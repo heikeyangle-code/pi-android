@@ -276,4 +276,140 @@ class FidelityFixesTest {
         ) as PiEvent.MessageUpdate
         assertNull((wrongKey.delta as AssistantDelta.Done).reason)
     }
+
+    @Test
+    fun `an unknown assistant delta kind is surfaced instead of swallowed`() {
+        // Events.kt documents Unknown as "rendered as a generic notice"; before
+        // this it fell through `else -> None` and a newer pi's delta vanished.
+        val r = reducer()
+        r.onEvent(
+            PiEvents.parse(
+                """{"type":"message_update","assistantMessageEvent":{"type":"future_delta","contentIndex":0,"delta":"x"}}""",
+            ),
+        )
+        val notice = r.transcript.single() as Notice
+        assertTrue(notice.text.contains("future_delta"))
+
+        // Deduplicated by kind, so a repeated delta cannot flood the stream.
+        r.onEvent(
+            PiEvents.parse(
+                """{"type":"message_update","assistantMessageEvent":{"type":"future_delta","contentIndex":0,"delta":"y"}}""",
+            ),
+        )
+        assertEquals(1, r.transcript.size)
+    }
+
+    // ------------------------------------------------- live custom messages
+
+    @Test
+    fun `a live custom message becomes a hook message`() {
+        // History replay already rendered `custom_message` entries; the live
+        // chain needed `customType`/`display` on MessageEnd to do the same, so
+        // injected context used to appear only after a reload.
+        val r = reducer()
+        val change = r.onEvent(
+            PiEvents.parse(
+                """{"type":"message_end","message":{"role":"custom","customType":"todo",
+                    "content":"- [ ] ship it","display":true,"timestamp":1000}}""".trimIndent().replace("\n", ""),
+            ),
+        )
+        assertTrue(change is TranscriptChange.Appended)
+        val hook = r.transcript.single() as HookMessage
+        assertEquals("todo", hook.customType)
+        assertEquals("- [ ] ship it", hook.markdown)
+    }
+
+    @Test
+    fun `a hidden or empty live custom message is not rendered`() {
+        val r = reducer()
+        // display:false means pi keeps it in context but hides it.
+        r.onEvent(
+            PiEvents.parse(
+                """{"type":"message_end","message":{"role":"custom","customType":"state","content":"x","display":false}}""",
+            ),
+        )
+        r.onEvent(
+            PiEvents.parse(
+                """{"type":"message_end","message":{"role":"custom","customType":"state","content":"","display":true}}""",
+            ),
+        )
+        assertTrue(r.transcript.isEmpty())
+    }
+
+    @Test
+    fun `an assistant message end still only closes streaming`() {
+        val r = reducer()
+        r.onEvent(PiEvents.parse("""{"type":"message_update","assistantMessageEvent":{"type":"text_delta","contentIndex":0,"delta":"hi"}}"""))
+        r.onEvent(
+            PiEvents.parse(
+                """{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"hi"}],"stopReason":"stop"}}""",
+            ),
+        )
+        assertEquals(1, r.transcript.size)
+        assertFalse((r.transcript.single() as AssistantText).streaming)
+    }
+
+    // ------------------------------------------------------- extension errors
+
+    // ------------------------------------------------- content-block ordering
+
+    @Test
+    fun `an interleaved text block keeps pi's block order`() {
+        // Captured from pi's real anthropic-messages adapter (fed a provider
+        // stream of text(0) -> tool_use(1) -> text(2)): the adapter emits
+        // text_start@0, toolcall_start@1, text_start@2. Keying streaming rows by
+        // "the last streaming text" would append block 2 into block 0's row,
+        // which sits before the tool card.
+        val r = reducer()
+        r.onEvent(PiEvents.parse("""{"type":"message_start","message":{"role":"assistant"}}"""))
+        r.onEvent(PiEvents.parse("""{"type":"message_update","assistantMessageEvent":{"type":"text_start","contentIndex":0}}"""))
+        r.onEvent(PiEvents.parse("""{"type":"message_update","assistantMessageEvent":{"type":"text_delta","contentIndex":0,"delta":"First part. "}}"""))
+        r.onEvent(
+            PiEvents.parse(
+                """{"type":"message_update","assistantMessageEvent":{"type":"toolcall_start","contentIndex":1,"id":"toolu_1","toolName":"bash"}}""",
+            ),
+        )
+        r.onEvent(PiEvents.parse("""{"type":"message_update","assistantMessageEvent":{"type":"text_start","contentIndex":2}}"""))
+        r.onEvent(PiEvents.parse("""{"type":"message_update","assistantMessageEvent":{"type":"text_delta","contentIndex":2,"delta":"Second part."}}"""))
+
+        assertEquals(3, r.transcript.size)
+        assertEquals("First part. ", (r.transcript[0] as AssistantText).text)
+        assertEquals("bash", (r.transcript[1] as ToolCall).toolName)
+        assertEquals("Second part.", (r.transcript[2] as AssistantText).text)
+    }
+
+    @Test
+    fun `a new assistant message restarts content block numbering`() {
+        val r = reducer()
+        r.onEvent(PiEvents.parse("""{"type":"message_start","message":{"role":"assistant"}}"""))
+        r.onEvent(PiEvents.parse("""{"type":"message_update","assistantMessageEvent":{"type":"text_delta","contentIndex":0,"delta":"one"}}"""))
+        r.onEvent(PiEvents.parse("""{"type":"message_end","message":{"role":"assistant"}}"""))
+        r.onEvent(PiEvents.parse("""{"type":"message_start","message":{"role":"assistant"}}"""))
+        r.onEvent(PiEvents.parse("""{"type":"message_update","assistantMessageEvent":{"type":"text_delta","contentIndex":0,"delta":"two"}}"""))
+        assertEquals(2, r.transcript.size)
+        assertEquals("one", (r.transcript[0] as AssistantText).text)
+        assertEquals("two", (r.transcript[1] as AssistantText).text)
+    }
+
+    @Test
+    fun `turn events carry no index on the RPC wire`() {
+        // AgentEvent declares no turnIndex and RPC forwards the agent event
+        // verbatim; only the extension TurnStartEvent/TurnEndEvent carry one, and
+        // those never reach stdout. An extra field is ignored, never surfaced.
+        assertEquals(PiEvent.TurnStart, PiEvents.parse("""{"type":"turn_start","turnIndex":7}"""))
+        val end = PiEvents.parse("""{"type":"turn_end","turnIndex":7,"toolResults":[{},{}]}""") as PiEvent.TurnEnd
+        assertEquals(2, end.toolResultCount)
+    }
+
+    @Test
+    fun `extension_error names the failing extension and hook`() {
+        // docs/rpc.md §extension_error: { extensionPath, event, error };
+        // rpc-mode.ts emits `error` text where `message` would be.
+        val event = PiEvents.parse(
+            """{"type":"extension_error","extensionPath":"/home/u/.pi/agent/extensions/x.ts","event":"tool_call","error":"boom"}""",
+        ) as PiEvent.ExtensionError
+        assertEquals("/home/u/.pi/agent/extensions/x.ts", event.extensionPath)
+        assertEquals("tool_call", event.event)
+        assertEquals("boom", event.message)
+    }
 }

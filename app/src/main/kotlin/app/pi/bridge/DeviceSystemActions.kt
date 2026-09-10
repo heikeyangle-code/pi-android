@@ -444,6 +444,11 @@ object DeviceSystemActions {
     // ------------------------------------------------------------------ torch ----
 
     fun torch(context: Context, on: Boolean): JSONObject {
+        // The permission is checked before the camera service is even consulted:
+        // without it `cameraIdList`/`getCameraCharacteristics` can still succeed
+        // while `setTorchMode` throws, and a SecurityException read after the fact
+        // produces exactly the wrong sentence ("没有找到带闪光灯的相机").
+        DeviceCapabilityStore.get(context).cameraPrecondition()?.let { throw DeviceActionException(it) }
         val manager = context.getSystemService(Context.CAMERA_SERVICE) as? CameraManager
             ?: throw DeviceActionException(DeviceDenial(DeviceDenial.UNSUPPORTED, "系统没有相机服务。"))
         val cameraId = try {
@@ -456,8 +461,8 @@ object DeviceSystemActions {
         } ?: throw DeviceActionException(
             DeviceDenial(
                 code = DeviceDenial.UNSUPPORTED,
-                reason = "没有找到带闪光灯的相机（或缺少相机权限）。",
-                hint = "维护者可在 AndroidManifest.xml 中声明 CAMERA 权限后重试。",
+                reason = "这台设备没有带闪光灯的相机（相机权限已授予，因此不是权限问题）。",
+                hint = "可以改用 android_notify / android_toast 等其他方式提醒用户。",
             ),
         )
         return try {
@@ -475,8 +480,8 @@ object DeviceSystemActions {
             throw DeviceActionException(
                 DeviceDenial(
                     code = DeviceDenial.NO_PERMISSION,
-                    reason = "应用没有相机权限，无法控制手电筒。",
-                    hint = "维护者需要在 AndroidManifest.xml 中声明 CAMERA 权限。",
+                    reason = "系统拒绝了手电筒控制（CAMERA 权限可能刚刚被撤销）。",
+                    hint = "请让用户在「设置 → 设备能力 → 位置·传感器·相机」重新授予相机权限。",
                 ),
             )
         }

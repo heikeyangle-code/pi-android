@@ -136,6 +136,48 @@ export interface HealthPayload {
 	locationPermissionGranted: boolean;
 	notificationPermissionGranted: boolean;
 	vibratePermissionGranted: boolean;
+	/**
+	 * The pre-API-29 storage path. Reported so a model can explain why
+	 * `android_export` fails on an old device instead of guessing.
+	 */
+	legacyStoragePermissionGranted?: boolean;
+	/**
+	 * The 放宽模式 switch, owned by the app. The permission gate reads it here so
+	 * both enforcers use one boolean (see `danger.shellPrecheck`).
+	 */
+	shellSyntaxRelaxed?: boolean;
+	/** The shell write boundary: the user's workspace, as the device shell sees it. */
+	workspace?: { shellPath: string | null; guestPath: string; known: boolean };
+	/** Shizuku (uid 2000 / root) status: the elevated shell backend. */
+	shizuku?: {
+		installed: boolean;
+		binderAlive: boolean;
+		permissionGranted: boolean;
+		ready: boolean;
+		uid: number;
+		version: number;
+		backendLabel: string;
+		note: string;
+	};
+	/** What the permission gate last reported doing (display only). */
+	gate?: {
+		reported: boolean;
+		sessionGrants?: string[];
+		counts?: Record<string, number>;
+		relaxedShellSyntax?: boolean;
+		note?: string;
+	};
+	/** Granted SAF directories (the storage group). */
+	saf?: { count: number; roots: string[] };
+	/** The full shell policy, so a model can read what is allowed before trying. */
+	shellPolicy?: {
+		allowedCommands: string[];
+		blocked: string[];
+		writeBoundary: string[];
+		syntax: string[];
+		relaxedCost: string;
+		elevatedBackend: boolean;
+	};
 	shellBackends: Array<{ id: string; label: string; available: boolean }>;
 	androidRelease: string;
 	sdkInt: number;
@@ -234,7 +276,15 @@ async function request<T>(
 				reason: `设备桥返回 HTTP ${response.status}（${path}）。`,
 			});
 		}
-		return envelope.data as T;
+		// Two envelope shapes exist on the wire and both are intentional:
+		//   `{ ok, data }`  — the capability-gated endpoints (`BridgeHttpResponse.ok`)
+		//   `{ ok, ...flat }` — `/app/health`, `/app/capabilities`, `/app/audit` and
+		//                       the gate report, which use `okRaw` because they are
+		//                       how a caller discovers *why* something else is refused.
+		// Reading only `data` made `bridgeHealth()` resolve to `undefined`, which
+		// silently disabled everything that reads it — including the 放宽模式 flag.
+		// (Found by tools-style runtime harness: node gate-check, 2026-09-10.)
+		return (envelope.data ?? envelope) as T;
 	}
 
 	const reason = lastError instanceof Error ? lastError.message : String(lastError);
@@ -261,6 +311,20 @@ export function bridgePost<T>(
 
 export async function bridgeHealth(): Promise<HealthPayload> {
 	return bridgeGet<HealthPayload>("/app/health", undefined, 5000);
+}
+
+/**
+ * Tell the app what the permission gate is currently doing, so the 设备能力 page can
+ * show it. Display only: nothing here changes policy, and the gate's own in-process
+ * memory is what enforces it. The UI labels the result as extension-reported.
+ */
+export async function reportGate(payload: {
+	sessionGrants: string[];
+	counts: Record<string, number>;
+	relaxedShellSyntax: boolean;
+	note: string;
+}): Promise<void> {
+	await bridgePost<unknown>("/app/gate/report", payload, 3000);
 }
 
 /** Diagnostics only: which paths were probed, when credentials were missing. */

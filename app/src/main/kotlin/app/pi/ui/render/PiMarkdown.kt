@@ -179,7 +179,7 @@ private val INLINE_CODE = Regex("(`{1,3})(?:(?!\\1)[\\s\\S])*?\\1")
  * the delimiter (`markdown.ts:31-39`, `isEscaped`).
  */
 private val BLOCK_MATH = Regex(
-    pattern = "(?<![\\p{L}\\p{N}\\\\])\\$\\$([^$]+?)\\$\\$\\n?",
+    pattern = """(?<![\p{L}\p{N}\\])\$\$([^$]+?)\$\$\n?""",
     option = RegexOption.DOT_MATCHES_ALL,
 )
 
@@ -199,6 +199,6 @@ private val BLOCK_MATH = Regex(
  * hide a real formula: `$\alpha$` opens with a backslash.
  */
 private val INLINE_MATH = Regex(
-    pattern = "(?<![\\p{L}\\p{N}\\\\])\\$(?![\\s\\p{L}\\p{N}])([^$\\n]+?)(?<!\\s)\\$(?![\\p{L}\\p{N}])",
+    pattern = """(?<![\p{L}\p{N}\\])\$(?![\s\p{L}\p{N}])([^$\n]+?)(?<!\s)\$(?![\p{L}\p{N}])""",
 )
 

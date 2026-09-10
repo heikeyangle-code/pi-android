@@ -249,6 +249,34 @@ class DeviceCapabilityStore private constructor(context: Context) {
         ContextCompat.checkSelfPermission(appContext, Manifest.permission.VIBRATE) ==
             PackageManager.PERMISSION_GRANTED
 
+    /** True when the app holds CAMERA, which `setTorchMode` has required since API 23. */
+    fun hasCameraPermission(): Boolean =
+        ContextCompat.checkSelfPermission(appContext, Manifest.permission.CAMERA) ==
+            PackageManager.PERMISSION_GRANTED
+
+    /**
+     * The camera precondition, checked per *endpoint* rather than per group.
+     *
+     * The 「位置 · 传感器 · 相机」 group also carries location, the sensor list and
+     * the battery reading, none of which need CAMERA. So a missing grant must not
+     * make the whole group unusable (the same reasoning as
+     * [sensorsPrecondition]) — but it must be reported as `NO_PERMISSION` with the
+     * camera permission named, and never as "this device has no flash". Before the
+     * manifest declared CAMERA, that mis-reporting was guaranteed on every ROM that
+     * enforces the permission.
+     */
+    fun cameraPrecondition(): DeviceDenial? =
+        if (hasCameraPermission()) {
+            null
+        } else {
+            DeviceDenial(
+                code = DeviceDenial.NO_PERMISSION,
+                reason = "控制手电筒需要相机权限（Android 6 起 CameraManager.setTorchMode 要求 CAMERA），当前未授予。",
+                hint = "请让用户在「设置 → 设备能力 → 位置·传感器·相机」点「授予相机权限」，" +
+                    "或在系统设置 → 应用 → pi → 权限 中打开相机权限；部分设备还需要先在系统里用过一次相机。",
+            )
+        }
+
     companion object {
         private const val PREFS_NAME = "pi-device-capabilities"
         private const val KEY_RELAXED_SHELL = "shell.relaxed-syntax"

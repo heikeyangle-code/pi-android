@@ -74,10 +74,27 @@ sealed interface PiEvent {
     data object AgentSettled : PiEvent { override val type = "agent_settled" }
 
     /**
-     * pi's `turn_start` / `turn_end` carry **no** turn index — the union is
-     * `{ type: "turn_start" }` and `{ type: "turn_end"; message; toolResults }`.
-     * The transcript does not need one: turns are delimited by the entries
-     * between them.
+     * pi's `turn_start` / `turn_end` carry **no** turn index on the RPC wire.
+     *
+     * This is easy to get wrong, because two *other* shapes do have one, and a
+     * reviewer who finds them will flip this comment back:
+     *
+     *  - `packages/agent/src/types.ts` declares the agent-level events as
+     *    `{ type: "turn_start" }` and
+     *    `{ type: "turn_end"; message; toolResults }` — no `turnIndex`.
+     *  - `core/extensions/types.ts` declares `TurnStartEvent`/`TurnEndEvent`
+     *    **with** `turnIndex` (plus `timestamp`), and
+     *    `AgentSession._emitExtensionEvent` builds exactly those.
+     *
+     * The chain decides it: `_handleAgentEvent` first calls
+     * `_emitExtensionEvent(event)` (extension handlers only) and then
+     * `this._emit(event)` with the **original** `AgentEvent`. `RpcMode` prints
+     * `session.subscribe(...)` through `toJsonEvent`, which returns every
+     * non-`message_update` record unchanged. So the `turnIndex`-bearing objects
+     * never reach stdout, and the app is right to model the count-free shape.
+     *
+     * The transcript does not need a turn index: turns are delimited by the
+     * entries between them.
      */
     data object TurnStart : PiEvent { override val type = "turn_start" }
     data class TurnEnd(val toolResultCount: Int) : PiEvent { override val type = "turn_end" }
@@ -95,6 +112,17 @@ sealed interface PiEvent {
         val text: String?,
         val stopReason: String?,
         val usage: TokenUsage?,
+        /**
+         * `customType` and `display` of a `role: "custom"` message — an
+         * extension's injected context (`core/messages.ts#CustomMessage`).
+         *
+         * The transcript renders those through [TranscriptReducer.onHookMessage],
+         * which history replay already reaches via `onEntry` (`custom_message`
+         * entries). Without these two fields the *live* chain had nothing to
+         * call it with, so injected context appeared only after a reload.
+         */
+        val customType: String? = null,
+        val display: Boolean? = null,
     ) : PiEvent {
         override val type = "message_end"
     }
@@ -246,7 +274,17 @@ sealed interface PiEvent {
         override val type = "extension_ui_request"
     }
 
-    data class ExtensionError(val message: String?) : PiEvent {
+    /**
+     * An extension threw. Carries enough to say *which* one: without
+     * [extensionPath] a failure is unattributable, and [event] names the pi hook
+     * it blew up in. Both are pi's own field names (`docs/rpc.md` §extension_error;
+     * `rpc-mode.ts` emits `{ extensionPath, event, error }`).
+     */
+    data class ExtensionError(
+        val message: String?,
+        val extensionPath: String? = null,
+        val event: String? = null,
+    ) : PiEvent {
         override val type = "extension_error"
     }
 
@@ -332,6 +370,8 @@ object PiEvents {
                 text = msg?.let { contentText(it["content"]) } ?: o.str("text"),
                 stopReason = msg?.str("stopReason") ?: o.str("stopReason"),
                 usage = msg?.obj("usage")?.let { parseUsage(it) } ?: o.obj("usage")?.let { parseUsage(it) },
+                customType = msg?.str("customType") ?: o.str("customType"),
+                display = msg?.bool("display") ?: o.bool("display"),
             )
         }
 
@@ -423,7 +463,11 @@ object PiEvents {
             raw = o,
         )
 
-        "extension_error" -> PiEvent.ExtensionError(o.str("message") ?: o.str("error"))
+        "extension_error" -> PiEvent.ExtensionError(
+            message = o.str("message") ?: o.str("error"),
+            extensionPath = o.str("extensionPath"),
+            event = o.str("event"),
+        )
 
         "entry_appended" -> {
             val entry = o.obj("entry")

@@ -57,22 +57,22 @@ class TranscriptBlocksTest {
     }
 
     @Test
-    fun `a model select event on the wire becomes a model change block`() {
+    fun `model_select is extension-only, so a record with that type is inert`() {
+        // `_emitModelSelect` calls `_extensionRunner.emit(...)`, never
+        // `_emit`/`subscribe` (agent-session.ts), so it is not on RPC stdout;
+        // and the persisted entry union has no `model_select`
+        // (session-manager.ts). The live signal is the `get_state` poll after
+        // `agent_settled` in PiSessionViewModel.
         val r = reducer()
-        r.onEvent(
-            PiEvents.parse(
-                """{"type":"model_select","provider":"anthropic","modelId":"claude-sonnet-4.5"}""",
-            ),
-        )
-        val item = r.transcript.single() as ModelChange
-        assertEquals("anthropic", item.provider)
-        assertEquals("claude-sonnet-4.5", item.modelId)
+        r.onEvent(PiEvents.parse("""{"type":"model_select","provider":"anthropic","modelId":"claude-sonnet-4.5"}"""))
+        r.onEvent(PiEvents.parse("""{"type":"model_select","model":{"provider":"openai","id":"gpt-5"}}"""))
+        assertTrue(r.transcript.isEmpty())
     }
 
     @Test
-    fun `a model select event with a nested model object still resolves`() {
+    fun `the app-synthesised model change helper produces the row`() {
         val r = reducer()
-        r.onEvent(PiEvents.parse("""{"type":"model_select","model":{"provider":"openai","id":"gpt-5"}}"""))
+        r.onModelChange("openai", "gpt-5")
         val item = r.transcript.single() as ModelChange
         assertEquals("openai", item.provider)
         assertEquals("gpt-5", item.modelId)
@@ -81,7 +81,7 @@ class TranscriptBlocksTest {
     @Test
     fun `a model change with no model at all is ignored`() {
         val r = reducer()
-        r.onEvent(PiEvents.parse("""{"type":"model_select"}"""))
+        r.onEntry(obj("""{"type":"model_change","id":"m1","timestamp":1000}"""))
         assertTrue(r.transcript.isEmpty())
     }
 
@@ -205,9 +205,16 @@ class TranscriptBlocksTest {
     // ------------------------------------------------- system prompt and skills
 
     @Test
-    fun `a system prompt entry becomes a collapsible block`() {
+    fun `a system prompt row comes from the app helper, not from an entry type`() {
+        // pi's persisted union has no `system_prompt` entry (session-manager.ts);
+        // the text is only reachable through `getSystemPrompt()`. An entry-shaped
+        // record is therefore inert, and onSystemPrompt is the API that produces
+        // the row.
         val r = reducer()
         r.onEntry(obj("""{"type":"system_prompt","id":"sp","timestamp":1000,"text":"You are pi."}"""))
+        assertTrue(r.transcript.isEmpty())
+
+        r.onSystemPrompt("You are pi.")
         assertEquals("You are pi.", (r.transcript.single() as SystemPrompt).fullText)
     }
 
@@ -234,7 +241,10 @@ class TranscriptBlocksTest {
     // -------------------------------------------------------------------- error
 
     @Test
-    fun `an error entry becomes an error block with a detail`() {
+    fun `an error row comes from the app helper, not from an entry type`() {
+        // pi has no `error` entry type: a failure is a `stopReason`/delta event
+        // (session-manager.ts). The entry-shaped record is inert; onError is the
+        // API that produces the row.
         val r = reducer()
         r.onEntry(
             obj(
@@ -242,6 +252,9 @@ class TranscriptBlocksTest {
                     """"content":[{"type":"text","text":"stack trace"}]}""",
             ),
         )
+        assertTrue(r.transcript.isEmpty())
+
+        r.onError("provider exploded", "stack trace")
         val item = r.transcript.single() as ErrorText
         assertEquals("provider exploded", item.message)
         assertEquals("stack trace", item.detail)

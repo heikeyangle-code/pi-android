@@ -532,6 +532,21 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
      * update that same row instead of stacking a new one per attempt.
      */
     private var summarizationNoticeIndex: Int? = null
+
+    /**
+     * Row index of the streaming block for each `contentIndex` within the
+     * current assistant message.
+     *
+     * pi addresses content blocks positionally. Verified against pi's own
+     * `anthropic-messages` adapter (fed a provider stream of
+     * text(0) → tool_use(1) → text(2)): it emits `text_start` at 0, then
+     * `toolcall_start` at 1, then **a second `text_start` at 2**. Looking up
+     * "the last streaming text row" would append block 2 into block 0's row,
+     * which sits before the tool card, so the transcript would read
+     * "First part. Second part." followed by the tool — not pi's order.
+     */
+    private val textIndexByContentIndex = mutableMapOf<Int, Int>()
+    private val thinkingIndexByContentIndex = mutableMapOf<Int, Int>()
     private var currentDay: Long? = null
     private var seq = 0
 
@@ -567,8 +582,30 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
 
     /** Fold one engine event. Never throws. */
     fun onEvent(event: PiEvent): TranscriptChange = when (event) {
+        // A new assistant message restarts content-block numbering, so the
+        // per-index row map must not carry over.
+        is PiEvent.MessageStart -> {
+            if (event.role == "assistant") {
+                textIndexByContentIndex.clear()
+                thinkingIndexByContentIndex.clear()
+            }
+            TranscriptChange.None
+        }
+
         is PiEvent.MessageUpdate -> onMessageUpdate(event)
-        is PiEvent.MessageEnd -> finishStreaming()
+        is PiEvent.MessageEnd -> {
+            val finished = finishStreaming()
+            // A live `role: "custom"` message is an extension's injected context.
+            // History replay already renders it (`custom_message` entries reach
+            // [onHookEntry]); the live chain used to drop it, so injected context
+            // only appeared after a reload. `display: false` means pi keeps it in
+            // context but hides it, exactly as [onHookEntry] treats it.
+            if (event.role == "custom" && event.display != false && !event.text.isNullOrEmpty()) {
+                onHookMessage(event.customType ?: "extension", event.text)
+            } else {
+                finished
+            }
+        }
         PiEvent.AgentStart -> {
             streaming = true
             TranscriptChange.None
@@ -731,12 +768,16 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
         streaming = true
         return when (delta) {
             is AssistantDelta.TextDelta -> {
-                val index = items.indexOfLast { it is AssistantText && it.streaming }
-                if (index >= 0) {
+                // One row per pi content block, keyed by `contentIndex`, so an
+                // interleaved block lands after the tool card rather than inside
+                // the first text row.
+                val index = textIndexByContentIndex[delta.contentIndex]
+                if (index != null && items.getOrNull(index) is AssistantText) {
                     val current = items[index] as AssistantText
                     items[index] = current.copy(text = current.text + delta.delta)
                     TranscriptChange.Updated(index)
                 } else {
+                    textIndexByContentIndex[delta.contentIndex] = items.size
                     append(
                         AssistantText(
                             key = nextKey("assistant"),
@@ -749,12 +790,13 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
             }
 
             is AssistantDelta.ThinkingDelta -> {
-                val index = items.indexOfLast { it is ThinkingBlock && it.streaming }
-                if (index >= 0) {
+                val index = thinkingIndexByContentIndex[delta.contentIndex]
+                if (index != null && items.getOrNull(index) is ThinkingBlock) {
                     val current = items[index] as ThinkingBlock
                     items[index] = current.copy(text = current.text + delta.delta)
                     TranscriptChange.Updated(index)
                 } else {
+                    thinkingIndexByContentIndex[delta.contentIndex] = items.size
                     append(
                         ThinkingBlock(
                             key = nextKey("thinking"),
@@ -795,6 +837,20 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
                     detail = delta.reason,
                 ),
             )
+
+            // A delta kind a newer pi introduced. Made visible on purpose: the
+            // class's own contract is that an engine upgrade degrades the UI
+            // rather than blanking it, and a silently swallowed kind is
+            // indistinguishable from a stall. Deduplicated by kind so a repeated
+            // delta cannot flood the transcript.
+            is AssistantDelta.Unknown -> {
+                val text = "未知的流式事件：${delta.kind}"
+                if (items.any { it is Notice && it.text == text }) {
+                    TranscriptChange.None
+                } else {
+                    append(Notice(key = nextKey("delta"), ts = now(), text = text))
+                }
+            }
 
             else -> TranscriptChange.None
         }
@@ -1018,7 +1074,14 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
             "message" -> entry.obj("message")?.let { onHistoryMessage(it, entryId, ts) }
                 ?: TranscriptChange.None
 
-            "model_change", "model_select" -> onModelEntry(entry, entryId, ts)
+            // `model_change` is the persisted entry type. There is no
+            // `model_select` entry (session-manager.ts) and no `model_select`
+            // event on RPC stdout either — `_emitModelSelect` calls
+            // `_extensionRunner.emit(...)`, never `_emit`/`subscribe`
+            // (agent-session.ts). A record with that type is therefore inert
+            // here; the live signal is the `get_state` poll after
+            // `agent_settled`, and [onModelChange] is the app-synthesised API.
+            "model_change" -> onModelEntry(entry, entryId, ts)
 
             "thinking_level_change" -> {
                 val level = entry.str("thinkingLevel") ?: entry.str("level")
@@ -1033,19 +1096,19 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
             // for the same shape.
             "custom_message", "hook_message" -> onHookEntry(entry, entryId, ts)
 
-            // The next three are **app-level block kinds, not pi entry types.**
-            // pi's persisted union is exactly: message, thinking_level_change,
-            // model_change, compaction, branch_summary, custom, custom_message,
-            // label, session_info (`core/session-manager.ts`). A skill command is
-            // expanded into an ordinary user message (`agent-session.ts`), the
-            // system prompt is only reachable through `getSystemPrompt()`, and a
-            // failure arrives as a `stopReason: "error"` event rather than an
-            // entry. These branches are inert during JSONL replay and exist so the
-            // same entry-shaped records can be fed in by an extension or the app.
-            "system_prompt" -> onSystemPromptEntry(entry, entryId, ts)
+            // `skill` / `skill_invocation` are **app-level aliases, not pi entry
+            // types**: pi expands `/skill:name` into an ordinary user message and
+            // the real projection is the `<skill …>` split in [projectUser]. The
+            // aliases stay so a caller can feed an entry-shaped skill record in.
             "skill", "skill_invocation" -> onSkillEntry(entry, entryId, ts)
-            "error" -> onErrorEntry(entry, entryId, ts)
 
+            // pi has no `system_prompt` or `error` entry type — the persisted
+            // union is exactly message, thinking_level_change, model_change,
+            // compaction, branch_summary, custom, custom_message, label and
+            // session_info (`core/session-manager.ts`). The system prompt is only
+            // reachable through `getSystemPrompt()`, and a failure arrives as a
+            // `stopReason`/delta event, so neither is handled here. Rows for them
+            // come from the app-synthesised [onSystemPrompt] / [onError] APIs.
             else -> TranscriptChange.None
         }
         return if (change == TranscriptChange.None && separator) {
@@ -1295,16 +1358,6 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
         )
     }
 
-    private fun onSystemPromptEntry(entry: JsonObject, entryId: String?, ts: Long): TranscriptChange {
-        val text = entry.str("text")
-            ?: entry.str("systemPrompt")
-            ?: entry.str("prompt")
-            ?: contentText(entry["content"])
-            ?: ""
-        if (text.isEmpty()) return TranscriptChange.None
-        return append(SystemPrompt(key = keyFor(entryId, "system"), ts = ts, fullText = text))
-    }
-
     private fun onSkillEntry(entry: JsonObject, entryId: String?, ts: Long): TranscriptChange {
         val name = entry.str("skillName")
             ?: entry.str("skill")
@@ -1323,14 +1376,6 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
                 skillName = name,
                 body = body,
             ),
-        )
-    }
-
-    private fun onErrorEntry(entry: JsonObject, entryId: String?, ts: Long): TranscriptChange {
-        val message = entry.str("message") ?: entry.str("error") ?: "出错了"
-        val detail = contentText(entry["content"]) ?: entry.str("detail")
-        return append(
-            ErrorText(key = keyFor(entryId, "error"), ts = ts, message = message, detail = detail),
         )
     }
 
@@ -1443,6 +1488,9 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
 
     private fun finishStreaming(): TranscriptChange {
         streaming = false
+        // Content-block numbering restarts with the next assistant message.
+        textIndexByContentIndex.clear()
+        thinkingIndexByContentIndex.clear()
         var touched = -1
         val ts = now()
         for (i in items.indices) {
@@ -1494,6 +1542,8 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
         diffIndexByCallId.clear()
         runningCompactionIndex = null
         summarizationNoticeIndex = null
+        textIndexByContentIndex.clear()
+        thinkingIndexByContentIndex.clear()
         currentDay = null
         streaming = false
     }
@@ -1502,19 +1552,21 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
         /**
          * Entry-shaped events that a newer pi may emit directly on stdout. They
          * are projectable through [onEntry]; everything else unknown is inert.
+         *
+         * Only real pi entry types belong here. `model_select`, `system_prompt`
+         * and `error` were removed because pi can emit none of them: the first is
+         * extension-only (`agent-session.ts`), and the other two are not in the
+         * persisted union (`session-manager.ts`).
          */
         val ENTRY_EVENT_TYPES = setOf(
             "model_change",
-            "model_select",
             "thinking_level_change",
             "compaction",
             "branch_summary",
             "custom_message",
             "hook_message",
-            "system_prompt",
             "skill",
             "skill_invocation",
-            "error",
         )
     }
 }

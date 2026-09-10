@@ -1,5 +1,7 @@
 package app.pi.ui.device
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -42,16 +44,21 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import app.pi.bridge.DeviceAccessibilityService
+import app.pi.bridge.DeviceApprovalLedger
 import app.pi.bridge.DeviceBridgeController
 import app.pi.bridge.DeviceCapability
 import app.pi.bridge.DeviceCapabilityState
 import app.pi.bridge.DeviceCapabilityStore
+import app.pi.bridge.DeviceSafStore
 import app.pi.bridge.DeviceShellGuard
+import app.pi.bridge.DeviceShizuku
+import app.pi.bridge.DeviceWorkspace
 import app.pi.ui.components.PiSectionHeader
 import app.pi.ui.theme.PiShapes
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
 import kotlinx.coroutines.delay
+import org.json.JSONObject
 
 /**
  * Device capability authorization (docs/pi-android-ui-spec.md §5.6).
@@ -62,6 +69,17 @@ import kotlinx.coroutines.delay
  * accessibility service is not running" is a state the user must be able to see and
  * act on — that distinction is the difference between a switch that works and one
  * that only looks like it does.
+ *
+ * ### Why every relaxation is visible here
+ *
+ * The user's requirement is that nothing may be loosened without a trace. So this
+ * screen is also the *policy* screen: the shell card shows the exact command
+ * whitelist, the irreducible hard blocklist, the write boundary and the relaxed-mode
+ * switch with its cost in one sentence; the storage card shows the granted SAF
+ * directories; and the approvals card shows what the pi-side permission gate has
+ * been told to stop asking about. None of that is inferred — it is read from the
+ * same objects the enforcement reads ([DeviceShellGuard], [DeviceCapabilityStore],
+ * [DeviceSafStore], [DeviceWorkspace], [DeviceShizuku]).
  *
  * The authority is [DeviceCapabilityStore]: it persists the switches and the HTTP
  * server re-reads it on every request, so a change here takes effect immediately —
@@ -75,21 +93,64 @@ fun DeviceCapabilityScreen(
     contentPadding: PaddingValues = PaddingValues(),
 ) {
     val context = LocalContext.current
+    val safStore = remember { DeviceSafStore.get(context) }
 
-    // Status is polled rather than observed: the accessibility service can be
-    // toggled in the system settings while this screen is in the foreground, and
-    // the user expects to come back and see the truth.
+    // Status is polled rather than observed: the accessibility service, Shizuku and
+    // the workspace can all change outside this screen while it is in the
+    // foreground, and the user expects to come back and see the truth.
     var accessibilityRunning by remember { mutableStateOf(DeviceAccessibilityService.isRunning()) }
     var bridgeStatus by remember { mutableStateOf(DeviceBridgeController.statusReport()) }
     var bridgeRunning by remember { mutableStateOf(DeviceBridgeController.isRunning()) }
     var revision by remember { mutableStateOf(0) }
+    var grants by remember { mutableStateOf(safStore.grants()) }
+    var relaxed by remember { mutableStateOf(store.isShellSyntaxRelaxed()) }
+    var shizuku by remember { mutableStateOf(DeviceShizuku.status(context)) }
+    var workspace by remember { mutableStateOf(DeviceWorkspace.summary()) }
+    var storagePermissionsNeeded by remember { mutableStateOf(!store.hasLegacyStoragePermission()) }
+    var note by remember { mutableStateOf<String?>(null) }
     val auditTail = remember(revision) { DeviceBridgeController.auditTail(5) }
 
+    // The SAF picker is the whole reason this group is no longer documented as
+    // "无": a picker needs an Activity, and this screen is one. Persisting the URI
+    // permission is what makes the grant survive a restart.
+    val directoryPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocumentTree(),
+    ) { uri ->
+        if (uri != null) {
+            val grant = safStore.add(uri, null)
+            grants = safStore.grants()
+            note = if (grant == null) {
+                "系统没有把这个目录的访问权限持久化（有些提供方不支持），重启后会失效。"
+            } else {
+                "已授权目录：${grant.name}。Agent 可以读写它里面的文件。"
+            }
+            revision += 1
+        }
+    }
+    val permissionRequester = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions(),
+    ) { result ->
+        storagePermissionsNeeded = !store.hasLegacyStoragePermission()
+        note = if (storagePermissionsNeeded) {
+            "存储权限仍未授予；在这台设备上导出文件需要它。"
+        } else {
+            "存储权限已授予。"
+        }
+        revision += 1
+    }
+
     LaunchedEffect(Unit) {
+        DeviceShizuku.addPermissionResultListener { granted ->
+            note = if (granted) "Shizuku 授权成功：Shell 现在以 ADB 身份运行。" else "Shizuku 授权被拒绝。"
+        }
         while (true) {
             accessibilityRunning = DeviceAccessibilityService.isRunning()
             bridgeRunning = DeviceBridgeController.isRunning()
             bridgeStatus = DeviceBridgeController.statusReport()
+            shizuku = DeviceShizuku.status(context)
+            DeviceWorkspace.refresh(context)
+            workspace = DeviceWorkspace.summary()
+            storagePermissionsNeeded = !store.hasLegacyStoragePermission()
             delay(1500)
         }
     }
@@ -127,6 +188,10 @@ fun DeviceCapabilityScreen(
                 )
             }
 
+            note?.let { message ->
+                item { InfoNote(message) }
+            }
+
             item {
                 PiSectionHeader("能力授权")
                 InfoNote(
@@ -152,12 +217,45 @@ fun DeviceCapabilityScreen(
                     onOpenSystemSettings = {
                         runCatching { context.startActivity(DeviceAccessibilityService.settingsIntent()) }
                     },
+                    relaxed = relaxed,
+                    onRelaxedChange = { enabled ->
+                        relaxed = enabled
+                        store.setShellSyntaxRelaxed(enabled)
+                        revision += 1
+                    },
+                    shizuku = shizuku,
+                    onRequestShizuku = {
+                        if (!DeviceShizuku.requestPermission()) {
+                            note = "无法发起 Shizuku 授权：Shizuku 没有在运行，或本机没有安装它。"
+                        }
+                    },
+                    grants = grants,
+                    onGrantDirectory = { directoryPicker.launch(null) },
+                    onRevokeDirectory = { uri ->
+                        safStore.remove(uri)
+                        grants = safStore.grants()
+                        revision += 1
+                    },
+                    storagePermissionsNeeded = storagePermissionsNeeded,
+                    onRequestStoragePermission = {
+                        val needed = store.legacyStoragePermissions()
+                        if (needed.isEmpty()) {
+                            note = "这台设备的 Android 版本不需要旧式存储权限。"
+                        } else {
+                            permissionRequester.launch(needed.toTypedArray())
+                        }
+                    },
                 )
             }
 
             item {
                 PiSectionHeader("Shell 策略")
-                ShellPolicyCard()
+                ShellPolicyCard(relaxed = relaxed, workspace = workspace)
+            }
+
+            item {
+                PiSectionHeader("本会话的审批")
+                ApprovalsCard()
             }
 
             item {
@@ -282,6 +380,15 @@ private fun DeviceCapabilityCard(
     onToggle: (Boolean) -> Unit,
     onSessionToggle: (Boolean) -> Unit,
     onOpenSystemSettings: () -> Unit,
+    relaxed: Boolean,
+    onRelaxedChange: (Boolean) -> Unit,
+    shizuku: JSONObject,
+    onRequestShizuku: () -> Unit,
+    grants: List<DeviceSafStore.Grant>,
+    onGrantDirectory: () -> Unit,
+    onRevokeDirectory: (String) -> Unit,
+    storagePermissionsNeeded: Boolean,
+    onRequestStoragePermission: () -> Unit,
 ) {
     val capability = state.capability
     Card {
@@ -372,7 +479,7 @@ private fun DeviceCapabilityCard(
                     color = if (accessibilityRunning) {
                         MaterialTheme.colorScheme.onSurfaceVariant
                     } else {
-                        MaterialTheme.colorScheme.error
+                        PiTheme.palette.error
                     },
                 )
                 TextButton(onClick = onOpenSystemSettings) { Text("前往系统设置") }
@@ -384,21 +491,85 @@ private fun DeviceCapabilityCard(
 
             DeviceCapability.Storage -> {
                 Spacer(Modifier.height(8.dp))
-                Text(
-                    "已授权目录：无（本版本用 MediaStore 写入公共 Download，不需要 SAF 授权，也读不到其他应用的文件）",
-                    style = PiTheme.text.meta,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+                for (line in DeviceSafStore.get(androidx.compose.ui.platform.LocalContext.current).summaryLines()) {
+                    Text(
+                        line,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                for (grant in grants) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            "· ${grant.name}",
+                            style = PiTheme.text.meta,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.weight(1f),
+                        )
+                        TextButton(onClick = { onRevokeDirectory(grant.uri) }) { Text("撤销") }
+                    }
+                }
+                TextButton(onClick = onGrantDirectory) { Text("授权目录") }
+                if (storagePermissionsNeeded) {
+                    Text(
+                        "这台设备的 Android 版本还需要「存储」权限才能写公共 Download。",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = PiTheme.palette.warning,
+                    )
+                    TextButton(onClick = onRequestStoragePermission) { Text("授予存储权限") }
+                }
             }
 
             DeviceCapability.Shell -> {
                 Spacer(Modifier.height(8.dp))
+                val backendLabel = shizuku.optString("backendLabel").ifEmpty { "应用自身身份" }
                 Text(
-                    "当前后端：应用自身身份（非 uid=2000）。Shizuku / ADB 无线调试配对尚未接入，" +
-                        "因此读不到其他应用与系统私有状态。",
+                    "当前 Shell 后端：$backendLabel",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+                Text(
+                    shizuku.optString("note"),
                     style = PiTheme.text.meta,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    TextButton(
+                        onClick = onRequestShizuku,
+                        enabled = shizuku.optBoolean("binderAlive"),
+                    ) { Text("请求 Shizuku 授权") }
+                    if (shizuku.optBoolean("ready") && shizuku.optInt("uid", -1) == 0) {
+                        Text(
+                            "Shizuku 以 root 运行",
+                            style = PiTheme.text.meta,
+                            color = PiTheme.palette.warning,
+                        )
+                    }
+                }
+
+                Spacer(Modifier.height(6.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            "放宽模式（命令替换与嵌套执行）",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
+                        Text(
+                            "默认关闭。开启后，\$() 与反引号、以及 sh/bash/eval/source 都会被允许。",
+                            style = PiTheme.text.meta,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Switch(checked = relaxed, onCheckedChange = onRelaxedChange)
+                }
+                if (relaxed) {
+                    Text(
+                        DeviceShellGuard.relaxedCost(),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = PiTheme.palette.warning,
+                    )
+                }
             }
 
             DeviceCapability.Sensors -> {
@@ -418,31 +589,107 @@ private fun DeviceCapabilityCard(
             Text(
                 state.reason,
                 style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.error,
+                color = PiTheme.palette.error,
             )
         }
     }
 }
 
+/**
+ * The shell policy, in full.
+ *
+ * This card exists because the user asked for one thing above all: **a relaxation
+ * the user cannot see is not allowed**. So it prints the whitelist, the hard
+ * blocklist with a reason per entry, the write boundary, and where the syntax
+ * policy stands — all read from [DeviceShellGuard], never retyped here.
+ */
 @Composable
-private fun ShellPolicyCard() {
+private fun ShellPolicyCard(relaxed: Boolean, workspace: String) {
     Card {
         Text(
-            "无论谁授权，下面这些都不会执行：",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurface,
+            "写入边界",
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.primary,
         )
-        for (line in DeviceShellGuard.policySummary()) {
+        Text(
+            workspace,
+            style = PiTheme.text.meta,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        for (line in DeviceShellGuard.writeBoundarySummary()) {
             Text(
                 "· $line",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
+
+        Spacer(Modifier.height(8.dp))
+        Text(
+            "语法策略",
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.primary,
+        )
+        for (line in DeviceShellGuard.syntaxSummary(relaxed)) {
+            Text(
+                "· $line",
+                style = MaterialTheme.typography.bodyMedium,
+                color = if (relaxed) PiTheme.palette.warning else MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+
+        Spacer(Modifier.height(8.dp))
+        Text(
+            "无论谁授权，下面这些都不会执行：",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurface,
+        )
+        for (line in DeviceShellGuard.blockedSummary()) {
+            Text(
+                "· $line",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+
+        Spacer(Modifier.height(8.dp))
+        Text(
+            "命令白名单（未知命令一律拒绝）：",
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.primary,
+        )
+        Text(
+            DeviceShellGuard.allowedSummary(),
+            style = PiTheme.text.monoSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+
         Spacer(Modifier.height(6.dp))
         Text(
-            "危险操作（结束应用、Shell、分享、打开链接、向输入框写入、跨沙箱读写文件）每次都会请求确认；" +
-                "没有确认通道时会直接拒绝，而不是默认允许。",
+            "危险操作（结束应用、Shell、分享、打开链接、向输入框写入、跨沙箱读写文件）第一次会请求确认，" +
+                "确认框里有「同意并记住本次会话」；没有确认通道时直接拒绝，而不是默认允许。",
+            style = PiTheme.text.meta,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+/** What the pi-side permission gate reported for this session. */
+@Composable
+private fun ApprovalsCard() {
+    Card {
+        for (line in DeviceApprovalLedger.summaryLines()) {
+            Text(
+                line,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Spacer(Modifier.height(4.dp))
+        Text(
+            "注意：「同意并记住本次会话」由 guest 内的 pi 扩展执行，App 只能显示它上报的状态，" +
+                "无法独立验证。真正不可绕过的边界是上面的能力开关、硬性禁用清单与工作区写入边界 —— " +
+                "它们都在 App 进程里执行。",
             style = PiTheme.text.meta,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )

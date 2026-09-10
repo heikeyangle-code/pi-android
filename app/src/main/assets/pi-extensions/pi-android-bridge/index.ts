@@ -165,6 +165,37 @@ interface ImportData {
 	text?: string;
 	base64?: string;
 }
+interface SafRoot {
+	name: string;
+	uri: string;
+	exists: boolean;
+}
+interface SafRootsData {
+	count: number;
+	roots: SafRoot[];
+	note: string;
+}
+interface SafListData {
+	path: string;
+	count: number;
+	truncated: boolean;
+	entries: Array<{ name: string; directory: boolean; bytes: number; lastModified: number; uri: string }>;
+}
+interface SafReadData {
+	path: string;
+	uri: string;
+	bytes: number;
+	truncated: boolean;
+	text?: string;
+	base64?: string;
+}
+interface SafWriteData {
+	path: string;
+	uri: string;
+	bytes: number;
+	created: boolean;
+	mimeType: string;
+}
 interface ShellData {
 	stdout: string;
 	stderr: string;
@@ -175,15 +206,20 @@ interface ShellData {
 	uid: number;
 	backendLabel: string;
 	note: string;
+	policy?: string;
 }
 
 // ---------------------------------------------------------------------------
 // tool registry
 // ---------------------------------------------------------------------------
 
-const ScreenKey = StringEnum(["back", "home", "recents", "notifications", "quicksettings"] as const, {
-	description: "要执行的系统按键。无障碍通道只能做这些全局动作；原始按键（enter/delete/方向键）需要 Shell 能力。",
-});
+const ScreenKey = StringEnum(
+	["back", "home", "recents", "notifications", "quicksettings", "powermenu", "lock", "screenshot", "split"] as const,
+	{
+		description:
+			"要执行的系统全局动作。无障碍通道只能做这些；原始按键（enter/delete/方向键）用 android_keyevent，需要 Shizuku。",
+	},
+);
 
 const ScreenshotFormat = StringEnum(["jpeg", "png"] as const, {
 	description: "图片格式。jpeg 更小、更适合交给模型；png 无损。默认 jpeg。",
@@ -243,6 +279,35 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 			const shells = health.shellBackends.map((backend) => `${backend.label}${backend.available ? "" : "（不可用）"}`);
 			lines.push("");
 			lines.push(`Shell 后端：${shells.length > 0 ? shells.join("、") : "无"}`);
+			const shizuku = health.shizuku;
+			if (shizuku) {
+				lines.push(`Shizuku：${shizuku.backendLabel}（${shizuku.note}）`);
+			}
+			const workspace = health.workspace;
+			if (workspace) {
+				lines.push(
+					`Shell 写入边界：${workspace.shellPath ?? "未确定"}（guest 内是 ${workspace.guestPath}）` +
+						"—— 工作区之内不拦，工作区之外会拒。",
+				);
+			}
+			if (typeof health.shellSyntaxRelaxed === "boolean") {
+				lines.push(`Shell 放宽模式：${health.shellSyntaxRelaxed ? "已开启（$(...)、反引号、sh/eval 都允许）" : "已关闭（默认）"}`);
+			}
+			const saf = health.saf;
+			if (saf) {
+				lines.push(
+					saf.count > 0
+						? `已授权（SAF）目录：${saf.roots.join("、")}`
+						: "已授权（SAF）目录：无 —— 需要用户在「设置 → 设备能力 → 存储」授权目录后，android_files_* 才可用。",
+				);
+			}
+			const gate = health.gate;
+			if (gate?.reported) {
+				const grants = gate.sessionGrants ?? [];
+				lines.push(
+					`本会话已记住同意的设备操作：${grants.length > 0 ? grants.join("、") : "无（每个危险操作都会单独询问）"}`,
+				);
+			}
 			lines.push(`审计日志：${health.auditLogPath}`);
 			return textResult(lines.join("\n"), {
 				connected: true,
@@ -327,7 +392,9 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 		label: "输入文本",
 		description:
 			"向当前界面的输入框写入文本。默认写入获得焦点的输入框，也可以指定 android_ui_dump 里的 index。" +
-			"submit=true 时会尝试触发回车提交（Android 11+）。需要「无障碍」能力，且属于危险操作，会先征得用户确认。",
+			"先尝试直接写入（ACTION_SET_TEXT）；被拒绝时自动改用「剪贴板 + 粘贴」，代价是会替换系统剪贴板里的内容（返回里会说明）。" +
+			"submit=true 时会尝试触发回车提交（Android 11+）。需要「无障碍」能力，且属于危险操作，首次会请求确认。" +
+			"要输入 enter/delete/方向键，用 android_keyevent（需要 Shizuku）。",
 		promptSnippet: "向屏幕上获得焦点的输入框写入文本",
 		parameters: Type.Object({
 			text: Type.String({ description: "要写入的文本（会替换输入框原有内容）。" }),
@@ -337,23 +404,32 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 		run: async (params) =>
 			guarded(async () => {
 				const p = params as { text: string; index?: number; submit?: boolean };
-				const data = await bridgePost<{ chars: number; submitted: boolean; submitHint?: string }>("/app/ui/input", {
+				const data = await bridgePost<{
+					chars: number;
+					submitted: boolean;
+					submitHint?: string;
+					mechanism?: string;
+					clipboardNote?: string;
+				}>("/app/ui/input", {
 					text: p.text,
 					index: p.index,
 					submit: p.submit === true,
 				});
 				let text = `已写入 ${data.chars} 个字符${data.submitted ? "，并已提交" : ""}`;
+				if (data.mechanism === "clipboard_paste") text += "（改用剪贴板粘贴完成）";
+				if (data.clipboardNote) text += `\n${data.clipboardNote}`;
 				if (data.submitHint) text += `\n${data.submitHint}`;
-				return textResult(text, { chars: data.chars, submitted: data.submitted });
+				return textResult(text, { chars: data.chars, submitted: data.submitted, mechanism: data.mechanism });
 			}),
 	},
 	{
 		name: "android_key",
 		label: "系统按键",
 		description:
-			"执行系统级按键：back（返回）、home（主页）、recents（最近任务）、notifications（通知栏）、quicksettings（快捷设置）。" +
-			"需要「无障碍」能力。原始按键（enter/delete/方向键）不在无障碍通道的能力范围内。",
-		promptSnippet: "执行 Android 系统按键（back/home/recents/notifications/quicksettings）",
+			"执行系统全局动作：back（返回）、home（主页）、recents（最近任务）、notifications（通知栏）、quicksettings（快捷设置）、" +
+			"powermenu（电源菜单）、lock（锁屏，Android 9+）、screenshot（系统截图，Android 11+）、split（分屏，Android 12+）。" +
+			"需要「无障碍」能力。这些动作不需要额外权限；enter/delete/方向键等原始按键用 android_keyevent。",
+		promptSnippet: "执行 Android 系统全局动作（back/home/recents/notifications/quicksettings/lock/screenshot…）",
 		parameters: Type.Object({
 			key: ScreenKey,
 		}),
@@ -362,6 +438,34 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 				const p = params as { key: string };
 				const data = await bridgePost<{ key: string; mode: string }>("/app/ui/key", { key: p.key });
 				return textResult(`已执行按键 ${data.key}（${data.mode}）`, data as unknown as Record<string, unknown>);
+			}),
+	},
+	{
+		name: "android_keyevent",
+		label: "注入原始按键",
+		description:
+			"向当前焦点注入原始按键（enter、del、tab、escape、dpad_up/down/left/right、move_end、page_down、数字键 F1 等）。" +
+			"这需要 ADB 身份（uid=2000），也就是要装好并授权 Shizuku；没有 Shizuku 时它会明确拒绝而不是装作成功。" +
+			"危险操作：按键会送到当前前台应用，等同于你亲手按。",
+		promptSnippet: "注入原始按键（enter/del/方向键等；需要 Shizuku）",
+		promptGuidelines: [
+			"Android 的全局动作（返回/主页）用 android_key 就够了；android_keyevent 只在确实需要 enter、delete、方向键这类按键时使用。",
+		],
+		parameters: Type.Object({
+			keys: Type.String({ description: "按键名，空格或逗号分隔，例如 \"ENTER\" 或 \"DPAD_DOWN DPAD_DOWN\"；KEYCODE_ 前缀可省略。" }),
+			repeat: Type.Optional(Type.Number({ description: "重复次数 1–20，默认 1。" })),
+		}),
+		run: async (params) =>
+			guarded(async () => {
+				const p = params as { keys: string; repeat?: number };
+				const data = await bridgePost<{ keys: string[]; repeat: number; mode: string; backend: string }>(
+					"/app/ui/keyevent",
+					{ keys: p.keys, repeat: p.repeat },
+				);
+				return textResult(
+					`已注入 ${data.keys.join(" ")}${data.repeat > 1 ? ` ×${data.repeat}` : ""}（${data.mode}，后端 ${data.backend}）`,
+					data as unknown as Record<string, unknown>,
+				);
 			}),
 	},
 	{
@@ -636,6 +740,8 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 		label: "导出到 Download",
 		description:
 			"把文本或 base64 二进制内容写成公共 Download 目录里的文件，用户与其他应用都能看到。" +
+			"API 29+ 走 MediaStore 不需要权限；Android 8/9 需要用户授予存储权限（应用会允许，并在「存储」卡里提供按钮）。" +
+			"想要写进用户自己的目录（不受 Download 限制），用 android_files_write。" +
 			"危险操作：内容离开应用沙箱，会请求确认。",
 		promptSnippet: "把内容导出成 Download 目录里的文件（危险操作，需用户确认）",
 		parameters: Type.Object({
@@ -663,7 +769,8 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 		name: "android_import",
 		label: "从 Download 读入",
 		description:
-			"按文件名读取公共 Download 目录里的文件。默认只能读取本应用自己导出过的文件，其他应用的文件需要用户授予存储访问。" +
+			"按文件名读取公共 Download 目录里的文件。API 33+ 上只能读取本应用自己导出过的文件（系统不再给普通应用读别人文件的权限）；" +
+			"API 30–32 需要用户授予存储权限。要读写用户自己指定的目录，用 android_files_read / android_files_write（SAF 授权，没有这个限制）。" +
 			"危险操作：文件内容会进入模型上下文，会请求确认。",
 		promptSnippet: "读取 Download 目录里的文件（危险操作，需用户确认）",
 		parameters: Type.Object({
@@ -685,6 +792,98 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 					`已读入 ${data.displayName}（${formatSize(data.bytes)}），它是二进制文件。` +
 						"如需查看，可以再调用一次并让用户确认，或改用 bash 工具在 guest 内处理。",
 					{ bytes: data.bytes, binary: true },
+				);
+			}),
+	},
+	{
+		name: "android_files_list",
+		label: "已授权目录",
+		description:
+			"列出用户在「设置 → 设备能力 → 存储」授权给 Agent 的目录（SAF）及其内容。不传 path 时列出根目录名；" +
+			"传 path 时路径写成「根目录名/相对路径」，例如 Documents/notes。这是读写用户自己的目录的方式，不受 Download 的限制。",
+		promptSnippet: "列出用户授权（SAF）的目录与其中的文件",
+		promptGuidelines: [
+			"要读写用户自己的文件时，先用 android_files_list 看清有哪些已授权目录与它们的名字；路径必须以根目录名开头。",
+		],
+		parameters: Type.Object({
+			path: Type.Optional(Type.String({ description: "「根目录名/相对路径」，省略则列出所有已授权根目录。" })),
+		}),
+		run: async (params) =>
+			guarded(async () => {
+				const p = params as { path?: string };
+				if (!p.path || p.path.trim().length === 0) {
+					const data = await bridgeGet<SafRootsData>("/app/files");
+					const lines = data.roots.map((root) => `- ${root.name}${root.exists ? "" : "（授权已失效）"}`);
+					if (lines.length === 0) lines.push("（还没有授权任何目录）");
+					return textResult(`已授权目录（${data.count}）：\n\n${lines.join("\n")}\n\n${data.note}`, {
+						count: data.count,
+					});
+				}
+				const data = await bridgePost<SafListData>("/app/files/list", { path: p.path });
+				const lines = data.entries.map(
+					(entry) => `${entry.directory ? "[目录]" : `[${formatSize(entry.bytes)}]`} ${entry.name}`,
+				);
+				if (lines.length === 0) lines.push("（空目录）");
+				return textResult(
+					truncateForModel(`${data.path}：\n\n${lines.join("\n")}\n\n共 ${data.count} 项${data.truncated ? "（已截断）" : ""}`, "目录列表"),
+					{ count: data.count },
+				);
+			}),
+	},
+	{
+		name: "android_files_read",
+		label: "读授权目录里的文件",
+		description:
+			"读取用户已授权（SAF）目录里的一个文件，路径写成「根目录名/相对路径」。文本直接返回，二进制以 base64 返回。" +
+			"危险操作：内容会进入模型上下文，会请求确认。",
+		promptSnippet: "读取用户授权目录里的文件（危险操作，需用户确认）",
+		parameters: Type.Object({
+			path: Type.String({ description: "「根目录名/相对路径」，例如 Documents/notes/todo.md。" }),
+			maxBytes: Type.Optional(Type.Number({ description: "最多读取多少字节，默认 1MB，上限 4MB。" })),
+		}),
+		run: async (params) =>
+			guarded(async () => {
+				const p = params as { path: string; maxBytes?: number };
+				const data = await bridgePost<SafReadData>("/app/files/read", { path: p.path, maxBytes: p.maxBytes });
+				if (typeof data.text === "string") {
+					return textResult(
+						`已读入 ${data.path}（${formatSize(data.bytes)}${data.truncated ? "，已截断" : ""}）：\n\n` +
+							truncateForModel(data.text, "文件内容"),
+						{ path: data.path, bytes: data.bytes },
+					);
+				}
+				return textResult(
+					`已读入 ${data.path}（${formatSize(data.bytes)}），它是二进制文件，以 base64 返回：\n\n` +
+						truncateForModel(data.base64 ?? "", "base64"),
+					{ path: data.path, bytes: data.bytes, binary: true },
+				);
+			}),
+	},
+	{
+		name: "android_files_write",
+		label: "写授权目录里的文件",
+		description:
+			"把文本或 base64 写进用户已授权（SAF）目录，路径写成「根目录名/相对路径」。不存在的中间目录会自动创建，同名文件会被覆盖。" +
+			"危险操作：可能覆盖用户已有的文件，会请求确认。",
+		promptSnippet: "写入用户授权目录里的文件（危险操作，需用户确认）",
+		parameters: Type.Object({
+			path: Type.String({ description: "「根目录名/相对路径」，例如 Documents/notes/todo.md。" }),
+			content: Type.Optional(Type.String({ description: "文本内容。" })),
+			base64: Type.Optional(Type.String({ description: "二进制内容的 base64；与 content 二选一。" })),
+			mimeType: Type.Optional(Type.String({ description: "MIME 类型，默认 text/plain。" })),
+		}),
+		run: async (params) =>
+			guarded(async () => {
+				const p = params as { path: string; content?: string; base64?: string; mimeType?: string };
+				const data = await bridgePost<SafWriteData>("/app/files/write", {
+					path: p.path,
+					content: p.content,
+					base64: p.base64,
+					mimeType: p.mimeType,
+				});
+				return textResult(
+					`已${data.created ? "创建" : "覆盖"} ${data.path}（${formatSize(data.bytes)}，${data.mimeType}）\nURI：${data.uri}`,
+					data as unknown as Record<string, unknown>,
 				);
 			}),
 	},
@@ -825,14 +1024,17 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 		name: "android_shell",
 		label: "设备 Shell",
 		description:
-			"在设备上执行一条受策略守卫限制的 Shell 命令。默认关闭，需要用户显式开启「Shell」能力，并且每次调用都要用户确认。" +
-			"只允许只读设备查询（getprop、dumpsys、pm list、logcat、ls、cat、df、ps 等）；" +
-			"块设备、SELinux、setprop、settings put、mount、清应用数据、提权与命令替换一律硬性拒绝。" +
-			"本版本没有接入 Shizuku/ADB，命令以应用自身身份（非 uid=2000）运行，读不到其他应用与系统私有状态。",
-		promptSnippet: "执行受策略守卫限制的设备 Shell 命令（默认关闭，每次需确认）",
+			"在设备上执行一条受策略守卫限制的 Shell 命令。默认关闭，需要用户显式开启「Shell」能力。" +
+			"允许日常读写命令（getprop、dumpsys、pm list、logcat、ls、cat、cp、mv、rm、mkdir、sed、tar、grep、find、curl 等）；" +
+			"未知命令一律拒绝。硬性禁用（与授权无关）：mount/umount、setenforce、setprop、settings put、mknod、dd、mkfs、pm clear/uninstall、su/sudo/magisk、/dev/block。" +
+			"写入边界是用户选定的工作区：工作区之内（含它本身就是 DCIM、Pictures、Download、Android/data 之类目录时）不拦，工作区之外会被拒。" +
+			"$(...) 与反引号默认拒绝，除非用户在「设置 → 设备能力 → Shell」打开「放宽模式」。" +
+			"命令以当前 Shell 后端身份运行：装了且授权了 Shizuku 就是 ADB 身份（uid=2000），否则是应用自身身份（读不到其他应用与系统私有状态）。" +
+			"要在工作区里跑构建、git、npm、rg 这类工具，请用 pi 的内置 bash —— 那是 guest 里的工作台，不受设备策略管辖。",
+		promptSnippet: "执行受策略守卫限制的设备 Shell 命令（默认关闭；第一次会请求确认，可记住本会话）",
 		promptGuidelines: [
-			"用 android_shell 查询设备状态前，先告诉用户这条命令要做什么；它每次都会弹出确认。",
-			"android_shell 只允许只读查询，需要写文件时用 android_export。",
+			"用 android_shell 之前先想清楚这一步是不是真的需要设备级身份；在工作区里做文件操作，内置 bash 更快也更合适。",
+			"android_shell 只写工作区之内；要写工作区之外的用户文件，用 android_files_write（需要用户先授权目录）。",
 		],
 		parameters: Type.Object({
 			command: Type.String({ description: "要执行的命令。多个动作请拆成多次调用。" }),
@@ -847,7 +1049,9 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 				if (data.stdout.trim().length > 0) parts.push(data.stdout.trimEnd());
 				if (data.stderr.trim().length > 0) parts.push(`[stderr]\n${data.stderr.trimEnd()}`);
 				parts.push(`[退出码 ${data.exitCode}${data.timedOut ? "，超时被杀" : ""}]`);
+				parts.push(`[后端 ${data.backendLabel}，uid=${data.uid}]`);
 				parts.push(data.note);
+				if (data.policy) parts.push(data.policy);
 				return textResult(truncateForModel(parts.join("\n"), "Shell 输出", "tail"), {
 					exitCode: data.exitCode,
 					backend: data.backend,
@@ -890,22 +1094,35 @@ proot 的 Ubuntu 用户态里，App 进程另外提供一组设备能力工具�
   文本/自绘界面用 \`android_screenshot\` 直接看图，\`android_input\` 写输入框。
 - 应用：\`android_apps\` 列表 → \`android_launch\` 启动；\`android_stop_app\` 结束用户应用（危险，需确认）。
 - 与用户交互：\`android_notify\`、\`android_toast\`、\`android_vibrate\`、\`android_tts\`。
-- 数据：\`android_clipboard_get/set\`；\`android_export\` 写到公共 Download，\`android_import\` 读回。
+- 数据：\`android_clipboard_get/set\`；\`android_export\` 写到公共 Download，\`android_import\` 读回；
+  用户自己指定的目录用 \`android_files_list/read/write\`（需要他先在「设置 → 设备能力 → 存储」授权目录）。
 - 设备状态：\`android_battery\`、\`android_location\`、\`android_sensors\`、\`android_torch\`。
 
 ## 规则
 
 1. **能力默认关闭。** 用户没有授权的能力会返回 \`[DISABLED]\` 或 \`[NO_PERMISSION]\` 加一句中文原因。
    把这句话原样转述给用户，并告诉他去哪打开（「设置 → 设备能力」）。不要自己编造解释，也不要反复重试。
-2. **危险操作会请求确认。** 结束应用、Shell、分享、打开链接、向输入框写入、跨沙箱读写文件都会弹确认；
-   用户拒绝时就停下来。没有确认通道时这些操作会被直接拒绝。
+2. **危险操作会请求确认。** 结束应用、Shell、分享、打开链接、向输入框写入、跨沙箱读写文件、注入按键都会弹确认；
+   确认框里有「同意并记住本次会话」——用户选了它，本会话内同类操作就不再问（结束会话后恢复）。用户拒绝时就停下来。
+   没有确认通道时这些操作会被直接拒绝。
 3. **点按要基于最新的屏幕。** \`android_tap\` 的编号来自最近一次 \`android_ui_dump\`；界面变化后要重新 dump。
 4. **不要假装做过。** 工具失败就是失败；把工具的返回内容如实告诉用户。
+5. **设备策略只管辖 android_* 工具。** 你在工作区里用内置 \`bash\` / read / write 跑 git、npm、rg、构建，
+   不受任何设备策略限制——那是你的工作台。设备 Shell（\`android_shell\`）是另一回事：它有命令白名单、
+   硬性禁用清单，而且只允许写工作区之内（工作区之外要写用户文件，用 \`android_files_write\`）。
 
 ## 与 Termux 的区别
 
 pi 官方在 Termux 上的做法是调用 \`termux-open-url\`、\`termux-notification\` 之类的命令。
 在这个 App 里请使用上面的 \`android_*\` 工具，它们不需要 Termux:API，并且会把失败原因说清楚。
+
+## 设备 Shell 的实际能力
+
+- 默认后端是应用自身身份，很多设备命令会因缺少权限而失败；用户装了并授权 **Shizuku** 之后，
+  后端会变成 ADB 身份（uid=2000），\`input\`、\`pm\`、\`am\`、\`settings get\`、\`dumpsys\` 才真正可用。
+  用 \`android_bridge_status\` 看当前后端，不要在报告里猜。
+- 白名单、硬性禁用清单、写入边界都会写进工具的返回里（\`policy\` 字段）；被拒绝时先读它，不要重复重试同一条命令。
+- \`$(...)\` 与反引号默认被拒，只有用户打开「放宽模式」才允许，而且那会同时放宽嵌套命令的检查。
 `;
 }
 
@@ -920,7 +1137,9 @@ function environmentGuidance(): string {
 		"- 工作区是 `/workspace`（快），用户共享存储是 `/sdcard`（慢，但用户可见）。",
 		"- 需要在手机上操作界面时：先 `android_ui_dump` 看清屏幕，再用 `android_tap` / `android_input` / `android_swipe` 操作，`android_screenshot` 用来直接看画面。",
 		"- 设备能力是按组授权的，默认只有「基础」组开启。被关闭的能力会返回 `[DISABLED]` 或 `[NO_PERMISSION]` 加一句中文原因；请把原因原样转述给用户，并指出「设置 → 设备能力」这个入口，不要自己猜测原因，也不要重复重试同一个调用。",
-		"- 结束应用、Shell、分享、打开链接、向输入框写入、跨沙箱读写文件属于危险操作：会请求用户确认，被拒绝时停下并告诉用户。",
+		"- 结束应用、Shell、分享、打开链接、向输入框写入、跨沙箱读写文件、注入按键属于危险操作：会请求用户确认（第一次确认时用户可以选择「同意并记住本次会话」），被拒绝时停下并告诉用户。",
+		"- 设备策略**只**管辖 android_* 工具：工作区里的 git / npm / 构建用内置 bash 自由进行，不受设备策略影响。android_shell 有命令白名单、硬性禁用清单，并且只允许写工作区之内；要写用户指定的其他目录，请让用户先在「设置 → 设备能力 → 存储」授权目录，再用 android_files_write。",
+		"- 想知道 Shell 后端是应用身份还是 Shizuku 的 ADB 身份（uid=2000），用 android_bridge_status 查，不要猜。",
 		"- 想知道当前到底有哪些能力可用，调用 `android_bridge_status`。",
 	].join("\n");
 }
