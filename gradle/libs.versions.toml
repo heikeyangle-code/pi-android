@@ -2,10 +2,17 @@
 # Markdown is rendered by a third-party stack, never by hand:
 #   org.jetbrains:markdown       — JetBrains' CommonMark + GFM parser (pure JVM)
 #   com.mikepenz:…-renderer-m3   — Compose renderer for that parser's AST
-# 0.45.0's classes were inspected with `javap -v`: their @Metadata `mv` is
-# [2,2,0], which the Kotlin pin below can still read. A renderer built by
-# Kotlin 2.3+ forces a toolchain bump, so re-check `mv` before changing this.
-markdown = "0.45.0"
+# 0.41.0 for two hard constraints, both verified against the real artifacts:
+#   * its AAR asks for minCompileSdk=36, which is what this project compiles
+#     against. 0.42.0 and newer ask for 37, and there is no plain
+#     `platforms;android-37` package — only 37.0/37.1/37.2 — so taking them
+#     means an AGP 9.x upgrade first.
+#   * its classes are @Metadata mv=[2,2,0], readable by the Kotlin 2.2.21 pin
+#     below. A renderer built by Kotlin 2.3+ forces a toolchain bump.
+# What 0.41.0 does not have, relative to 0.45.0: GFM alerts (`> [!NOTE]`),
+# `MarkdownTypography.alertTitle`, and the `StreamingMarkdownState` overload.
+# None of them are used yet; docs/known-gaps.md records when to move up.
+markdown = "0.41.0"
 
 # AGP 8.13 is the stable line; the androidx versions below are the newest that
 # still declare AGP 8.x in their AAR metadata. androidx releases from late 2025

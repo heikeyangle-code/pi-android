@@ -166,6 +166,17 @@ class PiEngineSession(
         }
     }
 
+    /**
+     * Send a command built from a fresh correlation id, and await its `response`.
+     *
+     * The id belongs to this class, not to callers, but a command builder needs
+     * one to put in the JSON it returns. Handing the id to the builder keeps both
+     * true: [PiEngineApi] writes `PiCommands.getState(id)` and this class keeps
+     * allocating and matching ids.
+     */
+    suspend fun request(build: (String) -> JsonObject, timeoutMs: Long = 120_000): PiEvent.Response =
+        request(build(nextId()), timeoutMs)
+
     // ------------------------------------------------------- typed operations
 
     fun prompt(

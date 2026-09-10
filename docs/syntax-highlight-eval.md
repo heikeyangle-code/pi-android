@@ -21,7 +21,7 @@ with the remaining 171). Coordinates:
 implementation("org.mozilla:rhino-runtime:1.7.15")   // MPL-2.0, 1,224,752 B jar, Java 8 bytecode
 // plus two generated assets committed to the repo (no runtime dependency, nothing fetched at runtime):
 //   app/src/main/assets/hljs/hljs-eager.es5.js   142,729 B  (32,996 B gzip)  -> 20 languages
-//   app/src/main/assets/hljs/hljs-rest.es5.js  ~1,033,352 B (~270 KB gzip)   -> 171 languages
+//   app/src/main/assets/hljs/hljs-rest.es5.js  1,073,638 B (279,486 B gzip)  -> 171 languages
 ```
 
 This is the only candidate that reproduces pi's output **exactly**: for all **191** highlight.js
@@ -50,7 +50,7 @@ faster, at the cost of exact pi parity, a pre-1.0 single-maintainer dependency, 
 
 | Candidate | Coordinates | License | Languages | Colour slots | Measured latency (JVM, aarch64, this host) | APK size impact (measured bytes) | Android minSdk 26 | Verdict |
 |---|---|---|---|---|---|---|---|---|
-| **Rhino + transpiled hljs 10.7.3** | `org.mozilla:rhino-runtime:1.7.15` + generated `hljs-eager.es5.js` / `hljs-rest.es5.js` assets | MPL-2.0 (Rhino) + BSD-3-Clause (hljs) — both fine for an Apache-2.0 app, no GPL | **191** (all of highlight.js 10.7.3); all 27 required present | **29** distinct `hljs-*` scopes measured across the 27 required languages; pi maps 25 → 100 % parity | load all 191: **2.19–3.03 s**; warm median per block: json(12 l.) **13.2–20.2 ms**, bash(19 l.) **21.8–25.2 ms**, kotlin(24 l.) **61.7–74.5 ms**, python(40 l.) **48.0–98.5 ms** (best 22.3–36.0 ms); cold first call 34.9–1274.6 ms; `highlightAuto` all-191 **9.7–14.7 s** | Rhino runtime jar **1,224,752 B**; eager asset **142,729 B** (32,996 B gzip); rest asset **1,033,352 B** (~270 KB gzip). Total ≈ **2.4 MB raw / ≈1.5 MB compressed** | ✅ Java 8 bytecode (class major 52); only APIs ≤ API 26; needs D8 lambda desugaring (`LambdaMetafactory`) and `-dontwarn java.beans.**` | ✅ **RECOMMENDED** |
+| **Rhino + transpiled hljs 10.7.3** | `org.mozilla:rhino-runtime:1.7.15` + generated `hljs-eager.es5.js` / `hljs-rest.es5.js` assets | MPL-2.0 (Rhino) + BSD-3-Clause (hljs) — both fine for an Apache-2.0 app, no GPL | **191** (all of highlight.js 10.7.3); all 27 required present | **29** distinct `hljs-*` scopes measured across the 27 required languages; pi maps 25 → 100 % parity | load all 191: **2.19–3.03 s**; warm median per block: json(12 l.) **13.2–20.2 ms**, bash(19 l.) **21.8–25.2 ms**, kotlin(24 l.) **61.7–74.5 ms**, python(40 l.) **48.0–98.5 ms** (best 22.3–36.0 ms); cold first call 34.9–1274.6 ms; `highlightAuto` all-191 **9.7–14.7 s** | Rhino runtime jar **1,224,752 B**; eager asset **142,729 B** (32,996 B gzip); rest asset **1,073,638 B** (279,486 B gzip). Total ≈ **2.4 MB raw / ≈1.5 MB compressed** | ✅ Java 8 bytecode (class major 52); only APIs ≤ API 26; needs D8 lambda desugaring (`LambdaMetafactory`) and `-dontwarn java.beans.**` | ✅ **RECOMMENDED** |
 | `io.github.ivan-magda:kotlin-textmate` | `io.github.ivan-magda:kotlin-textmate-core:0.2.0`, `…-compose:0.2.0` | MIT | Any TextMate grammar you vendor: **350+ available**, but **0 bundled** — 4 in the repo, 27 required must be vendored | TextMate scopes + VS Code themes (unbounded; far more than 9) | grammar load **27–74 ms**, theme load 145–223 ms, **cold first highlight 489–944 ms**, **warm 1.63–1.87 ms/28-line block**; my own run: 24-line Kotlin cold 601.8 ms, **warm median 5.67 ms**, 12-line JSON warm median **1.17 ms** | core jar **159,293 B** + compose aar **14,118 B** + deps joni **230,217 B**, jcodings **1,739,960 B**, gson **298,435 B** (kotlin-stdlib already present) + **vendored grammars ~1–2 MB for 27 languages, ~8.7 MB for ~200** | ✅ Java 17 bytecode (major 61), minSdk 24 in the AAR, no `.so` at all | ⚠️ **FALLBACK #1** — 40× faster and MIT, but pre-1.0 (2 releases, 47 stars, single maintainer), no bundled grammars, not byte-compatible with pi |
 | `dev.hossain:compose-highlight` (WebView/JS bridge) | `dev.hossain:compose-highlight:0.36.0` | MIT | 190+ via bundled `highlight.min.js` (`UNVERIFIED`: list not enumerated) | hljs scopes via CSS themes (27 bundled theme CSS files) | third-party benchmark: cold 120–180 ms, warm 6.4–18 ms/block (Pixel 9 Pro XL / S24 Ultra avg); **not my measurement** | AAR **629,348 B**, of which `assets/compose-highlight/highlight.min.js` **1,089,615 B** | ⚠️ minSdk 24 OK, but **`minCompileSdk=37`** — AGP hard-fails unless `compileSdk >= 37` (this app uses 36) | ⚠️ **FALLBACK #2** — viable, one shared hidden WebView (not one per block), but a Chromium instance in memory for the whole chat screen |
 | `dev.snipme:highlights` | `dev.snipme:highlights-jvm:1.1.0` | Apache-2.0 | **18** (`SyntaxLanguage` enum) | 9-colour theme | not measured here | jar **120,318 B** + coroutines/serialization deps | ⚠️ no `androidJvm` variant published (`UNVERIFIED` that Gradle resolves `-jvm` cleanly in an Android module) | ❌ **REJECT on capability** (18 languages, 9 colours — weaker than pi; matches the earlier rejection) |
@@ -191,7 +191,7 @@ node transpile.js hljs-eager.es2015.js hljs-eager.es5.js      # 142,729 B  (gzip
 # full:  core + all 191 languages
 cat hljs-core.min.js cdn/package/languages/*.min.js > hljs-full.es2015.js
 node transpile.js hljs-full.es2015.js hljs-full.es5.js        # 1,176,081 B (gzip 301,419 B)
-# rest = full - the 20 eager ones                                        ~1,033,352 B (~270 KB gzip)
+# rest = core + the other 171 languages                                  1,073,638 B (279,486 B gzip)
 ```
 
 ### 3.3 It actually runs: `hljs.highlight` output under Rhino 1.7.15 (interpreted)
@@ -271,7 +271,9 @@ of the **full 191-language** bundle (`bench-full-run1.txt`, `bench-full-run2.txt
 Eager bundle (core + pi's 20 languages, `bench-eager-run1/2.txt`): load **1,411.7 / 2,496.9 ms**,
 kotlin warm median **58.44 / 100.00 ms**. The eager bundle is 8× smaller but the fixed Rhino/Context
 cost dominates, so the eager/lazy split buys less startup time than the size ratio suggests — it is
-still worth doing because it removes 1.03 MB from the critical path.
+still worth doing because it removes 1.07 MB from the critical path.
+The complementary **rest bundle was verified too**: `REGISTERED_LANGUAGES=171`, `LOAD_MS=1623.4`
+(all 20 eager languages correctly absent: `kotlin:false, java:false, python:false, …`).
 
 Compiled/optimising mode (`setOptimizationLevel(9)`, `bench-full-opt9.txt`) — **informational only,
 not usable on Android** because Rhino's optimiser defines JVM bytecode at runtime (on Android that
@@ -427,7 +429,7 @@ rendering for every candidate (no Android build/device available).
 |---|---|---|
 | `rhino-runtime-1.7.15.jar` | 1,224,752 | 1,167,134 |
 | `hljs-eager.es5.js` (core + 20 langs) | 142,729 | 32,996 |
-| `hljs-rest.es5.js` (171 langs, = full − eager) | 1,033,352 | ~270,000 |
+| `hljs-rest.es5.js` (171 langs, measured) | 1,073,638 | 279,486 |
 | `hljs-full.es5.js` (alternative: all 191 in one file) | 1,176,081 | 301,419 |
 | `@highlightjs/cdn-assets@10.7.3` `highlight.min.js` (ES2015, **cannot** be used as-is) | 135,556 | 42,237 |
 | `highlight.js` 9.18.5 `highlight.min.js` (ES5-ish, wrong major version) | 73,706 | 28,383 |

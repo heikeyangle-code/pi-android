@@ -107,9 +107,17 @@ function verifyElfDisguise(path, expectedInterpreter) {
     throw new Error(`${path} is not an ELF file`);
   }
   if (buf[4] !== 2) throw new Error(`${path} is not 64-bit`);
+  // PIE is only required of the one payload Android actually execs. Its
+  // interpreter string marks that file: proot is exec'd through
+  // /system/bin/linker64, and Android refuses a non-PIE executable.
+  //
+  // The other three are mapped, never exec'd, so the rule does not apply to
+  // them — and `loader` is in fact ET_EXEC in the upstream Termux package
+  // (checked against the real .deb: e_type=2, 18,136 bytes). Requiring PIE of
+  // everything made this check fail on a correct payload.
+  if (expectedInterpreter === null) return;
   const isPie = (buf[16] | (buf[17] << 8)) === 3;
   if (!isPie) throw new Error(`${path} is not PIE; Android refuses non-PIE executables`);
-  if (expectedInterpreter === null) return;
   const found = buf.includes(Buffer.from(expectedInterpreter + "\0"));
   if (!found) {
     throw new Error(
@@ -190,14 +198,25 @@ function main() {
   }
   console.log("\njniLibs:");
   for (const item of JNI_PAYLOAD) {
-    // proot's own tree first, then the dependency debs (which share a prefix).
-    const candidates = [
-      join(prootStage, "proot", "data", "data", "com.termux", "files", "usr", item.from),
-      join(prootStage, "libtalloc", "data", "data", "com.termux", "files", "usr", item.from),
-      join(prootStage, "libandroidShmem", "data", "data", "com.termux", "files", "usr", item.from),
-    ];
+    // Termux debs install into `./data/data/com.termux/files/`, and JNI_PAYLOAD's
+    // `from` is already relative to that `files/` directory ("usr/bin/proot"),
+    // so it must NOT be appended after another "usr". Appending one produced
+    // ".../files/usr/usr/bin/proot" and the whole assemble step failed with
+    // "missing usr/bin/proot in the proot payloads" — verified by extracting the
+    // real deb and listing it:
+    //   ./data/data/com.termux/files/usr/bin/proot
+    //   ./data/data/com.termux/files/usr/libexec/proot/loader
+    //   ./data/data/com.termux/files/usr/lib/libtalloc.so.2.4.3
+    //   ./data/data/com.termux/files/usr/lib/libandroid-shmem.so
+    const candidates = ["proot", "libtalloc", "libandroidShmem"].map((name) =>
+      join(prootStage, name, "data", "data", "com.termux", "files", item.from),
+    );
     const src = candidates.find((p) => existsSync(p));
-    if (!src) throw new Error(`missing ${item.from} in the proot payloads`);
+    if (!src) {
+      throw new Error(
+        `missing ${item.from} in the proot payloads; looked for:\n  ${candidates.join("\n  ")}`,
+      );
+    }
     const dst = join(JNI, item.to);
     writeFileSync(dst, readFileSync(src));
     verifyElfDisguise(dst, item.interpreter);

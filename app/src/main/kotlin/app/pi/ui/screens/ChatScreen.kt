@@ -1,6 +1,7 @@
 package app.pi.ui.screens
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -45,6 +46,11 @@ import app.pi.ui.Boot
 import app.pi.ui.PiSessionViewModel
 import app.pi.ui.blocks.BlockRenderer
 import app.pi.ui.components.PiEmptyState
+import app.pi.ui.extension.ExtensionStatusRow
+import app.pi.ui.extension.ExtensionUiHost
+import app.pi.ui.extension.ExtensionWidgetStack
+import app.pi.ui.extension.WidgetPlacement
+import app.pi.ui.extension.windowTitleOf
 import app.pi.ui.theme.PiShapes
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
@@ -57,33 +63,74 @@ import app.pi.ui.theme.PiThinkingLevel
  * because the keyboard would otherwise cover it (docs/pi-android-ui-spec.md §4.1):
  *
  *   AppBar          session name · status · reload · overflow
+ *   StatusRow       extension `setStatus` entries (pi's footer, relocated)
  *   Transcript      the block kinds, rendered by `ui/blocks`
  *   QueueChips      steering / follow-up
+ *   Widgets         extension `setWidget`, above the editor
  *   Composer        border colour = thinking level, `!` = bash mode
+ *   Widgets         extension `setWidget`, below the editor
  *
  * Until the engine is up this screen shows the boot surface instead: the first
  * launch unpacks a Linux userland and that takes long enough that hiding it
  * behind a spinner would read as a hang.
+ *
+ * The screen is also the app's extension-UI surface: [ExtensionUiHost] renders
+ * pi's blocking dialogs and notification snackbars on top of whatever state the
+ * screen is in. That overlay has to be reachable even while the boot surface is
+ * showing, because an extension dialog is the only thing that can unblock a
+ * running pi turn — a dialog the user cannot see is the deadlock this exists to
+ * prevent.
  */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ChatScreen(
     contentPadding: PaddingValues,
     session: PiSessionViewModel,
 ) {
     val state by session.state.collectAsState()
+    val bottomInset = contentPadding.calculateBottomPadding()
 
-    if (state.boot !is Boot.Ready) {
-        BootScreen(
-            boot = state.boot,
-            onRetry = { session.boot() },
-            modifier = Modifier.padding(bottom = contentPadding.calculateBottomPadding()),
+    Box(Modifier.fillMaxSize()) {
+        if (state.boot !is Boot.Ready) {
+            BootScreen(
+                boot = state.boot,
+                onRetry = { session.boot() },
+                modifier = Modifier.padding(bottom = bottomInset),
+            )
+        } else {
+            ChatBody(state = state, session = session, bottomInset = bottomInset)
+        }
+        ExtensionUiHost(
+            session = session,
+            modifier = Modifier.fillMaxSize(),
+            // Above the bottom bar, so the snackbar never sits under the
+            // navigation gesture area.
+            snackbarBottomPadding = bottomInset + 8.dp,
         )
-        return
     }
+}
 
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ChatBody(
+    state: PiSessionViewModel.UiState,
+    session: PiSessionViewModel,
+    bottomInset: Dp,
+) {
     var draft by remember { mutableStateOf("") }
     val listState = rememberLazyListState()
+
+    // `set_editor_text`: an extension owns the composer content until the user
+    // types again, so the fill is applied once and then consumed. Consuming is
+    // load-bearing — this effect is keyed on the sequence, but leaving and
+    // re-entering the destination re-runs it, and a stale fill would silently
+    // overwrite whatever the user typed in the meantime.
+    val fill = state.composerFill
+    LaunchedEffect(fill?.seq) {
+        if (fill != null) {
+            draft = fill.text
+            session.consumeComposerFill(fill.seq)
+        }
+    }
 
     // Follow the tail while streaming, but never steal the scroll: only scroll
     // when the count grows, and let the user's own scrolling win afterwards.
@@ -97,7 +144,13 @@ fun ChatScreen(
             title = {
                 Column {
                     Text(
-                        if (state.transcript.isEmpty()) "新会话" else "会话",
+                        // `setTitle` is pi's terminal title — the session's name in
+                        // the user's own words — so it takes the primary line and the
+                        // engine label stays the subtitle.
+                        text = windowTitleOf(
+                            state.windowTitle,
+                            if (state.transcript.isEmpty()) "新会话" else "会话",
+                        ),
                         style = MaterialTheme.typography.titleMedium,
                     )
                     Text(
@@ -116,6 +169,8 @@ fun ChatScreen(
                 }
             },
         )
+
+        ExtensionStatusRow(state.extensionStatuses)
 
         if (state.transcript.isEmpty()) {
             PiEmptyState(
@@ -152,6 +207,10 @@ fun ChatScreen(
             QueueRow(steering = state.queueSteering, followUp = state.queueFollowUp)
         }
 
+        ExtensionWidgetStack(
+            widgets = state.extensionWidgets.filter { it.placement == WidgetPlacement.AboveEditor },
+        )
+
         Composer(
             draft = draft,
             onDraftChange = { draft = it },
@@ -165,8 +224,16 @@ fun ChatScreen(
                 }
             },
             onStop = { session.stop() },
-            bottomInset = contentPadding.calculateBottomPadding(),
         )
+
+        // `belowEditor` widgets sit after the composer's key-hint strip, which is
+        // the app's footer; pi puts them between editor and footer, and the
+        // difference is invisible at this density.
+        ExtensionWidgetStack(
+            widgets = state.extensionWidgets.filter { it.placement == WidgetPlacement.BelowEditor },
+        )
+
+        Spacer(Modifier.height(bottomInset + 8.dp))
     }
 }
 
@@ -203,7 +270,6 @@ private fun Composer(
     onCycleThinking: () -> Unit,
     onSend: () -> Unit,
     onStop: () -> Unit,
-    bottomInset: Dp,
 ) {
     Column(Modifier.fillMaxWidth()) {
         OutlinedTextField(
@@ -262,7 +328,6 @@ private fun Composer(
                 }
             }
         }
-        Spacer(Modifier.height(bottomInset + 8.dp))
     }
 }
 

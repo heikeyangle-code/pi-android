@@ -1,6 +1,5 @@
 package app.pi.ui.render
 
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
@@ -59,7 +58,6 @@ internal fun piMarkdownColors(): MarkdownColors {
         inlineCodeBackground = palette.infoBg,
         dividerColor = palette.mdHr,
         tableBackground = palette.cardBg,
-        darkTheme = isSystemInDarkTheme(),
     )
 }
 
@@ -102,7 +100,6 @@ internal fun piMarkdownTypography(): MarkdownTypography {
             style = SpanStyle(color = palette.mdLink, textDecoration = TextDecoration.Underline),
         ),
         table = mono.copy(fontSize = 12.5.sp, lineHeight = 18.sp, color = palette.text),
-        alertTitle = base.copy(color = palette.text, fontWeight = FontWeight.SemiBold),
     )
 }
 
