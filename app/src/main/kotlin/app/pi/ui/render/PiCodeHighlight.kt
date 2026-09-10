@@ -92,14 +92,24 @@ internal data class PiCodeSpan(val start: Int, val end: Int, val token: PiSyntax
 /**
  * The seam between the transcript and whatever actually colours code.
  *
- * It is deliberately synchronous and dependency-free: whichever backend wins
- * (an embedded highlight.js, a TextMate engine, or nothing at all) must be
- * callable from a background dispatcher with no Compose or Android context, so
- * that a code block can be highlighted once and cached as plain spans.
+ * It is deliberately synchronous and dependency-free: the winning backend is a
+ * Node service reached over loopback (`app.pi.highlight.PiNodeCodeHighlighter`),
+ * but it must stay callable from a background dispatcher with no Compose
+ * involvement, so a code block can be highlighted once and cached as plain spans.
+ *
+ * Two obligations on callers, both learned from the backend's cost model:
+ *
+ *  - **call it off the main thread** (`rememberPiHighlightedCode` uses
+ *    `Dispatchers.Default`); the implementation may wait up to a few hundred
+ *    milliseconds for the engine;
+ *  - **pass settled text, never a streaming prefix.** A fence that still changes
+ *    on every token would make every intermediate version a cache miss and a
+ *    request, which is why the caller debounces the block before asking.
  */
 internal interface PiCodeHighlighter {
     /**
-     * @param code the fence body, exactly as the model emitted it.
+     * @param code the fence body, exactly as the model emitted it, and settled:
+     *   see the note above about streaming.
      * @param language the fence's info string, already normalised by
      *   [PiCodeLanguage.normalize], or `null` when it is absent or unknown.
      * @return spans in any order; they are applied in order, so a later span
@@ -117,8 +127,10 @@ internal interface PiCodeHighlighter {
  * can misidentify prose as AppleScript, LiveCodeServer, etc., coloring random
  * English words as keywords."
  *
- * This is also the current default while the highlighter backend is undecided,
- * so the app renders correct, uncoloured code rather than wrong colours.
+ * This is also what the app renders with whenever the real highlighter cannot
+ * answer — no engine running, a timeout, a malformed reply, an unknown language.
+ * Code appears uncoloured rather than wrong, and a code block can never fail to
+ * render because highlighting did.
  */
 internal object PiPlainCodeHighlighter : PiCodeHighlighter {
     override fun highlight(code: String, language: String?): List<PiCodeSpan> = emptyList()

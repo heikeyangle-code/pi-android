@@ -282,7 +282,10 @@ class TerminalEmulator(
         screen.writeCell(cursorRow, cursorColumn, char, width, fg, bg, attrs)
         if (openLink != null) screen.lineAt(cursorRow).extendLink(cursorColumn)
         cursorColumn += width
-        cursorIntent = CursorIntent.Free
+        // `cursorIntent` is deliberately NOT reset here. The intent belongs to the
+        // program: pi emits CURSOR_MARKER (an APC) immediately before the cell the
+        // hardware cursor belongs on, and clearing it on the next character would
+        // lose the position before the view ever reads it.
         if (cursorColumn >= columns) {
             cursorColumn = columns - 1
             wrapPending = autowrap
@@ -290,9 +293,13 @@ class TerminalEmulator(
     }
 
     private fun lineFeed() {
-        if (cursorRow == scrollBottom) {
+        if (cursorRow >= scrollBottom) {
+            // At (or past) the bottom margin the line feed scrolls the region
+            // instead of moving the cursor. The `>=` matters: after an index the
+            // cursor is moved back into the margin, and a wrap that re-enters at
+            // the top row must still scroll.
             screen.scrollUp(scrollTop, scrollBottom)
-        } else if (cursorRow < rows - 1) {
+        } else {
             cursorRow++
         }
     }

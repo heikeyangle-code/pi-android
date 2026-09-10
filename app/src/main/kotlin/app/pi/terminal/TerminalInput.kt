@@ -96,6 +96,8 @@ internal object TerminalInput {
         private val printBuffer = StringBuilder(64)
         private var stringIntroducer: Char = ' '
         private var skipCharSetDesignation = false
+        /** True when the ESC we are looking at continues a string, not input. */
+        private var stringOpen = false
 
         /**
          * @param flush true at end of stream, so a truncated sequence is dropped
@@ -134,6 +136,18 @@ internal object TerminalInput {
                 }
 
                 ESCAPE -> when {
+                    // `ESC \` terminates a string that was introduced earlier.
+                    // pi's own output uses BEL, but `app.pi.terminal.TerminalEmulator`
+                    // must survive both forms: real programs (and tmux) send ST.
+                    stringOpen && char == '\\' -> {
+                        stringOpen = false
+                        state = GROUND
+                        when (stringIntroducer) {
+                            ']' -> out += Input.Osc(payload.toString())
+                            '_' -> out += Input.Apc(payload.toString())
+                            else -> out += Input.IgnoredString(stringIntroducer, payload.toString())
+                        }
+                    }
                     // `ESC ( B`: a character-set designation. Swallow the final.
                     skipCharSetDesignation -> {
                         skipCharSetDesignation = false
@@ -195,7 +209,10 @@ internal object TerminalInput {
                         state = GROUND
                         out += Input.Osc(payload.toString())
                     }
-                    ESC -> state = STRING_ESCAPE
+                    ESC -> {
+                        stringOpen = true
+                        state = STRING_ESCAPE
+                    }
                     else -> payload.append(char)
                 }
 
@@ -204,7 +221,10 @@ internal object TerminalInput {
                         state = GROUND
                         out += Input.Apc(payload.toString())
                     }
-                    ESC -> state = STRING_ESCAPE
+                    ESC -> {
+                        stringOpen = true
+                        state = STRING_ESCAPE
+                    }
                     else -> payload.append(char)
                 }
 
@@ -213,12 +233,18 @@ internal object TerminalInput {
                         state = GROUND
                         out += Input.IgnoredString(stringIntroducer, payload.toString())
                     }
-                    ESC -> state = STRING_ESCAPE
+                    ESC -> {
+                        stringOpen = true
+                        state = STRING_ESCAPE
+                    }
                     else -> payload.append(char)
                 }
 
                 STRING_ESCAPE -> when (char) {
                     '\\' -> {
+                        // An ESC immediately followed by `\` is the string
+                        // terminator (ST), whichever string state we came from.
+                        stringOpen = false
                         state = GROUND
                         when (stringIntroducer) {
                             ']' -> out += Input.Osc(payload.toString())
@@ -226,7 +252,9 @@ internal object TerminalInput {
                             else -> out += Input.IgnoredString(stringIntroducer, payload.toString())
                         }
                     }
-                    // Not a proper string terminator: go back to collecting.
+                    // Not a proper string terminator: go back to collecting. A
+                    // lone ESC inside a string is payload in principle; it is
+                    // dropped rather than kept, which matches what terminals do.
                     else -> {
                         state = when (stringIntroducer) {
                             ']' -> OSC

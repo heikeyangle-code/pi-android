@@ -1,7 +1,6 @@
 package app.pi.ui.screens
 
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -47,7 +46,6 @@ import app.pi.ui.PiSessionViewModel
 import app.pi.ui.blocks.BlockRenderer
 import app.pi.ui.components.PiEmptyState
 import app.pi.ui.extension.ExtensionStatusRow
-import app.pi.ui.extension.ExtensionUiHost
 import app.pi.ui.extension.ExtensionWidgetStack
 import app.pi.ui.extension.WidgetPlacement
 import app.pi.ui.extension.windowTitleOf
@@ -74,12 +72,12 @@ import app.pi.ui.theme.PiThinkingLevel
  * launch unpacks a Linux userland and that takes long enough that hiding it
  * behind a spinner would read as a hang.
  *
- * The screen is also the app's extension-UI surface: [ExtensionUiHost] renders
- * pi's blocking dialogs and notification snackbars on top of whatever state the
- * screen is in. That overlay has to be reachable even while the boot surface is
- * showing, because an extension dialog is the only thing that can unblock a
- * running pi turn — a dialog the user cannot see is the deadlock this exists to
- * prevent.
+ * The screen does **not** mount the extension UI host: PiRoot mounts
+ * `ExtensionUiHost` exactly once, above the active destination, and renders this
+ * screen inside that Box. Mounting it here as well would compose two hosts for
+ * the same request — two dialogs, two snackbar hosts racing for one notice
+ * queue — so this screen relies on PiRoot's single mount. See
+ * `ui/extension/ExtensionUiHost.kt` for the feature itself.
  */
 @Composable
 fun ChatScreen(
@@ -89,24 +87,15 @@ fun ChatScreen(
     val state by session.state.collectAsState()
     val bottomInset = contentPadding.calculateBottomPadding()
 
-    Box(Modifier.fillMaxSize()) {
-        if (state.boot !is Boot.Ready) {
-            BootScreen(
-                boot = state.boot,
-                onRetry = { session.boot() },
-                modifier = Modifier.padding(bottom = bottomInset),
-            )
-        } else {
-            ChatBody(state = state, session = session, bottomInset = bottomInset)
-        }
-        ExtensionUiHost(
-            session = session,
-            modifier = Modifier.fillMaxSize(),
-            // Above the bottom bar, so the snackbar never sits under the
-            // navigation gesture area.
-            snackbarBottomPadding = bottomInset + 8.dp,
+    if (state.boot !is Boot.Ready) {
+        BootScreen(
+            boot = state.boot,
+            onRetry = { session.boot() },
+            modifier = Modifier.padding(bottom = bottomInset),
         )
+        return
     }
+    ChatBody(state = state, session = session, bottomInset = bottomInset)
 }
 
 @OptIn(ExperimentalMaterial3Api::class)

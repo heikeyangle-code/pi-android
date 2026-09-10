@@ -27,14 +27,16 @@ import app.pi.ui.theme.PiTheme
  * The complete extension UI overlay: notification snackbars plus the blocking
  * dialog host, driven by [PiSessionViewModel]'s extension state.
  *
- * Call it once per screen that can show it (ChatScreen, WorkbenchScreen). It is
- * deliberately self-contained — it reads the session itself — so no screen has to
- * thread extension state through its own parameters, and the whole feature can be
- * hoisted to PiRoot later by moving a single call.
+ * Mounted **exactly once**, by PiRoot, above whichever destination is active.
+ * That single mount is load-bearing: this composable owns the only
+ * `SnackbarHostState` and the only dialog instance for the pending request, so a
+ * second mount inside a screen would render two dialogs for one request and let
+ * two snackbar hosts race for the same notice queue. Destination screens must
+ * therefore rely on PiRoot's mount rather than adding their own.
  *
  * [session] defaults to the Activity-scoped [viewModel]; PiRoot already creates
- * that same instance, so passing nothing here reuses the one engine rather than
- * booting a second one. That equivalence holds only while both call sites share a
+ * that same instance, so passing nothing reuses the one engine rather than
+ * booting a second one. That equivalence holds only while the call site shares a
  * ViewModelStoreOwner — true today, and the reason the parameter exists at all.
  */
 @Composable

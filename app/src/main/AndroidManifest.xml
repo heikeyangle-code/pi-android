@@ -78,9 +78,14 @@
           capability behind it additionally needs the matching opt-in switch
           (docs/pi-android-app-design.md §21.4, §23.2).
         -->
+        <!--
+          `android:description` is deliberately absent: AAPT requires a
+          @string/... reference there, and the user-visible wording already
+          lives in res/xml/accessibility_service_config.xml, which is what the
+          accessibility settings screen actually reads.
+        -->
         <service
             android:name=".bridge.DeviceAccessibilityService"
-            android:description="让 pi 读取屏幕、点按、滑动、输入与截屏。关闭后 Agent 立即失去这些能力。"
             android:exported="false"
             android:label="pi 设备桥"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">

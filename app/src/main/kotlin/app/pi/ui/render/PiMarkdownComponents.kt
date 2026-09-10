@@ -20,6 +20,7 @@ import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
+import app.pi.highlight.PiNodeCodeHighlighter
 import app.pi.ui.theme.PiTheme
 import com.mikepenz.markdown.compose.components.MarkdownComponentModel
 import com.mikepenz.markdown.compose.components.MarkdownComponents
@@ -30,6 +31,7 @@ import com.mikepenz.markdown.compose.elements.MarkdownCodeFence
 import com.mikepenz.markdown.model.ImageTransformer
 import com.mikepenz.markdown.model.NoOpImageTransformerImpl
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 
 /**
@@ -37,12 +39,16 @@ import kotlinx.coroutines.withContext
  * because the code components are reached through the renderer's own dispatch,
  * far from the call site that knows whether highlighting is available.
  *
- * The default does nothing, on purpose: pi refuses to guess a language it does
- * not recognise, and until a backend is installed this renders every block in
- * `mdCodeBlock` — which is exactly what pi does for an unknown fence.
+ * The default is the real backend — pi's own highlight.js, served by the guest
+ * engine over loopback (`app.pi.highlight.PiNodeCodeHighlighter`). It is safe as
+ * a default because it degrades on its own: before [app.pi.highlight.PiNodeCodeHighlighter.attach]
+ * runs, and whenever the engine is down, it returns no spans and every block
+ * renders in `mdCodeBlock` — which is what pi does for an unknown fence. A caller
+ * that wants to be sure of that (or to test the renderer without an engine)
+ * provides [PiPlainCodeHighlighter] explicitly.
  */
 internal val LocalPiCodeHighlighter = staticCompositionLocalOf<PiCodeHighlighter> {
-    PiPlainCodeHighlighter
+    PiNodeCodeHighlighter
 }
 
 /** Images are the renderer's other pluggable seam; same default as upstream. */
@@ -116,6 +122,14 @@ private fun PiCodeSurface(code: String, language: String?, style: TextStyle) {
  * language: pi skips auto-detection entirely, so a fence without a language
  * costs nothing here either.
  *
+ * The producer waits [STREAM_SETTLE_MS] before asking. A fence that a model is
+ * still writing changes on every token, and each change cancels this coroutine
+ * and starts a new one — so the delay means a block is only ever highlighted
+ * once it has stopped changing, and a long answer does not fire a request per
+ * token. The cost is one deliberate pause before colour appears on a finished
+ * block; the alternative is streaming text that stutters behind a queue of
+ * highlight requests for text nobody will ever see.
+ *
  * The spans are computed once per (code, language, highlighter) and the colours
  * applied separately, so switching theme repaints without re-running a
  * highlighter that may be expensive.
@@ -133,6 +147,7 @@ private fun rememberPiHighlightedCode(code: String, language: String?): Annotate
         value = if (PiCodeLanguage.isPlaintext(language)) {
             emptyList()
         } else {
+            delay(STREAM_SETTLE_MS)
             withContext(Dispatchers.Default) { highlighter.highlight(code, language) }
         }
     }
@@ -140,6 +155,14 @@ private fun rememberPiHighlightedCode(code: String, language: String?): Annotate
         buildPiCodeText(code, spans.value, palette)
     }
 }
+
+/**
+ * How long a fence must stop changing before it is worth highlighting. The eval
+ * doc suggests 150–250 ms (§4.3); this is the top of that range because the
+ * request itself is measurable and a settled block is worth more than a fast
+ * colour on a block that is still being rewritten.
+ */
+private const val STREAM_SETTLE_MS = 200L
 
 /**
  * Applies spans to the source text. Offsets are clamped rather than trusted: a
