@@ -6,16 +6,24 @@ import androidx.compose.ui.graphics.Color
 /**
  * pi's theme tokens, verbatim.
  *
- * pi themes are a JSON map of 53 required colour tokens (plus optional `vars`
- * and `export` sections) — see `packages/coding-agent/src/modes/interactive/
- * theme/theme-schema.json`. This app treats that file as the single source of
- * truth for colour (docs/pi-android-ui-spec.md §2.1): a theme the user made on
- * the desktop drops in here unchanged, and "change the pi theme" means "change
- * the app theme".
+ * A pi theme is a JSON file with a `colors` map — **51 required tokens plus 5
+ * optional ones that have fallbacks** (`scrollbarTrack`, `scrollbarThumb`,
+ * `searchMatchBg`, `searchMatchText`, `thinkingMax`), 56 in total, plus an
+ * optional `vars` section for reusable values and a 3-key `export` section for
+ * the HTML exporter's surfaces. Source of truth:
+ * `packages/coding-agent/src/modes/interactive/theme/theme-schema.json`.
+ *
+ * This file carries all 56 (`dark.json` gives every one) plus the 3 export
+ * tokens, because the point is not to have "a lot of colours" — it is that the
+ * app's palette should BE the user's pi theme. Themes are user-authored files
+ * (`~/.pi/agent/themes/*.json`), so a theme someone tuned on their desktop
+ * should change this app too, and a semantic colour pi assigned a meaning
+ * (`toolSuccessBg` is "this tool succeeded") should not be re-invented here and
+ * allowed to drift. docs/pi-android-ui-spec.md §2.1 has the surface mapping.
  *
  * The defaults below are pi's built-in `dark` and `light` themes, transcribed
- * literally. Semantic tokens (`success`/`error`/`warning`, thinking ramp, diff,
- * syntax, bashMode) must stay faithful to these values even when Android
+ * literally. Semantic tokens (`success`/`error`/`warning`, the thinking ramp,
+ * diff, syntax, bashMode) stay faithful to these values even when Android
  * dynamic colour is on — a state colour that drifts with the wallpaper is a
  * state colour you cannot trust.
  */

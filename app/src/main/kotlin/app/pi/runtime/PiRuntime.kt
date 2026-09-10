@@ -49,7 +49,7 @@ class PiPaths(private val filesDir: File, private val nativeLibDir: File) {
         val real = File(nativeLibDir, "libtalloc.so")
         if (!real.exists()) return
         val alias = File(lib, "libtalloc.so.2")
-        if (alias.exists() || alias.toPath().isSymbolicLink()) alias.delete()
+        if (java.nio.file.Files.isSymbolicLink(alias.toPath()) || alias.exists()) alias.delete()
         runCatching {
             java.nio.file.Files.createSymbolicLink(alias.toPath(), real.toPath())
         }
