@@ -177,3 +177,93 @@
 
 ### D4. 表格与其他元素改用手机版排版
 终端只有一种字和一种字号，pi 的标题只靠粗体/下划线区分。App 保留**颜色**一致，另外加了字号层级 —— 手机窄栏里同字号的标题不可读。pi 自己的 HTML 导出为了同样的原因做了同样的取舍。
+
+---
+
+## E. 未指派（无主）—— 下一批必须明确归属
+
+> 这一节的每一条都**还没有负责人**。之前它们只活在对话里，这就是"审计做得比路由好"的后果。
+
+### E1. 工具名冲突（pi 的规则是"先注册的赢"）
+自带扩展（`pi-android-bridge`、`pi-android-permission-gate`、`pi-highlight`）与用户安装的扩展**混在同一个 `~/.pi/agent/extensions/` 里**。同名工具会**静默地让一方失效**，不报错。
+命令名的冲突已由 GUI 侧处理（`name:1` 后缀保留，见 `PiSlashCommands.kt`），**工具名的没有任何处理**。
+收尾：扩展/包管理界面里检测并显示冲突；或在加载后比对工具表并给出警告。
+
+### E2. 高亮服务的 `attach(context)` 到底有没有被调用
+高亮代理说它在 `PiMarkdown.kt` 加了 `attach(context)`。**但没人验证过这条调用在 App 启动路径上真的会走到。**
+若没走到：高亮**永远静默退回单色**，而症状看起来像"回环服务没起来"——排查方向会完全跑偏。
+收尾：读 `attach` 的调用链，确认它被某一处真实调用（Application 启动 / 首次渲染 markdown）。**改动很小，但它是"看起来能用其实没生效"的典型形态。**
+
+### E3. 附件输入（图片）
+协议**已支持**：`docs/rpc.md` 的 `prompt` 命令带可选 `images` 字段，格式 `ImageContent`；会话条目里的 `Attachment` 还带 `fileName/mimeType/size/extractedText/preview`。
+App 侧**没有任何 UI**：没有选图、没有粘贴、没有拖入。**只能发纯文字。**
+收尾：输入框加附件入口 + 预览 + 随 `prompt` 发送。
+
+### E4. `@` 文件提及
+pi 有（见 `docs/settings.md`、`docs/usage.md`），App 没有。
+
+### E5. 懒启动引擎 + 无引擎浏览会话
+现在**开 App 就起引擎**（`PiRoot` 的 `LaunchedEffect` → `session.boot()`）。而：
+- 会话文件就在 App 私有目录里，**Android 能直接读** → 翻历史、看转录、改设置**根本不需要引擎**；
+- 引擎只在"真的要发消息"时才需要起。
+收尾：把 boot 从启动路径移走，做成"首次发送/首次需要时启动"，并加一个未启动/启动中/就绪/失败的状态分支。**改善的是启动体感，两条技术路线（留 pi / 换自研）都受益。**
+
+### E6. `ASSET_VERSION` 改成内容指纹（B12 的收尾）
+现在是手工常量。改成哈希资产树的文件名+大小写进 stamp，**彻底消掉"忘记提升版本号 → 新扩展静默不安装"这个人工步骤**。
+
+### E7. 扩展/包管理界面必须区分「内置」与「用户安装」
+`pi install` 装的东西和我们自带的三个混在同一个目录。若不加区分：
+- 用户会**以为自己装过** `pi-android-bridge`，删掉它 → **设备能力全部消失**，而 Kotlin 侧服务还在跑，症状莫名其妙；
+- 内置扩展应当**不可卸载**，并标明"随 App 提供"。
+（这一点随 B5 的界面一起做。）
+
+### E8. 终端方案的决策依据（记录，不是待办）
+工作区终端是**手写的 VT 模拟器**（3265 行），但**这个选型从来没有做过"买 vs 造"的对比**——是子代理自行决定、我未监督的。
+现成方案与其许可（**使用前必须逐个核实，许可搞错是法律问题**）：
+| 方案 | 许可 | 特点 |
+|---|---|---|
+| xterm.js + WebView | MIT | 覆盖率最高，行业标准；我们已用 WebView 跑 Mermaid |
+| ConnectBot `termlib` | Apache-2.0 | 成熟原生 VT 模拟器（Java），不用 WebView |
+| Termux `terminal-emulator` | GPL-3.0 | 技术强但**传染性许可**，链入即整体 GPL，基本排除 |
+收尾：**先上真机验证自写模拟器的覆盖率**；不行就换 xterm.js（MIT、覆盖最全、基础设施已在）。
+
+---
+
+## F. 协议层做不到的（这是限定，不是待办）
+
+写成待办会永远做不掉，写清楚才能让人不再重问一遍。
+
+### F1. 扩展加载失败是静默的
+pi 把扩展加载错误**只写进 `runtime.diagnostics`，不发任何事件**。RPC 侧**没有通道**能感知"某个扩展加载失败了"。所以界面上无法提示——除非从 guest 侧读那个诊断文件（另一条链路，未做）。
+
+### F2. GUI 永远够不着的这几个
+`setLabel`、工具集的读取与设置、`getSystemPrompt`、扩展加载诊断——**RPC 协议里根本没有对应命令**，`prompt` 也派发不了（内置命令不在 `get_commands` 里）。
+处置：GUI 里标「仅终端」并指向 `工作区 → pi TUI（原版）`。**不要伪造。**
+
+### F3. TUI-only 的扩展能力
+`custom()`、`setFooter/setHeader`、`setWorkingMessage/Visible/Indicator`、`setHiddenThinkingLabel`、`setEditorComponent`、`addAutocompleteProvider`、`onTerminalInput`、主题读写、`getEditorText()`（RPC 永远返回 `""`）、扩展驱动的 `setToolsExpanded`。
+这些**在 pi 自己的 RPC 模式里就是 no-op**，任何 RPC 客户端都拿不到。出路是 `pi TUI（原版）` 标签页。
+
+---
+
+## G. 已交接、待完成（归属明确）
+
+| 项 | 归属 |
+|---|---|
+| `rpc/**` 六条：`ExtensionError.extensionPath`/`event`、`MessageEnd.customType`/`display`、`model_select` 死分支、`AssistantDelta.Unknown` 注释与行为、`system_prompt`/`error` 死分支 | RPC 代理 |
+| `turnIndex` 两份审计结论相反，**回源码裁决** | RPC 代理 |
+| `contentIndex` 用**真实 `pi --mode rpc` 抓包**验证，不许靠文档猜 | RPC 代理 |
+| `PiEngineHost` 的 `restart()`/`reload()` 入口（B6 与 `/reload` 替代方案的共同前置） | 包管理代理（新授权） |
+| `runtime/**` 信任存储（`PiTrustStore` + `trust.json`） | 包管理代理 |
+| `CAMERA` 权限 + `NO_PERMISSION` 前置条件 | 闸门代理 |
+| C 节全部真机验证项 | **等 APK 能构建出来** |
+
+---
+
+## H. 流程教训（写给下一个人，不是待办）
+
+1. **记录 ≠ 派活。** 我把缺口写进这份文档就以为处理过了，但文档**不是工作队列**。每份审计报告进来，必须**立刻**转成"归属人 + 文件 + 验收条件"的条目，否则就会像发生过的那样——连着两轮被问"是不是还有落下的"，而**每次一问都能翻出东西**。
+2. **文件归属切得干净，会切出"公共入口无主"的空洞。** `engine/**` 的重启入口就是这样：两个功能都依赖它、两个代理都不许碰。指派任务时要专门检查一遍"**有没有一个所有功能都依赖的文件**"。
+3. **委托模板必须禁掉全部 git 写操作**，不只是 `commit`/`push`。`checkout` / `reset` / `stash` / `clean` / `restore` **能一次毁掉所有并行代理的在制品，而且不报错**。
+4. **并行时每个代理都会报"红不是我的文件"。** 这没有意义——**只有冻结树之后的整树 typecheck 才算数**。
+5. **自证不等于认账。** 代理报告 `typecheck: OK` 时要独立复跑；审计报告里"已核对为正确"的结论也要抽验。**反过来，报"证不出来"的项目要保留**，因为自信的错误发现会让人去改本来正确的代码。
