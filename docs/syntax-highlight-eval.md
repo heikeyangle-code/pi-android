@@ -1,5 +1,31 @@
 # Syntax-highlighting backend evaluation
 
+> **DECISION UPDATE (read this first).** The verdict below — Rhino running a
+> Babel-transpiled highlight.js — was **not** the path finally taken for the
+> implementation. All the measurements here remain valid and were the reason the
+> decision changed: Rhino costs 62–75 ms for a 24-line Kotlin block where a
+> native engine costs ~5.7 ms, and on a phone that becomes a visible ~0.2–0.4 s
+> "uncoloured → coloured" flash. That makes the app slower than pi at the one
+> thing pi does well, which is not acceptable for a project whose bar is "never
+> weaker than pi".
+>
+> The implementation now highlights in **pi's own Node runtime**: an ordinary pi
+> extension starts a loopback HTTP service that runs the **unmodified, untranspiled
+> highlight.js 10.7.3** under V8 — the same engine and version pi itself uses — and
+> the app calls it over 127.0.0.1. That gives pi-identical output *and* pi-identical
+> speed, adds no JS engine and no transpile step to the APK, and needs no Babel.
+> `PiCodeHighlighter` in `app/src/main/kotlin/app/pi/ui/render/PiCodeHighlight.kt`
+> is the seam; the do-nothing default is the fallback when the service is absent.
+>
+> Rhino remains the documented fallback if the Node path proves unusable (for
+> instance if code must be highlighted while no engine is running). Everything
+> below — the language/scope inventory, the measurements, the rejected candidates
+> and the reasons — is still the evidence base for that fallback and for the
+> "why not X" questions. Section 1's verdict should be read as "if we ever have
+> to do this on-device, this is how".
+
+
+
 Evaluation date: 2026-09-10. Host: Linux **aarch64**, 8 cores, 7.2 GB RAM (shared VM, some swap),
 JDK 17 (`/usr/lib/jvm/java-17-openjdk-arm64`). No Android device and no working Android build were
 available (`AAPT2` is x86_64-only), therefore **every execution in this document is on the plain JVM,

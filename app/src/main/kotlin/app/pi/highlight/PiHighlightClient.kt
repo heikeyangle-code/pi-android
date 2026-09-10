@@ -3,9 +3,12 @@ package app.pi.highlight
 import app.pi.ui.render.PiCodeSpan
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.ByteArrayOutputStream
 import java.io.File
-import java.net.HttpURLConnection
-import java.net.URL
+import java.io.InputStream
+import java.net.InetAddress
+import java.net.InetSocketAddress
+import java.net.Socket
 
 /**
  * Credentials the guest published for its highlight service.
@@ -135,6 +138,17 @@ internal class PiHighlightClient(private val credentialFiles: List<File>) {
         class Failed(val reason: String) : Reply
     }
 
+    /**
+     * One HTTP/1.1 request over a raw loopback socket.
+     *
+     * A socket rather than `HttpURLConnection` on purpose. Android's network
+     * security policy is enforced by the HTTP stacks and not by `Socket`, and for
+     * `targetSdk >= 28` cleartext HTTP is refused unless the manifest opts in —
+     * the manifest is not this change's to edit, and whether the policy exempts
+     * `127.0.0.1` is not something this code should have to bet on. A socket also
+     * sidesteps connection pooling and DNS for what is a fixed, one-shot request
+     * to a service on the same device.
+     */
     private fun post(credentials: PiHighlightCredentials, code: String, language: String): Reply {
         val payload = JSONObject()
             .put("code", code)
@@ -142,37 +156,43 @@ internal class PiHighlightClient(private val credentialFiles: List<File>) {
             .toString()
             .toByteArray(Charsets.UTF_8)
 
-        val connection = URL("http://127.0.0.1:${credentials.port}/highlight")
-            .openConnection() as HttpURLConnection
-        return try {
-            connection.requestMethod = "POST"
+        val head = buildString {
+            append("POST /highlight HTTP/1.1\r\n")
+            append("Host: 127.0.0.1:").append(credentials.port).append("\r\n")
+            append("Authorization: Bearer ").append(credentials.token).append("\r\n")
+            append("Content-Type: application/json; charset=utf-8\r\n")
+            append("Content-Length: ").append(payload.size).append("\r\n")
+            // The service closes every connection; saying so avoids it having to
+            // wait out a keep-alive timeout on our socket.
+            append("Connection: close\r\n")
+            append("\r\n")
+        }
+
+        Socket().use { socket ->
             // A request that cannot answer inside this budget is not worth
             // waiting for: the block is already on screen, and plain text is the
             // correct fallback (spec: short timeout, always fall back).
-            connection.connectTimeout = CONNECT_TIMEOUT_MS
-            connection.readTimeout = READ_TIMEOUT_MS
-            connection.doOutput = true
-            connection.setRequestProperty("Content-Type", "application/json; charset=utf-8")
-            connection.setRequestProperty("Authorization", "Bearer ${credentials.token}")
-            // No `Accept-Encoding`: gzip would buy nothing on loopback and only
-            // add a decode step to a hot path.
-            connection.setFixedLengthStreamingMode(payload.size)
-            connection.outputStream.use { it.write(payload) }
-
-            val status = connection.responseCode
-            val body = readBounded(connection)
-            if (status == HttpURLConnection.HTTP_UNAUTHORIZED) return Reply.Stale
-            if (body == null) return Reply.Failed("响应过大或读取失败（HTTP $status）")
-            val json = runCatching { JSONObject(body) }.getOrElse {
-                return Reply.Failed("响应不是 JSON（HTTP $status）")
+            socket.soTimeout = READ_TIMEOUT_MS
+            socket.connect(InetSocketAddress(InetAddress.getByName(LOOPBACK), credentials.port), CONNECT_TIMEOUT_MS)
+            socket.getOutputStream().apply {
+                write(head.toByteArray(Charsets.ISO_8859_1))
+                write(payload)
+                flush()
             }
-            if (status != HttpURLConnection.HTTP_OK || !json.optBoolean("ok", false)) {
-                return Reply.Failed(json.optString("reason", "HTTP $status"))
+            val reply = readReply(socket.getInputStream())
+            if (reply.status == HTTP_UNAUTHORIZED) return Reply.Stale
+            if (reply.body == null) return Reply.Failed("响应过大或读取失败（HTTP ${reply.status}）")
+            val json = runCatching { JSONObject(reply.body) }.getOrElse {
+                return Reply.Failed("响应不是 JSON（HTTP ${reply.status}）")
+            }
+            if (reply.status != HTTP_OK || !json.optBoolean("ok", false)) {
+                return Reply.Failed(json.optString("reason", "HTTP ${reply.status}"))
             }
             val data = json.optJSONObject("data") ?: return Reply.Failed("响应缺少 data")
             if (!data.optBoolean("known", false)) {
-                // The engine loading the language is a different answer from not
-                // shipping it, but both mean "no colour" to the caller.
+                // Unknown language and "the language is still loading" are
+                // different answers from the service, but both mean "no colour"
+                // to the caller, and neither should be cached as a failure.
                 return Reply.Spans(emptyList())
             }
             if (data.optInt("codeUnits", -1) != code.length) {
@@ -182,9 +202,48 @@ internal class PiHighlightClient(private val credentialFiles: List<File>) {
                 return Reply.Failed("codeUnits 与代码长度不一致，偏移量不可信")
             }
             return Reply.Spans(parseSpans(data.optJSONArray("spans"), code.length))
-        } finally {
-            runCatching { connection.disconnect() }
         }
+    }
+
+    private class HttpReply(val status: Int, val body: String?)
+
+    /** Status line, headers (ignored), then Content-Length bytes or EOF. */
+    private fun readReply(input: InputStream): HttpReply {
+        fun readLine(): String? {
+            val line = ByteArrayOutputStream()
+            while (line.size() <= MAX_HEADER_BYTES) {
+                val byte = input.read()
+                if (byte == -1) return if (line.size() == 0) null else line.toString("ISO-8859-1")
+                if (byte == '\n'.code) return line.toString("ISO-8859-1").trimEnd('\r')
+                line.write(byte)
+            }
+            return null
+        }
+
+        val statusLine = readLine() ?: return HttpReply(0, null)
+        val status = statusLine.split(' ').getOrNull(1)?.toIntOrNull() ?: 0
+        var contentLength = -1
+        while (true) {
+            val line = readLine() ?: break
+            if (line.isEmpty()) break
+            val colon = line.indexOf(':')
+            if (colon <= 0) continue
+            if (line.substring(0, colon).trim().equals("content-length", ignoreCase = true)) {
+                contentLength = line.substring(colon + 1).trim().toIntOrNull() ?: -1
+            }
+        }
+        if (contentLength > MAX_RESPONSE_BYTES) return HttpReply(status, null)
+
+        val out = ByteArrayOutputStream()
+        val buffer = ByteArray(16 * 1024)
+        while (contentLength < 0 || out.size() < contentLength) {
+            val read = input.read(buffer)
+            if (read <= 0) break
+            val wanted = if (contentLength < 0) read else minOf(read, contentLength - out.size())
+            if (out.size() + wanted > MAX_RESPONSE_BYTES) return HttpReply(status, null)
+            out.write(buffer, 0, wanted)
+        }
+        return HttpReply(status, out.toString("UTF-8"))
     }
 
     private fun parseSpans(array: JSONArray?, codeLength: Int): List<PiCodeSpan> {
@@ -211,25 +270,9 @@ internal class PiHighlightClient(private val credentialFiles: List<File>) {
         return spans
     }
 
-    /** Read at most [MAX_RESPONSE_BYTES]; a runaway reply must not be buffered. */
-    private fun readBounded(connection: HttpURLConnection): String? {
-        val stream = runCatching {
-            if (connection.responseCode in 200..299) connection.inputStream else connection.errorStream
-        }.getOrNull() ?: return null
-        return stream.use { input ->
-            val buffer = ByteArray(16 * 1024)
-            val out = java.io.ByteArrayOutputStream()
-            while (true) {
-                val read = input.read(buffer)
-                if (read <= 0) break
-                if (out.size() + read > MAX_RESPONSE_BYTES) return null
-                out.write(buffer, 0, read)
-            }
-            out.toString("UTF-8")
-        }
-    }
-
     private companion object {
+        const val LOOPBACK = "127.0.0.1"
+
         /**
          * Loopback on the same device: a connect that takes longer than this
          * means nothing is listening, and a read that takes longer means the
@@ -238,5 +281,8 @@ internal class PiHighlightClient(private val credentialFiles: List<File>) {
         const val CONNECT_TIMEOUT_MS = 100
         const val READ_TIMEOUT_MS = 150
         const val MAX_RESPONSE_BYTES = 2 * 1024 * 1024
+        const val MAX_HEADER_BYTES = 16 * 1024
+        const val HTTP_OK = 200
+        const val HTTP_UNAUTHORIZED = 401
     }
 }

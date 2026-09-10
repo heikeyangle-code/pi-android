@@ -225,7 +225,7 @@ class TerminalEmulator(
 
     /** Feed raw bytes from the guest, decoding UTF-8 incrementally. */
     fun feed(bytes: ByteArray, length: Int, endOfInput: Boolean = false) {
-        dispatch(TerminalInput.decode(bytes, length, endOfInput), endOfInput)
+        dispatch(scanner.decode(bytes, length, endOfInput), endOfInput)
     }
 
     /** Feed already-decoded text; used by tests and by the local echo path. */

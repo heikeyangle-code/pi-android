@@ -25,6 +25,6 @@
     android:canPerformGestures="true"
     android:canRetrieveWindowContent="true"
     android:canTakeScreenshot="true"
-    android:description="让 pi 读取屏幕、点按、滑动、输入与截屏。关闭后 Agent 立即失去这些能力。"
+    android:description="@string/accessibility_service_description"
     android:notificationTimeout="100"
     android:summary="让 pi 操作手机屏幕（需要「无障碍」能力授权）" />

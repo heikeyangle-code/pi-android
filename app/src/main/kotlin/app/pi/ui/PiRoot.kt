@@ -20,7 +20,9 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import app.pi.ui.extension.ExtensionUiHost
 import app.pi.ui.screens.ChatScreen
 import app.pi.ui.screens.SessionsScreen
 import app.pi.ui.screens.WorkbenchScreen
@@ -96,6 +98,20 @@ fun PiRoot(
                     onThemeChanged = onThemeChanged,
                 )
             }
+
+            // Mounted once, above the destination switch, because an extension
+            // dialog is not chat-specific: `notify` and `extension_error` arrive
+            // wherever the user happens to be, and a dialog nobody can see is a
+            // blocked engine — `editor` has no timer on pi's side at all
+            // (packages/coding-agent/src/modes/rpc-mode.ts:254-271).
+            //
+            // It must not also be mounted by a screen. Two hosts would render
+            // two dialogs for one request, and two snackbar hosts would race for
+            // the same notice queue; the screens' KDocs say so for that reason.
+            ExtensionUiHost(
+                session = session,
+                snackbarBottomPadding = padding.calculateBottomPadding() + 8.dp,
+            )
         }
     }
 }

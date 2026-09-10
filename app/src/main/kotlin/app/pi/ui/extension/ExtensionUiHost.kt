@@ -42,7 +42,9 @@ import app.pi.ui.theme.PiTheme
 @Composable
 fun ExtensionUiHost(
     session: PiSessionViewModel = viewModel(),
-    modifier: Modifier = Modifier,
+    // Full size by default: the snackbar is aligned to the bottom of this Box, so
+    // a wrap-content default would anchor it to the top of the parent instead.
+    modifier: Modifier = Modifier.fillMaxSize(),
     snackbarBottomPadding: Dp = 0.dp,
 ) {
     val state by session.state.collectAsState()

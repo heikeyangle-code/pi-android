@@ -154,7 +154,7 @@ internal object PiNodeCodeHighlighter : PiCodeHighlighter {
         digest.update(language.toByteArray(Charsets.UTF_8))
         digest.update(0)
         digest.update(code.toByteArray(Charsets.UTF_8))
-        return digest.digest().joinToString("") { byte -> "%02x".format(byte) }
+        return digest.digest().joinToString("") { byte -> "%02x".format(byte.toInt() and 0xFF) }
     }
 
     /** Diagnostics for the settings/diagnostics surface; never used on a hot path. */

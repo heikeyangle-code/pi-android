@@ -10,5 +10,12 @@
     <string name="engine_running_text">%1$d 个任务进行中</string>
     <string name="engine_idle_text">空闲</string>
     <string name="action_stop">停止</string>
+
+    <!--
+      Shown by the system in Settings → Accessibility. `android:description` on
+      an <accessibility-service> is a *reference* attribute — AAPT rejects a
+      literal there, which is why this text lives here and not in the XML.
+    -->
+    <string name="accessibility_service_description">让 pi 读取屏幕、点按、滑动、输入与截屏。关闭后 Agent 立即失去这些能力。</string>
     <string name="action_open">打开</string>
 </resources>

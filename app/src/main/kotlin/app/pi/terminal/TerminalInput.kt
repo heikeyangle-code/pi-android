@@ -59,22 +59,23 @@ internal sealed interface Input {
  */
 internal object TerminalInput {
 
-    private val decoders: ThreadLocal<CharsetDecoder> = ThreadLocal.withInitial {
-        Charsets.UTF_8.newDecoder()
-            .onMalformedInput(CodingErrorAction.REPLACE)
-            .onUnmappableCharacter(CodingErrorAction.REPLACE)
-    }
-
     /**
-     * Decode [length] bytes of [bytes], carrying an incomplete trailing sequence
-     * over to the next call.
+     * A UTF-8 decoder that keeps its state.
      *
-     * `endOfInput` must be true on the final call so a dangling partial sequence
-     * becomes a replacement character instead of being buffered forever.
+     * One per [Scanner], not per call and not a thread-local singleton: the
+     * decoder *is* the carry-over. A fresh `CharsetDecoder` per chunk cannot keep
+     * the half of a multi-byte character that arrived at the end of the previous
+     * read, and a `CharsetDecoder` shared between two terminals would splice one
+     * process's bytes onto another's. Either mistake shows up as `??` where CJK
+     * output should be.
      */
-    fun decode(bytes: ByteArray, length: Int, endOfInput: Boolean = false): String {
+    fun newDecoder(): CharsetDecoder = Charsets.UTF_8.newDecoder()
+        .onMalformedInput(CodingErrorAction.REPLACE)
+        .onUnmappableCharacter(CodingErrorAction.REPLACE)
+
+    /** Decode [length] bytes of [bytes] with a decoder that keeps its state. */
+    fun decode(decoder: CharsetDecoder, bytes: ByteArray, length: Int, endOfInput: Boolean = false): String {
         if (length <= 0 && !endOfInput) return ""
-        val decoder = decoders.get()!!
         val out = CharBuffer.allocate(length * 2 + 8)
         val result = decoder.decode(ByteBuffer.wrap(bytes, 0, length.coerceAtLeast(0)), out, endOfInput)
         if (result.isError) decoder.reset()
@@ -98,6 +99,13 @@ internal object TerminalInput {
         private var skipCharSetDesignation = false
         /** True when the ESC we are looking at continues a string, not input. */
         private var stringOpen = false
+
+        /** UTF-8 state for this stream; see [newDecoder]. */
+        private val decoder: CharsetDecoder = newDecoder()
+
+        /** Decode raw bytes for this scanner, carrying partial characters over. */
+        fun decode(bytes: ByteArray, length: Int, endOfInput: Boolean = false): String =
+            TerminalInput.decode(decoder, bytes, length, endOfInput)
 
         /**
          * @param flush true at end of stream, so a truncated sequence is dropped
