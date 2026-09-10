@@ -514,8 +514,10 @@ sealed interface TranscriptChange {
  * pi remains the single source of truth for a session; this projection exists
  * only to drive the screen. Re-attaching after a reconnect replays from
  * `get_entries { since }` via [seedFromHistory] rather than re-deriving state,
- * and live events only fill in what the wire actually carries (the entry
- * payloads that `entry_appended` omits arrive through [onEntry] / [seedFromHistory]).
+ * and live events fill in what the wire carries: `entry_appended` includes the
+ * whole entry object (projected through [onEntry]), and the streaming events
+ * that have no entry counterpart (`compaction_end.result`, the summarization
+ * retries) are folded directly.
  */
 class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis() }) {
 
@@ -523,6 +525,13 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
     private val toolIndexByCallId = mutableMapOf<String, Int>()
     private val diffIndexByCallId = mutableMapOf<String, Int>()
     private var runningCompactionIndex: Int? = null
+
+    /**
+     * The [Notice] row a `summarization_retry_scheduled` opened, so the matching
+     * `summarization_retry_attempt_start` / `summarization_retry_finished` can
+     * update that same row instead of stacking a new one per attempt.
+     */
+    private var summarizationNoticeIndex: Int? = null
     private var currentDay: Long? = null
     private var seq = 0
 
@@ -544,17 +553,16 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
     /**
      * Record the prompt the user just sent. Done locally (not from an event) so
      * the bubble appears the instant they hit send.
+     *
+     * A `/skill:name` prompt arrives here as the raw text the user typed, which
+     * is not a skill block — the expansion happens inside pi. The split is still
+     * applied so a caller that echoes the expanded form (or a re-render of one)
+     * gets the same card as history replay.
      */
     fun onUserPrompt(text: String, images: List<PiImage> = emptyList()): TranscriptChange {
         val ts = now()
         maybeDaySeparator(ts)
-        items += UserMessage(
-            key = nextKey("user"),
-            ts = ts,
-            text = text,
-            images = images,
-        )
-        return TranscriptChange.Appended(items.lastIndex)
+        return projectUser(text, images, ts) { prefix -> nextKey(prefix) }
     }
 
     /** Fold one engine event. Never throws. */
@@ -622,9 +630,88 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
             ),
         )
 
-        // The payload of an appended entry is not on the wire; the App requests
-        // `get_entries { since }` and feeds the result to [onEntry].
-        is PiEvent.EntryAppended -> TranscriptChange.None
+        // The whole entry object is on the wire (`agent-session.ts` emits
+        // `{ type: "entry_appended"; entry: SessionEntry }` and `json-event.ts`
+        // passes it through untouched), so it is projected directly. pi emits
+        // this only from the extension `appendEntry` path; a refetch would be
+        // the alternative and would leave a gap until it completed.
+        is PiEvent.EntryAppended -> event.entry?.let(::onEntry) ?: TranscriptChange.None
+
+        // Summarization retries are pi's own three-event retry loop for
+        // compaction / branch-summary LLM calls. They have no session entry, so
+        // they must be folded here or the retry loop is invisible and a stalling
+        // context looks like a hang.
+        is PiEvent.SummarizationRetryScheduled -> {
+            val text = "摘要重试" +
+                (event.attempt?.let { " $it" } ?: "") +
+                (event.maxAttempts?.let { "/$it" } ?: "") +
+                (event.delayMs?.let { "，${it / 1000}s 后" } ?: "") +
+                (event.errorMessage?.let { "：$it" } ?: "")
+            val open = summarizationNoticeIndex?.takeIf { items.getOrNull(it) is Notice }
+            if (open == null) {
+                val change = append(
+                    Notice(
+                        key = nextKey("summary-retry"),
+                        ts = now(),
+                        text = text,
+                        tone = Notice.Tone.Warning,
+                    ),
+                )
+                if (change is TranscriptChange.Appended) summarizationNoticeIndex = change.index
+                change
+            } else {
+                // One row for the whole retry loop: a second attempt replaces
+                // the first attempt's countdown instead of stacking a warning.
+                items[open] = (items[open] as Notice).copy(text = text)
+                TranscriptChange.Updated(open)
+            }
+        }
+
+        is PiEvent.SummarizationRetryAttemptStart -> {
+            val label = when (event.source) {
+                "compaction" -> "压缩摘要"
+                "branchSummary" -> "分支摘要"
+                else -> "摘要"
+            }
+            val open = summarizationNoticeIndex?.takeIf { items.getOrNull(it) is Notice }
+            if (open == null) {
+                // Attached mid-retry: the scheduled event that opened the loop
+                // was missed, so open the row now rather than dropping the state.
+                val change = append(
+                    Notice(
+                        key = nextKey("summary-retry"),
+                        ts = now(),
+                        text = "正在重试生成$label",
+                        tone = Notice.Tone.Warning,
+                    ),
+                )
+                if (change is TranscriptChange.Appended) summarizationNoticeIndex = change.index
+                change
+            } else {
+                val current = items[open] as Notice
+                if (current.text.contains(label)) {
+                    TranscriptChange.None
+                } else {
+                    items[open] = current.copy(text = "${current.text}（$label）")
+                    TranscriptChange.Updated(open)
+                }
+            }
+        }
+
+        is PiEvent.SummarizationRetryFinished -> {
+            val index = summarizationNoticeIndex?.takeIf { items.getOrNull(it) is Notice }
+            summarizationNoticeIndex = null
+            if (index == null) {
+                TranscriptChange.None
+            } else {
+                // pi sends no success flag here; the outcome arrives as
+                // `compaction_end.errorMessage` (or the branch-summary failure),
+                // so the row only stops looking like a pending retry.
+                val current = items[index] as Notice
+                items[index] = current.copy(text = "${current.text}，重试结束", tone = Notice.Tone.Info)
+                TranscriptChange.Updated(index)
+            }
+        }
 
         // Anything newer than this build. A handful of entry-shaped types are
         // still projectable, so try those instead of dropping them.
@@ -874,19 +961,39 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
             event.willRetry -> CompactionMarker.Status.Running
             else -> CompactionMarker.Status.Done
         }
+        // `compaction_end.result` is the only live source of the summary: the
+        // `compaction` session entry that also carries it is appended by the
+        // session manager and never announced as `entry_appended`. Without this
+        // the finished block is an unlabelled row until the session is reopened.
+        val result = event.result
+        val summary = result?.summary.orEmpty()
+        // `tokensFreed` mirrors `tokensBefore`, which is what `onCompactionEntry`
+        // stores from the persisted entry, so live and replayed rows agree.
+        val tokens = result?.tokensBefore
+        val firstKept = result?.firstKeptEntryId
         if (index < 0) {
             // Reconnected mid-compaction: synthesise the finished marker.
             return append(
                 CompactionMarker(
                     key = nextKey("compaction-done"),
                     ts = now(),
+                    summary = summary,
+                    tokensFreed = tokens,
+                    firstKeptEntryId = firstKept,
                     status = status,
                     errorMessage = event.errorMessage,
+                    reason = event.reason,
                 ),
             )
         }
         val current = items[index] as CompactionMarker
-        items[index] = current.copy(status = status, errorMessage = event.errorMessage)
+        items[index] = current.copy(
+            summary = summary.ifEmpty { current.summary },
+            tokensFreed = tokens ?: current.tokensFreed,
+            firstKeptEntryId = firstKept ?: current.firstKeptEntryId,
+            status = status,
+            errorMessage = event.errorMessage,
+        )
         if (status != CompactionMarker.Status.Running) runningCompactionIndex = null
         return TranscriptChange.Updated(index)
     }
@@ -994,12 +1101,7 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
                 val text = userText(message["content"]).ifEmpty {
                     message.str("text").orEmpty()
                 }
-                val images = imageBlocks(message["content"])
-                if (text.isEmpty() && images.isEmpty()) {
-                    TranscriptChange.None
-                } else {
-                    append(UserMessage(key = blockKey("user"), ts = ts, text = text, images = images))
-                }
+                projectUser(text, imageBlocks(message["content"]), ts, blockKey)
             }
 
             "assistant" -> onHistoryAssistant(message, ts, blockKey)
@@ -1254,6 +1356,43 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
         }.joinToString("")
     }
 
+    /**
+     * Emit the rows for a user message: a [SkillInvocation] card plus the
+     * trailing user text when pi expanded `/skill:name`, otherwise one
+     * [UserMessage].
+     *
+     * pi keeps no `skill` entry — `_expandSkillCommand` rewrites the user
+     * message itself (`core/agent-session.ts`) and its TUI splits the text back
+     * out with `parseSkillBlock` (`modes/interactive/interactive-mode.ts`).
+     * Replaying history without the same split leaves the literal `<skill …>`
+     * wrapper and the whole SKILL.md body in the user's bubble, and makes the
+     * skill card unreachable.
+     */
+    private fun projectUser(
+        text: String,
+        images: List<PiImage>,
+        ts: Long,
+        key: (String) -> String,
+    ): TranscriptChange {
+        val skill = parsePiSkillBlock(text)
+        if (skill == null) {
+            if (text.isEmpty() && images.isEmpty()) return TranscriptChange.None
+            return append(UserMessage(key = key("user"), ts = ts, text = text, images = images))
+        }
+        var change = append(
+            SkillInvocation(
+                key = key("skill"),
+                ts = ts,
+                skillName = skill.name,
+                body = skill.content,
+            ),
+        )
+        skill.userMessage?.let {
+            change = append(UserMessage(key = key("user"), ts = ts, text = it, images = images))
+        }
+        return change
+    }
+
     // ------------------------------------------------------- public single-row
 
     /** Append a [SystemPrompt] block (pi's assembled system prompt). */
@@ -1354,6 +1493,7 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
         toolIndexByCallId.clear()
         diffIndexByCallId.clear()
         runningCompactionIndex = null
+        summarizationNoticeIndex = null
         currentDay = null
         streaming = false
     }

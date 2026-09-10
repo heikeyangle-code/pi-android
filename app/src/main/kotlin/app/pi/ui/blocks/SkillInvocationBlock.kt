@@ -26,7 +26,10 @@ fun SkillInvocationBlock(
     defaultExpanded: Boolean = false,
 ) {
     val palette = PiTheme.palette
-    var expanded by remember { mutableStateOf(defaultExpanded) }
+    // Keyed on the parameter so the AppBar's expand/collapse-all switch (pi's
+    // `app.tools.expand`, interactive-mode.ts `setToolsExpanded`) reaches every
+    // row, exactly as pi re-applies expansion to all of its children.
+    var expanded by remember(defaultExpanded) { mutableStateOf(defaultExpanded) }
 
     BlockColumn(modifier) {
         BlockCard(

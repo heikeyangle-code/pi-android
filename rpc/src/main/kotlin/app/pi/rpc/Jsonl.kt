@@ -36,8 +36,16 @@ class JsonlFramer(private val maxRecordChars: Int = DEFAULT_MAX_RECORD_CHARS) {
 
     /**
      * Consume a chunk of decoded text and return every complete record it
-     * completed, in order. Records that are blank after CR trimming are
-     * skipped, matching pi's reader.
+     * completed, in order.
+     *
+     * Blank records (empty, or whitespace-only after a trailing CR is stripped)
+     * are dropped **on purpose, and this is not what pi's reader does**: pi's
+     * `attachJsonlLineReader` emits every LF-delimited span including `""`, and
+     * `rpc-mode.ts` answers a blank line with a
+     * `{"command":"parse","success":false}` error. pi never writes a blank
+     * record, so forwarding ours would only manufacture parse failures; the
+     * difference is recorded here because the framing tolerance looks identical
+     * from the outside.
      */
     fun feed(chunk: CharSequence): List<String> {
         var out: MutableList<String>? = null

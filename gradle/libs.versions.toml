@@ -2,17 +2,20 @@
 # Markdown is rendered by a third-party stack, never by hand:
 #   org.jetbrains:markdown       — JetBrains' CommonMark + GFM parser (pure JVM)
 #   com.mikepenz:…-renderer-m3   — Compose renderer for that parser's AST
-# 0.41.0 for two hard constraints, both verified against the real artifacts:
-#   * its AAR asks for minCompileSdk=36, which is what this project compiles
-#     against. 0.42.0 and newer ask for 37, and there is no plain
-#     `platforms;android-37` package — only 37.0/37.1/37.2 — so taking them
-#     means an AGP 9.x upgrade first.
-#   * its classes are @Metadata mv=[2,2,0], readable by the Kotlin 2.2.21 pin
-#     below. A renderer built by Kotlin 2.3+ forces a toolchain bump.
-# What 0.41.0 does not have, relative to 0.45.0: GFM alerts (`> [!NOTE]`),
-# `MarkdownTypography.alertTitle`, and the `StreamingMarkdownState` overload.
-# None of them are used yet; docs/known-gaps.md records when to move up.
-markdown = "0.41.0"
+# 0.45.0 is usable on AGP 8.13.2 with no AGP 9.x upgrade. Verified against the
+# real artifacts and the AGP/sdklib jars in the module cache:
+#   * the AAR asks for minCompileSdk=37 (+ minCompileMinorSdk=0). AGP 8.13.2 has
+#     the minor-version DSL: `compileSdk = 37` + `compileSdkMinor = 0` resolves
+#     to the `platforms;android-37.0` package. There is no plain android-37 —
+#     repository2-3.xml only has 37.0/37.1/37.2 — so the minor property is not
+#     optional. See app/build.gradle.kts.
+#   * its classes are @Metadata mv=[2,2,0], same as 0.41.0, readable by the
+#     Kotlin 2.2.21 pin below. A renderer built by Kotlin 2.3+ would force a
+#     toolchain bump.
+# Relative to 0.41.0 this brings GFM alerts (`> [!NOTE]`), the `alertTitle` slot
+# in `MarkdownTypography`, `darkTheme` in `markdownColor`, and the
+# `StreamingMarkdownState` overload. docs/known-gaps.md B9 has the evidence.
+markdown = "0.45.0"
 
 # AGP 8.13 is the stable line; the androidx versions below are the newest that
 # still declare AGP 8.x in their AAR metadata. androidx releases from late 2025

@@ -18,6 +18,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.pi.rpc.BranchSummary
+import app.pi.ui.render.PiMarkdownText
 import app.pi.ui.theme.PiTheme
 
 /**
@@ -68,11 +69,34 @@ fun BranchSummaryBlock(
                 }
                 ExpandLabel(expanded)
             }
-            ProseText(
-                text = item.summary.ifEmpty { "（无摘要）" },
-                color = palette.customMessageText,
-                maxLines = if (expanded) Int.MAX_VALUE else 2,
-            )
+            if (expanded) {
+                // Expanded: markdown. pi's expanded branch is a `Markdown` over
+                // the summary (`packages/coding-agent/src/modes/interactive/components/branch-summary-message.ts:41-45`),
+                // so headings, lists and fences in a model-written summary read
+                // as structure instead of as source.
+                PiMarkdownText(
+                    markdown = item.summary.ifEmpty { "（无摘要）" },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            } else {
+                // Collapsed: plain text cut to the same preview this block has
+                // always shown. pi's collapsed branch is likewise plain
+                // (`branch-summary-message.ts:46-56`), and a markdown renderer
+                // has no `maxLines` to carry the preview with.
+                ProseText(
+                    text = item.summary.ifEmpty { "（无摘要）" },
+                    modifier = Modifier.fillMaxWidth(),
+                    color = palette.customMessageText,
+                    maxLines = COLLAPSED_SUMMARY_LINES,
+                )
+            }
         }
     }
 }
+
+/**
+ * The collapsed line count, unchanged from this block's original preview. pi has
+ * no numeric equivalent here — a terminal line is not a wrapped phone line — so
+ * the existing value is kept rather than invented.
+ */
+private const val COLLAPSED_SUMMARY_LINES = 2

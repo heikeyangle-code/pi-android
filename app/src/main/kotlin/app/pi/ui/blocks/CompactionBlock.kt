@@ -18,6 +18,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import app.pi.rpc.CompactionMarker
+import app.pi.ui.render.PiMarkdownText
 import app.pi.ui.theme.PiShapes
 import app.pi.ui.theme.PiTheme
 
@@ -87,11 +88,41 @@ fun CompactionBlock(
                 textAlign = TextAlign.Center,
             )
         }
-        if (expanded && item.summary.isNotEmpty()) {
-            ProseText(
-                text = item.summary,
-                color = palette.customMessageText,
-            )
+        if (item.summary.isNotEmpty()) {
+            // Collapsed: plain text cut to a preview. Expanded: markdown.
+            //
+            // pi makes the same split for the same reason: its collapsed branch
+            // is a plain `Text` carrying the expand hint
+            // (`packages/coding-agent/src/modes/interactive/components/compaction-summary-message.ts:47-57`)
+            // and only the expanded branch builds a `Markdown`
+            // (`compaction-summary-message.ts:40-46`). The renderer has no
+            // `maxLines`, so the collapsed branch staying a `Text` is exactly
+            // what keeps the preview alive.
+            if (expanded) {
+                PiMarkdownText(
+                    markdown = item.summary,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 2.dp),
+                )
+            } else {
+                ProseText(
+                    text = item.summary,
+                    modifier = Modifier.fillMaxWidth(),
+                    color = palette.customMessageText,
+                    maxLines = COLLAPSED_SUMMARY_LINES,
+                )
+            }
         }
     }
 }
+
+/**
+ * How much of the summary the collapsed block previews.
+ *
+ * pi's collapsed compaction line is one line plus the expand hint
+ * (`compaction-summary-message.ts:47-57`); on a phone the summary itself is
+ * worth a two-line peek, and two lines is what this block's neighbour
+ * (`BranchSummaryBlock.kt`) uses for the same affordance.
+ */
+private const val COLLAPSED_SUMMARY_LINES = 2

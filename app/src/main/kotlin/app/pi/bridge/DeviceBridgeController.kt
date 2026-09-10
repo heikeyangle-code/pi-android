@@ -46,8 +46,25 @@ object DeviceBridgeController {
     /** Assets shipped in the APK that make up the extension. */
     private const val ASSET_ROOT = "pi-extensions"
 
-    /** Bumped whenever the shipped extension changes, to force re-installation. */
-    const val ASSET_VERSION = "1"
+    /**
+     * Bumped whenever anything under `assets/pi-extensions/` changes, to force
+     * re-installation into the guest.
+     *
+     * This is a manual gate and it fails silently: the stamp is compared before
+     * copying, so a device that already ran an older build keeps the old
+     * extension tree and never sees the new one. The symptom is not an error —
+     * it is a feature that "does not work", which sends whoever debugs it off to
+     * check ports, tokens and networks instead of the installer.
+     *
+     * So: **every change to `pi-extensions/ 目录` must bump this string.**
+     * History: "1" shipped the device bridge; "2" adds `pi-highlight/`.
+     *
+     * A content-derived fingerprint (hashing the asset tree's names and sizes)
+     * would remove the human step entirely and is the better long-term design —
+     * recorded in docs/known-gaps.md rather than done here, because the file is
+     * not the one being worked on right now.
+     */
+    const val ASSET_VERSION = "2"
 
     @Volatile
     private var server: DeviceBridgeHttpServer? = null

@@ -399,10 +399,11 @@ class RpcResponsesTypedTest {
             ),
         )
         assertEquals(3, commands.size)
-        assertEquals(PiResponses.CommandSource.Extension, commands[0].source)
-        assertEquals("/home/user/.pi/agent/extensions/session.ts", commands[0].sourceInfo!!.path)
-        assertEquals("global", commands[0].sourceInfo.scope)
-        assertNull(commands[0].location)
+        val first = commands[0]
+        assertEquals(PiResponses.CommandSource.Extension, first.source)
+        assertEquals("/home/user/.pi/agent/extensions/session.ts", first.sourceInfo!!.path)
+        assertEquals("global", first.sourceInfo.scope)
+        assertNull(first.location)
         // Documented flat fields still parse, so a pi that follows the doc works.
         assertEquals("project", commands[1].location)
         assertEquals("/home/user/myproject/.pi/agent/prompts/fix-tests.md", commands[1].path)

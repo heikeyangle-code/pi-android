@@ -14,6 +14,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -22,6 +23,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import app.pi.ui.chat.SessionTreeScreen
 import app.pi.ui.extension.ExtensionUiHost
 import app.pi.ui.screens.ChatScreen
 import app.pi.ui.screens.SessionsScreen
@@ -52,12 +54,49 @@ fun PiRoot(
     var destination by rememberSaveable { mutableStateOf(PiDestination.Chat.ordinal) }
     val current = PiDestination.entries[destination]
 
+    // The session tree is an overlay rather than a fifth destination: it belongs
+    // to the session, not to a place in the app, and pi's own TUI opens it over
+    // the transcript for the same reason. Four bottom-bar entries stays true.
+    var treeOpen by rememberSaveable { mutableStateOf(false) }
+
     // One engine for the whole app. Owned by the ViewModel rather than an
     // Activity so that a running turn survives the user leaving the screen, and
     // started here because the app has no "connect" concept: opening it starts
     // the local engine.
     val session: PiSessionViewModel = viewModel()
     LaunchedEffect(Unit) { session.boot() }
+
+    // Commands that need a destination are requested by the ViewModel through
+    // state, because they finish inside a coroutine after an RPC answer — by then
+    // there is no composable left to call back into. Consuming the request here
+    // keeps the ViewModel free of Compose navigation knowledge.
+    val uiState by session.state.collectAsState()
+    LaunchedEffect(uiState.navRequest) {
+        when (uiState.navRequest) {
+            NavRequest.Sessions -> {
+                treeOpen = false
+                destination = PiDestination.Sessions.ordinal
+            }
+            NavRequest.Chat -> {
+                treeOpen = false
+                destination = PiDestination.Chat.ordinal
+            }
+            NavRequest.Workbench -> {
+                treeOpen = false
+                destination = PiDestination.Workbench.ordinal
+            }
+            NavRequest.Settings -> {
+                treeOpen = false
+                destination = PiDestination.Settings.ordinal
+            }
+            NavRequest.SessionTree -> {
+                treeOpen = true
+                session.refreshTree()
+            }
+            null -> Unit
+        }
+        if (uiState.navRequest != null) session.consumeNav()
+    }
 
     Scaffold(
         bottomBar = {
@@ -96,6 +135,22 @@ fun PiRoot(
                     // that never reach the engine.
                     store = session.settingsStore,
                     onThemeChanged = onThemeChanged,
+                )
+            }
+
+            // The session tree draws over whatever destination is active, and
+            // before the extension host so a blocking dialog stays on top of it:
+            // an extension waiting on an answer must be answerable from the tree
+            // screen too (see the note on the single host below).
+            if (treeOpen) {
+                SessionTreeScreen(
+                    state = uiState,
+                    onFork = { entryId ->
+                        session.forkFrom(entryId)
+                        treeOpen = false
+                    },
+                    onRefresh = { session.refreshTree() },
+                    onClose = { treeOpen = false },
                 )
             }
 

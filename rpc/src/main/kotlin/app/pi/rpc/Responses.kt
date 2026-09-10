@@ -350,8 +350,18 @@ object PiResponses {
     }
 
     /** `compact` → `CompactionResult`. */
-    fun compactionResult(response: PiEvent.Response): CompactionResult? {
-        val obj = dataObject(response) ?: return null
+    fun compactionResult(response: PiEvent.Response): CompactionResult? =
+        compactionResult(response.data)
+
+    /**
+     * Parse a bare `CompactionResult` object.
+     *
+     * Shared by the `compact` response and the `result` field of a
+     * `compaction_end` event — pi builds both from the same
+     * `core/compaction/compaction.ts` value, so they must not drift.
+     */
+    fun compactionResult(element: JsonElement?): CompactionResult? {
+        val obj = element as? JsonObject ?: return null
         return CompactionResult(
             summary = obj.str("summary"),
             firstKeptEntryId = obj.str("firstKeptEntryId"),

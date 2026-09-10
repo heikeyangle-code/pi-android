@@ -40,7 +40,10 @@ fun DiffBlock(
     onOpenFull: ((ToolDiff) -> Unit)? = null,
 ) {
     val palette = PiTheme.palette
-    var expanded by remember { mutableStateOf(defaultExpanded) }
+    // Keyed on the parameter so the AppBar's expand/collapse-all switch (pi's
+    // `app.tools.expand`, interactive-mode.ts `setToolsExpanded`) reaches every
+    // row, exactly as pi re-applies expansion to all of its children.
+    var expanded by remember(defaultExpanded) { mutableStateOf(defaultExpanded) }
     val plan = remember(item.key, item.diffText) { diffPlan(item.hunks, MAX_DIFF_ROWS) }
     val omitted = item.lineCount > MAX_DIFF_ROWS || item.truncated
 

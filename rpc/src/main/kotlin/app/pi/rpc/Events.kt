@@ -40,7 +40,7 @@ sealed interface AssistantDelta {
     data class ToolCallEnd(val contentIndex: Int) : AssistantDelta {
         override val kind = "toolcall_end"
     }
-    data class Done(val stopReason: String?) : AssistantDelta { override val kind = "done" }
+    data class Done(val reason: String?) : AssistantDelta { override val kind = "done" }
     data class Error(val reason: String?) : AssistantDelta { override val kind = "error" }
 
     /** An event kind a newer pi introduced. Rendered as a generic notice. */
@@ -146,6 +146,18 @@ sealed interface PiEvent {
         val aborted: Boolean,
         val willRetry: Boolean,
         val errorMessage: String?,
+        /**
+         * pi's `compaction_end` carries the full `CompactionResult`
+         * (`core/agent-session.ts`), which is the only live source of the
+         * summary: the `compaction` session entry that also holds it is
+         * appended by the session manager, and `entry_appended` fires only for
+         * the extension `appendEntry` path. Without this the live compaction
+         * block stays unlabelled until the session is reopened.
+         *
+         * Null on abort/failure, where pi sends `result: undefined`
+         * (`docs/rpc.md` §compaction_end).
+         */
+        val result: PiResponses.CompactionResult? = null,
     ) : PiEvent {
         override val type = "compaction_end"
     }
@@ -238,7 +250,20 @@ sealed interface PiEvent {
         override val type = "extension_error"
     }
 
-    data class EntryAppended(val entryId: String?, val entryType: String?) : PiEvent {
+    /**
+     * An entry pi appended to the session. The payload **is** on the wire:
+     * `agent-session.ts` emits `{ type: "entry_appended"; entry: SessionEntry }`
+     * and `modes/json-event.ts` passes every non-`message_update` event through
+     * unchanged, so the full entry object arrives here. It is currently emitted
+     * only by the extension `appendEntry` path, which is precisely why the app
+     * must project it rather than wait for a refetch.
+     */
+    data class EntryAppended(
+        val entryId: String?,
+        val entryType: String?,
+        /** The whole `SessionEntry`; null for a malformed record. */
+        val entry: JsonObject? = null,
+    ) : PiEvent {
         override val type = "entry_appended"
     }
 
@@ -346,6 +371,9 @@ object PiEvents {
             aborted = o.bool("aborted") ?: false,
             willRetry = o.bool("willRetry") ?: false,
             errorMessage = o.str("errorMessage"),
+            // `result` is `undefined` (field omitted) on abort/failure and a
+            // full `CompactionResult` on success.
+            result = PiResponses.compactionResult(o["result"]),
         )
 
         "auto_retry_start" -> PiEvent.AutoRetryStart(
@@ -402,6 +430,7 @@ object PiEvents {
             PiEvent.EntryAppended(
                 entryId = entry?.str("id") ?: o.str("entryId"),
                 entryType = entry?.str("type") ?: o.str("entryType"),
+                entry = entry,
             )
         }
 
@@ -437,7 +466,10 @@ object PiEvents {
                 delta = e.str("delta").orEmpty(),
             )
             "toolcall_end" -> AssistantDelta.ToolCallEnd(e.int("contentIndex") ?: 0)
-            "done" -> AssistantDelta.Done(e.str("stopReason"))
+            // pi's `done` delta is `{ type: "done"; reason; message }`
+            // (`packages/ai/src/types.ts`), and `toJsonEvent` strips only
+            // `partial`, so the wire field is `reason` — never `stopReason`.
+            "done" -> AssistantDelta.Done(e.str("reason"))
             "error" -> AssistantDelta.Error(e.str("reason"))
             else -> AssistantDelta.Unknown(kind)
         }

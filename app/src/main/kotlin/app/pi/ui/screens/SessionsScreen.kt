@@ -22,6 +22,7 @@ import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
@@ -35,6 +36,7 @@ import androidx.compose.ui.unit.dp
 import app.pi.session.PiSessionStore
 import app.pi.ui.PiSessionViewModel
 import app.pi.ui.components.PiEmptyState
+import app.pi.ui.theme.PiShapes
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
 import java.util.concurrent.TimeUnit
@@ -46,6 +48,18 @@ import java.util.concurrent.TimeUnit
  * There is no RPC command that lists sessions — pi can only switch to a path you
  * already know — so the list comes from scanning pi's own session directory, the
  * same thing the desktop picker does (docs/pi-android-app-design.md §4.5, §18.3).
+ *
+ * A tap **switches the session** rather than merely opening the chat destination:
+ * `switch_session` is what makes pi adopt the file, is what lets a
+ * `session_before_switch` extension veto it, and is the only way the transcript
+ * can be rebuilt for another session (audit §6.9).
+ *
+ * Rename, export and clone are deliberately **not** offered per row. pi's
+ * `set_session_name`, `export_html` and `clone` take no session argument — they
+ * act on the active session (`rpc-mode.ts:600-631`, `:661-668`) — so offering
+ * them on a non-active row would silently operate on a different session than the
+ * one the user pointed at. They live on the Chat screen's overflow, where the
+ * target is unambiguous. pi's own TUI has the same constraint.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -55,6 +69,7 @@ fun SessionsScreen(
     session: PiSessionViewModel,
 ) {
     val sessions by session.sessions.collectAsState()
+    val state by session.state.collectAsState()
 
     // The directory only becomes meaningful once the runtime is unpacked, so
     // refresh when the screen appears rather than at construction.
@@ -70,6 +85,10 @@ fun SessionsScreen(
                     }
                 },
             )
+            // `sessionFile` is the only wire field that says which session pi is
+            // on, and it is a guest path — the file name is the part that matches
+            // the on-disk index.
+            val activeFile = state.meta.sessionFile?.substringAfterLast('/')
             if (sessions.isEmpty()) {
                 PiEmptyState(
                     icon = Icons.Filled.Forum,
@@ -84,13 +103,23 @@ fun SessionsScreen(
                     contentPadding = PaddingValues(bottom = PiSpacing.unit),
                 ) {
                     items(sessions, key = { it.file.absolutePath }) { summary ->
-                        SessionRow(summary, onOpenChat)
+                        SessionRow(
+                            summary = summary,
+                            active = activeFile != null && summary.file.name == activeFile,
+                            onOpen = {
+                                session.switchSession(summary)
+                                onOpenChat()
+                            },
+                        )
                     }
                 }
             }
         }
         ExtendedFloatingActionButton(
-            onClick = onOpenChat,
+            onClick = {
+                session.newSession()
+                onOpenChat()
+            },
             modifier = Modifier
                 .align(Alignment.BottomEnd)
                 .padding(
@@ -104,7 +133,7 @@ fun SessionsScreen(
 }
 
 @Composable
-private fun SessionRow(summary: PiSessionStore.Summary, onOpen: () -> Unit) {
+private fun SessionRow(summary: PiSessionStore.Summary, active: Boolean, onOpen: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -113,13 +142,30 @@ private fun SessionRow(summary: PiSessionStore.Summary, onOpen: () -> Unit) {
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(Modifier.weight(1f)) {
-            Text(
-                summary.displayName,
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onSurface,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    summary.displayName,
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = if (active) {
+                        MaterialTheme.colorScheme.primary
+                    } else {
+                        MaterialTheme.colorScheme.onSurface
+                    },
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                if (active) {
+                    Spacer(Modifier.width(6.dp))
+                    Surface(shape = PiShapes.badge, color = MaterialTheme.colorScheme.primaryContainer) {
+                        Text(
+                            "当前",
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.dp),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer,
+                        )
+                    }
+                }
+            }
             Spacer(Modifier.height(2.dp))
             Text(
                 buildString {

@@ -9,7 +9,13 @@ plugins {
 
 android {
     namespace = "app.pi"
-    compileSdk = 36
+    // SDK 37 ships as a *minor-version* platform: there is no `platforms;android-37`
+    // package, only 37.0/37.1/37.2. AGP 8.13.2 supports that scheme through
+    // `compileSdkMinor`; `compileSdk = 37` alone resolves to the nonexistent
+    // `platforms;android-37`. The minor setter must come *after* `compileSdk` —
+    // it reads the API level already set on the extension.
+    compileSdk = 37
+    compileSdkMinor = 0
 
     // ---------------------------------------------------------------------
     // targetSdk is a *runtime capability switch*, not a style choice.

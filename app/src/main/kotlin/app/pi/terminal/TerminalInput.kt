@@ -1,10 +1,5 @@
 package app.pi.terminal
 
-import java.nio.ByteBuffer
-import java.nio.CharBuffer
-import java.nio.charset.CharsetDecoder
-import java.nio.charset.CodingErrorAction
-
 /** One decoded terminal input event. */
 internal sealed interface Input {
 
@@ -60,27 +55,83 @@ internal sealed interface Input {
 internal object TerminalInput {
 
     /**
-     * A UTF-8 decoder that keeps its state.
+     * Incremental UTF-8 decoding with an explicit carry-over.
      *
-     * One per [Scanner], not per call and not a thread-local singleton: the
-     * decoder *is* the carry-over. A fresh `CharsetDecoder` per chunk cannot keep
-     * the half of a multi-byte character that arrived at the end of the previous
-     * read, and a `CharsetDecoder` shared between two terminals would splice one
-     * process's bytes onto another's. Either mistake shows up as `??` where CJK
-     * output should be.
+     * A `read()` returns whatever is available, which will happily split a
+     * multi-byte character: the reader can get `E4` and then `B8 AD` in two
+     * chunks. Decoding each chunk on its own is the classic way to print `??`
+     * where CJK should be, so a sequence that is incomplete at the end of a chunk
+     * is *held* until the rest arrives.
+     *
+     * This is written out rather than delegated to a `CharsetDecoder` because the
+     * decoder's `decode(in, out, endOfInput)` was observed in this project to
+     * consume an incomplete trailing sequence and report it as malformed on the
+     * next call — i.e. it did not carry over — and an explicit buffer is both
+     * easier to reason about and directly testable. The ranges on the lead byte
+     * reject overlong forms and surrogates; an overlong sequence that still passes
+     * the range check (e.g. `E0 80 80`) decodes to U+0000 rather than being
+     * flagged, which is noted rather than pretended away.
+     *
+     * One instance per stream: the carry-over *is* the state.
      */
-    fun newDecoder(): CharsetDecoder = Charsets.UTF_8.newDecoder()
-        .onMalformedInput(CodingErrorAction.REPLACE)
-        .onUnmappableCharacter(CodingErrorAction.REPLACE)
+    class Utf8 {
+        private val pending = ByteArray(4)
+        private var pendingLength = 0
+        private var expected = 0
 
-    /** Decode [length] bytes of [bytes] with a decoder that keeps its state. */
-    fun decode(decoder: CharsetDecoder, bytes: ByteArray, length: Int, endOfInput: Boolean = false): String {
-        if (length <= 0 && !endOfInput) return ""
-        val out = CharBuffer.allocate(length * 2 + 8)
-        val result = decoder.decode(ByteBuffer.wrap(bytes, 0, length.coerceAtLeast(0)), out, endOfInput)
-        if (result.isError) decoder.reset()
-        out.flip()
-        return out.toString()
+        fun decode(bytes: ByteArray, length: Int, endOfInput: Boolean = false): String {
+            if (length <= 0 && pendingLength == 0) return ""
+            val out = StringBuilder(length)
+            var i = 0
+            while (i < length) {
+                if (pendingLength == 0) {
+                    val lead = bytes[i].toInt() and 0xFF
+                    when {
+                        lead < 0x80 -> {
+                            out.append(lead.toChar())
+                            i++
+                            continue
+                        }
+                        lead in 0xC2..0xDF -> expected = 2
+                        lead in 0xE0..0xEF -> expected = 3
+                        lead in 0xF0..0xF4 -> expected = 4
+                        else -> {
+                            out.append(REPLACEMENT)
+                            i++
+                            continue
+                        }
+                    }
+                    pending[0] = bytes[i]
+                    pendingLength = 1
+                    i++
+                }
+                while (i < length && pendingLength < expected) {
+                    val next = bytes[i].toInt() and 0xFF
+                    if (next !in 0x80..0xBF) break
+                    pending[pendingLength++] = bytes[i]
+                    i++
+                }
+                if (pendingLength == expected) {
+                    out.append(String(pending, 0, expected, Charsets.UTF_8))
+                    pendingLength = 0
+                } else if (i < length) {
+                    // The next byte is not a continuation byte, so this sequence
+                    // can never complete: replace it and reprocess that byte.
+                    out.append(REPLACEMENT)
+                    pendingLength = 0
+                }
+                // Otherwise the sequence is merely incomplete: hold it.
+            }
+            if (endOfInput && pendingLength > 0) {
+                out.append(REPLACEMENT)
+                pendingLength = 0
+            }
+            return out.toString()
+        }
+
+        private companion object {
+            const val REPLACEMENT = '\uFFFD'
+        }
     }
 
     /**
@@ -100,12 +151,12 @@ internal object TerminalInput {
         /** True when the ESC we are looking at continues a string, not input. */
         private var stringOpen = false
 
-        /** UTF-8 state for this stream; see [newDecoder]. */
-        private val decoder: CharsetDecoder = newDecoder()
+        /** UTF-8 state for this stream; see [Utf8]. */
+        private val utf8 = Utf8()
 
         /** Decode raw bytes for this scanner, carrying partial characters over. */
         fun decode(bytes: ByteArray, length: Int, endOfInput: Boolean = false): String =
-            TerminalInput.decode(decoder, bytes, length, endOfInput)
+            utf8.decode(bytes, length, endOfInput)
 
         /**
          * @param flush true at end of stream, so a truncated sequence is dropped
@@ -169,10 +220,12 @@ internal object TerminalInput {
                     }
                     char == ']' -> {
                         state = OSC
+                        stringIntroducer = ']'
                         payload.setLength(0)
                     }
                     char == '_' -> {
                         state = APC
+                        stringIntroducer = '_'
                         payload.setLength(0)
                     }
                     char == 'P' || char == 'X' || char == '^' -> {

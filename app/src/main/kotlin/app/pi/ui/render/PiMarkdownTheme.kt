@@ -1,5 +1,6 @@
 package app.pi.ui.render
 
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
@@ -58,6 +59,9 @@ internal fun piMarkdownColors(): MarkdownColors {
         inlineCodeBackground = palette.infoBg,
         dividerColor = palette.mdHr,
         tableBackground = palette.cardBg,
+        // The renderer derives its GFM-alert container/on-container pairs from
+        // the ambient theme; tell it which way round this device is.
+        darkTheme = isSystemInDarkTheme(),
     )
 }
 
@@ -88,6 +92,9 @@ internal fun piMarkdownTypography(): MarkdownTypography {
         h4 = heading.copy(fontSize = 16.sp, lineHeight = 24.sp),
         h5 = heading.copy(fontSize = 15.sp, lineHeight = 22.sp),
         h6 = heading.copy(fontSize = 14.sp, lineHeight = 21.sp),
+        // GFM alert titles (`> [!NOTE]`) read as a small heading, not as body
+        // text — same size as h4, since the alert body is already inset.
+        alertTitle = heading.copy(fontSize = 16.sp, lineHeight = 24.sp),
         text = base.copy(color = palette.text),
         code = mono.copy(color = palette.mdCodeBlock),
         inlineCode = mono.copy(fontSize = 12.5.sp, lineHeight = 18.sp, color = palette.mdCode),

@@ -217,9 +217,32 @@ function handleHighlight(response: ServerResponse, request: IncomingMessage): Pr
 		}
 		const language = parsed.language.trim();
 
+		// An empty listing means highlight.js itself could not be found next to pi.
+		// That is a configuration failure worth naming, not "unknown language":
+		// otherwise every block would silently render plain.
+		let available: Set<string>;
+		try {
+			available = knownLanguages();
+		} catch (error) {
+			return fail(
+				response,
+				503,
+				"ENGINE_UNAVAILABLE",
+				`找不到 highlight.js：${error instanceof Error ? error.message : String(error)}。`,
+			);
+		}
+		if (available.size === 0) {
+			return fail(
+				response,
+				503,
+				"ENGINE_UNAVAILABLE",
+				`highlight.js 没有列出任何语言（${loadState().error ?? "未知原因"}）。`,
+			);
+		}
+
 		// Unknown language is not an error: it is pi's normal "render plain" path
 		// (hcl/graphql/toml/fish are not in highlight.js 10.7.3 at all).
-		if (!knownLanguages().has(language)) {
+		if (!available.has(language)) {
 			return send(response, 200, {
 				ok: true,
 				data: { language, known: false, spans: [], codeUnits: parsed.code.length, hljs: loadState().hljsVersion },

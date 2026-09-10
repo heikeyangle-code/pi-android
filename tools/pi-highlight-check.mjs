@@ -26,6 +26,7 @@
  */
 
 import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { mkdtemp, mkdir, readFile, stat } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { Agent as KeepAliveAgent, request as HttpRequest } from "node:http";
@@ -36,6 +37,9 @@ import { createJiti } from "/root/pi-feasibility/node_modules/@earendil-works/pi
 
 const PI = "/root/pi-feasibility/node_modules/@earendil-works/pi-coding-agent";
 const EXT_DIR = "/root/pi-android/app/src/main/assets/pi-extensions/pi-highlight";
+const REPO = "/root/pi-android";
+/** pi's TypeScript source, for the scope-table cross-check. */
+const PI_SRC = "/root/pi-src/packages/coding-agent/src";
 
 let failures = 0;
 let checks = 0;
@@ -232,6 +236,10 @@ async function main() {
 		await eagerProbe();
 		return;
 	}
+	if (process.argv.includes("--unref-probe")) {
+		await unrefProbe();
+		return;
+	}
 
 	const guestHome = await mkdtemp(join(tmpdir(), "pi-highlight-harness-"));
 	const agentDir = join(guestHome, ".pi", "agent");
@@ -305,6 +313,7 @@ async function main() {
 	const health0 = await (await authed("/health")).json();
 	check(health0.data.engineLoaded === false, "engine not loaded after activation + /health");
 	check(health0.data.located === false, "highlight.js not even located yet");
+	checkUnrefKeepsNothingAlive();
 
 	const denied = await fetch(`${base}/highlight`, {
 		method: "POST",
@@ -591,6 +600,10 @@ async function main() {
 			`${(bigResult.body.data.spans ?? []).length} spans`,
 	);
 
+	// ------------------------------------------------- Kotlin mapping parity --
+	section("Kotlin scope table vs pi's buildCliHighlightTheme");
+	checkKotlinScopeTable();
+
 	// --------------------------------------------------- eager comparison --
 	section("lazy vs eager (child process, so the numbers are honest)");
 	const eager = JSON.parse(
@@ -635,6 +648,106 @@ async function main() {
 	} else {
 		console.log("pi-highlight-check: OK");
 	}
+}
+
+/**
+ * Cross-check the Kotlin half without running Android.
+ *
+ * `PiHighlightScopes.kt` and `PiCodeHighlight.kt` are read as text, and every
+ * scope → token → palette-slot hop in them is compared with the same hop in pi's
+ * `buildCliHighlightTheme`. It cannot execute the Kotlin, but it can catch the
+ * one failure that matters for this table: a transcription that drifts from pi.
+ */
+function checkKotlinScopeTable() {
+	const themeSource = readFileSync(join(PI_SRC, "modes/interactive/theme/theme.ts"), "utf8");
+	const block = themeSource.slice(themeSource.indexOf("function buildCliHighlightTheme"));
+	const body = block.slice(0, block.indexOf("\n}"));
+	const piSlots = new Map();
+	for (const line of body.split("\n")) {
+		const fg = /^\s*([a-z_]+): \(s: string\) => t\.fg\("([A-Za-z]+)", s\),$/.exec(line);
+		if (fg) {
+			piSlots.set(fg[1], fg[2]);
+			continue;
+		}
+		const decoration = /^\s*([a-z_]+): \(s: string\) => t\.(italic|bold|underline)\(s\),$/.exec(line);
+		if (decoration) {
+			piSlots.set(decoration[1], decoration[2]);
+		}
+	}
+	check(piSlots.size === 25, `pi's table has 25 scopes (found ${piSlots.size})`);
+
+	const scopeSource = readFileSync(join(REPO, "app/src/main/kotlin/app/pi/highlight/PiHighlightScopes.kt"), "utf8");
+	const kotlinScopes = new Map();
+	for (const match of scopeSource.matchAll(/"([a-z_]+)" to PiSyntaxToken\.([A-Za-z]+)/g)) {
+		kotlinScopes.set(match[1], match[2]);
+	}
+	check(kotlinScopes.size === piSlots.size, `the Kotlin table has ${piSlots.size} scopes (found ${kotlinScopes.size})`);
+
+	// token → palette slot, read out of `PiSyntaxToken.color`, plus the three
+	// decoration-only tokens whose KDoc names their decoration.
+	const tokenSource = readFileSync(join(REPO, "app/src/main/kotlin/app/pi/ui/render/PiCodeHighlight.kt"), "utf8");
+	const tokenSlots = new Map();
+	for (const match of tokenSource.matchAll(/PiSyntaxToken\.([A-Za-z]+) -> palette\.([A-Za-z]+)/g)) {
+		tokenSlots.set(match[1], match[2]);
+	}
+	tokenSlots.set("Emphasis", "italic");
+	tokenSlots.set("Strong", "bold");
+	tokenSlots.set("Link", "underline");
+	check(tokenSlots.size >= 15, `read ${tokenSlots.size} token → palette hops out of PiCodeHighlight.kt`);
+
+	const drifted = [];
+	for (const [scope, slot] of piSlots) {
+		const token = kotlinScopes.get(scope);
+		if (token === undefined) {
+			drifted.push(`${scope}: missing in Kotlin`);
+			continue;
+		}
+		if (tokenSlots.get(token) !== slot) {
+			drifted.push(`${scope}: pi ${slot} != Kotlin ${token}->${tokenSlots.get(token)}`);
+		}
+	}
+	check(drifted.length === 0, "every pi scope resolves to the same colour slot in Kotlin", drifted.join("; "));
+}
+
+/**
+ * Prove the listening socket cannot keep pi's process alive.
+ *
+ * A child loads the extension (which binds the port) and then does nothing at
+ * all. If the server were referenced, Node's event loop would stay busy and the
+ * child would hang until the timeout; with `unref()` it exits on its own. This is
+ * the "idle-cost-free" requirement stated as an executable check.
+ */
+function checkUnrefKeepsNothingAlive() {
+	const guestHome = join(tmpdir(), `pi-highlight-unref-${process.pid}`);
+	let exited = true;
+	const started = Date.now();
+	try {
+		const output = execFileSync(process.execPath, [new URL(import.meta.url).pathname, "--unref-probe"], {
+			encoding: "utf8",
+			timeout: 20_000,
+			env: { ...process.env, HOME: guestHome, PI_CODING_AGENT_DIR: join(guestHome, ".pi", "agent"), PI_ANDROID_HIGHLIGHT_PORT: "3188" },
+		});
+		exited = output.includes("READY");
+	} catch {
+		exited = false;
+	}
+	check(exited, "a process that only started the service exits by itself (server is unref'd)", `waited ${Date.now() - started} ms`);
+}
+
+/**
+ * Loads the extension, reports READY, and then returns. The process must exit
+ * without any help — see [checkUnrefKeepsNothingAlive].
+ */
+async function unrefProbe() {
+	const jiti = createJiti(import.meta.url, { interopDefault: true, moduleCache: false });
+	const mod = await jiti.import(join(EXT_DIR, "index.ts"));
+	const factory = mod.default ?? mod;
+	await factory({ registerTool: () => {}, on: () => {}, registerCommand: () => {} });
+	const handle = await mod.startedService();
+	if (handle === null) throw new Error("service did not start");
+	process.stdout.write(`READY ${handle.port}\n`);
+	// Nothing else is scheduled: if the socket were referenced the loop would
+	// never empty and this process would hang.
 }
 
 /** Fresh-process measurement of what eager loading would have cost. */

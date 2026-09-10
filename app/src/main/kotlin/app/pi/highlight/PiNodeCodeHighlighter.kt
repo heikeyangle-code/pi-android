@@ -8,6 +8,7 @@ import app.pi.ui.render.PiCodeSpan
 import java.io.File
 import java.security.MessageDigest
 import java.util.concurrent.locks.ReentrantLock
+import kotlin.concurrent.withLock
 
 /**
  * The app's code highlighter: pi's own highlight.js, asked over loopback.
@@ -77,6 +78,9 @@ internal object PiNodeCodeHighlighter : PiCodeHighlighter {
      */
     private const val MAX_CODE_CHARS = 64 * 1024
     private const val MAX_CODE_LINES = 400
+
+    /** The credentials file the guest extension publishes; see [PiHighlightClient]. */
+    private const val TOKEN_FILE_NAME = "highlight-bridge.json"
 
     @Volatile
     private var client: PiHighlightClient? = null
@@ -159,10 +163,6 @@ internal object PiNodeCodeHighlighter : PiCodeHighlighter {
 
     /** Diagnostics for the settings/diagnostics surface; never used on a hot path. */
     fun lastFailure(): String? = client?.lastFailure
-
-    private companion object {
-        const val TOKEN_FILE_NAME = "highlight-bridge.json"
-    }
 }
 
 /**
