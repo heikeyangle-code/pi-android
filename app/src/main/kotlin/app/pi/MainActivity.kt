@@ -19,10 +19,11 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
 
         setContent {
-            // Theme preference is owned by the settings store later; until then
-            // follow the system. pi's own `theme` value ("dark", "light", or the
-            // automatic "lightTheme/darkTheme" pair) maps onto this switch.
-            var dark by remember { mutableStateOf(isSystemInDarkTheme()) }
+            // isSystemInDarkTheme() is @Composable, so it has to be read in the
+            // composition — not inside remember{}'s non-composable lambda. Read
+            // it once to seed the mutable state; the user can override after.
+            val systemDark = isSystemInDarkTheme()
+            var dark by remember { mutableStateOf(systemDark) }
             PiTheme(dark = dark) {
                 PiRoot(onToggleTheme = { dark = !dark }, isDark = dark)
             }

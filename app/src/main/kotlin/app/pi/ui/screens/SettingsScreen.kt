@@ -69,10 +69,11 @@ fun SettingsScreen(
             item {
                 PiSectionHeader("当前")
                 PiGroupRow(
-                    icon = Icons.Filled.Psychology,
-                    title = "模型与推理",
-                    summary = "未配置提供商",
-                    onClick = { },
+                    Group(
+                        Icons.Filled.Psychology,
+                        "模型与推理",
+                        "未配置提供商",
+                    ),
                 )
             }
             item { PiSectionHeader("引擎") }
