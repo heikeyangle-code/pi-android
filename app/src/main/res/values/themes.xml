@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+      Compose owns the real theme; this only needs to provide a sane window
+      before the first frame and keep the system bars transparent so the app can
+      draw edge-to-edge. Using the platform Material parent avoids pulling in the
+      View-based Material Components library just for a theme name.
+    -->
+    <style name="Theme.Pi" parent="@android:style/Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/pi_window_background</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:enforceStatusBarContrast">false</item>
+        <item name="android:enforceNavigationBarContrast">false</item>
+    </style>
+</resources>

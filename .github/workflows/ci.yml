@@ -1,0 +1,77 @@
+name: ci
+
+# Everything that can be verified without a phone runs here. The phone is the
+# only place the runtime can be validated, so everything else is pushed left:
+# protocol unit tests, both targetSdk variants, and the runtime assembly.
+#
+# Building on x86_64 runners is also the *only* place an Android APK can be
+# built today: Google ships AAPT2 for Linux as an x86_64 binary, so an aarch64
+# host cannot run it.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  protocol:
+    name: Protocol core (JVM unit tests)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Test :rpc
+        run: ./gradlew :rpc:test --console=plain
+      - name: Publish test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rpc-test-report
+          path: rpc/build/reports/tests/test
+          if-no-files-found: ignore
+
+  apk:
+    name: APK (${{ matrix.variant }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Known-good sandbox: what Termux pins. Sideload via F-Droid / APK.
+          - variant: sideload28
+            targetSdk: 28
+          # Play-viable: proot loader is exec'd from nativeLibraryDir and maps
+          # the guest binaries. Must be proven on hardware before it ships.
+          - variant: modern36
+            targetSdk: 36
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: android-actions/setup-android@v3
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Assemble arm64 release APK
+        run: |
+          ./gradlew :app:assembleRelease \
+            -Ppi.targetSdk=${{ matrix.targetSdk }} \
+            --console=plain
+      - name: Report APK size
+        run: |
+          ls -lh app/build/outputs/apk/release/
+          find app/build/outputs/apk -name '*.apk' -printf '%f %s bytes\n'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pi-android-${{ matrix.variant }}
+          path: app/build/outputs/apk/release/*.apk
+          if-no-files-found: error

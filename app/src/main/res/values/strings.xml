@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- pi's own brand is lowercase; keep it that way. -->
+    <string name="app_name">pi</string>
+
+    <string name="notif_channel_engine">本地引擎</string>
+    <string name="notif_channel_engine_desc">pi 引擎运行时显示的任务通知</string>
+
+    <string name="engine_running_title">pi 正在运行</string>
+    <string name="engine_running_text">%1$d 个任务进行中</string>
+    <string name="engine_idle_text">空闲</string>
+    <string name="action_stop">停止</string>
+    <string name="action_open">打开</string>
+</resources>

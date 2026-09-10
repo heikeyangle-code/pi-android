@@ -1,0 +1,24 @@
+# Build output
+build/
+.gradle/
+.kotlin/
+local.properties
+
+# Downloaded upstream artifacts (pinned in runtime.lock.json). Never committed:
+# ~65 MB of third-party binaries, reproducibly re-fetched by tools/fetch-runtime.mjs.
+build/downloads/
+
+# Runtime payloads assembled into the app. Produced by tools/fetch-runtime.mjs;
+# regenerated rather than versioned so the repo stays small and every byte is
+# traceable to a pinned upstream hash.
+app/src/main/assets/runtime/
+app/src/main/jniLibs/
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db

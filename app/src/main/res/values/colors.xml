@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+      pi's dark export surface: docs/pi-android-ui-spec.md §2.1 maps
+      export.pageBg -> Surface, export.cardBg -> SurfaceContainer.
+      Keeping the literal values here (rather than only in Kotlin) means the
+      window background matches the Compose canvas on the very first frame.
+    -->
+    <color name="pi_window_background">#18181E</color>
+    <color name="ic_launcher_background">#18181E</color>
+    <color name="ic_launcher_foreground">#8ABEB7</color>
+</resources>
