@@ -1,5 +1,6 @@
 package app.pi.ui.components
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -132,7 +133,13 @@ fun PiSwitchRow(
     }
 }
 
-/** A settings row whose value is chosen elsewhere. [value] is the summary. */
+/**
+ * A settings row whose value is chosen elsewhere. [value] is the summary.
+ *
+ * [onClick] is applied to the whole row rather than only the trailing text: a
+ * row that advertises a value but ignores taps is worse than one that offers no
+ * affordance at all.
+ */
 @Composable
 fun PiValueRow(
     title: String,
@@ -144,6 +151,7 @@ fun PiValueRow(
     Row(
         modifier = modifier
             .fillMaxWidth()
+            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
             .padding(horizontal = PiSpacing.screen, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {

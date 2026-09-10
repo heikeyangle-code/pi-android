@@ -44,10 +44,39 @@ class CommandsTest {
     }
 
     @Test
-    fun `streaming behaviour is only present when asked for`() {
-        assertEquals("steer", PiCommands.prompt("r", "m", streamingBehavior = StreamingBehavior.Steer).s("streamingBehavior"))
-        assertEquals("followUp", PiCommands.followUp("r", "m", streamingBehavior = StreamingBehavior.FollowUp).s("streamingBehavior"))
+    fun `only prompt carries streamingBehaviour`() {
+        // pi's RpcCommand union puts `streamingBehavior` on `prompt` alone.
+        // `steer` and `follow_up` ARE the two delivery choices, so a field there
+        // would be inventing wire pi does not accept. Both halves of that are
+        // asserted, because "stop sending it" and "start sending it" are equally
+        // breaking changes.
+        assertEquals(
+            "steer",
+            PiCommands.prompt("r", "m", streamingBehavior = StreamingBehavior.Steer).s("streamingBehavior"),
+        )
+        assertEquals(
+            "followUp",
+            PiCommands.prompt("r", "m", streamingBehavior = StreamingBehavior.FollowUp).s("streamingBehavior"),
+        )
         assertNull(PiCommands.prompt("r", "m").s("streamingBehavior"))
+        assertFalse(PiCommands.steer("r", "m").containsKey("streamingBehavior"))
+        assertFalse(PiCommands.followUp("r", "m").containsKey("streamingBehavior"))
+    }
+
+    @Test
+    fun `new_session and export_html carry pi's optional fields`() {
+        assertEquals("parent.jsonl", PiCommands.newSession("r", "parent.jsonl").s("parentSession"))
+        assertFalse(PiCommands.newSession("r").containsKey("parentSession"))
+        assertEquals("/out/x.html", PiCommands.exportHtml("r", "/out/x.html").s("outputPath"))
+        assertFalse(PiCommands.exportHtml("r").containsKey("outputPath"))
+    }
+
+    @Test
+    fun `steer and follow_up still accept images`() {
+        val images = listOf(PiImage(base64 = "AAAA", mimeType = "image/png"))
+        assertEquals("steer", PiCommands.steer("r", "m", images).s("type"))
+        assertTrue(PiCommands.steer("r", "m", images).containsKey("images"))
+        assertTrue(PiCommands.followUp("r", "m", images).containsKey("images"))
     }
 
     @Test

@@ -1,0 +1,39 @@
+{
+	"artifacts": {
+		"proot": {
+			"url": "https://packages.termux.dev/apt/termux-main/pool/main/p/proot/proot_5.1.107.92_aarch64.deb",
+			"sha256": "1f1c983509701f6826f568482c70673ee453a9ba38c9f5fa445a472d6b7524e9",
+			"why": "user-space syscall translator; no root needed"
+		},
+		"libtalloc": {
+			"url": "https://packages.termux.dev/apt/termux-main/pool/main/libt/libtalloc/libtalloc_2.4.3_aarch64.deb",
+			"sha256": "ac81ad623d74c209718b9f3acb2dd702cc8a88c431e820d212229910b4db29da",
+			"why": "proot's only non-Bionic dependency"
+		},
+		"libandroidShmem": {
+			"url": "https://packages.termux.dev/apt/termux-main/pool/main/liba/libandroid-shmem/libandroid-shmem_0.7_aarch64.deb",
+			"sha256": "0da3a24d558b93c92bcf8d611e0826a99ff96e396b148e6cdf33b47c47c57ff6",
+			"why": "proot dependency"
+		},
+		"ubuntuBase": {
+			"url": "https://cdimage.ubuntu.com/ubuntu-base/releases/24.04.3/release/ubuntu-base-24.04.3-base-arm64.tar.gz",
+			"sha256": "7b2dced6dd56ad5e4a813fa25c8de307b655fdabc6ea9213175a92c48dabb048",
+			"why": "glibc 2.39 userland — the reason npm's linux-arm64 prebuilds work"
+		},
+		"node": {
+			"url": "https://nodejs.org/dist/v24.19.0/node-v24.19.0-linux-arm64.tar.xz",
+			"sha256": "01443c1e1a29e531ccad5a46fefa6df490d2189c49f7955904aecdbb0fe86fdc",
+			"why": "pi requires Node >= 22.19; official glibc build"
+		},
+		"ripgrep": {
+			"url": "https://github.com/BurntSushi/ripgrep/releases/download/15.2.0/ripgrep-15.2.0-aarch64-unknown-linux-musl.tar.gz",
+			"sha256": "800b1e7206afe799dfb5a6901f23147cfaabe0e52210538100f61e86e1740915",
+			"why": "pi's `grep` tool spawns rg; static musl so it runs anywhere"
+		},
+		"fd": {
+			"url": "https://github.com/sharkdp/fd/releases/download/v10.2.0/fd-v10.2.0-aarch64-unknown-linux-musl.tar.gz",
+			"sha256": "4e8e596646d047d904f2c5ca74b39dccc69978b6e1fb101094e534b0b59c1bb0",
+			"why": "pi's `find` tool spawns fd"
+		}
+	}
+}

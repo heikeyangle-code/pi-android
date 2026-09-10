@@ -73,8 +73,14 @@ sealed interface PiEvent {
     data class AgentEnd(val willRetry: Boolean?) : PiEvent { override val type = "agent_end" }
     data object AgentSettled : PiEvent { override val type = "agent_settled" }
 
-    data class TurnStart(val turnIndex: Int?) : PiEvent { override val type = "turn_start" }
-    data class TurnEnd(val turnIndex: Int?) : PiEvent { override val type = "turn_end" }
+    /**
+     * pi's `turn_start` / `turn_end` carry **no** turn index — the union is
+     * `{ type: "turn_start" }` and `{ type: "turn_end"; message; toolResults }`.
+     * The transcript does not need one: turns are delimited by the entries
+     * between them.
+     */
+    data object TurnStart : PiEvent { override val type = "turn_start" }
+    data class TurnEnd(val toolResultCount: Int) : PiEvent { override val type = "turn_end" }
 
     data class MessageStart(val role: String?) : PiEvent { override val type = "message_start" }
     data class MessageUpdate(
@@ -136,6 +142,7 @@ sealed interface PiEvent {
     }
 
     data class CompactionEnd(
+        val reason: String?,
         val aborted: Boolean,
         val willRetry: Boolean,
         val errorMessage: String?,
@@ -152,15 +159,56 @@ sealed interface PiEvent {
         override val type = "auto_retry_start"
     }
 
-    data class AutoRetryEnd(val success: Boolean?, val attempt: Int?) : PiEvent {
+    data class AutoRetryEnd(
+        val success: Boolean?,
+        val attempt: Int?,
+        val finalError: String?,
+    ) : PiEvent {
         override val type = "auto_retry_end"
     }
 
     /**
+     * Summarization retries are a separate path from `auto_retry_*`: they fire
+     * when compaction or branch summarisation fails, and pi emits three shapes.
+     * Ignoring them would silently hide a stalling context — they are rare
+     * enough that a user seeing nothing would assume the agent had hung.
+     */
+    data class SummarizationRetryScheduled(
+        val attempt: Int?,
+        val maxAttempts: Int?,
+        val delayMs: Long?,
+        val errorMessage: String?,
+    ) : PiEvent {
+        override val type = "summarization_retry_scheduled"
+    }
+
+    data class SummarizationRetryAttemptStart(
+        /** `branchSummary` or `compaction`. */
+        val source: String?,
+        /** Present only when [source] is `compaction`. */
+        val reason: String?,
+    ) : PiEvent {
+        override val type = "summarization_retry_attempt_start"
+    }
+
+    data object SummarizationRetryFinished : PiEvent {
+        override val type = "summarization_retry_finished"
+    }
+
+    /**
      * A blocking dialog from an extension (`ctx.ui.select/confirm/input/editor`)
-     * or a fire-and-forget notification. Blocking methods must be answered with
-     * `PiCommands.extensionUi*`; note [timeoutMs] — pi resolves on its own when
-     * it elapses, so the UI has to count down.
+     * or a fire-and-forget notification.
+     *
+     * Field names are pi's own (`rpc-types.ts` `RpcExtensionUIRequest`), including
+     * the ones only some methods carry: `prefill` on `editor`, `notifyType` on
+     * `notify`, `statusKey`/`statusText` on `setStatus`, and
+     * `widgetKey`/`widgetLines`/`widgetPlacement` on `setWidget`. Modelling them
+     * as one wide type keeps the parser total (a request never fails to parse
+     * because a field it did not expect was missing).
+     *
+     * Blocking methods (`select`/`confirm`/`input`/`editor`) must be answered
+     * with `PiCommands.extensionUi*`; note [timeoutMs] — pi resolves on its own
+     * when it elapses, so the UI has to count down.
      */
     data class ExtensionUiRequest(
         val uiId: String,
@@ -169,7 +217,17 @@ sealed interface PiEvent {
         val message: String?,
         val options: List<String>,
         val placeholder: String?,
-        val value: String?,
+        /** `editor`'s initial text; `set_editor_text`'s payload. */
+        val text: String?,
+        /** `notify`'s severity: `info` / `warning` / `error`. */
+        val notifyType: String?,
+        /** `setStatus` key, and its text (null clears the row). */
+        val statusKey: String?,
+        val statusText: String?,
+        /** `setWidget` key, its lines, and `aboveEditor` / `belowEditor`. */
+        val widgetKey: String?,
+        val widgetLines: List<String>,
+        val widgetPlacement: String?,
         val timeoutMs: Long?,
         val raw: JsonObject,
     ) : PiEvent {
@@ -227,8 +285,11 @@ object PiEvents {
         "agent_end" -> PiEvent.AgentEnd(o.bool("willRetry"))
         "agent_settled" -> PiEvent.AgentSettled
 
-        "turn_start" -> PiEvent.TurnStart(o.int("turnIndex"))
-        "turn_end" -> PiEvent.TurnEnd(o.int("turnIndex"))
+        // pi sends no turn index; `toolResults` is an array we only need a count of.
+        "turn_start" -> PiEvent.TurnStart
+        "turn_end" -> PiEvent.TurnEnd(
+            toolResultCount = (o["toolResults"] as? kotlinx.serialization.json.JsonArray)?.size ?: 0,
+        )
 
         "message_start" -> PiEvent.MessageStart(o.obj("message")?.str("role") ?: o.str("role"))
         "message_update" -> {
@@ -281,6 +342,7 @@ object PiEvents {
 
         "compaction_start" -> PiEvent.CompactionStart(o.str("reason"))
         "compaction_end" -> PiEvent.CompactionEnd(
+            reason = o.str("reason"),
             aborted = o.bool("aborted") ?: false,
             willRetry = o.bool("willRetry") ?: false,
             errorMessage = o.str("errorMessage"),
@@ -293,7 +355,25 @@ object PiEvents {
             errorMessage = o.str("errorMessage"),
         )
 
-        "auto_retry_end" -> PiEvent.AutoRetryEnd(o.bool("success"), o.int("attempt"))
+        "auto_retry_end" -> PiEvent.AutoRetryEnd(
+            success = o.bool("success"),
+            attempt = o.int("attempt"),
+            finalError = o.str("finalError"),
+        )
+
+        "summarization_retry_scheduled" -> PiEvent.SummarizationRetryScheduled(
+            attempt = o.int("attempt"),
+            maxAttempts = o.int("maxAttempts"),
+            delayMs = o.long("delayMs"),
+            errorMessage = o.str("errorMessage"),
+        )
+
+        "summarization_retry_attempt_start" -> PiEvent.SummarizationRetryAttemptStart(
+            source = o.str("source"),
+            reason = o.str("reason"),
+        )
+
+        "summarization_retry_finished" -> PiEvent.SummarizationRetryFinished
 
         "extension_ui_request" -> PiEvent.ExtensionUiRequest(
             uiId = o.str("id").orEmpty(),
@@ -302,7 +382,15 @@ object PiEvents {
             message = o.str("message"),
             options = o.strList("options"),
             placeholder = o.str("placeholder"),
-            value = o.str("value") ?: o.str("text"),
+            // `editor` sends its initial content as `prefill`; `set_editor_text`
+            // sends `text`.
+            text = o.str("prefill") ?: o.str("text") ?: o.str("value"),
+            notifyType = o.str("notifyType"),
+            statusKey = o.str("statusKey"),
+            statusText = o.str("statusText"),
+            widgetKey = o.str("widgetKey"),
+            widgetLines = o.strList("widgetLines"),
+            widgetPlacement = o.str("widgetPlacement"),
             timeoutMs = o.long("timeout") ?: o.long("timeoutMs"),
             raw = o,
         )

@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Configuration for the device bridge's AccessibilityService.
+
+  What each line buys:
+
+    canRetrieveWindowContent  the whole point — the agent reads the control tree
+    canPerformGestures        tap / long-press / swipe by coordinate
+    canTakeScreenshot         API 30+ screenshots handed to the model as images
+    flagReportViewIds         resource ids in the dump, which is what makes a tap
+                              target stable across dumps
+    flagRetrieveInteractiveWindows
+                              multi-window and split-screen trees
+    flagIncludeNotImportantViews
+                              Compose and WebView marks most nodes "not important";
+                              without this a modern app dumps as an empty tree
+
+  notificationTimeout is kept low because the bridge pulls trees on demand and
+  does not consume the event stream at all.
+-->
+<accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:accessibilityEventTypes="typeAllMask"
+    android:accessibilityFeedbackType="feedbackGeneric"
+    android:accessibilityFlags="flagDefault|flagReportViewIds|flagRetrieveInteractiveWindows|flagIncludeNotImportantViews"
+    android:canPerformGestures="true"
+    android:canRetrieveWindowContent="true"
+    android:canTakeScreenshot="true"
+    android:description="让 pi 读取屏幕、点按、滑动、输入与截屏。关闭后 Agent 立即失去这些能力。"
+    android:notificationTimeout="100"
+    android:summary="让 pi 操作手机屏幕（需要「无障碍」能力授权）" />

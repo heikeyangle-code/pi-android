@@ -44,13 +44,39 @@ android {
         ndk { abiFilters += "arm64-v8a" }
     }
 
+    /**
+     * A committed sideload key, on purpose.
+     *
+     * CI's generated debug keystore differs on every run, so every build would
+     * carry a different signature and refuse to install over the previous one —
+     * the user would have to uninstall first, every single time. With a fixed key
+     * the app upgrades in place.
+     *
+     * The trade-off is real and deliberate: the key is in the repo, so anyone who
+     * can write to the repo can sign an update. That is acceptable for a personal
+     * sideload build and **not** acceptable for anything distributed through a
+     * store — those must set `PI_KEYSTORE` properties instead (see below).
+     */
+    signingConfigs {
+        create("sideload") {
+            // An out-of-band distribution key wins if supplied; otherwise the
+            // committed sideload key.
+            val external = System.getenv("PI_KEYSTORE")
+            storeFile = if (external != null) file(external) else rootProject.file("keystore/pi-sideload.jks")
+            storePassword = System.getenv("PI_KEYSTORE_PASSWORD") ?: "android"
+            keyAlias = System.getenv("PI_KEY_ALIAS") ?: "pi"
+            keyPassword = System.getenv("PI_KEY_PASSWORD") ?: "android"
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
             isShrinkResources = false
-            // Debug signing so sideload builds are installable without a keystore.
-            // A real release keystore is required before any store submission.
-            signingConfig = signingConfigs.getByName("debug")
+            val hasKey = System.getenv("PI_KEYSTORE") != null ||
+                rootProject.file("keystore/pi-sideload.jks").exists()
+            signingConfig =
+                if (hasKey) signingConfigs.getByName("sideload") else signingConfigs.getByName("debug")
         }
     }
 
@@ -107,4 +133,27 @@ dependencies {
     implementation(libs.documentfile)
     implementation(libs.webkit)
     implementation(libs.kotlinx.coroutines.core)
+    implementation(libs.markdown.renderer.m3)
+}
+
+// The markdown renderer is built by a newer Kotlin than this project's compiler
+// and therefore asks for kotlin-stdlib 2.4.0 (and coroutines 1.11.0). Kotlin
+// 2.2.21 refuses to read 2.4.0 metadata:
+//
+//   kotlin-stdlib-2.4.0.jar!/META-INF/kotlin-stdlib.kotlin_module:
+//     error: module was compiled with an incompatible version of Kotlin.
+//     The binary version of its metadata is 2.4.0, expected version is 2.2.0.
+//
+// — verified by compiling against that jar on this machine. Pinning the
+// standard library back to the compiler's own version is safe because the
+// renderer only refers to long-standing stdlib and coroutines members
+// (Pair/TuplesKt/CollectionsKt/EnumEntries, and Flow/StateFlow/Mutex/
+// CoroutineScope); a scan of every referenced `kotlin/` and `kotlinx/coroutines`
+// class in its 411 class files found nothing newer than Kotlin 1.9.
+configurations.all {
+    resolutionStrategy {
+        force("org.jetbrains.kotlin:kotlin-stdlib:${libs.versions.kotlin.get()}")
+        force("org.jetbrains.kotlinx:kotlinx-coroutines-core:${libs.versions.coroutines.get()}")
+        force("org.jetbrains.kotlinx:kotlinx-coroutines-core-jvm:${libs.versions.coroutines.get()}")
+    }
 }

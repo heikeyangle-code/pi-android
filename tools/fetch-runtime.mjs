@@ -42,6 +42,13 @@ const LOCK = join(ROOT, "runtime.lock.json");
 
 const TERMUX = "https://packages.termux.dev/apt/termux-main";
 
+/**
+ * pi's version. Pinned deliberately: the app's protocol layer is written against
+ * this release's RPC surface, and pi has no stability guarantee across minor
+ * versions. Bumping this is a decision, not an accident.
+ */
+const PI_VERSION = "0.85.1";
+
 /** Pinned upstream artifacts. `sha256: null` means "record on first resolve". */
 const ARTIFACTS = {
   proot: {
@@ -200,10 +207,13 @@ function main() {
 
   // 3. Userland payloads stay compressed in assets; the app unpacks them on
   //    first launch into <files>/pi/runtime (volatile) and <files>/pi/pi (kept).
+  //
+  //    Node is re-compressed from .tar.xz to .tar.gz here. Java has no xz
+  //    decoder, and shipping one to unpack a single archive at first launch is
+  //    not worth the bytes — so the conversion happens at build time instead.
   console.log("\nassets:");
   const assets = [
     ["ubuntuBase", "ubuntu-base.tar.gz"],
-    ["node", "node.tar.xz"],
     ["ripgrep", "ripgrep.tar.gz"],
     ["fd", "fd.tar.gz"],
   ];
@@ -215,10 +225,48 @@ function main() {
     console.log(`  ${out.padEnd(24)} ${mib.padStart(8)} MiB  ok`);
   }
 
-  const total = [...JNI_PAYLOAD.map((i) => join(JNI, i.to)), ...assets.map(([, o]) => join(ASSETS, o))]
-    .reduce((sum, p) => sum + statSync(p).size, 0);
+  {
+    const src = join(CACHE, ARTIFACTS.node.url.split("/").pop());
+    const dst = join(ASSETS, "node.tar.gz");
+    // Pipe rather than a temp tree: tar streams, and a rootfs-shaped extraction
+    // here would duplicate ~150 MB of files on the build host for no reason.
+    execFileSync("bash", ["-c", `xz -dc ${JSON.stringify(src)} | gzip -9 > ${JSON.stringify(dst)}`]);
+    const mib = (statSync(dst).size / 1024 / 1024).toFixed(1);
+    console.log(`  ${"node.tar.gz".padEnd(24)} ${mib.padStart(8)} MiB  ok (xz -> gz)`);
+  }
+
+  // 4. pi itself. Installed here so the first launch works offline; installing
+  //    it on device would need npm and a network before the app is usable.
+  //    --omit=optional is what keeps this ~150 MB instead of ~440 MB: pi's
+  //    optional deps are cloud-provider SDKs, and the ones a phone user has
+  //    credentials for are all plain HTTP anyway.
+  {
+    const dst = join(ASSETS, "pi-engine.tar.gz");
+    const stage = join(STAGE, "engine");
+    rmSync(stage, { recursive: true, force: true });
+    mkdirSync(stage, { recursive: true });
+    const spec = `@earendil-works/pi-coding-agent@${PI_VERSION}`;
+    console.log(`\nengine: ${spec}`);
+    execFileSync(
+      "npm",
+      ["install", "--ignore-scripts", "--omit=dev", "--omit=optional", "--no-audit", "--no-fund", spec],
+      { cwd: stage, stdio: "inherit" },
+    );
+    execFileSync("tar", ["-czf", dst, "-C", stage, "."]);
+    const mib = (statSync(dst).size / 1024 / 1024).toFixed(1);
+    console.log(`  ${"pi-engine.tar.gz".padEnd(24)} ${mib.padStart(8)} MiB  ok (pi ${PI_VERSION})`);
+    rmSync(stage, { recursive: true, force: true });
+  }
+
+  const produced = [
+    ...JNI_PAYLOAD.map((i) => join(JNI, i.to)),
+    ...assets.map(([, o]) => join(ASSETS, o)),
+    join(ASSETS, "node.tar.gz"),
+    join(ASSETS, "pi-engine.tar.gz"),
+  ];
+  const total = produced.reduce((sum, p) => sum + statSync(p).size, 0);
   console.log(`\npayload total ${(total / 1024 / 1024).toFixed(1)} MiB`);
-  console.log("note: the pi engine itself is added by tools/fetch-engine.mjs\n");
+  console.log("  (this is what the APK grows by, before compression)\n");
 }
 
 main();

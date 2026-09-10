@@ -59,8 +59,26 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
       - uses: android-actions/setup-android@v3
       - uses: gradle/actions/setup-gradle@v4
+
+      # The runtime is assembled from pinned upstreams rather than committed:
+      # ~65 MB of third-party binaries stay out of git, and every byte is
+      # traceable to a SHA-256 in runtime.lock.json (checked by the tool).
+      - name: Cache upstream artifacts
+        uses: actions/cache@v4
+        with:
+          path: build/downloads
+          key: pi-runtime-downloads-${{ hashFiles('runtime.lock.json') }}
+          restore-keys: pi-runtime-downloads-
+      - name: Assemble runtime (proot, Ubuntu, Node, rg/fd, pi)
+        run: |
+          sudo apt-get install -y -qq dpkg-dev xz-utils
+          node tools/fetch-runtime.mjs
+
       - name: Assemble arm64 release APK
         run: |
           ./gradlew :app:assembleRelease \

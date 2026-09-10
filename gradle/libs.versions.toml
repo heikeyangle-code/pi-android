@@ -1,4 +1,12 @@
 [versions]
+# Markdown is rendered by a third-party stack, never by hand:
+#   org.jetbrains:markdown       — JetBrains' CommonMark + GFM parser (pure JVM)
+#   com.mikepenz:…-renderer-m3   — Compose renderer for that parser's AST
+# 0.45.0's classes were inspected with `javap -v`: their @Metadata `mv` is
+# [2,2,0], which the Kotlin pin below can still read. A renderer built by
+# Kotlin 2.3+ forces a toolchain bump, so re-check `mv` before changing this.
+markdown = "0.45.0"
+
 # AGP 8.13 is the stable line; the androidx versions below are the newest that
 # still declare AGP 8.x in their AAR metadata. androidx releases from late 2025
 # onwards require AGP 9.1+, which is a major-version upgrade with its own DSL
@@ -39,6 +47,11 @@ lifecycle-viewmodel-compose = { module = "androidx.lifecycle:lifecycle-viewmodel
 documentfile = { module = "androidx.documentfile:documentfile", version.ref = "documentfile" }
 webkit = { module = "androidx.webkit:webkit", version.ref = "webkit" }
 navigation-compose = { module = "androidx.navigation:navigation-compose", version.ref = "navigation" }
+
+# --- markdown ---
+# Only the m3 renderer is declared: it brings org.jetbrains:markdown (the
+# parser), androidx.compose and kotlinx-collections-immutable transitively.
+markdown-renderer-m3 = { module = "com.mikepenz:multiplatform-markdown-renderer-m3", version.ref = "markdown" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

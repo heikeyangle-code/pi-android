@@ -60,33 +60,39 @@ object PiCommands {
         id: String,
         message: String,
         images: List<PiImage> = emptyList(),
-        streamingBehavior: StreamingBehavior? = null,
     ): JsonObject = buildJsonObject {
         put("id", id)
         put("type", "steer")
         put("message", message)
         putImages(images)
-        streamingBehavior?.let { put("streamingBehavior", it.wire) }
     }
 
+    /**
+     * pi's `follow_up` carries no `streamingBehavior` either: `steer` and
+     * `follow_up` *are* the two delivery choices, and pi's own union has no such
+     * field on either. Sending one would be inventing wire pi does not accept.
+     */
     fun followUp(
         id: String,
         message: String,
         images: List<PiImage> = emptyList(),
-        streamingBehavior: StreamingBehavior? = null,
     ): JsonObject = buildJsonObject {
         put("id", id)
         put("type", "follow_up")
         put("message", message)
         putImages(images)
-        streamingBehavior?.let { put("streamingBehavior", it.wire) }
     }
 
     fun abort(id: String): JsonObject = simple(id, "abort")
 
     fun clearQueue(id: String): JsonObject = simple(id, "clear_queue")
 
-    fun newSession(id: String): JsonObject = simple(id, "new_session")
+    /** @param parentSession pi accepts a parent session path when branching. */
+    fun newSession(id: String, parentSession: String? = null): JsonObject = buildJsonObject {
+        put("id", id)
+        put("type", "new_session")
+        parentSession?.let { put("parentSession", it) }
+    }
 
     // -------------------------------------------------------------------- state
 
@@ -174,7 +180,12 @@ object PiCommands {
 
     fun getSessionStats(id: String): JsonObject = simple(id, "get_session_stats")
 
-    fun exportHtml(id: String): JsonObject = simple(id, "export_html")
+    /** @param outputPath pi accepts an explicit destination for the export. */
+    fun exportHtml(id: String, outputPath: String? = null): JsonObject = buildJsonObject {
+        put("id", id)
+        put("type", "export_html")
+        outputPath?.let { put("outputPath", it) }
+    }
 
     fun switchSession(id: String, sessionPath: String): JsonObject = buildJsonObject {
         put("id", id)

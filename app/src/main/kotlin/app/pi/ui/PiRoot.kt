@@ -13,16 +13,18 @@ import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.lifecycle.viewmodel.compose.viewModel
 import app.pi.ui.screens.ChatScreen
 import app.pi.ui.screens.SessionsScreen
-import app.pi.ui.screens.SettingsScreen
 import app.pi.ui.screens.WorkbenchScreen
+import app.pi.ui.settings.PiSettingsStack
 
 /**
  * The four top-level destinations.
@@ -42,11 +44,18 @@ enum class PiDestination(val label: String, val icon: ImageVector) {
 
 @Composable
 fun PiRoot(
-    onToggleTheme: () -> Unit,
     isDark: Boolean,
+    onThemeChanged: (String) -> Unit,
 ) {
     var destination by rememberSaveable { mutableStateOf(PiDestination.Chat.ordinal) }
     val current = PiDestination.entries[destination]
+
+    // One engine for the whole app. Owned by the ViewModel rather than an
+    // Activity so that a running turn survives the user leaving the screen, and
+    // started here because the app has no "connect" concept: opening it starts
+    // the local engine.
+    val session: PiSessionViewModel = viewModel()
+    LaunchedEffect(Unit) { session.boot() }
 
     Scaffold(
         bottomBar = {
@@ -67,16 +76,24 @@ fun PiRoot(
                 PiDestination.Sessions -> SessionsScreen(
                     contentPadding = padding,
                     onOpenChat = { destination = PiDestination.Chat.ordinal },
+                    session = session,
                 )
 
-                PiDestination.Chat -> ChatScreen(contentPadding = padding)
+                PiDestination.Chat -> ChatScreen(
+                    contentPadding = padding,
+                    session = session,
+                )
 
                 PiDestination.Workbench -> WorkbenchScreen(contentPadding = padding)
 
-                PiDestination.Settings -> SettingsScreen(
+                PiDestination.Settings -> PiSettingsStack(
                     contentPadding = padding,
-                    isDark = isDark,
-                    onToggleTheme = onToggleTheme,
+                    // The real store: pi's own settings.json files, merged the way
+                    // pi merges them. Without it the stack would read and write an
+                    // in-memory map and the app would appear to accept changes
+                    // that never reach the engine.
+                    store = session.settingsStore,
+                    onThemeChanged = onThemeChanged,
                 )
             }
         }

@@ -23,6 +23,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import app.pi.ui.components.PiEmptyState
+import app.pi.ui.terminal.TerminalPane
 import app.pi.ui.theme.PiSpacing
 
 /**
@@ -30,10 +31,14 @@ import app.pi.ui.theme.PiSpacing
  *
  * These share one context — the current working directory — which is why they
  * are segments of one destination rather than separate destinations
- * (docs/pi-android-ui-spec.md §5.3). The terminal here is where the *original*
- * pi TUI runs: that is the escape hatch which keeps extension-drawn UI and the
- * built-in TUI commands reachable, and it is why the app never has to claim
- * "we reimplemented 95% of the API".
+ * (docs/pi-android-ui-spec.md §5.3).
+ *
+ * The **terminal** segment is the one that is load-bearing rather than a
+ * convenience: it runs the *original* pi TUI in a real PTY, which is the only way
+ * the extension APIs that draw terminal cells (`ctx.ui.custom()`, overlays,
+ * custom footers, `registerMessageRenderer`, `renderCall`/`renderResult`) stay
+ * reachable. That is why this app never has to claim "we reimplemented 95% of the
+ * API" — see [TerminalPane].
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -47,7 +52,7 @@ fun WorkbenchScreen(contentPadding: PaddingValues) {
         Icons.Filled.TaskAlt,
     )
 
-    Column(Modifier.fillMaxSize()) {
+    Column(Modifier.fillMaxSize().padding(contentPadding)) {
         TopAppBar(title = { Text("工作区") })
         SingleChoiceSegmentedButtonRow(
             Modifier.padding(horizontal = PiSpacing.screen),
@@ -61,19 +66,22 @@ fun WorkbenchScreen(contentPadding: PaddingValues) {
                 ) { Text(label) }
             }
         }
-        val (title, body) = when (segment) {
-            0 -> "终端未启动" to
-                "这里会跑真正的 bash，也可以直接启动原版 pi（TUI），\n" +
-                "扩展自绘的界面与内建的斜杠命令都在那里可用。"
-            1 -> "没有工作区" to "把手机里的一个文件夹设为工作区后，文件树会出现在这里。"
-            2 -> "不是 Git 仓库" to "工作区是 Git 仓库时，这里显示变更、diff 与检查点。"
-            else -> "没有后台任务" to "长时间运行的回合与命令会出现在这里，可以随时停止。"
+        if (segment == 0) {
+            // The terminal takes the rest of the screen: a TUI wants every row it
+            // can get, and the key bar sits at its bottom edge.
+            TerminalPane(Modifier.weight(1f))
+        } else {
+            val (title, body) = when (segment) {
+                1 -> "没有工作区" to "把手机里的一个文件夹设为工作区后，文件树会出现在这里。"
+                2 -> "不是 Git 仓库" to "工作区是 Git 仓库时，这里显示变更、diff 与检查点。"
+                else -> "没有后台任务" to "长时间运行的回合与命令会出现在这里，可以随时停止。"
+            }
+            PiEmptyState(
+                icon = icons[segment],
+                title = title,
+                body = body,
+                modifier = Modifier.weight(1f),
+            )
         }
-        PiEmptyState(
-            icon = icons[segment],
-            title = title,
-            body = body,
-            modifier = Modifier.weight(1f),
-        )
     }
 }

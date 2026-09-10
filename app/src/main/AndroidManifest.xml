@@ -14,6 +14,25 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
+    <!--
+      Device capability bridge. None of these are needed until the user turns on
+      the matching capability group in 设置 → 设备能力 (docs/pi-android-app-design.md
+      §21.4), and each one is requested with a reason naming this exact line when
+      it is missing — never silently.
+        VIBRATE                    → android_vibrate
+        KILL_BACKGROUND_PROCESSES  → android_stop_app
+        ACCESS_*_LOCATION          → android_location (runtime request)
+        QUERY_ALL_PACKAGES         → keeps android_apps complete on API 30+, where
+                                     package visibility is filtered by default
+    -->
+    <uses-permission android:name="android.permission.VIBRATE" />
+    <uses-permission android:name="android.permission.KILL_BACKGROUND_PROCESSES" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission
+        android:name="android.permission.QUERY_ALL_PACKAGES"
+        tools:ignore="QueryAllPackagesPermission" />
+
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
 
     <application
@@ -49,6 +68,28 @@
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="Runs a local AI coding agent (pi) whose tool calls can exceed the dataSync time limit" />
+        </service>
+
+        <!--
+          Device capability bridge: the only component in the app that can read the
+          screen and inject input. Deliberately not exported and protected by
+          BIND_ACCESSIBILITY_SERVICE, so only the platform can bind it. The user
+          still has to enable it by hand in Settings → Accessibility, and every
+          capability behind it additionally needs the matching opt-in switch
+          (docs/pi-android-app-design.md §21.4, §23.2).
+        -->
+        <service
+            android:name=".bridge.DeviceAccessibilityService"
+            android:description="让 pi 读取屏幕、点按、滑动、输入与截屏。关闭后 Agent 立即失去这些能力。"
+            android:exported="false"
+            android:label="pi 设备桥"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/accessibility_service_config" />
         </service>
 
     </application>

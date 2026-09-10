@@ -99,10 +99,13 @@ class TranscriptReducerTest {
         val r = reducer()
         r.onEvent(PiEvents.parse("""{"type":"tool_execution_start","toolCallId":"t9","toolName":"edit","args":{}}"""))
         r.onEvent(PiEvents.parse("""{"type":"tool_execution_end","toolCallId":"t9","toolName":"edit","isError":true,"result":{"content":[{"type":"text","text":"no match"}],"details":{"diff":"@@ bad"}}}"""))
-        val card = r.transcript.single() as ToolCall
+        // The card plus the diff block derived from `details.diff`.
+        val card = r.transcript[0] as ToolCall
         assertEquals(ToolStatus.Error, card.status)
         assertTrue(card.isError)
         assertTrue(card.details.toString().contains("@@ bad"))
+        assertEquals(2, r.transcript.size)
+        assertTrue(r.transcript[1] is ToolDiff)
     }
 
     @Test
@@ -125,12 +128,15 @@ class TranscriptReducerTest {
     }
 
     @Test
-    fun `compaction and retry surface as notices, not as fake messages`() {
+    fun `compaction becomes a real marker and retries surface as notices`() {
         val r = reducer()
         r.onEvent(PiEvents.parse("""{"type":"compaction_start","reason":"threshold"}"""))
         r.onEvent(PiEvents.parse("""{"type":"auto_retry_start","attempt":2,"maxAttempts":3,"delayMs":4000}"""))
         assertEquals(2, r.transcript.size)
-        assertTrue(r.transcript.all { it is Notice })
+        val compaction = r.transcript[0] as CompactionMarker
+        assertEquals(CompactionMarker.Status.Running, compaction.status)
+        assertEquals("threshold", compaction.reason)
+        assertTrue(r.transcript[1] is Notice)
         assertTrue((r.transcript[1] as Notice).text.contains("4s"))
         assertEquals(Notice.Tone.Warning, (r.transcript[1] as Notice).tone)
     }

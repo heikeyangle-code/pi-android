@@ -66,9 +66,29 @@ the modern path is validated on hardware rather than assumed.
 
 ### AAPT2 and ARM build hosts
 
-Google publishes AAPT2 for Linux as an **x86_64** binary, so an aarch64 host
-cannot run it and therefore cannot assemble an APK. CI (x86_64) is the build
-path; an ARM workstation can still run `:rpc:test` and the runtime assembly.
+Google publishes AAPT2 for Linux as an **x86_64** binary, so a stock AGP toolchain
+cannot assemble an APK on an aarch64 host. There is, however, an aarch64 build in
+Debian/Ubuntu's `android-sdk-build-tools`, and AGP will use it if pointed at it:
+
+```bash
+apt-get install -y android-sdk-build-tools
+./gradlew :app:compileReleaseKotlin \
+  -Pandroid.aapt2FromMavenOverride=/usr/lib/android-sdk/build-tools/debian/aapt2
+```
+
+Use this for **compile checking on an ARM workstation** — it catches Kotlin and
+Compose errors in seconds instead of after a CI round trip. The released artifacts
+are still assembled on x86_64 CI, because that is where the toolchain Google
+supports actually lives.
+
+Two Kotlin-specific traps that have already cost a CI cycle each:
+
+- **Block comments nest.** Writing `/*` inside a KDoc — easy to do accidentally in
+  a glob like `themes/*.json` — opens a *second* comment level, so the KDoc's own
+  `*/` closes only the inner one and the rest of the file is swallowed. The
+  compiler reports "unclosed comment" at the end of the file.
+- **`implementation` vs `api`.** `:rpc` returns `JsonObject` from its public API,
+  so its serialization dependency is `api`, not `implementation`.
 
 ## Runtime
 
@@ -84,6 +104,23 @@ path; an ARM workstation can still run `:rpc:test` and the runtime assembly.
 
 Every upstream is pinned by SHA-256 in `runtime.lock.json`; the tool refuses to
 build if an artifact's hash moves.
+
+## Signing
+
+Release builds are signed with the key in `keystore/pi-sideload.jks`. This is
+deliberate, and the trade-off is worth stating plainly:
+
+- CI's generated **debug** keystore differs on every run, so every build would
+  refuse to install over the previous one and the user would have to uninstall
+  first — every single time. A fixed key makes the app upgrade in place.
+- The key **is in the repository**, so anyone who can write to the repository can
+  sign an update. That is acceptable for a personal sideload build and **not**
+  acceptable for anything distributed through a store.
+
+For a real distribution key, set `PI_KEYSTORE`, `PI_KEYSTORE_PASSWORD`,
+`PI_KEY_ALIAS` and `PI_KEY_PASSWORD`; the build prefers them over the committed
+key. Switching keys costs one final uninstall, because Android will not replace
+an app signed by a different key.
 
 ## Licence
 
