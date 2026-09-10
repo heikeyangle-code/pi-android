@@ -46,10 +46,11 @@ enum class DeviceCapability(
     Storage(
         id = "storage",
         title = "存储",
-        summary = "把文件导出到公共 Download 目录，或从其中读回",
+        summary = "读写用户授权（SAF）的目录，并把文件导出到公共 Download",
         allows = listOf(
+            "读写你在本页授权的目录（SAF，重启后仍然有效）",
             "把 Agent 生成的文件写入 Download（用户可见、可撤销）",
-            "按文件名从 Download 读回文件交给 Agent",
+            "从 Download 读回文件交给 Agent（API 33+ 只能读本应用自己的文件）",
         ),
         defaultEnabled = false,
     ),
@@ -84,11 +85,11 @@ enum class DeviceCapability(
     Shell(
         id = "shell",
         title = "Shell",
-        summary = "在设备上执行受策略守卫限制的命令（默认关闭，且每次都要确认）",
+        summary = "在设备上执行受策略守卫限制的命令（默认关闭；危险操作第一次确认后可选择本会话不再询问）",
         allows = listOf(
-            "执行只读设备查询（getprop、dumpsys、pm list、logcat 等）",
-            "写入 Download 目录",
-            "读取 App 自己有权限读取的目录",
+            "执行日常读命令（getprop、dumpsys、pm list、logcat、ls、cat、df、ps 等）",
+            "执行日常写命令（cp、mv、rm、mkdir、sed、tar、curl 等），但只能写工作区之内",
+            "在装有 Shizuku 的设备上以 ADB 身份（uid=2000）运行，从而使用 input、pm、am、settings get 等",
         ),
         defaultEnabled = false,
     ),

@@ -35,6 +35,21 @@ documentfile = "1.0.1"
 webkit = "1.13.0"
 navigation = "2.9.0"
 
+# Shizuku: the ADB-level (uid=2000) shell backend, i.e. the reason android_shell
+# can do anything beyond the app's own sandbox. Licence is MIT (the POM's
+# <licenses> block; https://github.com/RikkaApps/Shizuku-API/blob/master/LICENSE),
+# and `:provider` declares minSdkVersion 23, below this app's 26 — so no desugaring
+# (13.1.0's changelog requires it only at minSdk 23). Four small AARs in total:
+# `api` brings `aidl` and `shared`; `provider` adds the ContentProvider that
+# delivers the binder (declared in AndroidManifest.xml). 13.1.5 is the newest
+# published version (Maven Central maven-metadata.xml, lastUpdated 2023-09-21).
+#
+# For tools/typecheck.sh: this script never runs Gradle, so run
+# tools/fetch-typecheck-deps.sh once (it stages jars into build/typecheck/extra/)
+# before typechecking on a machine whose Gradle cache has not resolved Shizuku yet.
+# Gradle itself resolves these from Maven Central with no extra step.
+shizuku = "13.1.5"
+
 [libraries]
 # --- protocol core ---
 kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "serializationJson" }
@@ -57,6 +72,14 @@ lifecycle-viewmodel-compose = { module = "androidx.lifecycle:lifecycle-viewmodel
 documentfile = { module = "androidx.documentfile:documentfile", version.ref = "documentfile" }
 webkit = { module = "androidx.webkit:webkit", version.ref = "webkit" }
 navigation-compose = { module = "androidx.navigation:navigation-compose", version.ref = "navigation" }
+
+# --- elevated device shell ---
+# `provider` is not optional: without it the Shizuku binder never reaches this app,
+# so the manifest declares `rikka.shizuku.ShizukuProvider` and the class has to be
+# on the runtime classpath (a missing provider class would crash the process at
+# startup, not degrade gracefully).
+shizuku-api = { module = "dev.rikka.shizuku:api", version.ref = "shizuku" }
+shizuku-provider = { module = "dev.rikka.shizuku:provider", version.ref = "shizuku" }
 
 # --- markdown ---
 # Only the m3 renderer is declared: it brings org.jetbrains:markdown (the

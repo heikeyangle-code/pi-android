@@ -140,6 +140,13 @@ dependencies {
     implementation(libs.webkit)
     implementation(libs.kotlinx.coroutines.core)
     implementation(libs.markdown.renderer.m3)
+
+    // The elevated (uid=2000) shell backend. `api` is what ShizukuShellBackend
+    // compiles against; `provider` is required at runtime for the binder handoff
+    // (see the ShizukuProvider entry in AndroidManifest.xml). Both are MIT and
+    // neither pulls native code.
+    implementation(libs.shizuku.api)
+    implementation(libs.shizuku.provider)
 }
 
 // The markdown renderer is built by a newer Kotlin than this project's compiler

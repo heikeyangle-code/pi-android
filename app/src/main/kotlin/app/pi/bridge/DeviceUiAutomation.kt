@@ -389,15 +389,31 @@ object DeviceUiAutomation {
         val args = Bundle().apply {
             putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text)
         }
-        val written = node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
+        // Two mechanisms, in the order that costs the user least:
+        //  1. ACTION_SET_TEXT replaces the field's content without touching the
+        //     clipboard, but Compose/WebView/custom editors often refuse it (the
+        //     review of this layer named exactly that as the reason to consider a
+        //     custom IME).
+        //  2. clipboard + ACTION_PASTE is the fallback that needs no IME and no
+        //     extra permission: paste goes through the view's own
+        //     onTextContextMenuItem, which far more editors implement.
+        // The cost of (2) is that the user's clipboard is replaced; the reply says
+        // so, because a silent clipboard overwrite is the kind of side effect this
+        // project refuses to hide.
+        var mechanism = "action_set_text"
+        var written = node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
         if (!written) {
-            // Last resort: typing through the node's own edit action is unavailable,
-            // so report precisely rather than pretending the text landed.
+            if (pasteInto(service, node, text)) {
+                mechanism = "clipboard_paste"
+                written = true
+            }
+        }
+        if (!written) {
             throw DeviceActionException(
                 DeviceDenial(
                     code = DeviceDenial.UNSUPPORTED,
-                    reason = "目标输入框拒绝了直接写入文本（可能是 WebView 或自绘控件）。",
-                    hint = "可以改用 android_shell 执行 input text（需要 Shell 能力），或让用户手动输入。",
+                    reason = "目标输入框既拒绝了直接写入文本，也拒绝了粘贴（可能是自绘控件或只读输入框）。",
+                    hint = "可以改用 android_shell 执行 input text（需要 Shell 能力 + Shizuku），或让用户手动输入。",
                 ),
             )
         }
@@ -416,7 +432,14 @@ object DeviceUiAutomation {
         return JSONObject().apply {
             put("chars", text.length)
             put("target", DeviceUiText.clip(node.text, 40))
+            put("mechanism", mechanism)
             put("submitted", submitted)
+            if (mechanism == "clipboard_paste") {
+                put(
+                    "clipboardNote",
+                    "直接写入被拒绝，已改用「剪贴板 + 粘贴」完成；系统剪贴板里原来的内容被这次写入替换了。",
+                )
+            }
             if (submit && !submitted) {
                 put(
                     "submitHint",
@@ -426,16 +449,52 @@ object DeviceUiAutomation {
         }
     }
 
+    /**
+     * Put [text] on the clipboard and ask [node] to paste it.
+     *
+     * The clipboard write is posted to the main looper for the same reason
+     * `DeviceSystemActions.clipboardSet` does it: the bridge serves requests from a
+     * pool thread with no `Looper`, and the platform's clipboard service is not
+     * documented as thread-safe there.
+     */
+    private fun pasteInto(service: AccessibilityService, node: AccessibilityNodeInfo, text: String): Boolean {
+        val manager = service.getSystemService(android.content.Context.CLIPBOARD_SERVICE)
+            as? android.content.ClipboardManager ?: return false
+        val posted = java.util.concurrent.CountDownLatch(1)
+        runCatching {
+            mainHandler.post {
+                runCatching {
+                    manager.setPrimaryClip(android.content.ClipData.newPlainText("pi", text))
+                }
+                posted.countDown()
+            }
+        }.onFailure { posted.countDown() }
+        runCatching { posted.await(2, java.util.concurrent.TimeUnit.SECONDS) }
+        return runCatching { node.performAction(AccessibilityNodeInfo.ACTION_PASTE) }.getOrDefault(false)
+    }
+
     // --------------------------------------------------------------- keys -----
 
     /** Keys the accessibility service can actually perform without an IME. */
-    private val globalActions: Map<String, Int> = mapOf(
-        "back" to AccessibilityService.GLOBAL_ACTION_BACK,
-        "home" to AccessibilityService.GLOBAL_ACTION_HOME,
-        "recents" to AccessibilityService.GLOBAL_ACTION_RECENTS,
-        "notifications" to AccessibilityService.GLOBAL_ACTION_NOTIFICATIONS,
-        "quicksettings" to AccessibilityService.GLOBAL_ACTION_QUICK_SETTINGS,
-    )
+    private val globalActions: Map<String, Int> = buildMap {
+        put("back", AccessibilityService.GLOBAL_ACTION_BACK)
+        put("home", AccessibilityService.GLOBAL_ACTION_HOME)
+        put("recents", AccessibilityService.GLOBAL_ACTION_RECENTS)
+        put("notifications", AccessibilityService.GLOBAL_ACTION_NOTIFICATIONS)
+        put("quicksettings", AccessibilityService.GLOBAL_ACTION_QUICK_SETTINGS)
+        put("powermenu", AccessibilityService.GLOBAL_ACTION_POWER_DIALOG)
+        // API-gated constants: adding them here is how the channel gains "lock the
+        // screen" and "take a screenshot" without any new permission.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            put("lock", AccessibilityService.GLOBAL_ACTION_LOCK_SCREEN)
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            put("screenshot", AccessibilityService.GLOBAL_ACTION_TAKE_SCREENSHOT)
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            put("split", AccessibilityService.GLOBAL_ACTION_TOGGLE_SPLIT_SCREEN)
+        }
+    }
 
     fun key(service: AccessibilityService, key: String): JSONObject {
         val normalized = key.trim().lowercase().replace("-", "").replace("_", "")
@@ -463,6 +522,80 @@ object DeviceUiAutomation {
                 hint = "如需 enter / delete / 方向键等原始按键，请改用 android_shell 执行 input keyevent（需要 Shell 能力），或让用户手动操作。",
             ),
         )
+    }
+
+    // ------------------------------------------------------- raw key events ----
+
+    /**
+     * `input keyevent` for the keys the accessibility channel cannot produce.
+     *
+     * This exists because the accessibility route can only fire five
+     * `GLOBAL_ACTION`s, and `input` — like every other `InputManager` client — needs
+     * `INJECT_EVENTS`, a signature permission the app will never hold. uid 2000
+     * does, so with Shizuku this endpoint finally is the "arbitrary keyevent"
+     * capability the design's `android_shell` note promised. Without Shizuku it
+     * refuses and says why, instead of returning a confusing permission error.
+     */
+    fun keyEvent(keys: String, repeat: Int, backend: DeviceShellBackend): JSONObject {
+        val tokens = keys.trim()
+            .uppercase()
+            .split(Regex("[\\s,]+"))
+            .filter { it.isNotEmpty() }
+            .map { it.removePrefix("KEYCODE_") }
+        if (tokens.isEmpty()) {
+            throw DeviceActionException(DeviceDenial(DeviceDenial.BAD_REQUEST, "keyevent 需要至少一个按键名。"))
+        }
+        // The characters are validated rather than escaped: the names go into a
+        // command string, and `input` has no shell-quoting of its own.
+        for (token in tokens) {
+            if (!Regex("^[A-Z0-9_]{1,24}$").matches(token)) {
+                throw DeviceActionException(
+                    DeviceDenial(
+                        code = DeviceDenial.BAD_REQUEST,
+                        reason = "不是合法的按键名：$token（只接受 A-Z0-9_，例如 ENTER、DEL、DPAD_DOWN、TAB）。",
+                        hint = "Android KeyEvent 的名字，KEYCODE_ 前缀可省略。",
+                    ),
+                )
+            }
+        }
+        val times = repeat.coerceIn(1, 20)
+        if (backend.id != ShizukuShellBackend.id) {
+            throw DeviceActionException(
+                DeviceDenial(
+                    code = DeviceDenial.UNSUPPORTED,
+                    reason = "原始按键需要 ADB 身份（uid=2000），当前 Shell 后端是应用自身身份，" +
+                        "而注入按键需要 INJECT_EVENTS 签名权限，应用永远拿不到。",
+                    hint = "请让用户在「设置 → 设备能力 → Shell」按提示启用 Shizuku，然后重试；" +
+                        "或者继续用 android_key（back/home/recents/notifications/quicksettings/lock 等全局动作）。",
+                ),
+            )
+        }
+        val command = buildString {
+            append("input keyevent")
+            repeat(times) {
+                for (token in tokens) append(' ').append(token)
+            }
+        }
+        val result = backend.run(command, 20_000)
+        val failed = result.exitCode != 0 ||
+            result.stderr.contains("Exception", ignoreCase = true) ||
+            result.stderr.contains("Error:", ignoreCase = true)
+        if (failed) {
+            throw DeviceActionException(
+                DeviceDenial(
+                    code = DeviceDenial.ERROR,
+                    reason = "input keyevent 失败（退出码 ${result.exitCode}）：" +
+                        result.stderr.trim().ifEmpty { result.stdout.trim() }.take(400),
+                    hint = "可以用 android_shell 手动跑同样的命令看完整输出。",
+                ),
+            )
+        }
+        return JSONObject().apply {
+            put("keys", JSONArray(tokens))
+            put("repeat", times)
+            put("mode", "input keyevent")
+            put("backend", result.backend)
+        }
     }
 
     // ---------------------------------------------------------- screenshot ----

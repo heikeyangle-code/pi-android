@@ -340,15 +340,21 @@ class TrustRepository(
                     runCatching { lockDir.delete() }
                 }
             }
-            // Stale: a process that died holding it. proper-lockfile uses mtime and
-            // a 10 s default; matching it keeps pi and the app from deadlocking on
-            // each other's leftovers.
+            // Stale: a process that died holding it. proper-lockfile checks the
+            // lock directory's mtime against a 10 s default and removes it itself;
+            // matching that is what keeps pi and the app from deadlocking on each
+            // other's leftovers after a crash.
             val age = System.currentTimeMillis() - lockDir.lastModified()
-            if (attempt >= MAX_LOCK_ATTEMPTS || (lockDir.isDirectory && age > LOCK_STALE_MS)) {
+            if (lockDir.isDirectory && age > LOCK_STALE_MS) {
                 runCatching { lockDir.delete() }
-                if (attempt >= MAX_LOCK_ATTEMPTS * 2) {
-                    throw IllegalStateException("无法获取 trust.json 的锁（${lockDir.absolutePath}）")
-                }
+                continue
+            }
+            // A *live* lock is never stolen. pi's own behaviour at maxAttempts is to
+            // throw (`trust-manager.ts:152-156`), and stealing here would be strictly
+            // worse than failing: the app would race pi's rewrite of the whole store
+            // and could lose a trust decision.
+            if (attempt >= MAX_LOCK_ATTEMPTS) {
+                throw IllegalStateException("无法获取 trust.json 的锁（${lockDir.absolutePath}）")
             }
             Thread.sleep(LOCK_RETRY_DELAY_MS)
         }

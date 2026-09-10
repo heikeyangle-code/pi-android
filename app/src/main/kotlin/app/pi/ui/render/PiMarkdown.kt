@@ -83,32 +83,71 @@ internal fun PiMarkdownText(
  * pi's `LATEX_MARKDOWN_EXTENSIONS`, applied to the *source* instead of to the
  * token stream.
  *
- * pi's tokenizers are marked extensions
- * (`packages/tui/src/components/markdown.ts:123-172`), so they only produce a
- * token where marked's own inline rules do not apply — a `$` inside a code span
- * or a fence is likewise left alone there. This port gets the same property for
- * free: the Android renderer highlights code fences from the fence text and the
- * inline-code annotator runs on spans, so a formula-looking `$` inside either is
- * never seen by this scan (see the block/inline ordering below for the other
- * half of the reason).
+ * pi's tokenizers are `marked` extensions
+ * (`packages/tui/src/components/markdown.ts:123-172`), which means they run
+ * **after** marked's own rules have already claimed code spans and fenced code:
+ * a `$` inside either is never seen by `tokenizeInlineLatex`. Reproducing that
+ * here means the scan has to skip code explicitly, which is what the fence and
+ * inline-code states in [piMarkdownSource] do. Without them `a `$y$` b` would be
+ * rewritten inside its own code span — a formula substitution the renderer would
+ * then display as literal code.
  *
- * Order matters, and it mirrors marked: **block first, inline second**. A block
- * token consumes its whole `$$...$$` run before any inline rule can look inside
- * it, so the inline pass never sees the body of a display formula. Doing it the
- * other way round would eat `$$` as two adjacent inline formulas.
+ * Order also matters, and it mirrors marked: **block first, inline second**. A
+ * block token consumes its whole `$$...$$` run before any inline rule can look
+ * inside it, so the inline pass never sees the body of a display formula. Doing
+ * it the other way round would eat `$$` as two adjacent inline formulas.
  *
- * pi's tokenizers also refuse to open on a delimiter that follows a word
+ * pi's tokenizer additionally refuses to open on a delimiter that follows a word
  * character (`markdown.ts:52-99`, `isEscaped` plus the boundary checks), which
- * is what keeps prose like `costs $5 and $10` from becoming a formula. The same
- * check is done here with a lookbehind.
+ * is what keeps prose like `costs $5 and $10` out of the math path. That rule is
+ * a lookbehind here.
  *
  * Anything [PiLatex] cannot reduce to Unicode is left exactly as written —
  * `latexToken.raw` is pi's own fallback when `renderLatex` returns `undefined`
  * (`markdown.ts:509` and `:649`).
  */
 internal fun piMarkdownSource(markdown: String): String {
+    // Fast path: no delimiter, nothing to rewrite. This is the common case for
+    // a streaming transcript.
     if (!markdown.contains('$')) return markdown
-    val block = BLOCK_MATH.replace(markdown) { match ->
+    val out = StringBuilder(markdown.length)
+    var index = 0
+    while (index < markdown.length) {
+        val fence = FENCE.find(markdown, index)
+        if (fence != null && fence.range.first == index) {
+            // A fenced block: copy up to the closing fence of the same
+            // character and at least the same length, so a shorter inner run of
+            // backticks cannot end it early.
+            out.append(fence.value)
+            val closing = "\n" + fence.groupValues[1]
+            val end = markdown.indexOf(closing, fence.range.last + 1)
+            if (end < 0) return out.append(markdown, fence.range.last + 1, markdown.length).toString()
+            out.append(markdown, fence.range.last + 1, end + closing.length)
+            index = end + closing.length
+            continue
+        }
+        val code = INLINE_CODE.find(markdown, index)
+        if (code != null && code.range.first == index) {
+            out.append(code.value)
+            index = code.range.last + 1
+            continue
+        }
+        val start = when {
+            fence == null -> code?.range?.first ?: markdown.length
+            code == null -> fence.range.first
+            else -> minOf(fence.range.first, code.range.first)
+        }
+        out.append(applyMath(markdown, index, start))
+        index = start
+    }
+    return out.toString()
+}
+
+/** Math substitution for one code-free run `[start, end)`. */
+private fun applyMath(text: String, start: Int, end: Int): String {
+    val run = text.substring(start, end)
+    if (!run.contains('$')) return run
+    val block = BLOCK_MATH.replace(run) { match ->
         // The trailing newline is part of the match, so a display formula keeps
         // its own line instead of being glued into the following paragraph.
         PiLatex.toDisplayUnicode(match.value) ?: match.value
@@ -120,12 +159,27 @@ internal fun piMarkdownSource(markdown: String): String {
 }
 
 /**
+ * An opening code fence at the current position: up to three spaces, then three
+ * or more backticks or tildes, as CommonMark specifies. The info string is not
+ * captured — the closing fence only needs the marker itself.
+ */
+private val FENCE = Regex("(?m)^ {0,3}(`{3,}|~{3,})[^\n]*")
+
+/**
+ * A code span: a backtick run, then the first run of exactly as many backticks.
+ * `org.intellij.markdown` uses the same greedy rule, so the scanner and the
+ * parser agree about where a span ends.
+ */
+private val INLINE_CODE = Regex("(`{1,3})(?:(?!\\1)[\\s\\S])*?\\1")
+
+/**
  * `$$`-delimited display math: pi's `tokenizeBlockLatex`
  * (`packages/tui/src/components/markdown.ts:101-121`), including its rule that
- * the opening `$$` cannot follow a word character.
+ * the opening `$$` cannot follow a word character and that a backslash escapes
+ * the delimiter (`markdown.ts:31-39`, `isEscaped`).
  */
 private val BLOCK_MATH = Regex(
-    pattern = "(?<![\\p{L}\\p{N}])\\$\\$([^$]+?)\\$\\$\\n?",
+    pattern = "(?<![\\p{L}\\p{N}\\\\])\\$\\$([^$]+?)\\$\\$\\n?",
     option = RegexOption.DOT_MATCHES_ALL,
 )
 
@@ -133,10 +187,18 @@ private val BLOCK_MATH = Regex(
  * `$`-delimited inline math: pi's `tokenizeInlineLatex`
  * (`packages/tui/src/components/markdown.ts:52-99`). The body may not contain a
  * bare `$` or a line break, and may not start or end on whitespace — the same
- * constraints pi's tokenizer enforces, and the reason `$` behaves as ordinary
+ * constraints pi's tokenizer enforces, which is why `$` stays ordinary
  * punctuation almost everywhere it appears in prose.
+ *
+ * The `\p{L}` lookahead after the opening delimiter is the one place this port
+ * is deliberately stricter than pi's regex: pi's tokenizer walks the string and
+ * checks `looksLikePendingDollarMath` (`markdown.ts:46-48`) before it accepts a
+ * non-whitespace body, which is what keeps a sentence like
+ * `costs $5 and $10 today` out of the math path. Requiring the first body
+ * character not to be a letter or digit is the cheap equivalent, and it cannot
+ * hide a real formula: `$\alpha$` opens with a backslash.
  */
 private val INLINE_MATH = Regex(
-    pattern = "(?<![\\p{L}\\p{N}])\\$(?!\\s)([^$\\n]+?)(?<!\\s)\\$(?![\\p{L}\\p{N}])",
+    pattern = "(?<![\\p{L}\\p{N}\\\\])\\$(?![\\s\\p{L}\\p{N}])([^$\\n]+?)(?<!\\s)\\$(?![\\p{L}\\p{N}])",
 )
 

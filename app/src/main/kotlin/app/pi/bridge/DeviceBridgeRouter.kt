@@ -222,9 +222,60 @@ class DeviceBridgeRouter(
 
                 "/app/shell" -> withCapability(DeviceCapability.Shell) {
                     val command = params.strRequired("command")
-                    DeviceShellGuard.inspect(command)?.let { throw DeviceActionException(it) }
+                    // One switch, two enforcers: the TS gate reads the same boolean
+                    // from /app/health, so the dialog and this guard cannot disagree.
+                    val relaxed = store.isShellSyntaxRelaxed()
+                    DeviceWorkspace.refresh(context)
+                    DeviceShellGuard.inspect(command, relaxed, DeviceWorkspace)?.let { throw DeviceActionException(it) }
                     val backend = DeviceShellGuard.active()
-                    DeviceShellGuard.toJson(backend.run(command, params.int("timeoutMs", 15_000)))
+                    DeviceShellGuard.toJson(
+                        result = backend.run(command, params.int("timeoutMs", 15_000)),
+                        relaxedShellSyntax = relaxed,
+                        boundaryLabel = DeviceWorkspace.shellPath(),
+                    )
+                }
+
+                // Raw key injection. The accessibility channel can only do the five
+                // GLOBAL_ACTIONs; `input keyevent` needs uid 2000, so this endpoint
+                // exists only to make the Shizuku payoff reachable.
+                "/app/ui/keyevent" -> withCapability(DeviceCapability.Accessibility) {
+                    DeviceUiAutomation.keyEvent(
+                        keys = params.strRequired("keys"),
+                        repeat = params.int("repeat", 1),
+                        backend = DeviceShellGuard.active(),
+                    )
+                }
+
+                "/app/files" -> withCapability(DeviceCapability.Storage) {
+                    DeviceSafStore.get(context).describe()
+                }
+
+                "/app/files/list" -> withCapability(DeviceCapability.Storage) {
+                    DeviceSafStore.get(context).list(params.str("path"))
+                }
+
+                "/app/files/read" -> withCapability(DeviceCapability.Storage) {
+                    DeviceSafStore.get(context).read(
+                        path = params.strRequired("path"),
+                        maxBytes = params.int("maxBytes", 1024 * 1024),
+                    )
+                }
+
+                "/app/files/write" -> withCapability(DeviceCapability.Storage) {
+                    DeviceSafStore.get(context).write(
+                        path = params.strRequired("path"),
+                        text = params.str("content"),
+                        base64 = params.str("base64"),
+                        mimeType = params.str("mimeType") ?: "text/plain",
+                    )
+                }
+
+                // The pi-side permission gate reports what it has approved. Display
+                // only: nothing here changes policy (the gate's own memory is the
+                // enforcement), and the UI labels it as extension-reported.
+                "/app/gate/report" -> {
+                    DeviceApprovalLedger.report(params.json)
+                    BridgeHttpResponse.okRaw(DeviceApprovalLedger.toJson())
                 }
 
                 else -> BridgeHttpResponse(404, notFound(path).toString())
@@ -276,6 +327,33 @@ class DeviceBridgeRouter(
         put("locationPermissionGranted", store.hasLocationPermission())
         put("notificationPermissionGranted", store.hasNotificationPermission())
         put("vibratePermissionGranted", store.hasVibratePermission())
+        put("legacyStoragePermissionGranted", store.hasLegacyStoragePermission())
+        // The relaxed-syntax switch is published so the pi-side gate can honour the
+        // exact same boolean the Kotlin guard enforces.
+        put("shellSyntaxRelaxed", store.isShellSyntaxRelaxed())
+        DeviceWorkspace.refresh(context)
+        put("workspace", JSONObject().apply {
+            put("shellPath", DeviceWorkspace.shellPath() ?: JSONObject.NULL)
+            put("guestPath", "/workspace")
+            put("known", DeviceWorkspace.isKnown())
+        })
+        put("shizuku", DeviceShizuku.status(context))
+        put("gate", DeviceApprovalLedger.toJson())
+        // The whole policy, so a model (and the diagnostics page) can see exactly
+        // what is permitted instead of inferring it from refusals.
+        put("shellPolicy", JSONObject().apply {
+            put("allowedCommands", JSONArray(DeviceShellGuard.allowedCommands))
+            put("blocked", JSONArray(DeviceShellGuard.blockedSummary()))
+            put("writeBoundary", JSONArray(DeviceShellGuard.writeBoundarySummary()))
+            put("syntax", JSONArray(DeviceShellGuard.syntaxSummary(store.isShellSyntaxRelaxed())))
+            put("relaxedCost", DeviceShellGuard.relaxedCost())
+            put("elevatedBackend", DeviceShellGuard.hasElevatedBackend())
+        })
+        put("saf", JSONObject().apply {
+            val grants = DeviceSafStore.get(context).grants()
+            put("count", grants.size)
+            put("roots", org.json.JSONArray(grants.map { it.name }))
+        })
         put("shellBackends", JSONArray().apply {
             for (backend in DeviceShellGuard.backends()) {
                 put(
@@ -413,7 +491,8 @@ class DeviceBridgeRouter(
     }
 
     companion object {
-        const val BRIDGE_VERSION = "1"
+        /** Bumped whenever the endpoint set or a payload shape changes. */
+        const val BRIDGE_VERSION = "2"
 
         /**
          * The port the bridge listens on. Deliberately not 3090: the shipping DSH
@@ -430,6 +509,7 @@ class DeviceBridgeRouter(
             "POST /app/ui/tap",
             "POST /app/ui/input",
             "POST /app/ui/key",
+            "POST /app/ui/keyevent",
             "POST /app/ui/swipe",
             "POST /app/screenshot",
             "GET  /app/apps",
@@ -450,7 +530,12 @@ class DeviceBridgeRouter(
             "POST /app/torch",
             "POST /app/export",
             "POST /app/import",
+            "GET  /app/files",
+            "POST /app/files/list",
+            "POST /app/files/read",
+            "POST /app/files/write",
             "POST /app/shell",
+            "POST /app/gate/report",
         )
     }
 }

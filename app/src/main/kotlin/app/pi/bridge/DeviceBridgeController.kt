@@ -57,14 +57,16 @@ object DeviceBridgeController {
      * check ports, tokens and networks instead of the installer.
      *
      * So: **every change to `pi-extensions/ 目录` must bump this string.**
-     * History: "1" shipped the device bridge; "2" adds `pi-highlight/`.
+     * History: "1" shipped the device bridge; "2" adds `pi-highlight/`; "3" adds the
+     * session-scoped approvals, the workspace-relative shell policy and the SAF file
+     * tools to the device extension.
      *
      * A content-derived fingerprint (hashing the asset tree's names and sizes)
      * would remove the human step entirely and is the better long-term design —
      * recorded in docs/known-gaps.md rather than done here, because the file is
      * not the one being worked on right now.
      */
-    const val ASSET_VERSION = "2"
+    const val ASSET_VERSION = "3"
 
     @Volatile
     private var server: DeviceBridgeHttpServer? = null
@@ -107,6 +109,10 @@ object DeviceBridgeController {
         val store = DeviceCapabilityStore.get(appContext)
         val log = DeviceAuditLog(File(paths.home, "device-bridge-audit.log"))
         auditLog = log
+
+        // The shell's write boundary is the user's workspace; re-read it on every
+        // start so a workspace change is picked up without a rebuild.
+        DeviceWorkspace.refresh(appContext)
 
         val minted = mintToken()
         token = minted

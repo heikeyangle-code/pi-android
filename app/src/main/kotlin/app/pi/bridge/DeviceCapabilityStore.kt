@@ -68,6 +68,26 @@ class DeviceCapabilityStore private constructor(context: Context) {
     fun isSessionDisabled(capability: DeviceCapability): Boolean =
         sessionDisabled.contains(capability.id)
 
+    /**
+     * 放宽模式: the opt-in that lets the shell guard accept command substitution
+     * (`$(...)`, backticks) and the nesting heads (`sh`, `eval`, `source`, …).
+     *
+     * One stored boolean, read by three consumers: the Kotlin guard
+     * ([DeviceShellGuard.inspect]), the authorization page, and the pi-side
+     * permission gate — the gate reads it from `/app/health`. That single source is
+     * the point: a mode only one side honoured would be worse than no mode, because
+     * the disagreement between "the dialog let it through" and "the guard refuses"
+     * is invisible.
+     *
+     * Default OFF, and it is not part of any capability group: turning 「Shell」 on
+     * must not silently widen what shell *syntax* is allowed.
+     */
+    fun isShellSyntaxRelaxed(): Boolean = prefs.getBoolean(KEY_RELAXED_SHELL, false)
+
+    fun setShellSyntaxRelaxed(relaxed: Boolean) {
+        prefs.edit().putBoolean(KEY_RELAXED_SHELL, relaxed).apply()
+    }
+
     /** Persisted decision **and** not cut for this session. */
     fun isEnabled(capability: DeviceCapability): Boolean =
         isPersistentlyEnabled(capability) && !isSessionDisabled(capability)
@@ -149,12 +169,16 @@ class DeviceCapabilityStore private constructor(context: Context) {
 
         DeviceCapability.Storage ->
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                // API 29+ has MediaStore, which needs no storage permission for the
+                // app's own exports; SAF grants cover everything else.
+                null
+            } else if (hasLegacyStoragePermission()) {
                 null
             } else {
                 DeviceDenial(
                     code = DeviceDenial.NO_PERMISSION,
                     reason = "这台设备（Android ${Build.VERSION.RELEASE}）导出文件需要存储权限，当前未授予。",
-                    hint = "请让用户在系统设置中为 pi-android 授予存储权限，或在应用内改用支持 MediaStore 的路径。",
+                    hint = "请让用户在「设置 → 设备能力 → 存储」点「授予存储权限」，或在系统设置里为本应用打开存储权限。",
                 )
             }
 
@@ -186,6 +210,31 @@ class DeviceCapabilityStore private constructor(context: Context) {
         return fine == PackageManager.PERMISSION_GRANTED || coarse == PackageManager.PERMISSION_GRANTED
     }
 
+    /**
+     * The pre-API-29 storage path.
+     *
+     * The manifest declares `WRITE_EXTERNAL_STORAGE` with `maxSdkVersion="29"` and
+     * `READ_EXTERNAL_STORAGE` with `maxSdkVersion="32"`, so both are requestable
+     * exactly where they still mean something and invisible above that. Before this
+     * the code told the user to add the permission to the manifest — the reason
+     * `android_export` and `android_import` simply could not work on Android 8/9,
+     * which `minSdk 26` says this app supports.
+     */
+    fun hasLegacyStoragePermission(): Boolean {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) return true
+        val read = ContextCompat.checkSelfPermission(appContext, Manifest.permission.READ_EXTERNAL_STORAGE)
+        if (read != PackageManager.PERMISSION_GRANTED) return false
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) return true
+        val write = ContextCompat.checkSelfPermission(appContext, Manifest.permission.WRITE_EXTERNAL_STORAGE)
+        return write == PackageManager.PERMISSION_GRANTED
+    }
+
+    /** The permissions the storage card should request on this API level. */
+    fun legacyStoragePermissions(): List<String> = buildList {
+        if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.P) add(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+        if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.S_V2) add(Manifest.permission.READ_EXTERNAL_STORAGE)
+    }
+
     /** True when the app may post notifications (always true below API 33). */
     fun hasNotificationPermission(): Boolean =
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -202,6 +251,7 @@ class DeviceCapabilityStore private constructor(context: Context) {
 
     companion object {
         private const val PREFS_NAME = "pi-device-capabilities"
+        private const val KEY_RELAXED_SHELL = "shell.relaxed-syntax"
 
         @Volatile
         private var instance: DeviceCapabilityStore? = null
