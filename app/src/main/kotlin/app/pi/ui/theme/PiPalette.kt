@@ -16,7 +16,7 @@ import androidx.compose.ui.graphics.Color
  * This file carries all 56 (`dark.json` gives every one) plus the 3 export
  * tokens, because the point is not to have "a lot of colours" — it is that the
  * app's palette should BE the user's pi theme. Themes are user-authored files
- * (`~/.pi/agent/themes/*.json`), so a theme someone tuned on their desktop
+ * (under `~/.pi/agent/themes/`), so a theme someone tuned on their desktop
  * should change this app too, and a semantic colour pi assigned a meaning
  * (`toolSuccessBg` is "this tool succeeded") should not be re-invented here and
  * allowed to drift. docs/pi-android-ui-spec.md §2.1 has the surface mapping.
