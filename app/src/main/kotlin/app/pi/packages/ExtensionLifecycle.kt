@@ -164,9 +164,17 @@ class ExtensionLifecycle {
      *
      * @param turnRunning the caller's live answer from the engine, not a guess.
      */
-    fun requestRestart(turnRunning: Boolean): RequestOutcome = when (val now = _state.value) {
+    fun requestRestart(
+        turnRunning: Boolean,
+        /**
+         * Why the wait, when the refusal came from the engine rather than from this
+         * machine. Passing the engine's own sentence matters: it is the difference
+         * between "等回合结束" and "重启会中断正在跑的 bash 命令，所以没有重启".
+         */
+        turnNote: String = TURN_RUNNING_NOTE,
+    ): RequestOutcome = when (val now = _state.value) {
         is State.NeedsRestart -> if (turnRunning) {
-            _state.value = State.AwaitingIdle(changes = now.changes, turnNote = TURN_RUNNING_NOTE)
+            _state.value = State.AwaitingIdle(changes = now.changes, turnNote = turnNote)
             RequestOutcome.WaitingForTurn
         } else {
             _state.value = State.AwaitingConfirmation(changes = now.changes, question = confirmQuestion(now.changes))

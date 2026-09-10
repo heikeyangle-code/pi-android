@@ -598,7 +598,7 @@ internal object PiLatex {
     }
 
     fun toDisplayUnicode(source: String): String? {
-        val body = source.removePrefix("$$").removeSuffix("$$").trim()
+        val body = source.trim().removePrefix("$$").removeSuffix("$$").trim()
         val rendered = toUnicode(body, display = true) ?: return null
         return "\n" + rendered + "\n"
     }

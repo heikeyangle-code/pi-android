@@ -189,6 +189,23 @@
 命令名的冲突已由 GUI 侧处理（`name:1` 后缀保留，见 `PiSlashCommands.kt`），**工具名的没有任何处理**。
 收尾：扩展/包管理界面里检测并显示冲突；或在加载后比对工具表并给出警告。
 
+### E9. 模型/凭证的"导入"在 GUI 里**完全是空壳**（点下去没有任何反应）
+- **症状**：设置 → 模型 → 「API Key」「OAuth 登录」「本地模型（llama.cpp）」三行**看得见、能点，但点了什么都不发生**。
+- **原因（两处都缺）**：
+  1. 这三行是 `PiRowKind.Action`（`PiSettingsRegistry.kt:369` 起），动作要通过 `PiSettingsStack(onRunAction = ...)` 派发——而 **`PiRoot.kt` 调用时根本没传 `onRunAction`**，默认 `null`，所以动作永远不会执行；
+  2. 即使传了，**也没有任何东西实现那个动作**：`grep -rn "app.credentials\|app.localModels"` 在 `PiSettingsRegistry.kt` 之外**零命中**——注册表只是画了行，没有消费者。
+- **真正该对接的东西**：pi 把凭证写在 `~/.pi/agent/auth.json`（0600），**不属于 `settings.json`**（见该行自己的描述）。所以正确做法是 App 侧写这个文件、或调用 pi 的登录流程，**不是往 settings.json 里塞键**。
+- **当前实际能做的**：只有**切换** pi 已经配好的模型（`get_available_models` → `set_model`/`cycle_model`），且需要引擎在跑、provider 已在 pi 侧配好。
+- **连带**：`app.trust.*` 两行（`PiSettingsRegistry.kt:1400-1422`）是**同一形态的空壳**——`runtime/**` 的信任存储未做（见 G 节）。
+- **收尾（用户已定方向，不再讨论方案）**：
+  1. **不用扩展、不另造格式**——直接读写 pi 的官方文件：凭证 `auth.json`（0600）、设置 `settings.json`；字段以 **pi 源码**为准（不是文档）；
+  2. **必须尊重 pi 的锁**（`proper-lockfile`，见 `settings-manager.ts:243`、`auth-storage.ts:76`），否则会和 pi 的运行期写入互相覆盖，症状是"设置自己变回去"，极难定位；
+  3. 第一步先读 `docs/custom-provider.md` 确认 **provider/model 定义的确切落点**（`settings.json` 的普通键？独立文件？）——**未确认前不许动手写代码**；
+  4. 界面要求**人性化**：选厂商 → 填 Key → 填模型名 → **「测试连接」** → 保存；**打开时读取并预填已有配置**，让"新增"和"编辑"共用一个界面。**"测试连接"是必须的**——要让人在保存前就知道 Key 对不对，而不是配完、重启、发消息才发现 401；
+  5. 写完后走 `PiEngineHost.restart()` 生效；
+  6. `PiRoot.kt` 把 `onRunAction` 接通；
+  7. 顺带**审计所有 `PiRowKind.Action` 行**，凡是"画了但没有消费者"的，要么实现、要么从界面撤掉——**一个点了没反应的行，比没有这一行更坏**。
+
 ### E2. 高亮服务的 `attach(context)` 到底有没有被调用
 高亮代理说它在 `PiMarkdown.kt` 加了 `attach(context)`。**但没人验证过这条调用在 App 启动路径上真的会走到。**
 若没走到：高亮**永远静默退回单色**，而症状看起来像"回环服务没起来"——排查方向会完全跑偏。
@@ -267,3 +284,60 @@ pi 把扩展加载错误**只写进 `runtime.diagnostics`，不发任何事件**
 3. **委托模板必须禁掉全部 git 写操作**，不只是 `commit`/`push`。`checkout` / `reset` / `stash` / `clean` / `restore` **能一次毁掉所有并行代理的在制品，而且不报错**。
 4. **并行时每个代理都会报"红不是我的文件"。** 这没有意义——**只有冻结树之后的整树 typecheck 才算数**。
 5. **自证不等于认账。** 代理报告 `typecheck: OK` 时要独立复跑；审计报告里"已核对为正确"的结论也要抽验。**反过来，报"证不出来"的项目要保留**，因为自信的错误发现会让人去改本来正确的代码。
+
+---
+
+## I. 功能缺口审查（`f2a50c61`）发现的、原先三份文档都没记的 11 条
+
+> 来源：`docs/feature-gaps.md`（667 行，148 行分级）。审查基线 `a7b7738` vs pi `bbb61e3`。
+> 分级计数：IMPLEMENTED 74 · PARTIAL 20 · MISSING-GUI 26 · MISSING-TERMINAL-ONLY 12 · CLI-ONLY 9 · N/A 7。
+> **其中 4 条是静默的行为缺陷**（写错字节、丢用户输入、死代码、失效开关），比"功能缺失"严重——因为它们**看起来是成功的**。
+
+### I1. `/tree` 的"跳到历史某点"在 RPC 里根本不可达（DEFECT）
+pi 能在**不新建会话文件**的前提下跳到任意历史点（`docs/sessions.md:71`、`interactive-mode.ts:5216-5322`）；而 `RpcCommand` 只有 `get_tree`/`fork`（`rpc-types.ts:20-74`）。
+App 的「分支」动作实际是 **fork，会写一个新会话文件**（`SessionTreeScreen.kt:74,165,226`）——**和 pi 的语义不同**，用户以为在"跳分支"，实际在"造新文件"。分支摘要也因此不可达。
+→ 应补进 **F2**（协议做不到）。
+
+### I2. **全部 20 个动作类设置行都是死的**（DEFECT，E9 的扩展）
+`PiRoot.kt:130-138` **从不传 `onRunAction`**（默认 `null`，`PiSettingsStack.kt:34`），`SettingsGroupScreen.kt:151-170` 把它们降级成"这个入口由运行时接管…"。
+涉及**App 里唯一的 API Key/OAuth 凭证入口、会话导入、更新检查、日志查看、诊断导出**——**全部点了没反应**。而且**整个仓库没有 `auth.json` 的写入者**。
+（E9 只记了凭证/信任那几行，**这一条要扩到全部 20 行**。）
+
+### I3. `/export <path>.jsonl` **会把 HTML 写进 `.jsonl` 文件**（DEFECT，静默写错字节）
+App 永远调 `export_html`（`PiSessionViewModel.kt:1371-1376`），而它的命令面板却宣传支持 `.html/.jsonl`（`PiSlashCommands.kt:121-124`）。
+pi 的 TUI 会按扩展名分支（`.jsonl` → `exportToJsonl`，`interactive-mode.ts:6064-6065`、`agent-session.ts:3488`），但 **RPC 只暴露 `export_html`**（`rpc-types.ts:60`、`rpc-mode.ts:600-602`）。
+**结果：文件内容错、扩展名错，还弹一个成功提示。**
+→ 处置：要么面板里不再宣传 `.jsonl`，要么自己按 pi 的 JSONL 格式导出。
+
+### I4. `follow_up` 在 UI 里是死代码（DEFECT）
+`PiSessionViewModel.sendFollowUp`（`.kt:1086`）**全树零调用方**；输入框只会 `steer`（`send`，`.kt:1053-1063`）。
+而 `set_follow_up_mode` **是接通的**——所以那个开关**看起来能用，实际没有任何东西能入队**。
+
+### I5. 自定义主题 JSON 永远到不了 App 自己的颜色（DEFECT）
+两套写死的调色板（`PiPalette.kt:112-249`），**没有任何代码解析主题文件**；`MainActivity.kt:35-40` 除 light/dark/`a/b` 外忽略一切名字——而 `PiPalette.kt:16-22` 把"跟随 pi 主题"写成设计意图。**注释与实际相反。**
+主题发现也不全：选择器只从 `themes` 设置里取名字（`PiSettingEditorHost.kt:90-98`），**漏了 pi 的规范目录 `~/.pi/agent/themes/`**（`resource-loader.ts:815`）。
+
+### I6. Esc 会清空队列、**并且丢掉你刚打的字**（DEFECT）
+`ChatScreen.kt:433` 调 `stop()` 时**没有传 `onRestored`**，而 `PiSessionViewModel.kt:1097` 支持把内容还回输入框。
+→ 用户按 Esc 想停下，结果**待发队列被清、输入的东西也没了**。
+
+### I7. 13 个已注册设置**全树只有注册表一处出现**（= 失效开关）
+含 `dynamicColor`、`fontScaleDelta`、`messageDensity`、`showTimestamps`、`thinkingCollapsedByDefault`、`app.tools.expandByDefault` 等；另外 `hideThinkingBlock` **在 `ChatScreen.kt:345-348` 从未被传入**。
+→ 界面给了开关，**没有任何消费者**。与 E9/I2 是同一类病。
+
+### I8. 搜索能力缺失（MISSING-GUI）
+转录内搜索、会话树过滤、会话列表的搜索/排序/命名/过滤——都没有。
+
+### I9. 没有删除会话，也没有 `pi -c` 的自动续接（MISSING-GUI）
+`boot()`→`attach()` **从不切会话**（`PiEngineHost.kt:231-233` 没有 `--continue`）。
+
+### I10. `app.device.*` 权限开关是**第二份、且可能矛盾的**授权真相（DEFECT）
+它们在设置目录里声明，但**没有任何代码读它们**——真正的强制在 `DeviceCapabilityStore` 的 SharedPreferences。
+→ 设置页会显示一套**和「设备能力」页不一致**的开关，**两边可以互相矛盾**；而 `SettingsHome.kt:80-82` 甚至声称没有这类键。
+**这一条要优先修**：授权只能有一个真相来源。
+
+### I11. 环境类能力缺失（CLI-ONLY / MISSING）
+离线模式、`--system-prompt`、`PI_CACHE_RETENTION=long` —— **环境变量映射是写死的**（`PiEngineHost.kt:250-258`）。
+
+### 审查自己标为 UNVERIFIED 的 6 项
+设备能力"两份真相"是否已在并发重写中被消除（静态不一致**已确认**）；`/share` 在 Android 上是否可行；终端专属行在真机是否可用（C2）；`hideThinkingBlock` 是否存在 grep 看不见的读取；"无消费者"全量扫描（它逐键验证了 13 个）；`SessionTreeScreen` 是否新增了非 fork 动作。**§2 的结论都不依赖这些未验证项。**
