@@ -178,7 +178,7 @@ class PiCredentialService(
         auth().setApiKey(preset.id, effectiveKey)?.let { error ->
             return SaveResult(false, steps + error, null)
         }
-        steps += "已写入 auth.json（0600）：${preset.id}"
+        steps += "凭证已保存（仅本 App 可读）：${preset.id}"
 
         val provider = PiModelsFile.Provider(
             id = preset.id,
@@ -200,7 +200,7 @@ class PiCredentialService(
         models().upsert(provider)?.let { error ->
             return SaveResult(false, steps + error, null)
         }
-        steps += "已写入 models.json：providers.${preset.id}（${choices.size} 个模型）"
+        steps += "模型清单已保存：${preset.id}（${choices.size} 个模型）"
 
         preferences().selectModel(
             providerId = preset.id,
@@ -209,17 +209,14 @@ class PiCredentialService(
         )?.let { error ->
             return SaveResult(false, steps + error, null)
         }
-        steps += "已写入 settings.json：defaultProvider/defaultModel/enabledModels"
+        steps += "已设为默认模型，并加入可切换的模型列表"
 
         return SaveResult(
             ok = true,
             steps = steps,
             restart = PiPackageService.RestartRequired(
                 changes = listOf("新增厂商 ${preset.displayName}（${choices.size} 个模型）"),
-                detail = "pi 在启动时构建模型与厂商表；RPC 协议里没有任何命令会重新读 models.json，" +
-                    "所以新厂商在重启引擎之前不会出现在 get_available_models 里。" +
-                    "auth.json 本身是带 revision 检查的，但 models.json 不是。" +
-                    "已保存的文件不会因此丢失。",
+                detail = "新厂商要重启引擎后才会出现在模型列表里。已保存的配置不会丢失。",
             ),
         )
     }

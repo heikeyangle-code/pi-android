@@ -280,8 +280,7 @@ class PiPackageService(
     fun restartRequirement(done: Done): RestartRequired? = when (done) {
         is Done.Ok -> RestartRequired(
             changes = listOf(done.summary),
-            detail = "pi 在启动时用 jiti 把扩展加载进进程，运行中的进程不会重新扫描扩展目录。" +
-                "新装的包只有在 /reload 或重启引擎之后才生效。",
+            detail = "新装的包要重启引擎之后才生效。",
         )
         else -> null
     }
@@ -290,10 +289,10 @@ class PiPackageService(
 
     private fun readiness(): Done.NotReady? {
         if (!layout.runtimeReady()) {
-            return Done.NotReady("运行时尚未就绪：rootfs 或 proot 缺失，无法在 guest 里执行 pi。")
+            return Done.NotReady("运行时尚未就绪，暂时无法执行 pi 命令。")
         }
         if (!layout.engineInstalled()) {
-            return Done.NotReady("引擎未安装：找不到 ${layout.guestEngineCli}。")
+            return Done.NotReady("引擎未安装。")
         }
         return null
     }
@@ -307,7 +306,7 @@ class PiPackageService(
         val skipped = PROJECT_SKIP_MARKERS.any { outcome.stderr.contains(it) }
 
         if (outcome.launchError != null) {
-            return Done.NotReady("无法启动 proot：${outcome.launchError}")
+            return Done.NotReady("无法启动运行时：${outcome.launchError}")
         }
         if (outcome.timedOut) {
             return Done.TimedOut(

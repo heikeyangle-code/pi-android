@@ -77,12 +77,6 @@ fun ModelPickerSheet(
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(Modifier.fillMaxWidth().padding(horizontal = PiSpacing.screen)) {
             Text("选择模型", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface)
-            Spacer(Modifier.height(4.dp))
-            Text(
-                "来自 pi 的可用模型快照（get_available_models），包含扩展注册的 provider。",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
             Spacer(Modifier.height(PiSpacing.unit))
             OutlinedTextField(
                 value = filter,
@@ -196,7 +190,7 @@ fun ThinkingPickerSheet(
             Text("思考等级", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface)
             Spacer(Modifier.height(4.dp))
             Text(
-                "可选等级由当前模型决定（get_available_thinking_levels）；pi 会把请求的等级夹到模型支持的范围内。",
+                "可选等级由当前模型决定。",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -261,11 +255,6 @@ fun ThinkingPickerSheet(
 /**
  * The session tools sheet: the switches and one-shot actions that pi's RPC
  * surface exposes but that have no home in the transcript.
- *
- * Every row names the command behind it, because several of them persist to pi's
- * own `settings.json` (`set_steering_mode`, `set_follow_up_mode`,
- * `set_auto_retry` do; `set_auto_compaction` is session state) and a user is
- * entitled to know which of their desktop settings just changed.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -296,25 +285,18 @@ fun SessionToolsSheet(
                 style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.onSurface,
             )
-            Spacer(Modifier.height(4.dp))
-            Text(
-                "这些开关对应 pi 的 RPC 命令；队列模式与自动重试会写进 pi 的 settings.json。",
-                modifier = Modifier.padding(horizontal = PiSpacing.screen),
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
             Spacer(Modifier.height(PiSpacing.unit))
 
             PiSectionHeader("队列模式")
             QueueModeRow(
                 title = "穿插消息（steer）",
-                supporting = "set_steering_mode：本回合工具调用之后、下一次模型调用之前投递",
+                supporting = "本回合进行中插入，下一次回答之前生效",
                 current = state.meta.steeringMode,
                 onPick = onSteeringMode,
             )
             QueueModeRow(
                 title = "后续消息（follow up）",
-                supporting = "set_follow_up_mode：整个回合结束后才投递",
+                supporting = "整个回合结束后才投递",
                 current = state.meta.followUpMode,
                 onPick = onFollowUpMode,
             )
@@ -323,25 +305,25 @@ fun SessionToolsSheet(
             PiSectionHeader("上下文与重试")
             PiSwitchRow(
                 title = "自动压缩",
-                supporting = "set_auto_compaction：接近上下文上限时由 pi 自动摘要",
+                supporting = "接近上下文上限时自动摘要",
                 checked = state.meta.autoCompaction,
                 onCheckedChange = onAutoCompaction,
             )
             PiSwitchRow(
                 title = "自动重试",
-                supporting = "set_auto_retry：可重试的模型错误按退避自动重试",
+                supporting = "可重试的模型错误按退避自动重试",
                 checked = state.meta.autoRetry,
                 onCheckedChange = onAutoRetry,
             )
             PiValueRow(
                 title = "取消重试",
-                supporting = "abort_retry：结束正在等待的退避延迟",
+                supporting = "结束正在等待的退避延迟",
                 value = "立即",
                 onClick = onAbortRetry,
             )
             PiValueRow(
                 title = "压缩上下文",
-                supporting = "compact：先中止当前回合，然后跑一次摘要调用",
+                supporting = "先中止当前回合，再生成一次摘要",
                 value = "执行",
                 onClick = onCompact,
             )
@@ -350,43 +332,43 @@ fun SessionToolsSheet(
             PiSectionHeader("会话")
             PiValueRow(
                 title = "会话信息与统计",
-                supporting = "get_session_stats：消息数、token、费用、上下文占用",
+                supporting = "消息数、token、费用、上下文占用",
                 value = "查看",
                 onClick = onStats,
             )
             PiValueRow(
                 title = "会话树",
-                supporting = "get_tree / get_entries：分支结构与扩展写入的条目",
+                supporting = "分支结构与扩展写入的条目",
                 value = "打开",
                 onClick = onTree,
             )
             PiValueRow(
                 title = "从历史消息分支",
-                supporting = "get_fork_messages → fork",
+                supporting = null,
                 value = "选择",
                 onClick = onFork,
             )
             PiValueRow(
                 title = "复制当前会话",
-                supporting = "clone：在当前节点复制出新的会话文件",
+                supporting = "复制出一个新的会话",
                 value = "执行",
                 onClick = onClone,
             )
             PiValueRow(
                 title = "重命名",
-                supporting = "set_session_name",
+                supporting = null,
                 value = state.meta.sessionName ?: "未命名",
                 onClick = onRename,
             )
             PiValueRow(
                 title = "导出会话（按扩展名）",
-                supporting = "export_html：写入工作区，包含扩展的 tool 渲染结果",
+                supporting = "导出到工作区，包含扩展生成的渲染结果",
                 value = "导出",
                 onClick = onExport,
             )
             PiValueRow(
                 title = "复制最后一条回复",
-                supporting = "get_last_assistant_text",
+                supporting = null,
                 value = "复制",
                 onClick = onCopyLast,
             )
@@ -399,8 +381,7 @@ fun SessionToolsSheet(
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 PiSectionHeader("仅终端可用的扩展（${state.tuiOnlyExtensions.size}）")
                 Text(
-                    "这些扩展使用了 RPC 模式没有实现的界面接口，在对话页不会有任何显示；" +
-                        "请到 工作区 → pi TUI（原版）里使用。",
+                    "这些扩展在对话页无法显示，请到「工作区 → pi TUI（原版）」里使用。",
                     modifier = Modifier.padding(horizontal = PiSpacing.screen, vertical = 4.dp),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -513,7 +494,7 @@ fun SessionStatsSheet(
                 stats.cost?.let { StatLine("累计费用", "$${trimCost(it)}") }
                 if (stats.contextUsage == null && stats.tokens == null) {
                     Text(
-                        "pi 还没有统计信息（通常是本次会话尚未产生模型调用）。",
+                        "这次会话还没有统计信息。",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -560,7 +541,7 @@ fun ForkPickerSheet(
             Text("从哪条消息分支", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface)
             Spacer(Modifier.height(4.dp))
             Text(
-                "pi 会在选中的用户消息处创建一个新会话（fork）。",
+                "会在选中的消息处创建一个新会话。",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -624,7 +605,7 @@ fun RenameSessionDialog(
         text = {
             Column {
                 Text(
-                    "对应 pi 的 set_session_name；会话列表与会话文件头都会用它。",
+                    "会话列表里显示的名称。",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

@@ -313,7 +313,7 @@ private fun TimeoutNote(dialog: ExtensionDialog) {
     val palette = PiTheme.palette
     Spacer(Modifier.height(6.dp))
     Text(
-        text = "超时后${dialog.method.timeoutVerb}：pi 侧同时计时，晚到的回复会被丢弃。",
+        text = "超时后${dialog.method.timeoutVerb}，晚到的回复会被丢弃。",
         style = PiTheme.text.meta,
         color = palette.muted,
     )

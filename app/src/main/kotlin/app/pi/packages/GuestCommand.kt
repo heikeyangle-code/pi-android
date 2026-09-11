@@ -199,8 +199,11 @@ class GuestCommand(private val layout: AgentLayout) {
         layout.ensureAgentMirrorDir()
         val binds = listOf(layout.workspaceBind(), layout.agentDirBind())
         check(PiAgentDirContract.bindsAgentDir(binds, layout.agentMirrorDir.absolutePath)) {
+            // No source citation in this text: an invariant message can reach a log or a
+            // crash report, and the rule for strings is the same in both places. The
+            // reasoning is in this method's KDoc.
             "guest 命令与引擎的 agent 目录绑定不一致：$binds；" +
-                "pi install/list 会写到一个引擎不读的目录（引擎那一侧见 PiEngineHost.kt:285-294）"
+                "这会让 pi install/list 写到一个引擎不读的目录"
         }
         return binds
     }

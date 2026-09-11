@@ -51,6 +51,29 @@ import org.connectbot.terminal.Terminal
 import org.connectbot.terminal.VTermKey
 
 /**
+ * The tabs a terminal page can be asked to open on.
+ *
+ * These are the two *predefined* tabs; a `Custom` command tab is opened from the
+ * new-tab menu only, which is why it is not a constant here (it needs the
+ * command). The names are the real ones [TerminalStore] puts in the tab strip,
+ * not a parallel vocabulary:
+ *
+ *  - [PiTui] is `PtyLauncher.Kind.PiTui`: its guest command is `pi` and it is the
+ *    only kind that gets pi's terminal-capability environment (`PtyLauncher`'s
+ *    `Spec.environment`). This is the tab that runs the original pi TUI, and the
+ *    one a terminal-only action has to land on.
+ *  - [Shell] is `PtyLauncher.Kind.Shell` — `bash -i`, and the default.
+ *
+ * It exists so a caller above this package (the Workbench screen, and through it
+ * `PiRoot`'s terminal-only jumps) can name a tab without repeating the
+ * `Kind`/title pair — which is how those two would drift apart.
+ */
+enum class TerminalTab(val kind: PtyLauncher.Kind, val title: String) {
+    Shell(PtyLauncher.Kind.Shell, "Shell"),
+    PiTui(PtyLauncher.Kind.PiTui, "pi TUI"),
+}
+
+/**
  * The Workbench terminal: real tabs, a real PTY, and the original pi TUI.
  *
  * This is the app's only intentional terminal surface, and the reason it exists is
@@ -77,7 +100,19 @@ import org.connectbot.terminal.VTermKey
  * to `PtyLauncher`, which still owns the PTY.
  */
 @Composable
-fun TerminalPane(modifier: Modifier = Modifier) {
+fun TerminalPane(
+    modifier: Modifier = Modifier,
+    /**
+     * Which tab the page opens on.
+     *
+     * It is an *initial* value, not a controlled one: the store is built once,
+     * so a later change to this argument does not re-open or switch tabs (which
+     * would kill a running guest). The Workbench passes [TerminalTab.PiTui] when
+     * a terminal-only action sent the user here — see `PiRoot`'s
+     * `TERMINAL_ONLY_ACTIONS`.
+     */
+    initialTab: TerminalTab = TerminalTab.Shell,
+) {
     val context = LocalContext.current
     val isDark = MaterialTheme.colorScheme.background.luminanceIsDark()
     val palette = remember(isDark) { if (isDark) TerminalPalette.dark() else TerminalPalette.light() }
@@ -97,8 +132,12 @@ fun TerminalPane(modifier: Modifier = Modifier) {
     // clipboard write. The library decodes the sequence and calls this on the
     // main looper (it posts its OSC handling there), so touching the clipboard
     // here is safe.
+    // The store is deliberately *not* keyed on `initialTab`: it is read once, at
+    // first composition, so a later change to the argument cannot tear down a
+    // running guest. (The Workbench consumes its request immediately after this
+    // first composition, which is exactly why that matters.)
     val store = remember(context, palette) {
-        TerminalStore(context, palette) { text ->
+        TerminalStore(context, palette, initialTab) { text ->
             androidClipboard.setPrimaryClip(ClipData.newPlainText("pi terminal", text))
             statusText = "已复制到剪贴板（OSC 52）"
         }
@@ -153,14 +192,14 @@ fun TerminalPane(modifier: Modifier = Modifier) {
                     text = { Text("Shell（guest bash）") },
                     onClick = {
                         showNewTabMenu = false
-                        store.open(PtyLauncher.Kind.Shell, "Shell")
+                        store.open(TerminalTab.Shell)
                     },
                 )
                 DropdownMenuItem(
                     text = { Text("pi TUI（原版）") },
                     onClick = {
                         showNewTabMenu = false
-                        store.open(PtyLauncher.Kind.PiTui, "pi TUI")
+                        store.open(TerminalTab.PiTui)
                     },
                 )
                 listOf("apt update", "git status", "node -v").forEach { command ->
@@ -283,6 +322,8 @@ private fun TerminalSurface(
 class TerminalStore(
     private val context: Context,
     private val palette: TerminalPalette,
+    /** The tab the page opens on; see [TerminalPane]'s `initialTab`. */
+    initialTab: TerminalTab = TerminalTab.Shell,
     /** Where a guest OSC 52 request goes; see [TerminalBridge]. */
     private val onClipboardCopy: (String) -> Unit,
 ) {
@@ -295,7 +336,8 @@ class TerminalStore(
         val bridge: TerminalBridge? = null,
     )
 
-    val tabs: SnapshotStateList<Tab> = mutableStateListOf(Tab(PtyLauncher.Kind.Shell, "Shell"))
+    val tabs: SnapshotStateList<Tab> =
+        mutableStateListOf(Tab(initialTab.kind, initialTab.title))
 
     var activeIndex by mutableStateOf(0)
         private set
@@ -305,6 +347,11 @@ class TerminalStore(
     fun select(index: Int) {
         activeIndex = index.coerceIn(0, (tabs.size - 1).coerceAtLeast(0))
         ensureStarted(activeIndex)
+    }
+
+    /** Open one of the predefined tabs, named once by [TerminalTab]. */
+    fun open(tab: TerminalTab) {
+        open(tab.kind, tab.title)
     }
 
     fun open(kind: PtyLauncher.Kind, title: String, command: String = "") {
@@ -317,7 +364,9 @@ class TerminalStore(
         val closing = tabs.getOrNull(index) ?: return
         closing.bridge?.close()
         tabs.removeAt(index)
-        if (tabs.isEmpty()) tabs += Tab(PtyLauncher.Kind.Shell, "Shell")
+        // A terminal page with no tab would leave no way to get one back, so the
+        // last close replenishes it with the default tab.
+        if (tabs.isEmpty()) tabs += Tab(TerminalTab.Shell.kind, TerminalTab.Shell.title)
         activeIndex = activeIndex.coerceIn(0, tabs.size - 1)
         ensureStarted(activeIndex)
     }

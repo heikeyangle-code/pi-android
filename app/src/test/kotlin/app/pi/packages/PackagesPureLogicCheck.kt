@@ -198,7 +198,12 @@ fun main() {
     check("default always", resolve(default = "always").trusted, true)
     check("default never", resolve(default = "never").rationale, ProjectTrust.Rationale.DefaultNever)
     check("rpc (no UI) refuses and explains", resolve().rationale, ProjectTrust.Rationale.NoUiRefused)
-    check("rpc explanation mentions the silent skip", resolve().explanation?.contains("静默跳过"), true)
+    // Pins the *consequence*, not the mechanism. The mechanism is `hasUI == false`,
+    // which means nothing to a user, and the word this once matched ("静默跳过") is
+    // gone with it — see ProjectTrust.skipNote. What must survive any rewording is
+    // that the refusal says the project's own resources are not loaded: that is the
+    // half a user cannot infer, and losing it would make this branch silent.
+    check("rpc (no UI) refusal names the consequence", resolve().explanation?.contains("不会加载"), true)
     check("user answer beats the no-UI refusal", resolve(hasUI = true, answer = true).rationale, ProjectTrust.Rationale.UserAnswer)
 
     // ------------------------------------------------------------ source specs
@@ -262,42 +267,22 @@ fun main() {
         PiPackageSource.parse("https://example.com/pkg.tar.gz")::class.simpleName,
         "Local",
     )
+    // The other half of that rule, and the reason it is not a prefix test: an https
+    // URL to a *repository* is a git source, because `parseGitUrl` accepts a protocol
+    // URL with at least two path segments (`package-manager.ts:1446-1471`, pi's
+    // `parseSource`). Transcribed classification fact — pinned here so the three
+    // spellings that reach pi's git installer stay three.
+    check(
+        "an https url to a repository is a git source",
+        PiPackageSource.parse("https://github.com/user/repo")::class.simpleName,
+        "Git",
+    )
     check(
         "a relative path is local",
         PiPackageSource.parse("./local/pkg")::class.simpleName,
         "Local",
     )
     check("github: prefix is non-local but not git", PiPackageSource.isLocalPath("github:x/y"), false)
-
-    // The install field's "this runtime has no git" note is shown while the typed
-    // spec parses as a git source, so these three spellings are what makes it appear
-    // and the fourth is what keeps it away. `parseGitUrl` accepts a protocol URL with
-    // at least two path segments, which is why a plain GitHub https URL counts.
-    check(
-        "git: is a git source",
-        PiPackageSource.parse("git:github.com/user/repo@v1")::class.simpleName,
-        "Git",
-    )
-    check(
-        "ssh:// is a git source",
-        PiPackageSource.parse("ssh://git@github.com/user/repo")::class.simpleName,
-        "Git",
-    )
-    check(
-        "an https url to a repo is a git source too",
-        PiPackageSource.parse("https://github.com/user/repo")::class.simpleName,
-        "Git",
-    )
-    check(
-        "an https url to a tarball is not (there is no repo path)",
-        PiPackageSource.parse("https://example.com/pkg.tar.gz")::class.simpleName,
-        "Local",
-    )
-    check(
-        "github: shorthand is not a git source, so the note must not appear",
-        PiPackageSource.parse("github:x/y")::class.simpleName,
-        "Local",
-    )
 
     // Pre-flight refuses only what pi cannot accept.
     check("blank source", PiPackageSource.validate("install", "  ")?.message, "Missing install source.")

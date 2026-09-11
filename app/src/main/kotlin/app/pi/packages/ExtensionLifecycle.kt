@@ -292,7 +292,7 @@ class ExtensionLifecycle {
         }
         append("重启需要约 ${expectedRestartSeconds.first}–${expectedRestartSeconds.last} 秒。")
         append("它会终止当前正在进行的回合（模型调用、工具调用、bash 命令都不会恢复），")
-        append("但已写入磁盘的会话内容不会丢失——会话是 JSONL 追加写的，重启后用 get_entries 重新挂载即可。")
+        append("但已写入磁盘的会话内容不会丢失。")
     }
 
     companion object {
@@ -369,8 +369,5 @@ object RefreshSemantics {
     val cachedAcrossGetCommands = listOf("extensions", "skills", "prompt templates")
 
     /** One sentence, for the report and for the UI. */
-    const val ANSWER: String =
-        "skills 与 prompt 模板不是每次 get_commands 重新扫描的：它们在 resource-loader 的 " +
-            "reload() 里扫描一次并缓存（resource-loader.ts:472-473、:487-488），get_commands 直接读缓存 " +
-            "（rpc-mode.ts:694-710）。新增技能或模板同样需要重启（或扩展命令里调用 ctx.reload()）。"
+    const val ANSWER: String = "新增的技能与提示模板需要重启引擎后才会生效。"
 }

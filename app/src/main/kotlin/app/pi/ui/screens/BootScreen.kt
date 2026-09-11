@@ -74,8 +74,7 @@ fun BootScreen(
                 Text("准备启动本地引擎", style = MaterialTheme.typography.titleMedium)
                 Spacer(Modifier.height(6.dp))
                 Text(
-                    "pi 会在手机上运行一个完整的 Linux 用户态：\n" +
-                        "Ubuntu(glibc) + Node 24 + 工具链，由 proot 承载，不需要 root。",
+                    "首次启动要准备 Linux 运行环境，需要几分钟。不需要 root。",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

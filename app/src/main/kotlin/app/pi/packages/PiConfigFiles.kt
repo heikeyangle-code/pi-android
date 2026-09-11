@@ -275,14 +275,14 @@ class PiAuthStorage(
     fun read(): Read {
         val effective = effectiveFile() ?: return Read.Ok(emptyMap())
         val text = runCatching { effective.readText() }.getOrElse { error ->
-            return Read.Invalid("Failed to read auth.json: ${error.message ?: error::class.java.simpleName}")
+            return Read.Invalid("凭证文件无法读取：${error.message ?: error::class.java.simpleName}")
         }
         val document = PiConfigFiles.parseObject(text)
-            ?: return Read.Invalid("Failed to read auth.json: invalid JSON")
+            ?: return Read.Invalid("凭证文件无法读取：不是 JSON 对象")
         val entries = LinkedHashMap<String, ApiKey>()
         for ((providerId, value) in document) {
             val credential = value as? JsonObject
-                ?: return Read.Invalid("Invalid auth.json credential for provider \"$providerId\"")
+                ?: return Read.Invalid("凭证记录格式不对（$providerId）")
             val type = (credential["type"] as? JsonPrimitive)?.content
             if (type != "api_key") {
                 // oauth credentials are pi's business (`/login` in a terminal); the
@@ -312,7 +312,7 @@ class PiAuthStorage(
             PiConfigFiles.withLock(file) {
                 val raw = if (file.isFile) file.readText() else "{}"
                 val document = PiConfigFiles.parseObject(raw)
-                    ?: return@withLock "auth.json 无法解析，已拒绝写入以免破坏它"
+                    ?: return@withLock "凭证文件无法解析，已拒绝写入以免破坏它"
                 val next = LinkedHashMap<String, JsonElement>(document)
                 next[providerId] = buildJsonObject {
                     put("type", JsonPrimitive("api_key"))
@@ -320,12 +320,12 @@ class PiAuthStorage(
                 }
                 val text = JsonObject(next).toString()
                 if (!PiConfigFiles.write(file, text, mode600 = true)) {
-                    return@withLock "写入 auth.json 失败（${file.absolutePath}）"
+                    return@withLock "写入凭证文件失败（${file.absolutePath}）"
                 }
                 writeMirror(text)
                 null
             }
-        }.getOrElse { error -> "写入 auth.json 失败：${error.message ?: error::class.java.simpleName}" }
+        }.getOrElse { error -> "写入凭证文件失败：${error.message ?: error::class.java.simpleName}" }
     }
 
     /**
@@ -338,17 +338,17 @@ class PiAuthStorage(
         PiConfigFiles.withLock(file) {
             if (!file.isFile) return@withLock null
             val document = PiConfigFiles.parseObject(file.readText())
-                ?: return@withLock "auth.json 无法解析，已拒绝写入以免破坏它"
+                ?: return@withLock "凭证文件无法解析，已拒绝写入以免破坏它"
             val next = LinkedHashMap<String, JsonElement>(document)
             if (next.remove(providerId) == null) return@withLock null
             val text = JsonObject(next).toString()
             if (!PiConfigFiles.write(file, text, mode600 = true)) {
-                return@withLock "写入 auth.json 失败"
+                return@withLock "写入凭证文件失败"
             }
             writeMirror(text)
             null
         }
-    }.getOrElse { error -> "写入 auth.json 失败：${error.message ?: error::class.java.simpleName}" }
+    }.getOrElse { error -> "写入凭证文件失败：${error.message ?: error::class.java.simpleName}" }
 
     /** The file a read should use: primary, else mirror. */
     private fun effectiveFile(): File? = PiConfigFiles.effectiveFile(file, mirror)
@@ -472,11 +472,11 @@ class PiModelsFile(
     fun read(): Snapshot {
         val effective = effectiveFile() ?: return Snapshot(JsonObject(emptyMap()), null)
         val text = runCatching { effective.readText() }.getOrNull()
-            ?: return Snapshot(JsonObject(emptyMap()), "Failed to load models.json: 无法读取 ${effective.absolutePath}")
+            ?: return Snapshot(JsonObject(emptyMap()), "模型配置无法读取（${effective.absolutePath}）")
         val document = PiConfigFiles.parseObject(PiConfigFiles.stripJsonComments(text))
-            ?: return Snapshot(JsonObject(emptyMap()), "Failed to parse models.json: 不是 JSON 对象（${effective.absolutePath}）")
+            ?: return Snapshot(JsonObject(emptyMap()), "模型配置不是 JSON 对象（${effective.absolutePath}）")
         val providers = document["providers"] as? JsonObject
-            ?: return Snapshot(JsonObject(emptyMap()), "Invalid models.json schema: 缺少 providers 对象")
+            ?: return Snapshot(JsonObject(emptyMap()), "模型配置格式不对：缺少厂商清单")
         return Snapshot(providers, null)
     }
 
@@ -513,7 +513,7 @@ class PiModelsFile(
         }
         val text = root.toString()
         if (!PiConfigFiles.write(file, text)) {
-            return "写入 models.json 失败（${file.absolutePath}）"
+            return "写入模型配置失败（${file.absolutePath}）"
         }
         mirror?.let { PiConfigFiles.write(it, text) }
         return null
@@ -527,7 +527,7 @@ class PiModelsFile(
         if (next.remove(providerId) == null) return null
         val root = buildJsonObject { put("providers", JsonObject(next)) }
         val text = root.toString()
-        if (!PiConfigFiles.write(file, text)) return "写入 models.json 失败"
+        if (!PiConfigFiles.write(file, text)) return "写入模型配置失败"
         mirror?.let { PiConfigFiles.write(it, text) }
         return null
     }
@@ -604,7 +604,7 @@ class PiEnginePreferences(
             store.invalidate()
             null
         }
-    }.getOrElse { error -> "写入 settings.json 失败：${error.message ?: error::class.java.simpleName}" }
+    }.getOrElse { error -> "写入设置失败：${error.message ?: error::class.java.simpleName}" }
 
     /** Currently selected provider/model, for prefilling the editor. */
     fun current(): Pair<String?, String?> {

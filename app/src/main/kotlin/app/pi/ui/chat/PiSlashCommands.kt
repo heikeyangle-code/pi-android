@@ -127,14 +127,14 @@ data class PiSlashCommand(
 val PI_BUILTIN_SLASH_COMMANDS: List<PiSlashCommand> = listOf(
     PiSlashCommand("settings", "打开设置菜单", PiCommandSource.Builtin, null, PiCommandAction.OpenSettings),
     PiSlashCommand(
-        "model", "选择模型（打开选择器）", PiCommandSource.Builtin, null,
+        "model", "选择模型", PiCommandSource.Builtin, null,
         PiCommandAction.PickModel, "<provider/model>",
     ),
     // The description must not promise pi's in-place leaf move: RPC has no such
     // command (`rpc-types.ts:20-74`), and what this app offers from the tree is a
     // fork that writes a new session file.
     PiSlashCommand(
-        "tree", "浏览会话树并从中分叉（切换分支只能在原版 TUI 里做）", PiCommandSource.Builtin, null,
+        "tree", "浏览会话树，从某条消息分叉", PiCommandSource.Builtin, null,
         PiCommandAction.OpenTree,
     ),
     PiSlashCommand(
@@ -142,7 +142,7 @@ val PI_BUILTIN_SLASH_COMMANDS: List<PiSlashCommand> = listOf(
         PiCommandAction.PickThinking, "<level>",
     ),
     PiSlashCommand(
-        "scoped-models", "启用/禁用 Ctrl+P 循环的模型范围", PiCommandSource.Builtin, null,
+        "scoped-models", "设置循环切换的模型范围", PiCommandSource.Builtin, null,
         PiCommandAction.OpenModelScope,
     ),
     PiSlashCommand(
@@ -168,7 +168,7 @@ val PI_BUILTIN_SLASH_COMMANDS: List<PiSlashCommand> = listOf(
     PiSlashCommand("compact", "手动压缩会话上下文", PiCommandSource.Builtin, null, PiCommandAction.Compact),
     PiSlashCommand("resume", "切换到另一个会话", PiCommandSource.Builtin, null, PiCommandAction.OpenSessions),
     PiSlashCommand("reload", "重载快捷键、扩展、技能、模板、主题与上下文文件", PiCommandSource.Builtin, null, PiCommandAction.TerminalOnly),
-    PiSlashCommand("quit", "退出 pi（本 App 由前台服务托管引擎）", PiCommandSource.Builtin, null, PiCommandAction.TerminalOnly),
+    PiSlashCommand("quit", "退出 pi", PiCommandSource.Builtin, null, PiCommandAction.TerminalOnly),
 )
 
 /**

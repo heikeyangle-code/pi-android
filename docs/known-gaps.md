@@ -517,7 +517,7 @@ pi 把扩展加载错误**只写进 `runtime.diagnostics`，不发任何事件**
 4. **并行时每个代理都会报"红不是我的文件"。** 这没有意义——**只有冻结树之后的整树 typecheck 才算数**。
 5. **自证不等于认账。** 代理报告 `typecheck: OK` 时要独立复跑；审计报告里"已核对为正确"的结论也要抽验。**反过来，报"证不出来"的项目要保留**，因为自信的错误发现会让人去改本来正确的代码。
 6. **一条写着"没做"、其实已经做完的条目，比漏记更危险。** 漏记只是少了一条待办；过时的"没做"会让人**重做已经正确的代码**，而重做往往会把它弄坏。本文件因此做了两件事：一是把 A1/A2/B1–B4/B8/B11/E2 标注为已完成（复核于 `dc00279`，逐条给了 `path:line` 证据），二是把"逐行复核"本身变成例行动作——**任何审计写进本文件的条目，下次复核时必须回代码确认它仍然成立**，而不是只在派活时当作事实引用。判断标准是"能不能指出现在还在缺的那一行"，不是"文档里写着缺"。
-7. **用户界面里不许出现文档路径、文件名、章节号（`§`），也不许解释"我们内部为什么这么做"。** 用户原话：**"不要乱加没用的说明。有了 Git 不就好了吗？写个鸡毛说明？没用的说明全删掉。"** 起因是 `PackageStrings` 里那句 `git: 源当前用不了…（docs/known-gaps.md §K2）`——它把**源码文档写进了用户界面**，这是无论内容对不对都不该发生的事。判定标准：**这条文案说的是用户此刻需要的事实，还是我给自己的设计做辩护？** 后者一律写进代码注释或本文件，不进界面。缺功能就补功能；**补不了的功能不该由一句说明来代替**（本例的正解是另一个任务把 git 打进 runtime，然后示例里加回 `git:` 即可）。
+7. **用户界面里不许出现文档路径、文件名、章节号（`§`），也不许解释"我们内部为什么这么做"。** 用户原话：**"不要乱加没用的说明。有了 Git 不就好了吗？写个鸡毛说明？没用的说明全删掉。"** 起因是 `PackageStrings` 里那句 `git: 源当前用不了…（docs/known-gaps.md §K2）`——它把**源码文档写进了用户界面**，这是无论内容对不对都不该发生的事。判定标准：**这条文案说的是用户此刻需要的事实，还是我给自己的设计做辩护？** 后者一律写进代码注释或本文件，不进界面。缺功能就补功能；**补不了的功能不该由一句说明来代替**（本例的正解是另一个任务把 git 打进 runtime，然后示例里加回 `git:` 即可）。规则落地时**回溯查了同批新增的 E7 文案**并一起缩减（见 §E7：删掉 `BUILTIN_UNINSTALLABLE`、`LIST_SECTION_NOTE`、`agentDirs`，`BUILTIN_NOTE` 从 5 行降到 1 句）。**已知仍然违规、尚未处理**：`PackageStrings` 里更早那批 trust/project 文案仍有 5 处 `*.ts:行号`（`SCOPE_PROJECT_LOCKED:51`、`PROJECT_PACKAGES_HIDDEN:58`、`TRUST_INVALID_NOTE:127`、`TRUST_SESSION_ONLY_NOTE:131`，以及 `SUBTITLE:24` 那句"pi 没有把包管理放进 RPC 协议"的内部解释）——**留着不算修好，属下一批清理**。
 
 ---
 
@@ -669,15 +669,39 @@ API<30 的截屏、默认开的基础组缺通知权限、永不刷新的审批�
 
 **一条更正（重要）**：较早的一次记录说「`pi list` 挂起、无输出」。那**不是 pi 的行为**，而是当时这台容器的资源饥饿（同一时段 5 个代理并行编译、出现 `fork: Function not implemented`）。同样的命令现在 **<2 秒返回**。不要把那次挂起写进任何结论。
 
-### K2. `git:` 源没有可用的 git（阻塞项）
+### K2. `git:` 源 —— **已解决：https 可用，ssh 形式仍不可用**（applied, uncommitted，未上 CI）
 
-- `runtime.lock.json` 的 `artifacts` 只有 `proot / libtalloc / libandroidShmem / ubuntuBase / node / ripgrep / fd` —— **没有 git**。
-- `RuntimeProvisioner.kt` 全文没有任何一处安装或软链 git（只有 node/npm/npx 与 `pi` 包装脚本）。
-- `ubuntu-base-24.04.3-base-arm64.tar.gz` 是 Ubuntu 的**最小 base**，本身不含 git。
-- `app/src/main/assets/runtime/` 在仓库里是**空目录**（引擎包 `pi-engine.tar.gz` 不入库），所以"引擎包里是否捆了 git"无法从仓库核对——但引擎包是 node_modules 树，正常不含 git 二进制。
-- 而 `PackageStrings.SPEC_HINT` 正在告诉用户可以用 `git:github.com/user/repo@v1`。**收尾条件**：把 git 加进 runtime artifacts + provisioner（属 `runtime/**` 所有者）。**UI 侧的处理已定稿（applied, uncommitted，未上 CI）**：`packages/PackageStrings.kt` 的 `SPEC_HINT` 不再列出 `git:`，只写 npm 与绝对路径；**曾经加过的那句"git 源当前用不了 + 指向本节"的用户可见说明已按要求整个删除**（连同常量、渲染分支与测试）。理由见 §H 的新条目：界面不该解释内部设计，更不该出现文档路径/文件名/章节号。
-- **这一条的 runtime 半边正在被另一个任务解决**（把 git 连依赖与 CA 证书打进运行时）。**那批工作落地后**，这个"没有 git"的状态就消失了；届时只需把 `git:github.com/user/repo@v1` 加回 `SPEC_HINT` 的示例里即可，不需要任何说明文字。
-- 真机确认一句即可：`... bash -lc 'command -v git || echo NO-GIT'`。
+**状态**：git 已经打进运行时。`runtime.lock.json` 新增 16 个 artifact（`git` 2.43.0-1ubuntu7.3、`caCertificates`、14 个库包），`tools/fetch-runtime.mjs` 在构建期把 deb 重打包成 `git.tgz`，`RuntimeProvisioner.installGit()` 把它解到 rootfs，`ProotCommand.environment` 用 `GIT_SSL_CAINFO`/`SSL_CERT_FILE` 指向随包安装的 CA bundle。
+
+**实测数字（构建机，非真机）**：
+
+| 项 | 值 |
+|---|---|
+| `git.tgz` | **7.26 MiB**（gzip -9；真的组装了一遍并复验，不是估算） |
+| 依赖闭包 | 读每个 ELF 的 `DT_NEEDED` 传递闭包：**33** 个 soname → **18** 个 pinned base 已有、**16** 个新增、**0** 未解析 |
+| CA bundle | 构建期把 `ca-certificates` 的 **121** 个 Mozilla `*.crt` 拼成，182,140 B（deb 里**没有** `ca-certificates.crt`，它是 postinst 生成的） |
+| `/usr/bin/git` | 软链到 `../lib/git-core/git`（deb 里那是**第二份 4 MB 副本**，不装它以省 ~4 MB） |
+
+**一处更正**：`RuntimeProvisioner.installTool` 的旧 KDoc 写"git-remote-http resolves 的 31 个共享库里有 15 个 base 没有"。上表是重新按传递闭包算的，数字是 **33 / 18 / 16**。旧数字不要再用。
+
+**明确的能力边界（这是结论，不是待办）**：
+
+- **可用**：`https://` 远端（`clone`/`fetch`/`pull`/`push`）；全部本地命令（init/status/diff/log/commit/add/branch/checkout/merge/rebase/stash…）。所以模型自己可以跑 `git status`/`diff`/`log`/`commit`，pi 读 `.git/HEAD` 取分支名也不再是"唯一能做的事"。
+- **不可用，且不是 bug**：`git@host:path` 与 `ssh://`。它们需要 **ssh 客户端 + 密钥/agent**，运行时不提供：没有 `ssh` 二进制、没有 `~/.ssh`、没有 agent forwarding，也无法应答 host-key 或口令提示。注意闭包里的 `libssh.so.4` 是 **libcurl 的 `sftp://` scheme**，不是 git 的 ssh transport——这两件事极容易被当成"那 ssh 应该能用"。失败形态是 `cannot run ssh: No such file or directory`。
+- **不可用**：`git commit` 在设置 `user.name`/`user.email` 之前会拒绝执行；载荷**不**伪造身份（编造一个作者比一句清楚的 "Please tell me who you are" 更坏）。
+- **不含**：Ubuntu 分到**别的包**里的子命令——`git svn`（`git-svn`）、`git send-email`（`git-email`）、`git gui`/`gitk`（`git-gui`/`gitk`）、`git instaweb`（无 web server）。载荷只装 `git` 包本身。
+
+**收尾条件（UI 半边，不在 `runtime/**` 范围）**：`packages/PackageStrings.kt` 的 `SPEC_HINT` 现在只写 npm 与绝对路径，**应收复为同时列出 `git:github.com/user/repo@v1`**——能力已经有了，界面不该再少列一种。**不要**再加任何解释文字：界面里出现文档路径/文件名/章节号（以及内部设计解释）已被明令禁止，那句旧的"这个运行时里没有 git（docs/known-gaps.md §K2）"正是因此被整个删除的。
+
+**做这件事时顺带发现并修掉的一条真实断链：`fd`/`rg` 在 agent 目录绑定之后悬空**（同一个 `RuntimeProvisioner` 问题域）
+
+- 症状：`/usr/local/bin/{rg,fd}` 是软链到 guest `/root/.pi/agent/bin/<tool>`，而那个 guest 路径落在哪个 host 目录由**谁启动 proot**决定——`PiEngineHost`（引擎）与 `GuestCommand`（装包）把 `paths.agentDir` 绑上去，`PtyLauncher`（终端，活的）**不绑**。而 `installTool` 只写 rootfs 副本（`<rootfs>/root/.pi/agent/bin/`）：绑定一生效，那份就被遮蔽。
+- 时序才是致命处：`PiEngineHost.kt:223` 的 `migrateGuestAgentDir()` 在 `:227` 的 `ensureReady()` **之前**跑；首启时 `<rootfs>/root/.pi/agent` 还不存在，于是它只返回"无需迁移"、**不写 marker**，随后 provisioning 才把 `bin/` 写进 rootfs。**所以第一次引擎启动时 rg/fd 就是悬空软链**：`@` 文件提及永远没有候选（与 pi 缺 fd 时的降级行为一模一样，看不出来），pi 自己的 `find` 工具（`runtime.lock.json` 里 fd 的理由就写着它）也坏掉。第二次启动迁移把 `bin/` rename 到 agentDir 才**碰巧**修好，而 wipe 之后又只能靠下一次 rename 的运气。
+- 修法：两份都写——`PiPaths.agentBinDir()`（绑定源 `<files>/pi/.pi/agent/bin`）与 `PiPaths.rootfsAgentBinDir()`（rootfs 副本）；`ensureToolsVisible()` 在 `ensureReady` 的"stamp 未变、直接返回"路径上重放一次，从存活的那份补回缺失的那份。这两个目录**互不包含**，所以任何"只装一份"的写法必然让三条启动路径中的一条悬空。
+- 自证：`app/src/test/kotlin/app/pi/runtime/AgentToolPathsCheck.kt`（13 项断言，含"两个目录互不包含"）。**`tools/run-app-pure-checks.sh` 尚未注册它**，注册之前它在 CI 里等于不存在——补丁见交付报告。
+
+**仍需真机确认（构建机证明不了）**：`git clone https://…` 是否真能过证书校验（CA 路径被显式钉在 `GIT_SSL_CAINFO`/`SSL_CERT_FILE`，因为 libcurl 编译进的是**目录** `/etc/ssl/certs` 的 `c_rehash` 形式，而载荷只装了拼接好的单文件 bundle、没有 hashed 软链）；以及 proot `--link2symlink` 之下 `git commit`/`gc` 的可靠性——**下结论前先量**。
+
 
 ### K3. 网络与路径
 

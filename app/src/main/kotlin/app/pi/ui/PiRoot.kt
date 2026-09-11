@@ -17,6 +17,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -29,6 +30,7 @@ import app.pi.ui.screens.ChatScreen
 import app.pi.ui.screens.SessionsScreen
 import app.pi.ui.screens.WorkbenchScreen
 import app.pi.ui.settings.PiSettingsStack
+import app.pi.ui.terminal.TerminalTab
 
 /**
  * The four top-level destinations.
@@ -86,6 +88,20 @@ fun PiRoot(
     // because the stack is composed only while 设置 is the current destination,
     // so the request has to survive that switch.
     var settingsFocus by rememberSaveable { mutableStateOf<String?>(null) }
+
+    // Which terminal tab the workbench should open on. A terminal-only action sets
+    // it to pi's TUI, because that is the only surface where the command it names
+    // exists; every other route into the workbench leaves it null and gets the
+    // default shell tab.
+    //
+    // It lives here, above the destination `when`, on purpose: the workbench screen
+    // is disposed the moment another destination is selected, so a request kept
+    // inside it would be thrown away by the very navigation it is part of.
+    //
+    // Deliberately not `rememberSaveable`: it is a one-frame navigation intent, and
+    // the terminal store it feeds is an ordinary `remember` too, so a recreated
+    // activity starts from a fresh shell tab either way.
+    var workbenchTerminalTab by remember { mutableStateOf<TerminalTab?>(null) }
 
     // One engine for the whole app. Owned by the ViewModel rather than an
     // Activity so that a running turn survives the user leaving the screen, and
@@ -165,7 +181,14 @@ fun PiRoot(
                     session = session,
                 )
 
-                PiDestination.Workbench -> WorkbenchScreen(contentPadding = padding)
+                PiDestination.Workbench -> WorkbenchScreen(
+                    contentPadding = padding,
+                    // The tab a terminal-only action asked for, if any. The screen
+                    // reports back once it has opened it, so later visits get the
+                    // default shell tab rather than spawning pi again.
+                    initialTerminalTab = workbenchTerminalTab,
+                    onInitialTerminalTabConsumed = { workbenchTerminalTab = null },
+                )
 
                 PiDestination.Settings -> PiSettingsStack(
                     contentPadding = padding,
@@ -198,6 +221,11 @@ fun PiRoot(
                                     "已切到 工作区 → 终端，请在那里运行 $terminalCommand。",
                                 warning = true,
                             )
+                            // Land on the pi TUI tab, not on whichever tab the
+                            // workbench page would otherwise start with: the named
+                            // command is a pi slash command, and a `bash` prompt is
+                            // not where it can be run.
+                            workbenchTerminalTab = TerminalTab.PiTui
                             session.requestNav(NavRequest.Workbench)
                         } else {
                             when (setting.key) {

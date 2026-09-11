@@ -200,15 +200,13 @@ object ProjectTrust {
      */
     fun skipNote(cwd: String, rationale: Rationale): String = when (rationale) {
         Rationale.NoUiRefused ->
-            "项目 $cwd 未获信任，而 pi 在非交互模式（--mode rpc）下不会弹窗询问，只会静默跳过项目本地的 " +
-                ".pi/extensions、.pi/skills、.pi/prompts、.pi/settings.json。没有错误，也没有任何提示——" +
-                "这就是你现在看到的行为。要做的事：在下方做出信任决定，它会写入 trust.json。"
+            "项目 $cwd 未获信任，pi 不会加载它本地的扩展、技能、提示模板与设置。请在下方选择是否信任。"
         Rationale.DefaultNever ->
-            "全局设置 defaultProjectTrust = \"never\"，因此项目资源始终被忽略。"
+            "全局设置已把项目信任固定为「从不」，项目资源始终被忽略。"
         Rationale.CliOverride ->
-            "本次调用显式指定了 --no-approve，项目资源被忽略。"
+            "本次会话被显式设为不信任，项目资源被忽略。"
         Rationale.SavedDecision ->
-            "trust.json 里保存了 $cwd 的拒绝决定，项目资源被忽略。选择「Trust」会覆盖它。"
+            "之前已拒绝信任这个项目，项目资源被忽略。选择「Trust」会覆盖它。"
         Rationale.UserAnswer ->
             "你选择了不信任 $cwd，项目资源被忽略。"
         Rationale.NoTrustRequiringResources -> ""

@@ -39,17 +39,6 @@ import app.pi.ui.theme.PiTheme
  * rather than of a button's onClick.
  */
 data class PiPackagesUiState(
-    /**
-     * Host path of the agent directory the **engine** reads: `PiPaths.agentDir`,
-     * which `PiEngineHost.kt:285-294` binds over guest `/root/.pi/agent`.
-     */
-    val engineAgentDir: String = "",
-    /**
-     * Host path of the rootfs copy, `<rootfs>/root/.pi/agent`. A guest command run
-     * through [GuestCommand] reads *this* one, because that proot argv binds only the
-     * workspace (`GuestCommand.kt:98-106`).
-     */
-    val rootfsAgentDir: String = "",
     /** The workspace whose trust decision is being shown, in guest spelling. */
     val guestWorkspace: String = "",
     val spec: String = "",
@@ -87,12 +76,13 @@ data class PiPackagesUiState(
 ) {
 
     /**
-     * One shipped extension as the app could verify it. [guestPath] is the guest
-     * spelling of the file pi loads, so the user can find it in the terminal tab.
+     * One shipped extension as the app could verify it. The presence is what the row
+     * shows; the guest path it was checked at is deliberately **not** on screen — it
+     * is a fact about our layout that the user has nothing to do with (the file-level
+     * rule in `PackageStrings`).
      */
     data class BuiltinRow(
         val extension: PiBuiltinExtension,
-        val guestPath: String,
         val presence: PiBuiltinExtension.Presence,
     )
 
@@ -166,7 +156,7 @@ fun PiPackagesScreen(
             .padding(horizontal = 14.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        item { Header(state) }
+        item { Header() }
         trust?.let { item { TrustCard(it, state.busy, onOpenTrustPrompt) } }
         state.trustInvalid?.let { item { InvalidTrustCard(it, state.busy, onTrustRepair) } }
         item { LifecycleCard(state, onRestartClick, onRestartConfirm, onRestartCancel) }
@@ -191,7 +181,7 @@ fun PiPackagesScreen(
                 val notReady = state.listNotReady
                 Text(
                     text = when {
-                        notReady != null -> PackageStrings.LIST_NOT_READY + notReady
+                        notReady != null -> PackageStrings.LIST_NOT_READY_PREFIX + notReady
                         state.listUnparsed -> PackageStrings.LIST_UNPARSED
                         else -> PackageStrings.NO_PACKAGES
                     },
@@ -213,22 +203,10 @@ fun PiPackagesScreen(
 }
 
 @Composable
-private fun Header(state: PiPackagesUiState) {
+private fun Header() {
     val palette = PiTheme.palette
     Column(Modifier.padding(top = 12.dp)) {
         Text(PackageStrings.TITLE, style = MaterialTheme.typography.titleLarge, color = palette.text)
-        Spacer(Modifier.height(4.dp))
-        Text(PackageStrings.SUBTITLE, style = MaterialTheme.typography.bodySmall, color = palette.muted)
-        if (state.engineAgentDir.isNotBlank() || state.rootfsAgentDir.isNotBlank()) {
-            Spacer(Modifier.height(4.dp))
-            PackageStrings.agentDirs(state.engineAgentDir, state.rootfsAgentDir).forEach { line ->
-                Text(
-                    text = line,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = palette.dim,
-                )
-            }
-        }
     }
 }
 
@@ -255,18 +233,7 @@ private fun BuiltinCard(rows: List<PiPackagesUiState.BuiltinRow>) {
                 color = palette.text,
             )
             Spacer(Modifier.height(6.dp))
-            Text(
-                PackageStrings.BUILTIN_NOTE,
-                style = MaterialTheme.typography.labelSmall,
-                color = palette.muted,
-            )
             rows.forEach { row -> BuiltinRowView(row) }
-            Spacer(Modifier.height(10.dp))
-            Text(
-                PackageStrings.BUILTIN_UNINSTALLABLE,
-                style = MaterialTheme.typography.labelSmall,
-                color = palette.dim,
-            )
         }
     }
 }
@@ -298,16 +265,15 @@ private fun BuiltinRowView(row: PiPackagesUiState.BuiltinRow) {
                 style = MaterialTheme.typography.labelSmall,
                 color = presenceColor,
             )
-            Spacer(Modifier.height(2.dp))
-            Text(row.guestPath, style = MaterialTheme.typography.labelSmall, color = palette.dim)
         }
     }
 }
 
 /**
  * The heading over the `pi list` rows, so the two origins are visibly two lists:
- * this one is what `pi install` wrote into `settings.json`'s `packages`, and it is
- * the whole of what `pi list` reports (`package-manager-cli.ts:970-1002`).
+ * this one is what `pi install` wrote into `settings.json`'s `packages`, which is the
+ * whole of what `pi list` reports (`package-manager-cli.ts:970-1002`). The reasoning
+ * stays here as a comment; the screen gets the two words.
  */
 @Composable
 private fun ListSectionHeading() {
@@ -317,12 +283,6 @@ private fun ListSectionHeading() {
             PackageStrings.LIST_SECTION_TITLE,
             style = MaterialTheme.typography.titleSmall,
             color = palette.text,
-        )
-        Spacer(Modifier.height(2.dp))
-        Text(
-            PackageStrings.LIST_SECTION_NOTE,
-            style = MaterialTheme.typography.labelSmall,
-            color = palette.muted,
         )
     }
 }
@@ -583,25 +543,6 @@ private fun InstallCard(
                 enabled = !state.busy,
                 modifier = Modifier.fillMaxWidth(),
             )
-            // Only while the typed spec really is a git source: for everyone who never
-            // types one, a permanent warning line is noise. The test is
-            // `PiPackageSource.parse` rather than a `git:` prefix check, because pi
-            // reaches the git installer from three spellings — `git:host/path`,
-            // `ssh://…` and `https://host/owner/repo` (`PiPackageSource.parse`, pi's
-            // `parseSource` at `package-manager.ts:1446-1471`) — and the last two would
-            // otherwise hit the missing binary with no warning at all.
-            val gitSourceTyped = state.spec.isNotBlank() &&
-                PiPackageSource.parse(state.spec) is PiPackageSource.Git
-            if (gitSourceTyped) {
-                // Kept out of the label: a field label that long is clipped on a phone,
-                // and the clarification has to be readable rather than truncated.
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    text = PackageStrings.SPEC_GIT_UNAVAILABLE,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = palette.warning,
-                )
-            }
             Spacer(Modifier.height(8.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 PiPackageScope.entries.forEach { scope ->

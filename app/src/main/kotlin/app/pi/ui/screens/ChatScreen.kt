@@ -973,16 +973,6 @@ private fun SearchBar(
                 Icon(Icons.Filled.Close, contentDescription = "关闭查找")
             }
         }
-        // The honest scope of this search: it finds and jumps to the message that
-        // contains the query and tints it, but the matched characters inside the
-        // markdown are not individually recoloured.
-        if (query.isNotBlank()) {
-            Text(
-                "匹配到消息块并跳转；块内文字不做逐字高亮。",
-                style = PiTheme.text.meta,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
     }
 }
 

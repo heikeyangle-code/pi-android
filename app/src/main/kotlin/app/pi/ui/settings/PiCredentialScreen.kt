@@ -134,7 +134,6 @@ fun PiCredentialScreen(
         }
     }
     val scope = rememberCoroutineScope()
-    val paths = remember(service) { service.paths() }
 
     var presetId by remember { mutableStateOf(initialPresetId ?: PiProviderPresets.all.first().id) }
     var apiKey by remember { mutableStateOf("") }
@@ -239,25 +238,12 @@ fun PiCredentialScreen(
                 .verticalScroll(rememberScrollState())
                 .padding(bottom = contentPadding.calculateBottomPadding()),
         ) {
-            Note(
-                "写入的是 pi 自己的文件：凭证 <agentDir>/auth.json（0600）、厂商与模型 " +
-                    "<agentDir>/models.json、选择项 settings.json。不新建格式，也不经 settings.json 存 Key。",
-            )
-            Note(
-                "本次写入的 host 路径：" + paths.first + "（pi 在 guest 里读它）；镜像：" + paths.second +
-                    "。models.json 没有锁——pi 只在启动时读它，而且从不写它。",
-            )
             if (modelsFileError != null) {
-                Note("models.json 当前无法被 pi 解析：$modelsFileError。修好之前，写入的厂商不会生效。")
+                Note("模型配置当前无法被 pi 解析：$modelsFileError。修好之前，写入的厂商不会生效。")
             }
 
             // ------------------------------------------------------------ 1 厂商
             PiSectionHeader("1 选厂商")
-            Note(
-                "pi 内置 10 家厂商的 baseUrl 与 api 抄自 packages/ai/src/providers/（不是猜的）；" +
-                    "标「App 侧」的三条 pi 没有内置 provider（Ollama 与自定义端点要由 models.json 提供，" +
-                    "正是这个界面在写的那份文件）。",
-            )
             PiProviderPresets.all.forEach { option ->
                 Row(
                     modifier = Modifier
@@ -274,7 +260,7 @@ fun PiCredentialScreen(
                             color = MaterialTheme.colorScheme.onSurface,
                         )
                         Text(
-                            (if (option.builtInPi) "pi 内置" else "App 侧新增") + " · " + option.api,
+                            (if (option.builtInPi) "pi 内置" else "自定义") + " · " + option.api,
                             style = PiTheme.text.meta,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -295,15 +281,13 @@ fun PiCredentialScreen(
             )
             if (maskedKey != null) {
                 Note(
-                    "auth.json 里已经有这个厂商的 Key（$maskedKey）。App 不回显 Key，" +
-                        "pi 也不会回显，所以“留空＝保持原样”做不到：空 Key 会被写入端拒绝" +
-                        "（auth.json 的 Key 不能为空）。要换 Key 就重新粘贴。",
+                    "这个厂商已保存过 Key（$maskedKey）。留空不会保留原 Key，要换就重新粘贴。",
                 )
             }
             if (preset.scanStyle == PiProviderPresets.ScanStyle.Keyless) {
                 Note(
-                    "这个端点不校验鉴权，但 pi 仍然要求 auth.json 里有凭证，否则不会列出该厂商的模型" +
-                        "（docs/models.md:37）。留空会写入占位值「" +
+                    "这个端点不校验鉴权，但 pi 仍要求填写凭证，否则不会列出该厂商的模型。" +
+                        "留空会写入占位值「" +
                         PiProviderPresets.KEYLESS_PLACEHOLDER + "」。",
                 )
             }
@@ -319,24 +303,19 @@ fun PiCredentialScreen(
             OutlinedTextField(
                 value = api,
                 onValueChange = { api = it },
-                label = { Text("api（协议实现，pi 的 KnownApi 字面量）") },
+                label = { Text("api（协议实现）") },
                 singleLine = true,
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 12.dp, vertical = 4.dp),
             )
             Note(
-                "api 不是装饰：它决定 pi 用哪套流式实现（packages/ai/src/types.ts:17-27）。写错时" +
-                    "厂商会注册成功、第一条消息才失败，所以这里从预设带出来，不要凭印象改。",
+                "写错 api 时厂商会注册成功、第一条消息才失败。请从上面的预设带出来，不要凭印象改。",
             )
 
             // ------------------------------------------------------------ 3 扫描
             PiSectionHeader("3 检测并扫描模型")
-            Note(
-                "“扫描模型”不是 pi 的能力，是 App 侧知识：pi 的 createProvider 有一个可选的 fetchModels 钩子" +
-                    "（packages/ai/src/models.ts:763，调用点 :831），但没有任何内置 provider 实现它；" +
-                    "pi 的清单是 providers/ 下的静态表。这里按厂商分派 GET /models 等请求，成功即等于 Key 可用。",
-            )
+            Note("扫描成功即表示 Key 可用。")
             Row(
                 modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
                 verticalAlignment = Alignment.CenterVertically,
@@ -392,9 +371,7 @@ fun PiCredentialScreen(
             // ------------------------------------------------------ 4 勾选与保存
             PiSectionHeader("4 勾选并保存")
             Note(
-                "左边勾选参与 Ctrl+P 循环的模型（写进 settings.json 的 enabledModels，" +
-                    "settings-manager.ts:139）；右边选默认模型（defaultModel）。" +
-                    "扫到的 id 能对上 pi 已有清单的用 pi 的元数据，对不上的用 App 默认值并标注。",
+                "左边勾选会用 Ctrl+P 切换的模型，右边选默认模型。标「默认值」的表示 pi 不认识这个模型。",
             )
             OutlinedTextField(
                 value = manualIds,
@@ -426,7 +403,7 @@ fun PiCredentialScreen(
                                 "pi 元数据：" + known.name +
                                     (known.contextWindow?.let { " · 上下文 $it" } ?: "")
                             } else {
-                                "默认值，可改（pi 的清单里没有匹配到它）"
+                                "pi 不认识这个模型，用的是 App 默认值，可改"
                             },
                             style = PiTheme.text.meta,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -500,7 +477,7 @@ fun PiCredentialScreen(
                     onClick = {
                         val engine = coordinator
                         if (engine == null) {
-                            restartNote = "重启未接入：设置页还没有拿到引擎的 restart()。" +
+                            restartNote = "重启不可用：设置页还没有连上引擎。" +
                                 "文件已经写好，重启 App 或引擎后生效。"
                         } else {
                             when (engine.request("新增厂商需要被 pi 重新加载")) {
@@ -526,12 +503,10 @@ fun PiCredentialScreen(
 
             PiSectionHeader("说明")
             Note(
-                "models.json 允许注释：pi 在解析前会过 stripJsonComments" +
-                    "（packages/coding-agent/src/core/model-config.ts:267），所以手写的带注释文件不会被判成损坏。",
+                "手写的模型配置可以带注释，不会被判成损坏。",
             )
             Note(
-                "一个厂商的 models 一旦提供就替换该厂商的全部模型，不是追加；provider 块本身覆盖在内置同名" +
-                    "provider 之上（docs/custom-provider.md:684、:33）。所以勾选时要想清楚这是不是全部要用的模型。",
+                "一个厂商的模型一旦提供就替换该厂商的全部模型；勾选时要想清楚这是不是全部要用的模型。",
             )
             Spacer(Modifier.height(24.dp))
         }

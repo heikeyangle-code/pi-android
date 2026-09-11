@@ -400,7 +400,7 @@ private fun DeviceBridgeCard(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Text(
-                    "仅监听 127.0.0.1（不对局域网开放），调用方需要 guest 内 token 文件中的令牌。",
+                    "仅本机可访问，不对局域网开放。",
                     style = PiTheme.text.meta,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -843,9 +843,8 @@ private fun ApprovalsCard(lines: List<String>) {
         }
         Spacer(Modifier.height(4.dp))
         Text(
-            "注意：「同意并记住本次会话」由 guest 内的 pi 扩展执行，App 只能显示它上报的状态，" +
-                "无法独立验证。真正不可绕过的边界是上面的能力开关、硬性禁用清单与工作区写入边界 —— " +
-                "它们都在 App 进程里执行。",
+            "注意：「同意并记住本次会话」的状态由 pi 上报，App 无法独立验证。" +
+                "真正不可绕过的边界是上面的能力开关、硬性禁用清单与写入边界。",
             style = PiTheme.text.meta,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )

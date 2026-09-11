@@ -352,7 +352,7 @@ object PiSettingsCatalog {
         PiSetting(
             key = "enabledModels",
             title = "循环模型",
-            description = "Ctrl+P 循环切换时使用的模型模式，格式与 --models 命令行参数相同，支持通配符。",
+            description = "Ctrl+P 循环切换时使用的模型，支持通配符。",
             kind = PiRowKind.List,
             group = G_MODEL,
             section = "循环模型",
@@ -369,7 +369,7 @@ object PiSettingsCatalog {
             // The old text named the credential file and settings.json on screen. The
             // rule for this pass is that the UI shows what a user can do, not where
             // the bytes go, so it now describes the flow instead.
-            description = "选厂商、粘贴 API Key、检测可用模型并保存。凭证与设置分开保存，保存后重启引擎即可生效。",
+            description = "填写厂商 API Key。",
             kind = PiRowKind.Action,
             group = G_MODEL,
             section = "凭证",
@@ -379,7 +379,7 @@ object PiSettingsCatalog {
             key = "app.credentials.oauth",
             title = "OAuth 登录（仅终端）",
             description = "Anthropic Claude Pro/Max、OpenAI Codex、GitHub Copilot、OpenRouter、Kimi Code、xAI、Radius 支持 OAuth，登录在系统浏览器里完成。" +
-                "登录动作只在 pi 的原版 TUI 里提供：点「执行」会切到 工作区 → 终端，请在那里运行 /login。",
+                "点「执行」会切到 工作区 → 终端，请在 pi TUI 标签页里运行 /login。",
             kind = PiRowKind.Action,
             group = G_MODEL,
             section = "凭证",
@@ -396,7 +396,7 @@ object PiSettingsCatalog {
             key = "app.localModels.manage",
             title = "本地模型（llama.cpp）",
             description = "配置 pi 使用的 llama.cpp router 端点（默认 http://127.0.0.1:8080）。" +
-                "加载/卸载模型、从 HuggingFace 下载 GGUF 只在 pi 的原版 TUI 里提供，本页不做。",
+                "管理本地模型请在 工作区 → 终端 里做。",
             kind = PiRowKind.Action,
             group = G_MODEL,
             section = "凭证",
@@ -664,7 +664,7 @@ object PiSettingsCatalog {
         PiSetting(
             key = "defaultTools",
             title = "内建工具",
-            description = "启动时启用的内建工具。整表替换而不是合并：项目设置里的数组会覆盖全局数组。扩展与 SDK 自定义工具始终启用。pi 的标准默认是 read、bash、edit、write；App 建议额外开启 grep、find、ls，否则模型只能退回 bash 跑 rg 和 fd，手机上更慢。",
+            description = "启动时启用的内建工具。建议额外开启 grep、find、ls，否则模型只能靠 bash 跑 rg 和 fd，手机上更慢。",
             kind = PiRowKind.List,
             group = G_TOOLS,
             section = "内建工具",
@@ -701,7 +701,7 @@ object PiSettingsCatalog {
         PiSetting(
             key = "sessionDir",
             title = "会话目录",
-            description = "会话文件的存放目录。优先级是 --session-dir、PI_CODING_AGENT_SESSION_DIR，最后才是这项设置。改动需要重启 App。",
+            description = "会话文件的存放目录。改动需要重启 App。",
             kind = PiRowKind.Text,
             group = G_SESSIONS,
             section = "存储",
@@ -720,9 +720,8 @@ object PiSettingsCatalog {
         PiSetting(
             key = "app.sessions.import",
             title = "导入会话（仅终端）",
-            description = "从 JSONL 文件恢复一个会话，会替换当前会话。" +
-                "这个功能只在 pi 的原版 TUI 里提供：点「执行」会切到 工作区 → 终端，" +
-                "请在那里运行 /import <path.jsonl>。",
+            description = "从导出的会话文件恢复一个会话，会替换当前会话。" +
+                "点「执行」会切到 工作区 → 终端，请在 pi TUI 标签页里运行 /import <path.jsonl>。",
             kind = PiRowKind.Action,
             group = G_SESSIONS,
             section = "动作",
@@ -739,7 +738,7 @@ object PiSettingsCatalog {
         PiSetting(
             key = "app.sessions.cleanupPolicy",
             title = "清理策略",
-            description = "App 侧对旧会话文件的清理策略。pi 本身不删除会话，删除动作始终可撤销。",
+            description = "旧会话文件的清理策略。删除动作始终可撤销。",
             kind = PiRowKind.Value,
             group = G_SESSIONS,
             section = "存储",
@@ -755,7 +754,7 @@ object PiSettingsCatalog {
         PiSetting(
             key = "app.sessions.resumeLast",
             title = "启动续接最近会话",
-            description = "启动 App 时自动切到最近一次会话，对应 pi 的 -c / --continue。默认关闭，避免把「打开就是新会话」变成意外。",
+            description = "启动 App 时自动切到最近一次会话。",
             kind = PiRowKind.Switch,
             group = G_SESSIONS,
             section = "存储",
@@ -770,7 +769,7 @@ object PiSettingsCatalog {
         PiSetting(
             key = "extensions",
             title = "扩展",
-            description = "本地扩展文件或目录的路径。相对路径在全局设置里相对 ~/.pi/agent、在项目设置里相对 .pi。",
+            description = "本地扩展文件或目录的路径。相对路径分别以全局设置目录与项目目录为基准。",
             kind = PiRowKind.List,
             group = G_RESOURCES,
             section = "本地资源",
@@ -793,8 +792,8 @@ object PiSettingsCatalog {
         PiSetting(
             key = "packages",
             title = "资源包",
-            description = "已安装的 npm / git 资源包。安装、更新、移除都请在资源包管理页里做，" +
-                "在这里手改会写出「看起来装了、其实没生效」的条目：点这一行打开那一页。",
+            description = "已安装的资源包。手改会写出「看起来装了、其实没生效」的条目；" +
+                "点这一行打开 资源包管理 页去安装、更新或移除。",
             kind = PiRowKind.List,
             group = G_RESOURCES,
             section = "资源包",
@@ -819,7 +818,7 @@ object PiSettingsCatalog {
         PiSetting(
             key = "skills",
             title = "技能",
-            description = "本地技能文件或目录的路径。每个技能是一个 SKILL.md，pi 按 name/description 规则校验。",
+            description = "本地技能文件或目录的路径。每个技能是一个带名称与描述的文件。",
             kind = PiRowKind.List,
             group = G_RESOURCES,
             section = "本地资源",
@@ -845,7 +844,7 @@ object PiSettingsCatalog {
         PiSetting(
             key = "themes",
             title = "主题",
-            description = "本地主题文件或目录的路径。pi 主题是 51 个必需令牌加 5 个可选令牌的 JSON，导入后与桌面共用同一套文件。",
+            description = "本地主题文件或目录的路径。",
             kind = PiRowKind.List,
             group = G_RESOURCES,
             section = "本地资源",
@@ -869,7 +868,7 @@ object PiSettingsCatalog {
         PiSetting(
             key = "app.contextFiles",
             title = "上下文文件",
-            description = "AGENTS.md 与 SYSTEM.md 的全局版与项目版。它们会被追加进系统提示，改动需要重载。",
+            description = "全局与项目级的上下文文件。它们会被追加进系统提示，改动需要重载。",
             kind = PiRowKind.List,
             group = G_RESOURCES,
             section = "上下文文件",
@@ -886,7 +885,7 @@ object PiSettingsCatalog {
         PiSetting(
             key = "theme",
             title = "主题",
-            description = "主题名：dark、light 或自定义主题。自动模式把「浅色主题名/深色主题名」作为一个字面量字符串保存，App 原样往返，不拆成两个字段。",
+            description = "主题名：dark、light 或自定义主题。自动模式可分别指定浅色与深色主题名。",
             kind = PiRowKind.Value,
             group = G_APPEARANCE,
             section = "主题",
@@ -1168,7 +1167,7 @@ object PiSettingsCatalog {
         PiSetting(
             key = "terminal.hyperlinks",
             title = "OSC 8 超链接",
-            description = "覆盖 OSC 8 超链接支持检测：自动、强制开启（true）或强制关闭（false）。高级项，pi 的 /settings 里不提供，这里可以直接改，写回的是 JSON 布尔值。",
+            description = "覆盖 OSC 8 超链接支持检测：自动 / 强制开启 / 强制关闭。",
             kind = PiRowKind.Value,
             group = G_TERMINAL,
             section = "终端能力（高级）",
@@ -1179,7 +1178,7 @@ object PiSettingsCatalog {
         PiSetting(
             key = "terminal.images",
             title = "图片协议",
-            description = "覆盖图片协议检测：自动、kitty、iterm2 或关闭（false）。高级项，pi 的 /settings 里不提供，这里可以直接改，关闭时写回 JSON 布尔值 false。",
+            description = "覆盖图片协议检测：自动 / kitty / iterm2 / 关闭。",
             kind = PiRowKind.Value,
             group = G_TERMINAL,
             section = "终端能力（高级）",
@@ -1190,7 +1189,7 @@ object PiSettingsCatalog {
         PiSetting(
             key = "terminal.trueColor",
             title = "真彩色",
-            description = "覆盖真彩色支持检测：自动、强制开启（true）或强制关闭（false）。高级项，pi 的 /settings 里不提供，这里可以直接改。",
+            description = "覆盖真彩色支持检测：自动 / 强制开启 / 强制关闭。",
             kind = PiRowKind.Value,
             group = G_TERMINAL,
             section = "终端能力（高级）",
@@ -1426,7 +1425,7 @@ object PiSettingsCatalog {
         PiSetting(
             key = "app.trust.projects",
             title = "项目信任名单",
-            description = "已保存信任决定的项目目录，对应 ~/.pi/agent/trust.json。信任一个项目会允许它加载 .pi/settings.json、安装项目资源包并执行项目扩展。",
+            description = "已保存信任决定的项目目录。信任一个项目会允许它加载项目资源并执行项目扩展。",
             kind = PiRowKind.List,
             group = G_SECURITY,
             section = "信任",
@@ -1543,8 +1542,8 @@ object PiSettingsCatalog {
         ),
         PiSetting(
             key = "app.runtime.rootfsUsage",
-            title = "rootfs 占用",
-            description = "Ubuntu rootfs 与 apt/npm 缓存的磁盘占用。",
+            title = "运行时占用",
+            description = "Linux 运行时与包缓存的磁盘占用。",
             kind = PiRowKind.Text,
             group = G_RUNTIME,
             section = "运行时",
@@ -1652,7 +1651,7 @@ object PiSettingsCatalog {
         PiSetting(
             key = "lastChangelogVersion",
             title = "上次 changelog 版本",
-            description = "pi 记录的上次展示更新日志的版本，用于判断是否需要再展示一次。只读。",
+            description = "上次展示更新日志的版本。只读。",
             kind = PiRowKind.Text,
             group = G_ABOUT,
             section = "更新",
@@ -1678,8 +1677,7 @@ object PiSettingsCatalog {
         PiSetting(
             key = "app.about.changelog",
             title = "查看更新日志（仅终端）",
-            description = "查看 pi 与 App 的更新历史，只能在 pi 的原版 TUI 里看：" +
-                "点「执行」会切到 工作区 → 终端，请在那里运行 /changelog。",
+            description = "点「执行」会切到 工作区 → 终端，请在 pi TUI 标签页里运行 /changelog。",
             kind = PiRowKind.Action,
             group = G_ABOUT,
             section = "更新",

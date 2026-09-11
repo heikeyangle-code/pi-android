@@ -149,7 +149,7 @@ fun SessionsScreen(
                 PiEmptyState(
                     icon = Icons.Filled.Forum,
                     title = "还没有会话",
-                    body = "pi 的每个会话都是一个 JSONL 文件，按工作目录归档。\n" +
+                    body = "会话按工作目录分组。\n" +
                         "新建一个，或者把手机里的文件夹设为工作区。",
                     modifier = Modifier.weight(1f),
                 )
@@ -217,7 +217,7 @@ fun SessionsScreen(
                     if (isActive) {
                         "「${pending.displayName}」是当前会话，pi 正在写入这个文件。先切换到别的会话再删除。"
                     } else {
-                        "删除「${pending.displayName}」？这个会话的 JSONL 文件会被移除，无法从 App 里恢复。"
+                        "删除「${pending.displayName}」？这个会话会被移除，无法恢复。"
                     },
                 )
             },

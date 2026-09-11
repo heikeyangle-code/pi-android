@@ -78,11 +78,6 @@ fun PiPackagesEntryRow(
                     style = MaterialTheme.typography.bodyLarge,
                     color = MaterialTheme.colorScheme.onSurface,
                 )
-                Text(
-                    PackageStrings.SUBTITLE,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
             }
             Text(
                 "打开",
@@ -245,8 +240,6 @@ class PiPackagesController(
     private var sessionTrustAnswer by mutableStateOf<Boolean?>(null)
 
     fun state(lifecycleState: ExtensionLifecycle.State): PiPackagesUiState = PiPackagesUiState(
-        engineAgentDir = layout.agentMirrorDir.absolutePath,
-        rootfsAgentDir = layout.agentTruthDir.absolutePath,
         guestWorkspace = layout.guestWorkspace,
         spec = spec,
         scope = scope,
@@ -292,11 +285,14 @@ class PiPackagesController(
             projectPackagesHidden = listing.projectPackagesHidden
             record(
                 headline = if (listing.notReady != null) {
-                    "pi list 未执行：${listing.notReady}"
+                    // The reason is already the sentence shown where the list would be
+                    // (`LIST_NOT_READY_PREFIX + notReady`). Repeating it here put the
+                    // same cause on screen twice, so this line records only the fact.
+                    "pi list 未执行"
                 } else {
                     "pi list：${listing.entries.size} 项；内置扩展 " +
                         "${builtins.count { it.presence == PiBuiltinExtension.Presence.EngineAgentDir }}" +
-                        "/${builtins.size} 个在引擎的 agent 目录里"
+                        "/${builtins.size} 个已生效"
                 },
                 command = listing.argv.joinToString(" "),
                 stdout = listing.raw,
@@ -356,7 +352,7 @@ class PiPackagesController(
         val engine = coordinator
         if (engine == null) {
             record(
-                headline = "重启未接入：设置页还没有拿到引擎的 restart()",
+                headline = "重启不可用：设置页还没有连上引擎。",
                 command = "",
                 stdout = "",
                 stderr = "",
@@ -419,7 +415,7 @@ class PiPackagesController(
                 record("本次会话：${option.label}", "", "", "")
             } else {
                 sessionTrustAnswer = null
-                record("trust.json：${option.label} —— ${result.message}", "", "", "")
+                record("信任记录：${option.label} —— ${result.message}", "", "", "")
             }
             promptVisible = false
         } finally {
@@ -432,7 +428,7 @@ class PiPackagesController(
         busy = true
         try {
             val result = io { trustRepository.repairInvalidStore() }
-            record("修复 trust.json：${result.message}", "", "", "")
+            record("修复信任记录：${result.message}", "", "", "")
         } finally {
             busy = false
         }
@@ -460,7 +456,6 @@ class PiPackagesController(
         return PiBuiltinExtension.SHIPPED.map { extension ->
             PiPackagesUiState.BuiltinRow(
                 extension = extension,
-                guestPath = extension.guestEntryPath(layout.guestAgentDir),
                 presence = extension.presenceIn(
                     engineAgentDirHasEntry = File(engineExtensions, extension.entryUnderExtensions).isFile,
                     rootfsHasEntry = File(rootfsExtensions, extension.entryUnderExtensions).isFile,

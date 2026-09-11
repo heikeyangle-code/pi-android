@@ -136,10 +136,8 @@ fun SessionTreeScreen(
                     Spacer(Modifier.width(8.dp))
                     TextButton(onClick = { filter = filter.next() }) { Text(filter.label) }
                 }
-                // The honesty note for the only action this screen offers.
                 Text(
-                    "这里是分叉：会新建一个会话文件。pi 的 /tree 能在原会话里切换节点（不新建文件），" +
-                        "但 RPC 没有这个命令，只能在「原版 TUI」里做。",
+                    "分叉会新建一个会话文件，原会话保持不变。",
                     modifier = Modifier.padding(horizontal = PiSpacing.screen),
                     style = PiTheme.text.meta,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -180,7 +178,7 @@ private fun BranchTab(
         PiEmptyState(
             icon = Icons.Filled.Close,
             title = if (state.busy != null) "正在读取…" else "还没有分支",
-            body = "会话的第一条消息落盘后，这里会显示分支结构。",
+            body = "会话有第一条消息后，这里会显示分支结构。",
             modifier = modifier,
         )
         return
@@ -360,7 +358,7 @@ private fun EntriesTab(entries: List<SessionEntry>, modifier: Modifier = Modifie
         PiEmptyState(
             icon = Icons.Filled.Close,
             title = "没有条目",
-            body = "get_entries 返回空列表：这个会话还没有写入任何条目。",
+            body = "这个会话还没有写入任何条目。",
             modifier = modifier,
         )
         return

@@ -181,12 +181,12 @@ fun SettingsGroupScreen(
             text = {
                 Text(
                     // A caller that passes no dispatcher gets the row's own text plus
-                    // one neutral sentence. It must not describe the host wiring: that
-                    // is internal, and `PiRoot` — the only production caller — always
-                    // passes one, so this branch is a preview/test path (spec §6.2's
-                    // "no dead rows" rule is enforced at the registry instead).
+                    // one neutral sentence saying the entry does not work here. It must
+                    // not describe the host wiring: that is internal, and `PiRoot` — the
+                    // only production caller — always passes a dispatcher, so this
+                    // branch is a preview/test path.
                     if (run == null) {
-                        openConfirmation.description + "\n\n这个入口在当前版本里不可用。"
+                        openConfirmation.description + "\n\n这个入口当前不可用。"
                     } else {
                         openConfirmation.description
                     },

@@ -223,11 +223,10 @@ object PiThemeLoader {
             return PiResolvedTheme.fallback(systemDark).copy(
                 setting = raw,
                 error = if (entry != null) {
-                    "主题「$name」的文件不存在：${entry.path}"
+                    "主题「$name」的文件不存在。"
                 } else {
                     "找不到主题「$name」。" +
-                        "pi 从 ~/.pi/agent/themes 与项目 .pi/themes 发现主题，" +
-                        "也可以把文件路径写进 themes 设置。"
+                        "可以在设置里检查主题名，或直接填写主题文件的路径。"
                 },
             )
         }
@@ -339,18 +338,18 @@ object PiThemeLoader {
         }
 
         if (missingTokens.isNotEmpty()) {
-            notes += "缺少必需令牌：${missingTokens.joinToString("、")}；这些颜色用内置主题的值代替。"
+            notes += "缺少这些颜色定义：${missingTokens.joinToString("、")}；这些颜色用内置主题的值代替。"
         }
         if (brokenTokens.isNotEmpty()) {
-            notes += "无法解析的令牌：${brokenTokens.joinToString("、")}；已用内置主题的值代替。"
+            notes += "无法解析的颜色：${brokenTokens.joinToString("、")}；已用内置主题的值代替。"
         }
         if (emptyTokens.isNotEmpty()) {
-            notes += "空值令牌（pi 里表示「用终端默认色」）：${emptyTokens.joinToString("、")}；" +
-                "这里用内置主题对应颜色代替，App 没有终端默认色可继承。"
+            notes += "这些颜色留空：${emptyTokens.joinToString("、")}；" +
+                "已用内置主题的颜色代替。"
         }
         if (indexedTokens.isNotEmpty()) {
-            notes += "256 色索引令牌：${indexedTokens.joinToString("、")}；" +
-                "按标准 xterm 调色板换算成 RGB，真实颜色取决于终端自己的调色板。"
+            notes += "256 色索引颜色：${indexedTokens.joinToString("、")}；" +
+                "已换算成最接近的真彩色。"
         }
 
         return ParsedTheme(palette = base.withTokens(resolved), dark = !isLight, notes = notes)

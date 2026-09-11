@@ -52,7 +52,10 @@ import app.pi.ui.theme.PiTheme
 fun PiProjectTrustPrompt(
     cwd: String,
     options: List<ProjectTrust.Option>,
-    /** Why this prompt is being shown; from [PackageStrings.rationale]. */
+    /**
+     * Why this prompt is being shown. The caller assembles it — `PiPackagesHost` from
+     * `ProjectTrust.resolve(...)`.
+     */
     explanation: String,
     /** Set while a trust decision is being written, to prevent double submission. */
     busy: Boolean = false,

@@ -80,19 +80,19 @@ fun PiEffectiveDialog(
     val (label, explanation, actionLabel) = when (kind) {
         EffectiveKind.Reload -> Triple(
             "需要重载",
-            "属于资源类设置，改动会写进配置文件，但要等一次重载（等价于 pi 的 /reload）才会被内核重新读取。",
+            "改动已保存，重载后生效。",
             "立即重载",
         )
 
         EffectiveKind.NewSession -> Triple(
             "需要新会话",
-            "内核在会话开始时读取这个值，当前会话不会改变。开一个新会话或重连内核之后生效。",
+            "当前会话不会改变，开一个新会话之后生效。",
             "新建会话",
         )
 
         EffectiveKind.RestartApp -> Triple(
             "需要重启 App",
-            "这个值在 App 进程启动时装配，必须先结束进程再启动。会话与文件不会受影响。",
+            "这个值在 App 启动时读取，必须先结束 App 再启动。会话与文件不会受影响。",
             "重启 App",
         )
 
@@ -466,8 +466,8 @@ fun PiListEditorSheet(
                     "每行一项，写成「键 = 值」，键按精确匹配不认通配符。值以 { 或 [ 开头时按 JSON 解析，" +
                         "例如逐模型压缩覆盖写成 model-id = {\"reserveTokens\": 400000}，其余按字符串/数字/布尔解析。"
                 } else {
-                    "每行一项，支持 glob 与排除标记：!pattern 排除、+path 强制包含、-path 强制排除，" +
-                        "App 原样保存不会改写成纯路径列表。值以 { 或 [ 开头时按 JSON 解析，例如 packages 的对象形式 " +
+                    "每行一项，支持 glob 与排除标记：!pattern 排除、+path 强制包含、-path 强制排除。" +
+                        "值以 { 或 [ 开头时按 JSON 解析，例如 packages 的对象形式 " +
                         "{\"source\": \"pi-skills\", \"autoload\": false}。"
                 },
             )
@@ -641,8 +641,8 @@ fun PiThemeEditorSheet(
             )
             Spacer(Modifier.height(4.dp))
             Text(
-                "自动模式在 settings.json 里就是一个字符串「浅色主题名/深色主题名」。这里保存的也是同一个字符串，" +
-                    "不会拆成两个字段。下面的自定义主题来自 pi 的发现规则：~/.pi/agent/themes、项目 .pi/themes 与 themes 设置。",
+                "自动模式需要分别填写浅色与深色主题名。" +
+                    "下面的自定义主题来自 pi 的主题目录与 themes 设置。",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -652,7 +652,7 @@ fun PiThemeEditorSheet(
             }
             if (notes.isNotEmpty()) {
                 Spacer(Modifier.height(8.dp))
-                PiInfoNote("当前主题有无法完全照搬的地方：\n" + notes.joinToString("\n") { "· $it" })
+                PiInfoNote("当前主题有部分颜色无法照搬：\n" + notes.joinToString("\n") { "· $it" })
             }
             Spacer(Modifier.height(PiSpacing.unit))
             Text(

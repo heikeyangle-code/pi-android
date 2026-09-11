@@ -17,6 +17,7 @@ import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -24,6 +25,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import app.pi.ui.components.PiEmptyState
 import app.pi.ui.terminal.TerminalPane
+import app.pi.ui.terminal.TerminalTab
 import app.pi.ui.theme.PiSpacing
 
 /**
@@ -49,7 +51,21 @@ import app.pi.ui.theme.PiSpacing
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun WorkbenchScreen(contentPadding: PaddingValues) {
+fun WorkbenchScreen(
+    contentPadding: PaddingValues,
+    /**
+     * A terminal tab this screen was asked to open on, or null for the default.
+     *
+     * `PiRoot` sets it when a settings row is a terminal-only action, because
+     * those rows exist for pi's TUI alone: landing on a running `bash` would show
+     * a prompt where the command they were told to run cannot work. It is a
+     * request rather than a value, so it is consumed — otherwise every later
+     * visit to this destination would spawn pi again instead of a shell.
+     */
+    initialTerminalTab: TerminalTab? = null,
+    /** Called once [initialTerminalTab] has been acted on; see above. */
+    onInitialTerminalTabConsumed: () -> Unit = {},
+) {
     var segment by rememberSaveable { mutableStateOf(0) }
     val labels = listOf("终端", "文件", "Git", "任务")
     val icons = listOf(
@@ -58,6 +74,16 @@ fun WorkbenchScreen(contentPadding: PaddingValues) {
         Icons.Filled.AccountTree,
         Icons.Filled.TaskAlt,
     )
+
+    // "Directly see pi's TUI" is two requirements, not one: the right tab *and*
+    // the terminal segment. The segment is remembered, so without this a jump
+    // made while 文件 was selected would land on the empty file screen.
+    LaunchedEffect(initialTerminalTab) {
+        if (initialTerminalTab != null) {
+            segment = 0
+            onInitialTerminalTabConsumed()
+        }
+    }
 
     Column(Modifier.fillMaxSize().padding(contentPadding)) {
         TopAppBar(title = { Text("工作区") })
@@ -76,7 +102,10 @@ fun WorkbenchScreen(contentPadding: PaddingValues) {
         if (segment == 0) {
             // The terminal takes the rest of the screen: a TUI wants every row it
             // can get, and the key bar sits at its bottom edge.
-            TerminalPane(Modifier.weight(1f))
+            TerminalPane(
+                modifier = Modifier.weight(1f),
+                initialTab = initialTerminalTab ?: TerminalTab.Shell,
+            )
         } else {
             val (title, body) = when (segment) {
                 1 -> "没有工作区" to "把手机里的一个文件夹设为工作区后，文件树会出现在这里。"
