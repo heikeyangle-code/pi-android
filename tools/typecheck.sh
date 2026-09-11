@@ -139,7 +139,7 @@ KOTLINC_CP="$(find -L "$KOTLINC_LIBS" -name '*.jar' | tr '\n' ':')"
 # actually happened once (a symlinked lib dir, which `find` does not descend
 # into without -L) — a green verdict on a tree that was never compiled is worse
 # than a red one, because it is trusted.
-if [ -z "$KOTLINC_CP" ] || ! echo "$KOTLINC_CP" | grep -q 'kotlin-compiler'; then
+if [ -z "$KOTLINC_CP" ] || [[ "$KOTLINC_CP" != *kotlin-compiler* ]]; then
   echo "typecheck: CANNOT RUN — no kotlin compiler jars found in $KOTLINC_LIBS" >&2
   echo "  KOTLINC_CP='$KOTLINC_CP'" >&2
   exit 2
@@ -161,7 +161,14 @@ compile() {
     -no-stdlib -jvm-target 17 -classpath "$cp" -d "$target" "$@" 2>&1)"
   # A JVM that failed to launch produces no Kotlin diagnostics at all, which the
   # verdict below would read as success. Turn that into an explicit failure.
-  if echo "$out" | grep -q "Could not find or load main class\|Unrecognized option\|Could not reserve enough space"; then
+  #
+  # Matched with `[[ == *pat* ]]` rather than `echo | grep -q`: under `pipefail` a
+  # large $out makes grep exit early on SIGPIPE (141), so the guard that exists to
+  # catch "the compiler never ran" would itself be skipped on exactly the runs with
+  # the most output. That is a false-OK channel, not a theoretical one.
+  if [[ "$out" == *"Could not find or load main class"* ||
+        "$out" == *"Unrecognized option"* ||
+        "$out" == *"Could not reserve enough space"* ]]; then
     echo "typecheck: CANNOT RUN — the compiler did not start:" >&2
     echo "$out" | head -3 >&2
     exit 2
@@ -181,6 +188,16 @@ if [ -n "$RPC_SOURCES" ]; then
     exit 1
   fi
   (cd "$OUT/rpc" && jar cf "$RPC_JAR" .) 2>/dev/null
+  # A jar built from an empty directory is still a valid jar. When :rpc's compile is
+  # killed (this machine throws `fork: Function not implemented` under load) the empty
+  # jar makes :app emit hundreds of fake `unresolved reference 'rpc'` diagnostics —
+  # 946 of them were once read as real defects. Refuse to continue instead.
+  RPC_CLASSES="$(jar tf "$RPC_JAR" 2>/dev/null | grep -c '\.class$')"
+  if [ "${RPC_CLASSES:-0}" -eq 0 ]; then
+    echo "typecheck: CANNOT RUN — :rpc produced an empty jar ($RPC_JAR)" >&2
+    echo "  any :app 'unresolved reference rpc' would be an artifact, not a defect" >&2
+    exit 2
+  fi
 fi
 
 # --- stage 2: :app against the :rpc jar ----------------------------------------

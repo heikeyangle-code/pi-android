@@ -222,14 +222,23 @@
   alertTitle = heading.copy(fontSize = 16.sp, lineHeight = 24.sp),
   ```
   0.45.0 里这两个参数都有默认值，所以不补也能编译；补上才是这次升级的目的（GFM alert 的标题样式与暗色配色）。
-- **本机类型检查的真实状态（完整两阶段 `tools/typecheck.sh`）**：
-  - `:rpc` 阶段：143 个 class，**0 条错误**（通过，`rpc.jar` 正常产出）。
-  - `:app` 阶段：**编不过**。107 条 `error:`，末行是 `typecheck: FAILED in :app`，脚本走 `exit 1`。
-  - 按文件分组（错误条数）：`app/src/main/kotlin/app/pi/ui/screens/ChatScreen.kt` **84**、`ui/PiSessionViewModel.kt` **14**、`ui/PiRoot.kt` **4**、`ui/screens/SessionsScreen.kt` **3**、`ui/extension/ExtensionUiHost.kt` **2**。
-  - 全部是同一类：`unresolved reference '<成员>'` 或 `cannot infer type for value parameter`。被点名的成员集中在视图模型那批（`switchSession` / `newSession` / `deleteSession` / `send` / `runBash` / `stop` / `setModel` / `refreshModels` / `setThinkingLevel` / `compact` / `exportSession` / `renameSession` / `copyLastAssistantText` …），另有 `ChatScreen.kt:865` 的 `unresolved reference 'KeyboardArrowUp'`。
-  - **关键判断**：没有一条错误涉及 markdown 渲染 API、`compileSdk`、AGP 或 Shizuku。所以这次 `:app` 失败**不是** 0.41.0→0.45.0 或 36→37 造成的，而是那批 `ui/**` 文件当时正处在并发重构的中间状态（`ui/render/**`、`ui/extension/**` 等都不归本次改动）。
-  - ⚠ 判读陷阱：**`:app` 的 class 数永远是 0**。本机不加载 Compose 编译器插件，codegen 走不到最后，所以 `build/typecheck/out-*/app` 为空**不代表失败**；唯一判据是日志里的 `error:` 行和末行。反过来也要小心「假 OK」：JVM 没起来时脚本可能直接吐 OK，所以 exit code 与末行要一起看。
-  - 复现：`bash tools/typecheck.sh > /tmp/tc.log 2>&1; echo $?`。脚本已改成每次调用独立 `out-$$`，并行跑不再互相删中间产物（`/tmp` 里 `fork: Function not implemented` 那类报错是机器被并发重编译压垮，不是脚本问题）。
+- **本机类型检查的真实状态（完整两阶段 `tools/typecheck.sh`，2026-09-11 最终）**：
+  - **`:app` 已通过，全树 0 条错误。** 命令与逐字输出：
+    ```
+    $ bash tools/typecheck.sh > /tmp/tc-verify2.log 2>&1; echo "EXIT=$?" >> /tmp/tc-verify2.log
+    $ cat /tmp/tc-verify2.log
+    typecheck: OK (:rpc + :app, cross-module boundary reproduced) — 0 error diagnostics, :rpc 0 / :app 0
+    EXIT=0
+    $ grep -cE '\.kt:[0-9]+:[0-9]+: error:' /tmp/tc-verify2.log
+    0
+    ```
+    可信度检查（否则 OK 不算数）：跑前删掉了可能残留的 `build/typecheck/rpc.jar`，跑后它被重建为 **306,124 字节 / 143 个 class**（`:rpc` 真的编译了，不是空 jar），日志里没有 `CANNOT RUN`（JVM 真的起来了）。这一轮包含当时刚加入、从未编译过的 508 行新文件 `app/src/main/kotlin/app/pi/packages/PiPackagesHost.kt`。
+  - 过程记录（供以后不要被吓到）：第一轮 107 条错误，根因是 `ChatScreen.kt:34` 两行 import 被拼成一行、`PiSessionViewModel.kt` 里 KDoc 的 `` `rpc/**` `` 让 Kotlin 块注释**嵌套**吞掉文件剩余部分；修完降到 6 条（`ChatScreen.kt` 缺 `import kotlinx.coroutines.launch`，两个 `let` 块连带报 `cannot infer type for 'R'`）；补上 import 后归零。**全程没有一条错误涉及 markdown 渲染 API、`compileSdk`、AGP 或 Shizuku**——0.41.0→0.45.0 与 36→37 没有引入任何编译错误。
+  - **⚠ `tools/typecheck.sh` 曾有两种「假 OK」，都已修，但判读时要知道**：
+    1. `set -uo pipefail` + `if echo "$APP_DIAG" | grep -qE "\.kt:...: error:"`：诊断超过管道缓冲（约 900+ 条）时 `grep -q` 提前退出、`echo` 收到 SIGPIPE，`pipefail` 让管道返回 141 → `if` 为假 → 打印 OK。实测出现过「946 条 error 后紧跟 `typecheck: OK` / `EXIT=0`」。修法：判定改用 here-string（`grep -qE ... <<<"$APP_DIAG"`，无管道即不受 pipefail 影响）。
+    2. 脚本从不检查 `java` 的退出码，`:rpc` 的编译若被杀/启动失败（无诊断＝看不出错）会照常 `jar cf` 一个空目录，产出 330 字节、只有 `META-INF/MANIFEST.MF` 的 `rpc.jar`；`:app` 随即爆出几百条 `unresolved reference 'rpc'` 的**假错**（实测 946 条，其中 `rpc` 92 条、`PiResponses`/`PiCommands`/`SessionEntry` 等 rpc 类型名上百条）。**跑之前 `rm -f build/typecheck/rpc.jar`，跑完 `unzip -l` 确认有 class，OK 才算数。**
+    加固后的判定行自带计数，不会再出现「光秃秃一个 OK」：`... — N error diagnostic(s)`。
+  - ⚠ 判读陷阱：**`:app` 的 class 数永远是 0**。本机不加载 Compose 编译器插件，codegen 走不到最后，所以 `build/typecheck/out-*/app` 为空**不代表失败**——唯一判据是日志里的 `error:` 行（自己数，别只看末行）。脚本已改成每次调用独立 `out-$$`；`/tmp` 里 `fork: Function not implemented` / Kotlin daemon 的 `SocketException: Function not implemented`、`pthread_create ENOSYS` 都是这台机器被并发重编译压垮，不是代码问题。
   - **Shizuku 依赖已补齐**：`tools/fetch-typecheck-deps.sh` 新增一段，按 `gradle/libs.versions.toml` 的 `shizuku` 版本取 4 个 AAR（`api`/`aidl`/`shared`/`provider`，13.1.5 时四个都是 AAR，已实测 200），解出 `classes.jar` 放到 `build/typecheck/extra/aar/shizuku-<artifact>/`。不需要 Gradle 解析 POM：少一个就是一条 unresolved import，而不是解析错误。
 
 ### B10. `libprootloader.so` 不是 PIE —— 装机时可能被拒
@@ -499,7 +508,7 @@ pi 的 TUI 会按扩展名分支（`.jsonl` → `exportToJsonl`，`interactive-m
 | 命令 | 结果 |
 |---|---|
 | `K2JVMCompiler -no-stdlib -jvm-target 17 -classpath <kotlinc+serialization+coroutines> -d <out> $(find rpc/src/main/kotlin -name '*.kt')`（与 `tools/typecheck.sh` 同一套 kotlinc/classpath） | **exit 0，0 error，143 个 class** |
-| `bash tools/typecheck.sh` | **没有一次真实 `OK` 可作证据。** 本会话出现过的两次 `typecheck: OK (:rpc + :app, cross-module boundary reproduced)`（`/tmp/typecheck.log` mtime 15:35:21；`/tmp/tc2.log` 11:17）**都是假 OK**：日志里没有任何编译器诊断，且 `build/typecheck/out/app` 与 `out-26048/app` 的 class 数都是 **0**（`rpc` = 143）。这正是旧脚本在 `KOTLINC_CP` 为空时打印 OK 的路径（现已加守卫）。**`:app` 尚未被编译验证。** |
+| `bash tools/typecheck.sh` | **`:app` 已通过编译验证（终局，2026-09-11）。** `typecheck: OK (:rpc + :app, cross-module boundary reproduced) — 0 error diagnostics, :rpc 0 / :app 0`，`EXIT=0`，`grep -cE '\.kt:[0-9]+:[0-9]+: error:'` = **0**；依据日志 `/tmp/tc-verify2.log`。可信度有反证：跑前删掉旧 `rpc.jar`，跑后它是 **306,124 字节 / 143 个 class**（不是空 jar），日志里 `CANNOT RUN` = 0，且本轮包含新增的 508 行 `PiPackagesHost.kt` 与 `import kotlinx.coroutines.launch`。<br>**此前两次 `OK` 是假 OK**（`/tmp/typecheck.log` 15:35:21、`/tmp/tc2.log` 11:17：日志里没有任何编译器诊断）。根因两个，均已修复：`pipefail` + `echo \| grep -q` 的 SIGPIPE 假 OK；不检查 `java` 退出码导致空 `rpc.jar` 引发 **946 条**假 `unresolved reference 'rpc'`。判定行现在自带错误计数，空 jar 会直接 `CANNOT RUN`。 |
 | 最小闭包编译（`runtime/*.kt` + `bridge/*.kt` + `session/*.kt` + 三个 `engine/` 文件；classpath = kotlinc + coroutines + serialization + android.jar + `out-26048/rpc`） | 98 个 `error:` **全部落在 `bridge/**`**（最小 classpath 缺 AndroidX 的 `ContextCompat` 等，是 classpath 缺口而非代码缺陷）；**`engine/` 0 error** —— `PiEngineHost.kt` / `PiEngineSession.kt` / `PiEngineApi.kt` 编译干净 |
 | `gradle :rpc:test --console=plain --no-daemon` | 最近一次**完成**的运行：**190 tests / 0 failures / 0 errors / 0 skipped**（`rpc/build/test-results/test/*.xml`，mtime 18:36:14）。本轮新增 10 个用例后期望 **200**，**待 `8ecfdf0b` 跑一次才有证据**（按资源规矩 RPC 代理不跑 gradle） |
 | 单测直跑（JUnitCore，编译产物） | 曾 `OK (198 tests)`；`FidelityFixesTest` 现有 33 个 `@Test` |
