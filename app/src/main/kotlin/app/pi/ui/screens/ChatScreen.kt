@@ -207,9 +207,6 @@ private fun ChatBody(
         }
     }
 
-    val userRowIndices = remember(state.transcript) {
-        state.transcript.mapIndexedNotNull { index, item -> if (item is UserMessage) index else null }
-    }
 
     // Transcript search. pi has the feature in its fullscreen viewport
     // (`keybindings.md` `tui.altScreen.search`) and the GUI needs it more: a long
@@ -241,6 +238,13 @@ private fun ChatBody(
         }
     }
     LaunchedEffect(searchQuery) { searchCursor = 0 }
+
+    // pi's `tui.altScreen.previousPrompt` / `nextPrompt` (`keybindings.md:112`):
+    // jump between the messages the *user* wrote. Computed over the same list the
+    // LazyColumn renders, so a hidden day separator cannot shift the target row.
+    val userRowIndices = remember(visibleItems) {
+        visibleItems.mapIndexedNotNull { index, item -> if (item is UserMessage) index else null }
+    }
 
     // Follow-the-tail state. The spec is explicit (§4.5): follow the newest block
     // by default, and **never steal the scroll** once the user has scrolled up —

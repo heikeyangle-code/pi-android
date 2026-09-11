@@ -206,6 +206,24 @@
 命令名的冲突已由 GUI 侧处理（`name:1` 后缀保留，见 `PiSlashCommands.kt`），**工具名的没有任何处理**。
 收尾：扩展/包管理界面里检测并显示冲突；或在加载后比对工具表并给出警告。
 
+### E9-接线规格（由包管理代理交付，界面未写——**这就是"钥匙"，别让它只活在聊天里**）
+
+核心层已在 `app/src/main/kotlin/app/pi/packages/` 就绪，界面只需要接线，**不需要再写逻辑**：
+
+| 界面元素 | 调用 | 返回 |
+|---|---|---|
+| 打开时预填 | `PiCredentialService.prefill(presetId)` | `Existing(providerId, modelId, configuredProviderIds, configuredModelIds, maskedKey, baseUrl, api, modelsFileError)` |
+| 选厂商 | `PiProviderPresets.all`（10 家 pi 内置 + 3 条 App 侧，`baseUrl`/`api` 已从 pi 的 `providers/*.ts` 抄好） | — |
+| **「检测并扫描模型」（唯一一个按钮）** | `suspend PiCredentialService.probe(preset, key, baseUrl)` | `Ok(models, endpoint, note)` / `Failed(kind, message, suggestion, endpoint)`——**`Failed.allowManual` 恒为 true** |
+| 勾选 + 保存 | `PiCredentialService.save(preset, key, baseUrl, api, choices, defaultModelId)` | `SaveResult(ok, steps, restart)`；`restart` 直接喂 `ExtensionLifecycle.installSucceeded(...)` |
+| **`PiRoot.kt`** | `PiSettingsStack(onRunAction = ...)` **目前没传**（默认 `null`），所以 `app.credentials.*` / `app.localModels.manage` 三行**点了没反应** | — |
+
+界面还需自己补两块：
+1. 扫到的 id **匹配 pi 内置目录取元数据**（数据源是 `PiCommands.getAvailableModels`——pi 的模型清单在**进程里**，不是文件）；匹配不上的用默认值并**标注"默认值，可改"**；
+2. 把两句事实写进界面文案：**`models.json` 完全没有锁**、**"扫描模型"不是 pi 的能力而是 App 侧知识**（常量已在 `PiModelScanner`/`PiProviderPresets` 注释里）。
+
+**之后**：I2（20 个动作行）→ I9（删会话 + `--continue`，先读 `cli.ts` 确认 `-c` 语义）→ I11（环境变量；`PiLaunchOptions` 已被接入 `PiEngineHost`，别重复实现）。
+
 ### E9. 模型/凭证的"导入"在 GUI 里**完全是空壳**（点下去没有任何反应）
 - **症状**：设置 → 模型 → 「API Key」「OAuth 登录」「本地模型（llama.cpp）」三行**看得见、能点，但点了什么都不发生**。
 - **原因（两处都缺）**：
