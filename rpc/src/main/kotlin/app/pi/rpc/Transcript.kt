@@ -957,30 +957,40 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
         }
 
         // Anything newer than this build. A handful of entry-shaped types are
-        // still projectable, so try those instead of dropping them.
-        is PiEvent.Unknown -> if (event.type in ENTRY_EVENT_TYPES) {
-            if (event.raw.isEmpty()) TranscriptChange.None else onEntry(event.raw)
-        } else {
-            // F25 (docs/rendering-review.md): a genuinely unknown event kind is
-            // made visible, exactly like an unknown assistant delta below — the
-            // two must not disagree about whether an engine upgrade degrades the
-            // UI or silently blanks it. The renderer's own
-            // `else -> NoticeBlock("暂不支持的内容块")` was deleted: TranscriptItem is
-            // sealed, so that branch was unreachable and this is the only place an
-            // unknown kind can appear.
-            //
-            // The row says what the user needs (this build is older than the
-            // engine) and nothing else: the wire name `event.type` is internal, so
-            // it is deliberately not printed. The sentence is shared verbatim with
-            // `AssistantDelta.Unknown`, so the dedupe below is across both sites —
-            // at most one such row per transcript, however many unknown kinds
-            // arrive (that is the anti-noise behaviour we want, and it is why this
-            // key's prefix only decides where the row sits in the stream).
-            val text = "收到一条当前版本不认识的消息；升级 App 后可能可见。"
-            if (items.any { it is Notice && it.text == text }) {
-                TranscriptChange.None
-            } else {
-                append(Notice(key = nextKey("event"), ts = now(), text = text))
+        // still projectable, so try those instead of dropping them; a name known
+        // to be unwireable stays inert; everything else is surfaced once.
+        is PiEvent.Unknown -> when {
+            event.type in ENTRY_EVENT_TYPES -> {
+                if (event.raw.isEmpty()) TranscriptChange.None else onEntry(event.raw)
+            }
+
+            // A name this build can name and that pi cannot put on this channel
+            // (see [NON_WIRE_EVENT_TYPES]): reporting it as "an event newer than
+            // this build" would tell the user something false.
+            event.type in NON_WIRE_EVENT_TYPES -> TranscriptChange.None
+
+            else -> {
+                // F25 (docs/rendering-review.md): a genuinely unknown event kind is
+                // made visible, exactly like an unknown assistant delta below — the
+                // two must not disagree about whether an engine upgrade degrades the
+                // UI or silently blanks it. The renderer's own
+                // `else -> NoticeBlock("暂不支持的内容块")` was deleted: TranscriptItem is
+                // sealed, so that branch was unreachable and this is the only place an
+                // unknown kind can appear.
+                //
+                // The row says what the user needs (this build is older than the
+                // engine) and nothing else: the wire name `event.type` is internal, so
+                // it is deliberately not printed. The sentence is shared verbatim with
+                // `AssistantDelta.Unknown`, so the dedupe below is across both sites —
+                // at most one such row per transcript, however many unknown kinds
+                // arrive (that is the anti-noise behaviour we want, and it is why this
+                // key's prefix only decides where the row sits in the stream).
+                val text = "收到一条当前版本不认识的消息；升级 App 后可能可见。"
+                if (items.any { it is Notice && it.text == text }) {
+                    TranscriptChange.None
+                } else {
+                    append(Notice(key = nextKey("event"), ts = now(), text = text))
+                }
             }
         }
 
@@ -2097,5 +2107,26 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
             "custom_message",
             "hook_message",
         )
+
+        /**
+         * Event names this build knows and that pi deliberately never writes to RPC
+         * stdout, so the `PiEvent.Unknown` arm of [onEvent] must not report them as
+         * "an event newer than this build".
+         *
+         * `model_select` is the only one today, and the proof is a call site:
+         * `AgentSession._emitModelSelect` hands the event to
+         * `this._extensionRunner.emit(...)` and never to `_emit`/`subscribe`
+         * (`core/agent-session.ts:1658-1670`), while `RpcMode` prints only what
+         * `session.subscribe(...)` delivers (`modes/rpc/rpc-mode.ts:355-360`). So a
+         * `model_select` record is hand-fed or app-synthesised, never evidence of a
+         * newer pi — and the notice's "升级 App 后可能可见" would be false for it.
+         * The app learns about a model switch by polling `get_state` after
+         * `agent_settled` instead.
+         *
+         * Extend this set only with the same kind of proof (a pi call site showing
+         * the name cannot be emitted) — never to silence an unknown-kind notice that
+         * is doing its job.
+         */
+        val NON_WIRE_EVENT_TYPES = setOf("model_select")
     }
 }

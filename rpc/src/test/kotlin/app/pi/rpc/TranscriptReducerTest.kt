@@ -142,14 +142,20 @@ class TranscriptReducerTest {
     }
 
     @Test
-    fun `unknown events are inert but never crash the reducer`() {
+    fun `unknown events surface once and never crash the reducer`() {
         val r = reducer()
         r.onEvent(text("before"))
+        // Two *different* unknown kinds — a well-formed record with a new type and
+        // an unparsable line, which also arrives as `PiEvent.Unknown`. The notice
+        // sentence is shared and deduped, so the stream gains exactly one row, not
+        // one per kind (and the unparsable line must not throw).
         r.onEvent(PiEvents.parse("""{"type":"totally_new_event","x":1}"""))
         r.onEvent(PiEvents.parse("} garbage"))
         r.onEvent(text("after"))
-        assertEquals(1, r.transcript.size)
+        assertEquals(2, r.transcript.size)
         assertEquals("beforeafter", (r.transcript[0] as AssistantText).text)
+        val notice = r.transcript[1] as Notice
+        assertEquals("收到一条当前版本不认识的消息；升级 App 后可能可见。", notice.text)
     }
 
     @Test

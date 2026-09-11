@@ -278,9 +278,15 @@ class FidelityFixesTest {
     }
 
     @Test
-    fun `an unknown assistant delta kind is surfaced instead of swallowed`() {
+    fun `an unknown assistant delta kind is surfaced once, not once per kind`() {
         // Events.kt documents Unknown as "rendered as a generic notice"; before
         // this it fell through `else -> None` and a newer pi's delta vanished.
+        //
+        // The sentence is shared verbatim with `PiEvent.Unknown`, so the dedupe
+        // holds across kinds *and* across the two sites — a session gains at most
+        // one such row, however many unknown kinds a newer engine sends. That
+        // "at most one" is the behaviour worth pinning; the old per-kind dedupe
+        // would have stacked one row per kind.
         val r = reducer()
         r.onEvent(
             PiEvents.parse(
@@ -288,14 +294,18 @@ class FidelityFixesTest {
             ),
         )
         val notice = r.transcript.single() as Notice
-        assertTrue(notice.text.contains("future_delta"))
+        assertEquals("收到一条当前版本不认识的消息；升级 App 后可能可见。", notice.text)
 
-        // Deduplicated by kind, so a repeated delta cannot flood the stream.
+        // A differently-named delta kind adds nothing.
         r.onEvent(
             PiEvents.parse(
-                """{"type":"message_update","assistantMessageEvent":{"type":"future_delta","contentIndex":0,"delta":"y"}}""",
+                """{"type":"message_update","assistantMessageEvent":{"type":"another_future_delta","contentIndex":0,"delta":"y"}}""",
             ),
         )
+        assertEquals(1, r.transcript.size)
+
+        // Neither does an unknown *event*: the dedupe is shared with onEvent.
+        r.onEvent(PiEvents.parse("""{"type":"future_event","x":1}"""))
         assertEquals(1, r.transcript.size)
     }
 

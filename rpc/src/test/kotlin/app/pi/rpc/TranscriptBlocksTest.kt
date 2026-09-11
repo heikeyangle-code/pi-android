@@ -63,6 +63,10 @@ class TranscriptBlocksTest {
         // and the persisted entry union has no `model_select`
         // (session-manager.ts). The live signal is the `get_state` poll after
         // `agent_settled` in PiSessionViewModel.
+        //
+        // This is also why the name is in the reducer's `NON_WIRE_EVENT_TYPES`
+        // set: an unknown *event* is now surfaced as a notice (F25), and for this
+        // name that notice would be false — no app upgrade can make pi emit it.
         val r = reducer()
         r.onEvent(PiEvents.parse("""{"type":"model_select","provider":"anthropic","modelId":"claude-sonnet-4.5"}"""))
         r.onEvent(PiEvents.parse("""{"type":"model_select","model":{"provider":"openai","id":"gpt-5"}}"""))
