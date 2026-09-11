@@ -208,7 +208,9 @@ The audit's `PARTIAL 20 / MISSING-GUI 26 / CLI-ONLY 9 = 55` is reproduced exactl
 > Note on #62: `known-gaps` **A3** is about markdown-embedded `![](...)` images via
 > `ImageTransformer`. It is a *different surface* — `feature-gaps.md:281` itself says "the
 > placeholder nature of the attachment grid is **not** called out there". A3 remains open
-> (`render/PiMarkdown.kt:68` still uses `NoOpImageTransformerImpl`), but it does not record #62.
+> (**superseded later in this pass**: `render/PiMarkdown.kt` no longer installs
+> `NoOpImageTransformerImpl` — it installs `rememberPiGuestImageTransformer()`, and A3 is closed;
+> see section 10.1), but it does not record #62.
 
 ### 2.10 Environment and ops (`feature-gaps.md` §1.10)
 
@@ -314,7 +316,7 @@ Listed so the ledger cannot over-claim. "Justified" = at least one of the 148 ro
 
 | Entry | Status |
 |---|---|
-| A3 markdown-embedded images | **Valid and unjustified.** Still open (`render/PiMarkdown.kt:68` `NoOpImageTransformerImpl`), but no feature-gaps row grades it. The nearest row (#62) is the attachment grid, a different surface. |
+| A3 markdown-embedded images | **Valid and unjustified as of this audit; closed later in the same pass.** The audit's evidence (`render/PiMarkdown.kt` installing `NoOpImageTransformerImpl`) no longer holds: the renderer now installs `rememberPiGuestImageTransformer()` and A3 is marked done in section 10.1. No feature-gaps row graded it, and the nearest row (#62) is the attachment grid, a different surface. |
 | B7 project-trust prompt | **Unjustified by any row, still unreachable, but its root cause is fixed.** `packages/PiProjectTrustPrompt.kt:52` exists and its only call site is `PiPackagesScreen.kt:119`, which nothing mounts — so the trust UI is still dead code. What *did* change is the path misalignment B7 documented: `PiEngineHost.kt:285-291` now binds `paths.agentDir` into the guest, so the app's trust.json/auth.json/session writes finally land where pi reads them. The UI half remains the packages agent's. |
 | B9 markdown lib version, B10 `libprootloader.so` PIE | Valid, no capability row (library/dependency constraints, by design outside the matrix). |
 | B12 / E6 `ASSET_VERSION` fingerprint | Valid (`bridge/DeviceBridgeController.kt:69` is still the literal `"3"`), no capability row. |
@@ -764,24 +766,30 @@ was scoped to.
 | **A1** `SkillInvocationBlock` | expanded = `PiMarkdownText` over the skill body **in `customMessageText`** (a `textColor` parameter was added to `PiMarkdownText` for it); the card surface is pi's `customMessageBg`; collapsed stays header-only, which is pi's collapsed state too (one `[skill] name (… to expand)` line, no body) | pi `components/skill-invocation-message.ts:36-45` (expanded `Markdown`; `:43` is the `customMessageText` option, `:40` the `**name**` header), `:46-53` (collapsed line), `:17` (surface), `:38`/`:49` (`customMessageLabel`); app `ui/blocks/SkillInvocationBlock.kt:19-33`, `:47-58`, `:79-107`; `ui/render/PiMarkdown.kt:68-71`, `:91-96` | **done** — one recorded deviation: pi's `**name**` markdown header (`:40`) is not repeated, because this card's header carries `/skill:name` in both states. The surface was *corrected* rather than kept: `customMessageBg` is not `cardBg` (`theme/dark.json:20,88` → `#2d2838` vs `#1e1e24`; `light.json:19,87` → `#ede7f6` vs `#ffffff`) |
 | **A2** LaTeX | `PiLatex.kt` ports pi's symbol/command tables and the text-level half of `LatexParser`; `piMarkdownSource` rewrites `$…$` / `$$…$$` before the parser sees them (code fences and code spans skipped) | `ui/render/PiLatex.kt:604` (`toUnicode`), `:624` (`formulaText`), `:649` (`toDisplayUnicode`), `ui/render/PiMarkdown.kt:132-167` | **done** for inline math without an environment; **limit** for pi's vertical layout (`renderLayout`, `packages/tui/src/latex.ts:723-809`), not ported — the class note now states exactly what that costs. pi gates only two of the three layout branches on `display`: `\frac` stacking (`latex.ts:1018`) and operator limits (`:1145`), so those differ **only inside** `$$…$$` (`components/markdown.ts:509` passes `display: true`; the inline call at `:649` does not), where the app prints `a/b` / `∑ᵢ₌₁ⁿ` instead of a stack. The environment branch is **not** gated (`parseEnvironment`, `:1090-1091`; matrix nodes at `:1350-1354`; `renderLayout` runs whenever a node exists, `:1382-1385`), so `\begin{pmatrix}` and friends differ in **both** contexts: the app reports the formula unsupported and prints the source. The note also records **why** a `renderLayout` port alone would not show: the app substitutes the rendered formula into the markdown source, and the renderer turns an in-paragraph EOL into a space (`MarkdownAnnotatorConfig.eolAsNewLine` default `false`; `annotator/AnnotatedStringKtx.kt:357`), so a grid would be re-flattened — a line-preserving channel is a prerequisite |
 | **A2** the `custom` trap | `custom` claims **only** `INLINE_MATH`/`BLOCK_MATH`, with no `else` branch, so the dispatcher's own "unrecognised ⇒ recurse into children" verdict is left intact. Documented at the definition | `ui/render/PiMarkdownComponents.kt:107-150` (the trap's KDoc), `:145-150` (the `custom` body) | **done** |
-| **A3** markdown images | `PiImagePlaceholder` renders alt + source when the transformer is the no-op default, and delegates to the library's own `MarkdownImage` the moment a real `ImageTransformer` is injected through `LocalPiImageTransformer` | `ui/render/PiMarkdownComponents.kt:92`, `:166-219` | **partial — blocked on a byte transport** (see below) |
+| **A3** markdown images | **done.** The byte transport shipped in `07c27861` (`bridge/GuestImageBytes.kt` + `bridge/PiGuestImageTransformer.kt`) and the renderer now wires it at **three** points, all needed: `rememberPiGuestImageTransformer()` fills `LocalPiImageTransformer` (the local `PiImagePlaceholder` reads) **and** is passed as `Markdown(imageTransformer = …)` for the library's own `MarkdownImage`/`MarkdownInlineImage`, which read only the library local (`.../compose/Markdown.kt:258`, `:347`); `PiImagePlaceholder` then decides on `transform`'s **result** — a non-null `ImageData` delegates to `MarkdownImage`, a `null` keeps the alt + source fallback (the library drops the node entirely on `null`, `.../elements/MarkdownImage.kt:17-29`). `http(s)` is refused by design, so such a link takes the fallback branch. **Honest limit left in place:** the same fallback does *not* exist for an **inline** image, because the library's `inlineImage` component draws nothing on `null` (`.../elements/MarkdownInlineImage.kt:11-13`) where pi prints the alt text (`packages/tui/src/components/markdown.ts:619-627`); overriding that slot is new render work, not done here | `ui/render/PiMarkdown.kt:125`, `:127-129`, `:130-140`; `ui/render/PiMarkdownComponents.kt:61-76`, `:175-243` | **done** (transport + wiring); inline-image alt fallback **not done** (recorded) |
 | **F32** / **RR-P9** | **done, by making the builders pure instead of wrapping them.** The library's five builders are `@Composable` (their defaults read `MaterialTheme`) and `remember`'s lambda is `@DisallowComposableCalls`, so the previous `remember { piMarkdownColors() }` wrapper could not compile. `PiMarkdownText` now reads the inputs (`PiTheme.palette`, `isSystemInDarkTheme()`, `MaterialTheme.typography.bodyLarge`, `PiTheme.text.mono`) once per composition and passes them to pure constructors: `DefaultMarkdownColors`/`DefaultMarkdownTypography` are public data classes, `markdownAlertColors` is not composable, and `MarkdownPadding`/`MarkdownDimens` are public interfaces whose builders' implementations are private, so the app implements them as constant top-level values. `piMarkdownComponents()` merely loses its `@Composable` — `markdownComponents(...)` was never composable — and is remembered directly. | `ui/render/PiMarkdown.kt:87-101` (the four reads + three `remember`s), `ui/render/PiMarkdownTheme.kt:136`, `:178`, `:212`, `:250-290`, `:292-324`, `ui/render/PiMarkdownComponents.kt:98-103` | **implemented** — not verifiable here (no local build; CI is the only compiler) |
 | theme: `darkTheme` | now a parameter of `piMarkdownColors`/`piAlertColors` instead of a read inside them, so the value is a `remember` key rather than something each builder re-reads | `ui/render/PiMarkdown.kt:88`, `ui/render/PiMarkdownTheme.kt:136`, `:178` | **done** |
 | theme: `alertTitle` | kept (0.45.0 GFM alert titles) | `ui/render/PiMarkdownTheme.kt:234` | **done** |
 | theme: GFM alert accents | mapped to pi semantic tokens (`mdQuote`/`success`/`mdHeading`/`warning`/`error`) instead of the library's Material-3 defaults, so no alert colour can drift with dynamic colour | `ui/render/PiMarkdownTheme.kt:153-186` | **done** |
 
-**A3 is the one thing this pass could not finish, and the reason is a transport, not the renderer.**
+**A3 is finished — the transport arrived and the renderer wires it. What is left is one honest hole.**
 The renderer's image path is `ImageTransformer.transform(link) -> ImageData?`
-(`multiplatform-markdown-renderer` `model/ImageTransformer.kt:16-29`); the app injects
-`NoOpImageTransformerImpl`, whose `transform` returns `null`
-(`model/NoOpImageTransformerImpl.kt:11-14`), and the library's `MarkdownImage` then draws nothing at
-all (`compose/elements/MarkdownImage.kt:17-29`). To do better, the app needs the bytes of an
-engine-side file: pi's image links are session attachments and workspace paths, not HTTP URLs, so a
-`Painter` requires either a loopback service that serves those paths (`bridge/DeviceBridgeHttp.kt`
-is the existing pattern) or a direct read of the guest filesystem — both outside `ui/render/**`.
-Implementing that `ImageTransformer` and providing it via `LocalPiImageTransformer` is the **whole**
-of the remaining work; `ui/render/PiMarkdownComponents.kt:198-203` already hands over to the library
-as soon as it is present.
+(`multiplatform-markdown-renderer` `model/ImageTransformer.kt:16-29`). The bytes now come from
+`bridge/GuestImageBytes.kt` (shipped in `07c27861`: `data:` URIs decoded in place, `file:`/bare paths
+mapped from the guest spelling to the host file, `http(s)` refused so nothing leaves the device)
+through `bridge/PiGuestImageTransformer.kt`, and `ui/render/PiMarkdown.kt:125-136` installs that one
+instance in both seams the two consumer paths read — our `LocalPiImageTransformer` and the library's
+`LocalImageTransformer` (via `Markdown(imageTransformer = …)`, `.../compose/Markdown.kt:258`, `:347`).
+`PiImagePlaceholder` (`ui/render/PiMarkdownComponents.kt:175-243`) asks for the result before
+delegating, so an unresolvable link keeps the alt + source text instead of becoming a node the
+library silently drops (`.../elements/MarkdownImage.kt:17-29`).
+**The hole:** the library's *inline* image component has no such fallback
+(`.../elements/MarkdownInlineImage.kt:11-13` draws nothing when `transform` returns `null`), so a
+markdown image written **inside a paragraph** that cannot be resolved is blank, where pi's terminal
+prints its alt text (`packages/tui/src/components/markdown.ts:619-627`). Block images (the `image`
+component this app overrides) do have the fallback. Closing it means overriding the `inlineImage`
+slot with an alt-text renderer — a rendering change not made in this pass, recorded here so it is not
+mistaken for done.
 
 **Not in scope here (other owners), reported not changed:** `F12`/`RR-P7`'s `dim` contrast is a
 `PiPalette` decision (`ui/theme/**`) even though two of its three sites are block files; `F11`/`RR-P6`

@@ -2,6 +2,7 @@ package app.pi.ui.render
 
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.runtime.Immutable
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextLinkStyles
 import androidx.compose.ui.text.TextStyle
@@ -119,10 +120,26 @@ import com.mikepenz.markdown.model.markdownAlertPadding
  * @param palette pi's resolved token set, read from `PiTheme.palette`.
  * @param darkTheme the renderer's own light/dark flag, read once per
  *   composition by the caller.
+ * @param textColor pi's base foreground for one specific surface, or `null` for
+ *   `palette.text`. pi's markdown takes such an override as a *base* colour
+ *   (`Markdown`'s `defaultTextStyle.color`, `packages/tui/src/components/markdown.ts:385`,
+ *   applied by `applyDefaultStyle` at `:377-403`), which the token colours
+ *   (headings, links, code) are drawn on top of — so the skill card, whose
+ *   renderer passes `theme.fg("customMessageText", …)`
+ *   (`components/skill-invocation-message.ts:43`), gets that colour for body
+ *   text while its headings keep `mdHeading`. The slot matters beyond the
+ *   body styles: the library also reads `MarkdownColors.text` for the code
+ *   fence header label (`.../elements/MarkdownCodeTopBar.kt:35`) and as the
+ *   last-resort text colour (`.../elements/material/TextWrapper.kt:41-47`), so
+ *   overriding both keeps one surface one colour.
  */
-internal fun piMarkdownColors(palette: PiPalette, darkTheme: Boolean): MarkdownColors =
+internal fun piMarkdownColors(
+    palette: PiPalette,
+    darkTheme: Boolean,
+    textColor: Color? = null,
+): MarkdownColors =
     DefaultMarkdownColors(
-        text = palette.text,
+        text = textColor ?: palette.text,
         codeBackground = palette.cardBg,
         inlineCodeBackground = palette.infoBg,
         dividerColor = palette.mdHr,
@@ -185,13 +202,21 @@ internal fun piAlertColors(palette: PiPalette, darkTheme: Boolean): MarkdownAler
  * @param base the body style this app's prose uses, read from
  *   `MaterialTheme.typography.bodyLarge`.
  * @param mono the mono role, read from `PiTheme.text.mono`.
+ * @param textColor the base foreground override described on [piMarkdownColors];
+ *   it replaces `palette.text` in the body slots only (`text`, `paragraph`,
+ *   `ordered`, `list`, `table`). Headings (`mdHeading`), links (`mdLink`), inline
+ *   code (`mdCode`), fences (`mdCodeBlock`), quotes (`mdQuote`) and bullets
+ *   (`mdListBullet`) keep pi's own tokens, exactly as they sit on top of the base
+ *   colour in pi (`markdown.ts:377-403`).
  */
 internal fun piMarkdownTypography(
     palette: PiPalette,
     base: TextStyle,
     mono: TextStyle,
+    textColor: Color? = null,
 ): MarkdownTypography {
     val heading = base.copy(color = palette.mdHeading, fontWeight = FontWeight.SemiBold)
+    val body = textColor ?: palette.text
 
     return DefaultMarkdownTypography(
         h1 = heading.copy(
@@ -207,18 +232,18 @@ internal fun piMarkdownTypography(
         // GFM alert titles (`> [!NOTE]`) read as a small heading, not as body
         // text — same size as h4, since the alert body is already inset.
         alertTitle = heading.copy(fontSize = 16.sp, lineHeight = 24.sp),
-        text = base.copy(color = palette.text),
+        text = base.copy(color = body),
         code = mono.copy(color = palette.mdCodeBlock),
         inlineCode = mono.copy(fontSize = 12.5.sp, lineHeight = 18.sp, color = palette.mdCode),
         quote = base.copy(color = palette.mdQuote),
-        paragraph = base.copy(color = palette.text),
-        ordered = base.copy(color = palette.text),
+        paragraph = base.copy(color = body),
+        ordered = base.copy(color = body),
         bullet = base.copy(color = palette.mdListBullet),
-        list = base.copy(color = palette.text),
+        list = base.copy(color = body),
         textLink = TextLinkStyles(
             style = SpanStyle(color = palette.mdLink, textDecoration = TextDecoration.Underline),
         ),
-        table = mono.copy(fontSize = 12.5.sp, lineHeight = 18.sp, color = palette.text),
+        table = mono.copy(fontSize = 12.5.sp, lineHeight = 18.sp, color = body),
     )
 }
 

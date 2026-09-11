@@ -58,7 +58,19 @@ internal val LocalPiCodeHighlighter = staticCompositionLocalOf<PiCodeHighlighter
     PiNodeCodeHighlighter
 }
 
-/** Images are the renderer's other pluggable seam; same default as upstream. */
+/**
+ * Images are the renderer's other pluggable seam.
+ *
+ * The default is upstream's no-op (`NoOpImageTransformerImpl.transform` returns `null`),
+ * and it is only reached by a caller that renders this component outside
+ * [PiMarkdownText] — a preview, a test. The app's real path installs
+ * `bridge/rememberPiGuestImageTransformer()` here (`PiMarkdown.kt`), which is the same
+ * instance handed to the library through `Markdown(imageTransformer = …)`. Two
+ * composition locals exist because the library reads its own
+ * (`com.mikepenz.markdown.compose.LocalImageTransformer`) inside
+ * `MarkdownImage`/`MarkdownInlineImage`, while [PiImagePlaceholder] needs the transformer
+ * *before* delegating, to keep its text fallback for a link whose bytes are not there.
+ */
 internal val LocalPiImageTransformer = staticCompositionLocalOf<ImageTransformer> {
     NoOpImageTransformerImpl()
 }
@@ -80,10 +92,11 @@ internal val LocalPiImageTransformer = staticCompositionLocalOf<ImageTransformer
  * Math is the second; [piMathComponent] explains why it claims only two element
  * types.
  *
- * Images are the third. The library's default already renders nothing for an
- * image whose bytes cannot be loaded, so [PiImagePlaceholder] exists to say that
- * an image was there and where it pointed, instead of dropping it. See its
- * comment for what a real implementation still needs.
+ * Images are the third. Real bytes now arrive through
+ * `bridge/PiGuestImageTransformer.kt` (installed by `PiMarkdown.kt`), so this
+ * component draws them and keeps saying "an image was here, and here is where it
+ * pointed" only for a link that could not be resolved. See its comment for why the
+ * decision is made on `transform`'s *result* rather than on the transformer's type.
  *
  * **Not composable, on purpose.** `markdownComponents(...)` is a plain function
  * in the library (`.../compose/components/MarkdownComponents.kt`) whose
@@ -173,31 +186,36 @@ private fun PiFormulaText(model: MarkdownComponentModel, block: Boolean) {
 }
 
 /**
- * Markdown images.
+ * Markdown images: draw the bytes when they can be reached, otherwise say what was
+ * there.
  *
- * **This is the floor, not a rendering.** pi's terminal cannot show an image at
- * all, so a markdown `![]()` in pi prints as the alt text or as nothing —
- * anything visible here is already better than pi. What this app still cannot
- * do is *get the bytes*: the renderer's own image path is
- * `ImageTransformer.transform(link)` returning an `ImageData` with a `Painter`
- * (upstream `model/ImageTransformer.kt:16-29`), and the default
- * `NoOpImageTransformerImpl.transform` returns `null` (`NoOpImageTransformerImpl.kt:11-14`),
- * which makes `MarkdownImage` draw nothing at all
- * (`compose/elements/MarkdownImage.kt:17-29`) — worse than pi's alt text,
- * because the node then disappears from the transcript with no trace.
+ * **pi has no counterpart here.** Its terminal renderer has no `image` case at all, so
+ * a markdown `![]()` falls to its `default` branch and prints the alt text
+ * (`packages/tui/src/components/markdown.ts:619-627`) — a markdown image in pi is
+ * *text*, never a fetch. Anything visible in this app is therefore an addition, not
+ * parity, and `docs/known-gaps.md` A3 records it as such.
  *
- * A real implementation needs one thing this module cannot supply: how to reach
- * an engine-side image. pi's markdown links point at session attachments and
- * workspace files, not at an HTTP URL, so the `link` is a path whose bytes live
- * in the guest. That transport is the recorded blocker in `docs/known-gaps.md`
- * A3 and belongs to the engine/bridge side of the app, not to the renderer.
+ * **Where the bytes come from now.** `bridge/PiGuestImageTransformer.kt` implements the
+ * renderer's image seam (`ImageTransformer.transform(link) -> ImageData?`, upstream
+ * `model/ImageTransformer.kt:16-29`) on top of `bridge/GuestImageBytes.kt`, which
+ * decodes `data:` URIs and maps `file:`/bare paths from the guest's spelling to the host
+ * file. `PiMarkdown.kt` installs it through [LocalPiImageTransformer] *and* through
+ * `Markdown(imageTransformer = …)`, so both this component and the library's own image
+ * components see it.
  *
- * This function therefore delegates to the library's own image component as soon
- * as a real transformer appears — implementing [ImageTransformer] and injecting
- * it through [LocalPiImageTransformer] is the whole of the finishing step, with
- * no change needed here. Until that exists, it renders the one thing that is
- * definitely known: the alt text pi would have shown, and the source, so a
- * reader can see that an image was meant to be there and where it points.
+ * **Why the decision is made on the result, not on the transformer's type.** The
+ * library drops the whole node when `transform` returns `null` — `MarkdownImage` reads
+ * `LocalImageTransformer.current.transform(link)?.let { … }`
+ * (`.../compose/elements/MarkdownImage.kt:17-29`), so a `null` means the image vanishes
+ * from the transcript with no trace. Asking *first* and keeping the alt + source text
+ * for a `null` is what keeps a link that cannot be resolved — `http(s)` is refused by
+ * design (`bridge/GuestImageBytes.kt`, "What it deliberately does not resolve"), a file
+ * may be missing, a body may exceed the size cap, and the first frame of any real load
+ * is still empty — strictly better than the no-op default's silence.
+ *
+ * `MarkdownImage` calls `transform` again; that second call is a cache read
+ * (`PiGuestImageTransformer.transform` seeds `produceState` from its bitmap cache), so
+ * the delegation costs no second IO.
  */
 @Composable
 private fun PiImagePlaceholder(model: MarkdownComponentModel) {
@@ -205,13 +223,17 @@ private fun PiImagePlaceholder(model: MarkdownComponentModel) {
     val content = model.content
     val node = model.node
     val transformer = LocalPiImageTransformer.current
-    if (transformer !is NoOpImageTransformerImpl) {
-        // A real byte source has been injected; let the library draw it.
+    val referenceHandler = LocalReferenceLinkHandler.current
+    val link = remember(content, node) { node.resolveImageLink(content, referenceHandler) }
+    // Ask for the bytes before deciding, for the reason in the doc above: a `null`
+    // result must fall through to the text fallback instead of handing the node to a
+    // component that would draw nothing.
+    val decoded = if (link != null) transformer.transform(link) else null
+    if (decoded != null) {
+        // Bytes in hand; let the library draw them (it reuses the same decoded bitmap).
         MarkdownImage(content, node)
         return
     }
-    val referenceHandler = LocalReferenceLinkHandler.current
-    val link = remember(content, node) { node.resolveImageLink(content, referenceHandler) }
     val alt = remember(content, node) { node.resolveImageAlt(content) }
     Column(
         modifier = Modifier

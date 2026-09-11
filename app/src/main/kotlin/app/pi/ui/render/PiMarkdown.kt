@@ -6,7 +6,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import app.pi.bridge.rememberPiGuestImageTransformer
 import app.pi.highlight.PiNodeCodeHighlighter
 import app.pi.ui.theme.PiTheme
 import com.mikepenz.markdown.m3.Markdown
@@ -53,11 +55,21 @@ import com.mikepenz.markdown.m3.Markdown
  *   rather than as an error — the same thing pi does while a model is typing.
  *   A fence that is still being written is not highlighted until it settles; see
  *   `rememberPiHighlightedCode`.
+ * @param textColor pi's base foreground for this surface, or `null` for
+ *   `palette.text`. It exists for the one caller whose pi component draws its
+ *   markdown in a token that is not `text`: the skill card passes
+ *   `customMessageText` (`packages/coding-agent/src/modes/interactive/components/skill-invocation-message.ts:43`),
+ *   which pi's `Markdown` takes as `defaultTextStyle.color`
+ *   (`components/markdown.ts:385`) — a base colour that the token colours for
+ *   headings, links and code are then drawn on top of, not a replacement for
+ *   them. A hand-written theme may set the two tokens differently, which is why
+ *   this is a parameter rather than a constant.
  */
 @Composable
 internal fun PiMarkdownText(
     markdown: String,
     modifier: Modifier = Modifier,
+    textColor: Color? = null,
 ) {
     val context = LocalContext.current
     // `remember(context)`: attach() is idempotent and cheap, but this keeps it to
@@ -77,18 +89,43 @@ internal fun PiMarkdownText(
     val darkTheme = isSystemInDarkTheme()
     val baseText = MaterialTheme.typography.bodyLarge
     val monoText = PiTheme.text.mono
-    val colors = remember(palette, darkTheme) { piMarkdownColors(palette, darkTheme) }
-    val typography = remember(palette, baseText, monoText) {
-        piMarkdownTypography(palette, baseText, monoText)
+    val colors = remember(palette, darkTheme, textColor) {
+        piMarkdownColors(palette, darkTheme, textColor)
+    }
+    val typography = remember(palette, baseText, monoText, textColor) {
+        piMarkdownTypography(palette, baseText, monoText, textColor)
     }
     // `piMarkdownComponents()` is an ordinary function — `markdownComponents(...)`
     // is not composable — so it can be remembered directly. The lambdas it holds
     // are composable, but only *created* here; the library does the same thing in
     // its own non-composable `CurrentComponentsBridge` (`.../components/MarkdownComponents.kt`).
     val components = remember { piMarkdownComponents() }
+    // A3, the image seam — three wiring points, and all three are needed:
+    //
+    //  1. this provider fills **our** local, which is what [PiImagePlaceholder]
+    //     reads to decide whether an image can be drawn at all;
+    //  2. `imageTransformer = imageTransformer` on `Markdown(...)` fills the
+    //     **library's** `LocalImageTransformer`, which is the only seam its own
+    //     components read — `MarkdownImage`/`MarkdownInlineImage` call
+    //     `LocalImageTransformer.current` (`.../elements/MarkdownImage.kt:17`,
+    //     `.../elements/MarkdownInlineImage.kt:12`) and the core `Markdown` provides
+    //     it from this very parameter (`.../compose/Markdown.kt:258`, `:347`).
+    //     Without it, the "decoded fine, now let the library draw it" hand-off in
+    //     [PiImagePlaceholder] would call `MarkdownImage` and get the default no-op
+    //     transformer, i.e. a node that draws nothing — worse than the placeholder
+    //     it replaced;
+    //  3. both come from one `rememberPiGuestImageTransformer()` instance, so the
+    //     decision and the drawing can never disagree about which transformer is
+    //     installed.
+    //
+    // `http(s)` links deliberately resolve to `null` (`bridge/GuestImageBytes.kt`,
+    // "What it deliberately does not resolve"): pi never fetches an image, and a
+    // silent request from composition would leak the user's IP. Those links keep the
+    // alt + source fallback.
+    val imageTransformer = rememberPiGuestImageTransformer()
     CompositionLocalProvider(
         LocalPiCodeHighlighter provides PiNodeCodeHighlighter,
-        LocalPiImageTransformer provides com.mikepenz.markdown.model.NoOpImageTransformerImpl(),
+        LocalPiImageTransformer provides imageTransformer,
     ) {
         Markdown(
             content = content,
@@ -96,6 +133,7 @@ internal fun PiMarkdownText(
             typography = typography,
             padding = piMarkdownPadding,
             dimens = piMarkdownDimens,
+            imageTransformer = imageTransformer,
             components = components,
             modifier = modifier,
         )

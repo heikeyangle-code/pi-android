@@ -30,11 +30,11 @@
   而 `custom` 的返回类型是 `Unit`（永远非 null）。**一旦提供 `custom`，所有未识别的块级节点都会被判定为"已处理"**，从而关闭原本的"递归渲染子节点"兜底。所以必须先决定：要么让 `custom` 只接管 math 类型并把其余类型显式交给默认组件，要么在扩展里自建 flavour。
 - **收尾条件**：先解决上面这个分派陷阱（写一个只认 math、其余类型转发默认行为的 `custom`），再接公式排版组件。
 
-### A3. 图片（markdown 内嵌 `![](...)` ） —— **渲染侧已就位，仍卡在取字节的通道**
-> **状态：不再是"渲染器缺东西"，而是"没有传输"。** `ui/render/PiMarkdownComponents.kt:92` 用 `PiImagePlaceholder` 接管了 markdown 的 image 槽：`LocalPiImageTransformer` 仍是默认的 `NoOpImageTransformerImpl` 时，它渲染 alt 文本 + 图片来源（比库默认的**什么都不画**强——`MarkdownImage.kt:17-29` 在 `transform` 返回 `null` 时整节点消失，那比 pi 的 alt 文本还差）；一旦有人注入真实 `ImageTransformer`，`PiMarkdownComponents.kt:198-203` 会立刻转发给库自带的 `MarkdownImage`，**不需要再改渲染侧一行**。所以收尾条件收敛为一条：实现 `ImageTransformer`（把 `link` 映射成引擎侧文件的字节 → `Painter`）并通过 `LocalPiImageTransformer` 注入。
+### A3. 图片（markdown 内嵌 `![](...)` ） —— **已完成（通道 `07c27861` + 接线于本次）**
+> **状态：收尾条件已满足，本条不再是缺口。** 取字节通道已由 `07c27861` 交付（`app/src/main/kotlin/app/pi/bridge/GuestImageBytes.kt` 解析 `data:` 与 guest 路径、`PiGuestImageTransformer.kt` 实现 `ImageTransformer` 并带 LRU+字节上限的位图缓存），**渲染侧的接线也已落地**：`ui/render/PiMarkdown.kt` 调 `rememberPiGuestImageTransformer()`，同一个实例既进 `LocalPiImageTransformer`（`PiImagePlaceholder` 用它判断能否画）又作为 `Markdown(imageTransformer = …)` 参数进**库自己的** `LocalImageTransformer`（库的 `MarkdownImage`/`MarkdownInlineImage` 只读后者——`compose/Markdown.kt:258`、`:347`）；`PiImagePlaceholder` 现在按 `transform` 的**返回值**决定：拿到 `ImageData` 才转发给 `MarkdownImage`，否则保留 alt + 来源文本（`MarkdownImage.kt:17-29` 在 `null` 时会整节点消失，所以只看 transformer 类型会让解析不了的链接比今天更差）。`http(s)` 被**有意拒绝**（不出网，见 `GuestImageBytes` KDoc），走的就是 alt + 来源那条分支。
+> **仍然诚实的限制**：*行内*图片走库的 `components.inlineImage`（默认 `MarkdownInlineImage`，`:11-13`），它在 `transform` 返回 `null` 时**什么都不画、也没有 alt 兜底**——所以一个解析不了的**行内**图片在 App 里是空白，而 pi 的终端会打印 alt 文本（pi 的 markdown 渲染器没有 `image` 分支，落到 `default` 打 token 文本，`packages/tui/src/components/markdown.ts:619-627`）。块级图片有 alt + 来源兜底，行内没有；要补齐就得覆盖 `inlineImage` 槽渲染成 alt 文本，属于新的渲染改动，尚未做。
 - **为什么该做**：库里 `MarkdownImageKt` / `MarkdownInlineImageKt` / `ImageTransformer` / `ImageData` / `PlaceholderConfig` 一应俱全，但默认实现是 `NoOpImageTransformerImpl`（什么都不加载）。
-- **阻塞点**：pi 的图片不是 http URL，而是引擎侧的文件（会话附件、工作区里的文件）。要接就得先确定"引擎侧文件怎么按需取字节"这条通道（与设备桥类似，需要一个回环接口或直接读 guest 文件系统）。这条通道不在 `ui/render/**` 里，`bridge/DeviceBridgeHttp.kt` 是现成的回环服务写法。
-- **收尾条件**：定下取字节的方式后，实现一个 `ImageTransformer` 并通过 `LocalPiImageTransformer` 注入。
+- **阻塞点（已解开）**：pi 的图片不是 http URL，而是引擎侧的文件。`07c27861` 定下了取字节的方式（`data:` 就地解码；`file:`/裸路径按 guest→host 映射读文件；`http(s)` 拒绝），渲染侧只负责注入。
 - **附注**：pi 的**终端界面根本不渲染图片**（终端放不下），所以这一项如果我们做了，是**比 pi 强**，不是补齐。
 
 ---
