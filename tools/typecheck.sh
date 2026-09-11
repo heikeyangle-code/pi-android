@@ -33,6 +33,18 @@
 #
 #   tools/typecheck.sh                 # everything
 #   tools/typecheck.sh --changed       # only files newer than the last run
+#
+# `-no-jdk` is load-bearing, not tidiness. Without it the compiler gets the JDK's
+# bootclasspath, so `java.lang.ProcessHandle` resolves locally while Gradle - which
+# compiles against android.jar - rejects it with "Unresolved reference". That is
+# exactly how three lock-file writers reached CI with an API Android does not have.
+# With `-no-jdk`, `java.*` comes from android.jar only, which is Gradle's own
+# configuration; verified clean on the whole tree before it was enabled.
+#
+# Known blind spots that remain, so a green local run is not a promise: the Compose
+# compiler plugin does not run (composable-call rules, @OptIn necessity), and AAPT2
+# does not run (resources, manifest structure, JVM platform declaration clashes are
+# partly caught, partly not). CI is the only place the release APK is built.
 
 set -uo pipefail
 
@@ -158,7 +170,7 @@ compile() {
   local out
   out="$(java -Xmx1100m -Dfile.encoding=UTF-8 -cp "$KOTLINC_CP" \
     org.jetbrains.kotlin.cli.jvm.K2JVMCompiler \
-    -no-stdlib -jvm-target 17 -classpath "$cp" -d "$target" "$@" 2>&1)"
+    -no-stdlib -no-jdk -jvm-target 17 -classpath "$cp" -d "$target" "$@" 2>&1)"
   # A JVM that failed to launch produces no Kotlin diagnostics at all, which the
   # verdict below would read as success. Turn that into an explicit failure.
   #
