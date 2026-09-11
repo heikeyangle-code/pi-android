@@ -79,22 +79,28 @@ class PiEngineSession(
 
     private val _changes = MutableStateFlow(0)
     /**
-     * Bumped whenever anything observable about the transcript moved, so Compose
-     * can observe it.
+     * Bumped on every publication, for a consumer that wants nothing but a wake-up.
      *
-     * It moves for **every** non-`response` event, including one whose
+     * It moves for **every** event that is published, including one whose
      * [TranscriptChange] is [TranscriptChange.None] (`handle`), because a `None`
-     * change says "no row changed", not "nothing changed": `agent_start` sets
-     * `TranscriptReducer.streaming` and returns `None` (rpc/Transcript.kt:777-780),
-     * and a `message_update` carrying only `usage` does the same
-     * (rpc/Transcript.kt:934-938). The UI's composer reads that flag, so a
-     * revision that moved only for row changes would leave it stale.
+     * change says "no row changed", not "nothing changed": the `PiEvent.AgentStart`
+     * arm of `TranscriptReducer.onEvent` sets `TranscriptReducer.streaming` and
+     * returns `None`, and the same holds for `TranscriptReducer.onMessageUpdate`
+     * when an update carries only `usage`. The UI's composer reads that flag, so a
+     * revision that moved only for row changes would leave it stale. Exactly two
+     * kinds of event publish nothing at all: a `response` (pi answering a command,
+     * which never projects a row) and F8's throttled `tool_execution_update`
+     * (`handle`), so this flow reports no gap for either.
      *
-     * [publication] is the authoritative form of the same event: it carries this
-     * same number **plus** the change. This flow is kept because it is the
-     * contract callers already collect (`ui/PiSessionViewModel.kt:672`), and
-     * [publish] always writes [publication] first, so `publication.value.revision`
-     * is never smaller than what a collector of this flow just observed.
+     * **Nothing collects this flow.** Its only consumer, the chat ViewModel, now
+     * collects [publication] (its `engine.publication.collect` plus the
+     * `syncTranscript(engine, pub)` it calls) — because a bare number cannot say
+     * which rows moved, which is the whole point of F7/RR-P7 — and a search over
+     * `app/` and `rpc/` finds no other reader of `revision`. It is kept because it is
+     * still a valid coarse signal and removing it would be an API change, not a
+     * comment change; a new consumer should use [publication]. [publish] always writes
+     * [publication] first, so `publication.value.revision` is never smaller than a
+     * `revision` a collector of this flow has just observed.
      */
     val revision: StateFlow<Int> = _changes.asStateFlow()
 
@@ -139,7 +145,7 @@ class PiEngineSession(
      *
      * The reducer already computes `TranscriptChange.Appended(index)` /
      * `Updated(index)` so "the UI can update one row instead of recomposing the
-     * list" (`rpc/Transcript.kt:596-616`), but `PiEngineSession` used to throw that
+     * list" (the `TranscriptChange` KDoc), but `PiEngineSession` used to throw that
      * index away and only bump a counter — so the only thing the app could do on
      * each of pi's streamed deltas was copy the whole list into a fresh `UiState`
      * and recompose the entire screen (docs/rendering-review.md F7 / RR-P7).
@@ -149,21 +155,23 @@ class PiEngineSession(
      * `TranscriptChange` reports **one** index per event and several reducer paths
      * deliberately report only the last row they touched:
      *
-     *  - `finishStreaming` flips every still-streaming row and returns the last one
-     *    it touched (`rpc/Transcript.kt:1904-1940`), reached from `message_end`,
-     *    `agent_end` and `agent_settled` (`:753-782`);
-     *  - `failTurn` rewrites every pending tool card and returns the last
-     *    (`rpc/Transcript.kt:1276-1325`);
+     *  - `TranscriptReducer.finishStreaming` flips every still-streaming row and
+     *    returns the last one it touched, and the `PiEvent.MessageEnd`,
+     *    `PiEvent.AgentEnd` and `PiEvent.AgentSettled` arms of
+     *    `TranscriptReducer.onEvent` all reach it;
+     *  - `TranscriptReducer.failTurn` rewrites every pending tool card and returns
+     *    the last one;
      *  - a `tool_execution_end` that also appends a `ToolDiff` reports the appended
      *    index while the tool row changed too — the `TranscriptChange` KDoc says so
-     *    (`rpc/Transcript.kt:598-600`, `:1121-1189`).
+     *    ("one event reports one index"), and `TranscriptReducer.finalizeTool` plus
+     *    `TranscriptReducer.appendToolDiff` are where it happens.
      *
      * A consumer that trusted `change` alone would leave a stopped turn's tool
-     * cards showing "运行中" and drop the error row `failTurn` appends. So
-     * [changedIndices] is the engine's own identity diff of the rows against the
-     * previous publication, and [replaced] says the list was rebuilt wholesale
-     * instead (`seedHistory`: `seedFromHistory` calls `reset()` and still answers
-     * `Appended`, `rpc/Transcript.kt:1472-1483`).
+     * cards showing "运行中" and drop the error row `TranscriptReducer.failTurn`
+     * appends. So [changedIndices] is the engine's own identity diff of the rows
+     * against the previous publication, and [replaced] says the list was rebuilt
+     * wholesale instead (`seedHistory`: `TranscriptReducer.seedFromHistory` calls
+     * `TranscriptReducer.reset()` and still answers `Appended`).
      *
      * ## Consumer protocol
      *
@@ -260,7 +268,7 @@ class PiEngineSession(
         // including `entry_appended`, whose payload really is on the wire
         // (`agent-session.ts:2620` emits `{type:"entry_appended", entry}`, which
         // `modes/json-event.ts` passes through and `TranscriptReducer.onEvent`
-        // projects at `rpc/Transcript.kt:843`). A caller must NOT call
+        // projects in its `PiEvent.EntryAppended` arm). A caller must NOT call
         // `transcript.onEntry(entry)` again: it would double the row. Reads of the
         // reducer from outside this class are fine; *writes* are not — they must go
         // through [publish] (via [prompt], [echoUserPrompt], [seedHistory]) or the
@@ -274,20 +282,22 @@ class PiEngineSession(
         //
         // The one exception is F8, and it is the engine half of that fix: a
         // `tool_execution_update` the reducer's 200 ms window swallowed has already
-        // merged its chunk into the stored row (`rpc/Transcript.kt:1103`) and
-        // returns `None` from the throttle on purpose (`:1112-1115`; the contract is
-        // stated on `TranscriptChange` itself at `:602-608`). Nothing else moved in
-        // that call: `onToolUpdate` never touches `streaming` or `lastUsage`
-        // (`:1091-1119`), and its only other state is the reducer-private
-        // `suppressedToolUpdate` marker, which flushes the row at the next turn
-        // boundary (`:1909-1938`) or when the card finalises (`:1185-1186`).
-        // Publishing it anyway would bump [revision], write a [TranscriptPublication]
-        // and wake the UI for exactly the repaint the throttle exists to prevent, so
-        // the throttle would buy nothing.
+        // merged its chunk into the stored row (the `items[index] = current.copy(…)`
+        // write in `TranscriptReducer.onToolUpdate`) and returns `None` from the
+        // throttle on purpose; the contract is stated on `TranscriptChange` itself, in
+        // its `[None]` paragraph. Nothing else moved in that call:
+        // `TranscriptReducer.onToolUpdate` never touches `streaming` or `lastUsage`,
+        // and its only other state is the reducer-private `suppressedToolUpdate`
+        // marker, which `TranscriptReducer.finishStreaming` flushes into its own
+        // return at the next turn boundary, or `TranscriptReducer.finalizeTool` clears
+        // when the card finalises. Publishing it anyway would bump [revision], write a
+        // [TranscriptPublication] and wake the UI for exactly the repaint the throttle
+        // exists to prevent, so the throttle would buy nothing.
         //
         // The same `None` also covers an update for a tool call this reducer never
-        // opened, or one with no `partialText` (`:1092-1094`): nothing was stored
-        // there either, so skipping is just as correct.
+        // opened, or one with no `partialText` (the three early returns at the top of
+        // `TranscriptReducer.onToolUpdate`): nothing was stored there either, so
+        // skipping is just as correct.
         val throttledToolUpdate =
             event is PiEvent.ToolExecutionUpdate && change == TranscriptChange.None
         if (!throttledToolUpdate && (change != TranscriptChange.None || event !is PiEvent.Response)) {
@@ -317,16 +327,17 @@ class PiEngineSession(
     private fun publish(change: TranscriptChange, replaced: Boolean = false) {
         val current = transcript.transcript
         val previous = publishedRows
-        // A shrink can only be `TranscriptReducer.reset()` (rpc/Transcript.kt:1965),
+        // A shrink can only be `TranscriptReducer.reset()`,
         // and an empty `previous` is a consumer's first sight of the list: neither
         // can be described by row indices, so both are a wholesale handoff.
         val rolled = replaced || previous.isEmpty() || current.size < previous.size
         // `change == None` does **not** mean "no row moved", so it must not be used
         // to reuse the previous snapshot: F8's throttled `tool_execution_update`
-        // mutates its row (`rpc/Transcript.kt:1103`) and returns `None` on purpose
-        // (`:1112-1115`; the contract is on `TranscriptChange` itself at `:602-608`),
-        // and a row reused on a size check alone would be a stale row that nothing
-        // ever republishes. The rows are therefore compared, not the change trusted.
+        // mutates its row (the `items[index] = current.copy(…)` write in
+        // `TranscriptReducer.onToolUpdate`) and returns `None` on purpose; the contract
+        // is on `TranscriptChange` itself, in its `[None]` paragraph. A row reused on
+        // a size check alone would be a stale row that nothing ever republishes. The
+        // rows are therefore compared, not the change trusted.
         //
         // The scan runs against the reducer's live list rather than a copy, so the
         // unchanged case (the common one: a `message_update` that carried only
@@ -418,7 +429,8 @@ class PiEngineSession(
      * `message_start` arrives with `role === "user"`
      * (`modes/interactive/interactive-mode.ts:3223-3227`), and the reducer here
      * appends nothing for a `user` message: it only clears the content-block maps
-     * for `assistant` (`rpc/Transcript.kt:744-750`). Without the echo the bubble the
+     * for `assistant` (the `PiEvent.MessageStart` arm of `TranscriptReducer.onEvent`).
+     * Without the echo the bubble the
      * user just sent would not exist until the session was reopened and replayed
      * (docs/rendering-review.md F1).
      */
@@ -450,11 +462,11 @@ class PiEngineSession(
     /**
      * Rebuild the whole stream from pi's persisted entries (`get_entries`).
      *
-     * `TranscriptReducer.seedFromHistory` resets the reducer first and then still
-     * answers `TranscriptChange.Appended(lastIndex)` (`rpc/Transcript.kt:1472-1483`),
-     * which describes one appended row — so the publication is marked `replaced` and
-     * the caller must adopt [TranscriptPublication.rows] wholesale instead of
-     * inserting at that index.
+     * `TranscriptReducer.seedFromHistory` resets the reducer first (`reset()`) and
+     * then still answers `TranscriptChange.Appended(lastIndex)`, which describes one
+     * appended row — so the publication is marked `replaced` and the caller must
+     * adopt [TranscriptPublication.rows] wholesale instead of inserting at that
+     * index.
      */
     fun seedHistory(entries: List<JsonObject>) {
         publish(transcript.seedFromHistory(entries), replaced = true)
