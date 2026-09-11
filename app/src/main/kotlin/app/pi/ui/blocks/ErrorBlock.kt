@@ -8,7 +8,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -22,14 +21,18 @@ import app.pi.ui.theme.PiTheme
 
 /**
  * `error-text` (docs/pi-android-ui-spec.md §7.4): a weakened `toolErrorBg` card
- * with an `error` stripe on the left — one human sentence, then 详情 and 重试.
- * A tool failure does not raise a global error; it lands here, in the stream.
+ * with an `error` stripe on the left — one human sentence, then 详情. A tool
+ * failure does not raise a global error; it lands here, in the stream.
+ *
+ * The spec's recovery path (「重试 / 换模型 / 查看详情」, §4.9) is not reachable from
+ * this block today: the app has no retry action, so F19 deleted the dead
+ * `onRetry` parameter and the button it gated. 换模型 is reachable from the AppBar
+ * chip / model row; a real 重试 needs an action in `ui/PiSessionViewModel.kt`.
  */
 @Composable
 fun ErrorBlock(
     item: ErrorText,
     modifier: Modifier = Modifier,
-    onRetry: (() -> Unit)? = null,
 ) {
     val palette = PiTheme.palette
     var expanded by remember { mutableStateOf(false) }
@@ -70,11 +73,11 @@ fun ErrorBlock(
                     }
                 }
                 Spacer(Modifier.weight(1f))
-                if (onRetry != null) {
-                    TextButton(onClick = onRetry) {
-                        Text("重试", style = MaterialTheme.typography.labelLarge)
-                    }
-                }
+                // F19 (`docs/rendering-review.md`): the 重试 button lived behind an
+                // `onRetry` no host ever passed — the app has no retry action (spec
+                // §7.4/§4.9 still ask for one; that is new UI, recorded in the
+                // review's F19 row), so the parameter and the button are gone rather
+                // than showing a control that does nothing.
             }
             if (expanded && !detail.isNullOrBlank()) {
                 MonoText(

@@ -35,7 +35,13 @@ fun ModelChangeBlock(
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = PiSpacing.screen, vertical = PiSpacing.unit / 2)
+            // F11 (`docs/rendering-review.md`): the page margin is the
+            // `LazyColumn`'s `contentPadding`, not the block's; this row used to
+            // add another `horizontal = PiSpacing.screen` on top of it, which is
+            // what left this kind at 32 dp while every `BlockColumn` block moved
+            // to 16 dp. The vertical half stays: this block is outside the list's
+            // block spacing by design.
+            .padding(vertical = PiSpacing.unit / 2)
             .height(PiSpacing.statusRow)
             .then(if (onClick != null) Modifier.clickable { onClick() } else Modifier),
         verticalAlignment = Alignment.CenterVertically,

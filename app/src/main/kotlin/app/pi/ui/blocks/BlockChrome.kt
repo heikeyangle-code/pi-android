@@ -34,20 +34,22 @@ import androidx.compose.ui.unit.dp
 import app.pi.ui.theme.PiShapes
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
-import java.text.SimpleDateFormat
-import java.util.Date
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import java.util.Locale
 
 /**
  * Shared chrome for the 14 conversation blocks (docs/pi-android-ui-spec.md §7.4).
  *
- * Every block sits on the same vertical rhythm — [PiSpacing.unit] is pi's own
- * line unit and doubling it into the gap keeps the stream recognisably pi's,
- * even though the surfaces are native. Colour always comes from
- * [PiTheme.palette]; nothing in this package hardcodes a value.
+ * The page margin and the block rhythm belong to the `LazyColumn` that renders
+ * the stream (spec §7.4: 块间距 16dp, `assistant-text` 左右内边距 0): it supplies both
+ * the horizontal content padding and the vertical arrangement, so a block that
+ * padded itself as well doubled the margin (F11 in `docs/rendering-review.md`).
+ * Colour always comes from [PiTheme.palette].
  */
 
-/** The wrapper every block uses: screen margin plus the block rhythm. */
+/** The wrapper every block uses. Margins come from the list, not from here (F11). */
 @Composable
 internal fun BlockColumn(
     modifier: Modifier = Modifier,
@@ -55,9 +57,7 @@ internal fun BlockColumn(
     content: @Composable ColumnScope.() -> Unit,
 ) {
     Column(
-        modifier = modifier
-            .fillMaxWidth()
-            .padding(horizontal = PiSpacing.screen, vertical = PiSpacing.unit / 2),
+        modifier = modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(6.dp),
         horizontalAlignment = horizontalAlignment,
         content = content,
@@ -185,9 +185,24 @@ internal fun ToggleRow(
     )
 }
 
+/**
+ * One hoisted formatter (F30 in `docs/rendering-review.md`).
+ *
+ * [formatClock] runs for every timestamped row, and those rows recompose per
+ * streamed chunk (F7/F8), so the old `SimpleDateFormat("HH:mm", …)` built inside
+ * the function re-parsed a pattern and a locale on each call. `DateTimeFormatter`
+ * is immutable and thread-safe (hence no `ThreadLocal`, and nothing to leak), and
+ * the zone is still resolved per call, so a device timezone change is reflected
+ * immediately exactly as the per-call version did. The one behavioural
+ * difference: the pattern's locale is captured once for the process instead of
+ * per call — irrelevant for `HH:mm` in this app's locales, but recorded rather
+ * than discovered later.
+ */
+private val CLOCK_FORMAT: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm", Locale.getDefault())
+
 /** Clock shown once per turn (docs/pi-android-ui-spec.md §4.6). */
 internal fun formatClock(ts: Long): String =
-    SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(ts))
+    Instant.ofEpochMilli(ts).atZone(ZoneId.systemDefault()).format(CLOCK_FORMAT)
 
 /** Durations the way pi prints them: ms under a second, then s, then m s. */
 internal fun formatDuration(ms: Long): String {

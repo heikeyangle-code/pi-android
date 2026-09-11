@@ -88,9 +88,11 @@ import app.pi.ui.blocks.BlockRenderer
 import app.pi.ui.chat.BashPanel
 import app.pi.ui.chat.ComposerRoute
 import app.pi.ui.chat.ForkPickerSheet
+import app.pi.ui.chat.MentionPalette
 import app.pi.ui.chat.ModelPickerSheet
 import app.pi.ui.chat.PiCommandAction
 import app.pi.ui.chat.PiCommandSource
+import app.pi.ui.chat.PiFileMentions
 import app.pi.ui.chat.PiSlashCommand
 import app.pi.ui.chat.RenameSessionDialog
 import app.pi.ui.chat.SessionStatsSheet
@@ -107,6 +109,7 @@ import app.pi.ui.extension.windowTitleOf
 import app.pi.ui.theme.PiShapes
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
@@ -122,6 +125,7 @@ import kotlinx.coroutines.launch
  *   Widgets         extension `setWidget`, above the editor
  *   BashPanel       a running or finished `!` command
  *   Palette         the `/` command list while the composer holds a command name
+ *   Mentions        the `@` file-mention list while the composer holds a mention
  *   Composer        border colour = thinking level, or bashMode for `!`
  *   Widgets         extension `setWidget`, below the editor
  *
@@ -294,6 +298,22 @@ private fun ChatBody(
         if (fill != null) {
             draft = fill.text
             session.consumeComposerFill(fill.seq)
+        }
+    }
+
+    // The `@` mention list. pi looks its candidates up on every keystroke of the
+    // token, debounced by 20 ms (`packages/tui/src/components/editor.ts:251`); here
+    // each lookup is a guest process (see `ui/chat/PiMentionSource.kt`), so the
+    // debounce is deliberately longer. That delays the list, it does not change what
+    // the list contains: the query that runs is the one whose result is still wanted,
+    // because `session.requestMentions` drops every superseded answer.
+    val mentionPrefix = PiFileMentions.prefixOf(draft)
+    LaunchedEffect(mentionPrefix) {
+        if (mentionPrefix == null) {
+            session.dismissMentions()
+        } else {
+            delay(MENTION_DEBOUNCE_MS)
+            session.requestMentions(mentionPrefix)
         }
     }
 
@@ -517,25 +537,40 @@ private fun ChatBody(
                 modifier = Modifier.weight(1f),
             )
         } else {
-            // `app.appearance.messageDensity`: the transcript's block rhythm. The
-            // default is pi's own single `--line-height` gap (PiSpacing.unit).
+            // `app.appearance.messageDensity`: the transcript's block rhythm,
+            // scaled around the spec's own gap. F11 (`docs/rendering-review.md`):
+            // blocks used to pad themselves as well, so the real gap was
+            // 18 (spacedBy) + 9 + 9 (BlockColumn) = 36 dp and the prose column lost
+            // 16 dp on each side; spec §7.4 asks for 块间距 16dp, and the list is now
+            // the only place that margins.
             val blockSpacing = when (prefs.messageDensity) {
                 "compact" -> PiSpacing.unit / 2
                 "cozy" -> PiSpacing.unit * 4 / 3
-                else -> PiSpacing.unit
+                else -> PiSpacing.screen
             }
             val horizontal = if (prefs.messageDensity == "compact") 12.dp else PiSpacing.screen
             Box(Modifier.weight(1f).fillMaxWidth()) {
             LazyColumn(
                 state = listState,
                 modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(vertical = PiSpacing.unit, horizontal = horizontal),
+                contentPadding = PaddingValues(vertical = PiSpacing.screen, horizontal = horizontal),
                 verticalArrangement = Arrangement.spacedBy(blockSpacing),
             ) {
                 // Keyed by the reducer's stable per-block key, which is what lets
                 // Compose animate the row that changed while streaming instead of
                 // recomposing the list.
-                itemsIndexed(visibleItems, key = { _, item -> item.key }) { index, item ->
+                //
+                // F33 (`docs/rendering-review.md`): without a `contentType` the
+                // `LazyColumn` cannot reuse a slot when the block kind changes, so
+                // scrolling a long mixed session re-inflates every row it passes.
+                // The item types are already distinct sealed subtypes, which is
+                // exactly the granularity the slot table reuses on, so the class is
+                // the content type — no new taxonomy needed.
+                itemsIndexed(
+                    visibleItems,
+                    key = { _, item -> item.key },
+                    contentType = { _, item -> item::class },
+                ) { index, item ->
                     val isMatch = searchMatches.contains(index)
                     val isCurrentMatch = isMatch && searchMatches.getOrNull(searchCursor) == index
                     val rowModifier = when {
@@ -555,6 +590,27 @@ private fun ChatBody(
                         hideThinking = prefs.hideThinkingBlock,
                         thinkingDefaultExpanded = !prefs.thinkingCollapsedByDefault,
                         toolsDefaultExpanded = toolsExpanded,
+                        // F19 (`docs/rendering-review.md`) / RR-P10: the two of the
+                        // renderer's five callbacks whose target already exists in
+                        // this app are supplied here instead of leaving the blocks'
+                        // gated labels unreachable. Model row → the picker sheet
+                        // (`ChatSheet.Model`); branch summary → the session tree,
+                        // which is where the app can move the leaf (the same target
+                        // the palette's 会话树 action uses, `:404-407`).
+                        onModelClick = {
+                            session.refreshModels()
+                            sheet = ChatSheet.Model
+                        },
+                        onBranchClick = {
+                            session.refreshTree()
+                            session.requestNav(NavRequest.SessionTree)
+                        },
+                        // The other three (`onImageClick`, `onDiffOpenFull`,
+                        // `onErrorRetry`) had no target anywhere in the app — no
+                        // image viewer, no full-screen diff route, no retry action —
+                        // so the review's other allowed branch was taken: the dead
+                        // parameters and their gated labels are deleted from the
+                        // blocks, rather than left claiming a feature.
                     )
                 }
             }
@@ -619,6 +675,28 @@ private fun ChatBody(
             )
         }
 
+        // The `@` mention list, next to the `/` palette and under the same two
+        // rules: it belongs to what the composer holds right now (`mentions.query`
+        // is the prefix the answer was computed for, so a late answer for an older
+        // keystroke cannot appear), and **it is not drawn when there is nothing to
+        // offer** — pi's autocomplete returns no suggestions at all in that case
+        // (`packages/tui/src/autocomplete.ts:305`), it does not show an empty popup.
+        //
+        // A tap inserts and does not send: pi's `@` branch of `applyCompletion`
+        // accepts the completion and stops, while only the `/` branch falls through
+        // to submitting (`packages/tui/src/components/editor.ts:784-802`). This
+        // app has no Enter-to-send for the composer to collide with, so a tap is
+        // the whole gesture.
+        val mentions = state.mentions
+        if (mentionPrefix != null && mentions != null && mentions.query == mentionPrefix && mentions.items.isNotEmpty()) {
+            val prefix = mentionPrefix
+            MentionPalette(
+                candidates = mentions.items,
+                onPick = { item -> draft = PiFileMentions.apply(draft, prefix, item) },
+                modifier = Modifier.padding(horizontal = PiSpacing.screen, vertical = 4.dp),
+            )
+        }
+
         if (attachments.isNotEmpty()) {
             Row(
                 Modifier.fillMaxWidth().padding(horizontal = PiSpacing.screen, vertical = 4.dp),
@@ -653,6 +731,12 @@ private fun ChatBody(
             onCycleThinking = { session.cycleThinkingLevel() },
             onOpenPalette = { if (draft.isBlank()) draft = "/" },
             onOpenBash = { if (draft.isBlank()) draft = "!" },
+            // `@` sits behind the phone keyboard's symbol page, and a mention only
+            // opens at a token boundary (`PiFileMentions.prefixOf`, pi's
+            // `PATH_DELIMITERS`), so this chip types exactly the trigger character —
+            // nothing else, which is why it does nothing when a mention is already
+            // open. The `/` and `!` chips beside it are the same kind of affordance.
+            onOpenMention = { if (PiFileMentions.prefixOf(draft) == null) draft += "@" },
             onOpenTui = { session.requestNav(NavRequest.Workbench) },
             onFollowUp = {
                 // pi's alt+enter: queue this message for after the current turn
@@ -660,8 +744,15 @@ private fun ChatBody(
                 // { streamingBehavior: "followUp" })`, which is `follow_up` on the
                 // wire). Only offered while streaming, because that is the only
                 // time pi's own binding queues rather than submits.
-                session.sendFollowUp(draft)
+                //
+                // The attachments go with it: pi's own call hands the editor's
+                // images to `_queueFollowUp` (`agent-session.ts:1225-1226`), and
+                // F21's finding in `docs/gap-disposition.md` §10 found this call
+                // dropping them — the chip looked like it queued the message and
+                // the picture was silently gone.
+                session.sendFollowUp(draft, attachments)
                 draft = ""
+                attachments = emptyList()
             },
             onSend = {
                 when (val route = routeComposerText(draft, state.commands)) {
@@ -1001,6 +1092,7 @@ private fun Composer(
     onCycleThinking: () -> Unit,
     onOpenPalette: () -> Unit,
     onOpenBash: () -> Unit,
+    onOpenMention: () -> Unit,
     onOpenTui: () -> Unit,
     onPickImage: () -> Unit,
     onFollowUp: () -> Unit,
@@ -1015,7 +1107,7 @@ private fun Composer(
                 .fillMaxWidth()
                 .padding(horizontal = PiSpacing.screen)
                 .heightIn(min = 56.dp, max = 160.dp),
-            placeholder = { Text("输入消息，/ 选命令，! 直接跑命令") },
+            placeholder = { Text("输入消息，/ 选命令，! 直接跑命令，@ 提及文件") },
             shape = PiShapes.inputMultiline,
             // A state channel, not decoration: pi paints its editor with the
             // current thinking level's token and switches to `bashMode` when the
@@ -1050,6 +1142,7 @@ private fun Composer(
                 KeyHint("/", onOpenPalette)
                 KeyHint("!", onOpenBash)
                 KeyHint("!!", onOpenBash)
+                KeyHint("@", onOpenMention)
                 KeyHint("图片", onPickImage)
                 // pi's `alt+enter` (`app.message.followUp`, keybindings.md:165):
                 // queue this text for the end of the current turn instead of
@@ -1116,6 +1209,18 @@ private fun Composer(
 
 /** pi: `isBashMode = text.trimStart().startsWith("!")`. */
 private fun bashModeOf(draft: String): Boolean = draft.trimStart().startsWith("!")
+
+/**
+ * How long the composer waits before asking for `@` mention candidates.
+ *
+ * pi debounces this trigger by 20 ms and then spawns `fd` in its own process
+ * (`packages/tui/src/components/editor.ts:251`, `:2362-2385`). Here the lookup is a
+ * whole guest process (`ui/chat/PiMentionSource.kt`), so the wait is longer on
+ * purpose. It is a delay, not a different answer: the debounce only decides *when*
+ * the query runs, and a superseded query's result is dropped rather than shown.
+ * No measured latency is claimed for that guest process - there is no device here.
+ */
+private const val MENTION_DEBOUNCE_MS: Long = 150L
 
 @Composable
 private fun KeyHint(label: String, onClick: () -> Unit) {

@@ -22,6 +22,7 @@ import app.pi.rpc.SessionEntry
 import app.pi.rpc.ToolCall
 import app.pi.rpc.ToolStatus
 import app.pi.rpc.TranscriptItem
+import app.pi.runtime.PtyLauncher
 import app.pi.runtime.RuntimeProvisioner
 import app.pi.session.PiSessionStore
 import app.pi.service.PiEngineService
@@ -29,6 +30,8 @@ import app.pi.settings.PiSettingsFileStore
 import app.pi.settings.readBoolean
 import app.pi.settings.readString
 import app.pi.ui.chat.PiCommandAction
+import app.pi.ui.chat.PiFileMentions
+import app.pi.ui.chat.PiMentionSource
 import app.pi.ui.chat.PiSlashCommand
 import app.pi.ui.chat.TuiOnlyExtension
 import app.pi.ui.chat.piCommandPalette
@@ -204,6 +207,21 @@ data class UiPrefs(
 class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
 
     /**
+     * The `@` mention candidates for one open token.
+     *
+     * [query] is the prefix they answer, kept so the composer can tell a list that
+     * belongs to what is on screen right now from the previous keystroke's answer
+     * arriving late. Empty [items] is a real answer (fd matched nothing, or there is
+     * no fd) and the composer shows no list for it, exactly as pi's autocomplete
+     * does not appear when it has no suggestions
+     * (`packages/tui/src/autocomplete.ts:305`).
+     */
+    data class MentionList(
+        val query: String,
+        val items: List<PiFileMentions.Item>,
+    )
+
+    /**
      * Live facts about the session, mirrored from pi.
      *
      * Everything here is read back from pi (`get_state`,
@@ -285,6 +303,8 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         val forkMessages: List<PiResponses.ForkMessage> = emptyList(),
         /** The running or last `bash` command, if any. */
         val bash: BashRun? = null,
+        /** The `@` mention list for the token in the composer, if one is open. */
+        val mentions: MentionList? = null,
         /**
          * Installed extensions that use a surface only the original TUI can
          * carry. Heuristic (a source scan) because pi reports nothing — see
@@ -338,6 +358,26 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     private val sessionStore: PiSessionStore by lazy {
         PiSessionStore(File(host.paths().agentDir, "sessions"))
     }
+
+    /**
+     * The `@` mention candidate source: the guest's own `fd`, run through the
+     * app-side guest command channel. Built lazily because it touches the runtime
+     * layout, and with the same workspace the engine is given
+     * (`PtyLauncher.workspaceHost`, `PtyLauncher.kt:255` — the one authority the
+     * terminal tab and the engine already share) rather than a second spelling of
+     * that path.
+     */
+    private val mentionSource: PiMentionSource by lazy {
+        PiMentionSource(getApplication(), PtyLauncher.workspaceHost(getApplication()))
+    }
+
+    /**
+     * Which mention request is the current one. Only this class writes it, and only
+     * the main thread does, so `@Volatile` is enough for the coroutine that reads it
+     * from `Dispatchers.IO` to decide a request is stale.
+     */
+    @Volatile
+    private var mentionRequestId: Int = 0
 
     private val _sessions = MutableStateFlow<List<PiSessionStore.Summary>>(emptyList())
     val sessions: StateFlow<List<PiSessionStore.Summary>> = _sessions.asStateFlow()
@@ -1585,18 +1625,28 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * second one. pi's TUI queues a follow-up only while the agent is streaming;
      * when it is idle alt+enter is a normal submit, so the composer offers this
      * only while streaming and [send] handles the idle case.
+     *
+     * [images] travels the whole way because pi's follow-up carries them: the
+     * TUI hands its editor attachments to `session.prompt(text, {
+     * streamingBehavior: "followUp" })` (`interactive-mode.ts:4146`), which
+     * reaches `_queueFollowUp(expandedText, currentImages)` (`agent-session.ts:1225-1226`).
+     * F21's investigation in `docs/gap-disposition.md` §10 found that
+     * `PiCommands.followUp` already had the parameter and this signature did not,
+     * so the 后续 chip silently dropped an attachment the user had added — a
+     * visible action with no effect, the same class of bug F19 removed elsewhere.
      */
-    fun sendFollowUp(text: String) {
+    fun sendFollowUp(text: String, images: List<PiImage> = emptyList()) {
         val engine = session ?: return
         val trimmed = text.trim()
         if (trimmed.isEmpty()) return
         // Same local echo as [send]: a follow-up is invisible on the wire until pi
         // delivers it, which is the whole point of queueing it.
-        engine.echoUserPrompt(trimmed)
+        engine.echoUserPrompt(trimmed, images)
         engine.send(
             PiCommands.followUp(
                 id = "follow-${System.nanoTime()}",
                 message = trimmed,
+                images = images,
             ),
         )
         syncTranscript(engine, engine.publication.value)
@@ -1732,6 +1782,42 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     /** `abort_retry` — cancel the pending retry delay and stop retrying. */
     fun abortRetry() {
         call("取消重试") { it.abortRetry() }
+    }
+
+    // ---------------------------------------------------------------- mentions
+
+    /**
+     * Refresh the `@` mention list for [prefix], the mention token the composer is
+     * typing (see `PiFileMentions.prefixOf`).
+     *
+     * pi resolves these candidates with `fd` in its own process
+     * (`packages/tui/src/autocomplete.ts:289-311`); this app has no such process, so
+     * the lookup is a guest command (see [PiMentionSource]) and therefore costs a
+     * process. Three consequences, all of them the caller's contract:
+     *
+     *  - the composer debounces before calling this, so a burst of keystrokes is not
+     *    a burst of proot spawns;
+     *  - only the newest request publishes a result ([mentionRequestId]); an answer
+     *    that arrives after the user typed on is dropped rather than replacing the
+     *    list with one for a prefix that is no longer on screen;
+     *  - [PiMentionSource] runs them one at a time, so a superseded request that is
+     *    still queued is skipped instead of being executed.
+     */
+    fun requestMentions(prefix: String) {
+        val id = ++mentionRequestId
+        viewModelScope.launch {
+            val items = mentionSource.query(prefix) { id != mentionRequestId }
+            if (id != mentionRequestId) return@launch
+            _state.value = _state.value.copy(mentions = MentionList(query = prefix, items = items.orEmpty()))
+        }
+    }
+
+    /** Close the mention list: the token stopped being a mention, or the screen left. */
+    fun dismissMentions() {
+        mentionRequestId++
+        if (_state.value.mentions != null) {
+            _state.value = _state.value.copy(mentions = null)
+        }
     }
 
     // -------------------------------------------------------------------- bash

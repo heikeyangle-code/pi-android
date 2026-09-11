@@ -38,6 +38,24 @@ fun ToolCallBlock(
     // `app.tools.expand`, interactive-mode.ts `setToolsExpanded`) reaches every
     // row, exactly as pi re-applies expansion to all of its children.
     var expanded by remember(defaultExpanded) { mutableStateOf(defaultExpanded) }
+    // F17 (`docs/rendering-review.md`): the card's own toggle and the spec's
+    // 「展开全部」 are two different questions — the first asks "show the output at
+    // all", the second "stop cutting it at 200 lines". Collapsing the card resets
+    // nothing: the user asked to see the tail once and it stays visible.
+    var fullOutput by remember { mutableStateOf(false) }
+    // F31 (`docs/rendering-review.md`): these are O(output) scans on a row that
+    // recomposes for every streamed chunk (F8's 200 ms throttle bounds how often),
+    // so they are keyed on the value they scan rather than re-run per composition.
+    val outputLineCount = remember(item.output) { lineCount(item.output) }
+    val outputOversize = remember(item.output) { item.output.toByteArray(Charsets.UTF_8).size > MAX_OUTPUT_BYTES }
+    // F17 + spec §4.2: 默认渲染前 200 行 + 「展开全部」; 单块 >200 KB 直接给「前往工作区」.
+    val previewText = remember(item.output, expanded, fullOutput, outputOversize) {
+        when {
+            !expanded || outputOversize -> ""
+            fullOutput -> item.output
+            else -> headLines(item.output, COLLAPSED_OUTPUT_LINES)
+        }
+    }
     val container = when (item.status) {
         ToolStatus.Pending -> palette.toolPendingBg
         ToolStatus.Success -> palette.toolSuccessBg
@@ -57,6 +75,20 @@ fun ToolCallBlock(
         ToolStatus.Pending -> "…"
         ToolStatus.Success -> "✓"
         ToolStatus.Error -> "✗"
+    }
+    // F31 (`docs/rendering-review.md`): the footer's parts list + `joinToString`
+    // used to be rebuilt on every composition, and its `lineCount` scanned the
+    // whole output each time. It depends only on the row's scalar fields, so it is
+    // built once per output change. `outputLineCount` is deliberately not a key —
+    // it is derived from `item.output`, which is.
+    val footer = remember(
+        item.output,
+        item.exitCode,
+        item.elapsedMs,
+        item.outputTruncated,
+        statusLabel,
+    ) {
+        toolFooter(item, statusLabel, outputLineCount)
     }
 
     BlockColumn(modifier) {
@@ -88,23 +120,37 @@ fun ToolCallBlock(
             }
 
             if (expanded && item.output.isNotEmpty()) {
-                MonoText(
-                    text = headLines(item.output, MAX_OUTPUT_LINES),
-                    color = palette.toolOutput,
-                    modifier = Modifier.padding(top = 2.dp),
-                )
-                if (lineCount(item.output) > MAX_OUTPUT_LINES) {
+                if (outputOversize) {
+                    // Spec §4.2: 单块 >200 KB 直接给「前往工作区查看完整日志」. The label
+                    // is the spec's own; the app has no log view to route to (the
+                    // workspace is the terminal destination the other rows name).
                     Text(
-                        text = "仅显示前 $MAX_OUTPUT_LINES 行，完整输出请前往工作区",
+                        text = "输出超过 200 KB，请前往工作区查看完整日志",
                         style = PiTheme.text.meta,
                         color = palette.muted,
                     )
+                } else {
+                    MonoText(
+                        text = previewText,
+                        color = palette.toolOutput,
+                        modifier = Modifier.padding(top = 2.dp),
+                    )
+                    if (!fullOutput && outputLineCount > COLLAPSED_OUTPUT_LINES) {
+                        Text(
+                            text = "展开全部（共 $outputLineCount 行）",
+                            modifier = Modifier
+                                .clickable(onClickLabel = "展开全部输出") { fullOutput = true }
+                                .padding(vertical = 2.dp),
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                    }
                 }
             }
 
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    text = toolFooter(item, statusLabel),
+                    text = footer,
                     modifier = Modifier.weight(1f),
                     style = PiTheme.text.meta,
                     color = palette.muted,
@@ -119,16 +165,30 @@ fun ToolCallBlock(
     }
 }
 
-/** The card's footer: status, exit code, duration and line count. */
-private fun toolFooter(item: ToolCall, statusLabel: String): String {
+/**
+ * The card's footer: status, exit code, duration and line count.
+ *
+ * [lines] is passed in rather than recomputed (F31 in `docs/rendering-review.md`):
+ * the caller already holds a remembered [lineCount] for the same output, and this
+ * function used to scan the whole (possibly megabyte) string on every
+ * composition.
+ */
+private fun toolFooter(item: ToolCall, statusLabel: String, lines: Int): String {
     val parts = mutableListOf(statusLabel)
     item.exitCode?.let { parts += "退出码 $it" }
     item.elapsedMs?.let { parts += formatDuration(it) }
-    val lines = lineCount(item.output)
     if (lines > 0) parts += "$lines 行"
     if (item.outputTruncated) parts += "已截断"
     if (item.output.isEmpty()) parts += "无输出"
     return parts.joinToString(" · ")
 }
 
-private const val MAX_OUTPUT_LINES = 400
+/**
+ * Spec §4.2's collapsed budget for a long tool result, and its hard ceiling for
+ * the inline surface. F17 (`docs/rendering-review.md`): this used to be 400 with
+ * no path to the remainder — a `bash` log past the cap was silently incomplete.
+ * The card's toggle now shows these lines and 「展开全部」 shows the rest; past
+ * [MAX_OUTPUT_BYTES] the block points at the workspace instead of painting it.
+ */
+private const val COLLAPSED_OUTPUT_LINES = 200
+private const val MAX_OUTPUT_BYTES = 200 * 1024

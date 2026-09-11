@@ -961,7 +961,27 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
         is PiEvent.Unknown -> if (event.type in ENTRY_EVENT_TYPES) {
             if (event.raw.isEmpty()) TranscriptChange.None else onEntry(event.raw)
         } else {
-            TranscriptChange.None
+            // F25 (docs/rendering-review.md): a genuinely unknown event kind is
+            // made visible, exactly like an unknown assistant delta below — the
+            // two must not disagree about whether an engine upgrade degrades the
+            // UI or silently blanks it. The renderer's own
+            // `else -> NoticeBlock("暂不支持的内容块")` was deleted: TranscriptItem is
+            // sealed, so that branch was unreachable and this is the only place an
+            // unknown kind can appear.
+            //
+            // The row says what the user needs (this build is older than the
+            // engine) and nothing else: the wire name `event.type` is internal, so
+            // it is deliberately not printed. The sentence is shared verbatim with
+            // `AssistantDelta.Unknown`, so the dedupe below is across both sites —
+            // at most one such row per transcript, however many unknown kinds
+            // arrive (that is the anti-noise behaviour we want, and it is why this
+            // key's prefix only decides where the row sits in the stream).
+            val text = "收到一条当前版本不认识的消息；升级 App 后可能可见。"
+            if (items.any { it is Notice && it.text == text }) {
+                TranscriptChange.None
+            } else {
+                append(Notice(key = nextKey("event"), ts = now(), text = text))
+            }
         }
 
         else -> TranscriptChange.None
@@ -1119,10 +1139,16 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
             // A delta kind a newer pi introduced. Made visible on purpose: the
             // class's own contract is that an engine upgrade degrades the UI
             // rather than blanking it, and a silently swallowed kind is
-            // indistinguishable from a stall. Deduplicated by kind so a repeated
-            // delta cannot flood the transcript.
+            // indistinguishable from a stall.
+            //
+            // The row says what the user needs (this build is older than the
+            // engine) and nothing else: the wire name `delta.kind` is internal, so
+            // it is deliberately not printed. The sentence is shared verbatim with
+            // `PiEvent.Unknown` in `onEvent` — which also means the dedupe below is
+            // across both sites, i.e. at most one such row per transcript however
+            // many unknown kinds arrive, which is the anti-noise behaviour we want.
             is AssistantDelta.Unknown -> {
-                val text = "未知的流式事件：${delta.kind}"
+                val text = "收到一条当前版本不认识的消息；升级 App 后可能可见。"
                 if (items.any { it is Notice && it.text == text }) {
                     TranscriptChange.None
                 } else {

@@ -22,15 +22,37 @@ import app.pi.rpc.UserMessage
  * The one place a [TranscriptItem] becomes pixels.
  *
  * Every kind from docs/pi-android-ui-spec.md §7.4 has a renderer; [Notice]
- * covers App chrome and doubles as the fallback for an item kind a newer pi
- * introduces, so an engine upgrade degrades a single row instead of blanking the
- * stream. Callers put the items in a `LazyColumn` keyed by `item.key` and pass
- * the changes the reducer reports.
+ * covers App chrome. Callers put the items in a `LazyColumn` keyed by `item.key`
+ * and pass the changes the reducer reports.
+ *
+ * **No `else` (F25 in `docs/rendering-review.md`).** [TranscriptItem] is a sealed
+ * interface with exactly the 14 kinds above, so the
+ * `else -> NoticeBlock("暂不支持的内容块")` this used to carry was unreachable: an
+ * unknown *item* cannot exist, and the case that can — a newer pi's *event* —
+ * never reaches this function, it is dropped in the reducer (`PiEvent.Unknown`,
+ * `rpc/Transcript.kt:961-965`). The honest place for the "upgrade the app" row is
+ * therefore that reducer branch, not here; leaving the branch in place only made
+ * a newer item subtype compile silently instead of failing the build. A future
+ * kind must be added to this `when` (and the `else` kept absent) so the compiler
+ * names every place that needs it.
+ *
+ * F19 (`docs/rendering-review.md`): this function used to declare five optional
+ * callbacks and its only caller supplied none of them, so five affordances were
+ * unreachable while the blocks kept rendering labels for them. Two have a target
+ * in the app and are now supplied (`onBranchClick`, `onModelClick`); the other
+ * three had no target at all — no image viewer, no full-screen diff route, no
+ * retry action — so their parameters and the labels they gated were deleted
+ * (`onImageClick`, `onDiffOpenFull`, `onErrorRetry`) rather than left claiming a
+ * feature. Adding one back means adding the surface it opens.
  *
  * @param hideThinking when true the thinking blocks are hidden entirely
  *   (pi's `hideThinkingBlock`).
  * @param thinkingDefaultExpanded collapsed by default, per spec principle 4.
  * @param toolsDefaultExpanded maps to pi's `app.tools.expand`.
+ * @param onBranchClick the branch-summary row's tap; the host opens the session
+ *   tree (the app's nearest equivalent of pi's branch jump).
+ * @param onModelClick the model-change row's tap; the host opens the model
+ *   picker sheet.
  */
 @Composable
 fun BlockRenderer(
@@ -39,14 +61,11 @@ fun BlockRenderer(
     hideThinking: Boolean = false,
     thinkingDefaultExpanded: Boolean = false,
     toolsDefaultExpanded: Boolean = false,
-    onImageClick: ((Int) -> Unit)? = null,
-    onDiffOpenFull: ((ToolDiff) -> Unit)? = null,
     onBranchClick: ((BranchSummary) -> Unit)? = null,
     onModelClick: (() -> Unit)? = null,
-    onErrorRetry: (() -> Unit)? = null,
 ) {
     when (item) {
-        is UserMessage -> UserMessageBlock(item, modifier, onImageClick)
+        is UserMessage -> UserMessageBlock(item, modifier)
 
         is AssistantText -> AssistantTextBlock(item, modifier)
 
@@ -56,7 +75,7 @@ fun BlockRenderer(
 
         is ToolCall -> ToolCallBlock(item, modifier, toolsDefaultExpanded)
 
-        is ToolDiff -> DiffBlock(item, modifier, toolsDefaultExpanded, onDiffOpenFull)
+        is ToolDiff -> DiffBlock(item, modifier, toolsDefaultExpanded)
 
         is CompactionMarker -> CompactionBlock(item, modifier)
 
@@ -70,21 +89,10 @@ fun BlockRenderer(
 
         is SystemPrompt -> SystemPromptBlock(item, modifier)
 
-        is ErrorText -> ErrorBlock(item, modifier, onErrorRetry)
+        is ErrorText -> ErrorBlock(item, modifier)
 
         is DateSeparator -> DateSeparatorBlock(item, modifier)
 
         is Notice -> NoticeBlock(item, modifier)
-
-        // A newer pi added a block kind this build does not render yet.
-        else -> NoticeBlock(
-            Notice(
-                key = item.key,
-                ts = item.ts,
-                text = "暂不支持的内容块（升级 App 后可见）",
-                tone = Notice.Tone.Info,
-            ),
-            modifier,
-        )
     }
 }

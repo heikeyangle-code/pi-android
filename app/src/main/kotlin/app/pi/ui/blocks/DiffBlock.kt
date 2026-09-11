@@ -7,7 +7,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -37,7 +36,6 @@ fun DiffBlock(
     item: ToolDiff,
     modifier: Modifier = Modifier,
     defaultExpanded: Boolean = false,
-    onOpenFull: ((ToolDiff) -> Unit)? = null,
 ) {
     val palette = PiTheme.palette
     // Keyed on the parameter so the AppBar's expand/collapse-all switch (pi's
@@ -84,17 +82,11 @@ fun DiffBlock(
                     style = PiTheme.text.meta,
                     color = palette.muted,
                 )
-                if (onOpenFull != null) {
-                    Text(
-                        text = "全屏",
-                        modifier = Modifier
-                            .clickable { onOpenFull(item) }
-                            .padding(horizontal = 6.dp, vertical = 2.dp),
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.primary,
-                    )
-                    Spacer(Modifier.width(8.dp))
-                }
+                // F19 (`docs/rendering-review.md`): the 「全屏」 label used to sit
+                // behind an `onOpenFull` the host never supplied — the app has no
+                // full-screen diff route — so both are deleted rather than left
+                // claiming the affordance (spec §4.8 still asks for one; that is
+                // new UI, recorded in the review's F19 row).
                 ExpandLabel(expanded)
             }
 
