@@ -354,10 +354,13 @@
 - **重启是必须的，理由可以精确到行**：`models.json` 只被 `ModelRuntime.refresh()` 读取（`model-runtime.ts:699`，另加启动时的 `create`，`:176`）。RPC 协议里**没有任何命令触发 refresh**——`get_available_models` 读的是缓存快照 `getAvailableSnapshot()`（`:422-424`）。`docs/models.md:80` 说「打开 `/model` 时重载、改完不用重启」，那是 **TUI**（`modes/interactive/model-catalog-refresh.ts:22` 会触发 refresh），**在 `--mode rpc` 下不成立**。`auth.json` 不同：它的读取带 revision 检查（`auth-storage.ts:39` + `getFileRevision`），所以外部新增的 Key 会被察觉；需要重启的是**厂商表**。
 - **"扫描模型"这件事 pi 里没有**：`createProvider` 有一个可选的 `fetchModels` 钩子（`packages/ai/src/models.ts:760-763`，调用点 `:831`），但**全仓库没有任何 provider 实现它**（`grep -rn fetchModels packages/ --include=*.ts` 只命中 `models.ts` 和两个测试文件）。pi 自己的清单是 `packages/ai/src/providers/` 下的静态表 + 从 pi.dev 刷新。所以扫描用的端点形状（`GET {base}/models` 等）**是 App 侧知识，不是 pi 行为**，UI 里必须这么标注；Anthropic 的 `x-api-key` + `anthropic-version` 同样不在 pi 里——它在 `api/anthropic-messages.ts:298-302` 只*校验*这些头存在，实际由第三方 SDK 发送。
 - **已实现（未上真机）**：`app/src/main/kotlin/app/pi/packages/` 下的 `PiConfigFiles`（`auth.json` / `models.json` / `settings.json` 的锁与原子写、0600、注释容忍）、`PiProviderPresets`（10 家 pi 内置厂商的 `baseUrl`/`api` 直接抄自 `providers/*.ts`）、`PiModelScanner`（按厂商分派的清单请求 + 失败分类，**失败永远 `allowManual=true`**）、`PiCredentialService`（预填 → 探测 → 保存三步，每步单独报结果）。
-- **仍未做**：`PiRoot.kt` 的 `onRunAction` 接通、以及那个"粘 Key → 扫描 → 勾选"的 Compose 界面（I2 的 20 行审计也包含在这里）。`PiEngineHost.restart()` 已就绪，界面接上即可用。
+- **~~仍未做~~ 已完成（2026-09-11，提交 `dae0ff5`，CI 绿）**：`PiRoot.kt` 的 `onRunAction` 已接；「选厂商 → 粘 Key → 扫描 → 勾选 → 保存」的 Compose 界面已写（`ui/settings/PiCredentialScreen.kt`，586 行）；装包入口也已挂进设置（`PiPackagesHost`，之前**没有任何入口**）。**这一条原来是"仍未做"，现在不成立了——留着这行是提醒：过期的"未做"记载比漏记更糟，它会让下一个人重做已经做完的东西。**
+  仍未闭环的只剩：`app.localModels.manage` 只做了一半（端点在、GGUF 加载/下载只能在 TUI）、OAuth 未实现（RPC 无 login）、16 个 Action 行只有提示没有实现（I2 记 partial）。
 
 ### E2. 高亮服务的 `attach(context)` 到底有没有被调用 —— **已完成（复核于 dc00279）**
-> **状态：调用链已确认，高亮不会静默退回单色。** `ui/render/PiMarkdown.kt:62` `remember(context) { PiNodeCodeHighlighter.attach(context) }`——每次渲染 markdown 时按 `context` 记住并调用一次，`attach` 自身幂等（`highlight/PiNodeCodeHighlighter.kt:105`）。落地于 `a7b7738`。原疑问"没人验证过"已经解决；剩下的是真机上的回环延迟，那属于 C4。
+> **状态：调用链已确认，高亮不会静默退回单色。** `ui/render/PiMarkdown.kt:77` `remember(context) { PiNodeCodeHighlighter.attach(context) }`——每次渲染 markdown 时按 `context` 记住并调用一次，`attach` 自身幂等（`highlight/PiNodeCodeHighlighter.kt:105`）。落地于 `a7b7738`。原疑问"没人验证过"已经解决；剩下的是真机上的回环延迟，那属于 C4。
+>
+> **方向也要说清（2026-09-11 复核）**：监听 HTTP 的**不是 app**，而是 guest 里的 Node 扩展（`assets/pi-extensions/pi-highlight/service.ts:353` 绑 `127.0.0.1:3176`）。Kotlin 侧（`highlight/PiHighlightClient.kt:86`/`:176`）是**客户端**，端口和 token 从扩展写下的 `highlight-bridge.json` 里读。降级链路已逐层确认存在（客户端并发上限/超时/大小阈值、HTTP 层 100ms/150ms 超时与 401 重读、UI 层默认空高亮器、扩展侧 `catch(() => null)`），**不存在"高亮挂了就白屏或崩溃"的路径**。
 
 ### E3. 附件输入（图片）
 协议**已支持**：`docs/rpc.md` 的 `prompt` 命令带可选 `images` 字段，格式 `ImageContent`；会话条目里的 `Attachment` 还带 `fileName/mimeType/size/extractedText/preview`。
