@@ -859,10 +859,13 @@ private fun Composer(
     onDraftChange: (String) -> Unit,
     thinkingLevel: String,
     streaming: Boolean,
+    /** True while a follow-up could actually be queued: streaming, non-blank draft. */
+    canFollowUp: Boolean,
     onCycleThinking: () -> Unit,
     onOpenPalette: () -> Unit,
     onOpenBash: () -> Unit,
     onOpenTui: () -> Unit,
+    onFollowUp: () -> Unit,
     onSend: () -> Unit,
     onStop: () -> Unit,
 ) {
@@ -909,6 +912,33 @@ private fun Composer(
                 KeyHint("/", onOpenPalette)
                 KeyHint("!", onOpenBash)
                 KeyHint("!!", onOpenBash)
+                // pi's `alt+enter` (`app.message.followUp`, keybindings.md:165):
+                // queue this text for the end of the current turn instead of
+                // steering it into the middle. The affordance only exists while a
+                // turn is running, because that is the only time the two delivery
+                // choices differ in pi as well.
+                if (streaming) {
+                    Surface(
+                        modifier = Modifier.clickable(enabled = canFollowUp, onClick = onFollowUp),
+                        shape = PiShapes.badge,
+                        color = if (canFollowUp) {
+                            PiTheme.palette.accent.copy(alpha = 0.18f)
+                        } else {
+                            MaterialTheme.colorScheme.surfaceContainerHigh
+                        },
+                    ) {
+                        Text(
+                            "后续",
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = if (canFollowUp) {
+                                PiTheme.palette.accent
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            },
+                        )
+                    }
+                }
                 Spacer(Modifier.weight(1f))
                 // pi's escape hatch, one tap from the composer: the surfaces RPC
                 // cannot carry (`custom()`, `setFooter`/`setHeader`, custom
