@@ -175,8 +175,9 @@ if [ -n "$RPC_SOURCES" ]; then
   rm -rf "$OUT/rpc"; mkdir -p "$OUT/rpc"
   RPC_DIAG="$(compile "$OUT/rpc" "$CP" $RPC_SOURCES)"
   echo "$RPC_DIAG" | grep -E "\.kt:[0-9]+:[0-9]+: error:" | sed "s|$ROOT/||"
-  if echo "$RPC_DIAG" | grep -qE "\.kt:[0-9]+:[0-9]+: error:"; then
-    echo "typecheck: FAILED in :rpc"
+  RPC_ERRS="$(echo "$RPC_DIAG" | grep -cE "\.kt:[0-9]+:[0-9]+: error:")"
+  if [ "$RPC_ERRS" -gt 0 ]; then
+    echo "typecheck: FAILED in :rpc — $RPC_ERRS error diagnostic(s)"
     exit 1
   fi
   (cd "$OUT/rpc" && jar cf "$RPC_JAR" .) 2>/dev/null
@@ -187,12 +188,17 @@ APP_SOURCES="$APP_SOURCES $(find "$STUB" -name '*.kt')"
 rm -rf "$OUT/app"; mkdir -p "$OUT/app"
 APP_DIAG="$(compile "$OUT/app" "$CP:$RPC_JAR" $APP_SOURCES)"
 echo "$APP_DIAG" | grep -E "\.kt:[0-9]+:[0-9]+: error:" | sed "s|$ROOT/||"
-if echo "$APP_DIAG" | grep -qE "\.kt:[0-9]+:[0-9]+: error:"; then
-  echo "typecheck: FAILED in :app"
+APP_ERRS="$(echo "$APP_DIAG" | grep -cE "\.kt:[0-9]+:[0-9]+: error:")"
+if [ "$APP_ERRS" -gt 0 ]; then
+  echo "typecheck: FAILED in :app — $APP_ERRS error diagnostic(s)"
   exit 1
 fi
 
 mkdir -p "$(dirname "$ROOT/build/typecheck/last")"
 touch "$ROOT/build/typecheck/last"
-echo "typecheck: OK (:rpc + :app, cross-module boundary reproduced)"
+# The verdict states the error count it is based on. Appending it rather than
+# rewording keeps every existing `grep "typecheck: OK"` working, while removing the
+# one thing that made this script lie: a bare "OK" that could not be told apart
+# from a run whose diagnostics were lost in a shared or truncated log.
+echo "typecheck: OK (:rpc + :app, cross-module boundary reproduced) — 0 error diagnostics, :rpc $RPC_ERRS / :app $APP_ERRS"
 exit 0
