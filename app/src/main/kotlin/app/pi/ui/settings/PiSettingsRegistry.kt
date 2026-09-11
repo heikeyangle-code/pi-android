@@ -727,6 +727,17 @@ object PiSettingsCatalog {
             ),
             aliases = listOf("cleanup", "prune"),
         ),
+        PiSetting(
+            key = "app.sessions.resumeLast",
+            title = "启动续接最近会话",
+            description = "启动 App 时自动切到最近一次会话，对应 pi 的 -c / --continue。默认关闭，避免把「打开就是新会话」变成意外。",
+            kind = PiRowKind.Switch,
+            group = G_SESSIONS,
+            section = "存储",
+            defaultValue = bool(false),
+            effective = EffectiveKind.RestartApp,
+            aliases = listOf("continue", "resume", "last"),
+        ),
 
         // ------------------------------------------------------------------
         // 7 扩展与资源

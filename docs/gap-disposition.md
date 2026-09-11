@@ -45,6 +45,14 @@ contain `PiCredentialService.kt` or `PiThemeFiles.kt`. The two block-file diffs 
   the file). Rows #34–#37 are therefore addressed in code but still absent from the GUI.
 - Files mid-write can also simply not compile, and none of this new code has a caller yet.
 
+**Two engine-side facts landed after §2's snapshot, and they relax several rows.** (1)
+`engine/PiEngineHost.kt:285-291` now binds `paths.agentDir` into the guest (`extraBinds`, with an
+explicit migration) — so app-side writes (settings.json, trust.json, `auth.json`, `models.json`,
+session files) finally land in the directory pi actually reads. That removes the "two truths" half of
+`known-gaps` B7 and turns the in-flight credential/model work (#13/#47/#49) from *written* into
+*effective*; the theme-discovery rows (#35–#37) now also resolve pi's real agent dir. (2)
+`rpc/PiLaunchOptions.kt` plus `PiEngineHost.boot(launch = …)` implement #11/#12/#64/#65/#66.
+
 **Verification snapshot.** Every app citation below was read at the commit above plus the dirty
 files listed here. Other agents were editing `ui/theme/PiTheme.kt`, `ui/blocks/*` and
 `ui/render/*` while this was written (e.g. `PiTextStyles.scaled(deltaSp)` for
@@ -587,7 +595,11 @@ named-only filter); the named-only part is one more filter clause (`summary.name
 
 ### P9 — #24 / #41 no way to delete a session
 
-Needs one store method and one UI flow; the store lives in an unowned package, the screen does not.
+**Store half already landed by this pass** — `session/PiSessionStore.kt:81`
+`suspend fun delete(file: File): Boolean`, contained to `.jsonl` files inside `sessionsRoot`. What
+remains is the UI half below, which lives in owned files.
+
+From here down is the remaining UI flow.
 
 `app/src/main/kotlin/app/pi/session/PiSessionStore.kt` (after `list`, line 70):
 ```kotlin

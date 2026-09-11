@@ -3,6 +3,9 @@ package app.pi.ui.screens
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.util.Base64
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -75,6 +78,7 @@ import app.pi.rpc.ThinkingBlock
 import app.pi.rpc.ToolCall
 import app.pi.rpc.ToolDiff
 import app.pi.rpc.TranscriptItem
+import app.pi.rpc.PiImage
 import app.pi.rpc.UserMessage
 import app.pi.ui.Boot
 import app.pi.ui.NavRequest
@@ -180,6 +184,29 @@ private fun ChatBody(
     // (`keybindings.md:112`): jump between the messages the *user* wrote. On a
     // phone there is no keybinding for it, so it lives in the overflow menu.
     val scope = rememberCoroutineScope()
+
+    // Image attachments. pi's `prompt`/`steer`/`follow_up` all carry `images`
+    // (`rpc-types.ts:22-24`) and the whole lower pipe already exists
+    // (`PiImage`, `Commands.putImages`, `PiEngineSession.prompt(images)`), so the
+    // only missing piece was a way to construct a non-empty list. A phone picker
+    // is the app's own job; pi has no picker to copy.
+    var attachments by remember { mutableStateOf<List<PiImage>>(emptyList()) }
+    val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri != null) {
+            val resolver = context.contentResolver
+            val mime = resolver.getType(uri) ?: "image/*"
+            val bytes = runCatching { resolver.openInputStream(uri)?.use { it.readBytes() } }.getOrNull()
+            if (bytes == null || bytes.isEmpty()) {
+                session.notifyUser("读取所选图片失败", warning = true)
+            } else {
+                attachments = attachments + PiImage(
+                    base64 = Base64.encodeToString(bytes, Base64.NO_WRAP),
+                    mimeType = mime,
+                )
+            }
+        }
+    }
+
     val userRowIndices = remember(state.transcript) {
         state.transcript.mapIndexedNotNull { index, item -> if (item is UserMessage) index else null }
     }
@@ -565,8 +592,33 @@ private fun ChatBody(
             )
         }
 
+        if (attachments.isNotEmpty()) {
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = PiSpacing.screen, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                attachments.forEachIndexed { index, _ ->
+                    Surface(
+                        modifier = Modifier
+                            .padding(end = 6.dp)
+                            .clickable { attachments = attachments.filterIndexed { i, _ -> i != index } },
+                        shape = PiShapes.badge,
+                        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    ) {
+                        Text(
+                            "图片 ${index + 1} ✕",
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+        }
+
         Composer(
             draft = draft,
+            onPickImage = { imagePicker.launch("image/*") },
             onDraftChange = { draft = it },
             thinkingLevel = state.meta.thinkingLevel,
             streaming = state.streaming,
@@ -586,10 +638,15 @@ private fun ChatBody(
             },
             onSend = {
                 when (val route = routeComposerText(draft, state.commands)) {
-                    ComposerRoute.Empty -> Unit
+                    // An image with no caption is still a message.
+                    ComposerRoute.Empty -> if (attachments.isNotEmpty()) {
+                        session.send("", attachments)
+                        attachments = emptyList()
+                    }
                     is ComposerRoute.Message -> {
-                        session.send(route.text)
+                        session.send(route.text, attachments)
                         draft = ""
+                        attachments = emptyList()
                     }
                     is ComposerRoute.Bash -> {
                         session.runBash(route.command, route.excludeFromContext)
@@ -918,6 +975,7 @@ private fun Composer(
     onOpenPalette: () -> Unit,
     onOpenBash: () -> Unit,
     onOpenTui: () -> Unit,
+    onPickImage: () -> Unit,
     onFollowUp: () -> Unit,
     onSend: () -> Unit,
     onStop: () -> Unit,
@@ -965,6 +1023,7 @@ private fun Composer(
                 KeyHint("/", onOpenPalette)
                 KeyHint("!", onOpenBash)
                 KeyHint("!!", onOpenBash)
+                KeyHint("图片", onPickImage)
                 // pi's `alt+enter` (`app.message.followUp`, keybindings.md:165):
                 // queue this text for the end of the current turn instead of
                 // steering it into the middle. The affordance only exists while a

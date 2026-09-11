@@ -488,6 +488,9 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      */
     private var armedDialogId: String? = null
 
+    /** `pi -c` is attempted once per process, not on every engine attach. */
+    private var resumeAttempted = false
+
     /** Monotonic ids for snackbar notices, composer fills and live turn rows. */
     private var noticeSeq = 0L
     private var composerFillSeq = 0L
@@ -621,7 +624,32 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             // while the app was closed is discovered here as well.
             refreshPrefs()
             refreshTheme()
+            maybeResumeLastSession()
         }
+    }
+
+    /**
+     * pi's `-c` / `--continue` (`cli/args.ts:100`): on launch, pick up where the
+     * last session for this cwd left off.
+     *
+     * The app's engine always starts a fresh session and its argv is fixed
+     * (`PiEngineHost.kt:231-233`), so the resume is a `switch_session` right after
+     * attach — the same command the session picker sends, which also lets a
+     * `session_before_switch` extension veto it. Behind
+     * `app.sessions.resumeLast` because "opening the app starts a new session" is
+     * a deliberate default that a fix must not silently flip.
+     */
+    private suspend fun maybeResumeLastSession() {
+        if (resumeAttempted) return
+        resumeAttempted = true
+        val enabled = runCatching { settingsStore.readBoolean("app.sessions.resumeLast") }.getOrNull() ?: false
+        if (!enabled) return
+        val recent = runCatching { sessionStore.list(limit = 1) }
+            .getOrDefault(emptyList())
+            .firstOrNull() ?: return
+        val current = _state.value.meta.sessionFile?.substringAfterLast('/')
+        if (current != null && recent.file.name == current) return
+        switchSession(recent)
     }
 
     /**
