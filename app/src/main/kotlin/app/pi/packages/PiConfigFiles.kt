@@ -131,7 +131,7 @@ object PiConfigFiles {
      */
     fun write(target: File, text: String, mode600: Boolean = false): Boolean = runCatching {
         target.parentFile?.mkdirs()
-        val temp = File(target.parentFile, "${target.name}.tmp-${ProcessHandle.current().pid()}")
+        val temp = File(target.parentFile, "${target.name}.tmp-${android.os.Process.myPid()}")
         temp.writeText(text)
         runCatching { Files.move(temp.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING) }
             .onFailure {

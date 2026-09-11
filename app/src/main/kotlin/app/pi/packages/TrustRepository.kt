@@ -311,7 +311,7 @@ class TrustRepository(
      */
     private fun writeFile(file: File, text: String): Boolean = runCatching {
         file.parentFile?.mkdirs()
-        val temp = File(file.parentFile, "${file.name}.tmp-${ProcessHandle.current().pid()}")
+        val temp = File(file.parentFile, "${file.name}.tmp-${android.os.Process.myPid()}")
         temp.writeText(text)
         runCatching { Files.move(temp.toPath(), file.toPath(), StandardCopyOption.REPLACE_EXISTING) }
             .onFailure {

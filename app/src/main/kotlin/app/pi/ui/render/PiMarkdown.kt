@@ -65,23 +65,28 @@ internal fun PiMarkdownText(
     // Keyed on the source: rewriting is a linear scan with a handful of regex
     // matches, but a streaming block re-parses on every token, so it is cached.
     val content = remember(markdown) { piMarkdownSource(markdown) }
-    // P9/F32: these config objects are pure functions of the palette (and, for
-    // typography, of the Material type scale), so they are remembered against
-    // those inputs instead of being rebuilt on every frame of a streaming block.
-    val palette = PiTheme.palette
-    val textStyles = PiTheme.text
-    val typeScale = MaterialTheme.typography
     CompositionLocalProvider(
         LocalPiCodeHighlighter provides PiNodeCodeHighlighter,
         LocalPiImageTransformer provides com.mikepenz.markdown.model.NoOpImageTransformerImpl(),
     ) {
+        // P9/F32 wanted these five config objects cached instead of rebuilt on every
+        // frame of a streaming block. They cannot be cached with `remember { ... }`
+        // while they are @Composable: `remember`'s calculation lambda is
+        // `@DisallowComposableCalls`, and the Compose compiler rejects it with
+        // "@Composable invocations can only happen from the context of a @Composable
+        // function" - which the Gradle release build caught and tools/typecheck.sh
+        // cannot, since it does not run the Compose plugin.
+        //
+        // So the three that genuinely read the theme are called here, and only the two
+        // that are pure functions of constants (`piMarkdownPadding`, `piMarkdownDimens`)
+        // keep their `remember`.
         Markdown(
             content = content,
-            colors = remember(palette) { piMarkdownColors() },
-            typography = remember(palette, textStyles, typeScale) { piMarkdownTypography() },
+            colors = piMarkdownColors(),
+            typography = piMarkdownTypography(),
             padding = remember { piMarkdownPadding() },
             dimens = remember { piMarkdownDimens() },
-            components = remember { piMarkdownComponents() },
+            components = piMarkdownComponents(),
             modifier = modifier,
         )
     }
