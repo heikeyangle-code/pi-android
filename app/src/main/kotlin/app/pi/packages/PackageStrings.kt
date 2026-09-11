@@ -41,13 +41,19 @@ object PackageStrings {
     const val SPEC_HINT = "npm:@scope/name@1.0.0 或 /绝对路径"
 
     /**
-     * The correction, on its own line so it is readable rather than clipped. Two
-     * facts, because either alone is misleading: pi supports git sources, and this
-     * runtime does not have git to give it.
+     * The correction shown **only while the typed spec is a git source**
+     * (`PiPackagesScreen`'s `gitSourceTyped`, via `PiPackageSource.parse`). Two facts,
+     * because either alone is misleading: pi does support git sources, and this
+     * runtime does not currently contain git to give it.
+     *
+     * **Delete this line when git ships.** Another task is adding git (plus its CA
+     * certificates) to the runtime assets and the provisioner — see
+     * `docs/known-gaps.md` §K2 — and the moment that lands this sentence is false.
+     * The wording is deliberately "当前…还没包含" rather than a schedule: the app
+     * cannot promise when that work finishes.
      */
     const val SPEC_GIT_UNAVAILABLE =
-        "git:… 源暂时装不了：pi 支持它，但这个运行时里没有 git（docs/known-gaps.md §K2）。" +
-            "要装上得先把它加进 runtime 资产与 provisioner。"
+        "git: 源当前用不了：pi 支持它，但这个运行时里还没包含 git（docs/known-gaps.md §K2）。"
 
     const val SCOPE_USER = "全局（~/.pi/agent/settings.json）"
     const val SCOPE_PROJECT = "项目（.pi/settings.json）"

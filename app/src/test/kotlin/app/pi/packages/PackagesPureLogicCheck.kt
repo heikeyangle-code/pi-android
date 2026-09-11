@@ -269,6 +269,36 @@ fun main() {
     )
     check("github: prefix is non-local but not git", PiPackageSource.isLocalPath("github:x/y"), false)
 
+    // The install field's "this runtime has no git" note is shown while the typed
+    // spec parses as a git source, so these three spellings are what makes it appear
+    // and the fourth is what keeps it away. `parseGitUrl` accepts a protocol URL with
+    // at least two path segments, which is why a plain GitHub https URL counts.
+    check(
+        "git: is a git source",
+        PiPackageSource.parse("git:github.com/user/repo@v1")::class.simpleName,
+        "Git",
+    )
+    check(
+        "ssh:// is a git source",
+        PiPackageSource.parse("ssh://git@github.com/user/repo")::class.simpleName,
+        "Git",
+    )
+    check(
+        "an https url to a repo is a git source too",
+        PiPackageSource.parse("https://github.com/user/repo")::class.simpleName,
+        "Git",
+    )
+    check(
+        "an https url to a tarball is not (there is no repo path)",
+        PiPackageSource.parse("https://example.com/pkg.tar.gz")::class.simpleName,
+        "Local",
+    )
+    check(
+        "github: shorthand is not a git source, so the note must not appear",
+        PiPackageSource.parse("github:x/y")::class.simpleName,
+        "Local",
+    )
+
     // Pre-flight refuses only what pi cannot accept.
     check("blank source", PiPackageSource.validate("install", "  ")?.message, "Missing install source.")
     check("null source", PiPackageSource.validate("remove", null)?.message, "Missing remove source.")

@@ -342,7 +342,7 @@ ShellPolicyCard 全部文案直读 `DeviceShellGuard`（`DeviceShell.kt:590-614`
 | 选厂商 | `PiProviderPresets.all`（10 家 pi 内置 + 3 条 App 侧，`baseUrl`/`api` 已从 pi 的 `providers/*.ts` 抄好） | — |
 | **「检测并扫描模型」（唯一一个按钮）** | `suspend PiCredentialService.probe(preset, key, baseUrl)` | `Ok(models, endpoint, note)` / `Failed(kind, message, suggestion, endpoint)`——**`Failed.allowManual` 恒为 true** |
 | 勾选 + 保存 | `PiCredentialService.save(preset, key, baseUrl, api, choices, defaultModelId)` | `SaveResult(ok, steps, restart)`；`restart` 直接喂 `ExtensionLifecycle.installSucceeded(...)` |
-| **`PiRoot.kt`** | **已接（applied, uncommitted）**：`ui/PiRoot.kt:167-189` 现在传 `onRunAction`（`app.compaction.runNow` → RPC `compact`，`rpc-types.ts:44`；`app.credentials.oauth` 指向 TUI，因为 `rpc-types.ts:20-74` 里没有 login；其余给一条"还没有接入实现"的提示，不再静默）。凭证两行由 `ui/settings/PiSettingsStack.kt:145-158` 的 `hostActions` 直接开屏，不走确认对话框 | — |
+| **`PiRoot.kt`** | **已接（applied, uncommitted）**：`ui/PiRoot.kt:188-236` 传 `onRunAction`。**§I2 那一轮之后，19 个 Action 行没有一行再落到"还没有接入实现"的提示上**：`app.compaction.runNow` → RPC `compact`（`rpc-types.ts:44`）；`app.security.emergencyStop` → `stop()` + `abortBash()`；`app.credentials.oauth` / `app.sessions.import` / `app.about.changelog` 指向 TUI（`rpc-types.ts:20-74` 里没有 login/import/changelog）；其余 12 行已撤掉。凭证两行由 `ui/settings/PiSettingsStack.kt:145-154` 的 `hostActions` 直接开屏，不走确认对话框（同一张表还接了只读的 `packages` 行 → 包管理页）。逐行结论见 **§I2** | — |
 
 界面还需自己补两块：
 1. 扫到的 id **匹配 pi 内置目录取元数据**（数据源是 `PiCommands.getAvailableModels`——pi 的模型清单在**进程里**，不是文件）；匹配不上的用默认值并**标注"默认值，可改"**；
@@ -351,7 +351,7 @@ ShellPolicyCard 全部文案直读 `DeviceShellGuard`（`DeviceShell.kt:590-614`
 **状态（applied, uncommitted，未上 CI）**：界面已写，`app/src/main/kotlin/app/pi/ui/settings/PiCredentialScreen.kt`（四段：选厂商 / 粘 Key / 检测并扫描 / 勾选并保存；保存成功后走 `ExtensionLifecycle.installSucceeded` + `EngineRestartCoordinator` 确认式重启）。两条 UI 补充都做了：元数据取自 `ui/PiRoot.kt:200` 传入的 `get_available_models` 快照，匹配不上的标"默认值，可改"；`models.json` 无锁与"扫描是 App 侧知识"两句写在界面说明里（依据 `core/model-runtime.ts:180`、`packages/ai/src/models.ts:763`/`:831`）。
 **未做完的一处 —— 已修（applied, uncommitted，未上 CI）**：`PiCredentialService.preferences()` 曾把 `settings.json` 只写到 `agentTruthDir`（rootfs 侧），而 `PiEngineHost.kt:285-294` 现在把 `paths.agentDir` 绑到了 guest 的 `/root/.pi/agent` —— 保存的第三步写的是一个 pi 不读、App 也不读的文件（`auth.json`/`models.json` 因为 `PiAuthStorage`/`PiModelsFile` 写两份而不受影响）。现改为 `packages/PiCredentialService.kt:69` 的 `agentDir = mirrorAgentDir`（即绑定源，也就是 `ui/PiSessionViewModel.kt:325-328` 那个 settings store 读的同一份）。同一前提还牵出 §K5 里 TrustRepository 的三处修正。
 
-**之后**：I2（20 个动作行）→ I9（删会话 + `--continue`，先读 `cli.ts` 确认 `-c` 语义）→ I11（环境变量；`PiLaunchOptions` 已被接入 `PiEngineHost`，别重复实现）。
+**之后**：**I2 已处置（applied, uncommitted —— 19 个动作行逐个给了结论，见 §I2）** → I9（删会话 + `--continue`，先读 `cli.ts` 确认 `-c` 语义）→ I11（环境变量；`PiLaunchOptions` 已被接入 `PiEngineHost`，别重复实现）。
 
 ### E9. 模型/凭证的"导入"在 GUI 里**完全是空壳**（点下去没有任何反应）
 - **症状**：设置 → 模型 → 「API Key」「OAuth 登录」「本地模型（llama.cpp）」三行**看得见、能点，但点了什么都不发生**。
@@ -384,7 +384,7 @@ ShellPolicyCard 全部文案直读 `DeviceShellGuard`（`DeviceShell.kt:590-614`
 - **"扫描模型"这件事 pi 里没有**：`createProvider` 有一个可选的 `fetchModels` 钩子（`packages/ai/src/models.ts:760-763`，调用点 `:831`），但**全仓库没有任何 provider 实现它**（`grep -rn fetchModels packages/ --include=*.ts` 只命中 `models.ts` 和两个测试文件）。pi 自己的清单是 `packages/ai/src/providers/` 下的静态表 + 从 pi.dev 刷新。所以扫描用的端点形状（`GET {base}/models` 等）**是 App 侧知识，不是 pi 行为**，UI 里必须这么标注；Anthropic 的 `x-api-key` + `anthropic-version` 同样不在 pi 里——它在 `api/anthropic-messages.ts:298-302` 只*校验*这些头存在，实际由第三方 SDK 发送。
 - **已实现（未上真机）**：`app/src/main/kotlin/app/pi/packages/` 下的 `PiConfigFiles`（`auth.json` / `models.json` / `settings.json` 的锁与原子写、0600、注释容忍）、`PiProviderPresets`（10 家 pi 内置厂商的 `baseUrl`/`api` 直接抄自 `providers/*.ts`）、`PiModelScanner`（按厂商分派的清单请求 + 失败分类，**失败永远 `allowManual=true`**）、`PiCredentialService`（预填 → 探测 → 保存三步，每步单独报结果）。
 - **~~仍未做~~ 已完成（2026-09-11，提交 `dae0ff5`，CI 绿）**：`PiRoot.kt` 的 `onRunAction` 已接；「选厂商 → 粘 Key → 扫描 → 勾选 → 保存」的 Compose 界面已写（`ui/settings/PiCredentialScreen.kt`，586 行）；装包入口也已挂进设置（`PiPackagesHost`，之前**没有任何入口**）。**这一条原来是"仍未做"，现在不成立了——留着这行是提醒：过期的"未做"记载比漏记更糟，它会让下一个人重做已经做完的东西。**
-  仍未闭环的只剩：`app.localModels.manage` 只做了一半（端点在、GGUF 加载/下载只能在 TUI）、OAuth 未实现（RPC 无 login）、16 个 Action 行只有提示没有实现（I2 记 partial）。
+  仍未闭环的只剩：`app.localModels.manage` 只做了一半（端点在、GGUF 加载/下载只能在 TUI）。**原记载的另外两项已不成立**：OAuth 现在是一个明确的"仅终端"跳转（`/login`，`PiRoot.kt:62-79`），`app.credentials.apiKey` 有真实表单；"16 个 Action 行只有提示没有实现"也已处置（**§I2**，19 行逐行有结论，未提交）。
 
 ### E2. 高亮服务的 `attach(context)` 到底有没有被调用 —— **已完成（复核于 dc00279）**
 > **状态：调用链已确认，高亮不会静默退回单色。** `ui/render/PiMarkdown.kt:77` `remember(context) { PiNodeCodeHighlighter.attach(context) }`——每次渲染 markdown 时按 `context` 记住并调用一次，`attach` 自身幂等（`highlight/PiNodeCodeHighlighter.kt:105`）。落地于 `a7b7738`。原疑问"没人验证过"已经解决；剩下的是真机上的回环延迟，那属于 C4。
@@ -396,8 +396,39 @@ ShellPolicyCard 全部文案直读 `DeviceShellGuard`（`DeviceShell.kt:590-614`
 App 侧**没有任何 UI**：没有选图、没有粘贴、没有拖入。**只能发纯文字。**
 收尾：输入框加附件入口 + 预览 + 随 `prompt` 发送。
 
-### E4. `@` 文件提及
-pi 有（见 `docs/settings.md`、`docs/usage.md`），App 没有。
+### E4. `@` 文件提及 —— **applied (uncommitted)**（未上 CI，未过真机）
+
+> 原记载是「pi 有（见 `docs/settings.md`、`docs/usage.md`），App 没有」。**那一行已经不成立**，
+> 但下面的"仍然没有的"三件事必须一起读——`applied` 不等于 `done`。
+
+**pi 的行为（读 `/root/pi-src`，`bbb61e34`，逐条带行号）**：
+
+- **触发只在 token 边界**：`@` 必须是行首或紧跟 `空格 / tab / 双引号 / 单引号 / =`（`packages/tui/src/autocomplete.ts:7` `PATH_DELIMITERS`，判定在 `:474-479`）；`@` 前缀在 `/` 命令之前判断（`:298-311`）。TUI 编辑器默认触发字符集是 `["@", "#"]`（`packages/tui/src/components/editor.ts:251`），`@` 有 20 ms debounce（`:251`、`:261-265`）。
+- **候选来自 cwd 下递归跑 `fd`**（`:124-222`）：`--type f --type d --follow --hidden`、排除 `.git` 及其子项、最多 100 条再取 20 条（`:750`、`:785`）。**fd 默认尊重 `.gitignore`（没加 `--no-ignore`）**，被忽略的路径不进候选；`--hidden` 让 `.pi/`、`.github/` 进，`.git` 出（`autocomplete.test.ts:315-335`）。**fd 不存在时候选为空、不弹窗**（`:741`）。
+- **选中插入的就是字面 `@` + 相对路径**（`:107-121`）：文件后补一个空格，目录不补且保留结尾 `/`（`:413-429`），含空格自动加引号 `@"…"`（`:111`）。
+- **pi 客户端不把 `@path` 展开成文件内容**：提交只做 `trim()`（`modes/interactive/interactive-mode.ts:2964-2967`），模型看到的是字面路径；它能被解析，是**工具侧** normalize 时剥掉开头的 `@`（`utils/paths.ts:80`，调用点 `core/tools/path-utils.ts:41`、`:49`）。
+- **找不到文件时没有提示也没有校验**，用户照样能把它发出去。
+- 与 CLI 的 `@file` 位置参数（`cli/args.ts:225-226`、`cli/file-processor.ts:25`：启动时把文件内容读进 prompt）是**两套机制**，composer 的提及不走它。混淆这两者会写出"顺手展开内容"的错误实现。
+
+**App 的实现（本次，未提交）**：
+
+- `ui/chat/PiFileMentions.kt` —— 纯逻辑：触发、`@` 前缀解析（含引号形式）、作用域拆分（`@a/b`、绝对路径、`~/`、`..`）、fd 的 argv 与其 shell 引用、`scoreEntry` 打分与完整排序、截 20、插入规则。每一条都对着上面引用的行转写；Android-free，所以能被 bare-JVM 自检直接编译。
+- `ui/chat/PiMentionSource.kt` —— **候选集不自己遍历工作区**，而是用 guest 里 pi 自己那个 `fd`（`runtime.lock.json` 的 `artifacts.fd`；`RuntimeProvisioner.kt:106`、`:464-469` 装到 `/usr/local/bin/fd`），经 app 侧已有的 guest 命令通道 `app.pi.packages.GuestCommand`（`GuestCommand.kt:99`，与引擎同一套 proot argv 与 bind）跑。**判据**：ignore 语义（分层 `.gitignore`、否定规则、`.ignore`/`.fdignore`、全局 ignore）是 `ignore` crate 的行为，Kotlin 复刻只能近似；同一个二进制 + 同一组 argv 才是逐字节一致。**不用 RPC 的 `bash`** 的理由是排除、不是遗漏：它的输出会进模型上下文（`PiEngineApi.kt:245-249`）、`abort_bash` 只针对"当前那条"命令、并且要求引擎已经启动（与 E5 的懒启动冲突）。
+- `ui/chat/MentionPalette.kt` + `ui/screens/ChatScreen.kt` + `ui/PiSessionViewModel.kt` —— 列表、debounce、抢答丢弃、点击插入；只有 `state.mentions.query == 当前前缀 && items 非空` 才画（空列表不画，对齐 `autocomplete.ts:305`）。**路由没改**：`@` 文本照旧走 `ComposerRoute.Message` → `send()`。
+
+**有意偏离（两条，都必须带着理由读）**：
+
+1. **光标用"草稿末尾"近似。** `Composer` 是 `OutlinedTextField(value = draft: String)`（`ui/screens/ChatScreen.kt`），**没有光标状态**，所以只有末尾那个提及 token 会补全；光标停在中间编辑旧的 `@` 时不弹列表。pi 读的是 `line.slice(0, cursorCol)`（`autocomplete.ts:296`）。**理由是输入框当前没有光标状态，不是"pi 也这样"。**
+2. **debounce 150 ms（pi 是 20 ms）**，因为这里每次查询是一次 guest 进程。这是**延迟**，不是不同的答案：被抢答的查询结果直接丢弃。**没有真机数据，不声称任何延迟数字。**
+
+另外两条与 pi 不同的细节（都写在 `PiFileMentions.kt` 的 KDoc 里）：pi 每次查询跑**两遍** fd（先 `--max-depth 1` 再递归）并去重（`:749-759`），本实现只跑递归那一遍（排序是全序，第一遍只在截断边界上有可见差异）；排序最后一级 pi 用 `localeCompare`（`:783`），这里用普通字符串序，只有"键完全相同"时才会看出差别。
+
+**后续项（记在这里，别让它消失在聊天里）**：
+
+- [ ] `Composer` 改 `TextFieldValue`，把真实光标带上，去掉偏离 1；
+- [ ] 把 `app/src/test/kotlin/app/pi/ui/chat/PiFileMentionsCheck.kt` 注册进 `tools/run-app-pure-checks.sh`（`run_harness mentions …`，并把该文件里两处写死的"2 harnesses"改成 3）——**不注册，`app/src/test/**` 在 CI 里就不会被编译，这个自检等于不存在**；
+- [ ] **真机验证 `fd` 在 agent 目录 bind 之后仍可执行**：`/usr/local/bin/fd` 是指向 `/root/.pi/agent/bin/fd` 的软链（`RuntimeProvisioner.kt:469`），而 `/root/.pi/agent` 被引擎的 bind 覆盖（`PiEngineHost.kt:285-294`）——**这一条我没有查证过，是已知风险**。fd 缺失时的降级行为与 pi 相同（无候选、不弹列表），所以坏了是"不出现"，不是"崩"。
+
 
 ### E5. 懒启动引擎 + 无引擎浏览会话
 现在**开 App 就起引擎**（`PiRoot` 的 `LaunchedEffect` → `session.boot()`）。而：
@@ -500,16 +531,49 @@ pi 能在**不新建会话文件**的前提下跳到任意历史点（`docs/sess
 App 的「分支」动作实际是 **fork，会写一个新会话文件**（`SessionTreeScreen.kt:74,165,226`）——**和 pi 的语义不同**，用户以为在"跳分支"，实际在"造新文件"。分支摘要也因此不可达。
 → 应补进 **F2**（协议做不到）。
 
-### I2. **全部 20 个动作类设置行都是死的**（DEFECT，E9 的扩展）——**已部分修复（applied, uncommitted），仍是 partial**
-**（以下三行是修复前的记载，保留以便复核；现状见下。）**
+### I2. **动作类设置行点了没反应**（DEFECT，E9 的扩展）——**已处置：applied (uncommitted)，19 行逐行有结论，没有一行留在「点了弹一句未接入」**
+
+> **先说数量：标题里的"20"已经不成立。** 第 20 个 Action 行 `app.device.sessionOverride` 在 `9a16271`（"drop the disconnected device/trust rows"）里随 7 个 `app.device.*` 一起删掉了，注册表现在有 **19** 个 `kind = PiRowKind.Action,`。`§E9-接线规格` 里"20 个动作行"是同一批过时数字，已在 `:354` 修。
+
+**（以下是修复前的记载，保留以便复核。）**
 `PiRoot.kt:130-138`（当时）**从不传 `onRunAction`**（默认 `null`，`PiSettingsStack.kt:34`），`SettingsGroupScreen.kt:151-170` 把它们降级成"这个入口由运行时接管…"。
 涉及**App 里唯一的 API Key/OAuth 凭证入口、会话导入、更新检查、日志查看、诊断导出**——**全部点了没反应**。而且**整个仓库没有 `auth.json` 的写入者**。
-（E9 只记了凭证/信任那几行，**这一条要扩到全部 20 行**。）
 
-**当前状态（19 个 `PiRowKind.Action` 行，`PiSettingsRegistry.kt:370/379/388/540/698/707/1443/1479/1488/1519/1554/1563/1572/1646/1655/1664/1673/1682/1692`，未上 CI）**：
-- **3 个真正有实现**：`app.credentials.apiKey` 与 `app.localModels.manage` → `PiCredentialScreen`（`ui/settings/PiSettingsStack.kt:145-158`）；`app.compaction.runNow` → RPC `compact`（`ui/PiRoot.kt:173`，依据 `rpc-types.ts:44`）；
-- **16 个只有一条明确提示**：`ui/PiRoot.kt:183-187` 弹"「X」还没有接入实现（docs/known-gaps.md §E9 / I2），当前点它不会有任何动作"——**不再是静默失效**，但也没有功能。**待决**：实现，或按 E9 原文从界面撤掉（父代理裁决：本轮保留提示，不删）。
+**本次处置（applied, uncommitted，未上 CI，未上真机）** —— 判据是 **pi 里有没有**，不是我们想不想做：
+
+| 行 key | pi 里有吗（依据） | RPC 有吗 | 结论 |
+|---|---|---|---|
+| `app.credentials.apiKey` | 有：`--api-key`（`cli/args.ts:108`）、`/login`，落在 `auth.json`（`core/auth-storage.ts:52`） | 无（App 直接写 `auth.json`） | **实现**（`PiCredentialScreen`；`PiSettingsStack.kt:146`） |
+| `app.localModels.manage` | 有：`/llama`（`extensions/llama/index.ts:183`），但加载/卸载/下载对 `ctx.mode !== "tui"` 直接返回（`:186-189`） | 无 | **实现**（端点写 `models.json`）+ 描述明说加载/下载仅 TUI（`PiSettingsStack.kt:147`） |
+| `app.compaction.runNow` | 有：`/compact` | 有：`compact`（`rpc-types.ts:44`） | **实现**（`PiRoot.kt:205` `session.compact()`）；带自定义指令的形态在对话面板（`ChatScreen.kt:341`），描述已写明 |
+| `app.security.emergencyStop` | 有：Esc = 清队列 + abort；bash 由 `abort_bash` 停 | 有：`abort` / `clear_queue` / `abort_bash`（`rpc-mode.ts:428` / `:433` / `:586`） | **本次实现**：`PiRoot.kt:216-219` → `session.stop()`（`PiEngineSession.kt:480-486`）+ `session.abortBash()`（`PiEngineApi.kt:262`，`abortBash` 停的是**全部**在跑的 bash，`agent-session.ts:3073-3077`） |
+| `app.credentials.oauth` | 有：`/login`（`interactive-mode.ts:3052-3055` → `:5485`），OAuth 只在交互模式 | 无 login/logout | **改跳转**：切 工作区 → 终端，文案写明 `/login`（`PiRoot.kt:62-79`） |
+| `app.sessions.import` | 有：`/import`（`interactive-mode.ts:6107`/`:6122` → `runtimeHost.importFromJsonl`） | 无 | **改跳转**：切终端，写明 `/import <path.jsonl>` |
+| `app.about.changelog` | 有：`/changelog`（`interactive-mode.ts:3022-3025`） | 无 | **改跳转**：切终端，写明 `/changelog` |
+| `app.sessions.exportAll` | **无批量导出**：`/export` 只导当前会话（`interactive-mode.ts:6062-6066`） | 只有 `export_html`，且只作用于当前会话（`rpc-types.ts:60`、`rpc-mode.ts:600-602`） | **撤掉**（单会话导出在对话面板 `/export`，`PiSlashCommands.kt:148-151`，可发现性不丢） |
+| `app.runtime.checkUpdate` | pi 自己的检查被 App 关掉（`PiEngineHost.kt:305-306` 设 `PI_SKIP_VERSION_CHECK`，`version-check.ts:97`）；`pi update --self` 是 npm 自更新（`package-manager-cli.ts:1033-1068`），而本 App 的引擎是 APK 资源按 revision 解包（`RuntimeProvisioner.kt:505-528` `extractEngine`，`:122` `wipe`），guest 里自更新会被下一次解包覆盖或与出厂版本分叉 | 无 | **撤掉**（版本由只读的「pi 版本」行报出，`PiSettingsRegistry.kt:1497` 起） |
+| `app.runtime.rollback` | **无**：pi 没有 rollback 子命令（`cli.ts` / `package-manager-cli.ts` 均无） | 无 | **撤掉** |
+| `app.runtime.cleanNpmCache` | **无**：pi 没有清缓存命令；App 也没有能在 guest 里跑 `npm cache clean` 的控制台（只有引擎 argv 与 PTY 终端） | 无 | **撤掉** |
+| `app.runtime.phantomKillerGuide` | **无**：纯 Android 设备侧 workaround；它给的修法是 `settings put global settings_enable_monitor_phantom_procs false`，本 App 被策略禁止执行，也无法代用户执行 | 无 | **撤掉**（设备侧唯一接通的面是「设备能力」页，入口在设置首页，不在这行） |
+| `app.runtime.logViewer` | **无**：pi 不写可供 GUI 尾随的日志文件 | 无 | **撤掉**（App 也没有分级日志 sink：引擎 stderr 只是内存里的一段 `MAX_STDERR_CHARS`，设备桥只有 audit log） |
+| `app.runtime.exportDiagnostics` | **无**对应行为 | 无 | **撤掉**（要真做是新功能：文件选择器导出 + zip 打包，不该当 Action 行挂在 pi 的设置目录里） |
+| `app.about.importFromDesktop` | **无**：pi 就地读它的 agent 目录，没有"从桌面导入"命令，也没有那种归档格式 | 无 | **撤掉** |
+| `app.about.exportConfig` | **无**：pi 没有配置导出命令，设置就是明文 JSON（`settings-manager.ts:154-181`） | 无 | **撤掉** |
+| `app.about.rawSettings` | **无**：pi 的 `/settings` 是分类编辑器菜单（`components/settings-selector.ts`），没有原样 JSON 编辑器 | 无 | **撤掉**（本 App 的逐键编辑器 + 全键搜索就是那个菜单的等价物；手编原始 JSON 还会绕过 pi 自己的写盘逻辑，和 `packages` 行同一个坑） |
+| `app.about.reset` | **无**：设置菜单里没有任何 reset 项（`settings-selector.ts` 无 reset id） | 无 | **撤掉** |
+| `app.about.licenses` | **无**：pi 不带任何许可界面 | 无 | **撤掉**（**这是判断项，不是铁证**：合规界面本来就不是 pi 行为。若 App 需要它，应以真实界面回归，而不是当 Action 行放回 pi 的设置目录） |
+
+**落地位置（本次改动，未提交）**：
+- `ui/settings/PiSettingsRegistry.kt` —— 19 行里 **12 行删除、7 行保留**（4 实现 + 3 跳转），被删的每一处都留了注释说明为什么：`app.sessions.exportAll`（`:729` 起）、运行时 6 行（`:1518`/`:1553`/`:1586`/`:1594` 起）、关于 5 行（`:1686` 起）。
+- `ui/PiRoot.kt` —— `TERMINAL_ONLY_ACTIONS`（`:62-79`）命中时 `notifyUser` 说出要跑的命令 + `requestNav(NavRequest.Workbench)`（`:189-201`）；`app.security.emergencyStop` → `session.stop()` + `session.abortBash()`（`:216-219`）；兜底 `else` 现在**对注册表里任何一行都不可达**，文案已从"还没有接入实现"改成"这是缺陷，请报告"，只作回归守卫（`:227-231`）。
+- 顺带同区域改动：`packages` 行从"让用户手编数组"改成 **只读 + 跳转包管理页**（`PiSettingsRegistry.kt:781-800` 的 `readOnly = true`，`PiSettingsStack.kt:148-153` 的 `hostActions`）。理由：那个数组是 `pi install` 的落盘结果（`core/package-manager.ts`；`PiPackagesScreen.kt:309` 自己写着"列表就是 `pi install` 写进 settings.json 的 packages"），手编会写出"看起来装了、其实没生效"的条目。
 - 顺带修掉的重复行：`stopReasonRow()`/`liveTurnIssue` 已删（冗余，会与 rpc 归约器新写的失败行重复），见 `ui/PiSessionViewModel.kt` 的 `syncTranscript` KDoc。
+
+**没有做的事，别读成 done**：
+- **没编译、没上 CI、没上真机**：本次一行 gradle 都没跑（父代理统一提交、统一验证）；`python3 tools/check-nested-comments.py` 是唯一跑过的自查。
+- **跳转的落点没有在设备上验证过**：`TerminalPane.kt:298` 默认开的标签是 `Shell`，所以切到工作区后用户可能还要自己切到 `pi TUI` 标签——文案写的是"请在 pi TUI 标签页里运行它"，但**没有把它设为默认**（`ui/terminal/**` 不在本次可改文件范围内）。
+- `app.about.licenses` 的撤掉是判断项，见上表最后一行。
+- `docs/feature-gaps.md` 里列的同一批 key（`:270`、`:302`、`:509-514`）**没有同步**——它不在本次允许改的文件范围内，父代理需要时再改。
 
 ### I3. `/export <path>.jsonl` **会把 HTML 写进 `.jsonl` 文件**（DEFECT，静默写错字节）
 App 永远调 `export_html`（`PiSessionViewModel.kt:1371-1376`），而它的命令面板却宣传支持 `.html/.jsonl`（`PiSlashCommands.kt:121-124`）。
@@ -609,7 +673,8 @@ API<30 的截屏、默认开的基础组缺通知权限、永不刷新的审批�
 - `RuntimeProvisioner.kt` 全文没有任何一处安装或软链 git（只有 node/npm/npx 与 `pi` 包装脚本）。
 - `ubuntu-base-24.04.3-base-arm64.tar.gz` 是 Ubuntu 的**最小 base**，本身不含 git。
 - `app/src/main/assets/runtime/` 在仓库里是**空目录**（引擎包 `pi-engine.tar.gz` 不入库），所以"引擎包里是否捆了 git"无法从仓库核对——但引擎包是 node_modules 树，正常不含 git 二进制。
-- 而 `PackageStrings.SPEC_HINT` 正在告诉用户可以用 `git:github.com/user/repo@v1`。**收尾条件**：把 git 加进 runtime artifacts + provisioner（属 `runtime/**` 所有者），或在 UI 上把 git 源标成"需要先装 git，当前不可用"。**UI 那一半已做（applied, uncommitted，未上 CI）**：`packages/PackageStrings.kt:41` 的 `SPEC_HINT` 不再列出 `git:`，改成 npm/绝对路径；`PackageStrings.kt:48-50` 的 `SPEC_GIT_UNAVAILABLE`（渲染在输入框下方，`packages/PiPackagesScreen.kt:586-593`）明说"pi 支持 git 源，但这个运行时里没有 git"。**剩下的一半仍留给 runtime owner**：加 git 或让 entry 变成可用。
+- 而 `PackageStrings.SPEC_HINT` 正在告诉用户可以用 `git:github.com/user/repo@v1`。**收尾条件**：把 git 加进 runtime artifacts + provisioner（属 `runtime/**` 所有者），或在 UI 上把 git 源标成"需要先装 git，当前不可用"。**UI 那一半已做（applied, uncommitted，未上 CI）**：`packages/PackageStrings.kt:41` 的 `SPEC_HINT` 不再列出 `git:`，改成 npm/绝对路径；`PackageStrings.kt:48-60` 的 `SPEC_GIT_UNAVAILABLE` **只在输入的 spec 真的解析成 git 源时才显示**（`packages/PiPackagesScreen.kt:586-602` 的 `gitSourceTyped`，判据是 `PiPackageSource.parse(...) is Git`，不是前缀匹配——因为 pi 从三种拼写进 git 安装器：`git:host/path`、`ssh://…`、`https://host/owner/repo`，见 `package-manager.ts:1446-1471`；后两种用前缀判会漏掉警告）。文案是"当前运行时里还没包含 git"，**不是"永久不可用"**。
+- **这一条的 runtime 半边正在被另一个任务解决**（把 git 连依赖与 CA 证书打进运行时）。**那批工作落地时，`SPEC_GIT_UNAVAILABLE` 这句要删掉**（常量 KDoc 里已写明"Delete this line when git ships"），`SPEC_HINT` 可以把 `git:` 加回去。
 - 真机确认一句即可：`... bash -lc 'command -v git || echo NO-GIT'`。
 
 ### K3. 网络与路径
@@ -647,6 +712,6 @@ proot 的 bind 是**每次调用**的事。于是同一条 host 路径在引擎�
 2. `packages/PiCredentialService.kt:69`：改为写绑定源（详见 §E9 那一行）。
 3. `publishIntoRootfs()`（`TrustRepository.kt:247`）现在**没有任何调用方**，绑定生效后也不再需要；保留但已注明，建议由 owner 删除。
 
-**同一批审计发现、已单独修掉的界面问题**（都不在 K5 这条绑定本身）：`EngineRestartCoordinator` 拒绝重启后卡在 `Restarting`（`ExtensionLifecycle.restartRefused`）；`pi list` 未执行却显示"没有包"（`Listing.notReady`）；`npm:foo@v1.2.3` 被判成"可被 update 移动"（`PiPackageSource.isExactNpmVersion` 对齐 node-semver strict FULL）；`SPEC_HINT` 曾宣传 `git:` 源（已去掉，见 §K2）。**全部为 applied (uncommitted)，未上 CI。**
+**同一批审计发现、已单独修掉的界面问题**（都不在 K5 这条绑定本身）：`EngineRestartCoordinator` 拒绝重启后卡在 `Restarting`（`ExtensionLifecycle.restartRefused`）；`pi list` 未执行却显示"没有包"（`Listing.notReady`）；`npm:foo@v1.2.3` 被判成"可被 update 移动"（`PiPackageSource.isExactNpmVersion` 对齐 node-semver strict FULL）；`SPEC_HINT` 曾宣传 `git:` 源（已去掉，且"当前运行时没有 git"这句改成**只在输入真的是 git 源时**才显示，见 §K2）。**全部为 applied (uncommitted)，未上 CI。**
 
 **未验证**：本机不编译、不跑 device（规矩）；`bindsAgentDir` 的断言只在纯逻辑层被覆盖；"proot 能绑定刚 `mkdirs` 出来的目录"只有源码级把握。**真机验证点**：装一个 npm 包 → 重启引擎 → 该包的工具/资源真的出现（修复前不会）。

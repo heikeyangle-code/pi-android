@@ -583,14 +583,25 @@ private fun InstallCard(
                 enabled = !state.busy,
                 modifier = Modifier.fillMaxWidth(),
             )
-            // Kept out of the label: a field label that long is clipped on a phone,
-            // and the clarification has to be readable rather than truncated.
-            Spacer(Modifier.height(4.dp))
-            Text(
-                text = PackageStrings.SPEC_GIT_UNAVAILABLE,
-                style = MaterialTheme.typography.labelSmall,
-                color = palette.warning,
-            )
+            // Only while the typed spec really is a git source: for everyone who never
+            // types one, a permanent warning line is noise. The test is
+            // `PiPackageSource.parse` rather than a `git:` prefix check, because pi
+            // reaches the git installer from three spellings — `git:host/path`,
+            // `ssh://…` and `https://host/owner/repo` (`PiPackageSource.parse`, pi's
+            // `parseSource` at `package-manager.ts:1446-1471`) — and the last two would
+            // otherwise hit the missing binary with no warning at all.
+            val gitSourceTyped = state.spec.isNotBlank() &&
+                PiPackageSource.parse(state.spec) is PiPackageSource.Git
+            if (gitSourceTyped) {
+                // Kept out of the label: a field label that long is clipped on a phone,
+                // and the clarification has to be readable rather than truncated.
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    text = PackageStrings.SPEC_GIT_UNAVAILABLE,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = palette.warning,
+                )
+            }
             Spacer(Modifier.height(8.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 PiPackageScope.entries.forEach { scope ->
