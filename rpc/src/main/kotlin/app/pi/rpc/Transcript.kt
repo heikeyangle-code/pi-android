@@ -1681,6 +1681,14 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
 
     private companion object {
         /**
+         * The `stopReason`s that mean a turn did **not** finish normally, and
+         * that pi's own TUI reports (`components/assistant-message.ts`):
+         * `length` = truncated by the output-token limit, `aborted` = stopped by
+         * the user, `error` = the provider failed.
+         */
+        val TURN_FAILURE_REASONS = setOf("length", "aborted", "error")
+
+        /**
          * Entry-shaped events that a newer pi may emit directly on stdout. They
          * are projectable through [onEntry]; everything else unknown is inert.
          *

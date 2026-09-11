@@ -1875,6 +1875,15 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         )
     }
 
+    /**
+     * A user-visible note from the UI layer, for failures the ViewModel does not
+     * own (a picker that returned nothing readable). Same channel as every other
+     * notice, so it cannot be missed silently.
+     */
+    fun notifyUser(message: String, warning: Boolean = false) {
+        pushNotice(message, if (warning) Notice.Tone.Warning else Notice.Tone.Info)
+    }
+
     /** Unknown `/name`: audit §6.4 — never let it reach the model as prose. */
     fun notifyUnknownCommand(name: String) {
         pushNotice(

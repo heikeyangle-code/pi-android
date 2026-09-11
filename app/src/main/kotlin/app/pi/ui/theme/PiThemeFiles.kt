@@ -255,7 +255,7 @@ object PiThemeLoader {
         val notes: List<String>,
     )
 
-    internal fun parseTheme(file: File): ParsedTheme {
+    private fun parseTheme(file: File): ParsedTheme {
         val json = readJson(file)
             ?: throw IllegalArgumentException("不是合法的 JSON 对象")
         return parseThemeJson(json)
@@ -380,7 +380,9 @@ object PiThemeLoader {
             if (text in seen) return null
             return resolveRaw(vars[text], vars, seen + text)
         }
-        return primitive.intOrNull?.let { if (it in 0..255) IndexedColor(it) else null }
+        // `JsonPrimitive` has no `intOrNull`; its content is the numeric text.
+        val index = primitive.content.toIntOrNull() ?: return null
+        return if (index in 0..255) IndexedColor(index) else null
     }
 
     private fun parseHex(text: String): Color? {

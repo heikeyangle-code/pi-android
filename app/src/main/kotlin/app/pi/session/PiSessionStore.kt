@@ -63,6 +63,29 @@ class PiSessionStore(private val sessionsRoot: File) {
         if (out.size > limit) out.subList(0, limit) else out
     }
 
+    /**
+     * Remove one session file.
+     *
+     * `docs/gap-disposition.md` rows **#24/#41**: the app can list, open and rename
+     * a session but cannot delete one, while pi's own picker can
+     * (`docs/sessions.md:48` — "delete with Ctrl+D, then confirm"). This is the
+     * store half of that fix; the confirmation dialog belongs to the screen's owner
+     * (patch P9 in that ledger), because pi's delete is a two-step action and the
+     * confirm must not be skipped here.
+     *
+     * Deliberately narrow: only a regular `.jsonl` file **inside** [sessionsRoot] is
+     * removed, so a bad `Summary.file` can never become an arbitrary unlink. The
+     * active session is *not* special-cased — refusing to delete the session pi is
+     * currently appending to is the caller's job, and it is called out in P9.
+     */
+    suspend fun delete(file: File): Boolean = withContext(Dispatchers.IO) {
+        val root = sessionsRoot.absoluteFile
+        val target = file.absoluteFile
+        if (!target.path.startsWith(root.path + File.separator)) return@withContext false
+        if (!target.isFile || !target.name.endsWith(".jsonl")) return@withContext false
+        runCatching { target.delete() }.getOrDefault(false)
+    }
+
     private fun readSummary(file: File, groupCwd: String): Summary? {
         var id = file.nameWithoutExtension
         var cwd = groupCwd

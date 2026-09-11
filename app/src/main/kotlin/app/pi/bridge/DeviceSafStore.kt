@@ -4,25 +4,6 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 /**
- * The device shell's **hard blocklist**, rendered for the authorization page.
- *
- * This is the same list [DeviceShellGuard.inspect] enforces, exposed as data so the
- * UI cannot drift from the policy. Every entry carries which of the two membership
- * tests earns it a place; an entry without one does not belong here (the user's
- * complaint was precisely that the list had grown by caution instead of reasoning).
- */
-object DeviceShellPolicyText {
-
-    fun blockLines(): List<String> = DeviceShellGuard.blockedSummary()
-
-    fun allowLine(): String = DeviceShellGuard.allowedSummary()
-
-    fun writeBoundaryLines(): List<String> = DeviceShellGuard.writeBoundarySummary()
-
-    fun syntaxLines(relaxed: Boolean): List<String> = DeviceShellGuard.syntaxSummary(relaxed)
-}
-
-/**
  * What the pi-side permission gate has approved in this session.
  *
  * The gate itself runs *inside the guest* (it is a pi extension), so the app cannot

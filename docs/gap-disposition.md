@@ -126,7 +126,7 @@ The audit's `PARTIAL 20 / MISSING-GUI 26 / CLI-ONLY 9 = 55` is reproduced exactl
 | 21 | jump to previous/next message (`ctrl+shift+up/down`) | MISSING-GUI | **UNRECORDED** | — | `ui/screens/ChatScreen.kt:167` `listState.animateScrollToItem(last)` is the only scroll control (auto-pin); no user-facing jump exists | `keybindings.md:112` `tui.altScreen.previousPrompt` | patch-ready P7 |
 | 22 | tree filters (`treeFilterMode`, `ctrl+t/u/l/a/o`) | MISSING-GUI | RECORDED-NO-OWNER (I) | **I8** | `ui/chat/SessionTreeScreen.kt:107` `BranchTab(state = state, onFork = onFork, …)` — no filter control; `treeFilterMode` occurs only at `PiSettingsRegistry.kt:1261` | `docs/sessions.md:100` | blocked |
 | 23 | session picker: search / sort / named filter / rename / delete | MISSING-GUI | RECORDED-NO-OWNER (I) | **I8** (search/sort/named) + **I9** (delete) | `ui/screens/SessionsScreen.kt:105` `items(sessions, key = { it.file.absolutePath })` — a plain list | `docs/sessions.md:43-48`; `keybindings.md:141-145` | patch-ready P8 |
-| 24 | session tree "delete session" + non-invasive variant | MISSING-GUI | RECORDED-NO-OWNER (I) | **I9** | `session/PiSessionStore.kt:49` `suspend fun list(limit: Int = 300)` — the store exposes no delete; `SessionsScreen.kt:105` renders rows only | `keybindings.md:144-145` | patch-ready P9 |
+| 24 | session tree "delete session" + non-invasive variant | MISSING-GUI | RECORDED-NO-OWNER (I) | **I9** | **Store half done:** `session/PiSessionStore.kt:81` `suspend fun delete(file: File): Boolean`, contained to `.jsonl` files inside `sessionsRoot`. Remaining: `SessionsScreen.kt:105` still renders rows with no long-press / confirm dialog | `keybindings.md:144-145` | patch-ready P9 (store half landed) |
 | 25 | external editor (`ctrl+g`) | PARTIAL | **UNRECORDED** | — | `ui/settings/PiSettingsRegistry.kt:1288` `key = "externalEditor",` — the sole occurrence outside a doc comment; no launch action exists | `keybindings.md` `app.editor.external` | blocked |
 | 26 | scoped models selector (`/scoped-models`) | PARTIAL | **UNRECORDED** | — | `ui/chat/PiSlashCommands.kt:118-119` `/scoped-models` is `PiCommandAction.TerminalOnly`; the setting is a raw `List` row at `PiSettingsRegistry.kt:355` | `keybindings.md` §Scoped Models Selector | patch-ready P10 |
 | 27 | `/tree` navigation: switch the active leaf | MISSING-TERMINAL-ONLY | **LIMIT** | **I1** / **F2** | `ui/chat/SessionTreeScreen.kt:226` `TextButton(onClick = { onFork(id) }) { Text("分支") }` — the only tree action is a fork, which writes a new session file | `rpc-types.ts:20-74` — the only tree commands are `get_tree` (`:66`) and `fork` (`:62`); `interactive-mode.ts:5216-5322` | limit |
@@ -307,7 +307,7 @@ Listed so the ledger cannot over-claim. "Justified" = at least one of the 148 ro
 | Entry | Status |
 |---|---|
 | A3 markdown-embedded images | **Valid and unjustified.** Still open (`render/PiMarkdown.kt:68` `NoOpImageTransformerImpl`), but no feature-gaps row grades it. The nearest row (#62) is the attachment grid, a different surface. |
-| B7 project-trust prompt | **Unjustified and currently unreachable.** `packages/PiProjectTrustPrompt.kt:52` exists, but its only call site is `PiPackagesScreen.kt:119`, and `PiPackagesScreen` has no caller — so the trust UI is dead code until the packages screen is mounted. |
+| B7 project-trust prompt | **Unjustified by any row, still unreachable, but its root cause is fixed.** `packages/PiProjectTrustPrompt.kt:52` exists and its only call site is `PiPackagesScreen.kt:119`, which nothing mounts — so the trust UI is still dead code. What *did* change is the path misalignment B7 documented: `PiEngineHost.kt:285-291` now binds `paths.agentDir` into the guest, so the app's trust.json/auth.json/session writes finally land where pi reads them. The UI half remains the packages agent's. |
 | B9 markdown lib version, B10 `libprootloader.so` PIE | Valid, no capability row (library/dependency constraints, by design outside the matrix). |
 | B12 / E6 `ASSET_VERSION` fingerprint | Valid (`bridge/DeviceBridgeController.kt:69` is still the literal `"3"`), no capability row. |
 | C1–C4 device/real-run verification | No capability row, by construction — these are "has it been run" items, not features. |
@@ -321,7 +321,7 @@ Listed so the ledger cannot over-claim. "Justified" = at least one of the 148 ro
 
 | Item | Why | What would settle it |
 |---|---|---|
-| **Does the tree compile?** | **Checked: `bash tools/typecheck.sh`, last line `typecheck: FAILED in :app`** (run started 07:50 on the working tree; `:rpc` phase passed). **7 errors, in 2 files, none of them touched by this pass**: `ui/PiSessionViewModel.kt:548` (×2) — the new `PiLaunchOptions` wiring is being called with a trailing lambda where a `PiLaunchOptions` is expected; and the untracked `ui/theme/PiThemeFiles.kt` (×5) — `:258` `'internal' function exposes its 'private-in-class' return type 'ParsedTheme'`, `:383` `unresolved reference 'intOrNull'` plus three inference errors. Both are mid-write by other agents; route them there. **Zero errors point at any file changed by this pass** (`ui/terminal/TerminalSettings.kt`, `TerminalPane.kt`, `TerminalSurface.kt`, `TerminalKeyBar.kt`, `terminal/TerminalController.kt`, `terminal/TerminalKeys.kt`). | Fix the two files above, then re-run; a frozen-tree run is still the only verdict on the untracked `packages/**` code, which has no caller and is therefore not exercised. |
+| **Does the tree compile?** | **P0 is cleared** (both blocker files fixed — see §8 P0), but there is **no green run yet**: the `:rpc` phase is currently red at `rpc/Transcript.kt` (the RPC agent is fixing its F3/`failTurn` work), so the script stops before `:app`. The last completed run ended `typecheck: FAILED in :app` with **7 errors, in 2 files, now both fixed, and none of them touched by this pass**; **zero diagnostics ever pointed at any file changed here** (`ui/terminal/TerminalSettings.kt`, `TerminalPane.kt`, `TerminalSurface.kt`, `TerminalKeyBar.kt`, `terminal/TerminalController.kt`, `terminal/TerminalKeys.kt`, `session/PiSessionStore.kt`). | A green `bash tools/typecheck.sh` once `:rpc` is green. A frozen-tree run is still the only verdict on the untracked `packages/**` code, which has no caller and is therefore not exercised. |
 | Whether `/share` can work on this host at all | Needs a browser plus a reachable loopback callback (`PI_SHARE_VIEWER_URL` is unset); never run. | Run the gist flow from the 工作区 → `pi TUI（原版）` tab on a device. |
 | Whether the 12 `TerminalOnly` rows are actually usable in this app's terminal tab | The tab exists (`PtyLauncher.Kind.PiTui`, reachable at `ChatScreen.kt:694`) but `known-gaps` C2 records the hand-written VT emulator as never run on a device. | The device pass already listed as C1/C2. |
 | The user-visible effect of `new_session parentSession` on pi's side (row #5) | Read from `rpc-mode.ts:438`; the consequence ("sessions are always roots") is inferred from the wire, not observed. | Create a parented session with a raw `pi --mode rpc` client and diff the session header / `get_tree`. |
@@ -337,42 +337,16 @@ paste. All line numbers are from `dc00279` + the dirty files named in §0; **re-
 line before applying**, because the tree moves. The status column in §2 points at the patch ids
 here.
 
-### P0 — the tree currently does not compile: fix these two first
+### P0 — RESOLVED (kept for the record): the tree did not compile
 
-`bash tools/typecheck.sh` on the working tree ends `typecheck: FAILED in :app` with 7 errors in two
-files, **both owned** and both mid-write. They are not findings of this audit; they are why a
-green run is impossible right now. Exact fixes:
+`bash tools/typecheck.sh` ended `typecheck: FAILED in :app` with 7 errors in two files, both owned and
+both mid-write. **Both are now fixed** at `af2d675`: the engine moved `launch` before `onStep` (with
+a comment naming the trailing-lambda trap — `engine/PiEngineHost.kt:190-199`), and the theme agent
+made `parseTheme`/`ParsedTheme` consistently private plus `primitive.content.toIntOrNull()`
+(`ui/theme/PiThemeFiles.kt:252-264`, `:381-385`). Kept here because the shape recurs: **adding a
+parameter after a trailing-lambda parameter silently rebinds every `f { … }` call site**, and the
+compiler's message names the lambda, not the parameter order.
 
-**(a) `ui/PiSessionViewModel.kt:558` (×2).** `PiEngineHost.boot` gained a trailing
-`launch: PiLaunchOptions = PiLaunchOptions()` parameter (`engine/PiEngineHost.kt:181-188`), so the
-existing trailing-lambda call now binds the lambda to `launch` instead of `onStep`.
-
-before
-```kotlin
-            val boot = host.boot(workspaceProvider = ::defaultWorkspace) { step ->
-                _state.value = _state.value.copy(boot = Boot.Working(step))
-            }
-```
-after (call-site fix)
-```kotlin
-            val boot = host.boot(
-                workspaceProvider = ::defaultWorkspace,
-                onStep = { step ->
-                    _state.value = _state.value.copy(boot = Boot.Working(step))
-                },
-            )
-```
-The alternative is one line in `engine/**` and no call-site change: put `launch` **before** `onStep`
-in both `boot` and `bootLocked`, which keeps the trailing-lambda form legal for every current and
-future caller. Either is correct; doing both is not.
-
-**(b) `ui/theme/PiThemeFiles.kt` (×5).**
-- `:258` `'internal' function exposes its 'private-in-class' return type 'ParsedTheme'` — before
-  `    private class ParsedTheme(` after `    internal class ParsedTheme(`
-- `:383` `unresolved reference 'intOrNull'` (there is no such member on `JsonPrimitive`) — before
-  `        return primitive.intOrNull?.let { if (it in 0..255) IndexedColor(it) else null }` after
-  `        return primitive.content.toIntOrNull()?.let { if (it in 0..255) IndexedColor(it) else null }`
-  (the four inference errors are downstream of this one).
 
 ### P1 — #62 images render as placeholders (highest severity: the bytes are already in memory)
 
