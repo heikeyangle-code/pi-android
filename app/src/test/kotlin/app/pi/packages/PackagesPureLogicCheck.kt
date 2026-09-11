@@ -8,10 +8,12 @@ package app.pi.packages
 // instead, so nothing about the Gradle build has to change for it to exist.
 //
 // **RUN BY CI since 2026-09-11**, by `tools/run-app-pure-checks.sh` from the `pure-checks`
-// job. Before that it had never been compiled by anything, which is how it shipped without
-// its `package` line: the class lands in the default package without one, so the FQCN the
-// harness runner used did not exist. `tools/typecheck.sh` compiles `app/src/main/kotlin`
-// only, so it never saw this file either. Run it by hand:
+// job. The first CI run reported ClassNotFoundException for this class, and that was a
+// symptom rather than the cause: the compiler had thrown before it compiled anything (its
+// own classpath was missing kotlinx-coroutines), and the runner of that day had no guard
+// for "produced nothing", so the missing class was the only thing it could report. The
+// `package` line was never missing - this file has always declared it, further down.
+// `tools/typecheck.sh` compiles `app/src/main/kotlin` only, so it never saw this file.
 //
 //   cd /root/pi-android
 //   KOTLINC_CP="$(find build/typecheck/kotlinc -name '*.jar' | tr '\n' ':')"
@@ -33,7 +35,6 @@ package app.pi.packages
 // "a plain https URL is a local path" rule), `pi list` parsing (including the
 // difference between "no packages" and "unparseable"), and every restart
 // transition including the turn-running rule.
-package app.pi.packages
 
 import app.pi.packages.ExtensionLifecycle
 import app.pi.packages.PiListOutput

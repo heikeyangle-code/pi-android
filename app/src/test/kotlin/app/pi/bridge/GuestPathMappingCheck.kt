@@ -9,10 +9,11 @@ package app.pi.bridge
 // touched it, `assembleRelease` does not compile `app/src/test`, and `tools/typecheck.sh`
 // compiles `app/src/main/kotlin` only.
 //
-// The missing `package` line is the reason this was found at all: without it the file
-// compiled into the *default* package, so the harness class was `GuestPathMappingCheckKt`
-// rather than `app.pi.bridge.GuestPathMappingCheckKt` - which is exactly what the first
-// CI run reported. Nothing compiled this file for its whole life, so nothing noticed.
+// The first CI run reported ClassNotFoundException for this class. That was a symptom, not
+// the cause: the compiler itself had thrown (its own classpath was missing
+// kotlinx-coroutines), and the runner of that day had no guard for "the compile produced
+// nothing", so it reported a missing class instead. The `package` line was never missing -
+// this file has always declared it, further down.
 //
 // Run it by hand:
 //
@@ -31,7 +32,6 @@ package app.pi.bridge
 // means an image silently renders the wrong file — the guest's `/etc/hosts` shown
 // from the phone instead of from the rootfs, or a guest `/tmp/x.png` resolved to a
 // different directory that merely shares the name.
-package app.pi.bridge
 
 var failures = 0
 
