@@ -17,15 +17,18 @@ import java.util.zip.GZIPInputStream
  * unpack two archives at first launch is not a trade worth making.
  *
  * Why gzip and not xz: Java has no xz decoder. `tools/fetch-runtime.mjs`
- * therefore re-packs Node's official `.tar.xz` into `.tar.gz` at build time, so
- * the device only ever needs gzip.
+ * therefore re-packs Node's official `.tar.xz` as gzip at build time, so the
+ * device only ever needs gzip. The payloads are named `.tgz` for a reason that has
+ * nothing to do with their contents — see `PAYLOAD_SUFFIX` there, and
+ * `RuntimeProvisioner`'s.
  *
  * Correctness properties that matter for a Linux userland:
  *  - **symlinks and hardlinks are recreated**, not dereferenced. A rootfs where
- *    `/bin/sh -> dash` became a copy, or where git's subcommands stopped sharing
- *    one inode, is subtly broken. Note the packaging consequence: a build that
- *    dereferences hardlinks is how an APK ends up hundreds of megabytes larger
- *    than its contents.
+ *    `/bin/sh -> dash` became a copy is subtly broken, and so is the git payload:
+ *    139 of its `/usr/lib/git-core` entries are symlinks to the one `git` binary,
+ *    which is what makes the exec path cost one binary instead of a hundred and
+ *    fifty. Note the packaging consequence: a build that dereferences links is how
+ *    an APK ends up hundreds of megabytes larger than its contents.
  *  - **the executable bit is applied** from the tar mode. Without it nothing in
  *    the userland runs.
  *  - **PAX and GNU long-name records are honoured**; Ubuntu's rootfs does

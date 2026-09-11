@@ -97,22 +97,50 @@ android {
     }
 
     // ---------------------------------------------------------------------
-    // The five runtime payloads must be *stored*, not deflated.
+    // The runtime payload assets must be *stored*, not deflated — and their file
+    // names must not end in `.gz`.
     //
-    // A device failed to boot a 127,195,427-byte APK with
-    //   failed to unpack ubuntu-base.tar.gz: runtime/ubuntu-base.tar.gz
-    // — AssetManager.open()'s bare-path FileNotFoundException — while the five
-    // archives account for ~115 MB of it, so they were demonstrably in the
-    // package and unreadable *through* it. A stored asset is served straight out
-    // of the APK's bytes, and it is also the only kind AssetManager.openFd() can
-    // hand back a file descriptor for; RuntimeProvisioner's reader has three
-    // layers (open/STREAMING, open/BUFFER, openFd) and the third is only real
-    // because of this block. The two changes are one fix, not two.
+    // ## Why the names matter (this was a total boot failure)
     //
-    // The payloads are ubuntu-base.tar.gz, node.tar.gz, pi-engine.tar.gz,
-    // ripgrep.tar.gz and fd.tar.gz, so "gz" covers all five today. xz and tar are
-    // listed so a future repack (the assembler already re-compresses Node from
-    // .tar.xz to .tar.gz) cannot quietly reintroduce a compressed payload.
+    // The Android Gradle Plugin gunzips an asset whose file *extension* is `gz`
+    // while it merges assets, and renames it at the same time:
+    // `com.android.ide.common.resources.AssetItem` tests
+    // `Files.getFileExtension(name).toLowerCase(Locale.US).equals("gz")` and then
+    // applies `Files.getNameWithoutExtension`, which removes only the final `.gz`.
+    // So the assembler wrote `assets/runtime/ubuntu-base.tar.gz` and the APK
+    // contained `ubuntu-base.tar`: 106 MB of uncompressed tar instead of the
+    // 28.5 MiB source file, under a name nothing asked for. `RuntimeProvisioner`
+    // looks up `runtime/ubuntu-base.tar.gz`, `AssetManager.open()` answered with a
+    // bare-path FileNotFoundException, and the runtime never provisioned — on
+    // every build, from the first one:
+    //
+    //   packaged asset unreadable: runtime/ubuntu-base.tar.gz
+    //   assets/runtime/ contains: fd.tar, node.tar, pi-engine.tar, ripgrep.tar, ubuntu-base.tar
+    //
+    // It is NOT aapt2: aapt2 2.20-14304508, run against a directory laid out like
+    // this one, ships `ubuntu-base.tar.gz` and `pi-engine.tgz` under their own
+    // names. The merge step runs first, so no flag on the aapt2 command line can
+    // undo it — only the name can.
+    //
+    // The payloads are therefore named with `PAYLOAD_SUFFIX = ".tgz"` in
+    // tools/fetch-runtime.mjs — the same gzip bytes, under an extension AGP leaves
+    // alone (`Files.getFileExtension("ubuntu-base.tgz")` is `tgz`).
+    // **Renaming any of them back to `.gz` re-breaks the app**, silently and with
+    // a *smaller* APK as the only symptom.
+    //
+    // ## Why they must be stored
+    //
+    // A stored asset is served straight out of the APK's bytes, and it is also the
+    // only kind `AssetManager.openFd()` can hand back a file descriptor for;
+    // RuntimeProvisioner's reader has three layers (open/STREAMING, open/BUFFER,
+    // openFd) and the third is only real because of this block.
+    //
+    // The list has to name the *actual* suffix: with `"gz"` listed and the files
+    // named `.tgz`, none of the six payloads matched, every one of them was
+    // deflated, and the `openFd()` layer went dead. `tgz` covers all six today.
+    // `xz` and `tar` are kept so a future repack (the assembler already
+    // re-compresses Node from `.tar.xz`) cannot quietly reintroduce a compressed
+    // payload.
     //
     // AGP 8.13.2 DSL, checked against the artifacts and *compiled* against them
     // rather than recalled:
@@ -120,7 +148,7 @@ android {
     //     `getAndroidResources()` and `androidResources(Function1)` in
     //     gradle-api-8.13.2.jar, and its receiver is ApplicationAndroidResources.
     //   * inside it the canonical spelling is the *property*:
-    //         noCompress += listOf("gz", "xz", "tar")
+    //         noCompress += listOf("tgz", "xz", "tar")
     //     `noCompress(String)` / `noCompress(String...)` still resolve but carry
     //     @Deprecated("Replaced with property noCompress"). Kotlin types the getter
     //     as the platform type (Mutable)Collection<String>!, so `+=` binds to
@@ -131,8 +159,8 @@ android {
     //     internal list), so AAPT2's own default no-compress extensions (.png,
     //     .jpg, …) are left in place.
     //   * AGP turns these entries into AAPT2's `--no-compress-regex`, a
-    //     suffix-anchored, case-insensitive alternation — the `gz` entry becomes
-    //     the group `(g|G)(z|Z)$` (PackagingUtils.getNoCompressForAapt ->
+    //     suffix-anchored, case-insensitive alternation — the `tgz` entry becomes
+    //     the group `(t|T)(g|G)(z|Z)$` (PackagingUtils.getNoCompressForAapt ->
     //     AaptV2CommandBuilder.getNoCompressRegex). Matching on a suffix is why no
     //     leading dot is needed.
     //
@@ -148,7 +176,7 @@ android {
     // the price of being able to open them at all.
     // ---------------------------------------------------------------------
     androidResources {
-        noCompress += listOf("gz", "xz", "tar")
+        noCompress += listOf("tgz", "xz", "tar")
     }
 
     packaging {

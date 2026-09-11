@@ -34,6 +34,86 @@
 			"url": "https://github.com/sharkdp/fd/releases/download/v10.2.0/fd-v10.2.0-aarch64-unknown-linux-musl.tar.gz",
 			"sha256": "4e8e596646d047d904f2c5ca74b39dccc69978b6e1fb101094e534b0b59c1bb0",
 			"why": "pi's `find` tool spawns fd"
+		},
+		"git": {
+			"url": "https://ports.ubuntu.com/ubuntu-ports/pool/main/g/git/git_2.43.0-1ubuntu7.3_arm64.deb",
+			"sha256": "db7f9a9a06a5dd6d6d5bd4bc3b14a2a0f0aaf0cc48f6e096e7ba3f4db63503ee",
+			"why": "git for pi's `git:` package source and the model's own status/diff/log/commit; noble-updates 2.43.0, the same series as the pinned ubuntu-base 24.04.3"
+		},
+		"caCertificates": {
+			"url": "https://ports.ubuntu.com/ubuntu-ports/pool/main/c/ca-certificates/ca-certificates_20260601~24.04.1_all.deb",
+			"sha256": "6bac2a01979e210d9eac1d4d56747ec709ea60654744d66705dc3c36e7629e50",
+			"why": "the pinned ubuntu-base ships no /etc/ssl and no CA bundle at all, so git's HTTPS transport has nothing to validate against; this deb is where the 121 Mozilla roots in the payload's /etc/ssl/certs/ca-certificates.crt come from"
+		},
+		"libcurlGnutls": {
+			"url": "https://ports.ubuntu.com/ubuntu-ports/pool/main/c/curl/libcurl3t64-gnutls_8.5.0-2ubuntu10.13_arm64.deb",
+			"sha256": "124fd75efab0338c58c329e8ec21d35ae461b8bf763a950ab1d0d5511f6f964f",
+			"why": "libcurl-gnutls.so.4 — the HTTP(S) transport behind git-remote-http; the -gnutls flavour because the base already ships libgnutls.so.30 and not the OpenSSL-linked curl"
+		},
+		"libbrotli1": {
+			"url": "https://ports.ubuntu.com/ubuntu-ports/pool/main/b/brotli/libbrotli1_1.1.0-2build2_arm64.deb",
+			"sha256": "cabf3462d908e72f2e594f19ae87c581c4614f099947e38fbd865bf8eae27014",
+			"why": "libcurl's DT_NEEDED (libbrotlidec.so.1 + libbrotlicommon.so.1); not in the base"
+		},
+		"libnghttp2": {
+			"url": "https://ports.ubuntu.com/ubuntu-ports/pool/main/n/nghttp2/libnghttp2-14_1.59.0-1ubuntu0.4_arm64.deb",
+			"sha256": "ec812e0b82dfb315b140020f4c8434191a89cf42c49dbb82605d0892b6783b59",
+			"why": "libcurl's DT_NEEDED (libnghttp2.so.14) — the HTTP/2 framing GitHub actually answers with; not in the base"
+		},
+		"libexpat1": {
+			"url": "https://ports.ubuntu.com/ubuntu-ports/pool/main/e/expat/libexpat1_2.6.1-2ubuntu0.4_arm64.deb",
+			"sha256": "284f48567ba2abe026e12ae351f5f4c3a489ce723f725eacfa51bf715aa94609",
+			"why": "libcurl's DT_NEEDED (libexpat.so.1); not in the base"
+		},
+		"libpsl5t64": {
+			"url": "https://ports.ubuntu.com/ubuntu-ports/pool/main/libp/libpsl/libpsl5t64_0.21.2-1.1build1_arm64.deb",
+			"sha256": "886d485c74567b855bcd19b6f353a769a08b58c111b2d8275a908a469c15d4bf",
+			"why": "libcurl's DT_NEEDED (libpsl.so.5, the public-suffix list libcurl consults for domain rules)"
+		},
+		"librtmp1": {
+			"url": "https://ports.ubuntu.com/ubuntu-ports/pool/main/r/rtmpdump/librtmp1_2.4+20151223.gitfa8646d.1-2build7_arm64.deb",
+			"sha256": "fb771b2743120d9d44ee9989fd485205680976f7bf89f2f1ac5df50238ea1db7",
+			"why": "libcurl's DT_NEEDED (librtmp.so.1)"
+		},
+		"libssh4": {
+			"url": "https://ports.ubuntu.com/ubuntu-ports/pool/main/libs/libssh/libssh-4_0.10.6-2ubuntu0.5_arm64.deb",
+			"sha256": "f1b8da917a3d65ca77918027206b55b69d62795df2676c39828d4439bc97e68f",
+			"why": "libcurl's DT_NEEDED (libssh.so.4). It gives libcurl an `sftp://` scheme, NOT git an ssh transport: `ssh://` and `git@host:` still need an ssh client, which is not shipped (docs/known-gaps.md K2)"
+		},
+		"libsasl2": {
+			"url": "https://ports.ubuntu.com/ubuntu-ports/pool/main/c/cyrus-sasl2/libsasl2-2_2.1.28+dfsg1-5ubuntu3.1_arm64.deb",
+			"sha256": "05da24adf2b95285ce7eaf9a2ea902fbf4f756a796c8adbfd221d746035df44b",
+			"why": "libcurl's DT_NEEDED (libsasl2.so.2); its libsasl2-modules-db sibling is deliberately not shipped because no SASL mechanism is reachable over HTTPS"
+		},
+		"libkrb5": {
+			"url": "https://ports.ubuntu.com/ubuntu-ports/pool/main/k/krb5/libkrb5-3_1.20.1-6ubuntu2.8_arm64.deb",
+			"sha256": "ef9bcb4f46d80022072741af30df1b6b08a80a8c3c3bbb06e0e710f99e4dab44",
+			"why": "libcurl's DT_NEEDED (libkrb5.so.3)"
+		},
+		"libgssapiKrb5": {
+			"url": "https://ports.ubuntu.com/ubuntu-ports/pool/main/k/krb5/libgssapi-krb5-2_1.20.1-6ubuntu2.8_arm64.deb",
+			"sha256": "3f2aea0bbe7aa2dfc9a525c5bde7bcb6d035cd99975b80a24a09eadcfe5d7503",
+			"why": "libcurl's DT_NEEDED (libgssapi_krb5.so.2); loaded at startup because a DT_NEEDED library is, whether or not its symbols are ever called"
+		},
+		"libk5crypto3": {
+			"url": "https://ports.ubuntu.com/ubuntu-ports/pool/main/k/krb5/libk5crypto3_1.20.1-6ubuntu2.8_arm64.deb",
+			"sha256": "989dd6b8e5707c73a8982f8e97080fc7a0f359a912d7a1d7e4a8b9185442a696",
+			"why": "libkrb5's DT_NEEDED (libk5crypto.so.3)"
+		},
+		"libkrb5support0": {
+			"url": "https://ports.ubuntu.com/ubuntu-ports/pool/main/k/krb5/libkrb5support0_1.20.1-6ubuntu2.8_arm64.deb",
+			"sha256": "ee2327c5501eec9d31f696cdd7a332509f90f130cde6180a5b99337deb7c39fe",
+			"why": "libkrb5's DT_NEEDED (libkrb5support.so.0)"
+		},
+		"libkeyutils1": {
+			"url": "https://ports.ubuntu.com/ubuntu-ports/pool/main/k/keyutils/libkeyutils1_1.6.3-3build1_arm64.deb",
+			"sha256": "d141e94ed3b32ea6540f2e927a83b3d42cd4378256a1aad60cda583ffdbd78af",
+			"why": "libkrb5's DT_NEEDED (libkeyutils.so.1)"
+		},
+		"libldap2": {
+			"url": "https://ports.ubuntu.com/ubuntu-ports/pool/main/o/openldap/libldap2_2.6.7+dfsg-1~exp1ubuntu8_arm64.deb",
+			"sha256": "296e93e99af40c59050b0b18e51de3e0bf85c713936b4ced9dbede799f61298a",
+			"why": "libcurl's DT_NEEDED (libldap.so.2 + liblber.so.2)"
 		}
 	}
 }

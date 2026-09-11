@@ -272,6 +272,18 @@ run_harness mentions \
   "$ROOT/app/src/test/kotlin/app/pi/ui/chat/PiFileMentionsCheck.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/ui/chat/PiFileMentions.kt"
 
+# app.pi.runtime: the two invariants that decide whether the guest can see a tool.
+# `installTool` writes rg and fd into two different host directories because the
+# engine and the package commands bind `<files>/pi/.pi/agent` over the guest's
+# `/root/.pi/agent` and the terminal does not, so a tool installed into only one of
+# them is invisible to one of the three launch paths. That failure is silent (pi's
+# `find` simply stops returning anything), which is why it is pinned here rather than
+# left to a device. Android-free: `PiRuntime.kt` imports only `java.io.File`.
+run_harness agent-tool-paths \
+  app.pi.runtime.AgentToolPathsCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/runtime/AgentToolPathsCheck.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/runtime/PiRuntime.kt"
+
 # --- 4. verdict ---------------------------------------------------------------
 # The counts are computed, not written down. They were hardcoded once ("2
 # harnesses"), and adding a third would have left the message lying about how much

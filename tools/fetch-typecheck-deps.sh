@@ -97,6 +97,38 @@ PY
   rm -rf "$tmp"
 done
 
+# termlib: the terminal emulator (`org.connectbot:termlib`), libvterm over JNI.
+# Staged for the same reason as everything else here — typecheck.sh never resolves
+# a configuration, and no local Gradle run has ever fetched it, so without this
+# every `VTermKey`/`Terminal`/`ModifierManager` reference in `ui/terminal/**`
+# reports "unresolved reference" and buries the real diagnostics under ~33 fakes.
+# It is also the dependency with a **ceiling** on its version: 0.0.14 and later are
+# built with Kotlin 2.3.x, whose metadata (mv=[2,3,0]) this project's 2.2.21
+# compiler cannot read. So the version is read from the catalog and must not be
+# "helpfully" bumped here.
+TERMLIB_VERSION="$(sed -n 's/^termlib = "\(.*\)"/\1/p' "$ROOT/gradle/libs.versions.toml")"
+if [ -z "$TERMLIB_VERSION" ]; then
+  echo "could not read the termlib version from gradle/libs.versions.toml" >&2
+  exit 1
+fi
+
+dir="$EXTRA/aar/termlib"
+if [ -s "$dir/classes.jar" ]; then
+  echo "have   termlib/classes.jar"
+else
+  echo "fetch  termlib-$TERMLIB_VERSION.aar"
+  mkdir -p "$dir"
+  tmp="$(mktemp -d)"
+  curl -fsSL --retry 3 -o "$tmp/termlib.aar" \
+    "$BASE/org/connectbot/termlib/$TERMLIB_VERSION/termlib-$TERMLIB_VERSION.aar"
+  python3 - "$tmp/termlib.aar" "$dir/classes.jar" <<'PY'
+import sys, zipfile
+with zipfile.ZipFile(sys.argv[1]) as z:
+    open(sys.argv[2], "wb").write(z.read("classes.jar"))
+PY
+  rm -rf "$tmp"
+fi
+
 echo
 echo "staged into $EXTRA:"
 find "$EXTRA" -name '*.jar' | sed "s|$ROOT/||" | sort

@@ -18,6 +18,40 @@ class PiPaths(private val filesDir: File, private val nativeLibDir: File) {
     /** pi's `PI_HOME`; `agentDir` below it is `PI_CODING_AGENT_DIR`. */
     val agentDir: File get() = File(home, ".pi/agent")
 
+    /**
+     * Where a guest-resolvable tool binary has to live — in **both** of the two
+     * directories this class exposes below.
+     *
+     * The guest spelling `/usr/local/bin/<tool>` is a symlink to
+     * `/root/.pi/agent/bin/<tool>`, and which host directory that guest path lands in
+     * depends on who launched proot:
+     *
+     *  - `PiEngineHost` (the chat engine) and `GuestCommand` (package commands) bind
+     *    [agentDir] over `/root/.pi/agent`, so the guest resolves it to [agentBinDir].
+     *    The rootfs copy at [rootfsAgentBinDir] is **shadowed** and unreachable there.
+     *  - `PtyLauncher` (the terminal) does **not** add that bind, so the guest falls
+     *    through to the rootfs copy at [rootfsAgentBinDir].
+     *
+     * Installing into only one of the two makes the tool work in one launch path and
+     * dangle in the other, and the failure is silent: a dangling `/usr/local/bin/fd`
+     * is indistinguishable from "fd was never installed" to every caller of it, which
+     * is how pi's `find` tool and the `@` mention completion both lose their backend
+     * with no error printed anywhere.
+     *
+     * The two are genuinely different directories and neither contains the other:
+     * [agentDir] is `<files>/pi/.pi/agent` (durable — `RuntimeProvisioner.wipe()`
+     * deletes only `<files>/pi/runtime`), while [rootfsAgentBinDir] is inside the
+     * volatile tree and is destroyed by every runtime revision bump.
+     */
+    fun agentBinDir(): File = File(agentDir, "bin")
+
+    /**
+     * The rootfs copy of [agentBinDir]. Read [agentBinDir]'s KDoc first: this is the
+     * copy that only a launch path *without* the agent-dir bind can see, and the one
+     * `RuntimeProvisioner.wipe()` deletes whenever the runtime revision changes.
+     */
+    fun rootfsAgentBinDir(): File = File(rootfs, "root/.pi/agent/bin")
+
     /** Volatile: re-extracted whenever the packaged runtime version changes. */
     val runtime: File = File(home, "runtime")
 
@@ -144,6 +178,32 @@ object ProotCommand {
         put("TERM", "xterm-256color")
         put("LANG", "C.UTF-8")
         put("PATH", "/opt/pi/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin")
+        // The trust store, named explicitly because nothing else names it. The
+        // pinned ubuntu-base ships no `/etc/ssl` at all; the git payload installs
+        // [GUEST_CA_BUNDLE] and these two variables are what make anything read it.
+        //
+        // They are not redundant with each other or with the default:
+        //  - `GIT_SSL_CAINFO` is git's own override, passed to libcurl as
+        //    CAINFO, so git's HTTPS transport loads this one file directly;
+        //  - `SSL_CERT_FILE` is the OpenSSL/GnuTLS convention, so the guest's other
+        //    TLS consumers (python, wget, anything not carrying its own store) work
+        //    too — Node does not need it, because Node ships its own CA store.
+        //
+        // The explicit path is load-bearing rather than belt-and-braces: libcurl's
+        // compiled-in default here is the *directory* `/etc/ssl/certs`, which it
+        // reads in `c_rehash` form (`<hash>.0` symlinks). The payload ships the
+        // concatenated bundle and no hashed links, so a lookup through the
+        // directory default would find nothing and every `https://` clone would
+        // fail certificate verification.
+        put("GIT_SSL_CAINFO", GUEST_CA_BUNDLE)
+        put("SSL_CERT_FILE", GUEST_CA_BUNDLE)
         putAll(extra)
     }
+
+    /**
+     * The CA bundle the git payload installs and [environment] points at
+     * (`RuntimeProvisioner.installGit` extracts it from inside `git.tgz`, generated
+     * at build time from the pinned `ca-certificates` deb).
+     */
+    const val GUEST_CA_BUNDLE = "/etc/ssl/certs/ca-certificates.crt"
 }

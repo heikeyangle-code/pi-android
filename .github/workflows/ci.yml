@@ -88,27 +88,76 @@ jobs:
         run: |
           ls -lh app/build/outputs/apk/release/
           find app/build/outputs/apk -name '*.apk' -printf '%f %s bytes\n'
-      # A device reported "failed to unpack ubuntu-base.tar.gz:
-      # runtime/ubuntu-base.tar.gz" - AssetManager's FileNotFoundException text - on an APK
-      # that provably carried the payloads. The classic cause is AAPT2 deflating an asset,
-      # because AssetManager.openFd() refuses a compressed entry. app/build.gradle.kts now
-      # sets androidResources { noCompress += listOf("gz","xz","tar") } so all five land
-      # Stored, but that is only a claim about the build until an actual APK is inspected.
-      # This step is that inspection: five entries, none of them compressed.
-      - name: Verify runtime payloads are stored uncompressed
+      # The runtime the app ships is the one thing in this repository that a
+      # compiler cannot check: the payloads are opaque archives handed to the
+      # guest, and every failure mode below is silent at build time.
+      #
+      # Two of them have already shipped:
+      #
+      #   1. The Android Gradle Plugin gunzips an asset whose *file extension* is
+      #      `gz` while merging assets (AssetItem.shouldBeUngzipped:
+      #      Files.getFileExtension(name).equals("gz")) and renames it with
+      #      Files.getNameWithoutExtension, so `ubuntu-base.tar.gz` (28.5 MiB)
+      #      landed in the APK as `ubuntu-base.tar` (106 MB of uncompressed tar)
+      #      while `RuntimeProvisioner` still asked for
+      #      `runtime/ubuntu-base.tar.gz`. `AssetManager.open()` answered with a
+      #      bare-path FileNotFoundException and the app never provisioned a
+      #      runtime. Not AAPT2 - aapt2 2.20 ships both names unchanged - which is
+      #      why the fix is the *name*, `*.tgz`, and not a flag: the rename happens
+      #      before aapt2 ever sees the file.
+      #
+      #   2. An earlier version of this step only counted `assets/runtime/`
+      #      entries and asked how many were `Stored`. That check passed a
+      #      458,824,004-byte APK whose payloads had been renamed by (1) - it
+      #      checked neither names nor sizes. A green tick here is only worth
+      #      what it measures.
+      #
+      # So this step compares the APK against the files that were actually staged:
+      #   * same names, both directions - nothing renamed away (1) and nothing
+      #     extra invented;
+      #   * every entry `Stored`, because `AssetManager.openFd()` refuses a
+      #     deflated entry and that is `openPayload`'s third and last access layer;
+      #   * same byte counts. A `Stored` entry's uncompressed length *is* the file
+      #     on disk, so this is exact equality, and it is the assertion (1) cannot
+      #     survive: 28.5 MiB does not equal 106 MB;
+      #   * a ceiling on the APK itself, so a future packaging accident surfaces as
+      #     a number rather than as a bug report from a phone.
+      - name: Verify runtime payloads are stored uncompressed and unrecompressed
         run: |
           set -euo pipefail
           apk="$(ls app/build/outputs/apk/release/*.apk | head -1)"
-          echo "inspecting $apk ($(stat -c %s "$apk") bytes)"
-          unzip -lv "$apk" | grep 'assets/runtime/' > /tmp/payloads.txt || true
-          cat /tmp/payloads.txt
-          count="$(grep -c 'assets/runtime/' /tmp/payloads.txt || true)"
-          compressed="$(grep 'assets/runtime/' /tmp/payloads.txt | grep -cv 'Stored' || true)"
-          echo "assets/runtime entries: $count, compressed: $compressed"
-          if [ "${count:-0}" -lt 5 ] || [ "${compressed:-1}" -ne 0 ]; then
-            echo "::error::expected five Stored runtime payloads, found $count with $compressed compressed"
-            exit 1
+          apk_bytes="$(stat -c %s "$apk")"
+          echo "inspecting $apk ($apk_bytes bytes)"
+          staged=app/src/main/assets/runtime
+          ls -l "$staged"
+
+          # Name, uncompressed length and method for every assets/runtime entry.
+          unzip -lv "$apk" \
+            | awk '$8 ~ /^assets\/runtime\// { print $1, $2, $8 }' \
+            | sort -k3 > /tmp/apk-payloads.txt
+          cat /tmp/apk-payloads.txt
+
+          # The same three facts for every staged file, in the same order.
+          for f in "$staged"/*; do
+            printf '%s %s %s\n' "$(stat -c %s "$f")" Stored "assets/runtime/$(basename "$f")"
+          done | sort -k3 > /tmp/staged-payloads.txt
+          echo "--- staged ---"
+          cat /tmp/staged-payloads.txt
+
+          fail=0
+          if [ "$(wc -l < /tmp/apk-payloads.txt)" -lt 5 ]; then
+            echo "::error::expected at least five runtime payloads in the APK, found $(wc -l < /tmp/apk-payloads.txt)"
+            fail=1
           fi
+          if ! diff -u /tmp/staged-payloads.txt /tmp/apk-payloads.txt; then
+            echo "::error::the APK's runtime payloads are not the staged ones (name, size or method differ); a rename here is what AAPT2 does to *.gz assets"
+            fail=1
+          fi
+          if [ "$apk_bytes" -gt $((200 * 1024 * 1024)) ]; then
+            echo "::error::APK is $((apk_bytes / 1024 / 1024)) MiB, over the 200 MiB ceiling; payloads are probably being stored expanded"
+            fail=1
+          fi
+          exit "$fail"
       - uses: actions/upload-artifact@v4
         with:
           name: pi-android-${{ matrix.variant }}

@@ -66,6 +66,12 @@ class RuntimeProvisioner(
             runCatching {
                 if (isStampCurrent(revision) && paths.rootfs.isDirectory) {
                     paths.prepareLibraryAliases()
+                    // The two tools live in *two* directories, and one of them is
+                    // outside the stamped tree ([PiPaths.agentBinDir]). A boot that
+                    // does not re-unpack is therefore still the only thing that can
+                    // repair a tool the agent-dir migration moved out of the rootfs —
+                    // see [ensureToolsVisible]. Cheap: two file-existence probes.
+                    ensureToolsVisible()
                     return@runCatching
                 }
                 val steps = buildList {
@@ -74,6 +80,7 @@ class RuntimeProvisioner(
                     add("解压 Ubuntu 用户态")
                     add("解压 Node 运行时")
                     add("安装 rg / fd")
+                    add("安装 git")
                     add("配置 DNS 与目录")
                     add("解压 pi 引擎")
                     add("完成")
@@ -106,6 +113,9 @@ class RuntimeProvisioner(
                 next(); installTool(RIPGREP_ARCHIVE, "rg"); installTool(FD_ARCHIVE, "fd")
                 index++
 
+                next(); installGit()
+                index++
+
                 next(); configureGuest()
                 index++
 
@@ -133,7 +143,7 @@ class RuntimeProvisioner(
         // asset is not in the APK — but an unpack that dies half way (disk full, a
         // truncated archive, a rejected symlink) can carry a bare path in its
         // message too, and the old single catch turned both into
-        // "failed to unpack ubuntu-base.tar.gz: runtime/ubuntu-base.tar.gz". That
+        // "failed to unpack ubuntu-base.tgz: runtime/ubuntu-base.tgz". That
         // ambiguity is indistinguishable from a device failure and cost a round
         // trip; [openPayload] now names the access layer that failed and the
         // pre-flight audit is appended here, so even a half-way failure arrives
@@ -150,12 +160,19 @@ class RuntimeProvisioner(
      * Open a payload archive from the APK, and if that fails, say what the APK
      * actually contains and which access layer failed.
      *
-     * A device reported `failed to unpack ubuntu-base.tar.gz: runtime/ubuntu-base.tar.gz`
-     * on an APK that is 127,195,427 bytes — and the five archives alone account for
-     * ~115 MB of that, so the payload is demonstrably in the package. Two things were
+     * A device reported `failed to unpack ubuntu-base.tgz: runtime/ubuntu-base.tgz`
+     * — this class's own message, naming the asset it could not open — on an APK
+     * that is 127,195,427 bytes, while the payload archives alone account for
+     * ~115 MB of it, so the payload was demonstrably in the package. Two things were
      * wrong with the old code as a diagnostic: it used one access mode, and when that
      * mode failed it said nothing about the state of the APK, so a missing asset, a
      * differently-placed asset and a broken install were indistinguishable.
+     *
+     * There was in fact a third thing wrong, and it was the cause: the asset was
+     * there under a *different name*, because AAPT2 gunzips and renames any asset
+     * whose name ends in `.gz`. That is why this method lists the directory it was
+     * told to read — the listing is what named the real problem. See
+     * [PAYLOAD_SUFFIX].
      *
      * Three layers now, tried in order, each failure recorded separately:
      *
@@ -246,7 +263,7 @@ class RuntimeProvisioner(
      * not destroy a runtime that already works.
      *
      * A missing or unreadable *required* payload throws here (the unpack would fail
-     * on it a moment later, after the wipe). `pi-engine.tar.gz` is reported but not
+     * on it a moment later, after the wipe). `pi-engine.tgz` is reported but not
      * required, mirroring [extractEngine], which treats a package without the
      * engine as provisionable and leaves installing it for later.
      */
@@ -396,64 +413,76 @@ class RuntimeProvisioner(
      * is worse than one that ships. Both binaries are static musl builds, so
      * they run in the guest regardless of libc.
      *
-     * ## What this class deliberately does NOT install: git (`docs/known-gaps.md` K2)
+     * ## git: installed, and exactly how far it reaches (`docs/known-gaps.md` K2)
      *
      * pi's package manager supports four source kinds — npm, git, an explicit URL
-     * and a path — and the git one shells out to a `git` binary:
+     * and a path — and the git one shells out to a bare `git`:
      * `installGit` runs `git clone <repo> <targetDir>` then `git checkout <ref>`
      * (`packages/coding-agent/src/core/package-manager.ts:1850`, `:1852`), and
      * `updateGit` uses `git fetch` / `rev-parse` / `reset --hard`
-     * (`:1932-1956`). Each call is a bare command name spawned with the process
-     * environment (`:2604-2611`), so git must be **on PATH inside the guest** —
-     * and it is not there:
+     * (`:1932-1956`). Each call is spawned with the process environment
+     * (`:2604-2611`), so git has to be on the guest's PATH. [installGit] puts it
+     * there, which is also what lets the model itself run `git status`, `git diff`,
+     * `git log` and `git commit` instead of only being able to read `.git/HEAD`.
      *
-     *  - `runtime.lock.json` has no git artifact (proot, libtalloc,
-     *    libandroidShmem, ubuntuBase, node, ripgrep, fd);
-     *  - the pinned `ubuntu-base-24.04.3-base-arm64.tar.gz` contains no `git`
-     *    and, checked by listing the cached tarball, no `/etc/ssl` and no CA
-     *    bundle at all — nothing for git's HTTPS transport to validate against
-     *    (Node is unaffected because it carries its own CA store);
-     *  - this class only links node/npm/npx ([extractNode]) and rg/fd
-     *    ([installTool]).
+     * ### What works
      *
-     * `git:` is therefore **unavailable**, and the app must not offer it. Shipping
-     * git was weighed and rejected. The cost is measured, not guessed, in an
-     * Ubuntu 24.04.3 aarch64 userland matching the pinned base: `git` plus
-     * `/usr/lib/git-core` gzip to **7.3 MiB**, and of the 31 shared libraries
-     * `git-remote-http` resolves, the 15 the base does not already ship (the
-     * GnuTLS flavour of libcurl, libnghttp2, libssh, libldap, libkrb5, libsasl2,
-     * libbrotlidec, …) add **1.6 MiB** gzipped — call it **9 MiB** of extra
-     * compressed payload, roughly 20 MiB unpacked, plus a CA bundle. That alone
-     * is not the reason; it is affordable next to the engine. The reasons are:
+     *  - **`https://` remotes.** `git clone`, `fetch`, `pull` and `push` against
+     *    GitHub and friends: the payload carries `libcurl-gnutls.so.4`, its full
+     *    transitive library closure, and a CA bundle at
+     *    [CA_BUNDLE][ProotCommand.GUEST_CA_BUNDLE], and [ProotCommand.environment]
+     *    points `GIT_SSL_CAINFO`/`SSL_CERT_FILE` at that file — necessary because
+     *    the pinned base ships no `/etc/ssl` at all, so there is nothing else for
+     *    a TLS peer to be validated against. Node is unaffected either way: it
+     *    carries its own CA store.
+     *  - **Everything local.** init, status, diff, log, commit, add, branch,
+     *    checkout, merge, rebase, stash and the rest of the builtins; one real
+     *    binary serves them all, and `git-remote-http` serves the HTTPS transport.
      *
-     *  - the whole thing is **unverifiable without a device**. There is no emulator
-     *    and no Gradle here, so a git payload would ship as an untested path on
-     *    top of an already unverified runtime, and a half-working install path is
-     *    worse app behaviour than an honestly absent one;
-     *  - the `git@host:path` and `ssh://` forms pi also advertises
-     *    (`packages/coding-agent/README.md:417-422`, resolved to those URLs at
-     *    `src/utils/git.ts:172-199`) would still need an ssh client and
-     *    credentials, so even a working git would answer only part of the source
-     *    grammar the UI would then be advertising;
-     *  - it is a **hand-built partial Debian userland**: the payload is a pinned
-     *    set of `.deb`s (git plus its library closure) that never receives the
-     *    Ubuntu security updates libgnutls/libcurl/libssh get, unlike the current
-     *    self-contained artifacts (static musl rg/fd, Node's official build);
-     *  - whether git is *reliable* under proot is **uncertain** — no measurement
-     *    was possible here (proot, hardlink shims and `--link2symlink` all sit
-     *    under every file git writes). The npm path, which most packages use, is
-     *    unaffected by all of this.
+     * ### What still does NOT work — a boundary, not a bug
      *
-     * If that decision is ever reversed, the shape is: a git artifact in
-     * `runtime.lock.json`, a build-time repack to `.tar.gz` in
+     *  - **`git@host:path` and `ssh://…`.** These are the other half of the source
+     *    grammar pi advertises (`packages/coding-agent/README.md:417-422`, resolved
+     *    at `src/utils/git.ts:172-199`). They need an **ssh client plus a key or an
+     *    agent**, and none of that is shipped: `git-remote-http` links `libssh.so.4`
+     *    — which is libcurl's `sftp://` scheme, not git's ssh transport — and there
+     *    is no `ssh` binary, no `~/.ssh`, no agent forwarding and no way to answer a
+     *    host-key or passphrase prompt. An ssh source therefore fails with
+     *    "cannot run ssh: No such file or directory", which is the honest outcome.
+     *    The UI should keep saying so rather than implying ssh works.
+     *  - **`git commit` needs an identity** before it will do anything:
+     *    `user.name` and `user.email` are unset, and the payload does not invent
+     *    them — a commit attributed to a made-up author is worse than a clear
+     *    "Please tell me who you are". One `git config --global user.email …` fixes
+     *    it.
+     *  - **Subcommands Ubuntu ships in *other* packages**: `git svn` (`git-svn`),
+     *    `git send-email` (`git-email`), `git gui`/`gitk` (`git-gui`, `gitk`),
+     *    `git web--browse`'s browsers, and `git instaweb` (no web server). The
+     *    payload is the `git` package alone, so those are absent rather than
+     *    broken.
+     *
+     * ### Why the payload looks the way it does
+     *
+     * It is a pinned set of Ubuntu `.deb`s in `runtime.lock.json` — git plus the 16
+     * libraries the base does not ship — re-assembled into a `.tgz` by
      * `tools/fetch-runtime.mjs` (the Debian payload is an `ar` archive the app's
-     * [TarExtractor] cannot read — the same reason Node is re-compressed from
-     * `.tar.xz` there today), an unpack plus a `/usr/local/bin/git` symlink in
-     * [installTool]'s shape (that is the path `ProotCommand.environment` puts on
-     * PATH), and a CA bundle.
+     * [TarExtractor] cannot read, the same reason Node is re-compressed from
+     * `.tar.xz` there). Two consequences worth knowing:
+     *
+     *  - the closure is **computed, not guessed** — 33 sonames reached, 18 already
+     *    in the base, 16 new, 0 unresolved — and the build re-checks it, so an
+     *    upstream bump that moves a soname fails the build instead of the phone;
+     *  - these libraries **do not receive Ubuntu security updates** the way a
+     *    desktop install does. Refreshing them means bumping the pins, which is
+     *    also why the UI must not promise more than the pins deliver.
+     *
+     * Reliability under proot is the one thing this cannot settle from here:
+     * proot, its hardlink shim and `--link2symlink` sit under every file git
+     * writes, and no device measurement of `git commit`/`gc` has been taken yet.
+     * The npm source path, which most packages use, is unaffected by all of this.
      */
     private fun installTool(archive: String, binaryName: String) {
-        val staging = File(paths.runtime, "${archive.removeSuffix(".tar.gz")}-stage")
+        val staging = File(paths.runtime, "${archive.removeSuffix(PAYLOAD_SUFFIX)}-stage")
         staging.deleteRecursively()
         extractAsset(archive, staging)
         val binary = staging.walkTopDown()
@@ -461,13 +490,90 @@ class RuntimeProvisioner(
             .maxByOrNull { it.length() }
             ?: throw ProvisioningException("$binaryName not found in $archive")
 
-        val dir = File(paths.rootfs, "root/.pi/agent/bin")
-        dir.mkdirs()
-        val dest = File(dir, binaryName)
-        binary.copyTo(dest, overwrite = true)
-        dest.setExecutable(true, false)
-        guestSymlink("/usr/local/bin/$binaryName", "/root/.pi/agent/bin/$binaryName")
+        // Both copies, deliberately — a tool installed into only one of them is
+        // invisible to one of the three things that launch a guest process. Read
+        // [PiPaths.agentBinDir] before moving either line: the short version is that
+        // the engine and package commands bind the durable dir over the guest's
+        // `/root/.pi/agent` and the terminal does not, so `agentBinDir` is the copy
+        // with the bind and `rootfsAgentBinDir` is the copy without it.
+        for (dir in listOf(paths.agentBinDir(), paths.rootfsAgentBinDir())) {
+            dir.mkdirs()
+            val dest = File(dir, binaryName)
+            binary.copyTo(dest, overwrite = true)
+            dest.setExecutable(true, false)
+        }
         staging.deleteRecursively()
+        publishTool(binaryName)
+    }
+
+    /**
+     * Unpack the git payload (see [installTool]'s KDoc for what it contains and how
+     * far it reaches).
+     *
+     * One line, because `git.tgz` is assembled at build time as a tree that already
+     * has the guest's own shape — `usr/bin/git`, `usr/lib/git-core/…`,
+     * `usr/lib/aarch64-linux-gnu/…`, `etc/ssl/certs/ca-certificates.crt`. So unlike
+     * rg and fd there is no binary to hunt for and nothing to relocate: extracting
+     * it over the rootfs *is* the install. It also needs no `/usr/local/bin` symlink
+     * and no second copy in the agent dir, because `/usr/bin` is already on the PATH
+     * [ProotCommand.environment] sets and no bind shadows `/usr` — the trap that
+     * [PiPaths.agentBinDir] documents for `/root/.pi/agent` simply does not apply
+     * here.
+     *
+     * The CA bundle rides along in the same archive, and
+     * [ProotCommand.environment] is what makes git use it.
+     */
+    private fun installGit() {
+        extractAsset(GIT_ARCHIVE, paths.rootfs)
+    }
+
+    /**
+     * Re-assert the `/usr/local/bin/<tool>` symlink and make sure the file it points at
+     * exists in **both** directories a launch path can resolve it through.
+     *
+     * ## Why this is not just [installTool] again
+     *
+     * `PiPaths.agentBinDir` explains the two directories. Two separate things can empty
+     * one of them after provisioning has already run, and neither re-runs `installTool`,
+     * because `ensureReady` returns early while the stamp is current:
+     *
+     *  - `PiEngineHost.migrateGuestAgentDir` runs **before** provisioning on every boot
+     *    (`PiEngineHost.kt:223`, then `:227`) and *moves* the children of the rootfs
+     *    agent dir into the durable one. It skips an entry whose target already exists,
+     *    so a complete install is left alone — but an install that predates this fix
+     *    has no `agentBinDir` yet, and there its `bin/` is renamed away, taking the
+     *    rootfs copy with it. That is the terminal's copy, and only this function puts
+     *    it back.
+     *  - `wipe()` deletes `rootfsAgentBinDir` wholesale on a revision bump. `installTool`
+     *    recreates it on that same boot, so this is the belt to that pair of braces.
+     *
+     * Copying from whichever copy survived keeps the two in step without needing the
+     * asset, which is what makes this callable from the early-return path where nothing
+     * has been unpacked yet. `overwrite = false` is the point: this repairs a missing
+     * file and must never race a fresh extraction into downgrading one.
+     */
+    private fun ensureToolsVisible() {
+        TOOL_BINARIES.forEach { publishTool(it) }
+    }
+
+    /**
+     * One tool's guest-visible spelling: `/usr/local/bin/<name>` pointing at the guest
+     * path `/root/.pi/agent/bin/<name>`, plus the guarantee that both host directories
+     * that guest path can mean actually hold the file.
+     *
+     * The symlink **must** name the guest path, not a host path — see [guestSymlink].
+     */
+    private fun publishTool(binaryName: String) {
+        val copies = listOf(File(paths.agentBinDir(), binaryName), File(paths.rootfsAgentBinDir(), binaryName))
+        val source = copies.firstOrNull { it.isFile } ?: return
+        copies.forEach { target ->
+            if (!target.isFile) {
+                target.parentFile?.mkdirs()
+                runCatching { source.copyTo(target, overwrite = false) }
+            }
+            if (target.isFile) target.setExecutable(true, false)
+        }
+        guestSymlink("$GUEST_LOCAL_BIN/$binaryName", "$GUEST_AGENT_BIN/$binaryName")
     }
 
     /**
@@ -575,13 +681,71 @@ class RuntimeProvisioner(
          * before the stamp check) — a design change, not a one-line edit, because
          * `PiEngineHost.stampMatches` compares the stamp against this constant.
          */
-        const val RUNTIME_REVISION = "1"
+        const val RUNTIME_REVISION = "2"
 
-        private const val UBUNTU_BASE = "ubuntu-base.tar.gz"
-        private const val NODE_ARCHIVE = "node.tar.gz"
-        private const val ENGINE_ARCHIVE = "pi-engine.tar.gz"
-        private const val RIPGREP_ARCHIVE = "ripgrep.tar.gz"
-        private const val FD_ARCHIVE = "fd.tar.gz"
+        /**
+         * The suffix every payload archive in `assets/runtime/` carries.
+         *
+         * **It must not end in `.gz`.** The Android Gradle Plugin gunzips an asset
+         * whose *file extension is* `gz` while it merges assets —
+         * `com.android.ide.common.resources.AssetItem` decides it with
+         * `Files.getFileExtension(name).toLowerCase(Locale.US).equals("gz")` and then
+         * renames with `Files.getNameWithoutExtension`, which removes only the final
+         * `.gz`. So the assembler writing `ubuntu-base.tar.gz` (28.5 MiB) put
+         * `ubuntu-base.tar` (106 MB) in the APK, this class still asked for
+         * `runtime/ubuntu-base.tar.gz`, and `AssetManager.open()` answered with its
+         * bare-path `FileNotFoundException` — the runtime never provisioned once, on
+         * any build, and the device's own report said so:
+         *
+         *   packaged asset unreadable: runtime/ubuntu-base.tar.gz
+         *   assets/runtime/ contains: fd.tar, node.tar, pi-engine.tar, ripgrep.tar, ubuntu-base.tar
+         *
+         * It is **not** AAPT2: aapt2 2.20-14304508, run directly against a directory
+         * laid out like this one, ships `ubuntu-base.tar.gz` and `pi-engine.tgz`
+         * under their own names. The rename is one stage earlier and therefore
+         * outlives any change to the aapt2 command line. `.tgz` is the same gzip
+         * bytes under an extension AGP leaves alone
+         * (`Files.getFileExtension("ubuntu-base.tgz")` is `tgz`).
+         *
+         * The matching half of the fix is `androidResources { noCompress }` in
+         * app/build.gradle.kts, which must name this suffix — and the full account,
+         * including the commands that established it, is on `PAYLOAD_SUFFIX` in
+         * tools/fetch-runtime.mjs.
+         *
+         * Nothing is recompressed by this: [TarExtractor.extractGzip] reads all six
+         * payloads exactly as before.
+         */
+        private const val PAYLOAD_SUFFIX = ".tgz"
+
+        private const val UBUNTU_BASE = "ubuntu-base$PAYLOAD_SUFFIX"
+        private const val NODE_ARCHIVE = "node$PAYLOAD_SUFFIX"
+        private const val ENGINE_ARCHIVE = "pi-engine$PAYLOAD_SUFFIX"
+        private const val RIPGREP_ARCHIVE = "ripgrep$PAYLOAD_SUFFIX"
+        private const val FD_ARCHIVE = "fd$PAYLOAD_SUFFIX"
+        private const val GIT_ARCHIVE = "git$PAYLOAD_SUFFIX"
+
+        /**
+         * The one guest directory a launcher that does **not** bind the agent dir
+         * resolves `/root/.pi/agent` through — see [PiPaths.agentBinDir].
+         */
+        private const val GUEST_AGENT_BIN = "/root/.pi/agent/bin"
+
+        /** The guest directory `ProotCommand.environment` puts on PATH (PiRuntime.kt). */
+        private const val GUEST_LOCAL_BIN = "/usr/local/bin"
+
+        /**
+         * The tools [publishTool] keeps visible, named where both the install step and
+         * the repair step ([ensureToolsVisible]) read the same list, so a third tool
+         * cannot be added to one and forgotten by the other.
+         *
+         * git is deliberately **not** here. It needs a whole `/usr/lib/git-core` tree
+         * and its libraries, and none of that belongs under `/root/.pi/agent`: it goes
+         * to the ordinary Debian locations in the rootfs (`/usr/bin/git`,
+         * `/usr/lib/git-core`), which are on PATH and are not shadowed by any bind — so
+         * it is visible to all three launch paths with no agent-dir involvement at all.
+         * See [installGit].
+         */
+        private val TOOL_BINARIES = listOf("rg", "fd")
 
         /**
          * Every payload archive `tools/fetch-runtime.mjs` writes into
@@ -591,7 +755,7 @@ class RuntimeProvisioner(
          * audit must report it, but a package without it is still a package this
          * class can provision from, so it is not a reason to refuse to start.
          *
-         * The list is the single place the five names are written down; the
+         * The list is the single place the six names are written down; the
          * companion constants above are what the extracting steps themselves use.
          */
         private val PAYLOADS = listOf(
@@ -599,6 +763,7 @@ class RuntimeProvisioner(
             Payload(NODE_ARCHIVE, required = true),
             Payload(RIPGREP_ARCHIVE, required = true),
             Payload(FD_ARCHIVE, required = true),
+            Payload(GIT_ARCHIVE, required = true),
             Payload(ENGINE_ARCHIVE, required = false),
         )
 
@@ -608,12 +773,13 @@ class RuntimeProvisioner(
          * it, instead of requiring a lookup in this file.
          *
          * [PAYLOADS] is the load-bearing list, and the suffix list in
-         * app/build.gradle.kts (`gz`, plus `xz`/`tar` for a future repack) is what
-         * keeps all five openable: a compressed asset is the one
-         * `AssetManager.openFd` cannot open.
+         * app/build.gradle.kts (`tgz`, plus `xz`/`tar` for a future repack) is what
+         * keeps all six openable: a compressed asset is the one
+         * `AssetManager.openFd` cannot open. That list must name the suffix the
+         * assets actually use — see [PAYLOAD_SUFFIX] for what happens otherwise.
          */
         private const val PAYLOAD_HINT =
-            "The five payload archives are generated at build time by tools/fetch-runtime.mjs " +
+            "The payload archives are generated at build time by tools/fetch-runtime.mjs " +
                 "(app/src/main/assets/runtime/ is not in git); an APK built without that step has " +
                 "assets/dexopt and nothing else."
     }
