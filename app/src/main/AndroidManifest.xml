@@ -68,23 +68,6 @@
         android:name="android.permission.READ_EXTERNAL_STORAGE"
         android:maxSdkVersion="32" />
 
-    <!--
-      Shizuku (dev.rikka.shizuku:provider) delivers the ADB-level binder to this
-      app through this provider. Without it the binder never arrives, so
-      ShizukuShellBackend would report 「未运行」 even while Shizuku is running.
-
-      `android:permission="android.permission.INTERACT_ACROSS_USERS_FULL"` is what
-      the Shizuku-API README specifies for the declaration: it keeps ordinary apps
-      from calling the provider, so only the platform (and therefore Shizuku) can.
-    -->
-    <provider
-        android:name="rikka.shizuku.ShizukuProvider"
-        android:authorities="${applicationId}.shizuku"
-        android:enabled="true"
-        android:exported="true"
-        android:multiprocess="false"
-        android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
-
     <!-- Package visibility for the manager app, so the status card can say
          「未安装」 instead of 「未运行」. -->
     <queries>
@@ -105,6 +88,27 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.Pi"
         tools:targetApi="36">
+
+        <!--
+          Shizuku (dev.rikka.shizuku:provider) delivers the ADB-level binder to this
+          app through this provider. Without it the binder never arrives, so
+          ShizukuShellBackend would report 「未运行」 even while Shizuku is running.
+
+          A provider is only legal *inside* application. Declared one level up, AAPT
+          fails the release build with "unexpected element provider found in
+          manifest" (CI run b1945fd, APK job, step 9 "Assemble arm64 release APK").
+
+          `android:permission="android.permission.INTERACT_ACROSS_USERS_FULL"` is what
+          the Shizuku-API README specifies for the declaration: it keeps ordinary apps
+          from calling the provider, so only the platform (and therefore Shizuku) can.
+        -->
+        <provider
+            android:name="rikka.shizuku.ShizukuProvider"
+            android:authorities="${applicationId}.shizuku"
+            android:enabled="true"
+            android:exported="true"
+            android:multiprocess="false"
+            android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
 
         <activity
             android:name=".MainActivity"
