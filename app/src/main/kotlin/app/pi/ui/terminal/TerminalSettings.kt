@@ -46,8 +46,8 @@ internal fun terminalSettingsStore(context: Context): PiSettingsStore {
     )
 }
 
-/** The cursor drawing the user picked. `DECSCUSR` from the guest is still not honoured; this is the app-side preference only. */
-internal enum class TerminalCursorStyle { Block, Bar, Underline }
+/** The cursor drawing the user picked. `DECSCUSR` from the guest is still not honoured; this is the app-side preference only. Public because `TerminalSurface` is a public composable and takes it as a parameter. */
+enum class TerminalCursorStyle { Block, Bar, Underline }
 
 /**
  * Resolved values for one Workbench composition.

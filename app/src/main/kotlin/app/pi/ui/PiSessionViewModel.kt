@@ -10,6 +10,7 @@ import app.pi.engine.PiEngineApi
 import app.pi.engine.PiEngineHost
 import app.pi.engine.PiEngineSession
 import app.pi.engine.PiRpcException
+import app.pi.rpc.ErrorText
 import app.pi.rpc.Notice
 import app.pi.rpc.PiCommands
 import app.pi.rpc.PiEvent
@@ -17,6 +18,8 @@ import app.pi.rpc.PiImage
 import app.pi.rpc.PiResponses
 import app.pi.rpc.QueueMode
 import app.pi.rpc.SessionEntry
+import app.pi.rpc.ToolCall
+import app.pi.rpc.ToolStatus
 import app.pi.rpc.TranscriptItem
 import app.pi.runtime.RuntimeProvisioner
 import app.pi.session.PiSessionStore
@@ -485,9 +488,22 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      */
     private var armedDialogId: String? = null
 
-    /** Monotonic ids for snackbar notices and composer fills. */
+    /** Monotonic ids for snackbar notices, composer fills and live turn rows. */
     private var noticeSeq = 0L
     private var composerFillSeq = 0L
+
+    /**
+     * The current turn's outcome, when pi reported one nothing else renders.
+     *
+     * pi prints a red line under a partial answer for `length`, `aborted` and
+     * `error` stop reasons (`components/assistant-message.ts:182-200`). The
+     * reducer drops `stopReason` entirely (`rpc/Transcript.kt`, out of this
+     * agent's ownership), so the ViewModel keeps the row itself and appends it to
+     * the projection until the next turn starts. It is deliberately live-only:
+     * the persisted session has no such entry, so a replay cannot reproduce it,
+     * and claiming otherwise would be a lie.
+     */
+    private var liveTurnIssue: TranscriptItem? = null
 
     /**
      * Start the foreground service that keeps a running turn alive.
@@ -608,11 +624,58 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /**
+     * Republish the engine's projection into [UiState].
+     *
+     * Two rendering-review defects are fixed here, both in the app's own layer:
+     *
+     *  - **F2**: a tool card must not keep claiming "运行中" after the turn it
+     *    belonged to has ended. pi closes every pending tool with
+     *    `updateResult({isError:true})` when a turn stops for `aborted`/`error`
+     *    (`interactive-mode.ts:3294-3302`); the reducer does not (that file is
+     *    `rpc/**`, out of this agent's ownership), so the pending rows are
+     *    projected as interrupted here — the card then says the turn ended
+     *    without a result instead of looking like a hang.
+     *  - **F7** (partial): publishing is skipped when no element of the reducer's
+     *    list changed identity. The engine bumps its revision for *every*
+     *    non-response event, including ones whose `TranscriptChange` is `None`,
+     *    so without this check every such event allocated a copy, a new
+     *    `UiState`, and recomposed the whole screen. The full fix — publishing
+     *    the reducer's change index — needs `PiEngineSession` and is reported
+     *    instead of done.
+     */
     private fun syncTranscript(engine: PiEngineSession) {
+        val streaming = engine.transcript.streaming
+        val source = engine.transcript.transcript
+        val published = _state.value.transcript
+        // An interrupted turn: a tool still pending can never receive its result
+        // now.
+        val interrupted = !streaming && source.any { it is ToolCall && it.status == ToolStatus.Pending }
+        val unchanged = source.size == published.size &&
+            source.indices.none { source[it] !== published[it] } &&
+            _state.value.streaming == streaming &&
+            _state.value.revision == engine.revision.value
+        if (unchanged && liveTurnIssue == null) return
+
+        val projected = if (interrupted) {
+            source.map { item ->
+                if (item is ToolCall && item.status == ToolStatus.Pending) {
+                    item.copy(
+                        status = ToolStatus.Error,
+                        isError = true,
+                        output = item.output.ifEmpty { "回合已结束，未收到工具结果（被停止或出错）" },
+                    )
+                } else {
+                    item
+                }
+            }
+        } else {
+            source.toList()
+        }
         _state.value = _state.value.copy(
-            transcript = engine.transcript.transcript.toList(),
+            transcript = liveTurnIssue?.let { projected + it } ?: projected,
             revision = engine.revision.value,
-            streaming = engine.transcript.streaming,
+            streaming = streaming,
         )
     }
 
@@ -622,6 +685,26 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                 queueSteering = event.steering.size,
                 queueFollowUp = event.followUp.size,
             )
+
+            // F3: a turn that ends for a reason other than "stop"/"toolUse" is not
+            // a finished answer, and pi says so under the partial text
+            // (`components/assistant-message.ts:182-200`). The reducer ignores
+            // `stopReason`, so the row is projected here for the live stream.
+            is PiEvent.MessageEnd -> {
+                if (event.role == "assistant") {
+                    val issue = stopReasonRow(event.stopReason, event.text)
+                    if (issue != null) {
+                        liveTurnIssue = issue
+                        session?.let { syncTranscript(it) }
+                    }
+                }
+            }
+
+            // A new assistant message means the previous turn's issue is history.
+            is PiEvent.MessageStart -> if (event.role == "assistant" && liveTurnIssue != null) {
+                liveTurnIssue = null
+                session?.let { syncTranscript(it) }
+            }
 
             // An extension that throws is otherwise invisible: pi reports it as
             // this event and nothing else, so a broken extension looks exactly
@@ -658,21 +741,14 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             )
 
             // An extension's own entry (`pi.appendEntry`) — the documented way to
-            // keep extension state across restarts. `entry_appended` carries the
-            // whole record, and the reducer's `onEntry` is the same projection a
-            // `get_entries` replay uses, so the two paths cannot drift. Without
-            // this, a `custom_message` with `display: true` only appears after a
-            // refetch (audit §5.8, §6.7).
-            is PiEvent.EntryAppended -> {
-                val entry = event.entry
-                val engine = session
-                if (entry != null && engine != null) {
-                    engine.transcript.onEntry(entry)
-                    // The engine's revision counter only moves for events it
-                    // handled itself, so the projection has to be republished here.
-                    syncTranscript(engine)
-                }
-            }
+            // keep extension state across restarts. Nothing to do here: the engine
+            // already routes `entry_appended` through the reducer
+            // (`PiEngineSession.kt:138-140` → `Transcript.onEvent`), and it bumps
+            // its revision for every non-response event, so the projection below
+            // republishes on its own. Projecting a second time from this branch
+            // (F5 in `docs/rendering-review.md`) would render every such entry
+            // twice the moment the reducer gains a case for `custom` entries.
+            is PiEvent.EntryAppended -> Unit
 
             // pi streams a running `bash` command as deltas and emits nothing else
             // until the response; accumulate here so the panel grows live.
@@ -1082,6 +1158,9 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
         engine.transcript.seedFromHistory(PiResponses.entries(response))
+        // The replay replaces the stream wholesale; a live-only turn-outcome row
+        // from the previous session must not survive it.
+        liveTurnIssue = null
         syncTranscript(engine)
     }
 
@@ -1246,9 +1325,21 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         val engine = session ?: return
         val trimmed = text.trim()
         if (trimmed.isEmpty() && images.isEmpty()) return
+        // A new user message supersedes the previous turn's outcome row.
+        liveTurnIssue = null
         if (engine.transcript.streaming) {
             // Mid-turn the delivery choice is the command itself: `steer` lands
             // after this turn's tool calls, `follow_up` only once pi stops.
+            //
+            // F1 (`docs/rendering-review.md`): echo the queued text locally, the
+            // way `prompt` already does through `PiEngineSession.prompt`. pi's own
+            // TUI adds the row on `message_start` for a user message
+            // (`interactive-mode.ts:3224-3226`), but the reducer here appends
+            // nothing for that role (`rpc/Transcript.kt:587-593`) — so without
+            // this echo a steered message is invisible until the session is
+            // reopened. If that reducer branch is ever fixed, this echo must be
+            // removed or the message renders twice.
+            engine.transcript.onUserPrompt(trimmed, images)
             engine.send(
                 PiCommands.steer(
                     id = "steer-${System.nanoTime()}",
@@ -1294,12 +1385,17 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         val engine = session ?: return
         val trimmed = text.trim()
         if (trimmed.isEmpty()) return
+        liveTurnIssue = null
+        // Same local echo as [send]: a follow-up is invisible on the wire until pi
+        // delivers it, which is the whole point of queueing it.
+        engine.transcript.onUserPrompt(trimmed)
         engine.send(
             PiCommands.followUp(
                 id = "follow-${System.nanoTime()}",
                 message = trimmed,
             ),
         )
+        syncTranscript(engine)
     }
 
     /** pi's Escape: abort, and hand the queued text back so the composer can restore it. */
@@ -1791,6 +1887,36 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     // ----------------------------------------------------------------- helpers
+
+    /**
+     * The row pi prints under a partial answer when a turn did not finish
+     * normally (`components/assistant-message.ts:182-200`): `length` means the
+     * output-token limit cut it off, `aborted` that the user stopped it, `error`
+     * that the provider call failed. Null when the turn ended as a normal
+     * `stop`/`toolUse`.
+     *
+     * The reducer drops `stopReason` (that is `rpc/**`, owned by another agent),
+     * so this is the app's own honest report of the outcome; the detail carries
+     * pi's wire value rather than invented wording.
+     */
+    private fun stopReasonRow(stopReason: String?, partialText: String?): TranscriptItem? {
+        val message = when (stopReason) {
+            "length" -> "回复被输出令牌上限截断，内容不完整"
+            "aborted" -> "回合被中断"
+            "error" -> "模型调用失败"
+            else -> return null
+        }
+        val detail = listOfNotNull(
+            "stopReason: $stopReason",
+            partialText?.takeIf { it.isNotBlank() }?.let { "部分输出：${it.takeLast(200)}" },
+        ).joinToString("\n")
+        return ErrorText(
+            key = "turn-issue-${System.nanoTime()}",
+            ts = System.currentTimeMillis(),
+            message = message,
+            detail = detail.ifBlank { null },
+        )
+    }
 
     /**
      * pi's wire spelling of a queue mode back into the enum. An unknown value maps

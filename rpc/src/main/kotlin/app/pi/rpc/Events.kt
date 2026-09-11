@@ -25,7 +25,15 @@ sealed interface AssistantDelta {
     data class TextDelta(val contentIndex: Int, val delta: String) : AssistantDelta {
         override val kind = "text_delta"
     }
-    data object TextEnd : AssistantDelta { override val kind = "text_end" }
+    /**
+     * The completed text block. [content] is pi's authoritative text for that
+     * block (`packages/ai/src/types.ts`: `{ type: "text_end"; contentIndex;
+     * content; partial }`), so a dropped or reordered delta cannot corrupt the
+     * final row.
+     */
+    data class TextEnd(val contentIndex: Int, val content: String?) : AssistantDelta {
+        override val kind = "text_end"
+    }
     data object ThinkingStart : AssistantDelta { override val kind = "thinking_start" }
     data class ThinkingDelta(val contentIndex: Int, val delta: String) : AssistantDelta {
         override val kind = "thinking_delta"
@@ -37,7 +45,19 @@ sealed interface AssistantDelta {
     data class ToolCallDelta(val contentIndex: Int, val delta: String) : AssistantDelta {
         override val kind = "toolcall_delta"
     }
-    data class ToolCallEnd(val contentIndex: Int) : AssistantDelta {
+
+    /**
+     * The completed tool call. pi sends the whole `toolCall` object here
+     * (`json-event.ts` passes it through unchanged), which is the first place the
+     * fully-assembled arguments appear — `tool_execution_start` usually carries
+     * them too, but this closes the window while arguments stop streaming.
+     */
+    data class ToolCallEnd(
+        val contentIndex: Int,
+        val id: String?,
+        val name: String?,
+        val arguments: JsonObject?,
+    ) : AssistantDelta {
         override val kind = "toolcall_end"
     }
     data class Done(val reason: String?) : AssistantDelta { override val kind = "done" }
@@ -123,6 +143,12 @@ sealed interface PiEvent {
          */
         val customType: String? = null,
         val display: Boolean? = null,
+        /**
+         * pi's own failure text for this message. It is what
+         * `components/assistant-message.ts` prints under an aborted/errored
+         * answer, and the only detail available when `stopReason` is `error`.
+         */
+        val errorMessage: String? = null,
     ) : PiEvent {
         override val type = "message_end"
     }
@@ -149,6 +175,17 @@ sealed interface PiEvent {
         val resultText: String?,
         val isError: Boolean,
         val details: JsonElement?,
+        /**
+         * Image blocks of the result, kept as images instead of being flattened
+         * into [resultText] as the literal `[image]`.
+         *
+         * pi renders every `content` block of type `image`
+         * (`components/tool-execution.ts`), so a screenshot tool or a `read` of a
+         * PNG is a picture there. The bytes cannot be decoded without an image
+         * loader (`docs/known-gaps.md` A3), but the payload is preserved here so
+         * the transcript can at least list what came back.
+         */
+        val resultImages: List<PiImage> = emptyList(),
     ) : PiEvent {
         override val type = "tool_execution_end"
     }
@@ -372,6 +409,7 @@ object PiEvents {
                 usage = msg?.obj("usage")?.let { parseUsage(it) } ?: o.obj("usage")?.let { parseUsage(it) },
                 customType = msg?.str("customType") ?: o.str("customType"),
                 display = msg?.bool("display") ?: o.bool("display"),
+                errorMessage = msg?.str("errorMessage") ?: o.str("errorMessage"),
             )
         }
 
@@ -387,13 +425,17 @@ object PiEvents {
             partialText = o.obj("partialResult")?.let { contentText(it["content"]) },
         )
 
-        "tool_execution_end" -> PiEvent.ToolExecutionEnd(
-            toolCallId = o.str("toolCallId").orEmpty(),
-            toolName = o.str("toolName"),
-            resultText = o.obj("result")?.let { contentText(it["content"]) },
-            isError = o.bool("isError") ?: false,
-            details = o.obj("result")?.get("details") ?: o["details"],
-        )
+        "tool_execution_end" -> {
+            val result = o.obj("result")
+            PiEvent.ToolExecutionEnd(
+                toolCallId = o.str("toolCallId").orEmpty(),
+                toolName = o.str("toolName"),
+                resultText = result?.let { contentText(it["content"]) },
+                isError = o.bool("isError") ?: false,
+                details = result?.get("details") ?: o["details"],
+                resultImages = imageBlocks(result?.get("content")),
+            )
+        }
 
         "bash_execution_update" -> PiEvent.BashExecutionUpdate(
             commandId = o.str("id"),
@@ -494,7 +536,10 @@ object PiEvents {
                 contentIndex = e.int("contentIndex") ?: 0,
                 delta = e.str("delta").orEmpty(),
             )
-            "text_end" -> AssistantDelta.TextEnd
+            "text_end" -> AssistantDelta.TextEnd(
+                contentIndex = e.int("contentIndex") ?: 0,
+                content = e.str("content"),
+            )
             "thinking_start" -> AssistantDelta.ThinkingStart
             "thinking_delta" -> AssistantDelta.ThinkingDelta(
                 contentIndex = e.int("contentIndex") ?: 0,
@@ -509,7 +554,17 @@ object PiEvents {
                 contentIndex = e.int("contentIndex") ?: 0,
                 delta = e.str("delta").orEmpty(),
             )
-            "toolcall_end" -> AssistantDelta.ToolCallEnd(e.int("contentIndex") ?: 0)
+            "toolcall_end" -> {
+                // `json-event.ts` forwards the whole `toolCall` object for this
+                // delta, so the id/name/arguments are available here.
+                val call = e.obj("toolCall")
+                AssistantDelta.ToolCallEnd(
+                    contentIndex = e.int("contentIndex") ?: 0,
+                    id = call?.str("id") ?: e.str("id") ?: e.str("toolCallId"),
+                    name = call?.str("name") ?: e.str("toolName"),
+                    arguments = call?.obj("arguments") ?: e.obj("arguments"),
+                )
+            }
             // pi's `done` delta is `{ type: "done"; reason; message }`
             // (`packages/ai/src/types.ts`), and `toJsonEvent` strips only
             // `partial`, so the wire field is `reason` — never `stopReason`.
@@ -555,6 +610,23 @@ internal fun JsonObject.obj(key: String): JsonObject? = this[key] as? JsonObject
 
 internal fun JsonObject.strList(key: String): List<String> =
     (this[key] as? JsonArray)?.mapNotNull { (it as? JsonPrimitive)?.content } ?: emptyList()
+
+/**
+ * Image blocks of a pi content array, in pi's `ImageContent` shape.
+ *
+ * Kept separate from [contentText] — which is display text and turns an image
+ * into the four characters `[image]` — so a tool result's images survive as
+ * payload instead of being replaced by a marker.
+ */
+internal fun imageBlocks(element: JsonElement?): List<PiImage> {
+    val array = element as? JsonArray ?: return emptyList()
+    return array.mapNotNull { block ->
+        val obj = block as? JsonObject ?: return@mapNotNull null
+        if (obj.str("type") != "image") return@mapNotNull null
+        val data = obj.str("data") ?: return@mapNotNull null
+        PiImage(base64 = data, mimeType = obj.str("mimeType") ?: "image/png")
+    }
+}
 
 /**
  * Flatten a pi content array (`[{"type":"text","text":"…"}, {"type":"image",…}]`)

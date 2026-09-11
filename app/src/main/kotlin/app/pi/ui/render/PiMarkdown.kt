@@ -1,11 +1,13 @@
 package app.pi.ui.render
 
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import app.pi.highlight.PiNodeCodeHighlighter
+import app.pi.ui.theme.PiTheme
 import com.mikepenz.markdown.m3.Markdown
 
 /**
@@ -63,17 +65,23 @@ internal fun PiMarkdownText(
     // Keyed on the source: rewriting is a linear scan with a handful of regex
     // matches, but a streaming block re-parses on every token, so it is cached.
     val content = remember(markdown) { piMarkdownSource(markdown) }
+    // P9/F32: these config objects are pure functions of the palette (and, for
+    // typography, of the Material type scale), so they are remembered against
+    // those inputs instead of being rebuilt on every frame of a streaming block.
+    val palette = PiTheme.palette
+    val textStyles = PiTheme.text
+    val typeScale = MaterialTheme.typography
     CompositionLocalProvider(
         LocalPiCodeHighlighter provides PiNodeCodeHighlighter,
         LocalPiImageTransformer provides com.mikepenz.markdown.model.NoOpImageTransformerImpl(),
     ) {
         Markdown(
             content = content,
-            colors = piMarkdownColors(),
-            typography = piMarkdownTypography(),
-            padding = piMarkdownPadding(),
-            dimens = piMarkdownDimens(),
-            components = piMarkdownComponents(),
+            colors = remember(palette) { piMarkdownColors() },
+            typography = remember(palette, textStyles, typeScale) { piMarkdownTypography() },
+            padding = remember { piMarkdownPadding() },
+            dimens = remember { piMarkdownDimens() },
+            components = remember { piMarkdownComponents() },
             modifier = modifier,
         )
     }

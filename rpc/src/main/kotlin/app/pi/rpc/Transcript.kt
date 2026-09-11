@@ -69,6 +69,13 @@ data class ToolCall(
     val endedAt: Long? = null,
     val exitCode: Int? = null,
     val outputTruncated: Boolean = false,
+    /**
+     * Images the tool returned, kept as payload instead of the `[image]` marker
+     * [output] carries (F16). Painting them needs an image loader the project
+     * does not have yet (`docs/known-gaps.md` A3), but the transcript must not be
+     * the place the bytes are lost.
+     */
+    val images: List<PiImage> = emptyList(),
 ) : TranscriptItem {
     /** Wall-clock duration pi's card shows in its footer. */
     val elapsedMs: Long? get() = endedAt?.let { (it - ts).coerceAtLeast(0) }
@@ -114,6 +121,12 @@ data class CompactionMarker(
     val status: Status = Status.Done,
     val errorMessage: String? = null,
     val reason: String? = null,
+    /**
+     * Usage of the summarization call(s) that produced this compaction (F18).
+     * pi prints what it cost (`interactive-mode.ts` formats "Compaction … (~$0.03)"),
+     * and the transcript should not be where that figure disappears.
+     */
+    val usage: TokenUsage? = null,
 ) : TranscriptItem {
     enum class Status { Running, Done, Aborted, Failed }
 }
@@ -534,6 +547,18 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
     private var summarizationNoticeIndex: Int? = null
 
     /**
+     * The most recent usage pi reported, from `message_update.usage` (cumulative
+     * during a turn) or `message_end.message.usage` (the final figure) — F10.
+     *
+     * Kept on the reducer because all three usage payloads were parsed and then
+     * dropped: the transcript is the only object the UI already observes, so this
+     * is where the status row (spec §4.1's `↑24.1k ↓3.2k · ◐ 52%`) can read it
+     * without polling `get_session_stats` after the fact.
+     */
+    var lastUsage: TokenUsage? = null
+        private set
+
+    /**
      * Row index of the streaming block for each `contentIndex` within the
      * current assistant message.
      *
@@ -595,12 +620,19 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
         is PiEvent.MessageUpdate -> onMessageUpdate(event)
         is PiEvent.MessageEnd -> {
             val finished = finishStreaming()
-            // A live `role: "custom"` message is an extension's injected context.
-            // History replay already renders it (`custom_message` entries reach
-            // [onHookEntry]); the live chain used to drop it, so injected context
-            // only appeared after a reload. `display: false` means pi keeps it in
-            // context but hides it, exactly as [onHookEntry] treats it.
-            if (event.role == "custom" && event.display != false && !event.text.isNullOrEmpty()) {
+            event.usage?.let { lastUsage = it }
+            // A truncated or aborted answer used to look exactly like a finished
+            // one, and an aborted turn left its tool card spinning "运行中"
+            // forever. pi reports both here (`components/assistant-message.ts`);
+            // see [failTurn].
+            if (event.role == "assistant" && event.stopReason in TURN_FAILURE_REASONS) {
+                failTurn(event.stopReason, event.errorMessage)
+            } else if (event.role == "custom" && event.display != false && !event.text.isNullOrEmpty()) {
+                // A live `role: "custom"` message is an extension's injected context.
+                // History replay already renders it (`custom_message` entries reach
+                // [onHookEntry]); the live chain used to drop it, so injected context
+                // only appeared after a reload. `display: false` means pi keeps it in
+                // context but hides it, exactly as [onHookEntry] treats it.
                 onHookMessage(event.customType ?: "extension", event.text)
             } else {
                 finished
@@ -764,6 +796,9 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
     // ------------------------------------------------------------- live blocks
 
     private fun onMessageUpdate(event: PiEvent.MessageUpdate): TranscriptChange {
+        // Latest accounting for the status row (F10); `message_update.usage` is
+        // cumulative, so the newest value simply replaces the previous one.
+        event.usage?.let { lastUsage = it }
         val delta = event.delta ?: return TranscriptChange.None
         streaming = true
         return when (delta) {
@@ -809,6 +844,21 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
                 }
             }
 
+            // `text_end.content` is pi's authoritative text for the block
+            // (`packages/ai/src/types.ts`). Replacing rather than ignoring it means
+            // a dropped or reordered delta cannot leave the row wrong.
+            is AssistantDelta.TextEnd -> {
+                val content = delta.content
+                val index = textIndexByContentIndex[delta.contentIndex]
+                val current = if (index == null) null else items.getOrNull(index) as? AssistantText
+                if (content == null || current == null || current.text == content) {
+                    TranscriptChange.None
+                } else {
+                    items[index!!] = current.copy(text = content)
+                    TranscriptChange.Updated(index)
+                }
+            }
+
             // A tool call announces itself before its arguments finish streaming,
             // so the card can show the tool name immediately.
             is AssistantDelta.ToolCallStart -> {
@@ -826,6 +876,25 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
                             status = ToolStatus.Pending,
                         ),
                     )
+                }
+            }
+
+            // `toolcall_end` carries the assembled `toolCall`, so the placeholder
+            // card opened by `toolcall_start` can gain its name and arguments
+            // before the tool actually runs.
+            is AssistantDelta.ToolCallEnd -> {
+                val index = delta.id?.let { toolIndexByCallId[it] }
+                    ?: items.indexOfLast { it is ToolCall && it.status == ToolStatus.Pending }
+                val current = items.getOrNull(index) as? ToolCall
+                if (current == null) {
+                    TranscriptChange.None
+                } else {
+                    toolIndexByCallId[current.toolCallId] = index
+                    items[index] = current.copy(
+                        toolName = delta.name?.takeIf { it.isNotEmpty() } ?: current.toolName,
+                        args = delta.arguments ?: current.args,
+                    )
+                    TranscriptChange.Updated(index)
                 }
             }
 

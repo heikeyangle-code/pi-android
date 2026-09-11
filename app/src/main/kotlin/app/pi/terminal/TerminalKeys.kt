@@ -23,7 +23,7 @@ import android.view.KeyEvent
  * Nothing here is interpreted locally — the app is a terminal, not a keybinding
  * layer — so the bytes go to the guest untouched.
  */
-internal object TerminalKeys {
+object TerminalKeys {
 
     const val ESC = "\u001b"
     const val TAB = "\t"

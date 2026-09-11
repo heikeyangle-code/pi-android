@@ -7,6 +7,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -27,8 +28,7 @@ import androidx.compose.material.icons.filled.ChatBubble
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.KeyboardArrowDown
-import androidx.compose.material.icons.filled.KeyboardArrowUp
-import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.KeyboardArrowUpimport androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Send
@@ -41,12 +41,14 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.SmallFloatingActionButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -204,9 +206,41 @@ private fun ChatBody(
         }
     }
     LaunchedEffect(searchQuery) { searchCursor = 0 }
+
+    // Follow-the-tail state. The spec is explicit (§4.5): follow the newest block
+    // by default, and **never steal the scroll** once the user has scrolled up —
+    // unlocking the follow and showing a "back to newest" affordance instead.
+    // F4 (`docs/rendering-review.md`): the previous implementation animated to the
+    // last item on *every* token, so scrolling up during a stream was yanked back
+    // on the next token, and each token restarted an animation.
+    var following by rememberSaveable { mutableStateOf(true) }
+    val atBottom by remember(listState) {
+        derivedStateOf {
+            val info = listState.layoutInfo
+            val total = info.totalItemsCount
+            total == 0 || (info.visibleItemsInfo.lastOrNull()?.index ?: -1) >= total - 2
+        }
+    }
+    // Only ever unlocks: scrolling back down does not silently re-arm, because the
+    // user asked to stop following. The button below re-arms it explicitly.
+    LaunchedEffect(atBottom) { if (!atBottom) following = false }
+    LaunchedEffect(state.revision, following, visibleItems.size) {
+        if (!following) return@LaunchedEffect
+        val last = visibleItems.size - 1
+        // Non-suspending while streaming: an animation per token is exactly the
+        // stutter F4 describes, and a jump is what "follow" means here.
+        if (last >= 0) {
+            if (state.streaming) listState.scrollToItem(last) else listState.animateScrollToItem(last)
+        }
+    }
     LaunchedEffect(searchMatches, searchCursor) {
         val index = searchMatches.getOrNull(searchCursor.coerceIn(0, (searchMatches.size - 1).coerceAtLeast(0)))
-        if (index != null) listState.animateScrollToItem(index)
+        if (index != null) {
+            // Jumping to a match is navigation, so following stops until the user
+            // asks for the newest block again.
+            following = false
+            listState.animateScrollToItem(index)
+        }
     }
 
     // `set_editor_text`: an extension owns the composer content until the user
@@ -222,12 +256,9 @@ private fun ChatBody(
         }
     }
 
-    // Follow the tail while streaming, but never steal the scroll: only scroll
-    // when the count grows, and let the user's own scrolling win afterwards.
-    LaunchedEffect(state.revision) {
-        val last = listState.layoutInfo.totalItemsCount - 1
-        if (last >= 0) listState.animateScrollToItem(last)
-    }
+    // Follow the tail while streaming, but never steal the scroll: the effect
+    // above only runs while `following` is armed, and that flag is dropped the
+    // moment the user scrolls away from the bottom.
 
     // A command the palette offers: pi's own dispatch rule (`agent-session.ts`
     // `prompt` → extension command → skill → template) for anything pi owns, and

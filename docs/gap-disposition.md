@@ -321,7 +321,7 @@ Listed so the ledger cannot over-claim. "Justified" = at least one of the 148 ro
 
 | Item | Why | What would settle it |
 |---|---|---|
-| **Does the tree compile?** | Not checked — no Gradle was run, as instructed, and the tree has untracked/mid-write code (`PiConfigFiles.kt`, `PiCredentialService.kt`, `PiModelScanner.kt`, `PiProviderPresets.kt`, `PiThemeFiles.kt`, plus dirty `PiMarkdown.kt`/`DeviceShell.kt` and two comment-only block edits). None of the untracked code has a caller, so none of it is exercised. | A frozen-tree typecheck/assemble. |
+| **Does the tree compile?** | **Checked: `bash tools/typecheck.sh`, last line `typecheck: FAILED in :app`** (run started 07:50 on the working tree; `:rpc` phase passed). **7 errors, in 2 files, none of them touched by this pass**: `ui/PiSessionViewModel.kt:548` (×2) — the new `PiLaunchOptions` wiring is being called with a trailing lambda where a `PiLaunchOptions` is expected; and the untracked `ui/theme/PiThemeFiles.kt` (×5) — `:258` `'internal' function exposes its 'private-in-class' return type 'ParsedTheme'`, `:383` `unresolved reference 'intOrNull'` plus three inference errors. Both are mid-write by other agents; route them there. **Zero errors point at any file changed by this pass** (`ui/terminal/TerminalSettings.kt`, `TerminalPane.kt`, `TerminalSurface.kt`, `TerminalKeyBar.kt`, `terminal/TerminalController.kt`, `terminal/TerminalKeys.kt`). | Fix the two files above, then re-run; a frozen-tree run is still the only verdict on the untracked `packages/**` code, which has no caller and is therefore not exercised. |
 | Whether `/share` can work on this host at all | Needs a browser plus a reachable loopback callback (`PI_SHARE_VIEWER_URL` is unset); never run. | Run the gist flow from the 工作区 → `pi TUI（原版）` tab on a device. |
 | Whether the 12 `TerminalOnly` rows are actually usable in this app's terminal tab | The tab exists (`PtyLauncher.Kind.PiTui`, reachable at `ChatScreen.kt:694`) but `known-gaps` C2 records the hand-written VT emulator as never run on a device. | The device pass already listed as C1/C2. |
 | The user-visible effect of `new_session parentSession` on pi's side (row #5) | Read from `rpc-mode.ts:438`; the consequence ("sessions are always roots") is inferred from the wire, not observed. | Create a parented session with a raw `pi --mode rpc` client and diff the session header / `get_tree`. |
@@ -686,3 +686,72 @@ Only row #55 is `fixed` today, and only partially: the four `app.terminal.*` key
 (`ui/terminal/TerminalSettings.kt`, `TerminalPane.kt`, `TerminalSurface.kt`, `TerminalKeyBar.kt`,
 `terminal/TerminalController.kt`), which is 4 of the 13 settings that row lists. Everything else
 below is a patch for the file's owner, not a change made by this pass.
+
+## 10. Merged ledger: `docs/rendering-review.md` (34 rows)
+
+`docs/rendering-review.md` (949 lines, as-of `98678da`) is a second audit — the rendering/transcript
+pipeline rather than the capability surface — and the parent asked for its rows to be merged here so
+there is one ledger. Its findings are `F1`–`F34` (DEFECT 8 · GAP 10 · PERF 8 · DEAD CODE 6 ·
+INCONSISTENCY 2) and its own ready-to-apply diffs are `RR-P1`–`RR-P10`, **renamed here** to avoid
+colliding with this document's `P1`–`P12`. The diffs themselves are not duplicated; apply them from
+`docs/rendering-review.md` §"Ready-to-apply patches", which stays the authority for its own text.
+
+**Ownership** (per the parent's allocation): `ui/**` except `ui/device|terminal` → **行为修复代理**;
+`ui/render/**` → **markdown 代理**; `rpc/**` → **RPC 代理**; `engine/**`, `packages/**` →
+**包管理代理**. No F-row falls in an unowned file, so all 34 are patches for an owner — including
+the ones touching `ui/terminal/**`, because that directory is occupied by *this* pass's terminal
+fix, not abandoned (rendering-review's note at its `:32-38` is correct about the mtimes).
+
+| id | class | Finding (one line) | App file → owner | RR patch | Status | Relates to |
+|---|---|---|---|---|---|---|
+| F1 | DEFECT | a message sent mid-turn never reaches the screen | `ui/PiSessionViewModel.kt` → 行为 | RR-P1 | patch-ready | #2/#3/#17 (my P4) |
+| F2 | DEFECT | aborted/errored turns leave tool cards spinning forever | `rpc/Transcript.kt` → RPC | RR-P5 | patch-ready | — |
+| F3 | DEFECT | a `length`-truncated or aborted answer reports nothing | `rpc/Transcript.kt` → RPC | RR-P5 | patch-ready | — |
+| F4 | DEFECT | follow-the-tail scroll re-animated on every token, stealing the scroll | `ui/screens/ChatScreen.kt` → 行为 | — | patch-ready (fix described in §F4) | — |
+| F5 | DEFECT | every `entry_appended` is projected twice | `ui/PiSessionViewModel.kt` → 行为 | RR-P2 | patch-ready | — |
+| F6 | GAP | extension `custom` entries render nothing | `rpc/Transcript.kt` → RPC | RR-P4 | patch-ready | — |
+| F7 | PERF | whole screen + app root invalidated per token; computed change index discarded | `ui/PiSessionViewModel.kt`, `ui/screens/ChatScreen.kt` → 行为 | — | blocked (needs a finer invalidation design) | #55 (`showTimestamps` et al. share the root) |
+| F8 | PERF | `tool_execution_update` applied unthrottled (spec asks 200 ms) | `rpc/Transcript.kt` → RPC | RR-P3 | patch-ready | — |
+| F9 | PERF | session replay and entry projection run on the main thread | `ui/PiSessionViewModel.kt` → 行为 | — | patch-ready (move to `Dispatchers.IO`) | — |
+| F10 | GAP | no live token/context indicator; all three `usage` payloads dropped | `ui/**` + `rpc/**` → 行为 + RPC | — | blocked (new UI) | — |
+| F11 | DEFECT | block margins and rhythm are ~2× the spec | `ui/blocks/BlockChrome.kt`, `ui/screens/ChatScreen.kt` → 行为 | RR-P6 | patch-ready | — |
+| F12 | DEFECT | dark-theme `dim` text is 2.1–2.9:1, under the spec's 3:1 floor | `ui/blocks/UserMessageBlock.kt`, `BranchSummaryBlock.kt` → 行为 | RR-P7 | patch-ready | — |
+| F13 | DEFECT | content tokens below 4.5:1 (tool output, diff context, thinking headline) | `ui/theme/PiPalette.kt` → 行为 | — | blocked (palette decisions) | #34–#37 (theme files) |
+| F14 | GAP | the light theme's `muted`/`dim` correction does not exist | `ui/theme/PiPalette.kt` → 行为 | — | blocked (palette decisions) | #34–#37 |
+| F15 | GAP | user messages render raw Markdown source | `ui/blocks/UserMessageBlock.kt` → 行为 | — | patch-ready (swap `Text` for `PiMarkdownText`) | A1 (same renderer) |
+| F16 | GAP | images returned by a tool are flattened to the literal text `[image]` | `rpc/Transcript.kt` + `ui/blocks/` → RPC + 行为 | — | patch-ready | #62, A3 |
+| F17 | GAP | tool output hard-capped at 400 lines, no way to see the rest; >200 KB rule absent | `ui/blocks/` → 行为 | — | patch-ready | #55 (`outputMaxLines`) |
+| F18 | GAP | compaction/branch-summary cost is parsed then dropped | `rpc/Transcript.kt` + `ui/blocks/` → RPC + 行为 | — | patch-ready | A1 |
+| F19 | GAP | five tap affordances unreachable — callbacks never supplied | `ui/screens/ChatScreen.kt` → 行为 | RR-P10 | patch-ready | — |
+| F20 | GAP | spec §4.8 per-block actions absent | `ui/blocks/` → 行为 | — | blocked (new UI) | — |
+| F21 | GAP | sending mid-turn silently steers instead of asking | `ui/screens/ChatScreen.kt` + `ui/PiSessionViewModel.kt` → 行为 | — | patch-ready | #2/#3/#17 (my P4) |
+| F22 | DEAD CODE | the `system-prompt` block kind cannot be produced | `rpc/Transcript.kt` → RPC | — | patch-ready (wire or delete) | — |
+| F23 | DEAD CODE | `outputTruncated` is never assigned, but is read for a label | `rpc/Transcript.kt` + `ui/blocks/ToolCallBlock.kt` → RPC + 行为 | — | patch-ready | — |
+| F24 | DEAD CODE | 8 `message_update` delta kinds parse then fall into `None` | `rpc/Events.kt`, `rpc/Transcript.kt` → RPC | — | patch-ready | — |
+| F25 | DEAD CODE | the `else -> NoticeBlock("暂不支持的内容块")` branch is unreachable | `ui/blocks/BlockRenderer.kt` → 行为 | — | patch-ready (delete; move the notice to `PiEvent.Unknown`) | — |
+| F26 | DEAD CODE | dead `skill`/`skill_invocation` entry helpers and aliases (pi has no such entry type) | `rpc/Transcript.kt` → RPC | — | patch-ready (delete) | — |
+| F27 | DEAD CODE | `turn_start` parsed with no renderer | `rpc/Transcript.kt` → RPC | — | closed (review says no fix needed) | — |
+| F28 | INCONSISTENCY | the same "expand" gesture differs per block type | `ui/blocks/*` → 行为 | — | blocked (standardise across ~8 occupied files) | — |
+| F29 | INCONSISTENCY | off-scale dp literals bypass `PiSpacing`/`PiShapes` | `ui/blocks/*`, `ui/theme/` → 行为 | — | blocked (mechanical but touches many occupied files) | — |
+| F30 | PERF | `formatClock` builds a `SimpleDateFormat` per call, per recomposition | `ui/blocks/BlockChrome.kt` → 行为 | RR-P8 | patch-ready | — |
+| F31 | PERF | `ToolCallBlock` re-scans/splits the whole output every composition | `ui/blocks/ToolCallBlock.kt` → 行为 | — | patch-ready (`remember(item.output)`) | #55 (`outputMaxLines`) |
+| F32 | PERF | five markdown config objects rebuilt per composition | `ui/render/PiMarkdown.kt` → markdown | RR-P9 | patch-ready | — |
+| F33 | PERF | `items(...)` has no `contentType`, so slots cannot be reused | `ui/screens/ChatScreen.kt` → 行为 | — | patch-ready | — |
+| F34 | PERF | nothing bounds the transcript or the entry list | `rpc/Transcript.kt` + `ui/screens/ChatScreen.kt` → RPC + 行为 | — | patch-ready (client-side slice; pi's `get_entries` has only a forward cursor, so backward paging must not be built) | — |
+
+Merged status counts for the 34 rendering rows: **patch-ready 26 · blocked 7 · closed 1**, plus one
+row (F34) whose *limit* is pi's forward-only cursor and whose fix is client-side. Combined with §9:
+
+| Ledger | fixed | patch-ready | blocked | in-flight | limit | closed | rows |
+|---|---|---|---|---|---|---|---|
+| `feature-gaps.md` rows (§2) | 1 | 23 | 11 | 15 | 14 | 5 | 69 |
+| `rendering-review.md` rows (§10) | 0 | 26 | 7 | 0 | 0 | 1 | 34 |
+| **Total** | **1** | **49** | **18** | **15** | **14** | **6** | **103** |
+
+Cross-ledger duplicates worth one owner, not two: F16 ↔ row #62 (both are "an image becomes
+nothing") and F17/F31 ↔ row #55's `app.tools.outputMaxLines`. Everything else in the rendering
+ledger is new work that the capability audit could not see, which is the point of merging it:
+**8 DEFECTs and 8 PERFs are not capability gaps and would never have appeared in a feature table.**
+One of them (F4) was found by the rendering review *after* my §2 snapshot; two of my rows (#55's
+terminal four) were fixed after theirs. Where the two documents disagree about a line number, the
+quoted snippet wins — that is rendering-review's own rule (`:28-31`) and it is the right one.
