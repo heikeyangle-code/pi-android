@@ -131,7 +131,19 @@ if [ ! -d "$KOTLINC_LIBS" ]; then
 fi
 
 mkdir -p "$ROOT/build/typecheck/out"
-KOTLINC_CP="$(find "$KOTLINC_LIBS" -name '*.jar' | tr '\n' ':')"
+KOTLINC_CP="$(find -L "$KOTLINC_LIBS" -name '*.jar' | tr '\n' ':')"
+
+# Fail loudly when the compiler cannot even start. Without this the script is a
+# liar: `java -cp ''` prints "Could not find or load main class", no `.kt:…:
+# error:` line ever appears, and the gate below reports "typecheck: OK". That
+# actually happened once (a symlinked lib dir, which `find` does not descend
+# into without -L) — a green verdict on a tree that was never compiled is worse
+# than a red one, because it is trusted.
+if [ -z "$KOTLINC_CP" ] || ! echo "$KOTLINC_CP" | grep -q 'kotlin-compiler'; then
+  echo "typecheck: CANNOT RUN — no kotlin compiler jars found in $KOTLINC_LIBS" >&2
+  echo "  KOTLINC_CP='$KOTLINC_CP'" >&2
+  exit 2
+fi
 OUT="$ROOT/build/typecheck/out"
 RPC_JAR="$ROOT/build/typecheck/rpc.jar"
 
@@ -139,9 +151,18 @@ compile() {
   # $1 = output dir/jar target, $2 = classpath, rest = sources
   local target="$1"; shift
   local cp="$1"; shift
-  java -Xmx1100m -Dfile.encoding=UTF-8 -cp "$KOTLINC_CP" \
+  local out
+  out="$(java -Xmx1100m -Dfile.encoding=UTF-8 -cp "$KOTLINC_CP" \
     org.jetbrains.kotlin.cli.jvm.K2JVMCompiler \
-    -no-stdlib -jvm-target 17 -classpath "$cp" -d "$target" "$@" 2>&1
+    -no-stdlib -jvm-target 17 -classpath "$cp" -d "$target" "$@" 2>&1)"
+  # A JVM that failed to launch produces no Kotlin diagnostics at all, which the
+  # verdict below would read as success. Turn that into an explicit failure.
+  if echo "$out" | grep -q "Could not find or load main class\|Unrecognized option\|Could not reserve enough space"; then
+    echo "typecheck: CANNOT RUN — the compiler did not start:" >&2
+    echo "$out" | head -3 >&2
+    exit 2
+  fi
+  echo "$out"
 }
 
 # --- stage 1: :rpc as its own module, producing a jar --------------------------

@@ -1437,6 +1437,9 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
             ?: entry.long("tokensBefore")
             ?: entry.long("tokens")
         val firstKept = entry.str("firstKeptEntryId")
+        // The persisted entry carries the summarization usage too, so a replayed
+        // session shows the same cost as the live one (F18).
+        val usage = entry.obj("usage")?.let(PiEvents::parseUsage)
         val index = runningCompactionIndex?.takeIf { items.getOrNull(it) is CompactionMarker }
             ?: items.indexOfLast { it is CompactionMarker && it.status == CompactionMarker.Status.Running }
         if (index >= 0) {
@@ -1447,6 +1450,7 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
                 firstKeptEntryId = firstKept ?: current.firstKeptEntryId,
                 status = CompactionMarker.Status.Done,
                 errorMessage = null,
+                usage = usage ?: current.usage,
             )
             runningCompactionIndex = null
             return TranscriptChange.Updated(index)
@@ -1459,6 +1463,7 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
                 tokensFreed = tokens,
                 firstKeptEntryId = firstKept,
                 status = CompactionMarker.Status.Done,
+                usage = usage,
             ),
         )
     }
@@ -1680,6 +1685,7 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
         summarizationNoticeIndex = null
         textIndexByContentIndex.clear()
         thinkingIndexByContentIndex.clear()
+        lastUsage = null
         currentDay = null
         streaming = false
     }
