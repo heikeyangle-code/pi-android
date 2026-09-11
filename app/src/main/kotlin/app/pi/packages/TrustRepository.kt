@@ -6,30 +6,36 @@ import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 
 /**
- * Reads and writes pi's `trust.json`, in both places it has to exist.
+ * Reads and writes pi's `trust.json`, in both places it can exist.
  *
- * ## Two files, one truth
+ * ## Which copy is authoritative — this changed, and it matters
  *
- * [AgentLayout] records the mismatch: pi reads `/root/.pi/agent/trust.json`, which
- * on the host is `<rootfs>/root/.pi/agent/trust.json` — inside the tree that
- * `RuntimeProvisioner.wipe()` deletes on every runtime revision bump
- * (`RuntimeProvisioner.kt:85-91`). The durable copy is `<files>/pi/.pi/agent/`,
- * which pi never reads today.
+ * pi reads `<agentDir>/trust.json` (`trust-manager.ts:212-214`). Since
+ * `PiEngineHost` binds the durable agent dir over guest `/root/.pi/agent`
+ * (`PiEngineHost.kt:285-294`), the file pi actually reads is
  *
- * So a write goes to both, and a read prefers the guest copy with the mirror as
- * fallback. [publishIntoRootfs] exists for the boot path: after provisioning, push
- * the durable copy back into the fresh rootfs. Without that step a user's trust
- * decisions would appear to work and then vanish after any app update that ships a
- * new runtime.
+ *   - [engineFile] — `<files>/pi/.pi/agent/trust.json`, the bind source. Durable
+ *     across a runtime re-extract (`RuntimeProvisioner.kt:85-91` deletes
+ *     `paths.runtime`), and the one the app's own settings store addresses too.
+ *   - [rootfsFile] — `<rootfs>/root/.pi/agent/trust.json`, kept in step as a
+ *     fallback for a run without the bind. While the engine runs it is **shadowed**,
+ *     and a guest command now binds the same directory ([GuestCommand.bindList]), so
+ *     nothing reads it in practice.
+ *
+ * This file previously read and locked the *rootfs* copy first, on the premise that
+ * the agent dir was not bound. That premise is gone (`AgentLayout` records it), and
+ * keeping the old order would have meant two real defects: a corrupt `engineFile`
+ * would never be reported even though pi refuses to start on one, and the advisory
+ * lock would sit next to a file pi never locks while pi locked the other one.
  *
  * ## Locking
  *
  * pi guards the store with an advisory lock at `<trust.json>.lock`, created as a
  * **directory** (`proper-lockfile`, `trust-manager.ts:137-176`), retrying 10 times
  * with a 20 ms sleep, and treating an existing lock as stale after its default 10 s
- * (`:140-142`). The app takes the same lock, the same way, so a concurrent write
- * cannot interleave: pi rewrites the whole file from its in-memory copy, and a
- * lost update here is a lost security decision.
+ * (`:140-142`). The app takes the same lock, on [engineFile]'s directory — the same
+ * file pi locks — so a concurrent write cannot interleave: pi rewrites the whole file
+ * from its in-memory copy, and a lost update here is a lost security decision.
  *
  * ## What this deliberately does not do
  *
@@ -44,14 +50,25 @@ class TrustRepository(
     private val guest: GuestCommand? = null,
 ) {
 
-    /** `<files>/pi/runtime/rootfs/root/.pi/agent/trust.json` — what pi actually reads. */
-    val truthFile: File get() = File(layout.agentTruthDir, TRUST_FILE_NAME)
+    /**
+     * `<files>/pi/.pi/agent/trust.json` — the bind source, i.e. **what pi reads**
+     * while the engine runs (`PiEngineHost.kt:285-294`).
+     */
+    val engineFile: File get() = File(layout.agentMirrorDir, TRUST_FILE_NAME)
 
-    /** `<files>/pi/.pi/agent/trust.json` — durable across a runtime re-extract. */
-    val mirrorFile: File get() = File(layout.agentMirrorDir, TRUST_FILE_NAME)
+    /**
+     * `<rootfs>/root/.pi/agent/trust.json` — the copy inside the tree
+     * `RuntimeProvisioner.wipe()` deletes. Shadowed by the bind; written for
+     * compatibility only.
+     */
+    val rootfsFile: File get() = File(layout.agentTruthDir, TRUST_FILE_NAME)
 
-    /** Where the store was read from; the UI uses it to say which file is authoritative. */
-    enum class Source { GuestTruth, DurableMirror, Missing }
+    /**
+     * Where the store was read from. Descriptive only: no caller branches on it today
+     * (`PiPackagesHost` surfaces [State.invalid] and the store's contents, not this),
+     * and claiming otherwise here would be another "the doc says the UI does it".
+     */
+    enum class Source { EngineAgentDir, RootfsCopy, Missing }
 
     data class State(
         val store: TrustStore,
@@ -65,28 +82,30 @@ class TrustRepository(
     // ------------------------------------------------------------------ reading
 
     /**
-     * The effective store. An invalid guest copy is reported but **not** repaired
-     * here: pi would throw on it at startup, and silently rewriting a file pi
-     * refuses to read would hide a real problem. [repairInvalidStore] is the
-     * explicit, user-initiated fix.
+     * The effective store, from the copy pi reads first ([engineFile]).
+     *
+     * An invalid authoritative copy is reported but **not** repaired here: pi would
+     * throw on it at startup, and silently rewriting a file pi refuses to read would
+     * hide a real problem. [repairInvalidStore] is the explicit, user-initiated fix.
      */
     fun read(): State {
-        if (truthFile.isFile) {
-            when (val truth = readFile(truthFile)) {
-                is TrustFile.Parse.Ok -> return State(truth.store, Source.GuestTruth)
+        if (engineFile.isFile) {
+            when (val engine = readFile(engineFile)) {
+                is TrustFile.Parse.Ok -> return State(engine.store, Source.EngineAgentDir)
                 is TrustFile.Parse.Invalid -> {
-                    // The mirror may still be readable; report the truth file's
-                    // failure as the headline, because that is the one pi trips over.
-                    val mirror = readFile(mirrorFile)
-                    val store = (mirror as? TrustFile.Parse.Ok)?.store ?: emptyMap()
-                    return State(store, Source.GuestTruth, invalid = truth)
+                    // The rootfs copy may still be readable; report the authoritative
+                    // file's failure as the headline, because that is the one pi trips
+                    // over.
+                    val rootfs = readFile(rootfsFile)
+                    val store = (rootfs as? TrustFile.Parse.Ok)?.store ?: emptyMap()
+                    return State(store, Source.EngineAgentDir, invalid = engine)
                 }
             }
         }
-        if (mirrorFile.isFile) {
-            return when (val mirror = readFile(mirrorFile)) {
-                is TrustFile.Parse.Ok -> State(mirror.store, Source.DurableMirror)
-                is TrustFile.Parse.Invalid -> State(emptyMap(), Source.DurableMirror, invalid = mirror)
+        if (rootfsFile.isFile) {
+            return when (val rootfs = readFile(rootfsFile)) {
+                is TrustFile.Parse.Ok -> State(rootfs.store, Source.RootfsCopy)
+                is TrustFile.Parse.Invalid -> State(emptyMap(), Source.RootfsCopy, invalid = rootfs)
             }
         }
         return State(emptyMap(), Source.Missing)
@@ -110,8 +129,10 @@ class TrustRepository(
 
     data class WriteResult(
         val ok: Boolean,
-        val guestWritten: Boolean,
-        val mirrorWritten: Boolean,
+        /** True when the copy pi reads ([engineFile]) was written. */
+        val engineWritten: Boolean,
+        /** True when the rootfs fallback copy was written too. */
+        val rootfsWritten: Boolean,
         val message: String,
     )
 
@@ -125,8 +146,8 @@ class TrustRepository(
             // app must not invent a record pi would not have written.
             return WriteResult(
                 ok = true,
-                guestWritten = false,
-                mirrorWritten = false,
+                engineWritten = false,
+                rootfsWritten = false,
                 message = "本次会话有效，未写入 trust.json",
             )
         }
@@ -139,8 +160,8 @@ class TrustRepository(
         if (existing.invalid != null) {
             return WriteResult(
                 ok = false,
-                guestWritten = false,
-                mirrorWritten = false,
+                engineWritten = false,
+                rootfsWritten = false,
                 message = "trust.json 无法解析，已拒绝写入以免破坏它：${existing.invalid.message}",
             )
         }
@@ -149,76 +170,89 @@ class TrustRepository(
 
         return try {
             withLock {
-                val guestWritten = writeFile(truthFile, text)
-                val mirrorWritten = writeFile(mirrorFile, text)
+                val engineWritten = writeFile(engineFile, text)
+                val rootfsWritten = writeFile(rootfsFile, text)
                 WriteResult(
-                    ok = guestWritten,
-                    guestWritten = guestWritten,
-                    mirrorWritten = mirrorWritten,
+                    ok = engineWritten,
+                    engineWritten = engineWritten,
+                    rootfsWritten = rootfsWritten,
                     message = buildString {
-                        append("已写入 ${truthFile.absolutePath}")
-                        if (!mirrorWritten) append("；镜像写入失败（${mirrorFile.absolutePath}）")
+                        append("已写入 ${engineFile.absolutePath}")
+                        if (!rootfsWritten) {
+                            append("；rootfs 副本写入失败（${rootfsFile.absolutePath}）")
+                        }
                     },
                 )
             }
         } catch (error: Throwable) {
             WriteResult(
                 ok = false,
-                guestWritten = false,
-                mirrorWritten = false,
+                engineWritten = false,
+                rootfsWritten = false,
                 message = "写入 trust.json 失败：${error.message ?: error::class.java.simpleName}",
             )
         }
     }
 
     /**
-     * Archive an unparseable store and start over from the mirror, or from `{}`.
+     * Archive an unparseable store and start over from the other copy, or from `{}`.
      *
      * This is not a convenience: pi **throws** on an invalid store
      * (`trust-manager.ts:107-121`), so a mangled `trust.json` breaks every pi
-     * startup until it is dealt with. The bad file is renamed aside rather than
-     * deleted, following the precedent in `PiSettingsFileStore.kt:36-38`.
+     * startup until it is dealt with. It archives the file pi reads ([engineFile]);
+     * the rootfs copy is then overwritten with the repaired content so the two do not
+     * disagree. The bad file is renamed aside rather than deleted, following the
+     * precedent in `PiSettingsFileStore.kt:36-38`.
      */
     fun repairInvalidStore(): WriteResult {
         val state = read()
         val invalid = state.invalid ?: return WriteResult(true, false, false, "trust.json 可解析，无需修复")
-        val archived = File(truthFile.parentFile, "$TRUST_FILE_NAME.invalid-${System.currentTimeMillis()}")
+        val archived = File(engineFile.parentFile, "$TRUST_FILE_NAME.invalid-${System.currentTimeMillis()}")
         val moved = runCatching {
-            truthFile.parentFile?.mkdirs()
-            Files.move(truthFile.toPath(), archived.toPath(), StandardCopyOption.REPLACE_EXISTING)
+            engineFile.parentFile?.mkdirs()
+            Files.move(engineFile.toPath(), archived.toPath(), StandardCopyOption.REPLACE_EXISTING)
             true
         }.getOrDefault(false)
         if (!moved) {
-            return WriteResult(false, false, false, "无法移开损坏的 ${truthFile.absolutePath}")
+            return WriteResult(false, false, false, "无法移开损坏的 ${engineFile.absolutePath}")
         }
-        val rewritten = writeFile(truthFile, TrustFile.serialize(state.store))
-        runCatching { writeFile(mirrorFile, TrustFile.serialize(state.store)) }
+        val text = TrustFile.serialize(state.store)
+        val rewritten = writeFile(engineFile, text)
+        val copied = runCatching { writeFile(rootfsFile, text) }.getOrDefault(false)
         return WriteResult(
             ok = rewritten,
-            guestWritten = rewritten,
-            mirrorWritten = true,
-            message = "已把损坏的文件移到 ${archived.absolutePath}，并用镜像内容重建。原始错误：${invalid.message}",
+            engineWritten = rewritten,
+            rootfsWritten = copied,
+            message = "已把损坏的文件移到 ${archived.absolutePath}，并用另一份内容重建。原始错误：${invalid.message}",
         )
     }
 
     /**
-     * Push the durable copy into the rootfs, for the boot path after provisioning.
+     * Push the authoritative copy into the rootfs, for the boot path after
+     * provisioning.
+     *
+     * **Kept for compatibility, and it currently has no caller.** Since the engine
+     * binds the durable directory over `/root/.pi/agent` (`PiEngineHost.kt:285-294`),
+     * the rootfs copy is shadowed and this step is no longer load-bearing; a guest
+     * command binds the same directory too ([GuestCommand.bindList]). It is left
+     * because it is idempotent and harmless, and removing public API from this layer
+     * is a separate decision.
      *
      * Idempotent, and a no-op when the rootfs copy already exists and parses: the
-     * guest copy is the one pi maintains, and overwriting a newer decision with a
-     * stale mirror would be a silent security regression.
+     * engine's copy is the one pi maintains, and overwriting a newer decision with a
+     * stale copy would be a silent security regression.
      *
      * @return true when something was published.
      */
     fun publishIntoRootfs(): Boolean {
         if (!layout.paths.rootfs.isDirectory) return false
-        val truthExists = truthFile.isFile
-        if (truthExists) return false
-        if (!mirrorFile.isFile) return false
-        val mirror = readFile(mirrorFile)
-        if (mirror is TrustFile.Parse.Invalid) return false
-        val text = runCatching { mirrorFile.readText() }.getOrNull() ?: return false
-        return writeFile(truthFile, text)
+        val rootfsExists = rootfsFile.isFile
+        if (rootfsExists) return false
+        if (!engineFile.isFile) return false
+        val engine = readFile(engineFile)
+        if (engine is TrustFile.Parse.Invalid) return false
+        val text = runCatching { engineFile.readText() }.getOrNull() ?: return false
+        return writeFile(rootfsFile, text)
     }
 
     // -------------------------------------------------------- canonicalisation
@@ -289,8 +323,14 @@ class TrustRepository(
             val rel = guestPath.removePrefix(guestRoot).trimStart('/')
             return if (rel.isEmpty()) File(hostRoot) else File(hostRoot, rel)
         }
-        // Everything else in the guest is the rootfs itself. In particular
-        // `/workspace` alone is NOT the bind — the bind target is
+        // Everything else in the guest maps into the rootfs — with **one** exception
+        // that this function is not asked about: the agent dir, which the engine binds
+        // from `<files>/pi/.pi/agent` (`PiEngineHost.kt:285-294`). Every caller here
+        // passes a path under the workspace (`hasTrustRequiringResources`), so the
+        // exception never applies; a future caller that wants an agent-dir path must
+        // go through [engineFile] and [rootfsFile] instead of this mapping.
+        //
+        // In particular `/workspace` alone is NOT the bind — the bind target is
         // `/workspace/pi/workspaces/workspace-1`, so a path one level up sits in
         // the rootfs. Getting this wrong would make a trigger check look at the
         // app's own filesDir.
@@ -327,7 +367,7 @@ class TrustRepository(
      * stale window is 10 s.
      */
     private fun <T> withLock(block: () -> T): T {
-        val lockDir = File(truthFile.parentFile, "$TRUST_FILE_NAME.lock")
+        val lockDir = File(engineFile.parentFile, "$TRUST_FILE_NAME.lock")
         lockDir.parentFile?.mkdirs()
         var attempt = 0
         while (true) {

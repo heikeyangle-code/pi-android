@@ -8,62 +8,36 @@ import java.io.File
 /**
  * Where pi's user files actually are, on the host and in the guest.
  *
- * This is the one place in the app that has to know about a mismatch that is easy
- * to get wrong and silent when you do.
+ * ## The bind that decides everything
  *
- * ## The mismatch, verified from code
+ * `PiEngineHost` binds **two** things into the guest (`PiEngineHost.kt:285-294`) — the
+ * workspace, and `PiPaths.agentDir` over `/root/.pi/agent` — and pins
+ * `PI_CODING_AGENT_DIR` to that same guest path (`:302-303`). So while the engine
+ * runs:
  *
- * `PiEngineHost` sets `PI_CODING_AGENT_DIR=/root/.pi/agent` (`PiEngineHost.kt:51`,
- * `:123`) and binds **only the workspace** into the guest (`:116`). So inside the
- * guest, `/root/.pi/agent` is a real directory of the rootfs:
+ *     <files>/pi/.pi/agent                     bound to   /root/.pi/agent  (pi reads)
+ *     <files>/pi/runtime/rootfs/root/.pi/agent            shadowed by that bind
  *
- *     <files>/pi/runtime/rootfs/root/.pi/agent      <- what pi reads and writes
+ * This file used to describe the opposite (the rootfs copy as "what pi reads", the
+ * durable copy as a mirror nothing reads), and the inversion is load-bearing rather
+ * than cosmetic:
  *
- * whereas `PiPaths.agentDir` is
+ *  - [agentMirrorDir] is the **authoritative** agent dir. It is what pi reads and
+ *    writes, it is what the app's own settings store addresses
+ *    (`ui/PiSessionViewModel.kt:325-328`), and it survives a runtime re-extract
+ *    (`RuntimeProvisioner.wipe()` deletes `paths.runtime` wholesale,
+ *    `RuntimeProvisioner.kt:85-91`, and only re-creates an empty
+ *    `/root/.pi/agent`).
+ *  - [agentTruthDir] is the rootfs copy. It is a real directory and this package
+ *    still keeps it in step, but pi does not read it while the bind is in place. It
+ *    is the fallback for a run whose proot argv omits the bind — which is why every
+ *    process started from here must add it, and why [GuestCommand] does:
+ *    [PiPackageService]'s `pi install` had been writing a `settings.json` the engine
+ *    never read.
  *
- *     <files>/pi/.pi/agent                          <- a *host-side mirror*
- *
- * `docs/extension-compatibility.md:523-524` says the agent dir is bind-mounted.
- * It is not — `PiEngineHost.kt:109-117` binds `workspace.absolutePath to
- * guestWorkspace` and nothing else. `DeviceBridgeController` already works around
- * this by writing to **both** locations and commenting the host one as "guest path
- * only if the engine binds it" (`DeviceBridgeController.kt:182-188`, `:230-233`).
- * This class makes that workaround explicit and reusable instead of incidental.
- *
- * ## Why it matters for this layer
- *
- *  - `trust.json` is read by pi at `<agentDir>/trust.json`
- *    (`trust-manager.ts:212-214`). Written only to the mirror, trust would never
- *    take effect. Written only to the rootfs, it would be **destroyed by the next
- *    runtime update**: `RuntimeProvisioner.wipe()` deletes `paths.runtime`
- *    wholesale (`RuntimeProvisioner.kt:85-91`) and only re-creates an empty
- *    `/root/.pi/agent` (`:185`). So it must be written to both, and the rootfs
- *    copy re-published after provisioning.
- *  - `pi install` writes `packages` into `<agentDir>/settings.json` and installs
- *    into `<agentDir>/npm`, both inside the volatile tree. The app cannot fix that
- *    from here (it would take the engine bind), but it can and does say so instead
- *    of reporting a durable install.
- *
- * ## What the app should do instead, exactly
- *
- * One line in `PiEngineHost.boot` makes the mirror authoritative and removes the
- * whole class of bug. It is not this package's file to edit, so it is reported
- * rather than applied:
- *
- * ```kotlin
- * val argv = ProotCommand.build(
- *     paths = paths,
- *     guestCommand = guestCommand,
- *     cwd = guestWorkspace,
- *     storage = android.os.Environment.getExternalStorageDirectory(),
- *     extraBinds = listOf(
- *         workspace.absolutePath to guestWorkspace,
- *         paths.agentDir.absolutePath to guestAgentDir,   // <- add this
- *     ),
- * )
- * ```
- *
- * Until that exists, [TrustRepository] keeps both copies in step.
+ * Server-side note for whoever finishes the job: the names [agentTruthDir] and
+ * [agentMirrorDir] predate the bind and are kept only because three files reference
+ * them. Read them as "rootfs copy" and "engine's agent dir".
  */
 class AgentLayout(
     context: Context,
@@ -76,8 +50,8 @@ class AgentLayout(
         nativeLibDir = File(context.applicationInfo.nativeLibraryDir),
     )
 
-    /** pi's `PI_CODING_AGENT_DIR` inside the guest (`PiEngineHost.kt:51`). */
-    val guestAgentDir: String = "/root/.pi/agent"
+    /** pi's `PI_CODING_AGENT_DIR` inside the guest (`PiEngineHost.kt:170`, `:302`). */
+    val guestAgentDir: String = PiAgentDirContract.GUEST_PATH
 
     /**
      * `$HOME` inside the guest. `ProotCommand.environment` pins it to `/root`
@@ -89,16 +63,16 @@ class AgentLayout(
     val guestHome: String = "/root"
 
     /**
-     * The guest's own home, on the host filesystem. proot does not translate paths
-     * for us: `--rootfs=<rootfs>` makes `<files>/pi/runtime/rootfs` appear as `/`,
-     * so guest `/root/.pi/agent` is exactly [agentTruthDir].
+     * The rootfs copy, `<rootfs>/root/.pi/agent`. **Shadowed by the engine's bind**
+     * while the engine runs (see the class note); kept in step as a fallback, and it
+     * is what `RuntimeProvisioner` re-creates after a wipe.
      */
     val agentTruthDir: File = File(paths.rootfs, "root/.pi/agent")
 
     /**
-     * The durable host copy. `PiPaths.agentDir` is `<files>/pi/.pi/agent`
-     * (`PiRuntime.kt:19`); it survives a runtime re-extract because it is not under
-     * `paths.runtime`.
+     * The durable, **authoritative** agent dir: `PiPaths.agentDir`
+     * (`<files>/pi/.pi/agent`). `PiEngineHost` binds this over the guest's
+     * `/root/.pi/agent` (`:285-294`), so it is the directory pi actually reads.
      */
     val agentMirrorDir: File = paths.agentDir
 
@@ -120,6 +94,28 @@ class AgentLayout(
 
     /** The one bind this layer needs when it runs a command in the workspace. */
     fun workspaceBind(): Pair<String, String> = hostWorkspace.absolutePath to guestWorkspace
+
+    /**
+     * The bind that makes [agentMirrorDir] the agent dir a guest command sees, in the
+     * exact shape `PiEngineHost` uses (`PiEngineHost.kt:294`:
+     * `paths.agentDir.absolutePath to guestAgentDir`). Pair this with
+     * [ensureAgentMirrorDir] and with the environment in
+     * [app.pi.packages.PiAgentDirContract]: the bind and the variable are the two
+     * halves of the same statement.
+     *
+     * Without it a command writes whichever `settings.json`, `npm/` tree and
+     * `extensions/` sit in the rootfs while the engine reads the bound directory —
+     * an install that reports success and changes nothing.
+     */
+    fun agentDirBind(): Pair<String, String> = agentMirrorDir.absolutePath to guestAgentDir
+
+    /**
+     * Create the durable agent dir if it is missing, so [agentDirBind] has a source:
+     * proot will not bind a host path that does not exist, and a package command can
+     * run before any engine boot has created it (`PiEngineHost.migrateGuestAgentDir`
+     * normally does, `:449-460`).
+     */
+    fun ensureAgentMirrorDir(): Boolean = agentMirrorDir.isDirectory || agentMirrorDir.mkdirs()
 
     /** The engine's cli.js, exactly as `PiEngineHost` computes it (`:95`). */
     val guestEngineCli: String

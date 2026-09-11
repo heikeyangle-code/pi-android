@@ -138,21 +138,102 @@ sealed interface PiPackageSource {
 
         /**
          * `isExactNpmVersion` is `semver.valid(version) !== null`
-         * (`package-manager.ts:59-61`), so this is "is a concrete version", not
-         * "is a range". `1.2.3` is pinned; `^1.2`, `latest` and `>=2` are not.
-         * pi uses the flag to skip pinned packages during `pi update --extensions`,
-         * so the label the app shows is pi's own distinction.
+         * (`package-manager.ts:59-61`), so this answers "will pi treat the spec as
+         * pinned", not "does it look numeric". pi consumes the flag by **skipping**
+         * those packages on update (`package-manager.ts:1104`, `:1210`), which is
+         * exactly what the list row claims (`PiPackagesScreen`'s 精确版本 / 范围标签
+         * label), so a wrong answer here is a wrong sentence on screen.
+         *
+         * The grammar is node-semver's **strict** FULL shape — the library pi depends
+         * on is semver 7.8.5 (`package-lock.json:4223-4234`), whose
+         * `FULLPLAIN = v?MAINVERSION PRERELEASE? BUILD?` and whose `valid()` parses
+         * with the non-loose regex:
+         *
+         *  - an optional lowercase `v` (not `=`; that is only in the LOOSE shape);
+         *  - three dot-separated numeric components, `0|[1-9]\d*`, each within
+         *    `Number.MAX_SAFE_INTEGER`;
+         *  - an optional `-prerelease`: dot-separated identifiers, each either
+         *    `0|[1-9]\d*` or `\d*[a-zA-Z-][a-zA-Z0-9-]*` (so an all-digit identifier
+         *    may not have a leading zero);
+         *  - an optional `+build`: dot-separated `[a-zA-Z0-9-]+` identifiers;
+         *  - the raw input at most 256 characters (semver checks this before trimming).
+         *
+         * All of the digit classes are ASCII on purpose: node's `\d` is `0-9`, while
+         * Kotlin's [Char.isDigit] is Unicode-aware and would accept other scripts'
+         * numerals that semver rejects.
+         *
+         * `v1.2.3` and `1.2.3-rc.1+build` are valid, so pi pins them (the case this
+         * used to get wrong); `1.2`, `^1.2`, `latest`, `01.2.3`, `=1.2.3`, `1.2.3.4`
+         * and `1.2.3-` are not, so pi keeps updating them.
          */
         fun isExactNpmVersion(version: String?): Boolean {
             if (version == null) return false
-            val core = version.substringBefore('+').substringBefore('-')
-            val parts = core.split('.')
-            if (parts.size != 3) return false
-            if (parts.any { it.isEmpty() || it.any { ch -> !ch.isDigit() } }) return false
-            // Prerelease/build metadata must still be well formed if present.
-            val rest = version.removePrefix(core)
-            return rest.isEmpty() || rest.startsWith("-") || rest.startsWith("+")
+            if (version.length > SEMVER_MAX_LENGTH) return false
+
+            var body = version.trim()
+            if (body.startsWith("v")) body = body.substring(1)
+
+            val plus = body.indexOf('+')
+            val build = if (plus >= 0) body.substring(plus + 1) else null
+            if (plus >= 0) body = body.substring(0, plus)
+
+            val dash = body.indexOf('-')
+            val prerelease = if (dash >= 0) body.substring(dash + 1) else null
+            if (dash >= 0) body = body.substring(0, dash)
+
+            val core = body.split('.')
+            if (core.size != 3) return false
+            if (!core.all { isNumericIdentifier(it) }) return false
+            if (prerelease != null && !isPrerelease(prerelease)) return false
+            if (build != null && !isBuildMetadata(build)) return false
+            return true
         }
+
+        /** semver's `NUMERICIDENTIFIER`, `0|[1-9]\d*`, bounded by `MAX_SAFE_INTEGER`. */
+        private fun isNumericIdentifier(value: String): Boolean {
+            if (value.isEmpty()) return false
+            if (value.length > 1 && value[0] == '0') return false
+            if (!value.all { isAsciiDigit(it) }) return false
+            val number = value.toLongOrNull() ?: return false
+            return number <= SEMVER_MAX_SAFE_INTEGER
+        }
+
+        /**
+         * semver's `PRERELEASE`: one or more dot-separated identifiers, each
+         * `0|[1-9]\d*` or `\d*[a-zA-Z-][a-zA-Z0-9-]*`.
+         */
+        private fun isPrerelease(value: String): Boolean {
+            if (value.isEmpty()) return false
+            return value.split('.').all { identifier ->
+                if (identifier.isEmpty()) return@all false
+                if (identifier.all { isAsciiDigit(it) }) {
+                    isNumericIdentifier(identifier)
+                } else {
+                    identifier.all { isIdentifierChar(it) }
+                }
+            }
+        }
+
+        /** semver's `BUILD`: dot-separated `[a-zA-Z0-9-]+` identifiers. */
+        private fun isBuildMetadata(value: String): Boolean {
+            if (value.isEmpty()) return false
+            return value.split('.').all { identifier ->
+                identifier.isNotEmpty() && identifier.all { isIdentifierChar(it) }
+            }
+        }
+
+        /** `\d` in node-semver is ASCII; [Char.isDigit] is not. */
+        private fun isAsciiDigit(char: Char): Boolean = char in '0'..'9'
+
+        /** node-semver's `LETTERDASHNUMBER`. */
+        private fun isIdentifierChar(char: Char): Boolean =
+            isAsciiDigit(char) || (char in 'a'..'z') || (char in 'A'..'Z') || char == '-'
+
+        /** semver's `MAX_LENGTH` (`constants.js`), checked before trimming. */
+        private const val SEMVER_MAX_LENGTH = 256
+
+        /** `Number.MAX_SAFE_INTEGER`, which semver rejects components above. */
+        private const val SEMVER_MAX_SAFE_INTEGER = 9007199254740991L
 
         // ------------------------------------------------------------------ git
         //

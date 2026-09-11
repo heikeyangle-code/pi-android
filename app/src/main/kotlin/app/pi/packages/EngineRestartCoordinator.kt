@@ -68,10 +68,13 @@ class EngineRestartCoordinator(
             is Outcome.Ok -> lifecycle.restartSucceeded()
             is Outcome.Failed -> lifecycle.restartFailed(outcome.message)
             is Outcome.Refused -> {
-                // Not a failure: the engine was never touched. Re-check the turn and
-                // fall back to the same waiting state as before the confirmation,
-                // carrying the engine's own sentence so the UI can say why.
-                lifecycle.requestRestart(turnRunning = true, turnNote = outcome.message)
+                // Not a failure: the engine was never touched. Go back to the waiting
+                // state the confirmation came from, carrying the engine's own sentence
+                // so the UI can say why. This must not go through `requestRestart`:
+                // from `Restarting` that answers BusyWithPackageCommand and changes
+                // nothing, which left the screen reading "正在重启引擎…" with no button
+                // to leave it.
+                lifecycle.restartRefused(outcome.message)
             }
         }
         return outcome

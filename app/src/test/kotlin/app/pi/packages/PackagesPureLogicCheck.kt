@@ -33,10 +33,14 @@ package app.pi.packages
 // nearest-ancestor trust lookup, the five prompt options, the `--approve` /
 // `-l` semantics, pi's package-source classification (including the surprising
 // "a plain https URL is a local path" rule), `pi list` parsing (including the
-// difference between "no packages" and "unparseable"), and every restart
-// transition including the turn-running rule.
+// difference between "no packages" and "unparseable"), every restart
+// transition including the turn-running rule, and the built-in-vs-installed
+// classification the package screen labels its rows from (E7: pi itself has no
+// such concept, so the shipped set is the app's own transcription).
 
 import app.pi.packages.ExtensionLifecycle
+import app.pi.packages.PiAgentDirContract
+import app.pi.packages.PiBuiltinExtension
 import app.pi.packages.PiListOutput
 import app.pi.packages.PiPackageScope
 import app.pi.packages.PiPackageSource
@@ -207,6 +211,41 @@ fun main() {
     check("range is not pinned", npmRange.pinned, false)
     check("unversioned npm", (PiPackageSource.parse("npm:foo") as PiPackageSource.Npm).version, null)
 
+    // `pinned` is `semver.valid(...) !== null` (`package-manager.ts:59-61`), and pi
+    // *skips* pinned specs on update (`:1104`, `:1210`). The row label claims exactly
+    // that, so these are the strict-FULL cases, not a numeric-looking heuristic.
+    // Every expectation below was checked against node-semver's own `valid()` (7.8.4,
+    // the copy bundled with the npm on this machine) before it was written down; the
+    // harness itself needs no npm.
+    fun pinned(v: String) = PiPackageSource.isExactNpmVersion(v)
+    check("a leading v is a valid version", pinned("v1.2.3"), true)
+    check("prerelease is a valid version", pinned("1.2.3-rc.1"), true)
+    check("build metadata is a valid version", pinned("1.2.3+build"), true)
+    check("prerelease and build together", pinned("1.2.3-rc.1+build.7"), true)
+    check("surrounding whitespace is trimmed by semver", pinned(" 1.2.3 "), true)
+    check("two components is a range, not a version", pinned("1.2"), false)
+    check("a caret range is not a version", pinned("^1.2"), false)
+    check("a tag is not a version", pinned("latest"), false)
+    check("a comparator is not a version", pinned(">=2"), false)
+    check("a leading zero is not valid in a component", pinned("01.2.3"), false)
+    check("exactly three components are required", pinned("1.2.3.4"), false)
+    check("= is only valid in semver's loose shape", pinned("=1.2.3"), false)
+    check("an empty prerelease is invalid", pinned("1.2.3-"), false)
+    check("an all-digit prerelease identifier may not have a leading zero", pinned("1.2.3-01"), false)
+    check("but a single 0 is a valid identifier", pinned("1.2.3-0"), true)
+    check("a digit-led non-numeric identifier is valid", pinned("1.2.3-0a"), true)
+    check("a hyphen-only identifier is valid", pinned("1.2.3--"), true)
+    check("an empty prerelease identifier is not", pinned("1.2.3-a..b"), false)
+    check("build identifiers may start with a zero", pinned("1.2.3+01"), true)
+    check("underscores are not identifier characters", pinned("1.2.3+a_b"), false)
+    check("a numeric component above MAX_SAFE_INTEGER is rejected", pinned("9007199254740992.0.0"), false)
+    check("the largest safe component is accepted", pinned("9007199254740991.0.0"), true)
+    // The 256-character cap is on the raw input and is checked before trimming, so a
+    // version that is otherwise perfectly valid is still not a version at 257.
+    check("256 characters is still a version", pinned("1.2.3-" + "a".repeat(250)), true)
+    check("257 characters is not, however valid the shape", pinned("1.2.3-" + "a".repeat(251)), false)
+    check("non-ascii digits are not digits", pinned("１.2.3"), false)
+
     val git = PiPackageSource.parse("git:github.com/user/repo@v1") as PiPackageSource.Git
     check("git repo grows an https prefix", git.repo, "https://github.com/user/repo")
     check("git ref", git.ref, "v1")
@@ -314,6 +353,138 @@ fun main() {
     check("still installing", life3.current::class.simpleName, "Installing")
     life3.installFailed("boom")
     check("a failed install returns to idle", life3.current, ExtensionLifecycle.State.Idle)
+
+    // A restart the *engine* refuses after the user confirmed it must go back to
+    // waiting. `requestRestart` cannot do that from `Restarting` (it answers
+    // BusyWithPackageCommand and changes nothing), so the machine parked there and
+    // the screen's Restarting branch has no button: the user could never leave.
+    val lifeRefused = ExtensionLifecycle()
+    lifeRefused.installSucceeded(listOf("x"), "d")
+    check("ask first", lifeRefused.requestRestart(turnRunning = false), ExtensionLifecycle.RequestOutcome.NeedsConfirmation)
+    check("confirmed restart starts", lifeRefused.restartStarted(), true)
+    check("it is in Restarting", lifeRefused.current::class.simpleName, "Restarting")
+    check(
+        "the machine is in Restarting before the engine answers",
+        lifeRefused.current::class.simpleName,
+        "Restarting",
+    )
+    lifeRefused.restartRefused("引擎：有回合正在运行，未重启")
+    check("a refused restart waits instead of parking in Restarting", lifeRefused.current::class.simpleName, "AwaitingIdle")
+    check(
+        "the engine's own sentence is kept for the screen",
+        (lifeRefused.current as ExtensionLifecycle.State.AwaitingIdle).turnNote,
+        "引擎：有回合正在运行，未重启",
+    )
+    check("the change list survives the refusal", lifeRefused.pendingRestart, true)
+    check(
+        "and it can be re-offered once the turn ends",
+        lifeRefused.requestRestart(turnRunning = false),
+        ExtensionLifecycle.RequestOutcome.NeedsConfirmation,
+    )
+    // Outside Restarting it is a no-op: a real restart in progress must not be reset.
+    lifeRefused.cancelRestart()
+    lifeRefused.restartRefused("不应该生效")
+    check("restartRefused is a no-op when no restart was started", lifeRefused.current::class.simpleName, "NeedsRestart")
+
+    // ------------------------------------------- built in vs installed (E7)
+    //
+    // pi reports no such distinction: `pi list` reads only `settings.json`'s
+    // `packages` (`package-manager-cli.ts:970-1002`), and `<agentDir>/extensions/`
+    // is auto-discovered as plain user-scope extensions
+    // (`package-manager.ts:2352-2362`, `:2470-2475`). So the shipped set is the
+    // app's own transcription of `app/src/main/assets/pi-extensions/`, and these
+    // checks pin what the UI labels a row from.
+    check("three extensions are shipped", PiBuiltinExtension.SHIPPED.size, 3)
+    check(
+        "shipped names are the asset names",
+        PiBuiltinExtension.SHIPPED.map { it.name },
+        listOf("pi-android-bridge", "pi-android-permission-gate", "pi-highlight"),
+    )
+
+    // pi's discovery loads a subdirectory only through its index.ts
+    // (`package-manager.ts:557-585`), so the entry is not the copied directory.
+    val bridge = PiBuiltinExtension.SHIPPED.first { it.name == "pi-android-bridge" }
+    check("a directory extension is loaded as its index.ts", bridge.entryUnderExtensions, "pi-android-bridge/index.ts")
+    check(
+        "guest spelling sits under extensions/",
+        bridge.guestEntryPath("/root/.pi/agent"),
+        "/root/.pi/agent/extensions/pi-android-bridge/index.ts",
+    )
+    check(
+        "the single-file extension is loaded as itself",
+        PiBuiltinExtension.SHIPPED.first { it.name == "pi-android-permission-gate" }.entryUnderExtensions,
+        "pi-android-permission-gate.ts",
+    )
+
+    // The truth table of the two agent directories. The engine's bind
+    // (`PiEngineHost.kt:285-294`) and a guest command's single bind
+    // (`GuestCommand.kt:98-106`) are what make "found" and "loaded" different.
+    check(
+        "present in the engine's agent dir",
+        bridge.presenceIn(engineAgentDirHasEntry = true, rootfsHasEntry = true),
+        PiBuiltinExtension.Presence.EngineAgentDir,
+    )
+    check(
+        "engine copy wins even when both exist",
+        bridge.presenceIn(engineAgentDirHasEntry = true, rootfsHasEntry = false),
+        PiBuiltinExtension.Presence.EngineAgentDir,
+    )
+    check(
+        "rootfs-only is its own state, not 'installed'",
+        bridge.presenceIn(engineAgentDirHasEntry = false, rootfsHasEntry = true),
+        PiBuiltinExtension.Presence.RootfsCopyOnly,
+    )
+    check(
+        "absent from both",
+        bridge.presenceIn(engineAgentDirHasEntry = false, rootfsHasEntry = false),
+        PiBuiltinExtension.Presence.Missing,
+    )
+
+    // ------------------------------------- agent dir contract (the bind fix)
+    //
+    // The engine binds the durable agent dir over guest /root/.pi/agent
+    // (`PiEngineHost.kt:285-294`). A guest command that does not pass the same bind
+    // writes a different settings.json than the one the running engine reads, exits 0,
+    // and changes nothing — so the agreement is a checked value.
+    check("the contract guest path is pi's guest agent dir", PiAgentDirContract.GUEST_PATH, "/root/.pi/agent")
+    check("session dir is <agentDir>/sessions", PiAgentDirContract.sessionDir("/root/.pi/agent"), "/root/.pi/agent/sessions")
+    check(
+        "the engine's bind satisfies the contract",
+        PiAgentDirContract.bindsAgentDir(
+            listOf("/files/pi/workspace-1" to "/workspace/pi/workspaces/workspace-1", "/files/pi/.pi/agent" to "/root/.pi/agent"),
+            "/files/pi/.pi/agent",
+        ),
+        true,
+    )
+    check(
+        "a command that omits the agent bind fails the contract",
+        PiAgentDirContract.bindsAgentDir(
+            listOf("/files/pi/workspace-1" to "/workspace/pi/workspaces/workspace-1"),
+            "/files/pi/.pi/agent",
+        ),
+        false,
+    )
+    check(
+        "a bind from the rootfs copy fails the contract",
+        PiAgentDirContract.bindsAgentDir(
+            listOf("/files/pi/runtime/rootfs/root/.pi/agent" to "/root/.pi/agent"),
+            "/files/pi/.pi/agent",
+        ),
+        false,
+    )
+    check(
+        "a bind to another guest path fails the contract",
+        PiAgentDirContract.bindsAgentDir(listOf("/files/pi/.pi/agent" to "/root/.pi"), "/files/pi/.pi/agent"),
+        false,
+    )
+    check(
+        "bind order does not matter",
+        PiAgentDirContract.bindsAgentDir(
+            listOf("/files/pi/.pi/agent" to "/root/.pi/agent", "/files/pi/ws" to "/workspace/ws"),
+            "/files/pi/.pi/agent",
+        ),
+        true,
+    )
 
     println(if (failures == 0) "\nharness: OK (all checks passed)" else "\nharness: FAILED ($failures)")
     if (failures != 0) kotlin.system.exitProcess(1)

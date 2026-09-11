@@ -29,7 +29,25 @@ object PackageStrings {
     const val CANCEL = "取消"
     const val CONFIRM = "确定"
 
-    const val SPEC_HINT = "npm:@scope/name@1.0.0 / git:github.com/user/repo@v1 / /绝对路径"
+    /**
+     * The install field's label. It used to advertise `git:github.com/user/repo@v1`
+     * as well, which the app cannot honour: `docs/known-gaps.md` §K2 established that
+     * the runtime has no git — `runtime.lock.json`'s artifacts are proot / libtalloc /
+     * libandroidShmem / ubuntuBase / node / ripgrep / fd, and `RuntimeProvisioner`
+     * installs or links none. pi *can* install a git source, so the option is not
+     * removed from pi's parser; it just cannot work here yet, and the field says so
+     * instead of promising it ([SPEC_GIT_UNAVAILABLE]).
+     */
+    const val SPEC_HINT = "npm:@scope/name@1.0.0 或 /绝对路径"
+
+    /**
+     * The correction, on its own line so it is readable rather than clipped. Two
+     * facts, because either alone is misleading: pi supports git sources, and this
+     * runtime does not have git to give it.
+     */
+    const val SPEC_GIT_UNAVAILABLE =
+        "git:… 源暂时装不了：pi 支持它，但这个运行时里没有 git（docs/known-gaps.md §K2）。" +
+            "要装上得先把它加进 runtime 资产与 provisioner。"
 
     const val SCOPE_USER = "全局（~/.pi/agent/settings.json）"
     const val SCOPE_PROJECT = "项目（.pi/settings.json）"
@@ -39,6 +57,8 @@ object PackageStrings {
             "（package-manager-cli.ts:936-940）。"
 
     const val NO_PACKAGES = "pi list 报告没有已安装的资源包。"
+    const val LIST_NOT_READY =
+        "pi list 根本没有执行（运行时或引擎未就绪），所以这不是「没有包」，而是「没跑成」："
     const val PROJECT_PACKAGES_HIDDEN =
         "注意：项目的 .pi/settings.json 里声明了资源包，但这次列表没有显示它们——" +
             "项目未获信任时 pi 会把整个项目文档当成空的（settings-manager.ts:405-408），" +
@@ -49,6 +69,69 @@ object PackageStrings {
     const val RUNNING = "正在执行…"
     const val TIMEOUT_NOTE =
         "命令超时已被终止。它可能已经写入了部分文件，请先刷新列表再决定下一步。"
+
+    // --------------------------------------------------- built in vs installed
+    //
+    // E7 (`docs/known-gaps.md` §E): the screen must say which rows the app shipped
+    // itself and which the user installed. pi has no such distinction — see
+    // [PiBuiltinExtension] — so every sentence below states where the app's label
+    // comes from instead of implying pi reported it.
+
+    const val BUILTIN_TITLE = "随 App 内置的扩展（不能通过 pi 卸载）"
+
+    const val BUILTIN_NOTE =
+        "pi 没有「内置扩展」这个概念：<agentDir>/extensions/ 下的一切都被它当成自动发现的用户扩展" +
+            "（package-manager.ts:2352-2362、:2470-2475），和用户自己放进去的文件无法区分；" +
+            "pi list 也只读 settings.json 的 packages（package-manager-cli.ts:970-1002），" +
+            "所以它从来不会列出下面这几个。「内置」这个标注来自 App 自己的资产清单" +
+            "（app/src/main/assets/pi-extensions/，由 DeviceBridgeController 拷进 extensions/），" +
+            "不是 pi 报告的。"
+
+    const val BUILTIN_UNINSTALLABLE =
+        "卸载：pi remove 对这些名字没有用——它们不在 settings.json 的 packages 里，" +
+            "pi 会回 No matching package found 并以退出码 1 结束（package-manager-cli.ts:959-966）。" +
+            "所以这里不提供移除按钮。顺带一句相反的坑：把文件删掉也不会让 pi 感知到什么，" +
+            "而资产安装闸门是内容指纹，标记一致时整棵扩展树都会被跳过（DeviceBridgeController.kt:281-285），" +
+            "所以删掉的内置扩展不会自动回来。"
+
+    const val LIST_SECTION_TITLE = "settings.json 里的资源包（pi list 的全部内容）"
+
+    const val LIST_SECTION_NOTE =
+        "这些是 pi install 写进 settings.json 的 packages 数组的条目，也是 pi list 唯一会列的东西" +
+            "（package-manager-cli.ts:970-1002 读 package-manager.ts:977-1003）。" +
+            "它们和上面的内置扩展是两套东西：装包不会替换内置扩展，卸载它们也不影响内置扩展。"
+
+    /** One line per shipped extension: what it is for, in the app's words. */
+    fun builtinPurpose(name: String): String = when (name) {
+        "pi-android-bridge" -> "设备能力工具（android_* 一整套）：读屏、点按、截屏、通知、剪贴板、导出…"
+        "pi-android-permission-gate" -> "设备工具的授权闸门：android_* 调用先经确认；没有 UI 时默认拒绝"
+        "pi-highlight" -> "代码高亮服务（渲染层走它）"
+        else -> ""
+    }
+
+    /** The three presence states of [PiBuiltinExtension.Presence], as sentences. */
+    fun builtinPresence(presence: PiBuiltinExtension.Presence): String = when (presence) {
+        PiBuiltinExtension.Presence.EngineAgentDir ->
+            "已在引擎读的 agent 目录里：pi 会加载它"
+        PiBuiltinExtension.Presence.RootfsCopyOnly ->
+            "只在 rootfs 副本里：引擎读的是被绑定的那个目录，所以这次 pi 不会加载它"
+        PiBuiltinExtension.Presence.Missing ->
+            "两个可能的目录里都没有：pi 不会加载它，对应的能力会缺失"
+    }
+
+    /**
+     * The two agent directories, printed together on purpose.
+     *
+     * The engine binds `PiPaths.agentDir` over guest `/root/.pi/agent`
+     * (`PiEngineHost.kt:285-294`) while [GuestCommand] binds only the workspace
+     * (`GuestCommand.kt:98-106`), so a host path printed alone would be wrong for one
+     * of the two readers. Naming both is the honest form, and it is what makes the
+     * built-in presence states above readable.
+     */
+    fun agentDirs(engineAgentDir: String, rootfsAgentDir: String): List<String> = listOf(
+        "引擎读的 agent 目录（PiEngineHost 绑定到 guest /root/.pi/agent）：$engineAgentDir",
+        "rootfs 里的同名目录（没有这条绑定的 guest 命令读写的是它）：$rootfsAgentDir",
+    )
 
     const val STDERR_TITLE = "pi 的 stderr（原样）"
     const val STDOUT_TITLE = "pi 的 stdout（原样）"

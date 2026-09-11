@@ -99,6 +99,15 @@ class PiPackageService(
          * (`package-manager-cli.ts:936-940`); nothing at all catches this one.
          */
         val projectPackagesHidden: Boolean = false,
+        /**
+         * Non-null when `pi list` was **never executed** — the runtime or the engine
+         * is missing ([readiness]). [raw] is empty in that case, and an empty `raw`
+         * with no entries is exactly what a successful `pi list` prints when nothing
+         * is installed, so without this field the screen would tell the user "no
+         * packages installed" about a command that never ran. Carries the same
+         * sentence as [stderr].
+         */
+        val notReady: String? = null,
     )
 
     sealed interface Done {
@@ -211,7 +220,16 @@ class PiPackageService(
      * (`package-manager.ts:977-1003`).
      */
     fun list(trust: TrustPass = TrustPass.None, projectTrusted: Boolean = false): Listing {
-        readiness()?.let { return Listing(emptyList(), "", it.summary, emptyList()) }
+        readiness()?.let {
+            // Nothing is executed, so nothing may be reported as "no packages".
+            return Listing(
+                entries = emptyList(),
+                raw = "",
+                stderr = it.summary,
+                argv = emptyList(),
+                notReady = it.summary,
+            )
+        }
         val outcome = guest.run(
             guestCommand = commandLine("list", spec = null, scope = PiPackageScope.User, trust = trust),
             cwd = layout.guestWorkspace,

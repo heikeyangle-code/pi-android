@@ -36,6 +36,7 @@ import androidx.compose.ui.unit.dp
 import app.pi.runtime.PtyLauncher
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
+import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -230,8 +231,10 @@ class PiPackagesController(
         private set
 
     private var entries by mutableStateOf<List<PiPackageEntry>>(emptyList())
+    private var builtins by mutableStateOf<List<PiPackagesUiState.BuiltinRow>>(emptyList())
     private var listRaw by mutableStateOf("")
     private var listUnparsed by mutableStateOf(false)
+    private var listNotReady by mutableStateOf<String?>(null)
     private var projectPackagesHidden by mutableStateOf(false)
     private var log by mutableStateOf<List<PiPackagesUiState.LogLine>>(emptyList())
     private var panel by mutableStateOf<PiPackagesUiState.TrustPanel?>(null)
@@ -242,15 +245,18 @@ class PiPackagesController(
     private var sessionTrustAnswer by mutableStateOf<Boolean?>(null)
 
     fun state(lifecycleState: ExtensionLifecycle.State): PiPackagesUiState = PiPackagesUiState(
-        installedRoot = layout.agentTruthDir.absolutePath,
+        engineAgentDir = layout.agentMirrorDir.absolutePath,
+        rootfsAgentDir = layout.agentTruthDir.absolutePath,
         guestWorkspace = layout.guestWorkspace,
         spec = spec,
         scope = scope,
         busy = busy,
         lifecycle = lifecycleState,
         entries = entries,
+        builtins = builtins,
         listRaw = listRaw,
         listUnparsed = listUnparsed,
+        listNotReady = listNotReady,
         projectPackagesHidden = projectPackagesHidden,
         log = log,
         trust = panel?.copy(promptVisible = promptVisible),
@@ -272,6 +278,7 @@ class PiPackagesController(
         busy = true
         try {
             val facts = readTrust()
+            builtins = io { readBuiltins() }
             val listing = io {
                 service.list(
                     trust = PiPackageService.TrustPass.None,
@@ -280,10 +287,17 @@ class PiPackagesController(
             }
             entries = listing.entries
             listRaw = listing.raw
-            listUnparsed = listing.entries.isEmpty() && listing.raw.isNotBlank()
+            listUnparsed = listing.notReady == null && listing.entries.isEmpty() && listing.raw.isNotBlank()
+            listNotReady = listing.notReady
             projectPackagesHidden = listing.projectPackagesHidden
             record(
-                headline = "pi list：${listing.entries.size} 项",
+                headline = if (listing.notReady != null) {
+                    "pi list 未执行：${listing.notReady}"
+                } else {
+                    "pi list：${listing.entries.size} 项；内置扩展 " +
+                        "${builtins.count { it.presence == PiBuiltinExtension.Presence.EngineAgentDir }}" +
+                        "/${builtins.size} 个在引擎的 agent 目录里"
+                },
                 command = listing.argv.joinToString(" "),
                 stdout = listing.raw,
                 stderr = listing.stderr,
@@ -429,6 +443,32 @@ class PiPackagesController(
 
     private class TrustFacts(val trusted: Boolean)
 
+    /**
+     * Which of the app's shipped extensions are on disk, and in which of the two
+     * agent directories.
+     *
+     * This is a plain filesystem look at two host paths, no guest command: the app
+     * put those files there itself (`DeviceBridgeController.kt:264-306` writes both
+     * roots), so asking pi would be asking the wrong authority — pi has no concept of
+     * a built-in extension and reports none of them in `pi list`. The two booleans
+     * are fed to [PiBuiltinExtension.presenceIn], which is pure and covered by
+     * `PackagesPureLogicCheck`.
+     */
+    private fun readBuiltins(): List<PiPackagesUiState.BuiltinRow> {
+        val engineExtensions = File(layout.agentMirrorDir, EXTENSIONS_DIR)
+        val rootfsExtensions = File(layout.agentTruthDir, EXTENSIONS_DIR)
+        return PiBuiltinExtension.SHIPPED.map { extension ->
+            PiPackagesUiState.BuiltinRow(
+                extension = extension,
+                guestPath = extension.guestEntryPath(layout.guestAgentDir),
+                presence = extension.presenceIn(
+                    engineAgentDirHasEntry = File(engineExtensions, extension.entryUnderExtensions).isFile,
+                    rootfsHasEntry = File(rootfsExtensions, extension.entryUnderExtensions).isFile,
+                ),
+            )
+        }
+    }
+
     private suspend fun readTrust(): TrustFacts {
         val canonical = io {
             runCatching { trustRepository.canonicalizeGuestPath(layout.guestWorkspace) }
@@ -509,5 +549,8 @@ class PiPackagesController(
 
     private companion object {
         const val MAX_LOG_LINES = 20
+
+        /** pi's auto-discovery directory under the agent dir (`package-manager.ts:2386`). */
+        const val EXTENSIONS_DIR = "extensions"
     }
 }

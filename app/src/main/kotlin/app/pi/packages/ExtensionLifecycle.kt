@@ -241,6 +241,26 @@ class ExtensionLifecycle {
         return true
     }
 
+    /**
+     * The engine refused a restart the user had already confirmed, so nothing was
+     * touched and the request goes back to waiting.
+     *
+     * [requestRestart] cannot do this itself: from [State.Restarting] it answers
+     * [RequestOutcome.BusyWithPackageCommand] and deliberately leaves the state alone,
+     * because a *real* restart must not be interrupted. That is right for a restart in
+     * progress and wrong for one the engine declined before touching anything — and
+     * [EngineRestartCoordinator.confirm] used to take exactly that path, so the screen
+     * parked on "正在重启引擎…" (the Restarting branch of `PiPackagesScreen`'s
+     * lifecycle card renders a note and no button at all).
+     *
+     * @param turnNote the engine's own sentence, so the screen can say why
+     *        (`PiEngineHost.Restart.RefusedTurnRunning.detail`).
+     */
+    fun restartRefused(turnNote: String) {
+        val now = _state.value as? State.Restarting ?: return
+        _state.value = State.AwaitingIdle(changes = now.changes, turnNote = turnNote)
+    }
+
     fun restartSucceeded() {
         _state.value = State.Ready("引擎已重启，新资源已加载。")
         lastMessage = null

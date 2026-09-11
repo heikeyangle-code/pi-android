@@ -272,6 +272,35 @@
 - 无障碍截屏（API 34 安全窗口限制）、后台启动 Activity 分享/打开、跨安装读取 MediaStore 导出文件、失焦时读剪贴板。
 - shell 后端只有 app uid（未接 Shizuku / ADB 无线调试）。
 
+#### C3.1 「设备能力」界面的静态一致性审计（`applied (uncommitted)`，未上 CI）
+
+把界面上每一处**声称**（这组要什么、现在能不能用、为什么不能用）与 `DeviceCapabilityStore`（唯一权威）、
+`DeviceShellGuard`、`/app/health` 的**真实**状态逐条核对。改动只有一处：
+`app/src/main/kotlin/app/pi/ui/device/DeviceCapabilityScreen.kt`。**真机行为仍然未验证**——这一节修的是"界面说的和代码做的不一致"，
+不是 C3 本身。
+
+| # | 界面声称（改前） | 真实行为 | 依据 | 状态 |
+|---|---|---|---|---|
+| 1 | Shell 卡「当前 Shell 后端」直接显示 `shizuku.backendLabel`，Shizuku 未就绪时字面为「Shizuku（未安装/未运行/未授权）」 | 此时执行命令的是 `AppUidShellBackend`（应用自身 uid）；`DeviceShellGuard.active()` 取第一个 available | `DeviceShizuku.kt:284-291`、`DeviceShell.kt:188-190`、`/app/health.shellBackends` | applied (uncommitted) |
+| 2 | 无障碍卡「前往系统设置」 | `runCatching { startActivity(...) }` 丢弃结果：没有该 Activity 时点按无任何反应、无提示 | 改前 `DeviceCapabilityScreen.kt:217-219` | applied (uncommitted) |
+| 3 | 无障碍组列「截屏并把图片交给模型查看」且徽章「可用」 | `screenshot` 在 API<30 直接 UNSUPPORTED（minSdk 26，Android 8/9 必现）；`/app/health.screenshotSupported = SDK>=R` | `DeviceUiAutomation.kt:609-616`、`DeviceBridgeRouter.kt:326`、`DeviceCapability.kt:67` | applied (uncommitted) |
+| 4 | 位置·传感器·相机卡只有一句静态文案，而 `cameraPrecondition()` 的 hint 叫用户"点「授予相机权限」" | 那个按钮**不存在**；全树没有任何代码请求 CAMERA / ACCESS_*_LOCATION；模型会原样转述，用户找不到入口 | `DeviceCapabilityStore.kt:268-278`（hint 在 `:275-276`）；`grep -rn "Manifest.permission.CAMERA\|ACCESS_FINE_LOCATION" app/src/main/kotlin` → 仅断言与判断 | applied (uncommitted) |
+| 5 | 基础组默认开、徽章「可用」 | API 33+ 缺 `POST_NOTIFICATIONS` 时 `android_notify` 每次必拒，而全树无人请求该权限，卡上无一字 | `DeviceSystemActions.kt:103-112`、`DeviceCapabilityStore.kt:239-245` | applied (uncommitted) |
+| 6 | ApprovalsCard 显示扩展上报的审批状态 | 该 item 不读任何轮询状态，LazyColumn item 只组合一次 → 屏幕开着时**永不刷新** | 改前 `DeviceCapabilityScreen.kt:679-697`；`DeviceApprovalLedger` 只在 `POST /app/gate/report` 时变 | applied (uncommitted) |
+
+修完的形态：后端标签改读 `DeviceShellGuard.active().label`（Shizuku 不可用的原因仍由 `DeviceShizuku.status` 的 `note` 单独说明）；
+无障碍设置页打不开时写入可见提示；API<30 显示"截屏需要 Android 11+"；相机/定位/通知三条**按真实授予状态**显示并提供请求按钮
+（请求后回读 store，不假设弹窗被接受）；ApprovalsCard 由轮询循环喂数据。
+
+**核过、一致（未改）**：设备桥卡「仅监听 127.0.0.1」（`DeviceBridgeHttp.kt:131`）、「已监听/未运行」（`DeviceBridgeController.isRunning()/lastReport`）、
+ShellPolicyCard 全部文案直读 `DeviceShellGuard`（`DeviceShell.kt:590-614`）、无障碍「服务未运行」与 store 同源（`DeviceCapabilityStore.kt:156-166`）、
+存储卡的旧式权限提示（`DeviceCapabilityStore.kt:223-236`）、顶部「被关闭的能力不会静默失效」（`DeviceCapabilityStore.kt:111-148` + `DeviceBridgeRouter.withCapability`）、
+`DeviceCapabilityEntryRow` 的「N/M 组能力可用」（返回设置页会重组重算）。
+
+**记账、不修（不在本次范围）**：`ShellPolicyCard` 的危险操作枚举原先漏了 `android_keyevent`（`assets/pi-extensions/pi-android-bridge/danger.ts:47-79`）——文案里已补，
+但那份清单仍在 UI 里硬编码、真相在 TS 扩展里，属"两份真相"残余；`DeviceShizuku.addPermissionResultListener` 每次进屏注册且不移除（listener 泄漏，`bridge/**`）；
+设备桥审计尾行只在刷新/toggle 时更新（有可见刷新按钮，可接受）。
+
 ### C4. 代码高亮服务
 - 方案：扩展在引擎进程内起回环 HTTP 服务，用**原版 highlight.js 10.7.3**（`--mode rpc` 下 pi 自己并不加载它）。
 - **未验证**：真机上 Node 侧加载耗时与内存增量、回环往返延迟、引擎未启动时的降级表现。
@@ -320,7 +349,7 @@
 2. 把两句事实写进界面文案：**`models.json` 完全没有锁**、**"扫描模型"不是 pi 的能力而是 App 侧知识**（常量已在 `PiModelScanner`/`PiProviderPresets` 注释里）。
 
 **状态（applied, uncommitted，未上 CI）**：界面已写，`app/src/main/kotlin/app/pi/ui/settings/PiCredentialScreen.kt`（四段：选厂商 / 粘 Key / 检测并扫描 / 勾选并保存；保存成功后走 `ExtensionLifecycle.installSucceeded` + `EngineRestartCoordinator` 确认式重启）。两条 UI 补充都做了：元数据取自 `ui/PiRoot.kt:200` 传入的 `get_available_models` 快照，匹配不上的标"默认值，可改"；`models.json` 无锁与"扫描是 App 侧知识"两句写在界面说明里（依据 `core/model-runtime.ts:180`、`packages/ai/src/models.ts:763`/`:831`）。
-**未做完的一处**：`PiCredentialService.preferences()` 把 `settings.json` 只写到 `agentTruthDir`（rootfs 侧），而 `PiEngineHost.kt:285-295` 现在把 `paths.agentDir` 绑到了 guest 的 `/root/.pi/agent` —— 所以保存的第三步写的是一个 pi 不读、App 也不读的文件（`auth.json`/`models.json` 因为 `PiAuthStorage`/`PiModelsFile` 写两份而不受影响）。修法是 `PiCredentialService.kt:59` 改成 `agentDir = mirrorAgentDir`（1 处，属 packages 的文件）。
+**未做完的一处 —— 已修（applied, uncommitted，未上 CI）**：`PiCredentialService.preferences()` 曾把 `settings.json` 只写到 `agentTruthDir`（rootfs 侧），而 `PiEngineHost.kt:285-294` 现在把 `paths.agentDir` 绑到了 guest 的 `/root/.pi/agent` —— 保存的第三步写的是一个 pi 不读、App 也不读的文件（`auth.json`/`models.json` 因为 `PiAuthStorage`/`PiModelsFile` 写两份而不受影响）。现改为 `packages/PiCredentialService.kt:69` 的 `agentDir = mirrorAgentDir`（即绑定源，也就是 `ui/PiSessionViewModel.kt:325-328` 那个 settings store 读的同一份）。同一前提还牵出 §K5 里 TrustRepository 的三处修正。
 
 **之后**：I2（20 个动作行）→ I9（删会话 + `--continue`，先读 `cli.ts` 确认 `-c` 语义）→ I11（环境变量；`PiLaunchOptions` 已被接入 `PiEngineHost`，别重复实现）。
 
@@ -384,6 +413,15 @@ pi 有（见 `docs/settings.md`、`docs/usage.md`），App 没有。
 - 用户会**以为自己装过** `pi-android-bridge`，删掉它 → **设备能力全部消失**，而 Kotlin 侧服务还在跑，症状莫名其妙；
 - 内置扩展应当**不可卸载**，并标明"随 App 提供"。
 （这一点随 B5 的界面一起做。）
+
+**状态（applied, uncommitted，未上 CI）**：界面已区分，**结论是「pi 自己不区分」**，界面照实这么写。
+
+- 数据源只有 App 自己：`packages/PiPackageModel.kt:63-119` 的 `PiBuiltinExtension` 是 `app/src/main/assets/pi-extensions/` 的转写（8 文件 → 3 个入口），入口文件按 pi 的发现规则取——`resolveExtensionEntries`（`package-manager.ts:557-585`）只在子目录含 `index.ts`/`index.js` 时接受该目录，所以两个目录扩展显示为 `index.ts`，单文件扩展显示为自身；安装器写的 `.pi-android-assets` 因为点号开头被 `collectAutoExtensionEntries` 跳过（`:604`）。
+- **「内置」这个标注必须声明来源**：pi 把 `<agentDir>/extensions/` 下的一切都当成自动发现的用户扩展（`source:"auto"`/`scope:"user"`，`package-manager.ts:2352-2362`，收集于 `:2470-2475`），和用户手放的文件无法区分；`pi list` 只读 `settings.json` 的 `packages`（`package-manager-cli.ts:970-1002` → `package-manager.ts:977-1003`），内置扩展永远不会出现在里面。所以界面写的是"这个标注来自 App 自己的资产清单，不是 pi 报告的"。
+- 存在性用**纯文件检查**分三态（`packages/PiPackagesHost.kt:457-470`：`engineAgentDirHasEntry`/`rootfsHasEntry` → `PiBuiltinExtension.presenceIn`）：引擎目录里 / 只在 rootfs 副本 / 两个都没有。三态而不是两态，因为两个 agent 目录不是一回事（见 §K5）。
+- **不可卸载**是构造上成立的：内置扩展不在 `settings.json` 的 `packages` 里，`pi remove <名字>` 只会回 `No matching package found` 并以退出码 1 结束（`package-manager-cli.ts:959-966`，`package-manager.ts:1054-1057` 的 `removeSourceFromSettings` 返回 false）。所以内置区块**没有移除按钮**。界面同时写明反向的坑：删文件也不会被 pi 感知，而资产安装闸门是内容指纹，标记一致时整棵扩展树都会被跳过（`bridge/DeviceBridgeController.kt:281-285`），删掉的内置扩展不会自动回来。
+- 界面位置：`packages/PiPackagesScreen.kt:235-328`（`BuiltinCard`/`BuiltinRowView`/`ListSectionHeading`），文案在 `packages/PackageStrings.kt:73-131`；`pi list` 的行上方加了"这些才是 `settings.json` 的 packages"的来源标题，两套东西不再混成一张列表。
+- 覆盖：`app/src/test/kotlin/app/pi/packages/PackagesPureLogicCheck.kt:389-441`（名单、入口规则、guest 路径、存在性真值表）。
 
 ### E8. 终端方案的决策依据（记录，不是待办）
 工作区终端是**手写的 VT 模拟器**（3265 行），但**这个选型从来没有做过"买 vs 造"的对比**——是子代理自行决定、我未监督的。
@@ -505,12 +543,15 @@ pi 的 TUI 会按扩展名分支（`.jsonl` → `exportToJsonl`，`interactive-m
 它们在设置目录里声明，但**没有任何代码读它们**——真正的强制在 `DeviceCapabilityStore` 的 SharedPreferences。
 → 设置页会显示一套**和「设备能力」页不一致**的开关，**两边可以互相矛盾**；而 `SettingsHome.kt:80-82` 甚至声称没有这类键。
 **这一条要优先修**：授权只能有一个真相来源。
+**状态（已处置）**：7 条 `app.device.*` 与 `G_DEVICE` 组已从注册表删除，`SettingsHome.kt` 写明 `DeviceCapabilityStore` 是唯一权威。
+删掉第二份开关**不等于**那一页就说真话了：同一页上仍有 6 处"界面声称 vs 真实行为"不一致（错的 Shell 后端标签、不存在的相机权限按钮、
+API<30 的截屏、默认开的基础组缺通知权限、永不刷新的审批卡、静默失败的设置页跳转），见 **§C3.1**，`applied (uncommitted)`。
 
 ### I11. 环境类能力缺失（CLI-ONLY / MISSING）
 离线模式、`--system-prompt`、`PI_CACHE_RETENTION=long` —— **环境变量映射是写死的**（`PiEngineHost.kt:250-258`）。
 
 ### 审查自己标为 UNVERIFIED 的 6 项
-设备能力"两份真相"是否已在并发重写中被消除（静态不一致**已确认**）；`/share` 在 Android 上是否可行；终端专属行在真机是否可用（C2）；`hideThinkingBlock` 是否存在 grep 看不见的读取；"无消费者"全量扫描（它逐键验证了 13 个）；`SessionTreeScreen` 是否新增了非 fork 动作。**§2 的结论都不依赖这些未验证项。**
+设备能力"两份真相"是否已在并发重写中被消除（静态不一致**已确认**；现已消除，见 I10 状态，并追加了界面一致性审计 §C3.1）；`/share` 在 Android 上是否可行；终端专属行在真机是否可用（C2）；`hideThinkingBlock` 是否存在 grep 看不见的读取；"无消费者"全量扫描（它逐键验证了 13 个）；`SessionTreeScreen` 是否新增了非 fork 动作。**§2 的结论都不依赖这些未验证项。**
 
 ---
 
@@ -568,7 +609,7 @@ pi 的 TUI 会按扩展名分支（`.jsonl` → `exportToJsonl`，`interactive-m
 - `RuntimeProvisioner.kt` 全文没有任何一处安装或软链 git（只有 node/npm/npx 与 `pi` 包装脚本）。
 - `ubuntu-base-24.04.3-base-arm64.tar.gz` 是 Ubuntu 的**最小 base**，本身不含 git。
 - `app/src/main/assets/runtime/` 在仓库里是**空目录**（引擎包 `pi-engine.tar.gz` 不入库），所以"引擎包里是否捆了 git"无法从仓库核对——但引擎包是 node_modules 树，正常不含 git 二进制。
-- 而 `PackageStrings.SPEC_HINT` 正在告诉用户可以用 `git:github.com/user/repo@v1`。**收尾条件**：把 git 加进 runtime artifacts + provisioner（属 `runtime/**` 所有者），或在 UI 上把 git 源标成"需要先装 git，当前不可用"。
+- 而 `PackageStrings.SPEC_HINT` 正在告诉用户可以用 `git:github.com/user/repo@v1`。**收尾条件**：把 git 加进 runtime artifacts + provisioner（属 `runtime/**` 所有者），或在 UI 上把 git 源标成"需要先装 git，当前不可用"。**UI 那一半已做（applied, uncommitted，未上 CI）**：`packages/PackageStrings.kt:41` 的 `SPEC_HINT` 不再列出 `git:`，改成 npm/绝对路径；`PackageStrings.kt:48-50` 的 `SPEC_GIT_UNAVAILABLE`（渲染在输入框下方，`packages/PiPackagesScreen.kt:586-593`）明说"pi 支持 git 源，但这个运行时里没有 git"。**剩下的一半仍留给 runtime owner**：加 git 或让 entry 变成可用。
 - 真机确认一句即可：`... bash -lc 'command -v git || echo NO-GIT'`。
 
 ### K3. 网络与路径
@@ -583,3 +624,29 @@ pi 的 TUI 会按扩展名分支（`.jsonl` → `exportToJsonl`，`interactive-m
 - 本次新增 `app/src/main/kotlin/app/pi/packages/PiPackagesHost.kt`：`PiPackagesHost`（可挂载的整屏，含标题栏与返回）、`PiPackagesController`（状态 + guest 调用 → `PiPackagesUiState`）、`PiPackagesEntryRow`（入口行）。restart 走 `EngineRestartCoordinator`（未接引擎时不假装能重启），信任决定只经 `PiProjectTrustPrompt` 写入。
 - settings 侧最小 patch 见交付报告（`PiSettingsStack.kt` + `SettingsHome.kt`，共 3 处）。
 - 次要：`PiSettingsRegistry.kt:759` 的 `packages` 行让用户**直接编辑 `settings.json` 的数组**，而 `PiPackageService` 的 KDoc 已论证"只改数组 = 配置一个磁盘上不存在的包"（B5）。建议把该行改成只读展示并指向包管理页。
+
+---
+
+### K5. 装包命令与引擎的 agent 目录绑定不一致 —— **已修（applied, uncommitted，未上 CI）**
+
+**症状（修复前）**：界面里 `pi install 'npm:foo'` 打印 `Installed npm:foo`、退出码 0、`pi list` 里也出现，但引擎什么都不加载；运行期更新（`RuntimeProvisioner.wipe()`）之后这些包连同 rootfs 一起消失。**没有错误、没有警告**——"静默无效"的形状。
+
+**根因（两个 proot 各自绑各自的）**：
+- 引擎：`PiEngineHost.kt:285-294` 的 `extraBinds` 是 workspace **+** `paths.agentDir.absolutePath to guestAgentDir`，并在 `:302-303` 钉住 `PI_CODING_AGENT_DIR`（`guestAgentDir` 定义在 `:170`）。
+- 包命令：`GuestCommand` 的 `ProotCommand.build` 只传 `workspaceBind()`（旧 `:98-106`），也**不设** `PI_CODING_AGENT_DIR`。
+
+proot 的 bind 是**每次调用**的事。于是同一条 host 路径在引擎里是 `/root/.pi/agent`，在包命令里是 rootfs 自带的那个 `/root/.pi/agent`：安装把 `settings.json` 与 `npm/` 写进了一份，引擎读的是另一份。pi 自己看不出这个差别（它只认自己的 agentDir，两边都"对"），只能由 App 保证一致。
+
+**修法**：
+- `packages/AgentLayout.kt:54` `guestAgentDir` 改用契约常量；`:110` `agentDirBind()` 产出与引擎**同一形状**的 bind；`:118` `ensureAgentMirrorDir()` 先建目录（proot 拒绝绑定不存在的 host 路径，而引擎没 boot 过时该目录还不存在）。
+- `packages/GuestCommand.kt:198-206` `bindList()` 传 workspace + agent dir（引擎同序），并用 `PiAgentDirContract.bindsAgentDir` **断言**一致；`:219-222` `agentDirEnv()` 补上与引擎相同的两个环境变量。
+- 自证装置：`packages/PiPackageModel.kt:137-160` 的 `PiAgentDirContract`（纯逻辑），覆盖在 `PackagesPureLogicCheck.kt:443-487`（引擎那对 bind 通过；只绑 workspace、从 rootfs 绑、guest 路径写错都判失败；顺序无关）。
+
+**同一前提（"agent dir 没被绑定"）留下的连带修正**：
+1. `packages/TrustRepository.kt:57-71`：`engineFile`（绑定源）改为**权威**，`rootfsFile` 降级为兼容写入；`read()` 改为先读 `engineFile`。旧顺序有两个真实后果：**引擎那一份损坏永远不会被报出来**（而 pi 启动时会对着它抛错），以及 **`withLock` 的锁加在 pi 不加锁的那个文件旁**（`:370`，互斥等于没有）。`repairInvalidStore` 的归档对象也跟着改。
+2. `packages/PiCredentialService.kt:69`：改为写绑定源（详见 §E9 那一行）。
+3. `publishIntoRootfs()`（`TrustRepository.kt:247`）现在**没有任何调用方**，绑定生效后也不再需要；保留但已注明，建议由 owner 删除。
+
+**同一批审计发现、已单独修掉的界面问题**（都不在 K5 这条绑定本身）：`EngineRestartCoordinator` 拒绝重启后卡在 `Restarting`（`ExtensionLifecycle.restartRefused`）；`pi list` 未执行却显示"没有包"（`Listing.notReady`）；`npm:foo@v1.2.3` 被判成"可被 update 移动"（`PiPackageSource.isExactNpmVersion` 对齐 node-semver strict FULL）；`SPEC_HINT` 曾宣传 `git:` 源（已去掉，见 §K2）。**全部为 applied (uncommitted)，未上 CI。**
+
+**未验证**：本机不编译、不跑 device（规矩）；`bindsAgentDir` 的断言只在纯逻辑层被覆盖；"proot 能绑定刚 `mkdirs` 出来的目录"只有源码级把握。**真机验证点**：装一个 npm 包 → 重启引擎 → 该包的工具/资源真的出现（修复前不会）。

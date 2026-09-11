@@ -56,7 +56,17 @@ class PiCredentialService(
         mirror = PiConfigFiles.modelsFile(mirrorAgentDir),
     )
 
-    private fun preferences() = PiEnginePreferences(agentDir = truthAgentDir, workspace = workspace)
+    /**
+     * The selection file must be the one pi reads, i.e. the **durable** agent dir:
+     * `PiEngineHost` binds it over guest `/root/.pi/agent` (`PiEngineHost.kt:285-294`),
+     * and the app's own settings store addresses the same directory
+     * (`PiSessionViewModel.kt:325-328` reads `host.paths().agentDir`). Writing the
+     * rootfs copy instead produced a save that reported success and changed nothing
+     * visible: `defaultProvider`/`defaultModel` landed in a file the bind shadows.
+     * (`auth.json` and `models.json` below write both copies, which is why only this
+     * step had the bug.)
+     */
+    private fun preferences() = PiEnginePreferences(agentDir = mirrorAgentDir, workspace = workspace)
 
     // -------------------------------------------------------------- prefill
 

@@ -39,7 +39,17 @@ import app.pi.ui.theme.PiTheme
  * rather than of a button's onClick.
  */
 data class PiPackagesUiState(
-    val installedRoot: String = "",
+    /**
+     * Host path of the agent directory the **engine** reads: `PiPaths.agentDir`,
+     * which `PiEngineHost.kt:285-294` binds over guest `/root/.pi/agent`.
+     */
+    val engineAgentDir: String = "",
+    /**
+     * Host path of the rootfs copy, `<rootfs>/root/.pi/agent`. A guest command run
+     * through [GuestCommand] reads *this* one, because that proot argv binds only the
+     * workspace (`GuestCommand.kt:98-106`).
+     */
+    val rootfsAgentDir: String = "",
     /** The workspace whose trust decision is being shown, in guest spelling. */
     val guestWorkspace: String = "",
     val spec: String = "",
@@ -47,9 +57,21 @@ data class PiPackagesUiState(
     val busy: Boolean = false,
     val lifecycle: ExtensionLifecycle.State = ExtensionLifecycle.State.Idle,
     val entries: List<PiPackageEntry> = emptyList(),
+    /**
+     * The extensions the APK itself ships, with the presence the app could verify.
+     * pi has no "built in" concept at all — the label is the app's, and the UI says
+     * so; see [PiBuiltinExtension].
+     */
+    val builtins: List<BuiltinRow> = emptyList(),
     /** `pi list`'s raw stdout, shown whenever parsing found nothing. */
     val listRaw: String = "",
     val listUnparsed: Boolean = false,
+    /**
+     * Non-null when `pi list` **never ran** (runtime or engine missing). Deliberately
+     * separate from an empty list: "nothing was executed" and "executed, nothing
+     * installed" are different facts and must not share one sentence.
+     */
+    val listNotReady: String? = null,
     /**
      * `.pi/settings.json` lists packages that this listing could not show, because
      * the project is untrusted. `pi list` exits 0 in that case and prints nothing
@@ -63,6 +85,16 @@ data class PiPackagesUiState(
     /** Non-null when a trust record is invalid and pi would refuse to start. */
     val trustInvalid: String? = null,
 ) {
+
+    /**
+     * One shipped extension as the app could verify it. [guestPath] is the guest
+     * spelling of the file pi loads, so the user can find it in the terminal tab.
+     */
+    data class BuiltinRow(
+        val extension: PiBuiltinExtension,
+        val guestPath: String,
+        val presence: PiBuiltinExtension.Presence,
+    )
 
     data class LogLine(
         val headline: String,
@@ -139,6 +171,8 @@ fun PiPackagesScreen(
         state.trustInvalid?.let { item { InvalidTrustCard(it, state.busy, onTrustRepair) } }
         item { LifecycleCard(state, onRestartClick, onRestartConfirm, onRestartCancel) }
         item { InstallCard(state, onSpecChange, onScopeChange, onInstall, onRefresh) }
+        item { BuiltinCard(state.builtins) }
+        item { ListSectionHeading() }
 
         if (state.projectPackagesHidden) {
             item {
@@ -151,10 +185,18 @@ fun PiPackagesScreen(
         }
         if (state.entries.isEmpty()) {
             item {
+                // Three different facts, three different sentences. "Nothing ran" must
+                // never read as "nothing is installed" — that is the lie this branch
+                // used to tell when the runtime was missing.
+                val notReady = state.listNotReady
                 Text(
-                    text = if (state.listUnparsed) PackageStrings.LIST_UNPARSED else PackageStrings.NO_PACKAGES,
+                    text = when {
+                        notReady != null -> PackageStrings.LIST_NOT_READY + notReady
+                        state.listUnparsed -> PackageStrings.LIST_UNPARSED
+                        else -> PackageStrings.NO_PACKAGES
+                    },
                     style = MaterialTheme.typography.bodySmall,
-                    color = if (state.listUnparsed) palette.warning else palette.muted,
+                    color = if (notReady != null || state.listUnparsed) palette.warning else palette.muted,
                 )
             }
         }
@@ -177,14 +219,111 @@ private fun Header(state: PiPackagesUiState) {
         Text(PackageStrings.TITLE, style = MaterialTheme.typography.titleLarge, color = palette.text)
         Spacer(Modifier.height(4.dp))
         Text(PackageStrings.SUBTITLE, style = MaterialTheme.typography.bodySmall, color = palette.muted)
-        if (state.installedRoot.isNotBlank()) {
+        if (state.engineAgentDir.isNotBlank() || state.rootfsAgentDir.isNotBlank()) {
             Spacer(Modifier.height(4.dp))
+            PackageStrings.agentDirs(state.engineAgentDir, state.rootfsAgentDir).forEach { line ->
+                Text(
+                    text = line,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = palette.dim,
+                )
+            }
+        }
+    }
+}
+
+// ------------------------------------------------------------- built in block
+
+/**
+ * The extensions the app ships, marked as the app's own claim rather than pi's.
+ *
+ * There is no remove button here *by construction*: pi does not know these are
+ * packages (`pi list` never shows them) and `pi remove <name>` would answer
+ * `No matching package found` with exit code 1
+ * (`package-manager-cli.ts:959-966`). Offering a button for that would be the
+ * "the UI says it can, and it cannot" shape this project keeps paying for.
+ */
+@Composable
+private fun BuiltinCard(rows: List<PiPackagesUiState.BuiltinRow>) {
+    if (rows.isEmpty()) return
+    val palette = PiTheme.palette
+    Surface(color = palette.cardBg, shape = PiShapes.card) {
+        Column(Modifier.fillMaxWidth().padding(12.dp)) {
             Text(
-                text = "pi 的 agent 目录：${state.installedRoot}",
+                PackageStrings.BUILTIN_TITLE,
+                style = MaterialTheme.typography.titleSmall,
+                color = palette.text,
+            )
+            Spacer(Modifier.height(6.dp))
+            Text(
+                PackageStrings.BUILTIN_NOTE,
+                style = MaterialTheme.typography.labelSmall,
+                color = palette.muted,
+            )
+            rows.forEach { row -> BuiltinRowView(row) }
+            Spacer(Modifier.height(10.dp))
+            Text(
+                PackageStrings.BUILTIN_UNINSTALLABLE,
                 style = MaterialTheme.typography.labelSmall,
                 color = palette.dim,
             )
         }
+    }
+}
+
+@Composable
+private fun BuiltinRowView(row: PiPackagesUiState.BuiltinRow) {
+    val palette = PiTheme.palette
+    val presenceColor = when (row.presence) {
+        PiBuiltinExtension.Presence.EngineAgentDir -> palette.success
+        PiBuiltinExtension.Presence.RootfsCopyOnly -> palette.warning
+        PiBuiltinExtension.Presence.Missing -> palette.error
+    }
+    Spacer(Modifier.height(10.dp))
+    Surface(color = palette.infoBg, shape = PiShapes.cardInner) {
+        Column(Modifier.fillMaxWidth().padding(10.dp)) {
+            Text(
+                row.extension.name,
+                style = MaterialTheme.typography.labelLarge,
+                color = palette.text,
+            )
+            val purpose = PackageStrings.builtinPurpose(row.extension.name)
+            if (purpose.isNotEmpty()) {
+                Spacer(Modifier.height(2.dp))
+                Text(purpose, style = MaterialTheme.typography.labelSmall, color = palette.muted)
+            }
+            Spacer(Modifier.height(2.dp))
+            Text(
+                PackageStrings.builtinPresence(row.presence),
+                style = MaterialTheme.typography.labelSmall,
+                color = presenceColor,
+            )
+            Spacer(Modifier.height(2.dp))
+            Text(row.guestPath, style = MaterialTheme.typography.labelSmall, color = palette.dim)
+        }
+    }
+}
+
+/**
+ * The heading over the `pi list` rows, so the two origins are visibly two lists:
+ * this one is what `pi install` wrote into `settings.json`'s `packages`, and it is
+ * the whole of what `pi list` reports (`package-manager-cli.ts:970-1002`).
+ */
+@Composable
+private fun ListSectionHeading() {
+    val palette = PiTheme.palette
+    Column(Modifier.fillMaxWidth()) {
+        Text(
+            PackageStrings.LIST_SECTION_TITLE,
+            style = MaterialTheme.typography.titleSmall,
+            color = palette.text,
+        )
+        Spacer(Modifier.height(2.dp))
+        Text(
+            PackageStrings.LIST_SECTION_NOTE,
+            style = MaterialTheme.typography.labelSmall,
+            color = palette.muted,
+        )
     }
 }
 
@@ -443,6 +582,14 @@ private fun InstallCard(
                 singleLine = true,
                 enabled = !state.busy,
                 modifier = Modifier.fillMaxWidth(),
+            )
+            // Kept out of the label: a field label that long is clipped on a phone,
+            // and the clarification has to be readable rather than truncated.
+            Spacer(Modifier.height(4.dp))
+            Text(
+                text = PackageStrings.SPEC_GIT_UNAVAILABLE,
+                style = MaterialTheme.typography.labelSmall,
+                color = palette.warning,
             )
             Spacer(Modifier.height(8.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

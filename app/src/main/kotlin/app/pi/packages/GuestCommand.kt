@@ -47,6 +47,13 @@ import java.util.concurrent.TimeUnit
  * because a divergence between how the engine is launched and how `pi install` is
  * launched would be invisible until a user installed a package that then behaved
  * differently from the same package installed by hand.
+ *
+ * That divergence had already happened, and this is where it was fixed: the engine
+ * binds the durable agent dir over guest `/root/.pi/agent` (`PiEngineHost.kt:285-294`,
+ * with `PI_CODING_AGENT_DIR` at `:302`), and this command did not — so `pi install`
+ * wrote a `settings.json` the running engine never read, reported success, and
+ * changed nothing. [bindList] now passes the same two binds and [agentDirEnv] the
+ * same two variables, and asserts the agreement rather than restating it.
  */
 class GuestCommand(private val layout: AgentLayout) {
 
@@ -100,11 +107,12 @@ class GuestCommand(private val layout: AgentLayout) {
             guestCommand = guestCommand,
             cwd = cwd,
             storage = Environment.getExternalStorageDirectory(),
-            // The workspace is the only extra bind the engine uses; `-l` writes
-            // `<cwd>/.pi/settings.json`, so the same bind is required here.
-            extraBinds = listOf(layout.workspaceBind()),
+            extraBinds = bindList(),
         )
-        val env = ProotCommand.environment(layout.paths, extra = ENV + extraEnv)
+        val env = ProotCommand.environment(
+            layout.paths,
+            extra = ENV + agentDirEnv() + extraEnv,
+        )
 
         val process = try {
             ProcessBuilder(argv)
@@ -169,6 +177,49 @@ class GuestCommand(private val layout: AgentLayout) {
         thread.start()
         return thread
     }
+
+    /**
+     * The extra binds: the workspace **and the agent dir**, the same two the engine
+     * passes and in the same order (`PiEngineHost.kt:285-294`). `-l` writes
+     * `<cwd>/.pi/settings.json`, so the workspace bind is required; `pi install`
+     * without `-l` writes `<agentDir>/settings.json` and installs into
+     * `<agentDir>/npm`, so the agent bind is required too.
+     *
+     * ## Why this is not redundant with the engine's bind
+     *
+     * It is a *different process*. proot binds are per-invocation, so this command
+     * starts with the rootfs's own `/root/.pi/agent` unless it says otherwise — while
+     * the running engine, launched with its own bind, reads the durable directory.
+     * Before this bind existed the app therefore installed into one directory and the
+     * engine read another: `pi install 'npm:foo'` printed `Installed npm:foo`, exited
+     * 0, wrote the `packages` entry where the engine would never look, and nothing
+     * happened. The assertion below is what keeps that from coming back quietly.
+     */
+    private fun bindList(): List<Pair<String, String>> {
+        layout.ensureAgentMirrorDir()
+        val binds = listOf(layout.workspaceBind(), layout.agentDirBind())
+        check(PiAgentDirContract.bindsAgentDir(binds, layout.agentMirrorDir.absolutePath)) {
+            "guest 命令与引擎的 agent 目录绑定不一致：$binds；" +
+                "pi install/list 会写到一个引擎不读的目录（引擎那一侧见 PiEngineHost.kt:285-294）"
+        }
+        return binds
+    }
+
+    /**
+     * `PI_CODING_AGENT_DIR` and `PI_CODING_AGENT_SESSION_DIR`, exactly as the engine
+     * sets them (`PiEngineHost.kt:302-303`).
+     *
+     * The bind already puts the right directory at `/root/.pi/agent`; the variables
+     * make pi's own resolution explicit instead of depending on `HOME`
+     * (`config.ts:528-532` falls back to `homedir()/.pi/agent`), so the two processes
+     * cannot drift if that ever changes. (The *bind* is what a reader can check after
+     * the fact: proot's `-b host:guest` pairs are in [Outcome.argv], which the screen
+     * prints as the command it actually ran. Environment variables are not.)
+     */
+    private fun agentDirEnv(): Map<String, String> = mapOf(
+        PiAgentDirContract.ENV_VAR to layout.guestAgentDir,
+        PiAgentDirContract.SESSION_ENV_VAR to PiAgentDirContract.sessionDir(layout.guestAgentDir),
+    )
 
     companion object {
         /**
