@@ -158,9 +158,12 @@ COMPILER_CP="$KOTLINC_CP:$LIB_CP"
 
 # --- 3. compile and run each harness ------------------------------------------
 failed=0
+attempted=0
+ran=0
 
 run_harness() { # $1 = label, $2 = main class, rest = sources (harness included)
   local label="$1" main_class="$2"; shift 2
+  attempted=$((attempted + 1))
   local src
   for src in "$@"; do
     if [ ! -f "$src" ]; then
@@ -232,6 +235,7 @@ run_harness() { # $1 = label, $2 = main class, rest = sources (harness included)
     return 1
   fi
   echo "pure-checks: OK — $label"
+  ran=$((ran + 1))
   return 0
 }
 
@@ -258,10 +262,24 @@ run_harness guest-paths \
   "$ROOT/app/src/test/kotlin/app/pi/bridge/GuestPathMappingCheck.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/bridge/GuestPathMapping.kt"
 
+# app.pi.ui.chat: the pure half of the `@` file-mention completion (trigger
+# boundaries, pi's fd argv and shell quoting, pi's scorer and ordering, and what a
+# pick inserts). Android-free: it imports only the Kotlin stdlib. Registered late -
+# for a while it lived in app/src/test with nothing compiling it, which is the same
+# standing every harness here had before this script existed.
+run_harness mentions \
+  app.pi.ui.chat.PiFileMentionsCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/ui/chat/PiFileMentionsCheck.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/ui/chat/PiFileMentions.kt"
+
 # --- 4. verdict ---------------------------------------------------------------
+# The counts are computed, not written down. They were hardcoded once ("2
+# harnesses"), and adding a third would have left the message lying about how much
+# was actually checked - a small instance of the thing this repository keeps
+# finding: a number in prose that nothing updates.
 if [ "$failed" -ne 0 ]; then
-  echo "pure-checks: FAILED — $failed of 2 harness(es) failed"
+  echo "pure-checks: FAILED — $failed of $attempted harness(es) failed"
   exit 1
 fi
-echo "pure-checks: OK — 2 harnesses ran on a bare JVM (no Android SDK, no Gradle)"
+echo "pure-checks: OK — $ran harnesses ran on a bare JVM (no Android SDK, no Gradle)"
 exit 0
