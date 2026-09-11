@@ -182,7 +182,7 @@ The audit's `PARTIAL 20 / MISSING-GUI 26 / CLI-ONLY 9 = 55` is reproduced exactl
 
 | # | Capability | Grade | Disposition | Owner / entry | App file proving the deficiency still exists | pi citation | Status |
 |---|---|---|---|---|---|---|---|
-| 55 | registered settings that nothing reads | MISSING-GUI | RECORDED-NO-OWNER (I) | **I7** | All 13 keys re-swept: each occurs once, inside `PiSettingsRegistry.kt` (`:662`, `:676`, `:690`, `:869`, `:879`, `:893`, `:908`, `:918`, `:1057`, `:1071`, `:1086`, `:1177`, `:1615`). Caveat: this is a negative-grep row and the UI agent was wiring `fontScaleDelta` (`PiTheme.kt`) during the pass — re-run the sweep before acting. | — (app-side) | fixed (partial) |
+| 55 | registered settings that nothing reads | MISSING-GUI | RECORDED-NO-OWNER (I) | **I7** | Originally all 13 keys occurred once each, inside `PiSettingsRegistry.kt` (`:662`, `:676`, `:690`, `:869`, `:879`, `:893`, `:908`, `:918`, `:1057`, `:1071`, `:1086`, `:1177`, `:1615`). **Now 11 of 13 have a consumer**: 4 terminal keys in `ui/terminal/TerminalSettings.kt` (this pass), and 7 in `ui/PiSessionViewModel.kt:426-446` `readPrefs()` — `fontScaleDelta`, `messageDensity`, `showTimestamps`, `thinkingCollapsedByDefault`, `expandToolsByDefault`, `hideThinkingBlock`, `keepAlive` (behaviour agent, dirty at this snapshot). Still unconsumed: `app.appearance.dynamicColor`, `app.tools.bashTimeoutSeconds`, `app.tools.outputMaxLines`. | — (app-side) | fixed (4/13) + in-flight (7/13); 3 open |
 | 56 | all 20 `Action`-kind rows are inert | MISSING-GUI | RECORDED-NO-OWNER (I) | **I2** | `PiRoot.kt:130-138` omits `onRunAction`; `SettingsGroupScreen.kt:155` then renders "这个入口由运行时接管，当前宿主还没有接入对应的实现"; 20 `PiRowKind.Action` rows counted in the registry | — (app-side) | blocked |
 | 57 | device capability switches (two authorities) | MISSING-GUI | RECORDED-NO-OWNER (I) | **I10** | `PiSettingsRegistry.kt:1474-1549` declares `app.device.*`; `grep -rn "app\.device\."` outside the registry → **0 hits**, while enforcement reads SharedPreferences at `bridge/DeviceCapabilityStore.kt:65-92` | — (app-side) | blocked |
 | 58 | update checks | MISSING-GUI | RECORDED-NO-OWNER (I) | **I2** | `PiSettingsRegistry.kt:1566` `key = "app.runtime.checkUpdate",` — an `Action` row inside the inert set above | — (app-side) | blocked |
@@ -336,6 +336,43 @@ For rows whose files are owned by another agent, this is the deliverable: a patc
 paste. All line numbers are from `dc00279` + the dirty files named in §0; **re-check the anchor
 line before applying**, because the tree moves. The status column in §2 points at the patch ids
 here.
+
+### P0 — the tree currently does not compile: fix these two first
+
+`bash tools/typecheck.sh` on the working tree ends `typecheck: FAILED in :app` with 7 errors in two
+files, **both owned** and both mid-write. They are not findings of this audit; they are why a
+green run is impossible right now. Exact fixes:
+
+**(a) `ui/PiSessionViewModel.kt:558` (×2).** `PiEngineHost.boot` gained a trailing
+`launch: PiLaunchOptions = PiLaunchOptions()` parameter (`engine/PiEngineHost.kt:181-188`), so the
+existing trailing-lambda call now binds the lambda to `launch` instead of `onStep`.
+
+before
+```kotlin
+            val boot = host.boot(workspaceProvider = ::defaultWorkspace) { step ->
+                _state.value = _state.value.copy(boot = Boot.Working(step))
+            }
+```
+after (call-site fix)
+```kotlin
+            val boot = host.boot(
+                workspaceProvider = ::defaultWorkspace,
+                onStep = { step ->
+                    _state.value = _state.value.copy(boot = Boot.Working(step))
+                },
+            )
+```
+The alternative is one line in `engine/**` and no call-site change: put `launch` **before** `onStep`
+in both `boot` and `bootLocked`, which keeps the trailing-lambda form legal for every current and
+future caller. Either is correct; doing both is not.
+
+**(b) `ui/theme/PiThemeFiles.kt` (×5).**
+- `:258` `'internal' function exposes its 'private-in-class' return type 'ParsedTheme'` — before
+  `    private class ParsedTheme(` after `    internal class ParsedTheme(`
+- `:383` `unresolved reference 'intOrNull'` (there is no such member on `JsonPrimitive`) — before
+  `        return primitive.intOrNull?.let { if (it in 0..255) IndexedColor(it) else null }` after
+  `        return primitive.content.toIntOrNull()?.let { if (it in 0..255) IndexedColor(it) else null }`
+  (the four inference errors are downstream of this one).
 
 ### P1 — #62 images render as placeholders (highest severity: the bytes are already in memory)
 
@@ -653,6 +690,24 @@ A behaviour change, so behind a setting rather than a silent new default.
    guarded on "the user has not already chosen a session on this launch".
 pi proof: `cli/args.ts:100` `--continue`/`-c`; `docs/sessions.md:39`.
 
+### P13 — #55 residual: the three settings still read by nothing
+
+The other ten of that row's thirteen now have consumers (four wired by this pass, six appearance/tool
+keys plus a seventh wired by the behaviour agent's `readPrefs()`, `PiSessionViewModel.kt:426-446`).
+These three do not:
+
+1. `app.tools.bashTimeoutSeconds` (`PiSettingsRegistry.kt:662`) — must bound the `bash` run. The
+   consumer belongs beside `PiSessionViewModel.runBash`/`BashPanel`; without it the row's description
+   ("命令超时") is a lie and a hung command has no timeout the user chose.
+2. `app.tools.outputMaxLines` (`:676`) — the tool card's head-line cap. This is the *same* hard-coded
+   cap rendering-review records as **F17** ("hard-capped at 400 lines, no way to see the rest"), so
+   fixing F17 and consuming this key are one change in `ui/blocks/BlockChrome.kt`/`ToolCallBlock.kt`.
+3. `app.appearance.dynamicColor` (`:869`) — needs `MainActivity`/`PiTheme`: when true, take the
+   substrate colours from `dynamicDarkColorScheme`/`dynamicLightColorScheme` while keeping pi's
+   semantic tokens (success/error/warning, the thinking ramp, diff, syntax) faithful to
+   `PiPalette`, exactly as `PiPalette.kt:24-30` states the rule. Not a mechanical patch: it is a
+   mapping decision, so it stays `blocked` until someone makes it.
+
 ### Rows that are **not** directly patchable, and why
 
 | Rows | Why not |
@@ -682,10 +737,15 @@ Every row in §2 carries a status in the extra column of its table, using this v
 | `closed` | Audited and requires no action (premise disproved or deliberate adaptation). |
 
 Summary: **fixed 1 · patch-ready 23 · blocked 11 · in-flight 15 · limit 14 · closed 5** (69 rows).
-Only row #55 is `fixed` today, and only partially: the four `app.terminal.*` keys are wired
-(`ui/terminal/TerminalSettings.kt`, `TerminalPane.kt`, `TerminalSurface.kt`, `TerminalKeyBar.kt`,
-`terminal/TerminalController.kt`), which is 4 of the 13 settings that row lists. Everything else
-below is a patch for the file's owner, not a change made by this pass.
+Row #55 is the only `fixed` row, and it is a mix: the four `app.terminal.*` keys are wired by this
+pass (`ui/terminal/TerminalSettings.kt`, `TerminalPane.kt`, `TerminalSurface.kt`, `TerminalKeyBar.kt`,
+`terminal/TerminalController.kt`), and **seven more** were wired concurrently by the behaviour agent
+in `PiSessionViewModel.readPrefs():426-446` (`fontScaleDelta`, `messageDensity`, `showTimestamps`,
+`thinkingCollapsedByDefault`, `expandToolsByDefault`, `hideThinkingBlock`, `keepAlive`). The last
+three (`dynamicColor`, `bashTimeoutSeconds`, `outputMaxLines`) are patch **P13**; `dynamicColor`
+needs a mapping decision, so it is `blocked` rather than mechanical. That is 11 of 13 live, which is
+the honest number — the row must not be marked `fixed` again until none of the 13 is unread.
+Everything else in the table is a patch for the file's owner, not a change made by this pass.
 
 ## 10. Merged ledger: `docs/rendering-review.md` (34 rows)
 

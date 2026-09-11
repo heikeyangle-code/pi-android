@@ -22,6 +22,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
@@ -32,12 +33,14 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import app.pi.rpc.PiMessage
 import app.pi.rpc.SessionEntry
 import app.pi.rpc.SessionTreeNode
 import app.pi.ui.PiSessionViewModel
@@ -66,6 +69,19 @@ import app.pi.ui.theme.PiTheme
  * for anything else (`agent-session-runtime.ts:274-287`). Offering it on every
  * row would produce a guaranteed error, so the rule is enforced in the UI with
  * pi's own condition.
+ *
+ * **What 分支 is not.** pi's `/tree` moves the active leaf to a previous point
+ * and lets you continue there *without creating a file* (`docs/sessions.md:71`,
+ * `interactive-mode.ts:5216-5322`); the RPC protocol exposes no command for that
+ * — the only tree commands are `get_tree` and `fork` (`rpc-types.ts:20-74`). The
+ * button on each row is therefore a **fork**: it writes a *new* session file
+ * (`docs/sessions.md:118-127`). The header above the tree says so, because a
+ * button labelled 分支 next to a tree view otherwise reads as "jump to this
+ * point", which it cannot do.
+ *
+ * The filter modes are pi's own (`interactive-mode.ts`'s tree selector,
+ * `FilterMode` in `components/tree-selector.ts:95`): default, no-tools,
+ * user-only, labeled-only, all — cycled here because a phone has no Ctrl+O.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -77,6 +93,8 @@ fun SessionTreeScreen(
     modifier: Modifier = Modifier,
 ) {
     var tab by rememberSaveable { mutableStateOf(0) }
+    var filter by rememberSaveable { mutableStateOf(TreeFilter.Default) }
+    var query by rememberSaveable { mutableStateOf("") }
     Surface(
         modifier = modifier.fillMaxSize(),
         color = MaterialTheme.colorScheme.background,
@@ -102,9 +120,40 @@ fun SessionTreeScreen(
                     ) { Text(label) }
                 }
             }
+            if (tab == 0) {
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = PiSpacing.screen, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    OutlinedTextField(
+                        value = query,
+                        onValueChange = { query = it },
+                        modifier = Modifier.weight(1f),
+                        singleLine = true,
+                        placeholder = { Text("筛选条目文字") },
+                        textStyle = PiTheme.text.mono,
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    TextButton(onClick = { filter = filter.next() }) { Text(filter.label) }
+                }
+                // The honesty note for the only action this screen offers.
+                Text(
+                    "这里是分叉：会新建一个会话文件。pi 的 /tree 能在原会话里切换节点（不新建文件），" +
+                        "但 RPC 没有这个命令，只能在「原版 TUI」里做。",
+                    modifier = Modifier.padding(horizontal = PiSpacing.screen),
+                    style = PiTheme.text.meta,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
             Spacer(Modifier.height(PiSpacing.unit))
             if (tab == 0) {
-                BranchTab(state = state, onFork = onFork, modifier = Modifier.weight(1f))
+                BranchTab(
+                    state = state,
+                    filter = filter,
+                    query = query,
+                    onFork = onFork,
+                    modifier = Modifier.weight(1f),
+                )
             } else {
                 EntriesTab(entries = state.entries, modifier = Modifier.weight(1f))
             }
@@ -115,15 +164,32 @@ fun SessionTreeScreen(
 @Composable
 private fun BranchTab(
     state: PiSessionViewModel.UiState,
+    filter: TreeFilter,
+    query: String,
     onFork: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val tree = state.tree?.tree.orEmpty()
+    val rows = remember(tree, state.tree?.leafId, filter, query) {
+        flattenTree(tree).filter { row ->
+            passesTreeFilter(row, state.tree?.leafId, filter) &&
+                (query.isBlank() || treeRowText(row).contains(query, ignoreCase = true))
+        }
+    }
     if (tree.isEmpty()) {
         PiEmptyState(
             icon = Icons.Filled.Close,
             title = if (state.busy != null) "正在读取…" else "还没有分支",
             body = "会话的第一条消息落盘后，这里会显示分支结构。",
+            modifier = modifier,
+        )
+        return
+    }
+    if (rows.isEmpty()) {
+        PiEmptyState(
+            icon = Icons.Filled.Close,
+            title = "没有匹配的条目",
+            body = "当前筛选是「${filter.label}」。换一个关键词，或再按一次筛选按钮循环到下一种模式。",
             modifier = modifier,
         )
         return
@@ -136,7 +202,7 @@ private fun BranchTab(
             bottom = PiSpacing.unit,
         ),
     ) {
-        items(flattenTree(tree), key = { it.node.entry.id ?: it.path }) { row ->
+        items(rows, key = { it.node.entry.id ?: it.path }) { row ->
             BranchRow(
                 row = row,
                 isLeaf = row.node.entry.id != null && row.node.entry.id == state.tree?.leafId,
@@ -160,6 +226,64 @@ fun flattenTree(roots: List<SessionTreeNode>, depth: Int = 0, prefix: String = "
         val path = "$prefix/$index"
         listOf(TreeRow(node, depth, path)) + flattenTree(node.children, depth + 1, path)
     }
+
+/**
+ * pi's five tree filter modes, in the order its own selector cycles them
+ * (`components/tree-selector.ts:1066-1073`).
+ */
+enum class TreeFilter(val label: String) {
+    Default("默认"),
+    NoTools("无工具"),
+    UserOnly("仅提问"),
+    LabeledOnly("仅有标签"),
+    All("全部");
+
+    fun next(): TreeFilter = entries[(ordinal + 1) % entries.size]
+}
+
+/**
+ * `TreeSelectorComponent`'s visibility rules (`components/tree-selector.ts:340-395`),
+ * reproduced:
+ *
+ *  - an assistant message with no text is hidden unless it is the current leaf or
+ *    it stopped with an error/abort — the latter needs `stopReason`, which the
+ *    wire model does carry (`PiMessage.Assistant.stopReason`);
+ *  - `default` hides the settings/bookkeeping entries (labels, custom, model and
+ *    thinking changes, session info);
+ *  - `no-tools` additionally hides tool results, `user-only` keeps user messages,
+ *    `labeled-only` keeps labelled nodes, `all` keeps everything.
+ */
+private fun passesTreeFilter(row: TreeRow, leafId: String?, mode: TreeFilter): Boolean {
+    val entry = row.node.entry
+    val isCurrentLeaf = entry.id != null && entry.id == leafId
+    if (entry is SessionEntry.Message && entry.message.role == "assistant" && !isCurrentLeaf) {
+        val assistant = entry.message as? PiMessage.Assistant
+        val hasText = assistant?.text?.isNotBlank() == true
+        val stoppedBadly = assistant?.stopReason != null &&
+            assistant.stopReason != "stop" &&
+            assistant.stopReason != "toolUse"
+        if (!hasText && !stoppedBadly) return false
+    }
+    val isSettingsEntry = entry is SessionEntry.Label ||
+        entry is SessionEntry.Custom ||
+        entry is SessionEntry.ModelChange ||
+        entry is SessionEntry.ThinkingLevelChange ||
+        entry is SessionEntry.SessionInfo
+    return when (mode) {
+        TreeFilter.UserOnly -> entry is SessionEntry.Message && entry.message.role == "user"
+        TreeFilter.NoTools ->
+            !isSettingsEntry && !(entry is SessionEntry.Message && entry.message.role == "toolResult")
+
+        TreeFilter.LabeledOnly -> row.node.label != null
+        TreeFilter.All -> true
+        TreeFilter.Default -> !isSettingsEntry
+    }
+}
+
+/** What a row's search matches on: its summary plus its pi-resolved label. */
+private fun treeRowText(row: TreeRow): String =
+    listOfNotNull(entryLabel(row.node.entry), entrySummary(row.node.entry), row.node.label)
+        .joinToString("\n")
 
 @Composable
 private fun BranchRow(row: TreeRow, isLeaf: Boolean, onFork: (String) -> Unit) {
@@ -223,7 +347,9 @@ private fun BranchRow(row: TreeRow, isLeaf: Boolean, onFork: (String) -> Unit) {
             )
         }
         if (canFork && id != null) {
-            TextButton(onClick = { onFork(id) }) { Text("分支") }
+            // "分叉为新会话" and not "分支": the action writes a new session file,
+            // it does not move the leaf inside this session.
+            TextButton(onClick = { onFork(id) }) { Text("分叉新会话") }
         }
     }
 }

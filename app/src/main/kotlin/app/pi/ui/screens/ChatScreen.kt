@@ -52,6 +52,7 @@ import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -175,6 +176,13 @@ private fun ChatBody(
     }
     val listState = rememberLazyListState()
     val context = LocalContext.current
+    // pi's `tui.altScreen.previousPrompt` / `nextPrompt`
+    // (`keybindings.md:112`): jump between the messages the *user* wrote. On a
+    // phone there is no keybinding for it, so it lives in the overflow menu.
+    val scope = rememberCoroutineScope()
+    val userRowIndices = remember(state.transcript) {
+        state.transcript.mapIndexedNotNull { index, item -> if (item is UserMessage) index else null }
+    }
 
     // Transcript search. pi has the feature in its fullscreen viewport
     // (`keybindings.md` `tui.altScreen.search`) and the GUI needs it more: a long
@@ -287,7 +295,7 @@ private fun ChatBody(
             PiCommandAction.CloneSession -> session.cloneSession()
             // `/export <path>`: pi picks the writer from the extension
             // (`interactive-mode.ts:6062-6066`), and so does the ViewModel.
-            PiCommandAction.ExportHtml -> session.exportSession(args.takeIf { it.isNotBlank() })
+            PiCommandAction.ExportSession -> session.exportSession(args.takeIf { it.isNotBlank() })
             PiCommandAction.CopyLastAssistant -> copyLastAssistant(session, context)
             PiCommandAction.RenameSession -> sheet = ChatSheet.Rename
             PiCommandAction.SessionStats -> {
@@ -383,6 +391,20 @@ private fun ChatBody(
                     }
                     OverflowItem("导出会话（按扩展名）") {
                         session.exportSession()
+                        overflow = false
+                    }
+                    OverflowItem("跳到上一条提问") {
+                        userRowIndices.lastOrNull { it < listState.firstVisibleItemIndex }?.let { row ->
+                            following = false
+                            scope.launch { listState.animateScrollToItem(row) }
+                        }
+                        overflow = false
+                    }
+                    OverflowItem("跳到下一条提问") {
+                        userRowIndices.firstOrNull { it > listState.firstVisibleItemIndex }?.let { row ->
+                            following = false
+                            scope.launch { listState.animateScrollToItem(row) }
+                        }
                         overflow = false
                     }
                     OverflowItem("复制最后一条回复") {

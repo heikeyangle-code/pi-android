@@ -118,6 +118,14 @@ class PiEngineHost(private val appContext: Context) {
     var lastBridgeError: String? = null
         private set
 
+    /**
+     * What the one-time agent-dir migration did, if anything. Kept for the same
+     * reason as [lastBridgeError]: a move that silently skipped half its entries
+     * looks identical to one that worked, and the difference matters to the user.
+     */
+    var lastAgentDirMigration: String? = null
+        private set
+
     sealed interface Boot {
         data class Ready(val session: PiEngineSession) : Boot
         data class NeedProvisioning(val progress: RuntimeProvisioner.Step) : Boot
@@ -181,8 +189,13 @@ class PiEngineHost(private val appContext: Context) {
     suspend fun boot(
         revision: String = RuntimeProvisioner.RUNTIME_REVISION,
         workspaceProvider: () -> File,
-        onStep: (RuntimeProvisioner.Step) -> Unit = {},
         launch: PiLaunchOptions = PiLaunchOptions(),
+        // `onStep` must stay LAST: callers pass it as a trailing lambda
+        // (`boot { step -> ... }`), and a trailing lambda always binds to the
+        // final parameter. Adding `launch` after it silently rebound every such
+        // call to `launch` and broke the build — if you add another parameter,
+        // put it before this one.
+        onStep: (RuntimeProvisioner.Step) -> Unit = {},
     ): Boot = lifecycleLock.withLock {
         bootLocked(revision, workspaceProvider, onStep, launch)
     }
@@ -202,6 +215,14 @@ class PiEngineHost(private val appContext: Context) {
         launch: PiLaunchOptions,
     ): Boot =
         withContext(Dispatchers.IO) {
+            // 0. Rescue the guest's own agent dir *before* provisioning, not after:
+            //    `ensureReady` wipes the whole runtime tree when the revision stamp
+            //    changes (RuntimeProvisioner.wipe), and `<rootfs>/root/.pi/agent` is
+            //    inside it. Migrating first is what makes this a fix rather than a
+            //    one-release reprieve.
+            lastAgentDirMigration = runCatching { migrateGuestAgentDir() }
+                .getOrElse { error -> "agent 目录迁移失败：${error.message ?: error::class.java.simpleName}" }
+
             // 1. Runtime payload.
             val provisioned = provisioner.ensureReady(revision, onStep)
             provisioned.exceptionOrNull()?.let {
@@ -261,7 +282,17 @@ class PiEngineHost(private val appContext: Context) {
                 // guest must start in the workspace rather than at /.
                 cwd = guestWorkspace,
                 storage = android.os.Environment.getExternalStorageDirectory(),
-                extraBinds = listOf(workspace.absolutePath to guestWorkspace),
+                extraBinds = listOf(
+                    workspace.absolutePath to guestWorkspace,
+                    // The agent dir was the one thing *not* bound, which meant pi read
+                    // and wrote `<rootfs>/root/.pi/agent` while the app addressed
+                    // `PiPaths.agentDir` (`<files>/pi/.pi/agent`). Every app-side
+                    // reader — settings, sessions, and this package's trust.json and
+                    // auth.json/models.json — was therefore looking at a directory pi
+                    // never touches, and, worse, one that `RuntimeProvisioner.wipe()`
+                    // deletes on every runtime revision bump.
+                    paths.agentDir.absolutePath to guestAgentDir,
+                ),
             )
             val env = ProotCommand.environment(
                 paths,
@@ -394,6 +425,91 @@ class PiEngineHost(private val appContext: Context) {
     // ------------------------------------------------------------- internals
 
     /**
+     * Move whatever pi has already written into `<rootfs>/root/.pi/agent` into
+     * [PiPaths.agentDir], which is about to be bind-mounted **over** that path.
+     *
+     * ## Why this is needed at all
+     *
+     * Until now the agent dir was not bound, so pi's sessions, `settings.json`,
+     * `auth.json`, extensions and installed packages all live on the rootfs side.
+     * Binding the host dir over it, without this step, would make every one of them
+     * invisible at once — "绑上去之后旧的会话和设置看起来消失了", which is worse than
+     * the inconsistency being fixed.
+     *
+     * ## Properties, each deliberate
+     *
+     *  - **Idempotent.** A marker file records the run; a second boot does nothing.
+     *  - **Non-destructive.** Entries are *moved*, never overwritten: a target that
+     *    already exists is skipped and counted, so the durable copy can never be
+     *    clobbered by a stale rootfs copy. The source directory itself is kept, so
+     *    it still serves as proot's mount point and as a fallback if the bind fails.
+     *  - **Fast.** Source and target are both under `<files>/pi`, so a same-filesystem
+     *    rename is a metadata operation — this matters because `npm/` and `git/` can
+     *    hold a full `node_modules` tree and a recursive copy would be minutes of
+     *    boot time. A cross-device rename fallback copies and then deletes.
+     *  - **Logged.** [lastAgentDirMigration] carries the counts, because "moved 0,
+     *    skipped 9" and "moved 9" are very different news and look the same from the
+     *    outside.
+     */
+    private fun migrateGuestAgentDir(): String {
+        val src = File(paths.rootfs, "root/.pi/agent")
+        val dst = paths.agentDir
+        if (!src.isDirectory) {
+            return "无需迁移：guest 侧没有 ${src.absolutePath}"
+        }
+        dst.mkdirs()
+        val marker = File(dst, MIGRATION_MARKER)
+        if (marker.isFile) {
+            return "已迁移过：${marker.readText().trim().ifEmpty { marker.absolutePath }}"
+        }
+
+        var moved = 0
+        var skipped = 0
+        var failed = 0
+        val failures = mutableListOf<String>()
+        for (child in src.listFiles().orEmpty()) {
+            val target = File(dst, child.name)
+            if (target.exists()) {
+                skipped++
+                continue
+            }
+            val renamed = runCatching { child.renameTo(target) }.getOrDefault(false)
+            if (renamed) {
+                moved++
+                continue
+            }
+            // Cross-device, or a filesystem that refuses the rename.
+            val copied = runCatching { child.copyRecursively(target, overwrite = false) }.isSuccess
+            if (copied) {
+                runCatching { child.deleteRecursively() }
+                moved++
+            } else {
+                failed++
+                if (failures.size < 5) failures += child.name
+            }
+        }
+
+        val summary = buildString {
+            append("agent 目录迁移：搬入 $moved 项，跳过 $skipped 项（目标已存在），失败 $failed 项")
+            append("（$src → $dst）")
+            if (failures.isNotEmpty()) append("；失败项：${failures.joinToString(", ")}")
+        }
+        // The marker is written only when nothing failed, so a partial move is
+        // retried on the next boot instead of being frozen as "done". `skipped` does
+        // not block it: a skipped entry already exists in the target, which is the
+        // whole point.
+        if (failed == 0) {
+            runCatching {
+                marker.writeText("moved=$moved skipped=$skipped failed=0 at=${System.currentTimeMillis()}\n")
+            }
+        }
+        // Recreate the mount point: moving the children leaves the directory, but a
+        // failed move of a top-level entry must not leave proot without a target.
+        runCatching { src.mkdirs() }
+        return summary
+    }
+
+    /**
      * Swap the attached session, closing the previous one.
      *
      * Closing here rather than at each call site is what makes "the UI never holds a
@@ -445,5 +561,13 @@ class PiEngineHost(private val appContext: Context) {
 
         /** The npm package name pi ships as. */
         const val PI_PACKAGE = "@earendil-works/pi-coding-agent"
+
+        /**
+         * Marker recording that the rootfs-side agent dir was moved into the bind
+         * target. Deliberately inside the *target*: the source is inside the
+         * volatile runtime tree, so a marker there would vanish exactly when the
+         * question "did the move already happen?" matters most.
+         */
+        private const val MIGRATION_MARKER = ".pi-android-agent-migrated"
     }
 }

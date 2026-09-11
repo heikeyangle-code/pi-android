@@ -379,7 +379,7 @@ fun SessionToolsSheet(
                 onClick = onRename,
             )
             PiValueRow(
-                title = "导出为 HTML",
+                title = "导出会话（按扩展名）",
                 supporting = "export_html：写入工作区，包含扩展的 tool 渲染结果",
                 value = "导出",
                 onClick = onExport,

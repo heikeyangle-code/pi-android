@@ -250,7 +250,9 @@ object DeviceShellGuard {
     private data class HardBlock(val pattern: Regex, val what: String, val why: String)
 
     /**
-     * The irreducible set. Eleven entries, no more.
+     * The irreducible set. Twelve patterns covering the ten things user consent must
+     * never reach (mount/umount and pm/cmd-package are each split into their own
+     * pattern so the denial can name the exact command).
      *
      * Test A = "needs privilege the app does not have, so it can only fail".
      * Test B = "irreversible device damage if it ever ran".

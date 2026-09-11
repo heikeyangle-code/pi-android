@@ -455,6 +455,27 @@ private fun detailsExitCode(details: JsonElement?): Int? {
     return obj.int("exitCode") ?: obj.int("exit_code") ?: obj.int("code")
 }
 
+/**
+ * Whether pi truncated this tool's output, from the tool-result `details`.
+ *
+ * pi's bash tool sets `details.truncation` only when it actually truncated
+ * (`core/tools/bash.ts`: `truncation: snapshot.truncation.truncated ? … :
+ * undefined`, and the `read` tool uses a plain `truncated`), so the presence of
+ * either form is the signal. JSON `null` — which `docs/rpc.md`'s example shows —
+ * means "not truncated".
+ */
+private fun detailsTruncated(details: JsonElement?): Boolean {
+    val obj = details as? JsonObject ?: return false
+    obj.bool("truncated")?.let { return it }
+    return when (val truncation = obj["truncation"]) {
+        null, is kotlinx.serialization.json.JsonNull -> false
+        // A boolean or a marker string: presence means it was truncated.
+        is kotlinx.serialization.json.JsonPrimitive -> truncation.content.toBooleanStrictOrNull() ?: true
+        is JsonObject -> truncation.bool("truncated") ?: true
+        else -> false
+    }
+}
+
 // ------------------------------------------------------------------- day labels
 
 /** Epoch day of [ts] in the device's zone, used only for day-boundary detection. */
@@ -975,6 +996,7 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
         isError = event.isError,
         details = event.details,
         ts = now(),
+        images = event.resultImages,
     )
 
     /**
@@ -989,6 +1011,7 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
         isError: Boolean,
         details: JsonElement?,
         ts: Long,
+        images: List<PiImage> = emptyList(),
     ): TranscriptChange {
         val index = toolIndexByCallId[callId]
         val change: TranscriptChange
@@ -1002,6 +1025,11 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
                 details = details ?: current.details,
                 endedAt = ts,
                 exitCode = detailsExitCode(details) ?: current.exitCode,
+                // F23: pi marks a truncated tool result in `details.truncation`
+                // (or `details.truncated`); nothing ever set this flag, so the
+                // UI's "已截断" label was unreachable.
+                outputTruncated = current.outputTruncated || detailsTruncated(details),
+                images = images.ifEmpty { current.images },
             )
             change = TranscriptChange.Updated(index)
         } else {
@@ -1017,6 +1045,8 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
                 details = details,
                 endedAt = ts,
                 exitCode = detailsExitCode(details),
+                outputTruncated = detailsTruncated(details),
+                images = images,
             )
             change = TranscriptChange.Appended(items.lastIndex)
         }
@@ -1063,6 +1093,43 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
     }
 
     // -------------------------------------------------------------- compaction
+
+    /**
+     * Report a turn pi ended abnormally, and close every tool card that can no
+     * longer finish (F3 + F2).
+     *
+     * pi's TUI does both: `components/assistant-message.ts` prints a red line for
+     * a `length`/`aborted`/`error` stop reason, and `interactive-mode.ts` hands
+     * every pending tool component `updateResult({…, isError:true})` before
+     * clearing it. Without this a response cut off by the output-token limit
+     * reads as a complete answer, and a stopped turn shows a live "运行中" card
+     * forever — both silent, both indistinguishable from success or a hang.
+     */
+    private fun failTurn(reason: String?, errorMessage: String?): TranscriptChange {
+        val ts = now()
+        val message = when (reason) {
+            "length" -> "回复被令牌上限截断"
+            "aborted" -> "回合已中止"
+            else -> "模型调用失败"
+        }
+        val detail = errorMessage?.takeIf { it.isNotBlank() }
+        var change = append(
+            ErrorText(key = nextKey("turn-failed"), ts = ts, message = message, detail = detail),
+        )
+        // Nothing will ever finalise a pending tool now.
+        for (i in items.indices) {
+            val call = items.getOrNull(i) as? ToolCall ?: continue
+            if (call.status != ToolStatus.Pending) continue
+            items[i] = call.copy(
+                status = ToolStatus.Error,
+                isError = true,
+                endedAt = ts,
+                output = call.output.ifEmpty { detail ?: message },
+            )
+            change = TranscriptChange.Updated(i)
+        }
+        return change
+    }
 
     private fun onCompactionStart(event: PiEvent.CompactionStart): TranscriptChange {
         val ts = now()
@@ -1250,6 +1317,8 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
                     isError = message.bool("isError") ?: message.bool("is_error") ?: false,
                     details = message["details"],
                     ts = ts,
+                    // Reload must not lose what the live path keeps (F16).
+                    images = imageBlocks(message["content"]),
                 )
             }
 
@@ -1448,19 +1517,12 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
         )
     }
 
-    private fun imageBlocks(element: JsonElement?): List<PiImage> {
-        val array = element as? JsonArray ?: return emptyList()
-        return array.mapNotNull { block ->
-            val obj = block as? JsonObject ?: return@mapNotNull null
-            if (obj.str("type") != "image") return@mapNotNull null
-            val data = obj.str("data") ?: return@mapNotNull null
-            PiImage(base64 = data, mimeType = obj.str("mimeType") ?: "image/png")
-        }
-    }
-
     /**
      * Text blocks of a pi content array. Unlike [contentText] this drops the
      * `[image]` marker, because the images are rendered by their own block.
+     *
+     * Image blocks themselves come from the shared `imageBlocks` in `Events.kt`,
+     * so the live `tool_execution_end` path and history replay use one parser.
      */
     private fun userText(element: JsonElement?): String {
         val array = element as? JsonArray ?: return contentText(element).orEmpty()

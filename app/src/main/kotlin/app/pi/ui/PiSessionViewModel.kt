@@ -1594,6 +1594,32 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
+     * Delete one session file from the on-disk index.
+     *
+     * pi's picker offers delete behind a confirmation (`docs/sessions.md:48`) and
+     * its store has no delete command either — the file *is* the session — so this
+     * removes the JSONL the same way the desktop UI does. The screen refuses the
+     * active session before ever calling this: pi is appending to that file, and
+     * unlinking it under the engine would keep it writing to a removed inode.
+     *
+     * `PiSessionStore` stays read-only (`PiSessionStore.kt:22-25`), which is why
+     * the unlink happens here.
+     */
+    fun deleteSession(summary: PiSessionStore.Summary) {
+        viewModelScope.launch {
+            val removed = withContext(Dispatchers.IO) {
+                runCatching { summary.file.delete() }.getOrDefault(false)
+            }
+            if (removed) {
+                pushNotice("已删除：${summary.displayName}", Notice.Tone.Info)
+                refreshSessions()
+            } else {
+                pushNotice("删除失败：${summary.file.name}", Notice.Tone.Warning)
+            }
+        }
+    }
+
+    /**
      * `switch_session` with a path from the on-disk index.
      *
      * The path has to be the one **pi** can open: pi resolves it inside the guest,

@@ -29,7 +29,13 @@ enum class PiCommandAction {
     OpenTree,
     PickFork,
     CloneSession,
-    ExportHtml,
+
+    /**
+     * `/export [path]`. The format follows the argument's extension, the way pi's
+     * own TUI does it (`interactive-mode.ts:6062-6066`): `.jsonl` goes to the
+     * app-side JSONL writer, anything else to `export_html`.
+     */
+    ExportSession,
     CopyLastAssistant,
     RenameSession,
     SessionStats,
@@ -109,7 +115,13 @@ val PI_BUILTIN_SLASH_COMMANDS: List<PiSlashCommand> = listOf(
         "model", "选择模型（打开选择器）", PiCommandSource.Builtin, null,
         PiCommandAction.PickModel, "<provider/model>",
     ),
-    PiSlashCommand("tree", "浏览会话树（切换分支）", PiCommandSource.Builtin, null, PiCommandAction.OpenTree),
+    // The description must not promise pi's in-place leaf move: RPC has no such
+    // command (`rpc-types.ts:20-74`), and what this app offers from the tree is a
+    // fork that writes a new session file.
+    PiSlashCommand(
+        "tree", "浏览会话树并从中分叉（切换分支只能在原版 TUI 里做）", PiCommandSource.Builtin, null,
+        PiCommandAction.OpenTree,
+    ),
     PiSlashCommand(
         "thinking", "设置思考等级", PiCommandSource.Builtin, null,
         PiCommandAction.PickThinking, "<level>",
@@ -119,8 +131,8 @@ val PI_BUILTIN_SLASH_COMMANDS: List<PiSlashCommand> = listOf(
         PiCommandAction.TerminalOnly,
     ),
     PiSlashCommand(
-        "export", "导出会话（默认 HTML，或指定 .html/.jsonl 路径）", PiCommandSource.Builtin, null,
-        PiCommandAction.ExportHtml,
+        "export", "导出会话：默认 HTML，路径以 .jsonl 结尾时写 JSONL", PiCommandSource.Builtin, null,
+        PiCommandAction.ExportSession,
     ),
     PiSlashCommand(
         "import", "从 JSONL 文件导入并恢复会话", PiCommandSource.Builtin, null,
