@@ -1163,6 +1163,9 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
         // stores from the persisted entry, so live and replayed rows agree.
         val tokens = result?.tokensBefore
         val firstKept = result?.firstKeptEntryId
+        // F18: what the summarization call cost. pi prints it as a notice after a
+        // compacted session; the marker carries it here so the number survives.
+        val usage = result?.usage
         if (index < 0) {
             // Reconnected mid-compaction: synthesise the finished marker.
             return append(
@@ -1175,6 +1178,7 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
                     status = status,
                     errorMessage = event.errorMessage,
                     reason = event.reason,
+                    usage = usage,
                 ),
             )
         }
@@ -1185,6 +1189,7 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
             firstKeptEntryId = firstKept ?: current.firstKeptEntryId,
             status = status,
             errorMessage = event.errorMessage,
+            usage = usage ?: current.usage,
         )
         if (status != CompactionMarker.Status.Running) runningCompactionIndex = null
         return TranscriptChange.Updated(index)

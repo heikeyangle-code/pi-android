@@ -510,9 +510,10 @@ private fun ChatBody(
                 else -> PiSpacing.unit
             }
             val horizontal = if (prefs.messageDensity == "compact") 12.dp else PiSpacing.screen
+            Box(Modifier.weight(1f).fillMaxWidth()) {
             LazyColumn(
                 state = listState,
-                modifier = Modifier.weight(1f).fillMaxWidth(),
+                modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(vertical = PiSpacing.unit, horizontal = horizontal),
                 verticalArrangement = Arrangement.spacedBy(blockSpacing),
             ) {
@@ -541,6 +542,17 @@ private fun ChatBody(
                         toolsDefaultExpanded = toolsExpanded,
                     )
                 }
+            }
+            // Spec §4.5's affordance: once the follow has been unlocked by the
+            // user's own scrolling, this is the only thing that re-arms it.
+            if (!following) {
+                SmallFloatingActionButton(
+                    onClick = { following = true },
+                    modifier = Modifier.align(Alignment.BottomEnd).padding(12.dp),
+                ) {
+                    Icon(Icons.Filled.KeyboardArrowDown, contentDescription = "回到最新")
+                }
+            }
             }
         }
 
