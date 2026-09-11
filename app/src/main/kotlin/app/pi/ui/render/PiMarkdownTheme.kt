@@ -15,10 +15,12 @@ import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
 import com.mikepenz.markdown.m3.markdownColor
 import com.mikepenz.markdown.m3.markdownTypography
+import com.mikepenz.markdown.model.MarkdownAlertColors
 import com.mikepenz.markdown.model.MarkdownColors
 import com.mikepenz.markdown.model.MarkdownDimens
 import com.mikepenz.markdown.model.MarkdownPadding
 import com.mikepenz.markdown.model.MarkdownTypography
+import com.mikepenz.markdown.model.markdownAlertColors
 import com.mikepenz.markdown.model.markdownDimens
 import com.mikepenz.markdown.model.markdownPadding
 
@@ -49,19 +51,59 @@ import com.mikepenz.markdown.model.markdownPadding
  * pi's built-in themes set `mdQuote` and `mdQuoteBorder` to the same value, so
  * for the shipped themes the output is identical; a hand-written pi theme that
  * chooses two different values loses the distinction.
+ *
+ * GFM alerts (`> [!NOTE]`, a 0.45.0 feature pi's terminal does not have) are
+ * mapped onto pi's own semantic tokens rather than left to Material 3, so no
+ * alert accent can drift with the device wallpaper — see [piAlertColors].
  */
 @Composable
 internal fun piMarkdownColors(): MarkdownColors {
     val palette = PiTheme.palette
+    // One read for both slots: the renderer uses this flag for its own derived
+    // container/on-container pairs, and [piAlertColors] uses it only to satisfy
+    // the same signature while overriding every accent itself.
+    val darkTheme = isSystemInDarkTheme()
     return markdownColor(
         text = palette.text,
         codeBackground = palette.cardBg,
         inlineCodeBackground = palette.infoBg,
         dividerColor = palette.mdHr,
         tableBackground = palette.cardBg,
-        // The renderer derives its GFM-alert container/on-container pairs from
-        // the ambient theme; tell it which way round this device is.
-        darkTheme = isSystemInDarkTheme(),
+        darkTheme = darkTheme,
+        alert = piAlertColors(darkTheme),
+    )
+}
+
+/**
+ * GFM alert accents, taken from pi's semantic tokens instead of the library's
+ * Material 3 defaults.
+ *
+ * The library defaults to `MarkdownAlertColorDefaults`, which resolves against
+ * `MaterialTheme.colorScheme`; this app derives its scheme from dynamic colour on
+ * Android 12+, so an alert bar would be the only markdown element whose colour is
+ * not pi's. `PiPalette`'s own doc says exactly why that is not acceptable: a
+ * state colour that drifts with the wallpaper is a state colour you cannot trust.
+ *
+ * pi has no GFM alerts (its terminal cannot render them), so there is no token to
+ * be faithful *to*. Each accent is therefore the closest pi token by meaning:
+ *
+ * | GitHub alert | pi token      | why |
+ * |--------------|---------------|-----|
+ * | `NOTE`       | `mdQuote`     | the calm informational emphasis |
+ * | `TIP`        | `success`     | positive, actionable |
+ * | `IMPORTANT`  | `mdHeading`   | the most prominent neutral token |
+ * | `WARNING`    | `warning`     | the token's literal name |
+ * | `CAUTION`    | `error`       | the token's literal name |
+ */
+internal fun piAlertColors(darkTheme: Boolean): MarkdownAlertColors {
+    val palette = PiTheme.palette
+    return markdownAlertColors(
+        darkTheme = darkTheme,
+        note = palette.mdQuote,
+        tip = palette.success,
+        important = palette.mdHeading,
+        warning = palette.warning,
+        caution = palette.error,
     )
 }
 
