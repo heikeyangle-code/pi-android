@@ -1,14 +1,18 @@
+package app.pi.bridge
+
 // A bare-JVM harness for the guest-to-host path mapping behind A3
 // (`bridge/GuestImageBytes.kt` -> `bridge/GuestPathMapping.kt`).
 //
-// **NOT RUN BY CI.** Nothing executes this file today:
-//   * `.github/workflows/ci.yml` runs `:rpc:test` only, never `:app:test`;
-//   * `assembleRelease` does not compile `app/src/test` at all;
-//   * `tools/typecheck.sh` compiles `app/src/main/kotlin` only.
-// It therefore has the same standing as `packages/PackagesPureLogicCheck.kt`: a
-// hand-run check that must be run by whoever touches the mapping. Until someone
-// wires it into CI, a green build says nothing about this file, and a compile
-// error in it will not be caught by anything either.
+// **RUN BY CI since 2026-09-11**, by `tools/run-app-pure-checks.sh` from the `pure-checks`
+// job in `.github/workflows/ci.yml` (no Android SDK, no Gradle, no AAPT2 - the closure
+// imports nothing from `android.*`). Before that it was decoration: `:rpc:test` never
+// touched it, `assembleRelease` does not compile `app/src/test`, and `tools/typecheck.sh`
+// compiles `app/src/main/kotlin` only.
+//
+// The missing `package` line is the reason this was found at all: without it the file
+// compiled into the *default* package, so the harness class was `GuestPathMappingCheckKt`
+// rather than `app.pi.bridge.GuestPathMappingCheckKt` - which is exactly what the first
+// CI run reported. Nothing compiled this file for its whole life, so nothing noticed.
 //
 // Run it by hand:
 //

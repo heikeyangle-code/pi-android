@@ -179,6 +179,21 @@ run_harness() { # $1 = label, $2 = main class, rest = sources (harness included)
     return 1
   fi
 
+  # An empty output directory is a failure even when the compiler printed nothing that
+  # matches an `error:` diagnostic. This is the same false-green channel that
+  # `tools/typecheck.sh` had to close for its `:rpc` jar: the run below would then fail
+  # with a bare ClassNotFoundException, which says nothing about *why* nothing compiled.
+  # Its first CI run failed exactly here, and the cause was invisible - the harnesses had
+  # no `package` line, so they landed in the default package under a different FQCN, and
+  # the compiler had nothing to complain about.
+  if [ -z "$(find "$out" -name '*.class' -print -quit 2>/dev/null)" ]; then
+    printf '%s\n' "$diag" | head -20
+    echo "pure-checks: FAILED — $label produced no class files" \
+         "(0 error diagnostics, but nothing was emitted either)"
+    failed=$((failed + 1))
+    return 1
+  fi
+
   local report
   report="$(java -cp "$out:$LIB_CP" "$main_class" 2>&1)"
   status=$?

@@ -1,3 +1,5 @@
+package app.pi.packages
+
 // Package-internal pure-logic checks, runnable on a bare JVM with no Gradle.
 //
 // Why this file has no test framework: this module's build has no
@@ -5,8 +7,11 @@
 // `app/build.gradle.kts`, which this package does not own. It is a plain `main()`
 // instead, so nothing about the Gradle build has to change for it to exist.
 //
-// `tools/typecheck.sh` compiles `app/src/main/kotlin` only, so this file is not
-// part of the typecheck. Run it by hand:
+// **RUN BY CI since 2026-09-11**, by `tools/run-app-pure-checks.sh` from the `pure-checks`
+// job. Before that it had never been compiled by anything, which is how it shipped without
+// its `package` line: the class lands in the default package without one, so the FQCN the
+// harness runner used did not exist. `tools/typecheck.sh` compiles `app/src/main/kotlin`
+// only, so it never saw this file either. Run it by hand:
 //
 //   cd /root/pi-android
 //   KOTLINC_CP="$(find build/typecheck/kotlinc -name '*.jar' | tr '\n' ':')"
