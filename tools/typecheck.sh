@@ -144,7 +144,11 @@ if [ -z "$KOTLINC_CP" ] || ! echo "$KOTLINC_CP" | grep -q 'kotlin-compiler'; the
   echo "  KOTLINC_CP='$KOTLINC_CP'" >&2
   exit 2
 fi
-OUT="$ROOT/build/typecheck/out"
+# Per-invocation output dir. Several agents run this script at once, and a shared
+# OUT means they delete each other's class files mid-compile — which shows up as
+# spurious "unresolved reference" errors in files nobody touched. Cheap to avoid.
+OUT="$ROOT/build/typecheck/out-$$"
+trap 'rm -rf "$OUT"' EXIT
 RPC_JAR="$ROOT/build/typecheck/rpc.jar"
 
 compile() {
