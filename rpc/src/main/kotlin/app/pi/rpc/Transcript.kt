@@ -72,9 +72,12 @@ data class ToolCall(
     val outputTruncated: Boolean = false,
     /**
      * Images the tool returned, kept as payload instead of the `[image]` marker
-     * [output] carries (F16). Painting them needs an image loader the project
-     * does not have yet (`docs/known-gaps.md` A3), but the transcript must not be
-     * the place the bytes are lost.
+     * [output] carries (F16). The parser and both entry points keep them
+     * (`Events.kt:454`, `Transcript.kt:1137` live, `:1547` replay) so the
+     * transcript is not where the bytes are lost — pi draws every `image` block
+     * (`components/tool-execution.ts:379-388`). Painting them needs a consumer:
+     * as of the F16 review no `ui/**` file reads this list (`ToolCallBlock`
+     * never references `images`), so the row still shows `[image]` text.
      */
     val images: List<PiImage> = emptyList(),
 ) : TranscriptItem {
@@ -168,7 +171,16 @@ data class SkillInvocation(
     val body: String = "",
 ) : TranscriptItem
 
-/** The `system-prompt` block: collapsed to a size line, expandable to full text. */
+/**
+ * The `system-prompt` block: collapsed to a size line, expandable to full text.
+ *
+ * **Unreachable in production (F22).** pi has no `system_prompt` session entry
+ * (`core/session-manager.ts:145-155`) and no RPC command returns the prompt
+ * (`rpc-types.ts:20-71`; `get_state`'s `RpcSessionState`, `:96-109`, carries no
+ * prompt field), so no wire data can produce this row. It exists because
+ * `ui/blocks/SystemPromptBlock.kt` renders it; the whole kind is slated for
+ * deletion together with that block and [TranscriptReducer.onSystemPrompt].
+ */
 data class SystemPrompt(
     override val key: String,
     override val ts: Long,
@@ -481,11 +493,15 @@ private fun compactEntryData(data: JsonElement?, max: Int = CUSTOM_ENTRY_DATA_MA
 /**
  * Whether pi truncated this tool's output, from the tool-result `details`.
  *
- * pi's bash tool sets `details.truncation` only when it actually truncated
- * (`core/tools/bash.ts`: `truncation: snapshot.truncation.truncated ? … :
- * undefined`, and the `read` tool uses a plain `truncated`), so the presence of
- * either form is the signal. JSON `null` — which `docs/rpc.md`'s example shows —
- * means "not truncated".
+ * pi's tools report truncation as `details.truncation`, a `TruncationResult`
+ * whose `truncated` boolean is the signal (`core/tools/truncate.ts:18-30`):
+ * bash sets it only when it actually truncated
+ * (`core/tools/bash.ts:268` — `truncation: snapshot.truncation.truncated ? … :
+ * undefined`) and `read` sets `details = { truncation }` on both its truncation
+ * branches (`core/tools/read.ts:156`, `:165`). A flat `details.truncated` is
+ * accepted too, but no pi tool writes that today — it costs one lookup and keeps
+ * a differently-shaped result from reading as "not truncated". JSON `null` —
+ * which `docs/rpc.md`'s example shows — means "not truncated".
  */
 private fun detailsTruncated(details: JsonElement?): Boolean {
     val obj = details as? JsonObject ?: return false
@@ -576,9 +592,9 @@ private val TURN_FAILURE_REASONS = setOf("length", "aborted", "error")
  * the `tool_execution_update` row: "**节流 200ms** 追加输出（避免抖动）".
  *
  * pi coalesces for the same reason, one layer lower: every chunk really is
- * emitted on the wire — `packages/agent/src/agent-loop.ts:678-712` calls
- * `emit({ type: "tool_execution_update", … })` once per `partialResult`, and
- * tools are executed strictly one call at a time (`:497-539`, one `await` per
+ * emitted on the wire — `packages/agent/src/agent-loop.ts:677-717` emits one
+ * `tool_execution_update` per `partialResult` (`:688-704` is the callback), and
+ * tools are executed strictly one call at a time (`:497-545`, one `await` per
  * call), so a chatty tool floods stdout exactly like it floods the app's log —
  * but the TUI never repaints per chunk: `TuiBase.requestRender` queues a single
  * frame and `scheduleRender` waits out `MIN_RENDER_INTERVAL_MS = 16`
@@ -642,7 +658,7 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
      * Wall-clock of the last **published** update, per tool call id (F8).
      *
      * Per call rather than one shared stamp: pi executes the calls of a single
-     * message strictly one after another (`agent-loop.ts:497-539`), and a shared
+     * message strictly one after another (`agent-loop.ts:497-545`), and a shared
      * stamp would swallow the first chunk of the next call. Cleared for a call id
      * when that call finalises ([finalizeTool]) and wholesale on [reset].
      */
@@ -1413,9 +1429,12 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
             // `model_select` entry (session-manager.ts) and no `model_select`
             // event on RPC stdout either — `_emitModelSelect` calls
             // `_extensionRunner.emit(...)`, never `_emit`/`subscribe`
-            // (agent-session.ts). A record with that type is therefore inert
-            // here; the live signal is the `get_state` poll after
-            // `agent_settled`, and [onModelChange] is the app-synthesised API.
+            // (`core/agent-session.ts:1658-1670`). A record with that type is
+            // therefore inert here; the app's live model indicator comes from the
+            // `get_state` poll after `agent_settled`, and the row below is the
+            // app's own (pi's TUI draws nothing for `model_change`:
+            // `sessionEntryToContextMessages` returns `[]` for it,
+            // `core/session-manager.ts:383-408`).
             "model_change" -> onModelEntry(entry, entryId, ts)
 
             "thinking_level_change" -> {
@@ -1434,25 +1453,32 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
             // An extension's own persisted state (`{ type, customType, data }`,
             // core/session-manager.ts:104-108, docs/session-format.md:279). pi
             // renders it through the renderer the extension registered for that
-            // `customType`: live from `entry_appended` (`interactive-mode.ts:3202-3205`
-            // → `:3557-3562`) and on replay (`renderSessionEntries`, `:3786-3788`,
+            // `customType`: live from `entry_appended` (`interactive-mode.ts:3202-3207`
+            // → `:3557-3562`) and on replay (`renderSessionEntries`, `:3786-3789`,
             // whose item list really does carry `custom` entries — `RenderSessionItem`
-            // at `:228`). Before this case the app dropped it on both paths.
+            // at `:228`, dispatched at `:3703-3707`). Before this case the app
+            // dropped it on both paths.
             "custom" -> onCustomEntry(entry, entryId, ts)
 
-            // `skill` / `skill_invocation` are **app-level aliases, not pi entry
-            // types**: pi expands `/skill:name` into an ordinary user message and
-            // the real projection is the `<skill …>` split in [projectUser]. The
-            // aliases stay so a caller can feed an entry-shaped skill record in.
-            "skill", "skill_invocation" -> onSkillEntry(entry, entryId, ts)
+            // F26: there is deliberately **no** `skill` / `skill_invocation` case
+            // here. pi has neither an entry type nor an event with those names —
+            // the persisted union is exactly message, thinking_level_change,
+            // model_change, compaction, branch_summary, custom, custom_message,
+            // label and session_info (`core/session-manager.ts:145-155`) —
+            // because `_expandSkillCommand` rewrites the user message itself
+            // (`core/agent-session.ts`). The real projection is the `<skill …>`
+            // split in [projectUser] from that user message, which is reachable
+            // from a live `message` entry and from history. The aliases that used
+            // to live here were reachable only by hand-feeding a `JsonObject`.
 
             // pi has no `system_prompt` or `error` entry type — the persisted
             // union is exactly message, thinking_level_change, model_change,
             // compaction, branch_summary, custom, custom_message, label and
-            // session_info (`core/session-manager.ts`). The system prompt is only
-            // reachable through `getSystemPrompt()`, and a failure arrives as a
-            // `stopReason`/delta event, so neither is handled here. Rows for them
-            // come from the app-synthesised [onSystemPrompt] / [onError] APIs.
+            // session_info (`core/session-manager.ts:145-155`). The system prompt
+            // is only reachable through `getSystemPrompt()`, which no RPC command
+            // exposes (`rpc-types.ts:20-71`), and a failure arrives as a
+            // `stopReason`/delta event, so neither is handled here. A row for the
+            // system prompt comes only from the app-side [onSystemPrompt] hook.
             else -> TranscriptChange.None
         }
         return if (change == TranscriptChange.None && separator) {
@@ -1751,11 +1777,12 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
      * something false.
      *
      * When no renderer is registered for a `customType`, pi is silent
-     * (`custom-entry.ts:42-44` returns before adding a child, and `:53-56` drops
-     * an empty component). The RPC wire carries no renderer registry, so the app
-     * cannot take that same decision, and the entry only reaches here because an
-     * extension explicitly appended it — showing the metadata is strictly closer
-     * to pi than the invisible row this replaces.
+     * (`interactive-mode.ts:3558-3561` returns before constructing a component),
+     * and when the renderer produces nothing it adds no child either
+     * (`components/custom-entry.ts:54-56`). The RPC wire carries no renderer
+     * registry, so the app cannot take that same decision, and the entry only
+     * reaches here because an extension explicitly appended it — showing the
+     * metadata is strictly closer to pi than the invisible row this replaces.
      *
      * The wording is the app's own: pi has no text for this row at all.
      */
@@ -1776,27 +1803,6 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
                 ts = ts,
                 text = text,
                 tone = Notice.Tone.Info,
-            ),
-        )
-    }
-
-    private fun onSkillEntry(entry: JsonObject, entryId: String?, ts: Long): TranscriptChange {
-        val name = entry.str("skillName")
-            ?: entry.str("skill")
-            ?: entry.str("name")
-            ?: ""
-        val body = entry.str("body")
-            ?: entry.str("text")
-            ?: contentText(entry["content"])
-            ?: entry.str("content")
-            ?: ""
-        if (name.isBlank() && body.isEmpty()) return TranscriptChange.None
-        return append(
-            SkillInvocation(
-                key = keyFor(entryId, "skill"),
-                ts = ts,
-                skillName = name,
-                body = body,
             ),
         )
     }
@@ -1855,26 +1861,28 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
 
     // ------------------------------------------------------- public single-row
 
-    /** Append a [SystemPrompt] block (pi's assembled system prompt). */
+    /**
+     * Append a [SystemPrompt] block. **App-only hook with no producer** (F22).
+     *
+     * pi has no `system_prompt` session entry — the persisted union is
+     * `core/session-manager.ts:145-155` — and no RPC command exposes the prompt:
+     * `rpc-types.ts:20-71` has none, and `get_state`'s `RpcSessionState`
+     * (`:96-109`) carries no prompt field. pi never renders the prompt text at
+     * all: its `/context` listing prints only the prompt's *source path*
+     * (`interactive-mode.ts:1715-1722`) and the only reader of the text is the
+     * extension-runner hook (`:2068`). So **no wire data can ever reach this
+     * method**: it is not called from `app/**` either (grep: declaration + tests
+     * only).
+     *
+     * It is kept, rather than deleted, only because [SystemPrompt] is still
+     * rendered by `ui/blocks/SystemPromptBlock.kt` through `BlockRenderer`; the
+     * honest fix is a coordinated deletion of item + block + this method + the
+     * spec §7.4 row, which cannot be done from `rpc/` alone. Recorded in
+     * `docs/gap-disposition.md` §10 (F22).
+     */
     fun onSystemPrompt(text: String, entryId: String? = null): TranscriptChange {
         if (text.isEmpty()) return TranscriptChange.None
         return append(SystemPrompt(key = keyFor(entryId, "system"), ts = now(), fullText = text))
-    }
-
-    /** Append a [SkillInvocation] block (`/skill:name` expansion). */
-    fun onSkill(name: String, body: String = "", entryId: String? = null): TranscriptChange {
-        if (name.isBlank() && body.isEmpty()) return TranscriptChange.None
-        return append(
-            SkillInvocation(key = keyFor(entryId, "skill"), ts = now(), skillName = name, body = body),
-        )
-    }
-
-    /** Append a [ModelChange] block (`set_model` / `model_select`). */
-    fun onModelChange(provider: String?, modelId: String, entryId: String? = null): TranscriptChange {
-        if (provider.isNullOrBlank() && modelId.isBlank()) return TranscriptChange.None
-        return append(
-            ModelChange(key = keyFor(entryId, "model"), ts = now(), provider = provider, modelId = modelId),
-        )
     }
 
     /** Append a [HookMessage] block (an extension-injected custom message). */
@@ -1893,11 +1901,6 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
             ),
         )
     }
-
-    /** Append an [ErrorText] block. */
-    fun onError(message: String, detail: String? = null): TranscriptChange = append(
-        ErrorText(key = nextKey("error"), ts = now(), message = message, detail = detail),
-    )
 
     // ------------------------------------------------------------------ helpers
 
@@ -1982,12 +1985,20 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
          * Entry-shaped events that a newer pi may emit directly on stdout. They
          * are projectable through [onEntry]; everything else unknown is inert.
          *
-         * Only real pi entry types belong here. `model_select`, `system_prompt`
-         * and `error` were removed because pi can emit none of them: the first is
-         * extension-only (`agent-session.ts`), and the other two are not in the
-         * persisted union (`session-manager.ts`). `custom` is in that union
-         * (`:145-155`) and is now projectable, so a bare `custom` record from a
-         * newer pi lands as a row instead of nothing.
+         * Only **real** pi entry types belong here — this is the list's whole
+         * point, because a name that pi cannot emit makes an unknown event look
+         * projectable and lets a hand-fed record masquerade as wire data. The
+         * persisted union is `core/session-manager.ts:145-155`: message,
+         * thinking_level_change, model_change, compaction, branch_summary,
+         * custom, custom_message, label, session_info. So `model_select`,
+         * `system_prompt` and `error` are absent (the first is extension-only,
+         * the other two are not entry types), and F26 removed the former
+         * `skill`/`skill_invocation` aliases for the same reason: pi has no such
+         * entry, it rewrites the user message instead (`core/agent-session.ts`).
+         * `custom` is in the union and is projectable. `hook_message` is the one
+         * deliberate extra: it is the alias [onEntry] accepts for
+         * `custom_message`'s shape, kept so an app-side or older record still
+         * lands.
          */
         val ENTRY_EVENT_TYPES = setOf(
             "model_change",
@@ -1997,8 +2008,6 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
             "custom",
             "custom_message",
             "hook_message",
-            "skill",
-            "skill_invocation",
         )
     }
 }

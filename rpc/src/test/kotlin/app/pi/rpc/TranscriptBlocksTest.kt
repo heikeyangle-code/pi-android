@@ -70,15 +70,6 @@ class TranscriptBlocksTest {
     }
 
     @Test
-    fun `the app-synthesised model change helper produces the row`() {
-        val r = reducer()
-        r.onModelChange("openai", "gpt-5")
-        val item = r.transcript.single() as ModelChange
-        assertEquals("openai", item.provider)
-        assertEquals("gpt-5", item.modelId)
-    }
-
-    @Test
     fun `a model change with no model at all is ignored`() {
         val r = reducer()
         r.onEntry(obj("""{"type":"model_change","id":"m1","timestamp":1000}"""))
@@ -117,7 +108,7 @@ class TranscriptBlocksTest {
 
     /**
      * pi renders a `custom` entry through the extension's registered renderer
-     * (`interactive-mode.ts:3202-3205` live, `:3704-3706` on replay). That
+     * (`interactive-mode.ts:3202-3207` live, `:3703-3707` on replay). That
      * renderer cannot cross RPC, so the reducer must at least surface the type
      * and the payload as a row — it used to emit nothing (F6).
      */
@@ -275,8 +266,8 @@ class TranscriptBlocksTest {
     fun `a system prompt row comes from the app helper, not from an entry type`() {
         // pi's persisted union has no `system_prompt` entry (session-manager.ts);
         // the text is only reachable through `getSystemPrompt()`. An entry-shaped
-        // record is therefore inert, and onSystemPrompt is the API that produces
-        // the row.
+        // record is therefore inert, and onSystemPrompt is the app-only API that
+        // produces the row (F22: it has no producer — see that method's KDoc).
         val r = reducer()
         r.onEntry(obj("""{"type":"system_prompt","id":"sp","timestamp":1000,"text":"You are pi."}"""))
         assertTrue(r.transcript.isEmpty())
@@ -285,33 +276,33 @@ class TranscriptBlocksTest {
         assertEquals("You are pi.", (r.transcript.single() as SystemPrompt).fullText)
     }
 
+    /**
+     * F26: pi has no `skill` or `skill_invocation` entry type — `_expandSkillCommand`
+     * rewrites the user message (`core/agent-session.ts`) — so a record with that
+     * name must stay inert rather than pretend to be wire data. The real skill
+     * card comes from the `<skill …>` split of a user message; see
+     * `FidelityFixesTest`'s `a skill user message projects a skill card plus the
+     * trailing message`.
+     */
     @Test
-    fun `a skill entry becomes a skill invocation with its body`() {
+    fun `skill-shaped entry records are inert, since pi has no such entry type`() {
         val r = reducer()
         r.onEntry(
             obj("""{"type":"skill","id":"s1","timestamp":1000,"name":"pdf","body":"step one\nstep two"}"""),
         )
-        val item = r.transcript.single() as SkillInvocation
-        assertEquals("pdf", item.skillName)
-        assertTrue(item.body.contains("step two"))
-    }
-
-    @Test
-    fun `the public skill helper produces the same block`() {
-        val r = reducer()
-        r.onSkill("commit", "# Commit\nwrite a good message")
-        val item = r.transcript.single() as SkillInvocation
-        assertEquals("commit", item.skillName)
-        assertTrue(item.body.startsWith("# Commit"))
+        r.onEntry(
+            obj("""{"type":"skill_invocation","id":"s2","timestamp":1000,"name":"pdf","body":"body"}"""),
+        )
+        assertTrue(r.transcript.isEmpty())
     }
 
     // -------------------------------------------------------------------- error
 
     @Test
-    fun `an error row comes from the app helper, not from an entry type`() {
+    fun `an error-shaped entry record is inert, since pi has no such entry type`() {
         // pi has no `error` entry type: a failure is a `stopReason`/delta event
-        // (session-manager.ts). The entry-shaped record is inert; onError is the
-        // API that produces the row.
+        // (session-manager.ts), and the row comes from `failTurn` / a provider
+        // error delta (F26 removed the unused app-side helper).
         val r = reducer()
         r.onEntry(
             obj(
@@ -320,11 +311,6 @@ class TranscriptBlocksTest {
             ),
         )
         assertTrue(r.transcript.isEmpty())
-
-        r.onError("provider exploded", "stack trace")
-        val item = r.transcript.single() as ErrorText
-        assertEquals("provider exploded", item.message)
-        assertEquals("stack trace", item.detail)
     }
 
     @Test
