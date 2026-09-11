@@ -177,7 +177,13 @@ class DeviceSafStore private constructor(context: android.content.Context) {
         return remaining.size != before.size
     }
 
-    /** How many directories the user has granted. */
+    /**
+     * How many directories the user has granted.
+     *
+     * **当前无调用方**（`describe()` 用的 `entries.length()`、`/app/health` 用的 `saf.count`
+     * 都自己算，没有走这里）。留着是因为它是唯一一个"只问数量"的入口，删掉前请先确认
+     * 没有在制品的界面在用它。
+     */
     fun grantCount(): Int = grants().size
 
     /** The live tree documents, skipping any grant the system has revoked. */

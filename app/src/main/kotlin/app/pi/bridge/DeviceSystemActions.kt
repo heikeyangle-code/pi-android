@@ -49,11 +49,14 @@ import java.util.concurrent.atomic.AtomicReference
  *
  * Two rules shape this file:
  *
- *  1. **A missing Android permission is reported, never swallowed.** Several of
- *     these need a manifest permission the current manifest does not declare yet
- *     (VIBRATE, location). The failure therefore names the exact permission and
- *     what the user or the app has to do, because "什么都没发生" is the failure
- *     mode the design doc singles out (design §21.4).
+ *  1. **A missing Android permission is reported, never swallowed.** The failure
+ *     names the exact permission and what the user or the app has to do, because
+ *     "什么都没发生" is the failure mode the design doc singles out
+ *     (design §21.4). Every permission these endpoints need (VIBRATE, the two
+ *     location permissions, CAMERA, the pre-API-29 storage pair) is declared
+ *     already (`AndroidManifest.xml:33-69`), so a refusal here means the *runtime
+ *     grant* is missing or the platform refused the call — the messages say that
+ *     rather than sending the reader to edit the manifest.
  *  2. **Anything that leaves the sandbox is reversible or reported.** Export goes
  *     to the public Download collection through MediaStore so the user can see and
  *     delete it, and the reply carries the resulting location.
@@ -161,9 +164,12 @@ object DeviceSystemActions {
             throw DeviceActionException(
                 DeviceDenial(
                     code = DeviceDenial.NO_PERMISSION,
-                    reason = "应用没有 VIBRATE 权限，无法震动。" +
-                        "（AndroidManifest.xml 需要添加 <uses-permission android:name=\"android.permission.VIBRATE\" />）",
-                    hint = "请让用户或维护者在清单中加入 VIBRATE 权限后重新构建安装。",
+                    // Declared at AndroidManifest.xml:33 and a normal (install-time)
+                    // permission, so a missing grant is not something a maintainer can
+                    // fix by editing the manifest.
+                    reason = "本应用当前没有 VIBRATE 权限，无法震动（清单已声明，被系统/安装策略拒绝了）。",
+                    hint = "请让用户在系统设置 → 应用 → pi-android → 权限里检查，或重装应用；" +
+                        "不要向用户声称已经震动过。",
                 ),
             )
         }
@@ -250,8 +256,10 @@ object DeviceSystemActions {
                 DeviceDenial(
                     code = DeviceDenial.NO_PERMISSION,
                     reason = "应用没有定位权限（ACCESS_FINE_LOCATION / ACCESS_COARSE_LOCATION）。",
-                    hint = "请让用户在系统设置 → 应用 → pi-android → 权限 中授予定位权限；" +
-                        "维护者还需要在 AndroidManifest.xml 中声明这两个权限。",
+                    // Both are declared (AndroidManifest.xml:35-36); this is a runtime
+                    // grant the user has not given, which is why the hint names the
+                    // system settings page rather than the manifest.
+                    hint = "请让用户在系统设置 → 应用 → pi-android → 权限 中授予定位权限，然后重试。",
                 ),
             )
         }
@@ -708,8 +716,10 @@ object DeviceSystemActions {
             }
         }
 
-        // API < 29: the public directory needs WRITE_EXTERNAL_STORAGE, which the
-        // app does not declare. Fail with the exact requirement.
+        // API < 29: the public directory needs WRITE_EXTERNAL_STORAGE, which is
+        // declared with `maxSdkVersion="29"` (`AndroidManifest.xml:64-69`), so on
+        // these API levels it exists and only the runtime grant can be missing. Fail
+        // with the exact requirement.
         val directory = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
         val target = File(directory, safeName)
         return try {
@@ -728,7 +738,7 @@ object DeviceSystemActions {
                 DeviceDenial(
                     code = DeviceDenial.NO_PERMISSION,
                     reason = "在 Android ${Build.VERSION.RELEASE} 上写入公共 Download 需要存储权限，当前未授予。",
-                    hint = "请让用户授予存储权限，或维护者在清单中声明 WRITE_EXTERNAL_STORAGE。",
+                    hint = "请让用户在「设置 → 设备能力 → 存储」点「授予存储权限」，或在系统设置里为本应用打开存储权限。",
                 ),
             )
         }
@@ -801,7 +811,12 @@ object DeviceSystemActions {
         return if (safe.length <= 120) safe else safe.take(120)
     }
 
-    /** Exposed for the diagnostics card: where export lands. */
+    /**
+     * Exposed for the diagnostics card: where export lands.
+     *
+     * **当前无调用方**：`export` 自己在返回值里带 `location`/`uri`，诊断页没读这个标签。
+     * 留着是为了界面要显示"导出到哪里"时不必再拼一次中文。
+     */
     fun downloadDirectoryLabel(): String = "Download（公共目录，用户可见）"
 
     /** Audio route hint used by the TTS endpoint on some ROMs. */

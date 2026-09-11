@@ -266,6 +266,17 @@ object DeviceShellGuard {
      * *succeed*, so for those the block is a policy decision rather than test A.
      * The user asked for exactly this list; the wording below says "we forbid it",
      * not "it cannot work".
+     *
+     * **Case, and the one place this list and its TypeScript mirror differ.** These
+     * `Regex`s are case-sensitive (Kotlin's default). The mirror in
+     * `assets/pi-extensions/pi-android-bridge/danger.ts` matches eleven of the twelve
+     * with the `i` flag, so the gate refuses `MOUNT` / `DD` style spellings that this
+     * guard would let through. Left as-is on purpose rather than "aligned" in either
+     * direction: this guard is the enforcement, the TS copy is only a "do not ask the
+     * user about something that can never be allowed" pre-filter, and a capitalised
+     * spelling is not a bypass on a case-sensitive filesystem (`MOUNT` is not a
+     * binary) — so adding `IGNORE_CASE` here would buy nothing and refuse prose that
+     * merely mentions the token.
      */
     private val hardBlocks: List<HardBlock> = listOf(
         // --- Test A: needs root (or ADB-level privilege) this app does not have ---

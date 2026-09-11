@@ -6,6 +6,7 @@ import app.pi.runtime.PiPaths
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import java.security.MessageDigest
 import java.security.SecureRandom
 
 /**
@@ -18,19 +19,22 @@ import java.security.SecureRandom
  * ### Where the token lives, and why in two places
  *
  * The extension runs *inside* the proot guest, so it needs a file it can open as
- * `/root/...`. Two guest paths can be that file, depending on how the engine's bind
- * mounts are arranged (the parent owns `PiEngineHost`, which today does not bind
- * `PI_CODING_AGENT_DIR`):
+ * `/root/...`. Two guest paths can be that file:
  *
  *  - `/root/.pi/device-bridge.json` — a plain file inside the rootfs, which proot
  *    maps 1:1. Always present, and always the *current* token because the bridge
  *    rewrites it on every start.
- *  - `/root/.pi/agent/device-bridge.json` — the host-side agent dir, which becomes
- *    guest-visible only if the engine binds it.
+ *  - `/root/.pi/agent/device-bridge.json` — the host-side agent dir. This one is
+ *    bound by the engine (`PiEngineHost.kt:291`, `paths.agentDir to
+ *    /root/.pi/agent`), so it is the same host file the app reads and writes.
  *
- * Writing both means the extension works either way, and the extension itself
- * probes a documented list of paths (plus `PI_ANDROID_BRIDGE_FILE`) instead of
- * assuming one.
+ * The second path used to be a *fallback* for the case where the engine did not
+ * bind the agent dir; that case is gone, but both are still written because the
+ * two are only guaranteed to coincide while the bind exists. If the bind is ever
+ * dropped, the rootfs copy is the one that keeps working.
+ *
+ * The extension itself probes a documented list of paths (plus
+ * `PI_ANDROID_BRIDGE_FILE`) instead of assuming one.
  *
  * The file is owner-readable only: 0600 inside app-private storage. It never
  * touches `/sdcard`, matching design §23.4.
@@ -47,25 +51,25 @@ object DeviceBridgeController {
     private const val ASSET_ROOT = "pi-extensions"
 
     /**
-     * Bumped whenever anything under `assets/pi-extensions/` changes, to force
-     * re-installation into the guest.
+     * **No longer the install gate.** The stamp written next to the installed
+     * extensions is a content fingerprint of the asset tree ([assetFingerprint]), so
+     * editing anything under `assets/pi-extensions/` no longer needs a version bump
+     * and can no longer be forgotten.
      *
-     * This is a manual gate and it fails silently: the stamp is compared before
-     * copying, so a device that already ran an older build keeps the old
-     * extension tree and never sees the new one. The symptom is not an error —
-     * it is a feature that "does not work", which sends whoever debugs it off to
-     * check ports, tokens and networks instead of the installer.
+     * This constant is the fallback for the one case a fingerprint cannot cover:
+     * when the asset tree cannot be read at all, the marker becomes `v<this value>`
+     * and the installer behaves exactly as it did before the fingerprint existed
+     * (compare, copy, stamp) rather than claiming everything is current.
      *
-     * So: **every change to `pi-extensions/ 目录` must bump this string.**
-     * History: "1" shipped the device bridge; "2" adds `pi-highlight/`; "3" adds the
-     * session-scoped approvals, the workspace-relative shell policy and the SAF file
-     * tools to the device extension; "4" adds the `device-reload` command (re-scan
-     * extensions/skills/prompts without restarting the engine).
+     * It still records what each shipped generation contained, which is why the
+     * history stays: "1" shipped the device bridge; "2" adds `pi-highlight/`; "3"
+     * adds the session-scoped approvals, the workspace-relative shell policy and the
+     * SAF file tools to the device extension; "4" adds the `device-reload` command
+     * (re-scan extensions/skills/prompts without restarting the engine).
      *
-     * A content-derived fingerprint (hashing the asset tree's names and sizes)
-     * would remove the human step entirely and is the better long-term design —
-     * recorded in docs/known-gaps.md rather than done here, because the file is
-     * not the one being worked on right now.
+     * The manual gate this replaced is `docs/known-gaps.md` B12 / E6 — a silent
+     * failure whose symptom was "some feature just does not work", which sends
+     * whoever debugs it to ports, tokens and networks instead of the installer.
      */
     const val ASSET_VERSION = "4"
 
@@ -85,7 +89,13 @@ object DeviceBridgeController {
 
     fun isRunning(): Boolean = server?.isRunning() == true
 
-    /** The live bearer token, for the diagnostics card. Never logged. */
+    /**
+     * The live bearer token. Never logged, and **currently has no caller**: the
+     * diagnostics card reports `tokenPresent` instead ([diagnostics]), on purpose —
+     * showing the token on screen is how it ends up in a screenshot. Kept as the
+     * one accessor a support flow would need, and labelled so nobody assumes the UI
+     * already uses it.
+     */
     fun currentToken(): String? = token
 
     fun auditLogPath(): String? = auditLog?.path
@@ -244,6 +254,11 @@ object DeviceBridgeController {
      * agent dir and the rootfs copy. Without this the tools simply do not exist for
      * the agent, so it is part of "start", not a separate chore for the app.
      *
+     * The stamp is a **content fingerprint** of the asset tree ([assetFingerprint]),
+     * not a hand-bumped constant. `ASSET_VERSION` remains only as the fallback for
+     * the case where the package's assets cannot be read at all, which is strictly
+     * the old behaviour rather than a new failure.
+     *
      * @return a short description, e.g. `已安装` / `已是最新` / `失败: …`
      */
     fun installExtensionAssets(context: Context): String {
@@ -256,48 +271,131 @@ object DeviceBridgeController {
             roots.add(File(paths.rootfs, "root/.pi/agent/extensions"))
         }
         return try {
+            val fingerprint = assetFingerprint(context)
+            val marker = fingerprint ?: "v$ASSET_VERSION"
             var copied = 0
             var skipped = 0
+            var bytes = 0L
             for (root in roots) {
                 root.mkdirs()
                 val stamp = File(root, ".pi-android-assets")
-                if (stamp.isFile && stamp.readText().trim() == ASSET_VERSION) {
+                if (stamp.isFile && stamp.readText().trim() == marker) {
                     skipped++
                     continue
                 }
-                copyAssetTree(context, ASSET_ROOT, root)
-                stamp.writeText(ASSET_VERSION)
+                bytes += copyAssetTree(context, ASSET_ROOT, root)
+                stamp.writeText(marker)
                 copied++
             }
+            val how = if (fingerprint == null) {
+                "标记 $marker（资产内容读不出来，退回手工版本号）"
+            } else {
+                "标记 ${marker.take(15)}…（内容指纹）"
+            }
             when {
-                copied > 0 -> "已安装到 $copied 个位置"
-                skipped > 0 -> "已是最新（$skipped 个位置）"
+                copied > 0 -> "已安装到 $copied 个位置，$bytes 字节，$how"
+                skipped > 0 -> "已是最新（$skipped 个位置，$how）"
                 else -> "未安装"
             }
         } catch (error: Exception) {
-            "失败: ${error::class.java.simpleName}: ${error.message}"
+            // Name what the package actually contains: a FileNotFoundException from
+            // `assets.open` cannot distinguish "asset missing" from "asset packaging
+            // is broken", and the reader has no other way to tell.
+            "失败: ${error::class.java.simpleName}: ${error.message}；包内实际内容：${describeAssets(context)}"
         }
     }
 
-    /** Recursive copy of an asset subtree; `AssetManager.list` is the only API. */
-    private fun copyAssetTree(context: Context, assetPath: String, target: File) {
+    /**
+     * Recursive copy of an asset subtree; `AssetManager.list` is the only API.
+     *
+     * One limitation cannot be worked around with this API: `list` returns an empty
+     * array for an empty *directory* exactly as it does for a *file*, so an empty
+     * directory inside `assets/pi-extensions/` would be opened as a file and throw.
+     * None exists today; the failure message names the asset path if one appears.
+     *
+     * @return the number of bytes copied, so `start`'s status line can be checked
+     *   against reality instead of trusted.
+     */
+    private fun copyAssetTree(context: Context, assetPath: String, target: File): Long {
         val children = context.assets.list(assetPath).orEmpty()
         if (children.isEmpty()) {
             target.parentFile?.mkdirs()
-            context.assets.open(assetPath).use { input ->
+            return context.assets.open(assetPath).use { input ->
                 target.outputStream().use { output -> input.copyTo(output) }
             }
-            return
         }
         target.mkdirs()
+        var total = 0L
         for (child in children) {
-            copyAssetTree(context, "$assetPath/$child", File(target, child))
+            total += copyAssetTree(context, "$assetPath/$child", File(target, child))
         }
+        return total
     }
 
-    /** Where the given extension file ends up inside the guest. */
-    fun guestExtensionPaths(): List<String> = listOf(
-        "/root/.pi/agent/extensions/pi-android-bridge/index.ts",
-        "/root/.pi/agent/extensions/pi-android-permission-gate.ts",
-    )
+    /**
+     * A SHA-256 over the whole asset tree, as `sha256:<hex>`: every file's asset path
+     * and its bytes, in sorted path order.
+     *
+     * This is the fix for the manual `ASSET_VERSION` gate in `docs/known-gaps.md`
+     * B12 / E6. That gate failed silently in the worst way — a device that had run an
+     * older build kept the old extension tree forever, and the symptom was "some
+     * feature just does not work", which sends the reader to ports, tokens and
+     * networks instead of the installer.
+     *
+     * `null` means the asset tree could not be read at all (the same condition that
+     * makes `copyAssetTree` throw); the caller then falls back to the constant, so a
+     * broken package produces today's behaviour and never a permanently empty
+     * extension directory.
+     */
+    private fun assetFingerprint(context: Context): String? = runCatching {
+        val names = ArrayList<String>()
+        collectAssetFiles(context, ASSET_ROOT, names)
+        val digest = MessageDigest.getInstance("SHA-256")
+        for (name in names.sorted()) {
+            digest.update(name.toByteArray(Charsets.UTF_8))
+            digest.update(0.toByte())
+            digest.update(context.assets.open(name).use { it.readBytes() })
+            digest.update(0.toByte())
+        }
+        "sha256:" + digest.digest().joinToString("") { byte -> "%02x".format(byte) }
+    }.getOrNull()
+
+    /** Every file (leaf) under [assetPath], by asset path. */
+    private fun collectAssetFiles(context: Context, assetPath: String, into: MutableList<String>) {
+        val children = context.assets.list(assetPath).orEmpty()
+        if (children.isEmpty()) {
+            into.add(assetPath)
+            return
+        }
+        for (child in children) collectAssetFiles(context, "$assetPath/$child", into)
+    }
+
+    /** What the APK's asset tree really contains, for a failure message. */
+    private fun describeAssets(context: Context): String = runCatching {
+        val top = context.assets.list(ASSET_ROOT).orEmpty().toList()
+        if (top.isNotEmpty()) {
+            return@runCatching "assets/$ASSET_ROOT 下有 ${top.size} 项：${top.joinToString("、")}"
+        }
+        val root = context.assets.list("").orEmpty().toList()
+        "assets/$ASSET_ROOT 列不出来；assets 根目录下有 ${root.size} 项：" +
+            (if (root.isEmpty()) "（空）" else root.joinToString("、"))
+    }.getOrElse { "列目录本身失败：${it::class.java.simpleName}: ${it.message}" }
+
+    /**
+     * Where the shipped extensions land inside the guest.
+     *
+     * Derived from the asset tree rather than hardcoded, because the previous literal
+     * list named only `pi-android-bridge/index.ts` and
+     * `pi-android-permission-gate.ts`: it had been stale since `pi-highlight/` was
+     * added (the very thing `ASSET_VERSION` history "2" records). Nothing calls this
+     * yet — it is here because it is the only place that answers "where did the
+     * extension go?" in guest terms.
+     */
+    fun guestExtensionPaths(context: Context): List<String> =
+        runCatching { context.assets.list(ASSET_ROOT).orEmpty().toList() }
+            .getOrDefault(emptyList())
+            .map { name -> "$GUEST_EXTENSIONS_DIR/$name" }
+
+    /** The guest directory the engine binds to `paths.agentDir/extensions`. */
+    private const val GUEST_EXTENSIONS_DIR = "/root/.pi/agent/extensions"
 }

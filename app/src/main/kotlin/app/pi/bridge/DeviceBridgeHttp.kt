@@ -165,7 +165,15 @@ class DeviceBridgeHttpServer(
         var request: BridgeHttpRequest? = null
         try {
             client.soTimeout = 20_000
-            val parsed = readRequest(client.getInputStream()) ?: return
+            val parsed = readRequest(client.getInputStream())
+            if (parsed == null) {
+                // A connection that carried no parseable request used to disappear
+                // without a trace: no response, no audit line. That makes "why is the
+                // bridge not answering?" unanswerable from the log, so the drop is
+                // recorded even though there is nobody to answer.
+                audit(BridgeAuditEvent(id, "?", "?", 400, false, "请求无法解析（空连接或请求头超过上限）"))
+                return
+            }
             request = parsed
             val response = when {
                 !authorized(parsed) -> BridgeHttpResponse.denial(
@@ -190,6 +198,23 @@ class DeviceBridgeHttpServer(
             )
         } catch (timeout: SocketTimeoutException) {
             audit(BridgeAuditEvent(id, "?", "?", 408, false, "请求超时"))
+        } catch (denial: DeviceActionException) {
+            // `readRequest` refuses an oversized body by throwing a BAD_REQUEST denial
+            // (`:277-284`). Falling into the generic branch below turned that 400 into
+            // a 500 "internal error" — the caller was told the bridge was broken when
+            // it had actually rejected the request on purpose.
+            val response = BridgeHttpResponse.denial(denial.denial)
+            runCatching { write(client.getOutputStream(), response) }
+            audit(
+                BridgeAuditEvent(
+                    id,
+                    request?.method ?: "?",
+                    request?.path ?: "?",
+                    response.status,
+                    false,
+                    noteOf(response),
+                ),
+            )
         } catch (error: Exception) {
             runCatching {
                 write(

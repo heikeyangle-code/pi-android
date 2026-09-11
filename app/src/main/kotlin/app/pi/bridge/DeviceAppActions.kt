@@ -123,9 +123,11 @@ object DeviceAppActions {
      * Stop a **user** app after refreshing the classification.
      *
      * `killBackgroundProcesses` only kills background processes and needs
-     * `android.permission.KILL_BACKGROUND_PROCESSES`, which the current manifest
-     * does not declare. When the platform refuses, the caller gets that exact
-     * sentence rather than a success message for something that did not happen.
+     * `android.permission.KILL_BACKGROUND_PROCESSES`, which the manifest declares
+     * (`AndroidManifest.xml:34`). When the platform still refuses — an OEM can
+     * restrict it, and the permission alone is no guarantee — the caller gets that
+     * exact sentence rather than a success message for something that did not
+     * happen.
      */
     fun stop(context: Context, packageName: String): JSONObject {
         requireExactPackage(packageName)
@@ -173,13 +175,15 @@ object DeviceAppActions {
         try {
             activityManager.killBackgroundProcesses(packageName)
         } catch (error: SecurityException) {
+            // The permission *is* declared (`AndroidManifest.xml:34`), so a
+            // SecurityException here means the OEM or the system policy refused it —
+            // not a missing declaration. The old text sent the reader to add a
+            // permission that has been there for a while.
             throw DeviceActionException(
                 DeviceDenial(
                     code = DeviceDenial.NO_PERMISSION,
-                    reason = "应用没有 KILL_BACKGROUND_PROCESSES 权限，无法结束「$packageName」。" +
-                        "（AndroidManifest.xml 需要添加 " +
-                        "<uses-permission android:name=\"android.permission.KILL_BACKGROUND_PROCESSES\" />）",
-                    hint = "请让维护者补上该权限后重新构建安装；在那之前请不要向用户声称应用已被结束。",
+                    reason = "本机拒绝了结束「$packageName」：系统未允许本应用结束后台进程。",
+                    hint = "不要向用户声称应用已被结束；请让用户自己在系统设置 → 应用里强制停止，或先用 android_apps 确认状态。",
                 ),
             )
         }

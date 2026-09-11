@@ -334,7 +334,13 @@ class DeviceBridgeRouter(
         DeviceWorkspace.refresh(context)
         put("workspace", JSONObject().apply {
             put("shellPath", DeviceWorkspace.shellPath() ?: JSONObject.NULL)
-            put("guestPath", "/workspace")
+            // The engine's spelling, not a constant: the caller here is the extension
+            // inside the process the engine spawned, whose cwd is
+            // `/workspace/<relative-to-filesDir>` (`PiEngineHost.guestPathFor`). The
+            // terminal's plain `/workspace` is a *different* mount of the same host
+            // directory, so both are published and neither is guessed.
+            put("guestPath", DeviceWorkspace.guestPath())
+            put("guestPathAliases", JSONArray(DeviceWorkspace.guestPathAliases()))
             put("known", DeviceWorkspace.isKnown())
         })
         put("shizuku", DeviceShizuku.status(context))

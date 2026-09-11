@@ -154,10 +154,19 @@ export function describeDangerousCall(toolName: string, input: Record<string, un
  * app must not depend on an extension to stay safe. This one exists so an obviously
  * forbidden command is refused *without* bothering the user with a confirmation
  * dialog for something that can never be allowed. The two lists are deliberately
- * identical and deliberately short: each entry earns its place by "needs privilege
- * the app does not have, so it can only fail" or "irreversible device damage if it
- * ever ran". A path-based rule does **not** belong here — the workspace is the write
- * boundary, and it is enforced on the Kotlin side where it cannot be bypassed.
+ * identical in *coverage* and deliberately short: each entry earns its place by
+ * "needs privilege the app does not have, so it can only fail" or "irreversible
+ * device damage if it ever ran". A path-based rule does **not** belong here — the
+ * workspace is the write boundary, and it is enforced on the Kotlin side where it
+ * cannot be bypassed.
+ *
+ * **One honest difference from the Kotlin list:** eleven of the twelve patterns
+ * here carry the `i` flag, and the Kotlin `Regex`es are case-sensitive. So this
+ * pre-filter also refuses `MOUNT` / `DD`-style spellings that the authoritative
+ * guard would let through (where they simply fail: `MOUNT` is not a binary). That
+ * asymmetry is left alone rather than "aligned": tightening the Kotlin guard would
+ * refuse prose that merely mentions a token, and loosening this one would gain
+ * nothing the guard does not already cover.
  */
 export const FORBIDDEN_SHELL_PATTERNS: ReadonlyArray<{ pattern: RegExp; label: string }> = [
 	{ pattern: /(^|[\s;&|()])mount(\s|$)/i, label: "挂载/卸载文件系统（需要 root，只会失败）" },

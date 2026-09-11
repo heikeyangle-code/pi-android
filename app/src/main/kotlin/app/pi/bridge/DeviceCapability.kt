@@ -11,8 +11,9 @@ package app.pi.bridge
  *
  * [defaultEnabled] exists because the spec draws one deliberate line — the
  * mundane, non-observable group (clipboard, notifications, opening links,
- * sharing) is on out of the box, and the three surveillance/control groups are
- * off until the user says otherwise. Nothing dangerous is ever defaulted on.
+ * sharing) is on out of the box, and the four surveillance/control groups
+ * (存储 / 无障碍 / 位置·传感器·相机 / Shell) are off until the user says
+ * otherwise. Nothing dangerous is ever defaulted on.
  */
 enum class DeviceCapability(
     val id: String,

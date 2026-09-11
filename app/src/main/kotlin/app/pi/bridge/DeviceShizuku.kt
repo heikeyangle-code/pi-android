@@ -160,7 +160,12 @@ object DeviceShizuku {
         })
     }
 
-    /** Kept for the diagnostics page: the last permission answer we saw. */
+    /**
+     * Kept for the diagnostics page: the last permission answer we saw.
+     *
+     * **当前无调用方**：诊断页读的是 [status] 的 `note`，没有把原始结果码显示出来。
+     * 留着是因为"用户点了授权、结果是什么"只有这里能回答。
+     */
     fun lastPermissionResult(): Int? = lastGrantResult
 
     /**

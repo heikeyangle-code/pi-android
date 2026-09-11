@@ -285,9 +285,16 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 			}
 			const workspace = health.workspace;
 			if (workspace) {
+				// Two guest spellings of one host directory exist, and they are not
+				// interchangeable: the engine mounts the workspace at
+				// `/workspace/<relative-to-filesDir>` (which is this process's cwd), while
+				// the app's terminal tab mounts the same host directory at plain
+				// `/workspace`. Both are printed so a model never has to guess.
+				const aliases = workspace.guestPathAliases?.filter((alias) => alias !== workspace.guestPath) ?? [];
 				lines.push(
-					`Shell 写入边界：${workspace.shellPath ?? "未确定"}（guest 内是 ${workspace.guestPath}）` +
-						"—— 工作区之内不拦，工作区之外会拒。",
+					`Shell 写入边界：${workspace.shellPath ?? "未确定"}（guest 内是 ${workspace.guestPath}` +
+						(aliases.length > 0 ? `；终端标签页是 ${aliases.join("、")}` : "") +
+						"）—— 工作区之内不拦，工作区之外会拒。",
 				);
 			}
 			if (typeof health.shellSyntaxRelaxed === "boolean") {
