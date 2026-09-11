@@ -93,3 +93,33 @@ jobs:
           name: pi-android-${{ matrix.variant }}
           path: app/build/outputs/apk/release/*.apk
           if-no-files-found: error
+
+  # `app/src/test/**` was previously compiled and run by nothing at all: the
+  # `protocol` job runs `:rpc:test` only, `assembleRelease` does not compile the
+  # unit-test source set, and `tools/typecheck.sh` compiles `app/src/main/kotlin`
+  # only. Both harnesses there are bare `main()` functions with a hand-rolled
+  # `check()` — they import no test framework and call `exitProcess(1)` on failure
+  # — so they need no Gradle test configuration, which is just as well because
+  # `app/build.gradle.kts` declares no `testImplementation`. This job compiles each
+  # harness together with its Android-free main closure using kotlinc fetched from
+  # Maven Central and runs it; a failed assertion reds the job. No Android SDK, no
+  # Gradle, no AAPT2: it is a pure-JVM check, which is the point — it can run on a
+  # machine that cannot build the APK.
+  pure-checks:
+    name: App pure-logic checks (bare JVM)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      # Holds the ~57 MB Kotlin compiler and the closure jars, keyed on the
+      # version catalog the script reads its versions from.
+      - name: Cache the Kotlin compiler and check libraries
+        uses: actions/cache@v4
+        with:
+          path: build/pure-checks
+          key: pi-pure-checks-deps-${{ hashFiles('gradle/libs.versions.toml') }}
+      - name: Run app/src/test harnesses
+        run: bash tools/run-app-pure-checks.sh
