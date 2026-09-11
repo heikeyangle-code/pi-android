@@ -32,7 +32,9 @@ import com.mikepenz.markdown.compose.elements.MarkdownCodeBackground
 import com.mikepenz.markdown.compose.elements.MarkdownCodeBlock
 import com.mikepenz.markdown.compose.elements.MarkdownCodeFence
 import com.mikepenz.markdown.compose.elements.MarkdownImage
+import com.mikepenz.markdown.compose.elements.MarkdownInlineImage
 import com.mikepenz.markdown.model.ImageTransformer
+import com.mikepenz.markdown.model.MarkdownTypography
 import com.mikepenz.markdown.model.NoOpImageTransformerImpl
 import com.mikepenz.markdown.utils.resolveImageAlt
 import com.mikepenz.markdown.utils.resolveImageLink
@@ -92,11 +94,14 @@ internal val LocalPiImageTransformer = staticCompositionLocalOf<ImageTransformer
  * Math is the second; [piMathComponent] explains why it claims only two element
  * types.
  *
- * Images are the third. Real bytes now arrive through
- * `bridge/PiGuestImageTransformer.kt` (installed by `PiMarkdown.kt`), so this
- * component draws them and keeps saying "an image was here, and here is where it
- * pointed" only for a link that could not be resolved. See its comment for why the
- * decision is made on `transform`'s *result* rather than on the transformer's type.
+ * Images are the third, and they take **two** slots, because the library splits the
+ * surface: a block image reaches `image` ([PiImagePlaceholder]), one written inside a
+ * paragraph reaches `inlineImage` ([PiInlineImage]). Real bytes now arrive through
+ * `bridge/PiGuestImageTransformer.kt` (installed by `PiMarkdown.kt`), so both components
+ * draw them and both keep saying "an image was here, and here is where it pointed" when
+ * the link cannot be resolved — the library's own inline default would draw nothing at
+ * all there. See each component's comment for why the decision is made on
+ * `transform`'s *result* rather than on the transformer's type.
  *
  * **Not composable, on purpose.** `markdownComponents(...)` is a plain function
  * in the library (`.../compose/components/MarkdownComponents.kt`) whose
@@ -112,6 +117,7 @@ internal fun piMarkdownComponents(): MarkdownComponents = markdownComponents(
     codeFence = { model -> PiCodeFence(model) },
     codeBlock = { model -> PiCodeBlock(model) },
     image = { model -> PiImagePlaceholder(model) },
+    inlineImage = { model -> PiInlineImage(model) },
     custom = { type, model -> piMathComponent(type, model) },
 )
 
@@ -219,7 +225,6 @@ private fun PiFormulaText(model: MarkdownComponentModel, block: Boolean) {
  */
 @Composable
 private fun PiImagePlaceholder(model: MarkdownComponentModel) {
-    val palette = PiTheme.palette
     val content = model.content
     val node = model.node
     val transformer = LocalPiImageTransformer.current
@@ -234,22 +239,96 @@ private fun PiImagePlaceholder(model: MarkdownComponentModel) {
         MarkdownImage(content, node)
         return
     }
+    // The block component is the only one that can resolve an alt: its `model.content`
+    // is the *whole document* plus the image node, which is what `resolveImageAlt`
+    // needs. The inline slot is not so lucky — see [PiInlineImage].
     val alt = remember(content, node) { node.resolveImageAlt(content) }
-    Column(
+    PiImageFallback(
+        alt = alt,
+        link = link,
+        typography = model.typography,
         modifier = Modifier
             .fillMaxWidth()
             .padding(vertical = 6.dp),
-    ) {
+    )
+}
+
+/**
+ * An image written *inside* a paragraph (`text ![](…) text`), which the library renders
+ * through an `InlineTextContent` placeholder rather than through the `image` slot: its
+ * `MarkdownText` builds inline content for every `IMAGE` node and hands each one to
+ * `components.inlineImage` (`.../elements/MarkdownText.kt:384`), whose default is
+ * `CurrentComponentsBridge.inlineImage` → `MarkdownInlineImage`
+ * (`.../compose/components/MarkdownComponents.kt:210-212`).
+ *
+ * **Why this has to be our own component rather than a configuration.** The library's
+ * inline path has no failure branch at all: `MarkdownInlineImage` is
+ * `transformer.transform(link)?.let { Image(…) }`
+ * (`.../elements/MarkdownInlineImage.kt:13`), so a `null` draws **nothing** while the
+ * placeholder box the library already reserved for the link stays on screen as empty
+ * space. pi's terminal prints the image token's text instead — the alt text
+ * (`packages/tui/src/components/markdown.ts:619-627`) — so this is a real divergence, and
+ * the only seam that can fix it is the `inlineImage` slot itself. Nothing else is
+ * consulted on this path.
+ *
+ * **What the model does and does not carry here.** `content` is the resolved **link**
+ * (`MarkdownInlineImageWithSize` builds `MarkdownComponentModel(link, node, typography)`,
+ * `.../elements/MarkdownText.kt:384-386`), and `node` is the *enclosing text node* whose
+ * offsets belong to the full document — which this component never receives. The alt
+ * text is therefore unreachable in the inline slot: the annotator only appends
+ * `appendInlineContent(tag, imageUrl)` for an image
+ * (`.../annotator/AnnotatedStringKtx.kt:280-282`), so neither the alt nor the image node
+ * survives. That is why the fallback below passes `alt = null` and renders the same
+ * "图片 / 图片地址…" shape the block component uses, through the shared [PiImageFallback];
+ * the wording lives in exactly one place.
+ *
+ * The success path delegates to the library component, which draws
+ * `Modifier.fillMaxSize()` inside the box the library sized for this link — the same
+ * transformer instance, so `transform` is a cache read.
+ */
+@Composable
+private fun PiInlineImage(model: MarkdownComponentModel) {
+    val link = model.content
+    val transformer = LocalPiImageTransformer.current
+    val decoded = if (link.isNotBlank()) transformer.transform(link) else null
+    if (decoded != null) {
+        MarkdownInlineImage(link, model.node)
+        return
+    }
+    PiImageFallback(alt = null, link = link, typography = model.typography)
+}
+
+/**
+ * The text drawn in place of an image whose bytes are not there: the alt line and the
+ * source, so a reader can see that an image was meant to be here and where it pointed.
+ *
+ * One implementation for both image surfaces — [PiImagePlaceholder] (a block image,
+ * which can resolve a real alt) and [PiInlineImage] (an inline one, which cannot) — so
+ * the two can never drift into two different wordings for the same situation.
+ *
+ * @param alt the image's alt text, or `null` when the surface cannot supply one; the
+ *   first line falls back to a plain "图片" label rather than inventing text.
+ * @param link the resolved source, or `null` when it could not be resolved at all.
+ */
+@Composable
+private fun PiImageFallback(
+    alt: String?,
+    link: String?,
+    typography: MarkdownTypography,
+    modifier: Modifier = Modifier,
+) {
+    val palette = PiTheme.palette
+    Column(modifier = modifier) {
         Text(
             text = alt?.takeIf { it.isNotBlank() } ?: "图片",
-            style = model.typography.text,
+            style = typography.text,
             color = palette.text,
         )
         Text(
             text = link?.takeIf { it.isNotBlank() }?.let { "图片地址：$it（当前无法显示）" }
                 ?: "图片地址缺失",
             modifier = Modifier.padding(top = 2.dp),
-            style = model.typography.code,
+            style = typography.code,
             color = palette.dim,
         )
     }
