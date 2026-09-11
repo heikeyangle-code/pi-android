@@ -190,18 +190,21 @@ private val BLOCK_MATH = Regex(
  * constraints pi's tokenizer enforces, which is why `$` stays ordinary
  * punctuation almost everywhere it appears in prose.
  *
- * The body is written as `[^\s\p{L}\p{N}$][^$\n]*?` for two reasons. First, a
- * body may not be empty, must not open on whitespace, and must not be a single
- * digit — that is what keeps `costs $5 and $10 today` out of the math path
- * (pi reaches the same conclusion by walking the string and checking
- * `looksLikePendingDollarMath`, `markdown.ts:46-48`). Second, and less
- * obviously, a lazy `([^$\n]+?)` combined with a first-character lookahead
- * silently matches **nothing** here: with the body allowed to shrink, the engine
- * satisfies the lookahead by moving the body's start forward, so `$x^2$` failed
- * to match at all. Consuming the first body character as a character class
- * removes that ambiguity.
+ * The body is `[^\s$][^$\n]*?`: non-empty, not opening on whitespace, not
+ * containing a bare `$`, not containing a line break. `(?!\d)` after the opening
+ * delimiter is the other half of pi's rule (`markdown.ts:46-48`,
+ * `looksLikePendingDollarMath`): a body that opens on a digit is a price, not a
+ * formula, which is what keeps `costs $5 and $10 today` out of the math path.
+ * Letters are allowed to open a body — `$x^2$` is the common case.
+ *
+ * Note the shape of the body: an earlier version used a lazy `([^$\n]+?)` plus a
+ * `(?!\p{L})` lookahead at the end, which silently matched **nothing** for
+ * `$x^2$`. With the body allowed to shrink, the engine satisfied the trailing
+ * constraints by moving the body's start forward; consuming the first character
+ * as its own class removes that ambiguity. The same failure mode is why the
+ * whitespace class here is written out rather than delegated to a lookahead.
  */
 private val INLINE_MATH = Regex(
-    pattern = """(?<![\p{L}\p{N}\\])\$([^\s\p{L}\p{N}$][^$\n]*?)(?<!\s)\$(?![\p{L}\p{N}])""",
+    pattern = """(?<![\p{L}\p{N}\\])\$(?!\d)([^\s$][^$\n]*?)(?<!\s)\$(?![\p{L}\p{N}])""",
 )
 

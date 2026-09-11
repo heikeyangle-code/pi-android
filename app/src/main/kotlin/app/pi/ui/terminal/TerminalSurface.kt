@@ -70,6 +70,12 @@ fun TerminalSurface(
     onOpenLink: (String) -> Unit,
     onTap: () -> Unit,
     modifier: Modifier = Modifier,
+    /**
+     * `app.terminal.cursorStyle`. The guest's own `DECSCUSR` is still accepted but
+     * not honoured (`TerminalEmulator.kt:65-66`); this is the user's app-side
+     * choice, so the two do not pretend to be the same thing.
+     */
+    cursorStyle: TerminalCursorStyle = TerminalCursorStyle.Block,
 ) {
     val measurer = rememberTextMeasurer()
     val density = LocalDensity.current
@@ -180,11 +186,32 @@ fun TerminalSurface(
                     val cursor = snapshot.emulator.cursor
                     if (cursor.visible && !snapshot.emulator.isAlternate) {
                         val cursorRow = snapshot.emulator.scrollbackSize - scrollbackStart + cursor.row
-                        drawRect(
-                            color = controller.palette.cursor.copy(alpha = 0.45f),
-                            topLeft = Offset(cursor.column * cell.width, cursorRow * cell.height),
-                            size = Size(cell.width, cell.height),
-                        )
+                        val left = cursor.column * cell.width
+                        val top = cursorRow * cell.height
+                        val color = controller.palette.cursor.copy(alpha = 0.45f)
+                        // The three shapes the `app.terminal.cursorStyle` row offers.
+                        // Cell-relative so a font change moves them together, and
+                        // floored at 1px so a thin style stays visible.
+                        val thin = (cell.height * 0.15f).coerceAtLeast(1f)
+                        when (cursorStyle) {
+                            TerminalCursorStyle.Block -> drawRect(
+                                color = color,
+                                topLeft = Offset(left, top),
+                                size = Size(cell.width, cell.height),
+                            )
+
+                            TerminalCursorStyle.Bar -> drawRect(
+                                color = color,
+                                topLeft = Offset(left, top),
+                                size = Size(thin.coerceAtMost(cell.width), cell.height),
+                            )
+
+                            TerminalCursorStyle.Underline -> drawRect(
+                                color = color,
+                                topLeft = Offset(left, top + cell.height - thin),
+                                size = Size(cell.width, thin),
+                            )
+                        }
                     }
                 }
             }

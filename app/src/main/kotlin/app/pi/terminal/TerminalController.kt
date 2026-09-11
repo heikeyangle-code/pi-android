@@ -34,6 +34,12 @@ class TerminalController private constructor(
     val kind: PtyLauncher.Kind,
     val columns: Int,
     val rows: Int,
+    /**
+     * Scrollback ring capacity, from `app.terminal.scrollbackLines`
+     * (`ui/terminal/TerminalSettings.kt`). pi caps nothing itself — this is the
+     * app's own buffer, and the setting's description promises exactly this knob.
+     */
+    historyLimit: Int,
     /** Guest command for [PtyLauncher.Kind.Custom]; ignored otherwise. */
     val command: String,
     private val scope: CoroutineScope,
@@ -51,7 +57,7 @@ class TerminalController private constructor(
         val rows: Int get() = emulator.active.rows
     }
 
-    private val emulator = TerminalEmulator(columns, rows, palette)
+    private val emulator = TerminalEmulator(columns, rows, palette, historyLimit)
 
     private val _revision = MutableStateFlow(0L)
     val revision: StateFlow<Long> = _revision
@@ -151,10 +157,12 @@ class TerminalController private constructor(
             columns: Int,
             rows: Int,
             palette: TerminalPalette,
+            historyLimit: Int = 2000,
             command: String = "",
             scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
         ): TerminalController {
-            val controller = TerminalController(context, palette, kind, columns, rows, command, scope)
+            val controller =
+                TerminalController(context, palette, kind, columns, rows, historyLimit, command, scope)
             controller.connect()
             return controller
         }

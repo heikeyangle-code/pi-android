@@ -9,6 +9,7 @@ import androidx.lifecycle.viewModelScope
 import app.pi.engine.PiEngineApi
 import app.pi.engine.PiEngineHost
 import app.pi.engine.PiEngineSession
+import app.pi.engine.PiRpcException
 import app.pi.rpc.Notice
 import app.pi.rpc.PiCommands
 import app.pi.rpc.PiEvent
@@ -21,6 +22,8 @@ import app.pi.runtime.RuntimeProvisioner
 import app.pi.session.PiSessionStore
 import app.pi.service.PiEngineService
 import app.pi.settings.PiSettingsFileStore
+import app.pi.settings.readBoolean
+import app.pi.settings.readString
 import app.pi.ui.chat.PiCommandAction
 import app.pi.ui.chat.PiSlashCommand
 import app.pi.ui.chat.TuiOnlyExtension
@@ -37,6 +40,9 @@ import app.pi.ui.extension.ExtensionWidget
 import app.pi.ui.extension.WidgetPlacement
 import app.pi.ui.extension.noticeToneOf
 import app.pi.ui.settings.PiSettingsStore
+import app.pi.ui.theme.PiResolvedTheme
+import app.pi.ui.theme.PiThemeEntry
+import app.pi.ui.theme.PiThemeLoader
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -46,9 +52,14 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
 import java.io.File
+import java.time.Instant
+import java.time.temporal.ChronoUnit
 
 /**
  * Boot progress, as a first-class state rather than a boolean.
@@ -117,6 +128,39 @@ data class BashRun(
     val cancelled: Boolean = false,
     val truncated: Boolean = false,
     val fullOutputPath: String? = null,
+)
+
+/**
+ * App-local UI preferences: the settings whose only reader is this app.
+ *
+ * Every one of these keys is declared by the settings registry and by nothing
+ * else, so before this type existed the rows wrote a JSON value that no code
+ * ever consulted — a switch that looks like it works and cannot. They are read
+ * here once and published through [UiState.prefs] so the transcript and the theme
+ * actually follow them.
+ *
+ * `hideThinkingBlock` is the one exception: it is **pi's own** setting
+ * (`core/settings-manager.ts:119`, `:962`), the registry row only mirrored it,
+ * and the transcript was never told about it.
+ *
+ * The four `app.terminal.*` rows are siblings of these and deliberately not
+ * repeated here: `ui/terminal/TerminalSettings.kt` is their consumer, so a second
+ * reader in the ViewModel would be a second truth about the same key.
+ */
+data class UiPrefs(
+    val fontScaleDelta: Int = 0,
+    val messageDensity: String = "comfortable",
+    val showTimestamps: Boolean = true,
+    val thinkingCollapsedByDefault: Boolean = true,
+    val expandToolsByDefault: Boolean = false,
+    /** pi's `hideThinkingBlock`. */
+    val hideThinkingBlock: Boolean = false,
+    /**
+     * `app.runtime.keepAlive`: whether the foreground service is started at all
+     * (`PiEngineService` owns the wake lock, so this is the only honest meaning
+     * the switch can have).
+     */
+    val keepAlive: Boolean = true,
 )
 
 /**
@@ -232,6 +276,12 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         val busy: String? = null,
         /** Set by the ViewModel, consumed by `PiRoot`. */
         val navRequest: NavRequest? = null,
+        /**
+         * App-local UI preferences read from pi's settings documents. Seeded at
+         * boot and refreshed whenever the settings stack writes a key that the
+         * app itself consumes — see [onSettingWritten].
+         */
+        val prefs: UiPrefs = UiPrefs(),
     )
 
     private val host = PiEngineHost(app)
@@ -281,6 +331,141 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
 
     private val _state = MutableStateFlow(UiState())
     val state: StateFlow<UiState> = _state.asStateFlow()
+
+    // ------------------------------------------------------- theme and prefs
+
+    /**
+     * The palette the whole app paints with, resolved from the `theme` setting.
+     *
+     * pi's theme loader is the specification: `theme.ts:555` reads a theme file,
+     * `theme.ts:228-244` resolves its colour values, and
+     * `resource-loader.ts:872-902` decides which files exist at all. Reading it
+     * here — rather than keeping two hand-written palettes in `PiPalette` — is
+     * what makes a desktop-tuned theme change this app, which is the written
+     * intent of `PiPalette.kt`.
+     */
+    private val _theme = MutableStateFlow(PiResolvedTheme.fallback(systemDark = true))
+    val theme: StateFlow<PiResolvedTheme> = _theme.asStateFlow()
+
+    /**
+     * Every theme name the picker may offer, with the file behind it.
+     *
+     * pi discovers `~/.pi/agent/themes` and the project's `.pi/themes` even when
+     * the `themes` setting names neither (`resource-loader.ts:872-880`), so the
+     * picker must not be limited to the setting's own list.
+     */
+    private val _themeEntries = MutableStateFlow<List<PiThemeEntry>>(emptyList())
+    val themeEntries: StateFlow<List<PiThemeEntry>> = _themeEntries.asStateFlow()
+
+    /** The system appearance, remembered so the `a/b` pair can be re-resolved. */
+    private var lastSystemDark: Boolean = true
+
+    /**
+     * Seed the app-side preferences and palette before the engine is up.
+     *
+     * Called by `MainActivity` for the first frame and again whenever the system
+     * appearance changes, because the automatic theme form `light/dark` is
+     * resolved against it.
+     */
+    fun startUiPreferences(systemDark: Boolean) {
+        lastSystemDark = systemDark
+        refreshPrefs()
+        refreshTheme(systemDark)
+    }
+
+    /** Re-read pi's theme selection and re-resolve the palette. */
+    fun refreshTheme(systemDark: Boolean = lastSystemDark) {
+        lastSystemDark = systemDark
+        viewModelScope.launch {
+            val configured = configuredThemePaths()
+            val setting = runCatching { settingsStore.readString("theme") }.getOrNull()
+            val resolved = withContext(Dispatchers.IO) {
+                PiThemeLoader.load(
+                    agentDir = host.paths().agentDir,
+                    workspace = defaultWorkspace(),
+                    configured = configured,
+                    setting = setting,
+                    systemDark = systemDark,
+                )
+            }
+            val entries = withContext(Dispatchers.IO) {
+                runCatching {
+                    PiThemeLoader.discover(host.paths().agentDir, defaultWorkspace(), configured)
+                }.getOrDefault(emptyList())
+            }
+            _theme.value = resolved
+            _themeEntries.value = entries
+        }
+    }
+
+    /** The `themes` setting, verbatim; used for discovery and for name lookup. */
+    private fun configuredThemePaths(): List<String> =
+        runCatching {
+            (settingsStore.read("themes") as? JsonArray)
+                ?.mapNotNull { (it as? JsonPrimitive)?.takeIf { value -> value.isString }?.content }
+                .orEmpty()
+        }.getOrDefault(emptyList())
+
+    /**
+     * Re-read [UiPrefs] from the settings documents.
+     *
+     * Runs off the main thread because the first read of each document hits the
+     * disk; `PiSettingsFileStore` caches afterwards, so the settings stack's own
+     * per-frame reads are unaffected.
+     */
+    fun refreshPrefs() {
+        viewModelScope.launch {
+            val prefs = withContext(Dispatchers.IO) { readPrefs() }
+            _state.value = _state.value.copy(prefs = prefs)
+        }
+    }
+
+    private fun readPrefs(): UiPrefs {
+        fun string(key: String, fallback: String): String =
+            settingsStore.readString(key)?.takeIf { it.isNotBlank() } ?: fallback
+
+        fun bool(key: String, fallback: Boolean): Boolean =
+            settingsStore.readBoolean(key) ?: fallback
+
+        fun int(key: String, fallback: Int, range: IntRange): Int =
+            ((settingsStore.read(key) as? JsonPrimitive)?.content?.toIntOrNull() ?: fallback)
+                .coerceIn(range)
+
+        return UiPrefs(
+            fontScaleDelta = int("app.appearance.fontScaleDelta", 0, -2..2),
+            messageDensity = string("app.appearance.messageDensity", "comfortable"),
+            showTimestamps = bool("app.appearance.showTimestamps", true),
+            thinkingCollapsedByDefault = bool("app.appearance.thinkingCollapsedByDefault", true),
+            expandToolsByDefault = bool("app.tools.expandByDefault", false),
+            hideThinkingBlock = bool("hideThinkingBlock", false),
+            keepAlive = bool("app.runtime.keepAlive", true),
+        )
+    }
+
+    /**
+     * A setting the settings stack just wrote was read by the app itself.
+     *
+     * The settings screens write straight to the store (which is what keeps
+     * pi's files authoritative), so app-side behaviour has to be told that the
+     * document changed. Without this an appearance edit would only take effect
+     * after a restart, i.e. the row would still look inert.
+     */
+    fun onSettingWritten(key: String) {
+        if (key == "theme") {
+            refreshTheme()
+            return
+        }
+        if (
+            key == "hideThinkingBlock" ||
+            key.startsWith("app.appearance.") ||
+            key.startsWith("app.tools.") ||
+            key == "app.runtime.keepAlive" ||
+            key == "themes"
+        ) {
+            refreshPrefs()
+            refreshTheme()
+        }
+    }
 
     // ----------------------------------------------------- extension UI state
 
@@ -340,13 +525,20 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
 
     fun boot() {
         if (_state.value.boot is Boot.Working) return
-        // Bring the foreground service up first. A pi turn is a model call plus an
-        // unbounded sequence of tool calls; with the screen off and no foreground
-        // service, Android is free to kill the whole process tree mid-write. The
-        // service is what owns the engine's lifetime — not the Activity, and not
-        // this ViewModel.
-        startEngineService()
         viewModelScope.launch {
+            // Read the preferences first: `app.runtime.keepAlive` decides whether
+            // the foreground service is started at all, so it cannot be read
+            // after the service would have been. This is the switch's consumer —
+            // without it the row wrote a JSON value nothing consulted.
+            val prefs = withContext(Dispatchers.IO) { readPrefs() }
+            _state.value = _state.value.copy(prefs = prefs)
+            // Bring the foreground service up first. A pi turn is a model call plus
+            // an unbounded sequence of tool calls; with the screen off and no
+            // foreground service, Android is free to kill the whole process tree
+            // mid-write. The service is what owns the engine's lifetime — not the
+            // Activity, and not this ViewModel. `keepAlive = false` is the user
+            // asking for exactly that risk.
+            if (prefs.keepAlive) startEngineService()
             val boot = host.boot(workspaceProvider = ::defaultWorkspace) { step ->
                 _state.value = _state.value.copy(boot = Boot.Working(step))
             }
@@ -409,6 +601,10 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             refreshCommands()
             refreshTuiOnlyExtensions()
             seedAutoRetryFromSettings()
+            // The agent dir exists for sure by now, so a theme dropped into it
+            // while the app was closed is discovered here as well.
+            refreshPrefs()
+            refreshTheme()
         }
     }
 
@@ -1083,12 +1279,25 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         syncTranscript(engine)
     }
 
+    /**
+     * `follow_up` — pi's `alt+enter` (`interactive-mode.ts:4126-4155`).
+     *
+     * The delivery choice *is* the difference between the two queueing commands:
+     * `steer` lands after this turn's tool calls (`_queueSteer`), `follow_up`
+     * only once the agent would otherwise stop (`_queueFollowUp`,
+     * `agent-session.ts:1453-1468`), and `set_follow_up_mode` configures the
+     * second one. pi's TUI queues a follow-up only while the agent is streaming;
+     * when it is idle alt+enter is a normal submit, so the composer offers this
+     * only while streaming and [send] handles the idle case.
+     */
     fun sendFollowUp(text: String) {
         val engine = session ?: return
+        val trimmed = text.trim()
+        if (trimmed.isEmpty()) return
         engine.send(
             PiCommands.followUp(
                 id = "follow-${System.nanoTime()}",
-                message = text.trim(),
+                message = trimmed,
             ),
         )
     }
@@ -1358,23 +1567,34 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
-     * `export_html`, written into the workspace so the file is reachable.
+     * `/export <path>` — the format follows the extension, exactly as pi does it.
      *
-     * pi's default destination is its cwd — `pi-session-<basename>.html`
-     * (`export-html/index.ts:284-288`) — which *is* the workspace, but the
-     * response returns the guest spelling of the path. Passing an explicit path
-     * keeps both spellings known to this class, so the notice can name a path the
-     * app can actually resolve. This is also the only non-TUI path by which an
-     * extension's `renderCall`/`renderResult` output reaches a client
-     * (audit §5.11).
+     * pi's TUI branches on the argument: `interactive-mode.ts:6062-6066` calls
+     * `exportToJsonl` when the path ends in `.jsonl` and `exportToHtml`
+     * otherwise. The RPC surface only exposes `export_html`
+     * (`rpc-types.ts:60`), so the JSONL branch is reproduced here from the same
+     * records pi would write — see [exportJsonl].
+     *
+     * HTML still goes through `export_html`, written into the workspace so the
+     * file is reachable. pi's default destination is its cwd —
+     * `pi-session-<basename>.html` (`export-html/index.ts:284-288`) — which *is*
+     * the workspace, but the response returns the guest spelling of the path.
+     * Passing an explicit path keeps both spellings known to this class, so the
+     * notice can name a path the app can actually resolve. This is also the only
+     * non-TUI path by which an extension's `renderCall`/`renderResult` output
+     * reaches a client (audit §5.11).
      */
-    fun exportHtml(fileName: String? = null) {
+    fun exportSession(fileName: String? = null) {
         val name = fileName?.trim()?.takeIf { it.isNotEmpty() }
-            ?: "pi-session-${System.currentTimeMillis()}.html"
-        val guestPath = "${guestWorkspace()}/$name"
+        if (name != null && name.endsWith(JSONL_SUFFIX, ignoreCase = true)) {
+            exportJsonl(name)
+            return
+        }
+        val htmlName = name ?: "pi-session-${System.currentTimeMillis()}.html"
+        val guestPath = "${guestWorkspace()}/$htmlName"
         call("导出会话") { api ->
             val written = api.exportHtml(guestPath)
-            val hostPath = File(defaultWorkspace(), name)
+            val hostPath = File(defaultWorkspace(), htmlName)
             pushNotice(
                 message = if (hostPath.isFile) {
                     "会话已导出：${hostPath.absolutePath}"
@@ -1384,6 +1604,93 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                 tone = Notice.Tone.Info,
             )
         }
+    }
+
+    /**
+     * Write the active branch as JSONL, byte-for-byte the shape of pi's
+     * `exportToJsonl` (`core/session-export.ts:7-42`).
+     *
+     * That function emits, in order: a fresh session header, then every entry on
+     * the current branch with `parentId` **re-chained to the previously written
+     * entry** (which is how an export of a branch becomes a linear file), then a
+     * trailing newline. The branch is `getBranch()`: walk `parentId` from the
+     * leaf to the root and reverse (`session-manager.ts:1274-1285`). `version` is
+     * `CURRENT_SESSION_VERSION` (`session-manager.ts:30`), not the copied file's.
+     *
+     * This is the app-side half of an RPC gap, not a re-implementation of pi's
+     * data: the entries come from `get_entries` verbatim, so the bytes differ
+     * only in JSON key order and in `parentId`, which pi itself rewrites.
+     */
+    private fun exportJsonl(fileName: String) {
+        call("导出会话") { _ ->
+            val engine = session ?: return@call
+            val response = engine.request({ PiCommands.getEntries(it) })
+            if (!response.success) {
+                throw PiRpcException("get_entries", response.error ?: "读取会话条目失败")
+            }
+            val raw = PiResponses.entries(response)
+            val leafId = PiResponses.sessionEntries(response)?.leafId
+            val branch = branchPath(raw, leafId)
+            val meta = _state.value.meta
+            val source = sessionHeaderOf(meta.sessionFile)
+            val header = buildJsonObject {
+                put("type", JsonPrimitive("session"))
+                put("version", JsonPrimitive(CURRENT_SESSION_VERSION))
+                put("id", JsonPrimitive(source?.first ?: meta.sessionId.orEmpty()))
+                put("timestamp", JsonPrimitive(Instant.now().truncatedTo(ChronoUnit.MILLIS).toString()))
+                put("cwd", JsonPrimitive(source?.second ?: guestWorkspace()))
+            }
+            val body = StringBuilder(header.toString())
+            var previousId: String? = null
+            for (entry in branch) {
+                val reChained = JsonObject(
+                    entry + ("parentId" to (previousId?.let { JsonPrimitive(it) } ?: JsonNull)),
+                )
+                body.append('\n').append(reChained)
+                previousId = (entry["id"] as? JsonPrimitive)?.takeIf { it.isString }?.content
+            }
+            body.append('\n')
+
+            val target = File(defaultWorkspace(), fileName)
+            target.parentFile?.mkdirs()
+            withContext(Dispatchers.IO) { target.writeText(body.toString()) }
+            pushNotice("会话已导出：${target.absolutePath}", Notice.Tone.Info)
+        }
+    }
+
+    /** `SessionManager.getBranch` (`session-manager.ts:1274-1285`), old to new. */
+    private fun branchPath(entries: List<JsonObject>, leafId: String?): List<JsonObject> {
+        if (leafId == null) return emptyList()
+        val byId = entries.mapNotNull { entry ->
+            val id = (entry["id"] as? JsonPrimitive)?.takeIf { it.isString }?.content
+            id?.let { it to entry }
+        }.toMap()
+        val path = ArrayDeque<JsonObject>()
+        var current = byId[leafId]
+        while (current != null) {
+            path.addFirst(current)
+            val parent = (current["parentId"] as? JsonPrimitive)?.takeIf { it.isString }?.content
+            current = parent?.let { byId[it] }
+        }
+        return path.toList()
+    }
+
+    /**
+     * `id` and `cwd` out of the session file's header line — the two header
+     * fields `exportSessionToJsonl` copies from the live session
+     * (`session-export.ts:22-28`). The mapped host file is preferred because a
+     * session switched from another project carries that project's cwd, which
+     * the app cannot otherwise know.
+     */
+    private fun sessionHeaderOf(guestPath: String?): Pair<String, String>? {
+        val path = guestPath ?: return null
+        val prefix = "${host.guestAgentDir}/"
+        if (!path.startsWith(prefix)) return null
+        val file = File(host.paths().agentDir, path.removePrefix(prefix))
+        val line = runCatching { file.useLines { it.firstOrNull() } }.getOrNull() ?: return null
+        val header = runCatching { app.pi.rpc.PiJson.parseObjectOrNull(line) }.getOrNull() ?: return null
+        fun field(key: String) = (header[key] as? JsonPrimitive)?.takeIf { it.isString }?.content
+        return (field("id") ?: return null) to (field("cwd") ?: guestWorkspace())
     }
 
     /**
@@ -1520,5 +1827,11 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
 
         /** A 1 MiB source file is not an extension a phone should be parsing. */
         const val MAX_EXTENSION_SOURCE_BYTES = 1L shl 20
+
+        /** The one extension pi's exporter treats as JSONL (`interactive-mode.ts:6064`). */
+        const val JSONL_SUFFIX = ".jsonl"
+
+        /** `CURRENT_SESSION_VERSION` (`core/session-manager.ts:30`). */
+        const val CURRENT_SESSION_VERSION = 3
     }
 }

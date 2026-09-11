@@ -25,7 +25,9 @@ import app.pi.ui.theme.PiTheme
 /**
  * `compaction` (docs/pi-android-ui-spec.md §7.4): a hairline across the stream
  * with a centred chip in `customMessageLabel`, stating what happened. The
- * summary is collapsed by default and can be expanded inline.
+ * summary is collapsed to a two-line plain-text preview and expands to the full
+ * markdown document in place — the split pi's own
+ * `compaction-summary-message.ts:40-57` makes, for the same reason.
  */
 @Composable
 fun CompactionBlock(

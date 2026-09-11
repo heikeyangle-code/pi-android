@@ -91,111 +91,111 @@ The audit's `PARTIAL 20 / MISSING-GUI 26 / CLI-ONLY 9 = 55` is reproduced exactl
 
 ### 2.1 RPC commands (`feature-gaps.md` §1.1)
 
-| # | Capability | Grade | Disposition | Owner / entry | App file proving the deficiency still exists | pi citation |
-|---|---|---|---|---|---|---|
-| 1 | `prompt` `images` | PARTIAL | RECORDED-NO-OWNER (E) | **E3** | `ui/PiSessionViewModel.kt:1049` `fun send(text: String, images: List<PiImage> = emptyList())`; the sole caller `ui/screens/ChatScreen.kt:415` `session.send(route.text)` passes no images | `rpc-types.ts:22` `images?: ImageContent[]` |
-| 2 | `prompt` `streamingBehavior: followUp` | PARTIAL | RECORDED-NO-OWNER (I) | **I4** (same capability; the `follow_up` route is the fix) | `rpc/Commands.kt:21` `FollowUp("followUp"),` — no caller ever passes `streamingBehavior` | `rpc-types.ts:22` `streamingBehavior?: "steer" \| "followUp"` |
-| 3 | `follow_up` | MISSING-GUI | RECORDED-NO-OWNER (I) | **I4** | `ui/PiSessionViewModel.kt:1086` `fun sendFollowUp(text: String) {` — repo-wide grep matches only this line | `rpc-types.ts:24`; `docs/rpc.md:102-104` |
-| 4 | `clear_queue` (returned text discarded) | PARTIAL | RECORDED-NO-OWNER (I) | **I6** | `ui/screens/ChatScreen.kt:433` `onStop = { session.stop() },` vs `ui/PiSessionViewModel.kt:1097` `fun stop(onRestored: (List<String>) -> Unit = {})` | `rpc-types.ts:26`; `docs/rpc.md:137-155` |
-| 5 | `new_session` `parentSession` | PARTIAL | **UNRECORDED** | — | `ui/PiSessionViewModel.kt:1281` `val result = api.newSession()` — no argument; the parameter exists at `engine/PiEngineApi.kt:295` | `rpc-types.ts:27` `parentSession?: string`; `rpc-mode.ts:438` |
-| 6 | `get_messages` (builder has no caller) | PARTIAL | CLOSED | — | `engine/PiEngineApi.kt:60` `suspend fun getMessages(...)` — no caller. Verdict: the transcript is projected from `get_entries` + events, a superset (`feature-gaps.md` §4.5). No user-visible loss, no work. | `rpc-types.ts:71` |
-| 7 | `export_html` (always HTML) | PARTIAL | RECORDED-NO-OWNER (I) | **I3** | `ui/PiSessionViewModel.kt:1376` `val written = api.exportHtml(guestPath)`, while the palette advertises `.jsonl` at `ui/chat/PiSlashCommands.kt:122` | `rpc-mode.ts:600-602` `exportToHtml` unconditionally; `rpc-types.ts:60` |
-| 8 | `export_html` `outputPath` (re-rooted) | PARTIAL | CLOSED | — | `ui/PiSessionViewModel.kt:1374` `val guestPath = "${guestWorkspace()}/$name"`. Verdict: deliberate — the file must land where the app can read it back (`:1377` `File(defaultWorkspace(), name)`). Documented behaviour, not a defect. | `rpc-types.ts:60` |
+| # | Capability | Grade | Disposition | Owner / entry | App file proving the deficiency still exists | pi citation | Status |
+|---|---|---|---|---|---|---|---|
+| 1 | `prompt` `images` | PARTIAL | RECORDED-NO-OWNER (E) | **E3** | `ui/PiSessionViewModel.kt:1049` `fun send(text: String, images: List<PiImage> = emptyList())`; the sole caller `ui/screens/ChatScreen.kt:415` `session.send(route.text)` passes no images | `rpc-types.ts:22` `images?: ImageContent[]` | patch-ready P6 |
+| 2 | `prompt` `streamingBehavior: followUp` | PARTIAL | RECORDED-NO-OWNER (I) | **I4** (same capability; the `follow_up` route is the fix) | `rpc/Commands.kt:21` `FollowUp("followUp"),` — no caller ever passes `streamingBehavior` | `rpc-types.ts:22` `streamingBehavior?: "steer" \| "followUp"` | patch-ready P4 |
+| 3 | `follow_up` | MISSING-GUI | RECORDED-NO-OWNER (I) | **I4** | `ui/PiSessionViewModel.kt:1086` `fun sendFollowUp(text: String) {` — repo-wide grep matches only this line | `rpc-types.ts:24`; `docs/rpc.md:102-104` | patch-ready P4 |
+| 4 | `clear_queue` (returned text discarded) | PARTIAL | RECORDED-NO-OWNER (I) | **I6** | `ui/screens/ChatScreen.kt:433` `onStop = { session.stop() },` vs `ui/PiSessionViewModel.kt:1097` `fun stop(onRestored: (List<String>) -> Unit = {})` | `rpc-types.ts:26`; `docs/rpc.md:137-155` | patch-ready P2 |
+| 5 | `new_session` `parentSession` | PARTIAL | **UNRECORDED** | — | `ui/PiSessionViewModel.kt:1281` `val result = api.newSession()` — no argument; the parameter exists at `engine/PiEngineApi.kt:295` | `rpc-types.ts:27` `parentSession?: string`; `rpc-mode.ts:438` | blocked |
+| 6 | `get_messages` (builder has no caller) | PARTIAL | CLOSED | — | `engine/PiEngineApi.kt:60` `suspend fun getMessages(...)` — no caller. Verdict: the transcript is projected from `get_entries` + events, a superset (`feature-gaps.md` §4.5). No user-visible loss, no work. | `rpc-types.ts:71` | closed |
+| 7 | `export_html` (always HTML) | PARTIAL | RECORDED-NO-OWNER (I) | **I3** | `ui/PiSessionViewModel.kt:1376` `val written = api.exportHtml(guestPath)`, while the palette advertises `.jsonl` at `ui/chat/PiSlashCommands.kt:122` | `rpc-mode.ts:600-602` `exportToHtml` unconditionally; `rpc-types.ts:60` | patch-ready P3 |
+| 8 | `export_html` `outputPath` (re-rooted) | PARTIAL | CLOSED | — | `ui/PiSessionViewModel.kt:1374` `val guestPath = "${guestWorkspace()}/$name"`. Verdict: deliberate — the file must land where the app can read it back (`:1377` `File(defaultWorkspace(), name)`). Documented behaviour, not a defect. | `rpc-types.ts:60` | closed |
 
 ### 2.2 pi's CLI surface (`feature-gaps.md` §1.2)
 
-| # | Capability | Grade | Disposition | Owner / entry | App file proving the deficiency still exists | pi citation |
-|---|---|---|---|---|---|---|
-| 9 | `pi install` / `remove` / `list` / `update` | CLI-ONLY | **ASSIGNED** | **B5** + **E7**, owner *包管理代理* (§G) | `packages/PiPackagesScreen.kt:95` `fun PiPackagesScreen(` — no caller outside `packages/`; `packages/PiPackageService.kt:59` likewise | `package-manager-cli.ts:46` `export type PackageCommand = "install" \| "remove" \| "update" \| "list"`; not in the `RpcCommand` union |
-| 10 | `pi config` (per-resource enable/disable) | CLI-ONLY | **UNRECORDED** | — | `ui/settings/PiSettingsRegistry.kt:779` `key = "packages[].autoload",` — whole-package only; no per-resource switch anywhere | `package-manager-cli.ts:278-289` |
-| 11 | `--offline` / `PI_OFFLINE` | CLI-ONLY | RECORDED-NO-OWNER (I) | **I11** | `engine/PiEngineHost.kt:247-260` `extra = mapOf(` … `"PI_ANDROID_BRIDGE_FILE" to …` — no `PI_OFFLINE` | `cli/args.ts:223`; `docs/environment-variables.md:84` |
-| 12 | `--system-prompt` / `--append-system-prompt` | CLI-ONLY | RECORDED-NO-OWNER (I) | **I11** | `engine/PiEngineHost.kt:232-233` `append(" --mode rpc")` / `append(" --session-dir ")` — argv has no such flag | `cli/args.ts:110,112` |
-| 13 | `--api-key` | CLI-ONLY | **ASSIGNED** | **E9** + in-flight `packages/PiConfigFiles.kt` / `PiCredentialService.kt` | `ui/chat/PiSlashCommands.kt:138` `/login` is `TerminalOnly`; the new writer `packages/PiConfigFiles.kt:308` `fun setApiKey(providerId: String, key: String): String?` and its orchestrator `packages/PiCredentialService.kt:39` `class PiCredentialService(` both have **no caller** | `cli/args.ts:108`; `docs/providers.md:62-107` |
-| 14 | `--continue`/`-c`, `--resume`, `--session`, `--fork` | MISSING-GUI | RECORDED-NO-OWNER (I) | **I9** (`-c` only; resume/switch/fork exist as actions) | `ui/PiSessionViewModel.kt:363` `private fun attach(engine: PiEngineSession) {` — no `switch_session`; argv has no `--continue` (`PiEngineHost.kt:232`) | `cli/args.ts:100`; `docs/sessions.md:39` |
-| 15 | per-run `--no-*` suppression (`--no-session`, `--no-extensions`, …) | CLI-ONLY | CLOSED | — | Persistent equivalents exist as the `extensions`/`skills`/`prompts`/`themes` rows; the app owns one long-lived engine, so there is no "per run" to suppress. Nothing a user can want is missing. | `cli/args.ts:169,192` |
+| # | Capability | Grade | Disposition | Owner / entry | App file proving the deficiency still exists | pi citation | Status |
+|---|---|---|---|---|---|---|---|
+| 9 | `pi install` / `remove` / `list` / `update` | CLI-ONLY | **ASSIGNED** | **B5** + **E7**, owner *包管理代理* (§G) | `packages/PiPackagesScreen.kt:95` `fun PiPackagesScreen(` — no caller outside `packages/`; `packages/PiPackageService.kt:59` likewise | `package-manager-cli.ts:46` `export type PackageCommand = "install" \| "remove" \| "update" \| "list"`; not in the `RpcCommand` union | in-flight |
+| 10 | `pi config` (per-resource enable/disable) | CLI-ONLY | **UNRECORDED** | — | `ui/settings/PiSettingsRegistry.kt:779` `key = "packages[].autoload",` — whole-package only; no per-resource switch anywhere | `package-manager-cli.ts:278-289` | blocked |
+| 11 | `--offline` / `PI_OFFLINE` | CLI-ONLY | RECORDED-NO-OWNER (I) | **I11** | `engine/PiEngineHost.kt:247-260` `extra = mapOf(` … `"PI_ANDROID_BRIDGE_FILE" to …` — no `PI_OFFLINE` | `cli/args.ts:223`; `docs/environment-variables.md:84` | in-flight |
+| 12 | `--system-prompt` / `--append-system-prompt` | CLI-ONLY | RECORDED-NO-OWNER (I) | **I11** | `engine/PiEngineHost.kt:232-233` `append(" --mode rpc")` / `append(" --session-dir ")` — argv has no such flag | `cli/args.ts:110,112` | in-flight |
+| 13 | `--api-key` | CLI-ONLY | **ASSIGNED** | **E9** + in-flight `packages/PiConfigFiles.kt` / `PiCredentialService.kt` | `ui/chat/PiSlashCommands.kt:138` `/login` is `TerminalOnly`; the new writer `packages/PiConfigFiles.kt:308` `fun setApiKey(providerId: String, key: String): String?` and its orchestrator `packages/PiCredentialService.kt:39` `class PiCredentialService(` both have **no caller** | `cli/args.ts:108`; `docs/providers.md:62-107` | in-flight |
+| 14 | `--continue`/`-c`, `--resume`, `--session`, `--fork` | MISSING-GUI | RECORDED-NO-OWNER (I) | **I9** (`-c` only; resume/switch/fork exist as actions) | `ui/PiSessionViewModel.kt:363` `private fun attach(engine: PiEngineSession) {` — no `switch_session`; argv has no `--continue` (`PiEngineHost.kt:232`) | `cli/args.ts:100`; `docs/sessions.md:39` | patch-ready P12 |
+| 15 | per-run `--no-*` suppression (`--no-session`, `--no-extensions`, …) | CLI-ONLY | CLOSED | — | Persistent equivalents exist as the `extensions`/`skills`/`prompts`/`themes` rows; the app owns one long-lived engine, so there is no "per run" to suppress. Nothing a user can want is missing. | `cli/args.ts:169,192` | closed |
 
 ### 2.3 Interactive TUI (`feature-gaps.md` §1.3)
 
-| # | Capability | Grade | Disposition | Owner / entry | App file proving the deficiency still exists | pi citation |
-|---|---|---|---|---|---|---|
-| 16 | queue editing: restore queued text on Esc | MISSING-GUI | RECORDED-NO-OWNER (I) | **I6** | `ui/screens/ChatScreen.kt:433` `onStop = { session.stop() },` | `docs/rpc.md:137-155`; `keybindings.md:166` `app.message.dequeue` |
-| 17 | queue a follow-up (`alt+enter`) | MISSING-GUI | RECORDED-NO-OWNER (I) | **I4** | `ui/PiSessionViewModel.kt:1086` — only occurrence | `keybindings.md:165` `app.message.followUp`; `docs/rpc.md:102` |
-| 18 | expand/collapse thinking (`ctrl+t`) | PARTIAL | RECORDED-NO-OWNER (I) | **I7** | `ui/screens/ChatScreen.kt:348` `thinkingDefaultExpanded = false,` — hard-coded | `keybindings.md` `app.thinking.toggle` |
-| 19 | `hideThinkingBlock` | MISSING-GUI | RECORDED-NO-OWNER (I) | **I7** | `ui/screens/ChatScreen.kt:345-349` `BlockRenderer(` passes neither `hideThinking` nor a collapse-all; the renderer supports it at `ui/blocks/BlockRenderer.kt:39` `hideThinking: Boolean = false,` | `core/settings-manager.ts:119` `hideThinkingBlock?: boolean` |
-| 20 | transcript search (`ctrl+shift+f`) | MISSING-GUI | RECORDED-NO-OWNER (I) | **I8** | No search UI in `app/src/main/kotlin/app/pi/ui`: `grep -r "rememberSearch\|SearchBar"` → 0 hits; only `settings/SettingsSearchScreen.kt` exists, which searches settings | `keybindings.md:114` `tui.altScreen.search` |
-| 21 | jump to previous/next message (`ctrl+shift+up/down`) | MISSING-GUI | **UNRECORDED** | — | `ui/screens/ChatScreen.kt:167` `listState.animateScrollToItem(last)` is the only scroll control (auto-pin); no user-facing jump exists | `keybindings.md:112` `tui.altScreen.previousPrompt` |
-| 22 | tree filters (`treeFilterMode`, `ctrl+t/u/l/a/o`) | MISSING-GUI | RECORDED-NO-OWNER (I) | **I8** | `ui/chat/SessionTreeScreen.kt:107` `BranchTab(state = state, onFork = onFork, …)` — no filter control; `treeFilterMode` occurs only at `PiSettingsRegistry.kt:1261` | `docs/sessions.md:100` |
-| 23 | session picker: search / sort / named filter / rename / delete | MISSING-GUI | RECORDED-NO-OWNER (I) | **I8** (search/sort/named) + **I9** (delete) | `ui/screens/SessionsScreen.kt:105` `items(sessions, key = { it.file.absolutePath })` — a plain list | `docs/sessions.md:43-48`; `keybindings.md:141-145` |
-| 24 | session tree "delete session" + non-invasive variant | MISSING-GUI | RECORDED-NO-OWNER (I) | **I9** | `session/PiSessionStore.kt:49` `suspend fun list(limit: Int = 300)` — the store exposes no delete; `SessionsScreen.kt:105` renders rows only | `keybindings.md:144-145` |
-| 25 | external editor (`ctrl+g`) | PARTIAL | **UNRECORDED** | — | `ui/settings/PiSettingsRegistry.kt:1288` `key = "externalEditor",` — the sole occurrence outside a doc comment; no launch action exists | `keybindings.md` `app.editor.external` |
-| 26 | scoped models selector (`/scoped-models`) | PARTIAL | **UNRECORDED** | — | `ui/chat/PiSlashCommands.kt:118-119` `/scoped-models` is `PiCommandAction.TerminalOnly`; the setting is a raw `List` row at `PiSettingsRegistry.kt:355` | `keybindings.md` §Scoped Models Selector |
-| 27 | `/tree` navigation: switch the active leaf | MISSING-TERMINAL-ONLY | **LIMIT** | **I1** / **F2** | `ui/chat/SessionTreeScreen.kt:226` `TextButton(onClick = { onFork(id) }) { Text("分支") }` — the only tree action is a fork, which writes a new session file | `rpc-types.ts:20-74` — the only tree commands are `get_tree` (`:66`) and `fork` (`:62`); `interactive-mode.ts:5216-5322` |
-| 28 | tree labels (`setLabel`, `shift+l`) | MISSING-TERMINAL-ONLY | **LIMIT** | **F2** | `ui/chat/SessionTreeScreen.kt:197` `row.node.label?.let { label ->` — labels are rendered, never set | no `RpcCommand` for `setLabel` |
-| 29 | `/import` | MISSING-TERMINAL-ONLY | **LIMIT** | **F2** / §2.9 | `ui/chat/PiSlashCommands.kt:127` `PiCommandAction.TerminalOnly,` (the `/import` row) | `interactive-mode.ts:2998,6107`; no `RpcCommand` |
-| 30 | `/share` | MISSING-TERMINAL-ONLY | **LIMIT** | §2.9 | `ui/chat/PiSlashCommands.kt:129` `PiSlashCommand("share", …, PiCommandAction.TerminalOnly)` | `core/slash-commands.ts:27`; no `RpcCommand` |
-| 31 | `/login`, `/logout` | MISSING-TERMINAL-ONLY | **LIMIT** | **F3** / §2.9 | `ui/chat/PiSlashCommands.kt:138-139` both `PiCommandAction.TerminalOnly` | `core/slash-commands.ts:33-34`; no `RpcCommand` |
-| 32 | `/reload` | MISSING-TERMINAL-ONLY | **LIMIT** | **B6** | `ui/screens/ChatScreen.kt:240-242` `IconButton(onClick = { session.notifyTerminalOnly(reloadCommand()) })` | `rpc-types.ts:20-74`; built-ins are excluded from `get_commands` |
-| 33 | `/changelog`, `/hotkeys`, `/quit` | MISSING-TERMINAL-ONLY | **LIMIT** | — | `ui/chat/PiSlashCommands.kt:133-134,144` all `TerminalOnly` | `core/slash-commands.ts:31-32,42`; no `RpcCommand` |
+| # | Capability | Grade | Disposition | Owner / entry | App file proving the deficiency still exists | pi citation | Status |
+|---|---|---|---|---|---|---|---|
+| 16 | queue editing: restore queued text on Esc | MISSING-GUI | RECORDED-NO-OWNER (I) | **I6** | `ui/screens/ChatScreen.kt:433` `onStop = { session.stop() },` | `docs/rpc.md:137-155`; `keybindings.md:166` `app.message.dequeue` | patch-ready P2 |
+| 17 | queue a follow-up (`alt+enter`) | MISSING-GUI | RECORDED-NO-OWNER (I) | **I4** | `ui/PiSessionViewModel.kt:1086` — only occurrence | `keybindings.md:165` `app.message.followUp`; `docs/rpc.md:102` | patch-ready P4 |
+| 18 | expand/collapse thinking (`ctrl+t`) | PARTIAL | RECORDED-NO-OWNER (I) | **I7** | `ui/screens/ChatScreen.kt:348` `thinkingDefaultExpanded = false,` — hard-coded | `keybindings.md` `app.thinking.toggle` | patch-ready P5 |
+| 19 | `hideThinkingBlock` | MISSING-GUI | RECORDED-NO-OWNER (I) | **I7** | `ui/screens/ChatScreen.kt:345-349` `BlockRenderer(` passes neither `hideThinking` nor a collapse-all; the renderer supports it at `ui/blocks/BlockRenderer.kt:39` `hideThinking: Boolean = false,` | `core/settings-manager.ts:119` `hideThinkingBlock?: boolean` | patch-ready P5 |
+| 20 | transcript search (`ctrl+shift+f`) | MISSING-GUI | RECORDED-NO-OWNER (I) | **I8** | No search UI in `app/src/main/kotlin/app/pi/ui`: `grep -r "rememberSearch\|SearchBar"` → 0 hits; only `settings/SettingsSearchScreen.kt` exists, which searches settings | `keybindings.md:114` `tui.altScreen.search` | blocked |
+| 21 | jump to previous/next message (`ctrl+shift+up/down`) | MISSING-GUI | **UNRECORDED** | — | `ui/screens/ChatScreen.kt:167` `listState.animateScrollToItem(last)` is the only scroll control (auto-pin); no user-facing jump exists | `keybindings.md:112` `tui.altScreen.previousPrompt` | patch-ready P7 |
+| 22 | tree filters (`treeFilterMode`, `ctrl+t/u/l/a/o`) | MISSING-GUI | RECORDED-NO-OWNER (I) | **I8** | `ui/chat/SessionTreeScreen.kt:107` `BranchTab(state = state, onFork = onFork, …)` — no filter control; `treeFilterMode` occurs only at `PiSettingsRegistry.kt:1261` | `docs/sessions.md:100` | blocked |
+| 23 | session picker: search / sort / named filter / rename / delete | MISSING-GUI | RECORDED-NO-OWNER (I) | **I8** (search/sort/named) + **I9** (delete) | `ui/screens/SessionsScreen.kt:105` `items(sessions, key = { it.file.absolutePath })` — a plain list | `docs/sessions.md:43-48`; `keybindings.md:141-145` | patch-ready P8 |
+| 24 | session tree "delete session" + non-invasive variant | MISSING-GUI | RECORDED-NO-OWNER (I) | **I9** | `session/PiSessionStore.kt:49` `suspend fun list(limit: Int = 300)` — the store exposes no delete; `SessionsScreen.kt:105` renders rows only | `keybindings.md:144-145` | patch-ready P9 |
+| 25 | external editor (`ctrl+g`) | PARTIAL | **UNRECORDED** | — | `ui/settings/PiSettingsRegistry.kt:1288` `key = "externalEditor",` — the sole occurrence outside a doc comment; no launch action exists | `keybindings.md` `app.editor.external` | blocked |
+| 26 | scoped models selector (`/scoped-models`) | PARTIAL | **UNRECORDED** | — | `ui/chat/PiSlashCommands.kt:118-119` `/scoped-models` is `PiCommandAction.TerminalOnly`; the setting is a raw `List` row at `PiSettingsRegistry.kt:355` | `keybindings.md` §Scoped Models Selector | patch-ready P10 |
+| 27 | `/tree` navigation: switch the active leaf | MISSING-TERMINAL-ONLY | **LIMIT** | **I1** / **F2** | `ui/chat/SessionTreeScreen.kt:226` `TextButton(onClick = { onFork(id) }) { Text("分支") }` — the only tree action is a fork, which writes a new session file | `rpc-types.ts:20-74` — the only tree commands are `get_tree` (`:66`) and `fork` (`:62`); `interactive-mode.ts:5216-5322` | limit |
+| 28 | tree labels (`setLabel`, `shift+l`) | MISSING-TERMINAL-ONLY | **LIMIT** | **F2** | `ui/chat/SessionTreeScreen.kt:197` `row.node.label?.let { label ->` — labels are rendered, never set | no `RpcCommand` for `setLabel` | limit |
+| 29 | `/import` | MISSING-TERMINAL-ONLY | **LIMIT** | **F2** / §2.9 | `ui/chat/PiSlashCommands.kt:127` `PiCommandAction.TerminalOnly,` (the `/import` row) | `interactive-mode.ts:2998,6107`; no `RpcCommand` | limit |
+| 30 | `/share` | MISSING-TERMINAL-ONLY | **LIMIT** | §2.9 | `ui/chat/PiSlashCommands.kt:129` `PiSlashCommand("share", …, PiCommandAction.TerminalOnly)` | `core/slash-commands.ts:27`; no `RpcCommand` | limit |
+| 31 | `/login`, `/logout` | MISSING-TERMINAL-ONLY | **LIMIT** | **F3** / §2.9 | `ui/chat/PiSlashCommands.kt:138-139` both `PiCommandAction.TerminalOnly` | `core/slash-commands.ts:33-34`; no `RpcCommand` | limit |
+| 32 | `/reload` | MISSING-TERMINAL-ONLY | **LIMIT** | **B6** | `ui/screens/ChatScreen.kt:240-242` `IconButton(onClick = { session.notifyTerminalOnly(reloadCommand()) })` | `rpc-types.ts:20-74`; built-ins are excluded from `get_commands` | limit |
+| 33 | `/changelog`, `/hotkeys`, `/quit` | MISSING-TERMINAL-ONLY | **LIMIT** | — | `ui/chat/PiSlashCommands.kt:133-134,144` all `TerminalOnly` | `core/slash-commands.ts:31-32,42`; no `RpcCommand` | limit |
 
 ### 2.4 Themes (`feature-gaps.md` §1.4)
 
-| # | Capability | Grade | Disposition | Owner / entry | App file proving the deficiency still exists | pi citation |
-|---|---|---|---|---|---|---|
-| 34 | a user theme JSON changes the app's own colours | MISSING-GUI | **ASSIGNED** | **I5** + in-flight `ui/theme/PiThemeFiles.kt` | `ui/theme/PiPalette.kt:114` `val Dark = PiPalette(` and `:177` `val Light = PiPalette(` remain the only two palettes the UI can use; `MainActivity.kt:35-40` still maps only `light`/`dark`/`a/b` and `else -> dark`. The new `PiThemeLoader`/`PiResolvedTheme` have **0 consumers** | `docs/themes.md:14-18`; `resource-loader.ts:875` |
-| 35 | theme discovery `<agentDir>/themes/*.json` | PARTIAL | **ASSIGNED** | **I5** + in-flight `PiThemeFiles.kt` (`PiThemeScope.AgentDir`) | `ui/settings/PiSettingEditorHost.kt:90-98` `localThemeNames` still derives names only from the `themes` settings row; nothing calls the new discovery | `resource-loader.ts:815` |
-| 36 | theme discovery `.pi/themes/*.json` | PARTIAL | **ASSIGNED** | **I5** + in-flight `PiThemeFiles.kt` (`PiThemeScope.Project`) | same as #35 | `resource-loader.ts:821` |
-| 37 | themes from packages (`themes/`, `pi.themes`) | PARTIAL | **ASSIGNED** | **I5** + in-flight `PiThemeFiles.kt` (`PiThemeScope.Configured`) | same as #35 | `docs/themes.md:17` |
-| 38 | `--theme` / `--no-themes` | CLI-ONLY | CLOSED | — | Persistent `themes` row exists; per-run flag has no per-run engine to attach to. | `cli/args.ts:177,192` |
+| # | Capability | Grade | Disposition | Owner / entry | App file proving the deficiency still exists | pi citation | Status |
+|---|---|---|---|---|---|---|---|
+| 34 | a user theme JSON changes the app's own colours | MISSING-GUI | **ASSIGNED** | **I5** + in-flight `ui/theme/PiThemeFiles.kt` | `ui/theme/PiPalette.kt:114` `val Dark = PiPalette(` and `:177` `val Light = PiPalette(` remain the only two palettes the UI can use; `MainActivity.kt:35-40` still maps only `light`/`dark`/`a/b` and `else -> dark`. The new `PiThemeLoader`/`PiResolvedTheme` have **0 consumers** | `docs/themes.md:14-18`; `resource-loader.ts:875` | in-flight |
+| 35 | theme discovery `<agentDir>/themes/*.json` | PARTIAL | **ASSIGNED** | **I5** + in-flight `PiThemeFiles.kt` (`PiThemeScope.AgentDir`) | `ui/settings/PiSettingEditorHost.kt:90-98` `localThemeNames` still derives names only from the `themes` settings row; nothing calls the new discovery | `resource-loader.ts:815` | in-flight |
+| 36 | theme discovery `.pi/themes/*.json` | PARTIAL | **ASSIGNED** | **I5** + in-flight `PiThemeFiles.kt` (`PiThemeScope.Project`) | same as #35 | `resource-loader.ts:821` | in-flight |
+| 37 | themes from packages (`themes/`, `pi.themes`) | PARTIAL | **ASSIGNED** | **I5** + in-flight `PiThemeFiles.kt` (`PiThemeScope.Configured`) | same as #35 | `docs/themes.md:17` | in-flight |
+| 38 | `--theme` / `--no-themes` | CLI-ONLY | CLOSED | — | Persistent `themes` row exists; per-run flag has no per-run engine to attach to. | `cli/args.ts:177,192` | closed |
 
 ### 2.5 Sessions (`feature-gaps.md` §1.5)
 
-| # | Capability | Grade | Disposition | Owner / entry | App file proving the deficiency still exists | pi citation |
-|---|---|---|---|---|---|---|
-| 39 | switch branch **in place** | MISSING-TERMINAL-ONLY | **LIMIT** | **I1** | `ui/chat/SessionTreeScreen.kt:226` — fork only | `rpc-types.ts:20-74`; `docs/sessions.md:71` |
-| 40 | branch summarization when leaving a branch | MISSING-TERMINAL-ONLY | **LIMIT** | **I1** / §2.1 | requires #39; unreachable | `interactive-mode.ts:5238`; `docs/sessions.md:131` |
-| 41 | **Delete** a session | MISSING-GUI | RECORDED-NO-OWNER (I) | **I9** | `session/PiSessionStore.kt:49` — `list` only | `docs/sessions.md:48`; `keybindings.md:144` |
-| 42 | search / sort / named-only filter in the picker | MISSING-GUI | RECORDED-NO-OWNER (I) | **I8** | `ui/screens/SessionsScreen.kt:105` | `docs/sessions.md:43-46` |
-| 43 | resume most recent session on launch (`pi -c`) | MISSING-GUI | RECORDED-NO-OWNER (I) | **I9** | `ui/PiSessionViewModel.kt:363` `attach()` issues no `switch_session`; `PiEngineHost.kt:232` argv | `cli/args.ts:100`; `docs/sessions.md:39` |
-| 44 | export to JSONL | MISSING-GUI | RECORDED-NO-OWNER (I) | **I3** | `ui/PiSessionViewModel.kt:1376` — always `export_html` | `interactive-mode.ts:6064-6065` vs `rpc-mode.ts:600-602` |
-| 45 | import from a JSONL file | MISSING-TERMINAL-ONLY | **LIMIT** | **F2** / §2.9 | `ui/chat/PiSlashCommands.kt:127` | `interactive-mode.ts:6107`; no `RpcCommand` |
-| 46 | per-cwd session **grouping** in the UI | PARTIAL | **UNRECORDED** | — | `ui/screens/SessionsScreen.kt:105` builds one flat `LazyColumn`; cwd appears only as a per-row string at `:172` `append(shortenPath(summary.cwd))` | `docs/sessions.md:7` |
+| # | Capability | Grade | Disposition | Owner / entry | App file proving the deficiency still exists | pi citation | Status |
+|---|---|---|---|---|---|---|---|
+| 39 | switch branch **in place** | MISSING-TERMINAL-ONLY | **LIMIT** | **I1** | `ui/chat/SessionTreeScreen.kt:226` — fork only | `rpc-types.ts:20-74`; `docs/sessions.md:71` | limit |
+| 40 | branch summarization when leaving a branch | MISSING-TERMINAL-ONLY | **LIMIT** | **I1** / §2.1 | requires #39; unreachable | `interactive-mode.ts:5238`; `docs/sessions.md:131` | limit |
+| 41 | **Delete** a session | MISSING-GUI | RECORDED-NO-OWNER (I) | **I9** | `session/PiSessionStore.kt:49` — `list` only | `docs/sessions.md:48`; `keybindings.md:144` | patch-ready P9 |
+| 42 | search / sort / named-only filter in the picker | MISSING-GUI | RECORDED-NO-OWNER (I) | **I8** | `ui/screens/SessionsScreen.kt:105` | `docs/sessions.md:43-46` | patch-ready P8 |
+| 43 | resume most recent session on launch (`pi -c`) | MISSING-GUI | RECORDED-NO-OWNER (I) | **I9** | `ui/PiSessionViewModel.kt:363` `attach()` issues no `switch_session`; `PiEngineHost.kt:232` argv | `cli/args.ts:100`; `docs/sessions.md:39` | patch-ready P12 |
+| 44 | export to JSONL | MISSING-GUI | RECORDED-NO-OWNER (I) | **I3** | `ui/PiSessionViewModel.kt:1376` — always `export_html` | `interactive-mode.ts:6064-6065` vs `rpc-mode.ts:600-602` | patch-ready P3 |
+| 45 | import from a JSONL file | MISSING-TERMINAL-ONLY | **LIMIT** | **F2** / §2.9 | `ui/chat/PiSlashCommands.kt:127` | `interactive-mode.ts:6107`; no `RpcCommand` | limit |
+| 46 | per-cwd session **grouping** in the UI | PARTIAL | **UNRECORDED** | — | `ui/screens/SessionsScreen.kt:105` builds one flat `LazyColumn`; cwd appears only as a per-row string at `:172` `append(shortenPath(summary.cwd))` | `docs/sessions.md:7` | patch-ready P11 |
 
 ### 2.6 Models, providers, thinking (`feature-gaps.md` §1.6)
 
-| # | Capability | Grade | Disposition | Owner / entry | App file proving the deficiency still exists | pi citation |
-|---|---|---|---|---|---|---|
-| 47 | custom provider via `models.json` (no editor) | PARTIAL | **ASSIGNED** | **E9** + in-flight `packages/PiConfigFiles.kt` / `PiCredentialService.kt` / `PiModelScanner.kt` | `packages/PiConfigFiles.kt:499` `fun upsert(provider: Provider): String?` and `PiCredentialService.kt:39` have no caller; the Action row `PiSettingsRegistry.kt:387` `key = "app.localModels.manage",` is inert | `docs/custom-provider.md`; `core/model-runtime.ts:174-175` |
-| 48 | OAuth login (`/login`, `/logout`) and `auth.json` | MISSING-TERMINAL-ONLY | **LIMIT** | **F3** / §2.9 | `PiSettingsRegistry.kt:378` `key = "app.credentials.oauth",` (`Action` kind at `:381`) is inert; `/login` is `TerminalOnly` (`PiSlashCommands.kt:138-139`) | no `RpcCommand` for login; `docs/providers.md:17-26` |
-| 49 | API-key credentials | MISSING-GUI | **ASSIGNED** | **E9** + in-flight `PiConfigFiles.kt` | `PiRoot.kt:130-138` calls `PiSettingsStack(` without `onRunAction`; the writer `PiConfigFiles.kt:308` has no caller | `docs/providers.md:62-107`; `core/auth-storage.ts:52` |
-| 50 | `provider/auth` events visible to the client | PARTIAL | **LIMIT** (compensated) | `fidelity-review.md` §4 / `extension-compatibility.md` §5.3 | The app works around it by polling: `ui/PiSessionViewModel.kt:492` "`model_select` is emitted to extensions only" and `:895` "Polled rather than event-driven on purpose" | `core/agent-session.ts:1665-1670` — `_emitModelSelect` calls `this._extensionRunner.emit(...)` only |
+| # | Capability | Grade | Disposition | Owner / entry | App file proving the deficiency still exists | pi citation | Status |
+|---|---|---|---|---|---|---|---|
+| 47 | custom provider via `models.json` (no editor) | PARTIAL | **ASSIGNED** | **E9** + in-flight `packages/PiConfigFiles.kt` / `PiCredentialService.kt` / `PiModelScanner.kt` | `packages/PiConfigFiles.kt:499` `fun upsert(provider: Provider): String?` and `PiCredentialService.kt:39` have no caller; the Action row `PiSettingsRegistry.kt:387` `key = "app.localModels.manage",` is inert | `docs/custom-provider.md`; `core/model-runtime.ts:174-175` | in-flight |
+| 48 | OAuth login (`/login`, `/logout`) and `auth.json` | MISSING-TERMINAL-ONLY | **LIMIT** | **F3** / §2.9 | `PiSettingsRegistry.kt:378` `key = "app.credentials.oauth",` (`Action` kind at `:381`) is inert; `/login` is `TerminalOnly` (`PiSlashCommands.kt:138-139`) | no `RpcCommand` for login; `docs/providers.md:17-26` | limit |
+| 49 | API-key credentials | MISSING-GUI | **ASSIGNED** | **E9** + in-flight `PiConfigFiles.kt` | `PiRoot.kt:130-138` calls `PiSettingsStack(` without `onRunAction`; the writer `PiConfigFiles.kt:308` has no caller | `docs/providers.md:62-107`; `core/auth-storage.ts:52` | in-flight |
+| 50 | `provider/auth` events visible to the client | PARTIAL | **LIMIT** (compensated) | `fidelity-review.md` §4 / `extension-compatibility.md` §5.3 | The app works around it by polling: `ui/PiSessionViewModel.kt:492` "`model_select` is emitted to extensions only" and `:895` "Polled rather than event-driven on purpose" | `core/agent-session.ts:1665-1670` — `_emitModelSelect` calls `this._extensionRunner.emit(...)` only | limit |
 
 ### 2.7 Skills, templates, packages (`feature-gaps.md` §1.7)
 
-| # | Capability | Grade | Disposition | Owner / entry | App file proving the deficiency still exists | pi citation |
-|---|---|---|---|---|---|---|
-| 51 | npm/git packages (`packages`) management UI | PARTIAL | **ASSIGNED** | **B5** + **E7**, owner *包管理代理* (§G) | `packages/PiPackagesScreen.kt:95` has no caller; `packages/PiPackageService.kt:59` has no caller | `docs/packages.md:22-39`; not in the `RpcCommand` union |
-| 52 | package resource enable/disable (`pi config`) | CLI-ONLY | **UNRECORDED** | — | `PiSettingsRegistry.kt:779` `key = "packages[].autoload",` — whole-package only | `package-manager-cli.ts:278-289` |
-| 53 | extension load diagnostics | MISSING-TERMINAL-ONLY | **LIMIT** | **F1** | `grep -rn "runtime.diagnostics"` over `app/src` + `rpc/src` → **0 hits**; no event carries it | pi writes load errors only to `runtime.diagnostics`; no RPC channel (`known-gaps` F1) |
-| 54 | built-in vs user-installed package distinction | MISSING-GUI | **ASSIGNED** | **E7**, owner *包管理代理* (§G) | `packages/PiPackagesScreen.kt:95` unmounted; bundled assets are installed at `bridge/DeviceBridgeController.kt:299` | — (app-side) |
+| # | Capability | Grade | Disposition | Owner / entry | App file proving the deficiency still exists | pi citation | Status |
+|---|---|---|---|---|---|---|---|
+| 51 | npm/git packages (`packages`) management UI | PARTIAL | **ASSIGNED** | **B5** + **E7**, owner *包管理代理* (§G) | `packages/PiPackagesScreen.kt:95` has no caller; `packages/PiPackageService.kt:59` has no caller | `docs/packages.md:22-39`; not in the `RpcCommand` union | in-flight |
+| 52 | package resource enable/disable (`pi config`) | CLI-ONLY | **UNRECORDED** | — | `PiSettingsRegistry.kt:779` `key = "packages[].autoload",` — whole-package only | `package-manager-cli.ts:278-289` | blocked |
+| 53 | extension load diagnostics | MISSING-TERMINAL-ONLY | **LIMIT** | **F1** | `grep -rn "runtime.diagnostics"` over `app/src` + `rpc/src` → **0 hits**; no event carries it | pi writes load errors only to `runtime.diagnostics`; no RPC channel (`known-gaps` F1) | limit |
+| 54 | built-in vs user-installed package distinction | MISSING-GUI | **ASSIGNED** | **E7**, owner *包管理代理* (§G) | `packages/PiPackagesScreen.kt:95` unmounted; bundled assets are installed at `bridge/DeviceBridgeController.kt:299` | — (app-side) | in-flight |
 
 ### 2.8 Settings coverage (`feature-gaps.md` §1.8)
 
-| # | Capability | Grade | Disposition | Owner / entry | App file proving the deficiency still exists | pi citation |
-|---|---|---|---|---|---|---|
-| 55 | registered settings that nothing reads | MISSING-GUI | RECORDED-NO-OWNER (I) | **I7** | All 13 keys re-swept: each occurs once, inside `PiSettingsRegistry.kt` (`:662`, `:676`, `:690`, `:869`, `:879`, `:893`, `:908`, `:918`, `:1057`, `:1071`, `:1086`, `:1177`, `:1615`). Caveat: this is a negative-grep row and the UI agent was wiring `fontScaleDelta` (`PiTheme.kt`) during the pass — re-run the sweep before acting. | — (app-side) |
-| 56 | all 20 `Action`-kind rows are inert | MISSING-GUI | RECORDED-NO-OWNER (I) | **I2** | `PiRoot.kt:130-138` omits `onRunAction`; `SettingsGroupScreen.kt:155` then renders "这个入口由运行时接管，当前宿主还没有接入对应的实现"; 20 `PiRowKind.Action` rows counted in the registry | — (app-side) |
-| 57 | device capability switches (two authorities) | MISSING-GUI | RECORDED-NO-OWNER (I) | **I10** | `PiSettingsRegistry.kt:1474-1549` declares `app.device.*`; `grep -rn "app\.device\."` outside the registry → **0 hits**, while enforcement reads SharedPreferences at `bridge/DeviceCapabilityStore.kt:65-92` | — (app-side) |
-| 58 | update checks | MISSING-GUI | RECORDED-NO-OWNER (I) | **I2** | `PiSettingsRegistry.kt:1566` `key = "app.runtime.checkUpdate",` — an `Action` row inside the inert set above | — (app-side) |
+| # | Capability | Grade | Disposition | Owner / entry | App file proving the deficiency still exists | pi citation | Status |
+|---|---|---|---|---|---|---|---|
+| 55 | registered settings that nothing reads | MISSING-GUI | RECORDED-NO-OWNER (I) | **I7** | All 13 keys re-swept: each occurs once, inside `PiSettingsRegistry.kt` (`:662`, `:676`, `:690`, `:869`, `:879`, `:893`, `:908`, `:918`, `:1057`, `:1071`, `:1086`, `:1177`, `:1615`). Caveat: this is a negative-grep row and the UI agent was wiring `fontScaleDelta` (`PiTheme.kt`) during the pass — re-run the sweep before acting. | — (app-side) | fixed (partial) |
+| 56 | all 20 `Action`-kind rows are inert | MISSING-GUI | RECORDED-NO-OWNER (I) | **I2** | `PiRoot.kt:130-138` omits `onRunAction`; `SettingsGroupScreen.kt:155` then renders "这个入口由运行时接管，当前宿主还没有接入对应的实现"; 20 `PiRowKind.Action` rows counted in the registry | — (app-side) | blocked |
+| 57 | device capability switches (two authorities) | MISSING-GUI | RECORDED-NO-OWNER (I) | **I10** | `PiSettingsRegistry.kt:1474-1549` declares `app.device.*`; `grep -rn "app\.device\."` outside the registry → **0 hits**, while enforcement reads SharedPreferences at `bridge/DeviceCapabilityStore.kt:65-92` | — (app-side) | blocked |
+| 58 | update checks | MISSING-GUI | RECORDED-NO-OWNER (I) | **I2** | `PiSettingsRegistry.kt:1566` `key = "app.runtime.checkUpdate",` — an `Action` row inside the inert set above | — (app-side) | blocked |
 
 ### 2.9 Attachments, images, `@` mentions (`feature-gaps.md` §1.9)
 
-| # | Capability | Grade | Disposition | Owner / entry | App file proving the deficiency still exists | pi citation |
-|---|---|---|---|---|---|---|
-| 59 | images into `prompt` | PARTIAL | RECORDED-NO-OWNER (E) | **E3** | `PiSessionViewModel.kt:1049` / `ChatScreen.kt:415` (as #1) | `rpc-types.ts:22` |
-| 60 | picking an image from the device | MISSING-GUI | RECORDED-NO-OWNER (E) | **E3** | `ChatScreen.kt:402-410` `Composer(` has no attachment affordance; `grep "PickVisualMedia\|GetContent\|ACTION_OPEN_DOCUMENT"` in UI → 0 hits | — |
-| 61 | pasting an image from the clipboard | MISSING-GUI | RECORDED-NO-OWNER (E) | **E3** | `ChatScreen.kt:552-554` only *writes* the clipboard (`clipboard?.setPrimaryClip(…)`); nothing reads an image in | `keybindings.md` `app.clipboard.pasteImage` |
-| 62 | rendering attachments in the transcript | PARTIAL | **UNRECORDED** | — | `ui/blocks/ImageGridBlock.kt:30` "The cells are drawn as labelled placeholders: this app has no image-loading dependency yet"; `:117` `text = "图片 ${index + 1}"` | `session-format.md:53-57` |
-| 63 | `@` file mentions | MISSING-GUI | RECORDED-NO-OWNER (E) | **E4** | `ui/chat/SlashPalette.kt:206-210` `routeComposerText` recognises only `!`/`/`; no `@` branch anywhere | `utils/paths.ts:17,80` |
+| # | Capability | Grade | Disposition | Owner / entry | App file proving the deficiency still exists | pi citation | Status |
+|---|---|---|---|---|---|---|---|
+| 59 | images into `prompt` | PARTIAL | RECORDED-NO-OWNER (E) | **E3** | `PiSessionViewModel.kt:1049` / `ChatScreen.kt:415` (as #1) | `rpc-types.ts:22` | patch-ready P6 |
+| 60 | picking an image from the device | MISSING-GUI | RECORDED-NO-OWNER (E) | **E3** | `ChatScreen.kt:402-410` `Composer(` has no attachment affordance; `grep "PickVisualMedia\|GetContent\|ACTION_OPEN_DOCUMENT"` in UI → 0 hits | — | patch-ready P6 |
+| 61 | pasting an image from the clipboard | MISSING-GUI | RECORDED-NO-OWNER (E) | **E3** | `ChatScreen.kt:552-554` only *writes* the clipboard (`clipboard?.setPrimaryClip(…)`); nothing reads an image in | `keybindings.md` `app.clipboard.pasteImage` | patch-ready P6 |
+| 62 | rendering attachments in the transcript | PARTIAL | **UNRECORDED** | — | `ui/blocks/ImageGridBlock.kt:30` "The cells are drawn as labelled placeholders: this app has no image-loading dependency yet"; `:117` `text = "图片 ${index + 1}"` | `session-format.md:53-57` | patch-ready P1 |
+| 63 | `@` file mentions | MISSING-GUI | RECORDED-NO-OWNER (E) | **E4** | `ui/chat/SlashPalette.kt:206-210` `routeComposerText` recognises only `!`/`/`; no `@` branch anywhere | `utils/paths.ts:17,80` | blocked |
 
 > Note on #62: `known-gaps` **A3** is about markdown-embedded `![](...)` images via
 > `ImageTransformer`. It is a *different surface* — `feature-gaps.md:281` itself says "the
@@ -204,19 +204,19 @@ The audit's `PARTIAL 20 / MISSING-GUI 26 / CLI-ONLY 9 = 55` is reproduced exactl
 
 ### 2.10 Environment and ops (`feature-gaps.md` §1.10)
 
-| # | Capability | Grade | Disposition | Owner / entry | App file proving the deficiency still exists | pi citation |
-|---|---|---|---|---|---|---|
-| 64 | `PI_OFFLINE` / `--offline` | CLI-ONLY | RECORDED-NO-OWNER (I) | **I11** | `PiEngineHost.kt:247-260` — fixed `extra = mapOf(...)`, no offline key | `docs/environment-variables.md:84`; `cli/args.ts:223` |
-| 65 | `PI_CACHE_RETENTION` | MISSING-GUI | RECORDED-NO-OWNER (I) | **I11** | same env map; `grep "PI_CACHE_RETENTION\|cacheRetention"` over `app/src` + `rpc/src` → **0 hits** | `docs/environment-variables.md:87` |
-| 66 | engine argv (closed to overrides) | PARTIAL | RECORDED-NO-OWNER (I) | **I11** | `PiEngineHost.kt:232-233` | `docs/rpc.md:7-15` |
-| 67 | runtime/ops diagnostics (`app.runtime.*`) | MISSING-GUI | RECORDED-NO-OWNER (I) | **I2** | 8 `app.runtime.*` `Action` rows at `PiSettingsRegistry.kt:1566-1668`, all inside the inert set of #56 | — (app-side) |
+| # | Capability | Grade | Disposition | Owner / entry | App file proving the deficiency still exists | pi citation | Status |
+|---|---|---|---|---|---|---|---|
+| 64 | `PI_OFFLINE` / `--offline` | CLI-ONLY | RECORDED-NO-OWNER (I) | **I11** | `PiEngineHost.kt:247-260` — fixed `extra = mapOf(...)`, no offline key | `docs/environment-variables.md:84`; `cli/args.ts:223` | in-flight |
+| 65 | `PI_CACHE_RETENTION` | MISSING-GUI | RECORDED-NO-OWNER (I) | **I11** | same env map; `grep "PI_CACHE_RETENTION\|cacheRetention"` over `app/src` + `rpc/src` → **0 hits** | `docs/environment-variables.md:87` | in-flight |
+| 66 | engine argv (closed to overrides) | PARTIAL | RECORDED-NO-OWNER (I) | **I11** | `PiEngineHost.kt:232-233` | `docs/rpc.md:7-15` | in-flight |
+| 67 | runtime/ops diagnostics (`app.runtime.*`) | MISSING-GUI | RECORDED-NO-OWNER (I) | **I2** | 8 `app.runtime.*` `Action` rows at `PiSettingsRegistry.kt:1566-1668`, all inside the inert set of #56 | — (app-side) | blocked |
 
 ### 2.11 Mixed-grade rows the audit parked under `IMPLEMENTED`
 
-| # | Capability | Grade | Disposition | Owner / entry | App file proving the deficiency still exists | pi citation |
-|---|---|---|---|---|---|---|
-| 68 | `--models` / `--tools` etc.: reading or setting the **live** tool set | PARTIAL (live) | **LIMIT** | **F2** | Only startup-equivalents exist (`enabledModels`, `defaultTools` settings); no RPC command reads or writes the live tool table | `rpc-types.ts:20-74` — no tools command; `known-gaps` F2 |
-| 69 | `httpProxy` reaching **package installs** | PARTIAL | CLOSED (audit premise disproved) | — | `packages/GuestCommand.kt:198-204` `ENV` carries no proxy — but none is needed: pi applies the setting to its own process environment before dispatching package commands (`main.ts:583` then `:586`), and npm is spawned with the inherited env (`core/package-manager.ts:15-35` `getEnv` returns `process.env`) | `core/http-dispatcher.ts:45-50` `applyHttpProxySettings` |
+| # | Capability | Grade | Disposition | Owner / entry | App file proving the deficiency still exists | pi citation | Status |
+|---|---|---|---|---|---|---|---|
+| 68 | `--models` / `--tools` etc.: reading or setting the **live** tool set | PARTIAL (live) | **LIMIT** | **F2** | Only startup-equivalents exist (`enabledModels`, `defaultTools` settings); no RPC command reads or writes the live tool table | `rpc-types.ts:20-74` — no tools command; `known-gaps` F2 | limit |
+| 69 | `httpProxy` reaching **package installs** | PARTIAL | CLOSED (audit premise disproved) | — | `packages/GuestCommand.kt:198-204` `ENV` carries no proxy — but none is needed: pi applies the setting to its own process environment before dispatching package commands (`main.ts:583` then `:586`), and npm is spawned with the inherited env (`core/package-manager.ts:15-35` `getEnv` returns `process.env`) | `core/http-dispatcher.ts:45-50` `applyHttpProxySettings` | closed |
 
 ## 3. Count summary
 
@@ -329,3 +329,360 @@ Listed so the ledger cannot over-claim. "Justified" = at least one of the 148 ro
 
 No row in §2 depends on an UNVERIFIED item: every deficiency above was read out of the current
 Kotlin (or proved absent by a repo-wide grep) and every LIMIT was proved against pi's source.
+
+## 8. Ready-to-apply patches (ordered by user-visible severity)
+
+For rows whose files are owned by another agent, this is the deliverable: a patch small enough to
+paste. All line numbers are from `dc00279` + the dirty files named in §0; **re-check the anchor
+line before applying**, because the tree moves. The status column in §2 points at the patch ids
+here.
+
+### P1 — #62 images render as placeholders (highest severity: the bytes are already in memory)
+
+`PiImage` carries the image inline as base64 (`rpc/Commands.kt:13`
+`data class PiImage(val base64: String, val mimeType: String)`), so **no new dependency and no
+byte channel are needed** — the file's own doc comment ("this app has no image-loading dependency
+yet") is the only thing blocking it. pi has no client-side answer to copy here; this is pure app
+rendering.
+
+`app/src/main/kotlin/app/pi/ui/blocks/ImageGridBlock.kt`, in `ImageCell` (line 111):
+
+before
+```kotlin
+        Box(contentAlignment = Alignment.Center) {
+            Column(
+```
+after
+```kotlin
+        Box(contentAlignment = Alignment.Center) {
+            // `PiImage` is base64 inline, so a decode is the whole channel.
+            val bitmap = remember(image.base64) { decodeImage(image.base64) }
+            if (bitmap != null) {
+                Image(
+                    bitmap = bitmap.asImageBitmap(),
+                    contentDescription = "第 ${index + 1} 张图片",
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize(),
+                )
+            } else {
+            Column(
+```
+close the new `else` after the placeholder `Column`'s closing brace (line 126), then add:
+
+```kotlin
+/** Decoded from the wire's inline base64; null keeps the labelled placeholder. */
+private fun decodeImage(base64: String): Bitmap? = runCatching {
+    val bytes = Base64.decode(base64, Base64.DEFAULT)
+    BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+}.getOrNull()
+```
+New imports: `android.graphics.Bitmap`, `android.graphics.BitmapFactory`, `android.util.Base64`,
+`androidx.compose.foundation.Image`, `androidx.compose.foundation.layout.fillMaxSize`,
+`androidx.compose.runtime.remember`, `androidx.compose.ui.graphics.asImageBitmap`,
+`androidx.compose.ui.layout.ContentScale`. Caveat: decoding in composition is main-thread work; a
+follow-up should move it to `produceState(Dispatchers.IO)`.
+
+### P2 — #4 / #16 Stop destroys the queued text (one lambda)
+
+`app/src/main/kotlin/app/pi/ui/screens/ChatScreen.kt:433`
+
+before
+```kotlin
+            onStop = { session.stop() },
+```
+after
+```kotlin
+            onStop = {
+                session.stop { restored ->
+                    if (restored.isNotEmpty()) draft = restored.joinToString("\n")
+                }
+            },
+```
+`stop(onRestored)` already exists (`PiSessionViewModel.kt:1097`) and pi prescribes exactly this
+(`docs/rpc.md:137-155`: restore the returned text in the client editor). No other change needed;
+`draft` is in scope.
+
+### P3 — #7 / #44 `/export x.jsonl` writes HTML (silent wrong bytes)
+
+Two edits; the first is the honest minimum, the second stops the wrong write.
+
+`app/src/main/kotlin/app/pi/ui/chat/PiSlashCommands.kt:122`
+
+before
+```kotlin
+        "export", "导出会话（默认 HTML，或指定 .html/.jsonl 路径）", PiCommandSource.Builtin, null,
+```
+after
+```kotlin
+        "export", "导出会话为 HTML（RPC 只提供 export_html；JSONL 导出只在终端标签页可用）", PiCommandSource.Builtin, null,
+```
+`app/src/main/kotlin/app/pi/ui/PiSessionViewModel.kt:1371-1374`
+
+before
+```kotlin
+    fun exportHtml(fileName: String? = null) {
+        val name = fileName?.trim()?.takeIf { it.isNotEmpty() }
+            ?: "pi-session-${System.currentTimeMillis()}.html"
+```
+after
+```kotlin
+    fun exportHtml(fileName: String? = null) {
+        val name = fileName?.trim()?.takeIf { it.isNotEmpty() }
+            ?: "pi-session-${System.currentTimeMillis()}.html"
+        if (!name.endsWith(".html", ignoreCase = true)) {
+            pushNotice("导出路径需要 .html：RPC 只有 export_html，pi 的 JSONL 导出仅 TUI 可用", Notice.Tone.Warning)
+            return
+        }
+```
+pi proof: `rpc-mode.ts:600-602` calls `session.exportToHtml(command.outputPath)` unconditionally,
+while the TUI branches on `.jsonl` (`interactive-mode.ts:6064-6065` → `exportToJsonl`). A JSONL
+export would have to be written app-side from `get_entries`; that is a feature, not a patch.
+
+### P4 — #2 / #3 / #17 follow-up delivery is unreachable
+
+`app/src/main/kotlin/app/pi/ui/screens/ChatScreen.kt`, in the overflow menu (next to the
+"循环切换模型" item, around line 295):
+
+```kotlin
+                    OverflowItem("排队追问（本轮结束后发送）") {
+                        if (draft.isNotBlank()) {
+                            session.sendFollowUp(draft.trim())
+                            draft = ""
+                        }
+                        overflow = false
+                    }
+```
+`sendFollowUp` exists and is correct (`PiSessionViewModel.kt:1086-1093`); it simply has no caller
+today. This also makes the already-wired `followUpMode` (`PiSettingsRegistry.kt:411`) mean
+something. pi: `keybindings.md:165` `app.message.followUp` (`alt+enter`); `docs/rpc.md:102-104`.
+
+### P5 — #18 / #19 `hideThinkingBlock` and thinking collapse-all never reach the renderer
+
+`app/src/main/kotlin/app/pi/ui/screens/ChatScreen.kt:345-349`
+
+before
+```kotlin
+                    BlockRenderer(
+                        item = item,
+                        toolsDefaultExpanded = toolsExpanded,
+                        thinkingDefaultExpanded = false,
+                    )
+```
+after
+```kotlin
+                    val prefs = session.settingsStore
+                    BlockRenderer(
+                        item = item,
+                        toolsDefaultExpanded = toolsExpanded,
+                        thinkingDefaultExpanded = thinkingExpanded
+                            ?: (prefs.readBoolean("app.appearance.thinkingCollapsedByDefault") != true),
+                        hideThinking = prefs.readBoolean("hideThinkingBlock") == true,
+                    )
+```
+plus one state var beside `toolsExpanded` (line 146) and one overflow item:
+
+```kotlin
+    var thinkingExpanded by rememberSaveable { mutableStateOf<Boolean?>(null) }
+...
+                    OverflowItem(if (thinkingExpanded == true) "收起全部思考" else "展开全部思考") {
+                        thinkingExpanded = thinkingExpanded != true
+                        overflow = false
+                    }
+```
+Imports: `app.pi.settings.readBoolean`. `BlockRenderer` already implements both parameters
+(`ui/blocks/BlockRenderer.kt:39-53`); pi's setting is `settings-manager.ts:119`
+(`hideThinkingBlock?: boolean`), documented in `docs/settings.md` §UI & Display. Caveat: it reads
+the store at composition, so the toggle applies on the next transcript recomposition; making it
+reactive means putting it in `UiState` (that file is owned).
+
+### P6 — #1 / #59 / #60 / #61 image input (picker + clipboard), end to end
+
+The plumbing below the UI already exists: `PiImage` (`rpc/Commands.kt:13`), `putImages`
+(`:265-278`), `PiEngineSession.prompt(images)` and `PiSessionViewModel.send(text, images)`
+(`:1049-1066`). Only the affordance is missing. In `ChatScreen`, beside the `Composer`:
+
+```kotlin
+    val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri != null) {
+            val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+            if (bytes != null) {
+                val mime = context.contentResolver.getType(uri) ?: "image/*"
+                session.send(
+                    draft.ifBlank { "请看这张图片" },
+                    listOf(PiImage(Base64.encodeToString(bytes, Base64.NO_WRAP), mime)),
+                )
+                draft = ""
+            }
+        }
+    }
+```
+and in the key-hint row (line 684-686, next to `KeyHint("/", …)`):
+
+```kotlin
+                KeyHint("图", { imagePicker.launch("image/*") })
+```
+New imports: `android.util.Base64`, `androidx.activity.compose.rememberLauncherForActivityResult`,
+`androidx.activity.result.contract.ActivityResultContracts`, `app.pi.rpc.PiImage`. The clipboard
+half (#61) is the same call with a URI from `clipboard.primaryClip?.getItemAt(0)?.uri`. pi side:
+`rpc-types.ts:22` `images?: ImageContent[]`; `keybindings.md` `app.clipboard.pasteImage`. Caveat:
+`readBytes()` runs on the main thread; wrap it in `withContext(Dispatchers.IO)` before shipping.
+
+### P7 — #21 no jump to previous/next message
+
+`ChatScreen`: a `rememberCoroutineScope()` plus two overflow items over the transcript index list.
+
+```kotlin
+    val scope = rememberCoroutineScope()
+    val userRowIndices = state.transcript.mapIndexedNotNull { i, item ->
+        if (item is UserMessage) i else null
+    }
+...
+                    OverflowItem("跳到上一条提问") {
+                        val current = listState.firstVisibleItemIndex
+                        userRowIndices.lastOrNull { it < current }?.let { row ->
+                            scope.launch { listState.animateScrollToItem(row) }
+                        }
+                        overflow = false
+                    }
+                    OverflowItem("跳到下一条提问") {
+                        val current = listState.firstVisibleItemIndex
+                        userRowIndices.firstOrNull { it > current }?.let { row ->
+                            scope.launch { listState.animateScrollToItem(row) }
+                        }
+                        overflow = false
+                    }
+```
+Imports: `androidx.compose.runtime.rememberCoroutineScope`, `kotlinx.coroutines.launch`,
+`app.pi.rpc.UserMessage`. pi: `keybindings.md:112` `tui.altScreen.previousPrompt`. Low value per
+the original audit, but ~15 lines.
+
+### P8 — #23 / #42 session list has no search/sort
+
+`app/src/main/kotlin/app/pi/ui/screens/SessionsScreen.kt`, above the `LazyColumn` (line ~99):
+
+```kotlin
+            var query by rememberSaveable { mutableStateOf("") }
+            var byName by rememberSaveable { mutableStateOf(false) }
+            val visible = remember(sessions, query, byName) {
+                sessions
+                    .filter { query.isBlank() || it.displayName.contains(query, true) || it.cwd.contains(query, true) }
+                    .let { list -> if (byName) list.sortedBy { it.displayName.lowercase() } else list }
+            }
+```
+then a search field in the `TopAppBar` `actions` (line 83) and a sort toggle
+(`IconButton(onClick = { byName = !byName })`), and change `items(sessions, …)` (line 105) to
+`items(visible, …)`. pi: `docs/sessions.md:43-46` (search by typing, Ctrl+S sort, Ctrl+N
+named-only filter); the named-only part is one more filter clause (`summary.name != null`).
+
+### P9 — #24 / #41 no way to delete a session
+
+Needs one store method and one UI flow; the store lives in an unowned package, the screen does not.
+
+`app/src/main/kotlin/app/pi/session/PiSessionStore.kt` (after `list`, line 70):
+```kotlin
+    /** Remove one session file. pi's TUI always confirms first (`docs/sessions.md:48`). */
+    suspend fun delete(file: File): Boolean = withContext(Dispatchers.IO) {
+        runCatching { file.delete() }.getOrDefault(false)
+    }
+```
+`PiSessionViewModel` (new method, beside `switchSession`):
+```kotlin
+    fun deleteSession(summary: PiSessionStore.Summary) {
+        viewModelScope.launch {
+            if (sessionStore.delete(summary.file)) {
+                pushNotice("已删除：${summary.displayName}", Notice.Tone.Info)
+                refreshSessions()
+            } else {
+                pushNotice("删除失败：${summary.file.name}", Notice.Tone.Warning)
+            }
+        }
+    }
+```
+`SessionsScreen`: `combinedClickable(onLongClick = { confirming = summary })` on `SessionRow`, plus
+an `AlertDialog` with 取消/删除 (pi requires the confirm step — `docs/sessions.md:48`).
+Caveat: deleting the **active** session must be refused or must switch first, otherwise pi keeps
+appending to a deleted inode; that check belongs with the owner.
+
+### P10 — #26 `/scoped-models` is terminal-only
+
+`app/src/main/kotlin/app/pi/ui/chat/PiSlashCommands.kt:116-120`: change the action from
+`PiCommandAction.TerminalOnly` to a new `PiCommandAction.EditScopedModels`, add the enum value
+(`:30-60`), and dispatch it in `ChatScreen.pick()` (around line 190) to open the editor for the
+`enabledModels` row instead of refusing:
+
+```kotlin
+            PiCommandAction.EditScopedModels -> {
+                session.requestNav(NavRequest.Settings)   // highlight "enabledModels"
+                overflow = false
+            }
+```
+The cheapest honest version is exactly this — route the command to the settings row that already
+exists (`PiSettingsRegistry.kt:355`). A real multi-select picker is new UI and should not be
+invented in a patch.
+
+### P11 — #46 no per-cwd grouping in the session list
+
+`SessionsScreen.kt:105`: replace the flat `items(sessions, …)` with grouped output.
+
+```kotlin
+            val groups = visible.groupBy { it.cwd }.toList()
+                .sortedByDescending { (_, rows) -> rows.maxOf { it.lastActivityAt } }
+...
+            groups.forEach { (cwd, rows) ->
+                item(key = "hdr:$cwd") { PiSectionHeader(shortenPath(cwd)) }
+                items(rows, key = { it.file.absolutePath }) { summary -> SessionRow(...) }
+            }
+```
+pi groups sessions by cwd on disk (`docs/sessions.md:7`; `session-manager.ts:479`), so this mirrors
+the store rather than inventing a grouping.
+
+### P12 — #14 / #43 no `pi -c` (resume the most recent session on launch)
+
+A behaviour change, so behind a setting rather than a silent new default.
+
+1. `PiSettingsRegistry.kt` (sessions group, near `:718`): add a `PiSetting` with
+   `key = "app.sessions.resumeLast"`, `kind = PiRowKind.Switch`, `defaultValue = bool(false)`,
+   `effective = EffectiveKind.RestartApp`, described as "启动时续接最近一次会话（对应 `pi -c`）".
+2. `PiSessionViewModel.attach()` (`:363-410`): after `replayHistory(engine)` and `refreshState()`,
+   add
+   ```kotlin
+   if (settingsStore.readBoolean("app.sessions.resumeLast") == true) {
+       sessions.value.firstOrNull()?.let { switchSession(it) }
+   }
+   ```
+   guarded on "the user has not already chosen a session on this launch".
+pi proof: `cli/args.ts:100` `--continue`/`-c`; `docs/sessions.md:39`.
+
+### Rows that are **not** directly patchable, and why
+
+| Rows | Why not |
+|---|---|
+| #10, #52 (`pi config` per-resource) | Needs a settings model for `packages[]` object filters (extensions/skills/prompts/themes patterns) plus a UI; the current `autoload` boolean is a different shape. `package-manager-cli.ts:278-289` is a TUI, not a protocol. |
+| #20 (transcript search) | New state (query, matches, current match, scroll anchoring) and a UI surface; nothing in `ChatScreen`'s current shape carries it. pi's panel is `tui.altScreen.search` (`keybindings.md:114`). |
+| #22 (tree filters) | pi offers five modes (`docs/sessions.md:100`) that each consult different node metadata; picking a subset is a product decision, and implementing all five blind (no device) is how a filter silently hides branches. |
+| #25 (external editor) | `externalEditor` is a **shell command pi itself runs** (`keybindings.md` `app.editor.external`), not an Android intent. Making it work on a phone means choosing a target app / `ACTION_EDIT` contract and reconciling it with the terminal tab, which already honours pi's setting. |
+| #5 (`new_session parentSession`) | There is no GUI concept of a parent session to pass; the app's "new session" is deliberately rootless and its branch affordance is fork. Needs a product decision, not a patch. |
+| #56, #58, #67 (the 20 inert Action rows) | `PiRoot.kt:130-138` needs `onRunAction` (one line), but the *actions* must exist: update check needs a version source, diagnostics a collector, rollback a target. Wiring the dispatcher without implementations trades one lie for twenty. |
+| #57 (duplicate device switches) | Two acceptable fixes (delete the registry rows, or make them a view over `DeviceCapabilityStore`); choosing between them is a decision about whether `app.device.*` should exist at all. |
+| #63 (`@` mentions) | Needs a workspace file picker and pi's `stripAtPrefix` semantics (`utils/paths.ts:17,80`); new UI, not a patch. |
+| #9, #51, #54, #13, #47, #49, #34–#37 | Already **in flight** — another agent's uncommitted `packages/**` and `ui/theme/**` code implements them; the remaining work is mounting/wiring, which is that agent's file. |
+| #11, #12, #64, #65, #66 | Also **in flight**: `rpc/PiLaunchOptions.kt` (new, untracked) and the `PiEngineHost.boot(launch = …)` change implement `PI_OFFLINE`, `PI_CACHE_RETENTION`, `--system-prompt`/`--append-system-prompt`; what is left is the settings rows and passing the options. |
+
+## 9. Status board
+
+Every row in §2 carries a status in the extra column of its table, using this vocabulary:
+
+| Status | Meaning |
+|---|---|
+| `fixed` | Verified working at the current tree; evidence in the row. |
+| `patch-ready` | A complete patch is in §8 (the P-id is in the row). |
+| `blocked` | Needs a design decision, a cross-file refactor, or a device pass — reason in §8's last table. |
+| `in-flight` | Another agent's uncommitted work implements it; only wiring remains. |
+| `limit` | pi offers no RPC path; the terminal tab is the route. |
+| `closed` | Audited and requires no action (premise disproved or deliberate adaptation). |
+
+Summary: **fixed 1 · patch-ready 23 · blocked 11 · in-flight 15 · limit 14 · closed 5** (69 rows).
+Only row #55 is `fixed` today, and only partially: the four `app.terminal.*` keys are wired
+(`ui/terminal/TerminalSettings.kt`, `TerminalPane.kt`, `TerminalSurface.kt`, `TerminalKeyBar.kt`,
+`terminal/TerminalController.kt`), which is 4 of the 13 settings that row lists. Everything else
+below is a patch for the file's owner, not a change made by this pass.

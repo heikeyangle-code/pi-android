@@ -6,6 +6,7 @@ import app.pi.runtime.PiPaths
 import app.pi.runtime.ProotCommand
 import app.pi.runtime.RuntimeProvisioner
 import app.pi.runtime.RuntimeSelfCheck
+import app.pi.rpc.PiLaunchOptions
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -161,16 +162,29 @@ class PiEngineHost(private val appContext: Context) {
     val guestAgentDir: String = "/root/.pi/agent"
 
     /**
+     * The pre-spawn options the current engine was started with, replayed by
+     * [restart].
+     *
+     * pi's process configuration (`PI_OFFLINE`, `PI_CACHE_RETENTION`,
+     * `--system-prompt`, …) is only readable when the process starts, so a
+     * restart that dropped these would silently change the user's engine.
+     */
+    private var launchOptions: PiLaunchOptions = PiLaunchOptions()
+
+    /**
      * @param workspaceProvider returns the host path of the workspace directory
      *        that will become the guest's cwd. Called lazily so first launch can
      *        create one.
+     * @param launch pi's pre-spawn configuration — see [PiLaunchOptions]. The
+     *        default reproduces the previous hard-wired launch byte for byte.
      */
     suspend fun boot(
         revision: String = RuntimeProvisioner.RUNTIME_REVISION,
         workspaceProvider: () -> File,
         onStep: (RuntimeProvisioner.Step) -> Unit = {},
+        launch: PiLaunchOptions = PiLaunchOptions(),
     ): Boot = lifecycleLock.withLock {
-        bootLocked(revision, workspaceProvider, onStep)
+        bootLocked(revision, workspaceProvider, onStep, launch)
     }
 
     /**
@@ -185,6 +199,7 @@ class PiEngineHost(private val appContext: Context) {
         revision: String,
         workspaceProvider: () -> File,
         onStep: (RuntimeProvisioner.Step) -> Unit,
+        launch: PiLaunchOptions,
     ): Boot =
         withContext(Dispatchers.IO) {
             // 1. Runtime payload.
@@ -227,10 +242,16 @@ class PiEngineHost(private val appContext: Context) {
                 )
             }
 
+            launchOptions = launch
+
             val guestCommand = buildString {
                 append("exec /opt/node/bin/node ").append(cli)
                 append(" --mode rpc")
                 append(" --session-dir ").append(guestAgentDir).append("/sessions")
+                // pi's pre-spawn flags. The suffix is already shell-quoted because
+                // `ProotCommand.build` hands this string to `bash -lc` inside the
+                // rootfs; empty when no option is set.
+                append(launch.commandLineSuffix())
             }
 
             val argv = ProotCommand.build(
@@ -258,7 +279,10 @@ class PiEngineHost(private val appContext: Context) {
                     // works — kept because an env var is visible in `env` output when
                     // someone has to debug why the bridge looks absent.
                     "PI_ANDROID_BRIDGE_FILE" to "/root/.pi/device-bridge.json",
-                ),
+                    // The user-chosen pre-spawn knobs. `PiLaunchOptions.environment`
+                    // only ever adds keys — pi tests some of them for presence, so a
+                    // "0" would be worse than omitting them.
+                ) + launch.environment(),
             )
 
             runCatching {
@@ -338,7 +362,10 @@ class PiEngineHost(private val appContext: Context) {
             _session.value = null
         }
 
-        return@withLock when (val boot = bootLocked(revision, workspaceProvider, onStep)) {
+        // Replay the options the running engine was started with: pi reads its
+        // process configuration only at startup, so a restart that dropped them
+        // would change the engine behind the user's back.
+        return@withLock when (val boot = bootLocked(revision, workspaceProvider, onStep, launchOptions)) {
             is Boot.Ready -> Restart.Ok(boot.session, replaced = current != null)
             is Boot.Failed -> Restart.Failed(
                 message = "重启失败：${boot.message}",

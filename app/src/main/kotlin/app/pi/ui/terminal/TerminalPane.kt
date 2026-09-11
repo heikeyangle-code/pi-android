@@ -60,6 +60,7 @@ import app.pi.terminal.TerminalController
 import app.pi.terminal.TerminalKeys
 import app.pi.terminal.TerminalPalette
 import kotlinx.coroutines.delay
+import kotlinx.serialization.json.JsonPrimitive
 
 /**
  * The Workbench terminal: real tabs, a real PTY, and the original pi TUI.
@@ -79,9 +80,17 @@ fun TerminalPane(modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val isDark = MaterialTheme.colorScheme.background.luminanceIsDark()
     val palette = remember(isDark) { if (isDark) TerminalPalette.dark() else TerminalPalette.light() }
-    val store = remember(context, palette) { TerminalStore(context, palette) }
+    // One store for the four `app.terminal.*` settings, built from the same agent
+    // dir and workspace the Settings screen writes through. Reads happen once per
+    // Workbench composition; the keys the user edits are `EffectiveKind.Reload`
+    // rows, so re-entering the tab is the documented way to apply them.
+    val settingsStore = remember(context) { terminalSettingsStore(context) }
+    val preferences = remember(settingsStore) { TerminalPreferences.read(settingsStore) }
+    val store = remember(context, palette, preferences) {
+        TerminalStore(context, palette, preferences.scrollbackLines)
+    }
 
-    var fontSize by remember { mutableStateOf(13f) }
+    var fontSize by remember(preferences) { mutableStateOf(preferences.fontSize) }
     var selection by remember { mutableStateOf<TerminalSelection?>(null) }
     var ctrlArmed by remember { mutableStateOf(false) }
     var showNewTabMenu by remember { mutableStateOf(false) }
@@ -182,6 +191,7 @@ fun TerminalPane(modifier: Modifier = Modifier) {
                     onOpenLink = { url -> openLink(context, url) },
                     onTap = { focus() },
                     modifier = Modifier.fillMaxSize(),
+                    cursorStyle = preferences.cursorStyle,
                 )
             }
         }
@@ -195,9 +205,15 @@ fun TerminalPane(modifier: Modifier = Modifier) {
                 // Any key press disarms the sticky modifier, like a real keyboard.
                 ctrlArmed = false
             },
-            onFontSize = { fontSize = it },
+            onFontSize = { size ->
+                fontSize = size
+                // Persist the one terminal setting whose control lives on the bar
+                // itself, so the choice survives leaving the Workbench tab.
+                settingsStore.write("app.terminal.fontSize", JsonPrimitive(size.toInt()))
+            },
             fontSize = fontSize,
             statusText = statusText,
+            keys = preferences.keyBar,
         )
     }
 }
@@ -213,6 +229,8 @@ fun TerminalPane(modifier: Modifier = Modifier) {
 class TerminalStore(
     private val context: Context,
     private val palette: TerminalPalette,
+    /** `app.terminal.scrollbackLines`, applied to each new emulator. */
+    private val historyLimit: Int = 2000,
 ) {
 
     /** One open terminal. The controller is null until the tab is first shown. */
@@ -277,6 +295,7 @@ class TerminalStore(
             columns = DEFAULT_COLUMNS,
             rows = DEFAULT_ROWS,
             palette = palette,
+            historyLimit = historyLimit,
             command = tab.command,
         )
         tabs[index] = tab.copy(controller = controller)

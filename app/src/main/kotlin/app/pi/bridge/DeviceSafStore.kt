@@ -17,7 +17,7 @@ object DeviceShellPolicyText {
 
     fun allowLine(): String = DeviceShellGuard.allowedSummary()
 
-    fun protectedWriteLines(): List<String> = DeviceShellGuard.protectedWriteSummary()
+    fun writeBoundaryLines(): List<String> = DeviceShellGuard.writeBoundarySummary()
 
     fun syntaxLines(relaxed: Boolean): List<String> = DeviceShellGuard.syntaxSummary(relaxed)
 }
@@ -242,7 +242,7 @@ class DeviceSafStore private constructor(context: android.content.Context) {
     fun list(path: String?): JSONObject {
         val clean = path?.trim().orEmpty()
         if (clean.isEmpty()) return describe()
-        val target = resolve(clean, createDirectories = false)
+        val target = resolve(clean)
             ?: throw notFound(clean)
         if (!target.isDirectory) {
             throw DeviceActionException(
@@ -280,7 +280,7 @@ class DeviceSafStore private constructor(context: android.content.Context) {
         if (clean.isEmpty()) {
             throw DeviceActionException(DeviceDenial(DeviceDenial.BAD_REQUEST, "读取文件需要 path。"))
         }
-        val target = resolve(clean, createDirectories = false) ?: throw notFound(clean)
+        val target = resolve(clean) ?: throw notFound(clean)
         if (target.isDirectory) {
             throw DeviceActionException(DeviceDenial(DeviceDenial.BAD_REQUEST, "「$clean」是目录，请用 android_files_list。"))
         }
@@ -330,15 +330,20 @@ class DeviceSafStore private constructor(context: android.content.Context) {
                 DeviceDenial(DeviceDenial.BAD_REQUEST, "写入需要 content（文本）或 base64（二进制）之一。"),
             )
         }
-        val target = resolve(clean)
-            ?: throw notFound(clean)
-        val parent = target.parentFile ?: throw DeviceActionException(
-            DeviceDenial(DeviceDenial.ERROR, "「$clean」没有可写的父目录。"),
-        )
-        val leafName = target.name ?: "untitled"
-        val existed = target.isFile
+        // A write has to *create* its target, so it walks the parent chain and makes
+        // the missing directories itself rather than resolving an existing document.
+        val slot = resolveForWrite(clean) ?: throw notFound(clean)
+        val parent = slot.parent
+        val leafName = slot.name
+        val existing = runCatching { parent.findFile(leafName) }.getOrNull()
+        if (existing != null && existing.isDirectory) {
+            throw DeviceActionException(
+                DeviceDenial(DeviceDenial.BAD_REQUEST, "「$clean」是一个目录，不能被文件覆盖。"),
+            )
+        }
+        val existed = existing != null
         val file = if (existed) {
-            target
+            existing!!
         } else {
             // A specific MIME type is what the user sees in Files; some providers
             // refuse it, so the documented generic type is the fallback.
@@ -378,64 +383,58 @@ class DeviceSafStore private constructor(context: android.content.Context) {
     // ---------------------------------------------------------------- helpers ----
 
     /**
-     * Address a path as `rootName/relative/parts`. The first segment selects the
-     * grant; the rest is walked with `findFile`, and optionally created.
+     * Address an **existing** path written as `rootName/relative/parts`: the first
+     * segment selects the grant, the rest is walked with `findFile`. Returns null at
+     * the first missing component, which callers turn into a NOT_FOUND that names the
+     * path (a silent null is how "the file just is not there" gets misreported).
      */
-    private fun resolve(path: String, createDirectories: Boolean): androidx.documentfile.provider.DocumentFile? {
+    private fun resolve(path: String): androidx.documentfile.provider.DocumentFile? {
         val parts = path.split('/').filter { it.isNotEmpty() }
         if (parts.isEmpty()) return null
-        val grant = grants().firstOrNull { it.name == parts[0] }
-            ?: grants().firstOrNull { it.name.equals(parts[0], ignoreCase = true) }
-            ?: return null
-        var current = runCatching {
-            androidx.documentfile.provider.DocumentFile.fromTreeUri(appContext, android.net.Uri.parse(grant.uri))
-        }.getOrNull() ?: return null
-
+        var current = rootFor(parts[0]) ?: return null
         for (index in 1 until parts.size) {
-            val part = parts[index]
-            val last = index == parts.size - 1
-            val existing = runCatching { current.findFile(part) }.getOrNull()
-            current = when {
-                existing != null -> existing
-                !createDirectories -> return null
-                last -> {
-                    // Leave the leaf to the caller: an empty DocumentFile shell with
-                    // the right name is what `createFile` needs to see.
-                    return current.createPlaceholder(part, grant)
-                }
-
-                else -> runCatching { current.createDirectory(part) }.getOrNull() ?: return null
-            }
+            current = runCatching { current.findFile(parts[index]) }.getOrNull() ?: return null
         }
         return current
     }
 
+    /** Where a write lands: the directory that must contain it, and the file name. */
+    private data class WriteSlot(
+        val parent: androidx.documentfile.provider.DocumentFile,
+        val name: String,
+    )
+
     /**
-     * A non-existent leaf: the write path needs a `DocumentFile` whose `parentFile`
-     * and `name` are right, and `DocumentFile.fromSingleUri` cannot express that, so
-     * the URI is built from the tree URI the same way `DocumentFile` does.
+     * The write counterpart of [resolve]: it creates the intermediate directories a
+     * path implies, and hands back the *parent* plus the leaf name so `write` can
+     * call `createFile` on it.
+     *
+     * This is deliberately separate from [resolve] rather than a `create: Boolean`
+     * flag: a read that quietly creates directories would be a side effect nobody
+     * asked for, and the earlier version of this file tried to fake a
+     * "not-yet-existing DocumentFile" instead, which no provider actually supports.
      */
-    private fun androidx.documentfile.provider.DocumentFile.createPlaceholder(
-        name: String,
-        grant: Grant,
-    ): androidx.documentfile.provider.DocumentFile? {
-        val parent = this
+    private fun resolveForWrite(path: String): WriteSlot? {
+        val parts = path.split('/').filter { it.isNotEmpty() }
+        if (parts.size < 2) return null
+        var current = rootFor(parts[0]) ?: return null
+        for (index in 1 until parts.size - 1) {
+            val part = parts[index]
+            val existing = runCatching { current.findFile(part) }.getOrNull()
+            current = existing
+                ?: runCatching { current.createDirectory(part) }.getOrNull()
+                ?: return null
+        }
+        return WriteSlot(current, parts.last())
+    }
+
+    /** The live tree document of a granted root, by its display name. */
+    private fun rootFor(name: String): androidx.documentfile.provider.DocumentFile? {
+        val grant = grants().firstOrNull { it.name == name }
+            ?: grants().firstOrNull { it.name.equals(name, ignoreCase = true) }
+            ?: return null
         return runCatching {
-            val documentId = parent.uri.lastPathSegment ?: return null
-            val childId = "$documentId/$name"
-            val childUri = android.content.ContentUris.withAppendedId(
-                android.net.Uri.parse("content://${parent.uri.authority}/tree/${android.net.Uri.encode(documentId)}"),
-                0,
-            )
-            // The path above is not a legal document URI on every provider, so the
-            // placeholder is only a name/parent carrier; `write` replaces it via
-            // `createFile` unless it exists by then.
-            if (childUri == null) null else {
-                androidx.documentfile.provider.DocumentFile.fromTreeUri(
-                    appContext,
-                    android.net.Uri.parse("${grant.uri}/document/${android.net.Uri.encode(childId)}"),
-                )
-            }
+            androidx.documentfile.provider.DocumentFile.fromTreeUri(appContext, android.net.Uri.parse(grant.uri))
         }.getOrNull()
     }
 

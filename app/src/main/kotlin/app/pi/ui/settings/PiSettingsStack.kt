@@ -13,6 +13,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import app.pi.bridge.DeviceCapabilityStore
 import app.pi.ui.device.DeviceCapabilityScreen
+import app.pi.ui.theme.PiThemeEntry
 
 /**
  * The whole settings stack in one composable: level 0 home, level 1 group,
@@ -30,7 +31,13 @@ import app.pi.ui.device.DeviceCapabilityScreen
 fun PiSettingsStack(
     contentPadding: PaddingValues,
     store: PiSettingsStore? = null,
-    onThemeChanged: (String) -> Unit = {},
+    /** Every theme the app can load, so the picker is not limited to `themes`. */
+    knownThemes: List<PiThemeEntry> = emptyList(),
+    /** Caveats of the theme in effect, shown with the picker. */
+    themeNotes: List<String> = emptyList(),
+    themeError: String? = null,
+    /** Called after any write, so app-side readers can re-read the key. */
+    onSettingWritten: (String) -> Unit = {},
     onRunAction: ((PiSetting) -> Unit)? = null,
 ) {
     val activeStore = store ?: rememberInMemoryPiSettingsStore()
@@ -91,7 +98,10 @@ fun PiSettingsStack(
                     highlightKey = null
                 },
                 highlightKey = highlightKey,
-                onThemeChanged = onThemeChanged,
+                knownThemes = knownThemes,
+                themeNotes = themeNotes,
+                themeError = themeError,
+                onSettingWritten = onSettingWritten,
                 onRunAction = onRunAction,
             )
 

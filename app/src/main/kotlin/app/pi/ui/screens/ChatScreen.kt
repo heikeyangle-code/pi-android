@@ -3,6 +3,8 @@ package app.pi.ui.screens
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -17,14 +19,18 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ChatBubble
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.DropdownMenu
@@ -52,6 +58,21 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import app.pi.rpc.AssistantText
+import app.pi.rpc.BranchSummary
+import app.pi.rpc.CompactionMarker
+import app.pi.rpc.DateSeparator
+import app.pi.rpc.ErrorText
+import app.pi.rpc.HookMessage
+import app.pi.rpc.ModelChange
+import app.pi.rpc.Notice
+import app.pi.rpc.SkillInvocation
+import app.pi.rpc.SystemPrompt
+import app.pi.rpc.ThinkingBlock
+import app.pi.rpc.ToolCall
+import app.pi.rpc.ToolDiff
+import app.pi.rpc.TranscriptItem
+import app.pi.rpc.UserMessage
 import app.pi.ui.Boot
 import app.pi.ui.NavRequest
 import app.pi.ui.PiSessionViewModel
@@ -138,14 +159,55 @@ private fun ChatBody(
     var draft by remember { mutableStateOf("") }
     var sheet by remember { mutableStateOf<ChatSheet?>(null) }
     var overflow by remember { mutableStateOf(false) }
+    // The app-local display preferences, read from pi's settings documents. They
+    // are preferences this screen actually obeys — before that they were rows
+    // whose value nothing consulted (`PiSessionViewModel.UiPrefs`).
+    val prefs = state.prefs
     // pi's `app.tools.expand` (Ctrl+O): one switch that expands or collapses every
     // expandable row. Extensions cannot drive it over RPC — `setToolsExpanded` is
     // a documented no-op there (`rpc-mode.ts:303-310`) and this app does not
     // pretend otherwise — so the preference belongs to the user, not to a wire
-    // message.
-    var toolsExpanded by rememberSaveable { mutableStateOf(false) }
+    // message, and `app.tools.expandByDefault` is where it starts.
+    var toolsExpanded by rememberSaveable(prefs.expandToolsByDefault) {
+        mutableStateOf(prefs.expandToolsByDefault)
+    }
     val listState = rememberLazyListState()
     val context = LocalContext.current
+
+    // Transcript search. pi has the feature in its fullscreen viewport
+    // (`keybindings.md` `tui.altScreen.search`) and the GUI needs it more: a long
+    // transcript on a phone has no other navigation. Matches are block-level, and
+    // the current one is both scrolled to and outlined with pi's own search
+    // tokens (`searchMatchBg`/`searchMatchText`), so the highlight is the theme's,
+    // not an invented colour.
+    var searchOpen by rememberSaveable { mutableStateOf(false) }
+    var searchQuery by rememberSaveable { mutableStateOf("") }
+    var searchCursor by rememberSaveable { mutableStateOf(0) }
+
+    val visibleItems = remember(state.transcript, prefs.showTimestamps) {
+        if (prefs.showTimestamps) {
+            state.transcript
+        } else {
+            state.transcript.filterNot { it is DateSeparator }
+        }
+    }
+    val searchMatches = remember(visibleItems, searchQuery, prefs.hideThinkingBlock) {
+        if (searchQuery.isBlank()) {
+            emptyList()
+        } else {
+            visibleItems.mapIndexedNotNull { index, item ->
+                // A block the user asked to hide cannot be a search result: the
+                // row is not on screen to scroll to.
+                if (prefs.hideThinkingBlock && item is ThinkingBlock) return@mapIndexedNotNull null
+                if (searchTextOf(item).contains(searchQuery, ignoreCase = true)) index else null
+            }
+        }
+    }
+    LaunchedEffect(searchQuery) { searchCursor = 0 }
+    LaunchedEffect(searchMatches, searchCursor) {
+        val index = searchMatches.getOrNull(searchCursor.coerceIn(0, (searchMatches.size - 1).coerceAtLeast(0)))
+        if (index != null) listState.animateScrollToItem(index)
+    }
 
     // `set_editor_text`: an extension owns the composer content until the user
     // types again, so the fill is applied once and then consumed. Consuming is
@@ -192,7 +254,9 @@ private fun ChatBody(
                 sheet = ChatSheet.Fork
             }
             PiCommandAction.CloneSession -> session.cloneSession()
-            PiCommandAction.ExportHtml -> session.exportHtml(args.takeIf { it.isNotBlank() })
+            // `/export <path>`: pi picks the writer from the extension
+            // (`interactive-mode.ts:6062-6066`), and so does the ViewModel.
+            PiCommandAction.ExportHtml -> session.exportSession(args.takeIf { it.isNotBlank() })
             PiCommandAction.CopyLastAssistant -> copyLastAssistant(session, context)
             PiCommandAction.RenameSession -> sheet = ChatSheet.Rename
             PiCommandAction.SessionStats -> {
@@ -237,6 +301,12 @@ private fun ChatBody(
                     session.refreshModels()
                     sheet = ChatSheet.Model
                 }
+                IconButton(onClick = { searchOpen = !searchOpen }) {
+                    Icon(
+                        Icons.Filled.Search,
+                        contentDescription = if (searchOpen) "关闭对话内查找" else "在对话里查找",
+                    )
+                }
                 IconButton(onClick = { session.notifyTerminalOnly(reloadCommand()) }) {
                     Icon(Icons.Filled.Refresh, contentDescription = "重载扩展、技能与主题")
                 }
@@ -280,8 +350,8 @@ private fun ChatBody(
                         sheet = ChatSheet.Rename
                         overflow = false
                     }
-                    OverflowItem("导出为 HTML") {
-                        session.exportHtml()
+                    OverflowItem("导出会话（按扩展名）") {
+                        session.exportSession()
                         overflow = false
                     }
                     OverflowItem("复制最后一条回复") {
@@ -320,6 +390,29 @@ private fun ChatBody(
 
         ExtensionStatusRow(state.extensionStatuses)
 
+        if (searchOpen) {
+            SearchBar(
+                query = searchQuery,
+                onQueryChange = { searchQuery = it },
+                matchCount = searchMatches.size,
+                cursor = searchCursor,
+                onPrevious = {
+                    if (searchMatches.isNotEmpty()) {
+                        searchCursor = (searchCursor - 1 + searchMatches.size) % searchMatches.size
+                    }
+                },
+                onNext = {
+                    if (searchMatches.isNotEmpty()) {
+                        searchCursor = (searchCursor + 1) % searchMatches.size
+                    }
+                },
+                onClose = {
+                    searchOpen = false
+                    searchQuery = ""
+                },
+            )
+        }
+
         if (state.transcript.isEmpty()) {
             PiEmptyState(
                 icon = Icons.Filled.ChatBubble,
@@ -329,23 +422,43 @@ private fun ChatBody(
                 modifier = Modifier.weight(1f),
             )
         } else {
+            // `app.appearance.messageDensity`: the transcript's block rhythm. The
+            // default is pi's own single `--line-height` gap (PiSpacing.unit).
+            val blockSpacing = when (prefs.messageDensity) {
+                "compact" -> PiSpacing.unit / 2
+                "cozy" -> PiSpacing.unit * 4 / 3
+                else -> PiSpacing.unit
+            }
+            val horizontal = if (prefs.messageDensity == "compact") 12.dp else PiSpacing.screen
             LazyColumn(
                 state = listState,
                 modifier = Modifier.weight(1f).fillMaxWidth(),
-                contentPadding = PaddingValues(
-                    vertical = PiSpacing.unit,
-                    horizontal = PiSpacing.screen,
-                ),
-                verticalArrangement = Arrangement.spacedBy(PiSpacing.unit),
+                contentPadding = PaddingValues(vertical = PiSpacing.unit, horizontal = horizontal),
+                verticalArrangement = Arrangement.spacedBy(blockSpacing),
             ) {
                 // Keyed by the reducer's stable per-block key, which is what lets
                 // Compose animate the row that changed while streaming instead of
                 // recomposing the list.
-                items(state.transcript, key = { it.key }) { item ->
+                itemsIndexed(visibleItems, key = { _, item -> item.key }) { index, item ->
+                    val isMatch = searchMatches.contains(index)
+                    val isCurrentMatch = isMatch && searchMatches.getOrNull(searchCursor) == index
+                    val rowModifier = when {
+                        isCurrentMatch -> Modifier
+                            .border(1.dp, PiTheme.palette.searchMatchText, PiShapes.cardInner)
+                            .background(PiTheme.palette.searchMatchBg, PiShapes.cardInner)
+
+                        isMatch -> Modifier.background(PiTheme.palette.searchMatchBg, PiShapes.cardInner)
+                        else -> Modifier
+                    }
                     BlockRenderer(
                         item = item,
+                        modifier = rowModifier,
+                        // pi's `hideThinkingBlock` (`settings-manager.ts:119`) and
+                        // the app's collapse-by-default preference both land here;
+                        // the renderer already honours both.
+                        hideThinking = prefs.hideThinkingBlock,
+                        thinkingDefaultExpanded = !prefs.thinkingCollapsedByDefault,
                         toolsDefaultExpanded = toolsExpanded,
-                        thinkingDefaultExpanded = false,
                     )
                 }
             }
@@ -404,10 +517,20 @@ private fun ChatBody(
             onDraftChange = { draft = it },
             thinkingLevel = state.meta.thinkingLevel,
             streaming = state.streaming,
+            canFollowUp = state.streaming && draft.isNotBlank(),
             onCycleThinking = { session.cycleThinkingLevel() },
             onOpenPalette = { if (draft.isBlank()) draft = "/" },
             onOpenBash = { if (draft.isBlank()) draft = "!" },
             onOpenTui = { session.requestNav(NavRequest.Workbench) },
+            onFollowUp = {
+                // pi's alt+enter: queue this message for after the current turn
+                // (`interactive-mode.ts:4126-4155` → `session.prompt(text,
+                // { streamingBehavior: "followUp" })`, which is `follow_up` on the
+                // wire). Only offered while streaming, because that is the only
+                // time pi's own binding queues rather than submits.
+                session.sendFollowUp(draft)
+                draft = ""
+            },
             onSend = {
                 when (val route = routeComposerText(draft, state.commands)) {
                     ComposerRoute.Empty -> Unit
@@ -430,7 +553,14 @@ private fun ChatBody(
                     is ComposerRoute.Unknown -> session.notifyUnknownCommand(route.name)
                 }
             },
-            onStop = { session.stop() },
+            // pi's Escape (`interactive-mode.ts:2855-2857`):
+            // `restoreQueuedMessagesToEditor({ abort: true })` clears the queue,
+            // puts the queued text **and** the current editor text back into the
+            // editor, then aborts. Dropping the queued text here is what made Stop
+            // silently destroy what the user had typed.
+            onStop = {
+                session.stop { restored -> draft = mergeRestoredQueue(restored, draft) }
+            },
         )
 
         // `belowEditor` widgets sit after the composer's key-hint strip, which is
@@ -493,7 +623,7 @@ private fun ChatBody(
             },
             onRename = { sheet = ChatSheet.Rename },
             onExport = {
-                session.exportHtml()
+                session.exportSession()
                 sheet = null
             },
             onCopyLast = { copyLastAssistant(session, context) },
@@ -531,6 +661,101 @@ private fun paletteQueryOf(draft: String): String? {
     if (!trimmed.startsWith("/")) return null
     if (trimmed.contains(' ')) return null
     return trimmed.removePrefix("/")
+}
+
+/**
+ * pi's cancel semantics, which Stop has to reproduce exactly
+ * (`restoreQueuedMessagesToEditor`, `interactive-mode.ts:4387-4406`):
+ *
+ * ```
+ * const combinedText = [queuedText, currentText].filter((t) => t.trim()).join("\n\n");
+ * ```
+ *
+ * Queued messages come first, the text already in the editor follows, and blank
+ * halves are dropped — so pressing Stop twice does not accumulate blank lines and
+ * does not lose the draft.
+ */
+private fun mergeRestoredQueue(restored: List<String>, current: String): String =
+    listOf(restored.filter { it.isNotBlank() }.joinToString("\n\n"), current)
+        .filter { it.isNotBlank() }
+        .joinToString("\n\n")
+
+/**
+ * The text a block contributes to transcript search.
+ *
+ * Every rendered block kind is covered, because a search that silently skips a
+ * kind would report "no matches" for text the user can see. Kinds with no text of
+ * their own (a date separator, a model change) contribute nothing.
+ */
+private fun searchTextOf(item: TranscriptItem): String = when (item) {
+    is UserMessage -> item.text
+    is AssistantText -> item.text
+    is ThinkingBlock -> item.text
+    is ToolCall -> listOf(item.toolName, item.argsSummary, item.output).joinToString("\n")
+    is ToolDiff -> listOf(item.path, item.diffText).joinToString("\n")
+    is CompactionMarker -> item.summary
+    is BranchSummary -> item.summary
+    is HookMessage -> item.markdown
+    is ModelChange -> listOfNotNull(item.provider, item.modelId).joinToString("/")
+    is SkillInvocation -> listOf(item.skillName, item.body).joinToString("\n")
+    is SystemPrompt -> item.fullText
+    is ErrorText -> listOfNotNull(item.message, item.detail).joinToString("\n")
+    is Notice -> item.text
+    is DateSeparator -> ""
+}
+
+/**
+ * The transcript's search field, modelled on pi's fullscreen search panel
+ * (`keybindings.md` `tui.altScreen.search` / `searchNext` / `searchPrevious` /
+ * `searchClose`): a query, a match count, previous/next, and a close.
+ */
+@Composable
+private fun SearchBar(
+    query: String,
+    onQueryChange: (String) -> Unit,
+    matchCount: Int,
+    cursor: Int,
+    onPrevious: () -> Unit,
+    onNext: () -> Unit,
+    onClose: () -> Unit,
+) {
+    Column(Modifier.fillMaxWidth().padding(horizontal = PiSpacing.screen, vertical = 4.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            OutlinedTextField(
+                value = query,
+                onValueChange = onQueryChange,
+                modifier = Modifier.weight(1f),
+                singleLine = true,
+                placeholder = { Text("在对话里查找") },
+                textStyle = PiTheme.text.mono,
+            )
+            Spacer(Modifier.width(4.dp))
+            Text(
+                if (matchCount == 0) "0/0" else "${cursor.coerceIn(0, matchCount - 1) + 1}/$matchCount",
+                style = PiTheme.text.meta,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            IconButton(onClick = onPrevious, enabled = matchCount > 0) {
+                Icon(Icons.Filled.KeyboardArrowUp, contentDescription = "上一个匹配")
+            }
+            IconButton(onClick = onNext, enabled = matchCount > 0) {
+                Icon(Icons.Filled.KeyboardArrowDown, contentDescription = "下一个匹配")
+            }
+            IconButton(onClick = onClose) {
+                Icon(Icons.Filled.Close, contentDescription = "关闭查找")
+            }
+        }
+        // The honest scope of this search: it finds and jumps to the message that
+        // contains the query and tints it, but the matched characters inside the
+        // markdown are not individually recoloured.
+        if (query.isNotBlank()) {
+            Text(
+                "匹配到消息块并跳转；块内文字不做逐字高亮。",
+                style = PiTheme.text.meta,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
 }
 
 /**

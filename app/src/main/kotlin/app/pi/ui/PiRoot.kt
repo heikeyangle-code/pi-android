@@ -49,7 +49,6 @@ enum class PiDestination(val label: String, val icon: ImageVector) {
 @Composable
 fun PiRoot(
     isDark: Boolean,
-    onThemeChanged: (String) -> Unit,
 ) {
     var destination by rememberSaveable { mutableStateOf(PiDestination.Chat.ordinal) }
     val current = PiDestination.entries[destination]
@@ -65,6 +64,12 @@ fun PiRoot(
     // the local engine.
     val session: PiSessionViewModel = viewModel()
     LaunchedEffect(Unit) { session.boot() }
+
+    // The theme picker lists what pi would load, not only what the `themes`
+    // setting names, and the active theme's caveats are shown with it. Both come
+    // from the ViewModel, which is the one place that reads pi's theme files.
+    val theme by session.theme.collectAsState()
+    val themeEntries by session.themeEntries.collectAsState()
 
     // Commands that need a destination are requested by the ViewModel through
     // state, because they finish inside a coroutine after an RPC answer — by then
@@ -134,7 +139,13 @@ fun PiRoot(
                     // in-memory map and the app would appear to accept changes
                     // that never reach the engine.
                     store = session.settingsStore,
-                    onThemeChanged = onThemeChanged,
+                    knownThemes = themeEntries,
+                    themeNotes = theme.notes,
+                    themeError = theme.error,
+                    // A written setting the app itself consumes (appearance, the
+                    // transcript's thinking toggle, the theme) has to be noticed:
+                    // the store is pi's file, and it has no change notification.
+                    onSettingWritten = { key -> session.onSettingWritten(key) },
                 )
             }
 

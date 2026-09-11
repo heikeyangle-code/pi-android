@@ -274,7 +274,7 @@ class DeviceBridgeRouter(
                 // only: nothing here changes policy (the gate's own memory is the
                 // enforcement), and the UI labels it as extension-reported.
                 "/app/gate/report" -> {
-                    DeviceApprovalLedger.report(params.json)
+                    DeviceApprovalLedger.report(params.body())
                     BridgeHttpResponse.okRaw(DeviceApprovalLedger.toJson())
                 }
 
@@ -408,6 +408,9 @@ class DeviceBridgeRouter(
     /** Parameter accessor: JSON body wins, then the query string. */
     private class Params(private val request: BridgeHttpRequest) {
         private val json: JSONObject by lazy { request.json() }
+
+        /** The raw request body as JSON, for endpoints that take a whole object. */
+        fun body(): JSONObject = json
 
         private fun value(name: String): Any? {
             if (json.has(name) && !json.isNull(name)) return json.get(name)

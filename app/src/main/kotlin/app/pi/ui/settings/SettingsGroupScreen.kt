@@ -29,6 +29,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import app.pi.ui.components.PiSectionHeader
 import app.pi.ui.theme.PiSpacing
+import app.pi.ui.theme.PiThemeEntry
 import kotlinx.serialization.json.JsonPrimitive
 
 /**
@@ -47,7 +48,10 @@ fun SettingsGroupScreen(
     contentPadding: PaddingValues,
     onBack: () -> Unit,
     highlightKey: String? = null,
-    onThemeChanged: (String) -> Unit = {},
+    knownThemes: List<PiThemeEntry> = emptyList(),
+    themeNotes: List<String> = emptyList(),
+    themeError: String? = null,
+    onSettingWritten: (String) -> Unit = {},
     onRunAction: ((PiSetting) -> Unit)? = null,
 ) {
     val group = PiSettingsCatalog.group(groupId)
@@ -101,6 +105,11 @@ fun SettingsGroupScreen(
                             checked = setting.boolIn(store, false),
                             onToggle = { next ->
                                 store.write(setting.key, JsonPrimitive(next))
+                                // Switch rows write in place, so they never reach
+                                // the editor sheet's callback; a switch the app
+                                // reads (the thinking toggle, timestamps, tool
+                                // expansion) would otherwise stay inert.
+                                onSettingWritten(setting.key)
                             },
                             onOpen = {
                                 if (setting.kind == PiRowKind.Action) {
@@ -125,10 +134,15 @@ fun SettingsGroupScreen(
         PiSettingEditorSheet(
             setting = openEditor,
             store = store,
+            knownThemes = knownThemes,
+            themeNotes = themeNotes,
+            themeError = themeError,
             onDismiss = { editing = null },
-            onWritten = { written ->
-                if (written.key == "theme") onThemeChanged(written.textIn(store, "dark"))
-            },
+            // Every write is announced, not just the theme: several keys
+            // (`hideThinkingBlock`, the `app.appearance.*` rows) are read by the
+            // app itself, and this screen is the only place that knows one
+            // changed. Without this they would be inert again.
+            onWritten = { written -> onSettingWritten(written.key) },
         )
     }
 

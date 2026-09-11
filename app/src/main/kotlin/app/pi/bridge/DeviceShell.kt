@@ -222,6 +222,9 @@ object DeviceShellGuard {
         // 进程与系统信息
         "ps", "top", "free", "uptime", "date", "uname", "id", "whoami", "pwd",
         "env", "printenv", "which", "type", "nproc", "getconf",
+        // `echo`/`printf` are how a shell writes a file at all; dropping them (as this
+        // list did after the first rewrite) makes `echo x > file` fail the whitelist.
+        "echo", "printf",
         "sleep", "true", "false", "test", "[",
         // 网络
         "ip", "ifconfig", "netstat", "ping", "curl", "wget",
@@ -446,20 +449,46 @@ object DeviceShellGuard {
         }
         val nonFlags = args.filter { it.isNotEmpty() && !it.startsWith("-") }
         return when (head) {
-            "rm", "rmdir", "mkdir", "touch", "truncate", "chmod", "ln", "install",
-            "patch", "tee", "mktemp", "unzip", "gzip", "gunzip", "zip", "tar",
+            // Every file argument is written in place.
+            "rm", "rmdir", "mkdir", "truncate", "patch", "tee",
+            "mktemp", "gzip", "gunzip",
             -> nonFlags
 
-            "cp", "mv" -> nonFlags.takeLast(1)
+            // `chmod -R 777 path`: the mode is not a path. It is octal (755) or
+            // symbolic (u+x, a=rwx); without dropping it the mode resolves to a path
+            // like `/777` and a legitimate chmod inside the workspace is refused.
+            // (The guard harness caught exactly that.)
+            "chmod" -> nonFlags.filterNot { isModeArgument(it) }
+
+            // `touch -t 202401011200 file`: the timestamp is an option *value*.
+            "touch" -> withoutOptionValues(args, setOf("-t", "-d", "-r"))
+
+            // Only the *destination* is written; the sources are reads, and blocking a
+            // read outside the workspace would be the gate reaching where it must not:
+            // `cp /etc/hosts <workspace>/h` is legitimate.
+            "cp", "mv", "install", "ln" -> nonFlags.takeLast(1)
             "dd" -> args.filter { it.contains("of=") }.map { it.substringAfter("of=") }
             // `sed -i s/a/b/ file` — the script is the first non-flag argument and
             // is not a path; without -i, sed does not write at all.
             "sed" -> if (args.any { it == "-i" || it.startsWith("-i") }) nonFlags.drop(1) else emptyList()
             "curl" -> values(listOf("-o", "--output"))
             "wget" -> values(listOf("-O", "--output-document"))
-            // find only writes when it is told to; then every path it names counts.
+            // `tar -xzf src.tgz -C dest`: the extraction directory is the write. When
+            // creating an archive (the `-c` bundle), the archive is one as well.
+            "tar" -> values(listOf("-C", "--directory")) +
+                (if (args.any { it.startsWith("-") && !it.startsWith("--") && it.contains('c') }) {
+                    values(listOf("-f", "--file"))
+                } else {
+                    emptyList()
+                })
+
+            "unzip" -> values(listOf("-d"))
+            "zip" -> nonFlags.take(1)
+            // find only writes when it is told to. Its *paths* are the leading
+            // arguments; from the first flag on it is an expression, and `-name 'x'`
+            // is a pattern, not a path (the harness caught that).
             "find" -> if (args.any { it == "-delete" || it == "-exec" || it == "-execdir" }) {
-                args.filter { it.isNotEmpty() && !it.startsWith("-") && !it.contains("{}") }
+                args.takeWhile { !it.startsWith("-") }.filter { it.isNotEmpty() }
             } else {
                 emptyList()
             }
@@ -467,6 +496,28 @@ object DeviceShellGuard {
             "sqlite3" -> nonFlags.take(1)
             else -> emptyList()
         }
+    }
+
+    private val octalMode = Regex("^[0-7]{3,4}$")
+    private val symbolicMode = Regex("^[ugoa]*[+-=][rwxXst]*$")
+
+    private fun isModeArgument(token: String): Boolean =
+        octalMode.matches(token) || symbolicMode.matches(token)
+
+    /** Non-flag arguments, skipping the value that follows any of [valueFlags]. */
+    private fun withoutOptionValues(args: List<String>, valueFlags: Set<String>): List<String> {
+        val out = ArrayList<String>()
+        var index = 0
+        while (index < args.size) {
+            val token = args[index]
+            if (token in valueFlags) {
+                index += 2
+                continue
+            }
+            if (token.isNotEmpty() && !token.startsWith("-")) out.add(token)
+            index += 1
+        }
+        return out
     }
 
     private fun targetAllowed(target: WriteTarget, boundary: ShellWriteBoundary): Boolean {
@@ -490,9 +541,15 @@ object DeviceShellGuard {
         if (raw.startsWith("/")) raw else "$cwd/$raw"
 
     /**
-     * Everything before the first character that could expand to something else.
-     * `rm -rf build/*` keeps `build/`, so a glob inside the workspace is allowed
-     * while `rm -rf /etc/*` is not.
+     * Everything before the first character that could expand to something else: a
+     * trailing glob or a variable does not change *where* the write lands, so the
+     * static prefix is what gets checked against the workspace. A glob inside the
+     * workspace is therefore allowed while a glob on a system directory is not.
+     *
+     * (The wording above avoids writing a slash-star pair inside this comment on
+     * purpose: Kotlin block comments nest, so one would swallow this KDoc's closing
+     * marker and report the error at the end of the file. It has bitten this repo
+     * more than once, including this very line.)
      */
     private fun staticPrefix(path: String): String {
         val cut = path.indexOfFirst { it == '*' || it == '?' || it == '$' || it == '{' || it == '~' }

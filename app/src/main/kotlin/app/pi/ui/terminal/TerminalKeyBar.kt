@@ -50,6 +50,12 @@ fun TerminalKeyBar(
     fontSize: Float,
     statusText: String?,
     modifier: Modifier = Modifier,
+    /**
+     * `app.terminal.keyBar`, already resolved to chips by
+     * `TerminalPreferences.keyBar`. Defaults to the documented bar so tests and
+     * previews keep the specified keys.
+     */
+    keys: List<TerminalKeys.ToolbarKey> = TerminalKeys.toolbarKeys,
 ) {
     Row(
         modifier
@@ -60,7 +66,7 @@ fun TerminalKeyBar(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        TerminalKeys.toolbarKeys.forEach { key ->
+        keys.forEach { key ->
             if (key.bytes == null) {
                 KeyChip(
                     label = key.label,

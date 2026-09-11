@@ -10,6 +10,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.ReadOnlyComposable
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
@@ -75,6 +76,20 @@ data class PiTextStyles(
     val mono: TextStyle,
     val monoSmall: TextStyle,
 ) {
+    /**
+     * The same roles with every size shifted by [deltaSp].
+     *
+     * This is what the `app.appearance.fontScaleDelta` setting drives: the base
+     * sizes above are pi's own rhythm (body 15/23, meta 11.5/16), and the setting
+     * only nudges them, exactly as its description promises. Line heights move
+     * with the size so the transcript's leading does not collapse.
+     */
+    fun scaled(deltaSp: Int): PiTextStyles = if (deltaSp == 0) this else PiTextStyles(
+        meta = meta.shifted(deltaSp),
+        mono = mono.shifted(deltaSp),
+        monoSmall = monoSmall.shifted(deltaSp),
+    )
+
     companion object {
         val Default = PiTextStyles(
             meta = TextStyle(
@@ -103,6 +118,12 @@ data class PiTextStyles(
  * FontFamily.Default, so token/cost text uses the monospace family instead.
  */
 val PiTextStyles.numeric: TextStyle get() = mono
+
+/** Shift a role's size and its leading together, never below 1sp. */
+private fun TextStyle.shifted(deltaSp: Int): TextStyle = copy(
+    fontSize = (fontSize.value + deltaSp).coerceAtLeast(1f).sp,
+    lineHeight = (lineHeight.value + deltaSp).coerceAtLeast(1f).sp,
+)
 
 val LocalPiPalette = staticCompositionLocalOf { PiPalette.Dark }
 val LocalPiTextStyles = staticCompositionLocalOf { PiTextStyles.Default }
@@ -179,36 +200,40 @@ private fun Color.luminanceIsDark(): Boolean {
     return (0.2126f * r + 0.7152f * g + 0.0722f * b) < 0.5f
 }
 
-private fun piTypography(): Typography {
+private fun piTypography(textScaleDelta: Int = 0): Typography {
+    fun TextStyle.shift(): TextStyle = copy(
+        fontSize = (fontSize.value + textScaleDelta).coerceAtLeast(1f).sp,
+        lineHeight = (lineHeight.value + textScaleDelta).coerceAtLeast(1f).sp,
+    )
     val base = Typography()
     return base.copy(
         displaySmall = base.displaySmall.copy(
             fontSize = 28.sp, lineHeight = 36.sp, fontWeight = FontWeight.Medium,
-        ),
+        ).shift(),
         headlineSmall = base.headlineSmall.copy(
             fontSize = 22.sp, lineHeight = 28.sp, fontWeight = FontWeight.SemiBold,
-        ),
+        ).shift(),
         titleMedium = base.titleMedium.copy(
             fontSize = 17.sp, lineHeight = 24.sp, fontWeight = FontWeight.SemiBold,
-        ),
+        ).shift(),
         titleSmall = base.titleSmall.copy(
             fontSize = 15.sp, lineHeight = 22.sp, fontWeight = FontWeight.SemiBold,
-        ),
+        ).shift(),
         bodyLarge = base.bodyLarge.copy(
             fontSize = 15.sp, lineHeight = 23.sp, fontWeight = FontWeight.Normal,
-        ),
+        ).shift(),
         bodyMedium = base.bodyMedium.copy(
             fontSize = 14.sp, lineHeight = 20.sp, fontWeight = FontWeight.Normal,
-        ),
+        ).shift(),
         labelLarge = base.labelLarge.copy(
             fontSize = 14.sp, lineHeight = 20.sp, fontWeight = FontWeight.Medium,
-        ),
+        ).shift(),
         labelMedium = base.labelMedium.copy(
             fontSize = 12.sp, lineHeight = 16.sp, fontWeight = FontWeight.Medium,
-        ),
+        ).shift(),
         labelSmall = base.labelSmall.copy(
             fontSize = 11.5.sp, lineHeight = 16.sp, fontWeight = FontWeight.Normal,
-        ),
+        ).shift(),
     )
 }
 
@@ -224,15 +249,18 @@ private fun piShapes(): Shapes = Shapes(
 fun PiTheme(
     dark: Boolean = true,
     palette: PiPalette = if (dark) PiPalette.Dark else PiPalette.Light,
+    /** `app.appearance.fontScaleDelta`: pi's sizes nudged by the user. */
+    textScaleDelta: Int = 0,
     content: @Composable () -> Unit,
 ) {
+    val styles = remember(textScaleDelta) { PiTextStyles.Default.scaled(textScaleDelta) }
     CompositionLocalProvider(
         LocalPiPalette provides palette,
-        LocalPiTextStyles provides PiTextStyles.Default,
+        LocalPiTextStyles provides styles,
     ) {
         MaterialTheme(
             colorScheme = palette.colorScheme(),
-            typography = piTypography(),
+            typography = piTypography(textScaleDelta),
             shapes = piShapes(),
             content = content,
         )

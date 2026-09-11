@@ -658,34 +658,16 @@ object PiSettingsCatalog {
             emptyListLabel = "默认 read/bash/edit/write",
             aliases = listOf("tools", "builtin"),
         ),
-        PiSetting(
-            key = "app.tools.bashTimeoutSeconds",
-            title = "bash 默认超时",
-            description = "App 在调用 bash 工具且模型没有给 timeout 时使用的秒数。0 表示不设超时，交给模型自己决定。",
-            kind = PiRowKind.Number,
-            group = G_TOOLS,
-            section = "运行限制",
-            defaultValue = num(0),
-            min = 0,
-            max = 3600,
-            step = 10,
-            unit = "s",
-            aliases = listOf("bash", "timeout"),
-        ),
-        PiSetting(
-            key = "app.tools.outputMaxLines",
-            title = "输出截断上限",
-            description = "工具输出回传给模型的行数上限，pi 自身的默认是 2000 行 / 50 KB，溢出会写到临时日志文件。",
-            kind = PiRowKind.Number,
-            group = G_TOOLS,
-            section = "运行限制",
-            defaultValue = num(2000),
-            min = 100,
-            max = 20000,
-            step = 100,
-            unit = "行",
-            aliases = listOf("truncate", "output"),
-        ),
+        // Two rows were deleted here rather than wired, because nothing in the
+        // app or on pi's wire can honour them:
+        //
+        //  - `app.tools.bashTimeoutSeconds`: the `bash` RPC command carries only
+        //    `command` and `excludeFromContext` (`rpc-types.ts:55`), and pi's own
+        //    bash tool takes its timeout as a per-call argument the model chooses
+        //    (`core/tools/bash.ts:234`). There is no setting and no field to set.
+        //  - `app.tools.outputMaxLines`: pi's truncation limits are compiled
+        //    constants, not a setting (`core/tools/truncate.ts:11`,
+        //    `DEFAULT_MAX_LINES = 2000`).
         PiSetting(
             key = "app.tools.expandByDefault",
             title = "工具输出默认展开",
@@ -865,16 +847,11 @@ object PiSettingsCatalog {
             allowCustom = true,
             aliases = listOf("appearance", "dark", "light", "reload"),
         ),
-        PiSetting(
-            key = "app.appearance.dynamicColor",
-            title = "动态取色",
-            description = "Android 12 及以上用壁纸取色，但只作用于中性色；success/error/warning、思考色温、diff 与语法色始终取 pi 主题值。",
-            kind = PiRowKind.Switch,
-            group = G_APPEARANCE,
-            section = "主题",
-            defaultValue = bool(true),
-            aliases = listOf("monet", "material-you"),
-        ),
+        // `app.appearance.dynamicColor` was deleted here. Android dynamic colour
+        // cannot coexist with the rule this app runs on — every colour comes from
+        // `PiTheme.palette`, which *is* the resolved pi theme — so the switch
+        // could never have been honoured without breaking the theme contract.
+        // Colour always comes from the theme file (see `ui/theme/PiThemeFiles.kt`).
         PiSetting(
             key = "app.appearance.fontScaleDelta",
             title = "字号微调",
@@ -1614,7 +1591,7 @@ object PiSettingsCatalog {
         PiSetting(
             key = "app.runtime.keepAlive",
             title = "后台保活",
-            description = "用前台服务与唤醒锁让 Agent 轮次在后台继续。改动需要重启 App 才生效。",
+            description = "用前台服务与唤醒锁让 Agent 轮次在后台继续。关闭后引擎仍会启动，但不再有前台服务保命，后台被杀时回合会中断。改动在下次启动 App 时生效。",
             kind = PiRowKind.Switch,
             group = G_RUNTIME,
             section = "后台",

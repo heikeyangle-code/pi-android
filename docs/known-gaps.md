@@ -9,18 +9,21 @@
 - `未开始` —— RPC 路线上可实现，还没动
 - `待验证` —— 代码写完了，但**从未在真机上跑过**
 - `已定妥协` —— 不是待办，是刻意的设计取舍，写在这里以免被当成 bug
+- `已完成（复核于 dc00279）` —— **逐行复核发现代码已经做完，但条目还写着"未开始/延期"。** 凡带这个标记的条目，收尾条件都已满足；**不要照着旧正文重做**。逐行的处置账本在 `docs/gap-disposition.md`（69 行，含状态列），那份文档是剩余工作的唯一权威清单；本文件负责"为什么延期 / 怎么收尾"的背景。
 
 ---
 
 ## A. 延期（有明确阻塞点）
 
-### A1. 压缩摘要 / 分支摘要 / Hook 消息改用 markdown 渲染
+### A1. 压缩摘要 / 分支摘要 / Hook 消息改用 markdown 渲染 —— **已完成（复核于 dc00279）**
+> **状态：收尾条件已满足，本条不再是缺口。** 折叠态纯文本 + `maxLines`、展开态 markdown 的做法已经落地：`ui/blocks/CompactionBlock.kt:104`、`ui/blocks/BranchSummaryBlock.kt:80`、`ui/blocks/HookMessageBlock.kt:65` 都调用 `PiMarkdownText`，折叠预览仍用 `COLLAPSED_SUMMARY_LINES`——正是本条要求的"不为了保真把折叠预览弄坏"。随五代理 checkpoint `46015ad` 落地。复核未改代码；下面的原始原因保留，只用于解释设计取舍。
 - **为什么该做**：这三块的内容是**模型写的散文**。pi 源码里 `compactionSummary` 走 `CompactionSummaryMessageComponent`，其第 43 行是 `new Markdown(header + this.message.summary, ...)`；`branchSummary` 同样走 markdown 组件；`HookMessageBlock` 的数据字段名直接就叫 `markdown`。纯文本渲染会把这些内容里的标题、列表、粗体、代码全部显示成源码。
 - **阻塞点**：`CompactionBlock` 和 `BranchSummaryBlock` 现在用 `maxLines`（2 行 / 4 行）实现"收起预览，点开展开"。markdown 渲染器**没有 `maxLines`**，直接替换会**丢掉折叠预览**——那是实际功能，不能为了保真把它弄坏。
 - **收尾条件 / 做法**：折叠态继续用纯文本 + `maxLines`（把前 N 行文字截出来即可），展开态切到 `PiMarkdownText`。约 30 行改动，落在 `ui/blocks/CompactionBlock.kt`、`BranchSummaryBlock.kt`、`HookMessageBlock.kt`。
 - **还没定的**：`ErrorBlock` / `SystemPromptBlock` / `SkillInvocationBlock` 是否也该走 markdown —— 需要逐个回 pi 源码确认它的渲染路径，不能凭感觉。
 
-### A2. LaTeX（行内 `$...$` / 块级 `$$...$$`）渲染
+### A2. LaTeX（行内 `$...$` / 块级 `$$...$$`）渲染 —— **已完成（复核于 dc00279）**
+> **状态：收尾条件已满足，本条不再是缺口。** `ui/render/PiLatex.kt` 已存在（`toUnicode` / `toDisplayUnicode`），并被 `ui/render/PiMarkdown.kt:153,157` 调用：块级 `$$` 与行内 `$` 都走 `renderLatex` 的等价物，无法归约的原文原样保留（`latexToken.raw` 的行为）。A2 指出的 `custom()` 分派陷阱没有出现——实现绕开了它而不是踩进去。PiLatex 的最后一次修改是 `dc00279`。复核未改代码。
 - **为什么该做**：pi 支持 LaTeX（`packages/tui/src/components/markdown.ts` 里的 `LATEX_MARKDOWN_EXTENSIONS` + `renderLatex()`）。我们的解析层其实**已经能识别**：`org.intellij.markdown` 的 GFM flavour 定义了 `GFMElementTypes.INLINE_MATH`、`BLOCK_MATH`，还带一个 `MathGeneratingProvider`。缺的只是渲染。
 - **阻塞点**：`MarkdownComponents.custom()` 的调用约定有陷阱 —— 渲染器的分派代码是
   `handled = components.custom?.invoke(node.type, model) != null`，
@@ -37,19 +40,25 @@
 
 ## B. 未开始（RPC 路线可实现，尚未动）
 
-### B1. `/` 命令面板
+> **复核提示（dc00279）**：B1–B4 的收尾条件**都已经满足**，只是标题还写着"未开始"。B5/B6/B7/B12 仍然有效。
+
+### B1. `/` 命令面板 —— **已完成（复核于 dc00279）**
+> **状态：已接线。** `get_commands` 现在是活路径：`PiSessionViewModel.refreshCommands()` → `PiSlashCommands.piCommandPalette()` → `ui/chat/SlashPalette.kt` 的分组面板；`routeComposerText` 把 `/name` 派发为命令、生成为 prompt、或标成"仅终端"，组内保留 `name:1` 后缀与 `sourceInfo` 来源标签。随 checkpoint `46015ad` 落地。
 - 引擎支持 `get_commands`，返回扩展命令、prompt 模板、skills 三类，`source` 字段区分来源。
 - `:rpc` 里 `PiCommands.getCommands(id)` 已经存在，但**没有任何调用方**。
 - 收尾：输入框键入 `/` 时拉取并分组展示，选中后按 `prompt` 命令发送。
 
-### B2. 会话管理：会话树 / fork / clone / switch / 重命名 / 导出
+### B2. 会话管理：会话树 / fork / clone / switch / 重命名 / 导出 —— **已完成（复核于 dc00279）**
+> **状态：全部已接线。** `get_tree` → `ui/chat/SessionTreeScreen.kt`（分支/条目两个 tab，标签已解析）；`fork` → tree 与 fork 选择器；`clone` → 溢出菜单；`switch_session` → `SessionsScreen`；`set_session_name` → 重命名对话框；`export_html` → 溢出菜单与 `/export`。**注意**：这里完成的是"能到达"，不代表语义与 pi 相同——树上的「分支」是 fork（写新文件），不是 pi 的原地跳分支，那条是 `gap-disposition.md` #27（LIMIT）。
 - `get_tree`、`get_entries`、`get_fork_messages`、`fork`、`clone`、`switch_session`、`set_session_name`、`export_html` 的 builder 全部已存在，**全部无调用方**。
 - 收尾：会话树 UI（分支可视化）+ 详情页动作。
 
-### B3. 模型与思考等级选择器 / 队列模式 / 压缩与重试开关
+### B3. 模型与思考等级选择器 / 队列模式 / 压缩与重试开关 —— **已完成（复核于 dc00279）**
+> **状态：全部已接线。** 模型选择器与循环切换、思考等级选择器与循环、`set_steering_mode`/`set_follow_up_mode`（`SessionToolsSheet`）、`compact`（`/compact` 与工具面板）、`set_auto_compaction`、`set_auto_retry`/`abort_retry` 都有调用方。**例外**：`set_follow_up_mode` 能配置的队列**没有东西能入队**，因为输入框只会 `steer`——那是 `gap-disposition.md` #3（I4），与本条已完成的开关接线是两件事。
 - `get_available_models`、`set_model`、`cycle_model`、`get_available_thinking_levels`、`set_thinking_level`、`cycle_thinking_level`、`set_steering_mode`、`set_follow_up_mode`、`compact`、`set_auto_compaction`、`set_auto_retry`、`abort_retry` —— builder 全部存在，**全部无调用方**。
 
-### B4. bash 模式（在会话里直接跑命令）
+### B4. bash 模式（在会话里直接跑命令） —— **已完成（复核于 dc00279）**
+> **状态：已接线。** 输入框的 `!` / `!!` 由 `ui/chat/SlashPalette.kt:212-216` 路由到 `PiSessionViewModel.runBash(command, excludeFromContext)`（`bash` + `excludeFromContext`），`BashPanel` 提供 `abort_bash` 的停止入口。随 checkpoint `46015ad` 落地。
 - `bash` / `abort_bash` 两个 builder 存在且未使用。
 
 ### B5. 扩展包管理（`pi install` / `pi list` / `pi remove`）—— **待验证**
@@ -79,6 +88,12 @@
   - **有回合在跑时**：`requestRestart(turnRunning = true)` 进入 `AwaitingIdle`，**不重启**，没有超时、没有强制路径。用户先停回合或等它结束，再点一次；那时会重新查 `isTurnRunning()`，为假才弹确认。理由写在类注释里：App 无法预知回合何时结束，猜一个时刻去杀回合就是本状态机要防的那种静默重启。
   - 时长在确认文案里写明约 1–3 秒，并说明它会终止正在跑的回合、但磁盘上的会话（JSONL 追加写）不会丢。
   - 设置页里所有 `EffectiveKind.Reload` 的行（`PiSettingsRegistry.kt:760`、`:773`、`:797`、`:810`、`:823`；枚举定义在 `ui/components/PiCommon.kt:204`）走同一个入口 `noteExternalChange`——**`EffectiveKind.Reload` 从此有消费者了**。
+- **重启入口已落地（本次授权范围内）**：`app/src/main/kotlin/app/pi/engine/PiEngineHost.kt` 现在有 `restart(reason, workspaceProvider, allowInterrupt)`，以及一个 `session: StateFlow<PiEngineSession?>`。
+  - `restart` 的语义就是「停掉当前进程 → 重走 boot → 交出新的 session」，顺序是**先关旧的再起新的**：两个引擎跑在同一个 cwd 上会同时往同一个会话 JSONL 里追加。
+  - **有回合在跑时自己也会拒绝**（`allowInterrupt=false` 时返回 `RefusedTurnRunning`，且**什么都没改**），所以调用方即使绕过状态机也不能静默打断回合。
+  - 第三种结果 `RefusedNeedsProvisioning`：如果 stamp 与 `RUNTIME_REVISION` 不一致，`restart` **拒绝执行**而不是顺手重新解包——重新解包会 `wipe()` 掉 guest 的 `/root/.pi/agent`（trust.json、packages、已安装的 npm/git 包全在里面）。「重载扩展」按钮永远不该做这件事。
+  - `session` 这个 StateFlow 是给界面重新绑定用的：重启期间与重启失败后它是 `null`，界面收集它重建 `PiEngineApi`，**不会继续拿着一个已经死掉的 session**。`boot()` 也会发布并关闭旧的 session，所以「两个引擎一个 cwd」在任何路径下都不会发生。
+  - 跨目录接线（`ui/**` 所有者，本层不改）：`app.pi.packages.EngineRestartCoordinator` 已经把状态机和 `restart` 接好了——`request()` 只产生确认问题，`confirm()` 才动作，并且**恒以 `allowInterrupt=false`** 调用引擎（确认不是永久杀回合的许可；确认之后才起的新回合会被引擎自己拒掉，然后回到 `AwaitingIdle` 而不是报失败）。
 - **收尾条件**：真机上确认「重启后 `get_commands` 里出现新扩展/新技能」，以及重启耗时。
 
 ### B7. 项目信任弹窗 —— **待验证**
@@ -106,7 +121,8 @@
 - `ui/**` 所有者需要把 `PiPackagesScreen(state, …)` 接到一个 ViewModel 上：`PiPackagesUiState` 的 `entries` / `log` 来自 `PiPackageService.list()` / `install()` / `remove()`，`lifecycle` 来自 `ExtensionLifecycle.state`，`trust`/`trustInvalid` 来自 `TrustRepository.read()` + `ProjectTrust.resolve()`。
 - 重启动作本身要由持引擎的一方提供：约定是 `isTurnRunning()` 与 `suspend fun restart(): String?`（null = 成功），再调用 `lifecycle.restartStarted()/restartSucceeded()/restartFailed()`。有回合在跑时必须走 `AwaitingIdle`，不能被调用方直接重启。
 
-### B8. 扩展 UI 的其余接线（子代理正在做，此处留档）
+### B8. 扩展 UI 的其余接线 —— **已完成（复核于 dc00279）**
+> **状态：全部已接线，包括全局承载点。** `ui/extension/ExtensionUiHost.kt` 现在**只**挂在 `ui/PiRoot.kt:166`（Scaffold 的 Box 内、目的页之上），页面里没有重复挂载——B8 自己写明的"必须成对操作"已经按正确方向完成，所以同一个请求不会弹两次窗。阻塞式对话框（`select`/`confirm`/`input`/`editor`）由 `PiSessionViewModel.onExtensionUi` 应答，即发即忘的 `notify`/`setStatus`/`setWidget`/`setTitle`/`set_editor_text` 由 `onExtensionChrome` 承载，`extension_error` 有展示。逐字段核对见 `docs/extension-compatibility.md` §1.2 / §6.1。**下面原始正文保留作历史，不要据此重做。**
 - 阻塞式对话框（`select`/`confirm`/`input`/`editor`）：`:rpc` 能解析、也有回包构造器，但 App 侧**一行处理都没有** → 引擎会永久阻塞。**这是当前最高优先级的缺陷。**
 - 即发即忘（`notify`/`setStatus`/`setWidget`/`setTitle`/`set_editor_text`）：同上，需要 UI 承载。
 - `extension_error` 事件：解析了但没展示，等于静默失败。
@@ -114,7 +130,8 @@
   - **必须成对操作**：`PiRoot` 的 `Box` 里渲染的就是当前页面，所以**不能**在 PiRoot 和页面里同时挂——会变成两个 host，同一个请求弹两次窗、两个 Snackbar 抢同一个通知队列。正确顺序：先从 `ChatScreen.kt` / `WorkbenchScreen.kt` 摘掉，再加到 `PiRoot.kt`。
   - **状态**：等对话框子代理摘除页面里的挂载后，由主线加 PiRoot 那一行。
 
-### B11. `PiEvent.ExtensionError` 丢掉了 `extensionPath`
+### B11. `PiEvent.ExtensionError` 丢掉了 `extensionPath` —— **已完成（复核于 dc00279）**
+> **状态：字段已存在。** `rpc/src/main/kotlin/app/pi/rpc/Events.kt:285` `val extensionPath: String? = null,`，解析分支 `:468` `extensionPath = o.str("extensionPath"),`。落地于 `a7b7738`（`rpc/Events.kt` 的最后一次修改）。复核未改代码。
 - **现状**：数据类只有 `message`，而 `EventUiRequest` 保留了 `raw`。扩展抛错时定位不到是哪个扩展。
 - **收尾**：给数据类加字段 + 在 `extension_error` 解析分支里读——**一行改动**，但 `rpc/Events.kt` 当时被 RPC 命令面子代理占用，不能并发改，故排队。
 
@@ -206,10 +223,23 @@
   6. `PiRoot.kt` 把 `onRunAction` 接通；
   7. 顺带**审计所有 `PiRowKind.Action` 行**，凡是"画了但没有消费者"的，要么实现、要么从界面撤掉——**一个点了没反应的行，比没有这一行更坏**。
 
-### E2. 高亮服务的 `attach(context)` 到底有没有被调用
-高亮代理说它在 `PiMarkdown.kt` 加了 `attach(context)`。**但没人验证过这条调用在 App 启动路径上真的会走到。**
-若没走到：高亮**永远静默退回单色**，而症状看起来像"回环服务没起来"——排查方向会完全跑偏。
-收尾：读 `attach` 的调用链，确认它被某一处真实调用（Application 启动 / 首次渲染 markdown）。**改动很小，但它是"看起来能用其实没生效"的典型形态。**
+#### E9 已核实的结论（读源码得到，不是猜的）
+
+- **落点确认：`providers` 不在 `settings.json` 里。** `Settings` 接口（`core/settings-manager.ts:106-158`）只有 `defaultProvider`、`defaultModel`、`modelThinkingLevels`、`enabledModels`——**没有 `providers`，也没有任何凭证键**。所以：
+  - **厂商与模型** → `<agentDir>/models.json`，顶层 `{ "providers": { "<id>": {…} } }`（`docs/models.md:3`；加载器 `core/model-config.ts:251-290`，路径来自 `core/model-runtime.ts:174-175`）。
+  - **凭证** → `<agentDir>/auth.json`（`core/auth-storage.ts:52`），`Record<providerId, Credential>`。
+  - `settings.json` 只存**选择**：`defaultProvider` / `defaultModel` / `enabledModels`。
+- **字段以源码为准，且与 `docs/custom-provider.md` 有一处不同**：`models.json` 里 provider 的 `oauth` 是字面量 `"radius"`（`model-config.ts:204`），**不是**文档里那个 OAuth 对象；模型条目**只有 `id` 是必填**（`model-config.ts:162-176`），文档里的 `name/reasoning/input/cost/contextWindow/maxTokens` 在 `models.json` 里全是可选。写文档那套形状会过不了 `validateModelsConfig`，结果是 pi 报 `Invalid models.json schema` 并**整份文件不生效**。
+- **锁只有两把，`models.json` 没有锁。** `auth.json`：`lockfile.lockSync(authPath, {realpath:false})`，10 次 × 20 ms（`auth-storage.ts:76-100`），写入 `mode: 0o600` 且注释明说**只在创建时生效**（`:24-25`）。`settings.json`：同样的锁（`settings-manager.ts:236-256`）。**`models.json` 完全不加锁**：`ModelConfig.load` 就是一次 `readFile`（`model-config.ts:251-290`），而 pi 从不写这个文件（动态模型缓存写的是 `models-store.json`，`model-runtime.ts:180`）。给它加一把别的写者不认的锁没有意义。
+- **`models.json` 允许注释**：加载前过 `stripJsonComments(stripBom(...))`（`model-config.ts:267`），所以 App 的读取端也必须容忍注释，否则会把用户手写的带注释文件判成损坏。
+- **覆盖语义**：`models` 一旦提供就**替换该 provider 的全部模型**（`docs/custom-provider.md:684`），而 provider 块本身是**覆盖**在内置同名 provider 之上（`:33`）。所以给 `openai` 写 `models` 不是"追加"，是"替换内置清单"。
+- **重启是必须的，理由可以精确到行**：`models.json` 只被 `ModelRuntime.refresh()` 读取（`model-runtime.ts:699`，另加启动时的 `create`，`:176`）。RPC 协议里**没有任何命令触发 refresh**——`get_available_models` 读的是缓存快照 `getAvailableSnapshot()`（`:422-424`）。`docs/models.md:80` 说「打开 `/model` 时重载、改完不用重启」，那是 **TUI**（`modes/interactive/model-catalog-refresh.ts:22` 会触发 refresh），**在 `--mode rpc` 下不成立**。`auth.json` 不同：它的读取带 revision 检查（`auth-storage.ts:39` + `getFileRevision`），所以外部新增的 Key 会被察觉；需要重启的是**厂商表**。
+- **"扫描模型"这件事 pi 里没有**：`createProvider` 有一个可选的 `fetchModels` 钩子（`packages/ai/src/models.ts:760-763`，调用点 `:831`），但**全仓库没有任何 provider 实现它**（`grep -rn fetchModels packages/ --include=*.ts` 只命中 `models.ts` 和两个测试文件）。pi 自己的清单是 `packages/ai/src/providers/` 下的静态表 + 从 pi.dev 刷新。所以扫描用的端点形状（`GET {base}/models` 等）**是 App 侧知识，不是 pi 行为**，UI 里必须这么标注；Anthropic 的 `x-api-key` + `anthropic-version` 同样不在 pi 里——它在 `api/anthropic-messages.ts:298-302` 只*校验*这些头存在，实际由第三方 SDK 发送。
+- **已实现（未上真机）**：`app/src/main/kotlin/app/pi/packages/` 下的 `PiConfigFiles`（`auth.json` / `models.json` / `settings.json` 的锁与原子写、0600、注释容忍）、`PiProviderPresets`（10 家 pi 内置厂商的 `baseUrl`/`api` 直接抄自 `providers/*.ts`）、`PiModelScanner`（按厂商分派的清单请求 + 失败分类，**失败永远 `allowManual=true`**）、`PiCredentialService`（预填 → 探测 → 保存三步，每步单独报结果）。
+- **仍未做**：`PiRoot.kt` 的 `onRunAction` 接通、以及那个"粘 Key → 扫描 → 勾选"的 Compose 界面（I2 的 20 行审计也包含在这里）。`PiEngineHost.restart()` 已就绪，界面接上即可用。
+
+### E2. 高亮服务的 `attach(context)` 到底有没有被调用 —— **已完成（复核于 dc00279）**
+> **状态：调用链已确认，高亮不会静默退回单色。** `ui/render/PiMarkdown.kt:62` `remember(context) { PiNodeCodeHighlighter.attach(context) }`——每次渲染 markdown 时按 `context` 记住并调用一次，`attach` 自身幂等（`highlight/PiNodeCodeHighlighter.kt:105`）。落地于 `a7b7738`。原疑问"没人验证过"已经解决；剩下的是真机上的回环延迟，那属于 C4。
 
 ### E3. 附件输入（图片）
 协议**已支持**：`docs/rpc.md` 的 `prompt` 命令带可选 `images` 字段，格式 `ImageContent`；会话条目里的 `Attachment` 还带 `fileName/mimeType/size/extractedText/preview`。
@@ -284,6 +314,7 @@ pi 把扩展加载错误**只写进 `runtime.diagnostics`，不发任何事件**
 3. **委托模板必须禁掉全部 git 写操作**，不只是 `commit`/`push`。`checkout` / `reset` / `stash` / `clean` / `restore` **能一次毁掉所有并行代理的在制品，而且不报错**。
 4. **并行时每个代理都会报"红不是我的文件"。** 这没有意义——**只有冻结树之后的整树 typecheck 才算数**。
 5. **自证不等于认账。** 代理报告 `typecheck: OK` 时要独立复跑；审计报告里"已核对为正确"的结论也要抽验。**反过来，报"证不出来"的项目要保留**，因为自信的错误发现会让人去改本来正确的代码。
+6. **一条写着"没做"、其实已经做完的条目，比漏记更危险。** 漏记只是少了一条待办；过时的"没做"会让人**重做已经正确的代码**，而重做往往会把它弄坏。本文件因此做了两件事：一是把 A1/A2/B1–B4/B8/B11/E2 标注为已完成（复核于 `dc00279`，逐条给了 `path:line` 证据），二是把"逐行复核"本身变成例行动作——**任何审计写进本文件的条目，下次复核时必须回代码确认它仍然成立**，而不是只在派活时当作事实引用。判断标准是"能不能指出现在还在缺的那一行"，不是"文档里写着缺"。
 
 ---
 

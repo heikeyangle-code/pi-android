@@ -42,6 +42,8 @@ import app.pi.ui.components.EffectiveKind
 import app.pi.ui.theme.PiShapes
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
+import app.pi.ui.theme.PiThemeEntry
+import app.pi.ui.theme.PiThemeScope
 
 /**
  * Level-2 editors for the settings stack (spec §6.1).
@@ -598,12 +600,21 @@ fun PiListEditorSheet(
  * file, so this editor writes it back as one string: the two name fields only
  * compose the literal, they are never stored separately, and the raw field
  * shows exactly what will be written.
+ *
+ * [knownThemes] is every theme the app can actually load, not just the ones the
+ * `themes` setting names: pi discovers the agent dir's `themes` directory and the
+ * project's `.pi/themes` on its own (`resource-loader.ts:872-880`), so limiting
+ * the list to the setting would hide the very theme the terminal is using.
+ * [notes] are the caveats of the theme currently in effect — a value the app
+ * could not honour is stated here instead of being ignored.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PiThemeEditorSheet(
     currentRaw: String,
-    knownThemes: List<String>,
+    knownThemes: List<PiThemeEntry>,
+    notes: List<String> = emptyList(),
+    error: String? = null,
     onSet: (String) -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -611,7 +622,11 @@ fun PiThemeEditorSheet(
     var raw by remember(currentRaw) { mutableStateOf(currentRaw) }
     var lightTheme by remember(currentRaw) { mutableStateOf(auto?.first ?: "light") }
     var darkTheme by remember(currentRaw) { mutableStateOf(auto?.second ?: "dark") }
-    val names = (listOf("dark", "light") + knownThemes).distinct()
+    val entries = buildList {
+        add(PiThemeEntry("dark", null, PiThemeScope.Builtin))
+        add(PiThemeEntry("light", null, PiThemeScope.Builtin))
+        knownThemes.forEach { entry -> if (none { it.name == entry.name }) add(entry) }
+    }
 
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(
@@ -626,10 +641,19 @@ fun PiThemeEditorSheet(
             )
             Spacer(Modifier.height(4.dp))
             Text(
-                "自动模式在 settings.json 里就是一个字符串「浅色主题名/深色主题名」。这里保存的也是同一个字符串，不会拆成两个字段。",
+                "自动模式在 settings.json 里就是一个字符串「浅色主题名/深色主题名」。这里保存的也是同一个字符串，" +
+                    "不会拆成两个字段。下面的自定义主题来自 pi 的发现规则：~/.pi/agent/themes、项目 .pi/themes 与 themes 设置。",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            if (error != null) {
+                Spacer(Modifier.height(8.dp))
+                PiInfoNote(error)
+            }
+            if (notes.isNotEmpty()) {
+                Spacer(Modifier.height(8.dp))
+                PiInfoNote("当前主题有无法完全照搬的地方：\n" + notes.joinToString("\n") { "· $it" })
+            }
             Spacer(Modifier.height(PiSpacing.unit))
             Text(
                 "单主题",
@@ -643,28 +667,35 @@ fun PiThemeEditorSheet(
                     .heightIn(max = 200.dp)
                     .verticalScroll(rememberScrollState()),
             ) {
-                names.forEach { name ->
-                    val selected = currentRaw == name
+                entries.forEach { entry ->
+                    val selected = currentRaw == entry.name
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
                             .clickable {
-                                onSet(name)
+                                onSet(entry.name)
                                 onDismiss()
                             }
                             .padding(vertical = 10.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Text(
-                            name,
-                            modifier = Modifier.weight(1f),
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = if (selected) {
-                                MaterialTheme.colorScheme.primary
-                            } else {
-                                MaterialTheme.colorScheme.onSurface
-                            },
-                        )
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                entry.name,
+                                style = MaterialTheme.typography.bodyLarge,
+                                color = if (selected) {
+                                    MaterialTheme.colorScheme.primary
+                                } else {
+                                    MaterialTheme.colorScheme.onSurface
+                                },
+                            )
+                            Text(
+                                entry.path?.let { "${entry.scope.label} · ${it.substringAfterLast('/')}" }
+                                    ?: entry.scope.label,
+                                style = PiTheme.text.meta,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
                         if (selected) {
                             Icon(
                                 Icons.Filled.Check,

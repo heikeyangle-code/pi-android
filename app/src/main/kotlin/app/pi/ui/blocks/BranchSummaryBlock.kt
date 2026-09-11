@@ -25,6 +25,9 @@ import app.pi.ui.theme.PiTheme
  * `branch-summary` (docs/pi-android-ui-spec.md §7.4): a `customMessageBg` card
  * labelled 分支摘要 with the branch id. Clicking either jumps to that branch
  * (when the host provides [onClick]) or expands the summary in place.
+ *
+ * The summary is a two-line plain-text preview while collapsed and markdown once
+ * expanded — the same split pi's `branch-summary-message.ts:41-56` makes.
  */
 @Composable
 fun BranchSummaryBlock(

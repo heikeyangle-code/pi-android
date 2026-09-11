@@ -1,6 +1,7 @@
 package app.pi.ui.settings
 
 import androidx.compose.runtime.Composable
+import app.pi.ui.theme.PiThemeEntry
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonPrimitive
 
@@ -11,12 +12,20 @@ import kotlinx.serialization.json.JsonPrimitive
  * only the four value-bearing kinds reach this point. Every write goes through
  * [PiSettingsStore.write] with the value the user actually chose — the store, not
  * this layer, is responsible for landing it in `settings.json`.
+ *
+ * [knownThemes] is passed in rather than derived here: the names pi can actually
+ * load come from the file system (the agent dir's `themes` directory and the
+ * project's `.pi/themes`), not from the `themes` setting alone, so the caller —
+ * which owns the resolved theme — is the one authority for the list.
  */
 @Composable
 fun PiSettingEditorSheet(
     setting: PiSetting,
     store: PiSettingsStore,
     onDismiss: () -> Unit,
+    knownThemes: List<PiThemeEntry> = emptyList(),
+    themeNotes: List<String> = emptyList(),
+    themeError: String? = null,
     onWritten: (PiSetting) -> Unit = {},
 ) {
     when (setting.kind) {
@@ -26,7 +35,9 @@ fun PiSettingEditorSheet(
             if (setting.key == "theme") {
                 PiThemeEditorSheet(
                     currentRaw = setting.textIn(store, "dark"),
-                    knownThemes = localThemeNames(store),
+                    knownThemes = knownThemes,
+                    notes = themeNotes,
+                    error = themeError,
                     onSet = { value ->
                         store.write(setting.key, JsonPrimitive(value))
                         onWritten(setting)
@@ -79,21 +90,4 @@ fun PiSettingEditorSheet(
             onDismiss = onDismiss,
         )
     }
-}
-
-/**
- * Theme file names known to the App, derived from the `themes` path list.
- *
- * Theme names cannot contain "/" because pi reserves it for the automatic
- * light/dark pair, so a theme file's basename is its name.
- */
-private fun localThemeNames(store: PiSettingsStore): List<String> {
-    val themesRow = PiSettingsCatalog.byKey["themes"] ?: return emptyList()
-    return themesRow
-        .editableEntries(store.read("themes"))
-        .map { it.trim() }
-        .filter { it.endsWith(".json") }
-        .map { it.substringAfterLast('/').removeSuffix(".json") }
-        .filter { name -> name.isNotEmpty() && !name.contains('*') && !name.contains('!') }
-        .distinct()
 }
