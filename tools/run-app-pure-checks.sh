@@ -142,6 +142,20 @@ done
 LIB_CP="$(find -L "$LIB_DIR" -name '*.jar' | tr '\n' ':')"
 LIB_CP="${LIB_CP%:}"
 
+# The compiler's OWN runtime classpath needs the staged libraries too, not just the
+# compiler jars. Kotlin 2.2's embeddable compiler pulls kotlinx-coroutines at run time
+# when it builds its IntelliJ environment, and that jar is not inside
+# kotlin-compiler-embeddable: the first CI run that got this far died with
+#
+#   exception: java.lang.NoClassDefFoundError: kotlinx/coroutines/CoroutineScope
+#     at ...KotlinCoreApplicationEnvironment.createApplication(...)
+#
+# `-version` does not catch it, because printing a version never creates the
+# environment - which is why the probe above passes and the compile then throws. The
+# source classpath (`-classpath "$LIB_CP"` in run_harness) is a separate thing and
+# stays as it is.
+COMPILER_CP="$KOTLINC_CP:$LIB_CP"
+
 # --- 3. compile and run each harness ------------------------------------------
 failed=0
 
@@ -162,7 +176,7 @@ run_harness() { # $1 = label, $2 = main class, rest = sources (harness included)
   # bootclasspath stays in play (no `-no-jdk` here — android.jar is not involved
   # and `java.net.URI` must resolve).
   local diag
-  diag="$(java -Xmx1100m -Dfile.encoding=UTF-8 -cp "$KOTLINC_CP" \
+  diag="$(java -Xmx1100m -Dfile.encoding=UTF-8 -cp "$COMPILER_CP" \
     org.jetbrains.kotlin.cli.jvm.K2JVMCompiler \
     -no-stdlib -jvm-target 17 -classpath "$LIB_CP" -d "$out" "$@" 2>&1)"
 
@@ -175,6 +189,17 @@ run_harness() { # $1 = label, $2 = main class, rest = sources (harness included)
   if [ "$errors" -gt 0 ]; then
     printf '%s\n' "$diag" | grep -E '\.kt:[0-9]+:[0-9]+: (error|warning):' | sed "s|$ROOT/||"
     echo "pure-checks: FAILED — $label did not compile: $errors error diagnostic(s)"
+    failed=$((failed + 1))
+    return 1
+  fi
+
+  # A compiler that threw is not a compiler that found nothing. Both reached this script
+  # as "0 error diagnostics", and the empty-class guard below then reported "produced no
+  # class files", which describes the symptom and hides the cause (it took a second CI run
+  # and a stack trace to learn that the compiler's own classpath was missing coroutines).
+  if [[ "$diag" == *"NoClassDefFoundError"* || "$diag" == *"exception:"* ]]; then
+    printf '%s\n' "$diag" | head -5
+    echo "pure-checks: CANNOT RUN — the Kotlin compiler threw instead of compiling ($label)"
     failed=$((failed + 1))
     return 1
   fi
