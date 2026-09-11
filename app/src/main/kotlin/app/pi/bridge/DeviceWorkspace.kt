@@ -165,8 +165,11 @@ object DeviceWorkspace : ShellWriteBoundary {
         return "/" + parts.joinToString("/")
     }
 
-    private companion object {
-        /** Where a guest sees the workspace's mount point. */
-        const val GUEST_WORKSPACE_ROOT = "/workspace"
-    }
+    // A `const val` directly in the object. It used to sit in a `companion object`, which
+    // Kotlin rejects outright here - "Modifier 'companion' is not applicable inside
+    // 'standalone object'" - and the compiler then also reported the object itself as
+    // inaccessible from DeviceBridgeRouter ("Cannot access 'companion object Companion':
+    // it is private in 'DeviceWorkspace'"). One illegal modifier, two errors.
+    /** Where a guest sees the workspace's mount point. */
+    private const val GUEST_WORKSPACE_ROOT = "/workspace"
 }

@@ -27,7 +27,7 @@ internal class GuestImage(
  * ## NOT WIRED YET — A3 does not take effect until this is called
  *
  * Nothing calls into this object, and nothing calls [PiGuestImageTransformer] either.
- * The missing wiring is two lines in `ui/render/**` (that directory's owner, not this
+ * The missing wiring is two lines in `ui/render/` (that directory's owner, not this
  * file's):
  *
  *  - **P-A** `ui/render/PiMarkdown.kt` — replace
