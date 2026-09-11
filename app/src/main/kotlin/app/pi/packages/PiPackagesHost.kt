@@ -183,7 +183,7 @@ fun PiPackagesHost(
             PiPackagesScreen(
                 state = controller.state(lifecycleState),
                 onSpecChange = { controller.spec = it },
-                onScopeChange = { controller.setScope(it) },
+                onScopeChange = { controller.chooseScope(it) },
                 onInstall = { scope.launch { controller.install() } },
                 onRemove = { entry -> scope.launch { controller.remove(entry) } },
                 onRefresh = { scope.launch { controller.refresh() } },
@@ -257,7 +257,12 @@ class PiPackagesController(
         trustInvalid = trustInvalid,
     )
 
-    fun setScope(next: PiPackageScope) {
+    // Named `chooseScope`, not `setScope`: `var scope` already generates a
+    // `setScope(PiPackageScope)` accessor, and a function with the same name and
+    // parameter is a "Platform declaration clash: the following declarations have the
+    // same JVM signature" - caught by the Gradle release build (CI, step 9) and
+    // invisible to tools/typecheck.sh.
+    fun chooseScope(next: PiPackageScope) {
         scope = next
     }
 
