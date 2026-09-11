@@ -78,8 +78,11 @@ fun SettingsHome(
                 CurrentModelCard(store, onOpenSetting)
             }
             // The device capability bridge is the one settings surface that is
-            // not a pi setting: pi has no notion of the phone it runs on, so
-            // these switches have no key in the catalog and get their own row.
+            // not a pi setting: pi has no notion of the phone it runs on, so this
+            // is the only screen for it. The catalog used to carry a second,
+            // disconnected copy of these switches under `app.device.*`; those rows
+            // were removed from `PiSettingsRegistry.kt` so there is one authority,
+            // `DeviceCapabilityStore`.
             if (onOpenDeviceCapabilities != null) {
                 item {
                     PiSectionHeader("设备")

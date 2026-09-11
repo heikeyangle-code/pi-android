@@ -665,3 +665,26 @@ reviewer does not spend a pass re-deriving it.
 stable across the pass (`Commands.kt`, `PiEngineHost.kt`, `PiPalette.kt`, `PiSettingEditorHost.kt`,
 `SettingsGroupScreen.kt`, `SettingsHome.kt`, `SessionsScreen.kt`, `SessionTreeScreen.kt`,
 `PiSessionViewModel.kt`, `ChatScreen.kt`) and re-checked at `a7b7738`.
+
+---
+
+## 6. Status of the §2 findings this pass fixed (behaviour agent, `ui/**`)
+
+Written while the work was landing; every claim is a `path:line` in the working tree, not a plan.
+The full row-by-row record, including what was removed instead of wired, is
+`docs/gap-disposition.md` §11.
+
+| §2 finding | State |
+|---|---|
+| §2.4(a) `/export x.jsonl` writes HTML | Fixed by implementing pi's JSONL export app-side (`ui/PiSessionViewModel.kt:1737`, `:1774`): extension picks the writer (`interactive-mode.ts:6062-6066`), header + branch + re-chained `parentId` (`session-export.ts:22-40`). No RPC change was made or needed. |
+| §2.3 Stop discards the queue | Fixed (`ui/screens/ChatScreen.kt`: the stop callback merges the drained queue with the draft, `interactive-mode.ts:4387-4406`). |
+| §2.2 `follow_up` dead | Fixed, and gated on streaming because that is the only time pi's own binding queues rather than submits (`interactive-mode.ts:4139-4152`). |
+| §2.4(b) custom theme never reaches the colours | Fixed: `ui/theme/PiThemeFiles.kt` loads pi's theme files into `PiPalette`; `MainActivity.kt` paints the resolved palette; the picker states the values it cannot honour. |
+| §2.4(c) discovery misses `~/.pi/agent/themes` | Fixed: discovery mirrors `resource-loader.ts:872-902`. |
+| §2.5(a) 13 settings with no consumer | 9 resolved (6 wired, 3 removed with the pi/rpc evidence in the registry comments); the four `app.terminal.*` rows are read by `ui/terminal/TerminalSettings.kt`, owned by another agent. |
+| §2.5(b) `hideThinkingBlock` never passed | Fixed (`ui/screens/ChatScreen.kt`, `ui/PiSessionViewModel.kt` `UiPrefs`). |
+| §2.6 search / tree filters / session list | Transcript search, pi's five tree filter modes, and session search + sort + named-only + per-cwd grouping are implemented. |
+| §2.1 分支 is a fork, not a tree jump | The UI now says so on the screen itself (`ui/chat/SessionTreeScreen.kt`), because RPC has no leaf-move command to implement. |
+| §2.7 session delete / `pi -c` | Delete exists with pi's confirmation step and refuses the active session; `pi -c` is behind `app.sessions.resumeLast`. |
+| §2.10 device switches duplicated, dead copy | The seven `app.device.*` catalog rows and their group are deleted; `DeviceCapabilityStore` is the single authority. |
+| §1.9 image input / image rendering | Picker → base64 `PiImage` → existing `prompt(images)` pipe; the transcript decodes the inline base64 instead of drawing a placeholder. |

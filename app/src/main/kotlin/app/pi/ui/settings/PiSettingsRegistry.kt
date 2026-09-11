@@ -10,7 +10,6 @@ import androidx.compose.material.icons.filled.Extension
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Memory
-import androidx.compose.material.icons.filled.PhoneAndroid
 import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Security
@@ -137,7 +136,6 @@ private const val G_APPEARANCE = "appearance"
 private const val G_TERMINAL = "terminal"
 private const val G_INTERACTION = "interaction"
 private const val G_SECURITY = "security"
-private const val G_DEVICE = "device"
 private const val G_RUNTIME = "runtime"
 private const val G_ABOUT = "about"
 
@@ -1397,17 +1395,11 @@ object PiSettingsCatalog {
             emptyListLabel = "无已信任项目",
             aliases = listOf("trust", "projects"),
         ),
-        PiSetting(
-            key = "app.trust.extensions",
-            title = "扩展信任名单",
-            description = "允许执行的扩展来源。未在名单里的项目扩展每次都要确认，这是项目信任的第二道闸门。",
-            kind = PiRowKind.List,
-            group = G_SECURITY,
-            section = "信任",
-            depth = 2,
-            emptyListLabel = "无已信任扩展",
-            aliases = listOf("trust", "extensions"),
-        ),
+        // `app.trust.extensions` was removed: pi has no extension allow-list to
+        // mirror. Trust is per project (`projectTrusted` plus `trust.json`,
+        // `settings-manager.ts:509-525`), and an extension's permission is that
+        // project decision, not a second list — a row here would have been the only
+        // occurrence of the key, exactly the dead-switch shape this pass removes.
         PiSetting(
             key = "app.security.dangerThreshold",
             title = "危险操作分级阈值",
@@ -1456,85 +1448,15 @@ object PiSettingsCatalog {
         ),
 
         // ------------------------------------------------------------------
-        // 12 设备能力
+        // 12 设备能力 — moved out of the settings catalog
         // ------------------------------------------------------------------
-        PiSetting(
-            key = "app.device.basic",
-            title = "基础能力",
-            description = "剪贴板、通知、打开链接、分享。默认开启，对应 Agent 能读粘贴板、发通知、拉起浏览器与系统分享。",
-            kind = PiRowKind.Switch,
-            group = G_DEVICE,
-            section = "分级授权",
-            defaultValue = bool(true),
-            aliases = listOf("clipboard", "notification", "permission"),
-        ),
-        PiSetting(
-            key = "app.device.storage",
-            title = "存储目录授权",
-            description = "通过 SAF 授权的目录列表。授权后 Agent 能在这些目录里读写文件，DCIM、Pictures 与 Android/data 始终只读。",
-            kind = PiRowKind.List,
-            group = G_DEVICE,
-            section = "分级授权",
-            depth = 2,
-            emptyListLabel = "未授权任何目录",
-            aliases = listOf("saf", "storage", "permission"),
-        ),
-        PiSetting(
-            key = "app.device.accessibility",
-            title = "屏幕读取与操作",
-            description = "高敏感能力：读屏、点按、滑动、输入。开启后 Agent 能操作任意 App 的界面，包括系统设置，请只在需要时打开。",
-            kind = PiRowKind.Switch,
-            group = G_DEVICE,
-            section = "分级授权",
-            defaultValue = bool(false),
-            dangerous = true,
-            aliases = listOf("accessibility", "screen", "permission"),
-        ),
-        PiSetting(
-            key = "app.device.sensors",
-            title = "位置、传感器与相机",
-            description = "位置、传感器读数与相机。每项分别申请系统权限，可以只开其中一项。",
-            kind = PiRowKind.Switch,
-            group = G_DEVICE,
-            section = "分级授权",
-            defaultValue = bool(false),
-            aliases = listOf("location", "sensor", "camera", "permission"),
-        ),
-        PiSetting(
-            key = "app.device.shell",
-            title = "Shell（Shizuku / ADB）",
-            description = "设备 shell 通道，用于查日志、读写受限目录、结束应用。需要无线调试配对或 Shizuku 服务，未就绪时这里显示引导。",
-            kind = PiRowKind.Value,
-            group = G_DEVICE,
-            section = "分级授权",
-            defaultValue = str("unavailable"),
-            options = choices(
-                "unavailable" to "未就绪",
-                "shizuku" to "Shizuku",
-                "adb" to "ADB 无线调试",
-            ),
-            allowCustom = false,
-            aliases = listOf("shizuku", "adb", "shell"),
-        ),
-        PiSetting(
-            key = "app.device.shellPair",
-            title = "配对设备 Shell",
-            description = "引导完成无线调试配对或启动 Shizuku 服务。状态检测失败时给出系统设置入口与可复制的命令。",
-            kind = PiRowKind.Action,
-            group = G_DEVICE,
-            section = "分级授权",
-            aliases = listOf("shizuku", "adb", "pair", "shell"),
-        ),
-        PiSetting(
-            key = "app.device.sessionOverride",
-            title = "本会话暂时禁用",
-            description = "只对当前会话关掉全部设备能力，下一个会话恢复。用于把敏感工具临时收起来。",
-            kind = PiRowKind.Switch,
-            group = G_DEVICE,
-            section = "分级授权",
-            defaultValue = bool(false),
-            aliases = listOf("session", "disable"),
-        ),
+        // The seven `app.device.*` rows lived here and were the *only* occurrence
+        // of those keys: the enforcement and the real switches both read
+        // `DeviceCapabilityStore`'s SharedPreferences
+        // (`DeviceCapabilityStore.kt:61-96`, reached from the 设备能力 entry row on
+        // SettingsHome), so editing a row here wrote a JSON value no code
+        // consulted — two screens for one grant, only one connected. The real
+        // screen is the single authority now.
 
         // ------------------------------------------------------------------
         // 13 运行时与诊断
@@ -1836,9 +1758,6 @@ object PiSettingsCatalog {
         },
         PiSettingsGroup(G_SECURITY, "安全与信任", Icons.Filled.Security) { store ->
             "项目信任：${summaryText(store, "defaultProjectTrust")}"
-        },
-        PiSettingsGroup(G_DEVICE, "设备能力", Icons.Filled.PhoneAndroid) { store ->
-            "无障碍：${summaryText(store, "app.device.accessibility")} · Shell：${summaryText(store, "app.device.shell")}"
         },
         PiSettingsGroup(G_RUNTIME, "运行时与诊断", Icons.Filled.Memory) { store ->
             val version = summaryText(store, "app.runtime.piVersion")
