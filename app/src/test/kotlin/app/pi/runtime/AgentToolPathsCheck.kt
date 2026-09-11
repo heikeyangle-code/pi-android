@@ -87,6 +87,26 @@ fun main() {
     check("git is told where the CA bundle is", env["GIT_SSL_CAINFO"], ProotCommand.GUEST_CA_BUNDLE)
     check("the other TLS consumers are told too", env["SSL_CERT_FILE"], ProotCommand.GUEST_CA_BUNDLE)
 
+    // ------------------------- 4. proot's link2symlink store exists and is in the rootfs
+    // proot turns a guest `link()` into a symlink stored in `PROOT_L2S_DIR`, and
+    // returns -ENOENT for the guest when it cannot open that directory. It never
+    // creates it. So this is not a tidiness check: a store that is not there is
+    // every hard link in the guest failing, which is what stops `dpkg` from
+    // replacing a file that is already installed.
+    check("PROOT_L2S_DIR is the store under the rootfs", env["PROOT_L2S_DIR"], "${p.rootfs.path}/.l2s")
+    check(
+        "the store is inside the rootfs, because its intermediates are bound into the guest",
+        p.l2s.path.startsWith(p.rootfs.path + "/"),
+        true,
+    )
+    check("PROOT_TMP_DIR is the app's own tmp", env["PROOT_TMP_DIR"], p.tmp.path)
+    val argv = ProotCommand.build(p, "true", "/root", null)
+    check(
+        "the store is bound at its own absolute path",
+        argv.zipWithNext().any { (flag, bind) -> flag == "-b" && bind == "${p.l2s.path}:${p.l2s.path}" },
+        true,
+    )
+
     println(if (failures == 0) "\nharness: OK (all checks passed)" else "\nharness: FAILED ($failures)")
     if (failures != 0) kotlin.system.exitProcess(1)
 }

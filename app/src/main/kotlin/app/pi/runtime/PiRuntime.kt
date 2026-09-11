@@ -61,6 +61,37 @@ class PiPaths(private val filesDir: File, private val nativeLibDir: File) {
     /** proot's scratch: loader spills, link2symlink targets. */
     val tmp: File get() = File(runtime, "tmp").also { it.mkdirs() }
 
+    /**
+     * The store proot's `--link2symlink` keeps its intermediates in, and it **must
+     * exist before proot starts**.
+     *
+     * This is not decoration. `link2symlink.c`'s `move_and_symlink_path` — the
+     * handler that turns a guest `link()` into a symlink — opens this directory and
+     * returns its failure as the guest's error:
+     *
+     *     status = open_l2s_directory();
+     *     if (status < 0)
+     *         return status;          // -ENOENT when the directory is not there
+     *
+     * `open_l2s_directory` is a plain `open(.., O_DIRECTORY | O_NOFOLLOW)`; proot
+     * never creates the directory itself. So a `PROOT_L2S_DIR` that does not exist
+     * makes **every** hard link inside the guest fail with `ENOENT`, which reads as
+     * "No such file or directory" about two files that are both demonstrably there.
+     *
+     * On this app that is not a corner case: it is why `apt-get install` cannot
+     * upgrade a package. dpkg makes a backup link next to every file it replaces
+     * (`./usr/lib/.../afalg.so` in the report that found this), and with hard links
+     * broken the run dies at the first already-installed file — `libssl3t64` in that
+     * report — even though the download and the permissions were fine.
+     *
+     * It lives **inside the rootfs** because [build] binds it into the guest at its
+     * own absolute path: the intermediates are absolute host paths recorded in
+     * symlink targets, so the guest has to be able to resolve them. It is recreated
+     * by this getter, so a revision bump that wipes the rootfs cannot leave the next
+     * launch without it.
+     */
+    val l2s: File get() = File(rootfs, ".l2s").also { it.mkdirs() }
+
     /** Holds the `libtalloc.so.2` alias the dynamic linker insists on. */
     val lib: File get() = File(runtime, "lib").also { it.mkdirs() }
 
@@ -102,7 +133,9 @@ class PiPaths(private val filesDir: File, private val nativeLibDir: File) {
  *
  *  - `--link2symlink`    the rootfs is on a filesystem where the hardlinks a
  *                        Linux userland normally relies on cannot be created,
- *                        so proot emulates them with symlinks
+ *                        so proot emulates them with symlinks — **and the store
+ *                        it keeps those in has to exist**, or the emulation
+ *                        reports ENOENT instead of working: [PiPaths.l2s]
  *  - `-0`                present as uid 0 inside; note this is a *fiction* —
  *                        `chown` appears to succeed and does nothing
  *  - `-b /proc -b /sys -b /dev`  things glibc and Node probe at startup
@@ -142,7 +175,12 @@ object ProotCommand {
         val argv = mutableListOf<String>()
         argv += paths.prootBinary().absolutePath
         argv += "--link2symlink"
-        argv += listOf("-b", "${paths.rootfs.path}/.l2s:${paths.rootfs.path}/.l2s")
+        // Bound at its own absolute path, and the source is the same `l2s` getter
+        // that creates it: the intermediates are host paths recorded in symlink
+        // targets, so the guest must be able to resolve them there. See [PiPaths.l2s]
+        // for what happens when this directory is missing - every hard link in the
+        // guest fails, and dpkg stops being able to upgrade anything.
+        argv += listOf("-b", "${paths.l2s.path}:${paths.l2s.path}")
         // `-L` keeps the guest's own absolute symlinks meaningful.
         argv += listOf("-L", "--kill-on-exit", "-0")
         argv += "--rootfs=${paths.rootfs.path}"
@@ -171,7 +209,7 @@ object ProotCommand {
     fun environment(paths: PiPaths, extra: Map<String, String> = emptyMap()): Map<String, String> = buildMap {
         put("PROOT_LOADER", paths.prootLoader().absolutePath)
         put("PROOT_TMP_DIR", paths.tmp.path)
-        put("PROOT_L2S_DIR", "${paths.rootfs.path}/.l2s")
+        put("PROOT_L2S_DIR", paths.l2s.path)
         put("LD_LIBRARY_PATH", "${paths.lib.path}:${paths.nativeLib.path}")
         put("HOME", "/root")
         put("TMPDIR", "/tmp")
