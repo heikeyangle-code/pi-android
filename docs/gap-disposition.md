@@ -748,6 +748,46 @@ colliding with this document's `P1`–`P12`. The diffs themselves are not duplic
 the ones touching `ui/terminal/**`, because that directory is occupied by *this* pass's terminal
 fix, not abandoned (rendering-review's note at its `:32-38` is correct about the mtimes).
 
+### 10.1 `ui/render/**` status as of this pass (markdown agent)
+
+Everything below is in `ui/render/**` plus the three `ui/blocks/**` files the markdown work had to
+touch, and every claim has a file:line. `known-gaps.md` **A1/A2/A3** are the three items this pass
+was scoped to.
+
+| item | what shipped | evidence (`path:line`) | state |
+|---|---|---|---|
+| **A1** compaction summary | collapsed = plain `Text` + `maxLines = 2`; expanded = `PiMarkdownText` | `ui/blocks/CompactionBlock.kt:91-116`, `:128` | **done** |
+| **A1** branch summary | collapsed = plain `Text` + `maxLines = 2`; expanded = `PiMarkdownText` | `ui/blocks/BranchSummaryBlock.kt:72-92`, `:102` | **done** |
+| **A1** hook/custom message | collapsed = plain `Text` + `maxLines = 4`; expanded (or too short to collapse) = `PiMarkdownText` | `ui/blocks/HookMessageBlock.kt:59-80`, `:86` | **done** |
+| **A1** `ErrorBlock` | **left as plain text on purpose** — pi renders the extension-error line with `new Text(...)`, not markdown | pi `modes/interactive/interactive-mode.ts:2829-2830`; app `ui/blocks/ErrorBlock.kt:47-50` | **correct as-is** |
+| **A1** `SystemPromptBlock` | **left as-is** — pi has no transcript component for the system prompt at all, so there is no pi rendering to match; the block already offers both a mono and a markdown reading | pi has no such component (only `interactive-mode.ts:1716-1719`, `:2068` read it) | **no pi counterpart** |
+| **A1** `SkillInvocationBlock` | **left as-is, but pi disagrees**: pi's expanded skill branch builds a `Markdown`; the app renders `ProseText` | pi `components/skill-invocation-message.ts:40-45`; app `ui/blocks/SkillInvocationBlock.kt:55-60` | **needs its owner** (file is `ui/blocks/**`, not render) |
+| **A2** LaTeX | `PiLatex.kt` ports pi's symbol/command tables and the text-level half of `LatexParser`; `piMarkdownSource` rewrites `$…$` / `$$…$$` before the parser sees them (code fences and code spans skipped) | `ui/render/PiLatex.kt:561` (`toUnicode`), `:600` (`toDisplayUnicode`), `ui/render/PiMarkdown.kt:117-170` | **done** (documented limit: no vertical layout — matrices/stacked fractions fall back to the source text) |
+| **A2** the `custom` trap | `custom` claims **only** `INLINE_MATH`/`BLOCK_MATH`, with no `else` branch, so the dispatcher's own "unrecognised ⇒ recurse into children" verdict is left intact. Documented at the definition | `ui/render/PiMarkdownComponents.kt:93`, `:100-141` | **done** |
+| **A3** markdown images | `PiImagePlaceholder` renders alt + source when the transformer is the no-op default, and delegates to the library's own `MarkdownImage` the moment a real `ImageTransformer` is injected through `LocalPiImageTransformer` | `ui/render/PiMarkdownComponents.kt:92`, `:166-219` | **partial — blocked on a byte transport** (see below) |
+| **F32** / **RR-P9** | the five markdown config objects are `remember`ed against their inputs instead of rebuilt per composition | `ui/render/PiMarkdown.kt:80-84` | **done** |
+| theme: `darkTheme` | still passed, and now computed once for both slots | `ui/render/PiMarkdownTheme.kt:64-73` | **done** |
+| theme: `alertTitle` | kept (0.45.0 GFM alert titles) | `ui/render/PiMarkdownTheme.kt:99-101` | **done** |
+| theme: GFM alert accents | mapped to pi semantic tokens (`mdQuote`/`success`/`mdHeading`/`warning`/`error`) instead of the library's Material-3 defaults, so no alert colour can drift with dynamic colour | `ui/render/PiMarkdownTheme.kt:75-105` | **done** |
+
+**A3 is the one thing this pass could not finish, and the reason is a transport, not the renderer.**
+The renderer's image path is `ImageTransformer.transform(link) -> ImageData?`
+(`multiplatform-markdown-renderer` `model/ImageTransformer.kt:16-29`); the app injects
+`NoOpImageTransformerImpl`, whose `transform` returns `null`
+(`model/NoOpImageTransformerImpl.kt:11-14`), and the library's `MarkdownImage` then draws nothing at
+all (`compose/elements/MarkdownImage.kt:17-29`). To do better, the app needs the bytes of an
+engine-side file: pi's image links are session attachments and workspace paths, not HTTP URLs, so a
+`Painter` requires either a loopback service that serves those paths (`bridge/DeviceBridgeHttp.kt`
+is the existing pattern) or a direct read of the guest filesystem — both outside `ui/render/**`.
+Implementing that `ImageTransformer` and providing it via `LocalPiImageTransformer` is the **whole**
+of the remaining work; `ui/render/PiMarkdownComponents.kt:198-203` already hands over to the library
+as soon as it is present.
+
+**Not in scope here (other owners), reported not changed:** `F12`/`RR-P7`'s `dim` contrast is a
+`PiPalette` decision (`ui/theme/**`) even though two of its three sites are block files; `F11`/`RR-P6`
+rhythm lives in `ui/blocks/BlockChrome.kt`; `F15`'s user-message markdown swap is
+`ui/blocks/UserMessageBlock.kt`; `F19`/`RR-P10` tap callbacks are `ui/screens/ChatScreen.kt`.
+
 | id | class | Finding (one line) | App file → owner | RR patch | Status | Relates to |
 |---|---|---|---|---|---|---|
 | F1 | DEFECT | a message sent mid-turn never reaches the screen | `ui/PiSessionViewModel.kt` → 行为 | RR-P1 | patch-ready | #2/#3/#17 (my P4) |
@@ -781,7 +821,7 @@ fix, not abandoned (rendering-review's note at its `:32-38` is correct about the
 | F29 | INCONSISTENCY | off-scale dp literals bypass `PiSpacing`/`PiShapes` | `ui/blocks/*`, `ui/theme/` → 行为 | — | blocked (mechanical but touches many occupied files) | — |
 | F30 | PERF | `formatClock` builds a `SimpleDateFormat` per call, per recomposition | `ui/blocks/BlockChrome.kt` → 行为 | RR-P8 | patch-ready | — |
 | F31 | PERF | `ToolCallBlock` re-scans/splits the whole output every composition | `ui/blocks/ToolCallBlock.kt` → 行为 | — | patch-ready (`remember(item.output)`) | #55 (`outputMaxLines`) |
-| F32 | PERF | five markdown config objects rebuilt per composition | `ui/render/PiMarkdown.kt` → markdown | RR-P9 | patch-ready | — |
+| F32 | PERF | five markdown config objects rebuilt per composition | `ui/render/PiMarkdown.kt` → markdown | RR-P9 | **fixed** (`PiMarkdown.kt:80-84`, `remember`ed against palette/type scale) | — |
 | F33 | PERF | `items(...)` has no `contentType`, so slots cannot be reused | `ui/screens/ChatScreen.kt` → 行为 | — | patch-ready | — |
 | F34 | PERF | nothing bounds the transcript or the entry list | `rpc/Transcript.kt` + `ui/screens/ChatScreen.kt` → RPC + 行为 | — | patch-ready (client-side slice; pi's `get_entries` has only a forward cursor, so backward paging must not be built) | — |
 

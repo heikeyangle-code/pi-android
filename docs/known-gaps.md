@@ -23,16 +23,17 @@
 - **还没定的**：`ErrorBlock` / `SystemPromptBlock` / `SkillInvocationBlock` 是否也该走 markdown —— 需要逐个回 pi 源码确认它的渲染路径，不能凭感觉。
 
 ### A2. LaTeX（行内 `$...$` / 块级 `$$...$$`）渲染 —— **已完成（复核于 dc00279）**
-> **状态：收尾条件已满足，本条不再是缺口。** `ui/render/PiLatex.kt` 已存在（`toUnicode` / `toDisplayUnicode`），并被 `ui/render/PiMarkdown.kt:153,157` 调用：块级 `$$` 与行内 `$` 都走 `renderLatex` 的等价物，无法归约的原文原样保留（`latexToken.raw` 的行为）。A2 指出的 `custom()` 分派陷阱没有出现——实现绕开了它而不是踩进去。PiLatex 的最后一次修改是 `dc00279`。复核未改代码。
+> **状态：收尾条件已满足，本条不再是缺口。** `ui/render/PiLatex.kt` 已存在（`toUnicode` / `toDisplayUnicode`），并被 `ui/render/PiMarkdown.kt:161,165` 调用：块级 `$$` 与行内 `$` 都走 `renderLatex` 的等价物，无法归约的原文原样保留（`latexToken.raw` 的行为）。**A2 指出的 `custom()` 分派陷阱是被显式处理的，不是绕开的**：`ui/render/PiMarkdownComponents.kt:93` 提供 `custom`，`:136-141` 的 `when` **只认 `INLINE_MATH` / `BLOCK_MATH` 且没有 `else` 分支**——因为 `custom` 的返回类型是 `Unit`（永远非 null），`MarkdownElementInternal` 的 `handled = components.custom?.invoke(...) != null` 会把任何被调用的节点都判为"已处理"；唯一能保住"未识别 ⇒ 递归子节点"默认行为的方式就是不认领它们，分发器自己的判断不会被这里改写。同一段 KDoc 已把这个陷阱写给下一个人。数学归约的结果在 `PiMarkdown.kt:117-170` 的 `piMarkdownSource` 里**在解析前**替换原文（代码围栏与行内代码跳过），因为库的 annotator 会把 math 节点的原始源文本追加进段落 `AnnotatedString`，用组件渲染反而会留下 `$x^2$` 本尊。未移植 pi 的竖直排版（矩阵、上下堆叠的分数/上下限），那部分按"原文照排"回退并已记录在案。
 - **为什么该做**：pi 支持 LaTeX（`packages/tui/src/components/markdown.ts` 里的 `LATEX_MARKDOWN_EXTENSIONS` + `renderLatex()`）。我们的解析层其实**已经能识别**：`org.intellij.markdown` 的 GFM flavour 定义了 `GFMElementTypes.INLINE_MATH`、`BLOCK_MATH`，还带一个 `MathGeneratingProvider`。缺的只是渲染。
 - **阻塞点**：`MarkdownComponents.custom()` 的调用约定有陷阱 —— 渲染器的分派代码是
   `handled = components.custom?.invoke(node.type, model) != null`，
   而 `custom` 的返回类型是 `Unit`（永远非 null）。**一旦提供 `custom`，所有未识别的块级节点都会被判定为"已处理"**，从而关闭原本的"递归渲染子节点"兜底。所以必须先决定：要么让 `custom` 只接管 math 类型并把其余类型显式交给默认组件，要么在扩展里自建 flavour。
 - **收尾条件**：先解决上面这个分派陷阱（写一个只认 math、其余类型转发默认行为的 `custom`），再接公式排版组件。
 
-### A3. 图片（markdown 内嵌 `![](...)` ）
-- **为什么该做**：库里 `MarkdownImageKt` / `MarkdownInlineImageKt` / `ImageTransformer` / `ImageData` / `PlaceholderConfig` 一应俱全，但默认实现是 `NoOpImageTransformerImpl`（什么都不加载）。所以现在 markdown 里的图片显示为 alt 文本。
-- **阻塞点**：pi 的图片不是 http URL，而是引擎侧的文件（会话附件、工作区里的文件）。要接就得先确定"引擎侧文件怎么按需取字节"这条通道（与设备桥类似，需要一个回环接口或直接读 guest 文件系统）。
+### A3. 图片（markdown 内嵌 `![](...)` ） —— **渲染侧已就位，仍卡在取字节的通道**
+> **状态：不再是"渲染器缺东西"，而是"没有传输"。** `ui/render/PiMarkdownComponents.kt:92` 用 `PiImagePlaceholder` 接管了 markdown 的 image 槽：`LocalPiImageTransformer` 仍是默认的 `NoOpImageTransformerImpl` 时，它渲染 alt 文本 + 图片来源（比库默认的**什么都不画**强——`MarkdownImage.kt:17-29` 在 `transform` 返回 `null` 时整节点消失，那比 pi 的 alt 文本还差）；一旦有人注入真实 `ImageTransformer`，`PiMarkdownComponents.kt:198-203` 会立刻转发给库自带的 `MarkdownImage`，**不需要再改渲染侧一行**。所以收尾条件收敛为一条：实现 `ImageTransformer`（把 `link` 映射成引擎侧文件的字节 → `Painter`）并通过 `LocalPiImageTransformer` 注入。
+- **为什么该做**：库里 `MarkdownImageKt` / `MarkdownInlineImageKt` / `ImageTransformer` / `ImageData` / `PlaceholderConfig` 一应俱全，但默认实现是 `NoOpImageTransformerImpl`（什么都不加载）。
+- **阻塞点**：pi 的图片不是 http URL，而是引擎侧的文件（会话附件、工作区里的文件）。要接就得先确定"引擎侧文件怎么按需取字节"这条通道（与设备桥类似，需要一个回环接口或直接读 guest 文件系统）。这条通道不在 `ui/render/**` 里，`bridge/DeviceBridgeHttp.kt` 是现成的回环服务写法。
 - **收尾条件**：定下取字节的方式后，实现一个 `ImageTransformer` 并通过 `LocalPiImageTransformer` 注入。
 - **附注**：pi 的**终端界面根本不渲染图片**（终端放不下），所以这一项如果我们做了，是**比 pi 强**，不是补齐。
 
@@ -221,6 +222,15 @@
   alertTitle = heading.copy(fontSize = 16.sp, lineHeight = 24.sp),
   ```
   0.45.0 里这两个参数都有默认值，所以不补也能编译；补上才是这次升级的目的（GFM alert 的标题样式与暗色配色）。
+- **本机类型检查的真实状态（完整两阶段 `tools/typecheck.sh`）**：
+  - `:rpc` 阶段：143 个 class，**0 条错误**（通过，`rpc.jar` 正常产出）。
+  - `:app` 阶段：**编不过**。107 条 `error:`，末行是 `typecheck: FAILED in :app`，脚本走 `exit 1`。
+  - 按文件分组（错误条数）：`app/src/main/kotlin/app/pi/ui/screens/ChatScreen.kt` **84**、`ui/PiSessionViewModel.kt` **14**、`ui/PiRoot.kt` **4**、`ui/screens/SessionsScreen.kt` **3**、`ui/extension/ExtensionUiHost.kt` **2**。
+  - 全部是同一类：`unresolved reference '<成员>'` 或 `cannot infer type for value parameter`。被点名的成员集中在视图模型那批（`switchSession` / `newSession` / `deleteSession` / `send` / `runBash` / `stop` / `setModel` / `refreshModels` / `setThinkingLevel` / `compact` / `exportSession` / `renameSession` / `copyLastAssistantText` …），另有 `ChatScreen.kt:865` 的 `unresolved reference 'KeyboardArrowUp'`。
+  - **关键判断**：没有一条错误涉及 markdown 渲染 API、`compileSdk`、AGP 或 Shizuku。所以这次 `:app` 失败**不是** 0.41.0→0.45.0 或 36→37 造成的，而是那批 `ui/**` 文件当时正处在并发重构的中间状态（`ui/render/**`、`ui/extension/**` 等都不归本次改动）。
+  - ⚠ 判读陷阱：**`:app` 的 class 数永远是 0**。本机不加载 Compose 编译器插件，codegen 走不到最后，所以 `build/typecheck/out-*/app` 为空**不代表失败**；唯一判据是日志里的 `error:` 行和末行。反过来也要小心「假 OK」：JVM 没起来时脚本可能直接吐 OK，所以 exit code 与末行要一起看。
+  - 复现：`bash tools/typecheck.sh > /tmp/tc.log 2>&1; echo $?`。脚本已改成每次调用独立 `out-$$`，并行跑不再互相删中间产物（`/tmp` 里 `fork: Function not implemented` 那类报错是机器被并发重编译压垮，不是脚本问题）。
+  - **Shizuku 依赖已补齐**：`tools/fetch-typecheck-deps.sh` 新增一段，按 `gradle/libs.versions.toml` 的 `shizuku` 版本取 4 个 AAR（`api`/`aidl`/`shared`/`provider`，13.1.5 时四个都是 AAR，已实测 200），解出 `classes.jar` 放到 `build/typecheck/extra/aar/shizuku-<artifact>/`。不需要 Gradle 解析 POM：少一个就是一条 unresolved import，而不是解析错误。
 
 ### B10. `libprootloader.so` 不是 PIE —— 装机时可能被拒
 - **背景**：`proot` 是 `ET_DYN`(PIE) 且引用 `/system/bin/linker64`，符合 Android 的 exec 要求；但 Termux 的 `loader` 是 **`ET_EXEC`（非 PIE）**，18,136 字节。它是被 proot **映射**（`PROOT_LOADER`）而不是被 exec 的，所以 PIE 规则本不适用于它 —— `tools/fetch-runtime.mjs` 里那个无条件 PIE 校验已经改成只对"会被 exec"的条目生效。

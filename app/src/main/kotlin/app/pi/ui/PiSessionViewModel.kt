@@ -661,7 +661,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      *    belonged to has ended. pi closes every pending tool with
      *    `updateResult({isError:true})` when a turn stops for `aborted`/`error`
      *    (`interactive-mode.ts:3294-3302`); the reducer does not (that file is
-     *    `rpc/**`, out of this agent's ownership), so the pending rows are
+     *    in `rpc/`, out of this agent's ownership), so the pending rows are
      *    projected as interrupted here — the card then says the turn ended
      *    without a result instead of looking like a hang.
      *  - **F7** (partial): publishing is skipped when no element of the reducer's
@@ -1958,7 +1958,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * that the provider call failed. Null when the turn ended as a normal
      * `stop`/`toolUse`.
      *
-     * The reducer drops `stopReason` (that is `rpc/**`, owned by another agent),
+     * The reducer drops `stopReason` (that is in `rpc/`, owned by another agent),
      * so this is the app's own honest report of the outcome; the detail carries
      * pi's wire value rather than invented wording.
      */
