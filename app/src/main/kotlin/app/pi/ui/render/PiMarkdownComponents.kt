@@ -84,8 +84,17 @@ internal val LocalPiImageTransformer = staticCompositionLocalOf<ImageTransformer
  * image whose bytes cannot be loaded, so [PiImagePlaceholder] exists to say that
  * an image was there and where it pointed, instead of dropping it. See its
  * comment for what a real implementation still needs.
+ *
+ * **Not composable, on purpose.** `markdownComponents(...)` is a plain function
+ * in the library (`.../compose/components/MarkdownComponents.kt`) whose
+ * parameters are `@Composable` lambdas; the library builds its own default set
+ * exactly this way from a non-composable `object CurrentComponentsBridge`. This
+ * app therefore declares no `@Composable` here either, which is what lets
+ * `PiMarkdownText` cache the whole set with `remember { piMarkdownComponents() }`
+ * (F32 / RR-P9). Adding the annotation back would make that `remember` illegal
+ * again and rebuild the set — and with it every default component's identity —
+ * on every token of a streaming block.
  */
-@Composable
 internal fun piMarkdownComponents(): MarkdownComponents = markdownComponents(
     codeFence = { model -> PiCodeFence(model) },
     codeBlock = { model -> PiCodeBlock(model) },

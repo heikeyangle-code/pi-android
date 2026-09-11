@@ -25,21 +25,72 @@ package app.pi.ui.render
  * the `\text`-family wrappers, spacing, `\left`/`\right`, size commands and
  * the character escapes.
  *
- * It deliberately does **not** port pi's vertical layout (`LayoutNode`,
- * `renderLayout`, `latex.ts:723`): stacked fractions, `\sum` limits above and
- * below the operator, and `\begin{matrix}` grids. Those exist to place glyphs
- * in a fixed character grid, which a proportional-text phone column does not
- * have. pi itself degrades all of them to inline text whenever the formula is
- * not display math, and the Android renderer has no display-math layout either.
+ * ## The one thing it deliberately does not port: pi's vertical layout
+ *
+ * pi's `LatexParser` can also emit *layout nodes* and let `renderLayout`
+ * (`latex.ts:723-809`) assemble them into a small character grid:
+ *
+ * * `\frac` stacks as numerator / a `─` rule / denominator when the formula is
+ *   display math and the fraction was not reached through a script
+ *   (`latex.ts:1017-1031`, the `shouldStack` branch; drawn at `latex.ts:748-761`);
+ * * a display operator carrying limits (`\sum`, `\int`, `\lim`, …) puts them
+ *   above and below the symbol instead of beside it (`latex.ts:1145-1148`,
+ *   drawn at `latex.ts:762-780`);
+ * * the eight grid environments (`array`, `matrix`, `smallmatrix`, `pmatrix`,
+ *   `bmatrix`, `Bmatrix`, `vmatrix`, `Vmatrix`) become a delimited grid
+ *   (`latex.ts:1301-1306` dispatches them, `latex.ts:1312-1355` pads the columns
+ *   and adds the `⎛⎝ ⎞⎠` family); `cases` (`latex.ts:1286-1299`) and
+ *   `aligned`/`gather`/`split` (`latex.ts:1257-1284`) are the same mechanism
+ *   without delimiters.
+ *
+ * None of that is drawn here. How far the difference reaches depends on the
+ * construct, because pi gates only two of the three on `display`:
+ *
+ * * `\frac` (`latex.ts:1018`) and operator limits (`latex.ts:1145`) are
+ *   **block-only** differences. pi renders an inline `$…$` token with
+ *   `renderLatex(text)` (`packages/tui/src/components/markdown.ts:649`), where
+ *   `display` is false and both are off, and a `$$…$$` token with
+ *   `renderLatex(text, { display: true })` (`markdown.ts:509`), where they are
+ *   on; each rendered line is then pushed separately (`markdown.ts:511-513`).
+ * * the environment branch is **not** gated: `\begin` goes straight to
+ *   `parseEnvironment` (`latex.ts:1090-1091`), a multi-row matrix always becomes
+ *   a layout node (`latex.ts:1350-1354`), and `renderLatex` runs `renderLayout`
+ *   whenever any node was collected, whatever `display` says
+ *   (`latex.ts:1382-1385`). pi therefore draws the grid for an inline
+ *   `$\begin{pmatrix}…\end{pmatrix}$` as well.
+ *
+ * So on a phone the visible fallbacks are exactly these:
+ *
+ * | construct | pi, inline `$…$` | pi, inside `$$…$$` | this port |
+ * |---|---|---|---|
+ * | `\frac{a}{b}` | `a/b` | stacked, with a rule between | `a/b` — pi's inline form (`latex.ts:1030`), so it matches inline and differs in block |
+ * | `\sum_{i=1}^{n}` | `∑ᵢ₌₁ⁿ` | limits above and below | `∑ᵢ₌₁ⁿ` — pi's inline form (`latex.ts:1150-1157`), so it matches inline and differs in block |
+ * | `\begin{pmatrix}…\end{pmatrix}` | a bracketed grid | a bracketed grid | `null`, so the caller prints the formula exactly as written — this one differs in **both** |
+ *
+ * **Why porting the layout function alone would not be enough.** [piMarkdownSource]
+ * substitutes a rendered formula into the markdown *source* before the parser
+ * runs, and the renderer's annotator turns an end of line inside a paragraph
+ * into a **space**: `MarkdownAnnotatorConfig.eolAsNewLine` defaults to `false`
+ * (`multiplatform-markdown-renderer/.../model/MarkdownAnnotatorConfig.kt`) and
+ * the annotator reads `MarkdownTokenTypes.EOL -> if (eolAsNewLine) append('\n')
+ * else append(' ')` (`.../annotator/AnnotatedStringKtx.kt:357`). A grid computed
+ * here would be flattened back into one line by the renderer on the way out, so
+ * pi's layout needs a channel that preserves line structure — a fence, or a
+ * block-level math component — before a port would be visible. That is a
+ * rendering-architecture change, not a change to this parser; until it exists,
+ * porting `renderLayout` would produce a correct string the app cannot draw,
+ * which is worse than the fallback above.
  *
  * Anything outside the ported subset makes [PiLatex.toUnicode] return `null`,
  * and the caller then leaves the source text alone \u2014 pi's own behaviour for a
- * formula it cannot render. Printing `\begin{pmatrix} a & b \end{pmatrix}`
- * verbatim is honest; drawing a grid we cannot draw would not be.
+ * formula it cannot render (`markdown.ts:509` and `:649` both fall back to
+ * `latexToken.raw`). Printing `\begin{pmatrix} a & b \end{pmatrix}` verbatim is
+ * honest; drawing a grid we cannot draw would not be.
  *
  * **Known limit, stated plainly:** there is no math-typesetting engine here and
- * none is being added. A formula either reduces to the Unicode pi would print
- * or it is shown as written. `docs/known-gaps.md` records the same trade.
+ * none is being added. A formula either reduces to the Unicode pi's own inline
+ * path would print, or it is shown as written. `docs/known-gaps.md` A2 and
+ * `docs/gap-disposition.md` section 10.1 record the same trade.
  */
 internal object PiLatex {
 
@@ -554,9 +605,18 @@ internal object PiLatex {
      * `latex.ts:1376` `renderLatex`: the Unicode approximation of one formula,
      * or `null` when it uses something this port does not implement.
      *
-     * @param display accepted for parity with pi's signature. It only selects
-     *   the stacked-limit layout that is not ported, so it changes nothing
-     *   here; the caller decides whether a block formula gets its own line.
+     * @param display accepted for parity with pi's signature. It selects the
+     *   stacked layout, which is not ported (see the class note), so it changes
+     *   nothing here; the caller decides whether a block formula gets its own
+     *   line. pi's inline call site passes nothing, i.e. `display = false`
+     *   (`markdown.ts:649`), and for an inline formula without an environment
+     *   this function then reproduces pi exactly: the `shouldStack` branch
+     *   (`latex.ts:1018`) and the display-limits branch (`latex.ts:1145`) are the
+     *   only `display`-gated ones, and pi turns both off. Note that pi's
+     *   environment branch (matrices, `cases`, `aligned`) is **not**
+     *   `display`-gated, so pi renders those even inline while this port reports
+     *   the formula unsupported — which is why `display` does not fully decide
+     *   this function's coverage.
      */
     fun toUnicode(source: String, display: Boolean = false): String? {
         val parser = LatexParser(source)
@@ -565,17 +625,6 @@ internal object PiLatex {
         return normalizeOutput(rendered)
     }
 
-    /**
-     * The block-math path: `markdown.ts:505-517` renders a `latexBlock` token
-     * with `display: true`. On a terminal that means stacked fractions and
-     * operator limits through `renderLayout` (`latex.ts:723`), which this port
-     * does not draw (see the class note). What it does keep is pi's other
-     * display-math decision: the result is laid out as **its own line block**
-     * (`markdown.ts:511-513` pushes each rendered line separately), so a display
-     * formula is never glued into the middle of a sentence. That is the part
-     * worth keeping on a phone, and it is why an unrenderable `$$...$$` still
-     * gets its own paragraph while an inline one just sits in the text.
-     */
     /**
      * The AST-level counterpart to [toUnicode]: the formula inside one parsed
      * math node, with the delimiters removed.
@@ -597,6 +646,23 @@ internal object PiLatex {
         return body.ifEmpty { fallback }
     }
 
+    /**
+     * The block-math path: `markdown.ts:505-517` renders a `latexBlock` token
+     * with `display: true`. On a terminal that means stacked fractions, operator
+     * limits and matrix grids through `renderLayout` (`latex.ts:723-809`), which
+     * this port does not draw (see the class note — and note that the class note
+     * also explains why the missing piece is a line-preserving channel, not this
+     * function). What this does keep is pi's other display-math decision: the
+     * result is laid out as **its own line block** (`markdown.ts:511-513` pushes
+     * each rendered line separately), so a display formula is never glued into
+     * the middle of a sentence. That is the part worth keeping on a phone, and
+     * it is why an unrenderable `$$...$$` still gets its own paragraph while an
+     * inline one just sits in the text.
+     *
+     * The `\n` padding is what makes that paragraph break visible through the
+     * markdown source the caller is rewriting; it is not pi's output (pi emits
+     * whole lines into its own text buffer).
+     */
     fun toDisplayUnicode(source: String): String? {
         val body = source.trim().removePrefix("$$").removeSuffix("$$").trim()
         val rendered = toUnicode(body, display = true) ?: return null
@@ -801,10 +867,11 @@ internal object PiLatex {
                 return ""
             }
             if (command == "frac" || command == "dfrac" || command == "tfrac") {
-                // `latex.ts:1024-1040`, minus the display-stacking branch: the
-                // Android renderer has no vertical layout, so fractions are
-                // always `a/b`. pi does the same for every inline fraction,
-                // where `display` is false.
+                // `latex.ts:1017-1031`, minus the `shouldStack` branch: this port
+                // never stacks, so a fraction is always `a/b`. That is pi's own
+                // result wherever `display` is false (`latex.ts:1030`), i.e. for
+                // every inline formula; inside `$$...$$` pi would stack instead
+                // (class note).
                 val numerator = parseRequiredArgument() ?: return null
                 val denominator = parseRequiredArgument() ?: return null
                 return formatFraction(numerator, denominator)
@@ -868,8 +935,16 @@ internal object PiLatex {
                 return if (command.startsWith("text") || command == "mbox") value else value.trim()
             }
             if (command == "begin") {
-                // `latex.ts:1101-1103` parses environments into layout nodes
-                // (matrices, `cases`, `aligned`), none of which is ported here.
+                // `latex.ts:1090-1091` hands `\begin` to `parseEnvironment`
+                // (`latex.ts:1239-1310`), which builds layout nodes: matrices
+                // (`latex.ts:1301-1306`, `:1312-1355`), `cases` (`:1286-1299`),
+                // `aligned`/`gather`/`split` (`:1257-1284`). Every one of them is
+                // drawn by `renderLayout`, which this port does not have.
+                // Returning `null` makes the whole formula unrenderable, so the
+                // caller prints the source text as written — pi's own recovery
+                // for a formula it cannot render (`markdown.ts:509`), applied one
+                // level earlier than pi applies it. See the class note for why the
+                // layout is not ported.
                 return null
             }
             // `latex.ts:1100`: an unknown command marks the expression

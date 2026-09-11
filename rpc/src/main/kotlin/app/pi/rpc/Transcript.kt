@@ -523,9 +523,22 @@ internal fun JsonObject.timestamp(fallback: Long): Long {
 
 /**
  * The `stopReason`s that mean a turn did **not** finish normally, and that pi's
- * own TUI reports (`components/assistant-message.ts`): `length` = truncated by
- * the output-token limit, `aborted` = stopped by the user, `error` = the
- * provider failed.
+ * own TUI reports: `length` = truncated by the output-token limit,
+ * `aborted` = stopped by the user, `error` = the provider failed.
+ *
+ * Values are checked against pi's own union, not against a document:
+ * `packages/ai/src/types.ts:406` declares
+ * `StopReason = "pending" | "stop" | "length" | "toolUse" | "error" | "aborted"
+ * | "deferred"`. The four left out are `stop` and `toolUse` (a result still
+ * follows), `pending` (a message still streaming) and `deferred` (pi keeps the
+ * turn alive for a deferred handle, so nothing has failed).
+ *
+ * The row each one prints is
+ * `packages/tui/src/components/assistant-message.ts:180-199` (`length` always,
+ * `aborted`/`error` only when the message carries no tool call), and the cards
+ * each one closes are `interactive-mode.ts:3295`/`:3735` (`aborted`/`error`
+ * only, never `length`). Both conditions live in the reducer's `failTurn` and in
+ * nothing else.
  *
  * File-level on purpose: a `private companion` member is reachable from the
  * class's own members, but a file-level `private val` is reachable from every
@@ -624,6 +637,17 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
     private fun keyFor(entryId: String?, prefix: String) = entryId ?: nextKey(prefix)
 
     /**
+     * The [ErrorText.key] for a failed turn found in history.
+     *
+     * Derived from pi's entry id so a re-seed of the same entries produces the
+     * same key (history keys are pi's ids, see [seedFromHistory]); the prefix
+     * cannot collide with [onHistoryMessage]'s `id`, `id-1`, `id-2` block keys
+     * because those are pi's id followed by a digit or nothing. It also must not
+     * collide with the `-diff` suffix [appendToolDiff] uses, and does not.
+     */
+    private fun failureKey(entryId: String?) = entryId?.let { "$it-turn-failed" } ?: nextKey("turn-failed")
+
+    /**
      * Record the prompt the user just sent. Done locally (not from an event) so
      * the bubble appears the instant they hit send.
      *
@@ -656,10 +680,14 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
             event.usage?.let { lastUsage = it }
             // A truncated or aborted answer used to look exactly like a finished
             // one, and an aborted turn left its tool card spinning "运行中"
-            // forever. pi reports both here (`components/assistant-message.ts`);
-            // see [failTurn].
+            // forever. pi reports both here
+            // (`packages/tui/src/components/assistant-message.ts:180-199` for the
+            // row and its `hasToolCalls` gate,
+            // `interactive-mode.ts:3294-3304` for the closed tool cards); see
+            // [failTurn], which the persisted-entry path in [onHistoryAssistant]
+            // also uses so replay matches this.
             if (event.role == "assistant" && event.stopReason in TURN_FAILURE_REASONS) {
-                failTurn(event.stopReason, event.errorMessage)
+                failTurn(event.stopReason, event.errorMessage, event.hasToolCalls)
             } else if (event.role == "custom" && event.display != false && !event.text.isNullOrEmpty()) {
                 // A live `role: "custom"` message is an extension's injected context.
                 // History replay already renders it (`custom_message` entries reach
@@ -1110,35 +1138,91 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
      * Report a turn pi ended abnormally, and close every tool card that can no
      * longer finish (F3 + F2).
      *
-     * pi's TUI does both: `components/assistant-message.ts` prints a red line for
-     * a `length`/`aborted`/`error` stop reason, and `interactive-mode.ts` hands
-     * every pending tool component `updateResult({…, isError:true})` before
-     * clearing it. Without this a response cut off by the output-token limit
-     * reads as a complete answer, and a stopped turn shows a live "运行中" card
-     * forever — both silent, both indistinguishable from success or a hang.
+     * Both of the app's entry points — the live `message_end` event and the
+     * persisted `message` entry that [seedFromHistory] projects — funnel through
+     * here, so a reopened session shows exactly what the live stream showed. The
+     * two decisions are pi's own, each taken from one condition rather than a
+     * local invention:
+     *
+     *  - **Which cards close.** `aborted` and `error` only.
+     *    `packages/coding-agent/src/modes/interactive/interactive-mode.ts:3294`
+     *    (live) and `:3735` (replay) both read
+     *    `message.stopReason === "aborted" || message.stopReason === "error"`
+     *    before `updateResult({content:[{type:"text",text:errorMessage}],
+     *    isError:true})` — `:3298-3303` / `:3745-3746`. A `length` stop runs
+     *    through the *else* branch (`:3305-3315`) and closes nothing, because the
+     *    turn may still be resumed; its signal is the separate truncation row
+     *    below.
+     *  - **Whether the row is appended.**
+     *    `packages/tui/src/components/assistant-message.ts:180-199`: `length`
+     *    always prints; `aborted`/`error` print only while
+     *    `!hasToolCalls` (`:180` = `content.some(c => c.type === "toolCall")`),
+     *    because with a tool call pi lets the closed card carry the error
+     *    instead of printing it twice.
+     *
+     * The wording is the app's own: pi's English strings are "Response was
+     * truncated before completion." (`:185`), the abort message (`:189-193`) and
+     * "Error: …" (`:196-198`), and the whole app speaks Chinese. One pi literal is
+     * honoured rather than translated — the `errorMessage === "Request was
+     * aborted"` case at `:190`, which pi replaces with its fixed "Operation
+     * aborted" — so the app's generic sentence covers it instead of echoing a
+     * provider string that pi itself refuses to echo. For `error`, `errorMessage`
+     * (or pi's own `"Unknown error"` fallback at `:196`) becomes the row's whole
+     * sentence, and a closed card's [ToolCall.output] gets that same text,
+     * exactly like pi's `updateResult`.
+     *
+     * The reason set is `StopReason`'s non-normal members
+     * (`packages/ai/src/types.ts:406`: `pending | stop | length | toolUse |
+     * error | aborted | deferred`) minus the four that are not failures.
+     *
+     * [key] is passed in rather than synthesised so the history path can derive
+     * it from pi's entry id, which keeps a re-seed from stacking a second row
+     * (the live path uses `null` and gets a fresh synthetic key per turn).
      */
-    private fun failTurn(reason: String?, errorMessage: String?): TranscriptChange {
+    private fun failTurn(
+        reason: String?,
+        errorMessage: String?,
+        hasToolCalls: Boolean,
+        key: String? = null,
+    ): TranscriptChange {
         val ts = now()
-        val message = when (reason) {
-            "length" -> "回复被令牌上限截断"
-            "aborted" -> "回合已中止"
-            else -> "模型调用失败"
+        val truncated = reason == "length"
+        // pi: `length` prints unconditionally; aborted/error print only when the
+        // message carried no tool call (assistant-message.ts:182-199).
+        val shouldAppend = truncated || !hasToolCalls
+        // The sentence is pi's own content in every branch, so it never needs a
+        // second "detail" line repeating it (`errorMessage` is exactly what pi
+        // prints). Only one pi literal is replaced rather than carried through:
+        // `assistant-message.ts:190` discards `errorMessage === "Request was
+        // aborted"` in favour of a fixed line, and the app's generic Chinese
+        // sentence is the equivalent of that fixed line.
+        val message = when {
+            truncated -> "回复被令牌上限截断"
+            reason == "aborted" -> errorMessage
+                ?.takeIf { it.isNotBlank() && it != "Request was aborted" }
+                ?: "回合已中止"
+            else -> errorMessage?.takeIf { it.isNotBlank() } ?: "Unknown error"
         }
-        val detail = errorMessage?.takeIf { it.isNotBlank() }
-        var change = append(
-            ErrorText(key = nextKey("turn-failed"), ts = ts, message = message, detail = detail),
-        )
-        // Nothing will ever finalise a pending tool now.
-        for (i in items.indices) {
-            val call = items.getOrNull(i) as? ToolCall ?: continue
-            if (call.status != ToolStatus.Pending) continue
-            items[i] = call.copy(
-                status = ToolStatus.Error,
-                isError = true,
-                endedAt = ts,
-                output = call.output.ifEmpty { detail ?: message },
-            )
-            change = TranscriptChange.Updated(i)
+
+        var change: TranscriptChange = if (shouldAppend) {
+            append(ErrorText(key = key ?: nextKey("turn-failed"), ts = ts, message = message))
+        } else {
+            TranscriptChange.None
+        }
+
+        // pi closes the cards on `aborted`/`error` only — never on `length`.
+        if (reason == "aborted" || reason == "error") {
+            for (i in items.indices) {
+                val call = items.getOrNull(i) as? ToolCall ?: continue
+                if (call.status != ToolStatus.Pending) continue
+                items[i] = call.copy(
+                    status = ToolStatus.Error,
+                    isError = true,
+                    endedAt = ts,
+                    output = call.output.ifEmpty { message },
+                )
+                change = TranscriptChange.Updated(i)
+            }
         }
         return change
     }
@@ -1320,7 +1404,7 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
                 projectUser(text, imageBlocks(message["content"]), ts, blockKey)
             }
 
-            "assistant" -> onHistoryAssistant(message, ts, blockKey)
+            "assistant" -> onHistoryAssistant(message, entryId, ts, blockKey)
 
             "toolresult", "tool_result", "tool" -> {
                 val callId = message.str("toolCallId")
@@ -1345,6 +1429,7 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
 
     private fun onHistoryAssistant(
         message: JsonObject,
+        entryId: String?,
         ts: Long,
         blockKey: (String) -> String,
     ): TranscriptChange {
@@ -1419,6 +1504,27 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
                     level = thinkingLevel,
                 ),
             )
+        }
+        // A persisted assistant entry keeps the whole assistant message including
+        // `stopReason`/`errorMessage` (`packages/ai/src/types.ts:440,443`; the
+        // session file stores `SessionMessageEntry.message` verbatim, and
+        // `core/session-manager.ts:386-394` hands that same object back as an
+        // `AgentMessage` on replay). So a turn that aborted, errored or was cut
+        // off by the token limit is decided here exactly as pi decides it on
+        // replay: `interactive-mode.ts:3735-3746` closes every tool component the
+        // aborted assistant message opened, and `assistant-message.ts:180-199`
+        // prints the truncation / abort / error line under the partial content.
+        //
+        // `hasToolCalls` is the same predicate on the same array pi reads
+        // (`assistant-message.ts:180`), and `failTurn` applies the same two
+        // conditions as the live path. Without this branch the live stream and a
+        // reopened session disagree: the live `message_end` path already reports
+        // the failure (see [failTurn]), and the replay path silently produced a
+        // clean-looking transcript — F2/F3's root cause.
+        val stopReason = message.str("stopReason")?.lowercase()
+        if (stopReason in TURN_FAILURE_REASONS) {
+            val errorMessage = message.str("errorMessage")
+            return failTurn(stopReason, errorMessage, hasToolCallBlock(message["content"]), key = failureKey(entryId))
         }
         return change
     }

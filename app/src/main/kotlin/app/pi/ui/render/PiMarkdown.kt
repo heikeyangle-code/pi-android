@@ -1,5 +1,6 @@
 package app.pi.ui.render
 
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -65,28 +66,37 @@ internal fun PiMarkdownText(
     // Keyed on the source: rewriting is a linear scan with a handful of regex
     // matches, but a streaming block re-parses on every token, so it is cached.
     val content = remember(markdown) { piMarkdownSource(markdown) }
+    // F32 / RR-P9: everything the five markdown objects depend on is read here,
+    // once per composition, and the objects themselves are built by the pure
+    // functions in `PiMarkdownTheme.kt` — the library's own builders are
+    // `@Composable` and therefore illegal inside `remember`'s calculation lambda
+    // (see that file's header for the failed attempt this replaced). Streaming a
+    // long block recomposes this function per token; without these three
+    // `remember`s every token rebuilt all five objects and the component set.
+    val palette = PiTheme.palette
+    val darkTheme = isSystemInDarkTheme()
+    val baseText = MaterialTheme.typography.bodyLarge
+    val monoText = PiTheme.text.mono
+    val colors = remember(palette, darkTheme) { piMarkdownColors(palette, darkTheme) }
+    val typography = remember(palette, baseText, monoText) {
+        piMarkdownTypography(palette, baseText, monoText)
+    }
+    // `piMarkdownComponents()` is an ordinary function — `markdownComponents(...)`
+    // is not composable — so it can be remembered directly. The lambdas it holds
+    // are composable, but only *created* here; the library does the same thing in
+    // its own non-composable `CurrentComponentsBridge` (`.../components/MarkdownComponents.kt`).
+    val components = remember { piMarkdownComponents() }
     CompositionLocalProvider(
         LocalPiCodeHighlighter provides PiNodeCodeHighlighter,
         LocalPiImageTransformer provides com.mikepenz.markdown.model.NoOpImageTransformerImpl(),
     ) {
-        // P9/F32 asked for these five config objects to be cached rather than rebuilt
-        // on every frame of a streaming block. None of them can be wrapped in
-        // `remember { ... }`: the library's builders (`markdownColor`,
-        // `markdownTypography`, `markdownComponents`, `markdownPadding`,
-        // `markdownDimens`) are all @Composable, and `remember`'s calculation lambda is
-        // `@DisallowComposableCalls`. The Compose compiler rejects it with
-        // "@Composable invocations can only happen from the context of a @Composable
-        // function" - a class of error tools/typecheck.sh cannot see, because it does
-        // not run the Compose plugin. Caching here needs those builders to become
-        // pure functions of the palette, which is a change in ui/render/**, not a
-        // wrapper. Until then P9/F32 stays `patch-ready` in docs/gap-disposition.md.
         Markdown(
             content = content,
-            colors = piMarkdownColors(),
-            typography = piMarkdownTypography(),
-            padding = piMarkdownPadding(),
-            dimens = piMarkdownDimens(),
-            components = piMarkdownComponents(),
+            colors = colors,
+            typography = typography,
+            padding = piMarkdownPadding,
+            dimens = piMarkdownDimens,
+            components = components,
             modifier = modifier,
         )
     }

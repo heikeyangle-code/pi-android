@@ -1,6 +1,7 @@
 package app.pi.ui.blocks
 
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -12,12 +13,18 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.pi.rpc.SkillInvocation
+import app.pi.ui.render.PiMarkdownText
 import app.pi.ui.theme.PiTheme
 
 /**
  * `skill-invocation` (docs/pi-android-ui-spec.md §7.4): a card headed
- * 技能 /skill:name with an expand arrow; expanding shows the SKILL.md body
- * (human prose, so the system font, not mono).
+ * 技能 /skill:name with an expand arrow; expanding shows the SKILL.md body as
+ * markdown — pi's expanded branch is a `Markdown`
+ * (`packages/coding-agent/src/modes/interactive/components/skill-invocation-message.ts:40-45`)
+ * and the spec asks for the same. Collapsed it shows the header only, which is
+ * what pi's collapsed branch does too (one `[skill] name (… to expand)` line,
+ * `skill-invocation-message.ts:47-52`) — so, unlike its neighbours, this block
+ * has no collapsed text preview and therefore no `maxLines` to preserve.
  */
 @Composable
 fun SkillInvocationBlock(
@@ -56,9 +63,28 @@ fun SkillInvocationBlock(
                 ExpandLabel(expanded)
             }
             if (expanded) {
-                ProseText(
-                    text = item.body.ifEmpty { "（技能没有正文）" },
-                    color = palette.text,
+                // Expanded: markdown, not prose. pi's expanded branch builds a
+                // `Markdown` over the skill body
+                // (`packages/coding-agent/src/modes/interactive/components/skill-invocation-message.ts:40-45`),
+                // so headings, lists and fences inside SKILL.md read as structure
+                // instead of as source.
+                //
+                // Two deliberate deviations, recorded rather than hidden:
+                //
+                // 1. pi prepends `**name**` as a bold markdown header inside that
+                //    document (`skill-invocation-message.ts:41-42`), because in pi
+                //    the name otherwise appears only in the collapsed line. This
+                //    card's header row carries `/skill:name` in *both* states
+                //    (spec §7.4), so prepending it here would print the name twice.
+                // 2. pi colours this markdown with `customMessageText`
+                //    (`skill-invocation-message.ts:44`); `PiMarkdownText` draws it
+                //    in `palette.text`. Both of pi's built-in themes define
+                //    `customMessageText` as `text` (`interactive/theme/dark.json:43`,
+                //    `light.json:42`), so the two coincide for the shipped themes
+                //    and differ only for a hand-written theme.
+                PiMarkdownText(
+                    markdown = item.body.ifEmpty { "（技能没有正文）" },
+                    modifier = Modifier.fillMaxWidth(),
                 )
             }
         }

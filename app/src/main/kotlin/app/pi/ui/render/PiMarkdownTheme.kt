@@ -1,28 +1,84 @@
 package app.pi.ui.render
 
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.runtime.Composable
+import androidx.compose.runtime.Immutable
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextLinkStyles
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import app.pi.ui.theme.PiPalette
 import app.pi.ui.theme.PiSpacing
-import app.pi.ui.theme.PiTheme
-import com.mikepenz.markdown.m3.markdownColor
-import com.mikepenz.markdown.m3.markdownTypography
+import com.mikepenz.markdown.model.DefaultMarkdownColors
+import com.mikepenz.markdown.model.DefaultMarkdownTypography
 import com.mikepenz.markdown.model.MarkdownAlertColors
+import com.mikepenz.markdown.model.MarkdownAlertDimens
+import com.mikepenz.markdown.model.MarkdownAlertPadding
 import com.mikepenz.markdown.model.MarkdownColors
 import com.mikepenz.markdown.model.MarkdownDimens
 import com.mikepenz.markdown.model.MarkdownPadding
 import com.mikepenz.markdown.model.MarkdownTypography
 import com.mikepenz.markdown.model.markdownAlertColors
-import com.mikepenz.markdown.model.markdownDimens
-import com.mikepenz.markdown.model.markdownPadding
+import com.mikepenz.markdown.model.markdownAlertDimens
+import com.mikepenz.markdown.model.markdownAlertPadding
+
+/**
+ * The five objects handed to `Markdown(...)`, built as **pure functions of the
+ * pi palette** instead of through the library's own builders.
+ *
+ * Why not the builders: in `com.mikepenz:multiplatform-markdown-renderer-m3:0.45.0`
+ * four of the five are composable functions, because their defaults read
+ * `MaterialTheme` — `multiplatform-markdown-renderer-m3/.../m3/MarkdownColors.kt`
+ * declares `@Composable fun markdownColor(...)`, its sibling
+ * `MarkdownTypography.kt` the same, and in the core artifact
+ * `.../model/MarkdownPadding.kt` and `.../model/MarkdownDimens.kt` are
+ * `@Composable fun markdownPadding(...)` / `markdownDimens(...)`. A composable
+ * function cannot be called from `remember`'s calculation lambda — that lambda
+ * is `@DisallowComposableCalls` — so `remember { piMarkdownColors() }` is
+ * rejected by the Compose compiler with "Composable invocations can only happen
+ * from the context of a @Composable function". That is exactly how the previous
+ * attempt at this patch (recorded in `docs/gap-disposition.md` section 10.1)
+ * broke the build.
+ *
+ * The fix is to keep the *reads* composable and the *construction* pure:
+ * `PiMarkdown.kt` reads `PiTheme.palette`, `isSystemInDarkTheme()`,
+ * `MaterialTheme.typography.bodyLarge` and `PiTheme.text.mono` at the
+ * composition point and passes them here, so every function in this file is an
+ * ordinary function and `remember(inputs) { ... }` is legal.
+ *
+ * Two of the five then need a detail of their own, because the library keeps the
+ * implementation it returns private:
+ *
+ * * `markdownColor` returns the public `DefaultMarkdownColors` data class
+ *   (`.../model/MarkdownColors.kt`), so [piMarkdownColors] constructs it
+ *   directly. Its `alert` slot comes from `markdownAlertColors`, a plain
+ *   (non-composable) function in the same artifact
+ *   (`.../model/MarkdownAlertColors.kt`), so [piAlertColors] is pure too.
+ * * `markdownTypography` returns the public `DefaultMarkdownTypography` data
+ *   class (`.../model/MarkdownTypography.kt`), so [piMarkdownTypography]
+ *   constructs it directly.
+ * * `markdownPadding` / `markdownDimens` return **private** data classes
+ *   (`private data class DefaultMarkdownPadding`, `.../model/MarkdownPadding.kt`;
+ *   `private data class DefaultMarkdownDimens`, `.../model/MarkdownDimens.kt`),
+ *   so they cannot be constructed from here. Their interfaces are public and
+ *   carry no behaviour, so this file implements them ([PiMarkdownPadding],
+ *   [PiMarkdownDimens]) with the same field values the builders were being
+ *   called with. Those two objects depend on nothing in the composition at all,
+ *   so they are top-level `val`s: allocated once per process, not once per
+ *   frame. The library defaults the app does not override (`blockQuoteBar`, the
+ *   alert paddings/dimens, `tableCellWidth`, `tableCellPadding`,
+ *   `tableCornerSize`) are transcribed from the 0.45.0 sources named in each
+ *   KDoc below — if that dependency is ever bumped, those numbers have to be
+ *   re-checked against the new artifact: an interface change fails the build
+ *   loudly, a changed default would not.
+ *
+ * The fifth object, `MarkdownComponents`, is not built here: its builder
+ * `markdownComponents(...)` is **not** composable (see `PiMarkdownComponents.kt`),
+ * so it is cached with `remember` as it stands.
+ */
 
 /**
  * pi's markdown tokens, mapped onto the renderer's colour slots.
@@ -55,37 +111,41 @@ import com.mikepenz.markdown.model.markdownPadding
  * GFM alerts (`> [!NOTE]`, a 0.45.0 feature pi's terminal does not have) are
  * mapped onto pi's own semantic tokens rather than left to Material 3, so no
  * alert accent can drift with the device wallpaper — see [piAlertColors].
+ *
+ * This is the body of the library's `markdownColor` (0.45.0,
+ * `multiplatform-markdown-renderer-m3/.../m3/MarkdownColors.kt`), with the
+ * composable part — the `MaterialTheme` defaults — moved to the call site.
+ *
+ * @param palette pi's resolved token set, read from `PiTheme.palette`.
+ * @param darkTheme the renderer's own light/dark flag, read once per
+ *   composition by the caller.
  */
-@Composable
-internal fun piMarkdownColors(): MarkdownColors {
-    val palette = PiTheme.palette
-    // One read for both slots: the renderer uses this flag for its own derived
-    // container/on-container pairs, and [piAlertColors] uses it only to satisfy
-    // the same signature while overriding every accent itself.
-    val darkTheme = isSystemInDarkTheme()
-    return markdownColor(
+internal fun piMarkdownColors(palette: PiPalette, darkTheme: Boolean): MarkdownColors =
+    DefaultMarkdownColors(
         text = palette.text,
         codeBackground = palette.cardBg,
         inlineCodeBackground = palette.infoBg,
         dividerColor = palette.mdHr,
         tableBackground = palette.cardBg,
-        darkTheme = darkTheme,
-        alert = piAlertColors(darkTheme),
+        // One value for both slots: the renderer uses this flag for its own
+        // derived container/on-container pairs, and the alert accents below
+        // override every accent this app draws.
+        alert = piAlertColors(palette, darkTheme),
     )
-}
 
 /**
  * GFM alert accents, taken from pi's semantic tokens instead of the library's
  * Material 3 defaults.
  *
- * The library defaults to `MarkdownAlertColorDefaults`, which resolves against
- * `MaterialTheme.colorScheme`; this app derives its scheme from dynamic colour on
- * Android 12+, so an alert bar would be the only markdown element whose colour is
- * not pi's. `PiPalette`'s own doc says exactly why that is not acceptable: a
- * state colour that drifts with the wallpaper is a state colour you cannot trust.
+ * The library defaults to `MarkdownAlertColorDefaults`, which is GitHub's own
+ * blue/green/purple/amber/red palette (`.../model/MarkdownAlertColors.kt`);
+ * this app derives its scheme from dynamic colour on Android 12+, so an alert
+ * bar would be the only markdown element whose colour is not pi's. `PiPalette`'s
+ * own doc says exactly why that is not acceptable: a state colour that drifts
+ * with the wallpaper is a state colour you cannot trust.
  *
- * pi has no GFM alerts (its terminal cannot render them), so there is no token to
- * be faithful *to*. Each accent is therefore the closest pi token by meaning:
+ * pi has no GFM alerts (its terminal cannot render them), so there is no token
+ * to be faithful *to*. Each accent is therefore the closest pi token by meaning:
  *
  * | GitHub alert | pi token      | why |
  * |--------------|---------------|-----|
@@ -94,11 +154,12 @@ internal fun piMarkdownColors(): MarkdownColors {
  * | `IMPORTANT`  | `mdHeading`   | the most prominent neutral token |
  * | `WARNING`    | `warning`     | the token's literal name |
  * | `CAUTION`    | `error`       | the token's literal name |
+ *
+ * `markdownAlertColors` itself is not composable — only the Material 3
+ * `markdownColor` default that calls it is — so this stays pure and cacheable.
  */
-@Composable
-internal fun piAlertColors(darkTheme: Boolean): MarkdownAlertColors {
-    val palette = PiTheme.palette
-    return markdownAlertColors(
+internal fun piAlertColors(palette: PiPalette, darkTheme: Boolean): MarkdownAlertColors =
+    markdownAlertColors(
         darkTheme = darkTheme,
         note = palette.mdQuote,
         tip = palette.success,
@@ -106,7 +167,6 @@ internal fun piAlertColors(darkTheme: Boolean): MarkdownAlertColors {
         warning = palette.warning,
         caution = palette.error,
     )
-}
 
 /**
  * pi's markdown type hierarchy, expressed in pi's colours.
@@ -116,15 +176,24 @@ internal fun piAlertColors(darkTheme: Boolean): MarkdownAlertColors {
  * scale every Compose surface already has — a heading in a phone-sized column
  * that is the same size as body text is unreadable, and pi's own HTML export
  * makes the same trade for the same reason.
+ *
+ * Body of the library's `markdownTypography` (0.45.0,
+ * `multiplatform-markdown-renderer-m3/.../m3/MarkdownTypography.kt`), with its
+ * two Material inputs lifted to parameters.
+ *
+ * @param palette pi's resolved token set.
+ * @param base the body style this app's prose uses, read from
+ *   `MaterialTheme.typography.bodyLarge`.
+ * @param mono the mono role, read from `PiTheme.text.mono`.
  */
-@Composable
-internal fun piMarkdownTypography(): MarkdownTypography {
-    val palette = PiTheme.palette
-    val base = MaterialTheme.typography.bodyLarge
-    val mono = PiTheme.text.mono
+internal fun piMarkdownTypography(
+    palette: PiPalette,
+    base: TextStyle,
+    mono: TextStyle,
+): MarkdownTypography {
     val heading = base.copy(color = palette.mdHeading, fontWeight = FontWeight.SemiBold)
 
-    return markdownTypography(
+    return DefaultMarkdownTypography(
         h1 = heading.copy(
             fontSize = 22.sp,
             lineHeight = 30.sp,
@@ -157,9 +226,32 @@ internal fun piMarkdownTypography(): MarkdownTypography {
  * pi's rhythm, as far as the renderer exposes it: block spacing stays tight so a
  * long answer does not become a column of whitespace, and the code/quote inset
  * is the same [PiSpacing.card] every other card in the app uses.
+ *
+ * Implements the library's public `MarkdownPadding` interface, because the
+ * builder's own implementation is private and the builder itself is composable
+ * (`multiplatform-markdown-renderer/.../model/MarkdownPadding.kt`). The values
+ * are the ones the app already passed to `markdownPadding(...)`; the two slots
+ * it did not pass — `blockQuoteBar` and `alert` — keep the 0.45.0 defaults,
+ * `PaddingValues.Absolute(left = 4.dp, top = 2.dp, right = 4.dp, bottom = 2.dp)`
+ * and `markdownAlertPadding()`, which is itself a plain function and is called
+ * here with its own defaults.
  */
-@Composable
-internal fun piMarkdownPadding(): MarkdownPadding = markdownPadding(
+@Immutable
+private data class PiMarkdownPadding(
+    override val block: Dp,
+    override val list: Dp,
+    override val listItemTop: Dp,
+    override val listItemBottom: Dp,
+    override val listIndent: Dp,
+    override val codeBlock: PaddingValues,
+    override val blockQuote: PaddingValues,
+    override val blockQuoteText: PaddingValues,
+    override val blockQuoteBar: PaddingValues.Absolute,
+    override val alert: MarkdownAlertPadding,
+) : MarkdownPadding
+
+/** The one [PiMarkdownPadding] instance; it depends on nothing in the composition. */
+internal val piMarkdownPadding: MarkdownPadding = PiMarkdownPadding(
     block = 2.dp,
     list = 4.dp,
     listItemTop = 2.dp,
@@ -168,13 +260,40 @@ internal fun piMarkdownPadding(): MarkdownPadding = markdownPadding(
     codeBlock = PaddingValues(horizontal = PiSpacing.card, vertical = 10.dp),
     blockQuote = PaddingValues(horizontal = PiSpacing.card, vertical = 0.dp),
     blockQuoteText = PaddingValues(vertical = 4.dp),
+    blockQuoteBar = PaddingValues.Absolute(left = 4.dp, top = 2.dp, right = 4.dp, bottom = 2.dp),
+    alert = markdownAlertPadding(),
 )
 
-/** 12dp corners keep code blocks recognisably cards rather than slabs. */
-@Composable
-internal fun piMarkdownDimens(): MarkdownDimens = markdownDimens(
+/**
+ * 12 dp corners keep code blocks recognisably cards rather than slabs.
+ *
+ * Same construction as [piMarkdownPadding]: the interface is public, the
+ * builder's implementation is private and the builder is composable
+ * (`multiplatform-markdown-renderer/.../model/MarkdownDimens.kt`). The four
+ * values the app passed are kept; the three it did not (`tableCellWidth = 160.dp`,
+ * `tableCellPadding = 16.dp`, `tableCornerSize = 8.dp`) and
+ * `alert = markdownAlertDimens()` are the 0.45.0 defaults, transcribed.
+ */
+@Immutable
+private data class PiMarkdownDimens(
+    override val dividerThickness: Dp,
+    override val codeBackgroundCornerSize: Dp,
+    override val blockQuoteThickness: Dp,
+    override val tableMaxWidth: Dp,
+    override val tableCellWidth: Dp,
+    override val tableCellPadding: Dp,
+    override val tableCornerSize: Dp,
+    override val alert: MarkdownAlertDimens,
+) : MarkdownDimens
+
+/** The one [PiMarkdownDimens] instance; constant, like its padding sibling. */
+internal val piMarkdownDimens: MarkdownDimens = PiMarkdownDimens(
     dividerThickness = 1.dp,
     codeBackgroundCornerSize = 12.dp,
     blockQuoteThickness = 3.dp,
     tableMaxWidth = Dp.Unspecified,
+    tableCellWidth = 160.dp,
+    tableCellPadding = 16.dp,
+    tableCornerSize = 8.dp,
+    alert = markdownAlertDimens(),
 )

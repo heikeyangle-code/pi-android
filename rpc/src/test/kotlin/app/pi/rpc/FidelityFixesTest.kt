@@ -417,8 +417,9 @@ class FidelityFixesTest {
 
     @Test
     fun `a length stop reports the truncation instead of looking complete`() {
-        // components/assistant-message.ts prints a red line for `length`; without
-        // it an answer cut off by the output-token limit reads as finished.
+        // assistant-message.ts:182-185 prints a red line for `length`
+        // unconditionally — without it an answer cut off by the output-token
+        // limit reads as finished.
         val r = reducer()
         r.onEvent(
             PiEvents.parse(
@@ -430,23 +431,73 @@ class FidelityFixesTest {
     }
 
     @Test
-    fun `an aborted turn closes its pending tool cards`() {
+    fun `a length stop closes no tool card`() {
+        // interactive-mode.ts:3295 closes pending tools only for `aborted`/`error`;
+        // `length` takes the else branch at :3306 and leaves them alone. pi's own
+        // comment upstream says a length stop "can happen before a tool call is
+        // complete", which is why the card must not be declared failed.
         val r = reducer()
         r.onEvent(PiEvents.parse("""{"type":"message_update","assistantMessageEvent":{"type":"toolcall_start","contentIndex":0,"id":"c1","toolName":"bash"}}"""))
+        r.onEvent(
+            PiEvents.parse(
+                """{"type":"message_end","message":{"role":"assistant","content":[{"type":"toolCall","id":"c1","name":"bash","arguments":{"command":"sleep 99"}}],"stopReason":"length"}}""",
+            ),
+        )
+        assertEquals(ToolStatus.Pending, r.transcript.filterIsInstance<ToolCall>().single().status)
+        assertEquals("回复被令牌上限截断", r.transcript.filterIsInstance<ErrorText>().single().message)
+    }
+
+    @Test
+    fun `an aborted turn with a tool call closes its card and prints no second line`() {
+        // The same assistant message that opened the card is the one that ends
+        // (`message_end` carries the final `message`), so `hasToolCalls` is true,
+        // assistant-message.ts:187 is false and pi prints no row — the closed card
+        // carries the error instead (`interactive-mode.ts:3298-3304`).
+        val r = reducer()
+        r.onEvent(PiEvents.parse("""{"type":"message_update","assistantMessageEvent":{"type":"toolcall_start","contentIndex":0,"id":"c1","toolName":"bash"}}"""))
+        r.onEvent(
+            PiEvents.parse(
+                """{"type":"message_end","message":{"role":"assistant","content":[""" +
+                    """{"type":"toolCall","id":"c1","name":"bash","arguments":{"command":"sleep 99"}}],""" +
+                    """"stopReason":"aborted","errorMessage":"Stopped by user"}}""",
+            ),
+        )
+        assertTrue("no ErrorText row when the message carried a tool call", r.transcript.none { it is ErrorText })
+        val call = r.transcript.filterIsInstance<ToolCall>().single()
+        assertEquals(ToolStatus.Error, call.status)
+        assertTrue(call.isError)
+        assertTrue(call.endedAt != null)
+        assertEquals("Stopped by user", call.output)
+    }
+
+    @Test
+    fun `an aborted turn with no tool call prints the abort line`() {
+        val r = reducer()
         r.onEvent(
             PiEvents.parse(
                 """{"type":"message_end","message":{"role":"assistant","content":[],"stopReason":"aborted","errorMessage":"Stopped by user"}}""",
             ),
         )
-        assertTrue(r.transcript.any { it is ErrorText && it.detail == "Stopped by user" })
-        val call = r.transcript.filterIsInstance<ToolCall>().single()
-        assertEquals(ToolStatus.Error, call.status)
-        assertTrue(call.isError)
-        assertTrue(call.endedAt != null)
+        val error = r.transcript.single() as ErrorText
+        assertEquals("Stopped by user", error.message)
     }
 
     @Test
-    fun `an error stop keeps pi's own message as the detail`() {
+    fun `pi's fixed "Request was aborted" literal is not echoed`() {
+        // assistant-message.ts:190-191: `message.errorMessage !== "Request was
+        // aborted"` — pi refuses that one string and prints its own fixed line.
+        val r = reducer()
+        r.onEvent(
+            PiEvents.parse(
+                """{"type":"message_end","message":{"role":"assistant","content":[],"stopReason":"aborted","errorMessage":"Request was aborted"}}""",
+            ),
+        )
+        val error = r.transcript.single() as ErrorText
+        assertEquals("回合已中止", error.message)
+    }
+
+    @Test
+    fun `an error stop with no tool call keeps pi's own message as the sentence`() {
         val r = reducer()
         r.onEvent(
             PiEvents.parse(
@@ -454,8 +505,20 @@ class FidelityFixesTest {
             ),
         )
         val error = r.transcript.single() as ErrorText
-        assertEquals("模型调用失败", error.message)
-        assertEquals("529 overloaded", error.detail)
+        assertEquals("529 overloaded", error.message)
+    }
+
+    @Test
+    fun `an error stop with a tool call closes the card and prints no row`() {
+        val r = reducer()
+        r.onEvent(PiEvents.parse("""{"type":"message_update","assistantMessageEvent":{"type":"toolcall_start","contentIndex":0,"id":"c1","toolName":"bash"}}"""))
+        r.onEvent(
+            PiEvents.parse(
+                """{"type":"message_end","message":{"role":"assistant","content":[{"type":"toolCall","id":"c1","name":"bash","arguments":{}}],"stopReason":"error","errorMessage":"529 overloaded"}}""",
+            ),
+        )
+        assertTrue(r.transcript.none { it is ErrorText })
+        assertEquals("529 overloaded", r.transcript.filterIsInstance<ToolCall>().single().output)
     }
 
     @Test
@@ -473,6 +536,122 @@ class FidelityFixesTest {
         )
         assertTrue(r.transcript.none { it is ErrorText })
         assertEquals(1, r.transcript.size)
+    }
+
+    // ---------------------------------- F2/F3 on the replay path (persisted)
+
+    @Test
+    fun `history replay reports a length truncation exactly like the live stream`() {
+        // The persisted assistant message keeps `stopReason`/`errorMessage`
+        // verbatim (`packages/ai/src/types.ts:440,443`), so `get_entries` replay
+        // must print the same row the live `message_end` did — until now the
+        // replay path ignored the field and a truncated answer looked finished.
+        val r = reducer()
+        r.seedFromHistory(
+            listOf(
+                obj(
+                    """{"type":"message","id":"a1","timestamp":1000,"message":{"role":"assistant",""" +
+                        """"content":[{"type":"text","text":"half"}],"stopReason":"length"}}""",
+                ),
+            ),
+        )
+        val error = r.transcript.filterIsInstance<ErrorText>().single()
+        assertEquals("回复被令牌上限截断", error.message)
+        assertEquals("a1-turn-failed", error.key)
+        assertEquals("half", r.transcript.filterIsInstance<AssistantText>().single().text)
+    }
+
+    @Test
+    fun `history replay closes the tool cards an aborted turn left pending`() {
+        // interactive-mode.ts:3735-3746 — on replay pi hands every tool component
+        // the aborted assistant entry opened `updateResult({isError:true})`,
+        // because the `toolResult` message for it never arrives. Because that
+        // entry also carries a tool call, assistant-message.ts:187 is false and
+        // no separate row is printed.
+        val r = reducer()
+        r.seedFromHistory(
+            listOf(
+                obj(
+                    """{"type":"message","id":"a1","timestamp":1000,"message":{"role":"assistant",""" +
+                        """"content":[{"type":"toolCall","id":"c1","name":"bash","arguments":{"command":"sleep 99"}}],""" +
+                        """"stopReason":"aborted","errorMessage":"Operation aborted"}}""",
+                ),
+            ),
+        )
+        assertTrue("no ErrorText row when the entry carried a tool call", r.transcript.none { it is ErrorText })
+        val call = r.transcript.filterIsInstance<ToolCall>().single()
+        assertEquals(ToolStatus.Error, call.status)
+        assertTrue(call.isError)
+        assertEquals("Operation aborted", call.output)
+        assertTrue(call.endedAt != null)
+    }
+
+    @Test
+    fun `history replay leaves a length-truncated tool card pending`() {
+        // The `length` half of ruling 1, on the replay path: interactive-mode.ts:3295
+        // /:3735 never include `length` in the close condition.
+        val r = reducer()
+        r.seedFromHistory(
+            listOf(
+                obj(
+                    """{"type":"message","id":"a1","timestamp":1000,"message":{"role":"assistant",""" +
+                        """"content":[{"type":"toolCall","id":"c1","name":"bash","arguments":{"command":"sleep 99"}}],""" +
+                        """"stopReason":"length"}}""",
+                ),
+            ),
+        )
+        assertEquals(ToolStatus.Pending, r.transcript.filterIsInstance<ToolCall>().single().status)
+        assertEquals("回复被令牌上限截断", r.transcript.filterIsInstance<ErrorText>().single().message)
+    }
+
+    @Test
+    fun `history replay keeps pi's own errorMessage for an error stop`() {
+        val r = reducer()
+        r.seedFromHistory(
+            listOf(
+                obj(
+                    """{"type":"message","id":"a1","timestamp":1000,"message":{"role":"assistant",""" +
+                        """"content":[],"stopReason":"error","errorMessage":"529 overloaded"}}""",
+                ),
+            ),
+        )
+        val error = r.transcript.filterIsInstance<ErrorText>().single()
+        assertEquals("529 overloaded", error.message)
+    }
+
+    @Test
+    fun `a normal history stop adds no error row and does not close a pending card`() {
+        // `toolUse`/`stop` are the two reasons that still lead to a result
+        // (`packages/ai/src/types.ts:406`); the toolResult entry follows and
+        // finalises the card, so replay must leave it pending at this point.
+        val r = reducer()
+        r.seedFromHistory(
+            listOf(
+                obj(
+                    """{"type":"message","id":"a1","timestamp":1000,"message":{"role":"assistant",""" +
+                        """"content":[{"type":"toolCall","id":"c1","name":"bash","arguments":{"command":"ls"}}],""" +
+                        """"stopReason":"toolUse"}}""",
+                ),
+            ),
+        )
+        assertTrue(r.transcript.none { it is ErrorText })
+        assertEquals(ToolStatus.Pending, r.transcript.filterIsInstance<ToolCall>().single().status)
+    }
+
+    @Test
+    fun `a re-seed of a failed turn keeps the key stable`() {
+        val entries = listOf(
+            obj(
+                """{"type":"message","id":"a1","timestamp":1000,"message":{"role":"assistant",""" +
+                    """"content":[{"type":"text","text":"half"}],"stopReason":"length"}}""",
+            ),
+        )
+        val r = reducer()
+        r.seedFromHistory(entries)
+        val first = r.transcript.filterIsInstance<ErrorText>().single().key
+        r.seedFromHistory(entries)
+        assertEquals(1, r.transcript.filterIsInstance<ErrorText>().size)
+        assertEquals(first, r.transcript.filterIsInstance<ErrorText>().single().key)
     }
 
     // -------------------------------------- F24/F23/F16/F18: dropped payloads

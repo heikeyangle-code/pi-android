@@ -42,7 +42,9 @@ class PiRpcException(
  * `PiEngineSession.prompt` mirrors the message into the local transcript before
  * sending it; routing them through a second path would either duplicate that
  * side effect or bypass it. They stay on [PiEngineSession] where the transcript
- * lives.
+ * lives, and so does the local echo a queued `steer`/`follow_up` needs
+ * (`PiEngineSession.echoUserPrompt`), because a reducer mutation has to be
+ * published by the engine to reach the UI (`PiEngineSession.publication`).
  *
  * Timeouts default to [DEFAULT_TIMEOUT_MS]; the commands that can legitimately
  * take minutes use [SLOW_TIMEOUT_MS], and every function lets the caller

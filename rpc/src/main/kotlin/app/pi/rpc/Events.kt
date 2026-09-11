@@ -145,10 +145,26 @@ sealed interface PiEvent {
         val display: Boolean? = null,
         /**
          * pi's own failure text for this message. It is what
-         * `components/assistant-message.ts` prints under an aborted/errored
-         * answer, and the only detail available when `stopReason` is `error`.
+         * `packages/coding-agent/src/modes/interactive/components/assistant-message.ts:190-198`
+         * prints under an aborted/errored answer, and the only detail available
+         * when `stopReason` is `error`.
          */
         val errorMessage: String? = null,
+        /**
+         * `message.content.some(c => c.type === "toolCall")` for the message that
+         * just ended — the exact condition pi's own transcript row uses to decide
+         * whether an `aborted`/`error` turn gets a red line
+         * (`packages/coding-agent/src/modes/interactive/components/assistant-message.ts:180,187`).
+         *
+         * It is parsed rather than dropped because the reducer has no other
+         * source: the live `message_end` carries no `content`, and the reducer's
+         * tool index cannot tell "this message called a tool" from "an earlier
+         * message left a card open". pi does not strip it —
+         * `modes/json-event.ts:53-55` returns a non-`message_update` event
+         * verbatim — and [PiEvents.parse] already reads `content` for [text], so
+         * this is the same array read once more instead of discarded.
+         */
+        val hasToolCalls: Boolean = false,
     ) : PiEvent {
         override val type = "message_end"
     }
@@ -402,6 +418,7 @@ object PiEvents {
 
         "message_end" -> {
             val msg = o.obj("message")
+            val content = msg?.get("content") ?: o["content"]
             PiEvent.MessageEnd(
                 role = msg?.str("role") ?: o.str("role"),
                 text = msg?.let { contentText(it["content"]) } ?: o.str("text"),
@@ -410,6 +427,7 @@ object PiEvents {
                 customType = msg?.str("customType") ?: o.str("customType"),
                 display = msg?.bool("display") ?: o.bool("display"),
                 errorMessage = msg?.str("errorMessage") ?: o.str("errorMessage"),
+                hasToolCalls = hasToolCallBlock(content),
             )
         }
 
@@ -651,3 +669,29 @@ internal fun contentText(element: JsonElement?): String? {
     }
     return text.takeIf { it.isNotEmpty() }
 }
+
+/**
+ * pi's `content.some(c => c.type === "toolCall")`
+ * (`packages/coding-agent/src/modes/interactive/components/assistant-message.ts:180`)
+ * over a content array that may be absent, a bare string or null.
+ *
+ * Wording matched exactly to pi's own spelling — camelCase `toolCall` — with the
+ * snake_case variants accepted for the same reason [PiEvents.parse] accepts them
+ * elsewhere: a provider or an older pi that spells it differently must not flip
+ * the decision silently.
+ *
+ * One predicate for both entry points on purpose. The live `message_end` event
+ * and the persisted `message` entry reach the transcript through different code
+ * paths (see [TranscriptReducer.onHistoryAssistant]), and a second copy of this
+ * check is exactly how "live and replay disagree" starts.
+ */
+internal fun hasToolCallBlock(content: JsonElement?): Boolean {
+    val blocks = content as? JsonArray ?: return false
+    return blocks.any { block ->
+        val obj = block as? JsonObject ?: return@any false
+        obj.str("type") in TOOL_CALL_BLOCK_TYPES
+    }
+}
+
+/** pi's spelling of a tool-call content block, plus the aliases the parser accepts. */
+internal val TOOL_CALL_BLOCK_TYPES = setOf("toolCall", "tool_call", "tool_use")

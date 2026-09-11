@@ -38,7 +38,7 @@ import kotlinx.coroutines.withTimeout
  * keeps running when the user leaves the screen
  * (docs/pi-android-app-design.md §7.1).
  *
- * Three properties this class is responsible for:
+ * Four properties this class is responsible for:
  *
  *  1. **Framing.** stdout is decoded and split by [JsonlFramer], never by a line
  *     reader — pi's records may legally contain U+2028/U+2029.
@@ -48,6 +48,12 @@ import kotlinx.coroutines.withTimeout
  *  3. **Degradation.** an unrecognised event or a newer pi must never blank the
  *     transcript; it surfaces as [PiEvent.Unknown] and is published like any
  *     other event.
+ *  4. **Publication.** every mutation of the reducer — the event path in [handle]
+ *     and the calls this class makes on the caller's behalf ([prompt],
+ *     [echoUserPrompt], [seedHistory]) — goes through [publish], which hands the
+ *     UI the rows that actually changed ([TranscriptPublication]). Rebuilding the
+ *     whole row list per event is what made a long streaming session progressively
+ *     laggier (docs/rendering-review.md F7 / RR-P7).
  *
  * This class knows nothing about Android or proot: it is handed already-built
  * argv/env, which is what makes it testable against a plain `node` process.
@@ -71,8 +77,51 @@ class PiEngineSession(
     val state: StateFlow<EngineState> = _state.asStateFlow()
 
     private val _changes = MutableStateFlow(0)
-    /** Bumped whenever the transcript changes, so Compose can observe it. */
+    /**
+     * Bumped whenever anything observable about the transcript moved, so Compose
+     * can observe it.
+     *
+     * It moves for **every** non-`response` event, including one whose
+     * [TranscriptChange] is [TranscriptChange.None] (`handle`), because a `None`
+     * change says "no row changed", not "nothing changed": `agent_start` sets
+     * `TranscriptReducer.streaming` and returns `None` (rpc/Transcript.kt:702-705),
+     * and a `message_update` carrying only `usage` does the same
+     * (rpc/Transcript.kt:859-863). The UI's composer reads that flag, so a
+     * revision that moved only for row changes would leave it stale.
+     *
+     * [publication] is the authoritative form of the same event: it carries this
+     * same number **plus** the change. This flow is kept because it is the
+     * contract callers already collect (`ui/PiSessionViewModel.kt:672`), and
+     * [publish] always writes [publication] first, so `publication.value.revision`
+     * is never smaller than what a collector of this flow just observed.
+     */
     val revision: StateFlow<Int> = _changes.asStateFlow()
+
+    private val _publication = MutableStateFlow(
+        TranscriptPublication(
+            revision = 0,
+            change = TranscriptChange.None,
+            rows = emptyList(),
+            changedIndices = emptyList(),
+            replaced = true,
+            streaming = false,
+        ),
+    )
+
+    /**
+     * The last reducer effect, with the rows it changed. See [publish] for the
+     * protocol a consumer has to follow.
+     */
+    val publication: StateFlow<TranscriptPublication> = _publication.asStateFlow()
+
+    /**
+     * The immutable snapshot handed out by the previous [publish].
+     *
+     * Kept because [changedIndices] is an identity diff against it: the reducer's
+     * own `TranscriptChange` reports a single index even when an event rewrote
+     * several rows (see [TranscriptPublication]).
+     */
+    private var publishedRows: List<TranscriptItem> = emptyList()
 
     val stderr = StringBuilder()
 
@@ -81,6 +130,69 @@ class PiEngineSession(
     private var waitJob: Job? = null
 
     enum class EngineState { Starting, Ready, Busy, Stopped, Failed }
+
+    /**
+     * One reducer effect, published atomically with the revision it belongs to.
+     *
+     * ## Why this exists
+     *
+     * The reducer already computes `TranscriptChange.Appended(index)` /
+     * `Updated(index)` so "the UI can update one row instead of recomposing the
+     * list" (`rpc/Transcript.kt:546-562`), but `PiEngineSession` used to throw that
+     * index away and only bump a counter — so the only thing the app could do on
+     * each of pi's streamed deltas was copy the whole list into a fresh `UiState`
+     * and recompose the entire screen (docs/rendering-review.md F7 / RR-P7).
+     *
+     * ## Why [change] alone is not enough
+     *
+     * `TranscriptChange` reports **one** index per event and several reducer paths
+     * deliberately report only the last row they touched:
+     *
+     *  - `finishStreaming` flips every still-streaming row and returns the last one
+     *    it touched (`rpc/Transcript.kt:1748-1773`), reached from `message_end`,
+     *    `agent_end` and `agent_settled` (`:678-707`);
+     *  - `failTurn` rewrites every pending tool card and returns the last
+     *    (`rpc/Transcript.kt:1181-1227`);
+     *  - a `tool_execution_end` that also appends a `ToolDiff` reports the appended
+     *    index while the tool row changed too — the `TranscriptChange` KDoc says so
+     *    (`rpc/Transcript.kt:553-555`, `:1032-1095`).
+     *
+     * A consumer that trusted `change` alone would leave a stopped turn's tool
+     * cards showing "运行中" and drop the error row `failTurn` appends. So
+     * [changedIndices] is the engine's own identity diff of the rows against the
+     * previous publication, and [replaced] says the list was rebuilt wholesale
+     * instead (`seedHistory`: `seedFromHistory` calls `reset()` and still answers
+     * `Appended`, `rpc/Transcript.kt:1365-1376`).
+     *
+     * ## Consumer protocol
+     *
+     *  - a consumer that has never seen a publication adopts [rows] as its list;
+     *  - when [replaced], adopt [rows] and ignore [changedIndices];
+     *  - otherwise re-read exactly [changedIndices]: rows below the consumer's own
+     *    length are replacements, rows at or past it are appends, in ascending
+     *    order (the reducer only ever appends at the tail, so an index is valid in
+     *    both the reducer's list and a consumer that is behind it);
+     *  - if a consumer's last seen revision is not `revision - 1`, it missed
+     *    publications (a `StateFlow` conflates, and the engine also publishes from
+     *    its own reader thread), and the only safe move is to adopt [rows] again.
+     *
+     * [change] is kept because it is the reducer's own word and it is cheap to act
+     * on for callers that only need to know the kind of movement.
+     */
+    data class TranscriptPublication(
+        /** Same number as [revision]. */
+        val revision: Int,
+        /** The reducer's own verdict for the event or call that produced this. */
+        val change: TranscriptChange,
+        /** The whole row list as of this revision; immutable and safe to hand around. */
+        val rows: List<TranscriptItem>,
+        /** Ascending row indices whose element identity changed; empty when [replaced]. */
+        val changedIndices: List<Int>,
+        /** True when [rows] must be adopted wholesale; see the class KDoc. */
+        val replaced: Boolean,
+        /** `TranscriptReducer.streaming` as of this revision. */
+        val streaming: Boolean,
+    )
 
     private fun nextId(): String = "req-${ids.incrementAndGet()}"
 
@@ -137,17 +249,95 @@ class PiEngineSession(
         }
         // The transcript is projected here, exactly once, for every event —
         // including `entry_appended`, whose payload really is on the wire
-        // (`agent-session.ts` emits `{type:"entry_appended", entry}`, which
-        // `json-event.ts` passes through and `TranscriptReducer.onEvent` projects).
-        // Callers must NOT call `transcript.onEntry(entry)` again: it would double
-        // the row. The revision below already moves for every non-`response`
-        // event, so subscribers see the change without help (fidelity/rendering
+        // (`agent-session.ts:2620` emits `{type:"entry_appended", entry}`, which
+        // `modes/json-event.ts` passes through and `TranscriptReducer.onEvent`
+        // projects at `rpc/Transcript.kt:768`). A caller must NOT call
+        // `transcript.onEntry(entry)` again: it would double the row. Reads of the
+        // reducer from outside this class are fine; *writes* are not — they must go
+        // through [publish] (via [prompt], [echoUserPrompt], [seedHistory]) or the
+        // change index and the row diff are never published (fidelity/rendering
         // review F5).
         val change: TranscriptChange = transcript.onEvent(event)
-        if (event !is PiEvent.Response || change != TranscriptChange.None) {
-            _changes.value = _changes.value + 1
+        // A `response` is pi answering a command; it never projects a row
+        // (`TranscriptReducer.onEvent`'s `else -> None`), so it must not wake the
+        // UI. Every other event does, even when the change is `None`, because the
+        // reducer also moves `streaming` / `thinkingLevel` / `lastUsage`.
+        if (change != TranscriptChange.None || event !is PiEvent.Response) {
+            publish(change)
         }
         _events.tryEmit(event)
+    }
+
+    // ------------------------------------------------------------- publication
+
+    /**
+     * Publish one reducer effect: [change], the rows it produced, and the exact
+     * rows that moved. The single writer of [revision] and [publication].
+     *
+     * Why the engine diffs rows itself instead of trusting `change`: see
+     * [TranscriptPublication]. The cost is one identity scan plus one reference
+     * copy per *row-changing* publication, which is strictly less work than the app
+     * used to do per revision — and, because the snapshot is built on the reader
+     * thread, the UI stops reading the reducer's mutable list across threads.
+     *
+     * Ordering is load-bearing: [publication] is written before [revision], so a
+     * collector of either sees a revision that [publication] already describes.
+     *
+     * @param replaced the caller knows the whole list was rebuilt (`seedHistory`).
+     */
+    private fun publish(change: TranscriptChange, replaced: Boolean = false) {
+        val current = transcript.transcript
+        val previous = publishedRows
+        // A shrink can only be `TranscriptReducer.reset()` (rpc/Transcript.kt:1798),
+        // and an empty `previous` is a consumer's first sight of the list: neither
+        // can be described by row indices, so both are a wholesale handoff.
+        val rolled = replaced || previous.isEmpty() || current.size < previous.size
+        val rows = when {
+            rolled -> current.toList()
+            // `None` means no row was touched — every mutating path in
+            // `TranscriptReducer` returns a non-`None` change (checked path by
+            // path: `finishStreaming` answers `None` only when it touched nothing,
+            // rpc/Transcript.kt:1772) — so the previous snapshot is still current
+            // and does not need copying. If a future reducer ever breaks that, the
+            // next publication's diff still picks the row up, because the diff is
+            // against this same snapshot rather than against `change`.
+            change == TranscriptChange.None && current.size == previous.size -> previous
+            else -> current.toList()
+        }
+        val indices = if (rolled) emptyList() else diffIndices(previous, rows)
+        publishedRows = rows
+        val next = _changes.value + 1
+        _publication.value = TranscriptPublication(
+            revision = next,
+            change = change,
+            rows = rows,
+            changedIndices = indices,
+            replaced = rolled,
+            streaming = transcript.streaming,
+        )
+        _changes.value = next
+    }
+
+    /**
+     * Row indices whose element identity differs between two lists, plus every row
+     * the new list added at the tail.
+     *
+     * `!==` rather than `!=`: reducer items are immutable data classes and every
+     * mutation path builds a new instance (`items[i] = current.copy(...)`), so an
+     * unchanged row is the *same object*, while `!=` would also compare a large
+     * tool output string for equality.
+     */
+    private fun diffIndices(
+        previous: List<TranscriptItem>,
+        rows: List<TranscriptItem>,
+    ): List<Int> {
+        val shared = minOf(previous.size, rows.size)
+        val changed = mutableListOf<Int>()
+        for (i in 0 until shared) {
+            if (previous[i] !== rows[i]) changed += i
+        }
+        for (i in shared until rows.size) changed += i
+        return changed
     }
 
     // --------------------------------------------------------------- sending
@@ -187,14 +377,53 @@ class PiEngineSession(
 
     // ------------------------------------------------------- typed operations
 
+    /**
+     * Send a prompt and mirror it into the local transcript before the wire call.
+     *
+     * The echo is local because pi's own TUI adds the user's row when
+     * `message_start` arrives with `role === "user"`
+     * (`modes/interactive/interactive-mode.ts:3223-3227`), and the reducer here
+     * appends nothing for a `user` message: it only clears the content-block maps
+     * for `assistant` (`rpc/Transcript.kt:669-675`). Without the echo the bubble the
+     * user just sent would not exist until the session was reopened and replayed
+     * (docs/rendering-review.md F1).
+     */
     fun prompt(
         message: String,
         images: List<PiImage> = emptyList(),
         streamingBehavior: app.pi.rpc.StreamingBehavior? = null,
     ) {
-        transcript.onUserPrompt(message, images)
-        _changes.value = _changes.value + 1
+        echoUserPrompt(message, images)
         send(PiCommands.prompt(nextId(), message, images, streamingBehavior))
+    }
+
+    /**
+     * Mirror a message the user sent or queued into the transcript, and publish it.
+     *
+     * This is the publishing form of `TranscriptReducer.onUserPrompt`, and it exists
+     * because the callers that queue text mid-turn do not go through [prompt]: pi's
+     * `steer` and `follow_up` are fire-and-forget and carry no echo of their own
+     * (pi's TUI only discovers a queued message when pi delivers it), so the app
+     * has to add the row itself at the moment it queues the text (F1). Calling
+     * `transcript.onUserPrompt` directly still creates the row, but the change is
+     * never published — no revision, no [publication] — and a caller that then
+     * wants the UI to show it has to rebuild the list by hand.
+     */
+    fun echoUserPrompt(text: String, images: List<PiImage> = emptyList()) {
+        publish(transcript.onUserPrompt(text, images))
+    }
+
+    /**
+     * Rebuild the whole stream from pi's persisted entries (`get_entries`).
+     *
+     * `TranscriptReducer.seedFromHistory` resets the reducer first and then still
+     * answers `TranscriptChange.Appended(lastIndex)` (`rpc/Transcript.kt:1365-1376`),
+     * which describes one appended row — so the publication is marked `replaced` and
+     * the caller must adopt [TranscriptPublication.rows] wholesale instead of
+     * inserting at that index.
+     */
+    fun seedHistory(entries: List<JsonObject>) {
+        publish(transcript.seedFromHistory(entries), replaced = true)
     }
 
     /**

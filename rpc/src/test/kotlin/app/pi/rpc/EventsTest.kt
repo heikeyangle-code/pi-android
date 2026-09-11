@@ -158,6 +158,29 @@ class EventsTest {
     }
 
     @Test
+    fun `message_end reports whether the message carried a tool call`() {
+        // The reducer decides between "print a red line" and "the card carries the
+        // error" on this flag, and pi's own condition is
+        // `message.content.some(c => c.type === "toolCall")`
+        // (modes/interactive/components/assistant-message.ts:180). The live
+        // `message_end` carries no other content, so it has to survive the parse.
+        val withCall = PiEvents.parse(
+            """{"type":"message_end","message":{"role":"assistant","content":[""" +
+                """{"type":"toolCall","id":"c1","name":"bash","arguments":{}}],"stopReason":"aborted"}}""",
+        ) as PiEvent.MessageEnd
+        assertTrue(withCall.hasToolCalls)
+
+        val withoutCall = PiEvents.parse(
+            """{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"hi"}],"stopReason":"length"}}""",
+        ) as PiEvent.MessageEnd
+        assertEquals(false, withoutCall.hasToolCalls)
+
+        // A message with no `content` at all is not a tool call either.
+        val empty = PiEvents.parse("""{"type":"message_end","message":{"role":"assistant"}}""") as PiEvent.MessageEnd
+        assertEquals(false, empty.hasToolCalls)
+    }
+
+    @Test
     fun `every documented event type maps to a typed case`() {
         val samples = listOf(
             """{"type":"agent_start"}""",

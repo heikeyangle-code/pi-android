@@ -50,6 +50,17 @@ const TERMUX = "https://packages.termux.dev/apt/termux-main";
 const PI_VERSION = "0.85.1";
 
 /** Pinned upstream artifacts. `sha256: null` means "record on first resolve". */
+// Deliberately absent: git. pi's `git:` package source shells out to a `git`
+// binary on the guest's PATH (packages/coding-agent/src/core/package-manager.ts:
+// 1850,1852,1932-1956, spawned with the process env at :2604-2611), and this list
+// is what would have to carry it. It is not here on purpose: measured cost is
+// ~9 MiB of extra compressed payload (git + /usr/lib/git-core 7.3 MiB, plus the
+// 15 libraries git-remote-http needs that ubuntu-base does not ship, 1.6 MiB), the
+// pinned base has no CA store for git's HTTPS transport, the `git@host:path` forms
+// would still need ssh and credentials, and none of it is verifiable without a
+// device. The full reasoning, the measured sizes and the recipe if that decision
+// is ever reversed are in app/src/main/kotlin/app/pi/runtime/RuntimeProvisioner.kt
+// (installTool's KDoc) and docs/known-gaps.md K2.
 const ARTIFACTS = {
   proot: {
     url: `${TERMUX}/pool/main/p/proot/proot_5.1.107.92_aarch64.deb`,

@@ -835,6 +835,24 @@ Each is the smallest change that addresses the finding; apply one at a time.
 
 **P9 — F32, `remember` the markdown config objects** (`ui/render/PiMarkdown.kt:70-79`)
 
+> **CORRECTION (2026-09-11) — the diff below does not compile; do not apply it.**
+> Four of the five builders are `@Composable` (`markdownColor` and `markdownTypography` in
+> the m3 artifact, `markdownPadding` and `markdownDimens` in core; only
+> `markdownComponents` is not), and `remember`'s calculation lambda is declared
+> `@DisallowComposableCalls`. Wrapping them produced, on the Gradle release build:
+> `@Composable invocations can only happen from the context of a @Composable function`
+> (`PiMarkdown.kt:80-84`, `PiMarkdownTheme.kt:98-99` in the tree at `19c8a25`).
+> The fix that does compile is the one now in the tree: read the theme inputs at the
+> composition site (`PiTheme.palette`, `isSystemInDarkTheme()`,
+> `MaterialTheme.typography.bodyLarge`, `PiTheme.text.mono`), then remember **pure
+> constructors** against them — `piMarkdownColors(palette, darkTheme)` and
+> `piMarkdownTypography(palette, base, mono)` build the library's public
+> `DefaultMarkdownColors` / `DefaultMarkdownTypography` directly, and `padding`/`dimens`
+> are top-level constants implementing the library's public interfaces (its
+> `DefaultMarkdownPadding`/`DefaultMarkdownDimens` are private). See
+> `ui/render/PiMarkdown.kt:76-88` and `ui/render/PiMarkdownTheme.kt`. This is a class of
+> error `tools/typecheck.sh` cannot see: it does not run the Compose compiler plugin.
+
 ```diff
 -            colors = piMarkdownColors(),
 -            typography = piMarkdownTypography(),
