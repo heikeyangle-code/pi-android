@@ -96,6 +96,61 @@ android {
         buildConfig = true
     }
 
+    // ---------------------------------------------------------------------
+    // The five runtime payloads must be *stored*, not deflated.
+    //
+    // A device failed to boot a 127,195,427-byte APK with
+    //   failed to unpack ubuntu-base.tar.gz: runtime/ubuntu-base.tar.gz
+    // — AssetManager.open()'s bare-path FileNotFoundException — while the five
+    // archives account for ~115 MB of it, so they were demonstrably in the
+    // package and unreadable *through* it. A stored asset is served straight out
+    // of the APK's bytes, and it is also the only kind AssetManager.openFd() can
+    // hand back a file descriptor for; RuntimeProvisioner's reader has three
+    // layers (open/STREAMING, open/BUFFER, openFd) and the third is only real
+    // because of this block. The two changes are one fix, not two.
+    //
+    // The payloads are ubuntu-base.tar.gz, node.tar.gz, pi-engine.tar.gz,
+    // ripgrep.tar.gz and fd.tar.gz, so "gz" covers all five today. xz and tar are
+    // listed so a future repack (the assembler already re-compresses Node from
+    // .tar.xz to .tar.gz) cannot quietly reintroduce a compressed payload.
+    //
+    // AGP 8.13.2 DSL, checked against the artifacts and *compiled* against them
+    // rather than recalled:
+    //   * the block is `androidResources { }` — CommonExtension declares both
+    //     `getAndroidResources()` and `androidResources(Function1)` in
+    //     gradle-api-8.13.2.jar, and its receiver is ApplicationAndroidResources.
+    //   * inside it the canonical spelling is the *property*:
+    //         noCompress += listOf("gz", "xz", "tar")
+    //     `noCompress(String)` / `noCompress(String...)` still resolve but carry
+    //     @Deprecated("Replaced with property noCompress"). Kotlin types the getter
+    //     as the platform type (Mutable)Collection<String>!, so `+=` binds to
+    //     MutableCollection.plusAssign — verified by compiling both spellings
+    //     against the real jar with this project's Kotlin 2.2.21: the property
+    //     form is clean, the method form emits the deprecation warning.
+    //   * it is additive either way (AaptOptions calls Collections.addAll on the
+    //     internal list), so AAPT2's own default no-compress extensions (.png,
+    //     .jpg, …) are left in place.
+    //   * AGP turns these entries into AAPT2's `--no-compress-regex`, a
+    //     suffix-anchored, case-insensitive alternation — the `gz` entry becomes
+    //     the group `(g|G)(z|Z)$` (PackagingUtils.getNoCompressForAapt ->
+    //     AaptV2CommandBuilder.getNoCompressRegex). Matching on a suffix is why no
+    //     leading dot is needed.
+    //
+    // This does NOT touch jniLibs. `packaging.jniLibs.useLegacyPackaging` is a
+    // separate switch: it becomes
+    // PackagingUtils.getNativeLibrariesLibrariesPackagingMode(Boolean) ->
+    // NativeLibrariesPackagingMode, while `androidResources.noCompress` only
+    // reaches AAPT2's *asset* compression. The four lib*.so files are packaged by
+    // the `packaging {}` block below, unchanged.
+    //
+    // Storing the payloads makes the APK a little larger and the first launch a
+    // little slower (nothing to inflate, but nothing compressed either). That is
+    // the price of being able to open them at all.
+    // ---------------------------------------------------------------------
+    androidResources {
+        noCompress += listOf("gz", "xz", "tar")
+    }
+
     packaging {
         // Executables disguised as lib*.so must be written to disk, not mmapped
         // from the APK: Android 10+ refuses execve() on app_data_file, and

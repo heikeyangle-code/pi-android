@@ -88,6 +88,27 @@ jobs:
         run: |
           ls -lh app/build/outputs/apk/release/
           find app/build/outputs/apk -name '*.apk' -printf '%f %s bytes\n'
+      # A device reported "failed to unpack ubuntu-base.tar.gz:
+      # runtime/ubuntu-base.tar.gz" - AssetManager's FileNotFoundException text - on an APK
+      # that provably carried the payloads. The classic cause is AAPT2 deflating an asset,
+      # because AssetManager.openFd() refuses a compressed entry. app/build.gradle.kts now
+      # sets androidResources { noCompress += listOf("gz","xz","tar") } so all five land
+      # Stored, but that is only a claim about the build until an actual APK is inspected.
+      # This step is that inspection: five entries, none of them compressed.
+      - name: Verify runtime payloads are stored uncompressed
+        run: |
+          set -euo pipefail
+          apk="$(ls app/build/outputs/apk/release/*.apk | head -1)"
+          echo "inspecting $apk ($(stat -c %s "$apk") bytes)"
+          unzip -lv "$apk" | grep 'assets/runtime/' > /tmp/payloads.txt || true
+          cat /tmp/payloads.txt
+          count="$(grep -c 'assets/runtime/' /tmp/payloads.txt || true)"
+          compressed="$(grep 'assets/runtime/' /tmp/payloads.txt | grep -cv 'Stored' || true)"
+          echo "assets/runtime entries: $count, compressed: $compressed"
+          if [ "${count:-0}" -lt 5 ] || [ "${compressed:-1}" -ne 0 ]; then
+            echo "::error::expected five Stored runtime payloads, found $count with $compressed compressed"
+            exit 1
+          fi
       - uses: actions/upload-artifact@v4
         with:
           name: pi-android-${{ matrix.variant }}

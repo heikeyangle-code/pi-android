@@ -4,8 +4,10 @@ import android.content.res.AssetManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.io.FilterInputStream
 import java.io.IOException
 import java.io.InputStream
+import kotlin.math.roundToInt
 
 /**
  * Unpacks the bundled runtime on first launch, and again whenever the packaged
@@ -33,6 +35,27 @@ class RuntimeProvisioner(
 
     class ProvisioningException(message: String, cause: Throwable? = null) : IOException(message, cause)
 
+    /** One payload archive the assembler is expected to place in `assets/runtime/`. */
+    private data class Payload(val name: String, val required: Boolean)
+
+    /** What the pre-flight audit found for one payload. */
+    private data class PayloadInfo(
+        val asset: String,
+        val required: Boolean,
+        val bytes: Long,
+        val via: String?,
+        val error: String?,
+    ) {
+        val ok: Boolean get() = error == null && bytes > 0L
+    }
+
+    /**
+     * The pre-flight audit's result as rendered for the screen, one payload per
+     * line. Written by [auditPayloads]; read by [payloadReportBlock] when a later
+     * step fails, so a failure after the audit still carries the audit with it.
+     */
+    private var payloadReport: String = ""
+
     /**
      * @param revision any string that changes when the packaged payload changes
      *        (the app's versionCode plus a payload hash). Recorded in a stamp
@@ -46,6 +69,7 @@ class RuntimeProvisioner(
                     return@runCatching
                 }
                 val steps = buildList {
+                    add("校验内置载荷")
                     add("准备存储")
                     add("解压 Ubuntu 用户态")
                     add("解压 Node 运行时")
@@ -58,6 +82,18 @@ class RuntimeProvisioner(
                 var index = 0
                 fun next(label: String = steps[index]) = onStep(Step(label, index, steps.size))
 
+                // Pre-flight, and deliberately *before* wipe(): the audit is the
+                // step that can prove the APK's payload is unusable, and a package
+                // that cannot be read must not destroy a runtime that works.
+                // `auditPayloads` throws only for the four payloads the unpack
+                // needs; see its KDoc for why the engine is reported but not
+                // required. Its file-and-size list goes on screen in the step
+                // label so the next device failure is self-explanatory.
+                next()
+                val payloads = auditPayloads()
+                onStep(Step(auditLabel(payloads), index, steps.size))
+                index++
+
                 next(); wipe()
                 index++
 
@@ -67,7 +103,7 @@ class RuntimeProvisioner(
                 next(); extractNode()
                 index++
 
-                next(); installTool("ripgrep", "rg"); installTool("fd", "fd")
+                next(); installTool(RIPGREP_ARCHIVE, "rg"); installTool(FD_ARCHIVE, "fd")
                 index++
 
                 next(); configureGuest()
@@ -99,18 +135,20 @@ class RuntimeProvisioner(
         // message too, and the old single catch turned both into
         // "failed to unpack ubuntu-base.tar.gz: runtime/ubuntu-base.tar.gz". That
         // ambiguity is indistinguishable from a device failure and cost a round
-        // trip; a missing asset is a *build* failure and says so now.
+        // trip; [openPayload] now names the access layer that failed and the
+        // pre-flight audit is appended here, so even a half-way failure arrives
+        // with the contents of the package attached.
         val stream = openPayload(archive)
         try {
             stream.use { TarExtractor(into).extractGzip(it) }
         } catch (e: IOException) {
-            throw ProvisioningException("failed to unpack $assetName: ${e.message}", e)
+            throw ProvisioningException("failed to unpack $assetName: ${e.message}${payloadReportBlock()}", e)
         }
     }
 
     /**
      * Open a payload archive from the APK, and if that fails, say what the APK
-     * actually contains.
+     * actually contains and which access layer failed.
      *
      * A device reported `failed to unpack ubuntu-base.tar.gz: runtime/ubuntu-base.tar.gz`
      * on an APK that is 127,195,427 bytes — and the five archives alone account for
@@ -119,33 +157,208 @@ class RuntimeProvisioner(
      * mode failed it said nothing about the state of the APK, so a missing asset, a
      * differently-placed asset and a broken install were indistinguishable.
      *
-     * Now: STREAMING first, then BUFFER (some install paths have been observed to serve
-     * one mode and not the other), and if both fail the message lists what
-     * `assets/runtime/` does contain. That turns the next device attempt into an answer
-     * instead of another round of guessing.
+     * Three layers now, tried in order, each failure recorded separately:
+     *
+     *  1. `open(ACCESS_STREAMING)` — the normal path; inflates the entry itself.
+     *  2. `open(ACCESS_BUFFER)` — some install paths have been observed to serve
+     *     one mode and not the other.
+     *  3. `openFd()` + `AssetFileDescriptor.createInputStream()` — the classic way
+     *     to read an asset, and for a *stored* entry it is a plain file read with
+     *     no inflate step. It only works on stored entries (a compressed one
+     *     throws "can not be opened as a file descriptor; it is probably
+     *     compressed"), which is exactly what `noCompress += "gz"`
+     *     in app/build.gradle.kts now guarantees for these suffixes: layer 3 and
+     *     that build setting are one fix, not two.
+     *
+     * If all three fail, the message names each layer's failure (exception class
+     * and message, so `FileNotFoundException` and a truncated-entry `IOException`
+     * are not the same text) and lists `assets/runtime/` and the asset root as the
+     * APK actually serves them.
      */
     private fun openPayload(archive: String): InputStream {
-        val attempts = listOf(AssetManager.ACCESS_STREAMING, AssetManager.ACCESS_BUFFER)
+        val failures = mutableListOf<String>()
         var last: IOException? = null
-        for (mode in attempts) {
-            try {
-                return assets.open(archive, mode)
-            } catch (e: IOException) {
-                last = e
-            }
+
+        try {
+            return assets.open(archive, AssetManager.ACCESS_STREAMING)
+        } catch (e: IOException) {
+            last = e
+            failures += "1 open(ACCESS_STREAMING) failed: ${describe(e)}"
         }
-        val present = runCatching { assets.list("runtime")?.sorted()?.joinToString(", ") }.getOrNull()
-        val root = runCatching { assets.list("")?.sorted()?.joinToString(", ") }.getOrNull()
+
+        try {
+            return assets.open(archive, AssetManager.ACCESS_BUFFER)
+        } catch (e: IOException) {
+            last = e
+            failures += "2 open(ACCESS_BUFFER) failed: ${describe(e)}"
+        }
+
+        try {
+            val fd = assets.openFd(archive)
+            // `createInputStream()` hands back a stream over the descriptor. The
+            // wrapper closes the AssetFileDescriptor as well as the stream, and
+            // makes closing twice (or close-after-close) harmless: a leaked
+            // descriptor would be one more way to make a *later* payload fail.
+            return object : FilterInputStream(fd.createInputStream()) {
+                private var closed = false
+                override fun close() {
+                    if (closed) return
+                    closed = true
+                    try {
+                        super.close()
+                    } finally {
+                        runCatching { fd.close() }
+                    }
+                }
+            }
+        } catch (e: IOException) {
+            last = e
+            failures += "3 openFd() failed: ${describe(e)}"
+        }
+
         throw ProvisioningException(
-            "packaged asset missing: $archive is not in this APK (both ACCESS_STREAMING and " +
-                "ACCESS_BUFFER failed: ${last?.message}). " +
-                "assets/runtime/ contains: ${present?.ifBlank { "(nothing)" } ?: "(unlistable)"}. " +
-                "assets/ root contains: ${root?.ifBlank { "(nothing)" } ?: "(unlistable)"}. " +
-                "The five payload archives are generated at build time by tools/fetch-runtime.mjs " +
-                "(app/src/main/assets/runtime/ is not in git); an APK built without that step has " +
-                "assets/dexopt and nothing else.",
+            buildString {
+                append("packaged asset unreadable: $archive could not be opened from this APK.\n")
+                failures.forEach { append("  ").append(it).append("\n") }
+                append("assets/runtime/ contains: ").append(listAssets("runtime")).append("\n")
+                append("assets/ root contains: ").append(listAssets("")).append("\n")
+                append(payloadReportBlock())
+                append(PAYLOAD_HINT)
+            },
             last,
         )
+    }
+
+    // ------------------------------------------------------------- payload audit
+
+    /**
+     * Confirm, before anything is unpacked, that each payload archive is present
+     * in the APK *and readable*, and record its size.
+     *
+     * This is the screen-visible half of the fix for the device report above.
+     * Waiting for the unpack to fail tells the user almost nothing: the wipe has
+     * already run, and only one asset is named. Auditing all five first turns the
+     * next device attempt into a list of what the APK actually contains — file
+     * names and sizes, in the step label, and again in any later failure message
+     * through [payloadReportBlock].
+     *
+     * The audit runs before [wipe] on purpose: a package that cannot be read must
+     * not destroy a runtime that already works.
+     *
+     * A missing or unreadable *required* payload throws here (the unpack would fail
+     * on it a moment later, after the wipe). `pi-engine.tar.gz` is reported but not
+     * required, mirroring [extractEngine], which treats a package without the
+     * engine as provisionable and leaves installing it for later.
+     */
+    private fun auditPayloads(): List<PayloadInfo> {
+        val audited = PAYLOADS.map { inspectPayload(it) }
+        payloadReport = audited.joinToString("\n") { it.line() }
+
+        val missing = audited.filter { it.required && !it.ok }
+        if (missing.isNotEmpty()) {
+            throw ProvisioningException(
+                buildString {
+                    append("bundled runtime payload unusable: ")
+                    append(missing.joinToString(", ") { it.asset })
+                    append("\n")
+                    append(payloadReport).append("\n")
+                    missing.forEach { info ->
+                        append("\nreading ").append(info.asset).append(" failed:\n")
+                        append(info.error ?: "(no detail)").append("\n")
+                    }
+                    append("\nassets/runtime/ contains: ").append(listAssets("runtime"))
+                    append("\nassets/ root contains: ").append(listAssets(""))
+                    append("\n").append(PAYLOAD_HINT)
+                },
+            )
+        }
+        return audited
+    }
+
+    private fun inspectPayload(payload: Payload): PayloadInfo {
+        val asset = "runtime/${payload.name}"
+        return try {
+            val (bytes, via) = payloadSize(asset)
+            PayloadInfo(asset, payload.required, bytes, via, null)
+        } catch (e: IOException) {
+            PayloadInfo(asset, payload.required, 0L, null, describe(e))
+        }
+    }
+
+    /**
+     * Size of one payload in bytes, plus which access path produced the number.
+     *
+     * `AssetManager.openFd` is tried first: for a *stored* (uncompressed) ZIP
+     * entry the length comes straight out of the APK directory without moving a
+     * byte, and the `androidResources { noCompress += ... }` block in
+     * app/build.gradle.kts is what stores these suffixes. On an APK where AAPT2
+     * deflated them, `openFd` throws its "probably compressed"
+     * `FileNotFoundException` and the length is counted off the stream instead —
+     * through [openPayload], the same chain the unpacker uses, so an unreadable
+     * payload is reported with the same per-layer detail and the same directory
+     * listings.
+     */
+    private fun payloadSize(asset: String): Pair<Long, String> {
+        val viaFd = runCatching { assets.openFd(asset).use { it.length } }.getOrNull()
+        if (viaFd != null && viaFd > 0L) return viaFd to "openFd"
+        val counted = openPayload(asset).use { countBytes(it) }
+        return counted to "stream"
+    }
+
+    private fun countBytes(stream: InputStream): Long {
+        val buffer = ByteArray(64 * 1024)
+        var total = 0L
+        while (true) {
+            val read = stream.read(buffer)
+            if (read < 0) return total
+            total += read.toLong()
+        }
+    }
+
+    /** One line per payload for the step label and for [payloadReport]. */
+    private fun PayloadInfo.line(): String = buildString {
+        append(asset).append("  ")
+        if (ok) {
+            append(formatBytes(bytes))
+            if (via != null) append(" via ").append(via)
+        } else {
+            append("UNREADABLE")
+            if (error != null) append(" (").append(error.lineSequence().first()).append(")")
+        }
+        if (!required) append(" [optional]")
+    }
+
+    /** The same audit as one compact, on-screen line of names and sizes. */
+    private fun auditLabel(audited: List<PayloadInfo>): String =
+        "校验内置载荷：" + audited.joinToString(" · ") { info ->
+            val name = info.asset.removePrefix("runtime/")
+            if (info.ok) "$name ${formatBytes(info.bytes)}" else "$name 缺失/不可读"
+        }
+
+    /**
+     * The audit, for a failure that happens *after* it — an unpack that dies
+     * half way, or an `open()` that fails during extraction rather than during the
+     * audit. Empty when no audit ran in this provisioning attempt.
+     */
+    private fun payloadReportBlock(): String =
+        if (payloadReport.isBlank()) "" else "\npayload audit:\n$payloadReport\n"
+
+    private fun listAssets(dir: String): String =
+        runCatching { assets.list(dir)?.sorted()?.joinToString(", ") }
+            .getOrNull()
+            ?.ifBlank { "(empty)" }
+            ?: "(unlistable)"
+
+    private fun describe(e: Throwable): String =
+        "${e::class.java.simpleName}: ${e.message ?: "(no message)"}"
+
+    private fun formatBytes(bytes: Long): String = when {
+        bytes >= 1024L * 1024L -> {
+            val tenths = (bytes / 1048576.0 * 10).roundToInt()
+            "${tenths / 10}.${tenths % 10} MiB"
+        }
+        bytes >= 1024L -> "${bytes / 1024L} KiB"
+        else -> "$bytes B"
     }
 
     /**
@@ -239,14 +452,14 @@ class RuntimeProvisioner(
      * [installTool]'s shape (that is the path `ProotCommand.environment` puts on
      * PATH), and a CA bundle.
      */
-    private fun installTool(archiveBase: String, binaryName: String) {
-        val staging = File(paths.runtime, "$archiveBase-stage")
+    private fun installTool(archive: String, binaryName: String) {
+        val staging = File(paths.runtime, "${archive.removeSuffix(".tar.gz")}-stage")
         staging.deleteRecursively()
-        extractAsset("$archiveBase.tar.gz", staging)
+        extractAsset(archive, staging)
         val binary = staging.walkTopDown()
             .filter { it.isFile && it.name == binaryName }
             .maxByOrNull { it.length() }
-            ?: throw ProvisioningException("$binaryName not found in $archiveBase archive")
+            ?: throw ProvisioningException("$binaryName not found in $archive")
 
         val dir = File(paths.rootfs, "root/.pi/agent/bin")
         dir.mkdirs()
@@ -367,5 +580,41 @@ class RuntimeProvisioner(
         private const val UBUNTU_BASE = "ubuntu-base.tar.gz"
         private const val NODE_ARCHIVE = "node.tar.gz"
         private const val ENGINE_ARCHIVE = "pi-engine.tar.gz"
+        private const val RIPGREP_ARCHIVE = "ripgrep.tar.gz"
+        private const val FD_ARCHIVE = "fd.tar.gz"
+
+        /**
+         * Every payload archive `tools/fetch-runtime.mjs` writes into
+         * `app/src/main/assets/runtime/`, in the order the steps consume them.
+         *
+         * `required = false` only for the engine, mirroring [extractEngine]: the
+         * audit must report it, but a package without it is still a package this
+         * class can provision from, so it is not a reason to refuse to start.
+         *
+         * The list is the single place the five names are written down; the
+         * companion constants above are what the extracting steps themselves use.
+         */
+        private val PAYLOADS = listOf(
+            Payload(UBUNTU_BASE, required = true),
+            Payload(NODE_ARCHIVE, required = true),
+            Payload(RIPGREP_ARCHIVE, required = true),
+            Payload(FD_ARCHIVE, required = true),
+            Payload(ENGINE_ARCHIVE, required = false),
+        )
+
+        /**
+         * Why the payloads exist and what their absence means. Appended to every
+         * payload failure so the on-screen message carries the explanation with
+         * it, instead of requiring a lookup in this file.
+         *
+         * [PAYLOADS] is the load-bearing list, and the suffix list in
+         * app/build.gradle.kts (`gz`, plus `xz`/`tar` for a future repack) is what
+         * keeps all five openable: a compressed asset is the one
+         * `AssetManager.openFd` cannot open.
+         */
+        private const val PAYLOAD_HINT =
+            "The five payload archives are generated at build time by tools/fetch-runtime.mjs " +
+                "(app/src/main/assets/runtime/ is not in git); an APK built without that step has " +
+                "assets/dexopt and nothing else."
     }
 }
