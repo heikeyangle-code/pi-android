@@ -313,11 +313,14 @@
 | 选厂商 | `PiProviderPresets.all`（10 家 pi 内置 + 3 条 App 侧，`baseUrl`/`api` 已从 pi 的 `providers/*.ts` 抄好） | — |
 | **「检测并扫描模型」（唯一一个按钮）** | `suspend PiCredentialService.probe(preset, key, baseUrl)` | `Ok(models, endpoint, note)` / `Failed(kind, message, suggestion, endpoint)`——**`Failed.allowManual` 恒为 true** |
 | 勾选 + 保存 | `PiCredentialService.save(preset, key, baseUrl, api, choices, defaultModelId)` | `SaveResult(ok, steps, restart)`；`restart` 直接喂 `ExtensionLifecycle.installSucceeded(...)` |
-| **`PiRoot.kt`** | `PiSettingsStack(onRunAction = ...)` **目前没传**（默认 `null`），所以 `app.credentials.*` / `app.localModels.manage` 三行**点了没反应** | — |
+| **`PiRoot.kt`** | **已接（applied, uncommitted）**：`ui/PiRoot.kt:167-189` 现在传 `onRunAction`（`app.compaction.runNow` → RPC `compact`，`rpc-types.ts:44`；`app.credentials.oauth` 指向 TUI，因为 `rpc-types.ts:20-74` 里没有 login；其余给一条"还没有接入实现"的提示，不再静默）。凭证两行由 `ui/settings/PiSettingsStack.kt:145-158` 的 `hostActions` 直接开屏，不走确认对话框 | — |
 
 界面还需自己补两块：
 1. 扫到的 id **匹配 pi 内置目录取元数据**（数据源是 `PiCommands.getAvailableModels`——pi 的模型清单在**进程里**，不是文件）；匹配不上的用默认值并**标注"默认值，可改"**；
 2. 把两句事实写进界面文案：**`models.json` 完全没有锁**、**"扫描模型"不是 pi 的能力而是 App 侧知识**（常量已在 `PiModelScanner`/`PiProviderPresets` 注释里）。
+
+**状态（applied, uncommitted，未上 CI）**：界面已写，`app/src/main/kotlin/app/pi/ui/settings/PiCredentialScreen.kt`（四段：选厂商 / 粘 Key / 检测并扫描 / 勾选并保存；保存成功后走 `ExtensionLifecycle.installSucceeded` + `EngineRestartCoordinator` 确认式重启）。两条 UI 补充都做了：元数据取自 `ui/PiRoot.kt:200` 传入的 `get_available_models` 快照，匹配不上的标"默认值，可改"；`models.json` 无锁与"扫描是 App 侧知识"两句写在界面说明里（依据 `core/model-runtime.ts:180`、`packages/ai/src/models.ts:763`/`:831`）。
+**未做完的一处**：`PiCredentialService.preferences()` 把 `settings.json` 只写到 `agentTruthDir`（rootfs 侧），而 `PiEngineHost.kt:285-295` 现在把 `paths.agentDir` 绑到了 guest 的 `/root/.pi/agent` —— 所以保存的第三步写的是一个 pi 不读、App 也不读的文件（`auth.json`/`models.json` 因为 `PiAuthStorage`/`PiModelsFile` 写两份而不受影响）。修法是 `PiCredentialService.kt:59` 改成 `agentDir = mirrorAgentDir`（1 处，属 packages 的文件）。
 
 **之后**：I2（20 个动作行）→ I9（删会话 + `--continue`，先读 `cli.ts` 确认 `-c` 语义）→ I11（环境变量；`PiLaunchOptions` 已被接入 `PiEngineHost`，别重复实现）。
 
@@ -456,10 +459,16 @@ pi 能在**不新建会话文件**的前提下跳到任意历史点（`docs/sess
 App 的「分支」动作实际是 **fork，会写一个新会话文件**（`SessionTreeScreen.kt:74,165,226`）——**和 pi 的语义不同**，用户以为在"跳分支"，实际在"造新文件"。分支摘要也因此不可达。
 → 应补进 **F2**（协议做不到）。
 
-### I2. **全部 20 个动作类设置行都是死的**（DEFECT，E9 的扩展）
-`PiRoot.kt:130-138` **从不传 `onRunAction`**（默认 `null`，`PiSettingsStack.kt:34`），`SettingsGroupScreen.kt:151-170` 把它们降级成"这个入口由运行时接管…"。
+### I2. **全部 20 个动作类设置行都是死的**（DEFECT，E9 的扩展）——**已部分修复（applied, uncommitted），仍是 partial**
+**（以下三行是修复前的记载，保留以便复核；现状见下。）**
+`PiRoot.kt:130-138`（当时）**从不传 `onRunAction`**（默认 `null`，`PiSettingsStack.kt:34`），`SettingsGroupScreen.kt:151-170` 把它们降级成"这个入口由运行时接管…"。
 涉及**App 里唯一的 API Key/OAuth 凭证入口、会话导入、更新检查、日志查看、诊断导出**——**全部点了没反应**。而且**整个仓库没有 `auth.json` 的写入者**。
 （E9 只记了凭证/信任那几行，**这一条要扩到全部 20 行**。）
+
+**当前状态（19 个 `PiRowKind.Action` 行，`PiSettingsRegistry.kt:370/379/388/540/698/707/1443/1479/1488/1519/1554/1563/1572/1646/1655/1664/1673/1682/1692`，未上 CI）**：
+- **3 个真正有实现**：`app.credentials.apiKey` 与 `app.localModels.manage` → `PiCredentialScreen`（`ui/settings/PiSettingsStack.kt:145-158`）；`app.compaction.runNow` → RPC `compact`（`ui/PiRoot.kt:173`，依据 `rpc-types.ts:44`）；
+- **16 个只有一条明确提示**：`ui/PiRoot.kt:183-187` 弹"「X」还没有接入实现（docs/known-gaps.md §E9 / I2），当前点它不会有任何动作"——**不再是静默失效**，但也没有功能。**待决**：实现，或按 E9 原文从界面撤掉（父代理裁决：本轮保留提示，不删）。
+- 顺带修掉的重复行：`stopReasonRow()`/`liveTurnIssue` 已删（冗余，会与 rpc 归约器新写的失败行重复），见 `ui/PiSessionViewModel.kt` 的 `syncTranscript` KDoc。
 
 ### I3. `/export <path>.jsonl` **会把 HTML 写进 `.jsonl` 文件**（DEFECT，静默写错字节）
 App 永远调 `export_html`（`PiSessionViewModel.kt:1371-1376`），而它的命令面板却宣传支持 `.html/.jsonl`（`PiSlashCommands.kt:121-124`）。
@@ -530,7 +539,7 @@ pi 的 TUI 会按扩展名分支（`.jsonl` → `exportToJsonl`，`interactive-m
 | `contentIndex` | **真实抓包证明会错序，已修。** pi 真实 anthropic 适配器对 text(0)→tool_use(1)→text(2) 发出 `text_start@0, toolcall_start@1, text_start@2`；reducer 现在按 `contentIndex` 建行索引表（`Transcript.kt:594-607`），不再"取最后一个 streaming 文本行"。同一抓包顺带证实 `done` 事件是 `{"type":"done","reason":"toolUse"}`（`reason`，不是 `stopReason`） |
 | 未知字段宽容 | `PiResponses` 的读者只取具名键、从不校验键集；策略写在 KDoc：未知字段忽略、缺省必需字段不伪造也不抛异常；测试 `unknown extra fields never break a reader` / `absent required fields degrade instead of throwing` |
 | I11 引擎侧（`gap-disposition.md` #11/#12/#64/#65/#66） | `rpc/.../PiLaunchOptions.kt:31,47,61` 把 `PI_OFFLINE` / `PI_CACHE_RETENTION=long` / `--system-prompt` / `--append-system-prompt` 映射出来；`engine/PiEngineHost.kt:192,215,275,316,399` 应用并让 `restart()` 复用。**残留**：没有 settings 行传值，`boot()` 唯一调用点在 `ui/PiSessionViewModel.kt:535`（都不在 `rpc/**`+`engine/**`） |
-| rendering-review P5 / F3+F2 | **归约器侧已完成（未提交，RPC 代理），两个触发条件已按裁决与 pi 一比一**：`Transcript.kt:1182-1229` `failTurn(reason, errorMessage, hasToolCalls, key = null)`。(1) **收卡**只在 `aborted`/`error`（`Transcript.kt:1214`），pi 依据 `modes/interactive/interactive-mode.ts:3294`（实时）/`:3735`（重放）；`length` 走 else（`:3305-3315`）**不收卡**。(2) **追加行**只在 `length`，或 `aborted`/`error` 且本条消息**没有**工具调用（`Transcript.kt:1191`），pi 依据 `packages/tui/src/components/assistant-message.ts:180`（`hasToolCalls`）+`:187`；该标志从 `message.content` 解析到事件上（`Events.kt:167`，判定函数 `Events.kt:688`，解析点 `Events.kt:430`）。(3) `errorMessage === "Request was aborted"` 的特判照抄（`Transcript.kt:1196` 对应 `assistant-message.ts:190`）。文案为中文（`length`→"回复被令牌上限截断"；`aborted`→pi 的 `errorMessage`，该特判时用"回合已中止"；`error`→pi 的 `errorMessage`，缺省 `Unknown error`）。**重放**：同一 `failTurn` 由持久化 assistant 条目驱动——`onHistoryAssistant` 读条目自带 `stopReason`/`errorMessage`（`Transcript.kt:1525`；pi 依据 `packages/ai/src/types.ts:440,443`，重放对照 `interactive-mode.ts:3735-3746`），所以 `seedFromHistory` 重开会话与实时流同源同判定；实时入口 `Transcript.kt:689`；历史行 key 可重放（`Transcript.kt:648`）。**残留（app 侧，需删）**：`ui/PiSessionViewModel.kt:1965` 的 `stopReasonRow()`/`liveTurnIssue` 现在是重复行；`syncTranscript` 的 `interrupted` 投影（`:681-700`）现在只剩 pi 未建模的路径（如引擎被杀）才可达 |
+| rendering-review P5 / F3+F2 | **归约器侧已完成（未提交，RPC 代理），两个触发条件已按裁决与 pi 一比一**：`Transcript.kt:1182-1229` `failTurn(reason, errorMessage, hasToolCalls, key = null)`。(1) **收卡**只在 `aborted`/`error`（`Transcript.kt:1214`），pi 依据 `modes/interactive/interactive-mode.ts:3294`（实时）/`:3735`（重放）；`length` 走 else（`:3305-3315`）**不收卡**。(2) **追加行**只在 `length`，或 `aborted`/`error` 且本条消息**没有**工具调用（`Transcript.kt:1191`），pi 依据 `packages/tui/src/components/assistant-message.ts:180`（`hasToolCalls`）+`:187`；该标志从 `message.content` 解析到事件上（`Events.kt:167`，判定函数 `Events.kt:688`，解析点 `Events.kt:430`）。(3) `errorMessage === "Request was aborted"` 的特判照抄（`Transcript.kt:1196` 对应 `assistant-message.ts:190`）。文案为中文（`length`→"回复被令牌上限截断"；`aborted`→pi 的 `errorMessage`，该特判时用"回合已中止"；`error`→pi 的 `errorMessage`，缺省 `Unknown error`）。**重放**：同一 `failTurn` 由持久化 assistant 条目驱动——`onHistoryAssistant` 读条目自带 `stopReason`/`errorMessage`（`Transcript.kt:1525`；pi 依据 `packages/ai/src/types.ts:440,443`，重放对照 `interactive-mode.ts:3735-3746`），所以 `seedFromHistory` 重开会话与实时流同源同判定；实时入口 `Transcript.kt:689`；历史行 key 可重放（`Transcript.kt:648`）。**app 侧重复行已删（applied, uncommitted，未上 CI）**：`ui/PiSessionViewModel.kt` 的 `stopReasonRow()`/`liveTurnIssue`（字段、`MessageEnd` 投影、`MessageStart` 复位、三处 `= null`、helper 本身）全部删除，归约器那行成为唯一一行；`syncTranscript` 的 `interrupted` 投影保留为 `projectRow`/`applyChanged`，作用域写在 KDoc 里（只碰 `ToolStatus.Pending` 的行，`output` 仅在为空时填，因此不会覆盖归约器写好的结果），可达路径是 pi 未建模的那种（引擎被杀/重启） |
 | rendering-review F24/F23/F16/F18 | `TextEnd.content` 覆盖累加文本（`Transcript.kt:883`）、`ToolCallEnd` 补齐工具名/参数（`:918`）、`details.truncation` → `outputTruncated`（`:467`）、工具结果图片保留为 `List<PiImage>`（`Events.kt:188`，ToolCall 字段 `Transcript.kt:78`）、压缩 `usage` 落到 `CompactionMarker`（`Transcript.kt:129`），并在 `lastUsage`（`:591`）暴露实时 usage（F10） |
 | F5（跨文件） | **engine 侧无需改动**：`PiEngineSession.handle()` 已经 `transcript.onEvent(event)` 投影 `entry_appended`，且 `_changes` 对每个非 response 事件自增。重复投影在 `ui/PiSessionViewModel.kt:666-675`（`e75821d0` 的 P2）。engine 侧已加注释说明"由本层投影一次"，避免两边各改一半 |
 

@@ -486,6 +486,23 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /**
+     * Drop the settings store's cached documents after a write that did not go
+     * through it.
+     *
+     * `PiSettingsFileStore` caches each document after its first read
+     * (`global`/`project`), and every other writer bypasses that cache: pi itself,
+     * `pi install` (guest-side), and the credential form's `PiEnginePreferences`.
+     * That last one invalidates a store instance of its *own*
+     * (`PiConfigFiles.kt:579`), so the app's reader kept the pre-write values —
+     * which is why this lives here, next to [settingsStore], rather than in the
+     * settings UI, and why [attach] calls it as well: a restarted engine is
+     * exactly the moment those files may have changed underneath us.
+     */
+    fun invalidateSettingsCache() {
+        (settingsStore as? PiSettingsFileStore)?.invalidate()
+    }
+
     // ----------------------------------------------------- extension UI state
 
     /**
@@ -506,6 +523,19 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
 
     /** `pi -c` is attempted once per process, not on every engine attach. */
     private var resumeAttempted = false
+
+    /**
+     * The engine revision this consumer has already applied to [UiState]; `0` is
+     * "nothing seen".
+     *
+     * A local marker rather than [UiState.revision] because the counter belongs to
+     * one engine's publication stream: on [attach] a *new* engine starts again at
+     * 1, and a leftover number from the previous one could make the gap check below
+     * accept a publication whose `changedIndices` describe rows this consumer never
+     * held — applying them to the old session's list. It is reset with the engine
+     * for exactly that reason. See [syncTranscript].
+     */
+    private var appliedRevision = 0
 
     /** Monotonic ids for snackbar notices and composer fills. */
     private var noticeSeq = 0L
@@ -626,14 +656,10 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
 
         session = engine
         api = PiEngineApi(engine)
-        // The settings store caches each document after its first read
-        // (`PiSettingsFileStore.global/project`), and every other writer bypasses
-        // that cache: pi itself, `pi install` (guest-side), and the credential
-        // form's `PiEnginePreferences` — which invalidates its *own* store
-        // instance (`PiConfigFiles.kt:579`), not this one. A fresh engine is
-        // exactly the moment those files may have changed, so the cache is
-        // dropped here rather than left to show pre-write values.
-        (settingsStore as? PiSettingsFileStore)?.invalidate()
+        // A fresh engine is exactly the moment the settings documents may have
+        // changed on disk, so the cache is dropped here rather than left showing
+        // pre-write values. See [invalidateSettingsCache].
+        invalidateSettingsCache()
         _state.value = _state.value.copy(boot = Boot.Ready)
         viewModelScope.launch {
             engine.state.collect { engineState ->
@@ -662,8 +688,18 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                 }
             }
         }
+        // The publication stream starts over with this engine (a fresh
+        // `PiEngineSession` counts from 1), so the consumer's marker must too:
+        // otherwise the first publication of the new engine could look like the
+        // continuation of the old one's revisions, and its `changedIndices` would
+        // be applied to the previous session's rows.
+        appliedRevision = 0
         viewModelScope.launch {
-            engine.revision.collect { syncTranscript(engine) }
+            // The publication, not `revision`: it carries the rows that moved
+            // (`TranscriptPublication.changedIndices`), which is the whole point
+            // of F7/RR-P7. A `revision` collector can only re-read the reducer's
+            // list and diff it here — an O(n) scan per streamed delta.
+            engine.publication.collect { pub -> syncTranscript(engine, pub) }
         }
         viewModelScope.launch {
             engine.events.collect { event -> onEvent(event) }
@@ -728,53 +764,118 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      *    `ToolStatus.Error` / `isError = true`, and `output` is filled **only when
      *    it is empty** (`ifEmpty`), so a result the reducer already wrote is never
      *    replaced.
-     *  - **F7** (partial): publishing is skipped when no element of the reducer's
-     *    list changed identity. The engine bumps its revision for *every*
-     *    non-response event, including ones whose `TranscriptChange` is `None`
-     *    (`PiEngineSession.kt:261-268`), so without this check every such event
-     *    allocated a copy, a new `UiState`, and recomposed the whole screen. The
-     *    full fix — publishing the reducer's change index — needs
-     *    `PiEngineSession` and is reported instead of done.
+     *  - **F7**: the engine publishes the rows that actually moved
+     *    (`PiEngineSession.TranscriptPublication.changedIndices`, an identity diff
+     *    it already has to compute), so this function updates those indices instead
+     *    of copying the whole list and diffing it here. The old check — "scan every
+     *    row, skip the copy when none moved" — was an O(n) scan per streamed delta,
+     *    which is what F7/RR-P7 asked to remove.
+     *
+     * ## Adopting wholesale, and why four cases do
+     *
+     * `changedIndices` describes the engine's *previous* snapshot, so it is only
+     * usable while this consumer is exactly one publication behind holding those
+     * same rows ([appliedRevision] is that bookkeeping):
+     *
+     *  1. [PiEngineSession.TranscriptPublication.replaced] — the list was rebuilt
+     *     (`seedHistory`) and indices mean nothing;
+     *  2. `revision != pub.revision - 1` — a `StateFlow` conflates and the engine
+     *     publishes from its own reader thread, so a gap is normal and the only
+     *     safe move is to adopt the rows again;
+     *  3. the streaming flag flipped — the F2 projection below rewrites *every*
+     *     pending tool card, which no per-index list can describe;
+     *  4. this list is shorter than `pub.rows` — it is behind, and the missing
+     *     tail would otherwise be dropped.
+     *
+     * **Work is decided by `changedIndices`, never by `change`.** F8's throttled
+     * `tool_execution_update` mutates its row and answers `TranscriptChange.None`
+     * on purpose (`rpc/Transcript.kt:1112-1115`), so a `null`-looking change can
+     * still carry a row: branching on the change kind would freeze that row's
+     * streamed output forever.
+     *
+     * When there is no row work at all, the list is left alone but [UiState] is
+     * still rewritten: the revision always advances, so a publication that carried
+     * only `usage` or `thinkingLevel` still wakes its readers (that wake-up is what
+     * a future usage row depends on). `StateFlow` drops an assignment that is
+     * `equals` to the current value, so this costs a comparison, not a
+     * recomposition, when nothing moved.
      *
      * No turn-outcome row lives here any more: the reducer appends it from
-     * `stopReason` itself (`rpc/Transcript.kt:684-690`, `:1157-1227`), and
-     * `message_end` always publishes (`PiEngineSession.kt:261-268`), so keeping a
-     * second copy in the ViewModel would have rendered the same failure twice,
-     * with different wording.
+     * `stopReason` itself (`rpc/Transcript.kt:684-690`, `:1157-1227`), and every
+     * event publishes except the tool updates F8 throttles away
+     * (`PiEngineSession.kt:288-296`), so keeping a second copy in the ViewModel
+     * would have rendered the same failure twice, with different wording.
      */
-    private fun syncTranscript(engine: PiEngineSession) {
-        val streaming = engine.transcript.streaming
-        val source = engine.transcript.transcript
-        val published = _state.value.transcript
+    private fun syncTranscript(engine: PiEngineSession, pub: PiEngineSession.TranscriptPublication) {
+        val previous = _state.value
         // An interrupted turn: a tool still pending can never receive its result
         // now.
-        val interrupted = !streaming && source.any { it is ToolCall && it.status == ToolStatus.Pending }
-        val unchanged = source.size == published.size &&
-            source.indices.none { source[it] !== published[it] } &&
-            _state.value.streaming == streaming &&
-            _state.value.revision == engine.revision.value
-        if (unchanged) return
+        val interrupted = !pub.streaming && pub.rows.any { it is ToolCall && it.status == ToolStatus.Pending }
+        val adopt = pub.replaced ||
+            appliedRevision != pub.revision - 1 ||
+            previous.streaming != pub.streaming ||
+            previous.transcript.size < pub.rows.size
 
-        val projected = if (interrupted) {
-            source.map { item ->
-                if (item is ToolCall && item.status == ToolStatus.Pending) {
-                    item.copy(
-                        status = ToolStatus.Error,
-                        isError = true,
-                        output = item.output.ifEmpty { "回合已结束，未收到工具结果（被停止或出错）" },
-                    )
-                } else {
-                    item
-                }
-            }
-        } else {
-            source.toList()
+        val transcript = when {
+            adopt -> pub.rows.map { row -> projectRow(row, interrupted) }
+
+            pub.changedIndices.isNotEmpty() -> applyChanged(
+                current = previous.transcript,
+                rows = pub.rows,
+                changedIndices = pub.changedIndices,
+                interrupted = interrupted,
+            )
+
+            else -> previous.transcript
         }
+
+        // The marker only moves once the list above is built from this revision:
+        // if anything between here and the assignment could throw, the next
+        // publication would still be treated as a gap and adopt wholesale.
         _state.value = _state.value.copy(
-            transcript = projected,
-            revision = engine.revision.value,
-            streaming = streaming,
+            transcript = transcript,
+            revision = pub.revision,
+            streaming = pub.streaming,
         )
+        appliedRevision = pub.revision
+    }
+
+    /**
+     * The F2 projection for one row: a tool card the engine never closed (the
+     * process died mid-turn) is reported as interrupted rather than left saying
+     * "运行中". See [syncTranscript].
+     */
+    private fun projectRow(item: TranscriptItem, interrupted: Boolean): TranscriptItem =
+        if (interrupted && item is ToolCall && item.status == ToolStatus.Pending) {
+            item.copy(
+                status = ToolStatus.Error,
+                isError = true,
+                output = item.output.ifEmpty { "回合已结束，未收到工具结果（被停止或出错）" },
+            )
+        } else {
+            item
+        }
+
+    /**
+     * Apply [changedIndices] to [current], projecting each row first.
+     *
+     * The engine's indices are ascending and always valid in [rows]
+     * (`PiEngineSession.diffIndices` diffs against its own previous snapshot): an
+     * index below the consumer's length is a replacement, one at or past it is an
+     * append — which is why the list is grown rather than indexed blindly.
+     */
+    private fun applyChanged(
+        current: List<TranscriptItem>,
+        rows: List<TranscriptItem>,
+        changedIndices: List<Int>,
+        interrupted: Boolean,
+    ): List<TranscriptItem> {
+        val next = current.toMutableList()
+        for (index in changedIndices) {
+            val row = projectRow(rows[index], interrupted)
+            if (index < next.size) next[index] = row else next.add(row)
+        }
+        return next
     }
 
     private fun onEvent(event: PiEvent) {
@@ -788,9 +889,11 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             // finished answer, and pi says so under the partial text
             // (`components/assistant-message.ts:182-200`). The reducer renders that
             // row itself from `stopReason` now (`rpc/Transcript.kt:684-690`), and
-            // `PiEngineSession` publishes on every event, so nothing is projected
-            // here — this branch exists only so the decision is visible where the
-            // old duplicate row used to be built.
+            // every event publishes — except the `tool_execution_update` chunks F8
+            // throttles away (`PiEngineSession.kt:288-296`), whose rows the reducer
+            // already holds — so nothing is projected here. This branch exists only
+            // so the decision is visible where the old duplicate row used to be
+            // built.
             is PiEvent.MessageEnd -> Unit
 
             // An extension that throws is otherwise invisible: pi reports it as
@@ -1252,8 +1355,14 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             // better than clearing a transcript we cannot repopulate.
             return
         }
-        engine.transcript.seedFromHistory(PiResponses.entries(response))
-        syncTranscript(engine)
+        // `seedHistory`, not `transcript.seedFromHistory`: the reducer path mutates
+        // the rows without publishing, and a publication is what carries the new
+        // list (and its `replaced` flag) to this consumer.
+        engine.seedHistory(PiResponses.entries(response))
+        // The collector would wake on its own, but not until this coroutine
+        // suspends; syncing here makes the rebuilt session visible in the same
+        // frame.
+        syncTranscript(engine, engine.publication.value)
     }
 
     /**
@@ -1429,7 +1538,11 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             // this echo a steered message is invisible until the session is
             // reopened. If that reducer branch is ever fixed, this echo must be
             // removed or the message renders twice.
-            engine.transcript.onUserPrompt(trimmed, images)
+            //
+            // `echoUserPrompt`, not `transcript.onUserPrompt`: the reducer path
+            // creates the row without publishing it, so no consumer would ever see
+            // it (PiEngineSession.echoUserPrompt exists for exactly this call).
+            engine.echoUserPrompt(trimmed, images)
             engine.send(
                 PiCommands.steer(
                     id = "steer-${System.nanoTime()}",
@@ -1440,7 +1553,9 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         } else {
             engine.prompt(trimmed, images)
         }
-        syncTranscript(engine)
+        // Already published by `prompt`/`echoUserPrompt`; reading it here is what
+        // makes the echoed row visible without waiting for the collector's dispatch.
+        syncTranscript(engine, engine.publication.value)
     }
 
     /**
@@ -1457,7 +1572,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         val engine = session ?: return
         val text = if (args.isBlank()) command.invocation else "${command.invocation} ${args.trim()}"
         engine.prompt(text)
-        syncTranscript(engine)
+        syncTranscript(engine, engine.publication.value)
     }
 
     /**
@@ -1477,14 +1592,14 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         if (trimmed.isEmpty()) return
         // Same local echo as [send]: a follow-up is invisible on the wire until pi
         // delivers it, which is the whole point of queueing it.
-        engine.transcript.onUserPrompt(trimmed)
+        engine.echoUserPrompt(trimmed)
         engine.send(
             PiCommands.followUp(
                 id = "follow-${System.nanoTime()}",
                 message = trimmed,
             ),
         )
-        syncTranscript(engine)
+        syncTranscript(engine, engine.publication.value)
     }
 
     /** pi's Escape: abort, and hand the queued text back so the composer can restore it. */
@@ -1492,7 +1607,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         val engine = session ?: return
         viewModelScope.launch {
             val restored = runCatching { engine.stopAndDrainQueue() }.getOrDefault(emptyList())
-            syncTranscript(engine)
+            syncTranscript(engine, engine.publication.value)
             // viewModelScope already runs on the main dispatcher, so this is
             // called from the UI thread without needing Dispatchers.Main.
             onRestored(restored)

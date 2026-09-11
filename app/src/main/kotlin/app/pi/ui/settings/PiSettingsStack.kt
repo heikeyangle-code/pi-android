@@ -16,7 +16,6 @@ import app.pi.bridge.DeviceCapabilityStore
 import app.pi.packages.EngineRestartCoordinator
 import app.pi.packages.PiPackagesHost
 import app.pi.rpc.PiResponses
-import app.pi.settings.PiSettingsFileStore
 import app.pi.ui.device.DeviceCapabilityScreen
 import app.pi.ui.theme.PiThemeEntry
 import kotlinx.serialization.json.JsonPrimitive
@@ -79,6 +78,13 @@ fun PiSettingsStack(
      */
     focusKey: String? = null,
     onFocusConsumed: () -> Unit = {},
+    /**
+     * Called after a screen wrote pi's files through a layer of its own (the
+     * credential form's `PiEnginePreferences`), so the owner of the settings store
+     * can drop its cached documents. The store is the ViewModel's, so the
+     * invalidation lives there — this stack only reports that a write happened.
+     */
+    onExternalSettingsWrite: () -> Unit = {},
 ) {
     val activeStore = store ?: rememberInMemoryPiSettingsStore()
     var groupId by remember { mutableStateOf<String?>(null) }
@@ -174,12 +180,7 @@ fun PiSettingsStack(
                 initialPresetId = credentialPreset,
                 availableModels = availableModels,
                 onLoadAvailableModels = onLoadAvailableModels,
-                // The form writes settings.json through a layer of its own, and
-                // this store caches each document after its first read
-                // (`PiSettingsFileStore.global/project`), so without dropping the
-                // cache the 默认模型 / 循环模型 rows would keep showing the
-                // pre-save values until the app restarted.
-                onFilesWritten = { (activeStore as? PiSettingsFileStore)?.invalidate() },
+                onFilesWritten = onExternalSettingsWrite,
             )
 
             packages -> PiPackagesHost(

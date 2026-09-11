@@ -202,6 +202,11 @@ fun PiRoot(
                     // `/scoped-models`: open the group and highlight the key.
                     focusKey = settingsFocus,
                     onFocusConsumed = { settingsFocus = null },
+                    // The credential form writes settings.json through the packages
+                    // layer, which invalidates a store instance of its own; the store
+                    // this app reads belongs to the ViewModel, so dropping its cache
+                    // is the ViewModel's job.
+                    onExternalSettingsWrite = { session.invalidateSettingsCache() },
                 )
             }
 
