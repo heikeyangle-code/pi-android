@@ -392,9 +392,9 @@ pi 把扩展加载错误**只写进 `runtime.diagnostics`，不发任何事件**
 
 | 项 | 归属 |
 |---|---|
-| `rpc/**` 六条：`ExtensionError.extensionPath`/`event`、`MessageEnd.customType`/`display`、`model_select` 死分支、`AssistantDelta.Unknown` 注释与行为、`system_prompt`/`error` 死分支 | RPC 代理 |
-| `turnIndex` 两份审计结论相反，**回源码裁决** | RPC 代理 |
-| `contentIndex` 用**真实 `pi --mode rpc` 抓包**验证，不许靠文档猜 | RPC 代理 |
+| `rpc/**` 六条：`ExtensionError.extensionPath`/`event`、`MessageEnd.customType`/`display`、`model_select` 死分支、`AssistantDelta.Unknown` 注释与行为、`system_prompt`/`error` 死分支 | RPC 代理 — **已交付**（见 §J） |
+| `turnIndex` 两份审计结论相反，**回源码裁决** | RPC 代理 — **已裁决**：RPC 线上**没有** `turnIndex`（见 §J） |
+| `contentIndex` 用**真实 `pi --mode rpc` 抓包**验证，不许靠文档猜 | RPC 代理 — **已验证并修复**（`pi --mode rpc` 在本机起不来，改用真实适配器直连；见 §J） |
 | `PiEngineHost` 的 `restart()`/`reload()` 入口（B6 与 `/reload` 替代方案的共同前置） | 包管理代理（新授权） |
 | `runtime/**` 信任存储（`PiTrustStore` + `trust.json`） | 包管理代理 |
 | `CAMERA` 权限 + `NO_PERMISSION` 前置条件 | 闸门代理 |
@@ -479,3 +479,36 @@ pi 的 TUI 会按扩展名分支（`.jsonl` → `exportToJsonl`，`interactive-m
 
 ### 审查自己标为 UNVERIFIED 的 6 项
 设备能力"两份真相"是否已在并发重写中被消除（静态不一致**已确认**）；`/share` 在 Android 上是否可行；终端专属行在真机是否可用（C2）；`hideThinkingBlock` 是否存在 grep 看不见的读取；"无消费者"全量扫描（它逐键验证了 13 个）；`SessionTreeScreen` 是否新增了非 fork 动作。**§2 的结论都不依赖这些未验证项。**
+
+---
+
+## J. RPC 代理交付记录（`rpc/**` + `engine/**`）
+
+### J.1 编译与测试证据
+
+| 命令 | 结果 |
+|---|---|
+| `K2JVMCompiler -no-stdlib -jvm-target 17 -classpath <kotlinc+serialization+coroutines> -d <out> $(find rpc/src/main/kotlin -name '*.kt')`（与 `tools/typecheck.sh` 同一套 kotlinc/classpath） | **exit 0，0 error，143 个 class** |
+| `bash tools/typecheck.sh` | 本会话内出现过 **`typecheck: OK (:rpc + :app, cross-module boundary reproduced)`** |
+| `gradle :rpc:test --console=plain --no-daemon` | 上一条完整跑通过 **190 tests / 0 failures**（本轮又新增 10 个 `FidelityFixesTest` 用例，重跑中） |
+| 单测直跑（JUnitCore，编译产物） | 曾 `OK (198 tests)`；`FidelityFixesTest` 现有 33 个 `@Test` |
+
+**`pi --mode rpc` 在这台机器上起不来**（连 `--version` 都超时，stdin 关闭也一样），所以"本地抓 RPC stdout"不可行。等价的替代做法（已被 `contentIndex` 一条证实有效）：直接用 Node 驱动 **pi 真实的 provider 适配器**
+`@earendil-works/pi-ai/dist/api/anthropic-messages.js` 的 `stream()`，喂一个 mock Anthropic SSE（text(0) → tool_use(1) → text(2)）。那是给 `contentIndex` 赋值、并被 `modes/json-event.ts` 原样序列化到线上的那一层。
+
+### J.2 已交付项（全部带证据）
+
+| 项 | 结论 / 证据 |
+|---|---|
+| `ExtensionError.extensionPath`/`event` | 已加字段并解析：`rpc/src/main/kotlin/app/pi/rpc/Events.kt:322`（`{extensionPath, event, error}`，文本兼容 `message`/`error`） |
+| `MessageEnd.customType`/`display` | 已加字段；实时 `role:"custom"` 现在走 `onHookMessage`：`Events.kt:140-146`，`Transcript.kt:663` |
+| `model_select` 死分支 | 已删（`onEntry` 只留 `model_change`；`ENTRY_EVENT_TYPES` 同步）。pi 只把它发给扩展（`_emitModelSelect` → `_extensionRunner.emit`），条目联合里也没有它 |
+| `AssistantDelta.Unknown` | 注释与行为一致：投影为按 kind 去重的 `Notice`（`Transcript.kt:900-921`） |
+| `system_prompt`/`error` 死分支 | 已删；`Transcript.kt:1085-1093` 留了"pi 没有这两种条目类型"的说明，行由 `onSystemPrompt()`/`onError()` 产生 |
+| `turnIndex`（两审相反） | **裁决：RPC 线上没有。** `packages/agent/src/types.ts:436-437` 的 `AgentEvent` 无 index；`core/extensions/types.ts` 的 `TurnStartEvent`/`TurnEndEvent` 有，但 `_handleAgentEvent` 只把它交给 `_emitExtensionEvent`（扩展处理器），随后 `_emit(event)` 转发的是**原始 AgentEvent**，`toJsonEvent` 对非 `message_update` 原样透传。注释已写全链条：`Events.kt:76-119` |
+| `contentIndex` | **真实抓包证明会错序，已修。** pi 真实 anthropic 适配器对 text(0)→tool_use(1)→text(2) 发出 `text_start@0, toolcall_start@1, text_start@2`；reducer 现在按 `contentIndex` 建行索引表（`Transcript.kt:560-575`），不再"取最后一个 streaming 文本行"。同一抓包顺带证实 `done` 事件是 `{"type":"done","reason":"toolUse"}`（`reason`，不是 `stopReason`） |
+| 未知字段宽容 | `PiResponses` 的读者只取具名键、从不校验键集；策略写在 KDoc：未知字段忽略、缺省必需字段不伪造也不抛异常；测试 `unknown extra fields never break a reader` / `absent required fields degrade instead of throwing` |
+| I11 引擎侧（`gap-disposition.md` #11/#12/#64/#65/#66） | `rpc/.../PiLaunchOptions.kt:31,47,61` 把 `PI_OFFLINE` / `PI_CACHE_RETENTION=long` / `--system-prompt` / `--append-system-prompt` 映射出来；`engine/PiEngineHost.kt:192,215,275,316,399` 应用并让 `restart()` 复用。**残留**：没有 settings 行传值，`boot()` 唯一调用点在 `ui/PiSessionViewModel.kt:535`（都不在 `rpc/**`+`engine/**`） |
+| rendering-review P5 / F3+F2 | `Transcript.kt:1120` `failTurn()`：`length`→"回复被令牌上限截断"、`aborted`→"回合已中止"、`error`→"模型调用失败"+`errorMessage`，并把仍在 `Pending` 的工具卡收成 `Error`；`Events.kt:151` 解析 `errorMessage` |
+| rendering-review F24/F23/F16/F18 | `TextEnd.content` 覆盖累加文本（`Transcript.kt:883`）、`ToolCallEnd` 补齐工具名/参数（`:918`）、`details.truncation` → `outputTruncated`（`:467`）、工具结果图片保留为 `List<PiImage>`（`Events.kt:188`，ToolCall 字段 `Transcript.kt:78`）、压缩 `usage` 落到 `CompactionMarker`（`Transcript.kt:129`），并在 `lastUsage`（`:591`）暴露实时 usage（F10） |
+| F5（跨文件） | **engine 侧无需改动**：`PiEngineSession.handle()` 已经 `transcript.onEvent(event)` 投影 `entry_appended`，且 `_changes` 对每个非 response 事件自增。重复投影在 `ui/PiSessionViewModel.kt:666-675`（`e75821d0` 的 P2）。engine 侧已加注释说明"由本层投影一次"，避免两边各改一半 |

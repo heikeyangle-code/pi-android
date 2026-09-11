@@ -135,6 +135,14 @@ class PiEngineSession(
             is PiEvent.AgentSettled, is PiEvent.AgentEnd -> _state.value = EngineState.Ready
             else -> Unit
         }
+        // The transcript is projected here, exactly once, for every event —
+        // including `entry_appended`, whose payload really is on the wire
+        // (`agent-session.ts` emits `{type:"entry_appended", entry}`, which
+        // `json-event.ts` passes through and `TranscriptReducer.onEvent` projects).
+        // Callers must NOT call `transcript.onEntry(entry)` again: it would double
+        // the row. The revision below already moves for every non-`response`
+        // event, so subscribers see the change without help (fidelity/rendering
+        // review F5).
         val change: TranscriptChange = transcript.onEvent(event)
         if (event !is PiEvent.Response || change != TranscriptChange.None) {
             _changes.value = _changes.value + 1

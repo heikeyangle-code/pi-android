@@ -67,6 +67,36 @@ PY
   rm -rf "$tmp"
 done
 
+# Shizuku, the ADB-level (uid=2000) shell backend. gradle/libs.versions.toml
+# records that `api` transitively brings `aidl` and `shared`, and that
+# `provider` is required at runtime for the binder handoff. typecheck.sh never
+# resolves POMs, so all four AARs are staged explicitly: a missing one shows up
+# as an unresolved import rather than as a resolution error.
+SHIZUKU_VERSION="$(sed -n 's/^shizuku = "\(.*\)"/\1/p' "$ROOT/gradle/libs.versions.toml")"
+if [ -z "$SHIZUKU_VERSION" ]; then
+  echo "could not read the shizuku version from gradle/libs.versions.toml" >&2
+  exit 1
+fi
+
+for artifact in api aidl shared provider; do
+  dir="$EXTRA/aar/shizuku-$artifact"
+  if [ -s "$dir/classes.jar" ]; then
+    echo "have   shizuku-$artifact/classes.jar"
+    continue
+  fi
+  echo "fetch  shizuku-$artifact-$SHIZUKU_VERSION.aar"
+  mkdir -p "$dir"
+  tmp="$(mktemp -d)"
+  curl -fsSL --retry 3 -o "$tmp/$artifact.aar" \
+    "$BASE/dev/rikka/shizuku/$artifact/$SHIZUKU_VERSION/$artifact-$SHIZUKU_VERSION.aar"
+  python3 - "$tmp/$artifact.aar" "$dir/classes.jar" <<'PY'
+import sys, zipfile
+with zipfile.ZipFile(sys.argv[1]) as z:
+    open(sys.argv[2], "wb").write(z.read("classes.jar"))
+PY
+  rm -rf "$tmp"
+done
+
 echo
 echo "staged into $EXTRA:"
 find "$EXTRA" -name '*.jar' | sed "s|$ROOT/||" | sort
