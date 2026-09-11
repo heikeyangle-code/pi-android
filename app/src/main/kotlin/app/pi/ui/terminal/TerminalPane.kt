@@ -3,8 +3,7 @@ package app.pi.ui.terminal
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
-import android.content.Intent
-import android.net.Uri
+import android.graphics.Typeface
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -13,12 +12,10 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
@@ -41,26 +38,17 @@ import androidx.compose.runtime.snapshots.SnapshotStateList
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.SolidColor
-import androidx.compose.ui.input.key.KeyEvent
-import android.view.KeyEvent as AndroidKeyEvent
-import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalSoftwareKeyboardController
-import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.pi.runtime.PtyLauncher
-import app.pi.terminal.TerminalController
-import app.pi.terminal.TerminalKeys
-import app.pi.terminal.TerminalPalette
 import kotlinx.coroutines.delay
-import kotlinx.serialization.json.JsonPrimitive
+import org.connectbot.terminal.ModifierManager
+import org.connectbot.terminal.Terminal
+import org.connectbot.terminal.VTermKey
 
 /**
  * The Workbench terminal: real tabs, a real PTY, and the original pi TUI.
@@ -74,47 +62,53 @@ import kotlinx.serialization.json.JsonPrimitive
  *
  * The three tab types are therefore not decoration — they are the three ways to
  * reach that: a guest shell, the original pi TUI, and an arbitrary command.
+ *
+ * ## What changed, and what did not
+ *
+ * What is drawn between the tab strip and the key bar is now
+ * `org.connectbot:termlib` — libvterm behind JNI, presented as a Compose
+ * component — instead of this app's own VT parser and canvas renderer. The
+ * library also brings what the old surface had to hand-roll: text selection with
+ * a magnifier, pinch-zoom, scrolling, and the soft-keyboard IME path.
+ *
+ * The shell around it is unchanged on purpose: the tab strip, the new-tab menu,
+ * the key bar's position, and the `app.terminal.*` settings all stay where the
+ * ui-spec puts them. [TerminalBridge] is the only new seam; it wires the library
+ * to `PtyLauncher`, which still owns the PTY.
  */
 @Composable
 fun TerminalPane(modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val isDark = MaterialTheme.colorScheme.background.luminanceIsDark()
     val palette = remember(isDark) { if (isDark) TerminalPalette.dark() else TerminalPalette.light() }
-    // One store for the four `app.terminal.*` settings, built from the same agent
-    // dir and workspace the Settings screen writes through. Reads happen once per
+    // One store for the `app.terminal.*` settings, built from the same agent dir
+    // and workspace the Settings screen writes through. Reads happen once per
     // Workbench composition; the keys the user edits are `EffectiveKind.Reload`
     // rows, so re-entering the tab is the documented way to apply them.
     val settingsStore = remember(context) { terminalSettingsStore(context) }
     val preferences = remember(settingsStore) { TerminalPreferences.read(settingsStore) }
-    val store = remember(context, palette, preferences) {
-        TerminalStore(context, palette, preferences.scrollbackLines)
-    }
-
-    var fontSize by remember(preferences) { mutableStateOf(preferences.fontSize) }
-    var selection by remember { mutableStateOf<TerminalSelection?>(null) }
-    var ctrlArmed by remember { mutableStateOf(false) }
-    var showNewTabMenu by remember { mutableStateOf(false) }
-    var statusText by remember { mutableStateOf<String?>(null) }
 
     val androidClipboard = remember(context) {
         context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
     }
+    var statusText by remember { mutableStateOf<String?>(null) }
 
-    val active = store.active()
-    // The guest's output is a `StateFlow` of revisions rather than a Compose
-    // state; collecting it is what makes a repaint happen at all.
-    val revision = active?.controller?.revision?.collectAsStateWithLifecycle()?.value ?: 0L
-
-    // OSC 52: a program — or pi itself — asked for the clipboard. The emulator
-    // cannot own the Android clipboard, so the pane drains those requests here.
-    LaunchedEffect(active, revision) {
-        val controller = active?.controller ?: return@LaunchedEffect
-        while (true) {
-            val text = controller.tryClipboardRequest() ?: break
+    // The one place an OSC 52 request from the guest becomes an Android
+    // clipboard write. The library decodes the sequence and calls this on the
+    // main looper (it posts its OSC handling there), so touching the clipboard
+    // here is safe.
+    val store = remember(context, palette) {
+        TerminalStore(context, palette) { text ->
             androidClipboard.setPrimaryClip(ClipData.newPlainText("pi terminal", text))
             statusText = "已复制到剪贴板（OSC 52）"
         }
     }
+
+    var ctrlArmed by remember { mutableStateOf(false) }
+    var altArmed by remember { mutableStateOf(false) }
+    var showNewTabMenu by remember { mutableStateOf(false) }
+
+    val bridge = store.active()?.bridge
 
     LaunchedEffect(statusText) {
         if (statusText != null) {
@@ -125,6 +119,23 @@ fun TerminalPane(modifier: Modifier = Modifier) {
 
     DisposableEffect(store) {
         onDispose { store.closeAll() }
+    }
+
+    // The sticky `ctrl`/`alt` chips, handed to the library so that the *soft*
+    // keyboard respects them too: the library's key handler combines these with
+    // the hardware modifiers and calls clearTransients() after each key, which is
+    // exactly one-shot behaviour.
+    val modifierManager = remember(ctrlArmed, altArmed) {
+        object : ModifierManager {
+            override fun isCtrlActive(): Boolean = ctrlArmed
+            override fun isAltActive(): Boolean = altArmed
+            override fun isShiftActive(): Boolean = false
+
+            override fun clearTransients() {
+                ctrlArmed = false
+                altArmed = false
+            }
+        }
     }
 
     Column(modifier.fillMaxSize().background(palette.background)) {
@@ -164,34 +175,17 @@ fun TerminalPane(modifier: Modifier = Modifier) {
             }
         }
 
-        val controller = active?.controller
-        if (controller == null) {
-            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text("正在启动终端…", color = palette.foreground)
-            }
-        } else {
-            TerminalInputHost(
-                controller = controller,
-                ctrlArmed = ctrlArmed,
-                onCtrlConsumed = { ctrlArmed = false },
-                modifier = Modifier.weight(1f),
-            ) { focus ->
+        Box(Modifier.weight(1f)) {
+            if (bridge == null) {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Text("正在启动终端…", color = palette.foreground)
+                }
+            } else {
                 TerminalSurface(
-                    controller = controller,
-                    revision = revision,
-                    fontSize = fontSize,
-                    selection = selection,
-                    onSelectionChange = { selection = it },
-                    onCopy = { text ->
-                        if (text.isNotBlank()) {
-                            androidClipboard.setPrimaryClip(ClipData.newPlainText("pi terminal", text))
-                            statusText = "已选择复制"
-                        }
-                    },
-                    onOpenLink = { url -> openLink(context, url) },
-                    onTap = { focus() },
-                    modifier = Modifier.fillMaxSize(),
-                    cursorStyle = preferences.cursorStyle,
+                    bridge = bridge,
+                    preferences = preferences,
+                    palette = palette,
+                    modifierManager = modifierManager,
                 )
             }
         }
@@ -199,46 +193,106 @@ fun TerminalPane(modifier: Modifier = Modifier) {
         TerminalKeyBar(
             palette = palette,
             ctrlArmed = ctrlArmed,
-            onCtrlToggle = { ctrlArmed = !ctrlArmed },
-            onKey = { bytes ->
-                active?.controller?.send(bytes)
-                // Any key press disarms the sticky modifier, like a real keyboard.
-                ctrlArmed = false
-            },
-            onFontSize = { size ->
-                fontSize = size
-                // Persist the one terminal setting whose control lives on the bar
-                // itself, so the choice survives leaving the Workbench tab.
-                settingsStore.write("app.terminal.fontSize", JsonPrimitive(size.toInt()))
-            },
-            fontSize = fontSize,
+            altArmed = altArmed,
             statusText = statusText,
-            keys = preferences.keyBar,
+            rows = preferences.keyBar,
+            onKey = { key ->
+                val sticky = key.sticky
+                if (sticky != null) {
+                    when (sticky) {
+                        StickyModifier.Ctrl -> ctrlArmed = !ctrlArmed
+                        StickyModifier.Alt -> altArmed = !altArmed
+                    }
+                } else {
+                    val emulator = bridge?.emulator
+                    if (emulator != null) {
+                        val mods = (if (ctrlArmed) MOD_CTRL else 0) or (if (altArmed) MOD_ALT else 0)
+                        val character = key.character
+                        if (character != null) {
+                            emulator.dispatchCharacter(mods, character)
+                        } else if (key.vtermKey != VTermKey.NONE) {
+                            emulator.dispatchKey(mods, key.vtermKey)
+                        }
+                    }
+                    // A sticky modifier applies to one key, exactly as it does on
+                    // the library's own keyboard path.
+                    ctrlArmed = false
+                    altArmed = false
+                }
+            },
+            onPaste = { bridge?.paste(readClipboard(context, androidClipboard)) },
         )
     }
 }
 
 /**
- * The tabs and their controllers.
+ * The library's Compose component, plus the one correction it needs.
  *
- * Held outside the composable so that a recomposition — including the one every
- * frame of guest output causes — cannot restart a process. Disposal closes every
- * session: the terminal's processes are deliberately tied to the screen, because a
- * hidden PTY would be a process the user cannot see or stop.
+ * `forcedSize` keeps the emulator's grid at the size `PtyLauncher` pinned, which
+ * is the whole reason the guest's full-screen TUI lines up: `script(1)` cannot
+ * resize the pty it created, so the guest's grid is frozen at spawn time and an
+ * emulator that reflowed to the view would paint a grid pi never laid out.
+ *
+ * The correction is [onSizeChanged]. With `forcedSize` set, the library computes
+ * the font size to fit that frozen grid — but it *also* resizes the emulator from
+ * the view size on every layout change, and its own re-assert is inside a
+ * `LaunchedEffect` keyed on the forced dimensions, which do not change. So after
+ * a rotation nothing would put the grid back. Re-asserting it here is idempotent
+ * and runs after the library's own resize, because a parent's layout callback
+ * follows its children's.
+ */
+@Composable
+private fun TerminalSurface(
+    bridge: TerminalBridge,
+    preferences: TerminalPreferences,
+    palette: TerminalPalette,
+    modifierManager: ModifierManager,
+) {
+    val focusRequester = remember { FocusRequester() }
+    val emulator = bridge.emulator
+    val (rows, columns) = bridge.fixedSize
+
+    Box(
+        Modifier
+            .fillMaxSize()
+            .onSizeChanged { emulator.resize(rows, columns) },
+    ) {
+        Terminal(
+            terminalEmulator = emulator,
+            modifier = Modifier.fillMaxSize(),
+            typeface = Typeface.MONOSPACE,
+            initialFontSize = preferences.fontSize.sp,
+            backgroundColor = palette.background,
+            foregroundColor = palette.foreground,
+            keyboardEnabled = true,
+            showSoftKeyboard = true,
+            focusRequester = focusRequester,
+            forcedSize = bridge.fixedSize,
+            modifierManager = modifierManager,
+        )
+    }
+}
+
+/**
+ * The tabs and their bridges.
+ *
+ * Held outside the composable so that a recomposition cannot restart a process.
+ * Disposal closes every session: the terminal's processes are deliberately tied to
+ * the screen, because a hidden PTY would be a process the user cannot see or stop.
  */
 class TerminalStore(
     private val context: Context,
     private val palette: TerminalPalette,
-    /** `app.terminal.scrollbackLines`, applied to each new emulator. */
-    private val historyLimit: Int = 2000,
+    /** Where a guest OSC 52 request goes; see [TerminalBridge]. */
+    private val onClipboardCopy: (String) -> Unit,
 ) {
 
-    /** One open terminal. The controller is null until the tab is first shown. */
+    /** One open terminal. The bridge is null until the tab is first shown. */
     data class Tab(
         val kind: PtyLauncher.Kind,
         val title: String,
         val command: String = "",
-        val controller: TerminalController? = null,
+        val bridge: TerminalBridge? = null,
     )
 
     val tabs: SnapshotStateList<Tab> = mutableStateListOf(Tab(PtyLauncher.Kind.Shell, "Shell"))
@@ -261,7 +315,7 @@ class TerminalStore(
 
     fun close(index: Int) {
         val closing = tabs.getOrNull(index) ?: return
-        closing.controller?.close()
+        closing.bridge?.close()
         tabs.removeAt(index)
         if (tabs.isEmpty()) tabs += Tab(PtyLauncher.Kind.Shell, "Shell")
         activeIndex = activeIndex.coerceIn(0, tabs.size - 1)
@@ -270,13 +324,13 @@ class TerminalStore(
 
     fun restart() {
         val current = active() ?: return
-        current.controller?.close()
-        tabs[activeIndex] = current.copy(controller = null)
+        current.bridge?.close()
+        tabs[activeIndex] = current.copy(bridge = null)
         ensureStarted(activeIndex)
     }
 
     fun closeAll() {
-        tabs.forEach { it.controller?.close() }
+        tabs.forEach { it.bridge?.close() }
         tabs.clear()
     }
 
@@ -288,88 +342,18 @@ class TerminalStore(
      */
     private fun ensureStarted(index: Int) {
         val tab = tabs.getOrNull(index) ?: return
-        if (tab.controller != null) return
-        val controller = TerminalController.open(
+        if (tab.bridge != null) return
+        val bridge = TerminalBridge.open(
             context = context,
             kind = tab.kind,
             columns = DEFAULT_COLUMNS,
             rows = DEFAULT_ROWS,
             palette = palette,
-            historyLimit = historyLimit,
+            onClipboardCopy = onClipboardCopy,
             command = tab.command,
         )
-        tabs[index] = tab.copy(controller = controller)
+        tabs[index] = tab.copy(bridge = bridge)
     }
-}
-
-/**
- * The hidden input field.
- *
- * A soft keyboard can only be summoned by a focused text field, and an IME can only
- * deliver composed text (CJK, emoji, autocorrect) to one. So there is an
- * almost-invisible field whose value is always reset to empty: every keystroke
- * produces an `onValueChange` with the newly committed text, which goes straight to
- * the pty. Nothing is ever rendered from the field — the terminal grid is the
- * display, and the pty echoes what the user typed.
- */
-@Composable
-private fun TerminalInputHost(
-    controller: TerminalController,
-    ctrlArmed: Boolean,
-    onCtrlConsumed: () -> Unit,
-    modifier: Modifier = Modifier,
-    content: @Composable (focus: () -> Unit) -> Unit,
-) {
-    val focusRequester = remember { FocusRequester() }
-    val keyboard = LocalSoftwareKeyboardController.current
-
-    fun focus() {
-        runCatching { focusRequester.requestFocus() }
-        keyboard?.show()
-    }
-
-    Box(modifier) {
-        content { focus() }
-        BasicTextField(
-            value = TextFieldValue(""),
-            onValueChange = { value ->
-                val text = value.text
-                if (text.isEmpty()) return@BasicTextField
-                controller.send(if (ctrlArmed) TerminalKeys.applyControl(text) else text)
-                if (ctrlArmed) onCtrlConsumed()
-            },
-            modifier = Modifier
-                .width(1.dp)
-                .height(1.dp)
-                .focusRequester(focusRequester)
-                .onPreviewKeyEvent { event -> handleHardwareKey(event, controller) },
-            textStyle = TextStyle(
-                color = Color.Transparent,
-                fontSize = 1.sp,
-                fontFamily = FontFamily.Monospace,
-            ),
-            cursorBrush = SolidColor(Color.Transparent),
-        )
-    }
-}
-
-/**
- * Hardware (and IME) key events.
- *
- * Returns true only for keys this turned into terminal bytes, so the field still
- * receives printable text and the system still receives shortcuts we do not claim.
- * Ctrl/Alt combinations and non-printing keys are consumed here; a bare letter is
- * left to the IME path above, which is where composed text comes from.
- */
-private fun handleHardwareKey(event: KeyEvent, controller: TerminalController): Boolean {
-    if (event.nativeKeyEvent.action != AndroidKeyEvent.ACTION_DOWN) return false
-    val native = event.nativeKeyEvent
-    val modified = native.isCtrlPressed || native.isAltPressed
-    val special = native.unicodeChar == 0 || native.unicodeChar < 0x20
-    if (!modified && !special) return false
-    val encoded = TerminalKeys.encode(native) ?: return false
-    controller.send(encoded)
-    return true
 }
 
 /** The tab strip: closable tabs, a restart action, and the new-tab menu. */
@@ -397,7 +381,7 @@ private fun TerminalTabBar(
                 Modifier
                     .padding(vertical = 4.dp, horizontal = 2.dp)
                     .background(
-                        if (selected) palette.selection else Color.Transparent,
+                        if (selected) palette.chipArmed else Color.Transparent,
                         RoundedCornerShape(8.dp),
                     )
                     .padding(start = 10.dp),
@@ -429,21 +413,23 @@ private fun TerminalTabBar(
     }
 }
 
+/**
+ * The clipboard, or an empty string when the platform refuses to hand it over.
+ *
+ * The context is passed through rather than nulled: `coerceToText` needs it to
+ * resolve an `Intent` or a `content:` URI, which is exactly the case a copied
+ * link or rich text arrives as.
+ */
+private fun readClipboard(context: Context, clipboard: ClipboardManager): String =
+    runCatching { clipboard.primaryClip?.getItemAt(0)?.coerceToText(context)?.toString().orEmpty() }
+        .getOrDefault("")
+
 private const val DEFAULT_COLUMNS = 80
 private const val DEFAULT_ROWS = 26
 
+/** libvterm's modifier bits, as `dispatchKey`/`dispatchCharacter` take them. */
+private const val MOD_ALT = 2
+private const val MOD_CTRL = 4
+
 private fun Color.luminanceIsDark(): Boolean =
     (0.2126f * red + 0.7152f * green + 0.0722f * blue) < 0.5f
-
-/**
- * Follow an OSC 8 hyperlink.
- *
- * Only schemes a user can meaningfully act on are handed to the system. An
- * `intent:` or `file:` URL printed by anything running in the guest would
- * otherwise be a way to drive the phone's app launcher from the terminal.
- */
-private fun openLink(context: Context, url: String) {
-    val scheme = url.substringBefore(':').lowercase()
-    if (scheme !in setOf("http", "https", "mailto", "tel")) return
-    runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }
-}

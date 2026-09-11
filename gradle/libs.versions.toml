@@ -50,6 +50,16 @@ navigation = "2.9.0"
 # Gradle itself resolves these from Maven Central with no extra step.
 shizuku = "13.1.5"
 
+# 0.0.13 IS A CEILING, NOT A STARTING POINT. Termlib moved to Kotlin 2.3.x in
+# 0.0.14: `javap -v` on 0.0.14+ reports `kotlin.Metadata(mv=[2,3,0])`, which
+# this project's Kotlin 2.2.21 compiler refuses to read ("The binary version of
+# its metadata is 2.3.0, expected version is 2.2.0") — exactly the failure that
+# already cost a CI round for the markdown renderer above. 0.0.13 is the last
+# release built with Kotlin 2.2.21: its classes are `mv=[2,2,0]` and its POM
+# pins `kotlin-stdlib:2.2.21`. Bumping this line means bumping `kotlin` above
+# to 2.3.x *and* moving the compose compiler plugin with it.
+termlib = "0.0.13"
+
 [libraries]
 # --- protocol core ---
 kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "serializationJson" }
@@ -85,6 +95,15 @@ shizuku-provider = { module = "dev.rikka.shizuku:provider", version.ref = "shizu
 # Only the m3 renderer is declared: it brings org.jetbrains:markdown (the
 # parser), androidx.compose and kotlinx-collections-immutable transitively.
 markdown-renderer-m3 = { module = "com.mikepenz:multiplatform-markdown-renderer-m3", version.ref = "markdown" }
+
+# --- terminal engine ---
+# ConnectBot's terminal component: libvterm (Paul Evans, MIT) behind JNI,
+# presented as a Compose component. Apache-2.0, Maven Central, and the AAR
+# already carries the prebuilt native library — `jni/arm64-v8a/libjni_cb_term.so`
+# — so there is no NDK/CMake step in this build and no source to vendor. Its
+# `aar-metadata.properties` asks for `minCompileSdk=1` and the manifest for
+# minSdk 24, both below this module's.
+termlib-android = { module = "org.connectbot:termlib", version.ref = "termlib" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

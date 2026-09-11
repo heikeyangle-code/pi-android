@@ -1,4 +1,4 @@
-package app.pi.terminal
+package app.pi.runtime
 
 import java.io.File
 import java.io.IOException
@@ -7,12 +7,15 @@ import java.io.OutputStream
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
- * One running terminal: a process, its pipes, and the emulator that paints it.
+ * One running terminal: a process and its pipes.
  *
  * The PTY itself is allocated *inside the guest* by `script(1)`, so from this
  * side there is nothing terminal-specific at all — just a process with pipes.
- * That is the whole point of the approach (see `app.pi.runtime.PtyLauncher`):
- * Android never has to fork a pty, and this class stays ordinary I/O.
+ * That is the whole point of the approach (see [PtyLauncher]): Android never has
+ * to fork a pty, and this class stays ordinary I/O. It is deliberately **not**
+ * part of the terminal emulator: the VT parsing and rendering belong to
+ * `org.connectbot:termlib`, which is handed these bytes by
+ * `app.pi.ui.terminal.TerminalBridge`.
  *
  * Three rules it exists to enforce:
  *
@@ -54,16 +57,11 @@ class PtySession private constructor(
     fun write(text: String) {
         if (closed.get()) return
         val bytes = text.toByteArray(Charsets.UTF_8)
-        try {
-            output.write(bytes)
-            output.flush()
-        } catch (error: IOException) {
-            lastError = "写入终端失败: ${error.message}"
-        }
+        write(bytes, bytes.size)
     }
 
     fun write(bytes: ByteArray, length: Int) {
-        if (closed.get()) return
+        if (closed.get() || length <= 0) return
         try {
             output.write(bytes, 0, length)
             output.flush()

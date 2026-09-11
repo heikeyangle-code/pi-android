@@ -1,7 +1,6 @@
 package app.pi.runtime
 
 import android.content.Context
-import app.pi.terminal.PtySession
 import java.io.File
 
 /**
@@ -66,10 +65,10 @@ import java.io.File
  * and both the guest and the view lay out for that fixed grid.
  *
  * The consequence: resizing the Android view does not reflow the guest TUI. The
- * view keeps painting the declared grid (see `TerminalSurface`), which is why the
- * declared size is chosen to fit a phone rather than the other way round. A
- * future native `forkpty` would remove this limitation; nothing else here
- * depends on it.
+ * terminal component is given the declared grid
+ * (`app.pi.ui.terminal.TerminalBridge`), which is why the declared size is
+ * chosen to fit a phone rather than the other way round. A future native
+ * `forkpty` would remove this limitation; nothing else here depends on it.
  *
  * ## Environment
  *
@@ -281,22 +280,31 @@ object PtyLauncher {
         put("COLUMNS", columns.toString())
         put("LINES", rows.toString())
         if (kind != Kind.PiTui) return@buildMap
-        // This emulator implements OSC 8 and true colour, and pi cannot detect
-        // either: it guesses from TERM/TERM_PROGRAM/branding variables, and this
+        // True colour is implemented — libvterm parses SGR 38/48 with 24-bit
+        // values and the view paints each cell's own RGB — but pi cannot detect
+        // it: pi guesses from TERM/TERM_PROGRAM/branding variables, and this
         // process's parent is an Android app, so detection always concludes
-        // "unknown terminal" and disables both.
-        put("PI_HYPERLINKS", "1")
+        // "unknown terminal".
         put("COLORTERM", "truecolor")
-        // Inline images are the one capability this emulator does not have (see
-        // TerminalEmulator's KDoc). Saying so is required: "auto" would let pi try
-        // to draw a picture with escape sequences we consume.
+        // OSC 8 hyperlinks are NOT implemented by the terminal component as
+        // pinned (org.connectbot:termlib 0.0.13): its OSC parser handles 52, 133
+        // and 1337 only, and its URL/hyperlink scan landed in a later release
+        // whose Kotlin metadata this project's compiler cannot read (see the
+        // ceiling note in gradle/libs.versions.toml). Advertising "1" would make
+        // pi emit links nothing can open, so this says "0"; pi's
+        // `parseBooleanCapabilityOverride` maps exactly "0" to false.
+        put("PI_HYPERLINKS", "0")
+        // Inline images are the other capability it does not have (upstream lists
+        // them as planned). Saying so is required: "auto" would let pi try to
+        // draw a picture with escape sequences nothing renders.
         put("PI_IMAGE_PROTOCOL", "none")
         // `TERMUX_VERSION` is deliberately NOT set. If it were, pi would skip its
         // full redraw when the terminal height changes
         // (`packages/tui/src/tui-main-screen.ts:347`) — and the height change here
         // is the software keyboard, where a stale viewport is exactly what you
         // would see. Leaving it unset also keeps pi's clipboard on OSC 52, which
-        // this emulator implements, instead of `termux-clipboard-*`.
+        // the terminal component does implement (its OSC 52 handler feeds the
+        // Android clipboard), instead of `termux-clipboard-*`.
         put("PI_SKIP_VERSION_CHECK", "1")
     }
 
