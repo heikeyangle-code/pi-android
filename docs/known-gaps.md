@@ -523,3 +523,41 @@ pi 的 TUI 会按扩展名分支（`.jsonl` → `exportToJsonl`，`interactive-m
 | rendering-review P5 / F3+F2 | `Transcript.kt:1120` `failTurn()`：`length`→"回复被令牌上限截断"、`aborted`→"回合已中止"、`error`→"模型调用失败"+`errorMessage`，并把仍在 `Pending` 的工具卡收成 `Error`；`Events.kt:151` 解析 `errorMessage` |
 | rendering-review F24/F23/F16/F18 | `TextEnd.content` 覆盖累加文本（`Transcript.kt:883`）、`ToolCallEnd` 补齐工具名/参数（`:918`）、`details.truncation` → `outputTruncated`（`:467`）、工具结果图片保留为 `List<PiImage>`（`Events.kt:188`，ToolCall 字段 `Transcript.kt:78`）、压缩 `usage` 落到 `CompactionMarker`（`Transcript.kt:129`），并在 `lastUsage`（`:591`）暴露实时 usage（F10） |
 | F5（跨文件） | **engine 侧无需改动**：`PiEngineSession.handle()` 已经 `transcript.onEvent(event)` 投影 `entry_appended`，且 `_changes` 对每个非 response 事件自增。重复投影在 `ui/PiSessionViewModel.kt:666-675`（`e75821d0` 的 P2）。engine 侧已加注释说明"由本层投影一次"，避免两边各改一半 |
+
+---
+
+## K. 装包功能（install / list / remove）的可达性与 guest 链路 —— 本次实测
+
+**一句话**：npm 链路已实测可用（同一版 pi、同一条命令形状、同样的落盘形状），**git 链路极可能不可用**（运行时里没有 git，而 UI 在宣传 `git:` 源），而**整块功能此前没有任何 UI 入口**（本次补了一个 host，settings 侧还差 3 行）。
+
+### K1. 实测证据（开发容器，pi 0.85.1 + node 24.19.0，`npm:` 源）
+
+| 命令 | 结果 |
+|---|---|
+| `node <pi>/dist/cli.js install 'npm:is-number@7.0.0' --approve`（stdin 关掉，非 TTY） | **rc=0**，输出 `Installing npm:is-number@7.0.0...` → `added 1 package, and audited 2 packages` → `Installed npm:is-number@7.0.0`。**没有卡在信任询问**（与 B5 的判断一致：非 TTY 下 `hasUI=false`，信任闸门确定性拒绝而不是弹窗） |
+| 落盘 | `<agentDir>/settings.json` → `{"packages":["npm:is-number@7.0.0"]}`；`<agentDir>/npm/node_modules/is-number` 存在，`<agentDir>/npm/package-lock.json` 生成 |
+| `node <pi>/dist/cli.js list` | **rc=0**，输出正是 `PiListOutput.parse` 期待的形状：`User packages:` / `  npm:is-number@7.0.0` / `    <agentDir>/npm/node_modules/is-number` |
+
+**一条更正（重要）**：较早的一次记录说「`pi list` 挂起、无输出」。那**不是 pi 的行为**，而是当时这台容器的资源饥饿（同一时段 5 个代理并行编译、出现 `fork: Function not implemented`）。同样的命令现在 **<2 秒返回**。不要把那次挂起写进任何结论。
+
+### K2. `git:` 源没有可用的 git（阻塞项）
+
+- `runtime.lock.json` 的 `artifacts` 只有 `proot / libtalloc / libandroidShmem / ubuntuBase / node / ripgrep / fd` —— **没有 git**。
+- `RuntimeProvisioner.kt` 全文没有任何一处安装或软链 git（只有 node/npm/npx 与 `pi` 包装脚本）。
+- `ubuntu-base-24.04.3-base-arm64.tar.gz` 是 Ubuntu 的**最小 base**，本身不含 git。
+- `app/src/main/assets/runtime/` 在仓库里是**空目录**（引擎包 `pi-engine.tar.gz` 不入库），所以"引擎包里是否捆了 git"无法从仓库核对——但引擎包是 node_modules 树，正常不含 git 二进制。
+- 而 `PackageStrings.SPEC_HINT` 正在告诉用户可以用 `git:github.com/user/repo@v1`。**收尾条件**：把 git 加进 runtime artifacts + provisioner（属 `runtime/**` 所有者），或在 UI 上把 git 源标成"需要先装 git，当前不可用"。
+- 真机确认一句即可：`... bash -lc 'command -v git || echo NO-GIT'`。
+
+### K3. 网络与路径
+
+- **解析**：`RuntimeProvisioner.kt:161-173` 写死 `/etc/resolv.conf`（223.5.5.5 / 8.8.8.8 / 1.1.1.1），所以"guest 里没有解析器"不是问题。
+- **registry**：npm 要连 `registry.npmjs.org`；设计 §25 已指出国内需要换镜像（`registry.npmmirror.com`）。这是真机网络问题，代码层不要假设它通。
+- **路径**：`/opt/node/bin/node` 与 `/opt/pi/node_modules/@earendil-works/pi-coding-agent/dist/cli.js` 由 `RuntimeProvisioner.extractNode`（`:109-126`）与 `extractEngine`（`:189-206`）创建，`AgentLayout.guestEngineCli`/`guestNode` 引用的就是这两个值；`PiPackageService.commandLine` 用的也是它们。**容器实测只能证明命令形状与 pi 子命令，路径本身仍需真机**（`PiPackageService` 已用 `Done.NotReady` 在缺失时明说，不会伪装成功）。
+
+### K4. UI 可达性（本次新增，settings 侧还差 3 行）
+
+- 此前 `PiPackagesScreen` / `PiProjectTrustPrompt` **没有任何调用方**（全仓 grep 只有 `packages/**` 自身），所以"包管理"对用户等于不存在。
+- 本次新增 `app/src/main/kotlin/app/pi/packages/PiPackagesHost.kt`：`PiPackagesHost`（可挂载的整屏，含标题栏与返回）、`PiPackagesController`（状态 + guest 调用 → `PiPackagesUiState`）、`PiPackagesEntryRow`（入口行）。restart 走 `EngineRestartCoordinator`（未接引擎时不假装能重启），信任决定只经 `PiProjectTrustPrompt` 写入。
+- settings 侧最小 patch 见交付报告（`PiSettingsStack.kt` + `SettingsHome.kt`，共 3 处）。
+- 次要：`PiSettingsRegistry.kt:759` 的 `packages` 行让用户**直接编辑 `settings.json` 的数组**，而 `PiPackageService` 的 KDoc 已论证"只改数组 = 配置一个磁盘上不存在的包"（B5）。建议把该行改成只读展示并指向包管理页。
