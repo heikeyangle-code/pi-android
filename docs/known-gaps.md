@@ -499,8 +499,9 @@ pi 的 TUI 会按扩展名分支（`.jsonl` → `exportToJsonl`，`interactive-m
 | 命令 | 结果 |
 |---|---|
 | `K2JVMCompiler -no-stdlib -jvm-target 17 -classpath <kotlinc+serialization+coroutines> -d <out> $(find rpc/src/main/kotlin -name '*.kt')`（与 `tools/typecheck.sh` 同一套 kotlinc/classpath） | **exit 0，0 error，143 个 class** |
-| `bash tools/typecheck.sh` | 本会话内出现过 **`typecheck: OK (:rpc + :app, cross-module boundary reproduced)`** |
-| `gradle :rpc:test --console=plain --no-daemon` | 上一条完整跑通过 **190 tests / 0 failures**（本轮又新增 10 个 `FidelityFixesTest` 用例，重跑中） |
+| `bash tools/typecheck.sh` | **没有一次真实 `OK` 可作证据。** 本会话出现过的两次 `typecheck: OK (:rpc + :app, cross-module boundary reproduced)`（`/tmp/typecheck.log` mtime 15:35:21；`/tmp/tc2.log` 11:17）**都是假 OK**：日志里没有任何编译器诊断，且 `build/typecheck/out/app` 与 `out-26048/app` 的 class 数都是 **0**（`rpc` = 143）。这正是旧脚本在 `KOTLINC_CP` 为空时打印 OK 的路径（现已加守卫）。**`:app` 尚未被编译验证。** |
+| 最小闭包编译（`runtime/*.kt` + `bridge/*.kt` + `session/*.kt` + 三个 `engine/` 文件；classpath = kotlinc + coroutines + serialization + android.jar + `out-26048/rpc`） | 98 个 `error:` **全部落在 `bridge/**`**（最小 classpath 缺 AndroidX 的 `ContextCompat` 等，是 classpath 缺口而非代码缺陷）；**`engine/` 0 error** —— `PiEngineHost.kt` / `PiEngineSession.kt` / `PiEngineApi.kt` 编译干净 |
+| `gradle :rpc:test --console=plain --no-daemon` | 最近一次**完成**的运行：**190 tests / 0 failures / 0 errors / 0 skipped**（`rpc/build/test-results/test/*.xml`，mtime 18:36:14）。本轮新增 10 个用例后期望 **200**，**待 `8ecfdf0b` 跑一次才有证据**（按资源规矩 RPC 代理不跑 gradle） |
 | 单测直跑（JUnitCore，编译产物） | 曾 `OK (198 tests)`；`FidelityFixesTest` 现有 33 个 `@Test` |
 
 **`pi --mode rpc` 在这台机器上起不来**（连 `--version` 都超时，stdin 关闭也一样），所以"本地抓 RPC stdout"不可行。等价的替代做法（已被 `contentIndex` 一条证实有效）：直接用 Node 驱动 **pi 真实的 provider 适配器**
@@ -513,10 +514,10 @@ pi 的 TUI 会按扩展名分支（`.jsonl` → `exportToJsonl`，`interactive-m
 | `ExtensionError.extensionPath`/`event` | 已加字段并解析：`rpc/src/main/kotlin/app/pi/rpc/Events.kt:322`（`{extensionPath, event, error}`，文本兼容 `message`/`error`） |
 | `MessageEnd.customType`/`display` | 已加字段；实时 `role:"custom"` 现在走 `onHookMessage`：`Events.kt:140-146`，`Transcript.kt:663` |
 | `model_select` 死分支 | 已删（`onEntry` 只留 `model_change`；`ENTRY_EVENT_TYPES` 同步）。pi 只把它发给扩展（`_emitModelSelect` → `_extensionRunner.emit`），条目联合里也没有它 |
-| `AssistantDelta.Unknown` | 注释与行为一致：投影为按 kind 去重的 `Notice`（`Transcript.kt:900-921`） |
-| `system_prompt`/`error` 死分支 | 已删；`Transcript.kt:1085-1093` 留了"pi 没有这两种条目类型"的说明，行由 `onSystemPrompt()`/`onError()` 产生 |
+| `AssistantDelta.Unknown` | 注释与行为一致：投影为按 kind 去重的 `Notice`（`Transcript.kt:943-961`） |
+| `system_prompt`/`error` 死分支 | 已删；`Transcript.kt:1258-1264` 留了"pi 没有这两种条目类型"的说明，行由 `onSystemPrompt()`/`onError()` 产生 |
 | `turnIndex`（两审相反） | **裁决：RPC 线上没有。** `packages/agent/src/types.ts:436-437` 的 `AgentEvent` 无 index；`core/extensions/types.ts` 的 `TurnStartEvent`/`TurnEndEvent` 有，但 `_handleAgentEvent` 只把它交给 `_emitExtensionEvent`（扩展处理器），随后 `_emit(event)` 转发的是**原始 AgentEvent**，`toJsonEvent` 对非 `message_update` 原样透传。注释已写全链条：`Events.kt:76-119` |
-| `contentIndex` | **真实抓包证明会错序，已修。** pi 真实 anthropic 适配器对 text(0)→tool_use(1)→text(2) 发出 `text_start@0, toolcall_start@1, text_start@2`；reducer 现在按 `contentIndex` 建行索引表（`Transcript.kt:560-575`），不再"取最后一个 streaming 文本行"。同一抓包顺带证实 `done` 事件是 `{"type":"done","reason":"toolUse"}`（`reason`，不是 `stopReason`） |
+| `contentIndex` | **真实抓包证明会错序，已修。** pi 真实 anthropic 适配器对 text(0)→tool_use(1)→text(2) 发出 `text_start@0, toolcall_start@1, text_start@2`；reducer 现在按 `contentIndex` 建行索引表（`Transcript.kt:594-607`），不再"取最后一个 streaming 文本行"。同一抓包顺带证实 `done` 事件是 `{"type":"done","reason":"toolUse"}`（`reason`，不是 `stopReason`） |
 | 未知字段宽容 | `PiResponses` 的读者只取具名键、从不校验键集；策略写在 KDoc：未知字段忽略、缺省必需字段不伪造也不抛异常；测试 `unknown extra fields never break a reader` / `absent required fields degrade instead of throwing` |
 | I11 引擎侧（`gap-disposition.md` #11/#12/#64/#65/#66） | `rpc/.../PiLaunchOptions.kt:31,47,61` 把 `PI_OFFLINE` / `PI_CACHE_RETENTION=long` / `--system-prompt` / `--append-system-prompt` 映射出来；`engine/PiEngineHost.kt:192,215,275,316,399` 应用并让 `restart()` 复用。**残留**：没有 settings 行传值，`boot()` 唯一调用点在 `ui/PiSessionViewModel.kt:535`（都不在 `rpc/**`+`engine/**`） |
 | rendering-review P5 / F3+F2 | `Transcript.kt:1120` `failTurn()`：`length`→"回复被令牌上限截断"、`aborted`→"回合已中止"、`error`→"模型调用失败"+`errorMessage`，并把仍在 `Pending` 的工具卡收成 `Error`；`Events.kt:151` 解析 `errorMessage` |
