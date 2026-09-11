@@ -96,6 +96,16 @@
   - 跨目录接线（`ui/**` 所有者，本层不改）：`app.pi.packages.EngineRestartCoordinator` 已经把状态机和 `restart` 接好了——`request()` 只产生确认问题，`confirm()` 才动作，并且**恒以 `allowInterrupt=false`** 调用引擎（确认不是永久杀回合的许可；确认之后才起的新回合会被引擎自己拒掉，然后回到 `AwaitingIdle` 而不是报失败）。
 - **收尾条件**：真机上确认「重启后 `get_commands` 里出现新扩展/新技能」，以及重启耗时。
 
+### B6-更优替代：用扩展命令调 `ctx.reload()`，不必重启引擎
+
+**现状（B6）**：装 skill / prompt 模板 / 扩展后**需要重启引擎**才能生效。原因是 pi 把资源扫描结果**缓存在 loader 字段里**（`resource-loader.ts:308-314`，初始化 `[]` 于 `:285-288`），只被 `updateSkillsFromPaths`（`:672-693`）/`updatePromptsFromPaths`（`:695-717`）赋值，而它们**只被 `reload()` 调用**（`:472-473`、`:487-488`）；`reload()` 只在启动（`core/sdk.ts:185-188`）和 `session.reload()`（`agent-session.ts:2849`）各跑一次。TUI 靠 `/reload` 解决，而 RPC **没有这个命令**。
+
+**更好的路（值得做，但要先实测）**：`ctx.reload()` **对扩展是可达的**——`rpc-mode.ts:341-343` 把 `reload` 挂进了扩展的 `commandContextActions`。而本 App **自带 3 个扩展**（设备桥、权限闸门、高亮服务）。所以在其中一个里注册一个命令去调 `ctx.reload()`，App 发 `prompt /<该命令>` 即可**当场重载**：
+- **好处**：不重启 Node 进程、**不打断正在跑的回合**、省掉 1~3 秒；
+- **必须先实测的三件事**：① `ctx.reload()` 在 RPC 模式下真的重扫 skills/prompts；② 重载后 `get_commands` 返回新条目；③ 重载不会破坏当前会话状态。
+- **不实测就上 = 又造一个"点了没反应"的功能。** 这正是本项目反复出现的病：界面承诺了行为，行为不存在。
+- 注意 `assets/pi-extensions/**` 有归属约束；`ASSET_VERSION` 必须同步提升（现在是 `"3"`），否则已安装设备拿不到新扩展。
+
 ### B7. 项目信任弹窗 —— **待验证**
 - **事实已核对**：`--mode rpc` 下 `hasUI` 恒为假（`main.ts:753` → `core/project-trust.ts:86-88` 直接 `return false`），配合默认 `defaultProjectTrust: "ask"`（`settings-manager.ts:1014-1017`），项目本地 `.pi/extensions` 被**静默跳过**：没有事件、没有 stderr、没有错误（`loader.ts:634-637`、`main.ts:775-782`）。
 - **trust.json 的格式是读源码得到的，不是猜的**（`core/trust-manager.ts`）：

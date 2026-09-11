@@ -126,6 +126,18 @@ sealed interface ExtensionAnswer {
  *  4. **Duplicate ids are refused, not replaced.** pi ids are uuids per request
  *     (`rpc-mode.ts` `crypto.randomUUID()`); a repeat means a bug or a hostile
  *     stream, and answering the wrong request is worse than showing nothing.
+ *  5. **The teardown drain is not optional — do not "simplify" it away.** [drain]
+ *     is called on engine death (`Stopped`/`Failed`), on a new session (`attach`),
+ *     and on ViewModel teardown (`onCleared`), and every drained request is
+ *     answered `cancelled`. That is what makes the period while no host is
+ *     composed survivable: a request can be queued but not yet on screen (no
+ *     composition, app in the background, a destination that does not render),
+ *     and for `select`/`confirm`/`input` pi resolves its own timer anyway, but
+ *     **`editor` has no agent-side timer at all** — `rpc-mode.ts`'s `editor()` is
+ *     an un-timed promise and its signature has no timeout options
+ *     (`types.ts`), so an unanswered `editor` hangs pi *forever*. Answering on
+ *     teardown is the only thing standing between "the UI went away" and "pi is
+ *     wedged", which makes the drain load-bearing rather than defensive.
  */
 class ExtensionDialogQueue {
 

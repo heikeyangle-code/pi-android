@@ -412,4 +412,163 @@ class FidelityFixesTest {
         assertEquals("tool_call", event.event)
         assertEquals("boom", event.message)
     }
+
+    // ------------------------------------------- P5 / F3 + F2: abnormal turns
+
+    @Test
+    fun `a length stop reports the truncation instead of looking complete`() {
+        // components/assistant-message.ts prints a red line for `length`; without
+        // it an answer cut off by the output-token limit reads as finished.
+        val r = reducer()
+        r.onEvent(
+            PiEvents.parse(
+                """{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"half"}],"stopReason":"length"}}""",
+            ),
+        )
+        val error = r.transcript.single() as ErrorText
+        assertEquals("回复被令牌上限截断", error.message)
+    }
+
+    @Test
+    fun `an aborted turn closes its pending tool cards`() {
+        val r = reducer()
+        r.onEvent(PiEvents.parse("""{"type":"message_update","assistantMessageEvent":{"type":"toolcall_start","contentIndex":0,"id":"c1","toolName":"bash"}}"""))
+        r.onEvent(
+            PiEvents.parse(
+                """{"type":"message_end","message":{"role":"assistant","content":[],"stopReason":"aborted","errorMessage":"Stopped by user"}}""",
+            ),
+        )
+        assertTrue(r.transcript.any { it is ErrorText && it.detail == "Stopped by user" })
+        val call = r.transcript.filterIsInstance<ToolCall>().single()
+        assertEquals(ToolStatus.Error, call.status)
+        assertTrue(call.isError)
+        assertTrue(call.endedAt != null)
+    }
+
+    @Test
+    fun `an error stop keeps pi's own message as the detail`() {
+        val r = reducer()
+        r.onEvent(
+            PiEvents.parse(
+                """{"type":"message_end","message":{"role":"assistant","content":[],"stopReason":"error","errorMessage":"529 overloaded"}}""",
+            ),
+        )
+        val error = r.transcript.single() as ErrorText
+        assertEquals("模型调用失败", error.message)
+        assertEquals("529 overloaded", error.detail)
+    }
+
+    @Test
+    fun `a normal stop adds no error row`() {
+        val r = reducer()
+        r.onEvent(
+            PiEvents.parse(
+                """{"type":"message_update","assistantMessageEvent":{"type":"text_delta","contentIndex":0,"delta":"done"}}""",
+            ),
+        )
+        r.onEvent(
+            PiEvents.parse(
+                """{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"done"}],"stopReason":"stop"}}""",
+            ),
+        )
+        assertTrue(r.transcript.none { it is ErrorText })
+        assertEquals(1, r.transcript.size)
+    }
+
+    // -------------------------------------- F24/F23/F16/F18: dropped payloads
+
+    @Test
+    fun `text_end content is authoritative over accumulated deltas`() {
+        // A lost delta must not leave the row wrong: `text_end.content` is pi's
+        // own text for the block.
+        val r = reducer()
+        r.onEvent(PiEvents.parse("""{"type":"message_update","assistantMessageEvent":{"type":"text_delta","contentIndex":0,"delta":"hel"}}"""))
+        r.onEvent(
+            PiEvents.parse(
+                """{"type":"message_update","assistantMessageEvent":{"type":"text_end","contentIndex":0,"content":"hello"}}""",
+            ),
+        )
+        assertEquals("hello", (r.transcript.single() as AssistantText).text)
+    }
+
+    @Test
+    fun `toolcall_end fills the card's arguments`() {
+        val r = reducer()
+        r.onEvent(PiEvents.parse("""{"type":"message_update","assistantMessageEvent":{"type":"toolcall_start","contentIndex":0,"id":"c1","toolName":""}}"""))
+        r.onEvent(
+            PiEvents.parse(
+                """{"type":"message_update","assistantMessageEvent":{"type":"toolcall_end","contentIndex":0,"toolCall":{"id":"c1","name":"bash","arguments":{"command":"ls"}}}}""",
+            ),
+        )
+        val call = r.transcript.single() as ToolCall
+        assertEquals("bash", call.toolName)
+        assertEquals("ls", call.args!!["command"].toString().trim('"'))
+    }
+
+    @Test
+    fun `a truncated tool result is flagged and its images are kept`() {
+        val r = reducer()
+        r.onEvent(
+            PiEvents.parse(
+                """{"type":"tool_execution_end","toolCallId":"c1","toolName":"read","isError":false,
+                    "result":{"content":[{"type":"text","text":"head…"},{"type":"image","data":"AAAA","mimeType":"image/png"}],
+                                "details":{"truncation":{"truncated":true},"fullOutputPath":"/tmp/x"}}}"""
+                    .trimIndent().replace("\n", ""),
+            ),
+        )
+        val call = r.transcript.filterIsInstance<ToolCall>().single()
+        assertTrue(call.outputTruncated)
+        assertEquals(1, call.images.size)
+        assertEquals("AAAA", call.images.single().base64)
+        assertEquals("image/png", call.images.single().mimeType)
+    }
+
+    @Test
+    fun `a null truncation detail is not reported as truncated`() {
+        val r = reducer()
+        r.onEvent(
+            PiEvents.parse(
+                """{"type":"tool_execution_end","toolCallId":"c1","toolName":"bash","isError":false,
+                    "result":{"content":[{"type":"text","text":"ok"}],"details":{"truncation":null}}}"""
+                    .trimIndent().replace("\n", ""),
+            ),
+        )
+        assertFalse(r.transcript.filterIsInstance<ToolCall>().single().outputTruncated)
+    }
+
+    @Test
+    fun `both usage payloads reach the transcript`() {
+        // F10: usage was parsed in three places and read by nobody.
+        val r = reducer()
+        r.onEvent(
+            PiEvents.parse(
+                """{"type":"message_update","usage":{"input":100,"output":20,"totalTokens":120,"cost":{"total":0.001}}}""",
+            ),
+        )
+        assertEquals(120L, r.lastUsage!!.totalTokens)
+        r.onEvent(
+            PiEvents.parse(
+                """{"type":"message_end","message":{"role":"assistant","content":[],"stopReason":"stop",
+                    "usage":{"input":150,"output":30,"totalTokens":180,"cost":{"total":0.002}}}}"""
+                    .trimIndent().replace("\n", ""),
+            ),
+        )
+        assertEquals(180L, r.lastUsage!!.totalTokens)
+        assertEquals(0.002, r.lastUsage!!.cost!!, 1e-9)
+    }
+
+    @Test
+    fun `compaction usage is carried onto the marker`() {
+        val r = reducer()
+        r.onEvent(PiEvents.parse("""{"type":"compaction_start","reason":"threshold"}"""))
+        r.onEvent(
+            PiEvents.parse(
+                """{"type":"compaction_end","aborted":false,"willRetry":false,
+                    "result":{"summary":"s","firstKeptEntryId":"k","tokensBefore":100,
+                              "usage":{"input":10,"output":5,"totalTokens":15,"cost":{"total":0.03}}}}"""
+                    .trimIndent().replace("\n", ""),
+            ),
+        )
+        assertEquals(0.03, (r.transcript.single() as CompactionMarker).usage!!.cost!!, 1e-9)
+    }
 }
