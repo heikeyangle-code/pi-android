@@ -5,6 +5,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.IOException
+import java.io.InputStream
 
 /**
  * Unpacks the bundled runtime on first launch, and again whenever the packaged
@@ -92,13 +93,59 @@ class RuntimeProvisioner(
 
     private fun extractAsset(assetName: String, into: File) {
         val archive = "runtime/$assetName"
+        // `AssetManager.open` throws a bare-path `FileNotFoundException` when the
+        // asset is not in the APK — but an unpack that dies half way (disk full, a
+        // truncated archive, a rejected symlink) can carry a bare path in its
+        // message too, and the old single catch turned both into
+        // "failed to unpack ubuntu-base.tar.gz: runtime/ubuntu-base.tar.gz". That
+        // ambiguity is indistinguishable from a device failure and cost a round
+        // trip; a missing asset is a *build* failure and says so now.
+        val stream = openPayload(archive)
         try {
-            assets.open(archive).use { stream ->
-                TarExtractor(into).extractGzip(stream)
-            }
+            stream.use { TarExtractor(into).extractGzip(it) }
         } catch (e: IOException) {
             throw ProvisioningException("failed to unpack $assetName: ${e.message}", e)
         }
+    }
+
+    /**
+     * Open a payload archive from the APK, and if that fails, say what the APK
+     * actually contains.
+     *
+     * A device reported `failed to unpack ubuntu-base.tar.gz: runtime/ubuntu-base.tar.gz`
+     * on an APK that is 127,195,427 bytes — and the five archives alone account for
+     * ~115 MB of that, so the payload is demonstrably in the package. Two things were
+     * wrong with the old code as a diagnostic: it used one access mode, and when that
+     * mode failed it said nothing about the state of the APK, so a missing asset, a
+     * differently-placed asset and a broken install were indistinguishable.
+     *
+     * Now: STREAMING first, then BUFFER (some install paths have been observed to serve
+     * one mode and not the other), and if both fail the message lists what
+     * `assets/runtime/` does contain. That turns the next device attempt into an answer
+     * instead of another round of guessing.
+     */
+    private fun openPayload(archive: String): InputStream {
+        val attempts = listOf(AssetManager.ACCESS_STREAMING, AssetManager.ACCESS_BUFFER)
+        var last: IOException? = null
+        for (mode in attempts) {
+            try {
+                return assets.open(archive, mode)
+            } catch (e: IOException) {
+                last = e
+            }
+        }
+        val present = runCatching { assets.list("runtime")?.sorted()?.joinToString(", ") }.getOrNull()
+        val root = runCatching { assets.list("")?.sorted()?.joinToString(", ") }.getOrNull()
+        throw ProvisioningException(
+            "packaged asset missing: $archive is not in this APK (both ACCESS_STREAMING and " +
+                "ACCESS_BUFFER failed: ${last?.message}). " +
+                "assets/runtime/ contains: ${present?.ifBlank { "(nothing)" } ?: "(unlistable)"}. " +
+                "assets/ root contains: ${root?.ifBlank { "(nothing)" } ?: "(unlistable)"}. " +
+                "The five payload archives are generated at build time by tools/fetch-runtime.mjs " +
+                "(app/src/main/assets/runtime/ is not in git); an APK built without that step has " +
+                "assets/dexopt and nothing else.",
+            last,
+        )
     }
 
     /**
@@ -135,6 +182,62 @@ class RuntimeProvisioner(
      * launch may not have a network, and a tool that silently fails on a plane
      * is worse than one that ships. Both binaries are static musl builds, so
      * they run in the guest regardless of libc.
+     *
+     * ## What this class deliberately does NOT install: git (`docs/known-gaps.md` K2)
+     *
+     * pi's package manager supports four source kinds — npm, git, an explicit URL
+     * and a path — and the git one shells out to a `git` binary:
+     * `installGit` runs `git clone <repo> <targetDir>` then `git checkout <ref>`
+     * (`packages/coding-agent/src/core/package-manager.ts:1850`, `:1852`), and
+     * `updateGit` uses `git fetch` / `rev-parse` / `reset --hard`
+     * (`:1932-1956`). Each call is a bare command name spawned with the process
+     * environment (`:2604-2611`), so git must be **on PATH inside the guest** —
+     * and it is not there:
+     *
+     *  - `runtime.lock.json` has no git artifact (proot, libtalloc,
+     *    libandroidShmem, ubuntuBase, node, ripgrep, fd);
+     *  - the pinned `ubuntu-base-24.04.3-base-arm64.tar.gz` contains no `git`
+     *    and, checked by listing the cached tarball, no `/etc/ssl` and no CA
+     *    bundle at all — nothing for git's HTTPS transport to validate against
+     *    (Node is unaffected because it carries its own CA store);
+     *  - this class only links node/npm/npx ([extractNode]) and rg/fd
+     *    ([installTool]).
+     *
+     * `git:` is therefore **unavailable**, and the app must not offer it. Shipping
+     * git was weighed and rejected. The cost is measured, not guessed, in an
+     * Ubuntu 24.04.3 aarch64 userland matching the pinned base: `git` plus
+     * `/usr/lib/git-core` gzip to **7.3 MiB**, and of the 31 shared libraries
+     * `git-remote-http` resolves, the 15 the base does not already ship (the
+     * GnuTLS flavour of libcurl, libnghttp2, libssh, libldap, libkrb5, libsasl2,
+     * libbrotlidec, …) add **1.6 MiB** gzipped — call it **9 MiB** of extra
+     * compressed payload, roughly 20 MiB unpacked, plus a CA bundle. That alone
+     * is not the reason; it is affordable next to the engine. The reasons are:
+     *
+     *  - the whole thing is **unverifiable without a device**. There is no emulator
+     *    and no Gradle here, so a git payload would ship as an untested path on
+     *    top of an already unverified runtime, and a half-working install path is
+     *    worse app behaviour than an honestly absent one;
+     *  - the `git@host:path` and `ssh://` forms pi also advertises
+     *    (`packages/coding-agent/README.md:417-422`, resolved to those URLs at
+     *    `src/utils/git.ts:172-199`) would still need an ssh client and
+     *    credentials, so even a working git would answer only part of the source
+     *    grammar the UI would then be advertising;
+     *  - it is a **hand-built partial Debian userland**: the payload is a pinned
+     *    set of `.deb`s (git plus its library closure) that never receives the
+     *    Ubuntu security updates libgnutls/libcurl/libssh get, unlike the current
+     *    self-contained artifacts (static musl rg/fd, Node's official build);
+     *  - whether git is *reliable* under proot is **uncertain** — no measurement
+     *    was possible here (proot, hardlink shims and `--link2symlink` all sit
+     *    under every file git writes). The npm path, which most packages use, is
+     *    unaffected by all of this.
+     *
+     * If that decision is ever reversed, the shape is: a git artifact in
+     * `runtime.lock.json`, a build-time repack to `.tar.gz` in
+     * `tools/fetch-runtime.mjs` (the Debian payload is an `ar` archive the app's
+     * [TarExtractor] cannot read — the same reason Node is re-compressed from
+     * `.tar.xz` there today), an unpack plus a `/usr/local/bin/git` symlink in
+     * [installTool]'s shape (that is the path `ProotCommand.environment` puts on
+     * PATH), and a CA bundle.
      */
     private fun installTool(archiveBase: String, binaryName: String) {
         val staging = File(paths.runtime, "$archiveBase-stage")
@@ -243,9 +346,21 @@ class RuntimeProvisioner(
 
     companion object {
         /**
-         * Bump when the packaged payload changes so existing installs re-unpack.
-         * The tool that assembles the runtime writes the same value into the
-         * sidecar manifest.
+         * Bump **by hand** when the packaged payload changes, so an existing
+         * install re-unpacks. The value is written to `<runtime>/.stamp`
+         * ([writeStamp]) and compared on every boot ([isStampCurrent]) and on
+         * every restart (`PiEngineHost.stampMatches`).
+         *
+         * **Nothing verifies this number.** `tools/fetch-runtime.mjs` writes no
+         * revision, sidecar or manifest of any kind — an earlier version of this
+         * comment claimed it did, and that claim was simply wrong (checked against
+         * the whole script). So a changed pin in `runtime.lock.json`, or a bumped
+         * `PI_VERSION`, leaves the app happily using the tree it extracted from the
+         * *previous* payload: the second install looks finished and silently runs
+         * the old engine. If that ever bites, the fix is a payload-derived revision
+         * (a digest of the assembled archives, published as an asset and read
+         * before the stamp check) — a design change, not a one-line edit, because
+         * `PiEngineHost.stampMatches` compares the stamp against this constant.
          */
         const val RUNTIME_REVISION = "1"
 
