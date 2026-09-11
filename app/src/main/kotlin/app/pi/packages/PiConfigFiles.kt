@@ -546,15 +546,40 @@ class PiModelsFile(
  * atomic replace and project-over-global precedence) and is wrapped in pi's own
  * `settings.json` lock, which that store does not take. Both writers must agree on
  * the lock or pi's next `save()` would silently drop the change.
+ *
+ * ## Whose cache this write has to satisfy
+ *
+ * `PiSettingsFileStore` caches each document after its first read, so **two
+ * instances over one file disagree after a write**. That is what happened with
+ * the app's own reader: `PiSessionViewModel.settingsStore` reads the same
+ * `settings.json` through a store of its own, and this class had no way to tell
+ * it that the file changed — invalidating the private instance above fixed
+ * nothing. Pass [sharedStore] to remove the question instead of patching it: the
+ * write then goes *through* the instance the app reads, so its snapshot is
+ * updated by the write itself.
  */
 class PiEnginePreferences(
     private val agentDir: File,
     private val workspace: File,
+    /**
+     * The store the rest of the app reads this same `settings.json` through, when
+     * there is one. Null builds a private store, which is the previous behaviour.
+     *
+     * It must address the same `settings.json` as [agentDir]: the lock below is
+     * taken on `File(agentDir, "settings.json")`, and pi locks the file it was
+     * actually launched against (`settings-manager.ts:236-256`). A caller whose
+     * app reads a different directory therefore has to pass the directory pi
+     * reads, not the other way round.
+     */
+    private val sharedStore: PiSettingsFileStore? = null,
 ) {
 
-    private val store: PiSettingsFileStore by lazy {
+    private val ownStore: PiSettingsFileStore by lazy {
         PiSettingsFileStore.forWorkspace(agentDir = agentDir, workspace = workspace)
     }
+
+    /** The instance every read and write here goes through. */
+    private val store: PiSettingsFileStore get() = sharedStore ?: ownStore
 
     /**
      * @param modelId null to only set the provider.

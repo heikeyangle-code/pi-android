@@ -44,6 +44,21 @@ enum class PiCommandAction {
     OpenSessions,
 
     /**
+     * `/scoped-models`. pi opens its **model-scope selector** for this command
+     * (`interactive-mode.ts:2975-2978` → `showModelsSelector()`, `:5024`), which
+     * is a different component from the plain `/model` picker
+     * (`showModelSelector`, `:4987`) and what it toggles is persisted as
+     * `settings.enabledModels` (`settings-manager.ts:1316-1326`).
+     *
+     * Unlike [TerminalOnly] this has a real destination in the app: the
+     * `enabledModels` row is a settings row (`PiSettingsRegistry.kt:355`), so the
+     * GUI navigates there and highlights it (`NavRequest.SettingsFocus`). Marking
+     * it [TerminalOnly] — as it was — made the palette say 「仅终端」 about a
+     * feature the app can actually reach.
+     */
+    OpenModelScope,
+
+    /**
      * A built-in whose implementation lives in pi's interactive shell and has
      * **no RPC counterpart**: pi exposes no command for it and `prompt()`
      * cannot reach it (built-ins are filtered out of `get_commands` and
@@ -128,7 +143,7 @@ val PI_BUILTIN_SLASH_COMMANDS: List<PiSlashCommand> = listOf(
     ),
     PiSlashCommand(
         "scoped-models", "启用/禁用 Ctrl+P 循环的模型范围", PiCommandSource.Builtin, null,
-        PiCommandAction.TerminalOnly,
+        PiCommandAction.OpenModelScope,
     ),
     PiSlashCommand(
         "export", "导出会话：默认 HTML，路径以 .jsonl 结尾时写 JSONL", PiCommandSource.Builtin, null,

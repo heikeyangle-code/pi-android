@@ -338,6 +338,15 @@ private fun ChatBody(
             PiCommandAction.NewSession -> session.newSession()
             PiCommandAction.Compact -> session.compact(args.takeIf { it.isNotBlank() })
             PiCommandAction.OpenSessions -> session.requestNav(NavRequest.Sessions)
+            // pi's `/scoped-models` opens the model-scope selector
+            // (`interactive-mode.ts:2975-2978` → `showModelsSelector()`, `:5024`)
+            // and clears the editor first (`:2976`). The app's row for what that
+            // selector toggles is `enabledModels`, so this navigates to it and
+            // highlights it (`settings-manager.ts:1316-1326`).
+            PiCommandAction.OpenModelScope -> {
+                draft = ""
+                session.requestNav(NavRequest.SettingsFocus("enabledModels"))
+            }
             PiCommandAction.TerminalOnly -> session.notifyTerminalOnly(command)
         }
     }

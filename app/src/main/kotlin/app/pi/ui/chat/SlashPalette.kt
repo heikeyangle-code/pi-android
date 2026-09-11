@@ -226,6 +226,10 @@ fun routeComposerText(text: String, commands: List<PiSlashCommand>): ComposerRou
         ?: return ComposerRoute.Unknown(name)
 
     return when (command.action) {
+        // `/scoped-models` is a normal dispatch: it has a destination in the app
+        // (`NavRequest.SettingsFocus("enabledModels")`), so typed text must reach
+        // `ChatScreen.pick` exactly like a palette tap does.
+        PiCommandAction.OpenModelScope -> ComposerRoute.Command(command, args)
         PiCommandAction.TerminalOnly -> ComposerRoute.Unreachable(command)
         else -> ComposerRoute.Command(command, args)
     }

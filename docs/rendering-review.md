@@ -852,6 +852,18 @@ Each is the smallest change that addresses the finding; apply one at a time.
 > `DefaultMarkdownPadding`/`DefaultMarkdownDimens` are private). See
 > `ui/render/PiMarkdown.kt:76-88` and `ui/render/PiMarkdownTheme.kt`. This is a class of
 > error `tools/typecheck.sh` cannot see: it does not run the Compose compiler plugin.
+>
+> **Addendum from the `ui/render/**` owner, after this note was written** (the tree moved when
+> the skill card was corrected at the parent's ruling). The four reads and three `remember`s are
+> now `ui/render/PiMarkdown.kt:87-101`, because an optional `textColor: Color?` was added to
+> `PiMarkdownText` — pi's `defaultTextStyle.color` option (`components/skill-invocation-message.ts:43`,
+> applied by `applyDefaultStyle` at `components/markdown.ts:385`) for the one block that draws its
+> markdown in `customMessageText`. The pure constructors it calls are unchanged in place:
+> `ui/render/PiMarkdownTheme.kt:136` (`piMarkdownColors`, now with `textColor`),
+> `:178` (`piAlertColors`), `:212` (`piMarkdownTypography`, now with `textColor`), `:250-290` (padding constants),
+> `:292-324` (dimens constants), and `piMarkdownComponents()` is non-composable at
+> `ui/render/PiMarkdownComponents.kt:98-103`. Nothing about the correction above changes: still no
+> `@Composable` call inside any `remember`.
 
 ```diff
 -            colors = piMarkdownColors(),

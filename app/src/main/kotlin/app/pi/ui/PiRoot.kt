@@ -58,6 +58,12 @@ fun PiRoot(
     // the transcript for the same reason. Four bottom-bar entries stays true.
     var treeOpen by rememberSaveable { mutableStateOf(false) }
 
+    // A settings key a command asked to open (pi's `/scoped-models` — see
+    // `NavRequest.SettingsFocus`). It lives here rather than inside the stack
+    // because the stack is composed only while 设置 is the current destination,
+    // so the request has to survive that switch.
+    var settingsFocus by rememberSaveable { mutableStateOf<String?>(null) }
+
     // One engine for the whole app. Owned by the ViewModel rather than an
     // Activity so that a running turn survives the user leaving the screen, and
     // started here because the app has no "connect" concept: opening it starts
@@ -76,8 +82,9 @@ fun PiRoot(
     // there is no composable left to call back into. Consuming the request here
     // keeps the ViewModel free of Compose navigation knowledge.
     val uiState by session.state.collectAsState()
-    LaunchedEffect(uiState.navRequest) {
-        when (uiState.navRequest) {
+    val navRequest = uiState.navRequest
+    LaunchedEffect(navRequest) {
+        when (navRequest) {
             NavRequest.Sessions -> {
                 treeOpen = false
                 destination = PiDestination.Sessions.ordinal
@@ -94,13 +101,18 @@ fun PiRoot(
                 treeOpen = false
                 destination = PiDestination.Settings.ordinal
             }
+            is NavRequest.SettingsFocus -> {
+                treeOpen = false
+                settingsFocus = navRequest.key
+                destination = PiDestination.Settings.ordinal
+            }
             NavRequest.SessionTree -> {
                 treeOpen = true
                 session.refreshTree()
             }
             null -> Unit
         }
-        if (uiState.navRequest != null) session.consumeNav()
+        if (navRequest != null) session.consumeNav()
     }
 
     Scaffold(
@@ -146,6 +158,50 @@ fun PiRoot(
                     // transcript's thinking toggle, the theme) has to be noticed:
                     // the store is pi's file, and it has no change notification.
                     onSettingWritten = { key -> session.onSettingWritten(key) },
+                    // The Action rows the engine has to run. The settings stack
+                    // implements the ones that need a screen of its own (the
+                    // credential form, `PiSettingsStack.hostActions`); everything
+                    // else arrives here, and a row nothing implements says so
+                    // instead of doing nothing — a dead row is worse than an
+                    // absent one (docs/known-gaps.md §E9 / I2).
+                    onRunAction = { setting ->
+                        when (setting.key) {
+                            // pi's `/compact` — the RPC command is `compact`
+                            // (`modes/rpc/rpc-types.ts:44`). The row also promises a
+                            // custom instruction, which needs a text field; the chat
+                            // palette's `/compact` takes one, this entry does not.
+                            "app.compaction.runNow" -> session.compact()
+                            // OAuth is not in the protocol at all: `RpcCommand`
+                            // (`modes/rpc/rpc-types.ts:20-74`) has no login/logout,
+                            // and pi's OAuth flows live in its interactive mode. The
+                            // workbench's original-TUI tab is the surface that has it.
+                            "app.credentials.oauth" -> session.notifyUser(
+                                "OAuth 登录只能在 工作区 → pi TUI（原版）里做：pi 的 RPC 协议里没有 login 命令" +
+                                    "（modes/rpc/rpc-types.ts:20-74），OAuth 流程只存在于它的交互模式里。",
+                                warning = true,
+                            )
+                            else -> session.notifyUser(
+                                "「${setting.title}」还没有接入实现（docs/known-gaps.md §E9 / I2），" +
+                                    "当前点它不会有任何动作。",
+                                warning = true,
+                            )
+                        }
+                    },
+                    // The engine restart the package and credential screens ask
+                    // for. `allowInterrupt` stays whatever the coordinator passes
+                    // (always false); a turn can never be killed by a settings tap.
+                    restartEngine = { reason, allowInterrupt ->
+                        session.restartEngine(reason, allowInterrupt)
+                    },
+                    isTurnRunning = { session.isTurnRunning() },
+                    // `get_available_models`: the only model list pi exposes over
+                    // RPC, used to mark a scanned id as pi metadata or as an app
+                    // default (`PiCredentialScreen`).
+                    availableModels = uiState.models,
+                    onLoadAvailableModels = { session.refreshModels() },
+                    // `/scoped-models`: open the group and highlight the key.
+                    focusKey = settingsFocus,
+                    onFocusConsumed = { settingsFocus = null },
                 )
             }
 

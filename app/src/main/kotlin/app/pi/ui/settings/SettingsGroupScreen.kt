@@ -53,6 +53,16 @@ fun SettingsGroupScreen(
     themeError: String? = null,
     onSettingWritten: (String) -> Unit = {},
     onRunAction: ((PiSetting) -> Unit)? = null,
+    /**
+     * Action rows whose work is not a one-shot command but a screen of their own,
+     * by key (the credential form; see `PiSettingsStack.hostActions`). Such a row
+     * opens that screen directly: its description already is the explanation, so
+     * an extra 执行/取消 confirmation would be one tap that decides nothing.
+     *
+     * Empty by default, which leaves every row on the [onRunAction] path — the
+     * behaviour every existing caller has.
+     */
+    hostActions: Map<String, () -> Unit> = emptyMap(),
 ) {
     val group = PiSettingsCatalog.group(groupId)
     val rows = remember(groupId) { buildGroupRows(groupId) }
@@ -112,7 +122,10 @@ fun SettingsGroupScreen(
                                 onSettingWritten(setting.key)
                             },
                             onOpen = {
-                                if (setting.kind == PiRowKind.Action) {
+                                val hostAction = hostActions[setting.key]
+                                if (hostAction != null) {
+                                    hostAction()
+                                } else if (setting.kind == PiRowKind.Action) {
                                     confirming = setting
                                 } else if (setting.kind != PiRowKind.Switch) {
                                     editing = setting

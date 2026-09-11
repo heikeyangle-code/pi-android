@@ -29,6 +29,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import app.pi.bridge.DeviceCapabilityStore
+import app.pi.packages.PiPackagesEntryRow
 import app.pi.ui.components.PiSectionHeader
 import app.pi.ui.device.DeviceCapabilityEntryRow
 import app.pi.ui.theme.PiShapes
@@ -56,6 +57,13 @@ fun SettingsHome(
     onOpenSetting: (String) -> Unit,
     /** `null` hides the row, which is what a preview or a test wants. */
     onOpenDeviceCapabilities: (() -> Unit)? = null,
+    /**
+     * The package/extension manager ([app.pi.packages.PiPackagesHost]). `null`
+     * hides the row for the same reason as the capability one: pi has no package
+     * screen to mirror — `pi install` is CLI-only in this version — so the entry
+     * exists only where the host can mount it.
+     */
+    onOpenPackages: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
     Column(Modifier.fillMaxSize()) {
@@ -92,6 +100,18 @@ fun SettingsHome(
                         store = DeviceCapabilityStore.get(context),
                         onClick = onOpenDeviceCapabilities,
                     )
+                }
+            }
+            // Extension packages, next to the capability row because they answer
+            // the same kind of question — "what can the agent use here?" — and
+            // neither is a pi setting. `pi install` is CLI-only in v0.85.1, so
+            // this screen is the app's own, not a transcription of pi's.
+            if (onOpenPackages != null) {
+                item {
+                    PiSectionHeader("扩展")
+                }
+                item {
+                    PiPackagesEntryRow(onClick = onOpenPackages)
                 }
             }
             item {

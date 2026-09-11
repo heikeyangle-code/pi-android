@@ -10,7 +10,8 @@ import app.pi.engine.PiEngineApi
 import app.pi.engine.PiEngineHost
 import app.pi.engine.PiEngineSession
 import app.pi.engine.PiRpcException
-import app.pi.rpc.ErrorText
+import app.pi.packages.EngineRestartCoordinator
+import app.pi.packages.asOutcome
 import app.pi.rpc.Notice
 import app.pi.rpc.PiCommands
 import app.pi.rpc.PiEvent
@@ -104,6 +105,21 @@ sealed interface NavRequest {
     data object Workbench : NavRequest
 
     data object Settings : NavRequest
+
+    /**
+     * The settings destination, positioned on one key.
+     *
+     * pi has no navigation API, so this vocabulary is the app's own. It exists
+     * for the one built-in command that opens a *selector* pi implements inside
+     * its TUI overlay: `/scoped-models` calls `showModelsSelector()`
+     * (`interactive-mode.ts:2975-2978`; the method at `:5024`), which is a
+     * different component from the plain `/model` picker (`showModelSelector`,
+     * `:4987`) and what it toggles is persisted as `settings.enabledModels`
+     * (`settings-manager.ts:1316-1326`). That key is a row in this app
+     * (`PiSettingsRegistry.kt:355`), so the faithful mapping of "open the
+     * scoped-models selector" is "open settings on that row".
+     */
+    data class SettingsFocus(val key: String) : NavRequest
 
     /** The session tree overlay (pi's `/tree`). */
     data object SessionTree : NavRequest
@@ -491,22 +507,9 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     /** `pi -c` is attempted once per process, not on every engine attach. */
     private var resumeAttempted = false
 
-    /** Monotonic ids for snackbar notices, composer fills and live turn rows. */
+    /** Monotonic ids for snackbar notices and composer fills. */
     private var noticeSeq = 0L
     private var composerFillSeq = 0L
-
-    /**
-     * The current turn's outcome, when pi reported one nothing else renders.
-     *
-     * pi prints a red line under a partial answer for `length`, `aborted` and
-     * `error` stop reasons (`components/assistant-message.ts:182-200`). The
-     * reducer drops `stopReason` entirely (`rpc/Transcript.kt`, out of this
-     * agent's ownership), so the ViewModel keeps the row itself and appends it to
-     * the projection until the next turn starts. It is deliberately live-only:
-     * the persisted session has no such entry, so a replay cannot reproduce it,
-     * and claiming otherwise would be a lie.
-     */
-    private var liveTurnIssue: TranscriptItem? = null
 
     /**
      * Start the foreground service that keeps a running turn alive.
@@ -571,6 +574,46 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /**
+     * Restart the engine, then re-attach this ViewModel to the new process.
+     *
+     * This is the callback the package and credential screens call through
+     * [EngineRestartCoordinator], whose KDoc names the real restart as
+     * `{ reason, allow -> engineHost.restart(reason, ...) }`. It lives here
+     * because `host` is private, and because the ViewModel — not the settings
+     * screen — is what has to keep talking to the engine afterwards.
+     *
+     * `allowInterrupt` is forwarded verbatim. The coordinator always passes
+     * `false`, and pi's own `Busy` state is re-checked independently by
+     * [PiEngineHost.restart] (`PiEngineHost.kt:367-372`), so a turn that started
+     * between the user's tap and this call cannot be interrupted by accident.
+     *
+     * Re-attaching on success is not optional: `restart` closes the old process
+     * before starting the new one (`PiEngineHost.kt:389-393`) and every action
+     * here checks `api != null`, so without it the UI would be inert until the
+     * next `boot()`.
+     */
+    suspend fun restartEngine(
+        reason: String,
+        allowInterrupt: Boolean,
+    ): EngineRestartCoordinator.Outcome {
+        val result = host.restart(
+            reason = reason,
+            workspaceProvider = ::defaultWorkspace,
+            allowInterrupt = allowInterrupt,
+        )
+        if (result is PiEngineHost.Restart.Ok) attach(result.session)
+        return result.asOutcome()
+    }
+
+    /**
+     * Live turn state for callers that must not interrupt a turn.
+     * [EngineRestartCoordinator.isTurnRunning] is documented as "normally
+     * `{ engineHost.turnRunning }`"; this is that answer without exposing the
+     * host.
+     */
+    fun isTurnRunning(): Boolean = host.turnRunning
+
     private fun attach(engine: PiEngineSession) {
         // Anything still pending belongs to the *previous* engine (a boot after a
         // failure, or a restart). It can never be answered now, so answer it
@@ -583,9 +626,24 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
 
         session = engine
         api = PiEngineApi(engine)
+        // The settings store caches each document after its first read
+        // (`PiSettingsFileStore.global/project`), and every other writer bypasses
+        // that cache: pi itself, `pi install` (guest-side), and the credential
+        // form's `PiEnginePreferences` — which invalidates its *own* store
+        // instance (`PiConfigFiles.kt:579`), not this one. A fresh engine is
+        // exactly the moment those files may have changed, so the cache is
+        // dropped here rather than left to show pre-write values.
+        (settingsStore as? PiSettingsFileStore)?.invalidate()
         _state.value = _state.value.copy(boot = Boot.Ready)
         viewModelScope.launch {
             engine.state.collect { engineState ->
+                // Only the engine that is still current may write state. A
+                // restart attaches a new engine while the old one's collector is
+                // still alive, and `PiEngineSession.close()` publishes `Stopped`
+                // (`PiEngineSession.kt:226`) — that value can be delivered after
+                // `attach` has already installed the new session, which would
+                // null out the fresh `api` and leave the whole UI inert.
+                if (session !== engine) return@collect
                 _state.value = _state.value.copy(engine = engineState)
                 if (
                     engineState == PiEngineSession.EngineState.Stopped ||
@@ -660,17 +718,29 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      *  - **F2**: a tool card must not keep claiming "运行中" after the turn it
      *    belonged to has ended. pi closes every pending tool with
      *    `updateResult({isError:true})` when a turn stops for `aborted`/`error`
-     *    (`interactive-mode.ts:3294-3302`); the reducer does not (that file is
-     *    in `rpc/`, out of this agent's ownership), so the pending rows are
-     *    projected as interrupted here — the card then says the turn ended
-     *    without a result instead of looking like a hang.
+     *    (`interactive-mode.ts:3294-3302`), and the reducer now does the same on
+     *    `message_end` (`rpc/Transcript.kt:689-690` → `failTurn`, `:1181-1227`),
+     *    so what remains uncovered is the path pi never models: **the engine was
+     *    killed or restarted mid-turn**, where no `message_end` ever arrives. The
+     *    pending rows are therefore closed here, and the card says the turn ended
+     *    without a result instead of looking like a hang. Scope, exactly: only a
+     *    row still at `ToolStatus.Pending` is touched — `status` becomes
+     *    `ToolStatus.Error` / `isError = true`, and `output` is filled **only when
+     *    it is empty** (`ifEmpty`), so a result the reducer already wrote is never
+     *    replaced.
      *  - **F7** (partial): publishing is skipped when no element of the reducer's
      *    list changed identity. The engine bumps its revision for *every*
-     *    non-response event, including ones whose `TranscriptChange` is `None`,
-     *    so without this check every such event allocated a copy, a new
-     *    `UiState`, and recomposed the whole screen. The full fix — publishing
-     *    the reducer's change index — needs `PiEngineSession` and is reported
-     *    instead of done.
+     *    non-response event, including ones whose `TranscriptChange` is `None`
+     *    (`PiEngineSession.kt:261-268`), so without this check every such event
+     *    allocated a copy, a new `UiState`, and recomposed the whole screen. The
+     *    full fix — publishing the reducer's change index — needs
+     *    `PiEngineSession` and is reported instead of done.
+     *
+     * No turn-outcome row lives here any more: the reducer appends it from
+     * `stopReason` itself (`rpc/Transcript.kt:684-690`, `:1157-1227`), and
+     * `message_end` always publishes (`PiEngineSession.kt:261-268`), so keeping a
+     * second copy in the ViewModel would have rendered the same failure twice,
+     * with different wording.
      */
     private fun syncTranscript(engine: PiEngineSession) {
         val streaming = engine.transcript.streaming
@@ -683,7 +753,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             source.indices.none { source[it] !== published[it] } &&
             _state.value.streaming == streaming &&
             _state.value.revision == engine.revision.value
-        if (unchanged && liveTurnIssue == null) return
+        if (unchanged) return
 
         val projected = if (interrupted) {
             source.map { item ->
@@ -701,7 +771,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             source.toList()
         }
         _state.value = _state.value.copy(
-            transcript = liveTurnIssue?.let { projected + it } ?: projected,
+            transcript = projected,
             revision = engine.revision.value,
             streaming = streaming,
         )
@@ -714,25 +784,14 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                 queueFollowUp = event.followUp.size,
             )
 
-            // F3: a turn that ends for a reason other than "stop"/"toolUse" is not
-            // a finished answer, and pi says so under the partial text
-            // (`components/assistant-message.ts:182-200`). The reducer ignores
-            // `stopReason`, so the row is projected here for the live stream.
-            is PiEvent.MessageEnd -> {
-                if (event.role == "assistant") {
-                    val issue = stopReasonRow(event.stopReason, event.text)
-                    if (issue != null) {
-                        liveTurnIssue = issue
-                        session?.let { syncTranscript(it) }
-                    }
-                }
-            }
-
-            // A new assistant message means the previous turn's issue is history.
-            is PiEvent.MessageStart -> if (event.role == "assistant" && liveTurnIssue != null) {
-                liveTurnIssue = null
-                session?.let { syncTranscript(it) }
-            }
+            // A turn that ends for a reason other than "stop"/"toolUse" is not a
+            // finished answer, and pi says so under the partial text
+            // (`components/assistant-message.ts:182-200`). The reducer renders that
+            // row itself from `stopReason` now (`rpc/Transcript.kt:684-690`), and
+            // `PiEngineSession` publishes on every event, so nothing is projected
+            // here — this branch exists only so the decision is visible where the
+            // old duplicate row used to be built.
+            is PiEvent.MessageEnd -> Unit
 
             // An extension that throws is otherwise invisible: pi reports it as
             // this event and nothing else, so a broken extension looks exactly
@@ -1075,10 +1134,18 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     /**
      * Dismiss everything pending and answer each one `cancelled`, oldest first.
      *
-     * Called when the engine dies or a new session replaces the old one. The
-     * write may be undeliverable (a dead pipe), which is fine — nobody is
-     * blocked then — but on a *session reset* pi is still alive and would
-     * otherwise sit forever on a dialog whose UI no longer exists.
+     * Called when the engine dies (`Stopped`/`Failed`), when a new session
+     * replaces the old one (`attach`), and at ViewModel teardown (`onCleared`).
+     *
+     * **Load-bearing — do not remove as redundant.** A request can be queued
+     * while no host is composed (app backgrounded, teardown mid-request).
+     * `select`/`confirm`/`input` are also resolved by pi's own timer, but
+     * `editor` has **no agent-side timer at all**
+     * (`packages/coding-agent/src/modes/rpc/rpc-mode.ts:254-271`: an un-timed
+     * promise with no timeout options in its signature), so an unanswered
+     * `editor` hangs pi forever. Answering on teardown is the only thing between
+     * "the UI went away" and "pi is wedged". The write may be undeliverable
+     * (a dead pipe), which is fine — nobody is blocked then.
      */
     private fun cancelAllDialogs() {
         val pending = dialogs.drain()
@@ -1186,9 +1253,6 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
         engine.transcript.seedFromHistory(PiResponses.entries(response))
-        // The replay replaces the stream wholesale; a live-only turn-outcome row
-        // from the previous session must not survive it.
-        liveTurnIssue = null
         syncTranscript(engine)
     }
 
@@ -1353,8 +1417,6 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         val engine = session ?: return
         val trimmed = text.trim()
         if (trimmed.isEmpty() && images.isEmpty()) return
-        // A new user message supersedes the previous turn's outcome row.
-        liveTurnIssue = null
         if (engine.transcript.streaming) {
             // Mid-turn the delivery choice is the command itself: `steer` lands
             // after this turn's tool calls, `follow_up` only once pi stops.
@@ -1413,7 +1475,6 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         val engine = session ?: return
         val trimmed = text.trim()
         if (trimmed.isEmpty()) return
-        liveTurnIssue = null
         // Same local echo as [send]: a follow-up is invisible on the wire until pi
         // delivers it, which is the whole point of queueing it.
         engine.transcript.onUserPrompt(trimmed)
@@ -1950,36 +2011,6 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     // ----------------------------------------------------------------- helpers
-
-    /**
-     * The row pi prints under a partial answer when a turn did not finish
-     * normally (`components/assistant-message.ts:182-200`): `length` means the
-     * output-token limit cut it off, `aborted` that the user stopped it, `error`
-     * that the provider call failed. Null when the turn ended as a normal
-     * `stop`/`toolUse`.
-     *
-     * The reducer drops `stopReason` (that is in `rpc/`, owned by another agent),
-     * so this is the app's own honest report of the outcome; the detail carries
-     * pi's wire value rather than invented wording.
-     */
-    private fun stopReasonRow(stopReason: String?, partialText: String?): TranscriptItem? {
-        val message = when (stopReason) {
-            "length" -> "回复被输出令牌上限截断，内容不完整"
-            "aborted" -> "回合被中断"
-            "error" -> "模型调用失败"
-            else -> return null
-        }
-        val detail = listOfNotNull(
-            "stopReason: $stopReason",
-            partialText?.takeIf { it.isNotBlank() }?.let { "部分输出：${it.takeLast(200)}" },
-        ).joinToString("\n")
-        return ErrorText(
-            key = "turn-issue-${System.nanoTime()}",
-            ts = System.currentTimeMillis(),
-            message = message,
-            detail = detail.ifBlank { null },
-        )
-    }
 
     /**
      * pi's wire spelling of a queue mode back into the enum. An unknown value maps
