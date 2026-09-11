@@ -5,6 +5,7 @@ import java.time.OffsetDateTime
 import java.time.ZoneId
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 
@@ -455,6 +456,28 @@ private fun detailsExitCode(details: JsonElement?): Int? {
     return obj.int("exitCode") ?: obj.int("exit_code") ?: obj.int("code")
 }
 
+/** Cap for [compactEntryData]: one transcript row, not a payload dump. */
+private const val CUSTOM_ENTRY_DATA_MAX = 200
+
+/**
+ * One-line, bounded rendering of a `custom` entry's `data` (F6).
+ *
+ * `data` is `unknown` in pi (`core/session-manager.ts:104-108`), so it is a
+ * string, a number, an array or an arbitrary nested object; the compact JSON
+ * form is the closest thing to what the extension's own renderer would have
+ * drawn. Newlines are flattened because the row is a single line, and the
+ * result is capped so a payload the UI cannot lay out cannot take over the
+ * transcript.
+ */
+private fun compactEntryData(data: JsonElement?, max: Int = CUSTOM_ENTRY_DATA_MAX): String {
+    val text = when (data) {
+        null, is JsonNull -> ""
+        is JsonPrimitive -> data.content
+        else -> data.toString()
+    }.replace('\n', ' ').replace('\r', ' ').trim()
+    return if (text.length <= max) text else text.take(max - 1) + "…"
+}
+
 /**
  * Whether pi truncated this tool's output, from the tool-result `details`.
  *
@@ -547,12 +570,42 @@ internal fun JsonObject.timestamp(fallback: Long): Long {
 private val TURN_FAILURE_REASONS = setOf("length", "aborted", "error")
 
 /**
+ * F8's publication window for `tool_execution_update`, in milliseconds.
+ *
+ * The number is the app's own UI spec — `docs/pi-android-ui-spec.md:369` §4.3,
+ * the `tool_execution_update` row: "**节流 200ms** 追加输出（避免抖动）".
+ *
+ * pi coalesces for the same reason, one layer lower: every chunk really is
+ * emitted on the wire — `packages/agent/src/agent-loop.ts:678-712` calls
+ * `emit({ type: "tool_execution_update", … })` once per `partialResult`, and
+ * tools are executed strictly one call at a time (`:497-539`, one `await` per
+ * call), so a chatty tool floods stdout exactly like it floods the app's log —
+ * but the TUI never repaints per chunk: `TuiBase.requestRender` queues a single
+ * frame and `scheduleRender` waits out `MIN_RENDER_INTERVAL_MS = 16`
+ * (`packages/tui/src/tui.ts:477`, `:952-1005`, `:986-1005`). The app's 200 ms is
+ * that same coalescing at a phone-appropriate interval.
+ *
+ * Only the *publication* is coalesced; the stored row is always current (see
+ * [TranscriptReducer.onToolUpdate]), which is what keeps the throttle from
+ * becoming data loss.
+ */
+private const val TOOL_UPDATE_THROTTLE_MS = 200L
+
+/**
  * What the last event did to the stream, so the UI can update one row instead
  * of recomposing the list. [Updated] is the hot path during streaming.
  *
  * One event reports one index. When an event both rewrites a row and appends one
  * (a tool end that also yields a [ToolDiff]) the append is reported, because the
  * appended index is the one the caller has to insert.
+ *
+ * [None] does **not** imply "no row changed": a `tool_execution_update` inside
+ * F8's 200 ms window merges its chunk into the stored row and answers [None]
+ * on purpose, so the row list is ahead of the publication until the next update
+ * or the turn boundary (where [TranscriptReducer.finishStreaming] flushes it).
+ * A consumer that renders from a snapshot must therefore not treat [None] as
+ * "the previous snapshot is still current" without comparing the rows — see
+ * `PiEngineSession.publish`, which is the one place that decides.
  */
 sealed interface TranscriptChange {
     data object None : TranscriptChange
@@ -584,6 +637,28 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
     private val toolIndexByCallId = mutableMapOf<String, Int>()
     private val diffIndexByCallId = mutableMapOf<String, Int>()
     private var runningCompactionIndex: Int? = null
+
+    /**
+     * Wall-clock of the last **published** update, per tool call id (F8).
+     *
+     * Per call rather than one shared stamp: pi executes the calls of a single
+     * message strictly one after another (`agent-loop.ts:497-539`), and a shared
+     * stamp would swallow the first chunk of the next call. Cleared for a call id
+     * when that call finalises ([finalizeTool]) and wholesale on [reset].
+     */
+    private val lastToolPublishAt = mutableMapOf<String, Long>()
+
+    /**
+     * The tool row whose newest chunk is in the transcript but was deliberately
+     * not published yet (F8).
+     *
+     * It exists so the throttle cannot lose the tail of a burst: [finishStreaming]
+     * — which every turn-ending event funnels through (`message_end`, `agent_end`,
+     * `agent_settled`) — reports this row when nothing else was touched, so the
+     * last chunk reaches the screen even if no further update arrives. A tool end
+     * reports its own row unconditionally, so the normal path never needs it.
+     */
+    private var suppressedToolUpdate: Int? = null
 
     /**
      * The [Notice] row a `summarization_retry_scheduled` opened, so the matching
@@ -1026,6 +1101,20 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
             else -> current.output + chunk
         }
         items[index] = current.copy(output = merged)
+        // F8: the row above is the truth; only the repaint is coalesced. Before
+        // this, every chunk published a whole transcript, so a `bash`/`grep`
+        // emitting hundreds of chunks a second drove hundreds of publications a
+        // second — the visible symptom is a jittering output area exactly during
+        // the long operations the user is watching (docs/rendering-review.md F8;
+        // spec §4.3 `tool_execution_update` → "节流 200ms").
+        val now = now()
+        val last = lastToolPublishAt[event.toolCallId]
+        if (last != null && now - last < TOOL_UPDATE_THROTTLE_MS) {
+            suppressedToolUpdate = index
+            return TranscriptChange.None
+        }
+        lastToolPublishAt[event.toolCallId] = now
+        suppressedToolUpdate = null
         return TranscriptChange.Updated(index)
     }
 
@@ -1090,6 +1179,11 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
             )
             change = TranscriptChange.Appended(items.lastIndex)
         }
+        // F8: a card that finalises always publishes its final state — the
+        // throttle is on the stream, never on the end of it — and its stamp is
+        // dropped so the id cannot outlive the card in this map.
+        lastToolPublishAt.remove(callId)
+        if (index != null && suppressedToolUpdate == index) suppressedToolUpdate = null
         return appendToolDiff(callId, toolName, details, ts) ?: change
     }
 
@@ -1221,6 +1315,9 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
                     endedAt = ts,
                     output = call.output.ifEmpty { message },
                 )
+                // F8: closing the card publishes it, so a chunk the throttle was
+                // still holding is delivered with it.
+                if (suppressedToolUpdate == i) suppressedToolUpdate = null
                 change = TranscriptChange.Updated(i)
             }
         }
@@ -1297,10 +1394,11 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
      * Project one persisted pi entry (a JSONL record from the session file, or
      * the same object carried by a `get_entries` response) onto the stream.
      *
-     * Entry types that are not conversation content — `custom` (extension state,
-     * deliberately not in the model's context), `label`, `session_info`, the
-     * `session` header and anything newer than this build — are inert rather
-     * than fatal.
+     * Entry types that are not conversation content — `label`, `session_info`,
+     * the `session` header and anything newer than this build — are inert rather
+     * than fatal. A `custom` entry is extension state and never enters the
+     * model's context, but pi still draws it (see [onCustomEntry]), so it is
+     * projected rather than dropped.
      */
     fun onEntry(entry: JsonObject): TranscriptChange {
         val type = entry.str("type").orEmpty()
@@ -1332,6 +1430,15 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
             // `custom_message` is pi's name; `hook_message` is an alias accepted
             // for the same shape.
             "custom_message", "hook_message" -> onHookEntry(entry, entryId, ts)
+
+            // An extension's own persisted state (`{ type, customType, data }`,
+            // core/session-manager.ts:104-108, docs/session-format.md:279). pi
+            // renders it through the renderer the extension registered for that
+            // `customType`: live from `entry_appended` (`interactive-mode.ts:3202-3205`
+            // → `:3557-3562`) and on replay (`renderSessionEntries`, `:3786-3788`,
+            // whose item list really does carry `custom` entries — `RenderSessionItem`
+            // at `:228`). Before this case the app dropped it on both paths.
+            "custom" -> onCustomEntry(entry, entryId, ts)
 
             // `skill` / `skill_invocation` are **app-level aliases, not pi entry
             // types**: pi expands `/skill:name` into an ordinary user message and
@@ -1624,6 +1731,55 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
         )
     }
 
+    /**
+     * The row for a `custom` session entry — extension state that deliberately
+     * never enters the model's context (`core/session-manager.ts:95-108`,
+     * `docs/session-format.md:279-282`). F6: both paths used to drop it, so an
+     * extension keeping visible state with `pi.appendEntry()` showed nothing.
+     *
+     * pi hands the entry to the renderer the extension registered for its
+     * `customType` (`interactive-mode.ts:3557-3562` →
+     * `components/custom-entry.ts:40-46`). That renderer is a live TUI component
+     * and cannot cross the RPC boundary, so the honest fallback is the one pi's
+     * own failure branch also prints — the type and the payload
+     * (`custom-entry.ts:48-52`: `[customType] renderer failed: …`).
+     *
+     * It is deliberately **not** a [HookMessage]: `custom` state is not context
+     * (`sessionEntryToContextMessages`, `core/session-manager.ts:383-408`, skips
+     * every `custom` entry), while `custom_message` — the card [onHookEntry]
+     * builds — *is* context (`:124-142`); reusing that card would assert
+     * something false.
+     *
+     * When no renderer is registered for a `customType`, pi is silent
+     * (`custom-entry.ts:42-44` returns before adding a child, and `:53-56` drops
+     * an empty component). The RPC wire carries no renderer registry, so the app
+     * cannot take that same decision, and the entry only reaches here because an
+     * extension explicitly appended it — showing the metadata is strictly closer
+     * to pi than the invisible row this replaces.
+     *
+     * The wording is the app's own: pi has no text for this row at all.
+     */
+    private fun onCustomEntry(entry: JsonObject, entryId: String?, ts: Long): TranscriptChange {
+        // pi's `CustomEntry` has no `display` field (`core/session-manager.ts:104-108`);
+        // only `CustomMessageEntry` has one (`:136-142`), and [onHookEntry]
+        // honours that one. A newer pi that adds it here is obeyed rather than
+        // ignored, so state an extension marks hidden cannot become a row.
+        if (entry.bool("display") == false) return TranscriptChange.None
+        val customType = entry.str("customType")
+            ?: entry.str("custom_type")
+            ?: "extension"
+        val data = compactEntryData(entry["data"])
+        val text = if (data.isEmpty()) "扩展状态：$customType" else "扩展状态：$customType · $data"
+        return append(
+            Notice(
+                key = keyFor(entryId, "custom"),
+                ts = ts,
+                text = text,
+                tone = Notice.Tone.Info,
+            ),
+        )
+    }
+
     private fun onSkillEntry(entry: JsonObject, entryId: String?, ts: Long): TranscriptChange {
         val name = entry.str("skillName")
             ?: entry.str("skill")
@@ -1750,6 +1906,13 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
         // Content-block numbering restarts with the next assistant message.
         textIndexByContentIndex.clear()
         thinkingIndexByContentIndex.clear()
+        // F8: the tail of a throttled burst must not be lost. Every turn-ending
+        // event comes through here (`message_end`, `agent_end`, `agent_settled`),
+        // so the row the throttle was still holding is reported now — otherwise a
+        // chunk that arrived inside the 200 ms window could stay unpublished for
+        // as long as the tool is silent.
+        val flushed = suppressedToolUpdate?.takeIf { items.getOrNull(it) is ToolCall }
+        suppressedToolUpdate = null
         var touched = -1
         val ts = now()
         for (i in items.indices) {
@@ -1769,7 +1932,11 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
                 else -> Unit
             }
         }
-        return if (touched >= 0) TranscriptChange.Updated(touched) else TranscriptChange.None
+        return when {
+            touched >= 0 -> TranscriptChange.Updated(touched)
+            flushed != null -> TranscriptChange.Updated(flushed)
+            else -> TranscriptChange.None
+        }
     }
 
     private fun append(item: TranscriptItem): TranscriptChange {
@@ -1803,6 +1970,8 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
         summarizationNoticeIndex = null
         textIndexByContentIndex.clear()
         thinkingIndexByContentIndex.clear()
+        lastToolPublishAt.clear()
+        suppressedToolUpdate = null
         lastUsage = null
         currentDay = null
         streaming = false
@@ -1816,13 +1985,16 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
          * Only real pi entry types belong here. `model_select`, `system_prompt`
          * and `error` were removed because pi can emit none of them: the first is
          * extension-only (`agent-session.ts`), and the other two are not in the
-         * persisted union (`session-manager.ts`).
+         * persisted union (`session-manager.ts`). `custom` is in that union
+         * (`:145-155`) and is now projectable, so a bare `custom` record from a
+         * newer pi lands as a row instead of nothing.
          */
         val ENTRY_EVENT_TYPES = setOf(
             "model_change",
             "thinking_level_change",
             "compaction",
             "branch_summary",
+            "custom",
             "custom_message",
             "hook_message",
             "skill",

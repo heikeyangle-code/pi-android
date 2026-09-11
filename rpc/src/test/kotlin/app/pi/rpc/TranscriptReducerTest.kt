@@ -173,4 +173,132 @@ class TranscriptReducerTest {
         r.onEvent(text("b"))
         assertEquals(key, (r.transcript[0] as AssistantText).key)
     }
+
+    // ------------------------------------------- tool update throttle (F8)
+
+    private fun toolStart(id: String) =
+        PiEvents.parse("""{"type":"tool_execution_start","toolCallId":"$id","toolName":"bash","args":{}}""")
+
+    private fun toolUpdate(id: String, chunk: String) =
+        PiEvents.parse(
+            """{"type":"tool_execution_update","toolCallId":"$id",""" +
+                """"partialResult":{"content":[{"type":"text","text":"$chunk"}]}}""",
+        )
+
+    private fun toolEnd(id: String, text: String) =
+        PiEvents.parse(
+            """{"type":"tool_execution_end","toolCallId":"$id","toolName":"bash","isError":false,""" +
+                """"result":{"content":[{"type":"text","text":"$text"}]}}""",
+        )
+
+    /**
+     * docs/pi-android-ui-spec.md:369 §4.3 asks for `tool_execution_update` to be
+     * throttled to 200 ms; pi's own renderer coalesces for the same reason
+     * (`packages/tui/src/tui.ts:477`, `:986-1005`).
+     */
+    @Test
+    fun `tool execution updates are throttled to the spec's 200 ms window`() {
+        val r = reducer()
+        r.onEvent(toolStart("tc1"))
+
+        clock = 1_000
+        assertTrue(r.onEvent(toolUpdate("tc1", "a")) is TranscriptChange.Updated)
+        clock = 1_100
+        assertEquals(TranscriptChange.None, r.onEvent(toolUpdate("tc1", "b")))
+        clock = 1_199
+        assertEquals(TranscriptChange.None, r.onEvent(toolUpdate("tc1", "c")))
+        // The stored row never lags, only the publication.
+        assertEquals("abc", (r.transcript.single() as ToolCall).output)
+
+        clock = 1_200
+        val change = r.onEvent(toolUpdate("tc1", "d"))
+        assertEquals(TranscriptChange.Updated(0), change)
+        assertEquals("abcd", (r.transcript.single() as ToolCall).output)
+    }
+
+    /** The throttle must never swallow the last chunk of a burst (F8's trap). */
+    @Test
+    fun `the last update before a turn ends is still delivered`() {
+        val r = reducer()
+        r.onEvent(toolStart("tc1"))
+        clock = 1_000
+        r.onEvent(toolUpdate("tc1", "one"))
+        clock = 1_010
+        assertEquals(TranscriptChange.None, r.onEvent(toolUpdate("tc1", "two")))
+        clock = 1_020
+        assertEquals(TranscriptChange.None, r.onEvent(toolUpdate("tc1", "three")))
+
+        // A turn boundary with no tool end still flushes the row the throttle
+        // was holding: `agent_end` funnels through `finishStreaming`.
+        clock = 1_030
+        assertEquals(TranscriptChange.Updated(0), r.onEvent(PiEvents.parse("""{"type":"agent_end"}""")))
+        val card = r.transcript.single() as ToolCall
+        assertEquals("onetwothree", card.output)
+    }
+
+    @Test
+    fun `a tool end always publishes the final row, throttle or not`() {
+        val r = reducer()
+        r.onEvent(toolStart("tc1"))
+        clock = 1_000
+        r.onEvent(toolUpdate("tc1", "partial"))
+        clock = 1_010
+        assertEquals(TranscriptChange.None, r.onEvent(toolUpdate("tc1", " more")))
+
+        clock = 1_015
+        assertTrue(r.onEvent(toolEnd("tc1", "final output")) is TranscriptChange.Updated)
+        val card = r.transcript.single() as ToolCall
+        assertEquals(ToolStatus.Success, card.status)
+        assertEquals("final output", card.output)
+    }
+
+    @Test
+    fun `an aborted turn still publishes the chunk the throttle was holding`() {
+        val r = reducer()
+        r.onEvent(toolStart("tc1"))
+        clock = 1_000
+        r.onEvent(toolUpdate("tc1", "before the abort"))
+        clock = 1_010
+        assertEquals(TranscriptChange.None, r.onEvent(toolUpdate("tc1", " last")))
+
+        clock = 1_020
+        r.onEvent(
+            PiEvents.parse(
+                """{"type":"message_end","message":{"role":"assistant","stopReason":"aborted"}}""",
+            ),
+        )
+        val card = r.transcript[0] as ToolCall
+        assertEquals(ToolStatus.Error, card.status)
+        assertEquals("before the abort last", card.output)
+    }
+
+    /**
+     * pi runs the tool calls of one message strictly one at a time
+     * (`agent-loop.ts:497-539`), so a stamp per call id is what keeps the first
+     * chunk of the *next* call from being swallowed by the previous one's window.
+     */
+    @Test
+    fun `one tool's throttle window does not swallow the next tool's first chunk`() {
+        val r = reducer()
+        clock = 1_000
+        r.onEvent(toolStart("a"))
+        assertTrue(r.onEvent(toolUpdate("a", "x")) is TranscriptChange.Updated)
+        r.onEvent(toolEnd("a", "x"))
+
+        // Same millisecond: a shared stamp would suppress this.
+        assertTrue(r.onEvent(toolStart("b")) is TranscriptChange.Appended)
+        assertTrue(r.onEvent(toolUpdate("b", "y")) is TranscriptChange.Updated)
+    }
+
+    @Test
+    fun `reset drops the throttle so a new session publishes immediately`() {
+        val r = reducer()
+        clock = 1_000
+        r.onEvent(toolStart("a"))
+        r.onEvent(toolUpdate("a", "x"))
+        r.reset()
+        r.onEvent(toolStart("a"))
+        clock = 1_000
+        assertTrue(r.onEvent(toolUpdate("a", "y")) is TranscriptChange.Updated)
+    }
 }

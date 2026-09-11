@@ -113,10 +113,77 @@ class TranscriptBlocksTest {
         assertTrue(r.transcript.isEmpty())
     }
 
+    // ---------------------------------------------------- extension state (F6)
+
+    /**
+     * pi renders a `custom` entry through the extension's registered renderer
+     * (`interactive-mode.ts:3202-3205` live, `:3704-3706` on replay). That
+     * renderer cannot cross RPC, so the reducer must at least surface the type
+     * and the payload as a row — it used to emit nothing (F6).
+     */
     @Test
-    fun `extension state entries stay out of the transcript`() {
+    fun `an extension state entry becomes a muted row carrying its type and data`() {
         val r = reducer()
-        r.onEntry(obj("""{"type":"custom","id":"c1","timestamp":1000,"data":{"n":1}}"""))
+        r.onEntry(
+            obj("""{"type":"custom","id":"c1","timestamp":1000,""" +
+                """"customType":"todo","data":{"n":1}}"""),
+        )
+        val item = r.transcript.single() as Notice
+        assertEquals(Notice.Tone.Info, item.tone)
+        assertTrue(item.text.contains("todo"))
+        assertTrue(item.text.contains("""{"n":1}"""))
+    }
+
+    @Test
+    fun `an extension state row keeps pi's entry id as its key and survives a re-seed`() {
+        val prompt = obj(
+            """{"type":"message","id":"u1","timestamp":1000,""" +
+                """"message":{"role":"user","content":"hi"}}""",
+        )
+        val entry = obj("""{"type":"custom","id":"c1","timestamp":1000,"customType":"state"}""")
+        val live = reducer()
+        live.onEntry(entry)
+        val replayed = reducer().also { it.seedFromHistory(listOf(prompt, entry)) }
+        assertEquals("c1", live.transcript.single().key)
+        assertEquals("c1", replayed.transcript.filterIsInstance<Notice>().single().key)
+    }
+
+    /** A `custom` entry is not context, so it must not become the hook card. */
+    @Test
+    fun `an extension state entry is not rendered as a hook message`() {
+        val r = reducer()
+        r.onEntry(
+            obj("""{"type":"custom","id":"c1","timestamp":1000,"customType":"todo","data":"ship it"}"""),
+        )
+        assertTrue(r.transcript.none { it is HookMessage })
+        assertTrue(r.transcript.single() is Notice)
+    }
+
+    @Test
+    fun `a malformed extension state entry still produces a labelled row`() {
+        val r = reducer()
+        r.onEntry(obj("""{"type":"custom","id":"c1","timestamp":1000}"""))
+        assertTrue((r.transcript.single() as Notice).text.contains("extension"))
+    }
+
+    @Test
+    fun `a long extension payload is truncated to one bounded line`() {
+        val r = reducer()
+        r.onEntry(
+            obj("""{"type":"custom","id":"c1","timestamp":1000,"customType":"big","data":"${"x".repeat(500)}"}"""),
+        )
+        val text = (r.transcript.single() as Notice).text
+        assertTrue(text.length < 260)
+        assertTrue(text.endsWith("…"))
+    }
+
+    /** `CustomEntry` has no `display` in pi; a future one is honoured, not ignored. */
+    @Test
+    fun `an extension state entry marked hidden stays out of the transcript`() {
+        val r = reducer()
+        r.onEntry(
+            obj("""{"type":"custom","id":"c1","timestamp":1000,"customType":"s","display":false}"""),
+        )
         assertTrue(r.transcript.isEmpty())
     }
 
