@@ -59,14 +59,15 @@ object DeviceBridgeController {
      * So: **every change to `pi-extensions/ 目录` must bump this string.**
      * History: "1" shipped the device bridge; "2" adds `pi-highlight/`; "3" adds the
      * session-scoped approvals, the workspace-relative shell policy and the SAF file
-     * tools to the device extension.
+     * tools to the device extension; "4" adds the `device-reload` command (re-scan
+     * extensions/skills/prompts without restarting the engine).
      *
      * A content-derived fingerprint (hashing the asset tree's names and sizes)
      * would remove the human step entirely and is the better long-term design —
      * recorded in docs/known-gaps.md rather than done here, because the file is
      * not the one being worked on right now.
      */
-    const val ASSET_VERSION = "3"
+    const val ASSET_VERSION = "4"
 
     @Volatile
     private var server: DeviceBridgeHttpServer? = null

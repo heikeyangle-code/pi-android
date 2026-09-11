@@ -1172,6 +1172,29 @@ export default function (pi: ExtensionAPI) {
 		});
 	}
 
+	// Reload without restarting the engine.
+	//
+	// pi watches no files (its only `fs.watch` is the git-branch footer), so a newly
+	// installed extension / skill / prompt template is invisible until something
+	// re-scans. `ctx.reload()` is the official hook for that: `core/extensions/types.ts`
+	// declares it on the command context, and `rpc-mode.ts` wires it to
+	// `session.reload()`. Exposing it as a slash command is what lets the app do
+	// `prompt("/device-reload")` after an install instead of killing and restarting
+	// the whole engine process.
+	//
+	// The notify happens *before* the await on purpose: reload invalidates this runner
+	// and the context that came with it (`agent-session.ts:889` — "This extension ctx
+	// is stale after ... ctx.reload()"), so there is no fresh ctx to speak through
+	// afterwards. A caller who needs proof that the scan finished can wait for the
+	// `session_start` event with `reason: "reload"`, which pi emits at the end.
+	pi.registerCommand("device-reload", {
+		description: "重新扫描扩展、技能与提示模板（新装扩展后不用重启引擎）",
+		handler: async (_args, ctx) => {
+			ctx.ui.notify("正在重新扫描扩展、技能与提示模板…", "info");
+			await ctx.reload();
+		},
+	});
+
 	// Tell the agent what environment it woke up in, every turn. The sentinel
 	// guards against double-appending if this extension is loaded twice.
 	pi.on("before_agent_start", async (event) => {
