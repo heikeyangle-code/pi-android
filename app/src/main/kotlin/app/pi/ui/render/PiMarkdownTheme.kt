@@ -158,6 +158,7 @@ internal fun piMarkdownTypography(): MarkdownTypography {
  * long answer does not become a column of whitespace, and the code/quote inset
  * is the same [PiSpacing.card] every other card in the app uses.
  */
+@Composable
 internal fun piMarkdownPadding(): MarkdownPadding = markdownPadding(
     block = 2.dp,
     list = 4.dp,
@@ -170,6 +171,7 @@ internal fun piMarkdownPadding(): MarkdownPadding = markdownPadding(
 )
 
 /** 12dp corners keep code blocks recognisably cards rather than slabs. */
+@Composable
 internal fun piMarkdownDimens(): MarkdownDimens = markdownDimens(
     dividerThickness = 1.dp,
     codeBackgroundCornerSize = 12.dp,

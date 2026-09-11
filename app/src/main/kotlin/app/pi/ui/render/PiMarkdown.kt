@@ -69,23 +69,23 @@ internal fun PiMarkdownText(
         LocalPiCodeHighlighter provides PiNodeCodeHighlighter,
         LocalPiImageTransformer provides com.mikepenz.markdown.model.NoOpImageTransformerImpl(),
     ) {
-        // P9/F32 wanted these five config objects cached instead of rebuilt on every
-        // frame of a streaming block. They cannot be cached with `remember { ... }`
-        // while they are @Composable: `remember`'s calculation lambda is
-        // `@DisallowComposableCalls`, and the Compose compiler rejects it with
+        // P9/F32 asked for these five config objects to be cached rather than rebuilt
+        // on every frame of a streaming block. None of them can be wrapped in
+        // `remember { ... }`: the library's builders (`markdownColor`,
+        // `markdownTypography`, `markdownComponents`, `markdownPadding`,
+        // `markdownDimens`) are all @Composable, and `remember`'s calculation lambda is
+        // `@DisallowComposableCalls`. The Compose compiler rejects it with
         // "@Composable invocations can only happen from the context of a @Composable
-        // function" - which the Gradle release build caught and tools/typecheck.sh
-        // cannot, since it does not run the Compose plugin.
-        //
-        // So the three that genuinely read the theme are called here, and only the two
-        // that are pure functions of constants (`piMarkdownPadding`, `piMarkdownDimens`)
-        // keep their `remember`.
+        // function" - a class of error tools/typecheck.sh cannot see, because it does
+        // not run the Compose plugin. Caching here needs those builders to become
+        // pure functions of the palette, which is a change in ui/render/**, not a
+        // wrapper. Until then P9/F32 stays `patch-ready` in docs/gap-disposition.md.
         Markdown(
             content = content,
             colors = piMarkdownColors(),
             typography = piMarkdownTypography(),
-            padding = remember { piMarkdownPadding() },
-            dimens = remember { piMarkdownDimens() },
+            padding = piMarkdownPadding(),
+            dimens = piMarkdownDimens(),
             components = piMarkdownComponents(),
             modifier = modifier,
         )
