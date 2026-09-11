@@ -106,6 +106,22 @@
 - **不实测就上 = 又造一个"点了没反应"的功能。** 这正是本项目反复出现的病：界面承诺了行为，行为不存在。
 - 注意 `assets/pi-extensions/**` 有归属约束；`ASSET_VERSION` 必须同步提升（现在是 `"3"`），否则已安装设备拿不到新扩展。
 
+### B6-定稿方案（用户已决策）：**任何安装 → 回合结束后自动重启**，不采用 `reload` 路线
+
+用户明确否掉了"用扩展调 `ctx.reload()`"的复杂方案。**定稿：只要涉及安装动作，就重启引擎让它生效。**
+
+**为什么重启必须由 App 做**：AI 跑在 pi 进程里，重启 = 杀掉它自己那个进程，**它做不到**。而 RPC **没有任何"我装了东西"的事件**。
+
+**App 如何知道"该重启了"——三条互补，推荐 ①+③：**
+
+| 办法 | 机制 | 评价 |
+|---|---|---|
+| **① 回合结束后比对资源指纹** | App 已收到 `agent_settled`；在回合前后各取一次指纹（`extensions/`、`skills/`、`prompts/`、`settings.json` 的 mtime+size），变了即视为"装了东西" | **最稳**：不依赖模型配合、不需要新协议；兜底 |
+| **② 监听目录（FileObserver）** | agent 目录绑定修复之后（`extraBinds` 加了 `paths.agentDir`），**这些资源现在位于 App 自己的文件目录里**，Android 的 `FileObserver` 可直接监听 | 最快；但可能漏掉 rootfs 侧的偶发写入 |
+| **③ 给模型一个"请求重启"的工具** | 在设备桥扩展里加如 `android_request_restart`，模型装完主动调 | 体验最好；但依赖模型记得调 |
+
+**关键约束**：无论哪条路，**重启只能发生在回合结束之后**——即必须走 `ExtensionLifecycle` 的 `AwaitingIdle` 分支，**不许中途打断**。"装完立刻重启"的真实含义是"**装完的那个回合结束之后再重启**"。
+
 ### B7. 项目信任弹窗 —— **待验证**
 - **事实已核对**：`--mode rpc` 下 `hasUI` 恒为假（`main.ts:753` → `core/project-trust.ts:86-88` 直接 `return false`），配合默认 `defaultProjectTrust: "ask"`（`settings-manager.ts:1014-1017`），项目本地 `.pi/extensions` 被**静默跳过**：没有事件、没有 stderr、没有错误（`loader.ts:634-637`、`main.ts:775-782`）。
 - **trust.json 的格式是读源码得到的，不是猜的**（`core/trust-manager.ts`）：
@@ -147,13 +163,40 @@
 
 ---
 
-### B9. markdown 渲染库升到 0.42+ / 0.45
-- **现状**：用 0.41.0。原因是硬约束：0.42.0 及更新的 AAR 要求 `minCompileSdk=37`，而本项目 `compileSdk = 36`（AGP 8.13.2）；升 37 需要 AGP 9.x，而版本目录里明确记录了刻意避开 AGP 9.x 的大版本迁移。
-- **代价**（相对 0.45.0，均已核对）：
-  - 没有 GFM alert（`> [!NOTE]` 会退化成普通引用块）
-  - `MarkdownTypography` 没有 `alertTitle`
-  - 没有 `StreamingMarkdownState` 重载（流式专门优化的解析状态）——**目前没用它**，用的是 String 重载
-- **收尾条件**：升级 AGP 到 9.x 且 `compileSdk` 能到 37 时，改版本号 + 补回 `darkTheme`/`alertTitle` 两个参数即可（`MarkdownCodeBackground` 等组件签名 0.41 与 0.45 一致，已核对）。
+### B9. markdown 渲染库升到 0.45.0 —— **已定论：AGP 8.13.2 可以，不用升 AGP 9**
+- **答案**：AGP 8.13.2 **能**编译 `compileSdk = 37`，前提是走它的**小版本 SDK** 通道。所以 markdown 已从 0.41.0 升到 **0.45.0**（GFM alert、`alertTitle`、`darkTheme`、`StreamingMarkdownState` 一起回来了）。事先担心的「必须升 AGP 9.x」**是错的**：那是把「没有 `platforms;android-37`」误当成「AGP 8.13 不支持小版本平台」了。
+- **根因与解法**：SDK 仓库里**没有**纯 `platforms;android-37`，只有 `37.0/37.1/37.2`。AGP 8.13.2 里 `compileSdk = 37` 单独写会哈希成 `android-37` → 找不到平台；必须再加 `compileSdkMinor = 0`，它才哈希成 `android-37.0`。**顺序不能反**：`CompileSdkDelegate.setCompileSdkMinor` 会先读当前 `compileSdk` 的 API level，为空就静默什么都不做。
+- **证据**（全部在本机复现）：
+  1. 仓库清单：`https://dl.google.com/android/repository/repository2-3.xml` 里只有
+     `path="platforms;android-37.0"`、`37.1`、`37.2`（外加 `37.2-beta*`），**没有任何 `platforms;android-37`**。
+  2. 平台可装：`sdkmanager --list` 能列出 `platforms;android-37.0`，安装成功；装完 `/opt/android-sdk/platforms/android-37.0/source.properties` 里是 `AndroidVersion.ApiLevel=37.0`、`ExtensionLevel=22`。
+     ⚠ 这改变了一个全局副作用：`tools/typecheck.sh` 取 `platforms/android-*/android.jar | sort | tail -1`，现在选中的是 **android-37.0** 而不是 android-36（37 是 36 的超集，兼容）。
+  3. DSL 存在：AGP 8.13.2 的公开接口 `com.android.build.api.dsl.CommonExtension` 有
+     `getCompileSdkMinor()` / `setCompileSdkMinor(Integer)`（`gradle-api-8.13.2.jar`，`javap` 可见）。
+  4. 用 AGP 8.13.2 **自己的类**直接调用（`java -cp <common/sdklib/gradle/gradle-api/gradle-common-api/kotlin-stdlib>` 跑一个探针）：
+     ```
+     sdklib AndroidVersion(36)                              -> android-36
+     sdklib AndroidVersion(37, 0)                           -> android-37.0
+     AGP CompileSdkVersionImpl(api=37, minor=0).toHash()    -> android-37.0
+     AGP CompileSdkVersionImpl(api=37, minor=null).toHash() -> android-37   ← 这就是那个不存在的包
+     ```
+     `AndroidVersion.getPlatformHashString()` 只对 API 36 做「无 `.0` 后缀」的特例；37 走 `getApiStringWithExtension()`，小版本一定带 `.0`。
+  5. AAR 元数据对得上：0.45.0 的 `META-INF/com/android/build/gradle/aar-metadata.properties` 是
+     `minCompileSdk=37` + `minCompileMinorSdk=0`。AGP 8.13.2 的 `AarMetadataReader` 只有 8 个字段、**整包找不到 `minCompileMinorSdk` 字符串**（即它不检查小版本），而 `minCompileSdk` 的比较对 api>36 用的是**已装平台的 API level**（37），所以 37 ≤ 37 通过。
+     → 副作用要记住：AGP 8.13.2 会**忽略** `minCompileMinorSdk`。将来若某个 AAR 要 `minCompileSdk=37` + `minCompileMinorSdk=1`，AGP 8.13.2 不会报错，只会在运行时缺 API。
+  6. Kotlin 侧不是第二道坎：0.45.0 的类 `@Metadata mv=[2,2,0]`（与 0.41.0 相同），Kotlin 2.2.21 能读；`darkTheme` 参数名在 0.45.0 的 `MarkdownColorsKt` 里、0.41.0 里没有，`alertTitle` 在 0.45.0 的 `MarkdownTypographyKt` 里、0.41.0 里没有。
+- **没跑成的验证（如实记）**：本机 Gradle **跑不起来**，且原因与本题无关：AGP 应用阶段就死在
+  `java.nio.file.FileSystemException: /root/.gradle/android/FakeDependency.jar: Function not implemented`，
+  随后 JVM 报 `pthread_create failed (ENOSYS)`（`unable to create native thread`）。加上 AAPT2 只有 x86_64，所以 `:app:checkDebugAarMetadata` 这条端到端验证在本机**不可能**通过；上面的 3–5 是能拿到的最强证据（AGP 自己的类 + 真实 AAR 元数据）。真机/CI 上应补跑一次 `:app:checkDebugAarMetadata`。
+- **落地改动**：`gradle/libs.versions.toml`（`markdown = "0.45.0"`）、`app/build.gradle.kts`（`compileSdk = 37` + `compileSdkMinor = 0`）。`gradle.properties` **不需要**改。
+- **仍需回补的两行**（该文件归 `ui/render` 负责人）：
+  ```kotlin
+  // piMarkdownColors() 的 markdownColor(...) 里：
+  darkTheme = isSystemInDarkTheme(),          // + import androidx.compose.foundation.isSystemInDarkTheme
+  // piMarkdownTypography() 的 markdownTypography(...) 里（放在 h6 之后）：
+  alertTitle = heading.copy(fontSize = 16.sp, lineHeight = 24.sp),
+  ```
+  0.45.0 里这两个参数都有默认值，所以不补也能编译；补上才是这次升级的目的（GFM alert 的标题样式与暗色配色）。
 
 ### B10. `libprootloader.so` 不是 PIE —— 装机时可能被拒
 - **背景**：`proot` 是 `ET_DYN`(PIE) 且引用 `/system/bin/linker64`，符合 Android 的 exec 要求；但 Termux 的 `loader` 是 **`ET_EXEC`（非 PIE）**，18,136 字节。它是被 proot **映射**（`PROOT_LOADER`）而不是被 exec 的，所以 PIE 规则本不适用于它 —— `tools/fetch-runtime.mjs` 里那个无条件 PIE 校验已经改成只对"会被 exec"的条目生效。

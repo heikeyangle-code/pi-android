@@ -31,6 +31,7 @@ import com.mikepenz.markdown.compose.components.markdownComponents
 import com.mikepenz.markdown.compose.elements.MarkdownCodeBackground
 import com.mikepenz.markdown.compose.elements.MarkdownCodeBlock
 import com.mikepenz.markdown.compose.elements.MarkdownCodeFence
+import com.mikepenz.markdown.compose.elements.MarkdownImage
 import com.mikepenz.markdown.model.ImageTransformer
 import com.mikepenz.markdown.model.NoOpImageTransformerImpl
 import com.mikepenz.markdown.utils.resolveImageAlt
@@ -169,31 +170,37 @@ private fun PiFormulaText(model: MarkdownComponentModel, block: Boolean) {
  * all, so a markdown `![]()` in pi prints as the alt text or as nothing —
  * anything visible here is already better than pi. What this app still cannot
  * do is *get the bytes*: the renderer's own image path is
- * `ImageTransformer.transform(link)` returning an `ImageData` with a
- * `Painter`, and the default `NoOpImageTransformerImpl` returns `null`, which
- * makes `MarkdownImage` render nothing at all
- * (upstream `compose/elements/MarkdownImage.kt:17-29`) — worse than pi's alt
- * text, because the node then disappears from the transcript with no trace.
+ * `ImageTransformer.transform(link)` returning an `ImageData` with a `Painter`
+ * (upstream `model/ImageTransformer.kt:16-29`), and the default
+ * `NoOpImageTransformerImpl.transform` returns `null` (`NoOpImageTransformerImpl.kt:11-14`),
+ * which makes `MarkdownImage` draw nothing at all
+ * (`compose/elements/MarkdownImage.kt:17-29`) — worse than pi's alt text,
+ * because the node then disappears from the transcript with no trace.
  *
  * A real implementation needs one thing this module cannot supply: how to reach
  * an engine-side image. pi's markdown links point at session attachments and
  * workspace files, not at an HTTP URL, so the `link` is a path whose bytes live
  * in the guest. That transport is the recorded blocker in `docs/known-gaps.md`
  * A3 and belongs to the engine/bridge side of the app, not to the renderer.
- * Whoever lands it implements [ImageTransformer] and injects it through
- * [LocalPiImageTransformer]; [PiImagePlaceholder] should then be deleted rather
- * than kept as a parallel path, because two image renderers is how the
- * transcript ends up disagreeing with itself.
  *
- * Until then this renders the one thing that is definitely known: the alt text
- * pi would have shown, and the source, so the reader can see that an image was
- * meant to be there and where it points.
+ * This function therefore delegates to the library's own image component as soon
+ * as a real transformer appears — implementing [ImageTransformer] and injecting
+ * it through [LocalPiImageTransformer] is the whole of the finishing step, with
+ * no change needed here. Until that exists, it renders the one thing that is
+ * definitely known: the alt text pi would have shown, and the source, so a
+ * reader can see that an image was meant to be there and where it points.
  */
 @Composable
 private fun PiImagePlaceholder(model: MarkdownComponentModel) {
     val palette = PiTheme.palette
     val content = model.content
     val node = model.node
+    val transformer = LocalPiImageTransformer.current
+    if (transformer !is NoOpImageTransformerImpl) {
+        // A real byte source has been injected; let the library draw it.
+        MarkdownImage(content, node)
+        return
+    }
     val referenceHandler = LocalReferenceLinkHandler.current
     val link = remember(content, node) { node.resolveImageLink(content, referenceHandler) }
     val alt = remember(content, node) { node.resolveImageAlt(content) }
