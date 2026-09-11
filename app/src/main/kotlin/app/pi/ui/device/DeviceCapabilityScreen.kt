@@ -1,5 +1,7 @@
 package app.pi.ui.device
 
+import android.Manifest
+import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
@@ -107,6 +109,16 @@ fun DeviceCapabilityScreen(
     var shizuku by remember { mutableStateOf(DeviceShizuku.status(context)) }
     var workspace by remember { mutableStateOf(DeviceWorkspace.summary()) }
     var storagePermissionsNeeded by remember { mutableStateOf(!store.hasLegacyStoragePermission()) }
+    // The endpoint-level grants the cards have to state: CAMERA gates the torch
+    // (DeviceCapabilityStore.kt:268-278), the location pair gates android_location
+    // (:207-211), POST_NOTIFICATIONS gates android_notify (:239-245). None of them
+    // makes its whole *group* unusable — which is exactly why the card, not the
+    // store, has to say so, or the group's 「可用」 badge reads as "everything here
+    // works" (docs/pi-android-app-design.md §21.4).
+    var cameraPermission by remember { mutableStateOf(store.hasCameraPermission()) }
+    var locationPermission by remember { mutableStateOf(store.hasLocationPermission()) }
+    var notificationPermission by remember { mutableStateOf(store.hasNotificationPermission()) }
+    var approvals by remember { mutableStateOf(DeviceApprovalLedger.summaryLines()) }
     var note by remember { mutableStateOf<String?>(null) }
     val auditTail = remember(revision) { DeviceBridgeController.auditTail(5) }
 
@@ -139,6 +151,27 @@ fun DeviceCapabilityScreen(
         revision += 1
     }
 
+    // The endpoint-level runtime grants: camera (手电筒), the location pair, and
+    // POST_NOTIFICATIONS. `cameraPrecondition()` and `notify()` tell the model to
+    // send the user to a button on this very card (DeviceCapabilityStore.kt:275-276,
+    // DeviceSystemActions.kt:103-112), so the card has to be able to ask — and then
+    // re-read the answer from the store instead of assuming the dialog was accepted.
+    val runtimePermissionRequester = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions(),
+    ) { result ->
+        cameraPermission = store.hasCameraPermission()
+        locationPermission = store.hasLocationPermission()
+        notificationPermission = store.hasNotificationPermission()
+        val denied = result.filterValues { granted -> !granted }.keys
+        note = if (denied.isEmpty()) {
+            "权限已授予。"
+        } else {
+            "以下权限仍未授予：${denied.joinToString("、")}。" +
+                "系统在拒绝两次后可能不再弹窗，需要到 系统设置 → 应用 → pi → 权限 中手动打开。"
+        }
+        revision += 1
+    }
+
     LaunchedEffect(Unit) {
         DeviceShizuku.addPermissionResultListener { granted ->
             note = if (granted) "Shizuku 授权成功：Shell 现在以 ADB 身份运行。" else "Shizuku 授权被拒绝。"
@@ -151,6 +184,13 @@ fun DeviceCapabilityScreen(
             DeviceWorkspace.refresh(context)
             workspace = DeviceWorkspace.summary()
             storagePermissionsNeeded = !store.hasLegacyStoragePermission()
+            cameraPermission = store.hasCameraPermission()
+            locationPermission = store.hasLocationPermission()
+            notificationPermission = store.hasNotificationPermission()
+            // The pi-side gate reports through POST /app/gate/report; nothing in that
+            // item reads a polled value, so without this the ledger would render once
+            // and never change while the screen is open.
+            approvals = DeviceApprovalLedger.summaryLines()
             delay(1500)
         }
     }
@@ -215,7 +255,16 @@ fun DeviceCapabilityScreen(
                         revision += 1
                     },
                     onOpenSystemSettings = {
-                        runCatching { context.startActivity(DeviceAccessibilityService.settingsIntent()) }
+                        // A swallowed result here is a dead button: some ROMs have no
+                        // activity for ACTION_ACCESSIBILITY_SETTINGS, and Android 10+
+                        // can refuse a background start. Say so instead of doing nothing.
+                        val opened = runCatching {
+                            context.startActivity(DeviceAccessibilityService.settingsIntent())
+                        }.isSuccess
+                        if (!opened) {
+                            note = "无法打开系统的无障碍设置页。请手动进入 系统设置 → 无障碍 → 已安装的服务，" +
+                                "启用「pi 设备桥」（包名 ${context.packageName}）。"
+                        }
                     },
                     relaxed = relaxed,
                     onRelaxedChange = { enabled ->
@@ -245,6 +294,12 @@ fun DeviceCapabilityScreen(
                             permissionRequester.launch(needed.toTypedArray())
                         }
                     },
+                    cameraPermission = cameraPermission,
+                    locationPermission = locationPermission,
+                    notificationPermission = notificationPermission,
+                    onRequestPermission = { names ->
+                        runtimePermissionRequester.launch(names.toTypedArray())
+                    },
                 )
             }
 
@@ -255,7 +310,10 @@ fun DeviceCapabilityScreen(
 
             item {
                 PiSectionHeader("本会话的审批")
-                ApprovalsCard()
+                // Fed from the polling loop above: this item reads no other state, so a
+                // direct `DeviceApprovalLedger.summaryLines()` call would compose once
+                // and stay frozen for as long as the screen is open.
+                ApprovalsCard(lines = approvals)
             }
 
             item {
@@ -389,6 +447,10 @@ private fun DeviceCapabilityCard(
     onRevokeDirectory: (String) -> Unit,
     storagePermissionsNeeded: Boolean,
     onRequestStoragePermission: () -> Unit,
+    cameraPermission: Boolean,
+    locationPermission: Boolean,
+    notificationPermission: Boolean,
+    onRequestPermission: (List<String>) -> Unit,
 ) {
     val capability = state.capability
     Card {
@@ -483,6 +545,19 @@ private fun DeviceCapabilityCard(
                     },
                 )
                 TextButton(onClick = onOpenSystemSettings) { Text("前往系统设置") }
+                if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+                    // The group is usable — dump/tap/input all work — but this one
+                    // endpoint is not, and the switch above must not imply otherwise:
+                    // `DeviceUiAutomation.screenshot` refuses with UNSUPPORTED below
+                    // API 30 (DeviceUiAutomation.kt:609-616), which is what
+                    // `/app/health`'s `screenshotSupported` reports (Router.kt:326).
+                    Text(
+                        "截屏：不可用 —— 无障碍截图需要 Android 11（API 30）及以上，" +
+                            "本机是 Android ${Build.VERSION.RELEASE}；此时只能靠「Shell」组的 screencap。",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = PiTheme.palette.error,
+                    )
+                }
                 InfoNote(
                     "无障碍服务能看到当前屏幕上的所有文本（包括密码框以外的输入内容与通知），并代替你点按。" +
                         "只在你需要 Agent 操作手机时开启，用完可以关闭。",
@@ -522,9 +597,15 @@ private fun DeviceCapabilityCard(
 
             DeviceCapability.Shell -> {
                 Spacer(Modifier.height(8.dp))
-                val backendLabel = shizuku.optString("backendLabel").ifEmpty { "应用自身身份" }
+                // The backend that will run the *next* command, from the same live
+                // probe the router uses (DeviceShell.kt:188-190). It must not be
+                // `shizuku.backendLabel`: that field is `ShizukuShellBackend.label`,
+                // whose value while Shizuku is not ready is literally
+                // 「Shizuku（未安装/未运行/未授权）」(DeviceShizuku.kt:284-291) — a
+                // backend that is going to run nothing, because `active()` falls back
+                // to the app's own uid.
                 Text(
-                    "当前 Shell 后端：$backendLabel",
+                    "当前 Shell 后端：${DeviceShellGuard.active().label}",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurface,
                 )
@@ -574,14 +655,80 @@ private fun DeviceCapabilityCard(
 
             DeviceCapability.Sensors -> {
                 Spacer(Modifier.height(8.dp))
-                Text(
-                    "定位还需要系统授予「位置信息」权限；手电筒在部分设备上需要相机权限。",
-                    style = PiTheme.text.meta,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+                // Two endpoint-level grants, stated as they are
+                // (DeviceCapabilityStore.kt:207-211, 268-278). The camera one *must* be
+                // requestable here: `cameraPrecondition()`'s hint tells the user to
+                // press 「授予相机权限」 on this card (Store:275-276) and the model
+                // relays that verbatim. The location grant is requested here too,
+                // because until now nothing in the app ever asked for it
+                // (`grep -rn ACCESS_FINE_LOCATION` outside the store and
+                // `DeviceSystemActions` → no request), so the endpoint could only ever
+                // answer NO_PERMISSION.
+                if (locationPermission) {
+                    Text(
+                        "定位权限：已授予（还要系统定位开关打开、且有过一次定位结果）。",
+                        style = PiTheme.text.meta,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                } else {
+                    Text(
+                        "定位权限：未授予 —— Agent 无法读取位置；传感器与电池不受影响。",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = PiTheme.palette.warning,
+                    )
+                    TextButton(
+                        onClick = {
+                            onRequestPermission(
+                                listOf(
+                                    Manifest.permission.ACCESS_FINE_LOCATION,
+                                    Manifest.permission.ACCESS_COARSE_LOCATION,
+                                ),
+                            )
+                        },
+                    ) { Text("授予定位权限") }
+                }
+                if (cameraPermission) {
+                    Text(
+                        "相机权限：已授予 —— 手电筒可用（部分设备还需要在系统里用过一次相机）。",
+                        style = PiTheme.text.meta,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                } else {
+                    Text(
+                        "相机权限：未授予 —— 手电筒不可用（Android 6 起 setTorchMode 需要 CAMERA）；位置与传感器不受影响。",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = PiTheme.palette.warning,
+                    )
+                    TextButton(
+                        onClick = { onRequestPermission(listOf(Manifest.permission.CAMERA)) },
+                    ) { Text("授予相机权限") }
+                }
             }
 
-            DeviceCapability.Basic -> Unit
+            DeviceCapability.Basic -> {
+                Spacer(Modifier.height(8.dp))
+                // 基础 is on by default, so its badge reads 「可用」 out of the box —
+                // and on API 33+ without POST_NOTIFICATIONS `android_notify` is refused
+                // every time (DeviceSystemActions.kt:103-112). Silence here is the one
+                // thing the default-on group cannot afford.
+                if (notificationPermission) {
+                    Text(
+                        "系统通知权限：已授予。",
+                        style = PiTheme.text.meta,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                } else {
+                    Text(
+                        "系统通知权限：未授予 —— 发送通知会被拒绝（Android 13+ 需要 POST_NOTIFICATIONS）；" +
+                            "剪贴板、打开链接、分享、Toast、震动不受影响。",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = PiTheme.palette.warning,
+                    )
+                    TextButton(
+                        onClick = { onRequestPermission(listOf(Manifest.permission.POST_NOTIFICATIONS)) },
+                    ) { Text("授予通知权限") }
+                }
+            }
         }
 
         if (!state.usable && state.enabled && state.reason != null) {
@@ -666,7 +813,7 @@ private fun ShellPolicyCard(relaxed: Boolean, workspace: String) {
 
         Spacer(Modifier.height(6.dp))
         Text(
-            "危险操作（结束应用、Shell、分享、打开链接、向输入框写入、跨沙箱读写文件）第一次会请求确认，" +
+            "危险操作（结束应用、Shell、分享、打开链接、向输入框写入、裸按键注入、跨沙箱读写文件）第一次会请求确认，" +
                 "确认框里有「同意并记住本次会话」；没有确认通道时直接拒绝，而不是默认允许。",
             style = PiTheme.text.meta,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -674,11 +821,20 @@ private fun ShellPolicyCard(relaxed: Boolean, workspace: String) {
     }
 }
 
-/** What the pi-side permission gate reported for this session. */
+/**
+ * What the pi-side permission gate reported for this session.
+ *
+ * [lines] is passed in rather than read here on purpose: this card is a
+ * `LazyColumn` item and reads no other state, so calling
+ * `DeviceApprovalLedger.summaryLines()` inside it would be composed once and never
+ * re-evaluated — the ledger changes only when the guest extension POSTs to
+ * `/app/gate/report`, which nothing in this composable observes. The polling loop
+ * in [DeviceCapabilityScreen] is the signal, and it costs one volatile read.
+ */
 @Composable
-private fun ApprovalsCard() {
+private fun ApprovalsCard(lines: List<String>) {
     Card {
-        for (line in DeviceApprovalLedger.summaryLines()) {
+        for (line in lines) {
             Text(
                 line,
                 style = MaterialTheme.typography.bodyMedium,
