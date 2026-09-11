@@ -43,7 +43,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { chmod, mkdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { highlightToRuns, knownLanguages, loadState } from "./hljs";
+import { highlightToRuns, knownLanguages, knowsLanguage, loadState } from "./hljs";
 
 export const SERVICE_NAME = "pi-android-highlight";
 export const SERVICE_VERSION = "1";
@@ -241,8 +241,10 @@ function handleHighlight(response: ServerResponse, request: IncomingMessage): Pr
 		}
 
 		// Unknown language is not an error: it is pi's normal "render plain" path
-		// (hcl/graphql/toml/fish are not in highlight.js 10.7.3 at all).
-		if (!available.has(language)) {
+		// (hcl/graphql/fish/sass are not in highlight.js 10.7.3 at all). Aliases
+		// count as known — `html` and `toml` have no file of their own but pi
+		// colours them, so a directory listing alone would under-report.
+		if (!knowsLanguage(language)) {
 			return send(response, 200, {
 				ok: true,
 				data: { language, known: false, spans: [], codeUnits: parsed.code.length, hljs: loadState().hljsVersion },

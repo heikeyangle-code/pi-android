@@ -3,6 +3,23 @@
  *
  *   node tools/pi-highlight-check.mjs            # full run
  *   node tools/pi-highlight-check.mjs --eager-probe   # internal: eager-load cost, for the comparison below
+ *   node tools/pi-highlight-check.mjs --write-aliases # regenerate the body of `aliases.ts` from highlight.js
+ *
+ * **No pipeline runs this script** (当前无流水线执行). `.github/workflows/ci.yml`
+ * runs `:rpc:test` (line 33), `:app:assembleRelease` (line 84) and
+ * `tools/run-app-pure-checks.sh` in the `pure-checks` job (lines 129-146); none of
+ * them reaches this file, and `tools/pi-highlight-check.sh` — the wrapper that
+ * also typechecks the extension — is not wired in either. A green run is
+ * therefore evidence for exactly the revision it was run against, and nothing
+ * else. It is written so that whoever wires it in can use it as-is:
+ *
+ *   - **it exits non-zero as soon as any check has failed** (see the summary at
+ *     the end of `main`); a thrown error does the same by itself;
+ *   - it needs no Android, no emulator and no device: Node plus a pi install;
+ *   - the three host-specific paths below are overridable through the
+ *     environment (`PI_HIGHLIGHT_CHECK_PI`, `PI_HIGHLIGHT_CHECK_PI_SRC`), and
+ *     the repo it checks is derived from this file's own location, so a checkout
+ *     anywhere works.
  *
  * The extension is loaded the way pi loads it — through jiti, with pi's own
  * specifier aliases — and then exercised over real loopback HTTP, so this proves
@@ -21,25 +38,34 @@
  *      an unknown language answers `known: false`, and the whole thing starts
  *      without loading any JavaScript.
  *   E. Latency: warm percentiles per snippet.
+ *   F. Language coverage: the committed alias table (`aliases.ts`) is rebuilt
+ *      from highlight.js's own definitions and must match row for row, and
+ *      alias-labelled fences must resolve to pi's exact runs.
  *
  * Nothing here needs Android; it needs Node and pi's install.
  */
 
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { mkdtemp, mkdir, readFile, stat } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { Agent as KeepAliveAgent, request as HttpRequest } from "node:http";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { pathToFileURL } from "node:url";
+import { dirname, join } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { createJiti } from "/root/pi-feasibility/node_modules/@earendil-works/pi-coding-agent/node_modules/jiti/lib/jiti.mjs";
 
-const PI = "/root/pi-feasibility/node_modules/@earendil-works/pi-coding-agent";
-const EXT_DIR = "/root/pi-android/app/src/main/assets/pi-extensions/pi-highlight";
-const REPO = "/root/pi-android";
-/** pi's TypeScript source, for the scope-table cross-check. */
-const PI_SRC = "/root/pi-src/packages/coding-agent/src";
+/**
+ * `PI_HIGHLIGHT_CHECK_PI` — the pi install whose `highlight.js` and `dist/` are
+ * the reference. `PI_HIGHLIGHT_CHECK_PI_SRC` — pi's TypeScript source, for the
+ * scope-table cross-check. Both default to this host's layout; a pipeline would
+ * set them (or, for `PI_SRC`, check out pi next to this repo).
+ */
+const PI = process.env.PI_HIGHLIGHT_CHECK_PI ?? "/root/pi-feasibility/node_modules/@earendil-works/pi-coding-agent";
+const PI_SRC = process.env.PI_HIGHLIGHT_CHECK_PI_SRC ?? "/root/pi-src/packages/coding-agent/src";
+/** This checkout, from the script's own location, so the check follows the code it reads. */
+const REPO = dirname(dirname(fileURLToPath(import.meta.url)));
+const EXT_DIR = join(REPO, "app/src/main/assets/pi-extensions/pi-highlight");
 
 let failures = 0;
 let checks = 0;
@@ -154,9 +180,39 @@ function resolveAll(runs) {
 		.filter((run) => run.key !== undefined);
 }
 
+/**
+ * Merge adjacent runs that resolved to the same key.
+ *
+ * pi has no run boundaries to compare with: `renderHighlightedHtml` emits a
+ * coloured *string*, so how much text it wraps in one escape sequence and how
+ * much in two is not observable, and the oracle here only recovers boundaries
+ * because the marker formatters put one around each flush. Our walk does keep
+ * them, and it deliberately merges adjacent text with an identical scope stack
+ * (`html-runs.ts`, the entity case) — the one real example today is csharp's
+ * zero-length `hljs-params` span, which splits `(` and `)` into two flushes that
+ * carry the same stack. That is colour-identical and differently segmented.
+ *
+ * Comparing the *per-character* token, which is what reaches the screen, is
+ * therefore the honest form of this check: every character must resolve to the
+ * same pi token on both sides. A wrong key, a missing region or a shifted
+ * boundary still fails.
+ */
+function normaliseRuns(runs) {
+	const merged = [];
+	for (const run of runs) {
+		const previous = merged[merged.length - 1];
+		if (previous !== undefined && previous.key === run.key && previous.end === run.start) {
+			previous.end = run.end;
+		} else {
+			merged.push({ start: run.start, end: run.end, key: run.key });
+		}
+	}
+	return merged;
+}
+
 function compareRuns(mine, theirs) {
-	const left = resolveAll(mine);
-	const right = resolveAll(theirs);
+	const left = normaliseRuns(resolveAll(mine));
+	const right = normaliseRuns(resolveAll(theirs));
 	if (left.length !== right.length) {
 		return `run count ${left.length} != ${right.length} (first left ${JSON.stringify(left[0])}, first right ${JSON.stringify(right[0])})`;
 	}
@@ -238,6 +294,10 @@ async function main() {
 	}
 	if (process.argv.includes("--unref-probe")) {
 		await unrefProbe();
+		return;
+	}
+	if (process.argv.includes("--write-aliases")) {
+		writeAliases();
 		return;
 	}
 
@@ -460,6 +520,20 @@ async function main() {
 		["ocaml", "let f x = x + 1\n"],
 		["elixir", "defmodule A do\nend\n"],
 		["powershell", "Get-ChildItem | Where-Object { $_.Name }\n"],
+		// Alias-labelled fences: names pi resolves that have no language file of
+		// their own. Before `aliases.ts` existed the service answered
+		// `known: false` for every one of these, so the block rendered plain while
+		// pi coloured it — `html` and `toml` were the two the app itself asks for.
+		["html", '<a href="/x">y</a>\n'],
+		["toml", "[a]\nb = 1\nc = true\n"],
+		["c++", "#include <vector>\nint main() { std::vector<int> v; return 0; }\n"],
+		["c#", "class A { static void Main() { } }\n"],
+		["golang", "package main\n\nfunc main() { println(1) }\n"],
+		["docker", "FROM alpine\nRUN echo hi\n"],
+		["bat", "@echo off\nrem note\nset A=1\n"],
+		["hbs", "<div>{{name}}</div>\n"],
+		["ml", "let f x = x + 1\n"],
+		["patch", "--- a\n+++ b\n@@ -1 +1 @@\n-a\n+b\n"],
 	];
 	let mismatches = 0;
 	let firstMismatch = "";
@@ -499,6 +573,10 @@ async function main() {
 		}
 	}
 	check(htmlDiffs === 0, "per-file language registration matches lib/index.js HTML", htmlDetail);
+
+	// ---------------------------------------------------- language coverage --
+	section("language coverage: the alias table");
+	checkAliasTable(hljsFull);
 
 	// ------------------------------------------------------------- refusals --
 	section("refusals and caps");
@@ -648,6 +726,122 @@ async function main() {
 	} else {
 		console.log("pi-highlight-check: OK");
 	}
+}
+
+/**
+ * Rebuild `name -> language file` the way highlight.js's own `lib/index.js`
+ * builds its registry, and report anything that does not agree with the engine.
+ *
+ * `listLanguages()` lists canonical names only — an alias lives in a private map
+ * that `getLanguage` consults — so the table cannot be read back out of the
+ * engine directly. It is rebuilt from the definitions in the order `lib/index.js`
+ * registers them (a later registration wins, aliases included), and then every
+ * rebuilt row is checked through the *public* `getLanguage` by object identity.
+ *
+ * @param hljs the engine with all 191 languages registered.
+ * @returns the rebuilt registry, the file names, and any row the engine refutes.
+ */
+function rebuildLanguageRegistry(hljs) {
+	const hljsDir = join(PI, "node_modules/highlight.js");
+	const languagesDir = join(hljsDir, "lib", "languages");
+	const requireFromPi = createRequire(join(PI, "package.json"));
+	const core = requireFromPi(join(hljsDir, "lib", "core.js"));
+
+	const indexSource = readFileSync(join(hljsDir, "lib", "index.js"), "utf8");
+	const registrations = [
+		...indexSource.matchAll(/registerLanguage\('([^']+)',\s*require\('\.\/languages\/([^']+)'\)\)/g),
+	].map((match) => ({ canonical: match[1], file: match[2] }));
+
+	const fileNames = new Set(
+		readdirSync(languagesDir)
+			.filter((entry) => entry.endsWith(".js") && entry !== "index.js")
+			.map((entry) => entry.slice(0, -3)),
+	);
+	const canonicalOf = new Map();
+	const registry = new Map();
+	for (const { canonical, file } of registrations) {
+		canonicalOf.set(file, canonical);
+		registry.set(canonical, file);
+		// A definition carries its aliases on the object it returns, not on the
+		// function, so it has to be called once. It is a pure factory: nothing is
+		// registered by calling it.
+		for (const alias of requireFromPi(join(languagesDir, `${file}.js`))(core).aliases ?? []) {
+			registry.set(alias, file);
+		}
+	}
+
+	const disagree = [];
+	for (const [name, file] of registry) {
+		const resolved = hljs.getLanguage(name);
+		if (resolved === undefined) {
+			disagree.push(`${name}: highlight.js does not know it`);
+		} else if (resolved !== hljs.getLanguage(canonicalOf.get(file))) {
+			disagree.push(`${name}: highlight.js resolves it to ${resolved.name}, not ${file}`);
+		}
+	}
+	return { registrations, fileNames, registry, disagree };
+}
+
+/** The alias-only rows of a rebuilt registry, sorted by name. */
+function aliasRows(registry, fileNames) {
+	return [...registry].filter(([name]) => !fileNames.has(name)).sort((a, b) => (a[0] < b[0] ? -1 : 1));
+}
+
+/**
+ * Compare the committed alias table with a rebuild of highlight.js's own.
+ *
+ * This is the check that keeps `aliases.ts` from going stale under a
+ * highlight.js upgrade; `--write-aliases` regenerates it with the same procedure.
+ */
+function checkAliasTable(hljs) {
+	const { registrations, fileNames, registry, disagree } = rebuildLanguageRegistry(hljs);
+	check(registrations.length === 191, `lib/index.js registers 191 languages (found ${registrations.length})`);
+	check(
+		disagree.length === 0,
+		`all ${registry.size} names resolve to the file the rebuild names`,
+		disagree.slice(0, 4).join("; "),
+	);
+
+	const derived = new Map(aliasRows(registry, fileNames));
+	const source = readFileSync(join(EXT_DIR, "aliases.ts"), "utf8");
+	const committed = new Map();
+	for (const match of source.matchAll(/^\t"([^"]+)": "([^"]+)",$/gm)) {
+		committed.set(match[1], match[2]);
+	}
+	check(committed.size > 0, `aliases.ts parsed (${committed.size} rows)`);
+
+	const missing = [...derived.keys()].filter((name) => !committed.has(name));
+	const extra = [...committed.keys()].filter((name) => !derived.has(name));
+	const wrong = [...derived.keys()].filter((name) => committed.has(name) && committed.get(name) !== derived.get(name));
+	check(
+		missing.length === 0 && extra.length === 0 && wrong.length === 0,
+		`aliases.ts matches highlight.js row for row (${derived.size} aliases)`,
+		`missing ${missing.slice(0, 5).join(",")} | extra ${extra.slice(0, 5).join(",")} | wrong ${wrong.slice(0, 5).join(",")}`,
+	);
+}
+
+/**
+ * Regenerate the body of `aliases.ts` from highlight.js (the header is left
+ * alone). The same rebuild the check runs, so the committed table and the check
+ * can never be produced by two different procedures.
+ */
+function writeAliases() {
+	const hljs = createRequire(join(PI, "package.json"))(join(PI, "node_modules/highlight.js/lib/index.js"));
+	const { fileNames, registry, disagree } = rebuildLanguageRegistry(hljs);
+	if (disagree.length > 0) {
+		throw new Error(`refusing to write: ${disagree.length} rows disagree with the engine, e.g. ${disagree[0]}`);
+	}
+	const rows = aliasRows(registry, fileNames).map(([alias, file]) => `\t${JSON.stringify(alias)}: ${JSON.stringify(file)},`);
+	const path = join(EXT_DIR, "aliases.ts");
+	const source = readFileSync(path, "utf8");
+	const start = source.indexOf("export const LANGUAGE_ALIASES");
+	const end = source.indexOf("\n};", start);
+	if (start === -1 || end === -1) {
+		throw new Error("aliases.ts does not have the shape this writer expects");
+	}
+	const next = `${source.slice(0, source.indexOf("{", start) + 1)}\n${rows.join("\n")}\n${source.slice(end + 1)}`;
+	writeFileSync(path, next);
+	console.log(`aliases.ts: wrote ${rows.length} rows`);
 }
 
 /**

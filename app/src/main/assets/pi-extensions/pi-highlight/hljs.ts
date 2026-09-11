@@ -25,7 +25,9 @@
  * instead of ~2.5 s, and later blocks ~1-3 ms. Registering the language files
  * one by one was verified equivalent to `lib/index.js`: 191/191 registered and
  * byte-identical HTML for a 26-language sample
- * (`tools/pi-highlight-check.mjs`).
+ * (`tools/pi-highlight-check.mjs`). A name that is an *alias* rather than a file
+ * (`html`, `toml`, `c++`, `c#`, `golang`, …) resolves through [LANGUAGE_ALIASES]
+ * to the file that declares it, so the one-file-per-language rule still holds.
  *
  * `highlightAuto` is never called. Over 191 languages it takes 9.7–14.7 s
  * (`docs/syntax-highlight-eval.md` §3.4), and pi's own rule is to render plain
@@ -36,6 +38,7 @@
 import { createRequire } from "node:module";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { LANGUAGE_ALIASES } from "./aliases";
 import { htmlToRuns, type HighlightRun } from "./html-runs";
 
 /** The slice of highlight.js this service uses. Structural, so nothing is imported eagerly. */
@@ -153,9 +156,13 @@ function locate(): Location {
 }
 
 /**
- * Every language highlight.js ships, read from the directory listing — no file
- * is parsed and no grammar is registered. This is what makes "is this language
- * known?" answerable before paying for any engine work.
+ * Every language *file* highlight.js ships, read from the directory listing — no
+ * file is parsed and no grammar is registered. This is the cheap half of "is this
+ * language known?"; [resolveLanguageFile] adds the other half, the aliases.
+ *
+ * Kept as "files only" on purpose: an empty listing is the one signal that
+ * highlight.js itself could not be found next to pi, which is a configuration
+ * failure worth naming rather than an unknown language (see the `service`).
  */
 export function knownLanguages(): Set<string> {
 	if (names) {
@@ -176,24 +183,56 @@ export function knownLanguages(): Set<string> {
 }
 
 /**
- * Load (once) whatever JavaScript `language` needs — core plus that one
- * language module. Returns `false` when highlight.js does not ship it.
+ * The language file that provides `name`.
+ *
+ * A name with a file of its own is that file — the common case, and the only one
+ * that costs nothing. Anything else goes through [LANGUAGE_ALIASES], highlight.js's
+ * own alias table; see that file for why a directory listing alone is not enough
+ * (`html`, `toml`, `c++`, `c#`, `golang`, `docker`, `bat` and 167 more names
+ * resolve to a language in pi but have no file of their own).
+ *
+ * @return the file to load, or `null` when highlight.js has no such language.
+ */
+export function resolveLanguageFile(name: string): string | null {
+	if (knownLanguages().has(name)) {
+		return name;
+	}
+	return LANGUAGE_ALIASES[name] ?? null;
+}
+
+/**
+ * Whether highlight.js can highlight `name` — pi's own question, asked the same
+ * way (`supportsLanguage` -> `getLanguage`, `utils/syntax-highlight.ts:210-212`).
+ */
+export function knowsLanguage(name: string): boolean {
+	return resolveLanguageFile(name) !== null;
+}
+
+/**
+ * Load (once) whatever JavaScript `language` needs — core plus the one language
+ * file that provides it. Returns `false` when highlight.js does not ship it.
+ *
+ * `registered` is keyed by the *file*, not by the requested name: registering a
+ * definition installs its own aliases inside highlight.js, so asking for `html`
+ * and then for `xml` must not register the same file twice, and `xml` is enough
+ * to make `html` resolve.
  */
 export function ensureLanguage(language: string): boolean {
-	if (registered.has(language)) {
-		return true;
-	}
-	if (!knownLanguages().has(language)) {
+	const file = resolveLanguageFile(language);
+	if (file === null) {
 		return false;
+	}
+	if (registered.has(file)) {
+		return true;
 	}
 	try {
 		const at = locate();
 		if (!engine) {
 			engine = at.require(at.corePath) as HljsInstance;
 		}
-		const definition = at.require(join(at.languagesDir, `${language}.js`));
-		engine.registerLanguage(language, definition);
-		registered.add(language);
+		const definition = at.require(join(at.languagesDir, `${file}.js`));
+		engine.registerLanguage(file, definition);
+		registered.add(file);
 		return true;
 	} catch (error) {
 		engineError = error instanceof Error ? error.message : String(error);
@@ -211,7 +250,9 @@ export interface HighlightResult {
 
 /**
  * Highlight `code` as `language` and return offset runs, or `null` when
- * highlight.js does not know the language.
+ * highlight.js does not know the language — aliases count as known, exactly as
+ * they do for pi. The name is handed to highlight.js unchanged, which resolves it
+ * through the registry [ensureLanguage] just populated.
  *
  * `ignoreIllegals: true` matches pi (`theme.ts` → `highlightCode`): a grammar
  * that trips over a half-typed construct must colour what it can, not throw.
