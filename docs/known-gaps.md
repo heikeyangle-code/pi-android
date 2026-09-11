@@ -448,10 +448,10 @@ App 侧**没有任何 UI**：没有选图、没有粘贴、没有拖入。**只�
 **状态（applied, uncommitted，未上 CI）**：界面已区分，**结论是「pi 自己不区分」**，界面照实这么写。
 
 - 数据源只有 App 自己：`packages/PiPackageModel.kt:63-119` 的 `PiBuiltinExtension` 是 `app/src/main/assets/pi-extensions/` 的转写（8 文件 → 3 个入口），入口文件按 pi 的发现规则取——`resolveExtensionEntries`（`package-manager.ts:557-585`）只在子目录含 `index.ts`/`index.js` 时接受该目录，所以两个目录扩展显示为 `index.ts`，单文件扩展显示为自身；安装器写的 `.pi-android-assets` 因为点号开头被 `collectAutoExtensionEntries` 跳过（`:604`）。
-- **「内置」这个标注必须声明来源**：pi 把 `<agentDir>/extensions/` 下的一切都当成自动发现的用户扩展（`source:"auto"`/`scope:"user"`，`package-manager.ts:2352-2362`，收集于 `:2470-2475`），和用户手放的文件无法区分；`pi list` 只读 `settings.json` 的 `packages`（`package-manager-cli.ts:970-1002` → `package-manager.ts:977-1003`），内置扩展永远不会出现在里面。所以界面写的是"这个标注来自 App 自己的资产清单，不是 pi 报告的"。
-- 存在性用**纯文件检查**分三态（`packages/PiPackagesHost.kt:457-470`：`engineAgentDirHasEntry`/`rootfsHasEntry` → `PiBuiltinExtension.presenceIn`）：引擎目录里 / 只在 rootfs 副本 / 两个都没有。三态而不是两态，因为两个 agent 目录不是一回事（见 §K5）。
-- **不可卸载**是构造上成立的：内置扩展不在 `settings.json` 的 `packages` 里，`pi remove <名字>` 只会回 `No matching package found` 并以退出码 1 结束（`package-manager-cli.ts:959-966`，`package-manager.ts:1054-1057` 的 `removeSourceFromSettings` 返回 false）。所以内置区块**没有移除按钮**。界面同时写明反向的坑：删文件也不会被 pi 感知，而资产安装闸门是内容指纹，标记一致时整棵扩展树都会被跳过（`bridge/DeviceBridgeController.kt:281-285`），删掉的内置扩展不会自动回来。
-- 界面位置：`packages/PiPackagesScreen.kt:235-328`（`BuiltinCard`/`BuiltinRowView`/`ListSectionHeading`），文案在 `packages/PackageStrings.kt:73-131`；`pi list` 的行上方加了"这些才是 `settings.json` 的 packages"的来源标题，两套东西不再混成一张列表。
+- **「内置」这个标注必须声明来源**：pi 把 `<agentDir>/extensions/` 下的一切都当成自动发现的用户扩展（`source:"auto"`/`scope:"user"`，`package-manager.ts:2352-2362`，收集于 `:2470-2475`），和用户手放的文件无法区分；`pi list` 只读 `settings.json` 的 `packages`（`package-manager-cli.ts:970-1002` → `package-manager.ts:977-1003`），内置扩展永远不会出现在里面。**证据留在代码注释与本节，界面上只剩用户需要的那一句**："「内置」是 App 的标注：pi 不分内置和用户安装。"
+- 存在性用**纯文件检查**分三态（`packages/PiPackagesHost.kt:455-468`：`engineAgentDirHasEntry`/`rootfsHasEntry` → `PiBuiltinExtension.presenceIn`）：引擎目录里 / 只在 rootfs 副本 / 两个都没有。三态而不是两态，因为两个 agent 目录不是一回事（见 §K5）。**界面上只说"已安装 / 只装在了旧位置 / 未安装"**，两个目录的 host 路径不出现在界面里（§H 第 7 条）。
+- **不可卸载**是构造上成立的：内置扩展不在 `settings.json` 的 `packages` 里，`pi remove <名字>` 只会回 `No matching package found` 并以退出码 1 结束（`package-manager-cli.ts:959-966`，`package-manager.ts:1054-1057` 的 `removeSourceFromSettings` 返回 false），所以内置区块**没有移除按钮**——这一点写进了区块标题"（不能用 pi 卸载）"。曾有一句专门解释它的界面文案（外加"删文件也不会自动回来"的说明），**已按 §H 第 7 条删除**：没有按钮就没有需要解释的操作；`DeviceBridgeController.kt:281-285` 的内容指纹闸门细节留在本文件。
+- 界面位置：`packages/PiPackagesScreen.kt:215-296`（`BuiltinCard`/`BuiltinRowView`/`ListSectionHeading`），文案在 `packages/PackageStrings.kt:67-96`；`pi list` 的行上方加了来源标题"已安装的资源包"，两套东西不再混成一张列表。
 - 覆盖：`app/src/test/kotlin/app/pi/packages/PackagesPureLogicCheck.kt:389-441`（名单、入口规则、guest 路径、存在性真值表）。
 
 ### E8. 终端方案的决策依据（记录，不是待办）

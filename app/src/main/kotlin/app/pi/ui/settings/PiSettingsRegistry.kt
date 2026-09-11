@@ -366,7 +366,10 @@ object PiSettingsCatalog {
         PiSetting(
             key = "app.credentials.apiKey",
             title = "API Key",
-            description = "厂商 API Key 表单。凭证写在 ~/.pi/agent/auth.json（0600），不属于 settings.json。",
+            // The old text named the credential file and settings.json on screen. The
+            // rule for this pass is that the UI shows what a user can do, not where
+            // the bytes go, so it now describes the flow instead.
+            description = "选厂商、粘贴 API Key、检测可用模型并保存。凭证与设置分开保存，保存后重启引擎即可生效。",
             kind = PiRowKind.Action,
             group = G_MODEL,
             section = "凭证",
@@ -374,17 +377,26 @@ object PiSettingsCatalog {
         ),
         PiSetting(
             key = "app.credentials.oauth",
-            title = "OAuth 登录",
-            description = "Anthropic Claude Pro/Max、OpenAI Codex、GitHub Copilot、OpenRouter、Kimi Code、xAI、Radius 支持 OAuth，登录在系统浏览器里完成。",
+            title = "OAuth 登录（仅终端）",
+            description = "Anthropic Claude Pro/Max、OpenAI Codex、GitHub Copilot、OpenRouter、Kimi Code、xAI、Radius 支持 OAuth，登录在系统浏览器里完成。" +
+                "登录动作只在 pi 的原版 TUI 里提供：点「执行」会切到 工作区 → 终端，请在那里运行 /login。",
             kind = PiRowKind.Action,
             group = G_MODEL,
             section = "凭证",
             aliases = listOf("login", "auth", "oauth"),
         ),
+        // The half of pi's `/llama` this row can actually do is the endpoint:
+        // `models.json` plus a placeholder credential, which is what the form
+        // behind this row writes. Loading/unloading models and downloading GGUF
+        // is the other half, and the extension refuses to run it outside the TUI
+        // (`extensions/llama/index.ts:186-189` returns unless `ctx.mode === "tui"`;
+        // `ctx.ui.custom()` is a documented no-op in RPC mode). The description
+        // has to say which half is missing rather than promise both.
         PiSetting(
             key = "app.localModels.manage",
             title = "本地模型（llama.cpp）",
-            description = "连接外部 llama.cpp router（默认 http://127.0.0.1:8080），加载/卸载模型并从 HuggingFace 下载 GGUF。对应 pi 的 /llama。",
+            description = "配置 pi 使用的 llama.cpp router 端点（默认 http://127.0.0.1:8080）。" +
+                "加载/卸载模型、从 HuggingFace 下载 GGUF 只在 pi 的原版 TUI 里提供，本页不做。",
             kind = PiRowKind.Action,
             group = G_MODEL,
             section = "凭证",
@@ -533,10 +545,16 @@ object PiSettingsCatalog {
             defaultValue = bool(false),
             aliases = listOf("branch", "tree"),
         ),
+        // Implemented: `PiRoot` calls `session.compact()`, i.e. the RPC command
+        // `compact` (`rpc-types.ts:44`). The command also takes
+        // `customInstructions`, but that needs a text field; the chat palette's
+        // `/compact <指令>` already has one (`ChatScreen.kt:341`), so the
+        // description names it instead of promising a field this row has not got.
         PiSetting(
             key = "app.compaction.runNow",
             title = "立即压缩",
-            description = "对当前会话手动触发一次压缩，可以附带一条自定义指令告诉模型压缩时关注什么。",
+            description = "对当前会话手动触发一次压缩。想附带一条自定义指令告诉模型压缩时关注什么，" +
+                "请在 对话 里输入 /compact <指令>；本行只做不带指令的那种压缩。",
             kind = PiRowKind.Action,
             group = G_COMPACTION,
             section = "动作",
@@ -691,24 +709,33 @@ object PiSettingsCatalog {
             effective = EffectiveKind.RestartApp,
             aliases = listOf("sessions", "dir"),
         ),
+        // pi has this behaviour, but only in its interactive TUI: `/import` is
+        // handled there and nowhere else (`interactive-mode.ts:6107` parses the
+        // argument, `:6122` calls `runtimeHost.importFromJsonl`), while the
+        // `RpcCommand` union has no import command at all (`rpc-types.ts:20-74`).
+        // The row is therefore an entry point to the one surface that can run it —
+        // the original TUI, which the workbench terminal runs in a real PTY
+        // (`PtyLauncher.Kind.PiTui`) — not a confirmation dialog for work that
+        // nothing performs.
         PiSetting(
             key = "app.sessions.import",
-            title = "导入会话",
-            description = "从 JSONL 文件导入一个会话到当前会话目录。",
+            title = "导入会话（仅终端）",
+            description = "从 JSONL 文件恢复一个会话，会替换当前会话。" +
+                "这个功能只在 pi 的原版 TUI 里提供：点「执行」会切到 工作区 → 终端，" +
+                "请在那里运行 /import <path.jsonl>。",
             kind = PiRowKind.Action,
             group = G_SESSIONS,
             section = "动作",
             aliases = listOf("import", "jsonl"),
         ),
-        PiSetting(
-            key = "app.sessions.exportAll",
-            title = "导出全部会话",
-            description = "把会话目录里的全部会话导出为 HTML 或 JSONL，便于备份与分享。",
-            kind = PiRowKind.Action,
-            group = G_SESSIONS,
-            section = "动作",
-            aliases = listOf("export"),
-        ),
+        // `app.sessions.exportAll` used to sit here and was removed on purpose:
+        // pi has no bulk export. `/export` exports the *current* session
+        // (`interactive-mode.ts:6064-6065`), the only RPC form is `export_html`
+        // for that same session (`rpc-types.ts:60`, `rpc-mode.ts:600-602`), and
+        // looping over the other session files would mean switching the live
+        // session to read each one — a state change the user did not ask for.
+        // Per-session export already exists in the chat palette (`/export`,
+        // `PiSlashCommands.kt:148-151`), so the row is gone rather than inert.
         PiSetting(
             key = "app.sessions.cleanupPolicy",
             title = "清理策略",
@@ -753,15 +780,27 @@ object PiSettingsCatalog {
             depth = 2,
             aliases = listOf("extensions", "reload"),
         ),
+        // Read-only on purpose, and an entry point rather than an editor. The
+        // array is written by the package manager: `pi install` records a source
+        // in `settings.packages` and also resolves, downloads and records what it
+        // installed (`core/package-manager.ts`; the app's own screen says the list
+        // it shows "is what `pi install` wrote into settings.json's packages",
+        // `packages/PiPackagesScreen.kt:309`). Letting a user hand-edit the array
+        // here would produce exactly the state that comment warns about — a spec
+        // that looks installed but was never fetched — so the row jumps to the
+        // package screen (`PiSettingsStack.hostActions`, entry key `packages`)
+        // instead of opening `PiListEditorSheet`.
         PiSetting(
             key = "packages",
             title = "资源包",
-            description = "要加载资源的 npm / git 包。字符串形式加载包内全部资源；对象形式可以按 extensions/skills/prompts/themes 过滤，并用 autoload: false 关闭自动加载。",
+            description = "已安装的 npm / git 资源包。安装、更新、移除都请在资源包管理页里做，" +
+                "在这里手改会写出「看起来装了、其实没生效」的条目：点这一行打开那一页。",
             kind = PiRowKind.List,
             group = G_RESOURCES,
             section = "资源包",
             defaultValue = list(),
             effective = EffectiveKind.Reload,
+            readOnly = true,
             globAware = true,
             depth = 3,
             aliases = listOf("install", "packages", "npm", "git"),
@@ -1436,10 +1475,16 @@ object PiSettingsCatalog {
             emptyListLabel = "无记录",
             aliases = listOf("audit", "log"),
         ),
+        // Implemented, and each clause of the description is one RPC command:
+        // "中止当前轮次" + "清空队列" are `clear_queue` and `abort`
+        // (`rpc-mode.ts:428`, `:433`, reached through
+        // `PiEngineSession.stopAndDrainQueue` `:480-486`), and "杀掉全部后台 bash
+        // 作业" is `abort_bash` (`rpc-mode.ts:586`), which aborts every running
+        // bash command rather than one (`agent-session.ts:3073-3077`).
         PiSetting(
             key = "app.security.emergencyStop",
             title = "紧急停止",
-            description = "立刻中止当前轮次、杀掉全部后台 bash 作业并清空队列。会话与文件保持原样，不会回滚已写入的改动。",
+            description = "立刻中止当前轮次、停掉正在运行的 bash 命令并清空队列。会话与文件保持原样，不会回滚已写入的改动。",
             kind = PiRowKind.Action,
             group = G_SECURITY,
             section = "审计",
@@ -1472,24 +1517,19 @@ object PiSettingsCatalog {
             readOnly = true,
             aliases = listOf("version", "update"),
         ),
-        PiSetting(
-            key = "app.runtime.checkUpdate",
-            title = "检查更新",
-            description = "检查 pi 是否有新版本，可以回滚到上一版。",
-            kind = PiRowKind.Action,
-            group = G_RUNTIME,
-            section = "版本",
-            aliases = listOf("update", "upgrade"),
-        ),
-        PiSetting(
-            key = "app.runtime.rollback",
-            title = "回滚到上一版",
-            description = "把 pi 退回升级前的版本。用于新版本出问题时快速恢复。",
-            kind = PiRowKind.Action,
-            group = G_RUNTIME,
-            section = "版本",
-            aliases = listOf("rollback", "downgrade"),
-        ),
+        // `app.runtime.checkUpdate` and `app.runtime.rollback` used to sit here and
+        // were removed on purpose. pi's own check is a network call the app turns
+        // off deliberately (`PiEngineHost.kt:305-306` sets `PI_SKIP_VERSION_CHECK`,
+        // because a phone app should not make it behind the user's back), and its
+        // replacement, `pi update --self`, is an npm self-update
+        // (`package-manager-cli.ts:1033-1068`) that this app's engine cannot use:
+        // the engine is an APK asset extracted by revision
+        // (`RuntimeProvisioner.extractEngine`, `:505-528`) and re-extracted by
+        // `wipe()` (`:122`) whenever that revision changes, so an in-guest update
+        // is either overwritten or diverges from the shipped version. pi has no
+        // rollback at all (no such subcommand in `cli.ts` /
+        // `package-manager-cli.ts`). The read-only 「pi 版本」 row above is what
+        // tells the user which version they are on.
         PiSetting(
             key = "app.runtime.nodeVersion",
             title = "Node 版本",
@@ -1504,7 +1544,7 @@ object PiSettingsCatalog {
         PiSetting(
             key = "app.runtime.rootfsUsage",
             title = "rootfs 占用",
-            description = "Ubuntu rootfs 与 apt/npm 缓存的磁盘占用。低于 1 GB 会给出告警并提供清理入口。",
+            description = "Ubuntu rootfs 与 apt/npm 缓存的磁盘占用。",
             kind = PiRowKind.Text,
             group = G_RUNTIME,
             section = "运行时",
@@ -1512,15 +1552,13 @@ object PiSettingsCatalog {
             readOnly = true,
             aliases = listOf("storage", "disk"),
         ),
-        PiSetting(
-            key = "app.runtime.cleanNpmCache",
-            title = "清理 npm 缓存",
-            description = "删除 npm 缓存与不再被引用的包文件，释放空间。不会动已安装的扩展。",
-            kind = PiRowKind.Action,
-            group = G_RUNTIME,
-            section = "运行时",
-            aliases = listOf("cache", "clean"),
-        ),
+        // `app.runtime.cleanNpmCache` was removed rather than wired: pi has no
+        // cache-clearing command (nothing in `cli.ts` or `package-manager-cli.ts`
+        // touches an npm store), and the app has no console that could call
+        // `npm cache clean` in the guest — the only surfaces that run guest
+        // commands are the engine's argv (`PiEngineHost`) and the PTY terminal.
+        // A row whose button cleans nothing is exactly the defect §I2 records.
+        // The 「rootfs 占用」 row above still reports how much space is in use.
         PiSetting(
             key = "app.runtime.keepAlive",
             title = "后台保活",
@@ -1547,33 +1585,25 @@ object PiSettingsCatalog {
             ),
             aliases = listOf("wakelock"),
         ),
-        PiSetting(
-            key = "app.runtime.phantomKillerGuide",
-            title = "幻影进程杀手指引",
-            description = "国产系统会在息屏后杀掉后台进程，导致长任务中断。这里给出一键跳转 ADB 设置与可复制的命令。",
-            kind = PiRowKind.Action,
-            group = G_RUNTIME,
-            section = "后台",
-            aliases = listOf("phantom", "adb", "keepalive"),
-        ),
-        PiSetting(
-            key = "app.runtime.logViewer",
-            title = "日志查看器",
-            description = "按级别与模块过滤内核日志，也用于导出诊断包。",
-            kind = PiRowKind.Action,
-            group = G_RUNTIME,
-            section = "诊断",
-            aliases = listOf("logs", "diagnostics"),
-        ),
-        PiSetting(
-            key = "app.runtime.exportDiagnostics",
-            title = "导出诊断包",
-            description = "把版本、环境、日志与配置（不含凭证）打包导出，用于反馈问题。",
-            kind = PiRowKind.Action,
-            group = G_RUNTIME,
-            section = "诊断",
-            aliases = listOf("diagnostics", "export"),
-        ),
+        // `app.runtime.phantomKillerGuide` was removed rather than wired. It is an
+        // Android-device workaround, and pi has no counterpart for it at all; the
+        // fix it describes is an `adb shell settings put global
+        // settings_enable_monitor_phantom_procs false`, which is a device-settings
+        // write this app is not allowed to perform and cannot perform for the user.
+        // The one connected surface that exists is 「设备能力」
+        // (`ui/device/DeviceCapabilityScreen.kt`), and it is reached from the
+        // settings home rather than from a row that pretends to be a guide.
+        // `app.runtime.logViewer` and `app.runtime.exportDiagnostics` were removed
+        // rather than wired. Neither has a pi counterpart: pi keeps no log file for
+        // a GUI to tail, and its only diagnostics surface is the TUI's own status
+        // output. The app has no log sink of its own either — the engine's stderr is
+        // held in memory (`PiEngineSession` `MAX_STDERR_CHARS`, shown with the boot
+        // failure) and the device bridge keeps an audit log
+        // (`DeviceBridgeRouter.kt:375-397`), but neither is a level/module-filtered
+        // log store, so a "日志查看器" row would open nothing. 导出诊断包 would need
+        // a file-picker export of those same non-existent logs plus a zip writer;
+        // that is a feature, not a wiring fix, and it does not belong in pi's
+        // settings catalog.
         PiSetting(
             key = "app.runtime.safeMode",
             title = "安全模式启动",
@@ -1632,68 +1662,49 @@ object PiSettingsCatalog {
         PiSetting(
             key = "collapseChangelog",
             title = "精简更新日志",
-            description = "更新后只显示精简版 changelog，完整内容用 /changelog 查看。",
+            description = "更新后只显示精简版更新日志，完整内容用下面那行的「查看更新日志」看。",
             kind = PiRowKind.Switch,
             group = G_ABOUT,
             section = "更新",
             defaultValue = bool(false),
             aliases = listOf("changelog"),
         ),
+        // pi has the changelog, but only behind a built-in TUI command:
+        // `interactive-mode.ts:3022-3025` dispatches `/changelog` to
+        // `handleChangelogCommand`, and built-ins are not reachable over RPC
+        // (`get_commands` excludes them, `rpc-types.ts:20-74` has no changelog
+        // command). The row therefore navigates to the original TUI in the workbench
+        // terminal, which is the only surface that can show it.
         PiSetting(
             key = "app.about.changelog",
-            title = "查看更新日志",
-            description = "查看 pi 与 App 的完整更新历史。",
+            title = "查看更新日志（仅终端）",
+            description = "查看 pi 与 App 的更新历史，只能在 pi 的原版 TUI 里看：" +
+                "点「执行」会切到 工作区 → 终端，请在那里运行 /changelog。",
             kind = PiRowKind.Action,
             group = G_ABOUT,
             section = "更新",
             aliases = listOf("changelog"),
         ),
-        PiSetting(
-            key = "app.about.importFromDesktop",
-            title = "从桌面导入 ~/.pi",
-            description = "选一个目录或压缩包，导入 AGENTS.md、extensions、skills、prompts、themes 与 settings.json。凭证默认不导入。",
-            kind = PiRowKind.Action,
-            group = G_ABOUT,
-            section = "配置",
-            aliases = listOf("import", "migrate"),
-        ),
-        PiSetting(
-            key = "app.about.exportConfig",
-            title = "导出配置包",
-            description = "把当前配置打包（不含凭证）用于分享或备份。",
-            kind = PiRowKind.Action,
-            group = G_ABOUT,
-            section = "配置",
-            aliases = listOf("export", "backup"),
-        ),
-        PiSetting(
-            key = "app.about.rawSettings",
-            title = "原始配置",
-            description = "直接编辑 settings.json 与 keybindings.json，等宽字体、JSON 校验、错误定位与保存前 diff 预览。",
-            kind = PiRowKind.Action,
-            group = G_ABOUT,
-            section = "配置",
-            aliases = listOf("json", "raw", "settings"),
-        ),
-        PiSetting(
-            key = "app.about.reset",
-            title = "重置配置",
-            description = "分项重置、全部重置，或只重置外观。重置前会显示将要改动的键。",
-            kind = PiRowKind.Action,
-            group = G_ABOUT,
-            section = "配置",
-            dangerous = true,
-            aliases = listOf("reset", "restore"),
-        ),
-        PiSetting(
-            key = "app.about.licenses",
-            title = "开源许可",
-            description = "本 App 与内置运行时使用的开源组件许可。",
-            kind = PiRowKind.Action,
-            group = G_ABOUT,
-            section = "关于",
-            aliases = listOf("license", "about"),
-        ),
+        // Five rows were removed from this group on purpose, because pi has no
+        // counterpart for any of them and nothing in the app implements them either:
+        //
+        //  - `app.about.importFromDesktop` — pi reads its agent dir in place; it has
+        //    no import-a-desktop-install command and no archive format for one.
+        //  - `app.about.exportConfig` — pi has no config-export command; settings are
+        //    plain JSON files at a documented path (`settings-manager.ts:154-181`).
+        //  - `app.about.rawSettings` — pi has no raw settings.json editor. Its
+        //    `/settings` is a menu of typed editors (`components/settings-selector.ts`),
+        //    and this app already has the equivalent per-key editors plus a search
+        //    over every registered key (`SettingsSearchScreen`). A second, raw JSON
+        //    editor would also be the same foot-gun the `packages` row was changed
+        //    for: it lets a user write a file pi's own writers would never produce.
+        //  - `app.about.reset` — pi has no reset; the settings menu exposes no
+        //    "restore defaults" action (`settings-selector.ts` has no reset id).
+        //  - `app.about.licenses` — pi ships LICENSE files but has no licenses
+        //    surface, and the app has no license screen or asset. This one is a
+        //    judgement call flagged in docs/known-gaps.md §I2: it is a compliance
+        //    surface, not a pi behaviour, so it should come back as a real screen if
+        //    the app needs one — not as an Action row inside pi's catalog.
     )
 
     /** Registry lookup by exact dotted key. */

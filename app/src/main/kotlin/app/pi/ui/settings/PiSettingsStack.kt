@@ -145,6 +145,12 @@ fun PiSettingsStack(
     val hostActions: Map<String, () -> Unit> = mapOf(
         "app.credentials.apiKey" to openCredentialForm,
         "app.localModels.manage" to openLocalModelForm,
+        // The `packages` row is a read-only *view* of what `pi install` wrote
+        // (`PiSettingsRegistry.kt` says so on the row). Editing the array by hand
+        // bypasses the download/resolve step and can leave a spec that looks
+        // installed but was never fetched, so the row opens the manager status quo
+        // screen instead of a list editor — the same screen 设置首页 already links.
+        "packages" to { packages = true },
     )
 
     BackHandler(enabled = searching || groupId != null || deviceCapabilities || packages || credentials) {

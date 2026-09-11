@@ -54,10 +54,12 @@ fun SettingsGroupScreen(
     onSettingWritten: (String) -> Unit = {},
     onRunAction: ((PiSetting) -> Unit)? = null,
     /**
-     * Action rows whose work is not a one-shot command but a screen of their own,
-     * by key (the credential form; see `PiSettingsStack.hostActions`). Such a row
-     * opens that screen directly: its description already is the explanation, so
-     * an extra 执行/取消 confirmation would be one tap that decides nothing.
+     * Rows whose work is not a one-shot command but a screen of their own, by key:
+     * the credential form and the local-model endpoint form, which are Action rows,
+     * plus the read-only `packages` row, which must open the package manager rather
+     * than a list editor (see `PiSettingsStack.hostActions`). Such a row opens that
+     * screen directly: its description already is the explanation, so an extra
+     * 执行/取消 confirmation would be one tap that decides nothing.
      *
      * Empty by default, which leaves every row on the [onRunAction] path — the
      * behaviour every existing caller has.
@@ -178,8 +180,13 @@ fun SettingsGroupScreen(
             title = { Text(openConfirmation.title) },
             text = {
                 Text(
+                    // A caller that passes no dispatcher gets the row's own text plus
+                    // one neutral sentence. It must not describe the host wiring: that
+                    // is internal, and `PiRoot` — the only production caller — always
+                    // passes one, so this branch is a preview/test path (spec §6.2's
+                    // "no dead rows" rule is enforced at the registry instead).
                     if (run == null) {
-                        openConfirmation.description + "\n\n这个入口由运行时接管，当前宿主还没有接入对应的实现。"
+                        openConfirmation.description + "\n\n这个入口在当前版本里不可用。"
                     } else {
                         openConfirmation.description
                     },
