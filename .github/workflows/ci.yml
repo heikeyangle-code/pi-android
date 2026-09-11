@@ -144,3 +144,19 @@ jobs:
           key: pi-pure-checks-deps-${{ hashFiles('gradle/libs.versions.toml') }}
       - name: Run app/src/test harnesses
         run: bash tools/run-app-pure-checks.sh
+
+  # Kotlin block comments NEST, so a path written as `ui/` followed by two asterisks
+  # inside a KDoc opens a second comment; the KDoc's closing delimiter closes that one,
+  # the outer comment stays open, and the compiler swallows the rest of the file. The
+  # errors it then reports are at the top of the file and describe the symptom
+  # ("Parameter name expected", "'key' overrides nothing"), with one honest "Unclosed
+  # comment" at the very last line. That has cost a full CI cycle five times in this
+  # repository, in five different files, and every time the fix was one character.
+  # Warnings in task briefs do not work; a check does.
+  comments:
+    name: Kotlin comment nesting guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reject nested block comments
+        run: python3 tools/check-nested-comments.py

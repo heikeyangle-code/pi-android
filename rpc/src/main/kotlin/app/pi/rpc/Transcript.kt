@@ -76,7 +76,7 @@ data class ToolCall(
      * (`Events.kt:454`, `Transcript.kt:1137` live, `:1547` replay) so the
      * transcript is not where the bytes are lost — pi draws every `image` block
      * (`components/tool-execution.ts:379-388`). Painting them needs a consumer:
-     * as of the F16 review no `ui/**` file reads this list (`ToolCallBlock`
+     * as of the F16 review no file under `ui/` reads this list (`ToolCallBlock`
      * never references `images`), so the row still shows `[image]` text.
      */
     val images: List<PiImage> = emptyList(),
@@ -126,21 +126,43 @@ data class CompactionMarker(
     val errorMessage: String? = null,
     val reason: String? = null,
     /**
-     * Usage of the summarization call(s) that produced this compaction (F18).
-     * pi prints what it cost (`interactive-mode.ts` formats "Compaction … (~$0.03)"),
+     * Usage of the summarization call(s) that produced this compaction (F18),
+     * from `compaction_end.result.usage` live and the persisted entry's `usage`
+     * on replay. pi prints what it cost
+     * (`interactive-mode.ts:3812` — `Compaction: 1.2k tokens billed (~$0.03)`),
      * and the transcript should not be where that figure disappears.
+     *
+     * **This row is deliberately not produced here**: pi gates the cost notice on
+     * the user setting `showCacheMissNotices`
+     * (`interactive-mode.ts:3804`, default **false** at
+     * `core/settings-manager.ts:120`), and the reducer is constructed with a clock
+     * and nothing else — it cannot read a setting, so appending a row here would
+     * show something pi hides by default. The gate belongs to the app, which
+     * already owns that switch (`ui/settings/PiSettingsRegistry.kt:331`); the
+     * reducer's job is only to carry the figure. See [BranchSummary.usage].
      */
     val usage: TokenUsage? = null,
 ) : TranscriptItem {
     enum class Status { Running, Done, Aborted, Failed }
 }
 
-/** The `branch-summary` block: a summary written when navigating the tree. */
+/**
+ * The `branch-summary` block: a summary written when navigating the tree.
+ */
 data class BranchSummary(
     override val key: String,
     override val ts: Long,
     val summary: String = "",
     val branchId: String? = null,
+    /**
+     * Usage of the summarization call that wrote this summary (F18). pi bills it
+     * exactly like a compaction: `interactive-mode.ts:3791-3792` builds the same
+     * `compaction_cost` item for `branch_summary`, `:3708-3711` dispatches it and
+     * `:3812` labels it "Branch summary". Carried here so a replayed session holds
+     * the figure; why no row is appended by the reducer is stated on
+     * [CompactionMarker.usage].
+     */
+    val usage: TokenUsage? = null,
 ) : TranscriptItem
 
 /**
@@ -1011,6 +1033,41 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
                 }
             }
 
+            // F24: the same authoritative-overwrite contract as [TextEnd], plus
+            // the one case [TextEnd] cannot have. pi documents that "Redacted
+            // thinking may be complete at start and emit no deltas"
+            // (`packages/ai/src/types.ts:542-543`), and the cumulative `message`
+            // its TUI renders is stripped from the wire
+            // (`modes/json-event.ts:40-45`, `:56-60`) — so for such a block this
+            // event is the only thing that can put the text on screen. Ignoring it
+            // does not merely risk a corrupt row, it loses the block entirely.
+            is AssistantDelta.ThinkingEnd -> {
+                val content = delta.content
+                val index = thinkingIndexByContentIndex[delta.contentIndex]
+                val current = if (index == null) null else items.getOrNull(index) as? ThinkingBlock
+                if (content == null || (current == null && content.isEmpty())) {
+                    TranscriptChange.None
+                } else if (current != null) {
+                    if (current.text == content) {
+                        TranscriptChange.None
+                    } else {
+                        items[index!!] = current.copy(text = content)
+                        TranscriptChange.Updated(index)
+                    }
+                } else {
+                    thinkingIndexByContentIndex[delta.contentIndex] = items.size
+                    append(
+                        ThinkingBlock(
+                            key = nextKey("thinking"),
+                            ts = now(),
+                            text = content,
+                            streaming = true,
+                            level = thinkingLevel,
+                        ),
+                    )
+                }
+            }
+
             // A tool call announces itself before its arguments finish streaming,
             // so the card can show the tool name immediately.
             is AssistantDelta.ToolCallStart -> {
@@ -1729,6 +1786,11 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
                 ts = ts,
                 summary = summary,
                 branchId = branchId,
+                // F18: the persisted entry carries what the summarization call
+                // cost (`core/session-manager.ts` `BranchSummaryEntry.usage`), and
+                // `SessionEntries.kt` already parses it for the tree screen — this
+                // is the same figure reaching the transcript, live and on replay.
+                usage = entry.obj("usage")?.let(PiEvents::parseUsage),
             ),
         )
     }
@@ -1871,7 +1933,7 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
      * all: its `/context` listing prints only the prompt's *source path*
      * (`interactive-mode.ts:1715-1722`) and the only reader of the text is the
      * extension-runner hook (`:2068`). So **no wire data can ever reach this
-     * method**: it is not called from `app/**` either (grep: declaration + tests
+     * method**: it is not called from `app/` either (grep: declaration + tests
      * only).
      *
      * It is kept, rather than deleted, only because [SystemPrompt] is still

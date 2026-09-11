@@ -750,4 +750,93 @@ class FidelityFixesTest {
         )
         assertEquals(0.03, (r.transcript.single() as CompactionMarker).usage!!.cost!!, 1e-9)
     }
+
+    // ------------------------------------------------- F24: thinking_end.content
+
+    @Test
+    fun `thinking_end content is authoritative over accumulated deltas`() {
+        // The exact contract `text_end` already has (`types.ts:550` vs `:553`).
+        val r = reducer()
+        r.onEvent(
+            PiEvents.parse(
+                """{"type":"message_update","assistantMessageEvent":{"type":"thinking_delta","contentIndex":0,"delta":"let me "}}""",
+            ),
+        )
+        r.onEvent(
+            PiEvents.parse(
+                """{"type":"message_update","assistantMessageEvent":{"type":"thinking_end","contentIndex":0,"content":"let me think"}}""",
+            ),
+        )
+        assertEquals("let me think", (r.transcript.single() as ThinkingBlock).text)
+    }
+
+    /**
+     * The case `text_end` cannot have: pi documents that "Redacted thinking may be
+     * complete at start and emit no deltas" (`ai/src/types.ts:542-543`), and the
+     * cumulative `message` its TUI renders is stripped from the wire
+     * (`modes/json-event.ts:40-45`, `:56-60`). Before F24's fix the app therefore
+     * dropped such a block entirely.
+     */
+    @Test
+    fun `a thinking block that emitted no deltas still reaches the transcript`() {
+        val r = reducer()
+        r.onEvent(
+            PiEvents.parse(
+                """{"type":"message_update","assistantMessageEvent":{"type":"thinking_start","contentIndex":0}}""",
+            ),
+        )
+        assertTrue(r.transcript.isEmpty())
+
+        r.onEvent(
+            PiEvents.parse(
+                """{"type":"message_update","assistantMessageEvent":{"type":"thinking_end","contentIndex":0,"content":"redacted summary"}}""",
+            ),
+        )
+        val block = r.transcript.single() as ThinkingBlock
+        assertEquals("redacted summary", block.text)
+        // No turn boundary has passed yet, so the row is still open.
+        assertTrue(block.streaming)
+    }
+
+    @Test
+    fun `a thinking end with no content and no open row adds nothing`() {
+        val r = reducer()
+        r.onEvent(
+            PiEvents.parse(
+                """{"type":"message_update","assistantMessageEvent":{"type":"thinking_end","contentIndex":0,"content":""}}""",
+            ),
+        )
+        assertTrue(r.transcript.isEmpty())
+    }
+
+    // ------------------------------------------------------- F18: branch summary
+
+    @Test
+    fun `a branch summary entry carries what its summarization call cost`() {
+        // pi bills branch summaries exactly like compactions
+        // (`interactive-mode.ts:3791-3792` builds the same `compaction_cost` item,
+        // `:3812` labels it "Branch summary"). The reducer carries the figure; the
+        // visible row is the app's, because pi gates it on `showCacheMissNotices`
+        // (`:3804`, default false) and the reducer cannot read settings.
+        val r = reducer()
+        r.onEntry(
+            obj(
+                """{"type":"branch_summary","id":"b1","timestamp":1000,""" +
+                    """"summary":"tried the other approach","fromId":"e9",""" +
+                    """"usage":{"input":10,"output":5,"totalTokens":15,"cost":{"total":0.02}}}""",
+            ),
+        )
+        val item = r.transcript.single() as BranchSummary
+        assertEquals(15L, item.usage!!.totalTokens)
+        assertEquals(0.02, item.usage.cost!!, 1e-9)
+    }
+
+    @Test
+    fun `a branch summary without usage stays renderable`() {
+        val r = reducer()
+        r.onEntry(
+            obj("""{"type":"branch_summary","id":"b1","timestamp":1000,"summary":"s","fromId":"e9"}"""),
+        )
+        assertNull((r.transcript.single() as BranchSummary).usage)
+    }
 }

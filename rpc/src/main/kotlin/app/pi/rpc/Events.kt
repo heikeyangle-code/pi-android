@@ -38,7 +38,24 @@ sealed interface AssistantDelta {
     data class ThinkingDelta(val contentIndex: Int, val delta: String) : AssistantDelta {
         override val kind = "thinking_delta"
     }
-    data object ThinkingEnd : AssistantDelta { override val kind = "thinking_end" }
+
+    /**
+     * The completed thinking block. [content] is the authoritative text of that
+     * block, exactly like [TextEnd] (`packages/ai/src/types.ts:553`:
+     * `{ type: "thinking_end"; contentIndex; content; partial }`, and
+     * `modes/json-event.ts:32-37` strips only `partial`).
+     *
+     * It is not redundant with [ThinkingDelta]: pi documents that "Redacted
+     * thinking may be complete at start and emit no deltas"
+     * (`packages/ai/src/types.ts:542-543`), so for such a block this event is the
+     * **only** carrier of the text over RPC — the cumulative `message` that pi's
+     * own TUI renders is deliberately removed from the wire
+     * (`modes/json-event.ts:40-45` states it, `:56-60` is where the object is
+     * rebuilt without it).
+     */
+    data class ThinkingEnd(val contentIndex: Int, val content: String?) : AssistantDelta {
+        override val kind = "thinking_end"
+    }
     data class ToolCallStart(val id: String?, val toolName: String?) : AssistantDelta {
         override val kind = "toolcall_start"
     }
@@ -563,7 +580,12 @@ object PiEvents {
                 contentIndex = e.int("contentIndex") ?: 0,
                 delta = e.str("delta").orEmpty(),
             )
-            "thinking_end" -> AssistantDelta.ThinkingEnd
+            // `content` is pi's authoritative text and the only source for a
+            // block that emitted no deltas (`ai/src/types.ts:542-553`).
+            "thinking_end" -> AssistantDelta.ThinkingEnd(
+                contentIndex = e.int("contentIndex") ?: 0,
+                content = e.str("content"),
+            )
             "toolcall_start" -> AssistantDelta.ToolCallStart(
                 id = e.str("id") ?: e.str("toolCallId"),
                 toolName = e.str("toolName"),
