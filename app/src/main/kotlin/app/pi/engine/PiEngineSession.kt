@@ -6,6 +6,7 @@ import app.pi.rpc.PiEvent
 import app.pi.rpc.PiEvents
 import app.pi.rpc.PiImage
 import app.pi.rpc.TranscriptChange
+import app.pi.rpc.TranscriptItem
 import app.pi.rpc.TranscriptReducer
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
