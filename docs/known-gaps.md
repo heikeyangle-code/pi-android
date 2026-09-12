@@ -1242,3 +1242,67 @@ M8 之后继续查"为什么打包入口没有变快"，查到了一个比打包
 **做法（已在本地验证可用）**：用 esbuild 的 `onLoad` 插件，在**内联之前**把每个源文件里的 `import.meta.url` 替换成**该文件真实的 `file://` URL**（逐模块，而不是全局 define）。原始文件全部留在磁盘上，所以 `import.meta.resolve`、`createRequire`、jiti 别名指向的都还是真实路径。这样打出来的 bundle + App 的三个扩展可以正常加载（对话、工具注册都正常）。
 
 **但打包的收益在本环境里测不出来**（上表三组没有差别），所以**本轮没有采用**。要真做，需要：payload 构建期加这一步（`tools/fetch-runtime.mjs`）、把入口指向 bundle、并配 RPC 冒烟测试——而且收益必须先在设备上用「引擎启动耗时」那一行确认，否则就是为一个测不出来的东西改打包。
+
+### M11. **App 写 `models.json` 的方式会把模型能力覆盖掉**（DEFECT，已修，工作树）
+
+**现象（用户在设备上遇到，模型自己诊断出来的）**：`android_screenshot` 取到的图能进会话文件、App 也渲染出来了，但模型看不到图——它收到的是占位符。同一症状的另一半是会话头显示 `79.7/128k`，而 DeepSeek V4.1 Flash 的上下文是 1M。
+
+**机制（pi 侧，逐行核对）**：
+
+1. `models.json` 里同 id 的条目是**整体替换**，不是合并：
+   `applyModelsJson` → `if (existingIndex >= 0) models[existingIndex] = model;`
+   （`core/provider-composer.ts:203-206`）。
+2. 被替换进去的那个对象，**每个字段都取 `definition.X ?? 默认值`**
+   （`modelFromJson`，`core/provider-composer.ts:150-166`）：
+   `input: definition.input ?? ["text"]`（`:158`）、`contextWindow ?? 128000`、
+   `maxTokens ?? 16384`、`reasoning ?? false`、`cost ?? 0`。
+   注意路径不对称：`modelOverrides` 走的是 `applyOverride`，那里是
+   `override.input ?? model.input`（`:111`）——**会保留能力**。App 用的是会把能力抹掉的那条。
+3. 所以一条只写了 `{"id": "..."}` 的声明，就把 pi 目录里"1M 上下文 + 支持图片"的元数据
+   换成了"128k + 仅文本"。
+
+**App 侧为什么会写出这种条目**（`app/src/main/kotlin/`）：
+
+- `ui/settings/PiCredentialScreen.kt:217-223`：
+  ```kotlin
+  input = when {
+      known == null -> emptyList()                       // 不写 input
+      known.acceptsImages -> listOf("text", "image")
+      else -> listOf("text")
+  },
+  defaultsApplied = known == null,
+  ```
+  `known` 来自**运行中的引擎**的模型列表。而**第一次添加一个厂商时，引擎里不可能有它的模型**
+  （凭证还没写进去），于是 `known == null` 必然成立 —— 这正是"加厂商"这个动作本身的必经阶段。
+- `packages/PiConfigFiles.kt:411-421`：`Model.toJson()` 只写非空字段，`input` 只在非空时写 →
+  写出来的就是 `{"id": "..."}`。
+- `packages/PiCredentialService.kt` 的 `save()` 把**每一个**选中的模型都这样写进 `models[]`。
+
+**后果**：不只是图片——**上下文窗口、maxTokens、reasoning、cost 一起被默认值掉**。
+上下文窗口被算成 128k 会直接影响自动压缩的时机；这个 App 的整条"1:1 跟着 pi"的承诺在
+这条路径上是断的。
+
+**修法（本工作树）**：只声明 pi 目录**描述不了**的模型。
+
+1. `PiCredentialService.save()`：`declared = choices.filter { it.defaultsApplied || !preset.builtInPi }`，
+   只把 `declared` 写进 `models[]`。两个信号各管一半：
+   `defaultsApplied` = "App 不知道这个模型"（写下去就是拿 pi 的默认值替换 pi 的知识）；
+   `preset.builtInPi` = "pi 到底有没有这个厂商的目录"（Ollama / llama.cpp / 自定义 没有，
+   那里 `models[]` 是唯一的声明，无论知不知道都必须写）。
+2. `PiConfigFiles.Provider.toJson()`：`models` 为空时**整个键不写**——pi 的 schema 里
+   `models` 是 `Type.Optional`（`core/model-config.ts:208`），而 `applyModelsJson` 只要求
+   厂商块至少带 baseUrl/headers/compat/modelOverrides/models/apiKey/oauth/authHeader 之一
+   （`:181-200`），上面那句 `baseUrl` 已经满足。写一个空数组是在断言"这个厂商没有模型"，
+   那是另一句（假）话。
+3. `PiConfigFiles.upsert()`：删掉 App 自己的"至少要有一个模型"校验——**pi 没有这条规则**，
+   而它正是会把上面那种合法写入挡下来的东西。
+4. 可用性不受影响：所选 id 仍然照旧进 `enabledModels`（`preferences().selectModel`），
+   那是 pi 自己"提供哪些模型"的机制（`settings-manager.ts:139`）。
+
+**这个修复同时是自愈的**：`upsert` 会替换整个厂商块，所以已经写坏的条目在下一次保存时消失，
+pi 目录里的正确元数据重新生效（用户手工改好的那份也随之不再必要）。
+
+**未验证**：无真机。这条改的是**写用户配置文件**的路径，风险点有两个，都需要在设备上确认：
+① 一个"pi 有目录 + 全部模型都已知"的厂商保存后，`models.json` 里那个块**没有 `models` 键**，
+而 pi 仍然列出这些模型；② 该厂商的模型在图/长上下文上恢复正常（判据：会话头不再是 `128k`，
+发图不再被替换成占位符）。

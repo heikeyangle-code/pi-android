@@ -454,7 +454,16 @@ class PiModelsFile(
             put("baseUrl", JsonPrimitive(baseUrl))
             put("api", JsonPrimitive(api))
             authHeader?.let { put("authHeader", JsonPrimitive(it)) }
-            put("models", JsonArray(models.map { it.toJson() }))
+            // Omitted when empty, which is pi's own shape rather than a shortcut:
+            // `models` is `Type.Optional(Type.Array(ModelDefinitionSchema))`
+            // (`model-config.ts:208`), and `applyModelsJson` only demands that a
+            // provider block carry *one* of baseUrl/headers/compat/modelOverrides/
+            // models/apiKey/oauth/authHeader (`provider-composer.ts:181-200`) — the
+            // baseUrl above satisfies that. An empty array would say "this provider
+            // has no models", which is a different and false claim: it means "pi's
+            // catalog is the only declaration for this provider", which is exactly
+            // what leaving the key out says (docs/known-gaps.md §M11).
+            if (models.isNotEmpty()) put("models", JsonArray(models.map { it.toJson() }))
         }
     }
 
@@ -500,7 +509,14 @@ class PiModelsFile(
         if (provider.id.isBlank()) return "厂商 id 不能为空"
         if (provider.baseUrl.isBlank()) return "Base URL 不能为空"
         if (provider.api.isBlank()) return "api 类型不能为空"
-        if (provider.models.isEmpty()) return "至少要有一个模型"
+        // No "at least one model" rule: pi does not have one. `models` is optional
+        // (`model-config.ts:208`) and `applyModelsJson` asks only that the block
+        // carry one of baseUrl/headers/compat/modelOverrides/models/apiKey/oauth/
+        // authHeader (`provider-composer.ts:181-200`), which the baseUrl checked just
+        // above already does. An empty list is a real state — "this provider's models
+        // come from pi's catalog and the app is not re-declaring them", which is what
+        // `PiCredentialService.save` writes for a provider pi ships
+        // (docs/known-gaps.md §M11).
         if (provider.models.any { it.id.isBlank() }) return "模型 id 不能为空"
 
         val snapshot = read()

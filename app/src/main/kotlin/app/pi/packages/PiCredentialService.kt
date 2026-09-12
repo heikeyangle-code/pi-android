@@ -192,13 +192,40 @@ class PiCredentialService(
         }
         steps += "凭证已保存（仅本 App 可读）：${preset.id}"
 
+        // Only declare the models pi's own catalog does **not** already describe.
+        //
+        // Writing an entry for a model pi ships is not an addition, it is a
+        // *replacement*: `applyModelsJson` swaps the same-id entry wholesale
+        // (`provider-composer.ts:203-206`) and `modelFromJson` fills every field the
+        // definition omits from pi's defaults (`:150-166`) — `input: ["text"]`,
+        // `contextWindow: 128000`, `reasoning: false`, `cost: 0`. So an entry built
+        // from a model this app could **not** resolve (nothing in the running
+        // engine's model list for that id — `PiCredentialScreen.choicesFor` marks
+        // that as `defaultsApplied`) silently downgrades a vision model to
+        // text-only and a 1M-token window to 128k. That is the defect recorded in
+        // `docs/known-gaps.md` §M11, found on device: images arrived at the app,
+        // were stored in the session, and were stripped before the model saw them,
+        // with `79.7/128k` in the header as the other half of the same symptom.
+        //
+        // Two facts decide, and each covers a different half:
+        //  - `defaultsApplied` — the app did not know this model. Declaring it would
+        //    replace pi's knowledge with pi's own defaults.
+        //  - `preset.builtInPi` — pi ships a catalog for this provider at all. Where
+        //    it does not (Ollama, llama.cpp, 自定义), `models[]` is the *only*
+        //    declaration that exists and must be written whatever we know.
+        //
+        // Availability is unaffected: every chosen id still goes to `enabledModels`
+        // (`preferences().selectModel`), which is pi's own mechanism for "which
+        // models to offer" (`settings-manager.ts:139`).
+        val declared = choices.filter { it.defaultsApplied || !preset.builtInPi }
+
         val provider = PiModelsFile.Provider(
             id = preset.id,
             name = preset.displayName,
             baseUrl = baseUrl.trim().trimEnd('/'),
             api = api,
             authHeader = preset.authHeader,
-            models = choices.map { choice ->
+            models = declared.map { choice ->
                 PiModelsFile.Model(
                     id = choice.id,
                     name = choice.name,
@@ -212,7 +239,11 @@ class PiCredentialService(
         models().upsert(provider)?.let { error ->
             return SaveResult(false, steps + error, null)
         }
-        steps += "模型清单已保存：${preset.id}（${choices.size} 个模型）"
+        steps += if (declared.isEmpty()) {
+            "模型信息沿用 pi 自带的目录，未覆盖模型能力"
+        } else {
+            "模型清单已保存：${preset.id}（${declared.size} 个模型）"
+        }
 
         preferences().selectModel(
             providerId = preset.id,
