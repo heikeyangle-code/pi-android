@@ -1,7 +1,6 @@
 package app.pi.ui.settings
 
-import android.app.ActivityManager
-import android.content.Context
+import app.pi.engine.PiEngineSession
 import app.pi.runtime.PiPaths
 import app.pi.service.PiEngineService
 import org.json.JSONObject
@@ -34,14 +33,13 @@ import java.io.File
  *  - **runtime usage** — the real byte count of `<files>/pi/runtime`, walked on
  *    the IO dispatcher by the caller. The volatile tree is the one that grows
  *    (rootfs, package caches), so that is what the row is about.
- *  - **wake lock** — the engine's foreground service is what holds it:
- *    `PiEngineService` acquires a `PARTIAL_WAKE_LOCK` in `onStartCommand` and
- *    releases it in `onDestroy`/`ACTION_STOP`. The lock object itself is private
- *    to the service, so the observable fact is whether that service is running;
- *    the row's description says so instead of implying a direct lock reading.
+ *  - **wake lock** — `PiEngineService.isWakeLockHeld()`, i.e. the lock's own
+ *    `isHeld`, published by the service that owns it. Not an inference from the
+ *    service being alive: the lock has a six-hour cap
+ *    (`acquire(WAKE_LOCK_TIMEOUT_MS)`), so a long-running service can be up with
+ *    the lock already released, and that case is the one the row spells out.
  */
 class RuntimeFacts(
-    private val context: Context,
     private val paths: PiPaths,
 ) {
 
@@ -50,8 +48,19 @@ class RuntimeFacts(
         val piVersion: String?,
         /** `v<major>.<minor>.<patch>` from the shipped node payload, or null. */
         val nodeVersion: String?,
-        /** Preformatted size of the volatile runtime tree, or null. */
+        /**
+         * Preformatted size of the volatile runtime tree, or null.
+         */
         val runtimeUsage: String?,
+        /**
+         * How long the last engine took to answer its first command, in ms, or null
+         * when none has been measured yet.
+         *
+         * This is the wait between "the engine process exists" and "the engine can
+         * act on a message", which is where a first message goes when the user types
+         * it immediately after opening the app (`PiEngineSession.probeServing`).
+         */
+        val engineStartupMs: Long?,
         /**
          * The wake lock's own `isHeld` (`PiEngineService.isWakeLockHeld()`), not an
          * inference from the service being alive.
@@ -74,6 +83,7 @@ class RuntimeFacts(
         piVersion = piVersion(),
         nodeVersion = nodeVersion(),
         runtimeUsage = runtimeUsage(),
+        engineStartupMs = PiEngineSession.lastServingMs,
         wakeLockHeld = PiEngineService.isWakeLockHeld(),
         serviceRunning = PiEngineService.isRunning(),
         runtimeUnpacked = paths.rootfs.isDirectory,
@@ -130,7 +140,7 @@ class RuntimeFacts(
 }
 
 /**
- * The four 运行时 rows' display strings, including the reason when a value could
+ * The 运行时 rows' display strings, including the reason when a value could
  * not be read.
  *
  * Every key always gets an entry, so a row can never fall through to its
@@ -143,6 +153,7 @@ internal fun runtimeOverrides(snapshot: RuntimeFacts.Snapshot?): Map<String, Str
             "app.runtime.piVersion",
             "app.runtime.nodeVersion",
             "app.runtime.rootfsUsage",
+            "app.runtime.engineStartup",
             "app.runtime.wakeLock",
         ).associateWith { "未读取" }
     }
@@ -155,12 +166,24 @@ internal fun runtimeOverrides(snapshot: RuntimeFacts.Snapshot?): Map<String, Str
         "app.runtime.piVersion" to (snapshot.piVersion ?: unreadable),
         "app.runtime.nodeVersion" to (snapshot.nodeVersion ?: unreadable),
         "app.runtime.rootfsUsage" to (snapshot.runtimeUsage ?: unreadable),
-        // The lock itself is private to the service; what is observable is the
-        // service, and the row's description says so.
-        "app.runtime.wakeLock" to when (snapshot.serviceRunning) {
-            true -> "前台服务运行中（唤醒锁随其持有）"
-            false -> "前台服务未运行（唤醒锁已释放）"
-            null -> "取不到：系统没有返回本应用的服务列表"
+        // Measured, not estimated: `PiEngineSession.probeServing` times the span
+        // between starting pi and pi's first answer. Rounded to whole seconds
+        // because that is the resolution the wait is felt at, and because a
+        // milliseconds figure would imply a precision this deliberately variable
+        // measurement does not have.
+        "app.runtime.engineStartup" to (
+            snapshot.engineStartupMs?.let { ms ->
+                if (ms < 1000) "$ms 毫秒" else "${(ms + 500) / 1000} 秒"
+            } ?: "尚未启动过引擎"
+            ),
+        // The lock's own state, read through `PiEngineService.isWakeLockHeld()`.
+        // The one case worth spelling out is the six-hour cap: the service is still
+        // running but the framework has already released the lock, so the engine is
+        // no longer protected from doze.
+        "app.runtime.wakeLock" to when {
+            snapshot.wakeLockHeld -> "持有中"
+            snapshot.serviceRunning -> "未持有（前台服务仍在运行，锁已达 6 小时上限）"
+            else -> "未持有"
         },
     )
 }

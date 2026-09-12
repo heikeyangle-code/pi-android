@@ -49,7 +49,7 @@ fun ModelChangeBlock(
         Text(
             text = "模型切换 →",
             style = PiTheme.text.meta,
-            color = palette.dim,
+            color = palette.metaOnCanvas,
         )
         Spacer(Modifier.width(PiSpacing.inline))
         Text(
@@ -65,7 +65,7 @@ fun ModelChangeBlock(
             Text(
                 text = provider,
                 style = PiTheme.text.meta,
-                color = palette.dim,
+                color = palette.metaOnCanvas,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )

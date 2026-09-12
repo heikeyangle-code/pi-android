@@ -14,6 +14,7 @@ import androidx.compose.ui.unit.dp
 import app.pi.rpc.AssistantText
 import app.pi.ui.render.PiMarkdownText
 import app.pi.ui.theme.PiTheme
+import app.pi.ui.theme.PiSpacing
 
 /**
  * `assistant-text` (docs/pi-android-ui-spec.md §7.4): no container at all — the
@@ -57,7 +58,7 @@ fun AssistantTextBlock(
             if (item.streaming) {
                 Box(
                     modifier = Modifier
-                        .padding(start = 4.dp)
+                        .padding(start = PiSpacing.small)
                         .size(width = 8.dp, height = 16.dp)
                         .clip(RoundedCornerShape(2.dp))
                         .background(palette.accent.copy(alpha = 0.65f)),

@@ -209,6 +209,18 @@ export default function (pi: ExtensionAPI) {
 
 	// A visible, auditable marker of what this extension is doing, so a user who
 	// reads pi's startup output knows the gate is installed rather than assuming it.
+	//
+	// ## Why nothing here is awaited
+	//
+	// pi awaits every `session_start` handler **before** it attaches the JSONL
+	// stdin reader (`core/agent-session.ts:2468-2491` reached from
+	// `modes/rpc/rpc-mode.ts:316`): while a handler is pending, a `prompt` the app
+	// has already written just sits in the pipe. Both calls below are loopback HTTP
+	// with 5 s / 3 s timeouts and one retry each, so awaiting them put up to 16 s of
+	// *display-only* work in front of every session's first message — on a device
+	// where the bridge is slow to answer, that is the user watching a spinner for
+	// no reason. The notify is the point of this handler, so it now happens first
+	// and the network result is applied when it arrives.
 	pi.on("session_start", async (_event, ctx) => {
 		// Every session starts from zero: the remembered approvals are session-scoped
 		// by definition, and a stale set would be a permanent grant nobody agreed to.
@@ -216,11 +228,8 @@ export default function (pi: ExtensionAPI) {
 		sessionGrants.clear();
 		approvals.clear();
 		relaxedFetchedAt = 0;
-		const relaxed = await currentRelaxed();
-		await publish("新会话开始：危险操作的审批记录已清空。");
 
-		if (!ctx.hasUI) return;
-		if (!announced || hadGrants) {
+		if (ctx.hasUI && (!announced || hadGrants)) {
 			announced = true;
 			ctx.ui.notify(
 				`设备审批已启用：${DANGEROUS_TOOLS.length} 个危险手机操作会请求确认，` +
@@ -229,12 +238,19 @@ export default function (pi: ExtensionAPI) {
 				"info",
 			);
 		}
-		if (relaxed) {
+
+		// The 放宽模式 warning needs the app's answer, and the gate's *enforcement*
+		// does not depend on either call landing (see `currentRelaxed`/`publish`), so
+		// both are fire-and-forget: `session_start` returns now and the warning is
+		// shown if and when the bridge says the mode is on.
+		void currentRelaxed().then((relaxed) => {
+			if (!relaxed || !ctx.hasUI) return;
 			ctx.ui.notify(
 				"Shell 放宽模式处于开启状态：$(...) 与反引号、sh/eval/source 都会被允许，" +
 					"写入边界与白名单从此只约束最外层命令。可在「设置 → 设备能力 → Shell」关闭。",
 				"warning",
 			);
-		}
+		});
+		void publish("新会话开始：危险操作的审批记录已清空。");
 	});
 }

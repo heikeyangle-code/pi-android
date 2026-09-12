@@ -309,6 +309,51 @@ class PiEngineSession(
         }
     }
 
+    /**
+     * Ask pi for its state, so [state] can leave [EngineState.Starting].
+     *
+     * ## Why a command and not "wait for the first byte"
+     *
+     * pi writes nothing on stdout until its startup is over, so a first-byte signal
+     * would work today — but it is an accident of pi's current output, not a
+     * contract. `get_state` is a contract: pi answers it from its stdin reader, so
+     * the reply proves the reader is attached, which is the exact thing the UI needs
+     * to be allowed to say 就绪 (`handle`).
+     *
+     * ## Why a timeout is not a failure
+     *
+     * The state deliberately stays [EngineState.Starting] when the probe times out:
+     * a phone that needs three minutes is slow, not broken, and calling it 就绪 to
+     * satisfy a timer is the lie this method exists to remove. A process that
+     * actually dies is reported by [waitJob] (`EngineState.Failed`), which is a
+     * different answer.
+     *
+     * Nothing is mutated here: flipping the state is [handle]'s job when the reply
+     * arrives, because that is also where `agent_start`/`agent_settled` write it —
+     * one place decides what [state] means.
+     *
+     * It also records how long the wait actually was ([lastServingMs]). That number
+     * is the only way to tell "the phone is slow" from "we asked pi for something
+     * expensive before it could read its stdin", and it is the user's whole
+     * complaint measured rather than described (docs/known-gaps.md §M1).
+     */
+    fun probeServing(timeoutMs: Long = SERVING_PROBE_TIMEOUT_MS) {
+        scope.launch {
+            val startedAt = System.nanoTime()
+            runCatching {
+                request(build = { id -> PiCommands.getState(id) }, timeoutMs = timeoutMs)
+            }.onSuccess { response ->
+                // Only a real answer is recorded. `request` also answers with a
+                // synthetic failure when it times out, and that one means the
+                // opposite of "serving" — it is the case this whole method exists to
+                // keep visible, so counting it would erase the evidence.
+                if (response.success) {
+                    lastServingMs = (System.nanoTime() - startedAt) / 1_000_000
+                }
+            }
+        }
+    }
+
     private suspend fun readLoop(input: InputStream) {
         val framer = JsonlFramer()
         val buffer = ByteArray(16 * 1024)
@@ -330,6 +375,16 @@ class PiEngineSession(
     private fun handle(record: String) {
         val event = PiEvents.parse(record)
         if (event is PiEvent.Response) {
+            // A response is the only proof that pi is *serving* this session. pi can
+            // answer a command only after `runRpcMode` has attached its stdin reader,
+            // and that is the last thing its startup does: node booting, the resource
+            // loader compiling the extensions and `bindExtensions` emitting
+            // `session_start` all happen with the pipe already open but unread. Until
+            // then the process exists and is healthy while every command written to it
+            // sits in the pipe. That gap is what the UI called 就绪 the instant
+            // `ProcessBuilder.start()` returned, and under proot on a phone it is tens
+            // of seconds (docs/known-gaps.md §M1).
+            if (_state.value == EngineState.Starting) _state.value = EngineState.Ready
             pending.remove(event.id)?.complete(event)
         }
         when (event) {
@@ -663,6 +718,30 @@ class PiEngineSession(
     companion object {
         /** Keep diagnostics bounded; the settings screen shows the tail. */
         private const val MAX_STDERR_CHARS = 64 * 1024
+
+        /**
+         * How long the most recent engine took to answer its first command, in
+         * milliseconds, or null while none has.
+         *
+         * Process-wide rather than per-session because the reader is 设置 →
+         * 运行时与诊断, which has no `PiEngineSession` to ask — the same shape as
+         * `PiEngineService.isWakeLockHeld()`, which the runtime rows already read for
+         * exactly this reason. Written only by [probeServing], which is the boot path
+         * every engine goes through (`PiEngineHost.bootLocked`).
+         */
+        @Volatile
+        var lastServingMs: Long? = null
+            private set
+
+        /**
+         * How long [probeServing] waits for pi's first answer.
+         *
+         * Generous on purpose, and deliberately longer than [request]'s own default:
+         * the probe is measuring a cold start under proot on a phone, which is the
+         * slowest path in this app, and a timeout here is not an error — it only
+         * leaves the UI saying 启动中 (see [probeServing]).
+         */
+        private const val SERVING_PROBE_TIMEOUT_MS = 300_000L
 
         /**
          * Start an engine described by a command line that already includes

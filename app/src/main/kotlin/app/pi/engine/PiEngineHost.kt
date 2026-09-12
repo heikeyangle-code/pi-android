@@ -314,6 +314,16 @@ class PiEngineHost(private val appContext: Context) {
                     // works — kept because an env var is visible in `env` output when
                     // someone has to debug why the bridge looks absent.
                     "PI_ANDROID_BRIDGE_FILE" to "/root/.pi/device-bridge.json",
+                    // **Deliberately absent: `NODE_COMPILE_CACHE`.** It was added here
+                    // on the theory that pi's startup is V8 compiling its modules, and
+                    // measured *no* effect in this environment: with a real provider
+                    // key and an idle container, pi answered a queued prompt at 20.8 s
+                    // cold / 20.7 s warm / 19.1 s warm again, and 13.9–18.7 s across
+                    // later runs regardless (docs/startup-latency.md). The cost is
+                    // node's module *loader* (969 module loads, ~4000 file syscalls
+                    // through proot), which a bytecode cache does not avoid. It is
+                    // written down instead of deleted because "we tried it and it did
+                    // not help" is the thing that stops it being tried again.
                     // The user-chosen pre-spawn knobs. `PiLaunchOptions.environment`
                     // only ever adds keys — pi tests some of them for presence, so a
                     // "0" would be worse than omitting them.
@@ -331,6 +341,15 @@ class PiEngineHost(private val appContext: Context) {
                 // leave the old process alive: two pi processes on one cwd would both
                 // append to the same session file and both hold the same settings.
                 publish(session)
+                // Spawned is not the same as serving, and the difference is what the
+                // user sees as "发消息不回复": pi does not read its stdin until its
+                // startup is over. Ask it a question so `PiEngineSession.state` can
+                // leave `Starting` on evidence instead of on the process existing
+                // (docs/known-gaps.md §M1). Deliberately not awaited here — the
+                // caller gets the session now and the UI reports 启动中 until the
+                // answer arrives, which is also what lets a first message be typed
+                // during the wait instead of being rejected.
+                session.probeServing()
                 Boot.Ready(session)
             }.getOrElse { error ->
                 // Fail closed: whoever was holding the previous session must not keep

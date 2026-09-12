@@ -26,6 +26,7 @@ import androidx.compose.ui.unit.dp
 import app.pi.rpc.PiImage
 import app.pi.ui.theme.PiShapes
 import app.pi.ui.theme.PiTheme
+import app.pi.ui.theme.PiSpacing
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.util.Base64
@@ -53,7 +54,7 @@ fun ImageGridBlock(
     modifier: Modifier = Modifier,
 ) {
     if (images.isEmpty()) return
-    val spacing = 6.dp
+    val spacing = PiSpacing.gutter
 
     if (images.size == 1) {
         ImageCell(
@@ -121,7 +122,7 @@ private fun ImageCell(
         modifier = modifier,
         shape = PiShapes.cardInner,
         color = palette.cardBg,
-        border = BorderStroke(1.dp, palette.borderMuted.copy(alpha = 0.5f)),
+        border = BorderStroke(PiSpacing.hairline, palette.borderMuted.copy(alpha = 0.5f)),
     ) {
         Box(contentAlignment = Alignment.Center) {
             val decoded = bitmap
@@ -136,7 +137,7 @@ private fun ImageCell(
                 // Only for bytes the platform codec refuses: the label states the
                 // mime type rather than showing an unlabelled empty box.
                 Column(
-                    modifier = Modifier.padding(8.dp),
+                    modifier = Modifier.padding(PiSpacing.inline),
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
                     Text(
@@ -147,7 +148,9 @@ private fun ImageCell(
                     Text(
                         text = image.mimeType.ifEmpty { "image" },
                         style = PiTheme.text.meta,
-                        color = palette.dim,
+                        // F13/F14: `dim` on a card is 2.89:1 in pi's dark theme;
+                        // `metaOnCard` is the palette's corrected meta token.
+                        color = palette.metaOnCard,
                     )
                 }
             }

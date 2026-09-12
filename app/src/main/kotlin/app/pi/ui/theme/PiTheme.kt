@@ -111,6 +111,20 @@ object PiSpacing {
 
     /** 30dp: a diff's line-number column. */
     val lineNumberColumn = 30.dp
+
+    /**
+     * 20dp: the height of the 3dp `AccentStripe` on every *titled card* —
+     * hook-message, skill-invocation and branch-summary, whose stripe runs down
+     * their header row (spec §7.4 gives those rows no height; 20dp is the row the
+     * three of them already drew).
+     *
+     * F28 (`docs/rendering-review.md`): the error card passed 36dp for the same
+     * element and the thinking block passes 32dp. The 32dp one is **spec**, not a
+     * choice — §7.4's thinking-block row is "收起：一行 32dp" — so it uses
+     * [statusRow]; the 36dp matched nothing (pi draws no stripe at all, so there
+     * is no upstream value to copy) and is therefore unified onto this token.
+     */
+    val accentStripe = 20.dp
 }
 
 /**

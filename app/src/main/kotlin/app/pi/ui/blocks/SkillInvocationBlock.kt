@@ -1,5 +1,6 @@
 package app.pi.ui.blocks
 
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.width
@@ -9,6 +10,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -67,26 +69,29 @@ fun SkillInvocationBlock(
             // no reason. A consistency choice inside this app, not a pi value.
             borderColor = palette.customMessageLabel.copy(alpha = 0.35f),
         ) {
-            ToggleRow(expanded = expanded, onToggle = { expanded = !expanded }) {
-                AccentStripe(palette.customMessageLabel, 20.dp)
-                Spacer(Modifier.width(PiSpacing.inner))
-                Text(
-                    text = "技能",
-                    style = PiTheme.text.monoSmall,
-                    color = palette.customMessageLabel,
-                )
-                Spacer(Modifier.width(PiSpacing.inline))
-                Text(
-                    text = "/skill:" + item.skillName.ifEmpty { "未知技能" },
-                    modifier = Modifier.weight(1f),
-                    style = PiTheme.text.mono,
-                    color = palette.text,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                ExpandLabel(expanded)
-            }
-            if (expanded) {
+            // F28: pi's only toggle is the content region (see `ToggleContent`);
+            // the header row is not a separate hit target.
+            ToggleContent(expanded = expanded, onToggle = { expanded = !expanded }) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    AccentStripe(palette.customMessageLabel, PiSpacing.accentStripe)
+                    Spacer(Modifier.width(PiSpacing.inner))
+                    Text(
+                        text = "技能",
+                        style = PiTheme.text.monoSmall,
+                        color = palette.customMessageLabel,
+                    )
+                    Spacer(Modifier.width(PiSpacing.inline))
+                    Text(
+                        text = "/skill:" + item.skillName.ifEmpty { "未知技能" },
+                        modifier = Modifier.weight(1f),
+                        style = PiTheme.text.mono,
+                        color = palette.text,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    ExpandLabel(expanded)
+                }
+                if (expanded) {
                 // Expanded: markdown, not prose. pi's expanded branch builds a
                 // `Markdown` over the skill body
                 // (`packages/coding-agent/src/modes/interactive/components/skill-invocation-message.ts:42-45`),
@@ -109,11 +114,12 @@ fun SkillInvocationBlock(
                 // otherwise appears only in the collapsed line. This card's header
                 // row carries `/skill:name` in *both* states (spec §7.4), so
                 // prepending it here would print the name twice.
-                PiMarkdownText(
-                    markdown = item.body.ifEmpty { "（技能没有正文）" },
-                    modifier = Modifier.fillMaxWidth(),
-                    textColor = palette.customMessageText,
-                )
+                    PiMarkdownText(
+                        markdown = item.body.ifEmpty { "（技能没有正文）" },
+                        modifier = Modifier.fillMaxWidth(),
+                        textColor = palette.customMessageText,
+                    )
+                }
             }
         }
     }

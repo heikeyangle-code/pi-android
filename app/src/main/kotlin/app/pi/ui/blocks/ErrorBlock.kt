@@ -1,6 +1,5 @@
 package app.pi.ui.blocks
 
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -18,6 +17,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import app.pi.rpc.ErrorText
 import app.pi.ui.theme.PiTheme
+import app.pi.ui.theme.PiSpacing
 
 /**
  * `error-text` (docs/pi-android-ui-spec.md §7.4): a weakened `toolErrorBg` card
@@ -44,7 +44,10 @@ fun ErrorBlock(
             borderColor = palette.error.copy(alpha = 0.45f),
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                AccentStripe(palette.error, 36.dp)
+                // F28: unified onto the titled-card stripe height. The 36dp this
+                // used matched no spec row and no pi value (pi draws no stripe at
+                // all), while the three other titled cards drew 20dp.
+                AccentStripe(palette.error, PiSpacing.accentStripe)
                 Spacer(Modifier.width(10.dp))
                 Column(Modifier.weight(1f)) {
                     ProseText(
@@ -56,11 +59,10 @@ fun ErrorBlock(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 if (!detail.isNullOrBlank()) {
                     Row(
-                        modifier = Modifier.clickable(
-                            onClickLabel = if (expanded) "收起详情" else "查看详情",
-                        ) {
-                            expanded = !expanded
-                        },
+                        // F28: the content region toggles (pi's rule); this row is
+                        // inside the card's region, so the tap still means the same
+                        // thing wherever on the card it lands.
+                        modifier = Modifier.toggleContent(expanded, { expanded = !expanded }),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Text(
@@ -68,7 +70,7 @@ fun ErrorBlock(
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.primary,
                         )
-                        Spacer(Modifier.width(4.dp))
+                        Spacer(Modifier.width(PiSpacing.small))
                         ExpandLabel(expanded, expandText = "", collapseText = "")
                     }
                 }
@@ -86,7 +88,7 @@ fun ErrorBlock(
                     // text on a tool-error surface, so it takes the variant that
                     // clears §9's 4.5:1 floor.
                     color = palette.bodyOnTool,
-                    modifier = Modifier.padding(top = 2.dp),
+                    modifier = Modifier.padding(top = PiSpacing.tiny),
                 )
             }
         }

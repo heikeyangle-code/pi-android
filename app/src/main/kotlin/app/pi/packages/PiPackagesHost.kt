@@ -147,6 +147,15 @@ fun PiPackagesHost(
     val guest = remember(layout) { GuestCommand(layout) }
     val service = remember(layout) { PiPackageService(layout, guest) }
     val trustRepository = remember(layout) { TrustRepository(layout, guest) }
+    // The filters live in `settings.json`, not in `pi list`'s output, so they are
+    // read through the app's settings store (which owns the merge rules and the
+    // project-over-global precedence) rather than by a second writer here.
+    val filterStore = remember(layout) {
+        PiPackageFilterStore(
+            agentDir = layout.agentMirrorDir,
+            workspace = layout.hostWorkspace,
+        )
+    }
     val lifecycle = remember { ExtensionLifecycle() }
     val coordinator = remember(layout, restartEngine) {
         restartEngine?.let { engine ->
@@ -158,7 +167,15 @@ fun PiPackagesHost(
         }
     }
     val controller = remember(layout, coordinator) {
-        PiPackagesController(layout, service, trustRepository, lifecycle, coordinator, defaultProjectTrust)
+        PiPackagesController(
+            layout,
+            service,
+            trustRepository,
+            lifecycle,
+            coordinator,
+            defaultProjectTrust,
+            filterStore,
+        )
     }
 
     val lifecycleState by lifecycle.state.collectAsState()
@@ -182,6 +199,12 @@ fun PiPackagesHost(
                 onScopeChange = { controller.chooseScope(it) },
                 onInstall = { scope.launch { controller.install() } },
                 onRemove = { entry -> scope.launch { controller.remove(entry) } },
+                onFilterAdd = { entry, type, pattern ->
+                    scope.launch { controller.addFilter(entry, type, pattern) }
+                },
+                onFilterRemove = { entry, type, pattern ->
+                    scope.launch { controller.removeFilter(entry, type, pattern) }
+                },
                 onRefresh = { scope.launch { controller.refresh() } },
                 onRestartClick = { controller.requestRestart() },
                 onRestartConfirm = { scope.launch { controller.confirmRestart() } },
@@ -216,6 +239,12 @@ class PiPackagesController(
     /** Null when the engine hook was not supplied; the restart button says so. */
     private val coordinator: EngineRestartCoordinator?,
     private val defaultProjectTrust: String,
+    /**
+     * The `packages[]` filters, read and written through the app's settings store.
+     * pi's `pi list` output does not carry them (only a `(filtered)` suffix), so
+     * this is the only route to what `settings.json` actually says.
+     */
+    private val filterStore: PiPackageFilterStore,
 ) {
 
     var spec by mutableStateOf("")
@@ -278,7 +307,19 @@ class PiPackagesController(
                     projectTrusted = facts.trusted,
                 )
             }
-            entries = listing.entries
+            // `pi list` prints `(filtered)` and nothing else, so the four glob
+            // arrays are read from the settings documents and attached to the
+            // entries — otherwise a package whose filters were set in pi's own TUI
+            // arrives here looking plain. A read failure is not fatal: the list is
+            // still the truth about what is installed.
+            val filterEntries = io { runCatching { filterStore.read() }.getOrNull() }
+            entries = listing.entries.map { entry ->
+                val filters = when (entry.scope) {
+                    PiPackageScope.User -> filterEntries?.user
+                    PiPackageScope.Project -> filterEntries?.project
+                }?.get(entry.source.raw)?.filters.orEmpty()
+                entry.copy(filters = filters)
+            }
             listRaw = listing.raw
             listUnparsed = listing.notReady == null && listing.entries.isEmpty() && listing.raw.isNotBlank()
             listNotReady = listing.notReady
@@ -342,6 +383,62 @@ class PiPackagesController(
         } finally {
             busy = false
         }
+    }
+
+    // ---------------------------------------------------------------- filters
+
+    /**
+     * Add one glob to `[type]` of [entry]'s package.
+     *
+     * The pattern is stored **exactly as typed**: pi's own config selector
+     * synthesises `+`/`-` from a checkbox
+     * (`modes/interactive/components/config-selector.ts:608-618`), but this app
+     * edits the stored strings, so a `+`/`-`/`!` the user already wrote keeps its
+     * meaning instead of being re-derived.
+     */
+    suspend fun addFilter(entry: PiPackageEntry, type: String, pattern: String) {
+        if (pattern.isBlank()) return
+        applyFilter(entry, type) { it -> PiPackageFilters.withPattern(it, type, pattern) }
+    }
+
+    /** Remove one glob verbatim; the key disappears when the array empties. */
+    suspend fun removeFilter(entry: PiPackageEntry, type: String, pattern: String) {
+        applyFilter(entry, type) { it -> PiPackageFilters.withoutPattern(it, type, pattern) }
+    }
+
+    private suspend fun applyFilter(
+        entry: PiPackageEntry,
+        type: String,
+        transform: (PiPackageFilters.Entry) -> PiPackageFilters.Entry,
+    ) {
+        if (type !in PiPackageFilters.RESOURCE_TYPES) return
+        busy = true
+        try {
+            val problem = io { filterStore.update(entry.scope, entry.source.raw, transform) }
+            record(
+                headline = if (problem == null) {
+                    "已更新 ${entry.source.raw} 的过滤规则"
+                } else {
+                    "过滤规则未修改：$problem"
+                },
+                command = "",
+                stdout = "",
+                stderr = "",
+            )
+            if (problem == null) {
+                // pi reads `packages` (and the filters in it) when the engine
+                // starts, so this lands in the same state machine an install does
+                // — the user is told a restart is needed instead of the change
+                // silently doing nothing.
+                lifecycle.noteExternalChange(
+                    listOf("${entry.source.raw} 的过滤规则"),
+                    "过滤规则在引擎启动时读取，改动要重启引擎才会生效。",
+                )
+            }
+        } finally {
+            busy = false
+        }
+        refresh()
     }
 
     /**

@@ -1,5 +1,8 @@
 package app.pi.rpc
 
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -14,6 +17,8 @@ class TranscriptReducerTest {
 
     private var clock = 1_000L
     private fun reducer() = TranscriptReducer { clock }
+
+    private fun obj(json: String): JsonObject = Json.parseToJsonElement(json).jsonObject
 
     private fun text(s: String) =
         PiEvents.parse("""{"type":"message_update","assistantMessageEvent":{"type":"text_delta","contentIndex":0,"delta":"$s"}}""")
@@ -306,5 +311,107 @@ class TranscriptReducerTest {
         r.onEvent(toolStart("a"))
         clock = 1_000
         assertTrue(r.onEvent(toolUpdate("a", "y")) is TranscriptChange.Updated)
+    }
+
+    // ------------------------------------------------------- user message rows
+    //
+    // pi draws a user row from its own event (`interactive-mode.ts:3222-3225`),
+    // and this app also echoes locally for instant feedback, so the two must not
+    // both become bubbles. An extension's `pi.sendUserMessage()` reaches the same
+    // event (`core/agent-session.ts:1569-1605`).
+
+    private fun userEnd(text: String) =
+        PiEvents.parse(
+            """{"type":"message_end","message":{"role":"user","content":[{"type":"text","text":"$text"}]}}""",
+        )
+
+    @Test
+    fun `pi's own message_end confirms the local echo instead of duplicating it`() {
+        val r = reducer()
+        r.onUserPrompt("hello")
+        r.onEvent(userEnd("hello"))
+        assertEquals(1, r.transcript.size)
+        assertTrue(r.transcript[0] is UserMessage)
+        assertEquals("hello", (r.transcript[0] as UserMessage).text)
+    }
+
+    @Test
+    fun `an extension's user message appears with no local echo`() {
+        val r = reducer()
+        r.onEvent(PiEvents.parse("""{"type":"message_start","message":{"role":"user"}}"""))
+        r.onEvent(userEnd("from the extension"))
+        assertEquals(1, r.transcript.size)
+        assertEquals("from the extension", (r.transcript[0] as UserMessage).text)
+    }
+
+    @Test
+    fun `a user message pi rewrote replaces the echo and still renders one row`() {
+        val r = reducer()
+        r.onUserPrompt("/skill:demo")
+        // Built as a raw JSON record rather than through `userEnd`, and in the
+        // exact shape pi's `_expandSkillCommand` writes — `parsePiSkillBlock` is
+        // anchored on the real form (`rpc/SkillBlock.kt`).
+        r.onEvent(
+            PiEvents.parse(
+                """{"type":"message_end","message":{"role":"user","content":[{"type":"text","text":"<skill name=\"demo\" location=\"/skills/demo/SKILL.md\">\nReferences are relative to /skills/demo.\n\nthe body\n</skill>"}]}}""",
+            ),
+        )
+        assertEquals(1, r.transcript.size)
+        // pi splits a skill block out of the event
+        // (`interactive-mode.ts:3631-3650`), so the projection is a card. The
+        // invariant that matters: exactly one row, and not the raw echo.
+        assertTrue(r.transcript[0] is SkillInvocation)
+        assertEquals("demo", (r.transcript[0] as SkillInvocation).skillName)
+    }
+
+    @Test
+    fun `two identical sends produce two rows, not one`() {
+        val r = reducer()
+        r.onUserPrompt("again")
+        r.onEvent(userEnd("again"))
+        r.onUserPrompt("again")
+        r.onEvent(userEnd("again"))
+        assertEquals(2, r.transcript.size)
+    }
+
+    @Test
+    fun `a send pi refused does not swallow the next user message`() {
+        val r = reducer()
+        r.onUserPrompt("rejected")
+        r.onEvent(PiEvents.parse("""{"type":"response","command":"prompt","success":false,"error":"no model"}"""))
+        r.onEvent(userEnd("from the extension"))
+        assertEquals(2, r.transcript.size)
+        assertEquals("from the extension", (r.transcript[1] as UserMessage).text)
+    }
+
+    @Test
+    fun `a rewritten echo behind tool rows is left alone rather than shifted`() {
+        val r = reducer()
+        r.onUserPrompt("/skill:demo")
+        // Tool rows land after the queued echo; removing it now would renumber
+        // them and a later tool update would mutate the wrong row.
+        r.onEvent(toolStart("t1"))
+        r.onEvent(
+            PiEvents.parse(
+                """{"type":"message_end","message":{"role":"user","content":[{"type":"text","text":"<skill name=\"demo\" location=\"/s/SKILL.md\">\nbody\n</skill>"}]}}""",
+            ),
+        )
+        assertEquals(2, r.transcript.size)
+        assertEquals("/skill:demo", (r.transcript[0] as UserMessage).text)
+        // The tool row is still the tool row, at its own index.
+        assertTrue(r.transcript[1] is ToolCall)
+    }
+
+    @Test
+    fun `a rebuilt stream renders the replayed row and ignores a late confirmation`() {
+        val r = reducer()
+        r.onUserPrompt("local echo")
+        r.reset()
+        r.onEntry(obj("""{"type":"message","id":"e1","message":{"role":"user","content":[{"type":"text","text":"replayed"}]}}"""))
+        r.onEvent(userEnd("replayed"))
+        // The reset dropped the pending echo, so the event is a message the app
+        // never showed and must be projected rather than swallowed.
+        assertEquals(2, r.transcript.size)
+        assertEquals("replayed", (r.transcript[1] as UserMessage).text)
     }
 }

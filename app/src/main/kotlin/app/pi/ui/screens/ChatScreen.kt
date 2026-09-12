@@ -10,6 +10,8 @@ import androidx.compose.foundation.Image
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.content.Intent
+import android.app.Activity
 import android.util.Base64
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -107,6 +109,7 @@ import app.pi.ui.chat.ThinkingPickerSheet
 import app.pi.ui.chat.routeComposerText
 import app.pi.ui.chat.thinkingLabelOf
 import app.pi.ui.components.PiEmptyState
+import app.pi.ui.components.PiStatusLine
 import app.pi.ui.extension.ExtensionStatusRow
 import app.pi.ui.extension.ExtensionWidgetStack
 import app.pi.ui.extension.WidgetPlacement
@@ -221,6 +224,49 @@ private fun ChatBody(
     // every API level this app supports without a backport dependency, and covers
     // file providers as well as the gallery.
     var attachments by remember { mutableStateOf<List<PiImage>>(emptyList()) }
+
+    // pi's `app.editor.external` (`keybindings.md:129`, ctrl+g) → `handleOpenExternalEditor`
+    // (`interactive-mode.ts:4246-4261`) → `editInExternalEditor`
+    // (`modes/interactive/external-editor.ts:14-52`): pi writes the composer text to a
+    // temp `prompt.md`, spawns the configured command, and **only if it exits zero**
+    // reads the file back (strip BOM, drop one trailing newline) and replaces the
+    // composer. Android has no command line to spawn, so the 1:1 mapping is an
+    // `ACTION_EDIT` handoff, and pi's exit-code rule maps onto Android's result code:
+    //   * `RESULT_OK` + text → replace the draft (pi: exit 0 → read back)
+    //   * `RESULT_CANCELED` → keep the draft (pi: non-zero exit discards everything)
+    //   * nothing handles it → keep the draft **and say so** (pi's `spawn` error
+    //     resolves `status: "failed"` and it prints a line; never silent)
+    val externalEditor = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult(),
+    ) { result ->
+        val returned = result.data
+            ?.getCharSequenceExtra(Intent.EXTRA_TEXT)
+            ?.toString()
+            ?.removePrefix("\uFEFF")
+            ?.removeSuffix("\n")
+        when {
+            result.resultCode == Activity.RESULT_OK && returned != null -> draft = returned
+            result.resultCode == Activity.RESULT_CANCELED -> session.notifyUser(
+                "外部编辑器没有改动内容，草稿保持原样。",
+            )
+            else -> session.notifyUser(
+                "外部编辑器没有返回可读的文本，草稿保持原样。",
+                warning = true,
+            )
+        }
+    }
+    fun openInExternalEditor() {
+        val intent = Intent(Intent.ACTION_EDIT)
+            .setType("text/plain")
+            .putExtra(Intent.EXTRA_TEXT, draft)
+        val opened = runCatching { externalEditor.launch(intent) }.isSuccess
+        if (!opened) {
+            session.notifyUser(
+                "没有应用能编辑文本（ACTION_EDIT）：草稿保持原样。设置 →「外部编辑器」说明了这条的来历。",
+                warning = true,
+            )
+        }
+    }
     val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         // A null uri is the user backing out of the picker, not a failure.
         if (uri != null) {
@@ -639,6 +685,19 @@ private fun ChatBody(
             },
         )
 
+        // F10 (`docs/rendering-review.md`): pi's footer figures — token totals, the
+        // cache-hit rate and the context percentage — put where spec §4.1 asks for
+        // them, the 32dp status row under the bar. Every figure comes from pi's own
+        // `getSessionStats()` (`core/agent-session.ts:3359-3407`), which is what the
+        // footer renders (`components/footer.ts:130-161`); an item with no data is
+        // omitted by the component rather than shown as a placeholder.
+        PiStatusLine(
+            stats = state.stats,
+            latestUsage = state.lastUsage,
+            contextWindowFallback = state.meta.model?.contextWindow,
+            autoCompaction = state.meta.autoCompaction,
+        )
+
         ExtensionStatusRow(state.extensionStatuses)
 
         if (searchOpen) {
@@ -665,11 +724,23 @@ private fun ChatBody(
         }
 
         if (state.transcript.isEmpty()) {
+            // The two empty states are the two different waits: the engine may exist
+            // and still not be reading its stdin, which is the whole reason a message
+            // sent right after launch used to sit unanswered (`PiSessionViewModel
+            // .engineStarting`). Saying 已就绪 in that window is the lie that made the
+            // app look broken, so the window gets its own words and its own promise
+            // (the message is kept, not dropped).
+            val starting = session.engineStarting(state)
             PiEmptyState(
                 icon = Icons.Filled.ChatBubble,
-                title = "引擎已就绪",
-                body = "pi 会读写你选定的工作区、执行命令、改代码。\n" +
-                    "输入 / 查看全部命令，输入 ! 直接跑 shell 命令。",
+                title = if (starting) "引擎正在启动" else "引擎已就绪",
+                body = if (starting) {
+                    "首次启动要加载 pi 的运行时与扩展，通常要几十秒。\n" +
+                        "现在发消息也可以：引擎开始工作后会立刻处理。"
+                } else {
+                    "pi 会读写你选定的工作区、执行命令、改代码。\n" +
+                        "输入 / 查看全部命令，输入 ! 直接跑 shell 命令。"
+                },
                 modifier = Modifier.weight(1f),
             )
         } else {
@@ -910,6 +981,10 @@ private fun ChatBody(
         Composer(
             draft = draft,
             onPickImage = { imagePicker.launch("image/*") },
+            // pi's ctrl+g lives in the key-hint row rather than on the send button:
+            // that button is send/stop, and an editor handoff is neither. The chips
+            // beside it (`/`, `!`, `@`, `图片`) are the same kind of affordance.
+            onOpenExternalEditor = { openInExternalEditor() },
             onDraftChange = { draft = it },
             thinkingLevel = state.meta.thinkingLevel,
             streaming = state.streaming,
@@ -1270,6 +1345,8 @@ private fun Composer(
     onOpenMention: () -> Unit,
     onOpenTui: () -> Unit,
     onPickImage: () -> Unit,
+    /** `app.editor.external`: hand the draft to an external editor (`ACTION_EDIT`). */
+    onOpenExternalEditor: () -> Unit,
     onFollowUp: () -> Unit,
     onSend: () -> Unit,
     onStop: () -> Unit,
@@ -1319,6 +1396,11 @@ private fun Composer(
                 KeyHint("!!", onOpenBash)
                 KeyHint("@", onOpenMention)
                 KeyHint("图片", onPickImage)
+                // pi's ctrl+g (`app.editor.external`, keybindings.md:129). It sits in
+                // the key-hint row, not on the send button: that button is send/stop
+                // and an editor handoff is neither, so there is no gesture to share
+                // or to collide with.
+                KeyHint("编辑器", onOpenExternalEditor)
                 // pi's `alt+enter` (`app.message.followUp`, keybindings.md:165):
                 // queue this text for the end of the current turn instead of
                 // steering it into the middle. The affordance only exists while a

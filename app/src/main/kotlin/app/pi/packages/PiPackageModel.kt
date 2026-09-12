@@ -167,4 +167,14 @@ data class PiPackageEntry(
     val filtered: Boolean,
     /** `pkg.installedPath`, when pi resolved one. */
     val installedPath: String?,
+    /**
+     * The four glob arrays of the object form, keyed by resource type
+     * (`extensions` / `skills` / `prompts` / `themes`), exactly as
+     * `settings.json` holds them. Empty for the bare-string form.
+     *
+     * `pi list` reports nothing but the `(filtered)` suffix, so these come from
+     * [PiPackageFilters] reading the settings documents — without that, a package
+     * whose filters were set in pi's own TUI looked like a plain package here.
+     */
+    val filters: Map<String, List<String>> = emptyMap(),
 )

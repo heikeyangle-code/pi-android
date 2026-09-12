@@ -182,6 +182,28 @@ sealed interface PiEvent {
          * this is the same array read once more instead of discarded.
          */
         val hasToolCalls: Boolean = false,
+        /**
+         * Image blocks of a `role: "user"` message, exactly as pi sent them.
+         *
+         * pi renders a user row straight from this event — on `message_start`
+         * with `role === "user"` it calls `addMessageToChat(event.message)`
+         * (`modes/interactive/interactive-mode.ts:3222-3225`) — so the row a user
+         * sees is the message pi built, not the text they typed into the editor.
+         * An extension's `pi.sendUserMessage()` produces the same event: it
+         * delegates to `prompt(text, { source: "extension" })`
+         * (`core/agent-session.ts:1569-1605`), which builds
+         * `{ role: "user", content, timestamp }` (`:1269-1277`) and hands it to
+         * the agent loop, whose `message_start`/`message_end` emission is
+         * unconditional (`packages/agent/src/agent-loop.ts:112-115`). A queued
+         * `steer`/`follow_up` message takes the same shape
+         * (`core/agent-session.ts:1444-1474`, injected at
+         * `agent-loop.ts:200-208`).
+         *
+         * Parsed because [contentText] collapses each image into the literal
+         * `[image]`; without this field the payload cannot be recovered from the
+         * event.
+         */
+        val images: List<PiImage> = emptyList(),
     ) : PiEvent {
         override val type = "message_end"
     }
@@ -436,8 +458,9 @@ object PiEvents {
         "message_end" -> {
             val msg = o.obj("message")
             val content = msg?.get("content") ?: o["content"]
+            val role = msg?.str("role") ?: o.str("role")
             PiEvent.MessageEnd(
-                role = msg?.str("role") ?: o.str("role"),
+                role = role,
                 text = msg?.let { contentText(it["content"]) } ?: o.str("text"),
                 stopReason = msg?.str("stopReason") ?: o.str("stopReason"),
                 usage = msg?.obj("usage")?.let { parseUsage(it) } ?: o.obj("usage")?.let { parseUsage(it) },
@@ -445,6 +468,10 @@ object PiEvents {
                 display = msg?.bool("display") ?: o.bool("display"),
                 errorMessage = msg?.str("errorMessage") ?: o.str("errorMessage"),
                 hasToolCalls = hasToolCallBlock(content),
+                // Only a user message carries images the transcript has to draw;
+                // an assistant/toolResult payload's images are handled by their
+                // own blocks and would be dropped here anyway.
+                images = if (role == "user") imageBlocks(content) else emptyList(),
             )
         }
 

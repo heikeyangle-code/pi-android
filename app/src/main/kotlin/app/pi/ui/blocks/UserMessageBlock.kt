@@ -14,6 +14,7 @@ import app.pi.rpc.UserMessage
 import app.pi.ui.render.PiMarkdownText
 import app.pi.ui.theme.PiShapes
 import app.pi.ui.theme.PiTheme
+import app.pi.ui.theme.PiSpacing
 
 /**
  * `user-message` (docs/pi-android-ui-spec.md §7.4): a full-width container in
@@ -61,7 +62,8 @@ fun UserMessageBlock(
             color = palette.userMessageBg,
         ) {
             Column(
-                modifier = Modifier.padding(14.dp),
+                // §7.4's user-message 内边距 14dp, by name.
+                modifier = Modifier.padding(PiSpacing.bubble),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 if (item.text.isNotEmpty()) {

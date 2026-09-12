@@ -408,6 +408,8 @@ ShellPolicyCard 全部文案直读 `DeviceShellGuard`（`DeviceShell.kt:590-614`
 - **~~仍未做~~ 已完成（2026-09-11，提交 `dae0ff5`，CI 绿）**：`PiRoot.kt` 的 `onRunAction` 已接；「选厂商 → 粘 Key → 扫描 → 勾选 → 保存」的 Compose 界面已写（`ui/settings/PiCredentialScreen.kt`，586 行）；装包入口也已挂进设置（`PiPackagesHost`，之前**没有任何入口**）。**这一条原来是"仍未做"，现在不成立了——留着这行是提醒：过期的"未做"记载比漏记更糟，它会让下一个人重做已经做完的东西。**
   仍未闭环的只剩：`app.localModels.manage` 只做了一半（端点在、GGUF 加载/下载只能在 TUI）。**原记载的另外两项已不成立**：OAuth 现在是一个明确的"仅终端"跳转（`/login`，`PiRoot.kt:49-70`），`app.credentials.apiKey` 有真实表单；"16 个 Action 行只有提示没有实现"也已处置（**§I2**，19 行逐行有结论，未提交）。
 
+**§E9 的收尾（2026-09-12，此前只在报告里）**：凭证页上原有一个**静默的假成功** —— `PiCredentialService.prefill()` 把 `auth.json` 的 `Read.Invalid` **静默丢成空 map**，于是破损的凭证文件会让界面显示"没有配置任何厂商"，而真相是 **pi 读它会直接抛错、启动不了**（`core/auth-storage.ts:216-227`）。修法两步：`Existing.authFileError` 由 `prefill()` 填上（`packages/PiCredentialService.kt`），再由 `ui/settings/PiCredentialScreen.kt` 消费并显示后果（「凭证当前无法被读取，这个页面显示的厂商不是全部。修好之前 pi 不会启动。」），**口径与旁边那条 `modelsFileError` 对齐**（后者另有一处源头泄漏：`PiConfigFiles` 的 `Snapshot.error` 会带上绝对路径，已记在这条旁边）。这是本仓"静默失败"家族的又一例：**能取到的失败原因必须说出来**。
+
 ### E2. 高亮服务的 `attach(context)` 到底有没有被调用 —— **已完成（复核于 dc00279）**
 > **状态：调用链已确认，高亮不会静默退回单色。** `ui/render/PiMarkdown.kt:77` `remember(context) { PiNodeCodeHighlighter.attach(context) }`——每次渲染 markdown 时按 `context` 记住并调用一次，`attach` 自身幂等（`highlight/PiNodeCodeHighlighter.kt:105`）。落地于 `a7b7738`。原疑问"没人验证过"已经解决；剩下的是真机上的回环延迟，那属于 C4。
 >
@@ -1019,3 +1021,122 @@ proot 的 bind 是**每次调用**的事。于是同一条 host 路径在引擎�
    - **为什么必须由 CI 做**：资产是**生成物**，改 `runtime.lock.json` 里任何 URL/版本都不会让构建失败——APK 照样构建、照样安装，而许可清单在**静默描述上一个版本**；设备上看不出来，也没有人会手工 diff 130 个生成文件。靠"记得重跑生成器"等于靠人记得——这正是本仓库为 `runtime-revision.txt` 已经废弃过一次的安排。
 5. **未上真机**：界面只在静态层面核对（无法本地编译 Gradle）。`manifest.txt` 的 TSV 解析、`assets.open` 的路径、63 KB 文本的滚动渲染都未在设备上跑过。
 6. **`librtmp1` 的库是 LGPL-2.1、其可执行程序是 GPL-2**；我们只分发 `librtmp.so.1`（库），清单按 LGPL-2.1 列。
+
+## M. 设备实测：首次发消息要等约 1 分钟（本轮定位，2026-09-12）
+
+来源：用户录屏 `Screenrecorder-2026-09-12-22-04-24-636.mp4`（88 s，1440×3200，1 fps 逐帧核对）。
+
+### M1. 「引擎已就绪」说的是**进程起来了**，不是 **pi 能干活了**（DEFECT，已修，工作树）
+
+**录屏时间线**（每一条都是帧上读出来的）：
+
+| t | 画面 |
+|---|---|
+| 1–5 s | AppBar 副标题「就绪」，空态标题「引擎已就绪」 |
+| ≈7 s | composer 里是「。哈哈哈」，键盘已收 |
+| ≈8 s | 用户气泡出现，**只有时间戳、没有文字**（见 M3） |
+| ≈9 s | 同一气泡显示「。哈哈哈」 |
+| 9–76 s | 屏幕上只有那一条用户气泡，**pi 没有任何输出** |
+| ≈76.7 s | 同时出现 `模型 → deepseek-flash deepseek` 行、permission-gate 的 `session_start` 通知「设备审批已启用：10 个…」 |
+| 80–85 s | 「思考 450ms」+ 回复正文 |
+
+**代码层面的机制**：
+
+- `PiEngineHost.bootLocked` 在 `ProcessBuilder.start()` 返回后**立刻** `publish(session)` 并 `Boot.Ready`；
+- `PiSessionViewModel.attach` 立刻 `boot = Boot.Ready`；
+- `engineLabel`（现在还有 `engineStarting`）当时只判 `Failed`/`Stopped`，`EngineState.Starting` 落进 `else -> "就绪"`。
+
+**pi 侧时序**（`/root/pi-src` @ `bbb61e34`，0.85.1）：`runRpcMode` → `rebindSession()` → `session.bindExtensions()` → `extensionRunner.emit(session_start)`（`modes/rpc/rpc-mode.ts:299-347`、`core/agent-session.ts:2468-2491`），**stdin 的 JSONL reader 是在这之后才挂上的**。录屏里 `session_start` 通知与第一条模型行同时出现，正是这个顺序：在那之前写进管道的 `prompt` 一直躺在管道里没人读。
+
+**本地量化**（开发容器，x86 Linux，node 24.19.0，pi 0.85.1，扩展用本仓库 `assets/pi-extensions` 原件，`PI_TIMING=1`）：
+
+```
+createAgentSessionRuntime: 2513ms   TOTAL: 2586ms
+extensions: pi-android-bridge/index.ts 1158ms · pi-highlight/index.ts 429ms · permission-gate.ts 124ms
+```
+
+同一件事在设备上是 **68–76 s（≈29×）**：差距来自 proot 的 syscall 翻译（模块解析是海量 `stat`/`open`）加上手机冷启动。**这条是量出来的，不是猜的**——pi 本体和我们的扩展在无 proot 时都很快。
+
+**已改（`applied (uncommitted)`）**：
+
+1. `PiEngineSession.handle`：收到任何 `response` 时把 `Starting` → `Ready`。`response` 是「pi 已经在读 stdin」的唯一证据；`AgentStart`/`AgentSettled` 的既有语义不动，所以"任何一次成功回合也必然回到 Ready"这条兜底还在。
+2. `PiEngineSession.probeServing()`：boot 之后立刻发一条 `get_state`（`PiCommands.getState`）。超时 300 s，**超时不改状态**——慢不等于坏，为了满足计时器而把它叫成就绪，正是这次要消灭的那个谎。进程真的死了由 `waitJob` 报 `Failed`，是另一个答案。
+3. `PiSessionViewModel.engineStarting()`；`engineLabel` 增加 `Starting -> "启动中"`。
+4. `ChatScreen` 空态：启动中时标题「引擎正在启动」，正文写明首次启动要几十秒、**现在发的消息会在引擎开始工作后立刻处理**（属实：`prompt` 已经在管道里，pi 一开始读就会处理）。
+5. ~~`PiEngineHost`：`NODE_COMPILE_CACHE=…`~~ **—— 已撤回。实测无效果，见 M6。**
+
+**没有解决的**：pi 自己的启动图（见 M4/M6）。M1 当时把 2.6 s 里的 1.7 s 算成"扩展加载"，那是被 `PI_TIMING` 的测量口径骗了（M4 第 1 条）：**真正的时间在 `main()` 之前，而那段没有任何计时**。
+
+### M2. 输入法把输入框、工具栏、底部导航整个盖住（DEFECT，已修，工作树）
+
+- **证据**：录屏 t=5 s 帧——键盘完全展开时，composer、其工具栏（`/ ! !! @ 图片` 那行）、底部四个导航项**一个都看不见**，聊天区下方直接就是键盘。
+- **根因**：`MainActivity` 调 `enableEdgeToEdge()`（`decorFitsSystemWindows=false`）之后，manifest 的 `adjustResize`（`AndroidManifest.xml:118`）**不再让窗口为 IME 让位**，IME 改以 window inset 上报。全仓只有 `TerminalPane` 用了 `imePadding()`，聊天页没有——所以终端页是对的，聊天页被盖住。
+- **修法**：`PiRoot` 的 `Scaffold(modifier = Modifier.imePadding())`，一处覆盖四个目的地（与 `adjustResize` 的语义一致：整屏上移，包括底栏）；同时删掉 `TerminalPane` 里那份——父级的 `imePadding()` 不会消费 inset，两处都留会 pad 两次，把按键栏顶出可视区。
+- **pi 侧**：`pi 无对应物`（pi 是 TUI，没有 IME 概念）。这是 App 自己的决定。
+- **未验证**：无本地 Gradle/模拟器，只有类型检查；键盘弹起时的实际位移必须在真机上看（列入 `docs/device-verification.md`）。
+
+### M3. 发送后约 1 s 内用户气泡是**空的**（观察，未定位，不作为已解决）
+
+t=8 s 帧：气泡已存在、只有时间戳 `22:04`、没有文字；t=9 s 起同一气泡显示「。哈哈哈」。`echoUserPrompt` 是**带着文本一次发布**的（`PiEngineSession.echoUserPrompt` → `transcript.onUserPrompt(text, images)`），所以不是"先发空行再补文本"的代码路径；更像 pi 冷启动把 CPU 占满期间的一次绘制滞后。**没有复现、没有定位**。修完 M1 之后 pi 的启动落在「启动中」阶段，观察它是否还在。
+
+顺带排除一条假线索：气泡时间戳 `22:04` 与状态栏 `10:04` 看似矛盾，其实是状态栏用 12 小时制（10:04 PM = 22:04），不是时区 bug。
+
+### M4. 追查结果（全链路，`docs/startup-latency.md`）——M1 的「为什么」
+
+一位子代理按"从代码全链路 + 本地实测"把这段延迟拆开了，结论与我最初的 proot 猜想**不同**，也比它具体：
+
+- **`PI_TIMING` 的 TOTAL 不是启动的主要成本。** `core/timings.ts:16-38`：`time()` 第一次调用才惰性建命名空间，`lastTime = Date.now()`，所以 TOTAL 从 `main()` 第一行才开始算——**node 启动和整个静态 ESM 模块图一秒都不在里面**。实测 `main TOTAL 2.9–3.4 s`，而同一次运行到「能响应命令」是 29–41 s。
+- **真正的成本是 node 的模块加载器在 proot 下发出的 syscall。** 实测整进程墙钟的 **68.6–72.5%** 落在 `internalModuleStat`/`lstat`/`open`/`stat`/`read`/`fstat`/`close` 上，另 **22–24%** 是 V8 编译源码。启动时一共 **969 次模块加载 / 466 个 specifier / 316–380 个脚本**；在本容器里这不难理解：`node -e 1` 只要 0.15 s（syscall 极少），而 `node dist/cli.js --version` 要 **19–35 s**（user 约 7 s、sys 约 3 s，其余在等），因为 proot 每条 syscall 都要 ptrace 停一次进程。
+- **jiti/Babel 的假设被量化证伪**：9 个 TS 文件全部 Babel 转译合计只有 **75–85 ms CPU**，jiti 自身加载 269–378 ms，占整进程 **1.1–2.0%**。
+- **所以"App 造成的那部分"不大，但确实存在**（同一台机器、同一份工作，三次取样）：
+  - pi 不带扩展：29.2 / 34.9 / 35.6 s；
+  - `.js` 预编译扩展：30.0 / 34.6 / 35.1 s；
+  - **App 原样 TS 扩展：40.6 / 41.0 / 80.7 s** → 预编译省 **6.4 s（中位）/ 10.5 s（最小）**；
+  - 另外 `bash -lc` 的登录 profile ≈1.5 s、`RuntimeSelfCheck` 每次启动白跑一个 guest 进程 ≈0.3–3 s。
+- **测量窗口被污染，已如实标注**：我（父 agent）当时正在同一容器里并发跑对照实验，内存也吃紧，同一份工作的墙钟能漂 25–55 倍。子代理的做法是只用**同一次运行内部的占比**与**与墙钟无关的结构性计数**，并明确写出"哪些暂时无法归因"。**那部分我不当成已解决。**
+
+**因此 M1 的修法（不再把进程存在当成就绪、把等待显示出来）仍然是对的那一半；另一半——把等待本身缩短——App 侧只剩四条杠杆：预编译扩展、不要 `-lc`、`RuntimeSelfCheck` 只在 revision 变化时跑、让首次启动也能吃到 `NODE_COMPILE_CACHE`。**其中编译缓存本轮已落地；其余三条**本轮没有做**（预编译需要改资产树 + `PiPackageModel` 的 SHIPPED 清单 + 构建步骤，而我自己那次对照实验没能复现出收益——两边的差异是"量 PI_TIMING 的 TOTAL"与"量整进程到可服务"，前者测不到 pre-main 段。要用设备数据定，判据是 `设置 → 运行时与诊断 → 引擎启动耗时`）。
+
+### M5. 那 ~1 秒的空气泡（M3）与"滴答"无关，但同一原因可解释
+
+M3 记的"发送后约 1 秒内用户气泡是空的"仍未定位。它出现在 pi 冷启动把 CPU 占满的那段时间里，最合理的解释仍是"一次绘制滞后"，但在拿到设备侧的帧时间之前**不作为结论**。
+
+### M6. 真 key 端到端实测：pi 自己就要 ~14 秒（2026-09-12，本轮最终数字）
+
+用户提供 DeepSeek key 后，我在本容器（**同一台手机、同一个 proot**）用 pi 0.85.1 真跑了一轮对话，事件逐条打时间戳。方法：解析 `--mode rpc` 的 stdout JSONL，记录 `response(prompt)` / `agent_start` / 第一条 assistant delta / `agent_end`；prompt 在进程创建后 13–30 ms 内就写进 stdin（与 App 完全一样）。
+
+一次典型结果（`--model deepseek/deepseek-v4-flash`）：
+
+```
+[    13 ms] prompt 写入 pi 的 stdin
+[ 17420 ms] response(prompt) success=true   ← pi 开始读 stdin（引擎可用）
+[ 17421 ms] agent_start                     ← 模型这一轮开始
+[ 21382 ms] first assistant delta           ← 屏幕上开始出字
+[ 21419 ms] agent_settled                   ← 回复完成
+```
+
+**模型自己只花约 4 秒；前面 17.4 秒全是引擎启动。**
+
+随后在同一环境、空闲状态下做了对照（每次都是"prompt 写入 → pi 回应 prompt"）：
+
+| 变体 | 用时 |
+|---|---|
+| **不带任何扩展** | **13.9 s** |
+| 旧扩展（`session_start` 里 `await` HTTP，git HEAD） | 16.1 / 14.3 s |
+| 新扩展（不阻塞，本工作树） | 14.4 / 14.2 s |
+| TS 扩展 | 18.7 / 17.6 s |
+| **预编译成 `.js` 的扩展** | **17.7 / 18.7 s**（与 TS 无差别） |
+| 冷 `NODE_COMPILE_CACHE` | 20.8 s |
+| 热 `NODE_COMPILE_CACHE`（第 2、3 次） | 20.7 / 19.1 s |
+
+**由此撤回两条被污染测量带出来的结论**（都写在这里，免得再被引用）：
+
+1. **"扩展预编译成 `.js` 能省 6.4–10.5 s"——不可复现。** TS 与 JS 两组在真 key 下无差别。相应地，M4 里那张表的"App：未预编译的 TS 扩展 ≈16%"要按本表读作 **≈1–2 s（且只在桥不可达时）**。
+2. **"`NODE_COMPILE_CACHE` 把启动从 2.6 s 压到 0.95 s"——不可复现。** 那个 2.6/0.95 s 是 `PI_TIMING` 的 TOTAL，而 TOTAL 不含 pre-main 段（M4 第 1 条）。按"到可服务"量：冷 20.8 / 热 20.7 / 再热 19.1，无差别。**该环境变量已从 `PiEngineHost` 撤回**，只留一条注释说明"试过、没用、别再试"。
+
+**仍然成立的**：
+
+- **本机同一份工作的墙钟会漂 25–55 倍**（空闲 13.9 s ↔ 压测期 80.7 s），所以单次测量不能当结论；上表每个数字都配了同批次对照。
+- **`session_start` 阻塞确实在关键路径上**：`rpc-mode.ts:382` 的 `await rebindSession()`（含 `bindExtensions`）先跑，`attachJsonlLineReader` 在 `:810` 才挂上；所以扩展在 `session_start` 里 `await` 一个带 5 s/3 s 超时且重试的 loopback HTTP，最坏会把"能读 stdin"推迟十几秒。**本工作树已把它改成 fire-and-forget**（`pi-android-permission-gate.ts`、`pi-android-bridge/index.ts`），上表 OLD 16.1/14.3 ↔ NEW 14.4/14.2 就是它的量级：**这里是 0–2 s，因为本机 3175 端口没人监听、连接被立刻拒绝；桥"在监听但迟迟不回"时上限仍是那 16 s。**
+- **真正的大头是 pi 自己的启动图**：969 次模块加载 / 466 个 specifier / 316–380 个脚本，在本容器里耗时 13.9–18.7 s（空闲），与 App 的扩展基本无关。**唯一能显著动它的是让 pi 少加载文件**：试过用 esbuild 把 `dist/cli.js` 打成单文件（12.5 MB，3.8 s 打完）——**带 `require` banner 的 ESM 产物能起，但会在 `node:fs:484` 挂掉**，因为 pi 会按包目录相对路径读自己的运行时资源文件。**这不是即插即用，本轮没有采用**；要做就得连资源一起处理，并且要有 RPC 冒烟测试兜底。
+- **App 侧本轮真正修好的是"说谎"那一半**：就绪判据 + 「启动中」 + 让等待可见，以及新增的「引擎启动耗时」事实行（`app.runtime.engineStartup`，由 `PiEngineSession.probeServing` 实测）。下一次设备复现时，那一行就是"到底多少秒、在哪一段"的答案。

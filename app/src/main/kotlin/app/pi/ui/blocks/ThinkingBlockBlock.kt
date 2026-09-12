@@ -16,6 +16,7 @@ import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.pi.rpc.ThinkingBlock
+import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
 import app.pi.ui.theme.PiThinkingLevel
 
@@ -45,37 +46,44 @@ fun ThinkingBlockBlock(
     }
 
     BlockColumn(modifier) {
-        ToggleRow(expanded = expanded, onToggle = { expanded = !expanded }) {
-            AccentStripe(pen, 32.dp)
-            Spacer(Modifier.width(10.dp))
-            Text(
-                text = headline,
-                style = MaterialTheme.typography.bodyMedium,
-                // F13: this is a body role, so it takes the 4.5:1 variant
-                // (`thinkingText` and `muted` are the same #808080 in pi's dark
-                // theme; 4.47:1 on the canvas is under the floor).
-                color = palette.thinkingBodyOnCanvas,
-            )
-            if (levelLabel != null) {
-                Spacer(Modifier.width(8.dp))
+        // F28: the whole block is the toggle target, which is what pi does —
+        // `components/assistant-message.ts:160-166` wraps the entire thinking
+        // component in the `MouseRegion` that flips its visibility.
+        ToggleContent(expanded = expanded, onToggle = { expanded = !expanded }) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                // §7.4's thinking-block row is "收起：一行 32dp", so the stripe is
+                // that row's height — the spec's value, now named.
+                AccentStripe(pen, PiSpacing.statusRow)
+                Spacer(Modifier.width(PiSpacing.inner))
                 Text(
-                    text = levelLabel,
-                    style = PiTheme.text.meta,
-                    color = pen,
+                    text = headline,
+                    style = MaterialTheme.typography.bodyMedium,
+                    // F13: this is a body role, so it takes the 4.5:1 variant
+                    // (`thinkingText` and `muted` are the same #808080 in pi's dark
+                    // theme; 4.47:1 on the canvas is under the floor).
+                    color = palette.thinkingBodyOnCanvas,
+                )
+                if (levelLabel != null) {
+                    Spacer(Modifier.width(PiSpacing.inline))
+                    Text(
+                        text = levelLabel,
+                        style = PiTheme.text.meta,
+                        color = pen,
+                    )
+                }
+                Spacer(Modifier.weight(1f))
+                ExpandLabel(expanded)
+            }
+            if (expanded) {
+                Text(
+                    text = item.text.ifEmpty { "（无思考内容）" },
+                    style = MaterialTheme.typography.bodyLarge.copy(
+                        fontStyle = FontStyle.Italic,
+                        lineHeight = 22.sp,
+                    ),
+                    color = palette.thinkingBodyOnCanvas,
                 )
             }
-            Spacer(Modifier.weight(1f))
-            ExpandLabel(expanded)
-        }
-        if (expanded) {
-            Text(
-                text = item.text.ifEmpty { "（无思考内容）" },
-                style = MaterialTheme.typography.bodyLarge.copy(
-                    fontStyle = FontStyle.Italic,
-                    lineHeight = 22.sp,
-                ),
-                color = palette.thinkingBodyOnCanvas,
-            )
         }
     }
 }

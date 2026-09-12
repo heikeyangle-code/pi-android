@@ -92,20 +92,21 @@ alone), so the verdict now covers **129 / 129 rows**:
 
 | Verdict | Rows | Meaning |
 |---|---|---|
-| 已实现 (implemented) | 50 | the user-visible outcome exists; graded **N/A** |
-| 仍未做 (not done) | 54 | nothing, or only a fallback; graded **MISSING**/**DEGRADED** |
+| 已实现 (implemented) | 51 | the user-visible outcome exists; graded **N/A** |
+| 仍未做 (not done) | 53 | nothing, or only a fallback; graded **MISSING**/**DEGRADED** |
 | 无用户可见职责 (nothing to show) | 25 | pi-side surface with no app-side obligation (extension-only event, extension-side call, or reachable only by editing the guest) |
 | 无法判断 (cannot determine) | 0 | — |
 
 
-pi-side counterpart for the 28 still-open rows: **27 are `pi 有但我们够不着`**
-(a pi surface the app cannot reach over `--mode rpc`) and **1 is app-side** —
-`sendUserMessage`'s live render, where the message *is* on the wire and
-`MessageEnd` simply has no `role:"user"` branch (the one row in this set that is a
-plain app gap, not a wire limit). **0 are `pi 无对应物（App 的决定）`**. That is the
-qualitative result: nothing in this set is "we chose not to"; 27 of 28 are
-wire-surface limits, most with a `file:line` in `rpc-mode.ts` showing the no-op or
-the missing event, and the 28th is a two-line app fix.
+pi-side counterpart for the rows that are still open: **all of them are
+`pi 有但我们够不着`** (a pi surface the app cannot reach over `--mode rpc`) and
+**none is `pi 无对应物（App 的决定）`**. The one exception in the first edition of
+this section — `sendUserMessage`'s live render, where the message *is* on the wire
+and the app simply had no `role: "user"` branch — **has since been implemented**
+(`Transcript.onUserMessageEnd`, plus the echo dedup in `onUserPrompt`), which is
+why the total below is 27 rather than 28. That is the qualitative result: nothing
+in this set is "we chose not to"; every open row is a wire-surface limit, most
+with a `file:line` in `rpc-mode.ts` showing the no-op or the missing event.
 
 #### "Said not done, actually done" — rows the old ledger got wrong
 
@@ -123,9 +124,9 @@ Grouped by symbol, because that is how they were verified:
 | Packages | `PiPackageService.install/remove/list`, `PiPackagesScreen`, `PiPackagesHost`, `PiListOutput`, `PiPackageService.TrustPass` |
 | bash | `PiSessionViewModel.runBash`, `BashPanel` (drives the `bash` command, i.e. the `user_bash` path) |
 
-#### 真正 `pi 有、我们够不着` 的 28 条
+#### 真正 `pi 有、我们够不着` 的 27 条
 
-All are `--mode rpc` no-ops or absent wire surfaces, each traceable to pi source:
+All are `--mode rpc` no-ops or absent wire surfaces, each traceable to pi source.
 
 | pi surface | Where pi makes it unreachable |
 |---|---|
@@ -143,7 +144,6 @@ All are `--mode rpc` no-ops or absent wire surfaces, each traceable to pi source
 | `setLabel` | no RPC command; the display path exists via `get_tree` |
 | `ctx.getSystemPrompt` | no RPC command |
 | `ctx.navigateTree` / `session_before_tree` / `session_tree` | no `navigate_tree` command |
-| `sendUserMessage` (live render) | app-side: `MessageEnd` has no `role:"user"` branch |
 | Extension load errors | `loader.ts:634-637` collects them; no output or wire channel exists |
 
 `registerMessageRenderer` / `registerEntryRenderer` moved from "MISSING" to
@@ -151,14 +151,18 @@ All are `--mode rpc` no-ops or absent wire surfaces, each traceable to pi source
 (`interactive-mode.ts:3558`, `:3597`), but the message/entry now appears through an
 app-side fallback card, so the user is no longer blind to it.
 
-**No row in this document concerns glass/blur/decorative motion/glow**, so the
-"用户已决定不做" rule applies to nothing here; the re-check asserts this
-programmatically (the apply script refuses a row containing that vocabulary).
+**No row in this document concerns glass/blur/decorative motion/glow.** The
+decorative items live in `pi-android-ui-spec.md` §11 ("视觉特效清单", from line
+869) and are marked `用户已决定不做` there; that section states its "做" list
+"不构成待办" and is kept only as a record. Nothing here re-opens them, and the
+re-check asserts its own claim programmatically (the apply script refuses a row
+containing that vocabulary).
 
 One row outside the 68 also changed: `turn_start`/`turn_end` went
 `DEGRADED -> N/A` because the first edition's §5.4 was itself wrong (§5.4
-corrected below). Net doc-wide totals after both passes: **1 BLOCKING /
-26 DEGRADED / 28 MISSING / 74 N/A** (129 rows).
+corrected below). Net doc-wide totals: **1 BLOCKING / 26 DEGRADED / 27 MISSING /
+75 N/A** (129 rows) — the 27th `MISSING` was `sendUserMessage`'s live render,
+implemented after this pass.
 
 Grades, used strictly:
 
@@ -182,8 +186,8 @@ numbers — every row was re-read against the app tree on 2026-09-10 (see §0.2)
 |---|---|---|---|---|
 | BLOCKING | 1 | 1 | `ctx.ui.editor()` with no client answer | §1.2 |
 | DEGRADED | 26 | 18 | works, differently, or only a fallback is reachable | §1.1 4 · §1.2 4 · §1.3 4 · §1.4 8 · §1.5 6 |
-| MISSING | 28 | 68 | invisible to the user | §1.1 5 · §1.2 16 · §1.3 2 · §1.4 2 · §1.5 3 |
-| N/A | 74 | 42 | no gap: implemented, or no app-side obligation | §1.1 14 · §1.2 6 · §1.3 19 · §1.4 22 · §1.5 13 |
+| MISSING | 27 | 68 | invisible to the user | §1.1 4 · §1.2 16 · §1.3 2 · §1.4 2 · §1.5 3 |
+| N/A | 75 | 42 | no gap: implemented, or no app-side obligation | §1.1 15 · §1.2 6 · §1.3 19 · §1.4 22 · §1.5 13 |
 
 All 129 rows were re-read by symbol (§0.2), not just the 68 `MISSING` ones. The
 first edition's numbers were `1 / 18 / 68 / 42`.
@@ -231,7 +235,7 @@ grades below are consequences of that, not of RPC.
 | `registerMarkdownTransformer(fn)` | Pure `string → string` transform applied to user/assistant markdown (`types.ts:1355`) | **Never called**: the only consumer is interactive mode (`interactive-mode.ts:2024-2025`, `3235`, `3645`) | Nothing: no transformer seam exists app-side (`grep Transformer` in `app/` hits only the unrelated image transformer in `PiMarkdown.kt:107-136`). | **MISSING** — 仍未做. pi 有但我们够不着 `interactive-mode.ts:2024-2025`（唯一消费者）. Note: the hook is pure `string -> string`, so if pi ever exposed it, this is cheap. | M |
 | `registerEntryRenderer(customType, renderer)` | TUI renders a `CustomEntry` (`types.ts:1358`; `interactive-mode.ts:3558`) | **Never called.** The entry data does reach the wire via `entry_appended` (`agent-session.ts:2616-2621`) | The extension's renderer cannot run; the entry is shown by the app's generic card: `PiEvent.EntryAppended -> onEntry -> onCustomEntry` (「扩展状态：<customType>」), `Transcript.kt:869`, `:1876`. | **DEGRADED** — 仍未做（渲染器本体够不着；条目以通用卡片兜底显示）. pi 有但我们够不着 `interactive-mode.ts:3558`. | M |
 | `sendMessage(msg, opts)` | Appends a custom message (in context, optionally displayed) with `triggerTurn`/`deliverAs` (`types.ts:1365-1368`) | Works: `_appendCustomMessage` emits `message_start`+`message_end` with `role:"custom"`, `customType`, `content`, `display`, `details` (`agent-session.ts:1537-1547`) | Implemented: `MessageEnd` custom branch -> `onHookMessage` -> `HookMessageBlock`, and history replay via `onCustomEntry`. `display:false` is honoured. | **N/A** — 已实现 `Transcript` custom branch / `onHookMessage` / `HookMessageBlock`. pi 有 `agent-session.ts:1537-1547`. | M |
-| `sendUserMessage(content, opts)` | Sends a user message and always triggers a turn; `source:"extension"` (`types.ts:1375-1378`; `agent-session.ts:1569-1605`) | Works: arrives as a `user` message event | Still not rendered live: `MessageEnd` handles `assistant` and `custom` only, so an incoming `role:"user"` message falls to `finished`; history replay does render it (`projectUser`). | **MISSING** — 仍未做（App 侧缺口，唯一一条不是线上限制的：在 `Transcript.onEvent` 的 `MessageEnd` 分支加 `role == "user"` 即可；数据已在线上）. pi 有 `agent-session.ts:1569-1605`. | XS |
+| `sendUserMessage(content, opts)` | Sends a user message and always triggers a turn; `source:"extension"` (`types.ts:1375-1378`; `agent-session.ts:1569-1605`) | Works: arrives as a `user` message event (`packages/agent/src/agent-loop.ts:112-115`) | Implemented: the `role == "user"` branch of `Transcript.onEvent` projects the event through `projectUser`, so `.images` are preserved and a live skill block splits into a card; the optimistic echo (`onUserPrompt`) is matched and consumed rather than duplicated (`onUserMessageEnd`), and an echo pi never confirmed is dropped on a failed `prompt`/`steer`/`follow_up` response or on `agent_settled`. | **N/A** — 已实现 `Transcript.onUserMessageEnd` / `replaceEchoWithProjection` / `PendingUserEcho`. pi 有 `agent-session.ts:1569-1605`. | — |
 | `appendEntry(customType, data)` | Persists a `CustomEntry` outside LLM context; the documented way to keep extension state across restarts (`types.ts:1381`; `docs/extensions.md:1477-1493`) | Works: `entry_appended` carries the **full entry** (`agent-session.ts:2616-2621`) and `get_entries` returns it | Implemented twice over: live `PiEvent.EntryAppended -> onEntry -> onCustomEntry`, and on attach/reconnect `PiEngineSession` builds a fresh reducer with `seedFromHistory(entries)`. | **N/A** — 已实现 `Transcript.onCustomEntry` + `PiEngineSession.seedHistory`. pi 有 `agent-session.ts:2616-2621`. | M |
 | `setSessionName(name)` / `getSessionName()` | Session display name (`types.ts:1388-1391`) | `set_session_name` command, `session_info_changed` event, and `get_state.sessionName` (`rpc-mode.ts:661-668`, `agent-session.ts:159`) | Implemented: `PiEngineApi.setSessionName` + `PiSessionViewModel.renameSession` + `PiEvent.SessionInfoChanged` handling (`PiSessionViewModel.kt:1040`, `:2048`). | **N/A** — 已实现 `PiEngineApi.setSessionName` / `renameSession` / `SessionInfoChanged`. pi 有 `types.ts:1388-1391`. | S |
 | `setLabel(entryId, label)` | Bookmarks an entry (`types.ts:1394`) | No RPC command and no event; only the session tree carries labels and the app has no tree UI (`docs/rpc.md:749-772`) | Read-only: `SessionTreeScreen` displays pi-resolved labels and filters on them (`TreeFilter.LabeledOnly`, `row.node.label`), but nothing sets a label. | **DEGRADED** — 仍未做（显示与过滤已实现；写入无通道）. pi 有但我们够不着 `types.ts:1394` — `rpc-types.ts:20-74` has no label command. | M |
@@ -1067,14 +1071,18 @@ consumed by `PiRoot`'s destination state (`ui/PiRoot.kt:37`).
 
 **6.12 Implement trust end-to-end.** `STATUS: done except the boot path` —
 `TrustRepository` (read/write/repair/publish), `ProjectTrust` (pi's decision
-order), `TrustFile`, `PiProjectTrustPrompt` and the `PiPackagesHost` wiring exist;
-nothing consults them before spawning pi, and `--approve` is not passed. Write/read `<files>/pi/.pi/agent/trust.json`
-(canonical guest paths, `true|false|null`), implement the five options, and
-replace the placeholder settings rows. API:
-`app/src/main/kotlin/app/pi/runtime/PiTrustStore.kt` with
-`fun get(cwd: String): Boolean?`, `fun set(cwd: String, trusted: Boolean)`,
-`fun trustParent(cwd: String)`, using `PiPaths.agentDir` and the format in
-`trust-manager.ts:125-135`. Do not add a second format.
+order), `TrustFile`, `PiProjectTrustPrompt` and the `PiPackagesHost` wiring
+already exist; what is left is the *boot* half: nothing consults them before
+spawning pi, and `--approve` is not passed. Concretely, the remaining work is
+(a) seed or read `<files>/pi/.pi/agent/trust.json` before `PiEngineHost` builds
+the guest argv (canonical guest paths as keys, `true|false|null` values, the
+format in `core/trust-manager.ts:125-135` — do not invent a second format), and
+(b) reach the same decision from the engine path, not only from the packages
+screen. The reusable pieces already in the tree are
+`packages/TrustRepository.kt` (`read`, `decisionFor`, `apply`, `setMany`,
+`repairInvalidStore`, `publishIntoRootfs`, `canonicalizeGuestPath`,
+`hasTrustRequiringResources`), `packages/ProjectTrust.kt` (`resolve`, `options`)
+and `packages/TrustFile.kt`; no new store is needed.
 
 ### P3 — impossible without switching to the in-process SDK, and even then only with a component bridge
 

@@ -20,6 +20,10 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
@@ -120,6 +124,13 @@ fun PiPackagesScreen(
     onScopeChange: (PiPackageScope) -> Unit,
     onInstall: () -> Unit,
     onRemove: (PiPackageEntry) -> Unit,
+    /**
+     * Edit one of the four glob arrays of a package's object form. pi stores them
+     * in `settings.json` (`core/settings-manager.ts:95-104`) and reads them when
+     * it starts, so the host writes them and reports that a restart is needed.
+     */
+    onFilterAdd: (PiPackageEntry, String, String) -> Unit,
+    onFilterRemove: (PiPackageEntry, String, String) -> Unit,
     onRefresh: () -> Unit,
     onRestartClick: () -> Unit,
     onRestartConfirm: () -> Unit,
@@ -191,7 +202,7 @@ fun PiPackagesScreen(
             }
         }
         items(state.entries, key = { "${it.scope.name}:${it.source.raw}" }) { entry ->
-            PackageRow(entry, state.busy, onRemove)
+            PackageRow(entry, state.busy, onRemove, onFilterAdd, onFilterRemove)
         }
 
         if (state.listUnparsed && state.listRaw.isNotBlank()) {
@@ -590,6 +601,8 @@ private fun PackageRow(
     entry: PiPackageEntry,
     busy: Boolean,
     onRemove: (PiPackageEntry) -> Unit,
+    onFilterAdd: (PiPackageEntry, String, String) -> Unit,
+    onFilterRemove: (PiPackageEntry, String, String) -> Unit,
 ) {
     val palette = PiTheme.palette
     Surface(color = palette.infoBg, shape = PiShapes.cardInner) {
@@ -652,6 +665,7 @@ private fun PackageRow(
                     color = palette.warning,
                 )
             }
+            FilterEditor(entry, busy, onFilterAdd, onFilterRemove)
             entry.installedPath?.let { path ->
                 Spacer(Modifier.height(2.dp))
                 Text(path, style = MaterialTheme.typography.labelSmall, color = palette.dim)
@@ -669,6 +683,111 @@ private fun PackageRow(
             }
         }
     }
+}
+
+/**
+ * The four glob arrays of a package's object form.
+ *
+ * pi stores them in `settings.json` (`core/settings-manager.ts:95-104`) and reads
+ * them when the engine starts; the leading `+`/`-`/`!` decides whether a pattern
+ * force-includes, force-excludes or excludes (`core/package-manager.ts:709-716`).
+ * The app edits the strings verbatim, so a pattern written in pi's own TUI stays
+ * visible and removable rather than being re-derived from a checkbox.
+ *
+ * Shown read-only until 编辑 is tapped: a package that pi filtered must not look
+ * plain here, but four text fields on every package would drown the common case
+ * (no filters at all).
+ */
+@Composable
+private fun FilterEditor(
+    entry: PiPackageEntry,
+    busy: Boolean,
+    onAdd: (PiPackageEntry, String, String) -> Unit,
+    onRemove: (PiPackageEntry, String, String) -> Unit,
+) {
+    val palette = PiTheme.palette
+    var editing by remember(entry.source.raw) { mutableStateOf(false) }
+
+    Spacer(Modifier.height(6.dp))
+    Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+        Text("过滤规则", style = MaterialTheme.typography.labelSmall, color = palette.muted)
+        Spacer(Modifier.weight(1f))
+        TextButton(onClick = { editing = !editing }, enabled = !busy) {
+            Text(if (editing) "完成" else "编辑", color = palette.accent)
+        }
+    }
+
+    if (entry.filters.isEmpty() && !editing) {
+        Text(
+            text = "没有过滤规则：这个资源包里的资源全部加载。",
+            style = MaterialTheme.typography.labelSmall,
+            color = palette.dim,
+        )
+        return
+    }
+
+    PiPackageFilters.RESOURCE_TYPES.forEach { type ->
+        val patterns = entry.filters[type].orEmpty()
+        if (patterns.isEmpty() && !editing) return@forEach
+        Text(
+            text = filterTypeLabel(type),
+            style = MaterialTheme.typography.labelSmall,
+            color = palette.muted,
+        )
+        patterns.forEach { pattern ->
+            Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                Text(
+                    text = pattern,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = palette.text,
+                    modifier = Modifier.weight(1f),
+                )
+                if (editing) {
+                    TextButton(onClick = { onRemove(entry, type, pattern) }, enabled = !busy) {
+                        Text("删除", color = palette.error)
+                    }
+                }
+            }
+        }
+        if (editing) {
+            FilterAddRow(busy) { pattern -> onAdd(entry, type, pattern) }
+        }
+    }
+}
+
+/** One add field per resource type, so the target array is never ambiguous. */
+@Composable
+private fun FilterAddRow(busy: Boolean, onAdd: (String) -> Unit) {
+    var draft by remember { mutableStateOf("") }
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+    ) {
+        OutlinedTextField(
+            value = draft,
+            onValueChange = { draft = it },
+            singleLine = true,
+            modifier = Modifier.weight(1f),
+            placeholder = { Text("如 skills/legacy* 或 +src/ext/**") },
+        )
+        TextButton(
+            onClick = {
+                onAdd(draft)
+                draft = ""
+            },
+            enabled = !busy && draft.isNotBlank(),
+        ) { Text("添加") }
+    }
+}
+
+/** pi's own resource names (`config-selector.ts:31-36`), labelled the way the settings rows name them. */
+private fun filterTypeLabel(type: String): String = when (type) {
+    "extensions" -> "扩展"
+    "skills" -> "技能"
+    "prompts" -> "提示模板"
+    "themes" -> "主题"
+    else -> type
 }
 
 // ------------------------------------------------------------------- raw cards

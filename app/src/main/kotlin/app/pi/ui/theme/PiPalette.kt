@@ -155,13 +155,6 @@ data class PiPalette(
     val metaOnCanvas: Color = PiContrast.ensure(muted, pageBg, 3.0)
 
     /**
-     * §9 meta floor (3:1) for `dim` painted on the user-message bubble — the
-     * timestamp. pi's `dim` `#666666` on `#343541` measures **2.11:1**, the
-     * worst pair in the transcript.
-     */
-    val metaOnUserMessage: Color = PiContrast.ensure(dim, userMessageBg, 3.0)
-
-    /**
      * §9 meta floor (3:1) for `dim` painted on a card surface — a branch id, a
      * model-change row. pi's `dim` on `cardBg` measures 2.89:1.
      */

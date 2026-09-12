@@ -153,10 +153,11 @@
 | 无法判断 | **0** | — |
 
 随后补核其余 **61 条**（第一版仅由 pi 源码推导、未回读 App 的行）：
-**129/129 行现在都有判决** —— 已实现 50 · 仍未做 54 · 无用户可见职责 25 · 无法判断 0。
+**129/129 行现在都有判决** —— 已实现 51 · 仍未做 53 · 无用户可见职责 25 · 无法判断 0。
+（原 28 条里那唯一一条 App 侧缺口 `sendUserMessage` 的 live 渲染**已实现**：`Transcript.onUserMessageEnd` + `onUserPrompt` 的回显去重，`rpc/**`，uncommitted。）
 
 `docs/extension-compatibility.md` 的 grade 合计因此从 `1/18/68/42` 变为
-**`1 BLOCKING / 26 DEGRADED / 28 MISSING / 74 N/A`**（129 行不变）。
+**`1 BLOCKING / 26 DEGRADED / 27 MISSING / 75 N/A`**（129 行不变）。
 68 条的位移是 25→N/A、15→DEGRADED、28 不变；另有 1 条非 MISSING 行
 `turn_start` 因原 §5.4 结论本身错误而 DEGRADED→N/A。
 
@@ -174,13 +175,13 @@
 | 包管理 | `PiPackageService.install/remove/list`、`PiPackagesScreen`、`PiPackagesHost`、`PiListOutput`、`TrustPass` |
 | bash | `runBash`、`BashPanel`（走 `bash` 命令 = `user_bash` 路径） |
 
-**真正 `pi 有、我们够不着` 的 28 条**：全部是 `--mode rpc` 的 no-op 或线上根本没有的命令 →
+**真正 `pi 有、我们够不着` 的 27 条**：全部是 `--mode rpc` 的 no-op 或线上根本没有的命令 →
 `setWorkingMessage/Visible/Indicator`、`setHiddenThinkingLabel`、`setFooter`、`setHeader`、`custom`、
 `getEditorText`、`addAutocompleteProvider`、`setEditorComponent`、`getAllThemes/getTheme/setTheme`、
 `getToolsExpanded/setToolsExpanded`、`onTerminalInput`（`rpc-mode.ts:163-311`）；
 `registerMarkdownTransformer`（只有 TUI 消费者）；`getActiveTools/getAllTools/setActiveTools`、
 `setLabel`、`getSystemPrompt`、`navigateTree`/`session_before_tree`/`session_tree`（RPC 无命令）；
-扩展加载错误（无输出通道）；扩展发出的 user 消息（App 侧 `MessageEnd` 无该分支）。
+扩展加载错误（无输出通道）。（原本第 28 条「扩展发出的 user 消息」已在 App 侧实现，见上。）
 **其中 0 条是 `pi 无对应物（App 的决定）`** —— 即这批不是"我们选择不做"，是线上没有。
 
 另：`docs/extension-compatibility.md` §5.4 原文说 "`turn_start` 带 `turnIndex`，App 记错了"，
@@ -206,8 +207,8 @@
 
 ## 7. 我认为**真正还欠的**前 5 项（按价值排序）
 
-1. ~~**§I11 的三个环境开关接上 UI**~~ **—— 已完成（复核于本轮）**：`app.runtime.offline` / `systemPrompt` / `cacheRetention` 三行 + `PiSessionViewModel.launchOptions()` + `boot(launch = …)`。这条曾是"唯一一条 pi 有、引擎已接、只差 UI"的真债，现在不是了。
-2. ~~**§I7 的 4 个运行时只读行接上供给方**~~ **—— 已完成（复核于本轮）**：`RuntimeFacts.runtimeOverrides()` 供值、`PiSettingsStack` 在 IO 线程读入，四个键不再显示注册表默认的假值。
+1. ~~**§I11 的三个环境开关接上 UI**~~ **—— 已完成（applied (uncommitted)）**：键 `app.runtime.offline` / `app.runtime.systemPrompt` / `app.runtime.cacheRetention`（`PiSettingsRegistry.kt` 的「进程」section，`effective = EffectiveKind.RestartEngine`）+ `PiSessionViewModel.launchOptions()` 从 store 读值 + `boot(launch = …)` / `restartEngine(…, launch = …)` + `PiEngineHost.restart(launch = …)`；另加「重启引擎」动作行（`app.runtime.restartEngine`，由 `PiSettingsStack.hostActions` 接住）。这条曾是"唯一一条 pi 有、引擎已接、只差 UI"的真债，现在不是了。
+2. ~~**§I7 的 4 个运行时只读行接上供给方**~~ **—— 已完成（applied (uncommitted)）**：`RuntimeFacts`（`piVersion` / `nodeVersion` / `runtimeUsage` / `wakeLockHeld`）→ `runtimeOverrides()` → `PiSettingsStack` 在 IO 线程读入并作为 `valueOverrides` 传给行与搜索结果；四个键的注册表默认值改成中性的「未读取」，**没有一条再显示假值**。唤醒锁读的是 `PiEngineService.isWakeLockHeld()`（锁自己的 `isHeld`，不是"服务在不在"的推断；6 小时上限这一残余不一致写在行的值里）。
 3. **RR F10 的 UI 半边**（实时 token/上下文指示）——pi 的 TUI 有（`components/footer.ts:107-111`），RPC 数据也已在 `lastUsage` 里；只差一个组件，是"1:1"里用户每天看得见的那一项。
 4. **RR F13 + F14 的调色板可读性**（对比度 < 4.5:1 / 浅色 `muted`/`dim` 缺失）——pi 两个主题文件就有正确取值（`theme/light.json:29-30`、`dark.json:30-31`），属于"照抄即可 1:1"的低风险修复，但影响可读性（不是装饰）。
 5. ~~**RR F16 的 UI 半边**~~ —— **已完成**（复核于本轮）：`ui/blocks/ToolCallBlock.kt` 已读 `item.images` 并渲染 `ImageGridBlock`，工具返回的图片不再压成 `[image]`。原记载保留在此以便对照：rpc 早已把 `List<PiImage>` 保下来（`rpc/Events.kt` 的 `imageBlocks`），当时只差渲染接线。

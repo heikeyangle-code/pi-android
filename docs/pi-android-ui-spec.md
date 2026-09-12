@@ -484,6 +484,17 @@ data class DateSeparator(key, ts, label)
 >
 > **图片全屏查看器**：`pi` 的 TUI 显示不了图片（`PI_IMAGE_PROTOCOL=none` 是 App 对不可渲染能力的诚实声明），**pi 无对应物** → 按同一条规矩不做。
 
+> **本表已实现的部分（2026-09-12，随 `2dbe79f` 过 CI）——记下来是因为它曾经只在报告里**：`ui/blocks/BlockChrome.kt` 新增 `BlockAction`/`BlockActionMenu`，各块在自己的目标上挂动作。逐行对照：
+> - **用户消息** → 复制 · **编辑并从此分叉**（`UserMessageBlock` → `BlockRenderer` 转发 `onForkFromMessage` → `ChatScreen` → `PiSessionViewModel.forkFrom(entryId)`；pi 依据 `rpc-types.ts:62` 的 `fork`、`docs/sessions.md:31`）
+> - **助手消息** → 复制全部（`AssistantTextBlock`）
+> - **工具卡（bash）** → 复制命令 · 复制输出（`ToolCallBlock`；命令取 `args.command`/`file_path`/`path`/`pattern`，**取不到就不显示这一项**）
+> - **工具卡** → 点击展开/收起：早已存在（`app.tools.expand` 的 `defaultExpanded` + `ToggleRow`/`ExpandLabel`）
+> - **思考块** → 点击展开/收起：早已存在（`app.thinking.toggle`）
+> - **压缩卡** → 展开摘要全文：已由该块的展开承担
+> - **分支摘要** → 点击打开会话树（`onBranchClick`）
+> - **模型变更行** → 点击打开模型面板（`onModelClick`，属 F19 那批已接的回调）
+> - **任意文本长按** → **有意不做成卡片手势**：Android 上"选择"归系统的选择手柄与浮动条，卡片再叠一层长按会把两个手势打成竞态。本 App 的分工是**文字保留平台选择、卡片承载块级动作**（`BlockActionMenu` 不包裹可选文本）。**这是 App 的替代方案，不是 pi 的行为。**
+
 ### 4.9 对话页的空态与异常
 | 场景 | 呈现 |
 |---|---|

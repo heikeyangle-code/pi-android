@@ -125,7 +125,6 @@ fun PiSettingsStack(
     val context = LocalContext.current
     val runtimeFacts = remember(context) {
         RuntimeFacts(
-            context = context.applicationContext,
             paths = PiPaths(
                 filesDir = context.filesDir,
                 nativeLibDir = File(context.applicationInfo.nativeLibraryDir),

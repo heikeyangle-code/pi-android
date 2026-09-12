@@ -968,6 +968,22 @@ conclusion nobody can find (`known-gaps.md` §H8 is the rule):
 - **F34's row is right, and F16's is not stale either**: `ToolCallBlock` reads `item.images` and
   renders `ImageGridBlock`, so tool-returned pictures are painted rather than flattened to
   `[image]` — verified by reading the file after `2dbe79f`.
+- **F10 and F13/F14 have landed too** (the rendering agent, `applied (uncommitted)` at the time of
+  writing; recorded here because it was told to report rather than write docs):
+  - **F10** — `ui/components/PiCommon.kt`'s `PiStatusLine`, fed by `UiState.lastUsage` in
+    `PiSessionViewModel` plus a `refreshStats()` on `agent_settled`, placed under the app bar at
+    spec §4.1's 32 dp. pi's figures are `footer.ts:106-161` and **our numbers are the same numbers**:
+    `getSessionStats()` ends with `contextUsage: this.getContextUsage()` (`agent-session.ts:3407`),
+    which is the call the footer itself makes — so this is pi's data, not a re-derivation. Four of
+    pi's items are omitted on purpose (no data, and no guessing): `pwd (branch) • session`, `• xp`,
+    ` (sub)`, and the model/thinking pair already shown elsewhere. No ring, no animation, no glow.
+  - **F13/F14** — `ui/theme/PiContrast.kt` derives per-surface variants (`bodyOnTool`,
+    `contextOnTool`, `thinkingBodyOnCanvas`, `metaOnCanvas`, `metaOnCard`) that raise a text/background
+    pair to WCAG 4.5:1 **only where text is painted on that surface**, so an imported theme is not
+    rewritten and pi's own 56 tokens are untouched. Worst offenders: tool output `#808080` at
+    **3.37:1** → `#979797` at 4.56:1 (dark); light `dim` at **4.28:1** → 4.94:1, which is the
+    correction spec §2.1:98 asks for. The remaining `dim` uses (tool names, line numbers) stay at
+    3.69:1, above §9's 3:1 meta floor.
 
 Three of them turned out to be **already implemented** before the pass started (F1, F4, F5 - the
 behaviour agent's §11 work landed them and nothing updated §10), which is why the count moved by

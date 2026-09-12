@@ -665,6 +665,16 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
     private var runningCompactionIndex: Int? = null
 
     /**
+     * User rows the app drew optimistically ([onUserPrompt]) that pi has not yet
+     * confirmed with its own `message_end`.
+     *
+     * FIFO, matched by text first ([onUserMessageEnd]). It exists only so the
+     * optimistic row and pi's authoritative event do not both become bubbles;
+     * it is not a source of truth for anything the user sees.
+     */
+    private val pendingUserEchoes = ArrayDeque<PendingUserEcho>()
+
+    /**
      * Wall-clock of the last **published** update, per tool call id (F8).
      *
      * Per call rather than one shared stamp: pi executes the calls of a single
@@ -760,6 +770,86 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
     fun onUserPrompt(text: String, images: List<PiImage> = emptyList()): TranscriptChange {
         val ts = now()
         maybeDaySeparator(ts)
+        val before = items.size
+        val change = projectUser(text, images, ts) { prefix -> nextKey(prefix) }
+        // Remember the optimistic row(s) so pi's own `message_end` for this send is
+        // recognised as a confirmation instead of appended as a second bubble (see
+        // [onUserMessageEnd]). The position is kept as well as the text: a pasted
+        // skill block projects to a card, and a rewrite has to be able to take
+        // exactly those rows back out.
+        val count = items.size - before
+        if (count > 0) {
+            pendingUserEchoes.addLast(PendingUserEcho(text, before, count))
+        }
+        return change
+    }
+
+    /**
+     * Fold a `role: "user"` `message_end`.
+     *
+     * pi draws the user's row from this event, not from the editor buffer: on
+     * `message_start` with `role === "user"` its TUI calls
+     * `addMessageToChat(event.message)` (`modes/interactive/interactive-mode.ts:3222-3225`),
+     * and the event is whatever pi actually queued — the app's own prompt, an
+     * extension's `pi.sendUserMessage()` (`core/agent-session.ts:1569-1605`), or a
+     * `steer`/`follow_up` message delivered at a turn boundary
+     * (`core/agent-session.ts:1444-1474` -> `packages/agent/src/agent-loop.ts:200-208`).
+     * The app additionally echoes locally for instant feedback (F1), so this
+     * branch has to tell the two apart: a matching pending echo is a confirmation
+     * and must not create a row, anything else is a message the app never showed
+     * and is projected through the same [projectUser] path history replay uses.
+     *
+     * Text is matched before position because a rejected prompt (no model, no
+     * auth) produces no event at all and would otherwise leave a stale echo at
+     * the head of the queue, swallowing the next unrelated message.
+     */
+    private fun onUserMessageEnd(
+        text: String,
+        images: List<PiImage>,
+        fallback: TranscriptChange,
+    ): TranscriptChange {
+        val matching = pendingUserEchoes.indexOfFirst { it.text == text }
+        if (matching >= 0) {
+            pendingUserEchoes.removeAt(matching)
+            return fallback
+        }
+        if (pendingUserEchoes.isNotEmpty()) {
+            // Same send, different text: pi rewrote it on the way in
+            // (`_expandSkillCommand` / `expandPromptTemplate`,
+            // `core/agent-session.ts:1211-1216`, or an `input` handler's
+            // `transform`). pi's own row shows this event, skill split included
+            // (`modes/interactive/interactive-mode.ts:3631-3650`), so the optimistic
+            // rows are replaced by the same projection history replay uses — never
+            // appended, which would render one send as two bubbles.
+            return replaceEchoWithProjection(pendingUserEchoes.removeFirst(), text, images)
+        }
+        if (text.isEmpty() && images.isEmpty()) return fallback
+        val ts = now()
+        maybeDaySeparator(ts)
+        return projectUser(text, images, ts) { prefix -> nextKey(prefix) }
+    }
+
+    /**
+     * Drop the optimistic rows recorded for [echo] and append pi's own projection
+     * of the message it actually queued.
+     *
+     * Only the tail is exchanged. `toolIndexByCallId` and `diffIndexByCallId` key
+     * rows by position, so removing a row in the middle would make a later
+     * `tool_execution_update`/`end` mutate the row above the one it means. A
+     * queued `steer` whose text pi expanded can sit mid-transcript, behind tool
+     * rows — there the optimistic row is left exactly as it is, which shows the
+     * text the user typed instead of pi's expansion but never duplicates it and
+     * never corrupts an index.
+     */
+    private fun replaceEchoWithProjection(
+        echo: PendingUserEcho,
+        text: String,
+        images: List<PiImage>,
+    ): TranscriptChange {
+        if (echo.start + echo.count != items.size) return TranscriptChange.None
+        repeat(echo.count) { items.removeAt(echo.start) }
+        val ts = now()
+        maybeDaySeparator(ts)
         return projectUser(text, images, ts) { prefix -> nextKey(prefix) }
     }
 
@@ -796,6 +886,12 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
                 // only appeared after a reload. `display: false` means pi keeps it in
                 // context but hides it, exactly as [onHookEntry] treats it.
                 onHookMessage(event.customType ?: "extension", event.text)
+            } else if (event.role == "user") {
+                // History replay reaches the same rows through `onEntry` -> the
+                // persisted `message` entry; this is the live half, so an
+                // extension's `sendUserMessage`, a delivered `steer`/`follow_up`,
+                // and the app's own prompt all appear without a session reload.
+                onUserMessageEnd(event.text.orEmpty(), event.images, finished)
             } else {
                 finished
             }
@@ -805,7 +901,15 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
             TranscriptChange.None
         }
         is PiEvent.AgentEnd -> finishStreaming()
-        PiEvent.AgentSettled -> finishStreaming()
+        PiEvent.AgentSettled -> {
+            // pi drains steering and follow-ups before it settles
+            // (`agent-session.ts` `_handlePostAgentRun` -> `hasQueuedMessages`,
+            // and `_emitAgentSettled` runs after that loop), so every echoed
+            // message has been confirmed by now. Dropping leftovers keeps a
+            // prompt pi rejected from blocking a later confirmation.
+            pendingUserEchoes.clear()
+            finishStreaming()
+        }
 
         is PiEvent.ToolExecutionStart -> onToolStart(event)
         is PiEvent.ToolExecutionUpdate -> onToolUpdate(event)
@@ -942,6 +1046,16 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
                 items[index] = current.copy(text = "${current.text}，重试结束", tone = Notice.Tone.Info)
                 TranscriptChange.Updated(index)
             }
+        }
+
+        // A send pi refused before accepting it (`docs/rpc.md`: `success:false`
+        // means rejected before acceptance — no model, no credentials, a command
+        // that cannot be queued). No `message_end` will ever arrive for it, so the
+        // optimistic row's echo must not stay in the queue: it would otherwise be
+        // consumed by the next unrelated user message and hide it.
+        is PiEvent.Response -> {
+            if (!event.success && event.command in ECHOED_COMMANDS) pendingUserEchoes.clear()
+            TranscriptChange.None
         }
 
         // Anything newer than this build. A handful of entry-shaped types are
@@ -2041,9 +2155,29 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
         lastUsage = null
         currentDay = null
         streaming = false
+        // A rebuild from `get_entries` renders every user row from the persisted
+        // entry, so any optimistic row from the previous stream is already
+        // represented and must not be re-matched against a future event.
+        pendingUserEchoes.clear()
     }
 
+    /**
+     * One optimistic user row (or row group) awaiting pi's confirming
+     * `message_end`: the text that was echoed, and where its projection landed.
+     */
+    private data class PendingUserEcho(val text: String, val start: Int, val count: Int)
+
     private companion object {
+
+        /**
+         * The RPC commands the app echoes locally ([onUserPrompt]) and therefore
+         * waits for pi to confirm with a `message_end`. A `success:false`
+         * response for one of them means pi refused the send before accepting it,
+         * so no confirmation will arrive and the echo has to be dropped
+         * (`docs/rpc.md`: "`success: false` means the prompt was rejected before
+         * acceptance").
+         */
+        val ECHOED_COMMANDS = setOf("prompt", "steer", "follow_up")
         /**
          * Entry-shaped events that a newer pi may emit directly on stdout. They
          * are projectable through [onEntry]; everything else unknown is inert.

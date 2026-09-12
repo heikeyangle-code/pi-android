@@ -22,6 +22,7 @@ import androidx.compose.ui.unit.dp
 import app.pi.rpc.ToolCall
 import app.pi.rpc.ToolStatus
 import app.pi.ui.theme.PiTheme
+import app.pi.ui.theme.PiSpacing
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 
@@ -162,9 +163,10 @@ fun ToolCallBlock(
         ) {
         BlockCard(
             color = container,
-            modifier = Modifier.clickable(
-                onClickLabel = if (expanded) "收起工具输出" else "展开工具输出",
-            ) { expanded = !expanded },
+            // F28: pi's tool card toggles from its content region
+            // (`components/tool-execution.ts:172-178`, applied to the call line and
+            // the result alike) — the shared `toggleContent`, not a second gesture.
+            modifier = Modifier.toggleContent(expanded, { expanded = !expanded }),
             borderColor = accent.copy(alpha = 0.35f),
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -183,7 +185,7 @@ fun ToolCallBlock(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-                Spacer(Modifier.width(8.dp))
+                Spacer(Modifier.width(PiSpacing.inline))
                 Text(text = statusGlyph, style = PiTheme.text.monoSmall, color = accent)
             }
 
@@ -210,15 +212,18 @@ fun ToolCallBlock(
                 } else {
                     MonoText(
                         text = previewText,
-                        color = palette.toolOutput,
-                        modifier = Modifier.padding(top = 2.dp),
+                        // F13: the tool body is read as text, so it takes the
+                        // variant that clears §9's 4.5:1 floor (dark 3.69:1 →
+                        // 4.56:1, light 4.31:1 → 4.52:1).
+                        color = palette.bodyOnTool,
+                        modifier = Modifier.padding(top = PiSpacing.tiny),
                     )
                     if (!fullOutput && outputLineCount > COLLAPSED_OUTPUT_LINES) {
                         Text(
                             text = "展开全部（共 $outputLineCount 行）",
                             modifier = Modifier
                                 .clickable(onClickLabel = "展开全部输出") { fullOutput = true }
-                                .padding(vertical = 2.dp),
+                                .padding(vertical = PiSpacing.tiny),
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.primary,
                         )
@@ -239,7 +244,7 @@ fun ToolCallBlock(
                         style = PiTheme.text.meta,
                         color = palette.warning,
                         modifier = Modifier
-                            .padding(top = 2.dp)
+                            .padding(top = PiSpacing.tiny)
                             .then(
                                 if (fullOutputPath == null) {
                                     Modifier
@@ -275,7 +280,7 @@ fun ToolCallBlock(
                     images = item.images,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(top = 2.dp)
+                        .padding(top = PiSpacing.tiny)
                         .pointerInput(item.key) { detectTapGestures { } },
                 )
             }

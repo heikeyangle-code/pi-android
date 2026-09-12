@@ -1,5 +1,6 @@
 package app.pi.ui.blocks
 
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.width
@@ -9,6 +10,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -41,23 +43,28 @@ fun HookMessageBlock(
             color = palette.customMessageBg,
             borderColor = palette.customMessageLabel.copy(alpha = 0.35f),
         ) {
-            ToggleRow(
+            // F28: the card's content is the target (pi's rule — see
+            // `ToggleContent`); `enabled` keeps a short message from toggling into
+            // nothing.
+            ToggleContent(
                 expanded = expanded,
-                onToggle = { if (collapsible) expanded = !expanded },
+                onToggle = { expanded = !expanded },
+                enabled = collapsible,
             ) {
-                AccentStripe(palette.customMessageLabel, 20.dp)
-                Spacer(Modifier.width(PiSpacing.inner))
-                Text(
-                    text = item.customType.ifEmpty { "extension" },
-                    modifier = Modifier.weight(1f),
-                    style = PiTheme.text.monoSmall,
-                    color = palette.customMessageLabel,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                if (collapsible) ExpandLabel(expanded)
-            }
-            if (expanded || !collapsible) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    AccentStripe(palette.customMessageLabel, PiSpacing.accentStripe)
+                    Spacer(Modifier.width(PiSpacing.inner))
+                    Text(
+                        text = item.customType.ifEmpty { "extension" },
+                        modifier = Modifier.weight(1f),
+                        style = PiTheme.text.monoSmall,
+                        color = palette.customMessageLabel,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    if (collapsible) ExpandLabel(expanded)
+                }
+                if (expanded || !collapsible) {
                 // Expanded (or short enough that there is nothing to collapse):
                 // markdown. The renderer's own hook-message component builds a
                 // `Markdown` over the message body
@@ -72,12 +79,13 @@ fun HookMessageBlock(
                 // `custom-message.ts` has no collapsed text branch — it renders
                 // the markdown body either way — so the line count comes from
                 // this block's own affordance, not from pi.
-                ProseText(
-                    text = item.markdown.ifEmpty { "（空消息）" },
-                    modifier = Modifier.fillMaxWidth(),
-                    color = palette.customMessageText,
-                    maxLines = COLLAPSED_MESSAGE_LINES,
-                )
+                    ProseText(
+                        text = item.markdown.ifEmpty { "（空消息）" },
+                        modifier = Modifier.fillMaxWidth(),
+                        color = palette.customMessageText,
+                        maxLines = COLLAPSED_MESSAGE_LINES,
+                    )
+                }
             }
         }
     }

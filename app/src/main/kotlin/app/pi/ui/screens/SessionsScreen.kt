@@ -91,6 +91,10 @@ fun SessionsScreen(
     var byName by rememberSaveable { mutableStateOf(false) }
     var namedOnly by rememberSaveable { mutableStateOf(false) }
     var confirming by remember { mutableStateOf<PiSessionStore.Summary?>(null) }
+    // Long-press opens pi's two per-session actions. Both exist in pi's session
+    // selector; ours live here because a phone has no Ctrl+D and no `new_session`
+    // argument prompt (`docs/sessions.md:48`, `rpc-types.ts:27`).
+    var actions by remember { mutableStateOf<PiSessionStore.Summary?>(null) }
 
     // The directory only becomes meaningful once the runtime is unpacked, so
     // refresh when the screen appears rather than at construction.
@@ -189,7 +193,7 @@ fun SessionsScreen(
                                     session.switchSession(summary)
                                     onOpenChat()
                                 },
-                                onLongPress = { confirming = summary },
+                                onLongPress = { actions = summary },
                             )
                         }
                     }
@@ -209,6 +213,35 @@ fun SessionsScreen(
                 ),
             icon = { Icon(Icons.Filled.Add, contentDescription = null) },
             text = { Text("新建会话") },
+        )
+    }
+
+    // pi's session actions, on a phone: long-press. `new_session` with a parent is
+    // pi's own field (`rpc-types.ts:27` → the new session's header records it,
+    // `session-manager.ts:938`), and pi's selector then nests the child under this
+    // session (`components/session-selector.ts:206-231`). We pass the guest path so
+    // the recorded parent resolves where pi reads it.
+    val acting = actions
+    if (acting != null) {
+        AlertDialog(
+            onDismissRequest = { actions = null },
+            title = { Text(acting.displayName) },
+            text = { Text("对这个会话做什么？") },
+            confirmButton = {
+                TextButton(onClick = {
+                    actions = null
+                    session.newChildSession(acting)
+                }) { Text("新建子会话") }
+            },
+            dismissButton = {
+                Row {
+                    TextButton(onClick = {
+                        actions = null
+                        confirming = acting
+                    }) { Text("删除") }
+                    TextButton(onClick = { actions = null }) { Text("取消") }
+                }
+            },
         )
     }
 

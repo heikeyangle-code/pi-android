@@ -1,6 +1,5 @@
 package app.pi.ui.blocks
 
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -21,6 +20,7 @@ import app.pi.rpc.CompactionMarker
 import app.pi.ui.components.PiBilledCostLine
 import app.pi.ui.render.PiMarkdownText
 import app.pi.ui.theme.PiShapes
+import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
 
 /**
@@ -62,19 +62,21 @@ fun CompactionBlock(
         else -> item.reason?.let { "原因：$it" } ?: ""
     }
 
-    BlockColumn(modifier) {
+    // F28: the whole block is the content region that toggles (pi's rule); the
+    // chip below stays a label, and the hairline/caption/summary are reachable
+    // because they are inside this region.
+    BlockColumn(modifier.toggleContent(expanded, { expanded = !expanded })) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             HorizontalDivider(
                 modifier = Modifier.weight(1f),
-                thickness = 1.dp,
+                thickness = PiSpacing.hairline,
                 color = palette.borderMuted.copy(alpha = 0.5f),
             )
             Surface(
-                modifier = Modifier
-                    .padding(horizontal = 8.dp)
-                    .clickable(onClickLabel = if (expanded) "收起摘要" else "展开摘要") {
-                        expanded = !expanded
-                    },
+                // F28: the chip is a label. pi's toggle is the content region
+                // (`ToggleContent`), which for this block is the whole hairline +
+                // caption + summary column below.
+                modifier = Modifier.padding(horizontal = PiSpacing.inline),
                 shape = PiShapes.chip,
                 color = palette.customMessageBg,
             ) {
@@ -87,7 +89,7 @@ fun CompactionBlock(
             }
             HorizontalDivider(
                 modifier = Modifier.weight(1f),
-                thickness = 1.dp,
+                thickness = PiSpacing.hairline,
                 color = palette.borderMuted.copy(alpha = 0.5f),
             )
         }
@@ -115,7 +117,7 @@ fun CompactionBlock(
                     markdown = item.summary,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(top = 2.dp),
+                        .padding(top = PiSpacing.tiny),
                 )
             } else {
                 ProseText(
@@ -131,7 +133,7 @@ fun CompactionBlock(
             PiBilledCostLine(
                 label = "Compaction",
                 usage = item.usage,
-                modifier = Modifier.fillMaxWidth().padding(top = 2.dp),
+                modifier = Modifier.fillMaxWidth().padding(top = PiSpacing.tiny),
             )
         }
     }

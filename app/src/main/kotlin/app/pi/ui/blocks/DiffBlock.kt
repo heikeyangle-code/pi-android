@@ -1,7 +1,6 @@
 package app.pi.ui.blocks
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -49,9 +48,8 @@ fun DiffBlock(
     BlockColumn(modifier) {
         BlockCard(
             color = palette.toolPendingBg,
-            modifier = Modifier.clickable(
-                onClickLabel = if (expanded) "收起差异" else "展开差异",
-            ) { expanded = !expanded },
+            // F28: same content-region gesture as the tool card.
+            modifier = Modifier.toggleContent(expanded, { expanded = !expanded }),
             borderColor = palette.borderMuted.copy(alpha = 0.35f),
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {

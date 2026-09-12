@@ -10,7 +10,6 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.imePadding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -154,18 +153,18 @@ fun TerminalPane(modifier: Modifier = Modifier) {
         }
     }
 
-    // `imePadding()` is what keeps the key bar reachable while typing. The activity
-    // is `enableEdgeToEdge()` (`MainActivity.kt:19`), so `decorFitsSystemWindows` is
-    // false and the manifest's `adjustResize` no longer shrinks the window for the
-    // soft keyboard — the IME arrives as a window inset instead, and without this
-    // the keyboard would simply cover the bar and the bottom of the grid.
+    // The IME is handled one level up, by the `Scaffold` in `PiRoot.kt`: it is the
+    // only place that can lift the bottom bar as well, and doing it here *as well*
+    // would pad twice (insets are not consumed by a parent's `imePadding()`), which
+    // would push the key bar off the top of the shrunken area.
     //
-    // What it does *not* do is reflow the guest: the pty's grid was pinned at spawn
-    // and cannot be resized (`script(1)` has no way to set it), so the component
-    // reacts to the smaller area by fitting the same grid into it. That is the
-    // documented cost of the frozen grid — see the KDoc above — and it is visible as
-    // a font that shrinks while the keyboard is up rather than one that scrolls.
-    Column(modifier.fillMaxSize().imePadding().background(palette.background)) {
+    // What nothing here can do is reflow the guest: the pty's grid was pinned at
+    // spawn and cannot be resized (`script(1)` has no way to set it), so the
+    // component reacts to the smaller area by fitting the same grid into it. That is
+    // the documented cost of the frozen grid — see the KDoc above — and it is
+    // visible as a font that shrinks while the keyboard is up rather than one that
+    // scrolls.
+    Column(modifier.fillMaxSize().background(palette.background)) {
         Box(Modifier.weight(1f)) {
             TerminalSurface(
                 bridge = bridge,

@@ -22,6 +22,7 @@ import app.pi.rpc.BranchSummary
 import app.pi.ui.components.PiBilledCostLine
 import app.pi.ui.render.PiMarkdownText
 import app.pi.ui.theme.PiTheme
+import app.pi.ui.theme.PiSpacing
 
 /**
  * `branch-summary` (docs/pi-android-ui-spec.md §7.4): a `customMessageBg` card
@@ -59,7 +60,7 @@ fun BranchSummaryBlock(
                     },
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                AccentStripe(palette.customMessageLabel, 20.dp)
+                AccentStripe(palette.customMessageLabel, PiSpacing.accentStripe)
                 Spacer(Modifier.width(10.dp))
                 Column(Modifier.weight(1f)) {
                     Text(
@@ -89,9 +90,10 @@ fun BranchSummaryBlock(
                 // `clickable` consumes the tap before the row's.
                 ExpandLabel(
                     expanded = expanded,
-                    modifier = Modifier.clickable(
-                        onClickLabel = if (expanded) "收起摘要" else "展开摘要",
-                    ) { expanded = !expanded },
+                    // F28: the row jumps to the branch (spec §7.4 点击跳转), so the
+                    // expand affordance stays a distinct target — but it is the
+                    // shared gesture, not a fourth spelling of it.
+                    modifier = Modifier.toggleContent(expanded, { expanded = !expanded }),
                 )
             }
             if (expanded) {
@@ -121,7 +123,7 @@ fun BranchSummaryBlock(
             PiBilledCostLine(
                 label = "Branch summary",
                 usage = item.usage,
-                modifier = Modifier.fillMaxWidth().padding(top = 2.dp),
+                modifier = Modifier.fillMaxWidth().padding(top = PiSpacing.tiny),
             )
         }
     }

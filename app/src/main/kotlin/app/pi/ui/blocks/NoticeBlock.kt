@@ -46,7 +46,7 @@ fun NoticeBlock(
             Text(
                 text = formatClock(item.ts),
                 style = PiTheme.text.meta,
-                color = palette.dim,
+                color = palette.metaOnCanvas,
             )
         }
     }

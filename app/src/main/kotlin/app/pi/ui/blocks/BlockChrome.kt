@@ -11,7 +11,6 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -67,7 +66,7 @@ internal fun BlockColumn(
 ) {
     Column(
         modifier = modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(6.dp),
+        verticalArrangement = Arrangement.spacedBy(PiSpacing.gutter),
         horizontalAlignment = horizontalAlignment,
         content = content,
     )
@@ -174,11 +173,11 @@ internal fun BlockCard(
         modifier = modifier.fillMaxWidth(),
         shape = PiShapes.card,
         color = color,
-        border = borderColor?.let { BorderStroke(1.dp, it) },
+        border = borderColor?.let { BorderStroke(PiSpacing.hairline, it) },
     ) {
         Column(
             modifier = Modifier.padding(PiSpacing.card),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
+            verticalArrangement = Arrangement.spacedBy(PiSpacing.gutter),
             content = content,
         )
     }
@@ -196,7 +195,7 @@ internal fun AccentStripe(
 ) {
     Box(
         modifier = modifier
-            .width(3.dp)
+            .width(PiSpacing.stripe)
             .height(height)
             .clip(RoundedCornerShape(2.dp))
             .background(color),
@@ -206,6 +205,10 @@ internal fun AccentStripe(
 /**
  * The one expand affordance: a word plus a state glyph. Text is required —
  * colour alone never carries the state (docs/pi-android-ui-spec.md §9).
+ *
+ * This is a **label**, not a hit target: pi's toggle is the content region (see
+ * [ToggleContent]), so leaving this inert keeps one gesture per block instead of
+ * a label-sized second one.
  */
 @Composable
 internal fun ExpandLabel(
@@ -220,7 +223,7 @@ internal fun ExpandLabel(
             style = MaterialTheme.typography.labelMedium,
             color = MaterialTheme.colorScheme.primary,
         )
-        Spacer(Modifier.width(2.dp))
+        Spacer(Modifier.width(PiSpacing.tiny))
         Icon(
             imageVector = if (expanded) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown,
             contentDescription = null,
@@ -230,19 +233,69 @@ internal fun ExpandLabel(
     }
 }
 
-/** A whole-row toggle used by the collapsible blocks. */
+/**
+ * The single expand/collapse gesture: **the content is the hit target**.
+ *
+ * `ToggleRow` — a header-row hit target — was the app's other pattern. It is
+ * gone (F28 in `docs/rendering-review.md`), because pi has exactly one and this
+ * is it. Every pi component that expands wraps *the thing that expands* in a
+ * mouse region and toggles from there:
+ *
+ *  - a tool card: `modes/interactive/components/tool-execution.ts:172-178`
+ *    (`createResultRegion`), applied to the call line and the result alike
+ *    (`:315-321`, `:333-336`, `:347-353`);
+ *  - a thinking block: `components/assistant-message.ts:160-166` wraps the whole
+ *    thinking component in a `MouseRegion` that flips a visibility override;
+ *  - a custom entry: `components/custom-entry.ts:59-60` adds the renderer's own
+ *    component as the child, region and all.
+ *
+ * Nothing in pi makes a header row — rather than the content it heads — the
+ * target, which is why this wrapper is a `Column` and a block hands it its whole
+ * body: the header row *and* the part that appears on expand.
+ *
+ * The disclosure itself stays whatever the call site already used
+ * (`AnimatedVisibility`, or the `if (expanded)` it had); no blur, no glow, no
+ * pulse, and §11's "at most two sustained animations on a screen" is respected
+ * because this adds no animation of its own.
+ *
+ * @param enabled false for a block with nothing to disclose (a short hook
+ *   message, say): the region then takes no clicks at all rather than toggling
+ *   into an empty state.
+ */
+// Callers: pass the lambda parenthesised — `Modifier.toggleContent(expanded, { … })`.
+// Kotlin binds a *trailing* lambda to the **last** parameter, which here is
+// `enabled`, so `toggleContent(expanded) { … }` does not compile.
+internal fun Modifier.toggleContent(
+    expanded: Boolean,
+    onToggle: () -> Unit,
+    enabled: Boolean = true,
+): Modifier = then(
+    if (enabled) {
+        Modifier.clickable(onClickLabel = if (expanded) "收起" else "展开") { onToggle() }
+    } else {
+        Modifier
+    },
+)
+
+/**
+ * [Modifier.toggleContent] for a block whose content is a column: the column —
+ * header row and disclosed body alike — becomes the hit target.
+ *
+ * Both shapes exist because a card's content region is sometimes the card's own
+ * `Surface` modifier (a tool card, a diff card) and sometimes a `Column` inside
+ * it (a thinking block, a hook card). They are one gesture: the `clickable` lives
+ * only in [Modifier.toggleContent].
+ */
 @Composable
-internal fun ToggleRow(
+internal fun ToggleContent(
     expanded: Boolean,
     onToggle: () -> Unit,
     modifier: Modifier = Modifier,
-    content: @Composable RowScope.() -> Unit,
+    enabled: Boolean = true,
+    content: @Composable ColumnScope.() -> Unit,
 ) {
-    Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .clickable(onClickLabel = if (expanded) "收起" else "展开") { onToggle() },
-        verticalAlignment = Alignment.CenterVertically,
+    Column(
+        modifier = modifier.fillMaxWidth().toggleContent(expanded, onToggle, enabled),
         content = content,
     )
 }

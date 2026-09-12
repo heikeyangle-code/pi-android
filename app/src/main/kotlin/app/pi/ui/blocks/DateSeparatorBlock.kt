@@ -45,7 +45,7 @@ fun DateSeparatorBlock(
             text = item.label.ifEmpty { formatClock(item.ts) },
             modifier = Modifier.padding(horizontal = PiSpacing.inner),
             style = PiTheme.text.meta,
-            color = palette.dim,
+            color = palette.metaOnCanvas,
         )
         HorizontalDivider(
             modifier = Modifier.weight(1f),

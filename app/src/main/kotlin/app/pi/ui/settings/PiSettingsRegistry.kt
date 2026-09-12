@@ -1299,7 +1299,10 @@ object PiSettingsCatalog {
         PiSetting(
             key = "externalEditor",
             title = "外部编辑器",
-            description = "Ctrl+G 打开的外部编辑器命令，优先于 \$VISUAL 与 \$EDITOR。VS Code 记得带 --wait。",
+            description = "pi 的 Ctrl+G 外部编辑器命令：pi 把输入框内容写进临时文件、启动这条命令、退出后读回" +
+                "（modes/interactive/external-editor.ts），优先于 \$VISUAL 与 \$EDITOR。终端标签页里的原版 pi " +
+                "会用它；App 自己的输入框不会——Android 上没有可执行命令行的编辑器进程，等价物是 ACTION_EDIT " +
+                "交给别的应用，尚未接。",
             kind = PiRowKind.Text,
             group = G_INTERACTION,
             section = "编辑器",
@@ -1539,6 +1542,18 @@ object PiSettingsCatalog {
             readOnly = true,
             aliases = listOf("storage", "disk"),
         ),
+        PiSetting(
+            key = "app.runtime.engineStartup",
+            title = "引擎启动耗时",
+            description = "上一次引擎从启动进程到能开始响应命令的用时。刚打开 App 就发消息时，" +
+                "这段时间就是消息在等待的时间。",
+            kind = PiRowKind.Text,
+            group = G_RUNTIME,
+            section = "运行时",
+            defaultValue = str("未读取"),
+            readOnly = true,
+            aliases = listOf("startup", "engine"),
+        ),
 
         // ------------------------------------------------------------------
         // 进程开关（pi 的启动参数 / 环境变量）
@@ -1625,8 +1640,7 @@ object PiSettingsCatalog {
         PiSetting(
             key = "app.runtime.wakeLock",
             title = "唤醒锁状态",
-            description = "唤醒锁由引擎的前台服务持有：服务运行时获取，服务停止时释放。" +
-                "这里显示那个前台服务当前是否在运行。",
+            description = "持有中表示引擎在息屏后仍能继续工作。锁由前台服务持有，最长 6 小时。",
             kind = PiRowKind.Text,
             group = G_RUNTIME,
             section = "后台",

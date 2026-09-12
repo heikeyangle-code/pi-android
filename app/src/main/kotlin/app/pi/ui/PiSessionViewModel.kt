@@ -31,6 +31,7 @@ import app.pi.settings.PiSettingsFileStore
 import app.pi.settings.readBoolean
 import app.pi.settings.readString
 import app.pi.ui.chat.PiCommandAction
+import app.pi.ui.chat.PiCommandSource
 import app.pi.ui.chat.PiFileMentions
 import app.pi.ui.chat.PiMentionSource
 import app.pi.ui.chat.PiSlashCommand
@@ -328,6 +329,14 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         val busy: String? = null,
         /** Set by the ViewModel, consumed by `PiRoot`. */
         val navRequest: NavRequest? = null,
+        /**
+         * pi's latest provider-reported usage, straight off the reducer
+         * (`TranscriptReducer.lastUsage`, fed by `message_update.usage` and
+         * `message_end.message.usage`). F10: every one of those payloads was
+         * parsed and then dropped, and pi's footer needs the latest one for its
+         * cache-hit item (`components/footer.ts:94-100`).
+         */
+        val lastUsage: app.pi.rpc.TokenUsage? = null,
         /**
          * App-local UI preferences read from pi's settings documents. Seeded at
          * boot and refreshed whenever the settings stack writes a key that the
@@ -947,6 +956,10 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             transcript = transcript,
             revision = pub.revision,
             streaming = pub.streaming,
+            // pi's footer needs the *latest* assistant usage for its cache-hit
+            // item (`components/footer.ts:94-100`); the reducer already keeps it
+            // (`TranscriptReducer.lastUsage`), and F10's status row is its reader.
+            lastUsage = engine.transcript.lastUsage,
         )
         appliedRevision = pub.revision
     }
@@ -1069,6 +1082,14 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                 viewModelScope.launch {
                     refreshState()
                     refreshCommands()
+                    // pi recomputes the footer's totals and context percentage on
+                    // every render (`components/footer.ts:106-111`). The app's
+                    // source for the same figures is `get_session_stats`, whose
+                    // `contextUsage` is literally `getContextUsage()`
+                    // (`core/agent-session.ts:3407`, the call the footer makes at
+                    // `footer.ts:108`), so it is re-read whenever a run settles —
+                    // F10.
+                    refreshStats()
                 }
             }
 
@@ -1688,7 +1709,25 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     fun runPromptCommand(command: PiSlashCommand, args: String) {
         val engine = session ?: return
         val text = if (args.isBlank()) command.invocation else "${command.invocation} ${args.trim()}"
-        engine.prompt(text)
+        if (command.source == PiCommandSource.Extension) {
+            // pi answers an extension command inside its own process and emits no
+            // user message at all: `prompt()` calls `_tryExecuteExtensionCommand`
+            // and returns on success (`agent-session.ts:1181-1190`, `:1331-1356`).
+            // pi's TUI therefore shows only what the handler sends — usually a
+            // `pi.sendMessage(...)`, which this app already renders from the
+            // `role: "custom"` event. Echoing here would leave a bubble pi never
+            // confirms, and that unconfirmed row would then be mistaken for the
+            // confirmation of a later message.
+            //
+            // `send`, not `prompt`: only `PiEngineSession.prompt` echoes, and this
+            // is the one `/` path that must not.
+            engine.send(PiCommands.prompt("cmd-${System.nanoTime()}", text))
+        } else {
+            // Templates and skills are expanded inside pi into a real user message
+            // (`agent-session.ts:1211-1216`), so the optimistic echo is confirmed by
+            // that event and replaced by pi's own projection of it.
+            engine.prompt(text)
+        }
         syncTranscript(engine, engine.publication.value)
     }
 
@@ -1947,10 +1986,22 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
 
     // --------------------------------------------------------- session actions
 
-    /** `new_session`. pi answers `cancelled` when an extension vetoes it. */
-    fun newSession() {
+    /**
+     * `new_session`.
+     *
+     * [parentSession] is pi's optional field (`rpc-types.ts:27`): the **guest path**
+     * of an existing session file, written verbatim into the new session's header as
+     * `parentSession` (`session-manager.ts:938` in `SessionManager.new`). pi does
+     * nothing else with it — its session selector rebuilds a tree from that field
+     * (`components/session-selector.ts:206-231`), and our own [PiSessionStore.Summary]
+     * already reads it back (`parentSession`), which is why a child session shows up
+     * with the 分支 marker. No grouping or tag of our own is involved.
+     *
+     * pi answers `cancelled` when an extension vetoes it.
+     */
+    fun newSession(parentSession: String? = null) {
         call("新建会话") { api ->
-            val result = api.newSession()
+            val result = api.newSession(parentSession)
             if (result.cancelled) {
                 pushNotice("扩展取消了新建会话", Notice.Tone.Warning)
                 return@call
@@ -1958,6 +2009,22 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             afterSessionReplaced()
             requestNav(NavRequest.Chat)
         }
+    }
+
+    /**
+     * `new_session` parented to one of the sessions in the on-disk index.
+     *
+     * The conversion host path → guest path is the same one [switchSession] uses;
+     * pi resolves `parentSession` inside the guest, so handing it a host path would
+     * record a parent that does not exist from pi's side.
+     */
+    fun newChildSession(summary: PiSessionStore.Summary) {
+        val path = guestSessionPath(summary.file)
+        if (path == null) {
+            fail("找不到会话文件：${summary.file.name}")
+            return
+        }
+        newSession(path)
     }
 
     /**
@@ -2267,6 +2334,13 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     /**
      * The one-line status the AppBar shows. Deliberately terse and in pi's own
      * vocabulary (working / queued / idle) rather than inventing new states.
+     *
+     * `Starting` is listed separately from the boot's own "启动中" because they are
+     * different waits with the same word: the boot one ends when the process is
+     * spawned, and this one ends when pi has answered its first command — under
+     * proot on a phone the second is by far the longer of the two. Both say 启动中
+     * because that is what the user is waiting for; the difference is what the chat's
+     * empty state explains (docs/known-gaps.md §M1).
      */
     fun engineLabel(current: UiState = _state.value): String = when {
         current.busy != null -> current.busy
@@ -2274,9 +2348,22 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         current.boot !is Boot.Ready -> "启动中"
         current.engine == PiEngineSession.EngineState.Failed -> "引擎已退出"
         current.engine == PiEngineSession.EngineState.Stopped -> "引擎已停止"
+        current.engine == PiEngineSession.EngineState.Starting -> "启动中"
         current.queueSteering > 0 || current.queueFollowUp > 0 -> "排队中"
         else -> "就绪"
     }
+
+    /**
+     * True while the engine exists but has not yet answered its first command.
+     *
+     * This is the window in which a sent message is *queued inside pi* rather than
+     * acted on: pi does not read its stdin until its startup is over, so the bubble
+     * appears at once and the answer comes only when the engine begins serving. The
+     * chat's empty state is where a user who opened the app and typed immediately is
+     * standing, so that is where the wait has to be named (`docs/known-gaps.md` §M1).
+     */
+    fun engineStarting(current: UiState = _state.value): Boolean =
+        current.boot is Boot.Ready && current.engine == PiEngineSession.EngineState.Starting
 
     override fun onCleared() {
         // Answer anything outstanding before the engine is torn down, so a

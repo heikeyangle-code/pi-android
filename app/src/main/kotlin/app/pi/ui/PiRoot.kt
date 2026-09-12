@@ -2,6 +2,7 @@ package app.pi.ui
 
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ChatBubble
 import androidx.compose.material.icons.filled.Forum
@@ -141,6 +142,16 @@ fun PiRoot(
     }
 
     Scaffold(
+        // `imePadding()` is what makes the soft keyboard *displace* the UI instead of
+        // covering it. The activity is `enableEdgeToEdge()` (`MainActivity.kt:18`) and
+        // the manifest asks for `adjustResize` (`AndroidManifest.xml:118`), but with
+        // edge-to-edge the framework stops resizing the window for the IME and reports
+        // it as an inset instead — so `adjustResize` alone lifts nothing, and the
+        // composer, its toolbar and the bottom bar all ended up behind the keyboard
+        // (seen on device, docs/known-gaps.md §M2). Applied here, once, for every
+        // destination: the terminal used to carry its own `imePadding()` and would now
+        // pad twice, so that one was removed.
+        modifier = Modifier.imePadding(),
         bottomBar = {
             NavigationBar {
                 PiDestination.entries.forEachIndexed { index, item ->
