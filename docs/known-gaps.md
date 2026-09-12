@@ -1201,3 +1201,44 @@ M3 记的"发送后约 1 秒内用户气泡是空的"仍未定位。它出现在
    `getAliases()` / `getPackageDir()` 在 bundle 入口下的行为，并保证扩展按名字导入 SDK 时解析到的仍是 **同一份**模块实例（否则 `instanceof` 与共享状态会分叉）。
 
 **所以这一轮的回答是：方向已验证、收益很大（7–10×），但没有落地。** 记在这里，免得被"我们试过打包"一句话带过——它试过、能快，卡在扩展解析上，且卡点已定位到具体文件与函数。
+
+### M9. **真正的元凶是我们自己的扩展**：一条 `import { StringEnum } from "@earendil-works/pi-ai"`（已修）
+
+M8 之后继续查"为什么打包入口没有变快"，查到了一个比打包重要得多的东西。
+
+**证据（`PI_TIMING=1`，单次运行内部数字，不受环境漂移影响）**：
+
+```
+（修之前，App 的三个扩展原样）
+  pi-android-bridge/index.ts        module import: 17 763 ms
+  pi-android-permission-gate.ts     module import:     48 ms
+  pi-highlight/index.ts             module import:    120 ms
+```
+
+**17.8 秒全在一条 value import 上。** 机制：pi 的扩展加载器用 **jiti** 把 SDK 交给扩展（`core/extensions/loader.ts:501-514` 的 `alias: getAliases()`），而
+`@earendil-works/pi-ai` 这个别名指向的是 **compat 入口**（`getAliases()`，`loader.ts:111-114`：`piAiCompatEntry = ai/dist/compat.js`，"a strict superset of the core entrypoint"）。它的 import 图就是**每一家 provider 及其 SDK**，jiti 要逐文件走 Babel。我们从那条路径只取了一个 4 行的小工具函数。
+
+**修法**：`StringEnum` 的实现（`packages/ai/src/utils/typebox-helpers.ts:14-26`）只依赖 `typebox`，而这个扩展**本来就 import typebox**。所以在 `pi-android-bridge/index.ts` 里逐字转写它（含出处注释），删掉那条 pi-ai value import；`ImageContent`/`TextContent` 仍是 `import type`，不产生运行时依赖。
+
+**效果**：同一个扩展的 module import **17 763 ms → 667 ms（26×）**，其余两个不变。工具注册照常（factory 正常执行、无 stderr）。
+
+**必须写清楚的边界**：**这个容器的端到端墙钟在同一份工作上能从 2 秒漂到 20 秒**（见 M7/M8），所以下面的三组 A/B **不能当成"修好了多少秒"的证据**：
+
+| 组合 | 到 pi 开始读 stdin（各 2 次） |
+|---|---|
+| 原样入口 + 原扩展 | 17.0 / 13.8 s |
+| 原样入口 + 修好的扩展 | 19.0 / 13.9 s |
+| 打包入口 + 修好的扩展 | 16.6 / 15.4 s |
+
+三者没有可区分的差别，因为没打包时"`main()` 之前的模块加载"本来就占大头，而那段在这里测不准。**能确定的是**：那条 import 让扩展加载多付了 17 秒的 CPU/解析工作（这是单次运行内部的量，不是墙钟对比），而它现在已经不付了。设备上的判据仍是 `设置 → 运行时与诊断 → 引擎启动耗时`。
+
+### M10. 回到"能不能既打包又让扩展正常"——**能，卡点已定位并已实现一个可用的打包器**
+
+答案：能。M8 里失败的原因是**具体的、可修的**：naive bundle 之后，每个被内联的模块的
+`import.meta.url` 都变成了 **bundle 自己的 URL**，而 pi 用 `import.meta.url` 算真实路径——
+`getAliases()` 就是 `path.resolve(dirname(fileURLToPath(import.meta.url)), "../..", "index.js")`
+（`core/extensions/loader.ts:92-93`），它假定自己仍在 `dist/core/extensions/`。少了两级，于是别名算成了 `node_modules/@earendil-works/index.js`，所有扩展加载失败。
+
+**做法（已在本地验证可用）**：用 esbuild 的 `onLoad` 插件，在**内联之前**把每个源文件里的 `import.meta.url` 替换成**该文件真实的 `file://` URL**（逐模块，而不是全局 define）。原始文件全部留在磁盘上，所以 `import.meta.resolve`、`createRequire`、jiti 别名指向的都还是真实路径。这样打出来的 bundle + App 的三个扩展可以正常加载（对话、工具注册都正常）。
+
+**但打包的收益在本环境里测不出来**（上表三组没有差别），所以**本轮没有采用**。要真做，需要：payload 构建期加这一步（`tools/fetch-runtime.mjs`）、把入口指向 bundle、并配 RPC 冒烟测试——而且收益必须先在设备上用「引擎启动耗时」那一行确认，否则就是为一个测不出来的东西改打包。

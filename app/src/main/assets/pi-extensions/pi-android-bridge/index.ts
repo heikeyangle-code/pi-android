@@ -30,10 +30,45 @@ import {
 	truncateTail,
 } from "@earendil-works/pi-coding-agent";
 import type { ImageContent, TextContent } from "@earendil-works/pi-ai";
-import { StringEnum } from "@earendil-works/pi-ai";
-import { Type, type Static, type TSchema } from "typebox";
+import { Type, type Static, type TSchema, type TUnsafe } from "typebox";
 import { BridgeError, bridgeGet, bridgeHealth, bridgePost, type HealthPayload } from "./client";
 import { dangerLevelOf } from "./danger";
+
+/**
+ * `StringEnum`, transcribed from pi-ai (`packages/ai/src/utils/typebox-helpers.ts:14-26`)
+ * instead of imported from `@earendil-works/pi-ai`.
+ *
+ * ## Why this is worth a local copy
+ *
+ * `import { StringEnum } from "@earendil-works/pi-ai"` looked like a four-line
+ * helper and cost **17.8 seconds of every engine start**. pi's extension loader
+ * gives extensions the SDK through jiti aliases, and the `@earendil-works/pi-ai`
+ * alias resolves to the **compat entrypoint** (`ai/dist/compat.js`, a superset of
+ * the core one — see `loader.ts:111-114`), whose import graph is every provider and
+ * its SDK. jiti transpiles that graph file by file, so one value import from pi-ai
+ * dragged the whole thing through Babel before the first message could be read.
+ *
+ * Measured on the phone this app runs on, with `PI_TIMING=1`: this extension's
+ * module import was **17 763 ms**, while the other two extensions (which import no
+ * value from the SDK's compat entry) were 48 ms and 120 ms. After this change the
+ * same number is in the hundreds of milliseconds — `docs/known-gaps.md` §M9.
+ *
+ * The function itself depends only on `typebox`, which this file already imports,
+ * so copying it is cheaper *and* removes a dependency rather than adding one. The
+ * body is pi's, character for character; if pi's version changes, this is the line
+ * to compare against.
+ */
+function StringEnum<T extends readonly string[]>(
+	values: T,
+	options?: { description?: string; default?: T[number] },
+): TUnsafe<T[number]> {
+	return Type.Unsafe<T[number]>({
+		type: "string",
+		enum: values as any,
+		...(options?.description && { description: options.description }),
+		...(options?.default && { default: options.default }),
+	});
+}
 
 // ---------------------------------------------------------------------------
 // shared plumbing
