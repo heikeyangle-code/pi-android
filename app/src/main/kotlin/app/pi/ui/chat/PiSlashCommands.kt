@@ -185,13 +185,27 @@ val PI_BUILTIN_SLASH_COMMANDS: List<PiSlashCommand> = listOf(
  *
  * The extension rows carry `sourceInfo`, so the tag comes from pi's own scope +
  * origin fields (`core/source-info.ts:3-12`) rather than from a path guess.
+ *
+ * @param skillCommandsEnabled pi's `enableSkillCommands` (default true). This is
+ *        where that setting actually takes effect in this app: pi reads it only in
+ *        its own TUI (`interactive-mode.ts:716`, `:4570`) and its RPC `get_commands`
+ *        hands over skill commands unconditionally (`rpc-mode.ts:702-708`), so a
+ *        panel built from that answer alone would ignore the switch entirely. pi's
+ *        TUI registers skills as commands only when the flag is on; dropping the
+ *        `Skill`-sourced entries here is the same rule applied to the panel this app
+ *        owns. The skills stay readable by the model either way — the setting is
+ *        about the command panel, not about access.
  */
 fun piCommandPalette(
     commands: List<PiResponses.SlashCommand>,
     builtins: List<PiSlashCommand> = PI_BUILTIN_SLASH_COMMANDS,
+    skillCommandsEnabled: Boolean = true,
 ): List<PiSlashCommand> {
     val taken = builtins.mapTo(HashSet()) { it.name }
     val fromPi = commands.mapNotNull { command ->
+        if (command.source == PiResponses.CommandSource.Skill && !skillCommandsEnabled) {
+            return@mapNotNull null
+        }
         if (!taken.add(command.name)) return@mapNotNull null
         PiSlashCommand(
             name = command.name,

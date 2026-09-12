@@ -45,13 +45,20 @@ import kotlinx.coroutines.flow.asStateFlow
  *
  * ## The same requirement covers settings
  *
- * `PiSettingsRegistry` marks every resource row `EffectiveKind.Reload`
- * (`PiCommon.kt:204` for the enum; `PiSettingsRegistry.kt:760`, `:773`, `:797`,
- * `:810`, `:823` for `extensions`, `packages`, `skills`, `prompts`, `themes`), and
- * `EffectiveKind.Reload` has no consumer. This machine is the consumer: a settings
- * write to any of those keys goes through [noteExternalChange] and lands in exactly
- * the same [State.NeedsRestart]. That is also the honest answer to "do skills and
- * prompt templates need a restart" — they do; see [RefreshSemantics].
+ * `PiSettingsRegistry` marks the six pi-resource rows `EffectiveKind.RestartEngine`
+ * (`PiCommon.kt:416` for the enum; the rows are `extensions`, `packages`,
+ * `packages[].autoload`, `skills`, `prompts`, `themes` — search for
+ * `effective = EffectiveKind.RestartEngine` in that file). They were `Reload` until
+ * this round, which was wrong twice over: `Reload` named a mechanism this app does
+ * not have (`pi --mode rpc` has no `/reload`; the class KDoc of `PiEngineHost`
+ * spells out why), and the badge it produced said "重载" for a change that in fact
+ * requires a new process. The label now matches the mechanism.
+ *
+ * This machine is still a consumer, and it is the one that acts without the user
+ * having to find the badge: a settings write to any of those keys goes through
+ * [noteExternalChange] and lands in exactly the same [State.NeedsRestart]. That is
+ * also the honest answer to "do skills and prompt templates need a restart" — they
+ * do; see [RefreshSemantics].
  */
 class ExtensionLifecycle {
 
@@ -151,7 +158,12 @@ class ExtensionLifecycle {
         lastMessage = message
     }
 
-    /** A settings row with `EffectiveKind.Reload` was written. Same requirement. */
+    /**
+     * A pi-resource settings row was written — the six `EffectiveKind.RestartEngine`
+     * ones (`extensions`, `packages`, `packages[].autoload`, `skills`, `prompts`,
+     * `themes`) or a package install. Same requirement in every case: the running pi
+     * process loaded those at startup and only a new process re-reads them.
+     */
     fun noteExternalChange(changes: List<String>, detail: String) {
         when (_state.value) {
             is State.Installing, is State.Restarting -> return

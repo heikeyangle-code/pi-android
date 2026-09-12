@@ -554,6 +554,12 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             refreshPrefs()
             refreshTheme()
         }
+        if (key == "enableSkillCommands") {
+            // The palette is built with this flag, so the list in `UiState` is now
+            // stale — and it is the only place the setting has any effect at all
+            // (`piCommandPalette`).
+            refreshCommands()
+        }
     }
 
     /**
@@ -1558,11 +1564,17 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * Reloaded on attach and after every `agent_settled`: extensions register
      * commands at load time and `resources_discover` can add skills and templates
      * later, both of which change this list with no dedicated wire event.
+     *
+     * Also reloaded when `enableSkillCommands` is written ([onSettingWritten]): the
+     * filter that implements it lives in `piCommandPalette`, so the cached list has
+     * to be rebuilt for the switch to be anything but decorative.
      */
     fun refreshCommands() {
         call("读取命令列表") { api ->
+            // pi's own default is true (`settings-manager.ts:1165`).
+            val skillCommands = settingsStore.readBoolean("enableSkillCommands") ?: true
             _state.value = _state.value.copy(
-                commands = piCommandPalette(api.getCommands()),
+                commands = piCommandPalette(api.getCommands(), skillCommandsEnabled = skillCommands),
                 commandsLoaded = true,
             )
         }

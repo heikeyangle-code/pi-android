@@ -252,6 +252,7 @@ run_harness packages \
   "$ROOT/app/src/main/kotlin/app/pi/packages/ProjectTrust.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/packages/PiPackageModel.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/packages/PiListOutput.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/packages/PiPackageFilters.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/packages/ExtensionLifecycle.kt" \
   "$ROOT/rpc/src/main/kotlin/app/pi/rpc/Ansi.kt"
 

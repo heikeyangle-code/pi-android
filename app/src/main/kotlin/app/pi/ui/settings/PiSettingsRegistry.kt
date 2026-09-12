@@ -774,7 +774,7 @@ object PiSettingsCatalog {
             group = G_RESOURCES,
             section = "本地资源",
             defaultValue = list(),
-            effective = EffectiveKind.Reload,
+            effective = EffectiveKind.RestartEngine,
             globAware = true,
             depth = 2,
             aliases = listOf("extensions", "reload"),
@@ -798,7 +798,7 @@ object PiSettingsCatalog {
             group = G_RESOURCES,
             section = "资源包",
             defaultValue = list(),
-            effective = EffectiveKind.Reload,
+            effective = EffectiveKind.RestartEngine,
             readOnly = true,
             globAware = true,
             depth = 3,
@@ -812,7 +812,7 @@ object PiSettingsCatalog {
             group = G_RESOURCES,
             section = "资源包",
             defaultValue = bool(true),
-            effective = EffectiveKind.Reload,
+            effective = EffectiveKind.RestartEngine,
             aliases = listOf("autoload", "packages"),
         ),
         PiSetting(
@@ -823,7 +823,7 @@ object PiSettingsCatalog {
             group = G_RESOURCES,
             section = "本地资源",
             defaultValue = list(),
-            effective = EffectiveKind.Reload,
+            effective = EffectiveKind.RestartEngine,
             globAware = true,
             depth = 2,
             aliases = listOf("skills", "reload"),
@@ -836,7 +836,7 @@ object PiSettingsCatalog {
             group = G_RESOURCES,
             section = "本地资源",
             defaultValue = list(),
-            effective = EffectiveKind.Reload,
+            effective = EffectiveKind.RestartEngine,
             globAware = true,
             depth = 2,
             aliases = listOf("prompts", "templates", "reload"),
@@ -849,7 +849,7 @@ object PiSettingsCatalog {
             group = G_RESOURCES,
             section = "本地资源",
             defaultValue = list(),
-            effective = EffectiveKind.Reload,
+            effective = EffectiveKind.RestartEngine,
             globAware = true,
             depth = 2,
             aliases = listOf("themes", "reload"),
@@ -862,22 +862,28 @@ object PiSettingsCatalog {
             group = G_RESOURCES,
             section = "本地资源",
             defaultValue = bool(true),
-            effective = EffectiveKind.Reload,
+            // `Immediate`, not `Reload`: pi reads this setting only in its own TUI
+            // (`interactive-mode.ts:716`, `:4570`) and its RPC `get_commands` lists
+            // skill commands unconditionally (`rpc-mode.ts:702-708`), so nothing
+            // inside pi would ever change. The command panel this row is about is
+            // *this app's*, built by `piCommandPalette`, and it filters on the write
+            // (`PiSessionViewModel.onSettingWritten` → `refreshCommands`) — so the
+            // row takes effect at once, which is also what pi's TUI does.
+            effective = EffectiveKind.Immediate,
             aliases = listOf("skills", "commands"),
         ),
-        PiSetting(
-            key = "app.contextFiles",
-            title = "上下文文件",
-            description = "全局与项目级的上下文文件。它们会被追加进系统提示，改动需要重载。",
-            kind = PiRowKind.List,
-            group = G_RESOURCES,
-            section = "上下文文件",
-            effective = EffectiveKind.Reload,
-            presets = listOf("~/.pi/agent/AGENTS.md", "~/.pi/agent/SYSTEM.md", ".pi/AGENTS.md", ".pi/SYSTEM.md"),
-            depth = 2,
-            emptyListLabel = "未发现",
-            aliases = listOf("agents", "system", "context", "reload"),
-        ),
+        // `app.contextFiles` used to sit here and is **deleted on purpose**. Its
+        // description promised "全局与项目级的上下文文件。它们会被追加进系统提示" and
+        // nothing in the tree read the key — a search for `contextFiles` across
+        // `app/src/main` and `rpc/src/main` found the registry row and nothing else
+        // — so it was an editor for a file list with no writer behind it, the same
+        // class of defect §I7 removed elsewhere. pi has no counterpart either: its
+        // context files are a *convention* it discovers by fixed name
+        // (`resource-loader.ts:72`: `AGENTS.override.md`, `AGENTS.md`, `AGENTS.MD`,
+        // `CLAUDE.md`, `CLAUDE.MD`) rather than a setting listing paths, so the
+        // presets this row offered were a view of pi's convention, not a control over
+        // it. `pi 无对应物`, and the honest form of "the app decides not to do this"
+        // is not to offer the switch.
 
         // ------------------------------------------------------------------
         // 8 外观

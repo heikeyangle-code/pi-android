@@ -47,6 +47,9 @@ import app.pi.packages.PiPackageSource
 import app.pi.packages.ProjectTrust
 import app.pi.packages.TrustFile
 import app.pi.packages.TrustStore
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
 
 // A bare-JVM harness for the pure half of app.pi.packages. Not shipped in :app —
 // it is written and run out-of-tree precisely so `tools/typecheck.sh` stays the
@@ -499,6 +502,82 @@ fun main() {
             "/files/pi/.pi/agent",
         ),
         true,
+    )
+
+    // ---- `pi config` 的按资源 glob（PiPackageFilters）----------------------------
+    //
+    // 这一组存在的理由就是那个读取端缺口：App 以前只认 `pi list` 的 `(filtered)`
+    // 后缀，四个 glob 数组根本没被解析过。所以第一条检查就是"能不能把 pi 写下的
+    // glob 逐条读出来"，后面每一条都对着 pi 自己的规则（`settings-manager.ts:95-104`
+    // 的形状、`config-selector.ts:26-38` 的四个键、`:619` 的空数组、`:623-628` 的塌回、
+    // `:611-614` 的去重按 body），以及本文件头部写明的**那一处有意偏离**。
+
+    val objectForm = buildJsonObject {
+        put("source", JsonPrimitive("npm:foo"))
+        put("autoload", JsonPrimitive(false))
+        put("extensions", JsonArray(listOf(JsonPrimitive("+extra"), JsonPrimitive("-legacy*"))))
+        put("skills", JsonArray(listOf(JsonPrimitive("c*"))))
+    }
+    val filtered = PiPackageFilters.parse(objectForm)
+    check("pi 的 object 形式能解析出 source", filtered?.source, "npm:foo")
+    check("能读到 autoload", filtered?.autoload, false)
+    check("能逐条读到 extensions 的两条 glob", filtered?.patterns("extensions"), listOf("+extra", "-legacy*"))
+    check("能读到 skills 的 glob", filtered?.patterns("skills"), listOf("c*"))
+    check("没写的资源键是空的，不是 null 崩", filtered?.patterns("themes"), emptyList<String>())
+    check("hasFilters 认得出这个条目有过滤", filtered?.hasFilters, true)
+
+    check("裸字符串是合法的 packages 元素", PiPackageFilters.parse(JsonPrimitive("npm:foo"))?.source, "npm:foo")
+    check("空白 source 的对象不会被编成一个包", PiPackageFilters.parse(buildJsonObject { put("source", JsonPrimitive("  ")) }), null)
+    check("非对象非字符串不猜成一个包", PiPackageFilters.parse(JsonPrimitive(7)), null)
+
+    val emptyArray = buildJsonObject {
+        put("source", JsonPrimitive("npm:bar"))
+        put("skills", JsonArray(emptyList()))
+    }
+    check("空数组等同于没有这个键（pi :619）", PiPackageFilters.parse(emptyArray)?.hasFilters, false)
+
+    // 往返：pi 写下的形状我们能原样写回去，不丢 glob、不丢 autoload。
+    check("object 形式往返不丢东西", filtered?.let { PiPackageFilters.toJson(it) }, objectForm)
+    check(
+        "没有过滤也没有 autoload 时塌回裸字符串（pi :623-628）",
+        PiPackageFilters.toJson(PiPackageFilters.Entry(source = "npm:baz")),
+        JsonPrimitive("npm:baz"),
+    )
+    check(
+        "**有意偏离**：只剩 autoload 时保留 object 形式，不静默丢掉 autoload",
+        PiPackageFilters.toJson(PiPackageFilters.Entry(source = "npm:baz", autoload = false)),
+        buildJsonObject { put("source", JsonPrimitive("npm:baz")); put("autoload", JsonPrimitive(false)) },
+    )
+    check(
+        "normalize 丢掉空数组",
+        PiPackageFilters.normalize(
+            PiPackageFilters.Entry(source = "npm:x", filters = mapOf("skills" to emptyList(), "themes" to listOf("t*"))),
+        ).filters,
+        mapOf("themes" to listOf("t*")),
+    )
+    check(
+        "**有意偏离**：normalize 后 autoload 仍在",
+        PiPackageFilters.normalize(PiPackageFilters.Entry(source = "npm:x", autoload = true)).autoload,
+        true,
+    )
+
+    // 去重按 body（pi :611-614）：`+c*` 与 `-c*` 不能并存，后者替换前者。
+    val added = PiPackageFilters.withPattern(filtered!!, "skills", "-c*")
+    check("同 body 的 glob 是替换不是追加", added.patterns("skills"), listOf("-c*"))
+    val addedNew = PiPackageFilters.withPattern(filtered, "skills", "other")
+    check("新 body 追加在末尾", addedNew.patterns("skills"), listOf("c*", "other"))
+    check("不该受影响的资源键不动", addedNew.patterns("extensions"), listOf("+extra", "-legacy*"))
+    check("未知名资源键不写入", PiPackageFilters.withPattern(filtered, "nope", "x").patterns("nope"), emptyList<String>())
+    check("空白 glob 不写入", PiPackageFilters.withPattern(filtered, "skills", "   ").patterns("skills"), listOf("c*"))
+    check(
+        "删除是逐字匹配，删空后键消失",
+        PiPackageFilters.withoutPattern(filtered, "skills", "c*").patterns("skills"),
+        emptyList<String>(),
+    )
+    check(
+        "删除后另一条 glob 还在",
+        PiPackageFilters.withoutPattern(filtered, "extensions", "+extra").patterns("extensions"),
+        listOf("-legacy*"),
     )
 
     println(if (failures == 0) "\nharness: OK (all checks passed)" else "\nharness: FAILED ($failures)")
