@@ -48,12 +48,16 @@ import org.connectbot.terminal.TerminalEmulatorFactory
  */
 class TerminalBridge private constructor(
     private val context: Context,
-    val kind: PtyLauncher.Kind,
-    /** The grid the guest's PTY was pinned to by [PtyLauncher]; see [fixedSize]. */
-    val columns: Int,
-    val rows: Int,
+    /**
+     * The cell grid the emulator starts at, before the view has been measured.
+     *
+     * A placeholder, not the real size: [start] replaces it with the grid the view
+     * reports, because that is the one the guest's PTY gets pinned to.
+     */
+    initialRows: Int,
+    initialColumns: Int,
     private val palette: TerminalPalette,
-    /** Guest command for [PtyLauncher.Kind.Custom]; ignored otherwise. */
+    /** Guest command; blank means the interactive shell (see `PtyLauncher.Spec`). */
     private val command: String,
     /**
      * Where an OSC 52 request from the guest goes.
@@ -61,8 +65,7 @@ class TerminalBridge private constructor(
      * The library decodes the sequence and hands over the text, but the Android
      * clipboard is the app's to own, so the pane supplies this sink. The library
      * posts its OSC handling to the main looper, so the sink is always called on
-     * the main thread and may touch the clipboard directly. This replaces the
-     * app's own OSC 52 handling, which the deleted emulator used to do.
+     * the main thread and may touch the clipboard directly.
      */
     private val onClipboardCopy: (String) -> Unit,
     private val writer: ExecutorService,
@@ -71,10 +74,15 @@ class TerminalBridge private constructor(
     /**
      * libvterm, wrapped by the library. Created here rather than taken as a
      * constructor argument so that its callbacks can close over `this`.
+     *
+     * It exists before the guest does, and that ordering is load-bearing: the pane
+     * has to render an emulator in order to measure the area the terminal will
+     * occupy, and the grid that measurement produces is what the guest's PTY is
+     * pinned to at spawn. See [start].
      */
     val emulator: TerminalEmulator = TerminalEmulatorFactory.create(
-        initialRows = rows,
-        initialCols = columns,
+        initialRows = initialRows,
+        initialCols = initialColumns,
         defaultForeground = palette.foreground,
         defaultBackground = palette.background,
         onKeyboardInput = { bytes -> writeToGuest(bytes) },
@@ -82,20 +90,30 @@ class TerminalBridge private constructor(
     )
 
     /**
-     * `(rows, cols)` for the library's `forcedSize`, which keeps the emulator's
-     * grid at the size [PtyLauncher] pinned instead of deriving it from the view.
+     * `(rows, cols)` once [start] has run, else null.
      *
-     * This is load-bearing, not cosmetic. `script(1)` cannot resize the pty it
-     * created, so the guest's idea of the grid (`stty` plus `COLUMNS`/`LINES`) is
-     * frozen when the process starts; an emulator that reflows to the view would
-     * paint a grid the program never laid out. Passing this also makes the
-     * library compute the font size that fits the whole grid on screen.
+     * This is the grid the guest's `stty` and `COLUMNS`/`LINES` were pinned to, and
+     * the pane hands it to the library as `forcedSize` so the emulator cannot be
+     * reflowed away from it — load-bearing rather than cosmetic, because `script(1)`
+     * cannot resize the pty it created: the guest's idea of the grid is frozen when
+     * the process starts, and an emulator that followed the view would paint a grid
+     * the program never laid out.
+     *
+     * Freezing a grid is only acceptable because the grid is *measured to fit* the
+     * view before the spawn (the pane's `terminalGrid`). Pinning a hard-coded
+     * `80x26` is what left the terminal as a thin band on a phone: 80 columns force
+     * the fitting font down to a few sp, and 26 rows of it fill less than half the
+     * height.
      */
-    val fixedSize: Pair<Int, Int> get() = rows to columns
+    @Volatile
+    var pinnedSize: Pair<Int, Int>? = null
+        private set
 
     private val bracketedPaste = BracketedPasteWatcher()
 
     @Volatile private var session: PtySession? = null
+
+    @Volatile private var started = false
 
     @Volatile var exitCode: Int? = null
         private set
@@ -107,6 +125,23 @@ class TerminalBridge private constructor(
         private set
 
     val isRunning: Boolean get() = session?.isRunning == true
+
+    // ---------------------------------------------------------------------- start
+
+    /**
+     * Pin the grid and start the guest. Idempotent: only the first call starts
+     * anything, so a later view resize cannot restart the user's shell.
+     *
+     * @param rows the measured rows, from the pane's `terminalGrid`.
+     * @param columns the measured columns, same source.
+     */
+    fun start(rows: Int, columns: Int) {
+        if (started) return
+        started = true
+        emulator.resize(rows, columns)
+        pinnedSize = rows to columns
+        connect(rows, columns)
+    }
 
     // ----------------------------------------------------------------------- paste
 
@@ -152,18 +187,18 @@ class TerminalBridge private constructor(
     }
 
     /**
-     * Start the guest process and connect it to the emulator.
+     * Start the guest process on the grid [start] pinned, and connect it to the
+     * emulator.
      *
-     * Called once, after construction, so that a failure can be reported through
-     * [lastError] instead of preventing a tab from existing: an empty tab is a
+     * Called once from [start], so a failure is reported through [lastError]
+     * rather than preventing the terminal from existing: an empty screen is a
      * worse answer than a message.
      */
-    private fun connect() {
-        val started = runCatching {
+    private fun connect(rows: Int, columns: Int) {
+        val launched = runCatching {
             PtyLauncher.start(
                 context = context,
                 spec = PtyLauncher.Spec(
-                    kind = kind,
                     command = command,
                     columns = columns,
                     rows = rows,
@@ -179,8 +214,8 @@ class TerminalBridge private constructor(
                 onExit = { code -> exitCode = code },
             )
         }
-        started.onSuccess { session = it }
-        started.onFailure { error ->
+        launched.onSuccess { session = it }
+        launched.onFailure { error ->
             lastError = "${error::class.java.simpleName}: ${error.message}"
         }
     }
@@ -188,15 +223,19 @@ class TerminalBridge private constructor(
     companion object {
 
         /**
-         * Create and start a terminal.
+         * Create a terminal: the emulator, but no guest yet.
+         *
+         * The process starts in [start], once the view has been measured. That
+         * split exists because the guest's PTY is pinned at spawn and cannot be
+         * resized afterwards, so the grid has to be known *before* the spawn — and
+         * the only honest source for it is the size the terminal will be drawn at.
          *
          * The returned bridge always exists, even when the guest cannot start.
          */
         fun open(
             context: Context,
-            kind: PtyLauncher.Kind,
-            columns: Int,
             rows: Int,
+            columns: Int,
             palette: TerminalPalette,
             onClipboardCopy: (String) -> Unit,
             command: String = "",
@@ -204,18 +243,15 @@ class TerminalBridge private constructor(
             val writer = Executors.newSingleThreadExecutor { runnable ->
                 Thread(runnable, "pi-pty-writer").apply { isDaemon = true }
             }
-            val bridge = TerminalBridge(
+            return TerminalBridge(
                 context = context,
-                kind = kind,
-                columns = columns,
-                rows = rows,
+                initialRows = rows,
+                initialColumns = columns,
                 palette = palette,
                 command = command,
                 onClipboardCopy = onClipboardCopy,
                 writer = writer,
             )
-            bridge.connect()
-            return bridge
         }
     }
 }

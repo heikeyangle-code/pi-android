@@ -11,7 +11,6 @@ import app.pi.rpc.HookMessage
 import app.pi.rpc.ModelChange
 import app.pi.rpc.Notice
 import app.pi.rpc.SkillInvocation
-import app.pi.rpc.SystemPrompt
 import app.pi.rpc.ThinkingBlock
 import app.pi.rpc.ToolCall
 import app.pi.rpc.ToolDiff
@@ -53,6 +52,11 @@ import app.pi.rpc.UserMessage
  *   tree (the app's nearest equivalent of pi's branch jump).
  * @param onModelClick the model-change row's tap; the host opens the model
  *   picker sheet.
+ * @param showBilledCost pi's `showCacheMissNotices` (`core/settings-manager.ts:120`,
+ *   default `false`). On, the compaction and branch-summary blocks print the
+ *   summarization's own usage exactly as pi does
+ *   (`modes/interactive/interactive-mode.ts:3802-3812`); off, they print nothing
+ *   extra — F18 in `docs/rendering-review.md`.
  */
 @Composable
 fun BlockRenderer(
@@ -61,11 +65,14 @@ fun BlockRenderer(
     hideThinking: Boolean = false,
     thinkingDefaultExpanded: Boolean = false,
     toolsDefaultExpanded: Boolean = false,
+    showBilledCost: Boolean = false,
     onBranchClick: ((BranchSummary) -> Unit)? = null,
+    /** §4.8: 编辑并从此分叉 — pi forks a session from a user message (`fork`, rpc-types.ts:62). */
+    onForkFromMessage: ((String) -> Unit)? = null,
     onModelClick: (() -> Unit)? = null,
 ) {
     when (item) {
-        is UserMessage -> UserMessageBlock(item, modifier)
+        is UserMessage -> UserMessageBlock(item, modifier, onForkFromMessage)
 
         is AssistantText -> AssistantTextBlock(item, modifier)
 
@@ -77,17 +84,15 @@ fun BlockRenderer(
 
         is ToolDiff -> DiffBlock(item, modifier, toolsDefaultExpanded)
 
-        is CompactionMarker -> CompactionBlock(item, modifier)
+        is CompactionMarker -> CompactionBlock(item, modifier, showBilledCost)
 
-        is BranchSummary -> BranchSummaryBlock(item, modifier, onBranchClick)
+        is BranchSummary -> BranchSummaryBlock(item, modifier, onBranchClick, showBilledCost)
 
         is HookMessage -> HookMessageBlock(item, modifier)
 
         is ModelChange -> ModelChangeBlock(item, modifier, onModelClick)
 
         is SkillInvocation -> SkillInvocationBlock(item, modifier)
-
-        is SystemPrompt -> SystemPromptBlock(item, modifier)
 
         is ErrorText -> ErrorBlock(item, modifier)
 

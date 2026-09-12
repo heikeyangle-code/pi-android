@@ -183,6 +183,18 @@ data class UiPrefs(
      * the switch can have).
      */
     val keepAlive: Boolean = true,
+    /**
+     * pi's `showCacheMissNotices` (`core/settings-manager.ts:120`, read at
+     * `:965-967` as `?? false`). It is the switch that gates the summarization
+     * cost line, and pi reads it for exactly three notices: the compaction /
+     * branch-summary billing line (`modes/interactive/interactive-mode.ts:3802-3812`),
+     * the assistant diagnostics (`:3814`) and the provider-recovery notices.
+     *
+     * Default `false` **is pi's default** — the row exists in the settings stack
+     * (`ui/settings/PiSettingsRegistry.kt:331`) and, until this field existed, no
+     * code read it, so the switch looked wired and was not.
+     */
+    val showCacheMissNotices: Boolean = false,
 )
 
 /**
@@ -497,6 +509,10 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             thinkingCollapsedByDefault = bool("app.appearance.thinkingCollapsedByDefault", true),
             expandToolsByDefault = bool("app.tools.expandByDefault", false),
             hideThinkingBlock = bool("hideThinkingBlock", false),
+            // pi's own key, at the top level of the document, default false
+            // (`core/settings-manager.ts:120`, `:965-967`). Gates the
+            // compaction / branch-summary cost line (F18).
+            showCacheMissNotices = bool("showCacheMissNotices", false),
             keepAlive = bool("app.runtime.keepAlive", true),
         )
     }
@@ -519,6 +535,10 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             key.startsWith("app.appearance.") ||
             key.startsWith("app.tools.") ||
             key == "app.runtime.keepAlive" ||
+            // pi's `showCacheMissNotices` gates the summarization billing line the
+            // transcript prints (F18), so a write has to reach `UiPrefs` before the
+            // next frame or the row would look inert.
+            key == "showCacheMissNotices" ||
             key == "themes"
         ) {
             refreshPrefs()

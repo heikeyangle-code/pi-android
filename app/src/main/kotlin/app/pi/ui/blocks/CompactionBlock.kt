@@ -18,6 +18,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import app.pi.rpc.CompactionMarker
+import app.pi.ui.components.PiBilledCostLine
 import app.pi.ui.render.PiMarkdownText
 import app.pi.ui.theme.PiShapes
 import app.pi.ui.theme.PiTheme
@@ -28,11 +29,20 @@ import app.pi.ui.theme.PiTheme
  * summary is collapsed to a two-line plain-text preview and expands to the full
  * markdown document in place — the split pi's own
  * `compaction-summary-message.ts:40-57` makes, for the same reason.
+ *
+ * [showBilledCost] is pi's `showCacheMissNotices` (`core/settings-manager.ts:120`,
+ * default `false`). pi prints a separate `compaction_cost` row for the
+ * summarization's own usage when it is on
+ * (`modes/interactive/interactive-mode.ts:3430-3436` live, `:3791-3793` on
+ * replay); the row is rendered here instead of as its own transcript item
+ * because the app keeps that usage on [CompactionMarker.usage] rather than as a
+ * separate entry. The text is pi's, verbatim — see [PiBilledCostLine].
  */
 @Composable
 fun CompactionBlock(
     item: CompactionMarker,
     modifier: Modifier = Modifier,
+    showBilledCost: Boolean = false,
 ) {
     val palette = PiTheme.palette
     var expanded by remember { mutableStateOf(false) }
@@ -115,6 +125,14 @@ fun CompactionBlock(
                     maxLines = COLLAPSED_SUMMARY_LINES,
                 )
             }
+        }
+        // F18: the summarization's own billing, gated by pi's switch.
+        if (showBilledCost) {
+            PiBilledCostLine(
+                label = "Compaction",
+                usage = item.usage,
+                modifier = Modifier.fillMaxWidth().padding(top = 2.dp),
+            )
         }
     }
 }

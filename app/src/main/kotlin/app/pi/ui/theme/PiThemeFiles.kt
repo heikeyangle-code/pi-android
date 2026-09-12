@@ -93,6 +93,18 @@ data class PiResolvedTheme(
     }
 }
 
+/**
+ * A theme file that was found and read but cannot be used, with a message
+ * written for the user.
+ *
+ * It exists so [PiThemeLoader.load] can tell "this file says something the app
+ * cannot honour" (worth showing, in the user's language) apart from any other
+ * failure (worth hiding, because a JVM or library exception's text is not the
+ * app's to print). Its `message` is always a complete Chinese sentence naming
+ * what is wrong and what to do about it.
+ */
+private class ThemeParseException(message: String) : Exception(message)
+
 object PiThemeLoader {
 
     /** The 54 `colors` tokens of `theme-schema.json`, required ones first. */
@@ -231,9 +243,18 @@ object PiThemeLoader {
             )
         }
         val parsed = runCatching { parseTheme(file) }.getOrElse { error ->
+            // Every user-visible word here is written by this file, never taken
+            // from an exception. Two earlier shapes were wrong:
+            // `error::class.java.simpleName` printed `FileNotFoundException` to
+            // the user, and `error.message` would print whatever a JVM or library
+            // exception happens to carry — a path, a token key, a parser's own
+            // wording. Only [ThemeParseException] speaks the user's language, so
+            // it is the only one whose text is allowed on screen; anything else
+            // gets a fixed sentence and keeps its cause in the stack trace.
             return PiResolvedTheme.fallback(systemDark).copy(
                 setting = raw,
-                error = "主题「$name」读取失败：${error.message ?: error::class.java.simpleName}",
+                error = (error as? ThemeParseException)?.message
+                    ?: "主题「$name」读取失败。可以换一个主题，或检查该主题文件的内容。",
             )
         }
         return PiResolvedTheme(
@@ -256,13 +277,13 @@ object PiThemeLoader {
 
     private fun parseTheme(file: File): ParsedTheme {
         val json = readJson(file)
-            ?: throw IllegalArgumentException("不是合法的 JSON 对象")
+            ?: throw ThemeParseException("这个主题文件不是合法的 JSON 对象。可以检查文件内容，或换一个主题。")
         return parseThemeJson(json)
     }
 
     private fun parseThemeJson(json: JsonObject): ParsedTheme {
         val colors = json["colors"] as? JsonObject
-            ?: throw IllegalArgumentException("缺少 colors 映射")
+            ?: throw ThemeParseException("这个主题文件里没有 colors 一栏。可以检查文件内容，或换一个主题。")
         val vars = json["vars"] as? JsonObject ?: JsonObject(emptyMap())
 
         // Which built-in palette supplies the values the file cannot express.

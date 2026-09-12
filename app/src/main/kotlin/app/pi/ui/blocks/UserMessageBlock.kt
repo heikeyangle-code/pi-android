@@ -37,9 +37,24 @@ import app.pi.ui.theme.PiTheme
 fun UserMessageBlock(
     item: UserMessage,
     modifier: Modifier = Modifier,
+    /** §4.8: 编辑并从此分叉 — `session.forkFrom(entryId)`; null hides the action. */
+    onForkFromMessage: ((String) -> Unit)? = null,
 ) {
     val palette = PiTheme.palette
+    val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
     BlockColumn(modifier) {
+        BlockActionMenu(
+            actions = buildList {
+                add(BlockAction("复制") { clipboard.setText(androidx.compose.ui.text.AnnotatedString(item.text)) })
+                // pi forks a session from a *user* message (`fork`, rpc-types.ts:62;
+                // pi's own picker is /fork, docs/sessions.md:31). The entry id is
+                // the block's stable key, which is pi's own entry id for a
+                // projected user message.
+                if (onForkFromMessage != null) {
+                    add(BlockAction("编辑并从此分叉") { onForkFromMessage(item.key) })
+                }
+            },
+        ) {
         Surface(
             modifier = Modifier.fillMaxWidth(),
             shape = PiShapes.card,
@@ -75,6 +90,7 @@ fun UserMessageBlock(
                     color = palette.userMessageText.copy(alpha = 0.62f),
                 )
             }
+        }
         }
     }
 }

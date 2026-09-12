@@ -82,7 +82,10 @@ fun ErrorBlock(
             if (expanded && !detail.isNullOrBlank()) {
                 MonoText(
                     text = detail,
-                    color = palette.toolOutput,
+                    // F13 (`docs/rendering-review.md`): raw error detail is body
+                    // text on a tool-error surface, so it takes the variant that
+                    // clears §9's 4.5:1 floor.
+                    color = palette.bodyOnTool,
                     modifier = Modifier.padding(top = 2.dp),
                 )
             }

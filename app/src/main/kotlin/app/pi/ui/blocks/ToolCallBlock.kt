@@ -91,7 +91,33 @@ fun ToolCallBlock(
         toolFooter(item, statusLabel, outputLineCount)
     }
 
+    val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
+    // §4.8: 工具卡长按 → 复制命令 / 复制输出. The command is the tool's own argument
+    // (`command` for bash, `file_path`/`path` for the file tools); a tool whose
+    // arguments are neither gets no command entry rather than a wrong one.
+    val commandText = remember(item.args) {
+        listOf("command", "file_path", "path", "pattern")
+            .firstNotNullOfOrNull { key ->
+                (item.args?.get(key) as? kotlinx.serialization.json.JsonPrimitive)
+                    ?.takeIf { it.isString }
+                    ?.content
+            }
+    }
     BlockColumn(modifier) {
+        BlockActionMenu(
+            actions = buildList {
+                if (commandText != null) {
+                    add(BlockAction("复制命令") {
+                        clipboard.setText(androidx.compose.ui.text.AnnotatedString(commandText))
+                    })
+                }
+                if (item.output.isNotEmpty()) {
+                    add(BlockAction("复制输出") {
+                        clipboard.setText(androidx.compose.ui.text.AnnotatedString(item.output))
+                    })
+                }
+            },
+        ) {
         BlockCard(
             color = container,
             modifier = Modifier.clickable(
@@ -161,6 +187,7 @@ fun ToolCallBlock(
                     ExpandLabel(expanded, expandText = "输出", collapseText = "收起")
                 }
             }
+        }
         }
     }
 }

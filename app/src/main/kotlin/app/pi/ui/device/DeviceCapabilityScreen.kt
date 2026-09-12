@@ -166,7 +166,10 @@ fun DeviceCapabilityScreen(
         note = if (denied.isEmpty()) {
             "权限已授予。"
         } else {
-            "以下权限仍未授予：${denied.joinToString("、")}。" +
+            // The result map is keyed by the platform's permission constants
+            // (`android.permission.CAMERA` …); those are not words to show a user, so
+            // they are named the way the cards name them.
+            "以下权限仍未授予：${denied.joinToString("、") { permissionLabel(it) }}。" +
                 "系统在拒绝两次后可能不再弹窗，需要到 系统设置 → 应用 → pi → 权限 中手动打开。"
         }
         revision += 1
@@ -262,8 +265,10 @@ fun DeviceCapabilityScreen(
                             context.startActivity(DeviceAccessibilityService.settingsIntent())
                         }.isSuccess
                         if (!opened) {
+                            // No package name: the user is looking at a list of service
+                            // labels, and 「pi 设备桥」 is what it is called there.
                             note = "无法打开系统的无障碍设置页。请手动进入 系统设置 → 无障碍 → 已安装的服务，" +
-                                "启用「pi 设备桥」（包名 ${context.packageName}）。"
+                                "启用「pi 设备桥」。"
                         }
                     },
                     relaxed = relaxed,
@@ -552,8 +557,8 @@ private fun DeviceCapabilityCard(
                     // API 30 (DeviceUiAutomation.kt:609-616), which is what
                     // `/app/health`'s `screenshotSupported` reports (Router.kt:326).
                     Text(
-                        "截屏：不可用 —— 无障碍截图需要 Android 11（API 30）及以上，" +
-                            "本机是 Android ${Build.VERSION.RELEASE}；此时只能靠「Shell」组的 screencap。",
+                        "截屏：不可用 —— 无障碍截图需要 Android 11 及以上，" +
+                            "本机是 Android ${Build.VERSION.RELEASE}；此时只有「Shell」组能截屏。",
                         style = MaterialTheme.typography.bodyMedium,
                         color = PiTheme.palette.error,
                     )
@@ -695,7 +700,7 @@ private fun DeviceCapabilityCard(
                     )
                 } else {
                     Text(
-                        "相机权限：未授予 —— 手电筒不可用（Android 6 起 setTorchMode 需要 CAMERA）；位置与传感器不受影响。",
+                        "相机权限：未授予 —— 手电筒不可用；位置、传感器与电池不受影响。",
                         style = MaterialTheme.typography.bodyMedium,
                         color = PiTheme.palette.warning,
                     )
@@ -719,8 +724,7 @@ private fun DeviceCapabilityCard(
                     )
                 } else {
                     Text(
-                        "系统通知权限：未授予 —— 发送通知会被拒绝（Android 13+ 需要 POST_NOTIFICATIONS）；" +
-                            "剪贴板、打开链接、分享、Toast、震动不受影响。",
+                        "系统通知权限：未授予 —— 发送通知会被拒绝；剪贴板、打开链接、分享、震动不受影响。",
                         style = MaterialTheme.typography.bodyMedium,
                         color = PiTheme.palette.warning,
                     )
@@ -897,6 +901,22 @@ private fun InfoNote(text: String) {
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
+}
+
+/**
+ * The name a permission goes by on this screen.
+ *
+ * The platform reports its answer keyed by constants such as
+ * `android.permission.POST_NOTIFICATIONS`; those are for logs, not for the reader,
+ * so the one place a denial is reported back names them the way the cards do.
+ * Anything unmapped falls back to the constant's last segment, which is still
+ * better than the whole string and can never be empty.
+ */
+private fun permissionLabel(permission: String): String = when (permission) {
+    Manifest.permission.CAMERA -> "相机"
+    Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION -> "位置信息"
+    Manifest.permission.POST_NOTIFICATIONS -> "通知"
+    else -> permission.substringAfterLast('.')
 }
 
 private fun iconFor(capability: DeviceCapability): ImageVector = when (capability) {

@@ -24,19 +24,35 @@ class PiPaths(private val filesDir: File, private val nativeLibDir: File) {
      *
      * The guest spelling `/usr/local/bin/<tool>` is a symlink to
      * `/root/.pi/agent/bin/<tool>`, and which host directory that guest path lands in
-     * depends on who launched proot:
+     * depends on whether the launch path binds [agentDir] over `/root/.pi/agent`:
      *
-     *  - `PiEngineHost` (the chat engine) and `GuestCommand` (package commands) bind
-     *    [agentDir] over `/root/.pi/agent`, so the guest resolves it to [agentBinDir].
-     *    The rootfs copy at [rootfsAgentBinDir] is **shadowed** and unreachable there.
-     *  - `PtyLauncher` (the terminal) does **not** add that bind, so the guest falls
-     *    through to the rootfs copy at [rootfsAgentBinDir].
+     *  - `PiEngineHost` (the chat engine), `GuestCommand` (package commands) and
+     *    `PtyLauncher` (the terminal) **all bind it now**, so on every ordinary launch
+     *    the guest resolves it to [agentBinDir] and the rootfs copy at
+     *    [rootfsAgentBinDir] is **shadowed**.
+     *  - The rootfs copy is therefore no longer "the other launch path's copy". It is
+     *    the copy that answers *before the next provision*: `wipe()` deletes the whole
+     *    volatile tree, `installTool` recreates both, and anything that runs in the
+     *    window between a wipe and the next successful provision falls through to the
+     *    rootfs copy. Keeping it costs two small files.
      *
-     * Installing into only one of the two makes the tool work in one launch path and
-     * dangle in the other, and the failure is silent: a dangling `/usr/local/bin/fd`
-     * is indistinguishable from "fd was never installed" to every caller of it, which
-     * is how pi's `find` tool and the `@` mention completion both lose their backend
-     * with no error printed anywhere.
+     * ## The history, because the shape only makes sense with it
+     *
+     * `PtyLauncher` used to be the one path that did **not** bind the agent dir, which
+     * meant the terminal's `pi` read `<rootfs>/root/.pi/agent` — a different agent dir
+     * from the chat page's, with different sessions, settings and credentials. That was
+     * survivable while the terminal only existed to show pi's own TUI on request. It
+     * stopped being survivable when the terminal became "a shell where the user types
+     * `pi`": the shell is now a first-class way to run pi, and running it against a
+     * second, volatile agent dir is not a smaller version of the chat page, it is a
+     * different install. So the terminal binds it too, and the three paths agree.
+     *
+     * Installing into only one of the two directories still breaks things, just over a
+     * narrower window, and the failure is silent either way: a dangling
+     * `/usr/local/bin/fd` is indistinguishable from "fd was never installed" to every
+     * caller of it, which is how pi's `find` tool and the `@` mention completion both
+     * lose their backend with no error printed anywhere. That is why `installTool`
+     * writes both and [ensureToolsVisible] repairs both.
      *
      * The two are genuinely different directories and neither contains the other:
      * [agentDir] is `<files>/pi/.pi/agent` (durable — `RuntimeProvisioner.wipe()`
@@ -46,8 +62,9 @@ class PiPaths(private val filesDir: File, private val nativeLibDir: File) {
     fun agentBinDir(): File = File(agentDir, "bin")
 
     /**
-     * The rootfs copy of [agentBinDir]. Read [agentBinDir]'s KDoc first: this is the
-     * copy that only a launch path *without* the agent-dir bind can see, and the one
+     * The rootfs copy of [agentBinDir]. Read [agentBinDir]'s KDoc first: since every
+     * launch path binds the agent dir, this copy answers only in the window between a
+     * `wipe()` and the next successful provision, and it is the one
      * `RuntimeProvisioner.wipe()` deletes whenever the runtime revision changes.
      */
     fun rootfsAgentBinDir(): File = File(rootfs, "root/.pi/agent/bin")

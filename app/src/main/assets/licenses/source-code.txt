@@ -1,0 +1,46 @@
+获取源代码
+==========
+
+本 App 分发的 GPL、LGPL 与其他要求提供源代码的程序，全部是未修改的上游发行版。
+对应的源代码可以从下面这些上游位置按相同版本取得。
+
+Linux 运行时（Ubuntu 基础系统及其附加软件包）
+--------------------------------------------
+来源：Ubuntu 24.04.3 (noble) 官方软件源，arm64 / all 架构。
+地址：https://ports.ubuntu.com/ubuntu-ports/ 与 https://archive.ubuntu.com/ubuntu/
+取法：在任一地址下按 池/源码包名 找到与「组件清单」中版本号相同的源码包
+      （.dsc 与 .orig.tar.* 等文件），或使用
+      apt-get source <软件包名>=<版本号>
+      在 Ubuntu 24.04 环境下获取。
+
+git
+---
+来源：Ubuntu 24.04.3 (noble-updates)，版本 2.43.0-1ubuntu7.3。
+上游：https://git-scm.com/  与  https://git.kernel.org/pub/scm/git/git.git
+Ubuntu 源码包：https://ports.ubuntu.com/ubuntu-ports/pool/main/g/git/
+
+proot
+-----
+来源：Termux 软件源，版本 5.1.107.92。
+上游：https://github.com/termux/proot  （标签 v5.1.107.92）
+Termux 打包脚本：https://github.com/termux/termux-packages/tree/master/packages/proot
+
+libtalloc
+---------
+来源：Termux 软件源，版本 2.4.3。
+上游：https://talloc.samba.org/   源码：https://www.samba.org/ftp/talloc/
+
+libandroid-shmem
+----------------
+来源：Termux 软件源，版本 0.7。
+上游：https://github.com/termux/libandroid-shmem  （标签 v0.7）
+
+其余随 App 分发的程序
+---------------------
+Apache-2.0、MIT、BSD、ISC 等宽松许可证不要求提供源代码。它们的许可证原文与版权声明
+一并附在本清单中；需要源代码时，按「组件清单」里给出的上游地址获取即可。
+
+联系方式
+--------
+若以上路径无法取得你需要的源代码，请通过本 App 的发布页面联系我们，
+我们会按许可证的要求提供对应的源代码。

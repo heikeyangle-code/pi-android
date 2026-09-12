@@ -64,6 +64,14 @@ fun SettingsHome(
      * exists only where the host can mount it.
      */
     onOpenPackages: (() -> Unit)? = null,
+    /**
+     * The open-source licence notices ([LicensesScreen]). `null` hides the row.
+     * This one is neither a pi setting nor a pi feature: publishing the licences of
+     * what we redistribute is *this* app's obligation as the distributor, which is
+     * why the row is a screen of its own rather than a row in pi's catalog
+     * (`docs/known-gaps.md` §L).
+     */
+    onOpenLicenses: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
     Column(Modifier.fillMaxSize()) {
@@ -112,6 +120,18 @@ fun SettingsHome(
                 }
                 item {
                     PiPackagesEntryRow(onClick = onOpenPackages)
+                }
+            }
+            // The licence notices. Not a pi setting and not a pi feature: this app
+            // redistributes a Linux userland, Node, git, proot, a pi engine and a
+            // number of libraries, so the licence texts and the source-availability
+            // statement are ours to publish.
+            if (onOpenLicenses != null) {
+                item {
+                    PiSectionHeader("关于")
+                }
+                item {
+                    PiLicensesEntryRow(onClick = onOpenLicenses)
                 }
             }
             item {

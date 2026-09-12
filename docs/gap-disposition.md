@@ -149,10 +149,10 @@ The audit's `PARTIAL 20 / MISSING-GUI 26 / CLI-ONLY 9 = 55` is reproduced exactl
 
 | # | Capability | Grade | Disposition | Owner / entry | App file proving the deficiency still exists | pi citation | Status |
 |---|---|---|---|---|---|---|---|
-| 34 | a user theme JSON changes the app's own colours | MISSING-GUI | **ASSIGNED** | **I5** + in-flight `ui/theme/PiThemeFiles.kt` | `ui/theme/PiPalette.kt:114` `val Dark = PiPalette(` and `:177` `val Light = PiPalette(` remain the only two palettes the UI can use; `MainActivity.kt:35-40` still maps only `light`/`dark`/`a/b` and `else -> dark`. The new `PiThemeLoader`/`PiResolvedTheme` have **0 consumers** | `docs/themes.md:14-18`; `resource-loader.ts:875` | in-flight |
-| 35 | theme discovery `<agentDir>/themes/*.json` | PARTIAL | **ASSIGNED** | **I5** + in-flight `PiThemeFiles.kt` (`PiThemeScope.AgentDir`) | `ui/settings/PiSettingEditorHost.kt:90-98` `localThemeNames` still derives names only from the `themes` settings row; nothing calls the new discovery | `resource-loader.ts:815` | in-flight |
-| 36 | theme discovery `.pi/themes/*.json` | PARTIAL | **ASSIGNED** | **I5** + in-flight `PiThemeFiles.kt` (`PiThemeScope.Project`) | same as #35 | `resource-loader.ts:821` | in-flight |
-| 37 | themes from packages (`themes/`, `pi.themes`) | PARTIAL | **ASSIGNED** | **I5** + in-flight `PiThemeFiles.kt` (`PiThemeScope.Configured`) | same as #35 | `docs/themes.md:17` | in-flight |
+| 34 | a user theme JSON changes the app's own colours | MISSING-GUI | **ASSIGNED** | **I5** + in-flight `ui/theme/PiThemeFiles.kt` | `ui/theme/PiPalette.kt:114` `val Dark = PiPalette(` and `:177` `val Light = PiPalette(` remain the only two palettes the UI can use; `MainActivity.kt:35-40` still maps only `light`/`dark`/`a/b` and `else -> dark`. `PiSessionViewModel.theme` is now a `StateFlow<PiResolvedTheme>` fed by `PiThemeLoader.load`/`discover` | `docs/themes.md:14-18`; `resource-loader.ts:875` | implemented — `PiThemeLoader.discover`/`load` + `PiSessionViewModel.refreshTheme` |
+| 35 | theme discovery `<agentDir>/themes/*.json` | PARTIAL | **ASSIGNED** | **I5** + in-flight `PiThemeFiles.kt` (`PiThemeScope.AgentDir`) | `PiSessionViewModel.refreshTheme` calls `PiThemeLoader.discover(host.paths().agentDir, defaultWorkspace(), configured)`, so the agent dir and project themes now merge with the `themes` row | `resource-loader.ts:815` | implemented — `PiThemeLoader.discover`/`load` + `PiSessionViewModel.refreshTheme` |
+| 36 | theme discovery `.pi/themes/*.json` | PARTIAL | **ASSIGNED** | **I5** + in-flight `PiThemeFiles.kt` (`PiThemeScope.Project`) | same as #35 — `PiThemeLoader.discover` covers the project `.pi/themes` root (`PiThemeScope.Project`) | `resource-loader.ts:821` | implemented — `PiThemeLoader.discover`/`load` + `PiSessionViewModel.refreshTheme` |
+| 37 | themes from packages (`themes/`, `pi.themes`) | PARTIAL | **ASSIGNED** | **I5** + in-flight `PiThemeFiles.kt` (`PiThemeScope.Configured`) | same as #35 — `PiThemeLoader.discover` covers the project `.pi/themes` root (`PiThemeScope.Project`) | `docs/themes.md:17` | implemented — `PiThemeLoader.discover`/`load` + `PiSessionViewModel.refreshTheme` |
 | 38 | `--theme` / `--no-themes` | CLI-ONLY | CLOSED | — | Persistent `themes` row exists; per-run flag has no per-run engine to attach to. | `cli/args.ts:177,192` | closed |
 
 ### 2.5 Sessions (`feature-gaps.md` §1.5)
@@ -190,9 +190,9 @@ The audit's `PARTIAL 20 / MISSING-GUI 26 / CLI-ONLY 9 = 55` is reproduced exactl
 
 | # | Capability | Grade | Disposition | Owner / entry | App file proving the deficiency still exists | pi citation | Status |
 |---|---|---|---|---|---|---|---|
-| 55 | registered settings that nothing reads | MISSING-GUI | RECORDED-NO-OWNER (I) | **I7** | Originally all 13 keys occurred once each, inside `PiSettingsRegistry.kt` (`:662`, `:676`, `:690`, `:869`, `:879`, `:893`, `:908`, `:918`, `:1057`, `:1071`, `:1086`, `:1177`, `:1615`). **Reconciled: 10 wired, 3 deleted with pi-source reasons.** Wired: the 4 terminal keys in `ui/terminal/TerminalSettings.kt`, and 6 in `PiSessionViewModel.readPrefs()` — `fontScaleDelta`, `messageDensity`, `showTimestamps`, `thinkingCollapsedByDefault`, `expandToolsByDefault`, `keepAlive` (plus `hideThinkingBlock`, which is also row #19). Deleted as unhonourable: `app.tools.bashTimeoutSeconds` (the `bash` RPC command carries no timeout field; pi's bash tool takes it per call), `app.tools.outputMaxLines` (pi's truncation limits are compiled constants), `app.appearance.dynamicColor` — each with the reason left in `PiSettingsRegistry.kt` at the deletion site. | — (app-side) | resolved — 10 of 13 wired (`TerminalSettings`, `PiSessionViewModel.readPrefs`), 3 deleted with pi-source reasons (`PiSettingsRegistry` tools/appearance comments: bash has no timeout field, truncation is a compiled constant, dynamic colour was never wired) |
+| 55 | registered settings that nothing reads | MISSING-GUI | RECORDED-NO-OWNER (I) | **I7** | Originally all 13 keys occurred once each, inside `PiSettingsRegistry.kt` (`:662`, `:676`, `:690`, `:869`, `:879`, `:893`, `:908`, `:918`, `:1057`, `:1071`, `:1086`, `:1177`, `:1615`). **Reconciled: 10 wired, 3 deleted with pi-source reasons.** Wired: the 4 terminal keys in `ui/terminal/TerminalSettings.kt`, and 6 in `PiSessionViewModel.readPrefs()` — `fontScaleDelta`, `messageDensity`, `showTimestamps`, `thinkingCollapsedByDefault`, `expandToolsByDefault`, `keepAlive` (plus `hideThinkingBlock`, which is also row #19). Deleted as unhonourable: `app.tools.bashTimeoutSeconds` (the `bash` RPC command carries no timeout field; pi's bash tool takes it per call), `app.tools.outputMaxLines` (pi's truncation limits are compiled constants), `app.appearance.dynamicColor` — each with the reason left in `PiSettingsRegistry.kt` at the deletion site. **Re-verified key by key on the current worktree (`applied (uncommitted)`)**: only **2** of the 4 terminal keys are actually consumed (`app.terminal.fontSize` and `app.terminal.keyBar`, both in `TerminalPreferences.read`) — `app.terminal.cursorStyle` and `app.terminal.scrollbackLines` had no reader at all and `ui/terminal/TerminalSettings.kt`'s KDoc handed the decision back to this catalog, so **both rows were deleted** with the pi-source reason at the deletion site (pi has no cursor-style or scrollback setting of its own; `showHardwareCursor` is a different key, and cursor shape comes from the guest's `DECSCUSR`). True split now: **8 wired, 2 deleted this round, 3 deleted earlier**. The `hideThinkingBlock` half is wired too (`PiSessionViewModel.readPrefs` + `ChatScreen`'s `hideThinking` and its search filter). Not one of the 13, but found in the same sweep and left alone: `app.runtime.piVersion` / `nodeVersion` / `rootfsUsage` / `wakeLock` have no writer anywhere, so they display only their defaults (and the `G_RUNTIME` group summary therefore reads 「pi 未安装」). | — (app-side) | **applied (uncommitted)** — 8 wired / 2 deleted this round / 3 deleted earlier; 4 further no-writer value rows recorded as a new finding |
 | 56 | all `Action`-kind rows are inert (19, not 20 — `app.device.sessionOverride` was deleted with the other `app.device.*` rows in `9a16271`) | MISSING-GUI | RECORDED-NO-OWNER (I) | **I2** | **applied (uncommitted), no CI yet.** `PiRoot.kt:188` passes `onRunAction` and every remaining row now has a decision, none left on the "还没有接入实现" fallback: **4 implemented** (`app.credentials.apiKey` + `app.localModels.manage` → `PiCredentialScreen` via `PiSettingsStack.kt:146-147`; `app.compaction.runNow` → RPC `compact` `PiRoot.kt:209`; `app.security.emergencyStop` → `stop()`+`abortBash()` `PiRoot.kt:217-220`), **3 navigate to the original TUI** for behaviours pi implements only there (`app.credentials.oauth` / `app.sessions.import` / `app.about.changelog`, `PiRoot.kt:49-70` + `:189-201`), **12 removed** with the reason left at the deletion site (`PiSettingsRegistry.kt:731`, `:1520`, `:1555`, `:1588`, `:1596`, `:1688`). The fallback branch survives only as a regression guard and is unreachable for every registered row (`PiRoot.kt:230-233`). Per-row evidence: `known-gaps.md` **§I2** | — (app-side) | applied (uncommitted) |
-| 57 | device capability switches (two authorities) | MISSING-GUI | RECORDED-NO-OWNER (I) | **I10** | `PiSettingsRegistry.kt:1474-1549` declares `app.device.*`; `grep -rn "app\.device\."` outside the registry → **0 hits**, while enforcement reads SharedPreferences at `bridge/DeviceCapabilityStore.kt:65-92`. **The second authority is gone** (§11 row "§2.10 `app.device.*` dead switches"), but removing it did not make the one remaining screen truthful: a static pass over `ui/device/DeviceCapabilityScreen.kt` found 6 UI-vs-behaviour mismatches — wrong Shell backend label, a camera-permission button that `DeviceCapabilityStore`'s own hint names while no such button existed, screenshot claimed as available below API 30, the default-on 基础 group silent about `POST_NOTIFICATIONS`, an approvals card that never re-composed, and a swallowed `startActivity` — all six fixed in that one file, `applied (uncommitted)`, no CI yet. See `known-gaps.md` §C3.1. | — (app-side) | **applied (uncommitted)** |
+| 57 | device capability switches (two authorities) | MISSING-GUI | RECORDED-NO-OWNER (I) | **I10** | `PiSettingsRegistry.kt:1474-1549` declares `app.device.*`; `grep -rn "app\.device\."` outside the registry → **0 hits**, while enforcement reads SharedPreferences at `bridge/DeviceCapabilityStore.kt:65-92`. **The second authority is gone** (§11 row "§2.10 `app.device.*` dead switches"), but removing it did not make the one remaining screen truthful: a static pass over `ui/device/DeviceCapabilityScreen.kt` found 6 UI-vs-behaviour mismatches — wrong Shell backend label, a camera-permission button that `DeviceCapabilityStore`'s own hint names while no such button existed, screenshot claimed as available below API 30, the default-on 基础 group silent about `POST_NOTIFICATIONS`, an approvals card that never re-composed, and a swallowed `startActivity`. **Re-verified item by item on this worktree: all six are present**, in the file that now has no diff against HEAD — they were committed as `2bd97cd fix(ui): six places the device screen disagreed with the device` (no CI run, no device pass). See `known-gaps.md` §C3.1. | — (app-side) | **applied (committed 2bd97cd; no CI, no device)** |
 | 58 | update checks | MISSING-GUI | RECORDED-NO-OWNER (I) | **I2** | **applied (uncommitted) — the row was removed, not wired.** pi's own check is switched off by this app on purpose (`PiEngineHost.kt:305-306` sets `PI_SKIP_VERSION_CHECK`; the gate is `utils/version-check.ts:98`), and its replacement is an npm self-update (`package-manager-cli.ts:1033-1068`) while this app's engine is an APK asset re-extracted per runtime revision (`RuntimeProvisioner.kt:505-528`, `:122`) — so an in-guest update is overwritten or diverges. Nothing is left to check; the read-only 「pi 版本」 row (`PiSettingsRegistry.kt:1510`) still reports the version. pi's check is not reachable over RPC either | `docs/environment-variables.md`; `cli/args.ts` | applied (uncommitted) |
 
 ### 2.9 Attachments, images, `@` mentions (`feature-gaps.md` §1.9)
@@ -219,7 +219,7 @@ The audit's `PARTIAL 20 / MISSING-GUI 26 / CLI-ONLY 9 = 55` is reproduced exactl
 | 64 | `PI_OFFLINE` / `--offline` | CLI-ONLY | RECORDED-NO-OWNER (I) | **I11** | **Engine side APPLIED** — duplicate of #11: `rpc/.../PiLaunchOptions.kt:47`, applied at `engine/PiEngineHost.kt:316` | `docs/environment-variables.md:84`; `cli/args.ts:223` | engine applied; settings+UI pending |
 | 65 | `PI_CACHE_RETENTION` | MISSING-GUI | RECORDED-NO-OWNER (I) | **I11** | **Engine side APPLIED** (RPC agent): `PiLaunchOptions.kt:47` maps `longCacheRetention` → `PI_CACHE_RETENTION=long`, applied at `engine/PiEngineHost.kt:316`. **Still blocked:** the settings row + `boot()` call site. pi has no `Settings` key for it (`core/settings-manager.ts`), so this is env-only by design — an app-level boolean is the only route | `docs/environment-variables.md:87` | engine applied; settings+UI pending |
 | 66 | engine argv (closed to overrides) | PARTIAL | RECORDED-NO-OWNER (I) | **I11** | **APPLIED at the engine boundary** (RPC agent): `engine/PiEngineHost.kt:192` `boot(…, launch: PiLaunchOptions = PiLaunchOptions())` → `:215` `bootLocked(…, launch)`; default reproduces the previous argv/env byte for byte; `restart()` replays the stored options (`:180`, `:399`) so a reload cannot silently change the engine. Residual is only "who passes non-defaults" (#11/#12/#65) | `docs/rpc.md:7-15` | engine applied |
-| 67 | runtime/ops diagnostics (`app.runtime.*`) | MISSING-GUI | RECORDED-NO-OWNER (I) | **I2** | **applied (uncommitted) — all six `Action` rows removed, not wired.** `checkUpdate`, `rollback`, `cleanNpmCache`, `phantomKillerGuide`, `logViewer`, `exportDiagnostics` are gone (`PiSettingsRegistry.kt:1520`/`:1555`/`:1588`/`:1596`). pi has no counterpart for any of them (no rollback/cache-clear/diagnostics subcommand), and the app has no level-filtered log sink or update channel to back them. **The old "8 `app.runtime.*` Action rows" count was already wrong** — only these six were `Action`; `piVersion`/`nodeVersion`/`rootfsUsage` are read-only `Text`, `keepAlive`/`safeMode` are `Switch`, `wakeLock` is `Value` | — (app-side) | applied (uncommitted) |
+| 67 | runtime/ops diagnostics (`app.runtime.*`) | MISSING-GUI | RECORDED-NO-OWNER (I) | **I2** | **applied (uncommitted) — all six `Action` rows removed, not wired.** `checkUpdate`, `rollback`, `cleanNpmCache`, `phantomKillerGuide`, `logViewer`, `exportDiagnostics` are gone (`PiSettingsRegistry.kt:1520`/`:1555`/`:1588`/`:1596`). pi has no counterpart for any of them (no rollback/cache-clear/diagnostics subcommand), and the app has no level-filtered log sink or update channel to back them. **The old "8 `app.runtime.*` Action rows" count was already wrong** — only these six were `Action`; `piVersion`/`nodeVersion`/`rootfsUsage` are read-only `Text`, `keepAlive`/`safeMode` are `Switch`, `wakeLock` is `Value`. **New in this pass (found while re-verifying §I7, not fixed):** those four read-only rows have **no writer anywhere in the tree**, so they render only their declared defaults — 「未安装」/「未安装」/「未知」/「未知」. The `G_RUNTIME` group summary reads `app.runtime.piVersion`, so the settings home therefore shows 「pi 未安装 · 保活：…」 on a device where pi is installed and running. The fix is a runtime producer (pi/Node version, rootfs size, wake-lock state), i.e. `runtime/**` + `service/**` work, not a registry edit; the row this replaces (row #58's claim that the pi-version row "still reports the version") is wrong until then | — (app-side) | applied (uncommitted); 4 no-writer rows recorded |
 
 ### 2.11 Mixed-grade rows the audit parked under `IMPLEMENTED`
 
@@ -248,6 +248,10 @@ The four required counts, over the 67 non-`IMPLEMENTED`/non-`N/A` rows:
 
 Over the 55 actionable rows: **ASSIGNED 10 · RECORDED-NO-OWNER 32 · UNRECORDED 8 · CLOSED 3 ·
 LIMIT 2**.
+
+**Status is a second axis, and it was re-tallied against the tree in §9:** implemented 29 ·
+applied (uncommitted/in-flight) 16 · resolved 1 · blocked 4 · limit 14 · closed 5. The `patch-ready`
+count that used to sit on that axis is now **0** (§9 carries the row-by-row proof).
 
 The four rows that moved from RECORDED-NO-OWNER to ASSIGNED during this pass are #34–#37 (themes):
 `ui/theme/PiThemeFiles.kt` appeared in the working tree while this document was being written and
@@ -321,8 +325,8 @@ Listed so the ledger cannot over-claim. "Justified" = at least one of the 148 ro
 | A3 markdown-embedded images | **Valid and unjustified as of this audit; closed later in the same pass.** The audit's evidence (`render/PiMarkdown.kt` installing `NoOpImageTransformerImpl`) no longer holds: the renderer now installs `rememberPiGuestImageTransformer()` and A3 is marked done in section 10.1. No feature-gaps row graded it, and the nearest row (#62) is the attachment grid, a different surface. |
 | B7 project-trust prompt | **Unjustified by any row, still unreachable, but its root cause is fixed.** `packages/PiProjectTrustPrompt.kt:52` exists and its only call site is `PiPackagesScreen.kt:119`, which nothing mounts — so the trust UI is still dead code. What *did* change is the path misalignment B7 documented: `PiEngineHost.kt:285-291` now binds `paths.agentDir` into the guest, so the app's trust.json/auth.json/session writes finally land where pi reads them. The UI half remains the packages agent's. |
 | B9 markdown lib version, B10 `libprootloader.so` PIE | Valid, no capability row (library/dependency constraints, by design outside the matrix). |
-| B12 / E6 `ASSET_VERSION` fingerprint | Valid (`bridge/DeviceBridgeController.kt:69` is still the literal `"3"`), no capability row. |
-| C1–C4 device/real-run verification | No capability row, by construction — these are "has it been run" items, not features. C3 gained a **static** sub-item (`known-gaps.md` §C3.1): the 设备能力 screen was audited claim-by-claim against `DeviceCapabilityStore` / `DeviceShellGuard` / `/app/health` and six UI-vs-behaviour mismatches were fixed (`applied (uncommitted)`). That is not a device run — C3 itself stays open. |
+| B12 / E6 `ASSET_VERSION` fingerprint | **Closed (`ba297c7`).** `bridge/DeviceBridgeController.assetFingerprint` hashes the whole `assets/pi-extensions` tree (`sha256:<hex>`, sorted asset paths plus bytes) and the installer stamps `.pi-android-assets` with it; `ASSET_VERSION` survives only as the fallback marker for "the asset tree could not be read at all", which is strictly the old behaviour and never a false "already current". The manual bump is gone, so the silent-failure mode B12/E6 recorded cannot recur. Cost measured here: 9 files / 129,363 bytes, re-read and hashed on every `DeviceBridgeController.start()`. No capability row. |
+| C1–C4 device/real-run verification | No capability row, by construction — these are "has it been run" items, not features. C3 gained a **static** sub-item (`known-gaps.md` §C3.1): the 设备能力 screen was audited claim-by-claim against `DeviceCapabilityStore` / `DeviceShellGuard` / `/app/health` and six UI-vs-behaviour mismatches were fixed (committed `2bd97cd`; all six re-verified on this worktree). Another agent also wrote the executable checklist for this whole section: `docs/device-verification.md` (51 items, every one still `未验`). Neither is a device run — C3 itself stays open. |
 | D1–D4 design compromises | No row needed; they are explicit non-gaps. |
 | E1 tool-name collisions | Justified only indirectly: row 1.7 is graded `IMPLEMENTED` for *command* collisions and its "Recorded where" cell says "tool-name collisions open". No row grades the tool half. |
 | E5 lazy engine start, E8 terminal build-vs-buy | App-side improvements/decisions with no feature-gaps row. |
@@ -746,17 +750,53 @@ Every row in §2 carries a status in the extra column of its table, using this v
 | `limit` | pi offers no RPC path; the terminal tab is the route. |
 | `closed` | Audited and requires no action (premise disproved or deliberate adaptation). |
 
-Summary: **fixed 1 · patch-ready 23 · blocked 10 · in-flight 13 · applied (uncommitted) 3 · limit 14 · closed 5** (69 rows).
+Summary, **re-tallied after the §2 reconciliation below**: **implemented 29 · applied (uncommitted/in-flight) 16 · resolved 1 · blocked 4 · limit 14 · closed 5** (69 rows).
 
-⚠️ **The `patch-ready: 23` above is a claim about the ledger, not about the tree.** A ten-row sample
-of them (the P1–P12 patches: queue text, export, follow-up delivery, images, session search/sort/
-delete/grouping, `pi -c`, thinking collapse, prev/next prompt) found **nine already implemented in
-the code** and the tenth implemented at a different call site than the row named. The rendering rows
-had exactly the same defect - F1, F4 and F5 were carried as `patch-ready` for two passes after the
-work landed - and it was only found by walking them one at a time against the source. **Until a
-reconciliation pass does that for §2, read every `patch-ready` here as "unverified", and verify
-before building.** An unverified "not done" costs what an unverified "done" costs: somebody rebuilds
-something that already exists.
+### §2 reconciliation — the `patch-ready: 23` rows, walked one at a time
+
+The previous summary read `patch-ready: 23` and flagged it unverified. Every one of those rows has now
+been opened in the working tree: **`patch-ready` is zero**, because **29 rows are implemented** — the
+23 that carried a patch, plus #20 and #22 which were carried as `blocked`, plus #34–#37 which were
+carried as `in-flight` while `PiThemeLoader` still had no consumer. Per-status before/after:
+
+| status | before | after | note |
+|---|---|---|---|
+| implemented (verified against the tree) | 0 (carried as `patch-ready`) | **29** | proof per row below |
+| patch-ready | 23 | **0** | none survives |
+| blocked | 10 | **4** | #5, #10, #25, #52 only |
+| closed | 5 | 5 | unchanged |
+| limit | 14 | 14 | unchanged (pi has no path) |
+| applied (uncommitted / in-flight) | 20 | 16 | other agents' rows, not re-verified here |
+| resolved (row #55) | 0 | 1 | 10 keys wired, 3 rows deleted with pi-source reasons |
+
+Proof for each changed row, by **file + symbol** (line numbers are deliberately absent — the tree's own
+convention, because they drifted collectively once already):
+
+| # | was | now — proof |
+|---|---|---|
+| 1, 59, 60, 61 | patch-ready P6 | implemented — `ChatScreen.imagePicker` (`rememberLauncherForActivityResult` + `ActivityResultContracts.GetContent`) → `PiSessionViewModel.send(text, images)` |
+| 2, 3, 17 | patch-ready P4 | implemented — `PiSessionViewModel.sendFollowUp` now has a caller (`ChatScreen` overflow) |
+| 4, 16 | patch-ready P2 | implemented — `ChatScreen.mergeRestoredQueue` fed by `PiSessionViewModel.stop(onRestored)` |
+| 7, 44 | patch-ready P3 | implemented — `PiSessionViewModel.exportSession` branches on `.jsonl` → `exportJsonl` |
+| 14, 43 | patch-ready P12 | implemented — `PiSessionViewModel` resume gate + `PiSettingsRegistry` `app.sessions.resumeLast` |
+| 18 | patch-ready P5 | implemented — `ChatScreen` `thinkingDefaultExpanded = !prefs.thinkingCollapsedByDefault` |
+| 19 | patch-ready P5 | implemented — `ChatScreen` `hideThinking = prefs.hideThinkingBlock` |
+| 20 | blocked | implemented — `ChatScreen.searchQuery` / `SearchBar` / `searchTextOf` |
+| 21 | patch-ready P7 | implemented — `ChatScreen` overflow 跳到上一条/下一条提问 |
+| 22 | blocked | implemented — `SessionTreeScreen.TreeFilter` (pi's five modes, cycled) |
+| 23, 42 | patch-ready P8 | implemented — `SessionsScreen` `query` / `byName` / `namedOnly` |
+| 24, 41 | patch-ready P9 | implemented — `SessionsScreen` `combinedClickable(onLongClick=…)` + `PiSessionViewModel.deleteSession` (store half `PiSessionStore.delete`) |
+| 26 | patch-ready P10 | implemented — `PiCommandAction.OpenModelScope` → `NavRequest.SettingsFocus(enabledModels)` |
+| 46 | patch-ready P11 | implemented — `SessionsScreen` `.groupBy { it.cwd }` + `PiSectionHeader` |
+| 62 | patch-ready P1 | implemented — `ImageGridBlock.decodeImage` (`Base64.decode` + `BitmapFactory.decodeByteArray`) |
+| 55 | fixed (4/13), 3 open | resolved — 10 keys wired (`TerminalSettings`, `PiSessionViewModel.readPrefs`), 3 rows deleted with pi-source reasons (`PiSettingsRegistry` deletion comments) |
+
+Why this happens, recorded so the next pass checks rather than assumes: **the ledger is written ahead
+of the tree.** The behaviour agent's §11 pass landed most of these while §2 still described them as
+patches, and nothing re-read the rows; the rendering table had exactly the same defect (F1, F4, F5
+carried as `patch-ready` for two passes after the work landed). An unverified "not done" costs what an
+unverified "done" costs — somebody rebuilds something that exists. Read a status here as a claim with
+a proof, and check the symbol before building.
 The three `applied (uncommitted)` rows are #51 and #54 (`packages/**`, owner *包管理代理*) and #63
 (`@` mentions, `ui/chat/**` + `ui/screens/ChatScreen.kt` + `ui/PiSessionViewModel.kt`). For #51/#54 the
 screen is mounted, the built-in/user distinction is drawn and labelled as the app's own claim, and the
@@ -904,12 +944,11 @@ its own.
 
 Three of them turned out to be **already implemented** before the pass started (F1, F4, F5 - the
 behaviour agent's §11 work landed them and nothing updated §10), which is why the count moved by
-more than the work did. The same defect almost certainly inflates §2's `patch-ready: 23`: a ten-row
-sample of those (the P1–P12 patches) found **nine with the code already in the tree** and the tenth
-implemented at a different call site. **Treat any `patch-ready` in §2 as unverified until a
-reconciliation pass walks it against the code the way this one did.** An unverified "not done" is
-not harmless: it sends someone to build what already exists, which is the same cost as an
-unverified "done".
+more than the work did. **§2 had the same defect and it is now walked too** — see
+"§2 reconciliation" in §9: `patch-ready` there is **0**, 29 rows turned out to be implemented, and
+only 4 remain genuinely blocked. Do not treat a status in either table as final: check the symbol it
+names. An unverified "not done" is not harmless — it sends someone to build what already exists,
+which is the same cost as an unverified "done".
 
 | Ledger | implemented/applied | partial | patch-ready | blocked | limit | closed | rows |
 |---|---|---|---|---|---|---|---|

@@ -1,5 +1,12 @@
 package app.pi.ui.screens
 
+import app.pi.ui.blocks.decodePiImage
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.Dispatchers
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.runtime.produceState
+import androidx.compose.foundation.Image
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -74,7 +81,6 @@ import app.pi.rpc.HookMessage
 import app.pi.rpc.ModelChange
 import app.pi.rpc.Notice
 import app.pi.rpc.SkillInvocation
-import app.pi.rpc.SystemPrompt
 import app.pi.rpc.ThinkingBlock
 import app.pi.rpc.ToolCall
 import app.pi.rpc.ToolDiff
@@ -144,6 +150,16 @@ import kotlinx.coroutines.launch
 fun ChatScreen(
     contentPadding: PaddingValues,
     session: PiSessionViewModel,
+    /**
+     * Open the workbench terminal.
+     *
+     * The terminal is where the surfaces the RPC path cannot carry live —
+     * `custom()`, `setFooter`/`setHeader`, custom editors, extension renderers —
+     * because `pi` itself runs there. It is a plain shell, so the user types `pi`
+     * to reach them; the caller owns only the destination, which is why this is
+     * one callback and no longer a tab selection.
+     */
+    onOpenTerminal: () -> Unit,
 ) {
     val state by session.state.collectAsState()
     val bottomInset = contentPadding.calculateBottomPadding()
@@ -156,7 +172,7 @@ fun ChatScreen(
         )
         return
     }
-    ChatBody(state = state, session = session, bottomInset = bottomInset)
+    ChatBody(state = state, session = session, bottomInset = bottomInset, onOpenTerminal = onOpenTerminal)
 }
 
 /** Which bottom sheet the chat screen has open, if any. */
@@ -168,6 +184,7 @@ private fun ChatBody(
     state: PiSessionViewModel.UiState,
     session: PiSessionViewModel,
     bottomInset: Dp,
+    onOpenTerminal: () -> Unit,
 ) {
     var draft by remember { mutableStateOf("") }
     var sheet by remember { mutableStateOf<ChatSheet?>(null) }
@@ -192,23 +209,55 @@ private fun ChatBody(
     val scope = rememberCoroutineScope()
 
     // Image attachments. pi's `prompt`/`steer`/`follow_up` all carry `images`
-    // (`rpc-types.ts:22-24`) and the whole lower pipe already exists
-    // (`PiImage`, `Commands.putImages`, `PiEngineSession.prompt(images)`), so the
-    // only missing piece was a way to construct a non-empty list. A phone picker
-    // is the app's own job; pi has no picker to copy.
+    // (`rpc-types.ts:22-24`), and the wire shape is inline base64 + MIME
+    // (`ImageContent`, `packages/ai/src/types.ts:367-371`; `docs/rpc.md:51-53`).
+    // There is no path and no size field, so the bytes travel inside the RPC
+    // message — which is why this needs no guest file at all: `GuestImageBytes`
+    // resolves guest paths *into* the app for markdown images, the opposite
+    // direction, and reusing it here would invent a second channel.
+    //
+    // Picker: `ActivityResultContracts.GetContent()` (the SAF document picker).
+    // Chosen over the Android 13 Photo Picker because (a) it needs no storage or
+    // media permission at all — the system grants a per-URI read to this app for
+    // exactly the file the user picked, which is the same model the app already
+    // uses for directory grants (`DeviceSafStore`), and (b) it is available on
+    // every API level this app supports without a backport dependency, and covers
+    // file providers as well as the gallery.
     var attachments by remember { mutableStateOf<List<PiImage>>(emptyList()) }
     val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        // A null uri is the user backing out of the picker, not a failure.
         if (uri != null) {
             val resolver = context.contentResolver
-            val mime = resolver.getType(uri) ?: "image/*"
-            val bytes = runCatching { resolver.openInputStream(uri)?.use { it.readBytes() } }.getOrNull()
-            if (bytes == null || bytes.isEmpty()) {
-                session.notifyUser("读取所选图片失败", warning = true)
-            } else {
-                attachments = attachments + PiImage(
-                    base64 = Base64.encodeToString(bytes, Base64.NO_WRAP),
-                    mimeType = mime,
+            val mime = resolver.getType(uri).orEmpty()
+            when {
+                !mime.startsWith("image/") -> session.notifyUser(
+                    "只能附加图片：所选文件的类型是 ${mime.ifEmpty { "未知类型" }}。请回到选择器换一张图片。",
+                    warning = true,
                 )
+
+                else -> {
+                    val bytes = runCatching {
+                        resolver.openInputStream(uri)?.use { it.readBytes() }
+                    }.getOrNull()
+                    when {
+                        bytes == null || bytes.isEmpty() -> session.notifyUser(
+                            "读取所选图片失败：无法打开这个文件（权限被拒或文件已被删除）。请重新选择，或换一张本地图片。",
+                            warning = true,
+                        )
+
+                        bytes.size > MAX_ATTACHMENT_BYTES -> session.notifyUser(
+                            "图片太大（${bytes.size / (1024 * 1024)} MB），上限是 " +
+                                "${MAX_ATTACHMENT_BYTES / (1024 * 1024)} MB；它要整段随消息发送。" +
+                                "请先压缩或裁剪后再试。",
+                            warning = true,
+                        )
+
+                        else -> attachments = attachments + PiImage(
+                            base64 = Base64.encodeToString(bytes, Base64.NO_WRAP),
+                            mimeType = mime.ifEmpty { "image/*" },
+                        )
+                    }
+                }
             }
         }
     }
@@ -495,8 +544,12 @@ private fun ChatBody(
                         sheet = ChatSheet.Model
                         overflow = false
                     }
-                    OverflowItem("打开原版 pi TUI") {
-                        session.requestNav(NavRequest.Workbench)
+                    // The terminal, named for what it now is. It used to say "打开原版
+                    // pi TUI", which described the tab the workbench opened on; the
+                    // workbench opens a shell, so the entry says where it goes and
+                    // the command to type once there.
+                    OverflowItem("打开终端（输入 pi 进原版 TUI）") {
+                        onOpenTerminal()
                         overflow = false
                     }
                 }
@@ -590,6 +643,12 @@ private fun ChatBody(
                         hideThinking = prefs.hideThinkingBlock,
                         thinkingDefaultExpanded = !prefs.thinkingCollapsedByDefault,
                         toolsDefaultExpanded = toolsExpanded,
+                        // F18 (`docs/rendering-review.md`): pi's own
+                        // `showCacheMissNotices` switch now reaches the blocks that
+                        // print the summarization billing line. pi's default is
+                        // `false` (`core/settings-manager.ts:120`), so an install
+                        // that never touched that row shows nothing new.
+                        showBilledCost = prefs.showCacheMissNotices,
                         // F19 (`docs/rendering-review.md`) / RR-P10: the two of the
                         // renderer's five callbacks whose target already exists in
                         // this app are supplied here instead of leaving the blocks'
@@ -605,6 +664,12 @@ private fun ChatBody(
                             session.refreshTree()
                             session.requestNav(NavRequest.SessionTree)
                         },
+                        // §4.8's 编辑并从此分叉: pi's user-message row opens the
+                        // fork picker and re-runs from that message
+                        // (`interactive-mode.ts:5216` / `docs/sessions.md:31`);
+                        // `forkFrom` is the same `fork` command that picker sends,
+                        // so the entry id here is the projected block's key.
+                        onForkFromMessage = { entryId -> session.forkFrom(entryId) },
                         // The other three (`onImageClick`, `onDiffOpenFull`,
                         // `onErrorRetry`) had no target anywhere in the app — no
                         // image viewer, no full-screen diff route, no retry action —
@@ -699,25 +764,28 @@ private fun ChatBody(
 
         if (attachments.isNotEmpty()) {
             Row(
-                Modifier.fillMaxWidth().padding(horizontal = PiSpacing.screen, vertical = 4.dp),
+                Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = PiSpacing.screen, vertical = 4.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                attachments.forEachIndexed { index, _ ->
-                    Surface(
-                        modifier = Modifier
-                            .padding(end = 6.dp)
-                            .clickable { attachments = attachments.filterIndexed { i, _ -> i != index } },
-                        shape = PiShapes.badge,
-                        color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                    ) {
-                        Text(
-                            "图片 ${index + 1} ✕",
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
+                attachments.forEachIndexed { index, image ->
+                    AttachmentThumb(
+                        image = image,
+                        index = index,
+                        onRemove = {
+                            attachments = attachments.filterIndexed { i, _ -> i != index }
+                        },
+                    )
                 }
+                Spacer(Modifier.width(8.dp))
+                // The consequence is stated where the user acts, not after the send:
+                // these bytes travel inside the message and count against the model.
+                Text(
+                    "随消息一起发送",
+                    style = PiTheme.text.meta,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
         }
 
@@ -737,7 +805,7 @@ private fun ChatBody(
             // nothing else, which is why it does nothing when a mention is already
             // open. The `/` and `!` chips beside it are the same kind of affordance.
             onOpenMention = { if (PiFileMentions.prefixOf(draft) == null) draft += "@" },
-            onOpenTui = { session.requestNav(NavRequest.Workbench) },
+            onOpenTui = onOpenTerminal,
             onFollowUp = {
                 // pi's alt+enter: queue this message for after the current turn
                 // (`interactive-mode.ts:4126-4155` → `session.prompt(text,
@@ -926,7 +994,6 @@ private fun searchTextOf(item: TranscriptItem): String = when (item) {
     is HookMessage -> item.markdown
     is ModelChange -> listOfNotNull(item.provider, item.modelId).joinToString("/")
     is SkillInvocation -> listOf(item.skillName, item.body).joinToString("\n")
-    is SystemPrompt -> item.fullText
     is ErrorText -> listOfNotNull(item.message, item.detail).joinToString("\n")
     is Notice -> item.text
     is DateSeparator -> ""
@@ -1164,11 +1231,12 @@ private fun Composer(
                 Spacer(Modifier.weight(1f))
                 // pi's escape hatch, one tap from the composer: the surfaces RPC
                 // cannot carry (`custom()`, `setFooter`/`setHeader`, custom
-                // editors, terminal input, the extension renderers) exist in the
-                // original TUI, and this is how a user reaches them without being
-                // told to go looking (audit §6.11).
+                // editors, terminal input, the extension renderers) exist in pi's
+                // own TUI, and the terminal is where `pi` runs. The chip says
+                // "终端" rather than "原版 TUI" because that is what it opens — a
+                // shell, in which the user types `pi` (audit §6.11).
                 Text(
-                    "原版 TUI",
+                    "终端",
                     modifier = Modifier
                         .clickable(onClick = onOpenTui)
                         .padding(end = 12.dp),
@@ -1223,3 +1291,56 @@ private fun KeyHint(label: String, onClick: () -> Unit) {
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
 }
+
+
+/**
+ * One pending attachment: a real thumbnail, not a file name.
+ *
+ * The decode is the same shared one the transcript uses ([decodePiImage]) and it
+ * runs off the main thread, because a camera JPEG is not composition work. A
+ * payload the platform codec refuses still gets a tappable chip with its MIME
+ * type, so the user can see *what* will be sent and remove it.
+ */
+@Composable
+private fun AttachmentThumb(
+    image: PiImage,
+    index: Int,
+    onRemove: () -> Unit,
+) {
+    val bitmap by produceState<android.graphics.Bitmap?>(initialValue = null, image.base64) {
+        value = withContext(Dispatchers.IO) { decodePiImage(image.base64) }
+    }
+    Surface(
+        modifier = Modifier
+            .padding(end = 6.dp)
+            .size(48.dp)
+            .clickable(onClickLabel = "移除第 ${index + 1} 张图片", onClick = onRemove),
+        shape = PiShapes.cardInner,
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+    ) {
+        Box(contentAlignment = Alignment.Center) {
+            val decoded = bitmap
+            if (decoded != null) {
+                Image(
+                    bitmap = decoded.asImageBitmap(),
+                    contentDescription = "待发送的第 ${index + 1} 张图片，点击移除",
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize(),
+                )
+            } else {
+                Text(
+                    image.mimeType.substringAfter('/').ifEmpty { "图片" },
+                    style = PiTheme.text.meta,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+    }
+}
+
+/**
+ * Inline attachments are base64 inside the RPC message, so a huge image bloats
+ * every prompt and every transcript row. This is the app's own guard: the
+ * protocol carries no size field to check against (`ImageContent`).
+ */
+private const val MAX_ATTACHMENT_BYTES = 8L * 1024 * 1024

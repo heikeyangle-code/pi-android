@@ -42,7 +42,7 @@
 
 ## B. 未开始（RPC 路线可实现，尚未动）
 
-> **复核提示（dc00279）**：B1–B4 的收尾条件**都已经满足**，只是标题还写着"未开始"。B5/B6/B7/B12 仍然有效。
+> **复核提示（dc00279；B12 于本轮更新）**：B1–B4 的收尾条件**都已经满足**，只是标题还写着"未开始"。B5/B6/B7 仍然有效；**B12 已收尾**（`ba297c7`，见 §B12 末条）。
 
 ### B1. `/` 命令面板 —— **已完成（复核于 dc00279）**
 > **状态：已接线。** `get_commands` 现在是活路径：`PiSessionViewModel.refreshCommands()` → `PiSlashCommands.piCommandPalette()` → `ui/chat/SlashPalette.kt` 的分组面板；`routeComposerText` 把 `/name` 派发为命令、生成为 prompt、或标成"仅终端"，组内保留 `name:1` 后缀与 `sourceInfo` 来源标签。随 checkpoint `46015ad` 落地。
@@ -81,6 +81,7 @@
   - `pi list` 的输出是渲染而非协议，所以解析失败会显示为「无法解析」并附原文，**不会**退化成「没有已安装的包」——那正是会骗人的分支（`PiListOutput`）。
 - **收尾条件**：真机上跑通一次 `pi list`。当前无法验证的部分：guest 内是否已解出 `npm`/`git`（`RuntimeProvisioner` 只软链了 node/npm/npx，未验证 npm 能连网）、`/opt/pi/.../cli.js` 是否真在同一路径、以及 10 分钟超时是否合适。
 - **已知副作用（无法从本层修复）**：安装物与 `packages` 都落在 `/root/.pi/agent` 下，而那是 **rootfs 内的易失目录**——`RuntimeProvisioner.wipe()` 会整体删掉 `paths.runtime`（`RuntimeProvisioner.kt:85-91`）并只重建一个空的 `/root/.pi/agent`（`:185`）。见 B7 的「同一处路径错位」。
+  - **—— 已解决（复核于 `182823e`，工作树）**：agent 目录已被绑到 `paths.agentDir`（`engine/PiEngineHost.kt:285-295`），所以 pi 现在写的就是那份**存活于 `RuntimeProvisioner.wipe()` 之外**的目录，本段描述的"落在易失目录"不再成立。**收尾仍只剩真机跑通一次 `pi list`**（见上一行的收尾条件）。
 
 ### B6. `/reload` 热重载 —— **待验证**（已改为「显式重启 + 状态机」）
 - **RPC 里没有 `reload` 命令**（同上，`rpc-types.ts:20-74`）。但重载管线**在 RPC 下是通着的**：`rpc-mode.ts:341-343` 把 `reload: async () => { await session.reload() }` 挂进了扩展的 `commandContextActions`，所以**扩展命令**调用 `ctx.reload()` 是 RPC 可达的（用 `prompt("/<扩展命令>")`）。内建 `/reload` 不行：内建命令被排除在 `get_commands` 之外（`docs/rpc.md:853`），`prompt` 只派发扩展命令（`agent-session.ts:1331-1343`）。App 目前没有这样的扩展命令，所以只能重启引擎进程。
@@ -160,6 +161,7 @@
 - **同一处路径错位（重要，跨目录，需要 engine 所有者改一行）**：`PiEngineHost` 只绑定了工作区（`:109-117`），**没有绑定 agent 目录**；于是 guest 里 pi 读写的是 `<files>/pi/runtime/rootfs/root/.pi/agent`，而 `PiPaths.agentDir`（`<files>/pi/.pi/agent`）**pi 根本看不见**。`docs/extension-compatibility.md:523-524` 写的「bind-mounted」与代码不符；`DeviceBridgeController.kt:182-188` 已经在用「两个位置都写」绕开它。
   - 影响：只写镜像 → 不生效；只写 rootfs → 下一次运行时更新被 `wipe()` 删掉。所以 `TrustRepository` 目前**两边都写**，并在 boot 后调 `publishIntoRootfs()` 从镜像回填。
   - **彻底修法（一行，属于 `engine/**`，本层不改）**：在 `PiEngineHost.boot` 的 `ProotCommand.build(...)` 里给 `extraBinds` 加 `paths.agentDir.absolutePath to guestAgentDir`。加上之后镜像就是权威，`publishIntoRootfs` 变成幂等空操作，`PiSessionViewModel` 的 `settingsStore`/`sessionStore` 也终于指向 pi 真正用的那份文件。
+  - **—— 已完成（复核于 `182823e`，工作树）**：那一行已经加上——`engine/PiEngineHost.kt:285-295` 的 `extraBinds` 现在是 `workspace.absolutePath to guestWorkspace` **加上** `paths.agentDir.absolutePath to guestAgentDir`，注释里写明了它修的就是本段描述的错位。**本段上面两句"pi 根本看不见""需要 engine 所有者改一行"已过期**，保留仅为记录这段诊断。连带的收益：§B5 那条"安装物落在易失 rootfs 目录"的副作用、§K5 的 TrustRepository 三处修正、以及 `fd`/`rg` 的软链悬空（`PiPaths.agentBinDir`/`rootfsAgentBinDir` + `ensureToolsVisible()`）都随这次绑定一起成立。
 - **`app.trust.*` 这两行设置项现在有意义了一半**：`app.trust.projects`（`PiSettingsRegistry.kt:1402`）的语义（「已保存信任决定的项目目录，对应 ~/.pi/agent/trust.json」）正是 `TrustRepository.read()`/`decide` 的模型，可以接到真数据上；`app.trust.extensions`（`:1413`，「扩展信任名单，第二道闸门」）**在 pi 里没有对应物**——pi 只有目录级信任，没有来源级扩展名单，所以这一行没有东西可写，建议删除或改成展示，而不是实现一个 pi 不认的第二套格式。**按约束没有改 `PiSettingsRegistry.kt`。**
 - **收尾条件**：真机上「写入 trust.json → 重启 → 项目 `.pi/extensions` 真的被加载」，以及 `readlink -f` 在 proot 里返回的规范化路径与 pi 写的键一致。
 
@@ -252,10 +254,12 @@
 - **危害**：症状不是报错，而是"某个功能就是不好使"——排查的人会去查端口、token、网络，而不是查安装器。高亮代理就是主动报出这一条才被发现的。
 - **临时处置**：版本号已从 `"1"` 提到 `"2"`（本次新增 `pi-highlight/`），并在常量上写明"**任何对 `assets/pi-extensions/**` 的改动都必须提升它**"。
 - **收尾**：改成**内容指纹**（哈希资产树的文件名+大小，写进 stamp），把这个人工步骤彻底消掉。改一个文件的事，但要在 `bridge/**` 的 owner 手上做。
+- **已收尾（复核于本轮，commit `ba297c7`）**：`DeviceBridgeController.assetFingerprint` 对整棵 `assets/pi-extensions` 算 `sha256:<hex>`（按资产路径排序，路径与字节都进摘要），stamp 文件 `.pi-android-assets` 与它比对；`ASSET_VERSION` 退化成"资产读不出来时"的回退标记（那时行为与旧版一致，不会假装已是最新）。**手工提升版本号这个步骤已经不存在。** 代价实测可忽略：整棵树 9 个文件 / 129,363 字节（最大单文件 58 KB），即每次 `start()` 多读约 130 KB 再算一次 SHA-256。
 
 ## C. 待验证（代码已写，从未在真机运行）
 
 > 这一节是整份文档里最重要的部分。上面所有 UI 都在**没有验证过地基**的前提下写的。
+> **执行件**：`docs/device-verification.md` —— 把这一节拆成「操作 → 预期 → 判据 → 失败含义」的逐条清单（含 host↔guest 路径对照表、以及"可以先自动跑的"探针）。**那份清单里的条目同样一条都还没跑过。**
 
 ### C1. 运行时能否在真机上启动 —— **唯一的关键路径**
 - proot + Ubuntu 24.04 + 官方 Node 24 + pi 在 Android 14 (SDK 34, aarch64) 上真正跑起来。
@@ -272,21 +276,27 @@
 - 无障碍截屏（API 34 安全窗口限制）、后台启动 Activity 分享/打开、跨安装读取 MediaStore 导出文件、失焦时读剪贴板。
 - shell 后端只有 app uid（未接 Shizuku / ADB 无线调试）。
 
-#### C3.1 「设备能力」界面的静态一致性审计（`applied (uncommitted)`，未上 CI）
+#### C3.1 「设备能力」界面的静态一致性审计（`applied (committed 2bd97cd)`；未上 CI、未过真机）
 
 把界面上每一处**声称**（这组要什么、现在能不能用、为什么不能用）与 `DeviceCapabilityStore`（唯一权威）、
 `DeviceShellGuard`、`/app/health` 的**真实**状态逐条核对。改动只有一处：
 `app/src/main/kotlin/app/pi/ui/device/DeviceCapabilityScreen.kt`。**真机行为仍然未验证**——这一节修的是"界面说的和代码做的不一致"，
 不是 C3 本身。
 
+**本轮逐条重核（工作树，六个标记逐个 grep 到）**：六处**都在**，且已随 `2bd97cd fix(ui): six places the device screen disagreed with the device` 提交（该文件现在与 HEAD 无差异）。下表状态列随之更新。
+
+**pi 侧判据（源码 `bbb61e34`）**：**这一页整页是 App 自己的东西，pi 没有对应物**——pi 0.85.1 的 `core/settings-manager.ts` 的 `Settings` 接口里没有任何 Android 侧的键（无障碍服务、Shizuku、SAF、运行时权限、截屏能力都不存在，它也不知道自己在手机上跑）。所以这六处的判据只能是"**不撒谎 + 用户能用**"，**不能**去 pi 里找依据，也不能把我们的选择说成 pi 的行为。（六处里唯一与 pi 沾边的是"截屏"这个动作本身，但 pi 作为 CLI 根本没有截屏能力，它的 `images` 设置只关乎发给模型的图片。）
+
+**收尾（同一文件，`applied (uncommitted)`）**：按用户随后下的界面字符串规矩，把上一轮新增文案里的内部词汇去掉——`setTorchMode`/`CAMERA`/`POST_NOTIFICATIONS`/API 号/`screencap`/包名都不再出现；权限请求被拒时返回的**平台常量**现在经 `permissionLabel`（`DeviceCapabilityScreen.kt`）显示为「相机 / 位置信息 / 通知」。保留不变的三类：后果（哪些还不可用、哪些不受影响）、前置条件（系统开关、Android 版本）、可行动的下一步（去哪个设置页、点哪个按钮）。本轮没有为观感增加任何动画/模糊/光晕。
+
 | # | 界面声称（改前） | 真实行为 | 依据 | 状态 |
 |---|---|---|---|---|
-| 1 | Shell 卡「当前 Shell 后端」直接显示 `shizuku.backendLabel`，Shizuku 未就绪时字面为「Shizuku（未安装/未运行/未授权）」 | 此时执行命令的是 `AppUidShellBackend`（应用自身 uid）；`DeviceShellGuard.active()` 取第一个 available | `DeviceShizuku.kt:284-291`、`DeviceShell.kt:188-190`、`/app/health.shellBackends` | applied (uncommitted) |
-| 2 | 无障碍卡「前往系统设置」 | `runCatching { startActivity(...) }` 丢弃结果：没有该 Activity 时点按无任何反应、无提示 | 改前 `DeviceCapabilityScreen.kt:217-219` | applied (uncommitted) |
-| 3 | 无障碍组列「截屏并把图片交给模型查看」且徽章「可用」 | `screenshot` 在 API<30 直接 UNSUPPORTED（minSdk 26，Android 8/9 必现）；`/app/health.screenshotSupported = SDK>=R` | `DeviceUiAutomation.kt:609-616`、`DeviceBridgeRouter.kt:326`、`DeviceCapability.kt:67` | applied (uncommitted) |
-| 4 | 位置·传感器·相机卡只有一句静态文案，而 `cameraPrecondition()` 的 hint 叫用户"点「授予相机权限」" | 那个按钮**不存在**；全树没有任何代码请求 CAMERA / ACCESS_*_LOCATION；模型会原样转述，用户找不到入口 | `DeviceCapabilityStore.kt:268-278`（hint 在 `:275-276`）；`grep -rn "Manifest.permission.CAMERA\|ACCESS_FINE_LOCATION" app/src/main/kotlin` → 仅断言与判断 | applied (uncommitted) |
-| 5 | 基础组默认开、徽章「可用」 | API 33+ 缺 `POST_NOTIFICATIONS` 时 `android_notify` 每次必拒，而全树无人请求该权限，卡上无一字 | `DeviceSystemActions.kt:103-112`、`DeviceCapabilityStore.kt:239-245` | applied (uncommitted) |
-| 6 | ApprovalsCard 显示扩展上报的审批状态 | 该 item 不读任何轮询状态，LazyColumn item 只组合一次 → 屏幕开着时**永不刷新** | 改前 `DeviceCapabilityScreen.kt:679-697`；`DeviceApprovalLedger` 只在 `POST /app/gate/report` 时变 | applied (uncommitted) |
+| 1 | Shell 卡「当前 Shell 后端」直接显示 `shizuku.backendLabel`，Shizuku 未就绪时字面为「Shizuku（未安装/未运行/未授权）」 | 此时执行命令的是 `AppUidShellBackend`（应用自身 uid）；`DeviceShellGuard.active()` 取第一个 available | `DeviceShizuku.kt:284-291`、`DeviceShell.kt:188-190`、`/app/health.shellBackends`；现读 `DeviceShellGuard.active().label`（`DeviceCapabilityScreen.kt:608`） | applied (committed 2bd97cd) |
+| 2 | 无障碍卡「前往系统设置」 | `runCatching { startActivity(...) }` 丢弃结果：没有该 Activity 时点按无任何反应、无提示 | 改前 `DeviceCapabilityScreen.kt:217-219`；现在读 `.isSuccess` 并在失败时写提示（`:263`） | applied (committed 2bd97cd) |
+| 3 | 无障碍组列「截屏并把图片交给模型查看」且徽章「可用」 | `screenshot` 在 API<30 直接 UNSUPPORTED（minSdk 26，Android 8/9 必现）；`/app/health.screenshotSupported = SDK>=R` | `DeviceUiAutomation.kt:609-616`、`DeviceBridgeRouter.kt:326`；现在 SDK<R 时显示一行红字（`DeviceCapabilityScreen.kt:548`） | applied (committed 2bd97cd) |
+| 4 | 位置·传感器·相机卡只有一句静态文案，而 `cameraPrecondition()` 的 hint 叫用户"点「授予相机权限」" | 那个按钮**不存在**；全树没有任何代码请求 CAMERA / ACCESS_*_LOCATION；模型会原样转述，用户找不到入口 | `DeviceCapabilityStore.kt:268-278`（hint 在 `:275-276`）；现在两张权限按真实授予态显示并各有一个请求按钮（`DeviceCapabilityScreen.kt:704` 等） | applied (committed 2bd97cd) |
+| 5 | 基础组默认开、徽章「可用」 | API 33+ 缺 `POST_NOTIFICATIONS` 时 `android_notify` 每次必拒，而全树无人请求该权限，卡上无一字 | `DeviceSystemActions.kt:103-112`、`DeviceCapabilityStore.kt:239-245`；现在显示通知权限态并可请求 | applied (committed 2bd97cd) |
+| 6 | ApprovalsCard 显示扩展上报的审批状态 | 该 item 不读任何轮询状态，LazyColumn item 只组合一次 → 屏幕开着时**永不刷新** | 改前 `DeviceCapabilityScreen.kt:679-697`；现在由轮询循环喂 `approvals`（`:193`）并 `ApprovalsCard(lines = approvals)`（`:316`） | applied (committed 2bd97cd) |
 
 修完的形态：后端标签改读 `DeviceShellGuard.active().label`（Shizuku 不可用的原因仍由 `DeviceShizuku.status` 的 `note` 单独说明）；
 无障碍设置页打不开时写入可见提示；API<30 显示"截屏需要 Android 11+"；相机/定位/通知三条**按真实授予状态**显示并提供请求按钮
@@ -327,7 +337,19 @@ ShellPolicyCard 全部文案直读 `DeviceShellGuard`（`DeviceShell.kt:590-614`
 
 > 这一节的每一条都**还没有负责人**。之前它们只活在对话里，这就是"审计做得比路由好"的后果。
 
-### E1. 工具名冲突（pi 的规则是"先注册的赢"）
+### E1. 工具名冲突（pi 的规则是"先注册的赢"）—— **已定：不做（2026-09-12，用户决定）**
+
+**结论：不做工具名冲突检测。** 用户原话：「自带扩展，这个不用管了，自带那 3 个扩展也没什么卵用，不用管它。」
+
+**仍然成立的事实，别读成"问题不存在"**：pi 的规则是**先注册的赢**，同名工具**静默让一方失效**、不报错；命令名的冲突 GUI 已处理（`name:1` 后缀），工具名仍然零处理。所以这是一处**已知且被接受的静默失败面**，不是已解决项。将来若有人被它咬到（症状：装了扩展、工具却不生效、也没有任何报错），回到本节。
+
+**一条事实留给将来的人，免得把载体当垃圾删掉**：那三个自带扩展里——
+- `pi-android-bridge` 是**设备能力的载体**（读屏 / 点按 / 截屏 / 剪贴板 / 通知那条链的 guest 侧），
+- `pi-android-permission-gate` 是**权限闸门**，
+- `pi-highlight` 是高亮服务。
+用户的意思是"**不为它们做冲突检测**"，**不是**"它们可以删"：删掉 `pi-android-bridge`，设备能力在 pi 眼里就没了（Kotlin 侧的服务仍在跑，症状会很难查）。§E7 记过同一点。
+
+原始记载（保留以便重估）：
 自带扩展（`pi-android-bridge`、`pi-android-permission-gate`、`pi-highlight`）与用户安装的扩展**混在同一个 `~/.pi/agent/extensions/` 里**。同名工具会**静默地让一方失效**，不报错。
 命令名的冲突已由 GUI 侧处理（`name:1` 后缀保留，见 `PiSlashCommands.kt`），**工具名的没有任何处理**。
 收尾：扩展/包管理界面里检测并显示冲突；或在加载后比对工具表并给出警告。
@@ -351,7 +373,7 @@ ShellPolicyCard 全部文案直读 `DeviceShellGuard`（`DeviceShell.kt:590-614`
 **状态（applied, uncommitted，未上 CI）**：界面已写，`app/src/main/kotlin/app/pi/ui/settings/PiCredentialScreen.kt`（四段：选厂商 / 粘 Key / 检测并扫描 / 勾选并保存；保存成功后走 `ExtensionLifecycle.installSucceeded` + `EngineRestartCoordinator` 确认式重启）。两条 UI 补充都做了：元数据取自 `ui/PiRoot.kt:200` 传入的 `get_available_models` 快照，匹配不上的标"默认值，可改"；`models.json` 无锁与"扫描是 App 侧知识"两句写在界面说明里（依据 `core/model-runtime.ts:180`、`packages/ai/src/models.ts:763`/`:831`）。
 **未做完的一处 —— 已修（applied, uncommitted，未上 CI）**：`PiCredentialService.preferences()` 曾把 `settings.json` 只写到 `agentTruthDir`（rootfs 侧），而 `PiEngineHost.kt:285-294` 现在把 `paths.agentDir` 绑到了 guest 的 `/root/.pi/agent` —— 保存的第三步写的是一个 pi 不读、App 也不读的文件（`auth.json`/`models.json` 因为 `PiAuthStorage`/`PiModelsFile` 写两份而不受影响）。现改为 `packages/PiCredentialService.kt:69` 的 `agentDir = mirrorAgentDir`（即绑定源，也就是 `ui/PiSessionViewModel.kt:325-328` 那个 settings store 读的同一份）。同一前提还牵出 §K5 里 TrustRepository 的三处修正。
 
-**之后**：**I2 已处置（applied, uncommitted —— 19 个动作行逐个给了结论，见 §I2）** → I9（删会话 + `--continue`，先读 `cli.ts` 确认 `-c` 语义）→ I11（环境变量；`PiLaunchOptions` 已被接入 `PiEngineHost`，别重复实现）。
+**之后**：**I2 已处置（已完成于 `6c2059a` —— 注册表现在只剩 7 个 Action 行：4 实现 + 3 跳转，其余 12 行删除；逐行结论见 §I2）** → **I9 已完成**（删会话 `af2d675`、`-c` 续接 `7885599`）→ **只剩 §I11**（离线 / `--system-prompt` / `PI_CACHE_RETENTION`：`PiLaunchOptions` 与 `PiEngineHost` 都接好了，缺的是 settings 行 + `boot()` 传值；见 §I11 状态）。
 
 ### E9. 模型/凭证的"导入"在 GUI 里**完全是空壳**（点下去没有任何反应）
 - **症状**：设置 → 模型 → 「API Key」「OAuth 登录」「本地模型（llama.cpp）」三行**看得见、能点，但点了什么都不发生**。
@@ -396,6 +418,23 @@ ShellPolicyCard 全部文案直读 `DeviceShellGuard`（`DeviceShell.kt:590-614`
 App 侧**没有任何 UI**：没有选图、没有粘贴、没有拖入。**只能发纯文字。**
 收尾：输入框加附件入口 + 预览 + 随 `prompt` 发送。
 
+**状态（applied, uncommitted，未上 CI，未过真机）**：入口、预览、随消息发送都已接上。
+- 协议的**真实形状**：`prompt` / `steer` / `follow_up` 的 `images` 是 `ImageContent`
+  ——`{"type":"image","data":"<base64>","mimeType":"image/jpeg"}`（`packages/ai/src/types.ts:367-371`，
+  `docs/rpc.md:51-53`、`:78`、`:88-93`、`:110-115`）。**没有路径字段、没有尺寸字段**，字节整段随 RPC 消息走；
+  我们的类型是 `app.pi.rpc.PiImage(base64, mimeType)`（`Commands.kt:13`），由 `putImages` 编码。会话条目里的
+  `Attachment(fileName/mimeType/size/...)` 是**落盘后**的记录，不是发送时的形状，两者别混。
+- 取图方式选 **SAF 文档选择器**（`ActivityResultContracts.GetContent`，符号在 `ChatScreen` 的
+  `imagePicker`）而不是 Android 13 的 Photo Picker：前者不需要任何存储/媒体权限（系统只授予用户刚选中的
+  那个 URI 的读权限，与 App 已有的目录授权模型 `DeviceSafStore` 同一套），且在所有受支持 API 上无需 backport 依赖，
+  同时覆盖文件提供者与相册。
+- **不需要 guest 能读到文件**：既然字节内联在 RPC 里，就与 `/sdcard`、App 私有目录、guest 路径映射都无关。
+  `bridge/GuestImageBytes.kt` 解决的是相反方向（guest 路径 → App 显示 markdown 图片），没有为附件另造通道。
+- 失败逐条有原因：非 `image/*`、打不开/被拒/文件已删、超过 `MAX_ATTACHMENT_BYTES`（8 MB，内联 base64 的
+  膨胀代价）三类各自给一句用户能读的话与下一步；取消选择不算失败，不弹提示。
+- 预览：`AttachmentThumb` 用与转录同一个 `decodePiImage` 在 IO 线程解码出缩略图，点击移除；编解码器拒绝的
+  载荷仍显示 MIME 类型，不静默消失。
+
 ### E4. `@` 文件提及 —— **applied (uncommitted)**（未上 CI，未过真机）
 
 > 原记载是「pi 有（见 `docs/settings.md`、`docs/usage.md`），App 没有」。**那一行已经不成立**，
@@ -425,12 +464,19 @@ App 侧**没有任何 UI**：没有选图、没有粘贴、没有拖入。**只�
 
 **后续项（记在这里，别让它消失在聊天里）**：
 
-- [ ] `Composer` 改 `TextFieldValue`，把真实光标带上，去掉偏离 1；
-- [ ] 把 `app/src/test/kotlin/app/pi/ui/chat/PiFileMentionsCheck.kt` 注册进 `tools/run-app-pure-checks.sh`（`run_harness mentions …`，并把该文件里两处写死的"2 harnesses"改成 3）——**不注册，`app/src/test/**` 在 CI 里就不会被编译，这个自检等于不存在**；
-- [ ] **真机验证 `fd` 在 agent 目录 bind 之后仍可执行**：`/usr/local/bin/fd` 是指向 `/root/.pi/agent/bin/fd` 的软链（`RuntimeProvisioner.kt:469`），而 `/root/.pi/agent` 被引擎的 bind 覆盖（`PiEngineHost.kt:285-294`）——**这一条我没有查证过，是已知风险**。fd 缺失时的降级行为与 pi 相同（无候选、不弹列表），所以坏了是"不出现"，不是"崩"。
+- [ ] `Composer` 改 `TextFieldValue`，把真实光标带上，去掉偏离 1；**—— 仍未做（复核于本轮，工作树）**：输入框仍是 `OutlinedTextField(value = draft: String)`（`ui/screens/ChatScreen.kt:1151` 一带），只有末尾那个 token 会补全。
+- [x] ~~把 `app/src/test/kotlin/app/pi/ui/chat/PiFileMentionsCheck.kt` 注册进 `tools/run-app-pure-checks.sh`~~ **—— 已完成（复核于 `d54beb7`；`tools/run-app-pure-checks.sh:270` 的 `run_harness mentions`）**，而且"两处写死的 2 harnesses"已改成**计算出来的计数**（脚本末尾注释明写这个数字曾撒谎）。同批注册的还有 `guest-paths` 与 `agent-tool-paths`。
+- [x] ~~**真机验证 `fd` 在 agent 目录 bind 之后仍可执行**~~ **—— 已解决（不是真机问题，是构建期就能定的 bug；复核于 `d54beb7`）**：`/usr/local/bin/{rg,fd}` 的软链目标确实会被 bind 遮蔽，且**首启时必然悬空**（`migrateGuestAgentDir()` 在 `ensureReady()` 之前跑，那时 rootfs 里还没有 `bin/`）。修法是两份都写 + 重放：`PiPaths.agentBinDir()`（绑定源）与 `rootfsAgentBinDir()`（rootfs 副本），`RuntimeProvisioner.ensureToolsVisible()` 在 stamp 未变的早退路径上补回缺失的那份；自检 `AgentToolPathsCheck.kt`（13 项断言，含"两个目录互不包含"）已注册（`run-app-pure-checks.sh:282`）。**"没查证过的已知风险"这句已经不成立。**
 
 
-### E5. 懒启动引擎 + 无引擎浏览会话
+### E5. 懒启动引擎 + 无引擎浏览会话 —— **已定：不做（2026-09-12，用户决定）**
+
+**结论：不做。** 用户原话：「启动引擎，这个不用改了，现在都是秒起，没有意义。」
+
+实测前提：引擎冷启动已经是**秒级**（用户在这台设备上的观察），所以这条要改善的那个"启动体感"已经不存在了。**不要再派这条**——它改善的是首屏等待，而首屏已经没有等待。若将来引擎启动变慢（例如 pi 变大、或运行时换成更重的形态），把这条拿出来重估，判据是**实测的启动耗时**，不是设计文档里当初的担心。
+
+下面保留原始记载，以便重估时不必重新调查：
+
 现在**开 App 就起引擎**（`PiRoot` 的 `LaunchedEffect` → `session.boot()`）。而：
 - 会话文件就在 App 私有目录里，**Android 能直接读** → 翻历史、看转录、改设置**根本不需要引擎**；
 - 引擎只在"真的要发消息"时才需要起。
@@ -438,6 +484,8 @@ App 侧**没有任何 UI**：没有选图、没有粘贴、没有拖入。**只�
 
 ### E6. `ASSET_VERSION` 改成内容指纹（B12 的收尾）
 现在是手工常量。改成哈希资产树的文件名+大小写进 stamp，**彻底消掉"忘记提升版本号 → 新扩展静默不安装"这个人工步骤**。
+**已收尾（复核于本轮，commit `ba297c7`；详见 §B12 末条）**：实现是**运行时**对资产内容算 SHA-256（`DeviceBridgeController.assetFingerprint`），不是构建期写一个指纹文件。选它的理由：指纹必须覆盖**打进 APK 的那份内容**，而 `assets/` 是源目录、构建期脚本还要额外保证"生成物与源一致"这第二个真相；运行时算的是 APK 里真实存在的东西，且这个树只有 129 KB（见 §B12）。手工常量留在原地只作回退。
+**pi 侧核对（源码 `bbb61e34`）**：**pi 没有"扩展资产版本/指纹"这个概念** —— 扩展是**扫目录**加载的（`core/resource-loader.ts` 把 `extensionPaths` 交给 `core/extensions/loader.ts` 的 `loadExtensions`/`loadExtensionsCached`），它唯一的缓存是**进程内**的 `extensionCache` + generation token（`loader.ts` 的 `isCurrentCacheToken`），**没有落盘版本戳、没有内容指纹**。所以这个闸门**是我们自己的机制**（因为 APK 里的资产要先拷到 guest 的扩展目录才存在），不是"按 pi 的做法"。它要解决的问题 pi 根本不存在：pi 的扩展就在磁盘上，改完即生效。
 
 ### E7. 扩展/包管理界面必须区分「内置」与「用户安装」
 `pi install` 装的东西和我们自带的三个混在同一个目录。若不加区分：
@@ -445,7 +493,7 @@ App 侧**没有任何 UI**：没有选图、没有粘贴、没有拖入。**只�
 - 内置扩展应当**不可卸载**，并标明"随 App 提供"。
 （这一点随 B5 的界面一起做。）
 
-**状态（applied, uncommitted，未上 CI）**：界面已区分，**结论是「pi 自己不区分」**，界面照实这么写。
+**状态（已完成，复核于 `6c2059a`）**：界面已区分，**结论是「pi 自己不区分」**，界面照实这么写。
 
 - 数据源只有 App 自己：`packages/PiPackageModel.kt:63-119` 的 `PiBuiltinExtension` 是 `app/src/main/assets/pi-extensions/` 的转写（8 文件 → 3 个入口），入口文件按 pi 的发现规则取——`resolveExtensionEntries`（`package-manager.ts:557-585`）只在子目录含 `index.ts`/`index.js` 时接受该目录，所以两个目录扩展显示为 `index.ts`，单文件扩展显示为自身；安装器写的 `.pi-android-assets` 因为点号开头被 `collectAutoExtensionEntries` 跳过（`:604`）。
 - **「内置」这个标注必须声明来源**：pi 把 `<agentDir>/extensions/` 下的一切都当成自动发现的用户扩展（`source:"auto"`/`scope:"user"`，`package-manager.ts:2352-2362`，收集于 `:2470-2475`），和用户手放的文件无法区分；`pi list` 只读 `settings.json` 的 `packages`（`package-manager-cli.ts:970-1002` → `package-manager.ts:977-1003`），内置扩展永远不会出现在里面。**证据留在代码注释与本节，界面上只剩用户需要的那一句**："「内置」是 App 的标注：pi 不分内置和用户安装。"
@@ -517,7 +565,7 @@ pi 把扩展加载错误**只写进 `runtime.diagnostics`，不发任何事件**
 4. **并行时每个代理都会报"红不是我的文件"。** 这没有意义——**只有冻结树之后的整树 typecheck 才算数**。
 5. **自证不等于认账。** 代理报告 `typecheck: OK` 时要独立复跑；审计报告里"已核对为正确"的结论也要抽验。**反过来，报"证不出来"的项目要保留**，因为自信的错误发现会让人去改本来正确的代码。
 6. **一条写着"没做"、其实已经做完的条目，比漏记更危险。** 漏记只是少了一条待办；过时的"没做"会让人**重做已经正确的代码**，而重做往往会把它弄坏。本文件因此做了两件事：一是把 A1/A2/B1–B4/B8/B11/E2 标注为已完成（复核于 `dc00279`，逐条给了 `path:line` 证据），二是把"逐行复核"本身变成例行动作——**任何审计写进本文件的条目，下次复核时必须回代码确认它仍然成立**，而不是只在派活时当作事实引用。判断标准是"能不能指出现在还在缺的那一行"，不是"文档里写着缺"。
-7. **用户界面里不许出现文档路径、文件名、章节号（`§`），也不许解释"我们内部为什么这么做"。** 用户原话：**"不要乱加没用的说明。有了 Git 不就好了吗？写个鸡毛说明？没用的说明全删掉。"** 起因是 `PackageStrings` 里那句 `git: 源当前用不了…（docs/known-gaps.md §K2）`——它把**源码文档写进了用户界面**，这是无论内容对不对都不该发生的事。判定标准：**这条文案说的是用户此刻需要的事实，还是我给自己的设计做辩护？** 后者一律写进代码注释或本文件，不进界面。缺功能就补功能；**补不了的功能不该由一句说明来代替**（本例的正解是另一个任务把 git 打进 runtime，然后示例里加回 `git:` 即可）。规则落地时**回溯查了同批新增的 E7 文案**并一起缩减（见 §E7：删掉 `BUILTIN_UNINSTALLABLE`、`LIST_SECTION_NOTE`、`agentDirs`，`BUILTIN_NOTE` 从 5 行降到 1 句）。**已知仍然违规、尚未处理**：`PackageStrings` 里更早那批 trust/project 文案仍有 5 处 `*.ts:行号`（`SCOPE_PROJECT_LOCKED:51`、`PROJECT_PACKAGES_HIDDEN:58`、`TRUST_INVALID_NOTE:127`、`TRUST_SESSION_ONLY_NOTE:131`，以及 `SUBTITLE:24` 那句"pi 没有把包管理放进 RPC 协议"的内部解释）——**留着不算修好，属下一批清理**。
+7. **用户界面里不许出现文档路径、文件名、章节号（`§`），也不许解释"我们内部为什么这么做"。** 用户原话：**"不要乱加没用的说明。有了 Git 不就好了吗？写个鸡毛说明？没用的说明全删掉。"** 起因是 `PackageStrings` 里那句 `git: 源当前用不了…（docs/known-gaps.md §K2）`——它把**源码文档写进了用户界面**，这是无论内容对不对都不该发生的事。判定标准：**这条文案说的是用户此刻需要的事实，还是我给自己的设计做辩护？** 后者一律写进代码注释或本文件，不进界面。缺功能就补功能；**补不了的功能不该由一句说明来代替**（本例的正解是另一个任务把 git 打进 runtime，然后示例里加回 `git:` 即可）。规则落地时**回溯查了同批新增的 E7 文案**并一起缩减（见 §E7：删掉 `BUILTIN_UNINSTALLABLE`、`LIST_SECTION_NOTE`、`agentDirs`，`BUILTIN_NOTE` 从 5 行降到 1 句）。**那批遗留已清理完毕**（`PackageStrings` 的 `SCOPE_PROJECT_LOCKED`、`PROJECT_PACKAGES_HIDDEN`、`TRUST_INVALID_NOTE`、`TRUST_SESSION_ONLY_NOTE` 都已去掉 `*.ts:行号`；内部解释句 `SUBTITLE` 整条删除、连调用点一起，见 `docs/ui-prose-audit.md` 的 A1）。回归判据：对 `packages/**` 的字符串字面量做全文扫描，`.ts:` / `.kt:` / `docs/` / `§` / `auth.json` / `models.json` / `settings.json` / `agentDir` / `guest` / `host` **零命中**（保留项只有三类：用户项目里被检查的目录项名、用户要填的端点地址、以及纯代码里的路径拼接）。
 
 ---
 
@@ -527,10 +575,12 @@ pi 把扩展加载错误**只写进 `runtime.diagnostics`，不发任何事件**
 > 分级计数：IMPLEMENTED 74 · PARTIAL 20 · MISSING-GUI 26 · MISSING-TERMINAL-ONLY 12 · CLI-ONLY 9 · N/A 7。
 > **其中 4 条是静默的行为缺陷**（写错字节、丢用户输入、死代码、失效开关），比"功能缺失"严重——因为它们**看起来是成功的**。
 
-### I1. `/tree` 的"跳到历史某点"在 RPC 里根本不可达（DEFECT）
+### I1. `/tree` 的"跳到历史某点"在 RPC 里根本不可达（DEFECT）—— **已判定为协议 limit + 界面已说真话（复核于本轮，工作树）**
 pi 能在**不新建会话文件**的前提下跳到任意历史点（`docs/sessions.md:71`、`interactive-mode.ts:5216-5322`）；而 `RpcCommand` 只有 `get_tree`/`fork`（`rpc-types.ts:20-74`）。
 App 的「分支」动作实际是 **fork，会写一个新会话文件**（`SessionTreeScreen.kt:74,165,226`）——**和 pi 的语义不同**，用户以为在"跳分支"，实际在"造新文件"。分支摘要也因此不可达。
 → 应补进 **F2**（协议做不到）。
+
+**状态（已处置，属于"pi 有但我们够不着"）**：能力缺口不变（RPC 没有对应命令），**变的是界面不再撒谎**——`ui/chat/SessionTreeScreen.kt:350` 的按钮已改名为「分叉新会话」，并在上方写明：pi 的 `/tree` 是原地移动叶子、不写文件（`docs/sessions.md:71`），RPC 没有这条命令（`rpc-types.ts:20-74`），所以这个按钮是 fork。**不要再派"实现原地跳分支"的活**：除非 pi 的 RPC 协议新增命令，否则它做不了。
 
 ### I2. **动作类设置行点了没反应**（DEFECT，E9 的扩展）——**已处置：applied (uncommitted)，19 行逐行有结论，没有一行留在「点了弹一句未接入」**
 
@@ -577,33 +627,91 @@ App 的「分支」动作实际是 **fork，会写一个新会话文件**（`Ses
 - `app.about.licenses` 的撤掉是判断项，见上表最后一行。
 - `docs/feature-gaps.md` 里列的同一批 key（`:270`、`:302`、`:509-514`）**没有同步**——它不在本次允许改的文件范围内，父代理需要时再改。
 
-### I3. `/export <path>.jsonl` **会把 HTML 写进 `.jsonl` 文件**（DEFECT，静默写错字节）
+### I3. `/export <path>.jsonl` **会把 HTML 写进 `.jsonl` 文件**（DEFECT，静默写错字节）—— **已解决（复核于 c6f8e41）**
 App 永远调 `export_html`（`PiSessionViewModel.kt:1371-1376`），而它的命令面板却宣传支持 `.html/.jsonl`（`PiSlashCommands.kt:121-124`）。
 pi 的 TUI 会按扩展名分支（`.jsonl` → `exportToJsonl`，`interactive-mode.ts:6064-6065`、`agent-session.ts:3488`），但 **RPC 只暴露 `export_html`**（`rpc-types.ts:60`、`rpc-mode.ts:600-602`）。
 **结果：文件内容错、扩展名错，还弹一个成功提示。**
 → 处置：要么面板里不再宣传 `.jsonl`，要么自己按 pi 的 JSONL 格式导出。
 
-### I4. `follow_up` 在 UI 里是死代码（DEFECT）
+**状态（已解决）**：选了"自己按 pi 的格式导出"。收尾条件 = 面板怎么说、磁盘上就是什么。
+由 `c6f8e41` 满足：符号 `PiSessionViewModel.exportSession`（按扩展名分派 `JSONL_SUFFIX`）、
+`exportJsonl`（`branchPath` 从 `get_entries` 的 `leafId` 回溯分支、`sessionHeaderOf` 取 header 的 id/cwd、
+`CURRENT_SESSION_VERSION` 写版本）、动作枚举 `PiCommandAction.ExportSession`；
+条目字节直接来自 `get_entries`，只按 pi 的 `core/session-export.ts` 重链 `parentId`。
+
+### I4. `follow_up` 在 UI 里是死代码（DEFECT）—— **已解决（复核于 c6f8e41）**
 `PiSessionViewModel.sendFollowUp`（`.kt:1086`）**全树零调用方**；输入框只会 `steer`（`send`，`.kt:1053-1063`）。
 而 `set_follow_up_mode` **是接通的**——所以那个开关**看起来能用，实际没有任何东西能入队**。
 
-### I5. 自定义主题 JSON 永远到不了 App 自己的颜色（DEFECT）
+**状态（已解决）**：收尾条件 = 存在一个能触达 `sendFollowUp` 的界面入口，且只在流式中提供
+（pi 的绑定在空闲时等同普通发送，无条件入队会静默排在队里等下一次回合）。
+由 `c6f8e41` 接上：符号 `PiSessionViewModel.sendFollowUp` ← composer 的「后续」chip
+（`Composer.canFollowUp` = `streaming && draft.isNotBlank()`，且仅在 `streaming` 时渲染）。
+签名后续由 `ecd98a2` / `7c2ecd7` 扩出 `images`，`follow_up` 因而不再丢附件。
+
+### I5. 自定义主题 JSON 永远到不了 App 自己的颜色（DEFECT）—— **已完成（复核于本轮，工作树；两处都修了）**
 两套写死的调色板（`PiPalette.kt:112-249`），**没有任何代码解析主题文件**；`MainActivity.kt:35-40` 除 light/dark/`a/b` 外忽略一切名字——而 `PiPalette.kt:16-22` 把"跟随 pi 主题"写成设计意图。**注释与实际相反。**
 主题发现也不全：选择器只从 `themes` 设置里取名字（`PiSettingEditorHost.kt:90-98`），**漏了 pi 的规范目录 `~/.pi/agent/themes/`**（`resource-loader.ts:815`）。
 
-### I6. Esc 会清空队列、**并且丢掉你刚打的字**（DEFECT）
+**状态（已完成）**：收尾条件 = ①App 的颜色真的来自 pi 主题文件；②`~/.pi/agent/themes/` 与 `.pi/themes` 里的主题可被选中。
+- ① `MainActivity.kt:31-44`：`val theme by session.theme.collectAsState()` → `PiTheme(palette = theme.palette, dark = theme.dark)`，注释明写"不是两个手写常量"；`PiPalette.kt` 现在只剩 `data class PiPalette`（写死调色板已删）。
+- ② `ui/theme/PiThemeFiles.kt:152` `scanDirectory(File(agentDir, "themes"), …)`、`:153` `scanDirectory(File(workspace, ".pi/themes"), …)`；解析在 `PiThemeLoader.load`（`:202`），含 `a/b` 自动对与 256 色/变量引用。
+- pi 依据：`core/resource-loader.ts:815`（agentDir/themes）、`:821`/`:875`（项目 `.pi/themes`）、`modes/interactive/theme/theme.ts:232`（`resolveVarRefs`）、`:597`（`resolveThemeSetting`）。
+
+### I6. Esc 会清空队列、**并且丢掉你刚打的字**（DEFECT）—— **已解决（复核于 c6f8e41）**
 `ChatScreen.kt:433` 调 `stop()` 时**没有传 `onRestored`**，而 `PiSessionViewModel.kt:1097` 支持把内容还回输入框。
 → 用户按 Esc 想停下，结果**待发队列被清、输入的东西也没了**。
 
-### I7. 13 个已注册设置**全树只有注册表一处出现**（= 失效开关）
+**状态（已解决）**：收尾条件 = Stop 之后队列里的文字回到输入框，且不覆盖用户已打的草稿。
+由 `c6f8e41` 满足：符号 `ChatScreen` 的 `onStop` 调用 `session.stop { restored -> draft = mergeRestoredQueue(restored, draft) }`，
+`mergeRestoredQueue` 复刻 pi 的 `[queued, current].filter(trim).join("\n\n")`。
+
+### I7. 13 个已注册设置**全树只有注册表一处出现**（= 失效开关）—— **已完成（复核于本轮；逐键表见下）**
 含 `dynamicColor`、`fontScaleDelta`、`messageDensity`、`showTimestamps`、`thinkingCollapsedByDefault`、`app.tools.expandByDefault` 等；另外 `hideThinkingBlock` **在 `ChatScreen.kt:345-348` 从未被传入**。
 → 界面给了开关，**没有任何消费者**。与 E9/I2 是同一类病。
+**逐键复核（工作树 + pi 源码 `bbb61e34`/0.85.1，本轮；13 键 = 4 个 `app.terminal.*` + 6 个 `PiSessionViewModel.readPrefs` 消费的 + 3 个早先已删）**。判据是 pi 源码，不是我们的想象；`grep -rn "<key>" --include=*.ts packages/`（排除 `.test.`）：
 
-### I8. 搜索能力缺失（MISSING-GUI）
+| 键 | pi 侧 | 我们这边（符号） | 结论 |
+|---|---|---|---|
+| `hideThinkingBlock` | **pi 有**：`core/settings-manager.ts:119`（`Settings` 接口）、`:962` `getHideThinkingBlock`、`:982` `setHideThinkingBlock`；消费在 `modes/interactive/components/assistant-message.ts:143`（渲染助手消息时按它隐藏 thinking 块） | `PiSessionViewModel.readPrefs` → `ChatScreen` 的 `hideThinking` 与搜索过滤 | **1:1，一致**。RPC 模式下 pi 不渲染，App 就是渲染方，所以读同一个键、按同一语义隐藏是唯一正确做法 |
+| `app.appearance.fontScaleDelta` | **pi 无**（0 hits） | `readPrefs` → `MainActivity` `textScaleDelta` → `PiTheme` | App 自己的键（有 `app.` 前缀）；已接 |
+| `app.appearance.messageDensity` | **pi 无**（0 hits） | `readPrefs` → `ChatScreen` 的块间距 | 同上 |
+| `app.appearance.showTimestamps` | **pi 无**（0 hits） | `readPrefs` → `ChatScreen` 的 `visibleItems` | 同上 |
+| `app.appearance.thinkingCollapsedByDefault` | **pi 无**（0 hits） | `readPrefs` → `ChatScreen` 的 `thinkingDefaultExpanded` | 同上 |
+| `app.tools.expandByDefault` | **pi 无**（0 hits） | `readPrefs` → `ChatScreen` 的 `toolsExpanded` | 同上 |
+| `app.runtime.keepAlive` | **pi 无**（`keepAlive` 的 10 处命中都在 `experimental/server.ts`，是 HTTP keep-alive，与此无关） | `readPrefs` → 启动路径上决定要不要起前台服务 | App 自己的键（Android 前台服务）；已接 |
+| `app.terminal.fontSize` | **pi 无**（0 hits） | `ui/terminal/TerminalSettings.kt` 的 `TerminalPreferences.read` | App 自己的键（我们的终端渲染）；已接 |
+| `app.terminal.keyBar` | **pi 无**（0 hits） | 同上 | 同上 |
+| `app.terminal.cursorStyle` | **pi 无**（0 hits；pi 唯一的游标键是 `showHardwareCursor`，`settings-manager.ts:147`） | 无 | **已删除（复核于 `6c2059a`）**：App 的键 + 无消费者 + 行为归 libvterm（`DECSCUSR`） |
+| `app.terminal.scrollbackLines` | **pi 无**（0 hits） | 无 | **已删除（复核于 `6c2059a`）**：同上（滚回缓冲是组件固定的那份） |
+| `app.tools.bashTimeoutSeconds` | **pi 无此设置**；pi 的 bash 超时是**每次调用的工具参数**（`modes/rpc/rpc-types.ts:55` 的 `bash` 命令只有 `command`/`excludeFromContext`，没有 timeout 字段；`core/tools/bash.ts:24-34` 的 `resolveTimeoutMs`） | 无 | 早先删除，**依据成立** |
+| `app.tools.outputMaxLines` | **pi 无此设置**；截断是编译常量（`core/tools/truncate.ts:11-12` `DEFAULT_MAX_LINES`/`DEFAULT_MAX_BYTES`） | 无 | 早先删除，**依据成立** |
+| `app.appearance.dynamicColor` | **pi 无**（Monet 是 Android 概念；pi 的主题是 `theme`，颜色来自 pi 主题令牌） | 无 | 早先删除，**依据成立** |
+
+- **同一类病仍在、本轮只做了最小如实化（新发现，不在这 13 个里）**：`app.runtime.piVersion` / `nodeVersion` / `rootfsUsage` / `wakeLock` **全树没有任何写入方**（全是 `app.` 前缀 = 我们自己的键，pi 无对应物），只显示各自默认值（"未安装"/"未安装"/"未知"/"未知"）。`G_RUNTIME` 组摘要原先读 `piVersion`，于是在设置首页写着「pi 未安装 · 保活：…」——**已改**为只报 store 里真有的值（`PiSettingsRegistry` 的 `G_RUNTIME` 摘要现在只拼「保活：…」，理由写在那一行）。四个行本身仍是死显示，修法是给它们接运行时供给方（`runtime/**`/`engine/**` 的活），本轮未做。
+
+### I8. 搜索能力缺失（MISSING-GUI）—— **已完成（复核于本轮，工作树；四项都有）**
 转录内搜索、会话树过滤、会话列表的搜索/排序/命名/过滤——都没有。
 
-### I9. 没有删除会话，也没有 `pi -c` 的自动续接（MISSING-GUI）
+**状态（已完成）**：收尾条件 = 四项各自有可达入口，且判据照着 pi 的 TUI 抄（不是我们发明一套）。
+- **转录内查找**：`ui/screens/ChatScreen.kt:274-297`（`searchOpen`/`searchQuery`/`searchMatches`/`searchCursor`）、`:332-336`（跳到匹配）、`:456-459`（AppBar 入口），行内高亮用 pi 的 `searchMatchBg`/`searchMatchText` token（`ui/theme` 调色板）。
+- **会话树过滤**：`ui/chat/SessionTreeScreen.kt:96-97`（`filter`/`query`）、`:137`（切模式）、`:232-239`（`TreeFilter`，五种模式）、`:254-271`（`passesTreeFilter`，含 pi 的"无文本助手不显示"规则）。
+- **会话列表搜索/排序/命名过滤**：`ui/screens/SessionsScreen.kt:90`（`query`）、`:104-114`（按显示名/cwd/文件名匹配 + `byName` 排序切换 + 只看已命名）、`:133-134`、`:177`（按 cwd 分组）。
+- pi 依据（**都是 TUI 行为；RPC 没有搜索命令**）：`modes/interactive/components/tree-selector.ts:366-378`（五种筛选）、`docs/sessions.md:43-46`（选择器控件：输入搜索、Ctrl+S 排序、Ctrl+N 只看已命名）、`packages/tui/src/tui-alt-screen.ts:171-273`（`searchMatchStyle`/`searchCurrentMatchStyle`）+ `modes/interactive/theme/theme-json.ts:40`（`searchMatchBg` 定义）。**这一条属于"pi 有、RPC 够不着、我们用 App 侧实现对齐"，不是"pi 没有"。**
+
+### I9. 没有删除会话，也没有 `pi -c` 的自动续接（MISSING-GUI）—— **已解决（复核于 af2d675 / 7885599）**
 `boot()`→`attach()` **从不切会话**（`PiEngineHost.kt:231-233` 没有 `--continue`）。
+
+**状态（已解决）**：两条分开处置，能力归属不同。
+- 删除会话：**pi 没有协议对应物**（TUI 是 Ctrl+D 后确认，可用时走 `trash`）。由 `af2d675` 落地：
+  符号 `PiSessionViewModel.deleteSession` ← `SessionsScreen` 的 `SessionRow.combinedClickable(onLongClick)`，
+  确认对话框的确认按钮对**当前会话**禁用（引擎正在写该文件，不能 unlink 它下面的 inode），
+  文案明说删除后无法从 App 里恢复（我们没有 trash）。
+  本轮另加了一句可发现性提示（`applied (uncommitted)`）：列表上方写明"长按一行可删除该会话；
+  当前会话要切换后才能删除"，因为入口存在但没人找得到等同于不存在。
+- 自动续接：pi 有 `-c/--continue`（`cli/args.ts:100-101`），RPC 无对应物。由 `7885599` 落地：
+  符号 `app.sessions.resumeLast`（开关，默认关闭）+ `PiSessionViewModel.maybeResumeLastSession()`
+  —— `attach` 之后用现成的 `switch_session` 切到最近会话，每进程只试一次。
 
 ### I10. `app.device.*` 权限开关是**第二份、且可能矛盾的**授权真相（DEFECT）
 它们在设置目录里声明，但**没有任何代码读它们**——真正的强制在 `DeviceCapabilityStore` 的 SharedPreferences。
@@ -613,8 +721,14 @@ pi 的 TUI 会按扩展名分支（`.jsonl` → `exportToJsonl`，`interactive-m
 删掉第二份开关**不等于**那一页就说真话了：同一页上仍有 6 处"界面声称 vs 真实行为"不一致（错的 Shell 后端标签、不存在的相机权限按钮、
 API<30 的截屏、默认开的基础组缺通知权限、永不刷新的审批卡、静默失败的设置页跳转），见 **§C3.1**，`applied (uncommitted)`。
 
-### I11. 环境类能力缺失（CLI-ONLY / MISSING）
+### I11. 环境类能力缺失（CLI-ONLY / MISSING）—— **仍未做：只剩 UI 半边（复核于本轮，工作树）**
 离线模式、`--system-prompt`、`PI_CACHE_RETENTION=long` —— **环境变量映射是写死的**（`PiEngineHost.kt:250-258`）。
+
+**状态：引擎侧早已齐、没有任何界面传值。这一条是 `docs/remaining-work.md` 里排第一的真债。**
+- 引擎侧（已完成）：`rpc/PiLaunchOptions.kt` 的 `offline` → `PI_OFFLINE=1`（`:31`/`:47`）、`longCacheRetention` → `PI_CACHE_RETENTION=long`、`systemPrompt`/`appendSystemPrompt` → `--system-prompt`/`--append-system-prompt`（`:61`）；`engine/PiEngineHost.kt:192`（`launch` 参数）/`:215`/`:275`（存进 `launchOptions`）/`:316`（拼进 argv/env）/`:399`（`restart` 复用同一份），所以**一旦有人传值，`boot()` 与重启都会照做**。
+- 卡点（未做）：没有任何 settings 行写这三个值（`grep -n "离线\|systemPrompt\|cacheRetention" ui/settings/PiSettingsRegistry.kt` → 0 命中），`boot()` 的唯一调用点 `ui/PiSessionViewModel.kt:634` 只传 `workspaceProvider`，于是永远走默认的 `PiLaunchOptions()`。
+- pi 依据（**这是"pi 有"的真债，不是 App 发明**）：`cli/args.ts:110`（`--system-prompt`）、`:112`（`--append-system-prompt`）、`:318`（`--offline`，帮助文本明写 "same as PI_OFFLINE=1"）、`:433`（`PI_OFFLINE` 环境变量）；`packages/ai/src/api/anthropic-messages.ts:57`（`PI_CACHE_RETENTION=long` 的消费点）、`core/model-runtime.ts:196`（读 `PI_OFFLINE`）。
+- 收尾条件：设置页有三行、值组进 `PiLaunchOptions` 并在 `boot()` 传入；改完需要重启引擎（走既有的 `ExtensionLifecycle` 状态机）。
 
 ### 审查自己标为 UNVERIFIED 的 6 项
 设备能力"两份真相"是否已在并发重写中被消除（静态不一致**已确认**；现已消除，见 I10 状态，并追加了界面一致性审计 §C3.1）；`/share` 在 Android 上是否可行；终端专属行在真机是否可用（C2）；`hideThinkingBlock` 是否存在 grep 看不见的读取；"无消费者"全量扫描（它逐键验证了 13 个）；`SessionTreeScreen` 是否新增了非 fork 动作。**§2 的结论都不依赖这些未验证项。**
@@ -741,3 +855,102 @@ proot 的 bind 是**每次调用**的事。于是同一条 host 路径在引擎�
 **同一批审计发现、已单独修掉的界面问题**（都不在 K5 这条绑定本身）：`EngineRestartCoordinator` 拒绝重启后卡在 `Restarting`（`ExtensionLifecycle.restartRefused`）；`pi list` 未执行却显示"没有包"（`Listing.notReady`）；`npm:foo@v1.2.3` 被判成"可被 update 移动"（`PiPackageSource.isExactNpmVersion` 对齐 node-semver strict FULL）；`SPEC_HINT` 曾宣传 `git:` 源（已去掉；期间加过一句"当前运行时没有 git"的用户可见说明，**已按要求整个删除**，见 §K2 与 §H 第 7 条）。**全部为 applied (uncommitted)，未上 CI。**
 
 **未验证**：本机不编译、不跑 device（规矩）；`bindsAgentDir` 的断言只在纯逻辑层被覆盖；"proot 能绑定刚 `mkdirs` 出来的目录"只有源码级把握。**真机验证点**：装一个 npm 包 → 重启引擎 → 该包的工具/资源真的出现（修复前不会）。
+
+### K6. guest 里两条与 DNS 有关的环境限制（A2 / A3，已核实，不是待办）
+
+真机排查中确认的两条限制。写在这里是因为它们的**症状都指向错误的方向**：看起来像我们的 `resolv.conf` 写错了，实际都不是。
+
+#### A2. 静态链接的 glibc 二进制**不能**做域名解析
+
+- **现象**：同一个域名、同一时刻，动态链接的 Node 能解析，静态链接的二进制（例如静态 ffmpeg）失败，`getaddrinfo` 返回 `EAI_SYSTEM`；连 `/etc/hosts` 里写死的条目也读不到。
+- **根因**：glibc 的 `getaddrinfo` 通过 `dlopen` 加载 `libnss_dns.so.2` 完成 DNS 查询。静态链接把这条路切断，于是不是"查不到"，而是**没有任何解析器**。
+- **与什么无关**：与我们的 `resolv.conf`（`RuntimeProvisioner.kt:161-173`）无关，与 `/etc/hosts` 也无关。不要去改它们——改了不会有任何变化。
+- **我们改不了什么**：不能把 `libnss_*` 塞进 rootfs 去救静态程序。NSS 模块与 glibc **版本必须完全一致**才可能成功，做不到就是做不到。
+- **能做什么**：用 apt 装的**动态版**，或 **musl 静态版**（musl 不依赖 NSS）。
+
+#### A3. 境内 DNS 投毒：受影响的是被墙域名，不是"网络坏了"
+
+- **现象**：某些域名解析到 `face:b00c:*` 这类地址。那是 Facebook 的 IPv6 前缀，是**投毒指纹**，不是真实解析结果。
+- **根因**：链路上的 DNS 应答被伪造。
+- **我们改不了什么**（三条硬约束，逐条挡死"本地 DoH 代理"这条路）：
+  1. glibc 的 stub resolver **不支持 DoH/DoT**；
+  2. `resolv.conf` 的 `nameserver` 只能写 **IP，不能带端口**，所以没法把它指到一个本地代理端口；
+  3. Android 应用**不能绑定 1024 以下的端口**（没有 `CAP_NET_BIND_SERVICE`），所以也没法在 53 端口起一个本地解析器。
+- **边界（重要，别扩大解释）**：B 站、GitHub、npm、PyPI 都正常，**只有被墙域名受影响**。因此不要把这类失败归因到运行时、npm 镜像或我们的配置上。
+- **能做什么**：换可达的解析路径（例如应用可用的 DoH 客户端放在 App 侧、或在用户自己的网络层解决），而不是在 guest 里折腾 `resolv.conf`。
+
+## L. 许可证合规处置（**分发义务**，不是 pi 行为）
+
+> 这一节的规格来源不是 pi，而是**我们打包分发这个事实**。判据分两处：
+> ① pi 自己怎么做署名 —— 这是 pi 规格，引 `file:line`；
+> ② 分发第三方程序产生的义务 —— 这是 Android/APK 侧的事实，**不去 pi 里找依据**。
+> 三态写法：`pi 有（file:line）` / `pi 无对应物（App 自己的决定或法定义务）` / `pi 有但我们够不着`。
+> 状态：**applied (uncommitted)**，未上 CI，未上真机。
+
+### L1. 我们到底分发了什么（逐条来自 `runtime.lock.json`，23 个 artifact 全部 SHA-256 校验通过）
+
+校验方式：按 lock 里的 URL 重新下载，逐个比对 `sha256`，23/23 一致，再从**校验过的字节**里读版权文件。
+
+| 进包位置 | 组件 | 许可证（读自包内 `copyright`） | 包内是否带许可全文 |
+|---|---|---|---|
+| `jniLibs/arm64-v8a/`（伪装成 `lib*.so`） | proot 5.1.107.92 | **GPL-2.0**（Termux 打包元数据） | **否**（Termux deb 不带 `usr/share/doc`） |
+| 同上 | libtalloc 2.4.3 | **GPL-3.0**（Termux 元数据；上游 talloc 为 LGPL-3.0） | **否** |
+| 同上 | libandroid-shmem 0.7 | **BSD-3-Clause**（Termux 元数据 + 上游 LICENSE） | **否** |
+| `assets/runtime/ubuntu-base.tgz` | Ubuntu 24.04.3 基础系统，**91 个软件包** | 各自许可，共 88 份 `copyright`（GPL-2+/GPL-3+/LGPL-2.1+/BSD/MIT/Expat…） | **是**（88 份随载荷走）+ 18 份 `/usr/share/common-licenses` |
+| `assets/runtime/git.tgz` | git 2.43.0 + **16 个库包** + CA bundle | git **GPL-2.0**；闭包内混合（LGPL-2.1+、MIT、BSD、Expat、OpenLDAP-2.8、curl…） | **否**（重建时只取 `usr/lib/git-core`、`usr/lib/aarch64-linux-gnu`、`usr/share/git-core`，**没取 `usr/share/doc`**） |
+| 同上 | ca-certificates 20260601 | GPL-2.0+（打包）+ **MPL-2.0**（`certdata.txt`） | **否**（只取生成的 bundle） |
+| `assets/runtime/node.tgz` | Node.js 24.19.0 | MIT | 是（载荷内 `LICENSE`） |
+| `assets/runtime/ripgrep.tgz` | ripgrep 15.2.0 | Unlicense 或 MIT | 是（`UNLICENSE`/`LICENSE-MIT`/`COPYING`） |
+| `assets/runtime/fd.tgz` | fd 10.2.0 | MIT 或 Apache-2.0 | 是（`LICENSE-MIT`/`LICENSE-APACHE`） |
+| `assets/runtime/pi-engine.tgz` | pi 0.85.1 + 143 个依赖 | pi **MIT**；依赖 83 MIT / 36 Apache-2.0 / 13 BSD-3-Clause / 7 ISC / 2 BlueOak-1.0.0 / 1 Unlicense / 1 0BSD —— **全部宽松，无 copyleft** | 依赖各自包内（npm 保留），未复核 |
+| 编译进 dex | termlib 0.0.13（含 libvterm） | Apache-2.0；libvterm **MIT** | 否 |
+| 编译进 dex | Shizuku API 13.1.5 | MIT | 否 |
+| 编译进 dex | AndroidX/Compose、Kotlin/kotlinx、markdown 渲染栈 | Apache-2.0（逐个 POM 核实） | 否 |
+
+**由此得到的缺口（精确）**：git 那 17 个 deb、ca-certificates、以及 proot/libtalloc/libandroid-shmem 的许可全文**不在 APK 里**。Ubuntu 基础系统、node、ripgrep、fd 的许可是在载荷里的，但用户看不到。
+
+### L2. pi 自己怎么做署名（**这是 pi 规格**）
+
+| pi 行为 | 依据 | 结论 |
+|---|---|---|
+| pi 以 MIT 授权 | `/root/pi-src/LICENSE:1-3`（"MIT License / Copyright (c) 2025 Mario Zechner"） | pi 有 —— 它有 LICENSE 文件 |
+| npm 包的许可声明 | `/root/pi-src/packages/coding-agent/package.json:98`（`"license": "MIT"`） | pi 有 —— 声明在 `package.json`，npm 会把它带进安装后的包 |
+| 依赖树的许可声明 | `packages/coding-agent/npm-shrinkwrap.json`：143 个依赖条目**全部**带 `license` 字段（MIT 83、Apache-2.0 36、BSD-3-Clause 13、ISC 7、BlueOak-1.0.0 2、Unlicense 1、0BSD 1） | pi 有 —— 每个依赖各自声明 |
+| **有没有"第三方声明"机制** | 全仓库 grep `third-party`/`thirdparty`（`packages/*/src`）：**仅 1 处命中**，且是计费提示 `modes/interactive/interactive-mode.ts:254`，与许可无关 | **pi 无对应物** |
+| **有没有许可界面 / CLI 输出版权** | `src/cli.ts` / `src/cli/` / `src/main.ts` grep `licen[cs]e`：**零命中**；交互设置菜单里也没有许可项（`modes/interactive/` grep `licen` 零命中） | **pi 无对应物** |
+| **有没有 per-package LICENSE** | `find . -maxdepth 3 -name "LICENSE*"`（排除 node_modules）：只有根 `./LICENSE` 一个 | **pi 无对应物** |
+
+**这解释了两件事**：① §I2 把 `app.about.licenses` 从 pi 的设置目录里撤掉是**对的**——pi 确实没有许可界面，把它当 pi 的功能就是编造；② 但"pi 没有"**不等于"我们没有义务"**——义务来自我们打包分发 GPL/LGPL 程序，与 pi 的行为无关。
+
+### L3. 我们的实现（`pi 无对应物`：形态是 App 自己的决定）
+
+| 我们做了什么 | 位置 |
+|---|---|
+| 从**校验过的上游字节**生成许可资产（不手打、不凭记忆） | `tools/build-license-assets.py`（新） |
+| 许可资产（103 个文件 / 1063 KiB；102 条 manifest；78 份去重后的 `copyright`；清单 **35 行**覆盖 `runtime.lock.json` 全部 23 个 artifact + pi 引擎闭包 + JVM 依赖树） | `app/src/main/assets/licenses/**`（新，**不在 `assets/runtime/`**） |
+| 声明"这些是未修改的上游发行版 + 逐组件上游地址" | `licenses/about.txt`、`licenses/source-code.txt`（由脚本写入，**是界面上的声明**，不是代码注释） |
+| 组件清单（组件/版本/许可证/进包位置/上游地址） | `licenses/component-list.txt` + `licenses/manifest.txt` |
+| 许可全文 | `GPL-2.0/LGPL-2.1/LGPL-3.0/GPL-3.0/MPL-2.0/Apache-2.0` 取自载荷的 `/usr/share/common-licenses`；`MIT/BSD-2/BSD-3/ISC/Zlib/curl/X11/OpenLDAP-2.8/BSD-4-Clause-UC/FSFULLR/all-permissive` 从**随包的 `copyright` 的 DEP-5 段落**里抽；`Unlicense` 取自 ripgrep 载荷；`0BSD`/`BlueOak-1.0.0` 按 pin 版本取（tslib 2.8.1 / lru-cache 11.4.0） |
+| 每个 Ubuntu 软件包的 `copyright`（版权归属记录） | `licenses/ubuntu-copyright-*.txt`（78 份，内容去重） |
+| 界面入口 | `ui/settings/LicensesScreen.kt`（新，`PiLicensesEntryRow` + `LicensesScreen`）；`ui/settings/SettingsHome.kt` 新增 `onOpenLicenses` 与「关于」分区一行；`ui/settings/PiSettingsStack.kt` 新增 `licenses` 分支 + 返回链 + 一行传参。**`PiRoot.kt` 未改**（分支在 stack 内部，默认参数即可） |
+| 验证 | `bash tools/typecheck.sh`（**不走 Gradle**）在改动后整树 **0 error**：`:rpc 0 / :app 0`，输出 `typecheck: OK (:rpc + :app, cross-module boundary reproduced)`。它不跑 Compose 编译器插件，所以 composable 调用规则与 `@OptIn` 必要性**未被检查**。`python3 tools/check-nested-comments.py` → `OK (145 Kotlin file(s) scanned)`。 |
+| 未改动的文件（澄清） | **`ui/settings/PiSettingsRegistry.kt` 本次没有改。** §I2 的撤行结论是「合规界面应以真实界面回归，而不是当 Action 行放回 pi 的设置目录」，所以只在**设置首页**加了一行入口，没有在 pi 的设置目录里重新登记任何 key。 |
+
+### L4. 三态对照
+
+| 项 | pi 行为（file:line） | 我们的实现 | 判定 |
+|---|---|---|---|
+| pi 的授权 | `LICENSE:1-3`、`packages/coding-agent/package.json:98` | 组件清单里列 `pi 引擎 0.85.1 MIT` | 一致 |
+| 第三方声明机制 | 无（grep 零命中，唯一命中无关） | App 自建 `assets/licenses/**` + `LicensesScreen` | **pi 无对应物**（App 的决定） |
+| 许可界面 | 无（CLI/交互菜单 grep 零命中） | 设置首页「关于」→「开源许可」 | **pi 无对应物**（§I2 撤行判断成立） |
+| GPL/LGPL 源码提供 | 不适用（pi 不是这些程序的分发方） | `licenses/source-code.txt` 写明未修改 + 逐组件上游地址 + 索取方式 | **pi 无对应物**（法定义务） |
+| Ubuntu 软件包版权记录 | 不适用 | 随包的 88 份 `copyright` 镜像进 assets（78 份去重） | **pi 无对应物** |
+
+### L5. 残留风险 / UNVERIFIED（要写清楚，别当成已解决）
+
+1. **`libgcc-s1`、`libncursesw6`、`libstdc++6` 在 ubuntu-base 载荷里没有 `copyright` 文件**（91 个包里就这 3 个）。三者的许可因此**没有随包文本**：libgcc/libstdc++ 是 GPL-3-with-GCC-exception，ncurses 是 MIT 类。收尾：从 Ubuntu 源码包里取这三份 `copyright` 补进资产。
+2. **libtalloc 的许可有两说**：Termux 打包元数据写 `GPL-3.0`，上游 talloc 一向声明 LGPL-3.0。清单里两种都写了，**未逐字核对上游 COPYING**（多个路径 404）。收尾：从 termux 的 `libtalloc` 补丁或 samba 发布包里取原文。
+3. **pi 引擎载荷里每个 npm 依赖的 `LICENSE` 文件未复核**：`license` 字段从 shrinkwrap 读过（143/143），但"每个包内确有 LICENSE 文件"靠的是 npm 的常规行为，**未在真实引擎 tarball 上验证**（该 tarball 是构建期生成的，本工作区没有）。
+4. **`assets/licenses/**` 与 `runtime.lock.json` 的同步没有 CI 断言**。改一个 artifact 版本后必须重跑 `tools/build-license-assets.py`，否则资产会静默过期。加断言要动 `ci.yml`，**已按规矩先报给父代理**，未改。
+5. **未上真机**：界面只在静态层面核对（无法本地编译 Gradle）。`manifest.txt` 的 TSV 解析、`assets.open` 的路径、63 KB 文本的滚动渲染都未在设备上跑过。
+6. **`librtmp1` 的库是 LGPL-2.1、其可执行程序是 GPL-2**；我们只分发 `librtmp.so.1`（库），清单按 LGPL-2.1 列。

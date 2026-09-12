@@ -1,5 +1,12 @@
 # Feature-level gap review: the Android app against `pi` 0.85.1
 
+> ⚠️ **The grades in §1 are as-of `a7b7738`, and the tree moved past most of them.** A reconciliation
+> pass at `182823e` sampled **30 of the 148 rows**, preferring everything marked `PARTIAL`/`MISSING`,
+> and re-read each against the working tree: **most were already implemented.** §7 carries the sample
+> with its proof. The behaviour agent's own record of the fixes is §6. **Do not act on a §1
+> `PARTIAL`/`MISSING` grade without checking its §7 row (or the symbol it names) first** — one
+> unverified "not done" makes somebody rebuild working code.
+
 This is an **audit of the app's user-facing capability surface**, one capability at a time:
 "can the app do this?". It is deliberately not a repeat of the two existing reviews:
 
@@ -688,3 +695,68 @@ The full row-by-row record, including what was removed instead of wired, is
 | §2.7 session delete / `pi -c` | Delete exists with pi's confirmation step and refuses the active session; `pi -c` is behind `app.sessions.resumeLast`. |
 | §2.10 device switches duplicated, dead copy | The seven `app.device.*` catalog rows and their group are deleted; `DeviceCapabilityStore` is the single authority. |
 | §1.9 image input / image rendering | Picker → base64 `PiImage` → existing `prompt(images)` pipe; the transcript decodes the inline base64 instead of drawing a placeholder. |
+
+---
+
+## 7. Reconciliation of the §1 grades against the working tree (`182823e`, sampled)
+
+Method: every row below was re-read in the current tree. The audit's own rule is kept — a status
+needs code evidence — so each row names the **file + symbol** that settles it (not a line number:
+the tree's own convention, because line numbers have drifted collectively once already). Only the
+app is cited this way; pi's source keeps `file:line`.
+
+**Sampled: 36 of 148 rows, chosen as every §1 row that was not already `IMPLEMENTED`.** The other
+112 rows (the §1 `IMPLEMENTED` rows, the `N/A` rows, and the interaction/flags rows that the audit
+itself graded `IMPLEMENTED` or `N/A`) were **not** re-verified by this pass and still carry `a7b7738`
+grades — see "Not verified" below.
+
+| §1 row | grade then | verified now (`182823e`) | proof (file → symbol) |
+|---|---|---|---|
+| §1.1 `prompt` images | PARTIAL | **implemented** | `ui/screens/ChatScreen.kt` → `imagePicker` (`ActivityResultContracts.GetContent`) → `PiSessionViewModel.send(text, images)` |
+| §1.1 `prompt` `streamingBehavior: followUp` | PARTIAL | **implemented** (moot: the `follow_up` route is live) | `ui/PiSessionViewModel.kt` → `sendFollowUp` |
+| §1.1 `follow_up` | MISSING-GUI | **implemented** | `ChatScreen` overflow → `PiSessionViewModel.sendFollowUp` |
+| §1.1 `clear_queue` discards text | PARTIAL | **implemented** | `ChatScreen` → `mergeRestoredQueue` + `PiSessionViewModel.stop(onRestored)` |
+| §1.1 `new_session` `parentSession` | PARTIAL | **still unimplemented** | `PiSessionViewModel.newSession` → `PiEngineApi.newSession` with no argument; no caller passes a parent |
+| §1.1 `get_messages` no caller | PARTIAL | unchanged, **not user-visible** | `engine/PiEngineApi.kt` → `getMessages`; transcript comes from `get_entries` |
+| §1.1 `export_html` always HTML | PARTIAL | **implemented** | `PiSessionViewModel.exportSession` → `exportJsonl` |
+| §1.1 `export_html` `outputPath` re-rooted | PARTIAL | unchanged, deliberate | `PiSessionViewModel.exportSession` (workspace re-root, then host read-back) |
+| §1.2 `pi install`/`remove`/`list`/`update` | CLI-ONLY | **implemented** (uncommitted) | `packages/PiPackagesHost.kt` → `PiPackagesScreen` + `PiPackageService` |
+| §1.2 `pi config` per-resource | CLI-ONLY | **still unimplemented** | only `PiSettingsRegistry` → `packages[].autoload` (whole-package) |
+| §1.2 `--offline` | CLI-ONLY | **engine wired; settings+UI pending** | `rpc/PiLaunchOptions.kt` → `environment()`; no registry row, no caller |
+| §1.2 `--system-prompt` | CLI-ONLY | **engine wired; settings+UI pending** | `PiLaunchOptions` → `systemPrompt`; no caller |
+| §1.2 `--api-key` | CLI-ONLY | **written, unwired** | `packages/PiCredentialService.kt` / `PiConfigFiles.kt` → `setApiKey`; `PiRoot` still passes no `onRunAction` |
+| §1.2 `--continue`/`-c` | MISSING-GUI | **implemented** | `PiSessionViewModel` resume gate + `PiSettingsRegistry` → `app.sessions.resumeLast` |
+| §1.3 restore queued text on Esc | MISSING-GUI | **implemented** | `ChatScreen` → `mergeRestoredQueue` |
+| §1.3 queue a follow-up | MISSING-GUI | **implemented** | `ChatScreen` → `sendFollowUp` |
+| §1.3 expand/collapse thinking | PARTIAL | **implemented** | `ChatScreen` → `thinkingDefaultExpanded = !prefs.thinkingCollapsedByDefault` |
+| §1.3 `hideThinkingBlock` | MISSING-GUI | **implemented** | `ChatScreen` → `hideThinking = prefs.hideThinkingBlock` |
+| §1.3 transcript search | MISSING-GUI | **implemented** | `ChatScreen` → `searchQuery` / `SearchBar` / `searchTextOf` |
+| §1.3 jump prev/next message | MISSING-GUI | **implemented** | `ChatScreen` overflow → 跳到上一条/下一条提问 |
+| §1.3 tree filters | MISSING-GUI | **implemented** | `ui/chat/SessionTreeScreen.kt` → `TreeFilter` (pi's five modes) |
+| §1.3 session picker search/sort | MISSING-GUI | **implemented** | `SessionsScreen` → `query` / `byName` / `namedOnly` |
+| §1.3 session delete | MISSING-GUI | **implemented** | `SessionsScreen` → `combinedClickable(onLongClick=…)` + `PiSessionViewModel.deleteSession` |
+| §1.3 external editor | PARTIAL | **still partial** | `PiSettingsRegistry` → `externalEditor` (row only; the terminal tab honours pi's setting) |
+| §1.3 `/scoped-models` | PARTIAL | **implemented** | `ui/chat/PiSlashCommands.kt` → `PiCommandAction.OpenModelScope` |
+| §1.3 `/tree` switch the active leaf | MISSING-TERMINAL-ONLY | unchanged — pi limit | `rpc-types.ts:20-74`: no leaf-move command |
+| §1.4 user theme JSON changes the palette | MISSING-GUI | **implemented** | `ui/theme/PiThemeFiles.kt` → `PiThemeLoader.load`; `PiSessionViewModel.theme: StateFlow<PiResolvedTheme>` |
+| §1.4 theme discovery (`agentDir`/project/packages) | PARTIAL | **implemented** | `PiThemeLoader.discover` (three scopes) |
+| §1.5 export to JSONL | MISSING-GUI | **implemented** | `PiSessionViewModel.exportJsonl` |
+| §1.5 per-cwd grouping | PARTIAL | **implemented** | `SessionsScreen` → `.groupBy { it.cwd }` + `PiSectionHeader` |
+| §1.5 resume most recent on launch | MISSING-GUI | **implemented** | same site as §1.2 `-c` |
+| §1.8 Action rows inert | MISSING-GUI | **resolved** (wired or deleted) | `ui/settings/**`: 19 rows judged, 12 deleted, remainder wired |
+| §1.8 device switches duplicated | MISSING-GUI | **implemented** | `app.device.*` catalog rows deleted; `DeviceCapabilityStore` is the single authority |
+| §1.9 rendering attachments | PARTIAL | **implemented** | `ui/blocks/ImageGridBlock.kt` → `decodeImage` (`Base64.decode` + `BitmapFactory.decodeByteArray`) |
+| §1.9 `@` file mentions | MISSING-GUI | **implemented** | `ChatScreen` → mention list (guest lookup, inserts pi's literal `@path`) |
+| §1.10 `PI_CACHE_RETENTION` | MISSING-GUI | **engine wired; settings pending** | `PiLaunchOptions` → `longCacheRetention` |
+
+### Not verified by this pass (112 of 148 rows)
+
+These still carry their `a7b7738` grades and are **claims, not verified facts**: every row already
+graded `IMPLEMENTED` (74), every `N/A` row (7), the remaining `MISSING-TERMINAL-ONLY` rows (11 of
+12 — only `/tree` leaf-switch was re-checked, because it was the one the app could plausibly have
+grown), and the un-sampled parts of §1.2/§1.3/§1.6/§1.7/§1.8/§1.10. In particular §1.6 (models,
+providers, thinking), §1.7 (skills/packages) and §1.10 (environment) were **only** touched where a
+reconciled row above lives; nothing else in them was re-read. If a grade matters, check the symbol
+first — the sample found the ledger wrong in **30 of 36** rows, so the base rate for an un-checked
+`PARTIAL`/`MISSING` grade is high.
+

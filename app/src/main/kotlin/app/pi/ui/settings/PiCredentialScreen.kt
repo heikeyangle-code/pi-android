@@ -141,6 +141,7 @@ fun PiCredentialScreen(
     var api by remember { mutableStateOf("") }
     var maskedKey by remember { mutableStateOf<String?>(null) }
     var modelsFileError by remember { mutableStateOf<String?>(null) }
+    var authFileError by remember { mutableStateOf<String?>(null) }
     var existingIds by remember { mutableStateOf<List<String>>(emptyList()) }
     var scanned by remember { mutableStateOf<List<PiModelScanner.ScannedModel>>(emptyList()) }
     var manualIds by remember { mutableStateOf("") }
@@ -167,6 +168,7 @@ fun PiCredentialScreen(
         api = existing.api ?: preset.api
         maskedKey = existing.maskedKey
         modelsFileError = existing.modelsFileError
+        authFileError = existing.authFileError
         existingIds = existing.configuredModelIds
         apiKey = ""
         scanned = emptyList()
@@ -240,6 +242,19 @@ fun PiCredentialScreen(
         ) {
             if (modelsFileError != null) {
                 Note("模型配置当前无法被 pi 解析：$modelsFileError。修好之前，写入的厂商不会生效。")
+            }
+            if (authFileError != null) {
+                // Deliberately *not* interpolating the service's text: that string
+                // is built from the raw exception (`PiAuthStorage.Read.Invalid`,
+                // `PiConfigFiles.kt:278`), so it can carry a host path or an
+                // exception class name. The cause that matters is kept, the
+                // internals are not.
+                //
+                // The warning is load-bearing, not decoration: an unreadable
+                // credential file leaves every provider field empty, so without
+                // this line "没有配置任何厂商" would be the screen's story while
+                // the truth is that the file is broken.
+                Note("凭证当前无法被读取，这个页面显示的厂商不是全部。修好之前 pi 不会启动。")
             }
 
             // ------------------------------------------------------------ 1 厂商

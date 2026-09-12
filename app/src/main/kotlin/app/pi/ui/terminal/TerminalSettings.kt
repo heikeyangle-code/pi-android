@@ -23,9 +23,11 @@ import kotlinx.serialization.json.JsonPrimitive
  *
  * **Still consumed here:**
  *  - `app.terminal.fontSize` — passed as the terminal component's
- *    `initialFontSize`. Note it is now only the *starting* size: the component is
- *    given a forced grid (see [TerminalBridge.fixedSize]) and computes the font
- *    that fits it, so the runtime control is the component's own pinch-zoom.
+ *    `initialFontSize`, and it is also the font size `TerminalPane`'s
+ *    `terminalGrid` measures the *initial* grid with. It is therefore only the
+ *    starting point twice over: the component is given that grid as `forcedSize`
+ *    (see [TerminalBridge.pinnedSize]) and computes the font that fits it, and the
+ *    runtime control on top is the component's own pinch-zoom.
  *  - `app.terminal.keyBar` — the chip list, resolved against
  *    [TerminalBarKey.catalog]. Names the old bar used (`pipe`, `tilde`) still
  *    resolve, so a stored list keeps working.

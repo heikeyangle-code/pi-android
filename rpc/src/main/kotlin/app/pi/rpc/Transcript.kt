@@ -19,13 +19,17 @@ enum class ToolStatus { Pending, Success, Error }
  * synthesised id for a live block — which is what lets the UI keep scroll
  * position and animate the right row. See docs/pi-android-ui-spec.md §4.2.
  *
- * The sealed hierarchy covers pi's 14 conversation block kinds
- * (docs/pi-android-ui-spec.md §7.4): user-message, assistant-text,
+ * The sealed hierarchy covers the 13 block kinds the app renders, listed in
+ * docs/pi-android-ui-spec.md §7.4: user-message, assistant-text,
  * thinking-block, tool-execution, tool-diff, compaction, branch-summary,
- * hook-message, model-change, skill-invocation, system-prompt, message-images
- * (carried by [UserMessage.images]), error-text and date-separator. [Notice]
- * stays for the few single-line status rows (auto-retry, extension errors) that
- * are App chrome rather than pi content.
+ * hook-message, model-change, skill-invocation, message-images
+ * (carried by [UserMessage.images]), error-text and date-separator. §7.4's
+ * fourteenth row, `system-prompt`, was deleted in F22 — no wire data could
+ * produce it (pi has no `system_prompt` entry, and no RPC command returns the
+ * prompt), so the item, its block and the `onSystemPrompt` hook went together
+ * and the spec row should follow. [Notice] stays for the few single-line status
+ * rows (auto-retry, extension errors) that are App chrome rather than pi
+ * content.
  */
 sealed interface TranscriptItem {
     val key: String
@@ -191,22 +195,6 @@ data class SkillInvocation(
     override val ts: Long,
     val skillName: String = "",
     val body: String = "",
-) : TranscriptItem
-
-/**
- * The `system-prompt` block: collapsed to a size line, expandable to full text.
- *
- * **Unreachable in production (F22).** pi has no `system_prompt` session entry
- * (`core/session-manager.ts:145-155`) and no RPC command returns the prompt
- * (`rpc-types.ts:20-71`; `get_state`'s `RpcSessionState`, `:96-109`, carries no
- * prompt field), so no wire data can produce this row. It exists because
- * `ui/blocks/SystemPromptBlock.kt` renders it; the whole kind is slated for
- * deletion together with that block and [TranscriptReducer.onSystemPrompt].
- */
-data class SystemPrompt(
-    override val key: String,
-    override val ts: Long,
-    val fullText: String = "",
 ) : TranscriptItem
 
 /** The `error-text` block: one human sentence plus optional raw detail. */
@@ -1570,8 +1558,9 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
             // session_info (`core/session-manager.ts:145-155`). The system prompt
             // is only reachable through `getSystemPrompt()`, which no RPC command
             // exposes (`rpc-types.ts:20-71`), and a failure arrives as a
-            // `stopReason`/delta event, so neither is handled here. A row for the
-            // system prompt comes only from the app-side [onSystemPrompt] hook.
+            // `stopReason`/delta event, so neither is handled here. (The
+            // `system-prompt` item kind was deleted in F22: nothing could ever
+            // produce it — pi renders no prompt text at all.)
             else -> TranscriptChange.None
         }
         return if (change == TranscriptChange.None && separator) {
@@ -1958,30 +1947,6 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
     }
 
     // ------------------------------------------------------- public single-row
-
-    /**
-     * Append a [SystemPrompt] block. **App-only hook with no producer** (F22).
-     *
-     * pi has no `system_prompt` session entry — the persisted union is
-     * `core/session-manager.ts:145-155` — and no RPC command exposes the prompt:
-     * `rpc-types.ts:20-71` has none, and `get_state`'s `RpcSessionState`
-     * (`:96-109`) carries no prompt field. pi never renders the prompt text at
-     * all: its `/context` listing prints only the prompt's *source path*
-     * (`interactive-mode.ts:1715-1722`) and the only reader of the text is the
-     * extension-runner hook (`:2068`). So **no wire data can ever reach this
-     * method**: it is not called from `app/` either (grep: declaration + tests
-     * only).
-     *
-     * It is kept, rather than deleted, only because [SystemPrompt] is still
-     * rendered by `ui/blocks/SystemPromptBlock.kt` through `BlockRenderer`; the
-     * honest fix is a coordinated deletion of item + block + this method + the
-     * spec §7.4 row, which cannot be done from `rpc/` alone. Recorded in
-     * `docs/gap-disposition.md` §10 (F22).
-     */
-    fun onSystemPrompt(text: String, entryId: String? = null): TranscriptChange {
-        if (text.isEmpty()) return TranscriptChange.None
-        return append(SystemPrompt(key = keyFor(entryId, "system"), ts = now(), fullText = text))
-    }
 
     /** Append a [HookMessage] block (an extension-injected custom message). */
     fun onHookMessage(

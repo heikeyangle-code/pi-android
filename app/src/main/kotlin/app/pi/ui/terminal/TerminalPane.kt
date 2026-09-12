@@ -3,46 +3,28 @@ package app.pi.ui.terminal
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.graphics.Paint
 import android.graphics.Typeface
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.snapshots.SnapshotStateList
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.unit.dp
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.sp
 import app.pi.runtime.PtyLauncher
 import kotlinx.coroutines.delay
@@ -51,75 +33,64 @@ import org.connectbot.terminal.Terminal
 import org.connectbot.terminal.VTermKey
 
 /**
- * The tabs a terminal page can be asked to open on.
+ * The Workbench terminal: one real terminal, running a real shell in the guest.
  *
- * These are the two *predefined* tabs; a `Custom` command tab is opened from the
- * new-tab menu only, which is why it is not a constant here (it needs the
- * command). The names are the real ones [TerminalStore] puts in the tab strip,
- * not a parallel vocabulary:
+ * ## What this page is
  *
- *  - [PiTui] is `PtyLauncher.Kind.PiTui`: its guest command is `pi` and it is the
- *    only kind that gets pi's terminal-capability environment (`PtyLauncher`'s
- *    `Spec.environment`). This is the tab that runs the original pi TUI, and the
- *    one a terminal-only action has to land on.
- *  - [Shell] is `PtyLauncher.Kind.Shell` — `bash -i`, and the default.
+ * A terminal. Not a launcher, not a tab strip, not a pi surface: it opens an
+ * interactive `bash` in the guest and everything else is typed into it. `pi` is on
+ * `PATH` (`/usr/local/bin/pi`), so `pi` reaches the original TUI — but this page
+ * never starts it on the user's behalf, because a terminal that boots into somebody
+ * else's full-screen program is not a terminal.
  *
- * It exists so a caller above this package (the Workbench screen, and through it
- * `PiRoot`'s terminal-only jumps) can name a tab without repeating the
- * `Kind`/title pair — which is how those two would drift apart.
- */
-enum class TerminalTab(val kind: PtyLauncher.Kind, val title: String) {
-    Shell(PtyLauncher.Kind.Shell, "Shell"),
-    PiTui(PtyLauncher.Kind.PiTui, "pi TUI"),
-}
-
-/**
- * The Workbench terminal: real tabs, a real PTY, and the original pi TUI.
+ * That is the whole reason [PtyLauncher] is used instead of a pipe: `script(1)`
+ * allocates a real pty inside the guest, so `process.stdin.isTTY` is true, raw mode
+ * works, `Ctrl+C` becomes `SIGINT` through the line discipline, and any full-screen
+ * program the user starts behaves as it does on a desktop. See [PtyLauncher]'s KDoc
+ * for the mechanism and its one real cost.
  *
- * This is the app's only intentional terminal surface, and the reason it exists is
- * narrow but load-bearing. A handful of pi extension APIs draw terminal cells
- * (`ctx.ui.custom()`, overlays, custom footers, `registerMessageRenderer`,
- * `renderCall`/`renderResult`) and are inert anywhere but pi's own TUI. Running the
- * unmodified TUI here is what keeps the "100% compatible" claim honest
- * (docs/pi-android-app-design.md §20.4, docs/pi-android-ui-spec.md §5.3).
+ * ## Why the grid is measured here, before the process starts
  *
- * The three tab types are therefore not decoration — they are the three ways to
- * reach that: a guest shell, the original pi TUI, and an arbitrary command.
+ * Inside the guest the pty's window size is written once, at spawn, by `stty` plus
+ * `COLUMNS`/`LINES` — `script(1)` cannot resize the pty it created. The terminal
+ * component is therefore given that same grid as its `forcedSize`, so the emulator
+ * and the guest cannot disagree about it.
  *
- * ## What changed, and what did not
+ * The consequence is that the grid has to be chosen *at spawn time*, and that it has
+ * to be a grid which **fits the area it will be drawn in**, because the component
+ * picks the font size by fitting the whole grid into the view. Both halves matter:
  *
- * What is drawn between the tab strip and the key bar is now
- * `org.connectbot:termlib` — libvterm behind JNI, presented as a Compose
- * component — instead of this app's own VT parser and canvas renderer. The
- * library also brings what the old surface had to hand-roll: text selection with
- * a magnifier, pinch-zoom, scrolling, and the soft-keyboard IME path.
+ *  - A hard-coded `80x26` — what this file used to pass — is a grid with a 3.1
+ *    aspect ratio. Fitting 80 columns into a phone's width forces the font down to a
+ *    few sp, and 26 rows of it then fill less than half the height: the terminal came
+ *    out as a thin band above a large empty area, which is what it looked like on a
+ *    device.
+ *  - Sizing the emulator from the view instead (no `forcedSize`) fills the screen
+ *    but silently desyncs it from the guest: the pty stays at its spawn size while
+ *    the emulator reflows on every keyboard transition and rotation, and
+ *    full-screen programs then draw into a grid their host does not agree with.
  *
- * The shell around it is unchanged on purpose: the tab strip, the new-tab menu,
- * the key bar's position, and the `app.terminal.*` settings all stay where the
- * ui-spec puts them. [TerminalBridge] is the only new seam; it wires the library
- * to `PtyLauncher`, which still owns the PTY.
+ * [terminalGrid] resolves both at once: it reproduces the component's own cell
+ * metrics, so the grid it returns is the grid the component would have chosen for
+ * the measured area — and that grid is then *frozen* for the life of the process. A
+ * later area change (the soft keyboard, a rotation) leaves a margin rather than
+ * reflowing a grid the guest cannot follow.
+ *
+ * ## Ownership
+ *
+ * The bridge — and with it the guest process — belongs to this composable: leaving
+ * the Workbench closes it. A pty nobody is looking at is a process the user cannot
+ * see and cannot stop.
  */
 @Composable
-fun TerminalPane(
-    modifier: Modifier = Modifier,
-    /**
-     * Which tab the page opens on.
-     *
-     * It is an *initial* value, not a controlled one: the store is built once,
-     * so a later change to this argument does not re-open or switch tabs (which
-     * would kill a running guest). The Workbench passes [TerminalTab.PiTui] when
-     * a terminal-only action sent the user here — see `PiRoot`'s
-     * `TERMINAL_ONLY_ACTIONS`.
-     */
-    initialTab: TerminalTab = TerminalTab.Shell,
-) {
+fun TerminalPane(modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val isDark = MaterialTheme.colorScheme.background.luminanceIsDark()
     val palette = remember(isDark) { if (isDark) TerminalPalette.dark() else TerminalPalette.light() }
-    // One store for the `app.terminal.*` settings, built from the same agent dir
-    // and workspace the Settings screen writes through. Reads happen once per
-    // Workbench composition; the keys the user edits are `EffectiveKind.Reload`
-    // rows, so re-entering the tab is the documented way to apply them.
+    // The `app.terminal.*` settings, read from the same documents the Settings
+    // screen writes. A read happens once per Workbench composition, and the keys
+    // the user edits are `EffectiveKind.Reload` rows, so re-entering the tab is the
+    // documented way to apply them.
     val settingsStore = remember(context) { terminalSettingsStore(context) }
     val preferences = remember(settingsStore) { TerminalPreferences.read(settingsStore) }
 
@@ -128,26 +99,35 @@ fun TerminalPane(
     }
     var statusText by remember { mutableStateOf<String?>(null) }
 
-    // The one place an OSC 52 request from the guest becomes an Android
-    // clipboard write. The library decodes the sequence and calls this on the
-    // main looper (it posts its OSC handling there), so touching the clipboard
-    // here is safe.
-    // The store is deliberately *not* keyed on `initialTab`: it is read once, at
-    // first composition, so a later change to the argument cannot tear down a
-    // running guest. (The Workbench consumes its request immediately after this
-    // first composition, which is exactly why that matters.)
-    val store = remember(context, palette) {
-        TerminalStore(context, palette, initialTab) { text ->
-            androidClipboard.setPrimaryClip(ClipData.newPlainText("pi terminal", text))
-            statusText = "已复制到剪贴板（OSC 52）"
-        }
+    // Restart is a generation counter rather than a method on the bridge: bumping it
+    // makes the `remember` below build a fresh bridge, and the `DisposableEffect` on
+    // the old one closes its process. That is also the only way to rebuild the
+    // emulator, which a wedged guest needs as much as a new process does.
+    var generation by remember { mutableStateOf(0) }
+    val bridge = remember(context, palette, generation) {
+        TerminalBridge.open(
+            context = context,
+            // Placeholders, replaced by the measured grid in [TerminalSurface],
+            // which is what `start` pins the guest's pty to. They only decide the
+            // emulator's size for the one frame before that measurement exists.
+            rows = PLACEHOLDER_ROWS,
+            columns = PLACEHOLDER_COLUMNS,
+            palette = palette,
+            onClipboardCopy = { text ->
+                // The library decodes OSC 52 and posts this to the main looper, so
+                // touching the Android clipboard here is safe.
+                androidClipboard.setPrimaryClip(ClipData.newPlainText("pi terminal", text))
+                statusText = "已复制到剪贴板（OSC 52）"
+            },
+        )
+    }
+
+    DisposableEffect(bridge) {
+        onDispose { bridge.close() }
     }
 
     var ctrlArmed by remember { mutableStateOf(false) }
     var altArmed by remember { mutableStateOf(false) }
-    var showNewTabMenu by remember { mutableStateOf(false) }
-
-    val bridge = store.active()?.bridge
 
     LaunchedEffect(statusText) {
         if (statusText != null) {
@@ -156,14 +136,11 @@ fun TerminalPane(
         }
     }
 
-    DisposableEffect(store) {
-        onDispose { store.closeAll() }
-    }
-
     // The sticky `ctrl`/`alt` chips, handed to the library so that the *soft*
-    // keyboard respects them too: the library's key handler combines these with
-    // the hardware modifiers and calls clearTransients() after each key, which is
-    // exactly one-shot behaviour.
+    // keyboard respects them too: the library's key handler combines these with the
+    // hardware modifiers and calls clearTransients() after each key, which is
+    // exactly one-shot behaviour. This is what makes `Ctrl+C` reachable from a phone
+    // keyboard at all — the chord is the sticky chip plus a letter from the IME.
     val modifierManager = remember(ctrlArmed, altArmed) {
         object : ModifierManager {
             override fun isCtrlActive(): Boolean = ctrlArmed
@@ -177,63 +154,36 @@ fun TerminalPane(
         }
     }
 
-    Column(modifier.fillMaxSize().background(palette.background)) {
-        TerminalTabBar(
-            tabs = store.tabs,
-            activeIndex = store.activeIndex,
-            onSelect = { store.select(it) },
-            onClose = { store.close(it) },
-            onAdd = { showNewTabMenu = true },
-            onRestart = { store.restart() },
-            palette = palette,
-        ) {
-            DropdownMenu(expanded = showNewTabMenu, onDismissRequest = { showNewTabMenu = false }) {
-                DropdownMenuItem(
-                    text = { Text("Shell（guest bash）") },
-                    onClick = {
-                        showNewTabMenu = false
-                        store.open(TerminalTab.Shell)
-                    },
-                )
-                DropdownMenuItem(
-                    text = { Text("pi TUI（原版）") },
-                    onClick = {
-                        showNewTabMenu = false
-                        store.open(TerminalTab.PiTui)
-                    },
-                )
-                listOf("apt update", "git status", "node -v").forEach { command ->
-                    DropdownMenuItem(
-                        text = { Text("命令：$command") },
-                        onClick = {
-                            showNewTabMenu = false
-                            store.open(PtyLauncher.Kind.Custom, command, command)
-                        },
-                    )
-                }
-            }
-        }
-
+    // `imePadding()` is what keeps the key bar reachable while typing. The activity
+    // is `enableEdgeToEdge()` (`MainActivity.kt:19`), so `decorFitsSystemWindows` is
+    // false and the manifest's `adjustResize` no longer shrinks the window for the
+    // soft keyboard — the IME arrives as a window inset instead, and without this
+    // the keyboard would simply cover the bar and the bottom of the grid.
+    //
+    // What it does *not* do is reflow the guest: the pty's grid was pinned at spawn
+    // and cannot be resized (`script(1)` has no way to set it), so the component
+    // reacts to the smaller area by fitting the same grid into it. That is the
+    // documented cost of the frozen grid — see the KDoc above — and it is visible as
+    // a font that shrinks while the keyboard is up rather than one that scrolls.
+    Column(modifier.fillMaxSize().imePadding().background(palette.background)) {
         Box(Modifier.weight(1f)) {
-            if (bridge == null) {
-                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Text("正在启动终端…", color = palette.foreground)
-                }
-            } else {
-                TerminalSurface(
-                    bridge = bridge,
-                    preferences = preferences,
-                    palette = palette,
-                    modifierManager = modifierManager,
-                )
-            }
+            TerminalSurface(
+                bridge = bridge,
+                preferences = preferences,
+                palette = palette,
+                modifierManager = modifierManager,
+            )
         }
 
         TerminalKeyBar(
             palette = palette,
             ctrlArmed = ctrlArmed,
             altArmed = altArmed,
-            statusText = statusText,
+            // The guest's own title (`OSC 0/1/2`) is deliberately not shown: with no
+            // tab strip there is nothing for it to label. What this line carries is
+            // the two things the user cannot otherwise see — that an OSC 52 copy
+            // happened, and that the guest itself failed to start.
+            statusText = statusText ?: bridge.lastError?.let { "终端未能启动：$it" },
             rows = preferences.keyBar,
             onKey = { key ->
                 val sticky = key.sticky
@@ -243,42 +193,51 @@ fun TerminalPane(
                         StickyModifier.Alt -> altArmed = !altArmed
                     }
                 } else {
-                    val emulator = bridge?.emulator
-                    if (emulator != null) {
-                        val mods = (if (ctrlArmed) MOD_CTRL else 0) or (if (altArmed) MOD_ALT else 0)
-                        val character = key.character
-                        if (character != null) {
-                            emulator.dispatchCharacter(mods, character)
-                        } else if (key.vtermKey != VTermKey.NONE) {
-                            emulator.dispatchKey(mods, key.vtermKey)
-                        }
+                    val emulator = bridge.emulator
+                    // Sticky state is what the user armed for *this* key; a chip's
+                    // own bits (the `^C`/`^D` chords) are what the chip always is.
+                    val mods = (if (ctrlArmed) MOD_CTRL else 0) or
+                        (if (altArmed) MOD_ALT else 0) or
+                        key.modifiers
+                    val character = key.character
+                    if (character != null) {
+                        // libvterm turns a printable code point plus the Ctrl bit into
+                        // the control byte, so this is `0x03` for `^C` — the same way
+                        // the library's own keyboard handler encodes it.
+                        emulator.dispatchCharacter(mods, character)
+                    } else if (key.vtermKey != VTermKey.NONE) {
+                        // Never a hard-coded `ESC [ A`: libvterm knows whether the
+                        // program asked for application-cursor mode.
+                        emulator.dispatchKey(mods, key.vtermKey)
                     }
-                    // A sticky modifier applies to one key, exactly as it does on
-                    // the library's own keyboard path.
+                    // A sticky modifier applies to one key, exactly as it does on the
+                    // library's own keyboard path.
                     ctrlArmed = false
                     altArmed = false
                 }
             },
-            onPaste = { bridge?.paste(readClipboard(context, androidClipboard)) },
+            onPaste = { bridge.paste(readClipboard(context, androidClipboard)) },
+            onRestart = { generation++ },
         )
     }
 }
 
 /**
- * The library's Compose component, plus the one correction it needs.
+ * The library's Compose component, plus the two corrections it needs.
  *
- * `forcedSize` keeps the emulator's grid at the size `PtyLauncher` pinned, which
- * is the whole reason the guest's full-screen TUI lines up: `script(1)` cannot
- * resize the pty it created, so the guest's grid is frozen at spawn time and an
- * emulator that reflowed to the view would paint a grid pi never laid out.
+ * `forcedSize` keeps the emulator's grid at the one the guest was pinned to, which
+ * is the whole reason the guest's full-screen programs line up.
  *
- * The correction is [onSizeChanged]. With `forcedSize` set, the library computes
- * the font size to fit that frozen grid — but it *also* resizes the emulator from
- * the view size on every layout change, and its own re-assert is inside a
- * `LaunchedEffect` keyed on the forced dimensions, which do not change. So after
- * a rotation nothing would put the grid back. Re-asserting it here is idempotent
- * and runs after the library's own resize, because a parent's layout callback
- * follows its children's.
+ * The first correction is [onSizeChanged]. With `forcedSize` set, the component
+ * *also* resizes the emulator from the view size on every layout change
+ * (`Terminal.kt:581-585`), and its own re-assert to `forcedSize` sits inside a
+ * `LaunchedEffect` keyed on the forced dimensions, which do not change
+ * (`Terminal.kt:653`) — so after a rotation nothing would put the grid back.
+ * Re-asserting it here is idempotent and runs after the component's own resize,
+ * because a parent's layout callback follows its children's.
+ *
+ * The second is the grid itself: see `TerminalPane`'s KDoc for why it is measured
+ * and then frozen instead of being derived from the view on every frame.
  */
 @Composable
 private fun TerminalSurface(
@@ -289,196 +248,111 @@ private fun TerminalSurface(
 ) {
     val focusRequester = remember { FocusRequester() }
     val emulator = bridge.emulator
-    val (rows, columns) = bridge.fixedSize
 
-    Box(
-        Modifier
-            .fillMaxSize()
-            .onSizeChanged { emulator.resize(rows, columns) },
-    ) {
-        Terminal(
-            terminalEmulator = emulator,
-            modifier = Modifier.fillMaxSize(),
-            typeface = Typeface.MONOSPACE,
-            initialFontSize = preferences.fontSize.sp,
-            backgroundColor = palette.background,
-            foregroundColor = palette.foreground,
-            keyboardEnabled = true,
-            showSoftKeyboard = true,
-            focusRequester = focusRequester,
-            forcedSize = bridge.fixedSize,
-            modifierManager = modifierManager,
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        val density = LocalDensity.current
+        // The component measures its cells from a paint at the font size it will
+        // draw with (`Terminal.kt:466-481`), so reproducing that measurement here is
+        // what makes the grid below the one it would have chosen itself.
+        val fontPx = with(density) { preferences.fontSize.sp.toPx() }
+        val measured = terminalGrid(
+            widthPx = with(density) { maxWidth.toPx() },
+            heightPx = with(density) { maxHeight.toPx() },
+            fontSizePx = fontPx,
         )
+
+        // Latched by `remember` with no key: the first measurement wins and is never
+        // recomputed. Deliberate — the guest's pty is pinned to this grid at spawn
+        // and `script(1)` cannot resize it, so a later change to the area must leave
+        // a margin rather than move the emulator away from the guest.
+        val pinned = remember { measured }
+
+        // Starting is idempotent, so this re-runs usefully after a restart (a new
+        // bridge) and is a no-op for the same bridge.
+        LaunchedEffect(bridge, pinned) {
+            bridge.start(rows = pinned.first, columns = pinned.second)
+        }
+
+        Box(
+            Modifier
+                .fillMaxSize()
+                .onSizeChanged { emulator.resize(pinned.first, pinned.second) },
+        ) {
+            Terminal(
+                terminalEmulator = emulator,
+                modifier = Modifier.fillMaxSize(),
+                typeface = Typeface.MONOSPACE,
+                initialFontSize = preferences.fontSize.sp,
+                backgroundColor = palette.background,
+                foregroundColor = palette.foreground,
+                keyboardEnabled = true,
+                showSoftKeyboard = true,
+                focusRequester = focusRequester,
+                forcedSize = pinned,
+                modifierManager = modifierManager,
+            )
+        }
     }
 }
 
 /**
- * The tabs and their bridges.
+ * The cell grid that fits [widthPx] x [heightPx] at [fontSizePx], as `(rows, cols)`.
  *
- * Held outside the composable so that a recomposition cannot restart a process.
- * Disposal closes every session: the terminal's processes are deliberately tied to
- * the screen, because a hidden PTY would be a process the user cannot see or stop.
+ * The same arithmetic the terminal component does for itself: `Terminal.kt:472-481`
+ * measures `"M"` and the ascent/descent spread, and its `charsPerDimension`
+ * (`Terminal.kt:1586`) divides by them. It is reproduced here because the grid has
+ * to exist *before* the guest process does, and the component cannot be asked for a
+ * size it has not been laid out for yet.
+ *
+ * Monospace only, which is the only typeface a terminal is drawn in.
+ *
+ * The clamps are sanity bounds rather than display policy: a degenerate or
+ * unbounded constraint must not be able to produce a grid that is then pinned into
+ * a guest pty for the life of the session.
  */
-class TerminalStore(
-    private val context: Context,
-    private val palette: TerminalPalette,
-    /** The tab the page opens on; see [TerminalPane]'s `initialTab`. */
-    initialTab: TerminalTab = TerminalTab.Shell,
-    /** Where a guest OSC 52 request goes; see [TerminalBridge]. */
-    private val onClipboardCopy: (String) -> Unit,
-) {
-
-    /** One open terminal. The bridge is null until the tab is first shown. */
-    data class Tab(
-        val kind: PtyLauncher.Kind,
-        val title: String,
-        val command: String = "",
-        val bridge: TerminalBridge? = null,
-    )
-
-    val tabs: SnapshotStateList<Tab> =
-        mutableStateListOf(Tab(initialTab.kind, initialTab.title))
-
-    var activeIndex by mutableStateOf(0)
-        private set
-
-    fun active(): Tab? = tabs.getOrNull(activeIndex)
-
-    fun select(index: Int) {
-        activeIndex = index.coerceIn(0, (tabs.size - 1).coerceAtLeast(0))
-        ensureStarted(activeIndex)
+private fun terminalGrid(
+    widthPx: Float,
+    heightPx: Float,
+    fontSizePx: Float,
+): Pair<Int, Int> {
+    if (!widthPx.isFinite() || !heightPx.isFinite() || widthPx <= 0f || heightPx <= 0f) {
+        return PLACEHOLDER_ROWS to PLACEHOLDER_COLUMNS
     }
-
-    /** Open one of the predefined tabs, named once by [TerminalTab]. */
-    fun open(tab: TerminalTab) {
-        open(tab.kind, tab.title)
+    val paint = Paint().apply {
+        typeface = Typeface.MONOSPACE
+        textSize = fontSizePx
+        isAntiAlias = true
     }
-
-    fun open(kind: PtyLauncher.Kind, title: String, command: String = "") {
-        tabs += Tab(kind, title, command)
-        activeIndex = tabs.size - 1
-        ensureStarted(activeIndex)
+    val cellWidth = paint.measureText("M")
+    val metrics = paint.fontMetrics
+    val cellHeight = metrics.descent - metrics.ascent
+    if (cellWidth <= 0f || cellHeight <= 0f) {
+        return PLACEHOLDER_ROWS to PLACEHOLDER_COLUMNS
     }
-
-    fun close(index: Int) {
-        val closing = tabs.getOrNull(index) ?: return
-        closing.bridge?.close()
-        tabs.removeAt(index)
-        // A terminal page with no tab would leave no way to get one back, so the
-        // last close replenishes it with the default tab.
-        if (tabs.isEmpty()) tabs += Tab(TerminalTab.Shell.kind, TerminalTab.Shell.title)
-        activeIndex = activeIndex.coerceIn(0, tabs.size - 1)
-        ensureStarted(activeIndex)
-    }
-
-    fun restart() {
-        val current = active() ?: return
-        current.bridge?.close()
-        tabs[activeIndex] = current.copy(bridge = null)
-        ensureStarted(activeIndex)
-    }
-
-    fun closeAll() {
-        tabs.forEach { it.bridge?.close() }
-        tabs.clear()
-    }
-
-    /**
-     * Start the tab's process the first time it is shown.
-     *
-     * Lazy on purpose: opening five tabs must not spawn five proot trees, and a tab
-     * the user never looks at should cost nothing.
-     */
-    private fun ensureStarted(index: Int) {
-        val tab = tabs.getOrNull(index) ?: return
-        if (tab.bridge != null) return
-        val bridge = TerminalBridge.open(
-            context = context,
-            kind = tab.kind,
-            columns = DEFAULT_COLUMNS,
-            rows = DEFAULT_ROWS,
-            palette = palette,
-            onClipboardCopy = onClipboardCopy,
-            command = tab.command,
-        )
-        tabs[index] = tab.copy(bridge = bridge)
-    }
-}
-
-/** The tab strip: closable tabs, a restart action, and the new-tab menu. */
-@Composable
-private fun TerminalTabBar(
-    tabs: List<TerminalStore.Tab>,
-    activeIndex: Int,
-    onSelect: (Int) -> Unit,
-    onClose: (Int) -> Unit,
-    onAdd: () -> Unit,
-    onRestart: () -> Unit,
-    palette: TerminalPalette,
-    menu: @Composable () -> Unit,
-) {
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .horizontalScroll(rememberScrollState())
-            .padding(horizontal = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        tabs.forEachIndexed { index, tab ->
-            val selected = index == activeIndex
-            Row(
-                Modifier
-                    .padding(vertical = 4.dp, horizontal = 2.dp)
-                    .background(
-                        if (selected) palette.chipArmed else Color.Transparent,
-                        RoundedCornerShape(8.dp),
-                    )
-                    .padding(start = 10.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    text = tab.title,
-                    color = palette.foreground,
-                    fontSize = 12.sp,
-                    fontFamily = FontFamily.Monospace,
-                    modifier = Modifier
-                        .padding(vertical = 6.dp)
-                        .clickable(interactionSource = null, indication = null) { onSelect(index) },
-                )
-                IconButton(onClick = { onClose(index) }, modifier = Modifier.width(32.dp)) {
-                    Icon(Icons.Filled.Close, contentDescription = "关闭标签", tint = palette.foreground)
-                }
-            }
-        }
-        IconButton(onClick = onRestart) {
-            Icon(Icons.Filled.Refresh, contentDescription = "重启标签", tint = palette.foreground)
-        }
-        Box {
-            IconButton(onClick = onAdd) {
-                Icon(Icons.Filled.Add, contentDescription = "新建标签", tint = palette.foreground)
-            }
-            menu()
-        }
-    }
+    val rows = (heightPx / cellHeight).toInt().coerceIn(MIN_ROWS, MAX_ROWS)
+    val columns = (widthPx / cellWidth).toInt().coerceIn(MIN_COLUMNS, MAX_COLUMNS)
+    return rows to columns
 }
 
 /**
  * The clipboard, or an empty string when the platform refuses to hand it over.
  *
  * The context is passed through rather than nulled: `coerceToText` needs it to
- * resolve an `Intent` or a `content:` URI, which is exactly the case a copied
- * link or rich text arrives as.
+ * resolve an `Intent` or a `content:` URI, which is exactly the case a copied link
+ * or rich text arrives as.
  */
 private fun readClipboard(context: Context, clipboard: ClipboardManager): String =
     runCatching { clipboard.primaryClip?.getItemAt(0)?.coerceToText(context)?.toString().orEmpty() }
         .getOrDefault("")
 
-private const val DEFAULT_COLUMNS = 80
-private const val DEFAULT_ROWS = 26
+/** The emulator's size for the one frame before the area has been measured. */
+private const val PLACEHOLDER_ROWS = 24
+private const val PLACEHOLDER_COLUMNS = 80
 
-/** libvterm's modifier bits, as `dispatchKey`/`dispatchCharacter` take them. */
-private const val MOD_ALT = 2
-private const val MOD_CTRL = 4
+private const val MIN_ROWS = 5
+private const val MAX_ROWS = 300
+private const val MIN_COLUMNS = 20
+private const val MAX_COLUMNS = 500
 
 private fun Color.luminanceIsDark(): Boolean =
     (0.2126f * red + 0.7152f * green + 0.0722f * blue) < 0.5f

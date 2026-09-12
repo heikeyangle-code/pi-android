@@ -22,9 +22,68 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import app.pi.rpc.TokenUsage
 import app.pi.ui.theme.PiShapes
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
+import java.util.Locale
+
+/**
+ * pi's own token formatter, transcribed from
+ * `packages/coding-agent/src/modes/interactive/components/footer.ts:24-30`.
+ *
+ * It is *not* the same rounding as `ui/blocks/BlockChrome.kt`'s
+ * `formatTokens` (that one prints `3k` where pi prints `3.2k` for 3 200). The
+ * summarization billing line uses pi's, because its text is pi's verbatim.
+ */
+fun piFormatTokens(count: Long): String = when {
+    count < 1_000L -> count.toString()
+    count < 10_000L -> String.format(Locale.US, "%.1fk", count / 1_000.0)
+    count < 1_000_000L -> "${Math.round(count / 1_000.0)}k"
+    count < 10_000_000L -> String.format(Locale.US, "%.1fM", count / 1_000_000.0)
+    else -> "${Math.round(count / 1_000_000.0)}M"
+}
+
+/**
+ * The summarization billing line pi prints for a compaction or a branch summary.
+ *
+ * **pi's text, verbatim** (`modes/interactive/interactive-mode.ts:3802-3812`):
+ *
+ * ```
+ * const tokens = usage.input + usage.output + usage.cacheRead + usage.cacheWrite;
+ * const cost = usage.cost.total >= 0.01 ? ` (~$${usage.cost.total.toFixed(2)})` : "";
+ * const label = notice.kind === "compaction" ? "Compaction" : "Branch summary";
+ * new Text(theme.fg("warning", `${label}: ${formatTokens(tokens)} tokens billed${cost}`), 1, 0)
+ * ```
+ *
+ * so the English labels and the `(~$0.03)` threshold are pi's, not an app
+ * translation — a translated label would stop matching the line the desktop TUI
+ * shows for the same session.
+ *
+ * Shown only when pi's `showCacheMissNotices` is on: pi guards the call with
+ * `if (!this.settingsManager.getShowCacheMissNotices()) return;` (`:3803`), and
+ * that setting defaults to `false` (`core/settings-manager.ts:120`, `:966`).
+ */
+@Composable
+fun PiBilledCostLine(
+    label: String,
+    usage: TokenUsage?,
+    modifier: Modifier = Modifier,
+) {
+    if (usage == null) return
+    val tokens = (usage.input ?: 0L) + (usage.output ?: 0L) +
+        (usage.cacheRead ?: 0L) + (usage.cacheWrite ?: 0L)
+    val cost = usage.cost?.takeIf { it >= 0.01 }?.let {
+        " (~$${String.format(Locale.US, "%.2f", it)})"
+    }.orEmpty()
+    Text(
+        text = "$label: ${piFormatTokens(tokens)} tokens billed$cost",
+        modifier = modifier,
+        style = PiTheme.text.meta,
+        // pi paints it with `theme.fg("warning", …)`.
+        color = PiTheme.palette.warning,
+    )
+}
 
 /**
  * Empty states never say "no data". They say what the screen is for and offer

@@ -87,12 +87,23 @@ class PiCredentialService(
         val configuredModelIds: List<String>,
         val baseUrl: String?,
         val api: String?,
-        /** True when `models.json` exists but pi would refuse to parse it. */
+        /** Non-null when the model config exists but pi would refuse to parse it. */
         val modelsFileError: String?,
+        /**
+         * Non-null when the credential file exists but cannot be read.
+         *
+         * Reported rather than swallowed: pi **throws** on an unreadable credential
+         * file (`auth-storage.ts:216-227`), so "no providers are configured" would be
+         * the wrong sentence — the truth is that the file is broken and pi will not
+         * start until it is dealt with. The screen must show this; until it does, the
+         * field is the service's contract, not decoration.
+         */
+        val authFileError: String?,
     )
 
     fun prefill(presetId: String?): Existing {
         val authRead = auth().read()
+        val authError = (authRead as? PiAuthStorage.Read.Invalid)?.message
         val keys = (authRead as? PiAuthStorage.Read.Ok)?.entries ?: emptyMap()
         val snapshot = models().read()
         val block = presetId?.let { snapshot.providers[it] as? kotlinx.serialization.json.JsonObject }
@@ -108,6 +119,7 @@ class PiCredentialService(
             baseUrl = (block?.get("baseUrl") as? kotlinx.serialization.json.JsonPrimitive)?.content,
             api = (block?.get("api") as? kotlinx.serialization.json.JsonPrimitive)?.content,
             modelsFileError = snapshot.error,
+            authFileError = authError,
         )
     }
 

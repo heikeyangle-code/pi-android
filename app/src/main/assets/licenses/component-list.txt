@@ -1,0 +1,187 @@
+组件清单
+========
+
+每一行：组件 · 版本 · 许可证 · 在 App 里的位置 · 上游发布地址（也是源代码地址）。
+
+■ Android 原生库（随 App 二进制安装）
+--------------------------
+  proot
+      版本      5.1.107.92
+      许可证    GPL-2.0
+      上游      https://github.com/termux/proot
+
+  libtalloc
+      版本      2.4.3
+      许可证    GPL-3.0（上游 talloc 声明为 LGPL-3.0）
+      上游      https://www.samba.org/ftp/talloc/
+
+  libandroid-shmem
+      版本      0.7
+      许可证    BSD-3-Clause
+      上游      https://github.com/termux/libandroid-shmem
+
+■ Linux 运行时（首次启动解包）
+-------------------
+  Ubuntu 基础系统
+      版本      24.04.3
+      许可证    各软件包各自的许可证
+      上游      https://cdimage.ubuntu.com/ubuntu-base/releases/24.04.3/release/
+
+  Ubuntu 附加软件包
+      版本      见清单
+      许可证    各软件包各自的许可证
+      上游      https://ports.ubuntu.com/ubuntu-ports/
+
+  Node.js
+      版本      24.19.0
+      许可证    MIT（含其内置依赖的许可证）
+      上游      https://nodejs.org/dist/v24.19.0/
+
+  git
+      版本      2.43.0
+      许可证    GPL-2.0
+      上游      https://git.kernel.org/pub/scm/git/git.git
+
+  ca-certificates
+      版本      20260601
+      许可证    GPL-2.0+（打包）与 MPL-2.0（证书数据）
+      上游      https://packages.ubuntu.com/noble/ca-certificates
+
+  ripgrep
+      版本      15.2.0
+      许可证    Unlicense 或 MIT
+      上游      https://github.com/BurntSushi/ripgrep
+
+  fd
+      版本      10.2.0
+      许可证    MIT 或 Apache-2.0
+      上游      https://github.com/sharkdp/fd
+
+  libcurl3t64-gnutls
+      版本      8.5.0
+      许可证    curl（MIT 类）
+      上游      https://curl.se/
+
+  libbrotli1
+      版本      1.1.0
+      许可证    MIT
+      上游      https://github.com/google/brotli
+
+  libnghttp2-14
+      版本      1.59.0
+      许可证    MIT
+      上游      https://nghttp2.org/
+
+  libexpat1
+      版本      2.6.1
+      许可证    MIT
+      上游      https://libexpat.github.io/
+
+  libpsl5t64
+      版本      0.21.2
+      许可证    MIT
+      上游      https://rockdaboot.github.io/libpsl/
+
+  librtmp1
+      版本      2.4
+      许可证    LGPL-2.1（库）
+      上游      https://rtmpdump.mplayerhq.hu/
+
+  libssh-4
+      版本      0.10.6
+      许可证    LGPL-2.1
+      上游      https://www.libssh.org/
+
+  libsasl2-2
+      版本      2.1.28
+      许可证    BSD 系列（含 BSD-4-Clause-UC）
+      上游      https://www.cyrusimap.org/sasl/
+
+  libkrb5-3 / libgssapi-krb5-2 / libk5crypto3 / libkrb5support0
+      版本      1.20.1
+      许可证    MIT
+      上游      https://web.mit.edu/kerberos/
+
+  libkeyutils1
+      版本      1.6.3
+      许可证    LGPL-2.1+ 或 GPL-2.0+
+      上游      https://people.redhat.com/~dhowells/keyutils/
+
+  libldap2
+      版本      2.6.7
+      许可证    OpenLDAP-2.8
+      上游      https://www.openldap.org/
+
+  pi 引擎
+      版本      0.85.1
+      许可证    MIT
+      上游      https://www.npmjs.com/package/@earendil-works/pi-coding-agent
+
+  pi 引擎的依赖包
+      版本      见 pi 0.85.1 的依赖锁定
+      许可证    MIT / Apache-2.0 / BSD-3-Clause / ISC（全部为宽松许可证）
+      上游      https://www.npmjs.com/package/@earendil-works/pi-coding-agent
+
+  highlight.js
+      版本      10.7.3
+      许可证    BSD-3-Clause
+      上游      https://highlightjs.org/
+
+  tslib
+      版本      2.8.1
+      许可证    0BSD
+      上游      https://www.npmjs.com/package/tslib
+
+  lru-cache / minimatch
+      版本      11.4.0 / 10.2.6
+      许可证    BlueOak-1.0.0
+      上游      https://www.npmjs.com/package/lru-cache
+
+■ 编译进 App 代码
+------------
+  AndroidX / Jetpack Compose（core-ktx、activity-compose、lifecycle、compose-ui、material3、material-icons-extended、foundation、documentfile、webkit、navigation）
+      版本      见版本目录
+      许可证    Apache-2.0
+      上游      https://developer.android.com/jetpack
+
+  Kotlin 标准库与 kotlinx 库（coroutines、serialization-json）
+      版本      见版本目录
+      许可证    Apache-2.0
+      上游      https://github.com/Kotlin
+
+  Shizuku API
+      版本      13.1.5
+      许可证    MIT
+      上游      https://github.com/RikkaApps/Shizuku-API
+
+  termlib
+      版本      0.0.13
+      许可证    Apache-2.0
+      上游      https://github.com/connectbot/termlib
+
+  libvterm（随 termlib 一起分发）
+      版本      见 termlib 内置版本
+      许可证    MIT
+      上游      https://github.com/neovim/libvterm
+
+  multiplatform-markdown-renderer-m3
+      版本      0.45.0
+      许可证    Apache-2.0
+      上游      https://github.com/mikepenz/multiplatform-markdown-renderer
+
+  org.jetbrains:markdown
+      版本      0.7.9
+      许可证    Apache-2.0
+      上游      https://github.com/JetBrains/markdown
+
+  kotlinx-collections-immutable（随 markdown 渲染器一起分发）
+      版本      见版本目录
+      许可证    Apache-2.0
+      上游      https://github.com/Kotlin/kotlinx.collections.immutable
+
+■ 不随包分发
+-------
+  JUnit（仅测试用，不随 App 分发）
+      版本      4.13.2
+      许可证    EPL-1.0
+      上游      https://junit.org/junit4/

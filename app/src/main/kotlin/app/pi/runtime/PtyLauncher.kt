@@ -72,39 +72,22 @@ import java.io.File
  *
  * ## Environment
  *
- * The environment is [ProotCommand.environment] verbatim — the same map the RPC
- * engine gets — minus proot's own host-side variables (its loader, tmp and
- * library paths are meaningless once inside), plus the terminal additions below.
- * Keeping one definition matters: the claim this app makes is that the guest is
- * the guest pi expects on a desktop.
+ * The environment is [ProotCommand.environment] **verbatim** — the same map the
+ * RPC engine gets (`PiEngineHost` hands it to `PiEngineSession.spawn`) — plus the
+ * terminal additions below. Keeping one definition matters: the claim this app
+ * makes is that the guest is the guest pi expects on a desktop. That verbatim is
+ * load-bearing rather than tidiness; [prepare] says why.
  */
 object PtyLauncher {
 
-    /** Host-side proot variables; they configure proot, not the guest. */
-    private val PROOT_ONLY_VARS = setOf(
-        "PROOT_LOADER",
-        "PROOT_LOADER_32",
-        "PROOT_TMP_DIR",
-        "PROOT_L2S_DIR",
-        "LD_LIBRARY_PATH",
-    )
-
-    /** What kind of terminal a tab wants. */
-    enum class Kind {
-        /** An interactive shell in the guest. */
-        Shell,
-
-        /** The original pi TUI — the reason this terminal exists at all. */
-        PiTui,
-
-        /** Any other command. */
-        Custom,
-    }
-
     class Spec(
-        val kind: Kind,
-        /** Guest-side command; used for [Kind.Custom]. */
-        val command: String = "",
+        /**
+         * Guest-side command. Defaults to an interactive shell, and that is the
+         * only thing the app ever asks for now: the terminal page is a plain
+         * terminal, and `pi` is reached by typing `pi` in it like any other
+         * program on `PATH`.
+         */
+        val command: String = DEFAULT_COMMAND,
         val columns: Int = 80,
         val rows: Int = 26,
     )
@@ -127,6 +110,35 @@ object PtyLauncher {
      * something about the terminal is wrong. The probe asks the guest's own shell
      * which `script` options exist, because assuming `-e` would turn a working
      * terminal into `invalid option` on an older util-linux.
+     *
+     * ## The environment is passed verbatim, on purpose
+     *
+     * `ProotCommand.environment` mixes three things: shell basics (`HOME`, `PATH`,
+     * `TERM`), the guest's CA bundle variables, and **proot's own**
+     * `PROOT_LOADER` / `PROOT_TMP_DIR` / `PROOT_L2S_DIR` / `LD_LIBRARY_PATH`. It
+     * is tempting to filter the last group out here, on the theory that they are
+     * host paths "meaningless once inside", and an earlier revision of this file
+     * did exactly that. It is wrong, and it broke the terminal on a real device
+     * with `CANNOT LINK EXECUTABLE …: library "libtalloc.so.2" not found`.
+     *
+     * The reason is that [PtySession.spawn] puts this map into the **proot
+     * process's** `ProcessBuilder.environment()`, not into the guest's. proot
+     * reads two of these before it ever enters the rootfs:
+     *
+     *  - `LD_LIBRARY_PATH` is the only thing that makes `PiPaths.lib` — where
+     *    `PiPaths.prepareLibraryAliases()` creates `libtalloc.so.2 → libtalloc.so`
+     *    — searchable, so without it the dynamic loader cannot resolve the name;
+     *  - `PROOT_LOADER` is the pre-extracted loader; without it proot unpacks one
+     *    into a temp directory, which Android 10+ W^X forbids executing from
+     *    (`PiRuntime`'s KDoc records that constraint).
+     *
+     * The engine path is the control group and shows the correct shape:
+     * `PiEngineHost` passes `ProotCommand.environment(...)` to
+     * `PiEngineSession.spawn` **unfiltered**, which is why chat worked while the
+     * terminal did not. Nothing strips these for the guest either — proot forwards
+     * its environment into the rootfs, so the guest on the working engine path
+     * already sees them, and a second, guest-level `unset` here would only make
+     * the two paths differ again for no demonstrated benefit.
      */
     fun prepare(context: Context, spec: Spec): Prepared {
         val paths = pathsFor(context)
@@ -135,6 +147,12 @@ object PtyLauncher {
         val workspace = workspaceHost(context)
 
         val guestCommand = buildGuestCommand(spec, flags, guestWorkspace)
+        // proot binds nothing that does not exist on the host side, and the
+        // terminal can legitimately be the first thing the user opens — before any
+        // engine boot has created the agent dir. `PiRuntime`'s own getters create
+        // their directories the same way, and `AgentLayout.ensureAgentMirrorDir`
+        // exists for exactly this reason on the package path.
+        paths.agentDir.mkdirs()
         val argv = ProotCommand.build(
             paths = paths,
             guestCommand = guestCommand,
@@ -142,10 +160,27 @@ object PtyLauncher {
             // the *bind mount* the chat engine uses, not the cwd.
             cwd = "/root",
             storage = storage,
-            extraBinds = listOf(workspace.absolutePath to guestWorkspace),
+            extraBinds = listOf(
+                workspace.absolutePath to guestWorkspace,
+                // The agent dir, bound exactly as `PiEngineHost` and
+                // `GuestCommand` bind it. Without this the terminal's
+                // `/root/.pi/agent` resolved to `<rootfs>/root/.pi/agent` — a
+                // *different* directory from the durable `<files>/pi/.pi/agent`
+                // the chat page's engine reads and writes. Typing `pi` in the
+                // terminal is now the normal way to reach the TUI, so that
+                // directory is the main path, not a corner case: the two would
+                // disagree about sessions, settings, credentials, extensions and
+                // every installed tool, and the rootfs copy is destroyed by the
+                // next runtime revision bump anyway.
+                //
+                // `PiPaths.agentBinDir()`'s KDoc names this launcher as the one
+                // path missing the bind; `PiAgentDirContract` is the checkable
+                // statement of the agreement, and this list is now its third
+                // conforming caller.
+                paths.agentDir.absolutePath to guestAgentDir,
+            ),
         )
         val environment = ProotCommand.environment(paths, extra = spec.environment())
-            .filterKeys { it !in PROOT_ONLY_VARS }
         return Prepared(
             spec = spec,
             argv = argv,
@@ -262,12 +297,28 @@ object PtyLauncher {
     private const val WORKSPACE_RELATIVE = "pi/workspaces/workspace-1"
     private const val guestWorkspace = "/workspace"
 
+    /**
+     * pi's agent dir inside the guest — the guest spelling of `PiPaths.agentDir`.
+     *
+     * The same value as `PiAgentDirContract.GUEST_PATH`
+     * (`app/src/main/kotlin/app/pi/packages/PiPackageModel.kt`, which also spells it
+     * for `GuestCommand`), kept as a local constant rather than imported so that
+     * this file stays inside `runtime`: it is the only place in `runtime` that
+     * needs it, and the guest path, its bind source and the two environment
+     * variables below are one statement that must not be split across packages.
+     *
+     * The **bind** in [prepare] is what makes the name mean the durable directory.
+     * Read the next paragraph for why that was missing and what it cost.
+     */
+    private const val guestAgentDir = "/root/.pi/agent"
+
     private fun Spec.environment(): Map<String, String> = buildMap {
-        val agentDir = "/root/.pi/agent"
         // The same file surface as a desktop install: sessions, settings, skills,
-        // extensions, themes.
-        put("PI_CODING_AGENT_DIR", agentDir)
-        put("PI_CODING_AGENT_SESSION_DIR", "$agentDir/sessions")
+        // extensions, themes. These variables name [guestAgentDir]; the bind in
+        // [prepare] is the other half of the same statement, and without it these
+        // two lines would point pi at a directory the app cannot see.
+        put("PI_CODING_AGENT_DIR", guestAgentDir)
+        put("PI_CODING_AGENT_SESSION_DIR", "$guestAgentDir/sessions")
         // pi's tty output goes to a pipe under proot and is relayed by `script`,
         // which adds latency to a byte-at-a-time escape sequence. Its default
         // reassembly window for a lone ESC is 10 ms, tuned for a local terminal;
@@ -279,7 +330,15 @@ object PtyLauncher {
         // falls back to these. They must match what `stty` pinned.
         put("COLUMNS", columns.toString())
         put("LINES", rows.toString())
-        if (kind != Kind.PiTui) return@buildMap
+        // Everything below is unconditional, and it used to be gated behind "this
+        // tab is pi's own TUI". That gate is gone with the tab: the terminal page
+        // opens a plain shell, and the user starts `pi` themselves by typing it.
+        // From pi's point of view nothing changed — it still sees an unknown
+        // terminal and still cannot detect any of this — so the capability
+        // statements have to be in the environment of the shell that will run it,
+        // or the `pi` the user types gets the wrong idea about the terminal it is
+        // drawing into.
+        //
         // True colour is implemented — libvterm parses SGR 38/48 with 24-bit
         // values and the view paints each cell's own RGB — but pi cannot detect
         // it: pi guesses from TERM/TERM_PROGRAM/branding variables, and this
@@ -308,13 +367,10 @@ object PtyLauncher {
         put("PI_SKIP_VERSION_CHECK", "1")
     }
 
-    private fun Spec.innerCommand(): String = when (kind) {
-        Kind.Shell -> "bash -i"
-        // `pi` is a Node CLI the runtime puts on PATH. TUI mode is its default
-        // when stdout is a terminal, which is now true.
-        Kind.PiTui -> "pi"
-        Kind.Custom -> if (command.isBlank()) "bash -i" else command
-    }
+    private fun Spec.innerCommand(): String = command.ifBlank { DEFAULT_COMMAND }
+
+    /** The shell every terminal tab runs. `pi` is a program inside it, not the tab's purpose. */
+    private const val DEFAULT_COMMAND = "bash -i"
 
     private const val PROBE_PREFIX = "script="
     private const val PROBE_MISSING = "missing"

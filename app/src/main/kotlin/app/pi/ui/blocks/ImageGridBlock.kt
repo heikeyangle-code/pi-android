@@ -110,7 +110,7 @@ private fun ImageCell(
     // Decoded off the main thread, keyed on the payload: a streaming transcript
     // recomposes often, and the decode must not repeat for the same bytes.
     val bitmap by produceState<Bitmap?>(initialValue = null, image.base64) {
-        value = withContext(Dispatchers.IO) { decodeImage(image.base64) }
+        value = withContext(Dispatchers.IO) { decodePiImage(image.base64) }
     }
     Surface(
         // F19 (`docs/rendering-review.md`): the `onImageClick` this used to gate a
@@ -162,8 +162,14 @@ private fun ImageCell(
     }
 }
 
-/** Decoded from the wire's inline base64; null keeps the labelled placeholder. */
-private fun decodeImage(base64: String): Bitmap? = runCatching {
+/**
+ * Decoded from the wire's inline base64; null keeps the labelled placeholder.
+ *
+ * Shared with the composer's attachment preview (`ChatScreen`): both directions of
+ * the same wire value (`PiImage`) must use one decoder, or a picture that renders
+ * in the transcript could fail in the thumbnail for no visible reason.
+ */
+internal fun decodePiImage(base64: String): Bitmap? = runCatching {
     val bytes = Base64.decode(base64, Base64.DEFAULT)
     BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
 }.getOrNull()

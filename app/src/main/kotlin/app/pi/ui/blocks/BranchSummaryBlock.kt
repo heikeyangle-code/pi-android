@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -18,6 +19,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.pi.rpc.BranchSummary
+import app.pi.ui.components.PiBilledCostLine
 import app.pi.ui.render.PiMarkdownText
 import app.pi.ui.theme.PiTheme
 
@@ -28,12 +30,18 @@ import app.pi.ui.theme.PiTheme
  *
  * The summary is a two-line plain-text preview while collapsed and markdown once
  * expanded — the same split pi's `branch-summary-message.ts:41-56` makes.
+ *
+ * [showBilledCost] is pi's `showCacheMissNotices`; when on, pi prints the
+ * summarization's own usage as a `branch_summary` billing row
+ * (`modes/interactive/interactive-mode.ts:3802-3812`, fed on replay at `:3792`).
+ * See [PiBilledCostLine] for why the text is pi's English verbatim.
  */
 @Composable
 fun BranchSummaryBlock(
     item: BranchSummary,
     modifier: Modifier = Modifier,
     onClick: ((BranchSummary) -> Unit)? = null,
+    showBilledCost: Boolean = false,
 ) {
     val palette = PiTheme.palette
     var expanded by remember { mutableStateOf(false) }
@@ -107,6 +115,14 @@ fun BranchSummaryBlock(
                     maxLines = COLLAPSED_SUMMARY_LINES,
                 )
             }
+        }
+        // F18: pi's `branch_summary` billing row, gated by its own switch.
+        if (showBilledCost) {
+            PiBilledCostLine(
+                label = "Branch summary",
+                usage = item.usage,
+                modifier = Modifier.fillMaxWidth().padding(top = 2.dp),
+            )
         }
     }
 }

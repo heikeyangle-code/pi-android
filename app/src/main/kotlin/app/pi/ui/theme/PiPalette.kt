@@ -109,6 +109,64 @@ data class PiPalette(
         else -> thinkingOff
     }
 
+    // ------------------------------------------------------- corrected tokens
+    //
+    // F13 / F14 (`docs/rendering-review.md`). pi's own values are kept verbatim
+    // above; these five are the *only* deviations, each one the spec's own
+    // "修正档" (`docs/pi-android-ui-spec.md:98` and §9's floor at `:831`), each
+    // lifted only as far as the floor requires and computed once per palette.
+    //
+    // They exist because pi paints these tokens as terminal glyphs on a
+    // background the terminal owns; a phone paints 13–15 sp prose on a surface
+    // this palette chooses. A theme whose values already pass is returned
+    // unchanged, so an imported theme never loses its author's colours.
+
+    /**
+     * §9 body floor (4.5:1) for the text a tool card carries — pi's `toolOutput`
+     * (`components/tool-execution.ts:165`) — against all three card states. pi's
+     * own `#808080` measures 3.69:1 on `toolPendingBg` `#282832` and **3.37:1**
+     * on `toolSuccessBg` `#283228`, the worst pair on the card.
+     */
+    val bodyOnTool: Color = PiContrast.ensureAgainstAll(
+        toolOutput,
+        listOf(toolPendingBg, toolSuccessBg, toolErrorBg),
+        4.5,
+    )
+
+    /**
+     * §9 body floor (4.5:1) for unified-diff context lines — pi's
+     * `toolDiffContext` — on the card the diff block draws (`toolPendingBg`).
+     * pi's own value measures 3.69:1.
+     */
+    val contextOnTool: Color = PiContrast.ensure(toolDiffContext, toolPendingBg, 4.5)
+
+    /**
+     * §9 body floor (4.5:1) for an expanded thinking block's body — pi's
+     * `thinkingText` (`components/assistant-message.ts:151`) — on the canvas.
+     * This is the same grey as `muted`, so the light theme's weak value
+     * (`docs/pi-android-ui-spec.md:98`) is corrected here too.
+     */
+    val thinkingBodyOnCanvas: Color = PiContrast.ensure(thinkingText, pageBg, 4.5)
+
+    /**
+     * §9 meta floor (3:1) for `muted` used as a *label* on the canvas — the
+     * thinking headline, an info notice, a diff's fold line.
+     */
+    val metaOnCanvas: Color = PiContrast.ensure(muted, pageBg, 3.0)
+
+    /**
+     * §9 meta floor (3:1) for `dim` painted on the user-message bubble — the
+     * timestamp. pi's `dim` `#666666` on `#343541` measures **2.11:1**, the
+     * worst pair in the transcript.
+     */
+    val metaOnUserMessage: Color = PiContrast.ensure(dim, userMessageBg, 3.0)
+
+    /**
+     * §9 meta floor (3:1) for `dim` painted on a card surface — a branch id, a
+     * model-change row. pi's `dim` on `cardBg` measures 2.89:1.
+     */
+    val metaOnCard: Color = PiContrast.ensure(dim, cardBg, 3.0)
+
     companion object {
         /** pi built-in `dark`. */
         val Dark = PiPalette(

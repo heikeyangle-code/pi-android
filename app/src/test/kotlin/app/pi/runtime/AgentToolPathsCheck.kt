@@ -9,12 +9,14 @@ package app.pi.runtime
 // What it pins, and why each one is worth pinning:
 //
 //  1. **The two tool directories are different.** `PiPaths.agentBinDir()` is the
-//     bind source (the engine and package commands bind it over the guest's
-//     `/root/.pi/agent`); `PiPaths.rootfsAgentBinDir()` is the copy only a launch
-//     path *without* that bind can see (`PtyLauncher`). Neither contains the other,
-//     which is precisely why installing into one of them leaves the other launch
-//     path with a dangling `/usr/local/bin/<tool>`. That failure is silent, and this
-//     is the assertion that would have caught it.
+//     bind source — the engine, the package commands and (since the terminal became
+//     "a shell where you type `pi`") `PtyLauncher` all bind it over the guest's
+//     `/root/.pi/agent`; `PiPaths.rootfsAgentBinDir()` is the copy that answers only
+//     in the window between `RuntimeProvisioner.wipe()` and the next successful
+//     provision. Neither contains the other, which is precisely why `installTool`
+//     writes both and `ensureToolsVisible` repairs both: a `/usr/local/bin/<tool>`
+//     that dangles is indistinguishable from "the tool was never installed", and that
+//     failure is silent. This is the assertion that would have caught it.
 //  2. **`/usr/bin/git` is reachable.** git is installed into the rootfs at the
 //     ordinary Debian paths and is addressed by PATH, not by an agent-dir symlink —
 //     so if `/usr/bin` ever leaves the PATH this class pins, `git` becomes

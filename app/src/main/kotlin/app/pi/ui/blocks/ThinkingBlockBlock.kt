@@ -51,7 +51,10 @@ fun ThinkingBlockBlock(
             Text(
                 text = headline,
                 style = MaterialTheme.typography.bodyMedium,
-                color = palette.muted,
+                // F13: this is a body role, so it takes the 4.5:1 variant
+                // (`thinkingText` and `muted` are the same #808080 in pi's dark
+                // theme; 4.47:1 on the canvas is under the floor).
+                color = palette.thinkingBodyOnCanvas,
             )
             if (levelLabel != null) {
                 Spacer(Modifier.width(8.dp))
@@ -71,7 +74,7 @@ fun ThinkingBlockBlock(
                     fontStyle = FontStyle.Italic,
                     lineHeight = 22.sp,
                 ),
-                color = palette.thinkingText,
+                color = palette.thinkingBodyOnCanvas,
             )
         }
     }

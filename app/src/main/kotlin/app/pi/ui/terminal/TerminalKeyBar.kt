@@ -73,6 +73,18 @@ data class TerminalBarKey(
     val popup: Char? = null,
     /** Set on the sticky modifier chips; nothing is sent when one is tapped. */
     val sticky: StickyModifier? = null,
+    /**
+     * Modifier bits this chip carries by itself, on top of the sticky ones.
+     *
+     * This is what makes a one-tap `Ctrl+C` possible. The sticky `CTRL` chip
+     * already covers every `Ctrl+<letter>` — but only while the soft keyboard is
+     * up, because the letter has to come from the IME: with the keyboard dismissed
+     * (which is how a terminal is normally read) `CTRL` has nothing to combine
+     * with. `^C` and `^D` are the two whose absence is felt immediately, so they
+     * carry the bit themselves. Everything else stays on the sticky path rather
+     * than turning the bar into a keyboard.
+     */
+    val modifiers: Int = 0,
 ) {
 
     /** The same chip, sending [value] instead of its face value (the popup path). */
@@ -100,10 +112,19 @@ data class TerminalBarKey(
         val PIPE = TerminalBarKey("pipe", "|", character = '|')
         val TILDE = TerminalBarKey("tilde", "~", character = '~')
 
-        /** Termux's default two rows, in its order. */
+        /** `Ctrl+C` — the interrupt, and the one key a terminal is unusable without. */
+        val CTRL_C = TerminalBarKey("ctrl_c", "^C", character = 'c', modifiers = MOD_CTRL)
+
+        /** `Ctrl+D` — end of input, which is how a shell is left. */
+        val CTRL_D = TerminalBarKey("ctrl_d", "^D", character = 'd', modifiers = MOD_CTRL)
+
+        /**
+         * Termux's default two rows, in its order, with the two `Ctrl` chords the
+         * soft keyboard cannot reach appended so the bar scrolls to them.
+         */
         val defaultRows: List<List<TerminalBarKey>> = listOf(
-            listOf(ESC, SLASH, DASH, HOME, UP, END, PGUP),
-            listOf(TAB, CTRL, ALT, LEFT, DOWN, RIGHT, PGDN),
+            listOf(ESC, SLASH, DASH, HOME, UP, END, PGUP, CTRL_C),
+            listOf(TAB, CTRL, ALT, LEFT, DOWN, RIGHT, PGDN, CTRL_D),
         )
 
         /**
@@ -117,7 +138,7 @@ data class TerminalBarKey(
          */
         val catalog: List<TerminalBarKey> = listOf(
             ESC, TAB, CTRL, ALT, UP, DOWN, LEFT, RIGHT,
-            HOME, END, PGUP, PGDN, SLASH, DASH, PIPE, TILDE,
+            HOME, END, PGUP, PGDN, SLASH, DASH, PIPE, TILDE, CTRL_C, CTRL_D,
         )
 
         private val indexById: Map<String, TerminalBarKey> = catalog.associateBy { it.id }
@@ -125,6 +146,17 @@ data class TerminalBarKey(
         fun byId(id: String): TerminalBarKey? = indexById[id.lowercase()]
     }
 }
+
+/**
+ * libvterm's modifier bits, as `dispatchKey`/`dispatchCharacter` take them.
+ *
+ * `internal` rather than file-private because two files in this package need the
+ * same numbers: the bar builds a chip's own [TerminalBarKey.modifiers] from them,
+ * and the pane combines them with the sticky state before dispatching.
+ */
+internal const val MOD_SHIFT = 1
+internal const val MOD_ALT = 2
+internal const val MOD_CTRL = 4
 
 /** The two sticky modifiers the bar can arm. */
 enum class StickyModifier { Ctrl, Alt }
@@ -158,6 +190,17 @@ fun TerminalKeyBar(
      * looking here.
      */
     onPaste: (() -> Unit)? = null,
+    /**
+     * Restart the guest, as one extra chip beside [onPaste].
+     *
+     * A terminal needs a way out of a shell that is wedged — `Ctrl+C` and `Ctrl+D`
+     * cover the ordinary cases, but a process stuck in an uninterruptible read, or
+     * a `bash` whose prompt was never restored, has nothing else. It replaces the
+     * tab strip's per-tab close button, which was the same action presented as
+     * something else: there is only ever one terminal on this page now, so closing
+     * it and restarting it were indistinguishable.
+     */
+    onRestart: (() -> Unit)? = null,
 ) {
     Column(
         modifier
@@ -184,8 +227,9 @@ fun TerminalKeyBar(
                         onKey = onKey,
                     )
                 }
-                if (index == rows.lastIndex && onPaste != null) {
-                    ActionChip(label = "PASTE", palette = palette, onClick = onPaste)
+                if (index == rows.lastIndex) {
+                    onPaste?.let { ActionChip(label = "PASTE", palette = palette, onClick = it) }
+                    onRestart?.let { ActionChip(label = "重开", palette = palette, onClick = it) }
                 }
             }
         }

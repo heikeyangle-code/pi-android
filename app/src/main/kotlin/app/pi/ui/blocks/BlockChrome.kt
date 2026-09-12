@@ -2,8 +2,11 @@ package app.pi.ui.blocks
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
@@ -21,9 +24,15 @@ import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -98,6 +107,59 @@ internal fun ProseText(
         maxLines = maxLines,
         overflow = TextOverflow.Ellipsis,
     )
+}
+
+
+/** One action of a block's long-press menu. */
+internal data class BlockAction(val label: String, val onSelect: () -> Unit)
+
+/**
+ * The card-level actions of `docs/pi-android-ui-spec.md` §4.8.
+ *
+ * Why a card long press rather than the spec's "long press on any text selects and
+ * copies": on Android, long press *inside* selectable text already belongs to the
+ * system selection handles + the floating Copy/Share bar, and stacking our own
+ * recogniser on the same gesture makes both unreliable. So the two are split by
+ * target: text keeps the platform's selection (which is "select to copy"), and the
+ * *card* — the surface around the text — carries the block actions. Nothing wraps
+ * a selectable text node, so no gesture is claimed twice.
+ *
+ * The menu is a plain drop-down: no animation, no scrim, no ripple, per the
+ * project's no-decoration rule.
+ */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+internal fun BlockActionMenu(
+    actions: List<BlockAction>,
+    modifier: Modifier = Modifier,
+    content: @Composable () -> Unit,
+) {
+    if (actions.isEmpty()) {
+        content()
+        return
+    }
+    var open by remember { mutableStateOf(false) }
+    Box(
+        modifier.combinedClickable(
+            onClickLabel = null,
+            onLongClickLabel = "更多操作",
+            onLongClick = { open = true },
+            onClick = {},
+        ),
+    ) {
+        content()
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            actions.forEach { action ->
+                DropdownMenuItem(
+                    text = { Text(action.label) },
+                    onClick = {
+                        open = false
+                        action.onSelect()
+                    },
+                )
+            }
+        }
+    }
 }
 
 /** A tonal container card: 16dp radius, no elevation, palette colour. */

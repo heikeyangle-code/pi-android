@@ -267,17 +267,16 @@ class TranscriptBlocksTest {
     // ------------------------------------------------- system prompt and skills
 
     @Test
-    fun `a system prompt row comes from the app helper, not from an entry type`() {
-        // pi's persisted union has no `system_prompt` entry (session-manager.ts);
-        // the text is only reachable through `getSystemPrompt()`. An entry-shaped
-        // record is therefore inert, and onSystemPrompt is the app-only API that
-        // produces the row (F22: it has no producer — see that method's KDoc).
+    fun `a system_prompt-shaped entry record is inert, because pi has no such entry`() {
+        // F22: pi's persisted union has no `system_prompt` entry
+        // (`core/session-manager.ts:145-155`), no RPC command returns the prompt
+        // (`rpc-types.ts:20-71`), and pi never renders prompt text — its `/context`
+        // listing prints only the source path (`interactive-mode.ts:1715-1722`).
+        // The item kind, its block and the `onSystemPrompt` hook were therefore
+        // deleted together; a record with that name must stay inert.
         val r = reducer()
         r.onEntry(obj("""{"type":"system_prompt","id":"sp","timestamp":1000,"text":"You are pi."}"""))
         assertTrue(r.transcript.isEmpty())
-
-        r.onSystemPrompt("You are pi.")
-        assertEquals("You are pi.", (r.transcript.single() as SystemPrompt).fullText)
     }
 
     /**

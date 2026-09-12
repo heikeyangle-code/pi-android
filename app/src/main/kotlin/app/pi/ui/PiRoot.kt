@@ -30,7 +30,6 @@ import app.pi.ui.screens.ChatScreen
 import app.pi.ui.screens.SessionsScreen
 import app.pi.ui.screens.WorkbenchScreen
 import app.pi.ui.settings.PiSettingsStack
-import app.pi.ui.terminal.TerminalTab
 
 /**
  * The four top-level destinations.
@@ -58,8 +57,9 @@ enum class PiDestination(val label: String, val icon: ImageVector) {
  * built-in either — `get_commands` deliberately excludes them and
  * `_tryExecuteExtensionCommand` only matches extension commands
  * (`PiSlashCommands.kt:5-19`). So the honest answer is the surface that does have
- * them: the workbench terminal runs the original TUI in a real PTY
- * (`PtyLauncher.Kind.PiTui`), which is why these rows navigate there.
+ * them: the workbench terminal runs a real shell in a real PTY, `pi` is on its
+ * `PATH`, and the command is run there — which is why these rows navigate to the
+ * terminal and tell the user to type `pi` first.
  */
 private val TERMINAL_ONLY_ACTIONS: Map<String, String> = mapOf(
     // `interactive-mode.ts:3052-3055` → `handleLoginCommand` (`:5485`); the OAuth
@@ -88,20 +88,6 @@ fun PiRoot(
     // because the stack is composed only while 设置 is the current destination,
     // so the request has to survive that switch.
     var settingsFocus by rememberSaveable { mutableStateOf<String?>(null) }
-
-    // Which terminal tab the workbench should open on. A terminal-only action sets
-    // it to pi's TUI, because that is the only surface where the command it names
-    // exists; every other route into the workbench leaves it null and gets the
-    // default shell tab.
-    //
-    // It lives here, above the destination `when`, on purpose: the workbench screen
-    // is disposed the moment another destination is selected, so a request kept
-    // inside it would be thrown away by the very navigation it is part of.
-    //
-    // Deliberately not `rememberSaveable`: it is a one-frame navigation intent, and
-    // the terminal store it feeds is an ordinary `remember` too, so a recreated
-    // activity starts from a fresh shell tab either way.
-    var workbenchTerminalTab by remember { mutableStateOf<TerminalTab?>(null) }
 
     // One engine for the whole app. Owned by the ViewModel rather than an
     // Activity so that a running turn survives the user leaving the screen, and
@@ -179,15 +165,16 @@ fun PiRoot(
                 PiDestination.Chat -> ChatScreen(
                     contentPadding = padding,
                     session = session,
+                    // The composer's terminal affordance: one `NavRequest.Workbench`,
+                    // which lands on the workbench's terminal segment. It used to
+                    // name a tab as well ("open pi's TUI"), because the jump had to
+                    // reach pi specifically; the terminal is a plain shell now and
+                    // there is no tab to name, so this is the whole request.
+                    onOpenTerminal = { session.requestNav(NavRequest.Workbench) },
                 )
 
                 PiDestination.Workbench -> WorkbenchScreen(
                     contentPadding = padding,
-                    // The tab a terminal-only action asked for, if any. The screen
-                    // reports back once it has opened it, so later visits get the
-                    // default shell tab rather than spawning pi again.
-                    initialTerminalTab = workbenchTerminalTab,
-                    onInitialTerminalTabConsumed = { workbenchTerminalTab = null },
                 )
 
                 PiDestination.Settings -> PiSettingsStack(
@@ -218,14 +205,13 @@ fun PiRoot(
                             // detail, and it belongs in the KDoc above, not on screen.
                             session.notifyUser(
                                 "「${setting.title}」只能在 pi 的原版 TUI 里执行：" +
-                                    "已切到 工作区 → 终端，请在那里运行 $terminalCommand。",
+                                    "已切到 工作区 → 终端，输入 pi 后在那里运行 $terminalCommand。",
                                 warning = true,
                             )
-                            // Land on the pi TUI tab, not on whichever tab the
-                            // workbench page would otherwise start with: the named
-                            // command is a pi slash command, and a `bash` prompt is
-                            // not where it can be run.
-                            workbenchTerminalTab = TerminalTab.PiTui
+                            // The terminal segment, which is where `pi` can be
+                            // typed. Nothing selects a tab: the workbench opens its
+                            // terminal by default, and there is no second one to
+                            // ask for.
                             session.requestNav(NavRequest.Workbench)
                         } else {
                             when (setting.key) {

@@ -36,7 +36,17 @@ fun AssistantTextBlock(
     modifier: Modifier = Modifier,
 ) {
     val palette = PiTheme.palette
+    val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
     BlockColumn(modifier) {
+        // §4.8: 助手消息长按 → 复制全部. 保存为文件 / 重新生成 are not offered here —
+        // see the block-action report: neither has a target in this build.
+        BlockActionMenu(
+            actions = listOf(
+                BlockAction("复制全部") {
+                    clipboard.setText(androidx.compose.ui.text.AnnotatedString(item.text))
+                },
+            ),
+        ) {
         Row(verticalAlignment = Alignment.Bottom) {
             if (item.text.isNotEmpty()) {
                 PiMarkdownText(
@@ -53,6 +63,7 @@ fun AssistantTextBlock(
                         .background(palette.accent.copy(alpha = 0.65f)),
                 )
             }
+        }
         }
     }
 }

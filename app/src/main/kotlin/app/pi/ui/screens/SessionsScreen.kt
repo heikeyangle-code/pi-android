@@ -145,6 +145,16 @@ fun SessionsScreen(
                     Text(if (namedOnly) "仅命名" else "全部")
                 }
             }
+            // The delete action is a long press, so the row has to say so: an
+            // action nobody can find is the same complaint as one that does not
+            // exist. pi reaches it with Ctrl+D (`docs/sessions.md:48`), which a
+            // phone has no key for.
+            Text(
+                "长按一行可删除该会话；当前会话要切换后才能删除。",
+                modifier = Modifier.padding(horizontal = PiSpacing.screen, vertical = 2.dp),
+                style = PiTheme.text.meta,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
             if (sessions.isEmpty()) {
                 PiEmptyState(
                     icon = Icons.Filled.Forum,

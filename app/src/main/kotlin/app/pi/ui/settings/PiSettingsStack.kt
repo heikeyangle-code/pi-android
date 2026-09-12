@@ -103,6 +103,10 @@ fun PiSettingsStack(
     // multi-step flow, so they own a screen instead of a confirm dialog.
     var credentials by remember { mutableStateOf(false) }
     var credentialPreset by remember { mutableStateOf<String?>(null) }
+    // The open-source licence notices. Not a pi screen either — see §L: publishing
+    // the licences of what this app redistributes is the distributor's obligation,
+    // so the screen is the app's own.
+    var licenses by remember { mutableStateOf(false) }
 
     val openSetting: (String) -> Unit = { key ->
         val setting = PiSettingsCatalog.byKey[key]
@@ -153,9 +157,13 @@ fun PiSettingsStack(
         "packages" to { packages = true },
     )
 
-    BackHandler(enabled = searching || groupId != null || deviceCapabilities || packages || credentials) {
+    BackHandler(
+        enabled = searching || groupId != null || deviceCapabilities || packages || credentials || licenses,
+    ) {
         if (searching) {
             searching = false
+        } else if (licenses) {
+            licenses = false
         } else if (credentials) {
             credentials = false
         } else if (packages) {
@@ -178,6 +186,11 @@ fun PiSettingsStack(
     val currentGroup = groupId
     Box(Modifier.fillMaxSize()) {
         when {
+            licenses -> LicensesScreen(
+                contentPadding = contentPadding,
+                onBack = { licenses = false },
+            )
+
             credentials -> PiCredentialScreen(
                 contentPadding = contentPadding,
                 onBack = { credentials = false },
@@ -240,6 +253,7 @@ fun PiSettingsStack(
                 onOpenSetting = openSetting,
                 onOpenDeviceCapabilities = { deviceCapabilities = true },
                 onOpenPackages = { packages = true },
+                onOpenLicenses = { licenses = true },
             )
         }
     }

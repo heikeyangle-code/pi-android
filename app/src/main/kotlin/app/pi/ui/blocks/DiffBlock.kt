@@ -94,7 +94,9 @@ fun DiffBlock(
                 if (plan.isEmpty()) {
                     MonoText(
                         text = item.diffText.ifEmpty { "（无差异内容）" },
-                        color = palette.toolOutput,
+                        // F13: `toolOutput` is 3.37:1 on the success card; the
+                        // derived variant clears §9's 4.5:1 body floor.
+                        color = palette.bodyOnTool,
                     )
                 } else {
                     for (row in plan) {
@@ -141,11 +143,13 @@ private fun DiffLineRow(line: DiffLine) {
     val markColor = when (line.kind) {
         DiffLineKind.Added -> palette.toolDiffAdded
         DiffLineKind.Removed -> palette.toolDiffRemoved
-        else -> palette.toolDiffContext
+        // F13: the context lines are read as body text (`PiTheme.text.mono`,
+        // 13/20), so they take the corrected variant, not pi's 3.69:1 value.
+        else -> palette.contextOnTool
     }
     val textColor = when (line.kind) {
         DiffLineKind.Added, DiffLineKind.Removed -> palette.text
-        else -> palette.toolDiffContext
+        else -> palette.contextOnTool
     }
     Row(
         modifier = Modifier

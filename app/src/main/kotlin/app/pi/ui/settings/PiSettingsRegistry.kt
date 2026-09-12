@@ -379,7 +379,7 @@ object PiSettingsCatalog {
             key = "app.credentials.oauth",
             title = "OAuth 登录（仅终端）",
             description = "Anthropic Claude Pro/Max、OpenAI Codex、GitHub Copilot、OpenRouter、Kimi Code、xAI、Radius 支持 OAuth，登录在系统浏览器里完成。" +
-                "点「执行」会切到 工作区 → 终端，请在 pi TUI 标签页里运行 /login。",
+                "点「执行」会切到 工作区 → 终端，输入 pi 后运行 /login。",
             kind = PiRowKind.Action,
             group = G_MODEL,
             section = "凭证",
@@ -714,14 +714,14 @@ object PiSettingsCatalog {
         // argument, `:6122` calls `runtimeHost.importFromJsonl`), while the
         // `RpcCommand` union has no import command at all (`rpc-types.ts:20-74`).
         // The row is therefore an entry point to the one surface that can run it —
-        // the original TUI, which the workbench terminal runs in a real PTY
-        // (`PtyLauncher.Kind.PiTui`) — not a confirmation dialog for work that
-        // nothing performs.
+        // pi's own TUI, which the workbench terminal reaches because `pi` is on the
+        // guest's `PATH` and the user types it there — not a confirmation dialog for
+        // work that nothing performs.
         PiSetting(
             key = "app.sessions.import",
             title = "导入会话（仅终端）",
             description = "从导出的会话文件恢复一个会话，会替换当前会话。" +
-                "点「执行」会切到 工作区 → 终端，请在 pi TUI 标签页里运行 /import <path.jsonl>。",
+                "点「执行」会切到 工作区 → 终端，输入 pi 后运行 /import <path.jsonl>。",
             kind = PiRowKind.Action,
             group = G_SESSIONS,
             section = "动作",
@@ -1091,35 +1091,23 @@ object PiSettingsCatalog {
             unit = "sp",
             aliases = listOf("font", "terminal"),
         ),
-        PiSetting(
-            key = "app.terminal.cursorStyle",
-            title = "光标样式",
-            description = "终端光标画法。硬件光标打开时由系统绘制，样式设置不再生效。",
-            kind = PiRowKind.Value,
-            group = G_TERMINAL,
-            section = "终端显示",
-            defaultValue = str("block"),
-            options = choices(
-                "block" to "方块",
-                "bar" to "竖线",
-                "underline" to "下划线",
-            ),
-            aliases = listOf("cursor"),
-        ),
-        PiSetting(
-            key = "app.terminal.scrollbackLines",
-            title = "滚回行数",
-            description = "终端保留的滚回缓冲行数，越大越占内存。",
-            kind = PiRowKind.Number,
-            group = G_TERMINAL,
-            section = "终端显示",
-            defaultValue = num(2000),
-            min = 500,
-            max = 50000,
-            step = 500,
-            unit = "行",
-            aliases = listOf("scrollback"),
-        ),
+        // `app.terminal.cursorStyle` and `app.terminal.scrollbackLines` were deleted
+        // here rather than wired. Both were **this app's own keys**: pi 0.85.1 has no
+        // cursor-style and no scrollback setting at all (`grep -rn` over `packages/**`
+        // in the pi checkout: 0 hits for each; pi's only cursor key is
+        // `showHardwareCursor`, `core/settings-manager.ts:147`, a different behaviour,
+        // and it is registered further down) — and neither had a reader anywhere in
+        // this tree, so both were switches that changed nothing.
+        // The behaviour they described is owned by the terminal component:
+        //   - cursor shape comes from the guest through `DECSCUSR`, which libvterm
+        //     inside `org.connectbot:termlib` honours;
+        //   - the transcript is the component's own fixed scrollback; there is no
+        //     number this app can hand it (the deleted row's own default was 2000,
+        //     which nothing ever honoured).
+        // `ui/terminal/TerminalSettings.kt` reached the same conclusion and left the
+        // decision here: a stored value no code reads is the defect
+        // `docs/known-gaps.md` §I7 records, and an inert switch is worse than no
+        // switch.
         PiSetting(
             key = "terminal.showImages",
             title = "终端显示图片",
@@ -1672,12 +1660,13 @@ object PiSettingsCatalog {
         // `interactive-mode.ts:3022-3025` dispatches `/changelog` to
         // `handleChangelogCommand`, and built-ins are not reachable over RPC
         // (`get_commands` excludes them, `rpc-types.ts:20-74` has no changelog
-        // command). The row therefore navigates to the original TUI in the workbench
-        // terminal, which is the only surface that can show it.
+        // command). The row therefore navigates to the workbench terminal, where the
+        // user runs `pi` and then the command — that being the only surface that can
+        // show it.
         PiSetting(
             key = "app.about.changelog",
             title = "查看更新日志（仅终端）",
-            description = "点「执行」会切到 工作区 → 终端，请在 pi TUI 标签页里运行 /changelog。",
+            description = "点「执行」会切到 工作区 → 终端，输入 pi 后运行 /changelog。",
             kind = PiRowKind.Action,
             group = G_ABOUT,
             section = "更新",
@@ -1769,9 +1758,12 @@ object PiSettingsCatalog {
             "项目信任：${summaryText(store, "defaultProjectTrust")}"
         },
         PiSettingsGroup(G_RUNTIME, "运行时与诊断", Icons.Filled.Memory) { store ->
-            val version = summaryText(store, "app.runtime.piVersion")
+            // Deliberately not the pi version. `app.runtime.piVersion` has no writer
+            // anywhere in the tree (§I7), so reading it here would print the row's
+            // fallback and this one line would tell the user 「pi 未安装」 while they
+            // are talking to it. The summary states only what the store really holds.
             val keepAlive = summaryText(store, "app.runtime.keepAlive")
-            "pi $version · 保活：$keepAlive"
+            "保活：$keepAlive"
         },
         PiSettingsGroup(G_ABOUT, "隐私与关于", Icons.Filled.Info) { store ->
             "遥测：${summaryText(store, "enableInstallTelemetry")} · 分析：${summaryText(store, "enableAnalytics")}"
