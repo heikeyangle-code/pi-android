@@ -665,23 +665,78 @@ class RuntimeProvisioner(
 
     companion object {
         /**
-         * Bump **by hand** when the packaged payload changes, so an existing
-         * install re-unpacks. The value is written to `<runtime>/.stamp`
-         * ([writeStamp]) and compared on every boot ([isStampCurrent]) and on
-         * every restart (`PiEngineHost.stampMatches`).
+         * The fallback revision, used only when [packagedRevision] cannot read the
+         * assembler's digest.
          *
-         * **Nothing verifies this number.** `tools/fetch-runtime.mjs` writes no
-         * revision, sidecar or manifest of any kind — an earlier version of this
-         * comment claimed it did, and that claim was simply wrong (checked against
-         * the whole script). So a changed pin in `runtime.lock.json`, or a bumped
-         * `PI_VERSION`, leaves the app happily using the tree it extracted from the
-         * *previous* payload: the second install looks finished and silently runs
-         * the old engine. If that ever bites, the fix is a payload-derived revision
-         * (a digest of the assembled archives, published as an asset and read
-         * before the stamp check) — a design change, not a one-line edit, because
-         * `PiEngineHost.stampMatches` compares the stamp against this constant.
+         * This used to be the whole mechanism, and the comment above it said so: the
+         * number was bumped **by hand** and nothing verified it. That arrangement
+         * fails in the direction that costs the most. Change a payload and forget to
+         * bump it, and every device keeps the tree it already unpacked — the APK
+         * installs, the app looks fine, and it is running the previous Node and the
+         * previous pi. The build produced nothing, and nothing on the device
+         * disagrees with anything else, so nobody finds out. The reverse mistake
+         * (bumping it when nothing changed) deletes everything the user installed
+         * inside the guest for no reason at all.
+         *
+         * So the number is derived now: [packagedRevision] reads a digest of the
+         * payload bytes that `tools/fetch-runtime.mjs` writes at build time, and a
+         * device that unpacked different bytes re-unpacks on its own. Nothing here
+         * needs a human to remember anything. Editing this constant therefore has no
+         * effect on a real build — which is the point — and it exists for the one
+         * build with no assembler behind it (a bare `:app:assembleRelease` over a
+         * checkout where `fetch-runtime.mjs` never ran), where the payloads are
+         * absent too and provisioning fails on the payload audit before this value is
+         * ever compared against a stamp.
+         *
+         * ## What a revision change still costs
+         *
+         * `wipe()` deletes the whole runtime tree, which holds the extracted guest —
+         * so **everything the user installed inside it goes**: apt and pip packages,
+         * `npm -g` packages, anything dropped into `/usr/local/bin`, edits to
+         * `/etc/hosts`, and all of `/root` except the bind-mounted `.pi/agent`. That
+         * is now automatic rather than forgettable, which makes it *more* important to
+         * know, not less: a payload change is a decision to delete the user's guest
+         * environment. Session history, credentials, settings, extensions and the
+         * workspace are outside the wiped tree and survive. See
+         * `docs/known-gaps.md`; keeping user-installed packages across a wipe is a
+         * provisioning-path change nobody has made, deliberately.
          */
         const val RUNTIME_REVISION = "2"
+
+        /**
+         * Where [packagedRevision] reads the digest from.
+         *
+         * Beside `assets/runtime/`, not inside it: CI asserts that every entry under
+         * that directory is one of the payloads, byte for byte, and a manifest is not
+         * a payload. `tools/fetch-runtime.mjs` writes this path; the APK step in
+         * `.github/workflows/ci.yml` asserts it survived packaging with a 16-character
+         * value, because a rename on one side only would leave every device on the
+         * fallback and silently restore the bug this replaced.
+         */
+        const val REVISION_ASSET = "runtime-revision.txt"
+
+        /** The digest length `tools/fetch-runtime.mjs` writes, in hex characters. */
+        private const val REVISION_LENGTH = 16
+
+        /**
+         * The revision the packaged payloads carry — a digest of their bytes, or
+         * [RUNTIME_REVISION] when the asset is not there.
+         *
+         * Read from the APK rather than compiled in so it cannot go stale. The read is
+         * a few dozen bytes, once per boot and once per restart, which is why it is
+         * done here instead of being cached in a field: there is nothing to gain and a
+         * stale cache is one more way to miss a payload change.
+         */
+        fun packagedRevision(assets: AssetManager): String =
+            runCatching {
+                assets.open(REVISION_ASSET, AssetManager.ACCESS_BUFFER).use {
+                    it.readBytes().decodeToString().trim()
+                }
+            }.getOrNull()
+                ?.takeIf { value ->
+                    value.length == REVISION_LENGTH && value.all { it.isDigit() || it in 'a'..'f' }
+                }
+                ?: RUNTIME_REVISION
 
         /**
          * The suffix every payload archive in `assets/runtime/` carries.

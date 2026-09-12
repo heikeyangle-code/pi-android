@@ -187,7 +187,11 @@ class PiEngineHost(private val appContext: Context) {
      *        default reproduces the previous hard-wired launch byte for byte.
      */
     suspend fun boot(
-        revision: String = RuntimeProvisioner.RUNTIME_REVISION,
+        // Derived from the packaged payloads, not hand-written: see
+        // `RuntimeProvisioner.packagedRevision`. A default that read the constant
+        // instead is exactly how a changed payload would keep every device on the
+        // tree it already unpacked, silently.
+        revision: String = RuntimeProvisioner.packagedRevision(appContext.assets),
         workspaceProvider: () -> File,
         launch: PiLaunchOptions = PiLaunchOptions(),
         // `onStep` must stay LAST: callers pass it as a trailing lambda
@@ -356,7 +360,10 @@ class PiEngineHost(private val appContext: Context) {
         reason: String,
         workspaceProvider: () -> File,
         allowInterrupt: Boolean = false,
-        revision: String = RuntimeProvisioner.RUNTIME_REVISION,
+        // Same derived value as `boot`, for the same reason — and it matters more
+        // here: `restart` compares it before deciding, so a stale constant would
+        // refuse a restart that is in fact needed.
+        revision: String = RuntimeProvisioner.packagedRevision(appContext.assets),
         onStep: (RuntimeProvisioner.Step) -> Unit = {},
     ): Restart = lifecycleLock.withLock {
         val current = _session.value
@@ -531,7 +538,7 @@ class PiEngineHost(private val appContext: Context) {
      * Does the unpacked runtime already match [revision]?
      *
      * Mirrors `RuntimeProvisioner.isStampCurrent`, which is private. Both halves are
-     * public — `PiPaths.stampFile()` and `RuntimeProvisioner.RUNTIME_REVISION` — so
+     * public — `PiPaths.stampFile()` and `RuntimeProvisioner.packagedRevision` — so
      * this reads the same two facts without duplicating the unpacking logic. If the
      * two ever disagree the consequence is a refused restart, not a wrong wipe.
      */

@@ -93,7 +93,7 @@
 - **重启入口已落地（本次授权范围内）**：`app/src/main/kotlin/app/pi/engine/PiEngineHost.kt` 现在有 `restart(reason, workspaceProvider, allowInterrupt)`，以及一个 `session: StateFlow<PiEngineSession?>`。
   - `restart` 的语义就是「停掉当前进程 → 重走 boot → 交出新的 session」，顺序是**先关旧的再起新的**：两个引擎跑在同一个 cwd 上会同时往同一个会话 JSONL 里追加。
   - **有回合在跑时自己也会拒绝**（`allowInterrupt=false` 时返回 `RefusedTurnRunning`，且**什么都没改**），所以调用方即使绕过状态机也不能静默打断回合。
-  - 第三种结果 `RefusedNeedsProvisioning`：如果 stamp 与 `RUNTIME_REVISION` 不一致，`restart` **拒绝执行**而不是顺手重新解包——重新解包会 `wipe()` 掉 guest 的 `/root/.pi/agent`（trust.json、packages、已安装的 npm/git 包全在里面）。「重载扩展」按钮永远不该做这件事。
+  - 第三种结果 `RefusedNeedsProvisioning`：如果 stamp 与载荷派生的 revision（`RuntimeProvisioner.packagedRevision`，读 `assets/runtime-revision.txt` 里的载荷摘要；早先是一个手写常量）不一致，`restart` **拒绝执行**而不是顺手重新解包——重新解包会 `wipe()` 掉 guest 的 `/root/.pi/agent`（trust.json、packages、已安装的 npm/git 包全在里面）。「重载扩展」按钮永远不该做这件事。
   - `session` 这个 StateFlow 是给界面重新绑定用的：重启期间与重启失败后它是 `null`，界面收集它重建 `PiEngineApi`，**不会继续拿着一个已经死掉的 session**。`boot()` 也会发布并关闭旧的 session，所以「两个引擎一个 cwd」在任何路径下都不会发生。
   - 跨目录接线（`ui/**` 所有者，本层不改）：`app.pi.packages.EngineRestartCoordinator` 已经把状态机和 `restart` 接好了——`request()` 只产生确认问题，`confirm()` 才动作，并且**恒以 `allowInterrupt=false`** 调用引擎（确认不是永久杀回合的许可；确认之后才起的新回合会被引擎自己拒掉，然后回到 `AwaitingIdle` 而不是报失败）。
 - **收尾条件**：真机上确认「重启后 `get_commands` 里出现新扩展/新技能」，以及重启耗时。

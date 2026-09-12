@@ -14,6 +14,13 @@ build/downloads/
 app/src/main/assets/runtime/
 app/src/main/jniLibs/
 
+# The digest of those payloads, written beside them by the same script and read at
+# boot by RuntimeProvisioner.packagedRevision. Ignored for a stronger reason than
+# the payloads themselves: a committed digest would be a *lie* the moment anyone
+# built with different payloads, and a stale revision is exactly the failure this
+# file exists to prevent — every device would keep the tree it already unpacked.
+app/src/main/assets/runtime-revision.txt
+
 # IDE
 .idea/
 *.iml

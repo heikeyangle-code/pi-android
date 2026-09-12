@@ -727,6 +727,46 @@ function main() {
         `asks for a name that is not there. Rename it to ${PAYLOAD_SUFFIX}.`,
     );
   }
+
+  writeRevision(produced);
+}
+
+/**
+ * Record, in `assets/runtime-revision.txt`, the digest of every byte this run
+ * assembled — the value `RuntimeProvisioner.ensureReady` stamps a device with.
+ *
+ * ## Why this is generated and not a constant someone remembers to bump
+ *
+ * It used to be `RuntimeProvisioner.RUNTIME_REVISION`, a hand-written string. The
+ * failure that arrangement invites is not symmetric with the work it costs:
+ *
+ *  - change a payload and forget to bump it, and every device keeps the tree it
+ *    already unpacked. The new APK installs, the app looks fine, and it is running
+ *    the previous Node and the previous pi. The build produced nothing. Nobody
+ *    finds out, because nothing on the device disagrees with anything else.
+ *  - bump it when nothing changed, and every device re-unpacks 110 MiB for nothing,
+ *    after `wipe()` has deleted everything the user installed inside the guest.
+ *
+ * Deriving it removes the first case entirely — the digest changes exactly when the
+ * payload bytes do — and makes the second case impossible to do by accident, because
+ * a hand edit to the number no longer has any effect. It is written **outside**
+ * `assets/runtime/` on purpose: that directory's invariant, checked by CI, is that
+ * every entry in it is one of these payloads, byte for byte.
+ *
+ * The digest is over the *file names as well as the contents*, sorted, so renaming
+ * a payload is a change too — which it is: the app asks for these names.
+ */
+function writeRevision(produced) {
+  const digest = createHash("sha256");
+  for (const path of [...produced].sort()) {
+    digest.update(basename(path));
+    digest.update("\0");
+    digest.update(readFileSync(path));
+  }
+  const value = digest.digest("hex").slice(0, 16);
+  const dst = join(dirname(ASSETS), "runtime-revision.txt");
+  writeFileSync(dst, `${value}\n`);
+  console.log(`revision ${value}  (${basename(dst)})`);
 }
 
 main();
