@@ -1178,3 +1178,26 @@ M3 记的"发送后约 1 秒内用户气泡是空的"仍未定位。它出现在
 | esbuild 把 pi 打成单文件 | 12.5 MB / 3.8 s 打得出来，带 `require` banner 的 ESM 产物**能启动**，但运行到 `node:fs:484` 挂——pi 会按包目录相对路径读自己的运行时资源文件。要做就得连资源一起处理 |
 | `RuntimeSelfCheck` 每次启动跑一个 guest 进程（`echo pi-runtime-ok`，`RuntimeSelfCheck.kt:79-100`） | **本轮没做**。它是 spawn 之前的步骤，直接压在"引擎开始起来"前面；按 revision 记一个"已通过"的 stamp 就能跳过，估 0.5–3 s。没做的原因是收益相对 15 s 太小，而它的价值恰恰是把"运行时跑不起来"变成一句清楚的话——为一个我没法在本地验证的改动动这个诊断不合适 |
 | page cache | 本容器 `drop_caches` 无权限，所以上面所有数字**都带着热页缓存**；设备冷启动只会更慢，不会更快 |
+
+### M8. 单文件打包实测能快 7–10 倍，但会破坏扩展解析——**未采用，方向已验证**
+
+起因：M7 的结论是"那 14–20 秒是 pi 自己的启动图（969 次模块加载）"。既然成本按**文件数**走，就该能靠"把文件变少"来砍。实测如下（真 key、`deepseek-v4-flash`、prompt 在进程创建后 20–30 ms 写入）：
+
+| 形态 | pi 开始读 stdin |
+|---|---|
+| 原样 `dist/cli.js`（969 次模块加载） | **16 242 / 20 136 ms** |
+| esbuild 打成单文件（12.5 MB，JS 全内联） | **2 149 ms** |
+| 单文件 + App 的扩展 | **2 805 ms**（但扩展加载失败，见下） |
+
+做法（可复现）：`esbuild dist/cli.js --bundle --platform=node --format=esm --target=node20 --external:@silvia-odwyer/photon-node --banner:js="import { createRequire as __cr } from 'node:module'; const require = __cr(import.meta.url);"`——`--format=cjs` 不行（`cross-spawn` 等 CJS 依赖的动态 `require` 在 ESM 输出里报"Dynamic require … is not supported"）；ESM + `createRequire` banner 才能起。
+
+**为什么没采用**：
+
+1. **pi 会按包目录相对路径读运行时数据文件**，第一处就是
+   `dist/modes/interactive/theme/dark.json`（`ENOENT`）。这条好办——数据文件本来就不在 bundle 里，放回原位即可（上表第 2 行就是这么测出来的）。
+2. **真正的拦路虎是扩展解析**。把 bundle 放在原 `dist/cli.js` 位置后，pi 的扩展加载器（jiti，`core/extensions/loader.ts:501-514` 的 `alias: getAliases()` 分支）解析 `@earendil-works/pi-coding-agent` 时算出了错路径：
+   `Cannot find module '/…/node_modules/@earendil-works/index.js'`；放在别处则是 `Cannot find module 'typebox'`（bundle 位置决定了 jiti 的解析基准）。**本 App 的全部设备能力都是扩展**，扩展加载不起来就没有 android_* 工具，所以这条不解决就不能上。
+3. 因此"打包 payload 时把 `dist/cli.js` 换成 bundle"不是即插即用，需要先弄明白
+   `getAliases()` / `getPackageDir()` 在 bundle 入口下的行为，并保证扩展按名字导入 SDK 时解析到的仍是 **同一份**模块实例（否则 `instanceof` 与共享状态会分叉）。
+
+**所以这一轮的回答是：方向已验证、收益很大（7–10×），但没有落地。** 记在这里，免得被"我们试过打包"一句话带过——它试过、能快，卡在扩展解析上，且卡点已定位到具体文件与函数。
