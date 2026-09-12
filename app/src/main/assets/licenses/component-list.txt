@@ -12,7 +12,7 @@
 
   libtalloc
       版本      2.4.3
-      许可证    GPL-3.0（上游 talloc 声明为 LGPL-3.0）
+      许可证    LGPL-3.0（上游 LICENSE 原文；Termux 打包元数据写 GPL-3.0，与上游不符）
       上游      https://www.samba.org/ftp/talloc/
 
   libandroid-shmem

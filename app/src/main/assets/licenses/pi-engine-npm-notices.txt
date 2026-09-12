@@ -1,0 +1,35 @@
+pi 引擎依赖的许可与版权声明来源
+===============================
+
+在「未随包提供许可文本的依赖」那一份里列出的 13 个组件，包里没有许可文件；但其中大多数能在别处找到声明：
+同一 monorepo、同一载荷里的兄弟包、或上游仓库。
+下面是逐个核到的位置。每一项的 sha256 都是实际抓到的字节，可以复核，不需要相信这段话。
+
+  6 × @earendil-works/* 包  （0.85.1，MIT）
+      正文与版权声明见列表里的『pi 引擎 0.85.1（MIT）』那一份：这六个包与 pi 引擎出自同一 monorepo，根 LICENSE 即它们的许可文本（已按 v0.85.1 标签逐字节核对）
+      来源    https://raw.githubusercontent.com/earendil-works/pi/v0.85.1/LICENSE
+      sha256  0457f5bcec3b3b211605dfb5d1a49042fd638f3686a410fe099c24a25af13c48
+
+  3 × @aws-sdk/* 包  （见上表，Apache-2.0）
+      正文见列表里的『Apache-2.0』。AWS SDK 的 LICENSE 就是 Apache-2.0 模板本身，不含逐包版权行；同一载荷里 22 个 @aws-sdk 包有 19 个带该文件，与上游逐字节相同
+      来源    https://raw.githubusercontent.com/aws/aws-sdk-js-v3/main/LICENSE
+      sha256  edea91454b811f127fbdea3d86f378f6719bd372ed440abf82b232f6fca06c3d
+
+  @nodable/entities  （2.1.0，MIT）
+      Copyright (c) 2026 Nodable —— 取自上游默认分支；该包 2.1.0 的发布标签在上游不存在，未能按版本核对
+      来源    https://raw.githubusercontent.com/nodable/val-parsers/master/LICENSE
+      sha256  750cb3fb6362804957ef52caaf9b5c824015be44d494637330d7cd8834d31d40
+
+  xml-naming  （0.1.0，MIT）
+      Copyright (c) 2026 Natural Intelligence —— 同上，取自默认分支，未能按版本核对
+      来源    https://raw.githubusercontent.com/NaturalIntelligence/xml-naming/main/LICENSE
+      sha256  8e75fc0e776c62ccadb8178ece8d3daa9ba7601fb0a49b2dfb0ea9a7a5c0aa07
+
+  standardwebhooks  （1.1.1，Apache-2.0）
+      正文见列表里的『Apache-2.0』；上游该文件是 Apache-2.0 模板，不含版权行
+      来源    https://raw.githubusercontent.com/standard-webhooks/standard-webhooks/main/LICENSE
+      sha256  c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4
+
+  data-uri-to-buffer  （4.0.1，MIT）
+      版权声明取不到：声明的 MIT 与作者（Nathan Rajlich <nathan@tootallnate.net>，取自包内 package.json）可读，但上游仓库的 LICENSE 在各分支与路径上均 404，无法确认版权行原文
+

@@ -100,6 +100,67 @@ PI_ENGINE_NO_LICENCE_TEXT = [
     ("@aws-sdk/nested-clients", "3.997.9", "Apache-2.0"),
 ]
 
+# Where the notice for each of those packages can actually be found, and what was
+# verified. "No licence file in the package" is not the same as "no notice exists":
+# most of these have an upstream file or a sibling in the same payload that carries
+# one, and the ones that do not are named as such. Every URL here was fetched while
+# writing this table and its sha256 is the bytes that came back, so the claim can be
+# re-checked instead of trusted.
+#
+# (package, version, licence, notice sentence, source url, sha256 or "" when none)
+PI_ENGINE_NOTICES = [
+    (
+        "6 × @earendil-works/* 包",
+        "0.85.1",
+        "MIT",
+        "正文与版权声明见列表里的『pi 引擎 0.85.1（MIT）』那一份：这六个包与 pi 引擎出自同一 monorepo，根 LICENSE 即它们的许可文本（已按 v0.85.1 标签逐字节核对）",
+        "https://raw.githubusercontent.com/earendil-works/pi/v0.85.1/LICENSE",
+        "0457f5bcec3b3b211605dfb5d1a49042fd638f3686a410fe099c24a25af13c48",
+    ),
+    (
+        "3 × @aws-sdk/* 包",
+        "见上表",
+        "Apache-2.0",
+        "正文见列表里的『Apache-2.0』。AWS SDK 的 LICENSE 就是 Apache-2.0 模板本身，不含逐包版权行；"
+        "同一载荷里 22 个 @aws-sdk 包有 19 个带该文件，与上游逐字节相同",
+        "https://raw.githubusercontent.com/aws/aws-sdk-js-v3/main/LICENSE",
+        "edea91454b811f127fbdea3d86f378f6719bd372ed440abf82b232f6fca06c3d",
+    ),
+    (
+        "@nodable/entities",
+        "2.1.0",
+        "MIT",
+        "Copyright (c) 2026 Nodable —— 取自上游默认分支；该包 2.1.0 的发布标签在上游不存在，未能按版本核对",
+        "https://raw.githubusercontent.com/nodable/val-parsers/master/LICENSE",
+        "750cb3fb6362804957ef52caaf9b5c824015be44d494637330d7cd8834d31d40",
+    ),
+    (
+        "xml-naming",
+        "0.1.0",
+        "MIT",
+        "Copyright (c) 2026 Natural Intelligence —— 同上，取自默认分支，未能按版本核对",
+        "https://raw.githubusercontent.com/NaturalIntelligence/xml-naming/main/LICENSE",
+        "8e75fc0e776c62ccadb8178ece8d3daa9ba7601fb0a49b2dfb0ea9a7a5c0aa07",
+    ),
+    (
+        "standardwebhooks",
+        "1.1.1",
+        "Apache-2.0",
+        "正文见列表里的『Apache-2.0』；上游该文件是 Apache-2.0 模板，不含版权行",
+        "https://raw.githubusercontent.com/standard-webhooks/standard-webhooks/main/LICENSE",
+        "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+    ),
+    (
+        "data-uri-to-buffer",
+        "4.0.1",
+        "MIT",
+        "版权声明取不到：声明的 MIT 与作者（Nathan Rajlich <nathan@tootallnate.net>，取自包内 package.json）可读，"
+        "但上游仓库的 LICENSE 在各分支与路径上均 404，无法确认版权行原文",
+        "",
+        "",
+    ),
+]
+
 
 def engine_version() -> str:
     """The pi version the engine payload is built from.
@@ -608,6 +669,33 @@ def build(lock: dict, fetch_missing: bool, stage: str) -> None:
         )
     )
 
+    # The remedy for each gap above, so "we know it is missing" is not where the
+    # trail ends. Every sha256 is the bytes that came back from the URL beside it.
+    notices = [
+        "pi 引擎依赖的许可与版权声明来源",
+        "===============================",
+        "",
+        "在「未随包提供许可文本的依赖」那一份里列出的 13 个组件，包里没有许可文件；但其中大多数能在别处找到声明：",
+        "同一 monorepo、同一载荷里的兄弟包、或上游仓库。",
+        "下面是逐个核到的位置。每一项的 sha256 都是实际抓到的字节，可以复核，不需要相信这段话。",
+        "",
+    ]
+    for pkg, pkg_version, licence, note, url, digest in PI_ENGINE_NOTICES:
+        notices.append(f"  {pkg}  （{pkg_version}，{licence}）")
+        notices.append(f"      {note}")
+        if url:
+            notices.append(f"      来源    {url}")
+            notices.append(f"      sha256  {digest}")
+        notices.append("")
+    write(os.path.join(OUT, "pi-engine-npm-notices.txt"), "\n".join(notices) + "\n")
+    manifest.append(
+        (
+            "pi-engine-npm-notices.txt",
+            "pi 引擎依赖的版权声明来源（含 1 个取不到的）",
+            "说明",
+        )
+    )
+
     # ------------------------------------------------------------------ prose
     write(os.path.join(OUT, "about.txt"), STATEMENT)
     manifest.insert(0, ("about.txt", "关于这份清单", "说明"))
@@ -645,7 +733,7 @@ def write(path: str, text: str) -> None:
 COMPONENTS: list[tuple[str, str, str, str, str]] = [
     # Android native libraries
     ("proot", "5.1.107.92", "GPL-2.0", "Android 原生库（随 App 二进制安装）", "https://github.com/termux/proot"),
-    ("libtalloc", "2.4.3", "GPL-3.0（上游 talloc 声明为 LGPL-3.0）", "Android 原生库（随 App 二进制安装）", "https://www.samba.org/ftp/talloc/"),
+    ("libtalloc", "2.4.3", "LGPL-3.0（上游 LICENSE 原文；Termux 打包元数据写 GPL-3.0，与上游不符）", "Android 原生库（随 App 二进制安装）", "https://www.samba.org/ftp/talloc/"),
     ("libandroid-shmem", "0.7", "BSD-3-Clause", "Android 原生库（随 App 二进制安装）", "https://github.com/termux/libandroid-shmem"),
     # Linux userland
     ("Ubuntu 基础系统", "24.04.3", "各软件包各自的许可证", "Linux 运行时（首次启动解包）", "https://cdimage.ubuntu.com/ubuntu-base/releases/24.04.3/release/"),

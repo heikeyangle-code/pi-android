@@ -946,6 +946,29 @@ closed             ( 2)  F22 F27
 rows this document once carried as "a patch exists but nobody has applied it" now has a verdict of
 its own.
 
+**Close-out (2026-09-12, the same day the rulings above were written).** Three conclusions reached
+after that pass had to be written back here, because a conclusion that only exists in a report is a
+conclusion nobody can find (`known-gaps.md` §H8 is the rule):
+
+- **F9's fix has landed.** Its row above says the real fix "is now owned by `89270cd0`" — that was the
+  state when the row was written. `89270cd0` implemented it: `PiEngineSession.seedHistory` is
+  `suspend`, projects into a fresh `TranscriptReducer` on `Dispatchers.Default`, and
+  `adoptSeededTranscript` swaps it in under `transcriptLock` — the same monitor `handle`/`foldEvent`
+  and `echoUserPrompt` take. Before that change the reducer had **no synchronisation at all** between
+  the IO reader thread and two Main writers, and `publish` itself was an unsynchronised
+  read-modify-write. The swap also takes a sequence number (`seedAttempts`) because making the
+  projection asynchronous made two replays able to finish out of order and adopt the wrong one.
+- **F17's row is not the whole story.** The bash card no longer hides pi's own truncation notice:
+  `ui/blocks/ToolCallBlock.kt` shows the full-output path pi already puts in the result
+  (`tools/bash.ts:326`/`:328`, `messages.ts:94-95` — copied verbatim by `rpc/Events.kt`'s
+  `contentText`), makes it copyable, and strips that same sentence out of the body **under pi's own
+  condition** (`renderers/bash.ts:59-64`, i.e. only when it is about to print the warning). The old
+  behaviour replaced the whole body with an invented "go to the workspace" line, which lost pi's
+  path *and* pointed at an action pi does not have.
+- **F34's row is right, and F16's is not stale either**: `ToolCallBlock` reads `item.images` and
+  renders `ImageGridBlock`, so tool-returned pictures are painted rather than flattened to
+  `[image]` — verified by reading the file after `2dbe79f`.
+
 Three of them turned out to be **already implemented** before the pass started (F1, F4, F5 - the
 behaviour agent's §11 work landed them and nothing updated §10), which is why the count moved by
 more than the work did. **§2 had the same defect and it is now walked too** — see

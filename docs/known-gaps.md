@@ -567,6 +567,12 @@ pi 把扩展加载错误**只写进 `runtime.diagnostics`，不发任何事件**
 6. **一条写着"没做"、其实已经做完的条目，比漏记更危险。** 漏记只是少了一条待办；过时的"没做"会让人**重做已经正确的代码**，而重做往往会把它弄坏。本文件因此做了两件事：一是把 A1/A2/B1–B4/B8/B11/E2 标注为已完成（复核于 `dc00279`，逐条给了 `path:line` 证据），二是把"逐行复核"本身变成例行动作——**任何审计写进本文件的条目，下次复核时必须回代码确认它仍然成立**，而不是只在派活时当作事实引用。判断标准是"能不能指出现在还在缺的那一行"，不是"文档里写着缺"。
 7. **用户界面里不许出现文档路径、文件名、章节号（`§`），也不许解释"我们内部为什么这么做"。** 用户原话：**"不要乱加没用的说明。有了 Git 不就好了吗？写个鸡毛说明？没用的说明全删掉。"** 起因是 `PackageStrings` 里那句 `git: 源当前用不了…（docs/known-gaps.md §K2）`——它把**源码文档写进了用户界面**，这是无论内容对不对都不该发生的事。判定标准：**这条文案说的是用户此刻需要的事实，还是我给自己的设计做辩护？** 后者一律写进代码注释或本文件，不进界面。缺功能就补功能；**补不了的功能不该由一句说明来代替**（本例的正解是另一个任务把 git 打进 runtime，然后示例里加回 `git:` 即可）。规则落地时**回溯查了同批新增的 E7 文案**并一起缩减（见 §E7：删掉 `BUILTIN_UNINSTALLABLE`、`LIST_SECTION_NOTE`、`agentDirs`，`BUILTIN_NOTE` 从 5 行降到 1 句）。**那批遗留已清理完毕**（`PackageStrings` 的 `SCOPE_PROJECT_LOCKED`、`PROJECT_PACKAGES_HIDDEN`、`TRUST_INVALID_NOTE`、`TRUST_SESSION_ONLY_NOTE` 都已去掉 `*.ts:行号`；内部解释句 `SUBTITLE` 整条删除、连调用点一起，见 `docs/ui-prose-audit.md` 的 A1）。回归判据：对 `packages/**` 的字符串字面量做全文扫描，`.ts:` / `.kt:` / `docs/` / `§` / `auth.json` / `models.json` / `settings.json` / `agentDir` / `guest` / `host` **零命中**（保留项只有三类：用户项目里被检查的目录项名、用户要填的端点地址、以及纯代码里的路径拼接）。
 
+8. **代理的结论必须落文件。只写在报告里的结论 = 不存在。** 每条"pi 行为 ↔ 我们的符号 ↔ 状态"都必须成为**某份文档的一行**，而不是只活在聊天记录里——聊天记录不参与下一轮的阅读，所以那种结论等于没写过，工作等于白做。本仓已经在三处栽过：**F9 那一行**（写成了"已派给某人"，而修法随后已经落地）、**`EffectiveKind.RestartEngine` 标签与唤醒锁直读**（代码里做了，账本里 grep 零命中）、**bash 卡的"完整输出路径 + 按 pi 的条件摘掉正文里重复那句"**（只在代码注释里，没有任何账本行）。
+
+   **落地机制（每轮冻结提交前，由提交者执行一次"账本收口"）**：把本轮**只在报告里**的结论逐条抄进对应账本（`gap-disposition.md` 的处置表、本文件的章节、`feature-gaps.md` 的行、`remaining-work.md` 的清单）；每条都要能回答"**下一个人照着这行能找到什么**"——符号名、pi 侧的 `file:line`、以及**状态**；提交信息里点明这次收口补了哪几行，这样它自己也进了历史。**判据**：同一个结论在聊天里说过、但 `grep` 不到，就是漏收口。
+
+   **已按这条规则完成的三处收口（2026-09-12）**：① F9 的处置表行补上"修法已落地"（`gap-disposition.md` §10 的 close-out 段，`89270cd0` 的实现）；② 本节 §I7 补上 `EffectiveKind.RestartEngine` 与唤醒锁直读；③ bash 卡的"完整输出路径 + 按 pi 的条件摘掉正文里重复那句"写进 `gap-disposition.md` §10 的 close-out 段（F17 那一族）。**另修掉一处比"过时"更坏的东西**：`feature-gaps.md` 在 §1 改成"reproduced"之后，同一文件的 §1 另一批行与 §2.8 标题**仍写着 "not set, no setting" / "has no app path"** —— 同一份文档自相矛盾，读者无法判断哪句是真的；这类"半更新"必须当成漏收口处理。
+
 ---
 
 ## I. 功能缺口审查（`f2a50c61`）发现的、原先三份文档都没记的 11 条
@@ -687,6 +693,10 @@ pi 的 TUI 会按扩展名分支（`.jsonl` → `exportToJsonl`，`interactive-m
 | `app.terminal.scrollbackLines` | **pi 无**（0 hits） | 无 | **已删除（复核于 `6c2059a`）**：同上（滚回缓冲是组件固定的那份） |
 | `app.tools.bashTimeoutSeconds` | **pi 无此设置**；pi 的 bash 超时是**每次调用的工具参数**（`modes/rpc/rpc-types.ts:55` 的 `bash` 命令只有 `command`/`excludeFromContext`，没有 timeout 字段；`core/tools/bash.ts:24-34` 的 `resolveTimeoutMs`） | 无 | 早先删除，**依据成立** |
 | `app.tools.outputMaxLines` | **pi 无此设置**；截断是编译常量（`core/tools/truncate.ts:11-12` `DEFAULT_MAX_LINES`/`DEFAULT_MAX_BYTES`） | 无 | 早先删除，**依据成立** |
+
+**§I7 的收尾（2026-09-12，`2dbe79f` 之后）——两条只在报告里的结论，现已落账**：
+- **新增 `EffectiveKind.RestartEngine`**：三个进程开关（`app.runtime.offline`/`systemPrompt`/`cacheRetention`）原先借用了 `EffectiveKind.Reload`（标签「需重载」），而它们**只在新进程生效**，所以「重载」是错的说法；现在有专属的 `RestartEngine`（标签「需重启引擎」），`ui/components/PiCommon.kt`。配套的动作行是 `app.runtime.restartEngine`，调用一律 `allowInterrupt = false`，所以有回合在跑时引擎自己会拒绝（`PiEngineHost.restart`）。
+- **唤醒锁那一行改成直读**：`app.runtime.wakeLock` 原先是**推断**（"前台服务在不在运行"），现在读 `PiEngineService` 暴露的真实状态，并由 `RuntimeFacts` 供值。四个运行时只读行（`piVersion`/`nodeVersion`/`rootfsUsage`/`wakeLock`）都改成了「取不到就说取不到」，不再摆一个看起来像真值的默认值。
 | `app.appearance.dynamicColor` | **pi 无**（Monet 是 Android 概念；pi 的主题是 `theme`，颜色来自 pi 主题令牌） | 无 | 早先删除，**依据成立** |
 
 - **同一类病：`app.runtime.piVersion` / `nodeVersion` / `rootfsUsage` / `wakeLock` 曾经全树没有写入方**（全是 `app.` 前缀 = 我们自己的键，pi 无对应物），只显示各自默认值（"未安装"/"未安装"/"未知"/"未知"）。`G_RUNTIME` 组摘要原先读 `piVersion`，于是在设置首页写着「pi 未安装 · 保活：…」——**已改**为只报 store 里真有的值（摘要现在只拼「保活：…」）。
@@ -978,7 +988,12 @@ proot 的 bind 是**每次调用**的事。于是同一条 host 路径在引擎�
      - `gcc-14_14.2.0-4ubuntu2~24.04.1.debian.tar.xz` sha256 `cfece214c2fb790ef5f3baffb9a53e40618e7ae12d053610b251e94d77d08ade`（`https://ports.ubuntu.com/ubuntu-ports/pool/main/g/gcc-14/`）—— `~24.04` 已被上游更新覆盖，池里只剩 `~24.04.1`；同一源码包，版权文件与载荷内那份一致。
 
    **已落地的改进（这才是真问题）**：生成器原先按**内容去重**，导致「与兄弟包共用同一份版权文件」的包在清单里**整行消失**——`libgssapi-krb5-2`/`libk5crypto3`/`libkrb5support0` 就是这样丢的。现在**一个包一份文件、一行 manifest**，并跟随文档符号链接，标题注明「版权文件由 X 提供」。清单因此从 78 行涨到 **107 行**（91 基础包 + 16 个 Ubuntu deb），每个包都可检索到。
-2. **libtalloc 的许可有两说（仍未消除）**：Termux 打包元数据写 `GPL-3.0`（`termux-packages/packages/libtalloc/build.sh`），上游 talloc 一向声明 LGPL-3.0。Termux 的 deb **不带任何 `usr/share/doc`**，所以包内没有可读文本；本轮没有解决（试过的上游 COPYING 路径均 404）。清单里两种都写了。收尾：从 termux 的 `libtalloc` 补丁或 samba 发布包（`https://www.samba.org/ftp/talloc/`）里取原文并作为资产收进来。**这是本清单里唯一一个许可名称仍有分歧的组件。**
+2. **【已解决】libtalloc 的许可：以上游 LICENSE 为准 = LGPL-3.0。** 上一轮说"两说未消除"，这一轮取到了真实文件：
+   - `https://www.samba.org/ftp/talloc/talloc-2.4.3.tar.gz`，sha256 `dc46c40b9f46bb34dd97fe41f548b0e8b247b77a918576733c528e83abd854dd`；
+   - 包内 `LICENSE` 的 sha256 `da7eabb7bafdf7d3ae5e9f223aa5bdc1eece45ac569dc21b3b037520b4464768`，正文第一行即 `GNU LESSER GENERAL PUBLIC LICENSE / Version 3, 29 June 2007` → **LGPL-3.0**；
+   - Termux 打包元数据（`termux-packages/packages/libtalloc/build.sh`）写的是 `GPL-3.0`，**与上游不符**；组件清单已改为 LGPL-3.0 并注明这处不一致。
+   - 我们随包的 `LGPL-3.0.txt`（取自载荷的 `/usr/share/common-licenses/LGPL-3`，sha256 `e3a994d82e644b03a792a930f574002658412f62407f5fee083f2555c5f23118`）与上游这份**只差一处 URL**（`https://fsf.org/` vs `http://fsf.org/`），是同一份 LGPL-3.0 正文，因此没有再加一份近乎重复的文件。
+   - 顺带说明：Termux 的 deb **不带任何 `usr/share/doc`**，所以这三个 Termux 组件（proot / libtalloc / libandroid-shmem）的许可文本本来就只能靠上游取，不是在包内读到的。
 3. **pi 引擎载荷的 npm 许可已实测复核（结论不乐观，但已定位）**。按 `fetch-runtime.mjs` 里 `pi-engine` 那步的原命令在隔离目录跑：
    `npm install --ignore-scripts --omit=dev --omit=optional @earendil-works/pi-coding-agent@0.85.1`（装到 `/tmp`，**没有落进 `app/` 或 `build/`**），再按 **npm 自己的安装清单**（`node_modules/.package-lock.json`）逐包核对：
 
@@ -991,6 +1006,13 @@ proot 的 bind 是**每次调用**的事。于是同一条 host 路径在引擎�
    **最要紧的一条：pi 自己就不带 LICENSE 文本。** 原因可查：`packages/coding-agent/package.json:98` 只声明 `license: MIT`，而 MIT 正文只在**仓库根** `LICENSE`，该目录对外发布时不带它 → 引擎载荷里只有字段、没有声明文本，而 MIT 要求保留声明。**处置**：由我们把 pi 的 MIT 原文随包发出，取自与引擎同版本的上游标签
    `https://raw.githubusercontent.com/earendil-works/pi/v0.85.1/LICENSE`，sha256 `0457f5bcec3b3b211605dfb5d1a49042fd638f3686a410fe099c24a25af13c48`——**与 `/root/pi-src/LICENSE`（0.85.1 源码树）逐字节相同**，已存为 `pi-license.txt`；版本号从 `tools/fetch-runtime.mjs` 的 `PI_VERSION` 读，避免两处版本漂移；哈希对不上时生成器**直接报错拒绝出包**。
    另把这 13 个包写成 `pi-engine-licence-gaps.txt` 随包展示——把"没有文本"如实写出来，比让清单看起来完整更重要。
+
+   **这 13 个的"声明在哪"也逐个核了**（`pi-engine-npm-notices.txt`，每项都带实际抓到的 sha256）：
+   - 6 个 `@earendil-works/*`：与 pi 同 monorepo，根 LICENSE 即其文本 —— 就是已随包的 `pi-license.txt`；
+   - 3 个 `@aws-sdk/*`：其 LICENSE 就是 **Apache-2.0 模板本身、不含逐包版权行**（上游 `aws-sdk-js-v3` 的 LICENSE 与载荷内 `@aws-sdk/core/LICENSE` **逐字节相同**，sha256 `edea91454b811f127fbdea3d86f378f6719bd372ed440abf82b232f6fca06c3d`；同一载荷里 22 个 @aws-sdk 包有 19 个带这个文件）；
+   - `@nodable/entities` 2.1.0 → `Copyright (c) 2026 Nodable`（sha256 `750cb3fb…`）、`xml-naming` 0.1.0 → `Copyright (c) 2026 Natural Intelligence`（sha256 `8e75fc0e…`）：**取自上游默认分支，这两个版本的上游标签不存在，未能按版本核对年份**；
+   - `standardwebhooks` 1.1.1：上游文件是 Apache-2.0 模板，无版权行（sha256 `c71d239d…`）；
+   - `data-uri-to-buffer` 4.0.1：**版权声明取不到** —— 声明的 MIT 与作者（`Nathan Rajlich <nathan@tootallnate.net>`，读自包内 `package.json`）可确认，但上游仓库的 LICENSE 在各分支/路径均 404。这是整份清单里**唯一一个连版权行都拿不到的组件**。
 4. **CI 断言已加（`ci.yml` 的 `apk` job，新增一步，未动别人那几条）**——`Verify the licence assets match the pinned runtime`：
    - **漂移**：`python3 tools/build-license-assets.py --fetch-missing` 之后用 `git status --porcelain -- app/src/main/assets/licenses` 必须为空。用 `git status` 而不是 `git diff`，因为新生成的文件还是未跟踪状态，`git diff` 看不见它。
    - **覆盖**：`ubuntu-packages.txt` 里的每个包都必须有 `ubuntu-copyright-<pkg>.txt` 且出现在 manifest 里。这条不是冗余：**重新生成看不出生成器本身写错的那类 bug**（文档符号链接那次的误报，重跑只会重现同一个错误答案），所以要直接对输出断言。本地实测：`91/91`，且在未提交时能正确报出 32 个漂移路径。

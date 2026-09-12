@@ -132,3 +132,4 @@ Unlicense.txt	Unlicense	许可证全文
 BlueOak-1.0.0.txt	BlueOak-1.0.0	许可证全文
 pi-license.txt	pi 引擎 0.85.1（MIT）	许可证全文
 pi-engine-licence-gaps.txt	未随包提供许可文本的依赖（13 个）	说明
+pi-engine-npm-notices.txt	pi 引擎依赖的版权声明来源（含 1 个取不到的）	说明

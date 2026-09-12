@@ -99,7 +99,7 @@ actions are in `PiSessionViewModel.kt`; the only screen that invokes them is `Ch
 | `abort` | `rpc-types.ts:25` | builder `Commands.kt:86`; sent inside `PiEngineSession.stopAndDrainQueue` (`:202`), reached by `PiSessionViewModel.stop` (`.kt:1097`) ← `ChatScreen.kt:433` | IMPLEMENTED | Yes | — |
 | `clear_queue` | `docs/rpc.md` §clear_queue; `rpc-types.ts:26` | builder `Commands.kt:88`; `stopAndDrainQueue` (`PiEngineSession.kt:197-204`) returns the queued text | PARTIAL — the returned text is **discarded** | Partly | — (see §2.3) |
 | `new_session` | `rpc-types.ts:27` | builder `Commands.kt:91`; `PiSessionViewModel.newSession` (`.kt:1283`); `ChatScreen.kt:196,259` | IMPLEMENTED | Yes | — |
-| `new_session` `parentSession` | `rpc-types.ts:27` | parameter exists (`Commands.kt:91`, `PiEngineApi.kt:295`); no GUI caller passes it (`api.newSession()` at `.kt:1290`) | PARTIAL | No | — |
+| `new_session` `parentSession` | `rpc-types.ts:27` | parameter exists (`Commands.kt:91`, `PiEngineApi.kt:295`); no GUI caller passes it (`api.newSession()` at `.kt:1290`) | 已实现（本轮接上） | No | `PiSessionViewModel.newSession(parentSession)` + `newChildSession` ← `SessionsScreen` 长按「新建子会话」；guest 路径经 `guestSessionPath` |
 | `get_state` | `rpc-types.ts:30` | builder `Commands.kt:99`; `refreshState` (`.kt:875`), polled after model change and on attach | IMPLEMENTED | Yes | — |
 | `get_messages` | `rpc-types.ts:71` | builder `Commands.kt:101`; `PiEngineApi.getMessages` (`PiEngineApi.kt:60`) — **no caller**; the transcript is projected from `get_entries` + events instead | PARTIAL | No | — (no user-visible loss; see §4) |
 | `set_model` | `rpc-types.ts:33` | builder `Commands.kt:105`; `PiSessionViewModel.setModel` (`.kt:1143`) ← `ModelPickerSheet` (`ChatScreen.kt:445`) and the AppBar chip (`:253`) | IMPLEMENTED | Yes | — |
@@ -144,7 +144,7 @@ whether the command is *protocol-reachable* (then the app can drive it) or *spaw
 |---|---|---|---|---|---|
 | `--mode rpc`, `--session-dir`, `--name`, `--thinking`, `--provider`, `--model` | `src/cli/args.ts`; `docs/rpc.md:9-15` | argv is fixed to `--mode rpc --session-dir <agentDir>/sessions` (`PiEngineHost.kt:231-233`); provider/model/name/thinking are set **after** start over RPC (`set_model`/`set_session_name`/`set_thinking_level`) and persisted via `defaultProvider`/`defaultModel`/`defaultThinkingLevel` | IMPLEMENTED (another way) | Yes | — |
 | `pi install` / `remove` / `list` / `update` | `package-manager-cli.ts:255-276`; `docs/packages.md:22-39` | no RPC command exists (verified against `rpc-types.ts:20-74`); an app-side implementation is under construction — `app/src/main/kotlin/app/pi/packages/` (`PiPackageService.kt`, `PiPackagesScreen.kt`, `PiListOutput.kt`) | CLI-ONLY (being reproduced) | Partly | `known-gaps.md` **B5**, **E7** |
-| `pi config` (resource enable/disable TUI) | `package-manager-cli.ts:278-289` | `packages[].autoload` is the app's per-package switch (`PiSettingsRegistry.kt`, routed to a sidecar by `PiSettingsFileStore.kt:140`); pi's per-**resource** enable/disable has no app equivalent | CLI-ONLY | No | — |
+| `pi config` (resource enable/disable TUI) | `package-manager-cli.ts:278-289` | `packages[].autoload` is the app's per-package switch (`PiSettingsRegistry.kt`, routed to a sidecar by `PiSettingsFileStore.kt:140`); pi's per-**resource** enable/disable has no app equivalent | 仍未做（缺嵌套的按资源模式编辑器） | No | pi 落盘 = `settings.json` 的 `packages[]` 对象形式的 `extensions/skills/prompts/themes` glob 数组，全空时塌回字符串（`modes/interactive/components/config-selector.ts:585-629`）；App 只有 `packages[].autoload`，编辑器属 `packages/**`（本轮无权限） |
 | `--offline` / `PI_OFFLINE` | `args.ts`; `docs/environment-variables.md` | **reproduced**: the `app.runtime.offline` Switch row → `PiSessionViewModel.launchOptions()` → `PiLaunchOptions.offline` → `PI_OFFLINE=1` in the engine environment (`PiLaunchOptions.environment()`, applied by `PiEngineHost` via `boot(…, launch)`) | IMPLEMENTED | Yes | — (see §2.11) |
 | `--system-prompt` / `--append-system-prompt` | `args.ts` | **reproduced**: the `app.runtime.systemPrompt` Text row → `PiSessionViewModel.launchOptions()` → `PiLaunchOptions.systemPrompt` → `--system-prompt`; blank means "use pi's own prompt", so no empty flag is ever passed | IMPLEMENTED | Yes | — (see §2.11) |
 | `--api-key` | `args.ts`; `docs/providers.md:62-107` | no writer for `auth.json` anywhere in the app (grep: 0 hits outside a description string); `/login` is marked `TerminalOnly` (`PiSlashCommands.kt:138`) and the Settings rows `app.credentials.apiKey` / `app.credentials.oauth` are inert Action rows | CLI-ONLY | Terminal tab | — (see §2.9, §2.10) |
@@ -178,7 +178,7 @@ whether the command is *protocol-reachable* (then the app can drive it) or *spaw
 | tree labels (`setLabel`, edit label `shift+l`) | `keybindings.md` `app.tree.editLabel` | labels are **rendered** (`SessionTreeScreen.kt:197-203`) but cannot be set — no RPC command | MISSING-TERMINAL-ONLY | No | `known-gaps.md` **F2** |
 | session picker: search / sort / named filter / rename / delete | `docs/sessions.md:43-48`; `keybindings.md` `app.session.toggle*`, `.rename`, `.delete` | `SessionsScreen` lists, refreshes and opens only (`SessionsScreen.kt:78-132`); `PiSessionStore` exposes only `list` (`PiSessionStore.kt:49`). Rename exists on the Chat overflow; **search, sort, named filter and delete do not exist** | **MISSING-GUI** | No | — (see §2.7) |
 | session tree "delete session" + non-invasive variant | `keybindings.md` `app.session.delete*` | absent (see above) | MISSING-GUI | No | — |
-| external editor (`ctrl+g`, `externalEditor`) | `keybindings.md` `app.editor.external` | `externalEditor` is a settings row only (`PiSettingsRegistry.kt:1288-1290`); no launch action; works inside the terminal tab because pi reads the setting | PARTIAL | Terminal tab | — |
+| external editor (`ctrl+g`, `externalEditor`) | `keybindings.md` `app.editor.external` | `externalEditor` is a settings row only (`PiSettingsRegistry.kt:1288-1290`); no launch action; works inside the terminal tab because pi reads the setting | 部分：pi 行为已核，App 不落地（界面已说实话） | Terminal tab | pi: `modes/interactive/external-editor.ts` 临时文件 + spawn + 退出码非 0 则丢弃；命令解析 `settings-manager.ts:970-981`；触发 `app.editor.external` (`interactive-mode.ts:4246-4261`)。App: 输入框在 ChatScreen（本轮禁改），注册表说明已改成事实 |
 | scoped models selector (`/scoped-models`) | `core/slash-commands.ts:24`; `keybindings.md` §Scoped Models Selector | marked `TerminalOnly` (`PiSlashCommands.kt:117-120`); the underlying `enabledModels` setting **is** editable as a raw list, but there is no selector | PARTIAL | Partly | — (see §2.6) |
 | `/import` (import a session JSONL) | `interactive-mode.ts:2997`; `docs/sessions.md` | `TerminalOnly` in the palette (`PiSlashCommands.kt:125-128`); the `app.sessions.import` Action row is inert (`PiSettingsRegistry.kt:715-722`); no RPC command exists | MISSING-TERMINAL-ONLY | Terminal tab | — (see §2.9) |
 | `/share` (secret GitHub gist) | `core/slash-commands.ts:27`; `docs/environment-variables.md` (`PI_SHARE_VIEWER_URL`) | `TerminalOnly`; no RPC command | MISSING-TERMINAL-ONLY | Terminal tab | — (see §2.9) |
@@ -255,7 +255,7 @@ whether the command is *protocol-reachable* (then the app can drive it) or *spaw
 | Prompt templates (`prompts` setting, `.md` files) | `docs/prompt-templates.md` | `get_commands` `source: "prompt"` → palette group 模板 | IMPLEMENTED | Yes | — |
 | Local extensions (`extensions` setting, `~/.pi/agent/extensions`) | `docs/extensions.md` | `extensions` setting row present; bundled extensions installed to the agent dir (`bridge/DeviceBridgeController.kt:225-241`) | IMPLEMENTED (pi-side) | Yes | `extension-compatibility.md` |
 | npm/git packages (`packages`) | `docs/packages.md:22-39` | `packages` + `packages[].autoload` settings exist; a management UI is under construction in `app/src/main/kotlin/app/pi/packages/` | PARTIAL | Partly | `known-gaps.md` **B5**, **E7** |
-| Package resource enable/disable (`pi config`) | `package-manager-cli.ts:278-289` | not reproduced | CLI-ONLY | No | — |
+| Package resource enable/disable (`pi config`) | `package-manager-cli.ts:278-289` | not reproduced | 仍未做（同上） | No | 同上：pi 的按资源开关就是 `settings.json` 里 `packages[]` 的四个 glob 数组（`config-selector.ts:585-629`），App 未提供嵌套编辑器 |
 | Extension load diagnostics | only `runtime.diagnostics`; no RPC channel | GUI cannot know an extension failed to load | MISSING-TERMINAL-ONLY | No | `known-gaps.md` **F1**, `extension-compatibility.md` §5.6 |
 | Extension command collision (`name:1`) | `runner.ts:653-691` | handled | IMPLEMENTED | Yes | `known-gaps.md` **E1** (commands handled; tool-name collisions open) |
 | Built-in vs user-installed package distinction | — | not built | MISSING-GUI | No | `known-gaps.md` **E7** |
@@ -296,9 +296,9 @@ whether the command is *protocol-reachable* (then the app can drive it) or *spaw
 |---|---|---|---|---|---|
 | `PI_CODING_AGENT_DIR`, `PI_CODING_AGENT_SESSION_DIR` | `docs/environment-variables.md` | both set (`PiEngineHost.kt:250-251`) | IMPLEMENTED | Yes | — |
 | `PI_SKIP_VERSION_CHECK` | same | set (`PiEngineHost.kt:254`) | IMPLEMENTED | Yes | — |
-| `PI_OFFLINE` / `--offline` | same | **not set, no setting** — so pi's startup network operations still run (`PiEngineHost.kt:250-258`) | CLI-ONLY, not reproduced | No | — (see §2.11) |
+| `PI_OFFLINE` / `--offline` | same | **reproduced（复核于 2026-09-12，`2dbe79f`）**：`app.runtime.offline` Switch → `PiSessionViewModel.launchOptions()` → `boot(launch = …)` → `rpc/PiLaunchOptions` 映射成 `PI_OFFLINE`。本行原先写 "not set, no setting"，已过期 | IMPLEMENTED | Yes | `app.runtime.offline` |
 | `PI_TELEMETRY` | same | not set; pi falls back to the `enableInstallTelemetry` setting, which the app writes | IMPLEMENTED (another way) | Yes | — |
-| `PI_CACHE_RETENTION` | same | not set, not exposed | MISSING-GUI (low value) | No | — |
+| `PI_CACHE_RETENTION` | same | **reproduced（复核于 2026-09-12，`2dbe79f`）**：`app.runtime.cacheRetention`（默认/长保留）→ `launchOptions()` → `PiLaunchOptions` 设 `PI_CACHE_RETENTION=long`。本行原先写 "not set, not exposed"，已过期 | IMPLEMENTED | Yes | `app.runtime.cacheRetention` |
 | `PI_PACKAGE_DIR` | same | not set; only needed for Nix/Guix-style installs | N/A | N/A | — |
 | `HTTP_PROXY` / `HTTPS_PROXY` | same | not set as env; covered for pi's own clients by the `httpProxy` setting | IMPLEMENTED (pi-side) | Yes | — |
 | `PI_IMAGE_PROTOCOL`, `PI_TRUE_COLOR`, `PI_HYPERLINKS`, `PI_HARDWARE_CURSOR`, `PI_TUI_ESC_TIMEOUT` | same | set for the TUI tab (`PtyLauncher.kt:277,288,293`, with `none`/`1`/`150`) and exposed as `terminal.*` / `showHardwareCursor` settings | IMPLEMENTED | Yes | `known-gaps.md` **C2** |
@@ -489,7 +489,12 @@ and there is no equivalent of `ctrl+t`.
 - **Classification:** MISSING-GUI. Delete is a data-loss-adjacent operation and should follow pi's
   confirm step; auto-resume needs a "continue where I left off" default that the app currently lacks.
 
-### 2.8 Extended prompt caching (`PI_CACHE_RETENTION=long`) has no app path
+### 2.8 Extended prompt caching (`PI_CACHE_RETENTION=long`) — **reproduced (2026-09-12)**
+
+> **This heading used to read "has no app path".** It was fixed by `app.runtime.cacheRetention` (a
+> 默认/长保留 value row) → `PiSessionViewModel.launchOptions()` → `boot(launch = …)` →
+> `rpc/PiLaunchOptions`, which sets `PI_CACHE_RETENTION=long`. Landed in `2dbe79f`. The audit text
+> below is kept as the pi-side reference it always was.
 
 - **pi:** `PI_CACHE_RETENTION` set to `long` switches the provider clients from the default short
   cache retention to the long one — `packages/ai/src/api/anthropic-messages.ts:51-57`,
@@ -724,7 +729,7 @@ grades — see "Not verified" below.
 | §1.1 `prompt` `streamingBehavior: followUp` | PARTIAL | **implemented** (moot: the `follow_up` route is live) | `ui/PiSessionViewModel.kt` → `sendFollowUp` |
 | §1.1 `follow_up` | MISSING-GUI | **implemented** | `ChatScreen` overflow → `PiSessionViewModel.sendFollowUp` |
 | §1.1 `clear_queue` discards text | PARTIAL | **implemented** | `ChatScreen` → `mergeRestoredQueue` + `PiSessionViewModel.stop(onRestored)` |
-| §1.1 `new_session` `parentSession` | PARTIAL | **still unimplemented** | `PiSessionViewModel.newSession` → `PiEngineApi.newSession` with no argument; no caller passes a parent |
+| §1.1 `new_session` `parentSession` | PARTIAL | 已实现（本轮接上） | `PiSessionViewModel.newSession(parentSession)` + `newChildSession` ← `SessionsScreen` 长按「新建子会话」；guest 路径经 `guestSessionPath` |
 | §1.1 `get_messages` no caller | PARTIAL | unchanged, **not user-visible** | `engine/PiEngineApi.kt` → `getMessages`; transcript comes from `get_entries` |
 | §1.1 `export_html` always HTML | PARTIAL | **implemented** | `PiSessionViewModel.exportSession` → `exportJsonl` |
 | §1.1 `export_html` `outputPath` re-rooted | PARTIAL | unchanged, deliberate | `PiSessionViewModel.exportSession` (workspace re-root, then host read-back) |
@@ -743,7 +748,7 @@ grades — see "Not verified" below.
 | §1.3 tree filters | MISSING-GUI | **implemented** | `ui/chat/SessionTreeScreen.kt` → `TreeFilter` (pi's five modes) |
 | §1.3 session picker search/sort | MISSING-GUI | **implemented** | `SessionsScreen` → `query` / `byName` / `namedOnly` |
 | §1.3 session delete | MISSING-GUI | **implemented** | `SessionsScreen` → `combinedClickable(onLongClick=…)` + `PiSessionViewModel.deleteSession` |
-| §1.3 external editor | PARTIAL | **still partial** | `PiSettingsRegistry` → `externalEditor` (row only; the terminal tab honours pi's setting) |
+| §1.3 external editor | PARTIAL | **still partial, now stated as fact** | pi mechanics verified (see §8 row); `PiSettingsRegistry` description now says the app's composer does not launch it |
 | §1.3 `/scoped-models` | PARTIAL | **implemented** | `ui/chat/PiSlashCommands.kt` → `PiCommandAction.OpenModelScope` |
 | §1.3 `/tree` switch the active leaf | MISSING-TERMINAL-ONLY | unchanged — pi limit | `rpc-types.ts:20-74`: no leaf-move command |
 | §1.4 user theme JSON changes the palette | MISSING-GUI | **implemented** | `ui/theme/PiThemeFiles.kt` → `PiThemeLoader.load`; `PiSessionViewModel.theme: StateFlow<PiResolvedTheme>` |
@@ -796,7 +801,7 @@ Verdict tally: **不适用 8, 仍未做 20, 已实现 107, 已解决 4, 部分�
 | `abort` | IMPLEMENTED | 已实现（符号在位核对） | pi 有 `rpc-types.ts` | Commands@PiRoot.kt; stopAndDrainQueue@PiRoot.kt; stop@PiRoot.kt |
 | `clear_queue` | PARTIAL | 已实现 | pi 有 `docs/rpc.md` | ChatScreen.mergeRestoredQueue · Commands@PiRoot.kt; stopAndDrainQueue@PiRoot.kt; PiEngineSession@PiR |
 | `new_session` | IMPLEMENTED | 已实现（符号在位核对） | pi 有 `rpc-types.ts` | Commands@PiRoot.kt; newSession@PiSessionViewModel.kt; ChatScreen@PiRoot.kt |
-| `new_session` `parentSession` | PARTIAL | 仍未做 | pi 有 `rpc-types.ts` | 缺：把父会话路径从 UI 传进 newSession · Commands@PiRoot.kt; PiEngineApi@PiRoot.kt |
+| `new_session` `parentSession` | PARTIAL | 已实现（本轮接上） | pi 有 `rpc-types.ts` | `PiSessionViewModel.newSession(parentSession)` + `newChildSession` ← `SessionsScreen` 长按「新建子会话」；guest 路径经 `guestSessionPath` |
 | `get_state` | IMPLEMENTED | 已实现（符号在位核对） | pi 有 `rpc-types.ts` | Commands@PiRoot.kt; refreshState@PiSessionViewModel.kt |
 | `get_messages` | PARTIAL | 仍未做（无用户可见损失） | pi 有 `rpc-types.ts` | 无调用方；transcript 来自 get_entries · Commands@PiRoot.kt; getMessages@PiEngineApi.kt; PiEngineApi@PiRoot. |
 | `set_model` | IMPLEMENTED | 已实现（符号在位核对） | pi 有 `rpc-types.ts` | Commands@PiRoot.kt; setModel@PiSessionViewModel.kt; ModelPickerSheet@ChatScreen.kt |
@@ -828,7 +833,7 @@ Verdict tally: **不适用 8, 仍未做 20, 已实现 107, 已解决 4, 部分�
 | Extension UI requests (`select`/`confirm`/`inp | IMPLEMENTED | 已实现（符号在位核对） | pi 有 `docs/rpc.md` | 审计未引可查符号 |
 | `--mode rpc`, `--session-dir`, `--name`, `--th | IMPLEMENTED | 已实现（符号在位核对） | pi 有 `args.ts` | PiEngineHost@PiSessionViewModel.kt; set_model@PiSessionViewModel.kt; set_session_name@PiSessionViewM |
 | `pi install` / `remove` / `list` / `update` | CLI-ONLY | 已实现（未提交） | pi 有 `package-manager-cli.ts` | PiPackagesHost → PiPackagesScreen + PiPackageService · PiPackageService@AgentLayout.kt; PiPackagesSc |
-| `pi config` (resource enable/disable TUI) | CLI-ONLY | 仍未做 | pi 有 `package-manager-cli.ts` | 缺：per-resource 过滤模型 + UI · autoload@PiSettingsRegistry.kt; PiSettingsRegistry@PiSessionViewModel.kt; |
+| `pi config` (resource enable/disable TUI) | CLI-ONLY | 仍未做（缺嵌套的按资源模式编辑器） | pi 有 `package-manager-cli.ts` | pi 落盘 = `settings.json` 的 `packages[]` 对象形式的 `extensions/skills/prompts/themes` glob 数组，全空时塌回字符串（`modes/interactive/components/config-selector.ts:585-629`）；App 只有 `packages[].autoload`，编辑器属 `packages/**`（本轮无权限） |
 | `--offline` / `PI_OFFLINE` | CLI-ONLY, not reproduc | 部分：引擎已接、设置与界面未接 | pi 有 `args.ts` | PiLaunchOptions.environment；无 registry 行 · PiEngineHost@PiSessionViewModel.kt; PI_CODING_AGENT_DIR@P |
 | `--system-prompt` / `--append-system-prompt` | CLI-ONLY, not reproduc | 部分：引擎已接、设置与界面未接 | pi 有 `args.ts` | PiLaunchOptions.systemPrompt；无调用方 · 审计未引可查符号 |
 | `--api-key` | CLI-ONLY | 部分：代码已写、无调用方 | pi 有 `args.ts` | PiCredentialService.setApiKey · json@PiRoot.kt; TerminalOnly@PiSessionViewModel.kt; PiSlashCommands@ |
@@ -855,7 +860,7 @@ Verdict tally: **不适用 8, 仍未做 20, 已实现 107, 已解决 4, 部分�
 | tree labels (`setLabel`, edit label `shift+l`) | MISSING-TERMINAL-ONLY | 仍未做（协议不可达） | pi 有但我们够不着（无 RpcCommand） | SessionTreeScreen@PiRoot.kt |
 | session picker: search / sort / named filter / | MISSING-GUI | 已实现 | pi 有 `docs/sessions.md` | SessionsScreen.query/byName/namedOnly · SessionsScreen@PiRoot.kt; PiSessionStore@PiSessionViewModel. |
 | session tree "delete session" + non-invasive v | MISSING-GUI | 仍未做 | pi 有 `keybindings.md` | 审计未引可查符号 |
-| external editor (`ctrl+g`, `externalEditor`) | PARTIAL | 仍未做 | pi 有 `keybindings.md` | 缺：Android 侧 ACTION_EDIT 目标选择 · externalEditor@PiSettingsRegistry.kt; PiSettingsRegistry@PiSessionVie |
+| external editor (`ctrl+g`, `externalEditor`) | PARTIAL | 部分：pi 行为已核，App 不落地（界面已说实话） | pi 有 `keybindings.md` | pi: `modes/interactive/external-editor.ts` 临时文件 + spawn + 退出码非 0 则丢弃；命令解析 `settings-manager.ts:970-981`；触发 `app.editor.external` (`interactive-mode.ts:4246-4261`)。App: 输入框在 ChatScreen（本轮禁改），注册表说明已改成事实 |
 | scoped models selector (`/scoped-models`) | PARTIAL | 已实现 | pi 有 `core/slash-commands.ts` | PiCommandAction.OpenModelScope · TerminalOnly@PiSessionViewModel.kt; PiSlashCommands@PiRoot.kt; enab |
 | `/import` (import a session JSONL) | MISSING-TERMINAL-ONLY | 仍未做（协议不可达） | pi 有但我们够不着（无 RpcCommand） | TerminalOnly@PiSessionViewModel.kt; PiSlashCommands@PiRoot.kt; import@PiApplication.kt |
 | `/share` (secret GitHub gist) | MISSING-TERMINAL-ONLY | 仍未做（协议不可达） | pi 有但我们够不着（无 RpcCommand） | TerminalOnly@PiSessionViewModel.kt |
@@ -904,7 +909,7 @@ Verdict tally: **不适用 8, 仍未做 20, 已实现 107, 已解决 4, 部分�
 | Prompt templates (`prompts` setting, `.md` fil | IMPLEMENTED | 已实现（符号在位核对） | pi 有 `docs/prompt-templates.md` | get_commands@PiRoot.kt |
 | Local extensions (`extensions` setting, `~/.pi | IMPLEMENTED | 已实现（符号在位核对） | pi 有 `docs/extensions.md` | extensions@PiSessionViewModel.kt |
 | npm/git packages (`packages`) | PARTIAL | 已实现（未提交） | pi 有 `docs/packages.md` | PiPackagesHost → PiPackagesScreen · packages@PiRoot.kt; autoload@PiSettingsRegistry.kt |
-| Package resource enable/disable (`pi config`) | CLI-ONLY | 仍未做 | pi 有 `package-manager-cli.ts` | 缺：per-resource 过滤模型 + UI · 审计未引可查符号 |
+| Package resource enable/disable (`pi config`) | CLI-ONLY | 仍未做（同上） | pi 有 `package-manager-cli.ts` | 同上：pi 的按资源开关就是 `settings.json` 里 `packages[]` 的四个 glob 数组（`config-selector.ts:585-629`），App 未提供嵌套编辑器 |
 | Extension load diagnostics | MISSING-TERMINAL-ONLY | 仍未做（协议不可达） | pi 有但我们够不着（无 RpcCommand） | 审计未引可查符号 |
 | Extension command collision (`name:1`) | IMPLEMENTED | 已实现（符号在位核对） | pi 有 `runner.ts:653-691` | 审计未引可查符号 |
 | Built-in vs user-installed package distinction | MISSING-GUI | 已实现（未提交） | pi 无对应物（App 自己的决定） | PiPackagesScreen builtin/user distinction · 审计未引可查符号 |
