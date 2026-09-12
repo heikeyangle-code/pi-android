@@ -244,6 +244,7 @@ fun PiEffectiveBadge(kind: EffectiveKind, modifier: Modifier = Modifier) {
         EffectiveKind.Immediate -> return
         EffectiveKind.Reload -> "需重载" to MaterialTheme.colorScheme.tertiary
         EffectiveKind.NewSession -> "新会话" to MaterialTheme.colorScheme.onSurfaceVariant
+        EffectiveKind.RestartEngine -> "需重启引擎" to MaterialTheme.colorScheme.error
         EffectiveKind.RestartApp -> "需重启" to MaterialTheme.colorScheme.error
     }
     Surface(
@@ -260,4 +261,25 @@ fun PiEffectiveBadge(kind: EffectiveKind, modifier: Modifier = Modifier) {
     }
 }
 
-enum class EffectiveKind { Immediate, Reload, NewSession, RestartApp }
+/**
+ * When a written value starts to apply.
+ *
+ * `Reload` and `RestartEngine` are **different** things on purpose:
+ *
+ *  - [Reload] — the app (or pi's own resource loader) re-reads the value/file
+ *    while the engine keeps running: the terminal key bar and the shortcuts are
+ *    applied by this app the moment they are written, and pi re-reads a theme
+ *    selection when its own UI asks for it.
+ *  - [RestartEngine] — the value is read **only when `pi --mode rpc` starts**:
+ *    pi's process configuration (`--offline`, `--system-prompt`,
+ *    `PI_CACHE_RETENTION`) and the resources its loader caches at startup.
+ *    Nothing short of a new process applies it, so the badge must not say
+ *    "重载" — a word that promises the change is one tap away.
+ *  - [RestartApp] — read while *this* app starts (the foreground-service switch).
+ *  - [Immediate] — nothing to wait for.
+ *
+ * pi itself has only two of these timings in its TUI (a settings write is either
+ * live or needs `/reload`); the split exists because the app must not promise
+ * pi's `/reload` over RPC, where it does not exist.
+ */
+enum class EffectiveKind { Immediate, Reload, RestartEngine, NewSession, RestartApp }

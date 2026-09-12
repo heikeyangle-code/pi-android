@@ -178,6 +178,65 @@ jobs:
           path: app/build/outputs/apk/release/*.apk
           if-no-files-found: error
 
+      # The licence assets are *generated* from the pinned artifacts, which makes
+      # them the one app-owned file set that can go stale without anything failing.
+      # Bump a URL or a version in runtime.lock.json and the APK still builds, still
+      # installs, and the notices quietly describe the previous release. Nothing on
+      # a device can notice — a user cannot tell that the git version printed in the
+      # notices is not the git in the payload — and no reviewer diffs 130 generated
+      # files by hand. So the invariant is asserted here, where the artifacts are:
+      # regenerate from the lockfile and require the committed assets to be exactly
+      # the result. "Remember to re-run the generator" is the same arrangement as the
+      # hand-written runtime revision this repository already replaced, for the same
+      # reason: a step a person must remember is a step that eventually is not done.
+      #
+      # The coverage check is not redundant with it, because regeneration cannot see
+      # the bug class that already happened once. For three Ubuntu packages
+      # `usr/share/doc/<pkg>` is a *symlink* to another package, so a generator that
+      # only looked for `usr/share/doc/<pkg>/copyright` reported them as shipping no
+      # licence text when the text was one symlink away — and re-running that
+      # generator reproduces the same wrong answer. The property is therefore checked
+      # against the output instead: every package the payload installs has a notice.
+      - name: Verify the licence assets match the pinned runtime
+        run: |
+          set -euo pipefail
+          python3 tools/build-license-assets.py --fetch-missing
+
+          # Modified, added or deleted: all three are drift, and `git diff` alone
+          # would miss a newly generated file because it is still untracked.
+          drift="$(git status --porcelain -- app/src/main/assets/licenses)"
+          if [ -n "$drift" ]; then
+            echo "$drift"
+            echo "::error::app/src/main/assets/licenses/** is not what tools/build-license-assets.py produces from the pinned artifacts; a licence notice is describing a different release than the app ships"
+            exit 1
+          fi
+          echo "licence assets are exactly what the pinned artifacts produce"
+
+          python3 - <<'PY'
+          import sys
+
+          assets = "app/src/main/assets/licenses"
+          manifest = set()
+          for line in open(f"{assets}/manifest.txt", encoding="utf-8"):
+              line = line.rstrip("\n")
+              if line and not line.startswith("#"):
+                  manifest.add(line.split("\t")[0])
+
+          packages = [
+              line.split("\t")[0]
+              for line in open(f"{assets}/ubuntu-packages.txt", encoding="utf-8")
+              if line.strip()
+          ]
+          missing = [p for p in packages if f"ubuntu-copyright-{p}.txt" not in manifest]
+          if missing:
+              print(
+                  f"::error::{len(missing)} of {len(packages)} packages installed by the "
+                  f"runtime payload have no licence notice: {', '.join(missing)}"
+              )
+              sys.exit(1)
+          print(f"licence coverage: {len(packages)}/{len(packages)} payload packages have their own notice")
+          PY
+
   # `app/src/test/**` was previously compiled and run by nothing at all: the
   # `protocol` job runs `:rpc:test` only, `assembleRelease` does not compile the
   # unit-test source set, and `tools/typecheck.sh` compiles `app/src/main/kotlin`

@@ -39,7 +39,7 @@ import kotlinx.coroutines.withTimeout
  * keeps running when the user leaves the screen
  * (docs/pi-android-app-design.md §7.1).
  *
- * Four properties this class is responsible for:
+ * Five properties this class is responsible for:
  *
  *  1. **Framing.** stdout is decoded and split by [JsonlFramer], never by a line
  *     reader — pi's records may legally contain U+2028/U+2029.
@@ -55,6 +55,12 @@ import kotlinx.coroutines.withTimeout
  *     UI the rows that actually changed ([TranscriptPublication]). Rebuilding the
  *     whole row list per event is what made a long streaming session progressively
  *     laggier (docs/rendering-review.md F7 / RR-P7).
+ *  5. **Ownership.** the reducer and the published snapshot have one owner at a
+ *     time, guarded by [transcriptLock]: the reader thread folds events under it
+ *     ([handle]), the app's mutations do too ([prompt], [echoUserPrompt]), and
+ *     [seedHistory] swaps in a reducer built off the frame thread. Nothing outside
+ *     that lock touches the reducer's mutable row list — including the UI, which
+ *     reads [TranscriptPublication.rows], a snapshot.
  *
  * This class knows nothing about Android or proot: it is handed already-built
  * argv/env, which is what makes it testable against a plain `node` process.
@@ -62,8 +68,75 @@ import kotlinx.coroutines.withTimeout
 class PiEngineSession(
     private val process: Process,
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
-    val transcript: TranscriptReducer = TranscriptReducer(),
+    initialTranscript: TranscriptReducer = TranscriptReducer(),
 ) {
+
+    /**
+     * The one lock that owns the reducer **and** the published snapshot.
+     *
+     * Why it exists: this class folds events into the reducer on the reader thread
+     * ([handle], inside [readLoop]'s IO context) while the app calls [prompt],
+     * [echoUserPrompt] and [seedHistory] from its own threads — the ViewModel's are
+     * `Dispatchers.Main.immediate`. `TranscriptReducer` is a plain state machine
+     * over an unsynchronized `MutableList` with no lock of its own, and neither
+     * [publishedRows] nor [publish]'s read-modify-write of [revision] was atomic,
+     * so two writers could interleave a reset with an append, or two publications
+     * could read the same previous snapshot and emit overlapping indices.
+     * Everything that touches the reducer or the publication now happens under this
+     * monitor.
+     *
+     * A monitor rather than a coroutine mutex on purpose: [handle] is not a suspend
+     * function and must not become one just to take a lock, and every critical
+     * section here is short (one event fold plus one identity scan) with no
+     * suspension point inside. [publish] is the longest — O(rows) — and it never
+     * blocks on I/O.
+     */
+    private val transcriptLock = Any()
+
+    /**
+     * The reducer currently serving this session.
+     *
+     * Not a `val` any more: [seedHistory] builds a fresh reducer off the frame
+     * thread and swaps it in under [transcriptLock], which keeps the expensive
+     * projection (a `TranscriptItem` per block, day separators, `summarizeToolArgs`,
+     * `parseUnifiedDiff`) out of the frame thread without making the reducer itself
+     * concurrent. The new instance is built on one thread and seen by the reader
+     * thread only after the swap, so no lock is needed *while* it is being built.
+     *
+     * `@Volatile` so another thread sees the swap. The reducer's own fields are
+     * **not** volatile, so this reference suits reads that tolerate being one
+     * publication behind; a read that must be consistent should use
+     * [TranscriptPublication.rows] from [publication].
+     */
+    @Volatile
+    private var reducer: TranscriptReducer = initialTranscript
+
+    /**
+     * Handed out per [seedHistory] call, in call order, and the highest value that
+     * has already taken over (the latter guarded by [transcriptLock]).
+     *
+     * Making the projection asynchronous introduced an ordering hazard that the
+     * synchronous seed did not have: two replays can now finish their projections
+     * out of order (a 2000-entry session projects slower than an empty one), so a
+     * replay issued *earlier* could take over *after* a later one and leave the
+     * previous session's rows on screen while pi is already in the new session.
+     * pi answers `get_entries` in request order, and [seedHistory] is called right
+     * after its own response, so call order **is** response order: adopting only a
+     * strictly newer attempt keeps the take-over monotone.
+     */
+    private val seedAttempts = AtomicLong(0)
+    private var adoptedSeedAttempt = 0L
+
+    /**
+     * The reducer currently serving this session. **Reads only.**
+     *
+     * Mutating through this reference is exactly what [transcriptLock] exists to
+     * stop: a direct `onEvent` / `onUserPrompt` / `seedFromHistory` call would race
+     * the reader thread, and the change would never be published. The publishing
+     * paths are [handle] (reader thread), [prompt], [echoUserPrompt] and
+     * [seedHistory].
+     */
+    val transcript: TranscriptReducer get() = reducer
 
     private val ids = AtomicLong(0)
     private val pending = ConcurrentHashMap<String, CompletableDeferred<PiEvent.Response>>()
@@ -264,16 +337,31 @@ class PiEngineSession(
             is PiEvent.AgentSettled, is PiEvent.AgentEnd -> _state.value = EngineState.Ready
             else -> Unit
         }
-        // The transcript is projected here, exactly once, for every event —
-        // including `entry_appended`, whose payload really is on the wire
-        // (`agent-session.ts:2620` emits `{type:"entry_appended", entry}`, which
-        // `modes/json-event.ts` passes through and `TranscriptReducer.onEvent`
-        // projects in its `PiEvent.EntryAppended` arm). A caller must NOT call
-        // `transcript.onEntry(entry)` again: it would double the row. Reads of the
-        // reducer from outside this class are fine; *writes* are not — they must go
-        // through [publish] (via [prompt], [echoUserPrompt], [seedHistory]) or the
-        // change index and the row diff are never published (fidelity/rendering
-        // review F5).
+        // The reader thread's critical section: [seedHistory] may be swapping the
+        // reducer (and the published snapshot) from the caller's thread while this
+        // event arrives, and [publish] is a read-modify-write over [publishedRows]
+        // and [revision].
+        synchronized(transcriptLock) { foldEvent(event) }
+        // Outside the lock: `tryEmit` touches no reducer state, and keeping it out
+        // shortens the section the reader thread holds.
+        _events.tryEmit(event)
+    }
+
+    /**
+     * Project one event into the reducer and publish it. The caller holds
+     * [transcriptLock].
+     *
+     * The transcript is projected here, exactly once, for every event — including
+     * `entry_appended`, whose payload really is on the wire (`agent-session.ts:2620`
+     * emits `{type:"entry_appended", entry}`, which `modes/json-event.ts` passes
+     * through and `TranscriptReducer.onEvent` projects in its
+     * `PiEvent.EntryAppended` arm). A caller must NOT call `transcript.onEntry(entry)`
+     * again: it would double the row. Reads of the reducer from outside this class
+     * are fine; *writes* are not — every one has to go through [publish] (this
+     * method, [prompt], [echoUserPrompt] and [seedHistory]), or the change index and
+     * the row diff are never published (fidelity/rendering review F5).
+     */
+    private fun foldEvent(event: PiEvent) {
         val change: TranscriptChange = transcript.onEvent(event)
         // A `response` is pi answering a command; it never projects a row
         // (`TranscriptReducer.onEvent`'s `else -> None`), so it must not wake the
@@ -303,7 +391,6 @@ class PiEngineSession(
         if (!throttledToolUpdate && (change != TranscriptChange.None || event !is PiEvent.Response)) {
             publish(change)
         }
-        _events.tryEmit(event)
     }
 
     // ------------------------------------------------------------- publication
@@ -315,9 +402,14 @@ class PiEngineSession(
      * Why the engine diffs rows itself instead of trusting `change`: see
      * [TranscriptPublication]. Every publication costs one identity scan of the row
      * list, and only one that really found a changed row pays for a reference copy
-     * — so a publication that carries nothing new allocates nothing. Because the
-     * snapshot is built on the reader thread, the UI also stops reading the
-     * reducer's mutable list across threads.
+     * — so a publication that carries nothing new allocates nothing. The snapshot is
+     * built under [transcriptLock] and handed out as an immutable list, so the UI
+     * never reads the reducer's mutable row list across threads.
+     *
+     * **The caller must hold [transcriptLock].** This reads [publishedRows] and
+     * [revision] and writes both, so two concurrent calls could publish two
+     * revisions with the same number, or diff against a snapshot that no longer
+     * belongs to the revision they report.
      *
      * Ordering is load-bearing: [publication] is written before [revision], so a
      * collector of either sees a revision that [publication] already describes.
@@ -456,7 +548,9 @@ class PiEngineSession(
      * wants the UI to show it has to rebuild the list by hand.
      */
     fun echoUserPrompt(text: String, images: List<PiImage> = emptyList()) {
-        publish(transcript.onUserPrompt(text, images))
+        synchronized(transcriptLock) {
+            publish(transcript.onUserPrompt(text, images))
+        }
     }
 
     /**
@@ -467,9 +561,71 @@ class PiEngineSession(
      * appended row — so the publication is marked `replaced` and the caller must
      * adopt [TranscriptPublication.rows] wholesale instead of inserting at that
      * index.
+     *
+     * ## Why this is suspend, and why it builds a second reducer
+     *
+     * The projection is the expensive half of a replay: one row per content block,
+     * plus day separators, `summarizeToolArgs` and `parseUnifiedDiff`. The frame
+     * thread used to run it inside the caller's coroutine (`Main.immediate`), which
+     * is what froze the UI when a long session was opened — the JSON parse was
+     * already off the frame thread (the `PiEvents.parse` in [readLoop]), so moving
+     * that was moving the cheap half.
+     *
+     * So the projection runs on [Dispatchers.Default] against a **fresh**
+     * [TranscriptReducer], which needs no synchronization at all: it is built on one
+     * thread and no other thread can see it until [adoptSeededTranscript] swaps it
+     * in. The old design mutated the live reducer from the caller's thread while the
+     * reader thread kept folding events into the same instance.
+     *
+     * ## The window this leaves
+     *
+     * Events pi sends between the `get_entries` response and the take-over are folded
+     * into the *previous* reducer and are then dropped with it. The window is the
+     * projection itself (41.84 ms for a 2000-entry session on a desktop JVM, not
+     * measured on a phone) and the callers are session switches, forks, clones and
+     * attach — points where pi is idle. Before this change the same window was not a
+     * dropped update but a data race on the reducer's list, so this is strictly
+     * better, not a regression; a lossless version would have to queue the events
+     * that arrive during the projection and fold them in after the swap.
      */
-    fun seedHistory(entries: List<JsonObject>) {
-        publish(transcript.seedFromHistory(entries), replaced = true)
+    suspend fun seedHistory(entries: List<JsonObject>) {
+        val attempt = seedAttempts.incrementAndGet()
+        val seeded = withContext(Dispatchers.Default) {
+            TranscriptReducer().also { it.seedFromHistory(entries) }
+        }
+        adoptSeededTranscript(seeded, attempt)
+    }
+
+    /**
+     * Take over [seeded] as this session's reducer, and publish the whole new row
+     * list as a replacement.
+     *
+     * The swap and the publication are one critical section: a reader-thread event
+     * folded between the two would otherwise be published against a snapshot that
+     * belongs to the session we are replacing. Two consequences worth knowing:
+     *
+     *  - [TranscriptChange.None] is published on purpose — the reducer's own answer
+     *    for the seed (`Appended(lastIndex)`) describes one row of a list that was
+     *    rebuilt wholesale, so `replaced = true` is the honest description and a
+     *    consumer must adopt [TranscriptPublication.rows]. Consumers already must
+     *    not branch on the change kind;
+     *  - the new reducer starts with `streaming = false` (`TranscriptReducer.reset`),
+     *    exactly as the old in-place seed did, so a take-over during a live turn
+     *    would report the turn as finished. No caller does that today: every
+     *    [seedHistory] call follows `switch_session` / `new_session` / `fork` /
+     *    `clone` or attach, where pi is idle.
+     *
+     * An [attempt] that is not newer than the last one adopted is dropped: see
+     * [seedAttempts]. Nothing is published for it, so the newest session stays on
+     * screen.
+     */
+    private fun adoptSeededTranscript(seeded: TranscriptReducer, attempt: Long) {
+        synchronized(transcriptLock) {
+            if (attempt <= adoptedSeedAttempt) return
+            adoptedSeedAttempt = attempt
+            reducer = seeded
+            publish(TranscriptChange.None, replaced = true)
+        }
     }
 
     /**

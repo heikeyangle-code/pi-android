@@ -1496,11 +1496,11 @@ object PiSettingsCatalog {
         PiSetting(
             key = "app.runtime.piVersion",
             title = "pi 版本",
-            description = "当前内置的 pi 版本。",
+            description = "当前内置的 pi 版本。运行时尚未解包或读不到时会写明原因。",
             kind = PiRowKind.Text,
             group = G_RUNTIME,
             section = "版本",
-            defaultValue = str("未安装"),
+            defaultValue = str("未读取"),
             readOnly = true,
             aliases = listOf("version", "update"),
         ),
@@ -1520,24 +1520,89 @@ object PiSettingsCatalog {
         PiSetting(
             key = "app.runtime.nodeVersion",
             title = "Node 版本",
-            description = "内置运行时里的 Node 版本。",
+            description = "内置运行时里的 Node 版本。运行时尚未解包或读不到时会写明原因。",
             kind = PiRowKind.Text,
             group = G_RUNTIME,
             section = "运行时",
-            defaultValue = str("未安装"),
+            defaultValue = str("未读取"),
             readOnly = true,
             aliases = listOf("node", "version"),
         ),
         PiSetting(
             key = "app.runtime.rootfsUsage",
             title = "运行时占用",
-            description = "Linux 运行时与包缓存的磁盘占用。",
+            description = "Linux 运行时与包缓存的磁盘占用。运行时尚未解包或读不到时会写明原因。",
             kind = PiRowKind.Text,
             group = G_RUNTIME,
             section = "运行时",
-            defaultValue = str("未知"),
+            defaultValue = str("未读取"),
             readOnly = true,
             aliases = listOf("storage", "disk"),
+        ),
+
+        // ------------------------------------------------------------------
+        // 进程开关（pi 的启动参数 / 环境变量）
+        //
+        // 这三项都是 pi 的**进程级**配置，pi 自己的 settings 文档里没有对应的键
+        // （`core/settings-manager.ts:106-158` 的 `Settings` 里没有 offline /
+        // systemPrompt / cacheRetention），所以键是我们自己的（`app.` 前缀），
+        // 值由 App 组进 `PiLaunchOptions`（`rpc/PiLaunchOptions.kt`）在启动
+        // `pi --mode rpc` 时传下去 —— 这与 pi 的 CLI 参数一一对应：
+        //   `--offline`（`cli/args.ts:318`，等价 `PI_OFFLINE=1`，`:433`）
+        //   `--system-prompt` / `--append-system-prompt`（`:110` / `:112`）
+        //   `PI_CACHE_RETENTION=long`（`packages/ai/src/api/anthropic-messages.ts:57`）
+        // 因为进程启动后这些值不再变，`effective` 用 `Reload`（界面标签「需重载」），
+        // 每一行的说明里写明需要重启引擎、以及重启的代价。
+        // ------------------------------------------------------------------
+        PiSetting(
+            key = "app.runtime.offline",
+            title = "离线模式",
+            description = "关闭 pi 启动时的联网动作（更新检查、包更新、安装遥测）。" +
+                "开启后模型调用照常联网。改动在重启引擎后生效。",
+            kind = PiRowKind.Switch,
+            group = G_RUNTIME,
+            section = "进程",
+            defaultValue = bool(false),
+            effective = EffectiveKind.RestartEngine,
+            aliases = listOf("offline", "network"),
+        ),
+        PiSetting(
+            key = "app.runtime.systemPrompt",
+            title = "自定义系统提示",
+            description = "替换 pi 自带的系统提示词；留空用 pi 自己的。改动在重启引擎后生效。",
+            kind = PiRowKind.Text,
+            group = G_RUNTIME,
+            section = "进程",
+            defaultValue = str(""),
+            effective = EffectiveKind.RestartEngine,
+            aliases = listOf("system", "prompt"),
+        ),
+        PiSetting(
+            key = "app.runtime.cacheRetention",
+            title = "缓存保留策略",
+            description = "长保留向厂商申请更长的提示缓存（支持的厂商才有差别）。" +
+                "改动在重启引擎后生效。",
+            kind = PiRowKind.Value,
+            group = G_RUNTIME,
+            section = "进程",
+            defaultValue = str("short"),
+            effective = EffectiveKind.RestartEngine,
+            options = choices(
+                "short" to "默认",
+                "long" to "长保留",
+            ),
+            aliases = listOf("cache", "retention"),
+        ),
+        PiSetting(
+            key = "app.runtime.restartEngine",
+            title = "重启引擎",
+            description = "让上面的进程开关生效。重启会终止正在进行的回合" +
+                "（模型调用、工具调用、正在跑的命令都不会恢复），已写入磁盘的会话不会丢失。",
+            kind = PiRowKind.Action,
+            group = G_RUNTIME,
+            section = "进程",
+            dangerous = true,
+            aliases = listOf("restart", "reload"),
         ),
         // `app.runtime.cleanNpmCache` was removed rather than wired: pi has no
         // cache-clearing command (nothing in `cli.ts` or `package-manager-cli.ts`
@@ -1560,16 +1625,13 @@ object PiSettingsCatalog {
         PiSetting(
             key = "app.runtime.wakeLock",
             title = "唤醒锁状态",
-            description = "当前是否持有唤醒锁，以及前台服务是否在运行。",
-            kind = PiRowKind.Value,
+            description = "唤醒锁由引擎的前台服务持有：服务运行时获取，服务停止时释放。" +
+                "这里显示那个前台服务当前是否在运行。",
+            kind = PiRowKind.Text,
             group = G_RUNTIME,
             section = "后台",
-            defaultValue = str("unknown"),
-            options = choices(
-                "unknown" to "未知",
-                "held" to "持有中",
-                "released" to "未持有",
-            ),
+            defaultValue = str("未读取"),
+            readOnly = true,
             aliases = listOf("wakelock"),
         ),
         // `app.runtime.phantomKillerGuide` was removed rather than wired. It is an

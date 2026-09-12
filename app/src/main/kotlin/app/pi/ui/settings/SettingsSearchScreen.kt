@@ -58,6 +58,12 @@ fun SettingsSearchScreen(
     onBack: () -> Unit,
     onOpenSetting: (String) -> Unit,
     initialQuery: String = "",
+    /**
+     * Values that do not live in the store (the 运行时 facts), by key. Passed
+     * through so a search hit shows the same text as the row does — see
+     * [SettingsGroupScreen.valueOverrides].
+     */
+    valueOverrides: Map<String, String> = emptyMap(),
 ) {
     var query by remember(initialQuery) { mutableStateOf(initialQuery) }
     val hits = remember(query) { PiSettingsCatalog.search(query) }
@@ -124,7 +130,8 @@ fun SettingsSearchScreen(
                 items(hits) { hit ->
                     SearchResultRow(
                         hit = hit,
-                        valueText = hit.setting.display(hit.setting.current(store)),
+                        valueText = valueOverrides[hit.setting.key]
+                            ?: hit.setting.display(hit.setting.current(store)),
                         onClick = { onOpenSetting(hit.setting.key) },
                     )
                 }

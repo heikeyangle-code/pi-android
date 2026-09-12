@@ -63,7 +63,6 @@ import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -116,7 +115,6 @@ import app.pi.ui.theme.PiShapes
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 
 /**
  * The transcript — the app's main stage (destination 2).
@@ -206,7 +204,6 @@ private fun ChatBody(
     // pi's `tui.altScreen.previousPrompt` / `nextPrompt`
     // (`keybindings.md:112`): jump between the messages the *user* wrote. On a
     // phone there is no keybinding for it, so it lives in the overflow menu.
-    val scope = rememberCoroutineScope()
 
     // Image attachments. pi's `prompt`/`steer`/`follow_up` all carry `images`
     // (`rpc-types.ts:22-24`), and the wire shape is inline base64 + MIME
@@ -280,6 +277,40 @@ private fun ChatBody(
             state.transcript.filterNot { it is DateSeparator }
         }
     }
+    // F34 (`docs/rendering-review.md`) / spec §4.5: a long session opens on its last
+    // [TRANSCRIPT_WINDOW_STEP] rows and grows that window upwards in the same steps.
+    // This is a **rendering** window only — the reducer keeps every row, which is the
+    // whole reason "load earlier" can be local. pi cannot answer the question this
+    // window asks: `get_entries` is documented with a forward-only `since` cursor
+    // (`packages/coding-agent/src/modes/rpc/rpc-types.ts:65`,
+    // `modes/rpc/rpc-mode.ts:638-648`), so no command returns the *earlier* half of a
+    // session, and inventing one would be begging pi for a protocol it does not have.
+    // (The spec's parenthetical "`get_entries` 天然支持增量" is only true forwards.)
+    //
+    // The window belongs to **one opening of one session**, which is why its
+    // `rememberSaveable` input is the session's identity:
+    //
+    //  - switching, forking, cloning or starting a session rebinds in place and the
+    //    ViewModel re-reads `get_state` (`PiSessionViewModel.afterSessionReplaced`), so
+    //    `sessionFile`/`sessionId` change — a changed input discards the saved value and
+    //    re-runs the initialiser, and session B opens on its own last 50 rows instead of
+    //    inheriting session A's expanded window. Without this, "打开时先渲染最后 50 条"
+    //    (spec §4.5) would be true only for the first session of the process.
+    //  - inside one opening the key is **constant**: `refreshState` runs on attach and
+    //    after every `agent_settled`, but it writes the same `sessionId`/`sessionFile`
+    //    those calls already returned, and pi answers `get_state` with an id for an
+    //    in-memory session too — so there is no null-then-id transition to reset a
+    //    window the user has grown. Even so, only growth would be lost, never rows.
+    //  - a configuration change (rotation) keeps the same key, so the window the user
+    //    built up is *restored* rather than reset — that is what `rememberSaveable`
+    //    rather than plain `remember` buys here.
+    val sessionKey = state.meta.sessionFile ?: state.meta.sessionId
+    var renderWindow by rememberSaveable(sessionKey) { mutableStateOf(TRANSCRIPT_WINDOW_STEP) }
+    val renderedItems = remember(visibleItems, renderWindow) { visibleItems.takeLast(renderWindow) }
+    val hiddenCount = visibleItems.size - renderedItems.size
+    // While anything is hidden the loading row is item 0, so a full-list index is a
+    // rendered index plus `hiddenCount` plus that one row.
+    val headerRows = if (hiddenCount > 0) 1 else 0
     val searchMatches = remember(visibleItems, searchQuery, prefs.hideThinkingBlock) {
         if (searchQuery.isBlank()) {
             emptyList()
@@ -297,8 +328,26 @@ private fun ChatBody(
     // pi's `tui.altScreen.previousPrompt` / `nextPrompt` (`keybindings.md:112`):
     // jump between the messages the *user* wrote. Computed over the same list the
     // LazyColumn renders, so a hidden day separator cannot shift the target row.
-    val userRowIndices = remember(visibleItems) {
+    //
+    // F34: derived **on demand** rather than per composition. It is an O(n) scan of
+    // the whole session and it is read only when one of the two overflow entries is
+    // tapped, so deriving it here meant paying that scan on every streamed token.
+    // The result is unchanged: it is still the full list that is scanned, which also
+    // keeps the jumps working across rows the window has not rendered yet.
+    fun userRowIndices(): List<Int> =
         visibleItems.mapIndexedNotNull { index, item -> if (item is UserMessage) index else null }
+
+    // F34: a jump target may sit in the part of the session the window has not
+    // rendered, and `LazyListState` cannot be asked for an index the current item list
+    // does not have. So a jump is two-phased: grow the window until the target is the
+    // *first* rendered row, then scroll from an effect that runs once that list
+    // exists. `hiddenCount` then equals the target's full index, which is why the
+    // second phase can compute its index from state rather than from a captured one.
+    var pendingJump by remember { mutableStateOf<Int?>(null) }
+    fun reveal(row: Int) {
+        val needed = visibleItems.size - row
+        if (needed > renderWindow) renderWindow = needed
+        pendingJump = row
     }
 
     // Follow-the-tail state. The spec is explicit (§4.5): follow the newest block
@@ -318,13 +367,34 @@ private fun ChatBody(
     // Only ever unlocks: scrolling back down does not silently re-arm, because the
     // user asked to stop following. The button below re-arms it explicitly.
     LaunchedEffect(atBottom) { if (!atBottom) following = false }
-    LaunchedEffect(state.revision, following, visibleItems.size) {
+    LaunchedEffect(state.revision, following, renderedItems.size, headerRows) {
         if (!following) return@LaunchedEffect
-        val last = visibleItems.size - 1
-        // Non-suspending while streaming: an animation per token is exactly the
-        // stutter F4 describes, and a jump is what "follow" means here.
-        if (last >= 0) {
+        // F34: the tail of the rendered window rather than of the whole session. The
+        // window always ends on the newest row, so this is the same row as before —
+        // and the +`headerRows` accounts for the loading row in front of it.
+        val last = renderedItems.size - 1 + headerRows
+        if (last >= headerRows) {
+            // Non-suspending while streaming: an animation per token is exactly the
+            // stutter F4 describes, and a jump is what "follow" means here.
             if (state.streaming) listState.scrollToItem(last) else listState.animateScrollToItem(last)
+        }
+    }
+    // Spec §4.5: "向上滚动时分批加载更早的 entry". Reaching the top grows the window by
+    // one step. The `earlierArmed` guard is what keeps that from looping: while the
+    // user stays at the top the flag is cleared by the load itself, and it is only
+    // re-armed once they scroll away — after a prepend, `LazyColumn` keeps the row
+    // they were looking at anchored by key, so "still at the top" means the same
+    // batch would otherwise be requested again on the next frame.
+    val atTop by remember(listState) {
+        derivedStateOf { listState.firstVisibleItemIndex == 0 }
+    }
+    var earlierArmed by rememberSaveable(sessionKey) { mutableStateOf(false) }
+    LaunchedEffect(atTop, hiddenCount) {
+        if (!atTop) {
+            earlierArmed = true
+        } else if (earlierArmed && hiddenCount > 0) {
+            earlierArmed = false
+            renderWindow += TRANSCRIPT_WINDOW_STEP
         }
     }
     LaunchedEffect(searchMatches, searchCursor) {
@@ -333,7 +403,15 @@ private fun ChatBody(
             // Jumping to a match is navigation, so following stops until the user
             // asks for the newest block again.
             following = false
+            reveal(index)
+        }
+    }
+    LaunchedEffect(pendingJump, renderedItems.size, hiddenCount, headerRows) {
+        val row = pendingJump ?: return@LaunchedEffect
+        val index = row - hiddenCount + headerRows
+        if (renderedItems.isNotEmpty() && index in 0 until renderedItems.size + headerRows) {
             listState.animateScrollToItem(index)
+            pendingJump = null
         }
     }
 
@@ -505,16 +583,21 @@ private fun ChatBody(
                         overflow = false
                     }
                     OverflowItem("跳到上一条提问") {
-                        userRowIndices.lastOrNull { it < listState.firstVisibleItemIndex }?.let { row ->
+                        // F34: the first visible row as a *full-list* index — the
+                        // loading row does not exist in `visibleItems`, and the
+                        // hidden prefix does not exist in the rendered list.
+                        val firstFull = listState.firstVisibleItemIndex - headerRows + hiddenCount
+                        userRowIndices().lastOrNull { it < firstFull }?.let { row ->
                             following = false
-                            scope.launch { listState.animateScrollToItem(row) }
+                            reveal(row)
                         }
                         overflow = false
                     }
                     OverflowItem("跳到下一条提问") {
-                        userRowIndices.firstOrNull { it > listState.firstVisibleItemIndex }?.let { row ->
+                        val firstFull = listState.firstVisibleItemIndex - headerRows + hiddenCount
+                        userRowIndices().firstOrNull { it > firstFull }?.let { row ->
                             following = false
-                            scope.launch { listState.animateScrollToItem(row) }
+                            reveal(row)
                         }
                         overflow = false
                     }
@@ -609,6 +692,36 @@ private fun ChatBody(
                 contentPadding = PaddingValues(vertical = PiSpacing.screen, horizontal = horizontal),
                 verticalArrangement = Arrangement.spacedBy(blockSpacing),
             ) {
+                // Spec §4.5's "顶部显示加载指示". There is deliberately no spinner: the
+                // earlier rows are already in memory (the reducer never dropped them),
+                // so between the tap and the rows there is nothing but a slice, and a
+                // spinner would be animating nothing. The row states what it does and
+                // how much is left, and is itself the tap target as well as the
+                // scroll-to-top trigger above.
+                if (hiddenCount > 0) {
+                    item(key = "transcript-earlier", contentType = "transcript-earlier") {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { renderWindow += TRANSCRIPT_WINDOW_STEP }
+                                .padding(vertical = 8.dp),
+                            horizontalArrangement = Arrangement.Center,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Icon(
+                                Icons.Filled.KeyboardArrowUp,
+                                contentDescription = null,
+                                tint = PiTheme.palette.muted,
+                            )
+                            Spacer(Modifier.width(6.dp))
+                            Text(
+                                text = "加载更早的 $hiddenCount 条",
+                                style = PiTheme.text.meta,
+                                color = PiTheme.palette.muted,
+                            )
+                        }
+                    }
+                }
                 // Keyed by the reducer's stable per-block key, which is what lets
                 // Compose animate the row that changed while streaming instead of
                 // recomposing the list.
@@ -620,10 +733,15 @@ private fun ChatBody(
                 // exactly the granularity the slot table reuses on, so the class is
                 // the content type — no new taxonomy needed.
                 itemsIndexed(
-                    visibleItems,
+                    renderedItems,
                     key = { _, item -> item.key },
                     contentType = { _, item -> item::class },
-                ) { index, item ->
+                ) { sliceIndex, item ->
+                    // F34: the search highlights and the prompt jumps speak full-list
+                    // indices, and both the window prefix and the loading row sit in
+                    // front of this item — translate once, here, so everything below
+                    // keeps using `index` as before.
+                    val index = sliceIndex + hiddenCount
                     val isMatch = searchMatches.contains(index)
                     val isCurrentMatch = isMatch && searchMatches.getOrNull(searchCursor) == index
                     val rowModifier = when {
@@ -1279,6 +1397,18 @@ private fun bashModeOf(draft: String): Boolean = draft.trimStart().startsWith("!
  * No measured latency is claimed for that guest process - there is no device here.
  */
 private const val MENTION_DEBOUNCE_MS: Long = 150L
+
+/**
+ * F34 (`docs/rendering-review.md`) / spec §4.5: how many transcript rows are rendered
+ * at once, and how many more each "load earlier" step (or a scroll to the top) reveals.
+ * The spec's number is 50 for the first paint; the same step is used for the batches,
+ * so the window grows in the units the spec describes.
+ *
+ * This is a *rendering* bound, not a data bound: the reducer keeps every row, which is
+ * what makes the earlier batches instant and keeps search, the prompt jumps and the
+ * reducer's own replay independent of how much is on screen.
+ */
+private const val TRANSCRIPT_WINDOW_STEP = 50
 
 @Composable
 private fun KeyHint(label: String, onClick: () -> Unit) {

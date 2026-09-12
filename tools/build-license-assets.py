@@ -63,6 +63,61 @@ NPM_LICENCE_FILES = [
     ("BlueOak-1.0.0.txt", "lru-cache", "11.4.0", "LICENSE.md"),
 ]
 
+# pi's own licence text, which the published npm tarball **does not contain**: the
+# MIT text lives at the monorepo root and `packages/coding-agent` is published
+# without a copy, so the engine payload carries a `license: MIT` field and no
+# notice — while MIT requires the notice. We therefore ship it ourselves, from the
+# upstream tag matching the engine version. Verified: this URL's bytes are
+# identical to `/root/pi-src/LICENSE` at pi 0.85.1 (sha256 0457f5bcec3b3b21…), so
+# the text is the one we actually distribute.
+PI_LICENCE_URL = "https://raw.githubusercontent.com/earendil-works/pi/v{version}/LICENSE"
+PI_LICENCE_SHA256 = "0457f5bcec3b3b211605dfb5d1a49042fd638f3686a410fe099c24a25af13c48"
+
+# Packages in the engine payload that **declare** a licence but ship **no licence
+# file**. Derived, not guessed: the `pi-engine` step of tools/fetch-runtime.mjs was
+# run in an isolated directory —
+#     npm install --ignore-scripts --omit=dev --omit=optional \
+#       @earendil-works/pi-coding-agent@0.85.1
+# — and npm's own installed list (`node_modules/.package-lock.json`) was audited:
+# 128 packages installed, 115 shipping a licence file, these 13 not. Every one of
+# the 13 still declares a field, so this is "no text", never "no licence"; and for
+# the 115 that do ship one, the text was checked to support the declared id (0
+# mismatches at 0.85.1). Pinned here because the assets must build without npm;
+# re-derive on a version bump (docs/known-gaps.md §L5).
+PI_ENGINE_NO_LICENCE_TEXT = [
+    ("@earendil-works/pi-coding-agent", "0.85.1", "MIT"),
+    ("@earendil-works/chord", "0.85.1", "MIT"),
+    ("@earendil-works/pi-agent-core", "0.85.1", "MIT"),
+    ("@earendil-works/pi-ai", "0.85.1", "MIT"),
+    ("@earendil-works/pi-telemetry", "0.85.1", "MIT"),
+    ("@earendil-works/pi-tui", "0.85.1", "MIT"),
+    ("@nodable/entities", "2.1.0", "MIT"),
+    ("data-uri-to-buffer", "4.0.1", "MIT"),
+    ("standardwebhooks", "1.1.1", "MIT"),
+    ("xml-naming", "0.1.0", "MIT"),
+    ("@aws-sdk/credential-provider-http", "3.972.39", "Apache-2.0"),
+    ("@aws-sdk/credential-provider-login", "3.972.41", "Apache-2.0"),
+    ("@aws-sdk/nested-clients", "3.997.9", "Apache-2.0"),
+]
+
+
+def engine_version() -> str:
+    """The pi version the engine payload is built from.
+
+    Read out of `tools/fetch-runtime.mjs` rather than repeated here, so a version
+    bump has one place to change and this script cannot silently pin a licence from
+    a different release than the engine it describes.
+    """
+    fetch_script = os.path.join(ROOT, "tools", "fetch-runtime.mjs")
+    try:
+        text = open(fetch_script, encoding="utf-8").read()
+    except OSError as error:
+        sys.exit(f"cannot read {fetch_script}: {error}")
+    m = re.search(r'^const PI_VERSION = "([^"]+)";', text, re.M)
+    if not m:
+        sys.exit("PI_VERSION not found in tools/fetch-runtime.mjs; the engine version must be pinned somewhere")
+    return m.group(1)
+
 
 def sha256(path: str) -> str:
     h = hashlib.sha256()
@@ -201,7 +256,7 @@ STATEMENT = """\
 
 需要你知道的两件事
 ------------------
-1. 这些程序都是**未修改的上游发行版**。它们以各自上游发布时的原始字节随 App 分发，
+1. 这些程序都是未修改的上游发行版。它们以各自上游发布时的原始字节随 App 分发，
    我们没有改动过它们的代码，也没有在它们之上做二次开发。
 
 2. 其中的 GPL / LGPL 程序，源代码可以从它们各自的上游发布地址获取，
@@ -323,12 +378,23 @@ def build(lock: dict, fetch_missing: bool, stage: str) -> None:
     status_dir = os.path.join(stage, "status")
     for target in (common, docs, status_dir):
         os.makedirs(target, exist_ok=True)
+    # Ubuntu's base image points three packages' documentation at another package
+    # instead of shipping a second copy: `usr/share/doc/libgcc-s1` and
+    # `.../libstdc++6` are symlinks to `gcc-14-base`, and `.../libncursesw6` is a
+    # symlink to `libtinfo6` (the same deb confirms it — `libncursesw6` has no
+    # copyright of its own and a `-> libtinfo6` doc entry). An earlier version of
+    # this script looked only for `usr/share/doc/<pkg>/copyright`, concluded those
+    # three packages ship no licence text, and was **wrong**: the text is there, one
+    # symlink away. Following the link is what makes all 91 base packages covered.
+    doc_links: dict[str, str] = {}
     with tarfile.open(base, "r:gz") as tar:
         for member in tar.getmembers():
             if member.name.startswith("usr/share/common-licenses/"):
                 tar.extract(member, common, filter="data")
             elif re.match(r"usr/share/doc/[^/]+/copyright$", member.name):
                 tar.extract(member, docs, filter="data")
+            elif re.match(r"^usr/share/doc/[^/]+$", member.name) and member.issym():
+                doc_links[os.path.basename(member.name)] = os.path.basename(member.linkname)
             elif member.name == "var/lib/dpkg/status":
                 tar.extract(member, status_dir, filter="data")
 
@@ -359,19 +425,23 @@ def build(lock: dict, fetch_missing: bool, stage: str) -> None:
         if spec["url"].endswith(".deb") and n not in ("proot", "libtalloc", "libandroidShmem")
     ]
     stanzas: dict[str, str] = {}
-    seen_copyright: dict[str, str] = {}
     ubuntu_rows: list[tuple[str, str, str]] = []
 
-    def add_copyright(pkg: str, version: str, path: str) -> str:
-        """Copy one copyright file, deduplicated by content."""
-        digest = sha256(path)
-        if digest in seen_copyright:
-            return seen_copyright[digest]
+    def add_copyright(pkg: str, version: str, path: str, via: str | None = None) -> None:
+        """Copy one package's copyright file and give it its own manifest row.
+
+        One file per package, not one file per distinct text. Deduplicating the
+        bytes would look tidier, but it makes packages disappear from the list
+        whenever two of them happen to share a copyright — which is exactly how the
+        `libgssapi-krb5-2` / `libk5crypto3` / `libkrb5support0` family and these
+        three symlinked packages went missing the first time. `via` names the
+        package a symlinked doc directory resolves to, so the row can say why the
+        text it opens is not titled after the package the user searched for.
+        """
         name = f"ubuntu-copyright-{pkg}.txt"
         shutil.copyfile(path, os.path.join(OUT, name))
-        seen_copyright[digest] = name
-        manifest.append((name, f"{pkg} {version}", "软件包版权与许可"))
-        return name
+        title = f"{pkg} {version}" + (f"（版权文件由 {via} 提供）" if via else "")
+        manifest.append((name, title, "软件包版权与许可"))
 
     for name in sorted(deb_names):
         deb = artifact(name, lock)
@@ -407,11 +477,18 @@ def build(lock: dict, fetch_missing: bool, stage: str) -> None:
                 pkg = os.path.basename(dirpath)
                 by_name[pkg] = os.path.join(dirpath, fname)
     missing_base = []
+    symlinked: list[str] = []
     for pkg, version in sorted(base_pkgs):
         if pkg in by_name:
             add_copyright(pkg, version, by_name[pkg])
+        elif doc_links.get(pkg) in by_name:
+            target = doc_links[pkg]
+            add_copyright(pkg, version, by_name[target], via=target)
+            symlinked.append(f"{pkg}→{target}")
         else:
             missing_base.append(f"{pkg} {version}")
+    if symlinked:
+        notes.append("base packages covered through a doc symlink: " + ", ".join(symlinked))
     if missing_base:
         notes.append("base packages with no copyright file: " + ", ".join(missing_base))
     lines = [f"{pkg}\t{version}" for pkg, version in sorted(base_pkgs)]
@@ -475,6 +552,62 @@ def build(lock: dict, fetch_missing: bool, stage: str) -> None:
         shutil.copyfile(cached, os.path.join(OUT, out_name))
         manifest.append((out_name, out_name[:-4], "许可证全文"))
 
+    # ------------------------------------- pi's own licence + the packages that lack one
+    # pi is the one component whose licence text we must supply ourselves, because
+    # upstream publishes the package without it (see PI_LICENCE_URL). The gaps file
+    # is the honest record of the packages we redistribute that carry no text: a
+    # licence list that silently omitted them would be worse than no list, because it
+    # would read as complete.
+    version = engine_version()
+    pi_licence = os.path.join(NPM_CACHE, f"pi-LICENSE-{version}.txt")
+    if not os.path.isfile(pi_licence) and fetch_missing:
+        url = PI_LICENCE_URL.format(version=version)
+        try:
+            with urllib.request.urlopen(url, timeout=60) as response:
+                body = response.read()
+        except Exception as error:  # noqa: BLE001 - reported, not raised
+            notes.append(f"pi licence: {url} failed ({error})")
+            body = None
+        if body is not None:
+            digest = hashlib.sha256(body).hexdigest()
+            if digest != PI_LICENCE_SHA256:
+                sys.exit(
+                    f"pi licence text changed at v{version}\n"
+                    f"  pinned  {PI_LICENCE_SHA256}\n"
+                    f"  actual  {digest}\n"
+                    f"  The engine version moved, so the licence text must be re-verified before it\n"
+                    f"  ships: read the new LICENSE, confirm it is still the intended licence, then\n"
+                    f"  update PI_LICENCE_SHA256. A silent change here is the one failure this pin exists\n"
+                    f"  to prevent."
+                )
+            with open(pi_licence, "wb") as fh:
+                fh.write(body)
+    if not os.path.isfile(pi_licence):
+        notes.append("pi licence text not cached; re-run with --fetch-missing")
+    else:
+        shutil.copyfile(pi_licence, os.path.join(OUT, "pi-license.txt"))
+        manifest.append(("pi-license.txt", f"pi 引擎 {version}（MIT）", "许可证全文"))
+
+    gaps = [
+        "未随包提供许可文本的 pi 依赖组件",
+        "=================================",
+        "",
+        "下列组件随 App 分发，且各自声明了许可证，但没有随包提供许可证原文。",
+        "它们使用的标准许可证原文已经收录在本清单里；版权声明以上游发布为准。",
+        "这份文件存在的意义是：不把「没有文本」写成「没有许可证」，也不让清单看起来比实际更完整。",
+        "",
+    ]
+    for pkg, pkg_version, licence in PI_ENGINE_NO_LICENCE_TEXT:
+        gaps.append(f"  {pkg}  {pkg_version}  {licence}")
+    write(os.path.join(OUT, "pi-engine-licence-gaps.txt"), "\n".join(gaps) + "\n")
+    manifest.append(
+        (
+            "pi-engine-licence-gaps.txt",
+            f"未随包提供许可文本的依赖（{len(PI_ENGINE_NO_LICENCE_TEXT)} 个）",
+            "说明",
+        )
+    )
+
     # ------------------------------------------------------------------ prose
     write(os.path.join(OUT, "about.txt"), STATEMENT)
     manifest.insert(0, ("about.txt", "关于这份清单", "说明"))
@@ -494,7 +627,7 @@ def build(lock: dict, fetch_missing: bool, stage: str) -> None:
     )
     print(f"wrote {len(manifest)} entries + manifest to {os.path.relpath(OUT, ROOT)}")
     print(f"  {len(os.listdir(OUT))} files, {total / 1024:.0f} KiB")
-    print(f"  deduplicated {len(seen_copyright)} distinct copyright files")
+    print(f"  {sum(1 for e in manifest if e[2] == '软件包版权与许可')} package copyright files, one per package")
     for note in notes:
         print(f"  note: {note}")
 

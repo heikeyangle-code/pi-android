@@ -23,6 +23,7 @@ import app.pi.rpc.DiffLine
 import app.pi.rpc.DiffLineKind
 import app.pi.rpc.ToolDiff
 import app.pi.ui.theme.PiTheme
+import app.pi.ui.theme.PiSpacing
 
 /**
  * `tool-diff` (docs/pi-android-ui-spec.md §7.4): path plus `+N −N` up top, then
@@ -60,7 +61,7 @@ fun DiffBlock(
                     color = palette.dim,
                     maxLines = 1,
                 )
-                Spacer(Modifier.width(8.dp))
+                Spacer(Modifier.width(PiSpacing.inline))
                 Text(
                     text = item.path.ifEmpty { "未命名文件" },
                     modifier = Modifier.weight(1f),
@@ -69,9 +70,9 @@ fun DiffBlock(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-                Spacer(Modifier.width(8.dp))
+                Spacer(Modifier.width(PiSpacing.inline))
                 Text("+${item.added}", style = PiTheme.text.monoSmall, color = palette.toolDiffAdded)
-                Spacer(Modifier.width(6.dp))
+                Spacer(Modifier.width(PiSpacing.gutter))
                 Text("−${item.removed}", style = PiTheme.text.monoSmall, color = palette.toolDiffRemoved)
             }
 
@@ -111,7 +112,11 @@ fun DiffBlock(
 
                             is DiffRow.Fold -> Text(
                                 text = "… ${row.count} 行未变",
-                                modifier = Modifier.padding(start = 16.dp, top = 2.dp, bottom = 2.dp),
+                                modifier = Modifier.padding(
+                                    start = PiSpacing.screen,
+                                    top = PiSpacing.tiny,
+                                    bottom = PiSpacing.tiny,
+                                ),
                                 style = PiTheme.text.meta,
                                 color = palette.muted,
                             )
@@ -155,24 +160,24 @@ private fun DiffLineRow(line: DiffLine) {
         modifier = Modifier
             .fillMaxWidth()
             .background(markColor.copy(alpha = 0.08f))
-            .padding(vertical = 1.dp),
+            .padding(vertical = PiSpacing.hairline),
         verticalAlignment = Alignment.Top,
     ) {
         Text(
             text = symbol,
-            modifier = Modifier.width(16.dp),
+            modifier = Modifier.width(PiSpacing.symbolColumn),
             style = PiTheme.text.mono,
             color = markColor,
         )
         Text(
             text = lineNumber(line),
-            modifier = Modifier.width(30.dp),
+            modifier = Modifier.width(PiSpacing.lineNumberColumn),
             style = PiTheme.text.monoSmall,
             color = palette.dim,
             maxLines = 1,
             textAlign = TextAlign.End,
         )
-        Spacer(Modifier.width(6.dp))
+        Spacer(Modifier.width(PiSpacing.gutter))
         Text(
             text = line.text.ifEmpty { " " },
             modifier = Modifier.weight(1f),

@@ -90,6 +90,12 @@ fun PiEffectiveDialog(
             "新建会话",
         )
 
+        EffectiveKind.RestartEngine -> Triple(
+            "需要重启引擎",
+            "改动已保存，重启引擎后生效。重启会终止正在进行的回合，已写入磁盘的会话不会丢失。",
+            "重启引擎",
+        )
+
         EffectiveKind.RestartApp -> Triple(
             "需要重启 App",
             "这个值在 App 启动时读取，必须先结束 App 再启动。会话与文件不会受影响。",

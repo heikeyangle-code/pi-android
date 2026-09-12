@@ -355,6 +355,12 @@ class PiEngineHost(private val appContext: Context) {
      * @param allowInterrupt the user has explicitly accepted that the in-flight turn
      *        will be killed. Without it, a running turn is a refusal, never an
      *        interruption.
+     * @param launch the process configuration for the **new** engine. Null replays
+     *        the set the running one was started with, which is what a restart
+     *        asked for by an install wants. A caller that changed one of pi's
+     *        process knobs must pass the new set here: those knobs are read only
+     *        when the process starts ([PiLaunchOptions]), so replaying the old set
+     *        would silently keep the old behaviour and report success.
      */
     suspend fun restart(
         reason: String,
@@ -364,6 +370,9 @@ class PiEngineHost(private val appContext: Context) {
         // here: `restart` compares it before deciding, so a stale constant would
         // refuse a restart that is in fact needed.
         revision: String = RuntimeProvisioner.packagedRevision(appContext.assets),
+        // Before `onStep`, deliberately: callers pass `onStep` as a trailing lambda
+        // and that only binds to the last *parameter*.
+        launch: PiLaunchOptions? = null,
         onStep: (RuntimeProvisioner.Step) -> Unit = {},
     ): Restart = lifecycleLock.withLock {
         val current = _session.value
@@ -403,7 +412,7 @@ class PiEngineHost(private val appContext: Context) {
         // Replay the options the running engine was started with: pi reads its
         // process configuration only at startup, so a restart that dropped them
         // would change the engine behind the user's back.
-        return@withLock when (val boot = bootLocked(revision, workspaceProvider, onStep, launchOptions)) {
+        return@withLock when (val boot = bootLocked(revision, workspaceProvider, onStep, launch ?: launchOptions)) {
             is Boot.Ready -> Restart.Ok(boot.session, replaced = current != null)
             is Boot.Failed -> Restart.Failed(
                 message = "重启失败：${boot.message}",

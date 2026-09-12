@@ -16,6 +16,7 @@ import app.pi.rpc.Notice
 import app.pi.rpc.PiCommands
 import app.pi.rpc.PiEvent
 import app.pi.rpc.PiImage
+import app.pi.rpc.PiLaunchOptions
 import app.pi.rpc.PiResponses
 import app.pi.rpc.QueueMode
 import app.pi.rpc.SessionEntry
@@ -635,6 +636,30 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      */
     private fun guestWorkspace(): String = "/workspace/pi/workspaces/workspace-1"
 
+    /**
+     * pi's **process** configuration, assembled from the three App-side keys of
+     * 设置 → 运行时 → 进程.
+     *
+     * pi has no settings keys for these — its `Settings` interface
+     * (`core/settings-manager.ts:106-158`) carries no `offline`, `systemPrompt`
+     * or `cacheRetention`; they exist only as CLI flags and environment
+     * variables (`--offline` / `PI_OFFLINE=1`, `src/cli/args.ts:318`, `:433`;
+     * `--system-prompt` / `--append-system-prompt`, `:110`, `:112`;
+     * `PI_CACHE_RETENTION=long`, `packages/ai/src/api/anthropic-messages.ts:57`).
+     * So the *keys* are ours and the *values* are pi's, handed over in
+     * [PiLaunchOptions] because that is the only moment pi reads them.
+     *
+     * Read fresh on every boot and every restart: a restart that replayed the
+     * boot-time set would silently ignore a change made since.
+     */
+    private fun launchOptions(): PiLaunchOptions = PiLaunchOptions(
+        offline = settingsStore.readBoolean("app.runtime.offline") ?: false,
+        longCacheRetention = settingsStore.readString("app.runtime.cacheRetention") == "long",
+        // Blank means "use pi's own prompt", not "pass an empty prompt": pi only
+        // takes `--system-prompt` when there is text to pass.
+        systemPrompt = settingsStore.readString("app.runtime.systemPrompt")?.takeIf { it.isNotBlank() },
+    )
+
     fun boot() {
         if (_state.value.boot is Boot.Working) return
         viewModelScope.launch {
@@ -651,7 +676,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             // Activity, and not this ViewModel. `keepAlive = false` is the user
             // asking for exactly that risk.
             if (prefs.keepAlive) startEngineService()
-            val boot = host.boot(workspaceProvider = ::defaultWorkspace) { step ->
+            val boot = host.boot(workspaceProvider = ::defaultWorkspace, launch = launchOptions()) { step ->
                 _state.value = _state.value.copy(boot = Boot.Working(step))
             }
             when (boot) {
@@ -682,6 +707,10 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * before starting the new one (`PiEngineHost.kt:389-393`) and every action
      * here checks `api != null`, so without it the UI would be inert until the
      * next `boot()`.
+     *
+     * The launch options are re-read here rather than replayed: the 进程 switches
+     * are pi's process configuration, so a restart is exactly the moment they are
+     * supposed to take effect (`PiEngineHost.restart`'s `launch` parameter).
      */
     suspend fun restartEngine(
         reason: String,
@@ -691,6 +720,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             reason = reason,
             workspaceProvider = ::defaultWorkspace,
             allowInterrupt = allowInterrupt,
+            launch = launchOptions(),
         )
         if (result is PiEngineHost.Restart.Ok) attach(result.session)
         return result.asOutcome()
@@ -726,7 +756,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                 // Only the engine that is still current may write state. A
                 // restart attaches a new engine while the old one's collector is
                 // still alive, and `PiEngineSession.close()` publishes `Stopped`
-                // (`PiEngineSession.kt:226`) — that value can be delivered after
+                // — that value can be delivered after
                 // `attach` has already installed the new session, which would
                 // null out the fresh `api` and leave the whole UI inert.
                 if (session !== engine) return@collect
@@ -769,7 +799,21 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         // (audit §6.7) — this is also what makes an extension's `appendEntry`
         // state and its `custom_message`s visible at all.
         viewModelScope.launch {
-            replayHistory(engine)
+            // The replay projects the whole session. `seedHistory` suspends now, so
+            // this no longer blocks the frame thread — but the screen would sit on
+            // the previous (usually empty) transcript with no explanation. `busy` is
+            // already the AppBar's second line (`engineLabel`), and the switch /
+            // fork / clone replays get it from `call`; this attach-time replay is the
+            // one that never did. Cleared token-matched, exactly like `call`'s
+            // `finally`, so a newer operation's label is never wiped.
+            _state.value = _state.value.copy(busy = "正在加载会话")
+            try {
+                replayHistory(engine)
+            } finally {
+                if (_state.value.busy == "正在加载会话") {
+                    _state.value = _state.value.copy(busy = null)
+                }
+            }
             refreshState()
             refreshCommands()
             refreshTuiOnlyExtensions()
@@ -815,7 +859,8 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      *    belonged to has ended. pi closes every pending tool with
      *    `updateResult({isError:true})` when a turn stops for `aborted`/`error`
      *    (`interactive-mode.ts:3294-3302`), and the reducer now does the same on
-     *    `message_end` (`rpc/Transcript.kt:689-690` → `failTurn`, `:1181-1227`),
+     *    `message_end` (the `PiEvent.MessageEnd` arm of `TranscriptReducer.onEvent`
+     *    calls `TranscriptReducer.failTurn`),
      *    so what remains uncovered is the path pi never models: **the engine was
      *    killed or restarted mid-turn**, where no `message_end` ever arrives. The
      *    pending rows are therefore closed here, and the card says the turn ended
@@ -849,7 +894,8 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      *
      * **Work is decided by `changedIndices`, never by `change`.** F8's throttled
      * `tool_execution_update` mutates its row and answers `TranscriptChange.None`
-     * on purpose (`rpc/Transcript.kt:1112-1115`), so a `null`-looking change can
+     * on purpose (the throttle branch of `TranscriptReducer.onToolUpdate`), so a
+     * `null`-looking change can
      * still carry a row: branching on the change kind would freeze that row's
      * streamed output forever.
      *
@@ -861,9 +907,9 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * recomposition, when nothing moved.
      *
      * No turn-outcome row lives here any more: the reducer appends it from
-     * `stopReason` itself (`rpc/Transcript.kt:684-690`, `:1157-1227`), and every
-     * event publishes except the tool updates F8 throttles away
-     * (`PiEngineSession.kt:288-296`), so keeping a second copy in the ViewModel
+     * `stopReason` itself (`TranscriptReducer.failTurn`), and every event publishes
+     * except the tool updates F8 throttles away (`PiEngineSession.foldEvent`), so
+     * keeping a second copy in the ViewModel
      * would have rendered the same failure twice, with different wording.
      */
     private fun syncTranscript(engine: PiEngineSession, pub: PiEngineSession.TranscriptPublication) {
@@ -877,7 +923,12 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             previous.transcript.size < pub.rows.size
 
         val transcript = when {
-            adopt -> pub.rows.map { row -> projectRow(row, interrupted) }
+            // `projectRow` is the identity unless `interrupted`, and adopting the
+            // engine's snapshot as-is is safe because `rows` is documented
+            // immutable and nothing below mutates a list in place (`applyChanged`
+            // copies). It saves one N-element copy per replay, session switch, fork,
+            // clone or revision gap — the adopt path is the common one.
+            adopt -> if (interrupted) pub.rows.map { row -> projectRow(row, true) } else pub.rows
 
             pub.changedIndices.isNotEmpty() -> applyChanged(
                 current = previous.transcript,
@@ -948,9 +999,9 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             // A turn that ends for a reason other than "stop"/"toolUse" is not a
             // finished answer, and pi says so under the partial text
             // (`components/assistant-message.ts:182-200`). The reducer renders that
-            // row itself from `stopReason` now (`rpc/Transcript.kt:684-690`), and
+            // row itself from `stopReason` now (`TranscriptReducer.failTurn`), and
             // every event publishes — except the `tool_execution_update` chunks F8
-            // throttles away (`PiEngineSession.kt:288-296`), whose rows the reducer
+            // throttles away (`PiEngineSession.foldEvent`), whose rows the reducer
             // already holds — so nothing is projected here. This branch exists only
             // so the decision is visible where the old duplicate row used to be
             // built.
@@ -993,9 +1044,9 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             // An extension's own entry (`pi.appendEntry`) — the documented way to
             // keep extension state across restarts. Nothing to do here: the engine
             // already routes `entry_appended` through the reducer
-            // (`PiEngineSession.kt:138-140` → `Transcript.onEvent`), and it bumps
-            // its revision for every non-response event, so the projection below
-            // republishes on its own. Projecting a second time from this branch
+            // (`PiEngineSession.foldEvent` folds it), and it bumps its revision for
+            // every event it publishes, so the projection below republishes on its
+            // own. Projecting a second time from this branch
             // (F5 in `docs/rendering-review.md`) would render every such entry
             // twice the moment the reducer gains a case for `custom` entries.
             is PiEvent.EntryAppended -> Unit
@@ -1417,7 +1468,11 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         }
         // `seedHistory`, not `transcript.seedFromHistory`: the reducer path mutates
         // the rows without publishing, and a publication is what carries the new
-        // list (and its `replaced` flag) to this consumer.
+        // list (and its `replaced` flag) to this consumer. It **suspends**: the
+        // projection runs on `Dispatchers.Default` and takes over the engine's
+        // reducer under its transcript lock, so this await is where the frame thread
+        // is released. The expensive half of a replay is that projection — the JSON
+        // parse was already off the frame thread in the engine's read loop.
         engine.seedHistory(PiResponses.entries(response))
         // The collector would wake on its own, but not until this coroutine
         // suspends; syncing here makes the rebuilt session visible in the same
@@ -1594,7 +1649,9 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             // way `prompt` already does through `PiEngineSession.prompt`. pi's own
             // TUI adds the row on `message_start` for a user message
             // (`interactive-mode.ts:3224-3226`), but the reducer here appends
-            // nothing for that role (`rpc/Transcript.kt:587-593`) — so without
+            // nothing for that role (the `PiEvent.MessageStart` arm of
+            // `TranscriptReducer.onEvent` only clears the content-block maps) — so
+            // without
             // this echo a steered message is invisible until the session is
             // reopened. If that reducer branch is ever fixed, this echo must be
             // removed or the message renders twice.

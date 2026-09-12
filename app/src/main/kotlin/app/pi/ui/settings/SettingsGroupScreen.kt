@@ -27,6 +27,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import app.pi.ui.components.EffectiveKind
 import app.pi.ui.components.PiSectionHeader
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiThemeEntry
@@ -65,6 +66,24 @@ fun SettingsGroupScreen(
      * behaviour every existing caller has.
      */
     hostActions: Map<String, () -> Unit> = emptyMap(),
+    /**
+     * Values that do not live in the settings store, by key: the read-only
+     * 运行时 rows, whose facts come from the runtime tree and the running
+     * service (see [RuntimeFacts]). An override is rendered verbatim instead of
+     * `display(store value)`, so a row can never fall back to a default that
+     * looks like a reading — the host always supplies either the real value or a
+     * sentence saying why it could not be read.
+     *
+     * Empty by default: every other row keeps reading the store.
+     */
+    valueOverrides: Map<String, String> = emptyMap(),
+    /**
+     * The host's engine restart, offered by the badge explanation of a
+     * [EffectiveKind.RestartEngine] row ("重启引擎"). Null hides that button, which
+     * is right where no engine hook exists: the row's own explanation still says
+     * what has to happen.
+     */
+    onRestartEngine: (() -> Unit)? = null,
 ) {
     val group = PiSettingsCatalog.group(groupId)
     val rows = remember(groupId) { buildGroupRows(groupId) }
@@ -113,7 +132,8 @@ fun SettingsGroupScreen(
                     ) {
                         PiSettingRow(
                             setting = setting,
-                            valueText = setting.display(setting.current(store)),
+                            valueText = valueOverrides[setting.key]
+                                ?: setting.display(setting.current(store)),
                             checked = setting.boolIn(store, false),
                             onToggle = { next ->
                                 store.write(setting.key, JsonPrimitive(next))
@@ -168,7 +188,15 @@ fun SettingsGroupScreen(
             kind = openExplanation.effective,
             settingTitle = openExplanation.title,
             onDismiss = { explaining = null },
-            onRunAction = run?.let { action -> { action(openExplanation) } },
+            // The badge's button is "the action that applies this value". For
+            // `RestartEngine` that action is the engine restart itself, which the
+            // host owns (设置 → 进程 → 重启引擎) — the generic action channel is for
+            // `PiRowKind.Action` rows and would answer "not implemented" here.
+            onRunAction = when {
+                openExplanation.effective == EffectiveKind.RestartEngine -> onRestartEngine
+                run != null -> { { run(openExplanation) } }
+                else -> null
+            },
         )
     }
 

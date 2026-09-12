@@ -15,6 +15,7 @@ import androidx.compose.ui.unit.dp
 import app.pi.rpc.SkillInvocation
 import app.pi.ui.render.PiMarkdownText
 import app.pi.ui.theme.PiTheme
+import app.pi.ui.theme.PiSpacing
 
 /**
  * `skill-invocation` (docs/pi-android-ui-spec.md §7.4): a card headed
@@ -68,13 +69,13 @@ fun SkillInvocationBlock(
         ) {
             ToggleRow(expanded = expanded, onToggle = { expanded = !expanded }) {
                 AccentStripe(palette.customMessageLabel, 20.dp)
-                Spacer(Modifier.width(10.dp))
+                Spacer(Modifier.width(PiSpacing.inner))
                 Text(
                     text = "技能",
                     style = PiTheme.text.monoSmall,
                     color = palette.customMessageLabel,
                 )
-                Spacer(Modifier.width(8.dp))
+                Spacer(Modifier.width(PiSpacing.inline))
                 Text(
                     text = "/skill:" + item.skillName.ifEmpty { "未知技能" },
                     modifier = Modifier.weight(1f),

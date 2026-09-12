@@ -51,7 +51,7 @@ fun ModelChangeBlock(
             style = PiTheme.text.meta,
             color = palette.dim,
         )
-        Spacer(Modifier.width(8.dp))
+        Spacer(Modifier.width(PiSpacing.inline))
         Text(
             text = name,
             style = MaterialTheme.typography.labelLarge,
@@ -61,7 +61,7 @@ fun ModelChangeBlock(
         )
         val provider = item.provider
         if (!provider.isNullOrBlank()) {
-            Spacer(Modifier.width(8.dp))
+            Spacer(Modifier.width(PiSpacing.inline))
             Text(
                 text = provider,
                 style = PiTheme.text.meta,

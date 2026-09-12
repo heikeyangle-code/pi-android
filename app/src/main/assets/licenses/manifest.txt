@@ -14,7 +14,10 @@ ubuntu-copyright-libbrotli1.txt	libbrotli1 1.1.0-2build2	软件包版权与许�
 ubuntu-copyright-libcurl3t64-gnutls.txt	libcurl3t64-gnutls 8.5.0-2ubuntu10.13	软件包版权与许可
 ubuntu-copyright-libexpat1.txt	libexpat1 2.6.1-2ubuntu0.4	软件包版权与许可
 ubuntu-copyright-libgssapi-krb5-2.txt	libgssapi-krb5-2 1.20.1-6ubuntu2.8	软件包版权与许可
+ubuntu-copyright-libk5crypto3.txt	libk5crypto3 1.20.1-6ubuntu2.8	软件包版权与许可
 ubuntu-copyright-libkeyutils1.txt	libkeyutils1 1.6.3-3build1	软件包版权与许可
+ubuntu-copyright-libkrb5-3.txt	libkrb5-3 1.20.1-6ubuntu2.8	软件包版权与许可
+ubuntu-copyright-libkrb5support0.txt	libkrb5support0 1.20.1-6ubuntu2.8	软件包版权与许可
 ubuntu-copyright-libldap2.txt	libldap2 2.6.7+dfsg-1~exp1ubuntu8	软件包版权与许可
 ubuntu-copyright-libnghttp2-14.txt	libnghttp2-14 1.59.0-1ubuntu0.4	软件包版权与许可
 ubuntu-copyright-libpsl5t64.txt	libpsl5t64 0.21.2-1.1build1	软件包版权与许可
@@ -41,17 +44,24 @@ ubuntu-copyright-gzip.txt	gzip 1.12-1ubuntu3.1	软件包版权与许可
 ubuntu-copyright-hostname.txt	hostname 3.23+nmu2ubuntu2	软件包版权与许可
 ubuntu-copyright-init-system-helpers.txt	init-system-helpers 1.66ubuntu1	软件包版权与许可
 ubuntu-copyright-libacl1.txt	libacl1 2.3.2-1build1.1	软件包版权与许可
+ubuntu-copyright-libapt-pkg6.0t64.txt	libapt-pkg6.0t64 2.8.3	软件包版权与许可
 ubuntu-copyright-libassuan0.txt	libassuan0 2.5.6-1build1	软件包版权与许可
 ubuntu-copyright-libattr1.txt	libattr1 1:2.5.2-1build1.1	软件包版权与许可
 ubuntu-copyright-libaudit-common.txt	libaudit-common 1:3.1.2-2.1build1.1	软件包版权与许可
+ubuntu-copyright-libaudit1.txt	libaudit1 1:3.1.2-2.1build1.1	软件包版权与许可
+ubuntu-copyright-libblkid1.txt	libblkid1 2.39.3-9ubuntu6.3	软件包版权与许可
 ubuntu-copyright-libbz2-1.0.txt	libbz2-1.0 1.0.8-5.1build0.1	软件包版权与许可
 ubuntu-copyright-libc-bin.txt	libc-bin 2.39-0ubuntu8.5	软件包版权与许可
+ubuntu-copyright-libc6.txt	libc6 2.39-0ubuntu8.5	软件包版权与许可
 ubuntu-copyright-libcap-ng0.txt	libcap-ng0 0.8.4-2build2	软件包版权与许可
 ubuntu-copyright-libcap2.txt	libcap2 1:2.66-5ubuntu2.2	软件包版权与许可
+ubuntu-copyright-libcom-err2.txt	libcom-err2 1.47.0-2.4~exp1ubuntu4.1	软件包版权与许可
 ubuntu-copyright-libcrypt1.txt	libcrypt1 1:4.4.36-4build1	软件包版权与许可
 ubuntu-copyright-libdb5.3t64.txt	libdb5.3t64 5.3.28+dfsg2-7	软件包版权与许可
 ubuntu-copyright-libdebconfclient0.txt	libdebconfclient0 0.271ubuntu3	软件包版权与许可
+ubuntu-copyright-libext2fs2t64.txt	libext2fs2t64 1.47.0-2.4~exp1ubuntu4.1	软件包版权与许可
 ubuntu-copyright-libffi8.txt	libffi8 3.4.6-1build1	软件包版权与许可
+ubuntu-copyright-libgcc-s1.txt	libgcc-s1 14.2.0-4ubuntu2~24.04（版权文件由 gcc-14-base 提供）	软件包版权与许可
 ubuntu-copyright-libgcrypt20.txt	libgcrypt20 1.10.3-2build1	软件包版权与许可
 ubuntu-copyright-libgmp10.txt	libgmp10 2:6.3.0+dfsg-2ubuntu6.1	软件包版权与许可
 ubuntu-copyright-libgnutls30t64.txt	libgnutls30t64 3.8.3-1.1ubuntu3.4	软件包版权与许可
@@ -61,30 +71,49 @@ ubuntu-copyright-libidn2-0.txt	libidn2-0 2.3.7-2build1.1	软件包版权与许�
 ubuntu-copyright-liblz4-1.txt	liblz4-1 1.9.4-1build1.1	软件包版权与许可
 ubuntu-copyright-liblzma5.txt	liblzma5 5.6.1+really5.4.5-1ubuntu0.2	软件包版权与许可
 ubuntu-copyright-libmd0.txt	libmd0 1.1.0-2build1.1	软件包版权与许可
+ubuntu-copyright-libmount1.txt	libmount1 2.39.3-9ubuntu6.3	软件包版权与许可
+ubuntu-copyright-libncursesw6.txt	libncursesw6 6.4+20240113-1ubuntu2（版权文件由 libtinfo6 提供）	软件包版权与许可
+ubuntu-copyright-libnettle8t64.txt	libnettle8t64 3.9.1-2.2build1.1	软件包版权与许可
 ubuntu-copyright-libnpth0t64.txt	libnpth0t64 1.6-3.1build1	软件包版权与许可
 ubuntu-copyright-libp11-kit0.txt	libp11-kit0 0.25.3-4ubuntu2.1	软件包版权与许可
 ubuntu-copyright-libpam-modules.txt	libpam-modules 1.5.3-5ubuntu5.4	软件包版权与许可
+ubuntu-copyright-libpam-modules-bin.txt	libpam-modules-bin 1.5.3-5ubuntu5.4	软件包版权与许可
+ubuntu-copyright-libpam-runtime.txt	libpam-runtime 1.5.3-5ubuntu5.4	软件包版权与许可
+ubuntu-copyright-libpam0g.txt	libpam0g 1.5.3-5ubuntu5.4	软件包版权与许可
 ubuntu-copyright-libpcre2-8-0.txt	libpcre2-8-0 10.42-4ubuntu2.1	软件包版权与许可
 ubuntu-copyright-libproc2-0.txt	libproc2-0 2:4.0.4-4ubuntu3.2	软件包版权与许可
 ubuntu-copyright-libseccomp2.txt	libseccomp2 2.5.5-1ubuntu3.1	软件包版权与许可
 ubuntu-copyright-libselinux1.txt	libselinux1 3.5-2ubuntu2.1	软件包版权与许可
 ubuntu-copyright-libsemanage-common.txt	libsemanage-common 3.5-1build5	软件包版权与许可
+ubuntu-copyright-libsemanage2.txt	libsemanage2 3.5-1build5	软件包版权与许可
 ubuntu-copyright-libsepol2.txt	libsepol2 3.5-2build1	软件包版权与许可
+ubuntu-copyright-libsmartcols1.txt	libsmartcols1 2.39.3-9ubuntu6.3	软件包版权与许可
+ubuntu-copyright-libss2.txt	libss2 1.47.0-2.4~exp1ubuntu4.1	软件包版权与许可
 ubuntu-copyright-libssl3t64.txt	libssl3t64 3.0.13-0ubuntu3.5	软件包版权与许可
+ubuntu-copyright-libstdc++6.txt	libstdc++6 14.2.0-4ubuntu2~24.04（版权文件由 gcc-14-base 提供）	软件包版权与许可
 ubuntu-copyright-libsystemd0.txt	libsystemd0 255.4-1ubuntu8.10	软件包版权与许可
 ubuntu-copyright-libtasn1-6.txt	libtasn1-6 4.19.0-3ubuntu0.24.04.1	软件包版权与许可
 ubuntu-copyright-libtinfo6.txt	libtinfo6 6.4+20240113-1ubuntu2	软件包版权与许可
+ubuntu-copyright-libudev1.txt	libudev1 255.4-1ubuntu8.10	软件包版权与许可
 ubuntu-copyright-libunistring5.txt	libunistring5 1.1-2build1.1	软件包版权与许可
+ubuntu-copyright-libuuid1.txt	libuuid1 2.39.3-9ubuntu6.3	软件包版权与许可
 ubuntu-copyright-libxxhash0.txt	libxxhash0 0.8.2-2build1	软件包版权与许可
 ubuntu-copyright-libzstd1.txt	libzstd1 1.5.5+dfsg2-2build1.1	软件包版权与许可
 ubuntu-copyright-login.txt	login 1:4.13+dfsg1-4ubuntu3.2	软件包版权与许可
+ubuntu-copyright-logsave.txt	logsave 1.47.0-2.4~exp1ubuntu4.1	软件包版权与许可
 ubuntu-copyright-mawk.txt	mawk 1.3.4.20240123-1build1	软件包版权与许可
+ubuntu-copyright-mount.txt	mount 2.39.3-9ubuntu6.3	软件包版权与许可
+ubuntu-copyright-ncurses-base.txt	ncurses-base 6.4+20240113-1ubuntu2	软件包版权与许可
+ubuntu-copyright-ncurses-bin.txt	ncurses-bin 6.4+20240113-1ubuntu2	软件包版权与许可
+ubuntu-copyright-passwd.txt	passwd 1:4.13+dfsg1-4ubuntu3.2	软件包版权与许可
 ubuntu-copyright-perl-base.txt	perl-base 5.38.2-3.2ubuntu0.2	软件包版权与许可
+ubuntu-copyright-procps.txt	procps 2:4.0.4-4ubuntu3.2	软件包版权与许可
 ubuntu-copyright-sed.txt	sed 4.9-2build1	软件包版权与许可
 ubuntu-copyright-sensible-utils.txt	sensible-utils 0.0.22	软件包版权与许可
 ubuntu-copyright-sysvinit-utils.txt	sysvinit-utils 3.08-6ubuntu3	软件包版权与许可
 ubuntu-copyright-tar.txt	tar 1.35+dfsg-3build1	软件包版权与许可
 ubuntu-copyright-ubuntu-keyring.txt	ubuntu-keyring 2023.11.28.1	软件包版权与许可
+ubuntu-copyright-util-linux.txt	util-linux 2.39.3-9ubuntu6.3	软件包版权与许可
 ubuntu-copyright-zlib1g.txt	zlib1g 1:1.3.dfsg-3.1ubuntu2.1	软件包版权与许可
 ubuntu-packages.txt	Ubuntu 软件包清单（91 个）	清单
 MIT.txt	MIT	许可证全文
@@ -101,3 +130,5 @@ all-permissive.txt	all-permissive	许可证全文
 Unlicense.txt	Unlicense	许可证全文
 0BSD.txt	0BSD	许可证全文
 BlueOak-1.0.0.txt	BlueOak-1.0.0	许可证全文
+pi-license.txt	pi 引擎 0.85.1（MIT）	许可证全文
+pi-engine-licence-gaps.txt	未随包提供许可文本的依赖（13 个）	说明

@@ -15,6 +15,7 @@ import androidx.compose.ui.unit.dp
 import app.pi.rpc.HookMessage
 import app.pi.ui.render.PiMarkdownText
 import app.pi.ui.theme.PiTheme
+import app.pi.ui.theme.PiSpacing
 
 /**
  * `hook-message` (docs/pi-android-ui-spec.md §7.4): an extension-injected
@@ -45,7 +46,7 @@ fun HookMessageBlock(
                 onToggle = { if (collapsible) expanded = !expanded },
             ) {
                 AccentStripe(palette.customMessageLabel, 20.dp)
-                Spacer(Modifier.width(10.dp))
+                Spacer(Modifier.width(PiSpacing.inner))
                 Text(
                     text = item.customType.ifEmpty { "extension" },
                     modifier = Modifier.weight(1f),

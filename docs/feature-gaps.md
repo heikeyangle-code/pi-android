@@ -145,8 +145,8 @@ whether the command is *protocol-reachable* (then the app can drive it) or *spaw
 | `--mode rpc`, `--session-dir`, `--name`, `--thinking`, `--provider`, `--model` | `src/cli/args.ts`; `docs/rpc.md:9-15` | argv is fixed to `--mode rpc --session-dir <agentDir>/sessions` (`PiEngineHost.kt:231-233`); provider/model/name/thinking are set **after** start over RPC (`set_model`/`set_session_name`/`set_thinking_level`) and persisted via `defaultProvider`/`defaultModel`/`defaultThinkingLevel` | IMPLEMENTED (another way) | Yes | — |
 | `pi install` / `remove` / `list` / `update` | `package-manager-cli.ts:255-276`; `docs/packages.md:22-39` | no RPC command exists (verified against `rpc-types.ts:20-74`); an app-side implementation is under construction — `app/src/main/kotlin/app/pi/packages/` (`PiPackageService.kt`, `PiPackagesScreen.kt`, `PiListOutput.kt`) | CLI-ONLY (being reproduced) | Partly | `known-gaps.md` **B5**, **E7** |
 | `pi config` (resource enable/disable TUI) | `package-manager-cli.ts:278-289` | `packages[].autoload` is the app's per-package switch (`PiSettingsRegistry.kt`, routed to a sidecar by `PiSettingsFileStore.kt:140`); pi's per-**resource** enable/disable has no app equivalent | CLI-ONLY | No | — |
-| `--offline` / `PI_OFFLINE` | `args.ts`; `docs/environment-variables.md` | not passed and no setting exists (`PiEngineHost.kt:250-258` sets only `PI_CODING_AGENT_DIR`, `PI_CODING_AGENT_SESSION_DIR`, `PI_SKIP_VERSION_CHECK`, `PI_ANDROID_BRIDGE_FILE`). pi therefore still performs startup network operations (package updates, install/update telemetry) | CLI-ONLY, **not reproduced** | No | — (see §2.11) |
-| `--system-prompt` / `--append-system-prompt` | `args.ts` | no RPC command and no settings key; the app's argv has no such flag (grep: 0 hits in `engine/`, `runtime/`) | CLI-ONLY, **not reproduced** | No | — (see §2.11) |
+| `--offline` / `PI_OFFLINE` | `args.ts`; `docs/environment-variables.md` | **reproduced**: the `app.runtime.offline` Switch row → `PiSessionViewModel.launchOptions()` → `PiLaunchOptions.offline` → `PI_OFFLINE=1` in the engine environment (`PiLaunchOptions.environment()`, applied by `PiEngineHost` via `boot(…, launch)`) | IMPLEMENTED | Yes | — (see §2.11) |
+| `--system-prompt` / `--append-system-prompt` | `args.ts` | **reproduced**: the `app.runtime.systemPrompt` Text row → `PiSessionViewModel.launchOptions()` → `PiLaunchOptions.systemPrompt` → `--system-prompt`; blank means "use pi's own prompt", so no empty flag is ever passed | IMPLEMENTED | Yes | — (see §2.11) |
 | `--api-key` | `args.ts`; `docs/providers.md:62-107` | no writer for `auth.json` anywhere in the app (grep: 0 hits outside a description string); `/login` is marked `TerminalOnly` (`PiSlashCommands.kt:138`) and the Settings rows `app.credentials.apiKey` / `app.credentials.oauth` are inert Action rows | CLI-ONLY | Terminal tab | — (see §2.9, §2.10) |
 | `--continue` / `-c`, `--resume`, `--session`, `--session-id`, `--fork` | `args.ts`; `docs/sessions.md:39` | `boot()` starts a fresh engine and `attach()` never sends `switch_session` (`PiSessionViewModel.kt:341-361`); resume/switch/fork exist as explicit user actions. **`-c` (resume the most recent session for this cwd) has no counterpart** — every launch begins a new session | MISSING-GUI | No | — (see §2.7) |
 | `--list-models`, `--export` | `args.ts` | reproduced by `get_available_models` (picker) and `export_html` | IMPLEMENTED (another way) | Yes | — |
@@ -197,7 +197,7 @@ whether the command is *protocol-reachable* (then the app can drive it) or *spaw
 | Automatic `lightTheme/darkTheme` pair | `docs/themes.md:35-40`; `theme.ts:582-597` | the setting round-trips the literal string unsplit (`PiSettingsStore.kt:19-23`, `PiSettingsEditors.kt:56,596`) and `MainActivity.kt:35-40` follows the system appearance for the `a/b` form | IMPLEMENTED | Yes | `fidelity-review.md` §"Settings registry" |
 | Select a theme by name | `docs/themes.md:24-31` | `theme` is a Value row with a dedicated editor sheet (`PiSettingEditorHost.kt:26-35`) and the write is echoed to the UI (`SettingsGroupScreen.kt:130`) | IMPLEMENTED | Yes | — |
 | **A user theme JSON changes the app's own colours** | `docs/themes.md:56-90` (theme format); `resource-loader.ts:815,821,875` (locations) | **`PiPalette` has exactly two hard-coded instances and nothing parses a theme file** (grep for theme-JSON reading in `app/src/main`: 0 hits). `MainActivity.kt:35-40` ignores any name that is not `light`/`dark`/`a/b`. `PiPalette.kt:16-22` *claims* "the app's palette should BE the user's pi theme" — it is not | **MISSING-GUI** | No | — (see §2.4) |
-| Theme **discovery** from `<agentDir>/themes/*.json` | `resource-loader.ts:815`; `docs/themes.md:14-18` | the picker's name list comes only from the `themes` *settings array* (`PiSettingEditorHost.kt:90-98`), so a theme dropped in pi's default global themes directory never appears | **PARTIAL** | Partly | — (see §2.4) |
+| Theme **discovery** from `<agentDir>/themes/*.json` | `resource-loader.ts:815`; `docs/themes.md:14-18` | **reproduced**: `PiThemeFiles.discover` scans `~/.pi/agent/themes`, `<workspace>/.pi/themes` **and** the `themes` settings array, so a theme dropped in pi's default global directory does appear in the picker | **IMPLEMENTED** | Yes | — (see §2.4) |
 | Theme discovery from `.pi/themes/*.json` (project) | `resource-loader.ts:821,875` | same as above | PARTIAL | Partly | — |
 | Themes from packages (`themes/`, `pi.themes`) | `docs/themes.md:17` | same as above | PARTIAL | Partly | — |
 | `--theme` / `--no-themes` | `args.ts` | CLI-only; persistent forms exist as settings | CLI-ONLY | No | — |
@@ -270,7 +270,7 @@ whether the command is *protocol-reachable* (then the app can drive it) or *spaw
 | Writes land in pi's own files | `settings-manager.ts:154-181` | global = `<agentDir>/settings.json`, project = `.pi/settings.json`, `app.*` sidecar (`PiSettingsFileStore.kt:160-164`); merge semantics match pi | IMPLEMENTED | Yes | `fidelity-review.md` §"Settings semantics" |
 | Settings search | `interactive-mode.ts` `/settings` | `SettingsSearchScreen` + `PiSettingsCatalog` aliases | IMPLEMENTED | Yes | — |
 | **Registered settings that nothing reads** | — | 6 appearance/tool rows (`app.appearance.dynamicColor`, `fontScaleDelta`, `messageDensity`, `showTimestamps`, `thinkingCollapsedByDefault`, `app.tools.expandByDefault`) and 7 more (`app.terminal.fontSize`, `.cursorStyle`, `.scrollbackLines`, `.keyBar`, `app.tools.bashTimeoutSeconds`, `outputMaxLines`, `app.runtime.keepAlive`) appear **exactly once in the tree — in the registry**. Editing them changes a JSON file and nothing else | **MISSING-GUI** | No | — (see §2.5) |
-| **Action-kind settings rows** | — | **all 20** `PiRowKind.Action` rows are inert because `PiRoot.kt:130-138` never passes `onRunAction`, whose default is `null` (`PiSettingsStack.kt:34`); `SettingsGroupScreen.kt:152-170` then renders "这个入口由运行时接管，当前宿主还没有接入对应的实现" | **MISSING-GUI** | No | — (see §2.9) |
+| **Action-kind settings rows** | — | **wired.** `PiRoot` passes `onRunAction`, so no Action row can fall through to "还没有接入实现" any more. **8** rows remain (`app.credentials.apiKey` / `.oauth`, `app.localModels.manage`, `app.compaction.runNow`, `app.sessions.import`, `app.security.emergencyStop`, `app.runtime.restartEngine`, `app.about.changelog`); the credential pair opens its own screen via `PiSettingsStack.hostActions`, and the other 11 rows were deleted in the §I2 pass. `SettingsGroupScreen` now says "这个入口当前不可用。" and nothing reaches it | **IMPLEMENTED** | Yes | — (see §2.9) |
 | Device capability switches | — | declared in the settings catalog (`app.device.basic/accessibility/sensors/sessionOverride/storage/shell`, `PiSettingsRegistry.kt:1474-1549`) **and** enforced from `DeviceCapabilityStore`'s SharedPreferences (`DeviceCapabilityStore.kt:61-96`). Nothing reads the `app.device.*` keys (grep outside the registry: 0). `SettingsHome.kt:80-82` asserts these "have no key in the catalog" — the catalog contains them | **MISSING-GUI** / coherence defect | Partly (the real screen works) | — (see §2.9) |
 | Telemetry settings (`enableInstallTelemetry`, `enableAnalytics`, `trackingId`) | `settings-manager.ts:128-130`; `core/telemetry.ts:9-15` | present and written to `settings.json`, which is exactly where pi reads them (`telemetry.ts:9-15`) | IMPLEMENTED (another way) | Yes | — |
 | `httpProxy` / `httpIdleTimeoutMs` / `websocketConnectTimeoutMs` | `settings-manager.ts:151-153`; `docs/environment-variables.md` | present; pi applies `httpProxy` as `HTTP_PROXY`/`HTTPS_PROXY` internally. The app does **not** set those env vars itself (`PiRuntime.kt:137-148`) — which is fine for pi's own clients, but an `npm install` run for a package would not inherit the proxy | IMPLEMENTED (pi-side) / PARTIAL (package installs) | Yes | — |
@@ -404,29 +404,28 @@ the bytes differ".
 **(a) JSONL export.** pi has `exportToJsonl` (`agent-session.ts:3482-3488`) and the TUI picks the
 implementation from the argument: `interactive-mode.ts:6064-6065` branches on `.jsonl`. RPC has no
 JSONL command — `rpc-types.ts:60` is `export_html` only, and `rpc-mode.ts:600-602` calls
-`exportToHtml` unconditionally, with no extension check. The app's `exportHtml` always calls
-`api.exportHtml(guestPath)` (`PiSessionViewModel.kt:1371-1376`) while its own palette row advertises
-"默认 HTML，或指定 .html/.jsonl 路径" (`PiSlashCommands.kt:121-124`, copied from
-`core/slash-commands.ts:25`). Typing `/export notes.jsonl` therefore writes **HTML into
-`notes.jsonl`** — a silent wrong-output bug, not merely a missing feature. There is no JSONL export
-path in the app at all.
+`exportToHtml` unconditionally, with no extension check. **Reproduced app-side (re-read in the tree):
+`PiSessionViewModel.exportSession` branches on the extension exactly as the TUI does, and
+`exportJsonl` writes real JSONL from `get_entries` with pi's own shape (header, branch walked from
+`leafId`, re-chained `parentId`, trailing newline).** The old "HTML into `notes.jsonl`" bug is gone;
+the gap is bridged app-side rather than faked.
 
 **(b) Theme JSON.** `docs/themes.md:14-18` documents discovery from `<agentDir>/themes/*.json` and
-`.pi/themes/*.json` (code: `resource-loader.ts:815,821,875`). The app has exactly two hard-coded
-palettes (`PiPalette.kt:112-249`) and **parses no theme file** (grep for theme JSON handling outside
-`PiSettingsRegistry`/editors: 0 hits). `MainActivity.kt:35-40` maps the selected name to dark/light for
-`light`, `dark` and the `a/b` pair and **ignores every other name**, which is what a custom theme is.
-`PiPalette.kt:16-22` states the design intent — "the app's palette should BE the user's pi theme …
-a theme someone tuned on their desktop should change this app too" — so this is an implementation
-gap against a written intent, not a deliberate simplification. (The *TUI tab* does honour the theme,
-because there pi loads it.)
+`.pi/themes/*.json` (code: `resource-loader.ts:815,821,875`). **Reproduced (re-read in the tree):**
+`PiThemeFiles` discovers, resolves and parses theme files (`discover` / `load` / `parseTheme` /
+`parseThemeJson`, including the `a/b` pair, 256-colour indices and var refs), and `MainActivity`
+paints `PiTheme(palette = theme.palette, …)`. `PiPalette`'s `Dark` / `Light` constants still exist —
+they are now only the **fallback** when no theme file resolves (and the base the file's tokens overlay),
+not the app's only colours. The TUI tab and the GUI therefore read the same theme file.
 
-**(c) Theme discovery in the picker.** `localThemeNames` (`PiSettingEditorHost.kt:90-98`) derives the
-list of theme names **only** from the `themes` settings array. A theme dropped in pi's documented
-default location (`~/.pi/agent/themes/`) is invisible to the picker even though pi itself will load
-it, so the GUI cannot select the very theme the terminal is using.
+**(c) Theme discovery in the picker.** **Reproduced (re-read in the tree):** `PiThemeFiles.discover`
+derives the name list from `~/.pi/agent/themes`, `<workspace>/.pi/themes` **and** the `themes` settings
+array (`scanDirectory` × 3 scopes), so a theme dropped in pi's documented default location is visible
+to the picker — the GUI can select the very theme the terminal is using.
 
-- **Classification:** (a) MISSING-GUI + defect; (b) MISSING-GUI; (c) PARTIAL.
+- **Classification:** (a) (b) (c) **all reproduced** (the grades above were MISSING-GUI / MISSING-GUI /
+  PARTIAL at the audited snapshot). The diff handler is gone with them — the fixer note below was
+  already satisfied before anyone acted on it.
 - **Note for the fixer:** the app already reads `<agentDir>/settings.json` through
   `PiSettingsFileStore` (`PiSettingsFileStore.kt:160-164`), so the guest agent dir is reachable; reading
   `themes/*.json` needs no new channel.
@@ -562,24 +561,32 @@ that the feature does not exist, when for `app.compaction.runNow` it actually do
   during part of this pass. The registry/store disconnect is static and verified; if a concurrent change
   added a bridge, re-check before acting.
 
-### 2.11 No offline mode, and the engine's argv is closed to system-prompt and credential overrides
+### 2.11 Offline mode and system prompt — **reproduced** (credential override: see §2.9)
 
 - **pi:** `PI_OFFLINE` disables "startup network operations, including update checks, package updates,
   and install/update telemetry" (`docs/environment-variables.md`), and `--offline` is a CLI flag
   (`src/cli/args.ts`). `--system-prompt` / `--append-system-prompt` let a run replace or extend the
   system prompt; `--api-key` supplies credentials at spawn.
-- **App:** the engine is spawned with a fixed command (`.kt:231-233`, `--mode rpc --session-dir …`) and
+- **App (audited snapshot — no longer true):** the engine is spawned with a fixed command (`.kt:231-233`, `--mode rpc --session-dir …`) and
   a fixed environment (`:250-258`: agent dir, session dir, `PI_SKIP_VERSION_CHECK`,
   `PI_ANDROID_BRIDGE_FILE`). There is **no** `PI_OFFLINE`, no `--system-prompt`, no `--api-key`, and no
   setting that produces any of them (grep in `engine/` + `runtime/`: 0 hits each). `PI_SKIP_VERSION_CHECK`
   suppresses *one* pi network call, while the offline switch that suppresses all of them
   (including package updates and telemetry) is absent.
+- **Reproduced (re-read in the tree):** `PiSettingsRegistry` registers `app.runtime.offline` (Switch),
+  `app.runtime.systemPrompt` (Text) and `app.runtime.cacheRetention` (Value) in a 「进程」section;
+  `PiSessionViewModel.launchOptions()` reads all three into `PiLaunchOptions`, and both `boot()` and
+  `restartEngine()` pass it down. `PiLaunchOptions.environment()` emits `PI_OFFLINE=1` (omitted, never
+  `"0"`) and `PI_CACHE_RETENTION=long`; the flags builder emits `--system-prompt` / `--append-system-prompt`.
+  A custom system prompt therefore no longer requires the original TUI, and startup network activity is
+  switchable from the phone.
 - **Consequence on a phone:** a user who wants the app to make no network requests except the model
   call cannot express that; and the "no surprise network calls from inside a phone app" rationale
   already written at `PiEngineHost.kt:255-256` only holds for the version check it disabled.
   A custom system prompt is likewise impossible without running the original TUI.
-- **Classification:** CLI-ONLY, not reproduced (offline, system prompt, api-key). Both a setting and an
-  argv entry would be needed; the spawn path is a single file, so this is cheap.
+- **Classification:** offline and system prompt are **IMPLEMENTED**; `--api-key` is covered by the
+  `auth.json` writers (§2.9). The "no setting that produces any of them" reading below is the
+  audited snapshot, kept for comparison.
 
 ---
 
@@ -589,13 +596,13 @@ Ordered by user-visible impact per unit of work, judged on a phone.
 
 | # | Item | Why first | Ref |
 |---|---|---|---|
-| 1 | **Wire `onRunAction`** (or delete the inert rows) | 20 rows currently lie to the user, three of them for capabilities that exist nowhere else in the app. One parameter at one call site unlocks all of them; deleting the rows is even cheaper and is the honest interim. | §2.9 |
+| 1 | ~~**Wire `onRunAction`** (or delete the inert rows)~~ **done** | Was: 20 rows lying to the user. Now: `PiRoot` passes `onRunAction`, **8** Action rows remain and every one of them has a verdict; the prompt that said "还没有接入实现" is unreachable. Re-check before acting on the old text. | §2.9 |
 | 2 | **Fix `/export *.jsonl`** | Currently writes HTML into a `.jsonl` file with a success toast. Either branch client-side to a JSONL-capable path or refuse non-HTML extensions. Silently wrong output is worse than absent output. | §2.4(a) |
 | 3 | **Restore drained queue text to the composer** | The plumbing and the documented behaviour already exist; one lambda at `ChatScreen.kt:433`. Today Stop destroys the user's queued messages. | §2.3 |
 | 4 | **Wire `follow_up`** | The command, the VM method and the docs all exist; the user has no way to say "after this, also do X". Small, and it makes the already-wired `set_follow_up_mode` meaningful. | §2.2 |
 | 5 | **Read the pi theme JSON into the app's palette** | The stated design intent of the whole colour system; a desktop-tuned theme currently changes the terminal tab and not the app. The file lives next to the `settings.json` the app already reads. | §2.4(b) |
 | 6 | **Transcript search** | Long transcripts are the normal case on a phone, and scrolling is the only tool today. pi has the feature; nothing about it needs the protocol. | §2.6 |
-| 7 | **Contrast "no reader" settings** | 13 rows promise behaviour that does not exist (font scale, density, timestamps, terminal font size, …). Cheap either way: implement the visible ones, delete the rest. | §2.5 |
+| 7 | ~~**Contrast "no reader" settings**~~ **done for the 13** | 9 wired (appearance/density/timestamps/tools/keepAlive/hideThinking + `readPrefs`), 4 by the terminal agent (`app.terminal.*`), 3 rows deleted with pi-source reasons. See `gap-disposition.md` §I5 / §11. Re-check before acting. | §2.5 |
 | 8 | **Resolve the duplicated device switches** | Two screens for one grant, only one connected, and they can contradict each other about a security-sensitive permission. | §2.10 |
 | 9 | **Wire `hideThinkingBlock` + a thinking collapse-all** | The renderer supports both; the screen passes neither. pi's setting is otherwise silently ignored. | §2.5(b) |
 | 10 | **Mark `/tree` as terminal-only and add it to F2** | The app today implies "分支" is tree navigation; it is a fork that creates a new file. Cheap honesty now; a real in-place switch is impossible over RPC. | §2.1 |
@@ -652,7 +659,8 @@ reviewer does not spend a pass re-deriving it.
     "原版 TUI" affordance (`ChatScreen.kt:694`) is the correct disposition for the
     `MISSING-TERMINAL-ONLY` rows; the rows in §1.3/§1.5/§2.9 should point at it rather than pretend.
 11. **`PI_IMAGE_PROTOCOL=none` for the terminal is deliberate and consistent** with the GUI owning
-    image display (`PtyLauncher.kt:293`, `TerminalEmulator.kt:53-54`); the inline-image gap belongs to
+    image display (`PtyLauncher.kt:293`, and `ui/terminal/`'s `TerminalBridge`/`TerminalPane`, which
+    replaced the hand-written `TerminalEmulator.kt` when the terminal moved to `termlib 0.0.13`); the inline-image gap belongs to
     `known-gaps.md` C2, not here.
 
 ---
@@ -749,7 +757,7 @@ grades — see "Not verified" below.
 | §1.9 `@` file mentions | MISSING-GUI | **implemented** | `ChatScreen` → mention list (guest lookup, inserts pi's literal `@path`) |
 | §1.10 `PI_CACHE_RETENTION` | MISSING-GUI | **engine wired; settings pending** | `PiLaunchOptions` → `longCacheRetention` |
 
-### Not verified by this pass (112 of 148 rows)
+### Not verified by this pass (superseded by §8 — see there for the completed sweep)
 
 These still carry their `a7b7738` grades and are **claims, not verified facts**: every row already
 graded `IMPLEMENTED` (74), every `N/A` row (7), the remaining `MISSING-TERMINAL-ONLY` rows (11 of
@@ -760,3 +768,253 @@ reconciled row above lives; nothing else in them was re-read. If a grade matters
 first — the sample found the ledger wrong in **30 of 36** rows, so the base rate for an un-checked
 `PARTIAL`/`MISSING` grade is high.
 
+
+
+## 8. Full sweep of the §1 grade table (`182823e`) — every parsed row
+
+Method, so each verdict's strength is explicit. This table is generated from §1's own rows. For every
+row it checks **each symbol or file the audit's "App status" cell names** against `app/src/main/kotlin`
+in the working tree. `已实现（符号在位核对）` means *the builder and the UI site the audit named both
+exist* — it is **not** a re-walk of the call chain. Rows whose call chain was actually walked in this
+session name the proving symbol in the evidence cell. `仍未做` on a PARTIAL/MISSING/CLI-ONLY row means
+no symbol check refuted the deficiency. **pi counterpart** is read off the row's own pi-source cell and
+never invented: `pi 有 …` when the row cites pi source/docs, `pi 无对应物（App 自己的决定）` when the row
+is app-declared, `pi 有但我们够不着` only where the audit graded `MISSING-TERMINAL-ONLY` (no
+`RpcCommand` carries it).
+
+Rows swept: **147** (the audit counts 148; §1.8 parses 8 of its 9 — see below).
+Verdict tally: **不适用 8, 仍未做 20, 已实现 107, 已解决 4, 部分：代码已写、无调用方 3, 部分：引擎已接、设置与界面未接 4, 部分：引擎已接、设置未接 1**.
+
+| capability | grade then | verified now | pi counterpart | evidence |
+|---|---|---|---|---|
+| `prompt` (text) | IMPLEMENTED | 已实现（符号在位核对） | pi 有 `docs/rpc.md` | Commands@PiRoot.kt; prompt@PiRoot.kt; PiEngineSession@PiRoot.kt |
+| `prompt` `images` | PARTIAL | 仍未做 | pi 有 `rpc-types.ts` | Commands@PiRoot.kt; PiImage@PiSessionViewModel.kt; PiEngineSession@PiRoot.kt |
+| `prompt` `streamingBehavior: steer` | IMPLEMENTED | 已实现（符号在位核对） | pi 有 `rpc-types.ts` | send@PiSessionViewModel.kt |
+| `prompt` `streamingBehavior: followUp` | PARTIAL | 已实现 | pi 有 `rpc-types.ts` | PiSessionViewModel.sendFollowUp · FollowUp@PiSessionViewModel.kt; Commands@PiRoot.kt; follow_up@PiSe |
+| `steer` | IMPLEMENTED | 已实现（符号在位核对） | pi 有 `docs/rpc.md` | Commands@PiRoot.kt; send@PiSessionViewModel.kt |
+| `follow_up` | MISSING-GUI | 已实现 | pi 有 `docs/rpc.md` | PiSessionViewModel.sendFollowUp · Commands@PiRoot.kt; sendFollowUp@PiSessionViewModel.kt |
+| `abort` | IMPLEMENTED | 已实现（符号在位核对） | pi 有 `rpc-types.ts` | Commands@PiRoot.kt; stopAndDrainQueue@PiRoot.kt; stop@PiRoot.kt |
+| `clear_queue` | PARTIAL | 已实现 | pi 有 `docs/rpc.md` | ChatScreen.mergeRestoredQueue · Commands@PiRoot.kt; stopAndDrainQueue@PiRoot.kt; PiEngineSession@PiR |
+| `new_session` | IMPLEMENTED | 已实现（符号在位核对） | pi 有 `rpc-types.ts` | Commands@PiRoot.kt; newSession@PiSessionViewModel.kt; ChatScreen@PiRoot.kt |
+| `new_session` `parentSession` | PARTIAL | 仍未做 | pi 有 `rpc-types.ts` | 缺：把父会话路径从 UI 传进 newSession · Commands@PiRoot.kt; PiEngineApi@PiRoot.kt |
+| `get_state` | IMPLEMENTED | 已实现（符号在位核对） | pi 有 `rpc-types.ts` | Commands@PiRoot.kt; refreshState@PiSessionViewModel.kt |
+| `get_messages` | PARTIAL | 仍未做（无用户可见损失） | pi 有 `rpc-types.ts` | 无调用方；transcript 来自 get_entries · Commands@PiRoot.kt; getMessages@PiEngineApi.kt; PiEngineApi@PiRoot. |
+| `set_model` | IMPLEMENTED | 已实现（符号在位核对） | pi 有 `rpc-types.ts` | Commands@PiRoot.kt; setModel@PiSessionViewModel.kt; ModelPickerSheet@ChatScreen.kt |
+| `cycle_model` | IMPLEMENTED | 已实现（符号在位核对） | pi 有 `rpc-types.ts` | Commands@PiRoot.kt; cycleModel@PiSessionViewModel.kt; ChatScreen@PiRoot.kt |
+| `get_available_models` | IMPLEMENTED | 已实现（符号在位核对） | pi 有 `rpc-types.ts` | Commands@PiRoot.kt; refreshModels@PiRoot.kt |
+| `set_thinking_level` | IMPLEMENTED | 已实现（符号在位核对） | pi 有 `rpc-types.ts` | Commands@PiRoot.kt; setThinkingLevel@PiSessionViewModel.kt; ThinkingPickerSheet@ChatScreen.kt |
+| `cycle_thinking_level` | IMPLEMENTED | 已实现（符号在位核对） | pi 有 `rpc-types.ts` | Commands@PiRoot.kt; cycleThinkingLevel@PiSessionViewModel.kt; ChatScreen@PiRoot.kt |
+| `get_available_thinking_levels` | IMPLEMENTED | 已实现（符号在位核对） | pi 有 `rpc-types.ts` | Commands@PiRoot.kt; refreshThinkingLevels@PiSessionViewModel.kt |
+| `set_steering_mode` | IMPLEMENTED | 已实现（符号在位核对） | pi 有 `rpc-types.ts` | Commands@PiRoot.kt; setSteeringMode@PiSessionViewModel.kt; SessionToolsSheet@ChatScreen.kt |
+| `set_follow_up_mode` | IMPLEMENTED | 已实现（符号在位核对） | pi 有 `rpc-types.ts` | Commands@PiRoot.kt; setFollowUpMode@PiSessionViewModel.kt; SessionToolsSheet@ChatScreen.kt |
+| `compact` | IMPLEMENTED | 已实现（符号在位核对） | pi 有 `rpc-types.ts` | Commands@PiRoot.kt; compact@PiRoot.kt; customInstructions@PiSessionViewModel.kt |
+| `set_auto_compaction` | IMPLEMENTED | 已实现（符号在位核对） | pi 有 `rpc-types.ts` | Commands@PiRoot.kt; setAutoCompaction@PiSessionViewModel.kt |
+| `set_auto_retry` | IMPLEMENTED | 已实现（符号在位核对） | pi 有 `rpc-types.ts` | Commands@PiRoot.kt; setAutoRetry@PiSessionViewModel.kt |
+| `abort_retry` | IMPLEMENTED | 已实现（符号在位核对） | pi 有 `rpc-types.ts` | Commands@PiRoot.kt; abortRetry@PiSessionViewModel.kt |
+| `bash` + `excludeFromContext` | IMPLEMENTED | 已实现（符号在位核对） | pi 有 `rpc-types.ts` | Commands@PiRoot.kt; runBash@PiSessionViewModel.kt; SlashPalette@ChatScreen.kt |
+| `abort_bash` | IMPLEMENTED | 已实现（符号在位核对） | pi 有 `rpc-types.ts` | Commands@PiRoot.kt; abortBash@PiRoot.kt; BashPanel@ChatScreen.kt |
+| `get_session_stats` | IMPLEMENTED | 已实现（符号在位核对） | pi 有 `rpc-types.ts` | Commands@PiRoot.kt; refreshStats@PiSessionViewModel.kt; SessionStatsSheet@ChatScreen.kt |
+| `export_html` | PARTIAL | 已实现 | pi 有 `rpc-types.ts` | PiSessionViewModel.exportSession · Commands@PiRoot.kt; exportHtml@PiSessionViewModel.kt |
+| `export_html` `outputPath` | PARTIAL | 已实现 | pi 有 `rpc-types.ts` | PiSessionViewModel.exportSession · PiSessionViewModel@MainActivity.kt |
+| `switch_session` + `cancelled` | IMPLEMENTED | 已实现（符号在位核对） | pi 有 `rpc-types.ts` | Commands@PiRoot.kt; switchSession@PiSessionViewModel.kt; SessionsScreen@PiRoot.kt |
+| `fork` + `cancelled` | IMPLEMENTED | 已实现（符号在位核对） | pi 有 `rpc-types.ts` | Commands@PiRoot.kt; forkFrom@PiRoot.kt |
+| `clone` | IMPLEMENTED | 已实现（符号在位核对） | pi 有 `rpc-types.ts` | Commands@PiRoot.kt; cloneSession@PiSessionViewModel.kt |
+| `get_fork_messages` | IMPLEMENTED | 已实现（符号在位核对） | pi 有 `rpc-types.ts` | Commands@PiRoot.kt; refreshForkMessages@PiSessionViewModel.kt |
+| `get_entries` + `since` | IMPLEMENTED | 已实现（符号在位核对） | pi 有 `rpc-types.ts` | Commands@PiRoot.kt; getEntries@PiSessionViewModel.kt |
+| `get_tree` | IMPLEMENTED | 已实现（符号在位核对） | pi 有 `rpc-types.ts` | Commands@PiRoot.kt; refreshTree@PiRoot.kt; SessionTreeScreen@PiRoot.kt |
+| `get_last_assistant_text` | IMPLEMENTED | 已实现（符号在位核对） | pi 有 `rpc-types.ts` | Commands@PiRoot.kt; copyLastAssistantText@PiSessionViewModel.kt; ChatScreen@PiRoot.kt |
+| `set_session_name` | IMPLEMENTED | 已实现（符号在位核对） | pi 有 `rpc-types.ts` | Commands@PiRoot.kt; renameSession@PiSessionViewModel.kt |
+| `get_commands` | IMPLEMENTED | 已实现（符号在位核对） | pi 有 `rpc-types.ts` | Commands@PiRoot.kt; refreshCommands@PiSessionViewModel.kt; piCommandPalette@PiSessionViewModel.kt |
+| Extension UI requests (`select`/`confirm`/`inp | IMPLEMENTED | 已实现（符号在位核对） | pi 有 `docs/rpc.md` | 审计未引可查符号 |
+| `--mode rpc`, `--session-dir`, `--name`, `--th | IMPLEMENTED | 已实现（符号在位核对） | pi 有 `args.ts` | PiEngineHost@PiSessionViewModel.kt; set_model@PiSessionViewModel.kt; set_session_name@PiSessionViewM |
+| `pi install` / `remove` / `list` / `update` | CLI-ONLY | 已实现（未提交） | pi 有 `package-manager-cli.ts` | PiPackagesHost → PiPackagesScreen + PiPackageService · PiPackageService@AgentLayout.kt; PiPackagesSc |
+| `pi config` (resource enable/disable TUI) | CLI-ONLY | 仍未做 | pi 有 `package-manager-cli.ts` | 缺：per-resource 过滤模型 + UI · autoload@PiSettingsRegistry.kt; PiSettingsRegistry@PiSessionViewModel.kt; |
+| `--offline` / `PI_OFFLINE` | CLI-ONLY, not reproduc | 部分：引擎已接、设置与界面未接 | pi 有 `args.ts` | PiLaunchOptions.environment；无 registry 行 · PiEngineHost@PiSessionViewModel.kt; PI_CODING_AGENT_DIR@P |
+| `--system-prompt` / `--append-system-prompt` | CLI-ONLY, not reproduc | 部分：引擎已接、设置与界面未接 | pi 有 `args.ts` | PiLaunchOptions.systemPrompt；无调用方 · 审计未引可查符号 |
+| `--api-key` | CLI-ONLY | 部分：代码已写、无调用方 | pi 有 `args.ts` | PiCredentialService.setApiKey · json@PiRoot.kt; TerminalOnly@PiSessionViewModel.kt; PiSlashCommands@ |
+| `--continue` / `-c`, `--resume`, `--session`, | MISSING-GUI | 已实现 | pi 有 `args.ts` | PiSessionViewModel resume gate + app.sessions.resumeLast · switch_session@PiSessionViewModel.kt; PiS |
+| `--list-models`, `--export` | IMPLEMENTED | 已实现（符号在位核对） | pi 有 `args.ts` | get_available_models@PiRoot.kt; export_html@PiSessionViewModel.kt |
+| `--models`, `--tools`, `--no-tools`, `--no-bui | IMPLEMENTED | 已实现（符号在位核对） | pi 有 `args.ts` | enabledModels@PiSessionViewModel.kt; defaultTools@PiSettingsRegistry.kt |
+| `--extension`, `--skill`, `--prompt-template`, | CLI-ONLY / N/A | 不适用（App 只有一个常驻引擎，没有 per-run 概念） | pi 有 `args.ts` | 持久化形式 = extensions/skills/prompts/themes 设置行 · extensions@PiSessionViewModel.kt; skills@PiSessionVie |
+| `--use-theme` (per-run theme), `--tui-mode`, ` | N/A | 不适用 | pi 有 `args.ts` | 无需符号（N/A） |
+| Built-in slash commands | IMPLEMENTED | 已实现（符号在位核对） | pi 有 `core/slash-commands.ts` | PI_BUILTIN_SLASH_COMMANDS@PiSlashCommands.kt; PiSlashCommands@PiRoot.kt; TerminalOnly@PiSessionViewM |
+| `/` palette incl. extension/template/skill com | IMPLEMENTED | 已实现（符号在位核对） | pi 有 `docs/rpc.md` | get_commands@PiRoot.kt; piCommandPalette@PiSessionViewModel.kt; PiSlashCommands@PiRoot.kt |
+| `/` interception (a `/cmd` must not become a p | IMPLEMENTED | 已实现（符号在位核对） | pi 有 `interactive-mode.ts` | routeComposerText@ChatScreen.kt; SlashPalette@ChatScreen.kt |
+| bash mode `!` / `!!` | IMPLEMENTED | 已实现（符号在位核对） | pi 有 `keybindings.md` | SlashPalette@ChatScreen.kt; ChatScreen@PiRoot.kt; BashPanel@ChatScreen.kt |
+| queue editing: restore queued text on Esc | MISSING-GUI | 已实现 | pi 有 `docs/rpc.md` | ChatScreen.mergeRestoredQueue · stopAndDrainQueue@PiRoot.kt; PiEngineSession@PiRoot.kt; ChatScreen@P |
+| queue a follow-up message (`alt+enter`) | MISSING-GUI | 已实现 | pi 有 `keybindings.md` | ChatScreen → sendFollowUp · sendFollowUp@PiSessionViewModel.kt |
+| expand/collapse all tool output (`ctrl+o`) | IMPLEMENTED | 已实现（符号在位核对） | pi 有 `keybindings.md` | toolsExpanded@ChatScreen.kt; ChatScreen@PiRoot.kt |
+| expand/collapse thinking (`ctrl+t`) | PARTIAL | 已实现 | pi 有 `keybindings.md` | ChatScreen thinkingDefaultExpanded · ChatScreen@PiRoot.kt |
+| `hideThinkingBlock` (hide thinking entirely) | MISSING-GUI | 已实现 | pi 有 `settings-manager.ts` | ChatScreen hideThinking · BlockRenderer@ChatScreen.kt; hideThinking@PiSessionViewModel.kt; ChatScree |
+| transcript search (`ctrl+shift+f`) | MISSING-GUI | 已实现 | pi 有 `keybindings.md` | ChatScreen.searchQuery/SearchBar · SearchBar@ChatScreen.kt |
+| jump to previous/next message (`ctrl+shift+up/ | MISSING-GUI | 已实现 | pi 有 `keybindings.md` | ChatScreen 跳到上/下一条 · 审计未引可查符号 |
+| model picker / cycle (`ctrl+l`, `ctrl+p`) | IMPLEMENTED | 已实现（符号在位核对） | pi 有 `keybindings.md` | ChatScreen@PiRoot.kt |
+| thinking picker / cycle (`shift+tab`) | IMPLEMENTED | 已实现（符号在位核对） | pi 有 `keybindings.md` | ChatScreen@PiRoot.kt |
+| `/tree` navigation: switch the active leaf | MISSING-TERMINAL-ONLY | 仍未做（协议不可达） | pi 有但我们够不着（无 RpcCommand） | rpc-types.ts 无 leaf-move 命令 · RpcCommand@PiRoot.kt; get_tree@PiSessionViewModel.kt; fork@PiRoot.kt |
+| tree filters (`treeFilterMode`, `ctrl+t/u/l/a/ | MISSING-GUI | 已实现 | pi 有 `docs/sessions.md` | SessionTreeScreen.TreeFilter · SessionTreeScreen@PiRoot.kt; treeFilterMode@PiSettingsRegistry.kt |
+| tree labels (`setLabel`, edit label `shift+l`) | MISSING-TERMINAL-ONLY | 仍未做（协议不可达） | pi 有但我们够不着（无 RpcCommand） | SessionTreeScreen@PiRoot.kt |
+| session picker: search / sort / named filter / | MISSING-GUI | 已实现 | pi 有 `docs/sessions.md` | SessionsScreen.query/byName/namedOnly · SessionsScreen@PiRoot.kt; PiSessionStore@PiSessionViewModel. |
+| session tree "delete session" + non-invasive v | MISSING-GUI | 仍未做 | pi 有 `keybindings.md` | 审计未引可查符号 |
+| external editor (`ctrl+g`, `externalEditor`) | PARTIAL | 仍未做 | pi 有 `keybindings.md` | 缺：Android 侧 ACTION_EDIT 目标选择 · externalEditor@PiSettingsRegistry.kt; PiSettingsRegistry@PiSessionVie |
+| scoped models selector (`/scoped-models`) | PARTIAL | 已实现 | pi 有 `core/slash-commands.ts` | PiCommandAction.OpenModelScope · TerminalOnly@PiSessionViewModel.kt; PiSlashCommands@PiRoot.kt; enab |
+| `/import` (import a session JSONL) | MISSING-TERMINAL-ONLY | 仍未做（协议不可达） | pi 有但我们够不着（无 RpcCommand） | TerminalOnly@PiSessionViewModel.kt; PiSlashCommands@PiRoot.kt; import@PiApplication.kt |
+| `/share` (secret GitHub gist) | MISSING-TERMINAL-ONLY | 仍未做（协议不可达） | pi 有但我们够不着（无 RpcCommand） | TerminalOnly@PiSessionViewModel.kt |
+| `/login`, `/logout` | MISSING-TERMINAL-ONLY | 仍未做（协议不可达） | pi 有但我们够不着（无 RpcCommand） | TerminalOnly@PiSessionViewModel.kt; PiSlashCommands@PiRoot.kt |
+| `/reload` | MISSING-TERMINAL-ONLY | 仍未做（协议不可达） | pi 有但我们够不着（无 RpcCommand） | ChatScreen@PiRoot.kt |
+| `/changelog`, `/hotkeys`, `/quit` | N/A / MISSING-TERMINAL | 仍未做 | pi 有但我们够不着（无 RpcCommand） | TerminalOnly@PiSessionViewModel.kt; hotkeys@PiSlashCommands.kt; quit@PiSlashCommands.kt |
+| custom keybindings (`keybindings.json`) | N/A | 不适用 | pi 有 `docs/keybindings.md` | keybindings@ChatScreen.kt |
+| Built-in `dark` / `light` | IMPLEMENTED | 已实现（符号在位核对） | pi 有 `docs/themes.md` | Dark@MainActivity.kt; Light@PiThemeFiles.kt; PiPalette@MainActivity.kt |
+| Automatic `lightTheme/darkTheme` pair | IMPLEMENTED | 已实现 | pi 有 `docs/themes.md` | PiSessionViewModel.refreshTheme · PiSettingsStore@PiSessionViewModel.kt; MainActivity@MainActivity.k |
+| Select a theme by name | IMPLEMENTED | 已实现 | pi 有 `docs/themes.md` | PiSettingEditorHost + SettingsGroupScreen echo · theme@MainActivity.kt; SettingsGroupScreen@Settings |
+| A user theme JSON changes the app's own colour | MISSING-GUI | 已实现 | pi 有 `docs/themes.md` | PiThemeLoader.load + PiSessionViewModel.theme · PiPalette@MainActivity.kt; MainActivity@MainActivity |
+| Theme discovery from `<agentDir>/themes/*.json | PARTIAL | 已实现 | pi 有 `resource-loader.ts` | PiThemeLoader.discover · themes@PiRoot.kt |
+| Theme discovery from `.pi/themes/*.json` (proj | PARTIAL | 已实现 | pi 有 `resource-loader.ts` | PiThemeLoader.discover · 审计未引可查符号 |
+| Themes from packages (`themes/`, `pi.themes`) | PARTIAL | 已实现 | pi 有 `docs/themes.md` | PiThemeLoader.discover · 审计未引可查符号 |
+| `--theme` / `--no-themes` | CLI-ONLY | 不适用（持久化形式已存在） | pi 有 `args.ts` | themes 设置行 · 审计未引可查符号 |
+| Theme used by `export_html` | N/A | 已实现 | pi 有 `agent-session.ts` | PiSessionViewModel.exportSession · 无需符号（N/A） |
+| Sessions as JSONL, grouped by cwd | IMPLEMENTED | 已实现（符号在位核对） | pi 有 `docs/sessions.md` | list@PiRoot.kt; encodedCwdFromGroupName@PiSessionStore.kt; PiSessionStore@PiSessionViewModel.kt |
+| Byte-compatibility with pi's session format | N/A | 不适用 | pi 有 `docs/session-format.md` | PiSessionStore@PiSessionViewModel.kt |
+| Tree view (`/tree`) | IMPLEMENTED | 已实现（符号在位核对） | pi 有 `docs/sessions.md` | get_tree@PiSessionViewModel.kt; SessionTreeScreen@PiRoot.kt |
+| Switch branch in place | MISSING-TERMINAL-ONLY | 仍未做（协议不可达） | pi 有但我们够不着（无 RpcCommand） | 审计未引可查符号 |
+| Branch summarization when leaving a branch | MISSING-TERMINAL-ONLY | 仍未做（协议不可达） | pi 有但我们够不着（无 RpcCommand） | requires the leaf move · 审计未引可查符号 |
+| Fork from a user message | IMPLEMENTED | 已实现（符号在位核对） | pi 有 `docs/sessions.md` | fork@PiRoot.kt; SessionTreeScreen@PiRoot.kt |
+| Clone current branch | IMPLEMENTED | 已实现（符号在位核对） | pi 有 `docs/sessions.md` | cloneSession@PiSessionViewModel.kt |
+| Switch / resume a session | IMPLEMENTED | 已实现（符号在位核对） | pi 有 `docs/sessions.md` | SessionsScreen@PiRoot.kt; switch_session@PiSessionViewModel.kt; cancelled@PiSessionViewModel.kt |
+| Rename | IMPLEMENTED | 已实现（符号在位核对） | pi 有 `docs/sessions.md` | set_session_name@PiSessionViewModel.kt |
+| Delete a session | MISSING-GUI | 已实现 | pi 有 `docs/sessions.md` | SessionsScreen.combinedClickable + PiSessionViewModel.deleteSession · 审计未引可查符号 |
+| Search / sort / named-only filter in the picke | MISSING-GUI | 已实现 | pi 有 `docs/sessions.md` | SessionsScreen.query/byName/namedOnly · SessionsScreen@PiRoot.kt |
+| Resume most recent session on launch (`pi -c`) | MISSING-GUI | 已实现 | pi 有 `args.ts` | PiSessionViewModel resume gate · PiSessionViewModel@MainActivity.kt |
+| Export to HTML | IMPLEMENTED | 已实现（符号在位核对） | pi 有 `docs/sessions.md` | export_html@PiSessionViewModel.kt; exportHtml@PiSessionViewModel.kt |
+| Export to JSONL | MISSING-GUI | 已实现 | pi 有 `agent-session.ts` | PiSessionViewModel.exportJsonl · export_html@PiSessionViewModel.kt; exportToHtml@PiSessionViewModel. |
+| Import from a JSONL file | MISSING-TERMINAL-ONLY | 仍未做（协议不可达） | pi 有但我们够不着（无 RpcCommand） | TerminalOnly@PiSessionViewModel.kt |
+| Entry log (`get_entries`) incl. extension stat | IMPLEMENTED | 已实现（符号在位核对） | pi 有 `docs/rpc.md` | appendEntry@PiSessionViewModel.kt; SessionTreeScreen@PiRoot.kt |
+| Per-cwd session grouping in the UI | PARTIAL | 已实现 | pi 有 `docs/sessions.md` | SessionsScreen.groupBy{cwd} · SessionsScreen@PiRoot.kt |
+| Model catalog from the provider | IMPLEMENTED | 已实现（符号在位核对） | pi 有 `docs/rpc.md` | refreshModels@PiRoot.kt; ModelPickerSheet@ChatScreen.kt |
+| Switch / cycle model | IMPLEMENTED | 已实现（符号在位核对） | pi 有 `docs/rpc.md` | 审计未引可查符号 |
+| Thinking levels, `off`…`max`, model-derived | IMPLEMENTED | 已实现（符号在位核对） | pi 有 `docs/rpc.md` | PiEngineApi@PiRoot.kt |
+| Per-model thinking defaults (`modelThinkingLev | IMPLEMENTED | 已实现（符号在位核对） | pi 有 `settings-manager.ts` | json@PiRoot.kt |
+| Custom provider via `models.json` | PARTIAL | 部分：代码已写、无调用方 | pi 有 `docs/custom-provider.md` | PiConfigFiles/PiCredentialService · json@PiRoot.kt; get_available_models@PiRoot.kt; manage@PiApplica |
+| OAuth login (`/login`, `/logout`) and `auth.js | MISSING-TERMINAL-ONLY | 仍未做（协议不可达） | pi 有但我们够不着（无 RpcCommand） | TerminalOnly@PiSessionViewModel.kt; json@PiRoot.kt |
+| API-key credentials | MISSING-GUI | 部分：代码已写、无调用方 | pi 有 `docs/providers.md` | PiCredentialService.setApiKey · apiKey@PiSettingsRegistry.kt |
+| Provider transport setting | IMPLEMENTED | 已实现（符号在位核对） | pi 有 `settings-manager.ts` | 审计未引可查符号 |
+| `provider/auth` events visible to the client | PARTIAL | 仍未做 | pi 无对应物（App 自己的决定） | model_select@PiSessionViewModel.kt; get_state@PiSessionViewModel.kt |
+| Skill discovery (`~/.pi/agent/skills`, `.pi/sk | IMPLEMENTED | 已实现（符号在位核对） | pi 有 `docs/skills.md` | PiEngineHost@PiSessionViewModel.kt; skills@PiSessionViewModel.kt |
+| `/skill:name` invocation | IMPLEMENTED | 已实现（符号在位核对） | pi 有 `agent-session.ts` | get_commands@PiRoot.kt; PiSlashCommands@PiRoot.kt |
+| `enableSkillCommands` | IMPLEMENTED | 已实现（符号在位核对） | pi 有 `settings-manager.ts` | 审计未引可查符号 |
+| Prompt templates (`prompts` setting, `.md` fil | IMPLEMENTED | 已实现（符号在位核对） | pi 有 `docs/prompt-templates.md` | get_commands@PiRoot.kt |
+| Local extensions (`extensions` setting, `~/.pi | IMPLEMENTED | 已实现（符号在位核对） | pi 有 `docs/extensions.md` | extensions@PiSessionViewModel.kt |
+| npm/git packages (`packages`) | PARTIAL | 已实现（未提交） | pi 有 `docs/packages.md` | PiPackagesHost → PiPackagesScreen · packages@PiRoot.kt; autoload@PiSettingsRegistry.kt |
+| Package resource enable/disable (`pi config`) | CLI-ONLY | 仍未做 | pi 有 `package-manager-cli.ts` | 缺：per-resource 过滤模型 + UI · 审计未引可查符号 |
+| Extension load diagnostics | MISSING-TERMINAL-ONLY | 仍未做（协议不可达） | pi 有但我们够不着（无 RpcCommand） | 审计未引可查符号 |
+| Extension command collision (`name:1`) | IMPLEMENTED | 已实现（符号在位核对） | pi 有 `runner.ts:653-691` | 审计未引可查符号 |
+| Built-in vs user-installed package distinction | MISSING-GUI | 已实现（未提交） | pi 无对应物（App 自己的决定） | PiPackagesScreen builtin/user distinction · 审计未引可查符号 |
+| pi's whole top-level settings surface | IMPLEMENTED | 已实现（符号在位核对） | pi 有 `settings-manager.ts` | path@PiRoot.kt; projectTrusted@PiSettingsRegistry.kt |
+| Writes land in pi's own files | IMPLEMENTED | 已实现（符号在位核对） | pi 有 `settings-manager.ts` | json@PiRoot.kt; PiSettingsFileStore@PiSessionViewModel.kt |
+| Settings search | IMPLEMENTED | 已实现（符号在位核对） | pi 有 `interactive-mode.ts` | SettingsSearchScreen@PiSettingsRegistry.kt; PiSettingsCatalog@PiSettingsStore.kt |
+| Registered settings that nothing reads | MISSING-GUI | 已解决 | pi 无对应物（App 自己的决定） | 10 wired + 3 deleted with reasons · dynamicColor@PiSettingsRegistry.kt; fontScaleDelta@MainActivity. |
+| Action-kind settings rows | MISSING-GUI | 已解决（接线或删除） | pi 无对应物（App 自己的决定） | SettingsGroupScreen/registry · Action@PiRoot.kt; PiRoot@MainActivity.kt; onRunAction@PiRoot.kt |
+| Telemetry settings (`enableInstallTelemetry`, | IMPLEMENTED | 已实现（符号在位核对） | pi 有 `settings-manager.ts` | json@PiRoot.kt; telemetry@PiSettingsRegistry.kt |
+| `httpProxy` / `httpIdleTimeoutMs` / `websocket | IMPLEMENTED | 已实现（符号在位核对） | pi 有 `settings-manager.ts` | httpProxy@PiSettingsRegistry.kt; HTTP_PROXY@PiSettingsRegistry.kt; HTTPS_PROXY@PiSettingsRegistry.kt |
+| Update checks | MISSING-GUI | 已解决（判定并删除行） | pi 有 `docs/environment-variables.md` | settings agent: 19 rows judged, 12 deleted · PiEngineHost@PiSessionViewModel.kt; checkUpdate@PiSetti |
+| Images into `prompt` | PARTIAL | 已实现 | pi 有 `rpc-types.ts` | ChatScreen.imagePicker → send(text, images) · PiImage@PiSessionViewModel.kt; Commands@PiRoot.kt |
+| Picking an image from the device | MISSING-GUI | 已实现 | pi 有 `pi has no phone picker, but the ca` | ChatScreen.imagePicker · GetContent@ChatScreen.kt; ACTION_OPEN_DOCUMENT@DeviceSafStore.kt |
+| Pasting an image from the clipboard | MISSING-GUI | 已实现 | pi 有 `keybindings.md` | ChatScreen.imagePicker · ChatScreen@PiRoot.kt; TerminalPane@WorkbenchScreen.kt |
+| Rendering attachments in the transcript | PARTIAL | 已实现 | pi 有 `core/messages.ts` | ImageGridBlock.decodeImage · UserMessageBlock@BlockRenderer.kt; images@PiSessionViewModel.kt; ImageG |
+| `@` file mentions | MISSING-GUI | 已实现 | pi 有 `utils/paths.ts` | ChatScreen mention list · 审计未引可查符号 |
+| `PI_CODING_AGENT_DIR`, `PI_CODING_AGENT_SESSIO | IMPLEMENTED | 已实现（符号在位核对） | pi 有 `docs/environment-variables.md` | PiEngineHost@PiSessionViewModel.kt |
+| `PI_SKIP_VERSION_CHECK` | IMPLEMENTED | 已实现（符号在位核对） | pi 有 `same` | PiEngineHost@PiSessionViewModel.kt |
+| `PI_OFFLINE` / `--offline` | CLI-ONLY, not reproduc | 部分：引擎已接、设置与界面未接 | pi 有 `same` | PiLaunchOptions.environment；无 registry 行 · PiEngineHost@PiSessionViewModel.kt |
+| `PI_TELEMETRY` | IMPLEMENTED | 已实现（符号在位核对） | pi 有 `same` | enableInstallTelemetry@PiSettingsRegistry.kt |
+| `PI_CACHE_RETENTION` | MISSING-GUI | 部分：引擎已接、设置未接 | pi 有 `same` | PiLaunchOptions.longCacheRetention · 审计未引可查符号 |
+| `PI_PACKAGE_DIR` | N/A | 不适用 | pi 有 `same` | 无需符号（N/A） |
+| `HTTP_PROXY` / `HTTPS_PROXY` | IMPLEMENTED | 已实现（符号在位核对） | pi 有 `same` | httpProxy@PiSettingsRegistry.kt |
+| `PI_IMAGE_PROTOCOL`, `PI_TRUE_COLOR`, `PI_HYPE | IMPLEMENTED | 已实现（符号在位核对） | pi 有 `same` | PtyLauncher@PiSessionViewModel.kt; none@PiSessionViewModel.kt; showHardwareCursor@PiSettingsRegistry |
+| `VISUAL` / `EDITOR` | IMPLEMENTED | 已实现（符号在位核对） | pi 有 `same` | externalEditor@PiSettingsRegistry.kt |
+| `AI_AGENT=pi` / `PI_CODING_AGENT=true` process | N/A | 不适用 | pi 有 `same` | 无需符号（N/A） |
+| Shell-tool session env (`PI_SESSION_ID`, `PI_P | N/A | 不适用 | pi 有 `same` | 无需符号（N/A） |
+| Engine argv | PARTIAL | 部分：引擎已接、设置与界面未接 | pi 有 `docs/rpc.md` | PiLaunchOptions + PiEngineHost.boot(launch) · PiEngineHost@PiSessionViewModel.kt |
+| Runtime/ops diagnostics (`app.runtime.*`) | MISSING-GUI | 已解决（判定并删除行） | pi 无对应物（App 自己的决定） | settings agent: 19 rows judged, 12 deleted · logViewer@PiSettingsRegistry.kt; exportDiagnostics@PiSe |
+
+### "说没做、其实做了" — the list this sweep exists to produce
+
+- **`prompt` `streamingBehavior: followUp`** (was PARTIAL) → 已实现 — PiSessionViewModel.sendFollowUp
+- **`follow_up`** (was MISSING-GUI) → 已实现 — PiSessionViewModel.sendFollowUp
+- **`clear_queue`** (was PARTIAL) → 已实现 — ChatScreen.mergeRestoredQueue
+- **`export_html`** (was PARTIAL) → 已实现 — PiSessionViewModel.exportSession
+- **`export_html` `outputPath`** (was PARTIAL) → 已实现 — PiSessionViewModel.exportSession
+- **`pi install` / `remove` / `list` / `update`** (was CLI-ONLY) → 已实现（未提交） — PiPackagesHost → PiPackagesScreen + PiPackageService
+- **`--continue` / `-c`, `--resume`, `--session`,** (was MISSING-GUI) → 已实现 — PiSessionViewModel resume gate + app.sessions.resumeLast
+- **queue editing: restore queued text on Esc** (was MISSING-GUI) → 已实现 — ChatScreen.mergeRestoredQueue
+- **queue a follow-up message (`alt+enter`)** (was MISSING-GUI) → 已实现 — ChatScreen → sendFollowUp
+- **expand/collapse thinking (`ctrl+t`)** (was PARTIAL) → 已实现 — ChatScreen thinkingDefaultExpanded
+- **`hideThinkingBlock` (hide thinking entirely)** (was MISSING-GUI) → 已实现 — ChatScreen hideThinking
+- **transcript search (`ctrl+shift+f`)** (was MISSING-GUI) → 已实现 — ChatScreen.searchQuery/SearchBar
+- **jump to previous/next message (`ctrl+shift+up/** (was MISSING-GUI) → 已实现 — ChatScreen 跳到上/下一条
+- **tree filters (`treeFilterMode`, `ctrl+t/u/l/a/** (was MISSING-GUI) → 已实现 — SessionTreeScreen.TreeFilter
+- **session picker: search / sort / named filter /** (was MISSING-GUI) → 已实现 — SessionsScreen.query/byName/namedOnly
+- **scoped models selector (`/scoped-models`)** (was PARTIAL) → 已实现 — PiCommandAction.OpenModelScope
+- **A user theme JSON changes the app's own colour** (was MISSING-GUI) → 已实现 — PiThemeLoader.load + PiSessionViewModel.theme
+- **Theme discovery from `<agentDir>/themes/*.json** (was PARTIAL) → 已实现 — PiThemeLoader.discover
+- **Theme discovery from `.pi/themes/*.json` (proj** (was PARTIAL) → 已实现 — PiThemeLoader.discover
+- **Themes from packages (`themes/`, `pi.themes`)** (was PARTIAL) → 已实现 — PiThemeLoader.discover
+- **Theme used by `export_html`** (was N/A) → 已实现 — PiSessionViewModel.exportSession
+- **Delete a session** (was MISSING-GUI) → 已实现 — SessionsScreen.combinedClickable + PiSessionViewModel.deleteSession
+- **Search / sort / named-only filter in the picke** (was MISSING-GUI) → 已实现 — SessionsScreen.query/byName/namedOnly
+- **Resume most recent session on launch (`pi -c`)** (was MISSING-GUI) → 已实现 — PiSessionViewModel resume gate
+- **Export to JSONL** (was MISSING-GUI) → 已实现 — PiSessionViewModel.exportJsonl
+- **Per-cwd session grouping in the UI** (was PARTIAL) → 已实现 — SessionsScreen.groupBy{cwd}
+- **npm/git packages (`packages`)** (was PARTIAL) → 已实现（未提交） — PiPackagesHost → PiPackagesScreen
+- **Built-in vs user-installed package distinction** (was MISSING-GUI) → 已实现（未提交） — PiPackagesScreen builtin/user distinction
+- **Images into `prompt`** (was PARTIAL) → 已实现 — ChatScreen.imagePicker → send(text, images)
+- **Picking an image from the device** (was MISSING-GUI) → 已实现 — ChatScreen.imagePicker
+- **Pasting an image from the clipboard** (was MISSING-GUI) → 已实现 — ChatScreen.imagePicker
+- **Rendering attachments in the transcript** (was PARTIAL) → 已实现 — ImageGridBlock.decodeImage
+- **`@` file mentions** (was MISSING-GUI) → 已实现 — ChatScreen mention list
+Every row whose grade **changed** from a form of "not done" to a form of "done" between `a7b7738` and
+`182823e`, with the proof. This is the valuable output; a stale "not done" sends someone to rebuild
+working code.
+
+- **`prompt` `streamingBehavior: followUp`** (PARTIAL) → 已实现 — PiSessionViewModel.sendFollowUp
+- **`follow_up`** (MISSING-GUI) → 已实现 — PiSessionViewModel.sendFollowUp
+- **`clear_queue`** (PARTIAL) → 已实现 — ChatScreen.mergeRestoredQueue
+- **`export_html`** (PARTIAL) → 已实现 — PiSessionViewModel.exportSession
+- **`export_html` `outputPath`** (PARTIAL) → 已实现 — PiSessionViewModel.exportSession
+- **`pi install` / `remove` / `list` / `update`** (CLI-ONLY) → 已实现（未提交） — PiPackagesHost → PiPackagesScreen + PiPackageService
+- **`--continue` / `-c`, `--resume`, `--session`, ** (MISSING-GUI) → 已实现 — PiSessionViewModel resume gate + app.sessions.resumeLast
+- **queue editing: restore queued text on Esc** (MISSING-GUI) → 已实现 — ChatScreen.mergeRestoredQueue
+- **queue a follow-up message (`alt+enter`)** (MISSING-GUI) → 已实现 — ChatScreen → sendFollowUp
+- **expand/collapse thinking (`ctrl+t`)** (PARTIAL) → 已实现 — ChatScreen thinkingDefaultExpanded
+- **`hideThinkingBlock` (hide thinking entirely)** (MISSING-GUI) → 已实现 — ChatScreen hideThinking
+- **transcript search (`ctrl+shift+f`)** (MISSING-GUI) → 已实现 — ChatScreen.searchQuery/SearchBar
+- **jump to previous/next message (`ctrl+shift+up/** (MISSING-GUI) → 已实现 — ChatScreen 跳到上/下一条
+- **tree filters (`treeFilterMode`, `ctrl+t/u/l/a/** (MISSING-GUI) → 已实现 — SessionTreeScreen.TreeFilter
+- **session picker: search / sort / named filter /** (MISSING-GUI) → 已实现 — SessionsScreen.query/byName/namedOnly
+- **scoped models selector (`/scoped-models`)** (PARTIAL) → 已实现 — PiCommandAction.OpenModelScope
+- **A user theme JSON changes the app's own colour** (MISSING-GUI) → 已实现 — PiThemeLoader.load + PiSessionViewModel.theme
+- **Theme discovery from `<agentDir>/themes/*.json** (PARTIAL) → 已实现 — PiThemeLoader.discover
+- **Theme discovery from `.pi/themes/*.json` (proj** (PARTIAL) → 已实现 — PiThemeLoader.discover
+- **Themes from packages (`themes/`, `pi.themes`)** (PARTIAL) → 已实现 — PiThemeLoader.discover
+- **Theme used by `export_html`** (N/A) → 已实现 — PiSessionViewModel.exportSession
+- **Delete a session** (MISSING-GUI) → 已实现 — SessionsScreen.combinedClickable + PiSessionViewModel.deleteSession
+- **Search / sort / named-only filter in the picke** (MISSING-GUI) → 已实现 — SessionsScreen.query/byName/namedOnly
+- **Resume most recent session on launch (`pi -c`)** (MISSING-GUI) → 已实现 — PiSessionViewModel resume gate
+- **Export to JSONL** (MISSING-GUI) → 已实现 — PiSessionViewModel.exportJsonl
+- **Per-cwd session grouping in the UI** (PARTIAL) → 已实现 — SessionsScreen.groupBy{cwd}
+- **npm/git packages (`packages`)** (PARTIAL) → 已实现（未提交） — PiPackagesHost → PiPackagesScreen
+- **Built-in vs user-installed package distinction** (MISSING-GUI) → 已实现（未提交） — PiPackagesScreen builtin/user distinction
+- **Images into `prompt`** (PARTIAL) → 已实现 — ChatScreen.imagePicker → send(text, images)
+- **Picking an image from the device** (MISSING-GUI) → 已实现 — ChatScreen.imagePicker
+- **Pasting an image from the clipboard** (MISSING-GUI) → 已实现 — ChatScreen.imagePicker
+- **Rendering attachments in the transcript** (PARTIAL) → 已实现 — ImageGridBlock.decodeImage
+- **`@` file mentions** (MISSING-GUI) → 已实现 — ChatScreen mention list
+
+### What this sweep does not settle
+
+* **Reachability for the `已实现（符号在位核对）` rows.** Symbol presence is necessary, not sufficient:
+  a builder can exist with no caller. Those rows are the ones the audit itself verified at `a7b7738`,
+  and the files are unchanged or improved since, but a frozen-tree call-graph check is the real proof.
+* **§1.8's ninth row.** §1.8's own subtotal says nine rows; eight parse into the grade vocabulary, so
+  one row's "App status" cell is phrased outside it. It is in neither this table nor §7.
+* **pi's runtime behaviour for these rows.** Every `pi 有 …` above reproduces the audit's citation; it
+  is **not** a fresh read of `/root/pi-src` for all 147. The rows whose pi source was re-read this
+  session are the ones listed in §7 and in the changed-row list above.

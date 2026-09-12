@@ -73,8 +73,92 @@ What this changes in the tables below:
 - The BLOCKING finding and the §3 dialog checklist are unaffected: no file in the
   delta touches pi, and `editor` having no timeout is a pi property, not an app one.
 
-Treat every "what the app does" cell as **true at the audited snapshot** and
-re-verify against the current tree before acting on a specific row.
+Treat every "what the app does" cell as **true at the audited snapshot**. §0.2
+below is the *re-verification* of the §1 inventory against the tree as it stood
+later the same day; where §0.1 and §0.2 disagree, §0.2 wins (it was read by
+symbol, not inferred).
+
+### 0.2 Verification pass over every `MISSING` row (2026-09-10, after the delta above)
+
+The first edition of this audit graded 68 rows `MISSING`. That count was never
+re-read against the app, and this repository has a documented failure mode of
+ledgers recording "done" work as "not done". So all 68 were re-read **by symbol**
+(`grep` for the symbol, then read the call site), not by line number. Results:
+
+Of those 68, **25 were already implemented**, **15 were partly implemented**, and
+**28 were genuinely absent**. A second pass then re-read the remaining **61** graded
+rows (the `DEGRADED`/`N/A`/`BLOCKING` ones the first edition derived from pi source
+alone), so the verdict now covers **129 / 129 rows**:
+
+| Verdict | Rows | Meaning |
+|---|---|---|
+| 已实现 (implemented) | 50 | the user-visible outcome exists; graded **N/A** |
+| 仍未做 (not done) | 54 | nothing, or only a fallback; graded **MISSING**/**DEGRADED** |
+| 无用户可见职责 (nothing to show) | 25 | pi-side surface with no app-side obligation (extension-only event, extension-side call, or reachable only by editing the guest) |
+| 无法判断 (cannot determine) | 0 | — |
+
+
+pi-side counterpart for the 28 still-open rows: **27 are `pi 有但我们够不着`**
+(a pi surface the app cannot reach over `--mode rpc`) and **1 is app-side** —
+`sendUserMessage`'s live render, where the message *is* on the wire and
+`MessageEnd` simply has no `role:"user"` branch (the one row in this set that is a
+plain app gap, not a wire limit). **0 are `pi 无对应物（App 的决定）`**. That is the
+qualitative result: nothing in this set is "we chose not to"; 27 of 28 are
+wire-surface limits, most with a `file:line` in `rpc-mode.ts` showing the no-op or
+the missing event, and the 28th is a two-line app fix.
+
+#### "Said not done, actually done" — rows the old ledger got wrong
+
+Grouped by symbol, because that is how they were verified:
+
+| Group | Symbols that exist now |
+|---|---|
+| Commands / palette | `PiSlashCommands.piCommandPalette`, `SlashPalette`, `PiCommandAction`, `PiSlashCommand`, `PiSessionViewModel.runPromptCommand`, `refreshCommands`, `sourceTagOf`, `PiCommandAction.TerminalOnly` + `notifyTerminalOnly` |
+| Extension messages & entries | `Transcript` custom branch -> `onHookMessage`, `HookMessageBlock`, `Transcript.onCustomEntry`, `PiEngineSession.seedHistory` / `TranscriptReducer.seedFromHistory` |
+| Session metadata | `PiEngineApi.setSessionName`, `PiSessionViewModel.renameSession`, `PiEvent.SessionInfoChanged` handling |
+| Session/queue/stats UI | `SessionStatsSheet` (context usage), `SessionToolsSheet`, `ModelPickerSheet` |
+| Models & providers | `PiEngineApi.getAvailableModels`, `refreshState()` on `AgentSettled`, `ModelChangeBlock` |
+| Session control | `PiEngineApi.newSession`/`fork`/`switchSession`, `PiSessionViewModel.newSession`/`forkFrom`/`cloneSession`/`switchSession` (each handles `cancelled` with a notice) |
+| Resources | `PiEngineApi.getCommands` -> `piCommandPalette` (skills/prompts with `PiCommandSource` provenance), `SkillInvocationBlock`, `rpc/SkillBlock.kt` `parsePiSkillBlock` |
+| Packages | `PiPackageService.install/remove/list`, `PiPackagesScreen`, `PiPackagesHost`, `PiListOutput`, `PiPackageService.TrustPass` |
+| bash | `PiSessionViewModel.runBash`, `BashPanel` (drives the `bash` command, i.e. the `user_bash` path) |
+
+#### 真正 `pi 有、我们够不着` 的 28 条
+
+All are `--mode rpc` no-ops or absent wire surfaces, each traceable to pi source:
+
+| pi surface | Where pi makes it unreachable |
+|---|---|
+| `ui.setWorkingMessage` / `setWorkingVisible` / `setWorkingIndicator` / `setHiddenThinkingLabel` | `rpc-mode.ts:179-193` (four no-ops) |
+| `ui.setFooter` / `setHeader` | `rpc-mode.ts:210-216` ("requires TUI access") |
+| `ui.custom` | `rpc-mode.ts:228-231` (returns `undefined`) |
+| `ui.getEditorText` | `rpc-mode.ts:248-252` (returns `""`) |
+| `ui.addAutocompleteProvider` | `rpc-mode.ts:273-275` (no-op) |
+| `ui.setEditorComponent` / `getEditorComponent` | `rpc-mode.ts:277-284` (no-op / `undefined`) |
+| `ui.getAllThemes` / `getTheme` / `setTheme` | `rpc-mode.ts:290-301` (`[]` / `undefined` / error) |
+| `ui.getToolsExpanded` / `setToolsExpanded` | `rpc-mode.ts:303-310` (`false` / no-op) |
+| `ui.onTerminalInput` | `rpc-mode.ts:163-166` (no-op unsubscribe) |
+| `registerMarkdownTransformer` | `interactive-mode.ts:2024-2025` (only TUI consumer) |
+| `getActiveTools` / `getAllTools` / `setActiveTools` | no RPC command at all (`rpc-types.ts:20-74`) |
+| `setLabel` | no RPC command; the display path exists via `get_tree` |
+| `ctx.getSystemPrompt` | no RPC command |
+| `ctx.navigateTree` / `session_before_tree` / `session_tree` | no `navigate_tree` command |
+| `sendUserMessage` (live render) | app-side: `MessageEnd` has no `role:"user"` branch |
+| Extension load errors | `loader.ts:634-637` collects them; no output or wire channel exists |
+
+`registerMessageRenderer` / `registerEntryRenderer` moved from "MISSING" to
+**DEGRADED**: the extension's renderer is still unreachable
+(`interactive-mode.ts:3558`, `:3597`), but the message/entry now appears through an
+app-side fallback card, so the user is no longer blind to it.
+
+**No row in this document concerns glass/blur/decorative motion/glow**, so the
+"用户已决定不做" rule applies to nothing here; the re-check asserts this
+programmatically (the apply script refuses a row containing that vocabulary).
+
+One row outside the 68 also changed: `turn_start`/`turn_end` went
+`DEGRADED -> N/A` because the first edition's §5.4 was itself wrong (§5.4
+corrected below). Net doc-wide totals after both passes: **1 BLOCKING /
+26 DEGRADED / 28 MISSING / 74 N/A** (129 rows).
 
 Grades, used strictly:
 
@@ -91,14 +175,18 @@ Effort is the app-side cost to close the gap: **XS** (hours), **S** (≤1 day),
 
 Grade totals across the whole inventory, counted from the tables in §1 (129 graded
 rows; every row carries exactly one grade, and merged rows cover all 36 events and
-all `ExtensionAPI`/`ExtensionUIContext` members):
+all `ExtensionAPI`/`ExtensionUIContext` members). **These are the post-verification
+numbers — every row was re-read against the app tree on 2026-09-10 (see §0.2).**
 
-| Grade | Count | Meaning here | Where the weight is |
-|---|---|---|---|
-| BLOCKING | 1 | `ctx.ui.editor()` with no client answer | §1.2 |
-| DEGRADED | 18 | works, differently | tools, events, wire shapes |
-| MISSING | 68 | invisible to the user | §1.2 (16), §1.5 (17), §1.1 (15) |
-| N/A | 42 | not this host's problem | extension-side and TUI-input surfaces |
+| Grade | Count | Before the re-check | Meaning here | Where the weight is |
+|---|---|---|---|---|
+| BLOCKING | 1 | 1 | `ctx.ui.editor()` with no client answer | §1.2 |
+| DEGRADED | 26 | 18 | works, differently, or only a fallback is reachable | §1.1 4 · §1.2 4 · §1.3 4 · §1.4 8 · §1.5 6 |
+| MISSING | 28 | 68 | invisible to the user | §1.1 5 · §1.2 16 · §1.3 2 · §1.4 2 · §1.5 3 |
+| N/A | 74 | 42 | no gap: implemented, or no app-side obligation | §1.1 14 · §1.2 6 · §1.3 19 · §1.4 22 · §1.5 13 |
+
+All 129 rows were re-read by symbol (§0.2), not just the 68 `MISSING` ones. The
+first edition's numbers were `1 / 18 / 68 / 42`.
 
 ---
 
@@ -134,29 +222,29 @@ grades below are consequences of that, not of RPC.
 
 | Surface | What pi does | Behaviour in `--mode rpc` | What the app does | Gap | Effort |
 |---|---|---|---|---|---|
-| `on(event, handler)` | Registers a handler for any of the 36 events in §1.4 (`types.ts:1257-1301`) | All events fire; handler errors are caught per-handler and reported through the error listener, which RPC serialises as `extension_error` (`runner.ts:851-882`; `rpc-mode.ts:348-350`) | Snackbar + transcript row via the `ExtensionError` event; **`extensionPath` and `event` are dropped** (`rpc/Events.kt:398`) | **DEGRADED** — "an extension errored" with no way to say which one or in which event | XS |
-| `registerTool(tool)` | Registers an LLM-callable tool; callable at load and after startup without `/reload` (`types.ts:1308-1310`; `docs/extensions.md:1371-1375`) | Fully works: the tool reaches the model and its calls arrive as `tool_execution_start/update/end` with `toolName`, `args`, `result.content`, `result.details` (`agent-session.ts:798-846`; `agent-loop.ts:444-474`) | Renders a generic tool block from `resultText`/`details`; partial updates rendered (`rpc/Transcript.kt:571-573`; `rpc/Events.kt:313-331`) | **DEGRADED** — no `label`, no `promptSnippet`, no custom rendering; `details` from an unknown extension is passed to the app's diff/ANSI heuristics and mostly ignored | S |
-| `registerCommand(name, opts)` | Slash command with `handler(args, ctx)`, dispatchable via `prompt("/name args")` even while streaming (`types.ts:1317`; `agent-session.ts:1181-1190`, `1331-1356`) | Works end-to-end: `prompt` with a `/`-prefixed string dispatches on the pi side (`agent-session.ts:1183-1189`) and the command is listed by `get_commands` (`rpc-mode.ts:685-692`) | **No discovery**: `get_commands` is never called, and there is no slash palette. Textual `/name args` typed in the composer does dispatch. `PiResponses.slashCommands` exists and is unused (`rpc/Responses.kt:96-112`) | **MISSING** — command exists but the user cannot find it | S |
-| `registerShortcut(key, opts)` | Binds an app keybinding; conflicts with built-ins are diagnosed (`types.ts:1320-1326`; `runner.ts:544-597`) | Not representable: no keyboard in RPC, and `getShortcuts` is only consulted by interactive mode (`interactive-mode.ts:6034`) | Nothing | **N/A** — a phone has no Ctrl-key surface; the app must expose equivalent commands instead | — |
-| `registerFlag(name, opts)` / `getFlag(name)` | CLI flags parsed from argv into `runtime.flagValues` (`types.ts:1329-1345`) | Works: values come from the process argv, and the app controls that argv (`PiEngineHost.kt:103-107`) | The app passes no extension flags | **N/A** — but see §6.4: flags are the only way to configure an extension from the app without a settings file | S |
-| `registerMessageRenderer(customType, renderer)` | TUI renders a `CustomMessage` with the extension's own Component (`types.ts:1352`; `interactive-mode.ts:3597`) | **Renderer is never called.** The message still reaches the wire as a normal message event (`agent-session.ts:1537-1547`) | The app parses only `role`/`text`/`stopReason`/`usage` from `message_end` and calls `finishStreaming()`; `customType`, `display` and `details` are discarded (`rpc/Events.kt:303-311`; `rpc/Transcript.kt:563`) | **MISSING** — extension-rendered messages do not appear at all | M |
-| `registerMarkdownTransformer(fn)` | Pure `string → string` transform applied to user/assistant markdown (`types.ts:1355`) | **Never called**: the only consumer is interactive mode (`interactive-mode.ts:2024-2025`, `3235`, `3645`) | Nothing | **MISSING** — but trivially recoverable: the hook is pure text and could be re-implemented app-side only if the app knew about it (it cannot; the transform lives in the extension) | M |
-| `registerEntryRenderer(customType, renderer)` | TUI renders a `CustomEntry` (`types.ts:1358`; `interactive-mode.ts:3558`) | **Never called.** The entry data does reach the wire via `entry_appended` (`agent-session.ts:2616-2621`) | `entry_appended` is parsed to `entryId`+`entryType` only, the payload is dropped, and the event is a no-op in the reducer (`rpc/Events.kt:400-406`; `rpc/Transcript.kt:627`) | **MISSING** — extension state is invisible | M |
-| `sendMessage(msg, opts)` | Appends a custom message (in context, optionally displayed) with `triggerTurn`/`deliverAs` (`types.ts:1365-1368`) | Works: `_appendCustomMessage` emits `message_start`+`message_end` with `role:"custom"`, `customType`, `content`, `display`, `details` (`agent-session.ts:1537-1547`) | Neither event is rendered: `message_start` has no case, `message_end` only stops the spinner (`rpc/Transcript.kt:563`) | **MISSING** — a `display: true` custom message is silently swallowed | M |
-| `sendUserMessage(content, opts)` | Sends a user message and always triggers a turn; `source:"extension"` (`types.ts:1375-1378`; `agent-session.ts:1569-1605`) | Works: arrives as a `user` message event | The app draws user bubbles only from its own local `onUserPrompt` (`rpc/Transcript.kt:548-558`); an incoming `message_start`/`message_end` with `role:"user"` is not rendered | **MISSING** — extension-driven turns look like the model talking to itself | M |
-| `appendEntry(customType, data)` | Persists a `CustomEntry` outside LLM context; the documented way to keep extension state across restarts (`types.ts:1381`; `docs/extensions.md:1477-1493`) | Works: `entry_appended` carries the **full entry** (`agent-session.ts:2616-2621`) and `get_entries` returns it | Payload dropped; `get_entries` never called; `TranscriptReducer.onEntry`/`seedFromHistory` exist but have no caller (`rpc/Transcript.kt:905`, `958`) | **MISSING** — restart-surviving extension state is unreachable | M |
-| `setSessionName(name)` / `getSessionName()` | Session display name (`types.ts:1388-1391`) | `set_session_name` command, `session_info_changed` event, and `get_state.sessionName` (`rpc-mode.ts:661-668`, `agent-session.ts:159`) | `session_info_changed` is parsed (`rpc/Events.kt:408`) but unhandled in the ViewModel; `set_session_name` never sent | **MISSING** | S |
-| `setLabel(entryId, label)` | Bookmarks an entry (`types.ts:1394`) | No RPC command and no event; only the session tree carries labels and the app has no tree UI (`docs/rpc.md:749-772`) | Nothing | **MISSING** | M |
-| `exec(command, args, opts)` | Runs a process with the pi process's permissions (`types.ts:1397`) | Runs extension-side; nothing crosses the wire | Nothing to do | **N/A** | — |
-| `getActiveTools()` | Active tool names (`types.ts:1400`) | Extension-side only | Nothing | **MISSING** (no tools UI) | M |
-| `getAllTools()` | Tool names, schemas, prompt guidelines, provenance (`types.ts:1403`) | Extension-side only; `get_commands` does not include tools | Nothing | **MISSING** (no tools UI) | M |
-| `setActiveTools(names)` | Enables/disables tools mid-run, including deferred/`search_tools` loading (`types.ts:1406`; `docs/extensions.md:2371-2404`) | Works on the pi side; the app never observes the tool set changing, so a "current tools" display would be stale | Nothing | **MISSING** | M |
-| `getCommands()` | `SlashCommandInfo[]` in the session (`types.ts:1409`) | Extension-side; the same data is available as the `get_commands` command (`rpc-mode.ts:682-713`) | Not called | **MISSING** | XS |
-| `setModel(model)` | Switches the session model, returns false when auth is missing (`types.ts:1419`) | Works, but **the change is not on the wire**: `model_select` is emitted only to extensions, never to session listeners (`agent-session.ts:1659-1670`) | Nothing (no model UI yet) | **DEGRADED** — a model changed by an extension cannot be displayed; the app must re-poll `get_state` | S |
-| `getThinkingLevel()` / `setThinkingLevel(level)` | Thinking level, clamped to model capability (`types.ts:1422-1428`) | Works, and the change *is* on the wire: `_emit({type:"thinking_level_changed"})` (`agent-session.ts:1830`) alongside the extension-only `thinking_level_select` (`:1831-1832`) | `thinking_level_changed` handled (`rpc/Transcript.kt:575-578`); `PiSessionViewModel.setThinking` calls `set_thinking_level` (`PiSessionViewModel.kt:650`) | **N/A** — complete | — |
-| `registerProvider(name, config)` | Adds/overrides a provider, models, OAuth login, custom `streamSimple` (`types.ts:1486-1487`) | Works immediately after initial load (`runner.ts:373-425`); registered providers become "configured" so their models join the availability snapshot (`model-runtime.ts:766-771`), hence `get_available_models` | `get_available_models` never called | **MISSING** — extension-provided models are unreachable because the app has no model picker | M |
-| `unregisterProvider(name)` | Removes the provider, restores overridden built-ins (`types.ts:1502`) | Works (`runner.ts:420-425`) | Nothing | **MISSING** | S |
-| `events` (`EventBus`) | Extension-to-extension pub/sub (`types.ts:1505`) | Works in-process; nothing crosses the wire | Nothing needed | **N/A** | — |
+| `on(event, handler)` | Registers a handler for any of the 36 events in §1.4 (`types.ts:1257-1301`) | All events fire; handler errors are caught per-handler and reported through the error listener, which RPC serialises as `extension_error` (`runner.ts:851-882`; `rpc-mode.ts:348-350`) | Implemented: `PiEvent.ExtensionError` now carries `extensionPath` and `event` (`rpc/Events.kt:353-355`, parsed `:543-545`), and the failure reaches both the snackbar and the transcript. | **N/A** — 已实现（`PiEvent.ExtensionError` 保留并可显示 `extensionPath`/`event`）；pi 有 `rpc-mode.ts:348-350` | XS |
+| `registerTool(tool)` | Registers an LLM-callable tool; callable at load and after startup without `/reload` (`types.ts:1308-1310`; `docs/extensions.md:1371-1375`) | Fully works: the tool reaches the model and its calls arrive as `tool_execution_start/update/end` with `toolName`, `args`, `result.content`, `result.details` (`agent-session.ts:798-846`; `agent-loop.ts:444-474`) | Renders a generic tool block from `resultText`/`details`; partial updates rendered (`rpc/Transcript.kt:571-573`; `rpc/Events.kt:313-331`) | **DEGRADED** — 仍未做；no `label`, no `promptSnippet`, no custom rendering; `details` from an unknown extension is passed to the app's diff/ANSI heuristics and mostly ignored（`label`/`promptSnippet` 不在线上；自定义渲染够不着）；pi 有但我们够不着 `interactive-mode/components/tool-execution.ts:116-121` | S |
+| `registerCommand(name, opts)` | Slash command with `handler(args, ctx)`, dispatchable via `prompt("/name args")` even while streaming (`types.ts:1317`; `agent-session.ts:1181-1190`, `1331-1356`) | Works end-to-end: `prompt` with a `/`-prefixed string dispatches on the pi side (`agent-session.ts:1183-1189`) and the command is listed by `get_commands` (`rpc-mode.ts:685-692`) | Implemented: listed by `refreshCommands()` -> `piCommandPalette(api.getCommands())`; invoked by `runPromptCommand` -> `prompt("/name args")` (`PiSlashCommands.kt:95-226`, `PiSessionViewModel.kt:1541-1548`, `:1688`). Rendered by `SlashPalette`. | **N/A** — 已实现 `PiSlashCommands.piCommandPalette` / `PiCommandAction.Prompt` / `PiSessionViewModel.runPromptCommand`. pi 有 `types.ts:1317`. | S |
+| `registerShortcut(key, opts)` | Binds an app keybinding; conflicts with built-ins are diagnosed (`types.ts:1320-1326`; `runner.ts:544-597`) | Not representable: no keyboard in RPC, and `getShortcuts` is only consulted by interactive mode (`interactive-mode.ts:6034`) | Nothing | **N/A** — 无用户可见职责；a phone has no Ctrl-key surface; the app must expose equivalent commands instead（手机无键盘；等价能力由命令面板承担）；pi 有 `types.ts:1320-1326` | — |
+| `registerFlag(name, opts)` / `getFlag(name)` | CLI flags parsed from argv into `runtime.flagValues` (`types.ts:1329-1345`) | Works: values come from the process argv, and the app controls that argv (`PiEngineHost.kt:103-107`) | The app passes no extension flags | **N/A** — 无用户可见职责；but see §6.4: flags are the only way to configure an extension from the app without a settings file（App 不传扩展 flag；这是 App 的决定——`PiEngineHost` 只传 `--mode rpc --session-dir`）；pi 有 `types.ts:1329-1345` | S |
+| `registerMessageRenderer(customType, renderer)` | TUI renders a `CustomMessage` with the extension's own Component (`types.ts:1352`; `interactive-mode.ts:3597`) | **Renderer is never called.** The message still reaches the wire as a normal message event (`agent-session.ts:1537-1547`) | The extension's own renderer cannot run; the message itself is shown by the app's generic card: `Transcript` custom branch -> `onHookMessage` -> `HookMessageBlock`. | **DEGRADED** — 仍未做（渲染器本体够不着；消息以通用卡片兜底显示）. pi 有但我们够不着 `interactive-mode.ts:3597`（只有 TUI 调 `getMessageRenderer`）. | M |
+| `registerMarkdownTransformer(fn)` | Pure `string → string` transform applied to user/assistant markdown (`types.ts:1355`) | **Never called**: the only consumer is interactive mode (`interactive-mode.ts:2024-2025`, `3235`, `3645`) | Nothing: no transformer seam exists app-side (`grep Transformer` in `app/` hits only the unrelated image transformer in `PiMarkdown.kt:107-136`). | **MISSING** — 仍未做. pi 有但我们够不着 `interactive-mode.ts:2024-2025`（唯一消费者）. Note: the hook is pure `string -> string`, so if pi ever exposed it, this is cheap. | M |
+| `registerEntryRenderer(customType, renderer)` | TUI renders a `CustomEntry` (`types.ts:1358`; `interactive-mode.ts:3558`) | **Never called.** The entry data does reach the wire via `entry_appended` (`agent-session.ts:2616-2621`) | The extension's renderer cannot run; the entry is shown by the app's generic card: `PiEvent.EntryAppended -> onEntry -> onCustomEntry` (「扩展状态：<customType>」), `Transcript.kt:869`, `:1876`. | **DEGRADED** — 仍未做（渲染器本体够不着；条目以通用卡片兜底显示）. pi 有但我们够不着 `interactive-mode.ts:3558`. | M |
+| `sendMessage(msg, opts)` | Appends a custom message (in context, optionally displayed) with `triggerTurn`/`deliverAs` (`types.ts:1365-1368`) | Works: `_appendCustomMessage` emits `message_start`+`message_end` with `role:"custom"`, `customType`, `content`, `display`, `details` (`agent-session.ts:1537-1547`) | Implemented: `MessageEnd` custom branch -> `onHookMessage` -> `HookMessageBlock`, and history replay via `onCustomEntry`. `display:false` is honoured. | **N/A** — 已实现 `Transcript` custom branch / `onHookMessage` / `HookMessageBlock`. pi 有 `agent-session.ts:1537-1547`. | M |
+| `sendUserMessage(content, opts)` | Sends a user message and always triggers a turn; `source:"extension"` (`types.ts:1375-1378`; `agent-session.ts:1569-1605`) | Works: arrives as a `user` message event | Still not rendered live: `MessageEnd` handles `assistant` and `custom` only, so an incoming `role:"user"` message falls to `finished`; history replay does render it (`projectUser`). | **MISSING** — 仍未做（App 侧缺口，唯一一条不是线上限制的：在 `Transcript.onEvent` 的 `MessageEnd` 分支加 `role == "user"` 即可；数据已在线上）. pi 有 `agent-session.ts:1569-1605`. | XS |
+| `appendEntry(customType, data)` | Persists a `CustomEntry` outside LLM context; the documented way to keep extension state across restarts (`types.ts:1381`; `docs/extensions.md:1477-1493`) | Works: `entry_appended` carries the **full entry** (`agent-session.ts:2616-2621`) and `get_entries` returns it | Implemented twice over: live `PiEvent.EntryAppended -> onEntry -> onCustomEntry`, and on attach/reconnect `PiEngineSession` builds a fresh reducer with `seedFromHistory(entries)`. | **N/A** — 已实现 `Transcript.onCustomEntry` + `PiEngineSession.seedHistory`. pi 有 `agent-session.ts:2616-2621`. | M |
+| `setSessionName(name)` / `getSessionName()` | Session display name (`types.ts:1388-1391`) | `set_session_name` command, `session_info_changed` event, and `get_state.sessionName` (`rpc-mode.ts:661-668`, `agent-session.ts:159`) | Implemented: `PiEngineApi.setSessionName` + `PiSessionViewModel.renameSession` + `PiEvent.SessionInfoChanged` handling (`PiSessionViewModel.kt:1040`, `:2048`). | **N/A** — 已实现 `PiEngineApi.setSessionName` / `renameSession` / `SessionInfoChanged`. pi 有 `types.ts:1388-1391`. | S |
+| `setLabel(entryId, label)` | Bookmarks an entry (`types.ts:1394`) | No RPC command and no event; only the session tree carries labels and the app has no tree UI (`docs/rpc.md:749-772`) | Read-only: `SessionTreeScreen` displays pi-resolved labels and filters on them (`TreeFilter.LabeledOnly`, `row.node.label`), but nothing sets a label. | **DEGRADED** — 仍未做（显示与过滤已实现；写入无通道）. pi 有但我们够不着 `types.ts:1394` — `rpc-types.ts:20-74` has no label command. | M |
+| `exec(command, args, opts)` | Runs a process with the pi process's permissions (`types.ts:1397`) | Runs extension-side; nothing crosses the wire | Nothing to do | **N/A** — 无用户可见职责（扩展侧执行，无上线面）；pi 有 `types.ts:1397` | — |
+| `getActiveTools()` | Active tool names (`types.ts:1400`) | Extension-side only | Nothing; and there is no wire surface at all (no `get_tools` in `rpc-types.ts:20-74`). | **MISSING** — 仍未做. pi 有但我们够不着（RPC 无该命令，`rpc-types.ts:20-74`；`types.ts:1400`）. | M |
+| `getAllTools()` | Tool names, schemas, prompt guidelines, provenance (`types.ts:1403`) | Extension-side only; `get_commands` does not include tools | Nothing; no wire surface. `PiEngineApi` covers ~30 commands and none of them exposes the tool list. | **MISSING** — 仍未做. pi 有但我们够不着（RPC 无该命令；`types.ts:1403`）. | M |
+| `setActiveTools(names)` | Enables/disables tools mid-run, including deferred/`search_tools` loading (`types.ts:1406`; `docs/extensions.md:2371-2404`) | Works on the pi side; the app never observes the tool set changing, so a "current tools" display would be stale | Nothing; no wire surface, and the app never observes the active set changing. | **MISSING** — 仍未做. pi 有但我们够不着（RPC 无该命令；`types.ts:1406`）. | M |
+| `getCommands()` | `SlashCommandInfo[]` in the session (`types.ts:1409`) | Extension-side; the same data is available as the `get_commands` command (`rpc-mode.ts:682-713`) | Implemented: `PiEngineApi.getCommands` + `refreshCommands()` (on boot and on `agent_settled`). | **N/A** — 已实现 `PiEngineApi.getCommands` / `refreshCommands`. pi 有 `types.ts:1409`, `rpc-mode.ts:682`. | XS |
+| `setModel(model)` | Switches the session model, returns false when auth is missing (`types.ts:1419`) | Works, but **the change is not on the wire**: `model_select` is emitted only to extensions, never to session listeners (`agent-session.ts:1659-1670`) | Implemented: `ModelPickerSheet` renders `get_available_models`; `refreshState()` runs on `AgentSettled`, so a model changed by an extension is picked up. | **N/A** — 已实现 `ModelPickerSheet` + `refreshState()`（`AgentSettled` 后）；pi 有 `types.ts:1419` | S |
+| `getThinkingLevel()` / `setThinkingLevel(level)` | Thinking level, clamped to model capability (`types.ts:1422-1428`) | Works, and the change *is* on the wire: `_emit({type:"thinking_level_changed"})` (`agent-session.ts:1830`) alongside the extension-only `thinking_level_select` (`:1831-1832`) | `thinking_level_changed` handled (`rpc/Transcript.kt:575-578`); `PiSessionViewModel.setThinking` calls `set_thinking_level` (`PiSessionViewModel.kt:650`) | **N/A** — 已实现 `set_thinking_level` + `thinking_level_changed`；pi 有 `types.ts:1422-1428` | — |
+| `registerProvider(name, config)` | Adds/overrides a provider, models, OAuth login, custom `streamSimple` (`types.ts:1486-1487`) | Works immediately after initial load (`runner.ts:373-425`); registered providers become "configured" so their models join the availability snapshot (`model-runtime.ts:766-771`), hence `get_available_models` | Observable end: `get_available_models` feeds `ModelPickerSheet`, and a registered provider joins pi's availability snapshot, so its models appear in the picker. | **N/A** — 已实现（可观测面：`PiEngineApi.getAvailableModels` -> `ModelPickerSheet`）. pi 有 `types.ts:1486`, `model-runtime.ts:766-771`. | M |
+| `unregisterProvider(name)` | Removes the provider, restores overridden built-ins (`types.ts:1502`) | Works (`runner.ts:420-425`) | Observable end: the provider's models disappear from the next `get_available_models`; the app re-reads it when the picker opens. | **N/A** — 已实现（同一可观测面无独立 UI）. pi 有 `types.ts:1502`. | S |
+| `events` (`EventBus`) | Extension-to-extension pub/sub (`types.ts:1505`) | Works in-process; nothing crosses the wire | Nothing needed | **N/A** — 无用户可见职责（扩展间通信，不上线）；pi 有 `types.ts:1505` | — |
 
 ### 1.2 `ExtensionUIContext` methods
 
@@ -167,63 +255,63 @@ have UI?" is literally `this.uiContext !== noOpUIContext` (`runner.ts:492-494`).
 
 | Surface | What pi does | Behaviour in `--mode rpc` | What the app does | Gap | Effort |
 |---|---|---|---|---|---|
-| `select(title, options, opts)` | Blocking selector (`types.ts:135`) | `extension_ui_request{method:"select",title,options,timeout}` → `{value}`/`{cancelled:true}` (`rpc-mode.ts:137-140`) | Queued, rendered as a dialog, answered by id (`PiSessionViewModel.kt:308-343`, `431-465`; `ui/extension/ExtensionDialogs.kt:78-120`) | **N/A** — complete. **Fixed in the working tree; `HEAD` sends no response at all** | — |
-| `confirm(title, message, opts)` | Blocking yes/no (`types.ts:138`) | `method:"confirm"` → `{confirmed:boolean}` (`rpc-mode.ts:142-145`) | Rendered and answered (`PiSessionViewModel.kt:437-453`) | **N/A** — complete (working tree) | — |
-| `input(title, placeholder, opts)` | Blocking text input (`types.ts:141`) | `method:"input"` → `{value}` (`rpc-mode.ts:147-150`) | Rendered and answered | **N/A** — complete (working tree) | — |
-| `editor(title, prefill)` | Blocking multi-line editor (`types.ts:224`) | `method:"editor"`, **no `timeout` field, and `opts` is not even in the signature**; the implementation ignores signal and timeout entirely (`rpc-mode.ts:254-271`) | Rendered and answered; the app knows the timer must be client-side (`ui/extension/ExtensionDialogs.kt:208-216`) | **BLOCKING** — an extension that never cancels an `editor()` wedges the pi process forever; the user can always answer, but if the app is killed the pi process is stuck | S (app) / unfixable from the app if the answer is never sent |
-| `notify(message, type)` | TUI toast (`types.ts:144`) | `method:"notify"`, fire-and-forget (`rpc-mode.ts:152-161`) | Snackbar queue, preserved across arrivals (`PiSessionViewModel.kt:348-352`, `595-602`) | **N/A** — complete (working tree) | — |
-| `onTerminalInput(handler)` | Raw keystrokes, interactive only (`types.ts:147`) | Returns a no-op unsubscribe (`rpc-mode.ts:163-166`) | Nothing | **MISSING** — extensions that add key handling are inert | L (needs a terminal surface) |
-| `setStatus(key, text)` | Footer status row; `undefined` clears (`types.ts:150`) | `method:"setStatus"` fire-and-forget (`rpc-mode.ts:168-177`) | Upsert-by-key row under the AppBar (`PiSessionViewModel.kt:386-397`; `ui/extension/ExtensionChrome.kt:47`) | **N/A** — complete (working tree) | — |
-| `setWorkingMessage(msg)` | Replaces the streaming status line (`types.ts:153`) | **No-op** (`rpc-mode.ts:179-181`) | Nothing (the app has its own spinner) | **MISSING** | S |
-| `setWorkingVisible(bool)` | Shows/hides the loader row (`types.ts:156`) | **No-op** (`rpc-mode.ts:183-185`) | Nothing | **MISSING** | S |
-| `setWorkingIndicator(opts)` | Custom spinner frames (`types.ts:166`) | **No-op** (`rpc-mode.ts:187-189`) | Nothing | **MISSING** | S |
-| `setHiddenThinkingLabel(label)` | Label for collapsed thinking (`types.ts:169`) | **No-op** (`rpc-mode.ts:191-193`) | Nothing; the app has its own thinking label | **MISSING** | XS |
-| `setWidget(key, lines\|factory, opts)` | Panel above/below the editor (`types.ts:172-177`) | **String arrays only**; component factories are silently dropped (`rpc-mode.ts:195-208`) | Rendered above/below the composer, cleared by empty lines (`PiSessionViewModel.kt:406-421`; `ui/extension/ExtensionChrome.kt:90`) | **DEGRADED** — the text half works (working tree); any component-factory widget is invisible | S |
-| `setFooter(factory)` | Replaces the whole footer (`types.ts:185-189`) | **No-op** (`rpc-mode.ts:210-212`) | Nothing | **MISSING** | L (arbitrary components) |
-| `setHeader(factory)` | Replaces the startup header (`types.ts:192`) | **No-op** (`rpc-mode.ts:214-216`) | Nothing | **MISSING** | L |
-| `setTitle(title)` | Terminal tab title (`types.ts:195`) | `method:"setTitle"` fire-and-forget (`rpc-mode.ts:218-226`) | Mapped to the AppBar title (`PiSessionViewModel.kt:362-364`; `screens/ChatScreen.kt:149-150`) | **DEGRADED** — the wire field is a *terminal window title*; reusing it as the app's title is an interpretation, not a contract | XS |
-| `custom(factory, opts)` | Hands the whole screen to a Component until `done(value)` (`types.ts:198-212`) | **Returns `undefined` immediately** (`rpc-mode.ts:228-231`) | Nothing — no dialog, no notice | **MISSING** and the most damaging one: an extension using `custom()` for required input proceeds with `undefined` and can make wrong decisions silently (`docs/rpc.md:1195-1196`) | XL (see §2/§6) |
-| `pasteToEditor(text)` | Paste with collapse handling (`types.ts:215`) | Delegates to `setEditorText` (`rpc-mode.ts:233-236`) | Handled as `set_editor_text` (`PiSessionViewModel.kt:366-374`) | **DEGRADED** — no paste-collapse semantics for large text | S |
-| `setEditorText(text)` | Sets the composer text (`types.ts:218`) | `method:"set_editor_text"` (`rpc-mode.ts:238-246`) | One-shot fill keyed by sequence, applied to the composer (`PiSessionViewModel.kt:366-374`, `468-472`) | **N/A** — complete (working tree) | — |
-| `getEditorText()` | Reads the composer (`types.ts:221`) | **Always returns `""`** — "synchronous method can't wait for RPC response" (`rpc-mode.ts:248-252`) | Nothing | **MISSING** — and *silently wrong*, which is worse than absent: an extension that reads the draft to decide something always sees an empty editor | M (needs editor state mirrored into the guest) |
-| `addAutocompleteProvider(factory)` | Composes completions (`types.ts:227`) | **No-op** (`rpc-mode.ts:273-275`) | Nothing | **MISSING** | L |
-| `setEditorComponent(factory)` / `getEditorComponent()` | Replaces the editor component (`types.ts:262-265`) | **No-op / `undefined`** (`rpc-mode.ts:277-284`) | Nothing | **MISSING** — vim-style editor extensions are inert | XL |
-| `theme` (getter) | The active `Theme` object (`types.ts:268`) | Returns pi's built-in `theme` singleton (`rpc-mode.ts:286-288`) | Nothing | **DEGRADED** — an extension reading colours gets the default dark theme, not the user's; cosmetic only | XS |
-| `getAllThemes()` | Theme names + paths (`types.ts:271`) | **Returns `[]`** (`rpc-mode.ts:290-292`) | Nothing | **MISSING** — extension theming UIs see no themes | S |
-| `getTheme(name)` | Loads a theme without switching (`types.ts:274`) | **Returns `undefined`** (`rpc-mode.ts:294-296`) | Nothing | **MISSING** | S |
-| `setTheme(theme)` | Switches the active theme (`types.ts:277`) | **Returns `{success:false, error:"Theme switching not supported in RPC mode"}`** (`rpc-mode.ts:298-301`) | Nothing | **MISSING** — an extension-driven theme switch fails with an error the app never shows | S |
-| `getToolsExpanded()` | Tool-output expansion state (`types.ts:280`) | **Always `false`** (`rpc-mode.ts:303-306`) | Nothing | **MISSING** | S |
-| `setToolsExpanded(bool)` | Sets expansion (`types.ts:283`) | **No-op** (`rpc-mode.ts:308-310`) | Nothing | **MISSING** | S |
+| `select(title, options, opts)` | Blocking selector (`types.ts:135`) | `extension_ui_request{method:"select",title,options,timeout}` → `{value}`/`{cancelled:true}` (`rpc-mode.ts:137-140`) | Queued, rendered as a dialog, answered by id (`PiSessionViewModel.kt:308-343`, `431-465`; `ui/extension/ExtensionDialogs.kt:78-120`) | **N/A** — 已实现 `ExtensionDialogs.SelectDialog` + `answerDialog`；pi 有 `rpc-mode.ts:137-140` | — |
+| `confirm(title, message, opts)` | Blocking yes/no (`types.ts:138`) | `method:"confirm"` → `{confirmed:boolean}` (`rpc-mode.ts:142-145`) | Rendered and answered (`PiSessionViewModel.kt:437-453`) | **N/A** — 已实现 `ExtensionDialogs.ConfirmDialog`；pi 有 `rpc-mode.ts:142-145` | — |
+| `input(title, placeholder, opts)` | Blocking text input (`types.ts:141`) | `method:"input"` → `{value}` (`rpc-mode.ts:147-150`) | Rendered and answered | **N/A** — 已实现 `ExtensionDialogs.InputDialog`；pi 有 `rpc-mode.ts:147-150` | — |
+| `editor(title, prefill)` | Blocking multi-line editor (`types.ts:224`) | `method:"editor"`, **no `timeout` field, and `opts` is not even in the signature**; the implementation ignores signal and timeout entirely (`rpc-mode.ts:254-271`) | Rendered and answered; the app knows the timer must be client-side (`ui/extension/ExtensionDialogs.kt:208-216`) | **BLOCKING** — 仍未做；an extension that never cancels an `editor()` wedges the pi process forever; the user can always answer, but if the app is killed the pi process is stuck（无超时：`types.ts:224` 无 opts、`rpc-mode.ts:254-271` 不装定时器；只能靠用户作答）；pi 有但我们够不着（pi 侧也没有超时机制） | S (app) / unfixable from the app if the answer is never sent |
+| `notify(message, type)` | TUI toast (`types.ts:144`) | `method:"notify"`, fire-and-forget (`rpc-mode.ts:152-161`) | Snackbar queue, preserved across arrivals (`PiSessionViewModel.kt:348-352`, `595-602`) | **N/A** — 已实现 `ExtensionUiHost` 的 snackbar 队列；pi 有 `rpc-mode.ts:152-161` | — |
+| `onTerminalInput(handler)` | Raw keystrokes, interactive only (`types.ts:147`) | Returns a no-op unsubscribe (`rpc-mode.ts:163-166`) | Not reachable through pi: `TuiOnlyScan` detects extensions that call it and warns, but the app cannot feed raw input into an extension running under `--mode rpc`. The PTY terminal runs pi's TUI, a different process. | **MISSING** — 仍未做（`TuiOnlyScan.TUI_ONLY_MARKERS` 只做告警）. pi 有但我们够不着 `rpc-mode.ts:163-166`（返回 no-op unsubscribe）. | L (needs a terminal surface) |
+| `setStatus(key, text)` | Footer status row; `undefined` clears (`types.ts:150`) | `method:"setStatus"` fire-and-forget (`rpc-mode.ts:168-177`) | Upsert-by-key row under the AppBar (`PiSessionViewModel.kt:386-397`; `ui/extension/ExtensionChrome.kt:47`) | **N/A** — 已实现 `ExtensionStatusRow`；pi 有 `rpc-mode.ts:168-177` | — |
+| `setWorkingMessage(msg)` | Replaces the streaming status line (`types.ts:153`) | **No-op** (`rpc-mode.ts:179-181`) | Not reachable through pi: the RPC context never emits this, so the app has no signal to react to. The app has its own streaming chrome, which is a separate thing. | **MISSING** — 仍未做. pi 有但我们够不着 `rpc-mode.ts:179-181`（no-op）. | S |
+| `setWorkingVisible(bool)` | Shows/hides the loader row (`types.ts:156`) | **No-op** (`rpc-mode.ts:183-185`) | Not reachable through pi: the RPC context never emits this, so the app has no signal to react to. The app has its own streaming chrome, which is a separate thing. | **MISSING** — 仍未做. pi 有但我们够不着 `rpc-mode.ts:183-185`（no-op）. | S |
+| `setWorkingIndicator(opts)` | Custom spinner frames (`types.ts:166`) | **No-op** (`rpc-mode.ts:187-189`) | Not reachable through pi: the RPC context never emits this, so the app has no signal to react to. The app has its own streaming chrome, which is a separate thing. | **MISSING** — 仍未做. pi 有但我们够不着 `rpc-mode.ts:187-189`（no-op）. | S |
+| `setHiddenThinkingLabel(label)` | Label for collapsed thinking (`types.ts:169`) | **No-op** (`rpc-mode.ts:191-193`) | Not reachable through pi. The app has its own thinking label/collapse (`ChatScreen` `hideThinkingBlock`), which is independent. | **MISSING** — 仍未做. pi 有但我们够不着 `rpc-mode.ts:191-193`（no-op）. | XS |
+| `setWidget(key, lines\|factory, opts)` | Panel above/below the editor (`types.ts:172-177`) | **String arrays only**; component factories are silently dropped (`rpc-mode.ts:195-208`) | Rendered above/below the composer, cleared by empty lines (`PiSessionViewModel.kt:406-421`; `ui/extension/ExtensionChrome.kt:90`) | **DEGRADED** — 仍未做；the text half works (working tree); any component-factory widget is invisible（组件工厂不可达；只有字符串行可用）；pi 有但我们够不着 `rpc-mode.ts:195-208` | S |
+| `setFooter(factory)` | Replaces the whole footer (`types.ts:185-189`) | **No-op** (`rpc-mode.ts:210-212`) | Not reachable; a component factory cannot cross the wire. `TuiOnlyScan` flags `.setFooter(`. | **MISSING** — 仍未做. pi 有但我们够不着 `rpc-mode.ts:210-212`（注释即 "requires TUI access"）. | L (arbitrary components) |
+| `setHeader(factory)` | Replaces the startup header (`types.ts:192`) | **No-op** (`rpc-mode.ts:214-216`) | Not reachable; same reason as `setFooter`. | **MISSING** — 仍未做. pi 有但我们够不着 `rpc-mode.ts:214-216`. | L |
+| `setTitle(title)` | Terminal tab title (`types.ts:195`) | `method:"setTitle"` fire-and-forget (`rpc-mode.ts:218-226`) | Mapped to the AppBar title (`PiSessionViewModel.kt:362-364`; `screens/ChatScreen.kt:149-150`) | **DEGRADED** — 已实现；the wire field is a *terminal window title*; reusing it as the app's title is an interpretation, not a contract（`windowTitleOf` -> AppBar 标题；语义是终端标题，属解释而非契约）；pi 有 `rpc-mode.ts:218-226` | XS |
+| `custom(factory, opts)` | Hands the whole screen to a Component until `done(value)` (`types.ts:198-212`) | **Returns `undefined` immediately** (`rpc-mode.ts:228-231`) | Not reachable; `custom()` resolves `undefined` inside pi, and `TuiOnlyScan.tuiOnlyMarkers` scans installed extension sources for `.custom(` / `mode === "tui"` and reports them to the user. | **MISSING** — 仍未做（`TuiOnlyScan` 检测并提示；无渲染通道）. pi 有但我们够不着 `rpc-mode.ts:228-231`, `:1205-1207`. | XL (see §2/§6) |
+| `pasteToEditor(text)` | Paste with collapse handling (`types.ts:215`) | Delegates to `setEditorText` (`rpc-mode.ts:233-236`) | Handled as `set_editor_text` (`PiSessionViewModel.kt:366-374`) | **DEGRADED** — 仍未做；no paste-collapse semantics for large text（无 paste 折叠语义；等价于 `setEditorText`）；pi 有但我们够不着 `rpc-mode.ts:233-236` | S |
+| `setEditorText(text)` | Sets the composer text (`types.ts:218`) | `method:"set_editor_text"` (`rpc-mode.ts:238-246`) | One-shot fill keyed by sequence, applied to the composer (`PiSessionViewModel.kt:366-374`, `468-472`) | **N/A** — 已实现 `ComposerFill` + `consumeComposerFill`；pi 有 `rpc-mode.ts:238-246` | — |
+| `getEditorText()` | Reads the composer (`types.ts:221`) | **Always returns `""`** — "synchronous method can't wait for RPC response" (`rpc-mode.ts:248-252`) | Not reachable; pi answers `""` synchronously. The app cannot mirror the guest-side composer over this protocol. | **MISSING** — 仍未做. pi 有但我们够不着 `rpc-mode.ts:248-252`（恒返回 `""`，静默错值）. | M (needs editor state mirrored into the guest) |
+| `addAutocompleteProvider(factory)` | Composes completions (`types.ts:227`) | **No-op** (`rpc-mode.ts:273-275`) | Not reachable. The app has its own completions: `MentionPalette`, `PiMentionSource`, `SlashPalette`. | **MISSING** — 仍未做. pi 有但我们够不着 `rpc-mode.ts:273-275`（no-op）. | L |
+| `setEditorComponent(factory)` / `getEditorComponent()` | Replaces the editor component (`types.ts:262-265`) | **No-op / `undefined`** (`rpc-mode.ts:277-284`) | Not reachable; the composer is Compose, and the factory is a pi-tui component. | **MISSING** — 仍未做. pi 有但我们够不着 `rpc-mode.ts:277-284`（no-op / `undefined`）. | XL |
+| `theme` (getter) | The active `Theme` object (`types.ts:268`) | Returns pi's built-in `theme` singleton (`rpc-mode.ts:286-288`) | Nothing | **DEGRADED** — 仍未做；an extension reading colours gets the default dark theme, not the user's; cosmetic only（扩展读到的是 pi 内置默认主题，不是用户主题）；pi 有但我们够不着 `rpc-mode.ts:286-288` | XS |
+| `getAllThemes()` | Theme names + paths (`types.ts:271`) | **Returns `[]`** (`rpc-mode.ts:290-292`) | Not reachable; pi returns `[]`. The app's own theme list comes from `PiThemeFiles`/`PiThemeLoader`, not from this call. | **MISSING** — 仍未做. pi 有但我们够不着 `rpc-mode.ts:290-292`（返回 `[]`）. | S |
+| `getTheme(name)` | Loads a theme without switching (`types.ts:274`) | **Returns `undefined`** (`rpc-mode.ts:294-296`) | Not reachable; pi returns `undefined`. | **MISSING** — 仍未做. pi 有但我们够不着 `rpc-mode.ts:294-296`. | S |
+| `setTheme(theme)` | Switches the active theme (`types.ts:277`) | **Returns `{success:false, error:"Theme switching not supported in RPC mode"}`** (`rpc-mode.ts:298-301`) | Not reachable; pi returns `{success:false, error:...}` and the app never sees the failure (it is not an event). | **MISSING** — 仍未做. pi 有但我们够不着 `rpc-mode.ts:298-301`. | S |
+| `getToolsExpanded()` | Tool-output expansion state (`types.ts:280`) | **Always `false`** (`rpc-mode.ts:303-306`) | Not reachable; pi returns `false`. The app tracks expansion per block (`HookMessageBlock` `defaultExpanded`, the AppBar's expand-all) independently. | **MISSING** — 仍未做. pi 有但我们够不着 `rpc-mode.ts:303-306`（恒 `false`）. | S |
+| `setToolsExpanded(bool)` | Sets expansion (`types.ts:283`) | **No-op** (`rpc-mode.ts:308-310`) | Not reachable; pi ignores it. | **MISSING** — 仍未做. pi 有但我们够不着 `rpc-mode.ts:308-310`（no-op）. | S |
 
 ### 1.3 `ExtensionContext` / `ExtensionCommandContext` / `ReplacedSessionContext`
 
 | Surface | What pi does | Behaviour in `--mode rpc` | What the app does | Gap | Effort |
 |---|---|---|---|---|---|
-| `ctx.mode` | `"tui" \| "rpc" \| "json" \| "print"` (`types.ts:307`, `:313`) | `"rpc"` (`rpc-mode.ts:321`) | — (extension-side) | **N/A** — and this is the *only* value that lets an extension adapt. Extensions written against `mode === "tui"` will take their non-TUI path, which is the honest reason "100% of pi's capability" is unreachable over RPC | — |
-| `ctx.hasUI` | Dialog capability (`types.ts:315`) | **`true`** (`runner.ts:492-494` + `rpc-mode.ts:320`) — `custom()` returning `undefined` while `hasUI` is `true` is exactly the trap described in §5.1 | — | **DEGRADED** — extensions trust `hasUI` and then call `custom()`/`setFooter()` | — |
-| `ctx.cwd` | Session cwd (`types.ts:317`) | Correct (the guest workspace, `PiEngineHost.kt:114`) | — | **N/A** | — |
-| `ctx.sessionManager` | Read-only entries/branch/leaf (`types.ts:319`) | Fully works in-process | Nothing | **N/A** | — |
-| `ctx.modelRegistry` | API-key resolution (`types.ts:321`) | Works in-process | Nothing | **N/A** | — |
-| `ctx.model` | Current model (`types.ts:323`) | Works | The app has no model indicator | **MISSING** (display only) | S |
-| `ctx.scopedModels` | Models scoped by `--models`/settings (`types.ts:328`) | Works; the app spawns without `--models` so it is empty | Nothing | **N/A** | — |
-| `ctx.thinkingLevel` | Current level (`types.ts:330`) | Works | Nothing (extension-side) | **N/A** | — |
-| `ctx.isIdle()` | Not streaming (`types.ts:332`) | Works | Nothing | **N/A** | — |
-| `ctx.isProjectTrusted()` | Trust incl. temporary/CLI overrides (`types.ts:334`) | Works, and is the app's only honest signal that project resources were skipped (§4) | Nothing | **MISSING** (no trust UI) | M |
-| `ctx.signal` | AbortSignal while streaming (`types.ts:336`) | Works | Nothing | **N/A** | — |
-| `ctx.abort()` | Aborts the operation (`types.ts:338`) | Works (`runner.ts:776-779`) | Nothing | **N/A** | — |
-| `ctx.hasPendingMessages()` | Queue non-empty (`types.ts:340`) | Works | Nothing | **N/A** | — |
-| `ctx.shutdown()` | Graceful exit (`types.ts:342`) | Sets `shutdownRequested`; pi exits after the next `agent_settled` (`rpc-mode.ts:345-347`, `747-750`) | The app sees the process exit and reports "引擎已退出" — no attribution to an extension | **DEGRADED** | S |
-| `ctx.getContextUsage()` | Token usage (`types.ts:344`) | Extension-side; `get_session_stats` exposes `contextUsage` (`rpc-mode.ts:595-598`; `docs/rpc.md:595`) | `get_session_stats` never called | **MISSING** | S |
-| `ctx.compact(opts)` | Triggers compaction, with `onComplete`/`onError` (`types.ts:346`) | Works; `compaction_start`/`compaction_end` are wire events (`agent-session.ts:157`, `161-168`) | Events are handled (`rpc/Transcript.kt:580-581`) | **N/A** | — |
-| `ctx.getSystemPrompt()` | Effective system prompt (`types.ts:348`) | Works | Nothing | **MISSING** (no system-prompt viewer) | S |
-| `ctx.getSystemPromptOptions()` | Structured prompt inputs (`types.ts:357`) | Works | Nothing | **N/A** | — |
-| `ctx.waitForIdle()` | Await idle (`types.ts:360`) | Works | Nothing | **N/A** | — |
-| `ctx.newSession(opts)` | New session with setup callback (`types.ts:363-367`) | Works via `runtimeHost.newSession` (`rpc-mode.ts:324`) | `new_session` never sent | **MISSING** | M |
-| `ctx.fork(entryId, opts)` | Fork from an entry (`types.ts:370-373`) | Works (`rpc-mode.ts:325-328`); cancellable via `session_before_fork` | `fork` never sent | **MISSING** | M |
-| `ctx.navigateTree(targetId, opts)` | Branch navigation with optional summary (`types.ts:376-379`) | Works (`rpc-mode.ts:329-337`) | No tree UI at all | **MISSING** | L |
-| `ctx.switchSession(path, opts)` | Switch session file (`types.ts:382-385`) | Works (`rpc-mode.ts:338-340`); `switch_session` also exists as a command | Session switching is done by reading files on disk, not by the RPC command (`PiSessionViewModel.kt:141-152`) | **DEGRADED** — file-driven switching cannot carry a `withSession` callback contract | S |
-| `ctx.reload()` | Reload extensions/skills/prompts/themes/context (`types.ts:388`; `agent-session.ts:2841-2866`) | Works **only from inside the guest**: there is no RPC command for it (§5.5) | Nothing | **MISSING** | S |
-| `ReplacedSessionContext.sendMessage/sendUserMessage` | Bind messages to the replacement session (`types.ts:396-406`) | Works in-process | Nothing | **N/A** | — |
+| `ctx.mode` | `"tui" \| "rpc" \| "json" \| "print"` (`types.ts:307`, `:313`) | `"rpc"` (`rpc-mode.ts:321`) | — (extension-side) | **N/A** — 无用户可见职责；and this is the *only* value that lets an extension adapt. Extensions written against `mode === "tui"` will take their non-TUI path, which is the honest reason "100% of pi's capability" is unreachable over RPC（扩展据此适配；App 侧无义务）；pi 有 `types.ts:307` | — |
+| `ctx.hasUI` | Dialog capability (`types.ts:315`) | **`true`** (`runner.ts:492-494` + `rpc-mode.ts:320`) — `custom()` returning `undefined` while `hasUI` is `true` is exactly the trap described in §5.1 | — | **DEGRADED** — 仍未做；extensions trust `hasUI` and then call `custom()`/`setFooter()`（RPC 下为 `true`，但 `custom()`/`setFooter` 等不可达；`TuiOnlyScan` 只告警）；pi 有但我们够不着 `rpc-mode.ts:228-231` | — |
+| `ctx.cwd` | Session cwd (`types.ts:317`) | Correct (the guest workspace, `PiEngineHost.kt:114`) | — | **N/A** — 无用户可见职责；pi 有 `types.ts:317` | — |
+| `ctx.sessionManager` | Read-only entries/branch/leaf (`types.ts:319`) | Fully works in-process | Nothing | **N/A** — 无用户可见职责（扩展只读会话；App 已通过 `get_entries`/`get_tree` 展示）；pi 有 `types.ts:319` | — |
+| `ctx.modelRegistry` | API-key resolution (`types.ts:321`) | Works in-process | Nothing | **N/A** — 无用户可见职责；pi 有 `types.ts:321` | — |
+| `ctx.model` | Current model (`types.ts:323`) | Works | Implemented: `ModelPickerSheet` renders `get_available_models`; `refreshState()` runs on `AgentSettled`; model changes also arrive as session entries rendered by `ModelChangeBlock`. | **N/A** — 已实现 `ModelPickerSheet` + `refreshState`（`AgentSettled` 后） + `ModelChangeBlock`. pi 有 `types.ts:323`. | S |
+| `ctx.scopedModels` | Models scoped by `--models`/settings (`types.ts:328`) | Works; the app spawns without `--models` so it is empty | Nothing | **N/A** — 无用户可见职责（App 未传 `--models`，集合为空）；pi 有 `types.ts:328` | — |
+| `ctx.thinkingLevel` | Current level (`types.ts:330`) | Works | Nothing (extension-side) | **N/A** — 无用户可见职责；pi 有 `types.ts:330` | — |
+| `ctx.isIdle()` | Not streaming (`types.ts:332`) | Works | Nothing | **N/A** — 无用户可见职责；pi 有 `types.ts:332` | — |
+| `ctx.isProjectTrusted()` | Trust incl. temporary/CLI overrides (`types.ts:334`) | Works, and is the app's only honest signal that project resources were skipped (§4) | Partially: `ProjectTrust.resolve` reproduces pi's decision order and `TrustRepository` reads/writes `trust.json`, but they are reached only from the packages screen (`PiPackagesHost`), not at engine boot. | **DEGRADED** — 仍未做（引擎启动不预置信任；仅包管理页 `PiPackagesHost` 走 `ProjectTrust.resolve` / `TrustRepository`）. pi 有 `types.ts:334`. | M |
+| `ctx.signal` | AbortSignal while streaming (`types.ts:336`) | Works | Nothing | **N/A** — 无用户可见职责；pi 有 `types.ts:336` | — |
+| `ctx.abort()` | Aborts the operation (`types.ts:338`) | Works (`runner.ts:776-779`) | Nothing | **N/A** — 无用户可见职责（App 自己的 abort 走 RPC `abort`）；pi 有 `types.ts:338` | — |
+| `ctx.hasPendingMessages()` | Queue non-empty (`types.ts:340`) | Works | Nothing | **N/A** — 无用户可见职责；pi 有 `types.ts:340` | — |
+| `ctx.shutdown()` | Graceful exit (`types.ts:342`) | Sets `shutdownRequested`; pi exits after the next `agent_settled` (`rpc-mode.ts:345-347`, `747-750`) | The app sees the process exit and reports "引擎已退出" — no attribution to an extension | **DEGRADED** — 仍未做（扩展请求关机时 App 只能看到进程退出，无法归因）；pi 有 `types.ts:342` | S |
+| `ctx.getContextUsage()` | Token usage (`types.ts:344`) | Extension-side; `get_session_stats` exposes `contextUsage` (`rpc-mode.ts:595-598`; `docs/rpc.md:595`) | Implemented: `SessionStatsSheet` renders `stats.contextUsage` (tokens/window/percent). | **N/A** — 已实现 `SessionStatsSheet` + `PiEngineApi.getSessionStats`. pi 有 `types.ts:344`, `rpc-mode.ts:595-598`. | S |
+| `ctx.compact(opts)` | Triggers compaction, with `onComplete`/`onError` (`types.ts:346`) | Works; `compaction_start`/`compaction_end` are wire events (`agent-session.ts:157`, `161-168`) | Events are handled (`rpc/Transcript.kt:580-581`) | **N/A** — 已实现（`compaction_start`/`compaction_end` 已投影；`compact()` 也有入口）；pi 有 `types.ts:346` | — |
+| `ctx.getSystemPrompt()` | Effective system prompt (`types.ts:348`) | Works | Nothing. The only `systemPrompt` in the app is a *launch* setting (`app.runtime.systemPrompt` -> `PiLaunchOptions.systemPrompt`), not a viewer. | **MISSING** — 仍未做. pi 有但我们够不着（无 RPC 命令；`rpc-types.ts:20-74`；`types.ts:348`）. | S |
+| `ctx.getSystemPromptOptions()` | Structured prompt inputs (`types.ts:357`) | Works | Nothing | **N/A** — 无用户可见职责；pi 有 `types.ts:357` | — |
+| `ctx.waitForIdle()` | Await idle (`types.ts:360`) | Works | Nothing | **N/A** — 无用户可见职责；pi 有 `types.ts:360` | — |
+| `ctx.newSession(opts)` | New session with setup callback (`types.ts:363-367`) | Works via `runtimeHost.newSession` (`rpc-mode.ts:324`) | Implemented: `PiSessionViewModel.newSession()` + `PiEngineApi.newSession`. | **N/A** — 已实现 `newSession` / `PiEngineApi.newSession`. pi 有 `types.ts:363-367`. | M |
+| `ctx.fork(entryId, opts)` | Fork from an entry (`types.ts:370-373`) | Works (`rpc-mode.ts:325-328`); cancellable via `session_before_fork` | Implemented: `forkFrom(entryId)` -> `PiEngineApi.fork`, and a cancelled fork is surfaced (「扩展取消了分支」). | **N/A** — 已实现 `forkFrom` / `PiEngineApi.fork`（含 `cancelled` 提示）. pi 有 `types.ts:370-373`. | M |
+| `ctx.navigateTree(targetId, opts)` | Branch navigation with optional summary (`types.ts:376-379`) | Works (`rpc-mode.ts:329-337`) | Still absent: `SessionTreeScreen` only forks from a node; there is no tree-navigation command on the wire (`rpc-types.ts:20-74`). | **MISSING** — 仍未做. pi 有但我们够不着（RPC 无 `navigate_tree`；`types.ts:376-379`）. | L |
+| `ctx.switchSession(path, opts)` | Switch session file (`types.ts:382-385`) | Works (`rpc-mode.ts:338-340`); `switch_session` also exists as a command | Implemented: `PiSessionViewModel.switchSession` calls `PiEngineApi.switchSession` (the RPC command) and reports an extension cancellation; the disk-read path remains only for listing. | **N/A** — 已实现 `PiEngineApi.switchSession` + `PiSessionViewModel.switchSession`（处理 `cancelled`）；pi 有 `types.ts:382-385` | S |
+| `ctx.reload()` | Reload extensions/skills/prompts/themes/context (`types.ts:388`; `agent-session.ts:2841-2866`) | Works **only from inside the guest**: there is no RPC command for it (§5.5) | Approximated, not implemented: `ExtensionLifecycle` + `EngineRestartCoordinator` + `PiRoot` restart the whole engine, which re-reads everything; the in-process `/reload` path is unreachable. | **DEGRADED** — 仍未做（RPC 无 `/reload`；`ExtensionLifecycle.requestRestart` 重启引擎近似，代价是丢掉进程内状态）. pi 有但我们够不着 `types.ts:388`, `slash-commands.ts:41`. | S |
+| `ReplacedSessionContext.sendMessage/sendUserMessage` | Bind messages to the replacement session (`types.ts:396-406`) | Works in-process | Nothing | **N/A** — 无用户可见职责（`withSession` 回调，App 侧不可达也不必要）；pi 有 `types.ts:396-406` | — |
 
 ### 1.4 Lifecycle and interception events
 
@@ -238,65 +326,65 @@ can then modify state that a later wire event will reflect — that is how
 
 | Event | What pi does | Behaviour in `--mode rpc` | What the app does | Gap | Effort |
 |---|---|---|---|---|---|
-| `project_trust` | Decides trust before project resources load; first yes/no wins (`types.ts:521-543`; `runner.ts:204-234`) | Fires, but the context handed to it has `hasUI: false`, so `ctx.ui.select` returns `undefined` (`main.ts:753`; `cli/project-trust.ts:13-30`) | Nothing — no trust handling exists | **MISSING** — see §4; project extensions never load and nothing says why | M |
-| `resources_discover` | Contributes skills/prompts/themes after `session_start` (`types.ts:546-557`) | Works in-process; contributed skills then appear in `get_commands` as `skill:` (`agent-session.ts:2493-2516`) | `get_commands` not called | **MISSING** | S |
-| `session_start` | `startup\|reload\|new\|resume\|fork` (`types.ts:564-570`) | Extension-side; on the wire only as a side effect (messages, name) | Nothing | **MISSING** | XS |
-| `session_info_changed` | Session renamed (`types.ts:573-577`) | Both an extension event and a wire event (`agent-session.ts:159`) | Parsed, unhandled (`rpc/Events.kt:408`) | **MISSING** | XS |
-| `session_before_switch` | Cancellable (`types.ts:580-584`) | Cancellation surfaces as `{cancelled:true}` in the `new_session`/`switch_session` response | Those commands are unused | **MISSING** | S |
-| `session_before_fork` | Cancellable, can skip conversation restore (`types.ts:587-591`) | `fork` response `{cancelled}` | `fork` unused | **MISSING** | S |
-| `session_before_compact` | Cancellable or fully replaces the compaction result (`types.ts:594-604`) | Cancellation shows as `compaction_end.aborted` (`agent-session.ts:161-168`) | Handled generically | **N/A** | — |
-| `session_compact` | Compaction succeeded (`types.ts:607-615`) | `compaction_end` (with `result`) | Handled | **N/A** | — |
-| `session_compact_failed` | Failure/abort, incl. `fromExtension` (`types.ts:618-630`) | `compaction_end{aborted,errorMessage}` | Handled | **N/A** | — |
-| `session_shutdown` | Teardown on quit/reload/replacement (`types.ts:633-638`) | Fires in-process; only visible as process exit | Reported as engine exit | **DEGRADED** | S |
-| `session_before_tree` | Cancellable tree navigation (`types.ts:656-660`) | In-process | No tree UI | **MISSING** | L |
-| `session_tree` | Post-navigation (`types.ts:663-669`) | In-process | Nothing | **MISSING** | L |
-| `context` | Before each LLM call; can replace the message array (`types.ts:688-691`; `runner.ts:1034-1063`) | In-process only. **The rewritten messages are not on the wire**; the app's transcript is a projection of what the model saw *before* the rewrite | Nothing | **DEGRADED** — the app can show content that the model never saw | M |
-| `before_provider_request` | Replaces the request payload (`types.ts:694-697`; `runner.ts:1066-1097`) | In-process | Nothing | **N/A** | — |
-| `before_provider_headers` | Mutates headers in place; `null` deletes (`types.ts:704-707`) | In-process | Nothing | **N/A** | — |
-| `after_provider_response` | Status + headers pre-stream (`types.ts:710-714`) | In-process | Nothing | **N/A** | — |
-| `before_agent_start` | Can inject a message and/or chain-replace the system prompt per turn (`types.ts:717-727`; `runner.ts:1131-1194`) | In-process. Injected messages appear on the wire as message events (custom role, §1.1) | Not rendered | **MISSING** | M |
-| `agent_start` | Loop started (`types.ts:730-732`) | Wire event | Handled (`rpc/Transcript.kt:564-567`) | **N/A** | — |
-| `agent_end` | `messages` + `willRetry` (`types.ts:735-738`) | Wire event with `willRetry` (`agent-session.ts:666`) | Handled | **N/A** | — |
-| `agent_settled` | No retry/compaction/continuation pending (`types.ts:741-743`) | Wire event (`agent-session.ts:629`) | Handled; also the app's idle signal | **N/A** | — |
-| `ui_prompt_start` / `ui_prompt_end` | "pi is now blocked on a dialog", with `kind` (`types.ts:748-761`; `runner.ts:453-486`) | Extension-only; **not on the wire** | Nothing — but the app's own dialog queue is the equivalent signal | **N/A** (extension-facing) | — |
-| `turn_start` / `turn_end` | Turn boundaries with `turnIndex`, `toolResults` (`types.ts:764-776`) | Wire events | Handled; the app's comment claims pi sends no `turnIndex` (`rpc/Events.kt:76-83`) — **wrong**: `AgentEvent`'s `turn_start` carries `turnIndex` (`types.ts:764-768`) | **DEGRADED** — the app discards a field it could use | XS |
-| `message_start` | Message (incl. `custom`) begins (`types.ts:779-782`) | Wire event | Ignored except as a hint; the app draws user bubbles locally | **MISSING** for `custom`/extension-sent `user` roles | M |
-| `message_update` | Token deltas (`types.ts:785-789`) | Wire event; cumulative `message`/`partial` **stripped** (`json-event.ts:40-61`) | Reassembles text/thinking/tool-call deltas | **N/A** | — |
-| `message_end` | Can replace the message (same role required) (`types.ts:792-795`; `runner.ts:885-924`) | The replacement becomes the persisted message and is what `message_end` on the wire carries (`agent-session.ts:805-817`) | Renders only role/text/usage; a *rewritten* message is rendered as-is (correct) but a `custom` one is not | **DEGRADED** | M |
-| `tool_execution_start/update/end` | Tool lifecycle (`types.ts:798-821`) | All three on the wire | Handled, incl. streaming partials | **N/A** | — |
-| `model_select` | Model changed, with `source` (`types.ts:830-835`) | **Not on the wire at all** — `_emitModelSelect` calls only `_extensionRunner.emit` (`agent-session.ts:1659-1670`) | Nothing | **MISSING** — the app cannot know the model changed | S |
-| `thinking_level_select` | Level changed (`types.ts:838-842`) | Extension-only; the wire carries the parallel `thinking_level_changed` (`agent-session.ts:1830-1832`) | Handled via the wire twin | **N/A** | — |
-| `user_bash` | Intercepts `!`/`!!`; can supply `operations` or a full result (`types.ts:849-857`; `runner.ts:1005-1031`) | Fires for the `bash` RPC command, and `eventResult.result` short-circuits execution (`rpc-mode.ts:563-576`) | `bash` command never sent by the app | **MISSING** | S |
-| `input` | Raw input before expansion; `source: interactive\|rpc\|extension`; `continue`/`transform`/`handled` (`types.ts:867-883`; `runner.ts:1246-1285`) | Fires with `source:"rpc"` for `prompt` (`rpc-mode.ts:402`) and for `steer`/`follow_up` (`rpc-mode.ts:419`, `424`; `agent-session.ts:1425-1438`) | Nothing needed | **N/A** — works, and `{action:"handled"}` returns a `success:true` prompt response with no turn, which the app will render as "nothing happened" | S |
-| `tool_call` | Block/allow, mutate `input` in place (`types.ts:894-954`; `runner.ts:982-1002`) | A blocked call becomes an **error tool result** with the reason (`agent-loop.ts:626-655`) and reaches the app as `tool_execution_end{isError:true}` (`agent-loop.ts:470-472`) | Rendered as a failed tool block | **DEGRADED** — the block reason is shown, but not *which extension* blocked it | S |
-| `tool_result` | Can replace `content`/`details`/`isError`/`usage`, chained in load order (`types.ts:1144-1149`; `runner.ts:927-980`) | The rewrite happens **before** `tool_execution_end`, so the app sees the rewritten content (`agent-session.ts:504-535`; `agent-loop.ts:731-758`) | Renders the rewritten content | **DEGRADED** — the app cannot show "the extension changed this" | S |
+| `project_trust` | Decides trust before project resources load; first yes/no wins (`types.ts:521-543`; `runner.ts:204-234`) | Fires, but the context handed to it has `hasUI: false`, so `ctx.ui.select` returns `undefined` (`main.ts:753`; `cli/project-trust.ts:13-30`) | Partially: `ProjectTrust` / `TrustFile` / `TrustRepository` / `PiProjectTrustPrompt` implement pi's decision order and write `trust.json`; the prompt lives in the packages screen, so a workspace with `.pi/extensions` is still skipped silently at boot. | **DEGRADED** — 仍未做（启动时静默跳过；包管理页已实现解析/写入 `.pi/agent/trust.json`）. pi 有 `types.ts:521-543`, `project-trust.ts:46-95`. | M |
+| `resources_discover` | Contributes skills/prompts/themes after `session_start` (`types.ts:546-557`) | Works in-process; contributed skills then appear in `get_commands` as `skill:` (`agent-session.ts:2493-2516`) | Observable for skills and prompts: they arrive through `get_commands` -> `piCommandPalette` (with `PiCommandSource` and `sourceTagOf(PiSourceInfo)` provenance). Theme paths remain invisible. | **N/A** — 已实现（skills/prompts 经 `get_commands` -> `piCommandPalette` / `sourceTagOf`）. pi 有 `types.ts:546-557`. | S |
+| `session_start` | `startup\|reload\|new\|resume\|fork` (`types.ts:564-570`) | Extension-side; on the wire only as a side effect (messages, name) | Nothing to do: pi emits it only to extensions, and it has no user-visible payload. There is no app-side obligation to implement. | **N/A** — 无用户可见职责（纯扩展侧事件）. pi 有 `types.ts:564-570`（只发给扩展）. | XS |
+| `session_info_changed` | Session renamed (`types.ts:573-577`) | Both an extension event and a wire event (`agent-session.ts:159`) | Implemented: `PiEvent.SessionInfoChanged` updates the session name in `UiState` (`PiSessionViewModel.kt:1040`). | **N/A** — 已实现 `PiEvent.SessionInfoChanged` 处理 + `renameSession`. pi 有 `agent-session.ts:159`. | XS |
+| `session_before_switch` | Cancellable (`types.ts:580-584`) | Cancellation surfaces as `{cancelled:true}` in the `new_session`/`switch_session` response | Implemented: `switchSession(summary)` checks `result.cancelled` and reports 「扩展取消了切换会话」. | **N/A** — 已实现 `PiSessionViewModel.switchSession`（`cancelled` 分支）. pi 有 `types.ts:580-584`. | S |
+| `session_before_fork` | Cancellable, can skip conversation restore (`types.ts:587-591`) | `fork` response `{cancelled}` | Implemented: `forkFrom` checks `result.cancelled` and reports 「扩展取消了分支」. | **N/A** — 已实现 `PiSessionViewModel.forkFrom`（`cancelled` 分支）. pi 有 `types.ts:587-591`. | S |
+| `session_before_compact` | Cancellable or fully replaces the compaction result (`types.ts:594-604`) | Cancellation shows as `compaction_end.aborted` (`agent-session.ts:161-168`) | Handled generically | **N/A** — 已实现（`compaction_end.aborted` 已投影）；pi 有 `types.ts:594-604` | — |
+| `session_compact` | Compaction succeeded (`types.ts:607-615`) | `compaction_end` (with `result`) | Handled | **N/A** — 已实现 `CompactionBlock`；pi 有 `types.ts:607-615` | — |
+| `session_compact_failed` | Failure/abort, incl. `fromExtension` (`types.ts:618-630`) | `compaction_end{aborted,errorMessage}` | Handled | **N/A** — 已实现（`compaction_end.errorMessage`）；pi 有 `types.ts:618-630` | — |
+| `session_shutdown` | Teardown on quit/reload/replacement (`types.ts:633-638`) | Fires in-process; only visible as process exit | Reported as engine exit | **DEGRADED** — 仍未做（只表现为引擎退出，无归因）；pi 有 `types.ts:633-638` | S |
+| `session_before_tree` | Cancellable tree navigation (`types.ts:656-660`) | In-process | Still absent; no tree-navigation command exists on the wire, so this event cannot be provoked from the app. | **MISSING** — 仍未做. pi 有但我们够不着（RPC 无 `navigate_tree`；`types.ts:656-660`）. | L |
+| `session_tree` | Post-navigation (`types.ts:663-669`) | In-process | Still absent; same reason as `session_before_tree`. `SessionTreeScreen` renders `get_tree` read-only plus a fork action. | **MISSING** — 仍未做. pi 有但我们够不着（`types.ts:663-669`）. | L |
+| `context` | Before each LLM call; can replace the message array (`types.ts:688-691`; `runner.ts:1034-1063`) | In-process only. **The rewritten messages are not on the wire**; the app's transcript is a projection of what the model saw *before* the rewrite | Nothing | **DEGRADED** — 仍未做；the app can show content that the model never saw（改写后的消息不上线，App 可能显示模型没看到过的内容）；pi 有但我们够不着（改写只存在于进程内） | M |
+| `before_provider_request` | Replaces the request payload (`types.ts:694-697`; `runner.ts:1066-1097`) | In-process | Nothing | **N/A** — 无用户可见职责（进程内改写，无上线面）；pi 有 `types.ts:694-697` | — |
+| `before_provider_headers` | Mutates headers in place; `null` deletes (`types.ts:704-707`) | In-process | Nothing | **N/A** — 无用户可见职责；pi 有 `types.ts:704-707` | — |
+| `after_provider_response` | Status + headers pre-stream (`types.ts:710-714`) | In-process | Nothing | **N/A** — 无用户可见职责；pi 有 `types.ts:710-714` | — |
+| `before_agent_start` | Can inject a message and/or chain-replace the system prompt per turn (`types.ts:717-727`; `runner.ts:1131-1194`) | In-process. Injected messages appear on the wire as message events (custom role, §1.1) | Partially: injected messages are now rendered (`onHookMessage` -> `HookMessageBlock`); the per-turn `systemPrompt` replacement is not observable at all. | **DEGRADED** — 仍未做（消息注入已实现；`systemPrompt` 替换不可观测）. pi 有 `types.ts:717-727`. | M |
+| `agent_start` | Loop started (`types.ts:730-732`) | Wire event | Handled (`rpc/Transcript.kt:564-567`) | **N/A** — 已实现（transcript streaming 状态）；pi 有 `types.ts:730-732` | — |
+| `agent_end` | `messages` + `willRetry` (`types.ts:735-738`) | Wire event with `willRetry` (`agent-session.ts:666`) | Handled | **N/A** — 已实现（`finishStreaming` + `willRetry`）；pi 有 `types.ts:735-738` | — |
+| `agent_settled` | No retry/compaction/continuation pending (`types.ts:741-743`) | Wire event (`agent-session.ts:629`) | Handled; also the app's idle signal | **N/A** — 已实现（转 idle，触发 `refreshState`/`refreshCommands`）；pi 有 `types.ts:741-743` | — |
+| `ui_prompt_start` / `ui_prompt_end` | "pi is now blocked on a dialog", with `kind` (`types.ts:748-761`; `runner.ts:453-486`) | Extension-only; **not on the wire** | Nothing — but the app's own dialog queue is the equivalent signal | **N/A** — 无用户可见职责（extension-facing）（扩展侧通知事件）；pi 有 `types.ts:748-761` | — |
+| `turn_start` / `turn_end` | Turn boundaries; the **extension-facing** events carry `turnIndex` and `timestamp` (`types.ts:764-776`), but the agent-core `AgentEvent` they are derived from does not (`packages/agent/src/types.ts:436-437`) | Wire events. **The wire carries the agent-core shape**: `_handleAgentEvent` calls `_emitExtensionEvent(event)` for extensions and then `_emit(event)` with the original object (`agent-session.ts:663`, `:666`), and `toJsonEvent` passes non-`message_update` records through unchanged (`json-event.ts:48-51`) | Handled; the app models the count-free shape and documents exactly this chain (`rpc/Events.kt:114-133`) | **N/A** — 已实现（App 采用无 turnIndex 的形状，与线上一致）；pi 有 `packages/agent/src/types.ts:436-437` | — |
+| `message_start` | Message (incl. `custom`) begins (`types.ts:779-782`) | Wire event | Partially: custom messages are rendered through the `MessageEnd` custom branch + `onHookMessage`; extension-sent `role:"user"` messages are still dropped live (see `sendUserMessage`). | **DEGRADED** — 仍未做（`custom` 已实现；扩展 user 消息仍未实现）. pi 有 `types.ts:779-782`. | M |
+| `message_update` | Token deltas (`types.ts:785-789`) | Wire event; cumulative `message`/`partial` **stripped** (`json-event.ts:40-61`) | Reassembles text/thinking/tool-call deltas | **N/A** — 已实现（按 contentIndex 重组 text/thinking/toolcall 增量）；pi 有 `json-event.ts:40-61` | — |
+| `message_end` | Can replace the message (same role required) (`types.ts:792-795`; `runner.ts:885-924`) | The replacement becomes the persisted message and is what `message_end` on the wire carries (`agent-session.ts:805-817`) | Implemented: assistant/custom roles are rendered; a `custom` message goes through `onHookMessage` -> `HookMessageBlock`, and a rewritten message is by definition the message pi persisted. | **N/A** — 已实现（`custom` 走 `onHookMessage`；改写后的消息即 pi 的最终消息，无独立归因可做）；pi 有 `agent-session.ts:805-817` | M |
+| `tool_execution_start/update/end` | Tool lifecycle (`types.ts:798-821`) | All three on the wire | Handled, incl. streaming partials | **N/A** — 已实现 `ToolCallBlock`（含流式 partial）；pi 有 `types.ts:798-821` | — |
+| `model_select` | Model changed, with `source` (`types.ts:830-835`) | **Not on the wire at all** — `_emitModelSelect` calls only `_extensionRunner.emit` (`agent-session.ts:1659-1670`) | Compensated: the event is not on the wire, so the app re-reads `get_state` + `get_commands` after every `AgentSettled` (`PiSessionViewModel.kt:1068-1073`) and renders `model_change` entries via `ModelChangeBlock`. | **DEGRADED** — 仍未做（事件不上线；改用 `refreshState` 轮询补偿）. pi 有但我们够不着 `agent-session.ts:1659-1670`（只发给扩展，无 `_emit`）. | S |
+| `thinking_level_select` | Level changed (`types.ts:838-842`) | Extension-only; the wire carries the parallel `thinking_level_changed` (`agent-session.ts:1830-1832`) | Handled via the wire twin | **N/A** — 已实现（经 `thinking_level_changed`）；pi 有 `types.ts:838-842` | — |
+| `user_bash` | Intercepts `!`/`!!`; can supply `operations` or a full result (`types.ts:849-857`; `runner.ts:1005-1031`) | Fires for the `bash` RPC command, and `eventResult.result` short-circuits execution (`rpc-mode.ts:563-576`) | Implemented: `runBash` / `BashPanel` send the `bash` command, which is exactly the path that emits `user_bash` (`rpc-mode.ts:563-576`), so an interceptor's result is what the panel shows. | **N/A** — 已实现 `PiSessionViewModel.runBash` / `BashPanel`. pi 有 `rpc-mode.ts:563-576`. | S |
+| `input` | Raw input before expansion; `source: interactive\|rpc\|extension`; `continue`/`transform`/`handled` (`types.ts:867-883`; `runner.ts:1246-1285`) | Fires with `source:"rpc"` for `prompt` (`rpc-mode.ts:402`) and for `steer`/`follow_up` (`rpc-mode.ts:419`, `424`; `agent-session.ts:1425-1438`) | Nothing needed | **N/A** — 无用户可见职责；works, and `{action:"handled"}` returns a `success:true` prompt response with no turn, which the app will render as "nothing happened"（事件本身可用；App 无需额外实现）；pi 有 `rpc-mode.ts:402` | S |
+| `tool_call` | Block/allow, mutate `input` in place (`types.ts:894-954`; `runner.ts:982-1002`) | A blocked call becomes an **error tool result** with the reason (`agent-loop.ts:626-655`) and reaches the app as `tool_execution_end{isError:true}` (`agent-loop.ts:470-472`) | Rendered as a failed tool block | **DEGRADED** — 仍未做；the block reason is shown, but not *which extension* blocked it（显示不了是哪个扩展拦截/改写）；pi 有（App 侧缺归因字段） | S |
+| `tool_result` | Can replace `content`/`details`/`isError`/`usage`, chained in load order (`types.ts:1144-1149`; `runner.ts:927-980`) | The rewrite happens **before** `tool_execution_end`, so the app sees the rewritten content (`agent-session.ts:504-535`; `agent-loop.ts:731-758`) | Renders the rewritten content | **DEGRADED** — 仍未做；the app cannot show "the extension changed this"（显示不了扩展改写过的标记）；pi 有（App 侧缺归因） | S |
 
 ### 1.5 Commands, resources, packaging, rendering, persistence
 
 | Surface | What pi does | Behaviour in `--mode rpc` | What the app does | Gap | Effort |
 |---|---|---|---|---|---|
-| `get_commands` | Returns extension commands + prompt templates + skills, tagged `source` (`rpc-mode.ts:682-713`) | Works; payload is `{name, description, source, sourceInfo}` — **`sourceInfo`, not the flattened `location`/`path` the docs show** (`rpc-mode.ts:690`; `source-info.ts:3-12`; docs claim at `docs/rpc.md:838-851`) | Never called; the reader drops `sourceInfo` too (`rpc/Responses.kt:96-112`), so provenance is lost even when it is wired | **MISSING** | S |
-| Slash commands | Extensions, templates and skills are all invokable via `prompt("/name")` (`agent-session.ts:1211-1216`) | Works textually | No palette; no `/` handling in the composer, so `/reload` is sent to the model as literal text (`PiSessionViewModel.kt:606-624`) | **DEGRADED** | S |
-| Built-in slash commands | `/reload`, `/trust`, `/model`, … (`slash-commands.ts:19-43`) | **Excluded from `get_commands`** and not handled by `prompt` (`docs/rpc.md:853`; `agent-session.ts:1331-1343` only dispatches *extension* commands) | Nothing | **MISSING** — the app cannot invoke a single built-in command, including `/reload` and `/trust` | S |
-| Skills | `SKILL.md` discovery; `/skill:name` expands to a `<skill>` block (`agent-session.ts:1362-1389`; `docs/skills.md:24-42`) | Works; skills are listed by `get_commands` and expanded on `prompt`/`steer`/`follow_up` (`docs/rpc.md:69`) | Nothing | **MISSING** (discovery) | S |
-| Prompt templates | `.md` templates expanded on `prompt` (`agent-session.ts:1215`; `docs/prompt-templates.md:9-17`) | Works; listed as `source:"prompt"` | Nothing | **MISSING** (discovery) | S |
-| Extension-contributed skills/templates/themes | `resources_discover` → merged with `scope:"temporary"`, `source:"extension:<name>"` (`agent-session.ts:2493-2544`) | Works and shows up in `get_commands` | Nothing | **MISSING** | S |
-| Themes | Theme JSON, `ctx.ui.setTheme`, hot-reload on edit (`docs/themes.md:17-28`, `141`) | `getAllThemes()`→`[]`, `getTheme()`→`undefined`, `setTheme()`→error (`rpc-mode.ts:290-301`) | Nothing | **MISSING** | M |
-| Packages (`pi install`) | npm/git/local packages, dedup, autoload, per-type filters (`docs/packages.md:22-39`, `64-133`) | Works entirely behind the CLI; nothing on the wire. npm install uses `install <spec> --prefix <root> --legacy-peer-deps` (`package-manager.ts:1785-1806`); **a git package's own dependencies are installed with `install --omit=dev`** (`package-manager.ts:1772-1778`) | No install UI; no `pi install` invocation | **MISSING** | M |
-| Package install trust gate | Project packages install only for a trusted project (`package-manager.ts:1740-1745`, `2398-2402`) | — | — | **MISSING** (no trust UI; see §4) | M |
-| Tool rendering (`renderCall`/`renderResult`) | TUI Components per tool row (`types.ts:491-500`; `interactive-mode/components/tool-execution.ts:116-121`) | **Never called on the wire.** But **`export_html` does call them**: `createToolHtmlRenderer` invokes the tool definition's renderers and converts ANSI→HTML (`export-html/tool-renderer.ts:99-156`, consumed at `:197`, `:211`) | `export_html` never called | **MISSING** live; **recoverable via `export_html`** — the only non-TUI path by which extension rendering reaches a client | M |
-| Message/entry renderers | Components for custom messages/entries (`interactive-mode.ts:3558`, `3597`) | Never called | Nothing | **MISSING** | M |
-| Markdown transformer | `string → string` (`types.ts:1207`) | Never called (`interactive-mode.ts:2024-2025`) | Nothing | **MISSING** | M |
-| Session persistence (`appendEntry`) | Custom entries survive restarts; documented recovery is to scan entries on `session_start` (`docs/extensions.md:1486-1492`) | Works; `get_entries` returns them | Nothing reads them | **MISSING** | M |
-| Labels | Persisted bookmarks (`docs/extensions.md:1514-1529`) | Only inside the session tree | No tree UI | **MISSING** | M |
-| Extension load errors | Collected into `LoadExtensionsResult.errors` (`loader.ts:588-591`, `634-637`) | **Never printed and never emitted**: the RPC path has no consumer; they land in `runtime.diagnostics`, which the app never sees (`main.ts:775-782`) | Nothing — a broken extension is indistinguishable from an absent one | **MISSING** | S |
-| Extension handler errors | Caught and reported via `onError` (`runner.ts:851-882`) | `extension_error{extensionPath, event, error}` (`rpc-mode.ts:348-350`) | Snackbar + transcript row; path/event dropped | **DEGRADED** | XS |
-| `tool_call` handler errors | **Not caught** — they propagate and block the tool (`runner.ts:982-1002`; `agent-session.ts:496-501`) | Tool fails with the thrown message as an error result | Rendered as a failed tool | **N/A** (docs `docs/extensions.md:2931`) | — |
-| Trust | Project `.pi` resources gated on `~/.pi/agent/trust.json` (§4) | **RPC never prompts; with `defaultProjectTrust:"ask"` it silently skips project resources** (`main.ts:753`; `project-trust.ts:86-88`) | No trust handling at all | **MISSING** — and silently lossy | M |
-| Hot reload | `/reload` / `ctx.reload()` rebinds the whole runtime (`agent-session.ts:2841-2866`) | No RPC command; only reachable through an extension command | Nothing | **MISSING** | S |
-| Extension-registered models | Appear in `get_available_models` (`model-runtime.ts:766-771`) | Works | Not called | **MISSING** | M |
-| `-e` / inline extensions | `pi -e ./x.ts`, `--no-builtin-tools` (`docs/extensions.md:7`, `2095-2099`) | Works: the app controls argv | The app passes only `--mode rpc --session-dir` (`PiEngineHost.kt:103-107`) | **N/A** (available if wanted) | — |
-| Bundled extension install | — | — | The app copies `assets/pi-extensions` into `<agentDir>/extensions` and `<rootfs>/root/.pi/agent/extensions` (`bridge/DeviceBridgeController.kt:225-241`) — i.e. the **global** user extension dir, which is trust-exempt (`trust-manager.ts:30-38`) | **N/A** — this is the correct way to ship an app-owned extension | — |
+| `get_commands` | Returns extension commands + prompt templates + skills, tagged `source` (`rpc-mode.ts:682-713`) | Works; payload is `{name, description, source, sourceInfo}` — **`sourceInfo`, not the flattened `location`/`path` the docs show** (`rpc-mode.ts:690`; `source-info.ts:3-12`; docs claim at `docs/rpc.md:838-851`) | Implemented: `refreshCommands()` -> `PiEngineApi.getCommands` -> `piCommandPalette`; `sourceInfo` is parsed and rendered as a source tag (`sourceTagOf`). | **N/A** — 已实现 `PiEngineApi.getCommands` / `piCommandPalette` / `sourceTagOf`. pi 有 `rpc-mode.ts:682-713`. | S |
+| Slash commands | Extensions, templates and skills are all invokable via `prompt("/name")` (`agent-session.ts:1211-1216`) | Works textually | Implemented: `/`-prefixed input opens the palette; built-ins the GUI cannot run produce an explicit notice instead of being sent to the model. | **N/A** — 已实现 `SlashPalette` + `PiSessionViewModel.send` 的 `/` 分支 + `notifyUnknownCommand`/`notifyTerminalOnly`；pi 有 `agent-session.ts:1181-1216` | S |
+| Built-in slash commands | `/reload`, `/trust`, `/model`, … (`slash-commands.ts:19-43`) | **Excluded from `get_commands`** and not handled by `prompt` (`docs/rpc.md:853`; `agent-session.ts:1331-1343` only dispatches *extension* commands) | Implemented app-side: `PiCommandAction` natively covers settings/model/thinking/tree/fork/clone/export/copy/rename/stats/new/compact/resume; the rest are `PiCommandAction.TerminalOnly` and say so (`notifyTerminalOnly`). | **N/A** — 已实现 `PiCommandAction`（常见内置原生实现，其余 `TerminalOnly` + `notifyTerminalOnly`）. pi 有但我们够不着 `slash-commands.ts:19-43`（内置命令只在 TUI，且被排除出 `get_commands`）. | S |
+| Skills | `SKILL.md` discovery; `/skill:name` expands to a `<skill>` block (`agent-session.ts:1362-1389`; `docs/skills.md:24-42`) | Works; skills are listed by `get_commands` and expanded on `prompt`/`steer`/`follow_up` (`docs/rpc.md:69`) | Implemented: skills appear in the palette from `get_commands` (`skill:` prefix), and `/skill:name` invocations are split back into a card by `parsePiSkillBlock` -> `SkillInvocationBlock`. | **N/A** — 已实现 `piCommandPalette` + `SkillInvocationBlock` + `parsePiSkillBlock` (`rpc/SkillBlock.kt`). pi 有 `agent-session.ts:1362-1389`. | S |
+| Prompt templates | `.md` templates expanded on `prompt` (`agent-session.ts:1215`; `docs/prompt-templates.md:9-17`) | Works; listed as `source:"prompt"` | Implemented: templates arrive as `source:"prompt"` rows and are dispatched through `PiCommandAction.Prompt`. | **N/A** — 已实现（`get_commands` 的 `source:"prompt"` -> `PiCommandAction.Prompt`）. pi 有 `agent-session.ts:1215`. | S |
+| Extension-contributed skills/templates/themes | `resources_discover` → merged with `scope:"temporary"`, `source:"extension:<name>"` (`agent-session.ts:2493-2544`) | Works and shows up in `get_commands` | Partially: extension-contributed skills and prompts are visible through `get_commands`; `themePaths` have no wire channel at all. | **DEGRADED** — 仍未做（skills/prompts 已实现；themes 不可达）. pi 有 `types.ts:553-557`. | S |
+| Themes | Theme JSON, `ctx.ui.setTheme`, hot-reload on edit (`docs/themes.md:17-28`, `141`) | `getAllThemes()`→`[]`, `getTheme()`→`undefined`, `setTheme()`→error (`rpc-mode.ts:290-301`) | Not reachable through pi: the app's theme list is its own (`PiThemeFiles.scanDirectory` over `agentDir/themes` + `.pi/themes` + the settings `themes` array), which is a different mechanism from an extension's `themePaths`. | **MISSING** — 仍未做（扩展 `themePaths` 无上线通道；app 自己的主题文件走 settings `themes`）. pi 有但我们够不着 `rpc-mode.ts:290-301`. | M |
+| Packages (`pi install`) | npm/git/local packages, dedup, autoload, per-type filters (`docs/packages.md:22-39`, `64-133`) | Works entirely behind the CLI; nothing on the wire. npm install uses `install <spec> --prefix <root> --legacy-peer-deps` (`package-manager.ts:1785-1806`); **a git package's own dependencies are installed with `install --omit=dev`** (`package-manager.ts:1772-1778`) | Implemented: `PiPackageService.install/remove/list` + `PiPackagesScreen` + `PiPackagesHost`, reachable from Settings; `pi list` output is parsed by `PiListOutput`. | **N/A** — 已实现 `PiPackageService.install/remove/list` / `PiPackagesScreen` / `PiListOutput`. pi 有 `package-manager-cli.ts:955`. | M |
+| Package install trust gate | Project packages install only for a trusted project (`package-manager.ts:1740-1745`, `2398-2402`) | — | Implemented: `PiPackageService` takes a `TrustPass` and refuses a project-scope install without it. | **N/A** — 已实现 `PiPackageService.TrustPass` + `ProjectTrust.resolve`. pi 有 `package-manager.ts:1740-1745`. | M |
+| Tool rendering (`renderCall`/`renderResult`) | TUI Components per tool row (`types.ts:491-500`; `interactive-mode/components/tool-execution.ts:116-121`) | **Never called on the wire.** But **`export_html` does call them**: `createToolHtmlRenderer` invokes the tool definition's renderers and converts ANSI→HTML (`export-html/tool-renderer.ts:99-156`, consumed at `:197`, `:211`) | Partially: live rendering is unreachable, but `exportSession` calls `export_html`, and pi's HTML renderer *does* invoke the extension renderers (`export-html/tool-renderer.ts:99-156`), so the custom output reaches the user as a file. | **DEGRADED** — 仍未做（live 不可达；`exportSession` -> `export_html` 是唯一通道）. pi 有但我们够不着（线上只有 `export_html`）. | M |
+| Message/entry renderers | Components for custom messages/entries (`interactive-mode.ts:3558`, `3597`) | Never called | Partially: the app renders its own generic cards for custom messages and custom entries; the extension's renderer still cannot run. | **DEGRADED** — 仍未做（渲染器本体够不着；通用兜底已实现）. pi 有但我们够不着 `interactive-mode.ts:3558`, `:3597`. | M |
+| Markdown transformer | `string → string` (`types.ts:1207`) | Never called (`interactive-mode.ts:2024-2025`) | Nothing; no seam, and no wire channel carries the transform. | **MISSING** — 仍未做. pi 有但我们够不着 `interactive-mode.ts:2024-2025`. | M |
+| Session persistence (`appendEntry`) | Custom entries survive restarts; documented recovery is to scan entries on `session_start` (`docs/extensions.md:1486-1492`) | Works; `get_entries` returns them | Implemented: live `entry_appended` projection and `seedHistory` on attach both render persisted custom entries. | **N/A** — 已实现 `onCustomEntry` + `seedHistory`. pi 有 `types.ts:1381`, `docs/extensions.md:1486-1492`. | M |
+| Labels | Persisted bookmarks (`docs/extensions.md:1514-1529`) | Only inside the session tree | Read-only: labels are displayed and filterable in `SessionTreeScreen`, never written. | **DEGRADED** — 仍未做（显示/过滤已实现；无写入命令）. pi 有但我们够不着 `types.ts:1394`. | M |
+| Extension load errors | Collected into `LoadExtensionsResult.errors` (`loader.ts:588-591`, `634-637`) | **Never printed and never emitted**: the RPC path has no consumer; they land in `runtime.diagnostics`, which the app never sees (`main.ts:775-782`) | Still nothing: no consumer of `LoadExtensionsResult.errors` anywhere in `app/` or `rpc/`. | **MISSING** — 仍未做. pi 有但我们够不着（`loader.ts:634-637` 收集，但没有任何输出/上报通道）. | S |
+| Extension handler errors | Caught and reported via `onError` (`runner.ts:851-882`) | `extension_error{extensionPath, event, error}` (`rpc-mode.ts:348-350`) | Implemented: `PiEvent.ExtensionError(extensionPath, event)` is parsed and shown with attribution. | **N/A** — 已实现（`extensionPath`/`event` 保留并可显示）；pi 有 `rpc-mode.ts:348-350` | XS |
+| `tool_call` handler errors | **Not caught** — they propagate and block the tool (`runner.ts:982-1002`; `agent-session.ts:496-501`) | Tool fails with the thrown message as an error result | Rendered as a failed tool | **N/A** — 无用户可见职责（docs `docs/extensions.md:2931`）（pi 侧 fail-closed 行为）；pi 有 `runner.ts:982-1002` | — |
+| Trust | Project `.pi` resources gated on `~/.pi/agent/trust.json` (§4) | **RPC never prompts; with `defaultProjectTrust:"ask"` it silently skips project resources** (`main.ts:753`; `project-trust.ts:86-88`) | Partially implemented: resolver, store reader/writer, rootfs publisher and prompt UI all exist, but only the packages screen consults them; the app still does not pre-seed trust before spawning pi, and does not pass `--approve`. | **DEGRADED** — 仍未做（启动路径；包管理页已实现 `TrustRepository` / `ProjectTrust` / `PiProjectTrustPrompt`）. pi 有 `trust-manager.ts:212-214`. | M |
+| Hot reload | `/reload` / `ctx.reload()` rebinds the whole runtime (`agent-session.ts:2841-2866`) | No RPC command; only reachable through an extension command | Approximated: `ExtensionLifecycle` + `EngineRestartCoordinator` + `PiRoot` restart the engine after an install; the `/reload` command itself is not invokable over RPC. | **DEGRADED** — 仍未做（RPC 无 `/reload`；重启用 `ExtensionLifecycle.requestRestart` 近似）. pi 有但我们够不着 `slash-commands.ts:41`. | S |
+| Extension-registered models | Appear in `get_available_models` (`model-runtime.ts:766-771`) | Works | Implemented: `ModelPickerSheet` renders `get_available_models`, which includes models from extension-registered providers. | **N/A** — 已实现 `ModelPickerSheet` <- `PiEngineApi.getAvailableModels`. pi 有 `model-runtime.ts:766-771`. | M |
+| `-e` / inline extensions | `pi -e ./x.ts`, `--no-builtin-tools` (`docs/extensions.md:7`, `2095-2099`) | Works: the app controls argv | The app passes only `--mode rpc --session-dir` (`PiEngineHost.kt:103-107`) | **N/A** — 无用户可见职责（available if wanted）（App 不传 `-e`；这是 App 的决定）；pi 有 `docs/extensions.md:7` | — |
+| Bundled extension install | — | — | The app copies `assets/pi-extensions` into `<agentDir>/extensions` and `<rootfs>/root/.pi/agent/extensions` (`bridge/DeviceBridgeController.kt:225-241`) — i.e. the **global** user extension dir, which is trust-exempt (`trust-manager.ts:30-38`) | **N/A** — 已实现 `DeviceBridgeController.installExtensionAssets`（内容指纹门）；pi 有 `trust-manager.ts:30-38`（全局扩展免信任） | — |
 
 ---
 
@@ -692,24 +780,35 @@ So an extension that calls `pi.setModel()` changes the session and the app's mod
 indicator never updates. Any model UI must therefore poll `get_state` after
 `agent_settled` (or after `set_model` responses), not wait for an event.
 
-### 5.4 `turn_start` *does* carry `turnIndex`
+### 5.4 ~~`turn_start` *does* carry `turnIndex`~~ — CORRECTED: it does not, on the wire
 
-The app asserts the opposite in a comment and discards the field
-(`rpc/Events.kt:76-83`), but `TurnStartEvent` has both `turnIndex` and `timestamp`
-(`types.ts:764-768`), and `AgentSessionEvent` forwards the core `AgentEvent`
-(`agent-session.ts:144-145`; emitted with `turnIndex: this._turnIndex`,
-`agent-session.ts:771-781`). Nothing breaks, but the app's transcript loses a
-stable ordering key it could have had.
+This section originally claimed the app was wrong to model `turn_start` without a
+turn index. **That claim was itself wrong** (a reverse lie: the app is right), and
+it is corrected here rather than deleted so the mistake is traceable.
+
+The chain: pi builds *two* turn events. `_emitExtensionEvent` constructs
+`TurnStartEvent`/`TurnEndEvent` **with** `turnIndex` for extension handlers
+(`types.ts:764-776`, `agent-session.ts:771-781`), then `_handleAgentEvent` emits
+the **original** core `AgentEvent` to session listeners
+(`agent-session.ts:663`, `:666`) — and that union is `{ type: "turn_start" }` /
+`{ type: "turn_end"; message; toolResults }` with no index
+(`packages/agent/src/types.ts:436-437`). `--mode rpc` prints the session-listener
+stream (`rpc-mode.ts:355-360`), so the app's count-free model is the correct one.
+The app's own comment documents this same reasoning (`rpc/Events.kt:114-133`).
 
 ### 5.5 There is no way for the client to trigger reload or any built-in command
 
 See §4.5. A user who edits `.pi/extensions/foo.ts` inside the app's workspace and
-then types `/reload` sends the literal string `/reload` to the model — a real
-prompt, a real API charge, and no reload. The app must intercept `/`-prefixed
-input client-side; today `PiSessionViewModel.send` has no `/` special-case at all
-(`PiSessionViewModel.kt:606-624`).
+then types `/reload` must not have the literal string sent to the model — that
+would be a real prompt and a real API charge for no reload. **Fixed in the app**:
+`send()` now routes `/`-prefixed input through the palette
+(`PiSessionViewModel.send`, and `notifyUnknownCommand` / `notifyTerminalOnly` for
+what the GUI cannot run), so a built-in that only the TUI can execute produces an
+explicit notice instead of a prompt. The remaining gap is the reload itself
+(§4.5): the app restarts the engine via `ExtensionLifecycle` because no RPC
+command exists.
 
-### 5.6 Extension load failures are completely silent
+### 5.6 Extension load failures are completely silent — **STILL OPEN (§0.2)**
 
 `loadExtension` returns `{error}` (`loader.ts:588-591`), `loadExtensionsCached`
 collects them (`:634-637`), and the RPC path never reads them: they end up in
@@ -721,21 +820,21 @@ diagnostics card cannot show them either. Requirement: after boot, compare the
 expected extension set against `get_commands`' `source:"extension"` entries and
 warn on a mismatch.
 
-### 5.7 `extension_error` loses its two most useful fields
+### 5.7 ~~`extension_error` loses its two most useful fields~~ — FIXED
 
-pi sends `{extensionPath, event, error}` (`rpc-mode.ts:348-350`). The app parses
-only `message`/`error` (`rpc/Events.kt:398`). With several extensions loaded,
-"扩展出错" is unattributable. Cheap fix, high diagnostic value.
+pi sends `{extensionPath, event, error}` (`rpc-mode.ts:348-350`). The app now
+parses all three: `PiEvent.ExtensionError(message, extensionPath, event)`
+(`rpc/Events.kt:353-355`, parsed at `:543-545`), so a failure names the extension
+and the hook it threw in.
 
-### 5.8 `entry_appended` carries the whole entry and the app throws it away
+### 5.8 ~~`entry_appended` carries the whole entry and the app throws it away~~ — FIXED
 
-`agent-session.ts:2616-2621` emits the full `CustomEntry`; the app keeps only
-`{entryId, entryType}` (`rpc/Events.kt:400-406`) and the reducer ignores the event
-(`rpc/Transcript.kt:627`). Combined with the never-called `get_entries`, this means
-extension state is not merely unrendered — the app has *no* path to it. The
-reducer is already able to render `custom_message`/`hook_message` entries
-(`rpc/Transcript.kt:1172-1194`, `1279-1296`), so the missing piece is one wire
-handler and one command call.
+`agent-session.ts:2616-2621` emits the full entry, and the app now projects it:
+`PiEvent.EntryAppended` carries the payload into
+`TranscriptReducer.onEvent` -> `onEntry` -> `onCustomEntry`
+(`rpc/Transcript.kt:869`, `:1876`). History replay uses the same projection:
+`PiEngineSession` builds a fresh reducer with `seedFromHistory(entries)` after
+`get_entries`. Extension state therefore survives a restart *and* a reconnect.
 
 ### 5.9 Precedence when two extensions collide (three different rules)
 
@@ -819,7 +918,12 @@ Three different mechanisms, three different app obligations:
    `customType`/`display`/`details` (`session-manager.ts:104-140`).
 3. Labels via `pi.setLabel` (`types.ts:1394`).
 
-None of the three is readable by the app today (§1.5).
+**All three are readable by the app today** (verified in the §0.2 re-check):
+custom entries via `onCustomEntry` (`rpc/Transcript.kt:1876`) and `seedHistory`;
+custom messages via the `MessageEnd` custom branch -> `onHookMessage`
+(`rpc/Transcript.kt:792-798`) -> `HookMessageBlock`; labels via `get_tree`, which
+pi resolves before sending (`TreeFilter.LabeledOnly`, `SessionTreeScreen`).
+Labels remain **read-only** — there is no `set_label` RPC command.
 
 ### 5.15 `--mode rpc` starts no session header, and the app must not assume one
 
@@ -833,9 +937,18 @@ defensive posture — but no code may depend on it.
 
 ## 6. Prioritised work list for the app
 
+**Status as of the §0.2 re-check (2026-09-10).** Each item below carries a
+`STATUS:` line. Four items are now implemented and one recommendation was wrong;
+leaving them unmarked is exactly how this repo's ledgers went stale, so they are
+marked rather than deleted.
+
 ### P0 — blocking hangs (do first)
 
-**6.1 Dialog watchdog and "answer everything" invariant.**
+`STATUS: still open.`
+
+**6.1 Dialog watchdog and "answer everything" invariant.** `STATUS: still open`
+(the dialog host exists in `ui/extension/**`; the no-timeout stall note is still
+absent).
 The blocking half is now implemented (`PiSessionViewModel.kt:431-465`), but three
 holes remain:
 (a) a dialog whose engine died between request and answer is answered on engine
@@ -850,7 +963,8 @@ Concrete API: `PiSessionViewModel.UiState.extensionDialog` already carries
 pi 会一直等待" note — the app already documents it in code
 (`ui/extension/ExtensionDialogs.kt:208-216`); make sure the UI says it.
 
-**6.2 Never drop a `tool_call`-blocked turn silently.** Not an app bug, but the
+**6.2 Never drop a `tool_call`-blocked turn silently.** `STATUS: still open` — no
+`ToolBlocked` transcript item exists; the reason is only shown as tool text. Not an app bug, but the
 app must render `tool_execution_end{isError:true}` with content "Tool execution
 was blocked" in a way that reads as *policy*, not failure
 (`agent-loop.ts:644-655`). API: `rpc/Events.kt:325-331` already carries
@@ -859,39 +973,56 @@ was blocked" in a way that reads as *policy*, not failure
 
 ### P1 — cheap, high-value (≤ 1 day each)
 
-**6.3 Wire `get_commands` into a slash palette.** `PiCommands.getCommands` and
+`STATUS: 6.3–6.9 are all implemented` (verified by symbol in §0.2); the entries are
+kept as the record of what the fix was.
+
+**6.3 Wire `get_commands` into a slash palette.** `STATUS: DONE` —
+`refreshCommands` -> `piCommandPalette` -> `SlashPalette`, with `sourceTagOf` for
+provenance and `PiCommandAction` for the built-ins that are not on the wire. `PiCommands.getCommands` and
 `PiResponses.slashCommands` already exist and are unused. Keep `sourceInfo` and
 add the built-in list app-side (from `slash-commands.ts:19-43`) so `/reload`,
 `/model`, `/compact`, `/trust` are discoverable. API:
 `PiEngineSession.suspend fun listCommands(): List<PiResponses.SlashCommand>`
 (send `get_commands`, refresh after `agent_settled` and after any reload).
 
-**6.4 Intercept `/`-prefixed composer input.** Today `/reload` goes to the model
+**6.4 Intercept `/`-prefixed composer input.** `STATUS: DONE` —
+`PiSessionViewModel.send` routes `/` through the palette and uses
+`notifyUnknownCommand` / `notifyTerminalOnly` instead of sending the text to the
+model. Today `/reload` goes to the model
 (§5.5). API: `PiSessionViewModel.send` should route a leading `/` to a palette
 selection, and only send `prompt("/cmd args")` for commands that are actually
 invokable (`source` present in `get_commands`), showing a clear error otherwise.
 
-**6.5 Keep `extensionPath` and `event` on `extension_error`.** One-line change in
+**6.5 Keep `extensionPath` and `event` on `extension_error`.** `STATUS: DONE` —
+`PiEvent.ExtensionError` now carries both (`rpc/Events.kt:353-355`). One-line change in
 `rpc/Events.kt:398` plus the snackbar text; turns "扩展出错" into "扩展
 pi-android-bridge 在 tool_call 中出错: …".
 
-**6.6 Render `role:"custom"` messages from `message_end`.** The payload is already
+**6.6 Render `role:"custom"` messages from `message_end`.** `STATUS: DONE` —
+`Transcript` custom branch -> `onHookMessage` -> `HookMessageBlock`. The payload is already
 on the wire (`agent-session.ts:1537-1547`); `rpc/Events.kt:303-311` must stop
 dropping `customType`/`display`/`details`, and `rpc/Transcript.kt:563` must append
 a `HookMessage` when `display !== false` (the block type exists,
 `rpc/Transcript.kt:1283`).
 
-**6.7 Surface `entry_appended` and call `get_entries` on attach.** Feed
+**6.7 Surface `entry_appended` and call `get_entries` on attach.** `STATUS: DONE`
+— `PiEvent.EntryAppended -> onEntry -> onCustomEntry`, plus
+`PiEngineSession.seedHistory` over `get_entries` on attach. Feed
 `PiEvent.EntryAppended`'s full entry into `TranscriptReducer.onEntry`
 (`rpc/Transcript.kt:905`) instead of `TranscriptChange.None`, and after every
 boot/reconnect call `get_entries` and `seedFromHistory` (`:958`). This is what
 makes extension state and restart-surviving messages visible.
 
-**6.8 Poll `get_state` for the model after `agent_settled`** and use
+**6.8 Poll `get_state` for the model after `agent_settled`** `STATUS: DONE` —
+`refreshState()` + `refreshCommands()` run on `PiEvent.AgentSettled`
+(`PiSessionViewModel.kt:1068-1073`), and `ModelPickerSheet` reads
+`get_available_models`. and use
 `get_available_models` for a picker, because `model_select` is not on the wire
 (§5.3) and extension-registered providers only appear via that command.
 
-**6.9 Turn session switching into `switch_session`.** The app lists sessions from
+**6.9 Turn session switching into `switch_session`.** `STATUS: DONE` —
+`PiSessionViewModel.switchSession` calls `PiEngineApi.switchSession` and reports an
+extension cancellation. The app lists sessions from
 disk (`PiSessionViewModel.kt:141-152`) but never tells pi. API:
 `PiEngineSession.suspend fun switchSession(path: String)` sending
 `switch_session`, then re-read `get_entries` (which also starts honouring
@@ -899,7 +1030,14 @@ disk (`PiSessionViewModel.kt:141-152`) but never tells pi. API:
 
 ### P2 — needs the terminal/component escape hatch (days–weeks)
 
+`STATUS: 6.10 and 6.11 partly done; 6.12 done except the boot path.`
+
 **6.10 Ship an app-owned "adapter" extension in the global extensions dir.**
+`STATUS: partly done / partly superseded` — packages are installed from the app
+(`PiPackageService`, `PiPackagesHost`) and reload is `ExtensionLifecycle`'s engine
+restart, so no adapter extension was needed for install/reload. A `project_trust`
+handler in a global extension is still the only way to make trust decisions
+visible to a *running* pi.
 Precedent exists: the device bridge is installed to `<agentDir>/extensions`
 (`bridge/DeviceBridgeController.kt:225-241`), which is trust-exempt
 (`trust-manager.ts:30-38`). Extend that pattern with commands the RPC surface
@@ -912,7 +1050,9 @@ lacks:
 API: extension commands are invoked with `prompt("/<name>")` (`agent-session.ts:1181-1190`),
 so no protocol work is needed.
 
-**6.11 Route TUI-only extensions to the real terminal.** `custom()`,
+**6.11 Route TUI-only extensions to the real terminal.** `STATUS: partly done` —
+`ui/chat/TuiOnlyScan.kt` implements the source scan and `TerminalPane` can open
+`PtyLauncher.Kind.PiTui`; the automatic hand-off/warning UI is what remains. `custom()`,
 `setFooter`, `setHeader`, `setEditorComponent`, `addAutocompleteProvider`,
 `onTerminalInput` and the renderer hooks cannot be expressed over this protocol
 (§1.2, §2.2). The app already launches pi's TUI in a PTY
@@ -925,7 +1065,10 @@ terminal for any session at will. Show "此扩展需要终端模式" with a one-
 "在终端中打开". API: a `PiSessionViewModel.openTerminalInWorkbench()` intent
 consumed by `PiRoot`'s destination state (`ui/PiRoot.kt:37`).
 
-**6.12 Implement trust end-to-end.** Write/read `<files>/pi/.pi/agent/trust.json`
+**6.12 Implement trust end-to-end.** `STATUS: done except the boot path` —
+`TrustRepository` (read/write/repair/publish), `ProjectTrust` (pi's decision
+order), `TrustFile`, `PiProjectTrustPrompt` and the `PiPackagesHost` wiring exist;
+nothing consults them before spawning pi, and `--approve` is not passed. Write/read `<files>/pi/.pi/agent/trust.json`
 (canonical guest paths, `true|false|null`), implement the five options, and
 replace the placeholder settings rows. API:
 `app/src/main/kotlin/app/pi/runtime/PiTrustStore.kt` with
@@ -936,7 +1079,9 @@ replace the placeholder settings rows. API:
 ### P3 — impossible without switching to the in-process SDK, and even then only with a component bridge
 
 **6.13 Live extension rendering (`renderCall`/`renderResult`, message/entry
-renderers, markdown transformers).** Over RPC these never run (§1.1, §1.5); the
+renderers, markdown transformers).** `STATUS: still open` (only the `export_html`
+fallback is reachable; the generic fallback cards are not the extension's
+rendering). Over RPC these never run (§1.1, §1.5); the
 only exposure is the `export_html` fallback (§5.11). Under the SDK the app can
 obtain the same definitions (`session.extensionRunner.getToolDefinition`, public
 per `runner.ts:514-519`) and render them itself — but it must first build an
@@ -944,14 +1089,16 @@ ANSI→Compose bridge, exactly as `export-html` does to HTML
 (`export-html/tool-renderer.ts:44-56`, `113-114`). Effort: **XL**. Recommendation:
 use `export_html` (P1) and defer the bridge.
 
-**6.14 Third-party TUI-only extensions at full fidelity.** Only pi's interactive
+**6.14 Third-party TUI-only extensions at full fidelity.** `STATUS: still open`
+(the PTY path exists; the product decision to route users there does not). Only pi's interactive
 mode in a real PTY delivers `custom()` overlays, custom editors, footers/headers
 and terminal input. The app has the PTY; the chat UI never will. This is the
 architectural conclusion: **the promise "100% of pi's capability, including
 extensions" is a promise about the terminal path, not about the RPC path**, and
 the UI should say which one the user is in.
 
-**6.15 `getEditorText()` and the composer.** RPC returns `""` forever
+**6.15 `getEditorText()` and the composer.** `STATUS: still open` — nothing mirrors
+composer state into the guest. RPC returns `""` forever
 (`rpc-mode.ts:248-252`). The only fixes are (a) an app-owned extension that mirrors
 the composer over the bridge, or (b) the SDK. Effort: **L**. Low priority — few
 extensions call it, but the ones that do misbehave silently.

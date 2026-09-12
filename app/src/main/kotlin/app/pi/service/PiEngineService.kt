@@ -31,9 +31,22 @@ import app.pi.R
  */
 class PiEngineService : Service() {
 
+    /**
+     * `@Volatile` because [companion object] readers ask about it from the UI
+     * thread while the service acquires/releases on the main thread; without it a
+     * reader could see a stale lock object and report the previous state.
+     */
+    @Volatile
     private var wakeLock: PowerManager.WakeLock? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
+
+    override fun onCreate() {
+        super.onCreate()
+        // Published before `onStartCommand` — the lock is acquired there, so a
+        // reader can legitimately see "service running, lock not held yet".
+        instance = this
+    }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
@@ -122,6 +135,9 @@ class PiEngineService : Service() {
 
     override fun onDestroy() {
         releaseWakeLock()
+        // Cleared *after* the lock is released, so a reader that sees no instance
+        // can never also believe a lock is still held by it.
+        instance = null
         super.onDestroy()
     }
 
@@ -130,5 +146,34 @@ class PiEngineService : Service() {
         private const val NOTIFICATION_ID = 1001
         private const val WAKE_LOCK_TAG = "pi:engine"
         private val WAKE_LOCK_TIMEOUT_MS = 6 * 60 * 60 * 1000L
+
+        /**
+         * The live service, for read-only observation from the UI. Null when it has
+         * never started or has been destroyed. Same shape as
+         * `DeviceAccessibilityService.instance` / `isRunning()`.
+         */
+        @Volatile
+        private var instance: PiEngineService? = null
+
+        /** Whether the service exists right now. */
+        fun isRunning(): Boolean = instance != null
+
+        /**
+         * Whether the CPU wake lock is held **right now** — the lock's own
+         * `isHeld`, not an inference from the service being alive.
+         *
+         * The two questions are not the same, and the difference is real:
+         *  - the lock is acquired in [onStartCommand] and released in
+         *    [stopEngineAndSelf] / [onDestroy], so it is normally held for exactly
+         *    the service's lifetime;
+         *  - it is acquired **with a 6-hour timeout**, so a service that works
+         *    longer than that keeps running with the lock already released by the
+         *    framework. In that window [isRunning] is true while this is false;
+         *  - between `onCreate` and the acquire, and during teardown, the two can
+         *    also disagree for a moment.
+         *
+         * Because it reads the lock itself, it is never an approximation.
+         */
+        fun isWakeLockHeld(): Boolean = instance?.wakeLock?.isHeld == true
     }
 }

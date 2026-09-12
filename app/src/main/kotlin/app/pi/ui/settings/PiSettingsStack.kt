@@ -4,11 +4,15 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -16,9 +20,14 @@ import app.pi.bridge.DeviceCapabilityStore
 import app.pi.packages.EngineRestartCoordinator
 import app.pi.packages.PiPackagesHost
 import app.pi.rpc.PiResponses
+import app.pi.runtime.PiPaths
 import app.pi.ui.device.DeviceCapabilityScreen
 import app.pi.ui.theme.PiThemeEntry
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonPrimitive
+import java.io.File
 
 /**
  * The whole settings stack in one composable: level 0 home, level 1 group,
@@ -108,6 +117,36 @@ fun PiSettingsStack(
     // so the screen is the app's own.
     var licenses by remember { mutableStateOf(false) }
 
+    // The 运行时 group's four read-only rows: their facts live in the runtime
+    // tree and in the engine's foreground service, not in the settings store, so
+    // they are read here and passed down as overrides. The read is a directory
+    // walk plus a few small files, hence IO, hence a state that starts null
+    // (rows show 未读取 for exactly one frame).
+    val context = LocalContext.current
+    val runtimeFacts = remember(context) {
+        RuntimeFacts(
+            context = context.applicationContext,
+            paths = PiPaths(
+                filesDir = context.filesDir,
+                nativeLibDir = File(context.applicationInfo.nativeLibraryDir),
+            ),
+        )
+    }
+    var facts by remember { mutableStateOf<RuntimeFacts.Snapshot?>(null) }
+    LaunchedEffect(runtimeFacts) {
+        facts = withContext(Dispatchers.IO) { runtimeFacts.read() }
+    }
+    // A restart asked for from the 进程 section. It is not routed through
+    // `EngineRestartCoordinator`: that machine answers "a *resource* change is
+    // waiting to be picked up", while these are process options that only take
+    // effect on a fresh process. The rail that matters — never interrupting a
+    // turn — is the engine's own (`PiEngineHost.restart` refuses while `Busy`),
+    // and this passes `allowInterrupt = false`, so a running turn is a refusal
+    // with the engine's own sentence, not a killed turn.
+    var restartPrompt by remember { mutableStateOf(false) }
+    var restartNote by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
+
     val openSetting: (String) -> Unit = { key ->
         val setting = PiSettingsCatalog.byKey[key]
         if (setting != null) {
@@ -155,6 +194,10 @@ fun PiSettingsStack(
         // installed but was never fetched, so the row opens the manager status quo
         // screen instead of a list editor — the same screen 设置首页 already links.
         "packages" to { packages = true },
+        // The 进程 section's three switches are pi's process configuration, so
+        // they can only take effect in a new `pi --mode rpc` process. This row is
+        // the next step the rows above point at.
+        "app.runtime.restartEngine" to { restartPrompt = true },
     )
 
     BackHandler(
@@ -221,6 +264,7 @@ fun PiSettingsStack(
                 contentPadding = contentPadding,
                 onBack = { searching = false },
                 onOpenSetting = openSetting,
+                valueOverrides = runtimeOverrides(facts),
             )
 
             currentGroup != null -> SettingsGroupScreen(
@@ -239,6 +283,10 @@ fun PiSettingsStack(
                 onSettingWritten = onSettingWritten,
                 onRunAction = onRunAction,
                 hostActions = hostActions,
+                valueOverrides = runtimeOverrides(facts),
+                // The same restart the 进程 section's action row asks for, offered
+                // from the badge explanation of a 需重启引擎 row.
+                onRestartEngine = { restartPrompt = true },
             )
 
             else -> SettingsHome(
@@ -256,5 +304,62 @@ fun PiSettingsStack(
                 onOpenLicenses = { licenses = true },
             )
         }
+    }
+
+    // The 进程 section's "restart so these take effect" step. Two dialogs, not
+    // one: the first states the cost before anything happens, the second reports
+    // what the engine answered (it refuses on its own while a turn is running, and
+    // its sentence is the one worth showing).
+    if (restartPrompt) {
+        AlertDialog(
+            onDismissRequest = { restartPrompt = false },
+            title = { Text("重启引擎") },
+            text = {
+                Text(
+                    if (isTurnRunning()) {
+                        "现在有回合正在运行。重启会终止模型调用、工具调用与正在跑的命令，它们都不会恢复；" +
+                            "已写入磁盘的会话不会丢失。"
+                    } else {
+                        "重启会终止正在进行的回合，已写入磁盘的会话不会丢失。"
+                    },
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        restartPrompt = false
+                        val engine = restartEngine
+                        if (engine == null) {
+                            restartNote = "重启未接入：设置页还没有拿到引擎的重启入口。文件与设置都已保存。"
+                        } else {
+                            scope.launch {
+                                restartNote = when (val outcome = engine("设置里更改了进程开关", false)) {
+                                    is EngineRestartCoordinator.Outcome.Ok ->
+                                        "引擎已重启，新的进程设置已生效。"
+
+                                    is EngineRestartCoordinator.Outcome.Refused -> outcome.message
+                                    is EngineRestartCoordinator.Outcome.Failed -> outcome.message
+                                }
+                            }
+                        }
+                    },
+                ) { Text("重启") }
+            },
+            dismissButton = {
+                TextButton(onClick = { restartPrompt = false }) { Text("取消") }
+            },
+        )
+    }
+
+    val restartResult = restartNote
+    if (restartResult != null) {
+        AlertDialog(
+            onDismissRequest = { restartNote = null },
+            title = { Text("重启引擎") },
+            text = { Text(restartResult) },
+            confirmButton = {
+                TextButton(onClick = { restartNote = null }) { Text("知道了") }
+            },
+        )
     }
 }

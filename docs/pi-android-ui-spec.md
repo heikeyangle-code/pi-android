@@ -148,7 +148,7 @@ v1 说"无阴影"，这是错的。现代 App 需要层级线索。改为 **M3 t
 | 5 | — | 8dp + scrim 32% | FAB 按下态、全屏查看器 |
 
 - **不用纯黑阴影**：用主题的 `shadow` 色 + 低透明度，暗色主题里用"更亮的表面"代替阴影（M3 的做法）。
-- **允许一处毛玻璃**：顶栏在滚动内容下方时，用 `Surface` 88% 不透明度 + 12dp blur（Android 12+ RenderEffect）。这是全 App 唯一使用模糊的地方，用来强化"内容在栏下滚动"的空间感。
+- **允许一处毛玻璃**：~~顶栏在滚动内容下方时，用 `Surface` 88% 不透明度 + 12dp blur（Android 12+ RenderEffect）。这是全 App 唯一使用模糊的地方，用来强化"内容在栏下滚动"的空间感。~~ **`用户已决定不做`**（纯视觉、空耗性能、没有信息增益）。
 
 ### 2.5 图标与插图
 
@@ -236,7 +236,10 @@ v1 说"无阴影"，这是错的。现代 App 需要层级线索。改为 **M3 t
 
 ### 3.3 三级：内容块（对话流元素，共 14 类）
 
-`user-message` · `assistant-text` · `thinking-block` · `tool-execution` · `tool-diff` · `compaction` · `branch-summary` · `hook-message` · `model-change` · `skill-invocation` · `system-prompt` · `message-images` · `error-text` · `date-separator`
+`user-message` · `assistant-text` · `thinking-block` · `tool-execution` · `tool-diff` · `compaction` · `branch-summary` · `hook-message` · `model-change` · `skill-invocation` · `message-images` · `error-text` · `date-separator`
+
+> `system-prompt` 已从这一行移除：它**没有生产者**（pi 没有该转录组件，也没有 RPC 命令返回 prompt），
+> 所以 item、块与钩子一起被删掉了。见 `docs/gap-disposition.md` §10.1 的 A1/F22 行。
 
 ### 3.4 四级：展开层
 
@@ -281,7 +284,7 @@ v1 说"无阴影"，这是错的。现代 App 需要层级线索。改为 **M3 t
 
 ```
 ┌──────────────────────────────────────────────────┐
-│ ←  重构认证中间件            ⟳   ⋮              │  App Bar（56dp，滚动后毛玻璃）
+│ ←  重构认证中间件            ⟳   ⋮              │  App Bar（56dp；毛玻璃 `用户已决定不做`）
 │ ~/projects/api · main · ↑24.1k ↓3.2k · ◐ 52% · sonnet-4.5 │  状态行（32dp，可点各项）
 ├──────────────────────────────────────────────────┤
 │                                                  │
@@ -354,7 +357,7 @@ data class DateSeparator(key, ts, label)
 - **流式优化**：正在流式的那个 item 的文本放在一个独立的 `MutableState<String>` 里，只有那个 composable 读它 → 列表其余部分不重组（这是打字机流畅的关键）
 - **Markdown 两段式**：流式中只用轻量行内解析（粗体/斜体/行内码/标题）；`message_end` 后再做**完整解析 + 语法高亮**（后台线程）。避免每帧重排。
 - **代码块**：先渲染纯文本，高亮结果异步到位后替换（`remember` 缓存按内容 hash）
-- **超长输出**：默认渲染前 200 行 + 「展开全部」（展开后启用虚拟滚动）；单块 >200 KB 直接给「前往工作区查看完整日志」
+- **超长输出**：默认渲染前 200 行 + 「展开全部」（展开后启用虚拟滚动）；单块超限时**印出 pi 记录的完整输出路径并允许点击复制**，**不提供「前往工作区」这类打开动作** —— 那个动作 pi 没有：它的 bash 工具只把路径写进文本（`core/messages.ts:94-95` 的 `[Output truncated. Full output: …]`、`core/tools/bash.ts:326-328`），全仓没有任何「打开它」的代码。App 侧实现见 `ui/blocks/ToolCallBlock.kt`（印出路径 + 可复制，不再指向一个不存在的动作）
 - **图片**：`Coil` 异步加载 + 占位骨架；大图先出缩略图
 
 ### 4.3 流式更新的实现规则
@@ -433,7 +436,7 @@ data class DateSeparator(key, ts, label)
 - **流式时若已解锁跟随，绝不抢滚动**（最常被做错的地方）。
 - **回顶**：双击 App Bar；或长按该 FAB 跳到会话开头。
 - **上一轮/下一轮**：长会话时底部中央出现极简 `↑ 上一轮 / ↓ 下一轮`（在 `UserMessage` 之间跳转，对应 pi 的 `previousPrompt`/`nextPrompt`）。
-- **长会话加载**：打开时先渲染最后 50 条，向上滚动时分批加载更早的 entry（`get_entries` 天然支持增量），顶部显示加载指示。
+- **长会话加载**：打开时先渲染最后 50 条，向上滚动时分批加载更早的 entry，顶部显示加载指示。**「更早的 entry」只能来自客户端已经保留的投影，不是 pi 的增量查询**：`get_entries` 的 `since?` 是**向前**的 durable cursor，返回的是它**之后**的 entry（`packages/coding-agent/src/modes/rpc/rpc-types.ts:65`、`modes/rpc/rpc-mode.ts:638-648`，pi 自己的 `packages/coding-agent/docs/rpc.md:717-745`），`get_messages` 同样没有游标（`rpc-types.ts:71`）—— 反向分页在 pi 侧不存在。实现见 `ui/screens/ChatScreen.kt` 的 `renderWindow` / `renderedItems` / 「加载更早的 N 条」。
 - **位置恢复**：离开会话时记住锚点 entry id，回来时 `scrollToItem(key)`。
 - **搜索**：App Bar 放大镜 → 顶部搜索栏（命中计数、上/下一处、关闭），命中用 `searchMatchBg/Text`，当前命中反转配色 + 加粗。搜索范围含工具输出（可关）。
 
@@ -468,6 +471,18 @@ data class DateSeparator(key, ts, label)
 | 分支摘要 | 点击 | 展开 · 跳到该分支 |
 | 图片 | 点击 | 全屏查看器（缩放/保存/分享） |
 | 模型变更行 | 点击 | 打开模型面板 |
+
+> **本表里有三行已决定不做（2026-09-12，用户决定）。** 理由是同一条规矩：用户说「**pi 没有的全不用做，只做有的**」，而这四行的动作 pi 里根本没有。记在这里是为了让下一个人**不要照着这张表重新派活**——本仓已经因为"账本说没做、其实做完"和"规格写了、但没人记得已经否决"浪费过好几轮。
+>
+> | 行 | 为什么不做 | 判据（读 pi 源码 `0.85.1`，`bbb61e34`） |
+> |---|---|---|
+> | **工具卡（bash）· 在工作区终端重跑** | pi 没有"重跑某条工具命令"这个动作；它的 TUI 靠终端自身的滚动选择/复制 | 全仓 `grep -rn "Re-run\|rerun\|re-run" packages/coding-agent/src` 只命中 `core/package-manager-cli.ts:1027` 的一句安装器文案 |
+> | **助手消息 · 重新生成** | pi 没有这个动作 | `grep -rn regenerate packages/coding-agent/src` 零命中 |
+> | **助手消息 · 保存为文件** | pi 的 `/export` 导出的是**整个会话**（我们已实现 `PiSessionViewModel.exportSession` / `exportJsonl`），没有"把单条消息存成文件" | `modes/interactive/interactive-mode.ts:6060-6066` |
+>
+> **本表里另有两行也停着，但原因不同——它们依赖的界面还不存在**（不是"pi 没有"）：`工具卡（edit/write）· 回滚此文件`（pi 全仓 `grep checkpoint` 只中 `core/compaction/compaction.ts:467`/`:543` 两处提示词散文，**没有文件快照/回滚/rewind 能力**，所以它同样是"pi 没有"，不做且界面不得暗示）、`工具卡（read/grep/find/ls）· 打开文件页并定位到行`（工作区的"文件"分段仍是空态，`WorkbenchScreen.kt`，没有落点）。
+>
+> **图片全屏查看器**：`pi` 的 TUI 显示不了图片（`PI_IMAGE_PROTOCOL=none` 是 App 对不可渲染能力的诚实声明），**pi 无对应物** → 按同一条规矩不做。
 
 ### 4.9 对话页的空态与异常
 | 场景 | 呈现 |
@@ -790,7 +805,7 @@ pi 的不同设置生效时机不同，App 必须明确标注，否则用户会�
 | **hook-message** | 卡片 `customMessageBg` + 左侧 3dp `customMessageLabel` 色条 + 顶部等宽小标签（`customType`）；**视觉上必须与用户/助手消息明显区分** |
 | **model-change** | 单行 32dp，11.5sp `dim`；模型名 `borderAccent` + Medium；文案「模型切换 → sonnet-4.5」 |
 | **skill-invocation** | 卡片；头部「技能 `/skill:name`」+ 展开箭头；展开显示 SKILL.md 正文（Markdown） |
-| **system-prompt** | 收起为一行「系统提示 · 3.2k 字符」；展开显示全文（等宽或按 Markdown 渲染，可切） |
+| ~~**system-prompt**~~ | **已删** —— 见上面对块清单的说明：没有生产者，item + 块 + 钩子一起移除，这一行不再是规格 |
 | **message-images** | 1 图撑满（最大 100% 宽）/ 2–4 图 2×2 网格 / >4 图网格 + `+N`；圆角 12dp；点击全屏（缩放/保存/分享） |
 | **error-text** | 卡片 `toolErrorBg` 弱化版 + 左侧 3dp `error` 条；一句人话 + 「详情」+ 「重试」 |
 | **date-separator** | 居中细线 + 中央时间标签 11.5sp `dim` |
@@ -854,20 +869,23 @@ pi 的不同设置生效时机不同，App 必须明确标注，否则用户会�
 
 ## 11. 视觉特效清单（做什么 / 不做什么）
 
+> **用户已表态：玻璃 / 毛玻璃、装饰性动效、光晕一类一律标 `用户已决定不做`** —— 纯视觉、空耗性能、没有信息增益。
+> 下面「做」这一节写于那个表态之前，**不构成待办**；本节的条目不核、不实现，保留仅为记录当时的意图。
+
 ### 做
-1. **思考色温光晕**：输入框聚焦时，边框外 2dp 有一层对应思考等级的柔和光晕（`thinking*` 色 12% 透明，blur 8dp）—— App 的签名视觉
-2. **顶栏毛玻璃**：内容滚动到顶栏下方时，顶栏 `Surface` 88% + 12dp blur（全 App 唯一用模糊处）
-3. **工具卡状态呼吸**：完成瞬间边框一次 `success`/`error` 色的 1px 呼吸（600ms）
-4. **上下文环扫过**：数值变化时环 200ms 扫过；跨阈值时颜色渐变 + 轻震
-5. **流式光标**：末尾 8×16dp 圆角方块，1s 透明度呼吸
-6. **共享元素转场**：会话卡片 → 对话页 App Bar 标题；缩略图 → 全屏图片
-7. **消息流入**：淡入 + 上移 8dp，同批错开 40ms
-8. **骨架微光**：1.5s 线性扫过
-9. **Chip/卡片收起展开**：高度 + 透明度同步动画（250ms spring）
-10. **危险确认脉冲**：卡片红色边框一次脉冲 + 长震
+1. **`用户已决定不做`** —— ~~**思考色温光晕**：输入框聚焦时，边框外 2dp 有一层对应思考等级的柔和光晕（`thinking*` 色 12% 透明，blur 8dp）—— App 的签名视觉~~
+2. **`用户已决定不做`** —— ~~**顶栏毛玻璃**：内容滚动到顶栏下方时，顶栏 `Surface` 88% + 12dp blur（全 App 唯一用模糊处）~~
+3. ~~**工具卡状态呼吸**：完成瞬间边框一次 `success`/`error` 色的 1px 呼吸（600ms）~~ **`用户已决定不做`（装饰动效）**
+4. ~~**上下文环扫过**：数值变化时环 200ms 扫过；跨阈值时颜色渐变 + 轻震~~ **`用户已决定不做`（装饰动效）**
+5. ~~**流式光标**：末尾 8×16dp 圆角方块，1s 透明度呼吸~~ **`用户已决定不做`（装饰动效）**
+6. ~~**共享元素转场**：会话卡片 → 对话页 App Bar 标题；缩略图 → 全屏图片~~ **`用户已决定不做`（装饰动效）**
+7. ~~**消息流入**：淡入 + 上移 8dp，同批错开 40ms~~ **`用户已决定不做`（装饰动效）**
+8. **`用户已决定不做`** —— ~~**骨架微光**：1.5s 线性扫过~~
+9. ~~**Chip/卡片收起展开**：高度 + 透明度同步动画（250ms spring）~~ **`用户已决定不做`（装饰动效）**
+10. ~~**危险确认脉冲**：卡片红色边框一次脉冲 + 长震~~ **`用户已决定不做`（装饰动效；危险操作的确认本身仍然要有，只是不做脉冲动画）**
 
 ### 不做
-- ❌ 任何形式的渐变背景（除光晕）
+- ❌ 任何形式的渐变背景（光晕本身也已 `用户已决定不做`）
 - ❌ 装饰性视差、粒子、彩带、庆祝动画
 - ❌ 列表项逐条飞入 / 交错入场（除消息流）
 - ❌ 按钮弹跳、`overshoot` > 1.1

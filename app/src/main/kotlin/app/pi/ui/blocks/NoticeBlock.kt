@@ -10,6 +10,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import app.pi.rpc.Notice
 import app.pi.ui.theme.PiTheme
+import app.pi.ui.theme.PiSpacing
 
 /**
  * Single-line status rows (auto-retry, extension failures) and the fallback for
@@ -34,14 +35,14 @@ fun NoticeBlock(
                 style = PiTheme.text.mono,
                 color = color,
             )
-            Spacer(Modifier.width(8.dp))
+            Spacer(Modifier.width(PiSpacing.inline))
             Text(
                 text = item.text.ifEmpty { "（无内容）" },
                 modifier = Modifier.weight(1f),
                 style = PiTheme.text.meta,
                 color = color,
             )
-            Spacer(Modifier.width(8.dp))
+            Spacer(Modifier.width(PiSpacing.inline))
             Text(
                 text = formatClock(item.ts),
                 style = PiTheme.text.meta,

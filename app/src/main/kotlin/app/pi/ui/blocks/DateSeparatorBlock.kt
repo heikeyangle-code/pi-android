@@ -38,18 +38,18 @@ fun DateSeparatorBlock(
     ) {
         HorizontalDivider(
             modifier = Modifier.weight(1f),
-            thickness = 1.dp,
+            thickness = PiSpacing.hairline,
             color = palette.borderMuted.copy(alpha = 0.5f),
         )
         Text(
             text = item.label.ifEmpty { formatClock(item.ts) },
-            modifier = Modifier.padding(horizontal = 10.dp),
+            modifier = Modifier.padding(horizontal = PiSpacing.inner),
             style = PiTheme.text.meta,
             color = palette.dim,
         )
         HorizontalDivider(
             modifier = Modifier.weight(1f),
-            thickness = 1.dp,
+            thickness = PiSpacing.hairline,
             color = palette.borderMuted.copy(alpha = 0.5f),
         )
     }

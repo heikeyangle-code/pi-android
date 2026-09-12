@@ -497,6 +497,26 @@ ls -l /root/.pi/highlight-bridge.json /root/.pi/agent/highlight-bridge.json 2>&1
 
 ---
 
+## I. 转录渲染窗口（F34；`ui/screens/ChatScreen.kt`）
+
+> 这两条来自 F34 的实现（`applied (uncommitted)`），**写清单时只读了代码，没有在设备上跑过**。两条都是"看起来对但没人看过"的假设，而且失败时用户会直接看到。
+
+### I1. 点「加载更早」时滚动位置**不动**（前插保锚点）
+**状态**：未验
+**操作**：打开一个超过 50 行的会话，滚到中部；点列表顶部的**「加载更早的 N 条」**（或一路滚到顶触发自动加载），连点 3 次
+**预期**：视口**停在原地**，新加载的行出现在**上方**（要继续上滑才看得到）；没有跳动、没有被拉回顶部、也没有被拉到底部
+**判据**：点击前后，屏幕上同一行（记住它的一小段文字）仍在同一高度（±1 行）；三次都成立；顶部那行的「…N 条」数字逐次变小
+**失败含义**：`ChatScreen.kt` 的 `renderedItems = visibleItems.takeLast(renderWindow)` 前插后，`LazyListState` 没有按 item key 保住锚点 —— 责任符号是 `renderedItems` / `renderWindow` / `headerRows`。若是**自动加载**路径（`atTop` + `earlierArmed`）在用户仍停在顶部时反复增长窗口，表现是连续跳动或"一直往下掉"，那是 `earlierArmed` 没有在加载后重新武装（它要求 `atTop` 先变回 false）——**不丢数据，但难看**。
+
+### I2. 跳到**窗口外**的行：先扩窗、再滚动（两阶段 `reveal`）
+**状态**：未验
+**操作**：① 在长会话（> 50 行）里打开搜索，输入一个只出现在**很靠前**（尚未渲染的那一段）的词，点「下一处」；② 再用溢出菜单的「跳到上一条提问」/「跳到下一条提问」，把目标选到窗口外的那一行
+**预期**：目标行**先被渲染出来**（窗口自动扩展，顶部「加载更早的 N 条」计数随之变化），**然后**平滑滚到它；最终目标行在视口里
+**判据**：目标行真的可见（不是停在原地、不是滚到列表末尾）；搜索那条还要**带 `searchMatchBg` 高亮 + 当前命中的反色加粗**
+**失败含义**：`ChatScreen.kt` 的两阶段跳转 —— `reveal(row)`（按 `visibleItems.size - row` 扩 `renderWindow`）与随后消费 `pendingJump` 的 `LaunchedEffect`（`index = row - hiddenCount + headerRows`）。只扩窗不滚 → `pendingJump` 没被消费（effect 的 key 或 `index in 0 until renderedItems.size + headerRows` 这个越界条件不满足）；滚到**错的行** → 索引换算（`hiddenCount` / `headerRows`）错了；高亮错行 → `searchMatches`（全表索引）与 `index = sliceIndex + hiddenCount` 不一致。
+
+---
+
 ## Z. 收尾
 
 - 全部条目的初始状态都是 `未验`。跑完把状态改成 `通过` / `失败`，失败的**贴真实输出**，不要只写"不行"。

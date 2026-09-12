@@ -34,7 +34,12 @@ INCONSISTENCY 2.** Events parsed but never rendered: **1** (`turn_start`), plus
   mtimes say otherwise (`terminal/TerminalController.kt` written 19:15:27,
   `ui/terminal/TerminalSettings.kt` created 19:12:50, `ui/terminal/*` written
   19:40+), so those files are also occupied in practice and no edit was made
-  there. Every defect found lives in a file that is occupied by an agent, so all
+  there. _(**Later note:** the hand-written emulator those files belonged to was
+  replaced by `termlib 0.0.13` — `app/src/main/kotlin/app/pi/terminal/` no longer
+  exists, and `ui/terminal/` now holds `TerminalBridge.kt`, `TerminalKeyBar.kt`,
+  `TerminalPalette.kt`, `TerminalPane.kt`, `TerminalSettings.kt`. The paragraph
+  above is kept as the review-time snapshot.)_
+  Every defect found lives in a file that is occupied by an agent, so all
   fixes below are patches, not edits.
 
 ### Cannot be verified without a device (no emulator, no Gradle, no APK)
@@ -347,7 +352,7 @@ Computed from `PiPalette.kt` (WCAG 2.x relative luminance):
 |---|---|---|
 | `toolOutput` #808080 on `toolPendingBg` #282832 | **3.69:1** | `ToolCallBlock.kt:91-95` (tool output, mono 13/20), `DiffBlock.kt:103-106` (raw diff body) |
 | `toolDiffContext` #808080 on `toolPendingBg` #282832 | **3.69:1** | `DiffBlock.kt:175` (context lines, mono 13/20) |
-| `toolOutput` #808080 on `cardBg` #1E1E24 | **4.20:1** | `SystemPromptBlock.kt:67` (full prompt body), `ErrorBlock.kt:80-84` (error detail) |
+| `toolOutput` #808080 on `cardBg` #1E1E24 | **4.20:1** | `ErrorBlock.kt:80-84` (error detail) — the `SystemPromptBlock` this row also cited **no longer exists** (see F22) |
 | `muted` #808080 on `pageBg` #18181E | **4.47:1** | `ThinkingBlockBlock.kt:51-55` — the “思考 12s” headline in `bodyMedium` |
 | `customMessageLabel` #9575CD on `customMessageBg` #2D2838 | 3.87:1 | `CompactionBlock.kt:71-76`, `HookMessageBlock.kt:49-56` (labels — clears the 3:1 meta floor) |
 
@@ -500,9 +505,16 @@ none of the five optional callbacks declared at `BlockRenderer.kt:42-46`.
 * Minimal fix: the three-way sheet on streaming send (needs new UI → report only);
   the `followUp` half is already implemented.
 
-## F22 — DEAD CODE — the `system-prompt` block kind cannot be produced
+## F22 — DEAD CODE — the `system-prompt` block kind cannot be produced — **CLOSED: the item was deleted**
 
-* App: `SystemPrompt` item (`Transcript.kt:157-162`), `SystemPromptBlock`
+> **Closed after this review (verified in the tree).** The coordinated deletion this
+> section asked for has happened: `ui/blocks/SystemPromptBlock.kt` no longer exists,
+> `BlockRenderer`'s `when` has no `system_prompt` branch, `onSystemPrompt` has no
+> caller anywhere in `app/**` or `rpc/**`, and `rpc/Transcript.kt`'s class note records
+> that the item, the block and the hook went together. The snapshot below is kept as
+> the reason the deletion was safe.
+
+* App (snapshot — all three of these were later **deleted**, see the note above the section): `SystemPrompt` item (`Transcript.kt:157-162`), `SystemPromptBlock`
   (`ui/blocks/SystemPromptBlock.kt:31`) and the renderer branch
   (`BlockRenderer.kt:71`) exist; the only producer is
   `TranscriptReducer.onSystemPrompt` (`Transcript.kt:1444`), which **no main-source
@@ -541,7 +553,7 @@ none of the five optional callbacks declared at `BlockRenderer.kt:42-46`.
 | thinking | header row only (`ToggleRow`) | `ThinkingBlockBlock.kt:48`, `BlockChrome.kt:173-186` |
 | hook message | header row only, and only when the body is long (`collapsible`) | `HookMessageBlock.kt:36`, `:43-46` |
 | skill | header row only, always | `SkillInvocationBlock.kt:39` |
-| system prompt | header row only | `SystemPromptBlock.kt:49` |
+| ~~system prompt~~ | ~~header row only~~ | **block deleted — see F22** |
 | compaction | the centre chip only | `CompactionBlock.kt:62-68` |
 | branch summary | the header row, but what it *does* is callback-dependent (jump vs expand) | `BranchSummaryBlock.kt:49-51` |
 
@@ -567,7 +579,7 @@ literals are not any of those values:
   — `1/2/6/8/16/30.dp`.
 * `ui/blocks/ToolCallBlock.kt:77`, `:86`, `:94` — `10.dp`, `8.dp`, `2.dp`.
 * `ui/blocks/SkillInvocationBlock.kt:41`, `:47`; `HookMessageBlock.kt:48`;
-  `BranchSummaryBlock.kt:55`; `SystemPromptBlock.kt:51`, `:63`;
+  `BranchSummaryBlock.kt:55`;
   `CompactionBlock.kt:64`, `:73`, `:108`; `NoticeBlock.kt:37`, `:44`;
   `ModelChangeBlock.kt:48`, `:58`; `ErrorBlock.kt:45`, `:68`, `:83`.
 
