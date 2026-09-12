@@ -68,6 +68,26 @@ class PiCredentialService(
      */
     private fun preferences() = PiEnginePreferences(agentDir = mirrorAgentDir, workspace = workspace)
 
+    /**
+     * pi's persisted catalog for [providerId] — `<agentDir>/models-store.json`
+     * (`core/model-runtime.ts:180` + `core/agent-session-services.ts:142`) — or an
+     * empty list when pi has none yet.
+     *
+     * This is the app's **capabilities source that exists before the credential
+     * does**: `get_available_models` is auth-filtered (`docs/models.md:34-36`), so at
+     * the moment a provider is being added it answers nothing, while pi's catalog
+     * already describes the models. It feeds the form and the display; it does **not**
+     * decide what gets written — [save] decides that with `preset.builtInPi` alone.
+     *
+     * Read from the agent dir pi actually uses ([mirrorAgentDir]), the one the engine
+     * binds over guest `/root/.pi/agent`; the rootfs copy is shadowed by that bind.
+     */
+    fun catalogModels(providerId: String): List<PiModelCatalog.Entry> {
+        val text = runCatching { File(mirrorAgentDir, "models-store.json").readText() }.getOrNull()
+            ?: return emptyList()
+        return PiModelCatalog.parse(text, providerId)
+    }
+
     // -------------------------------------------------------------- prefill
 
     /**
@@ -139,6 +159,15 @@ class PiCredentialService(
 
     // ------------------------------------------------------------------ save
 
+    /**
+     * One model the user chose in the credential form.
+     *
+     * The fields are the *vendor's* facts as far as the app could resolve them (pi's
+     * catalog, then the engine's list). They are written only for providers pi ships
+     * no catalog for — see [save]. There is deliberately no "are these the app's
+     * defaults" flag: the decision does not depend on how much the app knows, only on
+     * whether pi already knows the model.
+     */
     data class ModelChoice(
         val id: String,
         val name: String? = null,
@@ -146,8 +175,6 @@ class PiCredentialService(
         val contextWindow: Long? = null,
         val maxTokens: Long? = null,
         val input: List<String> = emptyList(),
-        /** True when these numbers are the app's defaults, not the vendor's. */
-        val defaultsApplied: Boolean = false,
     )
 
     data class SaveResult(
@@ -192,32 +219,30 @@ class PiCredentialService(
         }
         steps += "凭证已保存（仅本 App 可读）：${preset.id}"
 
-        // Only declare the models pi's own catalog does **not** already describe.
+        // ---- the one rule of this write --------------------------------------
         //
-        // Writing an entry for a model pi ships is not an addition, it is a
-        // *replacement*: `applyModelsJson` swaps the same-id entry wholesale
-        // (`provider-composer.ts:203-206`) and `modelFromJson` fills every field the
-        // definition omits from pi's defaults (`:150-166`) — `input: ["text"]`,
-        // `contextWindow: 128000`, `reasoning: false`, `cost: 0`. So an entry built
-        // from a model this app could **not** resolve (nothing in the running
-        // engine's model list for that id — `PiCredentialScreen.choicesFor` marks
-        // that as `defaultsApplied`) silently downgrades a vision model to
-        // text-only and a 1M-token window to 128k. That is the defect recorded in
-        // `docs/known-gaps.md` §M11, found on device: images arrived at the app,
-        // were stored in the session, and were stripped before the model saw them,
-        // with `79.7/128k` in the header as the other half of the same symptom.
+        // `models.json` declares **only what pi cannot know**.
         //
-        // Two facts decide, and each covers a different half:
-        //  - `defaultsApplied` — the app did not know this model. Declaring it would
-        //    replace pi's knowledge with pi's own defaults.
-        //  - `preset.builtInPi` — pi ships a catalog for this provider at all. Where
-        //    it does not (Ollama, llama.cpp, 自定义), `models[]` is the *only*
-        //    declaration that exists and must be written whatever we know.
+        // pi ships a catalog for the providers [PiProviderPresets] marks
+        // `builtInPi` (its own `providers/*.ts`, e.g. `providers/deepseek.ts:8-13`).
+        // For those, a `models[]` entry is not an addition but a **replacement**:
+        // `applyModelsJson` swaps the same-id model wholesale
+        // (`provider-composer.ts:203-206`) and `modelFromJson` then fills every field
+        // the entry omits from pi's own defaults (`:150-166`) — `input: ["text"]`,
+        // `contextWindow: 128000`, `maxTokens: 16384`, `reasoning: false`, `cost: 0`.
+        // Writing one therefore *downgrades* a model pi describes correctly, which is
+        // what happened on device: images were stripped before the model saw them and
+        // a 1M context window read as 128k (docs/known-gaps.md §M11/§M13).
         //
-        // Availability is unaffected: every chosen id still goes to `enabledModels`
-        // (`preferences().selectModel`), which is pi's own mechanism for "which
-        // models to offer" (`settings-manager.ts:139`).
-        val declared = choices.filter { it.defaultsApplied || !preset.builtInPi }
+        // So the rule is not "declare what we know" but **"declare only where pi has
+        // no definition at all"** — Ollama, llama.cpp, 自定义, the providers this app
+        // adds itself. There, `models[]` is the only definition that will ever exist.
+        //
+        // Picking models for a provider pi *does* ship is still meaningful, and still
+        // written: it is the **selection**, `enabledModels` in settings.json
+        // (`settings-manager.ts:139`), which is pi's own mechanism for "which models
+        // to offer" and says nothing about what a model *is*.
+        val declared = if (preset.builtInPi) emptyList() else choices
 
         val provider = PiModelsFile.Provider(
             id = preset.id,

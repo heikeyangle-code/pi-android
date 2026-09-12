@@ -685,6 +685,64 @@ fun main() {
         buildJsonObject { put("id", JsonPrimitive("m9")); put("input", JsonArray(listOf(JsonPrimitive("text")))) },
     )
 
+    // ---- pi 的目录读取（PiModelCatalog）----------------------------------------
+    //
+    // 这是"凭证还不存在时唯一的能力来源"：get_available_models 按凭证过滤
+    // （docs/models.md:34-36），所以第一次加厂商时引擎什么都不知道，而 pi 的目录
+    // （<agentDir>/models-store.json，model-runtime.ts:180）里已经有官方元数据。
+    // 检查的重点是**不发明**：pi 说 text-only 与 pi 什么都没说，必须是两种不同的结果。
+
+    val catalogStore = """
+        {
+          "deepseek": {
+            "models": [
+              {
+                "id": "deepseek-flash", "name": "DeepSeek V4.1 Flash",
+                "reasoning": true, "input": ["text", "image"],
+                "contextWindow": 1000000, "maxTokens": 384000,
+                "cost": { "input": 0.3, "output": 1.2, "cacheRead": 0.03, "cacheWrite": 0.3 }
+              },
+              { "id": "deepseek-chat", "input": ["text"], "contextWindow": 65536 },
+              { "id": "deepseek-bare" }
+            ]
+          },
+          "other": { "models": [ { "id": "x" } ] }
+        }
+    """.trimIndent()
+
+    val dsCatalog = PiModelCatalog.parse(catalogStore, "deepseek")
+    check("目录里三條都能读到", dsCatalog.size, 3)
+    val flash = dsCatalog.first { it.id == "deepseek-flash" }
+    check("读得到官方 name", flash.name, "DeepSeek V4.1 Flash")
+    check("读得到 reasoning", flash.reasoning, true)
+    check("**读得到图片能力**（这就是那个 bug 的判据）", flash.acceptsImages, true)
+    check("读得到 contextWindow（1M 而不是 128000）", flash.contextWindow, 1_000_000L)
+    check("读得到 maxTokens", flash.maxTokens, 384_000L)
+
+    val chat = dsCatalog.first { it.id == "deepseek-chat" }
+    check("pi 说 text-only 就是 false，而不是 null", chat.acceptsImages, false)
+    check("没写 name 就不发明一个", chat.name, null)
+    check("没写 maxTokens 就是 null", chat.maxTokens, null)
+
+    val bare = dsCatalog.first { it.id == "deepseek-bare" }
+    check("**pi 什么都没说时必须是 null**（与 text-only 区分开）", bare.acceptsImages, null)
+    check("什么都没说时 reasoning 也是 null", bare.reasoning, null)
+
+    check("别的厂商的条目不会被混进来", PiModelCatalog.parse(catalogStore, "other").map { it.id }, listOf("x"))
+    check("目录里没有这个厂商 → 空表，不是猜一个", PiModelCatalog.parse(catalogStore, "nope"), emptyList<PiModelCatalog.Entry>())
+    check("不是 JSON → 空表（沉默而不是崩）", PiModelCatalog.parse("not json", "deepseek"), emptyList<PiModelCatalog.Entry>())
+    check("provider 块没有 models → 空表", PiModelCatalog.parse("""{"deepseek":{}}""", "deepseek"), emptyList<PiModelCatalog.Entry>())
+    check(
+        "没有 id 的条目被跳过而不是编一个",
+        PiModelCatalog.parse("""{"p":{"models":[{"name":"x"},{"id":"ok"}]}}""", "p").map { it.id },
+        listOf("ok"),
+    )
+    check(
+        "models 不是数组也当没有",
+        PiModelCatalog.parse("""{"p":{"models":42}}""", "p"),
+        emptyList<PiModelCatalog.Entry>(),
+    )
+
     println(if (failures == 0) "\nharness: OK (all checks passed)" else "\nharness: FAILED ($failures)")
     if (failures != 0) kotlin.system.exitProcess(1)
 }

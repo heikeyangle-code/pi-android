@@ -408,8 +408,6 @@ class PiModelsFile(
         val input: List<String> = emptyList(),
         val costInput: Double? = null,
         val costOutput: Double? = null,
-        /** True when the app filled a value the vendor did not provide. */
-        val defaultsApplied: Boolean = false,
     ) {
         fun toJson(): JsonObject = buildJsonObject {
             put("id", JsonPrimitive(id))

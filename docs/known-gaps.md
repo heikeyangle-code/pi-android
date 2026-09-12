@@ -1368,3 +1368,63 @@ next[provider.id] = provider.toJson()   // ← 整个厂商块重建
 厂商后，`models.json` 那个块里没有 `models` 键而 pi 仍然列出模型；② 手写进 `models.json` 的
 `headers`/`compat`/`modelOverrides` 在一次 App 保存后**仍在**；③ 勾了「支持图片输入」的自定义模型，
 发的图不再被替换成占位符。
+
+### M13. 把整条链路收敛成一条规则（M11/M12 的收口，取代它们的判定逻辑）
+
+M11/M12 是**打补丁**：先发现"申报模型会覆盖能力"，加了一个
+`choices.filter { it.defaultsApplied || !preset.builtInPi }`；接着发现"合并会丢 pi 的键"，加了
+`PiModelsMerge`。补丁本身对，但判定条件仍然依赖"App 此刻知道多少"，而 —— 设备上模型自己查出来的
+那一步 —— **`get_available_models` 是按凭证过滤的**（`snapshot.available`，
+`modes/rpc/rpc-mode.ts:490-493`；pi 隐藏没有凭证的厂商，`docs/models.md:34-36`），
+所以**第一次加厂商时 `known` 必然是 null**，那个条件仍然会把 deepseek 申报出去，
+1M→128k / 384k→16k / reasoning→false / cost→0 照样发生。**也就是说 M11 修的其实不是用户踩到的那个场景。**
+
+**现在的规则，一句话**：
+
+> `models.json` 只声明 **pi 知道不了的东西**；其余一切是"选择"，不是"定义"。
+
+```
+能力从哪来：  pi 的目录(<agentDir>/models-store.json) → 引擎(get_available_models) → 用户勾选
+要不要声明：  preset.builtInPi 一个条件 — pi 自带目录的厂商，一律不声明
+选择写哪里：  settings.json 的 enabledModels / defaultProvider / defaultModel（pi 自己的机制）
+凭证写哪里：  auth.json
+写入方式：    合并 — App 拥有自己的键，pi 的键原样保留
+```
+
+**为什么"要不要声明"不再看 App 知道多少**：看 App 知道多少，就等于让"现在答不上来"变成"那就写一份
+默认值"。而 pi 的语义是**替换**（`applyModelsJson`：`models[existingIndex] = model`，
+`provider-composer.ts:203-206`），`modelFromJson` 又把每个没写的字段填成 pi 的默认值
+（`:150-166`）。所以对 pi 自带目录的厂商，**写就是降级**，无论 App 知不知道。
+反过来，对 pi 没有目录的厂商（Ollama / llama.cpp / 自定义），`models[]` 是**唯一**的定义，
+必须写 —— 而那里的能力只能来自用户，于是表单给了「支持图片输入」勾选框。
+
+**据此删掉的东西**（补丁留下的复杂度）：
+
+- `ModelChoice.defaultsApplied` 标志**整个删除**。它把"这行是 App 的默认值"和"要不要写进文件"
+  混在一个名字里，而后者现在由 `preset.builtInPi` 决定，与前者无关。
+- `PiConfigFiles.Model.defaultsApplied`：一个从没被任何代码读过的字段，删除。
+- 判定点从两处收敛为一处：`PiCredentialService.save` 里的
+  `val declared = if (preset.builtInPi) emptyList() else choices`。
+
+**新增的唯一一件事**：`PiModelCatalog`（新文件，纯对象）读 pi 的目录
+`<agentDir>/models-store.json` —— 形状 `Record<providerId, {models: Model[]}>`
+（`packages/ai/src/models-store.ts:3-14`；路径由 `model-runtime.ts:180` 与
+`agent-session-services.ts:142` 决定）。它是**凭证存在之前唯一的能力来源**，所以：
+
+- 表单里能显示真实元数据（1M、384k、reasoning、图片能力），并把它们填进将写的那条；
+- 引擎的列表作为**第二**来源，而不是第一：`get_available_models` 返回的是 pi **合成后**的快照，
+  App 自己写坏的条目在那里会以"pi 的元数据"的样子出现，先读它等于让坏条目自我辩护；
+- **它不参与"要不要声明"的判定**——那只看 `preset.builtInPi`。
+
+**这个读取器是"沉默而不是猜测"**：pi 说 `input: ["text"]` → `false`；pi 没写 `input` → `null`。
+两者必须区分，因为"pi 说是纯文本"和"pi 什么都没说"对用户是两件不同的事，而把它们混起来正是
+最初那个 bug 的形状。
+
+**验证**：`tools/typecheck.sh` OK（`:rpc 0 / :app 0`）；4 个 bare-JVM harness 全过，共 **286 条**检查，
+其中新增 15 条给 `PiModelCatalog`（含"pi 说 text-only 是 false、什么都没说是 null"、
+"不是 JSON 就返回空表而不是崩"、"没有 id 的条目跳过而不是编一个"），19 条给 `PiModelsMerge`，
+20 条给 `PiPackageFilters`。
+
+**未验证**：无真机。上机判据三条：① 加一个 pi 自带目录的厂商（DeepSeek）保存后，
+`models.json` 那个块**没有 `models` 键**、而 pi 仍列出模型；② 会话头从 `128k` 变成 `1M`；
+③ 手写的 `headers`/`compat`/`modelOverrides` 在一次 App 保存后仍在。

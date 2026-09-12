@@ -42,6 +42,7 @@ import app.pi.packages.AgentLayout
 import app.pi.packages.EngineRestartCoordinator
 import app.pi.packages.ExtensionLifecycle
 import app.pi.packages.PiCredentialService
+import app.pi.packages.PiModelCatalog
 import app.pi.packages.PiModelScanner
 import app.pi.packages.PiProviderPresets
 import app.pi.rpc.PiResponses
@@ -202,36 +203,62 @@ fun PiCredentialScreen(
     val candidates = remember(scanned, manualList, existingIds) {
         (scanned.map { it.id } + manualList + existingIds).distinct()
     }
-    val knownById = remember(availableModels, presetId) {
-        availableModels.filter { it.provider == presetId }.associateBy { it.id }
+
+    // What pi knows about a model, from the two sources that exist, in priority
+    // order: **pi's catalog first**, the engine's list second.
+    //
+    // The order matters. `get_available_models` answers from pi's *composed* runtime
+    // snapshot, so a `models[]` declaration this app wrote earlier appears there as if
+    // it were pi's own metadata — reading it first would let a bad entry justify
+    // itself. `<agentDir>/models-store.json` is the vendor metadata
+    // (`PiCredentialService.catalogModels`).
+    //
+    // This map is for the form and the labels only. What gets *written* is decided by
+    // `preset.builtInPi` in `PiCredentialService.save`, precisely so the decision does
+    // not depend on how much the app happens to know at this moment.
+    var catalog by remember(presetId) { mutableStateOf<List<PiModelCatalog.Entry>>(emptyList()) }
+    LaunchedEffect(presetId) {
+        catalog = withContext(Dispatchers.IO) { service.catalogModels(presetId) }
+    }
+    val knownById = remember(availableModels, catalog, presetId) {
+        val fromCatalog = catalog.associateBy { it.id }
+        val fromEngine = availableModels.filter { it.provider == presetId }.associateBy { it.id }
+        (fromCatalog.keys + fromEngine.keys).associateWith { id ->
+            val entry = fromCatalog[id]
+            val engine = fromEngine[id]
+            KnownModel(
+                name = entry?.name ?: engine?.name,
+                reasoning = entry?.reasoning ?: engine?.reasoning,
+                acceptsImages = entry?.acceptsImages ?: engine?.acceptsImages ?: false,
+                contextWindow = entry?.contextWindow ?: engine?.contextWindow,
+                maxTokens = entry?.maxTokens ?: engine?.maxTokens,
+            )
+        }
     }
 
-    // Per-model 「支持图片」, keyed by id, holding only the rows the user touched.
-    //
-    // Only consulted for models the app actually *declares* (`known == null`): for a
-    // model pi's catalog describes, the app writes no entry at all, so there is
-    // nothing here to override (`docs/known-gaps.md` §M11). Storing overrides rather
-    // than a pre-filled map also sidesteps a real race — `availableModels` arrives
-    // asynchronously from the engine, so anything computed eagerly would be computed
-    // against an empty list.
+    // Per-model 「支持图片」, holding only the rows the user touched. Only consulted
+    // for the providers whose models this app declares — the ones pi has no catalog
+    // for (`PiCredentialService.save`). Storing overrides rather than a pre-filled map
+    // also sidesteps a race: both sources above arrive asynchronously.
     var imageOverrides by remember { mutableStateOf<Map<String, Boolean>>(emptyMap()) }
 
     fun choicesFor(ids: List<String>): List<PiCredentialService.ModelChoice> = ids.map { id ->
         val known = knownById[id]
-        // `input` is written explicitly for every declared model, never left out.
-        // pi fills an omitted `input` with `["text"]` (`provider-composer.ts:158`), so
-        // omitting it is a silent claim of text-only — the mechanism behind §M11.
-        // What the user says here is what the file says.
-        val acceptsImages = imageOverrides[id] ?: (known?.acceptsImages == true)
         PiCredentialService.ModelChoice(
             id = id,
             name = known?.name,
             reasoning = known?.reasoning,
             contextWindow = known?.contextWindow,
             maxTokens = known?.maxTokens,
-            input = if (acceptsImages) listOf("text", "image") else listOf("text"),
-            // The label the UI draws; the flag itself is not written to pi.
-            defaultsApplied = known == null,
+            // Explicit, never omitted: pi fills an omitted `input` with `["text"]`
+            // (`provider-composer.ts:158`), so leaving it out is a silent claim of
+            // text-only. Written for the declaring providers only, where this is the
+            // sole source of the fact.
+            input = if (imageOverrides[id] ?: (known?.acceptsImages == true)) {
+                listOf("text", "image")
+            } else {
+                listOf("text")
+            },
         )
     }
 
@@ -425,22 +452,30 @@ fun PiCredentialScreen(
                     Column(Modifier.weight(1f)) {
                         Text(id, style = MaterialTheme.typography.bodyLarge)
                         Text(
-                            if (known != null) {
-                                "pi 元数据：" + known.name +
-                                    (known.contextWindow?.let { " · 上下文 $it" } ?: "")
-                            } else {
-                                "pi 不认识这个模型，按下面的选择登记"
+                            when {
+                                known != null -> buildString {
+                                    append("pi 元数据：").append(known.name ?: id)
+                                    known.contextWindow?.let { append(" · 上下文 ").append(it) }
+                                }
+
+                                // Two different "we don't know", and only one of them is
+                                // the user's problem. For a provider pi ships no catalog
+                                // for, this row *is* the definition — what the user picks
+                                // below is what the file will say. For one pi does ship,
+                                // the app writes no definition at all, so saying otherwise
+                                // would be the same kind of false promise the previous
+                                // wording made ("可改", with nothing to change).
+                                preset.builtInPi -> "pi 的目录里没有这个模型；勾选它不会让 pi 认识它"
+                                else -> "pi 不认识这个模型，按下面的选择登记"
                             },
                             style = PiTheme.text.meta,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
-                        if (known == null) {
-                            // Shown only where it is written. The app declares this
-                            // model itself, so `input` is a declaration the file will
-                            // carry — and pi's default for an omitted one is text-only
-                            // (`provider-composer.ts:158`). This is the only place the
-                            // user can say otherwise, which is what the row's subtitle
-                            // used to promise ("可改") without offering.
+                        if (!preset.builtInPi) {
+                            // Shown only where it is written — the providers whose models
+                            // this app declares. `input` is then a field the file will
+                            // carry, and pi's default for an omitted one is text-only
+                            // (`provider-composer.ts:158`).
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Checkbox(
                                     checked = imageOverrides[id] ?: false,
@@ -600,3 +635,18 @@ private fun Note(text: String) {
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
 }
+
+/**
+ * What pi knows about one model, flattened from the two sources that can say:
+ * pi's catalog and the engine's list.
+ *
+ * A local type rather than `PiResponses.ModelInfo` because this is a *merge* of two
+ * sources whose priority differs per field, not one source's payload.
+ */
+private data class KnownModel(
+    val name: String?,
+    val reasoning: Boolean?,
+    val acceptsImages: Boolean,
+    val contextWindow: Long?,
+    val maxTokens: Long?,
+)
