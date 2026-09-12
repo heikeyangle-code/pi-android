@@ -206,19 +206,30 @@ fun PiCredentialScreen(
         availableModels.filter { it.provider == presetId }.associateBy { it.id }
     }
 
+    // Per-model 「支持图片」, keyed by id, holding only the rows the user touched.
+    //
+    // Only consulted for models the app actually *declares* (`known == null`): for a
+    // model pi's catalog describes, the app writes no entry at all, so there is
+    // nothing here to override (`docs/known-gaps.md` §M11). Storing overrides rather
+    // than a pre-filled map also sidesteps a real race — `availableModels` arrives
+    // asynchronously from the engine, so anything computed eagerly would be computed
+    // against an empty list.
+    var imageOverrides by remember { mutableStateOf<Map<String, Boolean>>(emptyMap()) }
+
     fun choicesFor(ids: List<String>): List<PiCredentialService.ModelChoice> = ids.map { id ->
         val known = knownById[id]
+        // `input` is written explicitly for every declared model, never left out.
+        // pi fills an omitted `input` with `["text"]` (`provider-composer.ts:158`), so
+        // omitting it is a silent claim of text-only — the mechanism behind §M11.
+        // What the user says here is what the file says.
+        val acceptsImages = imageOverrides[id] ?: (known?.acceptsImages == true)
         PiCredentialService.ModelChoice(
             id = id,
             name = known?.name,
             reasoning = known?.reasoning,
             contextWindow = known?.contextWindow,
             maxTokens = known?.maxTokens,
-            input = when {
-                known == null -> emptyList()
-                known.acceptsImages -> listOf("text", "image")
-                else -> listOf("text")
-            },
+            input = if (acceptsImages) listOf("text", "image") else listOf("text"),
             // The label the UI draws; the flag itself is not written to pi.
             defaultsApplied = known == null,
         )
@@ -418,11 +429,26 @@ fun PiCredentialScreen(
                                 "pi 元数据：" + known.name +
                                     (known.contextWindow?.let { " · 上下文 $it" } ?: "")
                             } else {
-                                "pi 不认识这个模型，用的是 App 默认值，可改"
+                                "pi 不认识这个模型，按下面的选择登记"
                             },
                             style = PiTheme.text.meta,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
+                        if (known == null) {
+                            // Shown only where it is written. The app declares this
+                            // model itself, so `input` is a declaration the file will
+                            // carry — and pi's default for an omitted one is text-only
+                            // (`provider-composer.ts:158`). This is the only place the
+                            // user can say otherwise, which is what the row's subtitle
+                            // used to promise ("可改") without offering.
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Checkbox(
+                                    checked = imageOverrides[id] ?: false,
+                                    onCheckedChange = { on -> imageOverrides = imageOverrides + (id to on) },
+                                )
+                                Text("支持图片输入", style = PiTheme.text.meta)
+                            }
+                        }
                     }
                     RadioButton(selected = defaultModelId == id, onClick = { defaultModelId = id })
                 }

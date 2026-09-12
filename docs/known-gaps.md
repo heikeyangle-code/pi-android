@@ -1306,3 +1306,65 @@ pi 目录里的正确元数据重新生效（用户手工改好的那份也随�
 ① 一个"pi 有目录 + 全部模型都已知"的厂商保存后，`models.json` 里那个块**没有 `models` 键**，
 而 pi 仍然列出这些模型；② 该厂商的模型在图/长上下文上恢复正常（判据：会话头不再是 `128k`，
 发图不再被替换成占位符）。
+
+### M12. `models.json` 写入端丢 pi 的键（DEFECT，已修，工作树）
+
+M11 之后按用户要求"逐字段和 pi 对齐"复核了一遍写入端，发现**同一条代码路径上还有一个会丢数据的 bug**，
+而且它和 M11 是同一类：**一个只建模了部分 schema 的写入器，把没建模的键当成不存在。**
+
+**证据**：`PiModelsFile.upsert` 原先的注释写着"preserving … every key pi's schema allows that this
+class does not model"，但代码是
+
+```kotlin
+next[provider.id] = provider.toJson()   // ← 整个厂商块重建
+```
+
+`Provider.toJson()` 只产出 5 个键（`name?`/`baseUrl`/`api`/`authHeader?`/`models`），而 pi 的
+`ProviderConfigSchema` 允许 **11** 个（`core/model-config.ts:201-213`）——于是保存一个厂商会**静默删掉**：
+
+| 被删的键 | 后果 |
+|---|---|
+| `headers` | 该厂商每个请求的自定义头没了 |
+| `compat` | 非 OpenAI 端点最需要的兼容开关没了（`:60-140`） |
+| `oauth: "radius"` | 登录方式没了 |
+| `apiKey` | 写在 `models.json` 里的 key 没了 |
+| `modelOverrides` | **合并式**调整已存在模型的那条路径没了（`provider-composer.ts:106-118`） |
+
+模型条目同理会丢 6 个：`baseUrl`、`thinkingLevelMap`、`samplingParams`、`headers`、`compat`、
+`cost.tiers`（`core/model-config.ts:154-168`）。
+
+**修法**：写入改成**合并**——"App 拥有的键覆盖，pi 的键原样保留"。
+
+1. 新增 `packages/PiModelsMerge.kt`（纯对象，无文件/无 Android）：`provider(existing, written)` 与
+   `models(existing, declared)`。之所以独立成文件，是为了能进 bare-JVM harness——
+   `PiSettingsStore` 依赖 Compose，`PiConfigFiles` 进不去，而**这条路径静默出错的样子就是丢数据**，
+   它是本仓最该有回归测试的地方。
+2. `PiModelsMerge.provider` 只对 `models` 特殊处理：它在 `written` 里**缺席**本身就是一句陈述
+   （"这个厂商只用 pi 自带的目录"），所以是**删掉这个键**而不是像其他键那样合并过来——M11 的自愈
+   路径就靠这一条。
+3. `PiConfigFiles.upsert` 改为委派给它；两个私有 helper 搬进了新文件。
+4. `tools/run-app-pure-checks.sh` 的 `packages` 一项加上新文件，并新增 **19 条检查**：pi 的五个
+   provider 键与六个模型键必须逐字活下来、App 的键必须赢、`models` 缺席必须真的删键、按 id 合并、
+   未申报的旧条目必须被移除（自愈）、文件里没有的模型原样写出。
+
+**同时修掉的另一处"假承诺"**（在页面上，不在文件里）：`PiCredentialScreen` 对 App 不认识的模型写着
+「pi 不认识这个模型，用的是 App 默认值，**可改**」——但屏幕里**没有任何地方能改**。现在那一行只在
+**真正会被写进文件**的模型上显示一个「支持图片输入」勾选框（`imageOverrides`，只存用户点过的行，
+避免 `availableModels` 异步到达时的初始化竞态），并且**申报模型一律显式写 `input`**
+——省略 `input` 会被 pi 填成 `["text"]`（`provider-composer.ts:158`），那正是 M11 的机制。
+
+**仍然存在的、有意不做的**（都不是"和 pi 不一致"，而是 App 只做它能做的那部分）：
+
+- **pi 目录认识的模型，App 不能改它的字段**——因为 App 已经不再申报它们。要改就得走
+  `modelOverrides`（会合并、会保留），而 App 目前只**保留**手写的 `modelOverrides`、不提供编辑。
+- **App 申报一个它不认识的模型时，只知道 id**：写出来的就是 `{id, name?, input}`，其余交给 pi 的
+  默认值（`contextWindow` 128000、`maxTokens` 16384、`reasoning` false）。这与**用户自己在文件里
+  手写 `{"id": "..."}` 的效果完全相同**，所以是 1:1 的，但本地模型（Ollama 等）的真实上下文窗口
+  仍然要用户自己去文件里写。表单目前只放开了「支持图片」一项。
+- `PiAuthStorage.setApiKey` 仍是**按厂商整体替换**：给一个已经 OAuth 登录过的厂商写 API key，会把那份
+  oauth 记录换成 key。这与"我要改用 key"的意图一致，但**没有二次确认**，记在这里不当成已解决。
+
+**未验证**：无真机。这条改的是写用户配置文件的路径，必须上机确认三件事：① 保存一个 pi 自带目录的
+厂商后，`models.json` 那个块里没有 `models` 键而 pi 仍然列出模型；② 手写进 `models.json` 的
+`headers`/`compat`/`modelOverrides` 在一次 App 保存后**仍在**；③ 勾了「支持图片输入」的自定义模型，
+发的图不再被替换成占位符。

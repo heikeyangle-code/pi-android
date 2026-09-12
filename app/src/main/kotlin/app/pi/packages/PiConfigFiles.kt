@@ -500,8 +500,27 @@ class PiModelsFile(
     }
 
     /**
-     * Write or replace one provider block, preserving every other provider and every
-     * key pi's schema allows that this class does not model.
+     * Write or replace one provider block, preserving every other provider **and
+     * every key pi's schema allows that this class does not model**.
+     *
+     * The second half of that sentence was a lie until `docs/known-gaps.md` §M12:
+     * this used to do `next[provider.id] = provider.toJson()`, which rebuilds the
+     * block out of the five keys [Provider] knows and therefore deletes the rest.
+     * pi's `ProviderConfigSchema` (`core/model-config.ts:201-213`) allows eleven:
+     *
+     * | key | written by the app | why it matters |
+     * |---|---|---|
+     * | `name`, `baseUrl`, `api`, `authHeader` | yes | the credential form's own fields |
+     * | `models` | yes, authoritatively | see [mergeProvider] |
+     * | `headers` | **no** | custom HTTP headers on every request to this provider |
+     * | `compat` | **no** | the compatibility flags most non-OpenAI endpoints need (`:60-140`) |
+     * | `oauth` | **no** | `"radius"`; `applyModelsJson` throws without a `baseUrl` when set (`provider-composer.ts:182-184`) |
+     * | `apiKey` | **no** | a key placed in `models.json` instead of `auth.json` |
+     * | `modelOverrides` | **no** | the *merging* way to adjust a model pi already knows (`provider-composer.ts:106-118`) |
+     *
+     * A per-model entry loses five more the same way — `baseUrl`, `thinkingLevelMap`,
+     * `samplingParams`, `headers`, `compat`, plus `cost.tiers`
+     * (`core/model-config.ts:154-168`) — which [mergeProvider] also preserves.
      *
      * @return null on success, else a message.
      */
@@ -523,7 +542,7 @@ class PiModelsFile(
         snapshot.error?.let { return "已拒绝写入：$it" }
 
         val next = LinkedHashMap<String, JsonElement>(snapshot.providers)
-        next[provider.id] = provider.toJson()
+        next[provider.id] = mergeProvider(snapshot.providers[provider.id] as? JsonObject, provider)
         val root = buildJsonObject {
             put("providers", JsonObject(next))
         }
@@ -535,9 +554,17 @@ class PiModelsFile(
         return null
     }
 
+    /**
+     * One provider block, written over whatever was already there.
+     *
+     * The rules live in [PiModelsMerge] rather than here so they can be run on a bare
+     * JVM (`PackagesPureLogicCheck`); this call site is only the file plumbing.
+     */
+    private fun mergeProvider(existing: JsonObject?, provider: Provider): JsonObject =
+        PiModelsMerge.provider(existing, provider.toJson())
+
     /** Remove a provider block entirely. Returns null on success. */
-    fun remove(providerId: String): String? {
-        val snapshot = read()
+    fun remove(providerId: String): String? {        val snapshot = read()
         snapshot.error?.let { return "已拒绝写入：$it" }
         val next = LinkedHashMap<String, JsonElement>(snapshot.providers)
         if (next.remove(providerId) == null) return null

@@ -48,6 +48,7 @@ import app.pi.packages.ProjectTrust
 import app.pi.packages.TrustFile
 import app.pi.packages.TrustStore
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 
@@ -578,6 +579,110 @@ fun main() {
         "删除后另一条 glob 还在",
         PiPackageFilters.withoutPattern(filtered, "extensions", "+extra").patterns("extensions"),
         listOf("-legacy*"),
+    )
+
+    // ---- models.json 的合并规则（PiModelsMerge）--------------------------------
+    //
+    // `PiModelsFile.upsert` 曾经整块重建厂商块，于是 pi 允许而 App 未建模的键被静默删除
+    // （provider 级 headers/compat/oauth/apiKey/modelOverrides，模型级
+    // thinkingLevelMap/samplingParams/headers/compat/baseUrl/cost.tiers）。
+    // 这一组就是"删除"这个 bug 的回归测试：pi 的键必须原样活着，App 的键必须赢，
+    // 而 `models` 的**缺席**必须真的把键删掉。
+
+    val priorBlock = buildJsonObject {
+        put("name", JsonPrimitive("老名字"))
+        put("baseUrl", JsonPrimitive("https://old.example"))
+        put("api", JsonPrimitive("openai-completions"))
+        put("authHeader", JsonPrimitive(false))
+        // 这五个 App 不建模
+        put("headers", buildJsonObject { put("X-Tenant", JsonPrimitive("acme")) })
+        put("compat", buildJsonObject { put("supportsStore", JsonPrimitive(false)) })
+        put("apiKey", JsonPrimitive("sk-inline"))
+        put("modelOverrides", buildJsonObject { put("m1", buildJsonObject { put("contextWindow", JsonPrimitive(999)) }) })
+        put(
+            "models",
+            JsonArray(
+                listOf(
+                    buildJsonObject {
+                        put("id", JsonPrimitive("m1"))
+                        put("contextWindow", JsonPrimitive(1000))
+                        put("thinkingLevelMap", buildJsonObject { put("high", JsonPrimitive("x")) })
+                        put("samplingParams", buildJsonObject { put("temperature", JsonPrimitive(0.2)) })
+                        put("headers", buildJsonObject { put("X-Model", JsonPrimitive("1")) })
+                        put("baseUrl", JsonPrimitive("https://model.example"))
+                        put(
+                            "cost",
+                            buildJsonObject {
+                                put("input", JsonPrimitive(1.0))
+                                put("output", JsonPrimitive(2.0))
+                                put("cacheRead", JsonPrimitive(0.1))
+                                put("cacheWrite", JsonPrimitive(0.2))
+                                put("tiers", JsonArray(listOf(buildJsonObject { put("inputTokensAbove", JsonPrimitive(1000)) })))
+                            },
+                        )
+                    },
+                    buildJsonObject { put("id", JsonPrimitive("m2")) },
+                ),
+            ),
+        )
+    }
+
+    val writtenBlock = buildJsonObject {
+        put("name", JsonPrimitive("新名字"))
+        put("baseUrl", JsonPrimitive("https://new.example"))
+        put("api", JsonPrimitive("openai-completions"))
+        put("authHeader", JsonPrimitive(true))
+        put("models", JsonArray(listOf(buildJsonObject {
+            put("id", JsonPrimitive("m1"))
+            put("contextWindow", JsonPrimitive(2000))
+            put("input", JsonArray(listOf(JsonPrimitive("text"), JsonPrimitive("image"))))
+        })))
+    }
+    val mergedBlock = PiModelsMerge.provider(priorBlock, writtenBlock)
+    check("App 写出的键赢（baseUrl）", (mergedBlock["baseUrl"] as JsonPrimitive).content, "https://new.example")
+    check("App 写出的键赢（name）", (mergedBlock["name"] as JsonPrimitive).content, "新名字")
+    check("App 写出的键赢（authHeader）", (mergedBlock["authHeader"] as JsonPrimitive).content, "true")
+    check("**未建模的 provider 键原样保留**：headers", mergedBlock["headers"], priorBlock["headers"])
+    check("**未建模的 provider 键原样保留**：compat", mergedBlock["compat"], priorBlock["compat"])
+    check("**未建模的 provider 键原样保留**：apiKey", mergedBlock["apiKey"], priorBlock["apiKey"])
+    check("**未建模的 provider 键原样保留**：modelOverrides", mergedBlock["modelOverrides"], priorBlock["modelOverrides"])
+
+    val mergedModels = (mergedBlock["models"] as JsonArray).mapNotNull { it as? JsonObject }
+    // 申报的列表是权威：这条同时钉住 §M11 的自愈路径（pi 目录能描述的模型不被申报，
+    // 于是文件里那条旧的、把能力写坏的条目会消失）。
+    check("申报的列表就是权威：未申报的旧条目被移除", mergedModels.size, 1)
+    val m1 = mergedModels.first { (it["id"] as JsonPrimitive).content == "m1" }
+    check("App 写出的模型字段赢", m1["contextWindow"], JsonPrimitive(2000))
+    check("App 新写的模型字段生效", m1["input"], JsonArray(listOf(JsonPrimitive("text"), JsonPrimitive("image"))))
+    check("**未建模的模型键原样保留**：thinkingLevelMap", m1["thinkingLevelMap"], priorBlock["models"]?.let { (it as JsonArray)[0] }?.let { (it as JsonObject)["thinkingLevelMap"] })
+    check("**未建模的模型键原样保留**：samplingParams", m1["samplingParams"] != null, true)
+    check("**未建模的模型键原样保留**：模型级 headers", m1["headers"] != null, true)
+    check("**未建模的模型键原样保留**：模型级 baseUrl", m1["baseUrl"], JsonPrimitive("https://model.example"))
+    check("**未建模的模型键原样保留**：cost.tiers", (m1["cost"] as JsonObject)["tiers"] != null, true)
+    check(
+        "没被声明的旧条目确实不在了",
+        mergedModels.any { (it["id"] as JsonPrimitive).content == "m2" },
+        false,
+    )
+
+    check(
+        "**`models` 缺席就是要删掉这个键**（§M11 的自愈路径）",
+        PiModelsMerge.provider(priorBlock, buildJsonObject { put("baseUrl", JsonPrimitive("https://new.example")) })["models"],
+        null,
+    )
+    check(
+        "空厂商块合并后仍然保留未建模的键",
+        PiModelsMerge.provider(priorBlock, buildJsonObject { put("name", JsonPrimitive("n")) })["headers"],
+        priorBlock["headers"],
+    )
+    check("原本没有这个厂商时原样写出", PiModelsMerge.provider(null, writtenBlock), writtenBlock)
+    check(
+        "申报的模型里有一个是文件里没有的，就原样写它",
+        (PiModelsMerge.models(
+            JsonArray(listOf(buildJsonObject { put("id", JsonPrimitive("m1")) })),
+            JsonArray(listOf(buildJsonObject { put("id", JsonPrimitive("m9")); put("input", JsonArray(listOf(JsonPrimitive("text")))) })),
+        ) as JsonArray)[0],
+        buildJsonObject { put("id", JsonPrimitive("m9")); put("input", JsonArray(listOf(JsonPrimitive("text")))) },
     )
 
     println(if (failures == 0) "\nharness: OK (all checks passed)" else "\nharness: FAILED ($failures)")
