@@ -11,15 +11,12 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Extension
 import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -34,6 +31,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import app.pi.runtime.PtyLauncher
+import app.pi.ui.PiTopBar
 import app.pi.ui.settings.PiSettingsMetrics
 import app.pi.ui.theme.PiTheme
 import java.io.File
@@ -192,14 +190,7 @@ fun PiPackagesHost(
     LaunchedEffect(Unit) { controller.refresh() }
 
     Column(Modifier.fillMaxSize()) {
-        TopAppBar(
-            title = { Text(PackageStrings.TITLE) },
-            navigationIcon = {
-                IconButton(onClick = onBack) {
-                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
-                }
-            },
-        )
+        PiTopBar(title = PackageStrings.TITLE, onBack = onBack)
         Box(Modifier.fillMaxSize().padding(contentPadding)) {
             PiPackagesScreen(
                 state = controller.state(lifecycleState),

@@ -6,6 +6,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -15,7 +16,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -30,6 +30,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import app.pi.ui.components.EffectiveKind
+import app.pi.ui.components.PiDialog
+import app.pi.ui.components.PiDialogAction
+import app.pi.ui.components.PiDialogActions
+import app.pi.ui.components.PiDialogBody
+import app.pi.ui.components.PiDialogTitle
 import app.pi.ui.theme.PiShapes
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
@@ -97,7 +102,7 @@ internal object PiSettingsMetrics {
 
     /**
      * `06 §2`「线宽：全篇只有 1px」，用于搜索命中的左缘竖线与卡片描边；
-     * 与 `PiSpacing.hairline` / `PiV2Layout.hairline` 同值，令牌批次合并后只留一个。
+     * 与 `PiSpacing.hairline` / `PiSpacing.hairline` 同值，令牌批次合并后只留一个。
      */
     val hairline: Dp = 1.dp
 
@@ -128,9 +133,6 @@ internal object PiSettingsMetrics {
     val cardIconSize: Dp = 18.dp
     val searchIconGap: Dp = 9.dp
 
-    /** `06 §2`「对话框：最大宽 330、圆角 14、`padding:18px 16px 12px`」。 */
-    val dialogRadius: Dp = 14.dp
-
     /** `06 §2`「sheet：顶部圆角 16、抓手 `32×3`」。 */
     val sheetTopRadius: Dp = 16.dp
     val sheetHandleWidth: Dp = 32.dp
@@ -160,9 +162,6 @@ internal val PiSettingsCardShape = RoundedCornerShape(PiSettingsMetrics.cardRadi
 
 /** `06 §2`「搜索框 / 输入框：圆角 9」。 */
 internal val PiSettingsFieldShape = RoundedCornerShape(PiSettingsMetrics.searchFieldRadius)
-
-/** `06 §2`「对话框：圆角 14」，scrim 用 M3 默认的 0.32，不加阴影。 */
-internal val PiSettingsDialogShape = RoundedCornerShape(PiSettingsMetrics.dialogRadius)
 
 /** `06 §2`「sheet：顶部圆角 16」（只有上两个角，下沿贴屏底）。 */
 internal val PiSettingsSheetShape = RoundedCornerShape(
@@ -255,28 +254,51 @@ internal fun PiSettingsCard(
 }
 
 /**
- * `06 §2`「chip：高 26 圆角 999 `padding:0 9px`」+ 1px `borderMuted` 描边。
- * 搜索快捷词用它，不占整行。
+ * v2 的 `Chip`（`design-demos/direction-b-v2.html:605`）：高 26、圆角 999、
+ * `padding:0 9px`、`gap:5`；描边「选中 `borderAccent` / 否则 `borderMuted`」，底
+ * 「选中 `surf-high` / 否则透明」，字 12（选中正文色、否则 muted），可选前置符号用
+ * 等宽、muted。
+ *
+ * 搜索快捷词与**会话列表的两个筛选**共用它：`phone19` 的「↕ 按时间 / ○ 全部」就是
+ * `active` 那两档，所以它必须能画选中态，不能只是一个描边胶囊。
+ *
+ * @param active 这一档是不是当前选中的那一档（不是「开/关」）。
+ * @param glyph 前置符号（`↕` / `✓` / `○`），可选。
  */
 @Composable
 internal fun PiSettingsChip(
     text: String,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    active: Boolean = false,
+    glyph: String? = null,
 ) {
     Row(
         modifier = modifier
             .height(PiSettingsMetrics.chipHeight)
             .clip(PiShapes.badge)
-            .border(PiSettingsMetrics.hairline, MaterialTheme.colorScheme.outline, PiShapes.badge)
+            .background(if (active) MaterialTheme.colorScheme.surfaceContainerHigh else Color.Transparent)
+            .border(
+                PiSettingsMetrics.hairline,
+                if (active) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.outline,
+                PiShapes.badge,
+            )
             .clickable(onClick = onClick)
             .padding(horizontal = PiSettingsMetrics.chipPaddingHorizontal),
         verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(PiSettingsMetrics.badgeGap),
     ) {
+        if (glyph != null) {
+            Text(
+                glyph,
+                style = PiTheme.text.monoSmall,
+                color = PiTheme.palette.muted,
+            )
+        }
         Text(
             text,
             style = PiTheme.text.monoSmall,
-            color = MaterialTheme.colorScheme.onSurface,
+            color = if (active) MaterialTheme.colorScheme.onSurface else PiTheme.palette.muted,
         )
     }
 }
@@ -431,35 +453,75 @@ internal fun PiSettingsSwitchRowTrailing(
 }
 
 /**
- * v2 的对话框外壳（`06 §2`：最大宽 330、圆角 14、按钮 `padding:7px 12px` 圆角 8、
- * scrim `rgba(0,0,0,.32)`、无阴影）。
+ * v2 的对话框（`06 §2`：最大宽 330、圆角 14、底色 `surf-high`、1px `borderMuted`
+ * 描边、`padding:18px 16px 12px`、scrim `rgba(0,0,0,.32)`、无阴影）。
  *
- * 只统一外壳：最大宽、scrim 与按钮内边距由 `AlertDialog` 自己管（M3 的实现本来就
- * 是 v2 这一套），这里补的是圆角、底色与 15/600 的标题 —— 这三项 M3 默认与 v2 不同。
+ * 外壳本身在 `ui/components/PiDialog.kt` —— 那是扩展对话框与设置对话框共用的构件
+ * （两边原先一个用 `AlertDialog` + `surf-low`、一个自绘 `Dialog` + `surf-high`）。
+ * 这里只是设置页的薄封装：v2 的标题（15/600）、可选副行（12 muted）、正文
+ * （14 正文色）与行尾按钮（`padding:7px 12px`）。
+ *
+ * 按钮是文案 + 回调而不是 composable 槽：v2 的对话框按钮是
+ * `padding:7px 12px; border-radius:8` 的纯文字，M3 的 `TextButton` 是 40dp 高、
+ * 带水波纹的另一套取值，槽会把它漏回来。
+ *
+ * @param sub v2 标题下那行 12 灰的副行（`phone45` 用它写生效徽标词）。
+ * @param body 正文一段；`phone45` 的正文以「「设置名」」开头，调用方自己拼。
+ * @param content 富正文（多段、可滚动、选项列表），与 [body] 二选一。
+ * @param confirmationTone 主按钮的非 accent 色（v2 的删除确认用 `error`）。
+ * @param confirmationEnabled 关闭态用 `muted`（`phone25` 画的就是被拒的删除）。
  */
 @Composable
 internal fun PiSettingsDialog(
     onDismissRequest: () -> Unit,
     title: String,
-    confirmButton: @Composable () -> Unit,
     modifier: Modifier = Modifier,
-    dismissButton: (@Composable () -> Unit)? = null,
-    body: @Composable () -> Unit,
+    sub: String? = null,
+    body: String? = null,
+    content: (@Composable ColumnScope.() -> Unit)? = null,
+    confirmationLabel: String? = null,
+    onConfirm: (() -> Unit)? = null,
+    confirmationEnabled: Boolean = true,
+    confirmationTone: Color? = null,
+    dismissalLabel: String? = null,
+    onDismissButton: (() -> Unit)? = null,
 ) {
-    AlertDialog(
-        onDismissRequest = onDismissRequest,
-        modifier = modifier,
-        shape = PiSettingsDialogShape,
-        containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
-        title = {
+    PiDialog(onDismissRequest = onDismissRequest, modifier = modifier) {
+        PiDialogTitle(title)
+        if (sub != null) {
+            Spacer(Modifier.height(PiSettingsMetrics.supportingGap))
             Text(
-                title,
-                style = MaterialTheme.typography.titleSmall,
-                color = MaterialTheme.colorScheme.onSurface,
+                sub,
+                style = PiTheme.text.meta,
+                color = PiTheme.palette.muted,
             )
-        },
-        text = { body() },
-        confirmButton = confirmButton,
-        dismissButton = dismissButton,
-    )
+        }
+        if (body != null) {
+            PiDialogBody(body)
+        }
+        if (content != null) {
+            Spacer(Modifier.height(PiSettingsMetrics.rowGap))
+            content()
+        }
+        if (confirmationLabel != null || dismissalLabel != null) {
+            PiDialogActions {
+                if (dismissalLabel != null) {
+                    PiDialogAction(
+                        label = dismissalLabel,
+                        onClick = onDismissButton ?: onDismissRequest,
+                        primary = false,
+                    )
+                }
+                if (confirmationLabel != null) {
+                    PiDialogAction(
+                        label = confirmationLabel,
+                        onClick = onConfirm ?: onDismissRequest,
+                        primary = true,
+                        enabled = confirmationEnabled,
+                        tone = confirmationTone,
+                    )
+                }
+            }
+        }
+    }
 }

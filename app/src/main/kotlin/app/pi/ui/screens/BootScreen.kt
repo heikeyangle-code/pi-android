@@ -38,7 +38,6 @@ import app.pi.ui.Boot
 import app.pi.ui.theme.PiMark
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
-import app.pi.ui.theme.PiV2Layout
 
 /**
  * First-launch and boot-failure surface.
@@ -160,7 +159,7 @@ private fun BootBadge(boot: Boot) {
     Box(
         modifier = Modifier
             .size(BootBadgeSize)
-            .border(PiV2Layout.hairline, palette.borderMuted, CircleShape),
+            .border(PiSpacing.hairline, palette.borderMuted, CircleShape),
         contentAlignment = Alignment.Center,
     ) {
         if (boot is Boot.Failed) {
@@ -224,7 +223,7 @@ private fun BootErrorCard(message: String, detail: String?) {
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(BootCardRadius),
         color = MaterialTheme.colorScheme.errorContainer,
-        border = BorderStroke(PiV2Layout.hairline, palette.error.copy(alpha = 0.45f)),
+        border = BorderStroke(PiSpacing.hairline, palette.error.copy(alpha = 0.45f)),
     ) {
         Row(
             Modifier

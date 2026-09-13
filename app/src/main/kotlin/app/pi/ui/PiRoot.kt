@@ -2,6 +2,9 @@ package app.pi.ui
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -17,7 +20,11 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
@@ -31,9 +38,12 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -47,6 +57,7 @@ import app.pi.ui.screens.SessionsScreen
 import app.pi.ui.screens.SessionsView
 import app.pi.ui.screens.TerminalScreen
 import app.pi.ui.settings.PiSettingsStack
+import app.pi.ui.theme.PiTheme
 
 /**
  * The three top-level destinations, in bottom-bar order.
@@ -156,6 +167,318 @@ private fun overlayAt(index: Int?): PiOverlay? =
  * has always asked for.
  */
 private val OVERLAY_SNACKBAR_INSET = 64.dp
+
+// ------------------------------------------------------------------ the top bar
+//
+// v2's `TopBar` (`design-demos/direction-b-v2.html:489`), value for value: 48 high
+// on the dim surface with a 1px bottom rule, 14 horizontal, a 17/600 title with an
+// optional 12 meta line under it, a 32x32 radius-8 press box for the back chevron
+// (an 18 glyph), and 30x30 press boxes with 17 glyphs for the actions.
+//
+// Hand-drawn rather than `material3.TopAppBar` because none of the three values M3
+// fixes can be reached through it without a fight: its height is
+// `TopAppBarExpandedHeight` (64, and the `expandedHeight` parameter is the only way
+// out), its container is `surface` rather than the board's `surfaceDim`, it draws no
+// bottom rule at all, and its `navigationIcon`/`actions` slots wrap every child in a
+// 48dp `IconButton` with a 24dp glyph — visibly larger than the board's 32/18 and
+// 30/17 boxes. Every screen in this half goes through this one function instead, so
+// the chrome cannot drift screen by screen.
+
+/** `06 §2`「顶栏：高 48」. */
+private val TOP_BAR_HEIGHT = 48.dp
+
+/** `06 §2`「水平 14」. */
+private val TOP_BAR_INSET = 14.dp
+
+/** The back chevron's press box and glyph (`TopBar`: 32x32 radius 8, icon 18). */
+private val TOP_BAR_BACK_BOX = 32.dp
+private val TOP_BAR_BACK_GLYPH = 18.dp
+
+/**
+ * `TopBar`'s `margin-left:-6` on the back box: the chevron sits 8 from the edge
+ * while the rest of the row still measures from 14. Reproduced by pulling the row's
+ * leading inset in by the same amount only when there *is* a back box, so a screen
+ * without one keeps the plain 14 (which is what `phone4` shows).
+ */
+private val TOP_BAR_BACK_NUDGE = 6.dp
+
+/** The row's own gap between the back box, the title block and the actions. */
+private val TOP_BAR_GAP = 10.dp
+
+/** `TopBar` right cluster: `gap:4`. */
+private val TOP_BAR_ACTION_GAP = 4.dp
+
+/** One action's press box and glyph (`TopBar` right icons: 30x30, icon 17). */
+private val TOP_BAR_ACTION_BOX = 30.dp
+private val TOP_BAR_ACTION_GLYPH = 17.dp
+
+/** The text action's own padding (`TopBar`: `5px 9px`). */
+private val TOP_BAR_TEXT_ACTION_PADDING = 9.dp
+private val TOP_BAR_TEXT_ACTION_PADDING_VERTICAL = 5.dp
+
+/** The radius both press boxes use. */
+private val TOP_BAR_PRESS_SHAPE = RoundedCornerShape(8.dp)
+
+/**
+ * The app bar every screen in this half draws.
+ *
+ * @param meta the second line: v2's 12 muted text, one `margin-top:1` under the
+ *   title.
+ * @param engineMeta the second line for a screen whose second line *is* the engine
+ *   state — the session overlay (`phone19`) does this. It wins over [meta] when both
+ *   are given, and it is the triple-encoded spelling (`✓ 就绪`), not a bare word:
+ *   see [PiTopBarEngineMeta].
+ * @param onBack null on the three top-level destinations; when it is set the
+ *   chevron is the *first* child and the title block starts 50 from the left edge,
+ *   which is where the board puts it.
+ * @param actions the right cluster. The caller supplies its own press boxes so a
+ *   text action (v2's 导入 / 刷新 / 保存到 Download) and an icon action can sit
+ *   side by side as the board draws them.
+ */
+@Composable
+fun PiTopBar(
+    title: String,
+    modifier: Modifier = Modifier,
+    meta: String? = null,
+    engineMeta: String? = null,
+    onBack: (() -> Unit)? = null,
+    actions: (@Composable RowScope.() -> Unit)? = null,
+) {
+    Column(
+        modifier
+            .fillMaxWidth()
+            // `surfaceDim` is the design's `--surf-dim`, the same chrome tone the
+            // bottom bar uses: one step below the content's own background.
+            .background(MaterialTheme.colorScheme.surfaceDim),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(TOP_BAR_HEIGHT)
+                .padding(
+                    start = if (onBack != null) TOP_BAR_INSET - TOP_BAR_BACK_NUDGE else TOP_BAR_INSET,
+                    end = TOP_BAR_INSET,
+                ),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(TOP_BAR_GAP),
+        ) {
+            if (onBack != null) {
+                Box(
+                    modifier = Modifier
+                        .size(TOP_BAR_BACK_BOX)
+                        .clip(TOP_BAR_PRESS_SHAPE)
+                        .clickable(onClick = onBack),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        Icons.AutoMirrored.Filled.ArrowBack,
+                        contentDescription = "返回",
+                        modifier = Modifier.size(TOP_BAR_BACK_GLYPH),
+                        tint = MaterialTheme.colorScheme.onSurface,
+                    )
+                }
+            }
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.Center,
+            ) {
+                Text(
+                    title,
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                if (engineMeta != null) {
+                    PiTopBarEngineMeta(engineMeta)
+                } else if (meta != null) {
+                    Text(
+                        meta,
+                        // `TopBar`: `marginTop:1`.
+                        modifier = Modifier.padding(top = 1.dp),
+                        style = PiTheme.text.meta,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+            if (actions != null) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(TOP_BAR_ACTION_GAP),
+                    content = actions,
+                )
+            }
+        }
+        HorizontalDivider(
+            thickness = 1.dp,
+            color = MaterialTheme.colorScheme.outline,
+        )
+    }
+}
+
+/**
+ * One icon action's press box for [PiTopBar]: the board's 30x30 radius-8 box with a
+ * 17 glyph, so a top bar does not have to carry its own copy of those numbers.
+ */
+@Composable
+fun PiTopBarIcon(onClick: () -> Unit, contentDescription: String, icon: ImageVector) {
+    Box(
+        modifier = Modifier
+            .size(TOP_BAR_ACTION_BOX)
+            .clip(TOP_BAR_PRESS_SHAPE)
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            icon,
+            contentDescription = contentDescription,
+            modifier = Modifier.size(TOP_BAR_ACTION_GLYPH),
+            tint = MaterialTheme.colorScheme.onSurface,
+        )
+    }
+}
+
+/**
+ * One text action's press box for [PiTopBar] — v2's 导入 / 刷新 / 保存到 Download
+ * (`TopBar` right cluster: `padding:5px 9px`, `border-radius:8`, `t13`).
+ *
+ * The label is `bodyMedium` (14) rather than the board's 13: the app's own type scale
+ * has no 13 non-monospace role, and this text is a control rather than machine
+ * output, so it takes the body role the rest of the chrome uses. The one-step
+ * difference is recorded in this batch's deviation list rather than invented here.
+ */
+@Composable
+fun PiTopBarTextAction(label: String, onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .clip(TOP_BAR_PRESS_SHAPE)
+            .clickable(onClick = onClick)
+            .padding(horizontal = TOP_BAR_TEXT_ACTION_PADDING, vertical = TOP_BAR_TEXT_ACTION_PADDING_VERTICAL),
+    ) {
+        Text(
+            label,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurface,
+            maxLines = 1,
+        )
+    }
+}
+
+/**
+ * The app bar's **engine status line**, triple-encoded (symbol + word + tone) as
+ * `06 §4` requires: `✓ 就绪` success, `… 工作中` warning, `◌ 启动中` warning,
+ * `≡ 排队中` warning, `✗ 引擎已退出` / `■ 引擎已停止` error.
+ *
+ * The words are not this file's: they are [PiSessionViewModel.engineLabel]'s, which
+ * returns pi's own vocabulary and also passes through a *busy verb* ("读取会话树")
+ * while a request is in flight. Every one of those verbs is a wait, so the default
+ * arm is `… warning` — the same rule `06 §4` states for busy verbs.
+ *
+ * It lives beside [PiTopBar] because the top bar is the only place that draws it: the
+ * chat's app bar is the other caller, and both must spell the six states the same way
+ * or the engine would read differently on two screens.
+ */
+@Composable
+fun PiTopBarEngineMeta(word: String) {
+    val (glyph, tone) = when (word) {
+        "就绪" -> "✓" to PiTheme.palette.success
+        "引擎已退出", "引擎已停止" -> "✗" to PiTheme.palette.error
+        else -> "…" to PiTheme.palette.warning
+    }
+    Row(
+        modifier = Modifier.padding(top = 1.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(TOP_BAR_ENGINE_GAP),
+    ) {
+        Text(
+            glyph,
+            style = PiTheme.text.monoSmall,
+            color = tone,
+        )
+        Text(
+            word,
+            style = PiTheme.text.meta,
+            color = MaterialTheme.colorScheme.onSurface,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+/** `Engine` 的符号到词之间：`gap:5`。 */
+private val TOP_BAR_ENGINE_GAP = 5.dp
+
+/**
+ * v2's `Seg` (`design-demos/direction-b-v2.html:644`) — the segmented control the
+ * session overlay switches 会话 / 会话树 with, and the one the tree filters with.
+ *
+ * `gap:2`, `surf-high` fill, 1px `borderMuted`, radius 8, `padding:2`; each item is
+ * 24 high, `padding:0 10`, radius 6, 12 at weight 500/400, the selected one on
+ * `--selected-bg` in the body colour, the others transparent in `muted`.
+ *
+ * Hand-drawn because M3's `SegmentedButton` cannot be talked out of three things the
+ * board does not have: a 40dp item, a per-item outline, and the check glyph it draws
+ * inside the selected item (the app's callers were passing `shape = itemShape(...)`
+ * only, so the ticks were being drawn on device).
+ *
+ * It sits beside [PiTopBar] rather than in `ui/components/` because that package
+ * belongs to the other half of this refactor (only `PiDialog.kt` is this half's new
+ * file there); it should move next to `PiDialog` when the split is next opened.
+ */
+@Composable
+fun PiSeg(
+    options: List<String>,
+    selectedIndex: Int,
+    onSelect: (Int) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier
+            .clip(SEG_SHAPE)
+            .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+            .border(1.dp, MaterialTheme.colorScheme.outline, SEG_SHAPE)
+            .padding(SEG_PADDING),
+        horizontalArrangement = Arrangement.spacedBy(SEG_ITEM_GAP),
+    ) {
+        options.forEachIndexed { index, label ->
+            val selected = index == selectedIndex
+            Box(
+                modifier = Modifier
+                    .height(SEG_ITEM_HEIGHT)
+                    .clip(SEG_ITEM_SHAPE)
+                    .background(
+                        if (selected) PiTheme.palette.selectedBg else Color.Transparent,
+                    )
+                    .clickable { onSelect(index) }
+                    .padding(horizontal = SEG_ITEM_PADDING),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = label,
+                    style = MaterialTheme.typography.labelMedium.copy(
+                        fontWeight = if (selected) FontWeight.Medium else FontWeight.Normal,
+                    ),
+                    color = if (selected) {
+                        MaterialTheme.colorScheme.onSurface
+                    } else {
+                        PiTheme.palette.muted
+                    },
+                    maxLines = 1,
+                )
+            }
+        }
+    }
+}
+
+/** `Seg` 的取值：外圆角 8、`padding:2`、项高 24、`padding:0 10`、项圆角 6、gap 2。 */
+private val SEG_SHAPE = RoundedCornerShape(8.dp)
+private val SEG_ITEM_SHAPE = RoundedCornerShape(6.dp)
+private val SEG_PADDING = 2.dp
+private val SEG_ITEM_GAP = 2.dp
+private val SEG_ITEM_HEIGHT = 24.dp
+private val SEG_ITEM_PADDING = 10.dp
 
 // ------------------------------------------------------------------ the bottom bar
 //
@@ -287,6 +610,15 @@ fun PiRoot() {
         session.consumeNav()
     }
 
+    // v2 的 Boot 三态（`phone59`–`phone61`）是 `.b-screen` 整屏接管：没有顶栏，**也没有
+    // 底栏**（HTML:3242 的 `Boot` 直接画 `.b-boot`，外面没有 `TabBar`）。所以引擎还没
+    // 就绪、而对话页正被 `BootScreen` 接管时，这一屏不画底栏 —— 画着就多出一条 v2 没有
+    // 的、此刻也没有目的地的栏。
+    //
+    // 只在**对话页**这么做。恢复到的目的地若是设置/工作区，底栏必须留着：这台设备上首次
+    // 启动要解包整个运行时（几分钟），把用户锁在那一屏没有出路。
+    val bootTakeover = current == PiDestination.Chat && uiState.boot !is Boot.Ready
+
     Scaffold(
         // `imePadding()` is what makes the soft keyboard *displace* the UI instead of
         // covering it. The activity is `enableEdgeToEdge()` (`MainActivity.kt:19`) and
@@ -299,10 +631,12 @@ fun PiRoot() {
         // pad twice, so that one was removed.
         modifier = Modifier.imePadding(),
         bottomBar = {
-            PiBottomBar(
-                current = current,
-                onSelect = { destinationName = it.name },
-            )
+            if (!bootTakeover) {
+                PiBottomBar(
+                    current = current,
+                    onSelect = { destinationName = it.name },
+                )
+            }
         },
     ) { padding ->
         Box(Modifier.fillMaxSize()) {

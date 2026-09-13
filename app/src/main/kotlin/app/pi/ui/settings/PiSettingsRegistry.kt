@@ -390,8 +390,9 @@ object PiSettingsCatalog {
         // (`extensions/llama/index.ts:186-189` returns unless `ctx.mode === "tui"`;
         // `ctx.ui.custom()` is a documented no-op in RPC mode). The description
         // states what this form does and stops there: "there is more in the
-        // terminal" is said once, on the workbench terminal
-        // (`WorkbenchScreen.kt`), not repeated by every TUI-adjacent row.
+        // terminal" is said once, on the settings home's 终端 row
+        // (`SettingsHome.kt` 的 `PiTerminalEntryRow`)，不在每个与 TUI 有关的行上重复。
+        // 那条注释以前写的是 `WorkbenchScreen.kt` —— 那个屏已经随终端一起退役了。
         PiSetting(
             key = "app.localModels.manage",
             title = "本地模型（llama.cpp）",
@@ -728,8 +729,8 @@ object PiSettingsCatalog {
         // `RpcCommand` union has no import command, `rpc-types.ts:20-74`). It was
         // removed with the same rule that removed 27 TUI-only keys: a row that can
         // only say "go somewhere else" is not a setting. The one sentence that has
-        // to exist for discovery lives on the workbench terminal
-        // (`WorkbenchScreen.kt`), not once per row here.
+        // to exist for discovery lives on the settings home's 终端 row
+        // (`SettingsHome.kt`), not once per row here.
         PiSetting(
             key = "app.sessions.resumeLast",
             title = "启动续接最近会话",
@@ -1288,8 +1289,8 @@ object PiSettingsCatalog {
         // `rpc-types.ts:20-74` has no changelog command), so the row could only
         // navigate to the terminal and name the command. It was removed with the
         // TUI-only rows for the same reason as `app.sessions.import` above, and the
-        // discovery sentence now lives once on the workbench terminal
-        // (`WorkbenchScreen.kt`).
+        // discovery sentence now lives once on the settings home's 终端 row
+        // (`SettingsHome.kt`).
         // Five rows were removed from this group on purpose, because pi has no
         // counterpart for any of them and nothing in the app implements them either:
         //

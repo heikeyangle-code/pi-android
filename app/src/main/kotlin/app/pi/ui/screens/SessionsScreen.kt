@@ -2,7 +2,10 @@ package app.pi.ui.screens
 
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -12,32 +15,25 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Forum
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.SegmentedButton
-import androidx.compose.material3.SegmentedButtonDefaults
-import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -49,16 +45,30 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.pi.runtime.GuestWorkspacePath
 import app.pi.session.PiSessionStore
+import app.pi.ui.PiSeg
 import app.pi.ui.PiSessionViewModel
+import app.pi.ui.PiTopBar
+import app.pi.ui.PiTopBarIcon
+import app.pi.ui.PiTopBarTextAction
 import app.pi.ui.chat.SessionTreeScreen
+import app.pi.ui.components.PiDialog
+import app.pi.ui.components.PiDialogAction
+import app.pi.ui.components.PiDialogActions
+import app.pi.ui.components.PiDialogBody
+import app.pi.ui.components.PiDialogTitle
 import app.pi.ui.components.PiEmptyState
+import app.pi.ui.settings.PiSettingsChip
 import app.pi.ui.settings.PiSettingsMetrics
+import app.pi.ui.settings.PiSettingsSheet
 import app.pi.ui.theme.PiShapes
-import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
 import app.pi.ui.theme.numeric
 import java.util.concurrent.TimeUnit
@@ -114,7 +124,6 @@ enum class SessionsView(val label: String) {
  *   一个写着「树」的命令不该让用户再点一次分段控件。宿主把这个偏好提到覆盖层之外，
  *   因为它在这一屏存在之前就已经被设定了。
  */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SessionsScreen(
     contentPadding: PaddingValues,
@@ -173,44 +182,65 @@ fun SessionsScreen(
     }
 
     Column(Modifier.fillMaxSize().padding(contentPadding)) {
-        TopAppBar(
-            title = { Text(view.label) },
+        PiTopBar(
+            title = view.label,
+            // 顶栏的副行就是引擎状态（v2 的 `Engine`，`06 §4` 的三重编码：符号 + 词 +
+            // 色）。会话列表是「看引擎在哪」的地方，所以这一行跟着它。
+            engineMeta = session.engineLabel(state),
             actions = {
+                // v2 的顶栏在列表视图给「导入」+ 刷新图标，在树视图给「刷新」
+                // （`SessionsOverlay` 的 `right`），所以两个视图的右侧不完全相同。
                 if (view == SessionsView.List) {
                     // The list can only show sessions that are already in pi's
                     // directory; a session that arrived as a file needs this.
-                    TextButton(onClick = { importPicker.launch("*/*") }) { Text("导入") }
-                    IconButton(onClick = { session.refreshSessions() }) {
-                        Icon(Icons.Filled.Refresh, contentDescription = "刷新会话列表")
-                    }
+                    PiTopBarTextAction("导入") { importPicker.launch("*/*") }
+                    PiTopBarIcon(
+                        onClick = { session.refreshSessions() },
+                        contentDescription = "刷新会话列表",
+                        icon = Icons.Filled.Refresh,
+                    )
                 } else {
-                    TextButton(onClick = { session.refreshTree() }) { Text("刷新") }
+                    PiTopBarTextAction("刷新") { session.refreshTree() }
                 }
-                IconButton(onClick = onClose) {
-                    Icon(Icons.Filled.Close, contentDescription = "关闭会话列表")
-                }
+                PiTopBarIcon(
+                    onClick = onClose,
+                    contentDescription = "关闭会话列表",
+                    icon = Icons.Filled.Close,
+                )
             },
         )
-        // 一条分段控件服务两个视图，所以它在两者之上（v2 的 `Seg`）。
-        SingleChoiceSegmentedButtonRow(
-            Modifier.fillMaxWidth().padding(
-                start = PiSettingsMetrics.pageHorizontal,
-                end = PiSettingsMetrics.pageHorizontal,
-                top = PiSettingsMetrics.rowPaddingVertical,
-                bottom = PiSettingsMetrics.groupHeaderGap,
-            ),
+        // 一条分段控件服务两个视图，所以它在两者之上（v2 的 `Seg`）；同行右侧是本视图
+        // 的条数。列表给的是**筛过之后**的数（`phone20` 搜 diff 命中后写「1 条」）。
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(
+                    start = PiSettingsMetrics.pageHorizontal,
+                    end = PiSettingsMetrics.pageHorizontal,
+                    top = SESSIONS_VIEW_ROW_TOP,
+                    bottom = SESSIONS_VIEW_ROW_BOTTOM,
+                ),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(SESSIONS_VIEW_ROW_GAP),
         ) {
-            SessionsView.entries.forEachIndexed { index, item ->
-                SegmentedButton(
-                    selected = view == item,
-                    onClick = {
-                        viewIndex = item.ordinal
-                        // 树的叶子只有 `get_tree` 说了算，切过去时读一次；列表的刷新由
-                        // `refreshSessions` 在进入这一屏时做过。
-                        if (item == SessionsView.Tree) session.refreshTree()
-                    },
-                    shape = SegmentedButtonDefaults.itemShape(index, SessionsView.entries.size),
-                ) { Text(item.label) }
+            PiSeg(
+                options = SessionsView.entries.map { it.label },
+                selectedIndex = view.ordinal,
+                onSelect = { index ->
+                    val item = SessionsView.entries[index]
+                    viewIndex = item.ordinal
+                    // 树的叶子只有 `get_tree` 说了算，切过去时读一次；列表的刷新由
+                    // `refreshSessions` 在进入这一屏时做过。
+                    if (item == SessionsView.Tree) session.refreshTree()
+                },
+            )
+            Spacer(Modifier.weight(1f))
+            if (view == SessionsView.List) {
+                Text(
+                    "${visible.size} 条",
+                    style = PiTheme.text.meta,
+                    color = PiTheme.palette.muted,
+                )
             }
         }
 
@@ -231,63 +261,115 @@ fun SessionsScreen(
         } else {
             Box(Modifier.weight(1f).fillMaxWidth()) {
                 Column(Modifier.fillMaxSize()) {
-                    Row(
-                        Modifier.fillMaxWidth().padding(
-                            horizontal = PiSettingsMetrics.pageHorizontal,
-                            vertical = 4.dp,
-                        ),
-                        verticalAlignment = Alignment.CenterVertically,
+                    // 搜索框：v2 在会话覆盖层里是 36 高的方框（`SessionsOverlay` 的
+                    // `height:36`；设置首页那个才是 40），圆角 9、`surf-low` 底、
+                    // 1px `borderMuted`、内 `padding:0 10px`、图标 15、文本 12 等宽，
+                    // 有输入时右侧出现「清除」。
+                    Surface(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(
+                                start = PiSettingsMetrics.pageHorizontal,
+                                end = PiSettingsMetrics.pageHorizontal,
+                                top = SESSIONS_SEARCH_TOP,
+                                bottom = SESSIONS_SEARCH_BOTTOM,
+                            )
+                            .height(SESSIONS_SEARCH_HEIGHT),
+                        shape = RoundedCornerShape(PiSettingsMetrics.searchFieldRadius),
+                        color = MaterialTheme.colorScheme.surfaceContainerLow,
+                        border = BorderStroke(SESSIONS_HAIRLINE, MaterialTheme.colorScheme.outline),
                     ) {
-                        OutlinedTextField(
-                            value = query,
-                            onValueChange = { query = it },
-                            modifier = Modifier.weight(1f),
-                            singleLine = true,
-                            leadingIcon = {
-                                Icon(
-                                    Icons.Filled.Search,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(PiSettingsMetrics.searchIconSize),
-                                    tint = PiTheme.palette.muted,
+                        Row(
+                            modifier = Modifier.padding(horizontal = SESSIONS_SEARCH_PADDING),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(SESSIONS_SEARCH_GAP),
+                        ) {
+                            Icon(
+                                Icons.Filled.Search,
+                                contentDescription = null,
+                                modifier = Modifier.size(SESSIONS_SEARCH_ICON),
+                                tint = PiTheme.palette.muted,
+                            )
+                            Box(Modifier.weight(1f)) {
+                                if (query.isEmpty()) {
+                                    Text(
+                                        "搜索名称 / 目录 / 文件名",
+                                        style = PiTheme.text.monoSmall,
+                                        color = PiTheme.palette.muted,
+                                    )
+                                }
+                                BasicTextField(
+                                    value = query,
+                                    onValueChange = { query = it },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    singleLine = true,
+                                    textStyle = PiTheme.text.monoSmall.copy(
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                    ),
+                                    cursorBrush = SolidColor(PiTheme.palette.accent),
                                 )
-                            },
-                            placeholder = { Text("搜索名称 / 目录 / 文件名") },
-                            textStyle = PiTheme.text.mono,
-                        )
-                        Spacer(Modifier.width(8.dp))
-                        TextButton(onClick = { byName = !byName }) {
-                            Text(if (byName) "按名称" else "按时间")
-                        }
-                        TextButton(onClick = { namedOnly = !namedOnly }) {
-                            Text(if (namedOnly) "仅命名" else "全部")
+                            }
+                            if (query.isNotEmpty()) {
+                                Text(
+                                    "清除",
+                                    modifier = Modifier.clickable { query = "" },
+                                    style = PiTheme.text.meta,
+                                    color = PiTheme.palette.muted,
+                                )
+                            }
                         }
                     }
-                    // The delete action is a long press, so the row has to say so: an
-                    // action nobody can find is the same complaint as one that does not
-                    // exist. pi reaches it with Ctrl+D (`docs/sessions.md:48`), which a
-                    // phone has no key for.
-                    Text(
-                        "长按一行可删除该会话；当前会话要切换后才能删除。",
-                        modifier = Modifier.padding(
-                            horizontal = PiSettingsMetrics.pageHorizontal,
-                            vertical = 2.dp,
-                        ),
-                        style = PiTheme.text.meta,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+                    // 两个筛选 chip 与右侧那句提示同一行（v2 的 `rw`：`gap:7; marginTop:8`）。
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = PiSettingsMetrics.pageHorizontal),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(SESSIONS_CHIP_GAP),
+                    ) {
+                        // 排序 chip 永远处于「选中」那一档：它选的是两种排序中的一种，
+                        // 不是「开/关」（v2：`active={byTime}`，而 byTime 默认为真）。
+                        PiSettingsChip(
+                            text = if (byName) "按名称" else "按时间",
+                            glyph = "↕",
+                            active = true,
+                            onClick = { byName = !byName },
+                        )
+                        PiSettingsChip(
+                            text = if (namedOnly) "仅命名" else "全部",
+                            glyph = if (namedOnly) "✓" else "○",
+                            active = namedOnly,
+                            onClick = { namedOnly = !namedOnly },
+                        )
+                        Spacer(Modifier.weight(1f))
+                        // The delete action is a long press, so the row has to say so: an
+                        // action nobody can find is the same complaint as one that does not
+                        // exist. pi reaches it with Ctrl+D (`docs/sessions.md:48`), which a
+                        // phone has no key for.
+                        Text(
+                            "长按一行可删除该会话",
+                            style = PiTheme.text.meta,
+                            color = PiTheme.palette.muted,
+                        )
+                    }
                     if (sessions.isEmpty()) {
                         PiEmptyState(
                             icon = Icons.Filled.Forum,
                             title = "还没有会话",
                             body = "会话按工作目录分组，这里会列出每一个目录的对话。",
-                            modifier = Modifier.weight(1f),
+                            modifier = Modifier.fillMaxSize(),
+                            // `phone21` 画的是对话气泡，不是 π 字形：π 是 App 自己那几面
+                            // 空态（对话页）的标识，这里画的是「这个列表里没有东西」。
+                            markPi = false,
                         )
                     } else if (visible.isEmpty()) {
                         PiEmptyState(
                             icon = Icons.Filled.Search,
                             title = "没有匹配的会话",
                             body = "换一个关键词，或关掉「仅命名」筛选。",
-                            modifier = Modifier.weight(1f),
+                            modifier = Modifier.fillMaxSize(),
+                            // `phone22` 是放大镜：一次没搜到不是「App 是空的」。
+                            markPi = false,
                         )
                     } else {
                         val groups = visible
@@ -295,8 +377,8 @@ fun SessionsScreen(
                             .toList()
                             .sortedByDescending { (_, rows) -> rows.maxOf { it.lastActivityAt } }
                         LazyColumn(
-                            modifier = Modifier.weight(1f),
-                            contentPadding = PaddingValues(bottom = PiSpacing.unit),
+                            modifier = Modifier.fillMaxSize(),
+                            contentPadding = PaddingValues(bottom = SESSIONS_LIST_BOTTOM),
                         ) {
                             groups.forEach { (cwd, rows) ->
                                 item(key = "hdr:$cwd") { GroupHeading(groupLabel(cwd), rows.size) }
@@ -312,23 +394,40 @@ fun SessionsScreen(
                                     )
                                 }
                             }
+                            // 这句话在 v2 里排在列表**最后**（`padding:'16px 14px 4px'`），
+                            // 而不是搜索框下面：它说的是行上的操作，读完列表才用得上。
+                            item(key = "hint") {
+                                Text(
+                                    "长按一行可删除该会话；当前会话要切换后才能删除。",
+                                    modifier = Modifier.padding(
+                                        start = PiSettingsMetrics.pageHorizontal,
+                                        end = PiSettingsMetrics.pageHorizontal,
+                                        top = SESSIONS_HINT_TOP,
+                                        bottom = SESSIONS_HINT_BOTTOM,
+                                    ),
+                                    style = PiTheme.text.meta,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
                         }
                     }
                 }
-                ExtendedFloatingActionButton(
-                    onClick = {
-                        session.newSession()
-                        onOpenChat()
-                    },
+                // 新建会话：v2 画的是 accent 底的胶囊（`height:42; padding:0 16px; gap:7`，
+                // 图标 16 + 14/600 文字，`color:var(--page)`），不是 M3 的 FAB —— 没有
+                // 阴影、没有 tonal 容器色，也不随滚动浮动。
+                Row(
                     modifier = Modifier
                         .align(Alignment.BottomEnd)
                         .padding(
-                            end = PiSettingsMetrics.pageHorizontal,
-                            bottom = PiSettingsMetrics.groupGap,
+                            end = SESSIONS_NEW_SESSION_INSET,
+                            bottom = SESSIONS_NEW_SESSION_BOTTOM,
                         ),
-                    icon = { Icon(Icons.Filled.Add, contentDescription = null) },
-                    text = { Text("新建会话") },
-                )
+                ) {
+                    NewSessionButton {
+                        session.newSession()
+                        onOpenChat()
+                    }
+                }
             }
         }
     }
@@ -338,64 +437,200 @@ fun SessionsScreen(
     // `session-manager.ts:938`), and pi's selector then nests the child under this
     // session (`components/session-selector.ts:206-231`). We pass the guest path so
     // the recorded parent resolves where pi reads it.
+    //
+    // v2 draws these three as a **bottom sheet** (`phone23`: 抓手 + 会话名 +
+    // 「对这个会话做什么？」+ 三行), not as a centred dialog, because a row's own menu
+    // belongs to the row that was pressed. The sheet shell is the settings editors'
+    // one (`PiSettingsSheet`), so the handle, radius and scrim are the board's.
     val acting = actions
     if (acting != null) {
-        AlertDialog(
-            onDismissRequest = { actions = null },
-            title = { Text(acting.displayName) },
-            text = { Text("对这个会话做什么？") },
-            confirmButton = {
-                TextButton(onClick = {
-                    actions = null
-                    session.newChildSession(acting)
-                }) { Text("新建子会话") }
-            },
-            dismissButton = {
-                Row {
-                    TextButton(onClick = {
-                        actions = null
-                        confirming = acting
-                    }) { Text("删除") }
-                    TextButton(onClick = { actions = null }) { Text("取消") }
-                }
-            },
-        )
+        PiSettingsSheet(onDismiss = { actions = null }) {
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(
+                        start = PiSettingsMetrics.pageHorizontal,
+                        end = PiSettingsMetrics.pageHorizontal,
+                        top = PiSettingsMetrics.sheetHeadTop,
+                        bottom = PiSettingsMetrics.sheetHeadBottom,
+                    ),
+            ) {
+                Text(
+                    acting.displayName,
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    "对这个会话做什么？",
+                    modifier = Modifier.padding(top = PiSettingsMetrics.supportingGap),
+                    style = PiTheme.text.meta,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            SessionActionRow(
+                label = "新建子会话",
+                tone = MaterialTheme.colorScheme.onSurface,
+            ) {
+                actions = null
+                session.newChildSession(acting)
+            }
+            SessionActionRow(
+                label = "✗ 删除",
+                tone = PiTheme.palette.error,
+            ) {
+                actions = null
+                confirming = acting
+            }
+            SessionActionRow(
+                label = "取消",
+                tone = MaterialTheme.colorScheme.onSurface,
+            ) { actions = null }
+        }
     }
 
     // pi always confirms a delete (`docs/sessions.md:48`: "delete with Ctrl+D,
     // then confirm"), and deleting the session pi is currently appending to would
     // leave the engine writing to a removed file — so the active row is refused
     // rather than confirmed.
+    //
+    // v2's delete confirmation is `.b-dlg` with a leading glyph — `!` in error for
+    // an ordinary session, `⊘` in muted for the current one (`SessionsOverlay`:
+    // `glyph={ask==='current'?'⊘':'!'}`) — and its actions are ordered
+    // `[删除, 取消]`, the primary first, which is the opposite of every other
+    // dialog on the board. Both are why this one composes `PiDialog` directly
+    // instead of going through the cancel-first helper.
     val pending = confirming
     if (pending != null) {
         val isActive = activeFile != null && pending.file.name == activeFile
-        AlertDialog(
-            onDismissRequest = { confirming = null },
-            title = { Text("删除会话") },
-            text = {
-                Text(
-                    if (isActive) {
-                        "「${pending.displayName}」是当前会话，pi 正在写入这个文件。先切换到别的会话再删除。"
-                    } else {
-                        "删除「${pending.displayName}」？这个会话会被移除，无法恢复。"
-                    },
-                )
-            },
-            confirmButton = {
-                TextButton(
+        PiDialog(onDismissRequest = { confirming = null }) {
+            PiDialogTitle(
+                title = "删除会话",
+                glyph = if (isActive) "⊘" else "!",
+                glyphTone = if (isActive) PiTheme.palette.muted else PiTheme.palette.error,
+            )
+            PiDialogBody(
+                if (isActive) {
+                    "「${pending.displayName}」是当前会话，pi 正在写入这个文件。先切换到别的会话再删除。"
+                } else {
+                    "删除「${pending.displayName}」？这个会话会被移除，无法恢复。"
+                },
+            )
+            PiDialogActions {
+                PiDialogAction(
+                    label = "删除",
+                    primary = true,
+                    enabled = !isActive,
+                    tone = PiTheme.palette.error,
                     onClick = {
                         session.deleteSession(pending)
                         confirming = null
                     },
-                    enabled = !isActive,
-                ) { Text("删除") }
-            },
-            dismissButton = {
-                TextButton(onClick = { confirming = null }) { Text("取消") }
-            },
+                )
+                PiDialogAction(
+                    label = "取消",
+                    primary = false,
+                    onClick = { confirming = null },
+                )
+            }
+        }
+    }
+}
+
+/**
+ * 长按菜单里的一行（v2 `SessionsOverlay` 的 sheet 内容：`padding:12px 14px`、t14、
+ * 色由调用方按语义给 —— 删除是 error）。
+ */
+@Composable
+private fun SessionActionRow(label: String, tone: Color, onClick: () -> Unit) {
+    Text(
+        text = label,
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(
+                horizontal = PiSettingsMetrics.pageHorizontal,
+                vertical = SESSIONS_ACTION_ROW_PADDING,
+            ),
+        style = MaterialTheme.typography.bodyMedium,
+        color = tone,
+    )
+}
+
+/**
+ * 「+ 新建会话」：v2 的胶囊（`height:42; padding:0 16px; border-radius:999;
+ * background:var(--accent); color:var(--page); gap:7`，图标 16 + 14/600 文字）。
+ *
+ * 用 accent 而不是 M3 FAB 的 `primaryContainer`，是因为 v2 把它画成这一屏上最显眼
+ * 的那一件动作，而且明确没有阴影（`06 §5`：没有阴影）。
+ */
+@Composable
+private fun NewSessionButton(onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .height(SESSIONS_NEW_SESSION_HEIGHT)
+            .clip(PiShapes.badge)
+            .background(MaterialTheme.colorScheme.primary)
+            .clickable(onClick = onClick)
+            .padding(horizontal = SESSIONS_NEW_SESSION_PADDING),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(SESSIONS_NEW_SESSION_GAP),
+    ) {
+        Icon(
+            Icons.Filled.Add,
+            contentDescription = null,
+            modifier = Modifier.size(SESSIONS_NEW_SESSION_ICON),
+            tint = MaterialTheme.colorScheme.onPrimary,
+        )
+        Text(
+            "新建会话",
+            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
+            color = MaterialTheme.colorScheme.onPrimary,
         )
     }
 }
+
+// ------------------------------------------------------- v2 的会话覆盖层取值
+//
+// 每个数都指到 `design-demos/direction-b-v2.html` 的 `SessionsOverlay` 那一处。
+
+/** `SessionsOverlay` 分段控件行：`padding:10px 14px 6px`，`gap:8`。 */
+private val SESSIONS_VIEW_ROW_TOP = 10.dp
+private val SESSIONS_VIEW_ROW_BOTTOM = 6.dp
+private val SESSIONS_VIEW_ROW_GAP = 8.dp
+
+/** `SessionsOverlay` 搜索块：`padding:4px 14px 8px`；框高 36、内 10、gap 8、图标 15。 */
+private val SESSIONS_SEARCH_TOP = 4.dp
+private val SESSIONS_SEARCH_BOTTOM = 8.dp
+private val SESSIONS_SEARCH_HEIGHT = 36.dp
+private val SESSIONS_SEARCH_PADDING = 10.dp
+private val SESSIONS_SEARCH_GAP = 8.dp
+private val SESSIONS_SEARCH_ICON = 15.dp
+
+/** `SessionsOverlay` 筛选行：`gap:7`。 */
+private val SESSIONS_CHIP_GAP = 7.dp
+
+/** `SessionsOverlay` 列表底：`paddingBottom:14`；那句提示 `16px 14px 4px`。 */
+private val SESSIONS_LIST_BOTTOM = 14.dp
+private val SESSIONS_HINT_TOP = 16.dp
+private val SESSIONS_HINT_BOTTOM = 4.dp
+
+/** `SessionsOverlay` 新建按钮：`height:42`、`padding:0 16px`、gap 7、图标 16。 */
+private val SESSIONS_NEW_SESSION_HEIGHT = 42.dp
+private val SESSIONS_NEW_SESSION_PADDING = 16.dp
+private val SESSIONS_NEW_SESSION_GAP = 7.dp
+private val SESSIONS_NEW_SESSION_ICON = 16.dp
+
+/** 按钮那一行：`padding:0 16px 14px`。 */
+private val SESSIONS_NEW_SESSION_INSET = 16.dp
+private val SESSIONS_NEW_SESSION_BOTTOM = 14.dp
+
+/** sheet 里的一行：`padding:12px 14px`。 */
+private val SESSIONS_ACTION_ROW_PADDING = 12.dp
+
+/** `06 §2`「线宽：全篇只有 1px」。 */
+private val SESSIONS_HAIRLINE = 1.dp
 
 /**
  * 分组头：组名 + 本组条数（v2：`padding:14px 14px 6px`，组名 12 正文、条数 12 灰）。

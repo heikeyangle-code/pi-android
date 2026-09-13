@@ -14,7 +14,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -68,21 +67,20 @@ fun PiProjectTrustPrompt(
     onDismiss: () -> Unit,
 ) {
     val palette = PiTheme.palette
-    // 外壳走 v2 的对话框规格（圆角 14 + 表面阶梯 + 15/600 标题，06 §2）；对话框的
+    // 外壳走 v2 的对话框规格（06 §2 的 .b-dlg：330 / 圆角 14 / surf-high / 1px
+    // borderMuted，见 `ui/components/PiDialog.kt`）；对话框的
     // 选项行是 v2 的列表行：等宽符号 + 正文标签 + 12 灰副行，`11px 14px` 内边距。
     PiSettingsDialog(
         onDismissRequest = { if (!busy) onDismiss() },
         title = "信任这个项目？",
-        confirmButton = {},
-        dismissButton = {
-            TextButton(onClick = onDismiss, enabled = !busy) { Text(PackageStrings.CANCEL) }
-        },
-    ) {
-        Column(
-            Modifier
-                .verticalScroll(rememberScrollState())
-                .heightIn(max = PiSettingsMetrics.sheetBodyMax),
-        ) {
+        dismissalLabel = PackageStrings.CANCEL,
+        onDismissButton = { if (!busy) onDismiss() },
+        content = {
+            Column(
+                Modifier
+                    .verticalScroll(rememberScrollState())
+                    .heightIn(max = PiSettingsMetrics.sheetBodyMax),
+            ) {
                 // pi's exact prompt, kept as preformatted text: the second line is
                 // the path pi hashed, and a user may need to copy it.
                 Text(
@@ -144,6 +142,7 @@ fun PiProjectTrustPrompt(
                     style = PiTheme.text.meta,
                     color = palette.dim,
                 )
-        }
-    }
+            }
+        },
+    )
 }

@@ -24,11 +24,9 @@ import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -53,13 +51,15 @@ import app.pi.rpc.TranscriptItem
 import app.pi.runtime.PtyLauncher
 import app.pi.ui.BashRun
 import app.pi.ui.PiSessionViewModel
+import app.pi.ui.PiTopBar
+import app.pi.ui.PiTopBarIcon
 import app.pi.ui.blocks.DiffBlock
 import app.pi.ui.blocks.argString
 import app.pi.ui.blocks.lineCount
 import app.pi.ui.settings.PiSettingsMetrics
 import app.pi.ui.settings.PiSettingsSectionHeader
+import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
-import app.pi.ui.theme.PiV2Layout
 import app.pi.ui.theme.StateChip
 import app.pi.ui.theme.StateTone
 import kotlinx.coroutines.Dispatchers
@@ -134,17 +134,21 @@ fun ProjectScreen(
     val runs = remember(state.transcript, state.bash) { runningCommands(state.transcript, state.bash) }
 
     Column(Modifier.fillMaxSize().padding(contentPadding)) {
-        TopAppBar(
-            title = { Text("工作区") },
+        PiTopBar(
+            title = "工作区",
+            // v2 的副行就是这一屏的定义（`phone29`）：工作区 = 这个会话的项目现场。
+            meta = "这个会话的项目现场",
             actions = {
-                IconButton(onClick = { refreshTick++ }) {
-                    Icon(Icons.Filled.Refresh, contentDescription = "重新读取这个目录的资源")
-                }
+                PiTopBarIcon(
+                    onClick = { refreshTick++ },
+                    contentDescription = "重新读取这个目录的资源",
+                    icon = Icons.Filled.Refresh,
+                )
             },
         )
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(bottom = PiV2Layout.scrollBottomPadding),
+            contentPadding = PaddingValues(bottom = PiSpacing.scrollBottom),
         ) {
             item {
                 CurrentDirectoryCard(
@@ -328,7 +332,7 @@ private fun CurrentDirectoryCard(name: String) {
             .padding(
                 start = PiSettingsMetrics.pageHorizontal,
                 end = PiSettingsMetrics.pageHorizontal,
-                top = PiV2Layout.cardPadding,
+                top = PiSpacing.cardPadding,
             ),
         shape = RoundedCornerShape(PiSettingsMetrics.cardRadius),
         color = MaterialTheme.colorScheme.surfaceContainerLow,

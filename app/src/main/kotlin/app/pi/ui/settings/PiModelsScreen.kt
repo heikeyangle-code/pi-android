@@ -12,17 +12,10 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -42,6 +35,7 @@ import app.pi.packages.PiModelInventory
 import app.pi.packages.PiProviderPresets
 import app.pi.rpc.PiResponses
 import app.pi.runtime.PtyLauncher
+import app.pi.ui.PiTopBar
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
 import kotlinx.coroutines.Dispatchers
@@ -147,14 +141,7 @@ fun PiModelsScreen(
 
     val data = inventory
     Column(Modifier.fillMaxSize()) {
-        TopAppBar(
-            title = { Text("模型") },
-            navigationIcon = {
-                IconButton(onClick = onBack) {
-                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
-                }
-            },
-        )
+        PiTopBar(title = "模型", onBack = onBack)
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(bottom = contentPadding.calculateBottomPadding()),
@@ -238,41 +225,35 @@ fun PiModelsScreen(
 
     val asked = question
     if (asked != null) {
-        AlertDialog(
+        PiSettingsDialog(
             onDismissRequest = { question = null },
-            title = { Text("重启引擎") },
-            text = { Text(asked) },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        question = null
-                        val engine = coordinator
-                        if (engine == null) {
-                            restartNote = "重启没有接上：配置已经保存好，重启 App 或引擎之后生效。"
-                        } else {
-                            scope.launch {
-                                restartNote = when (val outcome = engine.confirm("用户确认重启引擎以加载新模型")) {
-                                    is EngineRestartCoordinator.Outcome.Ok -> {
-                                        // 引擎换了，模型列表要重新问一次；这里不是猜它已经好了。
-                                        onLoadAvailableModels()
-                                        "引擎已重启。新配置的模型现在应该出现在模型列表里了。"
-                                    }
-
-                                    is EngineRestartCoordinator.Outcome.Refused -> outcome.message
-                                    is EngineRestartCoordinator.Outcome.Failed -> outcome.message
-                                }
+            title = "重启引擎",
+            body = asked,
+            confirmationLabel = "重启",
+            onConfirm = {
+                question = null
+                val engine = coordinator
+                if (engine == null) {
+                    restartNote = "重启没有接上：配置已经保存好，重启 App 或引擎之后生效。"
+                } else {
+                    scope.launch {
+                        restartNote = when (val outcome = engine.confirm("用户确认重启引擎以加载新模型")) {
+                            is EngineRestartCoordinator.Outcome.Ok -> {
+                                // 引擎换了，模型列表要重新问一次；这里不是猜它已经好了。
+                                onLoadAvailableModels()
+                                "引擎已重启。新配置的模型现在应该出现在模型列表里了。"
                             }
+
+                            is EngineRestartCoordinator.Outcome.Refused -> outcome.message
+                            is EngineRestartCoordinator.Outcome.Failed -> outcome.message
                         }
-                    },
-                ) { Text("重启") }
+                    }
+                }
             },
-            dismissButton = {
-                TextButton(
-                    onClick = {
-                        question = null
-                        lifecycle.cancelRestart()
-                    },
-                ) { Text("取消") }
+            dismissalLabel = "取消",
+            onDismissButton = {
+                question = null
+                lifecycle.cancelRestart()
             },
         )
     }

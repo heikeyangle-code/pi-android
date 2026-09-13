@@ -746,7 +746,8 @@ private fun RestartConfirmDialog(
     val palette = PiTheme.palette
     val question = (lifecycle as? ExtensionLifecycle.State.AwaitingConfirmation)?.question
         ?: return
-    // 外壳走 v2 的对话框规格（圆角 14 + 表面阶梯 + 15/600 标题）。
+    // 外壳走 v2 的对话框规格（`06 §2` 的 .b-dlg：330 / 圆角 14 / surf-high / 1px
+    // borderMuted，见 `ui/components/PiDialog.kt`）。
     // Dismissal is a cancel, never an implicit confirm: `onDismissRequest`
     // routes to onCancel, matching pi's own "dismissal means no"
     // (`project-trust.ts:90-95`) and, more importantly, never restarting on a
@@ -754,19 +755,22 @@ private fun RestartConfirmDialog(
     PiSettingsDialog(
         onDismissRequest = onCancel,
         title = PackageStrings.RESTART_NEEDED_TITLE,
-        confirmButton = { Button(onClick = onConfirm) { Text(PackageStrings.RESTART_CONFIRM) } },
-        dismissButton = { TextButton(onClick = onCancel) { Text(PackageStrings.RESTART_STAY) } },
-    ) {
-        Column {
-            Text(question, style = PiTheme.text.meta, color = palette.muted)
-            Spacer(Modifier.height(PiSpacing.inline))
-            Text(
-                text = "重启是显式的：在你点下确认之前，App 不会重启引擎。",
-                style = PiTheme.text.meta,
-                color = palette.dim,
-            )
-        }
-    }
+        confirmationLabel = PackageStrings.RESTART_CONFIRM,
+        onConfirm = onConfirm,
+        dismissalLabel = PackageStrings.RESTART_STAY,
+        onDismissButton = onCancel,
+        content = {
+            Column {
+                Text(question, style = PiTheme.text.meta, color = palette.muted)
+                Spacer(Modifier.height(PiSpacing.inline))
+                Text(
+                    text = "重启是显式的：在你点下确认之前，App 不会重启引擎。",
+                    style = PiTheme.text.meta,
+                    color = palette.dim,
+                )
+            }
+        },
+    )
 }
 
 // ---------------------------------------------------------------- install card

@@ -8,15 +8,10 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material3.AlertDialog
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -24,6 +19,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import app.pi.ui.PiTopBar
+import app.pi.ui.PiTopBarIcon
 import app.pi.ui.components.EffectiveKind
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiThemeEntry
@@ -90,6 +87,11 @@ fun SettingsGroupScreen(
      * what has to happen.
      */
     onRestartEngine: (() -> Unit)? = null,
+    /**
+     * 顶栏右侧那个搜索图标（v2 `SettingsGroup` 的 `TopBar right`）。`null` 时不画它，
+     * 因为一个打不开搜索的入口就是第二处「看起来能点但没反应」。
+     */
+    onOpenSearch: (() -> Unit)? = null,
 ) {
     val group = PiSettingsCatalog.group(groupId)
     val sections = remember(groupId, freshness) { buildGroupSections(groupId) }
@@ -98,6 +100,27 @@ fun SettingsGroupScreen(
     var editing by remember { mutableStateOf<PiSetting?>(null) }
     var explaining by remember { mutableStateOf<PiSetting?>(null) }
     var confirming by remember { mutableStateOf<PiSetting?>(null) }
+
+    // 行上的三个动作。抽成 lambda 是因为页面底部还有一处「危险操作」要画同一个
+    // `app.security.emergencyStop` 行（v2 的 `SettingsGroup` 把它固定在页尾），
+    // 两处必须走同一条路径，否则同一个动作会有两种行为。
+    val openRow: (PiSetting) -> Unit = { setting ->
+        val hostAction = hostActions[setting.key]
+        if (hostAction != null) {
+            hostAction()
+        } else if (setting.kind == PiRowKind.Action) {
+            confirming = setting
+        } else if (setting.kind != PiRowKind.Switch) {
+            editing = setting
+        }
+    }
+    val toggleRow: (PiSetting, Boolean) -> Unit = { setting, next ->
+        store.write(setting.key, JsonPrimitive(next))
+        // Switch rows write in place, so they never reach the editor sheet's
+        // callback; a switch the app reads (the thinking toggle, timestamps, tool
+        // expansion) would otherwise stay inert.
+        onSettingWritten(setting.key)
+    }
 
     LaunchedEffect(highlightKey, groupId) {
         if (highlightKey == null) return@LaunchedEffect
@@ -110,12 +133,21 @@ fun SettingsGroupScreen(
     }
 
     Column(Modifier.fillMaxSize()) {
-        TopAppBar(
-            title = { Text(group?.title ?: "设置") },
-            navigationIcon = {
-                IconButton(onClick = onBack) {
-                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
+        PiTopBar(
+            title = group?.title ?: "设置",
+            onBack = onBack,
+            // v2 的分组页顶栏右侧是搜索图标（`phone34`–`phone38` 五台都有）：进了分组
+            // 才发现要找的是另一组时，不用先退回首页。
+            actions = if (onOpenSearch != null) {
+                {
+                    PiTopBarIcon(
+                        onClick = onOpenSearch,
+                        contentDescription = "搜索设置",
+                        icon = Icons.Filled.Search,
+                    )
                 }
+            } else {
+                null
             },
         )
         LazyColumn(
@@ -133,32 +165,42 @@ fun SettingsGroupScreen(
                 PiSettingsCard {
                     section.settings.forEachIndexed { index, setting ->
                         if (index > 0) PiSettingsHairline()
-                        PiSettingRow(
+                        SettingSlot(
                             setting = setting,
-                            valueText = valueOverrides[setting.key]
-                                ?: setting.display(setting.current(store)),
-                            checked = setting.boolIn(store, false),
-                            current = isCurrentValue(setting, store),
+                            store = store,
+                            valueOverrides = valueOverrides,
                             highlighted = setting.key == highlightKey,
-                            onToggle = { next ->
-                                store.write(setting.key, JsonPrimitive(next))
-                                // Switch rows write in place, so they never reach
-                                // the editor sheet's callback; a switch the app
-                                // reads (the thinking toggle, timestamps, tool
-                                // expansion) would otherwise stay inert.
-                                onSettingWritten(setting.key)
-                            },
-                            onOpen = {
-                                val hostAction = hostActions[setting.key]
-                                if (hostAction != null) {
-                                    hostAction()
-                                } else if (setting.kind == PiRowKind.Action) {
-                                    confirming = setting
-                                } else if (setting.kind != PiRowKind.Switch) {
-                                    editing = setting
-                                }
-                            },
-                            onExplainEffect = { explaining = setting },
+                            onToggle = toggleRow,
+                            onOpen = openRow,
+                            onExplain = { explaining = it },
+                        )
+                    }
+                }
+            }
+            // 危险行固定在分组页末尾（v2 `SettingsGroup` 的结构提案，`phone34`–`phone38`
+            // 五台都画了它，标题落款「本版固定在页尾」）。它画的是同一个
+            // `app.security.emergencyStop` 行 —— 不新写一行、不新写文案；已经在某一组
+            // 里的那一页（安全与信任）不再重复画一遍。
+            val danger = PiSettingsCatalog.byKey[DANGER_ROW_KEY]
+            val alreadyShown = sections.any { section ->
+                section.settings.any { it.key == DANGER_ROW_KEY }
+            }
+            if (danger != null && !alreadyShown) {
+                item {
+                    PiSettingsSectionHeader(
+                        label = "危险操作",
+                        count = "1 项",
+                        aside = "本版固定在页尾",
+                    )
+                    PiSettingsCard {
+                        SettingSlot(
+                            setting = danger,
+                            store = store,
+                            valueOverrides = valueOverrides,
+                            highlighted = danger.key == highlightKey,
+                            onToggle = toggleRow,
+                            onOpen = openRow,
+                            onExplain = { explaining = it },
                         )
                     }
                 }
@@ -219,43 +261,64 @@ fun SettingsGroupScreen(
     val openConfirmation = confirming
     if (openConfirmation != null) {
         val run = onRunAction
-        AlertDialog(
+        PiSettingsDialog(
             onDismissRequest = { confirming = null },
-            title = { Text(openConfirmation.title) },
-            text = {
-                Text(
-                    // A caller that passes no dispatcher gets the row's own text plus
-                    // one neutral sentence saying the entry does not work here. It must
-                    // not describe the host wiring: that is internal, and `PiRoot` — the
-                    // only production caller — always passes a dispatcher, so this
-                    // branch is a preview/test path.
-                    if (run == null) {
-                        openConfirmation.description + "\n\n这个入口当前不可用。"
-                    } else {
-                        openConfirmation.description
-                    },
-                )
-            },
-            confirmButton = {
-                if (run == null) {
-                    TextButton(onClick = { confirming = null }) { Text("知道了") }
-                } else {
-                    TextButton(
-                        onClick = {
-                            run(openConfirmation)
-                            confirming = null
-                        },
-                    ) { Text(if (openConfirmation.dangerous) "确认执行" else "执行") }
-                }
-            },
-            dismissButton = if (run == null) {
-                null
+            title = openConfirmation.title,
+            // A caller that passes no dispatcher gets the row's own text plus
+            // one neutral sentence saying the entry does not work here. It must
+            // not describe the host wiring: that is internal, and `PiRoot` — the
+            // only production caller — always passes a dispatcher, so this
+            // branch is a preview/test path.
+            body = if (run == null) {
+                openConfirmation.description + "\n\n这个入口当前不可用。"
             } else {
-                { TextButton(onClick = { confirming = null }) { Text("取消") } }
+                openConfirmation.description
             },
+            confirmationLabel = when {
+                run == null -> "知道了"
+                openConfirmation.dangerous -> "确认执行"
+                else -> "执行"
+            },
+            onConfirm = {
+                run?.invoke(openConfirmation)
+                confirming = null
+            },
+            dismissalLabel = if (run == null) null else "取消",
+            onDismissButton = { confirming = null },
         )
     }
 }
+
+/**
+ * 一行行槽：把 [PiSettingRow] 需要的五个值从 store 与宿主参数里取齐。
+ *
+ * 存在的理由是分组页有两处画行（分区里的卡片、页尾固定的危险行），两处必须用同一套
+ * 取值 —— 尤其是「当前生效值」的 2px accent 条判定，抄一遍就会分叉。
+ */
+@Composable
+private fun SettingSlot(
+    setting: PiSetting,
+    store: PiSettingsStore,
+    valueOverrides: Map<String, String>,
+    highlighted: Boolean,
+    onToggle: (PiSetting, Boolean) -> Unit,
+    onOpen: (PiSetting) -> Unit,
+    onExplain: (PiSetting) -> Unit,
+) {
+    PiSettingRow(
+        setting = setting,
+        valueText = valueOverrides[setting.key] ?: setting.display(setting.current(store)),
+        checked = setting.boolIn(store, false),
+        current = isCurrentValue(setting, store),
+        highlighted = highlighted,
+        onToggle = { next -> onToggle(setting, next) },
+        onOpen = { onOpen(setting) },
+        onExplainEffect = { onExplain(setting) },
+    )
+}
+
+/** v2 固定在分组页页尾的那一行（`phone34`–`phone38`）。 */
+private const val DANGER_ROW_KEY = "app.security.emergencyStop"
 
 /** 一个分区（v2 的 `Section`）：分区头 + 一组行，是 LazyColumn 的一个 item。 */
 private class GroupSection(val label: String, val settings: List<PiSetting>)

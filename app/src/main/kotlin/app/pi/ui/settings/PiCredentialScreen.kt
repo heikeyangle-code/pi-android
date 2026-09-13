@@ -12,21 +12,14 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -46,6 +39,7 @@ import app.pi.packages.PiModelScanner
 import app.pi.packages.PiProviderPresets
 import app.pi.rpc.PiResponses
 import app.pi.runtime.PtyLauncher
+import app.pi.ui.PiTopBar
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
 import kotlinx.coroutines.Dispatchers
@@ -277,14 +271,7 @@ fun PiCredentialScreen(
     }
 
     Column(Modifier.fillMaxSize()) {
-        TopAppBar(
-            title = { Text("厂商凭证") },
-            navigationIcon = {
-                IconButton(onClick = onBack) {
-                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
-                }
-            },
-        )
+        PiTopBar(title = "厂商凭证", onBack = onBack)
 
         Column(
             Modifier
@@ -607,36 +594,30 @@ fun PiCredentialScreen(
 
     val question = restartQuestion
     if (question != null) {
-        AlertDialog(
+        PiSettingsDialog(
             onDismissRequest = { restartQuestion = null },
-            title = { Text("重启引擎") },
-            text = { Text(question) },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        restartQuestion = null
-                        val engine = activeCoordinator
-                        if (engine != null) {
-                            scope.launch {
-                                restartNote = when (val outcome = engine.confirm("用户确认重启引擎")) {
-                                    is EngineRestartCoordinator.Outcome.Ok ->
-                                        "引擎已重启；新厂商现在会出现在模型列表里。"
+            title = "重启引擎",
+            body = question,
+            confirmationLabel = "重启",
+            onConfirm = {
+                restartQuestion = null
+                val engine = activeCoordinator
+                if (engine != null) {
+                    scope.launch {
+                        restartNote = when (val outcome = engine.confirm("用户确认重启引擎")) {
+                            is EngineRestartCoordinator.Outcome.Ok ->
+                                "引擎已重启；新厂商现在会出现在模型列表里。"
 
-                                    is EngineRestartCoordinator.Outcome.Refused -> outcome.message
-                                    is EngineRestartCoordinator.Outcome.Failed -> outcome.message
-                                }
-                            }
+                            is EngineRestartCoordinator.Outcome.Refused -> outcome.message
+                            is EngineRestartCoordinator.Outcome.Failed -> outcome.message
                         }
-                    },
-                ) { Text("重启") }
+                    }
+                }
             },
-            dismissButton = {
-                TextButton(
-                    onClick = {
-                        restartQuestion = null
-                        activeLifecycle.cancelRestart()
-                    },
-                ) { Text("取消") }
+            dismissalLabel = "取消",
+            onDismissButton = {
+                restartQuestion = null
+                activeLifecycle.cancelRestart()
             },
         )
     }

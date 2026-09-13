@@ -21,21 +21,23 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Terminal
+import androidx.compose.material.icons.filled.Timeline
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import app.pi.bridge.DeviceCapabilityStore
 import app.pi.packages.PiPackagesEntryRow
+import app.pi.ui.PiTopBar
+import app.pi.ui.PiTopBarIcon
 import app.pi.ui.device.DeviceCapabilityEntryRow
 import app.pi.ui.theme.PiTheme
 import app.pi.ui.theme.PiThinkingLevel
@@ -89,15 +91,34 @@ fun SettingsHome(
      * invisible.
      */
     onOpenTerminal: (() -> Unit)? = null,
+    /**
+     * 设置 → 模型（[PiModelsScreen]）。v2 的首页把它和终端并排放在「其他」一节
+     * （`direction-b-v2.html:2153-2156`，副行「这台设备上配好的厂商与模型」）。
+     *
+     * 它不是 pi 的一个设置项：这一页列的是这台设备上已经配好的厂商与模型，读的是
+     * `models.json` 与引擎，所以它既不属于 12 个分组，也不在「设备 / 扩展」两节里。
+     * `null` 隐藏这一行（预览与测试用）。
+     */
+    onOpenModels: (() -> Unit)? = null,
+    /**
+     * 设置 → 诊断报告（[app.pi.ui.settings.DiagnosticsScreen]）。v2 的首页把它放在
+     * 「关于」一节、开源许可的下面（`direction-b-v2.html:2162-2164`）。
+     *
+     * 它是运行时与诊断分组里那一行的同一个入口（`app.runtime.diagnostics`），这里再
+     * 给一条路径是因为引擎已经退出时用户最先翻的是「关于」。`null` 隐藏这一行。
+     */
+    onOpenDiagnostics: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
     Column(Modifier.fillMaxSize()) {
-        TopAppBar(
-            title = { Text("设置") },
+        PiTopBar(
+            title = "设置",
             actions = {
-                IconButton(onClick = onOpenSearch) {
-                    Icon(Icons.Filled.Search, contentDescription = "搜索设置")
-                }
+                PiTopBarIcon(
+                    onClick = onOpenSearch,
+                    contentDescription = "搜索设置",
+                    icon = Icons.Filled.Search,
+                )
             },
         )
         LazyColumn(
@@ -143,26 +164,56 @@ fun SettingsHome(
                     }
                 }
             }
-            // The terminal, one ordinary row next to 设备 / 扩展 / 关于 — the same
-            // rank as the other screens that are not pi settings. It has no
-            // section of its own because it is not a category: it is one surface,
-            // and `03-navigation-decision.md:24` asks for exactly one row.
-            if (onOpenTerminal != null) {
+            // 其他：终端 + 模型。v2 的首页把这两行放在同一节（`phone4` / `phone33`），
+            // 因为它们都不是 pi 的设置项 —— 一个是 TUI 回退口，一个是本应用自己扫
+            // 出来的模型清单 —— 也都不属于 12 个分组里的任何一个。
+            if (onOpenTerminal != null || onOpenModels != null) {
                 item {
-                    PiTerminalEntryRow(onClick = onOpenTerminal)
+                    PiSettingsSectionHeader("其他")
+                }
+                item {
+                    PiSettingsCard {
+                        if (onOpenTerminal != null) {
+                            PiTerminalEntryRow(onClick = onOpenTerminal)
+                        }
+                        if (onOpenTerminal != null && onOpenModels != null) {
+                            PiSettingsHairline()
+                        }
+                        if (onOpenModels != null) {
+                            PiEntryRow(
+                                icon = Icons.Filled.Timeline,
+                                title = "模型",
+                                supporting = "这台设备上配好的厂商与模型",
+                                onClick = onOpenModels,
+                            )
+                        }
+                    }
                 }
             }
-            // The licence notices. Not a pi setting and not a pi feature: this app
-            // redistributes a Linux userland, Node, git, proot, a pi engine and a
-            // number of libraries, so the licence texts and the source-availability
-            // statement are ours to publish.
-            if (onOpenLicenses != null) {
+            // 关于：开源许可 + 诊断报告。许可不是 pi 的设置也不是 pi 的功能：这个 App
+            // 分发了一整套 Linux 用户态、Node、git、proot、一个 pi 引擎和许多库，所以
+            // 许可证原文与源码获取方式是**本应用**的义务。诊断报告则是运行时与诊断分组
+            // 里那一行的第二个入口（引擎已经退出时，用户先翻的往往是「关于」）。
+            if (onOpenLicenses != null || onOpenDiagnostics != null) {
                 item {
                     PiSettingsSectionHeader("关于")
                 }
                 item {
                     PiSettingsCard {
-                        PiLicensesEntryRow(onClick = onOpenLicenses)
+                        if (onOpenLicenses != null) {
+                            PiLicensesEntryRow(onClick = onOpenLicenses)
+                        }
+                        if (onOpenLicenses != null && onOpenDiagnostics != null) {
+                            PiSettingsHairline()
+                        }
+                        if (onOpenDiagnostics != null) {
+                            PiEntryRow(
+                                icon = Icons.Filled.Timeline,
+                                title = "诊断报告",
+                                supporting = "引擎最后一次退出、运行时事实与最近的失败",
+                                onClick = onOpenDiagnostics,
+                            )
+                        }
                     }
                 }
             }
@@ -386,19 +437,19 @@ private fun GroupEntry(
 }
 
 /**
- * 终端入口行 —— 终端从底部目的地降下来的那一行（`03-navigation-decision.md:24`）。
+ * 首页上的一行入口：前置图标 + 标题 + 副行 + 「打开」 + chevron
+ * （v2 `SettingsHome` 的 `Row`：`padding:10px 12px`、图标 16 灰、标题 15/500、
+ * 副行 12 灰、尾部值 13、chevron 14）。
  *
- * 形状与 设备 / 扩展 / 关于 三行完全一样（`06 §2` 的 Row：`padding:10px 12px`、前置
- * 图标 16 灰、标题 15/500、副行 12 灰、尾部值 + chevron 14），而且**故意**和它们并列
- * 而不是自成一组：它不是一个类别，是一个面。
- *
- * 副行的话是从原来的工作区页搬过来的**原话**（旧 `WorkbenchScreen.kt:72`）——它是应用里
- * 唯一说明「哪些能力只有原版 TUI 有」的地方（订阅登录、会话导入、需要终端的扩展），
- * 删掉它等于把这些能力从界面上抹掉。`docs/settings-review.md` §9 的教训是这句话不该在
- * 每个 TUI 相关的设置行上重复，而应该只说一次——这里就是那一次。
+ * 「其他」与「关于」两节里的四行形状完全一样，所以这里只写一次。
  */
 @Composable
-private fun PiTerminalEntryRow(onClick: () -> Unit) {
+private fun PiEntryRow(
+    icon: ImageVector,
+    title: String,
+    supporting: String,
+    onClick: () -> Unit,
+) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -411,21 +462,21 @@ private fun PiTerminalEntryRow(onClick: () -> Unit) {
         horizontalArrangement = Arrangement.spacedBy(PiSettingsMetrics.rowGap),
     ) {
         Icon(
-            Icons.Filled.Terminal,
+            icon,
             contentDescription = null,
             tint = PiTheme.palette.muted,
             modifier = Modifier.size(PiSettingsMetrics.searchIconSize),
         )
         Column(Modifier.weight(1f)) {
             Text(
-                "终端",
+                title,
                 style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Medium),
                 color = MaterialTheme.colorScheme.onSurface,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
             Text(
-                "输入 pi 回车进入原版 TUI：订阅登录、会话导入、以及需要终端的扩展都在那边。",
+                supporting,
                 modifier = Modifier.padding(top = PiSettingsMetrics.supportingGap),
                 style = PiTheme.text.meta,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -445,4 +496,24 @@ private fun PiTerminalEntryRow(onClick: () -> Unit) {
             tint = PiTheme.palette.muted,
         )
     }
+}
+
+/**
+ * 终端入口行 —— 终端从底部目的地降下来的那一行（`03-navigation-decision.md:24`）。
+ *
+ * 副行的话是从原来的工作区页搬过来的**原话**（旧 `WorkbenchScreen.kt:72`），比 v2 首页
+ * 上那句「需要终端的扩展在那边」长：它是应用里唯一说明「哪些能力只有原版 TUI 有」的地方
+ * （订阅登录、会话导入、需要终端的扩展），而 v2 的 `06 §5` 只给了那半句。这处文案差异**故意
+ * 保留**并已写进本批的偏差清单等裁决 —— 删掉它就等于把这些能力从界面上抹掉。
+ * `docs/settings-review.md` §9 的教训是这句话不该在每个 TUI 相关的设置行上重复，而应该只
+ * 说一次——这里就是那一次。
+ */
+@Composable
+private fun PiTerminalEntryRow(onClick: () -> Unit) {
+    PiEntryRow(
+        icon = Icons.Filled.Terminal,
+        title = "终端",
+        supporting = "输入 pi 回车进入原版 TUI：订阅登录、会话导入、以及需要终端的扩展都在那边。",
+        onClick = onClick,
+    )
 }

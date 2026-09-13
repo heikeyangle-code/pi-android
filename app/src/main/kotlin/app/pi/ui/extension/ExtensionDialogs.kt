@@ -1,6 +1,5 @@
 package app.pi.ui.extension
 
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -15,7 +14,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -23,7 +21,6 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -33,16 +30,19 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
+import app.pi.ui.components.PiAutoFocus
+import app.pi.ui.components.PiDialog
+import app.pi.ui.components.PiDialogAction
+import app.pi.ui.components.PiDialogActions
+import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
-import app.pi.ui.theme.PiV2Layout
 import kotlin.math.roundToInt
 
 /**
@@ -71,12 +71,10 @@ import kotlin.math.roundToInt
  * ## Shell (`06 §2` 对话框, `phone55`–`phone58`)
  *
  * Max width 330, radius 14, `padding:18px 16px 12px`, a 1 px `borderMuted` rule, no
- * shadow. The board draws this shell itself (`.b-dlg`) rather than through a
- * platform dialog theme, and two of the numbers have no M3 slot — the 18/16/12
- * padding and the footer that sits *below* the button row — so the shell is a plain
- * `Dialog` plus a `Surface`. `Dialog`'s own platform scrim is the board's
- * `rgba(0,0,0,.32)` (`PiSettingsStyle` records the same 0.32 for the M3 dialogs);
- * drawing a second one on top would double it.
+ * shadow. The shell is `ui/components/PiDialog.kt`, shared with the settings
+ * dialogs; the board draws one `.b-dlg` for both, and the two shells had drifted
+ * apart on the background (`surf-low` here, `surf-high` there) before the merge.
+ * The board's own scrim, `rgba(0,0,0,.32)`, is drawn by that component.
  *
  * ## The three states this file has to make readable
  *
@@ -98,15 +96,11 @@ fun ExtensionDialogHost(
     onAnswer: (String, ExtensionAnswer) -> Unit,
 ) {
     if (dialog == null) return
-    Dialog(
-        onDismissRequest = { onAnswer(dialog.id, ExtensionAnswer.Cancelled) },
-        // Both are the defaults, spelled out because they are load-bearing: the
-        // back gesture must answer `cancelled` (pi treats it as Escape), and a tap
-        // outside must do the same rather than leave the request unanswered.
-        properties = DialogProperties(dismissOnBackPress = true, dismissOnClickOutside = true),
-    ) {
-        ExtensionDialogShell(dialog, backlog, onAnswer)
-    }
+    // The window, the scrim and the shell all come from `PiDialog` now (the same
+    // component the settings dialogs use), so this is one `Dialog` per request, not
+    // two nested ones. A dismissal still *answers* the request — pi treats it as
+    // Escape — rather than merely closing a window.
+    ExtensionDialogShell(dialog, backlog, onAnswer)
 }
 
 // ------------------------------------------------------------------- the shell
@@ -117,43 +111,27 @@ private fun ExtensionDialogShell(
     backlog: Int,
     onAnswer: (String, ExtensionAnswer) -> Unit,
 ) {
-    val palette = PiTheme.palette
     // Keyed on the id so a promoted request starts empty instead of carrying the
     // previous extension's answer over.
     var draft by remember(dialog.id) { mutableStateOf(dialog.prefill.orEmpty()) }
 
-    Surface(
-        // `width:100%; max-width:330px` — the cap first, then fill, so a screen
-        // narrower than 330 still gets the full width it has.
-        modifier = Modifier
-            .widthIn(max = DialogMaxWidth)
-            .fillMaxWidth(),
-        shape = RoundedCornerShape(DialogRadius),
-        color = MaterialTheme.colorScheme.surfaceContainerHigh,
-        border = BorderStroke(PiV2Layout.hairline, palette.borderMuted),
-    ) {
-        Column(
-            modifier = Modifier.padding(
-                start = DialogPaddingHorizontal,
-                end = DialogPaddingHorizontal,
-                top = DialogPaddingTop,
-                bottom = DialogPaddingBottom,
-            ),
-        ) {
-            DialogHeading(dialog)
-            DialogMessage(dialog.message)
+    // 外壳与设置页的对话框是**同一个构件**（`ui/components/PiDialog.kt`）：最大宽
+    // 330、圆角 14、`surf-high` 底、1px `borderMuted`、`padding:18px 16px 12px`、
+    // scrim `rgba(0,0,0,.32)`。两边原先各画一套，底色一个 `surf-low` 一个
+    // `surf-high`（`06 §2` 只认 `surf-high`）。
+    PiDialog(onDismissRequest = { onAnswer(dialog.id, ExtensionAnswer.Cancelled) }) {
+        DialogHeading(dialog)
+        DialogMessage(dialog.message)
 
-            when (dialog.method) {
-                ExtensionDialogMethod.Select -> SelectBody(dialog, onAnswer)
-                ExtensionDialogMethod.Input -> InputBody(dialog, draft, { draft = it }, onAnswer)
-                ExtensionDialogMethod.Editor -> EditorBody(dialog, draft, { draft = it }, onAnswer)
-                ExtensionDialogMethod.Confirm -> Unit
-            }
-
-            Spacer(Modifier.height(DialogActionGap))
-            DialogActions(dialog, draft, onAnswer)
-            DialogFooter(dialog, backlog)
+        when (dialog.method) {
+            ExtensionDialogMethod.Select -> SelectBody(dialog, onAnswer)
+            ExtensionDialogMethod.Input -> InputBody(dialog, draft, { draft = it }, onAnswer)
+            ExtensionDialogMethod.Editor -> EditorBody(dialog, draft, { draft = it }, onAnswer)
+            ExtensionDialogMethod.Confirm -> Unit
         }
+
+        DialogActions(dialog, draft, onAnswer)
+        DialogFooter(dialog, backlog)
     }
 }
 
@@ -191,7 +169,7 @@ private fun SelectBody(
             .fillMaxWidth()
             .heightIn(max = DialogListMaxHeight)
             .clip(shape)
-            .border(PiV2Layout.hairline, palette.borderMuted, shape),
+            .border(PiSpacing.hairline, palette.borderMuted, shape),
     ) {
         Column(Modifier.verticalScroll(rememberScrollState())) {
             dialog.options.forEachIndexed { index, option ->
@@ -199,7 +177,7 @@ private fun SelectBody(
                     Box(
                         Modifier
                             .fillMaxWidth()
-                            .height(PiV2Layout.hairline)
+                            .height(PiSpacing.hairline)
                             .background(palette.borderMuted),
                     )
                 }
@@ -309,7 +287,11 @@ private fun DialogHeading(dialog: ExtensionDialog) {
         Text(
             text = buildString {
                 append(dialog.title.ifBlank { dialog.method.fallbackTitle })
-                dialog.remainingSeconds()?.let { append("（${it} 秒）") }
+                // `<title> (5s)` —— pi 自己的写法（`docs/extensions.md` §"Timed
+                // Dialogs with Countdown"、`02-real-content.md:572`），v2 的
+                // `phone13` / `phone57` 也照抄。原先这里写的是「（5 秒）」，与稿子和
+                // pi 的原文都不一致。
+                dialog.remainingSeconds()?.let { append(" (").append(it).append("s)") }
             },
             modifier = Modifier.weight(1f),
             style = PiTheme.text.mono,
@@ -378,61 +360,45 @@ private fun DialogActions(
     draft: String,
     onAnswer: (String, ExtensionAnswer) -> Unit,
 ) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.End),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
+    // 按钮用共享构件（`ui/components/PiDialog.kt` 的 `PiDialogAction`）：v2 的对话框
+    // 按钮只有一套取值（`padding:7px 12px`、圆角 8、主按钮 accent + 600）。
+    PiDialogActions {
         when (dialog.method) {
-            ExtensionDialogMethod.Select -> DialogAction("取消", primary = false) {
-                onAnswer(dialog.id, ExtensionAnswer.Cancelled)
-            }
+            ExtensionDialogMethod.Select -> PiDialogAction(
+                label = "取消",
+                primary = false,
+                onClick = { onAnswer(dialog.id, ExtensionAnswer.Cancelled) },
+            )
 
             ExtensionDialogMethod.Confirm -> {
-                DialogAction("拒绝", primary = false) {
-                    onAnswer(dialog.id, ExtensionAnswer.Confirmed(false))
-                }
-                DialogAction("允许", primary = true) {
-                    onAnswer(dialog.id, ExtensionAnswer.Confirmed(true))
-                }
+                PiDialogAction(
+                    label = "拒绝",
+                    primary = false,
+                    onClick = { onAnswer(dialog.id, ExtensionAnswer.Confirmed(false)) },
+                )
+                PiDialogAction(
+                    label = "允许",
+                    primary = true,
+                    onClick = { onAnswer(dialog.id, ExtensionAnswer.Confirmed(true)) },
+                )
             }
 
             ExtensionDialogMethod.Input,
             ExtensionDialogMethod.Editor,
             -> {
-                DialogAction("取消", primary = false) {
-                    onAnswer(dialog.id, ExtensionAnswer.Cancelled)
-                }
-                DialogAction("确定", primary = true) {
-                    onAnswer(dialog.id, ExtensionAnswer.Value(draft))
-                }
+                PiDialogAction(
+                    label = "取消",
+                    primary = false,
+                    onClick = { onAnswer(dialog.id, ExtensionAnswer.Cancelled) },
+                )
+                PiDialogAction(
+                    label = "确定",
+                    primary = true,
+                    onClick = { onAnswer(dialog.id, ExtensionAnswer.Value(draft)) },
+                )
             }
         }
     }
-}
-
-/**
- * One dialog button: `padding:7px 12px`, radius 8, `14`; the primary one is
- * `accent` at weight 600, the secondary is the text colour.
- *
- * The secondary is deliberately *not* `error`: 拒绝/取消 is a legal answer with the
- * same standing as the primary one, and painting it red would make refusing look
- * like a destructive act (pi's own TUI draws both as plain menu entries).
- */
-@Composable
-private fun DialogAction(label: String, primary: Boolean, onClick: () -> Unit) {
-    val palette = PiTheme.palette
-    Text(
-        text = label,
-        modifier = Modifier
-            .clip(RoundedCornerShape(DialogActionRadius))
-            .clickable(role = Role.Button, onClick = onClick)
-            .padding(horizontal = 12.dp, vertical = 7.dp),
-        style = MaterialTheme.typography.bodyMedium.copy(
-            fontWeight = if (primary) FontWeight.SemiBold else FontWeight.Normal,
-        ),
-        color = if (primary) palette.accent else palette.text,
-    )
 }
 
 /**
@@ -471,7 +437,9 @@ private fun DialogFooter(dialog: ExtensionDialog, backlog: Int) {
  * (`padding:0 10px`, a 38-high single line, a 10/12-padded monospace block) are not
  * M3 slots. The border follows focus: `phone56` captures the field focused, and
  * drawing the focus ring on a field the keyboard is not attached to would claim a
- * focus the user does not have.
+ * focus the user does not have — which is also why the field **asks** for that
+ * focus when it appears (`PiAutoFocus`): a request arrives with the keyboard up,
+ * and the user's next tap is the answer, not a tap into the field.
  *
  * The editor's vertical scroll is M3-free too: `minLines 4` / `maxLines 10` is the
  * existing behaviour and the field scrolls internally once the text passes ten
@@ -491,6 +459,8 @@ private fun ExtField(
     val palette = PiTheme.palette
     val interaction = remember { MutableInteractionSource() }
     val focused by interaction.collectIsFocusedAsState()
+    val focusRequester = remember { FocusRequester() }
+    PiAutoFocus(focusRequester)
     val shape = RoundedCornerShape(FieldRadius)
     Box(
         modifier = Modifier
@@ -499,7 +469,7 @@ private fun ExtField(
             .clip(shape)
             .background(MaterialTheme.colorScheme.surfaceContainerLow)
             .border(
-                width = PiV2Layout.hairline,
+                width = PiSpacing.hairline,
                 color = if (focused) palette.borderAccent else palette.borderMuted,
                 shape = shape,
             )
@@ -509,7 +479,9 @@ private fun ExtField(
         BasicTextField(
             value = value,
             onValueChange = onValueChange,
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .focusRequester(focusRequester),
             textStyle = (if (singleLine) MaterialTheme.typography.bodyMedium else PiTheme.text.mono)
                 .copy(color = palette.text),
             singleLine = singleLine,
@@ -539,25 +511,19 @@ private fun ExtField(
 // -------------------------------------------------------------- the board's numbers
 
 /**
- * `06 §2`「对话框：最大宽 330、圆角 14、`padding:18px 16px 12px`」and the board's
- * button/field/list geometry (`.b-dlg`, `.press` buttons, `select` container).
+ * `06 §2` 的对话框外壳在 `ui/components/PiDialog.kt`（330 / 圆角 14 / `padding:18px
+ * 16px 12px` / surf-high / 1px borderMuted）；这里只剩扩展对话框自己的构件：动作行
+ * 上方 14 的空隙、`select` 的容器、两种输入框的形状。
  *
  * Literals in this file rather than members of a theme object because `ui/theme/`
  * belongs to another batch in this same round; they are the board's own numbers,
  * each cited below.
  */
-private val DialogMaxWidth = 330.dp
-private val DialogRadius = 14.dp
-private val DialogPaddingHorizontal = 16.dp
-private val DialogPaddingTop = 18.dp
-private val DialogPaddingBottom = 12.dp
 
 /** The gap every control and the footer keep from the line above them. */
 private val DialogControlGap = 10.dp
 
-/** `.b-dlg` actions row: `gap:6; margin-top:14`. */
-private val DialogActionGap = 14.dp
-private val DialogActionRadius = 8.dp
+/** `.b-dlg` actions row 的 `gap:6` 与 `margin-top:14` 由 `PiDialogActions` 画。 */
 
 /** `select`'s container: `border-radius:10`, rows `padding:10px 12px`. */
 private val DialogListRadius = 10.dp

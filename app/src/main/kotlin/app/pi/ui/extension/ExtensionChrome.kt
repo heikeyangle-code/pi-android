@@ -19,7 +19,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
-import app.pi.ui.theme.PiV2Layout
 
 /**
  * The fire-and-forget half of pi's extension UI, as chrome.
@@ -44,9 +43,9 @@ import app.pi.ui.theme.PiV2Layout
  * registered. Overflow scrolls instead of wrapping because a second line would
  * push the transcript down every time an extension updated a counter.
  *
- * Its inline margin is v2's page margin (14, `D1`), not the retired
- * `PiSpacing.screen` (16): this row sits directly under the AppBar, one line below
- * the app's own status row, so the two have to share a left edge. The `·` between
+ * Its inline margin is v2's page margin (`PiSpacing.pageHorizontal`, 14, `D1`): this
+ * row sits directly under the AppBar, one line below the app's own status row, so
+ * the two have to share a left edge. The `·` between
  * two entries is `muted`, not `dim`: v2 never draws `--dim` (its punctuation is
  * `--muted`), and `dim` on the canvas sits under the 3:1 the palette keeps for
  * meta text.
@@ -63,7 +62,7 @@ fun ExtensionStatusRow(
             .fillMaxWidth()
             .heightIn(min = PiSpacing.statusRow)
             .horizontalScroll(rememberScrollState())
-            .padding(horizontal = PiV2Layout.pageHorizontal),
+            .padding(horizontal = PiSpacing.pageHorizontal),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         statuses.forEachIndexed { index, status ->
@@ -109,7 +108,7 @@ fun ExtensionWidgetStack(
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = PiV2Layout.pageHorizontal, vertical = 4.dp),
+            .padding(horizontal = PiSpacing.pageHorizontal, vertical = 4.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         widgets.forEach { widget ->
@@ -117,7 +116,7 @@ fun ExtensionWidgetStack(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(WidgetCardRadius),
                 color = palette.cardBg,
-                border = BorderStroke(PiV2Layout.hairline, palette.borderMuted.copy(alpha = 0.35f)),
+                border = BorderStroke(PiSpacing.hairline, palette.borderMuted.copy(alpha = 0.35f)),
             ) {
                 Column(
                     modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),

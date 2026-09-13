@@ -19,15 +19,12 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -45,6 +42,7 @@ import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
+import app.pi.ui.PiTopBar
 import app.pi.ui.components.PiEmptyState
 import app.pi.ui.theme.PiTheme
 
@@ -96,14 +94,7 @@ fun SettingsSearchScreen(
     }
 
     Column(Modifier.fillMaxSize()) {
-        TopAppBar(
-            title = { Text("搜索设置") },
-            navigationIcon = {
-                IconButton(onClick = onBack) {
-                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
-                }
-            },
-        )
+        PiTopBar(title = "搜索设置", onBack = onBack)
         SearchField(
             query = query,
             onQueryChange = { query = it },
@@ -116,6 +107,8 @@ fun SettingsSearchScreen(
                 icon = Icons.Filled.Search,
                 title = "没有匹配的设置",
                 body = "试试字段名（reserveTokens、sessionDir），或者斜杠命令（/compact、/tree）。",
+                // 同会话列表那一对：一次没搜到是「找的东西不在这」，不是 App 的空面。
+                markPi = false,
             )
 
             else -> LazyColumn(

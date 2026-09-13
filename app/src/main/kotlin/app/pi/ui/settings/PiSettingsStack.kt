@@ -4,9 +4,6 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -407,6 +404,13 @@ fun PiSettingsStack(
                 // The same restart the 进程 section's action row asks for, offered
                 // from the badge explanation of a 需重启引擎 row.
                 onRestartEngine = { restartPrompt = true },
+                // The top bar's search icon (v2's group page has one). It raises the
+                // same level-2 search the home's search row does, and the back
+                // handler already knows to return to the group afterwards.
+                onOpenSearch = {
+                    backReturnsToSearch = true
+                    searching = true
+                },
             )
 
             else -> SettingsHome(
@@ -423,6 +427,11 @@ fun PiSettingsStack(
                 onOpenPackages = { packages = true },
                 onOpenLicenses = { licenses = true },
                 onOpenTerminal = onOpenTerminal,
+                // 首页「其他」里的模型行与「关于」里的诊断报告行和分组页里那两条 Action
+                // 行是同一个目的地（`openModels` / `diagnostics`），所以这里只是把已有的
+                // 两个状态开关接上去，不多开任何一页。
+                onOpenModels = openModels,
+                onOpenDiagnostics = { diagnostics = true },
             )
         }
     }
@@ -432,55 +441,46 @@ fun PiSettingsStack(
     // what the engine answered (it refuses on its own while a turn is running, and
     // its sentence is the one worth showing).
     if (restartPrompt) {
-        AlertDialog(
+        PiSettingsDialog(
             onDismissRequest = { restartPrompt = false },
-            title = { Text("重启引擎") },
-            text = {
-                Text(
-                    if (isTurnRunning()) {
-                        "现在有回合正在运行。重启会终止模型调用、工具调用与正在跑的命令，它们都不会恢复；" +
-                            "已写入磁盘的会话不会丢失。"
-                    } else {
-                        "重启会终止正在进行的回合，已写入磁盘的会话不会丢失。"
-                    },
-                )
+            title = "重启引擎",
+            body = if (isTurnRunning()) {
+                "现在有回合正在运行。重启会终止模型调用、工具调用与正在跑的命令，它们都不会恢复；" +
+                    "已写入磁盘的会话不会丢失。"
+            } else {
+                "重启会终止正在进行的回合，已写入磁盘的会话不会丢失。"
             },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        restartPrompt = false
-                        val engine = restartEngine
-                        if (engine == null) {
-                            restartNote = "重启未接入：设置页还没有拿到引擎的重启入口。文件与设置都已保存。"
-                        } else {
-                            scope.launch {
-                                restartNote = when (val outcome = engine("设置里更改了进程开关", false)) {
-                                    is EngineRestartCoordinator.Outcome.Ok ->
-                                        "引擎已重启，新的进程设置已生效。"
+            confirmationLabel = "重启",
+            onConfirm = {
+                restartPrompt = false
+                val engine = restartEngine
+                if (engine == null) {
+                    restartNote = "重启未接入：设置页还没有拿到引擎的重启入口。文件与设置都已保存。"
+                } else {
+                    scope.launch {
+                        restartNote = when (val outcome = engine("设置里更改了进程开关", false)) {
+                            is EngineRestartCoordinator.Outcome.Ok ->
+                                "引擎已重启，新的进程设置已生效。"
 
-                                    is EngineRestartCoordinator.Outcome.Refused -> outcome.message
-                                    is EngineRestartCoordinator.Outcome.Failed -> outcome.message
-                                }
-                            }
+                            is EngineRestartCoordinator.Outcome.Refused -> outcome.message
+                            is EngineRestartCoordinator.Outcome.Failed -> outcome.message
                         }
-                    },
-                ) { Text("重启") }
+                    }
+                }
             },
-            dismissButton = {
-                TextButton(onClick = { restartPrompt = false }) { Text("取消") }
-            },
+            dismissalLabel = "取消",
+            onDismissButton = { restartPrompt = false },
         )
     }
 
     val restartResult = restartNote
     if (restartResult != null) {
-        AlertDialog(
+        PiSettingsDialog(
             onDismissRequest = { restartNote = null },
-            title = { Text("重启引擎") },
-            text = { Text(restartResult) },
-            confirmButton = {
-                TextButton(onClick = { restartNote = null }) { Text("知道了") }
-            },
+            title = "重启引擎",
+            body = restartResult,
+            confirmationLabel = "知道了",
+            onConfirm = { restartNote = null },
         )
     }
 }

@@ -22,7 +22,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -42,7 +41,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import app.pi.ui.components.EffectiveKind
+import app.pi.ui.components.PiAutoFocus
 import app.pi.ui.theme.PiShapes
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
@@ -108,27 +110,21 @@ fun PiEffectiveDialog(
 
         EffectiveKind.Immediate -> return
     }
-    AlertDialog(
+    // v2 的生效说明弹窗（`phone45`）：**标题是设置名**，副行才是生效徽标那个词，
+    // 正文用「「设置名」…」讲清楚，动作是「稍后 / 立即重载」。原先这里把徽标词当标题、
+    // 把设置名塞进正文，结构与稿子正好反过来。
+    PiSettingsDialog(
         onDismissRequest = onDismiss,
-        title = { Text(label) },
-        text = { Text("「$settingTitle」$explanation") },
-        confirmButton = {
-            if (onRunAction != null) {
-                TextButton(
-                    onClick = {
-                        onRunAction()
-                        onDismiss()
-                    },
-                ) { Text(actionLabel) }
-            } else {
-                TextButton(onClick = onDismiss) { Text("知道了") }
-            }
+        title = settingTitle,
+        sub = label,
+        body = "「$settingTitle」$explanation",
+        confirmationLabel = if (onRunAction != null) actionLabel else "知道了",
+        onConfirm = {
+            onRunAction?.invoke()
+            onDismiss()
         },
-        dismissButton = if (onRunAction != null) {
-            { TextButton(onClick = onDismiss) { Text("稍后") } }
-        } else {
-            null
-        },
+        dismissalLabel = if (onRunAction != null) "稍后" else null,
+        onDismissButton = onDismiss,
     )
 }
 
@@ -279,6 +275,9 @@ fun PiNumberEditorSheet(
 
     var value by remember(bounded) { mutableStateOf(bounded) }
     var typed by remember(bounded) { mutableStateOf(bounded.toString()) }
+    // 同文本编辑器：`phone41` 的数字编辑器画的就是「框已聚焦」（1px borderAccent + 光标）。
+    val focusRequester = remember { FocusRequester() }
+    PiAutoFocus(focusRequester)
 
     fun update(next: Int) {
         val clamped = next.coerceIn(low, high)
@@ -331,7 +330,7 @@ fun PiNumberEditorSheet(
                         typed = text
                         text.trim().toIntOrNull()?.let { parsed -> value = parsed.coerceIn(low, high) }
                     },
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier.weight(1f).focusRequester(focusRequester),
                     singleLine = true,
                     label = { Text("精确值") },
                     textStyle = PiTheme.text.mono,
@@ -385,6 +384,9 @@ fun PiTextEditorSheet(
     onDismiss: () -> Unit,
 ) {
     var text by remember(initial) { mutableStateOf(initial) }
+    // 光标落在这个框里并弹键盘：`phone42` 画的就是这个状态（框带 borderAccent 环、末尾有
+    // 光标）。用户打开这一页就是为了改这一格，多一次点击没有意义。
+    val focusRequester = remember { FocusRequester() }
     PiSettingsSheet(onDismiss = onDismiss) {
         Column(
             Modifier
@@ -407,10 +409,14 @@ fun PiTextEditorSheet(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Spacer(Modifier.height(PiSettingsMetrics.sheetHeadBottom))
+            // 只读行不抢焦点：那里没有可输入的东西，弹键盘等于骗人。
+            if (!setting.readOnly) PiAutoFocus(focusRequester)
             OutlinedTextField(
                 value = text,
                 onValueChange = { text = it },
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .focusRequester(focusRequester),
                 singleLine = setting.depth <= 1,
                 readOnly = setting.readOnly,
                 enabled = !setting.readOnly,
@@ -858,7 +864,7 @@ fun PiThemeEditorSheet(
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun PiSettingsSheet(
+internal fun PiSettingsSheet(
     onDismiss: () -> Unit,
     // M3 的 sheet 正文槽是 `ColumnScope.() -> Unit`，所以这里照它的类型收：
     // 传一个 `() -> Unit` 是**不兼容**的（接收者算一个参数），编译期就会报错。
@@ -867,7 +873,10 @@ private fun PiSettingsSheet(
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         shape = PiSettingsSheetShape,
-        containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+        // `06 §2` / `.b-sheet`：底色是 `--surf-high`（`surfaceContainerHigh`），不是
+        // `surf-low` —— 对话框与 sheet 在 v2 里是同一个表面阶，这也是本次对话框合并
+        // 一并收掉的那处不一致。
+        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
         dragHandle = {
             // 抓手：32×3，只画不响应（M3 默认的 4dp 抓手与 22dp 顶距都超出 v2 的规格）。
             Box(

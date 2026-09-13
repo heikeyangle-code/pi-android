@@ -23,7 +23,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.PhoneAndroid
@@ -33,13 +32,11 @@ import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material.icons.filled.TouchApp
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -63,6 +60,8 @@ import app.pi.bridge.DeviceSafStore
 import app.pi.bridge.DeviceShellGuard
 import app.pi.bridge.DeviceShizuku
 import app.pi.bridge.DeviceWorkspace
+import app.pi.ui.PiTopBar
+import app.pi.ui.PiTopBarIcon
 import app.pi.ui.rememberPiScreenVisible
 import app.pi.ui.settings.PiSettingsCardShape
 import app.pi.ui.settings.PiSettingsMetrics
@@ -227,17 +226,15 @@ fun DeviceCapabilityScreen(
     }
 
     Column(Modifier.fillMaxSize()) {
-        TopAppBar(
-            title = { Text("设备能力") },
-            navigationIcon = {
-                IconButton(onClick = onBack) {
-                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
-                }
-            },
+        PiTopBar(
+            title = "设备能力",
+            onBack = onBack,
             actions = {
-                IconButton(onClick = { revision += 1 }) {
-                    Icon(Icons.Filled.Refresh, contentDescription = "刷新状态")
-                }
+                PiTopBarIcon(
+                    onClick = { revision += 1 },
+                    contentDescription = "刷新状态",
+                    icon = Icons.Filled.Refresh,
+                )
             },
         )
 
