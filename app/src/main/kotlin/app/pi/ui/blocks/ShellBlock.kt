@@ -8,6 +8,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import app.pi.rpc.Ansi
 import app.pi.rpc.ToolCall
 import app.pi.rpc.ToolStatus
 import app.pi.ui.theme.PiSpacing
@@ -66,7 +67,17 @@ internal fun ShellBlock(
     // warning line, and never while the result is still partial (`renderers/bash.ts:59-64`,
     // `:142`).
     val bodyText = remember(item.output, fullOutputPath, truncation, item.status) {
-        if (!pending && truncation != null) stripFullOutputFooter(item.output, fullOutputPath) else item.output
+        val text =
+            if (!pending && truncation != null) stripFullOutputFooter(item.output, fullOutputPath) else item.output
+        // pi drops ANSI **at the source**, twice: the bash executor strips every chunk
+        // before it is buffered or streamed (`core/bash-executor.ts:82`), and the display
+        // path strips again on the way out (`core/tools/render-utils.ts:48`). So a pi
+        // surface never shows an escape sequence, and it never invents its own ANSI
+        // renderer either — the 16/256/RGB palette lives only in the HTML exporter
+        // (`core/export-html/ansi-to-html.ts:15-31`). This is the second of those two
+        // strips, in the one place this app draws captured shell text, which is what
+        // makes the two agree instead of relying on the guest having done it.
+        Ansi.strip(text)
     }
     val lines = remember(bodyText) { lineCount(bodyText) }
     val painted = remember(bodyText, fullOutput) {

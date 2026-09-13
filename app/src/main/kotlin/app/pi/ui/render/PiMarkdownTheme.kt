@@ -94,10 +94,10 @@ import com.mikepenz.markdown.model.markdownAlertPadding
  * |---------------------|------------------------------------------------------|
  * | `mdHeading`         | colour of every heading style                        |
  * | `mdLink`            | `TextLinkStyles.style`                               |
- * | `mdLinkUrl`         | not renderable — a terminal prints it in parentheses, a phone shows no URL text. Still resolvable for the link sheet |
+ * | `mdLinkUrl`         | not painted — the app is in pi's *hyperlink-capable* branch, where pi prints only the link text too (see below) |
  * | `mdCode`            | `inlineCode` style colour                            |
- * | `mdCodeBlock`       | `code` style colour, i.e. the fallback body colour    |
- * | `mdCodeBlockBorder` | the code block's border stroke                       |
+ * | `mdCodeBlock`       | body colour of a fence **highlight.js does not know** — pi's uncoloured branch, never a coloured block's base |
+ * | `mdCodeBlockBorder` | the code block's border stroke and its language label |
  * | `mdQuote`           | `quote` style colour (and the quote bar — see below)  |
  * | `mdQuoteBorder`     | the quote bar, which shares the quote colour          |
  * | `mdHr`              | `dividerColor`                                       |
@@ -108,6 +108,45 @@ import com.mikepenz.markdown.model.markdownAlertPadding
  * pi's built-in themes set `mdQuote` and `mdQuoteBorder` to the same value, so
  * for the shipped themes the output is identical; a hand-written pi theme that
  * chooses two different values loses the distinction.
+ *
+ * Three more deserve their reasoning written down, because each is a place where
+ * the phone must *not* add something pi does not have.
+ *
+ * **`mdLinkUrl` is not painted, and that is pi's behaviour here.** pi has one
+ * branch for it: when the terminal can carry a hyperlink, the URL is *not*
+ * printed (the link text carries an OSC 8 sequence instead), and only a
+ * hyperlink-incapable consumer gets `text + linkUrl(" (href)")`
+ * (`packages/tui/src/components/markdown.ts:689-709`). The library's default
+ * annotator wires every link to `LocalUriHandler.openUri`
+ * (`multiplatform-markdown-renderer` 0.45.0, `annotator/AnnotatorSettingsKt`), so
+ * this app *is* a hyperlink-capable consumer: a tapped link opens. Printing the
+ * URL as well would be a second, invented branch. (An earlier revision of this
+ * comment promised the URL "still resolvable for the link sheet" — no such sheet
+ * exists, and none is needed.)
+ *
+ * **A code block has no background.** pi's terminal draws a fence as its three
+ * backticks plus the code, on the transcript's own surface
+ * (`packages/tui/src/components/markdown.ts:520-540`), and its HTML export says
+ * the same in CSS — `.markdown-content pre { background: transparent }` and
+ * `.markdown-content pre code { background: none }`
+ * (`core/export-html/template.css:900-909`). This app used to paint `cardBg`
+ * behind a fence and `infoBg` behind inline code; `infoBg` is pi's *export info
+ * panel* colour (the `export` section of `theme-schema.json`) and was never a code
+ * colour. Both are now transparent, so no pi token is used for a surface pi has
+ * no concept of.
+ *
+ * **A coloured block's base colour is `text`, not `mdCodeBlock`.** When
+ * highlight.js knows the language, pi colours exactly what highlight.js wrapped
+ * and leaves every other character at the terminal's default foreground — no
+ * `theme.fg` is applied to it at all (`theme.ts:1186-1205`) — and the export says
+ * it twice: `.hljs { color: var(--text) }` and `.markdown-content pre code {
+ * color: var(--text) }` (`template.css:959`, `:906-909`). `mdCodeBlock` is
+ * reserved for pi's *uncoloured* branch — a fence with no language, or one
+ * highlight.js does not know (`theme.ts:1085`, `:1193`) — so using it as the base
+ * of a coloured block would paint every un-tokenised character in the theme's
+ * code-block colour (green, in pi's built-in dark theme).
+ * `render/PiMarkdownComponents.kt` makes that choice and `render/PiCodeHighlight.kt`
+ * carries the engine's answer (`PiCodeHighlight.languageKnown`) that decides it.
  *
  * GFM alerts (`> [!NOTE]`, a 0.45.0 feature pi's terminal does not have) are
  * mapped onto pi's own semantic tokens rather than left to Material 3, so no
@@ -140,8 +179,13 @@ internal fun piMarkdownColors(
 ): MarkdownColors =
     DefaultMarkdownColors(
         text = textColor ?: palette.text,
-        codeBackground = palette.cardBg,
-        inlineCodeBackground = palette.infoBg,
+        // pi has no code background on either surface: the terminal's fence is its
+        // own text, and the export is explicit about it (`pre { background:
+        // transparent }`, `pre code { background: none }` — `template.css:900-909`).
+        // Transparent is therefore the faithful value, not a pi token borrowed for
+        // a surface pi does not have.
+        codeBackground = Color.Transparent,
+        inlineCodeBackground = Color.Transparent,
         dividerColor = palette.mdHr,
         tableBackground = palette.cardBg,
         // One value for both slots: the renderer uses this flag for its own

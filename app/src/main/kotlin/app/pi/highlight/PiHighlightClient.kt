@@ -1,6 +1,10 @@
 package app.pi.highlight
 
+import app.pi.ui.render.PiCodeHighlight
 import app.pi.ui.render.PiCodeSpan
+import app.pi.ui.render.PiMermaidArt
+import app.pi.ui.render.PiMermaidRun
+import app.pi.ui.render.piMermaidClassOf
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
@@ -91,51 +95,85 @@ internal class PiHighlightClient(private val credentialFiles: List<File>) {
     /**
      * One request.
      *
-     * @return the spans (possibly empty, which is a definitive answer and is
-     *   cached by the caller), or `null` when the answer cannot be trusted —
-     *   transport failure, malformed reply, or a reply whose character count
-     *   disagrees with the code that was sent.
+     * @return the answer — possibly no spans, which is definitive and is cached by
+     *   the caller, and whose [PiCodeHighlight.languageKnown] is the service's own
+     *   `known` flag, i.e. pi's `supportsLanguage`. `null` means the answer cannot
+     *   be trusted at all: transport failure, malformed reply, or a reply whose
+     *   character count disagrees with the code that was sent. The difference
+     *   matters — `known = false` renders as pi's *uncoloured* branch, while a
+     *   failure must not be cached as if it were an answer.
      */
-    fun fetch(code: String, language: String): List<PiCodeSpan>? {
+    fun fetch(code: String, language: String): PiCodeHighlight? {
         for (attempt in 0..1) {
             val credentials = credentials(force = attempt > 0) ?: run {
                 lastFailure = "读不到 highlight-bridge.json（引擎可能未运行）"
                 return null
             }
-            val reply = runCatching { post(credentials, code, language) }.getOrElse { error ->
+            val payload = JSONObject().put("code", code).put("language", language)
+            val reply = runCatching { post(credentials, "/highlight", payload) }.getOrElse { error ->
                 lastFailure = "${error::class.java.simpleName}: ${error.message}"
+                // A transport failure is how a *restarted* engine announces itself:
+                // the port and token in the credentials we cached belong to a process
+                // that is gone, and nothing will ever answer 401 for them (see the
+                // 401 branch below). Dropping the cache costs one file read on the
+                // next request and is what makes highlighting come back by itself
+                // after the engine is replaced — without it, a single restart would
+                // leave every code block uncoloured for the life of the app process.
+                cached = null
                 return null
             }
-            when (reply) {
-                is Reply.Spans -> {
-                    lastFailure = null
-                    return reply.spans
+            if (reply.status == HTTP_UNAUTHORIZED) {
+                // The engine mints a new token on every start, so a 401 means the
+                // file is worth re-reading — exactly once. A second 401 is a real
+                // failure and the block stays uncoloured.
+                lastFailure = "token 被拒绝（HTTP 401）"
+                if (attempt == 0) {
+                    cached = null
+                    continue
                 }
-                is Reply.Failed -> {
-                    lastFailure = reply.reason
-                    return null
-                }
-                is Reply.Stale -> {
-                    // The engine mints a new token on every start, so a 401 means
-                    // the file is worth re-reading — exactly once. A second 401 is
-                    // a real failure and the block stays plain.
-                    lastFailure = "token 被拒绝（HTTP 401）"
-                    if (attempt == 0) cached = null else return null
-                }
+                return null
             }
+            val body = reply.body ?: run {
+                lastFailure = "响应过大或读取失败（HTTP ${reply.status}）"
+                return null
+            }
+            val json = runCatching { JSONObject(body) }.getOrElse {
+                lastFailure = "响应不是 JSON（HTTP ${reply.status}）"
+                return null
+            }
+            if (reply.status != HTTP_OK || !json.optBoolean("ok", false)) {
+                lastFailure = json.optString("reason", "HTTP ${reply.status}")
+                return null
+            }
+            val data = json.optJSONObject("data") ?: run {
+                lastFailure = "响应缺少 data"
+                return null
+            }
+            if (!data.optBoolean("known", false)) {
+                // `known = false` is the service repeating pi's own
+                // `supportsLanguage` answer: this language is not one highlight.js
+                // has, so there is nothing to colour and the block must render in
+                // pi's *uncoloured* branch. It is a definitive answer, not a
+                // failure — which is why it is carried out as a flag rather than
+                // collapsed into "empty spans" (an empty span list is also what a
+                // real, known language can legitimately produce).
+                lastFailure = null
+                return PiCodeHighlight()
+            }
+            if (data.optInt("codeUnits", -1) != code.length) {
+                // The offsets were measured against a different string than the
+                // one on screen. Dropping them is the only safe move: applying
+                // them would colour the wrong characters.
+                lastFailure = "codeUnits 与代码长度不一致，偏移量不可信"
+                return null
+            }
+            lastFailure = null
+            return PiCodeHighlight(
+                spans = parseSpans(data.optJSONArray("spans"), code.length),
+                languageKnown = true,
+            )
         }
         return null
-    }
-
-    private sealed interface Reply {
-        /** Definitive: these spans (or none) are the answer. */
-        class Spans(val spans: List<PiCodeSpan>) : Reply
-
-        /** The token was rejected; the caller re-reads and tries once more. */
-        object Stale : Reply
-
-        /** The service answered with a refusal or something unusable. */
-        class Failed(val reason: String) : Reply
     }
 
     /**
@@ -149,19 +187,15 @@ internal class PiHighlightClient(private val credentialFiles: List<File>) {
      * sidesteps connection pooling and DNS for what is a fixed, one-shot request
      * to a service on the same device.
      */
-    private fun post(credentials: PiHighlightCredentials, code: String, language: String): Reply {
-        val payload = JSONObject()
-            .put("code", code)
-            .put("language", language)
-            .toString()
-            .toByteArray(Charsets.UTF_8)
+    private fun post(credentials: PiHighlightCredentials, path: String, payload: JSONObject): HttpReply {
+        val body = payload.toString().toByteArray(Charsets.UTF_8)
 
         val head = buildString {
-            append("POST /highlight HTTP/1.1\r\n")
+            append("POST ").append(path).append(" HTTP/1.1\r\n")
             append("Host: 127.0.0.1:").append(credentials.port).append("\r\n")
             append("Authorization: Bearer ").append(credentials.token).append("\r\n")
             append("Content-Type: application/json; charset=utf-8\r\n")
-            append("Content-Length: ").append(payload.size).append("\r\n")
+            append("Content-Length: ").append(body.size).append("\r\n")
             // The service closes every connection; saying so avoids it having to
             // wait out a keep-alive timeout on our socket.
             append("Connection: close\r\n")
@@ -176,33 +210,109 @@ internal class PiHighlightClient(private val credentialFiles: List<File>) {
             socket.connect(InetSocketAddress(InetAddress.getByName(LOOPBACK), credentials.port), CONNECT_TIMEOUT_MS)
             socket.getOutputStream().apply {
                 write(head.toByteArray(Charsets.ISO_8859_1))
-                write(payload)
+                write(body)
                 flush()
             }
-            val reply = readReply(socket.getInputStream())
-            if (reply.status == HTTP_UNAUTHORIZED) return Reply.Stale
-            if (reply.body == null) return Reply.Failed("响应过大或读取失败（HTTP ${reply.status}）")
-            val json = runCatching { JSONObject(reply.body) }.getOrElse {
-                return Reply.Failed("响应不是 JSON（HTTP ${reply.status}）")
-            }
-            if (reply.status != HTTP_OK || !json.optBoolean("ok", false)) {
-                return Reply.Failed(json.optString("reason", "HTTP ${reply.status}"))
-            }
-            val data = json.optJSONObject("data") ?: return Reply.Failed("响应缺少 data")
-            if (!data.optBoolean("known", false)) {
-                // Unknown language and "the language is still loading" are
-                // different answers from the service, but both mean "no colour"
-                // to the caller, and neither should be cached as a failure.
-                return Reply.Spans(emptyList())
-            }
-            if (data.optInt("codeUnits", -1) != code.length) {
-                // The offsets were measured against a different string than the
-                // one on screen. Dropping them is the only safe move: applying
-                // them would colour the wrong characters.
-                return Reply.Failed("codeUnits 与代码长度不一致，偏移量不可信")
-            }
-            return Reply.Spans(parseSpans(data.optJSONArray("spans"), code.length))
+            return readReply(socket.getInputStream())
         }
+    }
+
+    /**
+     * One mermaid render request.
+     *
+     * Same envelope and the same failure contract as [fetch], but the answer is an
+     * *art* or nothing: `null` means "draw the fence's own source", and it covers
+     * every case pi also falls back on — a dead engine, a timeout, a malformed
+     * reply, and a source `grok-mermaid` refuses to draw (`renderable: false`,
+     * which is pi's own `render()` returning `null`). There is nothing to validate
+     * against the input the way `codeUnits` guards a highlight: these runs are a
+     * *drawing* of the source, not offsets into it, so a wrong answer cannot
+     * mis-colour anything — it can only fail to arrive.
+     */
+    fun mermaid(source: String): PiMermaidArt? {
+        for (attempt in 0..1) {
+            val credentials = credentials(force = attempt > 0) ?: run {
+                lastFailure = "读不到 highlight-bridge.json（引擎可能未运行）"
+                return null
+            }
+            val reply = runCatching { post(credentials, "/mermaid", JSONObject().put("source", source)) }
+                .getOrElse { error ->
+                    lastFailure = "${error::class.java.simpleName}: ${error.message}"
+                    // Same reason as in `fetch`: a dead port means the credentials are
+                    // stale, and only re-reading the file can find the new engine.
+                    cached = null
+                    return null
+                }
+            when {
+                reply.status == HTTP_UNAUTHORIZED -> {
+                    lastFailure = "token 被拒绝（HTTP 401）"
+                    if (attempt == 0) cached = null else return null
+                }
+                reply.body == null -> {
+                    lastFailure = "响应过大或读取失败（HTTP ${reply.status}）"
+                    return null
+                }
+                else -> {
+                    val json = runCatching { JSONObject(reply.body) }.getOrElse {
+                        lastFailure = "响应不是 JSON（HTTP ${reply.status}）"
+                        return null
+                    }
+                    if (reply.status != HTTP_OK || !json.optBoolean("ok", false)) {
+                        lastFailure = json.optString("reason", "HTTP ${reply.status}")
+                        return null
+                    }
+                    val data = json.optJSONObject("data") ?: run {
+                        lastFailure = "响应缺少 data"
+                        return null
+                    }
+                    if (!data.optBoolean("renderable", false)) {
+                        // Definitive: pi keeps the original fence here too.
+                        lastFailure = null
+                        return null
+                    }
+                    lastFailure = null
+                    return parseMermaid(data)
+                }
+            }
+        }
+        return null
+    }
+
+    /**
+     * The wire shape of `POST /mermaid`'s rows, checked the way [parseSpans] checks
+     * spans: anything malformed is dropped rather than drawn. A row that is not an
+     * array, a run without text, an unknown class — all of them become "no art" (or,
+     * for a single run, an uncoloured one), because a half-parsed drawing is worse
+     * than the source the user can still read.
+     */
+    private fun parseMermaid(data: JSONObject): PiMermaidArt? {
+        val rowsJson = data.optJSONArray("rows") ?: return null
+        if (rowsJson.length() == 0) return null
+        val rows = ArrayList<List<PiMermaidRun>>(rowsJson.length())
+        for (rowIndex in 0 until rowsJson.length()) {
+            val rowJson = rowsJson.optJSONArray(rowIndex) ?: continue
+            val runs = ArrayList<PiMermaidRun>(rowJson.length())
+            for (runIndex in 0 until rowJson.length()) {
+                val runJson = rowJson.optJSONObject(runIndex) ?: continue
+                if (!runJson.has("text")) continue
+                runs.add(
+                    PiMermaidRun(
+                        text = runJson.optString("text", ""),
+                        kind = piMermaidClassOf(runJson.optString("cls", "")),
+                    ),
+                )
+            }
+            rows.add(runs)
+        }
+        if (rows.isEmpty()) return null
+        val warningsJson = data.optJSONArray("warnings")
+        val warnings = ArrayList<String>(warningsJson?.length() ?: 0)
+        if (warningsJson != null) {
+            for (index in 0 until warningsJson.length()) {
+                warningsJson.optString(index, "").takeIf { it.isNotEmpty() }?.let { warnings.add(it) }
+            }
+        }
+        return PiMermaidArt(rows = rows, warnings = warnings)
     }
 
     private class HttpReply(val status: Int, val body: String?)

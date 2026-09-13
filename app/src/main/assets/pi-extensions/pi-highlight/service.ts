@@ -44,9 +44,11 @@ import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { chmod, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { highlightToRuns, knownLanguages, knowsLanguage, loadState } from "./hljs";
+import { renderArt, type MermaidArt } from "./mermaid";
 
 export const SERVICE_NAME = "pi-android-highlight";
-export const SERVICE_VERSION = "1";
+/** Bumped by the `/mermaid` route. The app never hand-shakes on it — see `reuseExisting`. */
+export const SERVICE_VERSION = "2";
 
 /** Next to the device bridge's 3175, so the two are never confused. */
 export const DEFAULT_PORT = 3176;
@@ -59,6 +61,12 @@ const MAX_BODY_BYTES = 256 * 1024;
 
 /** A fence longer than this renders plain: highlighting it would not be seen anyway. */
 export const MAX_CODE_CHARS = 64 * 1024;
+
+/**
+ * The same cap for mermaid source. `grok-mermaid` already refuses diagrams it cannot
+ * lay out (it returns `null`), so this only bounds what crosses the socket.
+ */
+export const MAX_MERMAID_CHARS = 64 * 1024;
 
 const PORT_ATTEMPTS = 10;
 
@@ -288,6 +296,82 @@ function handleHighlight(response: ServerResponse, request: IncomingMessage): Pr
 	});
 }
 
+/**
+ * `POST /mermaid` — pi's own ` ```mermaid ` rendering.
+ *
+ * pi does not highlight mermaid with highlight.js: it renders the diagram to
+ * box-drawing art with `grok-mermaid` and colours each run by class
+ * (`components/mermaid.ts:38-56`). This route is that first half; the Kotlin side
+ * owns the class → pi-token table, exactly as it owns the hljs scope table for
+ * `/highlight`.
+ *
+ * `renderable: false` is a **definitive** answer, not a failure: it is pi's own
+ * "there is no art to show" (`render` returned `null`), after which pi keeps the
+ * original fence and so does the app. `ENGINE_UNAVAILABLE` is the different case —
+ * `grok-mermaid` itself could not be found next to pi — and is worth naming instead
+ * of letting every diagram silently fall back to source.
+ */
+function handleMermaid(response: ServerResponse, request: IncomingMessage): Promise<void> {
+	return readBody(request).then(async (body) => {
+		if (body.tooLarge) {
+			return fail(
+				response,
+				413,
+				"TOO_LARGE",
+				`请求体超过上限（${MAX_BODY_BYTES} 字节）。`,
+				"mermaid 源码过大时请直接以源码显示，不必渲染。",
+			);
+		}
+		let parsed: { source?: unknown };
+		try {
+			parsed = JSON.parse(body.text ?? "") as { source?: unknown };
+		} catch {
+			return fail(response, 400, "BAD_REQUEST", "请求体不是合法 JSON。");
+		}
+		if (typeof parsed.source !== "string" || parsed.source.trim().length === 0) {
+			return fail(response, 400, "BAD_REQUEST", "缺少 source 字段（字符串，且不能为空）。");
+		}
+		if (parsed.source.length > MAX_MERMAID_CHARS) {
+			return fail(
+				response,
+				413,
+				"TOO_LARGE",
+				`mermaid 源码 ${parsed.source.length} 字符，超过上限 ${MAX_MERMAID_CHARS}。`,
+			);
+		}
+
+		let art: MermaidArt | null;
+		try {
+			art = await renderArt(parsed.source);
+		} catch (error) {
+			return fail(
+				response,
+				503,
+				"ENGINE_UNAVAILABLE",
+				`找不到 grok-mermaid：${error instanceof Error ? error.message : String(error)}。`,
+				"引擎重启后会自动恢复；在此期间 mermaid 围栏以源码显示，这与 pi 的同一个回退一致。",
+			);
+		}
+
+		if (art === null) {
+			return send(response, 200, {
+				ok: true,
+				data: { renderable: false, width: 0, warnings: [] },
+			});
+		}
+		return send(response, 200, {
+			ok: true,
+			data: {
+				renderable: true,
+				width: art.width,
+				// Advisory only: pi shows them next to the art, never instead of it.
+				warnings: art.warnings,
+				rows: art.rows,
+			},
+		});
+	});
+}
+
 function handleHealth(response: ServerResponse, port: number): void {
 	const state = loadState();
 	send(response, 200, {
@@ -328,7 +412,10 @@ async function route(
 	if (path === "/highlight" && request.method === "POST") {
 		return handleHighlight(response, request);
 	}
-	if (path === "/health" || path === "/highlight") {
+	if (path === "/mermaid" && request.method === "POST") {
+		return handleMermaid(response, request);
+	}
+	if (path === "/health" || path === "/highlight" || path === "/mermaid") {
 		return fail(response, 405, "METHOD_NOT_ALLOWED", `${path} 不接受 ${request.method ?? "该"} 方法。`);
 	}
 	return fail(response, 404, "NOT_FOUND", `未知路径 ${path}。`);

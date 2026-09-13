@@ -12,6 +12,8 @@
 
 ## 0. 结论先行
 
+> **本节是审计当时的结论（历史快照）。本轮已按「施工记录」把 D1/D3/D4/D5/D6/D7/D8 修到 pi 行为，D2 经复核裁决为「两侧本就一致、无需改渲染」。要施工清单请直接看 §「施工记录」+ §「pi-highlight 扩展审计」。**
+
 1. **“和 pi 一模一样吗？”——不是，但差异集中在“底色”与“外壳”，不在 token 表上。**
    `hljs scope → pi syntax token` 的映射、语言判定、未知语言降级、流式行为，这四件事是**逐行一致**的（§A）。真正的偏差是：**高亮成功之后，未被 hljs 着色的那些字符，App 用的是 `mdCodeBlock`，pi 用的是 `text`（终端默认）**。
 2. **漏掉最多的三类 pi 上色**：① mermaid 图（4 个 token 的上色整条链路缺失）；② diff 的行色 + 行内词级 `inverse`；③ HTML 导出那一整套（`--syntax*`/`--md*` CSS 变量 + 与 CLI 不同的第二张 hljs 映射表）——第③类对“手机 App”本身不适用，但它是 pi 里真实存在的第二套上色机制，必须记账。
@@ -224,6 +226,8 @@
 
 #### (a) 必须修的保真度缺陷（按严重度）
 
+> **状态（本轮已施工）**：下表是**审计当时**的状态与证据，行号也是当时的；除 **D2 经复核裁决为「无需改渲染」**（见「施工记录」D2 行：App 落在 pi 的同一分支）外，**D1、D3、D4、D5、D6、D7、D8 均已修**，逐条的改动落点与理由见下方「施工记录：本次『修到 1:1』改了什么」。
+
 | ID | 缺陷 | 现状证据 | pi 的权威行为 |
 |---|---|---|---|
 | **D1** | 高亮成功时，未着色字符的基色 = `mdCodeBlock`（dark = 绿 `#B5BD68`） | `PiMarkdownTheme.kt:236`（`code = mono.copy(color = mdCodeBlock)`）、`PiMarkdownComponents.kt:359,375-377`；`read`/`write` 同理 `ReadBlock.kt:81`、`WriteBlock.kt:82` | `theme.ts:1186-1205` 上色分支**只返回 hljs 着好色的行**，其余字符无 ANSI = 终端默认；HTML 导出两处明证 `template.css:959`（`.hljs{color:var(--text)}`）、`:906-909`（`pre code{color:var(--text)}`）。`mdCodeBlock` 只在 `theme.ts:1085`/`:1193`（不上色）出现 |
@@ -256,19 +260,23 @@
 
 | 项 | 说明 |
 |---|---|
-| 语言别名表多 13 项、少 1 项 | §A4；多数是补 hljs 别名（更宽容），少数让 App 对 `.ini/.diff/.nix/.groovy/.dart/.objc` 也高亮 |
-| 围栏 info string 取第一个词 | App 更宽容；pi 会因 ` ```js title=x ` 整块不上色（§A4 #1） |
+| ~~语言别名表多 13 项、少 1 项~~ | **已修（本轮）**：拆表后路径表 = pi 的 58 键（含 `cmake`），围栏不再查别名表 —— 见「别名表机械比对」 |
+| ~~围栏 info string 取第一个词~~ | **已修（本轮）**：`normalize` 只剩 `trim + lowercase`，与 pi 交给 hljs 的字符串一致 |
 | 高亮器缓存/并发结构 | pi 靠 `(text,width)` 行缓存（`markdown.ts:279-281`），App 靠 `remember`+LRU；**两边都不会"每帧重算"以外的行为差异** |
-| `Ansi.parse` 死代码 | `rpc/.../Ansi.kt:68+` 零生产调用（唯一生产调用是同文件 `:46` 的 `strip`，见 `PiListOutput.kt:41`） |
-| `PiThemeFiles.kt:110` 注释"54 个 token" | 实为 51+5=56（笔误） |
+| `Ansi.parse` 仍是零生产调用 | `rpc/.../Ansi.kt:68+`：本轮按 pi 的行为在**渲染侧**接了 `Ansi.strip`（`ShellBlock.kt`、`ToolBodyText.kt`），`parse` 这一半没有对应需求（pi 从不自造 ANSI 渲染）。**处置建议见 §建议修复项 9**：或删 `parse`+`Span`+对应测试，或保留并注明它是给未来"带色输出面"的、已被测试覆盖的工具——我**没有删**，因为整份 `AnsiTest` 要跟着重写，属于 Protocol core 的 CI 面，收益为零、风险不为零 |
+| `PiThemeFiles.kt:110` 注释"54 个 token" | 实为 51+5=56（笔误，未改：越界文件） |
 | pi 内部两张 hljs 映射表不一致（S2 vs S8） | App 选了 TUI 那张，正确 |
-| `PiSyntaxToken.Emphasis/Strong/Link` | pi 的装饰项，App 用 Italic/Bold/Underline 落地（`PiMarkdownComponents.kt:461-465`）——**一致** |
-| 未知语言/无语言 | 两侧都"不猜测、不上色"（`theme.ts:1078-1086` ↔ `PiCodeHighlight.kt:123-137`、`PiMarkdownComponents.kt:424-425`）——**一致** |
+| `PiSyntaxToken.Emphasis/Strong/Link` | pi 的装饰项，App 用 Italic/Bold/Underline 落地（`PiMarkdownComponents.kt:625-630`）——**一致** |
+| 未知语言/无语言 | 两侧都"不猜测、不上色"（`theme.ts:1078-1086` ↔ `PiCodeHighlight.kt:109-151`、`PiMarkdownComponents.kt:538-551`）——**一致** |
 | scope 解析算法 | `exact → prefix(.) → prefix(-) → default(未定义) → 最内层优先` 两侧完全相同（`theme.ts:99-136` ↔ `PiHighlightScopes.kt:64-78`）——**一致** |
+| 行内词级 diff 的编辑脚本 | 分词器与 `equals` 逐条移植 jsdiff，**但搜索算法用 LCS 而非 Myers**：极小编辑脚本不唯一时，"哪个词被标为变化"可能与 pi 不同（两者都是极小解）。见 `DiffBlock.kt:364-402` 的 KDoc |
+| 码块宽度门 / mermaid 开关 | pi 有「图比终端宽 → 显示源码」与 `mermaidRenderingMode`/thinking 两个跳过条件；App 用横向滚动代替宽度门，且看不到消息类型 —— 逐条理由写在 `PiMermaid.kt:44-56` 与 `PiMarkdownComponents.kt:569-589` |
 
 ---
 
 ## 建议修复项（按 1:1 保真度排序）
+
+> **状态：1–7 本轮已全部落地**（落点与理由见「施工记录」），**8 的两条已做一条、一条转建议**，另新增第 9 条（本轮审计发现的真缺陷）。下面是当时的原文，保留作为"为什么这么修"的依据。
 
 1. **D1（最高优先，一行级改动就有肉眼可见效果）**：把"高亮成功"的基色从 `mdCodeBlock` 改为 `palette.text`。
    - 落点：`ui/render/PiMarkdownComponents.kt:357-383` 的 `PiCodeSurface`——`Text` 的 `style` 不再直接用 `model.typography.code`，改为 `model.typography.code.copy(color = palette.text)`；**同时保留**"`isPlaintext(language)` ⇒ 用 `mdCodeBlock`"这一分支（pi 的 `theme.ts:1085`/`:1193` 就是这么分的）。
@@ -284,21 +292,76 @@
    - ANSI：给 `ShellBlock.kt:72-74` 接上 `Ansi.strip`（或在界面上标注"依赖 pi 已剥"）；否则 `Ansi.parse` 白写且一旦上游改动会露字节。
    - Kotlin 别名表 vs `aliases.ts`：加一条机械校验（同 `tools/pi-highlight-check.mjs` 的思路），防止两张表打架。
    - `PiThemeFiles.kt:110` 的"54"改"56"。
+9. **本轮新发现（已修，列出以便回归）**：`PiHighlightClient` 只在 HTTP 401 时重读凭据文件，而**引擎重启后旧端口的连接是被拒、不是 401** ⇒ 一次引擎重启会让本次 App 进程内所有代码块不再上色。已在 `fetch`/`mermaid` 的 transport 失败分支 `cached = null`（下次请求自愈）。回归方式：让引擎重启两次，观察第二个会话的代码块仍然上色。
+10. **仍未改成 1:1 的三处（有意，理由已写进 KDoc）**：`DiffBlock` 的 8% 底 + 独立符号/行号列；`ToolBodyText` 给 `read`/`write` 加行号；`PiMermaid` 用横向滚动代替 pi 的宽度门、且看不到「thinking / 流式 / 开关」三态。加上 §B8-b 的 `PiContrast` 5 派生与 `contextOnTool`。
+
+---
+
+## 施工记录：本次「修到 1:1」改了什么
+
+| # | 落在哪一侧 | 改动（行号为改动后位置） | 为什么现在是 1:1 |
+|---|---|---|---|
+| **D1** | Kotlin | `ui/render/PiCodeHighlight.kt:92-151`（新增结果类型 `PiCodeHighlight(spans, languageKnown)`；`isPlaintext` → `isUnspecified`）、`highlight/PiNodeCodeHighlighter.kt:126-149`、`highlight/PiHighlightClient.kt:92-172`、`ui/render/PiMarkdownComponents.kt:395-449`、`ui/blocks/ToolBodyText.kt:47-91` | pi 的门是 **`supportsLanguage`**（`theme.ts:1080/1088/1192`），不是「围栏有没有写语言名」。引擎的 `known` 现在随 spans 一起回到渲染层：高亮成功分支基色 = `text`（= 终端默认前景），不上色分支 = `mdCodeBlock`（围栏，`:1085`）/ `toolOutput`（read/write，`read.ts:132`）。顺带修掉一个隐藏错位：围栏写 `text`/`plaintext` 时，pi 走「hljs 认识 ⇒ 无底色」，旧实现把它归进不上色分支 |
+| **D2** | 不改渲染，只改 KDoc | `ui/render/PiMarkdownTheme.kt:93-116` | 库的默认 annotator 把链接接到 `LocalUriHandler.openUri`（0.45.0 `annotator/AnnotatorSettingsKt` 的 `getLocalUriHandler` + `openUri`），App 因此落在 pi 的**有超链接能力**分支（`src/components/markdown.ts:692-707`）——该分支 pi 同样不打印 URL 文本。两侧一致；错的是原注释里那句「仍可为链接面板解析」 |
+| **D6** | Kotlin | `ui/render/PiMarkdownTheme.kt:186-190`（行内码/码块底色 → `Color.Transparent`）、`ui/render/PiMarkdownComponents.kt:422-436`（码块底 `Color.Transparent`） | pi 在两种表面上都没有码块背景（终端：围栏就是文字；导出：`template.css:900-909` 明写 `transparent`/`none`）。不再用 pi 令牌去填一个 pi 没有的表面（`infoBg` 本是导出页 info 面板色） |
+| **D7** | Kotlin | `ui/render/PiMarkdownComponents.kt:452-489`（自画 `PiCodeHeader`）、`:429-436`（关掉库 top bar，仍传 `language`/`code` 供无障碍标签） | 语言标签改用 `mdCodeBlockBorder`，与 pi 打印围栏行的令牌一致（`src/components/markdown.ts:522`/`:535`）；复制按钮同色，不引入新色相（它本身是 App 独有功能） |
+| **D8** | Kotlin | `ui/render/PiCodeHighlight.kt:171-283`：路径表 = pi 的 58 键 `extToLang`（含新增 `cmake`），`forPath` 用 pi 的 `split(".").pop()` 语义；围栏 `normalize` 只剩 `trim + lowercase` | 见下「别名表机械比对」 |
+| **D3+D4** | Kotlin | `ui/blocks/DiffBlock.kt:159-410`（整行色、词级反白、jsdiff 分词器移植、配对规则） | 整行 = `toolDiffAdded`/`toolDiffRemoved`（`diff.ts:127-152`）；1 删 1 增配对时对变化片段反白（`:24-79`，含「首片段前导空白不进反白」`:44-60`）；Compose 用「文字=卡片底、底=行色」表达 reverse video（本 App 唯一的文字背景） |
+| **D5** | **扩展（新增路由）+ Kotlin（取色）** | 新增 `pi-extensions/pi-highlight/mermaid.ts`、`service.ts` 的 `/mermaid`；新增 `ui/render/PiMermaid.kt`、`highlight/PiNodeMermaidRenderer.kt`、`ui/render/PiMarkdownComponents.kt:564-604` | pi 的 mermaid 是 `grok-mermaid` 的布局 + 4 个语义类取色（`mermaid.ts:38-56`）。布局留在 guest（同一个 `grok-mermaid@0.2.2`），**取色在 Kotlin**（`PiMermaid.kt` 的 cls→token 与 pi 同表）。`render` 返回 `null`、服务不可达、超时都回退成「直接显示围栏源码」，与 pi 的 `token.raw` 回退一致（`:75-76`） |
+| **ANSI** | Kotlin | `ui/blocks/ShellBlock.kt:68-80`、`ui/blocks/ToolBodyText.kt:47-72` 各接一次 `Ansi.strip`；`rpc/**` **未动** | pi 在源头剥（`bash-executor.ts:82`）并在显示层再剥（`render-utils.ts:48`），且从不自造 ANSI 渲染（16 色只在导出）。App 现在同侧剥、不画 |
+| **HTML 导出那套** | 不动 | — | 按要求保持不碰（原报告 S7/S8） |
+
+### 别名表机械比对（用户点名的未确认项，已查实）
+
+参照物：hljs 10.7.3 的 `lib/languages/*.js` = **191** 个语言文件；扩展 `aliases.ts` = **173** 个别名键；pi `extToLang`（`theme.ts:1106-1165`）= **58** 键；改前的 Kotlin 表 = **73** 键（围栏与路径共用一张）。
+
+| # | 发现 | 证据 | 处置 |
+|---|---|---|---|
+| 1 | 与 pi 共享的 58 个键**取值零分歧** | 58 键逐一比对 | 无需改 |
+| 2 | Kotlin 表**缺 `cmake`** | pi `theme.ts:1149` | **已补**（`.cmake` 现在与 pi 一样高亮） |
+| 3 | Kotlin 表**多出 16 键**（`kts/jsonc/shell/sh-session/console/diff/patch/ini/text/plain/txt/nix/groovy/dart/objectivec/objc`） | 旧 `PiCodeHighlight.kt` 单表两用 | **已通过拆表修掉**：路径表 = pi 的 58 键；围栏归一化 = pi 的 `trim + lowercase`（不再查别名表）。旧表会让 App 给 pi 明确不上色的 `.ini/.diff/.nix/.groovy/.dart/.objc` 上色 |
+| 4 | 5 个**值**不是 hljs 语言：`fish/sass/graphql/hcl` | hljs 无这四个文法 | **保留**：pi 自己的表也这么写，且两侧都在「引擎答 `known:false`」处收敛为不上色（`:1131/1138/1161/1163`） |
+| 5 | `aliases.ts` 与 hljs 实际注册表的一致性由 `tools/pi-highlight-check.mjs` 校验（191/191 语言 + 173 行别名 0 失配） | `hljs.ts:27-30` | Kotlin 侧**现在不再持有任何别名数据**，因此不存在第二份会漂移的表——这是本次比对最有价值的结论 |
+| 6 | 服务自身大小写敏感（`knownLanguages().has(name)` + `LANGUAGE_ALIASES[name]`），而 `hljs.getLanguage` 会小写化 | 旧 `hljs.ts` `resolveLanguageFile` | **已修**：先 `.toLowerCase()`，服务自身即等价于 `supportsLanguage`（Kotlin 侧照旧也小写，两道都有意保留） |
+| 7 | 围栏 info string 的取词规则现与 pi 一致 | pi：`marked@18.0.5` 的 `fences` 给整条 trim 后的 info string；App：`normalize` 只 `trim + lowercase` | 旧实现「取第一个词 + 去 `language-` 前缀 + 查别名表」会让 ` ```js title=x `、` ```language-js ` 上色，而 pi 是纯文本——现已一致 |
+| 8 | mermaid 的取词规则**故意不同**，且与 pi 相同 | pi 的 mermaid transformer 取 info string 的**第一个词**（`components/mermaid.ts:15`） | App 在 `rememberPiMermaidArt` 里用同样的「第一个词小写化」。与上一条不矛盾：pi 自己就是两套规则 |
+
+---
+
+## 附：`pi-highlight` 扩展审计（用户点名：「这个上色扩展有没有什么问题？」）
+
+结论先行：**扩展的核心没有发现必须修的上色缺陷**——它与 pi 用的是同一份 hljs、同一套 scope 语义、同源的语言判定。找到 3 个真问题：2 个已修（1 个在 Kotlin 客户端侧、1 个在扩展侧），1 个建议未改。改扩展的运行期含义见本节末。
+
+| # | 问题 | 证据 | 影响 | 建议 / 处置 |
+|---|---|---|---|---|
+| E1 | **hljs 版本与 scope 语义**是否与 pi 一致 | `hljs.ts:126-156` 用 `createRequire(anchor).resolve("highlight.js/package.json")` 从 pi 自己的包根解析；`hljs.ts:200-209` 对齐 `supportsLanguage`；`PiHighlightScopes.kt:31-57` 与 `theme.ts:1036-1064` 逐条同表 | **同源**：不是「同版本号」而是**同一份模块**（10.7.3），scope 名字不可能漂移；响应还回 `hljs` 版本号供诊断（`service.ts:285`） | 保持。可选加固：让 `tools/pi-highlight-check.mjs` 断言解析到的版本 == pi `package.json` 声明的版本 |
+| E2 | 语言注册方式与 pi 不同 | `hljs.ts:220-241`（按需单文件）vs pi `syntax-highlight.ts:24-68`（20 eager + 余下后台 `import`） | 结果一致（别名由语言定义自带，`resolveLanguageFile` 保证「一语言一文件」）；差别只在 pi 存在「后台加载完成前某语言暂时纯文本」的中间态，本服务没有 | 无需改，`hljs.ts:11-36` 已记录 |
+| E3 | 「未命中语言」与「引擎故障」会不会混成一条 | `service.ts:247-252`（`known:false`，200）vs `:257-273`（hljs 加载失败 → 503）；客户端 `PiHighlightClient.kt:145-152`、`:186-192` | **没有混**：未知语言 = 200 + `known:false`（缓存）；加载失败 = 503（丢弃、不缓存、下次重试）。这正是 D1 需要的区分 | 保持 |
+| E4 | **瞬态 fs 失败被永久缓存** | `hljs.ts:167-183`：`names` 无论成功失败都 `names = set` | `lib/languages` 一次读取失败 ⇒ 该进程此后把**所有**语言都当 unknown，直到引擎重启 | **建议（未改）**：只在成功时赋值 `names`。低概率，但后果是静默降级 |
+| E5 | 凭据陈旧：引擎重启后高亮永久消失 | 客户端旧逻辑只在 HTTP 401 时 `cached = null`；引擎换进程后旧端口的连接是**被拒**而不是 401 | 一个引擎重启就能让本次 App 进程内所有代码块不再上色 | **已修**：`fetch`/`mermaid` 的 transport 失败分支现在 `cached = null`，下次请求重读 `highlight-bridge.json`（自愈） |
+| E6 | 端口 / token 复用有没有退化 | `service.ts:386-410`（复用前做端到端 `/health` 校验）、`:476-492`（close 只删仍带自己 token 的文件）、`:448`（`unref` 不吊住 pi）、`index.ts:37-49`（同进程 `globalThis` 句柄） | 历史上「第二个进程抢端口并覆盖 token 文件、先退出者删掉后者的凭据」的 bug **未回归**；端到端校验还排除了「崩溃进程留下的陈旧文件被当成活服务」 | 保持；建议补一条「同 agent 目录并发启动两个 pi」的测试 |
+| E7 | 并发 | Node 单线程 + `highlightToRuns` 同步（`hljs.ts:260-273`）；共享可变状态只有 `registered`/`names`/`engine`，且都是幂等写入 | 请求天然串行，无数据竞争；客户端侧有 `BoundedWorkers(2, 64)` 限流（`PiNodeCodeHighlighter.kt:51-52`） | 保持 |
+| E8 | 超大代码 / 未闭合围栏 / 超时 | `service.ts:57-61`（256 KB 体）、`:210-217`（64 KB 码 → 413）、`:184-192`（体过大 → 413）；客户端 `PiNodeCodeHighlighter.kt:79-80`（64 KB / 400 行预检）、`PiHighlightClient.kt:281-282`（100 ms 连接 / 150 ms 读） | 不会打爆引擎，也不会让 UI 等；未闭合围栏由 App 侧 200 ms 去抖兜住 | 保持。**残余差异**：pi 有 `trimPartialClosingFences`（`src/components/markdown.ts:146-169`）剪掉流式中的残缺闭合围栏，App 依赖 markdown 解析器 + `retainState`，视觉不闪但非逐位等价 —— 要 1:1 需改 `PiMarkdown.kt`（不在本次范围） |
+| E9 | span 越界 / 重叠 | `html-runs.ts:152-231`（`position` 单调、同 scope 栈相邻合并、零长度不产出）；`PiHighlightClient.kt:250-282`（`0 ≤ start < end ≤ codeUnits`，且 `codeUnits` 必须等于本地长度才接受整份） | 越界被丢弃、长度不符整份丢弃 ⇒ 最坏是**无色**，不会错位；嵌套 scope 靠栈反向取最内层（`PiHighlightScopes.kt:64-69`），不靠重叠 | 保持 |
+| E10 | 重复上色 / 多实例 | 扩展只回 runs/classes，从不在 guest 上色（`html-runs.ts` 是 pi `renderHighlightedHtml` 的行走器**去掉取色**）；mermaid 也只回 `cls`（`mermaid.ts`） | 没有双重上色；同进程不会起第二个服务（`index.ts:37-49`），跨进程由一个服务独占 token 文件（E6） | 保持 |
+
+**扩展改动的运行期含义（重要）**：`app/src/main/assets/pi-extensions/pi-highlight/**` 是**随包资产**，由 pi 在引擎内以扩展形式加载（本仓库不编译它）。本次改了扩展（新增 `/mermaid`、`hljs.ts` 的大小写归一、`SERVICE_VERSION` 1→2），因此：
+
+- **必须让引擎重新加载扩展**（重启引擎，或对引擎执行 `/reload`）才生效。在此之前旧进程只服务 `/highlight`，App 请求 `/mermaid` 会拿到 404 → 客户端按「无 art」回退成直接显示围栏源码，**不报错、不白屏**；
+- `reuseExisting` 只校验 `service` 名与 `/health`、**不校验版本**，所以「装了新资产但没重载」是一个可预期的中间态，不是故障；
+- 协议是**加法**的：`/highlight` 的请求/响应、鉴权顺序、错误信封、降级行为一个字节未动；`/mermaid` 复用同一 token、同一端口、同一 `readBody` 上限与同一把前置鉴权。
 
 ---
 
 ## 不确定清单（附“怎么证实”）
 
-1. **pi-tui 0.85.1 的 `MarkdownCodeTopBar` 具体取哪个色**——本次是从 `PiMarkdownTheme.kt:131-134` 的 KDoc（引库 `elements/MarkdownCodeTopBar.kt:35`）与 `MarkdownColors` 构造推出来的，**没有独立读库源码**（gradle 缓存里只有 `.jar`/`classes.jar`，`find` 已超时中止）。
-   → 证实：解出 `~/.gradle/caches` 里 `multiplatform-markdown-renderer-android-0.45.0` 的 `-sources.jar`（或反编译 `classes.jar` 的 `MarkdownCodeTopBarKt`），确认 header label 用的是 `colors.text` 还是别处。
-2. **App 的 Kotlin 别名表与 `aliases.ts` 是否有冲突键**（例如 `console`、`sh-session`）——本次只做了人工对照，没有机械比对。
-   → 证实：把 `PiCodeHighlight.kt:150-202` 的 `put("k","v")` 与 `aliases.ts` 的 JSON 各导出成 map，取交集比较 value。
+1. ~~**pi-tui 0.85.1 的 `MarkdownCodeTopBar` 具体取哪个色**~~ —— **已查实（本轮）**：`javap -c` 反编译 `multiplatform-markdown-renderer-android-0.45.0/classes.jar` 的 `com/mikepenz/markdown/compose/elements/MarkdownCodeTopBarKt`，其取色指令是 `getLocalMarkdownColors()` → `MarkdownColors.getText-0d7_KjU`，即 top bar 的语言标签**读 `MarkdownColors.text`**。这正是 D7 无法靠配置修、必须自画 header 的原因（改 `MarkdownColors.text` 会连带改正文色）。
+2. ~~**App 的 Kotlin 别名表与 `aliases.ts` 是否有冲突键**~~ —— **已机械比对（本轮）**，结论见上「别名表机械比对」：共享的 58 键零分歧；Kotlin 表缺 `cmake`、多 16 键（已通过拆表消除）；服务侧大小写不等价（已修）。
 3. **pi 的 `highlightAuto` 分支是否被任何生产路径走到**——`syntax-highlight.ts:206` 有 `hljs.highlightAuto`，但全仓库对 `highlight()` 的调用只有 `theme.ts:1093/1201`，两处都**必传** `language`（经过 `supportsLanguage` 校验）。
    → 证实：`grep -rn "highlight(" ` 排除这两处与定义处后若为空，则该分支是库的通用性，不是 pi 的行为；结论"pi 不做自动猜测"成立。
 4. **App 的 markdown 解析是否每 token 重解析整篇**（间接影响流式卡顿）——`com.mikepenz` 库内部用没用 `produceState(content)` 缓存，本次未读库源码；App 侧只确定 `piMarkdownSource`（`PiMarkdown.kt:81`）与五个配置对象（`:93-103`）是 `remember` 的，`retainState=true`/关动画（`:184-185`）已在用。
    → 证实：读 0.45.0 的 `compose/Markdown.kt`（`retainState`/`MarkdownState` 的 produceState 键），或用 `Layout Inspector`/`Trace` 在真机流式时看解析线程占用。
-5. **`mermaidRenderingMode` 的默认值**（决定 D5 的严重度：pi 默认开还是关）——`interactive-mode.ts` 只看到读设置的那一行，未追默认值。
-   → 证实：查 `core/settings-manager.ts` 里 `mermaidRenderingMode` 的默认值与 `/settings` 的选项。
+5. ~~**`mermaidRenderingMode` 的默认值**~~ —— 本轮**部分查实**：D5 已按 pi 的默认路径实现（渲染 art），但 pi 的 `off` 开关与「thinking 块内不渲染」两个条件未在本 App 复现（`rememberPiMermaidArt` 的 KDoc 已写清理由）。要完全 1:1 需要把「设置 + 消息类型」透传到 markdown 渲染点，那要动 `PiMarkdown.kt`（不在本次范围）。
 6. **`renderers/read.ts`/`write.ts` 之外的其它渲染器是否也有高亮**——本次只逐个核对了 `read/write/edit/bash/grep/find/ls/write` 的 import 与 `theme.fg` 行；`grep/find/ls` 未见 `highlightCode`。
    → 证实：对 `dist/core/tools/renderers/*.js.map` 全量 grep `highlightCode`（本次已做，命中 `read`/`write`）。
 7. **引用块的 `mdQuoteBorder` 是否真能被单独绘制**——App 用一个色画条+文字，断言"内置两主题同值 ⇒ 等价"来自 dark.json/light.json 实测（`PiPalette.kt:198-199,261-262`）；但库有没有别的槽位能用 `mdQuoteBorder`，未核。

@@ -8,6 +8,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
+import app.pi.rpc.Ansi
 import app.pi.ui.render.PiCodeLanguage
 import app.pi.ui.render.rememberPiHighlightedCode
 import app.pi.ui.theme.PiTheme
@@ -37,7 +38,13 @@ import app.pi.ui.theme.PiTheme
  * @param lines the body to paint, already capped by the caller (pi's preview count when the
  *   card is merely expanded, the app's budget when it is fully expanded).
  * @param startLine the number of the first line, from pi's `args.offset`.
- * @param path the path pi was asked for; only its extension matters, and only for colour.
+ * @param path the path pi was asked for; only its extension matters, and only for colour;
+ *   the resulting base colour is [app.pi.ui.render.PiHighlightedCode.languageKnown]'s
+ *   decision, not the caller's.
+ * @param color pi's `toolOutput` for this card (the app's contrast-corrected
+ *   `bodyOnTool`), used **only** when highlight.js does not know the language — pi
+ *   uses it in the same place (`read.ts:132`) and leaves a highlighted body
+ *   uncoloured otherwise.
  */
 @Composable
 internal fun SourceLines(
@@ -49,18 +56,32 @@ internal fun SourceLines(
 ) {
     if (lines.isEmpty()) return
     val palette = PiTheme.palette
+    // pi strips ANSI from a tool result before it is displayed anywhere
+    // (`core/tools/render-utils.ts:48`), and a file body is a tool result like any
+    // other: a log file full of colour codes must read as text here, exactly as it
+    // does in pi. Stripping first also keeps the highlight offsets measured against
+    // the text that is actually drawn.
+    val clean = remember(lines) { lines.map { Ansi.strip(it) } }
     // The highlighter is asked for exactly the text that is sliced below, so character
     // offsets stay aligned even when a line was capped with "…".
-    val code = remember(lines) { lines.joinToString("\n") }
+    val code = remember(clean) { clean.joinToString("\n") }
     val language = remember(path) { PiCodeLanguage.forPath(path) }
     val highlighted = rememberPiHighlightedCode(code, language)
-    val numbered = remember(highlighted, lines, startLine, palette.muted) {
-        numberLines(lines, highlighted, startLine, palette.muted)
+    val numbered = remember(highlighted, clean, startLine, palette.muted) {
+        numberLines(clean, highlighted.text, startLine, palette.muted)
     }
     Text(
         text = numbered,
         style = PiTheme.text.mono,
-        color = color,
+        // pi's own branch, on the path side (`read.ts:132`, `write.ts:120`):
+        // `lang ? <highlighted, no colour> : theme.fg("toolOutput", line)`. When
+        // highlight.js knew the language, the characters it did not wrap carry no
+        // colour at all, and the phone's equivalent of "terminal default" is
+        // `text` — not the uncoloured-branch token the caller passes in. A language
+        // that is absent from pi's extension table, or that highlight.js does not
+        // know (`fish`/`sass`/`graphql`/`hcl` — `theme.ts:1131/1138/1161/1163`),
+        // keeps [color], which is `toolOutput` and therefore exactly pi's branch.
+        color = if (highlighted.languageKnown) palette.text else color,
         modifier = modifier,
     )
 }

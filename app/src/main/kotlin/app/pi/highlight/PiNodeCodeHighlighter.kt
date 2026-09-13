@@ -2,9 +2,9 @@ package app.pi.highlight
 
 import android.content.Context
 import app.pi.runtime.PiPaths
+import app.pi.ui.render.PiCodeHighlight
 import app.pi.ui.render.PiCodeHighlighter
 import app.pi.ui.render.PiCodeLanguage
-import app.pi.ui.render.PiCodeSpan
 import java.io.File
 import java.security.MessageDigest
 import java.util.concurrent.locks.ReentrantLock
@@ -23,7 +23,9 @@ import kotlin.concurrent.withLock
  * Contract with the rest of the app:
  *
  *  - it is installed through `LocalPiCodeHighlighter`, and is safe to use before
- *    [attach] (it returns no spans, so code renders in pi's plain block colour);
+ *    [attach] (it answers [PiCodeHighlight] with no spans and `languageKnown =
+ *    false`, so code renders in pi's plain block colour — the branch pi itself
+ *    takes for a language highlight.js does not know);
  *  - **it never throws.** Every failure — engine not started, timeout, malformed
  *    reply, a span outside the code — becomes "no highlighting";
  *  - **the code must be settled.** A fence that is still streaming changes on
@@ -89,8 +91,8 @@ internal object PiNodeCodeHighlighter : PiCodeHighlighter {
 
     private val cacheLock = Any()
 
-    private val cache = object : LinkedHashMap<String, List<PiCodeSpan>>(64, 0.75f, true) {
-        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, List<PiCodeSpan>>): Boolean =
+    private val cache = object : LinkedHashMap<String, PiCodeHighlight>(64, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, PiCodeHighlight>): Boolean =
             size > CACHE_ENTRIES
     }
 
@@ -121,31 +123,34 @@ internal object PiNodeCodeHighlighter : PiCodeHighlighter {
         }
     }
 
-    override fun highlight(code: String, language: String?): List<PiCodeSpan> = try {
+    override fun highlight(code: String, language: String?): PiCodeHighlight = try {
         resolve(code, language)
     } catch (error: Throwable) {
         // The seam's contract is "never throws": an interrupted wait, a missing
         // digest or a bug anywhere below must still leave the block renderable.
-        emptyList()
+        // `languageKnown = false` is the honest answer here — it is pi's
+        // "uncoloured" branch, which is what a block we could not colour must use.
+        PiCodeHighlight()
     }
 
-    private fun resolve(code: String, language: String?): List<PiCodeSpan> {
-        if (PiCodeLanguage.isPlaintext(language) || code.isEmpty()) return emptyList()
-        val name = language ?: return emptyList()
-        if (code.length > MAX_CODE_CHARS || code.count { it == '\n' } > MAX_CODE_LINES) return emptyList()
-        val active = client ?: return emptyList()
+    private fun resolve(code: String, language: String?): PiCodeHighlight {
+        if (PiCodeLanguage.isUnspecified(language) || code.isEmpty()) return PiCodeHighlight()
+        val name = language ?: return PiCodeHighlight()
+        if (code.length > MAX_CODE_CHARS || code.count { it == '\n' } > MAX_CODE_LINES) return PiCodeHighlight()
+        val active = client ?: return PiCodeHighlight()
 
         val key = cacheKey(name, code)
         synchronized(cacheLock) { cache[key] }?.let { return it }
 
-        val spans = workers.submit({ active.fetch(code, name) }, CALLER_WAIT_MS) ?: return emptyList()
+        val answer = workers.submit({ active.fetch(code, name) }, CALLER_WAIT_MS) ?: return PiCodeHighlight()
         // Only definitive answers are cached. A failure must be retried the next
         // time the block is composed, otherwise a block asked for while the engine
         // was still starting would stay uncoloured for the life of the entry.
-        if (spans.size <= MAX_CACHED_SPANS) {
-            synchronized(cacheLock) { cache[key] = spans }
+        // A "known, but no spans" answer *is* definitive and is cached as such.
+        if (answer.spans.size <= MAX_CACHED_SPANS) {
+            synchronized(cacheLock) { cache[key] = answer }
         }
-        return spans
+        return answer
     }
 
     /**
@@ -163,6 +168,16 @@ internal object PiNodeCodeHighlighter : PiCodeHighlighter {
 
     /** Diagnostics for the settings/diagnostics surface; never used on a hot path. */
     fun lastFailure(): String? = client?.lastFailure
+
+    /**
+     * The attached client, or `null` before [attach].
+     *
+     * Exposed for the sibling seam that talks to the same guest service —
+     * [PiNodeMermaidRenderer] — so both features share one credentials read, one
+     * token and one lifetime. It is not for callers that want to highlight: they use
+     * [highlight], which owns the queue, the cache and the fallback.
+     */
+    internal fun attached(): PiHighlightClient? = client
 }
 
 /**
@@ -176,8 +191,8 @@ internal object PiNodeCodeHighlighter : PiCodeHighlighter {
  */
 private class BoundedWorkers(private val threads: Int, private val queueLimit: Int) {
 
-    private class Task(val work: () -> List<PiCodeSpan>?) {
-        var result: List<PiCodeSpan>? = null
+    private class Task(val work: () -> PiCodeHighlight?) {
+        var result: PiCodeHighlight? = null
         var finished: Boolean = false
     }
 
@@ -191,7 +206,7 @@ private class BoundedWorkers(private val threads: Int, private val queueLimit: I
      * @return the work's result, or `null` when the queue was full or the caller's
      *   budget ran out. Both mean "render plain"; neither throws.
      */
-    fun submit(work: () -> List<PiCodeSpan>?, waitMs: Long): List<PiCodeSpan>? {
+    fun submit(work: () -> PiCodeHighlight?, waitMs: Long): PiCodeHighlight? {
         val task = Task(work)
         lock.withLock {
             if (queue.size >= queueLimit) return null

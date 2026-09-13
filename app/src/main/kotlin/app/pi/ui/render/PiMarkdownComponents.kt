@@ -1,18 +1,25 @@
 package app.pi.ui.render
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
@@ -21,8 +28,11 @@ import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.pi.highlight.PiNodeCodeHighlighter
+import app.pi.highlight.PiNodeMermaidRenderer
+import app.pi.ui.theme.PiPalette
 import app.pi.ui.theme.PiTheme
 import com.mikepenz.markdown.compose.LocalReferenceLinkHandler
 import com.mikepenz.markdown.compose.components.MarkdownComponentModel
@@ -51,10 +61,11 @@ import org.intellij.markdown.flavours.gfm.GFMElementTypes
  * The default is the real backend — pi's own highlight.js, served by the guest
  * engine over loopback (`app.pi.highlight.PiNodeCodeHighlighter`). It is safe as
  * a default because it degrades on its own: before [app.pi.highlight.PiNodeCodeHighlighter.attach]
- * runs, and whenever the engine is down, it returns no spans and every block
- * renders in `mdCodeBlock` — which is what pi does for an unknown fence. A caller
- * that wants to be sure of that (or to test the renderer without an engine)
- * provides [PiPlainCodeHighlighter] explicitly.
+ * runs, and whenever the engine is down, it answers with no spans and
+ * `languageKnown = false`, and every block renders in `mdCodeBlock` — which is
+ * exactly pi's branch for a fence whose language highlight.js does not know
+ * (`theme.ts:1085`). A caller that wants to be sure of that (or to test the
+ * renderer without an engine) provides [PiPlainCodeHighlighter] explicitly.
  */
 internal val LocalPiCodeHighlighter = staticCompositionLocalOf<PiCodeHighlighter> {
     PiNodeCodeHighlighter
@@ -354,38 +365,149 @@ private fun PiCodeBlock(model: MarkdownComponentModel) {
     }
 }
 
+/**
+ * One code block: pi's two rendering branches, on a phone.
+ *
+ * pi decides **once**, from the fence's language, and the decision is
+ * highlight.js's own answer (`supportsLanguage`, `theme.ts:1080`) — not "did the
+ * fence name something". [PiHighlightedCode.languageKnown] carries that answer and
+ * picks the base colour:
+ *
+ *  - **known** → the engine coloured what it could, and every character it did not
+ *    wrap keeps `text`, which is what a terminal's default foreground does for pi
+ *    (`theme.ts:1186-1205`; the HTML export says it twice, `template.css:959` and
+ *    `:906-909`);
+ *  - **not known** → pi paints the body itself in `mdCodeBlock` (`theme.ts:1085`),
+ *    which is also this app's answer when the engine cannot be reached at all.
+ *
+ * The chrome follows pi as far as a phone can: the fence's info string is printed
+ * in `mdCodeBlockBorder` (pi prints it as the opening fence line,
+ * `packages/tui/src/components/markdown.ts:522-535`), there is **no** background
+ * (pi has none — `template.css:900-909`), and the border that replaces pi's fence
+ * line keeps that same token.
+ *
+ * A ` ```mermaid ` fence never reaches any of that: pi replaces it with
+ * `grok-mermaid`'s art before the code renderer sees it
+ * (`components/mermaid.ts:60-88`), so the art is drawn instead — as inline code,
+ * which is why the fence's label and border are gone with it.
+ */
 @Composable
 private fun PiCodeSurface(code: String, language: String?, style: TextStyle) {
     val palette = PiTheme.palette
-    val highlighted = rememberPiHighlightedCode(code, PiCodeLanguage.normalize(language))
+    val normalized = remember(language) { PiCodeLanguage.normalize(language) }
+    val mermaid = rememberPiMermaidArt(code, language)
+    if (mermaid != null) {
+        Text(
+            text = piMermaidText(mermaid, palette),
+            // pi hands the art back as inline code, so an unclassed run is
+            // `mdCode`; the class colours sit on top of it — see `PiMermaid.kt`.
+            style = style.copy(color = palette.mdCode),
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState())
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+        )
+        piMermaidWarning(mermaid)?.let { warning ->
+            Text(
+                text = warning,
+                style = MaterialTheme.typography.labelMedium,
+                color = palette.warning,
+                modifier = Modifier.padding(start = 12.dp, end = 12.dp, bottom = 10.dp),
+            )
+        }
+        return
+    }
+    val highlighted = rememberPiHighlightedCode(code, normalized)
     MarkdownCodeBackground(
-        color = palette.cardBg,
+        color = Color.Transparent,
         shape = RoundedCornerShape(12.dp),
         border = BorderStroke(1.dp, palette.mdCodeBlockBorder),
         modifier = Modifier
             .fillMaxWidth()
             .padding(vertical = 8.dp),
-        // The header carries the language and a copy button. pi prints the
-        // language as the fence's opening line; a copy affordance is the one
-        // thing a touch screen can do that a terminal cannot, so it is kept.
-        showHeader = true,
-        language = language,
+        // The library's header reads `MarkdownColors.text`, which is the body colour
+        // — pi prints the fence's info string in `mdCodeBlockBorder`, so the header
+        // is ours ([PiCodeHeader]) and the library's is off. `language`/`code` are
+        // still passed: the library uses them for the block's accessibility label,
+        // which has nothing to do with the top bar.
+        showHeader = false,
+        language = normalized.orEmpty(),
         code = code,
     ) {
+        Column {
+            PiCodeHeader(language = normalized, code = code, palette = palette)
+            Text(
+                text = highlighted.text,
+                style = style.copy(
+                    color = if (highlighted.languageKnown) palette.text else palette.mdCodeBlock,
+                ),
+                modifier = Modifier
+                    .horizontalScroll(rememberScrollState())
+                    .padding(horizontal = 12.dp, vertical = 10.dp),
+            )
+        }
+    }
+}
+
+/**
+ * The fence's info string and a copy affordance, both in pi's token for that line.
+ *
+ * pi prints ` ```<lang> ` in `mdCodeBlockBorder` (`components/markdown.ts:522`,
+ * `:535`). A card is not a terminal line, so the backticks are not drawn — but the
+ * label's colour is pi's, and so is the copy affordance's, which has no counterpart
+ * in pi at all and therefore must not bring a colour of its own. A fence with no
+ * language shows no label, exactly as pi's line would be a bare fence.
+ */
+@Composable
+private fun PiCodeHeader(language: String?, code: String, palette: PiPalette) {
+    val clipboard = LocalClipboardManager.current
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = 12.dp, end = 12.dp, top = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
         Text(
-            text = highlighted,
-            style = style,
+            text = language.orEmpty(),
+            modifier = Modifier.weight(1f, fill = false),
+            style = MaterialTheme.typography.labelMedium,
+            color = palette.mdCodeBlockBorder,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Spacer(Modifier.weight(1f))
+        Text(
+            text = "复制",
+            style = MaterialTheme.typography.labelMedium,
+            color = palette.mdCodeBlockBorder,
             modifier = Modifier
-                .horizontalScroll(rememberScrollState())
-                .padding(horizontal = 12.dp, vertical = 10.dp),
+                .clickable(onClickLabel = "复制代码") { clipboard.setText(AnnotatedString(code)) }
+                .padding(start = 12.dp),
         )
     }
 }
 
 /**
- * Highlighting runs off the main thread and only when the fence names a
- * language: pi skips auto-detection entirely, so a fence without a language
- * costs nothing here either.
+ * A code body ready to draw: the source with the engine's spans applied, plus the
+ * engine's answer to the one question that decides the base colour.
+ *
+ * The two travel together because they come from the same request —
+ * [languageKnown] *is* [PiCodeHighlight.languageKnown] out of that request, and the
+ * text is that same answer already applied. Splitting them into two pieces of state
+ * would let a renderer paint a coloured block with the uncoloured branch's base (or
+ * the reverse) for one frame.
+ */
+internal data class PiHighlightedCode(val text: AnnotatedString, val languageKnown: Boolean)
+
+/**
+ * Highlighting runs off the main thread and only when the fence named something:
+ * pi skips auto-detection entirely (`theme.ts:1078-1086`), so a fence with no info
+ * string costs nothing here either.
+ *
+ * Note the question this asks is only "did the fence name a language" — the
+ * *answer* to "does highlight.js know it" comes back with the spans, because only
+ * the engine can answer it ([PiCodeHighlight.languageKnown]). A named language the
+ * engine does not know is a normal, cached, definitive answer, not a failure.
  *
  * **Streaming fences are debounced; finished ones are not.** A fence a model is
  * still writing changes on every token, so its producer waits [STREAM_SETTLE_MS]
@@ -407,7 +529,7 @@ private fun PiCodeSurface(code: String, language: String?, style: TextStyle) {
  * inherit both of this function's obligations rather than duplicating them.
  */
 @Composable
-internal fun rememberPiHighlightedCode(code: String, language: String?): AnnotatedString {
+internal fun rememberPiHighlightedCode(code: String, language: String?): PiHighlightedCode {
     val palette = PiTheme.palette
     val highlighter = LocalPiCodeHighlighter.current
     // A one-element array rather than state on purpose: this is a marker for the
@@ -415,14 +537,14 @@ internal fun rememberPiHighlightedCode(code: String, language: String?): Annotat
     // snapshot invalidation. Not keyed on `code` either — it exists to tell "this
     // block changed (streaming)" apart from "this block just appeared (final)".
     val hasStreamed = remember { booleanArrayOf(false) }
-    val spans = produceState(
-        initialValue = emptyList<PiCodeSpan>(),
+    val answer = produceState(
+        initialValue = PiCodeHighlight(),
         code,
         language,
         highlighter,
     ) {
-        value = if (PiCodeLanguage.isPlaintext(language)) {
-            emptyList()
+        value = if (PiCodeLanguage.isUnspecified(language)) {
+            PiCodeHighlight()
         } else {
             val isUpdate = hasStreamed[0]
             hasStreamed[0] = true
@@ -430,9 +552,54 @@ internal fun rememberPiHighlightedCode(code: String, language: String?): Annotat
             withContext(Dispatchers.Default) { highlighter.highlight(code, language) }
         }
     }
-    return remember(code, spans.value, palette) {
-        buildPiCodeText(code, spans.value, palette)
+    return remember(code, answer.value, palette) {
+        PiHighlightedCode(
+            text = buildPiCodeText(code, answer.value.spans, palette),
+            languageKnown = answer.value.languageKnown,
+        )
     }
+}
+
+/** The one fence language pi's mermaid transformer claims (`components/mermaid.ts:15`). */
+private const val MERMAID_LANGUAGE = "mermaid"
+
+private val WHITESPACE = Regex("\\s+")
+
+/**
+ * `grok-mermaid`'s art for a ` ```mermaid ` fence, or `null` for everything else —
+ * including every case where the art cannot be had.
+ *
+ * pi runs its mermaid transformer *before* the code-block renderer and only for that
+ * one language (`components/mermaid.ts:14-16`, `:60-88`), which is why this returns
+ * immediately for any other fence. The request has the same shape as the
+ * highlighter's — off the main thread, debounced while the fence is still changing,
+ * and never able to throw — and `null` is pi's own "no art to show": the caller
+ * draws the fence's source instead, exactly as pi keeps `token.raw` (`:75-76`).
+ *
+ * Two of pi's conditions are deliberately not reproduced, because this app cannot
+ * see what they depend on: pi skips mermaid inside an assistant *thinking* block and
+ * while streaming unless the setting allows it (`:63-69`). A settled transcript has
+ * neither state to read here, and a streaming fence is debounced anyway.
+ *
+ * The language test is pi's, word for word: the **first whitespace-separated token**
+ * of the info string, lower-cased. That is not the same rule the highlighter uses —
+ * pi hands the whole info string to highlight.js — and the difference is pi's own:
+ * ` ```mermaid x ` is drawn as a diagram, ` ```js x ` is not highlighted at all.
+ */
+@Composable
+private fun rememberPiMermaidArt(code: String, language: String?): PiMermaidArt? {
+    val isMermaid = remember(language) {
+        language?.trim()?.split(WHITESPACE)?.firstOrNull()?.lowercase() == MERMAID_LANGUAGE
+    }
+    if (!isMermaid) return null
+    val hasStreamed = remember { booleanArrayOf(false) }
+    val art = produceState<PiMermaidArt?>(initialValue = null, code, language) {
+        val isUpdate = hasStreamed[0]
+        hasStreamed[0] = true
+        if (isUpdate) delay(STREAM_SETTLE_MS)
+        value = withContext(Dispatchers.Default) { PiNodeMermaidRenderer.render(code) }
+    }
+    return art.value
 }
 
 /**
@@ -451,7 +618,7 @@ private const val STREAM_SETTLE_MS = 200L
 private fun buildPiCodeText(
     code: String,
     spans: List<PiCodeSpan>,
-    palette: app.pi.ui.theme.PiPalette,
+    palette: PiPalette,
 ): AnnotatedString = buildAnnotatedString {
     append(code)
     for (span in spans) {

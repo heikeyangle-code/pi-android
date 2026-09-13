@@ -97,12 +97,17 @@ export function loadState(): LoadState {
  *  - `PI_ANDROID_HIGHLIGHT_HLJS` exists so the verification harness can point at a
  *    checkout without pretending to be pi.
  *
+ * Exported because `./mermaid` needs the same four roots to find *pi's*
+ * `grok-mermaid`; the alternative was a second copy of this list drifting away
+ * from this one. The env var keeps its historical name (it is a test hook), but
+ * what the list means is "pi's package roots", not "highlight.js" specifically.
+ *
  * Note there is deliberately **no** import of `@earendil-works/pi-coding-agent`
  * here: the extension must stay cheap to activate, and pulling pi's index through
  * jiti at load time would transform a very large module graph for a value that
  * path resolution already provides.
  */
-function anchors(): string[] {
+export function anchors(): string[] {
 	const list: string[] = [];
 	const explicit = process.env.PI_ANDROID_HIGHLIGHT_HLJS;
 	if (explicit && explicit.trim().length > 0) {
@@ -194,10 +199,18 @@ export function knownLanguages(): Set<string> {
  * @return the file to load, or `null` when highlight.js has no such language.
  */
 export function resolveLanguageFile(name: string): string | null {
-	if (knownLanguages().has(name)) {
-		return name;
+	// highlight.js lower-cases the name inside `getLanguage` before looking it up, so
+	// `Kotlin`, `kotlin` and `KOTLIN` are one language to pi. That has to be
+	// reproduced here, because both tables below are keyed in lower case and a caller
+	// passing the fence's spelling through unchanged would otherwise be told a real
+	// language is unknown. (The app's Kotlin side lower-cases too, in
+	// `PiCodeLanguage.normalize`; keeping it in both places is deliberate — *this*
+	// function is the one that claims to answer `supportsLanguage`.)
+	const normalised = name.toLowerCase();
+	if (knownLanguages().has(normalised)) {
+		return normalised;
 	}
-	return LANGUAGE_ALIASES[name] ?? null;
+	return LANGUAGE_ALIASES[normalised] ?? null;
 }
 
 /**

@@ -16,6 +16,12 @@
  * with no code blocks pays nothing at all. The socket is `unref()`ed and the
  * extension starts no timers, so it cannot keep pi alive or wake it up.
  *
+ * A second route, `POST /mermaid`, serves ` ```mermaid ` blocks the same way:
+ * pi draws those with its own `grok-mermaid` rather than with highlight.js
+ * (`components/mermaid.ts:38-56`), so the layout engine stays in the guest and
+ * the class → pi-token colouring stays in Kotlin. That module is not imported
+ * either until the first `/mermaid` request asks for it (`./mermaid`).
+ *
  * The extension registers no tools and no commands: the consumer is the Android
  * app, not the model. It is the mirror image of `pi-android-bridge`, which is
  * the app serving the *model*.
