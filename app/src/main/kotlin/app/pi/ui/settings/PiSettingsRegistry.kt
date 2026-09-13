@@ -382,12 +382,13 @@ object PiSettingsCatalog {
         // is the other half, and the extension refuses to run it outside the TUI
         // (`extensions/llama/index.ts:186-189` returns unless `ctx.mode === "tui"`;
         // `ctx.ui.custom()` is a documented no-op in RPC mode). The description
-        // has to say which half is missing rather than promise both.
+        // states what this form does and stops there: "there is more in the
+        // terminal" is said once, on the workbench terminal
+        // (`WorkbenchScreen.kt`), not repeated by every TUI-adjacent row.
         PiSetting(
             key = "app.localModels.manage",
             title = "本地模型（llama.cpp）",
-            description = "配置 pi 使用的 llama.cpp router 端点（默认 http://127.0.0.1:8080）。" +
-                "管理本地模型请在 工作区 → 终端 里做。",
+            description = "配置 pi 使用的 llama.cpp router 端点（默认 http://127.0.0.1:8080）。",
             kind = PiRowKind.Action,
             group = G_MODEL,
             section = "凭证",
@@ -706,7 +707,7 @@ object PiSettingsCatalog {
         // `sessionDir` is deliberately absent even though pi has the key
         // (`settings-manager.ts:150`, read at `main.ts:675`). This app pins the
         // session root on the command line *and* in the environment
-        // (`PiEngineHost.kt:279` `--session-dir`, `:313`
+        // (`PiEngineHost.kt:275` `--session-dir`, `:307`
         // `PI_CODING_AGENT_SESSION_DIR`), and pi's precedence is
         // `--session-dir` > `PI_CODING_AGENT_SESSION_DIR` > the setting
         // (`main.ts:670-676`, `cli/args.ts:431`), so a value written here could
@@ -714,24 +715,14 @@ object PiSettingsCatalog {
         // it real means dropping both launch inputs and teaching
         // `PiSessionStore` to list the per-cwd directories as well; see
         // `docs/settings-review.md` §7.5.
-        // pi has this behaviour, but only in its interactive TUI: `/import` is
-        // handled there and nowhere else (`interactive-mode.ts:6107` parses the
-        // argument, `:6122` calls `runtimeHost.importFromJsonl`), while the
-        // `RpcCommand` union has no import command at all (`rpc-types.ts:20-74`).
-        // The row is therefore an entry point to the one surface that can run it —
-        // pi's own TUI, which the workbench terminal reaches because `pi` is on the
-        // guest's `PATH` and the user types it there — not a confirmation dialog for
-        // work that nothing performs.
-        PiSetting(
-            key = "app.sessions.import",
-            title = "导入会话（仅终端）",
-            description = "从导出的会话文件恢复一个会话，会替换当前会话。" +
-                "点「执行」会切到 工作区 → 终端，输入 pi 后运行 /import <path.jsonl>。",
-            kind = PiRowKind.Action,
-            group = G_SESSIONS,
-            section = "动作",
-            aliases = listOf("import", "jsonl"),
-        ),
+        //
+        // `app.sessions.import` used to sit here as a signpost to pi's own TUI
+        // (`/import` is TUI-only: `interactive-mode.ts:6107-6122`, and the
+        // `RpcCommand` union has no import command, `rpc-types.ts:20-74`). It was
+        // removed with the same rule that removed 27 TUI-only keys: a row that can
+        // only say "go somewhere else" is not a setting. The one sentence that has
+        // to exist for discovery lives on the workbench terminal
+        // (`WorkbenchScreen.kt`), not once per row here.
         PiSetting(
             key = "app.sessions.resumeLast",
             title = "启动续接最近会话",
@@ -1263,22 +1254,14 @@ object PiSettingsCatalog {
             defaultValue = bool(true),
             aliases = listOf("telemetry", "privacy"),
         ),
-        // pi has the changelog, but only behind a built-in TUI command:
-        // `interactive-mode.ts:3022-3025` dispatches `/changelog` to
-        // `handleChangelogCommand`, and built-ins are not reachable over RPC
-        // (`get_commands` excludes them, `rpc-types.ts:20-74` has no changelog
-        // command). The row therefore navigates to the workbench terminal, where the
-        // user runs `pi` and then the command — that being the only surface that can
-        // show it.
-        PiSetting(
-            key = "app.about.changelog",
-            title = "查看更新日志（仅终端）",
-            description = "点「执行」会切到 工作区 → 终端，输入 pi 后运行 /changelog。",
-            kind = PiRowKind.Action,
-            group = G_ABOUT,
-            section = "更新",
-            aliases = listOf("changelog"),
-        ),
+        // `app.about.changelog` was the other signpost to pi's own TUI: the
+        // changelog is behind the built-in `/changelog` (`interactive-mode.ts:3022-3025`)
+        // and built-ins are not reachable over RPC (`get_commands` excludes them,
+        // `rpc-types.ts:20-74` has no changelog command), so the row could only
+        // navigate to the terminal and name the command. It was removed with the
+        // TUI-only rows for the same reason as `app.sessions.import` above, and the
+        // discovery sentence now lives once on the workbench terminal
+        // (`WorkbenchScreen.kt`).
         // Five rows were removed from this group on purpose, because pi has no
         // counterpart for any of them and nothing in the app implements them either:
         //

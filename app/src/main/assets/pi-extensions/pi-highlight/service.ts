@@ -41,7 +41,7 @@
 
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
-import { chmod, mkdir, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { highlightToRuns, knownLanguages, knowsLanguage, loadState } from "./hljs";
 
@@ -365,7 +365,69 @@ export interface StartOptions {
  * Start the service. Idempotence is the caller's problem (`./index` keeps one
  * instance per process); this function always creates a server.
  */
+/**
+ * Reuse a highlight service that is already serving this agent directory, or null.
+ *
+ * ## Why this exists
+ *
+ * Two pi processes share one agent dir: the app's RPC engine, and a `pi` TUI the
+ * user starts in the terminal (`app/src/main/kotlin/app/pi/runtime/PtyLauncher.kt`).
+ * Both load this extension, and both used to become a *server*: the second one
+ * found the port taken, took the next free one (`listen` below) and **overwrote the
+ * same token file**; then the first one exited and `close` deleted that file —
+ * which by then belonged to the second one. The app's highlighter, which reads the
+ * token file, silently lost its credentials and fell back to plain text.
+ *
+ * Reusing a live service keeps exactly one owner of the file. The check is
+ * deliberately an end-to-end one — read the file, then ask that port's `/health`
+ * with that token — because a stale file from a crashed process is exactly the case
+ * that must *not* be treated as a live service.
+ */
+async function reuseExisting(options: StartOptions): Promise<HighlightServiceHandle | null> {
+	for (const path of options.tokenFilePaths ?? defaultTokenPaths()) {
+		const raw = await readFile(path, "utf8").catch(() => undefined);
+		if (raw === undefined) continue;
+		let parsed: { service?: unknown; port?: unknown; token?: unknown };
+		try {
+			parsed = JSON.parse(raw) as typeof parsed;
+		} catch {
+			continue;
+		}
+		if (parsed.service !== SERVICE_NAME) continue;
+		if (typeof parsed.token !== "string" || parsed.token.length === 0) continue;
+		if (typeof parsed.port !== "number" || !(parsed.port > 0)) continue;
+		if (!(await isServing(parsed.port, parsed.token))) continue;
+		return {
+			port: parsed.port,
+			token: parsed.token,
+			tokenFiles: [path],
+			// Not ours to close: the process that started it owns it, and this handle
+			// must not remove a token file another live service is using.
+			async close(): Promise<void> {},
+		};
+	}
+	return null;
+}
+
+/** `GET /health` with the file's token — the token check precedes the route. */
+async function isServing(port: number, token: string): Promise<boolean> {
+	try {
+		const response = await fetch(`http://127.0.0.1:${port}/health`, {
+			method: "GET",
+			headers: { authorization: `Bearer ${token}` },
+			signal: AbortSignal.timeout(1_500),
+		});
+		if (!response.ok) return false;
+		const body = (await response.json().catch(() => null)) as { ok?: unknown } | null;
+		return body?.ok === true;
+	} catch {
+		return false;
+	}
+}
+
 export async function startHighlightService(options: StartOptions = {}): Promise<HighlightServiceHandle> {
+	const existing = await reuseExisting(options);
+	if (existing) return existing;
 	const token = randomBytes(32).toString("base64url");
 	const requested = options.port ?? Number(process.env.PI_ANDROID_HIGHLIGHT_PORT ?? DEFAULT_PORT);
 	const server = createServer((request, response) => {
@@ -413,6 +475,19 @@ export async function startHighlightService(options: StartOptions = {}): Promise
 		tokenFiles,
 		async close(): Promise<void> {
 			for (const path of tokenFiles) {
+				// Delete only a file that still carries *our* token. Another process can
+				// have written this same path after us, and removing its file would strip
+				// the app's credentials while that service is still serving.
+				const current = await readFile(path, "utf8").catch(() => undefined);
+				if (current !== undefined) {
+					let parsed: { token?: unknown } | null = null;
+					try {
+						parsed = JSON.parse(current) as { token?: unknown };
+					} catch {
+						parsed = null;
+					}
+					if (parsed?.token !== token) continue;
+				}
 				await rm(path, { force: true }).catch(() => undefined);
 			}
 			const withConnections = server as Server & { closeAllConnections?: () => void };

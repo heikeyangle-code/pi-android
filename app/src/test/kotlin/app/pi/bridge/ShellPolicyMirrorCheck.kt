@@ -68,32 +68,50 @@ private data class Block(val tokens: List<String>, val source: String)
 /**
  * The literal tokens a regex source names, in order.
  *
- * The character after a backslash is dropped, because it is always a regex operator
- * here (`\b`, `\s`, `\.`, `$` is not escaped but is dropped by not being
- * alphanumeric). The two files write their patterns with the same syntax, so this
- * reduction is a fair comparison and a *different* rewrite on one side shows up as a
- * failure — which is the intent: the two lists are kept textually parallel, and a
- * deliberate rewrite has to be made on both sides.
+ * Two kinds of escape are treated differently, and that difference is what makes the
+ * comparison meaningful:
+ *
+ *  - an **operator** escape (`\b`, `\s`, `\d`, …) names no character; it is a
+ *    boundary, so the current token ends there;
+ *  - any other escape is the **literal** character it protects (`\/` is a slash,
+ *    `\.` a dot), so it goes through the ordinary "part of a token or not" test.
+ *
+ * Both files mean the same thing by the block-device pattern, and this reduction is
+ * what shows it: Kotlin's `/dev/block` and TypeScript's `\/dev\/block` both reduce to
+ * `dev` `block`. A *different* rewrite on one side fails the comparison, which is the
+ * intent — the two lists are kept textually parallel, and a deliberate rewrite has to
+ * be made on both sides.
  */
+private const val REGEX_OPERATOR_ESCAPES = "bBsSdDwWnNrRtTaAzZ"
+
 private fun tokens(pattern: String): List<String> {
     val out = mutableListOf<String>()
     val current = StringBuilder()
+    fun flush() {
+        if (current.isNotEmpty()) {
+            out.add(current.toString().lowercase())
+            current.setLength(0)
+        }
+    }
     var index = 0
     while (index < pattern.length) {
         val character = pattern[index]
         if (character == '\\' && index + 1 < pattern.length) {
+            val escaped = pattern[index + 1]
             index += 2
+            if (escaped in REGEX_OPERATOR_ESCAPES) {
+                flush()
+            } else if (escaped.isLetterOrDigit() || escaped == '_') {
+                current.append(escaped)
+            } else {
+                flush()
+            }
             continue
         }
-        if (character.isLetterOrDigit() || character == '_') {
-            current.append(character)
-        } else if (current.isNotEmpty()) {
-            out.add(current.toString().lowercase())
-            current.setLength(0)
-        }
+        if (character.isLetterOrDigit() || character == '_') current.append(character) else flush()
         index++
     }
-    if (current.isNotEmpty()) out.add(current.toString().lowercase())
+    flush()
     return out
 }
 
@@ -178,11 +196,11 @@ fun main() {
     }
 
     // ------------------- 4. every registered device tool has a declared danger level
-    val registered = Regex("""name:\s*"(android_[a-z_]+)"""")
+    val registered = Regex("name:\\s*\"(android_[a-z_]+)\"")
         .findAll(extensionText)
         .map { it.groupValues[1] }
         .toSet()
-    val declared = Regex("""\n\t(android_[a-z_]+):\s*"(read|control|dangerous)",""")
+    val declared = Regex("\\n\\t(android_[a-z_]+):\\s*\"(read|control|dangerous)\",")
         .findAll(dangerText)
         .map { it.groupValues[1] }
         .toSet()

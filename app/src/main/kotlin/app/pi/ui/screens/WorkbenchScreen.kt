@@ -11,6 +11,7 @@ import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material.icons.filled.TaskAlt
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
@@ -22,6 +23,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
 import app.pi.ui.components.PiEmptyState
 import app.pi.ui.terminal.TerminalPane
 import app.pi.ui.theme.PiSpacing
@@ -86,6 +88,18 @@ fun WorkbenchScreen(
             // segment needs nothing special because `segment` is local state that a
             // fresh composition starts at 0 — which is the terminal. See
             // `TerminalPane` for why there is only one terminal to open now.
+            //
+            // The one sentence about pi's own TUI lives here, not in the settings.
+            // Without it, the capabilities that only the TUI has (subscription
+            // login, session import, terminal-only extensions) would be invisible;
+            // with it repeated per settings row, every such row became a signpost
+            // instead of a setting (`docs/settings-review.md` §9).
+            Text(
+                "输入 pi 回车进入原版 TUI：订阅登录、会话导入、以及需要终端的扩展都在那边。",
+                modifier = Modifier.padding(horizontal = PiSpacing.screen, vertical = 6.dp),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
             TerminalPane(modifier = Modifier.weight(1f))
         } else {
             val (title, body) = when (segment) {

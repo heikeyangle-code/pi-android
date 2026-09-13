@@ -6,7 +6,7 @@ package app.pi.rpc
  *
  * `docs/rpc.md` §"Starting RPC Mode" documents the CLI flags and pi's
  * `docs/environment-variables.md` §"Pi Process Configuration" documents the
- * variables. These three are here — rather than in the command builders — for
+ * variables. These switches are here — rather than in the command builders — for
  * the reason `docs/gap-disposition.md` records against `PiEngineHost`: the map
  * of pi's process configuration was hard-wired, so a client could not ask for
  * any of them.
@@ -78,7 +78,7 @@ data class PiLaunchOptions(
         /**
          * The pure part of the App's settings → launch mapping.
          *
-         * `PiSessionViewModel.launchOptions()` reads six raw values out of the
+         * `PiSessionViewModel.launchOptions()` reads five raw values out of the
          * settings document; this function turns them into the process inputs, so
          * the normalisation rules — a blank prompt is "unset", not an empty flag;
          * only the exact value `long` enables long cache retention; a missing

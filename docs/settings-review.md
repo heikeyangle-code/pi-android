@@ -45,6 +45,7 @@ pi 侧文件（下文省略前缀 `packages/coding-agent/`）：
 | 读者够不着 | 25 个只有交互式 TUI 读的键，标着"立即生效"（默认 `Immediate`）而 RPC 进程永远不读 | **删除**（§1.2，逐条写"卡在哪"） |
 | 刷新语义标错 | `enabledModels` 标 `Immediate`（其实按会话解析）、`httpIdleTimeoutMs`/`websocketConnectTimeoutMs`/`httpProxy`/`defaultProjectTrust`/`images.*`/`retry.*`/`enableInstallTelemetry` 标 `Immediate`/`NewSession` 而实际是"进程启动"或"新会话"、`app.terminal.fontSize` 标 `Immediate` 而 `TerminalPane` 每次进入终端页才读一次 | **逐个改成有依据的值**（§5） |
 | 行是第二份真相、与实时状态可能矛盾 | `steeringMode`/`followUpMode`/`compaction.enabled`/`retry.enabled`：聊天页有一套实时开关（`ChatScreen.kt:1205-1206`、`ChatSheets.kt:294`），设置行写文件却推不到运行中的进程 | **接上 RPC 推送**（§4.1），四个键真的变成即时生效 |
+| 行只是"指路牌" | 3 个动作行（`app.sessions.import`、`app.about.changelog`、`app.credentials.oauth`）点下去只是切到终端并提示"输入 pi 后运行 xxx" | **删 2 留 1**（§9.2：留下的那个是 OAuth 的唯一下入口；发现性收拢成终端页一句话） |
 | 被本应用自己的启动参数覆盖 | `sessionDir`：pi 有键、也有读者，但优先级是 `--session-dir` > `PI_CODING_AGENT_SESSION_DIR` > 设置，而 App 两条都传了，所以这一行永远读不到（原描述"改动在下次启动引擎时生效"是假的） | **删除**（§1.2、§7.5，含"要做需要付出什么"） |
 | 描述与 pi 行为不符 | `images.blockImages` 声称"附件入口会禁用"（App 并没有这么做，`images.blockImages` 在 App 侧零消费）；`terminal.showTerminalProgress` 写"源码里有、文档里没写的字段"（内部解释） | **改文案**（§4.3；后者随行删除） |
 
@@ -61,11 +62,14 @@ pi 侧文件（下文省略前缀 `packages/coding-agent/`）：
 
 ### 0.4 计数说明
 
-本文的数字是写作时的快照，**唯一权威是 `settings-audit` 每次运行打印的那一行**。本轮的净变化是
-**107 → 66 键**（删 41：27 个读者够不着的 pi 键 + 2 个 pi 自己也不读的键 + 1 个被启动参数覆盖的 `sessionDir`
-+ 1 个不是合法路径的 `packages[].autoload` + 12 个没有消费者的 `app.*`）；写作之后，另一位代理在同一个
-注册表里补了一行 `app.models.inventory`（模型清单入口，带真实消费者 `PiSettingsStack.kt:228`），
-所以当前是 **67 键（41 pi + 26 App）**。
+本文的数字是写作时的快照，**唯一权威是 `settings-audit` 每次运行打印的那一行**。本轮的净变化：
+**删 43 行**（29 个 §1.2：27 个读者够不着的 pi 键 + 2 个 pi 自己也不读的键 + 1 个被启动参数覆盖的
+`sessionDir` + 1 个不是合法路径的 `packages[].autoload`；12 个 §2.2 没有消费者的 `app.*`；
+2 个 §9.2 的"指路牌"动作行），**107 − 43 = 64**。
+
+写作之后，同轮别的代理在同一个注册表里补了 3 行（都带真实消费者，`settings-audit` 同样要求）：
+`app.models.inventory`（模型清单页，`PiSettingsStack.kt:228`）、`app.runtime.appendSystemPrompt`、
+`app.runtime.noContextFiles`。所以当前是 **67 键（41 pi + 26 App）**。
 
 ---
 
@@ -162,7 +166,7 @@ pi 侧文件（下文省略前缀 `packages/coding-agent/`）：
 
 ## 2. App 自有键逐项表
 
-### 2.1 保留的 25 个 + 1 行（每个都有真实调用点）
+### 2.1 保留的 24 个 + 3 行（每个都有真实调用点）
 
 | `app.*` 键 | 谁读它（file:line） | EffectiveKind | 判定 |
 |---|---|---|---|
@@ -171,7 +175,6 @@ pi 侧文件（下文省略前缀 `packages/coding-agent/`）：
 | `app.localModels.manage` | `PiSettingsStack.kt:189`（开 llama.cpp 端点表单） | — | 一致（描述已写明管理部分只能在终端做，依据 `extensions/llama/index.ts:186-189`） |
 | `app.compaction.runNow` | `PiRoot.kt:234` → `session.compact()` | — | 一致 |
 | `app.tools.expandByDefault` | `PiSessionViewModel.kt:524` → `ChatScreen` | `Immediate` | 一致 |
-| `app.sessions.import` | `PiRoot.kt:70`（切终端跑 `/import`） | — | 一致 |
 | `app.sessions.resumeLast` | `PiSessionViewModel.kt:903` → `maybeResumeLastSession()` | `RestartApp` | 一致 |
 | `app.appearance.fontScaleDelta` | `PiSessionViewModel.kt:520` | `Immediate` | 一致 |
 | `app.appearance.messageDensity` | `PiSessionViewModel.kt:521` | `Immediate` | 一致 |
@@ -190,10 +193,9 @@ pi 侧文件（下文省略前缀 `packages/coding-agent/`）：
 | `app.runtime.restartEngine` | `PiSettingsStack.kt:199`（确认后重启） | — | 一致 |
 | `app.runtime.keepAlive` | `PiSessionViewModel.kt:530,574` → `startEngineService()`（启动路径，调用点 `:720`） | `RestartApp` | 一致 |
 | `app.runtime.wakeLock` | `RuntimeFacts.kt:157,183` | — | 一致（只读真值） |
-| `app.about.changelog` | `PiRoot.kt:72`（切终端跑 `/changelog`） | — | 一致 |
 | `app.models.inventory` | `PiSettingsStack.kt:228`（开模型清单页） | — | 一致（**另一位代理本轮补入**，不在本轮的删除/修正范围内；审计同样要求它有消费者） |
 
-### 2.2 删除的 12 个（没有消费者，或描述的机制不存在）
+### 2.2 删除的 14 个（没有消费者、描述的机制不存在，或只是指路牌）
 
 | `app.*` 键 | 查到什么 | 处置与理由 |
 |---|---|---|
@@ -209,6 +211,8 @@ pi 侧文件（下文省略前缀 `packages/coding-agent/`）：
 | `app.security.dangerThreshold` | 0 处；pi 也没有这个设置（审批粒度在工具/扩展层） | 删除 |
 | `app.security.auditLog` | 0 处；App 没有审计日志实现，pi 也没有 | 删除。这一行是"列每一次工具调用与审批决定"，而没有任何东西在记录 |
 | `app.runtime.safeMode` | 0 处 | 删除，**卡在这里**：pi 有 `--no-extensions`（`ARGS:169`，帮助文本 `:303`），但设备桥扩展就装在 agent 目录的 `extensions/` 下、不是用 `-e` 显式传的（`PiEngineHost.kt:289-295` 只绑目录），所以 `--no-extensions` 会连桥一起禁掉；要安全模式只禁用户扩展，得先把桥改成显式 `-e` + `-ne`，pi 没有更细的粒度。等有了这个粒度再做 |
+| `app.sessions.import` | 消费者只有它自己那一行的跳转（`PiRoot.kt` 的 `onRunAction`）；`/import` 只有 TUI 有 | 删除（§9.2）。一行只能说"去终端跑 /import"，不是设置 |
+| `app.about.changelog` | 同上（`/changelog`） | 删除（§9.2）。与 `lastChangelogVersion`/`collapseChangelog` 是同一类 TUI 事务 |
 
 ---
 
@@ -246,7 +250,8 @@ RPC 面只有这四个键有对应的实时命令：`set_steering_mode`/`set_fol
 
 ### 4.2 删除 40 行（§1.2、§2.2）
 
-`PiSettingsRegistry.kt` 从 107 键删到 66 键（41 pi + 25 App），行数 1926 → 1431（随后并入 1 行，见 §0.4）。
+`PiSettingsRegistry.kt` 本轮删 43 行（107 → 64），同轮别的代理补入 3 行，现 67 键（41 pi + 26 App）；
+注册表行数 1926 → 1467（随并发编辑在动，见 §0.4）。
 连带删掉的是"只为已删行存在"的复杂度：组常量 `G_INTERACTION` 与它的图标导入、
 5 个选项表（`tripleStateOptions`/`imageProtocolOptions`/`outputPadOptions`/`mermaidOptions`/`gesturePresets`）、
 以及 `PiOption.wireIsScalar` 这个标量线格式开关——它存在的唯一理由是 `outputPad`（0|1）、
@@ -382,19 +387,122 @@ pi 有 `sessionDir`（`SM:150`，读取 `SM:724`，优先级 `--session-dir` > `
 
 ---
 
-## 9. 自检
+## 9. 架构原则：设置只调 GUI，TUI 的旋钮不进设置
 
-- `bash tools/typecheck.sh` → `:rpc 0`；`:app 1`，唯一一条是**别人的在制品**：
-  `app/src/main/kotlin/app/pi/packages/PiPackagesScreen.kt:284: error: this annotation is not repeatable.`
-  （那一行上面多了一个 `@Composable`，来自同轮另一位代理正在加的 `DiscoveredCard`，与本次改动无关；
-  除去它，`app/src/main/kotlin` 的其余文件 0 诊断，含本轮改过的 `PiSettingsRegistry.kt` 与 `PiSessionViewModel.kt`）。
-- `bash tools/run-app-pure-checks.sh` → **8 项里 7 项通过**，其中新增的 `settings-audit` 通过
-  （`audit: 67 registered keys (41 pi, 26 app): 44 read by this app, 23 declared pi-owned, 9 search hints`）。
-  唯一失败项也是别人的在制品：`packages` 报 2 条失败（`PackagesPureLogicCheck.kt:830`/`:833`
-  期望 `[nested/deep, review]`/`[mine]` 实得 `[]`），对应的实现是那一位正在写的
-  `app/src/main/kotlin/app/pi/packages/PiResourceDiscovery.kt`。
-- `python3 tools/check-nested-comments.py` → `OK (157 Kotlin file(s) scanned)`。
-- **未改**：`/root/pi-src`（只读）、载荷、`docs/known-gaps.md`。没有 git 写操作、没有 Gradle、没有设备操作。
-- 一次干扰要记下来：本轮第一次 `run-app-pure-checks.sh` 与另一位代理对 `tools/run-app-pure-checks.sh`
-  的编辑撞在一起（该文件 06:40:46 被对方改了 `PiResourceDiscovery.kt` 那一行），bash 按字节偏移读脚本时读到错位内容，
-  日志里出现一堆 `line 312: xxx: command not found`。重跑即正常——共享脚本的并发编辑会让**任何**在跑的长任务留下这种假故障。
+**原则（用户裁决，本轮执行）**：**设置里只放 GUI 自己能兑现的东西。pi 的键如果只有交互式 TUI 读，
+就不进 App 的设置——用户要调它，去终端里跑原版 TUI。两者基本分开，唯一共享的是会话列表；
+底层是同一个 pi，扩展与技能是同一份。**
+
+判定两步，缺一不可：
+
+1. **pi 侧**：这个 `Settings` 键的 getter，调用点是否**只在 `modes/interactive/**` 或 `cli/**`**（只有 TUI 读它）；
+2. **App 侧**：App 自己是否读它、并实现了一个 **GUI 行为**。是 → 它是 GUI 自己的开关，不算 TUI 特有（保留）。
+
+### 9.1 逐行处置（第一批判为 TUI-only 的键）
+
+| pi 键 | pi 侧读者 | App 侧 | 处置 |
+|---|---|---|---|
+| `autocompleteMaxVisible` | `interactive-mode.ts:557,1958,2682` | 0 处 | 删除（§1.2 同一批） |
+| `branchSummary.skipPrompt` | `interactive-mode.ts:5236` | 0 处 | 删除 |
+| `markdown.codeBlockIndent` | `interactive-mode.ts:1261` | 0 处 | 删除 |
+| `collapseChangelog` | `interactive-mode.ts:766,4583` | 0 处 | 删除（`/changelog` 那个动作行也一并删，见 10.2） |
+| `doubleEscapeAction` | `interactive-mode.ts:2863,4585` | 0 处 | 删除 |
+| `editorPaddingX` | `interactive-mode.ts:556,1957` | 0 处 | 删除 |
+| `fullscreenCopyOnSelect` | `interactive-mode.ts:539,1944` | 0 处 | 删除 |
+| `fullscreenExitOutput` | `interactive-mode.ts:6601` | 0 处 | 删除 |
+| `fullscreenScrollbar` | `interactive-mode.ts:884,1936` | 0 处 | 删除 |
+| `terminal.imageWidthCells` | `interactive-mode.ts:3258,4567` | 0 处 | 删除 |
+| `lastChangelogVersion` | `interactive-mode.ts:1218` | 0 处 | 删除（App 给 pi 设了 `PI_SKIP_VERSION_CHECK=1`，`PiEngineHost.kt:310`） |
+| `markdown.mermaid` | `interactive-mode.ts:440,4582` | 0 处 | 删除 |
+| `quietStartup` | `interactive-mode.ts:859,912,1650` | 0 处 | 删除 |
+| `terminal.showImages` | `interactive-mode.ts:3257,4566` | 0 处 | 删除 |
+| `terminal.showTerminalProgress` | `interactive-mode.ts:843,3184` | 0 处 | 删除 |
+| `treeFilterMode` | `interactive-mode.ts:5208,4586` | 0 处 | 删除（App 的会话树有自己的过滤器，不读这个键） |
+| `tuiMode` | `interactive-mode.ts:523` | 0 处 | 删除（RPC 模式没有 TUI 可言） |
+| `outputPad` | `interactive-mode.ts:574,1950` | 0 处（复核过：App 侧那 2 个文件里是 Compose 的 padding 令牌，不是这个键） | 删除 |
+| `warnings.anthropicExtraUsage` | `interactive-mode.ts:4909` | 0 处（复核过：另外 4 个文件命中的是普通英文词 warning/warnings） | 删除 |
+| `externalEditor` | `interactive-mode.ts:2628,4247` | **0 处** | **删除**，与"保留"名单不同，理由见 10.3 |
+
+### 9.2 三个"指路牌"动作行
+
+| 行 | 处置 | 理由 |
+|---|---|---|
+| `app.sessions.import` | **删除** | `/import` 只有 TUI 有（`interactive-mode.ts:6107-6122`），RPC 无对应命令（`rpc-types.ts:20-74`）。一行只能说"去别处"，不是设置 |
+| `app.about.changelog` | **删除** | 同上（`/changelog`，`interactive-mode.ts:3022-3025`），且与 `lastChangelogVersion`/`collapseChangelog` 是同一类 TUI 事务 |
+| `app.credentials.oauth` | **保留（例外）** | 理由不是"能力"，是**发现性**：OAuth 是订阅制登录的唯一入口，而 App 自己的凭证表单只写 API key（`PiCredentialScreen.kt:52-58`），没有这一行用户**根本不会知道** pi 支持订阅登录。文案已写明"在原版 TUI 里"，点击后切到终端并提示 `/login`（`PiRoot.kt` 的 `onRunAction`） |
+
+`WorkbenchScreen.kt` 的终端段现在有**唯一一句**发现性说明（原文）：
+「输入 pi 回车进入原版 TUI：订阅登录、会话导入、以及需要终端的扩展都在那边。」
+——设置里不再有任何同类提示；上一批散落的（`app.localModels.manage` 的"管理本地模型请在终端里做"、
+`ChatScreen` 外部编辑器失败提示里的"设置 →「外部编辑器」"）都已随行删除或改写。
+
+### 9.3 `externalEditor` 为什么删（与交叉核对的"保留"不同）
+
+交叉核对的第二步把 `externalEditor` 归入"App 自己实现了 → 保留"，依据是 App 确实有一个外部编辑器功能。
+复核后的结论是**删**，因为**判定第二步要求 App 读这个键**：
+
+- pi 侧：这个键只被 TUI 的 Ctrl+G 读（`interactive-mode.ts:2628` 取命令、`:4247` 真正启动），
+  它是一条**外部命令字符串**（`SM:969` `getExternalEditorCommand`，回退 `$VISUAL`/`$EDITOR`）。
+- App 侧：`ChatScreen.openInExternalEditor`（`ChatScreen.kt:266-277`）走的是 Android 的 `ACTION_EDIT`，
+  启动系统里能编辑文本的应用，**完全不读这个键**（全树 grep `"externalEditor"` 在 App 源码里 0 命中）。
+  它是 App 自己的一件等价功能，不是对这个设置的消费。
+- 结论：留着这一行就是"一个 TUI 旋钮 + 一个说明"，正是本轮要清掉的东西；而 App 的外部编辑器照旧可用。
+
+### 9.4 其余两问
+
+- **`tuiOnlyExtensions` / `tuiOnlyMarkers`（`ui/chat/TuiOnlyScan.kt`，`PiSessionViewModel.kt:1705`）：保留。**
+  它不是 TUI 旋钮，而是**关于已安装资源的事实**：pi 在 RPC 模式下把 `ctx.ui.custom()`、`setFooter`、
+  `onTerminalInput` 等做成静默 no-op（`rpc-mode.ts:163-166`、`:179-231`、`:273-311`），
+  扩展自己又察觉不到（`ctx.hasUI` 仍为 true），于是"这个扩展为什么没反应"在 GUI 里无从回答。
+  列表说的是"某个扩展需要终端"，而不是"设置里再放一个开关"；它也只出现在对话页的扩展清单里。
+- **`enableSkillCommands`：保留，且它已经是 App 自己实现的。**
+  证据：`PiSessionViewModel.kt:1636` 读它来构建 `piCommandPalette`，`:561-566` 在写后刷新命令表；
+  也就是说 RPC 下"技能作为斜杠命令"这件事是 App 的命令面板在做（`docs/known-gaps.md` 记过这条），
+  不是照抄 TUI 语义。同理保留的还有 `hideThinkingBlock`（App 是渲染方）、`showCacheMissNotices`
+  （App 打印摘要计费行）、`theme`（App 的调色板来自主题文件）。
+- **设置的动作行现在剩 6 个**：`app.credentials.apiKey`、`app.credentials.oauth`、`app.localModels.manage`、
+  `app.compaction.runNow`、`app.security.emergencyStop`、`app.runtime.restartEngine`。
+
+### 9.5 原则执行后的自检口径
+
+`settings-audit` 现在同时守住这条原则的两头：注册键要么有 App 消费者、要么在 `piOwnedKeys` 里声明
+pi 读它（§6）。**但 `piOwnedKeys` 不能成为 TUI 键的后门**——它里面的 23 个键，每一个的 pi 读者都在
+`sdk.ts`/`agent-session.ts`/`main.ts`/`package-manager.ts`/`telemetry.ts`（进程或会话级），
+没有一个是"只有 `interactive-mode.ts` 读"。这条判据是人工复核的（§1.1 每一行都写了读取点），
+没有做成自动断言：审计是纯文本扫描，读不懂 TypeScript 的调用图。
+
+---
+
+## 10. 自检（以及"本机不编译"这条约束）
+
+用户裁决：**这台机器就是用户手机，不要在本机跑 kotlinc**（typecheck 与 pure-checks 都很重），
+验证连同别的改动一起交给 CI。所以本轮的自检口径分成"已在本机取证"与"必须在 CI 完成"两栏。
+
+**本机已取证：**
+
+- `python3 tools/check-nested-comments.py` → `OK`（0 处嵌套注释；169 个 Kotlin 文件，含本轮新增的审计 harness）。
+- **`settings-audit` 的判据在最终树上用等价脚本复核过**（Python 逐条重放 harness 的五条断言，读的是同一份
+  `PiSettingsRegistry.kt` 文本）：`67 registered keys (41 pi, 26 app): 44 read by this app, 23 declared pi-owned`，
+  `0` 个无读者、`0` 个过期白名单、`0` 个重复键、`0` 个 `app.*` 进白名单、9 个搜索提示 chip 全部可解析。
+  最后一版 harness 还加了一条"行区域里先剥掉注释"的修正——注释里提到已删的 `app.sessions.import`
+  会让 `导入` chip 假通过，这正是它抓到的第一例。
+- **真实 harness 在本轮较早的树上是跑通过的**：`bash tools/run-app-pure-checks.sh` 输出
+  `pure-checks: OK — settings-audit`（那一刻的注册表是 67 键 / 44 read / 24 owned / 2 slash hints）。
+  之后 harness 增加了 chip 检查、注册表又经过用户裁决的两批删除，**需要 CI 再跑一次**。
+- 结构自检（不是编译）：本轮改过的 5 个文件做过去字符串/注释的括号平衡检查，全部为 0；改动均通过
+  `edit` 工具的"读后写 + 唯一匹配"完成，其中一次被并发写挡下（工具报 file changed），说明并发保护有效。
+- 一次历史证据（改动之前的树）：`bash tools/typecheck.sh` → `:rpc 0`、`:app 1`，那一条是**别人的在制品**
+  `app/src/main/kotlin/app/pi/packages/PiPackagesScreen.kt` 的重复 `@Composable`（该文件随后被其作者修掉）。
+
+**必须由 CI 完成（本机不跑）：**
+
+1. `bash tools/typecheck.sh` → 期望 `:rpc 0 / :app 0`。本轮手改了 5 个 Kotlin 文件
+   （`PiSettingsRegistry.kt`、`PiRoot.kt`、`WorkbenchScreen.kt`、`SettingsSearchScreen.kt`、`ChatScreen.kt`）
+   与 1 个 harness；风险点是新增的 `MaterialTheme`/`dp` 导入与注释块内的编辑，都已逐行复核。
+2. `bash tools/run-app-pure-checks.sh` → 期望 8 项全过（`settings-audit` 是新增项）。
+3. `docs/settings-review.md` §7 列的四个真机判据。
+
+**未改**（规矩）：`/root/pi-src`（只读）、载荷、`docs/known-gaps.md`。没有 git 写操作、没有 Gradle、没有设备操作。
+一次干扰记在这里：本轮第一次 `run-app-pure-checks.sh` 与另一位代理对 `tools/run-app-pure-checks.sh`
+的编辑撞在一起（06:40:46 对方加了 `PiResourceDiscovery.kt` 一行），bash 按字节偏移读脚本时读到错位内容，
+日志里出现一堆 `line 312: xxx: command not found`；重跑即正常。共享脚本的并发编辑会让任何在跑的长任务留下这种假故障。

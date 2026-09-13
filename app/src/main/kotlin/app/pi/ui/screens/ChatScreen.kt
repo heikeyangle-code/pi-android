@@ -269,8 +269,13 @@ private fun ChatBody(
             .putExtra(Intent.EXTRA_TEXT, draft)
         val opened = runCatching { externalEditor.launch(intent) }.isSuccess
         if (!opened) {
+            // No pointer to a settings row: the pi key (`externalEditor`) only
+            // configures the Ctrl+G command *inside* pi's own TUI
+            // (`interactive-mode.ts:2628,4247`), so its row was removed with the
+            // TUI-only keys (`docs/settings-review.md` §9). This editor is the
+            // app's own and goes through `ACTION_EDIT`.
             session.notifyUser(
-                "没有应用能编辑文本（ACTION_EDIT）：草稿保持原样。设置 →「外部编辑器」说明了这条的来历。",
+                "没有应用能编辑文本，草稿保持原样。",
                 warning = true,
             )
         }

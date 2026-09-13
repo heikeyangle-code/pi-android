@@ -146,7 +146,7 @@ val COVERED_BY_PI_SETTING: List<PiCliKnobWithSetting> = listOf(
     PiCliKnobWithSetting(
         flag = "--models",
         envVar = null,
-        piReader = "cli/args.ts:131-132; main.ts:786",
+        piReader = "cli/args.ts:131-132; main.ts:788",
         piSettingKey = "enabledModels",
         why = "`parsed.models ?? settingsManager.getEnabledModels()` — the CLI value wins.",
     ),
@@ -174,7 +174,7 @@ val COVERED_BY_PI_SETTING: List<PiCliKnobWithSetting> = listOf(
     PiCliKnobWithSetting(
         flag = "--approve / --no-approve",
         envVar = null,
-        piReader = "cli/args.ts:219-222; main.ts:723-746",
+        piReader = "cli/args.ts:219-222; main.ts:725-744",
         piSettingKey = "defaultProjectTrust",
         why = "the `defaultProjectTrust` key is the persistent form; the flag is a one-run override.",
     ),
@@ -189,35 +189,35 @@ val COVERED_BY_PI_SETTING: List<PiCliKnobWithSetting> = listOf(
     PiCliKnobWithSetting(
         flag = "--extension",
         envVar = null,
-        piReader = "cli/args.ts:166-168; main.ts:715",
+        piReader = "cli/args.ts:166-168; main.ts:709",
         piSettingKey = "extensions",
         why = "the settings array is the persistent form of the same additional-paths input.",
     ),
     PiCliKnobWithSetting(
         flag = "--skill",
         envVar = null,
-        piReader = "cli/args.ts:171-173; main.ts:716",
+        piReader = "cli/args.ts:171-173; main.ts:710",
         piSettingKey = "skills",
         why = "same additional-paths shape as `extensions`.",
     ),
     PiCliKnobWithSetting(
         flag = "--prompt-template",
         envVar = null,
-        piReader = "cli/args.ts:174-176; main.ts:717",
+        piReader = "cli/args.ts:174-176; main.ts:711",
         piSettingKey = "prompts",
         why = "same additional-paths shape as `extensions`.",
     ),
     PiCliKnobWithSetting(
         flag = "--theme",
         envVar = null,
-        piReader = "cli/args.ts:177-179; main.ts:718",
+        piReader = "cli/args.ts:177-179; main.ts:712",
         piSettingKey = "themes",
         why = "same additional-paths shape as `extensions`.",
     ),
     PiCliKnobWithSetting(
         flag = "--use-theme",
         envVar = null,
-        piReader = "cli/args.ts:180-187; main.ts:667-669",
+        piReader = "cli/args.ts:180-187; main.ts:662-663",
         piSettingKey = "theme",
         why = "the flag is a one-run override of the `theme` key.",
     ),
@@ -248,7 +248,7 @@ val NOT_EXPOSED_PRE_SPAWN: List<PiPreSpawnSkipped> = listOf(
     PiPreSpawnSkipped(
         flag = "--no-extensions",
         envVar = null,
-        piReader = "cli/args.ts:169-170; main.ts:764",
+        piReader = "cli/args.ts:169-170; main.ts:767",
         reason = "disabling discovery stops pi scanning <agentDir>/extensions/, which is exactly where this " +
             "app's device-capability extensions are installed — the switch would silently remove every " +
             "android_* tool. The extension surface has its own screens.",
@@ -256,20 +256,20 @@ val NOT_EXPOSED_PRE_SPAWN: List<PiPreSpawnSkipped> = listOf(
     PiPreSpawnSkipped(
         flag = "--no-skills",
         envVar = null,
-        piReader = "cli/args.ts:188-189; main.ts:765",
+        piReader = "cli/args.ts:188-189; main.ts:768",
         reason = "the app's 技能 screen reads the same discovery directories, so pi ignoring them would make " +
             "that screen list skills the engine cannot use — two sources of truth, visibly disagreeing.",
     ),
     PiPreSpawnSkipped(
         flag = "--no-prompt-templates",
         envVar = null,
-        piReader = "cli/args.ts:190-191; main.ts:766",
+        piReader = "cli/args.ts:190-191; main.ts:769",
         reason = "same shape as --no-skills: the 提示模板 screen reads the directories pi would ignore.",
     ),
     PiPreSpawnSkipped(
         flag = "--no-themes",
         envVar = null,
-        piReader = "cli/args.ts:192-193; main.ts:767",
+        piReader = "cli/args.ts:192-193; main.ts:770",
         reason = "same shape: the 主题 screen reads the same theme directories.",
     ),
     PiPreSpawnSkipped(
@@ -298,13 +298,13 @@ val NOT_EXPOSED_PRE_SPAWN: List<PiPreSpawnSkipped> = listOf(
     PiPreSpawnSkipped(
         flag = "--verbose",
         envVar = null,
-        piReader = "cli/args.ts:217-218; main.ts:910",
+        piReader = "cli/args.ts:217-218; main.ts:942",
         reason = "only reaches pi's interactive TUI startup; nothing in RPC mode reads it.",
     ),
     PiPreSpawnSkipped(
         flag = "--tui-mode",
         envVar = null,
-        piReader = "cli/args.ts:203-216; main.ts:911",
+        piReader = "cli/args.ts:203-216; main.ts:943",
         reason = "pi's own TUI layout. The engine here runs --mode rpc; there is no TUI to lay out " +
             "(the `tuiMode` settings key is the persistent form and is equally TUI-only).",
     ),
@@ -366,7 +366,7 @@ val NOT_EXPOSED_PRE_SPAWN: List<PiPreSpawnSkipped> = listOf(
     PiPreSpawnSkipped(
         flag = null,
         envVar = "PI_STARTUP_BENCHMARK",
-        piReader = "main.ts:899-903",
+        piReader = "main.ts:914-916",
         reason = "a development benchmark switch; it even refuses to run outside interactive mode.",
     ),
     PiPreSpawnSkipped(

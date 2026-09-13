@@ -151,19 +151,19 @@ fun SettingsSearchScreen(
 @Composable
 private fun SearchHints(onPick: (String) -> Unit) {
     // Every chip has to resolve to at least one row, and `settings-audit` enforces
-    // it: a chip that matches nothing is a dead row one layer up. `/tree` and
-    // `sessionDir` both stopped resolving when the registry dropped the rows behind
-    // them (`docs/settings-review.md` §1.2, §7.5), so they were replaced by
-    // `/import` and `导入`.
+    // it: a chip that matches nothing is a dead row one layer up. `/tree`,
+    // `sessionDir`, `导入` and `/import` all stopped resolving when the rows behind
+    // them were dropped (`docs/settings-review.md` §1.2, §7.5, §9), so the chips
+    // follow the rows.
     val examples = listOf(
         "reserveTokens",
         "thinkingBudgets",
         "theme",
         "代理",
         "压缩",
-        "导入",
+        "保活",
         "/compact",
-        "/import",
+        "/login",
         "llama",
     )
     Column(Modifier.fillMaxWidth()) {

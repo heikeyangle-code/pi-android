@@ -168,7 +168,9 @@ object PiModelInventory {
         val authRead = readCredentials(authJson)
         val catalog = readCatalog(catalogJson)
         val engine = engineModels?.map { it.providerId to it.id }?.toSet()
-        val engineNames = engineModels?.associate { (it.providerId to it.id) to it.name }.orEmpty()
+        val engineNames = engineModels
+            ?.associate { model -> (model.providerId to model.id) to model.name }
+            .orEmpty()
         val engineIdsByProvider = engineModels?.groupBy({ it.providerId }, { it.id }).orEmpty()
 
         val providerIds = LinkedHashSet<String>()
@@ -176,7 +178,7 @@ object PiModelInventory {
         providerIds += modelsRead.blocks.keys
         providerIds += engineIdsByProvider.keys
 
-        val providers = providerIds.sortedWith(compareBy({ it.lowercase() }, { it })).map { providerId ->
+        val providers = providerIds.sortedWith(compareBy<String>({ it.lowercase() }, { it })).map { providerId ->
             val block = modelsRead.blocks[providerId]
             val declared = declaredModels(block)
             val overridden = overrideIds(block)
@@ -195,29 +197,36 @@ object PiModelInventory {
             val declaredById = declared.associateBy { it.id }
             val catalogById = catalogModels.associateBy { it.id }
 
-            val models = ids.filter { it.isNotBlank() }.sortedWith(compareBy({ it.lowercase() }, { it })).map { id ->
-                val origins = buildSet {
-                    if (id in catalogIds) add(Origin.PI_CATALOG)
-                    if (id in declaredById) add(Origin.DECLARED)
-                    if (id in overridden) add(Origin.OVERRIDDEN)
+            val models = ids
+                .filter { it.isNotBlank() }
+                .sortedWith(compareBy<String>({ it.lowercase() }, { it }))
+                .map { id ->
+                    val origins = buildSet {
+                        if (id in catalogIds) add(Origin.PI_CATALOG)
+                        if (id in declaredById) add(Origin.DECLARED)
+                        if (id in overridden) add(Origin.OVERRIDDEN)
+                    }
+                    Model(
+                        providerId = providerId,
+                        id = id,
+                        name = declaredById[id]?.name
+                            ?: catalogById[id]?.name
+                            ?: engineNames[providerId to id],
+                        origins = origins,
+                        enabled = selection.enabledPatterns.any { matches(it, providerId, id) },
+                        isDefault = isDefaultModel(selection, providerId, id),
+                        // `engine != null &&` in front of the membership test is not
+                        // redundant: inside the right-hand side of `&&` the compiler
+                        // smart-casts `engine` to non-null, while a subjectless
+                        // `when { engine == null -> …; x in engine -> }` does not narrow.
+                        status = when {
+                            engine == null -> Status.UNKNOWN
+                            engine != null && (providerId to id) in engine -> Status.READY
+                            !hasCredential -> Status.MISSING_CREDENTIAL
+                            else -> Status.PENDING_RESTART
+                        },
+                    )
                 }
-                Model(
-                    providerId = providerId,
-                    id = id,
-                    name = declaredById[id]?.name
-                        ?: catalogById[id]?.name
-                        ?: engineNames[providerId to id],
-                    origins = origins,
-                    enabled = selection.enabledPatterns.any { matches(it, providerId, id) },
-                    isDefault = isDefaultModel(selection, providerId, id),
-                    status = when {
-                        engine == null -> Status.UNKNOWN
-                        (providerId to id) in engine -> Status.READY
-                        !hasCredential -> Status.MISSING_CREDENTIAL
-                        else -> Status.PENDING_RESTART
-                    },
-                )
-            }
 
             Provider(
                 id = providerId,

@@ -206,7 +206,11 @@ fun main() {
     check("an exact provider/id pattern enables", deepseekModels.getValue("deepseek-chat").enabled, true)
     check("a bare id pattern enables", deepseekModels.getValue("deepseek-reasoner").enabled, true)
     check("a glob against the bare id enables", chosen.providers.first { it.id == "ollama" }.models.first { it.id == "qwen3" }.enabled, true)
-    check("a glob is case-insensitive", deepseekModels.getValue("deepseek-chat").enabled, true)
+    check(
+        "a pattern (and the id it is matched against) is case-insensitive",
+        PiModelInventory.matches("DEEPSEEK/DeepSeek-Chat", "deepseek", "deepseek-chat"),
+        true,
+    )
     check("an unmatched model is not enabled", engineOnly.providers.first().models.first().enabled, false)
     check("a colon suffix that is not a thinking level stays in the pattern", PiModelInventory.matches("none:notalevel", "none", "notalevel"), false)
     check("a thinking-level suffix is stripped before matching", PiModelInventory.matches("deepseek-reasoner:high", "deepseek", "deepseek-reasoner"), true)
@@ -324,8 +328,8 @@ fun main() {
             authJson = null,
             catalogJson = null,
             engineModels = emptyList(),
-        ).providers,
-        emptyList(),
+        ).providers.map { it.id to it.models.map { m -> m.id } },
+        listOf("p" to emptyList<String>()),
     )
     check(
         "model order inside a provider is stable",

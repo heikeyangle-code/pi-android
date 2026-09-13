@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.AlertDialog
@@ -114,13 +115,12 @@ fun PiModelsScreen(
     var reloadTick by remember { mutableStateOf(0) }
 
     // 引擎的答案是异步过来的（`onLoadAvailableModels` 走 RPC），所以把它的快照也作为 key。
+    // 没有 provider 的记录被跳过，而不是用一个空 id 造出一个厂商：`ModelInfo.provider` 是
+    // 可空的（`rpc/.../Responses.kt`），而一个空 id 的厂商卡只会让清单看起来坏了。
     val engineModels = remember(availableModels) {
-        availableModels.map {
-            PiModelInventory.EngineModel(
-                providerId = it.provider.orEmpty(),
-                id = it.id,
-                name = it.name,
-            )
+        availableModels.mapNotNull { info ->
+            val providerId = info.provider?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+            PiModelInventory.EngineModel(providerId = providerId, id = info.id, name = info.name)
         }
     }
 
@@ -206,8 +206,10 @@ fun PiModelsScreen(
                     item { Note("还没有配置任何厂商。点下面的「导入模型」选一个厂商、粘上 Key。") }
                 }
 
-                items(data.providers.size, key = { data.providers[it].id }) { index ->
-                    val provider = data.providers[index]
+                // The `items(list)` overload, not `items(count)`: the list form is the one
+                // this tree already uses in five places, so its import and its shape are
+                // beyond doubt.
+                items(data.providers, key = { it.id }) { provider ->
                     val isOpen = expanded[provider.id] ?: provider.defaultExpanded
                     ProviderCard(
                         provider = provider,

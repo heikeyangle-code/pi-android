@@ -705,9 +705,11 @@ L0 设置首页       13 个分组，每组右侧显示"当前值摘要"
 - 内建工具开关（ListRow → L2，8 项；**grep/find/ls 默认开**）· bash 默认超时（Number）· 输出截断上限（Number）· 工具输出默认展开（Switch）
 
 **L0-6 会话**
-- 导入会话（Action，切到终端跑 `/import`）。
-  **会话目录与清理策略已不在设置页**：目录由 App 的启动参数固定（pi 的优先级是命令行 > 环境变量 > 设置，
-  写设置也不会被读），清理策略没有任何实现——理由见 `settings-review.md` §1.2 与 §7.5。
+- 启动续接最近会话（Switch）。
+  **会话目录、导入会话、导出全部、清理策略都不在设置页**：目录由 App 的启动参数固定（pi 的优先级是
+  命令行 > 环境变量 > 设置，写设置也不会被读）；`/import` 只有原版 TUI 有，不做指路牌；
+  清理策略没有任何实现。理由见 `settings-review.md` §1.2、§2.2 与 §7.5、§9.2。
+  pi 的原版 TUI 能做什么，只在终端页说一句（`WorkbenchScreen.kt`）。
 
 **L0-7 扩展与资源**
 - 扩展（ListRow）· 资源包（ListRow + 安装/更新/移除）· 技能（ListRow）· 提示模板（ListRow）· 主题（ListRow + 导入）· 技能命令开关（Switch）· 上下文文件（ListRow → 编辑器）· 信任名单（ListRow）
@@ -729,7 +731,9 @@ L0 设置首页       13 个分组，每组右侧显示"当前值摘要"
 **L0-13 运行时与诊断**（见 5.7）
 
 **L0-14 隐私与关于**
-- 安装遥测 `enableInstallTelemetry`（Switch）· 匿名分析 `enableAnalytics`（Switch）· 追踪 ID `trackingId`（只读）· 版本与 changelog（`collapseChangelog`）· 开源许可 · **原始配置**（直接编辑 `settings.json` / `keybindings.json`，带校验与恢复默认）
+- 安装遥测 `enableInstallTelemetry`（Switch）· 开源许可。**匿名分析 / 追踪 ID / 版本与 changelog 已不在设置页**：
+  前两个 pi 自己只写不读，changelog 那两个键只有原版 TUI 读——理由见 `settings-review.md` §1.2、§9.1。
+  **原始配置编辑器不做**：pi 的 `/settings` 是类型化表单，没有原始编辑器；见 `settings-review.md` §8。
 
 ### 6.5 生效方式标记（`EffectiveBadge`）
 

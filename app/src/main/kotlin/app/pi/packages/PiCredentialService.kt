@@ -372,7 +372,7 @@ class PiCredentialService(
             ok = true,
             steps = steps,
             restart = PiPackageService.RestartRequired(
-                changes = listOf("新增厂商 ${preset.displayName}（${choices.size} 个模型）"),
+                changes = listOf("${preset.displayName} 的模型与凭证（${choices.size} 个模型）"),
                 detail = "新厂商要重启引擎后才会出现在模型列表里。已保存的配置不会丢失。",
             ),
         )

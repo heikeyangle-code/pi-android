@@ -145,9 +145,20 @@ fun main() {
         .mapNotNull { chip.find(it)?.groupValues?.get(1) }
         .filter { it.isNotBlank() && !it.contains("$") }
     check("the search screen's hint chips were found", chips.isNotEmpty())
+    // Comments are stripped from the rows region before matching: the registry
+    // explains its own removals in comments that live *inside* the settings list,
+    // and a chip matching one of those would be a false pass (it happened: a
+    // comment mentioning the removed `app.sessions.import` kept the "导入" chip
+    // green).
     val rows = registry
         .substringAfter("val settings: List<PiSetting> = listOf(")
         .substringBefore("/** Registry lookup by exact dotted key. */")
+        .lines()
+        .filterNot { line ->
+            val trimmed = line.trim()
+            trimmed.startsWith("//") || trimmed.startsWith("*") || trimmed.startsWith("/*")
+        }
+        .joinToString("\n")
     val dangling = chips.filter { !rows.contains(it.removePrefix("/")) }
     check(
         "every search hint chip resolves to a registered row",

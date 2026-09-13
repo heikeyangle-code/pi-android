@@ -70,7 +70,7 @@ package app.pi.ui.chat
  * session**: a fact, not a snapshot of "where the list is this frame".
  *
  * @param initiallyFollowing false when a restored state was paused (see
- *   [TailFollow.Saver]).
+ *   [fromSavedState] and [savedState]).
  */
 internal class TailFollow(initiallyFollowing: Boolean = true) {
 
@@ -94,7 +94,7 @@ internal class TailFollow(initiallyFollowing: Boolean = true) {
      * Set by [pause] while the viewport is at the end, and cleared by the user's own
      * scrolling (or [reArm]).
      *
-     * pi's `followSuppressedAtEnd` (`scroll-view.ts:31`, `:131`, `:192`) with the
+     * pi's `followSuppressedAtEnd` (`scroll-view.ts:35`, `:131`, `:196`) with the
      * same job: a navigation that lands on the last row — a search hit in the last
      * block, say — must not re-arm the follow just because the end is where it
      * stopped. Only the user's hand (or the explicit affordance) re-arms that.
@@ -104,7 +104,10 @@ internal class TailFollow(initiallyFollowing: Boolean = true) {
     private var previousRows: Int = -1
     private var previousAnchor: TailAnchor? = null
 
-    /** The last pin this machine handed out, and the geometry it was computed from. */
+    /**
+     * The pin the *current position* wants, and the geometry it was computed from —
+     * whether or not the last call handed it out (see the repeat guard in [onSnapshot]).
+     */
     private var lastPin: TailPin? = null
     private var lastPinViewport: TailViewport? = null
 
@@ -149,7 +152,7 @@ internal class TailFollow(initiallyFollowing: Boolean = true) {
      *     the bottom, which is the very defect that paragraph exists to forbid. At
      *     the end, a gesture re-arms instead: pi's `scrollTo`/`scrollBy` rule above.
      *  3. **Otherwise, being at the end re-arms** — but only if the pause was not a
-     *     navigation's (rule 3's `pausedByNavigation` guard). This is what makes
+     *     navigation's (the `pausedByNavigation` guard). This is what makes
      *     "new row arrives while the user happens to be at the bottom" follow, and
      *     what makes "the user scrolled back down" resume, both without a gesture
      *     being observed in the same frame.

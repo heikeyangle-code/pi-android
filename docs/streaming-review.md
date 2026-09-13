@@ -19,7 +19,7 @@
 
 另外两条是**结构性的次要缺陷**，也已修：`scrollToItem(lastIndex)` 在"最后一行比视口高"时把**最新文字留在折线以下**（§2.5）；长会话的"回到最新"入口没有计数、命中搜索/跳转后没有 pi 的 `disableFollow` 语义（§2.6）。
 
-**没有被证实的是"每 token 的 O(n) 算法开销"**：把数字算出来以后（§4.3），reducer 的字符串拼接、engine 的身份 diff、ViewModel 的整表拷贝在手机规模下都是**微秒级**，不是病根；病根是"每秒 60 次的动画与重排"和"空白帧"。诚实的结论是：F7 那条"越流越卡"的叙述在**算法层面**被高估了，在**动画层面**被漏掉了。
+**没有被证实的是"每 token 的 O(n) 算法开销"**：把数字算出来以后（§4.1），reducer 的字符串拼接、engine 的身份 diff、ViewModel 的整表拷贝在手机规模下都是**微秒级**，不是病根；病根是"每秒 60 次的动画与重排"和"空白帧"。诚实的结论是：F7 那条"越流越卡"的叙述在**算法层面**被高估了，在**动画层面**被漏掉了。
 
 ---
 
@@ -72,7 +72,9 @@
   ```
 
   三字节的中文/四字节的 emoji 占多数时，**大多数读边界都落在字符中间**。而且它是**永久的**：framer 在收到剩余字节之前已经把解码后的字符缓冲下来了；下游也没有任何东西能把它当错误 —— JSON 字符串里的 `U+FFFD` 是合法 JSON，记录照样解析成功。
-* **pi 侧**：`pi` 自己的读法不共享这个问题 —— 它的 `attachJsonlLineReader` 按**字节**切 `\n` 再解码（`packages/coding-agent/src/modes/rpc/jsonl.ts`）。`pi 有`：按字节分帧 + 解码是一条正确的路线，我们选择了另一条（按文本分帧），于是必须自己保证增量解码。
+* **pi 侧**：`pi 有`，而且就是这条修法 —— pi 的 `attachJsonlLineReader` 用 **`new StringDecoder("utf8")`**（Node 的增量解码器，会把不完整序列留到下次 `write`）解出文本，再在文本里按 `\n` 分帧：
+  `packages/coding-agent/src/modes/rpc/jsonl.ts:22`（`const decoder = new StringDecoder("utf8")`）、`:31`（`buffer += … decoder.write(chunk)`）、`:49`（`decoder.end()`）。
+  也就是说：App 的 framer 设计（只按 `\n`、连 `U+2028/U+2029` 都不算换行）本来就是照 pi 抄的，**漏掉的只有那台增量解码器** —— 这次补上的正是它。
 * **修法**：新增 `rpc/src/main/kotlin/app/pi/rpc/Utf8StreamDecoder.kt`（`java.nio.charset.CharsetDecoder` 的三参数 `decode`，把不完整序列的字节**带到下一读**；只有 `flush()` 在 EOF 才允许把真正截断的序列变成替换字符），`readLoop` 改为 `framer.feed(decoder.decode(buffer, read))` + 收尾 `framer.feed(decoder.flush())`（`PiEngineSession.kt:367-384`）。framer 的契约（只按 `\n` 切、`U+2028/U+2029` 不算换行）一个字没动。
 * **验证**：`app/src/test/kotlin/app/pi/rpc/Utf8StreamDecoderCheck.kt`，18 条检查，包括**在每一个字节偏移处切开**、拆成三段、逐字节喂、以及把替换字符行为的基线本身钉住（万一哪天 Java 变了，harness 会红）。`tools/run-app-pure-checks.sh` 的 `utf8-stream`。
 
@@ -286,7 +288,7 @@
 | 整段 markdown 重解析（每条更新重建组件），按 (text,width) 缓存渲染 | `pi 有` | `components/assistant-message.ts:91-100`；`components/markdown.ts:245-293` |
 | **增量** markdown（稳定前缀 AST + 不稳定尾巴） | `pi 无对应物`；库有但我们没用 | 库 0.45.0 `model/StreamingMarkdownState.kt`（`stableAst`/`unstableAstTail`）；App 走的是整段入口 `PiMarkdown.kt`。要做需要 delta 通道（§4.2） |
 | 尺寸/内容动画 | `pi 无对应物` | pi 无任何尺寸动画；我们曾吃库默认的 `animateContentSize`（§2.3），已关 |
-| stdout 按字节分帧 + 增量解码 | `pi 有` | `modes/rpc/jsonl.ts` 的按字节行读取；App 曾逐读解码（§2.0），已改为增量 |
+| 增量 UTF-8 解码 + 文本分帧（只认 `\n`） | `pi 有` | `modes/rpc/jsonl.ts:22`/`:31`/`:49` 的 `StringDecoder("utf8")`；App 已由 `Utf8StreamDecoder` 对齐（§2.0） |
 | 每个流式行一个 `MutableState<String>`（spec §4.2 的"打字机"设计） | `pi 无对应物（App 的设计）`，**仍未做** | 现在是不可变行 + 整表增量替换；要做需要 UiState 结构改动（§4.2/§4.3） |
 | F8 的 `tool_execution_update` 200 ms 节流 | `一致`（App 自定，pi 无对应节流） | `rpc/Transcript.kt:618`、`:1302`；engine 侧 `PiEngineSession.foldEvent` |
 
@@ -311,19 +313,23 @@
 我改 `PiEngineSession.kt`/`run-app-pure-checks.sh` 时是**最小插入**，并复核过他们的改动仍在（`stopAndDrainQueue` 读 `clear_queue` 响应那一段、`settings-audit` harness 注册都还在）。如果他们在我之后又写同一文件，我的插入可能被覆盖 —— 复核方式：`grep -n Utf8StreamDecoder app/.../PiEngineSession.kt` 与 `grep -n "^run_harness" tools/run-app-pure-checks.sh`。
 
 ### 8.3 自检命令与结果
-见 §9。
+
+见 §9。另：审查过程中（约 09:05）**别的代理做了一次批量提交**（`d8ac56a 批量快照：…`），把我的改动一起提交进去了 —— 所以现在 `git status` 里我的文件大部分不再显示为改动，只在我提交后又改过的那 4 个（`TailFollow.kt`、`Utf8StreamDecoder.kt`、`run-app-pure-checks.sh`、本文件）显示 ` M`。我本人**没有执行任何 git 写操作**。
 
 ---
 
 ## 9. 自检结果
 
+跑在 2026-09-13 的工作树上。
+
 | 命令 | 结果 |
 |---|---|
-| `bash tools/typecheck.sh` | 见下（`:rpc` / `:app` 的 error 数） |
-| `bash tools/run-app-pure-checks.sh` | 见下（含新加的 `tail-follow`、`utf8-stream`） |
-| `python3 tools/check-nested-comments.py` | 见下（应为 0 处） |
+| `bash tools/run-app-pure-checks.sh` | **全过**：`pure-checks: OK — 9 harnesses ran on a bare JVM`；其中 `tail-follow`（52 检查）、`utf8-stream`（18 检查）是本 Change 新加的。跑的是脚本的**快照副本**（`tools/.pure-checks-snapshot.sh`，跑完已删）—— 因为同一时刻别的代理正在往这个脚本里追加 harness，直接跑会被"读到写了一半的文件"打断（我第一次就撞上了：`line 312: :rpc: command not found`，那是别的代理写文件的中间态，不是脚本的错）。 |
+| `python3 tools/check-nested-comments.py` | **0 处**：`nested-comments: OK (159 Kotlin file(s) scanned)` |
+| `bash tools/typecheck.sh` | `:rpc` **0 error**；`:app` **1 error**，在 `app/src/main/kotlin/app/pi/packages/PiPackagesScreen.kt:284`（`error: this annotation is not repeatable.`）—— 那是**别的代理的在制品**：该文件在本轮被改了 +99 行，插入了一个 `@Composable` + KDoc + 又一个 `@Composable` 的重复标注。**与本次改动无关**（我不碰 `packages/**`）。能这样断言，是因为 `:app` 这一遍是**全树一次编译**：Kotlin 前端会把所有解析/类型错误都报出来，而这一遍里只有那一条，我的四个 `:app` 文件（`ChatScreen.kt`、`PiMarkdown.kt`、`PiMarkdownComponents.kt`、`engine/PiEngineSession.kt`）**零诊断**；`:rpc` 那一遍（含我新加的 `Utf8StreamDecoder.kt`）零诊断。 |
+| 上述 `:app` 错误的独立复核 | **没有结论（不作为证据）**：把整棵树拷到 `/tmp/pi-verify`（源码 + 已缓存的编译器/依赖），**只在副本里**修掉那句重复的 `@Composable`，想复跑一遍看全树是否 0 error —— 副本里 `:rpc` 那一遍跑完了（产出了非空 `rpc.jar`，即 0 error），但 `:app` 那一遍**三次都被本机的基础设施在跑完前杀掉**（长任务在工具调用被打断时一起被回收；`build/typecheck/last` 没有被 touch，说明没跑到判定那一步）。所以这一行只说明"我去排除了"，**不能**当成绿。要拿到绿，等 `PiPackagesScreen.kt` 的那句重复标注被别人修掉后重跑 `bash tools/typecheck.sh`。 |
 
-> 结果在下面的"自检记录"一节逐条写入（命令、退出状态、关键输出）。
+> **类型检查证明不了什么**：本地不跑 Compose 编译器插件（`tools/typecheck.sh` 的文件头写明），所以 composable 调用规则、`@OptIn` 必要性、以及所有组合/布局行为**都不在**这个门里 —— 那部分只有 Gradle/CI 和真机能证明（§6）。
 
 ---
 

@@ -149,6 +149,85 @@ function checkSurface(piDir) {
 		);
 	}
 	console.log(`   (${new Set(commands).size} commands, ${uiMethods.length} local handlers, ${presets.filter((p) => p.builtInPi).length} provider presets scanned)`);
+	checkMentionArgv(dist);
+	checkPreSpawnFlags(dist);
+}
+
+/**
+ * The pre-spawn table (`rpc/src/main/kotlin/app/pi/rpc/PiPreSpawnConfig.kt`) is the
+ * app's claim about which CLI flags and environment variables pi accepts at launch.
+ *
+ * Why this needs an assertion rather than a `file:line`: pi's parser routes any
+ * unrecognised `--flag` into `unknownFlags` (extension flags) instead of failing, so a
+ * renamed flag would not error anywhere — the settings row would simply stop doing
+ * anything. The same is true of an environment variable: a renamed one is just absent.
+ * That is the §I11 shape (a switch with no effect), one layer lower.
+ */
+function checkPreSpawnFlags(dist) {
+	const text = readFileSync(join(ROOT, "rpc/src/main/kotlin/app/pi/rpc/PiPreSpawnConfig.kt"), "utf8");
+	const exposed = (text.split("val APP_EXPOSED_PRE_SPAWN")[1] ?? "").split("val COVERED_BY_PI_SETTING")[0];
+	const flags = [...exposed.matchAll(/flag = "([^"]+)"/g)].map((m) => m[1]);
+	const variables = [...exposed.matchAll(/envVar = "([^"]+)"/g)].map((m) => m[1]);
+	for (const flag of flags) {
+		check(
+			`pre-spawn CLI flag still exists in the pinned engine: ${flag}`,
+			dist.includes(flag),
+			`app.pi passes ${flag} to pi at launch (rpc/.../PiPreSpawnConfig.kt, from PiLaunchOptions). ` +
+				`pi treats an unknown --flag as an extension flag rather than an error, so the settings ` +
+				`row would silently do nothing. Re-read the pinned cli/args.ts parseArgs and update ` +
+				`PiPreSpawnConfig.kt + PiLaunchOptions.kt.`,
+		);
+	}
+	for (const variable of variables) {
+		check(
+			`pre-spawn environment variable still exists in the pinned engine: ${variable}`,
+			dist.includes(variable),
+			`app.pi sets ${variable} in pi's process environment (rpc/.../PiPreSpawnConfig.kt). A rename ` +
+				`leaves the switch silently inert. Re-read the pinned docs/environment-variables.md and its ` +
+				`reader, then update PiPreSpawnConfig.kt + PiLaunchOptions.kt.`,
+		);
+	}
+	console.log(`   (${flags.length} pre-spawn flags, ${variables.length} variables pinned)`);
+}
+
+/**
+ * pi's `@` file-mention list is produced by the guest's own `fd`, run with **pi's
+ * argv** — that is the whole reason the app does not reimplement an ignore engine:
+ * pi's candidate semantics *are* fd's semantics (layered ignore files, `--hidden`
+ * with the `.git` exclusion, the 100-result cap). `PiFileMentions.fdCommand` is a
+ * transcription of that argv, so if pi changes it the app silently starts offering a
+ * different file set than pi's own `@` — the "App believes a copy" shape
+ * `docs/pi-sourced-lists.md` is about.
+ *
+ * Whitespace is stripped before the comparison so a minifier change cannot fail it,
+ * and only the flags are pinned: `--base-directory`'s value and the query are
+ * arguments the app supplies.
+ */
+function checkMentionArgv(dist) {
+	const compact = dist.replace(/\s+/g, "");
+	const flags = [
+		'"--type","f"',
+		'"--type","d"',
+		'"--follow"',
+		'"--hidden"',
+		'"--exclude",".git"',
+		'"--exclude",".git/*"',
+		'"--exclude",".git/**"',
+	].join(",");
+	const hasFlags = compact.includes(flags);
+	const hasCaps =
+		compact.includes('"--base-directory"') &&
+		compact.includes('"--max-results"') &&
+		compact.includes('"--full-path"');
+	check(
+		"pi's own fd argv for the @ file list is unchanged in the pinned engine",
+		hasFlags && hasCaps,
+		"app.pi reproduces pi's `@` candidates by running the guest's fd with pi's argv " +
+			"(app/src/main/kotlin/app/pi/ui/chat/PiFileMentions.kt, `fdCommand`, cited to " +
+			"packages/tui/src/autocomplete.ts's walkDirectoryWithFd). Re-read that function in " +
+			"the pinned engine and update `fdCommand` + the `mentions` harness — otherwise the " +
+			"App's completion offers a different file set than pi's own `@`.",
+	);
 }
 
 // -------------------------------------------------------------- part 2: behaviour

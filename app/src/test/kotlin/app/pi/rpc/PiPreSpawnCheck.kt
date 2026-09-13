@@ -1,0 +1,257 @@
+package app.pi.rpc
+
+// A bare-JVM check of the **pre-spawn** surface, registered in
+// `tools/run-app-pure-checks.sh` as `pre-spawn`.
+//
+// Why this check exists: `docs/pre-spawn-config.md` claims a table. The part
+// that can rot silently is not the prose but the wiring —
+//
+//   * a row added to the settings screen whose value never reaches
+//     `PiLaunchOptions` (the §I11 shape: a process switch with no process),
+//   * a knob exposed both as a settings key *and* as a CLI flag, which gives
+//     the engine two sources for one value (the §M12 shape: two truths, one of
+//     which silently wins),
+//   * a `RestartEngine` claim on the row that is not actually restart-only.
+//
+// `PiPreSpawnConfig.kt` and `PiLaunchOptions.kt` are pure Kotlin, so they are
+// compiled here directly. `PiSettingsRegistry.kt` imports Compose and
+// `PiSessionViewModel.kt` imports Android, so those two are read as **source
+// text** — the key name and the badge are exactly the granularity these checks
+// are about.
+
+import java.io.File
+import kotlin.system.exitProcess
+
+private var failures = 0
+
+private fun check(name: String, ok: Boolean, detail: String = "") {
+    if (ok) {
+        println("PASS $name")
+    } else {
+        failures++
+        println("FAIL $name${if (detail.isEmpty()) "" else "\n  $detail"}")
+    }
+}
+
+/** One `PiSetting( ... )` row of the registry, keyed by its `key = "..."`. */
+private fun settingBlocks(registry: String): List<String> =
+    registry.split(Regex("(?m)^\\s*PiSetting\\(\\s*$")).drop(1)
+
+private fun blockFor(registry: String, key: String): String? =
+    settingBlocks(registry).firstOrNull { it.contains("key = \"$key\"") }
+
+/** Splits a `--a / --b` / `VAR_A / VAR_B` spelling into its parts. */
+private fun spellings(value: String?): List<String> =
+    value?.split("/")?.map { it.trim() }?.filter { it.isNotEmpty() } ?: emptyList()
+
+/** `(^|\s)--flag(\s|$)` — so `--system-prompt` does not match inside `--xsystem-prompt`. */
+private fun containsFlag(suffix: String, flag: String): Boolean =
+    Regex("(^|\\s)" + Regex.escape(flag) + "(\\s|$)").containsMatchIn(suffix)
+
+fun main() {
+    val root = System.getProperty("pi.repo.root")?.let(::File)
+        ?: File(System.getProperty("user.dir") ?: ".")
+    val registryFile = File(root, "app/src/main/kotlin/app/pi/ui/settings/PiSettingsRegistry.kt")
+    val viewModelFile = File(root, "app/src/main/kotlin/app/pi/ui/PiSessionViewModel.kt")
+
+    check("the settings registry is readable at $registryFile", registryFile.isFile)
+    check("the session view model is readable at $viewModelFile", viewModelFile.isFile)
+    if (!registryFile.isFile || !viewModelFile.isFile) {
+        println("\nharness: FAILED (missing source to audit)")
+        exitProcess(1)
+    }
+    val registry = registryFile.readText()
+    val viewModel = viewModelFile.readText()
+
+    // ---------------------------------------------------------------- mapping
+    // The defaults are what pi gets with no options at all: nothing on either
+    // channel. A default that emitted anything would be a silent behaviour change
+    // on every launch.
+    val defaults = PiLaunchOptions()
+    check("the default launch sends no environment", defaults.environment().isEmpty())
+    check("the default launch sends no flags", defaults.commandLineSuffix() == "")
+
+    val allNull = PiLaunchOptions.fromSettingValues(
+        offline = null,
+        cacheRetention = null,
+        systemPrompt = null,
+        appendSystemPrompt = null,
+        noContextFiles = null,
+    )
+    check("absent settings collapse to the defaults", allNull == defaults)
+
+    val blank = PiLaunchOptions.fromSettingValues(
+        offline = false,
+        cacheRetention = "short",
+        systemPrompt = "   ",
+        appendSystemPrompt = "",
+        noContextFiles = false,
+    )
+    check(
+        "blank prompts and non-long cache retention emit nothing",
+        blank.commandLineSuffix() == "" && blank.environment().isEmpty(),
+        "got suffix=${blank.commandLineSuffix()} env=${blank.environment()}",
+    )
+
+    // `PI_OFFLINE` is tested for *presence* by core/model-runtime.ts:196, so a
+    // false-y string is worse than omitting the key.
+    val offlineOff = PiLaunchOptions.fromSettingValues(true, null, null, null, null)
+    check("offline=true sets PI_OFFLINE=1", offlineOff.environment()["PI_OFFLINE"] == "1")
+    val offlineUnset = PiLaunchOptions.fromSettingValues(false, null, null, null, null)
+    check(
+        "offline=false omits PI_OFFLINE rather than writing a false-y value",
+        !offlineUnset.environment().containsKey("PI_OFFLINE"),
+        "core/model-runtime.ts:196 treats any present PI_OFFLINE as 'model network off'.",
+    )
+    val cacheLong = PiLaunchOptions.fromSettingValues(null, "long", null, null, null)
+    check("cacheRetention=long sets PI_CACHE_RETENTION=long", cacheLong.environment()["PI_CACHE_RETENTION"] == "long")
+    val cacheShort = PiLaunchOptions.fromSettingValues(null, "short", null, null, null)
+    check("cacheRetention=short omits PI_CACHE_RETENTION", !cacheShort.environment().containsKey("PI_CACHE_RETENTION"))
+
+    // ------------------------------------------------- every exposed knob emits
+    val everything = PiLaunchOptions.fromSettingValues(
+        offline = true,
+        cacheRetention = "long",
+        systemPrompt = "base prompt",
+        appendSystemPrompt = "extra preference",
+        noContextFiles = true,
+    )
+    val suffix = everything.commandLineSuffix()
+    val environment = everything.environment()
+    for (knob in APP_EXPOSED_PRE_SPAWN) {
+        knob.flag?.let { flag ->
+            check(
+                "the exposed flag is emitted: $flag",
+                containsFlag(suffix, flag),
+                "PiLaunchOptions.commandLineSuffix() does not produce $flag. Re-read " +
+                    "rpc/PiLaunchOptions.kt and make the row real, or drop it from " +
+                    "APP_EXPOSED_PRE_SPAWN (rpc/PiPreSpawnConfig.kt).",
+            )
+        }
+        knob.envVar?.let { variable ->
+            check(
+                "the exposed environment variable is emitted: $variable",
+                environment.containsKey(variable),
+                "PiLaunchOptions.environment() does not produce $variable. Re-read " +
+                    "rpc/PiLaunchOptions.kt; the value is otherwise a settings row nothing reads.",
+            )
+        }
+        // The channel field is documentation, but a wrong one would mislead the doc.
+        val consistent = when (knob.channel) {
+            PiPreSpawnChannel.CliFlag -> knob.flag != null && knob.envVar == null
+            PiPreSpawnChannel.EnvVar -> knob.flag == null && knob.envVar != null
+            PiPreSpawnChannel.CliFlagOrEnv -> knob.flag != null && knob.envVar != null
+        }
+        check(
+            "the channel describes the spellings: ${knob.appKey}",
+            consistent,
+            "channel=${knob.channel} flag=${knob.flag} envVar=${knob.envVar} — fix one of them in PiPreSpawnConfig.kt.",
+        )
+    }
+
+    // Appending is not replacing: both land on the same command line and pi
+    // applies them in different places (core/system-prompt.ts:34-41).
+    check(
+        "replace and append are two distinct flags on one command line",
+        containsFlag(suffix, "--system-prompt") &&
+            containsFlag(suffix, "--append-system-prompt") &&
+            suffix.indexOf("--system-prompt") < suffix.indexOf("--append-system-prompt"),
+        "the append row must not shadow the replace row; see docs/pre-spawn-config.md.",
+    )
+    check(
+        "noContextFiles is a flag, not an environment variable",
+        containsFlag(suffix, "--no-context-files") && !environment.containsKey("--no-context-files"),
+    )
+    val noContextOff = PiLaunchOptions.fromSettingValues(null, null, null, null, false)
+    check("noContextFiles=false emits nothing", noContextOff.commandLineSuffix() == "")
+
+    // Quoting: the suffix is handed to `bash -lc`, so spaces and metacharacters
+    // must stay inside one argument.
+    val quoted = PiLaunchOptions.fromSettingValues(null, null, "it's here; rm -rf /", "a b", null)
+    check(
+        "prompt values are shell-quoted",
+        quoted.commandLineSuffix().contains("'it'\\''s here; rm -rf /'") &&
+            quoted.commandLineSuffix().contains("'a b'"),
+        "got ${quoted.commandLineSuffix()}",
+    )
+
+    // --------------------------------------------------------- the rule: no two truths
+    val exposedFlags = APP_EXPOSED_PRE_SPAWN.flatMap { spellings(it.flag) }.toSet()
+    val exposedEnv = APP_EXPOSED_PRE_SPAWN.flatMap { spellings(it.envVar) }.toSet()
+    val coveredFlags = COVERED_BY_PI_SETTING.flatMap { spellings(it.flag) }.toSet()
+    val coveredEnv = COVERED_BY_PI_SETTING.flatMap { spellings(it.envVar) }.toSet()
+    check(
+        "no exposed knob is also covered by a pi settings key",
+        (exposedFlags intersect coveredFlags).isEmpty() && (exposedEnv intersect coveredEnv).isEmpty(),
+        "overlap: ${(exposedFlags intersect coveredFlags) + (exposedEnv intersect coveredEnv)}. A key pi " +
+            "already reads must not get a second channel: the CLI value wins (core/sdk.ts:258-262), so the " +
+            "settings row would silently stop working.",
+    )
+    check(
+        "every covered knob names the settings key that supersedes it",
+        COVERED_BY_PI_SETTING.all { it.piSettingKey.isNotBlank() && it.why.isNotBlank() },
+    )
+
+    val skippedFlags = NOT_EXPOSED_PRE_SPAWN.flatMap { spellings(it.flag) }.toSet()
+    val skippedEnv = NOT_EXPOSED_PRE_SPAWN.flatMap { spellings(it.envVar) }.toSet()
+    check(
+        "a knob is either exposed or skipped, never both",
+        (exposedFlags intersect skippedFlags).isEmpty() && (exposedEnv intersect skippedEnv).isEmpty(),
+        "overlap: ${(exposedFlags intersect skippedFlags) + (exposedEnv intersect skippedEnv)}",
+    )
+    check(
+        "every skipped knob carries a reason",
+        NOT_EXPOSED_PRE_SPAWN.all { it.reason.isNotBlank() },
+        "a reason is mandatory: 'not done yet' and 'meaningless here' must stay distinguishable.",
+    )
+    check(
+        "a pi setting key is not reported as a pre-spawn row: defaultTools",
+        piPreSpawnKnob("defaultTools") == null,
+        "defaultTools is a settings key pi reads at session build; it must not be in APP_EXPOSED_PRE_SPAWN.",
+    )
+    check(
+        "an app-only row is not reported as a pre-spawn row: app.runtime.keepAlive",
+        piPreSpawnKnob("app.runtime.keepAlive") == null,
+    )
+
+    // ------------------------------------------------------- the registry rows
+    for (knob in APP_EXPOSED_PRE_SPAWN) {
+        val block = blockFor(registry, knob.appKey)
+        check(
+            "the pre-spawn key is registered: ${knob.appKey}",
+            block != null,
+            "no `PiSetting(key = \"${knob.appKey}\")` in PiSettingsRegistry.kt — the table and the screen " +
+                "have drifted.",
+        )
+        if (block == null) continue
+        check(
+            "the pre-spawn row is marked RestartEngine: ${knob.appKey}",
+            block.contains("effective = EffectiveKind.RestartEngine"),
+            "the value is written into pi's argv/env once, at spawn; a `NewSession` or `Reload` badge " +
+                "promises a change the running process cannot make. See docs/pre-spawn-config.md.",
+        )
+        check(
+            "the pre-spawn row lives in the 进程 section: ${knob.appKey}",
+            block.contains("group = G_RUNTIME"),
+            "the whole 进程 section is the app's pre-spawn surface; a row elsewhere hides that contract.",
+        )
+        check(
+            "the pre-spawn row is read by the launch mapping: ${knob.appKey}",
+            viewModel.contains("\"${knob.appKey}\""),
+            "PiSessionViewModel.kt never mentions this key, so the settings row writes a value no launch " +
+                "reads — the §I11 defect.",
+        )
+    }
+    check(
+        "the launch mapping goes through the pure normaliser",
+        viewModel.contains("PiLaunchOptions.fromSettingValues"),
+        "the settings→process normalisation must stay in PiLaunchOptions.fromSettingValues so this harness " +
+            "can execute it; re-read app/.../PiSessionViewModel.kt's launchOptions().",
+    )
+
+    if (failures > 0) {
+        println("\nharness: FAILED ($failures)")
+        exitProcess(1)
+    }
+    println("\nharness: OK")
+}

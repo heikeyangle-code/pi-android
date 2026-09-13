@@ -20,7 +20,11 @@ import java.nio.charset.CodingErrorAction
  *
  * (measured on this machine, `new String` with `UTF_8`, which is documented to
  * "always replace malformed-input and unmappable-character sequences"; the same
- * happens with `InputStreamReader` unless it is told to carry state). A pipe read
+ * happens with `InputStreamReader` unless it is told to carry state). pi's own
+ * reader does not have this hole — it decodes with Node's incremental
+ * `StringDecoder("utf8")` and only then splits on `\n`
+ * (`packages/coding-agent/src/modes/rpc/jsonl.ts:22`, `:31`, `:49`), which is the
+ * same two-step this class restores on the App's side. A pipe read
  * boundary is arbitrary, so for CJK text — three bytes per character — that is most
  * boundaries: every long Chinese answer loses characters to `\uFFFD`, and the damage
  * is permanent, because the framer has already buffered the decoded characters by the

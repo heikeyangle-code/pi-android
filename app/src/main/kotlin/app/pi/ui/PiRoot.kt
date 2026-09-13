@@ -48,30 +48,6 @@ enum class PiDestination(val label: String, val icon: ImageVector) {
     Settings("设置", Icons.Filled.Settings),
 }
 
-/**
- * Settings action rows whose pi counterpart exists but is **unreachable over
- * RPC**, mapped to the command the user has to run in pi's own TUI.
- *
- * The `RpcCommand` union is the whole protocol (`modes/rpc/rpc-types.ts:20-74`):
- * there is no login, no session import and no changelog in it. All three are
- * built-in slash commands of pi's interactive mode, and `prompt()` cannot reach a
- * built-in either — `get_commands` deliberately excludes them and
- * `_tryExecuteExtensionCommand` only matches extension commands
- * (`PiSlashCommands.kt:5-19`). So the honest answer is the surface that does have
- * them: the workbench terminal runs a real shell in a real PTY, `pi` is on its
- * `PATH`, and the command is run there — which is why these rows navigate to the
- * terminal and tell the user to type `pi` first.
- */
-private val TERMINAL_ONLY_ACTIONS: Map<String, String> = mapOf(
-    // `interactive-mode.ts:3052-3055` → `handleLoginCommand` (`:5485`); the OAuth
-    // flows live in the interactive shell (`ui/settings/PiCredentialScreen.kt:52-58`).
-    "app.credentials.oauth" to "/login",
-    // `interactive-mode.ts:6107-6122` — see the row's own comment for the split.
-    "app.sessions.import" to "/import <path.jsonl>",
-    // `interactive-mode.ts:3022-3025` → `handleChangelogCommand`.
-    "app.about.changelog" to "/changelog",
-)
-
 @Composable
 fun PiRoot(
     isDark: Boolean,
@@ -206,57 +182,62 @@ fun PiRoot(
                     // implements the ones that need a screen of its own (the
                     // credential form, `PiSettingsStack.hostActions`); everything
                     // else arrives here.
+                    //
+                    // There used to be a `TERMINAL_ONLY_ACTIONS` map holding three
+                    // signposts to pi's own TUI (`/login`, `/import`, `/changelog`).
+                    // Two of them went with their rows: a settings row whose only
+                    // content is "go somewhere else" is not a setting, and the single
+                    // sentence that has to exist for discovery lives on the workbench
+                    // terminal now (`WorkbenchScreen.kt`). The survivor is kept for
+                    // discoverability, not capability — OAuth is the only way to use a
+                    // subscription login and the credential form this app owns writes
+                    // API keys only (`ui/settings/PiCredentialScreen.kt:52-58`), so
+                    // without this row a user could not learn the option exists.
                     onRunAction = { setting ->
-                        val terminalCommand = TERMINAL_ONLY_ACTIONS[setting.key]
-                        if (terminalCommand != null) {
-                            // pi implements it, RPC does not. Name the command and move
-                            // the user to the one surface that has it, instead of a
-                            // notice that leaves them where they were. The wording stays
-                            // on what to do next: why this screen cannot is protocol
-                            // detail, and it belongs in the KDoc above, not on screen.
-                            session.notifyUser(
-                                "「${setting.title}」只能在 pi 的原版 TUI 里执行：" +
-                                    "已切到 工作区 → 终端，输入 pi 后在那里运行 $terminalCommand。",
-                                warning = true,
-                            )
-                            // The terminal segment, which is where `pi` can be
-                            // typed. Nothing selects a tab: the workbench opens its
-                            // terminal by default, and there is no second one to
-                            // ask for.
-                            session.requestNav(NavRequest.Workbench)
-                        } else {
-                            when (setting.key) {
-                                // pi's `/compact` — the RPC command is `compact`
-                                // (`modes/rpc/rpc-types.ts:44`). The custom-instruction
-                                // form of `/compact` needs a text field and lives in the
-                                // chat palette (`ChatScreen.kt:341`), which this row's
-                                // description now names; this entry triggers the bare one.
-                                "app.compaction.runNow" -> session.compact()
-                                // pi's Escape, as a button: `clear_queue` + `abort`
-                                // (`PiEngineSession.stopAndDrainQueue` `:480-486`) plus
-                                // `abort_bash` (`PiEngineApi.kt:262`), which aborts
-                                // *every* running bash command, not just one
-                                // (`agent-session.ts:3073-3077`). Nothing is killed
-                                // outside those RPC commands, which is exactly what the
-                                // row's description promises.
-                                "app.security.emergencyStop" -> {
-                                    session.stop()
-                                    session.abortBash()
-                                }
-                                // Reachable for no `PiRowKind.Action` row in the
-                                // registry today: the two credential rows are handled
-                                // by `PiSettingsStack.hostActions`, three are in
-                                // TERMINAL_ONLY_ACTIONS, and the remaining two are
-                                // above. It stays as a regression guard so that a row
-                                // added later without a handler is loud instead of
-                                // silent — the failure docs/known-gaps.md §I2 records.
-                                // The text names no internal cause on purpose: a user
-                                // cannot act on "this row has no handler".
-                                else -> session.notifyUser(
-                                    "「${setting.title}」当前不可用，请把这一步报告给我们。",
+                        when (setting.key) {
+                            // pi keeps OAuth in its own TUI
+                            // (`interactive-mode.ts:3052-3055` → `handleLoginCommand`
+                            // `:5485`) and the `RpcCommand` union has no login command,
+                            // so name the command and move the user to the surface that
+                            // has it. Why this screen cannot is protocol detail and
+                            // stays in the KDoc, not on screen.
+                            "app.credentials.oauth" -> {
+                                session.notifyUser(
+                                    "订阅登录要在 pi 的原版 TUI 里做：已切到 工作区 → 终端，" +
+                                        "输入 pi 后运行 /login。",
                                     warning = true,
                                 )
+                                session.requestNav(NavRequest.Workbench)
                             }
+                            // pi's `/compact` — the RPC command is `compact`
+                            // (`modes/rpc/rpc-types.ts:44`). The custom-instruction
+                            // form of `/compact` needs a text field and lives in the
+                            // chat palette (`ChatScreen.kt:341`), which this row's
+                            // description now names; this entry triggers the bare one.
+                            "app.compaction.runNow" -> session.compact()
+                            // pi's Escape, as a button: `clear_queue` + `abort`
+                            // (`PiEngineSession.stopAndDrainQueue` `:480-486`) plus
+                            // `abort_bash` (`PiEngineApi.kt:262`), which aborts
+                            // *every* running bash command, not just one
+                            // (`agent-session.ts:3073-3077`). Nothing is killed
+                            // outside those RPC commands, which is exactly what the
+                            // row's description promises.
+                            "app.security.emergencyStop" -> {
+                                session.stop()
+                                session.abortBash()
+                            }
+                            // Reachable for no `PiRowKind.Action` row in the registry
+                            // today: the credential rows are handled by
+                            // `PiSettingsStack.hostActions`, and the three above are
+                            // the ones this host runs. It stays as a regression guard
+                            // so a row added later without a handler is loud instead of
+                            // silent — the failure `docs/known-gaps.md` §I2 records.
+                            // The text names no internal cause on purpose: a user
+                            // cannot act on "this row has no handler".
+                            else -> session.notifyUser(
+                                "「${setting.title}」当前不可用，请把这一步报告给我们。",
+                                warning = true,
+                            )
                         }
                     },
                     // The engine restart the package and credential screens ask

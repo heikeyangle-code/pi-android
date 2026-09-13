@@ -61,6 +61,10 @@ fun PiDirectoryWatch(
     onChanged: () -> Unit,
 ) {
     val callback = rememberUpdatedState(onChanged)
+    // Read here, in composition, rather than inside the effect: a CompositionLocal read
+    // inside a `DisposableEffect` block works, but it is one more thing to have to be
+    // right about on a machine where Compose cannot be compiled.
+    val owner = LocalLifecycleOwner.current
     // Keyed on *what* is watched, so a different agent dir rebuilds both the
     // observers and the resume baseline.
     val key = directories.joinToString("|") { it.absolutePath } + "#" + (names?.joinToString(",") ?: "*")
@@ -74,7 +78,6 @@ fun PiDirectoryWatch(
             observer
         }
 
-        val owner = LocalLifecycleOwner.current
         val lifecycleObserver = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME && baseline.consume()) callback.value()
         }

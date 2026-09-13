@@ -2404,15 +2404,18 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
-     * Tell the user why a built-in command they know from pi's TUI does nothing
-     * here: pi exposes no RPC path for it and `prompt()` cannot dispatch it
-     * (built-ins are excluded from `get_commands` and `_tryExecuteExtensionCommand`
-     * only matches extension commands), so the honest answer names the one surface
-     * that can — the original TUI in the workbench terminal.
+     * Tell the user where a command they know from pi's TUI actually runs.
+     *
+     * The message states the consequence and the destination only. Why this app
+     * has no path for it is protocol detail (pi exposes no RPC route for built-in
+     * commands and `prompt()` cannot dispatch them either) and stays here in the
+     * KDoc — `docs/settings-review.md` §9.6 draws the line: the settings face drops
+     * TUI knobs, while pi's command face keeps them because it expresses what pi can
+     * do, with an honest badge instead of a fake action.
      */
     fun notifyTerminalOnly(command: PiSlashCommand) {
         pushNotice(
-            message = "pi 的 RPC 模式没有实现 /${command.name}，只能在工作区 → pi TUI（原版）里执行",
+            message = "/${command.name} 要在原版 TUI 里运行：已切到 工作区 → 终端。",
             tone = Notice.Tone.Warning,
         )
     }
