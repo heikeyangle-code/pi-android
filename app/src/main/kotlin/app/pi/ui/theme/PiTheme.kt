@@ -32,43 +32,15 @@ import androidx.compose.ui.unit.sp
  * [unit] is pi's own rhythm: its terminal UI and its HTML exporter both derive
  * every block gap from one `--line-height` unit (18px). Keeping that number as
  * the block gap is what makes the stream "feel" like pi even though the
- * typography and surfaces are native Android. See docs/pi-android-ui-spec.md §2.3.
- *
- * [paragraphGap] and [listIndent] are §2.2's two derived spacing rules
- * (`docs/pi-android-ui-spec.md:117`): paragraph gap = 0.55 × line height and
- * list indent = 1 × line height, both taken from the body role (15 / 23, `:98`).
+ * typography and surfaces are native Android.
  */
 @Immutable
 object PiSpacing {
     val unit = 18.dp
     val screen = 16.dp
     val card = 12.dp
-    val touchTarget = 48.dp
-    val appBar = 56.dp
     val statusRow = 32.dp
-    val bottomBar = 64.dp
-    val listItem = 72.dp
 
-    /** §2.2 细则 (`:117`): 0.55 × body line height (23sp) = 12.65dp. */
-    val paragraphGap = 12.65.dp
-
-    /** §2.2 细则 (`:117`): 1 × body line height (23sp) = 23dp. */
-    val listIndent = 23.dp
-
-    /** §7.1 列表项: 56dp single-line row. */
-    val listItemSingle = 56.dp
-
-    /** §7.1 主按钮 40dp inline / 56dp primary. */
-    val buttonInline = 40.dp
-    val buttonPrimary = 56.dp
-
-    /** §7.1 Chip / Tab 40dp, Chip本身 32dp. */
-    val tab = 40.dp
-    val chip = 32.dp
-
-    /** §7.3 上下文环 20dp / 2dp stroke; §2.5 error dot 8dp. */
-    val contextRing = 20.dp
-    val contextRingStroke = 2.dp
     val errorDot = 8.dp
 
     // ------------------------------------------------- the block-interior scale
@@ -181,47 +153,9 @@ object PiShapes {
  * next surface tone instead of a shadow.
  */
 @Immutable
-object PiElevation {
-    /** Level 0 — page background. No shadow (`:143`). */
-    val level0 = 0.dp
-
-    /** Level 1 — list card / message block (`:144`). */
-    val level1 = 1.dp
-
-    /** Level 2 — floating composer while scrolling (`:145`). */
-    val level2 = 2.dp
-
-    /** Level 3 — top bar once scrolled, Chip (`:146`). */
-    val level3 = 4.dp
-
-    /** Level 4 — bottom sheet, dialog (`:147`). */
-    val level4 = 6.dp
-
-    /** Level 5 — FAB pressed, full-screen viewer; §2.4 pairs it with 32% scrim (`:148`). */
-    val level5 = 8.dp
-
-    /** §2.4 (`:148`): the scrim alpha level 5 is specified with. */
-    const val level5ScrimAlpha = 0.32f
-}
 
 /** Sizes §2.5 and §7.3 fix for icons and illustration (`:155-159`, `:773`). */
 @Immutable
-object PiIcons {
-    /** §2.5 (`:155`): 20dp inline. */
-    val inline = 20.dp
-
-    /** §2.5 (`:155`): 24dp navigation. */
-    val nav = 24.dp
-
-    /** §2.5 (`:157`): the one dot, shown only for an error. */
-    val errorDot = PiSpacing.errorDot
-
-    /** §7.3 空态 (`:772`): 120dp line illustration. */
-    val emptyIllustration = 120.dp
-
-    /** §2.5 (`:159`): monochrome line illustration stroke. */
-    val illustrationStroke = 1.5.dp
-}
 
 /**
  * Motion tokens — the six rows of docs/pi-android-ui-spec.md §2.6
@@ -247,76 +181,6 @@ object PiIcons {
  * ~0.59, which is where 10 % overshoot begins.
  */
 @Immutable
-object PiMotion {
-    /** `instant` — input feedback, press states, scrolling (`:167`). */
-    const val instant = 0
-
-    /** `fast.spatial` — block entrance, chip expansion (`:168`). */
-    const val fastSpatialMs = 150
-
-    /** `medium.spatial` — sheet slide-up, card expansion (`:169`). */
-    const val mediumSpatialMs = 250
-
-    /** `slow.spatial` — full-screen transitions, shared elements (`:170`). */
-    const val slowSpatialMs = 400
-
-    /** `fast.effects` — background / alpha transitions (`:171`). */
-    const val fastEffectsMs = 100
-
-    /** `medium.effects` — state colours, theme switch (`:172`). */
-    const val mediumEffectsMs = 200
-
-    /** `spring(damping 0.9)`, the `fast.spatial` row (`:168`). */
-    const val fastSpatialDamping = 0.9f
-
-    /** `spring(damping 0.85)`, the `medium.spatial` row (`:169`). */
-    const val mediumSpatialDamping = 0.85f
-
-    /** `spring(damping 0.8)`, the `slow.spatial` row (`:170`). */
-    const val slowSpatialDamping = 0.8f
-
-    /** `fast.spatial`: 150 ms spring, damping 0.9 (`:168`). */
-    fun <T> fastSpatial(): AnimationSpec<T> = spatial(fastSpatialDamping)
-
-    /** `medium.spatial`: 250 ms spring, damping 0.85 (`:169`). */
-    fun <T> mediumSpatial(): AnimationSpec<T> = spatial(mediumSpatialDamping)
-
-    /** `slow.spatial`: 400 ms spring, damping 0.8 (`:170`). */
-    fun <T> slowSpatial(): AnimationSpec<T> = spatial(slowSpatialDamping)
-
-    /** `fast.effects`: 100 ms linear (`:171`). */
-    fun <T> fastEffects(): AnimationSpec<T> = tween(fastEffectsMs, easing = LinearEasing)
-
-    /** `medium.effects`: 200 ms ease-in-out (`:172`). */
-    fun <T> mediumEffects(): AnimationSpec<T> = tween(mediumEffectsMs, easing = FastOutSlowInEasing)
-
-    private fun <T> spatial(dampingRatio: Float): AnimationSpec<T> = spring(
-        dampingRatio = dampingRatio,
-        stiffness = Spring.StiffnessMediumLow,
-        visibilityThreshold = null,
-    )
-
-    // ------------------------------------------------------------- deprecated
-    // Pre-§2.6 spellings, kept only so an older call site still compiles.
-
-    @Deprecated("Use PiMotion.instant (§2.6).", ReplaceWith("PiMotion.instant"))
-    const val Instant = 0
-
-    @Deprecated("Use PiMotion.fastEffectsMs (§2.6).", ReplaceWith("PiMotion.fastEffectsMs"))
-    const val FastEffects = 100
-
-    @Deprecated("Use PiMotion.fastSpatialMs (§2.6).", ReplaceWith("PiMotion.fastSpatialMs"))
-    const val FastSpatial = 150
-
-    @Deprecated("Use PiMotion.mediumEffectsMs (§2.6).", ReplaceWith("PiMotion.mediumEffectsMs"))
-    const val Base = 200
-
-    @Deprecated("Use PiMotion.mediumSpatialMs (§2.6).", ReplaceWith("PiMotion.mediumSpatialMs"))
-    const val MediumSpatial = 250
-
-    @Deprecated("Use PiMotion.slowSpatialMs (§2.6).", ReplaceWith("PiMotion.slowSpatialMs"))
-    const val SlowSpatial = 400
-}
 
 /**
  * Text styles that Material 3's [Typography] has no slot for: pi's footer/meta

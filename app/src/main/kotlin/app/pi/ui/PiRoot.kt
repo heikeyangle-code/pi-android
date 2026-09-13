@@ -49,9 +49,7 @@ enum class PiDestination(val label: String, val icon: ImageVector) {
 }
 
 @Composable
-fun PiRoot(
-    isDark: Boolean,
-) {
+fun PiRoot() {
     var destination by rememberSaveable { mutableStateOf(PiDestination.Chat.ordinal) }
     val current = PiDestination.entries[destination]
 

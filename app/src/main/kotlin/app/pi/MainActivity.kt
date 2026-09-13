@@ -41,7 +41,7 @@ class MainActivity : ComponentActivity() {
                 palette = theme.palette,
                 textScaleDelta = uiState.prefs.fontScaleDelta,
             ) {
-                PiRoot(isDark = theme.dark)
+                PiRoot()
             }
         }
     }
