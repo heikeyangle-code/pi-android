@@ -66,9 +66,9 @@ class PiEngineHost(private val appContext: Context) {
     private val provisioner = RuntimeProvisioner(paths, appContext.assets)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
-    // The lock is process-wide (see [lifecycleLock] in the companion object), not a
-    // field of this instance: the resource it protects — one cwd, one session JSONL,
-    // one guest agent dir — is process-wide, and a host is created per ViewModel.
+    // The lock is process-wide (the companion's `PROCESS_LOCK`), not a field of this
+    // instance: the resource it protects — one cwd, one session JSONL, one guest agent
+    // dir — is process-wide, and a host is created per ViewModel.
     private val lifecycleLock: Mutex get() = PROCESS_LOCK
 
     /**

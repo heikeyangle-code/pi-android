@@ -9,7 +9,8 @@
 - **一致 / 有意偏离** —— 与 pi 一致，或有意不同并说明理由。
 
 行号是**本次审计时的快照**（本仓库同时有多个 agent 在改，`file:line` 只保证写作时成立；
-凡是本文说"已改"的，改动点自己在代码里带注释）。
+凡是本文说"已改"的，改动点自己在代码里带注释）。§5 的改动落在这些文件里之后，插入点**之后**的行号
+会整体位移；表里带「旧」字样的就是改动前的行号。
 
 **pi 的"生命周期"是什么**：pi 是 CLI，它的生命周期就是**进程**——没有 Activity、没有前台服务、
 没有息屏概念，因此本文里所有"什么时候该停止、谁负责停、屏幕关了怎么办"的问题，pi 侧一律是
@@ -150,8 +151,11 @@
 | 5-6 | `service/PiEngineService.kt` | `onStartCommand` 走 `PiEngineLifecyclePolicy.startCommand`；两种情况都 `START_NOT_STICKY`；`intent == null` 视为停机 | `START_STICKY` + null intent = 复活一个没有引擎的服务（重新发通知 + 上锁） |
 | 5-7 | `service/PiEngineService.kt`、`ui/PiSessionViewModel.kt`、`ui/settings/RuntimeFacts.kt` | 新增 `reportWork(active)`；唤醒锁按 `shouldHoldWakeLock(booting, turnRunning)` 取/放；通知计数由同一事实驱动；`app.runtime.wakeLock` 的文案改成"空闲不持锁"是正常的 | 原锁整服务寿命持有 + 6 h 上限（旧 `:148`、`:157-160`）；原通知计数恒 0（`:120-123` 无调用者） |
 | 5-8 | `ui/PiSessionViewModel.kt` | 倒计时循环用 `PiEngineLifecyclePolicy.nextCountdownDelayMs` 睡到**下一个整秒边界**（≤1000 ms），删掉固定 200 ms 常量 | pi 的同类倒计时是 1 Hz（`countdown-timer.ts:21`）；显示只按整秒变 |
-| 5-9 | `ui/screens/DeviceCapabilityScreen.kt`（+ 新的可见性小工具） | 轮询循环只在 Activity ≥ STARTED 时跑 | 现在 App 退后台仍每 1.5 s 一次 binder 调用；`PiFileWatch.kt:81-88` 已经用同一套 `LocalLifecycleOwner` + `LifecycleEventObserver` 写法，照抄它 |
+| 5-9 | `ui/screens/DeviceCapabilityScreen.kt` + 新文件 `ui/PiScreenVisibility.kt` | 轮询循环只在 Activity ≥ STARTED 时跑（`rememberPiScreenVisible()`）；Shizuku 的权限监听留在原来的一次性 `LaunchedEffect(Unit)` 里，因为它**没有注销 API**，跟着可见性重注册会每次多一个监听 | 现在 App 退后台仍每 1.5 s 一次 binder 调用；`PiFileWatch.kt:81-88` 已经用同一套 `LocalLifecycleOwner` + `LifecycleEventObserver` 写法，照抄它 |
 | 5-10 | `bridge/DeviceBridgeHttp.kt` | `stop()` 里 `pool.shutdownNow()` | 每 `DeviceBridgeController.start()` 新建一个 4 线程池（`:140`），而 `start()` 每次 boot 都跑（`PiEngineHost.kt:255`）→ 旧池永不回收 |
+| 5-11 | `ui/PiSessionViewModel.kt` | `engineTransition` 标记 + `syncEngineService` / `reportWakeLockNeed` 两个出口：boot 失败、restart 失败、引擎自灭这三种"没有引擎了"的收尾统一走它们；死亡分支额外把 `streaming` 置 false | 否则（a）重启期间旧引擎的 `Stopped` 会停掉前台服务、放掉新引擎冷启动要用的唤醒锁，（b）`streaming` 留在 true 会让锁永远不再释放 |
+| 5-12 | `ui/PiSessionViewModel.kt` | `reportedWork` 变化门：`reportWakeLockNeed` 只在答案翻转时调用服务（于是也能从发布流里调，覆盖 compaction 那段 `EngineState` 说 Ready 的窗口） | `updateNotification` 是一次 binder 调用，不能每 token 一次；`PiEngineSession.kt:757-760`（`closeAfterSettling` 的 KDoc）自己写明"`agent_end` 之后 compaction 可能还在跑" |
+| 5-13 | `ui/screens/BootScreen.kt` | `Boot.Failed` 的标题「引擎没能启动」→「引擎没有在运行」，两种情形（首启失败 / 中途退出）都成立 | 中途退出也落进这一屏（§5-2），旧标题对它是假的 |
 | — | `docs/lifecycle-and-timers.md` | 本文 | —— |
 
 **没有改的（有意）**：§A3 的 `publish()` 硬关；§4-3 的终端随页面销毁；§4-4 的 `stopWithTask`。
@@ -167,7 +171,7 @@
    **怎么测**：无需测；若将来把「重试」接到 `boot()` 之外的入口，必须改成 `closeAfterSettling`。
 3. **工作区终端随页面销毁**（`TerminalPane.kt:124-126`）：切到「对话」就 `bridge.close()` → 终端里的 `npm install`/`pi` 一起死。修它要把 bridge 提到目的地之上（`PiRoot`）持有，属于结构性改动，本次不动。
    **怎么测**：设备上在工作区终端里跑 `sleep 60`，切到「对话」再切回 —— 现在会看到终端被重开（`sleep` 不在了）。
-4. **从最近任务划掉 App**：manifest 没有 `android:stopWithTask="false"`（`AndroidManifest.xml:125-133`），系统默认会结束服务并杀进程 ⇒ 回合中断。设计文档记过这个先例（`docs/pi-android-app-design.md:1108`），是一次产品决定，本次不翻。
+4. **从最近任务划掉 App**：manifest 没有 `android:stopWithTask="false"`（`AndroidManifest.xml:126-133`），系统默认会结束服务并杀进程 ⇒ 回合中断。设计文档记过这个先例（`docs/pi-android-app-design.md:1108`），是一次产品决定，本次不翻。
    **怎么测**：设备上让一个回合跑着，从最近任务划掉，再从会话列表看那条 assistant 消息在不在。
 5. **唤醒锁策略的实测**：6 小时上限现在只影响"单次超过 6 小时的工作段"（§5-7）。真机上没有验证过"回合开始时锁被重新拿到、回合结束被放掉"。
    **怎么测**：`adb shell dumpsys power | grep -i "pi:engine"`（或设置 → 运行时 → 唤醒锁状态那一行）在空闲时应为「未持有」、发一条消息后变「持有中」、回合结束回到「未持有」。
@@ -177,6 +181,12 @@
    **怎么测**：打开该开关，聊一句，杀引擎，按「重试」，看转录是否回到该会话。
 8. **B2 的可见性门**：切后台时 1.5 s 轮询应当停止。
    **怎么测**：设备能力页停留 → 切后台 → `adb shell dumpsys activity service`/日志观察是否还有 binder 活动；亦可临时在循环里打一行日志对比前后台。
+9. **`DeviceShizuku.addPermissionResultListener` 没有注销 API**（`DeviceShizuku.kt:111-116` 只会往一个 list 里追加）：
+   每进一次"设备能力"页就多一个监听，进程内累积。这次**没修**：加一个移除 API 要动 Shizuku 桥的接口，
+   且这些监听只回调一句界面提示、不做别的事，代价是内存里几个闭包。
+   **怎么测**：反复进出该页 20 次，看 `permissionListeners` 的长度（临时日志）。修法：给它加 `removePermissionResultListener` 并在 `DisposableEffect` 里注销。
+10. **`DeviceBridgeController.stop()` 不清 token/auditLog**（`DeviceBridgeController.kt:158-162`）：`currentToken()` 在停止后仍返回旧 token（该方法**无调用者**，所以只影响诊断面）。
+    **怎么测**：无需；待有第二个调用者时一并修。
 
 ---
 
@@ -198,4 +208,46 @@
 5. **`tools/check-nested-comments.py`**：本次新增的 KDoc 里有 `/*` 形状的示例会触发
    （本文档与代码注释里出现过 `%d`、`/app/*`），提交前用 `python3 tools/check-nested-comments.py` 自检。
 6. **未跑的检查**：按用户要求，本机**没有**跑 `tools/typecheck.sh`、`tools/run-app-pure-checks.sh`、
-   Gradle，也没有跑 `check-nested-comments.py`（本轮最后一次编辑之后）。CI 是唯一的编译器。
+   Gradle；只跑了不需要编译的自检：`python3 tools/check-nested-comments.py`（OK）、
+   `bash -n tools/run-app-pure-checks.sh`（OK）、以及括号配平的粗检。CI 是唯一的编译器。
+
+---
+
+## 7. 修复后的状态机（一页说清，便于复核）
+
+```
+启动：boot()
+  ├─ 读 prefs（keepAlive）→ 需要就 startEngineService（服务在此拿唤醒锁：解包/冷启动要 CPU）
+  ├─ engineTransition = true ── host.boot() ── engineTransition = false
+  │      Ready  → attach(engine)：boot=Ready；收集器开始收 engine.state / publication / events
+  │      Failed → boot=Boot.Failed + syncEngineService(无引擎) + reportWakeLockNeed()
+  └─ 服务在引擎就绪且空闲后被 reportWork(false) 放锁（回合开始再拿）
+
+引擎状态收集器（只认当前 engine，`session !== engine` 直接返回）
+  Starting → reportWakeLockNeed()（booting）
+  Busy     → reportWakeLockNeed()（turnRunning）
+  Ready    → reportWakeLockNeed()（空闲 → 放锁）
+  Stopped/Failed：
+      api = null; session = null; boot = Boot.Failed；streaming = false
+      清对话框/扩展 chrome
+      engineTransition ? 什么也不做（restart 正在换引擎）
+                        : resumeAttempted = false + 停服务（没有引擎要保）
+      reportWakeLockNeed()
+
+重启：restartEngine() → engineTransition=true → host.restart()（先 closeAfterSettling 旧的）
+      → Ok：attach(新) ；否则 syncEngineService + reportWakeLockNeed（失败就停服务）
+      期间旧引擎发 Stopped 会被 engineTransition 挡掉
+
+通知「停止」：PiEngineController.stop()
+      → stopEngineHook → teardownScope { host.shutdown() }（进程级锁 → 收尾 → 关 pi）
+      → 引擎 Stopped → 收集器 → 失败态 + 重试可再 boot()
+
+ViewModel 销毁：onCleared → 注销 hook → teardownScope { host.shutdown(); stopIfRunning() }
+```
+
+**"两个引擎同时活着"的窗口**：`lifecycleLock` 现在是进程级（`PiEngineHost.PROCESS_LOCK`），
+`boot`/`restart`/`shutdown` 三个入口都在锁里，而 `restart` 是"先关旧的再起新的"，所以同一次重启不可能重叠。
+残留窗口只有一个：旧 ViewModel 的收尾**在**新 boot 拿到锁**之后**才被调度到（先来后到的顺序反过来）。
+`onCleared` 已经走 `host.shutdown()` 因此也在锁里，所以两者必然串行；唯一后果是那次收尾要排队等新引擎起完
+（≤ `SETTLE_TIMEOUT_MS`），期间旧进程可能还活着——它已经在关闭路径上，不会再接新命令。
+

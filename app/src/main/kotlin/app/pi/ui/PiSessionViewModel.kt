@@ -726,30 +726,49 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     /**
      * Tell the service whether anything needs the CPU awake right now.
      *
-     * Called at every engine-state transition rather than from the publication
-     * stream: a publication fires per streamed token, and this is a decision that
-     * only changes when a turn starts or ends. The inputs are the two CPU-bound
-     * windows ([PiEngineLifecyclePolicy.shouldHoldWakeLock]) — the engine starting
-     * (unpacking, node cold start: nothing on screen, all CPU) and a turn running —
-     * which is why an idle engine releases the lock instead of holding it for the
-     * service's whole lifetime.
+     * Called at every engine-state transition and from [syncTranscript] (the only
+     * other place the answer can change), both change-gated by [reportedWork] — this
+     * is a decision that flips a few times per turn, not per streamed token. The
+     * inputs are the CPU-bound windows
+     * ([PiEngineLifecyclePolicy.shouldHoldWakeLock]): the engine starting (unpacking,
+     * node cold start: nothing on screen, all CPU) and a turn running — where "a turn"
+     * is the union of the three signals this class already tracks, because no single
+     * one of them covers every long operation:
+     *
+     *  - `engine == Busy` — pi's own `agent_start` … `agent_settled`;
+     *  - `streaming` — the reducer's flag, which also survives a state emission the
+     *    main dispatcher never got to see (`StateFlow` conflates: a `Busy` that came
+     *    and went between two frame-thread resumes is simply not delivered);
+     *  - `busy != null` — an in-flight long RPC call, which is what covers compaction
+     *    (`PiEngineSession.closeAfterSettling`'s own note, `PiEngineSession.kt:757-760`:
+     *    `agent_end` maps to `Ready` while "a compaction may still be running", so
+     *    the engine state alone under-reports it).
      */
     private fun reportWakeLockNeed() {
         val current = _state.value
-        PiEngineService.reportWork(
-            active = PiEngineLifecyclePolicy.shouldHoldWakeLock(
-                // `engineTransition` counts as booting: while a restart is replacing
-                // the engine, the old one's `Stopped` would otherwise release the
-                // lock for the whole of the new engine's cold start — the one window
-                // where losing the CPU means the restart stalls until the screen
-                // comes back.
-                booting = engineTransition ||
-                    current.boot is Boot.Working ||
-                    current.engine == PiEngineSession.EngineState.Starting,
-                turnRunning = current.engine == PiEngineSession.EngineState.Busy,
-            ),
+        val active = PiEngineLifecyclePolicy.shouldHoldWakeLock(
+            // `engineTransition` counts as booting: while a restart is replacing the
+            // engine, the old one's `Stopped` would otherwise release the lock for the
+            // whole of the new engine's cold start — the one window where losing the
+            // CPU means the restart stalls until the screen comes back.
+            booting = engineTransition ||
+                current.boot is Boot.Working ||
+                current.engine == PiEngineSession.EngineState.Starting,
+            turnRunning = current.engine == PiEngineSession.EngineState.Busy ||
+                current.streaming ||
+                current.busy != null,
         )
+        if (reportedWork == active) return
+        reportedWork = active
+        PiEngineService.reportWork(active)
     }
+
+    /**
+     * The last answer handed to [PiEngineService.reportWork], so the decision above
+     * can be evaluated on the publication path without posting a notification per
+     * streamed token. `null` means "nothing reported yet in this ViewModel's life".
+     */
+    private var reportedWork: Boolean? = null
 
     /**
      * The workspace is app-private for speed; `/sdcard` goes through FUSE. The
@@ -976,6 +995,11 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                     _state.value = _state.value.copy(
                         bash = null,
                         busy = null,
+                        // The engine is gone, so nothing can still be streaming —
+                        // and this flag is one of the inputs to `reportWakeLockNeed`,
+                        // so leaving it true would keep the CPU wake lock held for a
+                        // turn that no longer exists.
+                        streaming = false,
                         boot = Boot.Failed(
                             if (engineState == PiEngineSession.EngineState.Stopped) {
                                 "引擎已停止，可以重新启动后继续。"
@@ -1205,6 +1229,10 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             lastUsage = engine.transcript.lastUsage,
         )
         appliedRevision = pub.revision
+        // `streaming` moved, which is one of the two inputs to "does the CPU have to
+        // stay awake" (`reportWakeLockNeed`). Change-gated there, so this costs one
+        // field comparison per publication — not a notification per streamed token.
+        reportWakeLockNeed()
     }
 
     /**

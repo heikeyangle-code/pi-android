@@ -141,6 +141,20 @@ class DeviceBridgeHttpServer(
         runCatching { serverSocket?.close() }
         serverSocket = null
         acceptThread = null
+        // The pool has to go with the socket, and this was the leak: a fixed pool
+        // keeps its four threads alive until they are shut down, and
+        // `DeviceBridgeController.start()` builds a **new** server (with a new pool)
+        // on every call — and it calls this `stop()` first. `start()` runs from
+        // `PiEngineHost.bootLocked` on every engine boot, so every app launch and
+        // every engine restart used to leak four threads for the life of the process.
+        //
+        // `shutdownNow` also interrupts a request in flight, which is the honest
+        // outcome of tearing the server down: `handle` closes its client socket in a
+        // `finally`, so the caller sees a dropped connection rather than a wrong
+        // answer. A `stopped` instance is never started again (`DeviceBridgeController`
+        // constructs a fresh server instead), so a shut-down pool cannot be asked to
+        // run anything: `acceptLoop`'s `catch (rejected)` would close the client.
+        runCatching { pool.shutdownNow() }
     }
 
     fun isRunning(): Boolean = running.get()
