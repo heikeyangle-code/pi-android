@@ -267,6 +267,32 @@ jobs:
       - name: Run app/src/test harnesses
         run: bash tools/run-app-pure-checks.sh
 
+  # The engine is pinned (`PI_VERSION` in tools/fetch-runtime.mjs) but this app does
+  # not fork it: it reads pi's files, sends pi's RPC commands and ships extensions
+  # into pi. Every one of those is a *fact about the pinned engine*, written down in
+  # App code with a `file:line` that describes one version. Bumping the pin without
+  # this job keeps the app compiling while the facts move underneath it — which is
+  # how §M11 (a capability silently downgraded) and §M12 (config keys silently
+  # deleted) both reached a device. `tools/pi-contract.mjs` asserts the surface and
+  # the behaviour, and every failure names the App code that has to be re-read.
+  contract:
+    name: pi contract (pinned engine)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      # Installing the pinned engine is the bulk of this job's wall time; the key
+      # names the version so a bump re-installs exactly once.
+      - name: Cache the pinned engine
+        uses: actions/cache@v4
+        with:
+          path: build/pi-contract
+          key: pi-contract-${{ hashFiles('tools/fetch-runtime.mjs') }}
+      - name: Assert the app's assumptions about the pinned engine
+        run: node tools/pi-contract.mjs
+
   # Kotlin block comments NEST, so a path written as `ui/` followed by two asterisks
   # inside a KDoc opens a second comment; the KDoc's closing delimiter closes that one,
   # the outer comment stays open, and the compiler swallows the rest of the file. The
