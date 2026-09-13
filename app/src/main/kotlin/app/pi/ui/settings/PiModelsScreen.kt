@@ -140,7 +140,13 @@ fun PiModelsScreen(
 
     var question by remember { mutableStateOf<String?>(null) }
     var restartNote by remember { mutableStateOf<String?>(null) }
-    var expanded by remember { mutableStateMapOf<String, Boolean>() }
+    // **No `by`.** `MutableMap<String, V>` carries delegate operators
+    // (`getValue`/`setValue`), so `by remember { mutableStateMapOf<…>() }` binds the
+    // property to the map's *value* type — `expanded` became a `Boolean`, and both
+    // `expanded[id]` and `expanded[id] = …` were then "no get/set operator method on
+    // Boolean" at :213/:217, which is what failed the CI build. The map itself is the
+    // thing being read and written, so it is the thing to hold.
+    val expanded = remember { mutableStateMapOf<String, Boolean>() }
 
     val data = inventory
     Column(Modifier.fillMaxSize()) {

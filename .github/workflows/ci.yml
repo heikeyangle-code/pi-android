@@ -81,9 +81,22 @@ jobs:
 
       - name: Assemble arm64 release APK
         run: |
+          set -o pipefail
           ./gradlew :app:assembleRelease \
             -Ppi.targetSdk=${{ matrix.targetSdk }} \
-            --console=plain
+            --console=plain 2>&1 | tee /tmp/assemble.log
+      # A red build has to be *readable* by whoever has to fix it. The job log needs
+      # admin rights on the repository; `::error::` annotations do not — they are
+      # readable through the REST API by anyone who can see the run. Those two facts
+      # are why this step exists: the first red build of this batch reported only
+      # "Process completed with exit code 1", and the Kotlin error that caused it had
+      # to be reconstructed by reasoning.
+      - name: Report Kotlin errors as annotations
+        if: failure()
+        run: |
+          grep -E "^e: file://|error: " /tmp/assemble.log | head -30 | while IFS= read -r line; do
+            echo "::error::$line"
+          done
       - name: Report APK size
         run: |
           ls -lh app/build/outputs/apk/release/
@@ -265,7 +278,15 @@ jobs:
           path: build/pure-checks
           key: pi-pure-checks-deps-${{ hashFiles('gradle/libs.versions.toml') }}
       - name: Run app/src/test harnesses
-        run: bash tools/run-app-pure-checks.sh
+        run: |
+          set -o pipefail
+          bash tools/run-app-pure-checks.sh 2>&1 | tee /tmp/pure-checks.log
+      - name: Report harness failures as annotations
+        if: failure()
+        run: |
+          grep -E "error:|FAILED|^FAIL " /tmp/pure-checks.log | tail -40 | while IFS= read -r line; do
+            echo "::error::$line"
+          done
 
   # The engine is pinned (`PI_VERSION` in tools/fetch-runtime.mjs) but this app does
   # not fork it: it reads pi's files, sends pi's RPC commands and ships extensions
