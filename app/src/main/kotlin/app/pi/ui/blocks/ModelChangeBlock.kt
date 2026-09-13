@@ -7,7 +7,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -17,6 +16,7 @@ import androidx.compose.ui.unit.dp
 import app.pi.rpc.ModelChange
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
+import app.pi.ui.theme.numeric
 
 /**
  * `model-change` (docs/pi-android-ui-spec.md §7.4): one 32dp muted line —
@@ -37,7 +37,7 @@ fun ModelChangeBlock(
             .fillMaxWidth()
             // F11 (`docs/rendering-review.md`): the page margin is the
             // `LazyColumn`'s `contentPadding`, not the block's; this row used to
-            // add another `horizontal = PiSpacing.screen` on top of it, which is
+            // add another `horizontal = PiSpacing.pageHorizontal` on top of it, which is
             // what left this kind at 32 dp while every `BlockColumn` block moved
             // to 16 dp. The vertical half stays: this block is outside the list's
             // block spacing by design.
@@ -54,7 +54,11 @@ fun ModelChangeBlock(
         Spacer(Modifier.width(PiSpacing.inline))
         Text(
             text = name,
-            style = MaterialTheme.typography.labelLarge,
+            // `06 §3` 构件 10「模型切换行：单行「模型切换 →」+ 模型 id（borderAccent 色）」
+            // and `06 §2`'s machine layer: a model id is machine language, and v2 sets it
+            // `mono t13` (`direction-b-v2.html:2601`). It used to be `labelLarge` (14 sp,
+            // sans), which broke the "two voices" rule on the one row that is *only* an id.
+            style = PiTheme.text.mono,
             color = palette.borderAccent,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
@@ -70,5 +74,15 @@ fun ModelChangeBlock(
                 overflow = TextOverflow.Ellipsis,
             )
         }
+        Spacer(Modifier.weight(1f))
+        // `06 §3` 构件 10's last part: the row's own time, at the far right in the machine
+        // face (`mono t12 c-muted`, v2 `direction-b-v2.html:2604`). `item.ts` is pi's own
+        // entry timestamp, the same field every other timestamped row prints.
+        Text(
+            text = formatClock(item.ts),
+            style = PiTheme.text.numeric,
+            color = palette.metaOnCanvas,
+            maxLines = 1,
+        )
     }
 }

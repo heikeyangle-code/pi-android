@@ -51,8 +51,7 @@ fun MentionPalette(
         modifier = modifier.fillMaxWidth(),
         color = MaterialTheme.colorScheme.surfaceContainer,
         shape = PiShapes.card,
-        tonalElevation = 2.dp,
-    ) {
+            ) {
         LazyColumn(
             modifier = Modifier.heightIn(max = 260.dp).padding(vertical = 4.dp),
         ) {

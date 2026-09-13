@@ -75,7 +75,7 @@ fun ModelPickerSheet(
         }
     }
     ModalBottomSheet(onDismissRequest = onDismiss) {
-        Column(Modifier.fillMaxWidth().padding(horizontal = PiSpacing.screen)) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = PiSpacing.pageHorizontal)) {
             Text("选择模型", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface)
             Spacer(Modifier.height(PiSpacing.unit))
             OutlinedTextField(
@@ -204,7 +204,7 @@ fun ThinkingPickerSheet(
     onDismiss: () -> Unit,
 ) {
     ModalBottomSheet(onDismissRequest = onDismiss) {
-        Column(Modifier.fillMaxWidth().padding(horizontal = PiSpacing.screen)) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = PiSpacing.pageHorizontal)) {
             Text("思考等级", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface)
             Spacer(Modifier.height(4.dp))
             Text(
@@ -299,7 +299,7 @@ fun SessionToolsSheet(
         ) {
             Text(
                 "会话与队列",
-                modifier = Modifier.padding(horizontal = PiSpacing.screen),
+                modifier = Modifier.padding(horizontal = PiSpacing.pageHorizontal),
                 style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.onSurface,
             )
@@ -405,12 +405,12 @@ fun SessionToolsSheet(
                 PiSectionHeader("本应用显示不了的扩展（${state.tuiOnlyExtensions.size}）")
                 Text(
                     "下面这些扩展用到了本应用不支持的自绘界面，它们在对话页不会显示内容。",
-                    modifier = Modifier.padding(horizontal = PiSpacing.screen, vertical = 4.dp),
+                    modifier = Modifier.padding(horizontal = PiSpacing.pageHorizontal, vertical = 4.dp),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 state.tuiOnlyExtensions.forEach { extension ->
-                    Column(Modifier.fillMaxWidth().padding(horizontal = PiSpacing.screen, vertical = 6.dp)) {
+                    Column(Modifier.fillMaxWidth().padding(horizontal = PiSpacing.pageHorizontal, vertical = 6.dp)) {
                         Text(
                             "${extension.name}（${extension.scope}）",
                             style = MaterialTheme.typography.bodyLarge,
@@ -436,7 +436,7 @@ private fun QueueModeRow(
     current: QueueMode,
     onPick: (QueueMode) -> Unit,
 ) {
-    Column(Modifier.fillMaxWidth().padding(horizontal = PiSpacing.screen, vertical = 8.dp)) {
+    Column(Modifier.fillMaxWidth().padding(horizontal = PiSpacing.pageHorizontal, vertical = 8.dp)) {
         Text(title, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurface)
         Text(
             supporting,
@@ -479,7 +479,7 @@ fun SessionStatsSheet(
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(
             Modifier.fillMaxWidth().heightIn(max = 560.dp).verticalScroll(rememberScrollState()).padding(
-                horizontal = PiSpacing.screen,
+                horizontal = PiSpacing.pageHorizontal,
             ),
         ) {
             Text(
@@ -560,7 +560,7 @@ fun ForkPickerSheet(
     onDismiss: () -> Unit,
 ) {
     ModalBottomSheet(onDismissRequest = onDismiss) {
-        Column(Modifier.fillMaxWidth().padding(horizontal = PiSpacing.screen)) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = PiSpacing.pageHorizontal)) {
             Text("从哪条消息分支", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface)
             Spacer(Modifier.height(4.dp))
             Text(

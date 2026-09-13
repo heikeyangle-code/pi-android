@@ -39,6 +39,8 @@ internal fun ReadBlock(
     item: ToolCall,
     modifier: Modifier = Modifier,
     defaultExpanded: Boolean = false,
+    firstOfRun: Boolean = true,
+    lastOfRun: Boolean = true,
 ) {
     val palette = PiTheme.palette
     val state = toolStateOf(item)
@@ -60,11 +62,19 @@ internal fun ReadBlock(
     }
     ToolActionMenu(command, item.output, fullOutputPath) {
         BlockColumn(modifier) {
-            ToolCard(item, expanded, { expanded = !expanded }) {
+            ToolCard(
+                item,
+                expanded,
+                { expanded = !expanded },
+                firstOfRun = firstOfRun,
+                lastOfRun = lastOfRun,
+            ) {
                 ToolHeader(
                     item = item,
                     title = "read",
                     subject = body.path.ifEmpty { "文件" } + range,
+                    expanded = expanded,
+                    expandable = hasBody,
                 )
                 if (expanded) {
                     if (body.lines.isEmpty()) {
@@ -112,8 +122,6 @@ internal fun ReadBlock(
                 }
                 ToolFooter(
                     text = footer,
-                    expanded = expanded,
-                    expandable = hasBody,
                     state = state,
                     elapsedMs = item.elapsedMs,
                 )

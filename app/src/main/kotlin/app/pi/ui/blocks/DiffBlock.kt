@@ -5,7 +5,12 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowRight
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -21,6 +26,7 @@ import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.unit.dp
 import app.pi.rpc.DiffHunk
 import app.pi.rpc.DiffLine
 import app.pi.rpc.DiffLineKind
@@ -63,6 +69,8 @@ fun DiffBlock(
     item: ToolDiff,
     modifier: Modifier = Modifier,
     defaultExpanded: Boolean = false,
+    firstOfRun: Boolean = true,
+    lastOfRun: Boolean = true,
 ) {
     val palette = PiTheme.palette
     // Keyed on the parameter so the AppBar's expand/collapse-all switch (pi's
@@ -74,13 +82,25 @@ fun DiffBlock(
 
     BlockColumn(modifier) {
         // The diff sits on the same rail as the calls beside it (`06 §3` 构件 1), with the
-        // one node that is not a state: `±`, in neutral tokens, because a diff has no
-        // status of its own. It carries **no duration tick** (`06 §2`: diff 卡不显示 —
-        // nothing here was timed, and the row is already the densest in the stream).
+        // one node that is not a state: `±`. It carries **no duration tick** (`06 §2`:
+        // diff 卡不显示 — nothing here was timed, and the row is already the densest in
+        // the stream).
+        //
+        // `06 §2` gives this node the plain tokens rather than a state's: a solid
+        // `borderMuted` ring and a `bodyOnTool` glyph, which is exactly the pair v2 draws
+        // (`direction-b-v2.html:1516-1520`: `border:'1px solid var(--border-muted)'` and
+        // `color:'var(--body-on-tool)'`). `StateTone.Muted` alone cannot express it — it
+        // resolves one colour for *both* parts (ring at 45 %, glyph `muted`) — which is
+        // why `PiStateNode` takes the two overrides.
         ToolRailFrame(
             glyph = DIFF_NODE_GLYPH,
             tone = StateTone.Muted,
             label = "差异",
+            firstOfRun = firstOfRun,
+            lastOfRun = lastOfRun,
+            strokeAlpha = 1f,
+            ringColor = palette.borderMuted,
+            glyphColor = palette.bodyOnTool,
         ) {
             BlockCard(
                 color = palette.toolPendingBg,
@@ -90,19 +110,21 @@ fun DiffBlock(
                 // state colour at 35 %: the diff is neutral by definition, and v2 draws it
                 // `1px solid var(--border-muted)`.
                 borderColor = palette.borderMuted,
+                // `06 §2` 工具卡 / diff 卡: this card's rows inset by 10, not 12.
+                padding = BlockCardRowPadding,
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
                         text = item.toolName.ifEmpty { "diff" },
                         style = PiTheme.text.monoSmall,
-                        color = palette.dim,
+                        color = palette.muted,
                         maxLines = 1,
                     )
                     Spacer(Modifier.width(PiSpacing.inline))
                     Text(
                         text = item.path.ifEmpty { "未命名文件" },
                         modifier = Modifier.weight(1f),
-                        style = PiTheme.text.mono,
+                        style = PiTheme.text.monoSmall,
                         color = palette.toolTitle,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
@@ -111,6 +133,19 @@ fun DiffBlock(
                     Text("+${item.added}", style = PiTheme.text.monoSmall, color = palette.toolDiffAdded)
                     Spacer(Modifier.width(PiSpacing.gutter))
                     Text("−${item.removed}", style = PiTheme.text.monoSmall, color = palette.toolDiffRemoved)
+                    Spacer(Modifier.width(PiSpacing.inline))
+                    // v2's diff card carries the same disclosure chevron as a tool card's
+                    // header (`direction-b-v2.html:1523`); its *label* below is plain text.
+                    Icon(
+                        imageVector = if (expanded) {
+                            Icons.Filled.KeyboardArrowDown
+                        } else {
+                            Icons.Filled.KeyboardArrowRight
+                        },
+                        contentDescription = null,
+                        modifier = Modifier.size(14.dp),
+                        tint = palette.bodyOnTool,
+                    )
                 }
 
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -125,7 +160,15 @@ fun DiffBlock(
                     // full-screen diff route — so both are deleted rather than left
                     // claiming the affordance (spec §4.8 still asks for one; that is
                     // new UI, recorded in the review's F19 row).
-                    ExpandLabel(expanded)
+                    //
+                    // A plain label, as v2 draws it: the chevron lives on the header row
+                    // above (`direction-b-v2.html:1523`) and this row's word is inert —
+                    // the card's own surface is the hit target (`toggleContent`).
+                    Text(
+                        text = if (expanded) "收起" else "展开",
+                        style = PiTheme.text.meta,
+                        color = palette.muted,
+                    )
                 }
 
                 if (expanded) {
@@ -149,8 +192,12 @@ fun DiffBlock(
 
                                 is DiffRow.Fold -> Text(
                                     text = "… ${row.count} 行未变",
+                                    // `06 §2` diff 卡: the fold line lines up with the code
+                                    // column, i.e. past the symbol column (16) and the
+                                    // number column (30) — v2 draws it behind a 46 px
+                                    // spacer for the same reason (`direction-b-v2.html:766`).
                                     modifier = Modifier.padding(
-                                        start = PiSpacing.screen,
+                                        start = PiSpacing.symbolColumn + PiSpacing.lineNumberColumn,
                                         top = PiSpacing.tiny,
                                         bottom = PiSpacing.tiny,
                                     ),
@@ -187,8 +234,8 @@ private fun DiffLineRow(row: DiffRow.Line) {
     val lineColor = when (line.kind) {
         DiffLineKind.Added -> palette.toolDiffAdded
         DiffLineKind.Removed -> palette.toolDiffRemoved
-        // F13: the context lines are read as body text (`PiTheme.text.mono`,
-        // 13/20), so they take the corrected variant, not pi's 3.69:1 value.
+        // F13: the context lines are read as body text (`PiTheme.text.code`, 13/19),
+        // so they take the corrected variant, not pi's 3.69:1 value.
         else -> palette.contextOnTool
     }
     val body = remember(row, lineColor, palette.toolPendingBg) {
@@ -204,13 +251,17 @@ private fun DiffLineRow(row: DiffRow.Line) {
         Text(
             text = symbol,
             modifier = Modifier.width(PiSpacing.symbolColumn),
-            style = PiTheme.text.mono,
+            style = PiTheme.text.code,
             color = lineColor,
         )
         Text(
             text = lineNumber(line),
-            modifier = Modifier.width(PiSpacing.lineNumberColumn),
-            style = PiTheme.text.monoSmall,
+            // `06 §2` diff 卡「行号列 30（右对齐 + 右内边距 8）」: the 8 dp is *inside*
+            // the 30, so the code body starts at 16 + 30 from the row's left edge with
+            // no extra gap — v2's `width:30;textAlign:right;paddingRight:8`
+            // (`direction-b-v2.html:775`).
+            modifier = Modifier.width(PiSpacing.lineNumberColumn).padding(end = 8.dp),
+            style = PiTheme.text.code,
             // pi colours the number with the line it belongs to (`diff.ts:127-152`
             // builds `"-123 content"` inside one `theme.fg`): the column keeps its
             // own layout here, but not its own colour.
@@ -218,11 +269,10 @@ private fun DiffLineRow(row: DiffRow.Line) {
             maxLines = 1,
             textAlign = TextAlign.End,
         )
-        Spacer(Modifier.width(PiSpacing.gutter))
         Text(
             text = body,
             modifier = Modifier.weight(1f),
-            style = PiTheme.text.mono,
+            style = PiTheme.text.code,
             color = lineColor,
         )
     }

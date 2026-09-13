@@ -53,8 +53,7 @@ fun SlashPalette(
         modifier = modifier.fillMaxWidth(),
         color = MaterialTheme.colorScheme.surfaceContainer,
         shape = PiShapes.card,
-        tonalElevation = 2.dp,
-    ) {
+            ) {
         if (matches.isEmpty()) {
             Text(
                 text = if (query.isBlank()) "没有可用命令" else "没有匹配「$query」的命令",

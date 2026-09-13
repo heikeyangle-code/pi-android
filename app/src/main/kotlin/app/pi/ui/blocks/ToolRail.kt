@@ -14,12 +14,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiStateNode
 import app.pi.ui.theme.PiTheme
-import app.pi.ui.theme.PiV2Layout
 import app.pi.ui.theme.StateTone
 
 /**
@@ -46,35 +46,35 @@ import app.pi.ui.theme.StateTone
  * filled with the page colour so the line does not show through the circle; that
  * fill is the rail's job, the ring and the glyph are [PiStateNode]'s.
  *
- * ## Who decides "one run" — the honest answer
+ * ## Who decides "one run"
  *
- * **Nobody, in this build.** A run is a property of *consecutive transcript items*,
- * and this app renders each item on its own: `BlockRenderer` receives one
- * [app.pi.rpc.TranscriptItem] and the `LazyColumn` that holds them
- * (`screens/ChatScreen.kt:1018-1060`) gives a block neither its index nor its
- * neighbours — and that file is not part of this batch. So every tool card and
- * every diff card draws **its own segment**, and the segment is drawn from the
- * card's top edge to [RAIL_BRIDGE] past its bottom edge. Two consecutive rail cards
- * therefore meet inside the list's block gap and read as one line, which is the
- * effect v2's run has; what is *not* reproduced is the run's own 16 dp inset at its
- * top and bottom, because a card cannot tell whether it is the first or the last of
- * a run.
+ * v2 wraps a run in **one** `RailRun` element
+ * (`direction-b-v2.html:722-730`: `position:relative;padding-left:26` with one line
+ * at `top:16;bottom:16`), so the line's two ends are properties of the *run*, not
+ * of a card. This app renders one transcript item at a time, so the list hands each
+ * card whether it is the run's first and/or last row
+ * (`screens/ChatScreen.kt`, computed from the neighbouring items being `ToolCall`
+ * or `ToolDiff`), and the card draws the matching end:
  *
- * The follow-up that would complete it is small and belongs to whoever owns the
- * list: pass `firstOfRun` / `lastOfRun` (or a `ToolState?` neighbour pair) down from
- * `itemsIndexed`, computed from `previous is ToolCall || previous is ToolDiff` and
- * the same for the next item, and skip [RAIL_BRIDGE] at those two ends. Until then
- * the visible cost is one 8 dp stub above the first node of a run and a ~16 dp tail
- * below the last card, against v2's clean inset.
+ *  - **first of the run** — the segment starts at [RAIL_LINE_INSET] (16), not at the
+ *    card's top edge, so there is no stub above the first node (v2's `top:16`);
+ *  - **last of the run** — it stops at [RAIL_LINE_INSET] above the card's bottom edge
+ *    (v2's `bottom:16`), so no tail hangs under the last card;
+ *  - **in between** — it runs from edge to edge and [RAIL_BRIDGE] past the bottom,
+ *    which is what joins it to the next card across the list's own block gap.
  *
- * ## Why [RAIL_BRIDGE] is 16 and not the 8 the block rhythm asks for
+ * A card that is both (a lone tool call) therefore draws a line that exists only
+ * behind its node, which is what v2's single-card runs look like.
  *
- * The transcript spaces its items by `PiSpacing.screen` (16) today
- * (`screens/ChatScreen.kt:971-982`); v2's target rhythm is `PiV2Layout.blockGap`
- * (8), and the change is one line in that same list, which this batch does not own.
- * Overdrawing by 16 keeps the line unbroken at **both** values (the gap is bridged
- * or covered), where 8 would leave an 8 dp hole at every card boundary until the
- * list changes. A longer tail, never a hole.
+ * ## Why [RAIL_BRIDGE] is the block gap and nothing more
+ *
+ * The bridging overdraw has to cover exactly the space the list leaves between two
+ * items — no more (a tail under the last card) and no less (a hole at every
+ * boundary). That space is [PiSpacing.blockGap] (8), v2's block rhythm
+ * (`06 §2`「块间距 8」), and the list that produces it is `ChatScreen.kt`. When
+ * both were 16 the bridge also covered the old 16 dp rhythm; now that the rhythm
+ * and the bridge are the same number, the two ends are cut by [RAIL_LINE_INSET]
+ * instead of by an overlong rule.
  */
 
 /** `06 §2`「左内边距 26」: where a rail card's content starts. */
@@ -91,14 +91,23 @@ internal val RAIL_NODE_TOP: Dp = 8.dp
 internal val RAIL_NODE_SIZE: Dp = 17.dp
 
 /**
- * How far past its own bounds a card draws the line, top and bottom.
+ * `06 §2`「上下各缩进 16」: how far inside the run's own ends the line starts and
+ * stops. Only the run's first and last cards use it; see the file KDoc.
  *
- * At least the transcript's block gap, so consecutive rail cards join (see the file
- * KDoc); 16 is `PiSpacing.screen`, which is the value that list spaces its items by
- * today. One constant, one consumer, and it disappears together with the bridge when
- * the list learns about runs.
+ * 16 keeps the line behind the node — the node spans 8 … 25 from the card's top,
+ * so a segment starting at 16 is hidden by the node's opaque page-coloured fill
+ * and the visible line begins at the circle, exactly as v2's `top:16` does.
  */
-internal val RAIL_BRIDGE: Dp = PiSpacing.screen
+internal val RAIL_LINE_INSET: Dp = 16.dp
+
+/**
+ * How far past its own bounds a *middle* card draws the line.
+ *
+ * The transcript's block rhythm, so consecutive rail cards join: the list spaces
+ * its items by `PiSpacing.blockGap` (`06 §2`「块间距 8」) and this overdraw is the
+ * same number. One constant, one consumer per direction.
+ */
+internal val RAIL_BRIDGE: Dp = PiSpacing.blockGap
 
 /**
  * One card on the rail: the 1 dp line behind it, the state node beside it, and the
@@ -107,6 +116,12 @@ internal val RAIL_BRIDGE: Dp = PiSpacing.screen
  * @param glyph the state symbol from `06 §4` (`… ✓ ✗ ⊘`, and `±` for a diff).
  * @param tone which state, and therefore which pi token paints the ring and the glyph.
  * @param label what a screen reader hears for the node — a bare glyph is not a state.
+ * @param firstOfRun true when no `ToolCall`/`ToolDiff` precedes this row in the
+ *   transcript: the line then starts [RAIL_LINE_INSET] inside the card instead of at
+ *   its top edge.
+ * @param lastOfRun true when no `ToolCall`/`ToolDiff` follows it: the line then stops
+ *   [RAIL_LINE_INSET] above the card's bottom edge instead of bridging past it.
+ * @param ringColor/glyphColor see [PiStateNode]; the diff node needs two tokens.
  */
 @Composable
 internal fun ToolRailFrame(
@@ -114,25 +129,35 @@ internal fun ToolRailFrame(
     tone: StateTone,
     label: String,
     modifier: Modifier = Modifier,
+    firstOfRun: Boolean = true,
+    lastOfRun: Boolean = true,
+    strokeAlpha: Float = 0.45f,
+    ringColor: Color? = null,
+    glyphColor: Color? = null,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val palette = PiTheme.palette
-    val stroke = PiV2Layout.hairline
+    val stroke = PiSpacing.hairline
     val x = RAIL_LINE_LEFT
-    val bridge = RAIL_BRIDGE
+    val top = if (firstOfRun) RAIL_LINE_INSET else 0.dp
+    val bottom = if (lastOfRun) RAIL_LINE_INSET else -RAIL_BRIDGE
     Box(
         modifier = modifier
             .fillMaxWidth()
             .drawBehind {
-                // Drawn behind the children, and past the item's own bounds: the list
-                // does not clip an item to its own size, so the overdraw lands in the
-                // block gap. `borderMuted` is the token v2's rail uses
-                // (`background:'var(--border-muted)'`).
-                drawRect(
-                    color = palette.borderMuted,
-                    topLeft = Offset(x.toPx(), 0f),
-                    size = Size(stroke.toPx(), size.height + bridge.toPx()),
-                )
+                // Drawn behind the children, and (in the middle of a run) past the
+                // item's own bounds: the list does not clip an item to its own size,
+                // so the overdraw lands in the block gap. `borderMuted` is the token
+                // v2's rail uses (`background:'var(--border-muted)'`).
+                val from = top.toPx()
+                val to = size.height - bottom.toPx()
+                if (to > from) {
+                    drawRect(
+                        color = palette.borderMuted,
+                        topLeft = Offset(x.toPx(), from),
+                        size = Size(stroke.toPx(), to - from),
+                    )
+                }
             },
     ) {
         Column(modifier = Modifier.padding(start = RAIL_INDENT), content = content)
@@ -147,6 +172,9 @@ internal fun ToolRailFrame(
                 // v2's node is opaque in the page colour (`background:'var(--page)'`):
                 // without it the line would run through the circle and the glyph.
                 .background(palette.pageBg, CircleShape),
+            strokeAlpha = strokeAlpha,
+            ringColor = ringColor,
+            glyphColor = glyphColor,
         )
     }
 }

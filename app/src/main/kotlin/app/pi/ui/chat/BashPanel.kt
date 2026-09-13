@@ -56,8 +56,7 @@ fun BashPanel(
         modifier = modifier.fillMaxWidth(),
         color = palette.cardBg,
         shape = PiShapes.cardInner,
-        tonalElevation = 2.dp,
-    ) {
+            ) {
         Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(

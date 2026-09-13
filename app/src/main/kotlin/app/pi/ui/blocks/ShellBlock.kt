@@ -49,6 +49,8 @@ internal fun ShellBlock(
     item: ToolCall,
     modifier: Modifier = Modifier,
     defaultExpanded: Boolean = false,
+    firstOfRun: Boolean = true,
+    lastOfRun: Boolean = true,
 ) {
     val palette = PiTheme.palette
     val state = toolStateOf(item)
@@ -96,8 +98,20 @@ internal fun ShellBlock(
     val footer = shellFooter(item, state, exitCode, lines, elapsedMs)
     ToolActionMenu(command.ifEmpty { null }, item.output, fullOutputPath) {
         BlockColumn(modifier) {
-            ToolCard(item, expanded, { expanded = !expanded }) {
-                ToolHeader(item = item, title = "$", subject = subject)
+            ToolCard(
+                item,
+                expanded,
+                { expanded = !expanded },
+                firstOfRun = firstOfRun,
+                lastOfRun = lastOfRun,
+            ) {
+                ToolHeader(
+                    item = item,
+                    title = "$",
+                    subject = subject,
+                    expanded = expanded,
+                    expandable = bodyText.isNotEmpty() || notice != null,
+                )
                 if (expanded && bodyText.isNotEmpty()) {
                     MonoText(
                         text = painted,
@@ -126,8 +140,6 @@ internal fun ShellBlock(
                 }
                 ToolFooter(
                     text = footer,
-                    expanded = expanded,
-                    expandable = bodyText.isNotEmpty() || notice != null,
                     state = state,
                     elapsedMs = elapsedMs,
                 )

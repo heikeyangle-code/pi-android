@@ -34,6 +34,8 @@ internal fun FindBlock(
     item: ToolCall,
     modifier: Modifier = Modifier,
     defaultExpanded: Boolean = false,
+    firstOfRun: Boolean = true,
+    lastOfRun: Boolean = true,
 ) = PathListBlock(
     item = item,
     title = "find",
@@ -43,6 +45,8 @@ internal fun FindBlock(
     parse = { ToolOutputParse.findBody(it) },
     modifier = modifier,
     defaultExpanded = defaultExpanded,
+    firstOfRun = firstOfRun,
+    lastOfRun = lastOfRun,
 )
 
 /**
@@ -64,6 +68,8 @@ internal fun LsBlock(
     item: ToolCall,
     modifier: Modifier = Modifier,
     defaultExpanded: Boolean = false,
+    firstOfRun: Boolean = true,
+    lastOfRun: Boolean = true,
 ) = PathListBlock(
     item = item,
     title = "ls",
@@ -73,6 +79,8 @@ internal fun LsBlock(
     parse = { ToolOutputParse.lsBody(it) },
     modifier = modifier,
     defaultExpanded = defaultExpanded,
+    firstOfRun = firstOfRun,
+    lastOfRun = lastOfRun,
 )
 
 /**
@@ -99,6 +107,8 @@ private fun PathListBlock(
     parse: (String) -> PathBody?,
     modifier: Modifier = Modifier,
     defaultExpanded: Boolean = false,
+    firstOfRun: Boolean = true,
+    lastOfRun: Boolean = true,
 ) {
     val palette = PiTheme.palette
     val state = toolStateOf(item)
@@ -106,7 +116,7 @@ private fun PathListBlock(
     var fullOutput by remember { mutableStateOf(false) }
     val body = remember(item.output) { parse(item.output) }
     if (body == null) {
-        ToolCallBlock(item, modifier, defaultExpanded)
+        ToolCallBlock(item, modifier, defaultExpanded, firstOfRun, lastOfRun)
         return
     }
     val command = remember(item.args) { toolCommandText(item.args) }
@@ -138,8 +148,25 @@ private fun PathListBlock(
     }
     ToolActionMenu(command, item.output, fullOutputPath) {
         BlockColumn(modifier) {
-            ToolCard(item, expanded, { expanded = !expanded }) {
-                ToolHeader(item = item, title = title, subject = subject)
+            ToolCard(
+                item,
+                expanded,
+                { expanded = !expanded },
+                firstOfRun = firstOfRun,
+                lastOfRun = lastOfRun,
+            ) {
+                ToolHeader(
+                    item = item,
+                    title = title,
+                    subject = subject,
+                    // v2's `find` / `ls` cards read out as a *count* at the header's
+                    // right end (`right="12 项"`, `right="0 项"`), not as a duration —
+                    // the tool's own `limit` answer is what those two cards say first.
+                    // It is the same number the footer prints, from the same parse.
+                    right = if (state == ToolState.Rejected) null else "${body.entryCount} 项",
+                    expanded = expanded,
+                    expandable = hasBody,
+                )
                 if (expanded) {
                     when {
                         body.empty -> Text(text = emptyText, style = PiTheme.text.meta, color = palette.muted)
@@ -188,8 +215,6 @@ private fun PathListBlock(
                 }
                 ToolFooter(
                     text = footer,
-                    expanded = expanded,
-                    expandable = hasBody,
                     state = state,
                     elapsedMs = item.elapsedMs,
                 )

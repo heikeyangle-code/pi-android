@@ -177,7 +177,7 @@ private fun TreeContent(
 ) {
     Column(modifier.fillMaxSize()) {
         SingleChoiceSegmentedButtonRow(
-            Modifier.fillMaxWidth().padding(horizontal = PiSpacing.screen),
+            Modifier.fillMaxWidth().padding(horizontal = PiSpacing.pageHorizontal),
         ) {
             listOf("分支", "条目").forEachIndexed { index, label ->
                 SegmentedButton(
@@ -189,7 +189,7 @@ private fun TreeContent(
         }
         if (tab == 0) {
             Row(
-                Modifier.fillMaxWidth().padding(horizontal = PiSpacing.screen, vertical = 4.dp),
+                Modifier.fillMaxWidth().padding(horizontal = PiSpacing.pageHorizontal, vertical = 4.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 OutlinedTextField(
@@ -205,7 +205,7 @@ private fun TreeContent(
             }
             Text(
                 "分叉会新建一个会话文件，原会话保持不变。",
-                modifier = Modifier.padding(horizontal = PiSpacing.screen),
+                modifier = Modifier.padding(horizontal = PiSpacing.pageHorizontal),
                 style = PiTheme.text.meta,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -243,6 +243,10 @@ private fun BranchTab(
     if (tree.isEmpty()) {
         PiEmptyState(
             icon = Icons.Filled.Close,
+            // v2's session-tree empty states use their own icon, not the π mark
+            // (`direction-b-v2.html:1922`: `icon="branch"`). `PiEmptyState` defaults
+            // to the mark because the *chat's* two engine empty states carry it.
+            markPi = false,
             title = if (state.busy != null) "正在读取…" else "还没有分支",
             body = "会话有第一条消息后，这里会显示分支结构。",
             modifier = modifier,
@@ -252,6 +256,10 @@ private fun BranchTab(
     if (rows.isEmpty()) {
         PiEmptyState(
             icon = Icons.Filled.Close,
+            // v2's session-tree empty states use their own icon, not the π mark
+            // (`direction-b-v2.html:1922`: `icon="branch"`). `PiEmptyState` defaults
+            // to the mark because the *chat's* two engine empty states carry it.
+            markPi = false,
             title = "没有匹配的条目",
             body = "当前筛选是「${filter.label}」。换一个关键词，或再按一次筛选按钮循环到下一种模式。",
             modifier = modifier,
@@ -261,8 +269,8 @@ private fun BranchTab(
     LazyColumn(
         modifier = modifier,
         contentPadding = PaddingValues(
-            start = PiSpacing.screen,
-            end = PiSpacing.screen,
+            start = PiSpacing.pageHorizontal,
+            end = PiSpacing.pageHorizontal,
             bottom = PiSpacing.unit,
         ),
     ) {
@@ -423,6 +431,10 @@ private fun EntriesTab(entries: List<SessionEntry>, modifier: Modifier = Modifie
     if (entries.isEmpty()) {
         PiEmptyState(
             icon = Icons.Filled.Close,
+            // v2's session-tree empty states use their own icon, not the π mark
+            // (`direction-b-v2.html:1922`: `icon="branch"`). `PiEmptyState` defaults
+            // to the mark because the *chat's* two engine empty states carry it.
+            markPi = false,
             title = "没有条目",
             body = "这个会话还没有写入任何条目。",
             modifier = modifier,
@@ -432,8 +444,8 @@ private fun EntriesTab(entries: List<SessionEntry>, modifier: Modifier = Modifie
     LazyColumn(
         modifier = modifier,
         contentPadding = PaddingValues(
-            start = PiSpacing.screen,
-            end = PiSpacing.screen,
+            start = PiSpacing.pageHorizontal,
+            end = PiSpacing.pageHorizontal,
             bottom = PiSpacing.unit,
         ),
     ) {

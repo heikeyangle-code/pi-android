@@ -65,6 +65,14 @@ import app.pi.rpc.UserMessage
  *   summarization's own usage exactly as pi does
  *   (`modes/interactive/interactive-mode.ts:3802-3812`); off, they print nothing
  *   extra — F18 in `docs/rendering-review.md`.
+ * @param firstOfRun true when the row before this one is **not** a `ToolCall` /
+ *   `ToolDiff`; [lastOfRun] is the same for the row after it. Only the tool and
+ *   diff blocks consume them, and only to place the execution rail's two ends: a
+ *   run is a property of *consecutive transcript items*, so the list that owns the
+ *   order is the only place that can compute them (`06 §2` 执行轨道「竖线上下各缩进
+ *   16」, and `ToolRail.kt`'s KDoc for the whole argument). Both default to `true`,
+ *   which is the shape of a one-card run: a caller that passes nothing gets v2's
+ *   clean inset rather than a stub and a tail.
  */
 @Composable
 fun BlockRenderer(
@@ -74,6 +82,8 @@ fun BlockRenderer(
     thinkingDefaultExpanded: Boolean = false,
     toolsDefaultExpanded: Boolean = false,
     showBilledCost: Boolean = false,
+    firstOfRun: Boolean = true,
+    lastOfRun: Boolean = true,
     onBranchClick: ((BranchSummary) -> Unit)? = null,
     /** §4.8: 编辑并从此分叉 — pi forks a session from a user message (`fork`, rpc-types.ts:62). */
     onForkFromMessage: ((String) -> Unit)? = null,
@@ -97,23 +107,23 @@ fun BlockRenderer(
         // itself has no built-in renderer for — its own fallback is
         // `withBuiltInRenderers` (`index.ts:51-63`).
         is ToolCall -> if (item.images.isNotEmpty()) {
-            ToolCallBlock(item, modifier, toolsDefaultExpanded)
+            ToolCallBlock(item, modifier, toolsDefaultExpanded, firstOfRun, lastOfRun)
         } else {
             when (item.toolName) {
-                "read" -> ReadBlock(item, modifier, toolsDefaultExpanded)
-                "write" -> WriteBlock(item, modifier, toolsDefaultExpanded)
-                "edit" -> EditBlock(item, modifier, toolsDefaultExpanded)
-                "grep" -> GrepBlock(item, modifier, toolsDefaultExpanded)
-                "find" -> FindBlock(item, modifier, toolsDefaultExpanded)
-                "ls" -> LsBlock(item, modifier, toolsDefaultExpanded)
+                "read" -> ReadBlock(item, modifier, toolsDefaultExpanded, firstOfRun, lastOfRun)
+                "write" -> WriteBlock(item, modifier, toolsDefaultExpanded, firstOfRun, lastOfRun)
+                "edit" -> EditBlock(item, modifier, toolsDefaultExpanded, firstOfRun, lastOfRun)
+                "grep" -> GrepBlock(item, modifier, toolsDefaultExpanded, firstOfRun, lastOfRun)
+                "find" -> FindBlock(item, modifier, toolsDefaultExpanded, firstOfRun, lastOfRun)
+                "ls" -> LsBlock(item, modifier, toolsDefaultExpanded, firstOfRun, lastOfRun)
                 // pi's two shells share one renderer factory (`index.ts:35-36`): the prompt
                 // is the only difference between them, so they share one block here too.
-                "bash", "powershell" -> ShellBlock(item, modifier, toolsDefaultExpanded)
-                else -> ToolCallBlock(item, modifier, toolsDefaultExpanded)
+                "bash", "powershell" -> ShellBlock(item, modifier, toolsDefaultExpanded, firstOfRun, lastOfRun)
+                else -> ToolCallBlock(item, modifier, toolsDefaultExpanded, firstOfRun, lastOfRun)
             }
         }
 
-        is ToolDiff -> DiffBlock(item, modifier, toolsDefaultExpanded)
+        is ToolDiff -> DiffBlock(item, modifier, toolsDefaultExpanded, firstOfRun, lastOfRun)
 
         is CompactionMarker -> CompactionBlock(item, modifier, showBilledCost)
 

@@ -158,7 +158,7 @@ fun StateChip(
     val color = stateToneColor(tone, palette)
     Row(
         modifier = modifier
-            .border(PiV2Layout.hairline, palette.borderMuted, CircleShape)
+            .border(PiSpacing.hairline, palette.borderMuted, CircleShape)
             .padding(start = 6.dp, end = 7.dp, top = 1.dp, bottom = 1.dp)
             .semantics { this.contentDescription = contentDescription ?: label },
         verticalAlignment = Alignment.CenterVertically,
@@ -213,6 +213,14 @@ fun StateChip(
  * @param strokeAlpha the node outline's alpha (`06 §2` says 45 %). A parameter
  *   because the same circle is drawn at a different alpha on the approval card's
  *   countdown; the default is the tool-card one.
+ * @param ringColor overrides the ring's colour. Null means "the state colour",
+ *   which is what every *state* node wants. It exists for the one node that is not
+ *   a state — the diff's `±` — where v2 draws the ring in `borderMuted` and the
+ *   glyph in `bodyOnTool` (`direction-b-v2.html:1518`, and `06 §2`'s diff card:
+ *   `1px solid var(--border-muted)`), i.e. two different tokens for one node.
+ *   Passing [StateTone] alone cannot express that pair, and inventing a tone for
+ *   it would be a second mapping of "no state" beside [StateTone.Muted].
+ * @param glyphColor overrides the glyph's colour; see [ringColor].
  * @param label what a screen reader hears. Required: a bare `✓` or `⊘` is not
  *   readable, and this node has no adjacent word *inside* it.
  */
@@ -224,13 +232,16 @@ fun PiStateNode(
     size: Dp,
     modifier: Modifier = Modifier,
     strokeAlpha: Float = 0.45f,
+    ringColor: Color? = null,
+    glyphColor: Color? = null,
 ) {
     val palette = PiTheme.palette
-    val color = stateToneColor(tone, palette)
+    val color = glyphColor ?: stateToneColor(tone, palette)
+    val ring = ringColor ?: color
     Box(
         modifier = modifier
             .size(size)
-            .border(PiV2Layout.hairline, color.copy(alpha = strokeAlpha), CircleShape)
+            .border(PiSpacing.hairline, ring.copy(alpha = strokeAlpha), CircleShape)
             .semantics { contentDescription = label },
         contentAlignment = Alignment.Center,
     ) {

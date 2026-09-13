@@ -33,11 +33,53 @@ import app.pi.R
 @Immutable
 object PiSpacing {
     val unit = 18.dp
-    val screen = 16.dp
-    val card = 12.dp
     val statusRow = 32.dp
 
     val errorDot = 8.dp
+
+    // ------------------------------------------------------- the v2 page scale
+    //
+    // These were `PiV2Layout`'s (`theme/PiLayout.kt`) and are folded in here by the
+    // B7 typography-and-cleanup batch, because two objects declaring the same page
+    // numbers is two answers to "how wide is the margin". Every value is
+    // `06 §2` 的原文，一行一个出处：
+    //
+    //   pageHorizontal     「屏水平 14px」
+    //   cardPadding        「卡片内 12px」
+    //   cardPaddingLoose   「当前目录卡 / 设备桥卡 14px」
+    //   groupHeaderGap     「分组头 padding:0 14px; margin-bottom:7px」
+    //   groupGap           「分组块 marginTop:18px」
+    //   scrollBottom       「滚动区底部留 14–18px」取上端
+    //   blockGap           「块间距 8」
+    //   topBarHeight       「顶栏：高 48」
+    //   bottomBarHeight    「底栏：高 56」
+
+    /** `06 §2`「屏水平 14px」: the page margin every v2 screen uses. */
+    val pageHorizontal = 14.dp
+
+    /** `06 §2`「卡片内 12px」: the interior padding of a default card. */
+    val cardPadding = 12.dp
+
+    /** `06 §2`「当前目录卡 / 设备桥卡 14px」. */
+    val cardPaddingLoose = 14.dp
+
+    /** `06 §2`「分组头 padding:0 14px; margin-bottom:7px」. */
+    val groupHeaderGap = 7.dp
+
+    /** `06 §2`「分组块 marginTop:18px」. */
+    val groupGap = 18.dp
+
+    /** `06 §2`「滚动区底部留 14–18px」. */
+    val scrollBottom = 18.dp
+
+    /** `06 §2`: the transcript's block rhythm (`块间距 8`). */
+    val blockGap = 8.dp
+
+    /** `06 §2`「顶栏：高 48」. */
+    val topBarHeight = 48.dp
+
+    /** `06 §2`「底栏：高 56」. */
+    val bottomBarHeight = 56.dp
 
     // ------------------------------------------------- the block-interior scale
     //
@@ -93,6 +135,25 @@ object PiSpacing {
      * is no upstream value to copy) and is therefore unified onto this token.
      */
     val accentStripe = 20.dp
+
+    // ------------------------------------------------------------ retired names
+
+    /**
+     * **Retired. Do not use in new code.** `screen` was `PiSpacing`'s page margin
+     * from `docs/pi-android-ui-spec.md`, which this project declared out of date
+     * (`00-screen-inventory.md:4`); v2's page margin is [pageHorizontal] (14), and
+     * decision **D1** (`07-construction-decisions.md`) makes 14 the one source of
+     * truth and retires this name once its last consumer is migrated. B7 migrated
+     * every call site **in its own half**; the one that is left is in the other
+     * half's `ui/screens/TerminalScreen.kt:73`, which this batch's file division
+     * forbids touching. The value is forwarded rather than deleted so the build
+     * stays green until that call site moves — it keeps no number of its own.
+     *
+     * It is deliberately **not** 14: an alias that silently changed meaning is how
+     * a screen ends up with the wrong margin without anyone editing it.
+     */
+    @Deprecated("The page margin is PiSpacing.pageHorizontal (14) — see D1.")
+    val screen = 16.dp
 }
 
 /**
@@ -164,46 +225,62 @@ val PiMonoFamily: FontFamily = FontFamily(
 )
 
 /**
- * Text styles that Material 3's [Typography] has no slot for: pi's footer/meta
- * line and the two monospace roles. Everything a *human* wrote uses the system
- * font; everything a *machine* emitted uses monospace — that split is the app's
- * rule #7 (docs/pi-android-ui-spec.md §1).
+ * Text styles that Material 3's [Typography] has no slot for: the transcript's
+ * prose role, pi's footer/meta line and the machine roles. Everything a *human*
+ * wrote uses the system font; everything a *machine* emitted uses monospace —
+ * that split is the app's rule #7 (docs/pi-android-ui-spec.md §1).
  *
- * The monospace roles are backed by the bundled [PiMonoFamily], not by
- * `FontFamily.Monospace`. The machine layer — commands, code, diffs, tool output,
- * paths, token counters — is the product's main content, and the *system* monospace
- * is a per-device choice, so every device drew it in a different face. `DiffBlock`
- * is the visible consequence: its `lineNumberColumn` (30.dp) and `symbolColumn`
- * (16.dp) are sized for a monospace advance width, so a device whose monospace is
- * wider or narrower shifts the fixed columns out of alignment. Bundling the face
- * pins the metrics instead of asking the ROM for them.
+ * ## The five sizes, and why they are these five (`06 §2` 字号 5 档)
+ *
+ * v2 fixes five sizes for the whole product — 12 / 13 / 14 / 15 / 17 — and
+ * `01-design-spec.md` §2 makes the bottom two a floor (「正文 ≥14px、标签/注释
+ * ≥12px」). The roles below cover the transcript's share of that scale; the two
+ * larger steps (15 row titles, 17 screen titles) come from M3's
+ * `titleSmall`/`titleMedium` (`piTypography`).
+ *
+ *   meta       12/18  labels, meta lines, machine readings (v2 `t12`)
+ *   monoSmall  12/18  the same size in the machine face (v2 `mono t12`)
+ *   mono       13/20  machine body: commands, tool output, paths (v2 `t13`)
+ *   code       13/19  fences and diffs — v2 overrides those two to a fixed 19
+ *   prose      14/23  human body: chat text, error sentences (v2 `t14`, 1.62)
+ *
+ * B7 (`numeric` / 字号档位收敛): [meta] and [monoSmall] used to be 11.5sp, which
+ * is **under** the spec's own 12px label floor and is a sixth step v2 never
+ * draws; [prose] is new because the transcript's human body was borrowing M3's
+ * `bodyLarge` (15sp), which is v2's *row-title* step, not its chat-text step.
  */
 @Immutable
 data class PiTextStyles(
     val meta: TextStyle,
     val mono: TextStyle,
     val monoSmall: TextStyle,
+    /** v2 `t14`: the transcript's human body (chat prose, an error's sentence). */
+    val prose: TextStyle,
+    /** v2's code/diff override: `mono` at a fixed 13/19. */
+    val code: TextStyle,
 ) {
     /**
      * The same roles with every size shifted by [deltaSp].
      *
      * This is what the `app.appearance.fontScaleDelta` setting drives: the base
-     * sizes above are pi's own rhythm (body 15/23, meta 11.5/16), and the setting
-     * only nudges them, exactly as its description promises. Line heights move
-     * with the size so the transcript's leading does not collapse.
+     * sizes above are v2's own five steps, and the setting only nudges them,
+     * exactly as its description promises. Line heights move with the size so the
+     * transcript's leading does not collapse.
      */
     fun scaled(deltaSp: Int): PiTextStyles = if (deltaSp == 0) this else PiTextStyles(
         meta = meta.shifted(deltaSp),
         mono = mono.shifted(deltaSp),
         monoSmall = monoSmall.shifted(deltaSp),
+        prose = prose.shifted(deltaSp),
+        code = code.shifted(deltaSp),
     )
 
     companion object {
         val Default = PiTextStyles(
             meta = TextStyle(
                 fontFamily = FontFamily.Default,
-                fontSize = 11.5.sp,
-                lineHeight = 16.sp,
+                fontSize = 12.sp,
+                lineHeight = 18.sp,
                 fontWeight = FontWeight.Normal,
             ),
             mono = TextStyle(
@@ -213,8 +290,19 @@ data class PiTextStyles(
             ),
             monoSmall = TextStyle(
                 fontFamily = PiMonoFamily,
-                fontSize = 11.5.sp,
-                lineHeight = 17.sp,
+                fontSize = 12.sp,
+                lineHeight = 18.sp,
+            ),
+            prose = TextStyle(
+                fontFamily = FontFamily.Default,
+                fontSize = 14.sp,
+                lineHeight = 23.sp,
+                fontWeight = FontWeight.Normal,
+            ),
+            code = TextStyle(
+                fontFamily = PiMonoFamily,
+                fontSize = 13.sp,
+                lineHeight = 19.sp,
             ),
         )
     }

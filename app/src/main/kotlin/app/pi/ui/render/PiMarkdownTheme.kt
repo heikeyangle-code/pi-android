@@ -46,7 +46,7 @@ import com.mikepenz.markdown.model.markdownAlertPadding
  *
  * The fix is to keep the *reads* composable and the *construction* pure:
  * `PiMarkdown.kt` reads `PiTheme.palette`, `isSystemInDarkTheme()`,
- * `MaterialTheme.typography.bodyLarge` and `PiTheme.text.mono` at the
+ * `PiTheme.text.prose`, `PiTheme.text.mono` and `PiTheme.text.code` at the
  * composition point and passes them here, so every function in this file is an
  * ordinary function and `remember(inputs) { ... }` is legal.
  *
@@ -244,8 +244,9 @@ internal fun piAlertColors(palette: PiPalette, darkTheme: Boolean): MarkdownAler
  *
  * @param palette pi's resolved token set.
  * @param base the body style this app's prose uses, read from
- *   `MaterialTheme.typography.bodyLarge`.
+ *   `PiTheme.text.prose` (`06 §2`'s 14 sp chat-text step).
  * @param mono the mono role, read from `PiTheme.text.mono`.
+ * @param code the fence body's role, read from `PiTheme.text.code` (13/19).
  * @param textColor the base foreground override described on [piMarkdownColors];
  *   it replaces `palette.text` in the body slots only (`text`, `paragraph`,
  *   `ordered`, `list`, `table`). Headings (`mdHeading`), links (`mdLink`), inline
@@ -257,6 +258,8 @@ internal fun piMarkdownTypography(
     palette: PiPalette,
     base: TextStyle,
     mono: TextStyle,
+    /** The fence body's own role — `06 §2`: 码块固定 13/19, not the 13/20 machine body. */
+    code: TextStyle,
     textColor: Color? = null,
 ): MarkdownTypography {
     val heading = base.copy(color = palette.mdHeading, fontWeight = FontWeight.SemiBold)
@@ -277,7 +280,7 @@ internal fun piMarkdownTypography(
         // text — same size as h4, since the alert body is already inset.
         alertTitle = heading.copy(fontSize = 16.sp, lineHeight = 24.sp),
         text = base.copy(color = body),
-        code = mono.copy(color = palette.mdCodeBlock),
+        code = code.copy(color = palette.mdCodeBlock),
         inlineCode = mono.copy(fontSize = 12.5.sp, lineHeight = 18.sp, color = palette.mdCode),
         quote = base.copy(color = palette.mdQuote),
         paragraph = base.copy(color = body),
@@ -294,7 +297,7 @@ internal fun piMarkdownTypography(
 /**
  * pi's rhythm, as far as the renderer exposes it: block spacing stays tight so a
  * long answer does not become a column of whitespace, and the code/quote inset
- * is the same [PiSpacing.card] every other card in the app uses.
+ * is the same [PiSpacing.cardPadding] every other card in the app uses.
  *
  * Implements the library's public `MarkdownPadding` interface, because the
  * builder's own implementation is private and the builder itself is composable
@@ -326,8 +329,8 @@ internal val piMarkdownPadding: MarkdownPadding = PiMarkdownPadding(
     listItemTop = 2.dp,
     listItemBottom = 2.dp,
     listIndent = 12.dp,
-    codeBlock = PaddingValues(horizontal = PiSpacing.card, vertical = 10.dp),
-    blockQuote = PaddingValues(horizontal = PiSpacing.card, vertical = 0.dp),
+    codeBlock = PaddingValues(horizontal = PiSpacing.cardPadding, vertical = 10.dp),
+    blockQuote = PaddingValues(horizontal = PiSpacing.cardPadding, vertical = 0.dp),
     blockQuoteText = PaddingValues(vertical = 4.dp),
     blockQuoteBar = PaddingValues.Absolute(left = 4.dp, top = 2.dp, right = 4.dp, bottom = 2.dp),
     alert = markdownAlertPadding(),

@@ -36,6 +36,8 @@ internal fun EditBlock(
     item: ToolCall,
     modifier: Modifier = Modifier,
     defaultExpanded: Boolean = false,
+    firstOfRun: Boolean = true,
+    lastOfRun: Boolean = true,
 ) {
     val palette = PiTheme.palette
     val state = toolStateOf(item)
@@ -48,8 +50,20 @@ internal fun EditBlock(
     }
     ToolActionMenu(command, item.output, null) {
         BlockColumn(modifier) {
-            ToolCard(item, expanded, { expanded = !expanded }) {
-                ToolHeader(item = item, title = "edit", subject = path.ifEmpty { "文件" })
+            ToolCard(
+                item,
+                expanded,
+                { expanded = !expanded },
+                firstOfRun = firstOfRun,
+                lastOfRun = lastOfRun,
+            ) {
+                ToolHeader(
+                    item = item,
+                    title = "edit",
+                    subject = path.ifEmpty { "文件" },
+                    expanded = expanded,
+                    expandable = failed,
+                )
                 if (expanded && failed) {
                     // pi's error branch (`renderers/edit.ts:97-106`): the result text, unless
                     // it is the preview's own error, which this app never has.
@@ -57,8 +71,6 @@ internal fun EditBlock(
                 }
                 ToolFooter(
                     text = footer,
-                    expanded = expanded,
-                    expandable = failed,
                     state = state,
                     elapsedMs = item.elapsedMs,
                 )

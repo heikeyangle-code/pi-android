@@ -30,11 +30,8 @@ import androidx.compose.ui.unit.sp
 import app.pi.rpc.PiResponses
 import app.pi.rpc.TokenUsage
 import app.pi.ui.theme.PiMark
-import app.pi.ui.theme.PiShapes
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
-import app.pi.ui.theme.PiV2Layout
-import app.pi.ui.theme.numeric
 import java.util.Locale
 import kotlin.math.roundToInt
 
@@ -62,15 +59,18 @@ fun piFormatTokens(count: Long): String = when {
  * (`输出`, `缓存读`), and the session's cost pinned to the right:
  *
  * ```
- * 上下文 52.3% [▮▮▮▮▯▯▯▯] 104k / 200k · 输出 8.2k · 缓存读 61.4k · $0.420
+ * 上下文 52% [▮▮▮▮▯▯▯▯] 104k / 200k · 输出 8.2k · 缓存读 61.4k · $0.42
  * ```
  *
- * The board prints that row with a rounded percentage and a two-decimal cost
- * (`上下文 52% … $0.42`); both come from the mock, and pi's own formatting wins here
- * because every figure is pi's: `percent.toFixed(1)` (`footer.ts:111`) and
- * `cost.toFixed(3)` (`footer.ts:142-146`). One decimal and three decimals are what
- * the app has printed since F10, and changing them would be a second rounding of
- * pi's numbers.
+ * ## The two figures are rounded the way the design writes them
+ *
+ * `06 §3` 构件 3 and the hero's own comment (`direction-b-v2.html:86`) write the
+ * percentage with **no** decimals and the cost with **two** — `52%`, `$0.42` — and
+ * that is the literal the frozen board shows. This row prints those two figures, so
+ * it prints them that way. It is a *display* rounding and only here: the app still
+ * holds pi's own numbers at pi's own precision, and 会话信息
+ * (`ui/chat/ChatSheets.kt`'s stats sheet) shows the percentage to one decimal and
+ * the cost to three, so nothing is lost — it is one row saying what the design says.
  *
  * ## Where each figure comes from (all of them pi's)
  *
@@ -99,9 +99,9 @@ fun piFormatTokens(count: Long): String = when {
  * $0.42`) and stops there, so the input total, the cache-write total and the
  * cache-hit rate leave this row. None of them is dropped from the app: 会话信息
  * (`ui/chat/ChatSheets.kt`'s stats sheet) prints 输入 / 输出 / 缓存读 / 缓存写 / 合计
- * in full. [latestUsage] therefore has no reading here any more — the parameter
- * stays because its caller (`screens/ChatScreen.kt`, which this batch does not own)
- * still passes it, and removing it is a one-line follow-up in that file.
+ * in full. B7 deleted the `latestUsage` parameter that used to carry them here: with
+ * no reading on this row that took a `TokenUsage`, it had become a dead argument
+ * whose only effect was to keep the caller importing `TokenUsage`.
  *
  * The percentage keeps pi's own colour thresholds (`>90` error, `>70` warning —
  * `footer.ts:154-156`); every other figure is muted or body text. No ring, no sweep
@@ -109,7 +109,6 @@ fun piFormatTokens(count: Long): String = when {
  *
  * @param stats `get_session_stats`; null before the first read, in which case the
  *   row renders nothing rather than zeros.
- * @param latestUsage the reducer's newest usage. Kept for the caller; see above.
  * @param contextWindowFallback the model's window, pi's own fallback when
  *   `getContextUsage()` reports none (`footer.ts:109`).
  * @param autoCompaction pi's `autoCompactEnabled` → the ` (auto)` suffix.
@@ -117,7 +116,6 @@ fun piFormatTokens(count: Long): String = when {
 @Composable
 fun PiStatusLine(
     stats: PiResponses.SessionStats?,
-    latestUsage: TokenUsage?,
     contextWindowFallback: Long?,
     autoCompaction: Boolean,
     modifier: Modifier = Modifier,
@@ -129,7 +127,7 @@ fun PiStatusLine(
     val percent = usage?.percent
     val used = usage?.tokens
     // pi: `?` when the percentage is unknown, never a substituted 0.
-    val percentText = percent?.let { String.format(Locale.US, "%.1f", it) } ?: "?"
+    val percentText = percent?.let { String.format(Locale.US, "%.0f", it) } ?: "?"
     val auto = if (autoCompaction) " (auto)" else ""
     val contextColor = when {
         percent != null && percent > 90.0 -> PiTheme.palette.error
@@ -143,7 +141,7 @@ fun PiStatusLine(
         totals?.output?.takeIf { it > 0L }?.let { add("输出 ${piFormatTokens(it)}") }
         totals?.cacheRead?.takeIf { it > 0L }?.let { add("缓存读 ${piFormatTokens(it)}") }
     }
-    val cost = stats.cost?.takeIf { it != 0.0 }?.let { "$${String.format(Locale.US, "%.3f", it)}" }
+    val cost = stats.cost?.takeIf { it != 0.0 }?.let { "$${String.format(Locale.US, "%.2f", it)}" }
     val windowText = contextWindow?.takeIf { it > 0L }?.let { piFormatTokens(it) }
     // "No data, no row": with no percentage, no window and no readings there is
     // nothing to read, and an empty status line would still cost 32dp.
@@ -153,7 +151,7 @@ fun PiStatusLine(
         modifier = modifier
             .fillMaxWidth()
             .height(PiSpacing.statusRow)
-            .padding(horizontal = PiV2Layout.pageHorizontal),
+            .padding(horizontal = PiSpacing.pageHorizontal),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
@@ -173,7 +171,10 @@ fun PiStatusLine(
                 // response (`agent-session.ts:3450`), and `?` is the honest spelling
                 // it uses for exactly that window (`footer.ts:110`).
                 text = "${used?.let { piFormatTokens(it) } ?: "?"} / $windowText",
-                style = PiTheme.text.numeric,
+                // `06 §2` 状态行 + `06 §2` 字号: every reading on this row is a machine
+                // reading at the 12 sp step (`mono t12 tab` in v2's `StateLine`), which
+                // is what keeps the figures aligned as they tick.
+                style = PiTheme.text.monoSmall,
                 color = PiTheme.palette.muted,
                 maxLines = 1,
             )
@@ -185,7 +186,7 @@ fun PiStatusLine(
             Text(
                 text = " · " + readings.joinToString(" · "),
                 modifier = Modifier.weight(1f),
-                style = PiTheme.text.numeric,
+                style = PiTheme.text.monoSmall,
                 color = PiTheme.palette.text,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
@@ -197,7 +198,7 @@ fun PiStatusLine(
             Spacer(Modifier.width(PiSpacing.small))
             Text(
                 text = cost,
-                style = PiTheme.text.numeric,
+                style = PiTheme.text.monoSmall,
                 color = PiTheme.palette.text,
                 maxLines = 1,
             )
@@ -337,7 +338,7 @@ fun PiEmptyState(
                 )
             }
         }
-        Spacer(Modifier.height(PiSpacing.unit))
+        Spacer(Modifier.height(EMPTY_STATE_TITLE_GAP))
         Text(
             title,
             style = MaterialTheme.typography.titleMedium,
@@ -362,6 +363,9 @@ fun PiEmptyState(
 /** `06 §2` 空态「padding:86px 34px」: the horizontal half, the only one Compose needs. */
 private val EMPTY_STATE_INSET = 34.dp
 
+/** `06 §2` 空态: the mark-to-title gap is v2's `marginTop:12`. */
+private val EMPTY_STATE_TITLE_GAP = 12.dp
+
 /** `06 §2` 空态「正文 14/1.6」: 14 sp × 1.6, stated as leading rather than as a ratio. */
 private val EMPTY_STATE_BODY_LEADING = 22.sp
 
@@ -371,8 +375,8 @@ fun PiSectionHeader(text: String, modifier: Modifier = Modifier) {
     Text(
         text,
         modifier = modifier.padding(
-            start = PiSpacing.screen,
-            end = PiSpacing.screen,
+            start = PiSpacing.pageHorizontal,
+            end = PiSpacing.pageHorizontal,
             top = PiSpacing.unit,
             bottom = 6.dp,
         ),
@@ -399,7 +403,7 @@ fun PiSwitchRow(
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = PiSpacing.screen, vertical = 10.dp),
+            .padding(horizontal = PiSpacing.pageHorizontal, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(Modifier.weight(1f)) {
@@ -440,7 +444,7 @@ fun PiValueRow(
         modifier = modifier
             .fillMaxWidth()
             .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
-            .padding(horizontal = PiSpacing.screen, vertical = 12.dp),
+            .padding(horizontal = PiSpacing.pageHorizontal, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(Modifier.weight(1f)) {
@@ -466,30 +470,6 @@ fun PiValueRow(
     }
 }
 
-/** Marks how a setting takes effect — pi has four different timings. */
-@Composable
-fun PiEffectiveBadge(kind: EffectiveKind, modifier: Modifier = Modifier) {
-    val (label, color) = when (kind) {
-        EffectiveKind.Immediate -> return
-        EffectiveKind.Reload -> "需重载" to MaterialTheme.colorScheme.tertiary
-        EffectiveKind.NewSession -> "新会话" to MaterialTheme.colorScheme.onSurfaceVariant
-        EffectiveKind.RestartEngine -> "需重启引擎" to MaterialTheme.colorScheme.error
-        EffectiveKind.RestartApp -> "需重启" to MaterialTheme.colorScheme.error
-    }
-    Surface(
-        modifier = modifier,
-        shape = PiShapes.badge,
-        color = color.copy(alpha = 0.16f),
-    ) {
-        Text(
-            label,
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
-            style = MaterialTheme.typography.labelSmall,
-            color = color,
-        )
-    }
-}
-
 /**
  * When a written value starts to apply.
  *
@@ -510,5 +490,13 @@ fun PiEffectiveBadge(kind: EffectiveKind, modifier: Modifier = Modifier) {
  * pi itself has only two of these timings in its TUI (a settings write is either
  * live or needs `/reload`); the split exists because the app must not promise
  * pi's `/reload` over RPC, where it does not exist.
+ *
+ * **The badge composable that used to render this enum is gone** (B7, the
+ * 死代码 收尾项): `PiEffectiveBadge` had zero call sites — `PiSettingsRegistry`
+ * carries [EffectiveKind] per setting and the settings package draws the 生效徽标
+ * itself, in v2's badge shape — so it was deleted rather than left as a second,
+ * unreachable spelling of the same pill. The enum stays: it is the registry's
+ * type and the settings package references it, and this batch does not own that
+ * package.
  */
 enum class EffectiveKind { Immediate, Reload, RestartEngine, NewSession, RestartApp }

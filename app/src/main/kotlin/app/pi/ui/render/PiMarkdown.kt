@@ -1,7 +1,6 @@
 package app.pi.ui.render
 
 import androidx.compose.foundation.isSystemInDarkTheme
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.remember
@@ -97,13 +96,16 @@ internal fun PiMarkdownText(
     // `remember`s every token rebuilt all five objects and the component set.
     val palette = PiTheme.palette
     val darkTheme = isSystemInDarkTheme()
-    val baseText = MaterialTheme.typography.bodyLarge
+    val baseText = PiTheme.text.prose
     val monoText = PiTheme.text.mono
+    // `06 §2`: 码块与 diff 固定 13/19 — a fence's body is the one machine role v2 gives
+    // its own leading, so it does not borrow `monoText`'s 13/20.
+    val codeText = PiTheme.text.code
     val colors = remember(palette, darkTheme, textColor) {
         piMarkdownColors(palette, darkTheme, textColor)
     }
-    val typography = remember(palette, baseText, monoText, textColor) {
-        piMarkdownTypography(palette, baseText, monoText, textColor)
+    val typography = remember(palette, baseText, monoText, codeText, textColor) {
+        piMarkdownTypography(palette, baseText, monoText, codeText, textColor)
     }
     // `piMarkdownComponents()` is an ordinary function — `markdownComponents(...)`
     // is not composable — so it can be remembered directly. The lambdas it holds

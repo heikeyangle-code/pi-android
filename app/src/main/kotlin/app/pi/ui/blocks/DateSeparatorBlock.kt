@@ -29,7 +29,7 @@ fun DateSeparatorBlock(
             .fillMaxWidth()
             // F11 (`docs/rendering-review.md`): the page margin is the
             // `LazyColumn`'s `contentPadding`, not the block's; this row used to
-            // add another `horizontal = PiSpacing.screen` on top of it, which is
+            // add another `horizontal = PiSpacing.pageHorizontal` on top of it, which is
             // what left this kind at 32 dp while every `BlockColumn` block moved
             // to 16 dp. Vertical rhythm stays here: this block is outside the
             // list's block spacing by design.

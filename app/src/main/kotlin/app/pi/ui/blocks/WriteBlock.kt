@@ -35,6 +35,8 @@ internal fun WriteBlock(
     item: ToolCall,
     modifier: Modifier = Modifier,
     defaultExpanded: Boolean = false,
+    firstOfRun: Boolean = true,
+    lastOfRun: Boolean = true,
 ) {
     val palette = PiTheme.palette
     val state = toolStateOf(item)
@@ -52,11 +54,19 @@ internal fun WriteBlock(
     }
     ToolActionMenu(command, item.output, null) {
         BlockColumn(modifier) {
-            ToolCard(item, expanded, { expanded = !expanded }) {
+            ToolCard(
+                item,
+                expanded,
+                { expanded = !expanded },
+                firstOfRun = firstOfRun,
+                lastOfRun = lastOfRun,
+            ) {
                 ToolHeader(
                     item = item,
                     title = "write",
                     subject = body.path.ifEmpty { "文件" },
+                    expanded = expanded,
+                    expandable = hasBody,
                 )
                 if (expanded) {
                     if (body.lines.isEmpty()) {
@@ -110,8 +120,6 @@ internal fun WriteBlock(
                 }
                 ToolFooter(
                     text = footer,
-                    expanded = expanded,
-                    expandable = hasBody,
                     state = state,
                     elapsedMs = item.elapsedMs,
                 )

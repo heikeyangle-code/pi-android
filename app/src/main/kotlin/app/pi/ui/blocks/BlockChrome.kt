@@ -7,9 +7,9 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -50,16 +50,15 @@ import java.util.Locale
  * Shared chrome for the 14 conversation blocks (docs/pi-android-ui-spec.md §7.4).
  *
  * The page margin and the block rhythm belong to the `LazyColumn` that renders
- * the stream (spec §7.4: 块间距 16dp, `assistant-text` 左右内边距 0): it supplies both
- * the horizontal content padding and the vertical arrangement, so a block that
+ * the stream (spec §7.4: `assistant-text` 左右内边距 0): it supplies both the
+ * horizontal content padding and the vertical arrangement, so a block that
  * padded itself as well doubled the margin (F11 in `docs/rendering-review.md`).
  * Colour always comes from [PiTheme.palette].
  *
  * v2's rhythm is **8**, not 16 (`06 §2`「块间距 8」, decision D1), and that number
  * lives at the one call site that owns it — the `LazyColumn`'s `spacedBy`
- * (`screens/ChatScreen.kt:971-982`), which this batch does not own. [BlockColumn]'s
- * own `Arrangement` is the *inside* of one block and stays on `PiSpacing.gutter`
- * (6dp), exactly as spec §7.4 has it.
+ * (`screens/ChatScreen.kt`). [BlockColumn]'s own `Arrangement` is the *inside* of
+ * one block and stays on `PiSpacing.gutter` (6dp), exactly as spec §7.4 has it.
  */
 
 /** The wrapper every block uses. Margins come from the list, not from here (F11). */
@@ -95,7 +94,7 @@ internal fun MonoText(
     )
 }
 
-/** Human prose: always the system font. */
+/** Human prose: always the system font, at v2's chat-text step (14/23). */
 @Composable
 internal fun ProseText(
     text: String,
@@ -106,7 +105,10 @@ internal fun ProseText(
     Text(
         text = text,
         modifier = modifier,
-        style = MaterialTheme.typography.bodyLarge,
+        // M3's `bodyLarge` is 15 sp — which is v2's *row-title* step, not its chat-text
+        // step (`06 §2` 字号 5 档: 14 = 正文、聊天文本、按钮). [app.pi.ui.theme.PiTextStyles]
+        // carries the right one.
+        style = PiTheme.text.prose,
         color = color ?: MaterialTheme.colorScheme.onSurface,
         maxLines = maxLines,
         overflow = TextOverflow.Ellipsis,
@@ -185,6 +187,13 @@ internal fun BlockCard(
     color: Color,
     modifier: Modifier = Modifier,
     borderColor: Color? = null,
+    /**
+     * The card's interior padding. The default is `06 §2`「卡片内 12px」; the tool
+     * card and the diff card pass their own `PaddingValues(horizontal = 10.dp)`
+     * because v2 gives their rows `padding:7px 10px` / `0 10px 8px` — a 10 dp
+     * horizontal inset, not the default card's 12.
+     */
+    padding: PaddingValues = PaddingValues(PiSpacing.cardPadding),
     content: @Composable ColumnScope.() -> Unit,
 ) {
     Surface(
@@ -194,12 +203,15 @@ internal fun BlockCard(
         border = borderColor?.let { BorderStroke(PiSpacing.hairline, it) },
     ) {
         Column(
-            modifier = Modifier.padding(PiSpacing.card),
+            modifier = Modifier.padding(padding),
             verticalArrangement = Arrangement.spacedBy(PiSpacing.gutter),
             content = content,
         )
     }
 }
+
+/** `06 §2` 工具卡 / diff 卡: their rows inset 10 horizontally (`padding:7px 10px`). */
+internal val BlockCardRowPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
 
 /**
  * The 3dp state stripe. Height is explicit on purpose: filling a Row's height

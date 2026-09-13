@@ -37,6 +37,8 @@ fun ToolCallBlock(
     item: ToolCall,
     modifier: Modifier = Modifier,
     defaultExpanded: Boolean = false,
+    firstOfRun: Boolean = true,
+    lastOfRun: Boolean = true,
 ) {
     val palette = PiTheme.palette
     // The card's state, derived once: `06 §4`'s fourth state (被拒) is read from the
@@ -116,11 +118,19 @@ fun ToolCallBlock(
     val commandText = remember(item.args) { toolCommandText(item.args) }
     ToolActionMenu(command = commandText, output = item.output, fullOutputPath = fullOutputPath) {
         BlockColumn(modifier) {
-            ToolCard(item, expanded, { expanded = !expanded }) {
+            ToolCard(
+                item,
+                expanded,
+                { expanded = !expanded },
+                firstOfRun = firstOfRun,
+                lastOfRun = lastOfRun,
+            ) {
                 ToolHeader(
                     item = item,
                     title = item.toolName.ifEmpty { "工具" },
                     subject = item.argsSummary,
+                    expanded = expanded,
+                    expandable = item.output.isNotEmpty(),
                 )
 
                 if (expanded && item.output.isNotEmpty()) {
@@ -204,8 +214,6 @@ fun ToolCallBlock(
 
                 ToolFooter(
                     text = footer,
-                    expanded = expanded,
-                    expandable = item.output.isNotEmpty(),
                     state = state,
                     elapsedMs = item.elapsedMs,
                 )
