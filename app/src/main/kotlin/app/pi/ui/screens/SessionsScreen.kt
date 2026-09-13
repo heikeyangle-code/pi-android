@@ -41,6 +41,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import app.pi.runtime.GuestWorkspacePath
 import app.pi.session.PiSessionStore
 import app.pi.ui.PiSessionViewModel
 import app.pi.ui.components.PiEmptyState
@@ -163,8 +164,7 @@ fun SessionsScreen(
                 PiEmptyState(
                     icon = Icons.Filled.Forum,
                     title = "还没有会话",
-                    body = "会话按工作目录分组。\n" +
-                        "新建一个，或者把手机里的文件夹设为工作区。",
+                    body = "会话按工作目录分组，这里会列出每一个目录的对话。",
                     modifier = Modifier.weight(1f),
                 )
             } else if (visible.isEmpty()) {
@@ -184,7 +184,7 @@ fun SessionsScreen(
                     contentPadding = PaddingValues(bottom = PiSpacing.unit),
                 ) {
                     groups.forEach { (cwd, rows) ->
-                        item(key = "hdr:$cwd") { PiSectionHeader(shortenPath(cwd)) }
+                        item(key = "hdr:$cwd") { PiSectionHeader(groupLabel(cwd)) }
                         items(rows, key = { it.file.absolutePath }) { summary ->
                             SessionRow(
                                 summary = summary,
@@ -323,7 +323,7 @@ private fun SessionRow(
             Spacer(Modifier.height(2.dp))
             Text(
                 buildString {
-                    append(shortenPath(summary.cwd))
+                    append(groupLabel(summary.cwd))
                     summary.model?.let { append(" · ").append(it) }
                 },
                 style = PiTheme.text.meta,
@@ -351,9 +351,25 @@ private fun SessionRow(
     }
 }
 
-/** Tail-relative, which is what stays meaningful for a long phone path. */
-private fun shortenPath(path: String): String =
-    if (path.length <= 40) path else "…" + path.takeLast(39)
+/**
+ * The heading a group of sessions is listed under, given the working directory pi
+ * recorded in each session's header.
+ *
+ * The raw value is a **guest** path (`/workspace/pi/workspaces/workspace-1` for this
+ * app's own workspace, `/root` for a session started by typing `pi` in the workbench
+ * terminal — see `PiSessionStore`), and printing it was both wrong for a person to
+ * read and the only place in this app that showed an internal directory. So the
+ * app's own workspace is named, and anything else is shown as its last segment: two
+ * projects with the same folder name look alike in the heading, which is a smaller
+ * problem than a path nobody can act on.
+ */
+private fun groupLabel(path: String): String {
+    val clean = path.trimEnd('/')
+    if (clean.isEmpty()) return "工作目录未记录"
+    val workspacePrefix = GuestWorkspacePath.GUEST_ROOT + "/" + GuestWorkspacePath.RELATIVE
+    if (clean == workspacePrefix) return "工作区"
+    return clean.substringAfterLast('/').ifEmpty { clean }
+}
 
 /**
  * Coarse on purpose: a precise timestamp on every row is noise, and the list is

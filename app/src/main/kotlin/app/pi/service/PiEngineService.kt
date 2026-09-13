@@ -25,9 +25,20 @@ import app.pi.R
  * requires the service *type* to be declared and justified, and the wake lock
  * is what stops doze from freezing the engine mid-write.
  *
- * The engine process itself is spawned by [PiEngineController] and owned by this
- * service, never by an Activity: the transcript must survive the user swiping
- * away from the chat screen.
+ * ## What it does *not* own
+ *
+ * The engine process is spawned by `PiEngineHost`, which the chat ViewModel owns —
+ * a child of this app's process, not of this service (the older sentence here,
+ * "spawned by [PiEngineController] and owned by this service", described the
+ * intended shape and was never true: [PiEngineController] is the wiring point, and
+ * until now its `stop()` only set an enum). What the service contributes is the
+ * process's *priority*: a foreground service is what stops Android from killing the
+ * process tree mid-turn, which is why [reportWork] and [stopIfRunning] keep the
+ * service's existence tied to an engine that is actually there.
+ *
+ * The consequence of that split is stated where it is decided: the notification's
+ * 停止 action stops the engine through [PiEngineController]'s registered handler
+ * (`PiSessionViewModel`), because the service cannot reach a child it does not own.
  */
 class PiEngineService : Service() {
 
@@ -48,15 +59,25 @@ class PiEngineService : Service() {
         instance = this
     }
 
+    /**
+     * Both outcomes are `START_NOT_STICKY`, and both are decisions of
+     * [PiEngineLifecyclePolicy].
+     *
+     * Ungraceful as it looks, it is the honest one: the engine is a **child process
+     * of this app's process** (`PiEngineHost` spawns it), so a service the framework
+     * re-creates after the process died has nothing left to keep alive. Answering
+     * such a call — `intent == null` — with a notification saying 「pi 正在运行」 and a
+     * fresh wake lock is a claim about an agent that does not exist, and the old code
+     * did exactly that (`START_STICKY` + `else -> startForegroundWithNotification()`).
+     * Starting a *new* engine is the app's job (the chat screen's 重试), not the
+     * service's.
+     */
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        when (intent?.action) {
-            ACTION_STOP -> {
-                stopEngineAndSelf()
-                return START_NOT_STICKY
-            }
-            else -> startForegroundWithNotification()
+        when (PiEngineLifecyclePolicy.startCommand(intent?.action, systemRestart = intent == null)) {
+            PiEngineLifecyclePolicy.StartCommand.StopEngine -> stopEngineAndSelf()
+            PiEngineLifecyclePolicy.StartCommand.StartEngine -> startForegroundWithNotification()
         }
-        return START_STICKY
+        return START_NOT_STICKY
     }
 
     private fun startForegroundWithNotification() {
@@ -110,6 +131,26 @@ class PiEngineService : Service() {
             .notify(NOTIFICATION_ID, buildNotification(runningTasks))
     }
 
+    /**
+     * Apply the app's answer to "is there work that must not be frozen?".
+     *
+     * The lock is taken per busy period rather than for the service's lifetime
+     * ([PiEngineLifecyclePolicy.shouldHoldWakeLock]): the runtime unpacking and pi's
+     * cold start are CPU-bound with no UI, and so is a turn; an engine that is merely
+     * alive is neither. That also means the six-hour cap now only ever expires inside
+     * a single six-hour turn instead of silently dropping the lock in the middle of
+     * a normal one — which is what the old always-held lock did (see
+     * [WAKE_LOCK_TIMEOUT_MS]).
+     *
+     * The notification's count is the same fact, one task or none: it used to be
+     * hard-wired to 0 and [updateNotification] had no caller at all, so the line
+     * 「%d 个任务进行中」 was a number nothing ever wrote.
+     */
+    private fun applyWork(active: Boolean) {
+        if (active) acquireWakeLock() else releaseWakeLock()
+        updateNotification(if (active) 1 else 0)
+    }
+
     private fun acquireWakeLock() {
         if (wakeLock?.isHeld == true) return
         val power = getSystemService(PowerManager::class.java) ?: return
@@ -120,8 +161,12 @@ class PiEngineService : Service() {
     }
 
     private fun stopEngineAndSelf() {
-        // Engine shutdown is idempotent; the controller tears down proot and the
-        // Node process tree.
+        // The engine first, then the service that exists for it: `PiEngineController`
+        // invokes the handler its owner registered (`PiSessionViewModel.stopEngineHook`
+        // → `PiEngineHost.shutdown`), which settles any running turn before closing pi
+        // — the same graceful path a restart takes. Both halves are idempotent, so a
+        // second tap (or an engine that already exited) is a no-op rather than a
+        // second teardown.
         PiEngineController.stop()
         releaseWakeLock()
         ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
@@ -142,9 +187,26 @@ class PiEngineService : Service() {
     }
 
     companion object {
-        const val ACTION_STOP = "app.pi.action.STOP_ENGINE"
+        /**
+         * The notification's stop action, owned by the pure policy object so that
+         * "what does this action mean" is a decision that can be checked without
+         * Android (`tools/run-app-pure-checks.sh`, harness `lifecycle-policy`).
+         */
+        const val ACTION_STOP = PiEngineLifecyclePolicy.ACTION_STOP
+
         private const val NOTIFICATION_ID = 1001
         private const val WAKE_LOCK_TAG = "pi:engine"
+
+        /**
+         * The framework's cap on one acquisition, not "how long a turn may run".
+         *
+         * Since the lock is taken per busy period ([applyWork]), this only matters to
+         * a single stretch of work longer than six hours (a very long tool run on a
+         * phone with the screen off). Past it the framework releases the lock and the
+         * app cannot ask for it again until the next busy period starts; that is a
+         * known, visible residual — the 设置 row reads the lock's own `isHeld`
+         * (`RuntimeFacts`), so it shows 未持有 rather than claiming protection.
+         */
         private val WAKE_LOCK_TIMEOUT_MS = 6 * 60 * 60 * 1000L
 
         /**
@@ -159,19 +221,35 @@ class PiEngineService : Service() {
         fun isRunning(): Boolean = instance != null
 
         /**
+         * Tell the service whether anything needs the CPU. No-op when it is not
+         * running (with `app.runtime.keepAlive` off there is no service at all, which
+         * is the switch's whole meaning) — the caller never has to ask first.
+         */
+        fun reportWork(active: Boolean) {
+            instance?.applyWork(active)
+        }
+
+        /**
+         * Stop the service **and the engine it exists for**, if it is running.
+         *
+         * The engine's teardown is `PiEngineController`'s: the app registers the one
+         * handler that knows how to stop the engine ([PiEngineController.stop]), so
+         * this is not "stop the notification" — it is the notification's 停止 button
+         * doing what it says. Called by the ViewModel when the engine is gone (there
+         * is nothing left to protect) and by the button itself.
+         */
+        fun stopIfRunning() {
+            instance?.stopEngineAndSelf()
+        }
+
+        /**
          * Whether the CPU wake lock is held **right now** — the lock's own
          * `isHeld`, not an inference from the service being alive.
          *
-         * The two questions are not the same, and the difference is real:
-         *  - the lock is acquired in [onStartCommand] and released in
-         *    [stopEngineAndSelf] / [onDestroy], so it is normally held for exactly
-         *    the service's lifetime;
-         *  - it is acquired **with a 6-hour timeout**, so a service that works
-         *    longer than that keeps running with the lock already released by the
-         *    framework. In that window [isRunning] is true while this is false;
-         *  - between `onCreate` and the acquire, and during teardown, the two can
-         *    also disagree for a moment.
-         *
+         * The two questions are not the same, and the difference is the whole point
+         * of the row that reads this: the lock is held only while something CPU-bound
+         * is happening ([PiEngineLifecyclePolicy.shouldHoldWakeLock] via [reportWork]),
+         * so "service up, lock not held" is the **normal idle state**, not a fault.
          * Because it reads the lock itself, it is never an approximation.
          */
         fun isWakeLockHeld(): Boolean = instance?.wakeLock?.isHeld == true

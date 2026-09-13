@@ -64,6 +64,31 @@ object GuestWorkspacePath {
     fun host(filesDir: File): File = File(filesDir, RELATIVE)
 
     /**
+     * [host], **created if it is missing**, and returned either way.
+     *
+     * The app cannot assume this directory exists. It is app-private storage, so
+     * Android may clear it between launches, and nothing creates it at install time;
+     * only two of the paths that need it used to create it — the engine before it
+     * binds `workspace.absolutePath` (`PiEngineHost.kt:259-260`) and the terminal
+     * before the same bind (`PtyLauncher.prepare`). Everything else that resolves a
+     * path under it assumed it was there: proot binds nothing that does not exist on
+     * the host side, `pi install -l` writes `<cwd>/.pi`, and `export_html` writes a
+     * workspace-relative file. One `mkdirs()` here is what makes every caller agree.
+     *
+     * Idempotent — a `mkdirs()` on an existing directory is a no-op — and it creates
+     * the intermediate `pi/workspaces` too, which nothing else creates. A failure is
+     * reported by the return value rather than thrown: these callers are UI paths
+     * that must keep working on a full disk, and each already handles a missing
+     * directory (an empty `@` list, a setting that does not persist). What they could
+     * not handle was a directory that looked configured and did not exist.
+     */
+    fun ensureHost(filesDir: File): File {
+        val dir = host(filesDir)
+        dir.mkdirs()
+        return dir
+    }
+
+    /**
      * The engine's guest spelling of [hostWorkspace]: the files directory is
      * mirrored at [GUEST_ROOT], so the spelling is what remains after the prefix
      * is removed. An empty remainder is the root itself.

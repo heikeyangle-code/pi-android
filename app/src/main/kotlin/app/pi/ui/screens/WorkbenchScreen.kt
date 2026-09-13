@@ -103,7 +103,7 @@ fun WorkbenchScreen(
             TerminalPane(modifier = Modifier.weight(1f))
         } else {
             val (title, body) = when (segment) {
-                1 -> "没有工作区" to "把手机里的一个文件夹设为工作区后，文件树会出现在这里。"
+                1 -> "文件树还没做" to "对话和终端已经可以读写这个工作目录；这里会显示它的目录树。"
                 2 -> "不是 Git 仓库" to "工作区是 Git 仓库时，这里显示变更、diff 与检查点。"
                 else -> "没有后台任务" to "长时间运行的回合与命令会出现在这里，可以随时停止。"
             }

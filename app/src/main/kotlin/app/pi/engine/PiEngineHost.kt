@@ -66,12 +66,10 @@ class PiEngineHost(private val appContext: Context) {
     private val provisioner = RuntimeProvisioner(paths, appContext.assets)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
-    /**
-     * Serialises boot/restart/shutdown. Two concurrent restarts would leave two
-     * proot trees running on one cwd — both writing the same session JSONL — which
-     * is precisely the state the class exists to prevent.
-     */
-    private val lifecycleLock = Mutex()
+    // The lock is process-wide (see [lifecycleLock] in the companion object), not a
+    // field of this instance: the resource it protects — one cwd, one session JSONL,
+    // one guest agent dir — is process-wide, and a host is created per ViewModel.
+    private val lifecycleLock: Mutex get() = PROCESS_LOCK
 
     /**
      * The engine currently attached, or null when nothing is running.
@@ -615,5 +613,29 @@ class PiEngineHost(private val appContext: Context) {
          * question "did the move already happen?" matters most.
          */
         private const val MIGRATION_MARKER = ".pi-android-agent-migrated"
+
+        /**
+         * Serialises boot/restart/shutdown **for the whole process**.
+         *
+         * Two concurrent restarts would leave two proot trees running on one cwd —
+         * both writing the same session JSONL — which is precisely the state the
+         * class exists to prevent. It used to be an instance field, and that was one
+         * host too narrow: a host is created per `PiSessionViewModel`, so the window
+         * where a finished Activity's engine is still being settled by
+         * `onCleared`'s teardown while the next ViewModel boots a new one on the same
+         * cwd was governed by **two different locks**. That is the one window in
+         * which two engines can genuinely overlap, and it is exactly the case the
+         * per-instance lock could not see.
+         *
+         * The lock is process-wide; the *host* is not, and nothing else about this
+         * class changes: [publish], the "the UI never holds a dead engine" rule and
+         * [restart]'s stop-then-start ordering all stay per-host.
+         *
+         * A restart that is in flight still closes the old engine *before* the new
+         * one is spawned, so the two are never live at once; the residual window is a
+         * teardown that begins after a new boot won the lock — see
+         * `docs/lifecycle-and-timers.md` §4.
+         */
+        private val PROCESS_LOCK = Mutex()
     }
 }

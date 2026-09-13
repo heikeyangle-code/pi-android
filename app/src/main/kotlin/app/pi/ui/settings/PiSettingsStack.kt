@@ -22,6 +22,7 @@ import app.pi.packages.ExtensionLifecycle
 import app.pi.packages.PiPackagesHost
 import app.pi.rpc.PiResponses
 import app.pi.runtime.PiPaths
+import app.pi.runtime.PiProjectConfig
 import app.pi.runtime.PtyLauncher
 import app.pi.ui.device.DeviceCapabilityScreen
 import app.pi.ui.theme.PiThemeEntry
@@ -175,7 +176,7 @@ fun PiSettingsStack(
     var filesEpoch by remember { mutableStateOf(0) }
     val workspace = remember(context) { PtyLauncher.workspaceHost(context) }
     PiDirectoryWatch(
-        directories = remember(paths, workspace) { listOf(paths.agentDir, File(workspace, ".pi")) },
+        directories = remember(paths, workspace) { listOf(paths.agentDir, PiProjectConfig.root(workspace)) },
         names = remember { SETTINGS_WATCHED },
         onChanged = {
             onExternalSettingsWrite()

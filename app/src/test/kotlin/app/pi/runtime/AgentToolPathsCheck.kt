@@ -152,6 +152,65 @@ fun main() {
         false,
     )
 
+    // --------------------- 6. the project config directory pi joins onto its cwd
+    // Every project-scoped thing pi reads lives under `<cwd>/.pi`: settings.json,
+    // skills/, prompts/, themes/, extensions/, SYSTEM.md, APPEND_SYSTEM.md and
+    // `pi install -l`'s scope. The app resolves those paths itself (it cannot ask pi
+    // for the name over RPC), so the name is a transcription of
+    // `CONFIG_DIR_NAME = pkg.piConfig?.configDir || ".pi"` — and a transcription that
+    // drifts is a whole directory the app reads and pi never opens. The value is
+    // pinned against the pinned engine by `checkProjectConfigDir` in
+    // `tools/pi-contract.mjs`; what this section pins is the *shape* the app builds
+    // from it, and the containment rule that keeps a future caller from escaping it.
+    check("the project config directory is pi's default", PiProjectConfig.DIRECTORY, ".pi")
+    check(
+        "the project config root is <workspace>/.pi",
+        PiProjectConfig.root(java.io.File("$FILES/${GuestWorkspacePath.RELATIVE}")).path,
+        "$FILES/${GuestWorkspacePath.RELATIVE}/.pi",
+    )
+    check(
+        "project settings resolve to pi's projectSettingsPath",
+        PiProjectConfig.settingsFile(java.io.File("$FILES/${GuestWorkspacePath.RELATIVE}")).path,
+        "$FILES/${GuestWorkspacePath.RELATIVE}/.pi/settings.json",
+    )
+    check(
+        "project themes resolve to <workspace>/.pi/themes",
+        PiProjectConfig.themesDir(java.io.File("$FILES/${GuestWorkspacePath.RELATIVE}")).path,
+        "$FILES/${GuestWorkspacePath.RELATIVE}/.pi/themes",
+    )
+    // The three resource directories pi discovers by walking (`resource-loader.ts:819-822`).
+    check(
+        "project extensions / skills / prompts sit under the same root",
+        listOf(
+            PiProjectConfig.extensionsDir(java.io.File("/ws")).path,
+            PiProjectConfig.skillsDir(java.io.File("/ws")).path,
+            PiProjectConfig.promptsDir(java.io.File("/ws")).path,
+        ),
+        listOf("/ws/.pi/extensions", "/ws/.pi/skills", "/ws/.pi/prompts"),
+    )
+    // `under` is the only path into `.pi` that may ever take a name the user or the
+    // model supplied, so the escapes have to be refused here rather than at a call
+    // site that forgot. `File(workspace, "../x")` is string concatenation: it never
+    // throws, and it silently names a directory outside the workspace.
+    check(
+        "a relative path inside .pi resolves",
+        PiProjectConfig.under(java.io.File("/ws"), "themes/mine.json")?.path,
+        "/ws/.pi/themes/mine.json",
+    )
+    check("a parent-directory escape is refused", PiProjectConfig.under(java.io.File("/ws"), "../outside"), null)
+    check(
+        "an escape buried inside the path is refused too",
+        PiProjectConfig.under(java.io.File("/ws"), "themes/../../outside"),
+        null,
+    )
+    check("a backslash escape is refused", PiProjectConfig.under(java.io.File("/ws"), "..\\..\\outside"), null)
+    check(
+        "an absolute path is contained rather than followed (it names nothing real, and it is inside)",
+        PiProjectConfig.under(java.io.File("/ws"), "/etc/passwd")?.path,
+        "/ws/.pi/etc/passwd",
+    )
+    check("an empty relative path is refused", PiProjectConfig.under(java.io.File("/ws"), ""), null)
+
     println(if (failures == 0) "\nharness: OK (all checks passed)" else "\nharness: FAILED ($failures)")
     if (failures != 0) kotlin.system.exitProcess(1)
 }

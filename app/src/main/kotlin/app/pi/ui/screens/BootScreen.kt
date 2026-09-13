@@ -107,7 +107,13 @@ fun BootScreen(
             }
 
             is Boot.Failed -> {
-                Text("引擎没能启动", style = MaterialTheme.typography.titleMedium)
+                // "引擎没能启动" described the only case this screen had when it was
+                // written. It is also where a *mid-session* engine death now lands
+                // (the ViewModel publishes `Boot.Failed` when pi exits on its own, so
+                // the composer cannot write into a closed pipe), and for that case the
+                // old title was false: the engine had started, and stopped. The
+                // neutral wording is true for both; the message below says which.
+                Text("引擎没有在运行", style = MaterialTheme.typography.titleMedium)
                 Spacer(Modifier.height(6.dp))
                 Surface(
                     shape = PiShapes.card,

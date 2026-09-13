@@ -2,6 +2,7 @@ package app.pi.settings
 
 import app.pi.rpc.PiJson
 import app.pi.rpc.SettingsDocument
+import app.pi.runtime.PiProjectConfig
 import app.pi.ui.settings.PiSettingsStore
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -88,7 +89,16 @@ class PiSettingsFileStore(
         // Writes go to the global document unless a project document is present
         // and already carries the key — a project override should be updated
         // where it lives, not shadowed by a new global value.
-        val targetIsProject = projectFile != null && lookup(project(), key) != null
+        //
+        // "Is present" has to be asked of the **filesystem**, not only of the cache.
+        // The project document is `<workspace>/.pi/settings.json`, and the workspace
+        // is app-private storage: Android clears it, and a user can delete it. If a
+        // missing document were located from a cached copy, `writeDocument` would
+        // `mkdirs()` the directory back and write every cached project key plus the
+        // one being changed — resurrecting an override the user deleted, which then
+        // shadows the global value in pi. Reading the file's existence first makes a
+        // deleted project document behave exactly like one that never existed.
+        val targetIsProject = projectFile != null && projectFile.isFile && lookup(project(), key) != null
         val base = if (targetIsProject) project() else global()
         val next = setPath(base, key, value)
         if (targetIsProject) {
@@ -160,7 +170,9 @@ class PiSettingsFileStore(
         fun forWorkspace(agentDir: File, workspace: File): PiSettingsFileStore =
             PiSettingsFileStore(
                 globalFile = File(agentDir, "settings.json"),
-                projectFile = File(workspace, ".pi/settings.json"),
+                // pi's own project path, from the one place the app transcribes it
+                // (`core/settings-manager.ts:233` = `<cwd>/<CONFIG_DIR_NAME>/settings.json`).
+                projectFile = PiProjectConfig.settingsFile(workspace),
                 appLocalFile = File(agentDir.parentFile ?: agentDir, "app-prefs.json"),
             )
     }

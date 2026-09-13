@@ -289,8 +289,19 @@ object PtyLauncher {
         return "cd ${Shell.quote(workspace)} && exec script $mode -c ${Shell.quote(pinned)} /dev/null"
     }
 
-    /** The host directory bind-mounted as the guest's `/workspace`. */
-    fun workspaceHost(context: Context): File = GuestWorkspacePath.host(context.filesDir)
+    /**
+     * The host directory bind-mounted as the guest's `/workspace`.
+     *
+     * This is the one accessor the chat engine, the terminal, the `@` completion, the
+     * package commands and the device shell's write boundary all read (see
+     * `GuestWorkspacePath`), which is why the directory is **created here** rather
+     * than at each call site: every consumer needs it to exist — proot will not bind
+     * a host path that does not exist, and `<workspace>/.pi` is where project
+     * settings, skills, prompt templates, themes and extensions are read from — and
+     * before this line only the engine and the terminal created it. It is app-private
+     * storage, so "it was there last launch" is not a guarantee.
+     */
+    fun workspaceHost(context: Context): File = GuestWorkspacePath.ensureHost(context.filesDir)
 
     /**
      * The workspace, as this launcher mounts it: the *same host directory* the

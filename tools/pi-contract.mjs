@@ -151,6 +151,46 @@ function checkSurface(piDir) {
 	console.log(`   (${new Set(commands).size} commands, ${uiMethods.length} local handlers, ${presets.filter((p) => p.builtInPi).length} provider presets scanned)`);
 	checkMentionArgv(dist);
 	checkPreSpawnFlags(dist);
+	checkProjectConfigDir(piDir);
+}
+
+/**
+ * pi's **project** config directory — `<cwd>/.pi`, the root of every project-scoped
+ * thing pi reads: `settings.json`, `skills/`, `prompts/`, `themes/`, `extensions/`,
+ * `SYSTEM.md`, `APPEND_SYSTEM.md`, and `pi install -l`'s install scope.
+ *
+ * Why this needs asserting: the name is a **transcription**, not a channel. pi's RPC
+ * settings surface is files rather than schema (`docs/settings-review.md`), and no
+ * response names the directory. pi derives it as
+ * `CONFIG_DIR_NAME = pkg.piConfig?.configDir || ".pi"` (`src/config.ts:504`) from its
+ * own `package.json`, so a pinned engine that ever declared something else would leave
+ * the app reading and writing a directory pi never opens — silently: settings show
+ * defaults, project skills/prompts/themes/extensions never appear, and a project-level
+ * `pi install -l` reports success into a directory pi ignores. That is the §M12 shape,
+ * one layer below the settings keys.
+ *
+ * The app-side value is read out of the Kotlin source as text (the technique
+ * `settings-audit` uses) rather than imported, because this script is JavaScript and
+ * the app is Kotlin.
+ */
+function checkProjectConfigDir(piDir) {
+	const kotlinDir = appLiterals(
+		"app/src/main/kotlin/app/pi/runtime/PiProjectConfig.kt",
+		/DIRECTORY:\s*String\s*=\s*"([^"]+)"/g,
+	)[0];
+	const manifest = JSON.parse(readFileSync(join(piDir, "package.json"), "utf8"));
+	const engineDir = manifest.piConfig?.configDir ?? ".pi";
+	check(
+		"the pinned engine's project config directory is the one the app joins onto the workspace",
+		kotlinDir === engineDir,
+		"app.pi resolves every project-scoped path itself: `<workspace>/<dir>/settings.json` " +
+			"(settings/PiSettingsFileStore.kt, packages/PiCredentialService.kt), `themes/` " +
+			"(ui/theme/PiThemeFiles.kt), `extensions/` (ui/PiSessionViewModel.kt), `skills/` and " +
+			"`prompts/`, and `pi install -l`'s scope (packages/AgentLayout.kt). Those call sites " +
+			"read `PiProjectConfig.DIRECTORY`. Re-read the pinned package.json's `piConfig` and " +
+			"`src/config.ts`'s CONFIG_DIR_NAME, then update `PiProjectConfig.DIRECTORY`.",
+	);
+	console.log(`   (project config dir pinned: ${kotlinDir})`);
 }
 
 /**

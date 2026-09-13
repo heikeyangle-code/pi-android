@@ -1,5 +1,7 @@
 package app.pi.packages
 
+import app.pi.runtime.PiProjectConfig
+
 /**
  * pi's project-trust decision, reproduced including the branch that decided it.
  *
@@ -46,7 +48,17 @@ object ProjectTrust {
         "APPEND_SYSTEM.md",
     )
 
-    const val CONFIG_DIR_NAME = ".pi"
+    /**
+     * pi's project config directory, from the app's one transcription of it
+     * (`PiProjectConfig`, cited to `config.ts:504`'s `CONFIG_DIR_NAME`).
+     *
+     * It used to be a second literal here, which is how two answers to the same
+     * question start: this object decides whether a project *needs* trusting by
+     * looking for the entries above, `TrustRepository` writes `trust.json` under
+     * `<cwd>/.pi`, and `PiProjectConfig` resolves the paths the app then reads.
+     * One name, three consumers.
+     */
+    const val CONFIG_DIR_NAME = PiProjectConfig.DIRECTORY
 
     /** `APP_NAME` (`config.ts:502`). */
     const val APP_NAME = "pi"

@@ -35,9 +35,10 @@ import java.io.File
  *    (rootfs, package caches), so that is what the row is about.
  *  - **wake lock** — `PiEngineService.isWakeLockHeld()`, i.e. the lock's own
  *    `isHeld`, published by the service that owns it. Not an inference from the
- *    service being alive: the lock has a six-hour cap
- *    (`acquire(WAKE_LOCK_TIMEOUT_MS)`), so a long-running service can be up with
- *    the lock already released, and that case is the one the row spells out.
+ *    service being alive, which matters more now than it used to: the lock is held
+ *    only while something CPU-bound happens (engine start, a running turn —
+ *    `PiEngineLifecyclePolicy.shouldHoldWakeLock`), so a service that is up with the
+ *    lock released is the ordinary idle state, not a fault.
  */
 class RuntimeFacts(
     private val paths: PiPaths,
@@ -67,9 +68,9 @@ class RuntimeFacts(
          */
         val wakeLockHeld: Boolean,
         /**
-         * Whether the engine service is alive. Used only to explain the one case
-         * where the two disagree: the lock has a six-hour cap while the service
-         * keeps running.
+         * Whether the engine service is alive. Used only to explain the case where
+         * the two disagree — the ordinary one being "the service is up and nothing
+         * needs the CPU right now".
          */
         val serviceRunning: Boolean,
         /**
@@ -176,13 +177,16 @@ internal fun runtimeOverrides(snapshot: RuntimeFacts.Snapshot?): Map<String, Str
                 if (ms < 1000) "$ms 毫秒" else "${(ms + 500) / 1000} 秒"
             } ?: "尚未启动过引擎"
             ),
-        // The lock's own state, read through `PiEngineService.isWakeLockHeld()`.
-        // The one case worth spelling out is the six-hour cap: the service is still
-        // running but the framework has already released the lock, so the engine is
-        // no longer protected from doze.
+        // The lock's own state, read through `PiEngineService.isWakeLockHeld()` — the
+        // lock's `isHeld`, not an inference from the service being alive. Since the
+        // lock is taken per busy period (`PiEngineLifecyclePolicy.shouldHoldWakeLock`,
+        // applied by `PiEngineService.reportWork`), "service up, lock released" is the
+        // **normal idle state**. The old wording here ("锁已达 6 小时上限") was an
+        // inference that the policy change made wrong: it told the user their
+        // protection had just expired while the app was simply doing nothing.
         "app.runtime.wakeLock" to when {
             snapshot.wakeLockHeld -> "持有中"
-            snapshot.serviceRunning -> "未持有（前台服务仍在运行，锁已达 6 小时上限）"
+            snapshot.serviceRunning -> "未持有（当前空闲）"
             else -> "未持有"
         },
     )

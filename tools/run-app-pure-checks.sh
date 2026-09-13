@@ -247,7 +247,10 @@ run_harness() { # $1 = label, $2 = main class, rest = sources (harness included)
 # ProjectTrust's resolution order, PiPackageSource classification, `pi list`
 # parsing and the restart state machine. Needs kotlinx.serialization (TrustFile)
 # and kotlinx.coroutines (ExtensionLifecycle's MutableStateFlow), plus :rpc's
-# pure ANSI stripper, which PiListOutput calls.
+# pure ANSI stripper, which PiListOutput calls — and `PiProjectConfig.kt`, because
+# `ProjectTrust.CONFIG_DIR_NAME` reads the app's one transcription of pi's project
+# config directory instead of repeating the literal (a harness compile failure if
+# that file is ever left out, which is the point).
 run_harness packages \
   app.pi.packages.PackagesPureLogicCheckKt \
   "$ROOT/app/src/test/kotlin/app/pi/packages/PackagesPureLogicCheck.kt" \
@@ -260,6 +263,7 @@ run_harness packages \
   "$ROOT/app/src/main/kotlin/app/pi/packages/PiModelsMerge.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/packages/PiModelCatalog.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/packages/PiResourceDiscovery.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/runtime/PiProjectConfig.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/packages/ExtensionLifecycle.kt" \
   "$ROOT/rpc/src/main/kotlin/app/pi/rpc/Ansi.kt"
 
@@ -292,18 +296,24 @@ run_harness mentions \
   "$ROOT/app/src/main/kotlin/app/pi/ui/chat/PiFileMentions.kt"
 
 # app.pi.runtime: the two invariants that decide whether the guest can see a tool,
-# plus the one implementation of the workspace's guest spelling. `installTool` writes
-# rg and fd into two different host directories because the engine and the package
-# commands bind `<files>/pi/.pi/agent` over the guest's `/root/.pi/agent` and the
-# terminal does not, so a tool installed into only one of them is invisible to one of
-# the three launch paths. That failure is silent (pi's `find` simply stops returning
-# anything), which is why it is pinned here rather than left to a device. Android-free:
-# `PiRuntime.kt` imports only `java.io.File`, and so does `GuestWorkspacePath.kt`.
+# plus the one implementation of the workspace's guest spelling, plus the one
+# transcription of pi's **project** config directory. `installTool` writes rg and fd
+# into two different host directories because the engine and the package commands bind
+# `<files>/pi/.pi/agent` over the guest's `/root/.pi/agent` and the terminal does not,
+# so a tool installed into only one of them is invisible to one of the three launch
+# paths. That failure is silent (pi's `find` simply stops returning anything), which is
+# why it is pinned here rather than left to a device. `PiProjectConfig` is pinned for
+# the same reason one layer up: pi reads every project-scoped thing (settings, skills,
+# prompts, themes, extensions) out of `<cwd>/.pi`, the app resolves those paths itself
+# because the name is not on any RPC channel, and a wrong name is a whole directory the
+# app reads and pi never opens. Android-free: `PiRuntime.kt` imports only
+# `java.io.File`, and so do `GuestWorkspacePath.kt` and `PiProjectConfig.kt`.
 run_harness agent-tool-paths \
   app.pi.runtime.AgentToolPathsCheckKt \
   "$ROOT/app/src/test/kotlin/app/pi/runtime/AgentToolPathsCheck.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/runtime/PiRuntime.kt" \
-  "$ROOT/app/src/main/kotlin/app/pi/runtime/GuestWorkspacePath.kt"
+  "$ROOT/app/src/main/kotlin/app/pi/runtime/GuestWorkspacePath.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/runtime/PiProjectConfig.kt"
 
 # app.pi.session: which on-disk files count as sessions, in which of pi's two
 # layouts, in what order, and which one `-c` would resume. It exists because the
@@ -400,6 +410,21 @@ run_harness pre-spawn \
   "$ROOT/app/src/test/kotlin/app/pi/rpc/PiPreSpawnCheck.kt" \
   "$ROOT/rpc/src/main/kotlin/app/pi/rpc/PiLaunchOptions.kt" \
   "$ROOT/rpc/src/main/kotlin/app/pi/rpc/PiPreSpawnConfig.kt"
+
+# app.pi.service: the foreground service's lifecycle decisions — what a start
+# command means (including the null intent a killed `START_STICKY` service is
+# re-created with), whether the CPU must stay awake, whether the service should
+# exist at all, and how long a countdown may sleep. They were inline in an Android
+# class, where the wrong answer is silent in three different ways: a notification
+# about an engine that is gone, a six-hour wake-lock cap that expires inside a turn
+# while the CPU stays awake for hours when pi is idle, and a countdown that polls
+# five times for every displayed second. `PiEngineLifecyclePolicy.kt` imports
+# nothing at all, so its truth tables — and a sweep of the countdown loop over every
+# deadline from 1 to 5000 ms — run here; the Android halves it is wired into do not.
+run_harness lifecycle-policy \
+  app.pi.service.PiEngineLifecyclePolicyCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/service/PiEngineLifecyclePolicyCheck.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/service/PiEngineLifecyclePolicy.kt"
 
 # --- 4. verdict ---------------------------------------------------------------
 # The counts are computed, not written down. They were hardcoded once ("2

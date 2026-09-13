@@ -1231,7 +1231,11 @@ object PiSettingsCatalog {
         PiSetting(
             key = "app.runtime.wakeLock",
             title = "唤醒锁状态",
-            description = "持有中表示引擎在息屏后仍能继续工作。锁由前台服务持有，最长 6 小时。",
+            // The policy changed with this row's wording: the lock is held while the
+            // engine starts or a turn runs, and released when idle (`PiEngineLifecyclePolicy`),
+            // so "未持有" while the app sits idle is normal — the old text ("最长 6
+            // 小时") described the old always-held lock and would now read as a fault.
+            description = "持有中表示引擎正在启动或正有回合在跑，此时息屏也能继续；空闲时自动释放以省电。",
             kind = PiRowKind.Text,
             group = G_RUNTIME,
             section = "后台",

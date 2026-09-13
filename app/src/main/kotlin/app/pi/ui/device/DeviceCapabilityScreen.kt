@@ -56,6 +56,7 @@ import app.pi.bridge.DeviceShellGuard
 import app.pi.bridge.DeviceShizuku
 import app.pi.bridge.DeviceWorkspace
 import app.pi.ui.components.PiSectionHeader
+import app.pi.ui.rememberPiScreenVisible
 import app.pi.ui.theme.PiShapes
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
@@ -175,10 +176,27 @@ fun DeviceCapabilityScreen(
         revision += 1
     }
 
+    // Registered once per entry into this screen, separately from the refresh loop
+    // below on purpose: `DeviceShizuku.addPermissionResultListener` has no removal
+    // API (it appends to a list), so re-registering it on every foreground/background
+    // switch would add one listener per switch. (That list already grows once per
+    // visit — a pre-existing leak, recorded in `docs/lifecycle-and-timers.md` §4.)
     LaunchedEffect(Unit) {
         DeviceShizuku.addPermissionResultListener { granted ->
             note = if (granted) "Shizuku 授权成功：Shell 现在以 ADB 身份运行。" else "Shizuku 授权被拒绝。"
         }
+    }
+
+    // The read-only refresh loop. Keyed on visibility, not on the composition: while
+    // the app was in the background this ran regardless — a Shizuku binder call, the
+    // accessibility service check, the bridge status, a workspace re-read and the
+    // approval ledger, every 1.5 s, for a screen nobody could see.
+    // (`rememberPiScreenVisible` reads the Activity's lifecycle; the whole loop is a
+    // re-read of already-published facts, so stopping it costs nothing but staleness
+    // for one frame after 切回前台, which the loop then fixes.)
+    val visible = rememberPiScreenVisible()
+    LaunchedEffect(visible) {
+        if (!visible) return@LaunchedEffect
         while (true) {
             accessibilityRunning = DeviceAccessibilityService.isRunning()
             bridgeRunning = DeviceBridgeController.isRunning()
@@ -194,7 +212,7 @@ fun DeviceCapabilityScreen(
             // item reads a polled value, so without this the ledger would render once
             // and never change while the screen is open.
             approvals = DeviceApprovalLedger.summaryLines()
-            delay(1500)
+            delay(REFRESH_INTERVAL_MS)
         }
     }
 
@@ -926,3 +944,15 @@ private fun iconFor(capability: DeviceCapability): ImageVector = when (capabilit
     DeviceCapability.Sensors -> Icons.Filled.Security
     DeviceCapability.Shell -> Icons.Filled.Terminal
 }
+
+/**
+ * How often the visible screen re-reads the facts that have no change channel.
+ *
+ * 1.5 s and only while visible: the values are all cheap reads (one binder call to
+ * Shizuku, a few file stats), but they are reads, and none of them is worth doing
+ * for a screen that is not on screen. There is no push channel for any of them —
+ * `DeviceAccessibilityService`, the Shizuku binder and the bridge's audit file are
+ * external to this app — which is why this is a poll and not an observer.
+ */
+private const val REFRESH_INTERVAL_MS = 1500L
+

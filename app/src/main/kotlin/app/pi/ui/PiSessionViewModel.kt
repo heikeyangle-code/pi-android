@@ -26,9 +26,12 @@ import app.pi.rpc.ToolStatus
 import app.pi.rpc.TranscriptItem
 import app.pi.rpc.extensionErrorHeadline
 import app.pi.runtime.GuestWorkspacePath
+import app.pi.runtime.PiProjectConfig
 import app.pi.runtime.PtyLauncher
 import app.pi.runtime.RuntimeProvisioner
 import app.pi.session.PiSessionStore
+import app.pi.service.PiEngineController
+import app.pi.service.PiEngineLifecyclePolicy
 import app.pi.service.PiEngineService
 import app.pi.settings.PiSettingsFileStore
 import app.pi.settings.readBoolean
@@ -361,6 +364,42 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     private var api: PiEngineApi? = null
 
     /**
+     * The engine's own teardown, handed to the foreground service.
+     *
+     * The service cannot stop the engine itself: the process is a child of this app
+     * process, spawned by [host], and the service has no reference to it. Until this
+     * hook existed, the notification's 「停止」 walked
+     * `PiEngineService.stopEngineAndSelf` → `PiEngineController.stop()`, which only
+     * wrote an enum **no code ever read** — so it removed the notification, released
+     * the wake lock and left pi running with nothing keeping its process alive.
+     *
+     * It runs on [teardownScope], not on the caller's thread: the caller is a service
+     * callback on the main thread, and `PiEngineHost.shutdown` settles a running turn
+     * (up to `SETTLE_TIMEOUT_MS`) before closing pi — the same ordering a restart
+     * uses, because a closed stdin makes pi exit without writing the turn it is in
+     * (`PiEngineSession.closeAfterSettling`).
+     */
+    private val stopEngineHook: () -> Unit = { teardownScope.launch { host.shutdown() } }
+
+    init {
+        PiEngineController.registerStopHandler(stopEngineHook)
+    }
+
+    /**
+     * True while [PiEngineHost.boot] or [restart] is replacing the engine.
+     *
+     * Only read and written on the main dispatcher (`viewModelScope`, the engine
+     * state collector), which is why it is a plain field. It exists because "the
+     * engine went away" and "we are deliberately putting a new one in its place" look
+     * identical from the state collector's seat: both publish `Stopped` while
+     * `session` still points at the engine being retired. Acting on the first
+     * (stopping the service, resetting the resume marker) during a restart would
+     * remove the foreground protection the *new* engine is about to need and can
+     * silently switch the user's session — see [attach] and [restartEngine].
+     */
+    private var engineTransition = false
+
+    /**
      * pi's settings documents, addressed exactly as a desktop install has them.
      *
      * The engine host owns the path layout, so the store is built from it rather
@@ -665,6 +704,54 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
+     * Stop the foreground service when it has nothing left to protect.
+     *
+     * The service exists to keep *the engine's* process tree alive
+     * (`app.runtime.keepAlive`), so "there is no engine and none is coming" is the
+     * state in which it must not keep a notification saying 「pi 正在运行」 over
+     * nothing. The decision itself is [PiEngineLifecyclePolicy.shouldServiceRun] —
+     * a pure function, so the truth table lives in the bare-JVM harness instead of
+     * in this class.
+     *
+     * Never stops the service when the answer is "it should run": starting it is
+     * [startEngineService]'s job, called from [boot] and [attach] where the intent is
+     * unambiguous.
+     */
+    private fun syncEngineService(engineAttached: Boolean, bootInProgress: Boolean) {
+        val keepAlive = _state.value.prefs.keepAlive
+        if (PiEngineLifecyclePolicy.shouldServiceRun(keepAlive, engineAttached, bootInProgress)) return
+        PiEngineService.stopIfRunning()
+    }
+
+    /**
+     * Tell the service whether anything needs the CPU awake right now.
+     *
+     * Called at every engine-state transition rather than from the publication
+     * stream: a publication fires per streamed token, and this is a decision that
+     * only changes when a turn starts or ends. The inputs are the two CPU-bound
+     * windows ([PiEngineLifecyclePolicy.shouldHoldWakeLock]) — the engine starting
+     * (unpacking, node cold start: nothing on screen, all CPU) and a turn running —
+     * which is why an idle engine releases the lock instead of holding it for the
+     * service's whole lifetime.
+     */
+    private fun reportWakeLockNeed() {
+        val current = _state.value
+        PiEngineService.reportWork(
+            active = PiEngineLifecyclePolicy.shouldHoldWakeLock(
+                // `engineTransition` counts as booting: while a restart is replacing
+                // the engine, the old one's `Stopped` would otherwise release the
+                // lock for the whole of the new engine's cold start — the one window
+                // where losing the CPU means the restart stalls until the screen
+                // comes back.
+                booting = engineTransition ||
+                    current.boot is Boot.Working ||
+                    current.engine == PiEngineSession.EngineState.Starting,
+                turnRunning = current.engine == PiEngineSession.EngineState.Busy,
+            ),
+        )
+    }
+
+    /**
      * The workspace is app-private for speed; `/sdcard` goes through FUSE. The
      * directory comes from the runtime layer's accessor rather than from a second
      * copy of `workspace-1`, so the terminal, this ViewModel and the device
@@ -731,18 +818,38 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             // Bring the foreground service up first. A pi turn is a model call plus
             // an unbounded sequence of tool calls; with the screen off and no
             // foreground service, Android is free to kill the whole process tree
-            // mid-write. The service is what owns the engine's lifetime — not the
-            // Activity, and not this ViewModel. `keepAlive = false` is the user
-            // asking for exactly that risk.
+            // mid-write. The service is what keeps that process tree alive — the
+            // engine itself is a child of this process (`host`). `keepAlive = false`
+            // is the user asking for exactly that risk.
             if (prefs.keepAlive) startEngineService()
-            val boot = host.boot(workspaceProvider = ::defaultWorkspace, launch = launchOptions()) { step ->
-                _state.value = _state.value.copy(boot = Boot.Working(step))
+            // Unpacking the runtime and pi's cold start are CPU-bound with nothing on
+            // screen, so the wake lock has to be held across them; the service takes
+            // it when it starts (`startForegroundWithNotification`), and the engine
+            // state collector releases it once the engine is up and idle
+            // (`reportWork`).
+            engineTransition = true
+            val boot = try {
+                host.boot(workspaceProvider = ::defaultWorkspace, launch = launchOptions()) { step ->
+                    _state.value = _state.value.copy(boot = Boot.Working(step))
+                }
+            } finally {
+                engineTransition = false
             }
             when (boot) {
                 is PiEngineHost.Boot.Ready -> attach(boot.session)
-                is PiEngineHost.Boot.Failed -> _state.value = _state.value.copy(
-                    boot = Boot.Failed(boot.message, boot.detail),
-                )
+                is PiEngineHost.Boot.Failed -> {
+                    _state.value = _state.value.copy(boot = Boot.Failed(boot.message, boot.detail))
+                    // There is no engine and none is coming, so the service has
+                    // nothing to protect: leaving it up would keep a notification
+                    // saying 「pi 正在运行」 over a process that failed to start.
+                    // The retry button on the same screen calls `boot()` again, and
+                    // that starts the service again if it is still wanted. Both
+                    // reports are needed here because the boot is over: the wake lock
+                    // was held for it (`engineTransition`), and the engine state
+                    // collector never ran (there is no engine to collect).
+                    syncEngineService(engineAttached = session != null, bootInProgress = false)
+                    reportWakeLockNeed()
+                }
                 else -> Unit
             }
         }
@@ -775,13 +882,35 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         reason: String,
         allowInterrupt: Boolean,
     ): EngineRestartCoordinator.Outcome {
-        val result = host.restart(
-            reason = reason,
-            workspaceProvider = ::defaultWorkspace,
-            allowInterrupt = allowInterrupt,
-            launch = launchOptions(),
-        )
-        if (result is PiEngineHost.Restart.Ok) attach(result.session)
+        // The old engine publishes `Stopped` while it is being retired, and
+        // `session` still points at it — the state collector cannot tell that apart
+        // from a crash. [engineTransition] is what tells it: without this the
+        // collector would stop the foreground service and reset the resume marker in
+        // the middle of a restart, i.e. drop the wake lock across the *new* engine's
+        // cold start and silently switch sessions when `app.sessions.resumeLast` is on.
+        engineTransition = true
+        val result = try {
+            host.restart(
+                reason = reason,
+                workspaceProvider = ::defaultWorkspace,
+                allowInterrupt = allowInterrupt,
+                launch = launchOptions(),
+            )
+        } finally {
+            engineTransition = false
+        }
+        if (result is PiEngineHost.Restart.Ok) {
+            attach(result.session)
+        } else {
+            // A refused restart leaves the old engine running (nothing changes); a
+            // failed one leaves none. `session` may lag behind by one collector
+            // dispatch, which is why the death branch below is the authority — this
+            // call is only here so the service does not outlive a failed restart, and
+            // the wake-lock report so the lock taken across the transition is
+            // released when the transition ends with no engine.
+            syncEngineService(engineAttached = session != null, bootInProgress = false)
+            reportWakeLockNeed()
+        }
         return result.asOutcome()
     }
 
@@ -830,11 +959,44 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                     // every action checks `api != null`, so this is what makes
                     // them no-ops instead of writes into a closed pipe — and drop
                     // a bash run nobody can observe any more.
+                    //
+                    // `session = null` is part of the same statement, and it is not
+                    // cosmetic: `send`/`sendFollowUp`/`runPromptCommand` read
+                    // `session` directly (that is what echoes a queued message into
+                    // the transcript), so leaving the dead object in place let the
+                    // composer write into a closed pipe. `PiEngineSession.send` no
+                    // longer throws, but a message that silently goes nowhere is not
+                    // an acceptable answer either — hence the failure state below,
+                    // which is what replaces the composer with 重试
+                    // (`ChatScreen.kt:176-183`).
                     api = null
+                    session = null
                     cancelAllDialogs()
                     clearExtensionChrome()
-                    _state.value = _state.value.copy(bash = null, busy = null)
+                    _state.value = _state.value.copy(
+                        bash = null,
+                        busy = null,
+                        boot = Boot.Failed(
+                            if (engineState == PiEngineSession.EngineState.Stopped) {
+                                "引擎已停止，可以重新启动后继续。"
+                            } else {
+                                "引擎异常退出，可以重新启动后继续。"
+                            },
+                            null,
+                        ),
+                    )
+                    if (!engineTransition) {
+                        // Not a restart: nothing is replacing this engine, so the
+                        // foreground service has nothing left to protect, and a
+                        // retry (the new failure screen's button) is a *new*
+                        // engine — which is a new chance to honour
+                        // `app.sessions.resumeLast`. During a restart neither is
+                        // true, which is what `engineTransition` is for.
+                        resumeAttempted = false
+                        syncEngineService(engineAttached = false, bootInProgress = false)
+                    }
                 }
+                reportWakeLockNeed()
             }
         }
         // The publication stream starts over with this engine (a fresh
@@ -1395,13 +1557,23 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     /**
      * Start the live countdown for a timed dialog.
      *
-     * The tick publishes once per *displayed second*, not once per poll: the
-     * dialog shows whole seconds (pi's TUI shows "Title (5s)"), so four state
-     * writes a second would recompose the transcript for no visible difference.
+     * The tick publishes once per *displayed second*, and it now also **sleeps** to
+     * the next displayed second ([PiEngineLifecyclePolicy.nextCountdownDelayMs]):
+     * the dialog shows whole seconds (pi's TUI shows "Title (5s)"), so a fixed
+     * 200 ms poll wrote the same number five times and woke the process five times
+     * for each visible change. pi's own countdown for the same thing is
+     * `setInterval(…, 1000)` (`modes/interactive/components/countdown-timer.ts:21`,
+     * disposed at the zero crossing `:26-29`), i.e. one wake-up per displayed
+     * second — which is what this now costs, with the deadline still hit exactly
+     * (the loop breaks on `remaining <= 0`, and the sleeps sum to the deadline).
      *
-     * pi runs its own timer for the same deadline (`rpc-mode.ts`
-     * `createDialogPromise`), so this countdown is presentation; the answer at
-     * zero is belt-and-braces, not the mechanism pi relies on.
+     * pi runs its own timer for the same deadline (`rpc-mode.ts:115-120`
+     * `createDialogPromise` → `setTimeout` → resolve with the default), so this
+     * countdown is presentation; the answer at zero is belt-and-braces, not the
+     * mechanism pi relies on. That is also why a coarse tick is acceptable here: a
+     * late answer is dropped by pi (the request is no longer pending), and only
+     * `editor` has no agent-side timer at all (`rpc-mode.ts:254-271`) — but an
+     * `editor` request carries no `timeout`, so it never reaches this loop.
      */
     private fun armDialogTimer(dialog: ExtensionDialog?) {
         dialogTimeoutJob?.cancel()
@@ -1421,7 +1593,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                     shownSeconds = seconds
                     if (dialogs.tick(id, remaining)) publishDialogState()
                 }
-                delay(TIMER_POLL_MS)
+                delay(PiEngineLifecyclePolicy.nextCountdownDelayMs(remaining))
             }
             onDialogTimedOut(id)
         }
@@ -1709,7 +1881,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     private fun scanTuiOnlyExtensions(): List<TuiOnlyExtension> {
         val roots = listOf(
             File(host.paths().agentDir, "extensions") to "全局",
-            File(defaultWorkspace(), ".pi/extensions") to "项目",
+            PiProjectConfig.extensionsDir(defaultWorkspace()) to "项目",
         )
         val found = mutableListOf<TuiOnlyExtension>()
         for ((root, scope) in roots) {
@@ -2243,10 +2415,17 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * file is reachable. pi's default destination is its cwd —
      * `pi-session-<basename>.html` (`export-html/index.ts:284-288`) — which *is*
      * the workspace, but the response returns the guest spelling of the path.
-     * Passing an explicit path keeps both spellings known to this class, so the
-     * notice can name a path the app can actually resolve. This is also the only
-     * non-TUI path by which an extension's `renderCall`/`renderResult` output
-     * reaches a client (audit §5.11).
+     * Passing an explicit path keeps both spellings known to this class, which is
+     * what lets the confirmation be checked against the file the app looks for.
+     *
+     * The confirmation names the **file**, not its path: the destination is this
+     * app's private storage, so the only path the app could print is one the user
+     * cannot open in any file manager — and it was the last place in the app's own
+     * copy that showed an internal directory. The fallback (`$written`) is pi's own
+     * response, used only when the file the app looks for is not there, because
+     * saying nothing about where it went would be worse than a guest path.
+     * This is also the only non-TUI path by which an extension's
+     * `renderCall`/`renderResult` output reaches a client (audit §5.11).
      */
     fun exportSession(fileName: String? = null) {
         val name = fileName?.trim()?.takeIf { it.isNotEmpty() }
@@ -2261,7 +2440,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             val hostPath = File(defaultWorkspace(), htmlName)
             pushNotice(
                 message = if (hostPath.isFile) {
-                    "会话已导出：${hostPath.absolutePath}"
+                    "会话已导出：$htmlName"
                 } else {
                     "会话已导出：$written"
                 },
@@ -2318,7 +2497,9 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             val target = File(defaultWorkspace(), fileName)
             target.parentFile?.mkdirs()
             withContext(Dispatchers.IO) { target.writeText(body.toString()) }
-            pushNotice("会话已导出：${target.absolutePath}", Notice.Tone.Info)
+            // The file, not its path — see [exportSession] for why the app does not
+            // print paths into its own private storage.
+            pushNotice("会话已导出：$fileName", Notice.Tone.Info)
         }
     }
 
@@ -2480,14 +2661,27 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         // Answer anything outstanding before the engine is torn down, so a
         // still-live pi is not left blocked on a dialog whose UI just vanished.
         cancelAllDialogs()
-        val engine = session
         session = null
         api = null
+        // Give the service its "no engine" answer *after* the settle, and give up
+        // this ViewModel's claim on the engine's stop hook so a later one can own it.
+        PiEngineController.unregisterStopHandler(stopEngineHook)
         // A turn that is still streaming has not reached pi's session file yet
         // (persistence happens on `message_end`), and a hard close drops it — so the
         // teardown settles the turn first. That cannot run on `viewModelScope`
         // because `onCleared` is what cancels it; see [teardownScope].
-        if (engine != null) teardownScope.launch { engine.closeAfterSettling() }
+        //
+        // Through `host.shutdown()`, not `engine.closeAfterSettling()`: the host holds
+        // the **process-wide** lifecycle lock, and closing the session directly
+        // bypassed it. That bypass was the one window in which two engines could
+        // genuinely be alive on one cwd — this teardown settling for up to a minute
+        // while the next ViewModel (a relaunch) boots a new engine on the same session
+        // file (`PiEngineHost.PROCESS_LOCK`). The service is stopped after the settle,
+        // so a backgrounded app does not keep a notification claiming 「pi 正在运行」.
+        teardownScope.launch {
+            host.shutdown()
+            PiEngineService.stopIfRunning()
+        }
         super.onCleared()
     }
 
@@ -2517,9 +2711,6 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private companion object {
-        /** Poll interval for the countdown; publishes only on second boundaries. */
-        const val TIMER_POLL_MS = 200L
-
         /**
          * Where [onCleared]'s teardown runs.
          *

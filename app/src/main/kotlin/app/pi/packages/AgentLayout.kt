@@ -4,6 +4,7 @@ import android.content.Context
 import app.pi.engine.PiEngineHost
 import app.pi.runtime.GuestWorkspacePath
 import app.pi.runtime.PiPaths
+import app.pi.runtime.PiProjectConfig
 import java.io.File
 
 /**
@@ -124,8 +125,15 @@ class AgentLayout(
     /** Node inside the guest (`RuntimeProvisioner.extractNode`, `:115`). */
     val guestNode: String get() = "/opt/node/bin/node"
 
-    /** `<cwd>/.pi/settings.json`, resolved to a host path for a guest workspace. */
-    fun hostProjectConfigDir(): File = File(hostWorkspace, ".pi")
+    /**
+     * The host-side `<cwd>/.pi` for this workspace — pi's project config directory,
+     * which holds `settings.json` and the four resource directories.
+     *
+     * Its KDoc said `<cwd>/.pi/settings.json` for a while, which named a file this
+     * function never returned; the path is `PiProjectConfig`'s, so the citation and
+     * the value now come from the same place.
+     */
+    fun hostProjectConfigDir(): File = PiProjectConfig.root(hostWorkspace)
 
     /** True when the runtime is unpacked far enough to run anything. */
     fun runtimeReady(): Boolean = paths.rootfs.isDirectory && paths.prootBinary().isFile && paths.prootLoader().isFile

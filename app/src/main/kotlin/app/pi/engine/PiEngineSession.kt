@@ -547,13 +547,26 @@ class PiEngineSession(
 
     // --------------------------------------------------------------- sending
 
-    /** Fire-and-forget command; use [request] when the reply matters. */
-    fun send(command: JsonObject) {
+    /**
+     * Fire-and-forget command; use [request] when the reply matters.
+     *
+     * @return false when the command could not be written because the engine is gone
+     *   (it exited, or [close] already closed the pipe). That is a normal race rather
+     *   than a caller error: every caller here runs on the UI thread while the reader
+     *   thread may be discovering EOF at the same moment, and this used to be an
+     *   unguarded `BufferedWriter.write` — an `IOException` on the main thread, i.e.
+     *   a crash, for a tap that arrived one frame after pi exited. Callers that must
+     *   know whether an engine is reachable read [state] (driven by the process
+     *   itself) or, in the app, `UiState.engine`; a successful write is not evidence
+     *   of a live engine, and a failed one is not a reason to crash.
+     */
+    fun send(command: JsonObject): Boolean = runCatching {
         synchronized(writer) {
             writer.write(PiCommands.encode(command))
             writer.flush()
         }
-    }
+        true
+    }.getOrDefault(false)
 
     /** Send and await pi's `response`. */
     suspend fun request(command: JsonObject, timeoutMs: Long = 120_000): PiEvent.Response {
@@ -753,6 +766,20 @@ class PiEngineSession(
      * leaking the process.
      */
     suspend fun closeAfterSettling(timeoutMs: Long = SETTLE_TIMEOUT_MS) {
+        // An engine that has already exited has nothing to settle, and asking it
+        // anything costs the whole timeout: `request` below would write into a closed
+        // pipe (dropped, see [send]) and then wait out `get_state`'s entire budget
+        // before falling through to [close] anyway. That path is reachable from the
+        // user — the notification's 停止 and the ViewModel's teardown both run it
+        // after pi has exited on its own — and it turned an immediately-correct
+        // teardown into a 30-second no-op wait on the IO dispatcher.
+        //
+        // The evidence is the process's own ([waitJob] writes `Stopped`/`Failed` from
+        // `waitFor`), not a guess from a flag nobody sets.
+        if (alreadyExited()) {
+            close()
+            return
+        }
         runCatching {
             val state = request(PiCommands.getState(nextId()), timeoutMs)
             val snapshot = PiResponses.sessionState(state)
@@ -762,6 +789,12 @@ class PiEngineSession(
         }
         close()
     }
+
+    /** True once the process is gone: either the OS says so, or the state machine does. */
+    private fun alreadyExited(): Boolean =
+        !process.isAlive ||
+            _state.value == EngineState.Stopped ||
+            _state.value == EngineState.Failed
 
     fun close() {
         runCatching { writer.close() }

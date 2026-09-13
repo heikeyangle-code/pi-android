@@ -1,5 +1,6 @@
 package app.pi.packages
 
+import app.pi.runtime.PiProjectConfig
 import java.io.File
 
 /**
@@ -126,7 +127,7 @@ class PiCredentialService(
     fun inventory(engineModels: List<PiModelInventory.EngineModel>?): PiModelInventory.Inventory {
         val selection = PiModelInventory.selection(
             globalSettings = readTextOrNull(File(mirrorAgentDir, "settings.json")),
-            projectSettings = readTextOrNull(File(workspace, ".pi/settings.json")),
+            projectSettings = readTextOrNull(PiProjectConfig.settingsFile(workspace)),
         )
         return PiModelInventory.assemble(
             modelsJson = readEffective(
@@ -150,7 +151,7 @@ class PiCredentialService(
      * **目录，不是文件**：App 写这些文件是原子的（写临时文件再 `rename`），而 inotify 的
      * 监视挂在 inode 上——监视文件会在自己写完之后失聪。理由写在 `PiFileWatch.kt`。
      */
-    fun watchedDirectories(): List<File> = listOf(mirrorAgentDir, File(workspace, ".pi"))
+    fun watchedDirectories(): List<File> = listOf(mirrorAgentDir, PiProjectConfig.root(workspace))
 
     private fun readEffective(primary: File, mirror: File): String? =
         PiConfigFiles.effectiveFile(primary, mirror)?.let { readTextOrNull(it) }

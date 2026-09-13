@@ -2,6 +2,7 @@ package app.pi.ui.theme
 
 import androidx.compose.ui.graphics.Color
 import app.pi.rpc.PiJson
+import app.pi.runtime.PiProjectConfig
 import java.io.File
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -50,7 +51,7 @@ enum class PiThemeScope(val label: String) {
     AgentDir("~/.pi/agent/themes"),
 
     /** `<cwd>/.pi/themes` — pi's project themes directory. */
-    Project(".pi/themes"),
+    Project("${PiProjectConfig.DIRECTORY}/themes"),
 
     /** A path or directory named by the `themes` setting. */
     Configured("themes 设置"),
@@ -150,7 +151,7 @@ object PiThemeLoader {
             found.putIfAbsent(name, PiThemeEntry(name, null, PiThemeScope.Builtin))
         }
         scanDirectory(File(agentDir, "themes"), PiThemeScope.AgentDir, found)
-        scanDirectory(File(workspace, ".pi/themes"), PiThemeScope.Project, found)
+        scanDirectory(PiProjectConfig.themesDir(workspace), PiThemeScope.Project, found)
         for (entry in configured) {
             val file = hostPathOf(entry, agentDir, workspace) ?: continue
             if (file.isDirectory) {
