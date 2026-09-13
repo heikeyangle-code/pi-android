@@ -1,0 +1,2282 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>pi 安卓客户端 · UI 重构方向 C · 作者性取向</title>
+
+<!--
+════════════════════════════════════════════════════════════════════
+  方向 C · 🧠 最佳设计师（顶级定制）· 作者性取向
+════════════════════════════════════════════════════════════════════
+
+【我选了谁】Panic Inc.（Cabel Sasser）。选的是方法论，不是视觉皮。
+
+理由（针对「这个开发者、这个产品」）：
+1. Panic 三十年只干一件事：把开发者的工具当成一件要传下去的器物（Transmit / Nova / Prompt / Coda）。
+   pi 的用户就是这群人——他不需要被取悦，他需要一件可信的仪器。这台手机是仪器的第二块表盘。
+2. Panic 的看家本事是「让机器输出被尊重地排版」：等宽字当主角、数据排成读数、用 1px 线而不是卡片阴影
+   切分信息。pi 的全部内容都是机器输出（命令、diff、行号、耗时、token），天生适配这套语言。
+3. Panic 会给工具留一处幽默或仪式感，把它变成「有人的东西」（Transmit 的卡车、Nova 的启动音）。
+   方向 C 只需要一处：120% 的签名细节，别处克制到 80%。
+4. 排除其他候选：Teenage Engineering 的仪器感会带来硬件化装饰面，而这个产品的内容里没有可装饰的实体；
+   原研哉的留白与本产品「高密度」的硬要求正面冲突（每屏要 ≥3 处真实差异化信息）；
+   Rauno Freiberg 的交互精度是「手感」向，而本方向要的是「作者性」向，且手感无法在静态稿里被检验。
+
+【启用的设计哲学（Panic 方法论的 4 条，逐条落到本稿）】
+P1 工具即器物 → 一屏只讲一件事；控件有物理逻辑。转录不是「聊天气泡流」，是一条可以读的纸带。
+P2 字体是唯一的材料 → 不用图标、不用阴影、不用渐变表达层级。层级只由字号、字重、1px 线、位置产生。
+   两套字族：人类语言用无衬线，机器语言用等宽。禁止 emoji。
+P3 颜色是信号不是装饰 → 整个产品只有一处发光：正在运行的那一步。状态永远三重编码：字 + 符号 + 颜色
+   （运行中 … / 成功 ✓ / 失败 ✗）。
+P4 一处仪式感 → 见下「签名细节」。
+
+【母题：执行脊（The Spine）】
+pi 的转录里天然存在一条别人没有的数据：每一步的耗时、diff 的增删行数、思考等级的颜色。
+本稿把转录左缘做成一条连续的量尺（纸带），每个块挂在脊上：
+· 工具卡节点 = 状态字形（… ✓ ✗）；刻度长度 = log(该步真实耗时)，并按量级分段（<1s 一段 / <10s 两段 / ≥10s 三段）；
+· diff 节点 = 双条刻度，长度 = 真实的 +N / −N 行数；
+· 思考块节点 = 4px 思考等级色条（pi 的 thinking 色温刻度就是这个产品自带的签名资产）；
+· 散文用虚线（不是工作），工具与 diff 用实线（是工作）；上下文压缩处纸带断一次。
+form 来自内容的哪里：来自工具卡页脚真实存在的「成功 · 132ms · 13 行」、diff 卡头的「+6 −5」、
+思考块的等级色——不是套模板。收益：滚动时不看字就知道 agent 把时间花在哪、哪一步断了、现在卡在哪。
+
+【signature 细节（120%）】执行脊的刻度语言本身。它只由真实数字驱动，且是全稿唯一的图形发明。
+【其余克制到 80%】无卡片阴影、无图标、无渐变、无装饰动效（只有 hover 变色与 120ms 状态过渡）；
+工具卡只有底色与 1px 线；列表靠行距、分组头与 1px 分隔线分层。
+
+【对 spec §11 五问的回答】
+1 叙事角色：对话是 hero（主战场）；会话列表是覆盖层上的索引；工作区是现场；设置是收尾。
+2 观众距离：10cm 单手 → 正文 14px、机器文本 13px、元信息与页脚 12px；每屏 ≥3 处真实差异化信息
+   （耗时/行数、上下文占比与 token、累计费用、思考等级、队列、待决策审批）。
+3 视觉温度：冷静 · 精密，带仪器感。不兴奋（不做动效与庆祝），不温柔（不软化失败与危险）。
+4 容量估算：三个 5 秒 thumbnail——(a) 顶部：用户消息 + 思考 + markdown 正文；(b) 中段：read / grep /
+   edit / diff 四张工具卡连成一条纸带；(c) 底部：运行中的命令 + 失败卡 + 待决策 + 输入区。
+   结论：一屏放 6 至 8 个块可行，前提是把卡片内的二级信息折叠成页脚一行（页脚 = 真实的「成功 · 132ms · 13 行」）。
+5 视觉母题：执行脊（见上）。
+
+【显式判断一：内容以事实底稿为唯一权威】
+不设 todo / 待办 / plan / 子代理块，也不画复选方框——这个 App 没有这些生产者。
+「清单」语义用助手正文里真实的 markdown 列表承担。进行中态只用真实措辞（如「运行中 · 已运行 12.3 秒 · 18 行」），
+不写「没有响应」（源码里没有这个词）。edit 卡与 diff 卡是两张独立的卡，不合并。
+
+【显式判断二：路径只出现在机器内容区】
+App 自己的文案零路径、零类名、零内部术语（这是模板语的硬规范，已逐条执行）。
+而工具卡的标题、命令、diff、输出本身就是 pi 的输出，路径是它的一部分，抹掉等于造假。
+界线：机器内容区如实呈现 pi 的输出，卡片标题里的长路径只保留末几段以维持可读性（省略号是排版决定）。
+
+【导航（按本次裁决）】底部三个目的地：对话 / 工作区 / 设置。
+会话列表不再是 tab，而是从对话页左上角会话名进入的覆盖层（列表 ↔ 会话树 同层切换，新建会话也在这里）。
+工作区 = 这个会话的项目现场（cwd、该目录的 pi 资源、改动、会话痕迹），不再是整屏终端；
+终端降格为设置首页里的一个入口行（与 设备 / 扩展 / 关于 同级）。两栏只在 ≥600dp 宽屏出现，竖屏 412 不做两栏。
+
+【真实内容】所有文案、块类型、状态词、页脚格式、按钮词、行标题与数值形状都取自事实底稿；
+对话正文与 diff 正文是底稿里的样例内容，未新编。
+-->
+
+<style>
+  /* ═══ pi 主题令牌（唯一调色板；不换色、不发明新色相） ═══ */
+  :root{
+    --accent:#8ABEB7; --border:#5F87FF; --border-accent:#00D7FF; --border-muted:#505050;
+    --success:#B5BD68; --error:#CC6666; --warning:#FFFF00;
+    --text:#D4D4D4; --muted:#808080; --dim:#666666;
+    --selected-bg:#3A3A4A; --user-bg:#343541; --user-text:#D4D4D4;
+    --custom-bg:#2D2838; --custom-label:#9575CD; --custom-text:#D4D4D4;
+    --tool-pending:#282832; --tool-success:#283228; --tool-error:#3C2828;
+    --tool-title:#D4D4D4; --tool-output:#808080;
+    --md-heading:#F0C674; --md-link:#81A2BE; --md-link-url:#666666;
+    --md-code:#8ABEB7; --md-codeblock:#B5BD68; --md-codeblock-border:#808080;
+    --md-quote:#808080; --md-hr:#808080; --md-bullet:#8ABEB7;
+    --diff-add:#B5BD68; --diff-del:#CC6666; --diff-ctx:#808080;
+    --syn-comment:#6A9955; --syn-keyword:#569CD6; --syn-function:#DCDCAA; --syn-variable:#9CDCFE;
+    --syn-string:#CE9178; --syn-number:#B5CEA8; --syn-type:#4EC9B0; --syn-op:#D4D4D4;
+    --think-off:#505050; --think-minimal:#6E6E6E; --think-low:#5F87AF; --think-medium:#81A2BE;
+    --think-high:#B294BB; --think-xhigh:#D183E8; --think-max:#FF5FFF;
+    --bash:#B5BD68;
+    --page:#18181E; --card:#1E1E24; --info:#3C3728;
+    --surf-low:#1E1E24; --surf:#232329; --surf-high:#29292F; --surf-highest:#303036; --surf-dim:#1C1C22;
+    /* pi 的对比度提升档：由 pi 色计算得出（同 piContrast 的机制），不是新颜色 */
+    --body-on-tool:#9A9A9A;
+    /* App 侧 alpha：颜色是 pi 的，透明度是 App 的 */
+    --hairline:rgba(80,80,80,.55);
+    --hairline-soft:rgba(80,80,80,.32);
+    --code-line:rgba(128,128,128,.55);
+    --diff-add-bg:rgba(181,189,104,.08);
+    --diff-del-bg:rgba(204,102,102,.08);
+    --scrim:rgba(0,0,0,.58);
+    --mono:"Geist Mono","JetBrains Mono","Noto Sans Mono CJK SC","DejaVu Sans Mono",ui-monospace,monospace;
+    --sans:"Geist","Noto Sans SC","Noto Sans CJK SC","PingFang SC","Microsoft YaHei",sans-serif;
+  }
+
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0;background:#0e0e12}
+  body{font-family:var(--sans);color:var(--text);font-synthesis:none;-webkit-font-smoothing:antialiased}
+  button{font:inherit;color:inherit;background:none;border:0;padding:0;margin:0;cursor:pointer;text-align:left}
+  button:disabled{cursor:default}
+  .num{font-variant-numeric:tabular-nums}
+
+  /* ═══ 版面（设备框之外的部分） ═══ */
+  .board{padding:48px}
+  .hd{margin:0 0 34px;max-width:1180px}
+  .hd-t{font-size:15px;line-height:22px;font-weight:700;color:var(--text)}
+  .hd-s{font-size:13px;line-height:20px;color:var(--muted);margin-top:5px;text-wrap:pretty}
+  .row{display:flex;gap:32px;flex-wrap:wrap;align-items:flex-start}
+  .cell{display:flex;flex-direction:column;gap:9px}
+  .cap{font-size:13px;line-height:18px;color:var(--text)}
+  .cap em{font-style:normal;color:var(--muted)}
+  .cap em:before{content:"｜";color:var(--dim)}
+  .ctrls{display:flex;align-items:center;gap:4px;flex-wrap:wrap;margin-bottom:3px}
+  .ctrl{font-size:12px;line-height:16px;color:var(--muted);padding:4px 8px;border:1px solid transparent;border-radius:4px}
+  .ctrl:hover{color:var(--text);border-color:var(--hairline)}
+  .ctrl.is-on{color:var(--text);border-color:var(--border-muted)}
+  .ctrl-k{font-size:12px;color:var(--dim);margin-right:2px}
+
+  /* ═══ 设备内的页面骨架 ═══ */
+  .app{height:100%;display:flex;flex-direction:column;background:var(--page);font-family:var(--sans);font-size:14px;line-height:22px;color:var(--text);font-synthesis:none;line-break:strict;overflow-wrap:anywhere;text-wrap:pretty}
+  .stage{flex:1;min-height:0;display:flex;flex-direction:column;position:relative}
+  .screen{flex:1;min-height:0;display:flex;flex-direction:column;position:relative;background:var(--page)}
+  .scroll{flex:1;min-height:0;overflow-y:auto;scrollbar-width:none}
+  .scroll::-webkit-scrollbar{width:0;height:0}
+
+  /* 顶栏：小标签在上、名字在下（Panic 的读数式登记） */
+  .appbar{display:flex;align-items:flex-start;gap:12px;padding:11px 16px 10px;border-bottom:1px solid var(--hairline)}
+  .ab-l{min-width:0;flex:1}
+  .ab-k{font-size:12px;line-height:15px;color:var(--muted)}
+  .ab-t{font-size:17px;line-height:22px;font-weight:700;letter-spacing:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px}
+  .ab-btn{display:block;width:100%;text-align:left}
+  .ab-r{flex:none;display:flex;flex-direction:column;align-items:flex-end;gap:3px}
+  .ab-s{font-family:var(--mono);font-size:12px;line-height:15px;color:var(--muted)}
+  .ab-acts{display:flex;gap:2px}
+  .act{font-size:12px;line-height:16px;color:var(--muted);padding:1px 5px;border-radius:4px}
+  .act:hover{color:var(--text);background:var(--surf-high)}
+
+  /* 状态条：一行读数 + 一条 1px 量尺 */
+  .stats{display:flex;align-items:center;gap:12px;padding:7px 16px 0;font-family:var(--mono);font-size:12px;line-height:15px;color:var(--muted)}
+  .stats b{font-weight:400;color:var(--text)}
+  .meter{height:2px;background:var(--hairline-soft);margin:7px 16px 0}
+  .meter i{display:block;height:2px;background:var(--accent)}
+  .stats-src{font-size:12px;line-height:15px;color:var(--dim);padding:5px 16px 0;font-family:var(--mono)}
+
+  .searchbar{display:flex;align-items:center;gap:8px;padding:9px 16px;border-bottom:1px solid var(--hairline)}
+  .searchbar input{flex:1;min-width:0;background:none;border:0;outline:none;color:var(--text);font-family:var(--mono);font-size:13px;line-height:18px;padding:3px 0}
+  .searchbar input::placeholder{color:var(--dim)}
+
+  /* ═══ 底部导航（三项，文字即导航） ═══ */
+  .tabbar{flex:none;height:58px;display:grid;grid-template-columns:repeat(3,1fr);border-top:1px solid var(--hairline);background:var(--page)}
+  .tab{position:relative;display:flex;align-items:center;justify-content:center;font-size:13px;line-height:18px;color:var(--muted)}
+  .tab:hover{color:var(--text)}
+  .tab.is-on{color:var(--text)}
+  .tab.is-on:after{content:"";position:absolute;left:50%;transform:translateX(-50%);bottom:11px;width:22px;height:2px;background:var(--accent)}
+
+  /* ═══ 执行脊：转录 = 一条纸带 ═══ */
+  .tape{padding:9px 0 12px}
+  .blk{display:grid;grid-template-columns:44px minmax(0,1fr);padding-right:14px;margin:0 0 10px}
+  .rail{position:relative;min-height:20px}
+  .line{position:absolute;left:12px;top:-10px;bottom:-10px;border-left:1px solid var(--hairline)}
+  .line.dotted{border-left-style:dashed}
+  .node{position:absolute;left:5px;top:12px;width:14px;height:14px;border-radius:50%;border:1px solid var(--dim);background:var(--page);display:flex;align-items:center;justify-content:center;font-family:var(--mono);font-size:10px;line-height:1}
+  .node-sq{position:absolute;left:8px;top:15px;width:8px;height:8px;background:var(--accent)}
+  .node-stripe{position:absolute;left:10px;top:13px;width:4px;height:12px}
+  .node-dot{position:absolute;left:10px;top:16px;width:5px;height:5px;background:var(--muted)}
+  .node-txt{position:absolute;left:4px;top:11px;width:16px;height:14px;text-align:center;font-family:var(--mono);font-size:13px;line-height:14px;background:var(--page)}
+  .tick{position:absolute;left:20px;top:18px;display:flex;gap:2px;height:2px}
+  .tick i{height:2px;background:currentColor;display:block}
+  .ticklines{position:absolute;left:20px;top:15px;display:flex;flex-direction:column;gap:2px}
+  .ticklines i{height:2px;display:block}
+  .blk-b{padding:9px 0;min-width:0}
+  .blk-b--flush{padding:0}
+
+  /* 日期分隔：纸带在这里断一次 */
+  .sep{display:flex;align-items:center;gap:8px;font-size:12px;line-height:16px;color:var(--muted)}
+  .sep i{flex:1;height:1px;background:var(--hairline);display:block}
+  .loadmore{font-size:12px;line-height:16px;color:var(--muted);font-family:var(--mono)}
+  .loadmore:hover{color:var(--text)}
+
+  /* 用户消息 */
+  .bubble{background:var(--user-bg);border-radius:12px;padding:11px 13px}
+  .bubble p{margin:0;font-size:14px;line-height:22px;color:var(--user-text)}
+  .bubble .meta{display:flex;align-items:center;justify-content:flex-end;gap:10px;margin-top:7px}
+  .bubble .time{font-size:12px;line-height:16px;color:var(--user-text);opacity:.62;font-variant-numeric:tabular-nums}
+  .thumb{width:54px;height:72px;border:1px solid var(--hairline);border-radius:6px;display:flex;align-items:flex-end;padding:5px;background:var(--surf-low);margin-top:9px}
+  .thumb span{font-family:var(--mono);font-size:12px;line-height:14px;color:var(--muted)}
+
+  /* markdown */
+  .md-h{font-size:20px;line-height:28px;font-weight:700;color:var(--md-heading);margin:0 0 8px}
+  .md-p{margin:0 0 9px;font-size:14px;line-height:22px;color:var(--text)}
+  .md-ul{margin:0 0 9px;padding:0;list-style:none}
+  .md-ul li{position:relative;padding-left:15px;font-size:14px;line-height:22px;margin-bottom:3px}
+  .md-ul li:before{content:"•";position:absolute;left:1px;color:var(--md-bullet)}
+  .md-ol{margin:0 0 9px;padding:0;list-style:none}
+  .md-ol li{position:relative;padding-left:19px;font-size:14px;line-height:22px;margin-bottom:3px}
+  .md-ol li b{position:absolute;left:0;font-weight:400;color:var(--md-bullet);font-variant-numeric:tabular-nums}
+  .icode{font-family:var(--mono);font-size:13px;color:var(--md-code);background:var(--info);border-radius:4px;padding:1px 4px}
+  .code{background:var(--card);border:1px solid var(--code-line);border-radius:10px;padding:9px 11px;margin:0 0 9px;overflow:hidden}
+  .code code{display:block;font-family:var(--mono);font-size:13px;line-height:19px;color:var(--md-codeblock)}
+  .cl{display:block;white-space:pre-wrap;overflow-wrap:anywhere}
+  .k{color:var(--syn-keyword)} .f{color:var(--syn-function)} .v{color:var(--syn-variable)}
+  .s{color:var(--syn-string)} .n{color:var(--syn-number)} .t{color:var(--syn-type)}
+  .c{color:var(--syn-comment)} .o{color:var(--syn-op)}
+  .caret{display:inline-block;width:8px;height:15px;border-radius:2px;background:var(--accent);opacity:.65;vertical-align:-2px}
+
+  /* 工具卡 */
+  .card{border-radius:10px;padding:10px 12px;background:var(--tool-pending)}
+  .card.ok{background:var(--tool-success)}
+  .card.err{background:var(--tool-error)}
+  .tb-h{display:flex;align-items:baseline;gap:7px;width:100%}
+  .tname{flex:none;font-family:var(--mono);font-size:12px;line-height:18px;color:var(--body-on-tool)}
+  .tsubj{min-width:0;font-family:var(--mono);font-size:13px;line-height:18px;color:var(--tool-title)}
+  .tstat{flex:none;margin-left:auto;font-family:var(--mono);font-size:12px;line-height:18px;font-variant-numeric:tabular-nums}
+  .tstat.ok{color:var(--success)} .tstat.err{color:var(--error)} .tstat.pend{color:var(--warning)}
+  .tb-b{margin-top:8px}
+  .tb-f{margin-top:8px;font-family:var(--mono);font-size:12px;line-height:16px;color:var(--body-on-tool);font-variant-numeric:tabular-nums}
+  .mono-b{font-family:var(--mono);font-size:13px;line-height:19px;color:var(--tool-title)}
+  .mono-b .ln{color:var(--body-on-tool);user-select:none}
+  .prev-more{font-family:var(--mono);font-size:12px;line-height:16px;color:var(--body-on-tool);margin-top:6px}
+  .gfile{margin-top:7px}
+  .gfile-h{display:flex;align-items:baseline;gap:8px;font-family:var(--mono);font-size:12px;line-height:16px;color:var(--tool-title)}
+  .gfile-h em{font-style:normal;margin-left:auto;color:var(--body-on-tool)}
+  .ghit{display:grid;grid-template-columns:34px minmax(0,1fr);font-family:var(--mono);font-size:13px;line-height:19px}
+  .ghit span:first-child{color:var(--body-on-tool);text-align:right;padding-right:8px}
+  .ghit span:last-child{white-space:pre-wrap;overflow-wrap:anywhere}
+  .drow{display:grid;grid-template-columns:16px 30px minmax(0,1fr)}
+  .dsym{font-family:var(--mono);font-size:13px;line-height:19px;color:var(--body-on-tool)}
+  .dln{font-family:var(--mono);font-size:12px;line-height:19px;color:var(--body-on-tool);text-align:right;padding-right:8px;font-variant-numeric:tabular-nums}
+  .dtx{font-family:var(--mono);font-size:13px;line-height:19px;color:var(--body-on-tool);white-space:pre-wrap;overflow-wrap:anywhere}
+  .drow.add{background:var(--diff-add-bg)} .drow.add .dsym{color:var(--diff-add)} .drow.add .dtx{color:var(--tool-title)}
+  .drow.del{background:var(--diff-del-bg)} .drow.del .dsym{color:var(--diff-del)} .drow.del .dtx{color:var(--tool-title)}
+  .dfold{font-family:var(--mono);font-size:12px;line-height:16px;color:var(--body-on-tool);background:var(--surf-dim);border-radius:4px;padding:2px 7px;display:inline-block;margin:5px 0}
+  .dfile{font-family:var(--mono);font-size:12px;line-height:16px;color:var(--body-on-tool);white-space:pre-wrap;overflow-wrap:anywhere}
+  .dbars{display:flex;gap:6px;align-items:center;font-family:var(--mono);font-size:12px;line-height:16px}
+  .dbars .add{color:var(--diff-add)} .dbars .del{color:var(--diff-del)}
+  .dbars .sum{color:var(--body-on-tool);margin-left:2px}
+  .cursor-line{display:inline-block;width:7px;height:14px;background:var(--accent);border-radius:1px;vertical-align:-2px}
+
+  /* 思考块 */
+  .think{display:flex;align-items:center;gap:8px;width:100%}
+  .think-t{font-size:13px;line-height:20px;color:var(--text)}
+  .think-lv{font-size:12px;line-height:16px;font-family:var(--mono)}
+  .think-b{margin-top:7px;font-size:13px;line-height:21px;font-style:italic;color:var(--muted);border-left:1px solid var(--hairline);padding-left:10px}
+  .fold{margin-left:auto;flex:none;font-size:12px;line-height:16px;color:var(--body-on-tool)}
+
+  /* 自定义卡（扩展 / 分支摘要 / 技能） */
+  .ccard{background:var(--custom-bg);border:1px solid rgba(149,117,205,.35);border-radius:10px;padding:10px 12px}
+  .ccard-h{display:flex;align-items:baseline;gap:8px;width:100%}
+  .ccard-k{font-family:var(--mono);font-size:12px;line-height:16px;color:var(--custom-label)}
+  .ccard-t{font-size:13px;line-height:18px;color:var(--custom-text)}
+  .ccard-b{margin-top:7px;font-size:13px;line-height:20px;color:var(--custom-text)}
+  .ccard-b ul{margin:0;padding:0;list-style:none}
+  .ccard-b li{position:relative;padding-left:14px;margin-bottom:2px}
+  .ccard-b li:before{content:"·";position:absolute;left:2px;color:var(--custom-label)}
+  .hook{margin-top:7px;font-size:13px;line-height:20px;color:var(--custom-text)}
+
+  /* 通知 / 压缩 / 模型切换 */
+  .notice{display:flex;gap:8px;font-size:12px;line-height:17px;font-family:var(--mono);color:var(--muted)}
+  .notice b{font-weight:400;color:var(--text)}
+  .notice .time{margin-left:auto;color:var(--dim);font-variant-numeric:tabular-nums}
+  .comp{display:flex;align-items:center;gap:10px}
+  .comp i{flex:1;height:1px;background:var(--hairline);display:block}
+  .comp-chip{background:var(--custom-bg);color:var(--custom-label);border-radius:999px;padding:3px 10px;font-size:12px;line-height:16px;white-space:nowrap}
+  .comp-cap{font-size:12px;line-height:16px;color:var(--muted);margin-top:6px;text-align:center}
+  .mchange{display:flex;align-items:center;gap:8px;font-size:12px;line-height:17px;color:var(--muted)}
+  .mchange b{font-weight:400;font-family:var(--mono);font-size:13px;color:var(--border-accent)}
+  .err-more{margin-top:7px;font-size:12px;line-height:16px;color:var(--error);font-family:var(--mono)}
+  .err-detail{margin-top:7px;font-family:var(--mono);font-size:12px;line-height:18px;color:var(--body-on-tool);background:var(--surf-dim);border-radius:6px;padding:7px 9px;white-space:pre-wrap;overflow-wrap:anywhere}
+
+  /* 输入区与待决策 */
+  .dock{flex:none;border-top:1px solid var(--hairline);background:var(--page)}
+  .approve{display:block;width:100%;padding:10px 16px;border-bottom:1px solid var(--hairline);background:var(--surf-dim)}
+  .approve-h{display:flex;align-items:baseline;gap:8px}
+  .approve-t{font-size:13px;line-height:19px;color:var(--text)}
+  .approve-q{margin-left:auto;flex:none;font-family:var(--mono);font-size:12px;line-height:16px;color:var(--muted)}
+  .approve-a{display:flex;align-items:center;gap:8px;margin-top:8px}
+  .approve-note{font-size:12px;line-height:16px;color:var(--muted);min-width:0}
+  .btn{font-size:13px;line-height:18px;padding:6px 14px;border-radius:8px;border:1px solid var(--hairline);color:var(--text)}
+  .btn:hover{border-color:var(--muted)}
+  .btn--pri{background:var(--accent);border-color:var(--accent);color:var(--page);font-weight:700}
+  .btn--pri:hover{background:var(--accent);border-color:var(--accent)}
+  .btn--danger{border-color:var(--error);color:var(--error)}
+  .btn--ghost{color:var(--muted)}
+  .btn:disabled{color:var(--dim);border-color:var(--hairline-soft)}
+  .queue{display:flex;align-items:center;gap:6px;padding:7px 16px 0}
+  .qchip{font-size:12px;line-height:16px;color:var(--text);background:var(--surf-high);border-radius:999px;padding:2px 9px;font-variant-numeric:tabular-nums}
+  .queue .act{margin-left:auto}
+  .composer{padding:7px 16px 0}
+  .composer-box{border:1px solid var(--think-medium);border-radius:10px;padding:9px 11px;min-height:40px}
+  .composer-box.bash{border-color:var(--bash)}
+  .composer-box textarea{display:block;width:100%;min-height:20px;max-height:76px;background:none;border:0;outline:none;resize:none;color:var(--text);font-family:var(--sans);font-size:14px;line-height:20px;padding:0}
+  .composer-box textarea::placeholder{color:var(--dim)}
+  .keys{display:flex;align-items:center;gap:5px;padding:8px 16px 10px;flex-wrap:wrap}
+  .key{font-family:var(--mono);font-size:12px;line-height:16px;color:var(--muted);border:1px solid var(--hairline);border-radius:5px;padding:2px 7px}
+  .key:hover{color:var(--text);border-color:var(--muted)}
+  .key--lv{border-color:var(--think-medium);color:var(--think-medium)}
+  .send{margin-left:auto;font-size:13px;line-height:18px;color:var(--page);background:var(--accent);border-radius:8px;padding:5px 14px;font-weight:700}
+  .send--stop{background:var(--error)}
+
+  /* ═══ 会话列表 / 会话树 覆盖层 ═══ */
+  .overlay{position:absolute;inset:0;z-index:60;background:var(--page);display:flex;flex-direction:column}
+  .modal{position:absolute;inset:0;z-index:80;background:var(--scrim);display:flex;align-items:center;justify-content:center;padding:22px}
+  .modal--sheet{align-items:flex-end;padding:0}
+  .dialog{width:100%;max-width:330px;background:var(--surf-low);border:1px solid var(--hairline);border-radius:16px;padding:16px}
+  .dialog-t{font-size:15px;line-height:21px;font-weight:700}
+  .dialog-b{font-size:14px;line-height:21px;color:var(--text);margin-top:9px}
+  .dialog-n{font-size:12px;line-height:17px;color:var(--muted);margin-top:9px}
+  .dialog-a{display:flex;justify-content:flex-end;gap:8px;margin-top:15px}
+  .dialog-a .btn{white-space:nowrap}
+  .sheet{width:100%;max-height:74%;background:var(--surf-low);border-radius:18px 18px 0 0;border-top:1px solid var(--hairline);display:flex;flex-direction:column}
+  .sheet-t{font-size:15px;line-height:21px;font-weight:700;padding:15px 16px 0}
+  .sheet-s{font-size:12px;line-height:17px;color:var(--muted);padding:5px 16px 0}
+  .sheet-c{overflow-y:auto;padding:9px 0 4px;scrollbar-width:none}
+  .sheet-c::-webkit-scrollbar{width:0}
+  .opt{display:flex;align-items:center;gap:10px;width:100%;padding:10px 16px;font-size:14px;line-height:20px;color:var(--text)}
+  .opt:hover{background:var(--surf)}
+  .opt.is-on{background:var(--selected-bg)}
+  .opt em{margin-left:auto;font-style:normal;font-size:12px;color:var(--muted);font-family:var(--mono)}
+  .sheet-f{padding:10px 16px 14px;border-top:1px solid var(--hairline)}
+
+  .obar{display:flex;align-items:flex-start;gap:10px;padding:11px 16px 9px;border-bottom:1px solid var(--hairline)}
+  .obar-k{font-size:12px;line-height:15px;color:var(--muted)}
+  .obar-t{font-size:17px;line-height:22px;font-weight:700;margin-top:1px}
+  .obar-r{flex:none;display:flex;align-items:center;gap:2px;padding-top:2px}
+  .seg{display:flex;gap:2px}
+  .seg-b{font-size:12px;line-height:16px;color:var(--muted);padding:4px 10px;border-radius:6px}
+  .seg-b:hover{color:var(--text)}
+  .seg-b.is-on{color:var(--text);background:var(--surf-high)}
+  .sqrow{display:flex;align-items:center;gap:8px;padding:8px 16px 8px;font-size:12px;line-height:16px;color:var(--muted);border-bottom:1px solid var(--hairline-soft)}
+  .sqrow .act{margin-left:auto}
+  .sqrow input{background:none;border:0;outline:none;flex:1;min-width:0;color:var(--text);font-family:var(--mono);font-size:13px;padding:1px 0}
+  .sqrow input::placeholder{color:var(--dim)}
+
+  .ghead{display:flex;align-items:center;gap:9px;padding:13px 16px 6px;font-size:12px;line-height:16px;color:var(--accent)}
+  .ghead i{flex:1;height:1px;background:var(--hairline);display:block}
+  .srow{display:grid;grid-template-columns:minmax(0,1fr) auto;column-gap:10px;padding:11px 16px;border-bottom:1px solid var(--hairline-soft);width:100%}
+  .srow:hover{background:var(--surf)}
+  .srow.is-sel{background:var(--selected-bg)}
+  .srow-1{display:flex;align-items:baseline;gap:7px;min-width:0}
+  .sname{font-size:14px;line-height:20px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .badge{flex:none;font-size:12px;line-height:15px;border:1px solid var(--border-muted);border-radius:4px;padding:1px 5px;color:var(--muted)}
+  .badge--cur{border-color:var(--accent);color:var(--accent)}
+  .badge--new{border-color:var(--dim);color:var(--muted)}
+  .badge--reload{border-color:var(--custom-label);color:var(--custom-label)}
+  .badge--restart{border-color:var(--error);color:var(--error)}
+  .srow-2{grid-column:1;font-family:var(--mono);font-size:12px;line-height:17px;color:var(--muted);margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .srow-3{grid-column:1;font-family:var(--mono);font-size:12px;line-height:17px;color:var(--dim);margin-top:2px;font-variant-numeric:tabular-nums}
+  .srow-r{grid-row:1/span 3;grid-column:2;display:flex;flex-direction:column;align-items:flex-end;gap:6px}
+  .stime{font-size:12px;line-height:16px;color:var(--muted);white-space:nowrap;font-variant-numeric:tabular-nums}
+
+  .fab{position:absolute;right:16px;bottom:16px;z-index:20;background:var(--surf-high);border:1px solid var(--hairline);color:var(--text);border-radius:10px;padding:9px 14px;font-size:13px;line-height:18px}
+  .fab:hover{border-color:var(--muted)}
+  .empty{padding:44px 28px;text-align:center}
+  .empty .mk{display:flex;justify-content:center;margin-bottom:14px;opacity:.9}
+  .empty-t{font-size:15px;line-height:22px;font-weight:700}
+  .empty-b{font-size:13px;line-height:20px;color:var(--muted);margin-top:7px;text-wrap:pretty}
+
+  /* 会话树 */
+  .trow{display:flex;align-items:flex-start;gap:8px;padding:8px 16px;border-bottom:1px solid var(--hairline-soft)}
+  .trow-rail{flex:none;width:2px;background:var(--hairline);align-self:stretch;margin-top:2px}
+  .trow-t{font-size:13px;line-height:19px;color:var(--text);min-width:0}
+  .trow-k{font-family:var(--mono);font-size:12px;line-height:16px;color:var(--muted);margin-top:3px}
+  .trow .act{margin-left:auto;flex:none}
+
+  /* ═══ 工作区 ═══ */
+  .wsec{padding:15px 16px 4px}
+  .wsec-h{display:flex;align-items:baseline;gap:9px;font-size:12px;line-height:16px;color:var(--muted)}
+  .wsec-h i{flex:1;height:1px;background:var(--hairline);display:block}
+  .wrow{display:grid;grid-template-columns:minmax(0,1fr) auto;column-gap:10px;padding:10px 16px;border-bottom:1px solid var(--hairline-soft);width:100%}
+  .wrow:hover{background:var(--surf)}
+  .wrow.is-open{background:var(--surf-dim)}
+  .wrow-t{font-size:14px;line-height:20px;color:var(--text);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .wrow-d{font-family:var(--mono);font-size:12px;line-height:17px;color:var(--muted);margin-top:3px;font-variant-numeric:tabular-nums}
+  .wrow-v{font-family:var(--mono);font-size:12px;line-height:18px;color:var(--text);white-space:nowrap;text-align:right;font-variant-numeric:tabular-nums}
+  .wrow-v.mut{color:var(--muted)}
+  .wrow-v.add{color:var(--diff-add)} .wrow-v.del{color:var(--diff-del)}
+  .wsub{border-bottom:1px solid var(--hairline-soft);padding:8px 16px 9px;background:var(--surf-dim)}
+  .wsub-r{display:flex;align-items:baseline;gap:9px;font-family:var(--mono);font-size:12px;line-height:18px;color:var(--muted);padding:2px 0}
+  .wsub-r b{font-weight:400;color:var(--text)}
+  .wsub-r em{font-style:normal;margin-left:auto;color:var(--muted);font-variant-numeric:tabular-nums}
+  .wfoot{padding:12px 16px 18px;font-size:12px;line-height:18px;color:var(--muted);text-wrap:pretty}
+  .wproj{padding:13px 16px 12px;border-bottom:1px solid var(--hairline)}
+  .wproj-t{font-size:15px;line-height:21px;font-weight:700}
+  .wproj-d{font-family:var(--mono);font-size:12px;line-height:17px;color:var(--muted);margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .wproj-k{display:flex;gap:14px;margin-top:9px;font-family:var(--mono);font-size:12px;line-height:16px;color:var(--muted);flex-wrap:wrap}
+  .wproj-k b{font-weight:400;color:var(--text)}
+  .wrun{display:flex;align-items:center;gap:9px;padding:11px 16px;border-bottom:1px solid var(--hairline);background:var(--tool-pending)}
+  .wrun-t{font-family:var(--mono);font-size:13px;line-height:18px;color:var(--tool-title);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .wrun-s{margin-left:auto;flex:none;font-family:var(--mono);font-size:12px;line-height:16px;color:var(--warning);white-space:nowrap}
+
+  /* ═══ 设置 ═══ */
+  .ssearch{display:flex;align-items:center;gap:9px;margin:12px 16px 4px;border:1px solid var(--hairline);border-radius:8px;padding:9px 11px}
+  .ssearch input{flex:1;min-width:0;background:none;border:0;outline:none;color:var(--text);font-size:14px;line-height:20px}
+  .ssearch input::placeholder{color:var(--dim)}
+  .ssearch em{font-style:normal;font-family:var(--mono);font-size:12px;color:var(--muted);flex:none}
+  .mcard{margin:12px 16px 2px;border:1px solid var(--hairline);border-radius:10px;padding:12px 13px}
+  .mcard-k{font-size:12px;line-height:16px;color:var(--muted)}
+  .mcard-v{font-family:var(--mono);font-size:14px;line-height:20px;margin-top:4px}
+  .mcard-d{font-family:var(--mono);font-size:12px;line-height:17px;color:var(--muted);margin-top:5px;font-variant-numeric:tabular-nums}
+  .setrow{display:flex;align-items:center;gap:12px;width:100%;padding:11px 16px;border-bottom:1px solid var(--hairline-soft);cursor:pointer}
+  .setrow:hover{background:var(--surf)}
+  .setrow.is-sel{background:var(--selected-bg)}
+  .setrow-l{min-width:0;flex:1}
+  .setrow-t{display:flex;align-items:baseline;gap:7px;font-size:14px;line-height:20px}
+  .setrow-t.act-primary{color:var(--accent)}
+  .setrow-t.act-danger{color:var(--error)}
+  .setrow-d{font-size:12px;line-height:17px;color:var(--muted);margin-top:3px;text-wrap:pretty}
+  .setrow-v{flex:none;font-family:var(--mono);font-size:13px;line-height:18px;color:var(--muted);max-width:132px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-variant-numeric:tabular-nums}
+  .setrow-v.set{color:var(--text)}
+  .chev{flex:none;font-family:var(--mono);font-size:13px;color:var(--dim);padding-left:2px}
+  .sw{flex:none;width:38px;height:22px;border-radius:999px;background:var(--surf-highest);position:relative;transition:background-color .12s}
+  .sw i{position:absolute;top:3px;left:3px;width:16px;height:16px;border-radius:50%;background:var(--text);transition:left .12s,background-color .12s}
+  .sw.is-on{background:var(--accent)}
+  .sw.is-on i{left:19px;background:var(--page)}
+  .sect{padding:16px 16px 5px;font-size:12px;line-height:16px;color:var(--muted)}
+  .sect i{display:block;height:1px;background:var(--hairline);margin-top:7px}
+  .sfoot{padding:14px 16px 20px;font-size:12px;line-height:18px;color:var(--muted);text-wrap:pretty}
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+
+<script type="text/babel" data-presets="react">
+/* ════════════════════════════════════════════════════════════════
+   第一段：设备框（原样内联，未做任何改动）+ 共享基元
+   ════════════════════════════════════════════════════════════════ */
+const {useState, useRef, useEffect, useMemo} = React;
+
+const androidFrameStyles = {
+  wrapper: {
+    display: 'inline-block',
+    padding: 10,
+    background: '#1a1a1a',
+    borderRadius: 44,
+    boxShadow: '0 0 0 2px #2a2a2a, 0 20px 60px rgba(0,0,0,0.3)',
+    position: 'relative',
+  },
+  screen: {
+    position: 'relative',
+    borderRadius: 36,
+    overflow: 'hidden',
+    background: '#fff',
+  },
+  statusBar: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    height: 32,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: '0 24px',
+    fontSize: 14,
+    fontWeight: 500,
+    fontFamily: 'Roboto, -apple-system, sans-serif',
+    zIndex: 20,
+    pointerEvents: 'none',
+  },
+  punchHole: {
+    position: 'absolute',
+    top: 10,
+    left: '50%',
+    transform: 'translateX(-50%)',
+    width: 14,
+    height: 14,
+    background: '#000',
+    borderRadius: '50%',
+    zIndex: 30,
+  },
+  statusIcons: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 6,
+  },
+  batteryText: {
+    fontSize: 11,
+    fontWeight: 600,
+    marginLeft: 2,
+  },
+  content: {
+    position: 'absolute',
+    top: 32,
+    left: 0,
+    right: 0,
+    bottom: 24,
+    overflow: 'auto',
+  },
+  navBar: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    height: 24,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 60,
+    zIndex: 10,
+  },
+  navButton: {
+    width: 36,
+    height: 4,
+    background: 'rgba(0,0,0,0.3)',
+    borderRadius: 999,
+  },
+};
+
+function AndroidFrame({
+  children,
+  width = 412,
+  height = 892,
+  time = '9:41',
+  battery = 100,
+  darkMode = false,
+  navStyle = 'gesture',
+}) {
+  const textColor = darkMode ? '#fff' : '#1a1a1a';
+
+  return (
+    <div style={androidFrameStyles.wrapper}>
+      <div style={{
+        ...androidFrameStyles.screen,
+        width,
+        height,
+        background: darkMode ? '#000' : '#fff',
+      }}>
+        <div style={{ ...androidFrameStyles.statusBar, color: textColor }}>
+          <span>{time}</span>
+          <div style={androidFrameStyles.statusIcons}>
+            <svg width="14" height="10" viewBox="0 0 14 10" fill="currentColor">
+              <rect x="0" y="6" width="2" height="4" rx="0.5" />
+              <rect x="4" y="4" width="2" height="6" rx="0.5" />
+              <rect x="8" y="2" width="2" height="8" rx="0.5" />
+              <rect x="12" y="0" width="2" height="10" rx="0.5" />
+            </svg>
+            <svg width="14" height="10" viewBox="0 0 14 10" fill="none">
+              <path d="M7 9a1 1 0 100-2 1 1 0 000 2z" fill="currentColor" />
+              <path d="M3 6a5 5 0 018 0" stroke="currentColor" strokeWidth="1.2" />
+              <path d="M0.5 3.5a11 11 0 0113 0" stroke="currentColor" strokeWidth="1.2" opacity="0.6" />
+            </svg>
+            <div style={{
+              width: 22,
+              height: 10,
+              border: '1.5px solid currentColor',
+              borderRadius: 2,
+              padding: 1,
+              position: 'relative',
+            }}>
+              <div style={{
+                width: `${battery}%`,
+                height: '100%',
+                background: 'currentColor',
+                borderRadius: 1,
+              }} />
+            </div>
+            <span style={androidFrameStyles.batteryText}>{battery}%</span>
+          </div>
+        </div>
+
+        <div style={androidFrameStyles.punchHole} />
+
+        <div style={androidFrameStyles.content}>
+          {children}
+        </div>
+
+        {navStyle === 'gesture' && (
+          <div style={androidFrameStyles.navBar}>
+            <div style={{
+              ...androidFrameStyles.navButton,
+              width: 100,
+              height: 4,
+              background: darkMode ? 'rgba(255,255,255,0.5)' : 'rgba(0,0,0,0.4)',
+            }} />
+          </div>
+        )}
+
+        {navStyle === 'buttons' && (
+          <div style={androidFrameStyles.navBar}>
+            <span style={{ color: textColor, fontSize: 20 }}>◁</span>
+            <span style={{ color: textColor, fontSize: 16 }}>○</span>
+            <span style={{ color: textColor, fontSize: 16 }}>□</span>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ── π 字形（唯一品牌图形，一个 path，原样使用） ── */
+function PiMark({ size }) {
+  const s = size || 16;
+  return (
+    <svg width={s} height={s} viewBox="0 0 108 108" aria-hidden="true" focusable="false">
+      <path fill="var(--accent)" d="M30,38 H78 V46 H71 V74 H63 V46 H45 V74 H37 V46 H30 Z" />
+    </svg>
+  );
+}
+
+/* ── 长路径的可读化：只保留末三段（排版决定，内容不变） ── */
+function shortPath(p) {
+  const parts = String(p).split('/');
+  if (parts.length <= 3) return p;
+  return '…/' + parts.slice(parts.length - 3).join('/');
+}
+
+/* ── 执行脊：刻度 = 该步真实耗时（对数 + 按量级分段） ── */
+function tickSpec(ms) {
+  const lo = Math.log10(50), hi = Math.log10(20000);
+  const t = Math.max(0, Math.min(1, (Math.log10(Math.max(ms, 50)) - lo) / (hi - lo)));
+  const w = Math.round(5 + t * 17);
+  const seg = ms < 1000 ? 1 : (ms < 10000 ? 2 : 3);
+  return { w: w, seg: seg };
+}
+
+function RailTick({ ms, status }) {
+  const s = tickSpec(ms);
+  const color = status === 'pending' ? 'var(--accent)' : (status === 'error' ? 'var(--error)' : 'var(--dim)');
+  const segW = Math.max(3, Math.round((s.w - (s.seg - 1) * 2) / s.seg));
+  const segs = [];
+  for (let i = 0; i < s.seg; i++) segs.push(<i key={i} style={{ width: segW + 'px' }} />);
+  return <span className="tick" style={{ color: color }}>{segs}</span>;
+}
+
+/* diff 的双条刻度：长度 = 真实增删行数 */
+function RailLines({ add, del }) {
+  return (
+    <span className="ticklines">
+      <i style={{ width: Math.min(22, 4 + add * 2) + 'px', background: 'var(--diff-add)' }} />
+      <i style={{ width: Math.min(22, 4 + del * 2) + 'px', background: 'var(--diff-del)' }} />
+    </span>
+  );
+}
+
+/* ── 块：挂在脊上的一个节点 ── */
+function Blk({ kind, status, ms, nodeKind, tickLines, color, children }) {
+  const dotted = kind === 'prose' || kind === 'think' || kind === 'notice';
+  const breakTape = kind === 'sep' || kind === 'compaction';
+  const stColor = status === 'pending' ? 'var(--warning)' : (status === 'error' ? 'var(--error)' : 'var(--success)');
+  let node = null;
+  if (nodeKind === 'tool') {
+    node = <span className="node" style={{ borderColor: stColor, color: stColor }}>{status === 'pending' ? '…' : (status === 'error' ? '✗' : '✓')}</span>;
+  } else if (nodeKind === 'think') {
+    node = <span className="node-stripe" style={{ background: color || 'var(--think-medium)' }} />;
+  } else if (nodeKind === 'user') {
+    node = <span className="node-sq" />;
+  } else if (nodeKind === 'notice') {
+    node = <span className="node-dot" />;
+  } else if (nodeKind === 'arrow') {
+    node = <span className="node-txt" style={{ color: 'var(--border-accent)' }}>→</span>;
+  } else if (nodeKind === 'diff') {
+    node = <span className="node-txt" style={{ color: 'var(--muted)' }}>±</span>;
+  }
+  return (
+    <div className={'blk k-' + kind}>
+      <div className="rail" aria-hidden="true">
+        {!breakTape && <span className={'line' + (dotted ? ' dotted' : '')} />}
+        {node}
+        {ms != null && <RailTick ms={ms} status={status} />}
+        {tickLines && <RailLines add={tickLines.add} del={tickLines.del} />}
+      </div>
+      <div className="blk-b">{children}</div>
+    </div>
+  );
+}
+
+/* ── 底部导航：三项，文字即导航 ── */
+const DESTS = [
+  { k: 'chat', label: '对话' },
+  { k: 'workbench', label: '工作区' },
+  { k: 'settings', label: '设置' },
+];
+
+function TabBar({ active, onSelect }) {
+  return (
+    <nav className="tabbar">
+      {DESTS.map(function (d) {
+        return (
+          <button
+            key={d.k}
+            className={'tab' + (active === d.k ? ' is-on' : '')}
+            onClick={function () { onSelect(d.k); }}
+          >{d.label}</button>
+        );
+      })}
+    </nav>
+  );
+}
+
+/* ── 分段控件 ── */
+function Seg({ items, value, onChange }) {
+  return (
+    <div className="seg">
+      {items.map(function (it) {
+        return (
+          <button key={it} className={'seg-b' + (value === it ? ' is-on' : '')} onClick={function () { onChange(it); }}>{it}</button>
+        );
+      })}
+    </div>
+  );
+}
+
+/* ── 开关 ── */
+function Switch({ on, onChange }) {
+  return (
+    <button
+      className={'sw' + (on ? ' is-on' : '')}
+      role="switch"
+      aria-checked={on}
+      onClick={function (e) { e.stopPropagation(); onChange(!on); }}
+    ><i /></button>
+  );
+}
+
+/* ── 对话框与底部 sheet ── */
+function Dialog({ title, body, note, actions, onClose }) {
+  return (
+    <div className="modal" onClick={onClose}>
+      <div className="dialog" onClick={function (e) { e.stopPropagation(); }}>
+        <div className="dialog-t">{title}</div>
+        {body ? <div className="dialog-b">{body}</div> : null}
+        {note ? <div className="dialog-n">{note}</div> : null}
+        <div className="dialog-a">
+          {actions.map(function (a, i) {
+            return (
+              <button
+                key={i}
+                className={'btn ' + (a.kind === 'pri' ? 'btn--pri' : (a.kind === 'danger' ? 'btn--danger' : 'btn--ghost'))}
+                disabled={a.disabled}
+                onClick={function () { if (a.onClick) a.onClick(); }}
+              >{a.label}</button>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Sheet({ title, sub, children, actions, onClose }) {
+  return (
+    <div className="modal modal--sheet" onClick={onClose}>
+      <div className="sheet" onClick={function (e) { e.stopPropagation(); }}>
+        <div className="sheet-t">{title}</div>
+        {sub ? <div className="sheet-s">{sub}</div> : null}
+        <div className="sheet-c">{children}</div>
+        {actions ? (
+          <div className="sheet-f">
+            <div className="dialog-a" style={{ marginTop: 0 }}>
+              {actions.map(function (a, i) {
+                return (
+                  <button
+                    key={i}
+                    className={'btn ' + (a.kind === 'pri' ? 'btn--pri' : (a.kind === 'danger' ? 'btn--danger' : 'btn--ghost'))}
+                    disabled={a.disabled}
+                    onClick={function () { if (a.onClick) a.onClick(); }}
+                  >{a.label}</button>
+                );
+              })}
+            </div>
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+Object.assign(window, {
+  AndroidFrame: AndroidFrame,
+  PiMark: PiMark,
+  shortPath: shortPath,
+  Blk: Blk,
+  TabBar: TabBar,
+  Seg: Seg,
+  Switch: Switch,
+  Dialog: Dialog,
+  Sheet: Sheet,
+});
+</script>
+
+<script type="text/babel" data-presets="react">
+/* ════════════════════════════════════════════════════════════════
+   第二段：五台屏
+   ════════════════════════════════════════════════════════════════ */
+const {useState: useState2, useRef: useRef2} = React;
+
+/* ── markdown 片段 ── */
+function MdH(props) { return <h2 className="md-h">{props.children}</h2>; }
+function MdP(props) { return <p className="md-p">{props.children}</p>; }
+function MdUl(props) {
+  return (
+    <ul className="md-ul">
+      {props.items.map(function (t, i) { return <li key={i}>{t}</li>; })}
+    </ul>
+  );
+}
+function MdOl(props) {
+  return (
+    <ol className="md-ol">
+      {props.items.map(function (t, i) {
+        return <li key={i}><b>{i + 1}.</b>{t}</li>;
+      })}
+    </ol>
+  );
+}
+function IC(props) { return <code className="icode">{props.children}</code>; }
+
+/* ── 工具卡外壳 ── */
+function ToolCard(props) {
+  const st = props.status;
+  const cls = 'card' + (st === 'success' ? ' ok' : (st === 'error' ? ' err' : ''));
+  const stCls = 'tstat' + (st === 'success' ? ' ok' : (st === 'error' ? ' err' : ' pend'));
+  const word = st === 'success' ? '成功' : (st === 'error' ? '失败' : '运行中');
+  const sym = st === 'success' ? '✓' : (st === 'error' ? '✗' : '…');
+  return (
+    <div className={cls}>
+      <button className="tb-h" onClick={props.onToggle}>
+        <span className="tname">{props.name}</span>
+        <span className="tsubj">{props.subject}</span>
+        <span className={stCls}>{word} {sym}</span>
+      </button>
+      {props.open ? <div className="tb-b">{props.children}</div> : null}
+      {props.footer ? <div className="tb-f">{props.footer}</div> : null}
+    </div>
+  );
+}
+
+/* ── 折叠标签 ── */
+function Fold(props) {
+  return <span className="fold">{props.open ? '收起' : '展开'}</span>;
+}
+
+/* ═══════════ ① 对话（hero） ═══════════ */
+function ChatScreen(props) {
+  const openSessions = props.openSessions;
+  const [open, setOpen] = useState2({
+    read1: false, read2: true, grep: true, diff: true, edit: false, think: false,
+    err: false, branch: false, skill: false, all: false,
+  });
+  const [approvalLocal, setApprovalLocal] = useState2(true);
+  const approval = props.showApproval === undefined ? approvalLocal : props.showApproval;
+  function decide() { if (props.onDecide) { props.onDecide(); } else { setApprovalLocal(false); } }
+  const [sheet, setSheet] = useState2(null);   // 'more' | 'model' | null
+  const [finding, setFinding] = useState2(false);
+  const [level, setLevel] = useState2('中');
+  const [draft, setDraft] = useState2('');
+  const LEVELS = ['关闭', '极简', '低', '中', '高', '很高', '最高'];
+  const LEVEL_COLOR = {
+    '关闭': 'var(--think-off)', '极简': 'var(--think-minimal)', '低': 'var(--think-low)',
+    '中': 'var(--think-medium)', '高': 'var(--think-high)', '很高': 'var(--think-xhigh)', '最高': 'var(--think-max)',
+  };
+  const bashMode = draft.charAt(0) === '!';
+  const lvColor = LEVEL_COLOR[level];
+  const tapeRef = useRef2(null);
+  const view = props.view || 'tools';
+
+  React.useEffect(function () {
+    const el = tapeRef.current;
+    if (!el) return;
+    if (view === 'top') { el.scrollTop = 0; return; }
+    if (view === 'bottom') { el.scrollTop = el.scrollHeight; return; }
+    const first = el.querySelector('.k-tool');
+    if (first) {
+      const base = el.offsetTop || 0;
+      el.scrollTop = Math.max(0, (first.offsetTop || 0) - base - 6);
+    }
+  }, [view]);
+
+  function tg(k) {
+    const n = Object.assign({}, open);
+    n[k] = !n[k];
+    setOpen(n);
+  }
+  function allCards(next) {
+    setOpen({ read1: next, read2: next, grep: next, diff: next, think: open.think, err: next, branch: next, skill: next, all: next });
+  }
+  function cycleLevel() {
+    const i = LEVELS.indexOf(level);
+    setLevel(LEVELS[(i + 1) % LEVELS.length]);
+  }
+  function keyInsert(t) {
+    setDraft(draft + t);
+  }
+
+  return (
+    <div className="screen">
+      <div className="appbar">
+        <div className="ab-l">
+          <div className="ab-k">会话</div>
+          <button className="ab-btn" onClick={openSessions} title="打开会话列表">
+            <div className="ab-t">会话列表排序错了 · 对话页顶部状态行</div>
+          </button>
+        </div>
+        <div className="ab-r">
+          <div className="ab-s">就绪</div>
+          <div className="ab-acts">
+            <button className="act" onClick={function () { setFinding(!finding); }}>搜索</button>
+            <button className="act" onClick={function () { setSheet('more'); }}>更多</button>
+          </div>
+        </div>
+      </div>
+
+      {finding ? (
+        <div className="searchbar">
+          <input placeholder="在对话里查找" defaultValue="" />
+          <span className="mono" style={{ fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--muted)' }}>3/8</span>
+          <button className="act">上一个</button>
+          <button className="act">下一个</button>
+          <button className="act" onClick={function () { setFinding(false); }}>关闭</button>
+        </div>
+      ) : null}
+
+      <div className="stats">
+        <span>上下文 <b>52%</b></span>
+        <span>104,000 / 200,000</span>
+        <span>缓存读 <b>12.4k</b></span>
+        <span style={{ marginLeft: 'auto' }}>累计 <b>$0.42</b></span>
+      </div>
+      <div className="meter"><i style={{ width: '52%' }} /></div>
+
+      <div className="scroll" ref={tapeRef}>
+        <div className="tape">
+
+          <Blk kind="meta">
+            <button className="loadmore" onClick={function () { }}>加载更早的 24 条</button>
+          </Blk>
+
+          <Blk kind="sep" nodeKind="none">
+            <div className="sep"><i /><span>今天</span><i /></div>
+          </Blk>
+
+          <Blk kind="user" nodeKind="user">
+            <div className="bubble">
+              <MdP>会话列表排序错了。我按「按时间」的时候，最近活动的目录应该排在最上面，但现在带「已命名」的那几条跑到最后去了。截图是这个列表，注意「工作区」那一组已经掉到第二屏。</MdP>
+              <div className="thumb"><span>1 张图片</span></div>
+              <div className="meta">
+                <span className="time">14:02</span>
+                <span className="time">已发送</span>
+              </div>
+            </div>
+          </Blk>
+
+          <Blk kind="think" nodeKind="think" color="var(--think-medium)">
+            <button className="think" onClick={function () { tg('think'); }}>
+              <span className="think-t">思考 8s</span>
+              <span className="think-lv" style={{ color: 'var(--think-medium)' }}>中</span>
+              <Fold open={open.think} />
+            </button>
+            {open.think ? (
+              <div className="think-b">排序在 groupBy 之后做的，先看 visible 的构造。</div>
+            ) : null}
+          </Blk>
+
+          <Blk kind="prose" nodeKind="none">
+            <MdH>先定位排序来源</MdH>
+            <MdP>列表是「先分组、再排序」：</MdP>
+            <MdUl items={[
+              <span key="a">分组用的是 <IC>it.cwd</IC>，所以一个目录一段</span>,
+              <span key="b">组间排序用的是组内最新的 <IC>lastActivityAt</IC></span>,
+              <span key="c"><IC>按名称</IC> 时才改用 <IC>displayName.lowercase()</IC></span>,
+            ]} />
+            <MdP>改之前先确认一下组内行序是谁给的：</MdP>
+            <div className="code"><code>
+              <span className="cl"><span className="k">val</span> groups = visible</span>
+              <span className="cl">{'    .groupBy { '}<span className="v">it.cwd</span>{' }'}</span>
+              <span className="cl">{'    .toList()'}</span>
+              <span className="cl">{'    .sortedByDescending { (_, rows) ->'}</span>
+              <span className="cl">{'        rows.maxOf { '}<span className="v">it.lastActivityAt</span>{' }'}</span>
+              <span className="cl">{'    }'}</span>
+            </code></div>
+          </Blk>
+
+          <Blk kind="tool" status="success" ms={132} nodeKind="tool">
+            <ToolCard
+              name="read"
+              subject={shortPath('app/src/main/kotlin/app/pi/ui/screens/SessionsScreen.kt') + ':119-131'}
+              status="success"
+              open={open.read1}
+              onToggle={function () { tg('read1'); }}
+              footer={'成功 · 132ms · 13 行'}
+            >
+              <div className="mono-b">
+                <span className="cl"><span className="ln">119  </span><span className="k">val</span> visible = <span className="f">remember</span>(sessions, query, byName, namedOnly) {'{'}</span>
+                <span className="cl"><span className="ln">120  </span>{'    sessions'}</span>
+                <span className="cl"><span className="ln">121  </span>{'        .filter { summary ->'}</span>
+              </div>
+              <div className="prev-more">展开全部（还有 10 行）</div>
+            </ToolCard>
+          </Blk>
+
+          <Blk kind="tool" status="success" ms={96} nodeKind="tool">
+            <ToolCard
+              name="read"
+              subject={shortPath('app/src/main/kotlin/app/pi/ui/screens/SessionsScreen.kt') + ':186-194'}
+              status="success"
+              open={open.read2}
+              onToggle={function () { tg('read2'); }}
+              footer={'成功 · 96ms · 9 行'}
+            >
+              <div className="mono-b">
+                <span className="cl"><span className="ln">188  </span>{'        .groupBy { '}<span className="v">it.cwd</span>{' }'}</span>
+                <span className="cl"><span className="ln">189  </span>{'        .toList()'}</span>
+                <span className="cl"><span className="ln">190  </span>{'        .sortedByDescending { (_, rows) ->'}</span>
+                <span className="cl"><span className="ln">191  </span>{'            rows.maxOf { '}<span className="v">it.lastActivityAt</span>{' }'}</span>
+                <span className="cl"><span className="ln">192  </span>{'        }'}</span>
+                <span className="cl"><span className="ln">193  </span>{'    SessionGroups(groups)'}</span>
+              </div>
+            </ToolCard>
+          </Blk>
+
+          <Blk kind="prose" nodeKind="none">
+            <MdP>组内没排过，难怪「已命名」那几条按文件名落到了后面。我把组内也按时间倒序补上。</MdP>
+          </Blk>
+
+          <Blk kind="tool" status="success" ms={88} nodeKind="tool">
+            <ToolCard
+              name="grep"
+              subject={'/sortedBy/ in ' + shortPath('app/src/main/kotlin')}
+              status="success"
+              open={open.grep}
+              onToggle={function () { tg('grep'); }}
+              footer={'成功 · 7 处 · 3 个文件 · 88ms'}
+            >
+              <div>
+                <div className="gfile">
+                  <div className="gfile-h">
+                    <span>{shortPath('app/src/main/kotlin/app/pi/ui/screens/SessionsScreen.kt')}</span>
+                    <em>3 处</em>
+                  </div>
+                  <div className="ghit">
+                    <span>129</span>
+                    <span>{'if (byName) list.sortedBy { '}<span className="v">it.displayName</span>{'.lowercase() } else list'}</span>
+                  </div>
+                  <div className="ghit">
+                    <span>194</span>
+                    <span>{'.sortedByDescending { (_, rows) -> rows.maxOf { '}<span className="v">it.lastActivityAt</span>{' } }'}</span>
+                  </div>
+                </div>
+                <div className="gfile">
+                  <div className="gfile-h">
+                    <span>{shortPath('app/src/main/kotlin/app/pi/ui/settings/PiSettingsRegistry.kt')}</span>
+                    <em>3 处</em>
+                  </div>
+                  <div className="ghit">
+                    <span>240</span>
+                    <span>{'val settings = catalog.'}<span className="f">sortedBy</span>{' { it.group.order }'}</span>
+                  </div>
+                </div>
+                <div className="gfile">
+                  <div className="gfile-h">
+                    <span>{shortPath('app/src/main/kotlin/app/pi/ui/chat/SessionTreeScreen.kt')}</span>
+                    <em>1 处</em>
+                  </div>
+                  <div className="ghit">
+                    <span>302</span>
+                    <span>{'rows.'}<span className="f">sortedByDescending</span>{' { it.time }'}</span>
+                  </div>
+                </div>
+              </div>
+            </ToolCard>
+          </Blk>
+
+          <Blk kind="tool" status="success" ms={214} nodeKind="tool">
+            <ToolCard
+              name="edit"
+              subject={shortPath('app/src/main/kotlin/app/pi/ui/screens/SessionsScreen.kt')}
+              status="success"
+              open={open.edit}
+              onToggle={function () { tg('edit'); }}
+              footer={'成功 · 214ms · 2 行'}
+            >
+              <div className="mono-b">改了组内排序与组间排序两处，差异见下一张卡。</div>
+            </ToolCard>
+          </Blk>
+
+          <Blk kind="diff" nodeKind="diff" tickLines={{ add: 6, del: 5 }}>
+            <div className="card">
+              <button className="tb-h" onClick={function () { tg('diff'); }}>
+                <span className="tname">edit</span>
+                <span className="tsubj">{shortPath('app/src/main/kotlin/app/pi/ui/screens/SessionsScreen.kt')}</span>
+                <span className="dbars" style={{ marginLeft: 'auto' }}>
+                  <span className="add num">+6</span>
+                  <span className="del num">−5</span>
+                </span>
+              </button>
+              <div className="tb-f dbars">
+                <span className="add num">新增 6 行</span>
+                <span className="del num">删除 5 行</span>
+                <button className="fold" style={{ marginLeft: 'auto' }} onClick={function () { tg('diff'); }}>{open.diff ? '收起' : '展开'}</button>
+              </div>
+              {open.diff ? (
+                <div className="tb-b">
+                  <div className="dfile">{'--- a/…/ui/screens/SessionsScreen.kt'}</div>
+                  <div className="dfile">{'+++ b/…/ui/screens/SessionsScreen.kt'}</div>
+                  <div className="drow ctx"><span className="dsym"> </span><span className="dln">188</span><span className="dtx">{'        } else {'}</span></div>
+                  <div className="drow ctx"><span className="dsym"> </span><span className="dln">189</span><span className="dtx">{'            val groups = visible'}</span></div>
+                  <div className="drow ctx"><span className="dsym"> </span><span className="dln">190</span><span className="dtx">{'                .groupBy { it.cwd }'}</span></div>
+                  <div className="dfold">… 12 行未变</div>
+                  <div className="drow del"><span className="dsym">-</span><span className="dln">191</span><span className="dtx">{'                .sortedByDescending { (_, rows) -> rows.maxOf { it.lastActivityAt } }'}</span></div>
+                  <div className="drow add"><span className="dsym">+</span><span className="dln">191</span><span className="dtx">{'                .map { (cwd, rows) -> cwd to rows.sortedByDescending { it.lastActivityAt } }'}</span></div>
+                  <div className="drow add"><span className="dsym">+</span><span className="dln">192</span><span className="dtx">{'                .sortedByDescending { (_, rows) ->'}</span></div>
+                  <div className="drow add"><span className="dsym">+</span><span className="dln">193</span><span className="dtx">{'                    rows.firstOrNull()?.lastActivityAt ?: 0L'}</span></div>
+                  <div className="drow add"><span className="dsym">+</span><span className="dln">194</span><span className="dtx">{'                }'}</span></div>
+                  <div className="drow del"><span className="dsym">-</span><span className="dln">330</span><span className="dtx">{'        Text(relativeTime(summary.lastActivityAt), style = PiTheme.text.meta)'}</span></div>
+                  <div className="drow add"><span className="dsym">+</span><span className="dln">334</span><span className="dtx">{'        Text(relativeTime(summary.lastActivityAt), style = PiTheme.text.meta, maxLines = 1)'}</span></div>
+                </div>
+              ) : null}
+            </div>
+          </Blk>
+
+          <Blk kind="tool" status="success" ms={96} nodeKind="tool">
+            <ToolCard
+              name="write"
+              subject={shortPath('app/src/test/kotlin/app/pi/ui/screens/SessionGroupOrderTest.kt')}
+              status="success"
+              open={false}
+              onToggle={function () { }}
+              footer={'成功 · 96ms · 38 行'}
+            />
+          </Blk>
+
+          <Blk kind="tool" status="success" ms={6400} nodeKind="tool">
+            <ToolCard
+              name="$"
+              subject={'tools/run-app-pure-checks.sh (timeout 120s)'}
+              status="success"
+              open={open.all}
+              onToggle={function () { tg('all'); }}
+              footer={'成功 · 退出码 0 · 耗时 6.4 秒 · 42 行'}
+            >
+              <div className="mono-b">
+                <span className="cl">{'[settings-audit] 68 项设置，全部有读取方'}</span>
+                <span className="cl">{'[prose-audit] 用户可见文案 0 处内部路径'}</span>
+                <span className="cl">{'[nested-comments] ok'}</span>
+                <span className="cl">{'[highlight] ok'}</span>
+                <span className="cl">{'PASS'}</span>
+              </div>
+              <div className="prev-more">展开全部（上方还有 37 行）</div>
+            </ToolCard>
+          </Blk>
+
+          <Blk kind="tool" status="pending" ms={12300} nodeKind="tool">
+            <ToolCard
+              name="$"
+              subject={'./gradlew :app:compileDebugKotlin'}
+              status="pending"
+              open={true}
+              onToggle={function () { }}
+              footer={'运行中 · 已运行 12.3 秒 · 18 行'}
+            >
+              <div className="mono-b">
+                <span className="cl">{'> Task :app:compileDebugKotlin'}</span>
+                <span className="cl">{'…'}<span className="cursor-line" style={{ marginLeft: 2 }} /></span>
+              </div>
+            </ToolCard>
+          </Blk>
+
+          <Blk kind="tool" status="error" ms={400} nodeKind="tool">
+            <ToolCard
+              name="$"
+              subject={'rg -n "TODO" app/src/main/kotlin'}
+              status="error"
+              open={true}
+              onToggle={function () { }}
+              footer={'失败 · 退出码 2 · 耗时 0.4 秒 · 0 行'}
+            >
+              <div className="mono-b" style={{ color: 'var(--error)' }}>
+                <span className="cl">{'rg: app/src/main/kotlin: 没有那个文件或目录 (os error 2)'}</span>
+              </div>
+            </ToolCard>
+          </Blk>
+
+          <Blk kind="error" status="error" nodeKind="tool">
+            <div className="card err">
+              <div className="tb-h" style={{ display: 'block' }}>
+                <span style={{ fontSize: 14, lineHeight: '21px', color: 'var(--text)' }}>引擎没能返回这个会话的内容，可以重新打开这个会话再试一次。</span>
+              </div>
+              <button className="err-more" onClick={function () { tg('err'); }}>详情</button>
+              {open.err ? <div className="err-detail">{'get_entries: session file not found'}</div> : null}
+            </div>
+          </Blk>
+
+          <Blk kind="notice" nodeKind="notice">
+            <div className="notice">
+              <span>·</span>
+              <span>上下文已压缩（<b>12,340</b> → <b>8,100</b> tokens）</span>
+              <span className="time">14:26</span>
+            </div>
+          </Blk>
+
+          <Blk kind="compaction" nodeKind="none">
+            <div className="comp"><i /><span className="comp-chip">上下文已压缩</span><i /></div>
+            <div className="comp-cap">释放 42k tokens</div>
+          </Blk>
+
+          <Blk kind="custom" nodeKind="none">
+            <div className="ccard">
+              <button className="ccard-h" onClick={function () { tg('branch'); }}>
+                <span className="ccard-k">分支摘要</span>
+                <span className="ccard-t" style={{ fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--muted)' }}>3f1c9a7e</span>
+                <span className="fold" style={{ color: 'var(--custom-label)' }}>跳转分支</span>
+              </button>
+              <div className="ccard-b">上一轮改过 grep 卡的分组标题，这次从那条消息分出来。</div>
+            </div>
+          </Blk>
+
+          <Blk kind="meta" nodeKind="arrow">
+            <div className="mchange">
+              <span>模型切换 →</span>
+              <b>deepseek/deepseek-chat</b>
+              <span style={{ marginLeft: 'auto', color: 'var(--dim)' }}>14:31</span>
+            </div>
+          </Blk>
+
+          <Blk kind="custom" nodeKind="none">
+            <div className="ccard">
+              <button className="ccard-h" onClick={function () { tg('skill'); }}>
+                <span className="ccard-k">技能</span>
+                <span className="ccard-t" style={{ fontFamily: 'var(--mono)', fontSize: 13, color: 'var(--text)' }}>/skill:review</span>
+                <span className="fold" style={{ color: 'var(--custom-label)' }}>{open.skill ? '收起' : '展开'}</span>
+              </button>
+              {open.skill ? (
+                <div className="ccard-b">
+                  <div style={{ fontSize: 13, lineHeight: '20px', color: 'var(--custom-label)', marginBottom: 5 }}>Review</div>
+                  <ul>
+                    <li>问题：组内没有排序，已命名的那几条按文件名落到最后</li>
+                    <li>位置：会话列表的组内行序</li>
+                    <li>证据：组间排序取了组内最新一条的时间，组内却没人排</li>
+                  </ul>
+                </div>
+              ) : null}
+            </div>
+          </Blk>
+
+          <Blk kind="custom" nodeKind="none">
+            <div className="ccard">
+              <div className="ccard-h">
+                <span className="ccard-k">extension</span>
+              </div>
+              <div className="hook">已记录本次改动：1 个文件，+6 −5。</div>
+            </div>
+          </Blk>
+
+          <Blk kind="prose" nodeKind="none">
+            <MdP>两处都改完了：</MdP>
+            <MdOl items={[
+              <span key="1">组内按 <IC>lastActivityAt</IC> 倒序</span>,
+              <span key="2">组间改为用组内第一条的时间，空组回退 <IC>0L</IC></span>,
+            ]} />
+            <div className="code"><code>
+              <span className="cl">{'.sortedByDescending { (_, rows) ->'}</span>
+              <span className="cl">{'    rows.firstOrNull()?.lastActivityAt ?: 0L'}</span>
+              <span className="cl">{'}'}</span>
+            </code></div>
+            <MdP>下一步建议把「已命名」那一栏的排序也写进测试，免得再回归。<span className="caret" style={{ marginLeft: 3 }} /></MdP>
+          </Blk>
+
+        </div>
+      </div>
+
+      <div className="dock">
+        {approval ? (
+          <div className="approve">
+            <div className="approve-h">
+              <span className="approve-t">允许写入 SessionsScreen.kt? (5s)</span>
+              <span className="approve-q">还有 1 个扩展对话框在排队</span>
+            </div>
+            <div className="approve-a">
+              <button className="btn btn--ghost" onClick={decide}>拒绝</button>
+              <button className="btn btn--pri" onClick={decide}>允许</button>
+              <span className="approve-note">超时后自动拒绝，晚到的回复会被丢弃。</span>
+            </div>
+          </div>
+        ) : null}
+
+        <div className="queue">
+          <span className="qchip num">穿插 2</span>
+          <span className="qchip num">后续 1</span>
+          <button className="act" onClick={function () { setDraft('把「已命名」的排序也写进测试'); }}>收回并编辑</button>
+        </div>
+
+        <div className="composer">
+          <div className={'composer-box' + (bashMode ? ' bash' : '')}>
+            <textarea
+              value={draft}
+              onChange={function (e) { setDraft(e.target.value); }}
+              placeholder="输入消息，/ 选命令，! 直接跑命令，@ 提及文件"
+            />
+          </div>
+        </div>
+
+        <div className="keys">
+          <button className="key" onClick={function () { keyInsert('/'); }}>/</button>
+          <button className="key" onClick={function () { keyInsert('!'); }}>!</button>
+          <button className="key" onClick={function () { keyInsert('!!'); }}>!!</button>
+          <button className="key" onClick={function () { keyInsert('@'); }}>@</button>
+          <button className="key">图片</button>
+          <button className="key">编辑器</button>
+          <button className="key key--lv" style={{ borderColor: lvColor, color: lvColor }} onClick={cycleLevel}>◐ {level}</button>
+          <button className={draft ? 'send send--stop' : 'send'}>{draft ? '停止' : '发送'}</button>
+        </div>
+      </div>
+
+      {sheet === 'more' ? (
+        <Sheet title="更多" onClose={function () { setSheet(null); }}>
+          {['命令面板', '会话与队列', '会话树', '会话信息', '新建会话', '从历史消息分支', '复制当前会话', '重命名', '导出会话（按扩展名）', '跳到上一条提问', '跳到下一条提问', '复制最后一条回复'].map(function (t) {
+            return <button key={t} className="opt" onClick={function () { setSheet(null); }}>{t}</button>;
+          })}
+          <button className="opt" onClick={function () { allCards(!open.all); setSheet(null); }}>
+            {open.all ? '收起全部工具输出' : '展开全部工具输出'}
+          </button>
+          <button className="opt" onClick={function () { setSheet('model'); }}>选择模型…</button>
+          <button className="opt" onClick={function () { setSheet('model'); }}>思考等级…</button>
+        </Sheet>
+      ) : null}
+
+      {sheet === 'model' ? (
+        <Sheet
+          title="选择模型"
+          sub="这个列表来自运行中的引擎。导入过的模型在 设置 → 模型 里能看到它们的状态。"
+          onClose={function () { setSheet(null); }}
+          actions={[{ label: '重新读取' }, { label: '取消', kind: 'pri', onClick: function () { setSheet(null); } }]}
+        >
+          {['deepseek/deepseek-chat', 'anthropic/claude-sonnet-4-5', 'openai/gpt-5', 'deepseek/deepseek-reasoner'].map(function (m) {
+            const cur = m === 'deepseek/deepseek-chat';
+            return (
+              <button key={m} className={'opt' + (cur ? ' is-on' : '')} onClick={function () { setSheet(null); }}>
+                <span style={{ fontFamily: 'var(--mono)', fontSize: 13 }}>{m}</span>
+                {cur ? <em>当前</em> : <em>思考 · 图片</em>}
+              </button>
+            );
+          })}
+        </Sheet>
+      ) : null}
+    </div>
+  );
+}
+
+/* ═══════════ ② 会话列表 / 会话树（覆盖层） ═══════════ */
+const GROUPS = [
+  {
+    g: '工作区',
+    rows: [
+      { t: '会话列表排序错了 · 对话页顶部状态行', cur: true, model: 'deepseek/deepseek-chat', n: 18, named: true, time: '刚刚' },
+      { t: '把 diff 卡片的高度收紧', model: 'anthropic/claude-sonnet-4-5', n: 42, named: true, time: '12 分钟前' },
+      { t: '工具卡的展开按钮点不到', model: 'deepseek/deepseek-reasoner', n: 9, time: '1 小时前' },
+      { t: '设置里 reserveTokens 该填多少', model: 'openai/gpt-5', n: 27, branch: true, time: '3 小时前' },
+      { t: '检查一下 @ 提及补全超时', model: 'zai/glm-4.6', n: 6, time: '昨天' },
+      { t: '会话导出为 HTML 少了扩展渲染', model: 'anthropic/claude-sonnet-4-5', n: 55, named: true, time: '2 天前' },
+      { t: '队列里的消息怎么单独撤回', model: 'deepseek/deepseek-chat', n: 4, time: '3 天前' },
+      { t: '主题的对比度在深色下不达标', model: 'moonshotai/kimi-k2', n: 31, branch: true, named: true, time: '1 周前' },
+      { t: '按键条挡住了输入框', model: 'qwen/qwen3-coder-plus', n: 12, time: '1 周前' },
+    ],
+  },
+  {
+    g: 'pi-android',
+    rows: [
+      { t: '把 run-app-pure-checks 的输出看懂', model: 'deepseek/deepseek-chat', n: 7, time: '4 小时前' },
+      { t: 'pi-contract 检查失败的三个文件', model: 'anthropic/claude-sonnet-4-5', n: 14, branch: true, time: '5 天前' },
+      { t: '源码许可清单要补一个库', model: 'openai/gpt-5', n: 3, time: '2 周前' },
+    ],
+  },
+  {
+    g: '工作目录未记录',
+    rows: [
+      { t: '（未命名）', model: null, n: 0, time: '1 分钟前', nocwd: true },
+    ],
+  },
+];
+
+function SessionsOverlay({ initialView, initialEmpty, initialQ, onClose }) {
+  const [view, setView] = useState2(initialView || '列表');
+  const [emptyMode, setEmptyMode] = useState2(initialEmpty ? '还没有会话' : null);
+  const [q, setQ] = useState2(initialQ || '');
+  const [byName, setByName] = useState2(false);
+  const [namedOnly, setNamedOnly] = useState2(false);
+  const [sel, setSel] = useState2(null);
+  const [dlg, setDlg] = useState2(null);
+  const [treeQ, setTreeQ] = useState2('');
+  const [treeTab, setTreeTab] = useState2('分支');
+
+  let groups = GROUPS.map(function (grp) {
+    return {
+      g: grp.g,
+      rows: grp.rows.filter(function (r) {
+        if (namedOnly && !r.named) return false;
+        if (!q) return true;
+        const hay = (r.t + ' ' + grp.g + ' ' + (r.model || '')).toLowerCase();
+        return hay.indexOf(q.toLowerCase()) >= 0;
+      }),
+    };
+  }).filter(function (grp) { return grp.rows.length > 0; });
+  if (byName) {
+    groups = groups.slice().sort(function (a, b) { return a.g.localeCompare(b.g); });
+    groups = groups.map(function (grp) {
+      return { g: grp.g, rows: grp.rows.slice().sort(function (a, b) { return a.t.localeCompare(b.t); }) };
+    });
+  }
+  const noMatch = groups.length === 0;
+  const showEmpty = emptyMode === '还没有会话';
+
+  const selRow = (function () {
+    for (let i = 0; i < GROUPS.length; i++) {
+      for (let j = 0; j < GROUPS[i].rows.length; j++) {
+        if (GROUPS[i].rows[j].t === sel) return GROUPS[i].rows[j];
+      }
+    }
+    return null;
+  })();
+
+  return (
+    <div className="overlay">
+      <div className="obar">
+        <div className="ab-l">
+          <div className="obar-k">对话</div>
+          <div className="obar-t">会话</div>
+        </div>
+        <div className="obar-r">
+          <button className="act" onClick={function () { setDlg('导入'); }}>导入</button>
+          <button className="act">刷新</button>
+          <button className="act" onClick={onClose}>关闭</button>
+        </div>
+      </div>
+
+      <div className="sqrow">
+        <Seg items={['列表', '会话树']} value={view} onChange={function (v) { setView(v); }} />
+        <span style={{ marginLeft: 'auto' }} />
+      </div>
+
+      {view === '列表' ? (
+        <div style={{ flex: 1, minHeight: 0, position: 'relative', display: 'flex', flexDirection: 'column' }}>
+          <div className="searchbar" style={{ borderBottom: '1px solid var(--hairline)' }}>
+            <input
+              value={q}
+              onChange={function (e) { setQ(e.target.value); setEmptyMode(null); }}
+              placeholder="搜索名称 / 目录 / 文件名"
+            />
+          </div>
+          <div className="sqrow" style={{ borderBottom: '1px solid var(--hairline)' }}>
+            <button className="act" onClick={function () { setByName(false); }} style={{ color: !byName ? 'var(--text)' : 'var(--muted)' }}>按时间</button>
+            <button className="act" onClick={function () { setByName(true); }} style={{ color: byName ? 'var(--text)' : 'var(--muted)' }}>按名称</button>
+            <span style={{ width: 10 }} />
+            <button className="act" onClick={function () { setNamedOnly(false); }} style={{ color: !namedOnly ? 'var(--text)' : 'var(--muted)' }}>全部</button>
+            <button className="act" onClick={function () { setNamedOnly(true); }} style={{ color: namedOnly ? 'var(--text)' : 'var(--muted)' }}>仅命名</button>
+            <span className="act" style={{ marginLeft: 'auto', color: 'var(--dim)' }}>长按一行可删除该会话</span>
+          </div>
+
+          <div className="scroll">
+            {showEmpty ? (
+              <div className="empty">
+                <div className="mk"><PiMark size={34} /></div>
+                <div className="empty-t">还没有会话</div>
+                <div className="empty-b">会话按工作目录分组，这里会列出每一个目录的对话。</div>
+              </div>
+            ) : noMatch ? (
+              <div className="empty">
+                <div className="empty-t">没有匹配的会话</div>
+                <div className="empty-b">换一个关键词，或关掉「仅命名」筛选。</div>
+              </div>
+            ) : (
+              groups.map(function (grp) {
+                return (
+                  <div key={grp.g}>
+                    <div className="ghead"><span>{grp.g}</span><i /></div>
+                    {grp.rows.map(function (r) {
+                      const isSel = sel === r.t;
+                      return (
+                        <div key={r.t} className={'srow' + (isSel ? ' is-sel' : '')}>
+                          <button
+                            style={{ gridColumn: '1 / span 2', display: 'grid', gridTemplateColumns: 'minmax(0,1fr) auto', columnGap: 10, width: '100%' }}
+                            onClick={function () { setSel(isSel ? null : r.t); }}
+                          >
+                            <span className="srow-1">
+                              <span className="sname">{r.t}</span>
+                              {r.cur ? <span className="badge badge--cur">当前</span> : null}
+                            </span>
+                            <span className="srow-r">
+                              <span className="stime">{r.time}</span>
+                              {isSel ? <span className="act">更多</span> : null}
+                            </span>
+                            <span className="srow-2">{r.nocwd ? '· 未记录' : (grp.g + (r.model ? ' · ' + r.model : ''))}</span>
+                            <span />
+                            <span className="srow-3">
+                              {r.n} 条{r.branch ? ' · 分支' : ''}{r.named ? ' · 已命名' : ''}
+                            </span>
+                            <span />
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+              })
+            )}
+          </div>
+
+          {selRow ? (
+            <div className="fab act" style={{ background: 'var(--surf-high)', border: '1px solid var(--hairline)' }} onClick={function () { setDlg('动作'); }}>这一行的操作</div>
+          ) : (
+            <button className="fab" onClick={function () { setDlg('新建'); }}>新建会话</button>
+          )}
+        </div>
+      ) : (
+        <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+          <div className="sqrow">
+            <Seg items={['分支', '条目']} value={treeTab} onChange={function (v) { setTreeTab(v); }} />
+            <span style={{ marginLeft: 'auto' }} />
+          </div>
+          <div className="searchbar">
+            <input value={treeQ} onChange={function (e) { setTreeQ(e.target.value); }} placeholder="筛选条目文字" />
+            <button className="act">默认</button>
+          </div>
+          <div className="sqrow" style={{ color: 'var(--muted)' }}>分叉会新建一个会话文件，原会话保持不变。</div>
+          <div className="scroll">
+            {treeQ ? (
+              <div className="empty">
+                <div className="empty-t">没有匹配的条目</div>
+                <div className="empty-b">当前筛选是「{treeQ}」。换一个关键词，或再按一次筛选按钮循环到下一种模式。</div>
+              </div>
+            ) : treeTab === '分支' ? (
+              <div>
+                {[
+                  { d: 0, t: '会话列表排序错了 · 对话页顶部状态行', k: 'provider/model', cur: true },
+                  { d: 1, t: '先定位排序来源', k: 'entry · assistant' },
+                  { d: 1, t: 'read 会话列表', k: 'entry · tool' },
+                  { d: 2, t: '组内排序改完', k: 'branch_summary', fork: true },
+                  { d: 2, t: '把 diff 卡片的高度收紧', k: 'entry · user', fork: true },
+                  { d: 1, t: '下一步建议把「已命名」写进测试', k: 'entry · assistant' },
+                ].map(function (r, i) {
+                  return (
+                    <div className="trow" key={i} style={{ paddingLeft: 16 + r.d * 12 }}>
+                      <span className="trow-rail" />
+                      <span style={{ minWidth: 0 }}>
+                        <span className="trow-t">{r.t}</span>
+                        <span className="trow-k">{r.k}{r.cur ? ' · 当前叶' : ''}</span>
+                      </span>
+                      {r.fork ? <button className="act">分叉新会话</button> : null}
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="empty">
+                <div className="empty-t">没有条目</div>
+                <div className="empty-b">这条会话还没有可显示的条目。</div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {dlg === '新建' ? (
+        <Dialog
+          title="新建会话"
+          body="新会话会写进当前工作目录，能和桌面上的 pi 共用同一个工作区。"
+          actions={[{ label: '取消', onClick: function () { setDlg(null); } }, { label: '新建', kind: 'pri', onClick: function () { setDlg(null); } }]}
+          onClose={function () { setDlg(null); }}
+        />
+      ) : null}
+
+      {dlg === '导入' ? (
+        <Dialog
+          title="导入会话"
+          body="从 JSONL 文件导入并恢复会话。"
+          note="引擎还没有就绪，等它启动完成后再导入。"
+          actions={[{ label: '知道了', kind: 'pri', onClick: function () { setDlg(null); } }]}
+          onClose={function () { setDlg(null); }}
+        />
+      ) : null}
+
+      {dlg === '动作' ? (
+        <Dialog
+          title={sel}
+          body="对这个会话做什么？"
+          actions={[
+            { label: '取消', onClick: function () { setDlg(null); } },
+            { label: '新建子会话', onClick: function () { setDlg(null); } },
+            { label: '删除', kind: 'danger', onClick: function () { setDlg('删除'); } },
+          ]}
+          onClose={function () { setDlg(null); }}
+        />
+      ) : null}
+
+      {dlg === '删除' ? (
+        selRow && selRow.cur ? (
+          <Dialog
+            title="删除会话"
+            body={'「' + sel + '」是当前会话，pi 正在写入这个文件。先切换到别的会话再删除。'}
+            actions={[
+              { label: '取消', onClick: function () { setDlg(null); } },
+              { label: '删除', disabled: true },
+            ]}
+            onClose={function () { setDlg(null); }}
+          />
+        ) : (
+          <Dialog
+            title="删除会话"
+            body={'删除「' + sel + '」？这个会话会被移除，无法恢复。'}
+            actions={[
+              { label: '取消', onClick: function () { setDlg(null); } },
+              { label: '删除', kind: 'danger', onClick: function () { setDlg(null); } },
+            ]}
+            onClose={function () { setDlg(null); }}
+          />
+        )
+      ) : null}
+    </div>
+  );
+}
+
+/* ═══════════ ③ 工作区（项目现场） ═══════════ */
+function WorkspaceScreen() {
+  const [openRow, setOpenRow] = useState2('技能');
+  const [selRow, setSelRow] = useState2(null);
+
+  const RES = [
+    { k: '技能', v: '1 项', sub: [['review', '按仓库规则逐条核对改动，输出「问题 / 位置 / 证据」三列']] },
+    { k: '扩展', v: '1 个', sub: [['extension', '写入本次改动记录']] },
+    { k: '资源包', v: '0 个', sub: [] },
+    { k: '提示模板', v: '空', sub: [] },
+    { k: '主题', v: 'dark', sub: [] },
+    { k: '内建工具', v: '4 个', sub: [['read · bash · edit · write', '默认']] },
+  ];
+
+  return (
+    <div className="screen">
+      <div className="appbar">
+        <div className="ab-l">
+          <div className="ab-k">项目现场</div>
+          <div className="ab-t">工作区</div>
+        </div>
+        <div className="ab-r">
+          <div className="ab-s">pi-android</div>
+          <div className="ab-acts"><button className="act">选择目录</button><button className="act">刷新</button></div>
+        </div>
+      </div>
+
+      <div className="scroll">
+        <div className="wproj">
+          <div className="wproj-t">pi-android</div>
+          <div className="wproj-d">…/kotlin/app/pi/ui</div>
+          <div className="wproj-k">
+            <span>分支 <b>main</b></span>
+            <span>项目信任 <b>询问</b></span>
+            <span>主题 <b>dark</b></span>
+          </div>
+        </div>
+
+        <div className="wrun">
+          <span className="wrun-t">$ ./gradlew :app:compileDebugKotlin</span>
+          <span className="wrun-s">运行中 · 已运行 12.3 秒</span>
+        </div>
+
+        <div className="wsec"><span className="wrun-t" style={{ color: 'var(--muted)' }}>本次会话的改动</span><i /></div>
+        <button className={'wrow' + (selRow === 'SessionsScreen' ? ' is-open' : '')} onClick={function () { setSelRow(selRow === 'SessionsScreen' ? null : 'SessionsScreen'); }}>
+          <span>
+            <span className="wrow-t">SessionsScreen.kt</span>
+            <span className="wrow-d">改 1 次 · 214ms</span>
+          </span>
+          <span className="dbars" style={{ marginTop: 2 }}>
+            <span className="add num">+6</span>
+            <span className="del num">−5</span>
+          </span>
+        </button>
+        <button className={'wrow' + (selRow === 'Test' ? ' is-open' : '')} onClick={function () { setSelRow(selRow === 'Test' ? null : 'Test'); }}>
+          <span>
+            <span className="wrow-t">SessionGroupOrderTest.kt</span>
+            <span className="wrow-d">新建 · 96ms</span>
+          </span>
+          <span className="wrow-v add num">新增 38 行</span>
+        </button>
+        {selRow === 'SessionsScreen' ? (
+          <div className="wsub">
+            <div className="wsub-r"><span>组内排序</span><b>已补 lastActivityAt 倒序</b></div>
+            <div className="wsub-r"><span>组间排序</span><b>取组内第一条时间，空组回退 0L</b></div>
+            <div className="wsub-r"><span>相对时间列</span><b>限制一行</b></div>
+          </div>
+        ) : null}
+        {selRow === 'Test' ? (
+          <div className="wsub">
+            <div className="wsub-r"><span>用例</span><b>4 个</b></div>
+            <div className="wsub-r"><span>覆盖</span><b>组内倒序 · 组间取首条 · 空组 · 命名冲突</b></div>
+          </div>
+        ) : null}
+
+        <div className="wsec"><span className="wrun-t" style={{ color: 'var(--muted)' }}>这次会话碰过的文件</span><i /></div>
+        {[
+          { t: 'SessionsScreen.kt', d: '读 2 次 · grep 3 处 · 改 1 次', v: '13 行' },
+          { t: 'PiSettingsRegistry.kt', d: 'grep 3 处', v: '未改' },
+          { t: 'SessionTreeScreen.kt', d: 'grep 1 处', v: '未改' },
+          { t: 'app/src', d: 'find 12 项', v: '—' },
+          { t: '…/app/pi/ui', d: 'ls 8 项', v: '—' },
+        ].map(function (r) {
+          return (
+            <button key={r.t} className={'wrow' + (selRow === r.t ? ' is-open' : '')} onClick={function () { setSelRow(selRow === r.t ? null : r.t); }}>
+              <span>
+                <span className="wrow-t">{r.t}</span>
+                <span className="wrow-d">{r.d}</span>
+              </span>
+              <span className={'wrow-v' + (r.v === '未改' || r.v === '—' ? ' mut' : '')}>{r.v}</span>
+            </button>
+          );
+        })}
+
+        <div className="wsec"><span className="wrun-t" style={{ color: 'var(--muted)' }}>这个目录里的 pi 资源</span><i /></div>
+        {RES.map(function (r) {
+          const on = openRow === r.k;
+          return (
+            <div key={r.k}>
+              <button className={'wrow' + (on ? ' is-open' : '')} onClick={function () { setOpenRow(on ? null : r.k); }}>
+                <span>
+                  <span className="wrow-t">{r.k}</span>
+                </span>
+                <span className={'wrow-v' + (on ? '' : ' mut')}>{r.v}</span>
+              </button>
+              {on && r.sub.length > 0 ? (
+                <div className="wsub">
+                  {r.sub.map(function (s, i) {
+                    return <div className="wsub-r" key={i}><b>{s[0]}</b><em>{s[1]}</em></div>;
+                  })}
+                </div>
+              ) : null}
+            </div>
+          );
+        })}
+
+        <div className="wsec"><span className="wrun-t" style={{ color: 'var(--muted)' }}>这个会话</span><i /></div>
+        <div className="wsub" style={{ borderBottom: '1px solid var(--hairline-soft)' }}>
+          <div className="wsub-r"><span>消息</span><b>6 用户 · 12 模型 · 18 总计</b></div>
+          <div className="wsub-r"><span>工具调用</span><b>9 次调用 · 9 条结果</b></div>
+          <div className="wsub-r"><span>上下文占用</span><b>52%（104000 / 200000）</b></div>
+          <div className="wsub-r"><span>累计费用</span><b>$0.42</b></div>
+        </div>
+
+        <div className="wfoot">
+          这里不再是终端：工作区是这个会话的项目现场，终端在设置里作为兜底入口。
+          目录与分支来自运行时；改动与文件痕迹来自本次会话的工具调用；资源来自这个目录的 pi 约定。
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ═══════════ ④ 设置首页 ═══════════ */
+const SETTING_GROUPS = [
+  { t: '模型与推理', s: '默认 deepseek/deepseek-chat · ◐ 中' },
+  { t: '消息与网络', s: '穿插：逐条 · 后续：全部' },
+  { t: '上下文与压缩', s: '自动压缩开 · 400000 / 20000' },
+  { t: '重试与网络', s: '自动重试开 · 3 次' },
+  { t: '工具', s: '默认 read·bash·edit·write' },
+  { t: '会话', s: '由本应用固定（与 pi 共用）· 续接：开' },
+  { t: '扩展与资源', s: '1 个扩展 · 0 个资源包' },
+  { t: '外观', s: '主题 dark' },
+  { t: '终端与 Shell', s: '默认 /bin/bash · 等宽 13' },
+  { t: '安全与信任', s: '项目信任：询问' },
+  { t: '运行时与诊断', s: '保活：开' },
+  { t: '隐私与关于', s: '遥测：关' },
+];
+
+function SettingsHome({ onOpenGroup }) {
+  const [q, setQ] = useState2('');
+  const [sel, setSel] = useState2(null);
+  const list = SETTING_GROUPS.filter(function (g) {
+    if (!q) return true;
+    return (g.t + ' ' + g.s).toLowerCase().indexOf(q.toLowerCase()) >= 0;
+  });
+  return (
+    <div className="screen">
+      <div className="appbar">
+        <div className="ab-l">
+          <div className="ab-k">全部设置</div>
+          <div className="ab-t">设置</div>
+        </div>
+        <div className="ab-r">
+          <div className="ab-s">68 项</div>
+          <div className="ab-acts"><button className="act">搜索设置</button></div>
+        </div>
+      </div>
+
+      <div className="scroll">
+        <div className="ssearch">
+          <input value={q} onChange={function (e) { setQ(e.target.value); }} placeholder="搜索设置" />
+          <em>68 项</em>
+        </div>
+
+        <div className="mcard">
+          <div className="mcard-k">当前模型</div>
+          <div className="mcard-v">deepseek/deepseek-chat</div>
+          <div className="mcard-d">◐ 中 · 上下文 52%（104000 / 200000）· 累计 $0.42</div>
+        </div>
+
+        <div className="sect">设备<i /></div>
+        <div className={'setrow' + (sel === '设备能力' ? ' is-sel' : '')} onClick={function () { setSel('设备能力'); }}>
+          <span className="setrow-l">
+            <span className="setrow-t">设备能力</span>
+            <span className="setrow-d">4/6 组能力可用</span>
+          </span>
+          <span className="setrow-v">查看</span>
+        </div>
+
+        <div className="sect">扩展<i /></div>
+        <div className={'setrow' + (sel === '扩展包' ? ' is-sel' : '')} onClick={function () { setSel('扩展包'); }}>
+          <span className="setrow-l">
+            <span className="setrow-t">扩展包与项目信任</span>
+            <span className="setrow-d">1 个扩展 · 项目信任：询问</span>
+          </span>
+          <span className="setrow-v">打开</span>
+        </div>
+
+        <div className="sect">终端<i /></div>
+        <div className={'setrow' + (sel === '终端' ? ' is-sel' : '')} onClick={function () { setSel('终端'); }}>
+          <span className="setrow-l">
+            <span className="setrow-t">终端</span>
+            <span className="setrow-d">输入 pi 回车进入原版 TUI：订阅登录、会话导入、以及需要终端的扩展都在那边。</span>
+          </span>
+          <span className="setrow-v">打开</span>
+        </div>
+
+        <div className="sect">关于<i /></div>
+        <div className={'setrow' + (sel === '开源许可' ? ' is-sel' : '')} onClick={function () { setSel('开源许可'); }}>
+          <span className="setrow-l">
+            <span className="setrow-t">开源许可</span>
+            <span className="setrow-d">App 内分发的第三方组件、许可证原文，以及 GPL / LGPL 程序的源代码获取方式</span>
+          </span>
+          <span className="setrow-v">打开</span>
+        </div>
+
+        <div className="sect">全部设置<i /></div>
+        {list.length === 0 ? (
+          <div className="empty" style={{ padding: '26px 22px' }}>
+            <div className="empty-t">没有匹配的设置</div>
+            <div className="empty-b">试试字段名（reserveTokens、sessionDir），或者斜杠命令（/compact、/tree）。</div>
+          </div>
+        ) : (
+          list.map(function (g) {
+            return (
+              <div key={g.t} className={'setrow' + (sel === g.t ? ' is-sel' : '')} onClick={function () { setSel(g.t); onOpenGroup(g.t); }}>
+                <span className="setrow-l">
+                  <span className="setrow-t">{g.t}</span>
+                  <span className="setrow-d">{g.s}</span>
+                </span>
+                <span className="chev">›</span>
+              </div>
+            );
+          })
+        )}
+
+        <div className="sfoot">
+          共 68 项设置。搜索同时匹配标题、说明与字段名，输入 reserveTokens 或 /compact 都能直达。
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ═══════════ ⑤ 设置的一个分组页 ═══════════ */
+const GROUP_DEFS = {
+  '模型与推理': [
+    { sect: '模型' },
+    { t: '已导入的模型', kind: 'action', d: '看这台设备上配好的厂商与模型，每个模型能不能用' },
+    { t: '默认厂商', kind: 'value', v: 'DeepSeek', opts: ['DeepSeek', 'Anthropic', 'OpenAI', '智谱'], badge: '新会话' },
+    { t: '默认模型', kind: 'value', v: 'deepseek/deepseek-chat', opts: ['deepseek/deepseek-chat', 'anthropic/claude-sonnet-4-5', 'openai/gpt-5'], badge: '新会话' },
+    { t: '默认思考等级', kind: 'value', v: '中', opts: ['关闭', '极简', '低', '中', '高', '很高', '最高'], badge: '新会话' },
+    { t: '逐模型思考等级', kind: 'list', v: '2 项', badge: '新会话' },
+    { t: '思考预算', kind: 'list', v: '未设置', badge: '新会话' },
+    { sect: '思考与缓存' },
+    { t: '隐藏思考块', kind: 'switch', on: true },
+    { t: '缓存未命中提示', kind: 'switch', on: false },
+    { t: '循环模型', kind: 'list', v: '全部模型', badge: '需重启引擎' },
+    { sect: '凭证' },
+    { t: 'API Key', kind: 'action', d: '为每个厂商写入 Key，写完要重启引擎' },
+    { t: '订阅登录', kind: 'action', d: '订阅登录要在 pi 的原版 TUI 里做，本应用没有入口。用 API Key 的厂商可以在上面的「API Key」里配置。' },
+    { t: '本地模型（llama.cpp）', kind: 'action', d: '把本机上的模型接进来' },
+  ],
+  '外观': [
+    { sect: '主题与密度' },
+    { t: '主题', kind: 'value', v: 'dark', opts: ['dark', 'light'], badge: '需重载' },
+    { t: '字号微调', kind: 'number', v: '0' },
+    { t: '消息密度', kind: 'value', v: '舒适', opts: ['舒适', '紧凑', '宽松'] },
+    { sect: '块' },
+    { t: '显示时间戳', kind: 'switch', on: true },
+    { t: '思考块默认折叠', kind: 'switch', on: true },
+    { sect: '图片' },
+    { t: '图片自动缩放', kind: 'switch', on: true, badge: '新会话' },
+    { t: '屏蔽图片', kind: 'switch', on: false, badge: '新会话' },
+  ],
+  '安全与信任': [
+    { sect: '信任' },
+    { t: '项目信任策略', kind: 'value', v: '询问', opts: ['询问', '总是信任', '从不信任'], badge: '需重启引擎' },
+    { sect: '紧急' },
+    { t: '紧急停止', kind: 'action', danger: true, d: '终止模型调用、工具调用与正在跑的命令；已写入磁盘的会话不会丢失' },
+  ],
+  '运行时与诊断': [
+    { sect: '运行时' },
+    { t: 'pi 版本', kind: 'text', v: '—', readonly: true },
+    { t: 'Node 版本', kind: 'text', v: '—', readonly: true },
+    { t: '运行时占用', kind: 'text', v: '—', readonly: true },
+    { t: '引擎启动耗时', kind: 'text', v: '未读取', readonly: true },
+    { sect: '进程' },
+    { t: '离线模式', kind: 'switch', on: false, badge: '需重启引擎' },
+    { t: '自定义系统提示', kind: 'text', v: '未设置', badge: '需重启引擎' },
+    { t: '追加系统提示', kind: 'text', v: '未设置', badge: '需重启引擎' },
+    { t: '缓存保留策略', kind: 'value', v: '未设置', opts: ['未设置', '短', '长'], badge: '需重启引擎' },
+    { t: '不加载上下文文件', kind: 'switch', on: false, badge: '需重启引擎' },
+    { t: '重启引擎', kind: 'action', d: '重启会终止正在进行的回合，已写入磁盘的会话不会丢失。' },
+    { t: '后台保活', kind: 'switch', on: true, badge: '需重启' },
+    { t: '唤醒锁状态', kind: 'text', v: '—', readonly: true },
+    { sect: '诊断' },
+    { t: '导出诊断报告', kind: 'action', d: '纯文本，汇总最后一次退出、运行时事实、关键路径与最近的失败' },
+  ],
+};
+
+function SettingsGroupScreen({ group, onBack }) {
+  const defs = GROUP_DEFS[group] || GROUP_DEFS['模型与推理'];
+  const [sw, setSw] = useState2({});
+  const [sheet, setSheet] = useState2(null);
+  const [dlg, setDlg] = useState2(null);
+  const [sel, setSel] = useState2(null);
+
+  function switchOn(r) {
+    if (r.t in sw) return sw[r.t];
+    return !!r.on;
+  }
+  function badgeText(b) { return b; }
+  function openRow(r) {
+    setSel(r.t);
+    if (r.kind === 'switch') return;
+    if (r.kind === 'action') { setDlg(r); return; }
+    if (r.kind === 'value') { setSheet({ mode: 'opts', row: r }); return; }
+    if (r.kind === 'list') { setSheet({ mode: 'list', row: r }); return; }
+    if (r.kind === 'number') { setSheet({ mode: 'num', row: r }); return; }
+    if (r.kind === 'text') { setSheet({ mode: r.readonly ? 'ro' : 'text', row: r }); return; }
+  }
+
+  return (
+    <div className="screen">
+      <div className="appbar">
+        <div className="ab-l">
+          <div className="ab-k"><button className="act" onClick={onBack}>返回</button></div>
+          <div className="ab-t">{group}</div>
+        </div>
+        <div className="ab-r">
+          <div className="ab-s">设置</div>
+        </div>
+      </div>
+
+      <div className="scroll">
+        {defs.map(function (r, i) {
+          if (r.sect) return <div className="sect" key={'s' + i}>{r.sect}<i /></div>;
+          const on = switchOn(r);
+          const isSel = sel === r.t;
+          return (
+            <div key={r.t} className={'setrow' + (isSel ? ' is-sel' : '')} onClick={function () { openRow(r); }}>
+              <span className="setrow-l">
+                <span className={'setrow-t' + (r.danger ? ' act-danger' : (r.kind === 'action' ? ' act-primary' : ''))}>
+                  <span>{r.t}</span>
+                  {r.badge ? (
+                    <span
+                      className={'badge ' + (r.badge === '仅新会话' ? 'badge--new' : (r.badge === '新会话' ? 'badge--new' : (r.badge === '需重载' ? 'badge--reload' : 'badge--restart')))}
+                      onClick={function (e) { e.stopPropagation(); setDlg({ t: r.t, badge: r.badge, kind: 'badge' }); }}
+                    >{badgeText(r.badge)}</span>
+                  ) : null}
+                </span>
+                {r.d ? <span className="setrow-d">{r.d}</span> : null}
+              </span>
+              {r.kind === 'switch' ? (
+                <Switch on={on} onChange={function (next) { const n = Object.assign({}, sw); n[r.t] = next; setSw(n); }} />
+              ) : r.kind === 'action' ? null : (
+                <span style={{ display: 'flex', alignItems: 'center' }}>
+                  <span className={'setrow-v' + (r.v && r.v !== '未设置' && r.v !== '—' ? ' set' : '')}>{r.v}</span>
+                  <span className="chev">›</span>
+                </span>
+              )}
+            </div>
+          );
+        })}
+
+        <div className="sfoot">
+          改完不一定马上生效：带徽标的行要按它的方式生效。徽标点一下能看到说明。
+        </div>
+      </div>
+
+      {sheet && sheet.mode === 'opts' ? (
+        <Sheet
+          title={sheet.row.t}
+          sub="选一个值。"
+          onClose={function () { setSheet(null); }}
+          actions={[{ label: '取消', onClick: function () { setSheet(null); } }]}
+        >
+          {sheet.row.opts.map(function (o) {
+            const cur = o === sheet.row.v;
+            return (
+              <button key={o} className={'opt' + (cur ? ' is-on' : '')} onClick={function () { setSheet(null); }}>
+                <span style={{ fontFamily: 'var(--mono)', fontSize: 13 }}>{o}</span>
+                {cur ? <em>当前</em> : null}
+              </button>
+            );
+          })}
+        </Sheet>
+      ) : null}
+
+      {sheet && sheet.mode === 'list' ? (
+        <Sheet
+          title={sheet.row.t}
+          sub="每行一项，支持 glob 与排除标记：!pattern 排除、+path 强制包含、-path 强制排除。"
+          onClose={function () { setSheet(null); }}
+          actions={[{ label: '取消', onClick: function () { setSheet(null); } }, { label: '确定', kind: 'pri', onClick: function () { setSheet(null); } }]}
+        >
+          <div className="opt" style={{ fontFamily: 'var(--mono)', fontSize: 13, color: 'var(--muted)' }}>{sheet.row.v}</div>
+        </Sheet>
+      ) : null}
+
+      {sheet && sheet.mode === 'num' ? (
+        <Sheet
+          title={sheet.row.t}
+          sub="按需微调，正负都行。"
+          onClose={function () { setSheet(null); }}
+          actions={[{ label: '取消', onClick: function () { setSheet(null); } }, { label: '确定', kind: 'pri', onClick: function () { setSheet(null); } }]}
+        >
+          <div className="opt" style={{ justifyContent: 'center', gap: 18 }}>
+            <span className="btn btn--ghost">−1</span>
+            <span style={{ fontFamily: 'var(--mono)', fontSize: 22 }}>{sheet.row.v}</span>
+            <span className="btn btn--ghost">+1</span>
+          </div>
+        </Sheet>
+      ) : null}
+
+      {sheet && (sheet.mode === 'text' || sheet.mode === 'ro') ? (
+        <Sheet
+          title={sheet.row.t}
+          sub={sheet.mode === 'ro' ? '这一行是只读的，来自运行中的引擎。' : '留空表示未设置。'}
+          onClose={function () { setSheet(null); }}
+          actions={sheet.mode === 'ro'
+            ? [{ label: '知道了', kind: 'pri', onClick: function () { setSheet(null); } }]
+            : [{ label: '取消', onClick: function () { setSheet(null); } }, { label: '确定', kind: 'pri', onClick: function () { setSheet(null); } }]}
+        >
+          <div className="opt" style={{ fontFamily: 'var(--mono)', fontSize: 13, color: 'var(--muted)' }}>{sheet.row.v}</div>
+        </Sheet>
+      ) : null}
+
+      {dlg && dlg.kind === 'badge' ? (
+        <Dialog
+          title={dlg.badge === '需重载' ? '需要重载' : (dlg.badge === '需重启' ? '需要重启 App' : '需要重启引擎')}
+          body={'「' + dlg.t + '」改完之后要' + (dlg.badge === '需重载' ? '重载一次' : (dlg.badge === '需重启' ? '重启 App' : '重启引擎')) + '才会生效。'}
+          actions={[{ label: '稍后', onClick: function () { setDlg(null); } }, { label: dlg.badge === '需重载' ? '立即重载' : (dlg.badge === '需重启' ? '重启 App' : '重启引擎'), kind: 'pri', onClick: function () { setDlg(null); } }]}
+          onClose={function () { setDlg(null); }}
+        />
+      ) : null}
+
+      {dlg && dlg.kind !== 'badge' ? (
+        dlg.t === '重启引擎' ? (
+          <Dialog
+            title="重启引擎"
+            body="现在有回合正在运行。重启会终止模型调用、工具调用与正在跑的命令，它们都不会恢复；已写入磁盘的会话不会丢失。"
+            actions={[{ label: '取消', onClick: function () { setDlg(null); } }, { label: '重启', kind: 'pri', onClick: function () { setDlg(null); } }]}
+            onClose={function () { setDlg(null); }}
+          />
+        ) : dlg.danger ? (
+          <Dialog
+            title="紧急停止"
+            body="会立刻终止模型调用、工具调用与正在跑的命令。已写入磁盘的会话不会丢失。"
+            actions={[{ label: '取消', onClick: function () { setDlg(null); } }, { label: '确认执行', kind: 'danger', onClick: function () { setDlg(null); } }]}
+            onClose={function () { setDlg(null); }}
+          />
+        ) : (
+          <Dialog
+            title={dlg.t}
+            body={dlg.d || '这个入口会在 pi 运行时打开对应的页面。'}
+            note="这个入口当前不可用。"
+            actions={[{ label: '知道了', kind: 'pri', onClick: function () { setDlg(null); } }]}
+            onClose={function () { setDlg(null); }}
+          />
+        )
+      ) : null}
+    </div>
+  );
+}
+
+/* ═══════════ 目的地容器 ═══════════ */
+function SettingsDest({ startGroup }) {
+  const [group, setGroup] = useState2(startGroup || null);
+  if (group) return <SettingsGroupScreen group={group} onBack={function () { setGroup(null); }} />;
+  return <SettingsHome onOpenGroup={function (g) { if (GROUP_DEFS[g]) setGroup(g); }} />;
+}
+
+function PiApp({ startTab, overlay, sessionsView, sessionsEmpty, sessionsQ, settingsGroup, chatApproval, onChatDecide, chatView }) {
+  const [tab, setTab] = useState2(startTab || 'chat');
+  const [ov, setOv] = useState2(overlay || null);
+  React.useEffect(function () { setOv(overlay || null); }, [overlay]);
+  return (
+    <div className="app">
+      <div className="stage">
+        {tab === 'chat' ? (
+          <ChatScreen
+            openSessions={function () { setOv('sessions'); }}
+            showApproval={chatApproval}
+            onDecide={onChatDecide}
+            view={chatView}
+          />
+        ) : null}
+        {tab === 'workbench' ? <WorkspaceScreen /> : null}
+        {tab === 'settings' ? <SettingsDest startGroup={settingsGroup || null} /> : null}
+        {ov === 'sessions' ? (
+          <SessionsOverlay
+            initialView={sessionsView || '列表'}
+            initialEmpty={!!sessionsEmpty}
+            initialQ={sessionsQ || ''}
+            onClose={function () { setOv(null); }}
+          />
+        ) : null}
+      </div>
+      <TabBar active={tab} onSelect={function (t) { setTab(t); setOv(null); }} />
+    </div>
+  );
+}
+
+/* ═══════════ 五台设备 ═══════════ */
+function Cell(props) {
+  return (
+    <div className="cell">
+      <div className="cap">{props.title}{props.note ? <em>{props.note}</em> : null}</div>
+      {props.controls ? <div className="ctrls">{props.controls}</div> : null}
+      <AndroidFrame width={412} height={892} darkMode time="9:41" battery={82}>
+        {props.children}
+      </AndroidFrame>
+    </div>
+  );
+}
+
+function App() {
+  const [c1, setC1] = useState2(true);
+  const [cv, setCv] = useState2('tools');
+  const [c2, setC2] = useState2(null);
+  const [c2view, setC2view] = useState2('列表');
+  const [c5, setC5] = useState2('模型与推理');
+
+  return (
+    <div className="board">
+      <div className="hd">
+        <div className="hd-t">方向 C · 作者性取向 ｜ 设计者视角：Panic Inc.（Cabel Sasser）</div>
+        <div className="hd-s">
+          母题 = 执行脊：转录左缘是一条连续的量尺，刻度长度与分段 = 该步真实耗时，diff 的双条 = 真实增删行数。
+          全稿克制到 80%，只有「正在跑的那一步」发光。
+        </div>
+      </div>
+
+      <div className="row">
+        <Cell
+          title="① 对话（hero，主战场）"
+          note="默认落在工具带，好让竖脊刻度一眼可见；左上是会话名，点它开列表"
+          controls={
+            <React.Fragment>
+              <span className="ctrl-k">视野</span>
+              <button className={'ctrl' + (cv === 'top' ? ' is-on' : '')} onClick={function () { setCv('top'); }}>顶部</button>
+              <button className={'ctrl' + (cv === 'tools' ? ' is-on' : '')} onClick={function () { setCv('tools'); }}>工具带</button>
+              <button className={'ctrl' + (cv === 'bottom' ? ' is-on' : '')} onClick={function () { setCv('bottom'); }}>末尾</button>
+              <span className="ctrl-k">待决策</span>
+              <button className={'ctrl' + (c1 ? ' is-on' : '')} onClick={function () { setC1(true); }}>显示</button>
+              <button className={'ctrl' + (!c1 ? ' is-on' : '')} onClick={function () { setC1(false); }}>隐藏</button>
+            </React.Fragment>
+          }
+        >
+          <PiApp
+            key="a1"
+            startTab="chat"
+            chatView={cv}
+            chatApproval={c1}
+            onChatDecide={function () { setC1(false); }}
+          />
+        </Cell>
+
+        <Cell
+          title="② 会话列表（覆盖层，从对话页左上角进入）"
+          note="列表 ↔ 会话树 同层切换；两种空态都在这里"
+          controls={
+            <React.Fragment>
+              <span className="ctrl-k">覆盖层</span>
+              <button className={'ctrl' + (c2view === '列表' && !c2 ? ' is-on' : '')} onClick={function () { setC2view('列表'); setC2(null); }}>列表</button>
+              <button className={'ctrl' + (c2view === '会话树' ? ' is-on' : '')} onClick={function () { setC2view('会话树'); setC2(null); }}>会话树</button>
+              <button className={'ctrl' + (c2 === 'empty' ? ' is-on' : '')} onClick={function () { setC2view('列表'); setC2('empty'); }}>还没有会话</button>
+              <button className={'ctrl' + (c2 === 'nomatch' ? ' is-on' : '')} onClick={function () { setC2view('列表'); setC2('nomatch'); }}>没有匹配</button>
+            </React.Fragment>
+          }
+        >
+          <PiApp
+            key={'b' + c2view + (c2 || '')}
+            startTab="chat"
+            overlay="sessions"
+            sessionsView={c2view}
+            sessionsEmpty={c2 === 'empty'}
+            sessionsQ={c2 === 'nomatch' ? 'zzz' : ''}
+          />
+        </Cell>
+
+        <Cell title="③ 工作区（项目现场）" note="本版工作区 = 这个会话的项目现场；终端住在设置里">
+          <PiApp startTab="workbench" />
+        </Cell>
+
+        <Cell title="④ 设置首页" note="设备 / 扩展 / 终端 / 关于 四个入口 + 12 个分组，搜索能筛">
+          <PiApp startTab="settings" />
+        </Cell>
+
+        <Cell
+          title="⑤ 设置的一个分组页"
+          note="六种行型 + 生效方式徽标 + 危险行确认态"
+          controls={
+            <React.Fragment>
+              <span className="ctrl-k">分组</span>
+              {['模型与推理', '外观', '安全与信任', '运行时与诊断'].map(function (g) {
+                return <button key={g} className={'ctrl' + (c5 === g ? ' is-on' : '')} onClick={function () { setC5(g); }}>{g}</button>;
+              })}
+            </React.Fragment>
+          }
+        >
+          <PiApp key={'c' + c5} startTab="settings" settingsGroup={c5} />
+        </Cell>
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+
+<!--
+════════════════════════════════════════════════════════════════════
+  交付前自检（逐条打勾）
+
+  [✓] 5 台 AndroidFrame 都是 412×892、darkMode，坐标尺寸与另两版一致；设备框的样式常量与组件原样内联，未改动。
+  [✓] 每台都能交互：底部三项导航可切（对话/工作区/设置）；会话列表从对话页左上角会话名打开、可关闭；
+      工具卡（read / grep / edit / diff / bash / 技能 / 分支摘要 / 错误详情）可展开收起；
+      「更多」与「选择模型」弹底部 sheet；长按替代动作、删除确认（当前会话那条按钮禁用）、导入提示、
+      危险行的确认执行、生效方式徽标的说明框都是真对话框；列表行可选中（selectedBg）；开关可点。
+      全部用 onClick，无 scrollIntoView，hover 有反馈。
+  [✓] 颜色 100% 来自 pi 令牌：仅用 dark 主题的 56 个令牌 + pi 自身的中性阶派生 + 由 pi 色计算出的对比度提升档
+      （--body-on-tool，机制同 piContrast）。无渐变、无模糊、无辉光、无新色相。
+      透明度只用于 pi 自己的 hairline 做法（borderMuted 的 alpha）与 diff 行底 8%，事实底稿明确 alpha 属 App 侧。
+      设备框之外那一圈页面底色按 spec §4 指定的 #0e0e12（设备内的设计面 100% 令牌）。
+  [✓] 字号：正文 14px；机器文本 13px；元信息与页脚 12px；标签 12px；小标题 17px；节点里的状态符号是 10px 的图形标记，
+      且状态永远另有文字（运行中 / 成功 / 失败），不靠颜色与符号单独承载。对比度：正文 --text 对 --page 约 11.8:1；
+      页面元信息 --muted 约 4.6:1；工具卡内二级文字 --body-on-tool 对三种工具底色均 ≥4.7:1。
+  [✓] 中文排印：字体链西文在前中文在后；font-synthesis:none；line-break:strict；overflow-wrap:anywhere；
+      text-wrap:pretty；引号用「」；数字全部 tabular-nums（耗时、行数、token、费用、行号）；字号档位 5 档（≤6）；
+      全稿两个中文字族（无衬线 + 等宽）；大字的张力靠同族字重对比（700 压 400），不靠花体。
+  [✓] 真实文案，不是 Lorem：块类型、状态词、页脚格式、按钮词、设置行标题与值、空态、异常文案全部取自事实底稿；
+      对话正文、diff 正文、命令输出用的是底稿里的样例内容。用户可见文本里没有类名、没有内部术语、
+      没有「终端」以外的实现词；App 自己的文案零路径（路径只出现在机器内容区，见顶部说明）。
+  [✓] 工作区选了一个答案并在页面里标注：候选 A「这个会话的项目现场」。页面底部那行小字写明了数据来源，
+      并在顶部注释里写明「本版工作区 = 候选 A」。
+  [✓] 能说出「form 来自内容的哪里」：来自工具卡页脚的真实耗时（成功 · 132ms · 13 行）、diff 卡头的 +6 −5、
+      以及思考块的等级色——执行脊只是把这些已经存在的数字画成了长度与分段。
+  [✓] 反 slop 逐条：无紫蓝渐变、无 emoji、无「圆角卡片 + 左侧彩色 accent 条」（左侧被执行脊取代）、
+      无装饰性 stats 与徽章堆砌（每个徽章都对应一条生效时机的真实语义）、无每个标题配图标、
+      无大而空的留白；留白只在分组之间作为构图停顿。
+  [✓] 不设 todo / 待办 / plan / 子代理块，不画复选方框；清单语义由助手正文的真实 markdown 列表承担。
+  [✓] 未使用「没有响应」这类源码里不存在的措辞；进行中态用真实措辞（运行中 · 已运行 12.3 秒 · 18 行）。
+  [✓] edit 卡与 diff 卡是两张独立的卡，未合并。
+  [✓] 导航按本次裁决：底部三项；会话列表是覆盖层；工作区是项目现场；终端是设置首页里的一个入口行；
+      竖屏 412 不做两栏（两栏只在 ≥600dp 出现，本稿不含）。
+  [✓] 单文件、内联、file:// 双击可开；不引用任何外部图片；React 与 Babel 用 spec 给定的版本与 integrity，未改。
+════════════════════════════════════════════════════════════════════
+-->
+</body>
+</html>

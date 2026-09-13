@@ -1,0 +1,2426 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>pi · UI 重构方向 A · 读数轨</title>
+
+<!--
+================================================================================
+方向 A · 秒数轮盘 #16 —— Terminal-Core Soft-Futurism（等宽字 + 等距立方）
+参照物：Cursor 的开发者终端美学 × Teenage Engineering 工业极简
+本版取向：「仪表」——信息以「读数 + 轨道」组织，对话流是一条带读数的执行轨道
+配色：只用 pi 主题令牌（brand-spec §2.1 dark + §3 派生表面阶），无渐变/无模糊/无辉光
+================================================================================
+
+── spec §11 · form 推导五问（逐条作答） ───────────────────────────────────────
+
+1) 叙事角色
+   对话 = hero（整条执行轨道 + 顶部的横读数带）；会话列表 = 索引入口（读数化的行）；
+   工作区 = 数据（这个会话的项目现场，等距底板 + 读数格）；设置首页 = 结尾（索引）；
+   设置分组页 = 结尾的细节页（一行一台仪器）。角色决定密度：hero 最高，索引页次之。
+
+2) 观众距离
+   10cm 手机。正文 14px（等宽读数同档）、标签/读数标签 12px、行高 1.45。
+   一屏要放下 6–8 个块 → 靠 16px 块距 + 24px 轨道缩进，而不是给每块套一张 16dp 圆角卡片。
+   圆角从「卡片语言」收敛到 8（分区）/4（chip），把层级交给发丝线与读数。
+
+3) 视觉温度
+   冷静 · 精密（仪器面板）。暖白 --text 落在炭黑 --page 上，全屏平铺、只在需要内容容器时
+   才抬起一个表面阶（工具卡用 pi 的状态底色、sheet 用 --surf-high）。唯一的「热」是状态：
+   success / error / warning 与思考等级色温刻度。温度差全部由字号与发丝线承担。
+
+4) 容量估算（先画 3 个 5 秒 thumbnail）
+   缩略 1 · 对话：一条竖轨 + 8 个节点方块 + 右侧读数 → 塞得下，每块平均 70px（1 行等宽头 + 1 行读数）。
+   缩略 2 · 设置首页：4 格横读数带 + 当前模型卡（含 7 段色温刻度）+ 12 格 bento → 一屏内基本可见。
+   缩略 3 · 工作区：一块等距底板 + 4 个读数格 → 不空，因为每格都有真实读数（调用次数/痕迹/资源/运行时）。
+   结论：对话页一屏 6–8 块可行；工具卡折叠态 46px、展开态按真实行数增长。
+
+5) 视觉母题：**读数轨（readout rail）**
+   来自内容哪里：pi 的每个工具块本身就是三段式——「工具名 / 状态符号 / 页脚读数（成功 · 132ms · 13 行）」。
+   本版把这三段放大成一套仪器语法：
+     · 竖轨 = 一次会话的执行轨道，14 种块是同一条轨上的节点（节点形状 = 块类型，节点色 = 状态）；
+     · 节点右侧 6px 刻度线 = 尺规语法，整条轨读起来像一条带刻度的记录纸；
+     · 块脚右端的 1px 横线长度 ∝ log2(耗时) = 时间轴（132ms 与 6.4 秒一眼可比）；
+     · 屏幕顶部同族的**横读数带**（label 12px + 值 14px tabular-nums，格间 1px 发丝线）＝ 状态行的仪器化；
+     · 工作区用同一族的等距底板表达「项目现场」的层次（等距 = 把目录/资源/会话三层叠起来看）。
+   母题复用到的真实 token：PiSpacing.contextRing(20dp/2dp)、errorDot、stripe、hairline、
+   toolDiffAdded/Removed/Context、thinking(level) 七级色温。
+
+── 假设（写下来以便复核） ────────────────────────────────────────────────────
+· **导航按 03-navigation-decision.md 的裁决**：底栏三项 = 对话 / 工作区 / 设置；
+  会话列表是覆盖层（从对话页左上角会话名进入，列表 ↔ 会话树 同层切换，新建会话也在这里）；
+  终端降格为设置首页里的一个入口行（与 设备 / 扩展 / 关于 同级），点进去是全屏终端页。
+  竖屏手机不做两栏；≥600dp 宽屏才把「项目现场」与终端并排（页内已用 12px 注明）。
+· 工作区选 **候选 A：这个会话的项目现场**。只用 pi 真实可读的东西：会话工作目录末段、
+  .pi 资源清单计数（技能 / 提示模板 / 扩展 / 资源包 / 主题，值是分组副行的真实形态）、
+  git 分支名与「本次会话改过/新建」的文件（改动清单来自转录里的 read/edit/write/diff 卡，
+  页内 12px 已注明「git 侧只读到分支名」，不发明文件树、不发明 git 的改动行数）、
+  运行时只读行与保活/离线开关。
+· 品牌禁区与裁决冲突的处理：裁决要求设置首页有「终端」入口行，故该处按裁决保留「终端」字样；
+  其余位置不出现终端入口。设置分组标题「终端与 Shell」显示为「Shell」、行「终端字号」写作
+  「等宽字号」（值 13 与源一致）、会话示例标题里的「终端」二字去掉。
+· 块类型以 02-real-content §0 为唯一权威：没有 todo / 待办 / plan / 子代理块，
+  也**没有复选方框**；「清单」以助手正文里的真实 markdown 有序列表呈现（块 28 的 1./2.）。
+· edit 卡与 diff 卡是两张不同的卡（02 块 08 / 块 09），本版不合并。
+· 「没有响应」这句话源码里不存在，本版不写；用「状态行停在工作中 + 壳卡页脚停在
+  已运行 12.3 秒 + 回到最新悬浮」三种真实表现表达假死。
+· 进行中态：AppBar 状态行「工作中」、通用工具卡「运行中 …」、Shell 页脚
+  「运行中 · 已运行 12.3 秒 · 18 行」、压缩块「正在压缩上下文…」。光标按 §9 只做静态呈现
+  （不写循环动画），形状与色值照 AssistantTextBlock 的 8×16 / accent 0.65。
+· 工具卡与 diff 正文里的路径/类名是 pi 自己的输出（02 素材，逐字引用），不算界面文案；
+  界面 chrome 层（标题、副行、说明、空态、设置行）零路径、零类名。
+· 用户消息正文里的长句按 412px 宽度重新折行，文字逐字不改。
+· 会话行的 12 条标题/数字沿用 02 §1.4 的示例形状（该表已标注「标题与数字为编造」）。
+· 工具卡名 `notes_lookup`、参数摘要 `scope=session`（块 25 通用回退卡）与 diff 的 +5/−2
+  是本版为自洽而编的示例（02 该处标注为示例）；块 23 的 +5 −2 与 diff 保持一致。
+· 对比度纪律：--muted(#808080) 只落在 --page(#18181E) 上（4.5:1）；任何抬起的表面上，
+  次级信息改用 --text 12px + 发丝线，靠字号而非颜色做层级（令牌里没有更亮的次级灰）。
+  状态色只用于字形/色条/刻度（非文本对比 ≥3:1），正文一律 --text。
+
+── 交互（每台都是一份完整 App 的独立状态机，初值不同） ────────────────────────
+底栏三项每台内都能切；对话页左上角会话名 → 会话列表覆盖层（列表 / 会话树 / 无会话 / 无匹配）；
+开场滚到 edit 卡（用 offsetTop 定位，不猜像素）：一屏里同时看到 edit 卡、真实 diff、
+write 卡、bash 成功卡的输出与耗时刻度、以及下一张 pending 卡；
+工具卡点击展/收；diff 展/收；审批行 → 弹窗（允许/拒绝 + 倒计时 + 排队数）；
+用户消息 → 动作菜单；模型 chip → 选择模型 sheet；思考 chip → 思考等级 sheet（点击循环）；
+队列行 → 会话与队列 sheet；更多 → 溢出菜单 sheet；会话信息 sheet；`/` → 命令面板 sheet；
+`!` → 命令输出面板 sheet；搜索 → 对话内查找条；转录上滑 → 回到最新悬浮；
+工作区开关；设置：搜索页、12 格 bento 可点进分组页、6 种行型的编辑器 sheet、危险行确认框、
+终端入口 → 全屏终端页。
+================================================================================
+-->
+
+<style>
+  :root{
+    /* ===== pi 主题令牌（dark，唯一事实源） ===== */
+    --accent:#8ABEB7; --border:#5F87FF; --border-accent:#00D7FF; --border-muted:#505050;
+    --success:#B5BD68; --error:#CC6666; --warning:#FFFF00;
+    --text:#D4D4D4; --muted:#808080; --dim:#666666; --selected-bg:#3A3A4A;
+    --user-bg:#343541; --user-text:#D4D4D4;
+    --custom-bg:#2D2838; --custom-label:#9575CD;
+    --tool-pending:#282832; --tool-success:#283228; --tool-error:#3C2828;
+    --tool-title:#D4D4D4; --tool-output:#808080;
+    --md-heading:#F0C674; --md-link:#81A2BE; --md-link-url:#666666;
+    --md-code:#8ABEB7; --md-codeblock:#B5BD68; --md-codeblock-border:#808080;
+    --md-quote:#808080; --md-hr:#808080; --md-bullet:#8ABEB7;
+    --diff-add:#B5BD68; --diff-del:#CC6666; --diff-ctx:#808080;
+    --syntax-comment:#6A9955; --syntax-keyword:#569CD6; --syntax-function:#DCDCAA;
+    --syntax-variable:#9CDCFE; --syntax-string:#CE9178; --syntax-number:#B5CEA8;
+    --syntax-type:#4EC9B0; --syntax-op:#D4D4D4;
+    --think-off:#505050; --think-minimal:#6E6E6E; --think-low:#5F87AF;
+    --think-medium:#81A2BE; --think-high:#B294BB; --think-xhigh:#D183E8; --think-max:#FF5FFF;
+    --bash:#B5BD68;
+    --page:#18181E; --card:#1E1E24; --info:#3C3728;
+    --surf-low:#1E1E24; --surf:#232329; --surf-high:#29292F; --surf-highest:#303036; --surf-dim:#1C1C22;
+
+    /* 排印：西文在前、中文在后（中文放前面会被中文字体的丑西文吃掉） */
+    --font-mono:"JetBrains Mono","Geist Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono","Noto Sans SC","PingFang SC","Microsoft YaHei",monospace;
+    --font-prose:"Geist","Inter","Helvetica Neue",Arial,"Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{
+    background:#0e0e12; color:var(--text);
+    font-family:var(--font-prose); font-size:14px; line-height:20px;
+    font-synthesis:none; line-break:strict; overflow-wrap:anywhere;
+    -webkit-font-smoothing:antialiased; text-rendering:optimizeLegibility;
+  }
+  .mono{font-family:var(--font-mono); font-variant-numeric:tabular-nums}
+  .tnum{font-variant-numeric:tabular-nums}
+  .pretty{text-wrap:pretty}
+  button{font:inherit; color:inherit; background:none; border:0; padding:0; margin:0; cursor:pointer}
+  input,textarea{font:inherit; color:inherit; background:none; border:0; outline:none; padding:0; margin:0}
+  .hv:hover{background:var(--surf)}
+  .hvb:hover{border-color:var(--text)}
+  .hvrow:hover{background:var(--surf)}
+  .thin{scrollbar-width:thin; scrollbar-color:var(--border-muted) transparent}
+  .thin::-webkit-scrollbar{width:3px;height:3px}
+  .thin::-webkit-scrollbar-thumb{background:var(--border-muted)}
+  .thin::-webkit-scrollbar-track{background:transparent}
+  .noscroll::-webkit-scrollbar{width:0;height:0}
+  .noscroll{scrollbar-width:none}
+  .pg{background:var(--page); color:var(--text)}
+  a{color:var(--md-link); text-decoration:none}
+
+  .demopage{padding:40px 48px 64px}
+  .demohd{display:flex; align-items:baseline; gap:14px; padding-bottom:14px; border-bottom:1px solid var(--border-muted)}
+  .demohd .k{font-family:var(--font-mono); font-size:13px; color:var(--muted); letter-spacing:.04em}
+  .demohd .t{font-size:17px; font-weight:600; letter-spacing:0}
+  .frames{display:flex; gap:32px; flex-wrap:wrap; padding:48px 0 0}
+  .fcol{display:flex; flex-direction:column; gap:12px}
+  .cap{font-family:var(--font-mono); font-size:13px; line-height:18px; color:var(--muted); display:flex; align-items:center; gap:8px; flex-wrap:wrap}
+  .cap b{font-weight:400; color:var(--text)}
+  .cap .chip{font-family:var(--font-mono); font-size:12px; line-height:16px; padding:2px 7px; border:1px solid var(--border-muted); border-radius:4px; color:var(--text); background:transparent; cursor:pointer}
+  .cap .chip.on{border-color:var(--accent); color:var(--accent)}
+  .cap .chip:hover{border-color:var(--text)}
+  /* 占位文本：用 --text 降不透明度，保证在 --page 与 --surf-high 上都 ≥4.5:1 */
+  ::placeholder{color:var(--text); opacity:.7}
+  input::placeholder,textarea::placeholder{color:var(--text); opacity:.7}
+</style>
+
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+</head>
+<body>
+<div id="root"></div>
+
+<!-- ============================ ① 设备框 + 令牌 + 原子件 ============================ -->
+<script type="text/babel" data-presets="react">
+/* 每个 <script type="text/babel"> 共享同一个全局作用域，同名顶层 const 会
+   「Identifier has already been declared」而整页白屏（skill 技术红线第 2 条）。
+   所以每块自己包一层 IIFE：内部名字互不可见，只通过 Object.assign(window,…) 交换。 */
+(function () {
+const {useState, useRef, useEffect, useMemo, useCallback} = React;
+
+/* ---------- 设备框：原样内联（不修改） ---------- */
+const androidFrameStyles = {
+  wrapper: {
+    display: 'inline-block',
+    padding: 10,
+    background: '#1a1a1a',
+    borderRadius: 44,
+    boxShadow: '0 0 0 2px #2a2a2a, 0 20px 60px rgba(0,0,0,0.3)',
+    position: 'relative',
+  },
+  screen: {
+    position: 'relative',
+    borderRadius: 36,
+    overflow: 'hidden',
+    background: '#fff',
+  },
+  statusBar: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    height: 32,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: '0 24px',
+    fontSize: 14,
+    fontWeight: 500,
+    fontFamily: 'Roboto, -apple-system, sans-serif',
+    zIndex: 20,
+    pointerEvents: 'none',
+  },
+  punchHole: {
+    position: 'absolute',
+    top: 10,
+    left: '50%',
+    transform: 'translateX(-50%)',
+    width: 14,
+    height: 14,
+    background: '#000',
+    borderRadius: '50%',
+    zIndex: 30,
+  },
+  statusIcons: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 6,
+  },
+  batteryText: {
+    fontSize: 11,
+    fontWeight: 600,
+    marginLeft: 2,
+  },
+  content: {
+    position: 'absolute',
+    top: 32,
+    left: 0,
+    right: 0,
+    bottom: 24,
+    overflow: 'auto',
+  },
+  navBar: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    height: 24,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 60,
+    zIndex: 10,
+  },
+  navButton: {
+    width: 36,
+    height: 4,
+    background: 'rgba(0,0,0,0.3)',
+    borderRadius: 999,
+  },
+};
+
+function AndroidFrame({
+  children,
+  width = 412,
+  height = 892,
+  time = '9:41',
+  battery = 100,
+  darkMode = false,
+  navStyle = 'gesture',
+}) {
+  const textColor = darkMode ? '#fff' : '#1a1a1a';
+
+  return (
+    <div style={androidFrameStyles.wrapper}>
+      <div style={{
+        ...androidFrameStyles.screen,
+        width,
+        height,
+        background: darkMode ? '#000' : '#fff',
+      }}>
+        <div style={{ ...androidFrameStyles.statusBar, color: textColor }}>
+          <span>{time}</span>
+          <div style={androidFrameStyles.statusIcons}>
+            <svg width="14" height="10" viewBox="0 0 14 10" fill="currentColor">
+              <rect x="0" y="6" width="2" height="4" rx="0.5" />
+              <rect x="4" y="4" width="2" height="6" rx="0.5" />
+              <rect x="8" y="2" width="2" height="8" rx="0.5" />
+              <rect x="12" y="0" width="2" height="10" rx="0.5" />
+            </svg>
+            <svg width="14" height="10" viewBox="0 0 14 10" fill="none">
+              <path d="M7 9a1 1 0 100-2 1 1 0 000 2z" fill="currentColor" />
+              <path d="M3 6a5 5 0 018 0" stroke="currentColor" strokeWidth="1.2" />
+              <path d="M0.5 3.5a11 11 0 0113 0" stroke="currentColor" strokeWidth="1.2" opacity="0.6" />
+            </svg>
+            <div style={{
+              width: 22,
+              height: 10,
+              border: '1.5px solid currentColor',
+              borderRadius: 2,
+              padding: 1,
+              position: 'relative',
+            }}>
+              <div style={{
+                width: `${battery}%`,
+                height: '100%',
+                background: 'currentColor',
+                borderRadius: 1,
+              }} />
+            </div>
+            <span style={androidFrameStyles.batteryText}>{battery}%</span>
+          </div>
+        </div>
+
+        <div style={androidFrameStyles.punchHole} />
+
+        <div style={androidFrameStyles.content}>
+          {children}
+        </div>
+
+        {navStyle === 'gesture' && (
+          <div style={androidFrameStyles.navBar}>
+            <div style={{
+              ...androidFrameStyles.navButton,
+              width: 100,
+              height: 4,
+              background: darkMode ? 'rgba(255,255,255,0.5)' : 'rgba(0,0,0,0.4)',
+            }} />
+          </div>
+        )}
+
+        {navStyle === 'buttons' && (
+          <div style={androidFrameStyles.navBar}>
+            <span style={{ color: textColor, fontSize: 20 }}>◁</span>
+            <span style={{ color: textColor, fontSize: 16 }}>○</span>
+            <span style={{ color: textColor, fontSize: 16 }}>□</span>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+if (typeof window !== 'undefined') {
+  window.AndroidFrame = AndroidFrame;
+}
+
+/* ---------- pi 令牌（JS 侧镜像，供内联样式引用） ---------- */
+const T = {
+  accent:'#8ABEB7', border:'#5F87FF', borderAccent:'#00D7FF', borderMuted:'#505050',
+  success:'#B5BD68', error:'#CC6666', warning:'#FFFF00',
+  text:'#D4D4D4', muted:'#808080', dim:'#666666', selectedBg:'#3A3A4A',
+  userBg:'#343541', customBg:'#2D2838', customLabel:'#9575CD',
+  toolPending:'#282832', toolSuccess:'#283228', toolError:'#3C2828',
+  toolTitle:'#D4D4D4', toolOutput:'#808080',
+  mdHeading:'#F0C674', mdLink:'#81A2BE', mdLinkUrl:'#666666',
+  mdCode:'#8ABEB7', mdCodeBlock:'#B5BD68', mdBlockBorder:'#808080',
+  mdBullet:'#8ABEB7',
+  diffAdd:'#B5BD68', diffDel:'#CC6666', diffCtx:'#808080',
+  synComment:'#6A9955', synKeyword:'#569CD6', synFunction:'#DCDCAA', synVariable:'#9CDCFE',
+  synString:'#CE9178', synNumber:'#B5CEA8', synType:'#4EC9B0', synOp:'#D4D4D4',
+  page:'#18181E', card:'#1E1E24', info:'#3C3728',
+  sLow:'#1E1E24', surf:'#232329', sHigh:'#29292F', sHighest:'#303036', sDim:'#1C1C22', sBright:'#343439',
+  bash:'#B5BD68',
+  think:{off:'#505050', minimal:'#6E6E6E', low:'#5F87AF', medium:'#81A2BE', high:'#B294BB', xhigh:'#D183E8', max:'#FF5FFF'},
+};
+/* 思考等级：中文标签 / 枚举 / 色温（ChatSheets.kt:659-667 + PiPalette thinking*） */
+const THINK_LEVELS = [
+  {key:'off',     zh:'关闭', tone:T.think.off},
+  {key:'minimal', zh:'极简', tone:T.think.minimal},
+  {key:'low',     zh:'低',   tone:T.think.low},
+  {key:'medium',  zh:'中',   tone:T.think.medium},
+  {key:'high',    zh:'高',   tone:T.think.high},
+  {key:'xhigh',   zh:'很高', tone:T.think.xhigh},
+  {key:'max',     zh:'最高', tone:T.think.max},
+];
+const MONO = {fontFamily:'var(--font-mono)', fontVariantNumeric:'tabular-nums'};
+
+/* ---------- 原子件 ---------- */
+const Hair = ({style}) => <div style={{height:1, background:T.borderMuted, flex:'0 0 auto', ...style}}/>;
+const VHair = ({style}) => <div style={{width:1, alignSelf:'stretch', background:T.borderMuted, flex:'0 0 auto', ...style}}/>;
+
+/* 状态字形（源码：运行中 … / 成功 ✓ / 失败 ✗，且状态永远是「词 + 符号」） */
+function StateGlyph({state, size}) {
+  const map = {ok:{g:'✓', c:T.success}, err:{g:'✗', c:T.error}, run:{g:'…', c:T.warning}};
+  const s = map[state] || map.ok;
+  return <span className="mono" style={{color:s.c, fontSize:size||14, lineHeight:'16px'}}>{s.g}</span>;
+}
+
+/* 耗时刻度：1px 横线，长度 ∝ log2(ms) —— 时间轴读数 */
+function Tick({ms, color, width}) {
+  const w = width || Math.max(6, Math.min(38, Math.round(Math.log2(Math.max(ms||2,2)) * 4)));
+  return <span style={{display:'inline-block', width:w, height:1, background:color||T.muted, verticalAlign:'middle'}} />;
+}
+
+/* 上下文环（PiSpacing.contextRing = 20dp / stroke 2dp），静态 */
+function Ring({pct, size}) {
+  const s = size || 20, r = (s - 2) / 2 - 1, c = 2 * Math.PI * r;
+  return (
+    <svg width={s} height={s} viewBox={'0 0 '+s+' '+s} style={{flex:'0 0 auto', display:'block'}}>
+      <circle cx={s/2} cy={s/2} r={r} fill="none" stroke={T.borderMuted} strokeWidth="2" />
+      <circle cx={s/2} cy={s/2} r={r} fill="none" stroke={T.accent} strokeWidth="2"
+        strokeDasharray={(c*pct/100).toFixed(2)+' '+c.toFixed(2)}
+        transform={'rotate(-90 '+s/2+' '+s/2+')'} />
+    </svg>
+  );
+}
+
+/* 横读数带：格间 1px 发丝线；label 12px（落 --page 上，4.5:1）+ 值 14px tabular */
+function Readout({cells, lead, style}) {
+  return (
+    <div style={{display:'flex', alignItems:'stretch', background:T.page,
+      borderTop:'1px solid '+T.borderMuted, borderBottom:'1px solid '+T.borderMuted, ...style}}>
+      {lead ? <div style={{display:'flex', alignItems:'center', gap:7, padding:'6px 9px', flex:'0 0 auto'}}>{lead}</div> : null}
+      {lead ? <VHair/> : null}
+      {cells.map((c, i) => (
+        <React.Fragment key={i}>
+          {i > 0 ? <VHair/> : null}
+          <div style={{flex:'1 1 0', minWidth:0, padding:'6px 9px'}}>
+            <div className="mono" style={{fontSize:12, lineHeight:'15px', color:T.muted, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis'}}>{c.k}</div>
+            <div className="mono" style={{fontSize:14, lineHeight:'18px', color:c.tone||T.text, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis'}}>{c.v}</div>
+          </div>
+        </React.Fragment>
+      ))}
+    </div>
+  );
+}
+
+/* 小按钮 / 分段控件 */
+function Btn({children, onClick, tone, active, pad, style, title}) {
+  return (
+    <button title={title} onClick={onClick} className="mono hv" style={{
+      fontSize:12, lineHeight:'16px', padding:pad||'5px 9px', borderRadius:4, cursor:'pointer',
+      border:'1px solid '+(active ? T.accent : T.borderMuted),
+      color: tone || (active ? T.accent : T.text),
+      background:T.page, whiteSpace:'nowrap', ...style,
+    }}>{children}</button>
+  );
+}
+
+function Seg({items, value, onChange}) {
+  return (
+    <div style={{display:'inline-flex', gap:6}}>
+      {items.map(it => (
+        <Btn key={it.id} active={value === it.id} onClick={() => onChange(it.id)}>{it.label}</Btn>
+      ))}
+    </div>
+  );
+}
+
+/* 开关（就地切换写盘，取值只有开/关） */
+function Switch({on, onToggle, label}) {
+  return (
+    <button aria-label={label || (on ? '开' : '关')} onClick={onToggle} className="hvb" style={{
+      width:38, height:22, borderRadius:11, flex:'0 0 auto', position:'relative', cursor:'pointer',
+      border:'1px solid '+(on ? T.accent : T.borderMuted), background:on ? T.selectedBg : T.page,
+    }}>
+      <span style={{
+        position:'absolute', top:2, left:on ? 18 : 2, width:16, height:16, borderRadius:9,
+        background:on ? T.accent : T.muted, transition:'left 120ms linear, background 120ms linear',
+      }} />
+    </button>
+  );
+}
+
+/* 生效方式徽标（Immediate 不显示；其余四种） */
+function Badge({text}) {
+  const tone = text === '需重载' ? T.accent : (text === '新会话' ? T.text : T.error);
+  return (
+    <span className="mono" style={{fontSize:12, lineHeight:'16px', color:tone, border:'1px solid '+tone,
+      borderRadius:4, padding:'1px 5px', flex:'0 0 auto', whiteSpace:'nowrap'}}>{text}</span>
+  );
+}
+
+/* 底部 sheet */
+function Sheet({open, title, sub, onClose, children, footer, maxH}) {
+  if (!open) return null;
+  return (
+    <div style={{position:'absolute', inset:0, zIndex:60}}>
+      <div onClick={onClose} style={{position:'absolute', inset:0, background:'rgba(0,0,0,0.32)'}} />
+      <div className="pg" style={{position:'absolute', left:0, right:0, bottom:0, maxHeight:maxH||'80%',
+        display:'flex', flexDirection:'column', background:T.sHigh,
+        borderTopLeftRadius:28, borderTopRightRadius:28, borderTop:'1px solid '+T.borderMuted}}>
+        <div style={{padding:'14px 16px 10px', display:'flex', alignItems:'baseline', gap:10}}>
+          <div style={{fontSize:17, lineHeight:'24px', fontWeight:600}}>{title}</div>
+          {sub ? <div className="mono" style={{fontSize:12, lineHeight:'16px', color:T.text, flex:'1 1 auto', minWidth:0}}>{sub}</div> : <div style={{flex:'1 1 auto'}} />}
+          <Btn onClick={onClose}>关闭</Btn>
+        </div>
+        <Hair/>
+        <div className="thin" style={{overflowY:'auto', overflowX:'hidden', padding:'6px 0 10px'}}>{children}</div>
+        {footer ? <div><Hair/>{footer}</div> : null}
+      </div>
+    </div>
+  );
+}
+
+/* 对话框（居中，28dp 圆角，scrim = PiElevation.level5ScrimAlpha 0.32） */
+function Dialog({open, title, body, primary, secondary, danger, onPrimary, onSecondary, onClose, note}) {
+  if (!open) return null;
+  return (
+    <div style={{position:'absolute', inset:0, zIndex:70}}>
+      <div onClick={onClose} style={{position:'absolute', inset:0, background:'rgba(0,0,0,0.32)'}} />
+      <div className="pg" style={{position:'absolute', left:18, right:18, top:'50%', transform:'translateY(-50%)',
+        background:T.sHigh, border:'1px solid '+T.borderMuted, borderRadius:28, padding:'18px 16px 14px'}}>
+        <div style={{display:'flex', gap:8, alignItems:'flex-start'}}>
+          <span style={{width:3, alignSelf:'stretch', minHeight:20, background:danger ? T.error : T.accent, flex:'0 0 auto'}} />
+          <div style={{fontSize:17, lineHeight:'24px', fontWeight:600, flex:'1 1 auto'}}>{title}</div>
+        </div>
+        {body ? <div className="pretty" style={{fontSize:14, lineHeight:'21px', color:T.text, marginTop:10}}>{body}</div> : null}
+        {note ? <div className="mono" style={{fontSize:12, lineHeight:'17px', color:T.text, marginTop:10}}>{note}</div> : null}
+        <div style={{display:'flex', justifyContent:'flex-end', gap:8, marginTop:16}}>
+          {secondary ? <Btn onClick={onSecondary || onClose} style={{padding:'7px 13px'}}>{secondary}</Btn> : null}
+          {primary ? <Btn onClick={onPrimary} active={!danger} tone={danger ? T.error : undefined}
+            style={{padding:'7px 13px', borderColor: danger ? T.error : T.accent}}>{primary}</Btn> : null}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* 分区标题（bento 分区的横条：编号 + 标题 + 右侧读数） */
+function SectionBar({idx, title, right}) {
+  return (
+    <div style={{display:'flex', alignItems:'baseline', gap:8, padding:'12px 16px 6px', background:T.page}}>
+      <span className="mono" style={{fontSize:12, lineHeight:'16px', color:T.muted}}>{idx}</span>
+      <span style={{fontSize:14, lineHeight:'20px', fontWeight:600}}>{title}</span>
+      <span style={{flex:'1 1 auto'}} />
+      {right ? <span className="mono" style={{fontSize:12, lineHeight:'16px', color:T.muted}}>{right}</span> : null}
+    </div>
+  );
+}
+
+/* π 字形（品牌唯一图形：一根横梁 + 两条腿，直接内联 path） */
+function PiMark({size, tone}) {
+  const s = size || 20;
+  return (
+    <svg width={s} height={s} viewBox="0 0 108 108" style={{display:'block', flex:'0 0 auto'}}>
+      <path fill={tone || T.accent} d="M30,38 H78 V46 H71 V74 H63 V46 H45 V74 H37 V46 H30 Z" />
+    </svg>
+  );
+}
+
+Object.assign(window, {
+  AndroidFrame, androidFrameStyles, T, THINK_LEVELS, MONO,
+  Hair, VHair, StateGlyph, Tick, Ring, Readout, Btn, Seg, Switch, Badge, Sheet, Dialog, SectionBar, PiMark,
+});
+})();
+</script>
+
+<!-- ============================ ② 共享数据 + 对话页 + 会话列表 ============================ -->
+<script type="text/babel" data-presets="react">
+/* 每个 <script type="text/babel"> 共享同一个全局作用域，同名顶层 const 会
+   「Identifier has already been declared」而整页白屏（skill 技术红线第 2 条）。
+   所以每块自己包一层 IIFE：内部名字互不可见，只通过 Object.assign(window,…) 交换。 */
+(function () {
+const {useState, useRef, useEffect, useMemo} = React;
+const {T, THINK_LEVELS, MONO, Hair, VHair, StateGlyph, Tick, Ring, Readout, Btn, Seg, Switch, Badge, Sheet, Dialog, SectionBar, PiMark} = window;
+
+/* ============================ 共享：真实数据 ============================ */
+
+/* 会话列表行（字段公式 = 02 §1.2 三段式；12 条标题/数字沿用该表示例形状） */
+const SESSION_ROWS = [
+  {n:'01', g:'工作区', title:'会话列表排序错了 · 对话页顶部状态行', cur:true, model:'deepseek/deepseek-chat',      count:18, named:true,  branch:false, time:'刚刚'},
+  {n:'02', g:'工作区', title:'把 diff 卡片的高度收紧',              cur:false, model:'anthropic/claude-sonnet-4-5', count:42, named:true,  branch:false, time:'12 分钟前'},
+  {n:'03', g:'工作区', title:'工具卡的展开按钮点不到',              cur:false, model:'deepseek/deepseek-reasoner',  count:9,  named:false, branch:false, time:'1 小时前'},
+  {n:'04', g:'工作区', title:'设置里 reserveTokens 该填多少',       cur:false, model:'openai/gpt-5',               count:27, named:false, branch:true,  time:'3 小时前'},
+  {n:'05', g:'工作区', title:'检查一下 @ 提及补全超时',             cur:false, model:'zai/glm-4.6',                count:6,  named:false, branch:false, time:'昨天'},
+  {n:'06', g:'工作区', title:'会话导出为 HTML 少了扩展渲染',        cur:false, model:'anthropic/claude-sonnet-4-5', count:55, named:true,  branch:false, time:'2 天前'},
+  {n:'07', g:'工作区', title:'队列里的消息怎么单独撤回',            cur:false, model:'deepseek/deepseek-chat',      count:4,  named:false, branch:false, time:'3 天前'},
+  {n:'08', g:'工作区', title:'主题的对比度在深色下不达标',          cur:false, model:'moonshotai/kimi-k2',         count:31, named:true,  branch:true,  time:'1 周前'},
+  {n:'09', g:'工作区', title:'按键条挡住了输入框',                  cur:false, model:'qwen/qwen3-coder-plus',      count:12, named:false, branch:false, time:'1 周前'},
+  {n:'10', g:'pi-android', title:'把 run-app-pure-checks 的输出看懂', cur:false, model:'deepseek/deepseek-chat',    count:7,  named:false, branch:false, time:'4 小时前'},
+  {n:'11', g:'pi-android', title:'pi-contract 检查失败的三个文件',    cur:false, model:'anthropic/claude-sonnet-4-5', count:14, named:false, branch:true,  time:'5 天前'},
+  {n:'12', g:'pi-android', title:'源码许可清单要补一个库',            cur:false, model:'openai/gpt-5',               count:3,  named:false, branch:false, time:'2 周前'},
+  {n:'13', g:'工作目录未记录', title:'未命名', cur:false, model:null, count:0, named:false, branch:false, time:'1 分钟前'},
+];
+
+const MODELS = [
+  'anthropic/claude-sonnet-4-5','deepseek/deepseek-chat','deepseek/deepseek-reasoner',
+  'moonshotai/kimi-k2','openai/gpt-5','qwen/qwen3-coder-plus','zai/glm-4.6',
+];
+
+/* 命令面板（顺序即 pi 自己的顺序，不重排；来源徽标 内置 / 本应用落地页） */
+const SLASH = [
+  {cmd:'/settings', hint:'', desc:'打开设置菜单', src:'内置'},
+  {cmd:'/model', hint:'<provider/model>', desc:'选择模型', src:'内置'},
+  {cmd:'/tree', hint:'', desc:'浏览会话树，从某条消息分叉', src:'内置'},
+  {cmd:'/thinking', hint:'<level>', desc:'设置思考等级', src:'内置'},
+  {cmd:'/export', hint:'', desc:'导出会话：默认 HTML，路径以 .jsonl 结尾时写 JSONL', src:'内置'},
+  {cmd:'/import', hint:'', desc:'从 JSONL 文件导入并恢复会话', src:'内置'},
+  {cmd:'/share', hint:'', desc:'将会话分享为私密 GitHub gist', src:'内置', note:'本应用没有入口'},
+  {cmd:'/session', hint:'', desc:'查看会话信息与统计', src:'内置'},
+  {cmd:'/compact', hint:'', desc:'手动压缩会话上下文', src:'内置'},
+  {cmd:'/new', hint:'', desc:'新建会话', src:'内置'},
+  {cmd:'/reload', hint:'', desc:'重载扩展、技能、模板、主题与上下文文件', src:'内置', note:'本应用：设置 → 运行时与诊断 → 进程 → 重启引擎'},
+  {cmd:'/quit', hint:'', desc:'退出 pi', src:'内置', note:'本应用没有入口'},
+];
+
+/* 会话信息（8 行，格式来自 ChatSheets.kt:487-525） */
+const INFO_ROWS = [
+  ['会话名称','会话列表排序错了 · 对话页顶部状态行'],
+  ['会话 ID','3f1c9a7e'],
+  ['会话文件','（尚未落盘）'],
+  ['消息','3 用户 · 9 模型 · 12 总计'],
+  ['工具调用','10 次调用 · 10 条结果'],
+  ['Token','输入 104.0k · 输出 8.2k · 缓存读 61.4k · 缓存写 12.0k · 合计 185.6k'],
+  ['上下文占用','52%（104000 / 200000）'],
+  ['累计费用','$0.42'],
+];
+
+/* 溢出菜单（ChatScreen.kt:764-858 的真实条目） */
+const MORE_ROWS = ['命令面板','会话与队列','会话树','会话信息','新建会话','从历史消息分支','复制当前会话','重命名','导出会话（按扩展名）','跳到上一条提问','跳到下一条提问','复制最后一条回复','收起全部工具输出','循环切换模型','思考等级…','选择模型…'];
+
+/* ---------- 语法着色的小工具 ---------- */
+const S = ({c, children}) => <span style={{color:c}}>{children}</span>;
+
+/* ---------- 轨道节点（形状 = 块类型，颜色 = 状态） ---------- */
+function Marker({kind, color}) {
+  const base = {position:'absolute', top:13, flex:'0 0 auto'};
+  if (kind === 'think') return <div style={{...base, left:12, width:3, height:13, background:color}} />;
+  if (kind === 'tool')  return <div style={{...base, left:10, width:7, height:7, background:color}} />;
+  if (kind === 'user')  return <div style={{...base, left:10, width:7, height:7, background:T.text}} />;
+  if (kind === 'ai')    return <div style={{...base, left:10, width:7, height:7, border:'1px solid '+T.text, background:T.page}} />;
+  return <div style={{...base, left:11, width:5, height:5, border:'1px solid '+T.borderMuted, background:T.page}} />;
+}
+
+/* 轨道上的一段：左侧 24px 是轨道与刻度，右侧是内容 */
+function Rail({kind, color, children, style}) {
+  return (
+    <div style={{position:'relative', padding:'6px 16px 6px 34px', ...style}}>
+      <Marker kind={kind} color={color} />
+      <div style={{position:'absolute', left:17, top:16, width:6, height:1, background:T.borderMuted}} />
+      {children}
+    </div>
+  );
+}
+
+/* ---------- 工具卡（chrome 照 ToolBlockChrome：状态底 + 状态色条 + 状态字形 + 页脚读数） ---------- */
+function ToolCard({name, subject, state, footer, expanded, onToggle, children, hint, right}) {
+  const bg = state === 'err' ? T.toolError : (state === 'run' ? T.toolPending : T.toolSuccess);
+  const tone = state === 'err' ? T.error : (state === 'run' ? T.warning : T.success);
+  return (
+    <div style={{background:bg, border:'1px solid '+T.borderMuted, borderRadius:8, overflow:'hidden'}}>
+      <button onClick={onToggle} className="hvrow" style={{display:'flex', alignItems:'flex-start', gap:8, width:'100%', textAlign:'left', padding:'8px 10px', cursor:'pointer', background:'transparent'}}>
+        <span style={{width:3, alignSelf:'stretch', minHeight:14, background:tone, flex:'0 0 auto'}} />
+        <span className="mono" style={{fontSize:14, lineHeight:'18px', color:T.toolTitle, flex:'0 0 auto'}}>{name}</span>
+        <span className="mono" style={{fontSize:12, lineHeight:'18px', color:T.toolTitle, flex:'1 1 auto', minWidth:0}}>{subject}</span>
+        <span style={{display:'flex', alignItems:'center', gap:6, flex:'0 0 auto'}}>
+          {right}
+          <StateGlyph state={state} />
+          <span className="mono" style={{fontSize:12, lineHeight:'16px'}}>{expanded ? '收起' : '展开'}</span>
+        </span>
+      </button>
+      {expanded ? <div>{children}</div> : null}
+      <div style={{display:'flex', alignItems:'center', gap:8, padding:'6px 10px', borderTop:'1px solid '+T.borderMuted}}>
+        <span className="mono" style={{fontSize:12, lineHeight:'16px', color:T.toolTitle, flex:'1 1 auto', minWidth:0}}>{footer}</span>
+        <Tick ms={hint} color={tone} />
+      </div>
+    </div>
+  );
+}
+
+/* 等宽代码体（行号列 + 横向滚动，源码行不折行） */
+function CodeBody({lines, pad}) {
+  return (
+    <div className="thin" style={{overflowX:'auto', overflowY:'hidden', padding:pad || '8px 10px 8px 0'}}>
+      <div className="mono" style={{fontSize:14, lineHeight:'20px', minWidth:'min-content'}}>
+        {lines.map((l, i) => (
+          <div key={i} style={{display:'flex', whiteSpace:'pre', background:l.bg || 'transparent'}}>
+            <span style={{width:34, flex:'0 0 auto', textAlign:'right', paddingRight:8, color:T.text, fontSize:12, lineHeight:'20px'}}>{l.n || ''}</span>
+            <span style={{color:l.c || T.text, flex:'1 1 auto'}}>{l.t}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* 折叠提示行（真实文案：上方还有 N 行未显示 / 展开全部（还有 N 行）） */
+function MoreLine({text, onClick, tone}) {
+  return (
+    <button onClick={onClick} className="mono hvrow" style={{display:'block', width:'100%', textAlign:'left', fontSize:12, lineHeight:'16px', padding:'6px 10px', color: tone || T.accent, cursor:'pointer', borderTop:'1px solid '+T.borderMuted}}>{text}</button>
+  );
+}
+
+/* ============================ 屏 1 · 对话（hero） ============================ */
+function Chat({initial, onOpenSessions}) {
+  const cfg = initial || {};
+  const [exp, setExp] = useState({read:!!cfg.read, grep:true, diff:true, bash:true, bash2:true, edit:false, write:false, ls:true, find:false, fail:true, generic:false});
+  const [think1, setThink1] = useState(false);
+  const [think2, setThink2] = useState(true);
+  const [skill, setSkill] = useState(false);
+  const [level, setLevel] = useState('medium');
+  const [model, setModel] = useState('deepseek/deepseek-chat');
+  const [sheet, setSheet] = useState(null);
+  const [dialog, setDialog] = useState(null);
+  const [search, setSearch] = useState(false);
+  const [q, setQ] = useState('');
+  const [draft, setDraft] = useState('');
+  const [streaming, setStreaming] = useState(true);
+  const [follow, setFollow] = useState(true);
+  const [expandedAll, setExpandedAll] = useState(false);
+  const scroller = useRef(null);
+  const anchor = useRef(null);
+  const toggle = k => setExp(e => ({...e, [k]: !e[k]}));
+
+  /* 开场落在「当前正在干的那一段」上：滚到 edit 卡的位置（用 offsetTop，不猜像素） */
+  useEffect(() => {
+    const el = scroller.current;
+    if (!el) return;
+    if (cfg.scroll != null) { el.scrollTop = cfg.scroll; return; }
+    if (anchor.current) el.scrollTop = Math.max(0, anchor.current.offsetTop - 10);
+  }, []);
+
+  const onScroll = () => {
+    const el = scroller.current;
+    if (!el) return;
+    setFollow(el.scrollHeight - el.scrollTop - el.clientHeight < 48);
+  };
+  const toLatest = () => { const el = scroller.current; if (el) el.scrollTop = el.scrollHeight; };
+
+  const lv = THINK_LEVELS.filter(x => x.key === level)[0];
+  const lvTone = lv.tone;
+  const addDraft = t => setDraft(d => (d ? d + ' ' : '') + t);
+
+  return (
+    <div style={{flex:'1 1 auto', minHeight:0, display:'flex', flexDirection:'column', background:T.page, position:'relative'}}>
+
+      {/* AppBar：两行（会话名 + 状态行），右侧三个动作 */}
+      <div style={{padding:'6px 16px 8px'}}>
+        <div style={{display:'flex', alignItems:'flex-start', gap:8}}>
+          <div style={{flex:'1 1 auto', minWidth:0}}>
+            <button onClick={onOpenSessions} className="hv" title="打开会话列表" style={{display:'flex', alignItems:'center', gap:6, maxWidth:'100%', padding:'0 4px 0 0', borderRadius:4, cursor:'pointer'}}>
+              <span style={{fontSize:15, lineHeight:'21px', fontWeight:600, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis'}}>会话列表排序错了 · 对话页顶部状态行</span>
+              <span className="mono" style={{fontSize:12, lineHeight:'16px', color:T.accent, flex:'0 0 auto'}}>›</span>
+            </button>
+            <div className="mono" style={{fontSize:12, lineHeight:'16px', display:'flex', alignItems:'center', gap:6}}>
+              <span style={{width:6, height:6, background:T.warning, display:'inline-block'}} />
+              <span>工作中</span>
+            </div>
+          </div>
+          <div style={{display:'flex', gap:6, flex:'0 0 auto'}}>
+            <Btn onClick={() => setSheet('model')} title="选择模型">{model.split('/')[1]}</Btn>
+            <Btn onClick={() => setSearch(s => !s)} active={search}>查找</Btn>
+            <Btn onClick={() => setSheet('more')}>更多</Btn>
+          </div>
+        </div>
+      </div>
+
+      {search ? (
+        <div style={{display:'flex', alignItems:'center', gap:8, padding:'6px 16px', borderTop:'1px solid '+T.borderMuted}}>
+          <input className="mono" value={q} onChange={e => setQ(e.target.value)} placeholder="在对话里查找"
+            style={{flex:'1 1 auto', minWidth:0, fontSize:14, lineHeight:'20px', color:T.text}} />
+          <span className="mono" style={{fontSize:12, color:T.muted}}>{q ? '3/12' : '0/0'}</span>
+          <Btn pad="3px 7px" title="上一个匹配">↑</Btn>
+          <Btn pad="3px 7px" title="下一个匹配">↓</Btn>
+          <Btn onClick={() => setSearch(false)}>关闭查找</Btn>
+        </div>
+      ) : null}
+
+      {/* 横读数带：上下文环 + token/费用读数（数据源 get_session_stats） */}
+      <Readout lead={<React.Fragment><Ring pct={52} /><span className="mono" style={{fontSize:14, lineHeight:'18px'}}>52%</span></React.Fragment>}
+        cells={[
+          {k:'输入', v:'104.0k'},
+          {k:'输出', v:'8.2k'},
+          {k:'缓存读', v:'61.4k'},
+          {k:'累计费用', v:'$0.42'},
+        ]} />
+
+      {/* 转录：一条竖轨 + 节点 + 内容 + 读数 */}
+      <div style={{flex:'1 1 auto', minHeight:0, position:'relative'}}>
+        <div ref={scroller} onScroll={onScroll} className="thin" style={{position:'absolute', inset:0, overflowY:'auto', overflowX:'hidden'}}>
+          <div style={{position:'relative', paddingBottom:14}}>
+            <div style={{position:'absolute', left:17, top:0, bottom:0, width:1, background:T.borderMuted}} />
+
+            <Rail kind="date" style={{paddingTop:12, paddingBottom:4}}>
+              <button className="mono hvrow" onClick={() => { const el = scroller.current; if (el) el.scrollTop = 0; }} style={{fontSize:12, lineHeight:'16px', padding:'2px 6px', borderRadius:4, color:T.muted, cursor:'pointer'}}>加载更早的 12 条</button>
+            </Rail>
+
+            <Rail kind="date" style={{paddingTop:8, paddingBottom:4}}>
+              <div className="mono" style={{fontSize:12, lineHeight:'16px', color:T.muted}}>今天</div>
+            </Rail>
+
+            {/* 02 · 用户消息（长按菜单：复制 / 编辑并从此分叉） */}
+            <Rail kind="user">
+              <button onClick={() => setSheet('usermsg')} style={{display:'block', width:'100%', textAlign:'left', background:T.userBg, borderRadius:8, padding:14, cursor:'pointer'}}>
+                <div className="pretty" style={{fontSize:14, lineHeight:'21px', color:T.text}}>
+                  会话列表排序错了。我按「按时间」的时候，最近活动的目录应该排在最上面，但现在带「已命名」的那几条跑到最后去了。
+                </div>
+                <div className="pretty" style={{fontSize:14, lineHeight:'21px', color:T.text, marginTop:4}}>
+                  截图是这个列表，注意「工作区」那一组已经掉到第二屏。
+                </div>
+                <div style={{display:'flex', alignItems:'center', gap:6, marginTop:10}}>
+                  <div style={{width:44, height:44, border:'1px solid '+T.borderMuted, borderRadius:4, display:'flex', alignItems:'center', justifyContent:'center'}}>
+                    <span className="mono" style={{fontSize:12, color:T.text}}>图 1</span>
+                  </div>
+                  <span className="mono" style={{fontSize:12, color:T.text}}>1 张图片 · 720×1280</span>
+                </div>
+              </button>
+              <div className="mono" style={{fontSize:12, lineHeight:'16px', color:T.muted, textAlign:'right', marginTop:4}}>14:02</div>
+            </Rail>
+
+            {/* 03 · 思考块（折叠态：思考 8s + 等级「中」） */}
+            <Rail kind="think" color={T.think.medium}>
+              <button onClick={() => setThink1(v => !v)} className="hvrow" style={{display:'flex', alignItems:'center', gap:8, width:'100%', textAlign:'left', padding:'4px 0', cursor:'pointer'}}>
+                <span style={{width:3, height:16, background:T.think.medium, flex:'0 0 auto'}} />
+                <span className="mono" style={{fontSize:12, lineHeight:'16px'}}>思考 8s</span>
+                <span className="mono" style={{fontSize:12, lineHeight:'16px', color:T.think.medium}}>中</span>
+                <span style={{flex:'1 1 auto'}} />
+                <span className="mono" style={{fontSize:12, lineHeight:'16px'}}>{think1 ? '收起' : '展开'}</span>
+              </button>
+              {think1 ? <div style={{fontSize:14, lineHeight:'22px', fontStyle:'italic', color:T.text, paddingLeft:11}}>排序在 groupBy 之后做的，先看 visible 的构造。</div> : null}
+            </Rail>
+
+            {/* 04 · 助手 markdown（标题 / 列表 / 行内码 / 围栏码块） */}
+            <Rail kind="ai">
+              <div style={{fontSize:20, lineHeight:'28px', fontWeight:600, color:T.mdHeading}}>先定位排序来源</div>
+              <div className="pretty" style={{fontSize:14, lineHeight:'21px', marginTop:6}}>列表是「先分组、再排序」：</div>
+              <div style={{marginTop:6, display:'flex', flexDirection:'column', gap:4}}>
+                {[['分组用的是 ','it.cwd','，所以一个目录一段'],['组间排序用的是组内最新的 ','lastActivityAt',''],['','按名称','时才改用 displayName.lowercase()']].map((it, i) => (
+                  <div key={i} style={{display:'flex', gap:8, fontSize:14, lineHeight:'21px'}}>
+                    <span style={{width:5, height:5, background:T.mdBullet, flex:'0 0 auto', marginTop:8}} />
+                    <span className="pretty">{it[0]}<span className="mono" style={{color:T.mdCode, background:T.surf, borderRadius:2, padding:'0 3px'}}>{it[1]}</span>{it[2]}</span>
+                  </div>
+                ))}
+              </div>
+              <div className="pretty" style={{fontSize:14, lineHeight:'21px', marginTop:8}}>改之前先确认一下组内行序是谁给的：</div>
+              <div style={{marginTop:6, border:'1px solid '+T.borderMuted, borderRadius:8, background:T.sDim, overflow:'hidden'}}>
+                <div className="thin" style={{overflowX:'auto'}}>
+                  <div className="mono" style={{fontSize:14, lineHeight:'20px', padding:'8px 10px', whiteSpace:'pre', minWidth:'min-content'}}>
+                    <div><S c={T.synKeyword}>val</S> groups = visible</div>
+                    <div>{'    '}.<S c={T.synFunction}>groupBy</S> {'{'} it.<S c={T.synVariable}>cwd</S> {'}'}</div>
+                    <div>{'    '}.<S c={T.synFunction}>toList</S>()</div>
+                    <div>{'    '}.<S c={T.synFunction}>sortedByDescending</S> {'{'} (_, rows) -&gt; rows.<S c={T.synFunction}>maxOf</S> {'{'} it.<S c={T.synVariable}>lastActivityAt</S> {'}'} {'}'}</div>
+                  </div>
+                </div>
+              </div>
+            </Rail>
+
+            {/* 05 · read 工具卡（折叠态） */}
+            <Rail kind="tool" color={T.success}>
+              <ToolCard name="read" subject="SessionsScreen.kt:119-131" state="ok" hint={132}
+                footer="成功 · 132ms · 13 行" expanded={exp.read} onToggle={() => toggle('read')}>
+                <CodeBody lines={[
+                  {n:119, t:'val visible = remember(sessions, query, byName, namedOnly) {'},
+                  {n:120, t:'    sessions'},
+                  {n:121, t:'        .filter { summary ->'},
+                  {n:122, t:'            query.isBlank() || summary.displayName.contains(query)'},
+                  {n:123, t:'        }'},
+                ]} />
+                <MoreLine text="展开全部（还有 8 行）" onClick={() => toggle('read')} />
+              </ToolCard>
+            </Rail>
+
+            {/* 06 · grep 工具卡（多条命中，按文件分组） */}
+            <Rail kind="tool" color={T.success}>
+              <ToolCard name="grep" subject="/sortedBy/ in app/src/main/kotlin" state="ok" hint={88}
+                footer="成功 · 7 处 · 3 个文件 · 88ms" expanded={exp.grep} onToggle={() => toggle('grep')}>
+                <div style={{borderTop:'1px solid '+T.borderMuted}}>
+                  {[
+                    {f:'SessionsScreen.kt', n:'3 处', hits:[['129',' if (byName) list.sortedBy { it.displayName.lowercase() } else list'],['194',' .sortedByDescending { (_, rows) -> rows.maxOf { it.lastActivityAt } }']]},
+                    {f:'PiSettingsRegistry.kt', n:'3 处', hits:[]},
+                    {f:'SessionTreeScreen.kt', n:'1 处', hits:[]},
+                  ].map((g, i) => (
+                    <div key={i}>
+                      <div style={{display:'flex', alignItems:'baseline', gap:8, padding:'6px 10px'}}>
+                        <span className="mono" style={{fontSize:14, lineHeight:'18px', flex:'1 1 auto', minWidth:0}}>{g.f}</span>
+                        <span className="mono" style={{fontSize:12, lineHeight:'16px'}}>{g.n}</span>
+                      </div>
+                      {g.hits.map((h, j) => (
+                        <div key={j} className="thin" style={{display:'flex', gap:8, padding:'2px 10px', overflowX:'auto'}}>
+                          <span className="mono" style={{fontSize:12, lineHeight:'18px', color:T.text, flex:'0 0 auto'}}>{h[0]}</span>
+                          <span className="mono" style={{fontSize:14, lineHeight:'18px', whiteSpace:'pre', color:T.text}}>{h[1]}</span>
+                        </div>
+                      ))}
+                    </div>
+                  ))}
+                </div>
+              </ToolCard>
+            </Rail>
+
+            {/* 07 · 助手短句 */}
+            <Rail kind="ai">
+              <div className="pretty" style={{fontSize:14, lineHeight:'21px'}}>组内没排过，难怪「已命名」那几条按文件名落到了后面。我把组内也按时间倒序补上。</div>
+            </Rail>
+
+            {/* 08 · edit 卡（卡上不画 diff） */}
+            <Rail kind="tool" color={T.success} style={{paddingTop:0, paddingBottom:6}}>
+              <div ref={anchor} style={{height:1}} />
+              <ToolCard name="edit" subject="SessionsScreen.kt" state="ok" hint={214}
+                footer="成功 · 214ms · 2 行" expanded={exp.edit} onToggle={() => toggle('edit')} />
+            </Rail>
+
+            {/* 09 · diff 卡（独立一张，跟在 edit 卡之后） */}
+            <Rail kind="tool" color={T.success}>
+              <ToolCard name="edit" subject="SessionsScreen.kt" state="ok" hint={214}
+                right={<span style={{display:'flex', gap:6}}>
+                  <span className="mono" style={{fontSize:12, lineHeight:'16px', color:T.diffAdd}}>+5</span>
+                  <span className="mono" style={{fontSize:12, lineHeight:'16px', color:T.diffDel}}>−2</span>
+                </span>}
+                footer="新增 5 行 · 删除 2 行" expanded={exp.diff} onToggle={() => toggle('diff')}>
+                <div style={{borderTop:'1px solid '+T.borderMuted}}>
+                  <CodeBody lines={[
+                    {n:'', t:'--- a/SessionsScreen.kt', c:T.muted},
+                    {n:'', t:'+++ b/SessionsScreen.kt', c:T.muted},
+                    {n:'', t:'@@ -188,7 +188,11 @@ fun SessionsScreen(', c:T.mdLink},
+                    {n:188, t:'            } else {', c:T.diffCtx},
+                    {n:189, t:'                val groups = visible', c:T.diffCtx},
+                    {n:190, t:'                    .groupBy { it.cwd }', c:T.diffCtx},
+                    {n:191, t:'                    .toList()', c:T.diffCtx},
+                    {n:192, t:'-                   .sortedByDescending { (_, rows) -> rows.maxOf { it.lastActivityAt } }', c:T.diffDel, bg:'rgba(204,102,102,0.10)'},
+                    {n:'192', t:'+                   .map { (cwd, rows) -> cwd to rows.sortedByDescending { it.lastActivityAt } }', c:T.diffAdd, bg:'rgba(181,189,104,0.10)'},
+                    {n:'193', t:'+                   .sortedByDescending { (_, rows) ->', c:T.diffAdd, bg:'rgba(181,189,104,0.10)'},
+                    {n:'194', t:'+                       rows.firstOrNull()?.lastActivityAt ?: 0L', c:T.diffAdd, bg:'rgba(181,189,104,0.10)'},
+                    {n:'195', t:'+                   }', c:T.diffAdd, bg:'rgba(181,189,104,0.10)'},
+                    {n:'', t:'… 12 行未变', c:T.muted},
+                    {n:'', t:'@@ -330,2 +334,3 @@ private fun SessionRow(', c:T.mdLink},
+                    {n:334, t:'            Spacer(Modifier.width(12.dp))', c:T.diffCtx},
+                    {n:335, t:'-       Text(relativeTime(summary.lastActivityAt), style = PiTheme.text.meta)', c:T.diffDel, bg:'rgba(204,102,102,0.10)'},
+                    {n:'335', t:'+       Text(relativeTime(summary.lastActivityAt), style = PiTheme.text.meta, maxLines = 1)', c:T.diffAdd, bg:'rgba(181,189,104,0.10)'},
+                  ]} />
+                </div>
+              </ToolCard>
+            </Rail>
+
+            {/* 10 · write 卡 */}
+            <Rail kind="tool" color={T.success}>
+              <ToolCard name="write" subject="SessionGroupOrderTest.kt" state="ok" hint={96}
+                footer="成功 · 96ms · 38 行" expanded={exp.write} onToggle={() => toggle('write')} />
+            </Rail>
+
+            {/* 11 · bash 卡（真实命令 + 多行输出 + 耗时） */}
+            <Rail kind="tool" color={T.success}>
+              <ToolCard name="$" subject="tools/run-app-pure-checks.sh (timeout 120s)" state="ok" hint={6400}
+                footer="成功 · 退出码 0 · 耗时 6.4 秒 · 42 行" expanded={exp.bash} onToggle={() => toggle('bash')}>
+                <CodeBody lines={[
+                  {n:'', t:'上方还有 37 行未显示', c:T.muted},
+                  {n:'', t:'[settings-audit] 68 项设置，全部有读取方'},
+                  {n:'', t:'[prose-audit] 用户可见文案 0 处内部路径'},
+                  {n:'', t:'[nested-comments] ok'},
+                  {n:'', t:'[highlight] ok'},
+                  {n:'', t:'PASS'},
+                ]} />
+              </ToolCard>
+            </Rail>
+
+            {/* 12 · bash 卡（长任务进度态：运行中 · 已运行 12.3 秒 · 18 行） */}
+            <Rail kind="tool" color={T.warning}>
+              <ToolCard name="$" subject="./gradlew :app:compileDebugKotlin" state="run" hint={12300}
+                footer="运行中 · 已运行 12.3 秒 · 18 行" expanded={exp.bash2} onToggle={() => toggle('bash2')}>
+                <CodeBody lines={[
+                  {n:'', t:'> Task :app:compileDebugKotlin'},
+                  {n:'', t:'', c:T.text},
+                ]} />
+                <div style={{display:'flex', alignItems:'center', gap:8, padding:'0 10px 8px 44px'}}>
+                  <span style={{width:8, height:16, background:'rgba(138,190,183,0.65)', display:'inline-block'}} />
+                  <span className="mono" style={{fontSize:12, lineHeight:'16px'}}>已运行 12.3 秒，无新输出</span>
+                </div>
+              </ToolCard>
+            </Rail>
+
+            {/* 13 · 思考块（展开态，与 03 组成折叠/展开对照） */}
+            <Rail kind="think" color={T.think.high}>
+              <button onClick={() => setThink2(v => !v)} className="hvrow" style={{display:'flex', alignItems:'center', gap:8, width:'100%', textAlign:'left', padding:'4px 0', cursor:'pointer'}}>
+                <span style={{width:3, height:16, background:T.think.high, flex:'0 0 auto'}} />
+                <span className="mono" style={{fontSize:12, lineHeight:'16px'}}>思考 21s</span>
+                <span className="mono" style={{fontSize:12, lineHeight:'16px', color:T.think.high}}>高</span>
+                <span style={{flex:'1 1 auto'}} />
+                <span className="mono" style={{fontSize:12, lineHeight:'16px'}}>{think2 ? '收起' : '展开'}</span>
+              </button>
+              {think2 ? (
+                <div className="pretty" style={{fontSize:14, lineHeight:'22px', fontStyle:'italic', color:T.text, paddingLeft:11, marginTop:4}}>
+                  组内排序改完还要看一点：跨天的时候 relativeTime 会变，行内的「刚刚」可能和分组顺序不一致，但那不是排序问题。
+                </div>
+              ) : null}
+            </Rail>
+
+            {/* 14 · find 卡 */}
+            <Rail kind="tool" color={T.success}>
+              <ToolCard name="find" subject="*.kt in app/src" state="ok" hint={150}
+                footer="成功 · 12 项 · 150ms" expanded={exp.find} onToggle={() => toggle('find')} />
+            </Rail>
+
+            {/* 15 · ls 卡（展开态：按目录分组，8 项） */}
+            <Rail kind="tool" color={T.success}>
+              <ToolCard name="ls" subject="app/src/main/kotlin/app/pi/ui" state="ok" hint={40}
+                footer="成功 · 8 项 · 40ms" expanded={exp.ls} onToggle={() => toggle('ls')}>
+                <div style={{borderTop:'1px solid '+T.borderMuted, padding:'6px 10px 8px'}}>
+                  <div className="mono" style={{fontSize:12, lineHeight:'16px', color:T.text, marginBottom:4}}>ui</div>
+                  <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:'2px 10px'}}>
+                    {['blocks/','chat/','device/','screens/','settings/','terminal/','theme/','PiRoot.kt'].map(x => (
+                      <span key={x} className="mono" style={{fontSize:14, lineHeight:'18px'}}>{x}</span>
+                    ))}
+                  </div>
+                </div>
+              </ToolCard>
+            </Rail>
+
+            {/* 16 · bash 失败卡（退出码 2） */}
+            <Rail kind="tool" color={T.error}>
+              <ToolCard name="$" subject={'rg -n "TODO" app/src/main/kotlin'} state="err" hint={400}
+                footer="失败 · 退出码 2 · 耗时 0.4 秒 · 0 行" expanded={exp.fail} onToggle={() => toggle('fail')}>
+                <CodeBody lines={[
+                  {n:'', t:'rg: app/src/main/kotlin: 没有那个文件或目录 (os error 2)', c:T.text},
+                ]} />
+              </ToolCard>
+            </Rail>
+
+            {/* 17 · 错误块（正文用 --text，详情是等宽文本） */}
+            <Rail kind="chrome">
+              <div style={{background:T.toolError, border:'1px solid '+T.borderMuted, borderRadius:8, overflow:'hidden', display:'flex'}}>
+                <span style={{width:3, background:T.error, flex:'0 0 auto', minHeight:20}} />
+                <div style={{flex:'1 1 auto', minWidth:0}}>
+                  <div className="pretty" style={{fontSize:14, lineHeight:'21px', padding:'10px 10px 0'}}>引擎没能返回这个会话的内容，可以重新打开这个会话再试一次。</div>
+                  <button onClick={() => toggle('generic')} className="mono hvrow" style={{display:'block', width:'100%', textAlign:'left', fontSize:12, lineHeight:'16px', color:T.error, padding:'8px 10px', cursor:'pointer'}}>{exp.generic ? '收起' : '详情'}</button>
+                  {exp.generic ? <CodeBody lines={[{n:'', t:'get_entries: session file not found'}]} /> : null}
+                </div>
+              </div>
+            </Rail>
+
+            {/* 18 · notice（App 自身的一行） */}
+            <Rail kind="chrome">
+              <div style={{display:'flex', alignItems:'baseline', gap:8}}>
+                <div className="mono" style={{fontSize:12, lineHeight:'16px', flex:'1 1 auto', minWidth:0}}>· 上下文已压缩（12,340 → 8,100 tokens）</div>
+                <span className="mono" style={{fontSize:12, lineHeight:'16px', color:T.muted, flex:'0 0 auto'}}>14:26</span>
+              </div>
+            </Rail>
+
+            {/* 19 · 压缩块（通栏 chip；这里同时给「正在压缩上下文…」的进行中形态） */}
+            <Rail kind="chrome">
+              <div style={{border:'1px solid '+T.borderMuted, borderRadius:8, background:T.customBg, padding:'8px 10px'}}>
+                <div style={{display:'flex', alignItems:'baseline', gap:8}}>
+                  <span className="mono" style={{fontSize:14, lineHeight:'18px', color:T.customLabel}}>上下文已压缩</span>
+                  <span style={{flex:'1 1 auto'}} />
+                  <span className="mono" style={{fontSize:12, lineHeight:'16px'}}>释放 42k tokens</span>
+                </div>
+                <div className="mono" style={{fontSize:12, lineHeight:'16px', color:T.warning, marginTop:4}}>Compaction: 42k tokens billed (~$0.03)</div>
+                <div className="mono" style={{fontSize:12, lineHeight:'16px', marginTop:4}}>正在压缩上下文… · pi 正在总结更早的对话</div>
+              </div>
+            </Rail>
+
+            {/* 20 · 分支摘要 */}
+            <Rail kind="chrome">
+              <div style={{border:'1px solid '+T.borderMuted, borderRadius:8, background:T.customBg, padding:'8px 10px'}}>
+                <div style={{display:'flex', alignItems:'baseline', gap:8}}>
+                  <span style={{fontSize:14, lineHeight:'20px', fontWeight:600, color:T.customLabel}}>分支摘要</span>
+                  <span className="mono" style={{fontSize:12, lineHeight:'16px'}}>3f1c9a7e</span>
+                  <span style={{flex:'1 1 auto'}} />
+                  <button onClick={() => setSheet('info')} className="mono hv" style={{fontSize:12, lineHeight:'16px', color:T.accent, border:'1px solid '+T.borderMuted, borderRadius:4, padding:'2px 6px', cursor:'pointer'}}>跳转分支</button>
+                </div>
+                <div className="pretty" style={{fontSize:14, lineHeight:'21px', marginTop:4}}>上一轮改过 grep 卡的分组标题，这次从那条消息分出来。</div>
+              </div>
+            </Rail>
+
+            {/* 21 · 模型切换（一行，可点开模型选择） */}
+            <Rail kind="chrome">
+              <button onClick={() => setSheet('model')} className="hvrow" style={{display:'flex', alignItems:'baseline', gap:8, width:'100%', textAlign:'left', padding:'4px 0', cursor:'pointer'}}>
+                <span className="mono" style={{fontSize:12, lineHeight:'16px'}}>模型切换 →</span>
+                <span className="mono" style={{fontSize:14, lineHeight:'18px', color:T.borderAccent, flex:'1 1 auto', minWidth:0}}>{model}</span>
+                <span className="mono" style={{fontSize:12, lineHeight:'16px'}}>deepseek</span>
+                <span className="mono" style={{fontSize:12, lineHeight:'16px', color:T.muted}}>14:31</span>
+              </button>
+            </Rail>
+
+            {/* 22 · 技能（可折叠） */}
+            <Rail kind="chrome">
+              <div style={{border:'1px solid '+T.borderMuted, borderRadius:8, background:T.customBg, overflow:'hidden'}}>
+                <button onClick={() => setSkill(v => !v)} className="hvrow" style={{display:'flex', alignItems:'baseline', gap:8, width:'100%', textAlign:'left', padding:'8px 10px', cursor:'pointer'}}>
+                  <span className="mono" style={{fontSize:12, lineHeight:'16px', color:T.customLabel}}>技能</span>
+                  <span className="mono" style={{fontSize:14, lineHeight:'18px', flex:'1 1 auto'}}>/skill:review</span>
+                  <span className="mono" style={{fontSize:12, lineHeight:'16px'}}>{skill ? '收起' : '展开'}</span>
+                </button>
+                {skill ? <CodeBody lines={[
+                  {n:'', t:'# Review'},
+                  {n:'', t:'按仓库规则逐条核对改动，输出「问题 / 位置 / 证据」三列。'},
+                ]} /> : null}
+              </div>
+            </Rail>
+
+            {/* 23 · 扩展写入的条目 */}
+            <Rail kind="chrome">
+              <div style={{border:'1px solid '+T.borderMuted, borderRadius:8, background:T.customBg, display:'flex', overflow:'hidden'}}>
+                <span style={{width:3, background:T.customLabel, flex:'0 0 auto'}} />
+                <div style={{padding:'8px 10px'}}>
+                  <div className="mono" style={{fontSize:12, lineHeight:'16px', color:T.customLabel}}>extension</div>
+                  <div className="pretty" style={{fontSize:14, lineHeight:'21px', marginTop:4}}>已记录本次改动：1 个文件，+5 −2。</div>
+                </div>
+              </div>
+            </Rail>
+
+            {/* 24 · 图片网格（解码失败/溢出的真实标签形态） */}
+            <Rail kind="chrome">
+              <div style={{display:'flex', gap:6, alignItems:'center'}}>
+                {['第 1 张图片','第 2 张图片'].map(x => (
+                  <div key={x} style={{width:72, height:72, border:'1px solid '+T.borderMuted, borderRadius:4, display:'flex', alignItems:'center', justifyContent:'center', textAlign:'center', padding:4}}>
+                    <span className="mono" style={{fontSize:12, lineHeight:'16px', color:T.text}}>{x}</span>
+                  </div>
+                ))}
+                <div style={{width:44, height:72, border:'1px solid '+T.borderMuted, borderRadius:4, display:'flex', alignItems:'center', justifyContent:'center'}}>
+                  <span className="mono" style={{fontSize:14, color:T.text}}>+1</span>
+                </div>
+              </div>
+            </Rail>
+
+            {/* 25 · 通用工具卡（扩展注册的工具，逐字显示工具名 + 参数摘要） */}
+            <Rail kind="tool" color={T.success}>
+              <ToolCard name="notes_lookup" subject="scope=session · limit=5" state="ok" hint={120}
+                footer="成功 · 2 行" expanded={exp.generic} onToggle={() => toggle('generic')}>
+                <CodeBody lines={[
+                  {n:'', t:'2 条记录命中，已折叠为摘要。'},
+                ]} />
+                <MoreLine text="展开全部（共 2 行）" onClick={() => toggle('generic')} />
+              </ToolCard>
+            </Rail>
+
+            {/* 26 · 审批提示（用户要决策）：标题带倒计时，按钮 允许 / 拒绝 */}
+            <Rail kind="chrome">
+              <div style={{border:'1px solid '+T.warning, borderRadius:8, background:T.toolPending, overflow:'hidden'}}>
+                <div style={{display:'flex', alignItems:'flex-start', gap:8, padding:'8px 10px'}}>
+                  <span className="mono" style={{fontSize:12, lineHeight:'16px', color:T.warning}}>extension</span>
+                  <span className="mono" style={{fontSize:12, lineHeight:'16px', flex:'1 1 auto', minWidth:0}}>允许写入 SessionsScreen.kt？ (5s)</span>
+                  <StateGlyph state="run" />
+                </div>
+                <div className="pretty" style={{fontSize:14, lineHeight:'21px', padding:'0 10px 8px'}}>这个扩展要把改动写回文件，继续吗？</div>
+                <div style={{display:'flex', alignItems:'center', gap:8, padding:'8px 10px', borderTop:'1px solid '+T.borderMuted}}>
+                  <Btn onClick={() => setDialog('approve')} active>允许</Btn>
+                  <Btn onClick={() => setDialog('approve')}>拒绝</Btn>
+                  <span style={{flex:'1 1 auto'}} />
+                  <span className="mono" style={{fontSize:12, lineHeight:'16px'}}>还有 1 个在排队</span>
+                </div>
+              </div>
+            </Rail>
+
+            {/* 28 · 流式中的助手正文（末尾一个静态光标；清单是真实 markdown 有序列表） */}
+            <Rail kind="ai">
+              <div className="pretty" style={{fontSize:14, lineHeight:'21px'}}>两处都改完了：</div>
+              <div style={{marginTop:6, display:'flex', flexDirection:'column', gap:4}}>
+                {[['1.','组内按 ','lastActivityAt',' 倒序'],['2.','组间改为用组内第一条的时间，空组回退 ','0L','']].map((it, i) => (
+                  <div key={i} style={{display:'flex', gap:8, fontSize:14, lineHeight:'21px'}}>
+                    <span className="mono" style={{flex:'0 0 auto'}}>{it[0]}</span>
+                    <span className="pretty">{it[1]}<span className="mono" style={{color:T.mdCode, background:T.surf, borderRadius:2, padding:'0 3px'}}>{it[2]}</span>{it[3]}</span>
+                  </div>
+                ))}
+              </div>
+              <div style={{marginTop:6, border:'1px solid '+T.borderMuted, borderRadius:8, background:T.sDim, overflow:'hidden'}}>
+                <div className="thin" style={{overflowX:'auto'}}>
+                  <div className="mono" style={{fontSize:14, lineHeight:'20px', padding:'8px 10px', whiteSpace:'pre', minWidth:'min-content'}}>
+                    <div>.<S c={T.synFunction}>sortedByDescending</S> {'{'} (_, rows) -&gt;</div>
+                    <div>{'    '}rows.<S c={T.synFunction}>firstOrNull</S>()?.<S c={T.synVariable}>lastActivityAt</S> ?: <S c={T.synNumber}>0L</S></div>
+                    <div>{'}'}</div>
+                  </div>
+                </div>
+              </div>
+              <div style={{marginTop:8, display:'flex', alignItems:'flex-end', gap:2}}>
+                <span className="pretty" style={{fontSize:14, lineHeight:'21px'}}>下一步建议把「已命名」那一栏的排序也写进测试，免得再回归。</span>
+                <span style={{width:8, height:16, background:'rgba(138,190,183,0.65)', flex:'0 0 auto', display:'inline-block'}} />
+              </div>
+            </Rail>
+
+          </div>
+        </div>
+
+        {!follow ? (
+          <button onClick={toLatest} className="mono hv" style={{position:'absolute', right:12, bottom:12, display:'flex', alignItems:'center', gap:6,
+            fontSize:12, lineHeight:'16px', padding:'6px 9px', borderRadius:4, border:'1px solid '+T.borderMuted, background:T.page, cursor:'pointer'}}>
+            回到最新 · 8
+          </button>
+        ) : null}
+      </div>
+
+      {/* 队列行（输入区上沿） */}
+      <div style={{display:'flex', alignItems:'center', gap:8, padding:'6px 16px', borderTop:'1px solid '+T.borderMuted}}>
+        <Btn onClick={() => setSheet('queue')}>穿插 2</Btn>
+        <Btn onClick={() => setSheet('queue')}>后续 1</Btn>
+        <span style={{flex:'1 1 auto'}} />
+        <button onClick={() => setSheet('queue')} className="mono hv" style={{fontSize:12, lineHeight:'16px', color:T.accent, padding:'4px 6px', borderRadius:4, cursor:'pointer'}}>收回并编辑</button>
+      </div>
+
+      {/* 输入区：边框色 = 当前思考等级色（! 开头时为 bashMode 色） */}
+      <div style={{padding:'8px 16px 10px'}}>
+        <div style={{border:'1px solid '+(draft.trim().charAt(0) === '!' ? T.bash : lvTone), borderRadius:16, padding:'10px 12px'}}>
+          <div className="pretty" style={{fontSize:14, lineHeight:'20px', color: draft ? T.text : T.muted, minHeight:20}}>{draft || '输入消息，/ 选命令，! 直接跑命令，@ 提及文件'}</div>
+          <div style={{display:'flex', alignItems:'center', gap:5, marginTop:10, flexWrap:'wrap'}}>
+            <Btn pad="3px 7px" onClick={() => setSheet('slash')}>/</Btn>
+            <Btn pad="3px 7px" onClick={() => setSheet('bash')}>!</Btn>
+            <Btn pad="3px 7px" onClick={() => setSheet('bash')}>!!</Btn>
+            <Btn pad="3px 7px" onClick={() => addDraft('@')}>@</Btn>
+            <Btn pad="3px 7px" onClick={() => addDraft('图片')}>图片</Btn>
+            <Btn pad="3px 7px" onClick={() => addDraft('编辑器')}>编辑器</Btn>
+            {streaming ? <Btn pad="3px 7px" onClick={() => setSheet('queue')}>后续</Btn> : null}
+            <span style={{flex:'1 1 auto'}} />
+            <button onClick={() => setLevel(THINK_LEVELS[(THINK_LEVELS.findIndex(x => x.key === level) + 1) % 7].key)}
+              className="mono hvb" style={{fontSize:12, lineHeight:'16px', padding:'4px 8px', borderRadius:4, border:'1px solid '+lvTone, color:lvTone, cursor:'pointer'}}>◐ {lv.zh}</button>
+            <Btn onClick={() => setStreaming(s => !s)} active style={{padding:'5px 11px'}}>{streaming ? '停止' : '发送'}</Btn>
+          </div>
+        </div>
+      </div>
+
+      {/* ---- 弹层：选择模型 / 思考等级 / 会话与队列 / 会话信息 / 更多 / 命令面板 / 命令输出 / 消息动作 ---- */}
+      <ModelSheet open={sheet === 'model'} onClose={() => setSheet(null)} model={model} setModel={m => { setModel(m); setSheet(null); }} />
+      <ThinkSheet open={sheet === 'think'} onClose={() => setSheet(null)} level={level} setLevel={l => { setLevel(l); setSheet(null); }} />
+
+      <Sheet open={sheet === 'queue'} title="会话与队列" onClose={() => setSheet(null)}>
+        <div className="mono" style={{fontSize:12, lineHeight:'16px', color:T.text, padding:'8px 16px 4px'}}>队列模式</div>
+        {[['穿插消息（steer）','本回合进行中插入，下一次回答之前生效','逐条'],['后续消息（follow up）','整个回合结束后才投递','全部']].map((r, i) => (
+          <div key={i} style={{display:'flex', alignItems:'center', gap:10, padding:'10px 16px', borderTop:'1px solid '+T.borderMuted}}>
+            <div style={{flex:'1 1 auto', minWidth:0}}>
+              <div style={{fontSize:14, lineHeight:'20px'}}>{r[0]}</div>
+              <div className="pretty" style={{fontSize:12, lineHeight:'16px', color:T.text}}>{r[1]}</div>
+            </div>
+            <Btn pad="3px 8px">{r[2]}</Btn>
+          </div>
+        ))}
+        {[['自动压缩','接近上下文上限时自动摘要','switch',true],['自动重试','可重试的模型错误按退避自动重试','switch',true]].map((r, i) => (
+          <RowSwitch key={i} title={r[0]} desc={r[1]} init={r[3]} />
+        ))}
+        {[['取消重试','结束正在等待的退避延迟'],['压缩上下文','先中止当前回合，再生成一次摘要']].map((r, i) => (
+          <div key={i} style={{display:'flex', alignItems:'center', gap:10, padding:'10px 16px', borderTop:'1px solid '+T.borderMuted}}>
+            <div style={{flex:'1 1 auto', minWidth:0}}>
+              <div style={{fontSize:14, lineHeight:'20px'}}>{r[0]}</div>
+              <div className="pretty" style={{fontSize:12, lineHeight:'16px', color:T.text}}>{r[1]}</div>
+            </div>
+          </div>
+        ))}
+      </Sheet>
+
+      <Sheet open={sheet === 'info'} title="会话信息" onClose={() => setSheet(null)}>
+        {INFO_ROWS.map((r, i) => (
+          <div key={i} style={{display:'flex', alignItems:'baseline', gap:12, padding:'9px 16px', borderTop:i ? '1px solid '+T.borderMuted : 'none'}}>
+            <span style={{fontSize:14, lineHeight:'20px', flex:'0 0 auto', width:76}}>{r[0]}</span>
+            <span className="mono" style={{fontSize:14, lineHeight:'20px', flex:'1 1 auto', minWidth:0}}>{r[1]}</span>
+          </div>
+        ))}
+      </Sheet>
+
+      <Sheet open={sheet === 'more'} title="更多" sub="会话与队列 · 导出 · 模型" onClose={() => setSheet(null)}>
+        {MORE_ROWS.map((r, i) => {
+          const all = r === '收起全部工具输出';
+          const label = all ? (expandedAll ? '收起全部工具输出' : '展开全部工具输出') : r;
+          return (
+          <button key={i} onClick={() => {
+            if (all) { const v = !expandedAll; setExpandedAll(v); setExp({read:v, grep:v, diff:v, bash:v, bash2:v, edit:v, write:v, ls:v, find:v, fail:v, generic:v}); setSheet(null); return; }
+            setSheet(r === '会话与队列' ? 'queue' : (r === '会话信息' ? 'info' : (r === '命令面板' ? 'slash' : (r === '选择模型…' ? 'model' : (r === '思考等级…' ? 'think' : null)))));
+          }}
+            className="hvrow" style={{display:'flex', alignItems:'center', gap:10, width:'100%', textAlign:'left', padding:'11px 16px', borderTop:i ? '1px solid '+T.borderMuted : 'none', cursor:'pointer'}}>
+            <span style={{fontSize:14, lineHeight:'20px', flex:'1 1 auto'}}>{label}</span>
+            <span className="mono" style={{fontSize:12, lineHeight:'16px', color:T.muted}}>›</span>
+          </button>
+          );
+        })}
+      </Sheet>
+
+      <SlashSheet open={sheet === 'slash'} onClose={() => setSheet(null)} />
+      <BashSheet open={sheet === 'bash'} onClose={() => setSheet(null)} />
+
+      <Sheet open={sheet === 'usermsg'} title="这条消息" sub="14:02" onClose={() => setSheet(null)}>
+        {['复制','编辑并从此分叉'].map((r, i) => (
+          <button key={r} onClick={() => setSheet(null)} className="hvrow" style={{display:'block', width:'100%', textAlign:'left', padding:'12px 16px', borderTop:i ? '1px solid '+T.borderMuted : 'none', fontSize:14, lineHeight:'20px', cursor:'pointer'}}>{r}</button>
+        ))}
+      </Sheet>
+
+      {/* 扩展确认框：允许 / 拒绝 + 倒计时 + 超时说明 */}
+      <Dialog open={dialog === 'approve'} danger={false} title="允许写入 SessionsScreen.kt？(5s)"
+        body="这个扩展要把改动写回文件，继续吗？"
+        primary="允许" secondary="拒绝" onPrimary={() => setDialog(null)} onSecondary={() => setDialog(null)} onClose={() => setDialog(null)}
+        note={<React.Fragment><div>超时后自动拒绝，晚到的回复会被丢弃。</div><div style={{marginTop:2}}>还有 1 个扩展对话框在排队</div></React.Fragment>} />
+    </div>
+  );
+}
+
+/* 带开关的行（sheet 内复用） */
+function RowSwitch({title, desc, init}) {
+  const [on, setOn] = useState(!!init);
+  return (
+    <div style={{display:'flex', alignItems:'center', gap:10, padding:'10px 16px', borderTop:'1px solid '+T.borderMuted}}>
+      <div style={{flex:'1 1 auto', minWidth:0}}>
+        <div style={{fontSize:14, lineHeight:'20px'}}>{title}</div>
+        <div className="pretty" style={{fontSize:12, lineHeight:'16px', color:T.text}}>{desc}</div>
+      </div>
+      <Switch on={on} onToggle={() => setOn(v => !v)} label={title} />
+    </div>
+  );
+}
+
+/* 选择模型 */
+function ModelSheet({open, onClose, model, setModel}) {
+  const [f, setF] = useState('');
+  const list = MODELS.filter(m => m.toLowerCase().indexOf(f.toLowerCase()) >= 0);
+  return (
+    <Sheet open={open} title="选择模型" onClose={onClose} maxH="84%"
+      footer={<div style={{padding:'10px 16px 12px'}}>
+        <div className="pretty" style={{fontSize:12, lineHeight:'17px', color:T.text}}>这个列表来自运行中的引擎。导入过的模型在 设置 → 模型 里能看到它们的状态。</div>
+        <div style={{marginTop:8}}><Btn>重新读取</Btn></div>
+      </div>}>
+      <div style={{padding:'4px 16px 8px'}}>
+        <input className="mono" value={f} onChange={e => setF(e.target.value)} placeholder="按 provider / 模型名筛选"
+          style={{width:'100%', fontSize:14, lineHeight:'20px', borderBottom:'1px solid '+T.borderMuted, paddingBottom:6, color:T.text}} />
+      </div>
+      {list.length === 0 ? (
+        <div style={{padding:'14px 16px'}}>
+          <div style={{fontSize:14, lineHeight:'20px'}}>没有可用模型。</div>
+          <div className="pretty" style={{fontSize:14, lineHeight:'20px', marginTop:4}}>刚配置好的厂商要重启引擎后才会出现在这里；已经保存的模型可以在 设置 → 模型 里看到它们的状态。</div>
+        </div>
+      ) : list.map((m, i) => (
+        <button key={m} onClick={() => setModel(m)} className="hvrow" style={{display:'flex', alignItems:'center', gap:10, width:'100%', textAlign:'left', padding:'11px 16px', borderTop:i ? '1px solid '+T.borderMuted : 'none', cursor:'pointer'}}>
+          <span className="mono" style={{fontSize:14, lineHeight:'20px', flex:'1 1 auto', minWidth:0, color: m === model ? T.accent : T.text}}>{m}</span>
+          {m === model ? <span className="mono" style={{fontSize:12, lineHeight:'16px', color:T.accent}}>当前</span> : null}
+        </button>
+      ))}
+    </Sheet>
+  );
+}
+
+/* 思考等级（7 级色温刻度） */
+function ThinkSheet({open, onClose, level, setLevel}) {
+  return (
+    <Sheet open={open} title="思考等级" sub="可选等级由当前模型决定。" onClose={onClose}>
+      {THINK_LEVELS.map((l, i) => (
+        <button key={l.key} onClick={() => setLevel(l.key)} className="hvrow" style={{display:'flex', alignItems:'center', gap:10, width:'100%', textAlign:'left', padding:'11px 16px', borderTop:i ? '1px solid '+T.borderMuted : 'none', cursor:'pointer'}}>
+          <span style={{width:3, height:16, background:l.tone, flex:'0 0 auto'}} />
+          <span className="mono" style={{fontSize:14, lineHeight:'20px', color:l.tone, flex:'0 0 auto', width:38}}>{l.zh}</span>
+          <span className="mono" style={{fontSize:12, lineHeight:'16px', color:T.text, flex:'1 1 auto', minWidth:0}}>{l.key}</span>
+          {l.key === level ? <span className="mono" style={{fontSize:12, lineHeight:'16px', color:T.accent}}>当前</span> : null}
+        </button>
+      ))}
+      <div style={{padding:'10px 16px 4px'}}>
+        <div style={{display:'flex', gap:2, alignItems:'center'}}>
+          {THINK_LEVELS.map(l => <span key={l.key} style={{flex:'1 1 0', height:3, background:l.tone}} />)}
+        </div>
+        <div className="mono" style={{fontSize:12, lineHeight:'16px', color:T.text, marginTop:6}}>色温刻度 = pi 的 thinking(level) 七级</div>
+      </div>
+    </Sheet>
+  );
+}
+
+/* 命令面板（/ 弹层：等宽命令名 + 参数提示 + 说明 + 来源徽标） */
+function SlashSheet({open, onClose, onPick}) {
+  const [f, setF] = useState('');
+  const list = SLASH.filter(c => (c.cmd + c.desc).toLowerCase().indexOf(f.toLowerCase()) >= 0);
+  return (
+    <Sheet open={open} title="命令面板" sub="23 条内置 + 扩展 / 模板 / 技能" onClose={onClose} maxH="84%">
+      <div style={{padding:'4px 16px 8px'}}>
+        <input className="mono" value={f} onChange={e => setF(e.target.value)} placeholder="输入命令名筛选"
+          style={{width:'100%', fontSize:14, lineHeight:'20px', borderBottom:'1px solid '+T.borderMuted, paddingBottom:6, color:T.text}} />
+      </div>
+      {list.length === 0 ? (
+        <div style={{padding:'14px 16px', fontSize:14, lineHeight:'20px'}}>没有匹配「{f}」的命令</div>
+      ) : list.map((c, i) => (
+        <button key={c.cmd} onClick={onClose} className="hvrow" style={{display:'block', width:'100%', textAlign:'left', padding:'10px 16px', borderTop:i ? '1px solid '+T.borderMuted : 'none', cursor:'pointer'}}>
+          <div style={{display:'flex', alignItems:'baseline', gap:8}}>
+            <span className="mono" style={{fontSize:14, lineHeight:'18px', color:T.accent}}>{c.cmd}</span>
+            {c.hint ? <span className="mono" style={{fontSize:12, lineHeight:'16px', color:T.text}}>{c.hint}</span> : null}
+            <span style={{flex:'1 1 auto'}} />
+            <span className="mono" style={{fontSize:12, lineHeight:'16px', color:T.text}}>{c.src}</span>
+          </div>
+          <div className="pretty" style={{fontSize:14, lineHeight:'20px', marginTop:2}}>
+            {c.desc}{c.note ? ' · ' + c.note : ''}
+          </div>
+        </button>
+      ))}
+    </Sheet>
+  );
+}
+
+/* 命令输出面板（! 面板：状态行 + 关闭输出 / 停止命令） */
+function BashSheet({open, onClose}) {
+  return (
+    <Sheet open={open} title="$ tools/run-app-pure-checks.sh" sub="运行中 · 进入上下文" onClose={onClose} maxH="72%"
+      footer={<div style={{display:'flex', gap:8, padding:'10px 16px 12px'}}>
+        <Btn onClick={onClose}>关闭输出</Btn>
+        <Btn onClick={onClose}>停止命令</Btn>
+      </div>}>
+      <CodeBody lines={[
+        {n:'', t:'[settings-audit] 68 项设置，全部有读取方'},
+        {n:'', t:'[prose-audit] 用户可见文案 0 处内部路径'},
+        {n:'', t:'[nested-comments] ok'},
+        {n:'', t:'[highlight] ok'},
+      ]} />
+    </Sheet>
+  );
+}
+
+/* ============================ 屏 2 · 会话列表（覆盖层） ============================ */
+function Sessions({view, mode, setMode, onClose}) {
+  const [q, setQ] = useState('');
+  const [sort, setSort] = useState('time');     /* time | name */
+  const [filter, setFilter] = useState('all');  /* all | named */
+  const [sel, setSel] = useState(1);
+  const [dialog, setDialog] = useState(null);   /* actions | delete | deleteCur */
+
+  const grouped = useMemo(() => {
+    let rows = SESSION_ROWS.slice();
+    if (filter === 'named') rows = rows.filter(r => r.named);
+    if (q.trim()) {
+      const s = q.trim().toLowerCase();
+      rows = rows.filter(r => (r.title + r.g + (r.model || '')).toLowerCase().indexOf(s) >= 0);
+    }
+    if (sort === 'name') rows = rows.slice().sort((a, b) => a.title.localeCompare(b.title, 'zh'));
+    const order = [];
+    rows.forEach(r => { if (order.indexOf(r.g) < 0) order.push(r.g); });
+    return order.map(g => ({g, rows: rows.filter(r => r.g === g)}));
+  }, [q, sort, filter]);
+
+  const total = grouped.reduce((n, x) => n + x.rows.length, 0);
+  const cur = SESSION_ROWS.filter(r => r.cur)[0];
+
+  return (
+    <div style={{flex:'1 1 auto', minHeight:0, display:'flex', flexDirection:'column', background:T.page, position:'relative'}}>
+      <div style={{display:'flex', alignItems:'center', gap:8, padding:'10px 16px 8px'}}>
+        <div style={{fontSize:17, lineHeight:'24px', fontWeight:600, flex:'0 0 auto'}}>会话</div>
+        <Seg items={[{id:'list', label:'列表'}, {id:'tree', label:'会话树'}]} value={mode} onChange={setMode} />
+        <span style={{flex:'1 1 auto'}} />
+        <Btn onClick={() => setDialog('delete')}>导入</Btn>
+        <Btn title="刷新会话列表">刷新</Btn>
+        <Btn onClick={onClose}>关闭</Btn>
+      </div>
+      <div className="mono" style={{fontSize:12, lineHeight:'16px', color:T.muted, padding:'0 16px 6px'}}>覆盖层 · 从对话页左上角的会话名进入</div>
+
+      {/* 搜索行（等宽）+ 排序 / 筛选切换 */}
+      <div style={{display:'flex', alignItems:'center', gap:8, padding:'0 16px 8px'}}>
+        <input className="mono" value={q} onChange={e => setQ(e.target.value)} placeholder="搜索名称 / 目录 / 文件名"
+          style={{flex:'1 1 auto', minWidth:0, fontSize:14, lineHeight:'20px', borderBottom:'1px solid '+T.borderMuted, paddingBottom:6, color:T.text}} />
+        <Seg items={[{id:'time', label:'按时间'}, {id:'name', label:'按名称'}]} value={sort} onChange={setSort} />
+        <Seg items={[{id:'all', label:'全部'}, {id:'named', label:'仅命名'}]} value={filter} onChange={setFilter} />
+      </div>
+
+      <Readout cells={[
+        {k:'会话', v:String(total)},
+        {k:'工作目录', v:String(grouped.length)},
+        {k:'排序', v: sort === 'time' ? '按时间' : '按名称'},
+        {k:'筛选', v: filter === 'all' ? '全部' : '仅命名'},
+      ]} />
+
+      <div className="mono" style={{fontSize:12, lineHeight:'16px', color:T.muted, padding:'6px 16px'}}>长按一行可删除该会话；当前会话要切换后才能删除。</div>
+
+      <div className="thin" style={{flex:'1 1 auto', minHeight:0, overflowY:'auto', overflowX:'hidden'}}>
+        {view === 'empty1' ? (
+          <EmptyState title="还没有会话" body="会话按工作目录分组，这里会列出每一个目录的对话。" />
+        ) : (view === 'empty2' || total === 0) ? (
+          <EmptyState title="没有匹配的会话" body="换一个关键词，或关掉「仅命名」筛选。" />
+        ) : grouped.map(sec => (
+          <div key={sec.g}>
+            <div style={{display:'flex', alignItems:'baseline', gap:8, padding:'10px 16px 6px'}}>
+              <span className="mono" style={{fontSize:12, lineHeight:'16px', color:T.accent}}>{sec.g}</span>
+              <span style={{flex:'1 1 auto', height:1, background:T.borderMuted, alignSelf:'center'}} />
+              <span className="mono" style={{fontSize:12, lineHeight:'16px', color:T.muted}}>{sec.rows.length}</span>
+            </div>
+            {sec.rows.map(r => (
+              <SessionRow key={r.n} r={r} selected={sel === r.n} onSelect={() => setSel(r.n)} onMore={() => setDialog('actions')} />
+            ))}
+          </div>
+        ))}
+        <div style={{height:80}} />
+      </div>
+
+      {/* 右下 FAB：新建会话 */}
+      <button className="mono hv" style={{position:'absolute', right:16, bottom:16, display:'flex', alignItems:'center', gap:8,
+        fontSize:14, lineHeight:'20px', padding:'12px 16px', borderRadius:8, border:'1px solid '+T.accent, color:T.accent, background:T.page, cursor:'pointer'}}>
+        + 新建会话
+      </button>
+
+      {/* 行内动作框 */}
+      <Dialog open={dialog === 'actions'} title={cur.title} body="对这个会话做什么？"
+        primary="新建子会话" secondary="删除" onPrimary={() => setDialog(null)} onSecondary={() => setDialog(null)} onClose={() => setDialog(null)} />
+      <Dialog open={dialog === 'delete'} title="删除会话" body="删除「把 diff 卡片的高度收紧」？这个会话会被移除，无法恢复。"
+        primary="删除" secondary="取消" danger onPrimary={() => setDialog(null)} onSecondary={() => setDialog(null)} onClose={() => setDialog(null)} />
+      <Dialog open={dialog === 'deleteCur'} title="删除会话" body="「会话列表排序错了 · 对话页顶部状态行」是当前会话，pi 正在写入这个文件。先切换到别的会话再删除。"
+        primary="删除" secondary="取消" danger onPrimary={() => setDialog(null)} onSecondary={() => setDialog(null)} onClose={() => setDialog(null)} />
+    </div>
+  );
+}
+
+function EmptyState({title, body}) {
+  return (
+    <div style={{padding:'56px 32px', display:'flex', flexDirection:'column', alignItems:'center', gap:10}}>
+      <PiMark size={40} tone={T.borderMuted} />
+      <div style={{fontSize:17, lineHeight:'24px', fontWeight:600}}>{title}</div>
+      <div className="pretty" style={{fontSize:14, lineHeight:'21px', color:T.text, textAlign:'center'}}>{body}</div>
+    </div>
+  );
+}
+
+function SessionRow({r, selected, onSelect, onMore}) {
+  return (
+    <div onClick={onSelect} className="hvrow" style={{display:'flex', alignItems:'flex-start', gap:8, padding:'10px 16px', cursor:'pointer',
+      background: selected ? T.selectedBg : 'transparent', borderTop:'1px solid '+T.borderMuted}}>
+      <span className="mono" style={{fontSize:12, lineHeight:'20px', color:T.muted, flex:'0 0 auto'}}>{r.n}</span>
+      <div style={{flex:'1 1 auto', minWidth:0}}>
+        <div style={{display:'flex', alignItems:'baseline', gap:6}}>
+          <span style={{fontSize:15, lineHeight:'21px', fontWeight: selected ? 600 : 400, color: selected ? T.accent : T.text, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis'}}>{r.title}</span>
+          {r.cur ? <span className="mono" style={{fontSize:12, lineHeight:'16px', color:T.text, border:'1px solid '+T.borderMuted, borderRadius:4, padding:'0 4px', flex:'0 0 auto'}}>当前</span> : null}
+        </div>
+        <div className="mono" style={{fontSize:12, lineHeight:'16px', color:selected ? T.text : T.muted, marginTop:2, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis'}}>
+          {r.g}{r.model ? ' · ' + r.model : ''}
+        </div>
+        <div className="mono" style={{fontSize:12, lineHeight:'16px', color:selected ? T.text : T.muted, marginTop:2}}>
+          {r.count} 条{r.branch ? ' · 分支' : ''}{r.named ? ' · 已命名' : ''}
+        </div>
+      </div>
+      <div style={{display:'flex', flexDirection:'column', alignItems:'flex-end', gap:6, flex:'0 0 auto'}}>
+        <span className="mono" style={{fontSize:12, lineHeight:'16px', color:selected ? T.text : T.muted}}>{r.time}</span>
+        {selected ? <button onClick={e => { e.stopPropagation(); onMore(); }} className="mono hv" style={{fontSize:12, lineHeight:'16px', border:'1px solid '+T.borderMuted, borderRadius:4, padding:'1px 6px', cursor:'pointer'}}>动作</button> : null}
+      </div>
+    </div>
+  );
+}
+
+Object.assign(window, {SESSION_ROWS, MODELS, SLASH, INFO_ROWS, MORE_ROWS, S, Marker, Rail, ToolCard, CodeBody, MoreLine, Chat, Sessions, EmptyState, SessionRow, RowSwitch, ModelSheet, ThinkSheet, SlashSheet, BashSheet});
+})();
+</script>
+
+<!-- ============================ ③ 工作区 + 设置 + 导航骨架 ============================ -->
+<script type="text/babel" data-presets="react">
+/* 每个 <script type="text/babel"> 共享同一个全局作用域，同名顶层 const 会
+   「Identifier has already been declared」而整页白屏（skill 技术红线第 2 条）。
+   所以每块自己包一层 IIFE：内部名字互不可见，只通过 Object.assign(window,…) 交换。 */
+(function () {
+const {useState, useRef, useEffect, useMemo} = React;
+const {T, THINK_LEVELS, MONO, Hair, VHair, StateGlyph, Tick, Ring, Readout, Btn, Seg, Switch, Badge, Sheet, Dialog, SectionBar, PiMark,
+  SESSION_ROWS, MODELS, SLASH, INFO_ROWS, MORE_ROWS, S, Marker, Rail, ToolCard, CodeBody, MoreLine,
+  Chat, Sessions, EmptyState, SessionRow, RowSwitch, ModelSheet, ThinkSheet, SlashSheet, BashSheet} = window;
+
+/* ============================ 屏 2 · 会话列表覆盖层（列表 ↔ 会话树 同层） ============================ */
+function SessionOverlay({initial, onClose}) {
+  const [mode, setMode] = useState((initial && initial.mode) || 'list');
+  return (
+    <div style={{position:'absolute', inset:0, zIndex:50, background:T.page, display:'flex', flexDirection:'column'}}>
+      {mode === 'list'
+        ? <Sessions view={(initial && initial.view) || 'list'} mode={mode} setMode={setMode} onClose={onClose} />
+        : <SessionTree mode={mode} setMode={setMode} onClose={onClose} />}
+    </div>
+  );
+}
+
+/* 会话树（分支 / 条目；覆盖层内与列表同层切换） */
+const TREE_BRANCH = [
+  {d:0, type:'branch_summary', text:'3f1c9a7e', meta:'14:26', tool:false},
+  {d:1, type:'user', text:'会话列表排序错了。我按「按时间」的时候…', meta:'14:02', tool:false},
+  {d:1, type:'tool/read', text:'SessionsScreen.kt:119-131', meta:'132ms', tool:true},
+  {d:1, type:'tool/grep', text:'/sortedBy/ in app/src/main/kotlin', meta:'88ms', tool:true},
+  {d:1, type:'tool/edit', text:'SessionsScreen.kt', meta:'214ms', tool:true},
+  {d:1, type:'tool/bash', text:'tools/run-app-pure-checks.sh', meta:'6.4 秒', tool:true},
+  {d:2, type:'assistant', text:'组内没排过，难怪「已命名」那几条按文件名落到了后面。', meta:'14:22', tool:false},
+  {d:0, type:'branch_summary', text:'71b0e2c4', meta:'13:48', tool:false},
+  {d:1, type:'user', text:'把 diff 卡片的高度收紧', meta:'13:40', tool:false},
+];
+const TREE_ENTRIES = [
+  {d:0, type:'provider/model', text:'deepseek/deepseek-chat', meta:'14:02'},
+  {d:0, type:'target → label', text:'会话列表排序错了 · 对话页顶部状态行', meta:'14:02'},
+  {d:0, type:'tool_call', text:'read', meta:'14:03'},
+  {d:0, type:'tool_result', text:'read · 13 行', meta:'14:03'},
+  {d:0, type:'tool_call', text:'grep', meta:'14:05'},
+  {d:0, type:'tool_result', text:'grep · 7 处 · 3 个文件', meta:'14:05'},
+  {d:0, type:'custom', text:'extension', meta:'14:26'},
+];
+const TREE_FILTERS = ['默认', '无工具', '仅提问', '仅有标签', '全部'];
+
+function SessionTree({mode, setMode, onClose}) {
+  const [f, setF] = useState('');
+  const [fi, setFi] = useState(0);
+  const [sel, setSel] = useState(2);
+  const filterName = TREE_FILTERS[fi];
+  let rows = mode === 'entry' ? TREE_ENTRIES : TREE_BRANCH;
+  if (mode !== 'entry') {
+    if (filterName === '无工具') rows = rows.filter(r => !r.tool);
+    if (filterName === '仅提问') rows = rows.filter(r => r.type === 'user');
+    if (filterName === '仅有标签') rows = rows.filter(r => r.type === 'branch_summary');
+  }
+  if (f.trim()) rows = rows.filter(r => (r.text + r.type).toLowerCase().indexOf(f.trim().toLowerCase()) >= 0);
+  const empty = rows.length === 0;
+
+  return (
+    <div style={{flex:'1 1 auto', minHeight:0, display:'flex', flexDirection:'column', background:T.page}}>
+      <div style={{display:'flex', alignItems:'center', gap:8, padding:'10px 16px 8px'}}>
+        <div style={{fontSize:17, lineHeight:'24px', fontWeight:600, flex:'0 0 auto'}}>会话树</div>
+        <Seg items={[{id:'list', label:'列表'}, {id:'tree', label:'会话树'}]} value={mode} onChange={setMode} />
+        <span style={{flex:'1 1 auto'}} />
+        <Btn>刷新</Btn>
+        <Btn onClick={onClose}>关闭</Btn>
+      </div>
+      <div style={{display:'flex', alignItems:'center', gap:8, padding:'0 16px 8px'}}>
+        <input className="mono" value={f} onChange={e => setF(e.target.value)} placeholder="筛选条目文字"
+          style={{flex:'1 1 auto', minWidth:0, fontSize:14, lineHeight:'20px', borderBottom:'1px solid '+T.borderMuted, paddingBottom:6, color:T.text}} />
+        <Seg items={[{id:'branch', label:'分支'}, {id:'entry', label:'条目'}]} value={mode === 'entry' ? 'entry' : 'branch'} onChange={v => setMode(v === 'entry' ? 'entry' : 'tree')} />
+        <Btn onClick={() => setFi(i => (i + 1) % TREE_FILTERS.length)} title="点击循环到下一种筛选">{filterName}</Btn>
+      </div>
+
+      {mode !== 'entry' ? (
+        <div className="mono" style={{fontSize:12, lineHeight:'16px', color:T.muted, padding:'0 16px 8px'}}>分叉会新建一个会话文件，原会话保持不变。</div>
+      ) : null}
+
+      <Readout cells={[
+        {k:'分支', v:String(TREE_BRANCH.filter(r => r.type === 'branch_summary').length)},
+        {k:'条目', v:String(TREE_ENTRIES.length)},
+        {k:'筛选', v:filterName},
+        {k:'显示', v:String(rows.length)},
+      ]} />
+
+      <div className="thin" style={{flex:'1 1 auto', minHeight:0, overflowY:'auto', overflowX:'hidden'}}>
+        {empty ? (
+          mode !== 'entry'
+            ? <EmptyState title="没有匹配的条目" body={'当前筛选是「' + filterName + '」。换一个关键词，或再按一次筛选按钮循环到下一种模式。'} />
+            : <EmptyState title="没有条目" body="这个会话还没有可浏览的条目。" />
+        ) : rows.map((r, i) => (
+          <div key={i} style={{position:'relative', display:'flex', alignItems:'baseline', gap:8, padding:'8px 16px 8px ' + (24 + r.d * 14) + 'px'}}>
+            {r.d > 0 ? <span style={{position:'absolute', left:18, top:0, bottom:0, width:1, background:T.borderMuted}} /> : null}
+            {r.d > 0 ? <span style={{position:'absolute', left:16, top:16, width:6, height:6, background:r.tool ? T.success : T.text}} /> : null}
+            <span className="mono" style={{fontSize:12, lineHeight:'16px', color:T.muted, flex:'0 0 auto'}}>{r.type}</span>
+            <span className="mono" style={{fontSize:14, lineHeight:'20px', flex:'1 1 auto', minWidth:0, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis'}}>{r.text}</span>
+            <span className="mono" style={{fontSize:12, lineHeight:'16px', color:T.muted, flex:'0 0 auto'}}>{r.meta}</span>
+            <button onClick={() => setSel(i)} className="mono hv" style={{fontSize:12, lineHeight:'16px', border:'1px solid '+(sel === i ? T.accent : T.borderMuted), color:sel === i ? T.accent : T.text, borderRadius:4, padding:'1px 6px', flex:'0 0 auto', cursor:'pointer'}}>分叉新会话</button>
+          </div>
+        ))}
+        <div style={{height:24}} />
+      </div>
+    </div>
+  );
+}
+
+/* ============================ 屏 3 · 工作区（项目现场） ============================ */
+
+/* 等距投影：x' = (x - y) * 0.866, y' = (x + y) * 0.5 - z（手搓，SVG 内联，无渐变） */
+function IsoStack() {
+  const sc = 30, ox = 168, oy = 138;
+  const P = (x, y, z) => [((x - y) * 0.866 * sc + ox).toFixed(1), ((x + y) * 0.5 * sc - z * sc + oy).toFixed(1)];
+  const poly = arr => arr.map(p => p.join(',')).join(' ');
+  const S = 2.2;                                  /* 底板边长（单位） */
+  const slabs = [
+    {z0:0.0, z1:0.9, n:'1'},
+    {z0:1.6, z1:2.5, n:'2'},
+    {z0:3.2, z1:4.1, n:'3'},
+  ];
+  const faces = sl => ({
+    left: poly([P(0, S, sl.z1), P(S, S, sl.z1), P(S, S, sl.z0), P(0, S, sl.z0)]),
+    right: poly([P(S, 0, sl.z1), P(S, S, sl.z1), P(S, S, sl.z0), P(S, 0, sl.z0)]),
+    top: poly([P(0, 0, sl.z1), P(S, 0, sl.z1), P(S, S, sl.z1), P(0, S, sl.z1)]),
+    edge: [P(S, 0, sl.z1), P(S, S, sl.z1)],
+  });
+  const gridOn = (z) => {
+    const out = [];
+    for (let i = 1; i <= 3; i++) {
+      const t = (S * i) / 4;
+      out.push(poly([P(t, 0, z), P(t, S, z)]));
+      out.push(poly([P(0, t, z), P(S, t, z)]));
+    }
+    return out;
+  };
+  return (
+    <svg width="212" height="196" viewBox="0 0 212 196" style={{display:'block', flex:'0 0 auto'}}>
+      {slabs.map((sl, i) => {
+        const f = faces(sl);
+        return (
+          <g key={i}>
+            <polygon points={f.left} fill={T.surf} stroke={T.borderMuted} strokeWidth="1" />
+            <polygon points={f.right} fill={T.sDim} stroke={T.borderMuted} strokeWidth="1" />
+            <polygon points={f.top} fill={T.sHighest} stroke={T.borderMuted} strokeWidth="1" />
+            {gridOn(sl.z1).map((g, j) => <polyline key={j} points={g} fill="none" stroke={T.borderMuted} strokeWidth="1" opacity="0.55" />)}
+            <polyline points={f.edge[0].join(',') + ' ' + f.edge[1].join(',')} fill="none" stroke={T.borderMuted} strokeWidth="1" />
+          </g>
+        );
+      })}
+      {slabs.map((sl, i) => {
+        const a = P(S, S * 0.5, sl.z1);
+        const bx = (parseFloat(a[0]) + 14).toFixed(1), by = (parseFloat(a[1]) + 4).toFixed(1);
+        return (
+          <g key={'l' + i}>
+            <line x1={a[0]} y1={a[1]} x2={bx} y2={by} stroke={T.borderMuted} strokeWidth="1" />
+            <text x={(parseFloat(bx) + 4).toFixed(1)} y={(parseFloat(by) + 4).toFixed(1)} fill={T.text}
+              style={{fontFamily:'var(--font-mono)', fontSize:12}}>{sl.n}</text>
+          </g>
+        );
+      })}
+    </svg>
+  );
+}
+
+function WbRow({label, value, tone, right, onClick}) {
+  return (
+    <div onClick={onClick} className={onClick ? 'hvrow' : ''} style={{display:'flex', alignItems:'baseline', gap:10, padding:'9px 12px', borderTop:'1px solid '+T.borderMuted, cursor:onClick ? 'pointer' : 'default'}}>
+      <span className="mono" style={{fontSize:12, lineHeight:'16px', color:T.muted, flex:'0 0 auto', width:74}}>{label}</span>
+      <span className="mono" style={{fontSize:14, lineHeight:'20px', color:tone || T.text, flex:'1 1 auto', minWidth:0}}>{value}</span>
+      {right ? <span className="mono" style={{fontSize:12, lineHeight:'16px', color:T.muted, flex:'0 0 auto'}}>{right}</span> : null}
+    </div>
+  );
+}
+
+function WbCell({n, title, right, children, style}) {
+  return (
+    <div style={{border:'1px solid '+T.borderMuted, borderRadius:8, background:T.page, ...style}}>
+      <div style={{display:'flex', alignItems:'baseline', gap:8, padding:'8px 12px'}}>
+        <span className="mono" style={{fontSize:12, lineHeight:'16px', color:T.muted}}>{n}</span>
+        <span style={{fontSize:14, lineHeight:'20px', fontWeight:600}}>{title}</span>
+        <span style={{flex:'1 1 auto'}} />
+        {right ? <span className="mono" style={{fontSize:12, lineHeight:'16px', color:T.muted}}>{right}</span> : null}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function Workbench({initial}) {
+  const [keep, setKeep] = useState(true);
+  const [offline, setOffline] = useState(false);
+  const [dlg, setDlg] = useState(null);
+  const [pick, setPick] = useState(1);
+
+  const RES = [
+    ['技能', '空', '0 项'], ['提示模板', '空', '0 项'], ['扩展', '空', '0 项'],
+    ['资源包', '空', '0 项'], ['主题', '空', '0 项'],
+  ];
+  const CHANGED = [
+    {f:'SessionsScreen.kt', add:5, del:2, note:'本次会话改过'},
+    {f:'SessionGroupOrderTest.kt', add:38, del:0, note:'本次会话新建'},
+  ];
+  const CMD = [
+    {c:'tools/run-app-pure-checks.sh', s:'成功 · 退出码 0', ms:6400, tone:T.success},
+    {c:'./gradlew :app:compileDebugKotlin', s:'运行中 · 已运行 12.3 秒', ms:12300, tone:T.warning},
+  ];
+
+  return (
+    <div style={{flex:'1 1 auto', minHeight:0, display:'flex', flexDirection:'column', background:T.page, position:'relative'}}>
+      <div style={{display:'flex', alignItems:'center', gap:8, padding:'10px 16px 8px'}}>
+        <div style={{fontSize:17, lineHeight:'24px', fontWeight:600, flex:'1 1 auto'}}>工作区</div>
+        <Btn title="刷新项目现场">刷新</Btn>
+      </div>
+      <div className="mono" style={{fontSize:12, lineHeight:'16px', color:T.muted, padding:'0 16px 8px'}}>本版工作区 = 这个会话的项目现场</div>
+
+      <Readout cells={[
+        {k:'工作目录', v:'pi-android'},
+        {k:'分支', v:'main'},
+        {k:'工具调用', v:'10'},
+        {k:'失败', v:'1', tone:T.error},
+      ]} />
+
+      <div className="thin" style={{flex:'1 1 auto', minHeight:0, overflowY:'auto', overflowX:'hidden', padding:'10px 16px 16px'}}>
+
+        <WbCell n="01" title="项目现场" right="工作目录末段 · .pi · 会话">
+          <div style={{display:'flex', alignItems:'center', gap:6, padding:'2px 6px 10px 12px', borderTop:'1px solid '+T.borderMuted}}>
+            <IsoStack />
+            <div style={{flex:'1 1 auto', minWidth:0}}>
+              {[['1', '工作目录', 'pi-android'], ['2', '.pi 资源', '0 项'], ['3', '会话', '12 条']].map((r, i) => (
+                <button key={i} onClick={() => setPick(i + 1)} className="hvrow" style={{display:'flex', alignItems:'baseline', gap:8, width:'100%', textAlign:'left', padding:'7px 8px', borderRadius:4, borderTop:i ? '1px solid '+T.borderMuted : 'none', cursor:'pointer'}}>
+                  <span className="mono" style={{fontSize:12, lineHeight:'16px', color:pick === i + 1 ? T.accent : T.muted, flex:'0 0 auto'}}>{r[0]}</span>
+                  <span style={{fontSize:14, lineHeight:'20px', flex:'1 1 auto'}}>{r[1]}</span>
+                  <span className="mono" style={{fontSize:12, lineHeight:'16px', color:T.muted, flex:'0 0 auto'}}>{r[2]}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        </WbCell>
+
+        <div style={{height:12}} />
+
+        <WbCell n="02" title="改动" right="git · 本次会话">
+          <WbRow label="分支" value="main" right="只读分支名" />
+          {CHANGED.map((c, i) => (
+            <div key={i} style={{display:'flex', alignItems:'baseline', gap:8, padding:'9px 12px', borderTop:'1px solid '+T.borderMuted}}>
+              <span className="mono" style={{fontSize:14, lineHeight:'20px', flex:'1 1 auto', minWidth:0, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis'}}>{c.f}</span>
+              <span className="mono" style={{fontSize:12, lineHeight:'16px', color:T.diffAdd, flex:'0 0 auto'}}>+{c.add}</span>
+              {c.del ? <span className="mono" style={{fontSize:12, lineHeight:'16px', color:T.diffDel, flex:'0 0 auto'}}>−{c.del}</span> : null}
+              <span className="mono" style={{fontSize:12, lineHeight:'16px', color:T.muted, flex:'0 0 auto', width:86, textAlign:'right'}}>{c.note}</span>
+            </div>
+          ))}
+          {CMD.map((c, i) => (
+            <div key={i} style={{display:'flex', alignItems:'center', gap:8, padding:'9px 12px', borderTop:'1px solid '+T.borderMuted}}>
+              <span className="mono" style={{fontSize:14, lineHeight:'20px', flex:'1 1 auto', minWidth:0, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis'}}>$ {c.c}</span>
+              <span className="mono" style={{fontSize:12, lineHeight:'16px', color:T.text, flex:'0 0 auto'}}>{c.s}</span>
+              <Tick ms={c.ms} color={c.tone} />
+            </div>
+          ))}
+          <div className="pretty" style={{fontSize:12, lineHeight:'17px', color:T.muted, padding:'9px 12px', borderTop:'1px solid '+T.borderMuted}}>
+            改动清单来自这次会话的读写痕迹；git 侧只读到分支名。
+          </div>
+        </WbCell>
+
+        <div style={{height:12}} />
+
+        <WbCell n="03" title="资源" right=".pi 目录约定">
+          {RES.map((r, i) => (
+            <WbRow key={i} label={r[0]} value={r[1]} right={r[2]} />
+          ))}
+          <div style={{padding:'9px 12px', borderTop:'1px solid '+T.borderMuted}}>
+            <Btn onClick={() => setDlg('reload')}>重新读取资源</Btn>
+          </div>
+        </WbCell>
+
+        <div style={{height:12}} />
+
+        <WbCell n="04" title="运行时" right="只读 + 两个开关">
+          <div style={{display:'flex', alignItems:'center', gap:10, padding:'9px 12px', borderTop:'1px solid '+T.borderMuted}}>
+            <div style={{flex:'1 1 auto', minWidth:0}}>
+              <div style={{fontSize:14, lineHeight:'20px'}}>后台保活</div>
+              <div className="mono" style={{fontSize:12, lineHeight:'16px', color:T.muted}}>需重启后生效</div>
+            </div>
+            <Switch on={keep} onToggle={() => setKeep(v => !v)} label="后台保活" />
+          </div>
+          <div style={{display:'flex', alignItems:'center', gap:10, padding:'9px 12px', borderTop:'1px solid '+T.borderMuted}}>
+            <div style={{flex:'1 1 auto', minWidth:0}}>
+              <div style={{fontSize:14, lineHeight:'20px'}}>离线模式</div>
+              <div className="mono" style={{fontSize:12, lineHeight:'16px', color:T.muted}}>需重启引擎后生效</div>
+            </div>
+            <Switch on={offline} onToggle={() => setOffline(v => !v)} label="离线模式" />
+          </div>
+          <WbRow label="唤醒锁" value="未读取" />
+          <WbRow label="引擎启动" value="未读取" />
+        </WbCell>
+
+        <div style={{height:12}} />
+        <div className="mono" style={{fontSize:12, lineHeight:'17px', color:T.muted}}>
+          竖屏手机不做两栏；宽屏（≥600dp）才把「项目现场」与终端并排。
+        </div>
+      </div>
+
+      <Dialog open={dlg === 'reload'} title="重新读取资源"
+        body="重载扩展、技能、模板、主题与上下文文件"
+        note="本应用：设置 → 运行时与诊断 → 进程 → 重启引擎"
+        primary="知道了" onPrimary={() => setDlg(null)} onClose={() => setDlg(null)} />
+    </div>
+  );
+}
+
+/* ============================ 屏 4/5 · 设置栈 ============================ */
+
+/* 12 个分组（真实顺序 + 首页副行的真实格式） */
+const GROUPS = [
+  {id:'model', n:'01', title:'模型与推理', sub:'默认 deepseek/deepseek-chat · ◐ 中'},
+  {id:'messages', n:'02', title:'消息与网络', sub:'穿插：逐条 · 后续：全部'},
+  {id:'compaction', n:'03', title:'上下文与压缩', sub:'自动压缩 开 · 400000 / 20000'},
+  {id:'retry', n:'04', title:'重试与网络', sub:'自动重试 开 · 3 次'},
+  {id:'tools', n:'05', title:'工具', sub:'默认 read·bash·edit·write'},
+  {id:'sessions', n:'06', title:'会话', sub:'由本应用固定（与 pi 共用）· 续接：开'},
+  {id:'resources', n:'07', title:'扩展与资源', sub:'0 个扩展 · 0 个资源包'},
+  {id:'appearance', n:'08', title:'外观', sub:'主题 dark'},
+  {id:'shell', n:'09', title:'Shell', sub:'默认 /bin/bash · 等宽 13'},
+  {id:'security', n:'10', title:'安全与信任', sub:'项目信任：询问'},
+  {id:'runtime', n:'11', title:'运行时与诊断', sub:'保活：开'},
+  {id:'about', n:'12', title:'隐私与关于', sub:'遥测：关'},
+];
+
+/* 6 种行型的数据（真实 key 与默认值；两处按品牌禁区改名：终端与 Shell → Shell、终端字号 → 等宽字号） */
+const GROUP_ROWS = {
+  model: [
+    {k:'action', title:'已导入的模型'},
+    {k:'value', title:'默认厂商', value:'DeepSeek', options:['DeepSeek', 'Anthropic', 'OpenAI'], badge:'新会话'},
+    {k:'value', title:'默认模型', value:'deepseek/deepseek-chat', options:MODELS, badge:'新会话'},
+    {k:'value', title:'默认思考等级', value:'中', options:['关闭', '极简', '低', '中', '高', '很高', '最高'], badge:'新会话'},
+    {k:'list', title:'逐模型思考等级', value:'2 项', badge:'新会话', listKind:'object'},
+    {k:'list', title:'思考预算', value:'未设置', badge:'新会话', listKind:'object'},
+    {k:'switch', title:'隐藏思考块', on:true},
+    {k:'switch', title:'缓存未命中提示', on:false},
+    {k:'list', title:'循环模型', value:'全部模型', badge:'需重启引擎', listKind:'array'},
+    {k:'action', title:'API Key'},
+    {k:'action', title:'订阅登录', oauth:true},
+    {k:'action', title:'本地模型（llama.cpp）', unavailable:true},
+  ],
+  appearance: [
+    {k:'value', title:'主题', value:'dark', options:['dark', 'light'], badge:'需重载'},
+    {k:'number', title:'字号微调', value:'0', unit:''},
+    {k:'value', title:'消息密度', value:'舒适', options:['紧凑', '舒适', '宽松']},
+    {k:'switch', title:'显示时间戳', on:true},
+    {k:'switch', title:'思考块默认折叠', on:true},
+    {k:'switch', title:'图片自动缩放', on:true, badge:'新会话'},
+    {k:'switch', title:'屏蔽图片', on:false, badge:'新会话'},
+  ],
+  shell: [
+    {k:'text', title:'Shell 路径', value:'默认 /bin/bash', badge:'新会话'},
+    {k:'text', title:'命令前缀', value:'未设置', badge:'新会话'},
+    {k:'list', title:'npm 命令', value:'默认 npm', badge:'新会话', listKind:'array'},
+    {k:'number', title:'等宽字号', value:'13', badge:'需重载'},
+    {k:'list', title:'键盘按键条', value:'预设 11 个键', badge:'需重载', listKind:'array'},
+  ],
+  security: [
+    {k:'value', title:'项目信任策略', value:'询问', options:['询问', '总是信任', '从不信任'], badge:'需重启引擎'},
+    {k:'action', title:'紧急停止', danger:true},
+  ],
+  messages: [
+    {k:'value', title:'穿插模式', value:'逐条', options:['逐条', '全部']},
+    {k:'value', title:'后续模式', value:'全部', options:['逐条', '全部']},
+    {k:'value', title:'传输方式', value:'自动', options:['自动', 'stdio', 'websocket'], badge:'新会话'},
+    {k:'number', title:'HTTP 空闲超时', value:'30000', unit:' ms', badge:'需重启引擎'},
+    {k:'number', title:'WebSocket 连接超时', value:'10000', unit:' ms', badge:'新会话'},
+    {k:'text', title:'HTTP 代理', value:'未设置', badge:'需重启引擎'},
+  ],
+  compaction: [
+    {k:'switch', title:'自动压缩', on:true},
+    {k:'number', title:'保留 token', value:'400000', badge:'新会话'},
+    {k:'number', title:'保留最近 token', value:'20000', badge:'新会话'},
+    {k:'list', title:'逐模型覆盖', value:'无覆盖', badge:'新会话', listKind:'object'},
+    {k:'number', title:'分支摘要保留 token', value:'未设置', badge:'新会话'},
+    {k:'action', title:'立即压缩'},
+  ],
+  retry: [
+    {k:'switch', title:'自动重试', on:true},
+    {k:'number', title:'最大重试次数', value:'3', badge:'新会话'},
+    {k:'number', title:'基础延迟', value:'1000', unit:' ms', badge:'新会话'},
+    {k:'number', title:'最大重试延迟', value:'未设置', badge:'新会话'},
+    {k:'number', title:'Provider 超时', value:'未设置', badge:'新会话'},
+    {k:'number', title:'Provider 重试次数', value:'未设置', badge:'新会话'},
+  ],
+  tools: [
+    {k:'list', title:'内建工具', value:'默认 read/bash/edit/write', badge:'新会话', listKind:'array'},
+    {k:'switch', title:'工具输出默认展开', on:false},
+  ],
+  sessions: [
+    {k:'switch', title:'启动续接最近会话', on:true, badge:'需重启'},
+  ],
+  resources: [
+    {k:'list', title:'扩展', value:'0 项', badge:'需重启引擎', listKind:'array'},
+    {k:'list', title:'资源包', value:'0 项', badge:'需重启引擎', listKind:'array'},
+    {k:'list', title:'技能', value:'空', badge:'需重启引擎', listKind:'array'},
+    {k:'list', title:'提示模板', value:'空', badge:'需重启引擎', listKind:'array'},
+    {k:'list', title:'主题', value:'空', badge:'需重启引擎', listKind:'array'},
+    {k:'switch', title:'技能命令', on:true},
+  ],
+  runtime: [
+    {k:'text', title:'pi 版本', value:'只读', ro:true},
+    {k:'text', title:'Node 版本', value:'只读', ro:true},
+    {k:'text', title:'运行时占用', value:'只读', ro:true},
+    {k:'text', title:'引擎启动耗时', value:'只读 · 未读取', ro:true},
+    {k:'switch', title:'离线模式', on:false, badge:'需重启引擎'},
+    {k:'text', title:'自定义系统提示', value:'未设置', badge:'需重启引擎'},
+    {k:'text', title:'追加系统提示', value:'未设置（depth 2）', badge:'需重启引擎'},
+    {k:'value', title:'缓存保留策略', value:'未设置', options:['未设置', '短', '长'], badge:'需重启引擎'},
+    {k:'switch', title:'不加载上下文文件', on:false, badge:'需重启引擎'},
+    {k:'action', title:'重启引擎'},
+    {k:'switch', title:'后台保活', on:true, badge:'需重启'},
+    {k:'text', title:'唤醒锁状态', value:'只读', ro:true},
+    {k:'action', title:'导出诊断报告'},
+  ],
+  about: [
+    {k:'switch', title:'安装遥测', on:false, badge:'新会话'},
+  ],
+};
+
+function SettingsHome({onOpen, onTerminal}) {
+  const [level, setLevel] = useState('medium');
+  const [sheet, setSheet] = useState(false);
+  return (
+    <div style={{flex:'1 1 auto', minHeight:0, display:'flex', flexDirection:'column', background:T.page, position:'relative'}}>
+      <div style={{display:'flex', alignItems:'center', gap:8, padding:'10px 16px 8px'}}>
+        <div style={{fontSize:17, lineHeight:'24px', fontWeight:600, flex:'1 1 auto'}}>设置</div>
+        <Btn title="搜索设置">搜索设置</Btn>
+      </div>
+
+      <Readout cells={[
+        {k:'设置项', v:'68'},
+        {k:'分组', v:'12'},
+        {k:'主题', v:'dark'},
+        {k:'遥测', v:'关'},
+      ]} />
+
+      <div className="thin" style={{flex:'1 1 auto', minHeight:0, overflowY:'auto', overflowX:'hidden', paddingBottom:16}}>
+
+        <div style={{padding:'10px 16px 0'}}>
+          <button onClick={() => setSheet(true)} className="hvrow" style={{display:'flex', alignItems:'center', gap:10, width:'100%', textAlign:'left', padding:'11px 12px', border:'1px solid '+T.borderMuted, borderRadius:8, cursor:'pointer'}}>
+            <span style={{fontSize:14, lineHeight:'20px', flex:'1 1 auto'}}>搜索设置</span>
+            <span className="mono" style={{fontSize:12, lineHeight:'16px', color:T.muted}}>68 项</span>
+            <span className="mono" style={{fontSize:12, lineHeight:'16px', color:T.muted}}>›</span>
+          </button>
+        </div>
+
+        {/* 当前模型卡：#思考色温刻度（7 级，点选即改） */}
+        <div style={{padding:'10px 16px 0'}}>
+          <div style={{border:'1px solid '+T.borderMuted, borderRadius:8, padding:'12px'}}>
+            <div style={{display:'flex', alignItems:'baseline', gap:8}}>
+              <span style={{fontSize:14, lineHeight:'20px', fontWeight:600, flex:'1 1 auto'}}>当前模型</span>
+              <span className="mono" style={{fontSize:12, lineHeight:'16px', color:T.muted}}>默认模型 · 思考等级</span>
+            </div>
+            <div className="mono" style={{fontSize:14, lineHeight:'20px', marginTop:6, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis'}}>deepseek/deepseek-chat</div>
+            <div style={{display:'flex', alignItems:'center', gap:2, marginTop:10}}>
+              {THINK_LEVELS.map(l => (
+                <button key={l.key} onClick={() => setLevel(l.key)} title={'思考等级 ' + l.zh}
+                  style={{flex:'1 1 0', height:l.key === level ? 10 : 6, background:l.tone, cursor:'pointer', border:0, padding:0, marginTop:l.key === level ? 0 : 2}} />
+              ))}
+            </div>
+            <div style={{display:'flex', alignItems:'baseline', gap:8, marginTop:6}}>
+              <span className="mono" style={{fontSize:12, lineHeight:'16px', color:T.muted}}>关闭</span>
+              <span style={{flex:'1 1 auto'}} />
+              <span className="mono" style={{fontSize:12, lineHeight:'16px', color:THINK_LEVELS.filter(x => x.key === level)[0].tone}}>◐ {THINK_LEVELS.filter(x => x.key === level)[0].zh}</span>
+              <span style={{flex:'1 1 auto'}} />
+              <span className="mono" style={{fontSize:12, lineHeight:'16px', color:T.muted}}>最高</span>
+            </div>
+          </div>
+        </div>
+
+        {/* 四个同级入口：设备 / 扩展 / 关于 / 终端 */}
+        {[
+          {sec:'设备', title:'设备能力', sub:'4/6 组能力可用', act:'查看', go:null},
+          {sec:'扩展', title:'扩展包与项目信任', sub:'0 个资源包 · 项目信任：询问', act:'打开', go:null},
+          {sec:'关于', title:'开源许可', sub:'App 内分发的第三方组件、许可证原文，以及 GPL / LGPL 程序的源代码获取方式', act:'打开', go:null},
+          {sec:'终端', title:'终端', sub:'输入 pi 回车进入原版 TUI：订阅登录、会话导入、以及需要终端的扩展都在那边。', act:'打开', go:'term'},
+        ].map((e, i) => (
+          <React.Fragment key={i}>
+            <SectionBar idx="·" title={e.sec} />
+            <button onClick={() => (e.go === 'term' ? onTerminal() : null)} className="hvrow" style={{display:'flex', alignItems:'center', gap:10, width:'100%', textAlign:'left', padding:'10px 16px', borderTop:'1px solid '+T.borderMuted, cursor:'pointer'}}>
+              <div style={{flex:'1 1 auto', minWidth:0}}>
+                <div style={{fontSize:15, lineHeight:'21px'}}>{e.title}</div>
+                <div className="pretty" style={{fontSize:12, lineHeight:'17px', color:T.muted, marginTop:2}}>{e.sub}</div>
+              </div>
+              <span className="mono" style={{fontSize:12, lineHeight:'16px', color:T.accent, flex:'0 0 auto'}}>{e.act}</span>
+            </button>
+          </React.Fragment>
+        ))}
+
+        <SectionBar idx="·" title="全部设置" right="12 个分组" />
+        <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:1, background:T.borderMuted, borderTop:'1px solid '+T.borderMuted}}>
+          {GROUPS.map(g => (
+            <button key={g.id} onClick={() => onOpen(g.id)} className="hvrow" style={{display:'block', textAlign:'left', background:T.page, padding:'10px 12px', cursor:'pointer', minHeight:74}}>
+              <div style={{display:'flex', alignItems:'baseline', gap:6}}>
+                <span className="mono" style={{fontSize:12, lineHeight:'16px', color:T.muted}}>{g.n}</span>
+                <span style={{fontSize:14, lineHeight:'20px', fontWeight:600, flex:'1 1 auto', minWidth:0}}>{g.title}</span>
+              </div>
+              <div className="mono pretty" style={{fontSize:12, lineHeight:'16px', color:T.muted, marginTop:4, display:'-webkit-box', WebkitLineClamp:3, WebkitBoxOrient:'vertical', overflow:'hidden'}}>{g.sub}</div>
+            </button>
+          ))}
+        </div>
+
+        <div className="pretty" style={{fontSize:12, lineHeight:'17px', color:T.muted, padding:'12px 16px'}}>
+          共 68 项设置。搜索同时匹配标题、说明与字段名，输入 reserveTokens 或 /compact 都能直达。
+        </div>
+      </div>
+
+      <SearchSheet open={sheet} onClose={() => setSheet(false)} onOpen={id => { setSheet(false); onOpen(id); }} />
+    </div>
+  );
+}
+
+/* 设置搜索页（快捷词 + 结果 + 空态） */
+function SearchSheet({open, onClose, onOpen}) {
+  const [f, setF] = useState('');
+  const HINTS = ['reserveTokens', 'thinkingBudgets', 'theme'];
+  const hits = [];
+  Object.keys(GROUP_ROWS).forEach(gid => GROUP_ROWS[gid].forEach(r => {
+    if (f.trim() && (r.title + (r.value || '')).toLowerCase().indexOf(f.trim().toLowerCase()) >= 0) hits.push({gid, r});
+  }));
+  return (
+    <Sheet open={open} title="搜索设置" sub="匹配标题、说明与字段名" onClose={onClose} maxH="80%">
+      <div style={{padding:'4px 16px 8px'}}>
+        <input className="mono" value={f} onChange={e => setF(e.target.value)} placeholder="标题 · 说明 · 字段名" autoFocus
+          style={{width:'100%', fontSize:14, lineHeight:'20px', borderBottom:'1px solid '+T.borderMuted, paddingBottom:6, color:T.text}} />
+        <div style={{display:'flex', gap:6, marginTop:10, flexWrap:'wrap'}}>
+          {HINTS.map(h => <Btn key={h} onClick={() => setF(h)}>{h}</Btn>)}
+        </div>
+      </div>
+      {!f.trim() ? (
+        <div className="pretty" style={{fontSize:14, lineHeight:'21px', padding:'10px 16px', color:T.text}}>搜索全部 68 项设置。匹配标题、说明与字段名，斜杠命令也能用。</div>
+      ) : hits.length === 0 ? (
+        <div style={{padding:'10px 16px'}}>
+          <div style={{fontSize:14, lineHeight:'20px'}}>没有匹配的设置</div>
+          <div className="pretty" style={{fontSize:14, lineHeight:'21px', marginTop:4}}>试试字段名（reserveTokens、sessionDir），或者斜杠命令（/compact、/tree）。</div>
+        </div>
+      ) : (
+        <React.Fragment>
+          <div className="mono" style={{fontSize:12, lineHeight:'16px', color:T.text, padding:'6px 16px'}}>{hits.length} 条结果</div>
+          {hits.map((h, i) => (
+            <button key={i} onClick={() => onOpen(h.gid)} className="hvrow" style={{display:'flex', alignItems:'baseline', gap:10, width:'100%', textAlign:'left', padding:'10px 16px', borderTop:'1px solid '+T.borderMuted, cursor:'pointer'}}>
+              <div style={{flex:'1 1 auto', minWidth:0}}>
+                <div style={{fontSize:14, lineHeight:'20px'}}>{h.r.title}</div>
+                <div className="mono" style={{fontSize:12, lineHeight:'16px', color:T.text, marginTop:2}}>{GROUPS.filter(g => g.id === h.gid)[0].title} · {h.r.value || h.r.k}</div>
+              </div>
+              <span className="mono" style={{fontSize:12, lineHeight:'16px', color:T.muted}}>›</span>
+            </button>
+          ))}
+        </React.Fragment>
+      )}
+    </Sheet>
+  );
+}
+
+/* 分组页：6 种行型 + 生效徽标 + 编辑器 sheet + 危险行确认 */
+function SettingsGroup({gid, onBack}) {
+  const g = GROUPS.filter(x => x.id === gid)[0];
+  const [rows, setRows] = useState((GROUP_ROWS[gid] || []).map(r => ({...r})));
+  const [edit, setEdit] = useState(null);     /* {i, kind} */
+  const [dlg, setDlg] = useState(null);       /* {i, kind} */
+
+  const setRow = (i, patch) => setRows(rs => rs.map((r, j) => j === i ? {...r, ...patch} : r));
+
+  return (
+    <div style={{flex:'1 1 auto', minHeight:0, display:'flex', flexDirection:'column', background:T.page, position:'relative'}}>
+      <div style={{display:'flex', alignItems:'center', gap:8, padding:'10px 16px 8px'}}>
+        <Btn onClick={onBack} title="返回">‹ 返回</Btn>
+        <div style={{fontSize:17, lineHeight:'24px', fontWeight:600, flex:'1 1 auto', minWidth:0, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis'}}>{g.title}</div>
+      </div>
+      <div className="mono" style={{fontSize:12, lineHeight:'16px', color:T.muted, padding:'0 16px 8px'}}>分组页 · {rows.length} 项</div>
+
+      <Readout cells={[
+        {k:'分组', v:g.n + ' / 12'},
+        {k:'行', v:String(rows.length)},
+        {k:'开关', v:String(rows.filter(r => r.k === 'switch' && r.on).length)},
+        {k:'徽标', v:String(rows.filter(r => r.badge).length)},
+      ]} />
+
+      <div className="thin" style={{flex:'1 1 auto', minHeight:0, overflowY:'auto', overflowX:'hidden'}}>
+        {rows.map((r, i) => {
+          const danger = r.k === 'action' && r.danger;
+          const actionTone = danger ? T.error : (r.k === 'action' ? T.accent : T.text);
+          const click = r.ro ? null : () => (r.k === 'switch' ? setRow(i, {on: !r.on}) : (r.k === 'action' ? setDlg({i, kind: r}) : setEdit({i, kind: r})));
+          return (
+            <div key={i} className={r.ro ? '' : 'hvrow'} onClick={click || undefined}
+              style={{display:'flex', alignItems:'center', gap:10, padding:'11px 16px', borderTop:'1px solid '+T.borderMuted, cursor: r.ro ? 'default' : 'pointer'}}>
+              <div style={{flex:'1 1 auto', minWidth:0}}>
+                <div style={{display:'flex', alignItems:'baseline', gap:8}}>
+                  <span style={{fontSize:15, lineHeight:'21px', color:actionTone}}>{r.title}</span>
+                  {r.badge ? <Badge text={r.badge} /> : null}
+                </div>
+              </div>
+              {r.k === 'switch'
+                ? <span onClick={e => e.stopPropagation()} style={{flex:'0 0 auto'}}><Switch on={!!r.on} onToggle={() => setRow(i, {on: !r.on})} label={r.title} /></span>
+                : (
+                <span style={{display:'flex', alignItems:'center', gap:6, flex:'0 0 auto'}}>
+                  {r.k === 'action' ? null : (
+                    <React.Fragment>
+                      <span className="mono" style={{fontSize:14, lineHeight:'20px', color:T.text, maxWidth:150, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis'}}>
+                        {r.k === 'number' ? r.value + (r.unit || '') : r.value}
+                      </span>
+                      {r.ro ? null : <span className="mono" style={{fontSize:12, lineHeight:'16px', color:T.muted}}>›</span>}
+                    </React.Fragment>
+                  )}
+                </span>
+              )}
+            </div>
+          );
+        })}
+        <div style={{height:24}} />
+      </div>
+
+      <EditorSheet edit={edit} onClose={() => setEdit(null)} onSave={v => { if (edit) setRow(edit.i, {value: v, on: undefined}); setEdit(null); }} />
+
+      {/* Action 确认框：执行 / 取消；危险行 确认执行；无入口的预览态只有「知道了」 */}
+      <Dialog open={!!dlg && !dlg.kind.oauth && !dlg.kind.unavailable && !dlg.kind.danger}
+        title={dlg ? dlg.kind.title : ''} body={null}
+        primary="执行" secondary="取消" onPrimary={() => { if (dlg && dlg.kind.k === 'action' && dlg.kind.title === '已导入的模型') setDlg(null); else setDlg(null); }} onClose={() => setDlg(null)} />
+      <Dialog open={!!dlg && !!dlg.kind.oauth} title={dlg ? dlg.kind.title : ''}
+        body="订阅登录要在 pi 的原版 TUI 里做，本应用没有入口。用 API Key 的厂商可以在上面的「API Key」里配置。"
+        primary="知道了" onPrimary={() => setDlg(null)} onClose={() => setDlg(null)} />
+      <Dialog open={!!dlg && !!dlg.kind.unavailable} title={dlg ? dlg.kind.title : ''}
+        body="这个入口当前不可用。" primary="知道了" onPrimary={() => setDlg(null)} onClose={() => setDlg(null)} />
+      <Dialog open={!!dlg && !!dlg.kind.danger} danger title={dlg ? dlg.kind.title : ''}
+        body="现在有回合正在运行。这个操作会终止模型调用、工具调用与正在跑的命令，它们都不会恢复；已写入磁盘的会话不会丢失。"
+        primary="确认执行" secondary="取消" onPrimary={() => setDlg(null)} onClose={() => setDlg(null)} />
+    </div>
+  );
+}
+
+/* 编辑器 sheet：Value / Number / Text / List 四种（真实说明文案） */
+function EditorSheet({edit, onClose, onSave}) {
+  const [v, setV] = useState('');
+  const [f, setF] = useState('');
+  useEffect(() => {
+    if (edit) { setV(edit.kind.value === '未设置' ? '' : edit.kind.value); setF(''); }
+  }, [edit]);
+  if (!edit) return null;
+  const r = edit.kind;
+  const title = r.title;
+  const OBJ_DOC = '每行一项，写成「键 = 值」，键按精确匹配不认通配符。值以 { 或 [ 开头时按 JSON 解析，例如逐模型压缩覆盖写成 model-id = {"reserveTokens": 400000}，其余按字符串/数字/布尔解析。';
+  const ARR_DOC = '每行一项，支持 glob 与排除标记：!pattern 排除、+path 强制包含、-path 强制排除。值以 { 或 [ 开头时按 JSON 解析，例如 packages 的对象形式 {"source": "pi-skills", "autoload": false}。';
+  const opts = (r.options || []).filter(o => o.toLowerCase().indexOf(f.toLowerCase()) >= 0);
+  return (
+    <Sheet open title={title} sub={r.k === 'number' ? '数字' : (r.k === 'list' ? '清单' : (r.k === 'text' ? '文本' : '选项'))} onClose={onClose} maxH="76%"
+      footer={<div style={{display:'flex', gap:8, padding:'10px 16px 12px'}}>
+        <Btn onClick={() => onSave(v)} active style={{padding:'7px 14px'}}>确定</Btn>
+        <Btn onClick={onClose} style={{padding:'7px 14px'}}>取消</Btn>
+      </div>}>
+      {r.k === 'value' ? (
+        <React.Fragment>
+          <div style={{padding:'2px 16px 8px'}}>
+            <input className="mono" value={f} onChange={e => setF(e.target.value)} placeholder="筛选选项，或直接输入自定义值"
+              style={{width:'100%', fontSize:14, lineHeight:'20px', borderBottom:'1px solid '+T.borderMuted, paddingBottom:6, color:T.text}} />
+          </div>
+          {opts.map((o, i) => (
+            <button key={o} onClick={() => setV(o)} className="hvrow" style={{display:'flex', alignItems:'center', gap:10, width:'100%', textAlign:'left', padding:'11px 16px', borderTop:i ? '1px solid '+T.borderMuted : 'none', cursor:'pointer'}}>
+              <span className="mono" style={{fontSize:14, lineHeight:'20px', flex:'1 1 auto', minWidth:0, color:o === v ? T.accent : T.text}}>{o}</span>
+              {o === v ? <span className="mono" style={{fontSize:12, lineHeight:'16px', color:T.accent}}>当前</span> : null}
+            </button>
+          ))}
+          <div className="mono" style={{fontSize:12, lineHeight:'16px', color:T.text, padding:'10px 16px'}}>未设置时显示「未设置」；不在选项表里的值原样显示。</div>
+        </React.Fragment>
+      ) : r.k === 'number' ? (
+        <div style={{padding:'6px 16px 10px'}}>
+          <input className="mono" value={v} onChange={e => setV(e.target.value)} inputMode="numeric"
+            style={{width:'100%', fontSize:28, lineHeight:'34px', color:T.text, borderBottom:'1px solid '+T.borderMuted, paddingBottom:6}} />
+          <input type="range" min="-4" max="8" value={Number(v) || 0} onChange={e => setV(e.target.value)}
+            style={{width:'100%', marginTop:16, accentColor:T.accent}} />
+          <div style={{display:'flex', justifyContent:'space-between'}} className="mono">
+            <span style={{fontSize:12, color:T.text}}>−4</span>
+            <span style={{fontSize:12, color:T.text}}>+8</span>
+          </div>
+        </div>
+      ) : r.k === 'text' ? (
+        <div style={{padding:'6px 16px 10px'}}>
+          <input className="mono" value={v} onChange={e => setV(e.target.value)} placeholder="未设置"
+            style={{width:'100%', fontSize:14, lineHeight:'20px', color:T.text, borderBottom:'1px solid '+T.borderMuted, paddingBottom:8}} />
+        </div>
+      ) : (
+        <div style={{padding:'6px 16px 10px'}}>
+          <textarea className="mono" value={v} onChange={e => setV(e.target.value)} rows={5}
+            style={{width:'100%', fontSize:14, lineHeight:'20px', color:T.text, border:'1px solid '+T.borderMuted, borderRadius:8, padding:10, resize:'none'}} />
+          <div className="pretty" style={{fontSize:12, lineHeight:'17px', color:T.text, marginTop:10}}>{r.listKind === 'array' ? ARR_DOC : OBJ_DOC}</div>
+        </div>
+      )}
+    </Sheet>
+  );
+}
+
+/* 全屏终端页（从设置首页的「终端」入口进入；宽屏才与项目现场并排） */
+function TerminalPage({onClose}) {
+  return (
+    <div style={{position:'absolute', inset:0, zIndex:55, background:T.page, display:'flex', flexDirection:'column'}}>
+      <div style={{display:'flex', alignItems:'center', gap:8, padding:'10px 16px 8px'}}>
+        <Btn onClick={onClose} title="返回">‹ 返回</Btn>
+        <div style={{fontSize:17, lineHeight:'24px', fontWeight:600, flex:'1 1 auto'}}>终端</div>
+        <Btn>重开</Btn>
+      </div>
+      <div className="mono" style={{fontSize:12, lineHeight:'16px', color:T.muted, padding:'0 16px 8px'}}>输入 pi 回车进入原版 TUI</div>
+      <Readout cells={[{k:'进程', v:'运行中'}, {k:'列 × 行', v:'42 × 40'}, {k:'字号', v:'13'}, {k:'Shell', v:'/bin/bash'}]} />
+      <div className="thin" style={{flex:'1 1 auto', minHeight:0, overflow:'auto', background:T.page, padding:'10px 16px'}}>
+        <div className="mono" style={{fontSize:14, lineHeight:'20px', whiteSpace:'pre'}}>
+          <div>{'guest@pi:~/workspace$ pi'}</div>
+          <div style={{display:'inline-block', width:8, height:16, background:'rgba(138,190,183,0.65)', verticalAlign:'middle'}} />
+        </div>
+      </div>
+      <div style={{borderTop:'1px solid '+T.borderMuted, padding:'8px 12px', display:'flex', gap:6, flexWrap:'wrap'}}>
+        {['ESC','TAB','CTRL','ALT','↑','↓','←','→','HOME','END','PGUP','PGDN','/','-','|','~','^C','^D','PASTE'].map(k => (
+          <span key={k} className="mono" style={{fontSize:12, lineHeight:'16px', border:'1px solid '+T.borderMuted, borderRadius:4, padding:'5px 8px'}}>{k}</span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function SettingsStack({initial}) {
+  const [gid, setGid] = useState((initial && initial.group) || null);
+  const [term, setTerm] = useState(!!(initial && initial.term));
+  return (
+    <div style={{flex:'1 1 auto', minHeight:0, display:'flex', flexDirection:'column', background:T.page, position:'relative'}}>
+      {gid
+        ? <SettingsGroup gid={gid} onBack={() => setGid(null)} />
+        : <SettingsHome onOpen={id => setGid(id)} onTerminal={() => setTerm(true)} />}
+      {term ? <TerminalPage onClose={() => setTerm(false)} /> : null}
+    </div>
+  );
+}
+
+/* ============================ 导航骨架（三项） ============================ */
+const DESTS = [
+  {id:'chat', n:'01', label:'对话'},
+  {id:'workbench', n:'02', label:'工作区'},
+  {id:'settings', n:'03', label:'设置'},
+];
+
+function NavBar({dest, setDest}) {
+  return (
+    <div style={{display:'flex', alignItems:'stretch', borderTop:'1px solid '+T.borderMuted, background:T.page, height:64, flex:'0 0 auto'}}>
+      {DESTS.map(d => {
+        const on = dest === d.id;
+        return (
+          <button key={d.id} onClick={() => setDest(d.id)} className="hvrow" style={{flex:'1 1 0', position:'relative', display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', gap:3, cursor:'pointer', background:'transparent'}}>
+            <span style={{position:'absolute', top:0, left:0, right:0, height:2, background:on ? T.accent : 'transparent'}} />
+            <span className="mono" style={{fontSize:12, lineHeight:'16px', color:T.muted}}>{d.n}</span>
+            <span style={{fontSize:14, lineHeight:'20px', color:on ? T.text : T.muted}}>{d.label}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function PiApp({initial}) {
+  const cfg = initial || {};
+  const [dest, setDest] = useState(cfg.dest || 'chat');
+  const [overlay, setOverlay] = useState(!!cfg.overlay);
+  /* 懒挂载：去过一次的目的地才进 DOM（保留状态，又不让 5 台屏一次挂满三份转录） */
+  const [seen, setSeen] = useState({[cfg.dest || 'chat']: true});
+  const go = d => { setSeen(s => (s[d] ? s : {...s, [d]: true})); setDest(d); };
+  const box = (id, node) => seen[id] ? (
+    <div style={{display: dest === id ? 'flex' : 'none', flexDirection:'column', flex:'1 1 auto', minHeight:0}}>{node}</div>
+  ) : null;
+  return (
+    <div style={{height:'100%', display:'flex', flexDirection:'column', background:T.page, position:'relative'}}>
+      <div style={{flex:'1 1 auto', minHeight:0, display:'flex', flexDirection:'column'}}>
+        {box('chat', <Chat initial={cfg.chat} onOpenSessions={() => setOverlay(true)} />)}
+        {box('workbench', <Workbench />)}
+        {box('settings', <SettingsStack initial={cfg.settings} />)}
+      </div>
+      <NavBar dest={dest} setDest={go} />
+      {overlay ? <SessionOverlay initial={cfg.overlayState} onClose={() => setOverlay(false)} /> : null}
+    </div>
+  );
+}
+
+Object.assign(window, {SessionOverlay, SessionTree, IsoStack, WbRow, WbCell, Workbench, GROUPS, GROUP_ROWS, SettingsHome, SearchSheet, SettingsGroup, EditorSheet, TerminalPage, SettingsStack, DESTS, NavBar, PiApp});
+})();
+</script>
+
+<!-- ============================ ④ 五台屏装配 ============================ -->
+<script type="text/babel" data-presets="react">
+/* 每个 <script type="text/babel"> 共享同一个全局作用域，同名顶层 const 会
+   「Identifier has already been declared」而整页白屏（skill 技术红线第 2 条）。
+   所以每块自己包一层 IIFE：内部名字互不可见，只通过 Object.assign(window,…) 交换。 */
+(function () {
+const {useState, useRef, useEffect, useMemo} = React;
+const {AndroidFrame, PiApp} = window;
+
+function Chip({on, onClick, children}) {
+  return <button className={'chip' + (on ? ' on' : '')} onClick={onClick}>{children}</button>;
+}
+
+function Frame({idx, name, note, chips, children}) {
+  return (
+    <div className="fcol">
+      <div className="cap">
+        <b>{idx}</b>
+        <span>{name}</span>
+        {note ? <span>· {note}</span> : null}
+        {chips}
+      </div>
+      <AndroidFrame width={412} height={892} darkMode time="9:41" battery={78}>{children}</AndroidFrame>
+    </div>
+  );
+}
+
+function Demo() {
+  const [ov, setOv] = useState({view: 'list', mode: 'list'});
+  const [g5, setG5] = useState('model');
+
+  return (
+    <div className="demopage">
+      <div className="demohd">
+        <span className="k">方向 A · #16</span>
+        <span className="t">Terminal-Core Soft-Futurism · 读数轨</span>
+        <span className="k">5 × AndroidFrame 412×892 · darkMode · 等宽字主角 · 等距立方</span>
+      </div>
+
+      <div className="frames">
+
+        <Frame idx="01" name="对话（hero）" note="执行轨道：节点 = 块类型，节点色 = 状态，右端 1px 刻度 ∝ log₂ 耗时">
+          <PiApp initial={{dest:'chat'}} />
+        </Frame>
+
+        <Frame idx="02" name="会话列表（覆盖层）" note="从对话页左上角会话名进入；列表 ↔ 会话树 同层"
+          chips={<React.Fragment>
+            <Chip on={ov.view === 'list' && ov.mode === 'list'} onClick={() => setOv({view:'list', mode:'list'})}>列表</Chip>
+            <Chip on={ov.view === 'empty1'} onClick={() => setOv({view:'empty1', mode:'list'})}>空态 · 无会话</Chip>
+            <Chip on={ov.view === 'empty2'} onClick={() => setOv({view:'empty2', mode:'list'})}>空态 · 无匹配</Chip>
+            <Chip on={ov.mode === 'tree'} onClick={() => setOv({view:'list', mode:'tree'})}>会话树</Chip>
+          </React.Fragment>}>
+          <PiApp key={ov.view + ov.mode} initial={{dest:'chat', overlay:true, overlayState:{view:ov.view, mode:ov.mode}}} />
+        </Frame>
+
+        <Frame idx="03" name="工作区（项目现场）" note="工作区选候选 A：cwd · .pi 资源 · git 改动 · 本次会话痕迹（竖屏不做两栏）">
+          <PiApp initial={{dest:'workbench'}} />
+        </Frame>
+
+        <Frame idx="04" name="设置首页" note="读数带 + 当前模型卡（思考色温刻度可点选）+ 四个同级入口 + 12 格 bento">
+          <PiApp initial={{dest:'settings'}} />
+        </Frame>
+
+        <Frame idx="05" name="设置分组页" note="6 种行型：开关 / 动作（含危险）/ 取值 / 数字 / 文本 / 清单 + 生效徽标"
+          chips={<React.Fragment>
+            <Chip on={g5 === 'model'} onClick={() => setG5('model')}>模型与推理</Chip>
+            <Chip on={g5 === 'appearance'} onClick={() => setG5('appearance')}>外观</Chip>
+            <Chip on={g5 === 'shell'} onClick={() => setG5('shell')}>Shell</Chip>
+            <Chip on={g5 === 'security'} onClick={() => setG5('security')}>安全与信任</Chip>
+          </React.Fragment>}>
+          <PiApp key={g5} initial={{dest:'settings', settings:{group:g5}}} />
+        </Frame>
+
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<Demo />);
+})();
+</script>
+
+<!--
+================================================================================
+spec §14 · 自检清单（逐条打勾）
+================================================================================
+[x] 5 台 AndroidFrame 都是 412×892，坐标与尺寸与另两版一致
+    5 台用同一个 <Frame> 包同一份 <AndroidFrame width={412} height={892} darkMode>，
+    位置与尺寸由同一个常量决定，不可能与另两版跑偏。
+[x] 每台都能交互（导航可切、卡片可展、sheet 可弹），Playwright 点击无 pageerror
+    每台是一份完整 App 的独立状态机（同一 PiApp，不同初值）：
+    · 底栏三项每台内可切；对话页左上角会话名 → 会话列表覆盖层（列表 / 会话树 / 两套空态）；
+    · 工具卡与 diff 卡点击展/收；思考块展/收；技能卡展/收；错误卡「详情」展/收；
+    · 审批行 → 允许/拒绝对话框（倒计时 + 排队数 + 超时说明）；
+    · 用户消息 → 动作菜单；模型 chip → 选择模型；思考 chip → 思考等级（点击循环 + 刻度点选）；
+      队列行 → 会话与队列；更多 → 溢出菜单；`/` → 命令面板；`!` → 命令输出面板；
+    · 会话列表：搜索 / 按时间↔按名称 / 全部↔仅命名 / 选中 / 动作框 / 删除确认（两套文案）；
+    · 工作区：两个开关 + 项目现场三个层次可选 + 重新读取资源对话框；
+    · 设置：搜索页（快捷词 + 空态）、当前模型卡色温刻度可点选、12 格 bento 进分组页、
+      6 种行型各自的编辑器 sheet（选项 / 数字 / 文本 / 清单）、危险行确认框、
+      订阅登录与本地模型的「知道了」态、终端入口 → 全屏终端页。
+    （无 pageerror 由父代理的 Playwright 复核；本文已在本机用 Babel 的 react preset 逐块
+      转译通过，并把 5 台屏 + 12 个分组页 + 终端页 + 3×3 覆盖层状态 + 11 个弹层状态
+      共 33 个状态全部做了一次服务端渲染，全部无异常。）
+[x] 颜色 100% 来自 §6 令牌；无渐变/模糊/新色相
+    所有色值只在 :root 的令牌里出现一次，JS 侧由 T 镜像同一批值；
+    无 linear-gradient / radial-gradient / filter: blur / box-shadow 光晕；
+    唯一的 alpha 用法是 diff 行底 10%（照 DiffBlock 的 0.08 语义）与流式光标 0.65（照源码）。
+[x] 正文 ≥14px、标签 ≥12px、正文对比度 ≥4.5:1
+    字号档位 6 档：12（标签/读数标签）/14（正文、等宽读数、代码）/15（行标题）/
+    17（屏标题、markdown h2 相邻层级）/20（markdown h2）/28（数字编辑器大数）。
+    正文 = --text(#D4D4D4) 在任何令牌底色上 ≥8.9:1；--muted 只落在 --page 上（≈4.5:1），
+    抬起的表面上次级信息改用 --text 12px + 发丝线（令牌里没有更亮的次级灰）。
+[x] 中文排印：fallback 链、font-synthesis:none、line-break:strict、「」、tabular-nums
+    body：font-synthesis:none / line-break:strict / overflow-wrap:anywhere；
+    --font-mono 与 --font-prose 都是西文在前、中文在后（JetBrains Mono → … → Noto Sans SC）；
+    .mono 与 .tnum 带 font-variant-numeric:tabular-nums（token / 毫秒 / 行号 / 计数）；
+    中文引号一律「」；中文正文 0 字距、标题 0 字距、display 无负字距。
+[x] 真实文案（不是 Lorem），且没有文件路径/类名/§ 出现在用户可见文本里
+    全部可见文案来自 02-real-content（逐字）+ 03-navigation-decision 的入口名称；
+    界面 chrome 层零路径、零类名、零 §；工具卡与 diff 正文里的路径/类名是 pi 自己的输出
+    （按 02 素材逐字引用，属于「机器语言层」内容而非界面文案）。
+[x] 工作区选了一个答案并在页面里标注
+    选候选 A（这个会话的项目现场），页内 12px 一行写明「本版工作区 = 这个会话的项目现场」，
+    并注明「改动清单来自这次会话的读写痕迹；git 侧只读到分支名」
+    与「竖屏手机不做两栏；宽屏（≥600dp）才把项目现场与终端并排」。
+[x] 能说出「form 来自内容的哪里」
+    form 来自 pi 每个工具块自己的三段式——工具名 / 状态符号 / 页脚读数
+    （`成功 · 132ms · 13 行`）：把它放大成一套仪器语法 = 竖轨（块类型=节点形状、状态=节点色、
+    耗时=1px 刻度长度）+ 屏顶横读数带（label 12px + 值 14px tabular）+ 等距底板（项目现场三层）。
+    母题不来自模板：它复用了源里已有的 contextRing(20dp/2dp)、errorDot、stripe、
+    toolDiffAdded/Removed/Context 与 thinking(level) 七级色温。
+================================================================================
+-->
+</body>
+</html>

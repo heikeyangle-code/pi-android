@@ -1,0 +1,1955 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>pi · 安卓客户端界面重构 · 方向 B（现实参照：Linear 移动端）</title>
+<!--
+================================================================================
+方向 B · 现实参照（标杆迁移）—— pi 安卓客户端界面重构 · 方向初稿
+================================================================================
+【参照案例】Linear 的移动端（iOS / Android）。它是「开发者用的高密度工具界面」里做得最好的一档，
+且刚在 2025 年 10 月重做过一次移动端的结构与视觉，方法论有第一手资料可查。
+
+· 官方改版公告（2025-10-16）《Mobile app redesign》
+  https://linear.app/changelog/2025-10-16-mobile-app-redesign
+  原文事实：iOS 与 Android 换上一套新的视觉设计系统；导航重做成新的底部工具栏
+  （a new bottom toolbar for quick access to core workflows）；每个屏顶部放一个主操作
+  （"Create Issue" button at the top of every screen）。
+
+· 团队设计复盘（2026-03-12）《A calmer interface for a product in motion》
+  https://linear.app/now/behind-the-latest-design-refresh
+  两条原则是逐字可引的：
+  ① "Don't compete for attention you haven't earned" —— 支撑导航的 chrome 必须退后：
+     侧栏调暗、图标变小、未激活文字降权、行距加大；tab 变紧凑而不是撑满整宽；
+     减少图标数量、缩小尺寸、去掉彩色图标底。
+  ② "Structure should be felt not seen" —— 分隔线太多太亮是噪音，改版把边界圆润化、
+     对比软化，让结构"被感觉到"而不是"被看到"。
+  调色事实：旧色偏冷蓝，改版走向更暖的灰；主题不再逐个定义 98 个变量，而由
+  base / accent / contrast 三个输入生成，表面（background / panels / dialogs）用 elevation 别名分阶。
+
+· 团队设计复盘（2024-03-28）《How we redesigned the Linear UI (part Ⅱ)》
+  https://linear.app/now/how-we-redesigned-the-linear-ui
+  原文事实：先抓「倒 L 形」全局 chrome（侧栏 + 顶部）来控制主内容区；目标写得很直白 ——
+  reduce visual noise / maintain visual alignment / increase the hierarchy and density of
+  navigation elements；动手前先做 environment / appearance / hierarchy 三组压力测试。
+
+【为什么选它】pi 的手机端要解决的是同一类问题：一个信息密度极高的开发者工具，要塞进
+412×892、单手、10cm 视距。Linear 移动端给出的答案正好是「底栏承载核心工作流 + 每屏一个主操作 +
+紧凑属性行 + 就地直接操作」，与本次「直接操作 + 强层级」的取向同构。
+
+【迁移的是方法论，不是外观 —— 这点是硬约束】
+Linear 移动端这一版的核心 material 是毛玻璃景深；而 pi 已明确否决模糊 / 渐变 / 辉光
+（空耗性能、无信息增益）。所以本版把它的 material 整个换掉，层级只由三样东西表达：
+① 表面阶梯（page → surf-low → surf → surf-high）② 1px borderMuted 的 hairline
+③ 字号 / 字重 / 对齐。这恰好就是它自己那条「Structure should be felt not seen」。
+色值 100% 来自 pi 的主题令牌，没有搬运 Linear 的任何一个色值（连它标志性的暖灰都没搬）。
+
+【拆解 → 迁移：五条】
+1 倒 L 骨架 → 底栏三个目的地 + 每屏顶部一个主操作（对话 = 发送/停止；工作区 = 刷新现场；
+  设置 = 搜索设置）。会话列表按产品裁决做成「对话页左上角进入的覆盖层」，不是第四个 tab。
+2 注意力预算：chrome（顶栏 / 底栏）落到 --surf-dim，内容区留在 --page；一屏里只有当前项
+  用 --accent，其余全部靠字号与对齐分层。图标只用 18px 单线，不做彩色图标底。
+3 结构不被看见：分组 = 表面阶 + 组内 inset hairline，不用卡片描边、不用阴影、不用圆角描边堆叠。
+4 属性即内容：每一行 = 标题 + 右对齐的属性（模型名 / 条数 / 耗时 / 退出码 / 增删行），
+  数字一律 tabular-nums；状态永远带字（运行中 / 成功 / 失败）再配符号，不是只有颜色。
+5 直接操作：列表行可选中、可左滑露出动作、可点开就地展开；输入 `/` 立刻出命令候选。
+
+【对 pi 真实内容做的三个结构取舍（都写在页面里）】
+· 对话流不再是一摞卡片墙：一串连续的工具调用画成一条**执行轨道**，节点就是真实状态字形
+  （… ✓ ✗）+ 真实耗时读数（132ms / 88ms / 6.4 秒 / 已运行 12.3 秒 / 退出码 2）。
+· 会话行的三行字段压成两行（标题 + 属性行），把「18 条 · 已命名」这类字段右对齐 ——
+  密度来自对齐，不来自堆行。
+· 工作区 = 项目的现场（当前目录、本目录的资源、改动、这次会话动过的文件）；
+  终端按产品裁决降格成设置首页里的一个入口行。
+
+【spec §11 五问】
+1 叙事角色：对话 = hero；会话列表 = 选择器（覆盖层，不是地方）；工作区 = 数据（项目现场）；
+  设置首页 = 结尾；设置分组页 = 结尾的细节层。
+2 观众距离：10cm 单手。正文 14px、机器语言层 13px、标签 12px，一屏要放 6–8 个块。
+3 视觉温度：冷静·精密。全篇没有一处靠「加色」表达层级，只有当前项与状态各占一次强调色。
+4 容量估算：三个 5 秒 thumbnail —— ① 一条竖直执行轨道 + 右侧读数 ② 两行属性列表 + 分组计数
+  ③ inset 行组 + 尾部值。836px 里 chrome 占 250px，内容区 586px → 6–8 块，成立。
+5 视觉母题：**执行轨道**。pi 的工具调用是一条有序序列，每一步都带真实状态与真实耗时，
+  edit 后面还必跟一块 diff —— 轨道就是这个序列的形状。form 来自内容：把「一摞卡片」
+  换成「一条轨道 + 节点上的读数」，节点之间的连续性就是"这是同一个回合里连着跑的"。
+
+【排版 / 颜色】颜色只取 pi 主题令牌；正文一律 --text（页面底上 11.9:1），12px 的次要标签用
+--muted（4.5:1 边上，pi 自己的 meta 规则是 3:1，这里更高）；工具卡正文与 diff 上下文行用
+pi 由对比度派生的 bodyOnTool / contextOnTool（#9E9E9E，在各工具底色上 4.97–5.44:1）。
+字号只有 5 档：12 / 13 / 14 / 15 / 17。中文 fallback 链西文在前、中文在后。
+
+【工具卡与 diff 里出现的路径】全部是用户自己项目的相对路径，界面上不出现本应用的文件路径、
+类名或内部标记。
+================================================================================
+-->
+<style>
+  :root{
+    /* ---- pi 主题令牌（dark）= 唯一色源，一个都没有改 ---- */
+    --accent:#8ABEB7; --border:#5F87FF; --border-accent:#00D7FF; --border-muted:#505050;
+    --success:#B5BD68; --error:#CC6666; --warning:#FFFF00;
+    --text:#D4D4D4; --muted:#808080; --dim:#666666; --selected-bg:#3A3A4A;
+    --user-bg:#343541; --user-text:#D4D4D4;
+    --custom-bg:#2D2838; --custom-label:#9575CD;
+    --tool-pending:#282832; --tool-success:#283228; --tool-error:#3C2828;
+    --tool-title:#D4D4D4; --tool-output:#808080;
+    --md-heading:#F0C674; --md-link:#81A2BE; --md-link-url:#666666;
+    --md-code:#8ABEB7; --md-codeblock:#B5BD68; --md-codeblock-border:#808080;
+    --md-quote:#808080; --md-hr:#808080; --md-bullet:#8ABEB7;
+    --diff-add:#B5BD68; --diff-del:#CC6666; --diff-ctx:#808080;
+    --syn-comment:#6A9955; --syn-keyword:#569CD6; --syn-function:#DCDCAA;
+    --syn-variable:#9CDCFE; --syn-string:#CE9178; --syn-number:#B5CEA8;
+    --syn-type:#4EC9B0; --syn-op:#D4D4D4;
+    --think-off:#505050; --think-minimal:#6E6E6E; --think-low:#5F87AF;
+    --think-medium:#81A2BE; --think-high:#B294BB; --think-xhigh:#D183E8; --think-max:#FF5FFF;
+    --bash:#B5BD68;
+    --page:#18181E; --card:#1E1E24; --info:#3C3728;
+    --surf-low:#1E1E24; --surf:#232329; --surf-high:#29292F; --surf-highest:#303036; --surf-dim:#1C1C22;
+    /* 由 toolOutput 抬到 4.5:1 的派生值（App 既有做法 bodyOnTool / contextOnTool） */
+    --body-on-tool:#9E9E9E;
+    --font-sans:"Geist","Inter","Noto Sans SC","Noto Sans CJK SC","PingFang SC","Microsoft YaHei",sans-serif;
+    --font-mono:"Geist Mono","JetBrains Mono","Noto Sans Mono","Noto Sans CJK SC",ui-monospace,Menlo,Consolas,monospace;
+  }
+  html,body{margin:0;padding:0;background:#0e0e12}
+  *{box-sizing:border-box}
+  .b-page{
+    font-family:var(--font-sans); color:var(--text); background:#0e0e12;
+    font-synthesis:none; line-break:strict; overflow-wrap:anywhere; text-wrap:pretty;
+    -webkit-font-smoothing:antialiased; text-rendering:optimizeLegibility;
+  }
+  .b-head{padding:40px 48px 0}
+  .b-head-t{font-size:22px;font-weight:600;line-height:1.3;color:var(--text);letter-spacing:-0.01em}
+  .b-head-s{font-size:13px;line-height:1.7;color:var(--muted);margin-top:8px;max-width:1180px}
+  .b-head-s em{font-style:normal;color:var(--text)}
+  .b-frames{display:flex;gap:32px;flex-wrap:wrap;padding:36px 48px 48px}
+  @keyframes bIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+  @keyframes bFade{from{opacity:0}to{opacity:1}}
+  @keyframes bRise{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
+  .b-phone{display:flex;flex-direction:column;gap:10px;animation:bIn .5s cubic-bezier(.2,.7,.3,1) both}
+  .b-cap{width:432px}
+  .b-cap b{display:block;font-size:13px;font-weight:600;line-height:1.5;color:var(--text)}
+  .b-cap span{display:block;font-size:13px;line-height:1.55;color:var(--muted);margin-top:2px}
+
+  /* ---- 手机内：一块 412×836 的舞台 ---- */
+  .b-root{
+    position:relative;width:412px;height:836px;display:flex;flex-direction:column;overflow:hidden;
+    background:var(--page);font-family:var(--font-sans);color:var(--text);
+    font-synthesis:none;line-break:strict;overflow-wrap:anywhere;
+    font-variant-numeric:tabular-nums;text-wrap:pretty;-webkit-font-smoothing:antialiased;
+  }
+  .b-stage{position:relative;flex:1;min-height:0;display:flex;flex-direction:column}
+  .b-screen{flex:1;min-height:0;display:flex;flex-direction:column;background:var(--page)}
+  .b-scroll{position:relative;flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:var(--muted) transparent}
+  .b-scroll::-webkit-scrollbar{width:3px}
+  .b-scroll::-webkit-scrollbar-thumb{background:var(--muted);border-radius:2px}
+  .b-scroll::-webkit-scrollbar-track{background:transparent}
+  .b-overlay{position:absolute;inset:0;z-index:6;background:var(--page);display:flex;flex-direction:column;animation:bFade .13s ease both}
+  .b-sheetwrap{position:absolute;inset:0;z-index:8;display:flex;flex-direction:column;justify-content:flex-end;animation:bFade .13s ease both}
+  .b-scrim{position:absolute;inset:0;background:rgba(0,0,0,.32)}
+  .b-sheet{position:relative;background:var(--surf-high);border-top-left-radius:16px;border-top-right-radius:16px;border-top:1px solid var(--border-muted);max-height:76%;display:flex;flex-direction:column;animation:bRise .16s cubic-bezier(.2,.7,.3,1) both;box-shadow:none}
+  .b-dlgwrap{position:absolute;inset:0;z-index:9;display:flex;align-items:center;justify-content:center;padding:22px;animation:bFade .13s ease both}
+  .b-dlg{position:relative;width:100%;max-width:330px;background:var(--surf-high);border:1px solid var(--border-muted);border-radius:14px;padding:18px 16px 12px;animation:bRise .16s cubic-bezier(.2,.7,.3,1) both}
+
+  /* ---- 字号 / 颜色工具类（只 5 档：12 / 13 / 14 / 15 / 17） ---- */
+  .t12{font-size:12px;line-height:1.5}
+  .t13{font-size:13px;line-height:1.55}
+  .t14{font-size:14px;line-height:1.62}
+  .t15{font-size:15px;line-height:1.4}
+  .t17{font-size:17px;line-height:1.28}
+  .w5{font-weight:500}.w6{font-weight:600}
+  .mono{font-family:var(--font-mono)}
+  .c-text{color:var(--text)}.c-muted{color:var(--muted)}.c-accent{color:var(--accent)}
+  .c-succ{color:var(--success)}.c-err{color:var(--error)}.c-warn{color:var(--warning)}
+  .c-link{color:var(--md-link)}.c-head{color:var(--md-heading)}.c-code{color:var(--md-code)}
+  .c-body{color:var(--body-on-tool)}
+  .ell{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .fl1{flex:1;min-width:0}
+  .rw{display:flex;align-items:center}
+  .press{cursor:pointer}
+  .press:hover{background-color:var(--surf)}
+  .press2{cursor:pointer}
+  .press2:hover{background-color:var(--surf-high)}
+  .press3{cursor:pointer}
+  .press3:hover{color:var(--text)}
+  .b-root input{font-family:inherit;font-size:14px}
+  .b-root input::placeholder{color:var(--muted);opacity:1}
+  .div{height:1px;background:var(--border-muted);flex:none}
+  .hair{height:1px;background:var(--border-muted);opacity:.55;flex:none}
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<!-- ============ React 18.3.1 + Babel 7.29.0（spec §4 指定版本，照抄） ============ -->
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+
+<!-- ============ 设备框（超话 skill 的 android_frame.jsx，原样内联，未改一行） ============ -->
+<script type="text/babel" data-presets="react">
+/**
+ * AndroidFrame — Android设备边框（参考Pixel 8系列）
+ *
+ * 含：punch-hole相机 + 状态栏 + 导航栏 + 圆角
+ *
+ * 用法：
+ *   <AndroidFrame time="9:41" battery={85}>
+ *     <YourAppContent />
+ *   </AndroidFrame>
+ */
+
+const androidFrameStyles = {
+  wrapper: {
+    display: 'inline-block',
+    padding: 10,
+    background: '#1a1a1a',
+    borderRadius: 44,
+    boxShadow: '0 0 0 2px #2a2a2a, 0 20px 60px rgba(0,0,0,0.3)',
+    position: 'relative',
+  },
+  screen: {
+    position: 'relative',
+    borderRadius: 36,
+    overflow: 'hidden',
+    background: '#fff',
+  },
+  statusBar: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    height: 32,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: '0 24px',
+    fontSize: 14,
+    fontWeight: 500,
+    fontFamily: 'Roboto, -apple-system, sans-serif',
+    zIndex: 20,
+    pointerEvents: 'none',
+  },
+  punchHole: {
+    position: 'absolute',
+    top: 10,
+    left: '50%',
+    transform: 'translateX(-50%)',
+    width: 14,
+    height: 14,
+    background: '#000',
+    borderRadius: '50%',
+    zIndex: 30,
+  },
+  statusIcons: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 6,
+  },
+  batteryText: {
+    fontSize: 11,
+    fontWeight: 600,
+    marginLeft: 2,
+  },
+  content: {
+    position: 'absolute',
+    top: 32,
+    left: 0,
+    right: 0,
+    bottom: 24,
+    overflow: 'auto',
+  },
+  navBar: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    height: 24,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 60,
+    zIndex: 10,
+  },
+  navButton: {
+    width: 36,
+    height: 4,
+    background: 'rgba(0,0,0,0.3)',
+    borderRadius: 999,
+  },
+};
+
+function AndroidFrame({
+  children,
+  width = 412,
+  height = 892,
+  time = '9:41',
+  battery = 100,
+  darkMode = false,
+  navStyle = 'gesture',
+}) {
+  const textColor = darkMode ? '#fff' : '#1a1a1a';
+
+  return (
+    <div style={androidFrameStyles.wrapper}>
+      <div style={{
+        ...androidFrameStyles.screen,
+        width,
+        height,
+        background: darkMode ? '#000' : '#fff',
+      }}>
+        <div style={{ ...androidFrameStyles.statusBar, color: textColor }}>
+          <span>{time}</span>
+          <div style={androidFrameStyles.statusIcons}>
+            <svg width="14" height="10" viewBox="0 0 14 10" fill="currentColor">
+              <rect x="0" y="6" width="2" height="4" rx="0.5" />
+              <rect x="4" y="4" width="2" height="6" rx="0.5" />
+              <rect x="8" y="2" width="2" height="8" rx="0.5" />
+              <rect x="12" y="0" width="2" height="10" rx="0.5" />
+            </svg>
+            <svg width="14" height="10" viewBox="0 0 14 10" fill="none">
+              <path d="M7 9a1 1 0 100-2 1 1 0 000 2z" fill="currentColor" />
+              <path d="M3 6a5 5 0 018 0" stroke="currentColor" strokeWidth="1.2" />
+              <path d="M0.5 3.5a11 11 0 0113 0" stroke="currentColor" strokeWidth="1.2" opacity="0.6" />
+            </svg>
+            <div style={{
+              width: 22,
+              height: 10,
+              border: '1.5px solid currentColor',
+              borderRadius: 2,
+              padding: 1,
+              position: 'relative',
+            }}>
+              <div style={{
+                width: `${battery}%`,
+                height: '100%',
+                background: 'currentColor',
+                borderRadius: 1,
+              }} />
+            </div>
+            <span style={androidFrameStyles.batteryText}>{battery}%</span>
+          </div>
+        </div>
+
+        <div style={androidFrameStyles.punchHole} />
+
+        <div style={androidFrameStyles.content}>
+          {children}
+        </div>
+
+        {navStyle === 'gesture' && (
+          <div style={androidFrameStyles.navBar}>
+            <div style={{
+              ...androidFrameStyles.navButton,
+              width: 100,
+              height: 4,
+              background: darkMode ? 'rgba(255,255,255,0.5)' : 'rgba(0,0,0,0.4)',
+            }} />
+          </div>
+        )}
+
+        {navStyle === 'buttons' && (
+          <div style={androidFrameStyles.navBar}>
+            <span style={{ color: textColor, fontSize: 20 }}>◁</span>
+            <span style={{ color: textColor, fontSize: 16 }}>○</span>
+            <span style={{ color: textColor, fontSize: 16 }}>□</span>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+if (typeof window !== 'undefined') {
+  window.AndroidFrame = AndroidFrame;
+}
+</script>
+
+<!-- ============ 组件语言：图标 / 顶栏 / 底栏 / 行 / 表面 / 轨道 / 工具卡 ============ -->
+<script type="text/babel" data-presets="react">
+(function(){
+  const h = React.createElement;
+
+  /* ---------- 图标：18 单线，currentColor，不做彩色图标底 ---------- */
+  const S = (p) => <svg width={p.s||18} height={p.s||18} viewBox="0 0 18 18" fill="none"
+      stroke="currentColor" strokeWidth={p.w||1.5} strokeLinecap="round" strokeLinejoin="round">{p.children}</svg>;
+
+  function Icon(p){
+    const s = p.s || 18;
+    switch(p.n){
+      case 'chat': return <S s={s} w={p.w}><path d="M2.9 6.1A2.6 2.6 0 015.5 3.5h7A2.6 2.6 0 0115.1 6.1v3.5a2.6 2.6 0 01-2.6 2.6H8.3l-3.6 2.4v-2.4h-.2A2.6 2.6 0 012.9 9.6z"/></S>;
+      case 'workbench': return <S s={s} w={p.w}><path d="M3 4.6h6.6M3 9h6.6M3 13.4h4.2M13.4 3.6v10.8"/></S>;
+      case 'settings': return <S s={s} w={p.w}><path d="M2.8 6.2h5.4M11.4 6.2h3.8M2.8 11.8h3.4M9.4 11.8h5.8"/><circle cx="9.9" cy="6.2" r="1.5"/><circle cx="7.6" cy="11.8" r="1.5"/></S>;
+      case 'search': return <S s={s} w={p.w}><circle cx="8" cy="8" r="4.6"/><path d="M11.4 11.4l3.4 3.4"/></S>;
+      case 'refresh': return <S s={s} w={p.w}><path d="M14.4 9a5.4 5.4 0 11-1.6-3.8"/><path d="M14.6 3.4v3.4h-3.4"/></S>;
+      case 'more': return <S s={s} w={p.w}><circle cx="3.9" cy="9" r="1.05" fill="currentColor" stroke="none"/><circle cx="9" cy="9" r="1.05" fill="currentColor" stroke="none"/><circle cx="14.1" cy="9" r="1.05" fill="currentColor" stroke="none"/></S>;
+      case 'plus': return <S s={s} w={p.w}><path d="M9 3.6v10.8M3.6 9h10.8"/></S>;
+      case 'right': return <S s={s} w={p.w||1.4}><path d="M7 4.4L11.6 9 7 13.6"/></S>;
+      case 'down': return <S s={s} w={p.w||1.4}><path d="M4.4 7L9 11.6 13.6 7"/></S>;
+      case 'left': return <S s={s} w={p.w}><path d="M11 3.8L5.8 9 11 14.2"/></S>;
+      case 'close': return <S s={s} w={p.w}><path d="M4.6 4.6l8.8 8.8M13.4 4.6l-8.8 8.8"/></S>;
+      case 'check': return <S s={s} w={p.w}><path d="M3.6 9.4l3.4 3.4L14.4 5.4"/></S>;
+      case 'send': return <S s={s} w={p.w}><path d="M9 14.6V4.2M4.4 8.6L9 4l4.6 4.6"/></S>;
+      case 'stop': return <S s={s} w={p.w}><rect x="5.2" y="5.2" width="7.6" height="7.6" rx="1.4" fill="currentColor" stroke="none"/></S>;
+      case 'filter': return <S s={s} w={p.w}><path d="M3 5.2h12M5.4 9h7.2M7.6 12.8h2.8"/></S>;
+      case 'import': return <S s={s} w={p.w}><path d="M9 3v7.4M5.9 7.4L9 10.5l3.1-3.1M3.6 14.2h10.8"/></S>;
+      case 'branch': return <S s={s} w={p.w}><path d="M5 3.6v7.2a3 3 0 003 3h4.4"/><circle cx="5" cy="3.6" r="1.5"/><path d="M13.4 10.8l1.8 3-1.8 3" transform="translate(0,-2.4)"/></S>;
+      case 'folder': return <S s={s} w={p.w}><path d="M2.8 5.4A1.6 1.6 0 014.4 3.8h2.4l1.4 1.6h5.4a1.6 1.6 0 011.6 1.6v6.2a1.6 1.6 0 01-1.6 1.6H4.4a1.6 1.6 0 01-1.6-1.6z"/></S>;
+      case 'file': return <S s={s} w={p.w}><path d="M4.6 3.4h5.2l3.6 3.6v7.6H4.6z"/><path d="M9.6 3.6v3.6h3.6"/></S>;
+      case 'terminal': return <S s={s} w={p.w}><path d="M3.4 5.4L6.8 9l-3.4 3.6M9 12.6h5.6"/></S>;
+      default: return <S s={s} w={p.w}><circle cx="9" cy="9" r="5.4"/></S>;
+    }
+  }
+
+  /* ---------- 顶栏：chrome 落到 --surf-dim，1px 收边 ---------- */
+  function TopBar(p){
+    return (
+      <div style={{flex:'none',background:'var(--surf-dim)',borderBottom:'1px solid var(--border-muted)',padding:'0 14px'}}>
+        <div className="rw" style={{height:48,gap:10}}>
+          {p.onBack ? (
+            <div className="press" onClick={p.onBack} style={{marginLeft:-6,width:32,height:32,borderRadius:8,display:'flex',alignItems:'center',justifyContent:'center',color:'var(--text)'}}>
+              <Icon n="left" s={18}/>
+            </div>
+          ) : null}
+          <div className={"fl1"+(p.onTitleClick?" press":"")} onClick={p.onTitleClick}
+            style={{minWidth:0,borderRadius:8,cursor:p.onTitleClick?'pointer':'default'}}>
+            <div className="rw" style={{gap:6}}>
+              <span className="t17 w6 ell">{p.title}</span>
+              {p.onTitleClick ? <Icon n="down" s={14} c="var(--muted)"/> : null}
+            </div>
+            {p.meta ? <div className="t12 c-muted ell" style={{marginTop:1}}>{p.meta}</div> : null}
+          </div>
+          <div className="rw" style={{gap:4,flex:'none'}}>{p.right}</div>
+        </div>
+      </div>
+    );
+  }
+
+  /* ---------- 底栏：三个目的地（对话 / 工作区 / 设置） ---------- */
+  function TabBar(p){
+    const items = [
+      {k:'chat', label:'对话', n:'chat'},
+      {k:'workbench', label:'工作区', n:'workbench'},
+      {k:'settings', label:'设置', n:'settings'},
+    ];
+    return (
+      <div style={{flex:'none',height:56,background:'var(--surf-dim)',borderTop:'1px solid var(--border-muted)',display:'flex'}}>
+        {items.map(it => {
+          const on = p.active === it.k;
+          return (
+            <div key={it.k} className="press" onClick={()=>p.onChange(it.k)}
+              style={{flex:1,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:3,
+                background:on?'var(--surf-dim)':'transparent'}}>
+              <Icon n={it.n} s={20} c={on?undefined:undefined}/>
+              <span className="t12" style={{color:on?'var(--accent)':'var(--text)',fontWeight:on?500:400}}>{it.label}</span>
+            </div>
+          );
+        })}
+      </div>
+    );
+  }
+
+  /* ---------- 表面 ---------- */
+  function Card(p){
+    return <div style={{background:p.bg||'var(--surf-low)',borderRadius:10,margin:'0 14px',overflow:'hidden',...p.style}}>{p.children}</div>;
+  }
+  function Section(p){
+    return (
+      <div style={{marginTop:18}}>
+        <div className="rw" style={{padding:'0 14px',marginBottom:7,gap:8}}>
+          <span className="t12 w5" style={{color:'var(--text)',letterSpacing:'.02em'}}>{p.label}</span>
+          {p.count!=null ? <span className="t12 c-muted">{p.count}</span> : null}
+          <span className="fl1"/>
+          {p.aside ? <span className="t12 c-muted">{p.aside}</span> : null}
+        </div>
+        {p.children}
+      </div>
+    );
+  }
+  function Rows(p){
+    const kids = React.Children.toArray(p.children).filter(Boolean);
+    return (
+      <Card>
+        {kids.map((c,i)=>(
+          <React.Fragment key={i}>
+            {i>0 ? <div className="div" style={{marginLeft:p.inset==null?14:p.inset}}/> : null}
+            {c}
+          </React.Fragment>
+        ))}
+      </Card>
+    );
+  }
+
+  /* ---------- 通用行：标题 + 属性（右对齐，tabular） ---------- */
+  function Row(p){
+    return (
+      <div className={p.flat?'press':'press2'} onClick={p.onClick}
+        style={{background:p.selected?'var(--selected-bg)':'transparent',padding:'10px 12px',display:'flex',alignItems:'center',gap:10,
+          cursor:p.onClick?'pointer':'default'}}>
+        {p.lead ? <span style={{flex:'none',color:'var(--muted)',display:'flex'}}>{p.lead}</span> : null}
+        <div className="fl1" style={{minWidth:0}}>
+          <div className="rw" style={{gap:7}}>
+            <span className={"t15 ell "+(p.mono?'mono t14':'')} style={{fontWeight:p.strong?600:500,color:p.tone||'var(--text)'}}>{p.title}</span>
+            {p.badge ? <Badge {...p.badge}/> : null}
+          </div>
+          {p.meta ? <div className={"t12 c-muted "+(p.metaMono?'mono':'')} style={{marginTop:3,...(p.metaMono?{fontSize:12}:null)}}>{p.meta}</div> : null}
+        </div>
+        {p.value!=null ? <span className={"t13 "+(p.valueMono?'mono tab':'')} style={{flex:'none',color:p.valueTone||'var(--text)',textAlign:'right'}}>{p.value}</span> : null}
+        {p.chevron !== false && p.onClick ? <Icon n="right" s={14} c="var(--muted)"/> : (p.chevron ? <Icon n="right" s={14} c="var(--muted)"/> : null)}
+        {p.trail}
+      </div>
+    );
+  }
+
+  /* ---------- 徽标：色块在最前，字用中性色（可读性优先） ---------- */
+  function Badge(p){
+    const c = p.tone || 'var(--muted)';
+    return (
+      <span className="rw" style={{flex:'none',gap:5,border:'1px solid var(--border-muted)',borderRadius:999,padding:'1px 7px 1px 6px'}}>
+        <span style={{width:5,height:5,borderRadius:1,background:c,flex:'none'}}/>
+        <span className="t12" style={{color:'var(--text)',lineHeight:'16px'}}>{p.text}</span>
+      </span>
+    );
+  }
+
+  function Chip(p){
+    return (
+      <span className={"t12 "+(p.mono?'mono ':'')+(p.onClick?'press':'')} onClick={p.onClick}
+        style={{display:'inline-flex',alignItems:'center',gap:5,flex:'none',height:26,padding:'0 9px',borderRadius:999,
+          border:'1px solid '+(p.active?'var(--border-accent)':'var(--border-muted)'),
+          background:p.active?'var(--surf-high)':'transparent',
+          color:p.active?'var(--accent)':'var(--text)',cursor:p.onClick?'pointer':'default'}}>
+        {p.dot ? <span style={{width:6,height:6,borderRadius:999,background:p.dot,flex:'none'}}/> : null}
+        {p.children}
+      </span>
+    );
+  }
+
+  function Switch(p){
+    return (
+      <span className="press" onClick={p.disabled?null:()=>p.onChange(!p.on)}
+        style={{flex:'none',width:38,height:22,borderRadius:999,background:p.on?'var(--accent)':'var(--surf-highest)',
+          border:'1px solid '+(p.on?'var(--accent)':'var(--border-muted)'),display:'flex',alignItems:'center',
+          padding:2,justifyContent:p.on?'flex-end':'flex-start',cursor:p.disabled?'not-allowed':'pointer'}}>
+        <span style={{width:16,height:16,borderRadius:999,background:p.on?'var(--page)':'var(--muted)'}}/>
+      </span>
+    );
+  }
+
+  function Seg(p){
+    return (
+      <div className="rw" style={{gap:2,background:'var(--surf-high)',border:'1px solid var(--border-muted)',borderRadius:8,padding:2,flex:'none'}}>
+        {p.items.map(it=>(
+          <span key={it.k} className="press t12" onClick={()=>p.onChange(it.k)}
+            style={{height:24,padding:'0 10px',display:'inline-flex',alignItems:'center',borderRadius:6,cursor:'pointer',
+              background:p.value===it.k?'var(--selected-bg)':'transparent',color:p.value===it.k?'var(--text)':'var(--muted)',fontWeight:p.value===it.k?500:400}}>
+            {it.label}
+          </span>
+        ))}
+      </div>
+    );
+  }
+
+  /* ---------- 底部 sheet / 对话框（都是 pi 的 scrim 0.32） ---------- */
+  function Sheet(p){
+    if(!p.open) return null;
+    return (
+      <div className="b-sheetwrap">
+        <div className="b-scrim" onClick={p.onClose}/>
+        <div className="b-sheet">
+          <div style={{flex:'none',padding:'8px 0 0',display:'flex',justifyContent:'center'}}>
+            <span style={{width:32,height:3,borderRadius:999,background:'var(--border-muted)'}}/>
+          </div>
+          <div style={{flex:'none',padding:'12px 14px 8px'}}>
+            <div className="rw" style={{gap:8}}>
+              <span className="t15 w6 fl1">{p.title}</span>
+              {p.right}
+              <div className="press" onClick={p.onClose} style={{width:28,height:28,marginRight:-6,borderRadius:8,display:'flex',alignItems:'center',justifyContent:'center',color:'var(--muted)'}}>
+                <Icon n="close" s={16}/>
+              </div>
+            </div>
+            {p.sub ? <div className="t12 c-muted" style={{marginTop:4}}>{p.sub}</div> : null}
+          </div>
+          <div className="b-scroll" style={{paddingBottom:8}}>{p.children}</div>
+          {p.footer ? <div className="t12 c-muted" style={{flex:'none',padding:'10px 14px 14px',borderTop:'1px solid var(--border-muted)'}}>{p.footer}</div> : null}
+        </div>
+      </div>
+    );
+  }
+
+  function Dialog(p){
+    if(!p.open) return null;
+    return (
+      <div className="b-dlgwrap">
+        <div className="b-scrim" onClick={p.onClose}/>
+        <div className="b-dlg">
+          <div className="t15 w6">{p.title}</div>
+          {p.sub ? <div className="t12 c-muted" style={{marginTop:4}}>{p.sub}</div> : null}
+          {p.children ? <div className="t14 c-text" style={{marginTop:10}}>{p.children}</div> : null}
+          <div className="rw" style={{justifyContent:'flex-end',gap:6,marginTop:14}}>
+            {(p.actions||[]).map((a,i)=>(
+              <span key={i} className="press t14" onClick={a.onClick}
+                style={{padding:'7px 12px',borderRadius:8,cursor:'pointer',fontWeight:a.primary?600:400,
+                  color:a.tone||(a.primary?'var(--accent)':'var(--text)')}}>
+                {a.label}
+              </span>
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  /* ---------- 执行轨道的节点（母题）：真实状态字形 + 真实状态色 ---------- */
+  /* 状态色 = pi 的 success / error / warning；底色上的 35% 描边是 App 既有做法（rgba 值逐字对应） */
+  const ST = {
+    pending:{c:'var(--warning)', rgb:'255,255,0', g:'…'},
+    success:{c:'var(--success)', rgb:'181,189,104', g:'✓'},
+    error:{c:'var(--error)', rgb:'204,102,102', g:'✗'},
+  };
+  function Node(p){
+    const st = ST[p.state] || ST.success;
+    return (
+      <span style={{position:'absolute',left:1,top:8,width:17,height:17,borderRadius:999,background:'var(--page)',
+        border:'1px solid rgba('+st.rgb+',.45)',display:'flex',alignItems:'center',justifyContent:'center',
+        fontFamily:'var(--font-mono)',fontSize:12,lineHeight:1,color:st.c,zIndex:1}}>
+        {st.g}
+      </span>
+    );
+  }
+  function RailRun(p){
+    return (
+      <div style={{position:'relative',paddingLeft:26}}>
+        <div style={{position:'absolute',left:9,top:16,bottom:16,width:1,background:'var(--border-muted)'}}/>
+        {p.children}
+      </div>
+    );
+  }
+
+  /* ---------- 工具卡：轨道节点 + 一行标题 + 就地展开 ---------- */
+  function ToolCard(p){
+    const st = ST[p.state] || ST.success;
+    const bg = p.state==='pending' ? 'var(--tool-pending)' : p.state==='error' ? 'var(--tool-error)' : 'var(--tool-success)';
+    return (
+      <div style={{position:'relative',marginLeft:-26,paddingLeft:26,marginBottom:8}}>
+        <Node state={p.state}/>
+        <div style={{background:bg,border:'1px solid rgba('+st.rgb+',.35)',borderRadius:10,overflow:'hidden'}}>
+          <div className="press2" onClick={p.onToggle}
+            style={{display:'flex',alignItems:'center',gap:7,padding:'7px 10px',cursor:'pointer'}}>
+            <span className="mono t12 c-muted" style={{flex:'none'}}>{p.name}</span>
+            <span className="mono t12 c-text ell fl1" style={{minWidth:0}}>{p.subject}</span>
+            {p.right ? <span className="mono t12 c-muted tab" style={{flex:'none'}}>{p.right}</span> : null}
+            <Icon n={p.expanded?'down':'right'} s={14} c="var(--body-on-tool)"/>
+          </div>
+          {p.expanded ? <div style={{padding:'0 10px 2px'}}>{p.children}</div> : null}
+          {p.footer ? (
+            <div className="mono t12 c-body" style={{padding:'0 10px 8px',display:'flex',alignItems:'center',gap:6}}>
+              <span style={{color:st.c}}>{st.g}</span>
+              <span className="fl1" style={{color:'var(--text)'}}>{p.footer}</span>
+            </div>
+          ) : null}
+        </div>
+      </div>
+    );
+  }
+
+  /* ---------- diff：pi 的行级纹理（符号列 16 / 行号列 30 / 行底 8%） ---------- */
+  function DiffBody(p){
+    return (
+      <div className="mono" style={{fontSize:13,lineHeight:'19px',paddingBottom:4}}>
+        {p.lines.map((l,i)=>{
+          if(l.fold){
+            return (
+              <div key={i} className="c-body" style={{display:'flex',alignItems:'center',gap:8,padding:'3px 0',fontSize:12}}>
+                <span style={{width:46,textAlign:'right',flex:'none'}}/>
+                <span>… {l.fold} 行未变</span>
+              </div>
+            );
+          }
+          const mark = l.t==='add' ? '+' : l.t==='del' ? '-' : ' ';
+          const markColor = l.t==='add' ? 'var(--diff-add)' : l.t==='del' ? 'var(--diff-del)' : 'var(--body-on-tool)';
+          const tint = l.t==='add' ? 'rgba(181,189,104,0.08)' : l.t==='del' ? 'rgba(204,102,102,0.08)' : 'transparent';
+          return (
+            <div key={i} style={{display:'flex',alignItems:'baseline',background:tint}}>
+              <span style={{width:16,flex:'none',color:markColor,textAlign:'center'}}>{mark}</span>
+              <span style={{width:30,flex:'none',color:'var(--body-on-tool)',textAlign:'right',paddingRight:8}}>{l.n}</span>
+              <span className="fl1" style={{color:l.t==='ctx'?'var(--body-on-tool)':'var(--text)',whiteSpace:'pre-wrap'}}>{l.s}</span>
+            </div>
+          );
+        })}
+      </div>
+    );
+  }
+
+  window.BUI = {Icon, TopBar, TabBar, Card, Section, Rows, Row, Badge, Chip, Switch, Seg, Sheet, Dialog, Node, RailRun, ToolCard, DiffBody, ST};
+})();
+</script>
+
+<!-- ============ 五台屏（真实内容） ============ -->
+<script type="text/babel" data-presets="react">
+(function(){
+  const U = window.BUI;
+  const {Icon, TopBar, Card, Section, Rows, Row, Badge, Chip, Switch, Seg, Sheet, Dialog, RailRun, ToolCard, DiffBody} = U;
+
+  /* ============================ 数据：全部来自 pi 的真实输出形状 ============================ */
+
+  /* 会话列表：12 条真实字段形状（cwd 分组 / 当前徽章 / 副行 / 条数 / 相对时间） */
+  const B_SESSIONS = [
+    {g:'工作区', rows:[
+      {t:'会话列表排序错了 · 对话页顶部状态行', cur:true, sub:'工作区 · deepseek/deepseek-chat', prop:'18 条 · 已命名', time:'刚刚'},
+      {t:'把 diff 卡片的高度收紧', sub:'工作区 · anthropic/claude-sonnet-4-5', prop:'42 条 · 已命名', time:'12 分钟前'},
+      {t:'工具卡的展开按钮点不到', sub:'工作区 · deepseek/deepseek-reasoner', prop:'9 条', time:'1 小时前'},
+      {t:'设置里 reserveTokens 该填多少', sub:'工作区 · openai/gpt-5', prop:'27 条 · 分支', time:'3 小时前'},
+      {t:'检查一下 @ 提及补全超时', sub:'工作区 · zai/glm-4.6', prop:'6 条', time:'昨天'},
+      {t:'会话导出为 HTML 少了扩展渲染', sub:'工作区 · anthropic/claude-sonnet-4-5', prop:'55 条 · 已命名', time:'2 天前'},
+      {t:'队列里的消息怎么单独撤回', sub:'工作区 · deepseek/deepseek-chat', prop:'4 条', time:'3 天前'},
+      {t:'主题的对比度在深色下不达标', sub:'工作区 · moonshotai/kimi-k2', prop:'31 条 · 分支 · 已命名', time:'1 周前'},
+      {t:'按键条挡住了输入框', sub:'工作区 · qwen/qwen3-coder-plus', prop:'12 条', time:'1 周前'},
+    ]},
+    {g:'mobile-app', rows:[
+      {t:'把 run-checks 的输出看懂', sub:'mobile-app · deepseek/deepseek-chat', prop:'7 条', time:'4 小时前'},
+      {t:'契约检查失败的三个文件', sub:'mobile-app · anthropic/claude-sonnet-4-5', prop:'14 条 · 分支', time:'5 天前'},
+      {t:'许可清单要补一个库', sub:'mobile-app · openai/gpt-5', prop:'3 条', time:'2 周前'},
+    ]},
+  ];
+
+  /* 这次会话的 diff：6 增 5 删（行号列按 pi 的 DiffBlock 形状） */
+  const B_DIFF = [
+    {n:'188', t:'ctx', s:'            } else {'},
+    {n:'189', t:'ctx', s:'                val groups = visible'},
+    {n:'190', t:'del', s:'                    .groupBy { it.cwd }'},
+    {n:'190', t:'add', s:'                    .groupBy { it.group }'},
+    {n:'191', t:'del', s:'                    .toList()'},
+    {n:'191', t:'add', s:'                    .map { (g, rows) -> g to rows.sortedByDescending { it.lastActiveAt } }'},
+    {n:'192', t:'del', s:'                    .sortedByDescending { (_, rows) -> rows.maxOf { it.lastActiveAt } }'},
+    {n:'192', t:'add', s:'                    .sortedByDescending { (_, rows) ->'},
+    {n:'193', t:'add', s:'                        rows.firstOrNull()?.lastActiveAt ?: 0L'},
+    {n:'194', t:'add', s:'                    }'},
+    {n:'195', t:'ctx', s:'            }'},
+    {fold:12},
+    {n:'330', t:'ctx', s:'            Spacer(Modifier.width(12.dp))'},
+    {n:'331', t:'del', s:'        Text(relativeTime(row.lastActiveAt), style = Text.meta)'},
+    {n:'332', t:'add', s:'        Text(relativeTime(row.lastActiveAt), style = Text.meta, maxLines = 1)'},
+    {n:'333', t:'del', s:'        Text("按时间", style = Text.meta)'},
+    {n:'334', t:'add', s:'        Text("按时间", style = Text.meta, maxLines = 1)'},
+  ];
+
+  /* read 工具卡展开后的正文（带行号 + 语法色，pi 的 SourceLines 形状） */
+  const B_READ_LINES = [
+    {n:185, seg:[['val','var'],[' visible = remember(sessions, query, byName, namedOnly) {','op']]},
+    {n:186, seg:[['    sessions','op']]},
+    {n:187, seg:[['        .filter { it.matches(query) }','op']]},
+    {n:188, seg:[['        .groupBy { it.group }','op']]},
+    {n:189, seg:[['        .map { (g, rows) ->','op']]},
+    {n:190, seg:[['            g to rows.sortedByDescending','op'],[' { it.lastActiveAt }','fn']]},
+    {n:191, seg:[['        }','op']]},
+  ];
+
+  /* `!` 命令输出（ShellBlock 折叠只给尾部 5 行） */
+  const B_SH_OUT = [
+    '[settings-audit] 68 项设置，全部有读取方',
+    '[prose-audit] 用户可见文案 0 处内部路径',
+    '[nested-comments] ok',
+    '[highlight] ok',
+    'PASS',
+  ];
+
+  /* `/` 命令面板：pi 自己的顺序，不重排；来源徽标四类 */
+  const B_CMDS = [
+    {n:'/settings', d:'打开设置菜单', s:'内置'},
+    {n:'/model', a:'<provider/model>', d:'选择模型', s:'内置'},
+    {n:'/tree', d:'浏览会话树，从某条消息分叉', s:'内置'},
+    {n:'/thinking', a:'<level>', d:'设置思考等级', s:'内置'},
+    {n:'/scoped-models', d:'设置循环切换的模型范围', s:'内置'},
+    {n:'/export', d:'导出会话：默认 HTML，路径以 .jsonl 结尾时写 JSONL', s:'内置'},
+    {n:'/import', d:'从 JSONL 文件导入并恢复会话', s:'内置'},
+    {n:'/share', d:'将会话分享为私密 GitHub gist', s:'内置', note:' · 本应用没有入口'},
+    {n:'/copy', d:'复制最后一条模型消息', s:'内置'},
+    {n:'/name', d:'设置会话显示名称', s:'内置'},
+    {n:'/session', d:'查看会话信息与统计', s:'内置'},
+    {n:'/fork', d:'从某条历史消息创建分支', s:'内置'},
+    {n:'/trust', d:'保存项目信任决定', s:'内置', note:' · 本应用：设置 → 扩展 → 扩展包与项目信任'},
+    {n:'/review', d:'按仓库规则逐条核对改动，输出「问题 / 位置 / 证据」三列', s:'技能'},
+    {n:'/compact', d:'手动压缩会话上下文', s:'内置'},
+    {n:'/reload', d:'重载扩展、技能、模板、主题与上下文文件', s:'扩展'},
+  ];
+
+  /* 模型选择 sheet 的行（成本是编的，字段形状与页脚格式是代码事实） */
+  const B_MODELS = [
+    {id:'deepseek/deepseek-chat', cur:true, p:'deepseek · 128k 上下文 · 思考 · 图片', c:'$0.27 / M 输入 · $1.10 / M 输出'},
+    {id:'anthropic/claude-sonnet-4-5', p:'anthropic · 200k 上下文 · 思考 · 图片', c:'$3.00 / M 输入 · $15.00 / M 输出'},
+    {id:'deepseek/deepseek-reasoner', p:'deepseek · 128k 上下文 · 思考', c:'$0.55 / M 输入 · $2.19 / M 输出'},
+    {id:'openai/gpt-5', p:'openai · 400k 上下文 · 思考 · 图片', c:'$1.25 / M 输入 · $10.00 / M 输出'},
+    {id:'zai/glm-4.6', p:'zai · 200k 上下文 · 思考', c:'$0.60 / M 输入 · $2.20 / M 输出'},
+    {id:'moonshotai/kimi-k2', p:'moonshotai · 256k 上下文', c:'$0.60 / M 输入 · $2.50 / M 输出'},
+  ];
+
+  /* 思考等级：色温刻度是 pi 的签名（off → max 七个真令牌） */
+  const B_LEVELS = [
+    {id:'off', l:'关闭', c:'var(--think-off)'},
+    {id:'minimal', l:'极简', c:'var(--think-minimal)'},
+    {id:'low', l:'低', c:'var(--think-low)'},
+    {id:'medium', l:'中', c:'var(--think-medium)'},
+    {id:'high', l:'高', c:'var(--think-high)'},
+    {id:'xhigh', l:'很高', c:'var(--think-xhigh)'},
+    {id:'max', l:'最高', c:'var(--think-max)'},
+  ];
+
+  /* 行内代码：mdCode 色 + infoBg 底（pi 的 markdown 映射） */
+  const Code = (p) => (
+    <code className="mono t13" style={{background:'var(--info)',color:'var(--md-code)',padding:'0 4px',borderRadius:3}}>{p.children}</code>
+  );
+
+  function ThinkScale(p){
+    return (
+      <div className="rw" style={{gap:0,height:26,borderRadius:6,overflow:'hidden',margin:'0 14px 10px'}}>
+        {B_LEVELS.map(l=>(
+          <span key={l.id} style={{flex:1,height:'100%',background:l.c,outline:l.id===p.value?'1px solid var(--text)':'none',outlineOffset:-1}}/>
+        ))}
+      </div>
+    );
+  }
+
+  /* 设置：12 个分组（标题逐字，摘要格式来自代码） */
+  const B_GROUPS = [
+    {t:'模型与推理', s:'默认 deepseek/deepseek-chat · ◐ 中'},
+    {t:'消息与网络', s:'穿插：逐条 · 后续：全部'},
+    {t:'上下文与压缩', s:'自动压缩开 · 400000 / 20000'},
+    {t:'重试与网络', s:'自动重试开 · 3 次'},
+    {t:'工具', s:'默认 read·bash·edit·write'},
+    {t:'会话', s:'由本应用固定（与 pi 共用）· 续接：开'},
+    {t:'扩展与资源', s:'3 个扩展 · 1 个资源包'},
+    {t:'外观', s:'主题 dark'},
+    {t:'终端与 Shell', s:'默认 /bin/bash · 等宽 13'},
+    {t:'安全与信任', s:'项目信任：询问'},
+    {t:'运行时与诊断', s:'保活：开'},
+    {t:'隐私与关于', s:'遥测：关'},
+  ];
+
+  /* 设置：模型与推理分组的 12 行（标题 / 类型 / 尾部值 / 生效徽标，全部代码事实） */
+  const B_MODEL_ROWS = [
+    {sec:'模型', rows:[
+      {k:'action', t:'已导入的模型', v:'', badge:null},
+      {k:'value', t:'默认厂商', v:'DeepSeek', badge:{text:'新会话'}},
+      {k:'value', t:'默认模型', v:'deepseek/deepseek-chat', badge:{text:'新会话'}},
+      {k:'list', t:'循环模型', v:'全部模型', badge:{text:'需重启引擎', tone:'var(--error)'}},
+    ]},
+    {sec:'推理', rows:[
+      {k:'value', t:'默认思考等级', v:'中', badge:{text:'新会话'}},
+      {k:'list', t:'逐模型思考等级', v:'2 项', badge:{text:'新会话'}},
+      {k:'list', t:'思考预算', v:'未设置', badge:{text:'新会话'}},
+      {k:'switch', t:'隐藏思考块', on:true},
+      {k:'switch', t:'缓存未命中提示', on:false},
+    ]},
+    {sec:'凭证', rows:[
+      {k:'action', t:'API Key', v:'', badge:null},
+      {k:'action', t:'订阅登录', v:'', badge:null},
+      {k:'action', t:'本地模型（llama.cpp）', v:'', badge:null},
+    ]},
+  ];
+
+  /* 设置搜索的全部条目（含 Number / Text 两型，尾部值格式来自代码） */
+  const B_SEARCH = [
+    {g:'模型与推理', t:'默认模型', v:'deepseek/deepseek-chat', k:'value'},
+    {g:'模型与推理', t:'默认思考等级', v:'中', k:'value'},
+    {g:'模型与推理', t:'隐藏思考块', v:'开', k:'switch'},
+    {g:'模型与推理', t:'循环模型', v:'全部模型', k:'list'},
+    {g:'上下文与压缩', t:'保留 token', v:'400000', k:'number'},
+    {g:'上下文与压缩', t:'保留最近 token', v:'20000', k:'number'},
+    {g:'终端与 Shell', t:'Shell 路径', v:'默认 /bin/bash', k:'text'},
+    {g:'终端与 Shell', t:'命令前缀', v:'未设置', k:'text'},
+    {g:'重试与网络', t:'最大重试次数', v:'3', k:'number'},
+    {g:'外观', t:'主题', v:'dark', k:'value'},
+    {g:'工具', t:'内建工具', v:'默认 read/bash/edit/write', k:'list'},
+    {g:'安全与信任', t:'紧急停止', v:'', k:'action'},
+  ];
+
+  /* ============================ ① 对话（hero） ============================ */
+  function ChatScreen(p){
+    const [ex, setEx] = React.useState({read1:false, read2:true, think:false, grep:true, diff:true, sh1:false, sh2:true, sh3:true, err:false});
+    const [sheet, setSheet] = React.useState(null);
+    const [level, setLevel] = React.useState('medium');
+    const [draft, setDraft] = React.useState('');
+    const [approved, setApproved] = React.useState(false);
+    const sc = React.useRef(null);
+    const anchor = React.useRef(null);
+    const tg = k => setEx(s => Object.assign({}, s, {[k]:!s[k]}));
+    React.useEffect(()=>{
+      if(sc.current && anchor.current){
+        const r = anchor.current.getBoundingClientRect();
+        const s = sc.current.getBoundingClientRect();
+        sc.current.scrollTop = sc.current.scrollTop + (r.top - s.top) - 8;
+      }
+    },[]);
+
+    const lv = B_LEVELS.find(x=>x.id===level) || B_LEVELS[3];
+    const slash = draft.startsWith('/') && draft.indexOf(' ') < 0;
+    const cmds = slash ? B_CMDS.filter(c=>c.n.indexOf(draft)===0 || draft==='/') : [];
+
+    return (
+      <div className="b-screen">
+        <TopBar
+          title="会话列表排序错了"
+          meta="工作中"
+          onTitleClick={p.onOpenSessions}
+          right={<>
+            <span className="press mono t12" onClick={()=>setSheet('model')}
+              style={{height:26,display:'inline-flex',alignItems:'center',padding:'0 9px',borderRadius:999,border:'1px solid var(--border-muted)',color:'var(--text)',cursor:'pointer'}}>
+              deepseek-chat
+            </span>
+            <div className="press" onClick={()=>setSheet('stats')} style={{width:30,height:30,borderRadius:8,display:'flex',alignItems:'center',justifyContent:'center',color:'var(--text)'}}>
+              <Icon n="search" s={17}/>
+            </div>
+            <div className="press" onClick={()=>setSheet('menu')} style={{width:30,height:30,borderRadius:8,display:'flex',alignItems:'center',justifyContent:'center',color:'var(--text)'}}>
+              <Icon n="more" s={17}/>
+            </div>
+          </>}
+        />
+        {/* 会话名就是入口：点它进会话列表覆盖层（产品裁决），下面一条只放这次会话的读数 */}
+        <div className="rw" style={{flex:'none',background:'var(--surf-dim)',padding:'2px 14px 8px',gap:8}}>
+          <span className="t12 c-muted">上下文 52%</span>
+          <span className="rw" style={{gap:2,flex:'none'}}>
+            {[0,1,2,3,4,5,6,7,8,9].map(i=>(
+              <span key={i} style={{width:5,height:8,borderRadius:1,background:i<5?'var(--accent)':'var(--border-muted)'}}/>
+            ))}
+          </span>
+          <span className="mono t12 tab c-muted">104k / 200k</span>
+          <span className="mono t12 tab c-text">$0.42</span>
+        </div>
+
+        <div style={{position:'relative',flex:1,minHeight:0,display:'flex',flexDirection:'column'}}>
+        <div className="b-scroll" ref={sc} style={{padding:'10px 14px 12px'}}>
+          <div className="rw" style={{gap:8,margin:'2px 0 10px'}}>
+            <span className="hair fl1"/>
+            <span className="t12 c-muted">今天</span>
+            <span className="hair fl1"/>
+          </div>
+          <div className="press" style={{padding:'4px 0 10px',cursor:'pointer'}}>
+            <span className="t12 c-muted">加载更早的 24 条</span>
+          </div>
+
+          {/* 用户消息：满宽气泡，右下角时间 */}
+          <div style={{background:'var(--user-bg)',borderRadius:12,padding:12,marginBottom:10}}>
+            <div className="t14" style={{color:'var(--user-text)'}}>
+              会话列表排序错了。我按「按时间」的时候，最近活动的目录应该排在最上面，但现在带「已命名」的那几条跑到最后去了。截图是这个列表，注意「工作区」那一组已经掉到第二屏。
+            </div>
+            <div className="rw" style={{justifyContent:'flex-end',marginTop:6}}>
+              <span className="mono t12 c-muted">14:02</span>
+            </div>
+          </div>
+
+          {/* 思考块：3px 色条 = 思考等级色（不套卡片） */}
+          <div style={{marginBottom:10}}>
+            <div className="press rw" onClick={()=>tg('think')} style={{gap:8,cursor:'pointer'}}>
+              <span style={{width:3,height:18,borderRadius:2,background:lv.c,flex:'none'}}/>
+              <span className="t14 w5">思考 8s</span>
+              <span className="t12" style={{color:lv.c}}>中</span>
+              <span className="fl1"/>
+              <span className="t12 c-muted">{ex.think?'收起':'展开'}</span>
+              <Icon n={ex.think?'down':'right'} s={13} c="var(--body-on-tool)"/>
+            </div>
+            {ex.think ? (
+              <div className="t14" style={{color:'var(--body-on-tool)',fontStyle:'italic',paddingLeft:11,marginTop:6}}>
+                排序在 groupBy 之后做的，先看 visible 的构造。
+              </div>
+            ) : null}
+          </div>
+
+          {/* 助手正文：无容器，落在画布上 */}
+          <div style={{marginBottom:12}}>
+            <div className="t17 w6 c-head" style={{marginBottom:6}}>先定位排序来源</div>
+            <div className="t14">列表是「先分组、再排序」：</div>
+            <div style={{marginTop:6}}>
+              <div className="rw t14" style={{gap:8,alignItems:'flex-start',marginTop:4}}>
+                <span style={{width:4,height:4,borderRadius:999,background:'var(--md-bullet)',marginTop:9,flex:'none'}}/>
+                <span className="fl1">分组用的是 <Code>it.group</Code>，所以一个目录一段</span>
+              </div>
+              <div className="rw t14" style={{gap:8,alignItems:'flex-start',marginTop:4}}>
+                <span style={{width:4,height:4,borderRadius:999,background:'var(--md-bullet)',marginTop:9,flex:'none'}}/>
+                <span className="fl1">组间排序用的是组内最新的 <Code>lastActiveAt</Code></span>
+              </div>
+              <div className="rw t14" style={{gap:8,alignItems:'flex-start',marginTop:4}}>
+                <span style={{width:4,height:4,borderRadius:999,background:'var(--md-bullet)',marginTop:9,flex:'none'}}/>
+                <span className="fl1"><Code>按名称</Code> 时才改用 <Code>title.lowercase()</Code></span>
+              </div>
+            </div>
+            <div className="t14" style={{marginTop:8}}>改之前先确认一下组内行序是谁给的：</div>
+            <div className="mono" style={{marginTop:8,background:'var(--card)',border:'1px solid var(--md-codeblock-border)',borderRadius:12,padding:'10px 12px',fontSize:13,lineHeight:'19px'}}>
+              <div><span style={{color:'var(--syn-keyword)'}}>val</span> <span style={{color:'var(--syn-variable)'}}>groups</span> <span style={{color:'var(--syn-op)'}}>= visible</span></div>
+              <div><span style={{color:'var(--syn-op)'}}>    .groupBy {'{'} it.group {'}'}</span></div>
+              <div><span style={{color:'var(--syn-op)'}}>    .toList()</span></div>
+              <div><span style={{color:'var(--syn-op)'}}>    .sortedByDescending {'{'} (_, rows) -&gt; rows.</span><span style={{color:'var(--syn-function)'}}>maxOf</span><span style={{color:'var(--syn-op)'}}> {'{'} it.lastActiveAt {'}'} {'}'}</span></div>
+            </div>
+          </div>
+
+          {/* —— 一条执行轨道：连续的工具调用 = 一条线 + 节点 —— */}
+          <RailRun>
+            <ToolCard name="read" state="success" expanded={ex.read1} onToggle={()=>tg('read1')}
+              subject="src/session/SessionList.kt:119-131" right="132ms" footer="成功 · 132ms · 13 行">
+              <div className="mono c-body" style={{fontSize:13,lineHeight:'19px',paddingBottom:2}}>
+                119  val visible = remember(sessions, query, byName, namedOnly) {'{'}
+                <br/>120      sessions
+                <br/>121          .filter {'{'} it.matches(query) {'}'}
+              </div>
+            </ToolCard>
+
+            <ToolCard name="read" state="success" expanded={ex.read2} onToggle={()=>tg('read2')}
+              subject="src/session/SessionList.kt:185-200" right="96ms"
+              footer="成功 · 96ms · 14 行 · 还有 4 行未显示">
+              <div className="mono" style={{fontSize:13,lineHeight:'19px',paddingBottom:2}}>
+                {B_READ_LINES.map(l=>(
+                  <div key={l.n} style={{display:'flex'}}>
+                    <span style={{width:28,flex:'none',textAlign:'right',paddingRight:8,color:'var(--body-on-tool)'}}>{l.n}</span>
+                    <span className="fl1">{l.seg.map((g,i)=><span key={i} style={{color:g[1]==='var'?'var(--syn-keyword)':g[1]==='fn'?'var(--syn-function)':'var(--syn-op)'}}>{g[0]}</span>)}</span>
+                  </div>
+                ))}
+              </div>
+            </ToolCard>
+
+            <ToolCard name="grep" state="success" expanded={ex.grep} onToggle={()=>tg('grep')}
+              subject="/sortedBy/ in src" right="88ms" footer="成功 · 7 处 · 3 个文件 · 88ms">
+              <div style={{paddingBottom:4}}>
+                {[
+                  {f:'src/session/SessionList.kt', n:'3 处', hits:[
+                    ['129','if (byName) list.sortedBy { it.title.lowercase() } else list','m'],
+                    ['194','.sortedByDescending { (_, rows) -> rows.maxOf { it.lastActiveAt } }','m'],
+                  ]},
+                  {f:'src/session/order.kt', n:'3 处', hits:[['88','rows.sortedByDescending { it.lastActiveAt }','m']]},
+                  {f:'src/session/tree.kt', n:'1 处', hits:[['41','// 分叉后由调用方重新排序','c']]},
+                ].map(g=>(
+                  <div key={g.f} style={{marginBottom:6}}>
+                    <div className="rw" style={{gap:8}}>
+                      <span className="mono t12 c-text ell fl1">{g.f}</span>
+                      <span className="mono t12 c-muted">{g.n}</span>
+                    </div>
+                    {g.hits.map(hh=>(
+                      <div key={hh[0]} className="rw" style={{gap:8,alignItems:'baseline'}}>
+                        <span className="mono t12 c-muted" style={{width:30,textAlign:'right',flex:'none'}}>{hh[0]}</span>
+                        <span className={"mono t12 ell "+(hh[2]==='c'?'c-body':'c-text')}>{hh[1]}</span>
+                      </div>
+                    ))}
+                  </div>
+                ))}
+              </div>
+            </ToolCard>
+
+            <ToolCard name="edit" state="success" expanded={false} onToggle={()=>{}} subject="src/session/SessionList.kt" right="214ms" footer="成功 · 214ms · 2 行"/>
+
+            {/* diff 卡：与 edit 卡是两张卡（pi 的转录就是这样） */}
+            <div ref={anchor} style={{position:'relative',marginLeft:-26,paddingLeft:26,marginBottom:8}}>
+              <span style={{position:'absolute',left:1,top:8,width:17,height:17,borderRadius:999,background:'var(--page)',border:'1px solid var(--border-muted)',display:'flex',alignItems:'center',justifyContent:'center',fontFamily:'var(--font-mono)',fontSize:12,color:'var(--body-on-tool)',zIndex:1}}>
+                ±
+              </span>
+              <div style={{background:'var(--tool-pending)',border:'1px solid var(--border-muted)',borderRadius:10,overflow:'hidden'}}>
+                <div className="press2" onClick={()=>tg('diff')} style={{display:'flex',alignItems:'center',gap:8,padding:'7px 10px',cursor:'pointer'}}>
+                  <span className="mono t12 c-muted" style={{flex:'none'}}>edit</span>
+                  <span className="mono t12 c-text ell fl1">src/session/SessionList.kt</span>
+                  <span className="mono t12 tab" style={{color:'var(--diff-add)',flex:'none'}}>+6</span>
+                  <span className="mono t12 tab" style={{color:'var(--diff-del)',flex:'none'}}>−5</span>
+                  <Icon n={ex.diff?'down':'right'} s={14} c="var(--body-on-tool)"/>
+                </div>
+                <div className="rw" style={{gap:8,padding:'0 10px 6px'}}>
+                  <span className="t12 c-muted">新增 6 行 · 删除 5 行</span>
+                  <span className="fl1"/>
+                  <span className="t12 c-muted" onClick={()=>tg('diff')} style={{cursor:'pointer'}}>{ex.diff?'收起':'展开'}</span>
+                </div>
+                {ex.diff ? <div style={{padding:'0 8px 6px'}}><DiffBody lines={B_DIFF}/></div> : null}
+              </div>
+            </div>
+
+            <ToolCard name="bash" state="success" expanded={ex.sh1} onToggle={()=>tg('sh1')}
+              subject="tools/check-ui.sh (timeout 120s)" right="6.4s"
+              footer="成功 · 退出码 0 · 耗时 6.4 秒 · 42 行">
+              <div className="mono c-body" style={{fontSize:13,lineHeight:'19px',paddingBottom:4}}>
+                <div style={{color:'var(--body-on-tool)'}}>上方还有 37 行未显示</div>
+                {B_SH_OUT.map((l,i)=><div key={i} style={{color:i===4?'var(--success)':'var(--body-on-tool)'}}>{l}</div>)}
+              </div>
+            </ToolCard>
+
+            <ToolCard name="bash" state="pending" expanded={ex.sh2} onToggle={()=>tg('sh2')}
+              subject="./gradlew :app:compileDebug" right="12.3s"
+              footer="运行中 · 已运行 12.3 秒 · 18 行">
+              <div style={{paddingBottom:6}}>
+                <div className="rw" style={{gap:3,marginBottom:6}}>
+                  {Array.from({length:24}).map((_,i)=>(
+                    <span key={i} style={{flex:1,height:3,borderRadius:1,background:i<9?'var(--warning)':'var(--border-muted)'}}/>
+                  ))}
+                </div>
+                <div className="mono c-body" style={{fontSize:13,lineHeight:'19px'}}>
+                  &gt; Task :app:compileDebugKotlin
+                </div>
+              </div>
+            </ToolCard>
+
+            <ToolCard name="bash" state="error" expanded={ex.sh3} onToggle={()=>tg('sh3')}
+              subject={'rg -n "TODO" src'} right="0.4s"
+              footer="失败 · 退出码 2 · 耗时 0.4 秒 · 0 行">
+              <div className="mono" style={{fontSize:13,lineHeight:'19px',paddingBottom:4,color:'var(--text)'}}>
+                rg: src: 没有那个文件或目录 (os error 2)
+              </div>
+            </ToolCard>
+          </RailRun>
+
+          {/* 错误块 */}
+          <div style={{background:'var(--tool-error)',border:'1px solid rgba(204,102,102,.45)',borderRadius:10,marginTop:6,marginBottom:10,display:'flex',overflow:'hidden'}}>
+            <span style={{width:3,background:'var(--error)',flex:'none'}}/>
+            <div style={{padding:'10px 12px',flex:1}}>
+              <div className="t14">引擎没能返回这个会话的内容，可以重新打开这个会话再试一次。</div>
+              <div className="rw" style={{gap:8,marginTop:6}}>
+                <span className="t12 c-err press3" onClick={()=>tg('err')} style={{cursor:'pointer'}}>{ex.err?'收起':'详情'}</span>
+              </div>
+              {ex.err ? <div className="mono c-body" style={{fontSize:13,marginTop:6}}>get_entries: session file not found</div> : null}
+            </div>
+          </div>
+
+          {/* notice 行 */}
+          <div className="rw" style={{gap:8,marginBottom:10}}>
+            <span className="t13 c-muted">·</span>
+            <span className="t13 c-muted fl1">上下文已压缩（12,340 → 8,100 tokens）</span>
+            <span className="mono t12 c-muted">14:26</span>
+          </div>
+
+          {/* 审批提示：扩展请求，用户要决策 */}
+          {!approved ? (
+            <div style={{background:'var(--surf-high)',border:'1px solid var(--warning)',borderRadius:10,marginBottom:10,overflow:'hidden'}}>
+              <div style={{padding:'10px 12px'}}>
+                <div className="rw" style={{gap:7}}>
+                  <span style={{width:5,height:5,borderRadius:1,background:'var(--warning)',flex:'none'}}/>
+                  <span className="mono t13 fl1 ell">允许写入 src/session/SessionList.kt? (5s)</span>
+                </div>
+                <div className="t12 c-muted" style={{marginTop:5}}>还有 1 个扩展对话框在排队</div>
+                <div className="rw" style={{gap:8,marginTop:9}}>
+                  <span className="press t13" onClick={()=>setApproved(true)}
+                    style={{padding:'6px 12px',borderRadius:8,background:'var(--accent)',color:'var(--page)',fontWeight:600,cursor:'pointer'}}>允许</span>
+                  <span className="press t13" onClick={()=>setApproved(true)}
+                    style={{padding:'6px 12px',borderRadius:8,border:'1px solid var(--border-muted)',cursor:'pointer'}}>拒绝</span>
+                </div>
+              </div>
+              <div className="t12 c-muted" style={{padding:'8px 12px',borderTop:'1px solid var(--border-muted)'}}>超时后自动拒绝，晚到的回复会被丢弃。</div>
+            </div>
+          ) : null}
+
+          {/* 收尾的助手正文：真实的 markdown 列表（pi 没有 todo 块） */}
+          <div style={{marginBottom:10}}>
+            <div className="t14">两处都改完了：</div>
+            <div className="t14" style={{marginTop:6}}>
+              {['组内按 lastActiveAt 倒序','组间改为用组内第一条的时间，空组回退 0L'].map((s,i)=>(
+                <div key={i} className="rw" style={{gap:8,alignItems:'baseline',marginTop:3}}>
+                  <span className="mono t13 c-muted" style={{flex:'none'}}>{i+1}.</span>
+                  <span className="fl1">{s}</span>
+                </div>
+              ))}
+            </div>
+            <div className="mono" style={{marginTop:8,background:'var(--card)',border:'1px solid var(--md-codeblock-border)',borderRadius:12,padding:'10px 12px',fontSize:13,lineHeight:'19px'}}>
+              <div><span style={{color:'var(--syn-op)'}}>.sortedByDescending {'{'} (_, rows) -&gt;</span></div>
+              <div><span style={{color:'var(--syn-op)'}}>    rows.</span><span style={{color:'var(--syn-function)'}}>firstOrNull</span><span style={{color:'var(--syn-op)'}}>()?.</span><span style={{color:'var(--syn-variable)'}}>lastActiveAt</span><span style={{color:'var(--syn-op)'}}> ?: </span><span style={{color:'var(--syn-number)'}}>0L</span></div>
+              <div><span style={{color:'var(--syn-op)'}}>{'}'}</span></div>
+            </div>
+            <div className="t14" style={{marginTop:8}}>下一步建议把「已命名」那一栏的排序也写进测试，免得再回归。</div>
+          </div>
+
+          {/* 流式中的助手文本：静态光标（pi 不做循环动画） */}
+          <div className="t14" style={{marginBottom:14}}>
+            现在跑一遍组内排序的回归测试，确认两种排序模式都不再翻车
+            <span style={{display:'inline-block',width:8,height:15,background:'var(--accent)',opacity:.65,borderRadius:2,marginLeft:3,verticalAlign:'-2px'}}/>
+          </div>
+
+        </div>
+        <div style={{position:'absolute',right:14,bottom:10,pointerEvents:'none'}}>
+          <span className="press t12" style={{pointerEvents:'auto',display:'inline-flex',alignItems:'center',gap:5,padding:'6px 12px',borderRadius:999,background:'var(--surf-high)',border:'1px solid var(--border-muted)',color:'var(--text)',cursor:'pointer'}}>
+            回到最新 · 8
+          </span>
+        </div>
+        </div>
+
+        {/* 队列 + 输入区 */}
+        <div style={{flex:'none',padding:'0 14px 10px'}}>
+          <div className="rw" style={{gap:8,marginBottom:8}}>
+            <Chip>穿插 2</Chip>
+            <Chip>后续 1</Chip>
+            <span className="fl1"/>
+            <span className="press t12 c-accent" style={{cursor:'pointer'}}>收回并编辑</span>
+          </div>
+
+          {slash ? (
+            <div style={{background:'var(--surf-high)',border:'1px solid var(--border-muted)',borderRadius:10,marginBottom:8,overflow:'hidden',animation:'bFade .12s ease both'}}>
+              <div className="rw" style={{padding:'8px 12px',borderBottom:'1px solid var(--border-muted)'}}>
+                <span className="t12 c-muted fl1">命令</span>
+                <span className="t12 c-muted">{cmds.length} 条</span>
+              </div>
+              <div className="b-scroll" style={{maxHeight:172}}>
+                {cmds.length===0 ? (
+                  <div style={{padding:'12px'}}>
+                    <div className="t14">没有匹配「{draft}」的命令</div>
+                  </div>
+                ) : cmds.map(c=>(
+                  <div key={c.n} className="press2" onClick={()=>setDraft(c.n+(c.a?' ':''))} style={{padding:'8px 12px',cursor:'pointer'}}>
+                    <div className="rw" style={{gap:8}}>
+                      <span className="mono t13 c-text" style={{flex:'none'}}>{c.n}</span>
+                      {c.a ? <span className="mono t12 c-muted" style={{flex:'none'}}>{c.a}</span> : null}
+                      <span className="fl1"/>
+                      <span className="t12 c-muted" style={{flex:'none'}}>{c.s}</span>
+                    </div>
+                    <div className="t12 c-muted" style={{marginTop:2}}>{c.d}{c.note||''}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
+
+          <div style={{border:'1px solid '+(draft.startsWith('!')?'var(--bash)':lv.c),borderRadius:14,background:'var(--surf-low)',padding:'9px 10px'}}>
+            <input value={draft} onChange={e=>setDraft(e.target.value)} placeholder="输入消息，/ 选命令，! 直接跑命令，@ 提及文件"
+              style={{width:'100%',background:'transparent',border:'none',outline:'none',color:'var(--text)',fontFamily:'var(--font-sans)',fontSize:14,lineHeight:'20px'}}/>
+            <div className="rw" style={{gap:6,marginTop:8}}>
+              {['/','!','!!','@','图片','编辑器'].map(c=>(
+                <span key={c} className="press mono t12" onClick={()=>setDraft(c==='图片'||c==='编辑器'?draft:c)}
+                  style={{height:24,minWidth:24,padding:'0 7px',display:'inline-flex',alignItems:'center',justifyContent:'center',
+                    borderRadius:6,background:'var(--surf-highest)',color:'var(--text)',cursor:'pointer'}}>{c}</span>
+              ))}
+              <span className="fl1"/>
+              <span className="press rw" onClick={()=>setSheet('think')} style={{gap:5,cursor:'pointer'}}>
+                <span style={{color:lv.c,fontSize:12}}>◐</span>
+                <span className="t12 c-text">{lv.l}</span>
+              </span>
+              <span className="press" onClick={()=>setDraft('')} style={{width:30,height:30,borderRadius:999,background:'var(--accent)',display:'flex',alignItems:'center',justifyContent:'center',color:'var(--page)',cursor:'pointer'}}>
+                <Icon n="send" s={16}/>
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {/* 溢出菜单 */}
+        <Sheet open={sheet==='menu'} title="会话" onClose={()=>setSheet(null)}
+          footer="这个列表来自运行中的引擎。">
+          {['命令面板','会话与队列','会话树','会话信息','新建会话','从历史消息分支','复制当前会话','重命名','导出会话（按扩展名）','跳到上一条提问','跳到下一条提问','复制最后一条回复','收起全部工具输出','循环切换模型','选择模型…','打开终端（输入 pi 进原版 TUI）'].map(t=>(
+            <div key={t} className="press2" onClick={()=>setSheet(null)} style={{padding:'11px 14px',cursor:'pointer'}}>
+              <span className="t14">{t}</span>
+            </div>
+          ))}
+        </Sheet>
+
+        {/* 模型选择 */}
+        <Sheet open={sheet==='model'} title="选择模型" onClose={()=>setSheet(null)}
+          right={<span className="t12 c-muted">{B_MODELS.length} 个</span>}
+          footer="这个列表来自运行中的引擎。导入过的模型在 设置 → 模型 里能看到它们的状态。">
+          <div style={{padding:'0 14px 10px'}}>
+            <div className="rw" style={{height:34,border:'1px solid var(--border-muted)',borderRadius:8,padding:'0 10px',gap:8}}>
+              <Icon n="search" s={15} c="var(--muted)"/>
+              <span className="mono t12 c-muted">按 provider / 模型名筛选</span>
+            </div>
+          </div>
+          {B_MODELS.map(m=>(
+            <div key={m.id} className="press2" onClick={()=>setSheet(null)} style={{padding:'9px 14px',cursor:'pointer',background:m.cur?'var(--selected-bg)':'transparent'}}>
+              <div className="rw" style={{gap:8}}>
+                <span className="mono t13 c-text ell fl1">{m.id}</span>
+                {m.cur ? <Badge text="当前" tone="var(--accent)"/> : null}
+              </div>
+              <div className="t12 c-muted" style={{marginTop:3}}>{m.p}</div>
+              <div className="mono t12 c-muted" style={{marginTop:2}}>{m.c}</div>
+            </div>
+          ))}
+        </Sheet>
+
+        {/* 思考等级：色温刻度 */}
+        <Sheet open={sheet==='think'} title="思考等级" sub="可选等级由当前模型决定。" onClose={()=>setSheet(null)}>
+          <ThinkScale value={level}/>
+          {B_LEVELS.map(l=>(
+            <div key={l.id} className="press2" onClick={()=>{setLevel(l.id);setSheet(null);}}
+              style={{padding:'9px 14px',display:'flex',alignItems:'center',gap:10,cursor:'pointer',background:l.id===level?'var(--selected-bg)':'transparent'}}>
+              <span style={{width:12,height:12,borderRadius:3,background:l.c,flex:'none'}}/>
+              <span className="t14 fl1">{l.l}</span>
+              {l.id===level ? <Badge text="当前" tone="var(--accent)"/> : null}
+            </div>
+          ))}
+        </Sheet>
+
+        {/* 会话信息 */}
+        <Sheet open={sheet==='stats'} title="会话信息" onClose={()=>setSheet(null)}>
+          {[
+            ['会话名称','会话列表排序错了'],
+            ['消息','6 用户 · 22 模型 · 28 总计'],
+            ['工具调用','10 次调用 · 10 条结果'],
+            ['Token','输入 96,400 · 输出 8,200 · 缓存读 74,100 · 缓存写 12,300 · 合计 191,000'],
+            ['上下文占用','52%（104,000 / 200,000）'],
+            ['累计费用','$0.42'],
+          ].map(r=>(
+            <div key={r[0]} className="rw" style={{padding:'10px 14px',gap:12,alignItems:'flex-start'}}>
+              <span className="t13 c-muted" style={{width:76,flex:'none'}}>{r[0]}</span>
+              <span className="t13 c-text mono tab fl1" style={{fontFamily:r[0]==='消息'||r[0]==='工具调用'?'var(--font-sans)':'var(--font-mono)'}}>{r[1]}</span>
+            </div>
+          ))}
+        </Sheet>
+      </div>
+    );
+  }
+
+  /* ============================ ② 会话列表（覆盖层） ============================ */
+  function SessionsOverlay(p){
+    const [view, setView] = React.useState('list');
+    const [q, setQ] = React.useState('');
+    const [onlyNamed, setOnlyNamed] = React.useState(false);
+    const [byTime, setByTime] = React.useState(true);
+    const [sel, setSel] = React.useState(null);
+    const [sheet, setSheet] = React.useState(false);
+    const [ask, setAsk] = React.useState(false);
+
+    const all = B_SESSIONS.reduce((a,g)=>a.concat(g.rows.map(r=>Object.assign({g:g.g},r))),[]);
+    const hit = all.filter(r=>(!q || (r.t+r.sub+r.prop).indexOf(q)>=0) && (!onlyNamed || r.prop.indexOf('已命名')>=0));
+    const groups = B_SESSIONS.map(g=>({g:g.g, rows:hit.filter(r=>r.g===g.g)})).filter(g=>g.rows.length);
+
+    return (
+      <div className="b-overlay">
+        <TopBar title="会话"
+          right={<>
+            <span className="press t13" onClick={()=>{}} style={{padding:'5px 9px',borderRadius:8,color:'var(--text)',cursor:'pointer'}}>导入</span>
+            <div className="press" onClick={()=>{}} style={{width:30,height:30,borderRadius:8,display:'flex',alignItems:'center',justifyContent:'center',color:'var(--text)'}}><Icon n="refresh" s={17}/></div>
+            <div className="press" onClick={p.onClose} style={{width:30,height:30,borderRadius:8,display:'flex',alignItems:'center',justifyContent:'center',color:'var(--text)'}}><Icon n="close" s={17}/></div>
+          </>}
+        />
+        <div className="rw" style={{flex:'none',padding:'10px 14px 6px',gap:8}}>
+          <Seg value={view} onChange={setView} items={[{k:'list',label:'会话'},{k:'tree',label:'会话树'}]}/>
+          <span className="fl1"/>
+          <span className="t12 c-muted">{hit.length} 条</span>
+        </div>
+
+        {view==='list' ? (
+          <React.Fragment>
+            <div style={{flex:'none',padding:'4px 14px 8px'}}>
+              <div className="rw" style={{height:36,border:'1px solid var(--border-muted)',borderRadius:9,padding:'0 10px',gap:8,background:'var(--surf-low)'}}>
+                <Icon n="search" s={15} c="var(--muted)"/>
+                <input value={q} onChange={e=>setQ(e.target.value)} placeholder="搜索名称 / 目录 / 文件名"
+                  className="mono fl1" style={{background:'transparent',border:'none',outline:'none',color:'var(--text)',fontSize:12}}/>
+                {q ? <span className="press t12 c-muted" onClick={()=>setQ('')} style={{cursor:'pointer'}}>清除</span> : null}
+              </div>
+              <div className="rw" style={{gap:7,marginTop:8}}>
+                <Chip active={byTime} onClick={()=>setByTime(!byTime)}>{byTime?'按时间':'按名称'}</Chip>
+                <Chip active={onlyNamed} onClick={()=>setOnlyNamed(!onlyNamed)}>{onlyNamed?'仅命名':'全部'}</Chip>
+                <span className="fl1"/>
+                <span className="t12 c-muted">长按一行可删除该会话</span>
+              </div>
+            </div>
+
+            <div className="b-scroll" style={{paddingBottom:14}}>
+              {p.empty ? (
+                <div style={{padding:'92px 34px',textAlign:'center'}}>
+                  <span style={{display:'inline-flex',color:'var(--muted)'}}><Icon n="chat" s={30}/></span>
+                  <div className="t17 w6" style={{marginTop:12}}>还没有会话</div>
+                  <div className="t14 c-muted" style={{marginTop:8,lineHeight:1.6}}>会话按工作目录分组，这里会列出每一个目录的对话。</div>
+                </div>
+              ) : groups.length===0 ? (
+                <div style={{padding:'92px 34px',textAlign:'center'}}>
+                  <span style={{display:'inline-flex',color:'var(--muted)'}}><Icon n="search" s={30}/></span>
+                  <div className="t17 w6" style={{marginTop:12}}>没有匹配的会话</div>
+                  <div className="t14 c-muted" style={{marginTop:8,lineHeight:1.6}}>换一个关键词，或关掉「仅命名」筛选。</div>
+                </div>
+              ) : groups.map(g=>(
+                <div key={g.g}>
+                  <div className="rw" style={{padding:'14px 14px 6px',gap:8}}>
+                    <span className="t12 w5" style={{letterSpacing:'.02em'}}>{g.g}</span>
+                    <span className="t12 c-muted">{g.rows.length}</span>
+                  </div>
+                  <Card>
+                    {g.rows.map((r,i)=>(
+                      <React.Fragment key={r.t}>
+                        {i>0 ? <div className="div" style={{marginLeft:14}}/> : null}
+                        <SwipeRow row={r}
+                          selected={sel===r.t}
+                          onSelect={()=>{setSel(r.t);setSheet(true);}}
+                          onDelete={()=>{setSel(r.t);setAsk(true);}}/>
+                      </React.Fragment>
+                    ))}
+                  </Card>
+                </div>
+              ))}
+              {p.empty ? null : <div className="t12 c-muted" style={{padding:'16px 14px 4px'}}>长按一行可删除该会话；当前会话要切换后才能删除。</div>}
+            </div>
+
+            <div className="rw" style={{flex:'none',justifyContent:'flex-end',padding:'0 16px 14px'}}>
+              <span className="press rw" onClick={()=>{}}
+                style={{height:42,padding:'0 16px',borderRadius:999,background:'var(--accent)',color:'var(--page)',gap:7,cursor:'pointer',fontWeight:600}}>
+                <Icon n="plus" s={16}/>
+                <span className="t14 w6" style={{color:'var(--page)'}}>新建会话</span>
+              </span>
+            </div>
+          </React.Fragment>
+        ) : (
+          <React.Fragment>
+            <div style={{flex:'none',padding:'4px 14px 8px'}}>
+              <div className="rw" style={{height:36,border:'1px solid var(--border-muted)',borderRadius:9,padding:'0 10px',gap:8,background:'var(--surf-low)'}}>
+                <Icon n="search" s={15} c="var(--muted)"/>
+                <span className="mono t12 c-muted fl1">筛选条目文字</span>
+                <span className="t12 c-muted">默认</span>
+              </div>
+              <div className="t12 c-muted" style={{marginTop:8}}>分叉会新建一个会话文件，原会话保持不变。</div>
+            </div>
+            <div className="b-scroll" style={{paddingBottom:14}}>
+              <Card>
+                {[
+                  {d:0, t:'会话列表排序错了 · 对话页顶部状态行', cur:true},
+                  {d:1, t:'把 diff 卡片的高度收紧'},
+                  {d:1, t:'工具卡的展开按钮点不到'},
+                  {d:2, t:'设置里 reserveTokens 该填多少'},
+                  {d:2, t:'检查一下 @ 提及补全超时'},
+                ].map((b,i)=>(
+                  <React.Fragment key={b.t}>
+                    {i>0 ? <div className="div" style={{marginLeft:14}}/> : null}
+                    <div className="press2" style={{padding:'10px 12px',paddingLeft:12+b.d*14,cursor:'pointer'}}>
+                      <div className="rw" style={{gap:8}}>
+                        {b.d>0 ? <span style={{width:2,height:16,background:'var(--border-muted)',flex:'none'}}/> : null}
+                        <span className="t14 ell fl1">{b.t}</span>
+                        {b.cur ? <Badge text="当前" tone="var(--accent)"/> : null}
+                        <span className="t12 c-accent" style={{flex:'none'}}>分叉新会话</span>
+                      </div>
+                    </div>
+                  </React.Fragment>
+                ))}
+              </Card>
+              <div className="t12 c-muted" style={{padding:'16px 14px 4px'}}>分叉会新建一个会话文件，原会话保持不变。</div>
+            </div>
+          </React.Fragment>
+        )}
+
+        {/* 长按/点选后的会话操作 */}
+        <Sheet open={sheet} title={sel||''} sub="对这个会话做什么？" onClose={()=>setSheet(false)}>
+          {['新建子会话','删除','取消'].map((a,i)=>(
+            <div key={a} className="press2" onClick={()=>{setSheet(false); if(a==='删除') setAsk(true);}}
+              style={{padding:'12px 14px',cursor:'pointer'}}>
+              <span className="t14" style={{color:a==='删除'?'var(--error)':'var(--text)'}}>{a}</span>
+            </div>
+          ))}
+        </Sheet>
+
+        {/* 删除确认：当前会话是禁止态 */}
+        <Dialog open={ask} title="删除会话"
+          onClose={()=>setAsk(false)}
+          actions={[
+            {label:'删除', primary:true, tone:sel && sel.indexOf('会话列表排序错了')===0?'var(--muted)':'var(--error)', onClick:()=>setAsk(false)},
+            {label:'取消', onClick:()=>setAsk(false)},
+          ]}>
+          {sel && sel.indexOf('会话列表排序错了')===0
+            ? '「'+sel+'」是当前会话，pi 正在写入这个文件。先切换到别的会话再删除。'
+            : '删除「'+sel+'」？这个会话会被移除，无法恢复。'}
+        </Dialog>
+      </div>
+    );
+  }
+
+  /* 左滑露出动作：会话行的直接操作 */
+  function SwipeRow(p){
+    const [dx, setDx] = React.useState(0);
+    const st = React.useRef(null);
+    const onDown = e => { st.current = {x:e.clientX, base:dx, moved:false}; try{e.currentTarget.setPointerCapture(e.pointerId);}catch(err){} };
+    const onMove = e => {
+      if(!st.current) return;
+      const d = st.current.base + (e.clientX - st.current.x);
+      const cl = Math.max(-168, Math.min(0, d));
+      if(Math.abs(e.clientX - st.current.x) > 4) st.current.moved = true;
+      setDx(cl);
+    };
+    const onUp = () => { if(!st.current) return; const moved = st.current.moved; setDx(d=>d<-56?-168:0); st.current=null; if(!moved) p.onSelect(); };
+    return (
+      <div style={{position:'relative',overflow:'hidden'}}>
+        <div style={{position:'absolute',top:0,bottom:0,right:0,display:'flex',width:168}}>
+          <div className="press2" onClick={()=>{setDx(0);p.onSelect();}}
+            style={{flex:1,display:'flex',alignItems:'center',justifyContent:'center',background:'var(--surf-highest)',cursor:'pointer'}}>
+            <span className="t12 c-text">新建子会话</span>
+          </div>
+          <div className="press2" onClick={()=>{setDx(0);p.onDelete();}}
+            style={{flex:1,display:'flex',alignItems:'center',justifyContent:'center',background:'var(--surf-highest)',borderLeft:'1px solid var(--border-muted)',cursor:'pointer'}}>
+            <span className="t12 c-err">删除</span>
+          </div>
+        </div>
+        <div onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp}
+          style={{position:'relative',transform:'translateX('+dx+'px)',background:p.selected?'var(--selected-bg)':'var(--surf-low)',
+            padding:'10px 12px',cursor:'pointer',touchAction:'pan-y'}}>
+          <div className="rw" style={{gap:7}}>
+            <span className="t15 w5 ell fl1">{p.row.t}</span>
+            {p.row.cur ? <Badge text="当前" tone="var(--accent)"/> : null}
+            <span className="mono t12 c-muted" style={{flex:'none'}}>{p.row.time}</span>
+          </div>
+          <div className="rw" style={{marginTop:3,gap:8}}>
+            <span className="t12 c-muted ell fl1">{p.row.sub}</span>
+            <span className="t12 c-muted" style={{flex:'none'}}>{p.row.prop}</span>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  /* ============================ ③ 工作区（项目现场） ============================ */
+  function WorkbenchScreen(p){
+    const [ex, setEx] = React.useState({diff:true, sh:true, res:false});
+    const [sel, setSel] = React.useState('SessionList.kt');
+    const tg = k => setEx(s => Object.assign({}, s, {[k]:!s[k]}));
+    const tag = <Badge text="本次会话" tone="var(--accent)"/>;
+    return (
+      <div className="b-screen">
+        <TopBar title="工作区" meta="这个会话的项目现场"
+          right={<div className="press" onClick={()=>{}} style={{width:30,height:30,borderRadius:8,display:'flex',alignItems:'center',justifyContent:'center',color:'var(--text)'}}><Icon n="refresh" s={17}/></div>}
+        />
+        <div className="b-scroll" style={{paddingBottom:16}}>
+          {/* 当前目录 */}
+          <div style={{padding:'14px 14px 0'}}>
+            <div style={{background:'var(--surf-low)',borderRadius:10,padding:'12px 14px'}}>
+              <div className="rw" style={{gap:10}}>
+                <span style={{color:'var(--muted)',display:'flex'}}><Icon n="folder" s={18}/></span>
+                <div className="fl1" style={{minWidth:0}}>
+                  <div className="t17 w6">工作区</div>
+                  <div className="t12 c-muted" style={{marginTop:2}}>分支 main · 3 个文件有改动</div>
+                </div>
+                <Badge text="本次会话在用" tone="var(--accent)"/>
+              </div>
+            </div>
+          </div>
+
+          <Section label="改动" count="3" aside="分支 main">
+            <Rows inset={14}>
+              {[
+                {f:'src/session/SessionList.kt', add:6, del:5, mine:true, ms:'214ms'},
+                {f:'src/session/order.test.kt', add:38, del:0, mine:true, ms:'96ms', isNew:true},
+                {f:'README.md', add:12, del:0, mine:false},
+              ].map(r=>(
+                <div key={r.f}>
+                  <Row
+                    title={r.f} mono strong
+                    lead={<Icon n="file" s={16}/>}
+                    badge={r.mine?{text:'本次会话', tone:'var(--accent)'}:null}
+                    meta={(r.isNew?'新增文件 · ':'') + (r.ms?('edit · '+r.ms):'git 改动，这次会话没动过')}
+                    value={<span className="mono t12 tab"><span style={{color:'var(--diff-add)'}}>+{r.add}</span>{r.del?<span style={{color:'var(--diff-del)'}}> −{r.del}</span>:null}</span>}
+                    selected={sel===r.f}
+                    onClick={()=>setSel(r.f)}
+                  />
+                  {r.mine && r.f==='src/session/SessionList.kt' ? (
+                    <div style={{background:'var(--tool-pending)',borderTop:'1px solid var(--border-muted)',borderBottom:'1px solid var(--border-muted)'}}>
+                      <div className="press2 rw" onClick={()=>tg('diff')} style={{padding:'7px 12px',gap:8,cursor:'pointer'}}>
+                        <span className="mono t12 c-muted" style={{flex:'none'}}>edit</span>
+                        <span className="t12 c-text fl1">就地看这块 diff</span>
+                        <Icon n={ex.diff?'down':'right'} s={14} c="var(--body-on-tool)"/>
+                      </div>
+                      {ex.diff ? <div style={{padding:'0 8px 8px'}}><DiffBody lines={B_DIFF}/></div> : null}
+                    </div>
+                  ) : null}
+                </div>
+              ))}
+            </Rows>
+          </Section>
+
+          <Section label="这个目录的资源" count="9 项" aside=".pi">
+            <Rows inset={14}>
+              {[
+                {t:'技能', n:'2 项', meta:'review · changelog'},
+                {t:'提示词', n:'1 项', meta:'提测前的自查清单'},
+                {t:'扩展', n:'3 项', meta:'已启用 2 个 · 需重启引擎 1 个'},
+                {t:'主题', n:'2 项', meta:'dark · light/dark 配对'},
+                {t:'资源包', n:'1 项', meta:'pi-skills'},
+              ].map(r=>(
+                <Row key={r.t} title={r.t} meta={r.meta} value={r.n}
+                  selected={sel===r.t} onClick={()=>setSel(r.t)} chevron={false}/>
+              ))}
+            </Rows>
+          </Section>
+
+          <Section label="会话落点" count="">
+            <Rows inset={14}>
+              <Row title="工作目录由本应用固定" meta="与 pi 共用 · 以后可以在这里选目录" chevron={false}/>
+              <Row title="终端入口在「设置」里" meta="全屏终端页从设置进入，不再占一个底部目的地" chevron={false}/>
+            </Rows>
+          </Section>
+
+          <div className="t13 c-muted" style={{padding:'16px 14px 0',lineHeight:1.6}}>
+            本版工作区 = 这个会话的项目现场：当前目录、本目录的资源、git 改动，以及这次会话动过的文件。
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  /* ============================ ④ 设置首页 ============================ */
+  function SettingsHome(p){
+    const [q, setQ] = React.useState('');
+    const [search, setSearch] = React.useState(false);
+    const [sel, setSel] = React.useState(null);
+    const [sheet, setSheet] = React.useState(false);
+    const [level, setLevel] = React.useState('medium');
+    const lv = B_LEVELS.find(x=>x.id===level) || B_LEVELS[3];
+    const hits = q ? B_SEARCH.filter(r=>(r.t+r.g+r.v).toLowerCase().indexOf(q.toLowerCase())>=0) : [];
+
+    return (
+      <div className="b-screen">
+        <TopBar title="设置"
+          right={<div className="press" onClick={()=>setSearch(!search)} style={{width:30,height:30,borderRadius:8,display:'flex',alignItems:'center',justifyContent:'center',color:'var(--text)'}}><Icon n="search" s={17}/></div>}
+        />
+        <div className="b-scroll" style={{paddingBottom:18}}>
+          {/* 搜索入口 */}
+          <div style={{padding:'12px 14px 0'}}>
+            {!search ? (
+              <div className="press2" onClick={()=>setSearch(true)}
+                style={{height:40,background:'var(--surf-low)',border:'1px solid var(--border-muted)',borderRadius:9,display:'flex',alignItems:'center',padding:'0 12px',gap:9,cursor:'pointer'}}>
+                <Icon n="search" s={16} c="var(--muted)"/>
+                <span className="t14 c-muted fl1">搜索设置</span>
+                <span className="t12 c-muted">68 项</span>
+              </div>
+            ) : (
+              <div style={{animation:'bFade .12s ease both'}}>
+                <div className="rw" style={{height:40,background:'var(--surf-low)',border:'1px solid var(--border-accent)',borderRadius:9,padding:'0 12px',gap:9}}>
+                  <Icon n="search" s={16} c="var(--muted)"/>
+                  <input autoFocus value={q} onChange={e=>setQ(e.target.value)} placeholder="标题 · 说明 · 字段名"
+                    style={{flex:1,background:'transparent',border:'none',outline:'none',color:'var(--text)',fontSize:14}}/>
+                  <span className="press t12 c-muted" onClick={()=>{setSearch(false);setQ('');}} style={{cursor:'pointer'}}>关闭</span>
+                </div>
+                {q ? (
+                  <React.Fragment>
+                    <div className="t12 c-muted" style={{marginTop:10}}>{hits.length} 条结果</div>
+                    <Rows inset={12}>
+                      {hits.map(r=>(
+                        <Row key={r.g+r.t} title={r.t} meta={r.g} mono
+                          value={r.v||''} valueMono chevron={false} selected={false}/>
+                      ))}
+                    </Rows>
+                  </React.Fragment>
+                ) : (
+                  <React.Fragment>
+                    <div className="t13 c-muted" style={{marginTop:10,lineHeight:1.6}}>搜索全部 68 项设置。匹配标题、说明与字段名，斜杠命令也能用。</div>
+                    <div className="rw" style={{gap:7,marginTop:10,flexWrap:'wrap'}}>
+                      {['reserveTokens','thinkingBudgets','theme'].map(k=>(
+                        <Chip key={k} mono onClick={()=>setQ(k)}>{k}</Chip>
+                      ))}
+                    </div>
+                    <Card style={{margin:'12px 0 0'}}>
+                      <div className="t12 c-muted" style={{padding:'10px 12px'}}>试试字段名（reserveTokens、sessionDir），或者斜杠命令（/compact、/tree）。</div>
+                    </Card>
+                  </React.Fragment>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* 当前模型 */}
+          <div style={{padding:'14px 14px 0'}}>
+            <Card style={{margin:0}}>
+              <div className="press2" onClick={()=>setSheet(true)} style={{padding:'11px 12px',cursor:'pointer'}}>
+                <div className="rw" style={{gap:8}}>
+                  <span className="t12 c-muted fl1">当前模型</span>
+                  <span className="t12 c-muted">改这里 →</span>
+                </div>
+                <div className="rw" style={{gap:8,marginTop:5}}>
+                  <span className="mono t14 c-text ell fl1">deepseek/deepseek-chat</span>
+                  <span className="rw" style={{gap:5,flex:'none'}}>
+                    <span style={{color:lv.c,fontSize:12}}>◐</span>
+                    <span className="t12 c-text">{lv.l}</span>
+                  </span>
+                </div>
+              </div>
+            </Card>
+          </div>
+
+          <Section label="设备">
+            <Rows inset={14}>
+              <Row title="设备能力" meta="4/6 组能力可用" value="查看" selected={sel==='dev'} onClick={()=>setSel('dev')}/>
+            </Rows>
+          </Section>
+          <Section label="扩展">
+            <Rows inset={14}>
+              <Row title="扩展包与项目信任" meta="3 个扩展 · 1 个资源包" value="打开" selected={sel==='ext'} onClick={()=>setSel('ext')}/>
+            </Rows>
+          </Section>
+          <Section label="终端">
+            <Rows inset={14}>
+              <Row title="打开终端" meta="输入 pi 进原版 TUI：订阅登录、会话导入、以及需要终端的扩展都在那边" value="打开" selected={sel==='term'} onClick={()=>setSel('term')}
+                lead={<Icon n="terminal" s={16}/>}/>
+            </Rows>
+          </Section>
+          <Section label="关于">
+            <Rows inset={14}>
+              <Row title="开源许可" meta="App 内分发的第三方组件、许可证原文，以及 GPL / LGPL 程序的源代码获取方式" value="打开" selected={sel==='lic'} onClick={()=>setSel('lic')}/>
+            </Rows>
+          </Section>
+
+          <Section label="全部设置" count="68 项">
+            <Rows inset={14}>
+              {B_GROUPS.map(g=>(
+                <Row key={g.t} title={g.t} meta={g.s} selected={sel===g.t}
+                  onClick={()=>{setSel(g.t); if(p.onOpenGroup && g.t==='模型与推理') p.onOpenGroup();}}/>
+              ))}
+            </Rows>
+          </Section>
+
+          <div className="t13 c-muted" style={{padding:'16px 14px 0',lineHeight:1.6}}>
+            共 68 项设置。搜索同时匹配标题、说明与字段名，输入 reserveTokens 或 /compact 都能直达。
+          </div>
+        </div>
+
+        <Sheet open={sheet} title="思考等级" sub="可选等级由当前模型决定。" onClose={()=>setSheet(false)}>
+          <ThinkScale value={level}/>
+          {B_LEVELS.map(l=>(
+            <div key={l.id} className="press2" onClick={()=>{setLevel(l.id);setSheet(false);}}
+              style={{padding:'9px 14px',display:'flex',alignItems:'center',gap:10,cursor:'pointer',background:l.id===level?'var(--selected-bg)':'transparent'}}>
+              <span style={{width:12,height:12,borderRadius:3,background:l.c,flex:'none'}}/>
+              <span className="t14 fl1">{l.l}</span>
+              {l.id===level ? <Badge text="当前" tone="var(--accent)"/> : null}
+            </div>
+          ))}
+        </Sheet>
+      </div>
+    );
+  }
+
+  /* ============================ ⑤ 设置的一个分组页 ============================ */
+  function SettingsGroup(p){
+    const [on, setOn] = React.useState({隐藏思考块:true, 缓存未命中提示:false});
+    const [sheet, setSheet] = React.useState(null);
+    const [opt, setOpt] = React.useState('默认模型');
+    const [dlg, setDlg] = React.useState(null);
+    const isProvider = opt.indexOf('厂商') >= 0;
+    const PROVIDERS = ['DeepSeek','Anthropic','OpenAI','Z.ai','Moonshot AI','Qwen'];
+
+    return (
+      <div className="b-screen">
+        <TopBar title="模型与推理" onBack={p.onBack}
+          right={<div className="press" onClick={()=>{}} style={{width:30,height:30,borderRadius:8,display:'flex',alignItems:'center',justifyContent:'center',color:'var(--text)'}}><Icon n="search" s={17}/></div>}
+        />
+        <div className="b-scroll" style={{paddingBottom:18}}>
+          {B_MODEL_ROWS.map(sec=>(
+            <Section key={sec.sec} label={sec.sec} count={sec.rows.length+' 项'}>
+              <Rows inset={14}>
+                {sec.rows.map(r=>{
+                  if(r.k==='switch'){
+                    return (
+                      <Row key={r.t} title={r.t} chevron={false}
+                        trail={<Switch on={!!on[r.t]} onChange={v=>setOn(s=>Object.assign({},s,{[r.t]:v}))}/>}/>
+                    );
+                  }
+                  const showBadge = r.badge ? {text:r.badge.text, tone:r.badge.tone} : null;
+                  return (
+                    <Row key={r.t}
+                      title={r.t}
+                      badge={showBadge}
+                      value={r.k==='action' ? null : r.v}
+                      valueMono={r.k!=='action'}
+                      onClick={()=>{
+                        if(r.k==='action') setDlg({title:r.t, kind:'action'});
+                        else if(r.t==='默认思考等级') setSheet('think');
+                        else if(r.k==='list') setSheet('list');
+                        else if(r.badge && r.badge.text==='需重启引擎') setDlg({title:r.t, kind:'restart'});
+                        else { setOpt(r.t); setSheet('option'); }
+                      }}/>
+                  );
+                })}
+              </Rows>
+            </Section>
+          ))}
+
+          {/* 本版的结构提案：危险行固定在分组页末尾，随时可触达 */}
+          <Section label="危险操作" count="1 项" aside="本版固定在页尾">
+            <Rows inset={14}>
+              <Row title="紧急停止" tone="var(--error)" chevron={false}
+                meta="正在跑的回合与命令会立刻停下"
+                trail={<span className="t13" style={{color:'var(--error)'}}>执行</span>}
+                onClick={()=>setDlg({title:'紧急停止', kind:'danger'})}/>
+            </Rows>
+          </Section>
+
+          <div className="t13 c-muted" style={{padding:'16px 14px 0',lineHeight:1.6}}>
+            每一行末尾那枚徽标说明改动什么时候生效：新会话 / 需重载 / 需重启引擎。
+          </div>
+        </div>
+
+        {/* 选项选择 */}
+        <Sheet open={sheet==='option'} title={opt} sub={isProvider?'这一项决定新会话用哪家厂商。':'输入框里可以直接填模型名。'} onClose={()=>setSheet(null)}
+          footer="这个列表来自运行中的引擎。">
+          {isProvider ? PROVIDERS.map(n=>(
+            <div key={n} className="press2" onClick={()=>setSheet(null)}
+              style={{padding:'11px 14px',display:'flex',alignItems:'center',gap:10,cursor:'pointer',background:n==='DeepSeek'?'var(--selected-bg)':'transparent'}}>
+              <span className="t14 fl1">{n}</span>
+              {n==='DeepSeek' ? <Badge text="当前" tone="var(--accent)"/> : null}
+            </div>
+          )) : B_MODELS.map(m=>(
+            <div key={m.id} className="press2" onClick={()=>setSheet(null)}
+              style={{padding:'9px 14px',cursor:'pointer',background:m.cur?'var(--selected-bg)':'transparent'}}>
+              <div className="rw" style={{gap:8}}>
+                <span className="mono t13 ell fl1">{m.id}</span>
+                {m.cur ? <Badge text="当前" tone="var(--accent)"/> : null}
+              </div>
+              <div className="t12 c-muted" style={{marginTop:2}}>{m.p}</div>
+            </div>
+          ))}
+        </Sheet>
+
+        {/* 思考等级 */}
+        <Sheet open={sheet==='think'} title="思考等级" sub="可选等级由当前模型决定。" onClose={()=>setSheet(null)}>
+          <ThinkScale value="medium"/>
+          {B_LEVELS.map(l=>(
+            <div key={l.id} className="press2" onClick={()=>setSheet(null)}
+              style={{padding:'9px 14px',display:'flex',alignItems:'center',gap:10,cursor:'pointer',background:l.id==='medium'?'var(--selected-bg)':'transparent'}}>
+              <span style={{width:12,height:12,borderRadius:3,background:l.c,flex:'none'}}/>
+              <span className="t14 fl1">{l.l}</span>
+              {l.id==='medium' ? <Badge text="当前" tone="var(--accent)"/> : null}
+            </div>
+          ))}
+        </Sheet>
+
+        {/* 清单编辑器（Object 型说明逐字来自源码） */}
+        <Sheet open={sheet==='list'} title="逐模型思考等级" sub="每行一项，写成「键 = 值」" onClose={()=>setSheet(null)}
+          footer="键按精确匹配不认通配符。">
+          <div style={{padding:'0 14px'}}>
+            <div className="mono t13" style={{background:'var(--surf-highest)',border:'1px solid var(--border-muted)',borderRadius:9,padding:'10px 12px',lineHeight:'22px'}}>
+              <div>deepseek/deepseek-reasoner = high</div>
+              <div>anthropic/claude-sonnet-4-5 = medium</div>
+            </div>
+            <div className="t13 c-muted" style={{marginTop:10,lineHeight:1.6}}>
+              每行一项，写成「键 = 值」，键按精确匹配不认通配符。值以 {'{'} 或 [ 开头时按 JSON 解析。
+            </div>
+            <div className="rw" style={{gap:8,marginTop:14,justifyContent:'flex-end'}}>
+              <span className="press t13" onClick={()=>setSheet(null)} style={{padding:'7px 12px',borderRadius:8,cursor:'pointer'}}>取消</span>
+              <span className="press t13" onClick={()=>setSheet(null)} style={{padding:'7px 12px',borderRadius:8,color:'var(--accent)',fontWeight:600,cursor:'pointer'}}>保存</span>
+            </div>
+          </div>
+        </Sheet>
+
+        {/* 生效方式 / 危险行的确认态 */}
+        <Dialog open={!!dlg} title={dlg?dlg.title:''}
+          onClose={()=>setDlg(null)}
+          sub={dlg&&dlg.kind!=='danger' ? (dlg.kind==='restart'?'需要重启引擎':'需要新会话') : null}
+          actions={dlg&&dlg.kind==='danger'
+            ? [{label:'取消', onClick:()=>setDlg(null)},{label:'确认执行', primary:true, tone:'var(--error)', onClick:()=>setDlg(null)}]
+            : (dlg&&dlg.kind==='restart'
+              ? [{label:'稍后', onClick:()=>setDlg(null)},{label:'重启引擎', primary:true, onClick:()=>setDlg(null)}]
+              : [{label:'取消', onClick:()=>setDlg(null)},{label:'执行', primary:true, onClick:()=>setDlg(null)}])}>
+          {dlg ? (dlg.kind==='restart'
+            ? '循环模型在引擎启动时确定，改完要重启引擎才会生效。'
+            : dlg.kind==='danger'
+              ? '正在跑的回合与命令会立刻停下，已写入磁盘的会话不会丢失。'
+              : '「'+dlg.title+'」会打开对应的页面，文件与设置都已保存。') : null}
+        </Dialog>
+      </div>
+    );
+  }
+
+  Object.assign(window, {ScreenChat:ChatScreen, ScreenSessions:SessionsOverlay, ScreenWorkbench:WorkbenchScreen, ScreenSettingsHome:SettingsHome, ScreenSettingsGroup:SettingsGroup});
+})();
+</script>
+
+<!-- ============ 装配：每个目的地一台独立状态机 + 五台平铺 ============ -->
+<script type="text/babel" data-presets="react">
+(function(){
+  const {TabBar} = window.BUI;
+
+  function Phone(p){
+    const [tab, setTab] = React.useState(p.start.tab);
+    const [overlay, setOverlay] = React.useState(p.start.overlay || null);
+    const [sub, setSub] = React.useState(p.start.sub || 'home');
+
+    const goTab = k => { setTab(k); setOverlay(null); setSub('home'); };
+    const [emptyDemo, setEmptyDemo] = React.useState(false);
+
+    let screen = null;
+    if(tab==='chat') screen = <window.ScreenChat onOpenSessions={()=>setOverlay('sessions')}/>;
+    else if(tab==='workbench') screen = <window.ScreenWorkbench/>;
+    else screen = sub==='group'
+      ? <window.ScreenSettingsGroup onBack={()=>setSub('home')}/>
+      : <window.ScreenSettingsHome onOpenGroup={()=>setSub('group')}/>;
+
+    return (
+      <div className="b-phone" style={{animationDelay:(p.i*70)+'ms'}}>
+        <div className="b-cap">
+          <b>{p.title}</b><span>{p.hint}</span>
+          {p.demo ? (
+            <span className="press" onClick={()=>setEmptyDemo(!emptyDemo)}
+              style={{display:'inline-flex',alignItems:'center',gap:6,marginTop:6,height:24,padding:'0 10px',borderRadius:999,cursor:'pointer',
+                border:'1px solid '+(emptyDemo?'var(--border-accent)':'var(--border-muted)'),color:emptyDemo?'var(--accent)':'var(--muted)',fontSize:12}}>
+              {'原型开关：'+(emptyDemo?'回到「会话列表」':'看「还没有会话」空态')}
+            </span>
+          ) : null}
+        </div>
+        <window.AndroidFrame width={412} height={892} darkMode time="9:41" battery={86}>
+          <div className="b-root">
+            <div className="b-stage">
+              {screen}
+              {overlay==='sessions' ? <window.ScreenSessions empty={emptyDemo} onClose={()=>setOverlay(null)}/> : null}
+            </div>
+            <TabBar active={tab} onChange={goTab}/>
+          </div>
+        </window.AndroidFrame>
+      </div>
+    );
+  }
+
+  function App(){
+    const frames = [
+      {i:0, start:{tab:'chat'}, title:'① 对话（hero）',
+       hint:'点按工具行就地展开（read / grep / diff / bash 四种状态）；输入 / 实时过滤命令；右上「⋯」出会话菜单、模型 chip 出模型表；底部三项可切。'},
+      {i:1, start:{tab:'chat', overlay:'sessions'}, demo:true, title:'② 会话列表（覆盖层）',
+       hint:'从对话页左上角的会话名进入（覆盖层，不占 tab）；「会话 / 会话树」同层切换；点行选中并弹出会话操作，左滑露出动作；搜索框输入无结果词看「没有匹配的会话」空态；注释下的原型开关切到「还没有会话」空态。'},
+      {i:2, start:{tab:'workbench'}, title:'③ 工作区（项目现场）',
+       hint:'当前目录 + 本目录的资源 + git 改动 + 这次会话动过的文件；带「本次会话」徽标的行可点开就地看 diff。终端已挪到「设置」里（旧版这一屏是整屏终端）。'},
+      {i:3, start:{tab:'settings'}, title:'④ 设置首页',
+       hint:'点搜索行展开成真实搜索（含 Number / Text 两种行型）；点「当前模型」开思考等级色温刻度；「全部设置」里点「模型与推理」进入下一台。'},
+      {i:4, start:{tab:'settings', sub:'group'}, title:'⑤ 设置分组页 · 模型与推理',
+       hint:'开关可点；带徽标的行说明生效方式（新会话 / 需重启引擎）；列表行开清单编辑器；Value 行开选项选择；页尾危险行给出确认态。左上角返回首页。'},
+    ];
+    return (
+      <div className="b-page">
+        <div className="b-head">
+          <div className="b-head-t">pi · 安卓客户端界面重构 —— 方向 B：现实参照（标杆迁移）</div>
+          <div className="b-head-s">
+            参照 <em>Linear 移动端</em>（2025-10-16 移动端改版 + 2026-03 视觉刷新）的方法论：底栏三项承载核心工作流、
+            每屏一个主操作、chrome 退后、结构不被看见、属性即内容、就地直接操作。
+            材质换成 pi 自己的表面阶梯与 1px 细线（pi 已否决模糊与渐变），色值 100% 来自 pi 主题令牌。
+            五台都是可点的独立状态机。
+          </div>
+        </div>
+        <div className="b-frames">
+          {frames.map(f=><Phone key={f.i} {...f}/>)}
+        </div>
+      </div>
+    );
+  }
+
+  const root = ReactDOM.createRoot(document.getElementById('root'));
+  root.render(<App/>);
+})();
+</script>
+</body>
+<!--
+================================================================================
+spec §14 自检清单（逐条打勾）
+================================================================================
+[x] 5 台 AndroidFrame 都是 412×892（width={412} height={892} darkMode），五台同尺寸同坐标；
+    设备框用 android_frame.jsx 原样内联，状态栏 / 打孔 / 导航条一行未改。
+[x] 每台都能交互：底部三项（对话 / 工作区 / 设置）可切；会话列表覆盖层可开可关、列表与会话树同层切换；
+    工具卡与文件行就地展开收起；思考块展开；5 个 sheet（会话菜单 / 选择模型 / 思考等级 / 会话信息 / 清单编辑器）；
+    3 类对话框（删除会话确认、生效方式说明、危险行确认态）；开关可点；会话行可选中；可左滑露出动作；
+    输入 / 出命令候选并随输入过滤。每个目的地一台独立状态机。
+[x] 颜色 100% 来自 spec §6 的 pi 令牌；无渐变、无模糊、无辉光、无新色相。
+    仅两处相邻值，都来自 pi 自己的派生规则而不是新颜色：
+      · body-on-tool #9E9E9E —— App 既有的对比度派生 token（toolOutput 抬到 4.5:1 的 bodyOnTool / contextOnTool）；
+      · rgba(...) 描边与行底 —— 颜色仍是 pi 令牌，只有透明度是 App 侧的（0.35 / 0.45 / 0.08 / 0.32，与源码一致）。
+[x] 正文 ≥14px、标签 ≥12px、对比度达标：正文（text）在页面底 11.9:1、在卡片上 11.2:1；
+    12px 次要标签用 muted（4.47:1，高于 pi 自己 meta 文本的 3:1 标准 metaOnCanvas）；
+    工具卡正文与 diff 上下文行 4.97–5.44:1；语义色文字（成功 / 警告 / 强调 / 链接 / 语法色）全部 ≥4.5:1。
+    两处例外都不是承载信息的文字，且同一信息旁边有 ≥4.5:1 的文字版本：
+      · diff 的减号与「−5」用 pi 的 toolDiffRemoved（工具卡底上 3.5:1，达 WCAG 1.4.11 图形 3:1），
+        同一信息在下一行以正文色写成「新增 6 行 · 删除 5 行」（9.3:1）；
+      · 轨道节点里的状态字形（节点带 45% 状态色描边，属于图形），状态词永远在页脚以正文色出现。
+[x] 中文排印：fallback 链西文在前中文在后；font-synthesis:none；line-break:strict；overflow-wrap:anywhere；
+    引号一律「」；数字 tabular-nums；字号只有 5 档（12 / 13 / 14 / 15 / 17）；机器语言层等宽（命令、diff、工具输出、token 数）。
+[x] 全部真实文案：会话名与字段形状、工具名与状态词（运行中 / 成功 / 失败 配 … ✓ ✗）、页脚格式
+    （成功 · 退出码 0 · 耗时 6.4 秒 · 42 行；运行中 · 已运行 12.3 秒 · 18 行）、扩展对话框按钮（允许 / 拒绝）、
+    设置行标题与尾部值、12 个分组标题、生效方式徽标、两套空态与异常文案，逐条来自 02-real-content.md。
+    没有 Lorem、没有自造按钮；对话与 diff 用素材表那段样例（工具卡里的路径是用户自己项目的相对路径，
+    界面上不出现本应用的文件路径、类名或 §）。edit 卡与 diff 卡保持两张卡。
+[x] 工作区选了一个答案并在页面里用 13px 注释写明：候选 A = 项目现场（当前目录、本目录的资源、git 改动、
+    这次会话动过的文件）；终端按产品裁决降格为「设置」首页里的入口行；会话列表是覆盖层不是 tab。
+[x] 能说出「form 来自内容的哪里」：来自 pi 的工具调用本身 —— 它是一条有序序列，每一步都带真实状态与真实耗时，
+    edit 后面必跟一块独立 diff。所以对话流画成一条执行轨道 + 节点上的读数，而不是一摞卡片墙。
+--------------------------------------------------------------------------------
+本版的两处主动设计提案（都写在页面里，供用户裁决）：
+  1. 危险行（紧急停止）固定在分组页末尾，作为「危险操作」区常驻可见 —— 让紧急动作随时可触达。
+  2. 会话行的三行字段压成两行（标题 + 属性行），属性右对齐 —— 密度来自对齐，不来自堆行。
+设置行系统的类型覆盖：分组页给出 Switch / Value / List / Action（含危险 Action 与确认态）；
+Number 与 Text 两型由「设置 · 搜索」态给出（例如 保留 token 400000、Shell 路径 默认 /bin/bash），
+没有为了凑类型发明不存在的行。
+验证方式（按任务约定不跑浏览器，截图由父代理统一做）：四个内联脚本块经 Babel 7.29 转换零报错；
+整棵 React 树在 Node 里 renderToStaticMarkup 通过，React 零 warning。
+================================================================================
+-->
+</html>

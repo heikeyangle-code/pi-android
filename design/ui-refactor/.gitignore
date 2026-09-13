@@ -1,0 +1,4 @@
+# 截图与派生页是生成物（tools/shoot.mjs、tools/build-review.mjs 可从 HTML 重新生成），
+# 不入库以免仓库里塞进几 MB 的 PNG。
+design-demos/shots/
+review.html
