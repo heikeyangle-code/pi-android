@@ -1,13 +1,19 @@
 package app.pi.ui.extension
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.Snackbar
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -17,6 +23,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -82,26 +91,22 @@ fun ExtensionUiHost(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
-                .padding(start = 12.dp, end = 12.dp, bottom = snackbarBottomPadding),
+                .padding(
+                    start = SnackbarSideInset,
+                    end = SnackbarSideInset,
+                    // PiRoot's inset is the bottom bar (56) plus an 8 dp margin;
+                    // the board puts the snackbar 14 above the bar, so the missing
+                    // 6 is added here rather than by editing that shared constant.
+                    bottom = snackbarBottomPadding + SnackbarBarGap,
+                ),
         ) { data ->
-            val palette = PiTheme.palette
-            // Tones map onto the palette the transcript already uses for the
-            // same three states, so a warning looks the same wherever it appears.
-            val container = when (shownTone) {
-                Notice.Tone.Info -> palette.cardBg
-                Notice.Tone.Warning -> palette.infoBg
-                Notice.Tone.Error -> palette.toolErrorBg
-            }
-            val content = when (shownTone) {
-                Notice.Tone.Info -> palette.text
-                Notice.Tone.Warning -> palette.warning
-                Notice.Tone.Error -> palette.error
-            }
-            Snackbar(
-                snackbarData = data,
-                containerColor = container,
-                contentColor = content,
-                actionColor = palette.accent,
+            ExtensionSnack(
+                tone = shownTone,
+                // `data.visuals.message` is pi's `notify` text verbatim: the tone
+                // glyph is drawn beside it, never prepended to it.
+                message = data.visuals.message,
+                actionLabel = data.visuals.actionLabel,
+                onAction = { data.performAction() },
             )
         }
 
@@ -112,3 +117,97 @@ fun ExtensionUiHost(
         )
     }
 }
+
+/**
+ * The three tones of `06 §4` / `phone52`–`phone54`: **symbol + word + colour**,
+ * with the symbol carrying the tone.
+ *
+ *   Info    `·` cardBg + text
+ *   Warning `!` infoBg + warning
+ *   Error   `✗` toolErrorBg + error (always with 「知道了」)
+ *
+ * The *message* stays in the text colour in all three: `error` on `toolErrorBg`
+ * measures ~3.6:1, under the 4.5:1 body floor `PiPalette` holds every other body
+ * line to, so the colour lives on the one-glyph prefix — which is also the point of
+ * the encoding, since the glyph survives a greyscale screenshot on its own.
+ *
+ * Built here rather than through M3's `Snackbar` because M3's layout has no slot
+ * for a leading glyph, and the tone prefix is the whole change. The action is the
+ * text colour at weight 500 (`phone54`), not the accent: the accent is the app's
+ * *primary action* colour and a snackbar's 「知道了」 only dismisses.
+ *
+ * Both the glyph and the action use the app's nearest roles — `mono` (13, where the
+ * board's glyph is 14) and `bodyMedium` (14/500, where its action is 13/500): the
+ * app's sans scale has no 13, and `B7` owns the type scale.
+ */
+@Composable
+private fun ExtensionSnack(
+    tone: Notice.Tone,
+    message: String,
+    actionLabel: String?,
+    onAction: () -> Unit,
+) {
+    val palette = PiTheme.palette
+    val container = when (tone) {
+        Notice.Tone.Info -> palette.cardBg
+        Notice.Tone.Warning -> palette.infoBg
+        Notice.Tone.Error -> palette.toolErrorBg
+    }
+    val glyphColor = when (tone) {
+        Notice.Tone.Info -> palette.text
+        Notice.Tone.Warning -> palette.warning
+        Notice.Tone.Error -> palette.error
+    }
+    val glyph = when (tone) {
+        Notice.Tone.Info -> "·"
+        Notice.Tone.Warning -> "!"
+        Notice.Tone.Error -> "✗"
+    }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(SnackbarRadius))
+            .background(container)
+            .padding(horizontal = SnackbarPaddingHorizontal, vertical = SnackbarPaddingVertical),
+        horizontalArrangement = Arrangement.spacedBy(SnackbarGap),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = glyph,
+            style = PiTheme.text.mono,
+            color = glyphColor,
+        )
+        Text(
+            text = message,
+            modifier = Modifier.weight(1f),
+            style = MaterialTheme.typography.bodyMedium,
+            color = palette.text,
+        )
+        if (actionLabel != null) {
+            Text(
+                text = actionLabel,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(SnackbarActionRadius))
+                    .clickable(role = Role.Button, onClick = onAction)
+                    .padding(vertical = 4.dp),
+                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
+                color = palette.text,
+            )
+        }
+    }
+}
+
+// -------------------------------------------------------------- the board's numbers
+
+/** `06 §2`「Snackbar：左右 12、距底 14、圆角 12、`padding:10px 12px` gap 10」. */
+private val SnackbarSideInset = 12.dp
+
+/** The missing part of 距底 14 once PiRoot's 64 dp (56 bar + 8) is counted. */
+private val SnackbarBarGap = 6.dp
+private val SnackbarRadius = 12.dp
+private val SnackbarPaddingHorizontal = 12.dp
+private val SnackbarPaddingVertical = 10.dp
+private val SnackbarGap = 10.dp
+
+/** `.b-dlg`-sized corner for the one action; keeps its ripple inside the label. */
+private val SnackbarActionRadius = 8.dp

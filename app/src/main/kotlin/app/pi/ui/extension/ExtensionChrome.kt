@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -16,9 +17,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import app.pi.ui.theme.PiShapes
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
+import app.pi.ui.theme.PiV2Layout
 
 /**
  * The fire-and-forget half of pi's extension UI, as chrome.
@@ -42,6 +43,13 @@ import app.pi.ui.theme.PiTheme
  * pi's status is a *footer*: dim chrome, one line, as many keys as extensions
  * registered. Overflow scrolls instead of wrapping because a second line would
  * push the transcript down every time an extension updated a counter.
+ *
+ * Its inline margin is v2's page margin (14, `D1`), not the retired
+ * `PiSpacing.screen` (16): this row sits directly under the AppBar, one line below
+ * the app's own status row, so the two have to share a left edge. The `·` between
+ * two entries is `muted`, not `dim`: v2 never draws `--dim` (its punctuation is
+ * `--muted`), and `dim` on the canvas sits under the 3:1 the palette keeps for
+ * meta text.
  */
 @Composable
 fun ExtensionStatusRow(
@@ -55,7 +63,7 @@ fun ExtensionStatusRow(
             .fillMaxWidth()
             .heightIn(min = PiSpacing.statusRow)
             .horizontalScroll(rememberScrollState())
-            .padding(horizontal = PiSpacing.screen),
+            .padding(horizontal = PiV2Layout.pageHorizontal),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         statuses.forEachIndexed { index, status ->
@@ -64,7 +72,7 @@ fun ExtensionStatusRow(
                     text = "·",
                     modifier = Modifier.padding(horizontal = 6.dp),
                     style = PiTheme.text.monoSmall,
-                    color = palette.dim,
+                    color = palette.muted,
                 )
             }
             Text(
@@ -85,6 +93,11 @@ fun ExtensionStatusRow(
  * to `widgetLines: string[]` (component factories are ignored in RPC mode), so
  * there is nothing to interpret — drawing them as anything richer would invent
  * structure pi never sent.
+ *
+ * The panel is a v2 card: radius 10 (`06 §2` gives every content card that one
+ * radius) and a 1 px `borderMuted` at `35 %` — the retired spec's `cardInner`
+ * radius (12) and `40 %` alpha are neither, and `06 §2`'s alpha set is
+ * `.35/.45/.55/.5/.08/.32`.
  */
 @Composable
 fun ExtensionWidgetStack(
@@ -96,15 +109,15 @@ fun ExtensionWidgetStack(
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = PiSpacing.screen, vertical = 4.dp),
+            .padding(horizontal = PiV2Layout.pageHorizontal, vertical = 4.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         widgets.forEach { widget ->
             Surface(
                 modifier = Modifier.fillMaxWidth(),
-                shape = PiShapes.cardInner,
+                shape = RoundedCornerShape(WidgetCardRadius),
                 color = palette.cardBg,
-                border = BorderStroke(1.dp, palette.borderMuted.copy(alpha = 0.4f)),
+                border = BorderStroke(PiV2Layout.hairline, palette.borderMuted.copy(alpha = 0.35f)),
             ) {
                 Column(
                     modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
@@ -127,3 +140,6 @@ fun ExtensionWidgetStack(
 
 /** The `setTitle` value, or the screen's own fallback when pi set none. */
 fun windowTitleOf(title: String?, fallback: String): String = title?.takeIf { it.isNotBlank() } ?: fallback
+
+/** `06 §2`: the one corner radius v2 gives a content card. */
+private val WidgetCardRadius = 10.dp
