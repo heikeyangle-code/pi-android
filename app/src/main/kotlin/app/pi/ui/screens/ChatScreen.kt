@@ -57,9 +57,7 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -920,9 +918,14 @@ private fun ChatBody(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
-                    ModelChip(state.meta.model?.id ?: state.meta.model?.name) {
-                        session.refreshModels()
-                        sheet = ChatSheet.Model
+                    // Hidden on the same three engine-empty screens v2 hides it on
+                    // (`modelChip={false}`); with no transcript there is no model
+                    // choice to report. See the status row's note below.
+                    if (!state.transcript.isEmpty()) {
+                        ModelChip(state.meta.model?.id ?: state.meta.model?.name) {
+                            session.refreshModels()
+                            sheet = ChatSheet.Model
+                        }
                     }
                     ChatTopBarIcon(
                         onClick = { searchOpen = !searchOpen },
@@ -1040,20 +1043,10 @@ private fun ChatBody(
             )
         }
 
-        // F10 (`docs/rendering-review.md`): pi's footer figures — token totals, the
-        // cache-hit rate and the context percentage — put where spec §4.1 asks for
-        // them, the 32dp status row under the bar. Every figure comes from pi's own
-        // `getSessionStats()` (`core/agent-session.ts:3359-3407`), which is what the
-        // footer renders (`components/footer.ts:130-161`); an item with no data is
-        // omitted by the component rather than shown as a placeholder.
-        PiStatusLine(
-            stats = state.stats,
-            contextWindowFallback = state.meta.model?.contextWindow,
-            autoCompaction = state.meta.autoCompaction,
-        )
-
-        ExtensionStatusRow(state.extensionStatuses)
-
+        // v2's `ChatShell` puts the search strip **between the TopBar and the status
+        // row** (`direction-b-v2.html:1366-1367`: `{p.searchBar}` then `{StateLine}`),
+        // because it is chrome for the bar above it rather than a row of the
+        // transcript's header — the app used to draw it under the extension status row.
         if (searchOpen) {
             SearchBar(
                 query = searchQuery,
@@ -1077,7 +1070,33 @@ private fun ChatBody(
             )
         }
 
-        if (state.transcript.isEmpty()) {
+        // F10 (`docs/rendering-review.md`): pi's footer figures — token totals, the
+        // cache-hit rate and the context percentage — put where spec §4.1 asks for
+        // them, the 32dp status row under the bar. Every figure comes from pi's own
+        // `getSessionStats()` (`core/agent-session.ts:3359-3407`), which is what the
+        // footer renders (`components/footer.ts:130-161`); an item with no data is
+        // omitted by the component rather than shown as a placeholder.
+        //
+        // v2 hides the row entirely on the three engine-empty screens
+        // (`ChatShell readings={false}` — `direction-b-v2.html:2814/2823/2833`, i.e.
+        // phone16/17/18): a reading row above "引擎正在启动" reports figures about a
+        // session that has not produced anything yet. The model chip is hidden by the
+        // same three screens (`modelChip={false}`) and for the same reason, so both are
+        // gated on the transcript being empty — which is exactly the condition that
+        // shows the empty state below.
+        val emptyTranscript = state.transcript.isEmpty()
+        if (!emptyTranscript) {
+            PiStatusLine(
+                stats = state.stats,
+                contextWindowFallback = state.meta.model?.contextWindow,
+                autoCompaction = state.meta.autoCompaction,
+            )
+        }
+
+        ExtensionStatusRow(state.extensionStatuses)
+
+
+        if (emptyTranscript) {
             // The two empty states are the two different waits: the engine may exist
             // and still not be reading its stdin, which is the whole reason a message
             // sent right after launch used to sit unanswered (`PiSessionViewModel
@@ -1115,17 +1134,20 @@ private fun ChatBody(
                 "cozy" -> PiSpacing.blockGap * 2
                 else -> PiSpacing.blockGap
             }
-            val horizontal = if (prefs.messageDensity == "compact") 12.dp else PiSpacing.pageHorizontal
+            // The page margin is **14 at every density** (`06 §2`「屏水平 14px」,
+            // `direction-b-v2.html:1376`: `.b-scroll{padding:10px 14px 12px}`). The
+            // compact step used to narrow it to 12 as well, which put the transcript's
+            // left edge out of line with the AppBar's own 14 and with every other
+            // screen; the density preference moves the *block rhythm*, not the page.
             Box(Modifier.weight(1f).fillMaxWidth()) {
             LazyColumn(
                 state = listState,
                 modifier = Modifier.fillMaxSize(),
-                // `06 §2`'s own scroll padding is `10px 14px 12px`
-                // (`direction-b-v2.html:1376`, the transcript's `.b-scroll`), so the
-                // page margin is 14 and the vertical ends are not the block gap.
+                // The vertical ends are not the block gap: they are the scroll
+                // container's own `10` top and `12` bottom.
                 contentPadding = PaddingValues(
-                    start = horizontal,
-                    end = horizontal,
+                    start = PiSpacing.pageHorizontal,
+                    end = PiSpacing.pageHorizontal,
                     top = 10.dp,
                     bottom = 12.dp,
                 ),
@@ -1645,9 +1667,36 @@ private fun searchTextOf(item: TranscriptItem): String = when (item) {
 }
 
 /**
- * The transcript's search field, modelled on pi's fullscreen search panel
- * (`keybindings.md` `tui.altScreen.search` / `searchNext` / `searchPrevious` /
- * `searchClose`): a query, a match count, previous/next, and a close.
+ * The transcript's search bar, transcribed from v2's `SearchState` bar
+ * (`direction-b-v2.html:2755-2767`, i.e. phone14).
+ *
+ * v2 draws **one strip** under the AppBar:
+ *
+ * ```
+ * 容器      padding:8px 14px, border-bottom:1px borderMuted, background:surf-dim
+ * 输入条    height:36, border:1px borderAccent, radius:9, background:surf-low,
+ *           padding:0 10px, gap:8
+ *   ·       search 字形 15 muted
+ *   ·       查询文本 mono t13 text
+ *   ·       `3 / 8` mono t12 muted
+ *   ·       「关闭查找」 t12 muted
+ * 动作行    margin-top:8, gap:8: `↑ 上一个匹配` / `↓ 下一个匹配` chips + 右侧说明 t12 muted
+ * ```
+ *
+ * The app used to draw an `OutlinedTextField` plus three Material `IconButton`s —
+ * two controls' worth of chrome, an M3 field outline the board does not have, and two
+ * icon buttons whose only label was a content description. The **mechanism** is
+ * unchanged and is still pi's: the query is the same string, the two arrows move
+ * `searchCursor`, and the count keeps pi's `cursor / total` reading.
+ *
+ * What is deliberately *not* v2 is the colouring of the hits themselves: the current
+ * match is filled with pi's `searchMatchBg` and ringed in `searchMatchText`, the
+ * others carry `searchMatchBg` alone (`ui/screens/ChatScreen.kt`, the row modifier in
+ * the transcript). Those two are pi's own search tokens and 09's highlight-fidelity
+ * record settled them; v2's prototype stands in `selectedBg`/`surf-high` there, which
+ * the parent's ruling keeps out. This bar therefore borrows v2's *structure* only.
+ *
+ * The trailing sentence is v2's, verbatim (`direction-b-v2.html:2766`).
  */
 @Composable
 private fun SearchBar(
@@ -1659,32 +1708,135 @@ private fun SearchBar(
     onNext: () -> Unit,
     onClose: () -> Unit,
 ) {
-    Column(Modifier.fillMaxWidth().padding(horizontal = PiSpacing.pageHorizontal, vertical = 4.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            OutlinedTextField(
+    Column(
+        Modifier
+            .fillMaxWidth()
+            // `surf-dim` is the chrome tone the AppBar and the bottom bar use; the
+            // strip is chrome, not content.
+            .background(MaterialTheme.colorScheme.surfaceDim)
+            .padding(horizontal = PiSpacing.pageHorizontal, vertical = 8.dp),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(SEARCH_BAR_HEIGHT)
+                .clip(RoundedCornerShape(9.dp))
+                .background(MaterialTheme.colorScheme.surfaceContainerLow)
+                .border(1.dp, PiTheme.palette.borderAccent, RoundedCornerShape(9.dp))
+                .padding(horizontal = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Icon(
+                imageVector = Icons.Filled.Search,
+                contentDescription = null,
+                modifier = Modifier.size(15.dp),
+                tint = PiTheme.palette.muted,
+            )
+            BasicTextField(
                 value = query,
                 onValueChange = onQueryChange,
                 modifier = Modifier.weight(1f),
                 singleLine = true,
-                placeholder = { Text("在对话里查找") },
-                textStyle = PiTheme.text.mono,
+                // `06 §2` 机器语言层: a search query over machine output is typed in the
+                // machine face, and v2 sets it `mono t13`.
+                textStyle = PiTheme.text.mono.copy(color = MaterialTheme.colorScheme.onSurface),
+                cursorBrush = SolidColor(PiTheme.palette.accent),
+                decorationBox = { inner ->
+                    Box {
+                        if (query.isEmpty()) {
+                            Text(
+                                text = "在对话里查找",
+                                style = PiTheme.text.mono,
+                                color = PiTheme.palette.muted,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                        inner()
+                    }
+                },
             )
-            Spacer(Modifier.width(4.dp))
             Text(
-                if (matchCount == 0) "0/0" else "${cursor.coerceIn(0, matchCount - 1) + 1}/$matchCount",
-                style = PiTheme.text.meta,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                text = if (matchCount == 0) {
+                    "0 / 0"
+                } else {
+                    "${cursor.coerceIn(0, matchCount - 1) + 1} / $matchCount"
+                },
+                style = PiTheme.text.monoSmall,
+                color = PiTheme.palette.muted,
+                maxLines = 1,
             )
-            IconButton(onClick = onPrevious, enabled = matchCount > 0) {
-                Icon(Icons.Filled.KeyboardArrowUp, contentDescription = "上一个匹配")
-            }
-            IconButton(onClick = onNext, enabled = matchCount > 0) {
-                Icon(Icons.Filled.KeyboardArrowDown, contentDescription = "下一个匹配")
-            }
-            IconButton(onClick = onClose) {
-                Icon(Icons.Filled.Close, contentDescription = "关闭查找")
-            }
+            Text(
+                text = "关闭查找",
+                modifier = Modifier
+                    .clip(RoundedCornerShape(6.dp))
+                    .clickable(onClickLabel = "关闭查找", onClick = onClose)
+                    .padding(horizontal = 4.dp, vertical = 4.dp),
+                style = PiTheme.text.meta,
+                color = PiTheme.palette.muted,
+                maxLines = 1,
+            )
         }
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            // A disabled end of the transcript is drawn muted rather than removed: the
+            // pair is a reading of "there is nothing further this way", and a missing
+            // chip would move the other one.
+            SearchChip("↑", "上一个匹配", enabled = matchCount > 0, onClick = onPrevious)
+            SearchChip("↓", "下一个匹配", enabled = matchCount > 0, onClick = onNext)
+            Spacer(Modifier.weight(1f))
+            Text(
+                text = "当前命中给底 + 亮，其余命中只给底",
+                style = PiTheme.text.meta,
+                color = PiTheme.palette.muted,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+/** `direction-b-v2.html:2756`: the search input row's height is v2's `36`. */
+private val SEARCH_BAR_HEIGHT = 36.dp
+
+/**
+ * One search action chip — v2's `Chip` (`direction-b-v2.html:605-617`) as the two
+ * match arrows use it (`:2763-2764`): `height:26`, `border-radius:999`, a
+ * `1px borderMuted` ring on a transparent ground, a glyph in the muted tone and the
+ * label in the text colour.
+ */
+@Composable
+private fun SearchChip(glyph: String, label: String, enabled: Boolean, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .height(26.dp)
+            .clip(RoundedCornerShape(percent = 50))
+            .border(1.dp, PiTheme.palette.borderMuted, RoundedCornerShape(percent = 50))
+            .then(if (enabled) Modifier.clickable(onClickLabel = label, onClick = onClick) else Modifier)
+            .padding(horizontal = 9.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(5.dp),
+    ) {
+        Text(
+            text = glyph,
+            style = PiTheme.text.monoSmall,
+            color = PiTheme.palette.muted,
+            maxLines = 1,
+        )
+        Text(
+            text = label,
+            style = PiTheme.text.meta,
+            color = if (enabled) {
+                MaterialTheme.colorScheme.onSurface
+            } else {
+                MaterialTheme.colorScheme.onSurfaceVariant
+            },
+            maxLines = 1,
+        )
     }
 }
 

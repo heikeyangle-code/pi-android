@@ -38,6 +38,12 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.vector.PathParser
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.pi.rpc.PiMessage
@@ -242,7 +248,7 @@ private fun BranchTab(
     }
     if (tree.isEmpty()) {
         PiEmptyState(
-            icon = Icons.Filled.Close,
+            icon = BRANCH_GLYPH,
             // v2's session-tree empty states use their own icon, not the π mark
             // (`direction-b-v2.html:1922`: `icon="branch"`). `PiEmptyState` defaults
             // to the mark because the *chat's* two engine empty states carry it.
@@ -255,7 +261,7 @@ private fun BranchTab(
     }
     if (rows.isEmpty()) {
         PiEmptyState(
-            icon = Icons.Filled.Close,
+            icon = BRANCH_GLYPH,
             // v2's session-tree empty states use their own icon, not the π mark
             // (`direction-b-v2.html:1922`: `icon="branch"`). `PiEmptyState` defaults
             // to the mark because the *chat's* two engine empty states carry it.
@@ -430,7 +436,7 @@ private fun BranchRow(row: TreeRow, isLeaf: Boolean, onFork: (String) -> Unit) {
 private fun EntriesTab(entries: List<SessionEntry>, modifier: Modifier = Modifier) {
     if (entries.isEmpty()) {
         PiEmptyState(
-            icon = Icons.Filled.Close,
+            icon = BRANCH_GLYPH,
             // v2's session-tree empty states use their own icon, not the π mark
             // (`direction-b-v2.html:1922`: `icon="branch"`). `PiEmptyState` defaults
             // to the mark because the *chat's* two engine empty states carry it.
@@ -526,3 +532,50 @@ private fun entryDetail(entry: SessionEntry): String = when (entry) {
     is SessionEntry.Custom -> "customType=${entry.customType.orEmpty()}\n${entry.data?.toString().orEmpty()}"
     is SessionEntry.Unknown -> entry.raw.toString()
 }
+
+/**
+ * The session tree's own icon — v2's `branch` glyph, path for path.
+ *
+ * `direction-b-v2.html:425`, the `Icon` function's `branch` arm, inside the board's
+ * `S` wrapper (`:402-403`: an `18x18` viewBox, `fill:none`, `stroke-width 1.5`,
+ * round caps and joins) and drawn at `s=30` by the empty states there
+ * (`:1922`: `EmptyState icon="branch"`):
+ *
+ * ```
+ * <path d="M5 3.6v8.4M5 12h5.6a2.4 2.4 0 002.4-2.4V8"/>
+ * <circle cx="5" cy="3" r="1.4"/><circle cx="13" cy="6.4" r="1.4"/>
+ * ```
+ *
+ * It replaces the Material `Close` glyph the three empty states used to show, which
+ * was the wrong drawing language *and* the wrong meaning (nothing is being closed
+ * here). The two `<circle>` elements become the two half-arc pairs that are the same
+ * circles, because a Compose `ImageVector` path builder has no `circle()` helper —
+ * the same one-notation difference `ui/components/PiNavGlyph.kt` documents for the
+ * settings glyph, and the centre and radius are unchanged.
+ *
+ * The stroke colour below is an unreachable placeholder: `PiEmptyState` draws this
+ * through `material3.Icon` with a `tint`, and this vector is left exactly the shape
+ * every Material icon has — built without its own `tintColor`, which
+ * [ImageVector.Builder] leaves unspecified — so that tint reaches it the same way.
+ */
+private val BRANCH_GLYPH: ImageVector =
+    ImageVector.Builder(
+        name = "PiSessionTreeBranch",
+        defaultWidth = 18.dp,
+        defaultHeight = 18.dp,
+        viewportWidth = 18f,
+        viewportHeight = 18f,
+    ).addPath(
+        // `PathParser` is the only entry point that reads SVG path syntax; the
+        // builder's `addPath` takes the parsed node list, not the string.
+        pathData = PathParser().parsePathString(
+            "M5 3.6v8.4M5 12h5.6a2.4 2.4 0 002.4-2.4V8" +
+                "M3.6 3a1.4 1.4 0 102.8 0a1.4 1.4 0 10-2.8 0" +
+                "M11.6 6.4a1.4 1.4 0 102.8 0a1.4 1.4 0 10-2.8 0",
+        ).toNodes(),
+        fill = null,
+        stroke = SolidColor(Color.Black),
+        strokeLineWidth = 1.5f,
+        strokeLineCap = StrokeCap.Round,
+        strokeLineJoin = StrokeJoin.Round,
+    ).build()

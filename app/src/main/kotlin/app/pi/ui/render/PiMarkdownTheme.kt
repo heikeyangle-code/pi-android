@@ -70,9 +70,9 @@ import com.mikepenz.markdown.model.markdownAlertPadding
  *   called with. Those two objects depend on nothing in the composition at all,
  *   so they are top-level `val`s: allocated once per process, not once per
  *   frame. The library defaults the app does not override (`blockQuoteBar`, the
- *   alert paddings/dimens, `tableCellWidth`, `tableCellPadding`,
- *   `tableCornerSize`) are transcribed from the 0.45.0 sources named in each
- *   KDoc below — if that dependency is ever bumped, those numbers have to be
+ *   alert paddings/dimens, `tableCellWidth`, `tableCornerSize`) are transcribed
+ *   from the 0.45.0 sources named in each KDoc below; `tableCellPadding` is the
+ *   one value of that group the app *does* override, with v2's own cell padding — if that dependency is ever bumped, those numbers have to be
  *   re-checked against the new artifact: an interface change fails the build
  *   loudly, a changed default would not.
  *
@@ -342,9 +342,16 @@ internal val piMarkdownPadding: MarkdownPadding = PiMarkdownPadding(
  * Same construction as [piMarkdownPadding]: the interface is public, the
  * builder's implementation is private and the builder is composable
  * (`multiplatform-markdown-renderer/.../model/MarkdownDimens.kt`). The four
- * values the app passed are kept; the three it did not (`tableCellWidth = 160.dp`,
- * `tableCellPadding = 16.dp`, `tableCornerSize = 8.dp`) and
- * `alert = markdownAlertDimens()` are the 0.45.0 defaults, transcribed.
+ * values the app passed are kept; `tableCellWidth = 160.dp`,
+ * `tableCornerSize = 8.dp` and `alert = markdownAlertDimens()` are the 0.45.0
+ * defaults, transcribed.
+ *
+ * `tableCellPadding` is **not** the library default: v2 draws a markdown table
+ * `padding:6px 8px` per cell (`direction-b-v2.html:300-303`, `.b-tbl th,.b-tbl td`),
+ * where the library's default is a uniform 16. The interface carries one `Dp` for
+ * both axes, so the cell takes v2's horizontal 8 — the axis that decides how much
+ * room a column's text gets — and the vertical step is the same number rather than
+ * two values the interface cannot express.
  */
 @Immutable
 private data class PiMarkdownDimens(
@@ -365,7 +372,8 @@ internal val piMarkdownDimens: MarkdownDimens = PiMarkdownDimens(
     blockQuoteThickness = 3.dp,
     tableMaxWidth = Dp.Unspecified,
     tableCellWidth = 160.dp,
-    tableCellPadding = 16.dp,
+    // v2's `6px 8px`; see this file's KDoc on why one number and not two.
+    tableCellPadding = 8.dp,
     tableCornerSize = 8.dp,
     alert = markdownAlertDimens(),
 )
