@@ -7,7 +7,7 @@
 
 | | **甲 · 对话流内核** | **乙 · 外壳、页面与浮层** |
 |---|---|---|
-| 可改 | `ui/blocks/**`、`ui/render/**`、`ui/chat/**`、`ui/theme/**`、`ui/components/PiCommon.kt`（状态行 / 空态） | `ui/PiRoot.kt`、`ui/screens/**`、`ui/settings/**`、`ui/packages/**`、`ui/extension/**`、`ui/device/**`、`MainActivity.kt`、**新建** `ui/components/PiDialog.kt` |
+| 可改 | `ui/blocks/**`、`ui/render/**`、`ui/chat/**`、`ui/theme/**`、`ui/components/PiCommon.kt`、**`ui/screens/ChatScreen.kt`（对话页内核：转录列表/输入区/滚动跟随）** | `ui/PiRoot.kt`、`ui/screens/**`（**ChatScreen.kt 除外**，发现那里的问题只报告不修改）、`ui/settings/**`、`ui/packages/**`、`ui/extension/**`、`ui/device/**`、`MainActivity.kt`、**新建** `ui/components/PiDialog.kt` |
 | 只读 | 乙的全部 | 甲的全部 |
 | 不许碰 | `rpc/**`、`ui/terminal/**`、`PiPalette` 的令牌值与 `colorScheme()` 映射 | 同左 |
 
@@ -53,3 +53,15 @@
 3. **用户亲自安装查看**。
 4. 用户截图 → 交 **v2 设计师代理**逐台对比出评审（它知道原意、能读图），只报编号化偏差，不改代码。
 5. 评审出的问题回到甲/乙修，直到用户认可。
+
+## 6. 从 B5 交上来的、必须由本次审查收口的具体项（别漏）
+
+| 项 | 归属 | 具体要求 |
+|---|---|---|
+| **块间距 16 → 8** | 甲 | 唯一调用点是 `ChatScreen.kt:971-982`（`blockSpacing` 与 `contentPadding(vertical=…)`）。v2 的块间距是 8。 |
+| **执行轨道的 run 收口** | 甲 | 现在每张卡自画上下接续段（`ToolRail.kt` 的 `RAIL_BRIDGE`，为了在 16/8 两种间距下都不断线），代价是首个节点上方 8dp 短头、末卡下方约 16dp 尾巴；v2 是 run 上下各缩进 16。正解：列表侧给每项传 `firstOfRun`/`lastOfRun`（`previous/next` 是否为 `ToolCall`/`ToolDiff`，约 6 行），然后 `RAIL_BRIDGE` 改为块间距。 |
+| **删掉 `latestUsage` 占位参数** | 甲 | 状态行按 v2 重排后，pi 的 ↑输入 / W 缓存写 / CH 命中率不再出现在这一行（会话信息 sheet 仍在显示），该参数成了死参——顺手删。 |
+| **百分比/费用显示精度按 v2** | 甲 | v2 写 `52%` / `$0.42`，现在保留 pi 的 `52.3%` / `$0.420`。设计稿是外观依据 ⇒ 按 v2 的字面；完整精度仍在会话信息 sheet 里可见。 |
+| **diff 节点配色对齐 v2** | 甲 | 现在用 `StateTone.Muted`（muted@45% 环）以复用同一节点组件；v2 是 `borderMuted` 实线环 + `bodyOnTool` 字。若差异肉眼可见就对齐；若为复用而保留，写清理由。 |
+| **工具卡顶栏主体排印** | 甲 | v2 是等宽 12 `text`，现在是 `bodyLarge`/`toolTitle`。属排印，与收尾项一起做。 |
+| **空态的 π 字形不要外溢** | 乙 | `PiEmptyState` 默认 `markPi = true`，会让会话列表×2、设置搜索、会话树×3 也变成 π；那几处 v2 用的是各自的图标（例如「没有匹配的会话」是放大镜）。在这些调用点显式 `markPi = false`，保留 v2 的图标。 |
