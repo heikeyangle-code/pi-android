@@ -130,13 +130,23 @@ sealed interface Boot {
  */
 sealed interface NavRequest {
     /**
-     * Open the session list over the current destination.
+     * Open the session list over the current destination — **and nothing else**.
      *
      * This replaced a `Sessions` member that switched to a 会话 *destination*.
      * The list is a selector, not a place (`03-navigation-decision.md`), and once
      * it became an overlay the request had to stop moving the destination: which
      * session the user is in is answered by picking a row, not by the picker
      * appearing.
+     *
+     * ## Why `/resume` does not switch to 对话 first either
+     *
+     * `/resume` is one of this member's callers, and it was worth deciding once
+     * rather than per call site: the palette row is typed **in the composer**, so
+     * the user is already on 对话 with the session they intend to leave in front of
+     * them. Switching destinations first would rebuild the transcript and move the
+     * ground under the list they are about to read, for no gain — and if they pick a
+     * row, the pick moves them then, which is exactly the moment the move carries
+     * information. The app-bar entry does the same thing for the same reason.
      */
     data object SessionList : NavRequest
 

@@ -100,17 +100,17 @@ enum class PiDestination(val label: String) {
  * records; keeping it out of the enum means the bottom bar cannot regress into
  * listing it again.
  *
- * These two are one layer, not two: the list and the tree are two views of the
- * same "which session" question and swap in place (the bar's later batch adds the
- * switch). The full-screen terminal joins them here, from the settings row, for
- * the same reason — it is not a place either.
+ * The list and the tree are **one** overlay with two views, not two overlays: they
+ * answer the same question, swap in place behind one segmented control, and — the
+ * part that decides it — Compose hands a back press to the most recently composed
+ * handler, so stacking two overlays would leave only the top one closable while the
+ * app keeps its single `BackHandler` promise (`PiRoot`'s own note below). The
+ * full-screen terminal joins them here, from the settings row, for the same reason:
+ * it is not a place either.
  */
 private enum class PiOverlay {
-    /** The session list, opened from the chat screen's app-bar session name. */
+    /** The session list — and, behind one tap, pi's `/tree`. */
     SessionList,
-
-    /** pi's `/tree` — the session tree. */
-    SessionTree,
 
     /**
      * The full-screen terminal, opened from the settings home's terminal row.
@@ -123,6 +123,16 @@ private enum class PiOverlay {
      */
     Terminal,
 }
+
+/**
+ * Which of the two views the session overlay opens on.
+ *
+ * `NavRequest.SessionTree` (pi's `/tree`, and the branch-summary row's tap) has to
+ * land on the tree rather than on the list — a command that says 树 must not make the
+ * user tap a segmented control to reach it. It is a *preference* rather than a
+ * separate overlay because there is only one overlay; see [PiOverlay].
+ */
+private enum class SessionViewPreference { List, Tree }
 
 /**
  * `rememberSaveable` cannot persist an enum (it is neither a `Bundle` value nor
@@ -190,6 +200,13 @@ fun PiRoot() {
     var overlayIndex by rememberSaveable { mutableStateOf<Int?>(null) }
     val overlay = overlayAt(overlayIndex)
 
+    // Which view the session overlay should open on. It is hoisted here, rather than
+    // left to `SessionsScreen`'s own `rememberSaveable`, because `/tree` and the
+    // branch-summary row have to open the overlay **on the tree**
+    // ([SessionViewPreference]); state inside the screen could not be set before the
+    // screen exists.
+    var sessionView by rememberSaveable { mutableStateOf(SessionViewPreference.List.name) }
+
     // A settings key a command asked to open (pi's `/scoped-models` — see
     // `NavRequest.SettingsFocus`). It lives here rather than inside the stack
     // because the stack is composed only while 设置 is the current destination,
@@ -226,7 +243,14 @@ fun PiRoot() {
             // layer; it must not also move the destination. Landing on 对话
             // happens when a row is picked, which is what the user asked for by
             // picking it.
+            //
+            // This is what `/resume` does too: the palette row is typed in the
+            // composer, so the user is already on 对话 with the session they want to
+            // leave in front of them. Switching destinations first would rebuild the
+            // transcript and move the ground under the list they are about to read,
+            // for no gain. If they pick a row, the pick moves them then.
             NavRequest.SessionList -> {
+                sessionView = SessionViewPreference.List.name
                 overlayIndex = PiOverlay.SessionList.ordinal
             }
             NavRequest.Chat -> {
@@ -242,10 +266,12 @@ fun PiRoot() {
                 settingsFocus = navRequest.key
                 destinationName = PiDestination.Settings.name
             }
-            // The tree draws over whatever destination is active, so this request
-            // deliberately leaves the destination alone.
+            // pi's `/tree`: the *same* overlay as the session list, opened on its
+            // second view. There is no separate tree overlay — see [PiOverlay] — so
+            // this both raises the layer and picks the view.
             NavRequest.SessionTree -> {
-                overlayIndex = PiOverlay.SessionTree.ordinal
+                sessionView = SessionViewPreference.Tree.name
+                overlayIndex = PiOverlay.SessionList.ordinal
                 session.refreshTree()
             }
             // The terminal raises the overlay layer for the same reason the list
@@ -283,6 +309,15 @@ fun PiRoot() {
                 PiDestination.Chat -> ChatScreen(
                     contentPadding = padding,
                     session = session,
+                    // The session name in the app bar is the way into the session
+                    // list. It raises the overlay only — the destination stays 对话,
+                    // because the user is picking a session *for this screen*, and
+                    // moving them first would rebuild the transcript underneath the
+                    // list they are about to read.
+                    onOpenSessions = {
+                        sessionView = SessionViewPreference.List.name
+                        overlayIndex = PiOverlay.SessionList.ordinal
+                    },
                 )
 
                 // The project's own screen. It reads pi's session directory, the
@@ -420,6 +455,7 @@ fun PiRoot() {
                     when (shown) {
                         PiOverlay.SessionList -> SessionsScreen(
                             contentPadding = padding,
+                            session = session,
                             // A pick switches the session and lands on it. The
                             // overlay closes because otherwise the user stays on
                             // the list they just answered.
@@ -427,17 +463,14 @@ fun PiRoot() {
                                 overlayIndex = null
                                 destinationName = PiDestination.Chat.name
                             },
-                            session = session,
-                        )
-
-                        PiOverlay.SessionTree -> SessionTreeScreen(
-                            state = uiState,
-                            onFork = { entryId ->
-                                session.forkFrom(entryId)
-                                overlayIndex = null
-                            },
-                            onRefresh = { session.refreshTree() },
                             onClose = { overlayIndex = null },
+                            // Which view to open on: `/tree` and the branch-summary
+                            // row ask for the tree, everything else for the list.
+                            initialView = if (sessionView == SessionViewPreference.Tree.name) {
+                                SessionsView.Tree
+                            } else {
+                                SessionsView.List
+                            },
                         )
 
                         // The full-screen terminal, unchanged from when it was a

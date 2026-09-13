@@ -76,6 +76,8 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -165,6 +167,14 @@ import kotlinx.coroutines.launch
 fun ChatScreen(
     contentPadding: PaddingValues,
     session: PiSessionViewModel,
+    /**
+     * 点顶栏那个会话名时打开会话列表覆盖层。
+     *
+     * 会话列表是「选择器」，它挂在**当前会话的名字**上：那个名字就是用户会说「我要换一个」
+     * 时看的东西（`03-navigation-decision.md` 把列表从底栏挪到这里的原话）。入口做成一个
+     * callback 而不是这里直接发导航请求，是因为覆盖层归 `PiRoot` 管，而这一屏不知道它。
+     */
+    onOpenSessions: () -> Unit,
 ) {
     val state by session.state.collectAsState()
     val bottomInset = contentPadding.calculateBottomPadding()
@@ -177,7 +187,12 @@ fun ChatScreen(
         )
         return
     }
-    ChatBody(state = state, session = session, bottomInset = bottomInset)
+    ChatBody(
+        state = state,
+        session = session,
+        bottomInset = bottomInset,
+        onOpenSessions = onOpenSessions,
+    )
 }
 
 /** Which bottom sheet the chat screen has open, if any. */
@@ -189,6 +204,7 @@ private fun ChatBody(
     state: PiSessionViewModel.UiState,
     session: PiSessionViewModel,
     bottomInset: Dp,
+    onOpenSessions: () -> Unit,
 ) {
     var draft by remember { mutableStateOf("") }
     var sheet by remember { mutableStateOf<ChatSheet?>(null) }
@@ -207,6 +223,28 @@ private fun ChatBody(
     }
     val listState = rememberLazyListState()
     val context = LocalContext.current
+
+    // 发出去之后把键盘收起来。
+    //
+    // `LocalSoftwareKeyboardController.current` is nullable: on a device with no
+    // software keyboard at all (a hardware-keyboard tablet, or a preview) there is
+    // nothing to hide, and the `?.` says so rather than demanding one. The focus
+    // clear is the half that makes the state consistent — with the field still
+    // focused, the next recomposition that touches it can raise the keyboard again,
+    // and the cursor would sit blinking in a field the user has left. Tapping the
+    // composer re-focuses it and the keyboard comes back on its own, which is the
+    // existing behaviour and is not changed here.
+    //
+    // Only the paths that actually handed something to pi call this: a notice
+    // (`ComposerRoute.Unreachable` / `Unknown`) leaves both the draft and the keys
+    // alone, because the user still owns the text it is complaining about.
+    val keyboard = LocalSoftwareKeyboardController.current
+    val focus = LocalFocusManager.current
+    val dismissKeys: () -> Unit = {
+        keyboard?.hide()
+        focus.clearFocus()
+    }
+
     // pi's `tui.altScreen.previousPrompt` / `nextPrompt`
     // (`keybindings.md:112`): jump between the messages the *user* wrote. On a
     // phone there is no keybinding for it, so it lives in the overflow menu.
@@ -711,21 +749,40 @@ private fun ChatBody(
         TopAppBar(
             title = {
                 Column {
-                    Text(
-                        // The session name is pi's own (`set_session_name` /
-                        // `session_info_changed`). `setTitle` is a *terminal window
-                        // title*, and reusing it as the app title is an
-                        // interpretation the audit grades DEGRADED — so it is only
-                        // the fallback.
-                        text = state.meta.sessionName
-                            ?: windowTitleOf(
-                                state.windowTitle,
-                                if (state.transcript.isEmpty()) "新会话" else "会话",
-                            ),
-                        style = MaterialTheme.typography.titleMedium,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
+                    // 会话名是这一屏上「换一个会话」的入口：点它打开会话列表覆盖层。
+                    // 它整体可点（不是只点文字），因为一个看起来像标题的东西如果不响应
+                    // 点击，用户就再也找不到列表——底栏已经不再有「会话」那一项了
+                    // （`03-navigation-decision.md`）。右侧那个 `∨` 是这个 affordance 的
+                    // 符号：v2 的顶栏用符号表示「这里能展开」。
+                    Row(
+                        modifier = Modifier
+                            .clickable(onClickLabel = "打开会话列表", onClick = onOpenSessions)
+                            .padding(end = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            // The session name is pi's own (`set_session_name` /
+                            // `session_info_changed`). `setTitle` is a *terminal window
+                            // title*, and reusing it as the app title is an
+                            // interpretation the audit grades DEGRADED — so it is only
+                            // the fallback.
+                            text = state.meta.sessionName
+                                ?: windowTitleOf(
+                                    state.windowTitle,
+                                    if (state.transcript.isEmpty()) "新会话" else "会话",
+                                ),
+                            style = MaterialTheme.typography.titleMedium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        Spacer(Modifier.width(4.dp))
+                        Icon(
+                            Icons.Filled.KeyboardArrowDown,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                     Text(
                         session.engineLabel(state),
                         style = PiTheme.text.meta,
@@ -1239,6 +1296,10 @@ private fun ChatBody(
                 // included — the queue row is chrome next to the composer, but the
                 // turn it belongs to is at the tail.
                 reArmTail()
+                // Queued is still delivered, so this is a "sent" for the same reason a
+                // normal send is: the text left the composer and the user is done
+                // typing it. See [dismissComposerKeys].
+                dismissKeys()
             },
             onSend = {
                 when (val route = routeComposerText(draft, state.commands)) {
@@ -1247,6 +1308,7 @@ private fun ChatBody(
                         session.send("", attachments)
                         attachments = emptyList()
                         reArmTail()
+                        dismissKeys()
                     }
                     is ComposerRoute.Message -> {
                         session.send(route.text, attachments)
@@ -1257,10 +1319,18 @@ private fun ChatBody(
                         // the next layout pass, so the user sees their own message
                         // rather than a transcript they had scrolled up into.
                         reArmTail()
+                        // The message is on the wire, so the keyboard has done its
+                        // job: dropping it is what turns the send into "watch the
+                        // answer" instead of "read through a half-covered screen"
+                        // ([dismissComposerKeys]).
+                        dismissKeys()
                     }
                     is ComposerRoute.Bash -> {
                         session.runBash(route.command, route.excludeFromContext)
                         draft = ""
+                        // `!` runs too: the command left the composer and output is
+                        // about to stream into the panel above it.
+                        dismissKeys()
                     }
                     is ComposerRoute.Command -> {
                         draft = ""
@@ -1268,7 +1338,9 @@ private fun ChatBody(
                     }
                     // The draft stays: the notice explains what to do, and throwing
                     // the user's text away would make the explanation harder to act
-                    // on.
+                    // on. For the same reason the keyboard stays — nothing was sent,
+                    // and taking the keys away from text the user still owns is the
+                    // one way this change could feel like a bug.
                     is ComposerRoute.Unreachable -> session.notifyTerminalOnly(route.command)
                     is ComposerRoute.Unknown -> session.notifyUnknownCommand(route.name)
                 }

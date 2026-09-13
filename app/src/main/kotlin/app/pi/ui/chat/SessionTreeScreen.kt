@@ -82,6 +82,20 @@ import app.pi.ui.theme.PiTheme
  * The filter modes are pi's own (`interactive-mode.ts`'s tree selector,
  * `FilterMode` in `components/tree-selector.ts:95`): default, no-tools,
  * user-only, labeled-only, all — cycled here because a phone has no Ctrl+O.
+ *
+ * ## Embedded mode
+ *
+ * [embedded] is the one shape change this batch makes (`05-compose-migration-plan.md`
+ * §3.6), and it carries no tree logic with it. The session tree is no longer a second
+ * overlay: it is the second **view** of the session-list overlay, switched by one
+ * segmented control (`SessionsScreen`), because two overlays stacked on each other
+ * leaves only the top one closable by the back key — and there is exactly one
+ * `BackHandler` in this app (`PiRoot`), by construction.
+ *
+ * When true, the caller already owns the top bar, the opaque backdrop and the
+ * padding, so this composable draws only its own filter row and list. When false it
+ * is still the whole screen, which is what the earlier overlay shape needed and what
+ * a preview or a test can render on its own.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -91,70 +105,122 @@ fun SessionTreeScreen(
     onRefresh: () -> Unit,
     onClose: () -> Unit,
     modifier: Modifier = Modifier,
+    embedded: Boolean = false,
 ) {
     var tab by rememberSaveable { mutableStateOf(0) }
     var filter by rememberSaveable { mutableStateOf(TreeFilter.Default) }
     var query by rememberSaveable { mutableStateOf("") }
-    Surface(
-        modifier = modifier.fillMaxSize(),
-        color = MaterialTheme.colorScheme.background,
-    ) {
-        Column(Modifier.fillMaxSize()) {
-            TopAppBar(
-                title = { Text("会话树") },
-                actions = {
-                    TextButton(onClick = onRefresh) { Text("刷新") }
-                    IconButton(onClick = onClose) {
-                        Icon(Icons.Filled.Close, contentDescription = "关闭")
-                    }
-                },
-            )
-            SingleChoiceSegmentedButtonRow(
-                Modifier.fillMaxWidth().padding(horizontal = PiSpacing.screen),
-            ) {
-                listOf("分支", "条目").forEachIndexed { index, label ->
-                    SegmentedButton(
-                        selected = tab == index,
-                        onClick = { tab = index },
-                        shape = SegmentedButtonDefaults.itemShape(index, 2),
-                    ) { Text(label) }
-                }
-            }
-            if (tab == 0) {
-                Row(
-                    Modifier.fillMaxWidth().padding(horizontal = PiSpacing.screen, vertical = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    OutlinedTextField(
-                        value = query,
-                        onValueChange = { query = it },
-                        modifier = Modifier.weight(1f),
-                        singleLine = true,
-                        placeholder = { Text("筛选条目文字") },
-                        textStyle = PiTheme.text.mono,
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    TextButton(onClick = { filter = filter.next() }) { Text(filter.label) }
-                }
-                Text(
-                    "分叉会新建一个会话文件，原会话保持不变。",
-                    modifier = Modifier.padding(horizontal = PiSpacing.screen),
-                    style = PiTheme.text.meta,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+    if (embedded) {
+        // No `Surface`: the caller's overlay already paints the opaque backdrop, and
+        // a second one would be a surface over a surface for no visual gain. No top
+        // bar either — the overlay's own bar is the only one on screen, which is
+        // also what keeps the back key's owner single.
+        TreeContent(
+            state = state,
+            tab = tab,
+            onTabChange = { tab = it },
+            filter = filter,
+            onCycleFilter = { filter = filter.next() },
+            query = query,
+            onQueryChange = { query = it },
+            onFork = onFork,
+            modifier = modifier,
+        )
+    } else {
+        Surface(
+            modifier = modifier.fillMaxSize(),
+            color = MaterialTheme.colorScheme.background,
+        ) {
+            Column(Modifier.fillMaxSize()) {
+                TopAppBar(
+                    title = { Text("会话树") },
+                    actions = {
+                        TextButton(onClick = onRefresh) { Text("刷新") }
+                        IconButton(onClick = onClose) {
+                            Icon(Icons.Filled.Close, contentDescription = "关闭")
+                        }
+                    },
                 )
-            }
-            Spacer(Modifier.height(PiSpacing.unit))
-            if (tab == 0) {
-                BranchTab(
+                TreeContent(
                     state = state,
+                    tab = tab,
+                    onTabChange = { tab = it },
                     filter = filter,
+                    onCycleFilter = { filter = filter.next() },
                     query = query,
+                    onQueryChange = { query = it },
                     onFork = onFork,
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier.fillMaxSize(),
                 )
-            } else {
-                EntriesTab(entries = state.entries, modifier = Modifier.weight(1f))
             }
+        }
+    }
+}
+
+/**
+ * 树本身：分支 / 条目两个 tab + 筛选行 + 列表。
+ *
+ * 抽出来只为了 [SessionTreeScreen] 的两种外壳（整屏 / 嵌进覆盖层）共用同一份内容——
+ * 里面没有一行逻辑是新的。
+ */
+@Composable
+private fun TreeContent(
+    state: PiSessionViewModel.UiState,
+    tab: Int,
+    onTabChange: (Int) -> Unit,
+    filter: TreeFilter,
+    onCycleFilter: () -> Unit,
+    query: String,
+    onQueryChange: (String) -> Unit,
+    onFork: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(modifier.fillMaxSize()) {
+        SingleChoiceSegmentedButtonRow(
+            Modifier.fillMaxWidth().padding(horizontal = PiSpacing.screen),
+        ) {
+            listOf("分支", "条目").forEachIndexed { index, label ->
+                SegmentedButton(
+                    selected = tab == index,
+                    onClick = { onTabChange(index) },
+                    shape = SegmentedButtonDefaults.itemShape(index, 2),
+                ) { Text(label) }
+            }
+        }
+        if (tab == 0) {
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = PiSpacing.screen, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = onQueryChange,
+                    modifier = Modifier.weight(1f),
+                    singleLine = true,
+                    placeholder = { Text("筛选条目文字") },
+                    textStyle = PiTheme.text.mono,
+                )
+                Spacer(Modifier.width(8.dp))
+                TextButton(onClick = onCycleFilter) { Text(filter.label) }
+            }
+            Text(
+                "分叉会新建一个会话文件，原会话保持不变。",
+                modifier = Modifier.padding(horizontal = PiSpacing.screen),
+                style = PiTheme.text.meta,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Spacer(Modifier.height(PiSpacing.unit))
+        if (tab == 0) {
+            BranchTab(
+                state = state,
+                filter = filter,
+                query = query,
+                onFork = onFork,
+                modifier = Modifier.weight(1f),
+            )
+        } else {
+            EntriesTab(entries = state.entries, modifier = Modifier.weight(1f))
         }
     }
 }
