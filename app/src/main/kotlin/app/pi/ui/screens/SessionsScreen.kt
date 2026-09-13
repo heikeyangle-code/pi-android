@@ -1,5 +1,7 @@
 package app.pi.ui.screens
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Box
@@ -97,6 +99,14 @@ fun SessionsScreen(
     // argument prompt (`docs/sessions.md:48`, `rpc-types.ts:27`).
     var actions by remember { mutableStateOf<PiSessionStore.Summary?>(null) }
 
+    // `/import` from the sessions screen: the same action as the palette row, and the
+    // same launcher. pi's TUI asks for a path in its editor (`interactive-mode.ts:6107-6119`);
+    // a phone picks a document, and the ViewModel copies it into the session
+    // directory and switches to it (`PiSessionViewModel.importSession`).
+    val importPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri != null) session.importSession(uri)
+    }
+
     // The directory only becomes meaningful once the runtime is unpacked, so
     // refresh when the screen appears rather than at construction.
     LaunchedEffect(Unit) { session.refreshSessions() }
@@ -125,6 +135,9 @@ fun SessionsScreen(
             TopAppBar(
                 title = { Text("会话") },
                 actions = {
+                    // The list can only show sessions that are already in pi's
+                    // directory; a session that arrived as a file needs this.
+                    TextButton(onClick = { importPicker.launch("*/*") }) { Text("导入") }
                     IconButton(onClick = { session.refreshSessions() }) {
                         Icon(Icons.Filled.Refresh, contentDescription = "刷新会话列表")
                     }

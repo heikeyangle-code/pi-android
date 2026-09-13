@@ -44,6 +44,17 @@ enum class PiCommandAction {
     OpenSessions,
 
     /**
+     * `/import <path.jsonl>`. pi's TUI asks for a path and hands it to
+     * `runtimeHost.importFromJsonl` (`interactive-mode.ts:6107-6119`); a phone has
+     * no path to type, so this opens the document picker and the ViewModel does the
+     * rest (`PiSessionViewModel.importSession`). Unlike [TerminalOnly] it has a real
+     * destination in this app: `switch_session` already takes a session file path
+     * (`rpc-types.ts:61`), so the picked file is copied into the session directory
+     * and adopted.
+     */
+    ImportSession,
+
+    /**
      * `/scoped-models`. pi opens its **model-scope selector** for this command
      * (`interactive-mode.ts:2975-2978` → `showModelsSelector()`, `:5024`), which
      * is a different component from the plain `/model` picker
@@ -171,9 +182,12 @@ val PI_BUILTIN_SLASH_COMMANDS: List<PiSlashCommand> = listOf(
         "export", "导出会话：默认 HTML，路径以 .jsonl 结尾时写 JSONL", PiCommandSource.Builtin, null,
         PiCommandAction.ExportSession,
     ),
+    // No `argumentHint`: a hint suppresses the palette tap's "run it" behaviour
+    // (`ChatScreen.pick` is only reached when `argumentHint == null`), and there is
+    // no path for a phone user to type — the tap *is* the command.
     PiSlashCommand(
         "import", "从 JSONL 文件导入并恢复会话", PiCommandSource.Builtin, null,
-        PiCommandAction.TerminalOnly,
+        PiCommandAction.ImportSession,
     ),
     PiSlashCommand("share", "将会话分享为私密 GitHub gist", PiCommandSource.Builtin, null, PiCommandAction.TerminalOnly),
     PiSlashCommand("copy", "复制最后一条模型消息", PiCommandSource.Builtin, null, PiCommandAction.CopyLastAssistant),

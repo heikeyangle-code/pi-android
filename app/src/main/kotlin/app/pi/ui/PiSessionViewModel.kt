@@ -2,7 +2,9 @@ package app.pi.ui
 
 import android.app.Application
 import android.content.Intent
+import android.net.Uri
 import android.os.SystemClock
+import android.provider.OpenableColumns
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -31,6 +33,8 @@ import app.pi.runtime.PiProjectConfig
 import app.pi.runtime.PtyLauncher
 import app.pi.runtime.RuntimeProvisioner
 import app.pi.session.PiSessionStore
+import app.pi.session.SessionExportNaming
+import app.pi.session.SessionImport
 import app.pi.service.PiEngineController
 import app.pi.service.PiEngineLifecyclePolicy
 import app.pi.service.PiEngineService
@@ -162,6 +166,30 @@ data class BashRun(
     val cancelled: Boolean = false,
     val truncated: Boolean = false,
     val fullOutputPath: String? = null,
+)
+
+/**
+ * A finished `/export` the user has not taken delivery of yet.
+ *
+ * pi writes an export into the user's own cwd and reports the path
+ * (`interactive-mode.ts:6060-6075`, default destination
+ * `core/export-html/index.ts:274-281`); this app's equivalent destination is its
+ * private workspace, where nothing outside the app can open it. The file is the
+ * deliverable, so the screen needs one more thing than "it worked": something to
+ * hand to Download or the share sheet. This value is that handle — it exists
+ * between the export and the user's choice, and it is the only reason the app
+ * keeps a path to its own artifact in state.
+ *
+ * [path] is the file's absolute host path and is **never** rendered: user-visible
+ * copy in this app names no internal directory. [name] is what the user sees and
+ * what the delivery uses as the Download file name.
+ */
+data class ExportedSession(
+    val name: String,
+    /** What the delivery channel calls the file — see `SessionExportNaming`. */
+    val mimeType: String,
+    /** Absolute path inside the app's private workspace. Not user-visible. */
+    val path: String,
 )
 
 /**
@@ -337,6 +365,12 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         val tuiOnlyExtensions: List<TuiOnlyExtension> = emptyList(),
         /** Label of the long RPC call in flight, for a progress line. */
         val busy: String? = null,
+        /**
+         * The `/export` that just finished, until the user dismisses it or the
+         * session changes. See [ExportedSession] for why the app keeps it: the file
+         * is the deliverable and it lives where no other app can open it.
+         */
+        val exported: ExportedSession? = null,
         /** Set by the ViewModel, consumed by `PiRoot`. */
         val navRequest: NavRequest? = null,
         /**
@@ -1832,15 +1866,31 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * The response is read through [PiResponses.entries], the raw-object reader,
      * because the reducer projects pi's own record shape — the typed
      * [SessionEntry] tree is for the tree screen, not for the reducer.
+     *
+     * **Both failure paths are reported, not swallowed.** They used to `return`
+     * silently, and that is what "tapping an old conversation does nothing" looked
+     * like from the user's seat: `get_entries` returns the whole session inside
+     * **one** JSONL record, so a record past the framer's cap never arrives, and
+     * the app then left the previous transcript on screen with no message, no
+     * cleared `busy` and no way to tell a slow open from a dead one
+     * (`docs/hang-and-crash-review.md` §A1; the engine layer now fails such a
+     * request immediately with a Chinese reason on the same channel). Saying
+     * something is strictly better here — the transcript is not cleared either way,
+     * because a failed rebuild must not destroy rows it cannot repopulate.
      */
     private suspend fun replayHistory(engine: PiEngineSession) {
         val response = runCatching {
             engine.request({ PiCommands.getEntries(it) })
-        }.getOrNull() ?: return
+        }.getOrNull() ?: run {
+            fail("引擎没能返回这个会话的内容，可以重新打开这个会话再试一次。")
+            return
+        }
         if (!response.success) {
             // A brand-new in-memory session answers with an empty page, not an
-            // error; a real error means we cannot rebuild, and saying nothing is
-            // better than clearing a transcript we cannot repopulate.
+            // error (that is the success branch below); a real error means the
+            // transcript cannot be rebuilt — and `response.error` already carries
+            // the engine's own reason, e.g. the oversized-record sentence.
+            fail("读取会话内容失败：${response.error ?: "原因未知"}。可以重新打开这个会话再试一次。")
             return
         }
         // `seedHistory`, not `transcript.seedFromHistory`: the reducer path mutates
@@ -2158,6 +2208,34 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
+     * pi's `app.message.dequeue` (`alt+up`): take the queued messages back out of
+     * pi and hand them to the composer **without aborting the turn**
+     * (`interactive-mode.ts:4157-4164` → `restoreQueuedMessagesToEditor()` with no
+     * options, `:4387-4406`).
+     *
+     * The difference from [stop] is exactly the missing `abort`, and it is pi's
+     * whole point of the action: the current turn keeps running, only the queue
+     * moves back into the editor. `clear_queue` is all-or-nothing
+     * (`rpc-types.ts:26`), so "one message at a time" is not on offer here — nor in
+     * pi, whose pending-messages list is read-only and whose hint restores them all.
+     *
+     * An empty answer is reported rather than silently ignored: it is what pi's
+     * `handleDequeue` says too ("No queued messages to restore"), and it is the only
+     * signal that the dequeue raced the turn's own consumption of the queue.
+     */
+    fun restoreQueue(onRestored: (List<String>) -> Unit = {}) {
+        val engine = session ?: return
+        viewModelScope.launch {
+            val restored = runCatching { engine.drainQueue() }.getOrDefault(emptyList())
+            syncTranscript(engine, engine.publication.value)
+            if (restored.isEmpty()) {
+                pushNotice("队列里没有待收回的消息", Notice.Tone.Warning)
+            }
+            onRestored(restored)
+        }
+    }
+
+    /**
      * `set_thinking_level`.
      *
      * pi clamps to what the model supports and only emits
@@ -2460,6 +2538,189 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /**
+     * `/import <path.jsonl>` — adopt a session file the user picked, then continue
+     * in it.
+     *
+     * pi's own `/import` is a TUI command (`interactive-mode.ts:6107-6119`) and RPC
+     * has no import command, but it does not need one: `switch_session` takes a
+     * session **file path** (`rpc-types.ts:61`) and its handler runs the same
+     * pipeline (`rpc-mode.ts:605-611` → `agent-session-runtime.ts:197-224`):
+     * `emitBeforeSwitch` (an extension can veto), `SessionManager.open` (the header
+     * is validated, `session-manager.ts:905-908`) and `assertSessionCwdExists`
+     * (the recorded cwd must exist, `session-cwd.ts:54-58`). So this method does
+     * only what pi's `importFromJsonl` does *before* that call
+     * (`agent-session-runtime.ts:361-405`): check the file, choose the destination
+     * name, copy it into the session directory.
+     *
+     * **One deliberate deviation**: pi copies first and validates afterwards, so a
+     * file it rejects stays in the session directory; this app validates the head
+     * before copying, so a wrong pick leaves nothing behind. The observable
+     * difference is only that (the file is not a session either way).
+     *
+     * The cwd case is the one this app cannot fully reproduce: pi's TUI offers
+     * "continue in current cwd" (`interactive-mode.ts:2545` →
+     * `formatMissingSessionCwdPrompt`) and re-imports with a `cwdOverride`, while
+     * `switch_session` has no such parameter (`rpc-types.ts:61`). That path fails
+     * with a sentence that says so and what to do instead — never silently.
+     *
+     * All work that touches the picked document or the session directory happens on
+     * [Dispatchers.IO], because the source can be a cloud provider and the session
+     * file can be hundreds of megabytes.
+     */
+    fun importSession(source: Uri) {
+        // `this.api` is null exactly while no engine is attached. Bound to a non-null
+        // local so the coroutine below captures a value the compiler can see is
+        // never null.
+        val api = this.api ?: run {
+            fail("引擎还没有就绪，等它启动完成后再导入。")
+            return
+        }
+        viewModelScope.launch {
+            _state.value = _state.value.copy(busy = "导入会话")
+            try {
+                when (val prepared = withContext(Dispatchers.IO) { prepareImport(source) }) {
+                    is ImportPrep.Rejected -> fail(prepared.sentence)
+
+                    is ImportPrep.Ready -> {
+                        val result = api.switchSession(prepared.guestPath)
+                        if (result.cancelled) {
+                            pushNotice("扩展取消了导入会话", Notice.Tone.Warning)
+                        } else {
+                            afterSessionReplaced()
+                            requestNav(NavRequest.Chat)
+                            pushNotice("已导入会话：${prepared.displayName}", Notice.Tone.Info)
+                        }
+                    }
+                }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Throwable) {
+                // pi's raw text is not echoed: two of its three shapes carry a
+                // filesystem path, and user-visible copy here never shows one.
+                fail(SessionImport.failureSentence((error as? PiRpcException)?.reason ?: error.message))
+            } finally {
+                if (_state.value.busy == "导入会话") _state.value = _state.value.copy(busy = null)
+            }
+        }
+    }
+
+    /** What [importSession] decided before it touches pi. */
+    private sealed interface ImportPrep {
+        data class Ready(val guestPath: String, val displayName: String) : ImportPrep
+        data class Rejected(val sentence: String) : ImportPrep
+    }
+
+    /**
+     * Read the picked document's head, decide whether it is a session, and copy it
+     * into pi's session directory under pi's own naming rule.
+     *
+     * Runs on IO; see [importSession] for the pipeline this reproduces.
+     */
+    private fun prepareImport(source: Uri): ImportPrep {
+        val resolver = getApplication<Application>().contentResolver
+        val sessionsRoot = File(host.paths().agentDir, "sessions")
+        val sourceName = displayNameOf(source)
+
+        // pi's usage string is `/import <path.jsonl>` (`interactive-mode.ts:6109`)
+        // and a session file that is not named `.jsonl` is not listed by pi's own
+        // picker (`session-manager.ts:825`), so a name that would produce an
+        // invisible session is refused with what to pick instead. A provider that
+        // exposes no display name at all gets a generated one and is judged on its
+        // content alone.
+        if (sourceName != null && !sourceName.endsWith(SessionImport.SUFFIX, ignoreCase = true)) {
+            return ImportPrep.Rejected(SessionImport.wrongSuffixSentence(sourceName))
+        }
+        val destinationSeed = sourceName
+            ?: "session-import-${System.currentTimeMillis()}${SessionImport.SUFFIX}"
+
+        // Step 1: pi's header rule, applied to a bounded head (`SessionImport`).
+        val head = runCatching {
+            resolver.openInputStream(source)?.use { input ->
+                String(readBoundedBytes(input, SessionImport.HEAD_SCAN_CHARS), Charsets.UTF_8)
+            }
+        }.getOrNull() ?: return ImportPrep.Rejected(SessionImport.unreadableSentence())
+        if (SessionImport.verdictOf(head) is SessionImport.Verdict.NotASession) {
+            return ImportPrep.Rejected(SessionImport.failureSentence("not a valid"))
+        }
+
+        // Step 2: pi's destination name (`agent-session-runtime.ts:371-379`).
+        sessionsRoot.mkdirs()
+        val destination = SessionImport.destinationName(destinationSeed) { candidate ->
+            File(sessionsRoot, candidate).exists()
+        } ?: return ImportPrep.Rejected(SessionImport.noFreeNameSentence(destinationSeed))
+        val target = File(sessionsRoot, destination)
+
+        // Step 3: the copy pi does with `COPYFILE_EXCL`
+        // (`agent-session-runtime.ts:387`). The name was chosen not to exist, so a
+        // plain create is the same guarantee; a partial write is removed rather than
+        // left where the session list would offer an unopenable row.
+        val copied = runCatching {
+            val input = resolver.openInputStream(source) ?: return@runCatching false
+            input.use { from ->
+                target.outputStream().use { to -> from.copyTo(to) }
+            }
+            true
+        }.getOrDefault(false)
+        if (!copied) {
+            runCatching { target.delete() }
+            return ImportPrep.Rejected(SessionImport.unreadableSentence())
+        }
+
+        val guestPath = guestSessionPath(target)
+        return if (guestPath == null) {
+            runCatching { target.delete() }
+            ImportPrep.Rejected(SessionImport.unreadableSentence())
+        } else {
+            ImportPrep.Ready(guestPath = guestPath, displayName = destination)
+        }
+    }
+
+    /**
+     * The picked document's name, or null when the provider does not publish one.
+     *
+     * `OpenableColumns.DISPLAY_NAME` is the only name a content URI has —
+     * `Uri.lastPathSegment` is a provider-internal id (`…/document/1234`) and using
+     * it as a file name was the reason a first attempt at this rejected every pick
+     * that came from the Downloads provider.
+     */
+    private fun displayNameOf(source: Uri): String? {
+        val resolver = getApplication<Application>().contentResolver
+        val published = runCatching {
+            resolver.query(source, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
+                if (cursor.moveToFirst()) cursor.getString(0) else null
+            }
+        }.getOrNull()
+        val cleaned = published
+            ?.substringAfterLast('/')
+            ?.substringAfterLast('\\')
+            ?.trim()
+            ?.takeIf { it.isNotEmpty() }
+        return cleaned
+    }
+
+    /**
+     * Read at most [limit] bytes off [input].
+     *
+     * Bounded because this reads a file the app did not choose the size of: a
+     * `.jsonl` whose first line is a multi-megabyte tool result or an inline image
+     * would otherwise be allocated in full before any budget could be consulted —
+     * the same defect `docs/hang-and-crash-review.md` §A4 fixed for the session
+     * list. The bytes are decoded as UTF-8 afterwards; a multi-byte character split
+     * by the limit can only appear at the very end, by which point the header line
+     * has been seen.
+     */
+    private fun readBoundedBytes(input: java.io.InputStream, limit: Int): ByteArray {
+        val out = java.io.ByteArrayOutputStream(minOf(limit, 64 * 1024))
+        val buffer = ByteArray(64 * 1024)
+        while (out.size() < limit) {
+            val read = input.read(buffer, 0, minOf(buffer.size, limit - out.size()))
+            if (read < 0) break
+            out.write(buffer, 0, read)
+        }
+        return out.toByteArray()
+    }
+
     /** `fork` from one of the user messages `get_fork_messages` offered. */
     fun forkFrom(entryId: String) {
         call("创建分支") { api ->
@@ -2511,42 +2772,68 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * (`rpc-types.ts:60`), so the JSONL branch is reproduced here from the same
      * records pi would write — see [exportJsonl].
      *
-     * HTML still goes through `export_html`, written into the workspace so the
-     * file is reachable. pi's default destination is its cwd —
-     * `pi-session-<basename>.html` (`export-html/index.ts:284-288`) — which *is*
-     * the workspace, but the response returns the guest spelling of the path.
-     * Passing an explicit path keeps both spellings known to this class, which is
-     * what lets the confirmation be checked against the file the app looks for.
+     * HTML still goes through `export_html`, written into the workspace where the
+     * app can find it again. pi's default destination is its cwd —
+     * `pi-session-<会话文件 basename>.html` (`core/export-html/index.ts:274-281`) —
+     * which *is* the workspace, but the response returns the guest spelling of the
+     * path. Passing an explicit path (with the name `SessionExportNaming` derives
+     * from pi's rule) keeps both spellings known to this class, which is what lets
+     * the app check the file it actually looks for.
      *
      * The confirmation names the **file**, not its path: the destination is this
      * app's private storage, so the only path the app could print is one the user
      * cannot open in any file manager — and it was the last place in the app's own
-     * copy that showed an internal directory. The fallback (`$written`) is pi's own
-     * response, used only when the file the app looks for is not there, because
-     * saying nothing about where it went would be worse than a guest path.
+     * copy that showed an internal directory. That sentence is exactly why the
+     * export now ends with a delivery handle instead of a path ([ExportedSession]):
+     * the user gets the file (Download or the share sheet), not a location they
+     * cannot reach. When the file is not there at all, the app says so rather than
+     * falling back to pi's guest path.
+     *
      * This is also the only non-TUI path by which an extension's
      * `renderCall`/`renderResult` output reaches a client (audit §5.11).
      */
     fun exportSession(fileName: String? = null) {
         val name = fileName?.trim()?.takeIf { it.isNotEmpty() }
-        if (name != null && name.endsWith(JSONL_SUFFIX, ignoreCase = true)) {
-            exportJsonl(name)
+        val jsonlName = name?.takeIf { SessionExportNaming.isJsonl(it) }
+        if (jsonlName != null) {
+            exportJsonl(jsonlName)
             return
         }
-        val htmlName = name ?: "pi-session-${System.currentTimeMillis()}.html"
+        val htmlName = name
+            ?: SessionExportNaming.defaultHtmlName(_state.value.meta.sessionFile, System.currentTimeMillis())
         val guestPath = "${guestWorkspace()}/$htmlName"
         call("导出会话") { api ->
-            val written = api.exportHtml(guestPath)
+            api.exportHtml(guestPath)
             val hostPath = File(defaultWorkspace(), htmlName)
-            pushNotice(
-                message = if (hostPath.isFile) {
-                    "会话已导出：$htmlName"
-                } else {
-                    "会话已导出：$written"
-                },
-                tone = Notice.Tone.Info,
-            )
+            if (hostPath.isFile) {
+                publishExport(hostPath)
+            } else {
+                pushNotice("导出没有写出文件，请重试。", Notice.Tone.Warning)
+            }
         }
+    }
+
+    /**
+     * Register a finished export and say what the user can now do with it.
+     *
+     * One place for both writers, so the sentence and the state cannot disagree
+     * about whether an export happened. The tone is Info on purpose: the export
+     * succeeded, and what follows is an action, not a warning.
+     */
+    private fun publishExport(file: File) {
+        _state.value = _state.value.copy(
+            exported = ExportedSession(
+                name = file.name,
+                mimeType = SessionExportNaming.mimeTypeFor(file.name),
+                path = file.absolutePath,
+            ),
+        )
+        pushNotice("会话已导出，可以保存到 Download 或分享出去。", Notice.Tone.Info)
+    }
+
+    /** The user is done with the export row. */
+    fun dismissExport() {
+        _state.value = _state.value.copy(exported = null)
     }
 
     /**
@@ -2596,10 +2883,19 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
 
             val target = File(defaultWorkspace(), fileName)
             target.parentFile?.mkdirs()
-            withContext(Dispatchers.IO) { target.writeText(body.toString()) }
+            // A failed write used to surface as the raw exception sentence, which
+            // carries the path it failed on. The consequence is what the user needs,
+            // and the path is the one thing this app never prints.
+            val written = withContext(Dispatchers.IO) {
+                runCatching { target.writeText(body.toString()) }.isSuccess
+            }
+            if (!written) {
+                pushNotice("导出没有写出文件，请重试。", Notice.Tone.Warning)
+                return@call
+            }
             // The file, not its path — see [exportSession] for why the app does not
             // print paths into its own private storage.
-            pushNotice("会话已导出：$fileName", Notice.Tone.Info)
+            publishExport(target)
         }
     }
 
@@ -2671,6 +2967,12 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         refreshState()
         refreshCommands()
         refreshSessions()
+        // A different session's export is no longer the thing on screen: the row
+        // would offer to save a file that belongs to the conversation the user just
+        // left. The file itself stays on disk — this only drops the handle.
+        if (_state.value.exported != null) {
+            _state.value = _state.value.copy(exported = null)
+        }
     }
 
     /** Ask `PiRoot` to change destination or open the tree overlay. */
@@ -2856,9 +3158,6 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
 
         /** A 1 MiB source file is not an extension a phone should be parsing. */
         const val MAX_EXTENSION_SOURCE_BYTES = 1L shl 20
-
-        /** The one extension pi's exporter treats as JSONL (`interactive-mode.ts:6064`). */
-        const val JSONL_SUFFIX = ".jsonl"
 
         /** `CURRENT_SESSION_VERSION` (`core/session-manager.ts:30`). */
         const val CURRENT_SESSION_VERSION = 3

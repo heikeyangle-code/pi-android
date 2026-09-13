@@ -398,9 +398,16 @@ private fun PiCodeSurface(code: String, language: String?, style: TextStyle) {
  * The spans are computed once per (code, language, highlighter) and the colours
  * applied separately, so switching theme repaints without re-running a
  * highlighter that may be expensive.
+ *
+ * `internal` rather than private because pi highlights *file* bodies with the same
+ * backend, not only fences: `read` and `write` resolve a language from the path
+ * (`core/tools/renderers/read.ts:126-127`, `write.ts:111-114`), and the app's
+ * `ReadBlock`/`WriteBlock` ask for exactly that text. Those callers pass a settled body
+ * (a `read` result arrives whole) and a language from `PiCodeLanguage.forPath`, so they
+ * inherit both of this function's obligations rather than duplicating them.
  */
 @Composable
-private fun rememberPiHighlightedCode(code: String, language: String?): AnnotatedString {
+internal fun rememberPiHighlightedCode(code: String, language: String?): AnnotatedString {
     val palette = PiTheme.palette
     val highlighter = LocalPiCodeHighlighter.current
     // A one-element array rather than state on purpose: this is a marker for the

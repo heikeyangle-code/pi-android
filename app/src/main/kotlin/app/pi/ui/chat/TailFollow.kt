@@ -366,16 +366,16 @@ internal data class TailPin(val index: Int, val offsetPx: Int)
 /** One observation of the list. See [TailFollow.onSnapshot]. */
 internal data class TailSnapshot(
     /**
-     * Rows in the *whole* transcript (`ChatScreen`'s `visibleItems.size`), not the
-     * rendered window. Drives [TailFollow.unseenRows] and the rebuilt-transcript
+     * Rows in the *whole* transcript (`ChatScreen`'s `state.transcript.size`), not
+     * the rendered window. Drives [TailFollow.unseenRows] and the rebuilt-transcript
      * rule.
      */
     val transcriptRows: Int,
     val viewport: TailViewport,
     /**
-     * A caller-owned counter with no meaning to the machine: bumping it makes the
-     * `snapshotFlow` that feeds this machine re-emit (and therefore the machine
-     * re-decide) even when nothing about the list changed. `ChatScreen` bumps it
+     * A caller-owned counter with no meaning to the machine: it is part of the key
+     * of the effect that feeds this machine, so bumping it makes the machine
+     * re-decide even when nothing about the transcript changed. `ChatScreen` bumps it
      * when the "back to latest" affordance is tapped or a message is sent, which is
      * the only way a pin can be issued between two tokens.
      */

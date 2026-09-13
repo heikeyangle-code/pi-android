@@ -329,11 +329,21 @@ run_harness agent-tool-paths \
 # returns such a line in full before any budget can be consulted. The harness drives
 # the scanner directly (over-long line dropped, budget bounded, terminator handling)
 # and through `list()`.
+#
+# `SessionImport.kt` / `SessionExportNaming.kt` joined it for the same reason one
+# layer up: `/import` and `/export` both hinge on **pi's own rules** — which first
+# line makes a file a session (`session-manager.ts:551-556`), how an imported copy is
+# named when the name is taken (`agent-session-runtime.ts:371-379`), and which
+# argument suffix picks which writer (`interactive-mode.ts:6062-6066`) — and none of
+# that can be executed while it lives in `PiSessionViewModel`, which imports Android
+# and Compose. Both files are Android-free (java.io/kotlinx.serialization only).
 run_harness sessions \
   app.pi.session.PiSessionStoreCheckKt \
   "$ROOT/app/src/test/kotlin/app/pi/session/PiSessionStoreCheck.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/session/PiSessionStore.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/session/SessionFileScan.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/session/SessionImport.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/session/SessionExportNaming.kt" \
   "$ROOT/rpc/src/main/kotlin/app/pi/rpc/PiJson.kt" \
   "$ROOT/rpc/src/main/kotlin/app/pi/rpc/internal/Json.kt"
 
@@ -362,6 +372,16 @@ run_harness tail-follow \
   app.pi.ui.chat.TailFollowCheckKt \
   "$ROOT/app/src/test/kotlin/app/pi/ui/chat/TailFollowCheck.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/ui/chat/TailFollow.kt"
+
+# app.pi.ui.chat: pi 的队列/编辑器合并规则。`restoreQueuedMessagesToEditor`
+# (`interactive-mode.ts:4387-4406`) 是 Stop（`{abort:true}`）和队列行「收回」共用的那一步：
+# 队列文本在前、输入框里已有的文本在后、空的一半丢掉（`:4397-4400`）。两条路径必须合并得
+# 一模一样，而 `ChatScreen.kt` 引入 Compose（本机编译不了），所以规则被抽成纯函数搬到
+# `QueueRestore.kt`。Android-free：只用 Kotlin stdlib。
+run_harness queue-restore \
+  app.pi.ui.chat.QueueRestoreCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/ui/chat/QueueRestoreCheck.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/ui/chat/QueueRestore.kt"
 
 # app.pi.packages: 设置 → 模型 的那张清单（`PiModelInventory.kt`）与外部改动检测的判据
 # （`PiFileStamps.kt`）。为什么它必须在这里：清单要回答"导入过的模型为什么不在列表里"，而
@@ -459,6 +479,25 @@ run_harness engine-exit-cause \
   app.pi.engine.EngineExitCauseCheckKt \
   "$ROOT/app/src/test/kotlin/app/pi/engine/EngineExitCauseCheck.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/engine/EngineExitCause.kt"
+
+# app.pi.ui.blocks: P2-1's per-tool result parser (`docs/capability-gap.md` §4.9).
+# Every rule in `ToolOutputParse.kt` is a claim about text pi wrote somewhere else — grep's
+# two row shapes (`core/tools/grep.ts:211-212`, empty answer `:256-259`, notice `:303`),
+# find's relativised paths (`find.ts:268-273`, `:261`, `:292`), ls's `"/"` directory suffix
+# (`ls.ts:121-129`, `:135`, `:155`) and read's three footers (`read.ts:56`, `:64`, `:66`,
+# `:73`) — and a wording change on pi's side makes the rule stop matching *silently*: a grep
+# result would render as one unrecognised blob and no build would say so. The second half of
+# the contract is that a newer engine's result must degrade to the generic card rather than
+# blank the transcript, so the harness also feeds every entry point hostile input (empty,
+# control characters, an unterminated bracket, megabytes of one line) and asserts that each
+# call still returns, that every list respects its cap, and that an unrecognised grep result
+# answers null. Android-free: kotlinx.serialization (for the args the protocol delivers) and
+# the Kotlin stdlib, plus `java.util.Locale` for pi's one-decimal duration. The eight block
+# files themselves import Compose and are therefore not compiled here — only the pure half.
+run_harness tool-output-parse \
+  app.pi.ui.blocks.ToolOutputParseCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/ui/blocks/ToolOutputParseCheck.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/ui/blocks/ToolOutputParse.kt"
 
 # --- 4. verdict ---------------------------------------------------------------
 # The counts are computed, not written down. They were hardcoded once ("2

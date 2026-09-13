@@ -858,9 +858,19 @@ class PiEngineSession(
     }
 
     /**
-     * pi's Escape: clear the queue, then abort — and the queue contents come
-     * back to the caller so the composer can restore them
-     * (docs/pi-android-ui-spec.md §7.2).
+     * Take every queued message back out of pi **without** touching the turn in
+     * flight: pi's `app.message.dequeue` (`alt+up`), wired at
+     * `modes/interactive/interactive-mode.ts:2899` and implemented by
+     * `restoreQueuedMessagesToEditor()` (`:4387-4406`) — which is
+     * `clearAllQueues()` + put the text back in the editor, and only aborts when the
+     * caller passes `{ abort: true }`.
+     *
+     * Everything queued comes back at once, matching pi: `clear_queue` takes no
+     * argument and its handler returns the whole `session.clearQueue()`
+     * (`rpc-types.ts:26`, `rpc-mode.ts:433-435`, `core/agent-session.ts:1608-1615`),
+     * and pi's pending-messages display is a read-only list under a single
+     * "edit all queued messages" hint — there is no per-message dequeue to
+     * reproduce.
      *
      * The queue text is read from the **`clear_queue` response**, not from
      * `get_state`. `clear_queue` answers with the arrays it just removed
@@ -871,12 +881,27 @@ class PiEngineSession(
      * produced two empty lists: pi emptied its queue and the text was never handed
      * back, so pressing Stop silently destroyed whatever the user had queued.
      */
-    suspend fun stopAndDrainQueue(): List<String> {
+    suspend fun drainQueue(): List<String> {
         val cleared = request(PiCommands.clearQueue(nextId()))
         val steering = queuedText(cleared, "steering")
         val followUp = queuedText(cleared, "followUp")
-        request(PiCommands.abort(nextId()))
         return steering + followUp
+    }
+
+    /**
+     * pi's Escape: [drainQueue], then abort — and the queue contents come back to
+     * the caller so the composer can restore them
+     * (docs/pi-android-ui-spec.md §7.2).
+     *
+     * The abort is unconditional and comes **after** the drain, exactly as
+     * `restoreQueuedMessagesToEditor({ abort: true })` orders it
+     * (`interactive-mode.ts:4391` then `:4404-4406`): a `clear_queue` that failed
+     * must not leave a turn running that the user asked to stop.
+     */
+    suspend fun stopAndDrainQueue(): List<String> {
+        val restored = drainQueue()
+        request(PiCommands.abort(nextId()))
+        return restored
     }
 
     private fun queuedText(response: PiEvent.Response, key: String): List<String> {

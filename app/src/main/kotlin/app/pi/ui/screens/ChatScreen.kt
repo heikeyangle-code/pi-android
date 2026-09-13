@@ -62,7 +62,6 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -73,6 +72,7 @@ import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -96,6 +96,7 @@ import app.pi.rpc.TranscriptItem
 import app.pi.rpc.PiImage
 import app.pi.rpc.UserMessage
 import app.pi.ui.Boot
+import app.pi.ui.ExportedSession
 import app.pi.ui.NavRequest
 import app.pi.ui.PiSessionViewModel
 import app.pi.ui.blocks.BlockRenderer
@@ -109,6 +110,7 @@ import app.pi.ui.chat.PiCommandAction
 import app.pi.ui.chat.PiFileMentions
 import app.pi.ui.chat.PiSlashCommand
 import app.pi.ui.chat.RenameSessionDialog
+import app.pi.ui.chat.SessionExportDelivery
 import app.pi.ui.chat.SessionStatsSheet
 import app.pi.ui.chat.SessionToolsSheet
 import app.pi.ui.chat.SlashPalette
@@ -116,6 +118,7 @@ import app.pi.ui.chat.TailFollow
 import app.pi.ui.chat.TailSnapshot
 import app.pi.ui.chat.TailViewport
 import app.pi.ui.chat.ThinkingPickerSheet
+import app.pi.ui.chat.mergeRestoredQueue
 import app.pi.ui.chat.routeComposerText
 import app.pi.ui.chat.thinkingLabelOf
 import app.pi.ui.components.PiEmptyState
@@ -445,59 +448,92 @@ private fun ChatBody(
     // left here is the reading of `LazyListState` and the one call that acts on the
     // decision.
     //
-    // Why it is no longer two `LaunchedEffect`s (F4 in `docs/rendering-review.md`,
-    // and the two defects `docs/streaming-review.md` §2.1/§2.2 record):
+    // What drives the follow, and why it is **data** and never layout.
     //
-    //  * `LaunchedEffect(atBottom) { if (!atBottom) following = false }` paused the
-    //    follow on one frame of a two-row approximation of "at the bottom". Content
-    //    growth and layout churn make that false without anybody scrolling, and the
-    //    old code — by design — never re-armed. The follow turned itself off and
-    //    stayed off: "流式时不会自动触底跟随".
-    //  * `LaunchedEffect(state.revision, ...)` was keyed on a counter that moves once
-    //    per streamed event (`PiSessionViewModel.syncTranscript` writes
-    //    `revision = pub.revision` on every publication), so the effect was cancelled
-    //    and restarted per token and its `scrollToItem` could be cancelled before it
-    //    ever ran. One long-lived effect that reacts to the *layout* instead cannot be
-    //    starved that way, and `requestScrollToItem` is not a suspending scroll at all.
+    // Spec §4.5 wants three things: follow the newest block by default, never steal the
+    // scroll once the user has moved the viewport, and re-arm from the 「回到最新」
+    // affordance. The rules themselves live in `ui/chat/TailFollow.kt` — Compose-free,
+    // pinned by `TailFollowCheck` on a bare JVM — and what is left here is reading
+    // `LazyListState` once per trigger and calling the one primitive that acts on the
+    // decision (`requestScrollToItem`).
     //
-    // `rememberSaveable(sessionKey, ...)`: the window's rules are about one opening of
-    // one session, and a rotation must not resurrect a paused follow as "keep
-    // following" (`LazyListState` restores its own position, so the next token would
-    // yank a reader who had scrolled up into history back to the bottom).
+    // **The trigger is the part that has to be right.** It used to be a long-lived
+    // `snapshotFlow { listState.layoutInfo … }`, chosen so the effect could not be
+    // starved per token the way `LaunchedEffect(state.revision, …)` with a suspending
+    // `scrollToItem` could (`docs/streaming-review.md` §2.1/§2.2). But an effect that
+    // *observes the layout* and then *requests a scroll* is an effect whose own output
+    // can write its input: `requestScrollToItem` ends in a measure pass, a measure pass
+    // writes `LazyListLayoutInfo`, and that write is what the observation was watching.
+    // Convergence then rests on "the geometry stops changing" — a claim about a
+    // measurement rather than about this code — and a remeasure loop on the frame
+    // thread is exactly the reported 「卡住不动 / 没有响应」.
+    //
+    // So the trigger is data. The keys below move on a publication (once per streamed
+    // event), on a row being added, on the user's own gestures, on a session change and
+    // on an inset change; **a scroll or a measure cannot move any of them.** The body
+    // may request a scroll, and a scroll cannot change a key, so this effect cannot
+    // re-enter itself. That is the termination argument, in one sentence.
+    //
+    // The user's hand is still observed, but narrowly: one `snapshotFlow` over
+    // `isScrollInProgress` *alone*. That input cannot be written by anything this code
+    // calls — `requestScrollToItem` starts no scroll session (`TailFollow`'s KDoc, from
+    // `LazyListState`'s own source) — so, unlike the old observation, this one cannot
+    // see its own effect. All it does on a rising edge is pause, a state the user can
+    // always undo with the affordance.
+    //
+    // `rememberSaveable(sessionKey, ...)`: the rules belong to one opening of one
+    // session, and a rotation must not resurrect a paused follow as "keep following"
+    // (`LazyListState` restores its own position, so the next token would yank a reader
+    // who had scrolled up into history back to the bottom).
     val tail = rememberSaveable(sessionKey, saver = TailFollowSaver) { TailFollow() }
-    // Mirrors of the machine's two outputs. They exist so the affordance below
-    // recomposes when they change and *only* then; writing the same value back to a
-    // `MutableState` is not an invalidation.
     var following by remember { mutableStateOf(tail.following) }
-    var unseenRows by remember { mutableIntStateOf(tail.unseenRows) }
-    // Handed to the machine, which ignores it: bumping it makes the `snapshotFlow`
-    // below re-emit so a pin can be issued between two layout passes. Without it a
-    // "back to newest" tap during a quiet moment would do nothing at all.
+    // The transcript's size when the follow was paused: the count on the affordance is
+    // then a subtraction from data already in hand, instead of a per-frame reading of
+    // the list (which is what the machine's own `unseenRows` used to be fed by). Saved
+    // across rotation, like the window, so the pause the user comes back to keeps its
+    // count.
+    var pausedRows by rememberSaveable(sessionKey) { mutableStateOf(0) }
+    // Bumped by the affordance and by a send: an explicit "go to the newest" must pin
+    // even when no other key would have moved.
     var tailPoke by remember { mutableLongStateOf(0L) }
-    // The *whole* transcript's row count, not the rendered window's: the unseen count
-    // must include rows the window has not materialised, and a shrinking count is what
-    // tells the machine the session was replaced. `rememberUpdatedState` because the
-    // effect below is started once and would otherwise capture the first composition's
-    // value forever.
+    // The *whole* transcript's row count, not the rendered window's: the count must
+    // include rows the window has not materialised. `rememberUpdatedState` because the
+    // gesture observer below is started once and would otherwise capture the first
+    // composition's value forever.
     val transcriptRows by rememberUpdatedState(state.transcript.size)
+    val unseenRows = if (following) 0 else (transcriptRows - pausedRows).coerceAtLeast(0)
 
     fun pauseTail() {
         tail.pause()
         following = false
-        unseenRows = 0
+        pausedRows = transcriptRows
     }
 
     fun reArmTail() {
         tail.reArm()
         following = true
-        unseenRows = 0
+        pausedRows = transcriptRows
         tailPoke++
     }
 
-    LaunchedEffect(listState) {
-        snapshotFlow {
-            val info = listState.layoutInfo
-            val last = info.visibleItemsInfo.lastOrNull()
+    LaunchedEffect(
+        state.revision,
+        state.streaming,
+        renderedItems.size,
+        following,
+        tailPoke,
+        sessionKey,
+        bottomInset,
+    ) {
+        if (!following) return@LaunchedEffect
+        // One frame, so the rows this publication added have been measured: reading
+        // `layoutInfo` before the layout pass would compute the pin from the previous
+        // frame's geometry. This is a *wait*, not an observation — nothing here is
+        // re-triggered by the measure that follows it.
+        withFrameNanos { }
+        val info = listState.layoutInfo
+        val last = info.visibleItemsInfo.lastOrNull()
+        val decision = tail.onSnapshot(
             TailSnapshot(
                 transcriptRows = transcriptRows,
                 poke = tailPoke,
@@ -512,22 +548,27 @@ private fun ChatBody(
                     isScrollInProgress = listState.isScrollInProgress,
                     atBottom = !listState.canScrollForward,
                 ),
-            )
-        }.collect { snapshot ->
-            val decision = tail.onSnapshot(snapshot)
-            if (following != decision.following) following = decision.following
-            if (unseenRows != decision.unseenRows) unseenRows = decision.unseenRows
-            val pin = decision.pin
-            // `requestScrollToItem` is the whole reason this is not a stutter: it
-            // applies the position at the next remeasure instead of animating, so N
-            // decisions in one frame cost one layout, a decision cannot be cancelled
-            // by the next token, and no animation is ever restarted. The
-            // `isScrollInProgress` re-read closes the gap between the snapshot and
-            // this line — the follow must never cancel the user's own drag (that is
-            // what `requestScrollToItem` does to a scroll in progress).
-            if (pin != null && !listState.isScrollInProgress) {
-                listState.requestScrollToItem(pin.index, pin.offsetPx)
-            }
+            ),
+        )
+        if (following != decision.following) following = decision.following
+        val pin = decision.pin
+        // `requestScrollToItem` is the whole reason this is not a stutter: it applies
+        // the position at the next remeasure instead of animating, so it starts no
+        // scroll session, is never cancelled by the next token and can never be
+        // mistaken for the user's hand. The `isScrollInProgress` re-read closes the gap
+        // between the snapshot and this line — the follow must never cancel a drag.
+        if (pin != null && !listState.isScrollInProgress) {
+            listState.requestScrollToItem(pin.index, pin.offsetPx)
+        }
+    }
+
+    // The user's hand: the rising edge of a scroll session. Started once; `collect`
+    // sees the current value first, and every later `true` is a drag or a fling —
+    // this code starts no scroll session (`requestScrollToItem` is not one, and the
+    // two jumps below use it for exactly that reason), so a `true` here is the user.
+    LaunchedEffect(listState) {
+        snapshotFlow { listState.isScrollInProgress }.collect { scrolling ->
+            if (scrolling) pauseTail()
         }
     }
     // Spec §4.5: "向上滚动时分批加载更早的 entry". Reaching the top grows the window by
@@ -608,6 +649,21 @@ private fun ChatBody(
     // below this line decides anything about it, except the two jumps and the FAB
     // that *pause* and *re-arm* it explicitly.
 
+    // `/import <path.jsonl>` (`interactive-mode.ts:6107-6119`). pi's TUI asks for a
+    // path in its editor; a phone has no path to type, so the palette row opens the
+    // document picker instead, and the ViewModel copies the picked file into pi's
+    // session directory and switches to it. Unconditional, as Compose requires of
+    // `rememberLauncherForActivityResult`, and declared before `pick` uses it.
+    val importPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        // A null uri is the user backing out of the picker, not a failure.
+        if (uri != null) session.importSession(uri)
+    }
+
+    // Where the export row's two delivery calls run. Both touch the filesystem
+    // (read the artifact; MediaStore/binder for the sink), so neither belongs on the
+    // frame thread; the scope only decides *that* they run, not which thread.
+    val exportScope = rememberCoroutineScope()
+
     // A command the palette offers: pi's own dispatch rule (`agent-session.ts`
     // `prompt` → extension command → skill → template) for anything pi owns, and
     // the app's native implementation for pi's built-ins, which pi's TUI also
@@ -645,6 +701,10 @@ private fun ChatBody(
             PiCommandAction.NewSession -> session.newSession()
             PiCommandAction.Compact -> session.compact(args.takeIf { it.isNotBlank() })
             PiCommandAction.OpenSessions -> session.requestNav(NavRequest.Sessions)
+            // `/import`: pi takes a path argument, a phone takes a picked document.
+            // Any argument is ignored — there is no path to type — and the picker's
+            // cancel is the "cancelled" answer rather than an error.
+            PiCommandAction.ImportSession -> importPicker.launch("*/*")
             // pi's `/scoped-models` opens the model-scope selector
             // (`interactive-mode.ts:2975-2978` → `showModelsSelector()`, `:5024`)
             // and clears the editor first (`:2976`). The app's row for what that
@@ -1020,7 +1080,44 @@ private fun ChatBody(
         }
 
         if (state.queueSteering > 0 || state.queueFollowUp > 0) {
-            QueueRow(steering = state.queueSteering, followUp = state.queueFollowUp)
+            QueueRow(
+                steering = state.queueSteering,
+                followUp = state.queueFollowUp,
+                // pi's `app.message.dequeue` (`alt+up`): the queue comes back to the
+                // editor and **the turn keeps running** (`interactive-mode.ts:4157-4164`
+                // → `:4387-4406` with no `abort`). Stop is the other half — it drains
+                // and aborts — and stays on the send button.
+                onRestore = {
+                    session.restoreQueue { restored -> draft = mergeRestoredQueue(restored, draft) }
+                },
+            )
+        }
+
+        // A finished export is a file the user cannot otherwise open: it lives in
+        // this app's private workspace. The row is the delivery, and it is the
+        // reason `exportSession` publishes `state.exported` at all.
+        val exported = state.exported
+        if (exported != null) {
+            ExportDeliveryRow(
+                exported = exported,
+                onSave = {
+                    exportScope.launch {
+                        val result = withContext(Dispatchers.IO) {
+                            SessionExportDelivery.saveToDownloads(context, exported)
+                        }
+                        session.notifyUser(result.sentence, warning = result.warning)
+                    }
+                },
+                onShare = {
+                    exportScope.launch {
+                        val result = withContext(Dispatchers.IO) {
+                            SessionExportDelivery.share(context, exported)
+                        }
+                        session.notifyUser(result.sentence, warning = result.warning)
+                    }
+                },
+                onDismiss = { session.dismissExport() },
+            )
         }
 
         ExtensionWidgetStack(
@@ -1301,24 +1398,12 @@ private fun paletteQueryOf(draft: String): String? {
 }
 
 /**
- * pi's cancel semantics, which Stop has to reproduce exactly
- * (`restoreQueuedMessagesToEditor`, `interactive-mode.ts:4387-4406`):
- *
- * ```
- * const combinedText = [queuedText, currentText].filter((t) => t.trim()).join("\n\n");
- * ```
- *
- * Queued messages come first, the text already in the editor follows, and blank
- * halves are dropped — so pressing Stop twice does not accumulate blank lines and
- * does not lose the draft.
- */
-private fun mergeRestoredQueue(restored: List<String>, current: String): String =
-    listOf(restored.filter { it.isNotBlank() }.joinToString("\n\n"), current)
-        .filter { it.isNotBlank() }
-        .joinToString("\n\n")
-
-/**
  * The text a block contributes to transcript search.
+ *
+ * (`mergeRestoredQueue` — pi's queue/editor merge rule, shared by Stop and the
+ * queue row's dequeue — lives in `ui/chat/QueueRestore.kt`: both actions must merge
+ * identically, and a pure function is the only form
+ * `tools/run-app-pure-checks.sh` can execute, because this file imports Compose.)
  *
  * Every rendered block kind is covered, because a search that silently skips a
  * kind would report "no matches" for text the user can see. Kinds with no text of
@@ -1454,8 +1539,19 @@ private fun ModelChip(label: String?, onClick: () -> Unit) {
     }
 }
 
+/**
+ * What is waiting behind the running turn, plus the one action pi offers on it.
+ *
+ * pi draws the same thing above its editor (`updatePendingMessagesDisplay`,
+ * `interactive-mode.ts:4368-4385`): one line per queued message and a single hint —
+ * "↳ <key> to edit all queued messages" — because `app.message.dequeue` restores
+ * **all** of them (`:4387-4406`) and `clear_queue` has no per-message form
+ * (`rpc-types.ts:26`). This row keeps the app's existing count chips and adds that
+ * one action; it deliberately does not pretend each message can be taken back
+ * alone, because nothing on the wire can do that.
+ */
 @Composable
-private fun QueueRow(steering: Int, followUp: Int) {
+private fun QueueRow(steering: Int, followUp: Int, onRestore: () -> Unit) {
     Row(
         Modifier.fillMaxWidth().padding(horizontal = PiSpacing.screen, vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -1463,6 +1559,17 @@ private fun QueueRow(steering: Int, followUp: Int) {
         if (steering > 0) QueueChip("穿插 $steering")
         if (steering > 0 && followUp > 0) Spacer(Modifier.width(8.dp))
         if (followUp > 0) QueueChip("后续 $followUp")
+        Spacer(Modifier.weight(1f))
+        // The consequence, not the mechanism: the text goes back into the input box
+        // and the turn that is running is not touched.
+        Text(
+            "收回并编辑",
+            modifier = Modifier
+                .clickable(onClick = onRestore)
+                .padding(horizontal = 6.dp, vertical = 3.dp),
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.primary,
+        )
     }
 }
 
@@ -1476,6 +1583,73 @@ private fun QueueChip(text: String) {
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
+}
+
+/**
+ * The delivery row for a finished `/export`.
+ *
+ * pi's export lands in the user's own cwd (`core/export-html/index.ts:274-281`), so
+ * on a desktop the file is simply there. This app's export lands in its private
+ * workspace, where no file manager can reach it — so "where is it and how do I get
+ * it out" is the only question the row has to answer. It shows the file name (what
+ * the user will look for) and the two sinks the app already owns for its own
+ * diagnostic report ([SessionExportDelivery]). No location is shown, because the
+ * only location the app could print is one the user cannot open.
+ */
+@Composable
+private fun ExportDeliveryRow(
+    exported: ExportedSession,
+    onSave: () -> Unit,
+    onShare: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = PiSpacing.screen, vertical = 4.dp),
+        shape = PiShapes.card,
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+    ) {
+        Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+            Text(
+                "会话已导出",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+            Text(
+                exported.name,
+                style = PiTheme.text.monoSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Spacer(Modifier.height(6.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                DeliveryAction("保存到 Download", onSave)
+                Spacer(Modifier.width(14.dp))
+                DeliveryAction("分享", onShare)
+                Spacer(Modifier.weight(1f))
+                Text(
+                    "关闭",
+                    modifier = Modifier
+                        .clickable(onClick = onDismiss)
+                        .padding(horizontal = 6.dp, vertical = 3.dp),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun DeliveryAction(label: String, onClick: () -> Unit) {
+    Text(
+        label,
+        modifier = Modifier
+            .clickable(onClick = onClick)
+            .padding(vertical = 3.dp),
+        style = MaterialTheme.typography.labelLarge,
+        color = MaterialTheme.colorScheme.primary,
+    )
 }
 
 @Composable

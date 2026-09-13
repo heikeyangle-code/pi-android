@@ -409,6 +409,50 @@ fun main() {
         )
         check("G10 the same unsatisfiable pin is not re-issued", remeasured.pin, null)
 
+        // Convergence, made executable. A pin is a request for a position, so the
+        // question "does the follow ever stop asking?" is a question about the
+        // geometry that applying the pin produces. The taller-than-viewport case is
+        // the one that matters (a long streaming answer), and `pinToTail`'s third
+        // branch is pure arithmetic on it:
+        //   hidden = lastVisibleOffsetPx + lastVisibleSizePx - viewportEndOffsetPx
+        // With the tail row's top at the viewport top (offset 0, size 2000, viewport
+        // end 1000) the follow asks for 1000 px more; at the position it asked for,
+        // the row's top is 1000 px above the viewport top and `hidden` is exactly 0,
+        // so the next observation asks for nothing. If either of these two checks
+        // ever fails, the "it converges" argument is wrong and the follow really can
+        // drive itself frame after frame - which is the signal worth having.
+        val tall = TailFollow()
+        val tallAsked = tall.onSnapshot(
+            TailSnapshot(
+                6,
+                viewport(
+                    6,
+                    atBottom = false,
+                    firstVisibleIndex = 5,
+                    lastVisibleOffsetPx = 0,
+                    lastVisibleIndex = 5,
+                    lastVisibleSizePx = 2000,
+                    viewportEndOffsetPx = 1000,
+                ),
+            ),
+        )
+        check("G14 a tall tail row pins by the pixels below the fold", tallAsked.pin, TailPin(5, 1000))
+        val tallSettled = tall.onSnapshot(
+            TailSnapshot(
+                6,
+                viewport(
+                    6,
+                    atBottom = true,
+                    firstVisibleIndex = 5,
+                    lastVisibleOffsetPx = -1000,
+                    lastVisibleIndex = 5,
+                    lastVisibleSizePx = 2000,
+                    viewportEndOffsetPx = 1000,
+                ),
+            ),
+        )
+        check("G15 the position that pin asked for asks for nothing", tallSettled.pin, null)
+
         // And the guard must not survive an explicit re-arm: the affordance means
         // "go to the newest now", so the remembered pin cannot suppress it.
         val reArmed = TailFollow()

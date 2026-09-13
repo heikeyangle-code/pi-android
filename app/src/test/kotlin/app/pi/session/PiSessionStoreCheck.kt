@@ -32,6 +32,16 @@ package app.pi.session
 //  5. **The name rules**: the latest `session_info` wins, and an empty one clears it
 //     (`:714-716`).
 //  6. **Deletion is contained**: only a regular `.jsonl` inside the session root.
+//  7. **The scan is bounded** (`SessionFileScan`): the 1 MiB budget is spent by a
+//     scanner that can drop an over-long line instead of reading it, because a
+//     session file's lines are messages (one of which can be a multi-megabyte tool
+//     result or an inline image).
+//  8. **`/import` and `/export` follow pi's own rules** (`SessionImport.kt`,
+//     `SessionExportNaming.kt`): which first line makes a file a session
+//     (`session-manager.ts:551-556`), what an imported copy is named when the name is
+//     taken (`agent-session-runtime.ts:371-379`), which argument suffix picks which
+//     export writer (`interactive-mode.ts:6062-6066`), and that the user-visible
+//     failure sentences name no internal path.
 
 var failures = 0
 
@@ -356,6 +366,152 @@ fun main() {
             "a truncated scan falls back to the file mtime",
             huge?.lastActivityAt,
             hugeFile.lastModified(),
+        )
+
+        // 9. `/import`'s three pure rules (`SessionImport.kt`).
+        //
+        // pi's import path copies the file into the session directory and hands it to
+        // `switch_session`, whose handler opens it with `SessionManager.open`
+        // (`rpc-mode.ts:605-611` → `agent-session-runtime.ts:197-224`). Whether the
+        // file *is* a session is therefore pi's rule, not the app's:
+        // `loadEntriesFromFile` keeps every parseable line in order and throws the
+        // whole list away when the first one is not `{type:"session", id:string}`
+        // (`session-manager.ts:551-556`), after which `_setSessionFile` rejects a
+        // non-empty file with no entries (`:905-908`). These checks pin the app's
+        // transcription of exactly that, because a wrong "yes" here imports a file
+        // pi will refuse to open, and a wrong "no" refuses a file pi accepts.
+
+        // The header itself, with the two fields the app reads off it.
+        val found = SessionImport.verdictOf(header("import-me", "2024-06-01T00:00:00.000Z", CWD))
+        check("a session header is recognised", found is SessionImport.Verdict.Found, true)
+        val foundHeader = (found as? SessionImport.Verdict.Found)?.header
+        check("its id is read", foundHeader?.id, "import-me")
+        check("its cwd is read", foundHeader?.cwd, CWD)
+
+        // Blank and malformed leading lines are skipped, not treated as content
+        // (`parseSessionEntryLine`, `:499-508`), so a file with a blank first line and
+        // leading junk is still a session — and its cwd comes from the header.
+        check(
+            "blank and malformed leading lines are skipped",
+            SessionImport.verdictOf("\n  \nnot json\n" + header("after-junk", "2024-06-01T00:00:00.000Z", OTHER_CWD)),
+            SessionImport.Verdict.Found(SessionImport.Header("after-junk", OTHER_CWD)),
+        )
+
+        // The first parseable line decides. A `message` entry first means pi drops
+        // the file (`:551-556`) even when a valid header follows it, so the app must
+        // say "not a session" rather than let pi fail after the copy.
+        check(
+            "a non-header first entry is not a session",
+            SessionImport.verdictOf(
+                message("m1", null, "2024-06-01T00:00:01.000Z", "user", "hi", 1L) + "\n" +
+                    header("header-after-message", "2024-06-01T00:00:00.000Z", CWD),
+            ),
+            SessionImport.Verdict.NotASession,
+        )
+
+        // A header with no string id is not a header (`:551-556` requires the type
+        // *and* a string id).
+        check(
+            "a session entry without a string id is not a session",
+            SessionImport.verdictOf("{\"type\":\"session\",\"version\":3}"),
+            SessionImport.Verdict.NotASession,
+        )
+
+        // Nothing parseable in the head is *not* a rejection: pi reads the whole file,
+        // and an empty file is even valid (it gets a fresh header, `:904-916`).
+        check(
+            "an empty file is undetermined, not rejected",
+            SessionImport.verdictOf(""),
+            SessionImport.Verdict.Indeterminate,
+        )
+        check(
+            "a head with only blank lines is undetermined",
+            SessionImport.verdictOf("\n\n   \n"),
+            SessionImport.Verdict.Indeterminate,
+        )
+
+        // Import naming: pi takes the basename, then `name-1.ext`, `name-2.ext` …
+        // before the extension (`agent-session-runtime.ts:371-379`).
+        val taken = mutableSetOf("2024-06-01T00-00-00-000Z_x.jsonl")
+        check(
+            "a free name is used as is",
+            SessionImport.destinationName("other.jsonl") { it in taken },
+            "other.jsonl",
+        )
+        check(
+            "a taken name gets -1 before the extension",
+            SessionImport.destinationName("2024-06-01T00-00-00-000Z_x.jsonl") { it in taken },
+            "2024-06-01T00-00-00-000Z_x-1.jsonl",
+        )
+        taken += "2024-06-01T00-00-00-000Z_x-1.jsonl"
+        check(
+            "a second collision gets -2",
+            SessionImport.destinationName("2024-06-01T00-00-00-000Z_x.jsonl") { it in taken },
+            "2024-06-01T00-00-00-000Z_x-2.jsonl",
+        )
+        check(
+            "a leading dot is part of the name, not an extension",
+            SessionImport.destinationName(".session") { it == ".session" },
+            ".session-1",
+        )
+        // Every candidate taken is an answer, not an infinite loop — and the caller
+        // must refuse rather than overwrite a conversation (pi's `COPYFILE_EXCL`).
+        check(
+            "exhausting the suffix search returns null",
+            SessionImport.destinationName("x.jsonl") { true },
+            null,
+        )
+        check("a blank source name is refused", SessionImport.destinationName("   ") { false }, null)
+
+        // 10. `/export`'s naming and typing rules (`SessionExportNaming.kt`).
+        //
+        // pi picks the writer from the argument's extension
+        // (`interactive-mode.ts:6062-6066`): `.jsonl` → JSONL, anything else (including
+        // nothing) → HTML. The default HTML name is
+        // `<APP_NAME>-session-<会话文件 basename>.html` (`export-html/index.ts:274-281`).
+        check("a .jsonl argument goes to the JSONL writer", SessionExportNaming.isJsonl("a.jsonl"), true)
+        check("the suffix is matched case-insensitively", SessionExportNaming.isJsonl("A.JSONL"), true)
+        check("no argument goes to the HTML writer", SessionExportNaming.isJsonl(null), false)
+        check("a .html argument goes to the HTML writer", SessionExportNaming.isJsonl("a.html"), false)
+
+        check(
+            "the default HTML name borrows the session file's basename",
+            SessionExportNaming.defaultHtmlName("/root/.pi/agent/sessions/2024-06-01T00-00-00-000Z_x.jsonl", 1L),
+            "pi-session-2024-06-01T00-00-00-000Z_x.html",
+        )
+        check(
+            "a session with no file yet gets a timestamp instead",
+            SessionExportNaming.defaultHtmlName(null, 42L),
+            "pi-session-session-42.html",
+        )
+        check(
+            "the HTML export is typed as HTML",
+            SessionExportNaming.mimeTypeFor("pi-session-x.html"),
+            "text/html",
+        )
+        check(
+            "the JSONL export is plain text (no registered JSONL type)",
+            SessionExportNaming.mimeTypeFor("session-x.jsonl"),
+            "text/plain",
+        )
+
+        // The failure sentences are user-visible copy, and this repository's rule is
+        // that they name no internal path. pi's raw text for two of the three shapes
+        // does (`session-cwd.ts:35-40`, `session-manager.ts:908`), which is why
+        // `failureSentence` classifies on pi's wording and writes its own sentence.
+        val cwdFailure = SessionImport.failureSentence(
+            "Stored session working directory does not exist: /root/somewhere",
+        )
+        val invalidFailure = SessionImport.failureSentence(
+            "Session file is not a valid pi session: /root/.pi/agent/sessions/x.jsonl",
+        )
+        check("the cwd failure mentions no path", cwdFailure.contains("/root"), false)
+        check("the invalid-file failure mentions no path", invalidFailure.contains("/root"), false)
+        check("the invalid-file failure says what to do", invalidFailure.contains(".jsonl"), true)
+        check(
+            "an unknown failure still names no path and still gives a next step",
+            SessionImport.failureSentence("boom: /data/user/0/app.pi/files/x").contains("/data"),
+            false,
         )
     }
 

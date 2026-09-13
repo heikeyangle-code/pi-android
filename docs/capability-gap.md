@@ -22,12 +22,15 @@
 
 1. **订阅式（OAuth）登录 / 登出** —— pi 里有（`interactive-mode.ts:5485`），RPC 没有命令，
    App 只有 API Key 表单。终端不可用之后，这条路彻底不通。
-2. **把排队消息逐条收回输入框、而不打断当前回合** —— pi 有（`interactive-mode.ts:4157-4164`），
-   App 只有 Stop（一次清空队列 + abort）。**可做，约 30 行，本轮给了方案没动代码。**
+2. **把排队消息收回输入框、而不打断当前回合** —— pi 有（`interactive-mode.ts:4157-4164`），
+   App 只有 Stop（一次清空队列 + abort）。**已做**：注意 pi 是**一次收回全部**，不是逐条
+   （`restoreQueuedMessagesToEditor` 调 `clearAllQueues()` 并只返回条数，`:4387-4406`；
+   那面「排队消息列表」是只读的，`:4368-4385`）。判据更正与改动见 `docs/capability-fill.md` §0/§2。
 3. **`/import`：从 JSONL 恢复会话** —— pi 有（`interactive-mode.ts:6107-6119`），
-   App 没有；`switch_session` 收的就是文件路径，**可做**。
+   App 没有；`switch_session` 收的就是文件路径，**已做**（`docs/capability-fill.md` §3）。
 4. **导出物能被用户拿出来**（打开 / 存 Download / 分享）—— 导出本身两边都有，
-   但 pi 写进用户自己的 cwd，App 写进私有目录只报文件名。**可做，且 App 已有同类通道。**
+   但 pi 写进用户自己的 cwd，App 写进私有目录只报文件名。**已做**：复用诊断报告那条通道
+   （`docs/capability-fill.md` §1）。
 5. **工具卡按工具分派渲染**（`read` 的行号与高亮、`grep`/`find`/`ls` 的列表）—— pi 有
    (`core/tools/renderers/*`)，App 是通用卡（`edit`/`write` 的 diff 除外）。**可做，收益中等。**
 6. **`/share`（Radius / 私密 gist）** —— pi 有（`session-share.ts:43-53`），
@@ -69,14 +72,14 @@ pi 没有 cron、没有调度器、没有后台任务、bash 工具也没有后�
 | # | pi 的能力 | pi `file:line` | App 现状 | App `file:line` | 四态 | 建议 |
 |---|---|---|---|---|---|---|
 | P0-1 | **订阅式（OAuth）登录 / 登出**：`/login`、`/logout` 走浏览器授权，能拿到 Claude Pro/Max、Codex、Copilot、OpenRouter、Kimi、xAI、Radius | `modes/interactive/interactive-mode.ts:3052-3062`（分发）、`:5485`（`handleLoginCommand`）、`:5059`（logout 选择器）；流程在 `cli/auth-command.ts` | 只有 **API Key 表单**；OAuth 只有一行「说明」行，点「执行」把用户送到终端 | `app/src/main/kotlin/app/pi/ui/settings/PiCredentialScreen.kt:52-58`（只写 API Key）；`.../PiSettingsRegistry.kt:369-382`（OAuth 行）；`.../PiRoot.kt:196-214`（通知 + `NavRequest.Workbench`） | **`pi 有但我们够不着（终端不可用）`**：`rpc-types.ts:20-74` 的 33 个命令里没有任何登录命令，pi 的 OAuth 实现整个长在 TUI 里（`BorderedLoader`/`OAuthSelector`） | **改文案**（本轮已做，§4.4）：说清「订阅登录本应用目前没有入口」，不再指终端。真做要在 App 内重写 PKCE/设备码流程 + 一个浏览器回调，属新功能，不在本轮 |
-| P0-2 | **把排队消息逐条收回输入框，而不打断当前回合**（`app.message.dequeue` 绑定） | `modes/interactive/interactive-mode.ts:4157-4164`（`handleDequeue` → `restoreQueuedMessagesToEditor()`）；`:4387-4406`（`abort?: boolean` 参数）；`:2899`（键位绑定） | **只有 Stop**：`clear_queue` + `abort` 一起做，回合被打断 | `app/src/main/kotlin/app/pi/engine/PiEngineSession.kt:874-880`（`stopAndDrainQueue`）；`.../PiSessionViewModel.kt:2149-2160`（`stop`）；`.../ui/screens/ChatScreen.kt:1198-1200`（Stop 按钮）、`:1459-1480`（队列 chip，**不可点**） | **`pi 有但 App 没有（可做）`**：`clear_queue` 只清队列不打断（`core/agent-session.ts:1608-1616`），App 已经会读它的响应；缺的只是「不清了就 abort」这一条路径 | **做**（本轮只写方案，见 §4.2）：队列 chip 可点 → `clear_queue` → 文本回到输入框，`abort` 不发 |
+| P0-2 | **把排队消息收回输入框（一次全部，pi 没有逐条），而不打断当前回合**（`app.message.dequeue` 绑定） | `modes/interactive/interactive-mode.ts:4157-4164`（`handleDequeue` → `restoreQueuedMessagesToEditor()`）；`:4387-4406`（`abort?: boolean` 参数）；`:2899`（键位绑定） | **只有 Stop**：`clear_queue` + `abort` 一起做，回合被打断 | `app/src/main/kotlin/app/pi/engine/PiEngineSession.kt:874-880`（`stopAndDrainQueue`）；`.../PiSessionViewModel.kt:2149-2160`（`stop`）；`.../ui/screens/ChatScreen.kt:1198-1200`（Stop 按钮）、`:1459-1480`（队列 chip，**不可点**） | **`pi 有且 App 现在有`**（本轮已做） | **已做**（见 `docs/capability-fill.md` §2）：`drainQueue()` 只 `clear_queue`、不发 `abort`；队列行「收回并编辑」→ 文本回到输入框。Stop 保持整组清空 + 打断 |
 | P0-3 | **`/reload`**：重载扩展、技能、模板、主题与上下文文件 | `modes/interactive/interactive-mode.ts:5970`（`handleReloadCommand`）；状态句在 `:6042-6048` | 命令面板把 `/reload` 标成「仅终端」；AppBar 那个刷新按钮也只说「去终端」 | `.../ui/chat/PiSlashCommands.kt:170`（`TerminalOnly`）；`.../ui/screens/ChatScreen.kt:698`（AppBar 按钮）、`:1393-1401`（`reloadCommand()`） | **`pi 有且 App 有（但没写清）`**：App 侧等价做法是**重启引擎**——它重跑 `pi --mode rpc`，pi 会重读 `settings.json` 并重扫四个资源目录（`core/agent-session-runtime.ts:226-252` → `createRuntime`） | **改文案**（本轮已做，§4.3）：`/reload` 指向「设置 → 运行时与诊断 → 进程 → 重启引擎」。语义差别（pi 在原地重载、重启会断当前回合）要写进说明 |
 
 ### P1 — 明显缺一块
 
 | # | pi 的能力 | pi `file:line` | App 现状 | App `file:line` | 四态 | 建议 |
 |---|---|---|---|---|---|---|
-| P1-1 | **`/import`**：从 JSONL 文件导入并继续 | `modes/interactive/interactive-mode.ts:6107-6119`（`handleImportCommand`，含确认框） | 没有导入入口。会话页只有列表/打开/删除 | `.../ui/screens/SessionsScreen.kt`（全 389 行无导入）；`.../session/PiSessionStore.kt`（只读索引） | **`pi 有但 App 没有（可做）`**：`switch_session`（`rpc-types.ts:61`）收的就是**会话文件路径**，把用户选的文件写进 `<agentDir>/sessions/` 再 `switch_session` 即可，不需要新协议 | **做**（未做）：SAF 选文件 → 拷进会话目录 → `switch_session`。注意 pi 会校验 cwd/`version` 头（`session-manager.ts`），导入外部文件前要先按 pi 的规则核一遍 |
+| P1-1 | **`/import`**：从 JSONL 文件导入并继续 | `modes/interactive/interactive-mode.ts:6107-6119`（`handleImportCommand`，含确认框） | 没有导入入口。会话页只有列表/打开/删除 | `.../ui/screens/SessionsScreen.kt`（全 389 行无导入）；`.../session/PiSessionStore.kt`（只读索引） | **`pi 有且 App 现在有`**（本轮已做） | **已做**（`docs/capability-fill.md` §3）：选文件 → 按 pi 的规则核会话头 → 拷进会话目录 → `switch_session` |
 | P1-2 | **`/share`**：把会话传成 Radius artifact，或退化成私密 GitHub gist | `modes/interactive/interactive-mode.ts:3002-3005`；实现在 `modes/interactive/session-share.ts:43-53`（Radius → `gh` 兜底）、`:60-76`（`gh auth status`） | 没有分享会话的入口。全 App 只有**诊断报告**能走系统分享 | `.../ui/settings/DiagnosticsScreen.kt:145-149`（诊断分享）；会话侧无 | **`pi 有但我们够不着（终端不可用）`**：RPC 无 share 命令；pi 的实现依赖 TUI 的 `BorderedLoader` 与 Radius 凭证/`gh` CLI | **不做**：真做等于把 pi 的 TUI 内部实现（对外上传 + `gh` 依赖）搬进 App，并新开一条会把系统提示词与工具定义一起上传的通道（`session-share.ts:30-42`）。这是一条安全面，值得单独立项 |
 | P1-3 | **导出物要能被用户拿出来**（`/export` 写完会报出落点路径） | `modes/interactive/interactive-mode.ts:6060-6075`：`Session exported to: <path>`；pi 的落点默认是 **cwd**（`core/export-html/index.ts:274-281`） | 导出写进 App 私有工作区，成功提示**只说文件名**；没有「打开 / 保存到 Download / 分享」 | `.../PiSessionViewModel.kt:2530-2552`（HTML）、`:2483-2535`（JSONL）、`:2470-2477`（只报文件名的理由） | **`pi 有且 App 有（导出本身）`**；「把文件交出去」这一半是 **`pi 无对应物（App 的决定）`**——pi 也没有打开/分享导出物的动作，但它的落点是用户自己的 cwd | **做**（小）：导出成功后给一个「分享 / 存到 Download」动作，复用 `DiagnosticsExport` 已经在用的那条通道（`.../ui/settings/DiagnosticsReport.kt:298-337`）。终端不可用之后，这是用户唯一能真正拿到 HTML 的路 |
 | P1-4 | **图片全屏查看（缩放 / 保存 / 分享）** | pi 在终端里把图片画进单元格（`packages/tui/src/components/image.ts:97-104`；不支持图形时退化成 `[Image: mime WxH]`，`terminal-image.ts:683-696`），**没有查看器** | 图片网格能画（F16 已修），点击无反应 | `.../ui/blocks/ImageGridBlock.kt:36-46`（明说查看器不存在，F19 删掉了假点击目标）、`.../blocks/ToolCallBlock.kt:274-286`（工具结果图）、`.../blocks/ChatScreen.kt`（用户消息图） | **`pi 无对应物（App 的决定）`**：查看器是 `docs/pi-android-ui-spec.md` §7.4 自己许的，不是 pi 的能力 | **按用户原则：不做**（或把 spec 那句改成「只画网格」）。若做，是 App 自己的新面，不是补 pi 的缺口 |
@@ -85,7 +88,7 @@ pi 没有 cron、没有调度器、没有后台任务、bash 工具也没有后�
 
 | # | pi 的能力 | pi `file:line` | App 现状 | App `file:line` | 四态 | 建议 |
 |---|---|---|---|---|---|---|
-| P2-1 | **八个内建工具各有专用渲染**：`read` 带行号 + 语法高亮、`write`/`edit` 高亮、`grep`/`find`/`ls` 的成组列表、`bash` 的实时计时 | `core/tools/renderers/index.ts:34-44`（全部渲染器）；`renderers/read.ts:127`（`highlightCode`）；`renderers/write.ts:54`；`renderers/bash.ts:140` | 一张**通用卡**：工具名 + 参数摘要 + 原始输出。只有 `edit`/`write` 的 diff 有专用渲染 | `.../ui/blocks/ToolCallBlock.kt:36-190`（通用卡，`item.toolName`/`item.argsSummary`/`MonoText`）；`.../ui/blocks/BlockRenderer.kt:85`（`ToolDiff` → `DiffBlock`）；`rpc/.../Transcript.kt:1402-1430`（diff 从 `details` 解析） | **`pi 有但 App 没有（可做）`**：`tool_execution_*` 事件带 `toolName`/`args`/`details`，App 全都有（`rpc/.../Events.kt:478-500`） | **部分做**：`grep`/`find`/`ls` 的列表化收益最大（手机上最省滚动）。高亮要评估开销（`ToolCallBlock` 每 200ms 重组一次，`renderers` 的 token 也没数据通道） |
+| P2-1 | **八个内建工具各有专用渲染**：`read` 带行号 + 语法高亮、`write`/`edit` 与 pi 的渲染器结构对齐、`grep` 的按文件分组 + 命中计数、`find`/`ls` 的成组列表、`bash` 的运行中计时 + 退出码 | `core/tools/renderers/index.ts:34-44`（**分派表**）；`renderers/read.ts:126-146`、`:28-37`；`renderers/write.ts:96-143`；`renderers/edit.ts:83-114`；`renderers/grep.ts:17-68`；`renderers/find.ts:17-63`；`renderers/ls.ts:17-56`；`renderers/bash.ts:35-41`、`:117-121`、`:139-141` | **八个专用块**（`ReadBlock`/`WriteBlock`/`EditBlock`/`GrepBlock`/`FindBlock`/`LsBlock`/`ShellBlock` + 分派）；带图片的结果与其余工具（扩展的 `android_*` 等）仍走通用卡 | 新增 `.../ui/blocks/ToolOutputParse.kt`（纯解析）、`ToolBlockChrome.kt`、`ToolBodyText.kt`、`ReadBlock.kt`、`WriteBlock.kt`、`EditBlock.kt`、`GrepBlock.kt`、`PathListBlock.kt`、`ShellBlock.kt`；分派 `.../ui/blocks/BlockRenderer.kt:83-102`；通用卡 `.../ui/blocks/ToolCallBlock.kt`（结构不变）；高亮 `.../render/PiCodeHighlight.kt`（新增 `forPath`） | **`pi 有且 App 本轮有`**：`tool_execution_*` 带 `toolName`/`args`/`details`（`rpc/.../Events.kt:478-500`），八张卡的每一项都从这三处来 | **已做**（见 §4.9，**本机未编译**）。**三件做不到的**写在 §4.9.3：`edit` 的预览 diff（pi 渲染时读盘算，`renderers/edit.ts:184-193`）、`write` 的流式增量高亮、以及「行号」本身（pi 终端不画行号，App 从 `args.offset` 推导）。其余工具无 pi 内建渲染器（`withBuiltInRenderers` 回落到通用卡，`index.ts:51-63`），故保留通用卡 |
 | P2-2 | **模型这一刻到底有哪些工具**：`getAllTools()` / `getActiveTools()` / `getSystemPrompt()` | `core/extensions/types.ts:1400`、`:1403`、`:348`；绑定处 `core/agent-session.ts:2632-2634`、`:2674` | 设置里只有 `defaultTools` 这一格的**内建**清单；模型实际能用什么（含扩展注册的 30 个 `android_*`）界面上看不到 | `.../ui/settings/PiSettingsRegistry.kt:677-690`（`defaultTools` 行）；`.../assets/pi-extensions/pi-android-bridge/index.ts`（30 个工具名，App 侧无读者） | **`pi 有但我们够不着（RPC 无通道；只在扩展上下文里）`**：33 个命令没有工具枚举 | **可做但绕**：App 自己**拥有**那三个随包扩展的源码，可以扫出工具名；但用户自己装的扩展仍列不全，列一半的清单比没有更危险（`docs/pi-sourced-lists.md` 的两次学费就是这个形状）→ **建议不做** |
 | P2-3 | **会话树导航**（切到任意叶子）与**给条目打标签** `navigateTree` / `setLabel` | `core/extensions/types.ts:657-664`（`session_before_tree`/`session_tree`）；`core/agent-session.ts`（`navigateTree`） | 会话树**只读**，从某条消息只能**分叉出新会话**；标签只显示 pi 已解析的 | `.../ui/chat/SessionTreeScreen.kt`（只读）；`.../ui/chat/PiSlashCommands.kt:133-139`（`/tree` 的说明已改成「浏览会话树，从某条消息分叉」） | **`pi 有但我们够不着（RPC 无命令）`**：`rpc-types.ts:20-74` 里没有 `navigate_tree`、也没有写标签的命令 | **不做**：没有通道；分叉是能给的最近似动作，且已写明 |
 | P2-4 | **扩展的四件套对话框 + 五个 fire-and-forget + 自定义渲染** | `modes/rpc/rpc-types.ts:246-281`（9 个方法）；`rpc-mode.ts:163-311`（不可达项逐个 no-op） | 四件套、五件套都有界面；**自定义渲染类**（`custom()`、`setFooter`、`setHeader`、`setWorkingMessage`、`setWorkingIndicator`、`setHiddenThinkingLabel`、`setEditorComponent`、`addAutocompleteProvider`、`onTerminalInput`、`getEditorText`、主题三件套、`setToolsExpanded`）没有落点 | `.../ui/extension/ExtensionDialogs.kt:81-256`（四件套）；`.../ui/extension/ExtensionChrome.kt:47-126`（状态/部件）；`.../ui/chat/TuiOnlyScan.kt:22-33`（标记扫描） | **`pi 有但我们够不着（RPC 上下文里是 no-op）`**：`rpc-mode.ts:174`（`setWorkingMessage`）、`:189`（`setFooter`）、`:197`（`setHeader`）、`:229-231`（`custom` 直接 `undefined`）、`:255-258`（autocomplete）、`:269-276`（editor component）、`:287-296`（主题）、`:300-307`（tools expanded）。pi 不报任何信号 | **不做**：没有上线通道；`TuiOnlyScan` 的提示文案本轮改写（不再指终端，见 §4） |
@@ -123,14 +126,14 @@ pi 没有 cron、没有调度器、没有后台任务、bash 工具也没有后�
 | S-5 | 「仅终端可用的扩展」一节让用户去终端 | `ui/chat/ChatSheets.kt:403-425` | **已改**（§4.5） | 一段文案 |
 | S-6 | 引擎因扩展加载失败退出时，让用户**去终端的扩展目录**里排查 | `engine/EngineExitCause.kt:107-108` | **已改**（§4.6） | 一句话；该文件有 bare-JVM harness（`EngineExitCauseCheck.kt`，断言只看 `summary()` 且要求不出现路径），不动 `summary()` 的判据 |
 | S-7 | 扩展发来无编号对话框时，提示「改用终端模式」 | `ui/PiSessionViewModel.kt:1471-1477` | **已改**（§4.7） | 一句话 |
-| S-8 | 排队消息**只能整批收**（Stop），不能只收而不打断 | `PiEngineSession.kt:874-880`；`ChatScreen.kt:1023,1458-1480` | **未做**，方案在 §4.2 | 4 个文件约 30 行；见下方说明 |
+| S-8 | 排队消息**只能整批收**（Stop），不能只收而不打断 | `PiEngineSession.kt:874-880`；`ChatScreen.kt:1023,1458-1480` | **已做**（见 `docs/capability-fill.md` §2） | 3 个文件；`PiEngineApi` 那层转发**不需要**（`stopAndDrainQueue` 从不经它），加了会是死代码 |
 
-**S-8 为什么留到下一轮。** 它是本节唯一一条「要加功能」的小缺口（其余七条都是删／改文案）。
-改动面是 `PiEngineSession`（新 `drainQueue()`）→ `PiEngineApi`（一层转发）→ `PiSessionViewModel`
-（新 `restoreQueue`）→ `ChatScreen`（队列 chip 变可点）。这台机器上**编译不了 Compose**
-（`tools/typecheck.sh` 不编 `ui/**`，`run-app-pure-checks.sh` 只跑纯逻辑），四文件改动没有本地
-验证手段，而它是纯增量、不修也不会说假话（现在的 Stop 是真的能收回排队文本的）。所以按
-「改动小而能讲清」的规矩，本轮只给方案、不动代码，并把它记为**下一个该做的**。
+**S-8 原来是本节唯一一条「要加功能」的小缺口**（其余七条都是删／改文案），当时因为本机
+编译不了 Compose 而留到下一轮。**这一轮做了**：`PiEngineSession` 新增 `drainQueue()`，
+`PiSessionViewModel` 新增 `restoreQueue`，队列行多一个「收回并编辑」。
+`PiEngineApi` 那一层转发是原方案的误判——`stopAndDrainQueue` 从来就不经 API
+（`stop`/`restoreQueue` 直接调 `PiEngineSession`），加一层就是没人调的死代码，所以没加。
+判据更正（pi 是**一次收回全部**，不是逐条）与完整改动清单在 `docs/capability-fill.md`。
 
 ---
 
@@ -154,7 +157,7 @@ pi 没有 cron、没有调度器、没有后台任务、bash 工具也没有后�
 | `steer` | `:23` | 能：回合中发送即 steer | 同上 `:2023-2055`（`send` 里 `transcript.streaming` 那一支） | `pi 有且 App 有` |
 | `follow_up` | `:24` | 能：「后续」chip（仅在流式中出现） | `ChatScreen.kt:1138-1160`（`onFollowUp`） | `pi 有且 App 有` |
 | `abort` | `:25` | 能：发送键在流式中变 Stop | `ChatScreen.kt:1524-1528`；`PiSessionViewModel.kt:2149-2160` | `pi 有且 App 有` |
-| `clear_queue` | `:26` | **部分**：只能随 Stop 一起清（见 P0-2） | `PiEngineSession.kt:874-880` | `pi 有但 App 没有（可做）`——缺「只清不打断」 |
+| `clear_queue` | `:26` | 能：队列行「收回并编辑」只清不打断；Stop 是清 + 打断 | `PiEngineSession.drainQueue()` / `stopAndDrainQueue()` | `pi 有且 App 现在有`——缺的那半本轮补上（`docs/capability-fill.md` §2） |
 | `new_session` | `:27`（含 `parentSession`） | 能：三条入口 + 会话页「以此为父新建」 | `ChatScreen.kt:645,725`；`SessionsScreen.kt:205,233`；`PiSessionViewModel.kt:2379,2398` | `pi 有且 App 有` |
 | `get_state` | `:30` | 不面向用户（引擎就绪探针 + 收尾判断） | `PiEngineSession.kt:427`（就绪探针）、`:932-934`（收尾时用 `isStreaming`/`isCompacting`） | `pi 有且 App 有意不需要界面` |
 | `set_model` | `:33` | 能：模型选择器 | `ChatScreen.kt:1214-1224` | `pi 有且 App 有` |
@@ -255,7 +258,7 @@ pi 的**内置**命令表：`core/slash-commands.ts:19-43`，**23** 条。App �
 | `/tree` | `:3042` → `showTreeSelector :5205` | 会话树页 | 只读树 + 分叉（P2-3） | `pi 有且 App 有`（少「移动叶子」） |
 | `/scoped-models` | `:2975-2978` → `showModelsSelector :5024` | 跳到 `enabledModels` 行 | 设置 → 模型与推理 → 循环模型 | `pi 有且 App 有` |
 | `/export` | `handleExportCommand :6060` | 导出（HTML/JSONL 按扩展名） | — | `pi 有且 App 有`（文件拿不出来见 P1-3） |
-| **`/import`** | `handleImportCommand :6107` | **标「仅终端」** | **没有** | **`pi 有但 App 没有（可做）`**（P1-1） |
+| **`/import`** | `handleImportCommand :6107` | **本轮已做**：面板行可执行，会话页也有「导入」 | 选文件 → 拷进会话目录 → `switch_session` | **`pi 有且 App 现在有`**（P1-1，`docs/capability-fill.md` §3） |
 | **`/share`** | `:3002` → `session-share.ts:43` | **标「仅终端」** | **没有** | **`pi 有但我们够不着（终端不可用）`**（P1-2） |
 | `/copy` | `handleCopyCommand` | 复制最后回复 | — | `pi 有且 App 有` |
 | `/name` | `handleNameCommand :6193` | 重命名面板 | — | `pi 有且 App 有` |
@@ -357,7 +360,7 @@ pi 的**内置**命令表：`core/slash-commands.ts:19-43`，**23** 条。App �
 | 命令自己用 `&` 放后台 | **能，且 pi 会失去跟踪**：shell 立刻退出 → 工具返回 → 那个进程留在 `trackedDetachedChildPids` 里，只在 pi 退出时被 `killTrackedDetachedChildren` 收掉 | `core/tools/bash.ts:107`（登记 pid）、`:129`（注释：不等被 detached 后代持有的 stdio）；`utils/shell.ts:206-211`（退出时清理） | App 的 BashPanel 只显示这一条命令的结果，之后那个后台进程**在界面上完全不可见、也没法停**（`abort_bash` 只管 pi 记着的那条） | **`pi 有（shell 层面）但两边都没有界面`** → App 侧 `pi 无对应物（App 的决定）`：没有可显示的对象，也就没有「任务列表」 |
 | 会话级穿插队列 `steering` | **有** | `core/agent-session.ts:150-154`（事件形状）、`:593-596`（`_emitQueueUpdate`）、`:1608-1616`（`clearQueue` 返回两串文本） | **有**：`queue_update` → 条数 chip | `pi 有且 App 有` |
 | 会话级后续队列 `followUp` | **有** | 同上 | **有**：「后续 N」chip + 逐条本地回显（消息本体可见） | `pi 有且 App 有` |
-| 队列的**逐条**操作 | **有**：`app.message.dequeue` 把队列收回输入框而不打断 | `modes/interactive/interactive-mode.ts:2899`（绑定）、`:4157-4164`（`handleDequeue`）、`:4387-4406`（实现） | **没有**：只有 Stop 的整批收回 | **`pi 有但 App 没有（可做）`**（P0-2） |
+| 队列的**整批**操作（pi 没有逐条） | **有**：`app.message.dequeue` 把队列收回输入框而不打断 | `modes/interactive/interactive-mode.ts:2899`（绑定）、`:4157-4164`（`handleDequeue`）、`:4387-4406`（实现） | **有**（本轮已做）：队列行「收回并编辑」→ 不 abort | **`pi 有且 App 现在有`**（P0-2） |
 | `get_state.pendingMessageCount` | **有** | `core/agent-session.ts:1618-1621` | 解析了但没人读；等价信息来自 `queue_update` | `pi 有且 App 有（等价信息）`（P3-2） |
 
 **队列落点的具体界面**（题面要求核到 UI）：chip 在 `ui/screens/ChatScreen.kt:1022-1023`
@@ -390,9 +393,9 @@ Stop 时的整批收回在 `PiSessionViewModel.kt:2149-2160` + `ChatScreen.kt:11
 |---|---|---|---|
 | `/export`（HTML 默认，`.jsonl` 走 JSONL） | `modes/interactive/interactive-mode.ts:6060-6075`：按扩展名分派，报出路径 | 有：`PiSessionViewModel.kt:2530-2600`（同样的分派规则），入口在面板 `/export` 与溢出菜单 | `pi 有且 App 有` |
 | HTML 导出的**默认落点** | 不传路径时写 `<cwd>/pi-session-<basename>.html`（`core/export-html/index.ts:274-281`） | App 永远传一个显式路径（写进工作区） | `pi 有且 App 有`（App 更确定，因为要核对文件是否真的写出来） |
-| 导出物**能被用户拿到** | pi 的落点是用户自己的 cwd | 落点是 App 私有工作区，提示只说文件名；没有打开/保存到 Download/分享 | **`pi 无对应物（App 的决定）`**，但用户能感觉到的缺口 → 见 P1-3（建议做） |
+| 导出物**能被用户拿到** | pi 的落点是用户自己的 cwd | **本轮已做**：导出后出现「保存到 Download / 分享」行（复用诊断报告那条通道） | **`pi 无对应物（App 的决定）`**，但用户能感觉到的缺口 → P1-3 已补（`docs/capability-fill.md` §1） |
 | 导出物**带扩展的自定义渲染** | `core/agent-session.ts:3463-3476`（`createToolHtmlRenderer`） | **有**：调 `export_html` 就等于拿到 pi 渲染的那一份 | `pi 有且 App 有`（对话流里反而没有，见 P2-1） |
-| `/import` | `:6107-6119` | **没有** | `pi 有但 App 没有（可做）`（P1-1） |
+| `/import` | `:6107-6119` | **有**（本轮）：面板行 + 会话页「导入」，校验/命名照 pi | `pi 有且 App 现在有`（P1-1） |
 | `/share`（Radius / 私密 gist） | `session-share.ts:43-53`、`:60-76` | 没有 | `pi 有但我们够不着（终端不可用）`（P1-2） |
 | `--export <in> [out]`（CLI） | `cli/args.ts:164-165`、`:312`（帮助文本）、`:384-385`（用法例） | 不适用（App 的引擎常驻 `--mode rpc`） | `pi 有且 App 有（等价）`（P3-8） |
 | 「管道」：`--mode text` / `--mode json` | `cli/args.ts:11` | 不适用 | `pi 有但 App 有意不做`（P3-9） |
@@ -411,19 +414,30 @@ Stop 时的整批收回在 `PiSessionViewModel.kt:2149-2160` + `ChatScreen.kt:11
 一并删除；`segment` 本地状态、`SingleChoiceSegmentedButtonRow` 与 `rememberSaveable` 不再需要。
 保留终端段与它那句话（终端本身是用户的决定，不在本轮范围内）。
 
-### 4.2 【未做，方案】排队消息「只收回、不打断」（P0-2）
+### 4.2 【已做】排队消息「只收回、不打断」（P0-2）
 
-下一轮照这个做，四个文件：
+> **2026-09-13 补记：这一节已实现**，改动清单在 `docs/capability-fill.md` §2/§5。
+> 下面保留原方案（它是照着做的），但有**两处更正**：
+>
+> 1. **不是「逐条」**。pi 的 `app.message.dequeue` 是一次收回全部
+>    （`clearAllQueues()`，`restoreQueuedMessagesToEditor`，`interactive-mode.ts:4387-4406`），
+>    它的排队消息列表是只读的（`:4368-4385`），RPC 的 `clear_queue` 也无参数
+>    （`rpc-types.ts:26`）。判据更正见 `docs/capability-fill.md` §0。
+> 2. **`PiEngineApi` 那层转发不需要**（原方案第 2 条）：`stopAndDrainQueue` 从来就不经 API，
+>    `stop`/`restoreQueue` 直接调 `PiEngineSession`；加一层会是没人调的死代码。所以是 3 个文件。
+
+原方案（照着做的那份）：
 
 1. `engine/PiEngineSession.kt`：在 `stopAndDrainQueue` 旁边加
    `suspend fun drainQueue(): List<String>` —— `request(PiCommands.clearQueue(nextId()))`，
    读 `steering`/`followUp` 两串文本（复用现成的私有 `queuedText`），**不发 `abort`**；
-2. `engine/PiEngineApi.kt`：加一层转发（照 `stopAndDrainQueue` 的写法）；
+2. ~~`engine/PiEngineApi.kt`：加一层转发（照 `stopAndDrainQueue` 的写法）~~ —— **不需要**，见上；
 3. `ui/PiSessionViewModel.kt`：加 `fun restoreQueue(onRestored: (List<String>) -> Unit)`，
    与 `stop`（`PiSessionViewModel.kt:2149-2160`）同形，只是不 abort；
 4. `ui/screens/ChatScreen.kt`：`QueueRow`（`:1459-1480`）加一个点击动作
    （`ChatScreen.kt:1022-1023` 传进去），点击时 `session.restoreQueue { restored -> draft = mergeRestoredQueue(restored, draft) }`；
-   文案用现有 `mergeRestoredQueue`（`:1304-1316`）的语义。
+   文案用现有 `mergeRestoredQueue`（`:1304-1316`）的语义 —— 这一轮把它抽成纯函数
+   （`ui/chat/QueueRestore.kt`）并登记进 `tools/run-app-pure-checks.sh` 的 `queue-restore`。
 
 语义对齐点：pi 的 `restoreQueuedMessagesToEditor()` 把队列文本**与当前输入框内容**拼起来
 （`interactive-mode.ts:4397-4400`），App 的 `mergeRestoredQueue` 已经是同一条规则。
@@ -485,6 +499,144 @@ Stop 时的整批收回在 `PiSessionViewModel.kt:2149-2160` + `ChatScreen.kt:11
 | `app/src/main/kotlin/app/pi/engine/EngineExitCause.kt` | 扩展加载失败那一句 |
 | `docs/capability-gap.md` | 本文 |
 
+### 4.9 【已做】P2-1：八个内建工具各有专用渲染
+
+> **状态：代码已落盘，本机未编译**（CI 是编译器，见 §5）。这一节把 pi 侧的判据、App 侧的
+> 落点、以及**三件做不到的事**一次写清；`docs/known-gaps.md` 未改动。
+
+#### 4.9.1 pi 侧：分派表与每个渲染器读哪些字段
+
+`createAllToolRenderers()`（`packages/coding-agent/src/core/tools/renderers/index.ts:34-44`）
+是唯一的分派表，八个内建工具（`powershell` 与 `bash` 共用 `createShellRenderers`）各有一对
+`renderCall`/`renderResult`。逐个读完后，每一列都是**这次现查的**：
+
+| 工具 | pi 渲染器（`file:line`） | 渲染器读的输入 | App 从哪拿 |
+|---|---|---|---|
+| `read` | `renderers/read.ts:150-175`；高亮 `:126-127`（`getLanguageFromPath` + `highlightCode`）；调用行 `:28-37`（`:start-end` 来自 `args.offset`/`limit`）；截断提示 `:137-146` | `args.path`/`offset`/`limit`、结果文本、`details.truncation` | `args`（`Events.kt:478`）+ 结果文本（`:495`）+ `details`（`:497`） |
+| `write` | `renderers/write.ts:145-180`；内容体 `:96-127`（`args.content`，高亮，折叠 10 行）；结果体 `:128-143`（**成功时什么都不打印**）；增量高亮缓存 `:34-88` | `args.path` + `args.content`、`isError` + 错误文本 | 同上（`args.content`，`Events.kt` 只做透传） |
+| `edit` | `renderers/edit.ts:171-237`；调用行 `:83-86`；结果体 `:87-114`（`details.diff` → `renderDiff`，`firstChangedLine`）；**预览 diff 由渲染器自己读盘算** `:184-193` | `args.path`/`edits`、`details.diff` | diff 已有通道：`Transcript.kt:1405-1442` → `ToolDiff` → `DiffBlock` |
+| `grep` | `renderers/grep.ts:17-35`（调用行）、`:36-68`（结果 + `[Truncated: …]` 提示）；行格式来自工具本身 `core/tools/grep.ts:211-212,273`；空结果 `:256-259`；尾部提示 `:303` | `args.pattern`/`path`/`glob`/`limit`、结果文本、`details.matchLimitReached`/`truncation`/`linesTruncated` | 全部在 `args` + 文本 + `details` |
+| `find` | `renderers/find.ts:17-32`、`:33-63`；结果行 `core/tools/find.ts:268-273`；空结果 `:261`；尾部提示 `:292` | `args.pattern`/`path`/`limit`、结果文本 | 同上 |
+| `ls` | `renderers/ls.ts:17-25`、`:26-56`；条目与 `"/"` 后缀 `core/tools/ls.ts:121-129`；空目录 `:135`；尾部提示 `:155` | `args.path`/`limit`、结果文本 | 同上 |
+| `bash` / `powershell` | `renderers/bash.ts:125-162`；命令头 `:35-41`（`"$ " + command`）；结果 `:42-122`（尾部 5 行 + `Elapsed`/`Took`）；实时刷新 `:139-141`（`setInterval(…, 1000)`） | `args.command`/`timeout`、结果文本、`details.truncation`/`fullOutputPath`、`isPartial` | `args` + 文本 + `details`；**退出码不在 `details`**（`BashToolDetails` 只有 `truncation`/`fullOutputPath`，`core/tools/bash.ts:49-52`），只在 pi 的句子 `Command exited with code N`（`:363-364`）里，App 按文本读回（`ToolOutputParse.shellExitCode`） |
+
+#### 4.9.2 App 侧：一个工具一个块，解析与渲染分开
+
+| 文件 | 作用 |
+|---|---|
+| `app/src/main/kotlin/app/pi/ui/blocks/ToolOutputParse.kt`（新） | **纯函数**：`readBody`/`writeBody`/`grepBody`/`findBody`/`lsBody`/`shellExitCode`/`elapsedLabel`，加上从 `ToolCallBlock.kt` 搬来的纯助手（`truncationOf`/`truncationNotice`/`fullOutputPathOf`/`stripFullOutputFooter`/`formatBytes`）。无 Compose、无 Android、无 `:rpc` 依赖，可被 bare-JVM harness 直接编译 |
+| `.../blocks/ToolBlockChrome.kt`（新） | 八张卡共用的那一半：状态底色/边框/文案/字形、标题行 `ToolHeader`、脚注行 `ToolFooter`、警告行 `ToolNotice`、卡片容器 `ToolCard`、长按菜单 `ToolActionMenu`、`toolCommandText`、`toolFooterText` |
+| `.../blocks/ToolBodyText.kt`（新） | 文件正文的渲染：`SourceLines`（行号 + pi 的高亮通道） |
+| `.../blocks/ReadBlock.kt`（新） | `read`：`read <路径>` 标题（含 pi 的 `:start-end` 行号区间）+ 行号正文（首行号 = `args.offset`，缺省 1）+ pi 的尾部句子（`[Showing lines …]`）+ 截断提示 |
+| `.../blocks/WriteBlock.kt`（新） | `write`：标题 + `args.content` 正文（行号 + 高亮，折叠 10 行 = pi 的 `:117`）；失败时打印错误文本（pi `:128-143`）；成功不打印（pi 同） |
+| `.../blocks/EditBlock.kt`（新） | `edit`：标题 `edit <路径>`（pi `:83-86`）+ 失败时的错误文本（pi `:97-106`）。**改动本身仍由后面那张 `DiffBlock` 画**（`BlockRenderer.kt:85`） |
+| `.../blocks/GrepBlock.kt`（新） | `grep`：`/模式/ in 路径 (glob) limit N` 标题（pi `:17-35`）+ **按文件分组**的命中列表（文件名 + 命中数 + 每行行号）+ pi 的尾部提示 + 「没有匹配」 |
+| `.../blocks/PathListBlock.kt`（新） | `find`（按目录分组）/ `ls`（按 pi 自己的 `"/"` 后缀分「目录 / 文件」两组，行上保留那个后缀）成组列表 + 空结果文案 |
+| `.../blocks/ShellBlock.kt`（新） | `bash`/`powershell`：`$ <命令>` 标题（pi `:35-41`）+ 尾部正文 + `退出码 N` + `已运行 X.X 秒`/`耗时 X.X 秒`（pi `:117-121`）+ pi 的截断/完整输出路径提示 |
+| `.../blocks/BlockRenderer.kt` | 按 `item.toolName` 分派到上面八个块；带图片的结果（`item.images` 非空）与**其余全部工具**仍走通用卡 `ToolCallBlock` |
+| `.../blocks/ToolCallBlock.kt` | 通用卡本体不改结构，只把纯助手换成 `ToolOutputParse` 里的那一份（同一份实现，不再有两份） |
+| `app/src/main/kotlin/app/pi/ui/render/PiCodeHighlight.kt` | 新增 `PiCodeLanguage.forPath(path)`：从**文件路径的扩展名**得出语言，照 pi 的 `getLanguageFromPath`（`theme.ts:1102-1135`）与 `supportsLanguage` 的「不认识就不高亮」 |
+| `app/src/main/kotlin/app/pi/ui/render/PiMarkdownComponents.kt` | `rememberPiHighlightedCode` 由 `private` 变 `internal`（同一个高亮通道，`read`/`write` 的正文复用；这就是 P2-1 原文里「高亮要评估开销」的那条通道，实测存在：`app.pi.highlight.PiNodeCodeHighlighter`，由 guest 侧的 highlight.js 提供） |
+| `app/src/test/kotlin/app/pi/ui/blocks/ToolOutputParseCheck.kt`（新） | bare-JVM harness，登记为 `tool-output-parse` |
+
+#### 4.9.3 与 pi 的三处**做不到**（不是没做，是没有通道）
+
+1. **`edit` 的预览 diff**。pi 在渲染时自己**读目标文件**、在内存里跑一遍替换再算出 diff
+   （`renderers/edit.ts:184-193` → `computeEditsDiff`）。App 没有「渲染时读工作区文件」这条通道，
+   自己读就会变成第二份真相（`docs/pi-sourced-lists.md` 的两次学费）。所以 `edit` 卡只画 pi 的
+   调用行，改动由 pi 在 `details.diff` 里给的最终 diff 画（`Transcript.kt:1405-1442`）。
+2. **`write` 的流式增量高亮**。pi 的 write 渲染器维护一个增量高亮缓存，参数还在流式时逐段上色
+   （`renderers/write.ts:15-88`）。App 的参数在 `toolcall_end` 一次性到达（`Transcript.kt:1206-1220`），
+   没有可增量的中间态；正文到达后一次性高亮。
+3. **行号本身不是 pi 的数据**。pi 的终端**从不画行号**：`renderers/read.ts:127` 只做
+   `highlightCode`，行号区间只出现在调用行（`:28-33`，来自 `args.offset`）。App 的行号因此是
+   「第 i 行 = `args.offset`(缺省 1) + i」这一条**从协议字段推导**的呈现，不是抄来的另一个真相；
+   `write` 的内容同理从第 1 行起。
+   另外两处小差异：`grep`/`find`/`ls` 的**分组**是 App 的排布（pi 只按行打印，`renderers/grep.ts:52`），
+   分组不丢弃任何行：同一个文件/目录只出一个标题（按首次出现的位置排序），`ls` 行上还保留 pi 自己的
+   `"/"` 后缀；`grep` 的 `details` 派生的 `[Truncated: …]` 那行不重复打印（pi 会把工具文本里的
+   `[… limit reached …]` 与它自己那行**各打一次**，`renderers/grep.ts:61-66`），因为两句说的是同一件事。
+
+#### 4.9.4 性能与边界（用户对空浪费零容忍）
+
+- **解析只做一次**：每个块的 `ToolOutputParse.xxx(...)` 都在 `remember(item.args, item.output, …)` 里，
+  与 `ToolCallBlock` 的 F31 同一条纪律；`bash` 那行的「实时计时」**不新起循环**，只在重组时读一次
+  `System.currentTimeMillis()`（复用已有的 200ms 发布节拍，`Transcript.kt:618`——计时器因此是
+  「跟着输出刷新」，空闲的命令停在最后一个数，而不是自己转）。
+- **上限三层**：扫描 ≤ 200 KB（`TOOL_SCAN_MAX_CHARS`）、每条正文 ≤ 200 行（`TOOL_BODY_MAX_LINES`）、
+  每个列表 ≤ 200 条（`TOOL_LIST_MAX_ENTRIES`）、每行 ≤ 500 字符（pi 自己的 `GREP_MAX_LINE_LENGTH`，
+  `core/tools/truncate.ts:13`；这里是**整行**含路径与行号，pi 是只截匹配文本，所以同一行我们的正文会短几十个字符 —— 两边的上界都成立）。pi 的折叠数照抄：read/write 10 行、grep 15 条、find/ls 20 条、
+  bash 5 行；「展开全部」把上限提到上面那层 App 预算，再多的部分**报数**而不是塞进界面。
+- **长列表不嵌套滚动容器**：聊天流本身是一个 `LazyColumn`，条目里再放一个可滚动列表（懒加载的正统做法）在 Compose 里没有合法高度，所以这里改成「上限 + 报数」：单块最多 200 行/200 条，超出部分用一句话说清（「还有 N 行/处/项未显示」），一次组合里创建的节点数因此有上界。
+- **高亮复用已有通道，不新增线程**：`read`/`write` 的正文走 markdown 代码块用的那一个 `rememberPiHighlightedCode`（`produceState` + `Dispatchers.Default`，由 Compose 的 composition scope 托管，块离屏即取消），并只在扩展名能解析出语言时才发起。本轮**没有**新增定时器、线程、后台服务或落盘；`bash` 的计时读的是重组节拍里的时钟，不是自己起的循环。
+- **不加机制**：没有新开关、没有设置项、没有后台服务、没有定时器、没有落盘；只动渲染层 + 解析 + harness 登记。
+- **降级不崩**：每个解析入口都不抛（`runCatching` + 形状不符返回 `null`），`null` 一律渲染通用卡；
+  `grep` 遇到读不懂的行**先原样保留**，一行都认不出来才整块退回通用卡。
+
+#### 4.9.5 harness（只登记，本机不跑）
+
+`tools/run-app-pure-checks.sh` 新增 `run_harness tool-output-parse`，编译
+`app/src/test/kotlin/app/pi/ui/blocks/ToolOutputParseCheck.kt` + `ToolOutputParse.kt`（都是 Android-free）。
+断言覆盖：正常输出、空输出、被截断的输出、**非 ASCII 路径**、**超大输出（上限与省略计数）**、
+**解析失败必须降级（返回 null 而不是抛）**，以及 `bash` 的退出码两个来源与计时文案。
+
+写这套断言时做了两轮「先验规则、再写断言」，两轮都抓到了东西：
+
+1. **node，只验规则**：照 pi 源码造样例（`grep.ts:211-212,273`、`find.ts:268-273`、
+   `ls.ts:121-135`、`read.ts:56-73` 的行形状）跑同一套正则/切分，改掉一处 —— `read` 的
+   「用户 limit 用完了」那种尾部句子也是 `\n\n[…]` 形态，不能只匹配「整段就是方括号」。
+2. **Python，把整份解析器重写一遍、把 harness 的断言原样跑过**（本机不编译 Kotlin，这是
+   能在本机拿到的最强证据）。四处不一致因此暴露，全部改掉：
+   - **真 bug 一处**：`GrepBody.fileCount` 原来取的是**被截断后**的分组数，500 个文件的搜索
+     会在脚注里写成「200 个文件」。现在在截断**之前**用 `allPaths` 计数（`omitted` 同理不参与）。
+   - **断言写错三处**：行的 500 字符上限是「整行」而不是「匹配文本」（正文因此是 493 而不是 501）；
+     行数统计 `entryCount` 是**总数**（4000）而不是被截断后的条数（200）；`Command exited with code N`
+     只有在尾部窗口里才读，原断言把「长尾巴」当成了「窗口外」，方向写反。
+
+#### 4.9.6 本机未编译，CI 是编译器（这一节自己那条）
+
+**这台「开发机」就是用户的手机**，本轮**没有**运行 `tools/typecheck.sh`、
+`tools/run-app-pure-checks.sh`、任何 Gradle 任务，也没有编译任何 Kotlin。下面每一句都是
+「按源码逐行看过」，不是「编译通过」。允许并实际跑过的静态检查：
+
+| 检查 | 命令 | 结果 |
+|---|---|---|
+| 嵌套注释 | `python3 tools/check-nested-comments.py` | `nested-comments: OK (195 Kotlin file(s) scanned)` |
+| harness 登记的脚本语法 | `bash -n tools/run-app-pure-checks.sh` | 通过（该脚本未运行） |
+| 解析规则 | 照 pi 源码造样例、用 node 跑同一套规则 | 见 §4.9.5；两处修正已回写 |
+| 括号/引号配平 | 自写脚本剥掉注释与字符串后计数 | 12 个改动/新增文件全部配平 |
+
+**上 CI 最可能出错的点**（按可能性排序；新加的 Compose 文件只有 CI 能编）：
+
+1. **`ToolHeader(title = "$", …)`**（`ui/blocks/ShellBlock.kt:81`）：字符串里一个孤立的 `$`。
+   Kotlin 只在 `$` 后跟标识符或 `{` 时当模板，仓库里已有同样写法（`ui/render/PiLatex.kt:644`：
+   `if (block) "$$" else "$"`），所以这行应当没事；真要红，唯一改法是把提示符写成 `"\$"`。
+2. **`AnnotatedString.subSequence(start, end)`**（`ui/blocks/ToolBodyText.kt` 的 `numberLines`）：
+   Compose UI text 的公开 API，BOM 很旧时才会缺失。替代实现是按行切 `buildAnnotatedString`
+   并把 span 重放一遍（`highlighted` 的 span 已按字符区间截取，换实现不影响正确性）。
+3. **`rememberPiHighlightedCode` 由 `private` 改 `internal`**（`ui/render/PiMarkdownComponents.kt:403`）
+   并在 `ui/blocks` 里调用：这是同一个 Gradle 模块（`:app`）内的 internal，没问题；
+   只有把 `ui/blocks` 拆成独立模块才会红（本仓库没有这个拆分）。
+4. **`SourceLines` 的条件调用**：它在 `lines.isEmpty()` 时提前 `return`，调用点本身也在
+   `if/else` 里。Compose 允许提前返回，仓库里已有同类写法（`ui/blocks/BlockChrome.kt:136-138`、
+   `ui/render/PiMarkdownComponents.kt:244-246`）。
+5. **harness 的类型推断**：`args(vararg pairs: Pair<String, Any?>)` 依赖 `Pair` 的协变来接受
+   `"k" to 5`；`put` 的重载来自 `kotlinx.serialization.json` 的扩展函数（已 import）。若
+   kotlinx 版本换包，这里最先红——它是纯逻辑，改动只在这两个文件内。
+6. **未使用的 import / 局部变量**：全仓库**没有**开 `allWarningsAsErrors`
+   （`app/build.gradle.kts:200-203` 只设 `jvmTarget`），所以这是警告不是错误；本轮仍按
+   「一个没人读的名字不留」清过一遍：`TOOL_PENDING_HINT` 与 `GrepMatch.path` 都因为
+   **没有任何读者**被删掉，`PathEntry.kind` 则反过来被用在了 `ls` 行的 `/` 后缀上
+   （pi 自己的标记，`core/tools/ls.ts:124`）。
+7. **`ToolCallBlock` 的等价重写**：它现在通过共享卡框渲染标题行与脚注行
+   （`ToolHeader`/`ToolFooter`/`ToolCard`/`ToolActionMenu`），值、样式、间距与改动前逐一对齐
+   （`10dp` → `PiSpacing.inner`、`PiSpacing.inline` 未变，状态色与字形同一套 `when`）。
+   本仓库没有截图/黄金像素测试，所以这条只是「若 CI 里有像素断言，这里是差异来源」。
+8. **`ui/blocks/BlockRenderer.kt` 的 `when (item.toolName)` 带 `else`**：这与该文件
+   「对 `TranscriptItem` 不写 `else`」的规矩**不冲突**（那条规矩钉的是 sealed interface 的
+   穷尽性；`toolName` 是 `String`，穷尽不了，而且 pi 自己也有回落，
+   `renderers/index.ts:51-63`）。CI 里若有断言「BlockRenderer 里不出现 `else ->`」，会红。
+
 ---
 
 ## 5. 本机未编译，CI 是编译器
@@ -531,11 +683,11 @@ Stop 时的整批收回在 `PiSessionViewModel.kt:2149-2160` + `ChatScreen.kt:11
 
 | 项 | 状态 | 判据 |
 |---|---|---|
-| P0-2 / S-8 的「只收回不打断」 | 方案已写（§4.2），未实现 | 设备上：流式中发两条消息 → 点队列 chip → 两条文本回到输入框，且**回合仍在跑**（状态行还是「工作中」） |
-| P1-3 的「导出物交出去」 | 未做 | 设备上：`/export` → 分享/存 Download → 用文件管理器能打开那个 HTML |
-| P1-1 的 `/import` | 未做 | 设备上：选一个 JSONL → 会话能被打开并继续 |
-| P2-1 的 `grep`/`find`/`ls` 列表化 | 未做 | 设备上：一次 `grep` 结果 200 行时的滚动与展开是否真的更省事 |
-| S-1…S-7 的改动 | 已改，**未编译** | CI 绿；设备上确认命令面板里 `/reload`、`/trust`、`/login` 三行显示的是 App 落点，而 `/import`、`/share`、`/changelog`、`/hotkeys`、`/quit` 显示「本应用没有入口」 |
+| P0-2 / S-8 的「收回不打断本轮」 | **已做**（`docs/capability-fill.md` §2），**未编译** | 设备上：流式中发两条消息 → 点队列行「收回并编辑」→ 两条文本回到输入框，且**回合仍在跑**（状态行还是「工作中」）；再按 Stop → 清空 + 打断 |
+| P1-3 的「导出物交出去」 | **已做**（`docs/capability-fill.md` §1），**未编译** | 设备上：`/export` → 保存到 Download / 分享 → 用文件管理器能打开那个 HTML |
+| P1-1 的 `/import` | **已做**（`docs/capability-fill.md` §3），**未编译** | 设备上：选一个 JSONL → 会话能被打开并继续；选错文件时要有一句话，且不冒出坏会话 |
+| P2-1 的专用渲染（八张卡） | **已做**（§4.9），**未编译** | 设备上：一次 `grep` 命中 50+ 行时按文件分组是否真的更省滚动；`bash` 跑长命令时脚注的「已运行 X.X 秒」是否跟着输出在动；`read` 的行号与文件真实行号是否一致（用 `offset` 读一次中段） |
+| S-1…S-7 的改动 | 已改，**未编译** | CI 绿；设备上确认命令面板里 `/reload`、`/trust`、`/login` 三行显示的是 App 落点，`/import` 现在**是**可执行行（本轮已做，`docs/capability-fill.md` §3），而 `/share`、`/changelog`、`/hotkeys`、`/quit` 仍显示「本应用没有入口」 |
 | 终端不可用后还剩哪些指去终端的入口 | 本轮修了 7 处文案（§4），**未做全量清理** | 剩下的三类都是「打开终端这个目的地」本身，而不是「在那里能做成某件事」：`ChatScreen.kt` 溢出菜单的「打开终端（输入 pi 进原版 TUI）」、composer 的「终端」chip、以及工作区终端段自己的那句说明。它们要不要删，取决于终端这件事的最终结论，本轮不动 |
 | `appLanding` 的落点路径会不会过期 | 已写死为字符串 | 分组标题改动时这里不会自动跟着变。若以后加一条「命令面板的落点必须指向存在的设置节点」的断言，`PiSettingsCatalog.groups` 是唯一真相来源 |
 

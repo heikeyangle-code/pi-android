@@ -24,6 +24,14 @@ import app.pi.rpc.UserMessage
  * covers App chrome. Callers put the items in a `LazyColumn` keyed by `item.key`
  * and pass the changes the reducer reports.
  *
+ * **[ToolCall] is two levels deep** (P2-1, `docs/capability-gap.md` §4.9). pi's
+ * `tool-execution` component renders a tool call through a per-tool renderer pair
+ * (`packages/coding-agent/src/core/tools/renderers/index.ts:34-44`), and this function
+ * makes the same dispatch on `item.toolName`: the eight built-ins get their own block, a
+ * result carrying images and every other tool keep [ToolCallBlock]. The fallback is not a
+ * gap: pi's own `withBuiltInRenderers` (`:51-63`) hands a tool with no built-in renderer
+ * the definition's own renderer or nothing at all.
+ *
  * **No `else` (F25 in `docs/rendering-review.md`).** [TranscriptItem] is a sealed
  * interface with exactly the 14 kinds above, so the
  * `else -> NoticeBlock("暂不支持的内容块")` this used to carry was unreachable: an
@@ -80,7 +88,30 @@ fun BlockRenderer(
             ThinkingBlockBlock(item, modifier, thinkingDefaultExpanded)
         }
 
-        is ToolCall -> ToolCallBlock(item, modifier, toolsDefaultExpanded)
+        // P2-1 (`docs/capability-gap.md` §4.9): pi gives every built-in tool its own
+        // renderer pair (`core/tools/renderers/index.ts:34-44` — read, bash, powershell,
+        // edit, write, grep, find, ls), so each one gets its own block here rather than one
+        // generic card. A result that came back with images keeps the generic card, because
+        // that is where pi's `content[type=image]` blocks are painted (F16 in
+        // `docs/rendering-review.md`); so does every other tool, which is exactly the set pi
+        // itself has no built-in renderer for — its own fallback is
+        // `withBuiltInRenderers` (`index.ts:51-63`).
+        is ToolCall -> if (item.images.isNotEmpty()) {
+            ToolCallBlock(item, modifier, toolsDefaultExpanded)
+        } else {
+            when (item.toolName) {
+                "read" -> ReadBlock(item, modifier, toolsDefaultExpanded)
+                "write" -> WriteBlock(item, modifier, toolsDefaultExpanded)
+                "edit" -> EditBlock(item, modifier, toolsDefaultExpanded)
+                "grep" -> GrepBlock(item, modifier, toolsDefaultExpanded)
+                "find" -> FindBlock(item, modifier, toolsDefaultExpanded)
+                "ls" -> LsBlock(item, modifier, toolsDefaultExpanded)
+                // pi's two shells share one renderer factory (`index.ts:35-36`): the prompt
+                // is the only difference between them, so they share one block here too.
+                "bash", "powershell" -> ShellBlock(item, modifier, toolsDefaultExpanded)
+                else -> ToolCallBlock(item, modifier, toolsDefaultExpanded)
+            }
+        }
 
         is ToolDiff -> DiffBlock(item, modifier, toolsDefaultExpanded)
 

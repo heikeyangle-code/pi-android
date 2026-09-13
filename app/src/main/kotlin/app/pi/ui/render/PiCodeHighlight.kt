@@ -214,6 +214,27 @@ internal object PiCodeLanguage {
         return aliases[lower] ?: lower
     }
 
+    /**
+     * The language of a *file*, for the blocks that render file content rather than a fence.
+     *
+     * pi's `read` and `write` renderers resolve the language from the path they were given —
+     * `getLanguageFromPath(rawPath)` (`modes/interactive/theme/theme.ts:1102-1135`, called at
+     * `core/tools/renderers/read.ts:126` and `write.ts:111`) — and then highlight only if
+     * highlight.js knows the name (`highlightCode`, `:1078-1086`).
+     *
+     * The extension table here is the same one [normalize] uses, so a path is resolved
+     * through exactly the names a fence would be. An extension the table does not know
+     * answers `null`, which is pi's "no valid language → skip highlighting entirely" branch —
+     * not a guess, and not a round trip to the highlighter that can only come back empty.
+     */
+    fun forPath(path: String?): String? {
+        if (path.isNullOrEmpty()) return null
+        val name = path.substringAfterLast('/').substringAfterLast('\\')
+        val dot = name.lastIndexOf('.')
+        if (dot <= 0 || dot == name.length - 1) return null
+        return aliases[name.substring(dot + 1).lowercase()]
+    }
+
     /** pi renders an unknown language as unhighlighted code, never as a guess. */
     fun isPlaintext(language: String?): Boolean =
         language == null || language == "plaintext" || language == "text"
