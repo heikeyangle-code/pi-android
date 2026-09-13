@@ -700,7 +700,7 @@ private fun ChatBody(
             }
             PiCommandAction.NewSession -> session.newSession()
             PiCommandAction.Compact -> session.compact(args.takeIf { it.isNotBlank() })
-            PiCommandAction.OpenSessions -> session.requestNav(NavRequest.Sessions)
+            PiCommandAction.OpenSessions -> session.requestNav(NavRequest.SessionList)
             // `/import`: pi takes a path argument, a phone takes a picked document.
             // Any argument is ignored — there is no path to type — and the picker's
             // cancel is the "cancelled" answer rather than an error.

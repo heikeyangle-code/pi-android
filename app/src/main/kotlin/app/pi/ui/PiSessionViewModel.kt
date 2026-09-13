@@ -110,17 +110,43 @@ sealed interface Boot {
 }
 
 /**
- * A destination change the ViewModel asks the UI to perform.
+ * A navigation the ViewModel asks the UI to perform.
  *
  * Requested through state rather than a callback because the action that needs
  * it usually ends in a coroutine after an RPC answer (`switch_session`, a
  * palette row) — by then there is no composable on the stack to call. pi itself
  * has no navigation API at all, so this vocabulary is the app's own and belongs
  * to the layer that knows the answer arrived.
+ *
+ * Only [Chat], [Workbench] and [Settings] name a top-level destination, and they
+ * are the three the bottom bar draws — the vocabulary and `PiDestination` are
+ * kept in step on purpose, so a request can never ask for a destination the bar
+ * does not have. Everything else here raises an overlay or focuses a screen.
  */
 sealed interface NavRequest {
-    data object Sessions : NavRequest
+    /**
+     * Open the session list over the current destination.
+     *
+     * This replaced a `Sessions` member that switched to a 会话 *destination*.
+     * The list is a selector, not a place (`03-navigation-decision.md`), and once
+     * it became an overlay the request had to stop moving the destination: which
+     * session the user is in is answered by picking a row, not by the picker
+     * appearing.
+     */
+    data object SessionList : NavRequest
+
     data object Chat : NavRequest
+
+    /**
+     * The workbench destination.
+     *
+     * It still means "go to 工作区" and nothing more. The name is now slightly
+     * behind the truth — that destination is becoming the project overview, and a
+     * later batch moves the *terminal* behind a settings row of its own, at which
+     * point the chat composer's terminal affordance stops pointing here. Renaming
+     * it is that batch's job, not this one's: the only consumer is the affordance
+     * that batch removes.
+     */
     data object Workbench : NavRequest
 
     data object Settings : NavRequest
@@ -2971,11 +2997,19 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** Ask `PiRoot` to change destination or open the tree overlay. */
+    /** Ask `PiRoot` to change destination, raise an overlay, or focus a screen. */
     fun requestNav(request: NavRequest) {
         _state.value = _state.value.copy(navRequest = request)
     }
 
+    /**
+     * Clear the request the UI has just handled.
+     *
+     * `PiRoot` consumes the request from inside its effect and runs that effect
+     * again on the `null` it writes back, so the value must actually change: the
+     * write is skipped when it is already `null` to avoid emitting a state change
+     * that carries none.
+     */
     fun consumeNav() {
         if (_state.value.navRequest != null) {
             _state.value = _state.value.copy(navRequest = null)
