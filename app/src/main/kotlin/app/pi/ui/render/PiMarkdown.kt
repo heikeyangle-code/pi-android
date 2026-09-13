@@ -11,8 +11,7 @@ import androidx.compose.ui.platform.LocalContext
 import app.pi.bridge.rememberPiGuestImageTransformer
 import app.pi.highlight.PiNodeCodeHighlighter
 import app.pi.ui.theme.PiTheme
-import com.mikepenz.markdown.compose.Markdown
-import com.mikepenz.markdown.model.markdownAnimations
+import com.mikepenz.markdown.m3.Markdown
 
 /**
  * Renders pi's markdown natively.
@@ -136,53 +135,6 @@ internal fun PiMarkdownText(
             dimens = piMarkdownDimens,
             imageTransformer = imageTransformer,
             components = components,
-            // Two library defaults this renderer must not inherit. Both are about the
-            // *streaming* case, and both were inherited silently until
-            // `docs/streaming-review.md` §2.3/§2.4 — the streaming row is the one row
-            // that recomposes on every token, so a default is a per-token decision
-            // here whether or not anyone made it.
-            //
-            // 1. `animations`: upstream defaults `MarkdownAnimations.animateTextSize`
-            //    to `Modifier.animateContentSize()` (renderer 0.45.0,
-            //    `model/MarkdownAnimations.kt:40-49`), which every markdown text
-            //    segment is drawn with (`compose/elements/MarkdownText.kt:214`). On a
-            //    growing answer that starts a size animation on *every* token, and what
-            //    it animates is the *measured height* the row reports
-            //    (`androidx.compose.animation:animation-android:1.8.3`,
-            //    `SizeAnimationModifierNode.measure`: the child is placed inside the
-            //    animated bounds, and 1.8.3 has no `clip` parameter). So the row's
-            //    height lags the text it holds: the newest lines overflow into the
-            //    next row, the transcript's own viewport clips them while the row is
-            //    the last one, and the follow's geometry ("are we at the bottom?") is
-            //    computed from the lagging height - the follow chases an animation
-            //    that every token restarts. It is also the only animation anywhere in
-            //    this app's UI (`grep -rn "animate" app/src/main/kotlin/app/pi/ui`
-            //    finds none of our own), which is the trade the user has already
-            //    decided against: it animates a size, carries no information, and
-            //    hides text while it runs. The library documents `{ this }` as the way
-            //    to switch it off (`MarkdownAnimations.kt:44-47`), which is exactly the
-            //    identity.
-            //
-            // 2. `retainState`: with the default `false`, every content change puts the
-            //    row back into `State.Loading` (`model/MarkdownState.kt:186-187`) — and
-            //    the loading slot renders an empty `Box` by default. The parse then
-            //    finishes on `Dispatchers.Default`, so whether a frame is drawn with
-            //    the row blanked is a race between that parse and the next vsync: on a
-            //    quiet frame the row keeps its text, on a slow one it collapses and
-            //    comes back. That is the reported "有时候会乱闪、在底部反复刷新", and
-            //    `retainState = true` is the library's own answer ("the previous content
-            //    remains visible while new content is being parsed"). Nothing else
-            //    changes: with it, a row only ever moves forwards.
-            //
-            // `retainState` is only reachable on the core `content: String` entry
-            // point — the m3 wrapper does not forward it (`markdown-renderer-m3`,
-            // `m3/Markdown.kt:62-104`) — which is why this call is
-            // `com.mikepenz.markdown.compose.Markdown` and not the m3 overload. The m3
-            // wrapper contributed nothing else here: this call already passes its own
-            // colours, typography, dimens, padding, components and image transformer,
-            // which is everything the wrapper would have supplied.
-            retainState = true,
-            animations = markdownAnimations(animateTextSize = { this }),
             modifier = modifier,
         )
     }
