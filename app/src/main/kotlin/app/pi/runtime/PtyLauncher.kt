@@ -151,7 +151,7 @@ object PtyLauncher {
         // terminal can legitimately be the first thing the user opens — before any
         // engine boot has created the agent dir or the workspace. `PiRuntime`'s own
         // getters create their directories the same way, the engine creates the
-        // workspace before binding it (`PiEngineHost.kt:257`, `workspace.mkdirs()`),
+        // workspace before binding it (`PiEngineHost`, `val workspace = …; workspace.mkdirs()`),
         // and `AgentLayout.ensureAgentMirrorDir` exists for exactly this reason on
         // the package path.
         workspace.mkdirs()

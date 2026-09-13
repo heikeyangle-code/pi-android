@@ -10,7 +10,7 @@
 |---|---|---|---|
 | **会话列表** `SessionsScreen` | pi 写的目录 `<agentDir>/sessions/`（两种布局）+ `-c` 的语义 | harness `sessions`；`docs/session-lifecycle.md` | 设备上确认"退出再进来会话还在、能打开看到完整对话" |
 | **对话** `ChatScreen` + `ui/blocks/**` + `ui/render/**` | pi 的事件流（RPC）+ 渲染规格 | harness `tail-follow`；`docs/rendering-review.md`（F1–F34）、`docs/streaming-review.md` | 流式的跟随/闪烁只有设备能定 |
-| **工作区** `WorkbenchScreen`（终端 + 工作区） | pi 的 `bash` 工具路径 / pty | harness `guest-paths`；`docs/terminal-*.md` | 终端与文件面**本轮没有重新审**（见下） |
+| **工作区** `WorkbenchScreen`（终端 + 工作区） | pi 的 `bash` 工具路径 / pty；`@` 用 pi 自己的 `fd` 二进制与 argv | harness `guest-paths`、`shell-policy-mirror`；契约 `checkMentionArgv`；`docs/surfaces-terminal-workbench-device.md` | **已审**：终端与引擎同一套 guest 环境；`shellPath`/`shellCommandPrefix` 只喂 pi 的非交互 bash（界面文案已改）；9 个路径转写点合并成 `GuestWorkspacePath`（"一个目录两个挂载点"保留为具名常量 + 断言） |
 | **设置** `PiSettingsStack` 等 12 个分组 | pi 的文件（`settings.json`）＋ pi 的 `Settings` 接口（schema 问不到） | harness `settings-audit`（6 条断言）；`docs/settings-review.md` | **已收口**：67 键（41 pi + 26 App），本轮删 43 行；0 个无读者、0 个过期白名单。真机判据 4 条待验 |
 
 ## 设置里的 12 个分组
@@ -23,7 +23,7 @@
 | 会话 | `sessionDir` 等键 + 上面的会话目录 | `sessions` + `settings-audit` | 同会话面 |
 | 扩展与资源 | **pi 看的目录**（`extensions/`、`skills/`、`prompts/`、`themes/`）＋ `pi list`（`settings.json` 的 `packages`） | harness `packages`（扩展/技能/模板/主题四类发现 + 合并写入）；`docs/pi-sourced-lists.md` | 设备上确认四类都能列出来 |
 | 外观 | pi 的主题 JSON（**读文件**）＋ App 自己的外观键 | `settings-audit` | 主题键的 `EffectiveKind` 仍是 `Reload`（App 侧热应用），需确认与 pi 的语义不冲突 |
-| 终端与 Shell | pi 的 `shellPath`/`shellCommandPrefix` ＋ 我们的 pty | **本轮未审** | 见下 |
+| 终端与 Shell | pi 的 `shellPath`/`shellCommandPrefix` ＋ 我们的 pty | `docs/surfaces-terminal-workbench-device.md` | **已审**：两者只影响 pi 执行的命令，不影响工作台终端（文案已写明）；`app.terminal.*` 两个键都有消费者 |
 | 安全与信任 | `trust.json`（pi 写）＋ App 的授权策略（`pi 无对应物`） | `docs/known-gaps.md` §I10、`gap-disposition.md` | `app.device.*` 是否仍是"第二份授权真相" |
 | 运行时与诊断 | 载荷与 pi 的 stderr（App 读） | `docs/known-gaps.md` §M（本轮）；`RuntimeFacts` | 设备上读「引擎启动耗时」那行 |
 | 隐私与关于 | 许可证资产（构建期生成）＋ pi 的遥测/分析键 | CI 的许可证断言；`settings-audit` | 无 |
@@ -36,6 +36,14 @@
 | 扩展 UI 子协议 | 同上（8→9 个方法） | `docs/rpc-coverage.md`；契约的命令/方法名断言 | 工具的自定义渲染在 RPC 下无通道（`pi 有但我们够不着`） |
 
 ## 本轮**没有**重新审的三块（写明，不含糊）
+
+> **2026-09-13 更新：这三块已经审完**，结论与逐项表在
+> `docs/surfaces-terminal-workbench-device.md`。要点：终端与引擎**同一套 guest 环境**、
+> `shellPath`/`shellCommandPrefix` 只喂 pi 的非交互 bash（不该管工作台终端，文案已改）、
+> `@` 提及**跑的就是 pi 自己的 fd 二进制与 argv**（另有契约断言钉住）、9 个路径转写点合并成
+> `runtime/GuestWorkspacePath.kt`（"一个目录两个挂载点"保留为具名常量 + harness 断言）、
+> `app.device.*` 的第二份真相已归一到 `DeviceCapabilityStore`、两份 shell 策略表新增
+> `shell-policy-mirror` harness（Kotlin 赢，不一致会被构建发现）。
 
 1. **终端与 Shell**（`ui/terminal/**`、`PtyLauncher`、`PtySession`）——历史上审过（termlib 的能力上限、按键栏、`script(1)` 的 winsize 不可达），但本轮的"真相来源"规则没有重新过一遍：`shellPath`/`shellCommandPrefix` 是否真的接上、按键栏与 pi 的键位是否一致、终端里的 guest 环境与引擎的是否同一套。**判据**：终端里 `echo $SHELL`/`env` 与引擎的 `ProotCommand.environment` 一致；`shellPath` 改了之后新开的终端用它。
 2. **工作区与 @ 提及**（`WorkbenchScreen`、`PiMentionSource`、文件选择）——`@` 列出的文件集是否与 pi 的 `@` 一致（pi 有自己的 ignore 规则）、工作区路径映射是否只有一处实现（已知 `guestPathFor` 与 `guestWorkspace` 是两份转写）。

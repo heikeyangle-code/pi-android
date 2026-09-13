@@ -112,8 +112,8 @@ proot 不绑一个宿主侧不存在的源。**修改**：`runtime/PtyLauncher.k
 | 1 | `engine/PiEngineHost.guestPathFor`（private） | 宿主 → guest 的**规则本体** | 改成调 `GuestWorkspacePath.under`（`PiEngineHost.kt:601`） |
 | 2 | `ui/PiSessionViewModel.guestWorkspace()` | **字面量** `/workspace/pi/workspaces/workspace-1` | 改成调同一个函数（`PiSessionViewModel.kt:684`） |
 | 3 | `packages/AgentLayout.guestWorkspace` | 复写同一规则（root 取 `home.parentFile`） | 改成调同一个函数（`AgentLayout.kt:90`） |
-| 4 | `bridge/DeviceWorkspace.guestSpellingOf` | 第二份复写（多两个分支） | 改成调同一个函数（`DeviceWorkspace.kt:143`） |
-| 5 | `ui/PiSessionViewModel.defaultWorkspace()` | 字面量 `pi/workspaces/workspace-1` | 改成 `PtyLauncher.workspaceHost`（`PiSessionViewModel.kt:675`） |
+| 4 | `bridge/DeviceWorkspace.guestSpellingOf` | 第二份复写（多两个分支） | 改成调同一个函数（`DeviceWorkspace.kt:142`） |
+| 5 | `ui/PiSessionViewModel.defaultWorkspace()` | 字面量 `pi/workspaces/workspace-1` | 改成 `PtyLauncher.workspaceHost`（`PiSessionViewModel.kt:673`） |
 | 6 | `runtime/PtyLauncher.workspaceHost` + `WORKSPACE_RELATIVE` | 宿主侧**规则本体** | 常量搬进 `GuestWorkspacePath.RELATIVE`，函数改成委托（`PtyLauncher.kt:293`） |
 | 7 | `runtime/PtyLauncher.guestWorkspace = "/workspace"` | **同一宿主目录的第二个挂载点** | 保留，但变成具名常量 `GuestWorkspacePath.TERMINAL_GUEST_PATH`（`PtyLauncher.kt:307`），并且旧注释里那句「这就是 `PiEngineHost` 映射的路径」被改掉（它是错的） |
 | 8 | `bridge/GuestPathMapping` 的 workspace 分支 | guest → host 的候选顺序（含两种拼法） | 保留：它是**反向**映射，且顺序是安全论据，由 harness `guest-paths` 钉住 |
@@ -210,8 +210,8 @@ terminal  /workspace                            == 同一个工作区 (PtyLaunch
 | `app/src/main/kotlin/app/pi/runtime/PtyLauncher.kt:157` | 绑之前先 `workspace.mkdirs()` | `PiEngineHost.kt:259` 的同一条 |
 | `…/runtime/PtyLauncher.kt:293,307` | 宿主路径取共享常量；终端挂载点具名；**改掉一句错的注释** | ②-2 表格第 7 行 |
 | `…/packages/AgentLayout.kt:90` | `guestWorkspace` 改为委托 | ②-2 第 3 行 |
-| `…/bridge/DeviceWorkspace.kt:143,165` | 规则改为委托；常量引用共享值 | ②-2 第 4、9 行 |
-| `…/ui/PiSessionViewModel.kt:675,684` | 两处字面量改为委托 | ②-2 第 2、5 行 |
+| `…/bridge/DeviceWorkspace.kt:142,165` | 规则改为委托；常量引用共享值 | ②-2 第 4、9 行 |
+| `…/ui/PiSessionViewModel.kt:673,684` | 两处字面量改为委托 | ②-2 第 2、5 行 |
 | `…/ui/settings/PiSettingsRegistry.kt:954,966` | `shellPath`/`shellCommandPrefix` 的说明写明**不管辖工作台终端** | ①-2 |
 | `app/src/test/kotlin/app/pi/runtime/AgentToolPathsCheck.kt` | 第 5 节：工作区拼法与「两个挂载点确实不同」的断言 | ②-2 |
 | `app/src/test/kotlin/app/pi/bridge/ShellPolicyMirrorCheck.kt` | **新增** harness `shell-policy-mirror` | ③-2 |
@@ -221,11 +221,27 @@ terminal  /workspace                            == 同一个工作区 (PtyLaunch
 
 **没有改**：pi（`/root/pi-src` 只读）、载荷（`assets/runtime/**`、`runtime.lock.json`）、`docs/known-gaps.md`、任何 git 写操作、Gradle。
 
-**自检**（本机唯一能跑的测试方式）：
+**自检**（本机唯一能跑的测试方式；结果如实记，含**不属于本次改动**的红）：
 
-- `bash tools/typecheck.sh` → `:rpc 0 / :app 0`；
-- `bash tools/run-app-pure-checks.sh` → 全部 `harness: OK`（含新增/扩展的两个）；
-- `python3 tools/check-nested-comments.py` → 0 处。
+- `python3 tools/check-nested-comments.py` → `nested-comments: OK (169 Kotlin file(s) scanned)`，0 处。
+- `bash tools/run-app-pure-checks.sh` → **12 个 harness 里 11 个 `harness: OK`**，包括本次新增/扩展的三个
+  （`shell-policy-mirror` 新增、`agent-tool-paths` 第 5 节新增、`settings-audit` 读了被改文案的注册表）。
+  唯一红的是 `models-inventory`，**编译失败在 `app/src/test/kotlin/app/pi/packages/PiModelInventoryCheck.kt:272`、`:286`**
+  （`cannot infer type for type parameter 'T'`）——那个 harness 是同一棵树上**另一个改动**刚加的，本次一行没碰。
+- `bash tools/typecheck.sh` → `:rpc 0`；`:app` 剩 **2 条**，都在
+  `app/src/main/kotlin/app/pi/ui/settings/PiModelsScreen.kt:213`、`:217`（`no 'get'/'set' operator method providing
+  array access`，`expanded[...]` 那个 `SnapshotStateMap`），**不在本次改过的任何文件里**。两次运行之间 `:app` 的错误
+  从 4 条降到 2 条（另一条在 `PiPackagesScreen.kt` 消失），说明这是并发改动中的中间态；本次改动的文件在两次运行里
+  **都是 0 条诊断**（第一次唯一属于我的是 `PiEngineHost.kt` 少一行 import，已修）。
+  **所以 `typecheck` 的「`:app 0`」这条自检要求本机现在拿不到，但挡住它的不是本次改动。**
+
+  **`PiModelsScreen` 那两条为什么很可能是环境、不是代码**（留给下一条线去核实，本次不动别人的文件）：
+  ① 那个文件与 `HEAD`（`bd7fd02`）逐字一致；② 同一个 `SnapshotStateMap` 在
+  `ui/settings/PiSettingsStore.kt:47`、`:50` 上索引却不报错；③ Gradle 缓存里**同时有两个 compose-runtime 版本**
+  （`androidx.compose.runtime:runtime-android:1.12.1` 与 `:1.8.3`），`tools/typecheck.sh` 把缓存里**所有** jar/aar 都塞进
+  classpath，谁赢由 `find` 的顺序决定——它自己的头注释说「resolution order matches what Gradle would pick (newest version
+  wins)」，但那只对 `build/typecheck/extra` 成立，缓存**内部**的同名不同版本没有排序。`:app` 的红是否随之漂移，值得一次
+  独立核实（例如在脚本里按版本号排序、或剔掉旧版本 AAR）。
 
 ---
 
