@@ -47,7 +47,7 @@ fun main() {
     val extensionSummary = EngineExitCause.summary(1, extensionStderr)
     checkTrue("A1 an extension load failure is attributed", extensionSummary != null)
     checkTrue("A2 and the sentence names the extension as the cause", extensionSummary?.contains("扩展") == true)
-    checkFalse("A3 the sentence leaks a file path", extensionSummary.contains("/root"))
+    checkFalse("A3 the sentence leaks a file path", extensionSummary?.contains("/root") == true)
 
     // The missing-module spelling, which is what §M9's shape looked like.
     val missingModule = "Error: Failed to load extension \"/x/needs.ts\": Failed to load extension: Cannot find module 'highlight.js'"

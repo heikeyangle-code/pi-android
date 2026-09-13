@@ -34,7 +34,9 @@ import app.pi.ui.theme.PiTheme
  *    the same thing typing in pi's editor does;
  *  - **a command that only the original TUI can run is shown as such** instead of
  *    being hidden. pi keeps those in its list; hiding them here would make the
- *    GUI look like it lost commands that exist.
+ *    GUI look like it lost commands that exist. "As such" now means one of two
+ *    things: the app's own way to reach the same outcome when it has one
+ *    (`PiSlashCommand.appLanding`), otherwise that there is no entry here.
  *
  * The list is capped in height so it never covers the transcript: on a phone the
  * composer must stay reachable while the palette is open.
@@ -99,9 +101,18 @@ private fun SlashPaletteRow(command: PiSlashCommand, onClick: () -> Unit) {
             }
             val subtitle = buildString {
                 append(command.description.orEmpty())
-                if (command.action == PiCommandAction.TerminalOnly) {
+                // A built-in that pi's RPC surface cannot dispatch is only useful to a
+                // user together with what *this* app can do about it. The badge used to
+                // read 「仅终端」, naming the terminal tab as the way to run it — but the
+                // terminal is not a usable surface, so a row that points there names an
+                // action that cannot be completed. `appLanding` is the app's own way to
+                // reach the same outcome (`/trust`, `/reload`, `/login`, `/logout`);
+                // without one, the honest badge is that there is no entry here.
+                val note = command.appLanding?.let { "本应用：$it" }
+                    ?: if (command.action == PiCommandAction.TerminalOnly) "本应用没有入口" else null
+                if (note != null) {
                     if (isNotEmpty()) append(" · ")
-                    append("仅终端")
+                    append(note)
                 }
             }
             if (subtitle.isNotEmpty()) {

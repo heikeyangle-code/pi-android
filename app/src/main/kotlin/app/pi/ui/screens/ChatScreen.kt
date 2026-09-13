@@ -104,8 +104,8 @@ import app.pi.ui.chat.ComposerRoute
 import app.pi.ui.chat.ForkPickerSheet
 import app.pi.ui.chat.MentionPalette
 import app.pi.ui.chat.ModelPickerSheet
+import app.pi.ui.chat.PI_BUILTIN_SLASH_COMMANDS
 import app.pi.ui.chat.PiCommandAction
-import app.pi.ui.chat.PiCommandSource
 import app.pi.ui.chat.PiFileMentions
 import app.pi.ui.chat.PiSlashCommand
 import app.pi.ui.chat.RenameSessionDialog
@@ -1385,18 +1385,17 @@ private fun SearchBar(
 }
 
 /**
- * pi's `/reload` has no RPC command at all — it rebinds the whole runtime inside
- * pi (`agent-session.ts` `reload()`, reachable only from an extension command,
- * `docs/extensions.md` §"Reloading") — so the AppBar's reload button says where
- * it *can* be run instead of pretending it can be run here.
+ * The AppBar's reload button asks the palette's `/reload` row what to say.
+ *
+ * pi's `/reload` has no RPC command — it rebinds the whole runtime inside pi
+ * (`agent-session.ts` `reload()`), so this app cannot run it. What the app *can* do
+ * is restart the engine, which re-reads `settings.json` and rescans every resource
+ * directory (`core/agent-session-runtime.ts:226-252` → `createRuntime`); the palette
+ * row carries that as its `appLanding`. Reusing the row keeps one answer to "where
+ * does `/reload` live here" instead of two that can drift apart.
  */
-private fun reloadCommand(): PiSlashCommand = PiSlashCommand(
-    name = "reload",
-    description = "重载快捷键、扩展、技能、模板、主题与上下文文件",
-    source = PiCommandSource.Builtin,
-    sourceTag = null,
-    action = PiCommandAction.TerminalOnly,
-)
+private fun reloadCommand(): PiSlashCommand =
+    PI_BUILTIN_SLASH_COMMANDS.first { it.name == "reload" }
 
 /** `get_last_assistant_text`, then the system clipboard; this is pi's `/copy`. */
 private fun copyLastAssistant(session: PiSessionViewModel, context: Context) {

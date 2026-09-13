@@ -4,36 +4,43 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.AccountTree
-import androidx.compose.material.icons.filled.Folder
-import androidx.compose.material.icons.filled.Terminal
-import androidx.compose.material.icons.filled.TaskAlt
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.SegmentedButton
-import androidx.compose.material3.SegmentedButtonDefaults
-import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import app.pi.ui.components.PiEmptyState
 import app.pi.ui.terminal.TerminalPane
 import app.pi.ui.theme.PiSpacing
 
 /**
- * The workbench (destination 3): terminal · files · git · tasks.
+ * The workbench (destination 3): the terminal.
  *
- * These share one context — the current working directory — which is why they
- * are segments of one destination rather than separate destinations
- * (docs/pi-android-ui-spec.md §5.3).
+ * It used to be four segments — terminal · files · git · tasks — over one shared
+ * context (the current working directory). The other three are gone, and they were
+ * deleted rather than built because pi has no capability behind any of them:
+ *
+ *  - **files** — pi has no file tree or explorer; the way it offers files is `@`
+ *    mention completion (`packages/tui/src/autocomplete.ts:289-311`), which this app
+ *    already implements (`ui/chat/PiFileMentions.kt`), plus the `ls`/`read` tools.
+ *  - **git** — pi reads exactly one thing from git, the current branch name, and only
+ *    to paint its own TUI footer (`core/footer-data-provider.ts:127`,
+ *    `modes/interactive/components/footer.ts:117`). There is no changes list, no diff
+ *    view and no checkpoint concept; `examples/extensions/git-checkpoint.ts` is an
+ *    example extension, not a capability, and it ships with neither pi's runtime nor
+ *    this app. Branch, changes, diff and checkpoints have no RPC channel either
+ *    (`modes/rpc/rpc-types.ts:20-74`).
+ *  - **tasks** — pi has no cron, no scheduler and no background-task concept at all.
+ *    Its bash tool takes only a command and a timeout and waits for the child to exit
+ *    (`core/tools/bash.ts:35-38`, `:127`); a command that backgrounds itself with `&`
+ *    is not tracked by pi and is only killed when pi exits (`utils/shell.ts:198-211`).
+ *    There is nothing to list, so a task list could only be an invention.
+ *
+ * Deleting them is the repository's own rule (`docs/pi-sourced-lists.md`): a surface
+ * with no source of truth is where the next silent wrong answer comes from. The
+ * empty-state copy promised three capabilities this app cannot have, and the honest
+ * version of that promise is no surface at all.
  *
  * The **terminal** segment is the one that is load-bearing rather than a
  * convenience: it runs the *original* pi TUI in a real PTY, which is the only way
@@ -54,65 +61,19 @@ import app.pi.ui.theme.PiSpacing
 fun WorkbenchScreen(
     contentPadding: PaddingValues,
 ) {
-    var segment by rememberSaveable { mutableStateOf(0) }
-    val labels = listOf("终端", "文件", "Git", "任务")
-    val icons = listOf(
-        Icons.Filled.Terminal,
-        Icons.Filled.Folder,
-        Icons.Filled.AccountTree,
-        Icons.Filled.TaskAlt,
-    )
-
     Column(Modifier.fillMaxSize().padding(contentPadding)) {
         TopAppBar(title = { Text("工作区") })
-        SingleChoiceSegmentedButtonRow(
-            Modifier.padding(horizontal = PiSpacing.screen),
-        ) {
-            labels.forEachIndexed { index, label ->
-                SegmentedButton(
-                    selected = segment == index,
-                    onClick = { segment = index },
-                    shape = SegmentedButtonDefaults.itemShape(index, labels.size),
-                    icon = { Icon(icons[index], contentDescription = null) },
-                ) { Text(label) }
-            }
-        }
-        if (segment == 0) {
-            // The terminal takes the rest of the screen: it wants every row it can
-            // get, and the key bar sits at its bottom edge.
-            //
-            // The terminal segment is also the only landing this screen has to
-            // arrange. It used to carry an "open on this tab" request from `PiRoot`
-            // (a `TerminalTab?` plus a consume callback), because a jump could ask
-            // for pi's TUI specifically; that request is gone with the tab, and the
-            // segment needs nothing special because `segment` is local state that a
-            // fresh composition starts at 0 — which is the terminal. See
-            // `TerminalPane` for why there is only one terminal to open now.
-            //
-            // The one sentence about pi's own TUI lives here, not in the settings.
-            // Without it, the capabilities that only the TUI has (subscription
-            // login, session import, terminal-only extensions) would be invisible;
-            // with it repeated per settings row, every such row became a signpost
-            // instead of a setting (`docs/settings-review.md` §9).
-            Text(
-                "输入 pi 回车进入原版 TUI：订阅登录、会话导入、以及需要终端的扩展都在那边。",
-                modifier = Modifier.padding(horizontal = PiSpacing.screen, vertical = 6.dp),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            TerminalPane(modifier = Modifier.weight(1f))
-        } else {
-            val (title, body) = when (segment) {
-                1 -> "文件树还没做" to "对话和终端已经可以读写这个工作目录；这里会显示它的目录树。"
-                2 -> "不是 Git 仓库" to "工作区是 Git 仓库时，这里显示变更、diff 与检查点。"
-                else -> "没有后台任务" to "长时间运行的回合与命令会出现在这里，可以随时停止。"
-            }
-            PiEmptyState(
-                icon = icons[segment],
-                title = title,
-                body = body,
-                modifier = Modifier.weight(1f),
-            )
-        }
+        // The one sentence about pi's own TUI lives here, not in the settings.
+        // Without it, the capabilities that only the TUI has (subscription
+        // login, session import, terminal-only extensions) would be invisible;
+        // with it repeated per settings row, every such row became a signpost
+        // instead of a setting (`docs/settings-review.md` §9).
+        Text(
+            "输入 pi 回车进入原版 TUI：订阅登录、会话导入、以及需要终端的扩展都在那边。",
+            modifier = Modifier.padding(horizontal = PiSpacing.screen, vertical = 6.dp),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        TerminalPane(modifier = Modifier.weight(1f))
     }
 }

@@ -368,9 +368,16 @@ object PiSettingsCatalog {
         ),
         PiSetting(
             key = "app.credentials.oauth",
-            title = "OAuth 登录（仅终端）",
-            description = "Anthropic Claude Pro/Max、OpenAI Codex、GitHub Copilot、OpenRouter、Kimi Code、xAI、Radius 支持 OAuth，登录在系统浏览器里完成。" +
-                "点「执行」会切到 工作区 → 终端，输入 pi 后运行 /login。",
+            title = "订阅登录（本应用暂无入口）",
+            // 这行原来写的是「点执行会切到 工作区 → 终端，输入 pi 后运行 /login」。终端不是
+            // 可用面，那句指引指向一个做不到的动作 —— 和这个仓库一直在修的那类缺陷同形
+            // （界面上写着一个不存在的动作）。改成如实说明：本应用只支持填 API Key。
+            // 为什么不能在应用里做：pi 的 OAuth 流程整个长在它自己的交互式界面里
+            // （`interactive-mode.ts:5485` `handleLoginCommand`），RPC 命令全集
+            // （`modes/rpc/rpc-types.ts:20-74`）里没有任何登录命令。
+            description = "Anthropic Claude Pro/Max、OpenAI Codex、GitHub Copilot、OpenRouter、" +
+                "Kimi Code、xAI、Radius 支持用订阅账号登录，授权在浏览器里完成。" +
+                "本应用目前只支持填厂商 API Key，订阅登录还没有入口。",
             kind = PiRowKind.Action,
             group = G_MODEL,
             section = "凭证",

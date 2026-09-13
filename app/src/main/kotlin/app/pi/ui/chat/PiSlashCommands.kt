@@ -62,8 +62,14 @@ enum class PiCommandAction {
      * A built-in whose implementation lives in pi's interactive shell and has
      * **no RPC counterpart**: pi exposes no command for it and `prompt()`
      * cannot reach it (built-ins are filtered out of `get_commands` and
-     * `prompt` only dispatches extension commands). The GUI must say so and
-     * point at the `pi TUI（原版）` terminal tab rather than fake it.
+     * `prompt` only dispatches extension commands).
+     *
+     * The GUI must not fake it. What it says instead depends on
+     * [PiSlashCommand.appLanding]: when this app has its own way to reach the
+     * same outcome, the row names that way; otherwise it says there is no entry
+     * here. It must **not** send the user to the terminal tab — the terminal is
+     * not a usable surface, so "go there" would name an action that cannot be
+     * completed.
      */
     TerminalOnly,
 }
@@ -105,6 +111,22 @@ data class PiSlashCommand(
     val sourceTag: String?,
     val action: PiCommandAction,
     val argumentHint: String? = null,
+    /**
+     * How this app itself reaches the same outcome, as a **user-visible
+     * location** (a screen path, never a file path or a class name). Null when
+     * the app has no such way.
+     *
+     * This exists because a pi built-in can be unreachable over RPC while the app
+     * still does the same thing somewhere else. `/trust` is the clearest case:
+     * `rpc-types.ts:20-74` has no trust command, yet the app reproduces pi's whole
+     * trust decision — same five options, same `trust.json` record — in the
+     * packages screen (`packages/ProjectTrust.kt`, `packages/PiProjectTrustPrompt.kt`).
+     * `/reload` is the other: restarting the engine re-reads
+     * `settings.json` and rescans every resource directory, which is what the
+     * user was actually asking for. Before this field, both rows said
+     * 「仅终端」, i.e. the palette denied a capability the app already had.
+     */
+    val appLanding: String? = null,
 ) {
     /** What the user types to invoke it. */
     val invocation: String get() = "/$name"
@@ -161,13 +183,44 @@ val PI_BUILTIN_SLASH_COMMANDS: List<PiSlashCommand> = listOf(
     PiSlashCommand("hotkeys", "查看全部快捷键", PiCommandSource.Builtin, null, PiCommandAction.TerminalOnly),
     PiSlashCommand("fork", "从某条历史消息创建分支", PiCommandSource.Builtin, null, PiCommandAction.PickFork),
     PiSlashCommand("clone", "在当前节点复制整个会话", PiCommandSource.Builtin, null, PiCommandAction.CloneSession),
-    PiSlashCommand("trust", "保存项目信任决定", PiCommandSource.Builtin, null, PiCommandAction.TerminalOnly),
-    PiSlashCommand("login", "配置 provider 认证", PiCommandSource.Builtin, null, PiCommandAction.TerminalOnly, "<provider>"),
-    PiSlashCommand("logout", "移除 provider 认证", PiCommandSource.Builtin, null, PiCommandAction.TerminalOnly),
+    // `/trust` has no RPC command, but the app reaches the same outcome itself:
+    // pi's five trust options and its `trust.json` record are reproduced in the
+    // packages screen (`packages/ProjectTrust.kt` + `packages/PiProjectTrustPrompt.kt`).
+    PiSlashCommand(
+        "trust", "保存项目信任决定", PiCommandSource.Builtin, null,
+        PiCommandAction.TerminalOnly,
+        appLanding = "设置 → 扩展 → 扩展包与项目信任",
+    ),
+    // `/login` and `/logout` are only half-reachable: the app owns an API-key form,
+    // while subscription (OAuth) login stays in pi's own interactive shell with no
+    // RPC channel at all. The row therefore names the half the app does have and
+    // says nothing about the other half — `notifyTerminalOnly` carries the part the
+    // palette cannot fit.
+    PiSlashCommand(
+        "login", "配置 provider 认证（本应用只支持 API Key）", PiCommandSource.Builtin, null,
+        PiCommandAction.TerminalOnly, "<provider>",
+        appLanding = "设置 → 模型与推理 → 凭证",
+    ),
+    PiSlashCommand(
+        "logout", "移除 provider 认证", PiCommandSource.Builtin, null,
+        PiCommandAction.TerminalOnly,
+        appLanding = "设置 → 模型与推理 → 凭证",
+    ),
     PiSlashCommand("new", "新建会话", PiCommandSource.Builtin, null, PiCommandAction.NewSession),
     PiSlashCommand("compact", "手动压缩会话上下文", PiCommandSource.Builtin, null, PiCommandAction.Compact),
     PiSlashCommand("resume", "切换到另一个会话", PiCommandSource.Builtin, null, PiCommandAction.OpenSessions),
-    PiSlashCommand("reload", "重载快捷键、扩展、技能、模板、主题与上下文文件", PiCommandSource.Builtin, null, PiCommandAction.TerminalOnly),
+    // pi's `/reload` rebinds the whole runtime in place; there is no RPC command for
+    // it (`rpc-types.ts:20-74`). Restarting the engine is not the same mechanism, but
+    // it is the same user-visible outcome for what `/reload` is used for here:
+    // `pi --mode rpc` is started again, so pi re-reads `settings.json` and rescans
+    // extensions, skills, prompts and themes (`core/agent-session-runtime.ts:226-252`
+    // → `createRuntime`). The one difference the user can feel — a running turn is
+    // interrupted — is what the restart dialog itself states before doing anything.
+    PiSlashCommand(
+        "reload", "重载扩展、技能、模板、主题与上下文文件", PiCommandSource.Builtin, null,
+        PiCommandAction.TerminalOnly,
+        appLanding = "设置 → 运行时与诊断 → 进程 → 重启引擎",
+    ),
     PiSlashCommand("quit", "退出 pi", PiCommandSource.Builtin, null, PiCommandAction.TerminalOnly),
 )
 

@@ -6,6 +6,7 @@ import android.os.SystemClock
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import app.pi.engine.EngineExitCause
 import app.pi.engine.PiEngineApi
 import app.pi.engine.PiEngineHost
 import app.pi.engine.PiEngineSession
@@ -54,6 +55,7 @@ import app.pi.ui.extension.ExtensionStatus
 import app.pi.ui.extension.ExtensionWidget
 import app.pi.ui.extension.WidgetPlacement
 import app.pi.ui.extension.noticeToneOf
+import app.pi.ui.settings.EngineDiagnostics
 import app.pi.ui.settings.PiSettingsStore
 import app.pi.ui.theme.PiResolvedTheme
 import app.pi.ui.theme.PiThemeEntry
@@ -355,6 +357,20 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
 
     private val host = PiEngineHost(app)
     private var session: PiEngineSession? = null
+
+    /**
+     * The engine's last exit, captured at the instant the state collector sees it
+     * die.
+     *
+     * Kept as a field and not read back off the session because the death branch
+     * drops that session on purpose (a dead object must not be left where the UI can
+     * talk to it). Without this capture the evidence is unreachable by the time
+     * anything wants it — which is what made 设置 → 导出诊断报告 say the exit code was
+     * "not recorded" for the one failure it exists to explain, and what left the
+     * failure screen with an empty detail line while the user's only report was
+     * `rpc: engine exited with code 1`.
+     */
+    private var lastEngineExit: EngineDiagnostics? = null
 
     /**
      * The typed façade over the live engine, rebuilt whenever an engine is
@@ -825,6 +841,39 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         noContextFiles = settingsStore.readBoolean("app.runtime.noContextFiles"),
     )
 
+    /**
+     * The engine's last exit, for 设置 → 运行时与诊断 → 导出诊断报告.
+     *
+     * A getter rather than the field itself because the diagnostic screen must read
+     * the **newest** capture: the engine can die while that screen is open, and the
+     * screen rebuilds from this lambda. Null until an engine has actually exited in
+     * this process — the report says so in words rather than showing a fabricated
+     * default.
+     */
+    fun engineDiagnostics(): EngineDiagnostics? = lastEngineExit
+
+    /**
+     * What this app has already recorded going wrong, newest first, for the
+     * report's 最近的失败 section.
+     *
+     * Two sources, because the app records failures in two places: the AppBar's
+     * error line ([UiState.lastError], which `fail()` sets on every failed RPC call
+     * — that is where `rpc: engine exited with code 1` itself lands) and the error
+     * notices the transcript shows. Distinct and bounded, so the same sentence does
+     * not appear four times in one report.
+     */
+    fun recentFailures(): List<String> {
+        val state = _state.value
+        val seen = LinkedHashSet<String>()
+        state.lastError?.takeIf { it.isNotBlank() }?.let { seen += it }
+        state.notices
+            .filter { it.tone == Notice.Tone.Error }
+            .map { it.message }
+            .filter { it.isNotBlank() }
+            .forEach { seen += it }
+        return seen.toList().take(MAX_REPORTED_FAILURES)
+    }
+
     fun boot() {
         if (_state.value.boot is Boot.Working) return
         viewModelScope.launch {
@@ -992,6 +1041,22 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                     session = null
                     cancelAllDialogs()
                     clearExtensionChrome()
+                    // Capture the exit facts **now**, while the dead session is still
+                    // in hand: the next statement drops the last reference to it, and
+                    // these four values (exit code, captured stderr, the startup
+                    // measurement, and which of Stopped/Failed it ended in) are the
+                    // only evidence the failure leaves behind. `DiagnosticsReport`
+                    // renders them; nothing else can still read them once this
+                    // function returns.
+                    lastEngineExit = EngineDiagnostics(
+                        state = engineState.name,
+                        exitCode = engine.lastExitCode,
+                        // The engine's own last words. Without this the failure screen
+                        // said "引擎异常退出" and the report said the exit code was not
+                        // recorded — for the one failure both exist to explain.
+                        stderr = engine.stderr.toString().ifBlank { null },
+                        startupMs = PiEngineSession.lastServingMs,
+                    )
                     _state.value = _state.value.copy(
                         bash = null,
                         busy = null,
@@ -1006,7 +1071,13 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                             } else {
                                 "引擎异常退出，可以重新启动后继续。"
                             },
-                            null,
+                            // The engine's own reason, in one sentence plus the stderr
+                            // line it came from. `BootScreen` renders this under the
+                            // title (`BootScreen.kt:129-133`), and its own last line
+                            // asks the user to send exactly this text on. `null` when
+                            // there is nothing attributable, in which case the generic
+                            // sentence above is the honest answer.
+                            EngineExitCause.detail(engine.lastExitCode, engine.stderr.toString()),
                         ),
                     )
                     if (!engineTransition) {
@@ -1399,7 +1470,8 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         // pi's hang behind a button that cannot work. Say so instead.
         if (request.uiId.isEmpty()) {
             pushNotice(
-                message = "扩展发来一个没有 id 的「${request.method}」对话框，无法回复；请改用终端模式运行该扩展。",
+                message = "扩展发来一个没有编号的「${request.method}」对话框，无法回复；" +
+                    "这个扩展的弹窗在当前引擎上无法使用。",
                 tone = Notice.Tone.Warning,
             )
             return
@@ -2613,19 +2685,33 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
-     * Tell the user where a command they know from pi's TUI actually runs.
+     * Tell the user what this app can do about a built-in that pi's RPC surface
+     * cannot dispatch.
      *
-     * The message states the consequence and the destination only — it does **not**
-     * claim to have navigated anywhere (the palette does not switch destinations
-     * here), and why this app has no path is protocol detail that stays in this
-     * KDoc. `docs/settings-review.md` §9.6 draws the line: the settings face drops
-     * TUI knobs, while pi's command face keeps them because it expresses what pi can
-     * do, with an honest badge instead of a fake action.
+     * Two outcomes, and the difference is a fact about the app rather than a
+     * preference: [PiSlashCommand.appLanding] non-null means the app reaches the
+     * same outcome somewhere else (`/trust` → the packages screen, `/reload` →
+     * restarting the engine), so the notice names that location; null means there is
+     * no entry here at all and the notice says so.
+     *
+     * It deliberately never says "go to the terminal". The terminal tab runs pi's
+     * own TUI in a PTY, but it is not a usable surface, so pointing there would name
+     * an action the user cannot complete — the same class of defect as a settings
+     * row whose only content is "go elsewhere". The message also does **not** claim
+     * to have navigated anywhere: the palette does not switch destinations here, and
+     * why the app has no channel is protocol detail that stays in this KDoc
+     * (`docs/settings-review.md` §9.6 draws the line: the settings face drops TUI
+     * knobs, while pi's command face keeps them and shows an honest badge).
      */
     fun notifyTerminalOnly(command: PiSlashCommand) {
+        val landing = command.appLanding
         pushNotice(
-            message = "/${command.name} 要在原版 TUI 里运行：工作区 → 终端。",
-            tone = Notice.Tone.Warning,
+            message = if (landing != null) {
+                "/${command.name} 在本应用里：$landing。"
+            } else {
+                "/${command.name} 只在 pi 的原版 TUI 里，本应用没有对应入口。"
+            },
+            tone = if (landing != null) Notice.Tone.Info else Notice.Tone.Warning,
         )
     }
 
@@ -2754,6 +2840,16 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
 
         /** Notifications held for the snackbar before the oldest is dropped. */
         const val MAX_PENDING_NOTICES = 8
+
+        /**
+         * How many recorded failures the diagnostic report carries.
+         *
+         * The report is a text file a person reads and sends back; the first few
+         * failures are the ones that matter, and `lastError` plus the error notices
+         * can otherwise repeat the same sentence for every failed call in a long
+         * session.
+         */
+        const val MAX_REPORTED_FAILURES = 12
 
         /** Extensions pi loads are TypeScript or JavaScript modules. */
         val EXTENSION_SOURCE_SUFFIXES = setOf("ts", "js", "mts", "mjs", "cts", "cjs")

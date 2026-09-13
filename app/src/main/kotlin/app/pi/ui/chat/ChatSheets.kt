@@ -393,13 +393,18 @@ fun SessionToolsSheet(
 
             // The one thing the GUI cannot render at all. pi gives the client no
             // signal when an extension takes these paths (`custom()` returns
-            // `undefined` silently, `setFooter` is a no-op), so the honest move is
-            // to name the extensions that need the original TUI and point at it.
+            // `undefined` silently, `setFooter` is a no-op:
+            // `modes/rpc/rpc-mode.ts:189`, `:229-231`), so the honest move is to name
+            // the extensions whose interface this app cannot show — and to say that
+            // nothing here will display them. It used to end with "use them in the
+            // original TUI"; the terminal is not a usable surface, so that sentence
+            // named an action the user could not complete. What is left is the fact
+            // the user can act on: which installed extension will look incomplete.
             if (state.tuiOnlyExtensions.isNotEmpty()) {
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                PiSectionHeader("仅终端可用的扩展（${state.tuiOnlyExtensions.size}）")
+                PiSectionHeader("本应用显示不了的扩展（${state.tuiOnlyExtensions.size}）")
                 Text(
-                    "这些扩展在对话页无法显示，请到「工作区 → pi TUI（原版）」里使用。",
+                    "下面这些扩展用到了本应用不支持的自绘界面，它们在对话页不会显示内容。",
                     modifier = Modifier.padding(horizontal = PiSpacing.screen, vertical = 4.dp),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,

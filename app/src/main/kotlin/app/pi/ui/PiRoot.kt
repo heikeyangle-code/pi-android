@@ -185,29 +185,27 @@ fun PiRoot(
                     //
                     // There used to be a `TERMINAL_ONLY_ACTIONS` map holding three
                     // signposts to pi's own TUI (`/login`, `/import`, `/changelog`).
-                    // Two of them went with their rows: a settings row whose only
-                    // content is "go somewhere else" is not a setting, and the single
-                    // sentence that has to exist for discovery lives on the workbench
-                    // terminal now (`WorkbenchScreen.kt`). The survivor is kept for
-                    // discoverability, not capability — OAuth is the only way to use a
-                    // subscription login and the credential form this app owns writes
-                    // API keys only (`ui/settings/PiCredentialScreen.kt:52-58`), so
-                    // without this row a user could not learn the option exists.
+                    // All three are gone now: a settings row whose only content is "go
+                    // somewhere else" is not a setting. The last survivor — the OAuth
+                    // row — used to move the user to the terminal tab; the terminal is
+                    // not a usable surface, so that action could not be completed and
+                    // the row now answers with what the app actually supports.
                     onRunAction = { setting ->
                         when (setting.key) {
-                            // pi keeps OAuth in its own TUI
+                            // pi keeps OAuth in its own interactive shell
                             // (`interactive-mode.ts:3052-3055` → `handleLoginCommand`
-                            // `:5485`) and the `RpcCommand` union has no login command,
-                            // so name the command and move the user to the surface that
-                            // has it. Why this screen cannot is protocol detail and
-                            // stays in the KDoc, not on screen.
+                            // `:5485`) and the `RpcCommand` union has no login command
+                            // (`modes/rpc/rpc-types.ts:20-74`), so there is no surface
+                            // in this app that can start it. Say that, and say what
+                            // this app does support (an API key, on the row above);
+                            // do not navigate anywhere. Protocol detail stays in the
+                            // KDoc, not on screen.
                             "app.credentials.oauth" -> {
                                 session.notifyUser(
-                                    "订阅登录要在 pi 的原版 TUI 里做：已切到 工作区 → 终端，" +
-                                        "输入 pi 后运行 /login。",
+                                    "订阅登录要在 pi 的原版 TUI 里做，本应用没有入口。" +
+                                        "用 API Key 的厂商可以在上面的「API Key」里配置。",
                                     warning = true,
                                 )
-                                session.requestNav(NavRequest.Workbench)
                             }
                             // pi's `/compact` — the RPC command is `compact`
                             // (`modes/rpc/rpc-types.ts:44`). The custom-instruction
@@ -247,6 +245,13 @@ fun PiRoot(
                         session.restartEngine(reason, allowInterrupt)
                     },
                     isTurnRunning = { session.isTurnRunning() },
+                    // 导出诊断报告的两个事实来源。都是 lambda：报告必须在**打开那一屏
+                    // 的时刻**读到最新的抓取，而引擎可能在那一屏开着的时候死掉。
+                    // `engineDiagnostics` 来自引擎退出瞬间的捕获（ViewModel 在丢弃死引擎
+                    // 之前存下的退出码与 stderr），`recentFailures` 来自 App 已经记下的失败。
+                    // 没有这两条接线，报告里那两节永远只会写"还没有记录"。
+                    engineDiagnostics = { session.engineDiagnostics() },
+                    recentFailures = { session.recentFailures() },
                     // `get_available_models`: the only model list pi exposes over
                     // RPC, used to mark a scanned id as pi metadata or as an app
                     // default (`PiCredentialScreen`).
