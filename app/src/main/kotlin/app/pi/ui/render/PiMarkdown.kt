@@ -12,7 +12,10 @@ import app.pi.bridge.rememberPiGuestImageTransformer
 import app.pi.highlight.PiNodeCodeHighlighter
 import app.pi.ui.theme.PiTheme
 import com.mikepenz.markdown.compose.Markdown
+import com.mikepenz.markdown.model.ReferenceLinkHandlerImpl
 import com.mikepenz.markdown.model.markdownAnimations
+import org.intellij.markdown.flavours.gfm.GFMFlavourDescriptor
+import org.intellij.markdown.parser.MarkdownParser
 
 /**
  * Renders pi's markdown natively.
@@ -49,6 +52,12 @@ import com.mikepenz.markdown.model.markdownAnimations
  * math node's raw source to the enclosing paragraph's `AnnotatedString`
  * (`com.mikepenz.markdown.annotator.AnnotatedStringKtxKt`), so a math component
  * would sit next to the raw `$x^2$` it was meant to replace.
+ *
+ * **This function owns the library's parser objects** ([flavour], [parser], [references]
+ * below) because the library does not: its `Markdown(content, …)` builds its own on every
+ * call, which defeats its `rememberMarkdownState` and re-parses the whole document on
+ * every recomposition. The mechanism and its measured cost are in
+ * `design/ui-refactor/08-hang-diagnosis.md`; the short version is on the `remember`s.
  *
  * @param markdown the source text, exactly as the engine emitted it. Streaming,
  *   half-finished markdown is expected and handled: the parser is given the
@@ -101,6 +110,41 @@ internal fun PiMarkdownText(
     // are composable, but only *created* here; the library does the same thing in
     // its own non-composable `CurrentComponentsBridge` (`.../components/MarkdownComponents.kt`).
     val components = remember { piMarkdownComponents() }
+    // The library's three parser objects, remembered here because it does **not** remember
+    // them itself. `Markdown(content, …)` declares `flavour = GFMFlavourDescriptor()`,
+    // `parser = MarkdownParser(flavour)` and `referenceLinkHandler = ReferenceLinkHandlerImpl()`
+    // as default parameter values, and Kotlin evaluates a default inside the callee on
+    // *every* call — the bytecode says so (`MarkdownKt.Markdown(String, …)` constructs all
+    // three in its own body, between `Composer.startDefaults()` and `endDefaults()`, so the
+    // Compose compiler wrapped none of them in a `remember`).
+    //
+    // That would be harmless if the library ignored them. It does the opposite: they are
+    // exactly the keys of `rememberMarkdownState`'s
+    // `remember(content, lookupLinks, flavour, parser, referenceLinkHandler, retainState)`
+    // **and** three of the fields `Input.equals` compares, and none of the three overrides
+    // `equals`. A fresh instance per execution therefore defeats that `remember`, builds a
+    // new `Input`, wakes `snapshotFlow { currentInput }`, and calls `updateInput` +
+    // `parse()` again — a whole-document re-parse plus, when the parse lands, a
+    // `MarkdownSuccess` that rebuilds every node of the document in a plain `Column`. On
+    // every recomposition of this composable, even when the text is byte-for-byte the same.
+    //
+    // Measured cost of one such pass (`design/ui-refactor/08-hang-diagnosis.md` §2.2):
+    // 8.95 ms / 1026 AST nodes for a 5 KB document, 22.97 ms / 9976 nodes for 50 KB,
+    // 58.02 ms / 29811 nodes for 150 KB. pi publishes the transcript once per streamed
+    // event, so with a few markdown rows on screen the frame thread never goes idle — the
+    // reported 「卡死 / 没有响应」, and the reason it gets worse the more content a session
+    // holds. Passing stable instances keeps `Input` equal, so unchanged text never
+    // re-parses and never re-renders.
+    //
+    // Three separate `remember`s rather than one shared instance, because
+    // `ReferenceLinkHandlerImpl` is **stateful**: `lookupLinks` defaults to true, and the
+    // parse stores every reference-link definition in the handler. One handler shared by
+    // all rows would let a `[x]: url` written in one message resolve a `[x]` in another.
+    // A per-row `remember` keeps that isolation and is still stable across this row's
+    // recompositions, which is all the fix needs.
+    val flavour = remember { GFMFlavourDescriptor() }
+    val parser = remember(flavour) { MarkdownParser(flavour) }
+    val references = remember { ReferenceLinkHandlerImpl() }
     // A3, the image seam — three wiring points, and all three are needed:
     //
     //  1. this provider fills **our** local, which is what [PiImagePlaceholder]
@@ -136,6 +180,13 @@ internal fun PiMarkdownText(
             dimens = piMarkdownDimens,
             imageTransformer = imageTransformer,
             components = components,
+            // The three stable instances built above. Omitting them is what let the library
+            // rebuild its own per execution and re-parse the whole document per
+            // recomposition; see the KDoc on those `remember`s for the mechanism and the
+            // measured numbers.
+            flavour = flavour,
+            parser = parser,
+            referenceLinkHandler = references,
             // Two library defaults this renderer must not inherit. Both are about the
             // *streaming* case, and both were inherited silently until
             // `docs/streaming-review.md` §2.3/§2.4 — the streaming row is the one row
