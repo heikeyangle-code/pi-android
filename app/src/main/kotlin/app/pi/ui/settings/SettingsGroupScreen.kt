@@ -275,6 +275,11 @@ private fun buildGroupSections(groupId: String): List<GroupSection> {
  * （`isExplicit` = `store.read(key) != null`），也就是它不再等于 pi 的内置默认。
  * 因此判定 = 行型是 Value 且值被显式写过。Switch / Action 行不参与 —— v2 也没给
  * 它们画条。
+ *
+ * 为什么**不**限制成「每组只画一条」：显式写过的每一行都确实在生效，把其中几条
+ * 压掉是为了视觉整齐而撒谎；注册表里也没有 `cur` 这类字段可以抄，加一个宿主传入的
+ * `currentKeys` 等于为一个纯视觉的约束新增参数。所以一个分组下出现多条 accent 条
+ * 是允许的、也是诚实的。
  */
 private fun isCurrentValue(setting: PiSetting, store: PiSettingsStore): Boolean =
     setting.kind == PiRowKind.Value && setting.isExplicit(store)

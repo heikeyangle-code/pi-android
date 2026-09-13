@@ -158,8 +158,21 @@ fun PiSettingRow(
  * 行骨架：底色（命中/普通）+ 左缘竖线 + `10px 12px` 的行内边距。
  *
  * 左缘两条线的分工是 v2 里的两件事，不能互相替代：
- *  - 命中高亮（搜索跳转）：1px accent，配 `surfaceContainerLow` 底（计划 S8）；
+ *  - 命中高亮（搜索跳转）：1px accent + `selectedBg` 填充；
  *  - 当前生效值：2px accent，上下各缩进 8（`06 §2`）。
+ *
+ * 命中填充为什么是 `selectedBg`：它就是 pi 的「选中」令牌（也就是 v2 的
+ * `--selected-bg: #3A3A4A`），`colorScheme()` 里另映射到 `primaryContainer`。
+ * 计划 S8 原本写 `surfaceContainerLow` —— 但设置行现在躺在同为
+ * `surfaceContainerLow` 的卡片里，那样填等于没填，只剩那 1px 竖线。改成
+ * `selectedBg` 后命中行既有可见填充、又不引入任何新颜色。
+ *
+ * 可读性（同 v2 自己那一对令牌的取值，未做任何调色）：
+ *  - 深色 `#3A3A4A`：正文 `#D4D4D4` 7.5:1、副行 `#808080` 2.8:1、accent 5.4:1；
+ *  - 浅色 `#D0D0E0`：正文 10.4:1、副行 3.5:1、accent 2.85:1。
+ * 深色副行 2.8:1 与浅色 accent 2.85:1 略低于 3:1 的元信息/图形地板，但这不是新
+ * 组合：v2 的选中行本来就是 `--selected-bg` + `--muted` / `--accent`，且同一行
+ * 另有正文色标题承担信息（`06 §4` 的图形类规则）。
  *
  * `onClick` 为 null 时整行不可点（Switch 行由控件自己吃点击）。
  */
@@ -176,11 +189,9 @@ private fun PiSettingsRowShell(
         modifier = modifier
             .fillMaxWidth()
             .background(
-                if (highlighted) {
-                    MaterialTheme.colorScheme.surfaceContainerLow
-                } else {
-                    Color.Transparent
-                },
+                // 命中填充 = pi 的 selectedBg（v2 的 --selected-bg）；见上方 KDoc
+                // 里「为什么不填 surfaceContainerLow」与对比度实测。
+                if (highlighted) PiTheme.palette.selectedBg else Color.Transparent,
             )
             .then(
                 if (onClick != null) {
