@@ -39,9 +39,9 @@ object PiSpacing {
 
     // ------------------------------------------------------- the v2 page scale
     //
-    // These were `PiV2Layout`'s (`theme/PiLayout.kt`) and are folded in here by the
-    // B7 typography-and-cleanup batch, because two objects declaring the same page
-    // numbers is two answers to "how wide is the margin". Every value is
+    // These lived in `theme/PiLayout.kt` as a second object until the final audit
+    // folded them in here and deleted that file: two objects declaring the same
+    // page numbers is two answers to "how wide is the margin". Every value is
     // `06 §2` 的原文，一行一个出处：
     //
     //   pageHorizontal     「屏水平 14px」
