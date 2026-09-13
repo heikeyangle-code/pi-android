@@ -9,8 +9,7 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.graphics.vector.PathData
-import androidx.compose.ui.graphics.vector.addPath
+import androidx.compose.ui.graphics.vector.PathParser
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
 
@@ -24,11 +23,13 @@ import androidx.compose.ui.unit.dp
  * the bar reads as a different weight and a different drawing language from the
  * rest of the surface, which is why the design does not use one there.
  *
- * The paths are the design's, character for character, and are handed to
- * [PathData] verbatim rather than transcribed into builder calls: the chat bubble
- * is four arcs, and a silent geometry error in an arc would be invisible to every
- * check this project can run on the machine that wrote it. [PathData] parses the
- * exact same SVG syntax the design's markup uses.
+ * The paths are the design's, character for character, and are parsed by
+ * [PathParser] verbatim rather than transcribed into builder calls: the chat
+ * bubble is four arcs, and a silent geometry error in an arc would be invisible
+ * to every check this project can run on the machine that wrote it. [PathParser]
+ * reads the exact same SVG syntax the design's markup uses, and
+ * `addPath(pathData = …)` takes what it returns (`List<PathNode>`) — the builder
+ * has no String overload.
  *
  * One notation difference from the design's markup, and only one: the settings
  * knobs are `<circle cx cy r>` elements there, and this Compose version's path
@@ -100,7 +101,11 @@ object PiNavGlyphs {
             viewportWidth = VIEWPORT,
             viewportHeight = VIEWPORT,
         ).addPath(
-            pathData = PathData(pathData),
+            // The builder wants the parsed node list, not the string: `addPath`
+            // is a member of `Builder` (importing it is a compile error), and the
+            // sibling `PathData` helper also takes a `PathBuilder` lambda, not a
+            // path string. `PathParser` is the only entry point that reads one.
+            pathData = PathParser().parsePathString(pathData).toNodes(),
             fill = null,
             stroke = SolidColor(Color.Black),
             strokeLineWidth = STROKE,
@@ -124,9 +129,12 @@ fun PiNavGlyph(vector: ImageVector, color: Color, modifier: Modifier = Modifier)
         imageVector = vector,
         contentDescription = null,
         modifier = modifier,
-        // Drawn on the design's own 18-unit grid, so a caller's box must not
-        // stretch them off it.
-        contentScale = ContentScale.None,
+        // The design draws the 18-unit grid into a 20-unit box (`<Icon s={20}/>`:
+        // `width/height 20`, `viewBox 0 0 18 18`), so the glyph is scaled up to
+        // fill the caller's box rather than drawn at its intrinsic 18dp and
+        // centred — `ContentScale.Fit` is that scaling, and `None` would draw it
+        // a size small.
+        contentScale = ContentScale.Fit,
         colorFilter = ColorFilter.tint(color),
     )
 }
