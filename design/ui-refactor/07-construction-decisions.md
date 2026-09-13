@@ -65,3 +65,8 @@
 **现象**：`git push` 连续十几次失败（TLS 被掐 / 连接重置），但同一时刻 `curl https://github.com` 是 200。
 **处置**：`git config http.version HTTP/1.1` + `http.postBuffer` 调大，并且**一次只推一个提交**（`git push origin <sha>:refs/heads/main` 逐个推）。三条积压提交一次成功。
 **结论**：这台手机的网络在 HTTP/2 大包上传上不稳；以后推送失败先试这两招，不要反复重试同一个命令。
+
+## D14 · Kotlin 注释里的 `/**` 会吞掉整个文件（一次真实事故与教训）
+**事故**：B8 在 `ExtensionDialogs.kt` 的 KDoc 里写了 `` `ui/theme/**` ``。Kotlin 的块注释**可嵌套**，于是 `/**` 又开了一层注释，把该文件**后面的所有代码**（包括刚定义的 `DialogMaxWidth` 等常量）都吞进注释里 ⇒ CI 报 10 处 `Unresolved reference`，同时注释守卫报 7 处 `nested block comment`。
+**修复**：只改那一行——KDoc 里写 `` `ui/theme/` `` 而不是 `` `ui/theme/**` ``。另有 6 处是级联假阳性（被吞掉的单行 KDoc 又被当成新的嵌套开头），改掉根因后守卫转 OK。
+**教训（给以后的人）**：**不要**写脚本全局替换 `/**`——**字符串字面量里也有 `/**`**（例如 `add(".git/**")`、测试里的标记串、提示文案 `` (ui/terminal/**) ``），批量替换会把它们改坏。我第一次就是这么干的，一次改了 7 个文件，把 `.git/**` 和一处测试断言改成了 `.git`，已全部 revert 后只改真正的那一行。定位这类问题用 `python3 tools/check-nested-comments.py`（它按语法位置判断，不误伤字符串）。

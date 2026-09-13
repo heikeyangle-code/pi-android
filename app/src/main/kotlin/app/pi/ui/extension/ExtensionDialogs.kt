@@ -542,7 +542,7 @@ private fun ExtField(
  * `06 §2`「对话框：最大宽 330、圆角 14、`padding:18px 16px 12px`」and the board's
  * button/field/list geometry (`.b-dlg`, `.press` buttons, `select` container).
  *
- * Literals in this file rather than members of a theme object because `ui/theme/**`
+ * Literals in this file rather than members of a theme object because `ui/theme/`
  * belongs to another batch in this same round; they are the board's own numbers,
  * each cited below.
  */
