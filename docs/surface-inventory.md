@@ -11,13 +11,13 @@
 | **会话列表** `SessionsScreen` | pi 写的目录 `<agentDir>/sessions/`（两种布局）+ `-c` 的语义 | harness `sessions`；`docs/session-lifecycle.md` | 设备上确认"退出再进来会话还在、能打开看到完整对话" |
 | **对话** `ChatScreen` + `ui/blocks/**` + `ui/render/**` | pi 的事件流（RPC）+ 渲染规格 | harness `tail-follow`；`docs/rendering-review.md`（F1–F34）、`docs/streaming-review.md` | 流式的跟随/闪烁只有设备能定 |
 | **工作区** `WorkbenchScreen`（终端 + 工作区） | pi 的 `bash` 工具路径 / pty | harness `guest-paths`；`docs/terminal-*.md` | 终端与文件面**本轮没有重新审**（见下） |
-| **设置** `PiSettingsStack` 等 12 个分组 | pi 的文件（`settings.json`）＋ pi 的 `Settings` 接口（schema 问不到） | harness `settings-audit`；`docs/settings-review.md` | 审计进行中 |
+| **设置** `PiSettingsStack` 等 12 个分组 | pi 的文件（`settings.json`）＋ pi 的 `Settings` 接口（schema 问不到） | harness `settings-audit`（6 条断言）；`docs/settings-review.md` | **已收口**：67 键（41 pi + 26 App），本轮删 43 行；0 个无读者、0 个过期白名单。真机判据 4 条待验 |
 
 ## 设置里的 12 个分组
 
 | 分组 | 真相来源 | 验收 | 未决 |
 |---|---|---|---|
-| 模型与推理 | `models.json` / `auth.json` / `models-store.json` / `settings.json` 的三个选择键 | `docs/models-review.md`（进行中）；契约里 10 个内置厂商的 baseUrl | **"AI 改了文件设置页会不会显示"** — 结论是不会（RPC 无重读通道），修法在 `docs/models-review.md` |
+| 模型与推理 | `models.json` / `auth.json` / `models-store.json` / `settings.json` 的三个选择键 | `docs/models-review.md`（进行中）；契约里 10 个内置厂商的 baseUrl | **"AI 改了文件设置页会不会显示"** — 结论是不会（RPC 无重读通道）；修法（`PiFileStamps`/`PiFileWatch` + 模型清单）在制品中 |
 | 消息与网络 / 上下文与压缩 / 重试与网络 | pi 的 `Settings` 键，值读文件 | `settings-audit` + `docs/settings-review.md` | 审计进行中 |
 | 工具 | pi 的工具名（`get_available_models`… 不，是 `defaultTools` 与 pi 的工具注册表） | 同上 | 同上 |
 | 会话 | `sessionDir` 等键 + 上面的会话目录 | `sessions` + `settings-audit` | 同会话面 |

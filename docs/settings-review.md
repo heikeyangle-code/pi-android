@@ -447,6 +447,9 @@ pi 有 `sessionDir`（`SM:150`，读取 `SM:724`，优先级 `--session-dir` > `
   启动系统里能编辑文本的应用，**完全不读这个键**（全树 grep `"externalEditor"` 在 App 源码里 0 命中）。
   它是 App 自己的一件等价功能，不是对这个设置的消费。
 - 结论：留着这一行就是"一个 TUI 旋钮 + 一个说明"，正是本轮要清掉的东西；而 App 的外部编辑器照旧可用。
+- **复核人同意按此判定（删）**：判定第二步是硬条件——App 不读该键，就不算"GUI 自己的开关"；
+  不为了与名单一致而把它加回来。它的失败提示也一并改了（`ChatScreen.kt:266-277`），
+  不再指向一个已删除的设置行。
 
 ### 9.4 其余两问
 
@@ -470,6 +473,25 @@ pi 读它（§6）。**但 `piOwnedKeys` 不能成为 TUI 键的后门**——�
 `sdk.ts`/`agent-session.ts`/`main.ts`/`package-manager.ts`/`telemetry.ts`（进程或会话级），
 没有一个是"只有 `interactive-mode.ts` 读"。这条判据是人工复核的（§1.1 每一行都写了读取点），
 没有做成自动断言：审计是纯文本扫描，读不懂 TypeScript 的调用图。
+
+### 9.6 边界：设置面与命令面不是一类界面
+
+原则只作用于**设置面**。pi 的**命令面**（斜杠命令面板，`PiSlashCommands.kt` / `SlashPalette.kt` /
+`notifyTerminalOnly`）保留 `PiCommandAction.TerminalOnly` 那一批（`/share`、`/changelog`、`/hotkeys`、
+`/trust`、`/login`、`/logout`、`/reload`、`/quit`），**不删**。理由：
+
+- **两个界面的职责不同**。命令面板回答"pi 有哪些命令"，隐掉就是**藏掉 pi 的能力**，与 1:1 的镜像关系冲突；
+  设置页回答"调 GUI 自己"，TUI 旋钮才在这里被清掉。
+- **保留 `app.credentials.oauth` 的那条理由在这里同样成立**：订阅登录只有 TUI 能完成，
+  命令面板里删掉 `/login`，用户就更不知道它存在了。而且那里已有诚实的处置：
+  徽标「仅终端」+ 点下去给一句"在原版 TUI 里运行"。
+- **文案按同一条原则收过**：`notifyTerminalOnly` 以前写的是"pi 的 RPC 模式没有实现 /xxx"——那是内部协议解释，
+  已改成只讲后果与去处（`"/xxx 要在原版 TUI 里运行：工作区 → 终端。"`），并且**不声称已经切过去**
+  （命令面板这一路并不导航，只有设置里的 OAuth 例外行才会 `requestNav(NavRequest.Workbench)`）。
+  结构没动，只动了这一句与它的 KDoc。
+
+一句话记法：**设置面清 TUI 旋钮；命令面保留，因为它表达的是 pi 有什么能力。**
+下一轮不要"顺手删干净"命令面板里的这一批。
 
 ---
 

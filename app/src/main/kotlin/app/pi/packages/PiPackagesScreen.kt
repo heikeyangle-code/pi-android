@@ -275,7 +275,6 @@ private fun BuiltinCard(rows: List<PiPackagesUiState.BuiltinRow>) {
     }
 }
 
-@Composable
 /**
  * The extensions found in the agent's `extensions/` directory, listed because pi
  * loads them — the app's own list could not see them, so work the model did itself

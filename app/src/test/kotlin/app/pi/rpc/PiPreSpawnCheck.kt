@@ -119,21 +119,34 @@ fun main() {
     val suffix = everything.commandLineSuffix()
     val environment = everything.environment()
     for (knob in APP_EXPOSED_PRE_SPAWN) {
-        knob.flag?.let { flag ->
-            check(
-                "the exposed flag is emitted: $flag",
-                containsFlag(suffix, flag),
-                "PiLaunchOptions.commandLineSuffix() does not produce $flag. Re-read " +
-                    "rpc/PiLaunchOptions.kt and make the row real, or drop it from " +
-                    "APP_EXPOSED_PRE_SPAWN (rpc/PiPreSpawnConfig.kt).",
+        // What must be true follows from `channel`, not from which fields happen to be
+        // filled in. `CliFlagOrEnv` means pi accepts *either* spelling, so demanding
+        // the flag would fail on a knob the app deliberately carries as its
+        // environment variable — `app.runtime.offline` is exactly that: `PiLaunchOptions`
+        // sets `PI_OFFLINE=1` (pi reads it, `docs/environment-variables.md:84`) and
+        // never passes `--offline`. Asserting the flag there asserted the wrong fact.
+        val flagEmitted = knob.flag?.let { containsFlag(suffix, it) } ?: false
+        val envEmitted = knob.envVar?.let { environment.containsKey(it) } ?: false
+        val why = "PiLaunchOptions must carry this knob to pi's process. Re-read " +
+            "rpc/PiLaunchOptions.kt and make the row real, or drop it from " +
+            "APP_EXPOSED_PRE_SPAWN (rpc/PiPreSpawnConfig.kt)."
+        when (knob.channel) {
+            PiPreSpawnChannel.CliFlag -> check(
+                "the exposed flag is emitted: ${knob.flag}",
+                flagEmitted,
+                why,
             )
-        }
-        knob.envVar?.let { variable ->
-            check(
-                "the exposed environment variable is emitted: $variable",
-                environment.containsKey(variable),
-                "PiLaunchOptions.environment() does not produce $variable. Re-read " +
-                    "rpc/PiLaunchOptions.kt; the value is otherwise a settings row nothing reads.",
+
+            PiPreSpawnChannel.EnvVar -> check(
+                "the exposed environment variable is emitted: ${knob.envVar}",
+                envEmitted,
+                why,
+            )
+
+            PiPreSpawnChannel.CliFlagOrEnv -> check(
+                "the exposed knob is emitted in one of its two spellings: ${knob.appKey}",
+                flagEmitted || envEmitted,
+                "neither ${knob.flag} nor ${knob.envVar} reached pi. $why",
             )
         }
         // The channel field is documentation, but a wrong one would mislead the doc.

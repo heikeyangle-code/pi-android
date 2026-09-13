@@ -109,8 +109,8 @@ fun PiSettingsStack(
     // pi installs resources with `pi install`, which has no RPC command, so the
     // app owns this UI; the screen is `app.pi.packages.PiPackagesHost`.
     var packages by remember { mutableStateOf(false) }
-    // The credential form. `app.credentials.apiKey` (`PiSettingsRegistry.kt:369`)
-    // and `app.localModels.manage` (`:387`) are Action rows whose work is a
+    // The credential form. `app.credentials.apiKey` (`PiSettingsRegistry.kt:358`)
+    // and `app.localModels.manage` (`:389`) are Action rows whose work is a
     // multi-step flow, so they own a screen instead of a confirm dialog.
     var credentials by remember { mutableStateOf(false) }
     var credentialPreset by remember { mutableStateOf<String?>(null) }

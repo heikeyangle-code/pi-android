@@ -20,7 +20,7 @@
 | App 界面层 | 设置 → 模型 的清单 | **能（本次改动之后）**。直读文件，并用 inotify + 回前台比 mtime 触发重读 | 新代码：`PiModelInventory.kt`、`PiModelsScreen.kt`、`PiFileWatch.kt` |
 | App 界面层（旧行为） | 设置页 | **看不到**。设置页里没有「已导入的模型」这东西；唯一能看到的地方是凭证表单里那个厂商的勾选行（`PiCredentialScreen` 的 `existingIds`） | 改动前的 `PiCredentialScreen.kt` + 空白的模型分组 |
 | App 界面层 | 对话页「选择模型」 | **看不到**。那个列表的唯一来源是 `get_available_models` | `ui/chat/ChatSheets.kt`（列表 = `state.models`）；`PiSessionViewModel.kt:1633` 只做一次 `api.getAvailableModels()` |
-| 引擎层 | pi 自己认不认这个模型 | **不认，直到重启引擎。** RPC 没有任何重读通道 | `core/model-runtime.ts:176`（`create`）与 `:699`（`refresh`）是 `ModelConfig.load` 仅有的两个调用点；`modes/rpc/rpc-mode.ts:490-493` 只读 `getAvailableSnapshot()`（`core/model-runtime.ts:422-424`，纯 getter）。启动期那一次 `void refresh(...)` 有 15s abort，且发生在 RPC 服务开始之前（`main.ts:925-936`） |
+| 引擎层 | pi 自己认不认这个模型 | **不认，直到重启引擎。** RPC 没有任何重读通道 | `core/model-runtime.ts:176`（`create`）与 `:699`（`refresh`）是 `ModelConfig.load` 仅有的两个调用点；`modes/rpc/rpc-mode.ts:490-493` 只读 `getAvailableSnapshot()`（`core/model-runtime.ts:422-424`，纯 getter）。启动期那一次 `void refresh(...)` 在 RPC 服务开始**之前发起**、不 await（15s abort），所以它只覆盖「引擎刚起来」那一瞬（`main.ts:922-934`） |
 
 **所以答案是一句分叉的话：**
 
