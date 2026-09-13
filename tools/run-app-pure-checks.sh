@@ -434,6 +434,32 @@ run_harness lifecycle-policy \
   "$ROOT/app/src/test/kotlin/app/pi/service/PiEngineLifecyclePolicyCheck.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/service/PiEngineLifecyclePolicy.kt"
 
+# app.pi.runtime: the unpack's free-space budget. `RuntimeProvisioner.ensureReady`
+# deletes the whole runtime tree and then extracts ~440 MB of payloads into it, and
+# nothing checked free space: on a phone that is out of room the user lost the
+# runtime that worked, the new one was half written, and - because the revision stamp
+# is only written at the end - every later launch repeated the wipe. The failing path
+# only exists on a device that is out of space, so nothing in the build could notice
+# it. The object imports nothing at all; the file read (`File.usableSpace`) and the
+# call site stay in the provisioner, which this harness deliberately does not compile.
+run_harness runtime-space \
+  app.pi.runtime.RuntimeSpaceBudgetCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/runtime/RuntimeSpaceBudgetCheck.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/runtime/RuntimeSpaceBudget.kt"
+
+# app.pi.engine: the engine's exit translator. pi exits with code 1 for a handful of
+# reasons and prints the reason to stderr; the app captured that stderr and then never
+# read it back, so the failure screen showed a title with an empty detail and the
+# diagnostic report said the exit code was "not recorded". Every rule in the object is
+# a claim about what pi prints, and the harness pins the strings **verbatim from runs
+# against the pinned engine** (pi 0.85.1): if pi's wording changes, the rule stops
+# matching silently, which is exactly the failure this pins. It also pins the other
+# half - an unattributable exit must stay unattributable. No imports either.
+run_harness engine-exit-cause \
+  app.pi.engine.EngineExitCauseCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/engine/EngineExitCauseCheck.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/engine/EngineExitCause.kt"
+
 # --- 4. verdict ---------------------------------------------------------------
 # The counts are computed, not written down. They were hardcoded once ("2
 # harnesses"), and adding a third would have left the message lying about how much

@@ -137,6 +137,11 @@ fun PiSettingsStack(
     var licenses by remember { mutableStateOf(false) }
     // 设置 → 模型：App 侧的一页，列出这台设备上配好的厂商与模型（`PiModelsScreen`）。
     var models by remember { mutableStateOf(false) }
+    // 设置 → 运行时与诊断 → 导出诊断报告（`app.runtime.diagnostics`）。报告的正文是
+    // 被交付的那件东西，所以它先被看到、再被送出：一页屏幕而不是一次静默的保存 ——
+    // 用户能亲眼看到退出码是空的、stderr 是空的、哪个载荷读不出来，再决定发不发。
+    // 它不碰引擎，因此引擎已经退出时同样可用（这正是它存在的场景）。
+    var diagnostics by remember { mutableStateOf(false) }
 
     // The 运行时 group's four read-only rows: their facts live in the runtime
     // tree and in the engine's foreground service, not in the settings store, so
@@ -255,15 +260,21 @@ fun PiSettingsStack(
         // they can only take effect in a new `pi --mode rpc` process. This row is
         // the next step the rows above point at.
         "app.runtime.restartEngine" to { restartPrompt = true },
+        // 线上事故的入口：界面只显示 "rpc: engine exited with code 1"，而用户没有 ADB、
+        // 看不到 logcat。这一行把 App 此刻还能读到的一切汇总成一份纯文本交给用户，报告
+        // 的抓取发生在引擎退出的一瞬间（`engineDiagnostics`），所以引擎死了也能导。
+        "app.runtime.diagnostics" to { diagnostics = true },
     )
 
     BackHandler(
-        enabled = searching || groupId != null || deviceCapabilities || packages || credentials || licenses || models,
+        enabled = searching || groupId != null || deviceCapabilities || packages || credentials || licenses || models || diagnostics,
     ) {
         if (searching) {
             searching = false
         } else if (licenses) {
             licenses = false
+        } else if (diagnostics) {
+            diagnostics = false
         } else if (models) {
             models = false
         } else if (credentials) {
@@ -291,6 +302,17 @@ fun PiSettingsStack(
             licenses -> LicensesScreen(
                 contentPadding = contentPadding,
                 onBack = { licenses = false },
+            )
+
+            // The engine's last exit, the runtime tree, the APK's payloads and the
+            // failures the app recorded — assembled into one text file the user can
+            // send. Both lambdas read the **newest** capture every time the screen
+            // rebuilds, because the engine can die while this screen is open.
+            diagnostics -> DiagnosticsScreen(
+                contentPadding = contentPadding,
+                onBack = { diagnostics = false },
+                engine = engineDiagnostics,
+                failures = recentFailures,
             )
 
             credentials -> PiCredentialScreen(

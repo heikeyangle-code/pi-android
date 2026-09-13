@@ -109,6 +109,37 @@ class RuntimeProvisioner(
                 onStep(Step(auditLabel(payloads), index, steps.size))
                 index++
 
+                // Pre-flight too, and it has to be *here*: after the audit (so the
+                // real payload sizes are known) and before `wipe()` (the only
+                // destructive step in this method). Without it, a phone that is out
+                // of space loses the runtime that worked, fails half way through the
+                // new one, and - because the stamp below is only written at the very
+                // end - repeats the whole thing on the next launch. The measured
+                // requirement and the sentence the user gets are in
+                // [RuntimeSpaceBudget].
+                //
+                // `usableSpace` on an unreadable path answers 0, and
+                // [RuntimeSpaceBudget.shortfall] treats that as "cannot tell" rather
+                // than "out of space", so this can never refuse a boot because of a
+                // number it could not read.
+                val payloadBytes = payloads.filter { it.ok }.sumOf { it.bytes }
+                // The volume the runtime will live on. `<files>/pi` may not exist yet
+                // on a first boot, and `usableSpace` on a path that does not exist
+                // answers 0 - which [RuntimeSpaceBudget.shortfall] reads as "cannot
+                // tell" and would silently skip the check exactly when a fresh
+                // install on a full phone is the case worth catching. Creating the
+                // directory first costs nothing: the unpack creates it moments later.
+                paths.home.mkdirs()
+                val available = paths.home.usableSpace
+                RuntimeSpaceBudget.shortfall(available, payloadBytes)?.let { missing ->
+                    throw ProvisioningException(
+                        RuntimeSpaceBudget.message(available, payloadBytes) +
+                            "\n（本次预检：可用 $available 字节，内置载荷 $payloadBytes 字节，" +
+                            "预计至少需要 ${RuntimeSpaceBudget.requiredBytes(payloadBytes)} 字节，" +
+                            "还差 $missing 字节）",
+                    )
+                }
+
                 next(); wipe()
                 index++
 

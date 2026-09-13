@@ -237,6 +237,27 @@ class PiEngineSession(
 
     val stderr = StringBuilder()
 
+    /**
+     * What the process exited with, or null while it is running / was never reaped.
+     *
+     * ## Why it is kept rather than only used
+     *
+     * [waitJob] needs the number to decide `Stopped` vs `Failed`, and the pending
+     * requests get it inside a sentence. Neither of those is readable afterwards:
+     * the failing request is consumed by a caller that has already moved on, and
+     * the ViewModel drops its reference to this session the moment it publishes
+     * `Boot.Failed`. That left the diagnostic report saying the exit code was
+     * "not recorded" — for the one failure the whole report exists to explain
+     * (`docs/engine-exit-review.md` §0.4).
+     *
+     * `@Volatile` because [waitJob] writes it on the host's IO scope while the UI
+     * thread may read it from the state collector in the same moment the state
+     * flips to `Failed`.
+     */
+    @Volatile
+    var lastExitCode: Int? = null
+        private set
+
     private var readerJob: Job? = null
     private var stderrJob: Job? = null
     private var waitJob: Job? = null
@@ -334,12 +355,42 @@ class PiEngineSession(
         }
         waitJob = scope.launch {
             val code = runCatching { process.waitFor() }.getOrDefault(-1)
+            lastExitCode = code
             _state.value = if (code == 0) EngineState.Stopped else EngineState.Failed
             // Fail every in-flight request rather than letting callers hang.
-            pending.values.forEach { it.complete(failure("engine exited with code $code")) }
+            //
+            // The message carries the engine's own last words, not just the number:
+            // the number alone is what the user already sees (`rpc: engine exited
+            // with code 1`), and the cause is only ever in the stderr. See
+            // [EngineExitCause] for what each line means and
+            // `docs/engine-exit-review.md` §2 for the runs that produced them.
+            val reason = buildString {
+                append("engine exited with code ").append(code)
+                val tail = stderrTail()
+                if (tail.isNotEmpty()) append("；stderr：").append(tail)
+            }
+            pending.values.forEach { it.complete(failure(reason)) }
             pending.clear()
         }
     }
+
+    /**
+     * The engine's own last words, for the sentence a waiting caller gets.
+     *
+     * A bounded tail rather than the whole capture: this string ends up inside a
+     * snackbar and a failure screen (the full 64 KB is what the diagnostic report is
+     * for). Read under the same monitor the stderr drain writes under, because
+     * [stderrJob] may be appending its final line while this runs — the process is
+     * gone, but the drain reads the pipe to EOF.
+     */
+    private fun stderrTail(): String = synchronized(stderr) {
+        val text = stderr.toString().trim()
+        when {
+            text.isEmpty() -> ""
+            text.length <= EXIT_STDERR_TAIL_CHARS -> text
+            else -> "…" + text.takeLast(EXIT_STDERR_TAIL_CHARS)
+        }
+    }.replace('\n', ' ')
 
     /**
      * Ask pi for its state, so [state] can leave [EngineState.Starting].
@@ -918,6 +969,16 @@ class PiEngineSession(
     companion object {
         /** Keep diagnostics bounded; the settings screen shows the tail. */
         private const val MAX_STDERR_CHARS = 64 * 1024
+
+        /**
+         * How much of the captured stderr travels in the failure sentence a waiting
+         * caller receives.
+         *
+         * Small on purpose: this text is rendered in a snackbar and on the failure
+         * screen, and both are one line tall in practice. The full capture is what
+         * the diagnostic report exports.
+         */
+        private const val EXIT_STDERR_TAIL_CHARS = 400
 
         /**
          * How long the most recent engine took to answer its first command, in
