@@ -44,6 +44,7 @@ import app.pi.ui.extension.ExtensionUiHost
 import app.pi.ui.screens.ChatScreen
 import app.pi.ui.screens.ProjectScreen
 import app.pi.ui.screens.SessionsScreen
+import app.pi.ui.screens.SessionsView
 import app.pi.ui.screens.TerminalScreen
 import app.pi.ui.settings.PiSettingsStack
 
