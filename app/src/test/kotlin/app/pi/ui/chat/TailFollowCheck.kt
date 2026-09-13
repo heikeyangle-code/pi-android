@@ -392,6 +392,34 @@ fun main() {
         )
         check("G8 new geometry is pinned again", grown.pin, TailPin(0, 1340))
 
+        // The loop the repeat guard exists for, in the shape that used to defeat it.
+        // When the tail row is taller than the viewport the pin is the *fixed*
+        // `TailPin(tail, 0)`: it does not depend on the offsets, and the list cannot
+        // satisfy it (the requested position is clamped), so the remeasure reports a
+        // different geometry with the same pin. Requiring an identical geometry as
+        // well let that through once per frame — a remeasure loop with nothing left to
+        // fix, which is the reported "卡住不动 / 没有响应".
+        val unreachable = TailFollow()
+        val asked = unreachable.onSnapshot(
+            TailSnapshot(6, viewport(6, atBottom = false, lastVisibleIndex = 2)),
+        )
+        check("G9 a tail above the viewport pins to its index", asked.pin, TailPin(5, 0))
+        val remeasured = unreachable.onSnapshot(
+            TailSnapshot(6, viewport(6, atBottom = false, firstVisibleIndex = 1, lastVisibleIndex = 2)),
+        )
+        check("G10 the same unsatisfiable pin is not re-issued", remeasured.pin, null)
+
+        // And the guard must not survive an explicit re-arm: the affordance means
+        // "go to the newest now", so the remembered pin cannot suppress it.
+        val reArmed = TailFollow()
+        reArmed.onSnapshot(TailSnapshot(6, viewport(6, atBottom = false, lastVisibleIndex = 2)))
+        reArmed.pause()
+        reArmed.reArm()
+        val afterReArm = reArmed.onSnapshot(
+            TailSnapshot(6, viewport(6, atBottom = false, lastVisibleIndex = 2)),
+        )
+        check("G11 an explicit re-arm pins again", afterReArm.pin, TailPin(5, 0))
+
         // Rotation: the paused state and its count survive, the anchors do not.
         val paused = TailFollow()
         paused.onSnapshot(TailSnapshot(50, viewport(50, atBottom = true, firstVisibleIndex = 45)))

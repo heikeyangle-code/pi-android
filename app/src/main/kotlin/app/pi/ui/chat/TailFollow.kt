@@ -105,11 +105,14 @@ internal class TailFollow(initiallyFollowing: Boolean = true) {
     private var previousAnchor: TailAnchor? = null
 
     /**
-     * The pin the *current position* wants, and the geometry it was computed from —
-     * whether or not the last call handed it out (see the repeat guard in [onSnapshot]).
+     * The pin the *current position* wants — whether or not the last call handed it
+     * out (see the repeat guard in [onSnapshot]).
+     *
+     * Only the pin is remembered, not the geometry it came from: an identical pin is
+     * the same request, and remembering the geometry as well is what let an
+     * unsatisfiable one be re-issued every frame.
      */
     private var lastPin: TailPin? = null
-    private var lastPinViewport: TailViewport? = null
 
     /**
      * Re-arm the follow. The "back to latest" affordance and the send button both
@@ -120,6 +123,10 @@ internal class TailFollow(initiallyFollowing: Boolean = true) {
         following = true
         unseenRows = 0
         pausedByNavigation = false
+        // An explicit "go to the newest" (the affordance, the send button) must not be
+        // suppressed by the repeat guard: the remembered pin describes what the
+        // *previous* position wanted, and the user has just asked for the tail.
+        lastPin = null
     }
 
     /**
@@ -208,22 +215,30 @@ internal class TailFollow(initiallyFollowing: Boolean = true) {
             viewport.totalItems <= 0 -> null
             else -> viewport.pinToTail()
         }
-        // Never re-issue a pin against a geometry that has not moved since the last
-        // one. `requestScrollToItem` schedules a remeasure even when the position it
-        // is given is the one already in place
+        // Never re-issue a pin. `requestScrollToItem` schedules a remeasure even when
+        // the position it is given is the one already in place
         // (`compose/foundation/.../LazyListState.kt:469-475`), and that remeasure
         // writes a new `LazyListLayoutInfo`, which re-emits the `snapshotFlow` that
-        // feeds this machine - so repeating an identical pin would be a per-frame
-        // remeasure loop with nothing left to fix. Identical geometry + identical pin
-        // is exactly that case, and skipping it cannot lose a scroll the previous pin
-        // had not already asked for.
-        val repeated = pin != null && pin == lastPin && viewport == lastPinViewport
+        // feeds this machine — so repeating a pin is a per-frame remeasure loop.
+        //
+        // Compare the **pin**, not the geometry it came from. Requiring an identical
+        // viewport too defeated this guard in the one case it exists for: when the
+        // tail row is taller than the viewport, `pinToTail()` returns the fixed
+        // `TailPin(tail, 0)` — a value that does not depend on the offsets — and the
+        // list cannot satisfy it (the requested position is clamped). The remeasure
+        // that `requestScrollToItem` schedules therefore produces a *different*
+        // geometry with the **same** pin, the old condition let it through, and the
+        // follow re-issued the unsatisfiable request on every frame: a remeasure loop
+        // with nothing left to fix, which is the reported "卡住不动 / 没有响应". An
+        // identical pin is the same request by definition, so skipping it cannot lose
+        // a scroll — a geometry that really moved asks for a different pin (see the
+        // harness's "new geometry is pinned again").
+        val repeated = pin != null && pin == lastPin
         val issued = if (repeated) null else pin
         // The memory follows what the *position* wants, not what was sent this time: a
         // skip means "already asked for", and forgetting it would let the next
         // identical emission ask again - which is the loop this exists to stop.
         lastPin = pin
-        lastPinViewport = if (pin == null) null else viewport
 
         previousRows = rows
         previousAnchor = anchor
