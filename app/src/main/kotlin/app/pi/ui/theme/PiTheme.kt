@@ -1,11 +1,5 @@
 package app.pi.ui.theme
 
-import androidx.compose.animation.core.AnimationSpec
-import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.Spring
-import androidx.compose.animation.core.spring
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Shapes
@@ -143,44 +137,6 @@ object PiShapes {
     /** §7.2 Snackbar (`:753`): 12dp. */
     val snackbar = RoundedCornerShape(12.dp)
 }
-
-/**
- * The elevation ladder of §2.4 (`docs/pi-android-ui-spec.md:141-148`).
- *
- * M3's tonal surfaces already carry the level a component sits at; these are the
- * shadow depths that go with it. §2.4 also says not to use pure black — pass the
- * ambient `shadow` colour and keep the alpha low, or in a dark theme prefer the
- * next surface tone instead of a shadow.
- */
-@Immutable
-
-/** Sizes §2.5 and §7.3 fix for icons and illustration (`:155-159`, `:773`). */
-@Immutable
-
-/**
- * Motion tokens — the six rows of docs/pi-android-ui-spec.md §2.6
- * (`:165-172`), verbatim, plus the spring damping each spatial row names.
- *
- * | spec §2.6 row | symbol | value |
- * |---|---|---|
- * | `instant` | [instant] | 0 ms |
- * | `fast.spatial` | [fastSpatialMs] / [fastSpatial] | 150 ms, spring damping 0.9 |
- * | `medium.spatial` | [mediumSpatialMs] / [mediumSpatial] | 250 ms, spring damping 0.85 |
- * | `slow.spatial` | [slowSpatialMs] / [slowSpatial] | 400 ms, spring damping 0.8 |
- * | `fast.effects` | [fastEffectsMs] / [fastEffects] | 100 ms linear |
- * | `medium.effects` | [mediumEffectsMs] / [mediumEffects] | 200 ms ease-in-out |
- *
- * The spec's dotted names cannot be Kotlin identifiers, so `fast.spatial` is
- * [fastSpatial]. Each token is exposed three ways for whoever needs it: a `*Ms`
- * number, a ready-made [AnimationSpec], and (for the two effect tokens) the
- * spec's easing. No caller should re-derive the curve.
- *
- * **Overshoot.** §11 (`docs/pi-android-ui-spec.md:874`) forbids `overshoot` above
- * 1.1. A spring overshoots by `exp(-πζ/√(1-ζ²))`, i.e. 0.15 % at ζ=0.9,
- * 0.63 % at 0.85 and 1.5 % at 0.8 — all far inside the limit. Do not damp below
- * ~0.59, which is where 10 % overshoot begins.
- */
-@Immutable
 
 /**
  * Text styles that Material 3's [Typography] has no slot for: pi's footer/meta
