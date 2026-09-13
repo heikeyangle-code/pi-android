@@ -46,3 +46,17 @@
 ## D10 · 「当前生效值」2px 条按「被显式写过」推导，不限制每组一条
 **裁决**：Value 行的值若在 store 里被显式写过，就带 2px accent 条；一组里可能有多条，不压成一条。
 **理由**：每一条都确实在生效，为了视觉压掉几条等于撒谎；也不给宿主加纯视觉参数 `currentKeys`。
+
+## D11 · 项目现场的 git 区块不做
+**裁决**：工作区（项目现场）不显示分支/未提交改动。
+**理由**：pi 没有对应 RPC；工作区目录本身也不是 git 仓库，跑 `git status` 只会得到「not a git repository」，把它画成「没有改动」就是把失败说成事实。用户原话：「好，没有就不做了」。要真做，得先定义「哪个目录算仓库」，那是产品决策而不是 UI 施工。
+
+## D12 · 剩余 UI 批次与复用安排
+- **B4 会话列表覆盖层 + 对话页左上角入口** → 复用 B1/B3 那位（源码映射与分批设计都在它上下文里）。
+- **B6c 包管理页视觉 + 设置旧样式残留** → 复用 B6 那位（`PiSettingsStyle` 是它写的，这页必须复用它）。
+- **上色 1:1（含扩展审计）** → 复用审计报告作者。
+- **卡死第二轮（新会话首条回复）+ 已落地的 markdown 修复** → 复用诊断作者。
+- **B5 对话块渲染**（工具卡/执行轨道/块 chrome/状态行读数）→ 等上色批让出 `ui/blocks/DiffBlock.kt` 与 `ToolBodyText.kt` 之后，**复用上色那位**（它那时已深度读过这批文件），不新开人。
+- **B8 状态面与浮层**（Boot 三态 / 扩展对话框四型 / Snackbar 三档 / 空态错误态的形态）→ 计划里没有单独成批，需要补一批。
+- **B7 排印与收尾**（`numeric` 消费点、字距字重、删 3 处 tonalElevation 与唯一 shadowElevation、顶栏 48dp、死代码 `PiEffectiveBadge`、`PiSettingsRegistry` 里 WorkbenchScreen 旧注释、`PiSpacing.screen` 退役、`PiV2Layout` 折进 `PiSpacing`）→ 最后一批。
+- **验收**：v2 设计师那位做 reviewer（它能读图），拿实机截图与 `design-demos/shots-v2/phoneNN.png` 逐台比对，只报编号化偏差、不改代码。
