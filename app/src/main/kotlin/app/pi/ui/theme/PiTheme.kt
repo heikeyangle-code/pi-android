@@ -135,25 +135,6 @@ object PiSpacing {
      * is no upstream value to copy) and is therefore unified onto this token.
      */
     val accentStripe = 20.dp
-
-    // ------------------------------------------------------------ retired names
-
-    /**
-     * **Retired. Do not use in new code.** `screen` was `PiSpacing`'s page margin
-     * from `docs/pi-android-ui-spec.md`, which this project declared out of date
-     * (`00-screen-inventory.md:4`); v2's page margin is [pageHorizontal] (14), and
-     * decision **D1** (`07-construction-decisions.md`) makes 14 the one source of
-     * truth and retires this name once its last consumer is migrated. B7 migrated
-     * every call site **in its own half**; the one that is left is in the other
-     * half's `ui/screens/TerminalScreen.kt:73`, which this batch's file division
-     * forbids touching. The value is forwarded rather than deleted so the build
-     * stays green until that call site moves — it keeps no number of its own.
-     *
-     * It is deliberately **not** 14: an alias that silently changed meaning is how
-     * a screen ends up with the wrong margin without anyone editing it.
-     */
-    @Deprecated("The page margin is PiSpacing.pageHorizontal (14) — see D1.")
-    val screen = 16.dp
 }
 
 /**
