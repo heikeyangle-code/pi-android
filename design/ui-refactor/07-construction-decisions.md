@@ -60,3 +60,8 @@
 - **B8 状态面与浮层**（Boot 三态 / 扩展对话框四型 / Snackbar 三档 / 空态错误态的形态）→ 计划里没有单独成批，需要补一批。
 - **B7 排印与收尾**（`numeric` 消费点、字距字重、删 3 处 tonalElevation 与唯一 shadowElevation、顶栏 48dp、死代码 `PiEffectiveBadge`、`PiSettingsRegistry` 里 WorkbenchScreen 旧注释、`PiSpacing.screen` 退役、`PiV2Layout` 折进 `PiSpacing`）→ 最后一批。
 - **验收**：v2 设计师那位做 reviewer（它能读图），拿实机截图与 `design-demos/shots-v2/phoneNN.png` 逐台比对，只报编号化偏差、不改代码。
+
+## D13 · 推送策略（本机网络与 GitHub 的兼容）
+**现象**：`git push` 连续十几次失败（TLS 被掐 / 连接重置），但同一时刻 `curl https://github.com` 是 200。
+**处置**：`git config http.version HTTP/1.1` + `http.postBuffer` 调大，并且**一次只推一个提交**（`git push origin <sha>:refs/heads/main` 逐个推）。三条积压提交一次成功。
+**结论**：这台手机的网络在 HTTP/2 大包上传上不稳；以后推送失败先试这两招，不要反复重试同一个命令。
