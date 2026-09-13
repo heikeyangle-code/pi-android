@@ -10,7 +10,7 @@ const { chromium } = require('/usr/local/lib/node_modules/playwright');
 
 const ROOT = '/root/pi-android/design/ui-refactor';
 const DEMOS = `${ROOT}/design-demos`;
-const SHOTS = `${DEMOS}/shots`;
+const SHOTS = `${DEMOS}/shots`; // 由 argv 覆盖见下
 fs.mkdirSync(SHOTS, { recursive: true });
 
 const all = [['a', 'direction-a'], ['b', 'direction-b'], ['c', 'direction-c']];

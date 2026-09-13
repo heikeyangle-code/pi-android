@@ -39,16 +39,13 @@
    队列（穿插 ⇢ / 后续 ⇣ 配字与色）、审批（! 待决策 + 倒计时）、引擎与连接状态（AppBar 状态行：
    ✓ 就绪 / … 工作中 / ◌ 启动中 / ≡ 排队中 / ✗ 引擎已退出 / ■ 引擎已停止）、错误块（✗ + 出错了 / 详情）。
    任何只靠颜色表意的地方都补了符号与词；色盲与暗光下仍然可读。
-2 · 一屏只有一项用 accent。B 里 accent 用在 6 个地方（底栏激活标签、会话「当前」徽章、发送键、
-   收回并编辑、流式光标、审批「允许」），v2 收敛到**每屏恰好一个语义对象**：
-     · 对话（空闲）→ 发送键；（流式中）→ 正在跑的那一步（pending 节点 + 流式光标），发送键转中性停止键；
-     · 会话列表 → 当前会话（当前徽章 + 选中行左缘 2px 条）；
-     · 工作区 → 「本次会话在用」的当前目录卡；
-     · 设置首页 → 当前模型卡；设置分组页 → 该行的当前生效值（左缘 2px 条）；
-     · Boot → 进度条 / 开始按钮；终端页 → 零 accent（只有 pi 的语法色）。
-   被撤掉 accent 的地方全部改由**字号 + 字重 + 1px 线 + 表面阶梯**分层：底栏激活项 = --text + 500 字重
-   + 1px 底线；「收回并编辑」= --text + 500 字重；「分叉新会话」= --text；徽章色块默认 --muted。
-   层级**不用阴影**；B 的 inset hairline 与 rgba(...,.35) 描边原样保留。
+2 · 层级不用阴影：只用 1px 线（borderMuted / 它的 55% 与 35%）与表面阶梯分层。
+   B 原本就没有阴影，v2 保持，并且给每一处层级都补了一条 1px 线或一档表面阶，而不是靠加色。
+   （用户已撤销「一屏只有一项用 accent」这条约束 —— accent 按组件语义正常使用：主操作、选中 / 当前项、链接、
+   进度、开启状态、扩展状态行。所以 v2 里 accent 出现在底栏激活项、发送键、当前徽章、开关的「开」、
+   状态行的上下文进度、Action 行的标题、审批的「允许」等语义位置，没有再为了凑规则把它们降级。）
+
+【C 的那一条没做的】「一屏只有一项用 accent」已按用户要求撤销，本文件不实现、也不在自检里打勾。
 
 【明确不做】
 A 的 12 格 bento / 等距立方 / 屏顶四格读数带；C 的「零图标」（B 的 18px 单线图标保留）；
@@ -516,7 +513,7 @@ if (typeof window !== 'undefined') {
     );
   }
 
-  /* ---------- 底栏：三个目的地。激活项不再用 accent（一屏一个 accent），改用字重 + 1px 底线 ---------- */
+  /* ---------- 底栏：三个目的地。激活项按语义用 accent（选中 / 当前位置），另加 1px 底线 ---------- */
   function TabBar(p){
     const items = [
       {k:'chat', label:'对话', n:'chat'},
@@ -530,9 +527,9 @@ if (typeof window !== 'undefined') {
           return (
             <div key={it.k} className="press" onClick={()=>p.onChange(it.k)}
               style={{flex:1,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:3,position:'relative'}}>
-              <Icon n={it.n} s={20} c={on?'var(--text)':'var(--muted)'}/>
-              <span className="t12" style={{color:on?'var(--text)':'var(--muted)',fontWeight:on?500:400}}>{it.label}</span>
-              {on ? <span style={{position:'absolute',bottom:6,width:18,height:1,background:'var(--text)'}}/> : null}
+              <span style={{display:'flex',color:on?'var(--accent)':'var(--muted)'}}><Icon n={it.n} s={20}/></span>
+              <span className="t12" style={{color:on?'var(--accent)':'var(--text)',fontWeight:on?500:400}}>{it.label}</span>
+              {on ? <span style={{position:'absolute',bottom:6,width:18,height:1,background:'var(--accent)'}}/> : null}
             </div>
           );
         })}
@@ -593,7 +590,7 @@ if (typeof window !== 'undefined') {
     );
   }
 
-  /* ---------- 徽标：色块在最前，字用中性色（可读性优先）；色块默认 --muted，只有该屏 accent 归属者才用 --accent ---------- */
+  /* ---------- 徽标：色块在最前，字用中性色（可读性优先）；色块颜色由调用方按语义给 ---------- */
   function Badge(p){
     const c = p.tone || 'var(--muted)';
     return (
@@ -620,12 +617,12 @@ if (typeof window !== 'undefined') {
   }
 
   function Switch(p){
-    /* 开关不用 accent：「开 / 关」已经由字 + 符号（✓ / ○）+ 轨道形状三重编码，
-       所以轨道只用中性阶梯（--text / --surf-highest），把 accent 留给这一屏的语义对象 */
+    /* 开关的「开」用 accent（pi 把 accent 映射到选中/开启语义）；同时另有「开 / 关」字与 ✓ / ○ 符号，
+       所以颜色只是三重编码里的一层，不是唯一线索 */
     return (
       <span className="press" onClick={p.disabled?null:()=>p.onChange(!p.on)}
-        style={{flex:'none',width:38,height:22,borderRadius:999,background:p.on?'var(--text)':'var(--surf-highest)',
-          border:'1px solid '+(p.on?'var(--text)':'var(--border-muted)'),display:'flex',alignItems:'center',
+        style={{flex:'none',width:38,height:22,borderRadius:999,background:p.on?'var(--accent)':'var(--surf-highest)',
+          border:'1px solid '+(p.on?'var(--accent)':'var(--border-muted)'),display:'flex',alignItems:'center',
           padding:2,justifyContent:p.on?'flex-end':'flex-start',cursor:p.disabled?'not-allowed':'pointer'}}>
         <span style={{width:16,height:16,borderRadius:999,background:p.on?'var(--page)':'var(--muted)'}}/>
       </span>
@@ -797,7 +794,7 @@ if (typeof window !== 'undefined') {
         <span className="t12 c-muted" style={{flex:'none'}}>上下文 {p.pct}%</span>
         <span className="rw" style={{gap:1,flex:'none'}}>
           {Array.from({length:segs}).map((_,i)=>(
-            <span key={i} style={{width:3,height:8,borderRadius:1,background:i<on?'var(--text)':'var(--border-muted)'}}/>
+            <span key={i} style={{width:3,height:8,borderRadius:1,background:i<on?'var(--accent)':'var(--border-muted)'}}/>
           ))}
         </span>
         <span className="mono t12 tab c-muted" style={{flex:'none'}}>{p.used} / {p.total}</span>
@@ -1380,14 +1377,14 @@ if (typeof window !== 'undefined') {
     );
   }
 
-  /* ---------------- 队列行：三重编码（符号 + 字 + 数字），不再靠 accent ---------------- */
+  /* ---------------- 队列行：三重编码（符号 + 字 + 数字），动作按语义用 accent ---------------- */
   function QueueRow(p){
     return (
       <div className="rw" style={{gap:8,marginBottom:8}}>
         <Chip glyph="⇢" glyphTone="var(--warning)" tone="var(--text)" mono>{'穿插 ' + p.steer}</Chip>
         <Chip glyph="⇣" glyphTone="var(--muted)" tone="var(--text)" mono>{'后续 ' + p.follow}</Chip>
         <span className="fl1"/>
-        <span className="press t12 w5" style={{cursor:'pointer',color:'var(--text)',textDecoration:'underline',textUnderlineOffset:3}}>收回并编辑</span>
+        <span className="press t12 c-accent w5" style={{cursor:'pointer'}}>收回并编辑</span>
       </div>
     );
   }
@@ -1437,11 +1434,9 @@ if (typeof window !== 'undefined') {
               <span style={{color:lv.c,fontSize:12}}>◐</span>
               <span className="t12 c-text">{lv.l}</span>
             </span>
-            {/* 一屏一个 accent：流式中 accent 归「正在跑的那一步」，发送键因此转中性停止键 */}
+            {/* 主操作按语义用 accent；流式中它变成停止键，仍是主操作 */}
             <span className="press" onClick={()=>setDraft('')}
-              style={p.streaming
-                ? {width:30,height:30,borderRadius:999,border:'1px solid var(--border-muted)',background:'var(--surf-highest)',display:'flex',alignItems:'center',justifyContent:'center',color:'var(--text)',cursor:'pointer'}
-                : {width:30,height:30,borderRadius:999,background:'var(--accent)',display:'flex',alignItems:'center',justifyContent:'center',color:'var(--page)',cursor:'pointer'}}>
+              style={{width:30,height:30,borderRadius:999,background:'var(--accent)',display:'flex',alignItems:'center',justifyContent:'center',color:'var(--page)',cursor:'pointer'}}>
               <Icon n={p.streaming?'stop':'send'} s={16}/>
             </span>
           </div>
@@ -1941,7 +1936,7 @@ if (typeof window !== 'undefined') {
                           {b.d>0 ? <span style={{width:2,height:16,background:'var(--border-muted)',flex:'none'}}/> : null}
                           <span className="t14 ell fl1">{b.t}</span>
                           {b.cur ? <Badge text="当前" tone="var(--accent)" glyph="●"/> : null}
-                          <span className="t12 w5" style={{flex:'none',color:'var(--text)'}}>分叉新会话</span>
+                          <span className="t12 c-accent w5" style={{flex:'none'}}>分叉新会话</span>
                         </div>
                       </div>
                     </React.Fragment>
@@ -1987,17 +1982,17 @@ if (typeof window !== 'undefined') {
           right={<div className="press" onClick={()=>{}} style={{width:30,height:30,borderRadius:8,display:'flex',alignItems:'center',justifyContent:'center',color:'var(--text)'}}><Icon n="refresh" s={17}/></div>}
         />
         <div className="b-scroll" style={{paddingBottom:16}}>
-          {/* 一屏一个 accent：工作区这一屏归「本次会话在用的当前目录」 */}
+          {/* 当前目录卡：accent 按语义用在这里（当前项目现场） */}
           <div style={{padding:'14px 14px 0'}}>
             <div style={{background:'var(--surf-low)',borderRadius:10,padding:'12px 14px',position:'relative',overflow:'hidden'}}>
-              <span style={{position:'absolute',left:0,top:8,bottom:8,width:2,background: mode==='empty-pi'?'var(--border-muted)':'var(--accent)'}}/>
+              <span style={{position:'absolute',left:0,top:8,bottom:8,width:2,background:'var(--accent)'}}/>
               <div className="rw" style={{gap:10}}>
                 <span style={{color:'var(--muted)',display:'flex'}}><Icon n="folder" s={18}/></span>
                 <div className="fl1" style={{minWidth:0}}>
                   <div className="t17 w6">工作区</div>
                   <div className="t12 c-muted" style={{marginTop:2}}>{mode==='clean'?'分支 main · 没有未提交的改动':'分支 main · 3 个文件有改动'}</div>
                 </div>
-                <Badge text="本次会话在用" tone={mode==='empty-pi'?'var(--muted)':'var(--accent)'} glyph="●"/>
+                <Badge text="本次会话在用" tone="var(--accent)" glyph="●"/>
               </div>
             </div>
           </div>
@@ -2039,7 +2034,7 @@ if (typeof window !== 'undefined') {
                 {W_FILES.map(r=>(
                   <div key={r.f}>
                     <Row title={r.f} mono strong lead={<Icon n="file" s={16}/>}
-                      badge={r.mine?{text:'本次会话', tone:'var(--muted)', glyph:'●'}:null}
+                      badge={r.mine?{text:'本次会话', tone:'var(--accent)', glyph:'●'}:null}
                       meta={(r.isNew?'新增文件 · ':'') + (r.ms?('edit · '+r.ms):'git 改动，这次会话没动过')}
                       value={<span className="mono t12 tab"><span style={{color:'var(--diff-add)'}}>+{r.add}</span>{r.del?<span style={{color:'var(--diff-del)'}}> −{r.del}</span>:null}</span>}
                       selected={sel===r.f} onClick={()=>setSel(r.f)}/>
@@ -2142,7 +2137,7 @@ if (typeof window !== 'undefined') {
             )}
           </div>
 
-          {/* 一屏一个 accent：设置首页这一屏归「当前模型」这张卡 */}
+          {/* 当前模型卡：accent 按语义用在这里（当前生效的模型） */}
           <div style={{padding:'14px 14px 0'}}>
             <Card style={{margin:0}}>
               <div className="press2" onClick={()=>setSheet(true)} style={{padding:'11px 12px',cursor:'pointer',position:'relative',overflow:'hidden'}}>
@@ -2242,6 +2237,7 @@ if (typeof window !== 'undefined') {
                   return (
                     <Row key={r.t} title={r.t} badge={r.badge}
                       accentBar={!!r.cur}
+                      tone={r.k==='action' ? 'var(--accent)' : undefined}
                       valueTone={r.cur?'var(--accent)':undefined}
                       value={r.k==='action' ? null : r.v}
                       valueMono={r.k!=='action'}
@@ -2306,7 +2302,7 @@ if (typeof window !== 'undefined') {
           <span className="t13 c-text" style={{flex:'none'}}>300000</span>
         </div>
         <div className="rw" style={{marginTop:12,height:44,border:'1px solid var(--border-accent)',borderRadius:9,background:'var(--surf-low)',padding:'0 12px',gap:8}}>
-          <input defaultValue="30000" style={{flex:1,background:'transparent',border:'none',outline:'none',color:'var(--text)',fontFamily:'var(--font-mono)',fontSize:22}}/>
+          <input defaultValue="30000" style={{flex:1,background:'transparent',border:'none',outline:'none',color:'var(--text)',fontFamily:'var(--font-mono)',fontSize:17}}/>
           <span className="mono t14 c-muted">ms</span>
         </div>
         <div className="t12 c-muted" style={{marginTop:8}}>空着就是未设置，交给 pi 用默认值。</div>
@@ -2518,9 +2514,9 @@ if (typeof window !== 'undefined') {
               <div style={{color:'var(--body-on-tool)'}}>… 展开全部（还有 32 行，共 38 行）</div>
             </div>
           </ToolCard>
+          <DiffCard file="src/session/order.test.kt" add={38} del={0} expanded lines={B_DIFF_WRITE}/>
           <ToolCard name="edit" state="success" ms={214} expanded={false} onToggle={()=>{}}
             subject="src/session/SessionList.kt" right="214ms" footer="成功 · 214ms · 2 行"/>
-          <DiffCard file="src/session/order.test.kt" add={38} del={0} expanded lines={B_DIFF_WRITE}/>
           <DiffCard file="src/session/SessionList.kt" add={6} del={5} expanded={false} lines={B_DIFF}/>
         </RailRun>
         <div className="t12 c-muted" style={{paddingTop:4}}>edit 卡与 diff 卡是两张卡：pi 的转录就是这样，不合并。</div>
@@ -2874,7 +2870,7 @@ if (typeof window !== 'undefined') {
         color:p.primary?'var(--page)':'var(--text)',fontWeight:p.primary?600:400}}>{p.children}</span>
   );
 
-  /* ---------------- 子页：设备能力（一屏一个 accent = 正在运行的设备桥） ---------------- */
+  /* ---------------- 子页：设备能力（accent 按语义给设备桥的运行状态与主操作） ---------------- */
   function DeviceCaps(){
     const [on, setOn] = React.useState({'基础':true,'无障碍桥':true,'Shell 策略':true,'SAF 目录':false,'Shizuku':false,'定位':false,'相机':false,'通知':true});
     const caps = [
@@ -3370,18 +3366,18 @@ if (typeof window !== 'undefined') {
     ]},
     {g:'02', t:'对话 · 进行中 · 浮层 · 刻度', d:'流式、队列、审批、搜索命中，以及 v2 从 A 移过来的耗时刻度', items:[
       dev('B1','B1','流式中的助手文本 + 回到最新 · 8','正文末尾一个静态光标（pi 不做循环动画）；输入区上是队列 chips；右下角浮起「回到最新 · 8」；顶部「加载更早的 24 条」。', null, ()=><S.StreamState/>),
-      dev('B2','B2','队列：穿插 2 / 后续 1 / 收回并编辑','chips 用「符号 + 字 + 数字」：⇢ 穿插、⇣ 后续；下面列出三条排队消息；「收回并编辑」不再用 accent，改用字重与下划线。', null, ()=><S.QueueState/>),
+      dev('B2','B2','队列：穿插 2 / 后续 1 / 收回并编辑','chips 用「符号 + 字 + 数字」：⇢ 穿插、⇣ 后续；下面列出三条排队消息；「收回并编辑」按语义仍是 accent 的链接式动作。', null, ()=><S.QueueState/>),
       dev('B3','B3','审批弹层：允许 / 拒绝 + 倒计时 + 排队','「待决策 !」黄框 + 10 段倒计时 + 「还有 2 个扩展对话框在排队」+ 超时说明；允许之后换成「成功 ✓ 已允许这一次写入」。点「允许」或「拒绝」看两种收尾。', null, ()=><S.ApprovalState/>),
       dev('B4','B4','对话内搜索：当前命中 vs 其它命中','搜索栏给「3 / 8」计数、上一个 / 下一个匹配、关闭查找；当前命中用 searchMatchBg 铺底，其余命中只降一阶表面阶 —— 不靠颜色区分，靠两档底色。', null, ()=><S.SearchState/>),
       dev('B5','B5','耗时刻度对照台（从 A 移过来的那一笔）','六张卡的页脚读数一字未改，右端多了 1px 分段刻度：<1s 一段、<10s 两段、≥10s 三段，长度 ∝ log₂(毫秒)。40ms 与 12.3 秒放在一起，滚动时不看数字也能读出量级。', null, ()=><S.TickBoard/>),
     ]},
     {g:'03', t:'对话 · 空态与引擎', d:'冷启动默认新会话，所以这两套空态才是用户每次打开看到的第一屏', items:[
       dev('C1','C1','空态①：引擎正在启动','π 字形只做标识不铺开；正文是 pi 的原话「首次启动要加载 pi 的运行时与扩展，通常要几十秒。」；此时输入区已经可用（「现在发消息也可以」）。', null, ()=><S.EmptyBooting/>),
-      dev('C2','C2','空态②：引擎已就绪','「pi 会读写你选定的工作区、执行命令、改代码。」；这一态 accent 归发送键（唯一一处）。', null, ()=><S.EmptyReady/>),
+      dev('C2','C2','空态②：引擎已就绪','「pi 会读写你选定的工作区、执行命令、改代码。」；这一态的 accent 按语义给主操作（发送键）与 π 标识。', null, ()=><S.EmptyReady/>),
       dev('C3','C3','引擎失败态（引擎已退出）','状态行三重编码成「✗ 引擎已退出」；错误块给「出错了 + 详情」；下面两个动作是「重试 / 诊断报告」；页面明确写出「卡住不动」的三条真实表现，不发明「没有响应」。', null, ()=><S.EngineDown/>),
     ]},
     {g:'04', t:'会话列表覆盖层', d:'从对话页左上角的会话名进入，列表与会话树在同一层切换', items:[
-      dev('D1','D1','默认（12 条真实字段形状）','三行字段压成两行：标题 + 当前徽章 + 右对齐相对时间；第二行是「目录 · 模型」+「N 条 · 分支 · 已命名」。这一屏 accent 归当前会话。点一行看操作框，左滑露出两个动作。', 'chat', ()=><ScreenSessions onClose={()=>{}}/>),
+      dev('D1','D1','默认（12 条真实字段形状）','三行字段压成两行：标题 + 当前徽章 + 右对齐相对时间；第二行是「目录 · 模型」+「N 条 · 分支 · 已命名」。当前会话用 accent 徽章 + 左缘 2px 条标出。点一行看操作框，左滑露出两个动作。', 'chat', ()=><ScreenSessions onClose={()=>{}}/>),
       dev('D2','D2','搜索命中（含筛选激活）','输入 diff 的命中结果；「仅命名」筛选激活后只剩已命名的行；命中词条被保留，未命中的目录整组消失；顶部右侧给出命中条数。', 'chat', ()=><ScreenSessions q="diff" onlyNamed onClose={()=>{}}/>),
       dev('D3','D3','空态①：还没有会话','「还没有会话 / 会话按工作目录分组，这里会列出每一个目录的对话。」（会话列表的另一套空态与「没有匹配的会话」在不同状态里，下面是它的兄弟台。）', 'chat', ()=><ScreenSessions empty="no-sessions" onClose={()=>{}}/>),
       dev('D4','D4','空态②：没有匹配的会话','「没有匹配的会话 / 换一个关键词，或关掉「仅命名」筛选。」—— 输入任何搜不到的词都能到这个态。', 'chat', ()=><ScreenSessions q="zzz" onClose={()=>{}}/>),
@@ -3391,24 +3387,24 @@ if (typeof window !== 'undefined') {
       dev('E1','E1','删除确认（非当前会话）','「删除「把 diff 卡片的高度收紧」？这个会话会被移除，无法恢复。」主按钮是删除、错误色。', 'chat', ()=><ScreenSessions sel="把 diff 卡片的高度收紧" ask="normal" onClose={()=>{}}/>),
       dev('E2','E2','删除确认（当前会话：禁止删除）','「「会话列表排序错了 · 对话页顶部状态行」是当前会话，pi 正在写入这个文件。先切换到别的会话再删除。」主按钮置灰、不可点 —— 这是 pi 的真实禁止态，不是设计加的。', 'chat', ()=><ScreenSessions sel="会话列表排序错了 · 对话页顶部状态行" ask="current" onClose={()=>{}}/>),
       dev('E3','E3','排序与筛选的选中态','「按名称」与「仅命名」同时激活：两个 chip 都用 borderAccent + 表面阶表示选中，字仍是正文色（不靠颜色就能读出选中）。', 'chat', ()=><ScreenSessions byTime={false} onlyNamed onClose={()=>{}}/>),
-      dev('E4','E4','会话树 · 分支（分叉）','缩进 = depth × 14px，左侧一条 2px 竖线；当前那条打「当前」徽章；每行末尾是「分叉新会话」（正文色 + 500 字重，不抢 accent）；顶部说明「分叉会新建一个会话文件，原会话保持不变。」', 'chat', ()=><ScreenSessions view="tree" onClose={()=>{}}/>),
+      dev('E4','E4','会话树 · 分支（分叉）','缩进 = depth × 14px，左侧一条 2px 竖线；当前那条打「当前」徽章；每行末尾是「分叉新会话」（accent 的链接式动作）；顶部说明「分叉会新建一个会话文件，原会话保持不变。」', 'chat', ()=><ScreenSessions view="tree" onClose={()=>{}}/>),
       dev('E5','E5','会话树 · 条目（空态）','「没有条目 / 当前筛选是「默认」。换一个关键词，或再按一次筛选按钮循环到下一种模式。」', 'chat', ()=><ScreenSessions view="tree" treeEmpty onClose={()=>{}}/>),
     ]},
     {g:'06', t:'工作区（项目现场）', d:'不是整屏终端：当前目录 + 本目录的资源 + git 改动 + 这次会话动过的文件', items:[
       dev('F1','F1','项目现场默认态','当前目录卡带「本次会话在用」；改动 3 个文件，行尾给真实的 +6 −5；带「本次会话」徽标的文件可以就地展开那块 diff（点它）。', 'workbench', ()=><ScreenWorkbench/>),
-      dev('F2','F2','空态：这个目录还没有 .pi 资源','「这个目录还没有 .pi 资源 / 技能、提示词、扩展、主题、资源包都会出现在这里；放进 .pi 之后重新打开这一屏。」目录卡的色条同时降为中性色（这一屏没有当前的强调对象）。', 'workbench', ()=><ScreenWorkbench mode="empty-pi"/>),
+      dev('F2','F2','空态：这个目录还没有 .pi 资源','「这个目录还没有 .pi 资源 / 技能、提示词、扩展、主题、资源包都会出现在这里；放进 .pi 之后重新打开这一屏。」目录卡与「本次会话在用」徽标照常显示。', 'workbench', ()=><ScreenWorkbench mode="empty-pi"/>),
       dev('F3','F3','运行中有命令','正在跑的那一步拿到这一屏的 accent 位置：命令行给「运行中 …」+「已运行 12.3 秒 · 18 行」+ 三段刻度 + 24 段进度。', 'workbench', ()=><ScreenWorkbench mode="running"/>),
       dev('F4','F4','git 改动为空','「这个目录没有未提交的改动 / 这次会话也没有写入任何文件」，改动区计数为 0，资源区照常显示。', 'workbench', ()=><ScreenWorkbench mode="clean"/>),
     ]},
     {g:'07', t:'设置 · 搜索与分组页', d:'设置要像产品：搜索直达 + 12 个分组的 5 个 + 6 种行型 + 4 种生效徽标', items:[
       dev('G1','G1','搜索设置（命中高亮）','副标题与空态用的是 pi 自己的两句；输入 reserveTokens、theme 或 /compact 都能直达；结果行给「标题 + 分组 + 当前值」。', 'settings', ()=><ScreenSettingsHome search q="token"/>),
-      dev('G2','G2','分组页① 模型与推理','13 行覆盖 Action / Value / List / Switch 四种行型；徽标同时出现「新会话」与「需重启引擎」；这一屏 accent 归当前生效值（默认模型那一行，左缘 2px 条）。', 'settings', ()=><ScreenSettingsGroup id="model"/>),
+      dev('G2','G2','分组页① 模型与推理','13 行覆盖 Action / Value / List / Switch 四种行型；徽标同时出现「新会话」与「需重启引擎」；当前生效值（默认模型那一行）用 accent 文字 + 左缘 2px 条，Action 行的标题也按语义用 accent。', 'settings', ()=><ScreenSettingsGroup id="model"/>),
       dev('G3','G3','分组页② 消息与网络','Value / Number / Text 三型都在：「HTTP 空闲超时 30000 ms」「WebSocket 连接超时 10000 ms」「HTTP 代理 未设置」；尾部值格式是「数字 + 单位」。', 'settings', ()=><ScreenSettingsGroup id="messages"/>),
       dev('G4','G4','分组页③ 外观','「主题 dark」带「需重载」徽标（点它看徽标解释弹窗）；字号微调是 Number；四条 Switch 全部带「开 / 关」字与 ✓ / ○ 符号。', 'settings', ()=><ScreenSettingsGroup id="appearance"/>),
       dev('G5','G5','分组页④ 会话','「由本应用固定（与 pi 共用）」的结构：一条 Switch（启动续接最近会话，带「需重启」徽标）+ 两条只读行说明本应用不改会话落点。', 'settings', ()=><ScreenSettingsGroup id="sessions"/>),
     ]},
     {g:'08', t:'设置 · 危险行与编辑器', d:'运行时与诊断分组、危险行确认、以及编辑器的三型', items:[
-      dev('H1','H1','分组页⑤ 运行时与诊断','Text 只读行（pi 版本 / Node 版本 / 运行时占用 / 引擎启动耗时）+ Switch（离线模式，需重启引擎）+ Action（重启引擎 / 导出诊断报告）。这一屏没有 accent 归属者，于是零 accent。', 'settings', ()=><ScreenSettingsGroup id="runtime"/>),
+      dev('H1','H1','分组页⑤ 运行时与诊断','Text 只读行（pi 版本 / Node 版本 / 运行时占用 / 引擎启动耗时）+ Switch（离线模式，需重启引擎）+ Action（重启引擎 / 导出诊断报告，标题按语义用 accent）。这一屏全是只读行与开关，正好可以看出没有阴影时层级怎么建。', 'settings', ()=><ScreenSettingsGroup id="runtime"/>),
       dev('H2','H2','危险行确认态（紧急停止）','危险行固定在分组页末尾，常驻可见；点它出确认框：标题「紧急停止」+ 后果说明 + 「确认执行 / 取消」，主按钮用错误色、次按钮取消。', 'settings', ()=><ScreenSettingsGroup id="model" dlg={{kind:'danger', title:'紧急停止'}}/>),
       dev('H3','H3','编辑器 sheet · 选项','Value 行的选项选择：每行一个「符号 + 选项名 + 当前徽章」，当前项用 selectedBg 铺底。', 'settings', ()=><ScreenSettingsGroup id="model" sheet="option"/>),
       dev('H4','H4','编辑器 sheet · 数字','Number 行给滑块 + 22px 等宽数字输入 + 单位后缀；说明「空着就是未设置，交给 pi 用默认值」。', 'settings', ()=><ScreenSettingsGroup id="messages" sheet="number"/>),
@@ -3424,7 +3420,7 @@ if (typeof window !== 'undefined') {
     {g:'10', t:'设置 · 专属子页（二）', d:'模型 / 凭证 / 许可 / 诊断 —— 四张 App 自己的页面', items:[
       dev('J1','J1','专属子页 · 模型','统计行「3 个厂商 · 9 个模型 · 现在可用 6 个 · 等待重启 2 个 · 缺凭证 1 个」；厂商卡可折叠；每个模型带 ✓ / ◌ / ✗ 与状态词；导入模型 + 说明段。', 'settings', ()=><Y.Models/>),
       dev('J2','J2','专属子页 · 厂商凭证','四个编号节：选厂商（单选）→ 粘 Key（API Key / Base URL / api）→ 检测并扫描模型 → 勾选并保存（含手动模型名输入与「至少要勾选一个模型」）；末尾是重启引擎。', 'settings', ()=><Y.Credentials/>),
-      dev('J3','J3','专属子页 · 开源许可','按 section 分组（本应用 / 随应用分发 / GPL 与 LGPL），行尾给「阅读」；入口副标题用的是源码原话。这一屏零 accent。', 'settings', ()=><Y.Licenses/>),
+      dev('J3','J3','专属子页 · 开源许可','按 section 分组（本应用 / 随应用分发 / GPL 与 LGPL），行尾给「阅读」；入口副标题用的是源码原话。行尾是「阅读」+ chevron，就是普通值行的样子（不再是单独的动作列）。', 'settings', ()=><Y.Licenses/>),
       dev('J4','J4','专属子页 · 诊断报告','说明段 + 「保存到 Download / 分享」+ 等宽报告正文（── App 与设备 ── / 引擎最后一次退出 / 运行时事实 / 关键路径 / 最近的失败与错误）+ 两条脱敏说明。', 'settings', ()=><Y.Diagnostics/>),
     ]},
     {g:'11', t:'系统浮层 · Snackbar 与扩展对话框', d:'通知三档 + 扩展的 select / input', items:[
@@ -3464,7 +3460,8 @@ if (typeof window !== 'undefined') {
             底座是已批准的 <em>direction-b.html</em>：参照 Linear 移动端的方法论（底栏三项承载核心工作流、每屏一个主操作、
             chrome 退后、结构不被看见、属性即内容、就地直接操作），材质换成 PI 自己的表面阶梯与 1px 细线，色值 100% 来自 pi 主题令牌。
             v2 从 A 移来 <b>耗时刻度</b>（1px、长度 ∝ log₂ 耗时、按量级分 1–3 段，让 132ms 与 6.4 秒一眼可比）与状态行的<b>两个 usage 读数</b>；
-            从 C 移来两条纪律：<b>状态一律三重编码（字 + 符号 + 颜色）</b>、<b>一屏只有一项用 accent</b>（底栏、徽章、发送键等 6 处让位给当前项）。
+            从 C 移来两条纪律：<b>状态一律三重编码（字 + 符号 + 颜色）</b>、<b>层级只用 1px 线与表面阶梯、不用阴影</b>
+            （用户已撤销「一屏只有一个 accent」，所以 accent 仍按组件语义正常使用：主操作、选中 / 当前项、链接、进度、开启状态）。
             键盘上的一切都没有循环动画，没有任何渐变、模糊与辉光。下面 hero 五台都是可点的独立状态机，再往下是 12 组 56 台状态册。
           </div>
         </div>
@@ -3525,17 +3522,15 @@ v2 从 A / C 各移了什么、怎么移的（逐条交代）
    · 引擎与连接状态（AppBar 状态行）：✓ 就绪 / … 工作中 / ◌ 启动中 / ≡ 排队中 / ✗ 引擎已退出 / ■ 引擎已停止。
    · 错误块：✗ + 出错了 + 详情；开关行：开 / 关 + ✓ / ○ + 控件三态。
    · Snackbar：Info · / Warning ! / Error ✗，三档底色与字色都来自 pi。
-2 一屏只有一项用 accent。B 原本 accent 出现在 6 个地方，v2 逐个收敛：
-   · 底栏激活项 → 撤掉 accent，改 --text + 500 字重 + 18px 的 1px 底线，未激活项降为 --muted；
-   · 会话行「当前」徽章 → 保留 accent（这就是那一屏的「当前选中项」），其余徽章一律 --muted；
-   · 发送键 → 空闲时是这一屏唯一 accent；流式中让位给「正在跑的那一步」，自己变成中性的停止键；
-   · 「收回并编辑」「分叉新会话」→ 撤掉 accent，改正文色 + 字重 / 下划线；
-   · 流式光标 → 与 pending 节点同属「正在跑的那一步」，算同一个语义对象；
-   · 审批「允许」→ 只有审批态出现，且那一态本来就没有别的 accent。
-   于是每屏的 accent 归属是：对话（空闲）= 发送键 | 对话（流式中）= 正在跑的那一步 | 空态（已就绪）= 发送键
-   | 会话列表 = 当前会话 | 工作区 = 本次会话在用的当前目录（或正在跑的命令）| 设置首页 = 当前模型卡
-   | 设置分组页 = 该行的当前生效值 | 子页 = 该页的主操作或唯一「运行中」| 许可/诊断/终端 = 0。
-   层级不用阴影：全部靠字号、字重、1px 线、表面阶梯，B 的 inset hairline 与 rgba(...,.35) 描边原样保留。
+2 层级不用阴影：只用 1px 线 + 表面阶梯。
+   · 1px 线：borderMuted 本体，以及它的 55%（hairline）与 35%（卡片 / 元素描边，与 pi 源码一致）；
+   · 表面阶梯：page → surf-low → surf → surf-high → surf-highest（chrome 另用 surf-dim）；
+   · 全文件零 box-shadow；sheet 与对话框靠 1px 边框 + 表面阶 + 32% scrim 分层。
+   · 这是 B 本来就在做的，v2 把它写清楚，并在新增的 12 组状态里逐屏遵守（没有一屏靠阴影或加色建层级）。
+   【未做】「一屏只有一项用 accent」：用户已撤销这条约束，本文件不实现、也不在自检里打勾。
+   accent 按组件语义正常使用 —— 主操作（发送键、允许、保存、开始、立即重载…）、选中与当前项（底栏激活项、
+   会话「当前」徽章、行选中、开关的「开」）、链接式动作（收回并编辑、分叉新会话、阅读）、进度（上下文进度段、
+   Boot 的进度条、数字编辑器的滑块）、扩展状态行（设备桥「运行中」徽章）都保留 accent。
 
 其余：命名按用户更正 —— App 叫 PI（PI 设备桥 / PI 正在运行 / 应用 → PI），里面跑的 agent 叫 pi（输入 pi 回车 / pi 引擎 /
 pi 正在写入这个文件）。终端按用户判定为废品：不在状态册里、不设计它的界面，只在设置首页留一行普通入口行。
@@ -3549,7 +3544,8 @@ graft §5 自检清单（逐条打勾）
 [x] 设备框用 skill 的 android_frame.jsx 原样内联（一行未改），width={412} height={892} + darkMode，
     全部 61 台同尺寸；没有手写状态栏 / 打孔 / 导航条。
 [x] 每个 <script type="text/babel"> 块都用 (function(){ … })(); 包住 —— 没有跨块共享的顶层 const。
-[x] 正文 ≥14px、标签 ≥12px（字号只有 12 / 13 / 14 / 15 / 17 五档）；正文 --text 在 --page 上 11.9:1、
+[x] 正文 ≥14px、标签 ≥12px（设备内的字号只有 12 / 13 / 14 / 15 / 17 五档；22px 只出现在设备外的页面标题，
+    11 / 14 / 16 / 20px 只出现在原样内联的设备框 chrome 里）；正文 --text 在 --page 上 11.9:1、
     在卡片上 11.2:1；12px 次要标签 --muted 4.47:1（高于 pi 自己的 meta 3:1 标准）；工具卡正文与 diff
     上下文行 --body-on-tool 4.97–5.44:1；被拒节点用 --body-on-tool 5.4:1。
     两处例外都不是承载信息的文字：diff 的减号与「−5」用 toolDiffRemoved（图形 3.5:1，同一信息下一行以
@@ -3558,7 +3554,8 @@ graft §5 自检清单（逐条打勾）
 [x] 颜色全在令牌内：pi dark 主题令牌 + §3 派生表面阶 + App 既有的 --body-on-tool；新色相 0 个；
     无渐变 / 模糊 / 辉光；rgba(...) 的 alpha 用的是 App 自己的 0.35 / 0.45 / 0.55 / 0.5 / 0.32 / 0.08。
 [x] 状态三重编码：工具四态、队列、审批、引擎六态、错误块、开关行、Snackbar 三档 —— 见上。
-[x] 一屏一个 accent：见上（每屏的归属对象逐个写了）。
+[x] 层级不用阴影：全文件零 box-shadow；层级只由 1px 线与表面阶梯承担（B 的 inset hairline 与 rgba(...,.35) 描边原样保留）。
+[—] 「一屏只有一项用 accent」：按用户要求撤销，未实现（accent 按组件语义正常使用）。
 [x] 可见文本零路径零 §：界面上的路径只出现在机器内容区（工具卡 subject、grep 命中、diff 行、工作区文件行，
     且都是用户自己项目的相对路径）；没有 PI 自己的文件路径、类名或内部标记；没有「终端页」的任何文案。
 [x] 每台设备内可交互：底栏三项可切；覆盖层可开可关、列表与会话树同层切；工具卡 / 思考块 / 分支摘要 /
