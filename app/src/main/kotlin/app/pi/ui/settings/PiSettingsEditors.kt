@@ -1,9 +1,13 @@
 package app.pi.ui.settings
 
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -37,7 +41,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.unit.dp
+import androidx.compose.ui.draw.clip
 import app.pi.ui.components.EffectiveKind
 import app.pi.ui.theme.PiShapes
 import app.pi.ui.theme.PiSpacing
@@ -141,28 +145,32 @@ fun PiOptionPickerSheet(
     onDismiss: () -> Unit,
 ) {
     var custom by remember { mutableStateOf("") }
-    ModalBottomSheet(onDismissRequest = onDismiss) {
+    PiSettingsSheet(onDismiss = onDismiss) {
         Column(
             Modifier
                 .fillMaxWidth()
-                .padding(horizontal = PiSpacing.screen),
+                .padding(
+                    start = PiSettingsMetrics.pageHorizontal,
+                    end = PiSettingsMetrics.pageHorizontal,
+                    top = PiSettingsMetrics.sheetHeadTop,
+                ),
         ) {
             Text(
                 title,
-                style = MaterialTheme.typography.titleMedium,
+                style = MaterialTheme.typography.titleSmall,
                 color = MaterialTheme.colorScheme.onSurface,
             )
-            Spacer(Modifier.height(4.dp))
+            Spacer(Modifier.height(PiSpacing.small))
             Text(
                 description,
-                style = MaterialTheme.typography.bodyMedium,
+                style = PiTheme.text.meta,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            Spacer(Modifier.height(PiSpacing.unit))
+            Spacer(Modifier.height(PiSettingsMetrics.sheetHeadBottom))
             Column(
                 Modifier
                     .fillMaxWidth()
-                    .heightIn(max = 420.dp)
+                    .heightIn(max = PiSettingsMetrics.sheetBodyMax)
                     .verticalScroll(rememberScrollState()),
             ) {
                 options.forEach { option ->
@@ -174,7 +182,7 @@ fun PiOptionPickerSheet(
                                 onPick(option.wire)
                                 onDismiss()
                             }
-                            .padding(vertical = 12.dp),
+                            .padding(vertical = PiSettingsMetrics.cardPadding),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Column(Modifier.weight(1f)) {
@@ -195,7 +203,7 @@ fun PiOptionPickerSheet(
                                 )
                             }
                         }
-                        Spacer(Modifier.width(12.dp))
+                        Spacer(Modifier.width(PiSettingsMetrics.cardPadding))
                         Text(
                             option.wire,
                             style = PiTheme.text.monoSmall,
@@ -206,8 +214,8 @@ fun PiOptionPickerSheet(
                                 Icons.Filled.Check,
                                 contentDescription = "已选中",
                                 modifier = Modifier
-                                    .padding(start = 8.dp)
-                                    .size(18.dp),
+                                    .padding(start = PiSpacing.inline)
+                                    .size(PiSettingsMetrics.cardIconSize),
                                 tint = MaterialTheme.colorScheme.primary,
                             )
                         }
@@ -226,7 +234,7 @@ fun PiOptionPickerSheet(
                         label = { Text("自定义值") },
                         textStyle = PiTheme.text.mono,
                     )
-                    Spacer(Modifier.width(8.dp))
+                    Spacer(Modifier.width(PiSpacing.inline))
                     TextButton(
                         onClick = {
                             val trimmed = custom.trim()
@@ -240,7 +248,7 @@ fun PiOptionPickerSheet(
             } else {
                 Spacer(Modifier.height(PiSpacing.unit))
             }
-            Spacer(Modifier.height(PiSpacing.unit))
+            Spacer(Modifier.height(PiSettingsMetrics.sheetFooterBottom))
         }
     }
 }
@@ -278,30 +286,34 @@ fun PiNumberEditorSheet(
         typed = clamped.toString()
     }
 
-    ModalBottomSheet(onDismissRequest = onDismiss) {
+    PiSettingsSheet(onDismiss = onDismiss) {
         Column(
             Modifier
                 .fillMaxWidth()
-                .padding(horizontal = PiSpacing.screen),
+                .padding(
+                    start = PiSettingsMetrics.pageHorizontal,
+                    end = PiSettingsMetrics.pageHorizontal,
+                    top = PiSettingsMetrics.sheetHeadTop,
+                ),
         ) {
             Text(
                 setting.title,
-                style = MaterialTheme.typography.titleMedium,
+                style = MaterialTheme.typography.titleSmall,
                 color = MaterialTheme.colorScheme.onSurface,
             )
-            Spacer(Modifier.height(4.dp))
+            Spacer(Modifier.height(PiSpacing.small))
             Text(
                 setting.description,
-                style = MaterialTheme.typography.bodyMedium,
+                style = PiTheme.text.meta,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            Spacer(Modifier.height(PiSpacing.unit))
+            Spacer(Modifier.height(PiSettingsMetrics.sheetHeadBottom))
             Text(
                 value.toString() + (setting.unit?.let { " $it" } ?: ""),
                 style = MaterialTheme.typography.headlineSmall,
                 color = MaterialTheme.colorScheme.primary,
             )
-            Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(PiSpacing.inline))
             Slider(
                 value = value.toFloat(),
                 onValueChange = { raw -> update(raw.toInt()) },
@@ -326,13 +338,18 @@ fun PiNumberEditorSheet(
                 )
                 TextButton(onClick = { update(value + step) }) { Text("+") }
             }
-            Spacer(Modifier.height(4.dp))
+            Spacer(Modifier.height(PiSpacing.small))
             Text(
                 "取值范围 $low 到 $high",
                 style = PiTheme.text.meta,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            Spacer(Modifier.height(PiSpacing.unit))
+            // v2 的 sheet 页脚：1px 上边（`borderMuted` 55%）+ `10px 14px 14px` 内边距。
+            HorizontalDivider(
+                thickness = PiSettingsMetrics.hairline,
+                color = MaterialTheme.colorScheme.outlineVariant,
+            )
+            Spacer(Modifier.height(PiSettingsMetrics.sheetFooterTop))
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.End,
@@ -350,7 +367,7 @@ fun PiNumberEditorSheet(
                     },
                 ) { Text("保存") }
             }
-            Spacer(Modifier.height(PiSpacing.unit))
+            Spacer(Modifier.height(PiSettingsMetrics.sheetFooterBottom))
         }
     }
 }
@@ -368,24 +385,28 @@ fun PiTextEditorSheet(
     onDismiss: () -> Unit,
 ) {
     var text by remember(initial) { mutableStateOf(initial) }
-    ModalBottomSheet(onDismissRequest = onDismiss) {
+    PiSettingsSheet(onDismiss = onDismiss) {
         Column(
             Modifier
                 .fillMaxWidth()
-                .padding(horizontal = PiSpacing.screen),
+                .padding(
+                    start = PiSettingsMetrics.pageHorizontal,
+                    end = PiSettingsMetrics.pageHorizontal,
+                    top = PiSettingsMetrics.sheetHeadTop,
+                ),
         ) {
             Text(
                 setting.title,
-                style = MaterialTheme.typography.titleMedium,
+                style = MaterialTheme.typography.titleSmall,
                 color = MaterialTheme.colorScheme.onSurface,
             )
-            Spacer(Modifier.height(4.dp))
+            Spacer(Modifier.height(PiSpacing.small))
             Text(
                 setting.description,
-                style = MaterialTheme.typography.bodyMedium,
+                style = PiTheme.text.meta,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            Spacer(Modifier.height(PiSpacing.unit))
+            Spacer(Modifier.height(PiSettingsMetrics.sheetHeadBottom))
             OutlinedTextField(
                 value = text,
                 onValueChange = { text = it },
@@ -397,14 +418,19 @@ fun PiTextEditorSheet(
                 textStyle = PiTheme.text.mono,
             )
             if (setting.readOnly) {
-                Spacer(Modifier.height(6.dp))
+                Spacer(Modifier.height(PiSpacing.gutter))
                 Text(
                     "这一项只读。",
                     style = PiTheme.text.meta,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            Spacer(Modifier.height(PiSpacing.unit))
+            // v2 的 sheet 页脚：1px 上边（`borderMuted` 55%）+ `10px 14px 14px` 内边距。
+            HorizontalDivider(
+                thickness = PiSettingsMetrics.hairline,
+                color = MaterialTheme.colorScheme.outlineVariant,
+            )
+            Spacer(Modifier.height(PiSettingsMetrics.sheetFooterTop))
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.End,
@@ -424,7 +450,7 @@ fun PiTextEditorSheet(
                     enabled = !setting.readOnly,
                 ) { Text("保存") }
             }
-            Spacer(Modifier.height(PiSpacing.unit))
+            Spacer(Modifier.height(PiSettingsMetrics.sheetFooterBottom))
         }
     }
 }
@@ -449,24 +475,28 @@ fun PiListEditorSheet(
     var entries by remember(initialEntries) { mutableStateOf(initialEntries) }
     var draft by remember { mutableStateOf("") }
 
-    ModalBottomSheet(onDismissRequest = onDismiss) {
+    PiSettingsSheet(onDismiss = onDismiss) {
         Column(
             Modifier
                 .fillMaxWidth()
-                .padding(horizontal = PiSpacing.screen),
+                .padding(
+                    start = PiSettingsMetrics.pageHorizontal,
+                    end = PiSettingsMetrics.pageHorizontal,
+                    top = PiSettingsMetrics.sheetHeadTop,
+                ),
         ) {
             Text(
                 setting.title,
-                style = MaterialTheme.typography.titleMedium,
+                style = MaterialTheme.typography.titleSmall,
                 color = MaterialTheme.colorScheme.onSurface,
             )
-            Spacer(Modifier.height(4.dp))
+            Spacer(Modifier.height(PiSpacing.small))
             Text(
                 setting.description,
-                style = MaterialTheme.typography.bodyMedium,
+                style = PiTheme.text.meta,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(PiSpacing.inline))
             PiInfoNote(
                 if (setting.container == PiValueContainer.Object) {
                     "每行一项，写成「键 = 值」，键按精确匹配不认通配符。值以 { 或 [ 开头时按 JSON 解析，" +
@@ -477,14 +507,14 @@ fun PiListEditorSheet(
                         "{\"source\": \"pi-skills\", \"autoload\": false}。"
                 },
             )
-            Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(PiSpacing.inline))
             if (setting.presets.isNotEmpty()) {
                 Text(
                     "快捷添加",
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.primary,
                 )
-                Spacer(Modifier.height(6.dp))
+                Spacer(Modifier.height(PiSpacing.gutter))
                 Row(
                     Modifier
                         .fillMaxWidth()
@@ -492,9 +522,12 @@ fun PiListEditorSheet(
                 ) {
                     setting.presets.forEach { preset ->
                         val selected = entries.contains(preset)
+                        // v2 的 chip：高 26、圆角 999、`padding:0 9px`、1px `borderMuted`
+                        // 描边；选中的那一枚换成 `surfaceContainerHigh` 底（§2「chip」）。
                         Surface(
                             modifier = Modifier
-                                .padding(end = 8.dp)
+                                .padding(end = PiSpacing.inline)
+                                .height(PiSettingsMetrics.chipHeight)
                                 .clickable {
                                     entries = if (selected) {
                                         entries.filter { it != preset }
@@ -502,19 +535,29 @@ fun PiListEditorSheet(
                                         entries + preset
                                     }
                                 },
-                            shape = PiShapes.chip,
+                            shape = PiShapes.badge,
                             color = if (selected) {
-                                MaterialTheme.colorScheme.secondaryContainer
-                            } else {
                                 MaterialTheme.colorScheme.surfaceContainerHigh
+                            } else {
+                                MaterialTheme.colorScheme.surfaceContainerLow
                             },
+                            border = BorderStroke(
+                                PiSettingsMetrics.hairline,
+                                MaterialTheme.colorScheme.outline,
+                            ),
                         ) {
-                            Text(
-                                preset,
-                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                                style = PiTheme.text.monoSmall,
-                                color = MaterialTheme.colorScheme.onSurface,
-                            )
+                            Row(
+                                modifier = Modifier.padding(
+                                    horizontal = PiSettingsMetrics.chipPaddingHorizontal,
+                                ),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text(
+                                    preset,
+                                    style = PiTheme.text.monoSmall,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                )
+                            }
                         }
                     }
                 }
@@ -523,7 +566,7 @@ fun PiListEditorSheet(
             Column(
                 Modifier
                     .fillMaxWidth()
-                    .heightIn(max = 300.dp)
+                    .heightIn(max = PiSettingsMetrics.sheetListMax)
                     .verticalScroll(rememberScrollState()),
             ) {
                 entries.forEachIndexed { index, entry ->
@@ -552,10 +595,10 @@ fun PiListEditorSheet(
                             )
                         }
                     }
-                    Spacer(Modifier.height(4.dp))
+                    Spacer(Modifier.height(PiSpacing.small))
                 }
             }
-            Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(PiSpacing.inline))
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
@@ -580,7 +623,12 @@ fun PiListEditorSheet(
                     Icon(Icons.Filled.Add, contentDescription = "添加")
                 }
             }
-            Spacer(Modifier.height(PiSpacing.unit))
+            // v2 的 sheet 页脚：1px 上边（`borderMuted` 55%）+ `10px 14px 14px` 内边距。
+            HorizontalDivider(
+                thickness = PiSettingsMetrics.hairline,
+                color = MaterialTheme.colorScheme.outlineVariant,
+            )
+            Spacer(Modifier.height(PiSettingsMetrics.sheetFooterTop))
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.End,
@@ -593,7 +641,7 @@ fun PiListEditorSheet(
                     },
                 ) { Text("保存") }
             }
-            Spacer(Modifier.height(PiSpacing.unit))
+            Spacer(Modifier.height(PiSettingsMetrics.sheetFooterBottom))
         }
     }
 }
@@ -634,30 +682,34 @@ fun PiThemeEditorSheet(
         knownThemes.forEach { entry -> if (none { it.name == entry.name }) add(entry) }
     }
 
-    ModalBottomSheet(onDismissRequest = onDismiss) {
+    PiSettingsSheet(onDismiss = onDismiss) {
         Column(
             Modifier
                 .fillMaxWidth()
-                .padding(horizontal = PiSpacing.screen),
+                .padding(
+                    start = PiSettingsMetrics.pageHorizontal,
+                    end = PiSettingsMetrics.pageHorizontal,
+                    top = PiSettingsMetrics.sheetHeadTop,
+                ),
         ) {
             Text(
                 "主题",
-                style = MaterialTheme.typography.titleMedium,
+                style = MaterialTheme.typography.titleSmall,
                 color = MaterialTheme.colorScheme.onSurface,
             )
-            Spacer(Modifier.height(4.dp))
+            Spacer(Modifier.height(PiSpacing.small))
             Text(
                 "自动模式需要分别填写浅色与深色主题名。" +
                     "下面的自定义主题来自 pi 的主题目录与 themes 设置。",
-                style = MaterialTheme.typography.bodyMedium,
+                style = PiTheme.text.meta,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             if (error != null) {
-                Spacer(Modifier.height(8.dp))
+                Spacer(Modifier.height(PiSpacing.inline))
                 PiInfoNote(error)
             }
             if (notes.isNotEmpty()) {
-                Spacer(Modifier.height(8.dp))
+                Spacer(Modifier.height(PiSpacing.inline))
                 PiInfoNote("当前主题有部分颜色无法照搬：\n" + notes.joinToString("\n") { "· $it" })
             }
             Spacer(Modifier.height(PiSpacing.unit))
@@ -666,11 +718,11 @@ fun PiThemeEditorSheet(
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.primary,
             )
-            Spacer(Modifier.height(6.dp))
+            Spacer(Modifier.height(PiSpacing.gutter))
             Column(
                 Modifier
                     .fillMaxWidth()
-                    .heightIn(max = 200.dp)
+                    .heightIn(max = PiSettingsMetrics.sheetThemeMax)
                     .verticalScroll(rememberScrollState()),
             ) {
                 entries.forEach { entry ->
@@ -682,7 +734,7 @@ fun PiThemeEditorSheet(
                                 onSet(entry.name)
                                 onDismiss()
                             }
-                            .padding(vertical = 10.dp),
+                            .padding(vertical = PiSettingsMetrics.rowPaddingVertical),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Column(Modifier.weight(1f)) {
@@ -706,7 +758,7 @@ fun PiThemeEditorSheet(
                             Icon(
                                 Icons.Filled.Check,
                                 contentDescription = "已选中",
-                                modifier = Modifier.size(18.dp),
+                                modifier = Modifier.size(PiSettingsMetrics.cardIconSize),
                                 tint = MaterialTheme.colorScheme.primary,
                             )
                         }
@@ -720,7 +772,7 @@ fun PiThemeEditorSheet(
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.primary,
             )
-            Spacer(Modifier.height(6.dp))
+            Spacer(Modifier.height(PiSpacing.gutter))
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
@@ -733,7 +785,7 @@ fun PiThemeEditorSheet(
                     label = { Text("浅色主题名") },
                     textStyle = PiTheme.text.mono,
                 )
-                Spacer(Modifier.width(8.dp))
+                Spacer(Modifier.width(PiSpacing.inline))
                 OutlinedTextField(
                     value = darkTheme,
                     onValueChange = { darkTheme = it },
@@ -743,19 +795,19 @@ fun PiThemeEditorSheet(
                     textStyle = PiTheme.text.mono,
                 )
             }
-            Spacer(Modifier.height(6.dp))
+            Spacer(Modifier.height(PiSpacing.gutter))
             Text(
                 "保存为 " + lightTheme.trim() + "/" + darkTheme.trim(),
                 style = PiTheme.text.monoSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            Spacer(Modifier.height(PiSpacing.unit))
+            Spacer(Modifier.height(PiSettingsMetrics.sheetHeadBottom))
             Text(
                 "原始值",
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.primary,
             )
-            Spacer(Modifier.height(6.dp))
+            Spacer(Modifier.height(PiSpacing.gutter))
             OutlinedTextField(
                 value = raw,
                 onValueChange = { raw = it },
@@ -764,7 +816,12 @@ fun PiThemeEditorSheet(
                 label = { Text("theme") },
                 textStyle = PiTheme.text.mono,
             )
-            Spacer(Modifier.height(PiSpacing.unit))
+            // v2 的 sheet 页脚：1px 上边（`borderMuted` 55%）+ `10px 14px 14px` 内边距。
+            HorizontalDivider(
+                thickness = PiSettingsMetrics.hairline,
+                color = MaterialTheme.colorScheme.outlineVariant,
+            )
+            Spacer(Modifier.height(PiSettingsMetrics.sheetFooterTop))
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.End,
@@ -787,7 +844,49 @@ fun PiThemeEditorSheet(
                     },
                 ) { Text("使用原始值") }
             }
-            Spacer(Modifier.height(PiSpacing.unit))
+            Spacer(Modifier.height(PiSettingsMetrics.sheetFooterBottom))
         }
     }
+}
+
+/**
+ * v2 的 sheet 外壳（`06 §2`）：顶部圆角 16、抓手 `32×3`、头 `12px 14px 8px`、
+ * 正文最大 420、页脚 `10px 14px 14px` + 1px 上边，scrim 用 M3 默认的
+ * `rgba(0,0,0,.32)`（与 v2 同值），**不加阴影**。
+ *
+ * 只统一外壳：五个编辑器的字段、按钮与写盘逻辑一个字都没动。
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun PiSettingsSheet(
+    onDismiss: () -> Unit,
+    // M3 的 sheet 正文槽是 `ColumnScope.() -> Unit`，所以这里照它的类型收：
+    // 传一个 `() -> Unit` 是**不兼容**的（接收者算一个参数），编译期就会报错。
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        shape = PiSettingsSheetShape,
+        containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+        dragHandle = {
+            // 抓手：32×3，只画不响应（M3 默认的 4dp 抓手与 22dp 顶距都超出 v2 的规格）。
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(top = PiSettingsMetrics.badgeGap),
+                contentAlignment = Alignment.Center,
+            ) {
+                Box(
+                    Modifier
+                        .size(
+                            width = PiSettingsMetrics.sheetHandleWidth,
+                            height = PiSettingsMetrics.sheetHandleHeight,
+                        )
+                        .clip(PiShapes.badge)
+                        .background(MaterialTheme.colorScheme.outline),
+                )
+            }
+        },
+        content = content,
+    )
 }

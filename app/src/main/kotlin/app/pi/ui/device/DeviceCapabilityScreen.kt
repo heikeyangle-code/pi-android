@@ -4,7 +4,11 @@ import android.Manifest
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -16,10 +20,12 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.PhoneAndroid
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Security
@@ -42,9 +48,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.unit.dp
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import app.pi.bridge.DeviceAccessibilityService
 import app.pi.bridge.DeviceApprovalLedger
 import app.pi.bridge.DeviceBridgeController
@@ -55,8 +63,10 @@ import app.pi.bridge.DeviceSafStore
 import app.pi.bridge.DeviceShellGuard
 import app.pi.bridge.DeviceShizuku
 import app.pi.bridge.DeviceWorkspace
-import app.pi.ui.components.PiSectionHeader
 import app.pi.ui.rememberPiScreenVisible
+import app.pi.ui.settings.PiSettingsCardShape
+import app.pi.ui.settings.PiSettingsMetrics
+import app.pi.ui.settings.PiSettingsSectionHeader
 import app.pi.ui.theme.PiShapes
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
@@ -236,7 +246,7 @@ fun DeviceCapabilityScreen(
             contentPadding = PaddingValues(bottom = PiSpacing.unit + contentPadding.calculateBottomPadding()),
         ) {
             item {
-                PiSectionHeader("设备桥")
+                PiSettingsSectionHeader("设备桥")
                 DeviceBridgeCard(
                     running = bridgeRunning,
                     status = bridgeStatus,
@@ -254,7 +264,7 @@ fun DeviceCapabilityScreen(
             }
 
             item {
-                PiSectionHeader("能力授权")
+                PiSettingsSectionHeader("能力授权")
                 InfoNote(
                     "能力默认关闭，逐组授权。「基础」组默认开启，因为它只做用户看得见的事" +
                         "（剪贴板、通知、打开链接、分享）。被关闭的能力不会静默失效：Agent 会收到明确原因，" +
@@ -327,12 +337,12 @@ fun DeviceCapabilityScreen(
             }
 
             item {
-                PiSectionHeader("Shell 策略")
+                PiSettingsSectionHeader("Shell 策略")
                 ShellPolicyCard(relaxed = relaxed, workspace = workspace)
             }
 
             item {
-                PiSectionHeader("本会话的审批")
+                PiSettingsSectionHeader("本会话的审批")
                 // Fed from the polling loop above: this item reads no other state, so a
                 // direct `DeviceApprovalLedger.summaryLines()` call would compose once
                 // and stay frozen for as long as the screen is open.
@@ -363,38 +373,53 @@ fun DeviceCapabilityEntryRow(
     val states = store.states()
     val usable = states.count { it.usable }
     val summary = "$usable/${states.size} 组能力可用"
-    Surface(
-        modifier = modifier.fillMaxWidth(),
-        color = MaterialTheme.colorScheme.surface,
+    // 这是设置首页卡片里的一行，所以它自己不再画底：v2 的行是
+    // `padding:10px 12px`，前置图标 16 灰，标题 15/500，尾部值 + chevron 14。
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(
+                horizontal = PiSettingsMetrics.rowPaddingHorizontal,
+                vertical = PiSettingsMetrics.rowPaddingVertical,
+            ),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(PiSettingsMetrics.rowGap),
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable(onClick = onClick)
-                .padding(horizontal = PiSpacing.screen, vertical = 14.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Icon(
-                Icons.Filled.Security,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(22.dp),
-            )
-            Spacer(Modifier.width(14.dp))
-            Column(Modifier.weight(1f)) {
-                Text("设备能力", style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurface)
-                Text(
-                    summary,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
+        Icon(
+            Icons.Filled.Security,
+            contentDescription = null,
+            tint = PiTheme.palette.muted,
+            modifier = Modifier.size(PiSettingsMetrics.searchIconSize),
+        )
+        Column(Modifier.weight(1f)) {
             Text(
-                "查看",
+                "设备能力",
+                style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Medium),
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                summary,
+                modifier = Modifier.padding(top = PiSettingsMetrics.supportingGap),
                 style = PiTheme.text.meta,
-                color = MaterialTheme.colorScheme.primary,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
         }
+        Text(
+            "查看",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurface,
+        )
+        Icon(
+            Icons.Filled.KeyboardArrowRight,
+            contentDescription = null,
+            modifier = Modifier.size(PiSettingsMetrics.chevronSize),
+            tint = PiTheme.palette.muted,
+        )
     }
 }
 
@@ -409,7 +434,7 @@ private fun DeviceBridgeCard(
     auditTail: List<String>,
     onStart: () -> Unit,
 ) {
-    Card {
+    Card(loose = true) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text(
@@ -431,12 +456,12 @@ private fun DeviceBridgeCard(
             StatusBadge(text = if (running) "已监听" else "未运行", positive = running)
         }
         if (!running) {
-            Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(PiSpacing.inline))
             TextButton(onClick = onStart) { Text("启动设备桥") }
         }
         val logPath = DeviceBridgeController.auditLogPath()
         if (logPath != null) {
-            Spacer(Modifier.height(6.dp))
+            Spacer(Modifier.height(PiSpacing.gutter))
             Text(
                 "审计日志：$logPath",
                 style = PiTheme.text.monoSmall,
@@ -444,7 +469,7 @@ private fun DeviceBridgeCard(
             )
         }
         if (auditTail.isNotEmpty()) {
-            Spacer(Modifier.height(4.dp))
+            Spacer(Modifier.height(PiSpacing.small))
             Text(
                 auditTail.joinToString("\n"),
                 style = PiTheme.text.monoSmall,
@@ -482,9 +507,9 @@ private fun DeviceCapabilityCard(
                 iconFor(capability),
                 contentDescription = null,
                 tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(22.dp),
+                modifier = Modifier.size(PiSettingsMetrics.cardIconSize),
             )
-            Spacer(Modifier.width(12.dp))
+            Spacer(Modifier.width(PiSettingsMetrics.rowGap))
             Column(Modifier.weight(1f)) {
                 Text(capability.title, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurface)
                 Text(
@@ -504,7 +529,7 @@ private fun DeviceCapabilityCard(
             )
         }
 
-        Spacer(Modifier.height(10.dp))
+        Spacer(Modifier.height(PiSpacing.inner))
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text(
@@ -537,7 +562,7 @@ private fun DeviceCapabilityCard(
             }
         }
 
-        Spacer(Modifier.height(8.dp))
+        Spacer(Modifier.height(PiSpacing.inline))
         Text(
             "这组能力让 Agent 能做什么：",
             style = MaterialTheme.typography.labelMedium,
@@ -553,7 +578,7 @@ private fun DeviceCapabilityCard(
 
         when (capability) {
             DeviceCapability.Accessibility -> {
-                Spacer(Modifier.height(8.dp))
+                Spacer(Modifier.height(PiSpacing.inline))
                 Text(
                     if (accessibilityRunning) {
                         "系统无障碍服务：运行中。"
@@ -588,7 +613,7 @@ private fun DeviceCapabilityCard(
             }
 
             DeviceCapability.Storage -> {
-                Spacer(Modifier.height(8.dp))
+                Spacer(Modifier.height(PiSpacing.inline))
                 for (line in DeviceSafStore.get(androidx.compose.ui.platform.LocalContext.current).summaryLines()) {
                     Text(
                         line,
@@ -619,7 +644,7 @@ private fun DeviceCapabilityCard(
             }
 
             DeviceCapability.Shell -> {
-                Spacer(Modifier.height(8.dp))
+                Spacer(Modifier.height(PiSpacing.inline))
                 // The backend that will run the *next* command, from the same live
                 // probe the router uses (DeviceShell.kt:188-190). It must not be
                 // `shizuku.backendLabel`: that field is `ShizukuShellBackend.label`,
@@ -651,7 +676,7 @@ private fun DeviceCapabilityCard(
                     }
                 }
 
-                Spacer(Modifier.height(6.dp))
+                Spacer(Modifier.height(PiSpacing.gutter))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
                         Text(
@@ -677,7 +702,7 @@ private fun DeviceCapabilityCard(
             }
 
             DeviceCapability.Sensors -> {
-                Spacer(Modifier.height(8.dp))
+                Spacer(Modifier.height(PiSpacing.inline))
                 // Two endpoint-level grants, stated as they are
                 // (DeviceCapabilityStore.kt:207-211, 268-278). The camera one *must* be
                 // requestable here: `cameraPrecondition()`'s hint tells the user to
@@ -729,7 +754,7 @@ private fun DeviceCapabilityCard(
             }
 
             DeviceCapability.Basic -> {
-                Spacer(Modifier.height(8.dp))
+                Spacer(Modifier.height(PiSpacing.inline))
                 // 基础 is on by default, so its badge reads 「可用」 out of the box —
                 // and on API 33+ without POST_NOTIFICATIONS `android_notify` is refused
                 // every time (DeviceSystemActions.kt:103-112). Silence here is the one
@@ -754,7 +779,7 @@ private fun DeviceCapabilityCard(
         }
 
         if (!state.usable && state.enabled && state.reason != null) {
-            Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(PiSpacing.inline))
             Text(
                 state.reason,
                 style = MaterialTheme.typography.bodyMedium,
@@ -793,7 +818,7 @@ private fun ShellPolicyCard(relaxed: Boolean, workspace: String) {
             )
         }
 
-        Spacer(Modifier.height(8.dp))
+        Spacer(Modifier.height(PiSpacing.inline))
         Text(
             "语法策略",
             style = MaterialTheme.typography.labelMedium,
@@ -807,7 +832,7 @@ private fun ShellPolicyCard(relaxed: Boolean, workspace: String) {
             )
         }
 
-        Spacer(Modifier.height(8.dp))
+        Spacer(Modifier.height(PiSpacing.inline))
         Text(
             "无论谁授权，下面这些都不会执行：",
             style = MaterialTheme.typography.bodyMedium,
@@ -821,7 +846,7 @@ private fun ShellPolicyCard(relaxed: Boolean, workspace: String) {
             )
         }
 
-        Spacer(Modifier.height(8.dp))
+        Spacer(Modifier.height(PiSpacing.inline))
         Text(
             "命令白名单（未知命令一律拒绝）：",
             style = MaterialTheme.typography.labelMedium,
@@ -833,7 +858,7 @@ private fun ShellPolicyCard(relaxed: Boolean, workspace: String) {
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
 
-        Spacer(Modifier.height(6.dp))
+        Spacer(Modifier.height(PiSpacing.gutter))
         Text(
             "危险操作（结束应用、Shell、分享、打开链接、向输入框写入、裸按键注入、跨沙箱读写文件）第一次会请求确认，" +
                 "确认框里有「同意并记住本次会话」；没有确认通道时直接拒绝，而不是默认允许。",
@@ -863,7 +888,7 @@ private fun ApprovalsCard(lines: List<String>) {
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-        Spacer(Modifier.height(4.dp))
+        Spacer(Modifier.height(PiSpacing.small))
         Text(
             "注意：「同意并记住本次会话」的状态由 pi 上报，App 无法独立验证。" +
                 "真正不可绕过的边界是上面的能力开关、硬性禁用清单与写入边界。",
@@ -877,28 +902,60 @@ private fun ApprovalsCard(lines: List<String>) {
 // small pieces
 // ---------------------------------------------------------------------------
 
+/**
+ * v2 的卡片（`06 §2`：圆角 10、`surfaceContainerLow` 底、无描边无阴影、左右 14px
+ * 页边）。[loose] 给「设备桥卡」那一档 14px 内边距，其余卡是 12px。
+ */
 @Composable
-private fun Card(content: @Composable () -> Unit) {
+private fun Card(loose: Boolean = false, content: @Composable () -> Unit) {
     Surface(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = PiSpacing.screen, vertical = 6.dp),
-        shape = PiShapes.card,
+            .padding(
+                horizontal = PiSettingsMetrics.pageHorizontal,
+                vertical = PiSettingsMetrics.notePaddingVertical,
+            ),
+        shape = PiSettingsCardShape,
         color = MaterialTheme.colorScheme.surfaceContainerLow,
     ) {
-        Column(Modifier.padding(14.dp)) { content() }
+        Column(
+            Modifier.padding(
+                if (loose) PiSettingsMetrics.cardPaddingLoose else PiSettingsMetrics.cardPadding,
+            ),
+        ) { content() }
     }
 }
 
+/**
+ * 状态徽标：形状照 `06 §2` 的徽标表（圆角 999、1px `borderMuted` 描边、
+ * 色块 5×5、文字 12 正文色）。颜色仍只来自 M3 槽位，本批不改取色。
+ */
 @Composable
 private fun StatusBadge(text: String, positive: Boolean) {
     val color = if (positive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
-    Surface(shape = PiShapes.badge, color = color.copy(alpha = 0.16f)) {
+    Row(
+        modifier = Modifier
+            .clip(PiShapes.badge)
+            .border(PiSettingsMetrics.hairline, MaterialTheme.colorScheme.outline, PiShapes.badge)
+            .padding(
+                start = PiSettingsMetrics.badgePaddingStart,
+                end = PiSettingsMetrics.badgePaddingEnd,
+                top = PiSettingsMetrics.badgePaddingVertical,
+                bottom = PiSettingsMetrics.badgePaddingVertical,
+            ),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(PiSettingsMetrics.badgeGap),
+    ) {
+        Box(
+            Modifier
+                .size(PiSettingsMetrics.badgeDot)
+                .clip(RoundedCornerShape(PiSettingsMetrics.badgeDotRadius))
+                .background(color),
+        )
         Text(
             text,
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
-            style = MaterialTheme.typography.labelSmall,
-            color = color,
+            style = PiTheme.text.meta,
+            color = MaterialTheme.colorScheme.onSurface,
         )
     }
 }
@@ -908,13 +965,16 @@ private fun InfoNote(text: String) {
     Surface(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = PiSpacing.screen, vertical = 6.dp),
-        shape = PiShapes.cardInner,
-        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+            .padding(
+                horizontal = PiSettingsMetrics.pageHorizontal,
+                vertical = PiSettingsMetrics.notePaddingVertical,
+            ),
+        shape = PiSettingsCardShape,
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
     ) {
         Text(
             text,
-            modifier = Modifier.padding(12.dp),
+            modifier = Modifier.padding(PiSettingsMetrics.cardPadding),
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )

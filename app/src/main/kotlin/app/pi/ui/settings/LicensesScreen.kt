@@ -2,27 +2,25 @@ package app.pi.ui.settings
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
@@ -34,9 +32,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.unit.dp
-import app.pi.ui.components.PiSectionHeader
-import app.pi.ui.theme.PiSpacing
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import app.pi.ui.theme.PiTheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -80,42 +77,53 @@ fun PiLicensesEntryRow(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Surface(
-        modifier = modifier.fillMaxWidth(),
-        color = MaterialTheme.colorScheme.surface,
+    // 设置首页卡片里的一行（v2 的 Row：`padding:10px 12px`、前置图标 16 灰、
+    // 标题 15/500、尾部值 + chevron 14）。
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(
+                horizontal = PiSettingsMetrics.rowPaddingHorizontal,
+                vertical = PiSettingsMetrics.rowPaddingVertical,
+            ),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(PiSettingsMetrics.rowGap),
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable(onClick = onClick)
-                .padding(horizontal = PiSpacing.screen, vertical = 14.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Icon(
-                Icons.Filled.Info,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(22.dp),
-            )
-            Spacer(Modifier.width(14.dp))
-            Column(Modifier.weight(1f)) {
-                Text(
-                    "开源许可",
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = MaterialTheme.colorScheme.onSurface,
-                )
-                Text(
-                    "App 内分发的第三方组件、许可证原文，以及 GPL / LGPL 程序的源代码获取方式",
-                    style = PiTheme.text.meta,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
+        Icon(
+            Icons.Filled.Info,
+            contentDescription = null,
+            tint = PiTheme.palette.muted,
+            modifier = Modifier.size(PiSettingsMetrics.searchIconSize),
+        )
+        Column(Modifier.weight(1f)) {
             Text(
-                "打开",
+                "开源许可",
+                style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Medium),
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                "App 内分发的第三方组件、许可证原文，以及 GPL / LGPL 程序的源代码获取方式",
+                modifier = Modifier.padding(top = PiSettingsMetrics.supportingGap),
                 style = PiTheme.text.meta,
-                color = MaterialTheme.colorScheme.primary,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
             )
         }
+        Text(
+            "打开",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurface,
+        )
+        Icon(
+            Icons.Filled.KeyboardArrowRight,
+            contentDescription = null,
+            modifier = Modifier.size(PiSettingsMetrics.chevronSize),
+            tint = PiTheme.palette.muted,
+        )
     }
 }
 
@@ -161,7 +169,10 @@ fun LicensesScreen(
         if (notices.isEmpty()) {
             Text(
                 "正在读取…",
-                modifier = Modifier.padding(horizontal = PiSpacing.screen, vertical = PiSpacing.unit),
+                modifier = Modifier.padding(
+                    horizontal = PiSettingsMetrics.pageHorizontal,
+                    vertical = PiSettingsMetrics.groupGap,
+                ),
                 style = PiTheme.text.meta,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -176,9 +187,17 @@ fun LicensesScreen(
             // licence texts and the per-package copyright files stay in the
             // sequence the manifest author put them in.
             notices.groupBy { it.section }.forEach { (section, entries) ->
-                item(key = "section-$section") { PiSectionHeader(section) }
-                items(entries, key = { it.file }) { notice ->
-                    NoticeRow(notice, onClick = { open = notice })
+                // v2 的许可页：分区头带计数，行装在一张圆角 10 的卡里，行间 1px
+                // inset hairline。一个分区是一个 LazyColumn item，所以卡片与它的
+                // 行不会被懒加载拆开。
+                item(key = "section-$section") {
+                    PiSettingsSectionHeader(label = section, count = "${entries.size} 项")
+                    PiSettingsCard {
+                        entries.forEachIndexed { index, notice ->
+                            if (index > 0) PiSettingsHairline()
+                            NoticeRow(notice, onClick = { open = notice })
+                        }
+                    }
                 }
             }
         }
@@ -192,19 +211,31 @@ private fun NoticeRow(notice: LicenceNotice, onClick: () -> Unit) {
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = onClick)
-            .padding(horizontal = PiSpacing.screen, vertical = 12.dp),
+            .padding(
+                horizontal = PiSettingsMetrics.rowPaddingHorizontal,
+                vertical = PiSettingsMetrics.rowPaddingVertical,
+            ),
         verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(PiSettingsMetrics.rowGap),
     ) {
         Text(
             notice.title,
             modifier = Modifier.weight(1f),
-            style = MaterialTheme.typography.bodyMedium,
+            style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Medium),
             color = MaterialTheme.colorScheme.onSurface,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
         )
         Text(
             "阅读",
-            style = PiTheme.text.meta,
-            color = MaterialTheme.colorScheme.primary,
+            style = PiTheme.text.mono,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Icon(
+            Icons.Filled.KeyboardArrowRight,
+            contentDescription = null,
+            modifier = Modifier.size(PiSettingsMetrics.chevronSize),
+            tint = PiTheme.palette.muted,
         )
     }
 }
@@ -234,7 +265,10 @@ private fun LicenceTextScreen(
         if (text == null) {
             Text(
                 "正在读取…",
-                modifier = Modifier.padding(horizontal = PiSpacing.screen, vertical = PiSpacing.unit),
+                modifier = Modifier.padding(
+                    horizontal = PiSettingsMetrics.pageHorizontal,
+                    vertical = PiSettingsMetrics.groupGap,
+                ),
                 style = PiTheme.text.meta,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -245,9 +279,9 @@ private fun LicenceTextScreen(
                 .fillMaxSize()
                 .verticalScroll(rememberScrollState())
                 .padding(
-                    start = PiSpacing.screen,
-                    end = PiSpacing.screen,
-                    bottom = contentPadding.calculateBottomPadding() + PiSpacing.unit,
+                    start = PiSettingsMetrics.pageHorizontal,
+                    end = PiSettingsMetrics.pageHorizontal,
+                    bottom = contentPadding.calculateBottomPadding() + PiSettingsMetrics.groupGap,
                 ),
         ) {
             // Monospace, because these are licence and copyright files: the line

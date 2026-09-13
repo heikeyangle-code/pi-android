@@ -1,12 +1,9 @@
 package app.pi.ui.settings
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -28,7 +25,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import app.pi.ui.components.EffectiveKind
-import app.pi.ui.components.PiSectionHeader
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiThemeEntry
 import kotlinx.serialization.json.JsonPrimitive
@@ -96,7 +92,7 @@ fun SettingsGroupScreen(
     onRestartEngine: (() -> Unit)? = null,
 ) {
     val group = PiSettingsCatalog.group(groupId)
-    val rows = remember(groupId, freshness) { buildGroupRows(groupId) }
+    val sections = remember(groupId, freshness) { buildGroupSections(groupId) }
     val listState = rememberLazyListState()
 
     var editing by remember { mutableStateOf<PiSetting?>(null) }
@@ -105,7 +101,11 @@ fun SettingsGroupScreen(
 
     LaunchedEffect(highlightKey, groupId) {
         if (highlightKey == null) return@LaunchedEffect
-        val index = rows.indexOfFirst { row -> row.setting?.key == highlightKey }
+        // 一个分区是一个 LazyColumn item（分区头 + 装行的卡片），所以命中的目标
+        // 索引是「包含这一行的那个分区」，不是行在注册表里的序号。
+        val index = sections.indexOfFirst { section ->
+            section.settings.any { it.key == highlightKey }
+        }
         if (index >= 0) listState.animateScrollToItem(index)
     }
 
@@ -123,28 +123,23 @@ fun SettingsGroupScreen(
             state = listState,
             contentPadding = PaddingValues(bottom = contentPadding.calculateBottomPadding()),
         ) {
-            items(rows) { row ->
-                val header = row.header
-                val setting = row.setting
-                if (header != null) {
-                    PiSectionHeader(header)
-                } else if (setting != null) {
-                    Column(
-                        Modifier
-                            .fillMaxWidth()
-                            .background(
-                                if (setting.key == highlightKey) {
-                                    MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.35f)
-                                } else {
-                                    MaterialTheme.colorScheme.surface
-                                },
-                            ),
-                    ) {
+            items(sections) { section ->
+                PiSettingsSectionHeader(
+                    label = section.label,
+                    count = "${section.settings.size} 项",
+                )
+                // v2 的分组容器：圆角 10、surfaceContainerLow 底、组内 1px inset
+                // hairline，无描边无阴影（06 §2「分组容器」）。
+                PiSettingsCard {
+                    section.settings.forEachIndexed { index, setting ->
+                        if (index > 0) PiSettingsHairline()
                         PiSettingRow(
                             setting = setting,
                             valueText = valueOverrides[setting.key]
                                 ?: setting.display(setting.current(store)),
                             checked = setting.boolIn(store, false),
+                            current = isCurrentValue(setting, store),
+                            highlighted = setting.key == highlightKey,
                             onToggle = { next ->
                                 store.write(setting.key, JsonPrimitive(next))
                                 // Switch rows write in place, so they never reach
@@ -169,7 +164,18 @@ fun SettingsGroupScreen(
                 }
             }
             item {
-                Spacer(Modifier.height(PiSpacing.unit))
+                // v2 分组页页脚：说明徽标的四种时机（06 §2「页脚说明 16px 14px 0」）。
+                Text(
+                    "每一行末尾那枚徽标说明改动什么时候生效：新会话 / 需重载 / 需重启引擎 / 需重启。",
+                    modifier = Modifier.padding(
+                        start = PiSettingsMetrics.pageHorizontal,
+                        end = PiSettingsMetrics.pageHorizontal,
+                        top = PiSettingsMetrics.footerTop,
+                        bottom = PiSpacing.unit,
+                    ),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
         }
     }
@@ -251,17 +257,24 @@ fun SettingsGroupScreen(
     }
 }
 
-/** A section header or a setting, flattened for one LazyColumn. */
-private class GroupRow(val header: String?, val setting: PiSetting?)
+/** 一个分区（v2 的 `Section`）：分区头 + 一组行，是 LazyColumn 的一个 item。 */
+private class GroupSection(val label: String, val settings: List<PiSetting>)
 
-private fun buildGroupRows(groupId: String): List<GroupRow> {
+private fun buildGroupSections(groupId: String): List<GroupSection> {
     val settings = PiSettingsCatalog.settingsIn(groupId)
-    val rows = mutableListOf<GroupRow>()
-    for (section in PiSettingsCatalog.sectionsIn(groupId)) {
-        rows.add(GroupRow(section, null))
-        for (setting in settings) {
-            if (setting.section == section) rows.add(GroupRow(null, setting))
-        }
+    return PiSettingsCatalog.sectionsIn(groupId).map { section ->
+        GroupSection(section, settings.filter { it.section == section })
     }
-    return rows
 }
+
+/**
+ * 这一行是不是「当前生效值」（v2 数据里的 `cur`，画左缘 2px accent 条）。
+ *
+ * v2 的两处 `cur` 是「默认模型」与「主题」，都是 Value 行，且都是用户自己选过的
+ * 那一个值；注册表里没有 `cur` 字段，可用的事实是「这个键在 store 里有显式值」
+ * （`isExplicit` = `store.read(key) != null`），也就是它不再等于 pi 的内置默认。
+ * 因此判定 = 行型是 Value 且值被显式写过。Switch / Action 行不参与 —— v2 也没给
+ * 它们画条。
+ */
+private fun isCurrentValue(setting: PiSetting, store: PiSettingsStore): Boolean =
+    setting.kind == PiRowKind.Value && setting.isExplicit(store)

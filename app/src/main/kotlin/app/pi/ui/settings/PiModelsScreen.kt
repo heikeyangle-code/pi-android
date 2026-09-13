@@ -35,7 +35,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.unit.dp
 import app.pi.packages.AgentLayout
 import app.pi.packages.EngineRestartCoordinator
 import app.pi.packages.ExtensionLifecycle
@@ -44,7 +43,6 @@ import app.pi.packages.PiModelInventory
 import app.pi.packages.PiProviderPresets
 import app.pi.rpc.PiResponses
 import app.pi.runtime.PtyLauncher
-import app.pi.ui.components.PiSectionHeader
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
 import kotlinx.coroutines.Dispatchers
@@ -186,7 +184,7 @@ fun PiModelsScreen(
                 }
                 if (restartNote != null) item { Note(restartNote.orEmpty()) }
 
-                item { PiSectionHeader("默认与循环") }
+                item { PiSettingsSectionHeader("默认与循环") }
                 item {
                     LinkRow(
                         title = "默认模型",
@@ -207,7 +205,7 @@ fun PiModelsScreen(
                 }
                 item { Note("循环模型在引擎启动时确定，改完要重启引擎才会生效。") }
 
-                item { PiSectionHeader("这台设备上配好的模型") }
+                item { PiSettingsSectionHeader("这台设备上配好的模型") }
                 if (data.providers.isEmpty()) {
                     item { Note("还没有配置任何厂商。点下面的「导入模型」选一个厂商、粘上 Key。") }
                 }
@@ -228,13 +226,13 @@ fun PiModelsScreen(
                 item {
                     OutlinedButton(
                         onClick = { onOpenCredentials(null) },
-                        modifier = Modifier.padding(horizontal = PiSpacing.screen, vertical = PiSpacing.unit),
+                        modifier = Modifier.padding(horizontal = PiSettingsMetrics.pageHorizontal, vertical = PiSpacing.unit),
                     ) { Text("导入模型") }
                 }
-                item { PiSectionHeader("说明") }
+                item { PiSettingsSectionHeader("说明") }
                 item { Note("「pi 目录」是 pi 自带的模型定义；「手写申报」写在你的模型配置里；「覆盖」只改 pi 目录里的某几个字段。") }
                 item { Note("一个厂商的模型一旦手写申报，就会替换这个厂商在 pi 目录里的同名条目；没动的厂商不受影响。") }
-                item { Spacer(Modifier.height(24.dp)) }
+                item { Spacer(Modifier.height(PiSettingsMetrics.groupGap)) }
             }
         }
     }
@@ -292,7 +290,7 @@ private fun Summary(data: PiModelInventory.Inventory) {
             if (pending > 0) append(" · 等待重启 $pending 个")
             if (noCredential > 0) append(" · 缺凭证 $noCredential 个")
         },
-        modifier = Modifier.padding(horizontal = PiSpacing.screen, vertical = PiSpacing.unit),
+        modifier = Modifier.padding(horizontal = PiSettingsMetrics.pageHorizontal, vertical = PiSpacing.unit),
         style = MaterialTheme.typography.bodyMedium,
         color = MaterialTheme.colorScheme.onSurface,
     )
@@ -309,9 +307,9 @@ private fun RestartCard(
     Column(
         Modifier
             .fillMaxWidth()
-            .padding(horizontal = PiSpacing.screen, vertical = 4.dp)
+            .padding(horizontal = PiSettingsMetrics.pageHorizontal, vertical = PiSpacing.small)
             .background(MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.35f))
-            .padding(PiSpacing.screen),
+            .padding(PiSettingsMetrics.cardPaddingLoose),
     ) {
         Text(
             "有 ${providers.size} 个厂商已经配好了，但引擎还没有加载它们。",
@@ -324,7 +322,7 @@ private fun RestartCard(
             style = PiTheme.text.meta,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        Spacer(Modifier.height(6.dp))
+        Spacer(Modifier.height(PiSpacing.gutter))
         OutlinedButton(
             onClick = {
                 if (coordinator == null) {
@@ -356,7 +354,7 @@ private fun LinkRow(title: String, value: String, onClick: () -> Unit) {
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = onClick)
-            .padding(horizontal = PiSpacing.screen, vertical = 10.dp),
+            .padding(horizontal = PiSettingsMetrics.rowPaddingHorizontal, vertical = PiSettingsMetrics.rowPaddingVertical),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(Modifier.weight(1f)) {
@@ -378,9 +376,9 @@ private fun ProviderCard(
     Column(
         Modifier
             .fillMaxWidth()
-            .padding(horizontal = PiSpacing.screen, vertical = 6.dp)
+            .padding(horizontal = PiSettingsMetrics.pageHorizontal, vertical = PiSettingsMetrics.notePaddingVertical)
             .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.25f))
-            .padding(PiSpacing.screen),
+            .padding(PiSettingsMetrics.cardPaddingLoose),
     ) {
         Text(
             PiProviderPresets.byId(provider.id)?.displayName ?: provider.name ?: provider.id,
@@ -396,7 +394,7 @@ private fun ProviderCard(
             style = PiTheme.text.meta,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        Spacer(Modifier.height(4.dp))
+        Spacer(Modifier.height(PiSpacing.small))
         if (provider.models.isEmpty()) {
             Text(
                 "pi 的目录里还没有这个厂商的模型；导入时会读到模型清单。",
@@ -411,7 +409,7 @@ private fun ProviderCard(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clickable(onClick = onToggle)
-                    .padding(vertical = 6.dp),
+                    .padding(vertical = PiSettingsMetrics.notePaddingVertical),
                 style = PiTheme.text.meta,
                 color = MaterialTheme.colorScheme.primary,
             )
@@ -421,7 +419,7 @@ private fun ProviderCard(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clickable(onClick = onToggle)
-                    .padding(vertical = 6.dp),
+                    .padding(vertical = PiSettingsMetrics.notePaddingVertical),
                 style = PiTheme.text.meta,
                 color = MaterialTheme.colorScheme.primary,
             )
@@ -431,7 +429,7 @@ private fun ProviderCard(
             modifier = Modifier
                 .fillMaxWidth()
                 .clickable(onClick = onOpenCredentials)
-                .padding(vertical = 6.dp),
+                .padding(vertical = PiSettingsMetrics.notePaddingVertical),
             style = MaterialTheme.typography.labelLarge,
             color = MaterialTheme.colorScheme.primary,
         )
@@ -443,9 +441,9 @@ private fun ModelLine(model: PiModelInventory.Model) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 3.dp),
+            .padding(vertical = PiSettingsMetrics.supportingGap),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        horizontalArrangement = Arrangement.spacedBy(PiSpacing.gutter),
     ) {
         Column(Modifier.weight(1f)) {
             Text(
@@ -498,7 +496,7 @@ private fun originText(model: PiModelInventory.Model): String {
 private fun Note(text: String) {
     Text(
         text,
-        modifier = Modifier.padding(horizontal = PiSpacing.screen, vertical = 4.dp),
+        modifier = Modifier.padding(horizontal = PiSettingsMetrics.pageHorizontal, vertical = PiSpacing.small),
         style = PiTheme.text.meta,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )

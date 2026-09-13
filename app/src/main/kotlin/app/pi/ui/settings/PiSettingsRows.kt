@@ -1,42 +1,52 @@
 package app.pi.ui.settings
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.KeyboardArrowRight
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.dp
 import app.pi.ui.components.EffectiveKind
-import app.pi.ui.components.PiEffectiveBadge
-import app.pi.ui.components.PiSwitchRow
-import app.pi.ui.components.PiValueRow
 import app.pi.ui.theme.PiShapes
-import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
 
 /**
- * Settings-row components, built on the two rows that already exist in
- * `PiCommon.kt` so the stack stays visually consistent with the rest of the app.
+ * 设置行构件：v2 的六种行型（`02-real-content.md` §4.3）共用一套行骨架。
  *
- * The only thing those two rows cannot express is the effective badge, because
- * they have no trailing slot. Rather than copy their layout, each row is wrapped
- * in [WithEffectBadge], which parks the badge at the right edge. Number, text,
- * list and action rows reuse [PiValueRow] as their body and only differ in what
- * the trailing value says and what tapping opens.
+ * 行骨架照 `06-v2-construction-reference.md` §2「行（Row）」实现：
+ * `padding:10px 12px`、标题 15/500、副行 12 灰、尾部值 13 等宽 + tabular、
+ * chevron 14、「当前生效值」左缘 2px accent 条。分层只用 1px 线与表面阶梯，
+ * 没有任何阴影与 2px 以上的描边。
+ *
+ * 这里不复用 `ui/components/PiCommon.kt` 的 `PiSwitchRow` / `PiValueRow`：
+ * 那两个还服务对话页的 sheet 与会话列表（本批范围外），且它们的取值来自旧 spec
+ * 的 16dp/12dp 节奏；改它们会牵动别的屏。设置页的行因此自成一套，取值只来自
+ * [PiSettingsMetrics]。
  */
 
-/** The six kinds of spec §6.2, dispatched from the registry metadata. */
+/** The six kinds of `02-real-content.md` §4.3, dispatched from the registry metadata. */
 @Composable
 fun PiSettingRow(
     setting: PiSetting,
@@ -47,126 +57,237 @@ fun PiSettingRow(
     onExplainEffect: () -> Unit,
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
+    /**
+     * 这一行显示的就是**当前生效的值**（v2 数据里的 `cur`）。
+     * 判定见 [SettingsGroupScreen]：值被显式写过、且行型是 Value —— 也就是
+     * 「用户选的那一个」，不是 pi 的内置默认。
+     */
+    current: Boolean = false,
+    /**
+     * 这一行是搜索命中跳转的目标（计划 S8：1px accent 左线 + `surfaceContainerLow` 底，
+     * 取代原来的 `secondaryContainer` 底色）。
+     */
+    highlighted: Boolean = false,
 ) {
     when (setting.kind) {
-        PiRowKind.Switch -> WithEffectBadge(setting.effective, onExplainEffect, modifier) {
-            PiSwitchRow(
+        PiRowKind.Switch -> PiSettingsRowShell(highlighted, current, modifier) {
+            RowBody(
                 title = setting.title,
                 supporting = setting.description,
+                effective = setting.effective,
+                onExplainEffect = onExplainEffect,
+            )
+            PiSettingsSwitchRowTrailing(
                 checked = checked,
                 onCheckedChange = onToggle,
                 enabled = enabled,
             )
         }
 
-        PiRowKind.Action -> PiActionSettingRow(
-            title = setting.title,
-            supporting = setting.description,
-            effective = setting.effective,
-            dangerous = setting.dangerous,
-            enabled = enabled,
-            onExplainEffect = onExplainEffect,
-            onClick = onOpen,
+        PiRowKind.Action -> PiSettingsRowShell(
+            highlighted = highlighted,
+            current = current,
             modifier = modifier,
-        )
+            onClick = onOpen,
+            enabled = enabled,
+        ) {
+            RowBody(
+                title = setting.title,
+                supporting = setting.description,
+                effective = setting.effective,
+                onExplainEffect = onExplainEffect,
+                // v2：Action 行的标题本身就是动作，用 accent；危险行动作词用 error。
+                titleColor = if (setting.dangerous) {
+                    PiTheme.palette.error
+                } else {
+                    MaterialTheme.colorScheme.primary
+                },
+            )
+            // v2 的危险行在尾部写「! 执行」（error 色），普通 Action 行尾部为空。
+            if (setting.dangerous) {
+                Text(
+                    "! 执行",
+                    style = PiTheme.text.mono,
+                    color = PiTheme.palette.error,
+                )
+            }
+        }
 
-        // Value, Number, Text and List all render as a value row plus a chevron;
-        // only the trailing text and the editor behind them differ.
+        // Value / Number / Text / List 都是「尾部值 + chevron」，只有编辑器与尾部
+        // 文案不同（06 §2：尾部值 13 等宽 + tabular）。
         PiRowKind.Value, PiRowKind.Number, PiRowKind.Text, PiRowKind.List ->
-            WithEffectBadge(setting.effective, onExplainEffect, modifier) {
-                Box(
-                    Modifier.clickable(enabled = enabled, onClick = onOpen),
-                ) {
-                    PiValueRow(
-                        title = setting.title,
-                        supporting = setting.description,
-                        value = valueText,
+            PiSettingsRowShell(
+                highlighted = highlighted,
+                current = current,
+                modifier = modifier,
+                onClick = onOpen,
+                enabled = enabled,
+            ) {
+                RowBody(
+                    title = setting.title,
+                    supporting = setting.description,
+                    effective = setting.effective,
+                    onExplainEffect = onExplainEffect,
+                )
+                Text(
+                    valueText,
+                    style = PiTheme.text.mono,
+                    color = if (current) {
+                        PiTheme.palette.accent
+                    } else {
+                        MaterialTheme.colorScheme.onSurface
+                    },
+                    textAlign = TextAlign.End,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                // 只读行（运行时事实）没有可打开的东西，v2 也不给它 chevron。
+                if (!setting.readOnly) {
+                    Icon(
+                        Icons.Filled.KeyboardArrowRight,
+                        contentDescription = null,
+                        modifier = Modifier.size(PiSettingsMetrics.chevronSize),
+                        tint = PiTheme.palette.muted,
                     )
                 }
             }
     }
 }
 
+/**
+ * 行骨架：底色（命中/普通）+ 左缘竖线 + `10px 12px` 的行内边距。
+ *
+ * 左缘两条线的分工是 v2 里的两件事，不能互相替代：
+ *  - 命中高亮（搜索跳转）：1px accent，配 `surfaceContainerLow` 底（计划 S8）；
+ *  - 当前生效值：2px accent，上下各缩进 8（`06 §2`）。
+ *
+ * `onClick` 为 null 时整行不可点（Switch 行由控件自己吃点击）。
+ */
 @Composable
-fun PiActionSettingRow(
-    title: String,
-    supporting: String?,
-    effective: EffectiveKind,
-    dangerous: Boolean,
-    enabled: Boolean,
-    onExplainEffect: () -> Unit,
-    onClick: () -> Unit,
+private fun PiSettingsRowShell(
+    highlighted: Boolean,
+    current: Boolean,
     modifier: Modifier = Modifier,
+    onClick: (() -> Unit)? = null,
+    enabled: Boolean = true,
+    content: @Composable RowScope.() -> Unit,
 ) {
-    WithEffectBadge(effective, onExplainEffect, modifier) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable(enabled = enabled, onClick = onClick)
-                .padding(horizontal = PiSpacing.screen, vertical = 12.dp),
-        ) {
-            Text(
-                title,
-                style = MaterialTheme.typography.bodyLarge,
-                color = if (dangerous) {
-                    MaterialTheme.colorScheme.error
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .background(
+                if (highlighted) {
+                    MaterialTheme.colorScheme.surfaceContainerLow
                 } else {
-                    MaterialTheme.colorScheme.primary
+                    Color.Transparent
                 },
             )
-            if (supporting != null) {
-                Text(
-                    supporting,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
+            .then(
+                if (onClick != null) {
+                    Modifier.clickable(enabled = enabled, onClick = onClick)
+                } else {
+                    Modifier
+                },
+            ),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(
+                    start = PiSettingsMetrics.rowPaddingHorizontal,
+                    end = PiSettingsMetrics.rowPaddingHorizontal,
+                    top = PiSettingsMetrics.rowPaddingVertical,
+                    bottom = PiSettingsMetrics.rowPaddingVertical,
+                ),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(PiSettingsMetrics.rowGap),
+            content = content,
+        )
+        if (current) {
+            Box(
+                Modifier
+                    .padding(
+                        top = PiSettingsMetrics.currentBarInset,
+                        bottom = PiSettingsMetrics.currentBarInset,
+                    )
+                    .fillMaxHeight()
+                    .width(PiSettingsMetrics.currentBarWidth)
+                    .background(PiTheme.palette.accent),
+            )
+        }
+        if (highlighted) {
+            Box(
+                Modifier
+                    .fillMaxHeight()
+                    .width(PiSettingsMetrics.hairline)
+                    .background(PiTheme.palette.accent),
+            )
         }
     }
 }
 
 /**
- * Explains one of pi's four take-effect timings (spec §6.5). The badge is shown
- * for everything that is not immediate, and tapping it must say what "reload"
- * means for this particular row, so the badge is a real touch target.
+ * 标题 + 生效徽标 + 副行。徽标紧跟标题（v2 的 Row 把 `badge` 放在标题行里，
+ * 不是钉在最右侧），点它弹生效说明。
  */
 @Composable
-private fun WithEffectBadge(
-    kind: EffectiveKind,
+private fun RowScope.RowBody(
+    title: String,
+    supporting: String?,
+    effective: EffectiveKind,
     onExplainEffect: () -> Unit,
-    modifier: Modifier = Modifier,
-    body: @Composable () -> Unit,
+    titleColor: Color = MaterialTheme.colorScheme.onSurface,
 ) {
-    Row(
-        modifier = modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Box(Modifier.weight(1f)) { body() }
-        if (kind != EffectiveKind.Immediate) {
-            PiEffectiveBadge(
-                kind = kind,
-                modifier = Modifier.clickable(onClick = onExplainEffect),
+    Column(Modifier.weight(1f)) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(PiSettingsMetrics.titleGap),
+        ) {
+            Text(
+                title,
+                style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Medium),
+                color = titleColor,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
-            Spacer(Modifier.width(PiSpacing.screen))
+            if (effective != EffectiveKind.Immediate) {
+                PiSettingsEffectiveBadge(
+                    kind = effective,
+                    modifier = Modifier.clickable(onClick = onExplainEffect),
+                )
+            }
+        }
+        if (supporting != null) {
+            Text(
+                supporting,
+                modifier = Modifier.padding(top = PiSettingsMetrics.supportingGap),
+                style = PiTheme.text.meta,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
         }
     }
 }
 
-/** Grey explanatory card, used for glob syntax and other caveats (spec §6.2). */
+/** 灰底说明卡：glob 语法、主题告警与只读提示共用（`06 §2` 卡片：圆角 10、内 12/14）。 */
 @Composable
 fun PiInfoNote(text: String, modifier: Modifier = Modifier) {
     Surface(
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = PiSpacing.screen, vertical = 6.dp),
-        shape = PiShapes.cardInner,
-        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+            .padding(horizontal = PiSettingsMetrics.pageHorizontal, vertical = PiSettingsMetrics.notePaddingVertical),
+        shape = PiSettingsCardShape,
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
     ) {
         Text(
             text,
-            modifier = Modifier.padding(12.dp),
+            modifier = Modifier.padding(
+                start = PiSettingsMetrics.cardPaddingLoose,
+                end = PiSettingsMetrics.cardPaddingLoose,
+                top = PiSettingsMetrics.rowPaddingVertical,
+                bottom = PiSettingsMetrics.rowPaddingVertical,
+            ),
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -176,18 +297,22 @@ fun PiInfoNote(text: String, modifier: Modifier = Modifier) {
 /** Monospace rendering of the raw dotted key, used by search results and L1. */
 @Composable
 fun PiKeyLabel(key: String, modifier: Modifier = Modifier) {
-    Surface(
-        modifier = modifier,
-        shape = PiShapes.badge,
-        color = MaterialTheme.colorScheme.surfaceContainerHighest,
-    ) {
-        Text(
-            key,
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
-            style = PiTheme.text.monoSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-    }
+    Text(
+        key,
+        modifier = modifier
+            .clip(PiShapes.badge)
+            .border(
+                PiSettingsMetrics.hairline,
+                MaterialTheme.colorScheme.outline,
+                PiShapes.badge,
+            )
+            .padding(
+                horizontal = PiSettingsMetrics.badgePaddingStart,
+                vertical = PiSettingsMetrics.badgePaddingVertical,
+            ),
+        style = PiTheme.text.monoSmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
 }
 
 /** One-line key/value pair, for read-only diagnostics rows. */
@@ -200,19 +325,22 @@ fun PiKeyValueRow(
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = PiSpacing.screen, vertical = 8.dp),
+            .padding(
+                horizontal = PiSettingsMetrics.rowPaddingHorizontal,
+                vertical = PiSettingsMetrics.rowPaddingVertical,
+            ),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween,
     ) {
         Text(
             label,
-            style = MaterialTheme.typography.bodyMedium,
+            style = PiTheme.text.meta,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        Spacer(Modifier.width(12.dp))
+        Spacer(Modifier.width(PiSettingsMetrics.rowGap))
         Text(
             value,
-            style = PiTheme.text.meta,
+            style = PiTheme.text.mono,
             color = MaterialTheme.colorScheme.onSurface,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,

@@ -1,5 +1,6 @@
 package app.pi.ui.settings
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -19,6 +20,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
@@ -30,7 +32,6 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.unit.dp
 import app.pi.runtime.PiPaths
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
@@ -106,7 +107,7 @@ fun DiagnosticsScreen(
         Column(
             Modifier
                 .fillMaxSize()
-                .padding(horizontal = PiSpacing.screen)
+                .padding(horizontal = PiSettingsMetrics.pageHorizontal)
                 .padding(bottom = contentPadding.calculateBottomPadding())
                 .verticalScroll(rememberScrollState()),
         ) {
@@ -164,13 +165,26 @@ fun DiagnosticsScreen(
                 if (working) "正在收集…" else "报告预览（与导出的文件内容一致）",
                 style = MaterialTheme.typography.labelLarge,
             )
-            Spacer(Modifier.height(6.dp))
-            Text(
-                report ?: "",
-                style = PiTheme.text.monoSmall,
-                color = MaterialTheme.colorScheme.onSurface,
-            )
-            Spacer(Modifier.height(PiSpacing.unit))
+            Spacer(Modifier.height(PiSettingsMetrics.notePaddingVertical))
+            // v2 的诊断报告预览：等宽正文装在一张圆角 10、1px `borderMuted` 描边的
+            // 卡里（`06 §2` 的卡片 + 线宽规则），正文 12/18 等宽。
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = PiSettingsCardShape,
+                color = MaterialTheme.colorScheme.surfaceContainerLow,
+                border = BorderStroke(
+                    PiSettingsMetrics.hairline,
+                    MaterialTheme.colorScheme.outlineVariant,
+                ),
+            ) {
+                Text(
+                    report ?: "",
+                    modifier = Modifier.padding(PiSettingsMetrics.cardPadding),
+                    style = PiTheme.text.monoSmall,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+            }
+            Spacer(Modifier.height(PiSettingsMetrics.groupGap))
         }
     }
 }

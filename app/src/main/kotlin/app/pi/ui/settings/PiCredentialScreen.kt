@@ -37,7 +37,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.unit.dp
 import app.pi.packages.AgentLayout
 import app.pi.packages.EngineRestartCoordinator
 import app.pi.packages.ExtensionLifecycle
@@ -47,7 +46,7 @@ import app.pi.packages.PiModelScanner
 import app.pi.packages.PiProviderPresets
 import app.pi.rpc.PiResponses
 import app.pi.runtime.PtyLauncher
-import app.pi.ui.components.PiSectionHeader
+import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -311,13 +310,13 @@ fun PiCredentialScreen(
             }
 
             // ------------------------------------------------------------ 1 厂商
-            PiSectionHeader("1 选厂商")
+            PiSettingsSectionHeader("1 选厂商")
             PiProviderPresets.all.forEach { option ->
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
                         .clickable { presetId = option.id }
-                        .padding(horizontal = 8.dp, vertical = 2.dp),
+                        .padding(horizontal = PiSettingsMetrics.badgePaddingStart, vertical = PiSettingsMetrics.badgePaddingVertical),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     RadioButton(selected = option.id == presetId, onClick = { presetId = option.id })
@@ -344,7 +343,7 @@ fun PiCredentialScreen(
             }
 
             // --------------------------------------------------------------- 2 Key
-            PiSectionHeader("2 粘 Key")
+            PiSettingsSectionHeader("2 粘 Key")
             OutlinedTextField(
                 value = apiKey,
                 onValueChange = { apiKey = it },
@@ -352,7 +351,7 @@ fun PiCredentialScreen(
                 singleLine = true,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 4.dp),
+                    .padding(horizontal = PiSettingsMetrics.cardPadding, vertical = PiSpacing.small),
             )
             if (credentialPresent) {
                 // Leaving it blank is what "I only came here to add a model" needs, so the
@@ -374,7 +373,7 @@ fun PiCredentialScreen(
                 singleLine = true,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 4.dp),
+                    .padding(horizontal = PiSettingsMetrics.cardPadding, vertical = PiSpacing.small),
             )
             OutlinedTextField(
                 value = api,
@@ -383,17 +382,17 @@ fun PiCredentialScreen(
                 singleLine = true,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 4.dp),
+                    .padding(horizontal = PiSettingsMetrics.cardPadding, vertical = PiSpacing.small),
             )
             Note(
                 "写错 api 时厂商会注册成功、第一条消息才失败。请从上面的预设带出来，不要凭印象改。",
             )
 
             // ------------------------------------------------------------ 3 扫描
-            PiSectionHeader("3 检测并扫描模型")
+            PiSettingsSectionHeader("3 检测并扫描模型")
             Note("扫描成功即表示 Key 可用。")
             Row(
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+                modifier = Modifier.padding(horizontal = PiSettingsMetrics.cardPadding, vertical = PiSpacing.small),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 OutlinedButton(
@@ -437,7 +436,7 @@ fun PiCredentialScreen(
                     Text(if (scanning) "正在扫描…" else "检测并扫描模型")
                 }
                 if (scanEndpoint != null) {
-                    Spacer(Modifier.width(8.dp))
+                    Spacer(Modifier.width(PiSpacing.inline))
                     Text(scanEndpoint.orEmpty(), style = PiTheme.text.monoSmall)
                 }
             }
@@ -445,7 +444,7 @@ fun PiCredentialScreen(
             if (scanError != null) Note(scanError.orEmpty())
 
             // ------------------------------------------------------ 4 勾选与保存
-            PiSectionHeader("4 勾选并保存")
+            PiSettingsSectionHeader("4 勾选并保存")
             Note(
                 "左边勾选会用 Ctrl+P 切换的模型，右边选默认模型。" +
                     "已经导入过的模型可以在 设置 → 模型 里一眼看到它们现在能不能用。",
@@ -456,7 +455,7 @@ fun PiCredentialScreen(
                 label = { Text("手动模型名（逗号、空格或换行分隔）") },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 4.dp),
+                    .padding(horizontal = PiSettingsMetrics.cardPadding, vertical = PiSpacing.small),
             )
             val scannedIds = remember(scanned) { scanned.map { it.id }.toSet() }
             val catalogIds = remember(catalog) { catalog.map { it.id }.toSet() }
@@ -465,7 +464,7 @@ fun PiCredentialScreen(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 8.dp),
+                        .padding(horizontal = PiSpacing.inline),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Checkbox(
@@ -511,7 +510,7 @@ fun PiCredentialScreen(
             }
 
             Row(
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                modifier = Modifier.padding(horizontal = PiSettingsMetrics.cardPadding, vertical = PiSpacing.inline),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Button(
@@ -555,7 +554,7 @@ fun PiCredentialScreen(
                 ) {
                     Text("保存")
                 }
-                Spacer(Modifier.width(8.dp))
+                Spacer(Modifier.width(PiSpacing.inline))
                 Text(
                     if (selected.isEmpty()) "至少要勾选一个模型" else "已选 ${selected.size} 个",
                     style = PiTheme.text.meta,
@@ -589,20 +588,20 @@ fun PiCredentialScreen(
                             }
                         }
                     },
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+                    modifier = Modifier.padding(horizontal = PiSettingsMetrics.cardPadding, vertical = PiSpacing.small),
                 ) {
                     Text("重启引擎")
                 }
             }
 
-            PiSectionHeader("说明")
+            PiSettingsSectionHeader("说明")
             Note(
                 "手写的模型配置可以带注释，不会被判成损坏。",
             )
             Note(
                 "一个厂商的模型一旦提供就替换该厂商的全部模型；勾选时要想清楚这是不是全部要用的模型。",
             )
-            Spacer(Modifier.height(24.dp))
+            Spacer(Modifier.height(PiSettingsMetrics.groupGap))
         }
     }
 
@@ -648,7 +647,7 @@ fun PiCredentialScreen(
 private fun Note(text: String) {
     Text(
         text,
-        modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+        modifier = Modifier.padding(horizontal = PiSettingsMetrics.cardPadding, vertical = PiSpacing.small),
         style = PiTheme.text.meta,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )

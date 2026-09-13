@@ -1,20 +1,24 @@
 package app.pi.ui.settings
 
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.KeyboardArrowRight
-import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -27,22 +31,23 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.unit.dp
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.sp
 import app.pi.bridge.DeviceCapabilityStore
 import app.pi.packages.PiPackagesEntryRow
-import app.pi.ui.components.PiSectionHeader
 import app.pi.ui.device.DeviceCapabilityEntryRow
-import app.pi.ui.theme.PiShapes
-import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
+import app.pi.ui.theme.PiThinkingLevel
 
 /**
- * Settings level 0 (spec §6.1).
+ * Settings level 0 (spec §6.1), 按 v2 重排：搜索入口 → 当前模型卡 → 设备 / 扩展 /
+ * 关于 → 全部设置（12 个分组）→ 页脚说明。
  *
- * This supersedes the flat list in `SettingsScreen.kt`: the same 14 groups, but
- * each one now carries a live summary read from the store, a prominent search
- * entry across every registered key, and a shortcut card for the two settings
- * users change most (model and thinking level).
+ * 层级与取值来自 `06-v2-construction-reference.md` §2：屏水平 14、分组容器圆角 10
+ * 且无描边无阴影、行 `padding:10px 12px`、标题 15/500、副行 12 灰、chevron 14、
+ * 搜索框 40 高圆角 9。当前模型卡是 v2 里 accent 的合法用法之一：卡内左缘一条
+ * 2px accent 条 + 模型 id 用 accent。
  *
  * The screen is stateless apart from the store it reads; navigation is the
  * caller's job, which is why it takes three callbacks rather than owning routes.
@@ -101,13 +106,15 @@ fun SettingsHome(
             // `DeviceCapabilityStore`.
             if (onOpenDeviceCapabilities != null) {
                 item {
-                    PiSectionHeader("设备")
+                    PiSettingsSectionHeader("设备")
                 }
                 item {
-                    DeviceCapabilityEntryRow(
-                        store = DeviceCapabilityStore.get(context),
-                        onClick = onOpenDeviceCapabilities,
-                    )
+                    PiSettingsCard {
+                        DeviceCapabilityEntryRow(
+                            store = DeviceCapabilityStore.get(context),
+                            onClick = onOpenDeviceCapabilities,
+                        )
+                    }
                 }
             }
             // Extension packages, next to the capability row because they answer
@@ -116,10 +123,12 @@ fun SettingsHome(
             // this screen is the app's own, not a transcription of pi's.
             if (onOpenPackages != null) {
                 item {
-                    PiSectionHeader("扩展")
+                    PiSettingsSectionHeader("扩展")
                 }
                 item {
-                    PiPackagesEntryRow(onClick = onOpenPackages)
+                    PiSettingsCard {
+                        PiPackagesEntryRow(onClick = onOpenPackages)
+                    }
                 }
             }
             // The licence notices. Not a pi setting and not a pi feature: this app
@@ -128,33 +137,43 @@ fun SettingsHome(
             // statement are ours to publish.
             if (onOpenLicenses != null) {
                 item {
-                    PiSectionHeader("关于")
+                    PiSettingsSectionHeader("关于")
                 }
                 item {
-                    PiLicensesEntryRow(onClick = onOpenLicenses)
+                    PiSettingsCard {
+                        PiLicensesEntryRow(onClick = onOpenLicenses)
+                    }
                 }
             }
+            // v2 把 12 个分组放进**一张**卡片，行间是 1px inset hairline；12 行不
+            // 多，所以整块是一个 LazyColumn item，不拆成 12 个 item。
             item {
-                PiSectionHeader("全部设置")
-            }
-            items(PiSettingsCatalog.groups) { group ->
-                GroupEntry(
-                    group = group,
-                    store = store,
-                    onClick = { onOpenGroup(group.id) },
+                PiSettingsSectionHeader(
+                    label = "全部设置",
+                    count = "${PiSettingsCatalog.settings.size} 项",
                 )
+                PiSettingsCard {
+                    PiSettingsCatalog.groups.forEachIndexed { index, group ->
+                        if (index > 0) PiSettingsHairline()
+                        GroupEntry(
+                            group = group,
+                            store = store,
+                            onClick = { onOpenGroup(group.id) },
+                        )
+                    }
+                }
             }
             item {
                 Text(
                     "共 ${PiSettingsCatalog.settings.size} 项设置。搜索同时匹配标题、说明与字段名，" +
                         "输入 reserveTokens 或 /compact 都能直达。",
                     modifier = Modifier.padding(
-                        start = PiSpacing.screen,
-                        end = PiSpacing.screen,
-                        top = PiSpacing.unit,
-                        bottom = PiSpacing.unit * 2,
+                        start = PiSettingsMetrics.pageHorizontal,
+                        end = PiSettingsMetrics.pageHorizontal,
+                        top = PiSettingsMetrics.footerTop,
+                        bottom = PiSettingsMetrics.groupGap,
                     ),
-                    style = PiTheme.text.meta,
+                    style = MaterialTheme.typography.bodyMedium.copy(lineHeight = 22.sp),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
@@ -162,88 +181,146 @@ fun SettingsHome(
     }
 }
 
-/** Prominent search entry, because search is the fastest path to any of ~130 keys. */
+/**
+ * 搜索入口（v2：高 40、圆角 9、`surfaceContainerLow` 底、1px `borderMuted` 描边、
+ * 内 `padding:0 12px`，图标 16，文字 14 灰，右侧项数 12 灰）。
+ */
 @Composable
 private fun SearchEntry(onClick: () -> Unit) {
     Surface(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = PiSpacing.screen, vertical = 8.dp)
+            .padding(
+                start = PiSettingsMetrics.pageHorizontal,
+                end = PiSettingsMetrics.pageHorizontal,
+                top = PiSettingsMetrics.cardPadding,
+            )
+            .height(PiSettingsMetrics.searchFieldHeight)
             .clickable(onClick = onClick),
-        shape = PiShapes.chip,
-        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        shape = PiSettingsFieldShape,
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
+        border = BorderStroke(
+            PiSettingsMetrics.hairline,
+            MaterialTheme.colorScheme.outline,
+        ),
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+            modifier = Modifier.padding(horizontal = PiSettingsMetrics.rowPaddingHorizontal),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Icon(
                 Icons.Filled.Search,
                 contentDescription = null,
-                modifier = Modifier.size(20.dp),
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(PiSettingsMetrics.searchIconSize),
+                tint = PiTheme.palette.muted,
             )
-            Spacer(Modifier.width(10.dp))
+            Spacer(Modifier.width(PiSettingsMetrics.searchIconGap))
             Text(
                 "搜索设置",
                 modifier = Modifier.weight(1f),
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.bodyMedium,
+                color = PiTheme.palette.muted,
             )
             Text(
                 "${PiSettingsCatalog.settings.size} 项",
                 style = PiTheme.text.meta,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                color = PiTheme.palette.muted,
             )
         }
     }
 }
 
-/** Shortcut card for the current model and thinking level (spec §6.1 快捷卡). */
+/**
+ * 当前模型快捷卡（v2：卡内左缘 2px accent 条、副行 `改这里 →`、模型 id 等宽
+ * accent、思考等级 `◐` + 中文标签）。
+ *
+ * 卡整体可点，落到「默认模型」那一行的编辑器；这是这个屏上最常改的两个值，
+ * 所以它值一张卡。
+ */
 @Composable
 private fun CurrentModelCard(store: PiSettingsStore, onOpenSetting: (String) -> Unit) {
     val model = PiSettingsCatalog.summaryText(store, "defaultModel")
-    val level = PiSettingsCatalog.summaryText(store, "defaultThinkingLevel")
-    Surface(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = PiSpacing.screen, vertical = 8.dp)
-            .clickable { onOpenSetting("defaultModel") },
-        shape = PiShapes.card,
-        color = MaterialTheme.colorScheme.surfaceContainerLow,
+    val levelText = PiSettingsCatalog.summaryText(store, "defaultThinkingLevel")
+    val levelWire = PiSettingsCatalog.byKey["defaultThinkingLevel"]
+        ?.current(store)
+        ?.primitiveText()
+    val levelColor = PiTheme.palette.thinking(PiThinkingLevel.fromWire(levelWire).wire)
+    PiSettingsCard(
+        modifier = Modifier.padding(top = PiSettingsMetrics.cardPaddingLoose),
     ) {
         Row(
-            modifier = Modifier.padding(14.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { onOpenSetting("defaultModel") }
+                .padding(
+                    start = PiSettingsMetrics.rowPaddingHorizontal,
+                    end = PiSettingsMetrics.rowPaddingHorizontal,
+                    top = PiSettingsMetrics.cardPadding,
+                    bottom = PiSettingsMetrics.cardPadding,
+                ),
             verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(PiSettingsMetrics.rowGap),
         ) {
-            Icon(
-                Icons.Filled.Psychology,
-                contentDescription = null,
-                modifier = Modifier.size(22.dp),
-                tint = MaterialTheme.colorScheme.primary,
+            Box(
+                Modifier
+                    .padding(
+                        top = PiSettingsMetrics.currentBarInset,
+                        bottom = PiSettingsMetrics.currentBarInset,
+                    )
+                    .fillMaxHeight()
+                    .width(PiSettingsMetrics.currentBarWidth)
+                    .background(PiTheme.palette.accent),
             )
-            Spacer(Modifier.width(14.dp))
             Column(Modifier.weight(1f)) {
-                Text(
-                    "当前模型",
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = MaterialTheme.colorScheme.onSurface,
-                )
-                Text(
-                    "$model · ◐ $level",
-                    style = PiTheme.text.meta,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(PiSettingsMetrics.titleGap),
+                ) {
+                    Text(
+                        "当前模型",
+                        modifier = Modifier.weight(1f),
+                        style = PiTheme.text.meta,
+                        color = PiTheme.palette.muted,
+                    )
+                    Text(
+                        "改这里 →",
+                        style = PiTheme.text.meta,
+                        color = PiTheme.palette.muted,
+                    )
+                }
+                Row(
+                    modifier = Modifier.padding(top = PiSettingsMetrics.badgeGap),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(PiSettingsMetrics.badgeGap),
+                ) {
+                    Text(
+                        model,
+                        modifier = Modifier.weight(1f),
+                        style = PiTheme.text.mono,
+                        color = PiTheme.palette.accent,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        "◐",
+                        style = PiTheme.text.meta,
+                        color = levelColor,
+                    )
+                    Text(
+                        levelText,
+                        style = PiTheme.text.meta,
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
+                }
             }
-            Icon(
-                Icons.Filled.KeyboardArrowRight,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
         }
     }
 }
 
+/**
+ * 分组入口行：标题 15/500 + 动态摘要 + chevron（v2 的首页分组行没有前置图标，
+ * 前置图标留给设备/扩展/关于三行，见 `06 §2` 的 Row `lead` 槽）。
+ */
 @Composable
 private fun GroupEntry(
     group: PiSettingsGroup,
@@ -254,33 +331,35 @@ private fun GroupEntry(
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = onClick)
-            .padding(horizontal = PiSpacing.screen, vertical = 14.dp),
+            .padding(
+                horizontal = PiSettingsMetrics.rowPaddingHorizontal,
+                vertical = PiSettingsMetrics.rowPaddingVertical,
+            ),
         verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(PiSettingsMetrics.rowGap),
     ) {
-        Icon(
-            group.icon,
-            contentDescription = null,
-            modifier = Modifier.size(22.dp),
-            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Spacer(Modifier.width(14.dp))
         Column(Modifier.weight(1f)) {
             Text(
                 group.title,
-                style = MaterialTheme.typography.bodyLarge,
+                style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Medium),
                 color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
             Text(
                 group.summary(store),
+                modifier = Modifier.padding(top = PiSettingsMetrics.supportingGap),
                 style = PiTheme.text.meta,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
         }
-        Spacer(Modifier.width(8.dp))
         Icon(
             Icons.Filled.KeyboardArrowRight,
             contentDescription = null,
-            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(PiSettingsMetrics.chevronSize),
+            tint = PiTheme.palette.muted,
         )
     }
 }
