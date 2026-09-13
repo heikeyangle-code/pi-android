@@ -1264,43 +1264,31 @@ export default function (pi: ExtensionAPI) {
 		}
 	});
 
-	// On session start, say something only when the user can act on it: a missing
-	// bridge, or an accessibility service that is enabled but not running. In the
-	// TUI mode the same probe also paints a footer status.
+	// On session start the app shows nothing at the bottom of the screen — and in RPC
+	// mode it does not even probe: device health is *persistent* state with a
+	// permanent home, and 设置 → 设备能力 shows the bridge's status, the accessibility
+	// service's state and every capability. Announcing it again at every session start
+	// was a snackbar the user had to dismiss for information that had not changed, and
+	// the probe itself was a loopback HTTP call in front of the session's first
+	// message. A genuine failure still surfaces where it happens: the `android_*` tool
+	// call reports it, with the address and the next step.
 	//
-	// Not awaited, deliberately. pi awaits every `session_start` handler **before**
-	// it attaches the JSONL stdin reader (`core/agent-session.ts:2468-2491` from
-	// `modes/rpc/rpc-mode.ts:316`), so an `await` here runs in front of the user's
-	// first message — and `bridgeHealth()` is a loopback HTTP call with a 5 s
-	// timeout and a retry, i.e. up to 10 s of *advisory* work. The probe answers a
-	// "should I warn the user?" question; the message itself is queued by pi and
-	// needs no bridge at all, so the answer can arrive late without any loss.
+	// TUI mode keeps the probe, because in a terminal there is no page to look at
+	// instead — it paints the same information as a footer status.
 	pi.on("session_start", async (_event, ctx) => {
-		if (!ctx.hasUI) return;
+		if (!ctx.hasUI || ctx.mode !== "tui") return;
 		void bridgeHealth()
 			.then((health) => {
-				if (health.accessibilityEnabledInSettings && !health.accessibilityRunning) {
-					ctx.ui.notify(
-						"设备桥：无障碍服务在系统设置里是启用的，但没有在运行。请到「设置 → 无障碍 → pi 设备桥」重新关闭再打开。",
-						"warning",
-					);
-				}
-				if (ctx.mode === "tui") {
-					const usable = health.capabilities
-						.filter((capability) => capability.usable)
-						.map((capability) => capability.title);
-					ctx.ui.setStatus(
-						"pi-android-bridge",
-						usable.length > 0 ? `设备桥：${usable.join("/")}` : "设备桥：无可用能力（到「设置 → 设备能力」开启）",
-					);
-				}
+				const usable = health.capabilities
+					.filter((capability) => capability.usable)
+					.map((capability) => capability.title);
+				ctx.ui.setStatus(
+					"pi-android-bridge",
+					usable.length > 0 ? `设备桥：${usable.join("/")}` : "设备桥：无可用能力（到「设置 → 设备能力」开启）",
+				);
 			})
 			.catch(() => {
-				ctx.ui.notify(
-					"设备桥未连接：手机能力（android_* 工具）当前不可用。请打开 pi-android 的「设置 → 设备能力」确认状态为「已监听」。",
-					"warning",
-				);
-				if (ctx.mode === "tui") ctx.ui.setStatus("pi-android-bridge", "设备桥：未连接");
+				ctx.ui.setStatus("pi-android-bridge", "设备桥：未连接");
 			});
 	});
 }

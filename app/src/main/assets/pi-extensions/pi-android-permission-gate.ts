@@ -48,7 +48,6 @@
 import type { ExtensionAPI, ToolCallEvent } from "@earendil-works/pi-coding-agent";
 import { bridgeHealth, reportGate } from "./pi-android-bridge/client";
 import {
-	DANGEROUS_TOOLS,
 	dangerLevelOf,
 	describeDangerousCall,
 	isDeviceTool,
@@ -65,9 +64,6 @@ const sessionGrants = new Set<string>();
 
 /** How many times each dangerous tool has been approved in this process. */
 const approvals = new Map<string, number>();
-
-/** The install notice is worth showing once per process, not once per session. */
-let announced = false;
 
 /** Cached 放宽模式 flag, with the time it was read (loopback call, so cheap). */
 let relaxedShellSyntax = false;
@@ -207,50 +203,27 @@ export default function (pi: ExtensionAPI) {
 		};
 	});
 
-	// A visible, auditable marker of what this extension is doing, so a user who
-	// reads pi's startup output knows the gate is installed rather than assuming it.
+	// The gate never speaks on the bottom of the screen. Both facts it used to
+	// announce there are *persistent* state, and each has a home where the user can
+	// read it whenever they want instead of having it pushed at every session start:
 	//
-	// ## Why nothing here is awaited
+	//   - the remembered approvals and the approval count → 设置 → 设备能力 → 本会话的审批
+	//     (kept truthful by `publish` below, which is the only reporting channel);
+	//   - 放宽模式 → 设置 → 设备能力 → Shell.
 	//
-	// pi awaits every `session_start` handler **before** it attaches the JSONL
-	// stdin reader (`core/agent-session.ts:2468-2491` reached from
-	// `modes/rpc/rpc-mode.ts:316`): while a handler is pending, a `prompt` the app
-	// has already written just sits in the pipe. Both calls below are loopback HTTP
-	// with 5 s / 3 s timeouts and one retry each, so awaiting them put up to 16 s of
-	// *display-only* work in front of every session's first message — on a device
-	// where the bridge is slow to answer, that is the user watching a spinner for
-	// no reason. The notify is the point of this handler, so it now happens first
-	// and the network result is applied when it arrives.
-	pi.on("session_start", async (_event, ctx) => {
+	// A per-session snackbar for an unchanged setting is confirmation fatigue with a
+	// zero information rate, and it also cost display-only latency in front of every
+	// session's first message.
+	pi.on("session_start", async (_event, _ctx) => {
 		// Every session starts from zero: the remembered approvals are session-scoped
 		// by definition, and a stale set would be a permanent grant nobody agreed to.
-		const hadGrants = sessionGrants.size > 0;
 		sessionGrants.clear();
 		approvals.clear();
 		relaxedFetchedAt = 0;
 
-		if (ctx.hasUI && (!announced || hadGrants)) {
-			announced = true;
-			ctx.ui.notify(
-				`设备审批已启用：${DANGEROUS_TOOLS.length} 个危险手机操作会请求确认，` +
-					"确认框里可以选择「同意并记住本次会话」。设备策略只管辖 android_* 工具，" +
-					"不影响 pi 在工作区里跑命令。",
-				"info",
-			);
-		}
-
-		// The 放宽模式 warning needs the app's answer, and the gate's *enforcement*
-		// does not depend on either call landing (see `currentRelaxed`/`publish`), so
-		// both are fire-and-forget: `session_start` returns now and the warning is
-		// shown if and when the bridge says the mode is on.
-		void currentRelaxed().then((relaxed) => {
-			if (!relaxed || !ctx.hasUI) return;
-			ctx.ui.notify(
-				"Shell 放宽模式处于开启状态：$(...) 与反引号、sh/eval/source 都会被允许，" +
-					"写入边界与白名单从此只约束最外层命令。可在「设置 → 设备能力 → Shell」关闭。",
-				"warning",
-			);
-		});
+		// Fire-and-forget: `session_start` must return before pi attaches the JSONL
+		// stdin reader (`core/agent-session.ts:2468-2491` from `modes/rpc/rpc-mode.ts:316`),
+		// so awaiting a loopback call here would run in front of the user's first message.
 		void publish("新会话开始：危险操作的审批记录已清空。");
 	});
 }
