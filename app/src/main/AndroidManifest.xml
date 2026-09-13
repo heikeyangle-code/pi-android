@@ -149,7 +149,7 @@
         <service
             android:name=".bridge.DeviceAccessibilityService"
             android:exported="false"
-            android:label="pi 设备桥"
+            android:label="PI 设备桥"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
             <intent-filter>
                 <action android:name="android.accessibilityservice.AccessibilityService" />

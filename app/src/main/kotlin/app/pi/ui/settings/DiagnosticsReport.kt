@@ -112,7 +112,7 @@ object DiagnosticsReport {
         }
 
         val body = buildString {
-            appendLine("pi-android 诊断报告")
+            appendLine("PI 诊断报告")
             appendLine("生成时间：${timestamp()}")
             appendLine()
             appendLine("说明：本文件是纯文本诊断材料，用于在引擎已经退出的情况下把可诊断的信息带到别处。")

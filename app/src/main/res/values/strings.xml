@@ -1,12 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- pi's own brand is lowercase; keep it that way. -->
-    <string name="app_name">pi</string>
+    <!--
+      两个名字，别混：这个 App 叫 PI（用户的产品名，启动器与 Android 设置里显示
+      的就是它）；它里面跑的 agent / CLI 叫 pi（上游项目自己的写法，小写）。
+      凡是界面上指「这个应用」的地方用 PI；凡是指「里面那个 agent」的地方保持 pi
+      （例如「输入 pi 回车」——那真的是要敲的命令）。
+    -->
+    <string name="app_name">PI</string>
 
     <string name="notif_channel_engine">本地引擎</string>
-    <string name="notif_channel_engine_desc">pi 引擎运行时显示的任务通知</string>
+    <string name="notif_channel_engine_desc">PI 运行时显示的任务通知</string>
 
-    <string name="engine_running_title">pi 正在运行</string>
+    <string name="engine_running_title">PI 正在运行</string>
     <string name="engine_running_text">%1$d 个任务进行中</string>
     <string name="engine_idle_text">空闲</string>
     <string name="action_stop">停止</string>
@@ -16,6 +21,6 @@
       an <accessibility-service> is a *reference* attribute — AAPT rejects a
       literal there, which is why this text lives here and not in the XML.
     -->
-    <string name="accessibility_service_description">让 pi 读取屏幕、点按、滑动、输入与截屏。关闭后 Agent 立即失去这些能力。</string>
+    <string name="accessibility_service_description">让 PI 读取屏幕、点按、滑动、输入与截屏。关闭后 Agent 立即失去这些能力。</string>
     <string name="action_open">打开</string>
 </resources>

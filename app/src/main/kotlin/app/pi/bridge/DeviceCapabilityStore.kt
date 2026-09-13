@@ -161,7 +161,7 @@ class DeviceCapabilityStore private constructor(context: Context) {
                 DeviceDenial(
                     code = DeviceDenial.NO_PERMISSION,
                     reason = "无障碍能力已开启，但系统的无障碍服务没有在运行，因此无法读取或操作屏幕。",
-                    hint = "请让用户打开 pi-android，在「设置 → 设备能力 → 无障碍」点「前往系统设置」并启用「pi 设备桥」，然后重试。",
+                    hint = "请让用户打开 PI，在「设置 → 设备能力 → 无障碍」点「前往系统设置」并启用「PI 设备桥」，然后重试。",
                 )
             }
 
@@ -273,7 +273,7 @@ class DeviceCapabilityStore private constructor(context: Context) {
                 code = DeviceDenial.NO_PERMISSION,
                 reason = "控制手电筒需要相机权限（Android 6 起 CameraManager.setTorchMode 要求 CAMERA），当前未授予。",
                 hint = "请让用户在「设置 → 设备能力 → 位置·传感器·相机」点「授予相机权限」，" +
-                    "或在系统设置 → 应用 → pi → 权限 中打开相机权限；部分设备还需要先在系统里用过一次相机。",
+                    "或在系统设置 → 应用 → PI → 权限 中打开相机权限；部分设备还需要先在系统里用过一次相机。",
             )
         }
 

@@ -171,7 +171,7 @@ fun DeviceCapabilityScreen(
             // (`android.permission.CAMERA` …); those are not words to show a user, so
             // they are named the way the cards name them.
             "以下权限仍未授予：${denied.joinToString("、") { permissionLabel(it) }}。" +
-                "系统在拒绝两次后可能不再弹窗，需要到 系统设置 → 应用 → pi → 权限 中手动打开。"
+                "系统在拒绝两次后可能不再弹窗，需要到 系统设置 → 应用 → PI → 权限 中手动打开。"
         }
         revision += 1
     }
@@ -284,9 +284,9 @@ fun DeviceCapabilityScreen(
                         }.isSuccess
                         if (!opened) {
                             // No package name: the user is looking at a list of service
-                            // labels, and 「pi 设备桥」 is what it is called there.
+                            // labels, and 「PI 设备桥」 is what it is called there.
                             note = "无法打开系统的无障碍设置页。请手动进入 系统设置 → 无障碍 → 已安装的服务，" +
-                                "启用「pi 设备桥」。"
+                                "启用「PI 设备桥」。"
                         }
                     },
                     relaxed = relaxed,

@@ -355,7 +355,7 @@ object DeviceUiAutomation {
                 DeviceDenial(
                     code = DeviceDenial.UNSUPPORTED,
                     reason = "$what 手势没有下发成功：无障碍服务可能被系统限制，或另一个手势正在进行。",
-                    hint = "请稍后重试；若持续失败，请让用户关闭再打开「设置 → 无障碍 → pi 设备桥」。",
+                    hint = "请稍后重试；若持续失败，请让用户关闭再打开「设置 → 无障碍 → PI 设备桥」。",
                 ),
             )
         }
@@ -688,7 +688,7 @@ object DeviceUiAutomation {
                 DeviceDenial(
                     code = DeviceDenial.NO_PERMISSION,
                     reason = "无障碍服务当前不可用，截图没有开始。",
-                    hint = "请让用户重新开启「设置 → 无障碍 → pi 设备桥」。",
+                    hint = "请让用户重新开启「设置 → 无障碍 → PI 设备桥」。",
                 ),
             )
         }

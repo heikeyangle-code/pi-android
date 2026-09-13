@@ -66,7 +66,7 @@ class PiEngineService : Service() {
      * Ungraceful as it looks, it is the honest one: the engine is a **child process
      * of this app's process** (`PiEngineHost` spawns it), so a service the framework
      * re-creates after the process died has nothing left to keep alive. Answering
-     * such a call — `intent == null` — with a notification saying 「pi 正在运行」 and a
+     * such a call — `intent == null` — with a notification saying 「PI 正在运行」 and a
      * fresh wake lock is a claim about an agent that does not exist, and the old code
      * did exactly that (`START_STICKY` + `else -> startForegroundWithNotification()`).
      * Starting a *new* engine is the app's job (the chat screen's 重试), not the

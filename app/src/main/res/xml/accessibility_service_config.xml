@@ -27,4 +27,4 @@
     android:canTakeScreenshot="true"
     android:description="@string/accessibility_service_description"
     android:notificationTimeout="100"
-    android:summary="让 pi 操作手机屏幕（需要「无障碍」能力授权）" />
+    android:summary="让 PI 操作手机屏幕（需要「无障碍」能力授权）" />

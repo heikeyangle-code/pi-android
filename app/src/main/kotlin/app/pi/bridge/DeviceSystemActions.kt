@@ -106,7 +106,7 @@ object DeviceSystemActions {
                 DeviceDenial(
                     code = DeviceDenial.NO_PERMISSION,
                     reason = "系统未授予通知权限（POST_NOTIFICATIONS），通知发不出去。",
-                    hint = "请让用户在系统设置 → 应用 → pi-android → 通知 中允许通知，然后重试。",
+                    hint = "请让用户在系统设置 → 应用 → PI → 通知 中允许通知，然后重试。",
                 ),
             )
         }
@@ -168,7 +168,7 @@ object DeviceSystemActions {
                     // permission, so a missing grant is not something a maintainer can
                     // fix by editing the manifest.
                     reason = "本应用当前没有 VIBRATE 权限，无法震动（清单已声明，被系统/安装策略拒绝了）。",
-                    hint = "请让用户在系统设置 → 应用 → pi-android → 权限里检查，或重装应用；" +
+                    hint = "请让用户在系统设置 → 应用 → PI → 权限里检查，或重装应用；" +
                         "不要向用户声称已经震动过。",
                 ),
             )
@@ -242,7 +242,7 @@ object DeviceSystemActions {
                 DeviceDenial(
                     code = DeviceDenial.UNSUPPORTED,
                     reason = "$what 失败：${error::class.java.simpleName}: ${error.message}",
-                    hint = "Android 10+ 限制后台启动界面。请让用户把 pi-android 切到前台后重试，或确认设备上有能处理该意图的应用。",
+                    hint = "Android 10+ 限制后台启动界面。请让用户把 PI 切到前台后重试，或确认设备上有能处理该意图的应用。",
                 ),
             )
         }
@@ -259,7 +259,7 @@ object DeviceSystemActions {
                     // Both are declared (AndroidManifest.xml:35-36); this is a runtime
                     // grant the user has not given, which is why the hint names the
                     // system settings page rather than the manifest.
-                    hint = "请让用户在系统设置 → 应用 → pi-android → 权限 中授予定位权限，然后重试。",
+                    hint = "请让用户在系统设置 → 应用 → PI → 权限 中授予定位权限，然后重试。",
                 ),
             )
         }

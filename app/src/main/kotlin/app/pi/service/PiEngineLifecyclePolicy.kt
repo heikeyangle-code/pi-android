@@ -9,7 +9,7 @@ package app.pi.service
  * Android class, and every one of them has a wrong answer that is silent:
  *
  *  - a service that outlives the engine it exists for keeps a notification saying
- *    "pi 正在运行" and a CPU wake lock nobody needs (`START_STICKY` re-creating a
+ *    "PI 正在运行" and a CPU wake lock nobody needs (`START_STICKY` re-creating a
  *    service whose process — and therefore whose engine — is gone);
  *  - a wake lock taken for the service's whole lifetime both expires after six hours
  *    while a turn is still running and keeps the CPU awake for hours while pi is

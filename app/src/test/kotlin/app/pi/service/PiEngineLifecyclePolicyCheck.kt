@@ -7,7 +7,7 @@ package app.pi.service
 // Why a harness and not a device: all three defects this pins are silent.
 //
 //  * `START_STICKY` re-creates a service whose process died; the notification then
-//    says "pi 正在运行" and the wake lock is re-acquired while no engine exists.
+//    says "PI 正在运行" and the wake lock is re-acquired while no engine exists.
 //  * A wake lock held for the service's whole lifetime expires after six hours in
 //    the middle of a turn, and keeps the CPU awake for hours while pi is idle.
 //  * A countdown polling five times a second shows the same number five times.

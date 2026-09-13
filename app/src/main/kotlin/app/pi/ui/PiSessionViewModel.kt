@@ -758,7 +758,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      *
      * The service exists to keep *the engine's* process tree alive
      * (`app.runtime.keepAlive`), so "there is no engine and none is coming" is the
-     * state in which it must not keep a notification saying 「pi 正在运行」 over
+     * state in which it must not keep a notification saying 「PI 正在运行」 over
      * nothing. The decision itself is [PiEngineLifecyclePolicy.shouldServiceRun] —
      * a pure function, so the truth table lives in the bare-JVM harness instead of
      * in this class.
@@ -943,7 +943,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                     _state.value = _state.value.copy(boot = Boot.Failed(boot.message, boot.detail))
                     // There is no engine and none is coming, so the service has
                     // nothing to protect: leaving it up would keep a notification
-                    // saying 「pi 正在运行」 over a process that failed to start.
+                    // saying 「PI 正在运行」 over a process that failed to start.
                     // The retry button on the same screen calls `boot()` again, and
                     // that starts the service again if it is still wanted. Both
                     // reports are needed here because the boot is over: the wake lock
@@ -3089,7 +3089,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         // genuinely be alive on one cwd — this teardown settling for up to a minute
         // while the next ViewModel (a relaunch) boots a new engine on the same session
         // file (`PiEngineHost.PROCESS_LOCK`). The service is stopped after the settle,
-        // so a backgrounded app does not keep a notification claiming 「pi 正在运行」.
+        // so a backgrounded app does not keep a notification claiming 「PI 正在运行」.
         teardownScope.launch {
             host.shutdown()
             PiEngineService.stopIfRunning()

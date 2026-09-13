@@ -311,7 +311,7 @@ class DeviceBridgeRouter(
             DeviceDenial(
                 code = DeviceDenial.NO_PERMISSION,
                 reason = "无障碍服务未运行。",
-                hint = "请让用户在「设置 → 无障碍」中启用 pi 设备桥。",
+                hint = "请让用户在「设置 → 无障碍」中启用 PI 设备桥。",
             ),
         )
 

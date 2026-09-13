@@ -109,7 +109,7 @@ object DeviceAppActions {
                 DeviceDenial(
                     code = DeviceDenial.UNSUPPORTED,
                     reason = "启动「$packageName」失败：${error::class.java.simpleName}: ${error.message}",
-                    hint = "Android 10+ 限制后台启动界面，请让用户先切到 pi-android 前台后重试。",
+                    hint = "Android 10+ 限制后台启动界面，请让用户先切到 PI 前台后重试。",
                 ),
             )
         }
@@ -136,7 +136,7 @@ object DeviceAppActions {
             throw DeviceActionException(
                 DeviceDenial(
                     code = DeviceDenial.BLOCKED_BY_POLICY,
-                    reason = "拒绝结束 pi-android 自身：那会连同当前会话一起中断。",
+                    reason = "拒绝结束 PI 自身：那会连同当前会话一起中断。",
                     hint = "如果要停止引擎，请让用户使用通知栏里的「停止」按钮。",
                 ),
             )
