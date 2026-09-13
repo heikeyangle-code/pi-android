@@ -179,6 +179,13 @@
       许可证    Apache-2.0
       上游      https://github.com/Kotlin/kotlinx.collections.immutable
 
+■ 编译进 App 代码（随包打包的等宽字体，Regular + Bold）
+--------------------------------------
+  JetBrains Mono
+      版本      2.304
+      许可证    OFL-1.1
+      上游      https://github.com/JetBrains/JetBrainsMono
+
 ■ 不随包分发
 -------
   JUnit（仅测试用，不随 App 分发）

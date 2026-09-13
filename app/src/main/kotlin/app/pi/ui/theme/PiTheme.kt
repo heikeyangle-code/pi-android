@@ -15,10 +15,12 @@ import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import app.pi.R
 
 /**
  * Spacing and shape scale.
@@ -139,10 +141,42 @@ object PiShapes {
 }
 
 /**
+ * The bundled machine-language face: JetBrains Mono v2.304, static `Regular` +
+ * `Bold` TTFs from the upstream release (`app/src/main/res/font/`), licensed
+ * OFL-1.1 (the text ships in the in-app licence list).
+ *
+ * Static instances rather than the release's
+ * `fonts/variable/JetBrainsMono[wght].ttf`: this app asks for exactly two weights,
+ * and a static pair needs no variation-axis resolution at runtime.
+ *
+ * Bold is not decorative — `buildPiCodeText` marks emphasised code spans
+ * `FontWeight.Bold`, so a family without a Bold entry would have those spans
+ * synthesised (faux-bold, wrong advance width) inside the code block.
+ *
+ * Use this (or the [PiTextStyles] `mono` / `monoSmall` roles, which are built on
+ * it) for anything a *machine* emitted. `FontFamily.Monospace` is deliberately not
+ * used outside the terminal: it resolves to whatever face the ROM picked, which is
+ * why fixed columns sized from an advance width used to shift between devices.
+ */
+val PiMonoFamily: FontFamily = FontFamily(
+    Font(R.font.jetbrains_mono_regular, FontWeight.Normal),
+    Font(R.font.jetbrains_mono_bold, FontWeight.Bold),
+)
+
+/**
  * Text styles that Material 3's [Typography] has no slot for: pi's footer/meta
  * line and the two monospace roles. Everything a *human* wrote uses the system
  * font; everything a *machine* emitted uses monospace — that split is the app's
  * rule #7 (docs/pi-android-ui-spec.md §1).
+ *
+ * The monospace roles are backed by the bundled [PiMonoFamily], not by
+ * `FontFamily.Monospace`. The machine layer — commands, code, diffs, tool output,
+ * paths, token counters — is the product's main content, and the *system* monospace
+ * is a per-device choice, so every device drew it in a different face. `DiffBlock`
+ * is the visible consequence: its `lineNumberColumn` (30.dp) and `symbolColumn`
+ * (16.dp) are sized for a monospace advance width, so a device whose monospace is
+ * wider or narrower shifts the fixed columns out of alignment. Bundling the face
+ * pins the metrics instead of asking the ROM for them.
  */
 @Immutable
 data class PiTextStyles(
@@ -173,12 +207,12 @@ data class PiTextStyles(
                 fontWeight = FontWeight.Normal,
             ),
             mono = TextStyle(
-                fontFamily = FontFamily.Monospace,
+                fontFamily = PiMonoFamily,
                 fontSize = 13.sp,
                 lineHeight = 20.sp,
             ),
             monoSmall = TextStyle(
-                fontFamily = FontFamily.Monospace,
+                fontFamily = PiMonoFamily,
                 fontSize = 11.5.sp,
                 lineHeight = 17.sp,
             ),

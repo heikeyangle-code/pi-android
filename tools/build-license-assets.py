@@ -17,7 +17,11 @@ The texts must not be typed from memory. Every file this script writes is either
     (`/usr/share/common-licenses/*`), which is how Ubuntu itself ships them, or
   * a small number of npm package licence files, fetched at a pinned version
     (see NPM_LICENCE_FILES) because they belong to the pi engine's dependency
-    closure and appear in no other downloaded artifact.
+    closure and appear in no other downloaded artifact, or
+  * the OFL-1.1 text of the JetBrains Mono font compiled into the APK, fetched at a
+    pinned release tag (see JETBRAINS_MONO_LICENCE_URL) because the canonical OFL is
+    in no artifact this app ships — `/usr/share/common-licenses/` carries 17 texts
+    and the OFL is not one of them.
 
 `runtime.lock.json` is the pin list; `tools/fetch-runtime.mjs` populates
 `build/downloads/`. Run that first, then this script. Nothing is compiled and
@@ -29,7 +33,7 @@ Kotlin change.
 
 Usage:
     python3 tools/build-license-assets.py
-    python3 tools/build-license-assets.py --fetch-missing   # allow unpkg for npm texts
+    python3 tools/build-license-assets.py --fetch-missing   # allow unpkg / GitHub raw for pinned texts
 """
 
 from __future__ import annotations
@@ -49,6 +53,7 @@ import urllib.request
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DOWNLOADS = os.path.join(ROOT, "build", "downloads")
 NPM_CACHE = os.path.join(DOWNLOADS, "npm-licences")
+FONT_CACHE = os.path.join(DOWNLOADS, "font-licences")
 OUT = os.path.join(ROOT, "app", "src", "main", "assets", "licenses")
 LOCK = os.path.join(ROOT, "runtime.lock.json")
 
@@ -62,6 +67,27 @@ NPM_LICENCE_FILES = [
     ("0BSD.txt", "tslib", "2.8.1", "LICENSE.txt"),
     ("BlueOak-1.0.0.txt", "lru-cache", "11.4.0", "LICENSE.md"),
 ]
+
+# JetBrains Mono 2.304 (OFL-1.1) — the machine-language typeface, compiled into the
+# APK as `app/src/main/res/font/jetbrains_mono_{regular,bold}.ttf`. It is bundled
+# rather than taken from the ROM because the system monospace is a per-device choice
+# and the app's diffs size fixed columns to the advance width. Redistributing the
+# font is what creates the obligation: the OFL requires the licence text to travel
+# with the font. Unlike the GPL/LGPL/Apache/MPL texts there is no copy of the OFL in
+# anything the app ships — `/usr/share/common-licenses/` in the pinned Ubuntu base
+# carries 17 files and the OFL is not among them — so it is fetched at the pinned
+# release tag. Upstream: https://github.com/JetBrains/JetBrainsMono
+# The tag's `OFL.txt` is byte-identical to the `OFL.txt` inside
+# `JetBrainsMono-2.304.zip`, i.e. the same release the two TTFs were extracted from
+# (checked while writing this pin; that is the point of pinning the tag, not master).
+JETBRAINS_MONO_VERSION = "2.304"
+JETBRAINS_MONO_LICENCE_URL = "https://raw.githubusercontent.com/JetBrains/JetBrainsMono/v{version}/OFL.txt"
+JETBRAINS_MONO_LICENCE_SHA256 = "30f0c136e3c88e422d0791acd97238870f9054a9729bc34cf2ff0d4ed8cac4ad"
+# Component-named, like the `ubuntu-copyright-<pkg>.txt` rows: the text carries the
+# JetBrains copyright line, so it is *this font's* copy of the OFL, not a generic
+# `OFL-1.1.txt` that a second OFL font could not reuse without becoming a lie.
+JETBRAINS_MONO_LICENCE_OUT = "JetBrainsMono-OFL-1.1.txt"
+JETBRAINS_MONO_LICENCE_TITLE = f"JetBrains Mono {JETBRAINS_MONO_VERSION}（OFL-1.1）"
 
 # pi's own licence text, which the published npm tarball **does not contain**: the
 # MIT text lives at the monorepo root and `packages/coding-agent` is published
@@ -410,7 +436,8 @@ def main() -> None:
     parser.add_argument(
         "--fetch-missing",
         action="store_true",
-        help="download the npm licence files listed in NPM_LICENCE_FILES (pinned versions)",
+        help="download the pinned licence texts that no artifact carries "
+        "(NPM_LICENCE_FILES, the pi LICENSE, the JetBrains Mono OFL)",
     )
     args = parser.parse_args()
 
@@ -613,6 +640,42 @@ def build(lock: dict, fetch_missing: bool, stage: str) -> None:
         shutil.copyfile(cached, os.path.join(OUT, out_name))
         manifest.append((out_name, out_name[:-4], "许可证全文"))
 
+    # ------------------------------------------------------------- font licences
+    # The bundled typeface's obligation. Same shape as the npm and pi texts above:
+    # pinned URL + pinned sha256, cached, fetched only under --fetch-missing, and a
+    # mismatch is a hard stop rather than a silent substitution.
+    os.makedirs(FONT_CACHE, exist_ok=True)
+    font_licence = os.path.join(FONT_CACHE, JETBRAINS_MONO_LICENCE_OUT)
+    if not os.path.isfile(font_licence) and fetch_missing:
+        url = JETBRAINS_MONO_LICENCE_URL.format(version=JETBRAINS_MONO_VERSION)
+        try:
+            with urllib.request.urlopen(url, timeout=60) as response:
+                body = response.read()
+        except Exception as error:  # noqa: BLE001 - reported, not raised
+            notes.append(f"{JETBRAINS_MONO_LICENCE_OUT}: {url} failed ({error})")
+            body = None
+        if body is not None:
+            digest = hashlib.sha256(body).hexdigest()
+            if digest != JETBRAINS_MONO_LICENCE_SHA256:
+                sys.exit(
+                    f"JetBrains Mono {JETBRAINS_MONO_VERSION} OFL text changed\n"
+                    f"  pinned  {JETBRAINS_MONO_LICENCE_SHA256}\n"
+                    f"  actual  {digest}\n"
+                    f"  The TTFs in app/src/main/res/font/ were extracted from the release zip at\n"
+                    f"  tag v{JETBRAINS_MONO_VERSION}, so if that tag's OFL.txt no longer matches this pin the\n"
+                    f"  font and the licence shipped beside it describe different releases: re-extract\n"
+                    f"  the TTFs, then update the pin."
+                )
+            with open(font_licence, "wb") as fh:
+                fh.write(body)
+    if not os.path.isfile(font_licence):
+        notes.append(f"{JETBRAINS_MONO_LICENCE_OUT} not cached; re-run with --fetch-missing")
+    else:
+        shutil.copyfile(font_licence, os.path.join(OUT, JETBRAINS_MONO_LICENCE_OUT))
+        manifest.append(
+            (JETBRAINS_MONO_LICENCE_OUT, JETBRAINS_MONO_LICENCE_TITLE, "许可证全文")
+        )
+
     # ------------------------------------- pi's own licence + the packages that lack one
     # pi is the one component whose licence text we must supply ourselves, because
     # upstream publishes the package without it (see PI_LICENCE_URL). The gaps file
@@ -777,6 +840,7 @@ COMPONENTS: list[tuple[str, str, str, str, str]] = [
     ("multiplatform-markdown-renderer-m3", "0.45.0", "Apache-2.0", "编译进 App 代码", "https://github.com/mikepenz/multiplatform-markdown-renderer"),
     ("org.jetbrains:markdown", "0.7.9", "Apache-2.0", "编译进 App 代码", "https://github.com/JetBrains/markdown"),
     ("kotlinx-collections-immutable（随 markdown 渲染器一起分发）", "见版本目录", "Apache-2.0", "编译进 App 代码", "https://github.com/Kotlin/kotlinx.collections.immutable"),
+    ("JetBrains Mono", "2.304", "OFL-1.1", "编译进 App 代码（随包打包的等宽字体，Regular + Bold）", "https://github.com/JetBrains/JetBrainsMono"),
     # Declared, but deliberately not in this list's scope: it is a test-only dependency
     # and no part of it reaches the APK, so it carries no distribution obligation.
     ("JUnit（仅测试用，不随 App 分发）", "4.13.2", "EPL-1.0", "不随包分发", "https://junit.org/junit4/"),

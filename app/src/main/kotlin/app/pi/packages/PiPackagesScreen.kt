@@ -25,8 +25,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
+import app.pi.ui.theme.PiMonoFamily
 import app.pi.ui.theme.PiShapes
 import app.pi.ui.theme.PiTheme
 
@@ -916,6 +916,14 @@ private fun LogCard(line: PiPackagesUiState.LogLine) {
     }
 }
 
+/**
+ * Raw machine text: a command and the stdout/stderr it produced, shown verbatim.
+ *
+ * Rendered in the bundled [PiMonoFamily] rather than `FontFamily.Monospace` — this
+ * is the same "two voices" rule the transcript follows (`PiTextStyles.mono`), and
+ * the system monospace is a per-device face. `bodySmall`'s size is kept as-is on
+ * purpose: this change only moves the family.
+ */
 @Composable
 private fun RawBlock(title: String, body: String) {
     val palette = PiTheme.palette
@@ -925,7 +933,7 @@ private fun RawBlock(title: String, body: String) {
         Surface(color = palette.pageBg, shape = PiShapes.cardInner) {
             Text(
                 text = body,
-                style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                style = MaterialTheme.typography.bodySmall.copy(fontFamily = PiMonoFamily),
                 color = palette.toolOutput,
                 modifier = Modifier.fillMaxWidth().padding(8.dp),
             )
