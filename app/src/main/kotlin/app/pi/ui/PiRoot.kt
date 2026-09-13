@@ -1,18 +1,24 @@
 package app.pi.ui
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ChatBubble
-import androidx.compose.material.icons.filled.Dashboard
-import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material3.Icon
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -23,11 +29,17 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import app.pi.ui.chat.SessionTreeScreen
+import app.pi.ui.components.PiNavGlyph
+import app.pi.ui.components.PiNavGlyphs
 import app.pi.ui.extension.ExtensionUiHost
 import app.pi.ui.screens.ChatScreen
 import app.pi.ui.screens.SessionsScreen
@@ -49,9 +61,13 @@ import app.pi.ui.settings.PiSettingsStack
  *
  * `ordinal` is the bottom-bar order, as before, so reordering this enum reorders
  * the bar. The start destination stays [Chat]: cold start is a new conversation.
+ *
+ * The icon is resolved through [icon] rather than carried as a constructor
+ * property, so the enum keeps naming pi's vocabulary and the drawing stays in the
+ * one place that draws: [PiNavGlyphs].
  */
-enum class PiDestination(val label: String, val icon: ImageVector) {
-    Chat("对话", Icons.Filled.ChatBubble),
+enum class PiDestination(val label: String) {
+    Chat("对话"),
 
     /**
      * The project on screen. It is still the old `WorkbenchScreen` (a full-screen
@@ -59,9 +75,17 @@ enum class PiDestination(val label: String, val icon: ImageVector) {
      * overview and keeps this name and position — the destination itself does not
      * move again.
      */
-    Workbench("工作区", Icons.Filled.Dashboard),
+    Workbench("工作区"),
 
-    Settings("设置", Icons.Filled.Settings),
+    Settings("设置");
+
+    /** The bar's glyph for this destination — see [PiNavGlyphs]. */
+    val icon: ImageVector
+        get() = when (this) {
+            Chat -> PiNavGlyphs.Chat
+            Workbench -> PiNavGlyphs.Workbench
+            Settings -> PiNavGlyphs.Settings
+        }
 }
 
 /**
@@ -99,14 +123,40 @@ private fun overlayAt(index: Int?): PiOverlay? =
  * The bottom inset assumed while an overlay covers the screen, when the
  * `Scaffold` reports none.
  *
- * The bottom bar is 80dp (`NavigationBar`'s own height), so the scaffold's
- * bottom padding is 80dp whenever the bar is drawn — which it always is, because
- * the overlay draws *inside* the scaffold's content box rather than replacing it.
- * The fallback is only for the case where that stops being true: a snackbar with
- * a zero inset sits under the system navigation bar, unseen. 80 + 8 is the same
- * 8dp the snackbar host below has always asked for.
+ * [BOTTOM_BAR_HEIGHT] is 56dp, so the scaffold's bottom padding is 56dp whenever
+ * the bar is drawn — which it always is, because the overlay draws *inside* the
+ * scaffold's content box rather than replacing it. The fallback is only for the
+ * case where that stops being true: a snackbar with a zero inset sits under the
+ * system navigation bar, unseen. 56 + 8 is the same 8dp the snackbar host below
+ * has always asked for.
  */
-private val OVERLAY_SNACKBAR_INSET = 88.dp
+private val OVERLAY_SNACKBAR_INSET = 64.dp
+
+// ------------------------------------------------------------------ the bottom bar
+//
+// v2's `TabBar` (`design-demos/direction-b-v2.html`), value for value: 56 high on
+// the dim surface, a 1px top rule, a 20 icon over a 12 label with 3 between them,
+// accent for the selected entry, and an 18x1 accent rule under it. These are
+// literals rather than members of `ui/theme/PiTheme.kt`'s spacing object because
+// that file is being edited by another agent in this same round; a later batch
+// folds them in.
+
+/** The bar's height, and (with [OVERLAY_SNACKBAR_INSET]) the scaffold's bottom inset. */
+private val BOTTOM_BAR_HEIGHT = 56.dp
+
+/** Gap between an entry's glyph and its label. */
+private val BOTTOM_BAR_ITEM_GAP = 3.dp
+
+/** The glyph's box, which is also the design's 20px icon size. */
+private val BOTTOM_BAR_ICON = 20.dp
+
+/** The label's size — the design's smallest type step. */
+private val BOTTOM_BAR_LABEL_SIZE = 12.sp
+
+/** The selected entry's underline: width, height, and distance from the bar's bottom. */
+private val BOTTOM_BAR_UNDERLINE_WIDTH = 18.dp
+private val BOTTOM_BAR_UNDERLINE_HEIGHT = 1.dp
+private val BOTTOM_BAR_UNDERLINE_INSET = 6.dp
 
 @Composable
 fun PiRoot() {
@@ -205,28 +255,10 @@ fun PiRoot() {
         // pad twice, so that one was removed.
         modifier = Modifier.imePadding(),
         bottomBar = {
-            NavigationBar {
-                PiDestination.entries.forEachIndexed { index, item ->
-                    NavigationBarItem(
-                        selected = current.ordinal == index,
-                        onClick = { destinationName = item.name },
-                        // Three entries at 412dp are ~137dp wide each, and each has
-                        // to stay a ≥48dp touch target even when a large font scale
-                        // clips the label. 48dp is written out rather than taken from
-                        // a token because the spacing object has no touch-target
-                        // member yet, and the file that holds it is being edited by
-                        // another agent in this same round — a token added there
-                        // would not be visible to this batch's compile. The later
-                        // batch that owns that file can name it.
-                        icon = {
-                            Box(Modifier.heightIn(min = 48.dp)) {
-                                Icon(item.icon, contentDescription = null)
-                            }
-                        },
-                        label = { Text(item.label) },
-                    )
-                }
-            }
+            PiBottomBar(
+                current = current,
+                onSelect = { destinationName = it.name },
+            )
         },
     ) { padding ->
         Box(Modifier.fillMaxSize()) {
@@ -438,5 +470,125 @@ fun PiRoot() {
                 ),
             )
         }
+    }
+}
+
+/**
+ * The bottom bar: the app's three destinations, drawn to v2's `TabBar`.
+ *
+ * Hand-drawn rather than `material3.NavigationBar` because the Material component
+ * cannot be talked out of two of its parts: the selection **indicator** pill
+ * behind the icon (v2 has none) and its own icon/label tinting rules. All three
+ * entries are siblings in one `selectableGroup`, so they are announced as one
+ * choice of three and the selected state is `Role.Tab`; the entries are ~137dp
+ * wide and the full [BOTTOM_BAR_HEIGHT] tall, which is the design's layout and
+ * also comfortably past the 48dp touch minimum at any font scale.
+ */
+@Composable
+private fun PiBottomBar(current: PiDestination, onSelect: (PiDestination) -> Unit) {
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .height(BOTTOM_BAR_HEIGHT)
+            // `surfaceDim` is the design's `--surf-dim`: the chrome tone, one step
+            // below the destinations' own background, which is what makes the bar
+            // read as chrome rather than as content.
+            .background(MaterialTheme.colorScheme.surfaceDim),
+    ) {
+        // `outline` is pi's `borderMuted` — the design's `1px solid var(--border-muted)`.
+        // Drawn as a real divider rather than a border modifier so it is exactly
+        // one hairline and takes no sub-pixel rounding from the bar's edges.
+        HorizontalDivider(
+            thickness = 1.dp,
+            color = MaterialTheme.colorScheme.outline,
+        )
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .weight(1f)
+                // One tab stop and one "selected" announcement per entry, instead
+                // of three unrelated buttons.
+                .selectableGroup(),
+        ) {
+            PiDestination.entries.forEach { item ->
+                PiBottomBarItem(
+                    item = item,
+                    selected = item == current,
+                    onClick = { onSelect(item) },
+                )
+            }
+        }
+    }
+}
+
+/**
+ * One entry: glyph over label, both accent when selected, with the design's 18x1
+ * accent rule under the selected one.
+ *
+ * The rule is a zero-height placeholder that grows to a hairline when selected,
+ * not an absolutely positioned overlay (which Compose has no modifier for): v2
+ * places it at the bar's bottom without taking layout space, and a zero-height
+ * sibling does the same, so selecting an entry cannot push its label up.
+ */
+@Composable
+private fun RowScope.PiBottomBarItem(
+    item: PiDestination,
+    selected: Boolean,
+    onClick: () -> Unit,
+) {
+    // The design's one accent use on this bar: the entry you are on. The glyph is
+    // accent, the label is accent and one weight heavier; an unselected glyph is
+    // muted while its label keeps the body colour, so the label stays readable.
+    val glyphColor = if (selected) {
+        MaterialTheme.colorScheme.primary
+    } else {
+        MaterialTheme.colorScheme.onSurfaceVariant
+    }
+    val labelColor = if (selected) {
+        MaterialTheme.colorScheme.primary
+    } else {
+        MaterialTheme.colorScheme.onSurface
+    }
+    val labelWeight = if (selected) FontWeight.Medium else FontWeight.Normal
+
+    Column(
+        modifier = Modifier
+            .weight(1f)
+            .fillMaxHeight()
+            // Selection, not a plain click: a tab strip that does not announce
+            // which tab is current is the accessibility half of the same fact the
+            // accent colour states visually.
+            .selectable(
+                selected = selected,
+                role = Role.Tab,
+                onClick = onClick,
+            ),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Spacer(Modifier.weight(1f))
+        PiNavGlyph(
+            vector = item.icon,
+            color = glyphColor,
+            modifier = Modifier.size(BOTTOM_BAR_ICON),
+        )
+        Spacer(Modifier.height(BOTTOM_BAR_ITEM_GAP))
+        Text(
+            text = item.label,
+            color = labelColor,
+            fontSize = BOTTOM_BAR_LABEL_SIZE,
+            fontWeight = labelWeight,
+            maxLines = 1,
+        )
+        Spacer(Modifier.weight(1f))
+        // Zero height when unselected, so the hairline costs nothing until it is
+        // drawn; the label above it does not move either way, because the box
+        // stays in the layout at both heights.
+        Box(
+            Modifier
+                .height(if (selected) BOTTOM_BAR_UNDERLINE_HEIGHT else 0.dp)
+                .width(BOTTOM_BAR_UNDERLINE_WIDTH)
+                .background(MaterialTheme.colorScheme.primary),
+        )
+        Spacer(Modifier.height(BOTTOM_BAR_UNDERLINE_INSET))
     }
 }
