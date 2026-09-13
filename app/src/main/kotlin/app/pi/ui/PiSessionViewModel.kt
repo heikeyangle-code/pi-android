@@ -1216,14 +1216,10 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                 return
             }
         if (recent == null) {
-            // pi's `-c` answers this by starting a new session, silently. Saying it
-            // matters here because the user explicitly asked for a resume: "no
-            // history for this workspace" and "the history is gone" look identical
-            // on screen otherwise.
-            val anySession = runCatching { sessionStore.list(limit = 1).isNotEmpty() }.getOrDefault(false)
-            if (anySession) {
-                pushNotice("当前工作区还没有历史会话，已开始新会话。", Notice.Tone.Warning)
-            }
+            // pi's `-c` answers this by starting a new session, silently, and so does
+            // the app. There is nothing here the user could act on, and a snackbar at
+            // every launch for a state that did not change is exactly the
+            // bottom-of-screen noise this app should not have.
             return
         }
         val current = _state.value.meta.sessionFile?.substringAfterLast('/')
