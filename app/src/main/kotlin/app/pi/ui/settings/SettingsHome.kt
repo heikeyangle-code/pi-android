@@ -34,7 +34,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.sp
 import app.pi.bridge.DeviceCapabilityStore
 import app.pi.packages.PiPackagesEntryRow
 import app.pi.ui.device.DeviceCapabilityEntryRow
@@ -195,7 +194,7 @@ fun SettingsHome(
                         top = PiSettingsMetrics.footerTop,
                         bottom = PiSettingsMetrics.groupGap,
                     ),
-                    style = MaterialTheme.typography.bodyMedium.copy(lineHeight = 22.sp),
+                    style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }

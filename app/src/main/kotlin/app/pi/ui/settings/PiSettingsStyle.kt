@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -127,6 +128,9 @@ internal object PiSettingsMetrics {
     val cardIconSize: Dp = 18.dp
     val searchIconGap: Dp = 9.dp
 
+    /** `06 §2`「对话框：最大宽 330、圆角 14、`padding:18px 16px 12px`」。 */
+    val dialogRadius: Dp = 14.dp
+
     /** `06 §2`「sheet：顶部圆角 16、抓手 `32×3`」。 */
     val sheetTopRadius: Dp = 16.dp
     val sheetHandleWidth: Dp = 32.dp
@@ -156,6 +160,9 @@ internal val PiSettingsCardShape = RoundedCornerShape(PiSettingsMetrics.cardRadi
 
 /** `06 §2`「搜索框 / 输入框：圆角 9」。 */
 internal val PiSettingsFieldShape = RoundedCornerShape(PiSettingsMetrics.searchFieldRadius)
+
+/** `06 §2`「对话框：圆角 14」，scrim 用 M3 默认的 0.32，不加阴影。 */
+internal val PiSettingsDialogShape = RoundedCornerShape(PiSettingsMetrics.dialogRadius)
 
 /** `06 §2`「sheet：顶部圆角 16」（只有上两个角，下沿贴屏底）。 */
 internal val PiSettingsSheetShape = RoundedCornerShape(
@@ -421,4 +428,38 @@ internal fun PiSettingsSwitchRowTrailing(
         }
         PiSettingsSwitch(checked = checked, onCheckedChange = onCheckedChange, enabled = enabled)
     }
+}
+
+/**
+ * v2 的对话框外壳（`06 §2`：最大宽 330、圆角 14、按钮 `padding:7px 12px` 圆角 8、
+ * scrim `rgba(0,0,0,.32)`、无阴影）。
+ *
+ * 只统一外壳：最大宽、scrim 与按钮内边距由 `AlertDialog` 自己管（M3 的实现本来就
+ * 是 v2 这一套），这里补的是圆角、底色与 15/600 的标题 —— 这三项 M3 默认与 v2 不同。
+ */
+@Composable
+internal fun PiSettingsDialog(
+    onDismissRequest: () -> Unit,
+    title: String,
+    confirmButton: @Composable () -> Unit,
+    modifier: Modifier = Modifier,
+    dismissButton: (@Composable () -> Unit)? = null,
+    body: @Composable () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismissRequest,
+        modifier = modifier,
+        shape = PiSettingsDialogShape,
+        containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+        title = {
+            Text(
+                title,
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+        },
+        text = { body() },
+        confirmButton = confirmButton,
+        dismissButton = dismissButton,
+    )
 }

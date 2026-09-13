@@ -1,17 +1,20 @@
 package app.pi.packages
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -24,10 +27,20 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.unit.dp
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import app.pi.ui.settings.PiInfoNote
+import app.pi.ui.settings.PiSettingsBadge
+import app.pi.ui.settings.PiSettingsCard
+import app.pi.ui.settings.PiSettingsCardShape
+import app.pi.ui.settings.PiSettingsDialog
+import app.pi.ui.settings.PiSettingsHairline
+import app.pi.ui.settings.PiSettingsMetrics
+import app.pi.ui.settings.PiSettingsSectionHeader
 import app.pi.ui.theme.PiMonoFamily
-import app.pi.ui.theme.PiShapes
+import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
 
 /**
@@ -172,80 +185,103 @@ fun PiPackagesScreen(
     }
 
     val palette = PiTheme.palette
+    // v2 的页面节奏（06 §2）：卡片自带左右 14px 页边（`PiSettingsCard`），分区头自带
+    // `marginTop:18px / margin-bottom:7px`，所以整列不再要水平内边距，也不要统一的
+    // 10px 行距 —— 那会把分区的层级压平。整页第一块用 14px 顶距代替 v2 的页首留白。
     LazyColumn(
         modifier = Modifier
             .fillMaxWidth()
-            .background(palette.pageBg)
-            .padding(horizontal = 14.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
+            .background(palette.pageBg),
     ) {
-        item { Header() }
-        trust?.let { item { TrustCard(it, state.busy, onOpenTrustPrompt) } }
-        state.trustInvalid?.let { item { InvalidTrustCard(it, state.busy, onTrustRepair) } }
+        trust?.let { panel ->
+            item {
+                PiSettingsSectionHeader("项目信任")
+                TrustCard(panel, state.busy, onOpenTrustPrompt)
+            }
+        }
+        state.trustInvalid?.let { message ->
+            item { InvalidTrustCard(message, state.busy, onTrustRepair) }
+        }
         item { LifecycleCard(state, onRestartClick, onRestartConfirm, onRestartCancel) }
         item { InstallCard(state, onSpecChange, onScopeChange, onInstall, onRefresh) }
-        item { BuiltinCard(state.builtins) }
+
+        if (state.builtins.isNotEmpty()) {
+            item {
+                PiSettingsSectionHeader(PackageStrings.BUILTIN_TITLE)
+                BuiltinCard(state.builtins)
+            }
+        }
 
         // Extensions that arrived the other way: pi loads them, `pi list` knows
         // nothing about them, and only the filesystem can say they are there. Shown
         // right after the app's own so the two origins stay two lists.
         if (state.discovered.isNotEmpty()) {
-            item { DiscoveredCard(state.discovered) }
+            item {
+                PiSettingsSectionHeader(PackageStrings.DISCOVERED_TITLE)
+                DiscoveredCard(state.discovered)
+            }
         }
 
         // The same question for the other three kinds pi discovers by looking at a
         // directory. A skill or theme written by hand used to be absent from this
         // screen entirely.
         if (state.resources.isNotEmpty()) {
-            item { ResourcesCard(state.resources) }
-        }
-        item { ListSectionHeading() }
-
-        if (state.projectPackagesHidden) {
             item {
-                Text(
-                    text = PackageStrings.PROJECT_PACKAGES_HIDDEN,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = PiTheme.palette.warning,
-                )
+                PiSettingsSectionHeader(PackageStrings.RESOURCES_TITLE)
+                ResourcesCard(state.resources)
             }
         }
-        if (state.entries.isEmpty()) {
-            item {
+        item {
+            PiSettingsSectionHeader(
+                label = PackageStrings.LIST_SECTION_TITLE,
+                count = "${state.entries.size} 项",
+            )
+            if (state.projectPackagesHidden) {
+                PiInfoNote(PackageStrings.PROJECT_PACKAGES_HIDDEN, tone = palette.warning)
+            }
+            if (state.entries.isEmpty()) {
                 // Three different facts, three different sentences. "Nothing ran" must
                 // never read as "nothing is installed" — that is the lie this branch
                 // used to tell when the runtime was missing.
                 val notReady = state.listNotReady
-                Text(
+                PiInfoNote(
                     text = when {
                         notReady != null -> PackageStrings.LIST_NOT_READY_PREFIX + notReady
                         state.listUnparsed -> PackageStrings.LIST_UNPARSED
                         else -> PackageStrings.NO_PACKAGES
                     },
-                    style = MaterialTheme.typography.bodySmall,
-                    color = if (notReady != null || state.listUnparsed) palette.warning else palette.muted,
+                    tone = if (notReady != null || state.listUnparsed) palette.warning else null,
                 )
+            } else {
+                // v2 的分组容器：一张圆角 10 的卡，包与包之间 1px inset hairline。
+                PiSettingsCard {
+                    state.entries.forEachIndexed { index, entry ->
+                        if (index > 0) PiSettingsHairline()
+                        PackageRow(entry, state.busy, onRemove, onFilterAdd, onFilterRemove)
+                    }
+                }
             }
-        }
-        items(state.entries, key = { "${it.scope.name}:${it.source.raw}" }) { entry ->
-            PackageRow(entry, state.busy, onRemove, onFilterAdd, onFilterRemove)
         }
 
         if (state.listUnparsed && state.listRaw.isNotBlank()) {
-            item { RawBlock(PackageStrings.STDOUT_TITLE, state.listRaw) }
+            item {
+                // 这一份是页面级的一整块（不是卡内的小块），所以要自己带页边距。
+                RawBlock(
+                    title = PackageStrings.STDOUT_TITLE,
+                    body = state.listRaw,
+                    modifier = Modifier.padding(
+                        start = PiSettingsMetrics.pageHorizontal,
+                        end = PiSettingsMetrics.pageHorizontal,
+                        top = PiSettingsMetrics.cardPaddingLoose,
+                    ),
+                )
+            }
         }
         items(state.log, key = { it.command + it.headline }) { line -> LogCard(line) }
-        item { Spacer(Modifier.height(24.dp)) }
+        item { Spacer(Modifier.height(PiSettingsMetrics.groupGap)) }
     }
 }
 
-@Composable
-private fun Header() {
-    val palette = PiTheme.palette
-    Column(Modifier.padding(top = 12.dp)) {
-        Text(PackageStrings.TITLE, style = MaterialTheme.typography.titleLarge, color = palette.text)
-    }
-}
 
 // ------------------------------------------------------------- built in block
 
@@ -261,16 +297,11 @@ private fun Header() {
 @Composable
 private fun BuiltinCard(rows: List<PiPackagesUiState.BuiltinRow>) {
     if (rows.isEmpty()) return
-    val palette = PiTheme.palette
-    Surface(color = palette.cardBg, shape = PiShapes.card) {
-        Column(Modifier.fillMaxWidth().padding(12.dp)) {
-            Text(
-                PackageStrings.BUILTIN_TITLE,
-                style = MaterialTheme.typography.titleSmall,
-                color = palette.text,
-            )
-            Spacer(Modifier.height(6.dp))
-            rows.forEach { row -> BuiltinRowView(row) }
+    // 分区名现在由页面的分区头承担（v2 的 Section），卡里只剩行。
+    PiSettingsCard {
+        rows.forEachIndexed { index, row ->
+            if (index > 0) PiSettingsHairline()
+            BuiltinRowView(row)
         }
     }
 }
@@ -282,28 +313,39 @@ private fun BuiltinCard(rows: List<PiPackagesUiState.BuiltinRow>) {
  */
 @Composable
 private fun DiscoveredCard(rows: List<PiAutoExtensions.Found>) {
-    val palette = PiTheme.palette
-    Surface(color = palette.cardBg, shape = PiShapes.card) {
-        Column(Modifier.fillMaxWidth().padding(12.dp)) {
-            Text(
-                PackageStrings.DISCOVERED_TITLE,
-                style = MaterialTheme.typography.titleSmall,
-                color = palette.text,
-            )
-            Spacer(Modifier.height(6.dp))
-            rows.forEach { found ->
-                Surface(color = palette.infoBg, shape = PiShapes.cardInner) {
-                    Column(Modifier.fillMaxWidth().padding(10.dp)) {
-                        Text(found.name, style = MaterialTheme.typography.labelLarge, color = palette.text)
-                        Spacer(Modifier.height(2.dp))
-                        Text(
-                            PackageStrings.DISCOVERED_PRESENCE,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = palette.success,
-                        )
-                    }
-                }
-                Spacer(Modifier.height(10.dp))
+    // v2 的扩展行：行首状态符号（✓）+ 等宽标题 + 尾部状态词，颜色只是第三层编码
+    // （06 §4「扩展/资源状态」）。
+    PiSettingsCard {
+        rows.forEachIndexed { index, found ->
+            if (index > 0) PiSettingsHairline()
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(
+                        horizontal = PiSettingsMetrics.rowPaddingHorizontal,
+                        vertical = PiSettingsMetrics.rowPaddingVertical,
+                    ),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(PiSettingsMetrics.rowGap),
+            ) {
+                Text(
+                    "✓",
+                    style = PiTheme.text.monoSmall,
+                    color = PiTheme.palette.success,
+                )
+                Text(
+                    found.name,
+                    modifier = Modifier.weight(1f),
+                    style = PiTheme.text.mono,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    PackageStrings.DISCOVERED_PRESENCE,
+                    style = PiTheme.text.monoSmall,
+                    color = PiTheme.palette.success,
+                )
             }
         }
     }
@@ -318,27 +360,44 @@ private fun DiscoveredCard(rows: List<PiAutoExtensions.Found>) {
 @Composable
 private fun ResourcesCard(rows: List<PiResourceDiscovery.Found>) {
     val palette = PiTheme.palette
-    Surface(color = palette.cardBg, shape = PiShapes.card) {
-        Column(Modifier.fillMaxWidth().padding(12.dp)) {
+    PiSettingsCard {
+        PiResourceDiscovery.Kind.entries.forEach { kind ->
+            val ofKind = rows.filter { it.kind == kind }
+            if (ofKind.isEmpty()) return@forEach
+            // 卡内的种类小标题：与行同左缘，12 灰。
             Text(
-                PackageStrings.RESOURCES_TITLE,
-                style = MaterialTheme.typography.titleSmall,
-                color = palette.text,
+                PackageStrings.resourceKind(kind) + "（${ofKind.size}）",
+                modifier = Modifier.padding(
+                    start = PiSettingsMetrics.rowPaddingHorizontal,
+                    end = PiSettingsMetrics.rowPaddingHorizontal,
+                    top = PiSettingsMetrics.rowPaddingVertical,
+                    bottom = PiSettingsMetrics.supportingGap,
+                ),
+                style = PiTheme.text.meta,
+                color = palette.muted,
             )
-            PiResourceDiscovery.Kind.entries.forEach { kind ->
-                val ofKind = rows.filter { it.kind == kind }
-                if (ofKind.isEmpty()) return@forEach
-                Spacer(Modifier.height(6.dp))
-                Text(
-                    PackageStrings.resourceKind(kind) + "（${ofKind.size}）",
-                    style = MaterialTheme.typography.labelLarge,
-                    color = palette.text,
-                )
-                ofKind.forEach { found ->
-                    Spacer(Modifier.height(2.dp))
+            ofKind.forEach { found ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(
+                            horizontal = PiSettingsMetrics.rowPaddingHorizontal,
+                            vertical = PiSettingsMetrics.supportingGap,
+                        ),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(PiSettingsMetrics.rowGap),
+                ) {
                     Text(
-                        found.name + PackageStrings.resourceScope(found.scope),
-                        style = MaterialTheme.typography.labelSmall,
+                        found.name,
+                        modifier = Modifier.weight(1f),
+                        style = PiTheme.text.mono,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        PackageStrings.resourceScope(found.scope),
+                        style = PiTheme.text.monoSmall,
                         color = palette.muted,
                     )
                 }
@@ -350,51 +409,57 @@ private fun ResourcesCard(rows: List<PiResourceDiscovery.Found>) {
 @Composable
 private fun BuiltinRowView(row: PiPackagesUiState.BuiltinRow) {
     val palette = PiTheme.palette
-    val presenceColor = when (row.presence) {
-        PiBuiltinExtension.Presence.EngineAgentDir -> palette.success
-        PiBuiltinExtension.Presence.RootfsCopyOnly -> palette.warning
-        PiBuiltinExtension.Presence.Missing -> palette.error
+    // 状态三重编码（06 §4）：字 + 符号 + 颜色。presence 是「在哪发现它」，
+    // 所以是状态的第三层而不是主信息。
+    val (presenceGlyph, presenceColor) = when (row.presence) {
+        PiBuiltinExtension.Presence.EngineAgentDir -> "✓" to palette.success
+        PiBuiltinExtension.Presence.RootfsCopyOnly -> "◌" to palette.warning
+        PiBuiltinExtension.Presence.Missing -> "✗" to palette.error
     }
-    Spacer(Modifier.height(10.dp))
-    Surface(color = palette.infoBg, shape = PiShapes.cardInner) {
-        Column(Modifier.fillMaxWidth().padding(10.dp)) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(
+                horizontal = PiSettingsMetrics.rowPaddingHorizontal,
+                vertical = PiSettingsMetrics.rowPaddingVertical,
+            ),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(PiSettingsMetrics.rowGap),
+    ) {
+        Column(Modifier.weight(1f)) {
             Text(
                 row.extension.name,
-                style = MaterialTheme.typography.labelLarge,
+                style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Medium),
                 color = palette.text,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
             val purpose = PackageStrings.builtinPurpose(row.extension.name)
             if (purpose.isNotEmpty()) {
-                Spacer(Modifier.height(2.dp))
-                Text(purpose, style = MaterialTheme.typography.labelSmall, color = palette.muted)
+                Text(
+                    purpose,
+                    modifier = Modifier.padding(top = PiSettingsMetrics.supportingGap),
+                    style = PiTheme.text.meta,
+                    color = palette.muted,
+                )
             }
-            Spacer(Modifier.height(2.dp))
-            Text(
-                PackageStrings.builtinPresence(row.presence),
-                style = MaterialTheme.typography.labelSmall,
-                color = presenceColor,
-            )
         }
-    }
-}
-
-/**
- * The heading over the `pi list` rows, so the two origins are visibly two lists:
- * this one is what `pi install` wrote into `settings.json`'s `packages`, which is the
- * whole of what `pi list` reports (`package-manager-cli.ts:970-1002`). The reasoning
- * stays here as a comment; the screen gets the two words.
- */
-@Composable
-private fun ListSectionHeading() {
-    val palette = PiTheme.palette
-    Column(Modifier.fillMaxWidth()) {
         Text(
-            PackageStrings.LIST_SECTION_TITLE,
-            style = MaterialTheme.typography.titleSmall,
-            color = palette.text,
+            presenceGlyph,
+            style = PiTheme.text.monoSmall,
+            color = presenceColor,
+        )
+        Text(
+            PackageStrings.builtinPresence(row.presence),
+            style = PiTheme.text.monoSmall,
+            color = presenceColor,
         )
     }
 }
+
+// 列表区的标题由页面的分区头承担（`PiSettingsSectionHeader`，v2 的 Section）：
+// 这一区是 `pi install` 写进 `settings.json` 的 `packages`，也就是 `pi list` 报告的
+// 全部内容（`package-manager-cli.ts:970-1002`）。原来的卡内标题与它重复，已删。
 
 // ------------------------------------------------------------------ trust card
 
@@ -415,30 +480,51 @@ private fun TrustCard(
         false -> palette.error
         null -> palette.warning
     }
-    Surface(color = palette.cardBg, shape = PiShapes.card) {
-        Column(Modifier.fillMaxWidth().padding(12.dp)) {
-            Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-                Text("项目信任", style = MaterialTheme.typography.titleSmall, color = palette.text)
-                Spacer(Modifier.weight(1f))
-                Text(decisionText, style = MaterialTheme.typography.labelLarge, color = decisionColor)
+    // 状态三重编码（06 §4）：符号 + 字 + 颜色。分区名由页面分区头承担，卡内不重复；
+    // 这一行的「值」就是本工作区当前的信任决定。
+    val decisionGlyph = when (trust.decision) {
+        true -> "✓"
+        false -> "⊘"
+        null -> "◌"
+    }
+    PiSettingsCard {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .padding(PiSettingsMetrics.cardPaddingLoose),
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(PiSettingsMetrics.titleGap),
+            ) {
+                Text(decisionGlyph, style = PiTheme.text.monoSmall, color = decisionColor)
+                Text(
+                    decisionText,
+                    modifier = Modifier.weight(1f),
+                    style = PiTheme.text.mono,
+                    color = decisionColor,
+                )
+                OutlinedButton(onClick = onOpenPrompt, enabled = !busy) {
+                    Text("作出信任决定…")
+                }
             }
-            Spacer(Modifier.height(6.dp))
+            Spacer(Modifier.height(PiSpacing.gutter))
             Text(
                 text = trust.explanation,
-                style = MaterialTheme.typography.bodySmall,
-                color = if (trust.skippingResources) palette.warning else palette.muted,
+                style = PiTheme.text.meta,
+                color = if (trust.skippingResources) {
+                    palette.warning
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                },
             )
             if (trust.blocksProjectPackages) {
-                Spacer(Modifier.height(6.dp))
+                Spacer(Modifier.height(PiSpacing.gutter))
                 Text(
                     text = PackageStrings.SCOPE_PROJECT_LOCKED,
-                    style = MaterialTheme.typography.labelSmall,
+                    style = PiTheme.text.meta,
                     color = palette.warning,
                 )
-            }
-            Spacer(Modifier.height(10.dp))
-            OutlinedButton(onClick = onOpenPrompt, enabled = !busy) {
-                Text("作出信任决定…")
             }
         }
     }
@@ -447,23 +533,54 @@ private fun TrustCard(
 @Composable
 private fun InvalidTrustCard(message: String, busy: Boolean, onRepair: () -> Unit) {
     val palette = PiTheme.palette
-    Surface(color = palette.toolErrorBg, shape = PiShapes.card) {
-        Column(Modifier.fillMaxWidth().padding(12.dp)) {
-            Text(
-                PackageStrings.TRUST_INVALID_TITLE,
-                style = MaterialTheme.typography.titleSmall,
-                color = palette.error,
+    // v2 的错误块（06 §2）：圆角 10、tool-error 底、1px 状态色描边、左 3px error 条、
+    // `padding:10px 12px`。它整块就是「出错了」这件事，所以标题用 error 色 + 状态词。
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(
+                horizontal = PiSettingsMetrics.pageHorizontal,
+                vertical = PiSettingsMetrics.cardPaddingLoose,
+            ),
+        shape = PiSettingsCardShape,
+        color = MaterialTheme.colorScheme.errorContainer,
+        border = BorderStroke(PiSettingsMetrics.hairline, palette.error.copy(alpha = 0.45f)),
+    ) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .height(IntrinsicSize.Min),
+        ) {
+            Box(
+                Modifier
+                    .width(PiSpacing.stripe)
+                    .fillMaxHeight()
+                    .background(palette.error),
             )
-            Spacer(Modifier.height(6.dp))
-            Text(message, style = MaterialTheme.typography.bodySmall, color = palette.text)
-            Spacer(Modifier.height(6.dp))
-            Text(
-                PackageStrings.TRUST_INVALID_NOTE,
-                style = MaterialTheme.typography.labelSmall,
-                color = palette.muted,
-            )
-            Spacer(Modifier.height(10.dp))
-            Button(onClick = onRepair, enabled = !busy) { Text(PackageStrings.TRUST_INVALID_ACTION) }
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(
+                        horizontal = PiSettingsMetrics.rowPaddingHorizontal,
+                        vertical = PiSettingsMetrics.rowPaddingVertical,
+                    ),
+            ) {
+                Text(
+                    PackageStrings.TRUST_INVALID_TITLE,
+                    style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Medium),
+                    color = palette.error,
+                )
+                Spacer(Modifier.height(PiSpacing.gutter))
+                Text(message, style = PiTheme.text.meta, color = MaterialTheme.colorScheme.onSurface)
+                Spacer(Modifier.height(PiSpacing.gutter))
+                Text(
+                    PackageStrings.TRUST_INVALID_NOTE,
+                    style = PiTheme.text.meta,
+                    color = palette.muted,
+                )
+                Spacer(Modifier.height(PiSpacing.inner))
+                Button(onClick = onRepair, enabled = !busy) { Text(PackageStrings.TRUST_INVALID_ACTION) }
+            }
         }
     }
 }
@@ -480,68 +597,92 @@ private fun LifecycleCard(
     val lifecycle = state.lifecycle
     if (lifecycle is ExtensionLifecycle.State.Idle) return
     if (lifecycle is ExtensionLifecycle.State.Ready) {
+        // 三重编码：符号 + 字 + 颜色（06 §4「引擎状态行」的 ✓ 就绪）。
         Text(
-            text = lifecycle.note,
-            style = MaterialTheme.typography.bodySmall,
+            text = "✓ " + lifecycle.note,
+            style = PiTheme.text.meta,
             color = PiTheme.palette.success,
         )
         return
     }
 
     val palette = PiTheme.palette
-    val accent = when (lifecycle) {
-        is ExtensionLifecycle.State.NeedsRestart -> palette.warning
-        is ExtensionLifecycle.State.AwaitingIdle -> palette.warning
-        is ExtensionLifecycle.State.Restarting -> palette.accent
-        else -> palette.muted
+    // 每个状态都是「符号 + 字 + 颜色」三层（06 §4「引擎状态行」「工具卡」的同一套纪律）。
+    val (glyph, accent) = when (lifecycle) {
+        is ExtensionLifecycle.State.NeedsRestart -> "◌" to palette.warning
+        is ExtensionLifecycle.State.AwaitingIdle -> "…" to palette.warning
+        is ExtensionLifecycle.State.Restarting -> "…" to palette.accent
+        is ExtensionLifecycle.State.Installing -> "…" to palette.warning
+        else -> "·" to palette.muted
     }
-    Surface(color = palette.cardBg, shape = PiShapes.card) {
-        Column(Modifier.fillMaxWidth().padding(12.dp)) {
-            Text(
-                text = when (lifecycle) {
-                    is ExtensionLifecycle.State.NeedsRestart -> PackageStrings.RESTART_NEEDED_TITLE
-                    is ExtensionLifecycle.State.AwaitingIdle -> PackageStrings.RESTART_WAIT_TURN
-                    is ExtensionLifecycle.State.Restarting -> PackageStrings.RESTARTING
-                    is ExtensionLifecycle.State.Installing -> PackageStrings.RUNNING
-                    else -> lifecycle.label
-                },
-                style = MaterialTheme.typography.titleSmall,
-                color = accent,
-            )
+    val headline = when (lifecycle) {
+        is ExtensionLifecycle.State.NeedsRestart -> PackageStrings.RESTART_NEEDED_TITLE
+        is ExtensionLifecycle.State.AwaitingIdle -> PackageStrings.RESTART_WAIT_TURN
+        is ExtensionLifecycle.State.Restarting -> PackageStrings.RESTARTING
+        is ExtensionLifecycle.State.Installing -> PackageStrings.RUNNING
+        else -> lifecycle.label
+    }
+    PiSettingsCard(modifier = Modifier.padding(top = PiSettingsMetrics.cardPaddingLoose)) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .padding(PiSettingsMetrics.cardPaddingLoose),
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(PiSettingsMetrics.titleGap),
+            ) {
+                if (lifecycle is ExtensionLifecycle.State.NeedsRestart) {
+                    // 「需要重启引擎」在 v2 里是一枚徽标（06 §2 的徽标表），不是正文行；
+                    // 其余是过场状态，用「符号 + 字 + 颜色」的行内三重编码（06 §4）。
+                    PiSettingsBadge(
+                        label = PackageStrings.RESTART_NEEDED_TITLE,
+                        tone = palette.warning,
+                        glyph = glyph,
+                    )
+                } else {
+                    Text(glyph, style = PiTheme.text.monoSmall, color = accent)
+                    Text(
+                        text = headline,
+                        style = MaterialTheme.typography.titleSmall,
+                        color = accent,
+                    )
+                }
+            }
             when (lifecycle) {
                 is ExtensionLifecycle.State.NeedsRestart -> {
-                    Spacer(Modifier.height(6.dp))
+                    Spacer(Modifier.height(PiSpacing.gutter))
                     Text(
                         lifecycle.detail,
-                        style = MaterialTheme.typography.bodySmall,
+                        style = PiTheme.text.meta,
                         color = palette.muted,
                     )
                     lifecycle.lastError?.let { error ->
-                        Spacer(Modifier.height(6.dp))
-                        Text(error, style = MaterialTheme.typography.bodySmall, color = palette.error)
+                        Spacer(Modifier.height(PiSpacing.gutter))
+                        Text(error, style = PiTheme.text.meta, color = palette.error)
                     }
-                    Spacer(Modifier.height(6.dp))
+                    Spacer(Modifier.height(PiSpacing.gutter))
                     Text(
                         text = ExtensionLifecycle.ANSWER_HINT,
-                        style = MaterialTheme.typography.labelSmall,
+                        style = PiTheme.text.meta,
                         color = palette.dim,
                     )
-                    Spacer(Modifier.height(10.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Spacer(Modifier.height(PiSpacing.inner))
+                    Row(horizontalArrangement = Arrangement.spacedBy(PiSpacing.inline)) {
                         Button(onClick = onRestartClick) { Text(PackageStrings.RESTART_BUTTON) }
                         TextButton(onClick = onCancel) { Text(PackageStrings.RESTART_STAY) }
                     }
                 }
 
                 is ExtensionLifecycle.State.AwaitingIdle -> {
-                    Spacer(Modifier.height(6.dp))
+                    Spacer(Modifier.height(PiSpacing.gutter))
                     Text(
                         lifecycle.turnNote,
-                        style = MaterialTheme.typography.bodySmall,
+                        style = PiTheme.text.meta,
                         color = palette.warning,
                     )
-                    Spacer(Modifier.height(10.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Spacer(Modifier.height(PiSpacing.inner))
+                    Row(horizontalArrangement = Arrangement.spacedBy(PiSpacing.inline)) {
                         // Re-checks the turn rather than promising a restart: the
                         // dialog only appears when the engine reports idle.
                         OutlinedButton(onClick = onRestartClick) { Text(PackageStrings.RESTART_BUTTON) }
@@ -552,33 +693,33 @@ private fun LifecycleCard(
                 is ExtensionLifecycle.State.AwaitingConfirmation -> {
                     // The dialog is rendered by PiPackagesScreen; the card is the
                     // fallback if the dialog was dismissed.
-                    Spacer(Modifier.height(6.dp))
+                    Spacer(Modifier.height(PiSpacing.gutter))
                     Text(
                         lifecycle.question,
-                        style = MaterialTheme.typography.bodySmall,
+                        style = PiTheme.text.meta,
                         color = palette.text,
                     )
-                    Spacer(Modifier.height(10.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Spacer(Modifier.height(PiSpacing.inner))
+                    Row(horizontalArrangement = Arrangement.spacedBy(PiSpacing.inline)) {
                         Button(onClick = onConfirm) { Text(PackageStrings.RESTART_CONFIRM) }
                         TextButton(onClick = onCancel) { Text(PackageStrings.RESTART_STAY) }
                     }
                 }
 
                 is ExtensionLifecycle.State.Restarting -> {
-                    Spacer(Modifier.height(6.dp))
+                    Spacer(Modifier.height(PiSpacing.gutter))
                     Text(
                         text = PackageStrings.RESTARTING_NOTE,
-                        style = MaterialTheme.typography.bodySmall,
+                        style = PiTheme.text.meta,
                         color = palette.muted,
                     )
                 }
 
                 else -> {
-                    Spacer(Modifier.height(6.dp))
+                    Spacer(Modifier.height(PiSpacing.gutter))
                     Text(
                         lifecycle.changesOrEmpty().joinToString("\n"),
-                        style = MaterialTheme.typography.bodySmall,
+                        style = PiTheme.text.meta,
                         color = palette.muted,
                     )
                 }
@@ -605,30 +746,27 @@ private fun RestartConfirmDialog(
     val palette = PiTheme.palette
     val question = (lifecycle as? ExtensionLifecycle.State.AwaitingConfirmation)?.question
         ?: return
-    AlertDialog(
-        // Dismissal is a cancel, never an implicit confirm: `onDismissRequest`
-        // routes to onCancel, matching pi's own "dismissal means no"
-        // (`project-trust.ts:90-95`) and, more importantly, never restarting on a
-        // back gesture.
+    // 外壳走 v2 的对话框规格（圆角 14 + 表面阶梯 + 15/600 标题）。
+    // Dismissal is a cancel, never an implicit confirm: `onDismissRequest`
+    // routes to onCancel, matching pi's own "dismissal means no"
+    // (`project-trust.ts:90-95`) and, more importantly, never restarting on a
+    // back gesture.
+    PiSettingsDialog(
         onDismissRequest = onCancel,
-        title = { Text(PackageStrings.RESTART_NEEDED_TITLE, color = palette.text) },
-        text = {
-            Column {
-                Text(question, style = MaterialTheme.typography.bodySmall, color = palette.muted)
-                Spacer(Modifier.height(8.dp))
-                Text(
-                    text = "重启是显式的：在你点下确认之前，App 不会重启引擎。",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = palette.dim,
-                )
-            }
-        },
+        title = PackageStrings.RESTART_NEEDED_TITLE,
         confirmButton = { Button(onClick = onConfirm) { Text(PackageStrings.RESTART_CONFIRM) } },
         dismissButton = { TextButton(onClick = onCancel) { Text(PackageStrings.RESTART_STAY) } },
-        containerColor = palette.cardBg,
-        titleContentColor = palette.text,
-        textContentColor = palette.muted,
-    )
+    ) {
+        Column {
+            Text(question, style = PiTheme.text.meta, color = palette.muted)
+            Spacer(Modifier.height(PiSpacing.inline))
+            Text(
+                text = "重启是显式的：在你点下确认之前，App 不会重启引擎。",
+                style = PiTheme.text.meta,
+                color = palette.dim,
+            )
+        }
+    }
 }
 
 // ---------------------------------------------------------------- install card
@@ -642,8 +780,12 @@ private fun InstallCard(
     onRefresh: () -> Unit,
 ) {
     val palette = PiTheme.palette
-    Surface(color = palette.cardBg, shape = PiShapes.card) {
-        Column(Modifier.fillMaxWidth().padding(12.dp)) {
+    PiSettingsCard(modifier = Modifier.padding(top = PiSettingsMetrics.cardPaddingLoose)) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .padding(PiSettingsMetrics.cardPaddingLoose),
+        ) {
             OutlinedTextField(
                 value = state.spec,
                 onValueChange = onSpecChange,
@@ -652,8 +794,8 @@ private fun InstallCard(
                 enabled = !state.busy,
                 modifier = Modifier.fillMaxWidth(),
             )
-            Spacer(Modifier.height(8.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Spacer(Modifier.height(PiSpacing.inline))
+            Row(horizontalArrangement = Arrangement.spacedBy(PiSpacing.inline)) {
                 PiPackageScope.entries.forEach { scope ->
                     val selected = scope == state.scope
                     OutlinedButton(
@@ -672,15 +814,15 @@ private fun InstallCard(
                 }
             }
             if (state.scope == PiPackageScope.Project) {
-                Spacer(Modifier.height(6.dp))
+                Spacer(Modifier.height(PiSpacing.gutter))
                 Text(
                     text = PackageStrings.SCOPE_PROJECT_LOCKED,
-                    style = MaterialTheme.typography.labelSmall,
+                    style = PiTheme.text.meta,
                     color = palette.dim,
                 )
             }
-            Spacer(Modifier.height(10.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Spacer(Modifier.height(PiSpacing.inner))
+            Row(horizontalArrangement = Arrangement.spacedBy(PiSpacing.inline)) {
                 Button(onClick = onInstall, enabled = !state.busy && state.spec.isNotBlank()) {
                     Text(if (state.busy) PackageStrings.RUNNING else PackageStrings.INSTALL_LABEL)
                 }
@@ -703,79 +845,99 @@ private fun PackageRow(
     onFilterRemove: (PiPackageEntry, String, String) -> Unit,
 ) {
     val palette = PiTheme.palette
-    Surface(color = palette.infoBg, shape = PiShapes.cardInner) {
-        Column(Modifier.fillMaxWidth().padding(12.dp)) {
-            Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-                Text(
-                    text = when (entry.source) {
-                        is PiPackageSource.Npm -> "npm"
-                        is PiPackageSource.Git -> "git"
-                        is PiPackageSource.Local -> "本地"
-                    },
-                    style = MaterialTheme.typography.labelMedium,
-                    color = palette.accent,
-                )
-                Spacer(Modifier.weight(1f))
-                Text(
-                    text = if (entry.scope == PiPackageScope.User) {
-                        PackageStrings.SCOPE_USER
-                    } else {
-                        PackageStrings.SCOPE_PROJECT
-                    },
-                    style = MaterialTheme.typography.labelSmall,
-                    color = palette.muted,
-                )
-            }
-            Spacer(Modifier.height(4.dp))
+    // v2 的行骨架（06 §2「行（Row）」）：`10px 12px`，行首是来源种类（机器值，等宽），
+    // 标题是包来源原文（等宽），尾部是作用域；详情、过滤规则与「移除」缩进在同一骨架下。
+    Column(Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(
+                    horizontal = PiSettingsMetrics.rowPaddingHorizontal,
+                    vertical = PiSettingsMetrics.rowPaddingVertical,
+                ),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(PiSettingsMetrics.rowGap),
+        ) {
             Text(
-                text = entry.source.raw,
-                style = MaterialTheme.typography.bodyMedium,
-                color = palette.text,
+                text = when (entry.source) {
+                    is PiPackageSource.Npm -> "npm"
+                    is PiPackageSource.Git -> "git"
+                    is PiPackageSource.Local -> "本地"
+                },
+                style = PiTheme.text.monoSmall,
+                color = palette.accent,
             )
-            (entry.source as? PiPackageSource.Npm)?.let { npm ->
-                Spacer(Modifier.height(2.dp))
+            Column(Modifier.weight(1f)) {
                 Text(
-                    text = buildString {
-                        append("包名 ${npm.name}")
-                        npm.version?.let { append("，版本 $it") }
-                        append(if (npm.pinned) "（精确版本，pi update --extensions 会跳过）" else "（范围/标签，可被 update 移动）")
-                    },
-                    style = MaterialTheme.typography.labelSmall,
-                    color = palette.dim,
+                    text = entry.source.raw,
+                    style = PiTheme.text.mono,
+                    color = palette.text,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
                 )
+                (entry.source as? PiPackageSource.Npm)?.let { npm ->
+                    Text(
+                        modifier = Modifier.padding(top = PiSettingsMetrics.supportingGap),
+                        text = buildString {
+                            append("包名 ${npm.name}")
+                            npm.version?.let { append("，版本 $it") }
+                            append(if (npm.pinned) "（精确版本，pi update --extensions 会跳过）" else "（范围/标签，可被 update 移动）")
+                        },
+                        style = PiTheme.text.meta,
+                        color = palette.dim,
+                    )
+                }
+                (entry.source as? PiPackageSource.Git)?.let { git ->
+                    Text(
+                        modifier = Modifier.padding(top = PiSettingsMetrics.supportingGap),
+                        text = buildString {
+                            append("仓库 ${git.repo}")
+                            append(if (git.ref != null) "，ref ${git.ref}（已钉住）" else "，未钉 ref")
+                        },
+                        style = PiTheme.text.meta,
+                        color = palette.dim,
+                    )
+                }
             }
-            (entry.source as? PiPackageSource.Git)?.let { git ->
-                Spacer(Modifier.height(2.dp))
-                Text(
-                    text = buildString {
-                        append("仓库 ${git.repo}")
-                        append(if (git.ref != null) "，ref ${git.ref}（已钉住）" else "，未钉 ref")
-                    },
-                    style = MaterialTheme.typography.labelSmall,
-                    color = palette.dim,
-                )
-            }
+            Text(
+                text = if (entry.scope == PiPackageScope.User) {
+                    PackageStrings.SCOPE_USER
+                } else {
+                    PackageStrings.SCOPE_PROJECT
+                },
+                style = PiTheme.text.monoSmall,
+                color = palette.muted,
+            )
+        }
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .padding(
+                    start = PiSettingsMetrics.rowPaddingHorizontal,
+                    end = PiSettingsMetrics.rowPaddingHorizontal,
+                    bottom = PiSettingsMetrics.rowPaddingVertical,
+                ),
+        ) {
             if (entry.filtered) {
-                Spacer(Modifier.height(2.dp))
                 Text(
                     text = "settings 里是对象形式：只加载显式列出的资源（可能只加载一部分）。",
-                    style = MaterialTheme.typography.labelSmall,
+                    style = PiTheme.text.meta,
                     color = palette.warning,
                 )
             }
             FilterEditor(entry, busy, onFilterAdd, onFilterRemove)
             entry.installedPath?.let { path ->
-                Spacer(Modifier.height(2.dp))
-                Text(path, style = MaterialTheme.typography.labelSmall, color = palette.dim)
+                Spacer(Modifier.height(PiSettingsMetrics.supportingGap))
+                Text(path, style = PiTheme.text.monoSmall, color = palette.dim)
             } ?: run {
-                Spacer(Modifier.height(2.dp))
+                Spacer(Modifier.height(PiSettingsMetrics.supportingGap))
                 Text(
                     text = "pi 没有报告安装路径——它可能尚未下载到磁盘，或该来源没有安装路径。",
-                    style = MaterialTheme.typography.labelSmall,
+                    style = PiTheme.text.meta,
                     color = palette.warning,
                 )
             }
-            Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(PiSpacing.inline))
             TextButton(onClick = { onRemove(entry) }, enabled = !busy) {
                 Text(PackageStrings.REMOVE_LABEL, color = palette.error)
             }
@@ -806,9 +968,9 @@ private fun FilterEditor(
     val palette = PiTheme.palette
     var editing by remember(entry.source.raw) { mutableStateOf(false) }
 
-    Spacer(Modifier.height(6.dp))
-    Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-        Text("过滤规则", style = MaterialTheme.typography.labelSmall, color = palette.muted)
+    Spacer(Modifier.height(PiSpacing.gutter))
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text("过滤规则", style = PiTheme.text.meta, color = palette.muted)
         Spacer(Modifier.weight(1f))
         TextButton(onClick = { editing = !editing }, enabled = !busy) {
             Text(if (editing) "完成" else "编辑", color = palette.accent)
@@ -818,7 +980,7 @@ private fun FilterEditor(
     if (entry.filters.isEmpty() && !editing) {
         Text(
             text = "没有过滤规则：这个资源包里的资源全部加载。",
-            style = MaterialTheme.typography.labelSmall,
+            style = PiTheme.text.meta,
             color = palette.dim,
         )
         return
@@ -829,14 +991,14 @@ private fun FilterEditor(
         if (patterns.isEmpty() && !editing) return@forEach
         Text(
             text = filterTypeLabel(type),
-            style = MaterialTheme.typography.labelSmall,
+            style = PiTheme.text.meta,
             color = palette.muted,
         )
         patterns.forEach { pattern ->
-            Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     text = pattern,
-                    style = MaterialTheme.typography.labelSmall,
+                    style = PiTheme.text.monoSmall,
                     color = palette.text,
                     modifier = Modifier.weight(1f),
                 )
@@ -859,8 +1021,8 @@ private fun FilterAddRow(busy: Boolean, onAdd: (String) -> Unit) {
     var draft by remember { mutableStateOf("") }
     Row(
         modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(PiSpacing.inline),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
         OutlinedTextField(
             value = draft,
@@ -893,24 +1055,28 @@ private fun filterTypeLabel(type: String): String = when (type) {
 @Composable
 private fun LogCard(line: PiPackagesUiState.LogLine) {
     val palette = PiTheme.palette
-    Surface(color = palette.cardBg, shape = PiShapes.card) {
-        Column(Modifier.fillMaxWidth().padding(12.dp)) {
+    PiSettingsCard(modifier = Modifier.padding(top = PiSpacing.inline)) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .padding(PiSettingsMetrics.cardPaddingLoose),
+        ) {
             Text(line.headline, style = MaterialTheme.typography.titleSmall, color = palette.text)
             if (line.warnings.isNotEmpty()) {
-                Spacer(Modifier.height(6.dp))
+                Spacer(Modifier.height(PiSpacing.gutter))
                 line.warnings.forEach { warning ->
-                    Text(warning, style = MaterialTheme.typography.bodySmall, color = palette.warning)
+                    Text(warning, style = PiTheme.text.meta, color = palette.warning)
                 }
             }
             if (line.stderr.isNotBlank()) {
-                Spacer(Modifier.height(6.dp))
+                Spacer(Modifier.height(PiSpacing.gutter))
                 RawBlock(PackageStrings.STDERR_TITLE, line.stderr)
             }
             if (line.stdout.isNotBlank()) {
-                Spacer(Modifier.height(6.dp))
+                Spacer(Modifier.height(PiSpacing.gutter))
                 RawBlock(PackageStrings.STDOUT_TITLE, line.stdout)
             }
-            Spacer(Modifier.height(6.dp))
+            Spacer(Modifier.height(PiSpacing.gutter))
             RawBlock(PackageStrings.COMMAND_TITLE, line.command)
         }
     }
@@ -919,23 +1085,35 @@ private fun LogCard(line: PiPackagesUiState.LogLine) {
 /**
  * Raw machine text: a command and the stdout/stderr it produced, shown verbatim.
  *
- * Rendered in the bundled [PiMonoFamily] rather than `FontFamily.Monospace` — this
- * is the same "two voices" rule the transcript follows (`PiTextStyles.mono`), and
- * the system monospace is a per-device face. `bodySmall`'s size is kept as-is on
- * purpose: this change only moves the family.
+ * Rendered through `PiTheme.text.monoSmall`, i.e. the bundled [PiMonoFamily] rather
+ * than `FontFamily.Monospace`: this is the same "two voices" rule the transcript
+ * follows, and the system monospace is a per-device face.
+ *
+ * 容器按 v2 的等宽块（06 §2 的卡片 + 线宽规则）：圆角 10、`surfaceContainerLow` 底、
+ * 1px `borderMuted` 描边、内边距 12；块前的那一行小标题是 12 灰。
  */
 @Composable
-private fun RawBlock(title: String, body: String) {
+private fun RawBlock(title: String, body: String, modifier: Modifier = Modifier) {
     val palette = PiTheme.palette
-    Column(Modifier.fillMaxWidth()) {
-        Text(title, style = MaterialTheme.typography.labelSmall, color = palette.muted)
-        Spacer(Modifier.height(2.dp))
-        Surface(color = palette.pageBg, shape = PiShapes.cardInner) {
+    Column(modifier.fillMaxWidth()) {
+        Text(title, style = PiTheme.text.meta, color = palette.muted)
+        Spacer(Modifier.height(PiSpacing.small))
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            shape = PiSettingsCardShape,
+            color = MaterialTheme.colorScheme.surfaceContainerLow,
+            border = BorderStroke(
+                PiSettingsMetrics.hairline,
+                MaterialTheme.colorScheme.outlineVariant,
+            ),
+        ) {
             Text(
                 text = body,
-                style = MaterialTheme.typography.bodySmall.copy(fontFamily = PiMonoFamily),
+                style = PiTheme.text.monoSmall,
                 color = palette.toolOutput,
-                modifier = Modifier.fillMaxWidth().padding(8.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(PiSettingsMetrics.cardPadding),
             )
         }
     }

@@ -1,6 +1,5 @@
 package app.pi.ui.settings
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -304,17 +303,19 @@ private fun RestartCard(
     onMessage: (String) -> Unit,
 ) {
     val providers = data.providersPendingRestart
-    Column(
-        Modifier
-            .fillMaxWidth()
-            .padding(horizontal = PiSettingsMetrics.pageHorizontal, vertical = PiSpacing.small)
-            .background(MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.35f))
-            .padding(PiSettingsMetrics.cardPaddingLoose),
-    ) {
+    // 旧的 `secondaryContainer.copy(alpha = .35f)` 是一条半透明色带：v2 的提示条是
+    // 「同一张卡 + 语义字色」（06 §3「提示条 Notice」三档 tone），分层只靠表面阶梯与
+    // 1px 线，所以这里换成普通卡片 + warning 色标题。
+    PiSettingsCard(modifier = Modifier.padding(top = PiSpacing.small)) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .padding(PiSettingsMetrics.cardPaddingLoose),
+        ) {
         Text(
             "有 ${providers.size} 个厂商已经配好了，但引擎还没有加载它们。",
             style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurface,
+            color = PiTheme.palette.warning,
         )
         Text(
             providers.joinToString("、") { it.id } +
@@ -345,6 +346,7 @@ private fun RestartCard(
                 }
             },
         ) { Text("重启引擎") }
+        }
     }
 }
 
@@ -373,13 +375,14 @@ private fun ProviderCard(
     onOpenCredentials: () -> Unit,
 ) {
     val shown = if (expanded) provider.models else provider.models.filter { it.noteworthy }
-    Column(
-        Modifier
-            .fillMaxWidth()
-            .padding(horizontal = PiSettingsMetrics.pageHorizontal, vertical = PiSettingsMetrics.notePaddingVertical)
-            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.25f))
-            .padding(PiSettingsMetrics.cardPaddingLoose),
-    ) {
+    // 厂商块是一张普通卡片（v2 的卡片：圆角 10、surfaceContainerLow 底、无描边），
+    // 不再铺一层 `surfaceVariant.copy(alpha = .25f)` 的半透明底。
+    PiSettingsCard {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .padding(PiSettingsMetrics.cardPaddingLoose),
+        ) {
         Text(
             PiProviderPresets.byId(provider.id)?.displayName ?: provider.name ?: provider.id,
             style = MaterialTheme.typography.titleSmall,
@@ -433,6 +436,7 @@ private fun ProviderCard(
             style = MaterialTheme.typography.labelLarge,
             color = MaterialTheme.colorScheme.primary,
         )
+        }
     }
 }
 

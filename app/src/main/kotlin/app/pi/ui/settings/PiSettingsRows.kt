@@ -283,7 +283,15 @@ private fun RowScope.RowBody(
 
 /** 灰底说明卡：glob 语法、主题告警与只读提示共用（`06 §2` 卡片：圆角 10、内 12/14）。 */
 @Composable
-fun PiInfoNote(text: String, modifier: Modifier = Modifier) {
+fun PiInfoNote(
+    text: String,
+    modifier: Modifier = Modifier,
+    /**
+     * 需要时只换字色（pi 的 `warning` / `error` 令牌），底色不动 ——
+     * `06 §3`「提示条 Notice」的三档 tone 就是「同一张底 + 不同字色」。
+     */
+    tone: Color? = null,
+) {
     Surface(
         modifier = modifier
             .fillMaxWidth()
@@ -300,7 +308,7 @@ fun PiInfoNote(text: String, modifier: Modifier = Modifier) {
                 bottom = PiSettingsMetrics.rowPaddingVertical,
             ),
             style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            color = tone ?: MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
 }

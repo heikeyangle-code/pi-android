@@ -1,7 +1,10 @@
 package app.pi.packages
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -9,15 +12,17 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.unit.dp
-import app.pi.ui.theme.PiShapes
+import androidx.compose.ui.draw.clip
+import app.pi.ui.settings.PiSettingsDialog
+import app.pi.ui.settings.PiSettingsMetrics
+import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
 
 /**
@@ -63,72 +68,82 @@ fun PiProjectTrustPrompt(
     onDismiss: () -> Unit,
 ) {
     val palette = PiTheme.palette
-    AlertDialog(
+    // 外壳走 v2 的对话框规格（圆角 14 + 表面阶梯 + 15/600 标题，06 §2）；对话框的
+    // 选项行是 v2 的列表行：等宽符号 + 正文标签 + 12 灰副行，`11px 14px` 内边距。
+    PiSettingsDialog(
         onDismissRequest = { if (!busy) onDismiss() },
-        title = {
-            Text(
-                text = "信任这个项目？",
-                style = MaterialTheme.typography.titleMedium,
-                color = palette.text,
-            )
-        },
-        text = {
-            Column(Modifier.verticalScroll(rememberScrollState()).heightIn(max = 420.dp)) {
-                // pi's exact prompt, kept as preformatted text: the second line is
-                // the path pi hashed, and a user may need to copy it.
-                Text(
-                    text = ProjectTrust.promptText(cwd),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = palette.muted,
-                )
-                Spacer(Modifier.height(10.dp))
-                Text(
-                    text = explanation,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = palette.warning,
-                )
-                Spacer(Modifier.height(14.dp))
-                options.forEach { option ->
-                    Surface(
-                        color = palette.selectedBg.copy(alpha = 0.45f),
-                        shape = PiShapes.cardInner,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 3.dp)
-                            .clickable(enabled = !busy) { onChoose(option) },
-                    ) {
-                        Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
-                            Text(
-                                text = option.label,
-                                style = MaterialTheme.typography.bodyLarge,
-                                color = if (option.trusted) palette.success else palette.error,
-                            )
-                            val subtitle = PackageStrings.trustSubtitle(option.label)
-                            if (subtitle.isNotEmpty()) {
-                                Spacer(Modifier.height(2.dp))
-                                Text(
-                                    text = subtitle,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = palette.muted,
-                                )
-                            }
-                        }
-                    }
-                }
-                Spacer(Modifier.height(6.dp))
-                Text(
-                    text = PackageStrings.TRUST_SESSION_ONLY_NOTE,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = palette.dim,
-                )
-            }
-        },
+        title = "信任这个项目？",
         confirmButton = {},
         dismissButton = {
             TextButton(onClick = onDismiss, enabled = !busy) { Text(PackageStrings.CANCEL) }
         },
-        containerColor = palette.cardBg,
-        titleContentColor = palette.text,
-        textContentColor = palette.muted,
-    )
+    ) {
+        Column(
+            Modifier
+                .verticalScroll(rememberScrollState())
+                .heightIn(max = PiSettingsMetrics.sheetBodyMax),
+        ) {
+                // pi's exact prompt, kept as preformatted text: the second line is
+                // the path pi hashed, and a user may need to copy it.
+                Text(
+                    text = ProjectTrust.promptText(cwd),
+                    style = PiTheme.text.meta,
+                    color = palette.muted,
+                )
+                Spacer(Modifier.height(PiSpacing.inner))
+                Text(
+                    text = explanation,
+                    style = PiTheme.text.meta,
+                    color = palette.warning,
+                )
+                Spacer(Modifier.height(PiSettingsMetrics.cardPaddingLoose))
+                options.forEach { option ->
+                    val tone = if (option.trusted) palette.success else palette.error
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = PiSettingsMetrics.supportingGap)
+                            .clip(RoundedCornerShape(PiSettingsMetrics.cardRadius))
+                            .background(palette.selectedBg.copy(alpha = 0.45f))
+                            .clickable(enabled = !busy) { onChoose(option) }
+                            .padding(
+                                horizontal = PiSettingsMetrics.cardPaddingLoose,
+                                vertical = PiSettingsMetrics.rowPaddingVertical,
+                            ),
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(PiSettingsMetrics.titleGap),
+                        ) {
+                            // 状态三重编码（06 §4）：符号 + 字 + 颜色。
+                            Text(
+                                text = if (option.trusted) "✓" else "⊘",
+                                style = PiTheme.text.monoSmall,
+                                color = tone,
+                            )
+                            Text(
+                                text = option.label,
+                                style = MaterialTheme.typography.bodyLarge,
+                                color = tone,
+                            )
+                        }
+                        val subtitle = PackageStrings.trustSubtitle(option.label)
+                        if (subtitle.isNotEmpty()) {
+                            Spacer(Modifier.height(PiSettingsMetrics.supportingGap))
+                            Text(
+                                text = subtitle,
+                                style = PiTheme.text.meta,
+                                color = palette.muted,
+                            )
+                        }
+                    }
+                }
+                Spacer(Modifier.height(PiSpacing.gutter))
+                Text(
+                    text = PackageStrings.TRUST_SESSION_ONLY_NOTE,
+                    style = PiTheme.text.meta,
+                    color = palette.dim,
+                )
+        }
+    }
 }
