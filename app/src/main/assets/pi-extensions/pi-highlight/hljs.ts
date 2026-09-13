@@ -181,9 +181,23 @@ export function knownLanguages(): Set<string> {
 			}
 		}
 	} catch (error) {
+		// **A failed listing is deliberately not cached.** This used to store whatever
+		// it had (i.e. nothing) and return it for the rest of the process, so one
+		// transient failure — EMFILE, a directory that was momentarily unreadable, a
+		// rootfs still settling under proot — turned *every* language into "unknown"
+		// until the engine restarted, silently and forever. Returning here leaves
+		// `names` unset, so the next request retries the listing; `engineError` keeps
+		// the reason for `/health` and for the `ENGINE_UNAVAILABLE` the service answers
+		// in the meantime (which is also what the client renders as plain code).
 		engineError = error instanceof Error ? error.message : String(error);
+		return set;
 	}
+	// A *successful* listing is cached, including an empty one: an empty directory is
+	// highlight.js not being installed next to pi at all, which is a configuration
+	// failure worth naming (the service answers 503 for it) rather than something to
+	// retry on every request.
 	names = set;
+	engineError = null;
 	return set;
 }
 

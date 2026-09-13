@@ -682,6 +682,10 @@ async function main() {
 	section("Kotlin scope table vs pi's buildCliHighlightTheme");
 	checkKotlinScopeTable();
 
+	// ----------------------------------------------------- version parity --
+	const healthVersion = await (await authed("/health")).json();
+	checkHljsVersion(hljsFull, healthVersion);
+
 	// --------------------------------------------------- eager comparison --
 	section("lazy vs eager (child process, so the numbers are honest)");
 	const eager = JSON.parse(
@@ -901,6 +905,79 @@ function checkKotlinScopeTable() {
 		}
 	}
 	check(drifted.length === 0, "every pi scope resolves to the same colour slot in Kotlin", drifted.join("; "));
+}
+
+/**
+ * The highlight.js version the whole colouring scheme rests on.
+ *
+ * The scope tables above are only correct **for a version of highlight.js**: it is
+ * highlight.js that decides whether a Kotlin `val` is `hljs-keyword` and a function
+ * name is `hljs-function` or `hljs-title function_`. A major bump renames exactly
+ * those classes — highlight.js v11 did, which is why pi's own HTML exporter carries
+ * v11 compound selectors (`.hljs-title.function_`, `core/export-html/template.css:964-968`)
+ * while its terminal table is still written for v10. When that happens nothing
+ * throws and nothing logs: every block simply unpaints (no scope resolves) or
+ * mis-paints, which is the single hardest colour regression to notice by eye.
+ *
+ * So the pin is the guard, and this constant is the guard's value. Bumping it is a
+ * deliberate act with three parts: re-run this script, diff the emitted scope names
+ * against the 25-scope table (`checkKotlinScopeTable` and pi's
+ * `buildCliHighlightTheme`), and re-check `aliases.ts` — that is the sequence this
+ * check exists to force.
+ */
+const VERIFIED_HLJS_VERSION = "10.7.3";
+
+/**
+ * Version parity, in three directions, plus the scope names themselves.
+ *
+ *  1. what pi *declares* vs what is *installed* — catches a hoisted, deduped or
+ *     hand-installed copy that is not the dependency pi asked for;
+ *  2. the installed version vs [VERIFIED_HLJS_VERSION] — the actual fidelity guard;
+ *  3. what the *running service reports to the app* vs the installed version — the
+ *     app colours with whatever the guest resolves, so this catches a service pinned
+ *     to a different copy than the one this script inspected;
+ *  4. and the cheap end-to-end reading of the same risk: highlight.js still emits
+ *     the scope names the tables map, so a rename cannot pass unnoticed here.
+ */
+function checkHljsVersion(hljsFull, health) {
+	section("highlight.js version parity");
+
+	const declared = JSON.parse(readFileSync(join(PI, "package.json"), "utf8")).dependencies?.["highlight.js"] ?? "";
+	// Resolved exactly the way the extension resolves it (`hljs.ts` → `locate()`).
+	const installed = JSON.parse(
+		readFileSync(createRequire(join(PI, "package.json")).resolve("highlight.js/package.json"), "utf8"),
+	).version;
+
+	check(
+		declared.replace(/^[\^~]/, "") === installed,
+		`pi declares highlight.js ${declared}, and ${installed} is what resolves`,
+		"the extension uses pi's own copy; a mismatch means the install moved, not the pin",
+	);
+	check(
+		installed === VERIFIED_HLJS_VERSION,
+		`highlight.js is the version this colouring was verified against (${VERIFIED_HLJS_VERSION})`,
+		`found ${installed}. A highlight.js bump renames hljs-* scopes (v11: hljs-function → hljs-title.function_), ` +
+			"which silently unpaints every code block. Before changing VERIFIED_HLJS_VERSION, re-run this script, " +
+			"diff the emitted scope names against the 25-scope tables, and re-check aliases.ts.",
+	);
+	check(
+		health?.data?.hljs === installed,
+		"the running service reports that same version to the app",
+		`/health said ${health?.data?.hljs ?? "(nothing)"}; the app colours with whatever the guest resolves`,
+	);
+
+	const probe = hljsFull.highlight("val x: Int = 1 // note", { language: "kotlin", ignoreIllegals: true }).value;
+	const emitted = new Set(
+		[...probe.matchAll(/class="([^"]*)"/g)]
+			.flatMap((match) => match[1].split(/\s+/))
+			.filter((name) => name.startsWith("hljs-"))
+			.map((name) => name.slice("hljs-".length)),
+	);
+	check(
+		emitted.has("keyword") && emitted.has("number") && emitted.has("comment"),
+		"highlight.js still emits the scope names pi's table is written for",
+		`emitted: ${[...emitted].join(", ") || "(none)"}`,
+	);
 }
 
 /**

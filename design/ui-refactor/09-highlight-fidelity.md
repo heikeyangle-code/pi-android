@@ -294,6 +294,14 @@
    - `PiThemeFiles.kt:110` 的"54"改"56"。
 9. **本轮新发现（已修，列出以便回归）**：`PiHighlightClient` 只在 HTTP 401 时重读凭据文件，而**引擎重启后旧端口的连接是被拒、不是 401** ⇒ 一次引擎重启会让本次 App 进程内所有代码块不再上色。已在 `fetch`/`mermaid` 的 transport 失败分支 `cached = null`（下次请求自愈）。回归方式：让引擎重启两次，观察第二个会话的代码块仍然上色。
 10. **仍未改成 1:1 的三处（有意，理由已写进 KDoc）**：`DiffBlock` 的 8% 底 + 独立符号/行号列；`ToolBodyText` 给 `read`/`write` 加行号；`PiMermaid` 用横向滚动代替 pi 的宽度门、且看不到「thinking / 流式 / 开关」三态。加上 §B8-b 的 `PiContrast` 5 派生与 `contextOnTool`。
+11. **hljs 版本断言：已实现（本轮）**，落在 `tools/pi-highlight-check.mjs` 的 `checkHljsVersion()` + `VERIFIED_HLJS_VERSION = "10.7.3"`，在「Kotlin scope table」之后新增一节 `== highlight.js version parity`，四条断言：
+    - pi **声明**的 `highlight.js`（`package.json` 的 `"10.7.3"` 精确钉版）== 实际解析到的版本 —— 防「装了一份不是 pi 要的 hljs」（hoist/去重/手装）；
+    - 解析到的版本 == `VERIFIED_HLJS_VERSION` —— **这是真正的保真闸门**；
+    - 运行中的服务 `/health` 报给 App 的 hljs 版本 == 上面那个版本 —— 防「App 上色的引擎与本脚本检查的不是同一份」；
+    - highlight.js **今天仍会发出** pi 那 25 条 scope 表所依赖的类名（用一个 Kotlin 探针断言 `keyword`/`number`/`comment` 都出现）—— 把「改名」这件事从隐性变显性。
+    **它防的是什么**：scope 表只对**某一个** hljs 版本成立，而决定 `val` 是不是 `hljs-keyword`、函数名是 `hljs-function` 还是 `hljs-title function_` 的正是 hljs 自己。v11 就是这么改的 —— pi 自己的 HTML 导出 CSS 里还留着 v11 的复合选择器（`template.css:964-968`），而它的终端表仍按 v10 写。真发生时**不抛错、不打日志**，只是每个代码块整体掉色或错色，是最难靠肉眼发现的一类回归。所以钉版就是闸门，而 `VERIFIED_HLJS_VERSION` 是闸门的取值：升级它是三件事（重跑本脚本、diff 发出的 scope 名、重核 `aliases.ts`），这条断言就是把这三件事变成必须做完。
+    **两次运行证据**（2026-xx，本机）：① 当前版本下 **64/64 全绿，`pi-highlight-check: OK`，exit 0**；② 把常量故意改成 `"10.7.4"` 后 **63/64，`FAIL highlight.js is the version this colouring was verified against (10.7.4)`，`pi-highlight-check: FAILED`，exit 1**（失败信息里带升级前必须复核的三件事）。附注：那台机器在第一次红跑时还额外红了一条**既有的计时断言**（`eager 20-language registration ... > 50 ms`，实测 44.9 ms），第二次重跑即通过 —— 是那条断言对宿主负载敏感，与本次改动无关，未修（不在本次改动范围）。
+12. **`SERVICE_VERSION` 与 hljs 版本不应耦合**（判断，非待办）：`SERVICE_VERSION` 描述的是**本服务的线协议**（路由 + 信封），而且 `reuseExisting` 刻意不拿它做握手，所以它纯粹是诊断字符串；hljs 版本描述的是**决定颜色的引擎**，它已经在**每个响应**（`data.hljs`）和 `/health` 里按请求可见。把两者绑在一起会同时毁掉两种含义：hljs 升级会逼出一个毫无意义的协议版本升级，而新增一条路由又会被当成引擎变了。真正值得补的（**建议，越界未做**）是把 `/health.hljs` 或响应里的 `data.hljs` 显示到诊断页，让一次用户反馈能说清「是哪个 hljs 给这个块上的色」。
 
 ---
 
