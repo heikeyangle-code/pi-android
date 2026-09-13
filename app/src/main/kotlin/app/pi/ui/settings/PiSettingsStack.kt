@@ -113,6 +113,17 @@ fun PiSettingsStack(
      * same reason as [engineDiagnostics].
      */
     recentFailures: () -> List<String> = { emptyList() },
+    /**
+     * 设置首页那一行「终端」要打开的全屏终端页。
+     *
+     * 终端从底部目的地降为首页一行（`03-navigation-decision.md:24`），但它的屏幕不是
+     * 这个栈里的一级：它盖住整屏、由 `PiRoot` 的覆盖层状态承载，而 `PiRoot` 又是唯一
+     * 管返回键的地方。所以这里只把「用户点了那一行」转成一个 lambda 交出去，栈自己不开
+     * 这一屏，也不新增一个内部层级。
+     *
+     * `null` 时那一行不画（与 设备能力 / 扩展包 / 开源许可 三行的约定一致）。
+     */
+    onOpenTerminal: (() -> Unit)? = null,
 ) {
     val activeStore = store ?: rememberInMemoryPiSettingsStore()
     var groupId by remember { mutableStateOf<String?>(null) }
@@ -411,6 +422,7 @@ fun PiSettingsStack(
                 onOpenDeviceCapabilities = { deviceCapabilities = true },
                 onOpenPackages = { packages = true },
                 onOpenLicenses = { licenses = true },
+                onOpenTerminal = onOpenTerminal,
             )
         }
     }

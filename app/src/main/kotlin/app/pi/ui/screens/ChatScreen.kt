@@ -165,16 +165,6 @@ import kotlinx.coroutines.launch
 fun ChatScreen(
     contentPadding: PaddingValues,
     session: PiSessionViewModel,
-    /**
-     * Open the workbench terminal.
-     *
-     * The terminal is where the surfaces the RPC path cannot carry live —
-     * `custom()`, `setFooter`/`setHeader`, custom editors, extension renderers —
-     * because `pi` itself runs there. It is a plain shell, so the user types `pi`
-     * to reach them; the caller owns only the destination, which is why this is
-     * one callback and no longer a tab selection.
-     */
-    onOpenTerminal: () -> Unit,
 ) {
     val state by session.state.collectAsState()
     val bottomInset = contentPadding.calculateBottomPadding()
@@ -187,7 +177,7 @@ fun ChatScreen(
         )
         return
     }
-    ChatBody(state = state, session = session, bottomInset = bottomInset, onOpenTerminal = onOpenTerminal)
+    ChatBody(state = state, session = session, bottomInset = bottomInset)
 }
 
 /** Which bottom sheet the chat screen has open, if any. */
@@ -199,7 +189,6 @@ private fun ChatBody(
     state: PiSessionViewModel.UiState,
     session: PiSessionViewModel,
     bottomInset: Dp,
-    onOpenTerminal: () -> Unit,
 ) {
     var draft by remember { mutableStateOf("") }
     var sheet by remember { mutableStateOf<ChatSheet?>(null) }
@@ -847,14 +836,12 @@ private fun ChatBody(
                         sheet = ChatSheet.Model
                         overflow = false
                     }
-                    // The terminal, named for what it now is. It used to say "打开原版
-                    // pi TUI", which described the tab the workbench opened on; the
-                    // workbench opens a shell, so the entry says where it goes and
-                    // the command to type once there.
-                    OverflowItem("打开终端（输入 pi 进原版 TUI）") {
-                        onOpenTerminal()
-                        overflow = false
-                    }
+                    // There is no terminal entry here any more. It used to open pi's
+                    // original TUI, and the user retired the terminal outright
+                    // ("现在是个废品那个功能"), so the only way in is the one row on
+                    // the settings home. Leaving it here would keep the most
+                    // valuable part of the overflow menu pointing at the least
+                    // usable surface in the app.
                 }
             },
         )
@@ -1233,7 +1220,6 @@ private fun ChatBody(
             // nothing else, which is why it does nothing when a mention is already
             // open. The `/` and `!` chips beside it are the same kind of affordance.
             onOpenMention = { if (PiFileMentions.prefixOf(draft) == null) draft += "@" },
-            onOpenTui = onOpenTerminal,
             onFollowUp = {
                 // pi's alt+enter: queue this message for after the current turn
                 // (`interactive-mode.ts:4126-4155` → `session.prompt(text,
@@ -1664,7 +1650,6 @@ private fun Composer(
     onOpenPalette: () -> Unit,
     onOpenBash: () -> Unit,
     onOpenMention: () -> Unit,
-    onOpenTui: () -> Unit,
     onPickImage: () -> Unit,
     /** `app.editor.external`: hand the draft to an external editor (`ACTION_EDIT`). */
     onOpenExternalEditor: () -> Unit,
@@ -1750,20 +1735,10 @@ private fun Composer(
                     }
                 }
                 Spacer(Modifier.weight(1f))
-                // pi's escape hatch, one tap from the composer: the surfaces RPC
-                // cannot carry (`custom()`, `setFooter`/`setHeader`, custom
-                // editors, terminal input, the extension renderers) exist in pi's
-                // own TUI, and the terminal is where `pi` runs. The chip says
-                // "终端" rather than "原版 TUI" because that is what it opens — a
-                // shell, in which the user types `pi` (audit §6.11).
-                Text(
-                    "终端",
-                    modifier = Modifier
-                        .clickable(onClick = onOpenTui)
-                        .padding(end = 12.dp),
-                    style = PiTheme.text.monoSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+                // The terminal chip that used to sit here is gone: the composer's
+                // right-hand side belongs to the two things a person reaches for
+                // while typing, and the terminal is not one of them any more — the
+                // user retired it, and the settings home's row is the one door.
                 // The signature element: pi encodes the thinking level as a colour
                 // temperature, and this chip is that language carried into the GUI.
                 // A tap cycles it — pi's `app.thinking.cycle` binding, the action

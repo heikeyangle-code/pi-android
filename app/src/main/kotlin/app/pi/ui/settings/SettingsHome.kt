@@ -20,6 +20,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -77,6 +78,18 @@ fun SettingsHome(
      * (`docs/known-gaps.md` §L).
      */
     onOpenLicenses: (() -> Unit)? = null,
+    /**
+     * The full-screen terminal ([app.pi.ui.screens.TerminalScreen]). `null` hides
+     * the row.
+     *
+     * The terminal used to be a bottom-bar destination and the user retired it
+     * ("现在是个废品那个功能"), so it is one ordinary row here rather than a place
+     * (`03-navigation-decision.md:24`). It stays reachable because it is the only
+     * surface where the extension APIs that draw terminal cells work at all, and
+     * the row's supporting line says so rather than leaving the capability
+     * invisible.
+     */
+    onOpenTerminal: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
     Column(Modifier.fillMaxSize()) {
@@ -129,6 +142,15 @@ fun SettingsHome(
                     PiSettingsCard {
                         PiPackagesEntryRow(onClick = onOpenPackages)
                     }
+                }
+            }
+            // The terminal, one ordinary row next to 设备 / 扩展 / 关于 — the same
+            // rank as the other screens that are not pi settings. It has no
+            // section of its own because it is not a category: it is one surface,
+            // and `03-navigation-decision.md:24` asks for exactly one row.
+            if (onOpenTerminal != null) {
+                item {
+                    PiTerminalEntryRow(onClick = onOpenTerminal)
                 }
             }
             // The licence notices. Not a pi setting and not a pi feature: this app
@@ -355,6 +377,68 @@ private fun GroupEntry(
                 overflow = TextOverflow.Ellipsis,
             )
         }
+        Icon(
+            Icons.Filled.KeyboardArrowRight,
+            contentDescription = null,
+            modifier = Modifier.size(PiSettingsMetrics.chevronSize),
+            tint = PiTheme.palette.muted,
+        )
+    }
+}
+
+/**
+ * 终端入口行 —— 终端从底部目的地降下来的那一行（`03-navigation-decision.md:24`）。
+ *
+ * 形状与 设备 / 扩展 / 关于 三行完全一样（`06 §2` 的 Row：`padding:10px 12px`、前置
+ * 图标 16 灰、标题 15/500、副行 12 灰、尾部值 + chevron 14），而且**故意**和它们并列
+ * 而不是自成一组：它不是一个类别，是一个面。
+ *
+ * 副行的话是从原来的工作区页搬过来的**原话**（旧 `WorkbenchScreen.kt:72`）——它是应用里
+ * 唯一说明「哪些能力只有原版 TUI 有」的地方（订阅登录、会话导入、需要终端的扩展），
+ * 删掉它等于把这些能力从界面上抹掉。`docs/settings-review.md` §9 的教训是这句话不该在
+ * 每个 TUI 相关的设置行上重复，而应该只说一次——这里就是那一次。
+ */
+@Composable
+private fun PiTerminalEntryRow(onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(
+                horizontal = PiSettingsMetrics.rowPaddingHorizontal,
+                vertical = PiSettingsMetrics.rowPaddingVertical,
+            ),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(PiSettingsMetrics.rowGap),
+    ) {
+        Icon(
+            Icons.Filled.Terminal,
+            contentDescription = null,
+            tint = PiTheme.palette.muted,
+            modifier = Modifier.size(PiSettingsMetrics.searchIconSize),
+        )
+        Column(Modifier.weight(1f)) {
+            Text(
+                "终端",
+                style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Medium),
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                "输入 pi 回车进入原版 TUI：订阅登录、会话导入、以及需要终端的扩展都在那边。",
+                modifier = Modifier.padding(top = PiSettingsMetrics.supportingGap),
+                style = PiTheme.text.meta,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        Text(
+            "打开",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurface,
+        )
         Icon(
             Icons.Filled.KeyboardArrowRight,
             contentDescription = null,

@@ -118,10 +118,15 @@ sealed interface Boot {
  * has no navigation API at all, so this vocabulary is the app's own and belongs
  * to the layer that knows the answer arrived.
  *
- * Only [Chat], [Workbench] and [Settings] name a top-level destination, and they
- * are the three the bottom bar draws — the vocabulary and `PiDestination` are
- * kept in step on purpose, so a request can never ask for a destination the bar
- * does not have. Everything else here raises an overlay or focuses a screen.
+ * Only [Chat] and [Settings] name a top-level destination, and they are two of the
+ * three the bottom bar draws — the vocabulary and `PiDestination` are kept in step
+ * on purpose, so a request can never ask for a destination the bar does not have.
+ * Everything else here raises an overlay or focuses a screen.
+ *
+ * 工作区 is deliberately absent for that reason: nothing in the app asks to *go*
+ * there (the bar is the only way), so there is no request for it. It used to be
+ * named by a `Workbench` member whose one consumer was the chat composer's
+ * terminal chip — removed with the chip when the terminal became a settings row.
  */
 sealed interface NavRequest {
     /**
@@ -138,16 +143,21 @@ sealed interface NavRequest {
     data object Chat : NavRequest
 
     /**
-     * The workbench destination.
+     * The full-screen terminal, over whatever destination is active.
      *
-     * It still means "go to 工作区" and nothing more. The name is now slightly
-     * behind the truth — that destination is becoming the project overview, and a
-     * later batch moves the *terminal* behind a settings row of its own, at which
-     * point the chat composer's terminal affordance stops pointing here. Renaming
-     * it is that batch's job, not this one's: the only consumer is the affordance
-     * that batch removes.
+     * This is what was `Workbench`. The rename is the point: the old name meant
+     * 「去工作区」, which was true while the terminal *was* the 工作区 destination,
+     * and became a lie the moment that destination turned into the project
+     * overview. The terminal is not a place in the app; it is the fallback surface
+     * for the handful of extension APIs the RPC path cannot carry, and the settings
+     * home's one row is now the only door to it (`03-navigation-decision.md`).
+     *
+     * Reached from the settings row, which is why it is a request at all rather
+     * than a callback: the row lives several composables down inside
+     * [app.pi.ui.settings.PiSettingsStack], and the overlay it raises belongs to
+     * `PiRoot`.
      */
-    data object Workbench : NavRequest
+    data object Terminal : NavRequest
 
     data object Settings : NavRequest
 

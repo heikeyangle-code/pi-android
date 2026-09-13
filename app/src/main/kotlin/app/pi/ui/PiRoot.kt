@@ -42,8 +42,9 @@ import app.pi.ui.components.PiNavGlyph
 import app.pi.ui.components.PiNavGlyphs
 import app.pi.ui.extension.ExtensionUiHost
 import app.pi.ui.screens.ChatScreen
+import app.pi.ui.screens.ProjectScreen
 import app.pi.ui.screens.SessionsScreen
-import app.pi.ui.screens.WorkbenchScreen
+import app.pi.ui.screens.TerminalScreen
 import app.pi.ui.settings.PiSettingsStack
 
 /**
@@ -70,10 +71,12 @@ enum class PiDestination(val label: String) {
     Chat("对话"),
 
     /**
-     * The project on screen. It is still the old `WorkbenchScreen` (a full-screen
-     * terminal) in this batch; the next batch replaces the body with the project
-     * overview and keeps this name and position — the destination itself does not
-     * move again.
+     * The project on screen: what this session is doing in its working directory —
+     * the directory itself, the files it has touched, the resources the directory
+     * carries, and any command still running. It replaced a full-screen terminal,
+     * which the user retired from the bar
+     * (`06-v2-construction-reference.md` §5) and which now has one plain row on the
+     * settings home.
      */
     Workbench("工作区"),
 
@@ -108,6 +111,17 @@ private enum class PiOverlay {
 
     /** pi's `/tree` — the session tree. */
     SessionTree,
+
+    /**
+     * The full-screen terminal, opened from the settings home's terminal row.
+     *
+     * It is an overlay rather than a destination because the user retired it from
+     * the bottom bar: it is a fallback for the handful of extension APIs the RPC
+     * path cannot carry, not a place to spend the bar's most visible slot
+     * (`03-navigation-decision.md`). Its own screen is deliberately not redesigned
+     * — `ui/terminal` is out of scope for this refactor.
+     */
+    Terminal,
 }
 
 /**
@@ -219,10 +233,6 @@ fun PiRoot() {
                 overlayIndex = null
                 destinationName = PiDestination.Chat.name
             }
-            NavRequest.Workbench -> {
-                overlayIndex = null
-                destinationName = PiDestination.Workbench.name
-            }
             NavRequest.Settings -> {
                 overlayIndex = null
                 destinationName = PiDestination.Settings.name
@@ -237,6 +247,13 @@ fun PiRoot() {
             NavRequest.SessionTree -> {
                 overlayIndex = PiOverlay.SessionTree.ordinal
                 session.refreshTree()
+            }
+            // The terminal raises the overlay layer for the same reason the list
+            // does: it is not a place. This is the *only* way in now — the chat
+            // composer's chip and the overflow entry are gone (the user retired
+            // the terminal), so the settings home's row is the one door.
+            NavRequest.Terminal -> {
+                overlayIndex = PiOverlay.Terminal.ordinal
             }
             null -> Unit
         }
@@ -266,18 +283,14 @@ fun PiRoot() {
                 PiDestination.Chat -> ChatScreen(
                     contentPadding = padding,
                     session = session,
-                    // The composer's terminal affordance: one `NavRequest.Workbench`,
-                    // which lands on the workbench destination. It used to name a tab
-                    // as well ("open pi's TUI"), because the jump had to reach pi
-                    // specifically; the terminal is a plain shell now and there is no
-                    // tab to name, so this is the whole request. The affordance itself
-                    // is due to disappear — the settings row is to be the only way in
-                    // — which is a later batch's call, not the navigation's.
-                    onOpenTerminal = { session.requestNav(NavRequest.Workbench) },
                 )
 
-                PiDestination.Workbench -> WorkbenchScreen(
+                // The project's own screen. It reads pi's session directory, the
+                // transcript and the workspace's `.pi`, so it takes the session —
+                // the terminal it replaced took nothing.
+                PiDestination.Workbench -> ProjectScreen(
                     contentPadding = padding,
+                    session = session,
                 )
 
                 PiDestination.Settings -> PiSettingsStack(
@@ -381,6 +394,10 @@ fun PiRoot() {
                     // this app reads belongs to the ViewModel, so dropping its cache
                     // is the ViewModel's job.
                     onExternalSettingsWrite = { session.invalidateSettingsCache() },
+                    // The terminal is the settings home's one row now, and the
+                    // screen it opens belongs to this overlay layer — so the stack
+                    // hands the tap back up rather than opening it itself.
+                    onOpenTerminal = { session.requestNav(NavRequest.Terminal) },
                 )
             }
 
@@ -421,6 +438,14 @@ fun PiRoot() {
                             },
                             onRefresh = { session.refreshTree() },
                             onClose = { overlayIndex = null },
+                        )
+
+                        // The full-screen terminal, unchanged from when it was a
+                        // destination: this batch moves the *door*, not the room
+                        // (`05-compose-migration-plan.md` §3.8).
+                        PiOverlay.Terminal -> TerminalScreen(
+                            contentPadding = padding,
+                            onBack = { overlayIndex = null },
                         )
                     }
                 }
