@@ -66,6 +66,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.listSaver
@@ -84,6 +85,7 @@ import app.pi.rpc.CompactionMarker
 import app.pi.rpc.DateSeparator
 import app.pi.rpc.ErrorText
 import app.pi.rpc.HookMessage
+import app.pi.rpc.JsonlFramer
 import app.pi.rpc.ModelChange
 import app.pi.rpc.Notice
 import app.pi.rpc.SkillInvocation
@@ -126,6 +128,7 @@ import app.pi.ui.theme.PiShapes
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 /**
  * The transcript — the app's main stage (destination 2).
@@ -280,6 +283,9 @@ private fun ChatBody(
             )
         }
     }
+    // Where the picked image is read and encoded. The picker callback itself runs on
+    // the main thread, and both halves of "load 6 MB and base64 it" belong off it.
+    val pickerScope = rememberCoroutineScope()
     val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         // A null uri is the user backing out of the picker, not a failure.
         if (uri != null) {
@@ -292,26 +298,47 @@ private fun ChatBody(
                 )
 
                 else -> {
-                    val bytes = runCatching {
-                        resolver.openInputStream(uri)?.use { it.readBytes() }
-                    }.getOrNull()
-                    when {
-                        bytes == null || bytes.isEmpty() -> session.notifyUser(
-                            "读取所选图片失败：无法打开这个文件（权限被拒或文件已被删除）。请重新选择，或换一张本地图片。",
-                            warning = true,
-                        )
+                    // Off the frame thread, and bounded while reading. This callback
+                    // runs on the main thread (`rememberLauncherForActivityResult`
+                    // resumes the Activity), and the previous shape read *everything*
+                    // the provider would give it — `readBytes()` on the whole
+                    // `InputStream` — and only then compared the length with
+                    // `MAX_ATTACHMENT_BYTES`. A cloud/gallery provider happily hands
+                    // out tens of megabytes, so "the image is too large" was decided
+                    // after allocating it, twice (the byte array, then the base64
+                    // string), on the thread that draws: on a phone with ~1 GB free
+                    // that is an OutOfMemoryError for the app, not a warning.
+                    // `readBounded` stops at the cap and reports "too large" without
+                    // ever holding more than the cap, and the encode happens on IO.
+                    pickerScope.launch {
+                        val bytes = withContext(Dispatchers.IO) {
+                            runCatching {
+                                resolver.openInputStream(uri)?.use { readBounded(it, MAX_ATTACHMENT_BYTES) }
+                            }.getOrNull()
+                        }
+                        when {
+                            bytes == null || bytes.isEmpty() -> session.notifyUser(
+                                "读取所选图片失败：无法打开这个文件（权限被拒或文件已被删除）。请重新选择，或换一张本地图片。",
+                                warning = true,
+                            )
 
-                        bytes.size > MAX_ATTACHMENT_BYTES -> session.notifyUser(
-                            "图片太大（${bytes.size / (1024 * 1024)} MB），上限是 " +
-                                "${MAX_ATTACHMENT_BYTES / (1024 * 1024)} MB；它要整段随消息发送。" +
-                                "请先压缩或裁剪后再试。",
-                            warning = true,
-                        )
+                            bytes.size > MAX_ATTACHMENT_BYTES -> session.notifyUser(
+                                "图片太大，上限是 " +
+                                    "${MAX_ATTACHMENT_BYTES / (1024 * 1024)} MB；它要整段随消息发送。" +
+                                    "请先压缩或裁剪后再试。",
+                                warning = true,
+                            )
 
-                        else -> attachments = attachments + PiImage(
-                            base64 = Base64.encodeToString(bytes, Base64.NO_WRAP),
-                            mimeType = mime.ifEmpty { "image/*" },
-                        )
+                            else -> {
+                                val image = withContext(Dispatchers.IO) {
+                                    PiImage(
+                                        base64 = Base64.encodeToString(bytes, Base64.NO_WRAP),
+                                        mimeType = mime.ifEmpty { "image/*" },
+                                    )
+                                }
+                                attachments = attachments + image
+                            }
+                        }
                     }
                 }
             }
@@ -1690,5 +1717,47 @@ private fun AttachmentThumb(
  * Inline attachments are base64 inside the RPC message, so a huge image bloats
  * every prompt and every transcript row. This is the app's own guard: the
  * protocol carries no size field to check against (`ImageContent`).
+ *
+ * **Derived from the transport's own cap, not chosen.** pi echoes an attachment
+ * back inside the records the app has to read — the `message` entries a
+ * `get_entries` response carries, and the `message_start`/`message_end` events —
+ * and the framer discards any single record longer than
+ * [JsonlFramer.DEFAULT_MAX_RECORD_CHARS]. Base64 costs 4 characters per 3 bytes, so
+ * an attachment of `B` bytes becomes a `4B/3`-character substring in that record;
+ * allowing `B` anywhere near the record cap means the app accepts an image whose
+ * own echo the app then refuses to read. At 8 MiB the cap was exactly the framer's
+ * limit, so *every* legal maximum-size attachment was guaranteed to break the
+ * session it was sent in.
+ *
+ * The arithmetic below keeps the two consistent: `(cap - slack) / 4 * 3`, where
+ * `slack` is headroom for the rest of the record (entry id, role, timestamp,
+ * mime type, JSON punctuation). `MAX_ATTACHMENT_BYTES` is therefore an `Int` and
+ * stays one — `bytes.size` is an `Int`, and a `Long` constant here would silently
+ * make that comparison a widening one nobody re-checks.
  */
-private const val MAX_ATTACHMENT_BYTES = 8L * 1024 * 1024
+private val MAX_ATTACHMENT_BYTES: Int =
+    (JsonlFramer.DEFAULT_MAX_RECORD_CHARS - FRAMING_SLACK_CHARS) / 4 * 3
+
+/** Headroom for everything in a record that is not the base64 payload. 64 KiB. */
+private const val FRAMING_SLACK_CHARS = 64 * 1024
+
+/**
+ * Read at most `limit + 1` bytes, so "bigger than the limit" is answered without
+ * ever materialising the whole input.
+ *
+ * `InputStream.readNBytes`/`readBytes()` allocate for whatever the provider offers;
+ * a gallery or cloud provider can offer hundreds of megabytes. One byte past the
+ * limit is all the caller's comparison needs, and it bounds both the allocation and
+ * the time spent on a file that is about to be rejected.
+ */
+private fun readBounded(input: java.io.InputStream, limit: Int): ByteArray {
+    val cap = limit + 1
+    val out = java.io.ByteArrayOutputStream(minOf(cap, 64 * 1024))
+    val buffer = ByteArray(64 * 1024)
+    while (out.size() < cap) {
+        val read = input.read(buffer, 0, minOf(buffer.size, cap - out.size()))
+        if (read < 0) break
+        out.write(buffer, 0, read)
+    }
+    return out.toByteArray()
+}

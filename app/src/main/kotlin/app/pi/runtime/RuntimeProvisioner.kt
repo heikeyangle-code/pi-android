@@ -38,8 +38,16 @@ class RuntimeProvisioner(
     /** One payload archive the assembler is expected to place in `assets/runtime/`. */
     private data class Payload(val name: String, val required: Boolean)
 
-    /** What the pre-flight audit found for one payload. */
-    private data class PayloadInfo(
+    /**
+     * What the pre-flight audit found for one payload.
+     *
+     * Internal rather than private so the diagnostic report can print the same six
+     * lines the boot screen shows: the report has to answer "does this APK carry
+     * every payload, and how big is each one", and re-deriving that from
+     * `AssetManager` in a second place would be a second answer to the same
+     * question (see [payloadInventory]).
+     */
+    internal data class PayloadInfo(
         val asset: String,
         val required: Boolean,
         val bytes: Long,
@@ -299,6 +307,26 @@ class RuntimeProvisioner(
             PayloadInfo(asset, payload.required, bytes, via, null)
         } catch (e: IOException) {
             PayloadInfo(asset, payload.required, 0L, null, describe(e))
+        }
+    }
+
+    /**
+     * The same six payloads [auditPayloads] checks, measured, **without throwing**
+     * and without touching `payloadReport`.
+     *
+     * The diagnostic report needs this as a fact, not as a gate: the audit's job is
+     * to refuse to start when a required payload is unreadable (and to write the
+     * failure into `payloadReport` for a later unpack error to carry), while the
+     * report's job is to say what is there even when the answer is "not everything".
+     * The two share [inspectPayload] and [PAYLOADS] so a seventh payload cannot be
+     * added to one and forgotten by the other.
+     *
+     * Blocking IO: `AssetManager.openFd` or a full stream count per payload. Callers
+     * run it off the main thread.
+     */
+    internal fun payloadInventory(): List<PayloadInfo> = PAYLOADS.map { payload ->
+        runCatching { inspectPayload(payload) }.getOrElse { error ->
+            PayloadInfo("runtime/${payload.name}", payload.required, 0L, null, describe(error))
         }
     }
 

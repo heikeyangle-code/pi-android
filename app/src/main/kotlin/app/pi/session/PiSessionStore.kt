@@ -68,8 +68,14 @@ class PiSessionStore(private val sessionsRoot: File) {
      * session longer than this budget is described by its first megabyte. The
      * consequence is named where it matters — see the `truncated` handling in
      * [readSummary].
+     *
+     * The budget is spent by [SessionFileScan], which is what makes it a real bound:
+     * `readLine()` cannot be capped, so the old shape read a line of any length and
+     * only then compared the total with this number (see that object's KDoc for why
+     * one line can be gigabytes of *legitimate* content). It also doubles as the
+     * per-line cap, because no single line is worth more than the whole scan.
      */
-    private val headerScanBudget = 1L shl 20
+    private val headerScanBudget = 1 shl 20
 
     /**
      * Every session under [sessionsRoot], most recent activity first.
@@ -179,16 +185,16 @@ class PiSessionStore(private val sessionsRoot: File) {
         var cwd: String? = null
         runCatching {
             file.bufferedReader(Charsets.UTF_8).use { reader ->
-                var consumed = 0L
-                while (consumed < headerScanBudget) {
-                    val line = reader.readLine() ?: break
-                    consumed += line.length + 1
-                    val obj = parseObjectOrNull(line) ?: continue
+                SessionFileScan.forEachLine(reader, headerScanBudget, headerScanBudget) { line ->
+                    if (line.isBlank()) return@forEachLine true
+                    val obj = parseObjectOrNull(line) ?: return@forEachLine true
                     // pi's discovery requires the first entry to be the session
                     // header and its id to be a string (`:566-570`); anything else is
                     // not a session and has no cwd to match.
                     if (obj.str("type") == "session" && obj.str("id") != null) cwd = obj.str("cwd")
-                    break
+                    // One line is the whole answer, so the scan stops here rather than
+                    // reading further into a file whose contents are not needed.
+                    false
                 }
             }
         }
@@ -223,19 +229,31 @@ class PiSessionStore(private val sessionsRoot: File) {
         var messageCount = 0
         var firstParsed = true
         var truncated = false
+        // The first parseable line decided the file is not a session. A flag rather
+        // than a non-local return, because the scan hands lines to a lambda now.
+        var notASession = false
+        // Characters the scan actually consumed. Everything the scan skips (blank
+        // lines, malformed lines, an over-long line) counts, so this is a real bound on
+        // the work done and the memory held — see [SessionFileScan].
+        var consumed = 0L
 
         runCatching {
             file.bufferedReader(Charsets.UTF_8).use { reader ->
-                var consumed = 0L
-                while (consumed < headerScanBudget) {
-                    val line = reader.readLine() ?: break
-                    consumed += line.length + 1
-                    if (line.isBlank()) continue
-                    val obj = parseObjectOrNull(line) ?: continue
+                // The scan is the bound (see [SessionFileScan]): pi's own discovery
+                // gives up on a file whose header is not within the budget
+                // (`:571-575`), and `readLine()` could not have enforced that — it
+                // returns a line of any length before any budget can be checked.
+                consumed = SessionFileScan.forEachLine(reader, headerScanBudget, headerScanBudget) { line ->
+                    if (notASession) return@forEachLine false
+                    if (line.isBlank()) return@forEachLine true
+                    val obj = parseObjectOrNull(line) ?: return@forEachLine true
 
                     if (firstParsed) {
                         firstParsed = false
-                        if (obj.str("type") != "session") return null
+                        if (obj.str("type") != "session") {
+                            notASession = true
+                            return@forEachLine false
+                        }
                     }
 
                     when (obj.str("type")) {
@@ -282,6 +300,7 @@ class PiSessionStore(private val sessionsRoot: File) {
                         // because it costs nothing and older files may differ.
                         "model_change" -> model = obj.str("modelId") ?: obj.str("model") ?: model
                     }
+                    true
                 }
                 // Leaving the loop with budget left means the reader hit EOF; only a
                 // budget exhaustion counts as truncated.
@@ -289,9 +308,11 @@ class PiSessionStore(private val sessionsRoot: File) {
             }
         }
 
-        // No parseable line at all, or the header is not within the scan budget:
-        // pi's discovery gives up in both cases (`:571-575` returns null for an
-        // oversized header), and listing nothing is the honest answer.
+        // The first parseable line was not a session header, or there was none at all
+        // (or the header is not within the scan budget — pi's discovery gives up in
+        // all three cases, `:571-575` returns null for an oversized header), and
+        // listing nothing is the honest answer.
+        if (notASession) return null
         if (firstParsed) return null
 
         val mtime = file.lastModified()

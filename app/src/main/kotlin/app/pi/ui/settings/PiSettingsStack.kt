@@ -97,6 +97,22 @@ fun PiSettingsStack(
      * invalidation lives there — this stack only reports that a write happened.
      */
     onExternalSettingsWrite: () -> Unit = {},
+    /**
+     * The engine's last-exit facts, for 导出诊断报告. A lambda rather than a value
+     * because the capture happens in the ViewModel the moment the engine dies, and
+     * the screen must read the newest one — including a death that happens while
+     * the screen is composed.
+     *
+     * The default ([null]) keeps the screen honest: with no engine owner wired it
+     * says the exit is not recorded instead of inventing one.
+     */
+    engineDiagnostics: () -> EngineDiagnostics? = { null },
+    /**
+     * The failures the app has already recorded (boot failure, last RPC error,
+     * extension notices), for the report's 最近的失败 section. A lambda for the
+     * same reason as [engineDiagnostics].
+     */
+    recentFailures: () -> List<String> = { emptyList() },
 ) {
     val activeStore = store ?: rememberInMemoryPiSettingsStore()
     var groupId by remember { mutableStateOf<String?>(null) }

@@ -281,6 +281,82 @@ fun main() {
             PiSessionStore(java.io.File(root, "nope")).list(),
             emptyList<PiSessionStore.Summary>(),
         )
+
+        // 8. the scan is *bounded*, and an over-long line is dropped rather than read.
+        //
+        // Why this is a check and not a comment: a session file's lines are messages,
+        // and one of them is legitimately a multi-megabyte tool result (pi's own cap
+        // is 50 KB per result) or an inline base64 image. `BufferedReader.readLine()`
+        // returns such a line *in full* before any budget can be consulted, so the
+        // store's 1 MiB "header scan budget" bounded nothing at all — on a phone whose
+        // free memory is ~1 GB, opening the session list could allocate whatever the
+        // largest line happened to be, three times over (reader buffer, String,
+        // JsonObject). `SessionFileScan` is the bound; these checks pin it.
+        val kept = mutableListOf<String>()
+        val consumed = SessionFileScan.forEachLine(
+            java.io.StringReader("a\r\nb\n" + "x".repeat(5_000) + "\nc"),
+            budget = 4096,
+            maxLineChars = 1024,
+        ) { line ->
+            kept += line
+            true
+        }
+        check("the scan strips a CR, keeps the lines it read", kept, listOf("a", "b"))
+        check("the scan stops exactly at its budget", consumed, 4096L)
+
+        val afterLongLine = mutableListOf<String>()
+        SessionFileScan.forEachLine(
+            java.io.StringReader("y".repeat(5_000) + "\nkept\n"),
+            budget = 100_000,
+            maxLineChars = 1024,
+        ) { line ->
+            afterLongLine += line
+            true
+        }
+        check("an over-long line is dropped and the next line survives", afterLongLine, listOf("kept"))
+
+        var stopsEarly = 0
+        SessionFileScan.forEachLine(java.io.StringReader("one\ntwo\n"), budget = 100, maxLineChars = 100) {
+            stopsEarly++
+            false
+        }
+        check("returning false stops the scan after one line", stopsEarly, 1)
+
+        val unterminated = mutableListOf<String>()
+        SessionFileScan.forEachLine(java.io.StringReader("tail"), budget = 100, maxLineChars = 100) { line ->
+            unterminated += line
+            true
+        }
+        check("an unterminated tail at EOF is a line", unterminated, listOf("tail"))
+
+        // ...and the same thing through the store's public surface: a session whose
+        // third line is larger than the whole scan budget still lists, with the header
+        // and the first user message intact, and falls back to the file's mtime for
+        // "last activity" (the scan was truncated, `PiSessionStore.kt` on `truncated`).
+        val hugeFile = sessionFile(
+            root,
+            "huge-line.jsonl",
+            listOf(
+                header("huge-line", "2024-06-01T00:00:00.000Z", CWD),
+                message("h1", null, "2024-06-01T00:00:01.000Z", "user", "before the huge line", mid + 1_000),
+                "{\"type\":\"message\",\"id\":\"h2\",\"message\":{\"role\":\"toolResult\",\"output\":\"" +
+                    "z".repeat(2 * 1024 * 1024) + "\"}}",
+            ),
+            mtime = new,
+        )
+        val huge = store.list().firstOrNull { it.file.name == "huge-line.jsonl" }
+        check("a session with an over-budget line is still listed", huge != null, true)
+        check("its header is still read", huge?.cwd, CWD)
+        check("its first user message is still the title", huge?.title, "before the huge line")
+        // Compared against the file's own mtime rather than the value handed to
+        // `setLastModified`: the point is the *rule* ("a truncated scan falls back to
+        // mtime"), and a filesystem with coarser timestamp granularity must not be able
+        // to red this check.
+        check(
+            "a truncated scan falls back to the file mtime",
+            huge?.lastActivityAt,
+            hugeFile.lastModified(),
+        )
     }
 
     outsideDir.deleteRecursively()

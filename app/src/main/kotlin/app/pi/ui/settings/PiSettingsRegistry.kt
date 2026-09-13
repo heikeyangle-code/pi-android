@@ -1243,6 +1243,23 @@ object PiSettingsCatalog {
             readOnly = true,
             aliases = listOf("wakelock"),
         ),
+        // 为线上事故加的入口：界面只显示 "rpc: engine exited with code 1"，而用户没有
+        // ADB、看不到 logcat，`PiEngineSession` 捕获的 stderr 又只留在已经死掉的对象里。
+        // 这一行把「App 此刻还能读到的一切」汇总成一份纯文本，交给 Download 或系统分享，
+        // 而不是塞进对话上下文（`DiagnosticsReport` 的 KDoc 写了为什么）。它是 Action 行
+        // 而不是开关：没有值可写，也没有 pi 侧的对应键。引擎已经退出时同样可用 —— 报告里
+        // 的引擎部分来自退出瞬间的抓取，不依赖引擎活着。
+        PiSetting(
+            key = "app.runtime.diagnostics",
+            title = "导出诊断报告",
+            description = "把引擎最后一次退出的退出码与已捕获的 stderr、运行时与载荷状态、关键路径、" +
+                "最近的失败和设备信息汇总成一份纯文本，保存到 Download 或直接分享。" +
+                "引擎已经退出时同样可用。报告不会进入对话上下文，敏感值已做脱敏。",
+            kind = PiRowKind.Action,
+            group = G_RUNTIME,
+            section = "诊断",
+            aliases = listOf("diagnostics", "report", "log", "stderr", "crash", "日志", "崩溃"),
+        ),
 
         // ------------------------------------------------------------------
         // 13 隐私与关于

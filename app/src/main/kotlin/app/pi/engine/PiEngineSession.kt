@@ -28,6 +28,10 @@ import java.io.File
 import java.io.InputStream
 import java.io.OutputStreamWriter
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.TimeoutCancellationException
@@ -144,6 +148,32 @@ class PiEngineSession(
     private val pending = ConcurrentHashMap<String, CompletableDeferred<PiEvent.Response>>()
     private val writer: BufferedWriter =
         BufferedWriter(OutputStreamWriter(process.outputStream, Charsets.UTF_8))
+
+    /**
+     * The one thread that ever touches [writer] — because the alternative is the
+     * frame thread touching a pipe.
+     *
+     * `send` is called from `PiSessionViewModel` on `Dispatchers.Main.immediate`
+     * (`prompt`, `sendFollowUp`, `runPromptCommand`, `send`), and a pipe write is
+     * **not** a bounded operation: it blocks once the kernel's ~64 KB buffer is full,
+     * i.e. exactly while pi is not reading its stdin. pi does not read stdin until its
+     * startup is over (that gap is the reason [probeServing] exists at all), and it
+     * also stops draining while it is busy parsing a huge record. So a large command —
+     * an attachment travels inline as base64, several megabytes of it — written from
+     * the frame thread is a main-thread block, and on a phone with pi's cold start
+     * (~20 s under proot, docs/startup-latency.md) that is long enough to be an ANR.
+     *
+     * One thread preserves the ordering pi's protocol depends on (commands carry ids
+     * and pi answers in order), and it moves *both* halves out of the caller:
+     * `PiCommands.encode` builds the whole JSON line, which for an attachment is the
+     * multi-megabyte string itself.
+     */
+    private val writeQueue: ExecutorService = Executors.newSingleThreadExecutor { runnable ->
+        Thread(runnable, "pi-stdin").apply { isDaemon = true }
+    }
+
+    /** Set once a write has failed; every later [send] answers false without trying. */
+    private val writeBroken = AtomicBoolean(false)
 
     private val _events = MutableSharedFlow<PiEvent>(extraBufferCapacity = 256)
     /** Every event, in order, for screens that need more than the transcript. */
@@ -366,6 +396,7 @@ class PiEngineSession(
         // KDoc has the measured baseline and `Utf8StreamDecoderCheck` pins it.
         val decoder = Utf8StreamDecoder()
         val buffer = ByteArray(16 * 1024)
+        var dropped = 0L
         withContext(Dispatchers.IO) {
             while (true) {
                 val read = try {
@@ -375,6 +406,10 @@ class PiEngineSession(
                 }
                 if (read < 0) break
                 val records = framer.feed(decoder.decode(buffer, read))
+                if (framer.droppedRecords != dropped) {
+                    dropped = framer.droppedRecords
+                    onRecordDropped()
+                }
                 for (record in records) handle(record)
             }
         }
@@ -383,6 +418,40 @@ class PiEngineSession(
         // complete the record that was in flight.
         for (record in framer.feed(decoder.flush())) handle(record)
         for (record in framer.flush()) handle(record)
+        if (framer.droppedRecords != dropped) onRecordDropped()
+    }
+
+    /**
+     * A record larger than [JsonlFramer]'s cap was thrown away by the framer.
+     *
+     * **Why this is not silent.** The framer counts the loss (`droppedRecords`) but
+     * nothing outside `:rpc`'s own unit test reads that number, so before this the
+     * drop was invisible: the reader simply had one fewer record and every caller went
+     * on waiting. For a *response* that is the worst possible failure mode, because the
+     * wait is bounded only by the request's own timeout — 120 s by default
+     * ([request]), and the replay path (`PiSessionViewModel.replayHistory` →
+     * `get_entries`) has no shorter budget — so opening such a session looks exactly
+     * like a hang and then silently does nothing.
+     *
+     * Every in-flight request is failed with the real reason instead. A dropped record
+     * cannot be correlated to the request it belonged to (its id is inside the bytes
+     * that were dropped), so the choice is between "answer everything that is waiting
+     * with the truth" and "let something wait up to two minutes for an answer that has
+     * already been destroyed". The reason names the transport, not the command, because
+     * that is what actually happened.
+     *
+     * Reachable in practice: `get_entries` returns a whole session in **one** record,
+     * and a long coding session with large tool outputs (pi's own cap is 50 KB per
+     * result) or an inline image can exceed the framer's 8 MiB
+     * (`JsonlFramer.DEFAULT_MAX_RECORD_CHARS`).
+     */
+    private fun onRecordDropped() {
+        // User-visible through `PiSessionViewModel.fail` → the transcript's error row and
+        // its notice, so it says what happened and what to do, not which object dropped
+        // what: "a message from the engine was too large to read" is the whole of it.
+        val reason = "引擎发来的一条内容太大，没能读取，这次操作没有完成。请重试。"
+        pending.values.forEach { it.complete(failure(reason)) }
+        pending.clear()
     }
 
     private fun handle(record: String) {
@@ -409,7 +478,30 @@ class PiEngineSession(
         // reducer (and the published snapshot) from the caller's thread while this
         // event arrives, and [publish] is a read-modify-write over [publishedRows]
         // and [revision].
-        synchronized(transcriptLock) { foldEvent(event) }
+        //
+        // **Isolated on purpose.** This is the process's only reader of pi's stdout,
+        // and it runs in a `SupervisorJob` child whose failure nobody observes: one
+        // exception out of the reducer would end the loop, after which the app never
+        // reads another byte of pi's output. pi keeps writing until the ~64 KB pipe
+        // buffer is full and then blocks in `write` — so the engine freezes mid-turn
+        // (no further event ever arrives, `state` stays `Busy`, the wake lock stays
+        // held), and every later `request` waits out its own full timeout because the
+        // response that would have completed it is sitting unread in the pipe. That
+        // is "the app hangs and nothing ever comes back", produced by one malformed
+        // event. `TranscriptReducer.onEvent` documents "never throws", and this is the
+        // second line of defence for the day that claim is wrong.
+        //
+        // `Exception`, not `Throwable`: an `Error` (an OOM while projecting a huge
+        // row, a `StackOverflowError` in a deep diff) is a statement about the host,
+        // and dressing it up as "one record was skipped" would hide the only evidence
+        // of it behind a stalled engine.
+        try {
+            synchronized(transcriptLock) { foldEvent(event) }
+        } catch (_: Exception) {
+            // Deliberately swallowed per record: the response above is already
+            // completed, the event is still emitted below, and the next record gets a
+            // clean run at the reducer.
+        }
         // Outside the lock: `tryEmit` touches no reducer state, and keeping it out
         // shortens the section the reader thread holds.
         _events.tryEmit(event)
@@ -548,25 +640,30 @@ class PiEngineSession(
     // --------------------------------------------------------------- sending
 
     /**
-     * Fire-and-forget command; use [request] when the reply matters.
+     * Queue a command for the writer thread; use [request] when the reply matters.
      *
-     * @return false when the command could not be written because the engine is gone
-     *   (it exited, or [close] already closed the pipe). That is a normal race rather
-     *   than a caller error: every caller here runs on the UI thread while the reader
-     *   thread may be discovering EOF at the same moment, and this used to be an
-     *   unguarded `BufferedWriter.write` — an `IOException` on the main thread, i.e.
-     *   a crash, for a tap that arrived one frame after pi exited. Callers that must
-     *   know whether an engine is reachable read [state] (driven by the process
-     *   itself) or, in the app, `UiState.engine`; a successful write is not evidence
-     *   of a live engine, and a failed one is not a reason to crash.
+     * @return false when the command could not be handed to the writer at all — the
+     *   engine already failed a write, or [close] has shut the queue down. Nothing
+     *   here blocks the caller: the write, the flush and the JSON encoding all happen
+     *   on [writeQueue] (see its KDoc for why that matters on the frame thread). That
+     *   also means a `true` is "queued", not "delivered" — the same distinction the
+     *   old KDoc drew for a successful write, since a successful write was never
+     *   evidence of a live engine either. Callers that must know whether an engine is
+     *   reachable read [state] (driven by the process itself) or, in the app,
+     *   `UiState.engine`.
      */
-    fun send(command: JsonObject): Boolean = runCatching {
-        synchronized(writer) {
-            writer.write(PiCommands.encode(command))
-            writer.flush()
-        }
-        true
-    }.getOrDefault(false)
+    fun send(command: JsonObject): Boolean {
+        if (writeBroken.get()) return false
+        return runCatching {
+            writeQueue.execute {
+                runCatching {
+                    writer.write(PiCommands.encode(command))
+                    writer.flush()
+                }.onFailure { writeBroken.set(true) }
+            }
+            true
+        }.getOrDefault(false)
+    }
 
     /** Send and await pi's `response`. */
     suspend fun request(command: JsonObject, timeoutMs: Long = 120_000): PiEvent.Response {
@@ -797,7 +894,17 @@ class PiEngineSession(
             _state.value == EngineState.Failed
 
     fun close() {
-        runCatching { writer.close() }
+        // Close stdin *before* killing the process, and let the writer thread be the
+        // one that does it: every queued command is written and flushed first, and a
+        // write parked on a full pipe unblocks as soon as the pipe's read end goes
+        // away. Bounded, because this runs while a screen or a ViewModel is going
+        // away: past [WRITER_DRAIN_TIMEOUT_MS] the destroy below is what frees the
+        // writer, and the thread is a daemon.
+        runCatching {
+            writeQueue.execute { runCatching { writer.close() } }
+            writeQueue.shutdown()
+            writeQueue.awaitTermination(WRITER_DRAIN_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+        }
         runCatching { process.destroy() }
         readerJob?.cancel()
         stderrJob?.cancel()
@@ -848,6 +955,16 @@ class PiEngineSession(
          * cannot be left.
          */
         private const val SETTLE_TIMEOUT_MS = 30_000L
+
+        /**
+         * How long [close] waits for the writer thread to finish what it was given.
+         *
+         * Long enough for a few megabytes of attachment to reach a pi that is reading,
+         * short enough that tearing a screen down is never perceptible. Reaching it
+         * means a write is parked on a full pipe, and the `process.destroy()` that
+         * follows is the thing that ends the wait.
+         */
+        private const val WRITER_DRAIN_TIMEOUT_MS = 1_000L
 
         /**
          * Start an engine described by a command line that already includes

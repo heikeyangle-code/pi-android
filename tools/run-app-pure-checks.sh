@@ -322,10 +322,18 @@ run_harness agent-tool-paths \
 # the device and nothing in the build could notice. Android-free — the store uses
 # `java.io.File`, kotlinx.serialization (through `:rpc`'s PiJson) and
 # kotlinx.coroutines only.
+#
+# `SessionFileScan.kt` is in the same closure because it is what makes the store's
+# 1 MiB scan an actual bound: a session file's lines are messages, one of which can be
+# a multi-megabyte tool result or an inline image, and `BufferedReader.readLine()`
+# returns such a line in full before any budget can be consulted. The harness drives
+# the scanner directly (over-long line dropped, budget bounded, terminator handling)
+# and through `list()`.
 run_harness sessions \
   app.pi.session.PiSessionStoreCheckKt \
   "$ROOT/app/src/test/kotlin/app/pi/session/PiSessionStoreCheck.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/session/PiSessionStore.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/session/SessionFileScan.kt" \
   "$ROOT/rpc/src/main/kotlin/app/pi/rpc/PiJson.kt" \
   "$ROOT/rpc/src/main/kotlin/app/pi/rpc/internal/Json.kt"
 
