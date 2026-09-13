@@ -266,10 +266,15 @@ fun main() {
         PiModelInventory.selection(null, null),
         PiModelInventory.Selection(null, null, emptyList()),
     )
+    // The type argument is **not** noise: `check`'s parameters are `Any?`, which gives
+    // `emptyList()`'s `T` nothing to be inferred from, and the compiler says so
+    // ("cannot infer type for type parameter 'T'. Specify it explicitly."). Spelling
+    // the element type is the whole fix, at the two call sites where a bare
+    // `emptyList()` is handed to `check` — do not "tidy" it back.
     check(
         "a malformed enabledModels value is empty, not a crash",
         PiModelInventory.selection("""{ "enabledModels": "deepseek/*" }""").enabledPatterns,
-        emptyList(),
+        emptyList<String>(),
     )
 
     // ------------------------------------------------------------- 5 坏输入
@@ -283,7 +288,7 @@ fun main() {
     check("an unparseable models.json is reported", broken.modelsJsonError != null, true)
     check("the report names no file path", broken.modelsJsonError?.contains('/') ?: false, false)
     check("an unparseable auth.json is reported", broken.authJsonError != null, true)
-    check("a broken models.json does not invent providers", broken.providers, emptyList())
+    check("a broken models.json does not invent providers", broken.providers, emptyList<PiModelInventory.Provider>())
     check("a catalog that is not an object is just empty", broken.engineKnown, true)
 
     val missingKey = PiModelInventory.assemble(
