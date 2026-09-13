@@ -56,6 +56,18 @@ data class PiPackagesUiState(
      * so; see [PiBuiltinExtension].
      */
     val builtins: List<BuiltinRow> = emptyList(),
+    /**
+     * Extensions pi would load from the agent's `extensions/` directory that are
+     * **not** the app's own three and **not** packages — typically what the model
+     * itself wrote there. They used to be invisible: this screen had only the shipped
+     * list and `pi list`'s rows, and this is neither. See [PiAutoExtensions].
+     */
+    val discovered: List<PiAutoExtensions.Found> = emptyList(),
+    /**
+     * Skills, prompt templates and themes pi would find by looking at a directory —
+     * not packages, so `pi list` says nothing about them either.
+     */
+    val resources: List<PiResourceDiscovery.Found> = emptyList(),
     /** `pi list`'s raw stdout, shown whenever parsing found nothing. */
     val listRaw: String = "",
     val listUnparsed: Boolean = false,
@@ -173,6 +185,20 @@ fun PiPackagesScreen(
         item { LifecycleCard(state, onRestartClick, onRestartConfirm, onRestartCancel) }
         item { InstallCard(state, onSpecChange, onScopeChange, onInstall, onRefresh) }
         item { BuiltinCard(state.builtins) }
+
+        // Extensions that arrived the other way: pi loads them, `pi list` knows
+        // nothing about them, and only the filesystem can say they are there. Shown
+        // right after the app's own so the two origins stay two lists.
+        if (state.discovered.isNotEmpty()) {
+            item { DiscoveredCard(state.discovered) }
+        }
+
+        // The same question for the other three kinds pi discovers by looking at a
+        // directory. A skill or theme written by hand used to be absent from this
+        // screen entirely.
+        if (state.resources.isNotEmpty()) {
+            item { ResourcesCard(state.resources) }
+        }
         item { ListSectionHeading() }
 
         if (state.projectPackagesHidden) {
@@ -245,6 +271,79 @@ private fun BuiltinCard(rows: List<PiPackagesUiState.BuiltinRow>) {
             )
             Spacer(Modifier.height(6.dp))
             rows.forEach { row -> BuiltinRowView(row) }
+        }
+    }
+}
+
+@Composable
+/**
+ * The extensions found in the agent's `extensions/` directory, listed because pi
+ * loads them — the app's own list could not see them, so work the model did itself
+ * was invisible on this screen.
+ */
+@Composable
+private fun DiscoveredCard(rows: List<PiAutoExtensions.Found>) {
+    val palette = PiTheme.palette
+    Surface(color = palette.cardBg, shape = PiShapes.card) {
+        Column(Modifier.fillMaxWidth().padding(12.dp)) {
+            Text(
+                PackageStrings.DISCOVERED_TITLE,
+                style = MaterialTheme.typography.titleSmall,
+                color = palette.text,
+            )
+            Spacer(Modifier.height(6.dp))
+            rows.forEach { found ->
+                Surface(color = palette.infoBg, shape = PiShapes.cardInner) {
+                    Column(Modifier.fillMaxWidth().padding(10.dp)) {
+                        Text(found.name, style = MaterialTheme.typography.labelLarge, color = palette.text)
+                        Spacer(Modifier.height(2.dp))
+                        Text(
+                            PackageStrings.DISCOVERED_PRESENCE,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = palette.success,
+                        )
+                    }
+                }
+                Spacer(Modifier.height(10.dp))
+            }
+        }
+    }
+}
+
+/**
+ * Skills, prompt templates and themes found on disk, grouped by kind.
+ *
+ * Shown because pi loads them from a directory rather than from `settings.json`, so
+ * neither of this screen's other two sources can see them.
+ */
+@Composable
+private fun ResourcesCard(rows: List<PiResourceDiscovery.Found>) {
+    val palette = PiTheme.palette
+    Surface(color = palette.cardBg, shape = PiShapes.card) {
+        Column(Modifier.fillMaxWidth().padding(12.dp)) {
+            Text(
+                PackageStrings.RESOURCES_TITLE,
+                style = MaterialTheme.typography.titleSmall,
+                color = palette.text,
+            )
+            PiResourceDiscovery.Kind.entries.forEach { kind ->
+                val ofKind = rows.filter { it.kind == kind }
+                if (ofKind.isEmpty()) return@forEach
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    PackageStrings.resourceKind(kind) + "（${ofKind.size}）",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = palette.text,
+                )
+                ofKind.forEach { found ->
+                    Spacer(Modifier.height(2.dp))
+                    Text(
+                        found.name + PackageStrings.resourceScope(found.scope),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = palette.muted,
+                    )
+                }
+            }
         }
     }
 }

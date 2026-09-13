@@ -21,6 +21,12 @@ package app.pi.runtime
 //     ordinary Debian paths and is addressed by PATH, not by an agent-dir symlink —
 //     so if `/usr/bin` ever leaves the PATH this class pins, `git` becomes
 //     invisible to every launch path at once while remaining installed.
+//  3. **The workspace's guest spelling comes from one function.** Four launch paths
+//     bind one host directory and each used to work out the guest path itself; the
+//     rule now lives in `GuestWorkspacePath` (compiled into this harness, which is
+//     why the file is listed alongside `PiRuntime.kt`). The terminal's *different*
+//     mount of the same directory is pinned too — it is deliberate, and a change to
+//     either spelling has to be a deliberate change here.
 
 var failures = 0
 
@@ -107,6 +113,43 @@ fun main() {
         "the store is bound at its own absolute path",
         argv.zipWithNext().any { (flag, bind) -> flag == "-b" && bind == "${p.l2s.path}:${p.l2s.path}" },
         true,
+    )
+
+    // --------------------- 5. the workspace's guest spelling has one implementation
+    // Four launch paths bind this one host directory (the engine, the terminal's
+    // pty, the package commands and the `@` completion's `fd`), and each used to
+    // spell the guest path itself. Two shipped bugs came out of that shape - a
+    // session file path and an agent-dir bind - so the rule now lives in
+    // `GuestWorkspacePath` and every call site reads it. These checks pin the rule
+    // and, just as importantly, pin the *disagreement* the rule cannot remove:
+    // the terminal mounts the same directory at a different guest path.
+    check("the workspace lives under the files directory", GuestWorkspacePath.RELATIVE, "pi/workspaces/workspace-1")
+    check(
+        "the workspace directory is <files>/pi/workspaces/workspace-1",
+        GuestWorkspacePath.host(java.io.File(FILES)).path,
+        "$FILES/pi/workspaces/workspace-1",
+    )
+    val engineSpelling = GuestWorkspacePath.under(FILES, "$FILES/${GuestWorkspacePath.RELATIVE}")
+    check(
+        "the engine's guest spelling of the workspace",
+        engineSpelling,
+        "/workspace/pi/workspaces/workspace-1",
+    )
+    check("the files directory itself is the mount root", GuestWorkspacePath.under(FILES, FILES), "/workspace")
+    check(
+        "a path outside the files directory keeps its own shape (matches guestPathFor)",
+        GuestWorkspacePath.under(FILES, "/sdcard/ws"),
+        "/workspace/sdcard/ws",
+    )
+    check(
+        "the terminal mounts the same directory at its own path",
+        GuestWorkspacePath.TERMINAL_GUEST_PATH,
+        "/workspace",
+    )
+    check(
+        "the two spellings really are different for today's workspace",
+        engineSpelling == GuestWorkspacePath.TERMINAL_GUEST_PATH,
+        false,
     )
 
     println(if (failures == 0) "\nharness: OK (all checks passed)" else "\nharness: FAILED ($failures)")

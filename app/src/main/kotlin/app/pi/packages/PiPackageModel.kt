@@ -1,5 +1,7 @@
 package app.pi.packages
 
+import java.io.File
+
 /**
  * The value types shared by the package service, the list parser and the UI:
  * [PiPackageScope], [PiPackageEntry], [PiBuiltinExtension] (what the APK ships
@@ -178,3 +180,102 @@ data class PiPackageEntry(
      */
     val filters: Map<String, List<String>> = emptyMap(),
 )
+
+/**
+ * What pi would load from an `extensions/` directory — the extensions that are
+ * **not** packages, and therefore not in `pi list`.
+ *
+ * ## Why this type exists
+ *
+ * The packages screen had exactly two sources: the three extensions this app ships
+ * (`PiBuiltinExtension.SHIPPED`, found by looking at the filesystem) and the rows
+ * `pi list` reports, which come from `settings.json`'s `packages` array
+ * (`package-manager-cli.ts:970-1002`). An extension **written straight into
+ * `<agentDir>/extensions/`** — by the user, or by the agent itself through `bash` —
+ * is neither: pi loads it (`collectAutoExtensionEntries`), the app never listed it,
+ * and the screen showed only the app's own three while an extension the model had
+ * just written was running invisibly.
+ *
+ * ## The rules, from pi
+ *
+ * `collectAutoExtensionEntries` (`core/package-manager.ts:587-639`):
+ *
+ *  1. if the directory itself carries `package.json`'s `pi.extensions` manifest, those
+ *     entries are the whole list (`resolveExtensionEntries`, `:557-572`); otherwise
+ *     `index.ts`, then `index.js` (`:574-584`);
+ *  2. otherwise scan its entries, skipping names beginning with `.` and
+ *     `node_modules` (`:602-603`), following symlinks (`:607-614`), honouring the
+ *     directory's `.gitignore` (`:617`, `:619-620`);
+ *  3. a **file** counts when it ends in `.ts` or `.js` (`:623`) — not `.mts`/`.cjs`;
+ *  4. a **directory** counts only when rule 1 finds an entry inside it (`:625-630`).
+ *
+ * Rule 2's `.gitignore` handling is the one part not reproduced here: reading git
+ * ignore rules is a dependency this screen does not otherwise need, and an
+ * `extensions/` directory is not a checkout. The consequence is named where it shows
+ * — this reader can list a file pi would skip.
+ */
+object PiAutoExtensions {
+
+    /** One entry pi would load, named for a person. */
+    data class Found(
+        /** The directory or file name, without the source suffix for a file. */
+        val name: String,
+        /** Path relative to the directory scanned, for the row's detail line. */
+        val relativePath: String,
+    )
+
+    /**
+     * Every extension entry under [root], per pi's rules above.
+     *
+     * [root] itself is checked first: a directory that *is* an extension (its own
+     * `index.ts`, or a `package.json` manifest) is a single entry, which is how pi's
+     * installer re-exports a whole package.
+     */
+    fun discover(root: File): List<Found> {
+        if (!root.isDirectory) return emptyList()
+        val own = resolveEntries(root)
+        if (own != null) return own
+        return root.listFiles().orEmpty()
+            .filter { !it.name.startsWith(".") && it.name != "node_modules" }
+            .sortedBy { it.name }
+            .flatMap { entry ->
+                when {
+                    entry.isFile && (entry.name.endsWith(".ts") || entry.name.endsWith(".js")) ->
+                        listOf(Found(entry.name.substringBeforeLast('.'), entry.name))
+                    entry.isDirectory -> resolveEntries(entry).orEmpty()
+                    else -> emptyList()
+                }
+            }
+    }
+
+    /**
+     * pi's rule 1 for one directory: its `package.json` `pi.extensions` entries when
+     * it has that manifest, else `index.ts`, else `index.js`, else nothing.
+     *
+     * The manifest branch is modelled because ignoring it would make a package copied
+     * into `extensions/` look like an empty directory; the entries it names are not
+     * resolved to files (that needs pi's manifest parsing), so the row is labelled
+     * with the directory.
+     */
+    private fun resolveEntries(dir: File): List<Found>? {
+        val manifest = File(dir, "package.json")
+        if (manifest.isFile) {
+            val names = runCatching {
+                val root = kotlinx.serialization.json.Json.parseToJsonElement(manifest.readText())
+                (((((root as? kotlinx.serialization.json.JsonObject)?.get("pi")) as? kotlinx.serialization.json.JsonObject)
+                    ?.get("extensions")) as? kotlinx.serialization.json.JsonArray)
+                    ?.mapNotNull { (it as? kotlinx.serialization.json.JsonPrimitive)?.content }
+                    .orEmpty()
+            }.getOrDefault(emptyList())
+            if (names.isNotEmpty()) {
+                return listOf(Found(dir.name, dir.name))
+            }
+        }
+        for (candidate in listOf("index.ts", "index.js")) {
+            if (File(dir, candidate).isFile) {
+                return listOf(Found(dir.name, File(dir, candidate).relativeTo(dir.parentFile ?: dir).path))
+            }
+        }
+        return null
+    }
+}

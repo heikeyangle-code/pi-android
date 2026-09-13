@@ -705,7 +705,9 @@ L0 设置首页       13 个分组，每组右侧显示"当前值摘要"
 - 内建工具开关（ListRow → L2，8 项；**grep/find/ls 默认开**）· bash 默认超时（Number）· 输出截断上限（Number）· 工具输出默认展开（Switch）
 
 **L0-6 会话**
-- 会话目录（Text）· 导入会话（Action）· 导出全部（Action）· 清理策略（ValueRow）
+- 导入会话（Action，切到终端跑 `/import`）。
+  **会话目录与清理策略已不在设置页**：目录由 App 的启动参数固定（pi 的优先级是命令行 > 环境变量 > 设置，
+  写设置也不会被读），清理策略没有任何实现——理由见 `settings-review.md` §1.2 与 §7.5。
 
 **L0-7 扩展与资源**
 - 扩展（ListRow）· 资源包（ListRow + 安装/更新/移除）· 技能（ListRow）· 提示模板（ListRow）· 主题（ListRow + 导入）· 技能命令开关（Switch）· 上下文文件（ListRow → 编辑器）· 信任名单（ListRow）

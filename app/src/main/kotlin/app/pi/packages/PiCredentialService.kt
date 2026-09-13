@@ -30,12 +30,33 @@ import java.io.File
  * is read by `ModelConfig.load`, which is called from `ModelRuntime.refresh()`
  * (`core/model-runtime.ts:699`) and from `ModelRuntime.create` at startup (`:176`).
  * Nothing on the RPC surface calls `refresh` — `get_available_models` returns a
- * cached snapshot (`:422-424`) — so a new provider does not appear until the process
- * restarts. (pi's docs say `models.json` "reloads each time you open `/model`"
- * (`docs/models.md:80`); that is true of the **TUI**, which triggers a refresh, and
- * false over `--mode rpc`.) `auth.json` is different — pi's reader is revision-checked
- * (`auth-storage.ts:39`, `getFileRevision`), so an externally added key is noticed
- * without a restart; the provider list is what needs one.
+ * cached snapshot (`modes/rpc/rpc-mode.ts:490-493` → `core/model-runtime.ts:422-424`)
+ * — so a new provider does not appear until the process restarts. (pi's docs say
+ * `models.json` "reloads each time you open `/model`" (`docs/models.md:92`); that is
+ * true of the **TUI**, which triggers a refresh, and false over `--mode rpc`.)
+ *
+ * `auth.json` **also** needs the restart, and the reason is worth stating because the
+ * obvious reading is wrong: pi's credential reader *is* revision-checked
+ * (`auth-storage.ts:341-342`, `getFileRevision`), so pi would read an externally
+ * added key — but the list `get_available_models` answers from is
+ * `snapshot.available`, which is only rebuilt by an availability refresh
+ * (`model-runtime.ts:290-313`), and nothing on the RPC surface triggers one
+ * (`rpc-mode.ts` calls only the `getAvailableSnapshot()` getter, at `:473` and
+ * `:491`). Reading the new key and *offering* the model are two different steps, and
+ * over RPC only a restart performs the second.
+ *
+ * ## A blank key means "keep the stored one"
+ *
+ * Editing an existing provider used to require re-pasting its key: the field was the
+ * only source of the credential, so a blank one failed with "API Key 不能为空". That
+ * made "add one model to a provider I already configured" — the common case this
+ * screen exists for — impossible without the secret at hand. So:
+ *
+ *  - key typed → it replaces the stored credential;
+ *  - key left blank **and** the provider already has a credential of any kind (including
+ *    an `oauth` entry this app does not edit) → `auth.json` is not touched at all;
+ *  - key left blank, no credential, keyless endpoint → pi's placeholder is written;
+ *  - key left blank, no credential → refused, with the reason.
  */
 class PiCredentialService(
     private val layout: AgentLayout,
@@ -88,6 +109,55 @@ class PiCredentialService(
         return PiModelCatalog.parse(text, providerId)
     }
 
+    // ------------------------------------------------------------- 已导入清单
+
+    /**
+     * 设置 → 模型 的那张清单：厂商、模型、来源、启用、现在能不能用。
+     *
+     * **直读，不进任何缓存。** 这是这个页面存在的理由之一：`PiSettingsFileStore` 会把文档
+     * 缓存到下一次 App 自己写入为止，而这里要回答的恰恰是「外部（pi、终端、AI）刚改完，
+     * 现在到底是什么」。读的是 pi 真正读的那一份（[mirrorAgentDir]，见 [AgentLayout]），
+     * `models.json`/`auth.json` 在没有的时候回落到 rootfs 那份，与写入端同一套规则
+     * （[PiConfigFiles.effectiveFile]）。
+     *
+     * @param engineModels 引擎的 `get_available_models`；null 表示读不到（引擎没跑），
+     *        这时清单里所有模型的状态是「无法判断」而不是「缺凭证」。
+     */
+    fun inventory(engineModels: List<PiModelInventory.EngineModel>?): PiModelInventory.Inventory {
+        val selection = PiModelInventory.selection(
+            globalSettings = readTextOrNull(File(mirrorAgentDir, "settings.json")),
+            projectSettings = readTextOrNull(File(workspace, ".pi/settings.json")),
+        )
+        return PiModelInventory.assemble(
+            modelsJson = readEffective(
+                primary = PiConfigFiles.modelsFile(truthAgentDir),
+                mirror = PiConfigFiles.modelsFile(mirrorAgentDir),
+            ),
+            authJson = readEffective(
+                primary = PiConfigFiles.authFile(truthAgentDir),
+                mirror = PiConfigFiles.authFile(mirrorAgentDir),
+            ),
+            catalogJson = readTextOrNull(File(mirrorAgentDir, "models-store.json")),
+            selection = selection,
+            engineModels = engineModels,
+        )
+    }
+
+    /**
+     * 交给 `PiDirectoryWatch` 的目录：引擎的 agent 目录，以及工作区的 `.pi`（项目级
+     * `settings.json` 在那里）。
+     *
+     * **目录，不是文件**：App 写这些文件是原子的（写临时文件再 `rename`），而 inotify 的
+     * 监视挂在 inode 上——监视文件会在自己写完之后失聪。理由写在 `PiFileWatch.kt`。
+     */
+    fun watchedDirectories(): List<File> = listOf(mirrorAgentDir, File(workspace, ".pi"))
+
+    private fun readEffective(primary: File, mirror: File): String? =
+        PiConfigFiles.effectiveFile(primary, mirror)?.let { readTextOrNull(it) }
+
+    private fun readTextOrNull(file: File): String? =
+        if (file.isFile) runCatching { file.readText() }.getOrNull() else null
+
     // -------------------------------------------------------------- prefill
 
     /**
@@ -103,6 +173,14 @@ class PiCredentialService(
         val modelId: String?,
         val enabledModelIds: List<String>,
         val maskedKey: String?,
+        /**
+         * 这个厂商在 `auth.json` 里有没有条目（**任何类型**，含 App 不编辑的 `oauth`）。
+         *
+         * 与 [maskedKey] 的区别是它要回答的那个问题：留空 Key 保存时，凭证会不会被动？有
+         * 条目 = 不动（见 [save] 的规则），所以界面说的是「留空会沿用已保存的凭证」，而不是
+         * 让用户为了改一个模型重新粘贴 Key。
+         */
+        val credentialPresent: Boolean,
         val configuredProviderIds: List<String>,
         val configuredModelIds: List<String>,
         val baseUrl: String?,
@@ -134,6 +212,7 @@ class PiCredentialService(
             modelId = currentModel,
             enabledModelIds = emptyList(),
             maskedKey = id?.let { keys[it]?.key }?.let { PiAuthStorage.mask(it) },
+            credentialPresent = id != null && auth().hasAnyEntry(id),
             configuredProviderIds = keys.keys.sorted(),
             configuredModelIds = id?.let { models().configuredModelIds(it) } ?: emptyList(),
             baseUrl = (block?.get("baseUrl") as? kotlinx.serialization.json.JsonPrimitive)?.content,
@@ -202,22 +281,28 @@ class PiCredentialService(
         if (choices.isEmpty()) {
             return SaveResult(false, listOf("没有选择任何模型"), null)
         }
-        if (preset.scanStyle == PiProviderPresets.ScanStyle.Keyless && apiKey.isBlank()) {
-            // pi hides a provider with no credential even when the endpoint needs
-            // none (`docs/models.md:34-36`), so a placeholder is written and the
-            // screen says so.
-            steps += "本地端点无鉴权，已按 pi 的要求写入占位 Key（${PiProviderPresets.KEYLESS_PLACEHOLDER}）"
+        // 留空 = 不动凭证（见类头部）。只有在"本来就没有凭证"时才是一个错误——否则编辑一个
+        // 已配好的厂商会被迫重新粘贴 Key，而这一步和"加一个模型"毫无关系。
+        val storedCredential = auth().hasAnyEntry(preset.id)
+        val effectiveKey: String? = when {
+            apiKey.isNotBlank() -> apiKey
+            storedCredential -> null
+            preset.scanStyle == PiProviderPresets.ScanStyle.Keyless -> PiProviderPresets.KEYLESS_PLACEHOLDER
+            else -> return SaveResult(false, steps + "这个厂商还没有保存过凭证，请填 API Key", null)
         }
-        val effectiveKey = if (apiKey.isBlank() && preset.scanStyle == PiProviderPresets.ScanStyle.Keyless) {
-            PiProviderPresets.KEYLESS_PLACEHOLDER
+        if (effectiveKey != null) {
+            auth().setApiKey(preset.id, effectiveKey)?.let { error ->
+                return SaveResult(false, steps + error, null)
+            }
+            steps += if (apiKey.isNotBlank()) {
+                "凭证已保存：${preset.id}"
+            } else {
+                // pi 会隐藏没有凭证的厂商（`docs/models.md:34-36`），所以无鉴权端点也要写一个占位值。
+                "本地端点无鉴权，已按 pi 的要求写入占位 Key（${PiProviderPresets.KEYLESS_PLACEHOLDER}）"
+            }
         } else {
-            apiKey
+            steps += "沿用已保存的凭证，未改动"
         }
-
-        auth().setApiKey(preset.id, effectiveKey)?.let { error ->
-            return SaveResult(false, steps + error, null)
-        }
-        steps += "凭证已保存（仅本 App 可读）：${preset.id}"
 
         // ---- the one rule of this write --------------------------------------
         //
@@ -246,7 +331,11 @@ class PiCredentialService(
 
         val provider = PiModelsFile.Provider(
             id = preset.id,
-            name = preset.displayName,
+            // pi's own providers already have a name, and this app's label for one
+            // ("Google AI Studio" for pi's "Google") is a label for *this* list, not a
+            // fact about the provider. Writing it would put the app's wording into
+            // `models.json` and rename the provider inside pi.
+            name = if (preset.builtInPi) null else preset.displayName,
             baseUrl = baseUrl.trim().trimEnd('/'),
             api = api,
             authHeader = preset.authHeader,
@@ -297,4 +386,14 @@ class PiCredentialService(
 
     /** For the UI's "which agent dir is this actually in" disclosure. */
     fun paths(): Pair<String, String> = truthAgentDir.absolutePath to mirrorAgentDir.absolutePath
+
+    companion object {
+        /**
+         * 模型这一块的界面要盯着的外部改动：这四份文件一变，"已导入的模型"这张清单就可能不同。
+         *
+         * 交给 `PiDirectoryWatch` 做**前缀**匹配，所以 `models.json.tmp-123`、
+         * `models.json.lock` 这类"有人正在写"的信号也算——它们正是原子写入的中间态。
+         */
+        val MODEL_FILES = listOf("models.json", "auth.json", "models-store.json", "settings.json")
+    }
 }

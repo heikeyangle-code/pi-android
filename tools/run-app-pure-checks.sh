@@ -223,7 +223,11 @@ run_harness() { # $1 = label, $2 = main class, rest = sources (harness included)
   fi
 
   local report
-  report="$(java -cp "$out:$LIB_CP" "$main_class" 2>&1)"
+  # `pi.repo.root` is passed to every harness: the settings audit reads the
+  # registry as source text and scans the tree from there, and deriving the root
+  # from the working directory would make its verdict depend on where someone
+  # happened to run this script from.
+  report="$(java -Dpi.repo.root="$ROOT" -cp "$out:$LIB_CP" "$main_class" 2>&1)"
   status=$?
   printf '%s\n' "$report"
   # Both halves are required. The status catches `exitProcess(1)`; the marker
@@ -255,6 +259,7 @@ run_harness packages \
   "$ROOT/app/src/main/kotlin/app/pi/packages/PiPackageFilters.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/packages/PiModelsMerge.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/packages/PiModelCatalog.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/packages/PiResourceDiscovery.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/packages/ExtensionLifecycle.kt" \
   "$ROOT/rpc/src/main/kotlin/app/pi/rpc/Ansi.kt"
 
@@ -264,6 +269,17 @@ run_harness guest-paths \
   app.pi.bridge.GuestPathMappingCheckKt \
   "$ROOT/app/src/test/kotlin/app/pi/bridge/GuestPathMappingCheck.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/bridge/GuestPathMapping.kt"
+
+# app.pi.bridge: the device shell's policy exists twice — Kotlin enforces it
+# (`DeviceShellGuard.hardBlocks`) and the permission gate's `danger.ts` mirrors it so
+# an impossible command is refused before the user is asked about it. The two diverged
+# once (a block-device pattern with a `\b` before a `/`, which can never match) and
+# nothing in the build could notice; this reads both files as source text and compares
+# the rules, plus the registered-tool vs danger-level sets. Android-free: java.io.File,
+# regex and the stdlib, because the Kotlin guard itself imports android.os.Process.
+run_harness shell-policy-mirror \
+  app.pi.bridge.ShellPolicyMirrorCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/bridge/ShellPolicyMirrorCheck.kt"
 
 # app.pi.ui.chat: the pure half of the `@` file-mention completion (trigger
 # boundaries, pi's fd argv and shell quoting, pi's scorer and ordering, and what a
@@ -275,17 +291,100 @@ run_harness mentions \
   "$ROOT/app/src/test/kotlin/app/pi/ui/chat/PiFileMentionsCheck.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/ui/chat/PiFileMentions.kt"
 
-# app.pi.runtime: the two invariants that decide whether the guest can see a tool.
-# `installTool` writes rg and fd into two different host directories because the
-# engine and the package commands bind `<files>/pi/.pi/agent` over the guest's
-# `/root/.pi/agent` and the terminal does not, so a tool installed into only one of
-# them is invisible to one of the three launch paths. That failure is silent (pi's
-# `find` simply stops returning anything), which is why it is pinned here rather than
-# left to a device. Android-free: `PiRuntime.kt` imports only `java.io.File`.
+# app.pi.runtime: the two invariants that decide whether the guest can see a tool,
+# plus the one implementation of the workspace's guest spelling. `installTool` writes
+# rg and fd into two different host directories because the engine and the package
+# commands bind `<files>/pi/.pi/agent` over the guest's `/root/.pi/agent` and the
+# terminal does not, so a tool installed into only one of them is invisible to one of
+# the three launch paths. That failure is silent (pi's `find` simply stops returning
+# anything), which is why it is pinned here rather than left to a device. Android-free:
+# `PiRuntime.kt` imports only `java.io.File`, and so does `GuestWorkspacePath.kt`.
 run_harness agent-tool-paths \
   app.pi.runtime.AgentToolPathsCheckKt \
   "$ROOT/app/src/test/kotlin/app/pi/runtime/AgentToolPathsCheck.kt" \
-  "$ROOT/app/src/main/kotlin/app/pi/runtime/PiRuntime.kt"
+  "$ROOT/app/src/main/kotlin/app/pi/runtime/PiRuntime.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/runtime/GuestWorkspacePath.kt"
+
+# app.pi.session: which on-disk files count as sessions, in which of pi's two
+# layouts, in what order, and which one `-c` would resume. It exists because the
+# reader had exactly one layout wired in (the grouped one) while the engine writes
+# the other one (flat, since `--session-dir` is passed): the list came back empty on
+# the device and nothing in the build could notice. Android-free — the store uses
+# `java.io.File`, kotlinx.serialization (through `:rpc`'s PiJson) and
+# kotlinx.coroutines only.
+run_harness sessions \
+  app.pi.session.PiSessionStoreCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/session/PiSessionStoreCheck.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/session/PiSessionStore.kt" \
+  "$ROOT/rpc/src/main/kotlin/app/pi/rpc/PiJson.kt" \
+  "$ROOT/rpc/src/main/kotlin/app/pi/rpc/internal/Json.kt"
+
+# :rpc: `extension_error`'s attribution. pi sends an absolute file path, which may
+# not reach user-visible copy, and most packaged extensions are loaded from
+# `index.ts` — so the naive "last path segment" names every broken extension
+# "index.ts" and attributes nothing. This pins the reduction the transcript row and
+# the snackbar share. Android-free and dependency-free: the file under test imports
+# nothing at all.
+run_harness extension-error-text \
+  app.pi.rpc.ExtensionErrorTextCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/rpc/ExtensionErrorTextCheck.kt" \
+  "$ROOT/rpc/src/main/kotlin/app/pi/rpc/ExtensionErrorText.kt"
+
+# app.pi.ui.chat: the transcript's follow-the-tail state machine. This is the one
+# part of streaming the App can be *made* to prove here. The rules (when does the
+# follow pause, when does it resume, where does it have to scroll to reach the
+# newest text) used to live in `LaunchedEffect`s reading `LazyListState`, and the
+# defect they caused - the follow pausing itself on a frame of layout churn and then
+# never coming back - cannot be reproduced without a device, but it reproduces
+# exactly against a pure function. Compose cannot be compiled on this machine (no
+# Compose compiler plugin in `tools/typecheck.sh`), so extracting the machine was the
+# only way to test any of this. Android-free by construction: `TailFollow.kt` imports
+# nothing at all.
+run_harness tail-follow \
+  app.pi.ui.chat.TailFollowCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/ui/chat/TailFollowCheck.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/ui/chat/TailFollow.kt"
+
+# app.pi.packages: 设置 → 模型 的那张清单（`PiModelInventory.kt`）与外部改动检测的判据
+# （`PiFileStamps.kt`）。为什么它必须在这里：清单要回答"导入过的模型为什么不在列表里"，而
+# 答案是一个**推断**（文件里有 + 有凭证 + 引擎没列 = 要重启），错在安静的那一侧就等于界面
+# 说"已经生效"而引擎从未读过那个文件 —— 正是 §M11/§M12 的形状。Compose 编译不了，所以判定
+# 必须留在纯对象里。文件本身不碰文件系统（四份文件原文由调用者传进来），只有 `PiFileStamps`
+# 用 `java.io.File` 做 mtime/大小判据。
+run_harness models-inventory \
+  app.pi.packages.PiModelInventoryCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/packages/PiModelInventoryCheck.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/packages/PiModelInventory.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/packages/PiJsonComments.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/packages/PiFileStamps.kt"
+
+# :rpc: the engine's stdout decoding. `PiEngineSession.readLoop` handed each 16 KiB
+# read to `String(bytes, 0, read, UTF_8)`, which decodes one read as a complete
+# stream - so a CJK character straddling two reads became one replacement character
+# per orphaned byte, inside a JSON string, where the record still parses and the
+# corruption is indistinguishable from text the model wrote. The harness splits a
+# byte stream at every offset (and one byte at a time) and proves the incremental
+# decoder is exact; it also pins the naive behaviour it replaces, so this file cannot
+# silently stop testing anything. JDK-only: java.nio plus the Kotlin stdlib, and it
+# compiles alongside `JsonlFramer`, whose contract it feeds.
+run_harness utf8-stream \
+  app.pi.rpc.Utf8StreamDecoderCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/rpc/Utf8StreamDecoderCheck.kt" \
+  "$ROOT/rpc/src/main/kotlin/app/pi/rpc/Utf8StreamDecoder.kt" \
+  "$ROOT/rpc/src/main/kotlin/app/pi/rpc/Jsonl.kt"
+
+# app.pi.ui.settings: the registry audit. `PiSettingsRegistry.kt` is data — 67 rows
+# transcribed from pi's settings documents — and nothing ever compared it against
+# the rest of the tree, so a row that is persisted and read by nobody could only be
+# found by hand. That defect has shipped three times (§I7, §I10, §I11 in
+# `docs/known-gaps.md`), which is what makes a check worth more than another careful
+# pass. The harness reads the registry as source text (it imports Compose, so it
+# cannot be compiled here) and fails on any key that is neither read by this app nor
+# declared pi-owned with the pi location that reads it. Android-free: java.io.File,
+# regex and the stdlib.
+run_harness settings-audit \
+  app.pi.ui.settings.PiSettingsAuditCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/ui/settings/PiSettingsAuditCheck.kt"
 
 # --- 4. verdict ---------------------------------------------------------------
 # The counts are computed, not written down. They were hardcoded once ("2

@@ -54,7 +54,6 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
-import androidx.compose.material3.SmallFloatingActionButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
@@ -63,10 +62,16 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.Saver
+import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -105,6 +110,9 @@ import app.pi.ui.chat.RenameSessionDialog
 import app.pi.ui.chat.SessionStatsSheet
 import app.pi.ui.chat.SessionToolsSheet
 import app.pi.ui.chat.SlashPalette
+import app.pi.ui.chat.TailFollow
+import app.pi.ui.chat.TailSnapshot
+import app.pi.ui.chat.TailViewport
 import app.pi.ui.chat.ThinkingPickerSheet
 import app.pi.ui.chat.routeComposerText
 import app.pi.ui.chat.thinkingLabelOf
@@ -396,33 +404,98 @@ private fun ChatBody(
         pendingJump = row
     }
 
-    // Follow-the-tail state. The spec is explicit (§4.5): follow the newest block
-    // by default, and **never steal the scroll** once the user has scrolled up —
-    // unlocking the follow and showing a "back to newest" affordance instead.
-    // F4 (`docs/rendering-review.md`): the previous implementation animated to the
-    // last item on *every* token, so scrolling up during a stream was yanked back
-    // on the next token, and each token restarted an animation.
-    var following by rememberSaveable { mutableStateOf(true) }
-    val atBottom by remember(listState) {
-        derivedStateOf {
-            val info = listState.layoutInfo
-            val total = info.totalItemsCount
-            total == 0 || (info.visibleItemsInfo.lastOrNull()?.index ?: -1) >= total - 2
-        }
+    // ---------------------------------------------------------------- follow the tail
+    //
+    // Spec §4.5: follow the newest block by default, and **never steal the scroll**
+    // once the user has scrolled up — pause the follow and show a "back to newest"
+    // affordance instead. The rules themselves live in `ui/chat/TailFollow.kt`, a
+    // Compose-free state machine pinned by `TailFollowCheck` on a bare JVM; what is
+    // left here is the reading of `LazyListState` and the one call that acts on the
+    // decision.
+    //
+    // Why it is no longer two `LaunchedEffect`s (F4 in `docs/rendering-review.md`,
+    // and the two defects `docs/streaming-review.md` §2.1/§2.2 record):
+    //
+    //  * `LaunchedEffect(atBottom) { if (!atBottom) following = false }` paused the
+    //    follow on one frame of a two-row approximation of "at the bottom". Content
+    //    growth and layout churn make that false without anybody scrolling, and the
+    //    old code — by design — never re-armed. The follow turned itself off and
+    //    stayed off: "流式时不会自动触底跟随".
+    //  * `LaunchedEffect(state.revision, ...)` was keyed on a counter that moves once
+    //    per streamed event (`PiSessionViewModel.syncTranscript` writes
+    //    `revision = pub.revision` on every publication), so the effect was cancelled
+    //    and restarted per token and its `scrollToItem` could be cancelled before it
+    //    ever ran. One long-lived effect that reacts to the *layout* instead cannot be
+    //    starved that way, and `requestScrollToItem` is not a suspending scroll at all.
+    //
+    // `rememberSaveable(sessionKey, ...)`: the window's rules are about one opening of
+    // one session, and a rotation must not resurrect a paused follow as "keep
+    // following" (`LazyListState` restores its own position, so the next token would
+    // yank a reader who had scrolled up into history back to the bottom).
+    val tail = rememberSaveable(sessionKey, saver = TailFollowSaver) { TailFollow() }
+    // Mirrors of the machine's two outputs. They exist so the affordance below
+    // recomposes when they change and *only* then; writing the same value back to a
+    // `MutableState` is not an invalidation.
+    var following by remember { mutableStateOf(tail.following) }
+    var unseenRows by remember { mutableIntStateOf(tail.unseenRows) }
+    // Handed to the machine, which ignores it: bumping it makes the `snapshotFlow`
+    // below re-emit so a pin can be issued between two layout passes. Without it a
+    // "back to newest" tap during a quiet moment would do nothing at all.
+    var tailPoke by remember { mutableLongStateOf(0L) }
+    // The *whole* transcript's row count, not the rendered window's: the unseen count
+    // must include rows the window has not materialised, and a shrinking count is what
+    // tells the machine the session was replaced. `rememberUpdatedState` because the
+    // effect below is started once and would otherwise capture the first composition's
+    // value forever.
+    val transcriptRows by rememberUpdatedState(state.transcript.size)
+
+    fun pauseTail() {
+        tail.pause()
+        following = false
+        unseenRows = 0
     }
-    // Only ever unlocks: scrolling back down does not silently re-arm, because the
-    // user asked to stop following. The button below re-arms it explicitly.
-    LaunchedEffect(atBottom) { if (!atBottom) following = false }
-    LaunchedEffect(state.revision, following, renderedItems.size, headerRows) {
-        if (!following) return@LaunchedEffect
-        // F34: the tail of the rendered window rather than of the whole session. The
-        // window always ends on the newest row, so this is the same row as before —
-        // and the +`headerRows` accounts for the loading row in front of it.
-        val last = renderedItems.size - 1 + headerRows
-        if (last >= headerRows) {
-            // Non-suspending while streaming: an animation per token is exactly the
-            // stutter F4 describes, and a jump is what "follow" means here.
-            if (state.streaming) listState.scrollToItem(last) else listState.animateScrollToItem(last)
+
+    fun reArmTail() {
+        tail.reArm()
+        following = true
+        unseenRows = 0
+        tailPoke++
+    }
+
+    LaunchedEffect(listState) {
+        snapshotFlow {
+            val info = listState.layoutInfo
+            val last = info.visibleItemsInfo.lastOrNull()
+            TailSnapshot(
+                transcriptRows = transcriptRows,
+                poke = tailPoke,
+                viewport = TailViewport(
+                    totalItems = info.totalItemsCount,
+                    firstVisibleIndex = listState.firstVisibleItemIndex,
+                    firstVisibleOffsetPx = listState.firstVisibleItemScrollOffset,
+                    lastVisibleIndex = last?.index ?: -1,
+                    lastVisibleOffsetPx = last?.offset ?: 0,
+                    lastVisibleSizePx = last?.size ?: 0,
+                    viewportEndOffsetPx = info.viewportEndOffset,
+                    isScrollInProgress = listState.isScrollInProgress,
+                    atBottom = !listState.canScrollForward,
+                ),
+            )
+        }.collect { snapshot ->
+            val decision = tail.onSnapshot(snapshot)
+            if (following != decision.following) following = decision.following
+            if (unseenRows != decision.unseenRows) unseenRows = decision.unseenRows
+            val pin = decision.pin
+            // `requestScrollToItem` is the whole reason this is not a stutter: it
+            // applies the position at the next remeasure instead of animating, so N
+            // decisions in one frame cost one layout, a decision cannot be cancelled
+            // by the next token, and no animation is ever restarted. The
+            // `isScrollInProgress` re-read closes the gap between the snapshot and
+            // this line — the follow must never cancel the user's own drag (that is
+            // what `requestScrollToItem` does to a scroll in progress).
+            if (pin != null && !listState.isScrollInProgress) {
+                listState.requestScrollToItem(pin.index, pin.offsetPx)
+            }
         }
     }
     // Spec §4.5: "向上滚动时分批加载更早的 entry". Reaching the top grows the window by
@@ -447,8 +520,11 @@ private fun ChatBody(
         val index = searchMatches.getOrNull(searchCursor.coerceIn(0, (searchMatches.size - 1).coerceAtLeast(0)))
         if (index != null) {
             // Jumping to a match is navigation, so following stops until the user
-            // asks for the newest block again.
-            following = false
+            // asks for the newest block again — pi's `disableFollow` semantics, which
+            // keep it stopped even if the hit is in the last row
+            // (`packages/tui/src/components/scroll-view.ts:131`, the search reveal at
+            // `tui-alt-screen.ts:636`).
+            pauseTail()
             reveal(index)
         }
     }
@@ -456,7 +532,13 @@ private fun ChatBody(
         val row = pendingJump ?: return@LaunchedEffect
         val index = row - hiddenCount + headerRows
         if (renderedItems.isNotEmpty() && index in 0 until renderedItems.size + headerRows) {
-            listState.animateScrollToItem(index)
+            // A direct position change, not `animateScrollToItem`: the jump is a
+            // navigation, and an animation is a *scroll session*, which the follow
+            // machine would read as the user's own hand and which would clear the
+            // "this was navigation" suppression that keeps a reveal to the last row
+            // from re-arming the follow. pi's own reveal is a direct `scrollTo`
+            // (`tui-alt-screen.ts:636` → `scroll-view.ts:127`).
+            listState.requestScrollToItem(index, 0)
             pendingJump = null
         }
     }
@@ -490,9 +572,9 @@ private fun ChatBody(
         }
     }
 
-    // Follow the tail while streaming, but never steal the scroll: the effect
-    // above only runs while `following` is armed, and that flag is dropped the
-    // moment the user scrolls away from the bottom.
+    // The follow itself is the single `LaunchedEffect(listState)` above; nothing
+    // below this line decides anything about it, except the two jumps and the FAB
+    // that *pause* and *re-arm* it explicitly.
 
     // A command the palette offers: pi's own dispatch rule (`agent-session.ts`
     // `prompt` → extension command → skill → template) for anything pi owns, and
@@ -634,7 +716,7 @@ private fun ChatBody(
                         // hidden prefix does not exist in the rendered list.
                         val firstFull = listState.firstVisibleItemIndex - headerRows + hiddenCount
                         userRowIndices().lastOrNull { it < firstFull }?.let { row ->
-                            following = false
+                            pauseTail()
                             reveal(row)
                         }
                         overflow = false
@@ -642,7 +724,7 @@ private fun ChatBody(
                     OverflowItem("跳到下一条提问") {
                         val firstFull = listState.firstVisibleItemIndex - headerRows + hiddenCount
                         userRowIndices().firstOrNull { it > firstFull }?.let { row ->
-                            following = false
+                            pauseTail()
                             reveal(row)
                         }
                         overflow = false
@@ -868,14 +950,38 @@ private fun ChatBody(
                     )
                 }
             }
-            // Spec §4.5's affordance: once the follow has been unlocked by the
-            // user's own scrolling, this is the only thing that re-arms it.
+            // Spec §4.5's affordance: once the follow has been paused by the user's
+            // own scrolling (or by a jump into history), this is the explicit way back.
+            // pi draws its own version only while the follow is off
+            // (`tui-alt-screen.ts:1620`) and clicking it changes the position directly
+            // (`:1015-1021` → `scroll-view.ts:477-480`); the count is the App's
+            // addition, from spec §4.5's 「↓ 回到最新（N）」.
             if (!following) {
-                SmallFloatingActionButton(
-                    onClick = { following = true },
-                    modifier = Modifier.align(Alignment.BottomEnd).padding(12.dp),
+                Surface(
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(12.dp)
+                        .clickable(onClickLabel = "回到最新", onClick = { reArmTail() }),
+                    shape = RoundedCornerShape(percent = 50),
+                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    shadowElevation = 3.dp,
                 ) {
-                    Icon(Icons.Filled.KeyboardArrowDown, contentDescription = "回到最新")
+                    Row(
+                        Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Icon(
+                            Icons.Filled.KeyboardArrowDown,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Spacer(Modifier.width(4.dp))
+                        Text(
+                            text = if (unseenRows > 0) "回到最新 · $unseenRows" else "回到最新",
+                            style = PiTheme.text.meta,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                 }
             }
             }
@@ -1014,6 +1120,10 @@ private fun ChatBody(
                 session.sendFollowUp(draft, attachments)
                 draft = ""
                 attachments = emptyList()
+                // Spec §4.5's 发送行为: a send lands on the newest row. Queued text
+                // included — the queue row is chrome next to the composer, but the
+                // turn it belongs to is at the tail.
+                reArmTail()
             },
             onSend = {
                 when (val route = routeComposerText(draft, state.commands)) {
@@ -1021,11 +1131,17 @@ private fun ChatBody(
                     ComposerRoute.Empty -> if (attachments.isNotEmpty()) {
                         session.send("", attachments)
                         attachments = emptyList()
+                        reArmTail()
                     }
                     is ComposerRoute.Message -> {
                         session.send(route.text, attachments)
                         draft = ""
                         attachments = emptyList()
+                        // Spec §4.5: 发送后清空输入、插入用户消息、**滚动到底**. The
+                        // machine re-arms and the poke makes it pin without waiting for
+                        // the next layout pass, so the user sees their own message
+                        // rather than a transcript they had scrolled up into.
+                        reArmTail()
                     }
                     is ComposerRoute.Bash -> {
                         session.runBash(route.command, route.excludeFromContext)
@@ -1491,6 +1607,21 @@ private const val MENTION_DEBOUNCE_MS: Long = 150L
  * reducer's own replay independent of how much is on screen.
  */
 private const val TRANSCRIPT_WINDOW_STEP = 50
+
+/**
+ * `rememberSaveable`'s saver for the follow machine.
+ *
+ * A configuration change must not turn a paused follow back into an armed one:
+ * `LazyListState` restores its own scroll position, so coming back armed would yank a
+ * reader who had scrolled up into history to the bottom on the next token. The three
+ * ints are the machine's own state (`ui/chat/TailFollow.kt`, [TailFollow.savedState]);
+ * the anchors are deliberately not among them, because they describe a single layout
+ * pass and a fresh layout compared against a stale one would read as a user gesture.
+ */
+private val TailFollowSaver: Saver<TailFollow, Any> = listSaver(
+    save = { it.savedState() },
+    restore = { saved -> TailFollow.fromSavedState(saved) },
+)
 
 @Composable
 private fun KeyHint(label: String, onClick: () -> Unit) {

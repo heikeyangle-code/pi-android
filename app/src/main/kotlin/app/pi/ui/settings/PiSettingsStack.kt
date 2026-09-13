@@ -18,9 +18,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import app.pi.bridge.DeviceCapabilityStore
 import app.pi.packages.EngineRestartCoordinator
+import app.pi.packages.ExtensionLifecycle
 import app.pi.packages.PiPackagesHost
 import app.pi.rpc.PiResponses
 import app.pi.runtime.PiPaths
+import app.pi.runtime.PtyLauncher
 import app.pi.ui.device.DeviceCapabilityScreen
 import app.pi.ui.theme.PiThemeEntry
 import kotlinx.coroutines.Dispatchers
@@ -116,6 +118,8 @@ fun PiSettingsStack(
     // the licences of what this app redistributes is the distributor's obligation,
     // so the screen is the app's own.
     var licenses by remember { mutableStateOf(false) }
+    // 设置 → 模型：App 侧的一页，列出这台设备上配好的厂商与模型（`PiModelsScreen`）。
+    var models by remember { mutableStateOf(false) }
 
     // The 运行时 group's four read-only rows: their facts live in the runtime
     // tree and in the engine's foreground service, not in the settings store, so
@@ -123,14 +127,13 @@ fun PiSettingsStack(
     // walk plus a few small files, hence IO, hence a state that starts null
     // (rows show 未读取 for exactly one frame).
     val context = LocalContext.current
-    val runtimeFacts = remember(context) {
-        RuntimeFacts(
-            paths = PiPaths(
-                filesDir = context.filesDir,
-                nativeLibDir = File(context.applicationInfo.nativeLibraryDir),
-            ),
+    val paths = remember(context) {
+        PiPaths(
+            filesDir = context.filesDir,
+            nativeLibDir = File(context.applicationInfo.nativeLibraryDir),
         )
     }
+    val runtimeFacts = remember(paths) { RuntimeFacts(paths = paths) }
     var facts by remember { mutableStateOf<RuntimeFacts.Snapshot?>(null) }
     LaunchedEffect(runtimeFacts) {
         facts = withContext(Dispatchers.IO) { runtimeFacts.read() }
@@ -145,6 +148,40 @@ fun PiSettingsStack(
     var restartPrompt by remember { mutableStateOf(false) }
     var restartNote by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
+
+    // One lifecycle and one coordinator for the whole stack, so the two screens
+    // that write pi's startup-read files (厂商凭证 and 模型) share one answer to
+    // "is something waiting for a restart". They used to build one each, and a
+    // second machine that cannot see the first is how a screen ends up saying
+    // "没有待重启的变更" while the other says "需要重启".
+    val lifecycle = remember { ExtensionLifecycle() }
+    val coordinator = remember(lifecycle, restartEngine) {
+        restartEngine?.let { engine ->
+            EngineRestartCoordinator(
+                lifecycle = lifecycle,
+                isTurnRunning = isTurnRunning,
+                restartEngine = engine,
+            )
+        }
+    }
+
+    // External-change epoch. `PiSettingsFileStore` caches both documents until the
+    // app itself writes one, so a file edited by pi, a terminal, or the AI kept
+    // showing the old value. `PiDirectoryWatch` reports real changes (inotify while
+    // this stack is composed, plus one mtime/size comparison on ON_RESUME); each
+    // report drops that cache and bumps this epoch, which re-builds the group rows
+    // and therefore re-reads the values. No timer, and nothing at all while the
+    // settings destination is not on screen.
+    var filesEpoch by remember { mutableStateOf(0) }
+    val workspace = remember(context) { PtyLauncher.workspaceHost(context) }
+    PiDirectoryWatch(
+        directories = remember(paths, workspace) { listOf(paths.agentDir, File(workspace, ".pi")) },
+        names = remember { SETTINGS_WATCHED },
+        onChanged = {
+            onExternalSettingsWrite()
+            filesEpoch++
+        },
+    )
 
     val openSetting: (String) -> Unit = { key ->
         val setting = PiSettingsCatalog.byKey[key]
@@ -184,7 +221,11 @@ fun PiSettingsStack(
         credentialPreset = "llamacpp"
         credentials = true
     }
+    // 设置 → 模型：App 侧的一页（`PiModelsScreen`）。它读的是文件与引擎，不是一个设置值，
+    // 所以和凭证表单一样是 Action 行 + 自己的界面，而不是一条可编辑的键。
+    val openModels: () -> Unit = { models = true }
     val hostActions: Map<String, () -> Unit> = mapOf(
+        "app.models.inventory" to openModels,
         "app.credentials.apiKey" to openCredentialForm,
         "app.localModels.manage" to openLocalModelForm,
         // The `packages` row is a read-only *view* of what `pi install` wrote
@@ -200,12 +241,14 @@ fun PiSettingsStack(
     )
 
     BackHandler(
-        enabled = searching || groupId != null || deviceCapabilities || packages || credentials || licenses,
+        enabled = searching || groupId != null || deviceCapabilities || packages || credentials || licenses || models,
     ) {
         if (searching) {
             searching = false
         } else if (licenses) {
             licenses = false
+        } else if (models) {
+            models = false
         } else if (credentials) {
             credentials = false
         } else if (packages) {
@@ -242,6 +285,29 @@ fun PiSettingsStack(
                 availableModels = availableModels,
                 onLoadAvailableModels = onLoadAvailableModels,
                 onFilesWritten = onExternalSettingsWrite,
+                // 与 设置 → 模型 共用一份"需要重启"状态，见上面 lifecycle 的注释。
+                lifecycle = lifecycle,
+                coordinator = coordinator,
+            )
+
+            models -> PiModelsScreen(
+                contentPadding = contentPadding,
+                onBack = { models = false },
+                lifecycle = lifecycle,
+                coordinator = coordinator,
+                availableModels = availableModels,
+                onLoadAvailableModels = onLoadAvailableModels,
+                // 打开设置里已有的那一行，而不是在这里重做编辑器：默认模型与循环列表的
+                // 编辑规则（通配符、pi 的默认值）已经在 `PiSettingsRegistry` 里写过一遍。
+                onOpenSetting = { key ->
+                    models = false
+                    openSetting(key)
+                },
+                onOpenCredentials = { presetId ->
+                    models = false
+                    credentialPreset = presetId
+                    credentials = true
+                },
             )
 
             packages -> PiPackagesHost(
@@ -260,6 +326,7 @@ fun PiSettingsStack(
 
             searching -> SettingsSearchScreen(
                 store = activeStore,
+                freshness = filesEpoch,
                 contentPadding = contentPadding,
                 onBack = { searching = false },
                 onOpenSetting = openSetting,
@@ -269,6 +336,10 @@ fun PiSettingsStack(
             currentGroup != null -> SettingsGroupScreen(
                 groupId = currentGroup,
                 store = activeStore,
+                // 外部改了 settings.json 之后，值必须在界面上变。store 的缓存由
+                // `onExternalSettingsWrite` 丢掉，而这个 epoch 才是让行重新读它的东西
+                // （行是在 composition 里读 store 的，缓存失效本身不会触发重组）。
+                freshness = filesEpoch,
                 contentPadding = contentPadding,
                 onBack = {
                     if (backReturnsToSearch) searching = true
@@ -362,3 +433,21 @@ fun PiSettingsStack(
         )
     }
 }
+
+/**
+ * 设置页要盯着的**外部改动**（交给 `PiDirectoryWatch` 做前缀匹配）。
+ *
+ * 只列 pi 读的文件与目录，不列 `sessions/`：会话目录在一个回合里会被反复写，把它算进来等于
+ * 让设置页跟着对话的节奏重组，而设置页里没有任何一行显示会话。
+ */
+private val SETTINGS_WATCHED = listOf(
+    "settings.json",
+    "models.json",
+    "auth.json",
+    "models-store.json",
+    "trust.json",
+    "extensions",
+    "skills",
+    "prompts",
+    "themes",
+)

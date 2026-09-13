@@ -184,50 +184,11 @@ object PiConfigFiles {
     /**
      * `stripJsonComments` (`core/model-config.ts:267` calls it before `JSON.parse`).
      *
-     * `models.json` is the one pi file that tolerates comments, so a user's
-     * annotated file must not be rejected by the app's reader. This strips `//` line
-     * comments and block comments **outside strings**; it is deliberately narrow and
-     * is only used for reading, never to re-serialise a user's file.
+     * The implementation lives in [PiJsonComments] so the bare-JVM harness can reach
+     * it (`PiConfigFiles` itself imports the app's settings layer and cannot compile
+     * there) and so this reader and [PiModelInventory] cannot drift apart.
      */
-    fun stripJsonComments(text: String): String {
-        val out = StringBuilder(text.length)
-        var inString = false
-        var escaped = false
-        var index = 0
-        while (index < text.length) {
-            val ch = text[index]
-            if (inString) {
-                out.append(ch)
-                when {
-                    escaped -> escaped = false
-                    ch == '\\' -> escaped = true
-                    ch == '"' -> inString = false
-                }
-                index++
-                continue
-            }
-            when {
-                ch == '"' -> {
-                    inString = true
-                    out.append(ch)
-                    index++
-                }
-                ch == '/' && index + 1 < text.length && text[index + 1] == '/' -> {
-                    while (index < text.length && text[index] != '\n') index++
-                }
-                ch == '/' && index + 1 < text.length && text[index + 1] == '*' -> {
-                    index += 2
-                    while (index + 1 < text.length && !(text[index] == '*' && text[index + 1] == '/')) index++
-                    index += 2
-                }
-                else -> {
-                    out.append(ch)
-                    index++
-                }
-            }
-        }
-        return out.toString()
-    }
+    fun stripJsonComments(text: String): String = PiJsonComments.strip(text)
 
     private const val MAX_ATTEMPTS = 10
     private const val RETRY_DELAY_MS = 20L
@@ -296,6 +257,22 @@ class PiAuthStorage(
             entries[providerId] = ApiKey(key, env)
         }
         return Read.Ok(entries)
+    }
+
+    /**
+     * Whether [providerId] has an entry at all — **any** type, including the `oauth`
+     * records [read] deliberately does not represent.
+     *
+     * This is the question "would leaving the key field blank destroy something?",
+     * and it has to be answered from the raw document: an `oauth` provider is
+     * perfectly configured, and treating it as empty would ask the user to paste a
+     * key they may not have. pi's own `storedProviders` counts a provider by the
+     * presence of a credential (`core/model-runtime.ts:305`), not by its shape.
+     */
+    fun hasAnyEntry(providerId: String): Boolean {
+        val effective = effectiveFile() ?: return false
+        val text = runCatching { effective.readText() }.getOrNull() ?: return false
+        return PiConfigFiles.parseObject(text)?.containsKey(providerId) == true
     }
 
     /**

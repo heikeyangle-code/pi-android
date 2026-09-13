@@ -24,6 +24,10 @@ package app.pi.rpc
  *  - [systemPrompt] / [appendSystemPrompt] → `--system-prompt <text>` and
  *    `--append-system-prompt <text>` (`src/cli/args.ts`). pi allows the append
  *    flag to repeat; one value is what an app-level setting can carry.
+ *  - [noContextFiles] → `--no-context-files` (`src/cli/args.ts:194`), which turns
+ *    off pi's discovery of `AGENTS.md` / `CLAUDE.md`. pi has no `settings.json`
+ *    key for it, so it is one of the few pre-spawn switches with no duplicate
+ *    source of truth (`docs/pre-spawn-config.md`).
  *
  * Every default is "unset", so `PiLaunchOptions()` produces exactly the process
  * pi gets with no options at all.
@@ -35,6 +39,8 @@ data class PiLaunchOptions(
     val systemPrompt: String? = null,
     /** Appended to pi's assembled system prompt (`--append-system-prompt`). */
     val appendSystemPrompt: String? = null,
+    /** Disables pi's `AGENTS.md` / `CLAUDE.md` discovery (`--no-context-files`). */
+    val noContextFiles: Boolean = false,
 ) {
 
     /**
@@ -65,10 +71,39 @@ data class PiLaunchOptions(
         appendSystemPrompt?.takeIf { it.isNotBlank() }?.let {
             append(" --append-system-prompt ").append(quote(it))
         }
+        if (noContextFiles) append(" --no-context-files")
     }
 
-    private companion object {
+    companion object {
+        /**
+         * The pure part of the App's settings → launch mapping.
+         *
+         * `PiSessionViewModel.launchOptions()` reads six raw values out of the
+         * settings document; this function turns them into the process inputs, so
+         * the normalisation rules — a blank prompt is "unset", not an empty flag;
+         * only the exact value `long` enables long cache retention; a missing
+         * boolean is false, never a truth-y string — live where the bare-JVM
+         * harness can execute them (`tools/run-app-pure-checks.sh`, harness
+         * `pre-spawn`). The caller keeps only the file IO.
+         *
+         * Each parameter is `null` when the key is absent from the document,
+         * which is how pi's sparse settings work (`settings-manager.ts`).
+         */
+        fun fromSettingValues(
+            offline: Boolean?,
+            cacheRetention: String?,
+            systemPrompt: String?,
+            appendSystemPrompt: String?,
+            noContextFiles: Boolean?,
+        ): PiLaunchOptions = PiLaunchOptions(
+            offline = offline ?: false,
+            longCacheRetention = cacheRetention == "long",
+            systemPrompt = systemPrompt?.takeIf { it.isNotBlank() },
+            appendSystemPrompt = appendSystemPrompt?.takeIf { it.isNotBlank() },
+            noContextFiles = noContextFiles ?: false,
+        )
+
         /** POSIX single-quoting: an embedded `'` is closed, escaped, reopened. */
-        fun quote(value: String): String = "'" + value.replace("'", "'\\''") + "'"
+        private fun quote(value: String): String = "'" + value.replace("'", "'\\''") + "'"
     }
 }

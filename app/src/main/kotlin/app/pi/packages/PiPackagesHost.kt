@@ -256,6 +256,19 @@ class PiPackagesController(
 
     private var entries by mutableStateOf<List<PiPackageEntry>>(emptyList())
     private var builtins by mutableStateOf<List<PiPackagesUiState.BuiltinRow>>(emptyList())
+
+    /**
+     * Extensions pi would load from the agent's `extensions/` directory that are
+     * neither the app's own nor packages ([PiAutoExtensions]).
+     */
+    private var discovered by mutableStateOf<List<PiAutoExtensions.Found>>(emptyList())
+
+    /**
+     * Skills, prompt templates and themes pi would find by looking at a directory —
+     * the same question [PiAutoExtensions] answers for extensions, and invisible on
+     * this screen for the same reason ([PiResourceDiscovery]).
+     */
+    private var resources by mutableStateOf<List<PiResourceDiscovery.Found>>(emptyList())
     private var listRaw by mutableStateOf("")
     private var listUnparsed by mutableStateOf(false)
     private var listNotReady by mutableStateOf<String?>(null)
@@ -276,6 +289,8 @@ class PiPackagesController(
         lifecycle = lifecycleState,
         entries = entries,
         builtins = builtins,
+        discovered = discovered,
+        resources = resources,
         listRaw = listRaw,
         listUnparsed = listUnparsed,
         listNotReady = listNotReady,
@@ -301,6 +316,8 @@ class PiPackagesController(
         try {
             val facts = readTrust()
             builtins = io { readBuiltins() }
+            discovered = io { readDiscovered() }
+            resources = io { readResources() }
             val listing = io {
                 service.list(
                     trust = PiPackageService.TrustPass.None,
@@ -560,6 +577,35 @@ class PiPackagesController(
             )
         }
     }
+
+    /**
+     * What pi would load from `extensions/` beyond the app's own three.
+     *
+     * Read from the **engine** agent dir (`agentMirrorDir`) — the one `PiEngineHost`
+     * binds over guest `/root/.pi/agent`, so it is the directory pi actually scans.
+     * The app's own entries are filtered out by the path pi loads them from
+     * (`PiBuiltinExtension.entryUnderExtensions`), which is what keeps the two
+     * sections from listing one extension twice.
+     */
+    private fun readDiscovered(): List<PiAutoExtensions.Found> {
+        val shipped = PiBuiltinExtension.SHIPPED.mapTo(HashSet()) { it.entryUnderExtensions }
+        return PiAutoExtensions.discover(File(layout.agentMirrorDir, EXTENSIONS_DIR))
+            .filterNot { it.relativePath in shipped }
+    }
+
+    /**
+     * The skills, prompts and themes pi finds in the two places it looks.
+     *
+     * Global scope is the engine agent dir (`agentMirrorDir`) — the directory
+     * `PiEngineHost` binds over guest `/root/.pi/agent`. Project scope is the
+     * workspace's own `.pi` (`AgentLayout.hostProjectConfigDir`), which is the other
+     * root pi's resource loader walks. Both are read because a skill the model wrote
+     * can be in either, and "I wrote a skill and the screen says zero" was the
+     * complaint.
+     */
+    private fun readResources(): List<PiResourceDiscovery.Found> =
+        PiResourceDiscovery.discover(layout.agentMirrorDir, PiResourceDiscovery.Found.Scope.Global) +
+            PiResourceDiscovery.discover(layout.hostProjectConfigDir(), PiResourceDiscovery.Found.Scope.Project)
 
     private suspend fun readTrust(): TrustFacts {
         val canonical = io {

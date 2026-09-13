@@ -20,9 +20,12 @@ import app.pi.rpc.PiLaunchOptions
 import app.pi.rpc.PiResponses
 import app.pi.rpc.QueueMode
 import app.pi.rpc.SessionEntry
+import app.pi.rpc.StreamingBehavior
 import app.pi.rpc.ToolCall
 import app.pi.rpc.ToolStatus
 import app.pi.rpc.TranscriptItem
+import app.pi.rpc.extensionErrorHeadline
+import app.pi.runtime.GuestWorkspacePath
 import app.pi.runtime.PtyLauncher
 import app.pi.runtime.RuntimeProvisioner
 import app.pi.session.PiSessionStore
@@ -53,7 +56,9 @@ import app.pi.ui.theme.PiResolvedTheme
 import app.pi.ui.theme.PiThemeEntry
 import app.pi.ui.theme.PiThemeLoader
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -534,11 +539,34 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * pi's files authoritative), so app-side behaviour has to be told that the
      * document changed. Without this an appearance edit would only take effect
      * after a restart, i.e. the row would still look inert.
+     *
+     * Two things happen here, and they are different in kind: the app re-reads
+     * what *it* renders, and the four keys pi also keeps in memory for the live
+     * session are pushed over RPC (see the `when` below). Everything else the
+     * settings page writes is picked up by pi the next time it reads a settings
+     * document — a new session, or a new process.
      */
     fun onSettingWritten(key: String) {
         if (key == "theme") {
             refreshTheme()
             return
+        }
+        // The four agent-level switches whose settings rows are a second editor of
+        // a value the chat screen already changes live. Writing `settings.json`
+        // alone would not reach the running process: pi loads its `SettingsManager`
+        // once per process **and** once per session (`settings-manager.ts:311-355`
+        // `create` → `fromStorageWithPaths`; `agent-session-runtime.ts:236-252`
+        // rebuilds the runtime, `main.ts:731` builds a fresh manager), so a file
+        // write is invisible to the process that is talking to us. The RPC surface
+        // is the only live path — `set_steering_mode`/`set_follow_up_mode`
+        // (`rpc-mode.ts:521-530`) and `set_auto_compaction`/`set_auto_retry`
+        // (`rpc-mode.ts:532-540`) — and pi persists the same key it was given
+        // (`agent-session.ts:1902-1917`), so the two writers cannot drift apart.
+        when (key) {
+            "steeringMode" -> queueModeOf(settingsStore.readString(key))?.let(::setSteeringMode)
+            "followUpMode" -> queueModeOf(settingsStore.readString(key))?.let(::setFollowUpMode)
+            "compaction.enabled" -> settingsStore.readBoolean(key)?.let(::setAutoCompaction)
+            "retry.enabled" -> settingsStore.readBoolean(key)?.let(::setAutoRetry)
         }
         if (
             key == "hideThinkingBlock" ||
@@ -636,43 +664,59 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** The workspace is app-private for speed; `/sdcard` goes through FUSE. */
-    private fun defaultWorkspace(): File = File(getApplication<Application>().filesDir, "pi/workspaces/workspace-1")
+    /**
+     * The workspace is app-private for speed; `/sdcard` goes through FUSE. The
+     * directory comes from the runtime layer's accessor rather than from a second
+     * copy of `workspace-1`, so the terminal, this ViewModel and the device
+     * shell's write boundary cannot end up pointing at different directories.
+     */
+    private fun defaultWorkspace(): File = PtyLauncher.workspaceHost(getApplication())
 
     /**
      * Where pi sees [defaultWorkspace].
      *
-     * Duplicated from `PiEngineHost.guestPathFor` (private) because the mapping is
-     * a contract, not an implementation detail: `PiEngineHost.kt:116` binds
-     * `workspace.absolutePath` onto `/workspace/<path under filesDir>` and `:114`
-     * starts pi with that path as its cwd. Paths inside a `bash` or `export_html`
-     * argument are resolved **in the guest**, so they must be written in the
-     * guest's spelling.
+     * The rule is `GuestWorkspacePath`'s — `PiEngineHost` binds
+     * `workspace.absolutePath` at that path and starts pi with it as its cwd.
+     * Paths inside a `bash` or `export_html` argument are resolved **in the
+     * guest**, so they must be written in the guest's spelling. This used to be a
+     * literal here, which is one more place the engine's cwd could drift.
      */
-    private fun guestWorkspace(): String = "/workspace/pi/workspaces/workspace-1"
+    private fun guestWorkspace(): String = GuestWorkspacePath.under(
+        getApplication<Application>().filesDir.absolutePath,
+        defaultWorkspace().absolutePath,
+    )
 
     /**
-     * pi's **process** configuration, assembled from the three App-side keys of
+     * pi's **process** configuration, assembled from the five App-side keys of
      * 设置 → 运行时 → 进程.
      *
      * pi has no settings keys for these — its `Settings` interface
-     * (`core/settings-manager.ts:106-158`) carries no `offline`, `systemPrompt`
-     * or `cacheRetention`; they exist only as CLI flags and environment
-     * variables (`--offline` / `PI_OFFLINE=1`, `src/cli/args.ts:318`, `:433`;
-     * `--system-prompt` / `--append-system-prompt`, `:110`, `:112`;
-     * `PI_CACHE_RETENTION=long`, `packages/ai/src/api/anthropic-messages.ts:57`).
-     * So the *keys* are ours and the *values* are pi's, handed over in
-     * [PiLaunchOptions] because that is the only moment pi reads them.
+     * (`core/settings-manager.ts:106-158`) carries no `offline`, `systemPrompt`,
+     * `systemPrompt` append, `cacheRetention` or `noContextFiles`; they exist
+     * only as CLI flags and environment variables (`--offline` / `PI_OFFLINE=1`,
+     * `src/cli/args.ts:223`, `:433`; `--system-prompt` / `--append-system-prompt`,
+     * `:110`, `:112`; `--no-context-files`, `:194`; `PI_CACHE_RETENTION=long`,
+     * `packages/ai/src/api/anthropic-messages.ts:57`). So the *keys* are ours and
+     * the *values* are pi's, handed over in [PiLaunchOptions] because that is the
+     * only moment pi reads them. The authoritative table — including which CLI
+     * knobs pi already covers with a settings key, and which are meaningless on a
+     * phone — is `rpc/PiPreSpawnConfig.kt` (`docs/pre-spawn-config.md`).
+     *
+     * Only the file IO is here; the normalisation (blank means unset, only `long`
+     * means long retention) lives in [PiLaunchOptions.fromSettingValues], where
+     * the bare-JVM harness can execute it.
      *
      * Read fresh on every boot and every restart: a restart that replayed the
      * boot-time set would silently ignore a change made since.
      */
-    private fun launchOptions(): PiLaunchOptions = PiLaunchOptions(
-        offline = settingsStore.readBoolean("app.runtime.offline") ?: false,
-        longCacheRetention = settingsStore.readString("app.runtime.cacheRetention") == "long",
+    private fun launchOptions(): PiLaunchOptions = PiLaunchOptions.fromSettingValues(
+        offline = settingsStore.readBoolean("app.runtime.offline"),
+        cacheRetention = settingsStore.readString("app.runtime.cacheRetention"),
         // Blank means "use pi's own prompt", not "pass an empty prompt": pi only
         // takes `--system-prompt` when there is text to pass.
-        systemPrompt = settingsStore.readString("app.runtime.systemPrompt")?.takeIf { it.isNotBlank() },
+        systemPrompt = settingsStore.readString("app.runtime.systemPrompt"),
+        appendSystemPrompt = settingsStore.readString("app.runtime.appendSystemPrompt"),
+        noContextFiles = settingsStore.readBoolean("app.runtime.noContextFiles"),
     )
 
     fun boot() {
@@ -843,23 +887,54 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
 
     /**
      * pi's `-c` / `--continue` (`cli/args.ts:100`): on launch, pick up where the
-     * last session for this cwd left off.
+     * last session **for this cwd** left off.
      *
      * The app's engine always starts a fresh session and its argv is fixed
-     * (`PiEngineHost.kt:231-233`), so the resume is a `switch_session` right after
+     * (`PiEngineHost.kt:275-280`), so the resume is a `switch_session` right after
      * attach — the same command the session picker sends, which also lets a
      * `session_before_switch` extension veto it. Behind
      * `app.sessions.resumeLast` because "opening the app starts a new session" is
-     * a deliberate default that a fix must not silently flip.
+     * a deliberate default that a fix must not silently flip (pi's own default too:
+     * `createSessionManager` returns `SessionManager.create` unless `-c`/`--resume`
+     * is passed, `main.ts:426-443`).
+     *
+     * The *selection* is pi's, not ours: [PiSessionStore.mostRecentForResume] is
+     * `findMostRecentSession(sessionDir, cwd)` (`session-manager.ts:636-653`) — the
+     * function `-c` itself uses (`:1589-1598`). It is deliberately not
+     * `list(limit = 1)`: the picker sorts by "last message activity"
+     * (`:1675`) while `-c` sorts by file mtime and filters the header's `cwd`
+     * against the engine's, so the two can name different sessions. The cwd filter
+     * is what keeps the chat from resuming a session that the guest terminal wrote
+     * under `/root` (`PtyLauncher.kt:321` puts those in the same directory).
+     *
+     * Every way this can end is named: a failure to read the directory is an error
+     * notice, "there are sessions but none for this workspace" is a warning, and
+     * `switchSession` reports pi's own rejection (a `session_before_switch` veto, a
+     * session whose recorded working directory no longer exists — `session-cwd.ts:54-59`
+     * throws `MissingSessionCwdError`, which `rpc-mode.ts:605-611` turns into a
+     * failed response).
      */
     private suspend fun maybeResumeLastSession() {
         if (resumeAttempted) return
         resumeAttempted = true
         val enabled = runCatching { settingsStore.readBoolean("app.sessions.resumeLast") }.getOrNull() ?: false
         if (!enabled) return
-        val recent = runCatching { sessionStore.list(limit = 1) }
-            .getOrDefault(emptyList())
-            .firstOrNull() ?: return
+        val recent = runCatching { sessionStore.mostRecentForResume(guestWorkspace()) }
+            .getOrElse { error ->
+                fail("读取会话目录失败：${error.message ?: error::class.simpleName}")
+                return
+            }
+        if (recent == null) {
+            // pi's `-c` answers this by starting a new session, silently. Saying it
+            // matters here because the user explicitly asked for a resume: "no
+            // history for this workspace" and "the history is gone" look identical
+            // on screen otherwise.
+            val anySession = runCatching { sessionStore.list(limit = 1).isNotEmpty() }.getOrDefault(false)
+            if (anySession) {
+                pushNotice("当前工作区还没有历史会话，已开始新会话。", Notice.Tone.Warning)
+            }
+            return
+        }
         val current = _state.value.meta.sessionFile?.substringAfterLast('/')
         if (current != null && recent.file.name == current) return
         switchSession(recent)
@@ -1031,10 +1106,13 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             // like an extension that chose to do nothing. The transcript reducer
             // already turns it into an `ErrorText` row (rpc/Transcript.kt), which
             // is only visible on the Chat destination — hence the snackbar too.
+            // Both name the extension from `extensionPath` so a failure is
+            // attributable; the reducer and this notice share the wording.
             is PiEvent.ExtensionError -> {
                 _state.value = _state.value.copy(lastError = event.message)
                 pushNotice(
-                    message = "扩展出错：${event.message?.takeIf { it.isNotBlank() } ?: "（pi 没有给出详情）"}",
+                    message = extensionErrorHeadline(event.extensionPath) + "：" +
+                        (event.message?.takeIf { it.isNotBlank() } ?: "pi 没有给出详情"),
                     tone = Notice.Tone.Error,
                 )
             }
@@ -1738,7 +1816,22 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             // Templates and skills are expanded inside pi into a real user message
             // (`agent-session.ts:1211-1216`), so the optimistic echo is confirmed by
             // that event and replaced by pi's own projection of it.
-            engine.prompt(text)
+            //
+            // Mid-turn the submission needs pi's `streamingBehavior`, exactly as
+            // pi's own TUI sends it (`interactive-mode.ts:3137-3142`:
+            // `session.prompt(text, { streamingBehavior: "steer" })` for every
+            // non-built-in submit while streaming). Without it pi rejects the
+            // `prompt` outright — "Agent is already processing. Specify
+            // streamingBehavior ('steer' or 'followUp') to queue the message"
+            // (`agent-session.ts:1211-1217`) — so selecting a template or a skill
+            // from the palette during a turn raised that error instead of queueing,
+            // while the same selection works in pi's TUI. `steer` is pi's own choice
+            // for Enter; the follow-up chip is a separate gesture and still goes
+            // through [sendFollowUp].
+            engine.prompt(
+                message = text,
+                streamingBehavior = if (engine.transcript.streaming) StreamingBehavior.Steer else null,
+            )
         }
         syncTranscript(engine, engine.publication.value)
     }
@@ -2048,13 +2141,16 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * active session before ever calling this: pi is appending to that file, and
      * unlinking it under the engine would keep it writing to a removed inode.
      *
-     * `PiSessionStore` stays read-only (`PiSessionStore.kt:22-25`), which is why
-     * the unlink happens here.
+     * The unlink itself goes through [PiSessionStore.delete] rather than
+     * `summary.file.delete()` so the store's containment guard
+     * (`PiSessionStore.kt:161-167` — only a regular `.jsonl` directly inside the
+     * session root) is the one that runs; a `Summary` is data, and data must not be
+     * able to name an arbitrary path to unlink.
      */
     fun deleteSession(summary: PiSessionStore.Summary) {
         viewModelScope.launch {
             val removed = withContext(Dispatchers.IO) {
-                runCatching { summary.file.delete() }.getOrDefault(false)
+                sessionStore.delete(summary.file)
             }
             if (removed) {
                 pushNotice("已删除：${summary.displayName}", Notice.Tone.Info)
@@ -2381,9 +2477,14 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         // Answer anything outstanding before the engine is torn down, so a
         // still-live pi is not left blocked on a dialog whose UI just vanished.
         cancelAllDialogs()
-        session?.close()
+        val engine = session
         session = null
         api = null
+        // A turn that is still streaming has not reached pi's session file yet
+        // (persistence happens on `message_end`), and a hard close drops it — so the
+        // teardown settles the turn first. That cannot run on `viewModelScope`
+        // because `onCleared` is what cancels it; see [teardownScope].
+        if (engine != null) teardownScope.launch { engine.closeAfterSettling() }
         super.onCleared()
     }
 
@@ -2415,6 +2516,19 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     private companion object {
         /** Poll interval for the countdown; publishes only on second boundaries. */
         const val TIMER_POLL_MS = 200L
+
+        /**
+         * Where [onCleared]'s teardown runs.
+         *
+         * `viewModelScope` is cancelled *by* `onCleared`, so the graceful stop cannot
+         * run there: the abort would be cancelled mid-flight and pi would be killed
+         * with the turn still unwritten (`PiEngineSession.closeAfterSettling` has the
+         * chain). This scope belongs to the process, which is what a teardown needs —
+         * the engine has to outlive the ViewModel long enough to finish writing. IO,
+         * and supervised so one failed stop cannot take the scope down before a later
+         * teardown uses it.
+         */
+        val teardownScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
         /** Notifications held for the snackbar before the oldest is dropped. */
         const val MAX_PENDING_NOTICES = 8

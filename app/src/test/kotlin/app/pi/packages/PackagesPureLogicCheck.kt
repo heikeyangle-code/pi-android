@@ -743,6 +743,104 @@ fun main() {
         emptyList<PiModelCatalog.Entry>(),
     )
 
+    // ---- 扩展发现（PiAutoExtensions）------------------------------------------
+    //
+    // 这个 bug 的形状：pi 会加载写进 `<agentDir>/extensions/` 的任何扩展，而设置页只列了
+    // "App 自带的 3 个"（文件系统）与 `pi list` 的行（settings.json 的 packages）——
+    // 模型自己写进去的扩展两者都不属于，于是在界面上**完全不存在**。
+    // 规则照 pi 的 `collectAutoExtensionEntries`（core/package-manager.ts:587-639）。
+
+    val extRoot = java.nio.file.Files.createTempDirectory("pi-auto-ext").toFile()
+    try {
+        // ① 单文件：只有 .ts/.js 算扩展（.mts/.cjs 不算，照 :623）
+        java.io.File(extRoot, "my-ext.ts").writeText("export default () => {}")
+        java.io.File(extRoot, "second.js").writeText("module.exports = () => {}")
+        java.io.File(extRoot, "notes.md").writeText("not an extension")
+        java.io.File(extRoot, "third.mts").writeText("export default () => {}")
+        // ② 目录：含 index.ts 才算；含 index.js 也算；两者都没有则跳过
+        java.io.File(extRoot, "with-index-ts").mkdirs()
+        java.io.File(extRoot, "with-index-ts/index.ts").writeText("export default () => {}")
+        java.io.File(extRoot, "with-index-js").mkdirs()
+        java.io.File(extRoot, "with-index-js/index.js").writeText("module.exports = () => {}")
+        java.io.File(extRoot, "empty-dir").mkdirs()
+        java.io.File(extRoot, "empty-dir/readme.txt").writeText("nothing here")
+        // ③ 点开头与 node_modules 必须跳过（:602-603）
+        java.io.File(extRoot, ".pi-android-assets").mkdirs()
+        java.io.File(extRoot, ".pi-android-assets/index.ts").writeText("export default () => {}")
+        java.io.File(extRoot, "node_modules").mkdirs()
+        java.io.File(extRoot, "node_modules/bad.ts").writeText("export default () => {}")
+
+        val found = PiAutoExtensions.discover(extRoot).map { it.name }.sorted()
+        check("只列出 pi 会加载的条目", found, listOf("my-ext", "second", "with-index-js", "with-index-ts"))
+        check("带 index.ts 的目录用目录名", found.contains("with-index-ts"), true)
+        check("**非 .ts/.js 的单文件不算扩展**", found.contains("notes"), false)
+        check("**没有 index 的目录不算扩展**", found.contains("empty-dir"), false)
+        check("**点开头的目录被跳过**（安装器那份 stamp）", found.contains(".pi-android-assets"), false)
+        check("**node_modules 被跳过**", found.contains("bad"), false)
+
+        // ④ 目录本身就是一个扩展：有 index.ts 时，返回它自己，不再往里扫
+        val selfRoot = java.nio.file.Files.createTempDirectory("pi-auto-self").toFile()
+        try {
+            java.io.File(selfRoot, "index.ts").writeText("export default () => {}")
+            java.io.File(selfRoot, "nested").mkdirs()
+            java.io.File(selfRoot, "nested/index.ts").writeText("export default () => {}")
+            check("目录自己是扩展时只返回它自己", PiAutoExtensions.discover(selfRoot).size, 1)
+        } finally {
+            selfRoot.deleteRecursively()
+        }
+        // ⑤ 不存在 / 空目录 → 空表（沉默而不是抛）
+        check("不存在的目录返回空表", PiAutoExtensions.discover(java.io.File(extRoot, "nope")), emptyList<PiAutoExtensions.Found>())
+    } finally {
+        extRoot.deleteRecursively()
+    }
+
+    // ---- 技能/提示模板/主题的发现（PiResourceDiscovery）------------------------
+    //
+    // 与扩展同一个 bug 的另外三个名词：pi 靠"看目录"发现它们，而设置页只有
+    // "App 自带的扩展"与 `pi list` 的 packages，于是一个手写/模型写的技能完全不存在。
+    // 规则照 pi 的 `collectResourceFiles`（core/package-manager.ts:645-653）与
+    // `collectSkillEntries`（:365-395）、`FILE_PATTERNS`（:206-211）。
+
+    val resRoot = java.nio.file.Files.createTempDirectory("pi-res").toFile()
+    try {
+        // 技能：<skills>/<name>/SKILL.md，一层；直接躺在 skills/ 下的 SKILL.md 不算
+        java.io.File(resRoot, "skills/good-skill").mkdirs()
+        java.io.File(resRoot, "skills/good-skill/SKILL.md").writeText("# skill")
+        java.io.File(resRoot, "skills/not-a-skill").mkdirs()
+        java.io.File(resRoot, "skills/not-a-skill/readme.md").writeText("no SKILL.md")
+        java.io.File(resRoot, "skills/SKILL.md").writeText("orphan, has no owning directory")
+        // 提示模板：递归的 .md
+        java.io.File(resRoot, "prompts").mkdirs()
+        java.io.File(resRoot, "prompts/review.md").writeText("review")
+        java.io.File(resRoot, "prompts/nested").mkdirs()
+        java.io.File(resRoot, "prompts/nested/deep.md").writeText("deep")
+        // 主题：递归的 .json
+        java.io.File(resRoot, "themes").mkdirs()
+        java.io.File(resRoot, "themes/mine.json").writeText("{}")
+        java.io.File(resRoot, "themes/notes.md").writeText("not a theme")
+
+        val all = PiResourceDiscovery.discover(resRoot, PiResourceDiscovery.Found.Scope.Global)
+        val skills = all.filter { it.kind == PiResourceDiscovery.Kind.Skills }.map { it.name }
+        val prompts = all.filter { it.kind == PiResourceDiscovery.Kind.Prompts }.map { it.name }
+        val themes = all.filter { it.kind == PiResourceDiscovery.Kind.Themes }.map { it.name }
+
+        check("技能按 SKILL.md 发现，名字取所在目录", skills, listOf("good-skill"))
+        check("**没有 SKILL.md 的目录不算技能**", skills.contains("not-a-skill"), false)
+        check("**skills/ 根下那个孤儿 SKILL.md 不算技能**", skills.size, 1)
+        check("提示模板递归发现 .md", prompts, listOf("nested/deep", "review"))
+        check("主题只认 .json", themes, listOf("mine"))
+        check("不同种类不会串（.md 不会被当成主题）", themes.contains("notes"), false)
+        check("每个条目都带 scope", all.all { it.scope == PiResourceDiscovery.Found.Scope.Global }, true)
+        check("不存在的根返回空表", PiResourceDiscovery.discover(java.io.File(resRoot, "nope"), PiResourceDiscovery.Found.Scope.Project), emptyList<PiResourceDiscovery.Found>())
+        check(
+            "空目录返回空表",
+            PiResourceDiscovery.discover(java.nio.file.Files.createTempDirectory("pi-res-empty").toFile(), PiResourceDiscovery.Found.Scope.Global),
+            emptyList<PiResourceDiscovery.Found>(),
+        )
+    } finally {
+        resRoot.deleteRecursively()
+    }
+
     println(if (failures == 0) "\nharness: OK (all checks passed)" else "\nharness: FAILED ($failures)")
     if (failures != 0) kotlin.system.exitProcess(1)
 }

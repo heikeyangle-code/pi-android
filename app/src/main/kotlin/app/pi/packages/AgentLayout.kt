@@ -2,6 +2,7 @@ package app.pi.packages
 
 import android.content.Context
 import app.pi.engine.PiEngineHost
+import app.pi.runtime.GuestWorkspacePath
 import app.pi.runtime.PiPaths
 import java.io.File
 
@@ -77,20 +78,19 @@ class AgentLayout(
     val agentMirrorDir: File = paths.agentDir
 
     /**
-     * The guest spelling of the workspace, computed **by the same rule** as
-     * `PiEngineHost.guestPathFor` (`:162-166`): strip the `<files>` prefix, then
-     * mount under `/workspace`. `PiSessionViewModel` duplicates the same string
-     * (`:331`) and calls the mapping "a contract, not an implementation detail".
+     * The guest spelling of the workspace, computed by the shared rule
+     * ([GuestWorkspacePath.under]) that `PiEngineHost` itself now calls, so the
+     * package commands, the engine and the `@` completion cannot disagree about
+     * which guest path is the engine's cwd.
      *
      * It matters here because `pi install -l` writes `<cwd>/.pi/settings.json` and
-     * `hasTrustRequiringProjectResources(cwd)` inspects `<cwd>/.pi`, both using the
-     * **guest** cwd — which is also the key pi writes into `trust.json`.
+     * `hasTrustRequiringProjectResources(cwd)` inspects `<cwd>/.pi`, both using
+     * the **guest** cwd — which is also the key pi writes into `trust.json`.
      */
-    val guestWorkspace: String = run {
-        val root = paths.home.parentFile?.absolutePath ?: paths.home.absolutePath
-        val rel = hostWorkspace.absolutePath.removePrefix(root).trimStart('/')
-        if (rel.isEmpty()) "/workspace" else "/workspace/$rel"
-    }
+    val guestWorkspace: String = GuestWorkspacePath.under(
+        paths.home.parentFile?.absolutePath ?: paths.home.absolutePath,
+        hostWorkspace.absolutePath,
+    )
 
     /** The one bind this layer needs when it runs a command in the workspace. */
     fun workspaceBind(): Pair<String, String> = hostWorkspace.absolutePath to guestWorkspace

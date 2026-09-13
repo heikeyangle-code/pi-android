@@ -1,6 +1,7 @@
 package app.pi.bridge
 
 import android.content.Context
+import app.pi.runtime.GuestWorkspacePath
 import app.pi.runtime.PtyLauncher
 import java.io.File
 
@@ -106,17 +107,17 @@ object DeviceWorkspace : ShellWriteBoundary {
 
     /**
      * The workspace as the **engine** spells it, i.e. where the process that reads
-     * `/app/health` (pi's extension) actually sees it. This mirrors
-     * `PiEngineHost.guestPathFor` (`engine/PiEngineHost.kt:552-556`): strip the
-     * `<filesDir>` prefix, then mount under `/workspace`; an empty remainder is
-     * `/workspace` itself.
+     * `/app/health` (pi's extension) actually sees it. `GuestWorkspacePath` owns
+     * the rule — this used to be a reproduction of it here, which is one more copy
+     * than a rule with a security consequence should have.
      */
     fun guestPath(): String = engineGuestPath
 
     /**
      * Both spellings, engine first. The second is `PtyLauncher`'s plain
-     * `/workspace` (`runtime/PtyLauncher.kt:264`), which is a different mount of the
-     * same host directory, so a path valid in one is not valid in the other.
+     * `/workspace` (`GuestWorkspacePath.TERMINAL_GUEST_PATH`), which is a
+     * different mount of the same host directory, so a path valid in one is not
+     * valid in the other.
      */
     fun guestPathAliases(): List<String> = listOf(engineGuestPath, GUEST_WORKSPACE_ROOT).distinct()
 
@@ -134,22 +135,12 @@ object DeviceWorkspace : ShellWriteBoundary {
     fun aliasSummary(): String = if (aliases.isEmpty()) "（未确定）" else aliases.joinToString("、")
 
     /**
-     * `guestPathFor`, reproduced. Kept as a pure function of the two canonical paths
-     * so the rule reads the same as the engine's rather than being a string trick at
-     * the call site.
+     * The engine's spelling, from the shared rule. Kept as a private function
+     * (rather than inlined at the [refresh] call site) so the canonicalised host
+     * path is the only thing it has to explain.
      */
-    private fun guestSpellingOf(workspace: String, filesRoot: String): String {
-        if (workspace.isEmpty()) return GUEST_WORKSPACE_ROOT
-        val relative = when {
-            workspace == filesRoot -> ""
-            workspace.startsWith("$filesRoot/") -> workspace.removePrefix("$filesRoot/")
-            // Outside <filesDir> the engine would mount the absolute path under
-            // /workspace, which is what this reproduces rather than guessing a
-            // friendlier name. Unreachable with today's workspace.
-            else -> workspace.trimStart('/')
-        }
-        return if (relative.isEmpty()) GUEST_WORKSPACE_ROOT else "$GUEST_WORKSPACE_ROOT/$relative"
-    }
+    private fun guestSpellingOf(workspace: String, filesRoot: String): String =
+        GuestWorkspacePath.under(filesRoot, workspace)
 
     private fun canonicalize(path: String): String {
         val clean = path.trim().trim('"', '\'')
@@ -171,5 +162,5 @@ object DeviceWorkspace : ShellWriteBoundary {
     // inaccessible from DeviceBridgeRouter ("Cannot access 'companion object Companion':
     // it is private in 'DeviceWorkspace'"). One illegal modifier, two errors.
     /** Where a guest sees the workspace's mount point. */
-    private const val GUEST_WORKSPACE_ROOT = "/workspace"
+    private const val GUEST_WORKSPACE_ROOT = GuestWorkspacePath.TERMINAL_GUEST_PATH
 }

@@ -960,7 +960,11 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
             ErrorText(
                 key = nextKey("ext-error"),
                 ts = now(),
-                message = "扩展出错",
+                // `extensionPath` is the only attribution pi sends — without it
+                // every broken extension reads the same as an idle one. See
+                // [extensionErrorHeadline]; the hook name (`event`) stays
+                // unshown, exactly as in pi's own UI.
+                message = extensionErrorHeadline(event.extensionPath),
                 detail = event.message,
             ),
         )

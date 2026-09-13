@@ -735,6 +735,36 @@ pi 的 TUI 会按扩展名分支（`.jsonl` → `exportToJsonl`，`interactive-m
   符号 `app.sessions.resumeLast`（开关，默认关闭）+ `PiSessionViewModel.maybeResumeLastSession()`
   —— `attach` 之后用现成的 `switch_session` 切到最近会话，每进程只试一次。
 
+  **【2026-09-13 更正：这条"已解决"在设备上实际行为为零】** 上面那套符号确实落地了，但它**一次都没有真正发出过 `switch_session`**：`maybeResumeLastSession()` 的第一句是
+  `sessionStore.list(limit = 1)…firstOrNull() ?: return`，而 `list()` **恒为空**——引擎用
+  `--session-dir <agentDir>/sessions` 启动，pi 在这种情况下**平铺**写文件
+  （`core/session-manager.ts:1551-1552`：`const dir = sessionDir ? normalizePath(sessionDir) : getDefaultSessionDir(cwd)`），
+  而旧的 `PiSessionStore.list()` 只遍历**子目录**并显式跳过顶层文件
+  （`if (!group.isDirectory) return@forEach`）。**读的布局和 pi 写的布局相反**，
+  于是列表打不开、续接静默 return——用户看到的就是"退出再进来会话就没了，列表里也没有"。
+  当初写错的原因也查到了：pi 自己的 `docs/session-format.md:7-11` **只描述默认布局**（按 cwd 分组），
+  而我们在启动时把目录固定成了父目录。
+
+  **本轮修法**（`docs/session-lifecycle.md` 有完整证据与复现探针）：`PiSessionStore` 两种布局都读
+  （顶层平铺文件 + 子目录分组，含混合）；续接改用一个专门的 `mostRecentForResume(cwd)`，照 pi `-c`
+  的规则来——`SessionManager.continueRecent` → `findMostRecentSession(dir, cwd)`，它**按文件 mtime 排序**
+  （`session-manager.ts:649`，不是 picker 用的 `modified`）、**按 header 的 `cwd` 过滤**（`:631-633`）、
+  且只看它拿到的那个目录；列表本身仍按 `lastActivityAt`（picker 的 `modified`）排。
+  **默认值没动**（仍默认关，与 pi 不带 `-c` 即开新会话一致）。
+
+  **本轮另发现第二个独立根因（同一个用户症状的另一半）**：pi 在 `message_end` 才写 entry，而且
+  **第一条 assistant 结束之前根本不建会话文件**（`agent-session.ts:669-691`、`:1029-1052`）；
+  我们关引擎的方式是关 stdin，而 pi 收到 EOF 会**立即** `shutdown()`、不等正在跑的 agent
+  （`rpc-mode.ts:805-807`、`:727-745`）——**所以回合中退出会丢掉这一段对话**。
+  修法是先走 pi 自己的 `abort`（其 handler 会 await `session.abort()` → `waitForIdle()`，
+  `rpc-mode.ts:428-431`、`agent-session.ts:1640-1646`），等 response 再关：
+  `PiEngineSession.closeAfterSettling()`，`PiEngineHost.restart/shutdown` 与 ViewModel 的
+  `onCleared` 都改用它。
+
+  **仍然未验（设备侧）**：proot 是否原样回传 `-w`（影响 `-c` 的 cwd 过滤，列表与手动打开不受影响）、
+  `closeAfterSettling` 的真机时序、1 MiB 头部扫描上限对超长会话排序/搜索的影响、
+  终端 TUI 会话（cwd=`/root`）会作为另一个分组出现在列表里（照 pi 语义，观感未验）。
+
 ### I10. `app.device.*` 权限开关是**第二份、且可能矛盾的**授权真相（DEFECT）
 它们在设置目录里声明，但**没有任何代码读它们**——真正的强制在 `DeviceCapabilityStore` 的 SharedPreferences。
 → 设置页会显示一套**和「设备能力」页不一致**的开关，**两边可以互相矛盾**；而 `SettingsHome.kt:80-82` 甚至声称没有这类键。

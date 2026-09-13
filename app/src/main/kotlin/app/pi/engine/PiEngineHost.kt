@@ -422,7 +422,13 @@ class PiEngineHost(private val appContext: Context) {
         }
 
         if (current != null) {
-            runCatching { current.close() }
+            // `closeAfterSettling`, not `close`: `allowInterrupt` is the caller
+            // accepting that this restart stops a running turn, and pi only writes
+            // the turn it is in when that turn ends — `close()` shuts stdin and pi
+            // exits on a closed stdin without waiting for the agent, so a hard close
+            // here would drop the turn from the conversation on disk.
+            // `PiEngineSession.closeAfterSettling` carries the file:line chain.
+            runCatching { current.closeAfterSettling() }
             // Publish null *before* the new engine exists, so a UI collecting the
             // flow shows "restarting" instead of holding the dead object.
             _session.value = null
@@ -447,10 +453,14 @@ class PiEngineHost(private val appContext: Context) {
     /**
      * Stop the engine and publish null. Idempotent; returns true when something was
      * actually stopped.
+     *
+     * Settles the running turn first, exactly like [restart]: this is a *stop*, not
+     * a kill, and the conversation the user just had is the thing they expect to
+     * find again (see `PiEngineSession.closeAfterSettling`).
      */
     suspend fun shutdown(): Boolean = lifecycleLock.withLock {
         val current = _session.value ?: return@withLock false
-        runCatching { current.close() }
+        runCatching { current.closeAfterSettling() }
         _session.value = null
         true
     }
@@ -582,13 +592,13 @@ class PiEngineHost(private val appContext: Context) {
      *
      * The workspace lives in app-private storage for speed (a cwd on `/sdcard`
      * goes through FUSE and makes an `npm install` several times slower), and is
-     * bind-mounted into the guest under `/workspace`.
+     * bind-mounted into the guest at the path [GuestWorkspacePath] derives. The
+     * rule itself is that object's — it used to be written out here as well, and
+     * a second copy of it is how the session-file path and the terminal's cwd
+     * drifted apart before.
      */
-    private fun guestPathFor(host: File): String {
-        val root = appContext.filesDir.absolutePath
-        val rel = host.absolutePath.removePrefix(root).trimStart('/')
-        return if (rel.isEmpty()) "/workspace" else "/workspace/$rel"
-    }
+    private fun guestPathFor(host: File): String =
+        GuestWorkspacePath.under(appContext.filesDir.absolutePath, host.absolutePath)
 
     companion object {
         /** Where the packaged engine lands inside the rootfs. */

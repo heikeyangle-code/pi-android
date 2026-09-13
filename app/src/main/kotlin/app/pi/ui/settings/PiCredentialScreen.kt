@@ -106,6 +106,15 @@ fun PiCredentialScreen(
     isTurnRunning: () -> Boolean = { false },
     /** `llamacpp` when opened from 本地模型, otherwise the first preset. */
     initialPresetId: String? = null,
+    /**
+     * 全 App 同一套「需要重启」状态机与执行者，由设置栈持有（见 `PiSettingsStack`）。
+     *
+     * 单独传进来是为了**和设置 → 模型 那一页共用一份状态**：两页都在写同一批文件，各自记
+     * 一份"有待重启的变更"就会出现一页说"需要重启"、另一页说"没有待重启"的分裂。null 时
+     * 这一页退回自己建一份（旧行为，预览与单测路径）。
+     */
+    lifecycle: ExtensionLifecycle? = null,
+    coordinator: EngineRestartCoordinator? = null,
     /** `get_available_models`: pi's metadata for models it already knows. */
     availableModels: List<PiResponses.ModelInfo> = emptyList(),
     onLoadAvailableModels: () -> Unit = {},
@@ -124,16 +133,18 @@ fun PiCredentialScreen(
         )
     }
     val service = remember(layout) { PiCredentialService(layout, layout.hostWorkspace) }
-    val lifecycle = remember { ExtensionLifecycle() }
-    val coordinator = remember(layout, restartEngine) {
+    val ownLifecycle = remember { ExtensionLifecycle() }
+    val activeLifecycle = lifecycle ?: ownLifecycle
+    val ownCoordinator = remember(layout, restartEngine) {
         restartEngine?.let { engine ->
             EngineRestartCoordinator(
-                lifecycle = lifecycle,
+                lifecycle = activeLifecycle,
                 isTurnRunning = isTurnRunning,
                 restartEngine = engine,
             )
         }
     }
+    val activeCoordinator = coordinator ?: ownCoordinator
     val scope = rememberCoroutineScope()
 
     var presetId by remember { mutableStateOf(initialPresetId ?: PiProviderPresets.all.first().id) }
@@ -141,6 +152,8 @@ fun PiCredentialScreen(
     var baseUrl by remember { mutableStateOf("") }
     var api by remember { mutableStateOf("") }
     var maskedKey by remember { mutableStateOf<String?>(null) }
+    var credentialPresent by remember { mutableStateOf(false) }
+    var configuredProviderIds by remember { mutableStateOf<List<String>>(emptyList()) }
     var modelsFileError by remember { mutableStateOf<String?>(null) }
     var authFileError by remember { mutableStateOf<String?>(null) }
     var existingIds by remember { mutableStateOf<List<String>>(emptyList()) }
@@ -168,6 +181,8 @@ fun PiCredentialScreen(
         baseUrl = existing.baseUrl ?: preset.baseUrl
         api = existing.api ?: preset.api
         maskedKey = existing.maskedKey
+        credentialPresent = existing.credentialPresent
+        configuredProviderIds = existing.configuredProviderIds
         modelsFileError = existing.modelsFileError
         authFileError = existing.authFileError
         existingIds = existing.configuredModelIds
@@ -313,7 +328,14 @@ fun PiCredentialScreen(
                             color = MaterialTheme.colorScheme.onSurface,
                         )
                         Text(
-                            (if (option.builtInPi) "pi 内置" else "自定义") + " · " + option.api,
+                            buildString {
+                                // Which ones this device already has a credential for is the
+                                // first thing a user looks for in a list of thirteen vendors,
+                                // and before this it was nowhere on the screen.
+                                if (option.id in configuredProviderIds) append("已配置 · ")
+                                append(if (option.builtInPi) "pi 内置" else "自定义")
+                                append(" · ").append(option.api)
+                            },
                             style = PiTheme.text.meta,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -332,15 +354,16 @@ fun PiCredentialScreen(
                     .fillMaxWidth()
                     .padding(horizontal = 12.dp, vertical = 4.dp),
             )
-            if (maskedKey != null) {
-                Note(
-                    "这个厂商已保存过 Key（$maskedKey）。留空不会保留原 Key，要换就重新粘贴。",
-                )
+            if (credentialPresent) {
+                // Leaving it blank is what "I only came here to add a model" needs, so the
+                // sentence says that instead of asking for the secret again.
+                val shown = maskedKey?.let { "（$it）" }.orEmpty()
+                Note("这个厂商已经保存过凭证$shown。Key 留空就不改动它；要换新的就粘贴一条。")
             }
             if (preset.scanStyle == PiProviderPresets.ScanStyle.Keyless) {
                 Note(
                     "这个端点不校验鉴权，但 pi 仍要求填写凭证，否则不会列出该厂商的模型。" +
-                        "留空会写入占位值「" +
+                        "还没有凭证时留空会写入占位值「" +
                         PiProviderPresets.KEYLESS_PLACEHOLDER + "」。",
                 )
             }
@@ -424,7 +447,8 @@ fun PiCredentialScreen(
             // ------------------------------------------------------ 4 勾选与保存
             PiSectionHeader("4 勾选并保存")
             Note(
-                "左边勾选会用 Ctrl+P 切换的模型，右边选默认模型。标「默认值」的表示 pi 不认识这个模型。",
+                "左边勾选会用 Ctrl+P 切换的模型，右边选默认模型。" +
+                    "已经导入过的模型可以在 设置 → 模型 里一眼看到它们现在能不能用。",
             )
             OutlinedTextField(
                 value = manualIds,
@@ -434,6 +458,8 @@ fun PiCredentialScreen(
                     .fillMaxWidth()
                     .padding(horizontal = 12.dp, vertical = 4.dp),
             )
+            val scannedIds = remember(scanned) { scanned.map { it.id }.toSet() }
+            val catalogIds = remember(catalog) { catalog.map { it.id }.toSet() }
             candidates.forEach { id ->
                 val known = knownById[id]
                 Row(
@@ -452,22 +478,14 @@ fun PiCredentialScreen(
                     Column(Modifier.weight(1f)) {
                         Text(id, style = MaterialTheme.typography.bodyLarge)
                         Text(
-                            when {
-                                known != null -> buildString {
-                                    append("pi 元数据：").append(known.name ?: id)
-                                    known.contextWindow?.let { append(" · 上下文 ").append(it) }
-                                }
-
-                                // Two different "we don't know", and only one of them is
-                                // the user's problem. For a provider pi ships no catalog
-                                // for, this row *is* the definition — what the user picks
-                                // below is what the file will say. For one pi does ship,
-                                // the app writes no definition at all, so saying otherwise
-                                // would be the same kind of false promise the previous
-                                // wording made ("可改", with nothing to change).
-                                preset.builtInPi -> "pi 的目录里没有这个模型；勾选它不会让 pi 认识它"
-                                else -> "pi 不认识这个模型，按下面的选择登记"
-                            },
+                            candidateMeta(
+                                id = id,
+                                known = known,
+                                fromScan = id in scannedIds,
+                                fromCatalog = id in catalogIds,
+                                alreadySaved = id in existingIds,
+                                builtInPi = preset.builtInPi,
+                            ),
                             style = PiTheme.text.meta,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -526,7 +544,7 @@ fun PiCredentialScreen(
                                     // Same machine as the package screen: the files
                                     // are on disk, pi has not seen them, and the user
                                     // is told rather than restarted silently.
-                                    lifecycle.installSucceeded(restart.changes, restart.detail)
+                                    activeLifecycle.installSucceeded(restart.changes, restart.detail)
                                     restartNote = restart.detail
                                 }
                             } else {
@@ -551,7 +569,7 @@ fun PiCredentialScreen(
                 Note(restartNote.orEmpty())
                 OutlinedButton(
                     onClick = {
-                        val engine = coordinator
+                        val engine = activeCoordinator
                         if (engine == null) {
                             restartNote = "重启不可用：设置页还没有连上引擎。" +
                                 "文件已经写好，重启 App 或引擎后生效。"
@@ -559,7 +577,7 @@ fun PiCredentialScreen(
                             when (engine.request("新增厂商需要被 pi 重新加载")) {
                                 ExtensionLifecycle.RequestOutcome.NeedsConfirmation -> {
                                     val waiting =
-                                        lifecycle.current as? ExtensionLifecycle.State.AwaitingConfirmation
+                                        activeLifecycle.current as? ExtensionLifecycle.State.AwaitingConfirmation
                                     restartQuestion = waiting?.question ?: "重启引擎以加载新厂商？"
                                 }
 
@@ -598,7 +616,7 @@ fun PiCredentialScreen(
                 TextButton(
                     onClick = {
                         restartQuestion = null
-                        val engine = coordinator
+                        val engine = activeCoordinator
                         if (engine != null) {
                             scope.launch {
                                 restartNote = when (val outcome = engine.confirm("用户确认重启引擎")) {
@@ -617,7 +635,7 @@ fun PiCredentialScreen(
                 TextButton(
                     onClick = {
                         restartQuestion = null
-                        lifecycle.cancelRestart()
+                        activeLifecycle.cancelRestart()
                     },
                 ) { Text("取消") }
             },
@@ -650,3 +668,46 @@ private data class KnownModel(
     val contextWindow: Long?,
     val maxTokens: Long?,
 )
+
+/**
+ * One line under a candidate model: **where this row came from**, then what pi knows
+ * about it.
+ *
+ * Why the source comes first: the list is a union of four inputs (the scan, pi's
+ * catalog, the models already saved for this provider, and whatever the user typed),
+ * and the four mean different things to the decision being made. A row the user just
+ * scanned is "this endpoint offers it"; a row only pi's catalog has is "pi knows it,
+ * the endpoint has not confirmed it"; a row already saved is "you are editing this".
+ * The previous single sentence ("pi 元数据：…") erased that distinction, which is part
+ * of why the form read as "很差劲".
+ *
+ * The last clause is the one that must not over-promise: for a provider pi ships a
+ * catalog for, checking a model pi does not know does not teach pi anything — the
+ * app writes no definition at all for those providers
+ * (`PiCredentialService.save`, docs/known-gaps.md §M13).
+ */
+private fun candidateMeta(
+    id: String,
+    known: KnownModel?,
+    fromScan: Boolean,
+    fromCatalog: Boolean,
+    alreadySaved: Boolean,
+    builtInPi: Boolean,
+): String = buildString {
+    val sources = buildList {
+        if (fromScan) add("扫描到")
+        if (fromCatalog) add("pi 目录里有")
+        if (alreadySaved) add("已保存")
+        if (isEmpty()) add("手动填写")
+    }
+    append(sources.joinToString(" · "))
+    if (known != null) {
+        append(" · ").append(known.name?.takeIf { it != id } ?: "pi 认识它")
+        known.contextWindow?.let { append(" · 上下文 ").append(it) }
+        if (known.acceptsImages) append(" · 支持图片")
+    } else if (builtInPi) {
+        append(" · pi 不认识它，勾选不会让 pi 认识它")
+    } else {
+        append(" · pi 不认识它，下面勾选的项会写进模型配置")
+    }
+}

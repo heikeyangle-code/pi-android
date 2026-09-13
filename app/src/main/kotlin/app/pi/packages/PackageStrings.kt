@@ -80,6 +80,34 @@ object PackageStrings {
 
     const val LIST_SECTION_TITLE = "已安装的资源包"
 
+    /**
+     * Extensions found in the agent's extensions directory that the app did not
+     * install. They are not packages, so `pi list` says nothing about them; the fact
+     * worth stating is that pi does load them, which is what was invisible.
+     */
+    const val DISCOVERED_TITLE = "其他扩展（不是随 App 安装的）"
+
+    const val DISCOVERED_PRESENCE = "pi 会加载它"
+
+    /**
+     * Skills, prompt templates and themes found on disk. Same reasoning as
+     * [DISCOVERED_TITLE]: pi loads them by looking at a directory, so neither the
+     * shipped list nor `pi list` mentions them.
+     */
+    const val RESOURCES_TITLE = "其他资源（不是随 App 安装的）"
+
+    fun resourceKind(kind: PiResourceDiscovery.Kind): String = when (kind) {
+        PiResourceDiscovery.Kind.Skills -> "技能"
+        PiResourceDiscovery.Kind.Prompts -> "提示模板"
+        PiResourceDiscovery.Kind.Themes -> "主题"
+    }
+
+    /** Where a resource was found, in the user's terms rather than as a path. */
+    fun resourceScope(scope: PiResourceDiscovery.Found.Scope): String = when (scope) {
+        PiResourceDiscovery.Found.Scope.Global -> "（全局）"
+        PiResourceDiscovery.Found.Scope.Project -> "（当前工作区）"
+    }
+
     /** One line per shipped extension: what it is for, in the app's words. */
     fun builtinPurpose(name: String): String = when (name) {
         "pi-android-bridge" -> "设备能力工具：读屏、点按、截屏、通知、剪贴板、导出…"

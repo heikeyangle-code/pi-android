@@ -49,6 +49,16 @@ fun SettingsGroupScreen(
     contentPadding: PaddingValues,
     onBack: () -> Unit,
     highlightKey: String? = null,
+    /**
+     * A counter that changes when the settings files changed **outside** this app.
+     *
+     * The rows read `store.read(...)` during composition, and a store that drops its
+     * cache does not by itself recompose anything — so an externally edited
+     * `settings.json` kept showing the old value until the user left and re-entered
+     * the group. Rebuilding the row list on a new epoch re-reads every value, and it
+     * only happens on a real file change (see `PiFileWatch.kt`), not per frame.
+     */
+    freshness: Int = 0,
     knownThemes: List<PiThemeEntry> = emptyList(),
     themeNotes: List<String> = emptyList(),
     themeError: String? = null,
@@ -86,7 +96,7 @@ fun SettingsGroupScreen(
     onRestartEngine: (() -> Unit)? = null,
 ) {
     val group = PiSettingsCatalog.group(groupId)
-    val rows = remember(groupId) { buildGroupRows(groupId) }
+    val rows = remember(groupId, freshness) { buildGroupRows(groupId) }
     val listState = rememberLazyListState()
 
     var editing by remember { mutableStateOf<PiSetting?>(null) }

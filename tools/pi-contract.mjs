@@ -41,7 +41,7 @@
  * Exit code 0 = every assertion holds. Non-zero = read the last line.
  */
 
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -107,6 +107,38 @@ function checkSurface(piDir) {
 				`find the new name in the pinned rpc-types.ts and update Commands.kt + its callers.`,
 		);
 	}
+	// The provider table is the app's own transcription of pi's `providers/*.ts` — the
+	// one table here that *writes* something: `PiCredentialService.save` puts a
+	// preset's `baseUrl` and `api` into `models.json`, so a stale entry would override
+	// the engine's real endpoint for that provider (the §M11 shape again). Only the
+	// providers pi ships are asserted; the app's own three (Ollama, llama.cpp, 自定义)
+	// have no counterpart by definition.
+	const presets = [
+		...readFileSync(join(ROOT, "app/src/main/kotlin/app/pi/packages/PiProviderPresets.kt"), "utf8")
+			.matchAll(/Preset\("([^"]+)",\s*"[^"]*",\s*"([^"]*)",\s*"([^"]*)",[^)]*?(true|false),\s*(true|false)/g),
+	].map((m) => ({ id: m[1], baseUrl: m[2], api: m[3], builtInPi: m[5] === "true" }));
+	for (const preset of presets.filter((p) => p.builtInPi && p.baseUrl.length > 0)) {
+		check(
+			`provider preset matches the pinned engine: ${preset.id}`,
+			dist.includes(preset.baseUrl),
+			`app.pi keeps its own table of pi's providers (packages/PiProviderPresets.kt) and ` +
+				`saves baseUrl/api from it into models.json — a stale entry overrides the engine's ` +
+				`own endpoint. Re-read the pinned providers/${preset.id}.ts.`,
+		);
+	}
+
+	// The one file path the app reconstructs rather than asks for. A rename here makes
+	// `PiModelCatalog` return an empty list for every provider — by design ("silence
+	// rather than a guess"), which means nothing else in the build could notice.
+	check(
+		"the pinned engine still names the model catalog `models-store.json`",
+		dist.includes("models-store.json"),
+		"app.pi reads pi's own model catalog beside models.json " +
+			"(packages/PiModelCatalog.kt, called from PiCredentialService.catalogModels and " +
+			"PiModelInventory). Re-read the pinned core/model-runtime.ts's FileModelsStore " +
+			"construction and update both readers if the name or the location moved.",
+	);
+
 	const knownUiMethods = ["confirm", "input", "notify", "select", "editor", "setStatus", "setTitle", "setWidget"];
 	for (const method of knownUiMethods) {
 		check(
@@ -116,7 +148,7 @@ function checkSurface(piDir) {
 				`extension's dialog would never be answered — check rpc-types.ts's RpcExtensionUIRequest.`,
 		);
 	}
-	console.log(`   (${new Set(commands).size} commands, ${uiMethods.length} local handlers scanned)`);
+	console.log(`   (${new Set(commands).size} commands, ${uiMethods.length} local handlers, ${presets.filter((p) => p.builtInPi).length} provider presets scanned)`);
 }
 
 // -------------------------------------------------------------- part 2: behaviour
@@ -221,6 +253,155 @@ function checkBehaviour(piDir) {
 	rmSync(probe, { recursive: true, force: true });
 }
 
+/**
+ * The fact the whole 设置 → 模型 page is built on: **over `--mode rpc`, `models.json` is
+ * only read when the process starts.**
+ *
+ * `ModelConfig.load` has exactly two call sites (`core/model-runtime.ts:176` in
+ * `create`, `:699` in `refresh`), and nothing on the RPC surface calls `refresh` —
+ * `get_available_models` answers from `getAvailableSnapshot()` (`rpc-mode.ts:490-493`).
+ * `PiModelInventory` turns "the file has it, the engine's list does not" into
+ * 「等待重启」, and `PiModelsScreen` tells the user to restart for it. If pi ever grew an
+ * RPC refresh (or reloaded the file per call), that sentence would become a lie — the
+ * user would restart for nothing. So the negative is asserted directly: write the file
+ * *while the engine is running*, ask again, and require the new model to be absent —
+ * then require it to be present in a fresh process.
+ *
+ * The negative is the flaky-looking half, so what it may not depend on: it does not
+ * depend on timing (both requests are answered by the same live process, in order),
+ * and a process that never answers fails the check with that sentence rather than
+ * passing quietly.
+ */
+function startPi(piDir, agentDir) {
+	const cli = join(piDir, "dist/cli.js");
+	const child = spawn("node", [cli, "--mode", "rpc", "--session-dir", join(agentDir, "sessions")], {
+		env: {
+			...process.env,
+			PI_CODING_AGENT_DIR: agentDir,
+			PI_SKIP_VERSION_CHECK: "1",
+			PI_OFFLINE: "1",
+			DEEPSEEK_API_KEY: "sk-contract",
+		},
+		stdio: ["pipe", "pipe", "pipe"],
+	});
+	const events = [];
+	let buffer = "";
+	child.stdout.setEncoding("utf8");
+	child.stdout.on("data", (chunk) => {
+		buffer += chunk;
+		let index;
+		while ((index = buffer.indexOf("\n")) >= 0) {
+			const line = buffer.slice(0, index);
+			buffer = buffer.slice(index + 1);
+			if (!line.trim()) continue;
+			try {
+				events.push(JSON.parse(line));
+			} catch {
+				// A partial or non-JSON line is not an answer; the wait below times out.
+			}
+		}
+	});
+	child.stderr.setEncoding("utf8");
+	child.stderr.on("data", () => {});
+	return {
+		events,
+		send(request) {
+			child.stdin.write(`${JSON.stringify(request)}\n`);
+		},
+		async waitFor(predicate, ms = 30_000) {
+			const deadline = Date.now() + ms;
+			for (;;) {
+				const found = events.find(predicate);
+				if (found) return found;
+				if (Date.now() > deadline) return undefined;
+				await new Promise((resolve) => setTimeout(resolve, 25));
+			}
+		},
+		async stop() {
+			child.stdin.end();
+			await new Promise((resolve) => {
+				const timer = setTimeout(() => {
+					child.kill("SIGKILL");
+					resolve();
+				}, 5_000);
+				child.on("exit", () => {
+					clearTimeout(timer);
+					resolve();
+				});
+			});
+		},
+	};
+}
+
+async function checkStartupOnlyReload(piDir) {
+	const probe = mkdtempSync(join(tmpdir(), "pi-contract-reload-"));
+	mkdirSync(join(probe, "sessions"), { recursive: true });
+
+	const baseline = availableModels(piDir, probe).filter((model) => model.provider === "deepseek");
+	if (baseline.length === 0) {
+		check(
+			"a provider with a credential contributes models to get_available_models",
+			false,
+			"the reload check below needs a credentialed provider to add a model to; " +
+				"re-read core/model-runtime.ts's credential handling if this stops working.",
+		);
+		rmSync(probe, { recursive: true, force: true });
+		return;
+	}
+	const model = baseline[0];
+	const addedId = "contract-added-model";
+
+	const live = startPi(piDir, probe);
+	try {
+		live.send({ id: "before", type: "get_available_models" });
+		const before = await live.waitFor((event) => event.type === "response" && event.id === "before");
+		check(
+			"a live engine answers get_available_models",
+			before?.success === true,
+			"nothing below can be asserted without a served request; if this fails, the " +
+				"RPC startup path changed and PiEngineSession's readiness probe is the place to look.",
+		);
+
+		writeModelsJson(probe, {
+			baseUrl: "https://api.deepseek.com",
+			api: "openai-completions",
+			models: [{ id: addedId, name: addedId }],
+		});
+
+		live.send({ id: "after", type: "get_available_models" });
+		const after = await live.waitFor((event) => event.type === "response" && event.id === "after");
+		const liveIds = (after?.data?.models ?? []).map((entry) => entry.id);
+		check(
+			"models.json edited while the engine runs really does need a restart",
+			after?.success === true && !liveIds.includes(addedId),
+			"PiModelInventory's PENDING_RESTART status and PiModelsScreen's 「等待重启」 + " +
+				"restart button are this fact. If pi now re-reads models.json during a session, " +
+				"re-read core/model-runtime.ts's refresh call sites and drop that UI (or find " +
+				"the command that refreshes and use it instead of a restart).",
+		);
+	} finally {
+		await live.stop();
+	}
+
+	const fresh = availableModels(piDir, probe);
+	check(
+		"a fresh engine does read the edited models.json",
+		fresh.some((entry) => entry.provider === "deepseek" && entry.id === addedId),
+		"the other half of the same fact: the file is read at startup " +
+			"(core/model-runtime.ts:176). If this fails, the probe itself is wrong (the file " +
+			"or the credential), not the app.",
+	);
+	check(
+		"the declared model did not silently inherit a catalog entry",
+		fresh.find((entry) => entry.id === addedId)?.name === addedId,
+		"a NEW id is appended, never merged into an existing one — this is what tells the " +
+			"two halves of applyModelsJson (replace vs push) apart; see " +
+			"provider-composer.ts:203-209 if it stopped holding.",
+	);
+
+	rmSync(probe, { recursive: true, force: true });
+}
+
 // ------------------------------------------------------------- part 3: extensions
 
 function checkExtensions(piDir) {
@@ -267,6 +448,7 @@ console.log("\n--- surface ---");
 checkSurface(piDir);
 console.log("\n--- behaviour ---");
 checkBehaviour(piDir);
+await checkStartupOnlyReload(piDir);
 console.log("\n--- extensions ---");
 checkExtensions(piDir);
 

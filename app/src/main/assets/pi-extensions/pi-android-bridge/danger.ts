@@ -167,6 +167,11 @@ export function describeDangerousCall(toolName: string, input: Record<string, un
  * asymmetry is left alone rather than "aligned": tightening the Kotlin guard would
  * refuse prose that merely mentions a token, and loosening this one would gain
  * nothing the guard does not already cover.
+ *
+ * The two lists are compared mechanically by the `shell-policy-mirror` bare-JVM
+ * harness (`app/src/test/kotlin/app/pi/bridge/ShellPolicyMirrorCheck.kt`, run by
+ * `tools/run-app-pure-checks.sh`), which fails when either side gains, loses or
+ * renames a rule. The `i` flags are deliberately not part of that comparison.
  */
 export const FORBIDDEN_SHELL_PATTERNS: ReadonlyArray<{ pattern: RegExp; label: string }> = [
 	{ pattern: /(^|[\s;&|()])mount(\s|$)/i, label: "挂载/卸载文件系统（需要 root，只会失败）" },

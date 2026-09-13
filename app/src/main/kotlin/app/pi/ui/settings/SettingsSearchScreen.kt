@@ -64,9 +64,17 @@ fun SettingsSearchScreen(
      * [SettingsGroupScreen.valueOverrides].
      */
     valueOverrides: Map<String, String> = emptyMap(),
+    /**
+     * Changes when the settings files changed outside this app, so the result rows
+     * re-read their values — the same mechanism as [SettingsGroupScreen.freshness],
+     * and the same reason: a cache drop alone does not recompose anything.
+     */
+    freshness: Int = 0,
 ) {
     var query by remember(initialQuery) { mutableStateOf(initialQuery) }
-    val hits = remember(query) { PiSettingsCatalog.search(query) }
+    // `freshness` is part of the key so a new epoch rebuilds the hit list, which is
+    // what re-reads `setting.current(store)` in every row below.
+    val hits = remember(query, freshness) { PiSettingsCatalog.search(query) }
     val focusRequester = remember { FocusRequester() }
 
     LaunchedEffect(Unit) {
@@ -142,15 +150,20 @@ fun SettingsSearchScreen(
 
 @Composable
 private fun SearchHints(onPick: (String) -> Unit) {
+    // Every chip has to resolve to at least one row, and `settings-audit` enforces
+    // it: a chip that matches nothing is a dead row one layer up. `/tree` and
+    // `sessionDir` both stopped resolving when the registry dropped the rows behind
+    // them (`docs/settings-review.md` §1.2, §7.5), so they were replaced by
+    // `/import` and `导入`.
     val examples = listOf(
         "reserveTokens",
-        "sessionDir",
         "thinkingBudgets",
         "theme",
         "代理",
         "压缩",
+        "导入",
         "/compact",
-        "/tree",
+        "/import",
         "llama",
     )
     Column(Modifier.fillMaxWidth()) {

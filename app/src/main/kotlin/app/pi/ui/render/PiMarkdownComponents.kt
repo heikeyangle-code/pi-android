@@ -150,10 +150,16 @@ internal fun piMarkdownComponents(): MarkdownComponents = markdownComponents(
  * In normal rendering this function is in fact unreachable for math, because
  * [piMarkdownSource] rewrites `$...$` / `$$...$$` before the parser runs; see
  * [PiMarkdownText]. It is kept because it is the AST-level statement of what
- * this app supports, and because the streaming renderer
- * (`StreamingMarkdownState`) renders an unstable AST tail built from the same
- * parse — a math node that ever survives to a component call must land here
- * rather than silently vanishing.
+ * this app supports, and because the renderer's dispatch reaches it for *any*
+ * node build it is handed — including a partial document, which is what every
+ * streaming token produces — so a math node that survives to a component call
+ * must land here rather than silently vanishing.
+ *
+ * (The library also ships a streaming parser that keeps a stable AST prefix and
+ * re-parses only its tail — `StreamingMarkdownState`, `model/StreamingMarkdownState.kt`
+ * in 0.45.0 — but this app does not use it: it is append-only (`append(chunk)`)
+ * while the App's transcript carries the accumulated text, so adopting it needs a
+ * delta channel out of the reducer first. See `docs/streaming-review.md` §4.2.)
  *
  * A node that reaches this point is rendered as the formula's own source in
  * `mdCode`, which is the phone's equivalent of pi's pending formula

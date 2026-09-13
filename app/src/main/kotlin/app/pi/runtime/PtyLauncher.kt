@@ -149,9 +149,12 @@ object PtyLauncher {
         val guestCommand = buildGuestCommand(spec, flags, guestWorkspace)
         // proot binds nothing that does not exist on the host side, and the
         // terminal can legitimately be the first thing the user opens — before any
-        // engine boot has created the agent dir. `PiRuntime`'s own getters create
-        // their directories the same way, and `AgentLayout.ensureAgentMirrorDir`
-        // exists for exactly this reason on the package path.
+        // engine boot has created the agent dir or the workspace. `PiRuntime`'s own
+        // getters create their directories the same way, the engine creates the
+        // workspace before binding it (`PiEngineHost.kt:257`, `workspace.mkdirs()`),
+        // and `AgentLayout.ensureAgentMirrorDir` exists for exactly this reason on
+        // the package path.
+        workspace.mkdirs()
         paths.agentDir.mkdirs()
         val argv = ProotCommand.build(
             paths = paths,
@@ -287,15 +290,21 @@ object PtyLauncher {
     }
 
     /** The host directory bind-mounted as the guest's `/workspace`. */
-    fun workspaceHost(context: Context): File = File(context.filesDir, WORKSPACE_RELATIVE)
+    fun workspaceHost(context: Context): File = GuestWorkspacePath.host(context.filesDir)
 
     /**
-     * The path [app.pi.engine.PiEngineHost] maps a workspace to, so a terminal tab
-     * and a chat session look at one directory. [PiEngineHost] derives it from the
-     * same relative path.
+     * The workspace, as this launcher mounts it: the *same host directory* the
+     * engine mounts, at a **different guest path**.
+     *
+     * `GuestWorkspacePath` owns both spellings and explains the difference; the
+     * earlier comment here claimed this was "the path [PiEngineHost] maps a
+     * workspace to, so a terminal tab and a chat session look at one directory",
+     * and the first half of that was simply false (`bridge/DeviceWorkspace`'s
+     * KDoc had already caught it). They do look at one *directory* — the same
+     * host directory — but not at one path, and `/app/health` publishes both
+     * spellings so nothing has to infer which one it holds.
      */
-    private const val WORKSPACE_RELATIVE = "pi/workspaces/workspace-1"
-    private const val guestWorkspace = "/workspace"
+    private val guestWorkspace: String = GuestWorkspacePath.TERMINAL_GUEST_PATH
 
     /**
      * pi's agent dir inside the guest — the guest spelling of `PiPaths.agentDir`.

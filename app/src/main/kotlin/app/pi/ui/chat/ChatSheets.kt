@@ -89,7 +89,17 @@ fun ModelPickerSheet(
             Spacer(Modifier.height(PiSpacing.unit))
             if (shown.isEmpty()) {
                 Text(
-                    if (busy) "正在读取模型列表…" else "没有可用模型。pi 需要至少一个已配置认证的 provider。",
+                    if (busy) {
+                        "正在读取模型列表…"
+                    } else {
+                        // The list is pi's availability snapshot and nothing else, so "just
+                        // configured a provider and it is not here" has exactly one cause:
+                        // the running engine has not re-read `models.json`/`auth.json`.
+                        // Saying that here is the difference between a dead end and one
+                        // tap, because this sheet is where the user notices.
+                        "没有可用模型。刚配置好的厂商要重启引擎后才会出现在这里；" +
+                            "已经保存的模型可以在 设置 → 模型 里看到它们的状态。"
+                    },
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -108,6 +118,14 @@ fun ModelPickerSheet(
                     }
                 }
             }
+            Spacer(Modifier.height(PiSpacing.unit))
+            // One line under the list, for the case the empty state cannot cover: the
+            // list is not empty, but the model the user just imported is not in it.
+            Text(
+                "这个列表来自运行中的引擎。导入过的模型在 设置 → 模型 里能看到它们的状态。",
+                style = PiTheme.text.meta,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
             Spacer(Modifier.height(PiSpacing.unit))
         }
     }

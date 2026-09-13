@@ -38,9 +38,8 @@ import kotlinx.serialization.json.JsonPrimitive
  *  - `app.terminal.cursorStyle` — cursor shape is whatever the guest asks for
  *    through `DECSCUSR`, which libvterm honours.
  *
- * Those two rows still exist in `PiSettingsRegistry.kt` (out of this change's
- * scope) and should either gain an engine-side knob or be removed there; they are
- * dead until then, and this comment is the pointer for whoever does it.
+ * Those two rows are no longer in `PiSettingsRegistry.kt`: the registry audit in
+ * this pass removed them, so there is nothing left here to keep in sync.
  *
  * **Same store, not a second one.** The paths are built from the same two
  * canonical resolvers the rest of the app uses — `PiPaths` for the agent dir (as

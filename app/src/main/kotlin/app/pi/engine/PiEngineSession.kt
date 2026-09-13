@@ -5,9 +5,11 @@ import app.pi.rpc.PiCommands
 import app.pi.rpc.PiEvent
 import app.pi.rpc.PiEvents
 import app.pi.rpc.PiImage
+import app.pi.rpc.PiResponses
 import app.pi.rpc.TranscriptChange
 import app.pi.rpc.TranscriptItem
 import app.pi.rpc.TranscriptReducer
+import app.pi.rpc.Utf8StreamDecoder
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -356,6 +358,13 @@ class PiEngineSession(
 
     private suspend fun readLoop(input: InputStream) {
         val framer = JsonlFramer()
+        // Incremental, because a read boundary is arbitrary and pi's stdout is
+        // usually UTF-8 CJK (three bytes per character): decoding each read on its own
+        // replaces a character that straddles two reads with one `\uFFFD` per orphaned
+        // byte, inside the JSON string, where nothing downstream can tell it from
+        // text the model wrote. `Utf8StreamDecoder` carries the partial sequence; its
+        // KDoc has the measured baseline and `Utf8StreamDecoderCheck` pins it.
+        val decoder = Utf8StreamDecoder()
         val buffer = ByteArray(16 * 1024)
         withContext(Dispatchers.IO) {
             while (true) {
@@ -365,10 +374,14 @@ class PiEngineSession(
                     -1
                 }
                 if (read < 0) break
-                val records = framer.feed(String(buffer, 0, read, Charsets.UTF_8))
+                val records = framer.feed(decoder.decode(buffer, read))
                 for (record in records) handle(record)
             }
         }
+        // A partial sequence at EOF is genuinely truncated input, so this is where it
+        // becomes a replacement character — and the framer gets one last chance to
+        // complete the record that was in flight.
+        for (record in framer.feed(decoder.flush())) handle(record)
         for (record in framer.flush()) handle(record)
     }
 
@@ -687,12 +700,20 @@ class PiEngineSession(
      * pi's Escape: clear the queue, then abort — and the queue contents come
      * back to the caller so the composer can restore them
      * (docs/pi-android-ui-spec.md §7.2).
+     *
+     * The queue text is read from the **`clear_queue` response**, not from
+     * `get_state`. `clear_queue` answers with the arrays it just removed
+     * (`rpc-mode.ts:433-435` returns `session.clearQueue()`, i.e.
+     * `{steering, followUp}` — `agent-session.ts:1608-1615`), while `get_state`
+     * carries no queue arrays at all (`RpcSessionState` has only
+     * `pendingMessageCount`). Reading them off `get_state` therefore always
+     * produced two empty lists: pi emptied its queue and the text was never handed
+     * back, so pressing Stop silently destroyed whatever the user had queued.
      */
     suspend fun stopAndDrainQueue(): List<String> {
-        val state = request(PiCommands.getState(nextId()), timeoutMs = 15_000)
-        val steering = queuedText(state, "steering")
-        val followUp = queuedText(state, "followUp")
-        request(PiCommands.clearQueue(nextId()))
+        val cleared = request(PiCommands.clearQueue(nextId()))
+        val steering = queuedText(cleared, "steering")
+        val followUp = queuedText(cleared, "followUp")
         request(PiCommands.abort(nextId()))
         return steering + followUp
     }
@@ -701,6 +722,45 @@ class PiEngineSession(
         val data = response.data as? JsonObject ?: return emptyList()
         val array = data[key] as? kotlinx.serialization.json.JsonArray ?: return emptyList()
         return array.mapNotNull { (it as? kotlinx.serialization.json.JsonPrimitive)?.content }
+    }
+
+    /**
+     * Close pi **after** letting it finish the turn it is in.
+     *
+     * Why [close] alone is not enough: pi writes a session entry when a message
+     * *ends* (`agent-session.ts:669-691` → `SessionManager.appendMessage`), and
+     * `_persist` does not create the session file at all until the first assistant
+     * message of the session has ended (`session-manager.ts:1029-1052`) — a session
+     * whose reply never lands is not on disk, and a later turn's assistant message
+     * only reaches the file at its own `message_end`. [close] shuts pi's stdin, and
+     * pi treats a closed stdin as "exit now" (`rpc-mode.ts:805-807` calls
+     * `shutdown()`, which unsubscribes and exits without waiting for the agent), so
+     * a turn that is still streaming is missing from the conversation that is left
+     * behind — the second half of "I left the app and the conversation was gone".
+     *
+     * The fix is pi's own command, not a delay: the `abort` handler awaits
+     * `session.abort()`, which awaits `waitForIdle()` (`agent-session.ts:1640-1646`),
+     * so its **response** arrives only after the turn has stopped — and an aborted
+     * assistant message is persisted like any other `message_end`. `get_state`
+     * decides whether that is needed at all, using pi's own flags rather than the
+     * local `Busy` state, which flips to ready on `agent_end` while a compaction may
+     * still be running (`PiEvent.AgentEnd` and `PiEvent.AgentSettled` both map to
+     * `Ready`).
+     *
+     * Bounded on purpose: this runs while a screen is going away, so a pi that never
+     * answers must not hold the teardown forever. Every failure path falls through
+     * to [close] — a hard kill is worse than a clean stop, but it is not worse than
+     * leaking the process.
+     */
+    suspend fun closeAfterSettling(timeoutMs: Long = SETTLE_TIMEOUT_MS) {
+        runCatching {
+            val state = request(PiCommands.getState(nextId()), timeoutMs)
+            val snapshot = PiResponses.sessionState(state)
+            if (snapshot != null && (snapshot.isStreaming || snapshot.isCompacting)) {
+                request(PiCommands.abort(nextId()), timeoutMs)
+            }
+        }
+        close()
     }
 
     fun close() {
@@ -742,6 +802,19 @@ class PiEngineSession(
          * leaves the UI saying 启动中 (see [probeServing]).
          */
         private const val SERVING_PROBE_TIMEOUT_MS = 300_000L
+
+        /**
+         * How long [closeAfterSettling] waits for pi to answer `get_state` and the
+         * follow-up `abort`.
+         *
+         * Far shorter than [request]'s own default and shorter than any LLM call on
+         * purpose: pi's `abort` returns as soon as the turn stops, which is a local
+         * state transition plus the write of the aborted message, so the only reason
+         * to wait this long is a phone that is out of CPU under proot. Past that the
+         * session is closed anyway; the alternative to a bounded wait is an app that
+         * cannot be left.
+         */
+        private const val SETTLE_TIMEOUT_MS = 30_000L
 
         /**
          * Start an engine described by a command line that already includes
