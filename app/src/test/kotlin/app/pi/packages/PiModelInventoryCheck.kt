@@ -100,9 +100,15 @@ fun main() {
     )
     check("the provider block keeps its name", ollama.name, "Ollama")
     check("the provider block keeps its endpoint", ollama.baseUrl, "http://localhost:11434/v1")
-    check("a provider with no block has no name", deepseek.name, null)
-    check("a provider with no block is not 'configured'", deepseek.configured, false)
+    // 这两条问的是"**没有** `models.json` 厂商块"的厂商，而 fixture 里那种厂商是
+    // `anthropic`（它只在 `auth.json` 里有凭证）。原来它们断言在 `deepseek` 上——而
+    // `deepseek` 在 `MODELS_JSON` 里**有**块（`baseUrl`+`api`），所以 `configured`
+    // 本该是 true，断言失败是**测试对象写错**，不是实现错。
+    val anthropic = inventory.providers.first { it.id == "anthropic" }
+    check("a provider with no block has no name", anthropic.name, null)
+    check("a provider with no block is not 'configured'", anthropic.configured, false)
     check("a provider with a block is 'configured'", ollama.configured, true)
+    check("a block without a name does not invent one", deepseek.name, null)
 
     // ------------------------------------------------------------------ 2 状态
 
