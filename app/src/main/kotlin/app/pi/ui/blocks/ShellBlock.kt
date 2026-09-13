@@ -10,7 +10,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import app.pi.rpc.Ansi
 import app.pi.rpc.ToolCall
-import app.pi.rpc.ToolStatus
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
 
@@ -52,9 +51,10 @@ internal fun ShellBlock(
     defaultExpanded: Boolean = false,
 ) {
     val palette = PiTheme.palette
+    val state = toolStateOf(item)
     var expanded by remember(defaultExpanded) { mutableStateOf(defaultExpanded) }
     var fullOutput by remember { mutableStateOf(false) }
-    val pending = item.status == ToolStatus.Pending
+    val pending = state == ToolState.Running
     val command = remember(item.args) { argString(item.args, "command").orEmpty() }
     val timeout = remember(item.args) { argInt(item.args, "timeout") }
     val exitCode = remember(item.exitCode, item.output) {
@@ -85,12 +85,19 @@ internal fun ShellBlock(
     }
     val hidden = remember(bodyText, painted) { hiddenLineCount(lines, painted) }
     val subject = remember(command, timeout) { shellSubject(command, timeout) }
-    // The live clock: one read per composition, no timer of its own. See the KDoc.
-    val footer = shellFooter(item, exitCode, lines, System.currentTimeMillis())
+    // The live clock: one read per composition, no timer of its own. See the KDoc. The
+    // same number feeds the footer's text and its tick (`04 §1.1`: 刻度与读数同源), so a
+    // running command's meter grows with the seconds beside it.
+    val elapsedMs = if (pending) {
+        (System.currentTimeMillis() - item.ts).coerceAtLeast(0)
+    } else {
+        item.elapsedMs
+    }
+    val footer = shellFooter(item, state, exitCode, lines, elapsedMs)
     ToolActionMenu(command.ifEmpty { null }, item.output, fullOutputPath) {
         BlockColumn(modifier) {
             ToolCard(item, expanded, { expanded = !expanded }) {
-                ToolHeader(title = "$", subject = subject, status = item.status)
+                ToolHeader(item = item, title = "$", subject = subject)
                 if (expanded && bodyText.isNotEmpty()) {
                     MonoText(
                         text = painted,
@@ -117,7 +124,13 @@ internal fun ShellBlock(
                 if (expanded && notice != null) {
                     ToolNotice(text = notice, copyOnTap = fullOutputPath)
                 }
-                ToolFooter(text = footer, expanded = expanded, expandable = bodyText.isNotEmpty() || notice != null)
+                ToolFooter(
+                    text = footer,
+                    expanded = expanded,
+                    expandable = bodyText.isNotEmpty() || notice != null,
+                    state = state,
+                    elapsedMs = elapsedMs,
+                )
             }
         }
     }
@@ -139,21 +152,23 @@ private fun shellSubject(command: String, timeout: Int?): String {
 }
 
 /**
- * The footer line: status, pi's exit code, pi's elapsed number, and the row's size.
+ * The footer line: state, pi's exit code, pi's elapsed number, and the row's size.
  *
  * pi splits these across two lines (its card's title, and `Elapsed`/`Took` under the body);
  * the app's card has one footer row, so they are joined in pi's order. The elapsed part is
  * [ToolOutputParse.elapsedLabel], which is pi's `formatDuration` (`renderers/bash.ts:32-34`).
  *
- * [nowMs] is read once by the caller: while the command runs this is the app's recomposition
- * beat, not a clock of its own.
+ * [elapsedMs] is handed in by the caller: while the command runs this is the app's
+ * recomposition beat, not a clock of its own, and the same value goes to the tick. A
+ * blocked call has no such reading — nothing ran — so it takes the fourth state's own
+ * footer instead.
  */
-private fun shellFooter(item: ToolCall, exitCode: Int?, lines: Int, nowMs: Long): String {
-    val pending = item.status == ToolStatus.Pending
-    val parts = mutableListOf(toolStatusLabel(item.status))
+private fun shellFooter(item: ToolCall, state: ToolState, exitCode: Int?, lines: Int, elapsedMs: Long?): String {
+    if (state == ToolState.Rejected) return toolRejectedFooter()
+    val pending = state == ToolState.Running
+    val parts = mutableListOf(toolStateLabel(state))
     if (!pending) exitCode?.let { parts += "退出码 $it" }
-    val elapsed = if (pending) (nowMs - item.ts).coerceAtLeast(0) else item.elapsedMs
-    if (elapsed != null) parts += ToolOutputParse.elapsedLabel(pending, elapsed)
+    if (elapsedMs != null) parts += ToolOutputParse.elapsedLabel(pending, elapsedMs)
     if (lines > 0) parts += "$lines 行"
     if (item.outputTruncated) parts += "已截断"
     if (!pending && item.output.isEmpty()) parts += "无输出"

@@ -15,6 +15,7 @@ import androidx.compose.ui.text.style.TextAlign
 import app.pi.rpc.ToolCall
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
+import app.pi.ui.theme.numeric
 
 /**
  * `grep` — pi's renderer for the content search (`core/tools/renderers/grep.ts`).
@@ -46,6 +47,7 @@ internal fun GrepBlock(
     defaultExpanded: Boolean = false,
 ) {
     val palette = PiTheme.palette
+    val state = toolStateOf(item)
     var expanded by remember(defaultExpanded) { mutableStateOf(defaultExpanded) }
     var fullOutput by remember { mutableStateOf(false) }
     val body = remember(item.output) { ToolOutputParse.grepBody(item.output) }
@@ -69,21 +71,25 @@ internal fun GrepBlock(
     val shownMatches = remember(plan) { countMatches(plan) }
     val omitted = (body.matchCount - shownMatches).coerceAtLeast(0)
     val hasBody = body.groups.isNotEmpty() || body.notice != null || body.empty
-    val footer = remember(item.output, item.exitCode, item.elapsedMs, item.outputTruncated, item.status, body.matchCount) {
-        val parts = mutableListOf(toolStatusLabel(item.status))
-        if (body.matchCount > 0) parts += "${body.matchCount} 处"
-        // pi's own count of files, not the capped group list's size (which would undercount
-        // a 500-file search as "200 个文件").
-        if (body.fileCount > 1) parts += "${body.fileCount} 个文件"
-        item.exitCode?.let { parts += "退出码 $it" }
-        item.elapsedMs?.let { parts += formatDuration(it) }
-        if (item.outputTruncated) parts += "已截断"
-        parts.joinToString(" · ")
+    val footer = remember(item.output, item.exitCode, item.elapsedMs, item.outputTruncated, state, body.matchCount) {
+        if (state == ToolState.Rejected) {
+            toolRejectedFooter()
+        } else {
+            val parts = mutableListOf(toolStateLabel(state))
+            if (body.matchCount > 0) parts += "${body.matchCount} 处"
+            // pi's own count of files, not the capped group list's size (which would undercount
+            // a 500-file search as "200 个文件").
+            if (body.fileCount > 1) parts += "${body.fileCount} 个文件"
+            item.exitCode?.let { parts += "退出码 $it" }
+            item.elapsedMs?.let { parts += formatDuration(it) }
+            if (item.outputTruncated) parts += "已截断"
+            parts.joinToString(" · ")
+        }
     }
     ToolActionMenu(command, item.output, fullOutputPath) {
         BlockColumn(modifier) {
             ToolCard(item, expanded, { expanded = !expanded }) {
-                ToolHeader(title = "grep", subject = subject, status = item.status)
+                ToolHeader(item = item, title = "grep", subject = subject)
                 if (expanded) {
                     when {
                         body.empty -> Text(
@@ -126,19 +132,32 @@ internal fun GrepBlock(
                     body.notice?.let { ToolNotice(text = it, copyOnTap = null) }
                     if (notice != null) ToolNotice(text = notice, copyOnTap = fullOutputPath)
                 }
-                ToolFooter(text = footer, expanded = expanded, expandable = hasBody)
+                ToolFooter(
+                    text = footer,
+                    expanded = expanded,
+                    expandable = hasBody,
+                    state = state,
+                    elapsedMs = item.elapsedMs,
+                )
             }
         }
     }
 }
 
-/** One file's heading: the path pi printed, plus how many of its rows are below. */
+/**
+ * One file's heading: the path pi printed, plus how many of its rows are below.
+ *
+ * The count is a **quantity, not a state** (`06 §4`: a number belongs in plain numeric
+ * text, `theme/PiStateChip.kt`), so it is mono and muted — v2's own treatment
+ * (`mono t12 c-muted`) — rather than a chip. It keeps the machine face so the counts
+ * line up down the card and do not jitter as a live search grows.
+ */
 @Composable
 private fun GrepGroupHeading(path: String, matches: Int) {
     val palette = PiTheme.palette
     Row(modifier = Modifier.padding(top = PiSpacing.gutter)) {
         MonoText(text = path, color = palette.toolTitle, modifier = Modifier.weight(1f), maxLines = 1)
-        Text(text = "$matches 处", style = PiTheme.text.meta, color = palette.dim, maxLines = 1)
+        Text(text = "$matches 处", style = PiTheme.text.numeric, color = palette.muted, maxLines = 1)
     }
 }
 

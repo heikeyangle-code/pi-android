@@ -21,13 +21,13 @@ import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
-import androidx.compose.ui.unit.dp
 import app.pi.rpc.DiffHunk
 import app.pi.rpc.DiffLine
 import app.pi.rpc.DiffLineKind
 import app.pi.rpc.ToolDiff
 import app.pi.ui.theme.PiTheme
 import app.pi.ui.theme.PiSpacing
+import app.pi.ui.theme.StateTone
 
 /**
  * `tool-diff` (docs/pi-android-ui-spec.md §7.4): path plus `+N −N` up top, then
@@ -50,7 +50,14 @@ import app.pi.ui.theme.PiSpacing
  * a non-colour signal), and the line-number column (pi carries the number inside
  * the coloured line, `diff.ts:127-152`; a phone column reads better and keeps the
  * numbers aligned).
+ *
+ * The rows themselves are untouched by the v2 batch — `09-highlight-fidelity.md`
+ * settled them 1:1 with pi, so their colours and the 8 % wash stay byte for byte.
  */
+
+/** `06 §2` diff 卡's rail node: `±`, the one node that is not a state. */
+private const val DIFF_NODE_GLYPH = "±"
+
 @Composable
 fun DiffBlock(
     item: ToolDiff,
@@ -66,88 +73,101 @@ fun DiffBlock(
     val omitted = item.lineCount > MAX_DIFF_ROWS || item.truncated
 
     BlockColumn(modifier) {
-        BlockCard(
-            color = palette.toolPendingBg,
-            // F28: same content-region gesture as the tool card.
-            modifier = Modifier.toggleContent(expanded, { expanded = !expanded }),
-            borderColor = palette.borderMuted.copy(alpha = 0.35f),
+        // The diff sits on the same rail as the calls beside it (`06 §3` 构件 1), with the
+        // one node that is not a state: `±`, in neutral tokens, because a diff has no
+        // status of its own. It carries **no duration tick** (`06 §2`: diff 卡不显示 —
+        // nothing here was timed, and the row is already the densest in the stream).
+        ToolRailFrame(
+            glyph = DIFF_NODE_GLYPH,
+            tone = StateTone.Muted,
+            label = "差异",
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    text = item.toolName.ifEmpty { "diff" },
-                    style = PiTheme.text.monoSmall,
-                    color = palette.dim,
-                    maxLines = 1,
-                )
-                Spacer(Modifier.width(PiSpacing.inline))
-                Text(
-                    text = item.path.ifEmpty { "未命名文件" },
-                    modifier = Modifier.weight(1f),
-                    style = PiTheme.text.mono,
-                    color = palette.toolTitle,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Spacer(Modifier.width(PiSpacing.inline))
-                Text("+${item.added}", style = PiTheme.text.monoSmall, color = palette.toolDiffAdded)
-                Spacer(Modifier.width(PiSpacing.gutter))
-                Text("−${item.removed}", style = PiTheme.text.monoSmall, color = palette.toolDiffRemoved)
-            }
-
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    text = "新增 ${item.added} 行 · 删除 ${item.removed} 行",
-                    modifier = Modifier.weight(1f),
-                    style = PiTheme.text.meta,
-                    color = palette.muted,
-                )
-                // F19 (`docs/rendering-review.md`): the 「全屏」 label used to sit
-                // behind an `onOpenFull` the host never supplied — the app has no
-                // full-screen diff route — so both are deleted rather than left
-                // claiming the affordance (spec §4.8 still asks for one; that is
-                // new UI, recorded in the review's F19 row).
-                ExpandLabel(expanded)
-            }
-
-            if (expanded) {
-                if (plan.isEmpty()) {
-                    MonoText(
-                        text = item.diffText.ifEmpty { "（无差异内容）" },
-                        // F13: `toolOutput` is 3.37:1 on the success card; the
-                        // derived variant clears §9's 4.5:1 body floor.
-                        color = palette.bodyOnTool,
+            BlockCard(
+                color = palette.toolPendingBg,
+                // F28: same content-region gesture as the tool card.
+                modifier = Modifier.toggleContent(expanded, { expanded = !expanded }),
+                // `06 §2` 颜色行 gives this card the plain hairline token rather than a
+                // state colour at 35 %: the diff is neutral by definition, and v2 draws it
+                // `1px solid var(--border-muted)`.
+                borderColor = palette.borderMuted,
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = item.toolName.ifEmpty { "diff" },
+                        style = PiTheme.text.monoSmall,
+                        color = palette.dim,
+                        maxLines = 1,
                     )
-                } else {
-                    for (row in plan) {
-                        when (row) {
-                            is DiffRow.Header -> Text(
-                                text = row.text,
-                                style = PiTheme.text.monoSmall,
-                                color = palette.muted,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
+                    Spacer(Modifier.width(PiSpacing.inline))
+                    Text(
+                        text = item.path.ifEmpty { "未命名文件" },
+                        modifier = Modifier.weight(1f),
+                        style = PiTheme.text.mono,
+                        color = palette.toolTitle,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Spacer(Modifier.width(PiSpacing.inline))
+                    Text("+${item.added}", style = PiTheme.text.monoSmall, color = palette.toolDiffAdded)
+                    Spacer(Modifier.width(PiSpacing.gutter))
+                    Text("−${item.removed}", style = PiTheme.text.monoSmall, color = palette.toolDiffRemoved)
+                }
 
-                            is DiffRow.Fold -> Text(
-                                text = "… ${row.count} 行未变",
-                                modifier = Modifier.padding(
-                                    start = PiSpacing.screen,
-                                    top = PiSpacing.tiny,
-                                    bottom = PiSpacing.tiny,
-                                ),
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = "新增 ${item.added} 行 · 删除 ${item.removed} 行",
+                        modifier = Modifier.weight(1f),
+                        style = PiTheme.text.meta,
+                        color = palette.muted,
+                    )
+                    // F19 (`docs/rendering-review.md`): the 「全屏」 label used to sit
+                    // behind an `onOpenFull` the host never supplied — the app has no
+                    // full-screen diff route — so both are deleted rather than left
+                    // claiming the affordance (spec §4.8 still asks for one; that is
+                    // new UI, recorded in the review's F19 row).
+                    ExpandLabel(expanded)
+                }
+
+                if (expanded) {
+                    if (plan.isEmpty()) {
+                        MonoText(
+                            text = item.diffText.ifEmpty { "（无差异内容）" },
+                            // F13: `toolOutput` is 3.37:1 on the success card; the
+                            // derived variant clears §9's 4.5:1 body floor.
+                            color = palette.bodyOnTool,
+                        )
+                    } else {
+                        for (row in plan) {
+                            when (row) {
+                                is DiffRow.Header -> Text(
+                                    text = row.text,
+                                    style = PiTheme.text.monoSmall,
+                                    color = palette.muted,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+
+                                is DiffRow.Fold -> Text(
+                                    text = "… ${row.count} 行未变",
+                                    modifier = Modifier.padding(
+                                        start = PiSpacing.screen,
+                                        top = PiSpacing.tiny,
+                                        bottom = PiSpacing.tiny,
+                                    ),
+                                    style = PiTheme.text.meta,
+                                    color = palette.muted,
+                                )
+
+                                is DiffRow.Line -> DiffLineRow(row)
+                            }
+                        }
+                        if (omitted) {
+                            Text(
+                                text = "差异过长，仅显示前 $MAX_DIFF_ROWS 行",
                                 style = PiTheme.text.meta,
                                 color = palette.muted,
                             )
-
-                            is DiffRow.Line -> DiffLineRow(row)
                         }
-                    }
-                    if (omitted) {
-                        Text(
-                            text = "差异过长，仅显示前 $MAX_DIFF_ROWS 行",
-                            style = PiTheme.text.meta,
-                            color = palette.muted,
-                        )
                     }
                 }
             }

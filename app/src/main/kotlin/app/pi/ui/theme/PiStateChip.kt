@@ -81,10 +81,13 @@ enum class StateTone {
      *
      * v2 paints this `#9E9E9E`, which is **not** one of pi's 56 tokens — the
      * reference doc's own §2 lists it beside the surfaces as an app-side value
-     * (`06 §2` 颜色行). Rather than add a colour, it resolves to `muted`
-     * (`#808080`), which is the token that means exactly this and is one step
-     * quieter than `dim`. Reported as a deviation in this batch's notes; if the
-     * designer wants the exact value it belongs in a palette token, not here.
+     * (`06 §2` 颜色行). Decision **D2** (`07-construction-decisions.md`) resolves it
+     * to `bodyOnTool`, the app's derived tool-body grey: it is the nearest existing
+     * token (dark `#979797`, i.e. the design's grey to within one lift step), it is
+     * already contrast-corrected against all three card grounds, and it keeps the
+     * state out of `error` (which would say "failure") and out of `dim` (which would
+     * read as disabled). This file is the only place the mapping lives — see
+     * [stateToneColor].
      */
     Rejected,
 
@@ -112,7 +115,9 @@ fun stateToneColor(tone: StateTone, palette: PiPalette): Color = when (tone) {
     StateTone.Success -> palette.success
     StateTone.Warning -> palette.warning
     StateTone.Error -> palette.error
-    StateTone.Rejected -> palette.muted
+    // D2: see [StateTone.Rejected] — the neutral reading, not `muted` (which is one
+    // lift step darker and drops under the 4.5:1 body floor on a success card).
+    StateTone.Rejected -> palette.bodyOnTool
     StateTone.Muted -> palette.muted
     StateTone.Dim -> palette.dim
 }

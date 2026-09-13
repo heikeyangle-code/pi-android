@@ -12,7 +12,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.pointerInput
 import app.pi.rpc.ToolCall
-import app.pi.rpc.ToolStatus
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
 
@@ -40,6 +39,9 @@ fun ToolCallBlock(
     defaultExpanded: Boolean = false,
 ) {
     val palette = PiTheme.palette
+    // The card's state, derived once: `06 §4`'s fourth state (被拒) is read from the
+    // result text, so every part of the card must agree on the same reading.
+    val state = toolStateOf(item)
     // Keyed on the parameter so the AppBar's expand/collapse-all switch (pi's
     // `app.tools.expand`, interactive-mode.ts `setToolsExpanded`) reaches every
     // row, exactly as pi re-applies expansion to all of its children.
@@ -81,7 +83,7 @@ fun ToolCallBlock(
     // not end in that bracket block is left byte-for-byte alone.
     val bodyText = remember(item.output, fullOutputPath, truncation, item.status) {
         // pi's `!options.isPartial`: a still-streaming row keeps its text untouched.
-        if (item.status != ToolStatus.Pending && truncation != null) {
+        if (state != ToolState.Running && truncation != null) {
             stripFullOutputFooter(item.output, fullOutputPath)
         } else {
             item.output
@@ -99,15 +101,14 @@ fun ToolCallBlock(
     // whole output each time. It depends only on the row's scalar fields, so it is
     // built once per output change. `outputLineCount` is deliberately not a key —
     // it is derived from `item.output`, which is.
-    val statusLabel = toolStatusLabel(item.status)
     val footer = remember(
         item.output,
         item.exitCode,
         item.elapsedMs,
         item.outputTruncated,
-        statusLabel,
+        state,
     ) {
-        toolFooterText(item, statusLabel, outputLineCount)
+        toolFooterText(item, state, outputLineCount)
     }
     // §4.8: 工具卡长按 → 复制命令 / 复制输出. The command is the tool's own argument
     // (`command` for bash, `file_path`/`path` for the file tools); a tool whose
@@ -117,9 +118,9 @@ fun ToolCallBlock(
         BlockColumn(modifier) {
             ToolCard(item, expanded, { expanded = !expanded }) {
                 ToolHeader(
+                    item = item,
                     title = item.toolName.ifEmpty { "工具" },
                     subject = item.argsSummary,
-                    status = item.status,
                 )
 
                 if (expanded && item.output.isNotEmpty()) {
@@ -205,6 +206,8 @@ fun ToolCallBlock(
                     text = footer,
                     expanded = expanded,
                     expandable = item.output.isNotEmpty(),
+                    state = state,
+                    elapsedMs = item.elapsedMs,
                 )
             }
         }

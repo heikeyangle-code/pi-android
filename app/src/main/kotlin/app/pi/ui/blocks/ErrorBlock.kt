@@ -3,6 +3,7 @@ package app.pi.ui.blocks
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.MaterialTheme
@@ -20,9 +21,15 @@ import app.pi.ui.theme.PiTheme
 import app.pi.ui.theme.PiSpacing
 
 /**
- * `error-text` (docs/pi-android-ui-spec.md §7.4): a weakened `toolErrorBg` card
- * with an `error` stripe on the left — one human sentence, then 详情. A tool
+ * `error-text` (docs/pi-android-ui-spec.md §7.4): a `toolErrorBg` card with an
+ * `error` stripe on the left — `✗ 出错了`, one human sentence, then 详情. A tool
  * failure does not raise a global error; it lands here, in the stream.
+ *
+ * The `✗ 出错了` pair is `06 §4`'s triple encoding for this block (符号 + 字 + 色),
+ * and it is what the card is scanned for; the sentence below it is the detail. The
+ * ground is the token itself rather than a weakened copy, matching `06 §2`'s
+ * 错误块 row — which also restores `bodyOnTool`'s contrast guarantee, since that
+ * derived token is computed against the full `toolErrorBg`.
  *
  * The spec's recovery path (「重试 / 换模型 / 查看详情」, §4.9) is not reachable from
  * this block today: the app has no retry action, so F19 deleted the dead
@@ -40,7 +47,7 @@ fun ErrorBlock(
 
     BlockColumn(modifier) {
         BlockCard(
-            color = palette.toolErrorBg.copy(alpha = 0.7f),
+            color = palette.toolErrorBg,
             borderColor = palette.error.copy(alpha = 0.45f),
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -50,10 +57,31 @@ fun ErrorBlock(
                 AccentStripe(palette.error, PiSpacing.accentStripe)
                 Spacer(Modifier.width(10.dp))
                 Column(Modifier.weight(1f)) {
-                    ProseText(
-                        text = item.message.ifEmpty { "出错了" },
-                        color = palette.text,
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = "✗",
+                            style = PiTheme.text.mono,
+                            color = palette.error,
+                            maxLines = 1,
+                        )
+                        Spacer(Modifier.width(PiSpacing.gutter))
+                        Text(
+                            text = "出错了",
+                            style = PiTheme.text.meta,
+                            color = palette.error,
+                            maxLines = 1,
+                        )
+                    }
+                    Spacer(Modifier.height(PiSpacing.tiny))
+                    // The header above already says 出错了, so an empty message is left
+                    // out rather than repeated: pi prints the sentence it was given, and
+                    // nothing when there is none.
+                    if (item.message.isNotBlank()) {
+                        ProseText(
+                            text = item.message,
+                            color = palette.text,
+                        )
+                    }
                 }
             }
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -66,12 +94,15 @@ fun ErrorBlock(
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Text(
-                            text = "详情",
+                            text = if (expanded) "收起" else "详情",
                             style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.primary,
+                            // v2 paints the error card's disclosure in the card's own
+                            // colour (`c-err`), not in the accent: the label belongs to
+                            // the state it reveals.
+                            color = palette.error,
                         )
                         Spacer(Modifier.width(PiSpacing.small))
-                        ExpandLabel(expanded, expandText = "", collapseText = "")
+                        ExpandLabel(expanded, expandText = "", collapseText = "", color = palette.error)
                     }
                 }
                 Spacer(Modifier.weight(1f))

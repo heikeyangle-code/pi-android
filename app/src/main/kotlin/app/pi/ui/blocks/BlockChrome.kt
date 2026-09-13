@@ -39,7 +39,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import app.pi.ui.theme.PiShapes
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
 import java.time.Instant
@@ -55,6 +54,12 @@ import java.util.Locale
  * the horizontal content padding and the vertical arrangement, so a block that
  * padded itself as well doubled the margin (F11 in `docs/rendering-review.md`).
  * Colour always comes from [PiTheme.palette].
+ *
+ * v2's rhythm is **8**, not 16 (`06 §2`「块间距 8」, decision D1), and that number
+ * lives at the one call site that owns it — the `LazyColumn`'s `spacedBy`
+ * (`screens/ChatScreen.kt:971-982`), which this batch does not own. [BlockColumn]'s
+ * own `Arrangement` is the *inside* of one block and stays on `PiSpacing.gutter`
+ * (6dp), exactly as spec §7.4 has it.
  */
 
 /** The wrapper every block uses. Margins come from the list, not from here (F11). */
@@ -161,7 +166,20 @@ internal fun BlockActionMenu(
     }
 }
 
-/** A tonal container card: 16dp radius, no elevation, palette colour. */
+/**
+ * The transcript card's corner radius: `06 §2`「工具卡：圆角 10」, and the same
+ * radius on the error card, the diff card and the three custom cards v2 draws
+ * (`06 §3` 构件 9：自定义消息卡 10).
+ *
+ * It lives here rather than in `PiShapes` (`theme/PiTheme.kt:107-141`) because that
+ * object's `card` row is the *spec's* 16 dp radius and this batch does not own
+ * `PiTheme.kt`. The two are not the same component: `PiShapes.card` is still the
+ * user-message bubble's radius, and `05 §3.3` decided the bubble keeps 16 dp while
+ * the transcript's cards tighten to v2's 10.
+ */
+internal val BlockCardShape = RoundedCornerShape(10.dp)
+
+/** A tonal container card: v2's 10dp radius, no elevation, palette colour. */
 @Composable
 internal fun BlockCard(
     color: Color,
@@ -171,7 +189,7 @@ internal fun BlockCard(
 ) {
     Surface(
         modifier = modifier.fillMaxWidth(),
-        shape = PiShapes.card,
+        shape = BlockCardShape,
         color = color,
         border = borderColor?.let { BorderStroke(PiSpacing.hairline, it) },
     ) {
@@ -186,6 +204,9 @@ internal fun BlockCard(
 /**
  * The 3dp state stripe. Height is explicit on purpose: filling a Row's height
  * would need intrinsic measurement, and a fixed bar is enough of an accent.
+ *
+ * `06 §2`'s stripe is `3px` wide with a `2px` radius — the values this already had,
+ * which is why v2 changed nothing here beyond naming it.
  */
 @Composable
 internal fun AccentStripe(
@@ -209,6 +230,14 @@ internal fun AccentStripe(
  * This is a **label**, not a hit target: pi's toggle is the content region (see
  * [ToggleContent]), so leaving this inert keeps one gesture per block instead of
  * a label-sized second one.
+ *
+ * v2 draws every `展开 / 收起` label in `muted` (`06 §3`: the thinking row, the diff
+ * card, the custom card's head), not in the accent — the accent is not a
+ * decoration, and an affordance that is always on screen should not compete with the
+ * card's state colour. [color] exists for the one card whose label belongs to its
+ * own tone: the error card's `详情`, which v2 paints `error`.
+ *
+ * @param color the label and chevron colour; `muted` by default, as v2 draws it.
  */
 @Composable
 internal fun ExpandLabel(
@@ -216,19 +245,21 @@ internal fun ExpandLabel(
     modifier: Modifier = Modifier,
     expandText: String = "展开",
     collapseText: String = "收起",
+    color: Color? = null,
 ) {
+    val tint = color ?: PiTheme.palette.muted
     Row(modifier = modifier, verticalAlignment = Alignment.CenterVertically) {
         Text(
             text = if (expanded) collapseText else expandText,
             style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.primary,
+            color = tint,
         )
         Spacer(Modifier.width(PiSpacing.tiny))
         Icon(
             imageVector = if (expanded) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown,
             contentDescription = null,
-            modifier = Modifier.size(16.dp),
-            tint = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.size(14.dp),
+            tint = tint,
         )
     }
 }

@@ -9,7 +9,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import app.pi.rpc.ToolCall
-import app.pi.rpc.ToolStatus
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
 
@@ -42,6 +41,7 @@ internal fun ReadBlock(
     defaultExpanded: Boolean = false,
 ) {
     val palette = PiTheme.palette
+    val state = toolStateOf(item)
     var expanded by remember(defaultExpanded) { mutableStateOf(defaultExpanded) }
     var fullOutput by remember { mutableStateOf(false) }
     val body = remember(item.args, item.output) { ToolOutputParse.readBody(item.args, item.output) }
@@ -51,20 +51,20 @@ internal fun ReadBlock(
     val notice = remember(item.details, fullOutputPath) {
         truncationNotice(fullOutputPath, truncationOf(item.details))
     }
-    val pending = item.status == ToolStatus.Pending
+    val pending = state == ToolState.Running
     val shown = if (fullOutput) body.lines else body.lines.take(READ_PREVIEW_LINES)
     val hidden = (body.totalLines - shown.size).coerceAtLeast(0)
     val hasBody = body.lines.isNotEmpty() || body.footer != null || body.scanCapped || notice != null
-    val footer = remember(item.output, item.exitCode, item.elapsedMs, item.outputTruncated, item.status) {
-        toolFooterText(item, toolStatusLabel(item.status), body.totalLines)
+    val footer = remember(item.output, item.exitCode, item.elapsedMs, item.outputTruncated, state) {
+        toolFooterText(item, state, body.totalLines)
     }
     ToolActionMenu(command, item.output, fullOutputPath) {
         BlockColumn(modifier) {
             ToolCard(item, expanded, { expanded = !expanded }) {
                 ToolHeader(
+                    item = item,
                     title = "read",
                     subject = body.path.ifEmpty { "文件" } + range,
-                    status = item.status,
                 )
                 if (expanded) {
                     if (body.lines.isEmpty()) {
@@ -110,7 +110,13 @@ internal fun ReadBlock(
                     }
                     if (notice != null) ToolNotice(text = notice, copyOnTap = fullOutputPath)
                 }
-                ToolFooter(text = footer, expanded = expanded, expandable = hasBody)
+                ToolFooter(
+                    text = footer,
+                    expanded = expanded,
+                    expandable = hasBody,
+                    state = state,
+                    elapsedMs = item.elapsedMs,
+                )
             }
         }
     }

@@ -1,7 +1,9 @@
 package app.pi.ui.components
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -19,16 +21,22 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import app.pi.rpc.PiResponses
 import app.pi.rpc.TokenUsage
+import app.pi.ui.theme.PiMark
 import app.pi.ui.theme.PiShapes
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
+import app.pi.ui.theme.PiV2Layout
+import app.pi.ui.theme.numeric
 import java.util.Locale
+import kotlin.math.roundToInt
 
 /**
  * pi's own token formatter, transcribed from
@@ -47,54 +55,61 @@ fun piFormatTokens(count: Long): String = when {
 }
 
 /**
- * pi's footer stats, as one row — **F10** (`docs/rendering-review.md`).
+ * The transcript's status line — v2's `StateLine` (`06 §3` 构件 3, `04 §1.2`).
  *
- * pi prints these figures in its footer on every render
- * (`packages/coding-agent/src/modes/interactive/components/footer.ts:106-161`):
+ * One row, read left to right: the context percentage, an eight-segment progress bar,
+ * the tokens in use against the window, the two readings direction A contributed
+ * (`输出`, `缓存读`), and the session's cost pinned to the right:
  *
  * ```
- * if (usageTotals.input)  statsParts.push(`↑${formatTokens(usageTotals.input)}`);
- * if (usageTotals.output) statsParts.push(`↓${formatTokens(usageTotals.output)}`);
- * if (usageTotals.cacheRead)  statsParts.push(`R${formatTokens(usageTotals.cacheRead)}`);
- * if (usageTotals.cacheWrite) statsParts.push(`W${formatTokens(usageTotals.cacheWrite)}`);
- * if ((cacheRead > 0 || cacheWrite > 0) && latestCacheHitRate !== undefined)
- *     statsParts.push(`CH${latestCacheHitRate.toFixed(1)}%`);
- * if (usageTotals.cost) statsParts.push(`$${usageTotals.cost.toFixed(3)}`);
- * const autoIndicator = this.autoCompactEnabled ? " (auto)" : "";
- * const contextPercentDisplay = percent === "?" ? `?/${formatTokens(contextWindow)}${autoIndicator}`
- *                                               : `${percent}%/${formatTokens(contextWindow)}${autoIndicator}`;
- * // percent > 90 → theme.fg("error", …); > 70 → theme.fg("warning", …)
+ * 上下文 52.3% [▮▮▮▮▯▯▯▯] 104k / 200k · 输出 8.2k · 缓存读 61.4k · $0.420
  * ```
  *
- * **Every figure is pi's own**, not a re-derivation: `getSessionStats()` sums the
- * same entries the footer walks (`core/agent-session.ts:3359-3407`) and its
- * `contextUsage` is literally `this.getContextUsage()` (`:3407`) — the call the
- * footer makes at `footer.ts:108`. So the app's polled
- * `PiResponses.SessionStats` carries the identical numbers.
+ * The board prints that row with a rounded percentage and a two-decimal cost
+ * (`上下文 52% … $0.42`); both come from the mock, and pi's own formatting wins here
+ * because every figure is pi's: `percent.toFixed(1)` (`footer.ts:111`) and
+ * `cost.toFixed(3)` (`footer.ts:142-146`). One decimal and three decimals are what
+ * the app has printed since F10, and changing them would be a second rounding of
+ * pi's numbers.
  *
- * **What is deliberately not shown, and why** (the rule is "no data, no row"):
+ * ## Where each figure comes from (all of them pi's)
  *
- *  - `pwd (branch) • session` — pi's left-hand context
- *    (`footer.ts:113-127`). The workspace path the app knows is the *guest*
- *    spelling and it has no git query at all; the session name is already the
- *    AppBar title. Showing a path we cannot resolve or a branch we never asked
- *    for would be a guess.
- *  - `• xp` — pi adds it when the runtime's experimental features are on
- *    (`footer.ts:163-165`); the app has no such flag for the engine.
- *  - ` (sub)` — pi appends it when the provider is subscription-backed
- *    (`footer.ts:148-151`); the app cannot ask `modelRuntime.isUsingSubscription`.
- *  - The model id and thinking level pi puts on the right (`footer.ts:167-`)
- *    are already visible in the AppBar's model chip and the composer's thinking
- *    chip, so repeating them here would duplicate state rather than add it.
+ *  - `上下文 N%` — `stats.contextUsage.percent`, i.e. pi's own `getContextUsage()`,
+ *    which is `estimate.tokens / contextWindow * 100`
+ *    (`core/agent-session.ts:3446-3450`); `?` when pi reports none, never a
+ *    substituted 0 (`footer.ts:108-110`).
+ *  - the bar — the same percentage across eight segments of `3×8` with a 1px gap,
+ *    filled in `accent` (`06 §2` 状态行). It is drawn only when pi reports a
+ *    percentage: an empty bar would claim "0 %".
+ *  - `used / window` — `contextUsage.tokens` / `contextUsage.contextWindow`; the
+ *    window falls back to the model's own (`footer.ts:109`).
+ *  - `输出` / `缓存读` — `stats.tokens.output` / `stats.tokens.cacheRead`, the two
+ *    fields A moved in (`04 §1.2`: 两个读数字段与「会话信息」sheet 里的 Token 行同源),
+ *    formatted by [piFormatTokens] — pi's rounding (`footer.ts:24-30`), **not**
+ *    `ui/blocks/BlockChrome.kt`'s `formatTokens`, which prints `3k` where pi prints
+ *    `3.2k`.
+ *  - `$…` — `stats.cost` at pi's three decimals (`footer.ts:142-146`), only when
+ *    non-zero, and it is the row's right-hand anchor.
  *
- * No ring, no sweep animation, no glow: pi's footer is static text and this row
- * is too.
+ * ## What is no longer on this row, and why nothing is lost
+ *
+ * pi's footer also prints `↑input ↓output RcacheRead WcacheWrite CH…%`
+ * (`footer.ts:106-146`). v2's status line is a *reading*, not a copy of that footer:
+ * `04 §1.2` adds the two A readings to B's line (`上下文 52% [分段进度] 104k / 200k
+ * $0.42`) and stops there, so the input total, the cache-write total and the
+ * cache-hit rate leave this row. None of them is dropped from the app: 会话信息
+ * (`ui/chat/ChatSheets.kt`'s stats sheet) prints 输入 / 输出 / 缓存读 / 缓存写 / 合计
+ * in full. [latestUsage] therefore has no reading here any more — the parameter
+ * stays because its caller (`screens/ChatScreen.kt`, which this batch does not own)
+ * still passes it, and removing it is a one-line follow-up in that file.
+ *
+ * The percentage keeps pi's own colour thresholds (`>90` error, `>70` warning —
+ * `footer.ts:154-156`); every other figure is muted or body text. No ring, no sweep
+ * animation, no glow: pi's footer is static text and this row is too.
  *
  * @param stats `get_session_stats`; null before the first read, in which case the
  *   row renders nothing rather than zeros.
- * @param latestUsage the reducer's newest usage, used only for `CH` — pi computes
- *   that rate from the **latest** assistant entry's prompt tokens
- *   (`footer.ts:94-100`), not from the session totals.
+ * @param latestUsage the reducer's newest usage. Kept for the caller; see above.
  * @param contextWindowFallback the model's window, pi's own fallback when
  *   `getContextUsage()` reports none (`footer.ts:109`).
  * @param autoCompaction pi's `autoCompactEnabled` → the ` (auto)` suffix.
@@ -109,69 +124,119 @@ fun PiStatusLine(
 ) {
     if (stats == null) return
     val totals = stats.tokens
-    val parts = mutableListOf<String>()
-    // pi prints a part only when its own figure is non-zero (`footer.ts:130-133`).
-    totals?.input?.takeIf { it > 0L }?.let { parts += "↑${piFormatTokens(it)}" }
-    totals?.output?.takeIf { it > 0L }?.let { parts += "↓${piFormatTokens(it)}" }
-    totals?.cacheRead?.takeIf { it > 0L }?.let { parts += "R${piFormatTokens(it)}" }
-    totals?.cacheWrite?.takeIf { it > 0L }?.let { parts += "W${piFormatTokens(it)}" }
-    // pi's cache-hit item: only once a cache has been touched, and only from the
-    // latest assistant usage (`footer.ts:93-100`, `:134-136`).
-    val promptTokens = latestUsage?.let {
-        (it.input ?: 0L) + (it.cacheRead ?: 0L) + (it.cacheWrite ?: 0L)
-    } ?: 0L
-    val cacheHitRate = latestUsage?.cacheRead?.takeIf { promptTokens > 0L }?.let {
-        it.toDouble() / promptTokens * 100.0
-    }
-    if ((totals?.cacheRead ?: 0L) > 0L || (totals?.cacheWrite ?: 0L) > 0L) {
-        cacheHitRate?.let { parts += "CH${String.format(Locale.US, "%.1f", it)}%" }
-    }
-    // `$0.123` — pi's three decimals (`footer.ts:142-146`), and only when non-zero.
-    stats.cost?.takeIf { it != 0.0 }?.let { parts += "$${String.format(Locale.US, "%.3f", it)}" }
-    val statsText = parts.joinToString(" ")
-
-    val contextWindow = stats.contextUsage?.contextWindow ?: contextWindowFallback
-    val percent = stats.contextUsage?.percent
-    // pi: `?/window` when the percentage is unknown, never a substituted 0.
+    val usage = stats.contextUsage
+    val contextWindow = usage?.contextWindow ?: contextWindowFallback
+    val percent = usage?.percent
+    val used = usage?.tokens
+    // pi: `?` when the percentage is unknown, never a substituted 0.
     val percentText = percent?.let { String.format(Locale.US, "%.1f", it) } ?: "?"
-    val contextText = if (contextWindow != null && contextWindow > 0L) {
-        "$percentText/${piFormatTokens(contextWindow)}"
-    } else {
-        percentText
-    }
     val auto = if (autoCompaction) " (auto)" else ""
     val contextColor = when {
         percent != null && percent > 90.0 -> PiTheme.palette.error
         percent != null && percent > 70.0 -> PiTheme.palette.warning
         else -> PiTheme.palette.muted
     }
-    if (statsText.isEmpty() && percent == null && contextWindow == null) return
+    // A reading appears only once it has a figure (pi's own rule for these parts,
+    // `footer.ts:130-133`): "输出 0" before the first reply would be a claim about a
+    // model that has not spoken yet.
+    val readings = buildList {
+        totals?.output?.takeIf { it > 0L }?.let { add("输出 ${piFormatTokens(it)}") }
+        totals?.cacheRead?.takeIf { it > 0L }?.let { add("缓存读 ${piFormatTokens(it)}") }
+    }
+    val cost = stats.cost?.takeIf { it != 0.0 }?.let { "$${String.format(Locale.US, "%.3f", it)}" }
+    val windowText = contextWindow?.takeIf { it > 0L }?.let { piFormatTokens(it) }
+    // "No data, no row": with no percentage, no window and no readings there is
+    // nothing to read, and an empty status line would still cost 32dp.
+    if (percent == null && windowText == null && readings.isEmpty() && cost == null) return
 
     Row(
         modifier = modifier
             .fillMaxWidth()
             .height(PiSpacing.statusRow)
-            .padding(horizontal = PiSpacing.screen),
+            .padding(horizontal = PiV2Layout.pageHorizontal),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        // The stats are the long part, so the context percentage — the figure a
-        // user checks before a long task — is pinned to the end instead of being
-        // the thing an ellipsis eats.
         Text(
-            text = statsText,
-            modifier = Modifier.weight(1f, fill = false),
-            style = PiTheme.text.meta,
-            color = PiTheme.palette.muted,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-        if (statsText.isNotEmpty()) Spacer(Modifier.width(PiSpacing.inline))
-        Text(
-            text = contextText + auto,
+            text = "上下文 $percentText$auto",
             style = PiTheme.text.meta,
             color = contextColor,
             maxLines = 1,
         )
+        if (percent != null) {
+            Spacer(Modifier.width(PiSpacing.small))
+            ContextSegments(percent)
+        }
+        if (windowText != null) {
+            Spacer(Modifier.width(PiSpacing.small))
+            Text(
+                // pi reports no token count after a compaction until the next
+                // response (`agent-session.ts:3450`), and `?` is the honest spelling
+                // it uses for exactly that window (`footer.ts:110`).
+                text = "${used?.let { piFormatTokens(it) } ?: "?"} / $windowText",
+                style = PiTheme.text.numeric,
+                color = PiTheme.palette.muted,
+                maxLines = 1,
+            )
+        }
+        if (readings.isNotEmpty()) {
+            // The readings absorb the slack so the cost stays pinned to the right
+            // (`06 §2` leaves the row's tail to the cost); an unusually long pair
+            // elides rather than pushing the cost off the row.
+            Text(
+                text = " · " + readings.joinToString(" · "),
+                modifier = Modifier.weight(1f),
+                style = PiTheme.text.numeric,
+                color = PiTheme.palette.text,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        } else {
+            Spacer(Modifier.weight(1f))
+        }
+        if (cost != null) {
+            Spacer(Modifier.width(PiSpacing.small))
+            Text(
+                text = cost,
+                style = PiTheme.text.numeric,
+                color = PiTheme.palette.text,
+                maxLines = 1,
+            )
+        }
+    }
+}
+
+/** `06 §2` 状态行: the context bar's segment count. */
+private const val CONTEXT_SEGMENTS = 8
+
+/** `06 §2` 状态行: each segment is `3×8` with a 1px gap and a 1px corner. */
+private val CONTEXT_SEGMENT_WIDTH = 3.dp
+private val CONTEXT_SEGMENT_HEIGHT = 8.dp
+
+/**
+ * The context bar: [CONTEXT_SEGMENTS] segments, `accent` up to the percentage and
+ * `borderMuted` after it.
+ *
+ * The bar is a *reading* of the percentage printed beside it, never the only copy of
+ * it (`06 §4`: 颜色不能是唯一信号), which is why the number and the bar are one
+ * glance apart and the number carries the colour thresholds.
+ */
+@Composable
+private fun ContextSegments(percent: Double, modifier: Modifier = Modifier) {
+    val palette = PiTheme.palette
+    val filled = (CONTEXT_SEGMENTS * percent / 100.0).roundToInt().coerceIn(0, CONTEXT_SEGMENTS)
+    Row(
+        modifier = modifier,
+        horizontalArrangement = Arrangement.spacedBy(PiSpacing.hairline),
+    ) {
+        repeat(CONTEXT_SEGMENTS) { index ->
+            Box(
+                Modifier
+                    .width(CONTEXT_SEGMENT_WIDTH)
+                    .height(CONTEXT_SEGMENT_HEIGHT)
+                    .clip(RoundedCornerShape(PiSpacing.hairline))
+                    .background(if (index < filled) palette.accent else palette.borderMuted),
+            )
+        }
     }
 }
 
@@ -219,6 +284,27 @@ fun PiBilledCostLine(
 /**
  * Empty states never say "no data". They say what the screen is for and offer
  * the one action that fills it (docs/pi-android-ui-spec.md §7.3).
+ *
+ * The mark is v2's: either the π glyph (`06 §2` 空态「π 字形 34」，`brand-spec.md` §1
+ * allows it as an empty-state identifier) or the screen's own icon inside the circle
+ * this component has always drawn. v2's prototype keeps both spellings and chooses
+ * per screen — the chat's two engine states carry the mark, because they are the
+ * app's own empty surface, while a search that matched nothing keeps its icon.
+ *
+ * [markPi] defaults to `true` so the **chat** empty states get the mark without
+ * touching `screens/ChatScreen.kt` (which this batch does not own). The call sites
+ * that draw a *finding* rather than the app's own surface — the session list's two
+ * empty states, the settings search and the session tree — want `markPi = false`
+ * and are named in this batch's notes: they live in files outside its boundary.
+ *
+ * Geometry follows `06 §2` where the container allows it: the horizontal inset is
+ * the board's 34, the title is the 17/600 title role, and the body is 14 with the
+ * board's 1.6 leading, left-aligned under the centred title. The board's `86px`
+ * *vertical* inset is not repeated: it is how the prototype centres this block in a
+ * fixed-height frame, and in the app the host hands the state a `weight(1f)` box
+ * that this column already centres in (`Arrangement.Center`).
+ *
+ * @param icon the screen's own icon; ignored while [markPi] is on.
  */
 @Composable
 fun PiEmptyState(
@@ -227,24 +313,29 @@ fun PiEmptyState(
     body: String,
     modifier: Modifier = Modifier,
     action: (@Composable () -> Unit)? = null,
+    markPi: Boolean = true,
 ) {
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .padding(PiSpacing.screen),
+            .padding(horizontal = EMPTY_STATE_INSET),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
-        Surface(
-            shape = RoundedCornerShape(percent = 50),
-            color = MaterialTheme.colorScheme.surfaceContainerHigh,
-        ) {
-            Icon(
-                icon,
-                contentDescription = null,
-                modifier = Modifier.padding(20.dp).size(28.dp),
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+        if (markPi) {
+            PiMark(size = 34.dp, tint = PiTheme.palette.muted)
+        } else {
+            Surface(
+                shape = RoundedCornerShape(percent = 50),
+                color = MaterialTheme.colorScheme.surfaceContainerHigh,
+            ) {
+                Icon(
+                    icon,
+                    contentDescription = null,
+                    modifier = Modifier.padding(20.dp).size(28.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         }
         Spacer(Modifier.height(PiSpacing.unit))
         Text(
@@ -253,12 +344,13 @@ fun PiEmptyState(
             color = MaterialTheme.colorScheme.onSurface,
             textAlign = TextAlign.Center,
         )
-        Spacer(Modifier.height(6.dp))
+        Spacer(Modifier.height(PiSpacing.inline))
         Text(
             body,
-            style = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier.fillMaxWidth(),
+            style = MaterialTheme.typography.bodyMedium.copy(lineHeight = EMPTY_STATE_BODY_LEADING),
             color = MaterialTheme.colorScheme.onSurfaceVariant,
-            textAlign = TextAlign.Center,
+            textAlign = TextAlign.Start,
         )
         if (action != null) {
             Spacer(Modifier.height(PiSpacing.unit))
@@ -266,6 +358,12 @@ fun PiEmptyState(
         }
     }
 }
+
+/** `06 §2` 空态「padding:86px 34px」: the horizontal half, the only one Compose needs. */
+private val EMPTY_STATE_INSET = 34.dp
+
+/** `06 §2` 空态「正文 14/1.6」: 14 sp × 1.6, stated as leading rather than as a ratio. */
+private val EMPTY_STATE_BODY_LEADING = 22.sp
 
 /** Small uppercase-ish group label. Used by the settings stack and pickers. */
 @Composable

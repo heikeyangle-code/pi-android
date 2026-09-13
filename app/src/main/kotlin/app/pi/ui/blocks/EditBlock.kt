@@ -8,7 +8,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import app.pi.rpc.ToolCall
-import app.pi.rpc.ToolStatus
 import app.pi.ui.theme.PiTheme
 
 /**
@@ -39,23 +38,30 @@ internal fun EditBlock(
     defaultExpanded: Boolean = false,
 ) {
     val palette = PiTheme.palette
+    val state = toolStateOf(item)
     var expanded by remember(defaultExpanded) { mutableStateOf(defaultExpanded) }
     val command = remember(item.args) { toolCommandText(item.args) }
     val path = remember(item.args) { argString(item.args, "file_path", "path").orEmpty() }
-    val failed = item.status == ToolStatus.Error
-    val footer = remember(item.output, item.exitCode, item.elapsedMs, item.outputTruncated, item.status) {
-        toolFooterText(item, toolStatusLabel(item.status), lineCount(item.output))
+    val failed = state == ToolState.Failed
+    val footer = remember(item.output, item.exitCode, item.elapsedMs, item.outputTruncated, state) {
+        toolFooterText(item, state, lineCount(item.output))
     }
     ToolActionMenu(command, item.output, null) {
         BlockColumn(modifier) {
             ToolCard(item, expanded, { expanded = !expanded }) {
-                ToolHeader(title = "edit", subject = path.ifEmpty { "文件" }, status = item.status)
+                ToolHeader(item = item, title = "edit", subject = path.ifEmpty { "文件" })
                 if (expanded && failed) {
                     // pi's error branch (`renderers/edit.ts:97-106`): the result text, unless
                     // it is the preview's own error, which this app never has.
                     Text(text = item.output, style = PiTheme.text.meta, color = palette.error)
                 }
-                ToolFooter(text = footer, expanded = expanded, expandable = failed)
+                ToolFooter(
+                    text = footer,
+                    expanded = expanded,
+                    expandable = failed,
+                    state = state,
+                    elapsedMs = item.elapsedMs,
+                )
             }
         }
     }

@@ -13,6 +13,7 @@ import androidx.compose.ui.Modifier
 import app.pi.rpc.ToolCall
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
+import app.pi.ui.theme.numeric
 
 /**
  * `find` — pi's renderer for the filename search (`core/tools/renderers/find.ts`).
@@ -100,6 +101,7 @@ private fun PathListBlock(
     defaultExpanded: Boolean = false,
 ) {
     val palette = PiTheme.palette
+    val state = toolStateOf(item)
     var expanded by remember(defaultExpanded) { mutableStateOf(defaultExpanded) }
     var fullOutput by remember { mutableStateOf(false) }
     val body = remember(item.output) { parse(item.output) }
@@ -122,18 +124,22 @@ private fun PathListBlock(
     val shown = remember(plan) { countEntries(plan) }
     val omitted = (body.entryCount - shown).coerceAtLeast(0)
     val hasBody = body.groups.isNotEmpty() || body.notice != null || body.empty
-    val footer = remember(item.output, item.exitCode, item.elapsedMs, item.outputTruncated, item.status, body.entryCount) {
-        val parts = mutableListOf(toolStatusLabel(item.status))
-        if (body.entryCount > 0) parts += "${body.entryCount} 项"
-        item.exitCode?.let { parts += "退出码 $it" }
-        item.elapsedMs?.let { parts += formatDuration(it) }
-        if (item.outputTruncated) parts += "已截断"
-        parts.joinToString(" · ")
+    val footer = remember(item.output, item.exitCode, item.elapsedMs, item.outputTruncated, state, body.entryCount) {
+        if (state == ToolState.Rejected) {
+            toolRejectedFooter()
+        } else {
+            val parts = mutableListOf(toolStateLabel(state))
+            if (body.entryCount > 0) parts += "${body.entryCount} 项"
+            item.exitCode?.let { parts += "退出码 $it" }
+            item.elapsedMs?.let { parts += formatDuration(it) }
+            if (item.outputTruncated) parts += "已截断"
+            parts.joinToString(" · ")
+        }
     }
     ToolActionMenu(command, item.output, fullOutputPath) {
         BlockColumn(modifier) {
             ToolCard(item, expanded, { expanded = !expanded }) {
-                ToolHeader(title = title, subject = subject, status = item.status)
+                ToolHeader(item = item, title = title, subject = subject)
                 if (expanded) {
                     when {
                         body.empty -> Text(text = emptyText, style = PiTheme.text.meta, color = palette.muted)
@@ -180,7 +186,13 @@ private fun PathListBlock(
                     body.notice?.let { ToolNotice(text = it, copyOnTap = null) }
                     if (notice != null) ToolNotice(text = notice, copyOnTap = fullOutputPath)
                 }
-                ToolFooter(text = footer, expanded = expanded, expandable = hasBody)
+                ToolFooter(
+                    text = footer,
+                    expanded = expanded,
+                    expandable = hasBody,
+                    state = state,
+                    elapsedMs = item.elapsedMs,
+                )
             }
         }
     }
@@ -190,6 +202,10 @@ private fun PathListBlock(
  * One group's heading: the directory for a `find` (pi's own `"."` fallback from
  * `renderers/ls.ts:19` for the search root itself) or pi's entry kind for an `ls`, each with
  * how many entries sit under it.
+ *
+ * The count is a quantity rather than a state (`06 §4`), so it is numeric and muted — the
+ * same treatment the `grep` card's group headings carry — and it keeps the machine face so
+ * the numbers align.
  */
 @Composable
 private fun PathGroupHeading(group: PathGroup) {
@@ -201,7 +217,7 @@ private fun PathGroupHeading(group: PathGroup) {
             modifier = Modifier.weight(1f),
             maxLines = 1,
         )
-        Text(text = "${group.entries.size} 项", style = PiTheme.text.meta, color = palette.dim, maxLines = 1)
+        Text(text = "${group.entries.size} 项", style = PiTheme.text.numeric, color = palette.muted, maxLines = 1)
     }
 }
 

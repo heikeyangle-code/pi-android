@@ -17,9 +17,13 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.TextOverflow
 import app.pi.rpc.ToolCall
 import app.pi.rpc.ToolStatus
+import app.pi.ui.theme.DurationMeter
 import app.pi.ui.theme.PiPalette
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
+import app.pi.ui.theme.StateChip
+import app.pi.ui.theme.StateTone
+import app.pi.ui.theme.stateToneColor
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 
@@ -40,50 +44,131 @@ import kotlinx.serialization.json.JsonPrimitive
  * (F31/F8 in `docs/rendering-review.md`).
  */
 
-/** The container colour of a tool card: pi's three status backgrounds. */
-internal fun toolContainerColor(status: ToolStatus, palette: PiPalette): Color = when (status) {
-    ToolStatus.Pending -> palette.toolPendingBg
-    ToolStatus.Success -> palette.toolSuccessBg
-    ToolStatus.Error -> palette.toolErrorBg
-}
-
-/** The border/stripe colour of a tool card: pi's status colour, one step stronger. */
-internal fun toolAccentColor(status: ToolStatus, palette: PiPalette): Color = when (status) {
-    ToolStatus.Pending -> palette.warning
-    ToolStatus.Success -> palette.success
-    ToolStatus.Error -> palette.error
-}
+/**
+ * The four states a tool card can be in — three from pi, one the app has to read.
+ *
+ * pi's wire carries three ([ToolStatus]). The fourth is what a call a **policy or
+ * approval layer stopped before it ran** looks like: pi has no "rejected" axis at
+ * all, and reports the blocker's own sentence as an *error* result with no execution
+ * behind it (`packages/agent/src/agent-loop.ts:644-655`; the app's own gate is the
+ * blocker in this build, `app/src/main/assets/pi-extensions/pi-android-permission-gate.ts`).
+ * `06 §4` gives that case its own word, glyph and colour because it is not a
+ * failure — nothing ran — and `docs/extension-compatibility.md` §6.2 already asks the
+ * app to render it as policy rather than error. This is the rendering half of that
+ * gap; the other half (a transcript item that carries the distinction) would live in
+ * the protocol layer.
+ */
+internal enum class ToolState { Running, Success, Failed, Rejected }
 
 /** Status is a word, never only a colour (docs/pi-android-ui-spec.md §9). */
-internal fun toolStatusLabel(status: ToolStatus): String = when (status) {
-    ToolStatus.Pending -> "运行中"
-    ToolStatus.Success -> "成功"
-    ToolStatus.Error -> "失败"
+internal fun toolStateLabel(state: ToolState): String = when (state) {
+    ToolState.Running -> "运行中"
+    ToolState.Success -> "成功"
+    ToolState.Failed -> "失败"
+    ToolState.Rejected -> "被拒"
 }
 
-/** The glyph beside the status word, for the same reason. */
-internal fun toolStatusGlyph(status: ToolStatus): String = when (status) {
-    ToolStatus.Pending -> "…"
-    ToolStatus.Success -> "✓"
-    ToolStatus.Error -> "✗"
+/** The glyph beside the status word, for the same reason (`06 §4`). */
+internal fun toolStateGlyph(state: ToolState): String = when (state) {
+    ToolState.Running -> "…"
+    ToolState.Success -> "✓"
+    ToolState.Failed -> "✗"
+    ToolState.Rejected -> "⊘"
+}
+
+/** The state's tone — the third channel, resolved in one table (`06 §4`). */
+internal fun toolStateTone(state: ToolState): StateTone = when (state) {
+    ToolState.Running -> StateTone.Warning
+    ToolState.Success -> StateTone.Success
+    ToolState.Failed -> StateTone.Error
+    // Decision D2: 被拒 is neither a failure nor a disabled state, so it takes the
+    // neutral token rather than `error`. `StateTone.Rejected` resolves to
+    // `bodyOnTool` (`theme/PiStateChip.kt`), the app's derived tool-body grey.
+    ToolState.Rejected -> StateTone.Rejected
+}
+
+/**
+ * The container colour of a tool card: pi's three status backgrounds, plus the
+ * ground `06 §3` 构件 5 gives the fourth state (被拒 sits on the *pending* ground —
+ * it did not fail, so it does not take the error surface).
+ */
+internal fun toolContainerColor(state: ToolState, palette: PiPalette): Color = when (state) {
+    ToolState.Running -> palette.toolPendingBg
+    ToolState.Success -> palette.toolSuccessBg
+    ToolState.Failed -> palette.toolErrorBg
+    ToolState.Rejected -> palette.toolPendingBg
+}
+
+/** The border, stripe, node-ring and tick colour of a card: its state colour. */
+internal fun toolAccentColor(state: ToolState, palette: PiPalette): Color =
+    stateToneColor(toolStateTone(state), palette)
+
+/**
+ * The sentences that mean "this call never ran", in the words the layer that stopped
+ * it used.
+ *
+ * pi's own fallback is `Tool execution was blocked` (`agent-loop.ts:644`), and the
+ * app's permission gate writes the rest — its deny branch, its hard shell refusal,
+ * its no-dialog branch and its headless branch. They are matched as a **prefix** of
+ * the result text, which is exactly what pi puts there (`createErrorToolResult` sets
+ * the whole text to the reason), so a tool that merely *mentions* one of these
+ * sentences in its output cannot be mistaken for a blocked call.
+ *
+ * The list is deliberately conservative: an unrecognised error is a failure
+ * (`06 §4`'s `✗ 失败`), never a guess at 被拒.
+ */
+private val BLOCKED_REASONS = listOf(
+    "Tool execution was blocked",
+    "用户拒绝了这个设备操作：",
+    "设备策略拒绝这条 Shell 命令",
+    "确认对话框不可用",
+    "没有确认通道（ctx.hasUI=false）时默认拒绝",
+)
+
+/** Whether a result text is one of [BLOCKED_REASONS] — see that list for the rule. */
+internal fun toolBlocked(output: String): Boolean {
+    val text = output.trimStart()
+    return BLOCKED_REASONS.any { text.startsWith(it) }
+}
+
+/**
+ * Which of the four states a row is in.
+ *
+ * A blocked call reaches the app as `isError = true` (`docs/extension-compatibility.md`
+ * §6.2), so the only signal separating [ToolState.Rejected] from [ToolState.Failed] is
+ * the blocker's sentence — the same kind of read pi's text already needs elsewhere in
+ * `ToolOutputParse.kt`, and the one this doc recommends.
+ */
+internal fun toolStateOf(item: ToolCall): ToolState = when {
+    item.status == ToolStatus.Pending -> ToolState.Running
+    item.status != ToolStatus.Error -> ToolState.Success
+    toolBlocked(item.output) -> ToolState.Rejected
+    else -> ToolState.Failed
 }
 
 /**
  * The card's title row: the tool (or its prompt) in mono, its subject in the tool title
- * colour, and the status glyph.
+ * colour, and the state as a [StateChip].
  *
  * pi's call line is exactly this shape — `theme.fg("toolTitle", theme.bold("read"))` then
  * the path (`core/tools/renderers/read.ts:34-37`), `$ <command>` for the shell
  * (`renderers/bash.ts:35-41`), `grep /pattern/ in <path>` (`renderers/grep.ts:17-35`).
+ *
+ * The right slot used to be a bare state glyph; it is now the **triple encoding** of
+ * `06 §4` — the word `运行中 / 成功 / 失败 / 被拒`, the symbol beside it, and the state
+ * colour, in one component shared with every other surface that has a state. The card
+ * therefore says what happened twice over, in words and in a symbol, and the colour is
+ * only the third channel (`theme/PiStateChip.kt`).
  */
 @Composable
 internal fun ToolHeader(
+    item: ToolCall,
     title: String,
     subject: String,
-    status: ToolStatus,
     modifier: Modifier = Modifier,
 ) {
     val palette = PiTheme.palette
+    val state = toolStateOf(item)
     Row(modifier = modifier, verticalAlignment = Alignment.CenterVertically) {
         Text(
             text = title,
@@ -101,26 +186,41 @@ internal fun ToolHeader(
             overflow = TextOverflow.Ellipsis,
         )
         Spacer(Modifier.width(PiSpacing.inline))
-        Text(
-            text = toolStatusGlyph(status),
-            style = PiTheme.text.monoSmall,
-            color = toolAccentColor(status, palette),
+        StateChip(
+            label = toolStateLabel(state),
+            tone = toolStateTone(state),
+            glyph = toolStateGlyph(state),
         )
     }
 }
 
 /**
- * The card's footer row: pi's elapsed/status line plus the expand affordance.
+ * The card's footer row: pi's elapsed/status line, the duration tick, and the expand
+ * affordance.
  *
  * pi prints the same line under every result (`renderers/bash.ts:117-121`:
  * `Elapsed`/`Took`), and this app assembles its parts in [toolFooterText]. The expand label
  * is a label, not a hit target — the card's content region is the target (F28).
+ *
+ * [DurationMeter] sits at the end of the readings, before the expand label: the tick is
+ * the *ordinal* reading of the same number the text just printed
+ * (`04 §1.1`: 刻度是补充，不是替代), so it belongs beside it rather than beside the
+ * affordance. It draws nothing when [elapsedMs] is null, which is what keeps a card with
+ * no measured duration — and every diff card, which has no duration of its own
+ * (`06 §2`: diff 卡不显示) — free of an empty tick.
+ *
+ * [elapsedMs] is passed in rather than read from [item] because one caller has a
+ * *live* number: a running shell command's elapsed time is derived from the row's own
+ * timestamp by [ShellBlock], not from `ToolCall.elapsedMs` (which only exists once the
+ * call has ended). Nothing here scans a result — the F31/F8 rule at the top of this file.
  */
 @Composable
 internal fun ToolFooter(
     text: String,
     expanded: Boolean,
     expandable: Boolean,
+    state: ToolState,
+    elapsedMs: Long?,
     modifier: Modifier = Modifier,
     expandText: String = "输出",
 ) {
@@ -134,7 +234,13 @@ internal fun ToolFooter(
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
+        DurationMeter(
+            ms = elapsedMs,
+            color = toolAccentColor(state, palette),
+            modifier = Modifier.padding(start = PiSpacing.inline),
+        )
         if (expandable) {
+            Spacer(Modifier.width(PiSpacing.inline))
             ExpandLabel(expanded, expandText = expandText, collapseText = "收起")
         }
     }
@@ -199,8 +305,12 @@ internal fun ToolNotice(
 }
 
 /**
- * The card itself: pi's status container, the one content-region gesture
+ * The card itself: the rail frame, pi's status container, the one content-region gesture
  * (`Modifier.toggleContent`, F28), and the block's own column of rows.
+ *
+ * The rail (`06 §3` 构件 1) wraps the card rather than the card wrapping the rail, because
+ * the node and the line live in the card's left margin — outside the surface that carries
+ * the tap gesture, exactly as v2 draws them (`marginLeft:-26; paddingLeft:26`).
  */
 @Composable
 internal fun ToolCard(
@@ -211,13 +321,26 @@ internal fun ToolCard(
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val palette = PiTheme.palette
-    BlockCard(
-        color = toolContainerColor(item.status, palette),
-        modifier = modifier.toggleContent(expanded, onToggle),
-        borderColor = toolAccentColor(item.status, palette).copy(alpha = 0.35f),
-        content = content,
-    )
+    val state = toolStateOf(item)
+    ToolRailFrame(
+        glyph = toolStateGlyph(state),
+        tone = toolStateTone(state),
+        label = toolStateLabel(state),
+        modifier = modifier,
+    ) {
+        BlockCard(
+            color = toolContainerColor(state, palette),
+            modifier = Modifier.toggleContent(expanded, onToggle),
+            // `06 §2`「描边 1px 状态色 35%」, for all four states: the ring is what the
+            // card's state looks like at a glance, and the fill is only its ground.
+            borderColor = toolAccentColor(state, palette).copy(alpha = TOOL_CARD_BORDER_ALPHA),
+            content = content,
+        )
+    }
 }
+
+/** `06 §2` 工具卡: the status-coloured border's alpha, in all four states. */
+internal const val TOOL_CARD_BORDER_ALPHA: Float = 0.35f
 
 /**
  * The long-press actions of §4.8, shared by every tool card: the command, the output, and
@@ -263,15 +386,21 @@ internal fun toolCommandText(args: JsonObject?): String? =
     }
 
 /**
- * The card's footer parts, in pi's order: status, pi's exit code, the duration pi measures,
+ * The card's footer parts, in pi's order: state, pi's exit code, the duration pi measures,
  * the row's size, and whether the result was truncated or empty.
  *
  * [lines] is passed in rather than recomputed (F31): the caller already holds a remembered
  * count for the same output, and this used to scan the whole (possibly megabyte) string on
  * every composition.
+ *
+ * A blocked call short-circuits every part: pi measured nothing, returned no exit code and
+ * produced no rows, so the settled parts below would report `0ms · 1 行` about a call that
+ * never ran. `06 §3` 构件 5 states the fact instead (「被拒 · 这次写入没有执行 · 0 行」);
+ * the wording here is tool-agnostic, because the blocked call can be any tool.
  */
-internal fun toolFooterText(item: ToolCall, statusLabel: String, lines: Int): String {
-    val parts = mutableListOf(statusLabel)
+internal fun toolFooterText(item: ToolCall, state: ToolState, lines: Int): String {
+    if (state == ToolState.Rejected) return toolRejectedFooter()
+    val parts = mutableListOf(toolStateLabel(state))
     item.exitCode?.let { parts += "退出码 $it" }
     item.elapsedMs?.let { parts += formatDuration(it) }
     if (lines > 0) parts += "$lines 行"
@@ -279,6 +408,9 @@ internal fun toolFooterText(item: ToolCall, statusLabel: String, lines: Int): St
     if (item.output.isEmpty()) parts += "无输出"
     return parts.joinToString(" · ")
 }
+
+/** The one footer a blocked call has (`06 §3` 构件 5), shared by every tool card. */
+internal fun toolRejectedFooter(): String = "${toolStateLabel(ToolState.Rejected)} · 没有执行"
 
 /**
  * pi's `[invalid content arg - expected string]` case
