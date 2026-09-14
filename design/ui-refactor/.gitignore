@@ -3,3 +3,6 @@
 design-demos/shots/
 review.html
 design-demos/shots-v2/
+# v2 全屏查看页（61 屏截图 base64 竖排，交给用户看的那份）同样是派生页：
+# 源是 design-demos/direction-b-v2.html + shots-v2/，5 MB 不入库。
+v2-viewer.html
