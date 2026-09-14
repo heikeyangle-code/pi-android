@@ -20,7 +20,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.KeyboardArrowDown
-import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.DropdownMenu
@@ -267,8 +267,17 @@ internal fun ExpandLabel(
             color = tint,
         )
         Spacer(Modifier.width(PiSpacing.tiny))
+        // v2 draws every `展开 / 收起` chevron the same way round: **down while
+        // expanded, right while collapsed** (`direction-b-v2.html:911`, the `ThinkRow`;
+        // the same pair in this half's `ToolBlockChrome.kt` header and `DiffBlock.kt`
+        // header). This used to be up-when-expanded / down-when-collapsed, i.e. the
+        // collapsed state showed a downward chevron that pointed at nothing.
         Icon(
-            imageVector = if (expanded) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown,
+            imageVector = if (expanded) {
+                Icons.Filled.KeyboardArrowDown
+            } else {
+                Icons.Filled.KeyboardArrowRight
+            },
             contentDescription = null,
             modifier = Modifier.size(14.dp),
             tint = tint,

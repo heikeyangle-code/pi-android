@@ -23,7 +23,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.pi.rpc.PiResponses
@@ -58,18 +57,22 @@ fun piFormatTokens(count: Long): String = when {
  * (`输出`, `缓存读`), and the session's cost pinned to the right:
  *
  * ```
- * 上下文 52% [▮▮▮▮▯▯▯▯] 104k / 200k · 输出 8.2k · 缓存读 61.4k · $0.42
+ * 上下文 52.3% [▮▮▮▮▯▯▯▯] 104k / 200k (auto) 输出 8.2k 缓存读 61.4k $0.420
  * ```
  *
- * ## The two figures are rounded the way the design writes them
+ * `52.3` and `$0.420` are **pi's own precision**, not this row's choice:
+ * `contextPercentValue.toFixed(1)` and `usageTotals.cost.toFixed(3)`
+ * (`components/footer.ts:111`, `:143`). v2's `StateLine` prints `{p.pct}%` — the
+ * value it was *passed* — so its sample `52` says nothing about rounding, and the
+ * numbers it was passed are pi's. The `%` is there in both: pi's footer is
+ * `` `${contextPercent}%` `` (`footer.ts:150-156`) and v2's row is
+ * `上下文 {p.pct}%` (`direction-b-v2.html:794`).
  *
- * `06 §3` 构件 3 and the hero's own comment (`direction-b-v2.html:86`) write the
- * percentage with **no** decimals and the cost with **two** — `52%`, `$0.42` — and
- * that is the literal the frozen board shows. This row prints those two figures, so
- * it prints them that way. It is a *display* rounding and only here: the app still
- * holds pi's own numbers at pi's own precision, and 会话信息
- * (`ui/chat/ChatSheets.kt`'s stats sheet) shows the percentage to one decimal and
- * the cost to three, so nothing is lost — it is one row saying what the design says.
+ * **There are no `·` separators on this row.** v2's `StateLine` is one
+ * `className="rw"` row with `gap:5` whose parts are separate spans — `输出` and
+ * `缓存读` included (`direction-b-v2.html:798-803`) — and phone01 renders it with
+ * the gaps only. The app used to join the readings with a literal `·`, which is a
+ * character v2 draws nowhere on this row.
  *
  * ## Where each figure comes from (all of them pi's)
  *
@@ -89,6 +92,11 @@ fun piFormatTokens(count: Long): String = when {
  *    `3.2k`.
  *  - `$…` — `stats.cost` at pi's three decimals (`footer.ts:142-146`), only when
  *    non-zero, and it is the row's right-hand anchor.
+ *
+ * The ` (auto)` suffix belongs to the **window** reading, not to the percentage:
+ * pi's line is `` `${percent}%/${window}${auto}` `` (`footer.ts:150-156`), so it
+ * rides `used / window` here as `13k / 1.0M (auto)`. The app used to hang it off the
+ * percentage, which reads as if the *percentage* were the automatic part.
  *
  * ## What is no longer on this row, and why nothing is lost
  *
@@ -125,8 +133,9 @@ fun PiStatusLine(
     val contextWindow = usage?.contextWindow ?: contextWindowFallback
     val percent = usage?.percent
     val used = usage?.tokens
-    // pi: `?` when the percentage is unknown, never a substituted 0.
-    val percentText = percent?.let { String.format(Locale.US, "%.0f", it) } ?: "?"
+    // pi: `?` when the percentage is unknown, never a substituted 0. One decimal is
+    // pi's own `toFixed(1)` (`footer.ts:111`) — see this function's KDoc.
+    val percentText = percent?.let { String.format(Locale.US, "%.1f", it) } ?: "?"
     val auto = if (autoCompaction) " (auto)" else ""
     val contextColor = when {
         percent != null && percent > 90.0 -> PiTheme.palette.error
@@ -140,7 +149,9 @@ fun PiStatusLine(
         totals?.output?.takeIf { it > 0L }?.let { add("输出 ${piFormatTokens(it)}") }
         totals?.cacheRead?.takeIf { it > 0L }?.let { add("缓存读 ${piFormatTokens(it)}") }
     }
-    val cost = stats.cost?.takeIf { it != 0.0 }?.let { "$${String.format(Locale.US, "%.2f", it)}" }
+    // Three decimals, pi's own `toFixed(3)` (`footer.ts:143`): this is what keeps a
+    // real `$0.006` from being rounded to `$0.01` and a `$0.004` from `$0.00`.
+    val cost = stats.cost?.takeIf { it != 0.0 }?.let { "$${String.format(Locale.US, "%.3f", it)}" }
     val windowText = contextWindow?.takeIf { it > 0L }?.let { piFormatTokens(it) }
     // "No data, no row": with no percentage, no window and no readings there is
     // nothing to read, and an empty status line would still cost 32dp.
@@ -154,7 +165,8 @@ fun PiStatusLine(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
-            text = "上下文 $percentText$auto",
+            // pi's footer and v2's row both print the unit; see the KDoc.
+            text = "上下文 $percentText%",
             style = PiTheme.text.meta,
             color = contextColor,
             maxLines = 1,
@@ -169,7 +181,8 @@ fun PiStatusLine(
                 // pi reports no token count after a compaction until the next
                 // response (`agent-session.ts:3450`), and `?` is the honest spelling
                 // it uses for exactly that window (`footer.ts:110`).
-                text = "${used?.let { piFormatTokens(it) } ?: "?"} / $windowText",
+                // ` (auto)` rides the window, as it does in pi's own concatenation.
+                text = "${used?.let { piFormatTokens(it) } ?: "?"} / $windowText$auto",
                 // `06 §2` 状态行 + `06 §2` 字号: every reading on this row is a machine
                 // reading at the 12 sp step (`mono t12 tab` in v2's `StateLine`), which
                 // is what keeps the figures aligned as they tick.
@@ -179,17 +192,24 @@ fun PiStatusLine(
             )
         }
         if (readings.isNotEmpty()) {
-            // The readings absorb the slack so the cost stays pinned to the right
-            // (`06 §2` leaves the row's tail to the cost); an unusually long pair
-            // elides rather than pushing the cost off the row.
-            Text(
-                text = " · " + readings.joinToString(" · "),
+            // One span per reading, separated by the row's own gap — v2's shape
+            // (`direction-b-v2.html:798-803`), with no `·` between them. The group
+            // absorbs the slack so the cost stays pinned to the right (`06 §2` leaves
+            // the row's tail to the cost).
+            Row(
                 modifier = Modifier.weight(1f),
-                style = PiTheme.text.monoSmall,
-                color = PiTheme.palette.text,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(PiSpacing.small),
+            ) {
+                readings.forEach { reading ->
+                    Text(
+                        text = reading,
+                        style = PiTheme.text.monoSmall,
+                        color = PiTheme.palette.text,
+                        maxLines = 1,
+                    )
+                }
+            }
         } else {
             Spacer(Modifier.weight(1f))
         }

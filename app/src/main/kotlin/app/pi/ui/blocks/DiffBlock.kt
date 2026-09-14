@@ -346,7 +346,12 @@ private fun diffPlan(hunks: List<DiffHunk>, maxLines: Int): List<DiffRow> {
     var budget = maxLines
     for (hunk in hunks) {
         if (budget <= 0) break
-        if (hunk.isFileHeader) {
+        // A file-level header hunk is recognised by its **lines**, not by its blank
+        // header: `parsePiDiff` (`rpc/.../Transcript.kt`) also returns a blank-headed
+        // hunk, but that one carries real `+`/`-` lines — pi's readable diff has no
+        // `@@` to name a hunk with. `DiffHunk.isFileHeader` cannot tell the two
+        // apart, so the kind test does.
+        if (hunk.lines.isNotEmpty() && hunk.lines.all { it.kind == DiffLineKind.Header }) {
             for (line in hunk.lines) {
                 if (budget <= 0) break
                 rows += DiffRow.Header(line.text)
@@ -354,7 +359,8 @@ private fun diffPlan(hunks: List<DiffHunk>, maxLines: Int): List<DiffRow> {
             }
             continue
         }
-        rows += DiffRow.Header(hunk.header)
+        // An empty header has nothing to print; only a `@@`-named hunk gets a row.
+        if (hunk.header.isNotEmpty()) rows += DiffRow.Header(hunk.header)
         var i = 0
         while (i < hunk.lines.size) {
             if (budget <= 0) break

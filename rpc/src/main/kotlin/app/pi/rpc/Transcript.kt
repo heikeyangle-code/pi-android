@@ -373,6 +373,119 @@ private class DiffHunkBuilder(
     fun build(): DiffHunk = DiffHunk(header, oldStart, oldCount, newStart, newCount, lines)
 }
 
+/**
+ * pi's **own** diff body, parsed into the same hunks every other diff goes through.
+ *
+ * ## Why a second parser exists
+ *
+ * pi's `edit` tool returns two different strings in its `details`
+ * (`packages/coding-agent/src/core/tools/edit.ts:210`: `{ diff, patch,
+ * firstChangedLine }`), and they are not two spellings of one thing:
+ *
+ *  - `patch` is a real unified diff (it is what `patch`/`git apply` would take);
+ *  - `diff` is `generateDiffString`'s output (`core/tools/edit-diff.ts:376-480`),
+ *    the **human** rendering pi's own TUI prints. Every line is
+ *    `<marker><line number><space><text>` — `+123 text`, `-123 text`, ` 123 text` —
+ *    and a long run of unchanged lines is elided with a ` ...` line. There is no
+ *    `@@` anywhere in it.
+ *
+ * `detailsDiffText` prefers `diff` (it is the string pi shows, so it is the one to
+ * be faithful to), which means the unified parser sees a body with no `@@`, finds
+ * no hunk, and reports a diff with zero added and zero removed lines — the header
+ * reads `+0 −0` beside a body full of `+`/`-` lines. This function is the other half:
+ * it reads that format and produces hunks with real line kinds, so the counts, the
+ * body colours and the intra-line pairing all come out of the same parse.
+ *
+ * ## The grammar, and what it deliberately does not do
+ *
+ * A line is classified by its **first character** — `+`, `-` or anything else
+ * (`Context`) — and the digits that follow it are that line's number on the side it
+ * exists on (`+` → new, `-` → old, context → both). That is the rule
+ * `modes/interactive/components/diff.ts` prints by
+ * (`^([+-\s])(\s*\d*)\s(.*)$`); it is implemented as a marker split rather than
+ * as that regex so a line whose text is empty (`+42` with nothing after it, which a
+ * blank line in the patch produces) still classifies by its marker instead of
+ * falling through to `Context`.
+ *
+ * Two honest limits:
+ *
+ *  - an elision line (` ...`) is a **Context** line with no number; pi does not say
+ *    how many lines it hid, and this parser does not invent a count for it;
+ *  - the number column is left blank when the format omits it, rather than
+ *    reconstructed from a running counter — a diff whose marker column disagrees
+ *    with its numbers must not be silently "corrected".
+ *
+ * @return one headerless hunk, or null when the text carries no `+`/`-` line at all
+ *   (i.e. it is not a diff, and the caller keeps its "print it as text" fallback).
+ */
+fun parsePiDiff(text: String): List<DiffHunk>? {
+    if (text.isEmpty()) return null
+    // A diff ends with a newline; that newline must not become a phantom blank
+    // context line, exactly as in [parseUnifiedDiff].
+    val body = if (text.endsWith("\n")) text.dropLast(1) else text
+    val lines = mutableListOf<DiffLine>()
+    var changed = 0
+    for (raw in body.split('\n')) {
+        val line = raw.removeSuffix("\r")
+        val marker = line.firstOrNull() ?: ' '
+        val kind = when (marker) {
+            '+' -> DiffLineKind.Added
+            '-' -> DiffLineKind.Removed
+            else -> DiffLineKind.Context
+        }
+        if (kind != DiffLineKind.Context) changed++
+        // The number column, then **exactly one** separator space, then the text.
+        //
+        // pi pads the number to the widest line number in the file (`padStart`), so
+        // the digits may be preceded by spaces: `+  9 text` is line 9. Swallowing
+        // "digits and spaces" rather than "the digits" would also eat the text's own
+        // indentation — `+42     return x` is line 42 with the text `    return x`,
+        // not `return x` — and indentation is most of what a code diff says.
+        val rest = line.drop(1)
+        val digitsStart = rest.indexOfFirst { it.isDigit() }
+        val number: Int?
+        val content: String
+        if (digitsStart < 0) {
+            // No number at all: pi's elision line (` ...`) and any marker-only line.
+            // pi's own regex reads these as an empty number column plus the text.
+            number = null
+            content = rest.trimStart(' ')
+        } else {
+            var end = digitsStart
+            while (end < rest.length && rest[end].isDigit()) end++
+            number = rest.substring(digitsStart, end).toIntOrNull()
+            content = rest.substring(end).removePrefix(" ")
+        }
+        lines += when (kind) {
+            DiffLineKind.Added -> DiffLine(kind, content, null, number)
+            DiffLineKind.Removed -> DiffLine(kind, content, number, null)
+            else -> DiffLine(kind, content, number, number)
+        }
+    }
+    if (changed == 0) return null
+    // The blank header is not a file-level header hunk: `DiffHunk.isFileHeader` is
+    // true for it, which is why the renderer decides that case by line kind rather
+    // than by that flag alone. pi's readable format simply has no `@@` to carry.
+    return listOf(DiffHunk(header = "", oldStart = 0, oldCount = 0, newStart = 0, newCount = 0, lines = lines))
+}
+
+/**
+ * Parse whichever of pi's two diff shapes this text is.
+ *
+ * The choice is made by **content**, not by which `details` key it came from: an
+ * extension may hand back a unified diff under `diff`, and pi hands its own format
+ * back under the same key. A body containing an `@@` line is a unified diff —
+ * pi's readable format cannot produce one, because every line of it starts with
+ * `+`, `-` or a space — and anything else goes through [parsePiDiff] first, falling
+ * back to the unified parser (whose "one header hunk" answer is what keeps a
+ * body the UI cannot read visible rather than blank).
+ */
+fun parseDiff(text: String): List<DiffHunk> {
+    val unified = text.lineSequence().any { it.startsWith("@@") }
+    if (unified) return parseUnifiedDiff(text)
+    return parsePiDiff(text) ?: parseUnifiedDiff(text)
+}
+
 /** Count added / removed lines across every hunk. */
 fun diffStats(hunks: List<DiffHunk>): DiffStats {
     var added = 0
@@ -422,7 +535,7 @@ fun buildToolDiff(
     removed: Int? = null,
     truncated: Boolean = false,
 ): ToolDiff {
-    val hunks = parseUnifiedDiff(text)
+    val hunks = parseDiff(text)
     val stats = diffStats(hunks)
     return ToolDiff(
         key = key,
@@ -1402,6 +1515,23 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
         return appendToolDiff(callId, toolName, details, ts) ?: change
     }
 
+    /**
+     * The path argument of the call with this id, out of the call's own `args`
+     * (`path` for `read`/`write`/`ls`, `file_path` for `edit` — pi's two spellings,
+     * the same pair `ui/blocks/ToolBlockChrome.kt`'s `toolCommandText` reads).
+     *
+     * Returns null when the card was never opened (a diff whose call the app did not
+     * see) or when the call carried no path at all.
+     */
+    private fun callArgsPath(callId: String): String? {
+        val index = toolIndexByCallId[callId] ?: return null
+        val args = (items.getOrNull(index) as? ToolCall)?.args ?: return null
+        for (key in listOf("path", "file_path", "filePath")) {
+            args.str(key)?.takeIf { it.isNotBlank() }?.let { return it }
+        }
+        return null
+    }
+
     private fun appendToolDiff(
         callId: String,
         toolName: String?,
@@ -1409,7 +1539,21 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
         ts: Long,
     ): TranscriptChange? {
         val text = detailsDiffText(details) ?: return null
-        val path = detailsString(details, "path", "file", "filePath", "relativePath").orEmpty()
+        // The path, in the order the three sources can actually answer:
+        //  1. `details.path` — what a file-oriented tool usually carries (pi's `edit`
+        //     does **not**: `core/tools/edit.ts:210` is `{ diff, patch,
+        //     firstChangedLine }`, which is why the card used to be titled
+        //     「未命名文件」);
+        //  2. `--- a/…` / `+++ b/…` — [diffPath], which answers for the `patch`
+        //     shape and is what `buildToolDiff` would have consulted anyway;
+        //  3. the **call's own arguments** (`path` / `file_path`), the same field
+        //     `summarizeToolArgs` prints on the card above, looked up by call id
+        //     because the diff row is built beside the call rather than from it.
+        // 「未命名文件」 is left for the case where all three are genuinely absent.
+        val path = detailsString(details, "path", "file", "filePath", "relativePath")
+            ?: diffPath(text)
+            ?: callArgsPath(callId)
+            ?: ""
         val added = details?.let { (it as? JsonObject)?.int("added") }
         val removed = details?.let { (it as? JsonObject)?.int("removed") }
         val truncated = (details as? JsonObject)?.bool("truncated") ?: false
