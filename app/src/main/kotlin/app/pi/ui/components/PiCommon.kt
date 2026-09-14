@@ -1,33 +1,56 @@
 package app.pi.ui.components
 
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Popup
+import androidx.compose.ui.window.PopupProperties
 import androidx.compose.ui.unit.sp
 import app.pi.rpc.PiResponses
 import app.pi.rpc.TokenUsage
 import app.pi.ui.theme.PiMark
+import app.pi.ui.theme.PiPalette
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
 import java.util.Locale
@@ -224,6 +247,313 @@ fun PiStatusLine(
         }
     }
 }
+
+/**
+ * pi's context reading as a **ring**, the composer's and the detail sheet's form of
+ * the status row's eight-segment bar.
+ *
+ * ## What it is
+ *
+ * An arc of [diameter] with a [stroke]-wide pen and **no number inside**: the fill
+ * runs from twelve o'clock clockwise for `percent × 3.6°`, so a glance reads the
+ * proportion without reading a figure. The transcript's own reading is not lost —
+ * the detail sheet prints the same percentage in words, and the ring's own
+ * `contentDescription` is set by the caller through its click label.
+ *
+ * ## The two colours are pi's thresholds, not this component's taste
+ *
+ * The track is `muted`; the fill is `accent` up to 70 %, `warning` above it and
+ * `error` above 90 % — the same three bands pi colours its footer percentage with
+ * (`components/footer.ts:154-156`), which the app's status row also uses. Colour is
+ * never the only channel here either: the percentage is spelled out in the detail
+ * sheet one tap away, and the ring's own click label says what it opens.
+ *
+ * ## `percent == null` is a real state, not zero
+ *
+ * pi reports no context usage between a compaction and the next reply. The ring then
+ * draws the **empty track** and a centred `?` — pi's own spelling for that window
+ * (`footer.ts:110`, and the app's status row used it) — rather than an empty arc that
+ * would read as "0 %".
+ *
+ * @param percent 0–100, straight from pi's `getContextUsage().percent`; null when pi
+ *   has not reported one.
+ * @param diameter the ring's outer size.
+ * @param stroke the pen width. `06 §2`'s bar has no analogue; 2 is the weight that
+ *   keeps a 24 dp ring legible as a ring rather than a dot.
+ * @param placeholderStyle the style of the `?`. It is a parameter because the ring
+ *   is drawn at two very different sizes (24 dp in the composer, ~52 dp in the sheet)
+ *   and one glyph size cannot serve both.
+ */
+@Composable
+fun PiContextRing(
+    percent: Double?,
+    diameter: Dp,
+    modifier: Modifier = Modifier,
+    stroke: Dp = 2.dp,
+    // Required rather than defaulted: the two call sites draw the ring at very
+    // different sizes (24 dp in the composer's key row, 52 dp in the sheet), and a
+    // default would have to read `PiTheme.text` inside a parameter list — a
+    // composable call in a default argument works, but this project has no other
+    // instance of it and the two sizes want two different styles anyway.
+    placeholderStyle: TextStyle,
+) {
+    val palette = PiTheme.palette
+    Box(modifier = modifier.size(diameter), contentAlignment = Alignment.Center) {
+        Canvas(Modifier.fillMaxSize()) {
+            val pen = stroke.toPx().coerceAtMost(size.minDimension / 2f)
+            val inset = pen / 2f
+            val box = Size(size.width - pen, size.height - pen)
+            val arc = Offset(inset, inset)
+            drawArc(
+                color = palette.muted,
+                startAngle = RING_START_ANGLE,
+                sweepAngle = 360f,
+                useCenter = false,
+                topLeft = arc,
+                size = box,
+                style = Stroke(width = pen),
+            )
+            if (percent != null) {
+                drawArc(
+                    color = contextProgressColor(percent, palette),
+                    startAngle = RING_START_ANGLE,
+                    sweepAngle = (percent * 3.6).toFloat().coerceIn(0f, 360f),
+                    useCenter = false,
+                    topLeft = arc,
+                    size = box,
+                    style = Stroke(width = pen),
+                )
+            }
+        }
+        if (percent == null) {
+            Text(
+                text = "?",
+                style = placeholderStyle,
+                color = palette.bodyOnTool,
+                maxLines = 1,
+            )
+        }
+    }
+}
+
+/** Twelve o'clock: the angle Compose measures arcs from is 3 o'clock. */
+private const val RING_START_ANGLE = -90f
+
+/**
+ * The colour pi gives a context percentage: `accent`, `warning` past 70, `error` past
+ * 90 (`components/footer.ts:154-156`). Shared by the ring's fill and the detail
+ * sheet's percentage, so the two cannot disagree.
+ *
+ * [PiStatusLine] keeps its own three-band expression rather than calling this one,
+ * and deliberately: that row prints the percentage as a *label* in `muted` at rest,
+ * where this function's at-rest colour is `accent` because it is painting a **fill**.
+ * The two share the two thresholds, not the at-rest colour, and the thresholds are
+ * spelled once here and once there — a reader changing one must change both.
+ *
+ * A null [percent] is not a colour: the caller draws no fill at all and says `?`.
+ */
+fun contextProgressColor(percent: Double, palette: PiPalette): Color = when {
+    percent > 90.0 -> palette.error
+    percent > 70.0 -> palette.warning
+    else -> palette.accent
+}
+
+/**
+ * The app's own menu, in v2's container rather than Material's.
+ *
+ * ## Why not `DropdownMenu`
+ *
+ * M3's default menu draws a 2 dp shadow, a 4 dp corner and its own surface colour.
+ * `04 §2.3` and all of v2 say the opposite: hierarchy is 1 px lines and the surface
+ * ladder, **no shadows**, and the corners in play are 10 and 14. A menu is a surface
+ * like any other, so it takes v2's: `surf-high`, a 1 px `borderMuted` ring, radius
+ * 10, zero elevation — and, for the same reason, **no ripple**: the pressed row
+ * simply becomes `surf-highest`, which is a colour swap and not an animation.
+ *
+ * ## It has to be a `Popup`
+ *
+ * The composer's own box is a 14 dp-radius container that clips its content, so a
+ * menu laid over it as a sibling `Box` would be cut off at the corner. `Popup` is a
+ * separate window (and it dismisses on an outside tap for free).
+ *
+ * ## Placement
+ *
+ * [PiMenuPlacement.Above] is the composer's: the menu's left edge lines up with the
+ * anchor's and its **bottom** sits 8 dp above the anchor's top, because the anchor is
+ * a chip in a row that lives at the bottom of the screen. [PiMenuPlacement.Below] is
+ * for an anchor near the top of the screen (the AppBar's ⋮), where "above" would be
+ * off-screen. Neither flips itself: both callers know where they are, and a menu that
+ * silently moved would be harder to reason about than one that is placed.
+ *
+ * ## The scroll bound
+ *
+ * [maxHeight] exists for the AppBar's menu, which has seventeen rows and would be
+ * ~680 dp tall — taller than the phone. v2's spec for this container has no bound
+ * because the menu it was drawn for has four rows (169 dp); the bound is this app's
+ * adaptation for the long one, and the composer's menu never reaches it.
+ *
+ * @param items the rows, in order. A row with [PiMenuItem.dividerBefore] gets a
+ *   1 px `borderMuted` rule at 55 % above it.
+ */
+@Composable
+fun PiMenu(
+    expanded: Boolean,
+    onDismiss: () -> Unit,
+    items: List<PiMenuItem>,
+    placement: PiMenuPlacement,
+    modifier: Modifier = Modifier,
+    maxHeight: Dp = PI_MENU_MAX_HEIGHT,
+) {
+    if (!expanded) return
+    val density = LocalDensity.current
+    val height = PI_MENU_ROW_HEIGHT * items.size +
+        PI_MENU_VERTICAL_PADDING * 2 +
+        (if (items.any { it.dividerBefore }) PI_MENU_DIVIDER_HEIGHT else 0.dp)
+    // `Popup`'s offset is from the anchor's top-left, in pixels.
+    val offsetY = when (placement) {
+        PiMenuPlacement.Above -> -(height + PI_MENU_ANCHOR_GAP)
+        PiMenuPlacement.Below -> PI_MENU_ANCHOR_GAP
+    }
+    Popup(
+        alignment = Alignment.TopStart,
+        offset = with(density) { IntOffset(0, offsetY.roundToPx()) },
+        onDismissRequest = onDismiss,
+        properties = PopupProperties(focusable = true),
+    ) {
+        Column(
+            modifier = modifier
+                .width(PI_MENU_WIDTH)
+                .heightIn(max = maxHeight)
+                .clip(RoundedCornerShape(PI_MENU_RADIUS))
+                .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                .border(
+                    width = 1.dp,
+                    color = PiTheme.palette.borderMuted,
+                    shape = RoundedCornerShape(PI_MENU_RADIUS),
+                )
+                .verticalScroll(rememberScrollState())
+                .padding(vertical = PI_MENU_VERTICAL_PADDING),
+        ) {
+            items.forEach { item ->
+                if (item.dividerBefore) {
+                    HorizontalDivider(
+                        thickness = 1.dp,
+                        color = PiTheme.palette.borderMuted.copy(alpha = 0.55f),
+                    )
+                }
+                PiMenuRow(item = item, onDismiss = onDismiss)
+            }
+        }
+    }
+}
+
+/** One row of a [PiMenu]: `[symbol 24] + 10 + label + slack + right-aligned note`. */
+@Composable
+private fun PiMenuRow(item: PiMenuItem, onDismiss: () -> Unit) {
+    val palette = PiTheme.palette
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    // What a screen reader hears. The rule the designer set: wherever a symbol is
+    // visible there must be Chinese beside it, and whatever is announced must *be*
+    // that Chinese — so the label and the note are joined, and a row whose spoken
+    // name is not just those two (「清空」 → 「清空草稿」) overrides it.
+    val spoken = item.a11yLabel ?: item.note?.let { "${item.label}，$it" } ?: item.label
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(
+                if (pressed) {
+                    MaterialTheme.colorScheme.surfaceContainerHighest
+                } else {
+                    Color.Transparent
+                },
+            )
+            .clickable(
+                interactionSource = interaction,
+                // No ripple: v2's menus have no press animation, and M3's would tint
+                // the row with `primary`, which this app reserves for real actions.
+                indication = null,
+                onClickLabel = spoken,
+            ) {
+                onDismiss()
+                item.onSelect()
+            }
+            .height(PI_MENU_ROW_HEIGHT)
+            .padding(horizontal = PI_MENU_ROW_PADDING),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(Modifier.width(PI_MENU_SYMBOL_WIDTH), contentAlignment = Alignment.Center) {
+            if (item.symbol != null) {
+                Text(
+                    text = item.symbol,
+                    style = PiTheme.text.monoSmall.copy(fontSize = 13.sp),
+                    color = item.symbolColor ?: palette.text,
+                    textAlign = TextAlign.Center,
+                    maxLines = 1,
+                )
+            }
+        }
+        Spacer(Modifier.width(PI_MENU_SYMBOL_GAP))
+        Text(
+            text = item.label,
+            modifier = Modifier.weight(1f),
+            style = MaterialTheme.typography.bodyMedium,
+            color = palette.text,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        if (item.note != null) {
+            Text(
+                text = item.note,
+                style = PiTheme.text.meta,
+                color = palette.muted,
+                maxLines = 1,
+            )
+        }
+    }
+}
+
+/**
+ * One row of a [PiMenu].
+ *
+ * [onSelect] is **last** so a caller can write `PiMenuItem("新建会话") { … }` — a
+ * trailing lambda binds to the final parameter, and putting it anywhere else means
+ * every one-line row has to name an argument it does not otherwise need. The rows
+ * that carry a symbol or a note use named arguments and are unaffected by the order.
+ */
+data class PiMenuItem(
+    val label: String,
+    /** The trigger character or glyph, centred in its own 24 dp column. */
+    val symbol: String? = null,
+    /** The right-aligned explanation of *which* variant this is (`进上下文`). */
+    val note: String? = null,
+    /** The symbol's colour; the label is always the text colour. */
+    val symbolColor: Color? = null,
+    /** Overrides what a screen reader hears; defaults to `label，note`. */
+    val a11yLabel: String? = null,
+    /** Draw the 1 px rule above this row. */
+    val dividerBefore: Boolean = false,
+    val onSelect: () -> Unit,
+)
+
+/** Where a [PiMenu] opens relative to its anchor. */
+enum class PiMenuPlacement { Above, Below }
+
+/** v2's menu container: 240 wide, radius 10, 4 dp of vertical padding, 40 dp rows. */
+private val PI_MENU_WIDTH = 240.dp
+private val PI_MENU_RADIUS = 10.dp
+private val PI_MENU_VERTICAL_PADDING = 4.dp
+private val PI_MENU_ROW_HEIGHT = 40.dp
+private val PI_MENU_ROW_PADDING = 12.dp
+private val PI_MENU_SYMBOL_WIDTH = 24.dp
+private val PI_MENU_SYMBOL_GAP = 10.dp
+private val PI_MENU_DIVIDER_HEIGHT = 1.dp
+
+/** The gap between the anchor and the menu's near edge. */
+private val PI_MENU_ANCHOR_GAP = 8.dp
+
+/** See [PiMenu]'s KDoc: the long AppBar menu scrolls inside this. */
+private val PI_MENU_MAX_HEIGHT = 320.dp
 
 /** `06 §2` 状态行: the context bar's segment count. */
 private const val CONTEXT_SEGMENTS = 8

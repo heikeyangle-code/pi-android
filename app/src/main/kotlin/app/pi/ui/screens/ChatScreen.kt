@@ -7,6 +7,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.vector.PathParser
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.runtime.produceState
 import androidx.compose.foundation.Image
@@ -22,6 +23,8 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -44,7 +47,6 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AttachFile
-import androidx.compose.material.icons.filled.ChatBubble
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
@@ -52,8 +54,6 @@ import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.filled.Stop
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -109,6 +109,7 @@ import app.pi.ui.PiSessionViewModel
 import app.pi.ui.blocks.BlockRenderer
 import app.pi.ui.chat.BashPanel
 import app.pi.ui.chat.ComposerRoute
+import app.pi.ui.chat.ContextSheet
 import app.pi.ui.chat.ForkPickerSheet
 import app.pi.ui.chat.MentionPalette
 import app.pi.ui.chat.ModelPickerSheet
@@ -128,8 +129,10 @@ import app.pi.ui.chat.mergeRestoredQueue
 import app.pi.ui.chat.routeComposerText
 import app.pi.ui.chat.thinkingLabelOf
 import app.pi.ui.chat.unlistedBuiltinHint
-import app.pi.ui.components.PiEmptyState
-import app.pi.ui.components.PiStatusLine
+import app.pi.ui.components.PiContextRing
+import app.pi.ui.components.PiMenu
+import app.pi.ui.components.PiMenuItem
+import app.pi.ui.components.PiMenuPlacement
 import app.pi.ui.extension.ExtensionWidgetStack
 import app.pi.ui.extension.WidgetPlacement
 import app.pi.ui.extension.windowTitleOf
@@ -202,7 +205,7 @@ fun ChatScreen(
 }
 
 /** Which bottom sheet the chat screen has open, if any. */
-private enum class ChatSheet { Model, Thinking, Tools, Stats, Fork, Rename }
+private enum class ChatSheet { Model, Thinking, Tools, Stats, Context, Fork, Rename }
 
 /** `06 §2`「顶栏：高 48」. The same number `ui/PiRoot.kt`'s `PiTopBar` uses. */
 private val CHAT_TOP_BAR_HEIGHT = 48.dp
@@ -277,7 +280,25 @@ private fun ChatBody(
     bottomInset: Dp,
     onOpenSessions: () -> Unit,
 ) {
-    var draft by remember { mutableStateOf("") }
+    // `draft` and `attachments` are **saveable**: they are the user's own input, and
+    // leaving the chat destination (工作区 / 设置) used to throw them away, because
+    // `PiRoot`'s `when (current)` drops this screen's composition entirely. Coming
+    // back now finds the text and the pending images where they were left.
+    //
+    // Deliberately **not** keyed on `sessionKey`, unlike `renderWindow` / `tail` /
+    // `pausedRows` above: those describe an *opening of a session*, while a draft is
+    // the user's unsent writing. This screen has never dropped the draft when the
+    // session changed underneath it (the composable stays mounted for a switch), and
+    // making it session-keyed would start silently deleting text on a switch. The
+    // risk that carries — a draft typed for one session being sent to another — is
+    // the one the screen already had.
+    var draft by rememberSaveable { mutableStateOf("") }
+    var attachments by rememberSaveable(stateSaver = AttachmentListSaver) {
+        mutableStateOf<List<PiImage>>(emptyList())
+    }
+    // One-shot overlays: a menu or a sheet that survives a trip to 工作区 would
+    // reappear on a screen the user has moved on from, so these stay plain
+    // `remember` on purpose.
     var sheet by remember { mutableStateOf<ChatSheet?>(null) }
     var overflow by remember { mutableStateOf(false) }
     // The app-local display preferences, read from pi's settings documents. They
@@ -343,7 +364,6 @@ private fun ChatBody(
     // for directory grants (`DeviceSafStore`), and (b) it is available on every API
     // level this app supports without a backport dependency, and covers file
     // providers as well as the gallery.
-    var attachments by remember { mutableStateOf<List<PiImage>>(emptyList()) }
 
     // There is **no external-editor chip** any more. pi's `app.editor.external`
     // (ctrl+g, `keybindings.md:129` → `interactive-mode.ts:4246-4261` →
@@ -974,109 +994,135 @@ private fun ChatBody(
                     // restarts the process, which re-reads the settings pi caches at
                     // startup) and is **not** a replacement for this button, so
                     // nothing was moved there to take its place.
-                    ChatTopBarIcon(
-                        onClick = { overflow = true },
-                        contentDescription = "更多",
-                        icon = Icons.Filled.MoreVert,
-                    )
-                    DropdownMenu(expanded = overflow, onDismissRequest = { overflow = false }) {
-                    OverflowItem("命令面板") {
-                        draft = "/"
-                        overflow = false
-                    }
-                    OverflowItem("会话与队列") {
-                        session.refreshTuiOnlyExtensions()
-                        sheet = ChatSheet.Tools
-                        overflow = false
-                    }
-                    OverflowItem("会话树") {
-                        // `PiRoot` refreshes the tree when it handles this request
-                        // (see the `/tree` arm in `pick`); refreshing here too issued
-                        // the same two RPCs twice.
-                        session.requestNav(NavRequest.SessionTree)
-                        overflow = false
-                    }
-                    OverflowItem("会话信息") {
-                        session.refreshStats()
-                        sheet = ChatSheet.Stats
-                        overflow = false
-                    }
-                    OverflowItem("新建会话") {
-                        session.newSession()
-                        overflow = false
-                    }
-                    OverflowItem("从历史消息分支") {
-                        session.refreshForkMessages()
-                        sheet = ChatSheet.Fork
-                        overflow = false
-                    }
-                    OverflowItem("复制当前会话") {
-                        session.cloneSession()
-                        overflow = false
-                    }
-                    OverflowItem("重命名") {
-                        sheet = ChatSheet.Rename
-                        overflow = false
-                    }
-                    OverflowItem("导出会话（按扩展名）") {
-                        session.exportSession()
-                        overflow = false
-                    }
-                    OverflowItem("跳到上一条提问") {
-                        // F34: the first visible row as a *full-list* index — the
-                        // loading row does not exist in `visibleItems`, and the
-                        // hidden prefix does not exist in the rendered list.
-                        val firstFull = listState.firstVisibleItemIndex - headerRows + hiddenCount
-                        userRowIndices().lastOrNull { it < firstFull }?.let { row ->
-                            pauseTail()
-                            reveal(row)
-                        }
-                        overflow = false
-                    }
-                    OverflowItem("跳到下一条提问") {
-                        val firstFull = listState.firstVisibleItemIndex - headerRows + hiddenCount
-                        userRowIndices().firstOrNull { it > firstFull }?.let { row ->
-                            pauseTail()
-                            reveal(row)
-                        }
-                        overflow = false
-                    }
-                    OverflowItem("复制最后一条回复") {
-                        copyLastAssistant(session, context)
-                        overflow = false
-                    }
-                    OverflowItem(if (toolsExpanded) "收起全部工具输出" else "展开全部工具输出") {
-                        toolsExpanded = !toolsExpanded
-                        overflow = false
-                    }
-                    // 「循环切换模型」 is **deleted**. pi has the keybinding
-                    // (`app.model.cycleForward` / `cycleBackward`, `keybindings.md`)
-                    // and a keyboard is where a blind cycle belongs: you press it
-                    // again and watch the footer. On a phone the same tap has no
-                    // visible result — the model chip and the composer both stay as
-                    // they were until the next turn — so it read as a button that did
-                    // nothing, and it is redundant next to the AppBar's model chip and
-                    // `/model`, both of which *show* what they are choosing.
-                    OverflowItem("思考等级…") {
-                        session.refreshThinkingLevels()
-                        sheet = ChatSheet.Thinking
-                        overflow = false
-                    }
-                    OverflowItem("循环切换思考等级") {
-                        session.cycleThinkingLevel()
-                        overflow = false
-                    }
-                    OverflowItem("选择模型…") {
-                        session.refreshModels()
-                        sheet = ChatSheet.Model
-                        overflow = false
-                    }
-                    // There is no terminal entry here any more. It used to open pi's
-                    // original TUI, and the user retired the terminal outright
-                    // ("现在是个废品那个功能"), so the only way in is the one row on
-                    // the settings home. Leaving it here would keep the most
-                    // valuable part of the overflow menu pointing at the least
-                    // usable surface in the app.
+                    // The two ⋮s of this screen — here and the composer's — draw the
+                    // same v2 container (`PiMenu`), not Material's menu: M3's shadow,
+                    // its 4 dp corner and its `primary` ripple are all three things
+                    // `04 §2.3` and v2 refuse. See `PiMenu`'s KDoc.
+                    Box {
+                        ChatTopBarIcon(
+                            onClick = { overflow = true },
+                            contentDescription = "更多",
+                            icon = Icons.Filled.MoreVert,
+                        )
+                        PiMenu(
+                            expanded = overflow,
+                            onDismiss = { overflow = false },
+                            // This anchor is at the top of the screen, so the menu
+                            // opens **downwards**; the composer's ⋮ is the mirror
+                            // image and opens upwards. Neither flips itself.
+                            placement = PiMenuPlacement.Below,
+                            items = buildList {
+                                add(PiMenuItem("命令面板") { draft = "/" })
+                                add(
+                                    PiMenuItem("会话与队列") {
+                                        session.refreshTuiOnlyExtensions()
+                                        sheet = ChatSheet.Tools
+                                    },
+                                )
+                                add(
+                                    PiMenuItem("会话树") {
+                                        // `PiRoot` refreshes the tree when it handles
+                                        // this request (see the `/tree` arm in
+                                        // `pick`); refreshing here too issued the same
+                                        // two RPCs twice.
+                                        session.requestNav(NavRequest.SessionTree)
+                                    },
+                                )
+                                // Two sheets, two names: 会话信息 is metadata
+                                // (name / id / file / counts) and 上下文与用量 is
+                                // every figure the app has. The composer's ring opens
+                                // the second one directly; this row exists so the
+                                // first is reachable without the ring.
+                                add(
+                                    PiMenuItem("会话信息") {
+                                        session.refreshStats()
+                                        sheet = ChatSheet.Stats
+                                    },
+                                )
+                                add(
+                                    PiMenuItem("上下文与用量") {
+                                        session.refreshStats()
+                                        sheet = ChatSheet.Context
+                                    },
+                                )
+                                add(PiMenuItem("新建会话") { session.newSession() })
+                                add(
+                                    PiMenuItem("从历史消息分支") {
+                                        session.refreshForkMessages()
+                                        sheet = ChatSheet.Fork
+                                    },
+                                )
+                                add(PiMenuItem("复制当前会话") { session.cloneSession() })
+                                add(PiMenuItem("重命名") { sheet = ChatSheet.Rename })
+                                add(PiMenuItem("导出会话（按扩展名）") { session.exportSession() })
+                                add(
+                                    PiMenuItem("跳到上一条提问") {
+                                        // F34: the first visible row as a *full-list*
+                                        // index — the loading row does not exist in
+                                        // `visibleItems`, and the hidden prefix does
+                                        // not exist in the rendered list.
+                                        val firstFull =
+                                            listState.firstVisibleItemIndex - headerRows + hiddenCount
+                                        userRowIndices().lastOrNull { it < firstFull }?.let { row ->
+                                            pauseTail()
+                                            reveal(row)
+                                        }
+                                    },
+                                )
+                                add(
+                                    PiMenuItem("跳到下一条提问") {
+                                        val firstFull =
+                                            listState.firstVisibleItemIndex - headerRows + hiddenCount
+                                        userRowIndices().firstOrNull { it > firstFull }?.let { row ->
+                                            pauseTail()
+                                            reveal(row)
+                                        }
+                                    },
+                                )
+                                add(
+                                    PiMenuItem("复制最后一条回复") {
+                                        copyLastAssistant(session, context)
+                                    },
+                                )
+                                // The label is read at build time, so it is still the
+                                // toggle it always was.
+                                add(
+                                    PiMenuItem(
+                                        if (toolsExpanded) "收起全部工具输出" else "展开全部工具输出",
+                                    ) { toolsExpanded = !toolsExpanded },
+                                )
+                                // 「循环切换模型」 is **deleted**. pi has the keybinding
+                                // (`app.model.cycleForward` / `cycleBackward`,
+                                // `keybindings.md`) and a keyboard is where a blind
+                                // cycle belongs: you press it again and watch the
+                                // footer. On a phone the same tap has no visible
+                                // result — the model chip and the composer both stay as
+                                // they were until the next turn — so it read as a
+                                // button that did nothing, and it is redundant next to
+                                // the AppBar's model chip and `/model`, both of which
+                                // *show* what they are choosing.
+                                add(
+                                    PiMenuItem("思考等级…") {
+                                        session.refreshThinkingLevels()
+                                        sheet = ChatSheet.Thinking
+                                    },
+                                )
+                                add(
+                                    PiMenuItem("循环切换思考等级") {
+                                        session.cycleThinkingLevel()
+                                    },
+                                )
+                                add(
+                                    PiMenuItem("选择模型…") {
+                                        session.refreshModels()
+                                        sheet = ChatSheet.Model
+                                    },
+                                )
+                                // There is no terminal entry here any more: the user
+                                // retired the terminal outright, so the settings home's
+                                // row is the one door.
+                            },
+                        )
                     }
                 }
             }
@@ -1113,55 +1159,33 @@ private fun ChatBody(
             )
         }
 
-        // F10 (`docs/rendering-review.md`): pi's footer figures — token totals, the
-        // cache-hit rate and the context percentage — put where spec §4.1 asks for
-        // them, the 32dp status row under the bar. Every figure comes from pi's own
-        // `getSessionStats()` (`core/agent-session.ts:3359-3407`), which is what the
-        // footer renders (`components/footer.ts:130-161`); an item with no data is
-        // omitted by the component rather than shown as a placeholder.
+        // The transcript's **status row is gone** (user ruling, decision D23): a
+        // permanent 32 dp band of figures above the stream spends display area the
+        // transcript wants, and the same numbers now live one tap away in the
+        // composer's context ring → 会话信息.
         //
-        // v2 hides the row entirely on the three engine-empty screens
-        // (`ChatShell readings={false}` — `direction-b-v2.html:2814/2823/2833`, i.e.
-        // phone16/17/18): a reading row above "引擎正在启动" reports figures about a
-        // session that has not produced anything yet. The model chip is hidden by the
-        // same three screens (`modelChip={false}`) and for the same reason, so both are
-        // gated on the transcript being empty — which is exactly the condition that
-        // shows the empty state below.
+        // `PiStatusLine` itself is kept (it is no longer called from this screen):
+        // the detail sheet draws the same figures in its own layout and is the reason
+        // the component still exists. Nothing else here reads it.
         val emptyTranscript = state.transcript.isEmpty()
-        if (!emptyTranscript) {
-            PiStatusLine(
-                stats = state.stats,
-                contextWindowFallback = state.meta.model?.contextWindow,
-                autoCompaction = state.meta.autoCompaction,
-            )
-        }
 
         // 扩展状态行（`ExtensionStatusRow`，即「📋 3/5」那一行）按用户裁决删除：
         // 扩展自己给的任意字符串不该在我们的顶栏常驻占一条横带。数据仍在收集
         // （`state.extensionStatuses`），将来放进「会话与队列」那张 sheet 按需查看；
         // 裁决与四个替代方案的比较见 `design/ui-refactor/11-designer-adjudication.md` D-3。
 
-        if (emptyTranscript) {
-            // The two empty states are the two different waits: the engine may exist
-            // and still not be reading its stdin, which is the whole reason a message
-            // sent right after launch used to sit unanswered (`PiSessionViewModel
-            // .engineStarting`). Saying 已就绪 in that window is the lie that made the
-            // app look broken, so the window gets its own words and its own promise
-            // (the message is kept, not dropped).
-            val starting = session.engineStarting(state)
-            PiEmptyState(
-                icon = Icons.Filled.ChatBubble,
-                title = if (starting) "引擎正在启动" else "引擎已就绪",
-                body = if (starting) {
-                    "首次启动要加载 pi 的运行时与扩展，通常要几十秒。\n" +
-                        "现在发消息也可以：引擎开始工作后会立刻处理。"
-                } else {
-                    "pi 会读写你选定的工作区、执行命令、改代码。\n" +
-                        "输入 / 查看全部命令，输入 ! 直接跑 shell 命令。"
-                },
-                modifier = Modifier.weight(1f),
-            )
-        } else {
+        // **An empty session shows nothing.** The two states that used to be drawn
+        // here — 「引擎正在启动」 and 「引擎已就绪」 with their two paragraphs — are
+        // deleted by the user's ruling (「引擎启动什么玩意，那些文字」: a brand-new
+        // conversation is a blank page with the bottom bar and the composer, and the
+        // AppBar's one-word engine state above it says everything the paragraphs did).
+        // v2's `EmptyState` component is not used here any more, but it is not dead:
+        // the session list, the settings search and the session tree still draw it.
+        //
+        // Deliberate deviation from v2's phone59/phone60: those two screens no longer
+        // appear in this state. See `design/ui-refactor/07-construction-decisions.md`
+        // D31.
+        if (!emptyTranscript) {
             // `app.appearance.messageDensity`: the transcript's block rhythm,
             // scaled around v2's own gap. F11 (`docs/rendering-review.md`):
             // blocks used to pad themselves as well, so the real gap was
@@ -1510,6 +1534,13 @@ private fun ChatBody(
             // One picker for everything: `*/*`, and the callback decides which of
             // pi's two channels the file goes down (see the attachment note above).
             onPickAttachment = { attachmentPicker.launch("*/*") },
+            // The reading the transcript's status row used to carry; pi's own percent,
+            // with no fallback invented for it (null draws the ring's `?` state).
+            contextPercent = state.stats?.contextUsage?.percent,
+            onOpenContext = {
+                session.refreshStats()
+                sheet = ChatSheet.Context
+            },
             onDraftChange = { draft = it },
             thinkingLevel = state.meta.thinkingLevel,
             streaming = state.streaming,
@@ -1540,30 +1571,6 @@ private fun ChatBody(
                 draft = ""
                 attachments = emptyList()
                 reArmTail()
-                dismissKeys()
-            },
-            onFollowUp = {
-                // pi's alt+enter: queue this message for after the current turn
-                // (`interactive-mode.ts:4126-4155` → `session.prompt(text,
-                // { streamingBehavior: "followUp" })`, which is `follow_up` on the
-                // wire). Only offered while streaming, because that is the only
-                // time pi's own binding queues rather than submits.
-                //
-                // The attachments go with it: pi's own call hands the editor's
-                // images to `_queueFollowUp` (`agent-session.ts:1225-1226`), and
-                // F21's finding in `docs/gap-disposition.md` §10 found this call
-                // dropping them — the chip looked like it queued the message and
-                // the picture was silently gone.
-                session.sendFollowUp(draft, attachments)
-                draft = ""
-                attachments = emptyList()
-                // Spec §4.5's 发送行为: a send lands on the newest row. Queued text
-                // included — the queue row is chrome next to the composer, but the
-                // turn it belongs to is at the tail.
-                reArmTail()
-                // Queued is still delivered, so this is a "sent" for the same reason a
-                // normal send is: the text left the composer and the user is done
-                // typing it. See [dismissComposerKeys].
                 dismissKeys()
             },
             onSend = {
@@ -1621,12 +1628,39 @@ private fun ChatBody(
             // puts the queued text **and** the current editor text back into the
             // editor, then aborts. Dropping the queued text here is what made Stop
             // silently destroy what the user had typed.
-            // `app.clear` clears the *editor*, and the editor on this screen is the
-            // draft plus the attachments staged for it.
+            // 清空 and 排队 are no longer Composer parameters: the designer's overflow
+            // ladder moved both out of the key row and into this screen's ⋮ menu, so
+            // the composer does not gate or run them any more.
+            // 清空 is the composer's own ⋮ entry (`ComposerMenu`); the editor it
+            // clears is the draft plus the attachments staged for it.
             canClear = draft.isNotBlank() || attachments.isNotEmpty(),
             onClear = {
                 draft = ""
                 attachments = emptyList()
+            },
+            onFollowUp = {
+                // pi's alt+enter: queue this message for after the current turn
+                // (`interactive-mode.ts:4126-4155` → `session.prompt(text,
+                // { streamingBehavior: "followUp" })`, which is `follow_up` on the
+                // wire). Only offered while streaming, because that is the only time
+                // pi's own binding queues rather than submits.
+                //
+                // The attachments go with it: pi's own call hands the editor's images
+                // to `_queueFollowUp` (`agent-session.ts:1225-1226`), and F21's
+                // finding in `docs/gap-disposition.md` §10 found this call dropping
+                // them — the chip looked like it queued the message and the picture
+                // was silently gone.
+                session.sendFollowUp(draft, attachments)
+                draft = ""
+                attachments = emptyList()
+                // Spec §4.5's 发送行为: a send lands on the newest row. Queued text
+                // included — the queue row is chrome next to the composer, but the
+                // turn it belongs to is at the tail.
+                reArmTail()
+                // Queued is still delivered, so this is a "sent" for the same reason a
+                // normal send is: the text left the composer and the user is done
+                // typing it. See [dismissComposerKeys].
+                dismissKeys()
             },
             onStop = {
                 session.stop { restored -> draft = mergeRestoredQueue(restored, draft) }
@@ -1701,6 +1735,8 @@ private fun ChatBody(
         )
 
         ChatSheet.Stats -> SessionStatsSheet(state = state, onDismiss = { sheet = null })
+
+        ChatSheet.Context -> ContextSheet(state = state, onDismiss = { sheet = null })
 
         ChatSheet.Fork -> ForkPickerSheet(
             messages = state.forkMessages,
@@ -1900,6 +1936,20 @@ private fun SearchBar(
     }
 }
 
+/**
+ * The context ring in the composer's key row (design decision D23).
+ *
+ * The ring is 24 dp across with a 2 dp pen (`r = 11`, circumference 69.12 dp), the
+ * touch target is **32** rather than the usual 48, and its slot in the row is **30**
+ * — the same as the send disc opposite it. The 32 is the designer's ruling and it is
+ * load-bearing: a 48 dp box would grow this row by 18 dp, and the row exists to keep
+ * the transcript's display area (the status band it replaces was 32 dp tall).
+ */
+private val CONTEXT_RING_DIAMETER = 24.dp
+private val CONTEXT_RING_STROKE = 2.dp
+private val CONTEXT_RING_TOUCH = 32.dp
+private val CONTEXT_RING_SLOT = 30.dp
+
 /** `direction-b-v2.html:2756`: the search input row's height is v2's `36`. */
 private val SEARCH_BAR_HEIGHT = 36.dp
 
@@ -2059,15 +2109,6 @@ private fun copyLastAssistant(session: PiSessionViewModel, context: Context) {
         val clipboard = context.getSystemService(ClipboardManager::class.java)
         clipboard?.setPrimaryClip(ClipData.newPlainText("pi", text))
     }
-}
-
-/** One row of the AppBar overflow menu. */
-@Composable
-private fun OverflowItem(label: String, onClick: () -> Unit) {
-    DropdownMenuItem(
-        text = { Text(label) },
-        onClick = onClick,
-    )
 }
 
 /**
@@ -2266,7 +2307,11 @@ private fun Composer(
     onOpenMention: () -> Unit,
     /** The paperclip: an image goes on the wire, any other file in as its path. */
     onPickAttachment: () -> Unit,
-    /** pi's `app.clear` (ctrl+c): empty editor. True while there is something to clear. */
+    /** pi's context occupancy, 0–100, or null when pi has not reported one. */
+    contextPercent: Double?,
+    /** The ring's tap: the detail sheet, where the same reading is spelled out. */
+    onOpenContext: () -> Unit,
+    /** pi's `app.clear`: empty editor. True while there is something to clear. */
     canClear: Boolean,
     onClear: () -> Unit,
     /** 插话: pi's steer — the message joins the running turn. */
@@ -2328,21 +2373,26 @@ private fun Composer(
             Spacer(Modifier.height(8.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
                 KeyHint("/", onOpenPalette)
-                KeyHint("!", onOpenBash)
-                // `!!` is **its own** chip and must type its own two characters: pi
-                // reads `text.startsWith("!!")` as "run this without adding it to the
-                // context" (`modes/interactive/interactive-mode.ts:933`, `:3107`), and
-                // the execution side already honours it
-                // (`ui/chat/SlashPalette.kt`'s `excludeFromContext`,
-                // `PiSessionViewModel.kt:2447`). It used to share `!`'s handler, so the
-                // chip inserted one `!` and quietly ran the command *in* context.
-                KeyHint("!!", onOpenBashExcluded)
-                KeyHint("@", onOpenMention)
+                // The three trigger characters that used to be their own chips live
+                // here now (`@`, `!`, `!!`). The row could not hold everything on a
+                // 360 dp phone, and the user's ruling was to shorten the row rather
+                // than to add a fallback order for it.
+                ComposerMenu(
+                    onOpenMention = onOpenMention,
+                    onOpenBash = onOpenBash,
+                    onOpenBashExcluded = onOpenBashExcluded,
+                    canClear = canClear,
+                    onClear = onClear,
+                )
                 // The paperclip: one picker, two channels (see the attachment note in
                 // `ChatBody`). It used to be a `图片` chip wired to an `image/*`
-                // picker, which is why nothing but an image could be attached.
+                // picker, which is why nothing but an image could be attached, and
+                // then a paperclip **with** the word 附件 — the user asked for the
+                // icon alone ("附件本身图标就行，不要有汉字"). Its click label is not the
+                // visible label (there is none), so it is passed separately.
                 KeyChip(
-                    label = "附件",
+                    label = "",
+                    a11yLabel = "添加附件",
                     enabled = true,
                     onClick = onPickAttachment,
                     icon = Icons.Filled.AttachFile,
@@ -2369,11 +2419,31 @@ private fun Composer(
                     KeyChip(label = "插话", enabled = canSteer, onClick = onSteer)
                     KeyChip(label = "排队", enabled = canFollowUp, onClick = onFollowUp)
                 }
-                // pi's `app.clear` (`interactive-mode.ts:919`, ctrl+c): empty the
-                // editor. Conditional for the same reason the delivery pair is — a
-                // chip that can do nothing is a chip that should not be there.
-                if (canClear) {
-                    KeyChip(label = "清空", enabled = true, onClick = onClear)
+                // The transcript's status row used to print this reading in its own
+                // 32 dp band above the stream; it is a ring in the key row now
+                // (decision D23). `06 §2` 输入区 gives the row no such member, so the
+                // geometry is the designer's ruling rather than the board's: a 24 dp
+                // ring with a 2 dp pen, a **32 dp** touch target and a **30 dp** slot
+                // — the slot matches the send disc opposite it so the row's height
+                // does not move, and the touch target is 32 rather than the usual 48
+                // because a 48 dp box would add 18 dp to a row whose whole point is
+                // not to take display area.
+                Box(
+                    modifier = Modifier.size(CONTEXT_RING_SLOT),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    PiContextRing(
+                        percent = contextPercent,
+                        diameter = CONTEXT_RING_DIAMETER,
+                        stroke = CONTEXT_RING_STROKE,
+                        placeholderStyle = PiTheme.text.meta,
+                        modifier = Modifier
+                            .size(CONTEXT_RING_TOUCH)
+                            .clip(RoundedCornerShape(percent = 50))
+                            // A ring has no words, so the label is the only thing a
+                            // screen reader has: it names the reading *and* the tap.
+                            .clickable(onClickLabel = "查看上下文与用量", onClick = onOpenContext),
+                    )
                 }
                 Spacer(Modifier.weight(1f))
                 // The terminal chip that used to sit here is gone: the composer's
@@ -2471,10 +2541,193 @@ private const val TRANSCRIPT_WINDOW_STEP = 50
  * the anchors are deliberately not among them, because they describe a single layout
  * pass and a fresh layout compared against a stale one would read as a user gesture.
  */
+/**
+ * `rememberSaveable`'s saver for the composer's pending attachments.
+ *
+ * A flat list of `base64, mimeType, base64, mimeType, …`: both halves are Strings, so
+ * the pair needs no `Parcelable` and no custom `Bundle` handling. Written out rather
+ * than left to `remember` because an attachment is up to ~6 MB of base64 the user
+ * picked on purpose — losing it to a trip to 工作区 is the same data loss as losing
+ * the draft.
+ */
+private val AttachmentListSaver: Saver<List<PiImage>, Any> = listSaver(
+    save = { images -> images.flatMap { image -> listOf<Any>(image.base64, image.mimeType) } },
+    restore = { flat ->
+        flat.chunked(2).mapNotNull { pair ->
+            val base64 = pair.getOrNull(0) as? String ?: return@mapNotNull null
+            val mime = pair.getOrNull(1) as? String ?: return@mapNotNull null
+            PiImage(base64 = base64, mimeType = mime)
+        }
+    },
+)
+
 private val TailFollowSaver: Saver<TailFollow, Any> = listSaver(
     save = { it.savedState() },
     restore = { saved -> TailFollow.fromSavedState(saved) },
 )
+
+/**
+ * The composer's ⋮ chip: the trigger characters and 清空, which no longer fit in the
+ * key row.
+ *
+ * ## Why the row is shorter
+ *
+ * The row could not hold a chip per trigger character on a 360 dp phone: with `@`,
+ * `!` and `!!` in it the streaming state ran past the edge and pushed the **send disc
+ * off screen**. The user's ruling was to stop budgeting for the overflow and shorten
+ * the row instead: those three, plus 清空, moved in here, and the row now measures
+ * **198 dp idle / 286 dp streaming** against the 312 dp a 360 dp phone gives the
+ * composer's inner box (412 dp phones get 364 dp). Those figures are *computed* from
+ * the design constants — chip = content + 2×7 dp padding + 6 dp gap, `/` a 7.2 dp
+ * mono advance, the paperclip 16, the ⋮ 24, `◐ 中` 37, the ring 30, the send disc
+ * 38 including its 8 dp lead — not measured on a device; there is no device here.
+ *
+ * ## The chip itself
+ *
+ * 24×24, radius 6, `surf-highest` — the same family as `/` and the paperclip — with a
+ * **hand-drawn three-dot glyph** at 16 dp rather than M3's `MoreVert`: that glyph is a
+ * 17–18 dp hairline drawn for the AppBar, and in a 24 dp chip it reads as a different
+ * weight. The touch target is 32×32 (4 dp of bleed on each side, inside the row's
+ * 30 dp), the pressed state is a flat `surf-high` rather than M3's ripple — the ripple
+ * would tint the chip with `accent`, which this app reserves for real actions.
+ *
+ * The menu opens **upwards** ([PiMenuPlacement.Above]): the chip is in a row at the
+ * bottom of the screen, so a downward menu would be under the keyboard.
+ */
+@Composable
+private fun ComposerMenu(
+    onOpenMention: () -> Unit,
+    onOpenBash: () -> Unit,
+    onOpenBashExcluded: () -> Unit,
+    canClear: Boolean,
+    onClear: () -> Unit,
+) {
+    var open by remember { mutableStateOf(false) }
+    val palette = PiTheme.palette
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    // The menu is a `Popup` anchored to this box (the composer's container has a
+    // 14 dp radius and clips, so an overlaid `Box` would be cut off at the corner).
+    //
+    // The box is **24 dp** — the chip's own size, in the same family as `/` and the
+    // paperclip — while the node that takes the tap is 32 dp and simply overflows it
+    // by 4 dp on each side. Setting the *box* to 32 would have made the chip 32 wide
+    // and moved the row; Compose hit-tests the child's own bounds, so the larger
+    // target works without the larger slot.
+    Box(
+        modifier = Modifier
+            .padding(end = 6.dp)
+            .size(24.dp)
+            .clip(RoundedCornerShape(6.dp))
+            .background(
+                if (pressed) {
+                    MaterialTheme.colorScheme.surfaceContainerHigh
+                } else {
+                    MaterialTheme.colorScheme.surfaceContainerHighest
+                },
+            ),
+        contentAlignment = Alignment.Center,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(32.dp)
+                .clickable(
+                    interactionSource = interaction,
+                    // No ripple: M3's would tint the chip with `accent`, and accent is
+                    // this app's colour for real actions.
+                    indication = null,
+                    onClickLabel = "更多输入方式",
+                    onClick = { open = true },
+                ),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = THREE_DOT_GLYPH,
+                contentDescription = null,
+                modifier = Modifier.size(16.dp),
+                tint = MaterialTheme.colorScheme.onSurface,
+            )
+        }
+        PiMenu(
+            expanded = open,
+            onDismiss = { open = false },
+            placement = PiMenuPlacement.Above,
+            items = buildList {
+                add(
+                    PiMenuItem(
+                        symbol = "@",
+                        label = "提及文件",
+                        note = "插入文件路径",
+                        symbolColor = palette.text,
+                        onSelect = onOpenMention,
+                    ),
+                )
+                // `!` and `!!` sit next to each other and differ **only** in the
+                // right-hand note, because that is the only difference in pi: `!!`
+                // runs the command without putting it in the model's context
+                // (`modes/interactive/interactive-mode.ts:933`, `:3107`; the
+                // execution side honours it through `ui/chat/SlashPalette.kt`'s
+                // `excludeFromContext`). The symbol of both is the shell mode colour
+                // pi paints a `!` line with.
+                add(
+                    PiMenuItem(
+                        symbol = "!",
+                        label = "跑命令",
+                        note = "进上下文",
+                        symbolColor = palette.bashMode,
+                        onSelect = onOpenBash,
+                    ),
+                )
+                add(
+                    PiMenuItem(
+                        symbol = "!!",
+                        label = "跑命令",
+                        note = "不进上下文",
+                        symbolColor = palette.bashMode,
+                        onSelect = onOpenBashExcluded,
+                    ),
+                )
+                if (canClear) {
+                    add(
+                        PiMenuItem(
+                            label = "清空",
+                            // pi's `app.clear` (`interactive-mode.ts:919`, ctrl+c).
+                            a11yLabel = "清空草稿",
+                            dividerBefore = true,
+                            onSelect = onClear,
+                        ),
+                    )
+                }
+            },
+        )
+    }
+}
+
+/**
+ * The three dots of [ComposerMenu], drawn here rather than taken from
+ * `Icons.Filled.MoreVert`.
+ *
+ * The viewport is 24 (M3's glyph is drawn for 18 and scaled), the dots are solid
+ * circles of `r = 2` centred at `y = 6 / 12 / 18`, and the path is the six half-arcs
+ * that are those three circles — an `ImageVector` path builder has no `circle()`
+ * helper (`ui/components/PiNavGlyph.kt` documents the same substitution). The fill is
+ * the same unreachable placeholder every vector here uses: `Icon`'s `tint` is what
+ * colours it, because this vector carries no `tintColor` of its own.
+ */
+private val THREE_DOT_GLYPH: ImageVector = ImageVector.Builder(
+    name = "PiComposerMenuDots",
+    defaultWidth = 24.dp,
+    defaultHeight = 24.dp,
+    viewportWidth = 24f,
+    viewportHeight = 24f,
+).addPath(
+    pathData = PathParser().parsePathString(
+        "M10 6a2 2 0 104 0a2 2 0 10-4 0" +
+            "M10 12a2 2 0 104 0a2 2 0 10-4 0" +
+            "M10 18a2 2 0 104 0a2 2 0 10-4 0",
+    ).toNodes(),
+    fill = SolidColor(Color.Black),
+).build()
 
 @Composable
 private fun KeyHint(label: String, onClick: () -> Unit) {
@@ -2483,6 +2736,19 @@ private fun KeyHint(label: String, onClick: () -> Unit) {
 
 /**
  * One chip of the composer's key row; [KeyHint] is the always-enabled member.
+ *
+ * ## Why three of the key row's triggers are not in the key row
+ *
+ * The row can run out of width on a 360 dp phone. It used to carry one chip per
+ * trigger character — `/`, `!`, `!!`, `@`, the paperclip — and the user's ruling was
+ * that the answer is not a priority ladder but a **shorter row**: `@`, `!` and `!!`
+ * move into the ⋮ chip beside them ([ComposerMenu]), where they do exactly what the
+ * chips did. What is left is what a person reaches for while typing (`/`, the
+ * paperclip), the two delivery choices that exist only mid-turn (插话 / 排队), the
+ * thinking level and the context ring.
+ *
+ * No width arithmetic, no fallback order, no budget constants — the row is short
+ * enough that it does not need any.
  *
  * `06 §2` 输入区 names six key chips (`/` `!` `!!` `@` `图片` `编辑器`) at
  * `24×24` 圆角 6, and v2 draws each one as `height:24;min-width:24;padding:0 7px;
@@ -2498,6 +2764,20 @@ private fun KeyHint(label: String, onClick: () -> Unit) {
  * deliver: pi's `alt+enter` 排队 and the 插话 chip both have nothing to hand over
  * while the composer is empty, and a disabled chip is drawn in the muted tokens and
  * takes no tap.
+ *
+ * ## An empty [label] is an icon-only chip, and it still has to be readable
+ *
+ * The paperclip draws **no text** (the user's ruling: 「附件本身图标就行，不要有汉字」),
+ * so an empty label skips the `Text` **and** the 4 dp gap before it — a `Text("")`
+ * would still claim the gap and quietly keep the chip wider than it looks. The
+ * accessibility label is therefore a **separate parameter**: [onClickLabel] comes
+ * from [a11yLabel], which defaults to [label] for the chips that do have words. An
+ * icon-only chip whose click label were empty would announce nothing at all, which is
+ * the one thing an icon-only control cannot afford.
+ *
+ * The icon is 16 dp, not the 14 dp used inside a labelled chip: with the same 7 dp of
+ * horizontal padding it makes the icon-only chip exactly 30 dp wide, the designer's
+ * number (16 + 7 + 7), and it matches the send disc's glyph weight opposite it.
  */
 @Composable
 private fun KeyChip(
@@ -2506,6 +2786,8 @@ private fun KeyChip(
     onClick: () -> Unit,
     /** Drawn before [label]; the paperclip is the one chip whose glyph carries meaning. */
     icon: ImageVector? = null,
+    /** What a screen reader hears; required in practice whenever [label] is empty. */
+    a11yLabel: String = label,
 ) {
     val content = if (enabled) {
         MaterialTheme.colorScheme.onSurface
@@ -2525,7 +2807,13 @@ private fun KeyChip(
                     MaterialTheme.colorScheme.surfaceContainerHigh
                 },
             )
-            .then(if (enabled) Modifier.clickable(onClickLabel = label, onClick = onClick) else Modifier)
+            .then(
+                if (enabled) {
+                    Modifier.clickable(onClickLabel = a11yLabel, onClick = onClick)
+                } else {
+                    Modifier
+                },
+            )
             .padding(horizontal = 7.dp),
         contentAlignment = Alignment.Center,
     ) {
@@ -2534,17 +2822,19 @@ private fun KeyChip(
                 Icon(
                     imageVector = icon,
                     contentDescription = null,
-                    modifier = Modifier.size(14.dp),
+                    modifier = Modifier.size(if (label.isEmpty()) 16.dp else 14.dp),
                     tint = content,
                 )
-                Spacer(Modifier.width(4.dp))
+                if (label.isNotEmpty()) Spacer(Modifier.width(4.dp))
             }
-            Text(
-                text = label,
-                style = PiTheme.text.monoSmall,
-                color = content,
-                maxLines = 1,
-            )
+            if (label.isNotEmpty()) {
+                Text(
+                    text = label,
+                    style = PiTheme.text.monoSmall,
+                    color = content,
+                    maxLines = 1,
+                )
+            }
         }
     }
 }

@@ -35,6 +35,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -531,6 +532,25 @@ fun PiRoot() {
     // screen exists.
     var sessionView by rememberSaveable { mutableStateOf(SessionViewPreference.List.name) }
 
+    // The per-destination state that has to survive a destination switch.
+    //
+    // `when (current)` below *removes* the other destinations from the
+    // composition, so everything they remembered goes with them: the transcript's
+    // `rememberLazyListState` (the scroll offset), the follow machine (`tail`),
+    // the render window, the in-chat search term and cursor. Coming back to 对话
+    // used to land at the top of the stream with the follow paused — the reported
+    // "切回来不会停在最底下".
+    //
+    // `SaveableStateHolder` is exactly the mechanism a navigation library uses for
+    // this: each destination's `rememberSaveable` values are saved under its own
+    // key when its branch leaves the composition and restored when it returns.
+    // Plain `remember` is **not** covered (it is not saveable by definition), so
+    // this preserves what was already `rememberSaveable` — which in `ChatScreen` is
+    // the scroll state, the follow machine, the window, the search term/cursor, the
+    // expansion flag and the paused/armed counters; the composer draft, `sheet` and
+    // `overflow` stay plain `remember` and still reset on a switch.
+    val saveableStateHolder = rememberSaveableStateHolder()
+
     // A settings key a command asked to open (pi's `/scoped-models` — see
     // `NavRequest.SettingsFocus`). It lives here rather than inside the stack
     // because the stack is composed only while 设置 is the current destination,
@@ -610,14 +630,14 @@ fun PiRoot() {
         session.consumeNav()
     }
 
-    // v2 的 Boot 三态（`phone59`–`phone61`）是 `.b-screen` 整屏接管：没有顶栏，**也没有
-    // 底栏**（HTML:3242 的 `Boot` 直接画 `.b-boot`，外面没有 `TabBar`）。所以引擎还没
-    // 就绪、而对话页正被 `BootScreen` 接管时，这一屏不画底栏 —— 画着就多出一条 v2 没有
-    // 的、此刻也没有目的地的栏。
-    //
-    // 只在**对话页**这么做。恢复到的目的地若是设置/工作区，底栏必须留着：这台设备上首次
-    // 启动要解包整个运行时（几分钟），把用户锁在那一屏没有出路。
-    val bootTakeover = current == PiDestination.Chat && uiState.boot !is Boot.Ready
+    // **The bottom bar is always there.** v2's Boot screens (`phone59`–`phone61`) are a
+    // full-screen takeover with no bar (HTML:3242 draws `.b-boot` with no `TabBar`
+    // outside it), and this app used to hide its bar to match while the chat page was
+    // taken over. It does not any more: a first install unpacks the whole runtime and
+    // that takes minutes, and a bar the user cannot use to leave the waiting screen is
+    // worse than a bar v2 did not draw. The only thing the takeover still changes is
+    // *inside* the chat destination (`screens/ChatScreen.kt`), which decides for itself
+    // whether to draw `BootScreen` in place of the transcript.
 
     Scaffold(
         // `imePadding()` is what makes the soft keyboard *displace* the UI instead of
@@ -631,17 +651,22 @@ fun PiRoot() {
         // pad twice, so that one was removed.
         modifier = Modifier.imePadding(),
         bottomBar = {
-            if (!bootTakeover) {
-                PiBottomBar(
-                    current = current,
-                    onSelect = { destinationName = it.name },
-                )
-            }
+            PiBottomBar(
+                current = current,
+                onSelect = { destinationName = it.name },
+            )
         },
     ) { padding ->
         Box(Modifier.fillMaxSize()) {
             when (current) {
-                PiDestination.Chat -> ChatScreen(
+                // One provider per destination, keyed by the enum constant's name:
+                // the keys are distinct by construction (an enum has no duplicate
+                // names) and stable across a switch, which is what the holder
+                // requires. No `removeState` is needed here — the set of keys is the
+                // closed set of three destinations, not a growing stack, so nothing
+                // can be orphaned. (A future sub-page stack would have to call it.)
+                PiDestination.Chat -> saveableStateHolder.SaveableStateProvider(current.name) {
+                    ChatScreen(
                     contentPadding = padding,
                     session = session,
                     // The session name in the app bar is the way into the session
@@ -649,22 +674,26 @@ fun PiRoot() {
                     // because the user is picking a session *for this screen*, and
                     // moving them first would rebuild the transcript underneath the
                     // list they are about to read.
-                    onOpenSessions = {
-                        sessionView = SessionViewPreference.List.name
-                        overlayIndex = PiOverlay.SessionList.ordinal
-                    },
-                )
+                        onOpenSessions = {
+                            sessionView = SessionViewPreference.List.name
+                            overlayIndex = PiOverlay.SessionList.ordinal
+                        },
+                    )
+                }
 
                 // The project's own screen. It reads pi's session directory, the
                 // transcript and the workspace's `.pi`, so it takes the session —
                 // the terminal it replaced took nothing.
-                PiDestination.Workbench -> ProjectScreen(
-                    contentPadding = padding,
-                    session = session,
-                )
+                PiDestination.Workbench -> saveableStateHolder.SaveableStateProvider(current.name) {
+                    ProjectScreen(
+                        contentPadding = padding,
+                        session = session,
+                    )
+                }
 
-                PiDestination.Settings -> PiSettingsStack(
-                    contentPadding = padding,
+                PiDestination.Settings -> saveableStateHolder.SaveableStateProvider(current.name) {
+                    PiSettingsStack(
+                        contentPadding = padding,
                     // The real store: pi's own settings.json files, merged the way
                     // pi merges them. Without it the stack would read and write an
                     // in-memory map and the app would appear to accept changes
@@ -767,8 +796,9 @@ fun PiRoot() {
                     // The terminal is the settings home's one row now, and the
                     // screen it opens belongs to this overlay layer — so the stack
                     // hands the tap back up rather than opening it itself.
-                    onOpenTerminal = { session.requestNav(NavRequest.Terminal) },
-                )
+                        onOpenTerminal = { session.requestNav(NavRequest.Terminal) },
+                    )
+                }
             }
 
             // The overlays draw over whatever destination is active. They are

@@ -34,10 +34,16 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.pi.rpc.PiResponses
 import app.pi.rpc.QueueMode
+import app.pi.rpc.TokenUsage
 import app.pi.ui.PiSessionViewModel
+import app.pi.ui.extension.ExtensionSpans
+import app.pi.ui.extension.ExtensionStatus
+import app.pi.ui.extension.chromeSpans
+import app.pi.ui.components.PiContextRing
 import app.pi.ui.components.PiSectionHeader
 import app.pi.ui.components.PiSwitchRow
 import app.pi.ui.components.PiValueRow
+import app.pi.ui.components.contextProgressColor
 import app.pi.ui.theme.PiShapes
 import app.pi.ui.theme.PiSpacing
 import java.util.Locale
@@ -354,8 +360,11 @@ fun SessionToolsSheet(
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             PiSectionHeader("会话")
             PiValueRow(
-                title = "会话信息与统计",
-                supporting = "消息数、token、费用、上下文占用",
+                // Not 「与统计」 any more: the sheet behind this row is metadata
+                // (name / id / file / message and tool counts); the figures moved to
+                // 上下文与用量, which the composer's ring opens.
+                title = "会话信息",
+                supporting = "会话名、会话 ID、文件、消息与工具计数",
                 value = "查看",
                 onClick = onStats,
             )
@@ -429,6 +438,23 @@ fun SessionToolsSheet(
                     }
                 }
             }
+
+            // D-3's landing for extension status (see [ExtensionStatusLine]).
+            // Last section of this sheet, and **absent entirely** when there is
+            // nothing to show: no empty shell, no `（0）`.
+            if (state.extensionStatuses.isNotEmpty()) {
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                PiSectionHeader("扩展状态（${state.extensionStatuses.size}）")
+                Text(
+                    "扩展通过 setStatus 交给客户端的字符串，按扩展自己的颜色显示。",
+                    modifier = Modifier.padding(horizontal = PiSpacing.pageHorizontal, vertical = 4.dp),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                state.extensionStatuses.forEach { status ->
+                    ExtensionStatusLine(status)
+                }
+            }
             Spacer(Modifier.height(PiSpacing.unit))
         }
     }
@@ -467,12 +493,80 @@ private fun QueueModeRow(
 }
 
 /**
- * Session stats, straight out of `get_session_stats`.
+ * **上下文与用量** — the sheet the composer's context ring opens.
  *
- * `get_state` already gives the session file, so it is shown here too — it is the
- * one fact that lets a user find the JSONL by hand. Field set follows
- * `SessionStats` in `agent-session.ts`; `cost` is USD as pi computes it, and
- * `contextUsage.percent` is pi's own estimate, not a tokenizer count.
+ * A sheet of its own rather than the top of 会话信息, by the user's ruling
+ * (「不要复用会话信息那个，直接重绘一个」): the metadata sheet identifies a session and
+ * this one measures it. Keeping them apart is also what makes each figure appear
+ * exactly once in the app, which is how the two sheets stopped being able to
+ * disagree.
+ *
+ * Two blocks and nothing else:
+ *
+ *  - [ContextBlock] — the ring, pi's own percentage, the window, and the two facts
+ *    pi does not report (the percentage is an estimate; there is no breakdown);
+ *  - [UsageBlock] — **本轮** and **本会话累计** side by side, five rows each, with the
+ *    two hit rates under them and labels long enough to tell apart.
+ *
+ * The states where a figure is missing belong to the blocks: no percentage yet is
+ * [ContextBlock]'s empty ring with a `?`, and no usage at all is [UsageBlock]'s `—`.
+ * Neither ever becomes a row of zeros.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun ContextSheet(
+    state: PiSessionViewModel.UiState,
+    onDismiss: () -> Unit,
+) {
+    val stats = state.stats
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(
+            Modifier.fillMaxWidth().heightIn(max = 560.dp).verticalScroll(rememberScrollState()).padding(
+                horizontal = PiSpacing.pageHorizontal,
+            ),
+        ) {
+            Text(
+                "上下文与用量",
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+            Spacer(Modifier.height(PiSpacing.unit))
+            if (stats == null) {
+                Text(
+                    "正在读取…",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            } else {
+                ContextBlock(stats = stats, autoCompaction = state.meta.autoCompaction)
+                Spacer(Modifier.height(PiSpacing.unit))
+                UsageBlock(
+                    turn = state.turnUsage,
+                    session = stats.tokens?.let { totals ->
+                        TokenUsage(
+                            input = totals.input,
+                            output = totals.output,
+                            cacheRead = totals.cacheRead,
+                            cacheWrite = totals.cacheWrite,
+                            totalTokens = totals.total,
+                            cost = stats.cost,
+                        )
+                    },
+                    lastMessage = state.lastUsage,
+                )
+            }
+            Spacer(Modifier.height(PiSpacing.unit))
+        }
+    }
+}
+
+/**
+ * Session metadata, straight out of `get_session_stats` and `get_state`.
+ *
+ * `get_state` already gives the session file, so it is shown here too — it is the one
+ * fact that lets a user find the JSONL by hand. Field set follows `SessionStats` in
+ * `agent-session.ts`, minus everything that measures the session: the counts, the
+ * token totals, the context percentage and the cost are in [ContextSheet].
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -500,45 +594,306 @@ fun SessionStatsSheet(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             } else {
+                // **Metadata only.** This sheet used to be the app's number dump —
+                // token totals, the context percentage and the session cost — and the
+                // user's ruling was blunt: 「把会话信息里那些上下文的那些信息删干净，
+                // 那个地方太丑了」. Every figure now lives in exactly one place, the
+                // 上下文与用量 sheet the composer's ring opens ([ContextSheet]); what
+                // is left here identifies the session rather than measuring it.
                 StatLine("会话名称", state.meta.sessionName ?: "未命名")
                 StatLine("会话 ID", stats.sessionId ?: state.meta.sessionId ?: "—")
                 StatLine("会话文件", stats.sessionFile ?: state.meta.sessionFile ?: "（尚未落盘）")
                 StatLine("消息", "${stats.userMessages} 用户 · ${stats.assistantMessages} 模型 · ${stats.totalMessages} 总计")
                 StatLine("工具调用", "${stats.toolCalls} 次调用 · ${stats.toolResults} 条结果")
-                stats.tokens?.let { tokens ->
-                    StatLine(
-                        "Token",
-                        "输入 ${tokens.input} · 输出 ${tokens.output} · " +
-                            "缓存读 ${tokens.cacheRead} · 缓存写 ${tokens.cacheWrite} · 合计 ${tokens.total}",
-                    )
-                }
-                stats.contextUsage?.let { usage ->
-                    // `percent` is already 0–100: pi computes
-                    // `(estimate.tokens / contextWindow) * 100`
-                    // (`core/agent-session.ts:3448`) and `Responses.kt` stores it as
-                    // it arrived. Multiplying by 100 here printed 12 % as **1200 %**.
-                    // One decimal, the same rounding the status row uses
-                    // (`ui/components/PiCommon.kt`), so the two readings of one figure
-                    // cannot disagree again.
-                    val percent = usage.percent?.let { String.format(Locale.US, "%.1f", it) + "%" } ?: "—"
-                    StatLine(
-                        "上下文占用",
-                        "$percent（${usage.tokens ?: 0} / ${usage.contextWindow ?: 0}）",
-                    )
-                }
-                stats.cost?.let { StatLine("累计费用", "$${trimCost(it)}") }
-                if (stats.contextUsage == null && stats.tokens == null) {
-                    Text(
-                        "这次会话还没有统计信息。",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
             }
             Spacer(Modifier.height(PiSpacing.unit))
         }
     }
 }
+
+/**
+ * One extension `setStatus` entry: its key, then its text **in the extension's own
+ * colours**.
+ *
+ * ## Why this lives in a sheet instead of above the transcript
+ *
+ * Adjudication **D-3** (`design/ui-refactor/11-designer-adjudication.md`): extension
+ * status is not a permanent band. An extension hands the client an arbitrary string —
+ * often a counter or a progress fragment — and a line of them under the AppBar is
+ * chrome the user did not ask for and cannot act on. So the *component* that drew
+ * that row (`ExtensionStatusRow`) was deleted, while the **data** was deliberately
+ * kept (`UiState.extensionStatuses`, fed by `PiSessionViewModel.setExtensionStatus`).
+ * This is the "on demand" half of that ruling: open 会话与队列 and the statuses are
+ * here. Nothing renders them anywhere else, and nothing should — a second permanent
+ * copy is exactly what D-3 removed.
+ *
+ * ## The colours are the extension's, through the one existing channel
+ *
+ * [ExtensionSpans] + [chromeSpans] are the same pair the extension widgets use
+ * (`ui/extension/ExtensionChrome.kt`): pi sends SGR bytes inside an ordinary string,
+ * `chromeSpans` parses them and the renderer matches each foreground back onto a pi
+ * palette token. Nothing here re-implements any of that — an extension that colours
+ * its status gets the colour it asked for, and one that does not gets the default.
+ *
+ * The text **wraps and is not capped**: a status an extension wrote in full is worth
+ * reading in full when the user has explicitly opened a sheet to read it.
+ */
+@Composable
+private fun ExtensionStatusLine(status: ExtensionStatus) {
+    val palette = PiTheme.palette
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = PiSpacing.pageHorizontal, vertical = 6.dp),
+        verticalAlignment = Alignment.Top,
+    ) {
+        Text(
+            text = status.key,
+            modifier = Modifier.padding(end = PiSpacing.inner),
+            style = PiTheme.text.monoSmall,
+            color = palette.muted,
+            maxLines = 1,
+        )
+        ExtensionSpans(
+            spans = remember(status.text) { chromeSpans(status.text) },
+            defaultColor = MaterialTheme.colorScheme.onSurface,
+            style = PiTheme.text.monoSmall,
+            modifier = Modifier.weight(1f),
+            maxLines = Int.MAX_VALUE,
+            overflow = TextOverflow.Clip,
+        )
+    }
+}
+
+/**
+ * The sheet's 上下文 block: the ring, the percentage, the window, and the two things
+ * pi does *not* say.
+ *
+ * The percentage is pi's own `getContextUsage().percent`
+ * (`core/agent-session.ts:3446-3450`), one decimal — the same figure the composer's
+ * ring draws, in words. The two notes under it exist because the number invites two
+ * questions the data cannot answer:
+ *
+ *  - it is an **estimate**: the last real usage plus `ceil(chars / 4)` per message
+ *    since (`core/compaction.ts:270-274`);
+ *  - pi has **no breakdown** — system prompt, tool definitions and messages are not
+ *    itemised anywhere in its protocol, only the total.
+ *
+ * `percent == null` is pi's own state after a compaction and before the next reply
+ * (`footer.ts:110` prints `?` for exactly this window): the ring draws its empty
+ * track with a `?`, the used count is `—`, and the window is still shown, because the
+ * window did not change.
+ */
+@Composable
+private fun ContextBlock(stats: PiResponses.SessionStats, autoCompaction: Boolean) {
+    val palette = PiTheme.palette
+    val usage = stats.contextUsage
+    val percent = usage?.percent
+    BlockLabel("上下文")
+    Spacer(Modifier.height(6.dp))
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        PiContextRing(
+            percent = percent,
+            diameter = SHEET_RING_DIAMETER,
+            stroke = SHEET_RING_STROKE,
+            placeholderStyle = MaterialTheme.typography.titleMedium,
+        )
+        Spacer(Modifier.width(PiSpacing.pageHorizontal))
+        Column(Modifier.weight(1f)) {
+            Text(
+                text = percent?.let { String.format(Locale.US, "%.1f", it) + "%" } ?: "—",
+                style = MaterialTheme.typography.titleMedium,
+                color = percent?.let { contextProgressColor(it, palette) }
+                    ?: MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Text(
+                text = "已用 " + (usage?.tokens?.let { exactCount(it) } ?: "—") +
+                    " / 窗口 " + (usage?.contextWindow?.let { exactCount(it) } ?: "—") +
+                    " · " + if (autoCompaction) "自动压缩开" else "自动压缩关",
+                style = PiTheme.text.meta,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+    Spacer(Modifier.height(6.dp))
+    if (percent == null) {
+        NoteText("压缩后 pi 还没有报占用。")
+    }
+    NoteText("百分比是 pi 的估算：最后一次真实用量 + 之后每条消息按字符数 ÷ 4（compaction.ts:270-274）。")
+    NoteText("pi 不提供分类明细（系统提示词 / 工具定义 / 对话消息这类拆项），只有总数。")
+}
+
+/**
+ * The sheet's 用量 block: **two columns, side by side** — 本轮 and 本会话累计.
+ *
+ * The two are separate columns on purpose, and the parent's ruling is why: the user
+ * once read a session total as the turn's, and a single column with two values would
+ * reproduce exactly that misreading. Five rows in both, in pi's own field order
+ * (`components/footer.ts:106-146`).
+ *
+ * **Counts are exact integers with thousands separators** — `96,400`, never `96k`.
+ * The transcript's compact forms (`96k`) belong to a one-line reading; a detail sheet
+ * exists to be quoted, and `96k` cannot say whether it was 96,400 or 96,900.
+ *
+ * **命中率 is one row, outside both columns, and it is `lastMessage`'s.** pi defines
+ * it on a single message — `cacheRead ÷ (input + cacheRead + cacheWrite)`
+ * (`footer.ts:95-98`) — and there is no turn-level equivalent: applying the same
+ * formula to a sum would produce a *second* percentage that looks like the first and
+ * means something else, which is precisely the confusion this sheet was reported for.
+ * So the row says which message it is about, and a turn with no such figure simply
+ * does not get one.
+ */
+@Composable
+private fun UsageBlock(turn: TokenUsage?, session: TokenUsage?, lastMessage: TokenUsage?) {
+    BlockLabel("用量")
+    Spacer(Modifier.height(6.dp))
+    Row(Modifier.fillMaxWidth()) {
+        UsageColumn("本轮", turn, Modifier.weight(1f))
+        Spacer(Modifier.width(PiSpacing.pageHorizontal))
+        UsageColumn("本会话累计", session, Modifier.weight(1f))
+    }
+    // Two hit rates, and the labels are long on purpose: the user has already read
+    // one of these as the other. They are different kinds of number —
+    //
+    //   命中率（最后一条回复）  is **pi's own field** for one message
+    //                            (`components/footer.ts:95-98`), and it is what pi's
+    //                            footer prints;
+    //   命中率（本会话累计）    is **derived here** from the four cumulative counters
+    //                            `get_session_stats` reports — the same counters pi
+    //                            sums itself, so the arithmetic is pi's, but the ratio
+    //                            is this app's and pi has no field for it.
+    //
+    // There is deliberately **no 本轮 hit rate**: a third percentage of the same shape
+    // would put three near-synonyms on one screen, which the designer ruled out (and a
+    // ratio of sums is not the sum of ratios in any case).
+    HitRateRow("命中率（最后一条回复）", hitRateOf(lastMessage))
+    HitRateRow("命中率（本会话累计）", cumulativeHitRateOf(session))
+}
+
+/** One hit-rate line; a rate with no figure draws nothing at all. */
+@Composable
+private fun HitRateRow(label: String, rate: String?) {
+    if (rate == null) return
+    Spacer(Modifier.height(6.dp))
+    Row(Modifier.fillMaxWidth()) {
+        Text(
+            text = label,
+            modifier = Modifier.weight(1f),
+            style = PiTheme.text.meta,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Text(
+            text = rate,
+            style = PiTheme.text.meta,
+            color = MaterialTheme.colorScheme.onSurface,
+            maxLines = 1,
+        )
+    }
+}
+
+/**
+ * The same ratio over the **whole session**: `ΣcacheRead ÷ (Σinput + ΣcacheRead +
+ * ΣcacheWrite)`.
+ *
+ * A derived figure; the KDoc on its caller says so where a reader meets it, and its
+ * inputs are `get_session_stats`' own cumulative counters, so nothing is estimated.
+ * Null when the session has no usage yet, or when all three counters are zero.
+ */
+private fun cumulativeHitRateOf(usage: TokenUsage?): String? {
+    if (usage == null) return null
+    val read = usage.cacheRead ?: 0L
+    val denominator = (usage.input ?: 0L) + read + (usage.cacheWrite ?: 0L)
+    if (denominator <= 0L) return null
+    return String.format(Locale.US, "%.1f", read * 100.0 / denominator) + "%"
+}
+
+@Composable
+private fun UsageColumn(title: String, usage: TokenUsage?, modifier: Modifier = Modifier) {
+    Column(modifier) {
+        Text(
+            text = title,
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.primary,
+        )
+        Spacer(Modifier.height(2.dp))
+        if (usage == null) {
+            // "No figures", not "zero": a turn in which pi reported no usage has no
+            // row of zeros to show (`TranscriptReducer.turnUsage`).
+            Text(
+                text = "—",
+                style = PiTheme.text.meta,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            return@Column
+        }
+        UsageRow("输入", usage.input?.let { exactCount(it) })
+        UsageRow("输出", usage.output?.let { exactCount(it) })
+        UsageRow("缓存读", usage.cacheRead?.let { exactCount(it) })
+        UsageRow("缓存写", usage.cacheWrite?.let { exactCount(it) })
+        UsageRow("费用", usage.cost?.let { "$" + String.format(Locale.US, "%.3f", it) })
+    }
+}
+
+@Composable
+private fun UsageRow(label: String, value: String?) {
+    Row(Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
+        Text(
+            text = label,
+            modifier = Modifier.weight(1f),
+            style = PiTheme.text.meta,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Text(
+            text = value ?: "—",
+            style = PiTheme.text.meta,
+            color = MaterialTheme.colorScheme.onSurface,
+            maxLines = 1,
+        )
+    }
+}
+
+/** A block's own title inside the sheet: the same weight the row labels carry. */
+@Composable
+private fun BlockLabel(text: String) {
+    Text(
+        text = text,
+        style = MaterialTheme.typography.labelMedium,
+        color = MaterialTheme.colorScheme.primary,
+    )
+}
+
+/** The two honest sentences and the no-reading state share this style. */
+@Composable
+private fun NoteText(text: String) {
+    Text(
+        text = text,
+        modifier = Modifier.padding(top = 2.dp),
+        style = PiTheme.text.meta,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+}
+
+/** `96,400` — an exact count, for a sheet someone quotes. */
+private fun exactCount(value: Long): String = String.format(Locale.US, "%,d", value)
+
+/**
+ * pi's cache-hit rate for one message, or null when it has no figure.
+ *
+ * `cacheRead ÷ (input + cacheRead + cacheWrite)` (`components/footer.ts:95-98`). A
+ * message that reported no usage at all, or one whose three fields are all zero,
+ * answers null rather than `0.0 %`.
+ */
+private fun hitRateOf(usage: TokenUsage?): String? {
+    if (usage == null) return null
+    val read = usage.cacheRead ?: 0L
+    val denominator = (usage.input ?: 0L) + read + (usage.cacheWrite ?: 0L)
+    if (denominator <= 0L) return null
+    return String.format(Locale.US, "%.1f", read * 100.0 / denominator) + "%"
+}
+
+/** The sheet's ring: the board gives the detail page no measurement, so 52/3 it is. */
+private val SHEET_RING_DIAMETER = 52.dp
+private val SHEET_RING_STROKE = 3.dp
 
 @Composable
 private fun StatLine(label: String, value: String) {

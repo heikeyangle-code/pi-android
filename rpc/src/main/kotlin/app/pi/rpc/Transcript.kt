@@ -218,6 +218,20 @@ data class Notice(
     override val ts: Long,
     val text: String,
     val tone: Tone = Tone.Info,
+    /**
+     * A key/value breakdown of the same entry, when it has one — today only pi's
+     * `custom` entries (an extension's `ctx.ui.appendEntry(customType, data)`).
+     *
+     * **[text] is not replaced by this and must keep its whole original string**:
+     * the transcript's search index reads it (`screens/ChatScreen.kt`'s
+     * `searchTextOf`), and so does the session export. The rows are a *reading* of
+     * the same data, drawn under the line rather than instead of it.
+     *
+     * Empty for every other producer, which is why it is a defaulted parameter: the
+     * two exhaustive `when`s over [TranscriptItem] (`ui/blocks/BlockRenderer.kt` and
+     * `screens/ChatScreen.kt`) do not have to move for it.
+     */
+    val rows: List<Pair<String, String>> = emptyList(),
 ) : TranscriptItem {
     enum class Tone { Info, Warning, Error }
 }
@@ -614,6 +628,72 @@ private fun compactEntryData(data: JsonElement?, max: Int = CUSTOM_ENTRY_DATA_MA
 }
 
 /**
+ * [total] plus one more message's usage, field by field.
+ *
+ * A field that neither side reported stays `null` rather than becoming `0` — see
+ * [TranscriptReducer.turnUsage] for why that distinction is load-bearing. `cost` is
+ * summed too: pi computes each message's cost from its own price table, so the turn's
+ * cost is the sum of the messages' costs and not a re-derivation.
+ */
+private fun addUsage(total: TokenUsage?, next: TokenUsage): TokenUsage = TokenUsage(
+    input = sumReported(total?.input, next.input),
+    output = sumReported(total?.output, next.output),
+    cacheRead = sumReported(total?.cacheRead, next.cacheRead),
+    cacheWrite = sumReported(total?.cacheWrite, next.cacheWrite),
+    reasoning = sumReported(total?.reasoning, next.reasoning),
+    totalTokens = sumReported(total?.totalTokens, next.totalTokens),
+    cost = sumReported(total?.cost, next.cost),
+)
+
+private fun sumReported(total: Long?, next: Long?): Long? = when {
+    total == null -> next
+    next == null -> total
+    else -> total + next
+}
+
+private fun sumReported(total: Double?, next: Double?): Double? = when {
+    total == null -> next
+    next == null -> total
+    else -> total + next
+}
+
+/**
+ * How many key/value rows of a `custom` entry's `data` are shown.
+ *
+ * A display budget, not a pi rule: the card is a reading of an extension's payload,
+ * and an extension may put anything in there. Twelve rows is roughly the point at
+ * which one entry stops being scannable on a phone. Keys past the cap are simply not
+ * drawn; nothing is annotated onto the card for them, and the single line above the
+ * rows still carries the compacted whole ([compactEntryData] of the object), so an
+ * entry that was cut short is never silent about it.
+ */
+private const val CUSTOM_ENTRY_ROWS_MAX = 12
+
+/**
+ * The **first level** of a `custom` entry's `data` as key/value rows.
+ *
+ * pi types `data` as `unknown` (`core/session-manager.ts:104-108`), so an extension
+ * can write a string, a number, an array or an arbitrary nested object. Only a
+ * JSON object has a key/value shape to draw; anything else answers an empty list and
+ * the caller keeps its single-line form. Values go through [compactEntryData], which
+ * is what keeps a payload from taking over the screen: newlines are flattened and
+ * every value is capped at [CUSTOM_ENTRY_DATA_MAX] characters.
+ *
+ * **Nothing here interprets the data.** A key is printed as the extension spelled it
+ * and a value as JSON's own text — no labels, no units, no guesses about what a field
+ * means. That is the deliberate ceiling for this feature: the *pixels* an extension's
+ * own renderer would have drawn cannot cross an RPC channel that has no such message
+ * (`RpcExtensionUIRequest`, `rpc-types.ts:246-281`), but the data can, and showing it
+ * unread is honest where inventing a rendering would not be.
+ */
+private fun entryDataRows(data: JsonElement?): List<Pair<String, String>> {
+    val obj = data as? JsonObject ?: return emptyList()
+    return obj.entries.take(CUSTOM_ENTRY_ROWS_MAX).map { (key, value) ->
+        key to compactEntryData(value)
+    }
+}
+
+/**
  * Whether pi truncated this tool's output, from the tool-result `details`.
  *
  * pi's tools report truncation as `details.truncation`, a `TruncationResult`
@@ -829,6 +909,49 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
         private set
 
     /**
+     * **This turn's** usage: every assistant reply since the turn started, summed.
+     *
+     * ## The definition, which is not "the last message"
+     *
+     * A turn is not one model reply. pi calls the model again after every tool
+     * result, so a turn that reads three files and edits one contains five or six
+     * assistant messages — and each of them reports its own usage. Reporting only the
+     * newest one undercounts a turn by an order of magnitude, which is why this is a
+     * sum and not a copy of [lastUsage].
+     *
+     * A turn starts at `agent_start` and ends at `agent_end` / `agent_settled`. The
+     * accumulator is zeroed on `agent_start` and **not** on `message_end`
+     * ([finishStreaming] explains why those two are different events), so it survives
+     * the whole turn and stays readable after it, which is what a detail sheet needs.
+     *
+     * ## Each message contributes its **final** usage, exactly once
+     *
+     * `message_update.usage` is cumulative *within* one message — the app's own
+     * reader says so where it stores it — so adding those would count one reply
+     * several times. Only `message_end.usage`, the settled figure for that message,
+     * is added. This is the one way to get this wrong, and it is one order of
+     * magnitude wrong, not a rounding error.
+     *
+     * ## What is deliberately not in here
+     *
+     * The **summarization** calls — compaction and branch summaries — are not part of
+     * a turn's work: they are what pi spends to make room, and pi bills them
+     * separately (`CompactionMarker.usage`, the `tokens billed` line). They are in the
+     * session totals and not here, on purpose.
+     *
+     * ## Null, and missing fields
+     *
+     * A turn in which no assistant message reported usage leaves this `null` — "no
+     * figures", not "zero", because the reader must be able to hide the group rather
+     * than print `0`. Within a sum, a field that **no** contributing message reported
+     * stays `null` for the same reason (a provider that does not report cache writes
+     * must not be shown as having written zero of them); a field some message
+     * reported is the sum of the reported values.
+     */
+    var turnUsage: TokenUsage? = null
+        private set
+
+    /**
      * Row index of the streaming block for each `contentIndex` within the
      * current assistant message.
      *
@@ -982,7 +1105,13 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
         is PiEvent.MessageEnd -> {
             // The message is over; the **turn** is not (see [finishStreaming]).
             val finished = finishStreaming(endsTurn = false)
-            event.usage?.let { lastUsage = it }
+            event.usage?.let { usage ->
+                lastUsage = usage
+                // The turn's own accounting takes only the assistant's **settled**
+                // figure for this message — never `message_update`, which is
+                // cumulative within a message (see [turnUsage]).
+                if (event.role == "assistant") turnUsage = addUsage(turnUsage, usage)
+            }
             // A truncated or aborted answer used to look exactly like a finished
             // one, and an aborted turn left its tool card spinning "运行中"
             // forever. pi reports both here
@@ -1012,6 +1141,9 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
         }
         PiEvent.AgentStart -> {
             streaming = true
+            // A new turn: its usage starts from nothing. Zeroed here rather than at
+            // `message_end` for the same reason `streaming` is (see [turnUsage]).
+            turnUsage = null
             TranscriptChange.None
         }
         is PiEvent.AgentEnd -> endTurn()
@@ -1846,11 +1978,35 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
             maybeDaySeparator(entry.timestamp(now()), force = true)
             onEntry(entry)
         }
+        // A rebuilt transcript has no live `agent_start` to zero the accumulator, so
+        // this turn's usage is recomputed from pi's own records: every assistant
+        // message **after the last user entry**. Same definition as the live path,
+        // same "final usage per message" rule — the entries carry the usage pi
+        // settled on (`SessionEntries`' assistant rows parse the same field).
+        turnUsage = turnUsageOf(entries)
         // A separator with nothing after it is noise (e.g. an empty session).
         while (items.isNotEmpty() && items.last() is DateSeparator) {
             items.removeAt(items.lastIndex)
         }
         return if (items.isEmpty()) TranscriptChange.None else TranscriptChange.Appended(items.lastIndex)
+    }
+
+    /** [turnUsage] over a session log: assistant messages after the last user entry. */
+    private fun turnUsageOf(entries: List<JsonObject>): TokenUsage? {
+        val lastUser = entries.indexOfLast { entry ->
+            entry.str("type") == "message" &&
+                entry.obj("message")?.str("role")?.lowercase() == "user"
+        }
+        var total: TokenUsage? = null
+        for (index in (lastUser + 1) until entries.size) {
+            val entry = entries[index]
+            if (entry.str("type") != "message") continue
+            val message = entry.obj("message") ?: continue
+            if (message.str("role")?.lowercase() != "assistant") continue
+            val usage = message.obj("usage")?.let(PiEvents::parseUsage) ?: continue
+            total = addUsage(total, usage)
+        }
+        return total
     }
 
     private fun onHistoryMessage(
@@ -2153,6 +2309,10 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
                 ts = ts,
                 text = text,
                 tone = Notice.Tone.Info,
+                // The structured half of the same payload. `text` above keeps the
+                // compacted line it always had — the search index and the export read
+                // it — and the rows are drawn *under* it by `NoticeBlock`.
+                rows = entryDataRows(entry["data"]),
             ),
         )
     }
@@ -2333,6 +2493,7 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
         lastToolPublishAt.clear()
         suppressedToolUpdate = null
         lastUsage = null
+        turnUsage = null
         currentDay = null
         streaming = false
         // A rebuild from `get_entries` renders every user row from the persisted

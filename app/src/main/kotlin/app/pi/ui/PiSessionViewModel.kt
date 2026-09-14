@@ -437,10 +437,25 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
          * pi's latest provider-reported usage, straight off the reducer
          * (`TranscriptReducer.lastUsage`, fed by `message_update.usage` and
          * `message_end.message.usage`). F10: every one of those payloads was
-         * parsed and then dropped, and pi's footer needs the latest one for its
-         * cache-hit item (`components/footer.ts:94-100`).
+         * parsed and then dropped.
+         *
+         * **It is the last message's figure, not the turn's** — pi's cache-hit rate
+         * is defined on one message (`components/footer.ts:94-100`:
+         * `cacheRead ÷ (input + cacheRead + cacheWrite)`), so a reader that wants
+         * 命中率 wants this field, and a reader that wants "what did this turn cost"
+         * wants [turnUsage] instead.
          */
         val lastUsage: app.pi.rpc.TokenUsage? = null,
+        /**
+         * **This turn's** usage: every assistant reply since the turn started, summed
+         * (`TranscriptReducer.turnUsage` — read its KDoc for the definition, for why
+         * only settled `message_end` figures are added, and for what it deliberately
+         * leaves out).
+         *
+         * `null` when the turn reported no usage at all, or before any turn has run;
+         * a reader hides its group rather than printing zeros.
+         */
+        val turnUsage: app.pi.rpc.TokenUsage? = null,
         /**
          * App-local UI preferences read from pi's settings documents. Seeded at
          * boot and refreshed whenever the settings stack writes a key that the
@@ -1386,15 +1401,17 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             streaming = pub.streaming,
             // The latest assistant usage, published so the UI can read it.
             //
-            // It has **no reader right now**: the status row's `latestUsage`
-            // parameter — which this comment used to name — was deleted when the row
-            // was re-laid out to v2's own readings. The three fields it carries
-            // (`input` / `cacheRead` / `cacheWrite`) are pi's inputs to the cache-hit
-            // rate (`components/footer.ts:95-98`: `cacheRead ÷ (input + cacheRead +
-            // cacheWrite)`), so the value is kept rather than dropped while the user
-            // picks the status row's final layout (decision D23). The reducer is still
-            // its writer (`TranscriptReducer.lastUsage`).
+            // It has **no reader in the transcript any more**: the status row's
+            // `latestUsage` parameter — which this comment used to name — was deleted
+            // when the row was re-laid out to v2's own readings, and the row itself is
+            // now folded into the composer's context ring and the 会话信息 sheet. Its
+            // three fields (`input` / `cacheRead` / `cacheWrite`) are pi's inputs to
+            // the cache-hit rate (`components/footer.ts:95-98`: `cacheRead ÷ (input +
+            // cacheRead + cacheWrite)`), which is what the sheet's 命中率 row reads.
+            // The reducer is still its writer (`TranscriptReducer.lastUsage`).
             lastUsage = engine.transcript.lastUsage,
+            // The turn's own accounting, on the same publication (see `turnUsage`).
+            turnUsage = engine.transcript.turnUsage,
         )
         appliedRevision = pub.revision
         // `streaming` moved, which is one of the two inputs to "does the CPU have to
