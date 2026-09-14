@@ -32,7 +32,6 @@ import {
 import type { ImageContent, TextContent } from "@earendil-works/pi-ai";
 import { Type, type Static, type TSchema, type TUnsafe } from "typebox";
 import { BridgeError, bridgeGet, bridgeHealth, bridgePost, type HealthPayload } from "./client";
-import { dangerLevelOf } from "./danger";
 
 /**
  * `StringEnum`, transcribed from pi-ai (`packages/ai/src/utils/typebox-helpers.ts:14-26`)
@@ -266,9 +265,9 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 		name: "android_bridge_status",
 		label: "设备桥状态",
 		description:
-			"报告 pi-android 设备桥的运行状态：五组设备能力（基础/存储/无障碍/位置·传感器·相机/Shell）各自的开关与可用性、" +
-			"无障碍服务状态、缺失的系统权限与截图支持情况。任何 android_* 工具返回 [DISABLED] 或 [NO_PERMISSION] 时，" +
-			"先用本工具查清原因再回复用户。",
+			"报告设备桥状态：五组能力（基础/存储/无障碍/位置·传感器·相机/Shell）各自的开关与可用性、" +
+			"无障碍服务状态、缺失的系统权限与截图支持度。任何 android_* 工具返回 [DISABLED] / [NO_PERMISSION] 时，" +
+			"先用它查清原因再回复用户。",
 		promptSnippet: "检查 pi-android 设备桥与各设备能力的授权状态",
 		promptGuidelines: [
 			"当某个 android_* 工具返回失败时，用 android_bridge_status 查明是哪一组能力被关闭或缺少系统权限，再把原因原样转述给用户。",
@@ -364,8 +363,8 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 		name: "android_ui_dump",
 		label: "读取屏幕",
 		description:
-			"读取当前屏幕的控件树，返回带编号的可读文本（每个控件给出 class、文本、资源 id、bounds 与 clickable/editable 等标记）。" +
-			"这些编号用于 android_tap / android_input。需要「无障碍」能力与系统无障碍服务。",
+			"读取当前屏幕的控件树，返回带编号的可读文本（class、文本、resource id、bounds、clickable/editable 标记）；" +
+			"编号供 android_tap / android_input 使用。需要「无障碍」能力与系统无障碍服务。",
 		promptSnippet: "读取当前 Android 屏幕的控件树（带编号，供点按与输入使用）",
 		promptGuidelines: [
 			"在操作手机界面前先用 android_ui_dump 看清屏幕，再用它给出的编号调用 android_tap / android_input；不要凭记忆连点。",
@@ -433,9 +432,9 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 		name: "android_input",
 		label: "输入文本",
 		description:
-			"向当前界面的输入框写入文本。默认写入获得焦点的输入框，也可以指定 android_ui_dump 里的 index。" +
-			"先尝试直接写入（ACTION_SET_TEXT）；被拒绝时自动改用「剪贴板 + 粘贴」，代价是会替换系统剪贴板里的内容（返回里会说明）。" +
-			"submit=true 时会尝试触发回车提交（Android 11+）。需要「无障碍」能力，且属于危险操作，首次会请求确认。" +
+			"向当前界面的输入框写入文本；默认写获得焦点的输入框，也可指定 android_ui_dump 里的 index。" +
+			"先试直接写入（ACTION_SET_TEXT），被拒绝时自动改用「剪贴板 + 粘贴」（会替换剪贴板内容，返回里会说明）。" +
+			"submit=true 会尝试回车提交（Android 11+）。需要「无障碍」能力。" +
 			"要输入 enter/delete/方向键，用 android_keyevent（需要 Shizuku）。",
 		promptSnippet: "向屏幕上获得焦点的输入框写入文本",
 		parameters: Type.Object({
@@ -468,9 +467,9 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 		name: "android_key",
 		label: "系统按键",
 		description:
-			"执行系统全局动作：back（返回）、home（主页）、recents（最近任务）、notifications（通知栏）、quicksettings（快捷设置）、" +
-			"powermenu（电源菜单）、lock（锁屏，Android 9+）、screenshot（系统截图，Android 11+）、split（分屏，Android 12+）。" +
-			"需要「无障碍」能力。这些动作不需要额外权限；enter/delete/方向键等原始按键用 android_keyevent。",
+			"执行系统全局动作：back、home、recents、notifications、quicksettings、powermenu、" +
+			"lock（锁屏，Android 9+）、screenshot（系统截图，Android 11+）、split（分屏，Android 12+）。" +
+			"需要「无障碍」能力，不需要额外权限；enter/delete/方向键等原始按键用 android_keyevent。",
 		promptSnippet: "执行 Android 系统全局动作（back/home/recents/notifications/quicksettings/lock/screenshot…）",
 		parameters: Type.Object({
 			key: ScreenKey,
@@ -486,9 +485,9 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 		name: "android_keyevent",
 		label: "注入原始按键",
 		description:
-			"向当前焦点注入原始按键（enter、del、tab、escape、dpad_up/down/left/right、move_end、page_down、数字键 F1 等）。" +
-			"这需要 ADB 身份（uid=2000），也就是要装好并授权 Shizuku；没有 Shizuku 时它会明确拒绝而不是装作成功。" +
-			"危险操作：按键会送到当前前台应用，等同于你亲手按。",
+			"向当前焦点注入原始按键（enter、del、tab、escape、dpad_up/down/left/right、move_end、page_down、F1 等）。" +
+			"需要 ADB 身份（uid=2000），也就是装好并授权 Shizuku；没有 Shizuku 时会明确拒绝而不是装作成功。" +
+			"按键会送到当前前台应用，等同于你亲手按。",
 		promptSnippet: "注入原始按键（enter/del/方向键等；需要 Shizuku）",
 		promptGuidelines: [
 			"Android 的全局动作（返回/主页）用 android_key 就够了；android_keyevent 只在确实需要 enter、delete、方向键这类按键时使用。",
@@ -782,9 +781,8 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 		label: "导出到 Download",
 		description:
 			"把文本或 base64 二进制内容写成公共 Download 目录里的文件，用户与其他应用都能看到。" +
-			"API 29+ 走 MediaStore 不需要权限；Android 8/9 需要用户授予存储权限（应用会允许，并在「存储」卡里提供按钮）。" +
-			"想要写进用户自己的目录（不受 Download 限制），用 android_files_write。" +
-			"危险操作：内容离开应用沙箱，会请求确认。",
+			"API 29+ 走 MediaStore 不需要权限；Android 8/9 需要用户授予存储权限（在「存储」卡里有按钮）。" +
+			"要写进用户自己的目录，用 android_files_write（需要先授权目录）。",
 		promptSnippet: "把内容导出成 Download 目录里的文件（危险操作，需用户确认）",
 		parameters: Type.Object({
 			name: Type.String({ description: "文件名（不含路径），例如 report.md。" }),
@@ -812,8 +810,7 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 		label: "从 Download 读入",
 		description:
 			"按文件名读取公共 Download 目录里的文件。API 33+ 上只能读取本应用自己导出过的文件（系统不再给普通应用读别人文件的权限）；" +
-			"API 30–32 需要用户授予存储权限。要读写用户自己指定的目录，用 android_files_read / android_files_write（SAF 授权，没有这个限制）。" +
-			"危险操作：文件内容会进入模型上下文，会请求确认。",
+			"API 30–32 需要用户授予存储权限。要读写用户自己指定的目录，用 android_files_read / android_files_write（SAF 授权，没有这个限制）。",
 		promptSnippet: "读取 Download 目录里的文件（危险操作，需用户确认）",
 		parameters: Type.Object({
 			name: Type.String({ description: "文件名（不含路径）。" }),
@@ -1066,13 +1063,11 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 		name: "android_shell",
 		label: "设备 Shell",
 		description:
-			"在设备上执行一条受策略守卫限制的 Shell 命令。默认关闭，需要用户显式开启「Shell」能力。" +
-			"允许日常读写命令（getprop、dumpsys、pm list、logcat、ls、cat、cp、mv、rm、mkdir、sed、tar、grep、find、curl 等）；" +
-			"未知命令一律拒绝。硬性禁用（与授权无关）：mount/umount、setenforce、setprop、settings put、mknod、dd、mkfs、pm clear/uninstall、su/sudo/magisk、/dev/block。" +
-			"写入边界是用户选定的工作区：工作区之内（含它本身就是 DCIM、Pictures、Download、Android/data 之类目录时）不拦，工作区之外会被拒。" +
-			"$(...) 与反引号默认拒绝，除非用户在「设置 → 设备能力 → Shell」打开「放宽模式」。" +
-			"命令以当前 Shell 后端身份运行：装了且授权了 Shizuku 就是 ADB 身份（uid=2000），否则是应用自身身份（读不到其他应用与系统私有状态）。" +
-			"要在工作区里跑构建、git、npm、rg 这类工具，请用 pi 的内置 bash —— 那是 guest 里的工作台，不受设备策略管辖。",
+			"在设备上执行一条受策略守卫限制的 Shell 命令（需要用户开启「Shell」能力）。有命令白名单，未知命令一律拒绝；" +
+			"硬性禁用（与授权无关）：mount/umount、setenforce、setprop、settings put、mknod、dd、mkfs、pm clear/uninstall、su/sudo/magisk、/dev/block。" +
+			"写入边界是用户选定的工作区：之内（含工作区本身就是 DCIM、Pictures、Download 等目录时）不拦，之外拒绝。" +
+			"`$(...)` 与反引号默认拒绝，除非用户在「设置 → 设备能力 → Shell」打开「放宽模式」。" +
+			"命令以当前后端身份运行：授权了 Shizuku 就是 ADB（uid=2000），否则是应用自身身份。工作区里的构建、git、npm、rg 请用内置 bash。",
 		promptSnippet: "执行受策略守卫限制的设备 Shell 命令（默认关闭；第一次会请求确认，可记住本会话）",
 		promptGuidelines: [
 			"用 android_shell 之前先想清楚这一步是不是真的需要设备级身份；在工作区里做文件操作，内置 bash 更快也更合适。",
@@ -1113,7 +1108,7 @@ const SKILL_SENTINEL = `name: ${SKILL_NAME}`;
 function skillMarkdown(): string {
 	return `---
 name: ${SKILL_NAME}
-description: pi-android 设备环境说明与手机能力（android_ui_dump / android_tap / android_screenshot / android_apps 等）的用法。当任务需要在手机上操作界面、读取屏幕、截屏、查看应用、读写剪贴板、通知用户、定位或使用传感器时使用。
+description: 在 Android 手机上操作界面、读屏、截屏、查看应用、读写剪贴板、通知、定位、使用传感器时的设备能力用法。
 ---
 
 # pi-android 设备环境
@@ -1174,15 +1169,10 @@ function environmentGuidance(): string {
 		"",
 		"## Android 设备环境（pi-android）",
 		"",
-		"你运行在 pi-android 客户端里：pi 内核在 proot 的 Ubuntu 中，App 额外提供了手机能力工具（全部以 android_ 开头）。",
-		"",
-		"- 工作区是 `/workspace`（快），用户共享存储是 `/sdcard`（慢，但用户可见）。",
-		"- 需要在手机上操作界面时：先 `android_ui_dump` 看清屏幕，再用 `android_tap` / `android_input` / `android_swipe` 操作，`android_screenshot` 用来直接看画面。",
-		"- 设备能力是按组授权的，默认只有「基础」组开启。被关闭的能力会返回 `[DISABLED]` 或 `[NO_PERMISSION]` 加一句中文原因；请把原因原样转述给用户，并指出「设置 → 设备能力」这个入口，不要自己猜测原因，也不要重复重试同一个调用。",
-		"- 结束应用、Shell、分享、打开链接、向输入框写入、跨沙箱读写文件、注入按键属于危险操作：会请求用户确认（第一次确认时用户可以选择「同意并记住本次会话」），被拒绝时停下并告诉用户。",
-		"- 设备策略**只**管辖 android_* 工具：工作区里的 git / npm / 构建用内置 bash 自由进行，不受设备策略影响。android_shell 有命令白名单、硬性禁用清单，并且只允许写工作区之内；要写用户指定的其他目录，请让用户先在「设置 → 设备能力 → 存储」授权目录，再用 android_files_write。",
-		"- 想知道 Shell 后端是应用身份还是 Shizuku 的 ADB 身份（uid=2000），用 android_bridge_status 查，不要猜。",
-		"- 想知道当前到底有哪些能力可用，调用 `android_bridge_status`。",
+		"你运行在 pi-android 客户端里：pi 内核在 proot 的 Ubuntu 中，App 另外提供以 android_ 开头的手机能力工具。",
+		"- 工作区是 `/workspace`（快；设备策略**只**管 android_* 工具，在这里跑 git / npm / 构建用内置 bash 不受限），用户共享存储是 `/sdcard`（慢，但用户可见）。",
+		"- 能力按组授权，默认只开「基础」组。返回 `[DISABLED]` / `[NO_PERMISSION]` 时，把附带的中文原因原样转述并指向「设置 → 设备能力」；不要猜原因，也不要重试同一次调用。",
+		"- 危险设备操作会请求用户确认（第一次可以选择「同意并记住本次会话」）；用户拒绝就停下并说明。",
 	].join("\n");
 }
 
@@ -1192,13 +1182,10 @@ function environmentGuidance(): string {
 
 export default function (pi: ExtensionAPI) {
 	for (const tool of DEVICE_TOOLS) {
-		const level = dangerLevelOf(tool.name) ?? "control";
 		pi.registerTool({
 			name: tool.name,
 			label: tool.label,
-			description: `${tool.description}（危险等级：${
-				level === "read" ? "只读" : level === "control" ? "操作，无需确认" : "危险，需要用户确认"
-			}）`,
+			description: tool.description,
 			promptSnippet: tool.promptSnippet,
 			promptGuidelines: tool.promptGuidelines,
 			parameters: tool.parameters,
