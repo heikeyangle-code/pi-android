@@ -138,7 +138,7 @@ export interface HealthPayload {
 	vibratePermissionGranted: boolean;
 	/**
 	 * The pre-API-29 storage path. Reported so a model can explain why
-	 * `android_export` fails on an old device instead of guessing.
+	 * `android_download(op="write")` fails on an old device instead of guessing.
 	 */
 	legacyStoragePermissionGranted?: boolean;
 	/**

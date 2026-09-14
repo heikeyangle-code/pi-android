@@ -342,7 +342,7 @@ object DeviceSystemActions {
             DeviceDenial(
                 code = DeviceDenial.NOT_FOUND,
                 reason = "找不到传感器「$typeName」。",
-                hint = "请先调用 android_sensors 列出可用的 typeName。",
+                hint = "请先调用 android_device_state（what=\"sensors\"）列出可用的 typeName。",
             ),
         )
 
@@ -470,7 +470,7 @@ object DeviceSystemActions {
             DeviceDenial(
                 code = DeviceDenial.UNSUPPORTED,
                 reason = "这台设备没有带闪光灯的相机（相机权限已授予，因此不是权限问题）。",
-                hint = "可以改用 android_notify / android_toast 等其他方式提醒用户。",
+                hint = "可以改用 android_say（kind=\"notification\" / \"toast\"）等其他方式提醒用户。",
             ),
         )
         return try {

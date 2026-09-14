@@ -469,7 +469,7 @@ ls -l /root/.pi/highlight-bridge.json /root/.pi/agent/highlight-bridge.json 2>&1
 
 ### H1. markdown 里的内嵌图片（guest 路径）
 **状态**：未验
-**操作**：让 Agent 在执行 `android_export`/写文件后，在回复里用 `![x](/workspace/…png)` 或 `/sdcard/…png` 引用它
+**操作**：让 Agent 在执行 `android_download`（`op="write"`）/写文件后，在回复里用 `![x](/workspace/…png)` 或 `/sdcard/…png` 引用它
 **预期**：对话里渲染出图片
 **判据**：看到图，而不是一个坏图标/空白
 **失败含义**：`bridge/GuestImageBytes` 的 guest→host 映射（§0.2 的表就是它的顺序：bind 映射优先于 rootfs）。它只解 pi 的 `read` 接受的那五种格式（jpg/png/gif/webp/bmp），动图只画第一帧；共享存储上的文件按 App 自己的权限读，**读不到时报告失败，不会假装是空图**。

@@ -2,10 +2,11 @@
  * The danger classification and shell pre-check, shared by the two extensions that
  * need it.
  *
- * It lives in its own module so the device extension (which documents the level in
- * each tool description) and the permission gate (which enforces it) cannot drift
- * apart. It imports nothing, so the gate loads even if the bridge client cannot be
- * resolved.
+ * It lives in its own module so the device extension (which registers the tools) and
+ * the permission gate (which enforces the level) cannot drift apart: every tool the
+ * extension registers must have a level here, and every level must name a registered
+ * tool (`ShellPolicyMirrorCheck`). It imports nothing, so the gate loads even if the
+ * bridge client cannot be resolved.
  *
  * ## Jurisdiction (read this before adding a tool name)
  *
@@ -37,6 +38,12 @@
  *                  files across the sandbox boundary. These are denied when there is
  *                  no UI to ask through, and the first approval may be remembered
  *                  for the rest of the session (see the permission gate).
+ *
+ * A tool that merged two capabilities carries the **highest** level of its branches,
+ * because the gate classifies a call by tool name: `android_app` lists apps (read) and
+ * launches them (control), so it is control; `android_clipboard` reads (read) and
+ * writes (control), so it is control. The merge is recorded as D32 in
+ * `design/ui-refactor/07-construction-decisions.md`.
  */
 
 export type DangerLevel = "read" | "control" | "dangerous";
@@ -48,34 +55,25 @@ export const DANGER_LEVELS: Record<string, DangerLevel> = {
 	android_bridge_status: "read",
 	android_ui_dump: "read",
 	android_screenshot: "read",
-	android_apps: "read",
-	android_clipboard_get: "read",
-	android_location: "read",
-	android_sensors: "read",
-	android_sensor: "read",
-	android_battery: "read",
+	android_device_state: "read",
 	android_files_list: "read",
 
 	android_tap: "control",
 	android_key: "control",
 	android_swipe: "control",
-	android_toast: "control",
+	android_say: "control",
 	android_vibrate: "control",
-	android_clipboard_set: "control",
-	android_notify: "control",
-	android_launch: "control",
+	android_clipboard: "control",
+	android_app: "control",
 	android_torch: "control",
-	android_tts: "control",
 
 	android_input: "dangerous",
 	android_keyevent: "dangerous",
 	android_stop_app: "dangerous",
 	android_share: "dangerous",
 	android_open: "dangerous",
-	android_export: "dangerous",
-	android_import: "dangerous",
-	android_files_read: "dangerous",
-	android_files_write: "dangerous",
+	android_download: "dangerous",
+	android_files: "dangerous",
 	android_shell: "dangerous",
 };
 
@@ -133,14 +131,14 @@ export function describeDangerousCall(toolName: string, input: Record<string, un
 			return `向当前界面的输入框写入文本：\n\n  ${truncate(asString(input, "text"), 300)}${input.submit === true ? "\n\n并尝试提交（回车）。" : ""}\n\n文本会进入其他应用的输入框，可能被直接发送出去；直接写入被拒绝时会改用剪贴板粘贴（会替换剪贴板内容）。`;
 		case "android_keyevent":
 			return `注入原始按键：\n\n  ${asString(input, "keys")}${Number(input.repeat ?? 1) > 1 ? ` ×${input.repeat}` : ""}\n\n按键会送到当前焦点所在的应用，等同于你亲手按。`;
-		case "android_export":
-			return `把文件写入公共 Download 目录：\n\n  ${asString(input, "name")}\n\n写入后设备上的其他应用与用户都能看到这个文件。`;
-		case "android_import":
-			return `从公共 Download 目录读入文件：\n\n  ${asString(input, "name")}\n\n文件内容会进入模型上下文。`;
-		case "android_files_read":
-			return `读取用户已授权（SAF）目录里的文件：\n\n  ${asString(input, "path")}\n\n文件内容会进入模型上下文。`;
-		case "android_files_write":
-			return `写入用户已授权（SAF）目录：\n\n  ${asString(input, "path")}\n\n这个目录之外的一切不受影响，但目录之内的现有文件可能被覆盖。`;
+		case "android_download":
+			return asString(input, "op") === "read"
+				? `从公共 Download 目录读入文件：\n\n  ${asString(input, "name")}\n\n文件内容会进入模型上下文。`
+				: `把文件写入公共 Download 目录：\n\n  ${asString(input, "name")}\n\n文件会离开沙箱，设备上的其他应用与用户都能看到。`;
+		case "android_files":
+			return asString(input, "op") === "read"
+				? `读取用户已授权（SAF）目录里的文件：\n\n  ${asString(input, "path")}\n\n文件内容会进入模型上下文。`
+				: `写入用户已授权（SAF）目录：\n\n  ${asString(input, "path")}\n\n这个目录之外的一切不受影响，但目录之内的现有文件可能被覆盖。`;
 		default:
 			return `执行设备操作：${toolName}`;
 	}

@@ -120,8 +120,9 @@ fun DeviceCapabilityScreen(
     var workspace by remember { mutableStateOf(DeviceWorkspace.summary()) }
     var storagePermissionsNeeded by remember { mutableStateOf(!store.hasLegacyStoragePermission()) }
     // The endpoint-level grants the cards have to state: CAMERA gates the torch
-    // (DeviceCapabilityStore.kt:268-278), the location pair gates android_location
-    // (:207-211), POST_NOTIFICATIONS gates android_notify (:239-245). None of them
+    // (DeviceCapabilityStore.kt:268-278), the location pair gates android_device_state
+    // (:207-211, what="location"), POST_NOTIFICATIONS gates android_say (:239-245,
+    // kind="notification"). None of them
     // makes its whole *group* unusable — which is exactly why the card, not the
     // store, has to say so, or the group's 「可用」 badge reads as "everything here
     // works" (docs/pi-android-app-design.md §21.4).
@@ -753,7 +754,7 @@ private fun DeviceCapabilityCard(
             DeviceCapability.Basic -> {
                 Spacer(Modifier.height(PiSpacing.inline))
                 // 基础 is on by default, so its badge reads 「可用」 out of the box —
-                // and on API 33+ without POST_NOTIFICATIONS `android_notify` is refused
+                // and on API 33+ without POST_NOTIFICATIONS `android_say` is refused
                 // every time (DeviceSystemActions.kt:103-112). Silence here is the one
                 // thing the default-on group cannot afford.
                 if (notificationPermission) {

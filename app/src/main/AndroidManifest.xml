@@ -21,13 +21,13 @@
       it is missing — never silently.
         VIBRATE                    → android_vibrate
         KILL_BACKGROUND_PROCESSES  → android_stop_app
-        ACCESS_*_LOCATION          → android_location (runtime request)
+        ACCESS_*_LOCATION          → android_device_state(what="location") (runtime request)
         CAMERA                     → android_torch (runtime request). Since API 23
                                      `CameraManager.setTorchMode` requires it; without
                                      it some ROMs fail with a message that reads like
                                      "no flash on this device", which is why the
                                      missing grant is now reported as NO_PERMISSION.
-        QUERY_ALL_PACKAGES         → keeps android_apps complete on API 30+, where
+        QUERY_ALL_PACKAGES         → keeps android_app(action="list") complete on API 30+, where
                                      package visibility is filtered by default
     -->
     <uses-permission android:name="android.permission.VIBRATE" />
@@ -58,7 +58,7 @@
       they are requestable exactly where they still mean anything: on API 29+ the
       app uses MediaStore, and from API 30 onwards the OS ignores
       WRITE_EXTERNAL_STORAGE anyway. Before this, the code told the user to "let the
-      maintainer add the permission to the manifest" — i.e. android_export could not
+      maintainer add the permission to the manifest" — i.e. android_download(op="write") could not
       work at all on the API levels this app claims to support.
     -->
     <uses-permission

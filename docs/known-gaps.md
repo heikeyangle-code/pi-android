@@ -295,7 +295,7 @@
 | 2 | 无障碍卡「前往系统设置」 | `runCatching { startActivity(...) }` 丢弃结果：没有该 Activity 时点按无任何反应、无提示 | 改前 `DeviceCapabilityScreen.kt:217-219`；现在读 `.isSuccess` 并在失败时写提示（`:263`） | applied (committed 2bd97cd) |
 | 3 | 无障碍组列「截屏并把图片交给模型查看」且徽章「可用」 | `screenshot` 在 API<30 直接 UNSUPPORTED（minSdk 26，Android 8/9 必现）；`/app/health.screenshotSupported = SDK>=R` | `DeviceUiAutomation.kt:609-616`、`DeviceBridgeRouter.kt:326`；现在 SDK<R 时显示一行红字（`DeviceCapabilityScreen.kt:548`） | applied (committed 2bd97cd) |
 | 4 | 位置·传感器·相机卡只有一句静态文案，而 `cameraPrecondition()` 的 hint 叫用户"点「授予相机权限」" | 那个按钮**不存在**；全树没有任何代码请求 CAMERA / ACCESS_*_LOCATION；模型会原样转述，用户找不到入口 | `DeviceCapabilityStore.kt:268-278`（hint 在 `:275-276`）；现在两张权限按真实授予态显示并各有一个请求按钮（`DeviceCapabilityScreen.kt:704` 等） | applied (committed 2bd97cd) |
-| 5 | 基础组默认开、徽章「可用」 | API 33+ 缺 `POST_NOTIFICATIONS` 时 `android_notify` 每次必拒，而全树无人请求该权限，卡上无一字 | `DeviceSystemActions.kt:103-112`、`DeviceCapabilityStore.kt:239-245`；现在显示通知权限态并可请求 | applied (committed 2bd97cd) |
+| 5 | 基础组默认开、徽章「可用」 | API 33+ 缺 `POST_NOTIFICATIONS` 时 `android_say`（`kind="notification"`）每次必拒，而全树无人请求该权限，卡上无一字 | `DeviceSystemActions.kt:103-112`、`DeviceCapabilityStore.kt:239-245`；现在显示通知权限态并可请求 | applied (committed 2bd97cd) |
 | 6 | ApprovalsCard 显示扩展上报的审批状态 | 该 item 不读任何轮询状态，LazyColumn item 只组合一次 → 屏幕开着时**永不刷新** | 改前 `DeviceCapabilityScreen.kt:679-697`；现在由轮询循环喂 `approvals`（`:193`）并 `ApprovalsCard(lines = approvals)`（`:316`） | applied (committed 2bd97cd) |
 
 修完的形态：后端标签改读 `DeviceShellGuard.active().label`（Shizuku 不可用的原因仍由 `DeviceShizuku.status` 的 `note` 单独说明）；

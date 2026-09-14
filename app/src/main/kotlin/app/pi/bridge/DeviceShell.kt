@@ -138,7 +138,7 @@ object AppUidShellBackend : DeviceShellBackend {
  *
  * This is only about *writes*: reading device state (`dumpsys`, `getprop`,
  * `ls /sdcard`) is what the 「Shell」 opt-in authorizes, and stays allowed wherever
- * it points. And it is only about the *shell*: `android_export` / `android_files_*`
+ * it points. And it is only about the *shell*: `android_download` / `android_files`
  * are separate, explicitly-confirmed endpoints whose whole purpose is to touch
  * files the user picks elsewhere.
  *
@@ -420,8 +420,8 @@ object DeviceShellGuard {
                 reason = "命令要写工作区之外的位置：${target.raw}（来自 ${target.kind}）。" +
                     "工作区是用户交给 Agent 的那一个目录，也是设备 Shell 的写入边界；" +
                     "边界之内（含 DCIM、Pictures、Download 之类的目录，只要它就是工作区）一律不拦。$platform",
-                hint = "请在工作区内操作（设备 Shell 看到的工作区是 $where；也可以用 android_export 写公共 Download，" +
-                    "或让用户在「设置 → 设备能力 → 存储」授权一个 SAF 目录后用 android_files_write）。",
+                hint = "请在工作区内操作（设备 Shell 看到的工作区是 $where；也可以用 android_download（op=\"write\"）写公共 Download，" +
+                    "或让用户在「设置 → 设备能力 → 存储」授权一个 SAF 目录后用 android_files（op=\"write\"））。",
             )
         }
         return null
@@ -597,7 +597,7 @@ object DeviceShellGuard {
         "写入边界 = 用户选定的工作区：工作区之内（含它本身就是 DCIM、Pictures、Download、Android/data 之类目录时）一律不拦。",
         "工作区之外的写入会被拒。原先那张写死的 DCIM / Pictures / Android-data 黑名单已经删掉 —— 它既挡了用户本来就交出去的东西，也没说明工作区之外还有什么。",
         "读取不受此限：dumpsys、getprop、ls /sdcard 这类查询指向哪里都可以。",
-        "android_export 与 android_files_*（SAF）是独立端点，各自的确认与授权覆盖它们，不受这条写入边界约束。",
+        "android_download 与 android_files（SAF）是独立端点，各自的确认与授权覆盖它们，不受这条写入边界约束。",
     )
 
     /** Where the syntax policy stands right now. */

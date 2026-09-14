@@ -217,7 +217,7 @@ class DeviceCapabilityStore private constructor(context: Context) {
      * `READ_EXTERNAL_STORAGE` with `maxSdkVersion="32"`, so both are requestable
      * exactly where they still mean something and invisible above that. Before this
      * the code told the user to add the permission to the manifest — the reason
-     * `android_export` and `android_import` simply could not work on Android 8/9,
+     * `android_download` simply could not work on Android 8/9,
      * which `minSdk 26` says this app supports.
      */
     fun hasLegacyStoragePermission(): Boolean {

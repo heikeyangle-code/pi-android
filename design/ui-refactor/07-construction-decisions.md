@@ -207,3 +207,85 @@
 - **落地**：`PiSessionViewModel` 加 `pendingPrompts` + `parkUntilAttached()`，把 `send` / `sendFollowUp` / `runPromptCommand` 三条**用户能在没有引擎时触达**的路径在 `session == null` 时**记住**（闭包重入原函数，压缩窗口/流式行为/乐观回显的检查一条都不会漏），`attach()` 在 `boot = Boot.Ready` 之后按序重放（先拷贝再清空）。稳态开销为零：一个空列表 + 每次发送一次 null 判断，无轮询、无定时器、不触发重组。
 - **定稿条件**：`ChatScreen` 变成 `boot is Boot.Working || boot is Boot.Failed` 才接管 —— `Idle` 直接显示正常对话页 + 底栏 + 输入框。`BootScreen.kt` 仍是 `Working` / `Failed` 的全部实现，不动。
 - **附带**：`PiSessionViewModel.engineStarting()` 在空态文字删除后已无调用点，**保留**（它是「引擎在、还没开始服务」这一窗口的唯一可读表述），KDoc 改成说明为什么留。
+
+## D32 · 设备桥 30 个工具合并成 21 个，同时把这轮提词压到最紧
+**先把账对齐**：用户给的「每轮 5992 字符」是上一笔（`3156926`「提词器瘦身」）**之前**的数，那一笔已经在 HEAD 里
+（删掉 30 条 description 尾巴上的「（危险等级：…）」390 字符、`environmentGuidance` 796→356、技能 front-matter 的
+description 180→90 字节）。本轮起点是 HEAD 那份；口径与上一笔一致 = 工具 `description` + `promptSnippet` +
+`promptGuidelines` + `environmentGuidance` + 技能 front-matter 的 `description` + 命令描述（另附 UTF-8 字节）。
+**用户原话**：「把我们自己写的提词压到最紧，并把设备桥的 30 个工具合并成更少的工具，同时把 Kotlin/docs 里所有引用旧工具名
+的地方改到自洽」「唯一不可谈判的是调用精度不受影响、不产生无故试错」。
+
+**合并（30 → 21：6 组合并、15 个保持独立）**
+
+| 合并后 | 由谁合并 | 判别参数（必填） | 危险级 |
+|---|---|---|---|
+| `android_download` | `android_export` + `android_import` | `op:"write"\|"read"` | dangerous |
+| `android_files` | `android_files_read` + `android_files_write` | `op:"read"\|"write"` | dangerous |
+| `android_device_state` | `android_battery` + `android_location` + `android_sensors` + `android_sensor` | `what:"battery"\|"location"\|"sensors"\|"sensor"` | read |
+| `android_say` | `android_notify` + `android_toast` + `android_tts` | `kind:"notification"\|"toast"\|"speak"` | control |
+| `android_app` | `android_apps` + `android_launch` | `action:"list"\|"launch"` | control |
+| `android_clipboard` | `android_clipboard_get` + `android_clipboard_set` | `text`（给了=写，不给=读） | control |
+
+独立：`android_bridge_status` `android_ui_dump` `android_tap` `android_input` `android_swipe` `android_key` `android_keyevent`
+`android_screenshot` `android_stop_app` `android_share` `android_open` `android_torch` `android_vibrate` `android_files_list` `android_shell`。
+
+**为什么这 6 组能合，别的不能**
+1. 可合的判据是「**同一件设备能力、只是方向或种类不同**，判别参数是**闭集且必填**，每个分支的必填组合一句话写得清」：
+   Download 读/写、SAF 读/写、电池/位置/传感器/采样、通知/短提示/朗读、列应用/启应用、剪贴板读/写。
+2. **`android_share` + `android_open` 不合并**：两者都是「把控制权交给别的应用」，但用户/模型那句话完全不同
+   （「分享出去」vs「打开它」），合并要发明一个 `kind`，而两分支的参数面（`text`/`url`/`subject` vs `url`）重叠不全，
+   会把一句明确的话变成一次猜测。**`android_tap` + `android_swipe` 不合并**：一个是「点中某个控件」，一个是「从 A 拖到 B」，
+   参数面（`index`/`x`/`y`/`longPress` vs `x1`/`y1`/`x2`/`y2`/`durationMs`）没有公共子集，合起来只多一个必填判别参数、不省描述。
+   **`android_key` + `android_keyevent` 不合并**：能力/权限根本不同（无障碍 vs ADB/Shizuku），合并会让「需不需要 Shizuku」
+   从工具名上消失。
+3. **两处细节保精度**：① 每个 `run` 的分支是原实现的**原样搬运**（同一端点、同一请求体、同一结果格式化与错误文案），
+   只按判别参数落分支；`op`/`what`/`kind`/`action` 非法时抛 `[BAD_PARAM] …只能是 "a" 或 "b"…`（与 bridge 的
+   `[CODE] 原因` + `提示：` 同形），不留给模型猜的句子。② 每个返回文本开头带**实际跑的分支**（`[op write]`/`[what sensors]`/
+   `[kind toast]`/`[action list]`/`[clipboard read]`），读的一眼看出是哪条路。
+4. **会被同一句话触发的工具对，在各自 description 里钉死**：`download`↔`files`、`files_list`↔`download(op="read")`、
+   `share`↔`open`、`say(notification)`↔`say(toast)`、`app(list)`↔`app(launch)`、`key`↔`keyevent`。
+
+**字数（脚本按上面口径量，字符 / UTF-8 字节）**
+
+| 项 | 改前（HEAD，30 工具） | 改后（21 工具） |
+|---|---|---|
+| 工具 description 合计 | 2837 / 6289 | 2317 / 4655 |
+| `promptSnippet` 合计 | 675 / 1609 | 340 / 886 |
+| `promptGuidelines` 合计（条数） | 755 / 1501（11 条） | 558 / 1024（7 条） |
+| `environmentGuidance` | 361 / 743 | 217 / 411 |
+| 技能 front-matter `description` | 55 / 147 | 31 / 77 |
+| 命令描述 | 27 / 81 | 22 / 66 |
+| **五项合计** | **4710 / 10370** | **3485 / 7119（−26.0% 字符，−31.3% 字节）** |
+| 参数 schema 里 description 合计 | 1174 / 2502 | 1620 / 3118 |
+| 含参数 description 的总量 | 5884 / 12872 | 5105 / 10237（−13.2% 字符，−20.5% 字节） |
+
+**为什么这样最短且不丢精度**
+- 删掉的只有四类：讲「为什么这么设计/历史决策/后端是谁」的解释、堆枚举清单、同一事实在多处重复、每条尾巴上的
+  「危险操作…会请求确认」（收进 snippet 的一个「（需确认）」，8 个 dangerous 工具各一处）。
+- **没删**：参数 schema 的 description 语义（默认值/范围/单位/二选一/代价）一个字没丢，合并工具额外加了
+  「仅 `op="write"`」这类分支限定语——这就是参数 description 从 1174 涨到 1620 的全部原因，是有意的加法；
+  能力、权限要求（无障碍 / Shizuku / SAF / 存储权限 / Android 版本）与失败处置（`[DISABLED]`→`android_bridge_status`、
+  `NOT_FOUND`→重新 dump、二进制读回→改用 bash）全部保留。
+- `promptGuidelines` 11 条收敛到 7 条，只留跨工具行为性的（dump→tap 工作流、控件树读不出改 screenshot、
+  `[DISABLED]`/`[NO_PERMISSION]` 处置、shell 只管工作区、`app` launch 要精确包名、全局动作 vs 原始按键、SAF 路径写法），
+  工具自己的 specialty 挂回该工具自己的 guideline。
+- `environmentGuidance` 只留三件任何工具都装不下的事（身份、`/workspace` 与 `/sdcard` + 设备策略只管 `android_*`、
+  危险操作确认语义），标题里的「Android 设备环境（pi-android）」哨兵原样保留（`before_agent_start` 依赖它）。
+- 技能正文一个字没删（按需读取，不进每轮上下文），只把 front-matter description 压到 31 字符并把正文里的旧工具名改成新名。
+
+**配套改动**：`danger.ts` 的 `DANGER_LEVELS` 按最终 21 个工具重写（合并工具取各分支的**最高**等级：`android_app` 的
+list 是 read、launch 是 control，故 control；`android_clipboard` 同理），`describeDangerousCall` 把原来 4 个
+case 收成 `android_download` / `android_files` 两个并按 `input.op` 给不同文案（读=内容进模型上下文，写=可能覆盖已有文件 /
+文件离开沙箱）；`isDeviceTool` / `shellPrecheck` / 禁止清单一个字没动。
+
+**自洽性交代**：`ShellPolicyMirrorCheck` 的检查 ④（注册工具集合 == `DANGER_LEVELS` 键集合）现在是 21 == 21；
+`docs/surfaces-terminal-workbench-device.md` 的「两边都是 30 个」改成 21；Kotlin 只改字符串与注释（
+`DeviceShell.kt`、`DeviceAppActions.kt`、`DeviceSystemActions.kt`、`DeviceCapabilityStore.kt`、
+`DeviceCapabilityScreen.kt`），分支、类型、签名、策略、端点、参数校验一行未动；`grep -rho "android_[a-z_]*" --include=*.kt`
+得到的每个名字都在这 21 个里。
+
+**已知取舍（不藏着）**：确认的「记住本次会话」是 `permission-gate.ts` 按**工具名**记账的（`sessionGrants.has(toolName)`），
+该文件本轮不许动，所以合并后「记住 `android_files`」会同时覆盖它的 read 与 write 两个方向——比合并前粗一档。
+要收回去的最小改法（留给下一轮）：记住的键改成 `toolName + ":" + input.op`（对没有 `op` 的工具退化成工具名）。
+

@@ -93,7 +93,7 @@ object DeviceAppActions {
                     } else {
                         "找不到包「$packageName」。"
                     },
-                    hint = "请先用 android_apps 列出可启动的应用，再传它给出的 packageName。",
+                    hint = "请先用 android_app（action=\"list\"）列出可启动的应用，再传它给出的 packageName。",
                 ),
             )
         }
@@ -156,7 +156,7 @@ object DeviceAppActions {
             DeviceDenial(
                 code = DeviceDenial.NOT_FOUND,
                 reason = "找不到包「$packageName」，未执行任何结束操作。",
-                hint = "请先调用 android_apps 刷新应用清单，再传入精确的包名。",
+                hint = "请先调用 android_app（action=\"list\"）刷新应用清单，再传入精确的包名。",
             ),
         )
         val system = (info.flags and ApplicationInfo.FLAG_SYSTEM) != 0
@@ -183,7 +183,7 @@ object DeviceAppActions {
                 DeviceDenial(
                     code = DeviceDenial.NO_PERMISSION,
                     reason = "本机拒绝了结束「$packageName」：系统未允许本应用结束后台进程。",
-                    hint = "不要向用户声称应用已被结束；请让用户自己在系统设置 → 应用里强制停止，或先用 android_apps 确认状态。",
+                    hint = "不要向用户声称应用已被结束；请让用户自己在系统设置 → 应用里强制停止，或先用 android_app（action=\"list\"）确认状态。",
                 ),
             )
         }
@@ -204,7 +204,7 @@ object DeviceAppActions {
                 DeviceDenial(
                     code = DeviceDenial.BAD_REQUEST,
                     reason = "「$packageName」不是合法的精确包名。",
-                    hint = "设备桥不接受模糊匹配或通配；请先用 android_apps 查到精确的 packageName。",
+                    hint = "设备桥不接受模糊匹配或通配；请先用 android_app（action=\"list\"）查到精确的 packageName。",
                 ),
             )
         }

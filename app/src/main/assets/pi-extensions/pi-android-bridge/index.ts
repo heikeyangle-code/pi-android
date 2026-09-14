@@ -1,7 +1,7 @@
 /**
  * pi-android device bridge — pi extension.
  *
- * Registers one tool per device capability the Android host app exposes, all of
+ * Registers the device capabilities the Android host app exposes as pi tools, all of
  * them talking to a loopback HTTP bridge that the app runs (`./client`). pi itself
  * deliberately ships no device integration; on Termux the documented answer is to
  * put `termux-*` shell commands in AGENTS.md. This extension is the app doing
@@ -112,6 +112,18 @@ async function guarded(run: () => Promise<ToolOutcome>): Promise<ToolOutcome> {
 		if (error instanceof BridgeError) throw new Error(error.toModelMessage());
 		throw error instanceof Error ? error : new Error(String(error));
 	}
+}
+
+/**
+ * A parameter mistake the schema cannot catch, in the bridge's own refusal shape
+ * (`[CODE] 原因` + `提示：`), naming the parameter and its allowed values.
+ */
+function badParam(tool: string, param: string, allowed: string[], got: unknown): Error {
+	const values = allowed.map((value) => `"${value}"`).join(" 或 ");
+	return new Error(
+		`[BAD_PARAM] ${tool} 的 ${param} 只能是 ${values}，收到 ${JSON.stringify(got)}。\n` +
+			`提示：请按允许值重新调用 ${tool}。`,
+	);
 }
 
 interface DeviceToolSpec {
@@ -250,13 +262,12 @@ interface ShellData {
 const ScreenKey = StringEnum(
 	["back", "home", "recents", "notifications", "quicksettings", "powermenu", "lock", "screenshot", "split"] as const,
 	{
-		description:
-			"要执行的系统全局动作。无障碍通道只能做这些；原始按键（enter/delete/方向键）用 android_keyevent，需要 Shizuku。",
+		description: "要执行的系统全局动作：lock 需 Android 9+、screenshot 11+、split 12+。无障碍通道只能做这些。",
 	},
 );
 
 const ScreenshotFormat = StringEnum(["jpeg", "png"] as const, {
-	description: "图片格式。jpeg 更小、更适合交给模型；png 无损。默认 jpeg。",
+	description: "图片格式：jpeg 更小（默认），png 无损。",
 });
 
 const DEVICE_TOOLS: DeviceToolSpec[] = [
@@ -265,13 +276,10 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 		name: "android_bridge_status",
 		label: "设备桥状态",
 		description:
-			"报告设备桥状态：五组能力（基础/存储/无障碍/位置·传感器·相机/Shell）各自的开关与可用性、" +
-			"无障碍服务状态、缺失的系统权限与截图支持度。任何 android_* 工具返回 [DISABLED] / [NO_PERMISSION] 时，" +
-			"先用它查清原因再回复用户。",
-		promptSnippet: "检查 pi-android 设备桥与各设备能力的授权状态",
+			"报告设备桥状态：各能力分组的开关与可用性、无障碍服务状态、缺失的系统权限、截图支持度。",
+		promptSnippet: "查看设备桥与各设备能力的授权状态",
 		promptGuidelines: [
-			"当某个 android_* 工具返回失败时，用 android_bridge_status 查明是哪一组能力被关闭或缺少系统权限，再把原因原样转述给用户。",
-			"用户问「你能做什么手机操作」时，用 android_bridge_status 列出当前真正可用的能力，不要凭猜测回答。",
+			"任何 android_* 工具返回 [DISABLED] / [NO_PERMISSION] 时，用 android_bridge_status 查明原因并原样转述给用户，不要重试同一次调用。",
 		],
 		parameters: Type.Object({}),
 		run: async () => {
@@ -339,7 +347,7 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 				lines.push(
 					saf.count > 0
 						? `已授权（SAF）目录：${saf.roots.join("、")}`
-						: "已授权（SAF）目录：无 —— 需要用户在「设置 → 设备能力 → 存储」授权目录后，android_files_* 才可用。",
+						: "已授权（SAF）目录：无 —— 需要用户在「设置 → 设备能力 → 存储」授权目录后，android_files 才可用。",
 				);
 			}
 			const gate = health.gate;
@@ -363,16 +371,15 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 		name: "android_ui_dump",
 		label: "读取屏幕",
 		description:
-			"读取当前屏幕的控件树，返回带编号的可读文本（class、文本、resource id、bounds、clickable/editable 标记）；" +
+			"读取当前屏幕的控件树（带编号的 class、文本、resource id、bounds、clickable/editable 标记）；" +
 			"编号供 android_tap / android_input 使用。需要「无障碍」能力与系统无障碍服务。",
-		promptSnippet: "读取当前 Android 屏幕的控件树（带编号，供点按与输入使用）",
+		promptSnippet: "读取当前屏幕的控件树（带编号）",
 		promptGuidelines: [
-			"在操作手机界面前先用 android_ui_dump 看清屏幕，再用它给出的编号调用 android_tap / android_input；不要凭记忆连点。",
-			"android_ui_dump 之后界面可能已经变化，脚本式的连续点按前应重新 dump。",
+			"操作界面前先用 android_ui_dump，用它给出的编号调用 android_tap / android_input；界面会变化，连续点按前重新 dump，index 报 NOT_FOUND 时也重新 dump。",
 		],
 		parameters: Type.Object({
 			filter: Type.Optional(
-				Type.String({ description: "只保留文本/描述/资源 id 含该子串的控件及其祖先，用于在小屏上快速定位。" }),
+				Type.String({ description: "只保留文本/描述/资源 id 含该子串的控件及其祖先。" }),
 			),
 			maxNodes: Type.Optional(
 				Type.Number({ description: `最多返回多少个控件，默认 ${400}，上限 2000。` }),
@@ -400,12 +407,9 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 		name: "android_tap",
 		label: "点按",
 		description:
-			"点按屏幕上的控件或坐标。优先用 android_ui_dump 给出的 index（走控件的点击动作，最可靠），" +
-			"也可以直接给 x/y 坐标。设置 longPress 为长按。需要「无障碍」能力。",
-		promptSnippet: "点按屏幕控件（用 android_ui_dump 的编号）或坐标",
-		promptGuidelines: [
-			"android_tap 的 index 必须来自最近一次 android_ui_dump；如果返回 NOT_FOUND，先重新 dump 再点。",
-		],
+			"点按控件或坐标：优先用 android_ui_dump 的 index（走控件点击动作，最可靠），也可直接给 x/y；" +
+			"longPress=true 长按。要写文本用 android_input，拖动或滚动用 android_swipe。需要「无障碍」能力。",
+		promptSnippet: "点按屏幕控件（用 dump 的编号）或坐标",
 		parameters: Type.Object({
 			index: Type.Optional(Type.Number({ description: "android_ui_dump 输出里的控件编号。" })),
 			x: Type.Optional(Type.Number({ description: "横坐标（像素）。与 y 一起使用时忽略 index。" })),
@@ -432,11 +436,10 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 		name: "android_input",
 		label: "输入文本",
 		description:
-			"向当前界面的输入框写入文本；默认写获得焦点的输入框，也可指定 android_ui_dump 里的 index。" +
+			"向当前界面的输入框写入文本：默认获得焦点的输入框，也可指定 android_ui_dump 里的 index。" +
 			"先试直接写入（ACTION_SET_TEXT），被拒绝时自动改用「剪贴板 + 粘贴」（会替换剪贴板内容，返回里会说明）。" +
-			"submit=true 会尝试回车提交（Android 11+）。需要「无障碍」能力。" +
-			"要输入 enter/delete/方向键，用 android_keyevent（需要 Shizuku）。",
-		promptSnippet: "向屏幕上获得焦点的输入框写入文本",
+			"submit=true 会尝试回车提交（Android 11+）。需要「无障碍」能力。",
+		promptSnippet: "向焦点输入框写入文本（需确认）",
 		parameters: Type.Object({
 			text: Type.String({ description: "要写入的文本（会替换输入框原有内容）。" }),
 			index: Type.Optional(Type.Number({ description: "android_ui_dump 里的输入框编号；省略则用当前焦点。" })),
@@ -467,10 +470,12 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 		name: "android_key",
 		label: "系统按键",
 		description:
-			"执行系统全局动作：back、home、recents、notifications、quicksettings、powermenu、" +
-			"lock（锁屏，Android 9+）、screenshot（系统截图，Android 11+）、split（分屏，Android 12+）。" +
-			"需要「无障碍」能力，不需要额外权限；enter/delete/方向键等原始按键用 android_keyevent。",
-		promptSnippet: "执行 Android 系统全局动作（back/home/recents/notifications/quicksettings/lock/screenshot…）",
+			"执行系统全局动作（取值见 key）。需要「无障碍」能力，不需要额外权限；" +
+			"原始按键（enter、delete、方向键）用 android_keyevent（需 Shizuku）。",
+		promptSnippet: "执行 Android 系统全局动作（返回/主页/锁屏…）",
+		promptGuidelines: [
+			"全局动作（返回、主页、锁屏、通知栏）用 android_key；只有确实需要 enter、delete、方向键时才用 android_keyevent。",
+		],
 		parameters: Type.Object({
 			key: ScreenKey,
 		}),
@@ -485,13 +490,9 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 		name: "android_keyevent",
 		label: "注入原始按键",
 		description:
-			"向当前焦点注入原始按键（enter、del、tab、escape、dpad_up/down/left/right、move_end、page_down、F1 等）。" +
-			"需要 ADB 身份（uid=2000），也就是装好并授权 Shizuku；没有 Shizuku 时会明确拒绝而不是装作成功。" +
-			"按键会送到当前前台应用，等同于你亲手按。",
-		promptSnippet: "注入原始按键（enter/del/方向键等；需要 Shizuku）",
-		promptGuidelines: [
-			"Android 的全局动作（返回/主页）用 android_key 就够了；android_keyevent 只在确实需要 enter、delete、方向键这类按键时使用。",
-		],
+			"向当前焦点注入原始按键（按键名见 keys）。需要 ADB 身份（uid=2000），也就是装好并授权 Shizuku；" +
+			"没有 Shizuku 时会明确拒绝。按键会送到当前前台应用，等同于你亲手按。",
+		promptSnippet: "注入原始按键（需 Shizuku，需确认）",
 		parameters: Type.Object({
 			keys: Type.String({ description: "按键名，空格或逗号分隔，例如 \"ENTER\" 或 \"DPAD_DOWN DPAD_DOWN\"；KEYCODE_ 前缀可省略。" }),
 			repeat: Type.Optional(Type.Number({ description: "重复次数 1–20，默认 1。" })),
@@ -512,9 +513,8 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 	{
 		name: "android_swipe",
 		label: "滑动",
-		description:
-			"从 (x1,y1) 滑动到 (x2,y2)，用于滚动列表、关闭卡片、拖动等。需要「无障碍」能力。",
-		promptSnippet: "在屏幕上滑动（滚动列表、翻页、拖动）",
+		description: "从 (x1,y1) 滑到 (x2,y2)，用于滚动、翻页、关闭卡片、拖动。需要「无障碍」能力。",
+		promptSnippet: "在屏幕上滑动（滚动/翻页/拖动）",
 		parameters: Type.Object({
 			x1: Type.Number({ description: "起点横坐标。" }),
 			y1: Type.Number({ description: "起点纵坐标。" }),
@@ -541,11 +541,11 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 		name: "android_screenshot",
 		label: "截屏",
 		description:
-			"截取当前屏幕并以图片内容返回，模型可以直接看到画面。默认缩放到最长边 1280 像素的 JPEG。" +
-			"需要「无障碍」能力、系统无障碍服务，以及 Android 11+。安全窗口（支付、密码界面）无法截取。",
-		promptSnippet: "截取手机屏幕并把图片交给模型查看",
+			"截取当前屏幕并作为图片返回，模型可以直接看到画面。默认缩放到最长边 1280 的 JPEG；" +
+			"安全窗口（支付、密码界面）无法截取。需要「无障碍」能力、系统无障碍服务与 Android 11+。",
+		promptSnippet: "截取手机屏幕交给模型查看",
 		promptGuidelines: [
-			"当 android_ui_dump 的控件树读不出界面内容（自绘界面、游戏、视频、图片）时，改用 android_screenshot 直接看屏幕。",
+			"android_ui_dump 的控件树读不出内容（自绘界面、游戏、视频、图片）时，改用 android_screenshot 直接看屏幕。",
 		],
 		parameters: Type.Object({
 			format: Type.Optional(ScreenshotFormat),
@@ -573,62 +573,64 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 
 	// ---------------------------------------------------------------- 应用 ----
 	{
-		name: "android_apps",
-		label: "应用列表",
+		name: "android_app",
+		label: "应用列表 / 启动",
 		description:
-			"列出设备上已安装（默认只看可启动的）应用，可按名称或包名过滤。Android 11 起未声明 QUERY_ALL_PACKAGES 时只能看到系统允许可见的包。",
-		promptSnippet: "列出已安装的 Android 应用（可按名称过滤）",
+			"action=\"list\" 列出已安装应用（默认只看可启动的；Android 11 起未声明 QUERY_ALL_PACKAGES 时只能看到系统允许可见的包）。" +
+			"action=\"launch\" 按 package 的精确包名启动。action 必填。",
+		promptSnippet: "列出已安装应用 / 按包名启动应用",
 		promptGuidelines: [
-			"调用 android_launch 之前先用 android_apps 查到精确的包名；android_launch 不接受模糊匹配。",
+			"android_app 的 action=\"launch\" 只接受精确包名，先用 action=\"list\" 查到它。",
 		],
 		parameters: Type.Object({
-			q: Type.Optional(Type.String({ description: "按名称或包名过滤的子串。" })),
-			includeSystem: Type.Optional(Type.Boolean({ description: "是否包含系统应用，默认 false。" })),
-			limit: Type.Optional(Type.Number({ description: "最多返回多少条，默认 60，上限 500。" })),
-		}),
-		run: async (params) =>
-			guarded(async () => {
-				const p = params as { q?: string; includeSystem?: boolean; limit?: number };
-				const data = await bridgeGet<AppsData>("/app/apps", {
-					q: p.q,
-					includeSystem: p.includeSystem,
-					limit: p.limit,
-				});
-				const lines = data.apps.map(
-					(app) =>
-						`${app.label}  ${app.packageName}` +
-						`${app.system ? "  [系统]" : ""}${app.launchable ? "" : "  [不可启动]"}`,
-				);
-				if (lines.length === 0) lines.push("（没有匹配的应用）");
-				const body = `${lines.join("\n")}\n\n共 ${data.count} 条${data.truncated ? "（已截断）" : ""}`;
-				const note = data.note ? `\n\n说明：${data.note}` : "";
-				return textResult(truncateForModel(body, "应用列表") + note, { count: data.count });
+			action: StringEnum(["list", "launch"] as const, {
+				description: "list 列出应用，launch 启动应用。",
 			}),
-	},
-	{
-		name: "android_launch",
-		label: "启动应用",
-		description: "按精确包名启动一个应用。包名从 android_apps 获取。",
-		promptSnippet: "按包名启动一个 Android 应用",
-		parameters: Type.Object({
-			package: Type.String({ description: "精确包名，例如 org.telegram.messenger。" }),
+			q: Type.Optional(Type.String({ description: "按名称或包名过滤的子串；仅 action=\"list\"。" })),
+			includeSystem: Type.Optional(Type.Boolean({ description: "是否包含系统应用，默认 false；仅 action=\"list\"。" })),
+			limit: Type.Optional(Type.Number({ description: "最多返回多少条，默认 60，上限 500；仅 action=\"list\"。" })),
+			package: Type.Optional(Type.String({ description: "精确包名，例如 org.telegram.messenger；action=\"launch\" 必填。" })),
 		}),
 		run: async (params) =>
 			guarded(async () => {
-				const p = params as { package: string };
-				const data = await bridgePost<{ packageName: string; component: string }>("/app/apps/launch", {
-					package: p.package,
-				});
-				return textResult(`已启动 ${data.packageName}${data.component ? `（${data.component}）` : ""}`, data as unknown as Record<string, unknown>);
+				const p = params as { action: string; q?: string; includeSystem?: boolean; limit?: number; package?: string };
+				if (p.action === "list") {
+					const data = await bridgeGet<AppsData>("/app/apps", {
+						q: p.q,
+						includeSystem: p.includeSystem,
+						limit: p.limit,
+					});
+					const lines = data.apps.map(
+						(app) =>
+							`${app.label}  ${app.packageName}` +
+							`${app.system ? "  [系统]" : ""}${app.launchable ? "" : "  [不可启动]"}`,
+					);
+					if (lines.length === 0) lines.push("（没有匹配的应用）");
+					const body = `${lines.join("\n")}\n\n共 ${data.count} 条${data.truncated ? "（已截断）" : ""}`;
+					const note = data.note ? `\n\n说明：${data.note}` : "";
+					return textResult(`[action list] ${truncateForModel(body, "应用列表")}${note}`, { count: data.count });
+				}
+				if (p.action === "launch") {
+					if (typeof p.package !== "string" || p.package.trim().length === 0) {
+						throw new Error(
+							"[BAD_PARAM] android_app 的 action=\"launch\" 需要 package（精确包名，先用 action=\"list\" 查）。" +
+								"\n提示：请传入 package 后重新调用 android_app。",
+						);
+					}
+					const data = await bridgePost<{ packageName: string; component: string }>("/app/apps/launch", {
+						package: p.package,
+					});
+					return textResult(`[action launch] 已启动 ${data.packageName}${data.component ? `（${data.component}）` : ""}`, data as unknown as Record<string, unknown>);
+				}
+				throw badParam("android_app", "action", ["list", "launch"], p.action);
 			}),
 	},
 	{
 		name: "android_stop_app",
 		label: "结束应用",
 		description:
-			"结束一个用户安装的应用的后台进程。危险操作：会请求用户确认；系统应用、关键进程与 pi-android 自身一律拒绝。" +
-			"只接受精确包名，不接受模糊匹配。",
-		promptSnippet: "结束后台应用进程（危险操作，需用户确认）",
+			"结束一个用户安装应用的后台进程。只接受精确包名；系统应用、关键进程与 pi-android 自身一律拒绝。",
+		promptSnippet: "结束后台应用进程（需确认）",
 		parameters: Type.Object({
 			package: Type.String({ description: "精确包名。" }),
 		}),
@@ -645,51 +647,71 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 
 	// ------------------------------------------------------------ 交互/输出 ----
 	{
-		name: "android_notify",
-		label: "发送通知",
-		description: "发送一条系统通知，点击通知会回到 pi-android。适合长任务完成时告知用户。",
-		promptSnippet: "发送一条 Android 系统通知",
+		name: "android_say",
+		label: "通知 / 短提示 / 朗读",
+		description:
+			"kind=\"notification\" 发系统通知（点击回到 pi-android）；kind=\"toast\" 弹屏幕上的短提示，不进通知栏；" +
+			"kind=\"speak\" 用系统 TTS 朗读文本。kind 必填。",
+		promptSnippet: "发系统通知 / 弹短提示 / 朗读文本",
 		parameters: Type.Object({
-			text: Type.String({ description: "通知正文。" }),
-			title: Type.Optional(Type.String({ description: "通知标题，默认 pi。" })),
-			id: Type.Optional(Type.Number({ description: "通知 id，用于覆盖同一通知；省略则自动生成。" })),
-		}),
-		run: async (params) =>
-			guarded(async () => {
-				const p = params as { text: string; title?: string; id?: number };
-				const data = await bridgePost<{ id: number; channel: string }>("/app/notify", {
-					text: p.text,
-					title: p.title,
-					id: p.id,
-				});
-				return textResult(`已发送通知（id=${data.id}）`, data as unknown as Record<string, unknown>);
+			kind: StringEnum(["notification", "toast", "speak"] as const, {
+				description: "notification 发通知，toast 弹屏内短提示，speak 朗读。",
 			}),
-	},
-	{
-		name: "android_toast",
-		label: "短提示",
-		description: "在屏幕上弹出一条 Toast 短提示（不进入通知栏）。适合「正在做什么」这类即时反馈。",
-		promptSnippet: "弹出 Android Toast 短提示",
-		parameters: Type.Object({
-			text: Type.String({ description: "提示文本。" }),
-			long: Type.Optional(Type.Boolean({ description: "是否使用长时长，默认 false。" })),
+			text: Type.String({ description: "要发送或朗读的文本。" }),
+			title: Type.Optional(Type.String({ description: "通知标题，默认 pi；仅 kind=\"notification\"。" })),
+			id: Type.Optional(Type.Number({ description: "通知 id，用于覆盖同一通知；省略则自动生成；仅 kind=\"notification\"。" })),
+			long: Type.Optional(Type.Boolean({ description: "是否使用长时长，默认 false；仅 kind=\"toast\"。" })),
+			language: Type.Optional(Type.String({ description: "BCP-47 语言标签，例如 zh-CN、en-US，默认系统语言；仅 kind=\"speak\"。" })),
+			rate: Type.Optional(Type.Number({ description: "语速 0.1–3.0，默认 1.0；仅 kind=\"speak\"。" })),
+			pitch: Type.Optional(Type.Number({ description: "音调 0.1–3.0，默认 1.0；仅 kind=\"speak\"。" })),
 		}),
 		run: async (params) =>
 			guarded(async () => {
-				const p = params as { text: string; long?: boolean };
-				const data = await bridgePost<{ duration: string }>("/app/toast", { text: p.text, long: p.long === true });
-				return textResult(`已显示提示（${data.duration}）`, data as unknown as Record<string, unknown>);
+				const p = params as {
+					kind: string;
+					text: string;
+					title?: string;
+					id?: number;
+					long?: boolean;
+					language?: string;
+					rate?: number;
+					pitch?: number;
+				};
+				if (p.kind === "notification") {
+					const data = await bridgePost<{ id: number; channel: string }>("/app/notify", {
+						text: p.text,
+						title: p.title,
+						id: p.id,
+					});
+					return textResult(`[kind notification] 已发送通知（id=${data.id}）`, data as unknown as Record<string, unknown>);
+				}
+				if (p.kind === "toast") {
+					const data = await bridgePost<{ duration: string }>("/app/toast", { text: p.text, long: p.long === true });
+					return textResult(`[kind toast] 已显示提示（${data.duration}）`, data as unknown as Record<string, unknown>);
+				}
+				if (p.kind === "speak") {
+					const data = await bridgePost<{ spoken: boolean; finished: boolean; language: string; chars: number }>(
+						"/app/tts",
+						{ text: p.text, language: p.language, rate: p.rate, pitch: p.pitch },
+						60_000,
+					);
+					return textResult(
+						`[kind speak] 已朗读 ${data.chars} 个字符（${data.language}）${data.finished ? "，已读完" : "，仍在播放"}`,
+						data as unknown as Record<string, unknown>,
+					);
+				}
+				throw badParam("android_say", "kind", ["notification", "toast", "speak"], p.kind);
 			}),
 	},
 	{
 		name: "android_vibrate",
 		label: "震动",
-		description: "让手机震动。可指定时长或自定义节奏（毫秒数组，按「停-动-停-动」交替解释）。",
+		description: "让手机震动。",
 		promptSnippet: "让手机震动（可自定义节奏）",
 		parameters: Type.Object({
 			ms: Type.Optional(Type.Number({ description: "震动时长（毫秒），默认 200，上限 10000。" })),
 			pattern: Type.Optional(
-				Type.Array(Type.Number(), { description: "自定义节奏的毫秒数组，例如 [0, 120, 80, 120]；给了它则忽略 ms。" }),
+				Type.Array(Type.Number(), { description: "自定义节奏的毫秒数组，例如 [0, 120, 80, 120]；按「停-动-停-动」解释，给了它则忽略 ms。" }),
 			),
 		}),
 		run: async (params) =>
@@ -703,8 +725,8 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 		name: "android_share",
 		label: "分享",
 		description:
-			"把文本或链接交给系统分享面板，由用户选择目标应用。危险操作：等于以用户的名义把内容发出应用，会请求确认。",
-		promptSnippet: "把文本或链接交给系统分享面板（危险操作，需用户确认）",
+			"把文本或链接交给系统分享面板，由用户选择目标应用；要直接用默认应用打开 URL 用 android_open。",
+		promptSnippet: "交给系统分享面板（需确认）",
 		parameters: Type.Object({
 			text: Type.Optional(Type.String({ description: "分享的正文。" })),
 			url: Type.Optional(Type.String({ description: "要附加的链接。" })),
@@ -725,8 +747,8 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 		name: "android_open",
 		label: "打开链接",
 		description:
-			"用系统默认应用打开一个 URL（含自定义 scheme 的深链）。危险操作：会把控制权交给另一个应用，会请求确认。",
-		promptSnippet: "用系统应用打开 URL 或深链（危险操作，需用户确认）",
+			"用系统默认应用打开 URL 或深链（含自定义 scheme）；要让用户自己选应用分享内容用 android_share。",
+		promptSnippet: "用系统应用打开 URL/深链（需确认）",
 		parameters: Type.Object({
 			url: Type.String({ description: "完整 URL，必须带 scheme，例如 https://pi.dev 或 mailto:a@b.c。" }),
 		}),
@@ -740,109 +762,102 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 
 	// ------------------------------------------------------------ 剪贴板 ----
 	{
-		name: "android_clipboard_get",
-		label: "读剪贴板",
+		name: "android_clipboard",
+		label: "剪贴板",
 		description:
-			"读取系统剪贴板的文本。注意 Android 10 起只有前台应用能读剪贴板，因此应用不在前台时读不到内容（会明确说明原因）。",
-		promptSnippet: "读取系统剪贴板文本",
-		parameters: Type.Object({}),
-		run: async () =>
-			guarded(async () => {
-				const data = await bridgeGet<ClipboardData>("/app/clipboard");
-				if (data.empty) {
-					const note = data.note ? `\n${data.note}` : "";
-					return textResult(`剪贴板为空或不可读。${note}`, { empty: true });
-				}
-				return textResult(
-					`剪贴板内容（${data.text.length} 字符）：\n\n${truncateForModel(data.text, "剪贴板")}`,
-					{ length: data.text.length },
-				);
-			}),
-	},
-	{
-		name: "android_clipboard_set",
-		label: "写剪贴板",
-		description: "把文本写入系统剪贴板，用户随后可以在任意应用中粘贴。",
-		promptSnippet: "把文本写入系统剪贴板",
+			"读或写系统剪贴板：给 text 写入，不给 text 读取。Android 10 起只有前台应用能读剪贴板，读不到时会说明原因。",
+		promptSnippet: "读写系统剪贴板",
 		parameters: Type.Object({
-			text: Type.String({ description: "要写入的文本。" }),
+			text: Type.Optional(Type.String({ description: "要写入的文本；省略则读剪贴板。" })),
 		}),
 		run: async (params) =>
 			guarded(async () => {
-				const p = params as { text: string };
-				const data = await bridgePost<{ chars: number }>("/app/clipboard", { text: p.text });
-				return textResult(`已写入剪贴板（${data.chars} 字符）`, data as unknown as Record<string, unknown>);
+				const p = params as { text?: string };
+				if (typeof p.text === "string") {
+					const data = await bridgePost<{ chars: number }>("/app/clipboard", { text: p.text });
+					return textResult(`[clipboard write] 已写入剪贴板（${data.chars} 字符）`, data as unknown as Record<string, unknown>);
+				}
+				const data = await bridgeGet<ClipboardData>("/app/clipboard");
+				if (data.empty) {
+					const note = data.note ? `\n${data.note}` : "";
+					return textResult(`[clipboard read] 剪贴板为空或不可读。${note}`, { empty: true });
+				}
+				return textResult(
+					`[clipboard read] 剪贴板内容（${data.text.length} 字符）：\n\n${truncateForModel(data.text, "剪贴板")}`,
+					{ length: data.text.length },
+				);
 			}),
 	},
 
 	// -------------------------------------------------------------- 存储 ----
 	{
-		name: "android_export",
-		label: "导出到 Download",
+		name: "android_download",
+		label: "公共 Download 读写",
 		description:
-			"把文本或 base64 二进制内容写成公共 Download 目录里的文件，用户与其他应用都能看到。" +
-			"API 29+ 走 MediaStore 不需要权限；Android 8/9 需要用户授予存储权限（在「存储」卡里有按钮）。" +
-			"要写进用户自己的目录，用 android_files_write（需要先授权目录）。",
-		promptSnippet: "把内容导出成 Download 目录里的文件（危险操作，需用户确认）",
+			"读写公共 Download 目录里的文件。" +
+			"op=\"write\" 需要 name + content（文本）或 base64 + mimeType（二进制）；op=\"read\" 需要 name，可选 maxBytes。" +
+			"write 在 API 29+ 无需权限、Android 8/9 需存储权限；" +
+			"read 在 API 33+ 只能读本应用导出过的文件、API 30–32 需存储权限。用户自己指定的目录用 android_files。op 必填。",
+		promptSnippet: "读写公共 Download 文件（需确认）",
 		parameters: Type.Object({
-			name: Type.String({ description: "文件名（不含路径），例如 report.md。" }),
-			content: Type.Optional(Type.String({ description: "文本内容。" })),
-			base64: Type.Optional(Type.String({ description: "二进制内容的 base64；与 content 二选一。" })),
-			mimeType: Type.Optional(Type.String({ description: "MIME 类型，默认 text/plain。" })),
-		}),
-		run: async (params) =>
-			guarded(async () => {
-				const p = params as { name: string; content?: string; base64?: string; mimeType?: string };
-				const data = await bridgePost<ExportData>("/app/export", {
-					name: p.name,
-					content: p.content,
-					base64: p.base64,
-					mimeType: p.mimeType,
-				});
-				return textResult(
-					`已导出到 ${data.location}/${data.displayName}（${formatSize(data.bytes)}）\nURI：${data.uri}`,
-					data as unknown as Record<string, unknown>,
-				);
+			op: StringEnum(["write", "read"] as const, {
+				description: "write 导出文件，read 读入文件。",
 			}),
-	},
-	{
-		name: "android_import",
-		label: "从 Download 读入",
-		description:
-			"按文件名读取公共 Download 目录里的文件。API 33+ 上只能读取本应用自己导出过的文件（系统不再给普通应用读别人文件的权限）；" +
-			"API 30–32 需要用户授予存储权限。要读写用户自己指定的目录，用 android_files_read / android_files_write（SAF 授权，没有这个限制）。",
-		promptSnippet: "读取 Download 目录里的文件（危险操作，需用户确认）",
-		parameters: Type.Object({
-			name: Type.String({ description: "文件名（不含路径）。" }),
-			maxBytes: Type.Optional(Type.Number({ description: "最多读取多少字节，默认 1MB，上限 4MB。" })),
+			name: Type.String({ description: "文件名（不含路径），例如 report.md。" }),
+			content: Type.Optional(Type.String({ description: "文本内容；op=\"write\"，与 base64 二选一。" })),
+			base64: Type.Optional(Type.String({ description: "二进制内容的 base64；op=\"write\"，与 content 二选一。" })),
+			mimeType: Type.Optional(Type.String({ description: "MIME 类型，默认 text/plain；op=\"write\"。" })),
+			maxBytes: Type.Optional(Type.Number({ description: "最多读取多少字节，默认 1MB，上限 4MB；op=\"read\"。" })),
 		}),
 		run: async (params) =>
 			guarded(async () => {
-				const p = params as { name: string; maxBytes?: number };
-				const data = await bridgePost<ImportData>("/app/import", { name: p.name, maxBytes: p.maxBytes });
-				if (typeof data.text === "string") {
+				const p = params as {
+					op: string;
+					name: string;
+					content?: string;
+					base64?: string;
+					mimeType?: string;
+					maxBytes?: number;
+				};
+				if (p.op === "write") {
+					const data = await bridgePost<ExportData>("/app/export", {
+						name: p.name,
+						content: p.content,
+						base64: p.base64,
+						mimeType: p.mimeType,
+					});
 					return textResult(
-						`已读入 ${data.displayName}（${formatSize(data.bytes)}${data.truncated ? "，已截断" : ""}）：\n\n` +
-							truncateForModel(data.text, "文件内容"),
-						{ bytes: data.bytes },
+						`[op write] 已导出到 ${data.location}/${data.displayName}（${formatSize(data.bytes)}）\nURI：${data.uri}`,
+						data as unknown as Record<string, unknown>,
 					);
 				}
-				return textResult(
-					`已读入 ${data.displayName}（${formatSize(data.bytes)}），它是二进制文件。` +
-						"如需查看，可以再调用一次并让用户确认，或改用 bash 工具在 guest 内处理。",
-					{ bytes: data.bytes, binary: true },
-				);
+				if (p.op === "read") {
+					const data = await bridgePost<ImportData>("/app/import", { name: p.name, maxBytes: p.maxBytes });
+					if (typeof data.text === "string") {
+						return textResult(
+							`[op read] 已读入 ${data.displayName}（${formatSize(data.bytes)}${data.truncated ? "，已截断" : ""}）：\n\n` +
+								truncateForModel(data.text, "文件内容"),
+							{ bytes: data.bytes },
+						);
+					}
+					return textResult(
+						`[op read] 已读入 ${data.displayName}（${formatSize(data.bytes)}），它是二进制文件。` +
+							"如需查看，可以再调用一次并让用户确认，或改用 bash 工具在 guest 内处理。",
+						{ bytes: data.bytes, binary: true },
+					);
+				}
+				throw badParam("android_download", "op", ["write", "read"], p.op);
 			}),
 	},
 	{
 		name: "android_files_list",
 		label: "已授权目录",
 		description:
-			"列出用户在「设置 → 设备能力 → 存储」授权给 Agent 的目录（SAF）及其内容。不传 path 时列出根目录名；" +
-			"传 path 时路径写成「根目录名/相对路径」，例如 Documents/notes。这是读写用户自己的目录的方式，不受 Download 的限制。",
-		promptSnippet: "列出用户授权（SAF）的目录与其中的文件",
+			"列出用户授权（SAF）的目录及其内容：不传 path 时列出已授权的根目录名。" +
+			"读写用户自己的文件用 android_files；公共 Download 目录用 android_download。",
+		promptSnippet: "列出已授权（SAF）的目录与文件",
 		promptGuidelines: [
-			"要读写用户自己的文件时，先用 android_files_list 看清有哪些已授权目录与它们的名字；路径必须以根目录名开头。",
+			"读写用户自己的文件前，先用 android_files_list 看清已授权的根目录名；路径必须以根目录名开头。",
 		],
 		parameters: Type.Object({
 			path: Type.Optional(Type.String({ description: "「根目录名/相对路径」，省略则列出所有已授权根目录。" })),
@@ -870,155 +885,143 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 			}),
 	},
 	{
-		name: "android_files_read",
-		label: "读授权目录里的文件",
+		name: "android_files",
+		label: "授权目录读写",
 		description:
-			"读取用户已授权（SAF）目录里的一个文件，路径写成「根目录名/相对路径」。文本直接返回，二进制以 base64 返回。" +
-			"危险操作：内容会进入模型上下文，会请求确认。",
-		promptSnippet: "读取用户授权目录里的文件（危险操作，需用户确认）",
+			"读写用户已授权（SAF）目录里的文件。" +
+			"op=\"write\" 需要 path + content（文本）或 base64（二进制，可配 mimeType），不存在的中间目录会自动创建、同名文件会被覆盖；" +
+			"op=\"read\" 只需 path，可选 maxBytes，文本直接返回、二进制给 base64。公共 Download 目录用 android_download。op 必填。",
+		promptSnippet: "读写授权目录里的文件（需确认）",
 		parameters: Type.Object({
+			op: StringEnum(["write", "read"] as const, {
+				description: "write 写文件，read 读文件。",
+			}),
 			path: Type.String({ description: "「根目录名/相对路径」，例如 Documents/notes/todo.md。" }),
-			maxBytes: Type.Optional(Type.Number({ description: "最多读取多少字节，默认 1MB，上限 4MB。" })),
+			content: Type.Optional(Type.String({ description: "文本内容；op=\"write\"，与 base64 二选一。" })),
+			base64: Type.Optional(Type.String({ description: "二进制内容的 base64；op=\"write\"，与 content 二选一。" })),
+			mimeType: Type.Optional(Type.String({ description: "MIME 类型，默认 text/plain；op=\"write\"。" })),
+			maxBytes: Type.Optional(Type.Number({ description: "最多读取多少字节，默认 1MB，上限 4MB；op=\"read\"。" })),
 		}),
 		run: async (params) =>
 			guarded(async () => {
-				const p = params as { path: string; maxBytes?: number };
-				const data = await bridgePost<SafReadData>("/app/files/read", { path: p.path, maxBytes: p.maxBytes });
-				if (typeof data.text === "string") {
+				const p = params as {
+					op: string;
+					path: string;
+					content?: string;
+					base64?: string;
+					mimeType?: string;
+					maxBytes?: number;
+				};
+				if (p.op === "read") {
+					const data = await bridgePost<SafReadData>("/app/files/read", { path: p.path, maxBytes: p.maxBytes });
+					if (typeof data.text === "string") {
+						return textResult(
+							`[op read] 已读入 ${data.path}（${formatSize(data.bytes)}${data.truncated ? "，已截断" : ""}）：\n\n` +
+								truncateForModel(data.text, "文件内容"),
+							{ path: data.path, bytes: data.bytes },
+						);
+					}
 					return textResult(
-						`已读入 ${data.path}（${formatSize(data.bytes)}${data.truncated ? "，已截断" : ""}）：\n\n` +
-							truncateForModel(data.text, "文件内容"),
-						{ path: data.path, bytes: data.bytes },
+						`[op read] 已读入 ${data.path}（${formatSize(data.bytes)}），它是二进制文件，以 base64 返回：\n\n` +
+							truncateForModel(data.base64 ?? "", "base64"),
+						{ path: data.path, bytes: data.bytes, binary: true },
 					);
 				}
-				return textResult(
-					`已读入 ${data.path}（${formatSize(data.bytes)}），它是二进制文件，以 base64 返回：\n\n` +
-						truncateForModel(data.base64 ?? "", "base64"),
-					{ path: data.path, bytes: data.bytes, binary: true },
-				);
-			}),
-	},
-	{
-		name: "android_files_write",
-		label: "写授权目录里的文件",
-		description:
-			"把文本或 base64 写进用户已授权（SAF）目录，路径写成「根目录名/相对路径」。不存在的中间目录会自动创建，同名文件会被覆盖。" +
-			"危险操作：可能覆盖用户已有的文件，会请求确认。",
-		promptSnippet: "写入用户授权目录里的文件（危险操作，需用户确认）",
-		parameters: Type.Object({
-			path: Type.String({ description: "「根目录名/相对路径」，例如 Documents/notes/todo.md。" }),
-			content: Type.Optional(Type.String({ description: "文本内容。" })),
-			base64: Type.Optional(Type.String({ description: "二进制内容的 base64；与 content 二选一。" })),
-			mimeType: Type.Optional(Type.String({ description: "MIME 类型，默认 text/plain。" })),
-		}),
-		run: async (params) =>
-			guarded(async () => {
-				const p = params as { path: string; content?: string; base64?: string; mimeType?: string };
-				const data = await bridgePost<SafWriteData>("/app/files/write", {
-					path: p.path,
-					content: p.content,
-					base64: p.base64,
-					mimeType: p.mimeType,
-				});
-				return textResult(
-					`已${data.created ? "创建" : "覆盖"} ${data.path}（${formatSize(data.bytes)}，${data.mimeType}）\nURI：${data.uri}`,
-					data as unknown as Record<string, unknown>,
-				);
+				if (p.op === "write") {
+					const data = await bridgePost<SafWriteData>("/app/files/write", {
+						path: p.path,
+						content: p.content,
+						base64: p.base64,
+						mimeType: p.mimeType,
+					});
+					return textResult(
+						`[op write] 已${data.created ? "创建" : "覆盖"} ${data.path}（${formatSize(data.bytes)}，${data.mimeType}）\nURI：${data.uri}`,
+						data as unknown as Record<string, unknown>,
+					);
+				}
+				throw badParam("android_files", "op", ["write", "read"], p.op);
 			}),
 	},
 
 	// ------------------------------------------------- 位置 / 传感器 / 相机 ----
 	{
-		name: "android_location",
-		label: "定位",
+		name: "android_device_state",
+		label: "设备状态",
 		description:
-			"读取设备最近一次已知位置（经纬度、精度、provider、数据年龄）。需要「位置·传感器·相机」能力与系统定位权限。",
-		promptSnippet: "读取设备最近一次已知位置",
-		parameters: Type.Object({}),
-		run: async () =>
-			guarded(async () => {
-				const data = await bridgeGet<{
-					latitude: number;
-					longitude: number;
-					accuracyMeters: number;
-					provider: string;
-					ageSeconds: number;
-					stale: boolean;
-				}>("/app/location");
-				const freshness = data.stale
-					? `（数据已有 ${data.ageSeconds} 秒，可能已经过时）`
-					: `（${data.ageSeconds} 秒前）`;
-				return textResult(
-					`位置：${data.latitude}, ${data.longitude}（精度约 ${Math.round(data.accuracyMeters)} 米，来自 ${data.provider}）${freshness}`,
-					data as unknown as Record<string, unknown>,
-				);
-			}),
-	},
-	{
-		name: "android_sensors",
-		label: "传感器列表",
-		description: "列出设备上的所有传感器（名称、类型、厂商、量程、分辨率）。",
-		promptSnippet: "列出设备上的传感器",
-		parameters: Type.Object({}),
-		run: async () =>
-			guarded(async () => {
-				const data = await bridgeGet<SensorsData>("/app/sensors");
-				const lines = data.sensors.map(
-					(sensor) => `${sensor.typeName}（type=${sensor.type}）  ${sensor.name}  ${sensor.vendor}`,
-				);
-				return textResult(
-					truncateForModel(`共 ${data.count} 个传感器：\n\n${lines.join("\n")}`, "传感器列表"),
-					{ count: data.count },
-				);
-			}),
-	},
-	{
-		name: "android_sensor",
-		label: "读取传感器",
-		description:
-			"读取一次传感器采样值（例如 accelerometer、light、pressure）。先用 android_sensors 拿到 typeName；" +
-			"有些传感器（如 step_counter）不适合单次采样。",
-		promptSnippet: "读取一次传感器数值",
+			"读设备状态。what=\"battery\" 电量/充电/温度；what=\"location\" 最近一次已知位置；" +
+			"what=\"sensors\" 列出所有传感器；" +
+			"what=\"sensor\" 读一次采样值（accelerometer、light、pressure 等；step_counter 之类不适合单次采样），给 typeName 或 type。" +
+			"需要「位置·传感器·相机」能力，location 还需系统定位权限。what 必填。",
+		promptSnippet: "读电池 / 位置 / 传感器",
 		parameters: Type.Object({
-			typeName: Type.Optional(Type.String({ description: "传感器类型名，例如 accelerometer。" })),
-			type: Type.Optional(Type.Number({ description: "传感器数字类型（Android Sensor.TYPE_*），与 typeName 二选一。" })),
-			timeoutMs: Type.Optional(Type.Number({ description: "等待一次采样的超时（毫秒），默认 1500。" })),
+			what: StringEnum(["battery", "location", "sensors", "sensor"] as const, {
+				description: "battery 电量，location 位置，sensors 传感器列表，sensor 一次采样。",
+			}),
+			typeName: Type.Optional(
+				Type.String({ description: "传感器类型名，例如 accelerometer；仅 what=\"sensor\"，与 type 二选一。" }),
+			),
+			type: Type.Optional(
+				Type.Number({ description: "传感器数字类型（Android Sensor.TYPE_*）；仅 what=\"sensor\"，与 typeName 二选一。" }),
+			),
+			timeoutMs: Type.Optional(Type.Number({ description: "等待一次采样的超时（毫秒），默认 1500；仅 what=\"sensor\"。" })),
 		}),
 		run: async (params) =>
 			guarded(async () => {
-				const p = params as { typeName?: string; type?: number; timeoutMs?: number };
-				const data = await bridgeGet<SensorSampleData>("/app/sensor", {
-					typeName: p.typeName,
-					type: p.type,
-					timeoutMs: p.timeoutMs,
-				});
-				return textResult(
-					`${data.name}（${data.typeName}）：${data.values.join(", ")}${data.units ? ` ${data.units}` : ""}`,
-					data as unknown as Record<string, unknown>,
-				);
-			}),
-	},
-	{
-		name: "android_battery",
-		label: "电池",
-		description: "读取电池电量百分比、充电状态与温度。",
-		promptSnippet: "读取电池电量与充电状态",
-		parameters: Type.Object({}),
-		run: async () =>
-			guarded(async () => {
-				const data = await bridgeGet<{ percent: number; status: string; plugged: boolean; temperatureC: number }>(
-					"/app/battery",
-				);
-				return textResult(
-					`电量 ${data.percent}% · 状态 ${data.status} · ${data.plugged ? "已接电源" : "未接电源"} · ${data.temperatureC}°C`,
-					data as unknown as Record<string, unknown>,
-				);
+				const p = params as { what: string; typeName?: string; type?: number; timeoutMs?: number };
+				if (p.what === "battery") {
+					const data = await bridgeGet<{ percent: number; status: string; plugged: boolean; temperatureC: number }>(
+						"/app/battery",
+					);
+					return textResult(
+						`[what battery] 电量 ${data.percent}% · 状态 ${data.status} · ${data.plugged ? "已接电源" : "未接电源"} · ${data.temperatureC}°C`,
+						data as unknown as Record<string, unknown>,
+					);
+				}
+				if (p.what === "location") {
+					const data = await bridgeGet<{
+						latitude: number;
+						longitude: number;
+						accuracyMeters: number;
+						provider: string;
+						ageSeconds: number;
+						stale: boolean;
+					}>("/app/location");
+					const freshness = data.stale
+						? `（数据已有 ${data.ageSeconds} 秒，可能已经过时）`
+						: `（${data.ageSeconds} 秒前）`;
+					return textResult(
+						`[what location] 位置：${data.latitude}, ${data.longitude}（精度约 ${Math.round(data.accuracyMeters)} 米，来自 ${data.provider}）${freshness}`,
+						data as unknown as Record<string, unknown>,
+					);
+				}
+				if (p.what === "sensors") {
+					const data = await bridgeGet<SensorsData>("/app/sensors");
+					const lines = data.sensors.map(
+						(sensor) => `${sensor.typeName}（type=${sensor.type}）  ${sensor.name}  ${sensor.vendor}`,
+					);
+					return textResult(
+						truncateForModel(`[what sensors] 共 ${data.count} 个传感器：\n\n${lines.join("\n")}`, "传感器列表"),
+						{ count: data.count },
+					);
+				}
+				if (p.what === "sensor") {
+					const data = await bridgeGet<SensorSampleData>("/app/sensor", {
+						typeName: p.typeName,
+						type: p.type,
+						timeoutMs: p.timeoutMs,
+					});
+					return textResult(
+						`[what sensor] ${data.name}（${data.typeName}）：${data.values.join(", ")}${data.units ? ` ${data.units}` : ""}`,
+						data as unknown as Record<string, unknown>,
+					);
+				}
+				throw badParam("android_device_state", "what", ["battery", "location", "sensors", "sensor"], p.what);
 			}),
 	},
 	{
 		name: "android_torch",
 		label: "手电筒",
-		description: "打开或关闭手电筒（相机闪光灯）。某些 ROM 需要相机权限。",
+		description: "开关手电筒（相机闪光灯）；某些 ROM 需要相机权限。",
 		promptSnippet: "开关手电筒",
 		parameters: Type.Object({
 			on: Type.Boolean({ description: "true 打开，false 关闭。" }),
@@ -1031,47 +1034,19 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 			}),
 	},
 
-	// ---------------------------------------------------------------- 语音 ----
-	{
-		name: "android_tts",
-		label: "语音朗读",
-		description: "用系统 TTS 引擎朗读一段文本。适合用户不看屏幕时汇报结果。",
-		promptSnippet: "用系统 TTS 朗读文本",
-		parameters: Type.Object({
-			text: Type.String({ description: "要朗读的文本。" }),
-			language: Type.Optional(Type.String({ description: "BCP-47 语言标签，例如 zh-CN、en-US；默认系统语言。" })),
-			rate: Type.Optional(Type.Number({ description: "语速 0.1–3.0，默认 1.0。" })),
-			pitch: Type.Optional(Type.Number({ description: "音调 0.1–3.0，默认 1.0。" })),
-		}),
-		run: async (params) =>
-			guarded(async () => {
-				const p = params as { text: string; language?: string; rate?: number; pitch?: number };
-				const data = await bridgePost<{ spoken: boolean; finished: boolean; language: string; chars: number }>(
-					"/app/tts",
-					{ text: p.text, language: p.language, rate: p.rate, pitch: p.pitch },
-					60_000,
-				);
-				return textResult(
-					`已朗读 ${data.chars} 个字符（${data.language}）${data.finished ? "，已读完" : "，仍在播放"}`,
-					data as unknown as Record<string, unknown>,
-				);
-			}),
-	},
-
 	// --------------------------------------------------------------- Shell ----
 	{
 		name: "android_shell",
 		label: "设备 Shell",
 		description:
-			"在设备上执行一条受策略守卫限制的 Shell 命令（需要用户开启「Shell」能力）。有命令白名单，未知命令一律拒绝；" +
+			"执行一条受策略守卫限制的设备 Shell 命令（需要用户开启「Shell」能力）。有命令白名单，未知命令一律拒绝；" +
 			"硬性禁用（与授权无关）：mount/umount、setenforce、setprop、settings put、mknod、dd、mkfs、pm clear/uninstall、su/sudo/magisk、/dev/block。" +
-			"写入边界是用户选定的工作区：之内（含工作区本身就是 DCIM、Pictures、Download 等目录时）不拦，之外拒绝。" +
+			"只允许写工作区之内（含工作区本身就是 DCIM、Pictures、Download 等目录时），之外拒绝。" +
 			"`$(...)` 与反引号默认拒绝，除非用户在「设置 → 设备能力 → Shell」打开「放宽模式」。" +
-			"命令以当前后端身份运行：授权了 Shizuku 就是 ADB（uid=2000），否则是应用自身身份。工作区里的构建、git、npm、rg 请用内置 bash。",
-		promptSnippet: "执行受策略守卫限制的设备 Shell 命令（默认关闭；第一次会请求确认，可记住本会话）",
+			"以后端身份运行：授权了 Shizuku 就是 ADB（uid=2000），否则是应用自身身份。",
+		promptSnippet: "执行受策略守卫的设备 Shell 命令（需确认）",
 		promptGuidelines: [
-			"用 android_shell 之前先想清楚这一步是不是真的需要设备级身份；在工作区里做文件操作，内置 bash 更快也更合适。",
-			"android_shell 只写工作区之内；要写工作区之外的用户文件，用 android_files_write（需要用户先授权目录）。",
+			"android_shell 只在确实需要设备级身份时才用；工作区里的文件、git、npm、构建用内置 bash，写用户自己的文件用 android_files（op=\"write\"）。",
 		],
 		parameters: Type.Object({
 			command: Type.String({ description: "要执行的命令。多个动作请拆成多次调用。" }),
@@ -1108,7 +1083,7 @@ const SKILL_SENTINEL = `name: ${SKILL_NAME}`;
 function skillMarkdown(): string {
 	return `---
 name: ${SKILL_NAME}
-description: 在 Android 手机上操作界面、读屏、截屏、查看应用、读写剪贴板、通知、定位、使用传感器时的设备能力用法。
+description: Android 手机的界面、应用、文件、通知与传感器工具用法。
 ---
 
 # pi-android 设备环境
@@ -1129,11 +1104,11 @@ proot 的 Ubuntu 用户态里，App 进程另外提供一组设备能力工具�
 
 - 看屏幕：\`android_ui_dump\`（控件树，带编号）→ \`android_tap\`（按编号点按）→ 再 dump。
   文本/自绘界面用 \`android_screenshot\` 直接看图，\`android_input\` 写输入框。
-- 应用：\`android_apps\` 列表 → \`android_launch\` 启动；\`android_stop_app\` 结束用户应用（危险，需确认）。
-- 与用户交互：\`android_notify\`、\`android_toast\`、\`android_vibrate\`、\`android_tts\`。
-- 数据：\`android_clipboard_get/set\`；\`android_export\` 写到公共 Download，\`android_import\` 读回；
-  用户自己指定的目录用 \`android_files_list/read/write\`（需要他先在「设置 → 设备能力 → 存储」授权目录）。
-- 设备状态：\`android_battery\`、\`android_location\`、\`android_sensors\`、\`android_torch\`。
+- 应用：\`android_app\`（\`action="list"\` 列应用、\`action="launch"\` 启动）；\`android_stop_app\` 结束用户应用（危险，需确认）。
+- 与用户交互：\`android_say\`（\`kind\` = notification / toast / speak）、\`android_vibrate\`。
+- 数据：\`android_clipboard\`（给 \`text\` 写、不给则读）；\`android_download\`（\`op="write"\` 写公共 Download、\`op="read"\` 读回）；
+  用户自己指定的目录用 \`android_files_list\` + \`android_files\`（\`op="read"\` / \`"write"\`，需要他先在「设置 → 设备能力 → 存储」授权目录）。
+- 设备状态：\`android_device_state\`（\`what\` = battery / location / sensors / sensor）、\`android_torch\`。
 
 ## 规则
 
@@ -1146,7 +1121,7 @@ proot 的 Ubuntu 用户态里，App 进程另外提供一组设备能力工具�
 4. **不要假装做过。** 工具失败就是失败；把工具的返回内容如实告诉用户。
 5. **设备策略只管辖 android_* 工具。** 你在工作区里用内置 \`bash\` / read / write 跑 git、npm、rg、构建，
    不受任何设备策略限制——那是你的工作台。设备 Shell（\`android_shell\`）是另一回事：它有命令白名单、
-   硬性禁用清单，而且只允许写工作区之内（工作区之外要写用户文件，用 \`android_files_write\`）。
+   硬性禁用清单，而且只允许写工作区之内（工作区之外要写用户文件，用 \`android_files\`（\`op="write"\`））。
 
 ## 与 Termux 的区别
 
@@ -1169,10 +1144,9 @@ function environmentGuidance(): string {
 		"",
 		"## Android 设备环境（pi-android）",
 		"",
-		"你运行在 pi-android 客户端里：pi 内核在 proot 的 Ubuntu 中，App 另外提供以 android_ 开头的手机能力工具。",
-		"- 工作区是 `/workspace`（快；设备策略**只**管 android_* 工具，在这里跑 git / npm / 构建用内置 bash 不受限），用户共享存储是 `/sdcard`（慢，但用户可见）。",
-		"- 能力按组授权，默认只开「基础」组。返回 `[DISABLED]` / `[NO_PERMISSION]` 时，把附带的中文原因原样转述并指向「设置 → 设备能力」；不要猜原因，也不要重试同一次调用。",
-		"- 危险设备操作会请求用户确认（第一次可以选择「同意并记住本次会话」）；用户拒绝就停下并说明。",
+		"pi 内核在 proot 的 Ubuntu 里，App 另外提供以 android_ 开头的设备工具。",
+		"- 工作区 `/workspace` 快、`/sdcard` 慢但用户可见；设备策略**只**管 android_* 工具，工作区里用内置 bash 跑 git / npm / 构建不受限。",
+		"- 危险设备操作会弹确认，用户可选「同意并记住本次会话」；被拒绝就停下并说明。",
 	].join("\n");
 }
 
@@ -1217,7 +1191,7 @@ export default function (pi: ExtensionAPI) {
 	// afterwards. A caller who needs proof that the scan finished can wait for the
 	// `session_start` event with `reason: "reload"`, which pi emits at the end.
 	pi.registerCommand("device-reload", {
-		description: "重新扫描扩展、技能与提示模板（新装扩展后不用重启引擎）",
+		description: "重新扫描扩展、技能与提示模板（无需重启引擎）",
 		handler: async (_args, ctx) => {
 			ctx.ui.notify("正在重新扫描扩展、技能与提示模板…", "info");
 			await ctx.reload();

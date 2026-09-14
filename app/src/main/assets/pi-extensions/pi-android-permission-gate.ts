@@ -62,6 +62,27 @@ const CHOICE_DENY = "拒绝";
 /** Tools the user approved; cleared on every session start. */
 const sessionGrants = new Set<string>();
 
+/**
+ * The key an approval is remembered under.
+ *
+ * The bridge's tools were merged: `android_download` and `android_files` now carry
+ * their direction in `op` (`"write"` / `"read"`), where they used to be two tools
+ * with two separate grants — remembering `android_files_write` never silenced
+ * `android_files_read`. Keying the grant by tool name alone would quietly widen
+ * that to both directions, so the op becomes part of the key whenever the call has
+ * one. A tool without a direction (shell, stop_app, share, open, input, keyevent)
+ * keeps its bare name, exactly as before.
+ */
+function grantKey(toolName: string, input: Record<string, unknown>): string {
+	const op = input.op;
+	return typeof op === "string" && op.length > 0 ? `${toolName}:${op}` : toolName;
+}
+
+/** What the user is shown for a remembered grant — `android_files（write）`. */
+function grantLabel(toolName: string, key: string): string {
+	return key === toolName ? toolName : `${toolName}（${key.slice(toolName.length + 1)}）`;
+}
+
 /** How many times each dangerous tool has been approved in this process. */
 const approvals = new Map<string, number>();
 
@@ -148,9 +169,10 @@ export default function (pi: ExtensionAPI) {
 		}
 
 		// (2) Already remembered for this session: do not ask again.
-		if (sessionGrants.has(toolName)) {
+		const key = grantKey(toolName, input);
+		if (sessionGrants.has(key)) {
 			approvals.set(toolName, (approvals.get(toolName) ?? 0) + 1);
-			await publish(`${toolName} 在本会话内已被记住，未再次询问。`);
+			await publish(`${grantLabel(toolName, key)} 在本会话内已被记住，未再次询问。`);
 			return undefined;
 		}
 
@@ -177,11 +199,12 @@ export default function (pi: ExtensionAPI) {
 		}
 
 		if (choice === CHOICE_REMEMBER) {
-			sessionGrants.add(toolName);
+			sessionGrants.add(key);
 			approvals.set(toolName, previous + 1);
-			await publish(`用户选择了「${CHOICE_REMEMBER}」：${toolName} 在本会话内不再询问。`);
+			const label = grantLabel(toolName, key);
+			await publish(`用户选择了「${CHOICE_REMEMBER}」：${label} 在本会话内不再询问。`);
 			await ctx.ui.notify(
-				`已记住：本会话不再询问「${toolName}」。结束会话后会恢复逐次确认。`,
+				`已记住：本会话不再询问「${label}」。结束会话后会恢复逐次确认。`,
 				"info",
 			);
 			return undefined;

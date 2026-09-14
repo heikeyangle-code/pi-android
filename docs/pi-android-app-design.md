@@ -998,13 +998,17 @@ App 内起仅绑 `127.0.0.1` 的 HTTP 服务（**独立端口 + 独立 token，�
 
 | 类别 | 工具 |
 |---|---|
-| 屏幕/UI | `android_ui_dump` `android_tap` `android_input` `android_key` `android_swipe` `android_screenshot`（**返回 ImageContent，模型能直接"看"屏幕**） |
-| 应用 | `android_apps` `android_launch` `android_stop_app` |
-| 交互 | `android_notify` `android_toast` `android_vibrate` `android_share` `android_open` `android_ask` |
-| 数据 | `android_clipboard_get/set` `android_files_read/write` `android_export` `android_import` |
-| 传感 | `android_location` `android_sensors` `android_torch` `android_battery` |
-| 媒体 | `android_camera_photo` `android_tts` |
+| 屏幕/UI | `android_ui_dump` `android_tap` `android_input` `android_key` `android_keyevent` `android_swipe` `android_screenshot`（**返回 ImageContent，模型能直接"看"屏幕**） |
+| 应用 | `android_app`（`action="list"/"launch"`） `android_stop_app` |
+| 交互 | `android_say`（`kind="notification"/"toast"/"speak"`） `android_vibrate` `android_share` `android_open` `android_ask` |
+| 数据 | `android_clipboard`（给 `text` 写、不给则读） `android_files_list` `android_files`（`op="read"/"write"`） `android_download`（`op="read"/"write"`） |
+| 传感 | `android_device_state`（`what="battery"/"location"/"sensors"/"sensor"`） `android_torch` |
+| 媒体 | `android_camera_photo` |
 | 高级（可选） | `android_shell`（Shizuku/ADB，uid=2000；套用与 DSH 相同的策略守卫：禁块设备/SELinux/`settings put`/挂载/清数据；结束应用前刷新清单并区分用户/系统应用） |
+
+这张表是 D32 合并之后的最终工具面（30 → 21），裁决与理由见
+`design/ui-refactor/07-construction-decisions.md` 的 D32；`android_ask` 与
+`android_camera_photo` 是当时规划、至今未实现的端点。
 
 另外注册：
 - **策略扩展**（危险操作分级确认，参考 `permission-gate.ts` 的写法）
