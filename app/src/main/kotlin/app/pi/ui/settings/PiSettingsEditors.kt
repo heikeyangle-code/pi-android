@@ -2,12 +2,14 @@ package app.pi.ui.settings
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -16,11 +18,15 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -28,8 +34,8 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -43,6 +49,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import app.pi.ui.components.EffectiveKind
 import app.pi.ui.components.PiAutoFocus
 import app.pi.ui.theme.PiShapes
@@ -169,66 +182,69 @@ fun PiOptionPickerSheet(
                     .heightIn(max = PiSettingsMetrics.sheetBodyMax)
                     .verticalScroll(rememberScrollState()),
             ) {
+                // v2 的选项行（`phone40` / HTML:2283-2293）：`padding:11px 14px`、
+                // 前导 `✓/○`（等宽 12，选中用正文色、未选中 muted）、标签 14、选中行
+                // 铺 `--selected-bg` + 右侧一枚「当前」徽标，**行间没有分隔线**。
                 options.forEach { option ->
                     val selected = option.wire == currentWire
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
+                            .background(
+                                if (selected) PiTheme.palette.selectedBg else Color.Transparent,
+                            )
                             .clickable {
                                 onPick(option.wire)
                                 onDismiss()
                             }
-                            .padding(vertical = PiSettingsMetrics.cardPadding),
+                            .padding(
+                                start = PiSettingsMetrics.pageHorizontal,
+                                end = PiSettingsMetrics.pageHorizontal,
+                                top = PiOptionRowPadding,
+                                bottom = PiOptionRowPadding,
+                            ),
                         verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(PiSettingsMetrics.rowGap),
                     ) {
+                        Text(
+                            if (selected) "✓" else "○",
+                            style = PiTheme.text.monoSmall,
+                            color = if (selected) {
+                                MaterialTheme.colorScheme.onSurface
+                            } else {
+                                PiTheme.palette.muted
+                            },
+                        )
                         Column(Modifier.weight(1f)) {
                             Text(
                                 option.label,
-                                style = MaterialTheme.typography.bodyLarge,
-                                color = if (selected) {
-                                    MaterialTheme.colorScheme.primary
-                                } else {
-                                    MaterialTheme.colorScheme.onSurface
-                                },
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurface,
                             )
                             if (option.description != null) {
                                 Text(
                                     option.description,
-                                    style = MaterialTheme.typography.bodyMedium,
+                                    modifier = Modifier.padding(top = PiSettingsMetrics.supportingGap),
+                                    style = PiTheme.text.meta,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
                             }
                         }
-                        Spacer(Modifier.width(PiSettingsMetrics.cardPadding))
-                        Text(
-                            option.wire,
-                            style = PiTheme.text.monoSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
                         if (selected) {
-                            Icon(
-                                Icons.Filled.Check,
-                                contentDescription = "已选中",
-                                modifier = Modifier
-                                    .padding(start = PiSpacing.inline)
-                                    .size(PiSettingsMetrics.cardIconSize),
-                                tint = MaterialTheme.colorScheme.primary,
-                            )
+                            PiSettingsBadge(label = "当前", tone = PiTheme.palette.accent)
                         }
                     }
-                    HorizontalDivider()
                 }
             }
             if (allowCustom) {
                 Spacer(Modifier.height(PiSpacing.unit))
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    OutlinedTextField(
+                    PiEditorField(
                         value = custom,
                         onValueChange = { custom = it },
                         modifier = Modifier.weight(1f),
-                        singleLine = true,
-                        label = { Text("自定义值") },
-                        textStyle = PiTheme.text.mono,
+                        label = "自定义值",
+                        height = PiNumberFieldHeight,
                     )
                     Spacer(Modifier.width(PiSpacing.inline))
                     TextButton(
@@ -307,33 +323,62 @@ fun PiNumberEditorSheet(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Spacer(Modifier.height(PiSettingsMetrics.sheetHeadBottom))
-            Text(
-                value.toString() + (setting.unit?.let { " $it" } ?: ""),
-                style = MaterialTheme.typography.headlineSmall,
-                color = MaterialTheme.colorScheme.primary,
-            )
-            Spacer(Modifier.height(PiSpacing.inline))
-            Slider(
-                value = value.toFloat(),
-                onValueChange = { raw -> update(raw.toInt()) },
-                valueRange = range,
-                steps = sliderSteps,
-            )
+            // v2 的数字编辑器（`phone41` / HTML:2297-2312）：两端读数夹着一条 2px 轨道，
+            // 下面是 44 高的等宽框（单位在框内右端）。原来那行 headline 读数没有对应物，
+            // 值本身就在框里，所以收掉了。
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(PiSliderLabelGap),
+            ) {
+                Text(
+                    "$low",
+                    style = PiTheme.text.meta,
+                    color = PiTheme.palette.muted,
+                )
+                Slider(
+                    value = value.toFloat(),
+                    onValueChange = { raw -> update(raw.toInt()) },
+                    modifier = Modifier.weight(1f),
+                    valueRange = range,
+                    steps = sliderSteps,
+                    thumb = { PiSliderThumb() },
+                    track = { state -> PiSliderTrack(state) },
+                )
+                Text(
+                    "$high",
+                    style = PiTheme.text.meta,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+            }
+            Spacer(Modifier.height(PiSettingsMetrics.rowGap))
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 TextButton(onClick = { update(value - step) }) { Text("−") }
-                OutlinedTextField(
+                PiEditorField(
                     value = typed,
                     onValueChange = { text ->
                         typed = text
                         text.trim().toIntOrNull()?.let { parsed -> value = parsed.coerceIn(low, high) }
                     },
-                    modifier = Modifier.weight(1f).focusRequester(focusRequester),
-                    singleLine = true,
-                    label = { Text("精确值") },
-                    textStyle = PiTheme.text.mono,
+                    modifier = Modifier.weight(1f),
+                    focusRequester = focusRequester,
+                    height = PiNumberFieldHeight,
+                    // v2 的数字框是等宽 17（`mono` 角色是 13，所以在这里就地定尺寸）。
+                    textStyle = PiTheme.text.mono.copy(fontSize = 17.sp, lineHeight = 22.sp),
+                    // v2 的数字框上没有 label（值就在框里、两端已有范围读数），所以这里
+                    // 不再挂「精确值」那一行。
+                    trailing = {
+                        if (setting.unit != null) {
+                            Text(
+                                setting.unit,
+                                style = PiTheme.text.mono,
+                                color = PiTheme.palette.muted,
+                            )
+                        }
+                    },
                 )
                 TextButton(onClick = { update(value + step) }) { Text("+") }
             }
@@ -411,17 +456,25 @@ fun PiTextEditorSheet(
             Spacer(Modifier.height(PiSettingsMetrics.sheetHeadBottom))
             // 只读行不抢焦点：那里没有可输入的东西，弹键盘等于骗人。
             if (!setting.readOnly) PiAutoFocus(focusRequester)
-            OutlinedTextField(
+            // 多行态照 v2（HTML:2313-2321）：`minHeight:80`、圆角 9、`surf-low`、内
+            // `10px 12px`、等宽 13。`singleLine` 仍由 `setting.depth` 决定（字段语义不动），
+            // 只是单行时用 v2 的单行框高。
+            PiEditorField(
                 value = text,
                 onValueChange = { text = it },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .focusRequester(focusRequester),
+                modifier = Modifier.fillMaxWidth(),
+                label = setting.key,
                 singleLine = setting.depth <= 1,
                 readOnly = setting.readOnly,
                 enabled = !setting.readOnly,
-                label = { Text(setting.key) },
-                textStyle = PiTheme.text.mono,
+                focusRequester = focusRequester,
+                height = if (setting.depth <= 1) PiNumberFieldHeight else null,
+                minHeight = if (setting.depth <= 1) null else PiTextFieldMinHeight,
+                contentPadding = if (setting.depth <= 1) {
+                    PiFieldPaddingSingleLine
+                } else {
+                    PiFieldPaddingBlock
+                },
             )
             if (setting.readOnly) {
                 Spacer(Modifier.height(PiSpacing.gutter))
@@ -580,14 +633,17 @@ fun PiListEditorSheet(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        OutlinedTextField(
+                        PiEditorField(
                             value = entry,
                             onValueChange = { changed ->
                                 entries = entries.toMutableList().also { list -> list[index] = changed }
                             },
                             modifier = Modifier.weight(1f),
-                            singleLine = true,
-                            textStyle = PiTheme.text.mono,
+                            height = PiNumberFieldHeight,
+                            // v2 的列表框是 `surf-highest` + `borderMuted`（HTML:2321-2325），
+                            // 与其余几型的 `surf-low` 不同档；聚焦时仍换 `borderAccent`。
+                            container = MaterialTheme.colorScheme.surfaceContainerHighest,
+                            textStyle = PiTheme.text.mono.copy(lineHeight = 22.sp),
                         )
                         IconButton(
                             onClick = {
@@ -609,13 +665,14 @@ fun PiListEditorSheet(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                OutlinedTextField(
+                PiEditorField(
                     value = draft,
                     onValueChange = { draft = it },
                     modifier = Modifier.weight(1f),
-                    singleLine = true,
-                    label = { Text("新增一项") },
-                    textStyle = PiTheme.text.mono,
+                    label = "新增一项",
+                    height = PiNumberFieldHeight,
+                    container = MaterialTheme.colorScheme.surfaceContainerHighest,
+                    textStyle = PiTheme.text.mono.copy(lineHeight = 22.sp),
                 )
                 IconButton(
                     onClick = {
@@ -731,45 +788,51 @@ fun PiThemeEditorSheet(
                     .heightIn(max = PiSettingsMetrics.sheetThemeMax)
                     .verticalScroll(rememberScrollState()),
             ) {
+                // v2 的主题行（`phone44` / HTML:2337-2344）：`padding:11px 14px`、
+                // 主题名**等宽 13**、右侧「当前」徽标、副行 12 灰 mt3、选中行铺
+                // `--selected-bg`，行间没有分隔线，也不用 ✓ 图标。
                 entries.forEach { entry ->
                     val selected = currentRaw == entry.name
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
+                            .background(
+                                if (selected) PiTheme.palette.selectedBg else Color.Transparent,
+                            )
                             .clickable {
                                 onSet(entry.name)
                                 onDismiss()
                             }
-                            .padding(vertical = PiSettingsMetrics.rowPaddingVertical),
+                            .padding(
+                                start = PiSettingsMetrics.pageHorizontal,
+                                end = PiSettingsMetrics.pageHorizontal,
+                                top = PiOptionRowPadding,
+                                bottom = PiOptionRowPadding,
+                            ),
                         verticalAlignment = Alignment.CenterVertically,
+                        // v2 的主题行是 `rw gap:8`。
+                        horizontalArrangement = Arrangement.spacedBy(PiSpacing.inline),
                     ) {
                         Column(Modifier.weight(1f)) {
                             Text(
                                 entry.name,
-                                style = MaterialTheme.typography.bodyLarge,
-                                color = if (selected) {
-                                    MaterialTheme.colorScheme.primary
-                                } else {
-                                    MaterialTheme.colorScheme.onSurface
-                                },
+                                style = PiTheme.text.mono,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
                             )
                             Text(
                                 entry.path?.let { "${entry.scope.label} · ${it.substringAfterLast('/')}" }
                                     ?: entry.scope.label,
+                                modifier = Modifier.padding(top = PiSettingsMetrics.supportingGap),
                                 style = PiTheme.text.meta,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
                         if (selected) {
-                            Icon(
-                                Icons.Filled.Check,
-                                contentDescription = "已选中",
-                                modifier = Modifier.size(PiSettingsMetrics.cardIconSize),
-                                tint = MaterialTheme.colorScheme.primary,
-                            )
+                            PiSettingsBadge(label = "当前", tone = PiTheme.palette.accent)
                         }
                     }
-                    HorizontalDivider()
                 }
             }
             Spacer(Modifier.height(PiSpacing.unit))
@@ -783,22 +846,20 @@ fun PiThemeEditorSheet(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                OutlinedTextField(
+                PiEditorField(
                     value = lightTheme,
                     onValueChange = { lightTheme = it },
                     modifier = Modifier.weight(1f),
-                    singleLine = true,
-                    label = { Text("浅色主题名") },
-                    textStyle = PiTheme.text.mono,
+                    label = "浅色主题名",
+                    height = PiNumberFieldHeight,
                 )
                 Spacer(Modifier.width(PiSpacing.inline))
-                OutlinedTextField(
+                PiEditorField(
                     value = darkTheme,
                     onValueChange = { darkTheme = it },
                     modifier = Modifier.weight(1f),
-                    singleLine = true,
-                    label = { Text("深色主题名") },
-                    textStyle = PiTheme.text.mono,
+                    label = "深色主题名",
+                    height = PiNumberFieldHeight,
                 )
             }
             Spacer(Modifier.height(PiSpacing.gutter))
@@ -814,13 +875,12 @@ fun PiThemeEditorSheet(
                 color = MaterialTheme.colorScheme.primary,
             )
             Spacer(Modifier.height(PiSpacing.gutter))
-            OutlinedTextField(
+            PiEditorField(
                 value = raw,
                 onValueChange = { raw = it },
                 modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
-                label = { Text("theme") },
-                textStyle = PiTheme.text.mono,
+                label = "theme",
+                height = PiNumberFieldHeight,
             )
             // v2 的 sheet 页脚：1px 上边（`borderMuted` 55%）+ `10px 14px 14px` 内边距。
             HorizontalDivider(
@@ -899,3 +959,161 @@ internal fun PiSettingsSheet(
         content = content,
     )
 }
+
+
+// ------------------------------------------------ v2 的字段框体与滑块（五型共用）
+//
+// 五型编辑器原来用 M3 的 `OutlinedTextField`：56 高、浮动 label，与 v2 的自绘框差着
+// 一整档。v2 的框体在 `EditorSheetBody` 里给了两副样子（`direction-b-v2.html:2297-2335`）：
+//
+//  - 单行框（数字）：`height:44`、圆角 9、`surf-low` 底、1px 边、内 `0 12px`，
+//    字是等宽 17，单位在框内右端（`mono t14 c-muted`）；
+//  - 多行框（文本）：`minHeight:80`、圆角 9、`surf-low` 底、1px 边、内 `10px 12px`，
+//    字是等宽 13；
+//  - 列表框：`surf-highest` 底 + 1px `borderMuted` 边、圆角 9、内 `10px 12px`、
+//    等宽 13 / 行高 22。
+//
+// 边色：v2 把**已聚焦**的输入框画成 `border-accent`（数字、文本两处都是），没聚焦时是
+// `borderMuted`。这里照这个规则做焦点环，而不是照 M3 的「描边永远一个色 + 变粗」。
+//
+// 五型的写盘逻辑、取值范围、条目语义一个字都没动：换掉的只是包装它们的那个盒子。
+
+/**
+ * 一个 v2 形状的输入框，五型编辑器共用。
+ *
+ * @param label 框上方的一行 12 灰说明。M3 的浮动 label 在 v2 的框体里没有槽位，而原文
+ *   显示的是**字段名/点号键**（`setting.key`、`浅色主题名`）——丢掉它不是排版问题，
+ *   是把「我在改哪个键」从这一屏抹掉，所以它留在框上沿，用 v2 自己的 12 灰。
+ * @param trailing 框内右端的读数（数字编辑器的单位）：v2 `mono t14 c-muted`。
+ * @param idleBorder 未聚焦时的边色；v2 的列表框用它自己的 `borderMuted`。
+ * @param container 框底色；v2 列表框是 `surf-highest`，其余是 `surf-low`。
+ */
+@Composable
+private fun PiEditorField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    modifier: Modifier = Modifier,
+    label: String? = null,
+    singleLine: Boolean = true,
+    enabled: Boolean = true,
+    readOnly: Boolean = false,
+    focusRequester: FocusRequester? = null,
+    height: Dp? = null,
+    minHeight: Dp? = null,
+    container: Color = MaterialTheme.colorScheme.surfaceContainerLow,
+    idleBorder: Color = MaterialTheme.colorScheme.outline,
+    textStyle: TextStyle = PiTheme.text.mono,
+    contentPadding: PaddingValues = PiFieldPaddingSingleLine,
+    trailing: (@Composable () -> Unit)? = null,
+) {
+    val interaction = remember { MutableInteractionSource() }
+    val focused by interaction.collectIsFocusedAsState()
+    Column(modifier) {
+        if (label != null) {
+            Text(
+                label,
+                style = PiTheme.text.meta,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+            )
+            Spacer(Modifier.height(PiFieldLabelGap))
+        }
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .then(if (height != null) Modifier.height(height) else Modifier)
+                .then(if (minHeight != null) Modifier.heightIn(min = minHeight) else Modifier)
+                .clip(PiFieldShape)
+                .background(container)
+                .border(
+                    PiSettingsMetrics.hairline,
+                    if (focused) PiTheme.palette.borderAccent else idleBorder,
+                    PiFieldShape,
+                )
+                .padding(contentPadding),
+            verticalAlignment = if (singleLine) Alignment.CenterVertically else Alignment.Top,
+            horizontalArrangement = Arrangement.spacedBy(PiSpacing.inline),
+        ) {
+            BasicTextField(
+                value = value,
+                onValueChange = onValueChange,
+                modifier = Modifier
+                    .weight(1f)
+                    .then(
+                        if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier,
+                    ),
+                enabled = enabled,
+                readOnly = readOnly,
+                singleLine = singleLine,
+                textStyle = textStyle.copy(color = MaterialTheme.colorScheme.onSurface),
+                cursorBrush = SolidColor(PiTheme.palette.accent),
+                interactionSource = interaction,
+            )
+            if (trailing != null) trailing()
+        }
+    }
+}
+
+/**
+ * 数字编辑器的滑块：v2 是 2px 的轨道 + 16 的旋钮（`background:var(--text)`），已选段是
+ * accent，两端各有一个读数（`t13`）。
+ *
+ * 手势仍交给 M3 的 `Slider`（只换 thumb/track 两个槽），这样拖动、无障碍、`steps` 的
+ * 吸附都还是原来那一套；换掉的只是画出来的那两件东西。
+ */
+@Composable
+private fun PiSliderThumb() {
+    Box(
+        Modifier
+            .size(PiSliderThumbSize)
+            .clip(CircleShape)
+            .background(MaterialTheme.colorScheme.onSurface),
+    )
+}
+
+// `SliderState` 本身带 `@ExperimentalMaterial3Api`（数字编辑器的调用点已有 opt-in，
+// 但这里的**签名**用了这个类型，所以声明处也要）。
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun PiSliderTrack(state: SliderState) {
+    val start = state.valueRange.start
+    val end = state.valueRange.endInclusive
+    val fraction = if (end > start) ((state.value - start) / (end - start)).coerceIn(0f, 1f) else 0f
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .height(PiSliderTrackHeight)
+            .background(MaterialTheme.colorScheme.outline),
+    ) {
+        Box(
+            Modifier
+                .fillMaxWidth(fraction)
+                .height(PiSliderTrackHeight)
+                .background(PiTheme.palette.accent),
+        )
+    }
+}
+
+/** `EditorSheetBody`：圆角 9（与设置页的搜索/输入框同一档）。 */
+private val PiFieldShape = RoundedCornerShape(PiSettingsMetrics.searchFieldRadius)
+
+/** 单行框 `padding:0 12px`；多行框 / 列表框 `padding:10px 12px`。 */
+private val PiFieldPaddingSingleLine = PaddingValues(horizontal = 12.dp)
+private val PiFieldPaddingBlock = PaddingValues(horizontal = 12.dp, vertical = 10.dp)
+
+/** 数字框 `height:44`；文本多行框 `minHeight:80`。 */
+private val PiNumberFieldHeight = 44.dp
+private val PiTextFieldMinHeight = 80.dp
+
+/** label 与框之间那一线。 */
+private val PiFieldLabelGap = 4.dp
+
+/** 滑块：轨道 2、旋钮 16。 */
+private val PiSliderTrackHeight = 2.dp
+private val PiSliderThumbSize = 16.dp
+
+/** 数字输入框两端的读数之间的空隙。 */
+private val PiSliderLabelGap = 10.dp
+
+/** 选项行 / 主题行：v2 是 `padding:11px 14px`（横向 14 由 sheet 正文的页边给）。 */
+private val PiOptionRowPadding = 11.dp
