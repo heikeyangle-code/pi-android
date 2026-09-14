@@ -1387,9 +1387,14 @@ object PiSettingsCatalog {
             "由本应用固定（与 pi 共用）· 续接：${summaryText(store, "app.sessions.resumeLast")}"
         },
         PiSettingsGroup(G_RESOURCES, "扩展与资源", Icons.Filled.Extension) { store ->
-            val extensions = byKey["extensions"]?.countIn(store) ?: 0
+            // 这两个数都是**设置里写了多少条**，不是 pi 加载了多少个：`extensions` 是
+            // 一个路径数组（`settings.json`），`packages` 是包来源数组，而 pi 实际加载的
+            // 扩展还会来自每个包自己的 `extensions/`、以及工作区 `.pi/extensions`。
+            // 原来的写法「N 个扩展」会被读成「pi 加载了 N 个扩展」——设置里写了 0 条不
+            // 等于 pi 一个扩展都没加载，那是两件事。所以这里只说设置里的条数。
+            val extensionPaths = byKey["extensions"]?.countIn(store) ?: 0
             val packages = byKey["packages"]?.countIn(store) ?: 0
-            "$extensions 个扩展 · $packages 个资源包"
+            "设置里 $extensionPaths 条扩展路径 · $packages 个资源包"
         },
         PiSettingsGroup(G_APPEARANCE, "外观", Icons.Filled.ColorLens) { store ->
             val themeValue = summaryText(store, "theme")

@@ -351,6 +351,19 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         val sessionId: String? = null,
         val sessionFile: String? = null,
         val messageCount: Int = 0,
+        /**
+         * pi is compacting the context right now.
+         *
+         * This flag exists because of one hard behaviour in pi: `session.prompt()`
+         * **throws** while a compaction is in progress —
+         * `Cannot submit a prompt while compaction is in progress…`
+         * (`core/agent-session.ts:1192-1196`) — so a message sent in that window
+         * must not go through `prompt` at all (see [send]). It is tracked from the
+         * two events and reconciled against `get_state`, because the event channel
+         * is documented to drop events under load (`docs/hang-and-crash-review.md`
+         * B6): a missed `compaction_end` would otherwise leave this true forever.
+         */
+        val compacting: Boolean = false,
     )
 
     data class UiState(
@@ -1370,9 +1383,16 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             transcript = transcript,
             revision = pub.revision,
             streaming = pub.streaming,
-            // pi's footer needs the *latest* assistant usage for its cache-hit
-            // item (`components/footer.ts:94-100`); the reducer already keeps it
-            // (`TranscriptReducer.lastUsage`), and F10's status row is its reader.
+            // The latest assistant usage, published so the UI can read it.
+            //
+            // It has **no reader right now**: the status row's `latestUsage`
+            // parameter — which this comment used to name — was deleted when the row
+            // was re-laid out to v2's own readings. The three fields it carries
+            // (`input` / `cacheRead` / `cacheWrite`) are pi's inputs to the cache-hit
+            // rate (`components/footer.ts:95-98`: `cacheRead ÷ (input + cacheRead +
+            // cacheWrite)`), so the value is kept rather than dropped while the user
+            // picks the status row's final layout (decision D23). The reducer is still
+            // its writer (`TranscriptReducer.lastUsage`).
             lastUsage = engine.transcript.lastUsage,
         )
         appliedRevision = pub.revision
@@ -1426,6 +1446,13 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                 queueSteering = event.steering.size,
                 queueFollowUp = event.followUp.size,
             )
+
+            // The window in which pi refuses a plain `prompt` (`:1192-1196`). Kept
+            // here rather than read off the transcript reducer (which draws the
+            // compaction card) because the *send* path is what needs it, and the
+            // reconciliation in [refreshState] is what heals a dropped event.
+            is PiEvent.CompactionStart -> setCompacting(true)
+            is PiEvent.CompactionEnd -> setCompacting(false)
 
             // A turn that ends for a reason other than "stop"/"toolUse" is not a
             // finished answer, and pi says so under the partial text
@@ -1863,10 +1890,68 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         )
     }
 
+    /**
+     * The two "nothing to compact" reasons in the user's language.
+     *
+     * pi's own words stay in parentheses: the sentence has to be readable in a
+     * Chinese UI, and the original has to survive for a bug report
+     * (`core/agent-session.ts:1985-1992`). Anything else comes back untouched —
+     * a reason this app has never seen is more valuable verbatim than guessed at.
+     */
+    private fun compactReasonInChinese(reason: String): String = when {
+        reason.contains("Nothing to compact", ignoreCase = true) ->
+            "这个会话还太小，没有可压缩的内容（pi：$reason）"
+
+        reason.contains("Already compacted", ignoreCase = true) ->
+            "这个会话已经压缩过了，没有新的内容可压（pi：$reason）"
+
+        else -> reason
+    }
+
+    /**
+     * Track pi's compaction window.
+     *
+     * Change-gated so a duplicated `compaction_start` does not republish state, and
+     * so the two sources ([PiEvent.CompactionStart]/[PiEvent.CompactionEnd] and the
+     * `get_state` reconciliation in [refreshState]) can both write it.
+     */
+    private fun setCompacting(value: Boolean) {
+        if (_state.value.meta.compacting == value) return
+        _state.value = _state.value.copy(meta = _state.value.meta.copy(compacting = value))
+    }
+
     /** A user-visible failure: a snackbar plus the AppBar's error line. */
     private fun fail(message: String) {
         _state.value = _state.value.copy(lastError = message)
         pushNotice(message, Notice.Tone.Error)
+    }
+
+    /**
+     * What a command does when there is no engine to run it on.
+     *
+     * This used to be "nothing", and that silence was a lie with two faces: an
+     * action the user just tapped appeared to do nothing, and a sheet that had
+     * opened on a read (会话信息 → `get_session_stats`, 分支 → `get_fork_messages`)
+     * kept its own wording — 「正在读取…」, 「没有可分叉的用户消息。」 — about data that
+     * was never read. Both are statements about the session, and both were false.
+     */
+    private enum class NoEngine {
+        /**
+         * The user asked for this just now (a tap, or a screen that opened on this
+         * data). The truthful sentence goes through [fail], i.e. a snackbar: it is
+         * the only channel this app has for "that did not happen".
+         */
+        Notify,
+
+        /**
+         * A background re-read nobody asked for — the state refresh after boot, a
+         * settle or a session swap. The engine's own state already says it is gone
+         * (`引擎已退出` in the AppBar, the boot screen), and one snackbar per
+         * internal refresh would be noise rather than information. The read still
+         * does **not** fabricate a value: it simply leaves the previous one, which
+         * is why every caller of this kind is a refresh rather than a first read.
+         */
+        Quiet,
     }
 
     /**
@@ -1876,9 +1961,25 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * finished call cannot clear a newer call's label. `CancellationException` is
      * rethrown: it means the ViewModel is going away, not that the command
      * failed.
+     *
+     * With no engine attached, [noEngine] decides between a snackbar and silence —
+     * see [NoEngine]. An identical message is not stacked twice: several refreshes
+     * can run in the same frame when an engine dies, and four copies of one
+     * sentence read as four failures.
      */
-    private fun call(label: String, block: suspend (PiEngineApi) -> Unit) {
-        val api = this.api ?: return
+    private fun call(
+        label: String,
+        noEngine: NoEngine = NoEngine.Notify,
+        block: suspend (PiEngineApi) -> Unit,
+    ) {
+        val api = this.api
+        if (api == null) {
+            if (noEngine == NoEngine.Notify) {
+                val message = "引擎未就绪：pi 现在不在运行，$label 没有执行。"
+                if (_state.value.notices.lastOrNull()?.message != message) fail(message)
+            }
+            return
+        }
         viewModelScope.launch {
             _state.value = _state.value.copy(busy = label)
             try {
@@ -1958,7 +2059,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * on attach and after every `agent_settled` (audit §6.8).
      */
     fun refreshState() {
-        call("读取会话状态") { api ->
+        call("读取会话状态", NoEngine.Quiet) { api ->
             val remote = api.getState()
             val current = _state.value.meta
             val level = remote.thinkingLevel?.takeIf { it.isNotBlank() } ?: current.thinkingLevel
@@ -1973,6 +2074,12 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                     sessionId = remote.sessionId,
                     sessionFile = remote.sessionFile,
                     messageCount = remote.messageCount,
+                    // `get_state` is the reconciliation for the event-tracked flag:
+                    // if `compaction_end` was dropped, the next attach/settle puts
+                    // this back to pi's own answer. `isCompacting` was parsed all
+                    // along (`rpc/.../Responses.kt:91`, `:276`) and only the engine's
+                    // teardown ever read it.
+                    compacting = remote.isCompacting,
                 ),
             )
             refreshThinkingLevels()
@@ -2116,24 +2223,24 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         val engine = session ?: return
         val trimmed = text.trim()
         if (trimmed.isEmpty() && images.isEmpty()) return
-        if (engine.transcript.streaming) {
-            // Mid-turn the delivery choice is the command itself: `steer` lands
-            // after this turn's tool calls, `follow_up` only once pi stops.
-            //
-            // F1 (`docs/rendering-review.md`): echo the queued text locally, the
-            // way `prompt` already does through `PiEngineSession.prompt`. pi's own
-            // TUI adds the row on `message_start` for a user message
-            // (`interactive-mode.ts:3224-3226`), but the reducer here appends
-            // nothing for that role (the `PiEvent.MessageStart` arm of
-            // `TranscriptReducer.onEvent` only clears the content-block maps) — so
-            // without
-            // this echo a steered message is invisible until the session is
-            // reopened. If that reducer branch is ever fixed, this echo must be
-            // removed or the message renders twice.
-            //
-            // `echoUserPrompt`, not `transcript.onUserPrompt`: the reducer path
-            // creates the row without publishing it, so no consumer would ever see
-            // it (PiEngineSession.echoUserPrompt exists for exactly this call).
+        // **Compacting: the one window in which `prompt` is not an option.** pi
+        // throws there — `Cannot submit a prompt while compaction is in progress.
+        // Wait for compaction to finish and retry.` (`core/agent-session.ts:1192-1196`,
+        // checked after the extension-command branch and before the streaming
+        // branch). The bare `steer`/`follow_up` commands have no such check: they go
+        // through `_queueUserInput` (`:1388-1413`), which runs the extension `input`
+        // handlers and the skill/template expansion and then pushes the text onto
+        // pi's own `_steeringMessages`/`_followUpMessages`. So during a compaction
+        // the message is **queued by pi** (visible in the queue row, which reads
+        // `queue_update`), the submission does not fail, and the app needs no local
+        // hold-and-flush of its own.
+        //
+        // Worst case if this flag is ever stale-true: the text lands in pi's
+        // steering queue and is delivered at the next agent step. Slower, not lost,
+        // not an error — which is why the trade is worth taking. (The flag is
+        // reconciled from `get_state` in [refreshState], so a dropped
+        // `compaction_end` heals at the next attach or settle.)
+        if (_state.value.meta.compacting) {
             engine.echoUserPrompt(trimmed, images)
             engine.send(
                 PiCommands.steer(
@@ -2142,11 +2249,38 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                     images = images,
                 ),
             )
-        } else {
-            engine.prompt(trimmed, images)
+            syncTranscript(engine, engine.publication.value)
+            return
         }
-        // Already published by `prompt`/`echoUserPrompt`; reading it here is what
-        // makes the echoed row visible without waiting for the collector's dispatch.
+        // Otherwise: one entry point, two delivery choices — pi's own shape. Its TUI
+        // submits every non-built-in message through `session.prompt(text, {
+        // streamingBehavior: "steer" })` while a turn is running
+        // (`interactive-mode.ts:3137-3143`) and through a plain `prompt` when the
+        // agent is idle, so the app does the same: `streamingBehavior` only while
+        // streaming, never on an idle engine.
+        //
+        // What `prompt` adds over the bare `steer` command: pi's own pre-flight —
+        // the compaction check above, the model/credential validation and the rest
+        // of `prompt`'s checks — and it is the path pi's TUI exercises, which is why
+        // `docs/feature-gaps.md:96` recorded the old app as never sending
+        // `streamingBehavior` on `prompt` ("used only through `follow_up`"). It is
+        // **not** "the only path that runs the input handlers": `_queueUserInput`
+        // runs those (`:1388-1413`) for the bare commands too.
+        //
+        // The optimistic echo is `PiEngineSession.prompt`'s own (`:763`), and it is
+        // no longer done here: it publishes the row *and* registers it in the
+        // reducer's pending-echo queue, which is what makes pi's later
+        // `message_end(role="user")` a confirmation instead of a second bubble
+        // (`rpc/.../Transcript.kt:883-897` records the echo, `:919-1010` matches
+        // it). Echoing here as well would render the row twice and leave a stale
+        // pending echo behind, which would then swallow the next unrelated message.
+        engine.prompt(
+            message = trimmed,
+            images = images,
+            streamingBehavior = if (engine.transcript.streaming) StreamingBehavior.Steer else null,
+        )
+        // Already published by `prompt`; reading it here is what makes the echoed
+        // row visible without waiting for the collector's dispatch.
         syncTranscript(engine, engine.publication.value)
     }
 
@@ -2224,15 +2358,37 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         val engine = session ?: return
         val trimmed = text.trim()
         if (trimmed.isEmpty()) return
-        // Same local echo as [send]: a follow-up is invisible on the wire until pi
-        // delivers it, which is the whole point of queueing it.
-        engine.echoUserPrompt(trimmed, images)
-        engine.send(
-            PiCommands.followUp(
-                id = "follow-${System.nanoTime()}",
-                message = trimmed,
-                images = images,
-            ),
+        // Compacting: [send] documents the window — pi's `prompt` throws
+        // (`agent-session.ts:1192-1196`) and the bare `follow_up` command queues the
+        // text instead (`_queueUserInput`, `:1388-1413`, no compaction check). Same
+        // trade, same worst case.
+        if (_state.value.meta.compacting) {
+            engine.echoUserPrompt(trimmed, images)
+            engine.send(
+                PiCommands.followUp(
+                    id = "follow-${System.nanoTime()}",
+                    message = trimmed,
+                    images = images,
+                ),
+            )
+            syncTranscript(engine, engine.publication.value)
+            return
+        }
+        // pi's `alt+enter` is the *same* submit with the other delivery choice:
+        // `session.prompt(text, { streamingBehavior: "followUp" })`
+        // (`interactive-mode.ts:4143-4150`), not the bare `follow_up` command — see
+        // [send] for what the command form gives up (pi's pre-flight checks). The
+        // echo is `PiEngineSession.prompt`'s, for the same single-render reason.
+        //
+        // `streamingBehavior` is only sent while a turn is running, because that is
+        // the only case pi's TUI queues a follow-up in: with the agent idle
+        // alt+enter is an ordinary submit (`interactive-mode.ts:4126-4155` is the
+        // streaming half; the idle half goes through the normal submit path), and
+        // this method's chip is only offered while streaming anyway.
+        engine.prompt(
+            message = trimmed,
+            images = images,
+            streamingBehavior = if (engine.transcript.streaming) StreamingBehavior.FollowUp else null,
         )
         syncTranscript(engine, engine.publication.value)
     }
@@ -2324,24 +2480,6 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** `cycle_model`. `null` means there is nothing to cycle to. */
-    fun cycleModel() {
-        call("切换模型") { api ->
-            val result = api.cycleModel()
-            if (result == null) {
-                pushNotice("只有一个可用模型，无法循环切换", Notice.Tone.Warning)
-                return@call
-            }
-            _state.value = _state.value.copy(
-                meta = _state.value.meta.copy(
-                    model = result.model ?: _state.value.meta.model,
-                    thinkingLevel = result.thinkingLevel ?: _state.value.meta.thinkingLevel,
-                ),
-            )
-            refreshThinkingLevels()
-        }
-    }
-
     /**
      * `set_steering_mode` / `set_follow_up_mode`.
      *
@@ -2370,7 +2508,15 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      */
     fun compact(customInstructions: String? = null) {
         call("压缩上下文") { api ->
-            val result = api.compact(customInstructions?.takeIf { it.isNotBlank() })
+            val result = try {
+                api.compact(customInstructions?.takeIf { it.isNotBlank() })
+            } catch (error: PiRpcException) {
+                // pi 用英文原文说明「没什么可压」的两种情形
+                // (`core/agent-session.ts:1985-1992`)，原样弹出来就是中文界面里的一句
+                // 英文。只映射这两条**已知**原因，其余 reason 一字不改地透出：这里不是
+                // 一个把 pi 的话吞掉的翻译层，用户拿它去搜/去报错仍然要对得上。
+                throw PiRpcException(error.command, compactReasonInChinese(error.reason))
+            }
             val before = result.tokensBefore
             val after = result.estimatedTokensAfter
             val detail = if (before != null && after != null) "（$before → $after tokens）" else ""
@@ -3002,13 +3148,57 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * replay, so the app re-reads pi's records itself. Nothing is reset
      * optimistically: the transcript is rebuilt from the session file and the
      * facts come back from `get_state`.
+     *
+     * ## Which session facts have to be re-read here, and which must not be
+     *
+     * Re-read:
+     *
+     *  - the transcript and its `streaming` flag ([replayHistory] → `seedHistory`,
+     *    then [syncTranscript]). The reducer resets, so `lastUsage` comes back as the
+     *    new session's too — `:1376` reads it off the reducer.
+     *  - [UiState.meta] ([refreshState]), the `/` palette ([refreshCommands]), the
+     *    session list ([refreshSessions]).
+     *  - **[UiState.stats]** ([refreshStats]). It is per-session: pi's
+     *    `getSessionStats` sums every entry **in this session file**
+     *    (`session-manager.ts:1315-1316`), so leaving the old value on screen made
+     *    the status row report the previous session's 输出 / 缓存读 / 费用 until the
+     *    next turn finished — which is what made the user ask whether those figures
+     *    were "all my sessions added up". (The token totals are cumulative *within* a
+     *    session; `contextUsage` is the current branch's `getBranch()` reading. Two
+     *    different scopes, one row.)
+     *  - [UiState.queueSteering] / [UiState.queueFollowUp]. They are written only by
+     *    `queue_update`, so without a reset a message queued in the session the user
+     *    just left keeps its chip on the new session — a count of messages pi is not
+     *    holding for this conversation. Zero is the honest value; pi's next
+     *    `queue_update` (if it has anything queued) corrects it.
+     *
+     * Deliberately *not* re-read, with the reason:
+     *
+     *  - `tree` / `entries` / `forkMessages`: per-session, but each is read by the
+     *    screen that shows it every time that screen opens ([refreshTree],
+     *    [refreshForkMessages]) and the overlays close on a pick, so a stale copy is
+     *    never the authority. Re-reading them here would add two RPC round trips to
+     *    every switch for data nobody is looking at.
+     *  - `bash`: a `!` command is a *workspace* job, not a session one — pi keeps
+     *    running it across a switch and the app's row reports that process, so
+     *    clearing it would hide a command that is still running.
+     *  - the extension surfaces (`extensionStatuses`, `extensionWidgets`,
+     *    `windowTitle`, `notices`) and above all `extensionDialog`: pi re-sends them
+     *    when they change and there is no RPC to re-read them. Dropping the dialog
+     *    would be worse than stale — pi is *blocked* on that answer
+     *    (`modes/rpc-mode.ts:254-271`), so clearing it would wedge the engine.
+     *  - `exported`, which is already handled just below.
      */
     private suspend fun afterSessionReplaced() {
         val engine = session ?: return
         replayHistory(engine)
         refreshState()
+        refreshStats()
         refreshCommands()
         refreshSessions()
+        if (_state.value.queueSteering != 0 || _state.value.queueFollowUp != 0) {
+            _state.value = _state.value.copy(queueSteering = 0, queueFollowUp = 0)
+        }
         // A different session's export is no longer the thing on screen: the row
         // would offer to save a file that belongs to the conversation the user just
         // left. The file itself stays on disk — this only drops the handle.
@@ -3037,37 +3227,6 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
-     * Tell the user what this app can do about a built-in that pi's RPC surface
-     * cannot dispatch.
-     *
-     * Two outcomes, and the difference is a fact about the app rather than a
-     * preference: [PiSlashCommand.appLanding] non-null means the app reaches the
-     * same outcome somewhere else (`/trust` → the packages screen, `/reload` →
-     * restarting the engine), so the notice names that location; null means there is
-     * no entry here at all and the notice says so.
-     *
-     * It deliberately never says "go to the terminal". The terminal tab runs pi's
-     * own TUI in a PTY, but it is not a usable surface, so pointing there would name
-     * an action the user cannot complete — the same class of defect as a settings
-     * row whose only content is "go elsewhere". The message also does **not** claim
-     * to have navigated anywhere: the palette does not switch destinations here, and
-     * why the app has no channel is protocol detail that stays in this KDoc
-     * (`docs/settings-review.md` §9.6 draws the line: the settings face drops TUI
-     * knobs, while pi's command face keeps them and shows an honest badge).
-     */
-    fun notifyTerminalOnly(command: PiSlashCommand) {
-        val landing = command.appLanding
-        pushNotice(
-            message = if (landing != null) {
-                "/${command.name} 在本应用里：$landing。"
-            } else {
-                "/${command.name} 只在 pi 的原版 TUI 里，本应用没有对应入口。"
-            },
-            tone = if (landing != null) Notice.Tone.Info else Notice.Tone.Warning,
-        )
-    }
-
-    /**
      * A user-visible note from the UI layer, for failures the ViewModel does not
      * own (a picker that returned nothing readable). Same channel as every other
      * notice, so it cannot be missed silently.
@@ -3083,10 +3242,6 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                 "如果要把它作为消息发给模型，请去掉开头的 /",
             tone = Notice.Tone.Warning,
         )
-    }
-
-    fun dismissError() {
-        _state.value = _state.value.copy(lastError = null)
     }
 
     /**

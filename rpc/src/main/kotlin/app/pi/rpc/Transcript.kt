@@ -980,7 +980,8 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
 
         is PiEvent.MessageUpdate -> onMessageUpdate(event)
         is PiEvent.MessageEnd -> {
-            val finished = finishStreaming()
+            // The message is over; the **turn** is not (see [finishStreaming]).
+            val finished = finishStreaming(endsTurn = false)
             event.usage?.let { lastUsage = it }
             // A truncated or aborted answer used to look exactly like a finished
             // one, and an aborted turn left its tool card spinning "运行中"
@@ -1013,7 +1014,7 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
             streaming = true
             TranscriptChange.None
         }
-        is PiEvent.AgentEnd -> finishStreaming()
+        is PiEvent.AgentEnd -> endTurn()
         PiEvent.AgentSettled -> {
             // pi drains steering and follow-ups before it settles
             // (`agent-session.ts` `_handlePostAgentRun` -> `hasQueuedMessages`,
@@ -1021,7 +1022,7 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
             // message has been confirmed by now. Dropping leftovers keeps a
             // prompt pi rejected from blocking a later confirmation.
             pendingUserEchoes.clear()
-            finishStreaming()
+            endTurn()
         }
 
         is PiEvent.ToolExecutionStart -> onToolStart(event)
@@ -2229,12 +2230,43 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
 
     // ------------------------------------------------------------------ helpers
 
-    private fun finishStreaming(): TranscriptChange {
-        streaming = false
+    /**
+     * A turn is over: pi has stopped working, so [streaming] may now go false.
+     *
+     * Only `agent_end` and `agent_settled` come here. `message_end` does **not**:
+     * one turn is many messages, and a turn with tool calls ends a message before
+     * every tool call it asked for.
+     */
+    private fun endTurn(): TranscriptChange = finishStreaming(endsTurn = true)
+
+    /**
+     * Close the current assistant message's rows.
+     *
+     * @param endsTurn whether the *turn* is over as well as the message. This used
+     *   to be one function that always cleared [streaming], which made the flag mean
+     *   "a message is arriving right now" instead of pi's own meaning — "pi is
+     *   working on this turn". With tool calls in a turn the two differ several
+     *   times a second (`agent_start` → true, assistant text → true, `message_end` →
+     *   false, a tool runs with the flag false, the tool's result message → true
+     *   again), and everything downstream of the flag flickered with it: the
+     *   composer's send button drew stop/send/stop/send, the AppBar's engine line
+     *   fell back to 「就绪」 while a tool was running, and a tap on the 「send」
+     *   frame carried no `streamingBehavior` at all — which pi answers with
+     *   `Agent is already processing. Specify streamingBehavior …`
+     *   (`core/agent-session.ts:1219-1223`).
+     *
+     *   The **rest** of this function is per-message and must keep running on every
+     *   `message_end`: the content-block numbering restarts with the next assistant
+     *   message (F8), and the throttled tail has to be published here or a chunk
+     *   that arrived inside the 200 ms window could stay hidden for as long as the
+     *   tool is silent.
+     */
+    private fun finishStreaming(endsTurn: Boolean): TranscriptChange {
+        if (endsTurn) streaming = false
         // Content-block numbering restarts with the next assistant message.
         textIndexByContentIndex.clear()
         thinkingIndexByContentIndex.clear()
-        // F8: the tail of a throttled burst must not be lost. Every turn-ending
+        // F8: the tail of a throttled burst must not be lost. Every end-of-message
         // event comes through here (`message_end`, `agent_end`, `agent_settled`),
         // so the row the throttle was still holding is reported now — otherwise a
         // chunk that arrived inside the 200 ms window could stay unpublished for

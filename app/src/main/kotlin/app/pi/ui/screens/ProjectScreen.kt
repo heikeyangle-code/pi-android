@@ -18,6 +18,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Extension
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Terminal
@@ -43,7 +44,10 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.pi.packages.AgentLayout
+import app.pi.packages.PiAutoExtensions
 import app.pi.packages.PiResourceDiscovery
+import app.pi.packages.ProjectTrust
+import app.pi.packages.TrustRepository
 import app.pi.rpc.ToolCall
 import app.pi.rpc.ToolDiff
 import app.pi.rpc.ToolStatus
@@ -57,7 +61,9 @@ import app.pi.ui.blocks.DiffBlock
 import app.pi.ui.blocks.argString
 import app.pi.ui.blocks.lineCount
 import app.pi.ui.settings.PiSettingsMetrics
+import app.pi.ui.settings.PiInfoNote
 import app.pi.ui.settings.PiSettingsSectionHeader
+import app.pi.ui.settings.PiSettingsCard
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
 import app.pi.ui.theme.StateChip
@@ -66,6 +72,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.util.Locale
 import java.util.concurrent.TimeUnit
+import kotlinx.serialization.json.JsonPrimitive
+import java.io.File
 
 /**
  * 工作区 —— 这个会话的**项目现场**（`03-navigation-decision.md` 的裁决）。
@@ -119,14 +127,57 @@ fun ProjectScreen(
     // 键就是唯一的重新读取入口（v2 的顶栏也正好有一个刷新键）。
     var refreshTick by remember { mutableIntStateOf(0) }
     var resources by remember { mutableStateOf<List<PiResourceDiscovery.Found>>(emptyList()) }
-    LaunchedEffect(refreshTick, context) {
-        resources = withContext(Dispatchers.IO) {
+    var extensions by remember { mutableStateOf<List<PiAutoExtensions.Found>>(emptyList()) }
+    var projectUntrusted by remember { mutableStateOf(false) }
+    LaunchedEffect(refreshTick, context, session) {
+        withContext(Dispatchers.IO) {
             // 工作区主目录由应用固定（`GuestWorkspacePath.RELATIVE`），`AgentLayout` 的
             // `hostProjectConfigDir()` 就是 `<workspace>/.pi`——pi 的项目资源根。
             val workspace = PtyLauncher.workspaceHost(context)
             val layout = AgentLayout(context.applicationContext, workspace)
-            runCatching { PiProject.projectResources(layout.hostProjectConfigDir()) }
+            val configDir = layout.hostProjectConfigDir()
+            resources = runCatching { PiProject.projectResources(configDir) }
                 .getOrDefault(emptyList())
+            // 第四个资源种类：**扩展**。它不在 `PiResourceDiscovery` 里（pi 用另一套规则
+            // 收集，`PiAutoExtensions` 就是那个读取器），所以这一屏原来一个扩展都不列：
+            // 用户把扩展放进 `.pi/extensions` 之后，工作区屏看不到它。
+            extensions = runCatching { PiProject.projectExtensions(configDir) }
+                .getOrDefault(emptyList())
+            // 信任：pi 只加载**受信任**项目的 `.pi` 资源（`interactive-mode.ts:3877`、
+            // `:3888-3907`），未受信任时它照旧启动但忽略这些目录 —— 而这一屏原来照常
+            // 把它们列出来，等于承诺了 pi 不会兑现的事。
+            //
+            // 判据与设置里的「扩展包与项目信任」卡同源（`PiPackagesHost.readTrust`）：
+            // `trust.json` 的存档决定 + 设置里的 `defaultProjectTrust`，交给纯逻辑
+            // `ProjectTrust.resolve` 裁决。`hasTrustRequiringResources` 在这里用**宿主侧
+            // 同一批目录**判断（`.pi/` 下四个入口是否有东西），pi 还会额外看
+            // `<cwd>/.agents/skills`；漏掉那一处只会让提示**少出现**，不会凭空出现。
+            val requiresTrust = ProjectTrust.TRUST_REQUIRING_CONFIG_ENTRIES.any {
+                File(configDir, it).exists()
+            }
+            if (requiresTrust) {
+                val repository = TrustRepository(layout)
+                val saved = runCatching { repository.decisionFor(layout.guestWorkspace) }.getOrNull()
+                val defaultTrust = runCatching {
+                    (session.settingsStore.read("defaultProjectTrust") as? JsonPrimitive)?.content
+                }.getOrNull() ?: "ask"
+                projectUntrusted = runCatching {
+                    !ProjectTrust.resolve(
+                        ProjectTrust.Inputs(
+                            cwd = layout.guestWorkspace,
+                            hasTrustRequiringResources = true,
+                            savedDecision = saved,
+                            defaultProjectTrust = defaultTrust,
+                            // 这一屏不是那个对话框：不给答案（null），让 resolve 按存档
+                            // 与默认值裁决，而不是替用户点一个。
+                            hasUI = true,
+                            userAnswer = null,
+                        ),
+                    ).trusted
+                }.getOrDefault(false)
+            } else {
+                projectUntrusted = false
+            }
         }
     }
 
@@ -206,12 +257,71 @@ fun ProjectScreen(
                 }
             }
 
+            // 项目目录里的**扩展**：第四个资源种类，pi 会加载它（受信任时），而这一屏
+            // 原来只列技能/提示词/主题三种 —— 「我放了扩展但看不到」正是这一类的抱怨。
+            item {
+                PiSettingsSectionHeader(
+                    label = "这个目录的扩展",
+                    count = "${extensions.size} 项",
+                    aside = ".pi/extensions",
+                )
+            }
+            if (extensions.isEmpty()) {
+                item {
+                    ProjectNoteRow(
+                        lead = {
+                            Icon(
+                                Icons.Filled.Extension,
+                                contentDescription = null,
+                                modifier = Modifier.size(PiSettingsMetrics.searchIconSize),
+                                tint = PiTheme.palette.muted,
+                            )
+                        },
+                        title = "这个目录还没有扩展",
+                        supporting = "把扩展放进这个目录的 extensions/ 之后重新打开这一屏；" +
+                            "pi 启动时会连同它一起加载。",
+                    )
+                }
+            } else {
+                item {
+                    PiSettingsCard {
+                        extensions.forEach { extension ->
+                            ProjectNoteRow(
+                                lead = {
+                                    Icon(
+                                        Icons.Filled.Extension,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(PiSettingsMetrics.searchIconSize),
+                                        tint = PiTheme.palette.muted,
+                                    )
+                                },
+                                title = extension.name,
+                                supporting = extension.relativePath,
+                            )
+                        }
+                    }
+                }
+            }
+
             item {
                 PiSettingsSectionHeader(
                     label = "这个目录的资源",
                     count = "${resources.size} 项",
                     aside = ".pi",
                 )
+            }
+            // pi 只加载**受信任**项目的 `.pi` 资源（`interactive-mode.ts:3877`、
+            // `:3888-3907`）。未受信任时它照旧启动、忽略这些目录，所以这一屏不能只是把它们
+            // 列出来就完事 —— 那是在承诺 pi 不会兑现的事。措辞只说「本应用在这个目录里看到
+            // 了什么」，不承诺 pi 会加载；受信任与否另有一句话说明在哪儿改。
+            if (projectUntrusted) {
+                item {
+                    PiInfoNote(
+                        text = "这个项目还没有被信任，pi 现在会忽略这个目录里的资源与扩展。" +
+                            "要让它生效，去 设置 → 扩展包与项目信任 里对这个工作目录作出信任决定。",
+                        tone = PiTheme.palette.warning,
+                    )
+                }
             }
             if (resources.isEmpty()) {
                 item {

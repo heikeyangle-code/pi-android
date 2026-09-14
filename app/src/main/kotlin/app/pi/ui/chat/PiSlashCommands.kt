@@ -22,10 +22,21 @@ enum class PiCommandAction {
     /** `prompt("/<name> args")` — pi expands/dispatches it. */
     Prompt,
 
-    /** Built-ins this GUI implements natively. */
-    OpenSettings,
-    PickModel,
-    PickThinking,
+    /**
+     * Built-ins this GUI implements natively.
+     *
+     * Three values used to sit at the head of this group and one at the tail:
+     * `OpenSettings`, `PickModel` and `PickThinking` (deleted with their
+     * `/settings`, `/model` and `/thinking` rows, [PI_BUILTIN_SLASH_COMMANDS] §B)
+     * and `OpenModelScope` (deleted with `/scoped-models`, §C). Every one of them
+     * opened a surface the user already has one gesture away, so the palette entry
+     * was a duplicate door — the surfaces themselves are untouched.
+     *
+     * `TerminalOnly` is gone too. It marked a built-in with no RPC path whose
+     * `appLanding` named the Settings row that does the job; the last five rows
+     * carrying it were deleted under the same ruling, which left the value with no
+     * reachable state at all.
+     */
     OpenTree,
     PickFork,
     CloneSession,
@@ -47,42 +58,11 @@ enum class PiCommandAction {
      * `/import <path.jsonl>`. pi's TUI asks for a path and hands it to
      * `runtimeHost.importFromJsonl` (`interactive-mode.ts:6107-6119`); a phone has
      * no path to type, so this opens the document picker and the ViewModel does the
-     * rest (`PiSessionViewModel.importSession`). Unlike [TerminalOnly] it has a real
-     * destination in this app: `switch_session` already takes a session file path
-     * (`rpc-types.ts:61`), so the picked file is copied into the session directory
-     * and adopted.
+     * rest (`PiSessionViewModel.importSession`). It has a real destination in this
+     * app: `switch_session` already takes a session file path (`rpc-types.ts:61`),
+     * so the picked file is copied into the session directory and adopted.
      */
     ImportSession,
-
-    /**
-     * `/scoped-models`. pi opens its **model-scope selector** for this command
-     * (`interactive-mode.ts:2975-2978` → `showModelsSelector()`, `:5024`), which
-     * is a different component from the plain `/model` picker
-     * (`showModelSelector`, `:4987`) and what it toggles is persisted as
-     * `settings.enabledModels` (`settings-manager.ts:1316-1326`).
-     *
-     * Unlike [TerminalOnly] this has a real destination in the app: the
-     * `enabledModels` row is a settings row (`PiSettingsRegistry.kt:355`), so the
-     * GUI navigates there and highlights it (`NavRequest.SettingsFocus`). Marking
-     * it [TerminalOnly] — as it was — made the palette say 「仅终端」 about a
-     * feature the app can actually reach.
-     */
-    OpenModelScope,
-
-    /**
-     * A built-in whose implementation lives in pi's interactive shell and has
-     * **no RPC counterpart**: pi exposes no command for it and `prompt()`
-     * cannot reach it (built-ins are filtered out of `get_commands` and
-     * `prompt` only dispatches extension commands).
-     *
-     * The GUI must not fake it. What it says instead depends on
-     * [PiSlashCommand.appLanding]: when this app has its own way to reach the
-     * same outcome, the row names that way; otherwise it says there is no entry
-     * here. It must **not** send the user to the terminal tab — the terminal is
-     * not a usable surface, so "go there" would name an action that cannot be
-     * completed.
-     */
-    TerminalOnly,
 }
 
 /** Palette grouping. Mirrors the `source` field of `RpcSlashCommand`. */
@@ -114,70 +94,108 @@ data class PiSlashCommand(
     val description: String?,
     val source: PiCommandSource,
     /**
-     * Provenance tag built exactly the way pi's own autocomplete builds it
-     * (`interactive-mode.ts` `getAutocompleteSourceTag`): `u`/`p`/`t` for
-     * user/project/temporary scope, plus the npm or git origin when there is
-     * one. Null for built-ins, which have no source file.
+     * Provenance tag, **derived** exactly the way pi's own autocomplete derives
+     * it (`interactive-mode.ts` `getAutocompleteSourceTag`, `:586-606`): the
+     * scope letter `u`/`p`/`t` for user/project/temporary
+     * (`core/source-info.ts:3`), plus the npm or git origin when there is one
+     * (`u:npm:<name>`, `u:git:<host>/<path>@<ref>`). Null for built-ins, which
+     * have no source file.
+     *
+     * **The letters are pi's convention, not this app's rendering.** The badge
+     * shows [sourceTagLabelOf] instead, which spells the scope out in Chinese
+     * (用户/项目/临时) and leaves the npm/git remainder verbatim. Do not "fix" the
+     * letters here to match the badge, and do not "fix" the badge back to letters:
+     * the split is deliberate — derivation is pi's, presentation is the user's.
      */
     val sourceTag: String?,
     val action: PiCommandAction,
     val argumentHint: String? = null,
-    /**
-     * How this app itself reaches the same outcome, as a **user-visible
-     * location** (a screen path, never a file path or a class name). Null when
-     * the app has no such way.
-     *
-     * This exists because a pi built-in can be unreachable over RPC while the app
-     * still does the same thing somewhere else. `/trust` is the clearest case:
-     * `rpc-types.ts:20-74` has no trust command, yet the app reproduces pi's whole
-     * trust decision — same five options, same `trust.json` record — in the
-     * packages screen (`packages/ProjectTrust.kt`, `packages/PiProjectTrustPrompt.kt`).
-     * `/reload` is the other: restarting the engine re-reads
-     * `settings.json` and rescans every resource directory, which is what the
-     * user was actually asking for. Before this field, both rows said
-     * 「仅终端」, i.e. the palette denied a capability the app already had.
-     */
-    val appLanding: String? = null,
 ) {
     /** What the user types to invoke it. */
     val invocation: String get() = "/$name"
 }
 
 /**
- * pi's built-in slash commands, transcribed from `core/slash-commands.ts:19-43`
+ * pi's built-in slash commands, transcribed from `core/slash-commands.ts:20-42`
  * (the same array pi builds its own autocomplete from,
  * `interactive-mode.ts:636`).
  *
  * Order is pi's order and is not sorted on purpose: it is the order the user
  * sees in the original TUI, and a palette that reorders itself would make the
- * two surfaces feel like different products.
+ * two surfaces feel like different products. The list is a **subsequence** of
+ * pi's array: twelve rows are deliberately absent.
  *
- * `/quit` is the one row with no action at all in either column: the engine is
- * owned by the app's foreground service, not by the transcript, so there is
- * nothing for the GUI to quit. It is kept as [PiCommandAction.TerminalOnly] so
- * the user is not left wondering why the command they know is absent.
+ * ## The twelve rows that are not here
+ *
+ * Three groups, three reasons. Only group A is about a missing ability; the other
+ * two are about the palette not being a second copy of the screens around it.
+ *
+ * ### A. Four abilities this platform cannot deliver at all
+ *
+ * `share` (`slash-commands.ts:27`), `changelog` (`:31`), `hotkeys` (`:32`) and
+ * `quit` (`:42`) were rows whose tap could only produce a warning — there was no
+ * landing and no RPC path. Each named an ability this platform has no path to:
+ *
+ *  - `share` is a secret GitHub gist written through the `gh` CLI
+ *    (`interactive-mode.ts:3002`); there is no RPC command for it and no `gh` on
+ *    Android. What the user actually wants — getting the session out of the app —
+ *    is `export` plus the app's own share sheet (`ui/chat/SessionExportDelivery.kt`).
+ *  - `changelog` (`:3022`) and `hotkeys` (`:3027`) render a TUI text panel:
+ *    changelog entries come from pi's own update check, and a shortcut list has
+ *    no meaning on a touch screen.
+ *  - `quit` (`:3099`) shuts down pi's interactive process. Here the engine is
+ *    owned by the app's foreground service, not by the transcript, so there is
+ *    nothing for the GUI to quit.
+ *
+ * ### B. Three abilities the app already offers one gesture away
+ *
+ * `settings` (`:20`), `model` (`:21`) and `thinking` (`:23`) all work; they are
+ * gone because each was a second door to something the screen behind the palette
+ * already offers, and duplicate doors are what made the panel unreadable:
+ *
+ *  - `settings` → the bottom bar's 「设置」 destination (`PiRoot.kt`, `PiDestination.Settings`);
+ *  - `model` → the top bar's model chip, which opens the same selector
+ *    (`ChatScreen.kt`, `ModelChip` → `ChatSheet.Model`);
+ *  - `thinking` → the composer's `◐` chip, which cycles the level and opens the
+ *    same picker through the overflow menu.
+ *
+ * ### C. Five whose destination is a Settings row
+ *
+ * `scoped-models` (`:24`), `trust` (`:35`), `login` (`:36`), `logout` (`:37`) and
+ * `reload` (`:41`) are gone under the same ruling, stated more strictly: a
+ * palette row may not be a door into Settings. Tapping one of them never
+ * navigated — it only pushed a notice naming the Settings row that does the job —
+ * so the row was literally telling the user to go and do it themselves. The
+ * outcomes remain reachable in Settings (项目信任策略 / 凭证 / 重启引擎 / 循环模型), and
+ * the deletion takes `PiCommandAction.TerminalOnly` with it: with no row carrying
+ * a destination, the action had no reachable state left.
+ *
+ * This is a **palette** decision, not a capability decision. pi still has all
+ * twelve commands and this app still reaches the outcomes; what is gone is the
+ * duplicate row — and the names are kept in [PI_UNLISTED_BUILTIN_COMMANDS] so a
+ * user who types one by hand gets a true sentence instead of "no such command".
+ * See `T7` in the delivery notes.
  */
 val PI_BUILTIN_SLASH_COMMANDS: List<PiSlashCommand> = listOf(
-    PiSlashCommand("settings", "打开设置菜单", PiCommandSource.Builtin, null, PiCommandAction.OpenSettings),
+    // pi: "Navigate session tree (switch branches)" — translated literally. The
+    // earlier wording added 「从某条消息分叉」, which is what *this app's* tree
+    // screen offers (a fork that writes a new session file) and not what pi's
+    // string says. What this row promises is pi's: navigation of the session
+    // tree. The mechanism behind it is the app's, and it is not promised here.
     PiSlashCommand(
-        "model", "选择模型", PiCommandSource.Builtin, null,
-        PiCommandAction.PickModel, "<provider/model>",
-    ),
-    // The description must not promise pi's in-place leaf move: RPC has no such
-    // command (`rpc-types.ts:20-74`), and what this app offers from the tree is a
-    // fork that writes a new session file.
-    PiSlashCommand(
-        "tree", "浏览会话树，从某条消息分叉", PiCommandSource.Builtin, null,
+        "tree", "浏览会话树（切换分支）", PiCommandSource.Builtin, null,
         PiCommandAction.OpenTree,
     ),
-    PiSlashCommand(
-        "thinking", "设置思考等级", PiCommandSource.Builtin, null,
-        PiCommandAction.PickThinking, "<level>",
-    ),
-    PiSlashCommand(
-        "scoped-models", "设置循环切换的模型范围", PiCommandSource.Builtin, null,
-        PiCommandAction.OpenModelScope,
-    ),
+    // pi: "Enable/disable models for Ctrl+P cycling". The mobile wording names the
+    // setting row instead of the keybinding — `Ctrl+P` does not exist here and the
+    // toggle that the command addresses is the same one, `enabledModels`
+    // (`settings-manager.ts:1316-1326`, row at `PiSettingsRegistry.kt:339`) — but
+    // both halves of pi's promise stay: it is a list of models that are *enabled
+    // or disabled*, and it is the set that cycling uses.
+    //
+    // Group C: not listed, because its destination *is* a settings row and this
+    // palette must not be a set of doors into Settings. `enabledModels` is
+    // reachable at 设置 → 模型与推理 → 循环模型.
     PiSlashCommand(
         "export", "导出会话：默认 HTML，路径以 .jsonl 结尾时写 JSONL", PiCommandSource.Builtin, null,
         PiCommandAction.ExportSession,
@@ -189,54 +207,105 @@ val PI_BUILTIN_SLASH_COMMANDS: List<PiSlashCommand> = listOf(
         "import", "从 JSONL 文件导入并恢复会话", PiCommandSource.Builtin, null,
         PiCommandAction.ImportSession,
     ),
-    PiSlashCommand("share", "将会话分享为私密 GitHub gist", PiCommandSource.Builtin, null, PiCommandAction.TerminalOnly),
-    PiSlashCommand("copy", "复制最后一条模型消息", PiCommandSource.Builtin, null, PiCommandAction.CopyLastAssistant),
+    // pi: "Copy last agent message to clipboard". 回复, not 消息: pi copies the last
+    // *agent* message, and this app's own wording for that object elsewhere is
+    // 「最后一条回复」 (the overflow row, `ChatScreen.kt`), so the two entries for
+    // the same action read the same.
+    PiSlashCommand("copy", "复制最后一条回复到剪贴板", PiCommandSource.Builtin, null, PiCommandAction.CopyLastAssistant),
     PiSlashCommand("name", "设置会话显示名称", PiCommandSource.Builtin, null, PiCommandAction.RenameSession),
     PiSlashCommand("session", "查看会话信息与统计", PiCommandSource.Builtin, null, PiCommandAction.SessionStats),
-    PiSlashCommand("changelog", "查看更新日志", PiCommandSource.Builtin, null, PiCommandAction.TerminalOnly),
-    PiSlashCommand("hotkeys", "查看全部快捷键", PiCommandSource.Builtin, null, PiCommandAction.TerminalOnly),
     PiSlashCommand("fork", "从某条历史消息创建分支", PiCommandSource.Builtin, null, PiCommandAction.PickFork),
     PiSlashCommand("clone", "在当前节点复制整个会话", PiCommandSource.Builtin, null, PiCommandAction.CloneSession),
-    // `/trust` has no RPC command, but the app reaches the same outcome itself:
-    // pi's five trust options and its `trust.json` record are reproduced in the
-    // packages screen (`packages/ProjectTrust.kt` + `packages/PiProjectTrustPrompt.kt`).
-    PiSlashCommand(
-        "trust", "保存项目信任决定", PiCommandSource.Builtin, null,
-        PiCommandAction.TerminalOnly,
-        appLanding = "设置 → 扩展 → 扩展包与项目信任",
-    ),
-    // `/login` and `/logout` are only half-reachable: the app owns an API-key form,
-    // while subscription (OAuth) login stays in pi's own interactive shell with no
-    // RPC channel at all. The row therefore names the half the app does have and
-    // says nothing about the other half — `notifyTerminalOnly` carries the part the
-    // palette cannot fit.
-    PiSlashCommand(
-        "login", "配置 provider 认证（本应用只支持 API Key）", PiCommandSource.Builtin, null,
-        PiCommandAction.TerminalOnly, "<provider>",
-        appLanding = "设置 → 模型与推理 → 凭证",
-    ),
-    PiSlashCommand(
-        "logout", "移除 provider 认证", PiCommandSource.Builtin, null,
-        PiCommandAction.TerminalOnly,
-        appLanding = "设置 → 模型与推理 → 凭证",
-    ),
+    // `/trust`, `/login`, `/logout` and `/reload` used to sit here as rows whose
+    // tap only produced a notice pointing at a Settings row. Group C: gone. The
+    // notice never navigated, so the palette was telling the user to go and do it
+    // themselves. The outcomes are still reachable, in Settings:
+    // 项目信任策略 (安全与信任), 凭证 (模型与推理), 重启引擎 (运行时与诊断).
     PiSlashCommand("new", "新建会话", PiCommandSource.Builtin, null, PiCommandAction.NewSession),
     PiSlashCommand("compact", "手动压缩会话上下文", PiCommandSource.Builtin, null, PiCommandAction.Compact),
     PiSlashCommand("resume", "切换到另一个会话", PiCommandSource.Builtin, null, PiCommandAction.OpenSessions),
-    // pi's `/reload` rebinds the whole runtime in place; there is no RPC command for
-    // it (`rpc-types.ts:20-74`). Restarting the engine is not the same mechanism, but
-    // it is the same user-visible outcome for what `/reload` is used for here:
-    // `pi --mode rpc` is started again, so pi re-reads `settings.json` and rescans
-    // extensions, skills, prompts and themes (`core/agent-session-runtime.ts:226-252`
-    // → `createRuntime`). The one difference the user can feel — a running turn is
-    // interrupted — is what the restart dialog itself states before doing anything.
-    PiSlashCommand(
-        "reload", "重载扩展、技能、模板、主题与上下文文件", PiCommandSource.Builtin, null,
-        PiCommandAction.TerminalOnly,
-        appLanding = "设置 → 运行时与诊断 → 进程 → 重启引擎",
-    ),
-    PiSlashCommand("quit", "退出 pi", PiCommandSource.Builtin, null, PiCommandAction.TerminalOnly),
 )
+
+/**
+ * The other twelve of pi's twenty-three built-ins: the ones this palette does
+ * **not** list, and the sentence the app should give a user who types one by
+ * hand.
+ *
+ * `PI_BUILTIN_SLASH_COMMANDS` names eleven and this map names twelve; together
+ * they are exactly `core/slash-commands.ts:20-42`. Both directions matter: the
+ * eleven are rows, and these twelve are the ones a user can still type because
+ * they remember them from pi. Without this table the app would answer `/trust`
+ * with the "that is not a command" message, which is false — pi has it.
+ *
+ * ## How `ChatScreen` uses it (agreed contract)
+ *
+ * The `ComposerRoute.Unknown` branch in `ChatScreen.kt` used to tell the user to
+ * drop the leading `/` and send the text as prose. That is the right answer only
+ * for a genuine typo, and it is exactly wrong for a name pi implements. The branch
+ * now looks a name up first and only falls through when there is no entry:
+ *
+ * ```kotlin
+ * is ComposerRoute.Unknown -> piCommandWithoutEntry(route.name)
+ *     ?.let { session.notifyUser(it) }
+ *     ?: session.notifyUnknownCommand(route.name)
+ * ```
+ *
+ * **`piCommandWithoutEntry` is a second copy of this table**, private to
+ * `ChatScreen.kt`. It was written in parallel with this one and the two must not
+ * both survive: they are the same twelve names and the same nine sentences, so the
+ * first time pi's built-in list changes they will disagree silently. This is the
+ * copy to keep — it lives beside [PI_BUILTIN_SLASH_COMMANDS], whose names are the
+ * complement, and the two together are checkable against
+ * `core/slash-commands.ts:20-42`. The caller should become:
+ *
+ * ```kotlin
+ * is ComposerRoute.Unknown -> unlistedBuiltinHint(route.name)
+ *     ?.let { session.notifyUser(it) }
+ *     ?: session.notifyUnknownCommand(route.name)
+ * ```
+ *
+ * The map is public and immutable, and [unlistedBuiltinHint] is the lookup entry
+ * point; both are stable. The three entries that name a surface do so because the
+ * user ruled that the *palette* should not be a second door to a screen that is
+ * already on the chat page — they are not navigation targets, so nothing here
+ * needs to be wired to a `NavRequest`. The other nine say only that pi has the
+ * command and this app has no entry for it: **do not** turn them into Settings
+ * paths. That is precisely the shape that was deleted (a row that tells the user
+ * to go and configure something themselves), and re-adding it here would put it
+ * back on a different surface.
+ */
+val PI_UNLISTED_BUILTIN_COMMANDS: Map<String, String> = mapOf(
+    // Group B in [PI_BUILTIN_SLASH_COMMANDS]: the ability has a direct surface on
+    // this screen, so the sentence names it instead of denying it.
+    "settings" to "pi 有 /settings；本应用用底栏的「设置」进入，命令面板不再单列。",
+    "model" to "pi 有 /model；本应用用顶栏的模型按钮打开选择器，命令面板不再单列。",
+    "thinking" to "pi 有 /thinking；本应用用输入框的 ◐ 切换思考等级，命令面板不再单列。",
+    // Group C: deleted so the palette stops pointing at Settings. The sentence
+    // states that honestly and stops there — no path, no "go and do it".
+    "scoped-models" to "pi 有 /scoped-models；本应用没有对应入口。",
+    "trust" to "pi 有 /trust；本应用没有对应入口。",
+    "login" to "pi 有 /login；本应用没有对应入口。",
+    "logout" to "pi 有 /logout；本应用没有对应入口。",
+    "reload" to "pi 有 /reload；本应用没有对应入口。",
+    // Group A: this platform cannot deliver the ability at all.
+    "share" to "pi 有 /share；本应用没有对应入口。",
+    "changelog" to "pi 有 /changelog；本应用没有对应入口。",
+    "hotkeys" to "pi 有 /hotkeys；本应用没有对应入口。",
+    "quit" to "pi 有 /quit；本应用没有对应入口。",
+)
+
+/**
+ * The sentence for a pi built-in this palette does not list, or null when [name]
+ * is not one of pi's unlisted built-ins.
+ *
+ * [name] is what was typed after the `/`, with the slash already removed —
+ * `ComposerRoute.Unknown.name` is exactly that. A leading `/` is tolerated anyway
+ * so a caller cannot get it wrong, and the match is case-insensitive because this
+ * is a courtesy message and never a dispatch: `/Trust` deserves the same true
+ * sentence as `/trust` rather than "no such command".
+ */
+fun unlistedBuiltinHint(name: String): String? =
+    PI_UNLISTED_BUILTIN_COMMANDS[name.trim().removePrefix("/").lowercase()]
 
 /**
  * Build the palette: pi's `get_commands` result plus pi's built-ins.
@@ -252,6 +321,24 @@ val PI_BUILTIN_SLASH_COMMANDS: List<PiSlashCommand> = listOf(
  *
  * The extension rows carry `sourceInfo`, so the tag comes from pi's own scope +
  * origin fields (`core/source-info.ts:3-12`) rather than from a path guess.
+ *
+ * ## Group order
+ *
+ * The three `get_commands` groups arrive on the wire in one order and are
+ * displayed in another, because those are two genuinely different orders in pi:
+ *
+ *  - the wire pushes **extension → template → skill** (`rpc-mode.ts:684-708`: the
+ *    `for` loops run over `getRegisteredCommands()`, then `promptTemplates`, then
+ *    `getSkills().skills`);
+ *  - the TUI builds its own autocomplete list as
+ *    `[...slashCommands, ...templateCommands, ...extensionCommands,
+ *    ...skillCommandList]` (`interactive-mode.ts:727`) — i.e. built-ins,
+ *    **templates, extensions**, skills.
+ *
+ * This palette reproduces the **TUI** order, because it is the surface a pi user
+ * sees while typing `/` and the panel exists to be that surface on a phone;
+ * `get_commands` is only the transport. [sortedBy] is stable, so rows inside one
+ * group keep the order the wire sent them in.
  *
  * @param skillCommandsEnabled pi's `enableSkillCommands` (default true). This is
  *        where that setting actually takes effect in this app: pi reads it only in
@@ -287,22 +374,40 @@ fun piCommandPalette(
             action = PiCommandAction.Prompt,
         )
     }
-    return builtins + fromPi
+    return builtins + fromPi.sortedBy { tuiGroupRank(it.source) }
+}
+
+/**
+ * Where [source] sits in pi's TUI autocomplete list
+ * (`interactive-mode.ts:727`), which is the order this palette displays.
+ *
+ * Separate from [PiCommandSource]'s declaration order on purpose: that order is
+ * the wire's (`rpc-mode.ts:684-708`), and conflating the two is what made the
+ * panel's grouping disagree with the TUI it is copying.
+ */
+private fun tuiGroupRank(source: PiCommandSource): Int = when (source) {
+    PiCommandSource.Builtin -> 0
+    PiCommandSource.Prompt -> 1
+    PiCommandSource.Extension -> 2
+    PiCommandSource.Skill -> 3
 }
 
 /**
  * pi's autocomplete provenance tag, reproduced from
- * `interactive-mode.ts` `getAutocompleteSourceTag`:
+ * `interactive-mode.ts` `getAutocompleteSourceTag` (`:586-606`):
  *
- *  - scope `user` → `u`, `project` → `p`, anything else (temporary) → `t`;
+ *  - scope `user` → `u`, `project` → `p`, anything else (temporary) → `t`
+ *    (`:591`, over `SourceScope` — `core/source-info.ts:3`);
  *  - source `auto`/`local`/`cli` adds nothing;
- *  - `npm:<name>` becomes `u:npm:<name>`;
- *  - a git URL becomes `u:git:<host>/<path>[@ref]`.
+ *  - `npm:<name>` becomes `u:npm:<name>` (`:598-601`);
+ *  - a git URL becomes `u:git:<host>/<path>[@ref]` (`:602-605`).
  *
- * The tag is shown because `source` alone (`extension`/`prompt`/`skill`) cannot
- * tell a user's own template from one inside an npm package — the distinction
- * pi's own UI makes and the one a user needs when deciding whether to trust a
- * command (audit §5.12).
+ * This function is the **derivation** and stays byte-identical to pi's; the
+ * *rendering* is [sourceTagLabelOf]'s. The tag is carried at all because
+ * `source` alone (`extension`/`prompt`/`skill`) cannot tell a user's own template
+ * from one inside an npm package — the distinction pi's own UI makes and the one
+ * a user needs when deciding whether to trust a command (audit §5.12). That npm
+ * and git remainder is exactly what [sourceTagLabelOf] must not drop.
  */
 fun sourceTagOf(info: PiSourceInfo?): String? {
     if (info == null) return null
@@ -316,6 +421,37 @@ fun sourceTagOf(info: PiSourceInfo?): String? {
     if (source.startsWith("npm:")) return "$scope:$source"
     val git = parseGitSource(source) ?: return scope
     return "$scope:git:$git"
+}
+
+/**
+ * [sourceTagOf]'s display form: the scope letter becomes its Chinese word, every
+ * other part of the tag is passed through untouched.
+ *
+ * ```
+ * u                     → 用户
+ * p:npm:@acme/pi-tools  → 项目·npm:@acme/pi-tools
+ * u:git:github.com/a/b@main → 用户·git:github.com/a/b@main
+ * ```
+ *
+ * The split is deliberate and was ruled on: `u`/`p`/`t` is **pi's** convention
+ * (`interactive-mode.ts:591`) and is what the wire and the derivation speak, but
+ * a single Latin letter next to 「扩展」/「技能」 read as noise to the user, so the
+ * badge spells it out. The npm and git parts are **not** translated and **not**
+ * dropped — they are the whole reason the tag exists (「我自己写的模板」 vs
+ * 「某个 npm 包里带的」, `:598-605`).
+ *
+ * An unrecognised tag is returned unchanged rather than guessed at: a future
+ * scope letter must show up as itself, not as a plausible-looking Chinese word.
+ */
+fun sourceTagLabelOf(tag: String): String {
+    val scope = when (tag.substringBefore(':')) {
+        "u" -> "用户"
+        "p" -> "项目"
+        "t" -> "临时"
+        else -> return tag
+    }
+    val rest = tag.substringAfter(':', "")
+    return if (rest.isEmpty()) scope else "$scope·$rest"
 }
 
 /**

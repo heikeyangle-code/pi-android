@@ -102,11 +102,58 @@ object PackageStrings {
         PiResourceDiscovery.Kind.Themes -> "主题"
     }
 
-    /** Where a resource was found, in the user's terms rather than as a path. */
+    /**
+     * Where one scanned resource was found.
+     *
+     * `Project` says 当前工作区 rather than pi's literal `project` on purpose: every
+     * other label on this screen (项目信任, 项目包, 本工作区) says 工作区, and one row
+     * calling the same place by pi's wire word while the row above calls it 工作区 is
+     * how two names for one thing get established. The scope value itself is still
+     * pi's (`settings.json`'s project scope), only the noun is the app's.
+     */
     fun resourceScope(scope: PiResourceDiscovery.Found.Scope): String = when (scope) {
         PiResourceDiscovery.Found.Scope.Global -> "（全局）"
         PiResourceDiscovery.Found.Scope.Project -> "（当前工作区）"
+        PiResourceDiscovery.Found.Scope.Package -> "（资源包）"
     }
+
+    /**
+     * The origin of one scanned resource, package name first when there is one.
+     *
+     * A package's resources are the only ones whose *owner* matters to the reader:
+     * "this theme comes from the package I installed" is the whole reason the row is
+     * on screen, and 资源包 alone would not say which one.
+     */
+    fun resourceOrigin(found: PiResourceDiscovery.Found): String =
+        found.packageName?.let { "（资源包：$it）" } ?: resourceScope(found.scope)
+
+    /**
+     * The section that shows what each **installed package** carries.
+     *
+     * Its title and its note both say 本应用自己扫的 because that is the one thing a
+     * reader has to know here: `pi list` reports a package's spec and install path
+     * and nothing inside it, so everything below is this app walking the same
+     * directory pi walks (`core/package-manager.ts:2066-2072`). Presenting it as
+     * pi's own report would be a claim about a list nobody received.
+     */
+    const val PACKAGE_RESOURCES_TITLE = "资源包里的资源（本应用自己扫的）"
+
+    /**
+     * The fourth kind a package can carry.
+     *
+     * Extensions are not a [PiResourceDiscovery.Kind]: pi collects them by a
+     * different rule and [PiAutoExtensions] is that reader, so this is the word the
+     * package card labels them with.
+     */
+    const val EXTENSION_KIND = "扩展"
+    const val PACKAGE_RESOURCES_NOTE =
+        "pi 会把每个包自己的 extensions / skills / prompts / themes 一起加载，但 RPC 里没有" +
+            "任何一条命令会列出它们。这一区是本应用按 pi 的目录规则去扫每个包的安装目录得到的，" +
+            "不是 pi 的报告 —— 扫到的不一定都已经生效（信任、过滤规则、引擎重启都会影响）。"
+    const val PACKAGE_ROOT_UNKNOWN =
+        "pi 没有报这个包的安装路径，按布局也推不出来，所以这个包里的资源列不出来。"
+    const val PACKAGE_RESOURCES_EMPTY =
+        "这个包的安装目录里没有 extensions / skills / prompts / themes。"
 
     /** One line per shipped extension: what it is for, in the app's words. */
     fun builtinPurpose(name: String): String = when (name) {

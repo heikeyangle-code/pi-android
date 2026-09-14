@@ -45,12 +45,13 @@ import app.pi.rpc.UserMessage
  *
  * F19 (`docs/rendering-review.md`): this function used to declare five optional
  * callbacks and its only caller supplied none of them, so five affordances were
- * unreachable while the blocks kept rendering labels for them. Two have a target
- * in the app and are now supplied (`onBranchClick`, `onModelClick`); the other
- * three had no target at all — no image viewer, no full-screen diff route, no
- * retry action — so their parameters and the labels they gated were deleted
- * (`onImageClick`, `onDiffOpenFull`, `onErrorRetry`) rather than left claiming a
- * feature. Adding one back means adding the surface it opens.
+ * unreachable while the blocks kept rendering labels for them. One has a target in
+ * the app and is supplied (`onBranchClick`); the others had no target at all — no
+ * image viewer, no full-screen diff route, no retry action, and (since the model
+ * row stopped rendering, below) no model row to tap — so their parameters and the
+ * labels they gated were deleted (`onImageClick`, `onDiffOpenFull`, `onErrorRetry`,
+ * `onModelClick`) rather than left claiming a feature. Adding one back means adding
+ * the surface it opens.
  *
  * @param hideThinking when true the thinking blocks are hidden entirely
  *   (pi's `hideThinkingBlock`).
@@ -58,8 +59,6 @@ import app.pi.rpc.UserMessage
  * @param toolsDefaultExpanded maps to pi's `app.tools.expand`.
  * @param onBranchClick the branch-summary row's tap; the host opens the session
  *   tree (the app's nearest equivalent of pi's branch jump).
- * @param onModelClick the model-change row's tap; the host opens the model
- *   picker sheet.
  * @param showBilledCost pi's `showCacheMissNotices` (`core/settings-manager.ts:120`,
  *   default `false`). On, the compaction and branch-summary blocks print the
  *   summarization's own usage exactly as pi does
@@ -87,7 +86,6 @@ fun BlockRenderer(
     onBranchClick: ((BranchSummary) -> Unit)? = null,
     /** §4.8: 编辑并从此分叉 — pi forks a session from a user message (`fork`, rpc-types.ts:62). */
     onForkFromMessage: ((String) -> Unit)? = null,
-    onModelClick: (() -> Unit)? = null,
 ) {
     when (item) {
         is UserMessage -> UserMessageBlock(item, modifier, onForkFromMessage)
@@ -131,7 +129,28 @@ fun BlockRenderer(
 
         is HookMessage -> HookMessageBlock(item, modifier)
 
-        is ModelChange -> ModelChangeBlock(item, modifier, onModelClick)
+        // **pi does not draw `model_change` in the transcript, so neither does this.**
+        // The entry exists in the session file (`core/session-manager.ts:64`, written
+        // at `:1099`) and the reducer keeps projecting it, but pi's own view of a
+        // model switch is a *transient* one: its `showStatus("Model: <id>")` line
+        // (`modes/interactive/interactive-mode.ts:4850`, `:4996`), which appends one
+        // `theme.fg("dim", …)` line at the end of the chat container and **replaces
+        // its text** on the next status update (`:3537-3553`) — it is not a row of the
+        // transcript, and it is never persisted. The only surface that shows the entry
+        // as a durable row is pi's session-tree selector
+        // (`components/tree-selector.ts:600` labels it `[model: <id>]`, `:830`).
+        //
+        // The row is deliberately **not** replaced with a notice: pi's sentence is
+        // English, momentary, and belongs to a status area this app does not have, so
+        // inventing 「模型已切换」 here would be new copy claiming to be pi's. Where the
+        // current model *is* shown is the AppBar's chip, which reads the same
+        // `ModelChange.modelId` this row used to (`screens/ChatScreen.kt`); the item
+        // stays in the list because it is that chip's fallback and one of the search
+        // and export inputs.
+        //
+        // v2's 构件 10 (`06 §3`) draws this as a row; the user asked for it to go
+        // (design decision D19), and pi agrees with the user.
+        is ModelChange -> Unit
 
         is SkillInvocation -> SkillInvocationBlock(item, modifier)
 

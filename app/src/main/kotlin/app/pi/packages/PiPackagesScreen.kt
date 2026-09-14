@@ -81,6 +81,18 @@ data class PiPackagesUiState(
      * not packages, so `pi list` says nothing about them either.
      */
     val resources: List<PiResourceDiscovery.Found> = emptyList(),
+    /**
+     * What each **installed package** carries, read off its install directory by
+     * this app.
+     *
+     * `pi list` reports a package's spec and where it was installed, and nothing
+     * about the resources inside it — while pi's loader does resolve a package's own
+     * `extensions/`, `skills/`, `prompts/` and `themes/`
+     * (`core/package-manager.ts:2066-2072`). So a user who installed an extension as
+     * a package saw an empty screen. Everything in here is the app walking the same
+     * directory pi walks, which is why the card says so on its face.
+     */
+    val packageScans: List<PackageScan> = emptyList(),
     /** `pi list`'s raw stdout, shown whenever parsing found nothing. */
     val listRaw: String = "",
     val listUnparsed: Boolean = false,
@@ -114,6 +126,27 @@ data class PiPackagesUiState(
         val extension: PiBuiltinExtension,
         val presence: PiBuiltinExtension.Presence,
     )
+
+    /**
+     * One installed package's own resources, as the app could see them on disk.
+     *
+     * [rootPath] is null when `pi list` reported no install path and the layout
+     * could not be derived either (a git package: pi names its checkout directory
+     * itself, and guessing would put a wrong path on screen). A null root is shown
+     * as such rather than as "no resources".
+     */
+    data class PackageScan(
+        /** `pi list`'s own source spelling — the row's identity. */
+        val label: String,
+        /** The host directory that was scanned. */
+        val rootPath: String?,
+        /** Extensions the package's `extensions/` directory holds. */
+        val extensions: List<PiAutoExtensions.Found> = emptyList(),
+        /** Skills, prompt templates and themes under the package root. */
+        val resources: List<PiResourceDiscovery.Found> = emptyList(),
+    ) {
+        val isEmpty: Boolean get() = extensions.isEmpty() && resources.isEmpty()
+    }
 
     data class LogLine(
         val headline: String,
@@ -263,6 +296,22 @@ fun PiPackagesScreen(
             }
         }
 
+        // 每个**已安装资源包**内部的资源。`pi list` 只报 spec 与安装路径，包里的
+        // extensions / skills / prompts / themes 不在任何 RPC 载荷里，所以这一区是
+        // 本应用自己扫安装目录的结果 —— 标题和说明都写明这一点（见 PackageStrings）。
+        if (state.packageScans.isNotEmpty()) {
+            item {
+                PiSettingsSectionHeader(
+                    label = PackageStrings.PACKAGE_RESOURCES_TITLE,
+                    count = "${state.packageScans.size} 个包",
+                )
+                PiInfoNote(PackageStrings.PACKAGE_RESOURCES_NOTE)
+            }
+            state.packageScans.forEach { scan ->
+                item(key = "pkgscan:${scan.label}") { PackageResourcesCard(scan) }
+            }
+        }
+
         if (state.listUnparsed && state.listRaw.isNotBlank()) {
             item {
                 // 这一份是页面级的一整块（不是卡内的小块），所以要自己带页边距。
@@ -396,13 +445,95 @@ private fun ResourcesCard(rows: List<PiResourceDiscovery.Found>) {
                         overflow = TextOverflow.Ellipsis,
                     )
                     Text(
-                        PackageStrings.resourceScope(found.scope),
+                        PackageStrings.resourceOrigin(found),
                         style = PiTheme.text.monoSmall,
                         color = palette.muted,
                     )
                 }
             }
         }
+    }
+}
+
+/**
+ * One installed package's own resources, as this app could see them.
+ *
+ * The caption is the point: the reader has to be able to tell this list from `pi
+ * list`'s, because pi reports none of it. A package with no discoverable root says
+ * so instead of showing an empty list, which would read as "the package is empty".
+ */
+@Composable
+private fun PackageResourcesCard(scan: PiPackagesUiState.PackageScan) {
+    val palette = PiTheme.palette
+    PiSettingsCard {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .padding(PiSettingsMetrics.cardPaddingLoose),
+        ) {
+            Text(
+                scan.label,
+                style = PiTheme.text.mono,
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Spacer(Modifier.height(PiSettingsMetrics.supportingGap))
+            Text(
+                text = scan.rootPath ?: PackageStrings.PACKAGE_ROOT_UNKNOWN,
+                style = PiTheme.text.monoSmall,
+                color = if (scan.rootPath == null) palette.warning else palette.dim,
+            )
+            if (scan.rootPath != null && scan.isEmpty) {
+                Spacer(Modifier.height(PiSettingsMetrics.supportingGap))
+                Text(
+                    PackageStrings.PACKAGE_RESOURCES_EMPTY,
+                    style = PiTheme.text.meta,
+                    color = palette.muted,
+                )
+            }
+            scan.extensions.forEach { extension ->
+                ResourceLine(
+                    name = extension.name,
+                    origin = PackageStrings.EXTENSION_KIND,
+                )
+            }
+            PiResourceDiscovery.Kind.entries.forEach { kind ->
+                scan.resources.filter { it.kind == kind }.forEach { found ->
+                    ResourceLine(
+                        name = found.name,
+                        origin = "${PackageStrings.resourceKind(kind)} " +
+                            PackageStrings.resourceOrigin(found),
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** One scanned resource inside a package: name + where it came from. */
+@Composable
+private fun ResourceLine(name: String, origin: String) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = PiSettingsMetrics.supportingGap),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(PiSettingsMetrics.rowGap),
+    ) {
+        Text(
+            name,
+            modifier = Modifier.weight(1f),
+            style = PiTheme.text.mono,
+            color = MaterialTheme.colorScheme.onSurface,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Text(
+            origin,
+            style = PiTheme.text.monoSmall,
+            color = PiTheme.palette.muted,
+        )
     }
 }
 

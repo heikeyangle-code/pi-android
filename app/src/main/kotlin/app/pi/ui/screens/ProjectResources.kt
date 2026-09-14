@@ -1,5 +1,6 @@
 package app.pi.ui.screens
 
+import app.pi.packages.PiAutoExtensions
 import app.pi.packages.PiResourceDiscovery
 import app.pi.rpc.ToolCall
 import app.pi.rpc.ToolDiff
@@ -146,6 +147,17 @@ internal object PiProject {
      */
     fun projectResources(projectConfigDir: File): List<PiResourceDiscovery.Found> =
         PiResourceDiscovery.discover(projectConfigDir, PiResourceDiscovery.Found.Scope.Project)
+
+    /**
+     * 这个目录的**扩展**——第四个资源种类，[projectResources] 覆盖不到它。
+     *
+     * 扩展不是 `PiResourceDiscovery.Kind` 的一员：pi 对它的收集规则不一样（一个目录里
+     * 的 `index.ts`/`package.json` 就是一条，见 `PiAutoExtensions`），所以它是单独一次读。
+     * 这一屏原来一个扩展都不列，用户把扩展放进 `.pi/extensions` 之后在工作区屏看不到它，
+     * 而 pi 启动时是会加载的（受信任时）。
+     */
+    fun projectExtensions(projectConfigDir: File): List<PiAutoExtensions.Found> =
+        PiAutoExtensions.discover(File(projectConfigDir, "extensions"))
 }
 
 /** One file this session touched, as the project screen shows it. */

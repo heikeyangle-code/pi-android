@@ -268,6 +268,7 @@ class PiPackagesController(
      * this screen for the same reason ([PiResourceDiscovery]).
      */
     private var resources by mutableStateOf<List<PiResourceDiscovery.Found>>(emptyList())
+    private var packageScans by mutableStateOf<List<PiPackagesUiState.PackageScan>>(emptyList())
     private var listRaw by mutableStateOf("")
     private var listUnparsed by mutableStateOf(false)
     private var listNotReady by mutableStateOf<String?>(null)
@@ -290,6 +291,7 @@ class PiPackagesController(
         builtins = builtins,
         discovered = discovered,
         resources = resources,
+        packageScans = packageScans,
         listRaw = listRaw,
         listUnparsed = listUnparsed,
         listNotReady = listNotReady,
@@ -336,6 +338,7 @@ class PiPackagesController(
                 }?.get(entry.source.raw)?.filters.orEmpty()
                 entry.copy(filters = filters)
             }
+            packageScans = io { readPackageScans(entries) }
             listRaw = listing.raw
             listUnparsed = listing.notReady == null && listing.entries.isEmpty() && listing.raw.isNotBlank()
             listNotReady = listing.notReady
@@ -605,6 +608,58 @@ class PiPackagesController(
     private fun readResources(): List<PiResourceDiscovery.Found> =
         PiResourceDiscovery.discover(layout.agentMirrorDir, PiResourceDiscovery.Found.Scope.Global) +
             PiResourceDiscovery.discover(layout.hostProjectConfigDir(), PiResourceDiscovery.Found.Scope.Project)
+
+    /**
+     * What each installed package carries in its own directory.
+     *
+     * ## Why this is a directory walk and not an RPC read
+     *
+     * `pi list` reports a package's spec, its scope and (when it has one) the
+     * installed path; the resources **inside** the package are not in any RPC
+     * payload (`get_commands` carries `name`/`description`/`source` and no path, and
+     * there is no command that lists package resources at all). pi's own loader does
+     * read them — a package root has the same four directories a project does
+     * (`core/package-manager.ts:2066-2072`, and `:1307` for the per-scope root) — so
+     * the app walks the same directory. That is a **local reproduction**, not pi's
+     * report, and the card's caption says so.
+     *
+     * ## Which root
+     *
+     * `pi list`'s `installedPath` is the authority because pi printed it
+     * (`package-manager-cli.ts:983-985`); it arrives in guest spelling and is mapped
+     * through the same two binds [AgentLayout] owns. When an entry has no reported
+     * path, only npm's layout can be derived (pi names git's checkout directory
+     * itself), so a git package without a path is reported as unmapped rather than
+     * guessed at.
+     */
+    private fun readPackageScans(entries: List<PiPackageEntry>): List<PiPackagesUiState.PackageScan> =
+        entries.map { entry ->
+            val root = entry.installedPath
+                ?.let { guest ->
+                    PiResourceDiscovery.hostPath(
+                        guestPath = guest,
+                        guestAgentDir = layout.guestAgentDir,
+                        agentDir = layout.agentMirrorDir,
+                        guestProjectDir = "${layout.guestWorkspace.trimEnd('/')}/.pi",
+                        projectDir = layout.hostProjectConfigDir(),
+                    )
+                }
+                ?: PiResourceDiscovery.packageRoots(
+                    root = when (entry.scope) {
+                        PiPackageScope.User -> layout.agentMirrorDir
+                        PiPackageScope.Project -> layout.hostProjectConfigDir()
+                    },
+                    npmName = (entry.source as? PiPackageSource.Npm)?.name,
+                ).firstOrNull()
+            PiPackagesUiState.PackageScan(
+                label = entry.source.raw,
+                rootPath = root?.takeIf { it.isDirectory }?.absolutePath,
+                extensions = root?.let { PiAutoExtensions.discover(File(it, EXTENSIONS_DIR)) }.orEmpty(),
+                resources = root?.let {
+                    PiResourceDiscovery.discoverPackage(it, packageName = entry.source.raw)
+                }.orEmpty(),
+            )
+        }
 
     private suspend fun readTrust(): TrustFacts {
         val canonical = io {

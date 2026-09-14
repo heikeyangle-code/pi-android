@@ -59,8 +59,19 @@ object PiResourceDiscovery {
         val name: String,
         /** Which root it was found under, so two roots can be told apart. */
         val scope: Scope,
+        /**
+         * The package this resource came out of, when [scope] is [Scope.Package].
+         *
+         * A package-installed resource is **not** something `pi list` reports: pi
+         * resolves a package's own `extensions/`, `skills/`, `prompts/` and
+         * `themes/` when its loader walks the install directory, and the RPC
+         * surface has no command that lists them. So everything under this scope is
+         * the app reading the same directory pi reads, and the UI has to say that
+         * rather than implying pi reported it.
+         */
+        val packageName: String? = null,
     ) {
-        enum class Scope { Global, Project }
+        enum class Scope { Global, Project, Package }
     }
 
     /**
@@ -80,6 +91,55 @@ object PiResourceDiscovery {
             }
         }
     }
+
+    /**
+     * One installed package's own resources, under the package's root directory.
+     *
+     * An installed package carries the same four directories a project does
+     * (`extensions/`, `skills/`, `prompts/`, `themes/`); pi's loader walks them when
+     * it loads the package (`core/package-manager.ts:2066-2072` for the installed
+     * root). Only the three [Kind]s are covered here — extensions are a different
+     * shape and [PiAutoExtensions] already reads them, so the caller runs both.
+     */
+    fun discoverPackage(packageRoot: File, packageName: String): List<Found> =
+        discover(packageRoot, Found.Scope.Package).map { it.copy(packageName = packageName) }
+
+    /**
+     * Where one `pi list` entry's `installedPath` is on **this** filesystem.
+     *
+     * `pi list` prints a guest path (`package-manager-cli.ts:983-985`), e.g.
+     * `/root/.pi/agent/npm/node_modules/foo` for a user package or
+     * `/root/pi/…/.pi/npm/…` for a project one. The app has both binds
+     * (`AgentLayout`), so the mapping is a prefix swap and nothing more. A path
+     * under neither root is reported as unmapped rather than guessed at: the caller
+     * then falls back to the layout it can compute ([packageRoots]).
+     */
+    fun hostPath(guestPath: String, guestAgentDir: String, agentDir: File, guestProjectDir: String, projectDir: File): File? {
+        val cleanAgent = guestAgentDir.trimEnd('/')
+        val cleanProject = guestProjectDir.trimEnd('/')
+        return when {
+            guestPath == cleanAgent -> agentDir
+            guestPath.startsWith("$cleanAgent/") ->
+                File(agentDir, guestPath.removePrefix("$cleanAgent/"))
+
+            guestPath == cleanProject -> projectDir
+            guestPath.startsWith("$cleanProject/") ->
+                File(projectDir, guestPath.removePrefix("$cleanProject/"))
+
+            else -> null
+        }
+    }
+
+    /**
+     * The install root every package of one scope has, by pi's layout.
+     *
+     * `core/package-manager.ts:1307` and `:2066-2072`: npm packages land in
+     * `<root>/npm/node_modules/<name>`, git checkouts in `<root>/git/…` under a
+     * directory pi names (which is why a git entry with no reported `installedPath`
+     * stays unmapped — inventing that name would put a wrong path on screen).
+     */
+    fun packageRoots(root: File, npmName: String?): List<File> =
+        listOfNotNull(npmName?.let { File(File(File(root, "npm"), "node_modules"), it) })
 
     /**
      * pi's skill layout: `<dir>/<name>/SKILL.md`, one level deep (`:381-385`).

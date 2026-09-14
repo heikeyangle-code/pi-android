@@ -767,14 +767,23 @@ class PiEngineSession(
     /**
      * Mirror a message the user sent or queued into the transcript, and publish it.
      *
-     * This is the publishing form of `TranscriptReducer.onUserPrompt`, and it exists
-     * because the callers that queue text mid-turn do not go through [prompt]: pi's
-     * `steer` and `follow_up` are fire-and-forget and carry no echo of their own
-     * (pi's TUI only discovers a queued message when pi delivers it), so the app
-     * has to add the row itself at the moment it queues the text (F1). Calling
-     * `transcript.onUserPrompt` directly still creates the row, but the change is
-     * never published — no revision, no [publication] — and a caller that then
-     * wants the UI to show it has to rebuild the list by hand.
+     * This is the publishing form of `TranscriptReducer.onUserPrompt`, and its one
+     * caller is [prompt] — the optimistic row that makes the user's own message
+     * visible the instant it is submitted, before pi confirms it (F1,
+     * `docs/rendering-review.md`). Publishing matters: calling
+     * `transcript.onUserPrompt` directly does create the row, but the change is
+     * never published — no revision, no [publication] — so no consumer would see it
+     * and a caller that wants the UI to show it would have to rebuild the list by
+     * hand.
+     *
+     * It stayed a separate function after every mid-turn queue path moved onto
+     * `prompt` + `streamingBehavior` (pi's own shape: `interactive-mode.ts:3137-3143`):
+     * `PiSessionViewModel.send` / `sendFollowUp` used to send the bare `steer` /
+     * `follow_up` commands, which carry no echo, and called this by hand. They no
+     * longer do — a second echo on top of [prompt]'s would render the row twice and
+     * leave a stale entry in the reducer's pending-echo queue
+     * (`rpc/.../Transcript.kt:883-897`) — so this is now [prompt]'s publisher and
+     * nothing else's.
      */
     fun echoUserPrompt(text: String, images: List<PiImage> = emptyList()) {
         synchronized(transcriptLock) {

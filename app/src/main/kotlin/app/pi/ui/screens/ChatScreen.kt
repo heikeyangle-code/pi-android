@@ -13,8 +13,8 @@ import androidx.compose.foundation.Image
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
-import android.content.Intent
-import android.app.Activity
+import android.os.Environment
+import android.provider.DocumentsContract
 import android.util.Base64
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -43,12 +43,12 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AttachFile
 import androidx.compose.material.icons.filled.ChatBubble
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.filled.Stop
@@ -112,7 +112,6 @@ import app.pi.ui.chat.ComposerRoute
 import app.pi.ui.chat.ForkPickerSheet
 import app.pi.ui.chat.MentionPalette
 import app.pi.ui.chat.ModelPickerSheet
-import app.pi.ui.chat.PI_BUILTIN_SLASH_COMMANDS
 import app.pi.ui.chat.PiCommandAction
 import app.pi.ui.chat.PiFileMentions
 import app.pi.ui.chat.PiSlashCommand
@@ -128,6 +127,7 @@ import app.pi.ui.chat.ThinkingPickerSheet
 import app.pi.ui.chat.mergeRestoredQueue
 import app.pi.ui.chat.routeComposerText
 import app.pi.ui.chat.thinkingLabelOf
+import app.pi.ui.chat.unlistedBuiltinHint
 import app.pi.ui.components.PiEmptyState
 import app.pi.ui.components.PiStatusLine
 import app.pi.ui.extension.ExtensionStatusRow
@@ -308,8 +308,9 @@ private fun ChatBody(
     // existing behaviour and is not changed here.
     //
     // Only the paths that actually handed something to pi call this: a notice
-    // (`ComposerRoute.Unreachable` / `Unknown`) leaves both the draft and the keys
-    // alone, because the user still owns the text it is complaining about.
+    // (`ComposerRoute.Unknown`, or a name pi has but this palette does not list)
+    // leaves both the draft and the keys alone, because the user still owns the text
+    // it is complaining about.
     val keyboard = LocalSoftwareKeyboardController.current
     val focus = LocalFocusManager.current
     val dismissKeys: () -> Unit = {
@@ -321,83 +322,76 @@ private fun ChatBody(
     // (`keybindings.md:112`): jump between the messages the *user* wrote. On a
     // phone there is no keybinding for it, so it lives in the overflow menu.
 
-    // Image attachments. pi's `prompt`/`steer`/`follow_up` all carry `images`
-    // (`rpc-types.ts:22-24`), and the wire shape is inline base64 + MIME
-    // (`ImageContent`, `packages/ai/src/types.ts:367-371`; `docs/rpc.md:51-53`).
-    // There is no path and no size field, so the bytes travel inside the RPC
-    // message — which is why this needs no guest file at all: `GuestImageBytes`
-    // resolves guest paths *into* the app for markdown images, the opposite
-    // direction, and reusing it here would invent a second channel.
+    // Attachments — one picker, two channels, chosen by what the user picked.
     //
-    // Picker: `ActivityResultContracts.GetContent()` (the SAF document picker).
-    // Chosen over the Android 13 Photo Picker because (a) it needs no storage or
-    // media permission at all — the system grants a per-URI read to this app for
-    // exactly the file the user picked, which is the same model the app already
-    // uses for directory grants (`DeviceSafStore`), and (b) it is available on
-    // every API level this app supports without a backport dependency, and covers
-    // file providers as well as the gallery.
+    // pi has exactly **one** channel that carries bytes: `prompt`/`steer`/
+    // `follow_up` take an `images` array (`rpc-types.ts:22-24`) whose wire shape is
+    // inline base64 + MIME (`ImageContent`, `packages/ai/src/types.ts:367-371`,
+    // `:456`; `docs/rpc.md:51-53`). There is no path and no size field, so an image
+    // needs no guest file at all — `GuestImageBytes` resolves guest paths *into* the
+    // app for markdown images, the opposite direction, and reusing it here would
+    // invent a second channel. **Any other file has no byte channel at all**: pi's
+    // `@file` is a CLI argument and RPC mode does not support it, so the phone's
+    // equivalent of pi's terminal-side 「drop files to attach」 is to put the file
+    // where the agent can read it — the session's own workspace — and hand it the
+    // path in the prompt. That is what this picker does for everything that is not
+    // an image.
+    //
+    // Picker: `ActivityResultContracts.GetContent()` (the SAF document picker) with
+    // `*/*`. Chosen over the Android 13 Photo Picker because (a) it needs no storage
+    // or media permission at all — the system grants a per-URI read to this app for
+    // exactly the file the user picked, which is the same model the app already uses
+    // for directory grants (`DeviceSafStore`), and (b) it is available on every API
+    // level this app supports without a backport dependency, and covers file
+    // providers as well as the gallery.
     var attachments by remember { mutableStateOf<List<PiImage>>(emptyList()) }
 
-    // pi's `app.editor.external` (`keybindings.md:129`, ctrl+g) → `handleOpenExternalEditor`
-    // (`interactive-mode.ts:4246-4261`) → `editInExternalEditor`
-    // (`modes/interactive/external-editor.ts:14-52`): pi writes the composer text to a
-    // temp `prompt.md`, spawns the configured command, and **only if it exits zero**
-    // reads the file back (strip BOM, drop one trailing newline) and replaces the
-    // composer. Android has no command line to spawn, so the 1:1 mapping is an
-    // `ACTION_EDIT` handoff, and pi's exit-code rule maps onto Android's result code:
-    //   * `RESULT_OK` + text → replace the draft (pi: exit 0 → read back)
-    //   * `RESULT_CANCELED` → keep the draft (pi: non-zero exit discards everything)
-    //   * nothing handles it → keep the draft **and say so** (pi's `spawn` error
-    //     resolves `status: "failed"` and it prints a line; never silent)
-    val externalEditor = rememberLauncherForActivityResult(
-        ActivityResultContracts.StartActivityForResult(),
-    ) { result ->
-        val returned = result.data
-            ?.getCharSequenceExtra(Intent.EXTRA_TEXT)
-            ?.toString()
-            ?.removePrefix("\uFEFF")
-            ?.removeSuffix("\n")
-        when {
-            result.resultCode == Activity.RESULT_OK && returned != null -> draft = returned
-            result.resultCode == Activity.RESULT_CANCELED -> session.notifyUser(
-                "外部编辑器没有改动内容，草稿保持原样。",
-            )
-            else -> session.notifyUser(
-                "外部编辑器没有返回可读的文本，草稿保持原样。",
-                warning = true,
-            )
-        }
-    }
-    fun openInExternalEditor() {
-        val intent = Intent(Intent.ACTION_EDIT)
-            .setType("text/plain")
-            .putExtra(Intent.EXTRA_TEXT, draft)
-        val opened = runCatching { externalEditor.launch(intent) }.isSuccess
-        if (!opened) {
-            // No pointer to a settings row: the pi key (`externalEditor`) only
-            // configures the Ctrl+G command *inside* pi's own TUI
-            // (`interactive-mode.ts:2628,4247`), so its row was removed with the
-            // TUI-only keys (`docs/settings-review.md` §9). This editor is the
-            // app's own and goes through `ACTION_EDIT`.
-            session.notifyUser(
-                "没有应用能编辑文本，草稿保持原样。",
-                warning = true,
-            )
-        }
-    }
-    // Where the picked image is read and encoded. The picker callback itself runs on
-    // the main thread, and both halves of "load 6 MB and base64 it" belong off it.
+    // There is **no external-editor chip** any more. pi's `app.editor.external`
+    // (ctrl+g, `keybindings.md:129` → `interactive-mode.ts:4246-4261` →
+    // `modes/interactive/external-editor.ts:14-52`) writes the composer to a temp
+    // file, spawns `$EDITOR` and reads it back **only on exit 0** — a command line
+    // this platform does not have. The app mapped it onto an `ACTION_EDIT` handoff,
+    // and on the user's phone nothing answers that intent, so the chip could only
+    // ever say 「没有应用能编辑文本」. Deleted by decision **D19**: the chip, its
+    // launcher, its `ACTION_EDIT` mapping and both notices are gone rather than left
+    // as a button that reports its own uselessness.
+    //
+    // The pi setting key (`externalEditor`) is pi's own and is untouched: it
+    // configures Ctrl+G inside pi's TUI, and it has no row in this app's settings
+    // (`docs/settings-review.md` §9 removed the TUI-only keys).
+
+    // Where a picked file is turned into an attachment. The picker callback itself
+    // runs on the main thread, and both halves of the work — "load 6 MB and base64
+    // it" for an image, "stream it into the workspace" for anything else — belong
+    // off it.
     val pickerScope = rememberCoroutineScope()
-    val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+    val attachmentPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         // A null uri is the user backing out of the picker, not a failure.
         if (uri != null) {
             val resolver = context.contentResolver
             val mime = resolver.getType(uri).orEmpty()
             when {
-                !mime.startsWith("image/") -> session.notifyUser(
-                    "只能附加图片：所选文件的类型是 ${mime.ifEmpty { "未知类型" }}。请回到选择器换一张图片。",
-                    warning = true,
-                )
+                // Anything that is not an image has no byte channel, so it goes in as
+                // its **path** — see [devicePathOf] for why the guest can open one and
+                // which sources can answer with a real path at all.
+                !mime.startsWith("image/") -> pickerScope.launch {
+                    val path = withContext(Dispatchers.IO) { devicePathOf(context, uri) }
+                    if (path == null) {
+                        // Nothing is inserted: a `content://` string or a guessed path
+                        // would be answered by pi with an error about a file the user
+                        // never named.
+                        session.notifyUser(
+                            "这个来源没有可用的文件路径，pi 读不到它。请换一个来源" +
+                                "（「文件」里的本地存储或下载），或先把文件存到手机上。",
+                            warning = true,
+                        )
+                    } else {
+                        // The path goes into the composer as **text**: pi's agent
+                        // resolves a path the same way it resolves one the user typed,
+                        // and the app does not get to write the prompt.
+                        draft = if (draft.isBlank()) path else draft + " " + path
+                    }
+                }
 
                 else -> {
                     // Off the frame thread, and bounded while reading. This callback
@@ -770,19 +764,12 @@ private fun ChatBody(
     fun pick(command: PiSlashCommand, args: String) {
         when (command.action) {
             PiCommandAction.Prompt -> session.runPromptCommand(command, args)
-            PiCommandAction.OpenSettings -> session.requestNav(NavRequest.Settings)
-            PiCommandAction.PickModel -> {
-                session.refreshModels()
-                sheet = ChatSheet.Model
-            }
-            PiCommandAction.PickThinking -> {
-                session.refreshThinkingLevels()
-                sheet = ChatSheet.Thinking
-            }
-            PiCommandAction.OpenTree -> {
-                session.refreshTree()
-                session.requestNav(NavRequest.SessionTree)
-            }
+            // The refresh belongs to the *navigation*: `PiRoot` handles this
+            // `NavRequest` by raising the session-list overlay, selecting the tree
+            // view and calling `refreshTree()` itself (`ui/PiRoot.kt`), which is the
+            // only way into the tree now. Refreshing here as well issued the same
+            // two RPCs twice.
+            PiCommandAction.OpenTree -> session.requestNav(NavRequest.SessionTree)
             PiCommandAction.PickFork -> {
                 session.refreshForkMessages()
                 sheet = ChatSheet.Fork
@@ -792,7 +779,17 @@ private fun ChatBody(
             // (`interactive-mode.ts:6062-6066`), and so does the ViewModel.
             PiCommandAction.ExportSession -> session.exportSession(args.takeIf { it.isNotBlank() })
             PiCommandAction.CopyLastAssistant -> copyLastAssistant(session, context)
-            PiCommandAction.RenameSession -> sheet = ChatSheet.Rename
+            // `/name <名字>` renames outright, exactly as pi does
+            // (`interactive-mode.ts:6193-6207`); the dialog is for the bare `/name`,
+            // where there is nothing to apply yet. The argument was silently dropped
+            // here — twice, in fact, because the first fix was lost in a later
+            // rewrite of this function — so it is worth saying out loud: this arm
+            // reads `args`.
+            PiCommandAction.RenameSession -> if (args.isNotBlank()) {
+                session.renameSession(args)
+            } else {
+                sheet = ChatSheet.Rename
+            }
             PiCommandAction.SessionStats -> {
                 session.refreshStats()
                 sheet = ChatSheet.Stats
@@ -803,17 +800,31 @@ private fun ChatBody(
             // `/import`: pi takes a path argument, a phone takes a picked document.
             // Any argument is ignored — there is no path to type — and the picker's
             // cancel is the "cancelled" answer rather than an error.
-            PiCommandAction.ImportSession -> importPicker.launch("*/*")
-            // pi's `/scoped-models` opens the model-scope selector
-            // (`interactive-mode.ts:2975-2978` → `showModelsSelector()`, `:5024`)
-            // and clears the editor first (`:2976`). The app's row for what that
-            // selector toggles is `enabledModels`, so this navigates to it and
-            // highlights it (`settings-manager.ts:1316-1326`).
-            PiCommandAction.OpenModelScope -> {
-                draft = ""
-                session.requestNav(NavRequest.SettingsFocus("enabledModels"))
+            // pi's `/import <path.jsonl>` takes a path (`interactive-mode.ts:6108`).
+            // This app's import cannot honour one: `prepareImport`
+            // (`PiSessionViewModel.kt`) reads a picked **document** through
+            // `contentResolver.openInputStream`, and a typed path names a file in the
+            // *guest*, which the app's own reader has no entry point for. So the
+            // picker opens — and the argument is **said to be ignored** rather than
+            // dropped in silence, which is the one option that is never acceptable.
+            PiCommandAction.ImportSession -> {
+                if (args.isNotBlank()) {
+                    session.notifyUser(
+                        "本应用改用文件选择器导入，参数「$args」被忽略：请在选择器里挑那个 .jsonl 文件。",
+                    )
+                }
+                importPicker.launch("*/*")
             }
-            PiCommandAction.TerminalOnly -> session.notifyTerminalOnly(command)
+            // `OpenSettings`, `PickModel`, `PickThinking`, `OpenModelScope` and
+            // `TerminalOnly` used to have arms here. Their palette rows (`/settings`,
+            // `/model`, `/thinking`, `/scoped-models`, and the five whose only answer
+            // was a notice naming a Settings row) are deleted — each row was a second
+            // door onto a surface the user already has one gesture away — and the
+            // `when` is exhaustive over [PiCommandAction], so the arms went with them.
+            // The surfaces themselves are untouched: 设置 is the bottom bar's third
+            // destination, the model is the AppBar chip, and the thinking level is the
+            // composer's `◐`. Typing one of those names is answered by
+            // `unlistedBuiltinHint` rather than by a lie.
         }
     }
 
@@ -921,8 +932,31 @@ private fun ChatBody(
                     // Hidden on the same three engine-empty screens v2 hides it on
                     // (`modelChip={false}`); with no transcript there is no model
                     // choice to report. See the status row's note below.
+                    //
+                    // The label has a **second source**, because `meta.model` is only
+                    // whatever the last `get_state` said (`PiSessionViewModel
+                    // .refreshState`), and a session that already has a transcript can
+                    // legitimately have no answer there — which is how the chip came
+                    // to read its own fallback 「选择模型」 on a session whose model the
+                    // transcript was printing one row below it. pi's own record of
+                    // that switch is the `model_change` entry, which the reducer keeps
+                    // as `ModelChange.modelId` (`rpc/.../Transcript.kt`): the same
+                    // field pi's tree selector labels (`components/tree-selector.ts:600`
+                    // `parts.push("model", entry.modelId)`). Taking it from there is a
+                    // **read of pi's data**, not a second guess at the live model.
+                    // `meta.model` keeps its meaning ("what pi reports now") and stays
+                    // the first choice; this only fills a hole.
                     if (!state.transcript.isEmpty()) {
-                        ModelChip(state.meta.model?.id ?: state.meta.model?.name) {
+                        val lastModelChange = remember(state.transcript) {
+                            state.transcript.asReversed().firstNotNullOfOrNull { item ->
+                                (item as? ModelChange)?.modelId?.takeIf { it.isNotBlank() }
+                            }
+                        }
+                        ModelChip(
+                            state.meta.model?.id
+                                ?: state.meta.model?.name
+                                ?: lastModelChange,
+                        ) {
                             session.refreshModels()
                             sheet = ChatSheet.Model
                         }
@@ -932,11 +966,15 @@ private fun ChatBody(
                         contentDescription = if (searchOpen) "关闭对话内查找" else "在对话里查找",
                         icon = Icons.Filled.Search,
                     )
-                    ChatTopBarIcon(
-                        onClick = { session.notifyTerminalOnly(reloadCommand()) },
-                        contentDescription = "重载扩展、技能与主题",
-                        icon = Icons.Filled.Refresh,
-                    )
+                    // There is **no reload icon** any more. pi's `/reload` has no RPC
+                    // channel at all — it rebinds pi's runtime *inside* pi
+                    // (`agent-session.ts` `reload()`) and `rpc-types.ts` carries no
+                    // `reload` command — so this button could only ever answer with
+                    // 「只在 pi 原版 TUI 里有」, promising a reload it cannot perform.
+                    // 设置 → 运行时与诊断 的「重启引擎」 is a different action (it
+                    // restarts the process, which re-reads the settings pi caches at
+                    // startup) and is **not** a replacement for this button, so
+                    // nothing was moved there to take its place.
                     ChatTopBarIcon(
                         onClick = { overflow = true },
                         contentDescription = "更多",
@@ -953,7 +991,9 @@ private fun ChatBody(
                         overflow = false
                     }
                     OverflowItem("会话树") {
-                        session.refreshTree()
+                        // `PiRoot` refreshes the tree when it handles this request
+                        // (see the `/tree` arm in `pick`); refreshing here too issued
+                        // the same two RPCs twice.
                         session.requestNav(NavRequest.SessionTree)
                         overflow = false
                     }
@@ -1010,10 +1050,14 @@ private fun ChatBody(
                         toolsExpanded = !toolsExpanded
                         overflow = false
                     }
-                    OverflowItem("循环切换模型") {
-                        session.cycleModel()
-                        overflow = false
-                    }
+                    // 「循环切换模型」 is **deleted**. pi has the keybinding
+                    // (`app.model.cycleForward` / `cycleBackward`, `keybindings.md`)
+                    // and a keyboard is where a blind cycle belongs: you press it
+                    // again and watch the footer. On a phone the same tap has no
+                    // visible result — the model chip and the composer both stay as
+                    // they were until the next turn — so it read as a button that did
+                    // nothing, and it is redundant next to the AppBar's model chip and
+                    // `/model`, both of which *show* what they are choosing.
                     OverflowItem("思考等级…") {
                         session.refreshThinkingLevels()
                         sheet = ChatSheet.Thinking
@@ -1242,19 +1286,19 @@ private fun ChatBody(
                         // `false` (`core/settings-manager.ts:120`), so an install
                         // that never touched that row shows nothing new.
                         showBilledCost = prefs.showCacheMissNotices,
-                        // F19 (`docs/rendering-review.md`) / RR-P10: the two of the
-                        // renderer's five callbacks whose target already exists in
-                        // this app are supplied here instead of leaving the blocks'
-                        // gated labels unreachable. Model row → the picker sheet
-                        // (`ChatSheet.Model`); branch summary → the session tree,
-                        // which is where the app can move the leaf (the same target
-                        // the palette's 会话树 action uses, `:404-407`).
-                        onModelClick = {
-                            session.refreshModels()
-                            sheet = ChatSheet.Model
-                        },
+                        // F19 (`docs/rendering-review.md`) / RR-P10: the one
+                        // remaining callback of the renderer's original five whose
+                        // target already exists in this app is supplied here instead of
+                        // leaving the block's gated label unreachable — the branch
+                        // summary → the session tree, which is where the app can move
+                        // the leaf (the same target the palette's 会话树 action uses,
+                        // `:404-407`). The model row's own tap used to be the second;
+                        // the row no longer renders (see `BlockRenderer`), so its
+                        // callback is gone with it and the model is reached from the
+                        // AppBar chip.
                         onBranchClick = {
-                            session.refreshTree()
+                            // Navigation refreshes the tree — see the `/tree` arm in
+                            // `pick`; this pair used to run the same two RPCs twice.
                             session.requestNav(NavRequest.SessionTree)
                         },
                         // §4.8's 编辑并从此分叉: pi's user-message row opens the
@@ -1364,8 +1408,22 @@ private fun ChatBody(
         // it once the command name is complete (its `CombinedAutocompleteProvider`
         // completes the first token only). The same rule keeps this list from
         // covering the transcript while arguments are being typed.
+        // `commandsLoaded` gates the panel: before the first `get_commands` answer
+        // the list is empty for a reason that has nothing to do with what the user
+        // typed, so rendering here would flash the panel's "nothing here" state for
+        // one frame every time `/` opens. Nothing is shown until the list it would
+        // draw is real.
+        //
+        // The panel's own empty branch (`ui/chat/SlashPalette.kt`) is only *half*
+        // unreachable, and that half is why this is a gate rather than a deletion:
+        // `piCommandPalette` always returns `builtins + fromPi`
+        // (`ui/chat/PiSlashCommands.kt:285`), so with a blank query the list can
+        // never be empty and 「没有可用命令」 never renders — but a query nothing
+        // matches renders 「没有匹配「…」的命令」 from the same branch, which is a
+        // real state a user reaches by typing. Deleting the branch would delete that
+        // state too.
         val paletteQuery = paletteQueryOf(draft)
-        if (paletteQuery != null) {
+        if (paletteQuery != null && state.commandsLoaded) {
             SlashPalette(
                 commands = state.commands,
                 query = paletteQuery,
@@ -1380,6 +1438,12 @@ private fun ChatBody(
                     // name is completed and left in the composer, which is pi's Tab
                     // behaviour, because submitting `/login` with no provider is
                     // never what the user meant.
+                    //
+                    // An argument-taking command leaves its name in the composer
+                    // (pi's Tab behaviour). The two exceptions that used to be here —
+                    // `/model` and `/thinking`, whose argument the app picked itself —
+                    // are gone with their rows: they are no longer in this palette at
+                    // all, so the exception set is empty rather than wrong.
                     if (command.argumentHint != null) {
                         draft = "${command.invocation} "
                     } else {
@@ -1442,24 +1506,41 @@ private fun ChatBody(
 
         Composer(
             draft = draft,
-            onPickImage = { imagePicker.launch("image/*") },
-            // pi's ctrl+g lives in the key-hint row rather than on the send button:
-            // that button is send/stop, and an editor handoff is neither. The chips
-            // beside it (`/`, `!`, `@`, `图片`) are the same kind of affordance.
-            onOpenExternalEditor = { openInExternalEditor() },
+            // One picker for everything: `*/*`, and the callback decides which of
+            // pi's two channels the file goes down (see the attachment note above).
+            onPickAttachment = { attachmentPicker.launch("*/*") },
             onDraftChange = { draft = it },
             thinkingLevel = state.meta.thinkingLevel,
             streaming = state.streaming,
             canFollowUp = state.streaming && draft.isNotBlank(),
+            // `steer` carries attachments as well as text, so it is enabled by
+            // either — the same rule the send button's own "an image with no caption
+            // is still a message" branch uses.
+            canSteer = state.streaming && (draft.isNotBlank() || attachments.isNotEmpty()),
             onCycleThinking = { session.cycleThinkingLevel() },
             onOpenPalette = { if (draft.isBlank()) draft = "/" },
             onOpenBash = { if (draft.isBlank()) draft = "!" },
+            // `!!` types both characters: it is a different pi mode, not a double
+            // `!` (`interactive-mode.ts:933`).
+            onOpenBashExcluded = { if (draft.isBlank()) draft = "!!" },
             // `@` sits behind the phone keyboard's symbol page, and a mention only
             // opens at a token boundary (`PiFileMentions.prefixOf`, pi's
             // `PATH_DELIMITERS`), so this chip types exactly the trigger character —
             // nothing else, which is why it does nothing when a mention is already
             // open. The `/` and `!` chips beside it are the same kind of affordance.
             onOpenMention = { if (PiFileMentions.prefixOf(draft) == null) draft += "@" },
+            onSteer = {
+                // `session.send` **is** the steer route mid-turn: it picks
+                // `streamingBehavior: "steer"` whenever the transcript is streaming
+                // (`PiSessionViewModel.kt`'s `send`), which is exactly this chip's
+                // condition, and it echoes the row locally so the message is visible
+                // before pi answers.
+                session.send(draft, attachments)
+                draft = ""
+                attachments = emptyList()
+                reArmTail()
+                dismissKeys()
+            },
             onFollowUp = {
                 // pi's alt+enter: queue this message for after the current turn
                 // (`interactive-mode.ts:4126-4155` → `session.prompt(text,
@@ -1524,8 +1605,14 @@ private fun ChatBody(
                     // on. For the same reason the keyboard stays — nothing was sent,
                     // and taking the keys away from text the user still owns is the
                     // one way this change could feel like a bug.
-                    is ComposerRoute.Unreachable -> session.notifyTerminalOnly(route.command)
-                    is ComposerRoute.Unknown -> session.notifyUnknownCommand(route.name)
+                    // `/name` where pi has the command but this palette does not list
+                    // it: a statement of fact plus this app's own door, never a
+                    // "retry it as prose" — the old wording told the user to drop the
+                    // slash and send it as a message, which is exactly wrong for a name
+                    // pi *does* implement.
+                    is ComposerRoute.Unknown -> unlistedBuiltinHint(route.name)
+                        ?.let { session.notifyUser(it) }
+                        ?: session.notifyUnknownCommand(route.name)
                 }
             },
             // pi's Escape (`interactive-mode.ts:2855-2857`):
@@ -1533,6 +1620,13 @@ private fun ChatBody(
             // puts the queued text **and** the current editor text back into the
             // editor, then aborts. Dropping the queued text here is what made Stop
             // silently destroy what the user had typed.
+            // `app.clear` clears the *editor*, and the editor on this screen is the
+            // draft plus the attachments staged for it.
+            canClear = draft.isNotBlank() || attachments.isNotEmpty(),
+            onClear = {
+                draft = ""
+                attachments = emptyList()
+            },
             onStop = {
                 session.stop { restored -> draft = mergeRestoredQueue(restored, draft) }
             },
@@ -1584,7 +1678,7 @@ private fun ChatBody(
                 sheet = ChatSheet.Stats
             },
             onTree = {
-                session.refreshTree()
+                // Navigation refreshes the tree — see the `/tree` arm in `pick`.
                 session.requestNav(NavRequest.SessionTree)
                 sheet = null
             },
@@ -1665,6 +1759,11 @@ private fun searchTextOf(item: TranscriptItem): String = when (item) {
     is Notice -> item.text
     is DateSeparator -> ""
 }
+
+// The "pi has this command but this palette does not list it" table lives in
+// `ui/chat/PiSlashCommands.kt` (`PI_UNLISTED_BUILTIN_COMMANDS` /
+// `unlistedBuiltinHint`), beside the built-in list it complements — a private copy
+// here would be a second table that goes stale the moment pi's list moves.
 
 /**
  * The transcript's search bar, transcribed from v2's `SearchState` bar
@@ -1841,17 +1940,117 @@ private fun SearchChip(glyph: String, label: String, enabled: Boolean, onClick: 
 }
 
 /**
- * The AppBar's reload button asks the palette's `/reload` row what to say.
+ * The phone path behind a picked document, or null when the source cannot answer one.
  *
- * pi's `/reload` has no RPC command — it rebinds the whole runtime inside pi
- * (`agent-session.ts` `reload()`), so this app cannot run it. What the app *can* do
- * is restart the engine, which re-reads `settings.json` and rescans every resource
- * directory (`core/agent-session-runtime.ts:226-252` → `createRuntime`); the palette
- * row carries that as its `appLanding`. Reusing the row keeps one answer to "where
- * does `/reload` live here" instead of two that can drift apart.
+ * ## Why a path and not a copy
+ *
+ * pi's chat engine is launched through proot with `ProotCommand.baseBinds`' shared
+ * storage binds (`runtime/PiRuntime.kt:177-180`, reached from the engine's own launch
+ * at `engine/PiEngineHost.kt:287` — the same `baseBinds` every launch shares, not a
+ * terminal-only set):
+ *
+ * ```
+ * -b <external storage>:/sdcard
+ * -b <external storage>:/storage/emulated/0
+ * ```
+ *
+ * so `/storage/emulated/0/…` is the **same path** inside the guest as on the phone,
+ * and a path handed to the agent as text is a path its `read` tool can open. That is
+ * also exactly what pi's terminal does with a dropped file: the drop becomes a path
+ * in the prompt, not a payload. No copy, no truncation, no rewrite — the file the
+ * agent reads is the file the user picked, and nothing has to be cleaned up
+ * afterwards.
+ *
+ * ## Why the two path styles do not collide
+ *
+ * `@` mentions (`ui/chat/PiFileMentions.kt`) insert paths **relative to the
+ * workspace**, because that is what its completion source produces. A picked file is
+ * outside the workspace, so this inserts an **absolute** path and never a relative
+ * one: mixing the two shapes would produce a token that looks like a mention and
+ * resolves somewhere else. The absolute form is also the one pi's own terminal
+ * inserts.
+ *
+ * ## What it covers, and what it refuses
+ *
+ * Covered — the three shapes the system picker actually hands back for local files:
+ *
+ *  - `file://…` → the path itself ([android.net.Uri.getPath]);
+ *  - `com.android.externalstorage.documents` → the SAF document id, which is
+ *    `primary:Download/x.pdf` (or `<volume-uuid>:…`) and maps onto
+ *    `/storage/emulated/0/…` (or `/storage/<uuid>/…`);
+ *  - `com.android.providers.downloads.documents` → `raw:/…` is the path after the
+ *    prefix, and a numeric id is resolved by asking the provider itself for its
+ *    `_data` column.
+ *
+ * Refused, **silently as far as the composer is concerned**: every other authority —
+ * a cloud provider, a documents provider that only streams, a `content://` URI whose
+ * `_data` is unset (normal for a virtual document). The caller inserts nothing and
+ * says so in one sentence, rather than putting a `content://` string or a guessed
+ * path in front of the agent: a path the guest cannot open is worse than no path,
+ * because pi will answer with an error about a file the user never named.
+ *
+ * The `_data` column is read as a literal rather than through
+ * `MediaStore.Downloads.COLUMN_DATA`: that constant is API 29 and this app's
+ * `minSdk` is 26, while the column itself is what the pre-29 providers expose.
+ *
+ * **The caveat that belongs on this function**: the bind makes the path *visible* to
+ * the guest, not *readable*. The guest runs as this app's uid under
+ * `untrusted_app` (`bridge/DeviceWorkspace.kt:54-58`), so the platform's storage
+ * rules still decide — with this app's `targetSdk` (28, the legacy model) a shared
+ * path is readable once the app holds the storage permission, and a path from a
+ * provider that streams from somewhere else is not a filesystem path at all.
  */
-private fun reloadCommand(): PiSlashCommand =
-    PI_BUILTIN_SLASH_COMMANDS.first { it.name == "reload" }
+private fun devicePathOf(context: Context, uri: android.net.Uri): String? {
+    when (uri.scheme) {
+        "file" -> return uri.path?.takeIf { it.isNotBlank() }
+        "content" -> Unit
+        else -> return null
+    }
+    val documentId = runCatching { DocumentsContract.getDocumentId(uri) }.getOrNull()
+    return when (uri.authority) {
+        "com.android.externalstorage.documents" -> documentId?.let { externalStoragePathOf(it) }
+        "com.android.providers.downloads.documents" -> documentId?.let { id ->
+            // `raw:` carries the path itself; anything else is a downloads row, and
+            // only the provider can say where that row's bytes live.
+            if (id.startsWith("raw:")) {
+                id.removePrefix("raw:").takeIf { it.isNotBlank() }
+            } else {
+                dataColumnOf(context, uri)
+            }
+        }
+        // Every other authority — cloud drives, streaming providers, and any provider
+        // whose `_data` is unset — has no phone path this app can hand over.
+        else -> null
+    }
+}
+
+/**
+ * SAF's external-storage document id → the phone path it names.
+ *
+ * The id is `<volume>:<relative path>`; `primary` is the built-in shared storage
+ * (`Environment.getExternalStorageDirectory()`, i.e. `/storage/emulated/0`) and any
+ * other value is a removable volume's UUID, which Android mounts at
+ * `/storage/<uuid>`.
+ */
+private fun externalStoragePathOf(documentId: String): String? {
+    val volume = documentId.substringBefore(':', "").trim()
+    val relative = documentId.substringAfter(':', "").trimStart('/')
+    if (volume.isEmpty() || relative.isEmpty()) return null
+    val root = if (volume.equals("primary", ignoreCase = true)) {
+        Environment.getExternalStorageDirectory().absolutePath
+    } else {
+        "/storage/$volume"
+    }
+    return "$root/$relative"
+}
+
+/** The `_data` (absolute path) column of a provider row, or null. */
+private fun dataColumnOf(context: Context, uri: android.net.Uri): String? = runCatching {
+    context.contentResolver.query(uri, arrayOf("_data"), null, null, null)?.use { cursor ->
+        val column = cursor.getColumnIndex("_data")
+        if (column < 0 || !cursor.moveToFirst()) null else cursor.getString(column)
+    }
+}.getOrNull()?.takeIf { it.isNotBlank() }
 
 /** `get_last_assistant_text`, then the system clipboard; this is pi's `/copy`. */
 private fun copyLastAssistant(session: PiSessionViewModel, context: Context) {
@@ -1935,9 +2134,14 @@ private fun QueueRow(steering: Int, followUp: Int, onRestore: () -> Unit) {
         Modifier.fillMaxWidth().padding(horizontal = PiSpacing.pageHorizontal, vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        if (steering > 0) QueueChip(glyph = "⇢", tone = PiTheme.palette.warning, text = "穿插 $steering")
+        // The two words are pi's two waiting modes and are **not** synonyms:
+        // 插话 is `steeringMode`/steer (this turn is steered by the message, applied
+        // between its tool calls), 排队 is `followUpMode`/followUp (processed once the
+        // whole turn is over). The glyphs and tones are the queue's own third channel
+        // (`06 §4`: `⇢` warning, `⇣` muted).
+        if (steering > 0) QueueChip(glyph = "⇢", tone = PiTheme.palette.warning, text = "插话 $steering")
         if (steering > 0 && followUp > 0) Spacer(Modifier.width(PiSpacing.inline))
-        if (followUp > 0) QueueChip(glyph = "⇣", tone = PiTheme.palette.muted, text = "后续 $followUp")
+        if (followUp > 0) QueueChip(glyph = "⇣", tone = PiTheme.palette.muted, text = "排队 $followUp")
         Spacer(Modifier.weight(1f))
         // The consequence, not the mechanism: the text goes back into the input box
         // and the turn that is running is not touched.
@@ -2051,13 +2255,22 @@ private fun Composer(
     streaming: Boolean,
     /** True while a follow-up could actually be queued: streaming, non-blank draft. */
     canFollowUp: Boolean,
+    /** True while a `steer` could actually be delivered: streaming, and something to send. */
+    canSteer: Boolean,
     onCycleThinking: () -> Unit,
     onOpenPalette: () -> Unit,
     onOpenBash: () -> Unit,
+    /** pi's `!!`: run the command without putting it in the model's context. */
+    onOpenBashExcluded: () -> Unit,
     onOpenMention: () -> Unit,
-    onPickImage: () -> Unit,
-    /** `app.editor.external`: hand the draft to an external editor (`ACTION_EDIT`). */
-    onOpenExternalEditor: () -> Unit,
+    /** The paperclip: an image goes on the wire, any other file in as its path. */
+    onPickAttachment: () -> Unit,
+    /** pi's `app.clear` (ctrl+c): empty editor. True while there is something to clear. */
+    canClear: Boolean,
+    onClear: () -> Unit,
+    /** 插话: pi's steer — the message joins the running turn. */
+    onSteer: () -> Unit,
+    /** 排队: pi's followUp — the message waits for the turn to finish. */
     onFollowUp: () -> Unit,
     onSend: () -> Unit,
     onStop: () -> Unit,
@@ -2115,22 +2328,51 @@ private fun Composer(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 KeyHint("/", onOpenPalette)
                 KeyHint("!", onOpenBash)
-                KeyHint("!!", onOpenBash)
+                // `!!` is **its own** chip and must type its own two characters: pi
+                // reads `text.startsWith("!!")` as "run this without adding it to the
+                // context" (`modes/interactive/interactive-mode.ts:933`, `:3107`), and
+                // the execution side already honours it
+                // (`ui/chat/SlashPalette.kt`'s `excludeFromContext`,
+                // `PiSessionViewModel.kt:2447`). It used to share `!`'s handler, so the
+                // chip inserted one `!` and quietly ran the command *in* context.
+                KeyHint("!!", onOpenBashExcluded)
                 KeyHint("@", onOpenMention)
-                KeyHint("图片", onPickImage)
-                // pi's ctrl+g (`app.editor.external`, keybindings.md:129). It sits in
-                // the key-hint row, not on the send button: that button is send/stop
-                // and an editor handoff is neither, so there is no gesture to share
-                // or to collide with.
-                KeyHint("编辑器", onOpenExternalEditor)
-                // pi's `alt+enter` (`app.message.followUp`, keybindings.md:165):
-                // queue this text for the end of the current turn instead of
-                // steering it into the middle. The affordance only exists while a
-                // turn is running, because that is the only time the two delivery
-                // choices differ in pi as well. It is drawn as one more key chip:
-                // that is the family it belongs to.
+                // The paperclip: one picker, two channels (see the attachment note in
+                // `ChatBody`). It used to be a `图片` chip wired to an `image/*`
+                // picker, which is why nothing but an image could be attached.
+                KeyChip(
+                    label = "附件",
+                    enabled = true,
+                    onClick = onPickAttachment,
+                    icon = Icons.Filled.AttachFile,
+                )
+                // The two ways to hand pi something **while it is working**, which is
+                // the only time they differ — both are `prompt` with a
+                // `streamingBehavior`, and the names are picked so the pair cannot be
+                // read as synonyms:
+                //
+                //   插话 = `steeringMode` / steer — this turn is steered by the
+                //          message, applied between its tool calls
+                //          (`interactive-mode.ts:3137-3142`, pi's own Enter while
+                //          streaming)
+                //   排队 = `followUpMode` / followUp — processed after the whole turn
+                //          is over (`app.message.followUp`, `keybindings.md:165`,
+                //          pi's `alt+enter`)
+                //
+                // Before this they were one chip (「后续」) and the steer half was
+                // reachable only through the send button — which, now that the engine
+                // flag means "a turn is running" rather than "a message is arriving",
+                // is a stop button for the whole turn. Both are drawn as key chips:
+                // that is the family they belong to.
                 if (streaming) {
-                    KeyChip(label = "后续", enabled = canFollowUp, onClick = onFollowUp)
+                    KeyChip(label = "插话", enabled = canSteer, onClick = onSteer)
+                    KeyChip(label = "排队", enabled = canFollowUp, onClick = onFollowUp)
+                }
+                // pi's `app.clear` (`interactive-mode.ts:919`, ctrl+c): empty the
+                // editor. Conditional for the same reason the delivery pair is — a
+                // chip that can do nothing is a chip that should not be there.
+                if (canClear) {
+                    KeyChip(label = "清空", enabled = true, onClick = onClear)
                 }
                 Spacer(Modifier.weight(1f))
                 // The terminal chip that used to sit here is gone: the composer's
@@ -2239,18 +2481,31 @@ private fun KeyHint(label: String, onClick: () -> Unit) {
 }
 
 /**
- * [KeyHint]'s implementation, with the one optional member of the family: pi's
- * `alt+enter` 后续 chip is drawn muted (and takes no tap) until there is a non-blank
- * draft to queue, because queueing an empty message is not an action pi offers.
+ * One chip of the composer's key row; [KeyHint] is the always-enabled member.
  *
- * `06 §2` 输入区「键位 chip `24×24` 圆角 6（`/` `!` `!!` `@` `图片` `编辑器`）」, and v2
- * draws each one as `height:24;min-width:24;padding:0 7px;border-radius:6;
- * background:surf-highest` with a **mono 12** label (`direction-b-v2.html:1430-1431`).
- * The row used to be bare mono text with no chip at all, so it read as five stray
- * characters rather than as keys.
+ * `06 §2` 输入区 names six key chips (`/` `!` `!!` `@` `图片` `编辑器`) at
+ * `24×24` 圆角 6, and v2 draws each one as `height:24;min-width:24;padding:0 7px;
+ * border-radius:6;background:surf-highest` with a **mono 12** label
+ * (`direction-b-v2.html:1430-1431`). This row is five of them plus two conditional
+ * ones: `图片` became the paperclip `附件` (one picker, two channels — see the
+ * attachment note in `ChatBody`), and `编辑器` is **deleted** by decision **D19**,
+ * because Android has no external editor to hand the draft to and the chip could
+ * only report that. Before this batch the row was bare mono text with no chip at
+ * all, so it read as stray characters rather than as keys.
+ *
+ * [enabled] is false for the conditional members whose action needs something to
+ * deliver: pi's `alt+enter` 排队 and the 插话 chip both have nothing to hand over
+ * while the composer is empty, and a disabled chip is drawn in the muted tokens and
+ * takes no tap.
  */
 @Composable
-private fun KeyChip(label: String, enabled: Boolean, onClick: () -> Unit) {
+private fun KeyChip(
+    label: String,
+    enabled: Boolean,
+    onClick: () -> Unit,
+    /** Drawn before [label]; the paperclip is the one chip whose glyph carries meaning. */
+    icon: ImageVector? = null,
+) {
     val content = if (enabled) {
         MaterialTheme.colorScheme.onSurface
     } else {
@@ -2273,12 +2528,23 @@ private fun KeyChip(label: String, enabled: Boolean, onClick: () -> Unit) {
             .padding(horizontal = 7.dp),
         contentAlignment = Alignment.Center,
     ) {
-        Text(
-            text = label,
-            style = PiTheme.text.monoSmall,
-            color = content,
-            maxLines = 1,
-        )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            if (icon != null) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    modifier = Modifier.size(14.dp),
+                    tint = content,
+                )
+                Spacer(Modifier.width(4.dp))
+            }
+            Text(
+                text = label,
+                style = PiTheme.text.monoSmall,
+                color = content,
+                maxLines = 1,
+            )
+        }
     }
 }
 

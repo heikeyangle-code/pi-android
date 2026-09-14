@@ -40,6 +40,7 @@ import app.pi.ui.components.PiSwitchRow
 import app.pi.ui.components.PiValueRow
 import app.pi.ui.theme.PiShapes
 import app.pi.ui.theme.PiSpacing
+import java.util.Locale
 import app.pi.ui.theme.PiTheme
 
 /**
@@ -306,14 +307,18 @@ fun SessionToolsSheet(
             Spacer(Modifier.height(PiSpacing.unit))
 
             PiSectionHeader("队列模式")
+            // 插话 / 排队 are the composer's two delivery chips' words, used here for
+            // the same two modes: one name per concept, or the sheet reads as if it
+            // were describing something else. The English names in the parentheses
+            // are pi's own (`steer` / `follow_up`).
             QueueModeRow(
-                title = "穿插消息（steer）",
+                title = "插话消息（steer）",
                 supporting = "本回合进行中插入，下一次回答之前生效",
                 current = state.meta.steeringMode,
                 onPick = onSteeringMode,
             )
             QueueModeRow(
-                title = "后续消息（follow up）",
+                title = "排队消息（follow up）",
                 supporting = "整个回合结束后才投递",
                 current = state.meta.followUpMode,
                 onPick = onFollowUpMode,
@@ -508,7 +513,14 @@ fun SessionStatsSheet(
                     )
                 }
                 stats.contextUsage?.let { usage ->
-                    val percent = usage.percent?.let { "${(it * 100).toInt()}%" } ?: "—"
+                    // `percent` is already 0–100: pi computes
+                    // `(estimate.tokens / contextWindow) * 100`
+                    // (`core/agent-session.ts:3448`) and `Responses.kt` stores it as
+                    // it arrived. Multiplying by 100 here printed 12 % as **1200 %**.
+                    // One decimal, the same rounding the status row uses
+                    // (`ui/components/PiCommon.kt`), so the two readings of one figure
+                    // cannot disagree again.
+                    val percent = usage.percent?.let { String.format(Locale.US, "%.1f", it) + "%" } ?: "—"
                     StatLine(
                         "上下文占用",
                         "$percent（${usage.tokens ?: 0} / ${usage.contextWindow ?: 0}）",

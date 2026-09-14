@@ -31,12 +31,12 @@ import app.pi.ui.theme.PiTheme
  * behaviours are taken from that provider rather than invented:
  *
  *  - **filtering is on the invocation name**, case-insensitively, prefix first —
- *    the same thing typing in pi's editor does;
- *  - **a command that only the original TUI can run is shown as such** instead of
- *    being hidden. pi keeps those in its list; hiding them here would make the
- *    GUI look like it lost commands that exist. "As such" now means one of two
- *    things: the app's own way to reach the same outcome when it has one
- *    (`PiSlashCommand.appLanding`), otherwise that there is no entry here.
+ *    the same thing typing in pi's editor does.
+ *
+ * Every row here is runnable: the built-ins whose only outcome was a notice
+ * ("no entry in this app" or "go to Settings") were **deleted**, not listed, so
+ * there is no longer a state to explain. `PiSlashCommands.PI_BUILTIN_SLASH_COMMANDS`
+ * records the twelve built-ins that are not here and why.
  *
  * The list is capped in height so it never covers the transcript: on a phone the
  * composer must stay reachable while the palette is open.
@@ -98,22 +98,12 @@ private fun SlashPaletteRow(command: PiSlashCommand, onClick: () -> Unit) {
                     )
                 }
             }
-            val subtitle = buildString {
-                append(command.description.orEmpty())
-                // A built-in that pi's RPC surface cannot dispatch is only useful to a
-                // user together with what *this* app can do about it. The badge used to
-                // read 「仅终端」, naming the terminal tab as the way to run it — but the
-                // terminal is not a usable surface, so a row that points there names an
-                // action that cannot be completed. `appLanding` is the app's own way to
-                // reach the same outcome (`/trust`, `/reload`, `/login`, `/logout`);
-                // without one, the honest badge is that there is no entry here.
-                val note = command.appLanding?.let { "本应用：$it" }
-                    ?: if (command.action == PiCommandAction.TerminalOnly) "本应用没有入口" else null
-                if (note != null) {
-                    if (isNotEmpty()) append(" · ")
-                    append(note)
-                }
-            }
+            // Just the description. A row used to append a provenance note for
+            // built-ins the app could not run (「仅终端」, then 「本应用：<设置路径>」);
+            // every one of those rows was deleted instead, so there is nothing left
+            // to annotate. Re-adding a note here means re-adding a row that cannot
+            // be run — see `PiSlashCommands.PI_BUILTIN_SLASH_COMMANDS`.
+            val subtitle = command.description.orEmpty()
             if (subtitle.isNotEmpty()) {
                 Text(
                     subtitle,
@@ -130,10 +120,20 @@ private fun SlashPaletteRow(command: PiSlashCommand, onClick: () -> Unit) {
 }
 
 /**
- * The provenance chip. pi shows the same information as a tag prefixed to the
- * description (`interactive-mode.ts` `prefixAutocompleteDescription`), and the
- * scope letter is the part that matters: a `p` command comes from the project
- * being worked on, which is a different trust question from `u`.
+ * The provenance chip: the source word (内置/扩展/模板/技能), then the scope, then
+ * the package origin when there is one.
+ *
+ * pi prefixes the same information to the description as a bracketed tag
+ * (`interactive-mode.ts` `prefixAutocompleteDescription`, `:612-617`:
+ * `[u:npm:…] <description>`). The relationship between the two halves is what
+ * matters and is unchanged: the **source word** says what kind of thing the
+ * command is, the **scope** says whose it is (a `项目` command comes from the
+ * project being worked on, which is a different trust question from `用户`), and
+ * the trailing `npm:`/`git:` part says which package it arrived in.
+ *
+ * Only the presentation of the scope differs from pi: pi writes the single
+ * letters `u`/`p`/`t`, and this badge writes 用户/项目/临时 — see
+ * [sourceTagLabelOf], which is where that ruling and its reason live.
  */
 @Composable
 private fun SourceBadge(command: PiSlashCommand) {
@@ -143,7 +143,9 @@ private fun SourceBadge(command: PiSlashCommand) {
         PiCommandSource.Prompt -> MaterialTheme.colorScheme.secondary
         PiCommandSource.Skill -> MaterialTheme.colorScheme.secondary
     }
-    val label = command.sourceTag?.let { "${command.source.label}·$it" } ?: command.source.label
+    val label = command.sourceTag
+        ?.let { "${command.source.label}·${sourceTagLabelOf(it)}" }
+        ?: command.source.label
     Surface(shape = PiShapes.badge, color = color.copy(alpha = 0.16f)) {
         Text(
             label,
@@ -160,8 +162,14 @@ private fun SourceBadge(command: PiSlashCommand) {
  *
  * Prefix matches come first, then substring matches, then everything (so an
  * empty query shows the full list). Ordering inside a group is the input order,
- * which is pi's own: built-ins first, then extension commands, templates and
- * skills — the same sequence the TUI's autocomplete presents.
+ * and the input order is pi's TUI autocomplete sequence — built-ins, templates,
+ * extensions, skills (`interactive-mode.ts:727`:
+ * `[...slashCommands, ...templateCommands, ...extensionCommands,
+ * ...skillCommandList]`). This function does not sort by group; it relies on
+ * `piCommandPalette` having already put the list in that order, because
+ * `get_commands` itself sends extension → template → skill
+ * (`rpc-mode.ts:684-708`) and copying the wire order would put extensions ahead
+ * of templates where the TUI shows the opposite.
  */
 fun filterPalette(commands: List<PiSlashCommand>, query: String): List<PiSlashCommand> {
     val needle = query.trim().removePrefix("/").lowercase()
@@ -192,9 +200,6 @@ sealed interface ComposerRoute {
     /** A known command. The screen runs [command] with [args]. */
     data class Command(val command: PiSlashCommand, val args: String) : ComposerRoute
 
-    /** A built-in only the original TUI implements. */
-    data class Unreachable(val command: PiSlashCommand) : ComposerRoute
-
     /** A `/`-prefixed string that is not a command at all. */
     data class Unknown(val name: String) : ComposerRoute
 
@@ -209,9 +214,14 @@ sealed interface ComposerRoute {
  * unrecognised name. pi's TUI does (`session.prompt(text)` at the end of the
  * chain), which is why typing `/reload` there costs a real model call when the
  * command is a built-in it cannot dispatch (audit §5.5); reproducing that would
- * reproduce a bug. A known command is dispatched, a built-in with no RPC path is
- * named as terminal-only, and anything else is refused with an explanation while
- * the draft stays in the composer.
+ * reproduce a bug. A known command is dispatched with its arguments, and anything
+ * else is refused with an explanation while the draft stays in the composer.
+ *
+ * There is no longer a third outcome. `ComposerRoute.Unreachable` carried the
+ * built-ins that only pi's TUI could run; every one of those rows was deleted
+ * from the palette (`PiSlashCommands.PI_BUILTIN_SLASH_COMMANDS`) rather than
+ * listed as a dead end, so every command in [commands] has a real action and a
+ * typed `/name` reaches it exactly like a tap does.
  */
 fun routeComposerText(text: String, commands: List<PiSlashCommand>): ComposerRoute {
     val trimmed = text.trim()
@@ -235,12 +245,5 @@ fun routeComposerText(text: String, commands: List<PiSlashCommand>): ComposerRou
     val command = commands.firstOrNull { it.name == name }
         ?: return ComposerRoute.Unknown(name)
 
-    return when (command.action) {
-        // `/scoped-models` is a normal dispatch: it has a destination in the app
-        // (`NavRequest.SettingsFocus("enabledModels")`), so typed text must reach
-        // `ChatScreen.pick` exactly like a palette tap does.
-        PiCommandAction.OpenModelScope -> ComposerRoute.Command(command, args)
-        PiCommandAction.TerminalOnly -> ComposerRoute.Unreachable(command)
-        else -> ComposerRoute.Command(command, args)
-    }
+    return ComposerRoute.Command(command, args)
 }

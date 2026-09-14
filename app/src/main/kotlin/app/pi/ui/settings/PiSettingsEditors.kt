@@ -792,7 +792,15 @@ fun PiThemeEditorSheet(
                 // 主题名**等宽 13**、右侧「当前」徽标、副行 12 灰 mt3、选中行铺
                 // `--selected-bg`，行间没有分隔线，也不用 ✓ 图标。
                 entries.forEach { entry ->
-                    val selected = currentRaw == entry.name
+                    // 自动模式的值是一个**配对**字面量 `lightTheme/darkTheme`，所以
+                    // `currentRaw == entry.name` 在自动模式下永远为假 —— 选中的那一行
+                    // 不显示「当前」，用户看不出现在到底在用哪个主题（`phone44` 画的是
+                    // 选中行铺 `--selected-bg` + 「当前」徽标）。这里把配对拆开比：
+                    // 两个成员各自都会被标出来，这正是自动模式的实情。
+                    val selected = currentRaw == entry.name ||
+                        splitAutoTheme(currentRaw)?.let { (light, dark) ->
+                            entry.name == light || entry.name == dark
+                        } == true
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
