@@ -15,7 +15,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -287,16 +286,21 @@ fun PiBilledCostLine(
  * the one action that fills it (docs/pi-android-ui-spec.md §7.3).
  *
  * The mark is v2's: either the π glyph (`06 §2` 空态「π 字形 34」，`brand-spec.md` §1
- * allows it as an empty-state identifier) or the screen's own icon inside the circle
- * this component has always drawn. v2's prototype keeps both spellings and chooses
- * per screen — the chat's two engine states carry the mark, because they are the
- * app's own empty surface, while a search that matched nothing keeps its icon.
+ * allows it as an empty-state identifier) or the screen's own icon. v2's prototype
+ * keeps both spellings and chooses per screen — the chat's two engine states carry
+ * the mark, because they are the app's own empty surface, while a search that
+ * matched nothing keeps its icon.
  *
- * [markPi] defaults to `true` so the **chat** empty states get the mark without
- * touching `screens/ChatScreen.kt` (which this batch does not own). The call sites
- * that draw a *finding* rather than the app's own surface — the session list's two
- * empty states, the settings search and the session tree — want `markPi = false`
- * and are named in this batch's notes: they live in files outside its boundary.
+ * **Both branches are bare glyphs.** [markPi]'s branch is the 34 dp `muted` mark;
+ * the other is the screen's icon at the board's 30 dp in the same `muted`. It used
+ * to sit inside a 68 dp `surfaceContainerHigh` disc, which no v2 empty state has
+ * (`direction-b-v2.html:821-823`; phone21/22 and phone28 are all a bare glyph over
+ * the title), so the container is gone.
+ *
+ * [markPi] defaults to `true`, which is the chat's two engine states. The call
+ * sites that draw a *finding* rather than the app's own surface — the session
+ * list's two, the settings search and the session tree's three — pass
+ * `markPi = false` and keep the icon v2 gives them.
  *
  * Geometry follows `06 §2` where the container allows it: the horizontal inset is
  * the board's 34, the title is the 17/600 title role, and the body is 14 with the
@@ -326,17 +330,19 @@ fun PiEmptyState(
         if (markPi) {
             PiMark(size = 34.dp, tint = PiTheme.palette.muted)
         } else {
-            Surface(
-                shape = RoundedCornerShape(percent = 50),
-                color = MaterialTheme.colorScheme.surfaceContainerHigh,
-            ) {
-                Icon(
-                    icon,
-                    contentDescription = null,
-                    modifier = Modifier.padding(20.dp).size(28.dp),
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
+            // A **bare** glyph, 30 and `muted`, exactly as the board draws this branch:
+            // `EmptyState` (`direction-b-v2.html:821-823`) puts the screen's own icon in
+            // a plain `inline-flex` coloured `--muted` and sizes the chat mark at 34
+            // against the others' 30 (`:819`). The app used to wrap it in a 68 dp
+            // `surfaceContainerHigh` disc, which is a container v2's empty states have
+            // nowhere — see phone21/22 (the session list's two) and phone28 (the tree's),
+            // all three a bare glyph over the title.
+            Icon(
+                icon,
+                contentDescription = null,
+                modifier = Modifier.size(EMPTY_STATE_ICON),
+                tint = PiTheme.palette.muted,
+            )
         }
         Spacer(Modifier.height(EMPTY_STATE_TITLE_GAP))
         Text(
@@ -365,6 +371,9 @@ private val EMPTY_STATE_INSET = 34.dp
 
 /** `06 §2` 空态: the mark-to-title gap is v2's `marginTop:12`. */
 private val EMPTY_STATE_TITLE_GAP = 12.dp
+
+/** `06 §2` 空态: a screen's own icon is the board's `s=30`, the π mark's `s=34` its sibling. */
+private val EMPTY_STATE_ICON = 30.dp
 
 /** `06 §2` 空态「正文 14/1.6」: 14 sp × 1.6, stated as leading rather than as a ratio. */
 private val EMPTY_STATE_BODY_LEADING = 22.sp

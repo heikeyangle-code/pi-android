@@ -23,9 +23,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.SegmentedButton
-import androidx.compose.material3.SegmentedButtonDefaults
-import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -49,6 +46,7 @@ import androidx.compose.ui.unit.dp
 import app.pi.rpc.PiMessage
 import app.pi.rpc.SessionEntry
 import app.pi.rpc.SessionTreeNode
+import app.pi.ui.PiSeg
 import app.pi.ui.PiSessionViewModel
 import app.pi.ui.components.PiEmptyState
 import app.pi.ui.theme.PiShapes
@@ -163,6 +161,9 @@ fun SessionTreeScreen(
     }
 }
 
+/** The two tabs, in pi's order: the resolved tree (`get_tree`) and the raw entries. */
+private val TREE_TABS = listOf("分支", "条目")
+
 /**
  * 树本身：分支 / 条目两个 tab + 筛选行 + 列表。
  *
@@ -182,16 +183,30 @@ private fun TreeContent(
     modifier: Modifier = Modifier,
 ) {
     Column(modifier.fillMaxSize()) {
-        SingleChoiceSegmentedButtonRow(
-            Modifier.fillMaxWidth().padding(horizontal = PiSpacing.pageHorizontal),
+        // 分支 / 条目 是真功能（分支 = pi 的 `get_tree`，条目 = entries），**不删**；
+        // 换的是组件语言：v2 的分段控件是 `Seg`（`direction-b-v2.html:644-657`），
+        // 由乙在 `ui/PiRoot.kt` 新建为 `PiSeg`，与它会话列表里换的那套是同一个。
+        // v2 的 tree 台（phone27/28）静态图上没有这个控件（那两台只画了筛选行）——
+        // 保留功能、统一组件语言，是父代理批准的刻意差异。
+        //
+        // 位置照 v2 画 `Seg` 的那一行（`:1853`：`padding:10px 14px 6px`，`Seg` 靠左，
+        // 不撑满）——M3 的 `SingleChoiceSegmentedButtonRow` 是 `fillMaxWidth` 的，
+        // 而 board 上这个控件是 hug content 的。
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .padding(
+                    start = PiSpacing.pageHorizontal,
+                    end = PiSpacing.pageHorizontal,
+                    top = PiSpacing.inner,
+                    bottom = PiSpacing.gutter,
+                ),
         ) {
-            listOf("分支", "条目").forEachIndexed { index, label ->
-                SegmentedButton(
-                    selected = tab == index,
-                    onClick = { onTabChange(index) },
-                    shape = SegmentedButtonDefaults.itemShape(index, 2),
-                ) { Text(label) }
-            }
+            PiSeg(
+                options = TREE_TABS,
+                selectedIndex = tab,
+                onSelect = onTabChange,
+            )
         }
         if (tab == 0) {
             Row(
