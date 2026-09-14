@@ -188,9 +188,25 @@ fun ChatScreen(
     val state by session.state.collectAsState()
     val bottomInset = contentPadding.calculateBottomPadding()
 
-    if (state.boot !is Boot.Ready) {
+    // D31: the boot surface is for **work** and for **failure** only.
+    //
+    // `Boot.Working` is a real unpack (first install, or a new engine revision) —
+    // minutes long, with steps and a progress bar, so it takes the screen.
+    // `Boot.Failed` is not a wait at all, it is the error state with 重试 and the
+    // diagnostics.
+    //
+    // `Boot.Idle` is the 1–2 s between "the app is up" and "pi answered the first
+    // `get_state`", and it used to take the screen too — the 「运行时正在启动」 page the
+    // user asked to delete. It no longer does: the chat page, its bottom bar and its
+    // composer are drawn immediately. The one thing that had to be true for that to
+    // be safe is that a message typed in that second is not lost; `send`,
+    // `sendFollowUp` and `runPromptCommand` now park it in
+    // `PiSessionViewModel.pendingPrompts` and replay it the moment a session
+    // attaches, so the composer is usable before the engine exists.
+    val boot = state.boot
+    if (boot is Boot.Working || boot is Boot.Failed) {
         BootScreen(
-            boot = state.boot,
+            boot = boot,
             onRetry = { session.boot() },
             modifier = Modifier.padding(bottom = bottomInset),
         )

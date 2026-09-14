@@ -201,3 +201,9 @@
 2. **删掉空会话里的引擎文字**（`ChatScreen.kt` 的 `PiEmptyState(title = "引擎正在启动"/"引擎已就绪", body = …)` 整块）：**空会话就是空白 + 底栏 + 输入框**，不写替代文案。
 3. **保留**顶栏那行一个词的引擎状态（`就绪`/`工作中`）——它不是一段说明文字，用户未点名。
 **前提（动手前须核）**：引擎未就绪时发消息**本来就会排队**、等引擎起来自动处理（`PiSessionViewModel` 的 `engineStarting` 逻辑），所以删掉接管页之后用户仍可立刻打字并得到回应。若这条不成立，则不删——先报。
+**核查结果与落实（前提只成立一半，已补齐）**：
+- **成立的一半**：`Boot.Ready` 之后、引擎还在 `Starting` 的那一段，`session` 已非空，消息经 `prompt` 进 pi 自己的队列（pi 启动完成前不读 stdin），气泡先出现、答复随后到。
+- **不成立的一半**：**`Boot.Idle` 那一两秒里 `session` 还是 `null`**（`session = engine` 与 `boot = Boot.Ready` 是 `attach()` 里的相邻两行，`Boot.Idle` 是构造默认值），而 `send()` 的第一行是 `val engine = session ?: return` —— **消息会被静默丢弃**，没有回显也没有错误。按用户「弄成正常的样子」的裁决，删页不能以静默丢输入为代价。
+- **落地**：`PiSessionViewModel` 加 `pendingPrompts` + `parkUntilAttached()`，把 `send` / `sendFollowUp` / `runPromptCommand` 三条**用户能在没有引擎时触达**的路径在 `session == null` 时**记住**（闭包重入原函数，压缩窗口/流式行为/乐观回显的检查一条都不会漏），`attach()` 在 `boot = Boot.Ready` 之后按序重放（先拷贝再清空）。稳态开销为零：一个空列表 + 每次发送一次 null 判断，无轮询、无定时器、不触发重组。
+- **定稿条件**：`ChatScreen` 变成 `boot is Boot.Working || boot is Boot.Failed` 才接管 —— `Idle` 直接显示正常对话页 + 底栏 + 输入框。`BootScreen.kt` 仍是 `Working` / `Failed` 的全部实现，不动。
+- **附带**：`PiSessionViewModel.engineStarting()` 在空态文字删除后已无调用点，**保留**（它是「引擎在、还没开始服务」这一窗口的唯一可读表述），KDoc 改成说明为什么留。

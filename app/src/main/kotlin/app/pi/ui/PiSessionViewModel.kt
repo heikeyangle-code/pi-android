@@ -468,6 +468,38 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     private var session: PiEngineSession? = null
 
     /**
+     * Prompts typed before an engine attached, replayed in order by [attach].
+     *
+     * `Boot.Idle` is the window between "the app is up" and "pi answered the first
+     * `get_state`" — 1–2 s on this device, every launch. The chat page is fully
+     * usable there (D31: the boot surface is drawn for `Boot.Working` and
+     * `Boot.Failed` only), so the composer is live and Enter reaches [send] while
+     * [session] is still `null`. The old code answered that with
+     * `val engine = session ?: return` — **the message vanished, with no bubble and
+     * no error**, the exact class of silent drop this round exists to remove. So the
+     * call is remembered and replayed verbatim once a session exists; a boot that
+     * fails leaves it parked until a retry succeeds.
+     *
+     * Only the three paths a user can reach without an engine are held: [send],
+     * [sendFollowUp] and [runPromptCommand]. `stop`, `restoreQueue` and the rest are
+     * *about* a live engine and mean nothing without one.
+     */
+    private val pendingPrompts = mutableListOf<() -> Unit>()
+
+    /**
+     * Park [action] if no engine is attached yet; `true` when it was parked.
+     *
+     * The closure re-enters the public function it came from, so the replay runs the
+     * same checks (compaction window, streaming behavior, optimistic echo) as a live
+     * call rather than a copy of them that could drift.
+     */
+    private fun parkUntilAttached(action: () -> Unit): Boolean {
+        if (session != null) return false
+        pendingPrompts += action
+        return true
+    }
+
+    /**
      * The engine's last exit, captured at the instant the state collector sees it
      * die.
      *
@@ -1116,6 +1148,16 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         // pre-write values. See [invalidateSettingsCache].
         invalidateSettingsCache()
         _state.value = _state.value.copy(boot = Boot.Ready)
+        // Anything typed before this engine attached is deliverable now: replay it in
+        // order ([pendingPrompts]). The list is copied and cleared **before** the
+        // closures run, so a replay that re-reaches `send` cannot append to the list
+        // being iterated — and so a replay that fails cannot leave the queue holding
+        // an entry that already ran.
+        if (pendingPrompts.isNotEmpty()) {
+            val queued = pendingPrompts.toList()
+            pendingPrompts.clear()
+            queued.forEach { it() }
+        }
         viewModelScope.launch {
             engine.state.collect { engineState ->
                 // Only the engine that is still current may write state. A
@@ -2293,9 +2335,11 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     // ------------------------------------------------------------------ actions
 
     fun send(text: String, images: List<PiImage> = emptyList()) {
-        val engine = session ?: return
         val trimmed = text.trim()
         if (trimmed.isEmpty() && images.isEmpty()) return
+        // No engine yet: hold the call instead of dropping it ([pendingPrompts]).
+        if (parkUntilAttached { send(text, images) }) return
+        val engine = session ?: return
         // **Compacting: the one window in which `prompt` is not an option.** pi
         // throws there — `Cannot submit a prompt while compaction is in progress.
         // Wait for compaction to finish and retry.` (`core/agent-session.ts:1192-1196`,
@@ -2368,6 +2412,9 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * skill commands and prompt templates for the same text.
      */
     fun runPromptCommand(command: PiSlashCommand, args: String) {
+        // Same hold as [send]: a palette command picked in the first second of a
+        // launch is remembered, not swallowed.
+        if (parkUntilAttached { runPromptCommand(command, args) }) return
         val engine = session ?: return
         val text = if (args.isBlank()) command.invocation else "${command.invocation} ${args.trim()}"
         if (command.source == PiCommandSource.Extension) {
@@ -2428,6 +2475,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * visible action with no effect, the same class of bug F19 removed elsewhere.
      */
     fun sendFollowUp(text: String, images: List<PiImage> = emptyList()) {
+        if (parkUntilAttached { sendFollowUp(text, images) }) return
         val engine = session ?: return
         val trimmed = text.trim()
         if (trimmed.isEmpty()) return
@@ -3342,11 +3390,14 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     /**
      * True while the engine exists but has not yet answered its first command.
      *
-     * This is the window in which a sent message is *queued inside pi* rather than
-     * acted on: pi does not read its stdin until its startup is over, so the bubble
-     * appears at once and the answer comes only when the engine begins serving. The
-     * chat's empty state is where a user who opened the app and typed immediately is
-     * standing, so that is where the wait has to be named (`docs/known-gaps.md` §M1).
+     * Kept though nothing calls it today: it is the single readable statement of the
+     * "engine up, not serving yet" window, and the *reason* a message sent there is
+     * safe is that pi does not read stdin until its startup is over, so the bubble
+     * appears at once and the answer follows. The empty-state paragraph that used to
+     * ask this question is deleted (D31), and the strictly earlier window — no engine
+     * at all — is now handled by [pendingPrompts] instead of by a boot screen. Both
+     * are still this one question's neighbours, so the predicate stays until
+     * something else needs to ask it.
      */
     fun engineStarting(current: UiState = _state.value): Boolean =
         current.boot is Boot.Ready && current.engine == PiEngineSession.EngineState.Starting
