@@ -3,6 +3,7 @@ package app.pi.highlight
 import app.pi.ui.render.PiCodeHighlight
 import app.pi.ui.render.PiCodeSpan
 import app.pi.ui.render.PiMermaidArt
+import app.pi.ui.render.PiMermaidReply
 import app.pi.ui.render.PiMermaidRun
 import app.pi.ui.render.piMermaidClassOf
 import org.json.JSONArray
@@ -220,20 +221,23 @@ internal class PiHighlightClient(private val credentialFiles: List<File>) {
     /**
      * One mermaid render request.
      *
-     * Same envelope and the same failure contract as [fetch], but the answer is an
-     * *art* or nothing: `null` means "draw the fence's own source", and it covers
-     * every case pi also falls back on — a dead engine, a timeout, a malformed
-     * reply, and a source `grok-mermaid` refuses to draw (`renderable: false`,
-     * which is pi's own `render()` returning `null`). There is nothing to validate
-     * against the input the way `codeUnits` guards a highlight: these runs are a
-     * *drawing* of the source, not offsets into it, so a wrong answer cannot
-     * mis-colour anything — it can only fail to arrive.
+     * Same envelope and the same failure contract as [fetch], but the answer is typed,
+     * because the caller's next move depends on *why* there is no drawing
+     * ([PiMermaidReply]): [PiMermaidReply.NoArt] is pi's own "there is no art to show"
+     * (`renderable: false`, i.e. `render()` returned `null`) and is definitive;
+     * [PiMermaidReply.Unavailable] is everything that a retry might fix — the engine is
+     * not up yet, or is still importing `grok-mermaid` on this first request, or the
+     * reply was malformed or truncated.
+     *
+     * There is nothing to validate against the input the way `codeUnits` guards a
+     * highlight: these runs are a *drawing* of the source rather than offsets into it,
+     * so a wrong answer cannot mis-colour anything — it can only fail to arrive.
      */
-    fun mermaid(source: String): PiMermaidArt? {
+    fun mermaid(source: String): PiMermaidReply {
         for (attempt in 0..1) {
             val credentials = credentials(force = attempt > 0) ?: run {
                 lastFailure = "读不到 highlight-bridge.json（引擎可能未运行）"
-                return null
+                return PiMermaidReply.Unavailable
             }
             val reply = runCatching { post(credentials, "/mermaid", JSONObject().put("source", source)) }
                 .getOrElse { error ->
@@ -241,41 +245,49 @@ internal class PiHighlightClient(private val credentialFiles: List<File>) {
                     // Same reason as in `fetch`: a dead port means the credentials are
                     // stale, and only re-reading the file can find the new engine.
                     cached = null
-                    return null
+                    return PiMermaidReply.Unavailable
                 }
             when {
                 reply.status == HTTP_UNAUTHORIZED -> {
                     lastFailure = "token 被拒绝（HTTP 401）"
-                    if (attempt == 0) cached = null else return null
+                    if (attempt == 0) {
+                        cached = null
+                    } else {
+                        return PiMermaidReply.Unavailable
+                    }
                 }
                 reply.body == null -> {
                     lastFailure = "响应过大或读取失败（HTTP ${reply.status}）"
-                    return null
+                    return PiMermaidReply.Unavailable
                 }
                 else -> {
                     val json = runCatching { JSONObject(reply.body) }.getOrElse {
                         lastFailure = "响应不是 JSON（HTTP ${reply.status}）"
-                        return null
+                        return PiMermaidReply.Unavailable
                     }
                     if (reply.status != HTTP_OK || !json.optBoolean("ok", false)) {
                         lastFailure = json.optString("reason", "HTTP ${reply.status}")
-                        return null
+                        return PiMermaidReply.Unavailable
                     }
                     val data = json.optJSONObject("data") ?: run {
                         lastFailure = "响应缺少 data"
-                        return null
+                        return PiMermaidReply.Unavailable
                     }
                     if (!data.optBoolean("renderable", false)) {
-                        // Definitive: pi keeps the original fence here too.
+                        // Definitive: pi keeps the original fence here too, so asking
+                        // again would only repeat the answer.
                         lastFailure = null
-                        return null
+                        return PiMermaidReply.NoArt
                     }
                     lastFailure = null
-                    return parseMermaid(data)
+                    val art = parseMermaid(data)
+                    // A reply that parsed to nothing drawable is treated as "no art"
+                    // rather than as a failure: half a drawing is worse than the source.
+                    return if (art == null) PiMermaidReply.NoArt else PiMermaidReply.Art(art)
                 }
             }
         }
-        return null
+        return PiMermaidReply.Unavailable
     }
 
     /**

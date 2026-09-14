@@ -285,6 +285,15 @@ const ASTRAL = `{"emoji": "🚀 ok", "flag": "🇨🇳"}
 const SHELL_UNKNOWN = `hcl snippet: resource "a" "b" { x = 1 }
 `;
 
+/**
+ * `grok-mermaid`'s semantic classes (`dist/types.d.ts` → `Cls`).
+ *
+ * The extension passes these through untouched — the Kotlin side owns the class → pi
+ * token table (`ui/render/PiMermaid.kt`) — so a class appearing here that no table row
+ * knows about is a colour that silently never gets applied.
+ */
+const MERMAID_CLASSES = new Set(["border", "text", "edge", "edgeLabel", "title", "none"]);
+
 // --------------------------------------------------------------------- main ---
 
 async function main() {
@@ -595,6 +604,57 @@ async function main() {
 		signal: AbortSignal.timeout(5_000),
 	});
 	check(notFound.status === 404, "unknown path answers 404");
+
+	// ------------------------------------------------------------- mermaid --
+	section("mermaid: the /mermaid route, its first-request cost, and its fallbacks");
+	// `grok-mermaid` is imported on the first `/mermaid` request, so this first call is
+	// the cold-start path the app's bounded retry exists for. Its duration is the number
+	// that retry has to cover, which is why it is printed rather than merely asserted.
+	const mermaidBody = { source: "graph TD\n  A[Start] --> B{OK?}\n  B -->|yes| C[Done]\n  B -->|no| A" };
+	const firstStarted = Date.now();
+	const firstMermaid = await authed("/mermaid", { method: "POST", body: JSON.stringify(mermaidBody) });
+	const firstMs = Date.now() - firstStarted;
+	const firstJson = await firstMermaid.json();
+	const firstRows = firstJson?.data?.rows ?? [];
+	console.log(`  info first /mermaid request (module import included): ${firstMs} ms, width ${firstJson?.data?.width}`);
+
+	const warmStarted = Date.now();
+	const warmMermaid = await authed("/mermaid", { method: "POST", body: JSON.stringify(mermaidBody) });
+	const warmMs = Date.now() - warmStarted;
+	await warmMermaid.json();
+
+	check(firstMermaid.status === 200 && firstJson?.data?.renderable === true, "a flowchart renders on the first request", JSON.stringify(firstJson).slice(0, 200));
+	check(firstRows.length > 0 && firstJson.data.width > 0, "the art has rows and a width", `rows=${firstRows.length} width=${firstJson?.data?.width}`);
+	check(
+		firstRows.every((row) => Array.isArray(row) && row.every((run) => MERMAID_CLASSES.has(run.cls) && typeof run.text === "string")),
+		"every run carries one of grok-mermaid's semantic classes",
+		`classes=${[...new Set(firstRows.flat().map((run) => run.cls))].join(", ")}`,
+	);
+	check(
+		firstRows.some((row) => row.some((run) => run.cls === "border")) && firstRows.some((row) => row.some((run) => run.cls === "text")),
+		"the drawing actually uses more than one class (so colouring has something to do)",
+	);
+	// The retry budget the app uses is 3 asks × (100 ms connect + 150 ms read) with two
+	// 400 ms pauses ≈ 1.55 s of wall clock. A cold import that needs more than that is a
+	// real regression to know about, not a silent "the diagram just does not appear".
+	check(firstMs < 1_200, "a cold import fits inside the app's retry budget", `${firstMs} ms`);
+	check(warmMs < firstMs, "the import is one-time: a warm request is cheaper than the first", `first ${firstMs} ms vs warm ${warmMs} ms`);
+
+	const unrenderable = await authed("/mermaid", { method: "POST", body: JSON.stringify({ source: "this is not mermaid at all" }) });
+	const unrenderableJson = await unrenderable.json();
+	check(
+		unrenderable.status === 200 && unrenderableJson?.data?.renderable === false,
+		"unparseable source is a *definitive* renderable:false, not a failure",
+		JSON.stringify(unrenderableJson).slice(0, 160),
+	);
+
+	const noSource = await authed("/mermaid", { method: "POST", body: JSON.stringify({}) });
+	check(noSource.status === 400, "a request without `source` is a 400");
+
+	// A fence pi itself refuses is the case the app must show as source, not as a
+	// half-drawn diagram.
+	const capsBody = await authed("/mermaid", { method: "POST", body: JSON.stringify({ source: "x".repeat(70 * 1024) }) });
+	check(capsBody.status === 413, "oversized mermaid source answers 413", `status=${capsBody.status}`);
 
 	// ------------------------------------------------------------- latency --
 	section("latency (warm, over loopback HTTP)");

@@ -43,21 +43,57 @@ internal data class PiMermaidRun(val text: String, val kind: PiMermaidClass)
  * A rendered diagram.
  *
  * [warnings] is `grok-mermaid`'s own list of source its flowchart grammar could not
- * read — advisory, never a reason to withhold the art
- * (`grok-mermaid/dist/types.d.ts`), and shown the way pi shows it: alongside the
- * drawing, not instead of it.
+ * read — advisory, and **pi's rule for them is the opposite of "show it anyway"**: a
+ * settled diagram with warnings is *not* drawn, pi keeps the fence's source and prints
+ * the warning underneath (`components/mermaid.ts:77-82`). The decision needs both the
+ * art and the caller's notion of "settled", so it is made where the fence is drawn
+ * (`PiCodeSurface`), not here.
  *
  * `grok-mermaid`'s `width` is deliberately **not** carried. pi uses it for one
  * decision — "wider than the terminal → keep the source instead"
  * (`components/mermaid.ts:76`) — and a phone replaces that with the horizontal
  * scroll every other code block in this app already has, because a diagram the user
  * can scroll is worth more than the mermaid source they cannot read. The service
- * still reports the number in its response; only the client ignores it.
+ * still reports the number in its response; only the client ignores it. **This is a
+ * deliberate divergence from pi, not a missing piece.**
  */
 internal data class PiMermaidArt(
     val rows: List<List<PiMermaidRun>>,
     val warnings: List<String> = emptyList(),
 )
+
+/**
+ * pi's `markdown.mermaid` setting: `settings-manager.ts:62-66` (`MermaidRenderingMode`,
+ * `"off" | "final" | "streaming"`, documented default `"streaming"`) and its getter at
+ * `:1350-1352`.
+ *
+ * The gate that consumes it is pi's (`components/mermaid.ts:62-69`): `off` never
+ * transforms a fence; `final` transforms only once the message has stopped streaming;
+ * `streaming` transforms during the stream as well.
+ */
+internal enum class PiMermaidMode { Off, Final, Streaming }
+
+/**
+ * What the mermaid seam answered — and, because they are different failures, *whether
+ * asking again could help*.
+ *
+ * The distinction exists for one reason: the guest imports `grok-mermaid` (a real
+ * layout engine) on the first request, which can outlast the socket's read budget, and
+ * only [Unavailable] is worth retrying. [NoArt] is definitive — it is `render()`
+ * returning `null`, which pi answers by keeping the fence's own text
+ * (`components/mermaid.ts:75-76`) — so retrying it would spend three requests being
+ * told the same thing.
+ */
+internal sealed interface PiMermaidReply {
+    /** There is a drawing to show. */
+    class Art(val art: PiMermaidArt) : PiMermaidReply
+
+    /** Definitive: `grok-mermaid` refuses this source; pi keeps the fence's text. */
+    object NoArt : PiMermaidReply
+
+    /** The engine could not answer: still loading, not running, timed out, bad reply. */
+    object Unavailable : PiMermaidReply
+}
 
 /**
  * `grok-mermaid`'s class string → [PiMermaidClass].

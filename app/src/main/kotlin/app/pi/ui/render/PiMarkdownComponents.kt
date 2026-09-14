@@ -1,5 +1,6 @@
 package app.pi.ui.render
 
+import android.content.Context
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -20,6 +21,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
@@ -32,8 +34,14 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.pi.highlight.PiNodeCodeHighlighter
 import app.pi.highlight.PiNodeMermaidRenderer
+import app.pi.runtime.PiPaths
+import app.pi.runtime.PiProjectConfig
+import app.pi.runtime.PtyLauncher
+import app.pi.settings.PiSettingsFileStore
+import app.pi.settings.readString
 import app.pi.ui.theme.PiPalette
 import app.pi.ui.theme.PiTheme
+import java.io.File
 import com.mikepenz.markdown.compose.LocalReferenceLinkHandler
 import com.mikepenz.markdown.compose.components.MarkdownComponentModel
 import com.mikepenz.markdown.compose.components.MarkdownComponents
@@ -396,9 +404,16 @@ private fun PiCodeSurface(code: String, language: String?, style: TextStyle) {
     val palette = PiTheme.palette
     val normalized = remember(language) { PiCodeLanguage.normalize(language) }
     val mermaid = rememberPiMermaidArt(code, language)
-    if (mermaid != null) {
+    // pi's rule for an incomplete drawing, and it is **not** "show it anyway": when the
+    // diagram is settled and `grok-mermaid` reported warnings, pi keeps the fence's
+    // *source* and puts the warning underneath (`components/mermaid.ts:77-82`). The art
+    // is deliberately dropped — a cross-checked partial diagram is more misleading than
+    // the diagram's own code. "Settled" is what the producer already waited for.
+    val art = mermaid?.takeIf { it.warnings.isEmpty() }
+    val mermaidWarning = mermaid?.let { piMermaidWarning(it) }
+    if (art != null) {
         Text(
-            text = piMermaidText(mermaid, palette),
+            text = piMermaidText(art, palette),
             // pi hands the art back as inline code, so an unclassed run is
             // `mdCode`; the class colours sit on top of it — see `PiMermaid.kt`.
             style = style.copy(color = palette.mdCode),
@@ -407,45 +422,47 @@ private fun PiCodeSurface(code: String, language: String?, style: TextStyle) {
                 .horizontalScroll(rememberScrollState())
                 .padding(horizontal = 12.dp, vertical = 10.dp),
         )
-        piMermaidWarning(mermaid)?.let { warning ->
-            Text(
-                text = warning,
-                style = MaterialTheme.typography.labelMedium,
-                color = palette.warning,
-                modifier = Modifier.padding(start = 12.dp, end = 12.dp, bottom = 10.dp),
-            )
-        }
-        return
     }
-    val highlighted = rememberPiHighlightedCode(code, normalized)
-    MarkdownCodeBackground(
-        color = Color.Transparent,
-        shape = RoundedCornerShape(12.dp),
-        border = BorderStroke(1.dp, palette.mdCodeBlockBorder),
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 8.dp),
-        // The library's header reads `MarkdownColors.text`, which is the body colour
-        // — pi prints the fence's info string in `mdCodeBlockBorder`, so the header
-        // is ours ([PiCodeHeader]) and the library's is off. `language`/`code` are
-        // still passed: the library uses them for the block's accessibility label,
-        // which has nothing to do with the top bar.
-        showHeader = false,
-        language = normalized.orEmpty(),
-        code = code,
-    ) {
-        Column {
-            PiCodeHeader(language = normalized, code = code, palette = palette)
-            Text(
-                text = highlighted.text,
-                style = style.copy(
-                    color = if (highlighted.languageKnown) palette.text else palette.mdCodeBlock,
-                ),
-                modifier = Modifier
-                    .horizontalScroll(rememberScrollState())
-                    .padding(horizontal = 12.dp, vertical = 10.dp),
-            )
+    if (art == null) {
+        val highlighted = rememberPiHighlightedCode(code, normalized)
+        MarkdownCodeBackground(
+            color = Color.Transparent,
+            shape = RoundedCornerShape(12.dp),
+            border = BorderStroke(1.dp, palette.mdCodeBlockBorder),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = if (mermaidWarning != null) 8.dp else 0.dp, bottom = 8.dp),
+            // The library's header reads `MarkdownColors.text`, which is the body colour
+            // — pi prints the fence's info string in `mdCodeBlockBorder`, so the header
+            // is ours ([PiCodeHeader]) and the library's is off. `language`/`code` are
+            // still passed: the library uses them for the block's accessibility label,
+            // which has nothing to do with the top bar.
+            showHeader = false,
+            language = normalized.orEmpty(),
+            code = code,
+        ) {
+            Column {
+                PiCodeHeader(language = normalized, code = code, palette = palette)
+                Text(
+                    text = highlighted.text,
+                    style = style.copy(
+                        color = if (highlighted.languageKnown) palette.text else palette.mdCodeBlock,
+                    ),
+                    modifier = Modifier
+                        .horizontalScroll(rememberScrollState())
+                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                )
+            }
         }
+    }
+    // pi's warning line, in pi's `warning` token and after the source it belongs to.
+    mermaidWarning?.let { warning ->
+        Text(
+            text = warning,
+            style = MaterialTheme.typography.labelMedium,
+            color = palette.warning,
+            modifier = Modifier.padding(start = 12.dp, end = 12.dp, top = 4.dp, bottom = 8.dp),
+        )
     }
 }
 
@@ -571,35 +588,176 @@ private val WHITESPACE = Regex("\\s+")
  *
  * pi runs its mermaid transformer *before* the code-block renderer and only for that
  * one language (`components/mermaid.ts:14-16`, `:60-88`), which is why this returns
- * immediately for any other fence. The request has the same shape as the
- * highlighter's — off the main thread, debounced while the fence is still changing,
- * and never able to throw — and `null` is pi's own "no art to show": the caller
+ * immediately for any other fence. `null` is pi's own "no art to show": the caller
  * draws the fence's source instead, exactly as pi keeps `token.raw` (`:75-76`).
  *
- * Two of pi's conditions are deliberately not reproduced, because this app cannot
- * see what they depend on: pi skips mermaid inside an assistant *thinking* block and
- * while streaming unless the setting allows it (`:63-69`). A settled transcript has
- * neither state to read here, and a streaming fence is debounced anyway.
+ * **pi's mode gate is honoured here** ([PiMermaidMode], from `markdown.mermaid`):
+ * [PiMermaidMode.Off] never asks, so the fence stays source — pi's
+ * `mode === "off"` branch (`components/mermaid.ts:64-65`).
+ *
+ * **Cold start, and why this retries.** The guest imports `grok-mermaid` — a real
+ * layout engine — on the first `/mermaid` request, and that import can outlast the
+ * socket's 150 ms read budget. A single-shot producer therefore answered "no art" for
+ * the *first* diagram on screen and only drew it once something recycled the row (the
+ * reported "画完了不显示，屏幕必须晃动、滑动才画出来": scrolling the `LazyColumn`
+ * disposed and rebuilt this component, whose `produceState` then ran again against a
+ * warm engine). [PiMermaidReply] tells the two failures apart, so this retries only
+ * [PiMermaidReply.Unavailable] — up to [MERMAID_ATTEMPTS] asks, [MERMAID_RETRY_MS]
+ * apart — and never retries [PiMermaidReply.NoArt], which is a definitive answer.
+ * Cancellation is free: a changed key or a disposed row cancels this coroutine,
+ * including the waits. **Worst case per fence**: 3 requests and ≈1.6 s of a background
+ * coroutine (3 × 250 ms of socket budget + 2 × 400 ms of waiting), then it stops — no
+ * timer survives it, and a transcript with F mermaid fences never exceeds 3·F requests.
+ *
+ * **`Final` waits for the fence even the first time.** pi's gate there is
+ * `context.isStreaming` (`:66-67`), which this component cannot see — `PiMarkdownText`
+ * receives markdown, not the message's state, and adding a parameter to it is outside
+ * this change. So `Final` treats every ask as "possibly still streaming" and settles
+ * first; the cost is [STREAM_SETTLE_MS] before a final diagram appears, and the benefit
+ * is that a mid-stream partial diagram is not drawn. `Streaming` keeps pi's behaviour
+ * of drawing during the stream (as far as a debounced producer can).
  *
  * The language test is pi's, word for word: the **first whitespace-separated token**
  * of the info string, lower-cased. That is not the same rule the highlighter uses —
  * pi hands the whole info string to highlight.js — and the difference is pi's own:
  * ` ```mermaid x ` is drawn as a diagram, ` ```js x ` is not highlighted at all.
+ *
+ * **pi's `assistant-thinking` gate is satisfied structurally, not by a check.** pi
+ * refuses to transform inside a thinking message (`components/mermaid.ts:65`). In this
+ * app a thinking body is drawn by `ThinkingBlockBlock` as one plain `Text` of
+ * `item.text` in italic prose (`ui/blocks/ThinkingBlockBlock.kt:79-87`) — it never
+ * enters the markdown renderer, so no code-fence component runs there and a
+ * ` ```mermaid ` fence inside a thinking block stays literal text, which is what pi
+ * shows too.
  */
 @Composable
 private fun rememberPiMermaidArt(code: String, language: String?): PiMermaidArt? {
+    val mode = rememberPiMermaidMode()
+    // pi: `mode === "off"` returns the markdown untouched, i.e. no transform at all.
+    if (mode == PiMermaidMode.Off) return null
     val isMermaid = remember(language) {
         language?.trim()?.split(WHITESPACE)?.firstOrNull()?.lowercase() == MERMAID_LANGUAGE
     }
     if (!isMermaid) return null
     val hasStreamed = remember { booleanArrayOf(false) }
-    val art = produceState<PiMermaidArt?>(initialValue = null, code, language) {
+    val art = produceState<PiMermaidArt?>(initialValue = null, code, language, mode) {
         val isUpdate = hasStreamed[0]
         hasStreamed[0] = true
-        if (isUpdate) delay(STREAM_SETTLE_MS)
-        value = withContext(Dispatchers.Default) { PiNodeMermaidRenderer.render(code) }
+        if (isUpdate || mode == PiMermaidMode.Final) delay(STREAM_SETTLE_MS)
+        var attempt = 0
+        while (true) {
+            when (val reply = withContext(Dispatchers.Default) { PiNodeMermaidRenderer.render(code) }) {
+                is PiMermaidReply.Art -> {
+                    value = reply.art
+                    return@produceState
+                }
+                PiMermaidReply.NoArt -> {
+                    value = null
+                    return@produceState
+                }
+                PiMermaidReply.Unavailable -> {
+                    attempt++
+                    if (attempt >= MERMAID_ATTEMPTS) {
+                        value = null
+                        return@produceState
+                    }
+                    delay(MERMAID_RETRY_MS)
+                }
+            }
+        }
     }
     return art.value
+}
+
+/** How many asks one fence gets while the guest is still importing `grok-mermaid`. */
+private const val MERMAID_ATTEMPTS = 3
+
+/** The pause between those asks; long enough for a cold ESM import to land. */
+private const val MERMAID_RETRY_MS = 400L
+
+/** pi's key, verbatim: `settings.markdown.mermaid` (`settings-manager.ts:66`). */
+private const val MERMAID_SETTING_KEY = "markdown.mermaid"
+
+/**
+ * `markdown.mermaid` for this composition.
+ *
+ * pi reads the mode per markdown render (`components/mermaid.ts:62`) from its own
+ * settings object. This app has no settings object in the render tree — the store is
+ * passed explicitly to the Settings screens and to the terminal — so the value is read
+ * from **the same file-backed store those screens write**
+ * (`PiSettingsFileStore.forWorkspace`, exactly as `terminalSettingsStore` builds it:
+ * `PiPaths` for the agent dir, `PtyLauncher.workspaceHost` for the workspace), and
+ * cached in [PiMermaidModeSource] so that a transcript with twenty code fences does not
+ * parse `settings.json` twenty times — once per fence *and again* every time a recycled
+ * row recomposes.
+ *
+ * The cache is invalidated by the settings documents' stamp (mtime + size), which is two
+ * `stat` calls per ask: cheap, no timer, and it means flipping the setting is picked up
+ * by the next composition instead of needing an app restart.
+ */
+@Composable
+private fun rememberPiMermaidMode(): PiMermaidMode {
+    val context = LocalContext.current
+    return remember(context) { PiMermaidModeSource.mode(context) }
+}
+
+/**
+ * The process-wide `markdown.mermaid` cache behind [rememberPiMermaidMode].
+ *
+ * Deliberately a process-wide singleton rather than composition state: the value is
+ * asked for once per code fence, the store's own caches are per instance, and building a
+ * store per fence would re-read (and re-parse) `settings.json` per fence — which is
+ * exactly the kind of quiet per-row I/O this app avoids elsewhere.
+ */
+private object PiMermaidModeSource {
+
+    private class Cached(
+        val globalFile: File,
+        val projectFile: File,
+        val stamp: String,
+        val mode: PiMermaidMode,
+    )
+
+    private val lock = Any()
+    private var cached: Cached? = null
+
+    fun mode(context: Context): PiMermaidMode {
+        val fresh = cached
+        if (fresh != null && stampOf(fresh) == fresh.stamp) return fresh.mode
+        synchronized(lock) {
+            cached?.let { if (stampOf(it) == it.stamp) return it.mode }
+            val app = context.applicationContext ?: context
+            val paths = PiPaths(
+                filesDir = app.filesDir,
+                nativeLibDir = File(app.applicationInfo.nativeLibraryDir),
+            )
+            val workspace = PtyLauncher.workspaceHost(app)
+            val globalFile = File(paths.agentDir, "settings.json")
+            val projectFile = PiProjectConfig.settingsFile(workspace)
+            val store = PiSettingsFileStore.forWorkspace(agentDir = paths.agentDir, workspace = workspace)
+            val mode = piMermaidModeOf(runCatching { store.readString(MERMAID_SETTING_KEY) }.getOrNull())
+            cached = Cached(globalFile, projectFile, stampOf(globalFile, projectFile), mode)
+            return mode
+        }
+    }
+
+    private fun stampOf(entry: Cached): String = stampOf(entry.globalFile, entry.projectFile)
+
+    private fun stampOf(globalFile: File, projectFile: File): String =
+        "${globalFile.lastModified()}:${globalFile.length()}|${projectFile.lastModified()}:${projectFile.length()}"
+}
+
+/**
+ * pi's accepted values, and pi's default for everything else.
+ *
+ * `"streaming"` is the documented default (`settings-manager.ts:66`), so an unset key —
+ * or a value pi could not have written — resolves to it. Defaulting to [PiMermaidMode.Off]
+ * would look safer and would silently disable a feature the user never turned off.
+ */
+private fun piMermaidModeOf(raw: String?): PiMermaidMode = when (raw?.trim()?.lowercase()) {
+    "off" -> PiMermaidMode.Off
+    "final" -> PiMermaidMode.Final
+    else -> PiMermaidMode.Streaming
 }
 
 /**
