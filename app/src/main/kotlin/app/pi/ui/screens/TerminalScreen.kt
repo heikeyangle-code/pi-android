@@ -70,7 +70,10 @@ fun TerminalScreen(
         // row became a signpost instead of a setting (`docs/settings-review.md` §9).
         Text(
             "输入 pi 回车进入原版 TUI：订阅登录、会话导入、以及需要终端的扩展都在那边。",
-            modifier = Modifier.padding(horizontal = PiSpacing.screen, vertical = 6.dp),
+            // 页水平 14（D1：`PiSpacing.pageHorizontal` 是唯一事实源）。这一屏 v2 没有
+            // 画过（终端已退役），但页水平是全应用一致的取值，所以它跟着 14，而不是旧
+            // 的 16。
+            modifier = Modifier.padding(horizontal = PiSpacing.pageHorizontal, vertical = 6.dp),
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
