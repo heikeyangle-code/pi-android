@@ -39,6 +39,9 @@
 |---|---|---|---|---|---|
 | D-1 | **状态行的数值格式与 `(auto)` 位置** | 样本值写 `上下文 52%` / `$0.42`（整数百分比、两位金额），`(auto)` 未出现在行内 | `toFixed(1)`（`52.0%`）、`toFixed(3)`（`$0.006`），`(auto)` 挂在**窗口**之后 | 已按 pi 落地（`%.1f` + `%` + `%.3f` + `窗口 (auto)`） | 保持 pi |
 | D-2 | **diff 正文的上色范围与省略行** | 只给**符号列**上色，正文用 `--text`（上下文用 `--body-on-tool`）；折叠行写 `… N 行未变` | **整行**上色（符号+行号+正文同一个 `theme.fg`）；省略行是 ` <pad> ...`，**不带行数** | 已按 pi 落地（整行上色；省略行按 context 渲染、数字列留空） | 保持 pi |
+| D-3 | **扩展状态行：v2 稿里没有这一行** | 对话壳只画到「读数状态行」（`ChatShell:1359-1370`）为止，**没有**扩展状态行的图 | pi 的 `ctx.ui.setStatus` 把扩展的状态文本画在**终端 footer** 一行（`interactive-mode.ts:2090`） | **已按用户裁决删除渲染**（用户：「就一本书的图标，上面写了个数字呗…如果是的话就删掉」）；`ui/extension/ExtensionChrome.kt` 的 `ExtensionStatusRow` 构件随之删除，`ChatScreen.kt` 的调用点一并摘掉 | **用户已裁决：不显示**。数据仍被收集（`UiState.extensionStatuses` / `setExtensionStatus` 保留），将来若要看，放进「会话与队列」那张 sheet 是一处小改动。评审时**不要**把它当成漏画 |
+| D-4 | **扩展颜色：v2 的调色板里没有扩展要的颜色** | v2 全篇只用 pi 令牌（`--accent`/`--warning`/…） | 扩展用 `theme.fg(...)` 指定**任意 RGB**（真彩色/256 色），随字符串以 ANSI 过来 | 实现为「解析 ANSI → 找最接近的 pi 令牌 → 找不到回落默认色」，**不新造颜色**（`ui/extension/ExtensionChrome.kt` 的 `tokenColorFor`） | 保持（扩展的粗体/斜体/下划线/背景色**不带过来**，只带前景色） |
+| D-5 | **扩展对话框**：与设置侧共用同一构件 | `.b-dlg`（最大宽 330 / 圆角 14 / `surf-high` / 1px `borderMuted` / `padding:18px 16px 12px` / scrim 0.32） | pi 的终端对话框（`extension-selector.ts` 等，形态完全不同） | 已按 v2 落地：`ui/components/PiDialog.kt`，设置侧与扩展四型共用；`AlertDialog` 在同一半区归零；不新造颜色 | 保持 v2（这是本轮唯一「有图可对」的扩展面） |
 
 ## B2 · 已由父代理裁决的（记录，不再讨论）
 

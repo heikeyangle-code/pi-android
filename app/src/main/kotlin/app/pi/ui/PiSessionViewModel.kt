@@ -58,6 +58,7 @@ import app.pi.ui.extension.ExtensionNotice
 import app.pi.ui.extension.ExtensionStatus
 import app.pi.ui.extension.ExtensionWidget
 import app.pi.ui.extension.WidgetPlacement
+import app.pi.ui.extension.chromeText
 import app.pi.ui.extension.noticeToneOf
 import app.pi.ui.settings.EngineDiagnostics
 import app.pi.ui.settings.PiSettingsStore
@@ -1583,11 +1584,20 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         val dialog = ExtensionDialog(
             id = request.uiId,
             method = method,
+            // Labels keep their bytes: an extension colours them with
+            // `ctx.ui.theme.fg(...)`, whose SGR bytes are the only colour channel
+            // the wire has (`rpc-types.ts:246-281` carries one plain string each).
+            // The dialog host turns them back into colour with `chromeSpans` +
+            // `PiPalette.tokenColorFor`; stripping here would destroy the colour
+            // before anything could paint it.
             title = request.title.orEmpty(),
             message = request.message,
             options = request.options,
             placeholder = request.placeholder,
             // `docs/rpc.md`: `editor` carries its initial content in `prefill`.
+            // A value, not a label: the app hands it back on confirm, and it is
+            // drawn in a `BasicTextField`, which takes one plain string. See
+            // `ExtField`'s KDoc — no stripping and no painting, both deliberate.
             prefill = request.text,
             timeoutMs = request.timeoutMs,
             // Seed the countdown so the first frame shows the full duration
@@ -1603,11 +1613,16 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     private fun onExtensionChrome(request: PiEvent.ExtensionUiRequest) {
         when (request.method) {
             "notify" -> pushNotice(
+                // Chrome, so the message keeps the extension's escapes for the
+                // snackbar to paint (`ExtensionUiHost`). `chromeText` would be the
+                // wrong call: it removes the colour rather than rendering it.
                 message = request.message.orEmpty(),
                 // rpc.md: notifyType is info | warning | error, default info.
                 tone = noticeToneOf(request.notifyType),
             )
 
+            // Collected but not drawn: the status row was deleted by adjudication
+            // D-3. See setExtensionStatus for why the data is kept anyway.
             "setStatus" -> setExtensionStatus(request.statusKey, request.statusText)
 
             "setWidget" -> setExtensionWidget(
@@ -1617,7 +1632,13 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             )
 
             "setTitle" -> _state.value = _state.value.copy(
-                windowTitle = request.title?.takeIf { it.isNotBlank() },
+                // The one chrome surface that *is* stripped, because it has no
+                // span host: `windowTitle` becomes the Chat AppBar's `Text`, which
+                // lives in `ChatScreen.kt` and takes one string. Stripped before
+                // the blank check, so a title that is nothing but escapes falls
+                // back to the screen's own name instead of occupying the bar
+                // invisibly.
+                windowTitle = request.title?.let { chromeText(it) }?.takeIf { it.isNotBlank() },
             )
 
             "set_editor_text" -> request.text?.let { text ->
@@ -1626,6 +1647,9 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                 // rather than treated as "clear": the parser cannot tell an absent
                 // `text` from an empty one, and guessing "clear" would silently
                 // wipe whatever the user had typed.
+                //
+                // Neither stripped nor painted, for the same reason as `editor`'s
+                // prefill: this text is a draft the user may send to the model.
                 composerFillSeq += 1
                 _state.value = _state.value.copy(composerFill = ComposerFill(composerFillSeq, text))
             }
@@ -1639,6 +1663,18 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * `statusText: undefined` (or omit it) to clear the status entry" — the
      * parser turns both into null, and an empty string renders as nothing at all,
      * so both clear here too.
+     *
+     * **Nothing renders this today.** The user's adjudication deleted the status
+     * row (`design/ui-refactor/11-designer-adjudication.md` D-3 — v2's dialogue
+     * shell draws no extension status line), so the `ExtensionStatus` list has no
+     * composable any more. The data is kept deliberately rather than left behind:
+     * it is the only copy of what an extension asked to show, and the adjudication
+     * names the 「会话与队列」 sheet as where it could reappear — which is a call
+     * site, not a re-plumb.
+     *
+     * [text] keeps its escapes instead of being stripped here: whoever draws it
+     * next has to be able to paint the colour (`chromeSpans` +
+     * `tokenColorFor`), and the state should stay equal to the wire payload.
      */
     private fun setExtensionStatus(key: String?, text: String?) {
         if (key.isNullOrEmpty()) return
@@ -1659,6 +1695,10 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * widget", and an empty array renders zero lines, so both are the same state.
      * Order is first-seen stable so a widget does not jump around the composer
      * when an extension updates it every turn.
+     *
+     * [lines] keep their escapes, and are neither capped nor trimmed here: the
+     * row budget and the colour both belong to the drawing site
+     * (`ExtensionWidgetStack`), so this state stays equal to the wire payload.
      */
     private fun setExtensionWidget(key: String?, lines: List<String>, placement: String?) {
         if (key.isNullOrEmpty()) return
@@ -1699,12 +1739,28 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         settleDialog(dialog, command)
     }
 
+    /**
+     * The one place a wire response is built, and therefore the one place that
+     * decides what an answer *is*.
+     *
+     * A `select` answer is sent **plain** (`chromeText`): the option label is
+     * painted with whatever colour the extension wrapped it in, but the answer
+     * must be the label, not the escape bytes that painted it. `input` and
+     * `editor` values are *not* stripped — those are text the user typed or kept
+     * from a `prefill`, and editing them here would change the user's own answer
+     * rather than decline to paint a label.
+     */
     private fun buildAnswer(dialog: ExtensionDialog, answer: ExtensionAnswer): JsonObject? = when (answer) {
         is ExtensionAnswer.Value ->
             if (dialog.method == ExtensionDialogMethod.Confirm) {
                 null
             } else {
-                PiCommands.extensionUiValue(dialog.id, answer.value)
+                val value = if (dialog.method == ExtensionDialogMethod.Select) {
+                    chromeText(answer.value)
+                } else {
+                    answer.value
+                }
+                PiCommands.extensionUiValue(dialog.id, value)
             }
 
         is ExtensionAnswer.Confirmed ->

@@ -13,25 +13,26 @@ session hung forever with no error.
 
 | File | Contents |
 |------|----------|
-| `ExtensionUi.kt` | Protocol model — `ExtensionDialogMethod`, `ExtensionDialog`, `ExtensionAnswer`, `ExtensionNotice`, `ExtensionStatus`, `ExtensionWidget`, `WidgetPlacement`, `ComposerFill`, `noticeToneOf` — and `ExtensionDialogQueue`, the FIFO policy (see §3). |
-| `ExtensionDialogs.kt` | Material 3 `select` / `confirm` / `input` / `editor` dialogs, live countdown bar, `prefill` handling, cancel-on-dismiss. |
+| `ExtensionUi.kt` | Protocol model — `ExtensionDialogMethod`, `ExtensionDialog`, `ExtensionAnswer`, `ExtensionNotice`, `ExtensionStatus`, `ExtensionWidget`, `WidgetPlacement`, `ComposerFill`, `noticeToneOf` — plus `chromeText` / `chromeSpans` (the plain and styled forms of an extension string; §5), `boundedWidgetLines` with pi's `MAX_WIDGET_LINES` and truncation row (§5), and `ExtensionDialogQueue`, the FIFO policy (see §3). |
+| `ChromeColor.kt` | `PiPalette.tokenColorFor(span)`: the ANSI-foreground → pi-theme-token mapping, with the measured threshold and the reasons there is a threshold at all (§5). |
+| `ExtensionDialogs.kt` | Material 3 `select` / `confirm` / `input` / `editor` dialogs, live countdown bar, `prefill` handling, cancel-on-dismiss. Title, message, option labels and placeholder are painted; the field's *value* is not (§5). |
 | `ExtensionUiHost.kt` | The single overlay: snackbar queue (`notify`, `extension_error`) + `ExtensionDialogHost`, driven by the ViewModel's extension state. |
-| `ExtensionChrome.kt` | `ExtensionStatusRow` (`setStatus`), `ExtensionWidgetStack` (`setWidget`, above/below editor), `windowTitleOf` (`setTitle`). |
+| `ExtensionChrome.kt` | `ExtensionSpans` (the span renderer), `ExtensionWidgetStack` (`setWidget`, above/below editor, row-capped per §5), `windowTitleOf` (`setTitle`). The status row is **deleted** — see §5. |
 
 Deadlock disposition, method by method:
 
 | pi method | Disposition |
 |-----------|-------------|
-| `select` | Dialog; option tap → `{value}`; 取消 / back → `{cancelled:true}`. |
+| `select` | Dialog; option tap → `{value}`; 取消 / back → `{cancelled:true}`. The label is painted with the extension's colour, the answer is sent **plain** (§5). |
 | `confirm` | Dialog; 允许 → `{confirmed:true}`, 拒绝 / back → `{confirmed:false}` / `{cancelled:true}` (pi maps both to `false`). |
 | `input` | Dialog with placeholder; 确定 → `{value}` (empty string is a legal value); 取消 → `{cancelled:true}`. |
-| `editor` | Multi-line dialog pre-filled from `prefill`; 确定 → `{value}`; 取消 → `{cancelled:true}`. **No countdown — see §2.** |
-| `notify` | Snackbar, tone from `notifyType` (info/warning/error, defaults to info). |
-| `setStatus` | Row under the AppBar; upsert by `statusKey`; absent/empty `statusText` clears. |
-| `setWidget` | Panel above/below the composer by `widgetPlacement` (default `aboveEditor`); empty `widgetLines` clears the key. |
-| `setTitle` | Primary line of the Chat AppBar; blank clears back to 会话/新会话. |
-| `set_editor_text` | Fills the composer once (`composerFill` seq, consumed on apply so re-entering the destination cannot overwrite newer typing). |
-| `extension_error` | Non-fatal error snackbar ("扩展出错：…"); the transcript already carries an `ErrorText` row from the rpc reducer. |
+| `editor` | Multi-line dialog pre-filled from `prefill`; 确定 → `{value}`; 取消 → `{cancelled:true}`. **No countdown — see §2.** `prefill` is byte-exact and unpainted because it is answered back (§5). |
+| `notify` | Snackbar, tone from `notifyType` (info/warning/error, defaults to info); the message is painted with the extension's colour (§5). |
+| `setStatus` | **Not rendered, by adjudication.** `statusKey` upserts and an absent/empty `statusText` clears, exactly as before, and `UiState.extensionStatuses` still collects every entry — but `ExtensionStatusRow` was deleted (D-3) and nothing draws the list today. See §5. |
+| `setWidget` | Panel above/below the composer by `widgetPlacement` (default `aboveEditor`); empty `widgetLines` clears the key. Each line is painted, and the rows are capped at pi's 10 with pi's own `... (widget truncated)` row (§5). |
+| `setTitle` | Primary line of the Chat AppBar; blank clears back to 会话/新会话. The one chrome surface that is **stripped, not painted** — its host is a `ChatScreen.kt` `Text` that takes one string (§5). Stripped before the blank test, so a title of nothing but escapes falls back instead of occupying the bar invisibly. |
+| `set_editor_text` | Fills the composer once (`composerFill` seq, consumed on apply so re-entering the destination cannot overwrite newer typing); byte-exact, neither stripped nor painted (§5). |
+| `extension_error` | Non-fatal error snackbar ("扩展出错：…"); the transcript already carries an `ErrorText` row from the rpc reducer. Both name the extension from `extensionPath` — see §4. |
 
 ## 2. `editor` has no agent-side timer — explicit disposition
 
@@ -82,78 +83,134 @@ Dialogs with Countdown"): `confirm` → `confirmed:false`; `select`/`input` →
 both directions because pi deletes the pending entry before resolving and
 silently drops a response whose id is no longer pending.
 
-## 4. Patch list for files owned by others
+## 4. Cross-file notes
 
-Only one patch is outstanding. `PiSessionViewModel.kt` lines **1075–1082** — the
-drain's KDoc says *what* it does but not *why it cannot be removed*:
+No patch is outstanding. Two entries in an earlier revision of this file were
+wrong and are recorded here so they are not re-opened:
 
-Before:
+- The `cancelAllDialogs` KDoc patch ("only one patch is outstanding",
+  `PiSessionViewModel.kt` lines 1075–1082) **is applied**. The function and its
+  "Load-bearing — do not remove as redundant" KDoc now live at
+  `PiSessionViewModel.kt:1855-1871`; line 1075 is a closing brace in the
+  engine-restart path (`attach` itself is at `:1088`), so that range pointed at
+  unrelated code even before the file moved.
+- "`PiEvent.ExtensionError` models only `message` … so `extensionPath` is
+  unreachable from this layer" was **never true of this tree**:
+  `rpc/.../Events.kt:375-379` declares `extensionPath` and `event`, the parser
+  fills them at `Events.kt:570-573`, and the app already uses them —
+  `PiSessionViewModel.kt:1475-1482` and `rpc/.../Transcript.kt:1073-1081` both
+  route the path through `extensionErrorHeadline`
+  (`rpc/.../ExtensionErrorText.kt:28`). Attribution works; nothing is pending.
 
-```kotlin
-    /**
-     * Dismiss everything pending and answer each one `cancelled`, oldest first.
-     *
-     * Called when the engine dies or a new session replaces the old one. The
-     * write may be undeliverable (a dead pipe), which is fine — nobody is
-     * blocked then — but on a *session reset* pi is still alive and would
-     * otherwise sit forever on a dialog whose UI no longer exists.
-     */
-```
-
-After:
-
-```kotlin
-    /**
-     * Dismiss everything pending and answer each one `cancelled`, oldest first.
-     *
-     * Called when the engine dies (`Stopped`/`Failed`), when a new session
-     * replaces the old one (`attach`), and at ViewModel teardown (`onCleared`).
-     *
-     * **Load-bearing — do not remove as redundant.** A request can be queued
-     * while no host is composed (app backgrounded, teardown mid-request).
-     * `select`/`confirm`/`input` are also resolved by pi's own timer, but
-     * `editor` has **no agent-side timer at all** (`src/modes/rpc/rpc-mode.ts`:
-     * an un-timed promise with no timeout options in its signature), so an
-     * unanswered `editor` hangs pi forever. Answering on teardown is the only
-     * thing between "the UI went away" and "pi is wedged". The write may be
-     * undeliverable (a dead pipe), which is fine — nobody is blocked then.
-     */
-```
-
-Everything else is already wired in the tree (verified at HEAD `2e8d93b`):
+Everything else is already wired in the tree (verified at HEAD `61efd99`):
 
 - `PiSessionViewModel.kt` — `UiState.extensionDialog/.extensionDialogBacklog/.extensionStatuses/.extensionWidgets/.windowTitle/.composerFill/.notices`; `answerDialog(id, answer)`, `consumeNotice(seq)`, `consumeComposerFill(seq)`; `ExtensionUiRequest` routing; drain on `attach` / `Stopped` / `Failed` / `onCleared`.
-- `ChatScreen.kt` — `ExtensionStatusRow`, `ExtensionWidgetStack` (above/below the composer), `windowTitleOf` for the AppBar, `composerFill` applied and consumed.
-- `PiRoot.kt` — exactly **one** `ExtensionUiHost` mount (line 177). Do not add a second: two mounts would render two dialogs for one request and two snackbar hosts racing for one notice queue.
+- `ChatScreen.kt` — `ExtensionWidgetStack` (above/below the composer), `windowTitleOf` for the AppBar, `composerFill` applied and consumed; `ExtensionStatusRow` used to be mounted here and its call site plus import are removed with the component.
+- `PiRoot.kt` — exactly **one** `ExtensionUiHost` mount (line 858). Do not add a second: two mounts would render two dialogs for one request and two snackbar hosts racing for one notice queue.
 
-Out of scope (other owners), recorded so it is not lost: `PiEvent.ExtensionError`
-models only `message` and keeps no raw object, so `extensionPath` (present on the
-wire per `docs/rpc.md` §`extension_error`) is unreachable from this layer. Adding
-it is a one-line change in `rpc/src/main/kotlin/app/pi/rpc/Events.kt`.
+## 5. Extension strings: the colour, the plain values, and the widget row budget
 
-## 5. Verification
+Two host-side adjustments happen to extension strings on the way in, because the
+RPC wire carries far less than the TUI does. The reason for each is a gap in
+`RpcExtensionUIRequest` (`rpc-types.ts:246-281`: every payload field is `string`,
+`string[]` or a fixed enum — there is no colour channel and no layout budget).
 
-Narrow frontend type-check of this package, run after the last edit, against the
-shared classpath + `build/typecheck/rpc.jar` and a throwaway stub of the
-peer-owned ViewModel API (script: `/tmp/piext/narrow2.sh`, log:
-`/tmp/piext/narrow-raw.log`):
+1. **The colour is painted, not discarded.** An extension colours its chrome with
+   `ctx.ui.theme.fg("accent", …)` — `examples/extensions/plan-mode/index.ts:63`
+   does it to its status text — and that returns the text wrapped in SGR bytes
+   (`theme.ts:323-327`). A terminal paints them; the wire carries them as an
+   ordinary string, so the app has to interpret them itself:
+   `chromeSpans` (`= Ansi.parse`) splits the string into runs and
+   `PiPalette.tokenColorFor` maps each run's RGB back onto a pi theme token
+   (`ChromeColor.kt`). The drawing sites are `ExtensionSpans` on every widget line,
+   the snackbar message in `ExtensionUiHost`, and the dialog's title, message,
+   option labels and placeholder in `ExtensionDialogs`. The status row used to be
+   the fourth and is gone — see the note at the end of this section.
 
-```
-grep -cE "\.kt:[0-9]+:[0-9]+: error:"  ->  0
-```
+   **The mapping is "nearest token, within a measured threshold"**, and the
+   threshold matters: the app's engine runs with `TERM=xterm-256color` and no
+   `COLORTERM` (`runtime/PiRuntime.kt:233`), so pi quantises every token through
+   `rgbTo256` before it reaches the wire (`theme.ts:164-193,529`) and the app gets
+   a *cell*, not the token's exact value. Measured over both built-in palettes
+   with pi's own distance metric: every **text** token survives the round trip
+   within 507.4, while the first **surface** token sits at 1263 — so the threshold
+   is 1000, and a colour further away than that keeps the app's own colour rather
+   than being repainted as a token that merely happens to be closest. 110 of the
+   118 shipped token colours are honoured; the 8 that fall back are exactly the
+   dark theme's surface tokens. No colour is ever *derived* — the result is
+   always a palette value, so nothing can drift from the user's theme.
+   `background`, `dim`, bold, italic and underline on a span are ignored: the
+   app's surfaces and type scale are its own, and foreground colour is the one
+   thing an extension cannot express any other way.
 
-i.e. **no `error:` diagnostic in `ui/extension/**`**; the JVM still exits 2 with a
-codegen exception on default-value stubs because the Compose compiler plugin is
-not on the classpath — exactly the limitation documented in the header of
-`tools/typecheck.sh` ("The pass/fail verdict is based on whether any `error:`
-diagnostic was emitted, not on the compiler's exit status").
+2. **Values that leave the app again are never painted and never edited.**
+   `chromeText` (`= Ansi.strip`) is the plain form, and it is used only where the
+   styled form is impossible or wrong:
 
-Full-module runs of `tools/typecheck.sh`: the last one that completed over this
-code reported exactly one error here — `ExtensionUiHost.kt` missing the
-`fillMaxSize` import for its default modifier — which is fixed (import line 4,
-use line 48). Later attempts could not complete for reasons outside this
-directory: a peer was mid-write on `tools/typecheck.sh` (transient shell syntax
-error at line 180), and several concurrent `K2JVMCompiler` processes caused
-`fork: Function not implemented` / silent death of background runs. The `:rpc`
-stage did complete and refresh `build/typecheck/rpc.jar`. The parent runs the
-final integration typecheck on the frozen tree.
+   - `setTitle` — its host is the Chat AppBar's `Text` in `ChatScreen.kt`, which
+     takes one string, so the title is stripped rather than painted (and stripped
+     *before* the blank test, so a title of nothing but escapes falls back to the
+     screen's own name instead of occupying the bar invisibly);
+   - `editor`'s `prefill` and `set_editor_text` — bytes are preserved exactly,
+     neither stripped nor painted. They are drafts the user may send to the model,
+     and they are drawn in a `BasicTextField`, which takes one string (see
+     `ExtField`'s KDoc);
+   - a `select` **answer** — the label is painted with the extension's colour, but
+     `buildAnswer` strips it before it goes on the wire, so escape bytes can never
+     come back to pi as the user's choice. (`input`/`editor` answers are *not*
+     stripped: those are the user's own text, not a label.)
+
+3. **`boundedWidgetLines` caps a widget at pi's `MAX_WIDGET_LINES` (10)** and
+   appends pi's own row, verbatim: `... (widget truncated)`
+   (`interactive-mode.ts:2276` for the constant, `:2216-2218` for the row). pi caps
+   widgets so one panel cannot push the conversation off screen; without the cap a
+   runaway widget grows the transcript without limit. The row is drawn in
+   `palette.muted`, which is what pi's `theme.fg("muted", …)` resolves to.
+   Verified field by field against pi: the constant is 10, the slice is
+   `take(MAX_WIDGET_LINES)`, the over-limit test is `size > MAX_WIDGET_LINES` (so
+   exactly ten rows adds no marker), and the row's text is untranslated. Applied in
+   `ExtensionChrome.kt` at the draw site, so `ExtensionWidget.lines` stays exactly
+   what pi sent.
+
+4. **The status row is deleted, the status data is not.** pi draws `setStatus` in
+   its terminal footer (`interactive-mode.ts:2090`); the app drew a horizontally
+   scrolling row of counters under its AppBar. The user's adjudication
+   (`design/ui-refactor/11-designer-adjudication.md` D-3: v2's dialogue shell has
+   no such line) deleted the composable `ExtensionStatusRow`, so there is no
+   `setStatus` drawing site any more — including in the colour work above, which
+   now covers the widget, the notification and the dialog text only.
+
+   What was **kept on purpose**:
+
+   - `UiState.extensionStatuses` — the collected entries;
+   - `setExtensionStatus(key, text)` — the upsert/clear semantics, unchanged;
+   - the `"setStatus"` route in `onExtensionChrome`.
+
+   The reason is that the data is the only copy of what an extension asked to
+   show, and the adjudication names the 「会话与队列」 sheet as a place it could
+   reappear. Re-rendering it is then a new composable plus one call site — no
+   protocol or ViewModel change. Both the route and `setExtensionStatus` carry a
+   comment saying exactly this, so the next reader does not "clean up" an
+   apparently unused field.
+
+## 6. Verification
+
+`tools/typecheck.sh` over the whole tree, plus
+`python3 tools/check-nested-comments.py`. The pass/fail verdict is whether any
+`error:` diagnostic was emitted, not the compiler's exit status — the JVM exits
+non-zero even on a clean frontend because the Compose compiler plugin is not on
+the classpath (header of `tools/typecheck.sh`).
+
+Known standing false positives, unchanged by this directory: three `BuildConfig`
+unresolved references in `ui/settings/DiagnosticsReport.kt`, which exist only in a
+Gradle-generated class that AAPT2 would have produced.
+
+`ui/extension/**` has no unit-test harness. The palette mapping in `ChromeColor.kt`
+is the part worth pinning — its threshold is a measured number, and the measurement
+is reproduced by running both built-in palettes through pi's `rgbTo256`
+(`theme.ts:164-193`) and then through the matcher. That needs a bare-JVM harness
+following the pattern in `tools/run-app-pure-checks.sh`, plus a line in that
+script; both files are outside this directory's ownership, and the mapper does
+import Compose's `Color`, so a harness would have to take the palette as ARGB ints.
+
+

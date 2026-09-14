@@ -1,22 +1,25 @@
 package app.pi.ui.extension
 
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.Alignment
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
+import app.pi.rpc.Ansi
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
 
@@ -29,60 +32,64 @@ import app.pi.ui.theme.PiTheme
  * dialogs or toasts. The one exception is `set_editor_text`, which is not chrome
  * at all and fills the composer in ChatScreen.
  *
- * pi's TUI puts the status line in the footer and the widget next to the editor
- * (`docs/tui.md` §"Status indicators" / §"Widgets above/below editor"); the app
- * moved its footer to the top of the transcript so the keyboard cannot cover it
- * (docs/pi-android-ui-spec.md §4.1), so [ExtensionStatusRow] belongs under the
- * AppBar and [ExtensionWidgetStack] around the composer.
+ * pi puts the widget next to the editor (`docs/tui.md` §"Widgets above/below
+ * editor"), and the app hangs [ExtensionWidgetStack] around its composer.
+ *
+ * **The status row is gone.** pi draws `setStatus` in its terminal footer
+ * (`interactive-mode.ts:2090`) and the app used to draw a scrolling row of
+ * counters under its AppBar; the user's adjudication
+ * (`design/ui-refactor/11-designer-adjudication.md` D-3 — v2's dialogue shell has
+ * no such line) deleted that composable, `ExtensionStatusRow`. The *data* is
+ * untouched: `UiState.extensionStatuses` is still collected and `setStatus` is
+ * still routed (`PiSessionViewModel.setExtensionStatus`), so showing it again —
+ * in the 「会话与队列」 sheet the adjudication names — is a call site, and nothing
+ * here would have to change.
  */
 
 /**
- * `setStatus` entries, one row, horizontally scrollable.
+ * One extension-supplied string, drawn with the colours pi asked for.
  *
- * pi's status is a *footer*: dim chrome, one line, as many keys as extensions
- * registered. Overflow scrolls instead of wrapping because a second line would
- * push the transcript down every time an extension updated a counter.
+ * `Ansi.Span.foreground` is an RGB value, not a token name, so the span is
+ * matched back onto the palette by [tokenColorFor] — and when no token is close
+ * enough, [defaultColor] is used instead. That fallback is the common case in
+ * practice for text without colour at all: [Ansi.parse] returns a single span
+ * with a null foreground for it, so an uncoloured string costs one `Text` and
+ * nothing else.
  *
- * Its inline margin is v2's page margin (`PiSpacing.pageHorizontal`, 14, `D1`): this
- * row sits directly under the AppBar, one line below the app's own status row, so
- * the two have to share a left edge. The `·` between
- * two entries is `muted`, not `dim`: v2 never draws `--dim` (its punctuation is
- * `--muted`), and `dim` on the canvas sits under the 3:1 the palette keeps for
- * meta text.
+ * Typography (bold/italic/underline) and `dim` are not carried over, and a
+ * span's background is ignored — see the KDoc on [tokenColorFor].
  */
 @Composable
-fun ExtensionStatusRow(
-    statuses: List<ExtensionStatus>,
+fun ExtensionSpans(
+    spans: List<Ansi.Span>,
+    defaultColor: Color,
+    style: TextStyle,
     modifier: Modifier = Modifier,
+    maxLines: Int = Int.MAX_VALUE,
+    overflow: TextOverflow = TextOverflow.Clip,
 ) {
-    if (statuses.isEmpty()) return
     val palette = PiTheme.palette
-    Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .heightIn(min = PiSpacing.statusRow)
-            .horizontalScroll(rememberScrollState())
-            .padding(horizontal = PiSpacing.pageHorizontal),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        statuses.forEachIndexed { index, status ->
-            if (index > 0) {
-                Text(
-                    text = "·",
-                    modifier = Modifier.padding(horizontal = 6.dp),
-                    style = PiTheme.text.monoSmall,
-                    color = palette.muted,
-                )
+    // One candidate array per palette, not one per span: `toArgb()` is not free
+    // and a widget can carry dozens of spans.
+    val tokens = remember(palette) { palette.themeTokenArgb() }
+    // Keyed on the spans themselves: `Ansi.Span` is a data class, so an unchanged
+    // string re-renders nothing when the caller recomposes.
+    val text: AnnotatedString = remember(spans, tokens, defaultColor) {
+        buildAnnotatedString {
+            spans.forEach { span ->
+                withStyle(SpanStyle(color = tokenColorFor(span, tokens) ?: defaultColor)) {
+                    append(span.text)
+                }
             }
-            Text(
-                text = status.text,
-                style = PiTheme.text.monoSmall,
-                color = palette.accent,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
         }
     }
+    Text(
+        text = text,
+        modifier = modifier,
+        style = style,
+        maxLines = maxLines,
+        overflow = overflow,
+    )
 }
 
 /**
@@ -92,6 +99,12 @@ fun ExtensionStatusRow(
  * to `widgetLines: string[]` (component factories are ignored in RPC mode), so
  * there is nothing to interpret — drawing them as anything richer would invent
  * structure pi never sent.
+ *
+ * Row budget and truncation row are pi's ([boundedWidgetLines], `MAX_WIDGET_LINES`):
+ * a widget is an extension's own layout, and pi caps it at ten rows so one panel
+ * cannot push the conversation off screen (`interactive-mode.ts:2276`). Applying
+ * the cap here rather than when the state is built keeps [ExtensionWidget.lines]
+ * equal to the wire payload.
  *
  * The panel is a v2 card: radius 10 (`06 §2` gives every content card that one
  * radius) and a 1 px `borderMuted` at `35 %` — the retired spec's `cardInner`
@@ -122,13 +135,16 @@ fun ExtensionWidgetStack(
                     modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
                     verticalArrangement = Arrangement.spacedBy(2.dp),
                 ) {
-                    widget.lines.forEach { line ->
-                        Text(
-                            // A blank line is meaningful spacing in a text widget,
-                            // which a Text("") would collapse to zero height.
-                            text = line.ifEmpty { " " },
+                    boundedWidgetLines(widget.lines).forEach { line ->
+                        // A blank line is meaningful spacing in a text widget,
+                        // which a Text("") would collapse to zero height. A line
+                        // that is nothing but colour escapes is blank in the same
+                        // sense — it paints no glyphs — so it takes the same path.
+                        val text = if (chromeText(line).isEmpty()) " " else line
+                        ExtensionSpans(
+                            spans = chromeSpans(text),
+                            defaultColor = palette.muted,
                             style = PiTheme.text.monoSmall,
-                            color = palette.muted,
                         )
                     }
                 }

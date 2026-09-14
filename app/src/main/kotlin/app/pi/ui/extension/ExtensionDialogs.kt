@@ -185,6 +185,10 @@ private fun SelectBody(
                     modifier = Modifier
                         .fillMaxWidth()
                         .clickable(role = Role.Button) {
+                            // The label is *painted* with the extension's colour but
+                            // *answered* plain: `buildAnswer` strips escapes from a
+                            // select answer, so a colour the extension wrapped its
+                            // own option in cannot come back as the user's choice.
                             onAnswer(dialog.id, ExtensionAnswer.Value(option))
                         }
                         .padding(horizontal = 12.dp, vertical = 10.dp),
@@ -196,11 +200,11 @@ private fun SelectBody(
                         style = PiTheme.text.monoSmall,
                         color = palette.muted,
                     )
-                    Text(
-                        text = option,
-                        modifier = Modifier.weight(1f),
+                    ExtensionSpans(
+                        spans = chromeSpans(option),
+                        defaultColor = palette.text,
                         style = MaterialTheme.typography.bodyMedium,
-                        color = palette.text,
+                        modifier = Modifier.weight(1f),
                     )
                 }
             }
@@ -284,18 +288,24 @@ private fun DialogHeading(dialog: ExtensionDialog) {
             style = PiTheme.text.mono,
             color = palette.warning,
         )
-        Text(
-            text = buildString {
-                append(dialog.title.ifBlank { dialog.method.fallbackTitle })
-                // `<title> (5s)` —— pi 自己的写法（`docs/extensions.md` §"Timed
-                // Dialogs with Countdown"、`02-real-content.md:572`），v2 的
-                // `phone13` / `phone57` 也照抄。原先这里写的是「（5 秒）」，与稿子和
-                // pi 的原文都不一致。
-                dialog.remainingSeconds()?.let { append(" (").append(it).append("s)") }
-            },
-            modifier = Modifier.weight(1f),
+        // The heading is chrome, so it keeps whatever colour the extension gave
+        // the title. The countdown suffix is appended *after* the title text, and
+        // pi's `theme.fg` closes every coloured run with `\x1b[39m`
+        // (`theme.ts:326`), so the suffix parses as its own uncoloured span and
+        // takes `palette.text` rather than borrowing the title's colour.
+        val label = buildString {
+            append(dialog.title.ifBlank { dialog.method.fallbackTitle })
+            // `<title> (5s)` —— pi 自己的写法（`docs/extensions.md` §"Timed
+            // Dialogs with Countdown"、`02-real-content.md:572`），v2 的
+            // `phone13` / `phone57` 也照抄。原先这里写的是「（5 秒）」，与稿子和
+            // pi 的原文都不一致。
+            dialog.remainingSeconds()?.let { append(" (").append(it).append("s)") }
+        }
+        ExtensionSpans(
+            spans = chromeSpans(label),
+            defaultColor = palette.text,
             style = PiTheme.text.mono,
-            color = palette.text,
+            modifier = Modifier.weight(1f),
         )
     }
     if (dialog.timed) CountdownRow(dialog)
@@ -342,10 +352,13 @@ private fun CountdownRow(dialog: ExtensionDialog) {
 private fun DialogMessage(message: String?) {
     if (message.isNullOrBlank()) return
     Spacer(Modifier.height(DialogControlGap))
-    Text(
-        text = message,
+    // `palette.text` when the extension coloured nothing. Note the guard above
+    // tests the *raw* string, so a message that is only colour escapes is not
+    // blank here and reserves its gap — which is what pi draws for it too.
+    ExtensionSpans(
+        spans = chromeSpans(message),
+        defaultColor = PiTheme.palette.text,
         style = MaterialTheme.typography.bodyMedium,
-        color = PiTheme.palette.text,
     )
 }
 
@@ -444,6 +457,13 @@ private fun DialogFooter(dialog: ExtensionDialog, backlog: Int) {
  * The editor's vertical scroll is M3-free too: `minLines 4` / `maxLines 10` is the
  * existing behaviour and the field scrolls internally once the text passes ten
  * lines.
+ *
+ * [placeholder] is drawn with the extension's colour; [value] is **not**, because
+ * `BasicTextField` takes one `String` and that string is the answer that goes back
+ * to pi on confirm. Painting it would mean either editing a payload or splitting
+ * the value from what is displayed, and a draft the user is editing is not a
+ * label — so escapes in a `prefill` reach the field verbatim, exactly as they
+ * reach pi's own editor.
  */
 @Composable
 private fun ExtField(
@@ -495,11 +515,13 @@ private fun ExtField(
             keyboardActions = KeyboardActions(onDone = { onSubmit() }),
             decorationBox = { inner ->
                 if (value.isEmpty()) {
-                    Text(
-                        text = placeholder,
-                        maxLines = 1,
+                    // A placeholder is chrome, so it keeps the extension's colour;
+                    // `value` itself does not, and cannot — see this function's KDoc.
+                    ExtensionSpans(
+                        spans = chromeSpans(placeholder),
+                        defaultColor = palette.muted,
                         style = if (singleLine) MaterialTheme.typography.bodyMedium else PiTheme.text.mono,
-                        color = palette.muted,
+                        maxLines = 1,
                     )
                 }
                 inner()

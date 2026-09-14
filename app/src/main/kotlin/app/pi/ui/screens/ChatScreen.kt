@@ -130,7 +130,6 @@ import app.pi.ui.chat.thinkingLabelOf
 import app.pi.ui.chat.unlistedBuiltinHint
 import app.pi.ui.components.PiEmptyState
 import app.pi.ui.components.PiStatusLine
-import app.pi.ui.extension.ExtensionStatusRow
 import app.pi.ui.extension.ExtensionWidgetStack
 import app.pi.ui.extension.WidgetPlacement
 import app.pi.ui.extension.windowTitleOf
@@ -1137,8 +1136,10 @@ private fun ChatBody(
             )
         }
 
-        ExtensionStatusRow(state.extensionStatuses)
-
+        // 扩展状态行（`ExtensionStatusRow`，即「📋 3/5」那一行）按用户裁决删除：
+        // 扩展自己给的任意字符串不该在我们的顶栏常驻占一条横带。数据仍在收集
+        // （`state.extensionStatuses`），将来放进「会话与队列」那张 sheet 按需查看；
+        // 裁决与四个替代方案的比较见 `design/ui-refactor/11-designer-adjudication.md` D-3。
 
         if (emptyTranscript) {
             // The two empty states are the two different waits: the engine may exist

@@ -1,5 +1,6 @@
 package app.pi.ui.extension
 
+import app.pi.rpc.Ansi
 import app.pi.rpc.Notice
 
 /**
@@ -212,6 +213,45 @@ enum class WidgetPlacement(val wire: String) {
     }
 }
 
+/**
+ * pi's own cap on the rows a string widget may occupy
+ * (`interactive-mode.ts:2276`: `MAX_WIDGET_LINES = 10`, "Maximum total widget
+ * lines to prevent viewport overflow").
+ *
+ * Borrowed as pi's value rather than chosen here: a widget is an extension's
+ * layout, and the cap exists because the *host* cannot let one panel push the
+ * conversation off screen. A different number would make the same widget render
+ * differently in the two hosts for no reason.
+ */
+const val MAX_WIDGET_LINES = 10
+
+/**
+ * pi's truncation row, **verbatim** (`interactive-mode.ts:2217`:
+ * `theme.fg("muted", "... (widget truncated)")`).
+ *
+ * Left in English on purpose. It is a line of the interface pi itself paints,
+ * not this app's prose, and translating it would make one widget read
+ * differently depending on which host drew it. pi colours it `muted`; the app
+ * already draws every widget line in `palette.muted`, so the bare string is the
+ * faithful equivalent.
+ */
+const val WIDGET_TRUNCATED_LINE = "... (widget truncated)"
+
+/**
+ * pi's truncation rule for a string widget, applied where the widget is drawn.
+ *
+ * The slice happens at render time rather than when the state is built, so
+ * [ExtensionWidget.lines] stays exactly what pi sent — the same separation pi
+ * keeps between its widget map and the `Container` it builds from it
+ * (`interactive-mode.ts:2213-2218`).
+ */
+fun boundedWidgetLines(lines: List<String>): List<String> =
+    if (lines.size <= MAX_WIDGET_LINES) {
+        lines
+    } else {
+        lines.take(MAX_WIDGET_LINES) + WIDGET_TRUNCATED_LINE
+    }
+
 /** One `setWidget` panel: non-empty [lines]; an empty list clears the key. */
 data class ExtensionWidget(
     val key: String,
@@ -238,3 +278,41 @@ fun noticeToneOf(notifyType: String?): Notice.Tone = when (notifyType?.lowercase
     "error" -> Notice.Tone.Error
     else -> Notice.Tone.Info
 }
+
+/**
+ * The **plain** form of an extension's string: every ANSI escape sequence
+ * removed, nothing else changed.
+ *
+ * Needed wherever the escapes are meaningless rather than merely unpaintable:
+ *
+ *  - a value the app hands *back* to the extension or the model — `editor`'s
+ *    `prefill`, `set_editor_text`, and the `select` answer. Stripping those would
+ *    silently edit a payload, which is a different act from declining to paint a
+ *    label (see `buildAnswer`, which strips only the label it is answering with);
+ *  - hosts that cannot lay out styled runs: the Chat AppBar's title, whose
+ *    `Text` lives in `ChatScreen.kt` and takes one string.
+ *
+ * Everywhere a `Text` can carry several colours, prefer [chromeSpans] plus the
+ * token mapper in `ChromeColor.kt`, which *paints* what pi asked for instead of
+ * discarding it.
+ *
+ * Why the escapes exist at all: an extension colours its chrome with
+ * `ctx.ui.theme.fg("accent", …)`, and pi returns that text wrapped in SGR bytes
+ * (`modes/interactive/theme/theme.ts:323-327`). `examples/extensions/plan-mode/index.ts:63`
+ * does exactly that for its `setStatus` text. A terminal paints those bytes; the
+ * RPC wire carries them as an ordinary `string` (`rpc-types.ts:246-281` has no
+ * colour field), so the app must either interpret them or remove them — leaving
+ * them in would put `ESC` inside a Compose `Text`.
+ */
+fun chromeText(raw: String): String = Ansi.strip(raw)
+
+/**
+ * The **display** form of an extension's string: pi's styled runs, ready for the
+ * token mapper.
+ *
+ * A string with no escapes parses to a single default-styled span
+ * ([Ansi.parse] guarantees that), so a caller needs no branch for the ordinary
+ * case.
+ */
+fun chromeSpans(raw: String): List<Ansi.Span> = Ansi.parse(raw)
+

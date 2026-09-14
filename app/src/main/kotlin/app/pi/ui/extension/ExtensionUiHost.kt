@@ -130,6 +130,8 @@ fun ExtensionUiHost(
  * measures ~3.6:1, under the 4.5:1 body floor `PiPalette` holds every other body
  * line to, so the colour lives on the one-glyph prefix — which is also the point of
  * the encoding, since the glyph survives a greyscale screenshot on its own.
+ * That is the *default*: an extension that coloured its own sentence with
+ * `ctx.ui.theme.fg(...)` keeps that colour, which is what it would get in pi.
  *
  * Built here rather than through M3's `Snackbar` because M3's layout has no slot
  * for a leading glyph, and the tone prefix is the whole change. The action is the
@@ -177,11 +179,15 @@ private fun ExtensionSnack(
             style = PiTheme.text.mono,
             color = glyphColor,
         )
-        Text(
-            text = message,
-            modifier = Modifier.weight(1f),
+        // `palette.text` is the default; a colour the extension asked for wins,
+        // exactly as it would in pi's TUI. The contrast argument above is about
+        // the *tone* colour, which the app chooses — not about a colour the
+        // extension chose for its own sentence.
+        ExtensionSpans(
+            spans = chromeSpans(message),
+            defaultColor = palette.text,
             style = MaterialTheme.typography.bodyMedium,
-            color = palette.text,
+            modifier = Modifier.weight(1f),
         )
         if (actionLabel != null) {
             Text(

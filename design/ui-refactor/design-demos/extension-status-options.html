@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>扩展状态 · 这一块怎么设计</title>
+<!--
+================================================================================
+扩展状态（ctx.ui.setStatus）这一块的设计方案 · 派生稿，不入库
+================================================================================
+三件前提（都已核对源码，不是假设）：
+1 状态串是扩展任意给的一行字符串：`ExtensionStatus(key, text)`，键 upsert、空串即清除
+  （PiSessionViewModel.setExtensionStatus）。颜色由扩展用 theme.fg() 指定，App 解 ANSI →
+  最接近的 pi 令牌，只带前景色（不带粗体/斜体/下划线/背景，裁决 D-4）。
+2 plan-mode 的真实两种状态（examples/extensions/plan-mode/index.ts:63-67）：
+  执行中且有待办 → accent 的 `📋 完成数/总数`；规划模式开着 → warning 的 `⏸ plan`；否则清空。
+  并且 `📋 n/m` 出现的条件与 `setWidget("plan-todos", …)` 出现的条件**完全相同**（:74-82）
+  → 有进度数字时，待办面板一定同时在（数字可由面板里的 ☑/☐ 读出，是冗余信息）。
+3 面板（setWidget）保留，画在输入框上/下，v2 依据 = 圆角 10 + 1px borderMuted 35%。
+
+宽度基准：360dp 屏 − 左右各 14dp = 332dp 可用；1 CSS px = 1 dp。
+字宽：JetBrains Mono 12sp = 7.20dp/字符（字体度量 1000/600，与上一轮同一把尺子）；
+中文 12.0dp；emoji（📋 ⏸ ☑ ☐）按 14.0dp 计（Noto Color Emoji ≈1.17em，留 ±2dp 波动）。
+颜色只用 pi 令牌，不新造色。
+================================================================================
+-->
+<style>
+  :root{
+    --accent:#8ABEB7; --border-muted:#505050; --success:#B5BD68; --error:#CC6666; --warning:#FFFF00;
+    --text:#D4D4D4; --muted:#808080; --dim:#666666; --selected-bg:#3A3A4A;
+    --page:#18181E; --card:#1E1E24; --surf:#232329; --surf-high:#29292F; --surf-highest:#303036; --surf-dim:#1C1C22;
+    --mono:"JetBrains Mono",ui-monospace,"Roboto Mono",Menlo,Consolas,monospace;
+    --sans:"Geist","Inter","Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;
+  }
+  html,body{margin:0;padding:0;background:#0e0e12;color:var(--text);font-family:var(--sans);
+    font-synthesis:none;line-break:strict;overflow-wrap:anywhere;-webkit-font-smoothing:antialiased}
+  *{box-sizing:border-box}
+  .wrap{max-width:780px;margin:0 auto;padding:22px 16px 72px}
+  h1{font-size:19px;font-weight:600;line-height:1.35;margin:0 0 8px;letter-spacing:-0.01em}
+  h2{font-size:15px;font-weight:600;margin:0 0 6px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  h3{font-size:13px;font-weight:600;margin:16px 0 6px}
+  p{font-size:13px;line-height:1.7;color:var(--muted);margin:6px 0}
+  p b,li b{color:var(--text);font-weight:600}
+  .lead{font-size:13px;line-height:1.75;color:var(--muted)}
+  code,.mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+  .kbd{font-family:var(--mono);font-size:12px;color:var(--text);background:var(--surf);border:1px solid var(--border-muted);border-radius:4px;padding:0 4px}
+  .card{background:var(--card);border:1px solid var(--border-muted);border-radius:12px;padding:14px;margin:14px 0}
+  .card.rec{border-color:var(--accent)}
+  .tag{font-size:11px;letter-spacing:.06em;border:1px solid var(--border-muted);border-radius:999px;padding:1px 8px;color:var(--muted);font-weight:500}
+  .tag.rec{color:var(--page);background:var(--accent);border-color:var(--accent)}
+  .tag.no{color:var(--error);border-color:var(--error)}
+  table{width:100%;border-collapse:collapse;font-size:12px;margin:8px 0 2px}
+  th,td{border:1px solid var(--border-muted);padding:6px 8px;text-align:left;vertical-align:top}
+  th{color:var(--muted);font-weight:500}
+  td.mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+  .ok{color:var(--success)}.bad{color:var(--error)}.warn{color:var(--warning)}
+  ul{margin:6px 0;padding-left:18px}
+  li{font-size:13px;line-height:1.7;color:var(--muted);margin:3px 0}
+  hr{border:0;border-top:1px solid var(--border-muted);margin:26px 0}
+
+  /* ---- 360dp 手机条：内宽 332dp ---- */
+  .screen{width:360px;max-width:100%;background:var(--page);border:1px solid var(--border-muted);border-radius:12px;overflow:hidden}
+  .strip{padding:0 14px}
+  .appbar{background:var(--surf-dim);border-bottom:1px solid var(--border-muted);padding:6px 14px 7px;display:flex;gap:10px;align-items:flex-start}
+  .appbar .tblock{flex:1;min-width:0}
+  .appbar .title{font-size:17px;font-weight:600;line-height:1.28;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .appbar .meta{display:flex;align-items:center;gap:5px;margin-top:1px;font-size:12px;line-height:18px;color:var(--muted)}
+  .appbar .acts{display:flex;gap:4px;flex:none;align-items:center}
+  .mchip{font-family:var(--mono);font-size:12px;line-height:18px;border:1px solid var(--border-muted);border-radius:999px;padding:2px 9px;color:var(--text);white-space:nowrap}
+  .iconbtn{width:30px;height:30px;border-radius:8px;border:1px solid transparent;display:flex;align-items:center;justify-content:center;color:var(--text);font-size:12px}
+  .readings{background:var(--surf-dim);padding:4px 14px 8px;font-size:12px;line-height:18px}
+  .rline{display:flex;align-items:center;gap:4px;white-space:nowrap;overflow:hidden;min-height:18px}
+  .lbl{color:var(--muted);flex:none}
+  .val{font-family:var(--mono);font-variant-numeric:tabular-nums;color:var(--text);flex:none}
+  .seg{display:flex;gap:1px;flex:none}
+  .seg i{width:3px;height:8px;border-radius:1px;background:var(--border-muted)}
+  .seg i.on{background:var(--accent)}
+  .spread{flex:1;min-width:0}
+  .extchip{display:inline-flex;align-items:center;gap:4px;height:18px;padding:0 8px;border:1px solid var(--border-muted);
+    border-radius:999px;font-family:var(--mono);font-size:12px;color:var(--text);flex:none}
+  .extchip .dot{width:6px;height:6px;border-radius:999px;background:var(--accent);flex:none}
+  .widget{background:var(--card);border:1px solid rgba(80,80,80,.35);border-radius:10px;padding:6px 10px;margin:4px 14px}
+  .widget .wline{font-family:var(--mono);font-size:12px;line-height:1.6;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .statusline{display:flex;align-items:center;gap:6px;padding:5px 14px 1px;font-family:var(--mono);font-size:12px;line-height:18px}
+  .composer{margin:6px 14px 12px;border:1px solid var(--border-muted);border-radius:14px;background:var(--surf);height:34px;
+    display:flex;align-items:center;padding:0 10px;color:var(--muted);font-size:12px}
+  .sheet{background:var(--surf-high);border:1px solid var(--border-muted);border-radius:14px;overflow:hidden}
+  .sheet .sh{padding:10px 14px;border-bottom:1px solid var(--border-muted);font-size:14px;font-weight:600}
+  .sheet .sec{padding:10px 14px 4px;font-size:12px;font-weight:500;letter-spacing:.02em;color:var(--text)}
+  .sheet .note{padding:0 14px 6px;font-size:12px;line-height:1.6;color:var(--muted)}
+  .sheet .row{display:flex;gap:8px;padding:6px 14px;align-items:baseline}
+  .sheet .key{font-family:var(--mono);font-size:12px;color:var(--muted);width:66px;flex:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .sheet .txt{font-family:var(--mono);font-size:12px;line-height:18px;color:var(--text);flex:1;min-width:0}
+  .divider{height:1px;background:var(--border-muted);margin:8px 0 2px}
+
+  .bars{display:flex;align-items:center;gap:4px;margin-top:8px;margin-left:14px;width:332px;max-width:calc(100% - 14px)}
+  .meter{position:relative;height:10px;background:var(--surf);border-radius:3px;overflow:hidden;flex:1}
+  .meter i{position:absolute;left:0;top:0;bottom:0;background:var(--surf-highest)}
+  .meter i.fill{background:rgba(138,190,183,.45)}
+  .meter i.over{background:rgba(204,102,102,.55)}
+  .ruler{position:relative;height:16px;margin-top:6px;border-top:1px solid var(--border-muted);margin-left:14px;width:332px;max-width:calc(100% - 14px)}
+  .ruler span{position:absolute;top:0;height:5px;width:1px;background:var(--border-muted)}
+  .ruler b{position:absolute;top:5px;font-size:10px;font-weight:400;color:var(--dim);transform:translateX(-50%)}
+  .limit{position:absolute;top:-4px;bottom:-2px;width:1px;background:var(--error)}
+  .cap{font-size:12px;color:var(--muted);margin-top:6px}
+  .cap b{color:var(--text)}
+  .pair{display:flex;gap:14px;flex-wrap:wrap}
+  .pair > div{flex:none}
+  .plabel{font-size:12px;color:var(--muted);margin:0 0 5px}
+  .legend{display:flex;flex-wrap:wrap;gap:10px 16px;font-size:12px;color:var(--muted);margin-top:10px}
+  .legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:-1px}
+  .why{border-left:2px solid var(--accent);padding-left:10px;margin:10px 0 0}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>扩展状态这一块，到底怎么设计</h1>
+  <p class="lead">
+    那一行已经按你的裁决删掉了（数据还在收）。所以这里讨论的是：<b>「扩展在干什么」这件事，应该出现在哪、以什么形态出现。</b>
+    基准 360dp 屏、两边各 14dp → <b>可用 332dp</b>；等宽 12sp 每字符 7.20dp。
+  </p>
+
+  <div class="card">
+    <h3 style="margin-top:0">先看三条事实（都核对过源码）</h3>
+    <ul>
+      <li><b>状态串是扩展任意给的一行字</b>：<span class="mono">setStatus(key, text)</span> 按键 upsert、空串即清除；颜色由扩展指定（App 解 ANSI → 最接近的 pi 令牌，只带前景色）。它可能很长、可能每一步都变。</li>
+      <li><b>plan-mode 只有两种真实状态</b>：执行中且有待办 → accent 的 <span class="mono">📋 3/5</span>；规划模式开着 → warning 的 <span class="mono">⏸ plan</span>；其余清空。而且 <span class="mono">📋 n/m</span> 出现的条件与待办面板 <span class="mono">setWidget("plan-todos")</span> 出现的条件<b>完全相同</b> —— 也就是说：<b>看到数字时，那份清单一定就在输入框上面</b>，数字是冗余的。</li>
+      <li><b>面板（widget）保留</b>，圆角 10 + 1px <span class="mono">borderMuted 35%</span>，画在输入框上/下。</li>
+    </ul>
+  </div>
+
+  <h2>0 · 四个候选位置</h2>
+  <p>先把这块的现有结构画出来（顶栏 + 读数行），四个方案分别插在不同位置：</p>
+  <div class="screen">
+    <div class="appbar">
+      <div class="tblock">
+        <div class="title">会话列表排序错了</div>
+        <div class="meta"><span class="mono" style="color:var(--success)">✓</span><span style="color:var(--text)">就绪</span>
+          <span style="color:var(--dim)">← ②</span></div>
+      </div>
+      <div class="acts"><span class="mchip">deepseek-chat</span><span class="iconbtn">⌕</span><span class="iconbtn">⋯</span></div>
+    </div>
+    <div class="readings">
+      <div class="rline">
+        <span class="lbl">上下文</span><span class="val">52.0%</span>
+        <span class="seg"><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i></i><i></i><i></i><i></i></span>
+        <span class="val">104k/200k</span><span class="lbl">自动</span>
+        <span class="spread"></span>
+        <span class="extchip"><span class="dot"></span>1</span><span style="color:var(--dim);font-size:11px">←③</span>
+        <span class="val">$0.420</span>
+      </div>
+      <div class="rline" style="gap:2px">
+        <span class="lbl">输入</span><span class="val">96k</span>
+        <span class="lbl">输出</span><span class="val">8.2k</span>
+        <span class="lbl">缓存读</span><span class="val">74k</span>
+        <span class="lbl">缓存写</span><span class="val">12k</span>
+        <span class="lbl">命中</span><span class="val">61.4%</span>
+      </div>
+    </div>
+    <div class="statusline" style="color:var(--dim)">← ④（面板区：扩展内容住在这里）</div>
+    <div class="widget">
+      <div class="wline" style="color:var(--muted)">☐ 先定位排序来源</div>
+      <div class="wline" style="color:var(--muted)">☑ 组内按时间倒序</div>
+    </div>
+    <div class="composer">输入消息，/ 选命令，! 直接跑命令，@ 提及文件</div>
+  </div>
+  <p class="cap">① = 不上界面（只在「会话与队列」sheet 里按需看）；② = 并进顶栏那句引擎状态；③ = 读数行右端一枚小 chip；④ = 面板区顶部一条状态行。</p>
+
+  <hr>
+  <h2>方案 1 · 彻底不显示 <span class="tag">常驻占用 0dp</span></h2>
+  <div class="pair">
+    <div>
+      <p class="plabel">有状态：界面上什么也不多</p>
+      <div class="screen" style="width:300px">
+        <div class="appbar" style="padding:5px 12px 6px">
+          <div class="tblock"><div class="title" style="font-size:15px">会话列表排序错了</div>
+            <div class="meta"><span class="mono" style="color:var(--success)">✓</span><span style="color:var(--text)">就绪</span></div></div>
+        </div>
+        <div class="composer" style="margin:10px 12px 12px">输入消息，/ 选命令…</div>
+      </div>
+    </div>
+    <div>
+      <p class="plabel">唯一的出口：菜单项带计数 → sheet 里一节</p>
+      <div class="sheet" style="width:300px">
+        <div class="sh">会话与队列</div>
+        <div class="sec">会话</div>
+        <div class="row"><span class="key">重命名</span><span class="txt" style="color:var(--muted)">未命名</span></div>
+        <div class="divider"></div>
+        <div class="sec">扩展状态（1）</div>
+        <div class="note">扩展自己写入的一行文本，按原样显示。</div>
+        <div class="row"><span class="key">plan-mode</span><span class="txt" style="color:var(--accent)">📋 3/5</span></div>
+      </div>
+    </div>
+  </div>
+  <ul>
+    <li><b>排布</b>：chrome 里 0 个像素；菜单项 <span class="mono">会话与队列</span> 尾部给一个 muted 计数（有状态时才有），sheet 末尾新增一节「扩展状态（N）」+ 一行说明 + 每个键一行（键名等宽 muted，文本用扩展原色、可换行、不限行数）。</li>
+    <li><b>宽度</b>：常驻 0dp；sheet 行内容宽 304dp，键名列 64.8dp，文本每行 231.2dp（≈19 个汉字），放不下就换行 —— <b>全文永远读得到</b>。</li>
+    <li><b>字号 / 颜色</b>：键名 = 等宽 12 灰；文本 = 等宽 12（<span class="mono">monoSmall</span>）+ 扩展色；说明句 = 无衬线 12 灰。</li>
+    <li><b>出现 / 消失</b>：永不常驻。0 条时菜单项没有计数、sheet 里整节不渲染（不留空面板）。</li>
+    <li><b>丢掉</b>：环境感知。像 <span class="mono">⏸ plan</span>（规划模式开着、写工具被禁用）这种<b>没有面板、也没有别处表达</b>的状态，会长期没人知道；出问题的扩展（卡住、报错）也看不见。</li>
+    <li><b>为什么不如 3</b>：它把「有东西在跑」这条信号一并删掉了，而删掉信号的代价要用户主动想起来去翻菜单才能补回来 —— 实际上等于永远不知道。</li>
+  </ul>
+
+  <hr>
+  <h2>方案 2 · 并进顶栏的引擎状态那一行 <span class="tag">常驻 38.8–46dp</span></h2>
+  <p class="plabel">有状态（短）</p>
+  <div class="screen">
+    <div class="appbar">
+      <div class="tblock">
+        <div class="title">会话列表排序错了</div>
+        <div class="meta"><span class="mono" style="color:var(--success)">✓</span><span style="color:var(--text)">就绪</span><span style="color:var(--dim)">·</span><span class="mono" style="color:var(--accent)">📋 3/5</span></div>
+      </div>
+      <div class="acts"><span class="mchip">deepseek-chat</span><span class="iconbtn">⌕</span><span class="iconbtn">⋯</span></div>
+    </div>
+  </div>
+  <div class="bars"><div class="meter"><i class="fill" style="width:92.2px"></i></div></div>
+  <div class="ruler"><span style="left:0"></span><b style="left:0">0</b><span class="limit" style="left:140.4px"></span><b style="left:140.4px;color:var(--error)">元信息行 140.4 上限</b></div>
+  <p class="plabel" style="margin-top:14px">长状态串（同一行会被截到）：<span class="mono">正在跑 3 个后台检查 · 2 个失败</span> → 实际显示</p>
+  <div class="screen">
+    <div class="appbar">
+      <div class="tblock">
+        <div class="title">会话列表排序错了</div>
+        <div class="meta"><span class="mono" style="color:var(--success)">✓</span><span style="color:var(--text)">就绪</span><span style="color:var(--dim)">·</span><span class="mono" style="color:var(--error)">正在跑…</span></div>
+      </div>
+      <div class="acts"><span class="mchip">deepseek-chat</span><span class="iconbtn">⌕</span><span class="iconbtn">⋯</span></div>
+    </div>
+  </div>
+  <p class="plabel" style="margin-top:14px">无状态：这一行回到原样（高度不变，所以不会纵向跳动）</p>
+  <div class="screen">
+    <div class="appbar">
+      <div class="tblock">
+        <div class="title">会话列表排序错了</div>
+        <div class="meta"><span class="mono" style="color:var(--success)">✓</span><span style="color:var(--text)">就绪</span></div>
+      </div>
+      <div class="acts"><span class="mchip">deepseek-chat</span><span class="iconbtn">⌕</span><span class="iconbtn">⋯</span></div>
+    </div>
+  </div>
+  <table>
+    <thead><tr><th>形态</th><th>元信息行可用</th><th>扣掉「✓ 就绪」后留给扩展状态</th><th>实际能放</th></tr></thead>
+    <tbody>
+      <tr><td>v2 顶栏（chip＋搜索＋更多）@360dp</td><td class="mono">140.4dp</td><td class="mono">89.0dp</td><td class="ok">📋 3/5（38.8）／⏸ plan（46.0）／长串 → <span class="mono">正在跑 3…</span></td></tr>
+      <tr><td>App 现状（chip＋搜索＋重载＋更多）@360dp</td><td class="mono">106.4dp</td><td class="mono">55.0dp</td><td class="warn">📋 3/5 ✓；长串只剩 <span class="mono">正在跑…</span>（4 个汉字）</td></tr>
+      <tr><td>App 现状 @412dp</td><td class="mono">158.4dp</td><td class="mono">107.0dp</td><td class="warn">长串 → <span class="mono">正在跑 3…</span></td></tr>
+      <tr><td>v2 顶栏 @412dp</td><td class="mono">192.4dp</td><td class="mono">141.0dp</td><td class="ok">长串 → <span class="mono">正在跑 3 个后台检查 · 2…</span></td></tr>
+    </tbody>
+  </table>
+  <ul>
+    <li><b>排布</b>：<span class="mono">✓ 就绪 · 📋 3/5</span>，引擎词在前（它是 pi 的状态，永远第一位），分隔符 <span class="mono">·</span> 用 dim，扩展串用扩展自己的色。</li>
+    <li><b>截断规则</b>（必须写死，不然会撞到右边三个按钮）：预算 = 元信息行可用宽 − 引擎词 − 8dp 间隔 − <span class="mono">·</span>；按显示宽度累加（中文 12、等宽 7.2、emoji 14），超出就<b>回退到最近的分隔符</b>（空格 / <span class="mono">·</span> / <span class="mono">/</span>）再补 <span class="mono">…</span>（7.2dp）；≥2 个扩展有状态时只显示第一个，尾部加 <span class="mono">+N</span>。全文始终在 sheet 里。</li>
+    <li><b>字号 / 颜色</b>：等宽 12；引擎部分保持三重编码（✓ 绿 / … 黄 / ✗ 红 + 词）；扩展部分扩展色；<span class="mono">·</span> 与 <span class="mono">+N</span> 用 dim。</li>
+    <li><b>出现 / 消失</b>：有状态即常驻；清空即消失。<b>顶栏是两行定高，所以出现/消失不引起纵向跳动</b>；状态变化只改文字，不改结构。</li>
+    <li><b>丢掉</b>：长文本（360dp 上只剩 4 个汉字）；多扩展时只看到第一个；以及那一行的语义纯度 —— 「就绪」不再是这一行唯一的意思，用户会以为 <span class="mono">📋 3/5</span> 也是引擎在说话。</li>
+    <li><b>为什么不如 3</b>：把一个<b>别人家的、长度不可控的字符串</b>塞进「我们自己的状态行」，是拿布局的稳定性去换一点常驻可见性；而它换来的可见性对 plan-mode 还是冗余的（面板里已经有 ☑/☐）。</li>
+  </ul>
+
+  <hr>
+  <h2>方案 3 · 读数行右端一枚「有扩展状态」的小 chip <span class="tag rec">推荐</span> <span class="tag">常驻 42.4dp</span></h2>
+  <div class="pair">
+    <div>
+      <p class="plabel">无状态：chip 不渲染（不留空位）</p>
+      <div class="screen">
+        <div class="readings" style="padding:6px 14px 8px">
+          <div class="rline">
+            <span class="lbl">上下文</span><span class="val">52.0%</span>
+            <span class="seg"><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i></i><i></i><i></i><i></i></span>
+            <span class="val">104k/200k</span><span class="lbl">自动</span><span class="spread"></span><span class="val">$0.420</span>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div>
+      <p class="plabel">有状态：右侧多一枚 chip（只有数字会变）</p>
+      <div class="screen">
+        <div class="readings" style="padding:6px 14px 8px">
+          <div class="rline">
+            <span class="lbl">上下文</span><span class="val">52.0%</span>
+            <span class="seg"><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i></i><i></i><i></i><i></i></span>
+            <span class="val">104k/200k</span><span class="lbl">自动</span><span class="spread"></span>
+            <span class="extchip"><span class="dot"></span>2</span><span class="val">$0.420</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="bars"><div class="meter"><i class="fill" style="width:304.6px"></i></div></div>
+  <div class="ruler"><span style="left:0"></span><b style="left:0">0</b><span class="limit" style="left:332px"></span><b style="left:332px;color:var(--error)">332 上限</b></div>
+  <p class="cap">读数行第一行全长 <b>304.6dp</b>（含 chip），余 27.4dp；费用涨到 <span class="mono">$12.345</span> 时 311.8dp，仍余 20.2dp。</p>
+  <p class="plabel" style="margin-top:14px">点开 chip → 「会话与队列」sheet 的这一节（全文，不截断）</p>
+  <div class="sheet" style="max-width:420px">
+    <div class="sh">会话与队列</div>
+    <div class="sec">队列模式</div>
+    <div class="row"><span class="key">穿插消息</span><span class="txt" style="color:var(--muted)">逐条</span></div>
+    <div class="divider"></div>
+    <div class="sec">扩展状态（2）</div>
+    <div class="note">扩展自己写入的一行文本，按原样显示；颜色由扩展决定。</div>
+    <div class="row"><span class="key">plan-mode</span><span class="txt" style="color:var(--accent)">📋 3/5</span></div>
+    <div class="row"><span class="key">checks</span><span class="txt" style="color:var(--error)">正在跑 3 个后台检查 · 2 个失败</span></div>
+  </div>
+  <ul>
+    <li><b>排布</b>：放在读数行<b>第一行右端、费用左边</b>（那儿有 85.8dp 空档）。形态固定 = <span class="mono">[6dp 圆点][数字]</span>，圆角 999 的 1px 描边胶囊，高 18dp。</li>
+    <li><b>宽度</b>：42.4dp（含描边 2 + 内边距 16 + 圆点 6 + 间隔 4 + 两位数字 14.4）；三位数上限 49.6dp，所以给它 50dp 的位置就不会因数字变长而推动布局。<b>不把状态文本放进 chip</b>：那样只有 51.8dp ≈ 7 个等宽字符，等于把「任意长字符串」的麻烦换了个地方。</li>
+    <li><b>字号 / 颜色</b>：数字 = 等宽 12 text；圆点 = accent（有状态）；描边 = borderMuted；点击后 sheet 内：键名等宽 12 muted、文本等宽 12 + 扩展色、说明句无衬线 12 muted。</li>
+    <li><b>出现 / 消失</b>：0 条 → 整个 chip 不渲染（不发灰、不留空位）；≥1 条 → 常驻，形状不变、只有数字变（1 → 2 不会推动布局）。状态文本变化<b>完全不影响界面</b>。</li>
+    <li><b>丢掉</b>：文本本身，需要一次点击。这是它唯一的代价。</li>
+    <li><b>为什么比 1 / 2 好</b>：它把「任意长、任意变、扩展自己上色」的东西挡在一个<b>形状永不改变的壳</b>后面 —— 用户看不到那个孤零零的 <span class="mono">📋 6</span>（你嫌突兀的就是它），但「有扩展在跑 / 有几个」这条信号一直在；2 会让每次状态变化都去改写「引擎状态」那行，1 则连信号一起删掉。而且它落在读数行 —— 本来就是「这台会话的机器读数」区，语义一致。</li>
+  </ul>
+
+  <hr>
+  <h2>方案 4 · 状态住进扩展面板区 <span class="tag">只在有面板时 / 全宽 332dp</span></h2>
+  <p>面板区本来就是扩展的地盘，而且 <span class="mono">📋 n/m</span> 与待办清单<b>永远同时出现</b> —— 把进度数字贴在它自己的清单上方，是零点击的：</p>
+  <div class="screen">
+    <div class="statusline"><span style="color:var(--muted)">plan-mode</span><span style="color:var(--dim)">·</span><span style="color:var(--success)">📋 3/5</span></div>
+    <div class="widget">
+      <div class="wline"><span style="color:var(--success)">☑ </span><span style="color:var(--muted)">先定位排序来源</span></div>
+      <div class="wline"><span style="color:var(--muted)">☐ </span><span style="color:var(--text)">组内按 lastActiveAt 倒序</span></div>
+      <div class="wline"><span style="color:var(--muted)">☐ </span><span style="color:var(--text)">组间用组内第一条的时间</span></div>
+    </div>
+    <div class="composer">输入消息，/ 选命令，! 直接跑命令，@ 提及文件</div>
+  </div>
+  <p class="plabel" style="margin-top:14px">没有面板的扩展（如 <span class="mono">⏸ plan</span>）：回落到方案 3 的 chip</p>
+  <div class="screen">
+    <div class="readings" style="padding:6px 14px 8px">
+      <div class="rline">
+        <span class="lbl">上下文</span><span class="val">52.0%</span><span class="spread"></span>
+        <span class="extchip"><span class="dot" style="background:var(--warning)"></span>1</span><span class="val">$0.420</span>
+      </div>
+    </div>
+    <div class="composer" style="margin-top:8px">输入消息，/ 选命令…</div>
+  </div>
+  <ul>
+    <li><b>排布</b>：面板区顶部一行 —— <span class="mono">键名 · 状态串</span>（键名 muted、串用扩展色），宽度与面板同宽（332dp），然后才是面板卡。一行只有一条状态；≥2 条时显示前两条，其余进 sheet。</li>
+    <li><b>宽度</b>：<span class="mono">plan-mode · 📋 3/5</span> = 117.2dp；假想长串 <span class="mono">正在跑 3 个后台检查 · 2 个失败</span> = 169.6dp —— 都远在 332dp 内，<b>几乎不需要截断</b>（真要截也是在 332dp 上截，能放 19 个汉字）。</li>
+    <li><b>字号 / 颜色</b>：等宽 12；键名 muted；串用扩展色；与面板同一左右内边距（14dp），不是卡片、不加边框（面板本身已经是卡）。</li>
+    <li><b>出现 / 消失</b>：有面板 + 有状态 → 常驻在面板上方；没有面板 → 回落方案 3 的 chip。它跟着面板一起出现/消失 —— 这是面板本来就有的行为，不是新增跳动。</li>
+    <li><b>丢掉</b>：只覆盖「有面板」的扩展；没有面板的状态仍然要点开 chip。</li>
+    <li><b>为什么它是最强的「一眼看到进度」</b>：进度和它描述的那份清单在同一屏、同一栏、相隔 0 行；用户读清单时顺手就读到数字，不需要知道「状态」这个概念。缺点是它引入了两套机制（面板区一行 + 没面板时的 chip）。</li>
+  </ul>
+
+  <hr>
+  <h2>共享的部分：sheet 那一节怎么画（四个方案都一样）</h2>
+  <ul>
+    <li>位置：「会话与队列」sheet 里，排在「会话」节之后、「本应用显示不了的扩展（N）」之前；<span class="mono">HorizontalDivider(outlineVariant)</span> + <span class="mono">PiSectionHeader("扩展状态（N）")</span>。</li>
+    <li>一行说明：<b>「扩展自己写入的一行文本，按原样显示。」</b>（语气规则：说用户能做的事，不说字节去了哪）。</li>
+    <li>每个键一行：键名（等宽 12 muted，固定 66dp 列）+ 状态全文（<span class="mono">ExtensionSpans</span>，扩展色，可换行，不限行数）。宽 304dp，键名占 64.8dp → 文本每行 231.2dp ≈ 19 个汉字，长串全部读得到。</li>
+    <li>空态：0 条状态时<b>整节不渲染</b>（菜单项也不带计数），不出现空面板。</li>
+  </ul>
+
+  <hr>
+  <h2>推荐</h2>
+  <div class="card rec">
+    <p style="margin-top:0"><b>方案 3（读数行右端一枚计数 chip + sheet 看全文）。</b>理由一句话：扩展状态是别人家的任意字符串，它不该拥有我们的一行 —— 给它一个<b>形状永不变的壳</b>（42.4dp、只变数字），既拿掉了你嫌突兀的那个孤立碎片，又保住了「有扩展在跑、有几个」这条信号。宽度实测 304.6dp ≤ 332dp（余 27.4dp），0 条时不渲染，不新增行高。</p>
+    <p class="why"><b>如果你坚持「一眼能看到进度」：选方案 4。</b>因为进度真正的载体是那份待办清单，把 <span class="mono">📋 3/5</span> 放在清单上方（面板区顶部，332dp 全宽，实测 117.2dp）是唯一零点击、且不会变成孤立碎片的做法；没有面板的扩展再用 chip 兜底。第二选择是方案 2，但要知道 360dp 上它只剩 4 个汉字，而且会污染「引擎状态」那一行的语义。</p>
+  </div>
+
+  <div class="legend">
+    <span><i style="background:#D4D4D4"></i>数值 / 键名正文 text</span>
+    <span><i style="background:#808080"></i>标签 muted</span>
+    <span><i style="background:#8ABEB7"></i>accent（扩展自选色之一）</span>
+    <span><i style="background:#FFFF00"></i>warning</span>
+    <span><i style="background:#CC6666"></i>error</span>
+    <span><i style="background:#505050"></i>1px 线 / 描边</span>
+  </div>
+
+  <p class="cap">另外提一句施工态：<span class="kbd">ChatScreen.kt:133</span> 的 import 与 <span class="kbd">:1140</span> 的调用点还在，而 <span class="kbd">ExtensionChrome.kt</span> 里已经没有 <span class="mono">ExtensionStatusRow</span> 这个构件了 —— 这一轮不管选哪个方案，那两处都要一起摘掉（我这份稿子只出方案，没动代码）。</p>
+</div>
+</body>
+</html>
