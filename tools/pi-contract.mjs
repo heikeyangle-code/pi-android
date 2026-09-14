@@ -303,6 +303,72 @@ function runPi(piDir, agentDir, requests, seconds = 60) {
 		});
 }
 
+/**
+ * The **packed** entry the app launches, asserted end to end.
+ *
+ * `PiEngineHost` prefers `dist/bundle/rpc-entry.js` (upstream's
+ * `exports["./rpc-entry"]`, which forces `--mode rpc` itself) and falls back to
+ * the unpacked `dist/cli.js` — the packed build is what takes engine startup from
+ * ~18–20 s to ~1 s, and the fallback exists so that a future payload without it
+ * only gets slower. Those two are complementary and both have to stay asserted:
+ * this check is the one that fails *loudly* on the next version bump if the bundle
+ * disappears, while the app's fallback is what keeps a user's phone working.
+ *
+ * The risk the entry change carries is a real turn, not a `--version` print, so the
+ * assertion is a served `get_state` over the packed entry with no `--mode rpc` on
+ * the command line.
+ */
+function checkBundledEntry(piDir) {
+	const bundled = join(piDir, "dist/bundle/rpc-entry.js");
+	const cli = join(piDir, "dist/bundle/cli.js");
+	check(
+		"the payload contains the packed rpc entry the app launches",
+		existsSync(bundled) && existsSync(cli),
+		"PiEngineHost prefers dist/bundle/rpc-entry.js (package.json `exports[\"./rpc-entry\"]`). " +
+			"It falls back to dist/cli.js, so the app still starts — just ~20x slower. If upstream " +
+			"really dropped the bundle, update PiEngineHost's candidate list and this check together.",
+	);
+	if (!existsSync(bundled)) return;
+
+	const probe = mkdtempSync(join(tmpdir(), "pi-contract-bundle-"));
+	mkdirSync(join(probe, "sessions"), { recursive: true });
+	const out = execFileSync(
+		"node",
+		[bundled, "--session-dir", join(probe, "sessions")],
+		{
+			input: JSON.stringify({ id: "b", type: "get_state" }) + "\n",
+			encoding: "utf8",
+			timeout: 60_000,
+			env: {
+				...process.env,
+				PI_CODING_AGENT_DIR: probe,
+				PI_SKIP_VERSION_CHECK: "1",
+				PI_OFFLINE: "1",
+			},
+			stdio: ["pipe", "pipe", "pipe"],
+		},
+	);
+	const answer = out
+		.split("\n")
+		.filter(Boolean)
+		.flatMap((line) => {
+			try {
+				return [JSON.parse(line)];
+			} catch {
+				return [];
+			}
+		})
+		.find((event) => event.type === "response" && event.id === "b");
+	check(
+		"the packed entry serves a get_state without --mode rpc",
+		answer?.success === true,
+		"rpc-entry.js is supposed to inject `--mode rpc` itself. If it no longer does, the app's " +
+			"launch line (PiEngineHost's guestCommand) is what breaks — it deliberately omits the flag " +
+			"for this entry.",
+	);
+	rmSync(probe, { recursive: true, force: true });
+}
+
 function availableModels(piDir, agentDir) {
 	const events = runPi(piDir, agentDir, [{ id: "m", type: "get_available_models" }]);
 	const response = events.find((e) => e.type === "response" && e.command === "get_available_models");
@@ -565,6 +631,8 @@ if (!existsSync(join(piDir, "dist"))) {
 
 console.log("\n--- surface ---");
 checkSurface(piDir);
+console.log("\n--- bundled entry ---");
+checkBundledEntry(piDir);
 console.log("\n--- behaviour ---");
 checkBehaviour(piDir);
 await checkStartupOnlyReload(piDir);

@@ -72,6 +72,27 @@ class RuntimeSelfCheck(private val paths: PiPaths) {
             )
         }
 
+        // A pass at this exact unpacked revision is as good as a fresh probe.
+        //
+        // What this check answers is "can this device execute a guest binary", a
+        // property of the payload plus the ROM — and the payload's identity *is* the
+        // provisioning stamp. The probe is a whole proot process with a 60 s
+        // `waitFor` budget on the critical path to the first prompt, so repeating it
+        // on every boot costs 0.3–3 s to re-learn something that cannot have changed.
+        //
+        // The structural checks above deliberately run **before** the stamp: deleting
+        // the rootfs, the proot binary or the loader must not be masked by a stale
+        // pass. Nothing is written on a failure (see the end of this function), so a
+        // failure is never cached, and `RuntimeProvisioner.wipe()` removes the stamp
+        // together with the tree it describes.
+        val revision = runCatching { paths.stampFile().readText().trim() }.getOrNull()
+        if (!revision.isNullOrEmpty() && passedAtRevision(revision)) {
+            return@withContext Outcome(
+                Status.Ok,
+                "运行时可用（这个解包版本上次已通过自检，本次没有重复探测）",
+            )
+        }
+
         // `echo` from the guest's own coreutils: if this prints, then exec of a
         // guest binary worked, which is the entire question.
         val marker = "pi-runtime-ok"
@@ -83,7 +104,7 @@ class RuntimeSelfCheck(private val paths: PiPaths) {
         )
         val env = ProotCommand.environment(paths)
 
-        runCatching {
+        val outcome = runCatching {
             val process = ProcessBuilder(argv)
                 .directory(paths.runtime)
                 .also { it.environment().putAll(env) }
@@ -137,7 +158,20 @@ class RuntimeSelfCheck(private val paths: PiPaths) {
                 "无法启动 proot：${error::class.java.simpleName}: ${error.message}",
             )
         }
+        // Only a pass is remembered. A failure has to be re-reported at the next
+        // boot with its own diagnostic text — that text is the only thing that makes
+        // "the runtime cannot run here" actionable.
+        if (outcome.ok && !revision.isNullOrEmpty()) {
+            runCatching { paths.selfCheckStamp().writeText(revision + "\n") }
+        }
+        outcome
     }
+
+    /** Has a probe already passed at this unpacked revision? */
+    private fun passedAtRevision(revision: String): Boolean = runCatching {
+        val stamp = paths.selfCheckStamp()
+        stamp.isFile && stamp.readText().trim() == revision
+    }.getOrDefault(false)
 
     private fun looksLikeExecDenial(stderr: String): Boolean {
         val markers = listOf(

@@ -676,12 +676,31 @@ class RuntimeProvisioner(
         }
         extractAsset(ENGINE_ARCHIVE, target)
         // Convenience launcher: `pi` on PATH inside the guest.
-        val cli = File(target, "node_modules/@earendil-works/pi-coding-agent/dist/cli.js")
-        if (cli.isFile) {
+        //
+        // Same preference order as the engine launch in `PiEngineHost`, for the same
+        // reason: the packed entry starts in about a second where the unpacked one
+        // takes tens of seconds, and a payload that lost its bundle must only get
+        // slower, not stop working. The wrapper is written here, at unpack time, so
+        // it can look at what actually arrived.
+        //
+        // The path written into the script is the **guest** spelling, not the host
+        // File's. The whole point of proot is that a guest path is translated on the
+        // way in — so a script naming `/data/user/0/<pkg>/files/pi/runtime/rootfs/…`
+        // asks the guest for a path that does not exist there (`<rootfs>/data/…`),
+        // and `pi` on PATH dies with "Cannot find module". This used to interpolate
+        // `cli.path`, which is exactly that host path.
+        val guestEngineRoot = "/opt/pi/node_modules/@earendil-works/pi-coding-agent"
+        val hostEngineRoot = File(target, "node_modules/@earendil-works/pi-coding-agent")
+        val guestCli = if (File(hostEngineRoot, "dist/bundle/cli.js").isFile) {
+            "$guestEngineRoot/dist/bundle/cli.js"
+        } else {
+            "$guestEngineRoot/dist/cli.js"
+        }
+        if (File(hostEngineRoot, "dist").isDirectory) {
             val bin = File(paths.rootfs, "opt/pi/bin").also { it.mkdirs() }
             val wrapper = File(bin, "pi")
             wrapper.writeText(
-                "#!/bin/bash\nexec /opt/node/bin/node ${cli.path} \"\$@\"\n",
+                "#!/bin/bash\nexec /opt/node/bin/node $guestCli \"\$@\"\n",
             )
             wrapper.setExecutable(true, false)
             guestSymlink("/usr/local/bin/pi", "/opt/pi/bin/pi")

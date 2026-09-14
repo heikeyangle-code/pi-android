@@ -258,22 +258,55 @@ class PiEngineHost(private val appContext: Context) {
             workspace.mkdirs()
             val guestWorkspace = guestPathFor(workspace)
 
-            val cli = "$ENGINE_GUEST_ROOT/node_modules/$PI_PACKAGE/dist/cli.js"
-            if (!File(paths.rootfs, cli.removePrefix("/")).isFile) {
-                return@withContext Boot.Failed(
-                    "引擎未安装",
-                    "找不到 $cli —— 打包运行时需要包含 pi 引擎（tools/fetch-runtime.mjs）",
-                )
-            }
+            // The two engines pi ships, in preference order.
+            //
+            // `dist/bundle/rpc-entry.js` first: it is the entry upstream *promises*
+            // for this use (`package.json` maps `exports["./rpc-entry"]` to it) and it
+            // forces `--mode rpc` itself. It is also the **packed** build, and that
+            // is where the startup time comes from — measured on this workstation
+            // (node 24.19.0, no proot): `dist/bundle/cli.js --version` 1.0 s, and a
+            // bundled `get_state` round trip 2.0 s, against ~18–20 s for the
+            // unpacked entry, which loads thousands of modules at boot.
+            //
+            // It is preferred, not assumed. This is a dependency the *user* upgrades
+            // (`tools/fetch-runtime.mjs` pins the version, CI's contract run re-checks
+            // it), so an upstream rename or a dropped bundle must degrade to "slower",
+            // never to "the engine cannot start". Hence the fallback — the unpacked
+            // entry, which needs `--mode rpc` spelled out — and a fatal failure only
+            // when neither exists, with both candidates named so the report says what
+            // was looked for.
+            //
+            // **Keep shipping the whole `dist/` tree.** The bundle is not
+            // self-contained: `config.ts:389-431` (`getExportTemplateDir()`,
+            // `getThemesDir()`) resolves the package root from `__dirname` and then
+            // reads `dist/core/export-html` and its siblings. Trimming the payload to
+            // `dist/bundle/**` would break those paths at runtime, in the export and
+            // theme features rather than at startup.
+            val engineRoot = "$ENGINE_GUEST_ROOT/node_modules/$PI_PACKAGE"
+            val entryCandidates = listOf(
+                "$engineRoot/dist/bundle/rpc-entry.js" to false,
+                "$engineRoot/dist/cli.js" to true,
+            )
+            val chosen = entryCandidates.firstOrNull { (candidate, _) ->
+                File(paths.rootfs, candidate.removePrefix("/")).isFile
+            } ?: return@withContext Boot.Failed(
+                "引擎未安装",
+                "找不到引擎入口，试过这两个：\n" +
+                    entryCandidates.joinToString("\n") { "  · ${it.first}" } +
+                    "\n打包运行时需要包含 pi 引擎（tools/fetch-runtime.mjs）",
+            )
+            val cli = chosen.first
+            // Only the unpacked entry needs the flag; `rpc-entry.js` injects it.
+            val needsModeFlag = chosen.second
 
             launchOptions = launch
 
             val guestCommand = buildString {
                 append("exec /opt/node/bin/node ").append(cli)
-                append(" --mode rpc")
+                if (needsModeFlag) append(" --mode rpc")
                 append(" --session-dir ").append(guestAgentDir).append("/sessions")
                 // pi's pre-spawn flags. The suffix is already shell-quoted because
-                // `ProotCommand.build` hands this string to `bash -lc` inside the
+                // `ProotCommand.build` hands this string to `bash -c` inside the
                 // rootfs; empty when no option is set.
                 append(launch.commandLineSuffix())
             }

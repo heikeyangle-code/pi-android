@@ -139,6 +139,18 @@ class PiPaths(private val filesDir: File, private val nativeLibDir: File) {
 
     /** Marker recording which packaged runtime revision is unpacked. */
     fun stampFile(): File = File(runtime, ".stamp")
+
+    /**
+     * Marker recording which unpacked revision passed [RuntimeSelfCheck].
+     *
+     * A separate file from [stampFile], on purpose: that one means "this revision
+     * is unpacked" and is written by the provisioner, this one means "a guest
+     * binary has actually been executed at this revision" and is written by the
+     * check. Sharing one file would make either statement imply the other. It lives
+     * inside the runtime tree, so `RuntimeProvisioner.wipe()` deletes it together
+     * with what it describes.
+     */
+    fun selfCheckStamp(): File = File(runtime, ".selfcheck")
 }
 
 /**
@@ -208,7 +220,15 @@ object ProotCommand {
         // bash tool fail to spill oversized output.
         argv += listOf("-b", "${paths.tmp.path}:/tmp")
         argv += "/bin/bash"
-        argv += "-lc"
+        // `-c`, not `-lc`. A login shell sources `/etc/profile` and every file it
+        // pulls in, which measured ~1.5 s per guest start on this device — and there
+        // is nothing for it to set up: [environment] already hands the guest
+        // `PATH`, `HOME`, `TMPDIR`, `TERM`, `LANG` and `LD_LIBRARY_PATH`
+        // explicitly, and the pinned ubuntu-base ships no `/etc/profile.d` payload
+        // this app depends on. Anything that *did* need a login shell would be a
+        // dependency on a file the runtime tree can be re-extracted without —
+        // exactly the kind of "works until the next wipe" that this file avoids.
+        argv += "-c"
         argv += guestCommand
         return argv
     }
