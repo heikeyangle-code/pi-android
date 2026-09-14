@@ -70,3 +70,43 @@
 **事故**：B8 在 `ExtensionDialogs.kt` 的 KDoc 里写了 `` `ui/theme/**` ``。Kotlin 的块注释**可嵌套**，于是 `/**` 又开了一层注释，把该文件**后面的所有代码**（包括刚定义的 `DialogMaxWidth` 等常量）都吞进注释里 ⇒ CI 报 10 处 `Unresolved reference`，同时注释守卫报 7 处 `nested block comment`。
 **修复**：只改那一行——KDoc 里写 `` `ui/theme/` `` 而不是 `` `ui/theme/**` ``。另有 6 处是级联假阳性（被吞掉的单行 KDoc 又被当成新的嵌套开头），改掉根因后守卫转 OK。
 **教训（给以后的人）**：**不要**写脚本全局替换 `/**`——**字符串字面量里也有 `/**`**（例如 `add(".git/**")`、测试里的标记串、提示文案 `` (ui/terminal/**) ``），批量替换会把它们改坏。我第一次就是这么干的，一次改了 7 个文件，把 `.git/**` 和一处测试断言改成了 `.git`，已全部 revert 后只改真正的那一行。定位这类问题用 `python3 tools/check-nested-comments.py`（它按语法位置判断，不误伤字符串）。
+
+## D15 · 状态行的「数值与分隔」照 pi，不照 v2 的样本字面
+**现象**：用户实机截图（终审前的旧版）指着状态行说「计费那一栏有问题」。核出 5 条，其中**两条是终审时改错的**。
+
+**裁决**（逐条）：
+
+| 项 | 现为 | 改为 | 依据 |
+|---|---|---|---|
+| `%` | 缺（`上下文 1.3` 直接顶进度段） | `上下文 1.3%` | pi `footer.ts:111`；v2 `:794` 也是 `上下文 {p.pct}%` |
+| 百分比精度 | `%.0f`（终审由一位改零位） | `%.1f` | pi `toFixed(1)`（`footer.ts:111`） |
+| 费用精度 | `%.2f`（终审由三位改两位） | `%.3f` | pi `toFixed(3)`（`footer.ts:143`） |
+| ` (auto)` | 挂在百分比后 | 挂在**窗口**后（`1.3%/1.0M (auto)`） | pi `${percent}%/${window}${auto}`（`footer.ts:150-156`） |
+| 读数分隔 | 插 ` · ` | 只留间隙（无 `·`） | v2 `StateLine` 实现（`:798-803`）+ 裁定清单 B-1 |
+
+**理由（为什么零位小数那条推理是错的，写下来防再犯）**：终审时我读 v2 的 hero 注释 `上下文 52% [8 段进度] 104k / 200k` 与 `StateLine` 的 `{p.pct}%`，判断「v2 用整数」，于是把 pi 的 `toFixed(1)` 改成 `%.0f`。**这是把「板子的样本取值」当成了「板子的格式规定」**：v2 的 `StateLine` 原样打印传入值、自己不做任何舍入，52 只是它样本数据恰好是整数；数值来源是 pi，所以格式也该是 pi 的。同理费用：v2 的 `$0.42` 只是样本，pi 是三位，而两位小数会把 `$0.006` 显示成 `$0.01`、`$0.004` 显示成 `$0.00`——金额读数不是装饰。
+**教训（给以后的人）**：v2 板子上出现的**任何具体数值**都可能是样本数据，不是格式规定。判定格式要看板子的**代码**（`{p.x}` 是怎么被拼进去的），必要时回 pi 的源码对 `toFixed`/模板串。
+
+**影响**：`ui/components/PiCommon.kt` 的 `PiStatusLine`（含 KDoc 里两处自相矛盾的说明：一处说 v2 是两位、一处说「pi 的三位」而代码是两位）。
+
+## D16 · diff 卡的解析对象是 pi 的「给人看」diff，不是 unified diff
+**现象**：用户实机截图（旧版）里 `edit` 卡的头部是 `+0 −0`、第二行 `新增 0 行 · 删除 0 行`，而正文明明有 4 行 `-`、1 行 `+`；且**正文一点颜色都没有**。
+
+**根因（已核实，不是配色问题）**：pi 的 `edit` 工具 details 是 `{ diff, patch, firstChangedLine }`（`core/tools/edit.ts:210`）。`diff` 由 `generateDiffString` 产出（`core/tools/edit-diff.ts:376-480`），是**面向人的显示串**：`+123 text` / `-123 text` / ` 123 text`，长上下文折叠成 ` <pad> ...`，**没有 `@@`**；真 unified diff 在 `patch` 里。而 app 的 `detailsDiffText` 优先取 `diff`，`buildToolDiff` 又用只认 `@@` 的 `parseUnifiedDiff` ⇒ **0 个 hunk** ⇒ `added/removed` 都落到 0（头部 `+0 −0`），且 `DiffBlock` 走「解析失败」分支把原始串整段单色打印。
+
+**裁决**：按 pi `modes/interactive/components/diff.ts` 的语义解析并渲染 `diff`（前缀定 kind、相邻的单删单增做逐词反白、上下文行用 `toolDiffContext`）；`patch` 只用来**兜底取路径**（`edit` 的 details 不带 path，所以标题恒为「未命名文件」）与兼容只给 unified diff 的工具/扩展。**颜色仍取 pi 的整行上色**（`diff.ts:127-152`），不改成 v2 那种「只给符号列上色、正文用 text」——用户红线是上色 1:1。pi 的 `...` 省略行按 context 渲染、数字列留空：**pi 的省略行不带「省了多少行」，不为凑 v2 的「… N 行未变」去算一个数**。
+
+**影响**：`rpc/src/main/kotlin/app/pi/rpc/Transcript.kt`、`ui/blocks/DiffBlock.kt`。
+
+## D17 · `展开/收起` 的箭头方向：折叠→右，展开→下
+**现象**：用户截图里折叠态的思考行画的是 `展开 ⌄`（向下箭头）。
+**裁决**：统一为 v2 的 `Icon n={expanded?'down':'right'}`（`direction-b-v2.html:911`）。`ui/blocks/BlockChrome.kt` 的 `ExpandLabel` 原来写成 `expanded→Up / collapsed→Down`，方向反了；`ToolBlockChrome.kt:224` 与 `DiffBlock.kt:141` 本来就是对的。
+**影响**：`ExpandLabel` 的全部调用点（思考块、错误详情、技能调用、hook 消息、分支摘要）。
+
+## D18 · 用户实机反馈（旧版 APK）的处置归档
+用户装的是**终审前**的 APK，报「计费栏有问题 / diff 卡有问题 / 输入框 / 底下乱七八糟 / 还有很多问题」。逐条核到当前代码后分三类，记下来免得下次重复排查：
+
+- **真错，已在 D15/D16/D17 修**：状态行 5 项、diff 全链路、`ExpandLabel` 箭头。
+- **旧版才有、当前代码已对**：输入区（composer 已是 v2 的单一 14 圆角框、芯片行在框内、`◐`+等级名、30×30 accent 圆盘、边框取思考等级色/bashMode）、顶栏「选择模型」胶囊（旧版带 ⓘ 图标与填充底）、三个空态的 68dp 圆底。
+- **不是 bug（v2 原样）**：底部本来就是三层（输入框 + 键位行 + 底栏）；「回到最新」浮层压住正文是 v2 的画法（`:1515`）；`回到最新` 后面没有 `· N` 是 `unseenRows == 0` 时的正常形态。
+- **待用户确认**：状态行下面那一行「深色小方块 + accent 的 `6`」，形状符合扩展状态行（`ui/extension/ExtensionChrome.kt:54` 把扩展 `ctx.ui.setStatus()` 的文本逐字渲染成 mono + accent），而 pi 自带示例扩展 `plan-mode` 正好报 ``📋 完成数/总数``——若用户确实装了该扩展则不是 bug。
