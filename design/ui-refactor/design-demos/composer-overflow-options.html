@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>输入区 ⋮ 按钮与它的菜单</title>
+<!--
+================================================================================
+输入框键位行的 ⋮ 按钮 + 菜单 · 设计方案 · 派生稿，不入库
+================================================================================
+已定前提：
+· 键位行（可用宽 310dp @360dp 屏）从左到右 = `/` 芯片 · 附件（纯图标 30dp）· **新的 ⋮** ·
+  干活时的 `插话`/`排队`；右侧 = `◐ 等级名` + 30dp 发送键。
+· `@`（提及文件）`!`（跑命令）`!!`（跑命令 · 不进上下文）`清空`（清草稿）四项**收进 ⋮ 菜单**。
+· 用户要求简单：**不再做任何「按宽度退让」的阶梯** —— 菜单就是为了让那一行结构上就装得下。
+测量基准：360dp 屏、键位行可用 310dp（= 360 − 2×14 页面 − 2×10 容器内边距 − 2×1 边框）；
+  等宽 12sp 每字符 7.20dp、13sp 7.80dp、中文 12sp 12.0dp / 14sp 14.0dp；芯片自带 6dp 尾距。
+颜色只用 pi 令牌：text #D4D4D4 · muted #808080 · dim #666666 · bash #B5BD68（pi 的 shell 模式色）·
+  accent #8ABEB7 · warning #FFFF00 · error #CC6666 · borderMuted #505050 · page #18181E ·
+  surf-low #1E1E24 · surf #232329 · surf-high #29292F · surf-highest #303036 · surf-dim #1C1C22。
+全篇零阴影、零渐变、零模糊；层级由 1px 线与表面阶梯承担。
+================================================================================
+-->
+<style>
+  :root{
+    --accent:#8ABEB7; --border-muted:#505050; --success:#B5BD68; --error:#CC6666; --warning:#FFFF00;
+    --bash:#B5BD68; --text:#D4D4D4; --muted:#808080; --dim:#666666;
+    --page:#18181E; --card:#1E1E24; --surf:#232329; --surf-high:#29292F; --surf-highest:#303036; --surf-dim:#1C1C22;
+    --mono:"JetBrains Mono",ui-monospace,"Roboto Mono",Menlo,Consolas,monospace;
+    --sans:"Geist","Inter","Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;
+  }
+  html,body{margin:0;padding:0;background:#0e0e12;color:var(--text);font-family:var(--sans);
+    font-synthesis:none;line-break:strict;overflow-wrap:anywhere;-webkit-font-smoothing:antialiased}
+  *{box-sizing:border-box}
+  .wrap{max-width:800px;margin:0 auto;padding:22px 16px 72px}
+  h1{font-size:19px;font-weight:600;line-height:1.35;margin:0 0 8px;letter-spacing:-0.01em}
+  h2{font-size:15px;font-weight:600;margin:0 0 6px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  h3{font-size:13px;font-weight:600;margin:16px 0 6px}
+  p{font-size:13px;line-height:1.7;color:var(--muted);margin:6px 0}
+  p b,li b{color:var(--text);font-weight:600}
+  .lead{font-size:13px;line-height:1.75;color:var(--muted)}
+  code,.mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+  .kbd{font-family:var(--mono);font-size:12px;color:var(--text);background:var(--surf);border:1px solid var(--border-muted);border-radius:4px;padding:0 4px}
+  .card{background:var(--card);border:1px solid var(--border-muted);border-radius:12px;padding:14px;margin:14px 0}
+  .card.rec{border-color:var(--accent)}
+  .tag{font-size:11px;letter-spacing:.06em;border:1px solid var(--border-muted);border-radius:999px;padding:1px 8px;color:var(--muted);font-weight:500}
+  .tag.rec{color:var(--page);background:var(--accent);border-color:var(--accent)}
+  .tag.no{color:var(--error);border-color:var(--error)}
+  table{width:100%;border-collapse:collapse;font-size:12px;margin:8px 0 2px}
+  th,td{border:1px solid var(--border-muted);padding:6px 8px;text-align:left;vertical-align:top}
+  th{color:var(--muted);font-weight:500}
+  td.mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+  .ok{color:var(--success)}.bad{color:var(--error)}.warn{color:var(--warning)}
+  ul{margin:6px 0;padding-left:18px}
+  li{font-size:13px;line-height:1.7;color:var(--muted);margin:3px 0}
+  hr{border:0;border-top:1px solid var(--border-muted);margin:26px 0}
+  .cap{font-size:12px;color:var(--muted);margin-top:6px}
+  .plabel{font-size:12px;color:var(--muted);margin:10px 0 5px}
+  .legend{display:flex;flex-wrap:wrap;gap:10px 16px;font-size:12px;color:var(--muted);margin-top:10px}
+  .legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:-1px}
+  .why{border-left:2px solid var(--accent);padding-left:10px;margin:10px 0 0}
+  .grid2{display:flex;gap:18px;flex-wrap:wrap}
+
+  /* ---- 键位行与芯片（1px = 1dp） ---- */
+  .screen{width:360px;max-width:100%;background:var(--page);border:1px solid var(--border-muted);border-radius:12px;overflow:hidden}
+  .composer{margin:10px 14px;border:1px solid #81A2BE;border-radius:14px;background:var(--surf);padding:9px 10px}
+  .composer .input{font-size:14px;line-height:20px;color:var(--muted);margin-bottom:8px}
+  .keyrow{display:flex;align-items:center;gap:6px;min-height:30px}
+  .kchip{height:24px;min-width:24px;padding:0 7px;border-radius:6px;background:var(--surf-highest);color:var(--text);
+    font-family:var(--mono);font-size:12px;display:inline-flex;align-items:center;justify-content:center;flex:none}
+  .kchip.icon{padding:0 7px}
+  .kchip.dot{width:24px;min-width:24px;padding:0}
+  .kchip.circ{background:transparent;border:1px solid var(--border-muted);border-radius:999px}
+  .kchip.bare{background:transparent}
+  .spacer{flex:1;min-width:0}
+  .think{display:flex;align-items:center;gap:5px;padding:4px;border-radius:6px;color:var(--text);font-size:12px;flex:none}
+  .send{width:30px;height:30px;border-radius:999px;background:var(--accent);color:var(--page);display:flex;align-items:center;justify-content:center;flex:none;font-size:12px}
+  .mrow{display:flex;align-items:center;gap:0}
+  .mrow>*{margin-right:6px}
+  .mrow .think{margin-right:0}
+  .mrow .kchip{flex:none;justify-content:center}
+  .clipwrap{position:relative;display:inline-block;max-width:100%}
+  .clipwrap .mask{position:absolute;top:0;bottom:0;right:0;background:rgba(24,24,30,.82);pointer-events:none}
+  .clipwrap .clipline{position:absolute;top:-2px;bottom:-2px;width:1px;background:var(--error)}
+
+  .bars{display:flex;align-items:center;gap:4px;margin-top:8px;margin-left:14px;width:310px;max-width:calc(100% - 14px)}
+  .meter{position:relative;height:10px;background:var(--surf);border-radius:3px;overflow:hidden;flex:1}
+  .meter i{position:absolute;left:0;top:0;bottom:0;background:var(--surf-highest)}
+  .meter i.fill{background:rgba(138,190,183,.45)}
+  .meter i.over{background:rgba(204,102,102,.55)}
+  .ruler{position:relative;height:16px;margin-top:6px;border-top:1px solid var(--border-muted);margin-left:14px;width:310px;max-width:calc(100% - 14px)}
+  .ruler span{position:absolute;top:0;height:5px;width:1px;background:var(--border-muted)}
+  .ruler b{position:absolute;top:5px;font-size:10px;font-weight:400;color:var(--dim);transform:translateX(-50%)}
+  .limit{position:absolute;top:-4px;bottom:-2px;width:1px;background:var(--error)}
+
+  /* ---- 菜单：v2 自绘 ---- */
+  .menu{width:240px;background:var(--surf-high);border:1px solid var(--border-muted);border-radius:10px;padding:4px 0}
+  .mitem{height:40px;display:flex;align-items:center;gap:10px;padding:0 12px}
+  .mitem.press{background:var(--surf-highest)}
+  .msym{width:24px;flex:none;font-family:var(--mono);font-size:13px;text-align:center;color:var(--text)}
+  .msym.bash{color:var(--bash)}
+  .mlabel{font-size:14px;color:var(--text);flex:none}
+  .mhint{font-size:12px;color:var(--muted);flex:none;margin-left:auto}
+  .mdiv{height:1px;background:var(--border-muted);opacity:.55;margin:4px 0}
+  /* ---- 菜单：M3 默认对照 ---- */
+  .m3menu{width:240px;background:var(--surf);border-radius:4px;padding:8px 0;box-shadow:0 1px 2px rgba(0,0,0,.3),0 2px 6px rgba(0,0,0,.15)}
+  .m3item{height:48px;display:flex;align-items:center;padding:0 12px;gap:10px}
+  .m3item .mlabel{font-size:14px;color:var(--text)}
+  .m3item .mhint{font-size:12px;color:var(--muted)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>输入区多出来的那个 ⋮</h1>
+  <p class="lead">
+    键位行从左到右：<b>`/` · 附件（纯图标 30dp）· ⋮</b>（干活时再加 `插话`/`排队`），右侧是 `◐ 等级名` + 30dp 发送键。
+    `@`（提及文件）、`!`（跑命令）、`!!`（跑命令 · 不进上下文）、`清空`（清草稿）<b>四项收进 ⋮ 菜单</b>。
+    这样一来那一行<b>结构上就装得下</b>了 —— 不需要任何按宽度退让的阶梯。<br>
+    测量基准：360dp 屏、键位行可用 <b>310dp</b>；等宽 12sp 7.20dp/字符、中文 14sp 14.0dp/12sp 12.0dp。
+  </p>
+
+  <h2>1 · 闭合态那一行（这就是它现在的全部内容）</h2>
+  <div class="screen">
+    <div class="composer">
+      <div class="input">输入消息，/ 选命令，@ 提及文件…</div>
+      <div class="keyrow">
+        <span class="kchip">/</span>
+        <span class="kchip icon"><svg width="16" height="16" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M12.6 7.4l-4.6 4.6a2.6 2.6 0 01-3.7-3.7l5.2-5.2a1.7 1.7 0 012.4 2.4l-5.2 5.2a.9.9 0 01-1.2-1.2l4.6-4.6"/></svg></span>
+        <span class="kchip dot"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="6" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="18" r="2"/></svg></span>
+        <span class="spacer"></span>
+        <span class="think"><span style="color:#81A2BE">◐</span><span>中</span></span>
+        <span style="width:8px"></span>
+        <span class="send">↑</span>
+      </div>
+    </div>
+  </div>
+  <div class="bars"><div class="meter"><i class="fill" style="width:168.6px"></i></div></div>
+  <div class="ruler"><span style="left:0"></span><b style="left:0">0</b><span class="limit" style="left:310px"></span><b style="left:310px;color:var(--error)">310 可见边界</b><b style="left:168.6px;color:var(--success)">168.6</b></div>
+  <p class="cap">空闲态 <b>168.6dp</b>，余 <b>141.4dp</b>。</p>
+
+  <p class="plabel" style="margin-top:14px">流式中（`插话`/`排队` 也在场）—— 最宽的一态</p>
+  <div class="screen">
+    <div class="composer">
+      <div class="input">输入消息，/ 选命令…</div>
+      <div class="keyrow">
+        <span class="kchip">/</span>
+        <span class="kchip icon"><svg width="16" height="16" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M12.6 7.4l-4.6 4.6a2.6 2.6 0 01-3.7-3.7l5.2-5.2a1.7 1.7 0 012.4 2.4l-5.2 5.2a.9.9 0 01-1.2-1.2l4.6-4.6"/></svg></span>
+        <span class="kchip dot"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="6" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="18" r="2"/></svg></span>
+        <span class="kchip">插话</span>
+        <span class="kchip">排队</span>
+        <span class="spacer"></span>
+        <span class="think"><span style="color:#81A2BE">◐</span><span>中</span></span>
+        <span style="width:8px"></span>
+        <span class="send">■</span>
+      </div>
+    </div>
+  </div>
+  <div class="bars"><div class="meter"><i class="fill" style="width:256.6px"></i></div></div>
+  <div class="ruler"><span style="left:0"></span><b style="left:0">0</b><span class="limit" style="left:310px"></span><b style="left:310px;color:var(--error)">310 可见边界</b><b style="left:256.6px;color:var(--success)">256.6</b></div>
+  <p class="cap">最宽态 <b>256.6dp</b>，余 <b>53.4dp</b>（等级名两字时 268.6dp，仍余 41.4）—— <b>四种状态全部放得下</b>。</p>
+
+  <table>
+    <thead><tr><th>键位行</th><th>空闲 · 空输入</th><th>空闲 · 有草稿</th><th>流式中 · 空输入</th><th>流式中 · 有草稿</th></tr></thead>
+    <tbody>
+      <tr><td>收进菜单<b>之前</b>（`@ ! !! 清空` 都在行里）</td><td class="mono">233.0 ✓ 余 77</td><td class="mono warn">277.0 ✓ 余 33</td><td class="mono bad">321.0 超 11</td><td class="mono bad">365.0 超 55</td></tr>
+      <tr><td>收进菜单<b>之后</b>（本方案）</td><td class="mono ok">168.6 ✓ 余 141</td><td class="mono ok">168.6 ✓ 余 141</td><td class="mono ok">256.6 ✓ 余 53</td><td class="mono ok">256.6 ✓ 余 53</td></tr>
+    </tbody>
+  </table>
+  <p class="cap">
+    这张表就是「不再需要退让阶梯」的依据：旧行在流式两态本来就溢出 11 / 55dp（发送键会被挤出可见区），
+    四项进菜单后<b>一态不超</b>，而且「有草稿」不再让行变宽（`清空` 已经不在行里）。<b>R1–R5 那套阶梯整条作废。</b>
+  </p>
+
+  <hr>
+  <h2>2 · ⋮ 按钮本身：三个候选</h2>
+  <div class="card rec">
+    <h3 style="margin-top:0">V1（推荐）· 与 `/` 同族：24×24 芯片 + 三点图标</h3>
+    <div class="keyrow" style="margin-left:0">
+      <span class="kchip">/</span>
+      <span class="kchip icon"><svg width="16" height="16" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M12.6 7.4l-4.6 4.6a2.6 2.6 0 01-3.7-3.7l5.2-5.2a1.7 1.7 0 012.4 2.4l-5.2 5.2a.9.9 0 01-1.2-1.2l4.6-4.6"/></svg></span>
+      <span class="kchip dot" style="outline:1px dashed rgba(128,128,128,.6);outline-offset:4px"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="6" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="18" r="2"/></svg></span>
+      <span style="color:var(--dim);font-size:12px">← 虚线 = 32×32 触控区（视觉仍是 24×24）</span>
+    </div>
+    <ul>
+      <li><b>尺寸 / 形状</b>：24×24、圆角 6、底色 <span class="mono">surf-highest #303036</span> —— 与 `/`、附件、`插话`、`排队` 完全同族；<b>不新造一种按钮</b>。</li>
+      <li><b>图标</b>：<b>自绘三点</b>而不是 M3 的 <span class="mono">Icons.Filled.MoreVert</span>：视口 24、三个实心圆 <span class="mono">r=2</span>、圆心 y = 6 / 12 / 18、颜色 <span class="mono">currentColor</span>（<span class="mono">--text</span>），渲染 16dp。理由是顶栏那个 ⋮ 用的是 M3 图标（视觉 17–18dp、笔画更细），而这一枚要和 24dp 的芯片同高——自绘能精确控三点的直径与间距，且与 v2 的单线图标族（18 视口、stroke 1.5）不冲突（实心点不是描边图形）。</li>
+      <li><b>间距</b>：与其它芯片一样，<b>尾距 6dp</b>；不单独加宽。左右各 6dp 的节奏感是这一行的语法。</li>
+      <li><b>触控</b>：视觉 24×24，可点区域 <b>32×32</b>（向外 4dp，行高 30 之内，上下各让 1dp）。与上下文圆环那枚的做法一致 —— 24dp 的视觉 + 32dp 的触控是这一行能给的极限（48dp 会把行高抬到 48，与「别占显示区域」冲突）。</li>
+      <li><b>按下态</b>：整块底色 <span class="mono">surf-high</span>（比常态暗一阶的表面阶），不用 M3 默认的 primary 涟漪（那会出现 accent 光晕，而 v2 的 accent 只给主操作）。</li>
+    </ul>
+  </div>
+  <div class="card">
+    <h3 style="margin-top:0">V2 · 独立圆形描边</h3>
+    <div class="keyrow" style="margin-left:0">
+      <span class="kchip circ dot"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="6" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="18" r="2"/></svg></span>
+      <span style="color:var(--dim);font-size:12px">24dp 圆 + 1px borderMuted</span>
+    </div>
+    <p class="cap">问题：这一行右侧已经有两个圆（上下文环、发送键），再来一个圆就成「三个圆」；而且它和左边的方角芯片不是一族。<b>不采用。</b></p>
+  </div>
+  <div class="card">
+    <h3 style="margin-top:0">V3 · 无底色纯图标</h3>
+    <div class="keyrow" style="margin-left:0">
+      <span class="kchip bare dot"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="6" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="18" r="2"/></svg></span>
+      <span style="color:var(--dim);font-size:12px">只有三点，没有承载面</span>
+    </div>
+    <p class="cap">最轻，但它看起来不像键位行的一员（旁边每个键都有底），按下态也没有承载面。<b>不采用。</b></p>
+  </div>
+
+  <hr>
+  <h2>3 · 菜单容器：M3 默认 vs v2 自绘</h2>
+  <p>现在顶栏那个 ⋮ 用的是 Material 的 <span class="kbd">DropdownMenu</span> 默认容器（<span class="kbd">ChatScreen.kt:982</span> 的 <span class="mono">OverflowItem</span> 没有覆盖任何颜色/形状）。下面是同一批内容在两种容器里的样子：</p>
+  <div class="grid2">
+    <div>
+      <p class="plabel">M3 默认（现状）</p>
+      <div class="m3menu">
+        <div class="m3item"><span class="mono" style="width:20px;color:var(--muted)">@</span><span class="mlabel">提及文件</span><span class="mhint" style="margin-left:auto">插入文件路径</span></div>
+        <div class="m3item"><span class="mono" style="width:20px;color:var(--muted)">!</span><span class="mlabel">跑命令</span><span class="mhint" style="margin-left:auto">进上下文</span></div>
+        <div class="m3item"><span class="mono" style="width:20px;color:var(--muted)">!!</span><span class="mlabel">跑命令</span><span class="mhint" style="margin-left:auto">不进上下文</span></div>
+        <div class="m3item"><span class="mono" style="width:20px;color:var(--muted)"></span><span class="mlabel">清空</span></div>
+      </div>
+      <p class="cap">容器 <span class="mono">surfaceContainer</span>（≈ #232329）、圆角 <b>4dp</b>、M3 自带 <b>2dp 阴影</b>、项高 <b>48dp</b>、无边框 ⇒ 四项 <b>192dp</b> 高。</p>
+    </div>
+    <div>
+      <p class="plabel">v2 自绘（推荐）</p>
+      <div class="menu">
+        <div class="mitem"><span class="msym">@</span><span class="mlabel">提及文件</span><span class="mhint">插入文件路径</span></div>
+        <div class="mitem"><span class="msym bash">!</span><span class="mlabel">跑命令</span><span class="mhint">进上下文</span></div>
+        <div class="mitem"><span class="msym bash">!!</span><span class="mlabel">跑命令</span><span class="mhint">不进上下文</span></div>
+        <div class="mdiv"></div>
+        <div class="mitem"><span class="msym"></span><span class="mlabel">清空</span></div>
+      </div>
+      <p class="cap">容器 <span class="mono">surf-high #29292F</span> + 1px <span class="mono">borderMuted</span> + 圆角 <b>10dp</b> + <b>零阴影</b>、项高 <b>40dp</b> ⇒ 四项 + 分隔 + 上下各 4dp = <b>169dp</b>。</p>
+    </div>
+  </div>
+  <table>
+    <thead><tr><th>维度</th><th>M3 默认</th><th>v2 自绘</th></tr></thead>
+    <tbody>
+      <tr><td>容器色</td><td class="mono">surfaceContainer #232329</td><td class="mono">surf-high #29292F</td></tr>
+      <tr><td>描边</td><td>无</td><td>1px <span class="mono">borderMuted #505050</span></td></tr>
+      <tr><td>圆角</td><td class="mono">4dp（M3 extraSmall）</td><td class="mono">10dp（v2 的内容卡圆角）</td></tr>
+      <tr><td>阴影</td><td class="bad">2dp（+ tonal elevation）</td><td class="ok">零</td></tr>
+      <tr><td>项高 / 内边距</td><td class="mono">48dp / 12dp</td><td class="mono">40dp / 12dp + 24dp 符号列</td></tr>
+      <tr><td>分隔</td><td>无（要自己加）</td><td>1px <span class="mono">borderMuted 55%</span></td></tr>
+      <tr><td>四项总高</td><td class="mono">192dp</td><td class="mono">169dp</td></tr>
+      <tr><td>与全 App 的一致性</td><td class="bad">与 sheet / 对话框（PiDialog）的语言不一致</td><td class="ok">与 PiDialog、面板卡同一套（1px 线 + 表面阶 + 圆角 10）</td></tr>
+    </tbody>
+  </table>
+  <p class="cap"><b>结论：换成 v2 自绘，两个 ⋮ 一起换</b>（顶栏那个与输入区这个必须长得一样）。三条依据：① v2 明令层级不用阴影，M3 默认带 2dp 阴影；② 4dp 圆角与全 App 的 10/14 圆角不是一套；③ 两个 ⋮ 是同一个动作，风格分裂会被一眼看出。</p>
+
+  <h3>自绘菜单的完整规格（照这个做，顶栏那个也照这个改）</h3>
+  <table>
+    <thead><tr><th>项</th><th>取值</th></tr></thead>
+    <tbody>
+      <tr><td>容器</td><td>宽 <b>240dp</b>（内容最小需求 194dp）；内边距 垂直 <b>4dp</b> / 水平 <b>0</b>；圆角 <b>10dp</b>；底色 <span class="mono">surf-high</span>；描边 1px <span class="mono">borderMuted</span>；<b>无阴影</b></td></tr>
+      <tr><td>项高 / 布局</td><td><b>40dp</b>；水平内边距 <b>12dp</b>；<span class="mono">[符号列 24dp]</span> + 10dp 间隔 + 标签 + 弹性空隙 + 说明（右对齐）</td></tr>
+      <tr><td>符号列</td><td>等宽 <b>13sp</b> 居中，宽 <b>24dp</b>；<span class="mono">@</span> 用 <span class="mono">--text</span>，<span class="mono">!</span> 与 <span class="mono">!!</span> 用 <span class="mono">--bash #B5BD68</span>（pi 自己的 shell 模式色）；<span class="mono">清空</span> 无符号、列留空以保持对齐</td></tr>
+      <tr><td>标签</td><td>无衬线 <b>14sp</b>，<span class="mono">--text</span></td></tr>
+      <tr><td>说明</td><td>无衬线 <b>12sp</b>，<span class="mono">--muted</span>，右对齐（沿用 v2「标题 + 右对齐属性」的行语法）</td></tr>
+      <tr><td>分隔</td><td>1px <span class="mono">borderMuted</span> @55%，上下各 4dp，只出现在「清空」之前</td></tr>
+      <tr><td>按下态</td><td>整行底色 <span class="mono">surf-highest</span>；不用 M3 的 primary 涟漪</td></tr>
+      <tr><td>出现 / 消失</td><td>无动画（v2 禁装饰动效）；点外部或选中即关</td></tr>
+      <tr><td>承载</td><td><b>必须用 Popup</b>（<span class="kbd">DropdownMenu</span> 本身就是 Popup）—— 不能用 Box 叠在输入框里：输入框有 14dp 圆角与裁剪，菜单会被切掉</td></tr>
+    </tbody>
+  </table>
+
+  <hr>
+  <h2>4 · 菜单项：四项怎么排</h2>
+  <div class="menu" style="margin-left:0">
+    <div class="mitem"><span class="msym">@</span><span class="mlabel">提及文件</span><span class="mhint">插入文件路径</span></div>
+    <div class="mitem"><span class="msym bash">!</span><span class="mlabel">跑命令</span><span class="mhint">进上下文</span></div>
+    <div class="mitem"><span class="msym bash">!!</span><span class="mlabel">跑命令</span><span class="mhint">不进上下文</span></div>
+    <div class="mdiv"></div>
+    <div class="mitem"><span class="msym"></span><span class="mlabel">清空</span></div>
+  </div>
+  <ul>
+    <li><b>顺序</b>：`@` 在最前（最常用），紧跟着 `!` 与 `!!` <b>相邻</b> —— 这一对的差别只在说明列（进上下文 / 不进上下文），挨着放才能一眼比出来；`清空` 是另一种动作（丢弃，不是插入），用 1px 分隔线隔开。</li>
+    <li><b>为什么不写成两行</b>：说明只有 4–6 个汉字，右对齐在同一行就够；两行会把菜单从 169dp 撑到 200dp 以上，也让「四个动作」读起来像四条说明。</li>
+    <li><b>`!` 与 `!!` 的区分</b>：两行标签都叫「跑命令」，差别全部落在右侧说明上，用词直接抄 pi 的语义：<span class="mono">! </span>「进上下文」、<span class="mono">!! </span>「不进上下文」。<b>不允许</b>只写符号或只写「同前」。</li>
+    <li><b>选中后的行为不变</b>：`@` 把 `@` 插进草稿并唤出提及候选；`!` / `!!` 分别进 shell 面板（后者不带进上下文）；`清空` 清掉草稿。菜单只是入口，处理函数一个都不动。</li>
+    <li><b>内容宽度核算</b>：最宽的一项是「@ 提及文件 … 插入文件路径」= 12 + 24 + 10 + 56 + 8 + 72 + 12 = <b>194dp</b> ✓ 240dp 容器里余 46dp；「!! 跑命令 … 不进上下文」= 12+24+10+42+60+12 = 160dp ✓。</li>
+  </ul>
+
+  <hr>
+  <h2>5 · 菜单从哪冒出来、会不会被挡住</h2>
+  <div class="screen" style="height:230px;position:relative">
+    <div class="menu" style="position:absolute;left:74px;bottom:74px">
+      <div class="mitem"><span class="msym">@</span><span class="mlabel">提及文件</span><span class="mhint">插入文件路径</span></div>
+      <div class="mitem"><span class="msym bash">!</span><span class="mlabel">跑命令</span><span class="mhint">进上下文</span></div>
+      <div class="mitem"><span class="msym bash">!!</span><span class="mlabel">跑命令</span><span class="mhint">不进上下文</span></div>
+      <div class="mdiv"></div>
+      <div class="mitem"><span class="msym"></span><span class="mlabel">清空</span></div>
+    </div>
+    <div class="composer" style="position:absolute;left:0;right:0;bottom:10px;margin:0 14px">
+      <div class="input">输入消息，/ 选命令…</div>
+      <div class="keyrow">
+        <span class="kchip">/</span>
+        <span class="kchip icon"><svg width="16" height="16" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M12.6 7.4l-4.6 4.6a2.6 2.6 0 01-3.7-3.7l5.2-5.2a1.7 1.7 0 012.4 2.4l-5.2 5.2a.9.9 0 01-1.2-1.2l4.6-4.6"/></svg></span>
+        <span class="kchip dot" style="background:var(--surf-high)"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="6" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="18" r="2"/></svg></span>
+        <span class="spacer"></span>
+        <span class="think"><span style="color:#81A2BE">◐</span><span>中</span></span>
+        <span style="width:8px"></span>
+        <span class="send">↑</span>
+      </div>
+    </div>
+  </div>
+  <ul>
+    <li><b>向上展开</b>：锚点是 ⋮ 的<b>左边缘</b>，底边贴在按钮上方 <b>8dp</b>。理由：输入框在最底部，下方的空间属于键盘/底栏，向下展开一定被挡。</li>
+    <li><b>不需要翻转</b>：菜单总高 169dp，上方是转录区（通常几百 dp），在任何竖屏高度下都放得下；横屏极端情况仍按「向上、必要时上移到不被 AppBar 遮住」处理，不做向下翻转（翻译成实现：<span class="mono">Popup</span> 里按可用高度钳制 y 即可）。</li>
+    <li><b>键盘</b>：Compose 的 <span class="kbd">imePadding()</span> 已经把整个 scaffold 顶到键盘上方，输入框始终在键盘之上，所以向上展开的菜单也一定在键盘之上 —— 这条不需要额外处理，但要写进验收：<b>键盘弹出 + 菜单展开时，四项都要完整可见</b>。</li>
+    <li><b>底栏</b>：菜单向上，不进入底栏区域；底栏在输入框之下，两者不重叠。</li>
+    <li><b>右边缘</b>：⋮ 在左边，240dp 菜单不会越界；若将来按钮靠右，规则是「右对齐锚点」，与屏幕内边界保持 14dp。</li>
+    <li><b>不用 scrim</b>：v2 的 0.32 scrim 只给 sheet / dialog；菜单是轻量浮层，靠 1px 边框与表面阶与背景分开，点外部即关。</li>
+  </ul>
+
+  <hr>
+  <h2>6 · 无障碍</h2>
+  <table>
+    <thead><tr><th>元素</th><th>标签（talkback 读出来的）</th><th>要求</th></tr></thead>
+    <tbody>
+      <tr><td>⋮ 按钮（输入区）</td><td><span class="mono">更多输入方式</span></td><td>不能只给图标不给名字；与顶栏那个 ⋮ 的名字必须不同（顶栏保持 <span class="mono">更多</span>），否则读屏时两个「更多」分不清</td></tr>
+      <tr><td><span class="mono">@</span> 提及文件</td><td><span class="mono">提及文件，插入文件路径</span></td><td>文字标签 + 说明一起读；不允许只读符号</td></tr>
+      <tr><td><span class="mono">!</span> 跑命令</td><td><span class="mono">跑命令，进上下文</span></td><td>同上</td></tr>
+      <tr><td><span class="mono">!!</span> 跑命令</td><td><span class="mono">跑命令，不进上下文</span></td><td>这一对的可访问名必须<b>不一样</b>（默认从文字取，正好满足）</td></tr>
+      <tr><td>清空</td><td><span class="mono">清空草稿</span></td><td>标签写全，避免只读「清空」不知道清什么</td></tr>
+    </tbody>
+  </table>
+  <p class="cap">规则一句话：<b>能看见符号的地方，旁边一定有一句中文</b>；能读出来的名字里，一定包含那句中文（说明列也带上）。</p>
+
+  <hr>
+  <h2>7 · 推荐</h2>
+  <div class="card rec">
+    <p style="margin-top:0"><b>V1 的 ⋮（24×24、圆角 6、<span class="mono">surf-highest</span>、自绘三点、触控 32dp、尾距 6dp）＋ v2 自绘菜单（<span class="mono">surf-high</span> + 1px <span class="mono">borderMuted</span> + 圆角 10 + 零阴影 + 项高 40 + 右对齐说明）＋ 四项顺序 <span class="mono">@ / ! / !! / ─── / 清空</span> ＋ 向上展开、锚点在按钮上方 8dp、必须走 Popup。</b></p>
+    <p class="why"><b>一句话理由</b>：这一行有四件不常按的动作要安置，菜单是唯一能让它在 310dp 里<b>永久</b>装得下的办法（最宽态从 365.0dp 的超宽降到 256.6dp），而 ⋮ 与菜单只要完全沿用 v2 既有语言（同族芯片 + 1px 线 + 表面阶 + 圆角 10），既不用新造按钮，也不用再写一条退让阶梯。</p>
+  </div>
+
+  <div class="legend">
+    <span><i style="background:#D4D4D4"></i>文字 / 符号 text</span>
+    <span><i style="background:#808080"></i>说明 muted</span>
+    <span><i style="background:#B5BD68"></i>! 与 !! 的符号（pi 的 shell 模式色）</span>
+    <span><i style="background:#303036"></i>芯片底 surf-highest</span>
+    <span><i style="background:#29292F"></i>菜单底 surf-high</span>
+    <span><i style="background:#505050"></i>1px 线 / 描边</span>
+  </div>
+
+  <p class="cap">本稿只出方案与预览，没有改任何代码。参考实现位置：键位行在 <span class="kbd">ChatScreen.kt</span> 的 composer（<span class="kbd">KeyChip</span> 的 24 高 / 尾距 6 / 内边距 7），顶栏菜单在 <span class="kbd">ChatScreen.kt:982</span>（现在是 M3 <span class="mono">DropdownMenu</span> 默认容器，按第 3 节换成自绘）。</p>
+</div>
+</body>
+</html>
