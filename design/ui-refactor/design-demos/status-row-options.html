@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>状态行（信息栏）· 完整性与版式方案</title>
+<!--
+================================================================================
+状态行（信息栏）方案稿 · 派生稿，不入库
+================================================================================
+回答两件事：1 完整性（pi 终端 footer 的读数缺哪个、为什么缺）；2 版式（全部读数怎么排才放得下、才直观）。
+宽度基准：360dp 屏 − 左右各 14dp = 332dp 可用。1 CSS px = 1 dp。
+等宽字宽：JetBrains Mono regular，unitsPerEm 1000、advance 600 → 12sp 下 7.20dp/字符；
+  ↑ ↓ 也在字体里（U+2191 / U+2193），同样 600，所以 pi 的记号不额外占宽。
+  （直接读 app/src/main/res/font/jetbrains_mono_regular.ttf 的 hmtx/cmap 度量，不是估的。）
+中文标签：系统无衬线 12sp，一字 12.0dp；中文与数字之间的空格按 3.2dp 算。
+组内空档：4dp（PiSpacing.small）/ 2dp（PiSpacing.tiny）。
+颜色只取 pi 令牌：page #18181E · card #1E1E24 · surf #232329 · surf-highest #303036 · borderMuted #505050 ·
+text #D4D4D4 · muted #808080 · dim #666666 · accent #8ABEB7 · warning #FFFF00 · error #CC6666。
+================================================================================
+-->
+<style>
+  :root{
+    --accent:#8ABEB7; --border-muted:#505050; --success:#B5BD68; --error:#CC6666; --warning:#FFFF00;
+    --text:#D4D4D4; --muted:#808080; --dim:#666666; --selected-bg:#3A3A4A;
+    --page:#18181E; --card:#1E1E24; --surf:#232329; --surf-high:#29292F; --surf-highest:#303036; --surf-dim:#1C1C22;
+    --mono:"JetBrains Mono",ui-monospace,"Roboto Mono",Menlo,Consolas,monospace;
+    --sans:"Geist","Inter","Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;
+  }
+  html,body{margin:0;padding:0;background:#0e0e12;color:var(--text);
+    font-family:var(--sans);font-synthesis:none;line-break:strict;overflow-wrap:anywhere;
+    -webkit-font-smoothing:antialiased}
+  *{box-sizing:border-box}
+  .wrap{max-width:760px;margin:0 auto;padding:22px 16px 64px}
+  h1{font-size:19px;font-weight:600;line-height:1.35;margin:0 0 6px;letter-spacing:-0.01em}
+  h2{font-size:15px;font-weight:600;margin:0 0 4px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  h3{font-size:13px;font-weight:600;margin:18px 0 6px;color:var(--text)}
+  p{font-size:13px;line-height:1.7;color:var(--muted);margin:6px 0}
+  p b,li b{color:var(--text);font-weight:600}
+  .lead{font-size:13px;line-height:1.75;color:var(--muted);margin:0 0 18px}
+  code,.mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+  .kbd{font-family:var(--mono);font-size:12px;color:var(--text);background:var(--surf);border:1px solid var(--border-muted);
+    border-radius:4px;padding:0 4px}
+  .card{background:var(--card);border:1px solid var(--border-muted);border-radius:12px;padding:14px;margin:14px 0}
+  .tag{font-size:11px;letter-spacing:.06em;border:1px solid var(--border-muted);border-radius:999px;
+    padding:1px 8px;color:var(--muted);font-weight:500}
+  .tag.rec{color:var(--page);background:var(--accent);border-color:var(--accent)}
+  table{width:100%;border-collapse:collapse;font-size:12px;margin:8px 0 2px}
+  th,td{border:1px solid var(--border-muted);padding:6px 8px;text-align:left;vertical-align:top}
+  th{color:var(--muted);font-weight:500}
+  td.mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+  .ok{color:var(--success)}.no{color:var(--error)}.warn{color:var(--warning)}
+
+  /* ---- 360dp 手机条：内宽 332dp ---- */
+  .screen{width:360px;max-width:100%;background:var(--page);border:1px solid var(--border-muted);border-radius:10px;
+    padding:2px 14px;margin:10px 0 0}
+  .row{display:flex;align-items:center;gap:4px;height:22px;white-space:nowrap;overflow:hidden}
+  .row.tight{gap:2px}
+  .lbl{font-family:var(--sans);font-size:12px;line-height:18px;color:var(--muted);flex:none}
+  .val{font-family:var(--mono);font-size:12px;line-height:18px;color:var(--text);font-variant-numeric:tabular-nums;flex:none}
+  .seg{display:flex;gap:1px;flex:none}
+  .seg i{display:block;width:3px;height:8px;border-radius:1px;background:var(--border-muted)}
+  .seg i.on{background:var(--accent)}
+  .spread{flex:1;min-width:0}
+  .bars{display:flex;align-items:center;gap:4px;margin-top:8px;width:360px;max-width:100%}
+  .meter{position:relative;height:10px;background:var(--surf);border-radius:3px;overflow:hidden;flex:1}
+  .meter i{position:absolute;left:0;top:0;bottom:0;background:var(--surf-highest)}
+  .meter i.over{background:rgba(204,102,102,.55)}
+  .ruler{position:relative;height:16px;margin-top:8px;border-top:1px solid var(--border-muted);width:360px;max-width:100%}
+  .ruler span{position:absolute;top:0;height:5px;width:1px;background:var(--border-muted)}
+  .ruler b{position:absolute;top:5px;font-size:10px;font-weight:400;color:var(--dim);transform:translateX(-50%)}
+  .limit{position:absolute;top:-4px;bottom:-2px;width:1px;background:var(--error)}
+  .note{font-size:12px;line-height:1.7;color:var(--muted)}
+  .legend{display:flex;flex-wrap:wrap;gap:10px 16px;font-size:12px;color:var(--muted)}
+  .legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:-1px}
+  ul{margin:6px 0;padding-left:18px}
+  li{font-size:13px;line-height:1.7;color:var(--muted);margin:3px 0}
+  hr{border:0;border-top:1px solid var(--border-muted);margin:26px 0}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>状态行（信息栏）· 完整性与版式</h1>
+  <p class="lead">
+    基准：<b>360dp 屏 − 左右各 14dp = 332dp 可用</b>。1 CSS px = 1 dp，下面每条都按真实宽度画。<br>
+    字宽事实：JetBrains Mono 12sp 每字符 <b>7.20dp</b>（字体度量 unitsPerEm 1000 / advance 600；<span class="kbd">↑</span> <span class="kbd">↓</span> 也在字体里、同为 600）。中文标签 12sp 每字 12.0dp。组内空档 4dp。
+  </p>
+
+  <h2>0 · 先看现在这一行</h2>
+  <p>你现在看到的这一行，<b>在 360dp 的屏上放不下</b>：它要 415.8dp，可用只有 332dp。</p>
+  <div class="screen">
+    <div class="row">
+      <span class="lbl">上下文</span><span class="val">52.0%</span>
+      <span class="seg"><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i></i><i></i><i></i><i></i></span>
+      <span class="val">104k / 200k (auto)</span>
+      <span class="spread"></span>
+      <span class="lbl">输出</span><span class="val">8.2k</span>
+      <span class="lbl">缓存读</span><span class="val">74k</span>
+      <span class="val">$0.420</span>
+    </div>
+  </div>
+  <div class="bars">
+    <div class="meter"><i style="width:332px"></i><i class="over" style="left:332px;width:28px"></i></div>
+  </div>
+  <div class="ruler">
+    <span style="left:0"></span><b style="left:0">0</b>
+    <span style="left:110px"></span><b style="left:110px">110</b>
+    <span style="left:221px"></span><b style="left:221px">221</b>
+    <span class="limit" style="left:332px"></span><b style="left:332px;color:var(--error)">332 上限</b>
+  </div>
+  <p class="note" style="margin-top:10px;color:var(--error)">
+    红条一直伸到屏幕右缘，但真实超出是 <b>83.8dp</b> —— 也就是到屏幕边还有 55.8dp 画不下。
+  </p>
+  <p class="note" style="margin-top:12px">
+    灰色 = 332dp 之内，红条 = 超出的 <b>83.8dp</b>。超出的部分不是被压小，而是被裁掉：
+    「上下文 + 进度条 + 窗口 + 费用」这几段是不可压缩的，占 291.0dp，剩下给读数区的只有 <b>41.0dp</b>，而「输出 + 缓存读」要 120.8dp →
+    <b>裁掉 79.8dp</b>；412dp 的屏上读数区能拿到 93.0dp，仍然裁掉 27.8dp。这就是「显示不全」的原因。
+  </p>
+  <p class="note">
+    另外，<b>「有的低亮度小字、有的是高亮度大字」是错觉</b>：这一行每个字都是 12sp（行高 18sp），没有一个大字。
+    差别来自两处 —— 前一段用<b>无衬线 + muted 灰</b>，后两段用<b>等宽 + text 亮</b>。同一行两种字面、两种亮度，读起来像两个层级。
+  </p>
+
+  <hr>
+  <h2>1 · 完整性缺口表</h2>
+  <p>对照 pi 终端 footer（<span class="kbd">packages/coding-agent/src/modes/interactive/components/footer.ts:100-161</span>），一个都不能少的清单：</p>
+  <table>
+    <thead><tr><th>读数</th><th>pi 的字面</th><th>pi 行号</th><th>App 现在</th><th>缺的原因</th></tr></thead>
+    <tbody>
+      <tr><td>上下文百分比</td><td class="mono">52.0%</td><td class="mono">:111 :150-153</td><td class="ok">有</td><td>—</td></tr>
+      <tr><td>上下文窗口 + 自动压缩</td><td class="mono">/200k (auto)</td><td class="mono">:150-153</td><td class="ok">有</td><td>—</td></tr>
+      <tr><td>上下文已用 token</td><td class="mono">（pi 没有）</td><td>—</td><td class="ok">有 104k</td><td>App 自己加的；pi footer 只给百分比</td></tr>
+      <tr><td>输入</td><td class="mono">↑96k</td><td class="mono">:130</td><td class="no">缺</td><td>只是没做：协议里一直有（<span class="kbd">SessionStats.tokens.input</span>）</td></tr>
+      <tr><td>输出</td><td class="mono">↓8.2k</td><td class="mono">:131</td><td class="ok">有 8.2k</td><td>—</td></tr>
+      <tr><td>缓存读</td><td class="mono">R74k</td><td class="mono">:132</td><td class="ok">有 74k</td><td>—</td></tr>
+      <tr><td>缓存写</td><td class="mono">W12k</td><td class="mono">:133</td><td class="no">缺</td><td>只是没做：协议里有（<span class="kbd">tokens.cacheWrite</span>）</td></tr>
+      <tr><td>缓存命中率</td><td class="mono">CH61.4%</td><td class="mono">:134-135</td><td class="no">缺</td><td>协议没有现成字段，但可算 —— 公式见下</td></tr>
+      <tr><td>累计费用</td><td class="mono">$0.420</td><td class="mono">:143</td><td class="ok">有 $0.420</td><td>—（App 已经是 toFixed(3)，与 pi 一致）</td></tr>
+      <tr><td>订阅标记</td><td class="mono"> (sub)</td><td class="mono">:143</td><td class="no">缺</td><td>本应用只走 API Key，没有订阅态可标 → 建议不做</td></tr>
+      <tr><td>实验特性开关</td><td class="mono">• xp</td><td class="mono">:162-163</td><td class="no">缺</td><td>桌面实验开关，App 不涉及 → 建议不做</td></tr>
+    </tbody>
+  </table>
+  <p class="note" style="margin-top:10px">
+    <b>命中率的确切来源：</b><span class="kbd">footer.ts:95-98</span>，在遍历全部会话条目的循环里逐个覆盖：<br>
+    <span class="mono" style="color:var(--text)">const latestPromptTokens = entry.message.usage.input + entry.message.usage.cacheRead + entry.message.usage.cacheWrite;</span><br>
+    <span class="mono" style="color:var(--text)">latestCacheHitRate = latestPromptTokens &gt; 0 ? (entry.message.usage.cacheRead / latestPromptTokens) * 100 : undefined;</span><br>
+    所以它算的是<b>最后一条 assistant 消息</b>的命中率，不是全会话平均。显示条件（<span class="kbd">:134-135</span>）：仅当 <span class="kbd">cacheRead&gt;0 或 cacheWrite&gt;0</span> 且该值有定义；字面是 <span class="kbd">CH{toFixed(1)}%</span>。<br>
+    App 侧取数等价：<span class="kbd">transcript.lastUsage</span>（来自 <span class="kbd">message_update.usage</span> / <span class="kbd">message_end.message.usage</span>）里 input / cacheRead / cacheWrite 三件都有 →
+    <b>命中率不缺数据，只是没做</b>。
+  </p>
+
+  <hr>
+  <h2>2 · 三个版式方案</h2>
+
+  <div class="card">
+    <h2>方案 A · 一行 · pi 记号 <span class="tag">307.2dp · 余 24.8</span></h2>
+    <div class="screen">
+      <div class="row">
+        <span class="val">52.0%/200k</span><span style="width:3.2px"></span>
+        <span class="val">↑96k</span><span style="width:3.2px"></span>
+        <span class="val">↓8.2k</span><span style="width:3.2px"></span>
+        <span class="val">R74k</span><span style="width:3.2px"></span>
+        <span class="val">W12k</span><span style="width:3.2px"></span>
+        <span class="val">CH61.4%</span><span style="width:3.2px"></span>
+        <span class="val">$0.420</span>
+      </div>
+    </div>
+    <div class="bars"><div class="meter"><i style="width:307.2px"></i></div></div>
+    <div class="ruler"><span style="left:0"></span><b style="left:0">0</b><span class="limit" style="left:332px"></span><b style="left:332px;color:var(--error)">332</b></div>
+    <ul style="margin-top:14px">
+      <li><b>确切字面</b>：<span class="mono">52.0%/200k ↑96k ↓8.2k R74k W12k CH61.4% $0.420</span>（46 字符 × 7.20 = 307.2dp）</li>
+      <li><b>字号 / 字面 / 颜色</b>：整行 JetBrains Mono 12sp / 行高 18sp。<b>数值</b> text；<b>记号</b>（<span class="mono">↑ ↓ R W CH</span>）muted（pi 在终端里整行都是 dim）；
+        <b>上下文百分比</b>是唯一带语义色的数值：≤70 text、&gt;70 warning、&gt;90 error（pi 的规则，<span class="kbd">footer.ts:154-160</span>）。</li>
+      <li><b>丢掉的</b>：<span class="mono">(auto)</span>（要 50.4dp，加回去就是 357.6dp，超 25.6dp）、App 自己加的「已用 104k」、八段进度条、以及
+        「输入 / 输出 / 缓存读 / 缓存写 / 命中」五个中文词（全部换成 pi 记号）。</li>
+      <li><b>为什么不如 B</b>：它跟桌面端 pi 1:1，但手机用户一眼看不懂 <span class="mono">R / W / CH</span>（这正是「不直观」的来源），而且仍然放不下 <span class="mono">(auto)</span> 与进度条。</li>
+    </ul>
+  </div>
+
+  <div class="card" style="border-color:var(--accent)">
+    <h2>方案 B · 两行 · 中文分组 <span class="tag rec">推荐</span> <span class="tag">第一行 258.2dp · 第二行 297.6dp</span></h2>
+    <div class="screen">
+      <div class="row">
+        <span class="lbl">上下文</span><span class="val">52.0%</span>
+        <span class="seg"><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i></i><i></i><i></i><i></i></span>
+        <span class="val">104k/200k</span><span class="lbl">自动</span>
+        <span class="spread"></span>
+        <span class="val">$0.420</span>
+      </div>
+      <div class="row tight">
+        <span class="lbl">输入</span><span class="val">96k</span>
+        <span class="lbl">输出</span><span class="val">8.2k</span>
+        <span class="lbl">缓存读</span><span class="val">74k</span>
+        <span class="lbl">缓存写</span><span class="val">12k</span>
+        <span class="lbl">命中</span><span class="val">61.4%</span>
+      </div>
+    </div>
+    <div class="bars"><div class="meter"><i style="width:258.2px"></i></div></div>
+    <div class="ruler"><span style="left:0"></span><b style="left:0">0</b><span class="limit" style="left:332px"></span><b style="left:332px;color:var(--error)">332</b></div>
+    <div class="bars"><div class="meter"><i style="width:297.6px"></i></div></div>
+    <div class="ruler"><span style="left:0"></span><b style="left:0">0</b><span class="limit" style="left:332px"></span><b style="left:332px;color:var(--error)">332</b></div>
+    <ul style="margin-top:14px">
+      <li><b>确切字面</b>：第一行 <span class="mono">上下文 52.0% ▮▮▮▮▯▯▯▯ 104k/200k 自动</span> —— 右端贴 <span class="mono">$0.420</span>；
+        第二行 <span class="mono">输入 96k　输出 8.2k　缓存读 74k　缓存写 12k　命中 61.4%</span></li>
+      <li><b>字号 / 字面 / 颜色</b>：<b>标签</b> = 系统无衬线 12sp，muted；<b>数值</b> = JetBrains Mono 12sp + tabular-nums，text；
+        <b>上下文百分比</b>是唯一允许变色的数值（&gt;70 warning / &gt;90 error）；<b>进度段</b> = 8 段 3×8dp，已填充 accent、未填充 borderMuted；
+        <b>「自动」</b> = muted 12sp（pi 只在自动压缩开启时才显示 <span class="mono"> (auto)</span>，<span class="kbd">:149</span>）。</li>
+      <li><b>丢掉的</b>：<b>没有丢任何读数</b> —— pi footer 的 8 个字段全在，另外保住了 App 的「已用 104k」和八段进度条。
+        真正付出的是高度：状态行 32dp → 44dp（两行 18sp + 上下各 4dp）。费用从第二行挪到第一行右端，因为第二行加了费用会到 344.8dp（超 12.8dp）。</li>
+      <li><b>为什么比 A / C 好</b>：唯一同时做到「一个都不能少」+「中文看得懂」+「每种角色只有一种字面」的排法；两行各留 34 / 34dp 余量，
+        最坏情况（各值 4 字符、命中率 100.0%）第二行 326.4dp 也仍然在 332dp 之内。</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h2>方案 C · 一行 · 中文标签 <span class="tag">286.2dp（只装得下 8 项里的 3 项）</span></h2>
+    <div class="screen">
+      <div class="row">
+        <span class="lbl">上下文</span><span class="val">52.0%</span>
+        <span class="seg"><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i></i><i></i><i></i><i></i></span>
+        <span class="val">104k/200k</span>
+        <span class="lbl">输出</span><span class="val">8.2k</span>
+        <span class="spread"></span>
+        <span class="val">$0.420</span>
+      </div>
+    </div>
+    <div class="bars"><div class="meter"><i style="width:286.2px"></i></div></div>
+    <div class="ruler"><span style="left:0"></span><b style="left:0">0</b><span class="limit" style="left:332px"></span><b style="left:332px;color:var(--error)">332</b></div>
+    <ul style="margin-top:14px">
+      <li><b>确切字面</b>：<span class="mono">上下文 52.0% ▮▮▮▮▯▯▯▯ 104k/200k　输出 8.2k　$0.420</span></li>
+      <li><b>字号 / 颜色</b>：同 B 的两种角色（标签 muted 无衬线、数值 text 等宽）。</li>
+      <li><b>丢掉的</b>：输入、缓存读、缓存写、命中率 —— 全丢。加回「输入」一项就是 339.0dp（超 7.0dp），四项全加是 538.2dp。</li>
+      <li><b>为什么不如 B</b>：它和今天能看到的基本一样，等于没解决你的问题。列在这里是为了说明：<b>12sp 下限 + 中文标签，一行最多只能放 3 项读数</b>。</li>
+    </ul>
+  </div>
+
+  <h3>单行到底能装多少（实测表）</h3>
+  <table>
+    <thead><tr><th>排法（都在 360dp / 332dp 基准下）</th><th>宽度</th><th>结论</th></tr></thead>
+    <tbody>
+      <tr><td>现状：上下文+进度+窗口(含 auto)+输出+缓存读+费用</td><td class="mono">415.8dp</td><td class="no">超 83.8dp，裁掉读数区 79.8dp</td></tr>
+      <tr><td>pi 原样（↑↓RWCH + 费用 + %/窗口 + (auto) + 已用）</td><td class="mono">385.6dp</td><td class="no">超 53.6dp</td></tr>
+      <tr><td>pi 全字段，去掉「已用」</td><td class="mono">357.6dp</td><td class="no">超 25.6dp</td></tr>
+      <tr><td>pi 全字段，去掉「已用」与「(auto)」</td><td class="mono">307.2dp</td><td class="ok">= 方案 A</td></tr>
+      <tr><td>中文标签一行：上下文+进度+窗口+输出+费用</td><td class="mono">286.2dp</td><td class="warn">= 方案 C</td></tr>
+      <tr><td>中文标签一行，再加「输入」</td><td class="mono">339.0dp</td><td class="no">超 7.0dp</td></tr>
+      <tr><td>中文标签一行，8 项读数全要</td><td class="mono">538.2dp</td><td class="no">超 206.2dp</td></tr>
+      <tr><td>两行 · 中文标签 · 9 项全要</td><td class="mono">258.2 / 297.6dp</td><td class="ok">= 方案 B</td></tr>
+    </tbody>
+  </table>
+
+  <hr>
+  <h2>3 · 统一「字面 / 亮度」的规则（回答「不直观」）</h2>
+  <p>现状是四种角色混在一行：无衬线·灰（上下文）、等宽·亮（输出 / 缓存读 / 费用）、等宽·灰（104k / 200k）。改成两种角色就清楚了：</p>
+  <table>
+    <thead><tr><th>角色</th><th>用在哪</th><th>字面</th><th>颜色</th></tr></thead>
+    <tbody>
+      <tr><td>标签</td><td>上下文 / 输入 / 输出 / 缓存读 / 缓存写 / 命中 / 自动</td><td>系统无衬线 12sp / 行高 18sp</td><td class="mono">muted #808080</td></tr>
+      <tr><td>数值</td><td>所有数字：百分比、token、命中率、费用</td><td>JetBrains Mono 12sp + tabular-nums</td><td class="mono">text #D4D4D4</td></tr>
+      <tr><td>数值·带压力</td><td>只有上下文百分比</td><td>同「数值」</td><td class="mono">&gt;70 warning #FFFF00　&gt;90 error #CC6666</td></tr>
+      <tr><td>图形</td><td>八段上下文进度</td><td>3×8dp 圆角 1dp，段间 1dp</td><td class="mono">accent #8ABEB7 / borderMuted #505050</td></tr>
+    </tbody>
+  </table>
+  <div class="legend" style="margin-top:12px">
+    <span><i style="background:#D4D4D4"></i>数值 text</span>
+    <span><i style="background:#808080"></i>标签 muted</span>
+    <span><i style="background:#8ABEB7"></i>进度 accent</span>
+    <span><i style="background:#FFFF00"></i>&gt;70% warning</span>
+    <span><i style="background:#CC6666"></i>&gt;90% error</span>
+    <span><i style="background:#505050"></i>未填充 / 1px 线</span>
+  </div>
+
+  <hr>
+  <h2>4 · 推荐</h2>
+  <p><b>采用方案 B（两行 · 中文分组）。</b>它是唯一在 12sp 下限里把 pi footer 的 8 个字段全部显示、中文可读、长数字也塞得下的排法；
+    代价是 12dp 高度（状态行 32 → 44dp）。</p>
+  <p><b>如果要求「一个都不能少」：</b>还是方案 B —— 它本来就是按「一个都不能少」设计的，没有字段被牺牲；
+    单行方案（A）无论如何都要丢掉 <span class="mono">(auto)</span> 或「已用 token」中的至少一个，且极端数值下没有余量。</p>
+  <p class="note">
+    落地时的两条细则：① 第二行组内空档用 2dp（tiny），第一行用 4dp（small），这样最坏情况 326.4dp 仍有余量；
+    ② 数值显示沿用 App 已有的 <span class="kbd">piFormatTokens</span>（&lt;1k 原样、&lt;10k 一位小数 k、&lt;1M 整数 k、&lt;10M 一位小数 M、其余整数 M），
+    它与 pi 的 <span class="kbd">formatTokens</span>（<span class="kbd">footer.ts:24-30</span>）逐行一致 —— 所以 96,400 显示 <span class="mono">96k</span>、8,200 显示 <span class="mono">8.2k</span>、200,000 显示 <span class="mono">200k</span>。
+  </p>
+</div>
+</body>
+</html>

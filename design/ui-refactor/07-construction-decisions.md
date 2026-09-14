@@ -109,4 +109,64 @@
 - **真错，已在 D15/D16/D17 修**：状态行 5 项、diff 全链路、`ExpandLabel` 箭头。
 - **旧版才有、当前代码已对**：输入区（composer 已是 v2 的单一 14 圆角框、芯片行在框内、`◐`+等级名、30×30 accent 圆盘、边框取思考等级色/bashMode）、顶栏「选择模型」胶囊（旧版带 ⓘ 图标与填充底）、三个空态的 68dp 圆底。
 - **不是 bug（v2 原样）**：底部本来就是三层（输入框 + 键位行 + 底栏）；「回到最新」浮层压住正文是 v2 的画法（`:1515`）；`回到最新` 后面没有 `· N` 是 `unseenRows == 0` 时的正常形态。
-- **待用户确认**：状态行下面那一行「深色小方块 + accent 的 `6`」，形状符合扩展状态行（`ui/extension/ExtensionChrome.kt:54` 把扩展 `ctx.ui.setStatus()` 的文本逐字渲染成 mono + accent），而 pi 自带示例扩展 `plan-mode` 正好报 ``📋 完成数/总数``——若用户确实装了该扩展则不是 bug。
+- **已查清并答复用户**：状态行下面那一行「深色小方块 + accent 的 `6`」**就是** `ExtensionStatusRow`（`ui/extension/ExtensionChrome.kt:54-87`，把扩展 `ctx.ui.setStatus()` 的文本逐字渲染成 mono + accent）；那个方块是**真彩 emoji**（系统 emoji 字体渲染——emoji 保留自身配色，而同一行的数字被染成 accent；若是缺字 tofu 两者会同色）；随包只有 3 个扩展（`PiPackageModel.kt:113-120`：设备桥 / 权限门 / 代码高亮），`plan-mode` 不在其中，而 pi 自带示例扩展 `plan-mode` 正好报 ``📋 完成数/总数`` ⇒ **是用户自己装的扩展，不是 app 的 bug**。
+
+## D19 · 删掉输入区的「编辑器」芯片（外部编辑器在 Android 上没有可交付物）
+**裁决**：删掉 `编辑器` 芯片及其全部实现，删干净（launcher、handler、参数、提示文案、只讲它的注释）。
+**理由**：pi 的能力是 `app.editor.external`（`keybindings.md:129` ctrl+g → `interactive-mode.ts:4246-4261` → `external-editor.ts:14-52`）：把草稿写进临时文件、**启动命令行编辑器**（`$EDITOR`/nano/vim）、退出码 0 才读回。Android 上没有可启动的命令行，app 只能映射成 `ACTION_EDIT` 交接；而用户机上没有任何应用接它，这个按钮唯一可能的结果是一句「没有应用能编辑文本」。用户裁决：「删了编辑器，删干净。」属于「pi 有、平台交付不了」那一类，不是「pi 没有所以不做」。
+**影响**：`ui/screens/ChatScreen.kt`（`:352-400`、`:1519`、`:2327-2328`、`:2411`、以及 `:2538` 芯片清单注释）。`06 §2` 原话列了六个芯片，注释里必须写明删的是哪个、为什么，别让后来的人当成漏画。
+
+## D20 · 曲别针 = 附件入口；图片走字节通道，其它文件**只插路径、不复制**
+**裁决**：输入区的 `图片` 芯片改成**曲别针**，选择器 mime `*/*`：
+- 选到**图片** → 走既有 `ImageContent` 附件通道（pi 协议里唯一合法的字节通道）；
+- 选到**其它文件** → 把它在**手机上的真实路径**（`/storage/emulated/0/…`）以文本插入输入框，**不复制**、不改写；拿不到真实路径的来源（云盘等 provider）什么都不插，并给一句诚实提示。
+
+**理由（关键事实）**：`runtime/PiRuntime.kt:165-178` 的 `ProotCommand.baseBinds` 是**每次启动都带**的绑定，其中有 `-b <共享存储>:/sdcard` 与 `-b <共享存储>:/storage/emulated/0`——**手机的共享存储在 guest 里同路径可见**，pi 的 agent 用 `read` 就能读到那个路径。用户先选过「复制进工作区」，随后改成「发送文件路径就行，别复制了」，而这个绑定事实说明**他改得对**：复制是多余的，还平白在工作区留下副本。
+**为什么不能送字节**：pi 的对话内容类型只有 `TextContent | ImageContent`（`packages/ai/src/types.ts:351-372`、`:456`），`@file` 只是 CLI 参数（`cli/file-processor.ts:24`），RPC 明确不支持任意文件字节（`main.ts:641`）。所以「发任何东西」在 pi 协议下的正确形态就是：图片给字节、其它给路径。
+**影响**：`ui/screens/ChatScreen.kt`（选择器 mime、URI→真实路径解析、插入形态）。插入用**绝对路径**（与 pi 终端里 `drop files to attach` 插入绝对路径一致），**不要**混用 `@` mention 的相对路径风格。
+
+## D21 · 插话与排队改走 `prompt` + `streamingBehavior`（不再发裸命令）
+**现象**：用户问「没有给我做插话功能吗？官方是有插话的吗？」——插话**有**（流式中直接发送），但他这一问让我把链路核了一遍，发现 app 与 pi 的实现不同。
+**裁决**：流式中的普通发送与「后续」排队都改成 pi 的形式：`session.prompt(text, { streamingBehavior: "steer" | "followUp" })`。
+**理由**：pi 的 TUI 两条路都走这个入口（`interactive-mode.ts:3137-3143` 的注释写明「This handles extension commands (execute immediately), prompt template expansion, and queueing」；followUp 在 `:4143-4150`），RPC 的 `prompt` **接受** `streamingBehavior` 并原样转发（`rpc-mode.ts:395-408`）；而裸 `steer` / `follow_up` 命令直连内部方法（`:418-426`），**绕过 `_processInput`** ⇒ 扩展 `emitInput`、模板/技能展开、压缩期排队都不会发生。pi 在**压缩期间**另有一条岔路（`:3125-3131` steer / `:4130-4136` followUp）会先排队而不是直接发。
+**影响**：`ui/PiSessionViewModel.kt`（流式发送分支、follow-up 分支、以及那条手工 `echoUserPrompt`——改成 `prompt` 后用户行由 `prompt` 自己发布，必须确认只渲染一次）、`engine/PiEngineSession.kt`、`rpc/.../Commands.kt`（`prompt` 可能需要补 `streamingBehavior` 字段）。
+
+**落地结果（施工代理复核后的两条更正）**：
+1. **wire 不用改**：`Commands.kt:46-57` 的 `prompt` 早就带 `streamingBehavior`（枚举拼写 `steer`/`followUp`，`:16-22`），`PiEngineSession.prompt` 早已透传（`:758-765`）；`send`/`sendFollowUp` 改成一次 `engine.prompt(..., if (streaming) Steer/FollowUp else null)`。裸 `steer`/`follow_up` 的**生产调用点因此归零**；两个 builder 保留（`PiCommands` 是 pi 33 条命令面的转录，`CommandsTest.kt` 钉它们的 wire 形状），各补一段 KDoc 说明「app 已不再发送、为什么」。
+2. **手工 echo 删对了，而且理由比「会不会渲染两遍」更严重**：`prompt` 的 echo 会**登记**一条 pending echo（`Transcript.kt:883-897`），pi 随后那条 `message_end(role="user")` 命中它即为确认（`:919-1010`）；若再手工 echo 一次，除了屏幕上两行气泡，还会留下一条**永远不会被消费的陈旧 echo**——它按文本匹配，会在**下一条无关消息**的 `message_end` 到来时被错误地当成确认吞掉。所以两处手工 `echoUserPrompt` 已删，全仓只剩 `PiEngineSession.kt:763` 一个调用点。
+
+## D22 · 压缩期间「先排队再发」暂不做（记录成已知缺口，不是漏做）
+**事实（施工代理逐行核过）**：`UiState.meta` **没有** `isCompacting` 字段（`EngineMeta` 的字段里没有它；`PiResponses.kt:91/:276` 解析出来的那个只被引擎收尾路径 `PiEngineSession.kt:959` 读，用来决定要不要先 abort）；`compaction_start`/`compaction_end` **只被转录 reducer 消费**（画压缩卡），`PiSessionViewModel.onEvent` 没有这两个臂。所以 app 里现在**没有任何「正在压缩」的事实可用**，`send` 只按 `engine.transcript.streaming` 决策 ⇒ 压缩期是**直接发**，与 pi 的 TUI（`session.isCompacting` 为真时改走 `queueCompactionMessage`，`interactive-mode.ts:3125-3131` steer / `:4130-4136` followUp）**不等价**。
+**为什么这轮不做**（三件必须一起做，其中两件的前置不在本轮范围）：
+- RPC **既不能写也观察不到**压缩队列：命令全集里没有 `queue_compaction_message`，`queue_update` 只带 `{steering, followUp}`（`Events.kt:508-509`）；所以只能 app 本地暂存 + 压缩结束后自己 flush。
+- flush 只能挂在 `compaction_end` 上，而事件通道有**已记录的丢事件缺陷**（`hang-and-crash-review.md` B6：`PiEngineSession.kt:178` 容量 256、`:507` `tryEmit` 丢弃）。漏一个 `compaction_end` = 用户那条消息**永远发不出去**，而气泡早已 echo 在屏幕上——比现状更糟。
+- 「排队显示在哪」那一半在 `ChatScreen.kt` 的队列行（`⇢ 穿插 N` / `⇣ 排队 N`）；本地暂存若折进这两个计数，等于让芯片对「pi 收到了几条」说假话。
+**最小安全路径（留给以后）**：① `UiState.compacting`（两个事件臂，事件其实已经送到 VM，只是没人接）；② 给 `compaction_start/end` 做不丢的通道；③ `send`/`sendFollowUp` 在压缩期本地暂存 + `compaction_end` 后按原 delivery choice flush + 折进队列 chip。
+
+**已核实的 pi 侧事实（父代理在 `/root/pi-src` 读到，补上原文「无法核实」那条）**：`session.prompt()` 在压缩进行中**直接抛错**——`if (this._compactionAbortController !== undefined) throw new Error("Cannot submit a prompt while compaction is in progress. Wait for compaction to finish and retry.")`（`core/agent-session.ts:1192-1196`，位于扩展命令之后、流式判断之前）。而裸命令那条路**没有这个检查**：`session.steer()`/`followUp()` → `_queueUserInput`（`:1388-1413`，只做扩展命令拦截 + `_runInputHandlers` + 技能/模板展开）→ 压进队列，**不抛错**。pi 的 TUI 在压缩期是**本地暂存**：`queueCompactionMessage`（`interactive-mode.ts:4408-4414`）+ `flushCompactionQueue`（`:4426+`）。
+**由此暴露的回归（D22 的修正案）**：D21 把发送统一改走 `prompt` 之后，**压缩期间发消息会收到 pi 的英文报错，且消息没有被排队**（改之前裸 `steer` 会排队）。修法见 D23。
+
+## D23 · 压缩期改走裸队列命令（补 D21 引入的窄窗口回归）
+**裁决**：`UiState` 增加 `compacting`（`compaction_start`/`compaction_end` 两个事件臂，并在 `refreshState()` 里用已解析的 `get_state.isCompacting` **对账**，以免那条已知的丢事件缺陷把标志永久卡在 true）；发送时**压缩期为真就走裸 `steer`/`follow_up`**，否则维持 `prompt` + `streamingBehavior`。
+**理由**：pi 的 `prompt` 在压缩期必抛（上一条事实），而队列命令不抛且排进 pi 自己的队列 ⇒ 消息在界面的队列行上**本来就看得见**（`queue_update`），因此**不需要本地暂存**（也就不需要新 UI），更不会踩「漏一个 `compaction_end` 就永远发不出去」那个坑（`hang-and-crash-review.md` B6）。代价：压缩期这一条不经过 `prompt` 的压缩检查/预检——而那正是要绕开的。最坏情况：若标志 stale-true，消息只会进 pi 的 steering 队列并在下一个 agent step 交付，**不是失败**。
+**顺带更正 D21 的一处措辞**：裸 `steer`/`follow_up` **并非**绕过整个 `_processInput`——`_queueUserInput` 会跑 `_runInputHandlers` 与技能/模板展开，它跳过的只是压缩检查、预检与 model 校验。
+
+## D24 · 命令面板从 23 条砍到 11 条（用户裁决「没用的全删了」）
+**删除 12 条，三组理由**：A 本平台无法交付 4 条（`share` 要 gh CLI 建 gist、`changelog`/`hotkeys` 是 TUI 渲染面、`quit` 无「退出 pi」语义）；B 同屏已有更直接入口 3 条（`settings`→底栏「设置」、`model`→顶栏模型按钮、`thinking`→输入框 `◐`）；C 目的地是设置行 5 条（`scoped-models` `trust` `login` `logout` `reload`）——用户原话「点一下需要跳转到设置导航的，全都删掉」。
+**保留 11 条**：`tree export import copy name session fork clone new compact resume`，逐条走过执行路径（描述与行为一致、空态都有话说），且**面板里不再有「点了也完不成」的命令**（原 `/model`、`/thinking` 是需要参数却没候选的两条，随删除消失）。
+**连带删除**：`PiCommandAction` 的 5 个取值（`OpenSettings`/`PickModel`/`PickThinking`/`OpenModelScope`/`TerminalOnly`）、`PiSlashCommand.appLanding` 字段、`ComposerRoute.Unreachable`、`notifyTerminalOnly()`、`cycleModel()`（入口删除后零调用者；RPC 本体与测试保留）。**顺带修掉一条错的旧指路**：`/trust` 原来指「设置 → 扩展 → 扩展包与项目信任」，实际在「安全与信任 → 信任」。
+**顺序与措辞**：分组顺序改成 pi 的 TUI 顺序（内置 → 模板 → 扩展 → 技能，`interactive-mode.ts:727`；wire 的顺序不同，见 `rpc-mode.ts:684-708`）；`tree` 改回 pi 直译（去掉 app 自加的「从某条消息分叉」）；`copy` 改「复制最后一条回复到剪贴板」。
+**scope 徽章**：保留 pi 的派生（`interactive-mode.ts:586-606` 的 `u/p/t` + npm/git），**渲染按用户裁决转汉字**（用户 / 项目 / 临时），npm/git 余部原样保留。
+**新增**：`PI_UNLISTED_BUILTIN_COMMANDS` + `unlistedBuiltinHint(name)`（12 条）——手工键入这些名字时不再说「去掉 `/` 当正文发」（那是把 pi 真有的命令教成错误用法），而是陈述事实并指向本应用自己的入口。
+
+## D25 · `streaming` 的语义回到 pi（「正在跑一轮」）
+**现象**：用户在干活时看到发送键**一会三角一会方块**；点三角时发送**撞上** pi 的 `Agent is already processing. Specify streamingBehavior…`（`agent-session.ts:1219-1223`）。
+**根因**：`finishStreaming()` 在 `message_end`（每条助手消息）就清 `streaming`，而一轮里带工具调用时 `message_end` 与下一条 `message_start` 交替 ⇒ 标志一轮内翻好几次。
+**裁决**：只有**轮次级**事件清标志——`agent_end` / `agent_settled` / 引擎退出；`message_end` 继续走收尾刷新但用 `finishStreaming(endsTurn = false)`。行级「此刻正在吐字」由 `item.streaming` 独立承担（它仍由 `message_end` 清），两类消费者各拿各的信号。
+**连带修好的三处（施工代理逐条复核）**：① `interrupted` 判定（旧语义下工具运行中会被误判成「回合已结束、工具未回」并闪烁）；② CPU 唤醒锁（`turnRunning` 里 `streaming` 为假时可能在命令跑到一半放锁）；③ 顶栏引擎标签（工具一跑就掉回「就绪」）。
+**同时**：流式发送键恒为「停止」，投递方式交给两个只在干活时出现的芯片——`插话`（steer，现在插进本轮）与`排队`（followUp，本轮结束后），两者都走 `prompt` + `streamingBehavior`。
+
+## D26 · 不让界面说谎（本轮从审计里收口的三处）
+1. **`call()` 在引擎未附着时不再静默返回**：新增 `NoEngine { Notify, Quiet }`；动作类与「用户刚打开的读」（`/session`、`/fork`、`/tree` 那些会永久停在「正在读取…」或显示「没有可分叉的消息」的地方）走 `Notify`（`fail("引擎未就绪…")`，并对同一句话去重，避免引擎死时同帧叠四条）；只有 `refreshState` 这种内部重读是 `Quiet`。
+2. **`/compact` 的两条英文原因映射成中文**（`Nothing to compact…` / `Already compacted…`，`agent-session.ts:1985-1992`），其余 reason 原文透出（保留 pi 原文便于搜索）。
+3. **已知缺口（记录，未做）**：`forkMessages` 是裸 List，分不出「还没加载」与「加载完是空的」，所以 sheet 的空态文案在引擎 detach 的窄窗口里仍可能不准（snackbar 已说真话）。最小修法：`UiState` 加 `forkMessagesLoaded`（及 `statsLoaded`/`treeLoaded`），甲在空态分两支。

@@ -147,7 +147,7 @@ whether the command is *protocol-reachable* (then the app can drive it) or *spaw
 | `pi config` (resource enable/disable TUI) | `package-manager-cli.ts:278-289` | **reproduced (applied, uncommitted)**: `packages/PiPackageFilters.kt` parses/serialises the object form (empty array → key dropped, all four empty → back to the bare source string), `packages/PiPackageFilterStore.kt` reads and writes `packages` through the app's existing `PiSettingsFileStore`, `PiPackageEntry.filters` carries them into the UI, and `PiPackagesScreen`'s `FilterEditor` adds/removes one glob per resource type. pi's own `packages[].autoload` row is unchanged | IMPLEMENTED (uncommitted) | Yes | pi 落盘 = `settings.json` 的 `packages[]` 对象形式的 `extensions/skills/prompts/themes` glob 数组，全空时塌回字符串（`modes/interactive/components/config-selector.ts:585-629`）。**一处有意偏离**：`autoload` 存在时不塌回裸字符串——pi 的 `:623-628` 只看四个数组，会顺手丢掉 `autoload` |
 | `--offline` / `PI_OFFLINE` | `args.ts`; `docs/environment-variables.md` | **reproduced**: the `app.runtime.offline` Switch row → `PiSessionViewModel.launchOptions()` → `PiLaunchOptions.offline` → `PI_OFFLINE=1` in the engine environment (`PiLaunchOptions.environment()`, applied by `PiEngineHost` via `boot(…, launch)`) | IMPLEMENTED | Yes | — (see §2.11) |
 | `--system-prompt` / `--append-system-prompt` | `args.ts` | **reproduced**: the `app.runtime.systemPrompt` Text row → `PiSessionViewModel.launchOptions()` → `PiLaunchOptions.systemPrompt` → `--system-prompt`; blank means "use pi's own prompt", so no empty flag is ever passed | IMPLEMENTED | Yes | — (see §2.11) |
-| `--api-key` | `args.ts`; `docs/providers.md:62-107` | no writer for `auth.json` anywhere in the app (grep: 0 hits outside a description string); `/login` is marked `TerminalOnly` (`PiSlashCommands.kt:138`) and the Settings rows `app.credentials.apiKey` / `app.credentials.oauth` are inert Action rows | CLI-ONLY | Terminal tab | — (see §2.9, §2.10) |
+| `--api-key` | `args.ts`; `docs/providers.md:62-107` | no writer for `auth.json` anywhere in the app (grep: 0 hits outside a description string) and the Settings rows `app.credentials.apiKey` / `app.credentials.oauth` are inert Action rows. **2026-09-14：** 本行原先还说「`/login` is marked `TerminalOnly`（`PiSlashCommands.kt:138`）」——那个面板行按用户裁决删除，`TerminalOnly` 这个 action 本身也已删除；`--api-key` 的结论不变 | CLI-ONLY | Terminal tab | — (see §2.9, §2.10) |
 | `--continue` / `-c`, `--resume`, `--session`, `--session-id`, `--fork` | `args.ts`; `docs/sessions.md:39` | `boot()` starts a fresh engine and `attach()` never sends `switch_session` (`PiSessionViewModel.kt:341-361`); resume/switch/fork exist as explicit user actions. **`-c` (resume the most recent session for this cwd) has no counterpart** — every launch begins a new session | MISSING-GUI | No | — (see §2.7) |
 | `--list-models`, `--export` | `args.ts` | reproduced by `get_available_models` (picker) and `export_html` | IMPLEMENTED (another way) | Yes | — |
 | `--models`, `--tools`, `--no-tools`, `--no-builtin-tools`, `--exclude-tools` | `args.ts` | reproduced by the `enabledModels` and `defaultTools` settings; *reading/setting the live tool set* is not protocol-reachable | IMPLEMENTED (startup) / PARTIAL (live) | Partly | `known-gaps.md` **F2** |
@@ -160,9 +160,9 @@ whether the command is *protocol-reachable* (then the app can drive it) or *spaw
 
 | Capability | pi source | App status | Classification | GUI? | Recorded where |
 |---|---|---|---|---|---|
-| Built-in slash commands | `core/slash-commands.ts:19-43` | all **23** built-ins transcribed verbatim into `PI_BUILTIN_SLASH_COMMANDS` (`PiSlashCommands.kt:106-145`); 13 are implemented natively, 10 are `TerminalOnly` | IMPLEMENTED | Yes | — |
+| Built-in slash commands | `core/slash-commands.ts:20-42` | **2026-09-14：11 条在列 + 12 条不列**（用户裁决「没用的全删了」）。`PI_BUILTIN_SLASH_COMMANDS` (`PiSlashCommands.kt`) 只保留 11 条可直接执行的（`tree` `export` `import` `copy` `name` `session` `fork` `clone` `new` `compact` `resume`）；删掉的 12 条按 A/B/C 三组记在同一个 KDoc 里：**A** 本平台无法交付 4（`share` `changelog` `hotkeys` `quit`）、**B** 同屏已有更直接入口 3（`settings` `model` `thinking`）、**C** 目的地是设置行 5（`scoped-models` `trust` `login` `logout` `reload`）。名字没丢：`PI_UNLISTED_BUILTIN_COMMANDS` + `unlistedBuiltinHint()` 让手敲这些名字时得到一句真话。**本行原先写 "all 23 transcribed verbatim；13 natively，10 `TerminalOnly`"，已过期**：`PiCommandAction.TerminalOnly`、`PiSlashCommand.appLanding`、`ComposerRoute.Unreachable` 三个符号已整个删除（不是「10 条 TerminalOnly」） | IMPLEMENTED | Yes | 依据 `PiSlashCommands.kt` 的 A/B/C 分组注释 |
 | `/` palette incl. extension/template/skill commands, `name:1` suffixes, source tags | `docs/rpc.md` §get_commands; `runner.ts:653-691` | `get_commands` → `piCommandPalette` (`PiSlashCommands.kt:162-183`); suffix + `sourceInfo` tag preserved (`:199-211`) | IMPLEMENTED | Yes | `known-gaps.md` **B1** (now done), `extension-compatibility.md` §5.9/§5.12 |
-| `/` interception (a `/cmd` must not become a prompt) | `interactive-mode.ts:2980+` | `routeComposerText` (`SlashPalette.kt:206-232`) classifies Message / Bash / Command / Unreachable / Unknown before sending | IMPLEMENTED | Yes | `extension-compatibility.md` §6.4 (now done) |
+| `/` interception (a `/cmd` must not become a prompt) | `interactive-mode.ts:2980+` | `routeComposerText` (`SlashPalette.kt`) classifies Message / Bash / Command / Unknown before sending. **2026-09-14：`Unreachable` 这一支已删除** —— 它只服务「pi 有、本面板不列」的内置命令，那 12 条按用户裁决删掉后没有任何生产者 | IMPLEMENTED | Yes | `extension-compatibility.md` §6.4 (now done) |
 | bash mode `!` / `!!` | `keybindings.md` `app.tools.expand` neighbours; `interactive-mode.ts` bash mode | `SlashPalette.kt:212-216`, composer border token (`ChatScreen.kt:670-676`), `BashPanel` | IMPLEMENTED | Yes | `known-gaps.md` **B4** (now done) |
 | queue editing: restore queued text on Esc | `docs/rpc.md` §clear_queue; `keybindings.md` `app.message.dequeue` | `stopAndDrainQueue` returns the text (`PiEngineSession.kt:197-204`) but `ChatScreen.kt:433` calls `session.stop()` **without** `onRestored`, dropping it | **MISSING-GUI** | No | — (see §2.3) |
 | queue a follow-up message (`alt+enter`) | `keybindings.md` `app.message.followUp` | `sendFollowUp` has no caller (§1.1) | MISSING-GUI | No | — (see §2.2) |
@@ -179,12 +179,12 @@ whether the command is *protocol-reachable* (then the app can drive it) or *spaw
 | session picker: search / sort / named filter / rename / delete | `docs/sessions.md:43-48`; `keybindings.md` `app.session.toggle*`, `.rename`, `.delete` | `SessionsScreen` lists, refreshes and opens only (`SessionsScreen.kt:78-132`); `PiSessionStore` exposes only `list` (`PiSessionStore.kt:49`). Rename exists on the Chat overflow; **search, sort, named filter and delete do not exist** | **MISSING-GUI** | No | — (see §2.7) |
 | session tree "delete session" + non-invasive variant | `keybindings.md` `app.session.delete*` | absent (see above) | MISSING-GUI | No | — |
 | external editor (`ctrl+g`, `externalEditor`) | `keybindings.md` `app.editor.external` | `externalEditor` is a settings row only (`PiSettingsRegistry.kt:1288-1290`); no launch action; works inside the terminal tab because pi reads the setting | 已实现（ACTION_EDIT 映射） | Terminal tab | pi: 临时 `prompt.md` + spawn；**退出码≠0 丢弃**（`modes/interactive/external-editor.ts:14-52`），命令解析 `settings-manager.ts:970-981`，触发 `app.editor.external`（`interactive-mode.ts:4246-4261`）。App: `ChatScreen.openInExternalEditor` → `ACTION_EDIT`(text/plain)；RESULT_OK 回写、取消保留草稿、无应用处理时 notifyUser 说明（对应 pi 的 spawn 失败） |
-| scoped models selector (`/scoped-models`) | `core/slash-commands.ts:24`; `keybindings.md` §Scoped Models Selector | marked `TerminalOnly` (`PiSlashCommands.kt:117-120`); the underlying `enabledModels` setting **is** editable as a raw list, but there is no selector | PARTIAL | Partly | — (see §2.6) |
-| `/import` (import a session JSONL) | `interactive-mode.ts:2997`; `docs/sessions.md` | `TerminalOnly` in the palette (`PiSlashCommands.kt:125-128`); the `app.sessions.import` Action row **is gone** (settled by the TUI-only ruling, `settings-review.md` §9.2); no RPC command exists | MISSING-TERMINAL-ONLY | Terminal tab | — (see §2.9) |
-| `/share` (secret GitHub gist) | `core/slash-commands.ts:27`; `docs/environment-variables.md` (`PI_SHARE_VIEWER_URL`) | `TerminalOnly`; no RPC command | MISSING-TERMINAL-ONLY | Terminal tab | — (see §2.9) |
-| `/login`, `/logout` | `docs/providers.md:17,26` | `TerminalOnly` (`PiSlashCommands.kt:138-139`); Settings rows inert | MISSING-TERMINAL-ONLY | Terminal tab | — (see §2.9) |
-| `/reload` | `docs/extensions.md` §Reloading; no RPC command | AppBar button deliberately reports "terminal only" (`ChatScreen.kt:236-239,542-549`) | MISSING-TERMINAL-ONLY | Terminal tab | `known-gaps.md` **B6**, `extension-compatibility.md` §4.5 |
-| `/changelog`, `/hotkeys`, `/quit` | `core/slash-commands.ts:31-32,42` | `TerminalOnly`; `hotkeys` has no meaning on a phone and `quit` is meaningless (the app owns the engine) | N/A / MISSING-TERMINAL-ONLY | Terminal tab | — |
+| scoped models selector (`/scoped-models`) | `core/slash-commands.ts:24`; `keybindings.md` §Scoped Models Selector | **2026-09-14：面板行已删除**（C 组，用户裁决「点一下要去设置里办的全删」）；底层 `enabledModels` 设置**仍**可编辑（`PiSettingsRegistry.kt:339`），选择器组件本身仍未实现 | PARTIAL | Partly | — (see §2.6) |
+| `/import` (import a session JSONL) | `interactive-mode.ts:2997`; `docs/sessions.md` | **2026-09-14：本行原先引「`TerminalOnly` in the palette (`PiSlashCommands.kt:125-128`)」，那个 action 已整个删除、引用失效。** 评级保持 MISSING-TERMINAL-ONLY 不变，因为该档说的是 **pi 的暴露面**（`rpc-types.ts:20-74` 里没有 `import`，本文件 §1 的档位定义）；**但 app 侧并不缺这个能力**：`/import` 是保留的 11 条之一（`PiCommandAction.ImportSession`），走文件选择器 → `PiSessionViewModel.importSession` → 把选中的 JSONL 拷进会话目录后 `switch_session`（`rpc-types.ts:61`），即 pi 的路径参数被选择器替代。是否改评级为 `IMPLEMENTED (another way)` 留给账本所有者的下一轮裁决 | MISSING-TERMINAL-ONLY | Terminal tab | — (see §2.9) |
+| `/share` (secret GitHub gist) | `core/slash-commands.ts:27`; `docs/environment-variables.md` (`PI_SHARE_VIEWER_URL`) | **2026-09-14：面板行已删除**（A 组，用户裁决）。能力本身仍未交付：要 `gh` CLI（`interactive-mode.ts:3002`），Android 上没有，pi 也没有对应 `RpcCommand`。本行原先的「`TerminalOnly`」二字随该 action 一起失效 | MISSING-TERMINAL-ONLY | Terminal tab | — (see §2.9) |
+| `/login`, `/logout` | `docs/providers.md:17,26` | **2026-09-14：面板行已删除**（C 组，用户裁决）。能力仍未交付：OAuth 只在 pi 自己的交互式 shell 里（没有 `RpcCommand`），本应用只有 API Key 表单（`PiSettingsRegistry.kt:366-402` 的「凭证」区） | MISSING-TERMINAL-ONLY | Terminal tab | — (see §2.9) |
+| `/reload` | `docs/extensions.md` §Reloading; no RPC command | **2026-09-14：面板行与 AppBar 刷新图标都已删除**（前者 C 组用户裁决；后者由甲同期删掉——那个图标只会回一句「终端里才有」，是个假动作）。能力仍未交付：RPC 没有 `reload`；app 的替代是 `设置 → 运行时与诊断 → 进程 → 重启引擎` | MISSING-TERMINAL-ONLY | Terminal tab | `known-gaps.md` **B6**, `extension-compatibility.md` §4.5 |
+| `/changelog`, `/hotkeys`, `/quit` | `core/slash-commands.ts:31-32,42` | **2026-09-14：三条面板行已删除**（A 组，用户裁决）。三条都只有一句「本应用没有对应入口」可说：`changelog` 是 pi 更新检查渲染出的 TUI 文本面板、`hotkeys` 在触屏上没有意义、`quit` 无意义（引擎归 app 的前台服务） | N/A / MISSING-TERMINAL-ONLY | Terminal tab | — |
 | custom keybindings (`keybindings.json`) | `docs/keybindings.md` §Custom Configuration | a phone has no keybindings to rebind; `app.interaction.keybindings` is a settings row with **no reader** | N/A | N/A | — |
 
 **Subtotal (TUI, 26 rows):** IMPLEMENTED 7 · PARTIAL 3 · MISSING-GUI 8 · MISSING-TERMINAL-ONLY 7 · N/A 1.
@@ -223,7 +223,7 @@ whether the command is *protocol-reachable* (then the app can drive it) or *spaw
 | Resume most recent session on launch (`pi -c`) | `args.ts` `--continue`; `docs/sessions.md:39` | `boot()` → `attach()` performs no switch (`PiSessionViewModel.kt:341-361`) | MISSING-GUI | No | — (see §2.7) |
 | Export to HTML | `docs/sessions.md:34` | `export_html` + `exportHtml` | IMPLEMENTED | Yes | — |
 | Export to JSONL | `agent-session.ts:3482-3488` (`exportToJsonl`); TUI `.jsonl` branch at `interactive-mode.ts:6064-6065` | **RPC exposes only `export_html`** (`rpc-types.ts:60`; `rpc-mode.ts:600-602` calls `exportToHtml` unconditionally). The app always calls `export_html` (`PiSessionViewModel.kt:1371-1376`), so a `.jsonl` path yields **HTML bytes under a `.jsonl` name** | **MISSING-GUI** (capability) + defect | No | — (see §2.4) |
-| Import from a JSONL file | `interactive-mode.ts:2997` | no RPC command; palette row `TerminalOnly`; Action row inert | MISSING-TERMINAL-ONLY | Terminal tab | — (see §2.9) |
+| Import from a JSONL file | `interactive-mode.ts:2997` | **2026-09-14：** 本行原先引「palette row `TerminalOnly`」，该 action 已删除、引用失效。**评级不变**（该档说的是 pi 没有 `import` 这个 `RpcCommand`）；但 **app 侧能力是有的**：`/import` 是保留的 11 条之一（`PiCommandAction.ImportSession`），走文件选择器 → `PiSessionViewModel.importSession` → 拷进会话目录后 `switch_session`（`rpc-types.ts:61`） | MISSING-TERMINAL-ONLY | Terminal tab | — (see §2.9) |
 | Entry log (`get_entries`) incl. extension state | `docs/rpc.md` §get_entries | rendered as the 条目 tab, which is the only place `pi.appendEntry` state is visible (`SessionTreeScreen.kt:57-63`) | IMPLEMENTED | Yes | `known-gaps.md` **B2** |
 | Per-cwd session **grouping** in the UI | `docs/sessions.md:7` | cwd is shown as a per-row path string (`SessionsScreen.kt:170-179`) but rows are one flat list, not grouped/filterable by project | PARTIAL | Partly | — |
 
@@ -238,7 +238,7 @@ whether the command is *protocol-reachable* (then the app can drive it) or *spaw
 | Thinking levels, `off`…`max`, model-derived | `docs/rpc.md` §get_available_thinking_levels; `ThinkingLevel` at `packages/agent/src/types.ts:301` | levels are wire strings, never a client enum (`PiEngineApi.kt:112-123`); picker + cycle | IMPLEMENTED | Yes | `known-gaps.md` **B3** |
 | Per-model thinking defaults (`modelThinkingLevels`) / thinking budgets | `settings-manager.ts:111,143`; `docs/models.md:259-300` | both settings rows present (see §1.8); pi reads them from `settings.json` | IMPLEMENTED (another way) | Yes | `fidelity-review.md` §"Settings registry" |
 | Custom provider via `models.json` | `docs/custom-provider.md`; `docs/providers.md:3` | file-based: a `models.json` in the agent dir is picked up by pi and its models appear through `get_available_models` → the picker. **No editor/browser for the file**, and the `app.localModels.manage` Action row is inert | PARTIAL | Partly | — (see §2.9) |
-| OAuth login (`/login`, `/logout`) and `auth.json` | `docs/providers.md:17-26,111,185` | `TerminalOnly`; no `auth.json` writer in the app | MISSING-TERMINAL-ONLY | Terminal tab | — (see §2.9) |
+| OAuth login (`/login`, `/logout`) and `auth.json` | `docs/providers.md:17-26,111,185` | **2026-09-14：面板行已删除**（C 组，用户裁决）。能力仍未交付：OAuth 只在 pi 自己的交互式 shell 里（无 `RpcCommand`），app 侧只有 API Key 表单与「订阅登录（本应用暂无入口）」那一行。本行原先的「`TerminalOnly`」二字随该 action 一起失效 | MISSING-TERMINAL-ONLY | Terminal tab | — (see §2.9) |
 | API-key credentials | `docs/providers.md:62-107` | `app.credentials.apiKey` is an inert Action row | MISSING-GUI | No | — (see §2.9) |
 | Provider transport setting | `settings-manager.ts` `transport`; `docs/settings.md` §Network | settings row present | IMPLEMENTED (another way) | Yes | — |
 | `provider/auth` events visible to the client | — | `model_select` reaches extensions only (`agent-session.ts:1659-1670`), and `fidelity-review.md` §4 records the dead reducer branch; the app compensates by polling `get_state` | PARTIAL | Yes | `fidelity-review.md` §4, `extension-compatibility.md` §5.3 |
@@ -529,18 +529,29 @@ at all**:
 
 - **Credentials** — `app.credentials.apiKey` / `app.credentials.oauth`. pi stores them in
   `~/.pi/agent/auth.json` (`docs/providers.md:111,185`) and `/logout` clears them (`:26`). The app
-  contains **no** `auth.json` writer (grep: 0 hits outside a description string), and `/login`/`/logout`
-  are `TerminalOnly` (`PiSlashCommands.kt:138-139`). So configuring a provider without using the
-  terminal tab is impossible, while two Settings rows imply otherwise.
-- **Session import** — `app.sessions.import` (**row deleted**, `settings-review.md` §9.2) plus `/import`
-  (`PiSlashCommands.kt:125-128`, `TerminalOnly`). pi's `handleImportCommand` is TUI-only
-  (`interactive-mode.ts:2997`); no `RpcCommand` imports a file. So importing a JSONL session requires
-  the terminal tab.
-- **`/share`** — `PiSlashCommands.kt:129` `TerminalOnly`; `core/slash-commands.ts:27`; no RPC command.
+  contains **no** `auth.json` writer (grep: 0 hits outside a description string). So configuring a
+  provider without using the terminal tab is impossible, while two Settings rows imply otherwise.
+  **2026-09-14:** 这一段原先写「`/login`/`/logout` 是 `TerminalOnly`（`PiSlashCommands.kt:138-139`）」，
+  已过期：那两个面板行按用户裁决删除，`PiCommandAction.TerminalOnly` 这个 action 也整个删掉了。
+  这里的事实没变（OAuth 仍然走不通），变的只是它不再由一条面板行承载。
+- **Session import** — `app.sessions.import` (**row deleted**, `settings-review.md` §9.2). pi's
+  `handleImportCommand` is TUI-only (`interactive-mode.ts:2997`) and no `RpcCommand` imports a file —
+  but the app reaches the same outcome without one: the palette's `/import` row (kept, `ImportSession`,
+  `PiSlashCommands.kt`) opens a document picker and `PiSessionViewModel.importSession` copies the picked
+  JSONL into the session directory before `switch_session` (`rpc-types.ts:61`).
+  **2026-09-14:** 这一段原先写「plus `/import`（`PiSlashCommands.kt:125-128`, `TerminalOnly`）… So
+  importing a JSONL session requires the terminal tab」——两句都已过期，且后一句本来就不成立；
+  同一更正见 §1.3 / §1.5 的 `/import` 行。
+- **`/share`** — `core/slash-commands.ts:27`; no RPC command; it needs the `gh` CLI
+  (`interactive-mode.ts:3002`), which does not exist on Android.
   Whether a gist flow can work at all on this host (browser + loopback callback,
   `PI_SHARE_VIEWER_URL`) is **UNVERIFIED** (§5).
+  **2026-09-14:** 面板行按用户裁决删除（原先写作 `PiSlashCommands.kt:129` `TerminalOnly`）。
 
-**Classification:** MISSING-GUI for the wiring itself; MISSING-TERMINAL-ONLY for import/share; and the
+**Classification:** MISSING-GUI for the wiring itself; MISSING-TERMINAL-ONLY for import/share and for
+the OAuth half of credentials — **2026-09-14:** these grades describe *pi's* exposure, not the app's
+coverage: the palette's `/import` row survives and reaches the outcome through the document picker
+(see above), while the `/share` and `/login` `/logout` rows are gone; and the
 inert rows are a UX defect in their own right — a row that opens a "not wired" dialog teaches the user
 that the feature does not exist, when for `app.compaction.runNow` it actually does (via `/compact`).
 
@@ -676,7 +687,7 @@ reviewer does not spend a pass re-deriving it.
 |---|---|---|
 | Whether `DeviceCapabilityScreen`/`DeviceShizuku` gained a bridge to the `app.device.*` settings keys during the concurrent rewrite | Both files were being edited throughout this pass; the registry/store disconnect was verified statically, the runtime identity of the two switches was not | Re-grep `app.device.` outside `PiSettingsRegistry.kt` after the tree freezes |
 | Whether `/share` can work on this host at all | It needs a browser and (per `docs/providers.md:44-51`) a reachable loopback callback for OAuth; `PI_SHARE_VIEWER_URL` is not set and the flow was never run | Run the gist flow from the `pi TUI（原版）` tab on a device |
-| Whether the `TerminalOnly` rows are actually usable *in this app's terminal tab* | The tab exists and runs the unmodified pi (`PtyLauncher.Kind.PiTui`), but `known-gaps.md` C2 records the VT emulator as never run on a device | The device pass already listed as C1/C2 |
+| Whether the `MISSING-TERMINAL-ONLY` rows are actually usable *in this app's terminal tab* | The tab exists and runs the unmodified pi (`PtyLauncher.Kind.PiTui`), but `known-gaps.md` C2 records the VT emulator as never run on a device. **2026-09-14:** 原先写作「the `TerminalOnly` rows」——那是已删除的 action 名；这里问的从来是评级为 MISSING-TERMINAL-ONLY 的那些行 | The device pass already listed as C1/C2 |
 | Whether any GUI code reads pi's `hideThinkingBlock` through a path a grep would miss (e.g. via a generated constant) | My verification was textual: 0 hits for `hideThinkingBlock` outside the registry + one doc comment | A frozen-tree typecheck-and-search, or simply passing it at `ChatScreen.kt:345-348` and observing |
 | The exact number of `app.*` settings with no reader | 13 were confirmed individually; the mechanical sweep over all 127 keys timed out twice on this tree | Re-run the sweep with a longer budget once the tree is frozen |
 | Whether `ui/chat/SessionTreeScreen.kt` gains a non-fork action | It is untracked-then-committed within this pass and its action list changed at least once | Re-read `SessionTreeScreen.kt` after the freeze |
@@ -749,7 +760,7 @@ grades — see "Not verified" below.
 | §1.3 session picker search/sort | MISSING-GUI | **implemented** | `SessionsScreen` → `query` / `byName` / `namedOnly` |
 | §1.3 session delete | MISSING-GUI | **implemented** | `SessionsScreen` → `combinedClickable(onLongClick=…)` + `PiSessionViewModel.deleteSession` |
 | §1.3 external editor | PARTIAL | 已实现（ACTION_EDIT 映射） | pi: 临时 `prompt.md` + spawn；**退出码≠0 丢弃**（`modes/interactive/external-editor.ts:14-52`），命令解析 `settings-manager.ts:970-981`，触发 `app.editor.external`（`interactive-mode.ts:4246-4261`）。App: `ChatScreen.openInExternalEditor` → `ACTION_EDIT`(text/plain)；RESULT_OK 回写、取消保留草稿、无应用处理时 notifyUser 说明（对应 pi 的 spawn 失败） |
-| §1.3 `/scoped-models` | PARTIAL | **implemented** | `ui/chat/PiSlashCommands.kt` → `PiCommandAction.OpenModelScope` |
+| §1.3 `/scoped-models` | PARTIAL | **palette row deleted** (2026-09-14, C 组用户裁决「点一下要去设置里办的全删」)；`PiCommandAction.OpenModelScope` 随之删除，剩下的只有那条设置行 | `ui/settings/PiSettingsRegistry.kt:339` (`enabledModels`) |
 | §1.3 `/tree` switch the active leaf | MISSING-TERMINAL-ONLY | unchanged — pi limit | `rpc-types.ts:20-74`: no leaf-move command |
 | §1.4 user theme JSON changes the palette | MISSING-GUI | **implemented** | `ui/theme/PiThemeFiles.kt` → `PiThemeLoader.load`; `PiSessionViewModel.theme: StateFlow<PiResolvedTheme>` |
 | §1.4 theme discovery (`agentDir`/project/packages) | PARTIAL | **implemented** | `PiThemeLoader.discover` (three scopes) |
@@ -836,13 +847,13 @@ Verdict tally: **不适用 8, 仍未做 20, 已实现 107, 已解决 4, 部分�
 | `pi config` (resource enable/disable TUI) | CLI-ONLY | 已实现（applied, uncommitted） | pi 有 `package-manager-cli.ts` | pi 落盘 = `settings.json` 的 `packages[]` 对象形式的 `extensions/skills/prompts/themes` glob 数组，全空时塌回字符串（`modes/interactive/components/config-selector.ts:585-629`）；App 只有 `packages[].autoload`，编辑器属 `packages/**`（本轮无权限） |
 | `--offline` / `PI_OFFLINE` | CLI-ONLY, not reproduc | 部分：引擎已接、设置与界面未接 | pi 有 `args.ts` | PiLaunchOptions.environment；无 registry 行 · PiEngineHost@PiSessionViewModel.kt; PI_CODING_AGENT_DIR@P |
 | `--system-prompt` / `--append-system-prompt` | CLI-ONLY, not reproduc | 部分：引擎已接、设置与界面未接 | pi 有 `args.ts` | PiLaunchOptions.systemPrompt；无调用方 · 审计未引可查符号 |
-| `--api-key` | CLI-ONLY | 部分：代码已写、无调用方 | pi 有 `args.ts` | PiCredentialService.setApiKey · json@PiRoot.kt; TerminalOnly@PiSessionViewModel.kt; PiSlashCommands@ |
+| `--api-key` | CLI-ONLY | 部分：代码已写、无调用方 | pi 有 `args.ts` | PiCredentialService.setApiKey · json@PiRoot.kt; apiKey@PiSettingsRegistry.kt |
 | `--continue` / `-c`, `--resume`, `--session`, | MISSING-GUI | 已实现 | pi 有 `args.ts` | PiSessionViewModel resume gate + app.sessions.resumeLast · switch_session@PiSessionViewModel.kt; PiS |
 | `--list-models`, `--export` | IMPLEMENTED | 已实现（符号在位核对） | pi 有 `args.ts` | get_available_models@PiRoot.kt; export_html@PiSessionViewModel.kt |
 | `--models`, `--tools`, `--no-tools`, `--no-bui | IMPLEMENTED | 已实现（符号在位核对） | pi 有 `args.ts` | enabledModels@PiSessionViewModel.kt; defaultTools@PiSettingsRegistry.kt |
 | `--extension`, `--skill`, `--prompt-template`, | CLI-ONLY / N/A | 不适用（App 只有一个常驻引擎，没有 per-run 概念） | pi 有 `args.ts` | 持久化形式 = extensions/skills/prompts/themes 设置行 · extensions@PiSessionViewModel.kt; skills@PiSessionVie |
 | `--use-theme` (per-run theme), `--tui-mode`, ` | N/A | 不适用 | pi 有 `args.ts` | 无需符号（N/A） |
-| Built-in slash commands | IMPLEMENTED | 已实现（符号在位核对） | pi 有 `core/slash-commands.ts` | PI_BUILTIN_SLASH_COMMANDS@PiSlashCommands.kt; PiSlashCommands@PiRoot.kt; TerminalOnly@PiSessionViewM |
+| Built-in slash commands | IMPLEMENTED | 已实现（符号在位核对）；**2026-09-14 起为 11 条在列 + 12 条不列** | pi 有 `core/slash-commands.ts:20-42` | PI_BUILTIN_SLASH_COMMANDS@PiSlashCommands.kt; PI_UNLISTED_BUILTIN_COMMANDS@PiSlashCommands.kt; unlistedBuiltinHint@PiSlashCommands.kt; PiSlashCommands@PiRoot.kt |
 | `/` palette incl. extension/template/skill com | IMPLEMENTED | 已实现（符号在位核对） | pi 有 `docs/rpc.md` | get_commands@PiRoot.kt; piCommandPalette@PiSessionViewModel.kt; PiSlashCommands@PiRoot.kt |
 | `/` interception (a `/cmd` must not become a p | IMPLEMENTED | 已实现（符号在位核对） | pi 有 `interactive-mode.ts` | routeComposerText@ChatScreen.kt; SlashPalette@ChatScreen.kt |
 | bash mode `!` / `!!` | IMPLEMENTED | 已实现（符号在位核对） | pi 有 `keybindings.md` | SlashPalette@ChatScreen.kt; ChatScreen@PiRoot.kt; BashPanel@ChatScreen.kt |
@@ -861,12 +872,12 @@ Verdict tally: **不适用 8, 仍未做 20, 已实现 107, 已解决 4, 部分�
 | session picker: search / sort / named filter / | MISSING-GUI | 已实现 | pi 有 `docs/sessions.md` | SessionsScreen.query/byName/namedOnly · SessionsScreen@PiRoot.kt; PiSessionStore@PiSessionViewModel. |
 | session tree "delete session" + non-invasive v | MISSING-GUI | 仍未做 | pi 有 `keybindings.md` | 审计未引可查符号 |
 | external editor (`ctrl+g`, `externalEditor`) | PARTIAL | 已实现（ACTION_EDIT 映射） | pi 有 `keybindings.md` | pi: 临时 `prompt.md` + spawn；**退出码≠0 丢弃**（`modes/interactive/external-editor.ts:14-52`），命令解析 `settings-manager.ts:970-981`，触发 `app.editor.external`（`interactive-mode.ts:4246-4261`）。App: `ChatScreen.openInExternalEditor` → `ACTION_EDIT`(text/plain)；RESULT_OK 回写、取消保留草稿、无应用处理时 notifyUser 说明（对应 pi 的 spawn 失败） |
-| scoped models selector (`/scoped-models`) | PARTIAL | 已实现 | pi 有 `core/slash-commands.ts` | PiCommandAction.OpenModelScope · TerminalOnly@PiSessionViewModel.kt; PiSlashCommands@PiRoot.kt; enab |
-| `/import` (import a session JSONL) | MISSING-TERMINAL-ONLY | 仍未做（协议不可达） | pi 有但我们够不着（无 RpcCommand） | TerminalOnly@PiSessionViewModel.kt; PiSlashCommands@PiRoot.kt; import@PiApplication.kt |
-| `/share` (secret GitHub gist) | MISSING-TERMINAL-ONLY | 仍未做（协议不可达） | pi 有但我们够不着（无 RpcCommand） | TerminalOnly@PiSessionViewModel.kt |
-| `/login`, `/logout` | MISSING-TERMINAL-ONLY | 仍未做（协议不可达） | pi 有但我们够不着（无 RpcCommand） | TerminalOnly@PiSessionViewModel.kt; PiSlashCommands@PiRoot.kt |
-| `/reload` | MISSING-TERMINAL-ONLY | 仍未做（协议不可达） | pi 有但我们够不着（无 RpcCommand） | ChatScreen@PiRoot.kt |
-| `/changelog`, `/hotkeys`, `/quit` | N/A / MISSING-TERMINAL | 仍未做 | pi 有但我们够不着（无 RpcCommand） | TerminalOnly@PiSessionViewModel.kt; hotkeys@PiSlashCommands.kt; quit@PiSlashCommands.kt |
+| scoped models selector (`/scoped-models`) | PARTIAL | **面板行已删除**（2026-09-14，C 组用户裁决）；`PiCommandAction.OpenModelScope` 已删，只剩设置行 | pi 有 `core/slash-commands.ts:24` | enabledModels@PiSettingsRegistry.kt |
+| `/import` (import a session JSONL) | MISSING-TERMINAL-ONLY | **2026-09-14：引用已修**（原引 `TerminalOnly@PiSessionViewModel.kt`，该 action 已删除）。档位不变（pi 无 `import` RpcCommand）；app 侧能力具备 | pi 无 `import` RpcCommand，但本应用用文件选择器 + `switch_session` 达到同一结果 | importSession@PiSessionViewModel.kt; ImportSession@PiSlashCommands.kt |
+| `/share` (secret GitHub gist) | MISSING-TERMINAL-ONLY | 仍未做（需 `gh` CLI，Android 无）；**面板行已删除**（2026-09-14，A 组） | pi 有但我们够不着（无 RpcCommand） | 审计未引可查符号 |
+| `/login`, `/logout` | MISSING-TERMINAL-ONLY | 仍未做（OAuth 无 RpcCommand）；**面板行已删除**（2026-09-14，C 组） | pi 有但我们够不着（无 RpcCommand） | 审计未引可查符号 |
+| `/reload` | MISSING-TERMINAL-ONLY | 仍未做（无 RpcCommand；替代路径是「重启引擎」设置行）；**面板行与 AppBar 刷新图标都已删除** | pi 有但我们够不着（无 RpcCommand） | 审计未引可查符号 |
+| `/changelog`, `/hotkeys`, `/quit` | N/A / MISSING-TERMINAL | 仍未做；**三条面板行已删除**（2026-09-14，A 组） | pi 有但我们够不着（无 RpcCommand） | 审计未引可查符号 |
 | custom keybindings (`keybindings.json`) | N/A | 不适用 | pi 有 `docs/keybindings.md` | keybindings@ChatScreen.kt |
 | Built-in `dark` / `light` | IMPLEMENTED | 已实现（符号在位核对） | pi 有 `docs/themes.md` | Dark@MainActivity.kt; Light@PiThemeFiles.kt; PiPalette@MainActivity.kt |
 | Automatic `lightTheme/darkTheme` pair | IMPLEMENTED | 已实现 | pi 有 `docs/themes.md` | PiSessionViewModel.refreshTheme · PiSettingsStore@PiSessionViewModel.kt; MainActivity@MainActivity.k |
@@ -891,7 +902,7 @@ Verdict tally: **不适用 8, 仍未做 20, 已实现 107, 已解决 4, 部分�
 | Resume most recent session on launch (`pi -c`) | MISSING-GUI | 已实现 | pi 有 `args.ts` | PiSessionViewModel resume gate · PiSessionViewModel@MainActivity.kt |
 | Export to HTML | IMPLEMENTED | 已实现（符号在位核对） | pi 有 `docs/sessions.md` | export_html@PiSessionViewModel.kt; exportHtml@PiSessionViewModel.kt |
 | Export to JSONL | MISSING-GUI | 已实现 | pi 有 `agent-session.ts` | PiSessionViewModel.exportJsonl · export_html@PiSessionViewModel.kt; exportToHtml@PiSessionViewModel. |
-| Import from a JSONL file | MISSING-TERMINAL-ONLY | 仍未做（协议不可达） | pi 有但我们够不着（无 RpcCommand） | TerminalOnly@PiSessionViewModel.kt |
+| Import from a JSONL file | MISSING-TERMINAL-ONLY | **2026-09-14：引用已修**（原引 `TerminalOnly@PiSessionViewModel.kt`，该 action 已删除）。档位不变（pi 无 `import` RpcCommand）；app 侧能力具备 | pi 无 `import` RpcCommand；本应用用文件选择器 + `switch_session` 达到同一结果 | importSession@PiSessionViewModel.kt; ImportSession@PiSlashCommands.kt; switch_session@PiSessionViewModel.kt |
 | Entry log (`get_entries`) incl. extension stat | IMPLEMENTED | 已实现（符号在位核对） | pi 有 `docs/rpc.md` | appendEntry@PiSessionViewModel.kt; SessionTreeScreen@PiRoot.kt |
 | Per-cwd session grouping in the UI | PARTIAL | 已实现 | pi 有 `docs/sessions.md` | SessionsScreen.groupBy{cwd} · SessionsScreen@PiRoot.kt |
 | Model catalog from the provider | IMPLEMENTED | 已实现（符号在位核对） | pi 有 `docs/rpc.md` | refreshModels@PiRoot.kt; ModelPickerSheet@ChatScreen.kt |
@@ -899,7 +910,7 @@ Verdict tally: **不适用 8, 仍未做 20, 已实现 107, 已解决 4, 部分�
 | Thinking levels, `off`…`max`, model-derived | IMPLEMENTED | 已实现（符号在位核对） | pi 有 `docs/rpc.md` | PiEngineApi@PiRoot.kt |
 | Per-model thinking defaults (`modelThinkingLev | IMPLEMENTED | 已实现（符号在位核对） | pi 有 `settings-manager.ts` | json@PiRoot.kt |
 | Custom provider via `models.json` | PARTIAL | 部分：代码已写、无调用方 | pi 有 `docs/custom-provider.md` | PiConfigFiles/PiCredentialService · json@PiRoot.kt; get_available_models@PiRoot.kt; manage@PiApplica |
-| OAuth login (`/login`, `/logout`) and `auth.js | MISSING-TERMINAL-ONLY | 仍未做（协议不可达） | pi 有但我们够不着（无 RpcCommand） | TerminalOnly@PiSessionViewModel.kt; json@PiRoot.kt |
+| OAuth login (`/login`, `/logout`) and `auth.js | MISSING-TERMINAL-ONLY | 仍未做（OAuth 无 RpcCommand）；**面板行已删除**（2026-09-14，C 组） | pi 有但我们够不着（无 RpcCommand） | json@PiRoot.kt; oauth@PiSettingsRegistry.kt |
 | API-key credentials | MISSING-GUI | 部分：代码已写、无调用方 | pi 有 `docs/providers.md` | PiCredentialService.setApiKey · apiKey@PiSettingsRegistry.kt |
 | Provider transport setting | IMPLEMENTED | 已实现（符号在位核对） | pi 有 `settings-manager.ts` | 审计未引可查符号 |
 | `provider/auth` events visible to the client | PARTIAL | 仍未做 | pi 无对应物（App 自己的决定） | model_select@PiSessionViewModel.kt; get_state@PiSessionViewModel.kt |
@@ -957,7 +968,7 @@ Verdict tally: **不适用 8, 仍未做 20, 已实现 107, 已解决 4, 部分�
 - **jump to previous/next message (`ctrl+shift+up/** (was MISSING-GUI) → 已实现 — ChatScreen 跳到上/下一条
 - **tree filters (`treeFilterMode`, `ctrl+t/u/l/a/** (was MISSING-GUI) → 已实现 — SessionTreeScreen.TreeFilter
 - **session picker: search / sort / named filter /** (was MISSING-GUI) → 已实现 — SessionsScreen.query/byName/namedOnly
-- **scoped models selector (`/scoped-models`)** (was PARTIAL) → 已实现 — PiCommandAction.OpenModelScope
+- **scoped models selector (`/scoped-models`)** (was PARTIAL) → 曾经的「已实现」指的是把面板行接到 `enabledModels` 设置行的 `PiCommandAction.OpenModelScope`；**2026-09-14 该行按用户裁决删除，该枚举值一并删除，评级退回 PARTIAL**（选择器组件本身从未实现）
 - **A user theme JSON changes the app's own colour** (was MISSING-GUI) → 已实现 — PiThemeLoader.load + PiSessionViewModel.theme
 - **Theme discovery from `<agentDir>/themes/*.json** (was PARTIAL) → 已实现 — PiThemeLoader.discover
 - **Theme discovery from `.pi/themes/*.json` (proj** (was PARTIAL) → 已实现 — PiThemeLoader.discover
@@ -994,7 +1005,7 @@ working code.
 - **jump to previous/next message (`ctrl+shift+up/** (MISSING-GUI) → 已实现 — ChatScreen 跳到上/下一条
 - **tree filters (`treeFilterMode`, `ctrl+t/u/l/a/** (MISSING-GUI) → 已实现 — SessionTreeScreen.TreeFilter
 - **session picker: search / sort / named filter /** (MISSING-GUI) → 已实现 — SessionsScreen.query/byName/namedOnly
-- **scoped models selector (`/scoped-models`)** (PARTIAL) → 已实现 — PiCommandAction.OpenModelScope
+- **scoped models selector (`/scoped-models`)** (PARTIAL) → 同一处置：面板行与 `PiCommandAction.OpenModelScope` 已于 2026-09-14 删除（用户裁决，C 组），只有 `enabledModels` 设置行留下，评级维持 PARTIAL
 - **A user theme JSON changes the app's own colour** (MISSING-GUI) → 已实现 — PiThemeLoader.load + PiSessionViewModel.theme
 - **Theme discovery from `<agentDir>/themes/*.json** (PARTIAL) → 已实现 — PiThemeLoader.discover
 - **Theme discovery from `.pi/themes/*.json` (proj** (PARTIAL) → 已实现 — PiThemeLoader.discover

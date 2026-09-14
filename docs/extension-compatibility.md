@@ -114,7 +114,7 @@ Grouped by symbol, because that is how they were verified:
 
 | Group | Symbols that exist now |
 |---|---|
-| Commands / palette | `PiSlashCommands.piCommandPalette`, `SlashPalette`, `PiCommandAction`, `PiSlashCommand`, `PiSessionViewModel.runPromptCommand`, `refreshCommands`, `sourceTagOf`, `PiCommandAction.TerminalOnly` + `notifyTerminalOnly` |
+| Commands / palette | `PiSlashCommands.piCommandPalette`, `SlashPalette`, `PiCommandAction`, `PiSlashCommand`, `PiSessionViewModel.runPromptCommand`, `refreshCommands`, `sourceTagOf`, `sourceTagLabelOf`, `PI_UNLISTED_BUILTIN_COMMANDS` / `unlistedBuiltinHint`. **2026-09-14：** `PiCommandAction.TerminalOnly`、`PiCommandAction.OpenModelScope`、`PiSlashCommand.appLanding`、`notifyTerminalOnly` 与 `ComposerRoute.Unreachable` 均已删除——面板只列可执行的命令 |
 | Extension messages & entries | `Transcript` custom branch -> `onHookMessage`, `HookMessageBlock`, `Transcript.onCustomEntry`, `PiEngineSession.seedHistory` / `TranscriptReducer.seedFromHistory` |
 | Session metadata | `PiEngineApi.setSessionName`, `PiSessionViewModel.renameSession`, `PiEvent.SessionInfoChanged` handling |
 | Session/queue/stats UI | `SessionStatsSheet` (context usage), `SessionToolsSheet`, `ModelPickerSheet` |
@@ -368,8 +368,8 @@ can then modify state that a later wire event will reflect — that is how
 | Surface | What pi does | Behaviour in `--mode rpc` | What the app does | Gap | Effort |
 |---|---|---|---|---|---|
 | `get_commands` | Returns extension commands + prompt templates + skills, tagged `source` (`rpc-mode.ts:682-713`) | Works; payload is `{name, description, source, sourceInfo}` — **`sourceInfo`, not the flattened `location`/`path` the docs show** (`rpc-mode.ts:690`; `source-info.ts:3-12`; docs claim at `docs/rpc.md:838-851`) | Implemented: `refreshCommands()` -> `PiEngineApi.getCommands` -> `piCommandPalette`; `sourceInfo` is parsed and rendered as a source tag (`sourceTagOf`). | **N/A** — 已实现 `PiEngineApi.getCommands` / `piCommandPalette` / `sourceTagOf`. pi 有 `rpc-mode.ts:682-713`. | S |
-| Slash commands | Extensions, templates and skills are all invokable via `prompt("/name")` (`agent-session.ts:1211-1216`) | Works textually | Implemented: `/`-prefixed input opens the palette; built-ins the GUI cannot run produce an explicit notice instead of being sent to the model. | **N/A** — 已实现 `SlashPalette` + `PiSessionViewModel.send` 的 `/` 分支 + `notifyUnknownCommand`/`notifyTerminalOnly`；pi 有 `agent-session.ts:1181-1216` | S |
-| Built-in slash commands | `/reload`, `/trust`, `/model`, … (`slash-commands.ts:19-43`) | **Excluded from `get_commands`** and not handled by `prompt` (`docs/rpc.md:853`; `agent-session.ts:1331-1343` only dispatches *extension* commands) | Implemented app-side: `PiCommandAction` natively covers settings/model/thinking/tree/fork/clone/export/copy/rename/stats/new/compact/resume; the rest are `PiCommandAction.TerminalOnly` and say so (`notifyTerminalOnly`). | **N/A** — 已实现 `PiCommandAction`（常见内置原生实现，其余 `TerminalOnly` + `notifyTerminalOnly`）. pi 有但我们够不着 `slash-commands.ts:19-43`（内置命令只在 TUI，且被排除出 `get_commands`）. | S |
+| Slash commands | Extensions, templates and skills are all invokable via `prompt("/name")` (`agent-session.ts:1211-1216`) | Works textually | Implemented: `/`-prefixed input opens the palette; a pi built-in the app does not list is answered with a true sentence instead of being sent to the model. | **N/A** — 已实现 `SlashPalette` + `PiSessionViewModel.send` 的 `/` 分支 + `notifyUnknownCommand` / `unlistedBuiltinHint`。**2026-09-14：** 原写的 `notifyTerminalOnly` 已随 12 条不列命令一起删除 | S |
+| Built-in slash commands | `/tree`, `/export`, `/import`, … (`slash-commands.ts:20-42`) | **Excluded from `get_commands`** and not handled by `prompt` (`docs/rpc.md:853`; `agent-session.ts:1331-1343` only dispatches *extension* commands) | Implemented app-side: **11 条在列**（`tree` `export` `import` `copy` `name` `session` `fork` `clone` `new` `compact` `resume`），各有 `PiCommandAction` 实现；**12 条不列**（`PiSlashCommands.kt` 的 A/B/C 分组注释：4 条本平台无法交付、3 条同屏已有更直接入口、5 条目的地是设置行），名字保留在 `PI_UNLISTED_BUILTIN_COMMANDS` 里以便手敲时给一句真话。 | **N/A** — 已实现 `PiCommandAction`（11 条原生实现，其余 12 条不列）。**2026-09-14：** 本行原先写「23 条，其余 `TerminalOnly` + `notifyTerminalOnly`」——那个 action 与那个函数都已删除，用户裁决「没用的全删了」 | S |
 | Skills | `SKILL.md` discovery; `/skill:name` expands to a `<skill>` block (`agent-session.ts:1362-1389`; `docs/skills.md:24-42`) | Works; skills are listed by `get_commands` and expanded on `prompt`/`steer`/`follow_up` (`docs/rpc.md:69`) | Implemented: skills appear in the palette from `get_commands` (`skill:` prefix), and `/skill:name` invocations are split back into a card by `parsePiSkillBlock` -> `SkillInvocationBlock`. | **N/A** — 已实现 `piCommandPalette` + `SkillInvocationBlock` + `parsePiSkillBlock` (`rpc/SkillBlock.kt`). pi 有 `agent-session.ts:1362-1389`. | S |
 | Prompt templates | `.md` templates expanded on `prompt` (`agent-session.ts:1215`; `docs/prompt-templates.md:9-17`) | Works; listed as `source:"prompt"` | Implemented: templates arrive as `source:"prompt"` rows and are dispatched through `PiCommandAction.Prompt`. | **N/A** — 已实现（`get_commands` 的 `source:"prompt"` -> `PiCommandAction.Prompt`）. pi 有 `agent-session.ts:1215`. | S |
 | Extension-contributed skills/templates/themes | `resources_discover` → merged with `scope:"temporary"`, `source:"extension:<name>"` (`agent-session.ts:2493-2544`) | Works and shows up in `get_commands` | Partially: extension-contributed skills and prompts are visible through `get_commands`; `themePaths` have no wire channel at all. | **DEGRADED** — 仍未做（skills/prompts 已实现；themes 不可达）. pi 有 `types.ts:553-557`. | S |
@@ -806,8 +806,8 @@ See §4.5. A user who edits `.pi/extensions/foo.ts` inside the app's workspace a
 then types `/reload` must not have the literal string sent to the model — that
 would be a real prompt and a real API charge for no reload. **Fixed in the app**:
 `send()` now routes `/`-prefixed input through the palette
-(`PiSessionViewModel.send`, and `notifyUnknownCommand` / `notifyTerminalOnly` for
-what the GUI cannot run), so a built-in that only the TUI can execute produces an
+(`PiSessionViewModel.send`, and `notifyUnknownCommand` / `unlistedBuiltinHint` for
+what the GUI cannot run), so a built-in the app does not list produces an
 explicit notice instead of a prompt. The remaining gap is the reload itself
 (§4.5): the app restarts the engine via `ExtensionLifecycle` because no RPC
 command exists.
@@ -991,7 +991,7 @@ add the built-in list app-side (from `slash-commands.ts:19-43`) so `/reload`,
 
 **6.4 Intercept `/`-prefixed composer input.** `STATUS: DONE` —
 `PiSessionViewModel.send` routes `/` through the palette and uses
-`notifyUnknownCommand` / `notifyTerminalOnly` instead of sending the text to the
+`notifyUnknownCommand` / `unlistedBuiltinHint` instead of sending the text to the
 model. Today `/reload` goes to the model
 (§5.5). API: `PiSessionViewModel.send` should route a leading `/` to a palette
 selection, and only send `prompt("/cmd args")` for commands that are actually
