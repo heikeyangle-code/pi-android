@@ -222,7 +222,7 @@ class DeviceBridgeHttpServer(
                     DeviceDenial(
                         code = DeviceDenial.UNAUTHORIZED,
                         reason = "设备桥 token 无效或缺失。",
-                        hint = "请让维护者确认 token 文件与 App 内的一致；扩展会自动从 guest 内的 token 文件读取。",
+                        hint = "让维护者确认 token 文件与 App 一致（扩展会自动读取）。",
                     ),
                 )
                 else -> handler(parsed)
@@ -275,7 +275,7 @@ class DeviceBridgeHttpServer(
                     BridgeHttpResponse.denial(
                         DeviceDenial(
                             code = DeviceDenial.ERROR,
-                            reason = "设备桥内部错误：${error::class.java.simpleName}: ${error.message}",
+                            reason = "设备桥内部错误：${error.message}",
                         ),
                     ),
                 )

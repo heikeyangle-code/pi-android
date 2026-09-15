@@ -328,11 +328,10 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 	{
 		name: "android_bridge_status",
 		label: "设备桥状态",
-		description:
-			"Report bridge state: capability switches, availability, accessibility service state, missing permissions, screenshot support.",
-		promptSnippet: "Check device bridge and capability status",
+		description: "Bridge + capability state: groups on/usable, accessibility, missing permissions, screenshot support.",
+		promptSnippet: "Bridge + capability status",
 		promptGuidelines: [
-			"On [DISABLED]/[NO_PERMISSION] from any android_* tool, use android_bridge_status to find the cause, relay it verbatim, and do not retry the same call.",
+			"On [DISABLED]/[NO_PERMISSION] read android_bridge_status; relay its reason, no retry.",
 		],
 		parameters: Type.Object({}),
 		run: async () => {
@@ -447,33 +446,29 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 	{
 		name: "android_ui_dump",
 		label: "读取屏幕",
-		description:
-			"Read the screen node tree: indexed class/text/resource id/bounds/clickable/editable flags; indices feed android_tap and android_input. " +
-			"waitForText/waitForId wait on-device for that node (up to waitMs, default 5000) before dumping; diff=true returns only changes since the last dump. " +
-			"Coordinates are display pixels. Requires Accessibility.",
-		promptSnippet: "Read the current screen node tree (indexed)",
+		description: "Read the screen node tree (indexed); indices feed android_tap and android_input. Coordinates are display pixels.",
+		promptSnippet: "Read screen tree (indexed)",
 		promptGuidelines: [
-			"Dump before acting; on NOT_FOUND for an index, dump again or pass text/desc/resourceId to android_tap so the device resolves it.",
-			"To wait for a screen to load, use waitForText/waitForId, not repeated dumps.",
+			"Dump before acting; on NOT_FOUND re-dump or pass text/desc/id to android_tap; wait via waitForText/waitForId.",
 		],
 		parameters: Type.Object({
 			filter: Type.Optional(
-				Type.String({ description: "Keep only nodes whose text/description/resource id contains this substring, plus ancestors." }),
+				Type.String({ description: "Keep nodes whose text/description/resource id contains this, plus ancestors." }),
 			),
 			maxNodes: Type.Optional(
-				Type.Number({ description: `Max nodes returned, default ${400}, cap 2000.` }),
+				Type.Number({ description: `Max nodes, default ${400}, cap 2000.` }),
 			),
 			waitForText: Type.Optional(
-				Type.String({ description: "Wait for a node whose text contains this, then dump; NOT_FOUND on timeout." }),
+				Type.String({ description: "Wait until a node text contains this, then dump; NOT_FOUND on timeout." }),
 			),
 			waitForId: Type.Optional(
-				Type.String({ description: "Wait for a node whose resource id contains this, then dump." }),
+				Type.String({ description: "Wait until a node resource id contains this, then dump." }),
 			),
 			waitMs: Type.Optional(
-				Type.Number({ description: "Wait timeout in ms, default 5000, cap 30000; only with waitForText/waitForId." }),
+				Type.Number({ description: "Timeout ms, default 5000, cap 30000; with waitForText/waitForId." }),
 			),
 			diff: Type.Optional(
-				Type.Boolean({ description: "Return only changes since the last dump (added/changed/removed), default false." }),
+				Type.Boolean({ description: "Only changes since the last dump (added/changed/removed), default false." }),
 			),
 		}),
 		run: async (params) =>
@@ -515,18 +510,16 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 	{
 		name: "android_tap",
 		label: "点按",
-		description:
-			"Tap a node or coordinate: prefer a android_ui_dump index (node click action, most reliable), else x/y, else text/desc/resourceId resolved on-device. " +
-			"longPress=true long-presses. Text goes to android_input, drag/scroll to android_swipe. Requires Accessibility.",
-		promptSnippet: "Tap a control (dump index, text/id, or coordinates)",
+		description: "Tap by dump index (most reliable), x/y, or text/desc/resourceId resolved on-device. longPress for long press.",
+		promptSnippet: "Tap node or coordinate",
 		parameters: Type.Object({
-			index: Type.Optional(Type.Number({ description: "Node index from android_ui_dump output." })),
-			x: Type.Optional(Type.Number({ description: "X in display pixels. With y, index is ignored." })),
-			y: Type.Optional(Type.Number({ description: "Y in display pixels." })),
-			text: Type.Optional(Type.String({ description: "Resolve target by node text (substring, case-insensitive); exclusive with index/x/y." })),
-			desc: Type.Optional(Type.String({ description: "Resolve target by contentDescription substring." })),
-			resourceId: Type.Optional(Type.String({ description: "Resolve target by resource id substring, e.g. btn_send." })),
-			longPress: Type.Optional(Type.Boolean({ description: "Long-press instead of tap, default false." })),
+			index: Type.Optional(Type.Number({ description: "Node index from the last dump." })),
+			x: Type.Optional(Type.Number({ description: "X in display px; with y, index is ignored." })),
+			y: Type.Optional(Type.Number({ description: "Y in display px." })),
+			text: Type.Optional(Type.String({ description: "Match node text (substring, case-insensitive); exclusive with index/x/y." })),
+			desc: Type.Optional(Type.String({ description: "Match contentDescription substring." })),
+			resourceId: Type.Optional(Type.String({ description: "Match resource id substring, e.g. btn_send." })),
+			longPress: Type.Optional(Type.Boolean({ description: "Long-press, default false." })),
 		}),
 		run: async (params) =>
 			guarded(async () => {
@@ -557,16 +550,13 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 	{
 		name: "android_input",
 		label: "输入文本",
-		description:
-			"Write text into a field: the focused input by default, or a android_ui_dump index. " +
-			"Tries the direct set action (ACTION_SET_TEXT); when refused, falls back to clipboard + paste (replaces the clipboard contents, noted in the reply). " +
-			"submit=true attempts enter (Android 11+). Requires the Accessibility capability.",
-		promptSnippet: "Type text into a field (confirm)",
+		description: "Type into the focused field or a dump index; falls back to clipboard paste (replaces the clipboard) when refused.",
+		promptSnippet: "Type into a field",
 		parameters: Type.Object({
-			text: Type.String({ description: "Text to write (replaces the field contents)." }),
-			index: Type.Optional(Type.Number({ description: "Field index from android_ui_dump; omit to use the focused field." })),
-			desc: Type.Optional(Type.String({ description: "Resolve the field by contentDescription substring (instead of index)." })),
-			resourceId: Type.Optional(Type.String({ description: "Resolve the field by resource id substring, e.g. input_box (instead of index)." })),
+			text: Type.String({ description: "Text to write (replaces field contents)." }),
+			index: Type.Optional(Type.Number({ description: "Field index from the last dump; omit for the focused field." })),
+			desc: Type.Optional(Type.String({ description: "Match the field by contentDescription substring." })),
+			resourceId: Type.Optional(Type.String({ description: "Match the field by resource id substring, e.g. input_box." })),
 			submit: Type.Optional(Type.Boolean({ description: "Attempt enter after writing, default false." })),
 		}),
 		run: async (params) =>
@@ -598,12 +588,10 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 	{
 		name: "android_key",
 		label: "系统按键",
-		description:
-			"Perform a system global action (values in key). Requires the Accessibility capability, no extra permission. " +
-			"For raw keys (enter, delete, arrows) use android_keyevent (needs Shizuku).",
-		promptSnippet: "Run an Android global action (back/home/lock…)",
+		description: "Run a system global action. For raw keys (enter/delete/arrows) use android_keyevent (needs Shizuku).",
+		promptSnippet: "Global action (back/home/lock)",
 		promptGuidelines: [
-			"Use android_key for global actions (back, home, lock, notifications); use android_keyevent only when enter, delete or arrow keys are actually needed.",
+			"Raw keys need android_keyevent + Shizuku; else android_key.",
 		],
 		parameters: Type.Object({
 			key: ScreenKey,
@@ -618,13 +606,11 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 	{
 		name: "android_keyevent",
 		label: "注入原始按键",
-		description:
-			"Inject raw key events into the focused window (names in keys). Requires the ADB identity (uid=2000), i.e. Shizuku installed and authorized; refuses without it. " +
-			"Keys go to the foreground app, same as pressing them by hand.",
-		promptSnippet: "Inject raw key events (Shizuku, confirm)",
+		description: "Inject raw keys into the focused window via Shizuku (ADB uid=2000); refuses without it.",
+		promptSnippet: "Inject raw keys (Shizuku)",
 		parameters: Type.Object({
-			keys: Type.String({ description: "Key names, space- or comma-separated, e.g. \"ENTER\" or \"DPAD_DOWN DPAD_DOWN\"; the KEYCODE_ prefix is optional." }),
-			repeat: Type.Optional(Type.Number({ description: "Repeat count 1–20, default 1." })),
+			keys: Type.String({ description: "Space/comma-separated, e.g. \"ENTER\" or \"DPAD_DOWN DPAD_DOWN\"; KEYCODE_ prefix optional." }),
+			repeat: Type.Optional(Type.Number({ description: "1-20, default 1." })),
 		}),
 		run: async (params) =>
 			guarded(async () => {
@@ -642,25 +628,22 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 	{
 		name: "android_swipe",
 		label: "滑动 / 滚动",
-		description:
-			"Swipe (x1,y1)→(x2,y2) in display pixels: scroll, page, dismiss, drag. " +
-			"With direction, scroll the list at index/selector via the accessibility scroll action (no guessed distance, no clash with system gesture navigation); x1..y2 are then unneeded. " +
-			"Requires the Accessibility capability.",
-		promptSnippet: "Swipe the screen, or scroll a list by node",
+		description: "Swipe in display pixels, or scroll the node at index/selector with direction (accessibility scroll action).",
+		promptSnippet: "Swipe or scroll a node",
 		parameters: Type.Object({
 			x1: Type.Optional(Type.Number({ description: "Start x in display pixels." })),
 			y1: Type.Optional(Type.Number({ description: "Start y." })),
 			x2: Type.Optional(Type.Number({ description: "End x." })),
 			y2: Type.Optional(Type.Number({ description: "End y." })),
-			durationMs: Type.Optional(Type.Number({ description: "Gesture duration in ms, default 300; shorter is faster." })),
+			durationMs: Type.Optional(Type.Number({ description: "Gesture ms, default 300." })),
 			direction: Type.Optional(
 				StringEnum(["forward", "backward"] as const, {
-					description: "Use the node scroll action: forward = later in the list, backward = earlier; needs index/selector.",
+					description: "Scroll the node instead: forward/backward; needs index/selector.",
 				}),
 			),
-			index: Type.Optional(Type.Number({ description: "Scrollable node index (with direction)." })),
-			text: Type.Optional(Type.String({ description: "Resolve the scrollable node by text substring (with direction)." })),
-			resourceId: Type.Optional(Type.String({ description: "Resolve the scrollable node by resource id substring." })),
+			index: Type.Optional(Type.Number({ description: "Scrollable node index." })),
+			text: Type.Optional(Type.String({ description: "Match the scrollable node by text substring." })),
+			resourceId: Type.Optional(Type.String({ description: "Match the scrollable node by resource id substring." })),
 		}),
 		run: async (params) =>
 			guarded(async () => {
@@ -714,25 +697,20 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 	{
 		name: "android_screenshot",
 		label: "截屏",
-		description:
-			"Capture the screen as an image. Default JPEG, longest side 1280. " +
-			"region=[left,top,right,bottom] crops first (display pixels, crop then scale, so small text stays legible); " +
-			"marks=true draws the last dump's clickable indices onto the image (dump first). " +
-			"Secure windows (payments, passwords) cannot be captured. Requires Accessibility and Android 11+.",
-		promptSnippet: "Capture the phone screen for the model",
+		description: "Capture the screen (Android 11+); region crops it, marks draws the last dump's indices. Secure windows fail.",
+		promptSnippet: "Capture the screen",
 		promptGuidelines: [
-			"When android_ui_dump returns no useful nodes (custom-drawn UI, games, video, images), use android_screenshot to look at the screen.",
-			"For small text or one area, crop with region instead of raising maxDimension (sharper, fewer tokens).",
+			"Custom UI/games/video: android_screenshot; crop small text with region.",
 		],
 		parameters: Type.Object({
 			format: Type.Optional(ScreenshotFormat),
-			maxDimension: Type.Optional(Type.Number({ description: "Longest-side scale cap in pixels, default 1280, range 240–4096." })),
+			maxDimension: Type.Optional(Type.Number({ description: "Longest side cap in px, default 1280 (240-4096)." })),
 			quality: Type.Optional(Type.Number({ description: "JPEG quality 20–100, default 82." })),
 			region: Type.Optional(
-				Type.Array(Type.Number(), { description: "Crop area [left,top,right,bottom] in display pixels; omit for the full screen." }),
+				Type.Array(Type.Number(), { description: "Crop [left,top,right,bottom] in display px; omit for full screen." }),
 			),
 			marks: Type.Optional(
-				Type.Boolean({ description: "Draw clickable indices from the last android_ui_dump onto the image, default false." }),
+				Type.Boolean({ description: "Draw the last dump's clickable indices, default false." }),
 			),
 		}),
 		run: async (params) =>
@@ -782,21 +760,16 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 	{
 		name: "android_app",
 		label: "应用列表 / 启动",
-		description:
-			"action=\"list\" lists installed apps (launchable only by default; on Android 11+ without QUERY_ALL_PACKAGES only visible packages appear). " +
-			"action=\"launch\" starts an app by exact package. action is required.",
-		promptSnippet: "List installed apps / launch by package",
-		promptGuidelines: [
-			"android_app action=\"launch\" accepts exact package names only; find it first with action=\"list\".",
-		],
+		description: "List installed apps, or launch one by exact package name (find it with action="list" first).",
+		promptSnippet: "List or launch apps",
 		parameters: Type.Object({
 			action: StringEnum(["list", "launch"] as const, {
-				description: "list = list apps, launch = start an app.",
+				description: "list = list apps, launch = start one.",
 			}),
-			q: Type.Optional(Type.String({ description: "Substring filter on app name or package; action=\"list\" only." })),
-			includeSystem: Type.Optional(Type.Boolean({ description: "Include system apps, default false; action=\"list\" only." })),
-			limit: Type.Optional(Type.Number({ description: "Max rows, default 60, cap 500; action=\"list\" only." })),
-			package: Type.Optional(Type.String({ description: "Exact package name, e.g. org.telegram.messenger; required for action=\"launch\"." })),
+			q: Type.Optional(Type.String({ description: "Substring filter on name or package; list only." })),
+			includeSystem: Type.Optional(Type.Boolean({ description: "Include system apps, default false; list only." })),
+			limit: Type.Optional(Type.Number({ description: "Max rows, default 60, cap 500; list only." })),
+			package: Type.Optional(Type.String({ description: "Exact package, e.g. org.telegram.messenger; required for launch." })),
 		}),
 		run: async (params) =>
 			guarded(async () => {
@@ -853,9 +826,8 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 	{
 		name: "android_stop_app",
 		label: "结束应用",
-		description:
-			"Kill a user-installed app's background process. Exact package name only; system apps, critical processes and pi-android itself are always refused.",
-		promptSnippet: "Kill a background app process (confirm)",
+		description: "Kill a user app's background process; system apps, critical processes and pi-android are refused.",
+		promptSnippet: "Kill a background app",
 		parameters: Type.Object({
 			package: Type.String({ description: "Exact package name." }),
 		}),
@@ -874,21 +846,19 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 	{
 		name: "android_say",
 		label: "通知 / 短提示 / 朗读",
-		description:
-			"kind=\"notification\" posts a system notification (tapping returns to pi-android); kind=\"toast\" shows a short on-screen message, not in the shade; " +
-			"kind=\"speak\" reads the text with system TTS. kind is required.",
-		promptSnippet: "System notification / toast / speak",
+		description: "Post a notification, show a short on-screen message, or read text with TTS.",
+		promptSnippet: "Notify / toast / speak",
 		parameters: Type.Object({
 			kind: StringEnum(["notification", "toast", "speak"] as const, {
-				description: "notification = post a notification, toast = short on-screen message, speak = read aloud.",
+				description: "notification, toast, or speak.",
 			}),
 			text: Type.String({ description: "Text to send or read." }),
-			title: Type.Optional(Type.String({ description: "Notification title, default pi; kind=\"notification\" only." })),
-			id: Type.Optional(Type.Number({ description: "Notification id, overwrites the same notification; auto-generated when omitted; kind=\"notification\" only." })),
-			long: Type.Optional(Type.Boolean({ description: "Use the long duration, default false; kind=\"toast\" only." })),
-			language: Type.Optional(Type.String({ description: "BCP-47 language tag, e.g. zh-CN, en-US; default system language; kind=\"speak\" only." })),
-			rate: Type.Optional(Type.Number({ description: "Speech rate 0.1–3.0, default 1.0; kind=\"speak\" only." })),
-			pitch: Type.Optional(Type.Number({ description: "Pitch 0.1–3.0, default 1.0; kind=\"speak\" only." })),
+			title: Type.Optional(Type.String({ description: "Notification title, default pi." })),
+			id: Type.Optional(Type.Number({ description: "Notification id (overwrites the same one); default auto." })),
+			long: Type.Optional(Type.Boolean({ description: "Long duration, default false." })),
+			language: Type.Optional(Type.String({ description: "BCP-47 tag, e.g. zh-CN; default system." })),
+			rate: Type.Optional(Type.Number({ description: "Speech rate 0.1-3.0, default 1.0." })),
+			pitch: Type.Optional(Type.Number({ description: "Pitch 0.1-3.0, default 1.0." })),
 		}),
 		run: async (params) =>
 			guarded(async () => {
@@ -932,11 +902,11 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 		name: "android_vibrate",
 		label: "震动",
 		description: "Vibrate the phone.",
-		promptSnippet: "Vibrate the phone (custom pattern allowed)",
+		promptSnippet: "Vibrate the phone",
 		parameters: Type.Object({
-			ms: Type.Optional(Type.Number({ description: "Vibration length in ms, default 200, cap 10000." })),
+			ms: Type.Optional(Type.Number({ description: "Length ms, default 200, cap 10000." })),
 			pattern: Type.Optional(
-				Type.Array(Type.Number(), { description: "Custom pattern in ms, e.g. [0, 120, 80, 120]; read as off-on-off-on; overrides ms." }),
+				Type.Array(Type.Number(), { description: "Pattern ms, e.g. [0,120,80,120] (off-on-off-on); overrides ms." }),
 			),
 		}),
 		run: async (params) =>
@@ -949,13 +919,12 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 	{
 		name: "android_share",
 		label: "分享",
-		description:
-			"Hand text or a link to the system share sheet; the user picks the target app. To open a URL directly use android_open.",
-		promptSnippet: "Open the system share sheet (confirm)",
+		description: "Share text or a link via the system sheet; to open a URL use android_open.",
+		promptSnippet: "Share to another app",
 		parameters: Type.Object({
 			text: Type.Optional(Type.String({ description: "Body to share." })),
 			url: Type.Optional(Type.String({ description: "Link to attach." })),
-			subject: Type.Optional(Type.String({ description: "Title / subject." })),
+			subject: Type.Optional(Type.String({ description: "Title." })),
 		}),
 		run: async (params) =>
 			guarded(async () => {
@@ -971,11 +940,8 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 	{
 		name: "android_open",
 		label: "打开链接",
-		description:
-			"Open a URL or deep link with the system default app (custom schemes and intent: URLs included); " +
-			"an intent: URL with no match falls back to its browser_fallback_url. " +
-			"To let the user pick an app for sharing use android_share.",
-		promptSnippet: "Open a URL/deep link with a system app (confirm)",
+		description: "Open a URL/deep link with the default app; intent: URLs fall back to browser_fallback_url.",
+		promptSnippet: "Open URL / deep link",
 		parameters: Type.Object({
 			url: Type.String({
 				description:
@@ -994,9 +960,8 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 	{
 		name: "android_clipboard",
 		label: "剪贴板",
-		description:
-			"Read or write the system clipboard: pass text to write, omit it to read. Since Android 10 only a foreground app can read the clipboard; a failed read says why.",
-		promptSnippet: "Read/write the system clipboard",
+		description: "Pass text to write the clipboard, omit it to read; reads work only in the foreground (Android 10+).",
+		promptSnippet: "Read/write clipboard",
 		parameters: Type.Object({
 			text: Type.Optional(Type.String({ description: "Text to write; omit to read the clipboard." })),
 		}),
@@ -1023,21 +988,17 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 	{
 		name: "android_download",
 		label: "公共 Download 读写",
-		description:
-			"Read/write files in the public Download folder. " +
-			"op=\"write\" needs name + content (text) or base64 + mimeType (binary); op=\"read\" needs name, optional maxBytes. " +
-			"write needs no permission on API 29+, needs storage permission on Android 8/9; " +
-			"read can only see files this app exported on API 33+, needs storage permission on API 30–32. For user-chosen directories use android_files. op is required.",
-		promptSnippet: "Read/write public Download files (confirm)",
+		description: "Read/write the public Download folder; user-authorized dirs use android_files. write: no permission on API 29+, storage permission on 8/9. read: own exports only on 33+, storage permission on 30-32.",
+		promptSnippet: "Public Download files",
 		parameters: Type.Object({
 			op: StringEnum(["write", "read"] as const, {
-				description: "write = export a file, read = import a file.",
+				description: "write = export, read = import.",
 			}),
-			name: Type.String({ description: "File name (no path), e.g. report.md." }),
-			content: Type.Optional(Type.String({ description: "Text content; op=\"write\", exclusive with base64." })),
-			base64: Type.Optional(Type.String({ description: "Base64 of binary content; op=\"write\", exclusive with content." })),
-			mimeType: Type.Optional(Type.String({ description: "MIME type, default text/plain; op=\"write\"." })),
-			maxBytes: Type.Optional(Type.Number({ description: "Max bytes to read, default 1MB, cap 4MB; op=\"read\"." })),
+			name: Type.String({ description: "File name, no path; e.g. report.md." }),
+			content: Type.Optional(Type.String({ description: "Text; with write, not base64." })),
+			base64: Type.Optional(Type.String({ description: "Binary as base64; with write, not content." })),
+			mimeType: Type.Optional(Type.String({ description: "MIME type, default text/plain." })),
+			maxBytes: Type.Optional(Type.Number({ description: "Max bytes, default 1MB, cap 4MB." })),
 		}),
 		run: async (params) =>
 			guarded(async () => {
@@ -1082,15 +1043,10 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 	{
 		name: "android_files_list",
 		label: "已授权目录",
-		description:
-			"List user-authorized (SAF) directories and their contents: omit path to list authorized root names. " +
-			"Use android_files to read/write those files; use android_download for the public Download folder.",
-		promptSnippet: "List authorized (SAF) directories and files",
-		promptGuidelines: [
-			"Before reading or writing the user's files, list authorized root names with android_files_list; paths must start with a root name.",
-		],
+		description: "List user-authorized (SAF) dirs; omit path for root names. Read/write them with android_files.",
+		promptSnippet: "List authorized dirs",
 		parameters: Type.Object({
-			path: Type.Optional(Type.String({ description: "\"root name/relative path\"; omit to list all authorized roots." })),
+			path: Type.Optional(Type.String({ description: "Omit for root names; else \"root/relative\"." })),
 		}),
 		run: async (params) =>
 			guarded(async () => {
@@ -1117,20 +1073,17 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 	{
 		name: "android_files",
 		label: "授权目录读写",
-		description:
-			"Read/write files in user-authorized (SAF) directories. " +
-			"op=\"write\" needs path + content (text) or base64 (binary, optional mimeType); missing parent dirs are created and an existing file is overwritten; " +
-			"op=\"read\" needs path, optional maxBytes; text is returned directly, binary as base64. For the public Download folder use android_download. op is required.",
-		promptSnippet: "Read/write files in authorized directories (confirm)",
+		description: "Read/write files under a user-authorized (SAF) dir. write: creates parent dirs, overwrites. read: text direct, binary as base64. Public Download uses android_download.",
+		promptSnippet: "Authorized-dir files",
 		parameters: Type.Object({
 			op: StringEnum(["write", "read"] as const, {
-				description: "write = write a file, read = read a file.",
+				description: "write or read.",
 			}),
-			path: Type.String({ description: "\"root name/relative path\", e.g. Documents/notes/todo.md." }),
-			content: Type.Optional(Type.String({ description: "Text content; op=\"write\", exclusive with base64." })),
-			base64: Type.Optional(Type.String({ description: "Base64 of binary content; op=\"write\", exclusive with content." })),
-			mimeType: Type.Optional(Type.String({ description: "MIME type, default text/plain; op=\"write\"." })),
-			maxBytes: Type.Optional(Type.Number({ description: "Max bytes to read, default 1MB, cap 4MB; op=\"read\"." })),
+			path: Type.String({ description: "\"root/relative\", e.g. Documents/notes/todo.md; must start with an authorized root name." }),
+			content: Type.Optional(Type.String({ description: "Text; with write, not base64." })),
+			base64: Type.Optional(Type.String({ description: "Binary as base64; with write, not content." })),
+			mimeType: Type.Optional(Type.String({ description: "MIME type, default text/plain." })),
+			maxBytes: Type.Optional(Type.Number({ description: "Max bytes, default 1MB, cap 4MB." })),
 		}),
 		run: async (params) =>
 			guarded(async () => {
@@ -1177,23 +1130,19 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 	{
 		name: "android_device_state",
 		label: "设备状态",
-		description:
-			"Read device state. what=\"battery\" level/charging/temperature; what=\"location\" last known position; " +
-			"what=\"sensors\" lists all sensors; " +
-			"what=\"sensor\" reads one sample (accelerometer, light, pressure…; step_counter and similar do not fit single sampling), with typeName or type. " +
-			"Requires the location·sensors·camera capability; location also needs the system location permission. what is required.",
-		promptSnippet: "Read battery / location / sensors",
+		description: "Read battery, last known location, the sensor list, or one sensor sample.",
+		promptSnippet: "Battery / location / sensors",
 		parameters: Type.Object({
 			what: StringEnum(["battery", "location", "sensors", "sensor"] as const, {
-				description: "battery = level, location = position, sensors = sensor list, sensor = one sample.",
+				description: "battery = level, location = position (needs the system location permission), sensors = list, sensor = one sample.",
 			}),
 			typeName: Type.Optional(
-				Type.String({ description: "Sensor type name, e.g. accelerometer; what=\"sensor\" only, exclusive with type." }),
+				Type.String({ description: "Sensor type name, e.g. accelerometer; with sensor, not type." }),
 			),
 			type: Type.Optional(
-				Type.Number({ description: "Sensor numeric type (Android Sensor.TYPE_*); what=\"sensor\" only, exclusive with typeName." }),
+				Type.Number({ description: "Android Sensor.TYPE_*; with sensor, not typeName." }),
 			),
-			timeoutMs: Type.Optional(Type.Number({ description: "Sample wait timeout in ms, default 1500; what=\"sensor\" only." })),
+			timeoutMs: Type.Optional(Type.Number({ description: "Sample timeout ms, default 1500." })),
 		}),
 		run: async (params) =>
 			guarded(async () => {
@@ -1251,8 +1200,8 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 	{
 		name: "android_torch",
 		label: "手电筒",
-		description: "Turn the flashlight (camera LED) on or off; some ROMs need the camera permission.",
-		promptSnippet: "Turn the flashlight on/off",
+		description: "Flashlight (camera LED) on/off; some ROMs need the camera permission.",
+		promptSnippet: "Flashlight on/off",
 		parameters: Type.Object({
 			on: Type.Boolean({ description: "true = on, false = off." }),
 		}),
@@ -1268,18 +1217,13 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 	{
 		name: "android_shell",
 		label: "设备 Shell",
-		description:
-			"Run one device shell command under the policy guard (needs the user's Shell capability). Commands are whitelisted; unknown commands are refused. " +
-			"Hard-blocked regardless of authorization: mount/umount, setenforce, setprop, settings put, mknod, dd, mkfs, pm clear/uninstall, su/sudo/magisk, /dev/block. " +
-			"Writes are allowed only inside the workspace (including when the workspace itself is DCIM, Pictures or Download). " +
-			"`$(...)` and backticks are refused unless the user enables relaxed mode. " +
-			"Runs as the active backend identity: Shizuku authorized = ADB (uid=2000), otherwise this app's own uid.",
-		promptSnippet: "Run a policy-guarded device shell command (confirm)",
+		description: "Whitelisted shell; unknown refused. Blocked: mount/umount, setenforce, setprop, settings put, mknod, dd, mkfs, pm clear|uninstall, su|sudo|magisk, /dev/block. Writes only in workspace; Shizuku = uid 2000, else app uid.",
+		promptSnippet: "Guarded device shell",
 		promptGuidelines: [
-			"Use android_shell only when device-level identity is genuinely needed; for workspace files, git, npm and builds use the built-in bash, and to write the user's files use android_files (op=\"write\").",
+			"android_shell only for device identity; workspace git/npm/builds use bash.",
 		],
 		parameters: Type.Object({
-			command: Type.String({ description: "Command to run. Split multiple actions into separate calls." }),
+			command: Type.String({ description: "One command; split multiple actions into separate calls. `$(...)`/backticks need relaxed mode." }),
 			timeoutMs: Type.Optional(Type.Number({ description: "Timeout in ms, default 15000, cap 60000." })),
 		}),
 		run: async (params) =>
@@ -1313,64 +1257,52 @@ const SKILL_SENTINEL = `name: ${SKILL_NAME}`;
 function skillMarkdown(): string {
 	return `---
 name: ${SKILL_NAME}
-description: Using pi-android device tools for screen, apps, files, notifications and sensors.
+description: pi-android device tools: screen, apps, files, notifications, sensors.
 ---
 
 # pi-android device environment
 
-The pi kernel runs in a proot Ubuntu; the app process provides the device tools.
+pi runs in a proot Ubuntu; the app provides the android_* tools.
 
 ## Paths
 
 | Path | Meaning |
 |---|---|
 | \`/root/.pi/agent\` | pi agentDir: settings, extensions, skills, sessions, auth.json |
-| \`/workspace\` | current workspace (app-private storage, fast, good for build/npm) |
-| \`/sdcard\`, \`/storage/emulated/0\` | user shared storage (FUSE, slow, good for user-visible files) |
-| \`/tmp\` | writable temporary directory |
+| \`/workspace\` | workspace (app-private, fast, for build/npm) |
+| \`/sdcard\`, \`/storage/emulated/0\` | shared storage (FUSE, slow, visible) |
+| \`/tmp\` | writable temp |
 
-## Device tools
+## Tools
 
-- Screen: \`android_ui_dump\` (indexed node tree). Prefer text/desc/resourceId in \`android_tap\` so the device
-  resolves the target (indices are valid only within one dump). Wait for a screen with the dump's
-  waitForText/waitForId. For text or custom-drawn UI use \`android_screenshot\` (region crop, marks labels
-  clickable indices). \`android_input\` writes into fields.
-- Apps: \`android_app\` (\`action="list"\`, \`action="launch"\`); \`android_stop_app\` kills user apps (dangerous, confirm).
-- User: \`android_say\` (\`kind\` = notification / toast / speak), \`android_vibrate\`.
-- Data: \`android_clipboard\` (pass \`text\` to write, omit to read); \`android_download\` (\`op="write"\` / \`op="read"\`) for public
-  Download; \`android_files_list\` + \`android_files\` (\`op="read"\` / \`"write"\`) for directories the user authorized in
-  Settings → Device capabilities → Storage.
-- State: \`android_device_state\` (\`what\` = battery / location / sensors / sensor), \`android_torch\`.
+- Screen: \`android_ui_dump\` → \`android_tap\` (index or text/desc/resourceId resolved on-device) → \`android_input\`;
+  wait with waitForText/waitForId. Custom-drawn UI: \`android_screenshot\` (region, marks).
+- Apps: \`android_app\`, \`android_stop_app\` (confirm). User: \`android_say\`, \`android_vibrate\`.
+- Data: \`android_clipboard\`, \`android_download\`, \`android_files_list\`/\`android_files\` (SAF dirs the user authorized).
+- State: \`android_device_state\`, \`android_torch\`.
 
 ## Rules
 
-1. **Capabilities are off by default.** Unauthorized ones return \`[DISABLED]\` / \`[NO_PERMISSION]\` with a Chinese
-   reason: relay it verbatim, tell the user where to enable it (Settings → Device capabilities), do not invent an
-   explanation and do not retry.
-2. **Dangerous actions confirm.** Stopping an app, shell, share, open, typing into a field, cross-sandbox file access
-   and raw key injection prompt; the prompt offers "allow and remember for this session", which silences that class
-   until the session ends. On refusal, stop. Without a confirmation channel they are refused outright.
-3. **Taps follow the latest screen.** An index is valid only within the latest \`android_ui_dump\`; prefer
-   text/desc/resourceId selectors, or wait with waitForText/waitForId. The reply's "foreground A → B" and "screen did
-   not change" are the self-check.
-4. **Never pretend.** A failed call is a failure; report the tool output as it is.
-5. **Device policy governs \`android_*\` only.** Built-in bash/read/write for git, npm, rg and builds inside the
-   workspace are unrestricted. \`android_shell\` differs: command whitelist, hard blocklist, writes only inside the
-   workspace (use \`android_files\` (\`op="write"\`) for the user's files elsewhere).
+1. Capabilities are off by default; \`[DISABLED]\`/\`[NO_PERMISSION]\` carry a Chinese reason — relay it verbatim, say
+   where to enable it (Settings → Device capabilities), don't retry.
+2. Dangerous actions confirm ("allow and remember for this session" silences that class until the session ends);
+   refusal = stop.
+3. Indices are valid only within the latest \`android_ui_dump\`; prefer selectors. The reply's "foreground A → B" /
+   "screen did not change" is the self-check.
+4. Never pretend: report tool output as it is.
+5. Policy covers only \`android_*\`; workspace bash/read/write are unrestricted. \`android_shell\` has a whitelist, a
+   hard blocklist and writes only in the workspace.
 
 ## vs Termux
 
-Upstream pi on Termux uses \`termux-open-url\` and similar. Here use the \`android_*\` tools; no Termux:API needed, and
-failures state their reason.
+Use the \`android_*\` tools; upstream Termux commands don't apply.
 
-## Device shell reality
+## Device shell
 
-- The default backend is the app's own identity, so many commands fail on privilege; with **Shizuku** installed and
-  authorized the backend is ADB (uid=2000) and \`input\`, \`pm\`, \`am\`, \`settings get\` and \`dumpsys\` work. Read the
-  backend from \`android_bridge_status\`; do not guess.
-- The whitelist, hard blocklist and write boundary are echoed in the tool reply (\`policy\` field); read it before
-  retrying a refused command.
-- \`$(...)\` and backticks are refused unless the user enables relaxed mode, which also relaxes nested-command checks.
+- Default backend is the app uid; with **Shizuku** authorized it is ADB (uid=2000) and \`input\`, \`pm\`, \`am\`,
+  \`settings get\`, \`dumpsys\` work; read it from \`android_bridge_status\`.
+- Whitelist, blocklist and write boundary are echoed in the reply (\`policy\`).
+- \`$(...)\`/backticks need the user's relaxed mode.
 `;
 }
 
@@ -1380,9 +1312,9 @@ function environmentGuidance(): string {
 		"",
 		"## Android device environment (pi-android)",
 		"",
-		"The pi kernel runs in a proot Ubuntu; the app provides device tools prefixed android_.",
-		"- Workspace `/workspace` is fast, `/sdcard` slow but user-visible; device policy governs **only** android_* tools, so git / npm / builds via the built-in bash in the workspace are unrestricted.",
-		"- Dangerous device actions confirm, with an \"allow and remember for this session\" option; on refusal, stop and explain.",
+		"pi runs in proot Ubuntu; tools are android_*.",
+		"- `/workspace` fast, `/sdcard` slow; device policy covers only android_* tools, workspace bash unrestricted.",
+		"- Dangerous device actions confirm; on refusal, stop.",
 	].join("\n");
 }
 
@@ -1427,7 +1359,7 @@ export default function (pi: ExtensionAPI) {
 	// afterwards. A caller who needs proof that the scan finished can wait for the
 	// `session_start` event with `reason: "reload"`, which pi emits at the end.
 	pi.registerCommand("device-reload", {
-		description: "Re-scan extensions, skills and prompt templates (no engine restart)",
+		description: "Re-scan extensions, skills and prompts (no engine restart)",
 		handler: async (_args, ctx) => {
 			ctx.ui.notify("正在重新扫描扩展、技能与提示模板…", "info");
 			await ctx.reload();

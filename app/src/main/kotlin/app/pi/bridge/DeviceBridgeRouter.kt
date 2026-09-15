@@ -31,7 +31,7 @@ class DeviceBridgeRouter(
         if (request.method != "GET" && request.method != "POST") {
             return BridgeHttpResponse(
                 400,
-                errorBody(DeviceDenial(DeviceDenial.BAD_REQUEST, "只支持 GET 与 POST，收到 ${request.method}。")).toString(),
+                errorBody(DeviceDenial(DeviceDenial.BAD_REQUEST, "只支持 GET/POST，收到 ${request.method}。")).toString(),
             )
         }
         val path = request.path.trimEnd('/').ifEmpty { "/" }
@@ -54,8 +54,8 @@ class DeviceBridgeRouter(
                             throw DeviceActionException(
                                 DeviceDenial(
                                     DeviceDenial.BAD_REQUEST,
-                                    "waitMs / requireMatch 需要一个选择器（text/desc/resourceId/package/className）。",
-                                    hint = "要么去掉 waitMs，要么用 selector 指定要等待的控件。",
+                                    "waitMs 需要选择器：text/desc/resourceId/package。",
+                                    hint = "去掉 waitMs，或用 selector 指定要等的控件。",
                                 ),
                             )
                         }
@@ -345,7 +345,7 @@ class DeviceBridgeRouter(
             BridgeHttpResponse.denial(
                 DeviceDenial(
                     code = DeviceDenial.ERROR,
-                    reason = "设备桥处理 ${request.path} 时出错：${error::class.java.simpleName}: ${error.message}",
+                    reason = "处理 ${request.path} 出错：${error.message}",
                 ),
             )
         }
@@ -380,8 +380,8 @@ class DeviceBridgeRouter(
                 DeviceAccessibilityService.State.ENABLED_NOT_CONNECTED -> throw DeviceActionException(
                     DeviceDenial(
                         code = DeviceDenial.NOT_CONNECTED,
-                        reason = "无障碍服务已启用，但系统还没有把它连上（正在重连，通常一两秒内完成）。",
-                        hint = "请稍等约 1 秒后重试同一次调用；不需要改任何设置。",
+                        reason = "无障碍已启用但系统未连上（正在重连）。",
+                        hint = "等约 1 秒重试同一次调用，不用改设置。",
                         retryable = true,
                     ),
                 )
@@ -390,14 +390,14 @@ class DeviceBridgeRouter(
                     DeviceDenial(
                         code = DeviceDenial.NO_PERMISSION,
                         reason = "无障碍服务未启用，无法读取或操作屏幕。",
-                        hint = "请让用户在「设置 → 无障碍」中启用 PI 设备桥，然后重试。",
+                        hint = "让用户在「设置 → 无障碍」启用 PI 设备桥后重试。",
                     ),
                 )
 
                 DeviceAccessibilityService.State.CONNECTED -> throw DeviceActionException(
                     DeviceDenial(
                         code = DeviceDenial.NOT_CONNECTED,
-                        reason = "无障碍服务刚刚断开（可能被系统重启）。",
+                        reason = "无障碍服务刚断开（被系统重启）。",
                         hint = "请稍等约 1 秒后重试。",
                         retryable = true,
                     ),

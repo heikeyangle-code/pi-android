@@ -68,7 +68,7 @@ object AppUidShellBackend : DeviceShellBackend {
             throw DeviceActionException(
                 DeviceDenial(
                     code = DeviceDenial.ERROR,
-                    reason = "无法启动 shell：${error::class.java.simpleName}: ${error.message}",
+                    reason = "无法启动 shell：${error.message}",
                 ),
             )
         }
@@ -359,9 +359,8 @@ object DeviceShellGuard {
             if (block.pattern.containsMatchIn(trimmed)) {
                 return DeviceDenial(
                     code = DeviceDenial.BLOCKED_BY_POLICY,
-                    reason = "命令被设备策略拦截：${block.what}（${block.why}）。" +
-                        "这一条与工作区在哪无关，也无法通过用户授权放行。",
-                    hint = "请改用只读查询或其他工具，或直接告诉用户这一步无法通过设备桥完成。",
+                    reason = "被策略拦截：${block.what}（${block.why}）。授权无法放行。",
+                    hint = "改用只读查询或其他工具，或告诉用户这步做不到。",
                 )
             }
         }
@@ -379,9 +378,8 @@ object DeviceShellGuard {
             if (normalized.isEmpty() || normalized !in heads) {
                 return DeviceDenial(
                     code = DeviceDenial.BLOCKED_BY_POLICY,
-                    reason = "命令「$head」不在设备 Shell 的白名单内，未知命令默认拦截。",
-                    hint = "设备 Shell 是设备级遥控，不是工作区里的通用终端：日常读写（ls/cat/cp/mv/rm/mkdir/sed/tar/grep/find/curl/dumpsys/pm/settings get …）都在白名单里；" +
-                        "要跑构建、git、npm、rg 这类工具，请用 pi 的内置 bash —— 那才是工作区的工作台，不受设备策略管辖。",
+                    reason = "命令「$head」不在白名单内，未知命令默认拦截。",
+                    hint = "设备 Shell 只跑白名单；git/npm/构建用工作区内置 bash。",
                 )
             }
         }
@@ -394,9 +392,8 @@ object DeviceShellGuard {
 
     private fun substitutionDenial(what: String): DeviceDenial = DeviceDenial(
         code = DeviceDenial.BLOCKED_BY_POLICY,
-        reason = "命令包含$what 命令替换，已按策略拦截。",
-        hint = "请把每一步拆成独立的命令分别执行；如果确实需要嵌套执行，" +
-            "让用户在「设置 → 设备能力 → Shell」打开「放宽模式」（默认关闭）。",
+        reason = "命令包含$what 替换，已拦截。",
+        hint = "拆成独立命令；嵌套需让用户开「放宽模式」（设置 → 设备能力 → Shell）。",
     )
 
     // ------------------------------------------------------ write boundary ----
@@ -417,11 +414,8 @@ object DeviceShellGuard {
             }
             return DeviceDenial(
                 code = DeviceDenial.BLOCKED_BY_POLICY,
-                reason = "命令要写工作区之外的位置：${target.raw}（来自 ${target.kind}）。" +
-                    "工作区是用户交给 Agent 的那一个目录，也是设备 Shell 的写入边界；" +
-                    "边界之内（含 DCIM、Pictures、Download 之类的目录，只要它就是工作区）一律不拦。$platform",
-                hint = "请在工作区内操作（设备 Shell 看到的工作区是 $where；也可以用 android_download（op=\"write\"）写公共 Download，" +
-                    "或让用户在「设置 → 设备能力 → 存储」授权一个 SAF 目录后用 android_files（op=\"write\"））。",
+                reason = "要写工作区外：${target.raw}（${target.kind}）。工作区内可写。$platform",
+                hint = "在工作区内操作（$where）；或用 android_files（op=\"write\"）。",
             )
         }
         return null

@@ -212,15 +212,15 @@ class DeviceCapabilityStore private constructor(context: Context) {
             // caller can act on.
             DeviceAccessibilityService.State.ENABLED_NOT_CONNECTED -> DeviceDenial(
                 code = DeviceDenial.NOT_CONNECTED,
-                reason = "无障碍服务已启用，但系统还没有把它连上（正在重连，通常一两秒内完成）。",
-                hint = "请稍等约 1 秒后重试同一次调用；不需要改任何设置。若持续如此，再让用户关闭并重新打开「设置 → 无障碍 → PI 设备桥」。",
+                reason = "无障碍已启用但系统未连上（正在重连）。",
+                hint = "等约 1 秒重试；仍失败让用户重开「设置 → 无障碍 → PI 设备桥」。",
                 retryable = true,
             )
 
             DeviceAccessibilityService.State.NOT_ENABLED -> DeviceDenial(
                 code = DeviceDenial.NO_PERMISSION,
-                reason = "无障碍能力已开启，但系统的无障碍服务没有启用，因此无法读取或操作屏幕。",
-                hint = "请让用户打开 PI，在「设置 → 设备能力 → 无障碍」点「前往系统设置」并启用「PI 设备桥」，然后重试。",
+                reason = "无障碍服务未启用，无法操作屏幕。",
+                hint = "让用户在「设置 → 设备能力 → 无障碍」启用 PI 设备桥。",
             )
         }
 
@@ -236,8 +236,8 @@ class DeviceCapabilityStore private constructor(context: Context) {
             } else {
                 DeviceDenial(
                     code = DeviceDenial.NO_PERMISSION,
-                    reason = "这台设备（Android ${Build.VERSION.RELEASE}）导出文件需要存储权限，当前未授予。",
-                    hint = "请让用户在「设置 → 设备能力 → 存储」点「授予存储权限」，或在系统设置里为本应用打开存储权限。",
+                    reason = "Android ${Build.VERSION.RELEASE} 导出需要存储权限。",
+                    hint = "让用户在「设置 → 设备能力 → 存储」点「授予存储权限」。",
                 )
             }
 
@@ -247,8 +247,8 @@ class DeviceCapabilityStore private constructor(context: Context) {
             } else {
                 DeviceDenial(
                     code = DeviceDenial.NO_PERMISSION,
-                    reason = "Shell 能力已开启，但可用的执行后端不存在。",
-                    hint = "本版本只带应用自身身份（uid=${android.os.Process.myUid()}）的后端；Shizuku / ADB 无线调试配对尚未接入。",
+                    reason = "Shell 已开启但没有可用后端。",
+                    hint = "应用自身身份后端（uid=${android.os.Process.myUid()}）；Shizuku 未接入。",
                 )
             }
 
@@ -330,9 +330,8 @@ class DeviceCapabilityStore private constructor(context: Context) {
         } else {
             DeviceDenial(
                 code = DeviceDenial.NO_PERMISSION,
-                reason = "控制手电筒需要相机权限（Android 6 起 CameraManager.setTorchMode 要求 CAMERA），当前未授予。",
-                hint = "请让用户在「设置 → 设备能力 → 位置·传感器·相机」点「授予相机权限」，" +
-                    "或在系统设置 → 应用 → PI → 权限 中打开相机权限；部分设备还需要先在系统里用过一次相机。",
+                reason = "控制手电筒需要 CAMERA 权限（API 23+ 要求）。",
+                hint = "让用户在「设置 → 设备能力 → 位置·传感器·相机」点「授予相机权限」；部分设备需先用一次相机。",
             )
         }
 

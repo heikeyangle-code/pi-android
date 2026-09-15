@@ -177,14 +177,14 @@ object DeviceShizuku {
             throw DeviceActionException(
                 DeviceDenial(
                     code = DeviceDenial.NO_PERMISSION,
-                    reason = "Shizuku 不可用（未安装、未运行或未授权），无法以 ADB 身份执行命令。",
-                    hint = "请让用户在「设置 → 设备能力 → Shell」里按提示安装/启动并授权 Shizuku，然后重试。",
+                    reason = "Shizuku 不可用（未安装/未运行/未授权）。",
+                    hint = "让用户在「设置 → 设备能力 → Shell」安装并授权 Shizuku。",
                 ),
             )
         }
         val binder = runCatching { Shizuku.getBinder() }.getOrNull()
             ?: throw DeviceActionException(
-                DeviceDenial(DeviceDenial.NO_PERMISSION, "Shizuku 的 binder 已经断开（Shizuku 可能刚刚停止）。"),
+                DeviceDenial(DeviceDenial.NO_PERMISSION, "Shizuku binder 已断开（可能刚停止）。"),
             )
         val service = IShizukuService.Stub.asInterface(binder)
         val remote = try {
@@ -194,11 +194,11 @@ object DeviceShizuku {
                 DeviceDenial(
                     code = DeviceDenial.ERROR,
                     reason = "Shizuku 拒绝创建进程：${error.message}",
-                    hint = "Shizuku 可能已经停止，请让用户重新启动它。",
+                    hint = "让用户重启 Shizuku 后重试。",
                 ),
             )
         } ?: throw DeviceActionException(
-            DeviceDenial(DeviceDenial.ERROR, "Shizuku 没有返回远程进程（服务端版本可能太旧）。"),
+            DeviceDenial(DeviceDenial.ERROR, "Shizuku 未返回远程进程（服务端可能过旧）。"),
         )
 
         val stdout = StringBuilder()

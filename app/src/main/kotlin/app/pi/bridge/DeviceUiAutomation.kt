@@ -188,8 +188,8 @@ object DeviceUiAutomation {
             ?: throw DeviceActionException(
                 DeviceDenial(
                     code = DeviceDenial.NOT_FOUND,
-                    reason = "当前没有可读取的窗口（屏幕可能处于锁屏或没有任何前台界面）。",
-                    hint = "请让用户先解锁屏幕并回到可见界面，然后重试。",
+                    reason = "没有可读窗口（可能锁屏或没有前台界面）。",
+                    hint = "让用户解锁并回到可见界面后重试。",
                 ),
             )
 
@@ -506,7 +506,7 @@ object DeviceUiAutomation {
             throw DeviceActionException(
                 DeviceDenial(
                     DeviceDenial.BAD_REQUEST,
-                    "等待需要一个选择器：text / desc / resourceId / package / className 至少给一个。",
+                    "至少给一个选择器：text/desc/resourceId/package。",
                 ),
             )
         }
@@ -550,8 +550,7 @@ object DeviceUiAutomation {
             DeviceDenial(
                 code = DeviceDenial.NOT_FOUND,
                 reason = what,
-                hint = "可以先用 android_ui_dump（可带 filter）看现在屏幕上有什么，或调大 timeoutMs 后重试；" +
-                    "如果界面停在加载或弹窗上，先处理遮挡的窗口。",
+                hint = "先用 android_ui_dump 看屏幕或调大 timeoutMs；弹窗先处理。",
             ),
         )
     }
@@ -573,8 +572,8 @@ object DeviceUiAutomation {
             ?: throw DeviceActionException(
                 DeviceDenial(
                     DeviceDenial.NOT_FOUND,
-                    "当前没有可读取的窗口，无法验证坐标 ($x, $y)。",
-                    hint = "请让用户先解锁并回到可见界面。",
+                    "没有可读窗口，无法验证坐标 ($x, $y)。",
+                    hint = "让用户解锁并回到可见界面。",
                 ),
             )
         val all = ArrayList<NodeRecord>()
@@ -631,8 +630,8 @@ object DeviceUiAutomation {
                 ?: throw DeviceActionException(
                     DeviceDenial(
                         code = DeviceDenial.NOT_FOUND,
-                        reason = "按选择器找不到可点按的控件：${selector.describe()}。",
-                        hint = "先用 android_ui_dump 看屏幕，或用 dump 的 waitFor 等它出现（界面可能还在加载）。",
+                        reason = "按选择器找不到可点控件：${selector.describe()}。",
+                        hint = "先用 android_ui_dump 看屏幕，或用 waitFor 等它出现。",
                     ),
                 )
             val bounds = Rect().also { node.getBoundsInScreen(it) }
@@ -653,8 +652,8 @@ object DeviceUiAutomation {
                 throw DeviceActionException(
                     DeviceDenial(
                         DeviceDenial.UNSUPPORTED,
-                        "选择器命中的控件不可点击，也没有可见区域：${selector.describe()}。",
-                        hint = "请重新 dump 屏幕后改点一个带 clickable 的控件，或直接给 x/y。",
+                        "命中的控件不可点击且无可见区域：${selector.describe()}。",
+                        hint = "重新 dump 后改点带 clickable 的控件，或直接给 x/y。",
                     ),
                 )
             }
@@ -675,9 +674,8 @@ object DeviceUiAutomation {
                 ?: throw DeviceActionException(
                     DeviceDenial(
                         code = DeviceDenial.NOT_FOUND,
-                        reason = "找不到编号 $index 的控件：屏幕内容已经变化。",
-                        hint = "请重新调用 android_ui_dump 获取最新的控件编号，再点按；" +
-                            "或者直接给 text/desc/resourceId，让设备侧按选择器点击（不怕编号过期）。",
+                        reason = "找不到编号 $index 的控件：屏幕已变化。",
+                        hint = "重新 dump 取新编号，或给 text/desc/resourceId。",
                     ),
                 )
             val node = resolve(service, record)
@@ -713,8 +711,8 @@ object DeviceUiAutomation {
                 throw DeviceActionException(
                     DeviceDenial(
                         code = DeviceDenial.UNSUPPORTED,
-                        reason = "编号 $index 的控件不可点击，也没有可见区域。",
-                        hint = "请重新 dump 屏幕，改点一个带 clickable 标记的控件。",
+                        reason = "编号 $index 不可点击且无可见区域。",
+                        hint = "重新 dump，改点带 clickable 的控件。",
                     ),
                 )
             }
@@ -736,8 +734,8 @@ object DeviceUiAutomation {
             throw DeviceActionException(
                 DeviceDenial(
                     code = DeviceDenial.BAD_REQUEST,
-                    reason = "点按需要提供 index、选择器（text/desc/resourceId），或者同时提供 x 与 y。",
-                    hint = "推荐用选择器：设备侧按当前屏幕解析，不怕编号过期。",
+                    reason = "点按需要 index 或 x+y，也可用选择器。",
+                    hint = "推荐用选择器：不怕编号过期。",
                 ),
             )
         }
@@ -784,7 +782,7 @@ object DeviceUiAutomation {
             else -> throw DeviceActionException(
                 DeviceDenial(
                     DeviceDenial.BAD_REQUEST,
-                    "滚动方向只能是 forward / backward，收到「$direction」。",
+                    "方向只能是 forward/backward，收到「$direction」。",
                 ),
             )
         }
@@ -811,8 +809,7 @@ object DeviceUiAutomation {
                 code = DeviceDenial.UNSUPPORTED,
                 reason = "没有找到可滚动的控件" +
                     (if (selector != null && !selector.isEmpty) "：${selector.describe()}" else "") + "。",
-                hint = "可以改用 android_swipe 给坐标滑动（画布类界面只能这样）；" +
-                    "或者先用 android_ui_dump 找到带 scrollable 的控件。",
+                hint = "改用 android_swipe 坐标滑动，或找带 scrollable 的控件。",
             ),
         )
         val performed = target.performAction(
@@ -822,8 +819,8 @@ object DeviceUiAutomation {
             throw DeviceActionException(
                 DeviceDenial(
                     code = DeviceDenial.BUSY,
-                    reason = "控件拒绝了这一次滚动（可能已经滚到尽头，或界面正在动画）。",
-                    hint = "稍等一下重试；如果反复如此，说明列表已经到头。",
+                    reason = "控件拒绝滚动（可能已到尽头或正在动画）。",
+                    hint = "稍等重试；反复如此说明已到列表尽头。",
                     retryable = true,
                 ),
             )
@@ -915,8 +912,7 @@ object DeviceUiAutomation {
             DeviceDenial(
                 code = DeviceDenial.BUSY,
                 reason = reason,
-                hint = "这是可以重试的：等约 1 秒再发一次同样的调用即可；" +
-                    "若连续失败，再让用户关闭并重新打开「设置 → 无障碍 → PI 设备桥」。",
+                hint = "等 1 秒重试；仍失败让用户重开「设置 → 无障碍 → PI 设备桥」。",
                 retryable = true,
             ),
         )
@@ -964,9 +960,8 @@ object DeviceUiAutomation {
                     ?: throw DeviceActionException(
                         DeviceDenial(
                             code = DeviceDenial.NOT_FOUND,
-                            reason = "找不到编号 $index 的输入框：屏幕内容已经变化。",
-                            hint = "请重新调用 android_ui_dump，再向最新的输入框写入文本；" +
-                                "或者用 resourceId / text 选择器让设备侧自己解析。",
+                            reason = "找不到编号 $index 的输入框：屏幕已变化。",
+                            hint = "重新 dump 后写入最新输入框，或用 resourceId/text。",
                         ),
                     )
                 resolve(service, record)
@@ -977,9 +972,8 @@ object DeviceUiAutomation {
         val node = target ?: throw DeviceActionException(
             DeviceDenial(
                 code = DeviceDenial.NOT_FOUND,
-                reason = "没有找到处于焦点的输入框，无法写入文本。",
-                hint = "请先用 android_ui_dump 找到输入框并点按它，再调用 android_input 并传入它的 index，" +
-                    "或者直接给 resourceId/text 选择器。",
+                reason = "没有焦点输入框，无法写入。",
+                hint = "先 dump 找到输入框点按，再传 index 或 resourceId。",
             ),
         )
 
@@ -1009,8 +1003,8 @@ object DeviceUiAutomation {
             throw DeviceActionException(
                 DeviceDenial(
                     code = DeviceDenial.UNSUPPORTED,
-                    reason = "目标输入框既拒绝了直接写入文本，也拒绝了粘贴（可能是自绘控件或只读输入框）。",
-                    hint = "可以改用 android_shell 执行 input text（需要 Shell 能力 + Shizuku），或让用户手动输入。",
+                    reason = "输入框拒绝写入和粘贴（可能是自绘或只读控件）。",
+                    hint = "改用 android_shell 的 input text（需 Shizuku），或用户手输。",
                 ),
             )
         }
@@ -1117,7 +1111,7 @@ object DeviceUiAutomation {
                     DeviceDenial(
                         code = DeviceDenial.UNSUPPORTED,
                         reason = "系统拒绝了全局动作「$key」。",
-                        hint = "请让用户确认无障碍服务仍然启用，然后重试。",
+                        hint = "让用户确认无障碍服务已启用后重试。",
                     ),
                 )
             }
@@ -1131,8 +1125,8 @@ object DeviceUiAutomation {
         throw DeviceActionException(
             DeviceDenial(
                 code = DeviceDenial.UNSUPPORTED,
-                reason = "无障碍通道不能注入按键「$key」。可用按键：" + globalActions.keys.sorted().joinToString("、") + "。",
-                hint = "如需 enter / delete / 方向键等原始按键，请改用 android_keyevent（需要 Shizuku 提供的 ADB 身份），或让用户手动操作。",
+                reason = "无障碍不能注入按键「$key」。可用：" + globalActions.keys.sorted().joinToString("、") + "。",
+                hint = "原始按键改用 android_keyevent（需 Shizuku）。",
             ),
         )
     }
@@ -1170,8 +1164,8 @@ object DeviceUiAutomation {
                 throw DeviceActionException(
                     DeviceDenial(
                         code = DeviceDenial.BAD_REQUEST,
-                        reason = "不是合法的按键名：$token（只接受 A-Z0-9_，例如 ENTER、DEL、DPAD_DOWN、TAB）。",
-                        hint = "Android KeyEvent 的名字，KEYCODE_ 前缀可省略。",
+                        reason = "非法按键名：$token（只用 A-Z0-9_，如 ENTER、DEL）。",
+                        hint = "Android KeyEvent 名，KEYCODE_ 可省略。",
                     ),
                 )
             }
@@ -1181,10 +1175,8 @@ object DeviceUiAutomation {
             throw DeviceActionException(
                 DeviceDenial(
                     code = DeviceDenial.UNSUPPORTED,
-                    reason = "原始按键需要 ADB 身份（uid=2000），当前 Shell 后端是应用自身身份，" +
-                        "而注入按键需要 INJECT_EVENTS 签名权限，应用永远拿不到。",
-                    hint = "请让用户在「设置 → 设备能力 → Shell」按提示启用 Shizuku，然后重试；" +
-                        "或者继续用 android_key（back/home/recents/notifications/quicksettings/lock 等全局动作）。",
+                    reason = "原始按键需要 ADB 身份（uid=2000），当前后端是应用自身身份。",
+                    hint = "启用 Shizuku（设置 → 设备能力 → Shell）或改用 android_key。",
                 ),
             )
         }
@@ -1203,9 +1195,9 @@ object DeviceUiAutomation {
             throw DeviceActionException(
                 DeviceDenial(
                     code = DeviceDenial.ERROR,
-                    reason = "input keyevent 失败（退出码 ${result.exitCode}）：" +
+                    reason = "input keyevent 失败（码 ${result.exitCode}）：" +
                         result.stderr.trim().ifEmpty { result.stdout.trim() }.take(400),
-                    hint = "可以用 android_shell 手动跑同样的命令看完整输出。",
+                    hint = "可用 android_shell 手动跑同一条命令看输出。",
                 ),
             )
         }
@@ -1239,8 +1231,8 @@ object DeviceUiAutomation {
             throw DeviceActionException(
                 DeviceDenial(
                     code = DeviceDenial.UNSUPPORTED,
-                    reason = "无障碍截图需要 Android 11（API 30）及以上，本机是 Android ${Build.VERSION.RELEASE}。",
-                    hint = "可以让用户用系统截图，或改用 android_shell 的 screencap（需要 Shell 能力 + Shizuku）。",
+                    reason = "无障碍截图需要 Android 11。",
+                    hint = "让用户用系统截图，或用 android_shell screencap（需 Shizuku）。",
                 ),
             )
         }
@@ -1260,7 +1252,7 @@ object DeviceUiAutomation {
                 throw DeviceActionException(
                     DeviceDenial(
                         DeviceDenial.BAD_REQUEST,
-                        "裁剪区域超出屏幕范围：请求 ${it.toShortString()}，屏幕是 ${sourceWidth}×${sourceHeight}（display 像素）。",
+                        "裁剪超出屏幕（display）：${it.toShortString()}。",
                     ),
                 )
             }
@@ -1412,8 +1404,8 @@ object DeviceUiAutomation {
             throw DeviceActionException(
                 DeviceDenial(
                     code = DeviceDenial.NOT_CONNECTED,
-                    reason = "无障碍服务当前不可用，截图没有开始（服务可能刚被系统重启）。",
-                    hint = "稍等约 1 秒重试；若持续失败，请让用户重新开启「设置 → 无障碍 → PI 设备桥」。",
+                    reason = "无障碍服务不可用，截图未开始。",
+                    hint = "稍等 1 秒重试；仍失败让用户重开「设置 → 无障碍 → PI 设备桥」。",
                     retryable = true,
                 ),
             )
@@ -1450,7 +1442,7 @@ object DeviceUiAutomation {
         return DeviceDenial(
             code = DeviceDenial.UNSUPPORTED,
             reason = message,
-            hint = "如果是安全窗口，请让用户退出该界面后重试；如果是频率限制，稍等一秒再截。",
+            hint = "安全窗口让用户退出后重试；频率限制则稍等 1 秒。",
         )
     }
 

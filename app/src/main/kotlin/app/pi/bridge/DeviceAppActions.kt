@@ -129,7 +129,7 @@ object DeviceAppActions {
                     } else {
                         "找不到包「$packageName」。"
                     },
-                    hint = "请先用 android_app（action=\"list\"）列出可启动的应用，再传它给出的 packageName。",
+                    hint = "先用 android_app（action=\"list\"）查可启动项再传 packageName。",
                 ),
             )
         }
@@ -188,7 +188,7 @@ object DeviceAppActions {
         throw DeviceActionException(
             DeviceDenial(
                 code = DeviceDenial.BLOCKED_BACKGROUND,
-                reason = "启动「$packageName」没有生效：$detail。Android 10+ 会静默丢弃后台界面启动。",
+                reason = "启动「$packageName」没有生效：$detail。",
                 hint = buildString {
                     append("下一步按顺序试：")
                     append("① 让用户把 pi-android 切到前台后重试；")
@@ -307,8 +307,8 @@ object DeviceAppActions {
             throw DeviceActionException(
                 DeviceDenial(
                     code = DeviceDenial.BLOCKED_BY_POLICY,
-                    reason = "拒绝结束 PI 自身：那会连同当前会话一起中断。",
-                    hint = "如果要停止引擎，请让用户使用通知栏里的「停止」按钮。",
+                    reason = "拒绝结束 PI 自身：会中断当前会话。",
+                    hint = "要停止引擎，让用户用通知栏的「停止」按钮。",
                 ),
             )
         }
@@ -316,8 +316,8 @@ object DeviceAppActions {
             throw DeviceActionException(
                 DeviceDenial(
                     code = DeviceDenial.BLOCKED_BY_POLICY,
-                    reason = "拒绝结束关键系统包「$packageName」（会导致系统界面或电话功能异常）。",
-                    hint = "系统应用与关键进程不允许通过设备桥结束。",
+                    reason = "拒绝结束关键系统包「$packageName」。",
+                    hint = "系统应用与关键进程不能通过设备桥结束。",
                 ),
             )
         }
@@ -326,8 +326,8 @@ object DeviceAppActions {
         }.getOrNull() ?: throw DeviceActionException(
             DeviceDenial(
                 code = DeviceDenial.NOT_FOUND,
-                reason = "找不到包「$packageName」，未执行任何结束操作。",
-                hint = "请先调用 android_app（action=\"list\"）刷新应用清单，再传入精确的包名。",
+                reason = "找不到包「$packageName」，未执行结束。",
+                hint = "先用 android_app（action=\"list\"）刷新再传精确包名。",
             ),
         )
         val system = (info.flags and ApplicationInfo.FLAG_SYSTEM) != 0
@@ -335,8 +335,8 @@ object DeviceAppActions {
             throw DeviceActionException(
                 DeviceDenial(
                     code = DeviceDenial.BLOCKED_BY_POLICY,
-                    reason = "「$packageName」是系统应用，设备桥不会结束系统应用。",
-                    hint = "只有用户安装的应用可以被结束；请让用户自己在系统设置里处理系统应用。",
+                    reason = "「$packageName」是系统应用，不结束。",
+                    hint = "只能结束用户安装的应用；请让用户在系统设置里处理。",
                 ),
             )
         }
@@ -353,8 +353,8 @@ object DeviceAppActions {
             throw DeviceActionException(
                 DeviceDenial(
                     code = DeviceDenial.NO_PERMISSION,
-                    reason = "本机拒绝了结束「$packageName」：系统未允许本应用结束后台进程。",
-                    hint = "不要向用户声称应用已被结束；请让用户自己在系统设置 → 应用里强制停止，或先用 android_app（action=\"list\"）确认状态。",
+                    reason = "本机拒绝结束「$packageName」：未允许结束后台进程。",
+                    hint = "不要声称已结束；让用户在 系统设置 → 应用 里强制停止。",
                 ),
             )
         }
@@ -374,8 +374,8 @@ object DeviceAppActions {
             throw DeviceActionException(
                 DeviceDenial(
                     code = DeviceDenial.BAD_REQUEST,
-                    reason = "「$packageName」不是合法的精确包名。",
-                    hint = "设备桥不接受模糊匹配或通配；请先用 android_app（action=\"list\"）查到精确的 packageName。",
+                    reason = "「$packageName」不是合法精确包名。",
+                    hint = "不接受模糊匹配；用 android_app（action=\"list\"）。",
                 ),
             )
         }

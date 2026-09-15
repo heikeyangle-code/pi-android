@@ -122,8 +122,8 @@ object DeviceSystemActions {
             throw DeviceActionException(
                 DeviceDenial(
                     code = DeviceDenial.NO_PERMISSION,
-                    reason = "系统未授予通知权限（POST_NOTIFICATIONS），通知发不出去。",
-                    hint = "请让用户在系统设置 → 应用 → PI → 通知 中允许通知，然后重试。",
+                    reason = "未授予通知权限（POST_NOTIFICATIONS）。",
+                    hint = "让用户在 系统设置 → 应用 → PI → 通知 中允许通知。",
                 ),
             )
         }
@@ -188,9 +188,8 @@ object DeviceSystemActions {
                     // Declared at AndroidManifest.xml:33 and a normal (install-time)
                     // permission, so a missing grant is not something a maintainer can
                     // fix by editing the manifest.
-                    reason = "本应用当前没有 VIBRATE 权限，无法震动（清单已声明，被系统/安装策略拒绝了）。",
-                    hint = "请让用户在系统设置 → 应用 → PI → 权限里检查，或重装应用；" +
-                        "不要向用户声称已经震动过。",
+                    reason = "本应用没有 VIBRATE 权限，无法震动。",
+                    hint = "让用户在 系统设置 → 应用 → PI → 权限 检查或重装；不要声称已震动。",
                 ),
             )
         }
@@ -245,8 +244,8 @@ object DeviceSystemActions {
             throw DeviceActionException(
                 DeviceDenial(
                     code = DeviceDenial.BAD_REQUEST,
-                    reason = "URL 缺少 scheme（例如 https://）。",
-                    hint = "请补全成 https://… 或 mailto:… 这类完整地址。",
+                    reason = "URL 缺少 scheme（如 https://）。",
+                    hint = "补全成 https://… 或 mailto:…。",
                 ),
             )
         }
@@ -270,8 +269,8 @@ object DeviceSystemActions {
             throw DeviceActionException(
                 DeviceDenial(
                     code = DeviceDenial.BAD_REQUEST,
-                    reason = "无法解析 intent: URL：${error::class.java.simpleName}: ${error.message}",
-                    hint = "intent: URL 的写法是 intent://<data>#Intent;scheme=…;package=…;end。",
+                    reason = "无法解析 intent: URL：${error.message}",
+                    hint = "写法：intent://…#Intent;scheme=…;package=…;end。",
                 ),
             )
         }
@@ -297,11 +296,10 @@ object DeviceSystemActions {
             throw DeviceActionException(
                 DeviceDenial(
                     code = DeviceDenial.UNSUPPORTED,
-                    reason = "这台设备上没有应用能处理这个 intent: URL" +
+                    reason = "没有应用能处理这个 intent: URL" +
                         (if (fallback.isNullOrBlank()) "，" else "，它给的 browser_fallback_url 也无法使用，") +
                         "没有打开任何东西。",
-                    hint = "可以先用 android_shell 的 pm resolve-activity 确认目标应用是否安装，" +
-                        "或者改用普通的 https 链接。",
+                    hint = "用 android_shell 的 pm resolve-activity 确认，或改用 https。",
                 ),
             )
         }
@@ -325,8 +323,8 @@ object DeviceSystemActions {
             throw DeviceActionException(
                 DeviceDenial(
                     code = DeviceDenial.UNSUPPORTED,
-                    reason = "$what 失败：${error::class.java.simpleName}: ${error.message}",
-                    hint = "Android 10+ 限制后台启动界面。请让用户把 PI 切到前台后重试，或确认设备上有能处理该意图的应用。",
+                    reason = "$what 失败：${error.message}",
+                    hint = "Android 10+ 限制后台启动界面：让用户把 PI 切到前台后重试。",
                 ),
             )
         }
@@ -339,11 +337,11 @@ object DeviceSystemActions {
             throw DeviceActionException(
                 DeviceDenial(
                     code = DeviceDenial.NO_PERMISSION,
-                    reason = "应用没有定位权限（ACCESS_FINE_LOCATION / ACCESS_COARSE_LOCATION）。",
+                    reason = "应用没有定位权限（ACCESS_FINE/COARSE_LOCATION）。",
                     // Both are declared (AndroidManifest.xml:35-36); this is a runtime
                     // grant the user has not given, which is why the hint names the
                     // system settings page rather than the manifest.
-                    hint = "请让用户在系统设置 → 应用 → PI → 权限 中授予定位权限，然后重试。",
+                    hint = "让用户在 系统设置 → 应用 → PI → 权限 授予定位权限。",
                 ),
             )
         }
@@ -368,7 +366,7 @@ object DeviceSystemActions {
                     } else {
                         "设备的定位服务未开启。"
                     },
-                    hint = "请让用户打开系统定位开关，并先在地图类应用中获取一次定位，然后重试。",
+                    hint = "让用户打开系统定位开关，并先用地图类应用获取一次定位。",
                 ),
             )
         }
@@ -426,7 +424,7 @@ object DeviceSystemActions {
             DeviceDenial(
                 code = DeviceDenial.NOT_FOUND,
                 reason = "找不到传感器「$typeName」。",
-                hint = "请先调用 android_device_state（what=\"sensors\"）列出可用的 typeName。",
+                hint = "先用 android_device_state（what=\"sensors\"）。",
             ),
         )
 
@@ -455,8 +453,8 @@ object DeviceSystemActions {
                 throw DeviceActionException(
                     DeviceDenial(
                         code = DeviceDenial.NOT_FOUND,
-                        reason = "在 ${wait}ms 内没有收到「${sensor.name}」的数据。",
-                        hint = "该传感器可能不可用，或采样很慢；可以加大 timeoutMs 后重试。",
+                        reason = "${wait}ms 内没有收到「${sensor.name}」的数据。",
+                        hint = "传感器可能不可用或采样慢；加大 timeoutMs 重试。",
                     ),
                 )
             }
@@ -553,8 +551,8 @@ object DeviceSystemActions {
         } ?: throw DeviceActionException(
             DeviceDenial(
                 code = DeviceDenial.UNSUPPORTED,
-                reason = "这台设备没有带闪光灯的相机（相机权限已授予，因此不是权限问题）。",
-                hint = "可以改用 android_say（kind=\"notification\" / \"toast\"）等其他方式提醒用户。",
+                reason = "这台设备没有带闪光灯的相机（权限已授予）。",
+                hint = "改用 android_say（kind=\"notification\"/\"toast\"）。",
             ),
         )
         return try {
@@ -565,15 +563,15 @@ object DeviceSystemActions {
                 DeviceDenial(
                     code = DeviceDenial.ERROR,
                     reason = "手电筒切换失败：${error.reason}",
-                    hint = "请让用户确认没有其他应用正在使用相机。",
+                    hint = "让用户确认没有其他应用在用相机。",
                 ),
             )
         } catch (error: SecurityException) {
             throw DeviceActionException(
                 DeviceDenial(
                     code = DeviceDenial.NO_PERMISSION,
-                    reason = "系统拒绝了手电筒控制（CAMERA 权限可能刚刚被撤销）。",
-                    hint = "请让用户在「设置 → 设备能力 → 位置·传感器·相机」重新授予相机权限。",
+                    reason = "系统拒绝手电筒控制（CAMERA 权限可能被撤销）。",
+                    hint = "让用户在「设置 → 设备能力 → 位置·传感器·相机」重授相机权限。",
                 ),
             )
         }
@@ -621,8 +619,8 @@ object DeviceSystemActions {
             throw DeviceActionException(
                 DeviceDenial(
                     code = DeviceDenial.UNSUPPORTED,
-                    reason = "TTS 引擎初始化超时（15 秒）。",
-                    hint = "这台设备可能没有安装语音合成引擎。",
+                    reason = "TTS 初始化超时（15 秒）。",
+                    hint = "设备可能没有语音合成引擎。",
                 ),
             )
         }
@@ -632,8 +630,8 @@ object DeviceSystemActions {
             throw DeviceActionException(
                 DeviceDenial(
                     code = DeviceDenial.UNSUPPORTED,
-                    reason = "TTS 引擎初始化失败（状态 ${status.get()}）。",
-                    hint = "请让用户在系统设置中安装并选择一个语音合成引擎。",
+                    reason = "TTS 初始化失败（状态 ${status.get()}）。",
+                    hint = "让用户安装并选择一个语音合成引擎。",
                 ),
             )
         }
@@ -653,8 +651,8 @@ object DeviceSystemActions {
             throw DeviceActionException(
                 DeviceDenial(
                     code = DeviceDenial.UNSUPPORTED,
-                    reason = "TTS 引擎不支持语言「${locale.toLanguageTag()}」。",
-                    hint = "请改用支持的语言，或让用户安装对应的语音数据包。",
+                    reason = "TTS 不支持语言「${locale.toLanguageTag()}」。",
+                    hint = "换支持的语言，或让用户装语音数据包。",
                 ),
             )
         }
@@ -745,12 +743,12 @@ object DeviceSystemActions {
             base64 != null -> runCatching { android.util.Base64.decode(base64, android.util.Base64.DEFAULT) }
                 .getOrElse {
                     throw DeviceActionException(
-                        DeviceDenial(DeviceDenial.BAD_REQUEST, "base64 内容无法解码：${it.message}"),
+                        DeviceDenial(DeviceDenial.BAD_REQUEST, "base64 无法解码：${it.message}"),
                     )
                 }
             text != null -> text.toByteArray(Charsets.UTF_8)
             else -> throw DeviceActionException(
-                DeviceDenial(DeviceDenial.BAD_REQUEST, "导出需要 content（文本）或 base64（二进制）之一。"),
+                DeviceDenial(DeviceDenial.BAD_REQUEST, "导出需要 content 或 base64 之一。"),
             )
         }
         if (bytes.isEmpty()) {
@@ -770,8 +768,8 @@ object DeviceSystemActions {
                 throw DeviceActionException(
                     DeviceDenial(
                         code = DeviceDenial.ERROR,
-                        reason = "无法在 Download 中创建文件「$safeName」。",
-                        hint = "请让用户确认设备存储空间充足且未处于「工作资料」受限目录。",
+                        reason = "无法在 Download 创建「$safeName」。",
+                        hint = "让用户确认存储空间充足、不在受限工作资料中。",
                     ),
                 )
             }
@@ -787,7 +785,7 @@ object DeviceSystemActions {
                 throw DeviceActionException(
                     DeviceDenial(
                         code = DeviceDenial.ERROR,
-                        reason = "写入 Download 失败：${error::class.java.simpleName}: ${error.message}",
+                        reason = "写入 Download 失败：${error.message}",
                     ),
                 )
             }
@@ -821,8 +819,8 @@ object DeviceSystemActions {
             throw DeviceActionException(
                 DeviceDenial(
                     code = DeviceDenial.NO_PERMISSION,
-                    reason = "在 Android ${Build.VERSION.RELEASE} 上写入公共 Download 需要存储权限，当前未授予。",
-                    hint = "请让用户在「设置 → 设备能力 → 存储」点「授予存储权限」，或在系统设置里为本应用打开存储权限。",
+                    reason = "Android ${Build.VERSION.RELEASE} 写 Download 需存储权限。",
+                    hint = "让用户在「设置 → 设备能力 → 存储」点「授予存储权限」。",
                 ),
             )
         }
@@ -855,8 +853,8 @@ object DeviceSystemActions {
             val input = stream ?: throw DeviceActionException(
                 DeviceDenial(
                     code = DeviceDenial.NOT_FOUND,
-                    reason = "在 Download 中找不到应用可读取的文件「$safeName」。",
-                    hint = "只有本应用导出的文件默认可读；其他应用的文件需要用户先授予存储访问。",
+                    reason = "Download 里找不到可读文件「$safeName」。",
+                    hint = "默认只能读本应用导出的文件；其他文件需用户授予存储访问。",
                 ),
             )
             input.use { it.readBytes().let { data -> if (data.size > limit) data.copyOf(limit) else data } }
@@ -864,7 +862,7 @@ object DeviceSystemActions {
             val target = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), safeName)
             if (!target.isFile) {
                 throw DeviceActionException(
-                    DeviceDenial(DeviceDenial.NOT_FOUND, "在 Download 中找不到「$safeName」。"),
+                    DeviceDenial(DeviceDenial.NOT_FOUND, "Download 里找不到「$safeName」。"),
                 )
             }
             target.readBytes().let { if (it.size > limit) it.copyOf(limit) else it }

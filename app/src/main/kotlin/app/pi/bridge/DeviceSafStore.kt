@@ -301,7 +301,7 @@ class DeviceSafStore private constructor(context: android.content.Context) {
             throw DeviceActionException(
                 DeviceDenial(
                     code = DeviceDenial.BAD_REQUEST,
-                    reason = "写入需要「根目录名/相对路径」形式的 path（例如 Documents/notes/todo.md）。",
+                    reason = "写入需要「根目录名/相对路径」形式的 path。",
                     hint = "先用 android_files_list 看已授权的根目录名。",
                 ),
             )
@@ -314,7 +314,7 @@ class DeviceSafStore private constructor(context: android.content.Context) {
 
             text != null -> text.toByteArray(Charsets.UTF_8)
             else -> throw DeviceActionException(
-                DeviceDenial(DeviceDenial.BAD_REQUEST, "写入需要 content（文本）或 base64（二进制）之一。"),
+                DeviceDenial(DeviceDenial.BAD_REQUEST, "写入需要 content 或 base64 之一。"),
             )
         }
         // A write has to *create* its target, so it walks the parent chain and makes
@@ -340,7 +340,7 @@ class DeviceSafStore private constructor(context: android.content.Context) {
                 ?: throw DeviceActionException(
                     DeviceDenial(
                         code = DeviceDenial.ERROR,
-                        reason = "SAF 目录拒绝创建「$clean」（提供方可能只读，或文件名不合法）。",
+                        reason = "SAF 目录拒绝创建「$clean」（可能只读或文件名非法）。",
                     ),
                 )
         }
@@ -429,15 +429,15 @@ class DeviceSafStore private constructor(context: android.content.Context) {
         DeviceDenial(
             code = DeviceDenial.NOT_FOUND,
             reason = "在已授权目录里找不到「$path」。",
-            hint = "先用 android_files_list 看根目录名与目录内容；路径是「根目录名/相对路径」。",
+            hint = "先用 android_files_list 看根目录名（路径=根名/相对）。",
         ),
     )
 
     private fun revoked(path: String, error: Throwable): DeviceActionException = DeviceActionException(
         DeviceDenial(
             code = DeviceDenial.NO_PERMISSION,
-            reason = "访问「$path」失败，SAF 授权可能已经失效：${error::class.java.simpleName}: ${error.message}",
-            hint = "请让用户在「设置 → 设备能力 → 存储」重新授权该目录。",
+            reason = "访问「$path」失败，SAF 授权可能失效：${error.message}",
+            hint = "让用户在「设置 → 设备能力 → 存储」重新授权该目录。",
         ),
     )
 
