@@ -13,6 +13,7 @@ import app.pi.rpc.Notice
 import app.pi.rpc.SkillInvocation
 import app.pi.rpc.ThinkingBlock
 import app.pi.rpc.ToolCall
+import app.pi.rpc.PiImage
 import app.pi.rpc.ToolDiff
 import app.pi.rpc.TranscriptItem
 import app.pi.rpc.UserMessage
@@ -86,9 +87,17 @@ fun BlockRenderer(
     onBranchClick: ((BranchSummary) -> Unit)? = null,
     /** §4.8: 编辑并从此分叉 — pi forks a session from a user message (`fork`, rpc-types.ts:62). */
     onForkFromMessage: ((String) -> Unit)? = null,
+    /**
+     * A tap on any image in the transcript — the user's attachment, a `read` of a
+     * picture, or a tool's screenshot. It is the target F19
+     * (`docs/rendering-review.md`) said was missing when it deleted the old
+     * `onImageClick`; now that [PiImageViewer] exists, the callback has somewhere to
+     * go and is supplied by `ChatScreen`. Null keeps every image inert.
+     */
+    onImageClick: ((PiImage) -> Unit)? = null,
 ) {
     when (item) {
-        is UserMessage -> UserMessageBlock(item, modifier, onForkFromMessage)
+        is UserMessage -> UserMessageBlock(item, modifier, onForkFromMessage, onImageClick)
 
         is AssistantText -> AssistantTextBlock(item, modifier)
 
@@ -105,7 +114,9 @@ fun BlockRenderer(
         // itself has no built-in renderer for — its own fallback is
         // `withBuiltInRenderers` (`index.ts:51-63`).
         is ToolCall -> if (item.images.isNotEmpty()) {
-            ToolCallBlock(item, modifier, toolsDefaultExpanded, firstOfRun, lastOfRun)
+            // The one branch whose card can carry images, so the one that needs the
+            // viewer: `onImageClick` reaches the grid from `ToolCallBlock`.
+            ToolCallBlock(item, modifier, toolsDefaultExpanded, firstOfRun, lastOfRun, onImageClick)
         } else {
             when (item.toolName) {
                 "read" -> ReadBlock(item, modifier, toolsDefaultExpanded, firstOfRun, lastOfRun)

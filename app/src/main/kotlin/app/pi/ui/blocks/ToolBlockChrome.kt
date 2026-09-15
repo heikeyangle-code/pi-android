@@ -435,6 +435,18 @@ internal const val TOOL_CARD_BORDER_ALPHA: Float = 0.35f
  *
  * [command] is the tool's own argument (see [toolCommandText]); a tool whose arguments are
  * none of pi's spellings gets no command entry rather than a wrong one.
+ *
+ * **Every entry copies the whole field, never the preview on screen.** The card shows
+ * `headLines` / the renderer's preview count and a `已截断` footer when that is less than
+ * what pi returned, so `复制输出` taking `output` — pi's full result — is the only thing
+ * that makes the truncated card safe to work from. That was already true and stays true;
+ * it is restated here because the ⋮ below now competes with the text's own selection, and
+ * a selection can only ever grab the preview.
+ *
+ * The ⋮ is on because the card body became a selection scope (`BlockCard` →
+ * [SelectableContent]): a long press on the output now selects it, so the menu needs a
+ * trigger that is not a gesture over text. Long-pressing the card's chrome — the rail, the
+ * padding outside a text node — still opens it exactly as before.
  */
 @Composable
 internal fun ToolActionMenu(
@@ -456,6 +468,7 @@ internal fun ToolActionMenu(
                 add(BlockAction("复制完整输出路径") { clipboard.setText(AnnotatedString(fullOutputPath)) })
             }
         },
+        menuButton = true,
         content = content,
     )
 }

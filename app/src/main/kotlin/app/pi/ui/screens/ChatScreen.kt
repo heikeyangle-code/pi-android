@@ -4,6 +4,7 @@ import app.pi.ui.blocks.decodePiImage
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.Dispatchers
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
@@ -44,6 +45,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AttachFile
@@ -107,6 +109,7 @@ import app.pi.ui.ExportedSession
 import app.pi.ui.NavRequest
 import app.pi.ui.PiSessionViewModel
 import app.pi.ui.blocks.BlockRenderer
+import app.pi.ui.blocks.PiImageViewer
 import app.pi.ui.chat.BashPanel
 import app.pi.ui.chat.ComposerRoute
 import app.pi.ui.chat.ContextSheet
@@ -125,8 +128,10 @@ import app.pi.ui.chat.TailFollow
 import app.pi.ui.chat.TailSnapshot
 import app.pi.ui.chat.TailViewport
 import app.pi.ui.chat.ThinkingPickerSheet
+import app.pi.ui.chat.mayLoadEarlier
 import app.pi.ui.chat.mergeRestoredQueue
 import app.pi.ui.chat.routeComposerText
+import app.pi.ui.chat.prependAnchoredIndex
 import app.pi.ui.chat.thinkingLabelOf
 import app.pi.ui.chat.unlistedBuiltinHint
 import app.pi.ui.components.PiContextRing
@@ -317,6 +322,11 @@ private fun ChatBody(
     // `remember` on purpose.
     var sheet by remember { mutableStateOf<ChatSheet?>(null) }
     var overflow by remember { mutableStateOf(false) }
+    // The image the user tapped, if any. It is a full-screen `Dialog`
+    // (`PiImageViewer`) and therefore its own window: nothing here unmounts the
+    // `LazyColumn`, so closing the viewer returns to the exact scroll position
+    // without a single line of restoration logic.
+    var viewedImage by remember { mutableStateOf<PiImage?>(null) }
     // The app-local display preferences, read from pi's settings documents. They
     // are preferences this screen actually obeys — before that they were rows
     // whose value nothing consulted (`PiSessionViewModel.UiPrefs`).
@@ -406,25 +416,47 @@ private fun ChatBody(
             val resolver = context.contentResolver
             val mime = resolver.getType(uri).orEmpty()
             when {
-                // Anything that is not an image has no byte channel, so it goes in as
-                // its **path** — see [devicePathOf] for why the guest can open one and
-                // which sources can answer with a real path at all.
+                // Anything that is not an image has no byte channel, so the bytes are
+                // copied into the workspace and the agent is handed the **path** — see
+                // [copyIntoWorkspace] for why a copy and never a guessed device path.
+                // The work is streamed and bounded on `Dispatchers.IO`; the callback
+                // resumed the Activity, so this is the frame thread.
                 !mime.startsWith("image/") -> pickerScope.launch {
-                    val path = withContext(Dispatchers.IO) { devicePathOf(context, uri) }
-                    if (path == null) {
-                        // Nothing is inserted: a `content://` string or a guessed path
-                        // would be answered by pi with an error about a file the user
-                        // never named.
-                        session.notifyUser(
-                            "这个来源没有可用的文件路径，pi 读不到它。请换一个来源" +
-                                "（「文件」里的本地存储或下载），或先把文件存到手机上。",
+                    val result = withContext(Dispatchers.IO) { copyIntoWorkspace(context, uri) }
+                    when (result) {
+                        // The path goes into the composer as **text**: pi's agent
+                        // resolves it the same way it resolves one the user typed, and
+                        // the app does not get to write the prompt.
+                        is WorkspaceCopy.Copied -> {
+                            draft = if (draft.isBlank()) {
+                                result.relativePath
+                            } else {
+                                draft + " " + result.relativePath
+                            }
+                            // Named, because the file is now visible in 工作区 and an
+                            // unexplained new file there is worse than the copy was.
+                            session.notifyUser("已放入工作区：${result.relativePath}")
+                        }
+                        // Each failure names its own cause and inserts nothing: a
+                        // `content://` string or a guessed path would be answered by pi
+                        // with an error about a file the user never named.
+                        WorkspaceCopy.Unreadable -> session.notifyUser(
+                            "读不到这个文件：来源没有把它打开（权限被拒或文件已被删除）。" +
+                                "请重新选择，或先把文件存到手机上再选。",
                             warning = true,
                         )
-                    } else {
-                        // The path goes into the composer as **text**: pi's agent
-                        // resolves a path the same way it resolves one the user typed,
-                        // and the app does not get to write the prompt.
-                        draft = if (draft.isBlank()) path else draft + " " + path
+
+                        WorkspaceCopy.TooLarge -> session.notifyUser(
+                            "文件太大：上限是 ${MAX_ATTACHMENT_BYTES / (1024 * 1024)} MB。" +
+                                "它还没有被复制进工作区，也没有加进这条消息；请先裁剪或压缩。",
+                            warning = true,
+                        )
+
+                        WorkspaceCopy.WriteFailed -> session.notifyUser(
+                            "写不进工作区（存储空间不足或目录不可写）。" +
+                                "这个文件没有被复制，也没有加进这条消息。",
+                            warning = true,
+                        )
                     }
                 }
 
@@ -523,7 +555,17 @@ private fun ChatBody(
     //    rather than plain `remember` buys here.
     val sessionKey = state.meta.sessionFile ?: state.meta.sessionId
     var renderWindow by rememberSaveable(sessionKey) { mutableStateOf(TRANSCRIPT_WINDOW_STEP) }
-    val renderedItems = remember(visibleItems, renderWindow) { visibleItems.takeLast(renderWindow) }
+    // A window the user opened **all the way** — by tapping 「回到顶部」, which goes to
+    // row 0 and therefore has to materialise every row above the window — stays open.
+    // Without this flag the window would be a *count* (`renderWindow`) while the
+    // transcript only grows, so the next streamed row would re-hide itself behind a
+    // fresh「加载更早的 1 条」row and the user would be looking at the top of the
+    // conversation with the newest text hidden from them. `reArmTail()` closes it
+    // again, so following the tail costs the last-50 window exactly as before.
+    var windowOpen by rememberSaveable(sessionKey) { mutableStateOf(false) }
+    val renderedItems = remember(visibleItems, renderWindow, windowOpen) {
+        if (windowOpen) visibleItems else visibleItems.takeLast(renderWindow)
+    }
     val hiddenCount = visibleItems.size - renderedItems.size
     // While anything is hidden the loading row is item 0, so a full-list index is a
     // rendered index plus `hiddenCount` plus that one row.
@@ -694,9 +736,15 @@ private fun ChatBody(
     // sees the current value first, and every later `true` is a drag or a fling —
     // this code starts no scroll session (`requestScrollToItem` is not one, and the
     // two jumps below use it for exactly that reason), so a `true` here is the user.
+    // `isScrollInProgress` is a plain field on `LazyListState`, not snapshot state, so
+    // it is mirrored into one here: the "load earlier" rule needs it as a *key*, and a
+    // `derivedStateOf` cannot see it change. This collector already existed for the
+    // pause; it now feeds both readers.
+    var scrolling by remember { mutableStateOf(false) }
     LaunchedEffect(listState) {
-        snapshotFlow { listState.isScrollInProgress }.collect { scrolling ->
-            if (scrolling) pauseTail()
+        snapshotFlow { listState.isScrollInProgress }.collect { inProgress ->
+            scrolling = inProgress
+            if (inProgress) pauseTail()
         }
     }
     // Spec §4.5: "向上滚动时分批加载更早的 entry". Reaching the top grows the window by
@@ -708,14 +756,42 @@ private fun ChatBody(
     val atTop by remember(listState) {
         derivedStateOf { listState.firstVisibleItemIndex == 0 }
     }
+    // `!canScrollForward` — the same end test `TailFollow` uses (`TailViewport.atBottom`),
+    // and for the same reason: it is true exactly when the last row's bottom is inside
+    // the viewport, including the tail of a row taller than the viewport.
+    val atBottom by remember(listState) {
+        derivedStateOf { !listState.canScrollForward }
+    }
     var earlierArmed by rememberSaveable(sessionKey) { mutableStateOf(false) }
-    LaunchedEffect(atTop, hiddenCount) {
+    LaunchedEffect(atTop, hiddenCount, scrolling) {
         if (!atTop) {
             earlierArmed = true
-        } else if (earlierArmed && hiddenCount > 0) {
-            earlierArmed = false
-            renderWindow += TRANSCRIPT_WINDOW_STEP
+            return@LaunchedEffect
         }
+        // `mayLoadEarlier` is the whole fix for 「用力往旧消息方向一划就跳到最顶部」: a
+        // batch may only be prepended once the gesture is over. Prepending *while a
+        // fling is running* grows the list in the direction the fling is travelling,
+        // so the fling never reaches an end and one flick walks the whole session.
+        if (!mayLoadEarlier(atTop, earlierArmed, hiddenCount, scrolling)) return@LaunchedEffect
+        earlierArmed = false
+        val headerBefore = headerRows
+        val prepended = minOf(TRANSCRIPT_WINDOW_STEP, hiddenCount)
+        renderWindow += TRANSCRIPT_WINDOW_STEP
+        // The "load earlier" row keeps its key at index 0 for as long as anything is
+        // hidden, so the `LazyColumn`'s own key anchoring cannot see this prepend when
+        // that row is the first visible item — the content slides by the whole batch
+        // under a stationary index. Asking for the anchored index is the other half of
+        // the fix (`prependAnchoredIndex`, `ui/chat/TailFollow.kt`).
+        val headerAfter = if (hiddenCount - prepended > 0) 1 else 0
+        listState.requestScrollToItem(
+            prependAnchoredIndex(
+                firstVisibleIndex = listState.firstVisibleItemIndex,
+                prependedRows = prepended,
+                headerRowsBefore = headerBefore,
+                headerRowsAfter = headerAfter,
+            ),
+            listState.firstVisibleItemScrollOffset,
+        )
     }
     LaunchedEffect(searchMatches, searchCursor) {
         val index = searchMatches.getOrNull(searchCursor.coerceIn(0, (searchMatches.size - 1).coerceAtLeast(0)))
@@ -1201,6 +1277,39 @@ private fun ChatBody(
         // Deliberate deviation from v2's phone59/phone60: those two screens no longer
         // appear in this state. See `design/ui-refactor/07-construction-decisions.md`
         // D31.
+
+        // **The transcript's box is always there, even when the transcript is not.**
+        //
+        // This is the fix for 「打开软件之后，输入框跑到屏幕最上面，启动成功之后才落到正常
+        // 位置」, and the mechanism is the whole story: a `Column` measures its
+        // non-weighted children first and gives the weighted ones what is *left*. With
+        // an empty transcript the `weight(1f)` row did not exist at all (the `if` was
+        // around it), so nothing absorbed the free space and the composer — the next
+        // child — was laid out immediately under the top bar. It dropped into place
+        // only when the first rows arrived and the weighted box appeared with them.
+        // The trigger is therefore deterministic and is *not* a first-frame inset
+        // artefact: **any empty transcript** puts the composer at the top, and the 1–2 s
+        // of `Boot.Idle` (D31: the chat page is drawn immediately, the boot page no
+        // longer is) is simply when the user sees it. A brand-new conversation with
+        // nothing sent yet is the same state, which is why this is a layout bug and not
+        // a startup one.
+        //
+        // Keeping the box and moving the emptiness *inside* it makes the composer's
+        // position depend only on the screen's height and on the heights of the rows
+        // below it — never on what the transcript measured, whether it holds 0 rows or
+        // 5000. **Why not `Box(fillMaxSize)` with the composer `align(BottomCenter)`**
+        // (the other shape considered): the transcript then has to know how tall the
+        // composer is in order to pad its last rows out from under it, and the only way
+        // to learn that is to measure the composer and feed the result back into the
+        // transcript — a measure → pad → measure dependency, which is the coupling this
+        // file already went out of its way to avoid (`design/ui-refactor/08-hang-diagnosis.md`,
+        // and the follow effect's own argument above). One owner for the vertical order
+        // is what keeps this fixable.
+        //
+        // `bottomInset` is untouched by it: the trailing spacer and the boot page's
+        // padding keep exactly the semantics they had (see the `Spacer` below and
+        // `ChatScreen`'s boot branch).
+        Box(Modifier.weight(1f).fillMaxWidth()) {
         if (!emptyTranscript) {
             // `app.appearance.messageDensity`: the transcript's block rhythm,
             // scaled around v2's own gap. F11 (`docs/rendering-review.md`):
@@ -1224,7 +1333,6 @@ private fun ChatBody(
             // compact step used to narrow it to 12 as well, which put the transcript's
             // left edge out of line with the AppBar's own 14 and with every other
             // screen; the density preference moves the *block rhythm*, not the page.
-            Box(Modifier.weight(1f).fillMaxWidth()) {
             LazyColumn(
                 state = listState,
                 modifier = Modifier.fillMaxSize(),
@@ -1344,48 +1452,99 @@ private fun ChatBody(
                         },
                         // §4.8's 编辑并从此分叉: pi's user-message row opens the
                         // fork picker and re-runs from that message
-                        // (`interactive-mode.ts:5216` / `docs/sessions.md:31`);
-                        // `forkFrom` is the same `fork` command that picker sends,
-                        // so the entry id here is the projected block's key.
-                        onForkFromMessage = { entryId -> session.forkFrom(entryId) },
-                        // The other three (`onImageClick`, `onDiffOpenFull`,
-                        // `onErrorRetry`) had no target anywhere in the app — no
-                        // image viewer, no full-screen diff route, no retry action —
-                        // so the review's other allowed branch was taken: the dead
-                        // parameters and their gated labels are deleted from the
-                        // blocks, rather than left claiming a feature.
+                        // (`interactive-mode.ts:5216` / `docs/sessions.md:31`).
+                        //
+                        // The block hands over its transcript key, which is pi's entry
+                        // id only on the replay path — a bubble drawn for a prompt sent
+                        // in this run carries a synthetic key (`Transcript.kt:982`,
+                        // `:1010`), and sending that to `fork` is exactly what pi
+                        // answered with `Invalid entry ID for forking`. The order that
+                        // *is* reliable lives here, so the row's position among the user
+                        // rows and its text are read from the full list (not just the
+                        // rendered window) and handed to the ViewModel, which matches
+                        // them against `get_fork_messages` — pi's own list of legal fork
+                        // points.
+                        onForkFromMessage = { key ->
+                            val row = visibleItems
+                                .firstOrNull { it is UserMessage && it.key == key } as? UserMessage
+                            session.forkFromMessage(
+                                key = key,
+                                ordinal = userMessageOrdinal(visibleItems, key),
+                                text = row?.text.orEmpty(),
+                            )
+                        },
+                        // F19 (`docs/rendering-review.md`) deleted `onImageClick`
+                        // because no viewer existed to receive it. One does now, so
+                        // the callback is back and supplied: every image anywhere in
+                        // the transcript — a user attachment, an assistant's picture,
+                        // a tool's screenshot — opens [PiImageViewer]. The other two
+                        // (`onDiffOpenFull`, `onErrorRetry`) still have no target and
+                        // stay deleted.
+                        onImageClick = { viewedImage = it },
                     )
                 }
             }
-            // Spec §4.5's affordance: once the follow has been paused by the user's
-            // own scrolling (or by a jump into history), this is the explicit way back.
-            // pi draws its own version only while the follow is off
-            // (`tui-alt-screen.ts:1620`) and clicking it changes the position directly
-            // (`:1015-1021` → `scroll-view.ts:477-480`); the count is the App's
-            // addition, from spec §4.5's 「↓ 回到最新（N）」.
-            if (!following) {
-                // v2 draws this as a bordered pill with **no elevation**
-                // (`direction-b-v2.html:1510`: `background:surf-high`,
-                // `border:1px solid borderMuted`, `padding:6px 12px`, and no
-                // `box-shadow` anywhere in the board — `04 §2.3`: 层级不用阴影).
-                // The app's copy carried `shadowElevation = 3.dp`, the only shadow in
-                // its half of the UI, and a `↓` glyph v2 does not draw; the words
-                // already say what the tap does.
-                Surface(
+            // Spec §4.5's affordance, in its second shape. It used to be one bordered
+            // pill reading 「回到最新 · N」; the user's ruling was 「弄得小一点，只剩一个
+            // 箭头，半透明一点，现在太遮挡视线了。弄成上下两个箭头」, so it is now two
+            // round arrow buttons — one to the first row, one to the newest — and the
+            // count moved into a 5 dp badge, which is the board's own badge swatch
+            // (`06-v2-construction-reference.md` §「徽标」: 色块 5×5 圆角 1). v2 has no
+            // floating-button row, so this borrows the pill's exact tokens rather than
+            // inventing any: `surfaceContainerHigh` ground, a `borderMuted` hairline,
+            // no elevation (`direction-b-v2.html:1510`, and `04 §2.3`: 层级不用阴影).
+            //
+            // **When each is shown.** Up: only when there is something above, i.e. the
+            // viewport is not on the first item. Down: when there is something below
+            // **or** the follow is paused — the second half matters, because a
+            // navigation that lands on the last row deliberately keeps the follow off
+            // (`TailFollow.pause`, pi's `disableFollow`), and hiding the button there
+            // would leave no way to re-arm it. A viewport that is at the bottom *and*
+            // following shows neither, which is the state the transcript is in most of
+            // the time and the reason the old pill was the only thing on screen.
+            val showUp = !atTop
+            val showDown = !atBottom || !following
+            if (showUp || showDown) {
+                Column(
                     modifier = Modifier
                         .align(Alignment.BottomEnd)
-                        .padding(12.dp)
-                        .clickable(onClickLabel = "回到最新", onClick = { reArmTail() }),
-                    shape = RoundedCornerShape(percent = 50),
-                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                    border = BorderStroke(1.dp, PiTheme.palette.borderMuted),
+                        .padding(SCROLL_ARROWS_PADDING),
+                    horizontalAlignment = Alignment.End,
+                    verticalArrangement = Arrangement.spacedBy(SCROLL_ARROWS_GAP),
                 ) {
-                    Text(
-                        text = if (unseenRows > 0) "回到最新 · $unseenRows" else "回到最新",
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                        style = PiTheme.text.meta,
-                        color = MaterialTheme.colorScheme.onSurface,
-                    )
+                    if (showUp) {
+                        ScrollArrowButton(
+                            icon = Icons.Filled.KeyboardArrowUp,
+                            label = "回到顶部",
+                            onClick = {
+                                // Navigation, not following: pi's `disableFollow`
+                                // semantics for anything that reveals a row.
+                                pauseTail()
+                                // Row 0 of the whole transcript. `reveal` is the app's
+                                // existing "materialise the rows I need, then go there"
+                                // primitive (the prompt jumps use it), and it is what
+                                // keeps this honest: the window is a rendering budget,
+                                // not a limit on what the user may look at.
+                                windowOpen = true
+                                reveal(0)
+                            },
+                        )
+                    }
+                    if (showDown) {
+                        ScrollArrowButton(
+                            icon = Icons.Filled.KeyboardArrowDown,
+                            label = "回到最新",
+                            unread = unseenRows > 0,
+                            onClick = {
+                                // Closing the window is the counterpart of the up
+                                // arrow's `windowOpen = true`: following the tail means
+                                // the last-50 window again, not a transcript the user
+                                // once opened all the way.
+                                windowOpen = false
+                                reArmTail()
+                            },
+                        )
+                    }
                 }
             }
             }
@@ -1771,6 +1930,16 @@ private fun ChatBody(
 
         null -> Unit
     }
+
+    // Hosted here, at the top of the screen's own tree, for the same reason the
+    // sheets are: the tap can come from any block, and the surface that opens must
+    // not live inside the row it came from — a `LazyColumn` disposes a scrolled-away
+    // item, and a viewer whose state died with its row would vanish under the
+    // dialog. `PiImageViewer` is a `Dialog` (a separate window), so this placement
+    // does not overlay the list; it only decides who owns "which image is open".
+    viewedImage?.let { image ->
+        PiImageViewer(image = image, onDismiss = { viewedImage = null })
+    }
 }
 
 /**
@@ -1783,6 +1952,31 @@ private fun paletteQueryOf(draft: String): String? {
     if (!trimmed.startsWith("/")) return null
     if (trimmed.contains(' ')) return null
     return trimmed.removePrefix("/")
+}
+
+/**
+ * The 0-based index of the user-message row [key] among the list's user-message
+ * rows, or -1 when the list does not hold it.
+ *
+ * This is the app-side half of pi's fork list order: `getUserMessagesForForking`
+ * walks the session's entries in file order and keeps every user message with
+ * text (`core/agent-session.ts:3309-3327`), and a transcript row is projected
+ * from one of those same entries, so the two orders agree. It is derived on
+ * demand — the callback runs once per long press — rather than kept as a map
+ * that a streaming publication would rebuild on every chunk (the append-only
+ * cost this screen already went out of its way to avoid, see `userRowIndices`).
+ *
+ * The caller in the ViewModel trusts the value only together with the row's own
+ * text, because one entry can project no user row at all (`Transcript.kt:2353-2368`).
+ */
+private fun userMessageOrdinal(items: List<TranscriptItem>, key: String): Int {
+    var ordinal = 0
+    for (item in items) {
+        if (item !is UserMessage) continue
+        if (item.key == key) return ordinal
+        ordinal++
+    }
+    return -1
 }
 
 /**
@@ -2007,117 +2201,140 @@ private fun SearchChip(glyph: String, label: String, enabled: Boolean, onClick: 
 }
 
 /**
- * The phone path behind a picked document, or null when the source cannot answer one.
+ * Put a picked non-image file where the agent can read it, and answer with the
+ * workspace-relative path to insert.
  *
- * ## Why a path and not a copy
+ * ## Why a copy, and not a device path
  *
- * pi's chat engine is launched through proot with `ProotCommand.baseBinds`' shared
- * storage binds (`runtime/PiRuntime.kt:177-180`, reached from the engine's own launch
- * at `engine/PiEngineHost.kt:287` — the same `baseBinds` every launch shares, not a
- * terminal-only set):
+ * This is the implementation of the sentence that used to sit above the *old* code
+ * as its stated design — 「把文件放到 agent 能读到的地方」 — and which that code did
+ * not follow: it guessed a phone path instead (`/storage/emulated/0/…`, a
+ * `_data` column, `raw:`), and on any source that would not answer with one it failed
+ * with 「这个来源没有可用的文件路径」. On Android 10+ that is nearly every source: the
+ * system picker hands back a `content://` URI from Files/Downloads/Recent/cloud
+ * providers, `_data` is unset for a virtual document, and a cloud provider has no
+ * filesystem path at all. The user's report — 「除了图片，其他的东西我点完发送，它说
+ * 『这个来源没有可用的文件路径』」 — is that failure, and it is deterministic rather
+ * than intermittent.
  *
- * ```
- * -b <external storage>:/sdcard
- * -b <external storage>:/storage/emulated/0
- * ```
+ * A guessed path was also only ever *half* a fix. The proot bind makes
+ * `/storage/emulated/0/…` the same spelling inside the guest, but the guest runs as
+ * this app's uid under `untrusted_app` (`bridge/DeviceWorkspace.kt:54-58`): a shared
+ * path is visible and may still be unreadable, and the app cannot tell the difference
+ * from here. The failure then happens *inside pi*, about a file the user never named —
+ * strictly worse than the error above.
  *
- * so `/storage/emulated/0/…` is the **same path** inside the guest as on the phone,
- * and a path handed to the agent as text is a path its `read` tool can open. That is
- * also exactly what pi's terminal does with a dropped file: the drop becomes a path
- * in the prompt, not a payload. No copy, no truncation, no rewrite — the file the
- * agent reads is the file the user picked, and nothing has to be cleaned up
- * afterwards.
+ * A copy has neither problem. The workspace is app-private storage that the engine
+ * already mounts (`PtyLauncher.workspaceHost`), the app writes the bytes itself, and
+ * the path handed over is one the guest demonstrably owns. It is also the shape pi's
+ * own terminal uses for a dropped file: the drop becomes a **path in the prompt**, not
+ * a payload.
  *
- * ## Why the two path styles do not collide
+ * The path is **relative to the workspace** (`attachments/report.pdf`), which is what
+ * `@` mentions insert too (`ui/chat/PiFileMentions.kt`). Relative resolves against the
+ * engine's cwd, which *is* the workspace, so the guest/host "one directory, two
+ * spellings" trap (`GuestWorkspacePath`) never arises. The old comment's worry that
+ * the two shapes would collide is answered by making them the same shape.
  *
- * `@` mentions (`ui/chat/PiFileMentions.kt`) insert paths **relative to the
- * workspace**, because that is what its completion source produces. A picked file is
- * outside the workspace, so this inserts an **absolute** path and never a relative
- * one: mixing the two shapes would produce a token that looks like a mention and
- * resolves somewhere else. The absolute form is also the one pi's own terminal
- * inserts.
+ * ## What the user is told
  *
- * ## What it covers, and what it refuses
+ * Success names the file it placed, because the workspace is a directory the user can
+ * see from 工作区 and an unexplained new file there is worse than the copy. Failure
+ * gives the actual cause ([WorkspaceCopy]) and inserts **nothing** — never a
+ * `content://` string and never a guessed path.
  *
- * Covered — the three shapes the system picker actually hands back for local files:
- *
- *  - `file://…` → the path itself ([android.net.Uri.getPath]);
- *  - `com.android.externalstorage.documents` → the SAF document id, which is
- *    `primary:Download/x.pdf` (or `<volume-uuid>:…`) and maps onto
- *    `/storage/emulated/0/…` (or `/storage/<uuid>/…`);
- *  - `com.android.providers.downloads.documents` → `raw:/…` is the path after the
- *    prefix, and a numeric id is resolved by asking the provider itself for its
- *    `_data` column.
- *
- * Refused, **silently as far as the composer is concerned**: every other authority —
- * a cloud provider, a documents provider that only streams, a `content://` URI whose
- * `_data` is unset (normal for a virtual document). The caller inserts nothing and
- * says so in one sentence, rather than putting a `content://` string or a guessed
- * path in front of the agent: a path the guest cannot open is worse than no path,
- * because pi will answer with an error about a file the user never named.
- *
- * The `_data` column is read as a literal rather than through
- * `MediaStore.Downloads.COLUMN_DATA`: that constant is API 29 and this app's
- * `minSdk` is 26, while the column itself is what the pre-29 providers expose.
- *
- * **The caveat that belongs on this function**: the bind makes the path *visible* to
- * the guest, not *readable*. The guest runs as this app's uid under
- * `untrusted_app` (`bridge/DeviceWorkspace.kt:54-58`), so the platform's storage
- * rules still decide — with this app's `targetSdk` (28, the legacy model) a shared
- * path is readable once the app holds the storage permission, and a path from a
- * provider that streams from somewhere else is not a filesystem path at all.
+ * The cap is the same number as the image cap on purpose: one limit for the user to
+ * learn, and the copy is streamed and bounded, so a 2 GB provider stream is refused
+ * without ever being held in memory.
  */
-private fun devicePathOf(context: Context, uri: android.net.Uri): String? {
-    when (uri.scheme) {
-        "file" -> return uri.path?.takeIf { it.isNotBlank() }
-        "content" -> Unit
-        else -> return null
-    }
-    val documentId = runCatching { DocumentsContract.getDocumentId(uri) }.getOrNull()
-    return when (uri.authority) {
-        "com.android.externalstorage.documents" -> documentId?.let { externalStoragePathOf(it) }
-        "com.android.providers.downloads.documents" -> documentId?.let { id ->
-            // `raw:` carries the path itself; anything else is a downloads row, and
-            // only the provider can say where that row's bytes live.
-            if (id.startsWith("raw:")) {
-                id.removePrefix("raw:").takeIf { it.isNotBlank() }
-            } else {
-                dataColumnOf(context, uri)
+private fun copyIntoWorkspace(context: Context, uri: android.net.Uri): WorkspaceCopy {
+    val directory = java.io.File(
+        app.pi.runtime.PtyLauncher.workspaceHost(context),
+        ATTACHMENTS_DIR,
+    )
+    if (!directory.isDirectory && !directory.mkdirs()) return WorkspaceCopy.WriteFailed
+
+    val source = runCatching { context.contentResolver.openInputStream(uri) }.getOrNull()
+        ?: return WorkspaceCopy.Unreadable
+
+    val displayName = displayNameOf(context, uri)
+    return source.use { input ->
+        val name = app.pi.ui.chat.uniqueAttachmentName(
+            app.pi.ui.chat.sanitizeAttachmentName(displayName),
+        ) { candidate -> java.io.File(directory, candidate).exists() }
+        val target = java.io.File(directory, name)
+        // The name is sanitised, and this is the guard that does not depend on the
+        // sanitiser being right: whatever it returned must land *inside* the
+        // attachments directory. A name that escapes it is a path the app would be
+        // writing on a stranger's behalf.
+        val root = runCatching { directory.canonicalPath }.getOrNull() ?: return WorkspaceCopy.WriteFailed
+        val resolved = runCatching { target.canonicalPath }.getOrNull() ?: return WorkspaceCopy.WriteFailed
+        if (resolved != "$root${java.io.File.separator}$name") return WorkspaceCopy.WriteFailed
+
+        val written = runCatching {
+            target.outputStream().use { sink -> copyBounded(input, sink, MAX_ATTACHMENT_BYTES) }
+        }.getOrNull() ?: return WorkspaceCopy.WriteFailed
+        when {
+            written < 0 -> {
+                // The partial file must not stay behind: the user was told the
+                // attachment was refused, so a half file in 工作区 would be a lie.
+                target.delete()
+                WorkspaceCopy.TooLarge
             }
+            else -> WorkspaceCopy.Copied("$ATTACHMENTS_DIR/$name")
         }
-        // Every other authority — cloud drives, streaming providers, and any provider
-        // whose `_data` is unset — has no phone path this app can hand over.
-        else -> null
     }
+}
+
+/** The picker's own name for a document, or null when the provider will not say. */
+private fun displayNameOf(context: Context, uri: android.net.Uri): String? = runCatching {
+    context.contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)
+        ?.use { cursor ->
+            val column = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+            if (column < 0 || !cursor.moveToFirst()) null else cursor.getString(column)
+        }
+}.getOrNull()?.takeIf { it.isNotBlank() }
+
+/** Where picked non-image files are placed inside the workspace. */
+private const val ATTACHMENTS_DIR = "attachments"
+
+/** One picked file that was put into the workspace. */
+private sealed interface WorkspaceCopy {
+    /** The workspace-relative path to insert, e.g. `attachments/report.pdf`. */
+    data class Copied(val relativePath: String) : WorkspaceCopy
+
+    /** The provider would not open the document: permission, or it is gone. */
+    data object Unreadable : WorkspaceCopy
+
+    /** Larger than [MAX_ATTACHMENT_BYTES]; the partial file was removed. */
+    data object TooLarge : WorkspaceCopy
+
+    /** The workspace could not be created, or the copy failed — disk full, read-only. */
+    data object WriteFailed : WorkspaceCopy
 }
 
 /**
- * SAF's external-storage document id → the phone path it names.
+ * Stream `input` into `sink`, stopping the moment the total would pass [limit].
  *
- * The id is `<volume>:<relative path>`; `primary` is the built-in shared storage
- * (`Environment.getExternalStorageDirectory()`, i.e. `/storage/emulated/0`) and any
- * other value is a removable volume's UUID, which Android mounts at
- * `/storage/<uuid>`.
+ * Returns the number of bytes written, or `-1` when the limit was exceeded — the
+ * signal the caller needs before it has read anything more. `readBytes()` on the whole
+ * stream is what the image path's KDoc already rejects for the same reason (a cloud
+ * provider offers hundreds of megabytes); nothing here ever holds more than one
+ * 64 KiB buffer, and the bytes only ever exist on disk.
  */
-private fun externalStoragePathOf(documentId: String): String? {
-    val volume = documentId.substringBefore(':', "").trim()
-    val relative = documentId.substringAfter(':', "").trimStart('/')
-    if (volume.isEmpty() || relative.isEmpty()) return null
-    val root = if (volume.equals("primary", ignoreCase = true)) {
-        Environment.getExternalStorageDirectory().absolutePath
-    } else {
-        "/storage/$volume"
+private fun copyBounded(input: java.io.InputStream, sink: java.io.OutputStream, limit: Int): Int {
+    var total = 0L
+    val buffer = ByteArray(64 * 1024)
+    while (true) {
+        val read = input.read(buffer)
+        if (read < 0) break
+        total += read
+        if (total > limit) return -1
+        sink.write(buffer, 0, read)
     }
-    return "$root/$relative"
+    return total.toInt()
 }
 
-/** The `_data` (absolute path) column of a provider row, or null. */
-private fun dataColumnOf(context: Context, uri: android.net.Uri): String? = runCatching {
-    context.contentResolver.query(uri, arrayOf("_data"), null, null, null)?.use { cursor ->
-        val column = cursor.getColumnIndex("_data")
-        if (column < 0 || !cursor.moveToFirst()) null else cursor.getString(column)
-    }
-}.getOrNull()?.takeIf { it.isNotBlank() }
 
 /** `get_last_assistant_text`, then the system clipboard; this is pi's `/copy`. */
 private fun copyLastAssistant(session: PiSessionViewModel, context: Context) {
@@ -2546,6 +2763,76 @@ private const val MENTION_DEBOUNCE_MS: Long = 150L
  * reducer's own replay independent of how much is on screen.
  */
 private const val TRANSCRIPT_WINDOW_STEP = 50
+
+/** The two floating scroll arrows: v2's dense control step, and 8dp apart. */
+private val SCROLL_ARROWS_GAP = 8.dp
+private val SCROLL_ARROWS_PADDING = 12.dp
+private val SCROLL_ARROW_SIZE = 30.dp
+
+/**
+ * Idle opacity of a scroll arrow. The buttons sit over the transcript, so at rest
+ * they must not compete with the text; pressing one brings it to full opacity for as
+ * long as the touch lasts, which is the feedback the user asked for (「半透明一点」
+ * without losing the press).
+ */
+private const val SCROLL_ARROW_IDLE_ALPHA = 0.62f
+
+/**
+ * One of the transcript's two floating scroll arrows (spec §4.5's affordance, in the
+ * shape the user ruled for).
+ *
+ * A circle with `surfaceContainerHigh`, a `borderMuted` hairline and **no** shadow —
+ * the three values the 「回到最新」 pill already used, so this introduces no new
+ * colour (`direction-b-v2.html:1510`, `04 §2.3` 层级不用阴影). The glyph is the same
+ * Material chevron the block chrome and the composer already draw; no emoji, no text.
+ *
+ * @param unread draws the 5 dp badge — the board's badge swatch (`06` §「徽标」:
+ *   色块 5×5 圆角 1) in the accent. It replaces the old pill's 「· N」 count: the user
+ *   asked for one arrow with no words, and the *fact* that something arrived is what
+ *   the count was there to say, not the number.
+ */
+@Composable
+private fun ScrollArrowButton(
+    icon: ImageVector,
+    label: String,
+    onClick: () -> Unit,
+    unread: Boolean = false,
+) {
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    Box(
+        modifier = Modifier
+            .size(SCROLL_ARROW_SIZE)
+            .alpha(if (pressed) 1f else SCROLL_ARROW_IDLE_ALPHA)
+            .clip(CircleShape)
+            .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+            .border(1.dp, PiTheme.palette.borderMuted, CircleShape)
+            .clickable(
+                interactionSource = interaction,
+                indication = null,
+                onClickLabel = label,
+                onClick = onClick,
+            ),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = label,
+            modifier = Modifier.size(18.dp),
+            tint = MaterialTheme.colorScheme.onSurface,
+        )
+        if (unread) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(4.dp)
+                    .size(5.dp)
+                    .clip(RoundedCornerShape(1.dp))
+                    .background(PiTheme.palette.accent),
+            )
+        }
+    }
+}
 
 /**
  * `rememberSaveable`'s saver for the follow machine.

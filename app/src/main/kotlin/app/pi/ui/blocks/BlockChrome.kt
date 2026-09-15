@@ -18,10 +18,13 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -120,15 +123,69 @@ internal fun ProseText(
 internal data class BlockAction(val label: String, val onSelect: () -> Unit)
 
 /**
+ * Makes everything below it a **system text-selection scope**.
+ *
+ * ## Why this exists, and why it is here
+ *
+ * Until this was added the app had no `SelectionContainer` at all
+ * (`grep -rn "SelectionContainer" --include=*.kt app/src/main/kotlin` was 0 hits),
+ * so *no* text on *any* screen could be selected: a long press anywhere in the
+ * transcript opened the block-action menu and nothing else. The user's report was
+ * exact — 「长按只能出现一个特别丑的框，是复制全部，没法用系统的自由复制呀」.
+ *
+ * The gesture cannot be shared. Compose detects selection inside the **text node**
+ * (each `BasicText` below the registrar this container provides attaches its own
+ * long-press/drag recogniser and consumes the pointer), while the block menu is a
+ * `combinedClickable` on the *ancestor* box. Pointer events reach the deepest hit
+ * node first, so text wins a long press that lands on text, and the ancestor still
+ * wins one that lands on the card's own chrome. That split is not a workaround: it
+ * is the split [BlockActionMenu]'s own design note already intended ("text keeps
+ * the platform's selection … the *card* … carries the block actions") — it had
+ * simply never been wired up.
+ *
+ * ## The trade-offs, stated rather than discovered later
+ *
+ *  - **Selection is per container.** Dragging a handle across two *different*
+ *    scopes does not extend one selection into the other; the second scope starts
+ *    its own. That is why the scope sits at the **block** rather than around each
+ *    `Text`: one card is one scope, so a tool card's command line, its body and its
+ *    footer can be selected in a single gesture. Cross-*row* selection (from one
+ *    transcript item into the next) stays impossible — that is the `LazyColumn`'s
+ *    per-item composition limit, and moving the scope would not fix it.
+ *  - **A long press on selectable text no longer opens the block menu**, so every
+ *    block that owns a scope and has actions also draws the ⋮ trigger
+ *    ([BlockMenuButton]). Long-pressing the card's chrome (padding, rail, margins)
+ *    still opens the menu exactly as before, and a block with no selectable content
+ *    is untouched.
+ *  - **No nesting.** The scope is applied once per block, at the highest point that
+ *    still excludes the other blocks, and [MonoText] / [ProseText] deliberately do
+ *    *not* wrap themselves: an inner registrar silently shadows the outer one for
+ *    its own node, which would fragment one card into several scopes.
+ */
+@Composable
+internal fun SelectableContent(
+    modifier: Modifier = Modifier,
+    content: @Composable () -> Unit,
+) {
+    SelectionContainer(modifier = modifier, content = content)
+}
+
+/**
  * The card-level actions of `docs/pi-android-ui-spec.md` §4.8.
  *
  * Why a card long press rather than the spec's "long press on any text selects and
  * copies": on Android, long press *inside* selectable text already belongs to the
  * system selection handles + the floating Copy/Share bar, and stacking our own
  * recogniser on the same gesture makes both unreliable. So the two are split by
- * target: text keeps the platform's selection (which is "select to copy"), and the
- * *card* — the surface around the text — carries the block actions. Nothing wraps
- * a selectable text node, so no gesture is claimed twice.
+ * target: text keeps the platform's selection (now actually wired up, see
+ * [SelectableContent]), and whatever is left of the *card* carries the block
+ * actions.
+ *
+ * Because the text really does take the long press once a scope is in play,
+ * [menuButton] is how a block that owns one keeps its actions reachable without
+ * hunting for a stretch of bare card chrome: it draws the same menu behind a
+ * visible ⋮. Blocks with no selectable content leave it off and behave exactly as
+ * before.
  *
  * The menu is a plain drop-down: no animation, no scrim, no ripple, per the
  * project's no-decoration rule.
@@ -138,6 +195,8 @@ internal data class BlockAction(val label: String, val onSelect: () -> Unit)
 internal fun BlockActionMenu(
     actions: List<BlockAction>,
     modifier: Modifier = Modifier,
+    /** Draw the ⋮ trigger beside the content as well as the long press. */
+    menuButton: Boolean = false,
     content: @Composable () -> Unit,
 ) {
     if (actions.isEmpty()) {
@@ -153,7 +212,14 @@ internal fun BlockActionMenu(
             onClick = {},
         ),
     ) {
-        content()
+        if (menuButton) {
+            Row(verticalAlignment = Alignment.Top) {
+                Box(Modifier.weight(1f)) { content() }
+                BlockMenuButton(onOpen = { open = true })
+            }
+        } else {
+            content()
+        }
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
             actions.forEach { action ->
                 DropdownMenuItem(
@@ -165,6 +231,31 @@ internal fun BlockActionMenu(
                 )
             }
         }
+    }
+}
+
+/**
+ * The ⋮ that opens [BlockActionMenu] once its long press has been handed to text
+ * selection.
+ *
+ * Deliberately small and in the `dim` token: it is an affordance, not a
+ * decoration, and `06 §2`'s palette has no slot for a third kind of chrome. The hit
+ * target is 32 dp — v2's own dense row height — rather than Material's 48 dp,
+ * because a 48 dp column beside every assistant paragraph would be the loudest
+ * thing on the screen.
+ */
+@Composable
+private fun BlockMenuButton(onOpen: () -> Unit) {
+    IconButton(
+        onClick = onOpen,
+        modifier = Modifier.size(32.dp),
+    ) {
+        Icon(
+            imageVector = Icons.Filled.MoreVert,
+            contentDescription = "更多操作",
+            modifier = Modifier.size(16.dp),
+            tint = PiTheme.palette.dim,
+        )
     }
 }
 
@@ -181,7 +272,18 @@ internal fun BlockActionMenu(
  */
 internal val BlockCardShape = RoundedCornerShape(10.dp)
 
-/** A tonal container card: v2's 10dp radius, no elevation, palette colour. */
+/**
+ * A tonal container card: v2's 10dp radius, no elevation, palette colour.
+ *
+ * **The card body is one text-selection scope** ([SelectableContent]). Every card
+ * block — tool cards, the diff card, the error card, compaction, branch summaries,
+ * hook messages, skills, the path list — gets selection from this one place, which
+ * is also why the scope is here and not in [MonoText]/[ProseText]: one card must
+ * stay one scope, or a drag that starts on the command line could not reach the
+ * body below it. The card's own tap gesture (`Modifier.toggleContent`) is on the
+ * `Surface` *outside* the scope and is unaffected — a tap is not consumed by a
+ * selection, only a long press is.
+ */
 @Composable
 internal fun BlockCard(
     color: Color,
@@ -202,11 +304,13 @@ internal fun BlockCard(
         color = color,
         border = borderColor?.let { BorderStroke(PiSpacing.hairline, it) },
     ) {
-        Column(
-            modifier = Modifier.padding(padding),
-            verticalArrangement = Arrangement.spacedBy(PiSpacing.gutter),
-            content = content,
-        )
+        SelectableContent {
+            Column(
+                modifier = Modifier.padding(padding),
+                verticalArrangement = Arrangement.spacedBy(PiSpacing.gutter),
+                content = content,
+            )
+        }
     }
 }
 
@@ -386,13 +490,6 @@ internal fun formatTokens(count: Long): String = when {
     count >= 1_000_000 -> "${count / 1_000_000}M"
     count >= 1_000 -> "${count / 1_000}k"
     else -> count.toString()
-}
-
-/** Character counts for the system-prompt line. */
-internal fun formatChars(count: Int): String = when {
-    count >= 10_000 -> "${count / 1_000}k 字符"
-    count >= 1_000 -> String.format(Locale.US, "%.1fk 字符", count / 1_000f)
-    else -> "$count 字符"
 }
 
 /** Line count of a machine-output blob, for the tool footer. */

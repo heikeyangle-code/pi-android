@@ -225,7 +225,15 @@ private fun TreeContent(
                 TextButton(onClick = onCycleFilter) { Text(filter.label) }
             }
             Text(
-                "分叉会新建一个会话文件，原会话保持不变。",
+                // The question this line answers is the one the empty button used to
+                // raise: "can I tap a row and continue from there?". pi's `/tree` can,
+                // but only in-process — `navigateTree` lives in the TUI
+                // (`interactive-mode.ts:5288`) and `rpc-mode.ts` has no command for it
+                // (its full `case` list: `get_entries`, `get_tree`, `fork`, `clone`,
+                // `switch_session`, `new_session`). So the app's button forks, and the
+                // sentence says so instead of leaving a 分支-looking tree to imply a
+                // jump it cannot make.
+                "pi 的 RPC 没有「跳到这一点」的命令（那是终端界面的内部功能），所以这里只能新建分支。",
                 modifier = Modifier.padding(horizontal = PiSpacing.pageHorizontal),
                 style = PiTheme.text.meta,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -255,10 +263,18 @@ private fun BranchTab(
     modifier: Modifier = Modifier,
 ) {
     val tree = state.tree?.tree.orEmpty()
-    val rows = remember(tree, state.tree?.leafId, filter, query) {
-        flattenTree(tree).filter { row ->
-            passesTreeFilter(row, state.tree?.leafId, filter) &&
-                (query.isBlank() || treeRowText(row).contains(query, ignoreCase = true))
+    val leafId = state.tree?.leafId
+    val rows = remember(tree, leafId, filter, query) {
+        // pi splits the query on whitespace and requires **every** token
+        // (`components/tree-selector.ts:349-395`: `searchTokens.every(...)`, with the
+        // tokens built from `searchQuery.toLowerCase().split(/\s+/)`). A single
+        // `contains` — what this used to do — matched the whole query as one phrase,
+        // so "read file" found nothing in a row that says "file … read" and a
+        // two-word search behaved differently here than in pi for no reason.
+        val tokens = query.lowercase().split(WHITESPACE).filter { it.isNotEmpty() }
+        flattenTree(tree, leafId).filter { row ->
+            passesTreeFilter(row, leafId, filter) &&
+                tokens.all { treeRowText(row).contains(it, ignoreCase = true) }
         }
     }
     if (tree.isEmpty()) {
@@ -306,19 +322,124 @@ private fun BranchTab(
 }
 
 /** One tree node with its depth and a stable path, for a flat list. */
-data class TreeRow(val node: SessionTreeNode, val depth: Int, val path: String)
+data class TreeRow(
+    val node: SessionTreeNode,
+    val depth: Int,
+    val path: String,
+    /**
+     * True when this node is on the **root → leaf** path — pi's `activePathIds`
+     * (`components/tree-selector.ts:180-195`, drawn from `:...`'s `isActivePath`
+     * branch). It is what makes "where am I in this tree" answerable at all: the
+     * leaf alone is one row, and in a session with branches the leaf's id says
+     * nothing about which of the earlier forks is the live one.
+     */
+    val onActivePath: Boolean,
+)
+
+/**
+ * The ids on the root → leaf path, walked through `parentId` exactly as pi's
+ * `buildActivePath` does (`components/tree-selector.ts:180-195`).
+ *
+ * Frozen against a loop: a session file whose `parentId` chain cycles is
+ * malformed, and pi's own walk would spin on it too, so the visited set is the
+ * app's one addition (it costs one `add` and turns a hang into a short tree).
+ */
+fun activePathIds(roots: List<SessionTreeNode>, leafId: String?): Set<String> {
+    if (leafId == null) return emptySet()
+    val byId = HashMap<String, SessionTreeNode>()
+    val pending = ArrayDeque(roots)
+    while (pending.isNotEmpty()) {
+        val node = pending.removeLast()
+        node.entry.id?.let { byId[it] = node }
+        pending.addAll(node.children)
+    }
+    val path = LinkedHashSet<String>()
+    var current: String? = leafId
+    while (current != null && path.add(current)) {
+        current = byId[current]?.entry?.parentId
+    }
+    return path
+}
 
 /**
  * Depth-first flattening. pi's tree is an ordered forest (`getTree` returns the
- * roots in creation order), and drawing it as a flat list keeps every row's
- * height uniform — a phone cannot render the TUI's box-drawing branches legibly,
- * so indentation carries the structure instead.
+ * roots in creation order, children sorted by timestamp), and drawing it as a flat
+ * list keeps every row's height uniform — a phone cannot render the TUI's
+ * box-drawing branches legibly, so indentation carries the structure instead.
+ *
+ * **The indent rule is pi's, not "one step per generation".** A child of a
+ * single-child parent stays at the parent's indent; only a **branch point** (a node
+ * with more than one child, and the one generation right after it) steps in
+ * (`components/tree-selector.ts:288-297`). Stepping on every generation — what this
+ * used to do — meant a plain linear conversation, which is the common case and has
+ * no structure to show, walked 12 dp further right per message and left the screen
+ * after ~25 rows: the deeper the session, the less of it was readable, and every
+ * row carried an indent that encoded nothing. With pi's rule the indent *is* the
+ * information: a step to the right means "a second branch starts here".
+ *
+ * **Order is pi's too.** The branch containing the current leaf is listed first at
+ * every level (`containsActive`, `tree-selector.ts:236-285`), so the live path is
+ * the first thing read top to bottom, and sibling order under it is still pi's
+ * timestamps — `sortedByDescending` is stable, so this only lifts the active
+ * subtree and never reshuffles what pi sent. With more than one root the forest is
+ * pi's "virtual root that branches": every root indents one step
+ * (`tree-selector.ts:262-266`).
+ *
+ * **Iterative, not recursive.** pi says why in `session-manager.ts:1350-1352`
+ * ("Use iterative approach to avoid stack overflow on deep trees"); a session
+ * resumed a few thousand times is deep enough to matter, and the recursion this
+ * replaces would have died on it with a `StackOverflowError` in the middle of a
+ * recomposition.
  */
-fun flattenTree(roots: List<SessionTreeNode>, depth: Int = 0, prefix: String = ""): List<TreeRow> =
-    roots.flatMapIndexed { index, node ->
-        val path = "$prefix/$index"
-        listOf(TreeRow(node, depth, path)) + flattenTree(node.children, depth + 1, path)
+fun flattenTree(roots: List<SessionTreeNode>, leafId: String?): List<TreeRow> {
+    val active = activePathIds(roots, leafId)
+    val multipleRoots = roots.size > 1
+
+    // (node, indent, justBranched, path). Pushed in reverse so the pop order is the
+    // reading order, the way pi's own stack works.
+    data class Frame(val node: SessionTreeNode, val indent: Int, val justBranched: Boolean, val path: String)
+
+    val orderedRoots = roots.sortedByDescending { it.entry.id != null && it.entry.id in active }
+    val stack = ArrayDeque<Frame>()
+    for (index in orderedRoots.indices.reversed()) {
+        stack.addLast(
+            Frame(
+                node = orderedRoots[index],
+                indent = if (multipleRoots) 1 else 0,
+                justBranched = multipleRoots,
+                path = "/$index",
+            ),
+        )
     }
+
+    val rows = ArrayList<TreeRow>(stack.size)
+    while (stack.isNotEmpty()) {
+        val (node, indent, justBranched, path) = stack.removeLast()
+        val id = node.entry.id
+        rows += TreeRow(node, indent, path, onActivePath = id != null && id in active)
+
+        val children = node.children.sortedByDescending { it.entry.id != null && it.entry.id in active }
+        val childIndent = when {
+            children.size > 1 -> indent + 1
+            justBranched && indent > 0 -> indent + 1
+            else -> indent
+        }
+        for (index in children.indices.reversed()) {
+            stack.addLast(
+                Frame(
+                    node = children[index],
+                    indent = childIndent,
+                    justBranched = children.size > 1,
+                    path = "$path/$index",
+                ),
+            )
+        }
+    }
+    return rows
+}
+
+/** pi's query tokenizer: `searchQuery.toLowerCase().split(/\s+/)`. */
+private val WHITESPACE = Regex("\\s+")
 
 /**
  * pi's five tree filter modes, in the order its own selector cycles them
@@ -391,12 +512,18 @@ private fun BranchRow(row: TreeRow, isLeaf: Boolean, onFork: (String) -> Unit) {
     ) {
         // A thin rule instead of box-drawing characters: it survives the phone's
         // proportional UI font, which pi's `├──` glyphs do not.
+        //
+        // The rule's colour is now pi's `activePathIds` reading, not the leaf's: an
+        // ancestor of the leaf is "where this conversation actually came from" just
+        // as much as the leaf is, and colouring only the leaf left the user unable to
+        // tell the live branch from an abandoned one in a tree with three forks. It
+        // is not decoration — it is the one mark that says which path is in effect.
         Box(
             Modifier
                 .width(2.dp)
                 .height(28.dp)
                 .background(
-                    if (isLeaf) {
+                    if (row.onActivePath) {
                         MaterialTheme.colorScheme.primary
                     } else {
                         MaterialTheme.colorScheme.outlineVariant

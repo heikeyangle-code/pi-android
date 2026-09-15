@@ -491,6 +491,50 @@ fun main() {
         check("G13 a restored follow keeps following", state(resumed), "true/0")
     }
 
+    // ================================================ H. loading earlier rows (window)
+    //
+    // The defect these pin is not in the follow machine but in the *rendering window*
+    // it feeds: a firm flick toward history walked to the first row of the whole
+    // conversation (「不管聊天有多长，我往下稍微用力划一下，它直接回到聊天最顶部」). The
+    // cause was that a batch of rows was prepended **while the fling was still
+    // running**, so the list kept growing in the direction of travel and the fling
+    // never reached an end. `mayLoadEarlier` is the rule; `prependAnchoredIndex` is
+    // what keeps the prepend from moving the rows under the viewport, because the
+    // window's head row (「加载更早的 N 条」) keeps a constant key at index 0 and so
+    // defeats the `LazyColumn`'s own key anchoring exactly when it is the first
+    // visible item.
+    run {
+        // The rule itself.
+        check("H1 a flick in flight loads nothing", mayLoadEarlier(true, true, 500, true), false)
+        check("H2 the batch loads once the gesture is over", mayLoadEarlier(true, true, 500, false), true)
+        check("H3 away from the window top nothing loads", mayLoadEarlier(false, true, 500, false), false)
+        check("H4 an un-armed window top loads nothing", mayLoadEarlier(true, false, 500, false), false)
+        check("H5 nothing hidden loads nothing", mayLoadEarlier(true, true, 0, false), false)
+
+        // The anchor. 50 rows are prepended; the "load earlier" row stays at index 0
+        // (headerRowsBefore = headerRowsAfter = 1), so a viewport parked on it has to
+        // move to index 51 — the sentinel is 0, the 50 new rows are 1..50, and the row
+        // the user was reading (old content row 0) is now 51. Parking at 50 would land
+        // on the *newest* row of the batch and slide the content by 49 rows.
+        check("H6 the sentinel row anchors to the batch's first row", prependAnchoredIndex(0, 50, 1, 1), 51)
+        // Reading real content: content row 9 was at index 10 and must stay there.
+        check("H7 a content row keeps its position", prependAnchoredIndex(10, 50, 1, 1), 60)
+        // The last batch: nothing is hidden afterwards, so the sentinel is gone and
+        // every index drops by one.
+        check("H8 the final batch accounts for the vanished sentinel", prependAnchoredIndex(10, 50, 1, 0), 59)
+        // No sentinel at either end (a window that was already complete).
+        check("H9 no sentinel, no shift", prependAnchoredIndex(10, 0, 0, 0), 10)
+        // A viewport scrolled inside a row keeps its pixel offset; the caller passes
+        // `firstVisibleItemScrollOffset` through untouched, which this pins as a
+        // statement about the function's contract: it only ever moves the *index*.
+        check("H10 nothing prepended anchors to itself", prependAnchoredIndex(3, 0, 1, 1), 3)
+        // Defensive: a negative first-visible index cannot happen from
+        // `LazyListState`, but the function must not invent a row above 0 — it clamps
+        // to "the sentinel was the first visible item", which is the same answer H6
+        // pins.
+        check("H11 a negative index clamps to the sentinel case", prependAnchoredIndex(-1, 50, 1, 1), 51)
+    }
+
     println(if (failures == 0) "\nharness: OK (all checks passed)" else "\nharness: FAILED ($failures)")
     if (failures != 0) kotlin.system.exitProcess(1)
 }

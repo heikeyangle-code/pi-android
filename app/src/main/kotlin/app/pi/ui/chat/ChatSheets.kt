@@ -918,6 +918,22 @@ private fun StatLine(label: String, value: String) {
  * (`session.getUserMessagesForForking()`, `rpc-mode.ts:633-636`), so no filtering
  * happens here — pi decides what a valid fork point is, and `fork(entryId)`
  * re-validates it on the other side.
+ *
+ * **The order is pi's and the ordinal is shown.** Several prompts look alike in a
+ * three-line preview, so the user's request was 「后面写个 123 也行」: each row now
+ * carries its 1-based position in a monospaced gutter. The number is the row's
+ * index in the list pi sent — `messages` is rendered with `forEachIndexed` and
+ * never re-sorted, filtered or deduplicated here, because the whole value of the
+ * number is that "第 3 条" in this sheet and the third entry of
+ * `getUserMessagesForForking()` are the same message. Re-ordering would silently
+ * break exactly the promise the number makes.
+ *
+ * The blurb states pi's real semantics, which the previous copy got wrong:
+ * `fork` defaults to `position: "before"` (`agent-session-runtime.ts:264-287`), so
+ * the new session ends *before* the chosen message — that message is not carried
+ * over; its text is handed back instead and the block menu's 编辑并从此分叉 puts it
+ * in the composer (`interactive-mode.ts:5157-5165`), which is what the picker
+ * opened from the ⋮ menu will do too once the fork lands.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -931,22 +947,28 @@ fun ForkPickerSheet(
             Text("从哪条消息分支", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface)
             Spacer(Modifier.height(4.dp))
             Text(
-                "会在选中的消息处创建一个新会话。",
+                "会在「这条消息之前」分出新的会话（这条消息本身不会带过去），" +
+                    "并把它放回输入框，可以改完再发。编号就是 pi 给的可分叉消息顺序。",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Spacer(Modifier.height(PiSpacing.unit))
             if (messages.isEmpty()) {
                 Text(
-                    "没有可分叉的用户消息。",
+                    // pi's own wording for this state is `No messages to fork from`
+                    // (`interactive-mode.ts:5149-5155`); saying what to do about it is
+                    // the app's addition, because a sheet that says only "没有" reads
+                    // as a broken feature rather than as an empty session.
+                    "pi 说这个会话还没有可分叉的用户消息（No messages to fork from）。" +
+                        "先发一条消息，等 pi 把它写进会话文件后再回来。",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             } else {
                 Column(Modifier.fillMaxWidth().heightIn(max = 420.dp).verticalScroll(rememberScrollState())) {
-                    messages.forEach { message ->
-                        Column(
-                            Modifier
+                    messages.forEachIndexed { index, message ->
+                        Row(
+                            modifier = Modifier
                                 .fillMaxWidth()
                                 .clickable {
                                     onPick(message.entryId)
@@ -954,18 +976,28 @@ fun ForkPickerSheet(
                                 }
                                 .padding(vertical = 10.dp),
                         ) {
+                            // The gutter: a monospaced ordinal, wide enough for three
+                            // digits so the text column cannot shift between rows.
                             Text(
-                                message.text.ifBlank { "（空消息）" },
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurface,
-                                maxLines = 3,
-                                overflow = TextOverflow.Ellipsis,
+                                text = "${index + 1}",
+                                modifier = Modifier.width(28.dp),
+                                style = PiTheme.text.mono,
+                                color = MaterialTheme.colorScheme.primary,
                             )
-                            Text(
-                                message.entryId,
-                                style = PiTheme.text.meta,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
+                            Column(Modifier.weight(1f)) {
+                                Text(
+                                    message.text.ifBlank { "（空消息）" },
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    maxLines = 3,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                                Text(
+                                    message.entryId,
+                                    style = PiTheme.text.meta,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
                         }
                     }
                 }

@@ -2085,6 +2085,16 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     private fun call(
         label: String,
         noEngine: NoEngine = NoEngine.Notify,
+        /**
+         * Optional translation of a failure into something the user can act on.
+         *
+         * The default is [Throwable.message], which for a [PiRpcException] is pi's
+         * own English sentence prefixed with the command name — correct, but it
+         * names the *symptom* and not one thing to do next. A command whose
+         * failures have a small, knowable set of causes passes a mapper here
+         * instead; pi's own text is kept inside the sentence, never replaced.
+         */
+        errorText: ((Throwable) -> String)? = null,
         block: suspend (PiEngineApi) -> Unit,
     ) {
         val api = this.api
@@ -2102,7 +2112,11 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             } catch (error: CancellationException) {
                 throw error
             } catch (error: Throwable) {
-                fail(error.message?.takeIf { it.isNotBlank() } ?: "$label 失败")
+                fail(
+                    errorText?.invoke(error)
+                        ?: error.message?.takeIf { it.isNotBlank() }
+                        ?: "$label 失败",
+                )
             } finally {
                 if (_state.value.busy == label) _state.value = _state.value.copy(busy = null)
             }
@@ -3030,17 +3044,162 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         return out.toByteArray()
     }
 
-    /** `fork` from one of the user messages `get_fork_messages` offered. */
-    fun forkFrom(entryId: String) {
-        call("创建分支") { api ->
-            val result = api.fork(entryId)
+    /**
+     * `fork` from an entry id pi itself handed us: the fork picker
+     * ([refreshForkMessages] → `get_fork_messages`) and the session tree
+     * (`get_tree` node ids). Both are already pi's entry ids, so nothing is
+     * resolved here.
+     */
+    fun forkFrom(entryId: String) = forkAt(entryId, row = null)
+
+    /**
+     * `fork` for a row the user long-pressed in the transcript.
+     *
+     * **Why this needs its own resolver.** The block-action menu only knows the
+     * row's *transcript key* (`UserMessage.key`), and that key is pi's entry id
+     * only on the replay path: `TranscriptReducer.seedFromHistory` keys a
+     * projected block off the entry it came from (`rpc/Transcript.kt:2020-2029`),
+     * but the live path that draws the bubble the instant the user hits send
+     * mints a synthetic one — `nextKey("user")` = `user-<epochMillis>-<n>`
+     * (`Transcript.kt:982`, `:1010`). pi's `fork` looks the id up in the session
+     * manager and throws `Invalid entry ID for forking` for anything it does not
+     * know (`core/agent-session-runtime.ts:274-284`), so long-pressing a message
+     * sent in *this* app run used to fail while long-pressing a message that came
+     * back from `get_entries` worked. That is the whole of "有时候报错，有时候不报错":
+     * it is deterministic, keyed on which of the two paths produced the row.
+     *
+     * The fix does not need a new wire field. pi already publishes the complete,
+     * authoritative list of forkable points ([PiEngineApi.getForkMessages] →
+     * `session.getUserMessagesForForking()`, `core/agent-session.ts:3309-3327`),
+     * so the row is resolved against that list — see [resolveForkPoint].
+     *
+     * @param key the row's transcript key, used as an exact entry id when it is one.
+     * @param ordinal the row's 0-based index among the transcript's user-message
+     *   rows, or -1 when the caller cannot supply it.
+     * @param text the row's own text, the last handle on a live (synthetic) row.
+     */
+    fun forkFromMessage(key: String, ordinal: Int, text: String) =
+        forkAt(key, row = ForkRow(key = key, ordinal = ordinal, text = text))
+
+    /**
+     * A long-pressed transcript row, as the three things [resolveForkPoint] can use.
+     *
+     * `ordinal` is the same order pi lists the messages in, because
+     * `getUserMessagesForForking` walks `getEntries()` in file order and the
+     * transcript's user rows are projected from those same entries in the same
+     * order — the one exception is a `/skill:` prompt with no trailing user text,
+     * which projects no user row at all (`Transcript.kt:2353-2368`). That is why
+     * the ordinal is only trusted together with the text.
+     */
+    private data class ForkRow(val key: String, val ordinal: Int, val text: String)
+
+    /**
+     * The one fork path: resolve (when the caller had no id), fork, rebuild.
+     *
+     * pi's `/fork` forks **before** the chosen message — `position: "before"` is
+     * the default and sets the new leaf to that entry's `parentId`
+     * (`agent-session-runtime.ts:264-287`) — and returns the message's text as
+     * `selectedText` (`rpc-mode.ts:613-618`). pi's own picker then puts that text
+     * back in the editor so it can be edited and resent
+     * (`interactive-mode.ts:5157-5165`), which is what the block menu's label
+     * 编辑并从此分叉 promises and what this now does through the same composer
+     * fill channel `set_editor_text` uses.
+     */
+    private fun forkAt(entryId: String, row: ForkRow?) {
+        call("创建分支", errorText = ::forkFailureText) { api ->
+            val target = if (row == null) {
+                entryId
+            } else {
+                val messages = api.getForkMessages()
+                resolveForkPoint(row, messages) ?: run {
+                    fail(forkPointNotFoundText(messages.isEmpty()))
+                    return@call
+                }
+            }
+            val result = api.fork(target)
             if (result.cancelled) {
                 pushNotice("扩展取消了分支", Notice.Tone.Warning)
                 return@call
             }
             afterSessionReplaced()
+            result.text?.takeIf { it.isNotBlank() }?.let(::fillComposer)
             requestNav(NavRequest.Chat)
         }
+    }
+
+    /**
+     * Which forkable message a long-pressed transcript row means, or null.
+     *
+     * Three handles, tried in decreasing strength. The first is exact; the other
+     * two exist only because pi gives the app no way to learn the entry id of a
+     * message it has just sent — `message_end` carries the message but no entry id
+     * (`core/agent-session.ts:1524`, `:791-793`) and `entry_appended` is emitted
+     * for extension `appendEntry` calls alone (`agent-session.ts:2593-2599`).
+     *
+     *  1. the transcript key **is** an entry id (the replay path) — exact;
+     *  2. the row's position among the user rows, accepted only when pi's text for
+     *     that position is the row's text, because a skipped row (`/skill:` with no
+     *     trailing text) shifts every later ordinal by one;
+     *  3. the row's text, preferring the **last** match: for a live row the last
+     *     occurrence is the one just sent, and for a duplicated text either
+     *     occurrence is a legal fork point, so the nearest to the leaf is the
+     *     useful one.
+     */
+    private fun resolveForkPoint(row: ForkRow, messages: List<PiResponses.ForkMessage>): String? {
+        messages.firstOrNull { it.entryId == row.key }?.let { return it.entryId }
+        if (row.ordinal >= 0) {
+            messages.getOrNull(row.ordinal)
+                ?.takeIf { it.text == row.text }
+                ?.let { return it.entryId }
+        }
+        return messages.lastOrNull { it.text == row.text }?.entryId
+    }
+
+    /** Nothing to fork from at all is a different answer from "not this row". */
+    private fun forkPointNotFoundText(noForkableMessages: Boolean): String = if (noForkableMessages) {
+        "这个会话还没有可分叉的用户消息（pi：No messages to fork from）。" +
+            "先发一条消息，等 pi 把它写进会话文件后再分叉。"
+    } else {
+        "这条消息不在 pi 的可分叉点里。pi 只允许从已经写进会话文件的用户消息分叉" +
+            "（getUserMessagesForForking），刚发出去还没落盘的一条就是这种情况：" +
+            "等这一轮结束，或从 ⋮ 菜单的「从历史消息分支」里选一条。"
+    }
+
+    /**
+     * pi's failures on the fork path, said with the next step attached.
+     *
+     * The reasons are pi's own, verbatim and quoted, because the app cannot
+     * translate a fact it does not own — but each one has a known cause and a
+     * known way out (`core/agent-session-runtime.ts:274-324`), and leaving that
+     * out is what made the old failure read as a bare "engine said no".
+     */
+    private fun forkFailureText(error: Throwable): String {
+        val reason = error.message?.takeIf { it.isNotBlank() } ?: "原因未知"
+        val next = when {
+            reason.contains("Invalid entry ID for forking") ->
+                "请从 ⋮ 菜单的「从历史消息分支」里选一条消息；那条列表就是 pi 认可的全部分叉点。"
+
+            reason.contains("has not been saved yet") ->
+                "pi 还没有把这个会话写到磁盘上的会话文件。先发一条消息、等模型回复一句，再分叉。"
+
+            reason.contains("Persisted session is missing a session file") ->
+                "pi 认为这个会话是持久化的，却没有会话文件路径。新开一个会话再试。"
+
+            reason.contains("Failed to create forked session") ->
+                "pi 没能写出分叉后的会话文件。检查 pi 工作目录是否可写（空间、权限），再试一次。"
+
+            else -> "可以重新打开这个会话再试一次。"
+        }
+        return "创建分支失败：$reason。$next"
+    }
+
+    /**
+     * Hand [text] to the composer, exactly as an extension's `set_editor_text`
+     * does — one channel, one sequence counter, so a later fill always wins.
+     */
+    private fun fillComposer(text: String) {
+        composerFillSeq += 1
+        _state.value = _state.value.copy(composerFill = ComposerFill(composerFillSeq, text))
     }
 
     /** `clone` — duplicate the active branch at the current position. */

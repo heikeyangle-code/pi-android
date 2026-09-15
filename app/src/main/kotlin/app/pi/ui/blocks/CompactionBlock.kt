@@ -112,20 +112,28 @@ fun CompactionBlock(
             // (`compaction-summary-message.ts:40-46`). The renderer has no
             // `maxLines`, so the collapsed branch staying a `Text` is exactly
             // what keeps the preview alive.
-            if (expanded) {
-                PiMarkdownText(
-                    markdown = item.summary,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = PiSpacing.tiny),
-                )
-            } else {
-                ProseText(
-                    text = item.summary,
-                    modifier = Modifier.fillMaxWidth(),
-                    color = palette.customMessageText,
-                    maxLines = COLLAPSED_SUMMARY_LINES,
-                )
+            // Both branches are one selection scope: the summary is model prose the
+            // user may want to quote. It sits outside the `if` because the expanded
+            // branch paints several `Text` nodes through the markdown renderer (a
+            // per-paragraph scope could not be dragged across), while the collapsed
+            // branch is a single [ProseText] — one scope covers both shapes, and
+            // neither branch contains another one, so nothing is nested.
+            SelectableContent {
+                if (expanded) {
+                    PiMarkdownText(
+                        markdown = item.summary,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = PiSpacing.tiny),
+                    )
+                } else {
+                    ProseText(
+                        text = item.summary,
+                        modifier = Modifier.fillMaxWidth(),
+                        color = palette.customMessageText,
+                        maxLines = COLLAPSED_SUMMARY_LINES,
+                    )
+                }
             }
         }
         // F18: the summarization's own billing, gated by pi's switch.

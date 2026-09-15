@@ -31,6 +31,15 @@ import app.pi.ui.theme.PiSpacing
  * typing" next to the growing text. It is bottom-aligned so it rides the last
  * line of whatever the renderer produced, code block included.
  *
+ * **The prose is one selection scope** ([SelectableContent]), which is what makes
+ * the assistant's own text the thing the user can select — the complaint this
+ * fixes (「长按只能出现一个特别丑的框，是复制全部，没法用系统的自由复制」). One scope
+ * around the whole markdown, not one per paragraph: [PiMarkdownText] paints several
+ * `Text` nodes and a selection has to be able to run out of one into the next.
+ * Because the text now takes the long press, the block's one action (复制全部) also
+ * gets the ⋮ trigger; a long press on the row's own chrome (the gap beside the
+ * streaming cursor, the block's margins) still opens the old menu.
+ *
  * **Do not throttle the text this block hands to [PiMarkdownText].** A 140 ms
  * "settled text" window was tried here to cut the renderer's per-update cost
  * (`design/ui-refactor/08-hang-diagnosis.md` §9.5/§10) and it broke 触底跟随: the
@@ -53,28 +62,34 @@ fun AssistantTextBlock(
     BlockColumn(modifier) {
         // §4.8: 助手消息长按 → 复制全部. 保存为文件 / 重新生成 are not offered here —
         // see the block-action report: neither has a target in this build.
+        //
+        // 复制全部 still copies `item.text` in full — pi's own message content, never
+        // the rendered, wrapped or truncated form the markdown pipeline produced.
         BlockActionMenu(
             actions = listOf(
                 BlockAction("复制全部") {
                     clipboard.setText(androidx.compose.ui.text.AnnotatedString(item.text))
                 },
             ),
+            menuButton = true,
         ) {
-        Row(verticalAlignment = Alignment.Bottom) {
-            if (item.text.isNotEmpty()) {
-                PiMarkdownText(
-                    markdown = item.text,
-                    modifier = Modifier.weight(1f),
-                )
-            }
-            if (item.streaming) {
-                Box(
-                    modifier = Modifier
-                        .padding(start = PiSpacing.small)
-                        .size(width = 8.dp, height = 16.dp)
-                        .clip(RoundedCornerShape(2.dp))
-                        .background(palette.accent.copy(alpha = 0.65f)),
-                )
+        SelectableContent {
+            Row(verticalAlignment = Alignment.Bottom) {
+                if (item.text.isNotEmpty()) {
+                    PiMarkdownText(
+                        markdown = item.text,
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+                if (item.streaming) {
+                    Box(
+                        modifier = Modifier
+                            .padding(start = PiSpacing.small)
+                            .size(width = 8.dp, height = 16.dp)
+                            .clip(RoundedCornerShape(2.dp))
+                            .background(palette.accent.copy(alpha = 0.65f)),
+                    )
+                }
             }
         }
         }

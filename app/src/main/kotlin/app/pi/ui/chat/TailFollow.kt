@@ -393,3 +393,75 @@ internal data class TailDecision(
     val unseenRows: Int,
     val pin: TailPin?,
 )
+
+/**
+ * Whether "load earlier rows" may run on this frame.
+ *
+ * ## The defect this rule exists for
+ *
+ * The transcript renders a **window** of its last N rows (`ChatScreen`'s
+ * `renderWindow` / `hiddenCount`) and grows it by one step whenever the viewport
+ * reaches the window's top. Growing it *prepends* rows.
+ *
+ * The old rule was "the window's first item is visible while the user is at the
+ * top", with no condition on a scroll being in flight — and that made a **fling
+ * unbounded**. A fling is momentum that keeps applying after the finger leaves; each
+ * time it reached the top of the loaded rows, another step was prepended *at the
+ * head*, i.e. the list grew in the direction the fling was travelling, so the fling
+ * could never reach an end. On a long session the loop ran to exhaustion: one firm
+ * flick toward history landed on the very first row of the conversation. That is the
+ * user's 「不管聊天有多长，我往下稍微用力划一下，它直接回到聊天最顶部」 — and 「往下滑就
+ * 很正常」 for the same reason: a slow drag is released long before the loop can
+ * compound, a flick is not.
+ *
+ * [isScrollInProgress] is the whole fix: a batch is loaded when the gesture is over,
+ * so a flick travels through the rows it was given and stops. Every input here is a
+ * plain value the Compose side reads off `LazyListState` — nothing in this file
+ * touches Compose — which is what lets `TailFollowCheck` pin the rule on a bare JVM.
+ *
+ * @param atWindowTop the window's first item is the viewport's first item.
+ * @param armed true once the user has been away from the window top, so a viewport
+ *   that merely *starts* there does not load on the first frame.
+ * @param hiddenRows rows the window is holding back (`hiddenCount`).
+ */
+internal fun mayLoadEarlier(
+    atWindowTop: Boolean,
+    armed: Boolean,
+    hiddenRows: Int,
+    isScrollInProgress: Boolean,
+): Boolean = atWindowTop && armed && hiddenRows > 0 && !isScrollInProgress
+
+/**
+ * The index the list has to be moved to so that prepending [prependedRows] rows at
+ * its head does **not** move the rows the user is reading — the second half of the
+ * same defect.
+ *
+ * A `LazyColumn` anchors its scroll position on the **key of its first visible
+ * item**, and this list's head row is the synthetic "load earlier" row: it keeps the
+ * same key (`transcript-earlier`) at index 0 for as long as anything is hidden. So
+ * when the first visible item is that row, the anchoring sees the same key at the
+ * same index and the viewport stays at index 0 while the *content* under it changes
+ * by the whole prepended batch — the list appears to jump towards the beginning even
+ * though the fling has stopped. When the first visible item is a real transcript row
+ * the anchoring is correct, which is why only the window's head needed this.
+ *
+ * The arithmetic, in one line: a row's index is `headerRows + its content index`, and
+ * prepending shifts every content index by [prependedRows]. A first visible item that
+ * *is* the header (`firstVisibleIndex - headerRowsBefore` negative) has no content row
+ * to preserve, so the batch's first row becomes the anchor instead — that is the
+ * `coerceAtLeast(0)`, and it is what makes "read from the oldest loaded row" the
+ * landing point rather than "stay on the sentinel".
+ *
+ * @param firstVisibleIndex `LazyListState.firstVisibleItemIndex` before the prepend.
+ * @param headerRowsBefore/After whether the "load earlier" row is present before and
+ *   after (it disappears once nothing is hidden, shifting everything by one).
+ */
+internal fun prependAnchoredIndex(
+    firstVisibleIndex: Int,
+    prependedRows: Int,
+    headerRowsBefore: Int,
+    headerRowsAfter: Int,
+): Int {
+    val contentIndex = (firstVisibleIndex - headerRowsBefore).coerceAtLeast(0)
+    return headerRowsAfter + contentIndex + prependedRows
+}

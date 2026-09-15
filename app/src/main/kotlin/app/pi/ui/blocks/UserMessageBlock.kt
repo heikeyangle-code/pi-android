@@ -10,6 +10,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import app.pi.rpc.PiImage
 import app.pi.rpc.UserMessage
 import app.pi.ui.render.PiMarkdownText
 import app.pi.ui.theme.PiShapes
@@ -40,6 +41,8 @@ fun UserMessageBlock(
     modifier: Modifier = Modifier,
     /** §4.8: 编辑并从此分叉 — `session.forkFrom(entryId)`; null hides the action. */
     onForkFromMessage: ((String) -> Unit)? = null,
+    /** A tap on an attached image opens it full screen ([PiImageViewer]). */
+    onImageClick: ((PiImage) -> Unit)? = null,
 ) {
     val palette = PiTheme.palette
     val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
@@ -48,14 +51,21 @@ fun UserMessageBlock(
             actions = buildList {
                 add(BlockAction("复制") { clipboard.setText(androidx.compose.ui.text.AnnotatedString(item.text)) })
                 // pi forks a session from a *user* message (`fork`, rpc-types.ts:62;
-                // pi's own picker is /fork, docs/sessions.md:31). The entry id is
-                // the block's stable key, which is pi's own entry id for a
-                // projected user message.
+                // pi's own picker is /fork, docs/sessions.md:31). Only the row's
+                // *transcript key* travels from here: it is pi's entry id on the
+                // replay path and a synthetic `user-<millis>-<n>` on the live one, so
+                // the ViewModel resolves it against `get_fork_messages` rather than
+                // handing it to pi (`forkFromMessage`, `PiSessionViewModel.kt`).
                 if (onForkFromMessage != null) {
                     add(BlockAction("编辑并从此分叉") { onForkFromMessage(item.key) })
                 }
             },
+            menuButton = true,
         ) {
+        // The bubble's body is one selection scope: the user's own words are the
+        // first thing anyone tries to copy, and before this the only way was the
+        // menu's 复制. The ⋮ above keeps that whole-bubble copy for a single tap.
+        SelectableContent {
         Surface(
             modifier = Modifier.fillMaxWidth(),
             shape = PiShapes.card,
@@ -77,6 +87,7 @@ fun UserMessageBlock(
                     ImageGridBlock(
                         images = item.images,
                         modifier = Modifier.fillMaxWidth(),
+                        onImageClick = onImageClick,
                     )
                 }
                 Text(
@@ -92,6 +103,7 @@ fun UserMessageBlock(
                     color = palette.userMessageText.copy(alpha = 0.62f),
                 )
             }
+        }
         }
         }
     }

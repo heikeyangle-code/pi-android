@@ -1,6 +1,5 @@
 package app.pi.ui.blocks
 
-import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Text
@@ -10,7 +9,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.input.pointer.pointerInput
+import app.pi.rpc.PiImage
 import app.pi.rpc.ToolCall
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
@@ -39,6 +38,8 @@ fun ToolCallBlock(
     defaultExpanded: Boolean = false,
     firstOfRun: Boolean = true,
     lastOfRun: Boolean = true,
+    /** A tap on a returned image opens it full screen ([PiImageViewer]). */
+    onImageClick: ((PiImage) -> Unit)? = null,
 ) {
     val palette = PiTheme.palette
     // The card's state, derived once: `06 §4`'s fourth state (被拒) is read from the
@@ -199,16 +200,22 @@ fun ToolCallBlock(
                 // the grid's labelled placeholder is the decode-failure fallback that
                 // stands in for pi's text branch.
                 //
-                // The tap is swallowed here on purpose: pi wraps only the *text* of the
-                // result in the region that toggles the card (`tool-execution.ts:172-178`),
-                // so tapping a screenshot must not collapse the card in this layout.
+                // pi wraps only the *text* of a result in the region that toggles the
+                // card (`tool-execution.ts:172-178`), so a tap on a screenshot must
+                // not collapse the card. This used to be a no-op tap detector that
+                // swallowed the gesture and did nothing else — the user's report was
+                // 「点一下它只会展开，图片没有反应」. The cell now owns the tap
+                // (`ImageGridBlock`'s own `clickable`, the deepest node, so it is
+                // dispatched here before the card's `toggleContent`), and it opens the
+                // picture instead: image → viewer, every other part of the card →
+                // expand/collapse, exactly as before.
                 if (item.images.isNotEmpty()) {
                     ImageGridBlock(
                         images = item.images,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(top = PiSpacing.tiny)
-                            .pointerInput(item.key) { detectTapGestures { } },
+                            .padding(top = PiSpacing.tiny),
+                        onImageClick = onImageClick,
                     )
                 }
 

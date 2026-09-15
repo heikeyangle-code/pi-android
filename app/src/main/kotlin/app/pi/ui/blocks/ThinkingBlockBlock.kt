@@ -79,14 +79,19 @@ fun ThinkingBlockBlock(
                 ExpandLabel(expanded)
             }
             if (expanded) {
-                Text(
-                    text = item.text.ifEmpty { "（无思考内容）" },
-                    // v2: `t14`, italic, in the tool-body grey, indented past the stripe
-                    // (`paddingLeft:11`) and one 6 dp step below the headline row.
-                    modifier = Modifier.padding(start = THINK_BODY_INDENT, top = PiSpacing.gutter),
-                    style = PiTheme.text.prose.copy(fontStyle = FontStyle.Italic),
-                    color = palette.thinkingBodyOnCanvas,
-                )
+                // One scope around the body: the thinking text is model prose like any
+                // other and the user asked for it to be selectable. This block has no
+                // actions of its own, so nothing has to move to a ⋮ here.
+                SelectableContent {
+                    Text(
+                        text = item.text.ifEmpty { "（无思考内容）" },
+                        // v2: `t14`, italic, in the tool-body grey, indented past the stripe
+                        // (`paddingLeft:11`) and one 6 dp step below the headline row.
+                        modifier = Modifier.padding(start = THINK_BODY_INDENT, top = PiSpacing.gutter),
+                        style = PiTheme.text.prose.copy(fontStyle = FontStyle.Italic),
+                        color = palette.thinkingBodyOnCanvas,
+                    )
+                }
             }
         }
     }
