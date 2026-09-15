@@ -1,0 +1,1899 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PI · 工作区（最终方案）· 高保真可点原型</title>
+<!--
+================================================================================
+PI · 安卓客户端 · 底栏第二个 tab「工作区」——最终方案高保真可点原型
+底座：design-demos/direction-b-v2.html（已冻结的 v2 设计稿）。本文件不重新发明语言，
+只把「工作区」这一屏从「只读的项目现场」补成「现场 + 能动手」：同一屏里既能看到 agent 在干什么，
+也能自己打开 / 编辑 / 删除文件。不新增页面、不改导航。
+
+--------------------------------------------------------------------------------
+【沿用 v2 的（一个色值、一个字重都没有改）】
+· 手机框 .b-screen / .b-scroll、全部 CSS 变量（pi dark 令牌 + 表面阶梯 + --body-on-tool）；
+· 构件：TopBar / TabBar / Section / Rows / Row / Badge / Chip / Seg / Sheet / Dialog / DiffBody /
+  Tick / Engine / Notice / Snack / EmptyState / PiMark —— 全部从 v2 原样内联，
+  Icon 只多了一个 `bin`（二进制文件要跟文件夹 / 文本分开，v2 的图标表里没有第三个文件态）；
+· 状态三重编码（字 + 符号 + 颜色）；层级只用 1px 线与表面阶梯，全文件零阴影；
+  无渐变、无模糊 / 毛玻璃、无辉光、无循环动画；不引任何外部图片；不用 emoji；
+· 字号只有 12 / 13 / 14 / 15 / 17 五档；文件名与路径用等宽；
+· React 18.3.1 + Babel 7.29.0（unpkg pinned + integrity），设备框用 android_frame.jsx 原样内联；
+· 图例与状态按钮沿用 v2 的「原型开关」小控件写法（1px 边框 + 激活换 borderAccent）。
+
+--------------------------------------------------------------------------------
+【这一版新增 / 改动的一屏五段】
+① 当前目录卡：沿用 v2 那张（surf-low 底 + 左缘 2px accent + folder + 工作区名 + 一行现场摘要）。
+   两处改动：(a) 整张卡可点，右端给「切换」小徽标 + chevron → 工作区切换面板；
+   (b) 摘要只写能真实取到的两件事 —— 本次会话改过几个文件、正在跑几条命令。
+   v2 那张卡上的「分支 main · 3 个文件有改动」删掉了：**pi 没有 git 通道，这两条取不到**。
+② 正在跑：v2 原样（命令行等宽 + 「运行中 · 已运行 12.3 秒 · 18 行」+ 24 段进度点阵 + Tick）。
+   没有在跑的命令时整段不画（不画空态）。
+③ 本次会话改过：这一屏的主角。每行 = 文件名（等宽、粗）+「本次会话」徽标（accent）+
+   右侧 +N −M（--diff-add / --diff-del）+ 行尾 ⋮。点行就地展开那块 diff（v2 的 DiffBody）；
+   ⋮ 出底部菜单：打开 / 编辑 / 重命名 / 删除 / 看它在对话里的那一步；
+   另有一条 agent 正在写这个文件的 pending 态（--tool-pending 底 + 一行说明）。
+   这次会话什么都没改：这一段给一句话空态，下面照旧能浏览文件。
+④ 全部文件（这一版要补的缺口）：段头右侧「新建」入口（新建文件 / 新建文件夹）；
+   面包屑「工作区 / src / session」可点回上层、长名字中间省略；
+   目录在前，文件夹 / 文本 / 二进制三种图标分开；主标题文件名（等宽）、副行「大小 · 修改时间」；
+   本次会话动过的行同样带「本次会话」徽标与 +N −M；行尾 ⋮ = 打开 / 编辑 / 重命名 / 删除 / 复制路径；
+   目录为空给一句话 +「新建文件」按钮；读目录失败给原因 + 重试。
+⑤ 这个目录的资源（与 pi 官方一致）：段内用 v2 的分段按钮切「技能 / 提示词 / 扩展 / 主题」，
+   段头右侧显示该项计数。每条一行 = 名字（技能 / 提示词 / 主题用文本，扩展用等宽文件名）+
+   来源徽标 + 状态点。点一行开查看器看原文；技能与提示词那一行多一个「在对话里用」
+   （它的效果是往输入框插 /名字）。排序按 pi 的优先级：项目 .pi → .agents → 全局 → 包。
+
+--------------------------------------------------------------------------------
+【来源徽标与状态：具体取舍（设计决定，写在明处）】
+1 五种来源的「身份」交给短标签本身 —— 项目 .pi / .agents / 全局 / 包 · <包名> / 扩展贡献。
+   **不为每一族发明一个新颜色**：pi 的令牌表里没有五个语义色，硬造五个就是自创配色，
+   而且五色并列会让「来源」和「状态」两套编码互相干扰。
+2 徽标上那个 5px 的点只留两档，编码真正有结果差别的那件事：**项目内（accent）vs 项目外（muted）**。
+   同名冲突时 pi 让项目内那一条赢，这是来源之间唯一会影响行为的分野，也只值得一个色差。
+3 排印再分一层，靠字不靠色：路径型来源（.pi / .agents / 包名）用等宽，抽象来源（全局 / 扩展贡献）用文本。
+   12px 里五族仍然一眼分得开。
+4 状态只标异常（正常什么都不加），并且一律三重编码：
+   · 同名冲突 → warning：符号 ! + 行内一句「与「项目 .pi」同名」（说清跟谁撞了，不只是「冲突」）；
+   · 解析失败 → error：符号 ✗ + 状态词「解析失败」，副行给 pi 的原因（例如「front matter 缺 name」）；
+   · 被禁用   → muted：符号 ⊘ + 「已禁用」。**禁用不是失败**，所以不给它 error 色（同 v2 的「被拒」处理）；
+   · 正常     → 不加点也不加字（v2 的纪律：只有异常才留下痕迹）。
+5 项目未受信任：这一段顶部一条提示，写明 pi 不会加载这个项目的 .pi 资源；底下照旧列出，
+   但整段压暗（opacity .5）。压暗表达的是「不生效」，不是「读不到」；提示本身保持满对比度。
+6 排序按 pi 的优先级（项目 .pi → .agents → 全局 → 包），所以同名的那两条会在列表里挨着出现 ——
+   冲突不需要用户自己去两处找。
+
+--------------------------------------------------------------------------------
+【明确不做的】
+· 不写 git 分支 / 改动数（pi 没有这条通道）；不改底栏、不改导航、不新增页面、不加 fab；
+· 不给资源段加「安装 / 卸载 / 启用 / 停用」这类 pi 没有的动作（这一屏只有「打开」与「在对话里用」）；
+· 不把「终端」拉回来（用户在 v2 已判定终端是废品）；
+· 左侧返回 / 面包屑都只在本屏内移动，不制造第二个导航层级。
+
+【原型里没接的线（画了但在这个 HTML 里只做到「关掉菜单」）】
+· ⋮ 里的「看它在对话里的那一步」：正式版会切到「对话」tab 并定位到那一步。原型不改导航，
+  所以只关菜单，不发假提示。
+· ⋮ 里的「重命名 / 删除 / 新建」：正式版走 pi 的 File I/O；原型里删除给到确认框（这是要画的浮层），
+  重命名 / 新建给到输入框，确定后不再真的改数据。
+· 「在对话里用」：正式版切到对话页并把 /名字 插进输入框；原型弹一条 Snack 表示这一步做了。
+
+【这一屏里我没有拍板的产品问题（列在页面最底部，同一份也写在交付说明里）】
+================================================================================
+-->
+<style>
+  :root{
+    /* ---- pi 主题令牌（dark）= 唯一色源，一个都没有改 ---- */
+    --accent:#8ABEB7; --border:#5F87FF; --border-accent:#00D7FF; --border-muted:#505050;
+    --success:#B5BD68; --error:#CC6666; --warning:#FFFF00;
+    --text:#D4D4D4; --muted:#808080; --dim:#666666; --selected-bg:#3A3A4A;
+    --user-bg:#343541; --user-text:#D4D4D4;
+    --custom-bg:#2D2838; --custom-label:#9575CD;
+    --tool-pending:#282832; --tool-success:#283228; --tool-error:#3C2828;
+    --tool-title:#D4D4D4; --tool-output:#808080;
+    --md-heading:#F0C674; --md-link:#81A2BE; --md-link-url:#666666;
+    --md-code:#8ABEB7; --md-codeblock:#B5BD68; --md-codeblock-border:#808080;
+    --md-quote:#808080; --md-hr:#808080; --md-bullet:#8ABEB7;
+    --diff-add:#B5BD68; --diff-del:#CC6666; --diff-ctx:#808080;
+    --syn-comment:#6A9955; --syn-keyword:#569CD6; --syn-function:#DCDCAA;
+    --syn-variable:#9CDCFE; --syn-string:#CE9178; --syn-number:#B5CEA8;
+    --syn-type:#4EC9B0; --syn-op:#D4D4D4;
+    --think-off:#505050; --think-minimal:#6E6E6E; --think-low:#5F87AF;
+    --think-medium:#81A2BE; --think-high:#B294BB; --think-xhigh:#D183E8; --think-max:#FF5FFF;
+    --bash:#B5BD68;
+    --page:#18181E; --card:#1E1E24; --info:#3C3728;
+    --surf-low:#1E1E24; --surf:#232329; --surf-high:#29292F; --surf-highest:#303036; --surf-dim:#1C1C22;
+    /* 由 toolOutput 抬到 4.5:1 的派生值（App 既有做法 bodyOnTool / contextOnTool） */
+    --body-on-tool:#9E9E9E;
+    --font-sans:"Geist","Inter","Noto Sans SC","Noto Sans CJK SC","PingFang SC","Microsoft YaHei",sans-serif;
+    --font-mono:"Geist Mono","JetBrains Mono","Noto Sans Mono","Noto Sans CJK SC",ui-monospace,Menlo,Consolas,monospace;
+  }
+  html,body{margin:0;padding:0;background:#0e0e12}
+  *{box-sizing:border-box}
+  .b-page{
+    font-family:var(--font-sans); color:var(--text); background:#0e0e12;
+    font-synthesis:none; line-break:strict; overflow-wrap:anywhere; text-wrap:pretty;
+    -webkit-font-smoothing:antialiased; text-rendering:optimizeLegibility;
+  }
+  .b-head{padding:40px 48px 0}
+  .b-head-t{font-size:22px;font-weight:600;line-height:1.3;color:var(--text);letter-spacing:-0.01em}
+  .b-head-s{font-size:13px;line-height:1.75;color:var(--muted);margin-top:8px;max-width:1180px}
+  .b-head-s em{font-style:normal;color:var(--text)}
+  .b-head-s b{font-weight:600;color:var(--text)}
+  .b-frames{display:flex;gap:32px;flex-wrap:wrap;padding:32px 48px 8px}
+  @keyframes bIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+  @keyframes bFade{from{opacity:0}to{opacity:1}}
+  @keyframes bRise{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
+  .b-phone{display:flex;flex-direction:column;gap:10px;animation:bIn .5s cubic-bezier(.2,.7,.3,1) both}
+  .b-cap{width:432px}
+  .b-cap b{display:block;font-size:13px;font-weight:600;line-height:1.5;color:var(--text)}
+  .b-cap span{display:block;font-size:13px;line-height:1.55;color:var(--muted);margin-top:2px}
+
+  /* ---- 手机内：一块 412×836 的舞台 ---- */
+  .b-root{
+    position:relative;width:412px;height:836px;display:flex;flex-direction:column;overflow:hidden;
+    background:var(--page);font-family:var(--font-sans);color:var(--text);
+    font-synthesis:none;line-break:strict;overflow-wrap:anywhere;
+    font-variant-numeric:tabular-nums;text-wrap:pretty;-webkit-font-smoothing:antialiased;
+  }
+  .b-stage{position:relative;flex:1;min-height:0;display:flex;flex-direction:column}
+  .b-screen{flex:1;min-height:0;display:flex;flex-direction:column;background:var(--page)}
+  .b-scroll{position:relative;flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:var(--muted) transparent}
+  .b-scroll::-webkit-scrollbar{width:3px}
+  .b-scroll::-webkit-scrollbar-thumb{background:var(--muted);border-radius:2px}
+  .b-scroll::-webkit-scrollbar-track{background:transparent}
+  .b-overlay{position:absolute;inset:0;z-index:6;background:var(--page);display:flex;flex-direction:column;animation:bFade .13s ease both}
+  .b-sheetwrap{position:absolute;inset:0;z-index:8;display:flex;flex-direction:column;justify-content:flex-end;animation:bFade .13s ease both}
+  .b-scrim{position:absolute;inset:0;background:rgba(0,0,0,.32)}
+  .b-sheet{position:relative;background:var(--surf-high);border-top-left-radius:16px;border-top-right-radius:16px;border-top:1px solid var(--border-muted);max-height:80%;display:flex;flex-direction:column;animation:bRise .16s cubic-bezier(.2,.7,.3,1) both;box-shadow:none}
+  .b-dlgwrap{position:absolute;inset:0;z-index:9;display:flex;align-items:center;justify-content:center;padding:22px;animation:bFade .13s ease both}
+  .b-dlg{position:relative;width:100%;max-width:330px;background:var(--surf-high);border:1px solid var(--border-muted);border-radius:14px;padding:18px 16px 12px;animation:bRise .16s cubic-bezier(.2,.7,.3,1) both}
+
+  /* ---- 字号 / 颜色工具类（全篇只有 5 档：12 / 13 / 14 / 15 / 17） ---- */
+  .t12{font-size:12px;line-height:1.5}
+  .t13{font-size:13px;line-height:1.55}
+  .t14{font-size:14px;line-height:1.62}
+  .t15{font-size:15px;line-height:1.4}
+  .t17{font-size:17px;line-height:1.28}
+  .w5{font-weight:500}.w6{font-weight:600}
+  .mono{font-family:var(--font-mono)}
+  .tab{font-variant-numeric:tabular-nums}
+  .c-text{color:var(--text)}.c-muted{color:var(--muted)}.c-accent{color:var(--accent)}
+  .c-succ{color:var(--success)}.c-err{color:var(--error)}.c-warn{color:var(--warning)}
+  .c-link{color:var(--md-link)}.c-head{color:var(--md-heading)}.c-code{color:var(--md-code)}
+  .c-body{color:var(--body-on-tool)}
+  .ell{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .fl1{flex:1;min-width:0}
+  .rw{display:flex;align-items:center}
+  .press{cursor:pointer}
+  .press:hover{background-color:var(--surf)}
+  .press2{cursor:pointer}
+  .press2:hover{background-color:var(--surf-high)}
+  .press3{cursor:pointer}
+  .press3:hover{color:var(--text)}
+  .b-root input{font-family:inherit;font-size:14px}
+  .b-root input::placeholder{color:var(--muted);opacity:1}
+  .div{height:1px;background:var(--border-muted);flex:none}
+  .hair{height:1px;background:var(--border-muted);opacity:.55;flex:none}
+
+  /* ---- A 的耗时刻度：1px 横线，总长 ∝ log₂(ms)，按量级分段 ---- */
+  .tick{display:inline-flex;align-items:center;gap:2px;flex:none}
+  .tick i{display:block;height:1px}
+
+  /* ---- Snackbar：Info = card 底 + 正文色；Warning = info 底 + warning 色；Error = toolError 底 + error 色 ---- */
+  .b-snack{position:absolute;left:12px;right:12px;z-index:11;border-radius:12px;padding:10px 12px;
+    display:flex;align-items:center;gap:10px;animation:bRise .16s cubic-bezier(.2,.7,.3,1) both}
+
+  /* ---- 工作区新增：面包屑 / 代码查看器 / 页面侧的状态控件与图例 ---- */
+  .w-crumb{display:inline-flex;align-items:center;gap:1px;min-width:0}
+  .w-code{white-space:pre;font-variant-ligatures:none}
+  .b-ctl{display:flex;flex-wrap:wrap;gap:6px;padding:0 48px;max-width:1240px}
+  .b-ctl-i{display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 10px;border-radius:999;
+    border:1px solid var(--border-muted);color:var(--muted);font-size:12px;cursor:pointer;background:transparent;
+    font-family:var(--font-mono)}
+  .b-ctl-i:hover{border-color:var(--text);color:var(--text)}
+  .b-ctl-i.on{border-color:var(--border-accent);color:var(--text);background:var(--surf)}
+  .b-ctlx{display:flex;gap:6px;align-items:baseline;padding:14px 48px 0;max-width:1180px}
+  .b-ctlx .k{font-family:var(--font-mono);font-size:12px;color:var(--accent);flex:none;width:104px}
+  .b-ctlx .v{font-size:13px;line-height:1.7;color:var(--muted);flex:1;min-width:0}
+  .b-block{padding:14px 48px 0;max-width:1180px}
+  .b-block-h{font-size:12px;font-weight:600;color:var(--muted);letter-spacing:.08em;padding:18px 0 10px;border-top:1px solid var(--border-muted)}
+  .b-lg{display:flex;gap:14px;align-items:baseline;padding:7px 0;border-bottom:1px solid rgba(80,80,80,.35)}
+  .b-lg .b{width:186px;flex:none}
+  .b-lg .d{font-size:13px;line-height:1.7;color:var(--muted);flex:1;min-width:0}
+  .b-lg .d b{font-weight:600;color:var(--text)}
+  .b-qs{font-size:13px;line-height:1.85;color:var(--muted);padding:4px 0 0}
+  .b-qs b{color:var(--text);font-weight:600}
+  .b-foot{padding:26px 48px 90px;max-width:1180px}
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<!-- ============ React 18.3.1 + Babel 7.29.0（与 v2 同一组 pinned 版本 + integrity，照抄不动） ============ -->
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+
+<!-- ============ 设备框：v2 内联的 android_frame.jsx，原样搬过来，一行未改 ============ -->
+<script type="text/babel" data-presets="react">
+(function(){
+const androidFrameStyles = {
+  wrapper: { display:'inline-block', padding:10, background:'#1a1a1a', borderRadius:44,
+    boxShadow:'0 0 0 2px #2a2a2a, 0 20px 60px rgba(0,0,0,0.3)', position:'relative' },
+  screen: { position:'relative', borderRadius:36, overflow:'hidden', background:'#fff' },
+  statusBar: { position:'absolute', top:0, left:0, right:0, height:32, display:'flex', alignItems:'center',
+    justifyContent:'space-between', padding:'0 24px', fontSize:14, fontWeight:500,
+    fontFamily:'Roboto, -apple-system, sans-serif', zIndex:20, pointerEvents:'none' },
+  punchHole: { position:'absolute', top:10, left:'50%', transform:'translateX(-50%)', width:14, height:14,
+    background:'#000', borderRadius:'50%', zIndex:30 },
+  statusIcons: { display:'flex', alignItems:'center', gap:6 },
+  batteryText: { fontSize:11, fontWeight:600, marginLeft:2 },
+  content: { position:'absolute', top:32, left:0, right:0, bottom:24, overflow:'auto' },
+  navBar: { position:'absolute', bottom:0, left:0, right:0, height:24, display:'flex', alignItems:'center',
+    justifyContent:'center', gap:60, zIndex:10 },
+  navButton: { width:36, height:4, background:'rgba(0,0,0,0.3)', borderRadius:999 },
+};
+function AndroidFrame({ children, width = 412, height = 892, time = '9:41', battery = 100, darkMode = false, navStyle = 'gesture' }) {
+  const textColor = darkMode ? '#fff' : '#1a1a1a';
+  return (
+    <div style={androidFrameStyles.wrapper}>
+      <div style={{ ...androidFrameStyles.screen, width, height, background: darkMode ? '#000' : '#fff' }}>
+        <div style={{ ...androidFrameStyles.statusBar, color: textColor }}>
+          <span>{time}</span>
+          <div style={androidFrameStyles.statusIcons}>
+            <svg width="14" height="10" viewBox="0 0 14 10" fill="currentColor">
+              <rect x="0" y="6" width="2" height="4" rx="0.5" />
+              <rect x="4" y="4" width="2" height="6" rx="0.5" />
+              <rect x="8" y="2" width="2" height="8" rx="0.5" />
+              <rect x="12" y="0" width="2" height="10" rx="0.5" />
+            </svg>
+            <svg width="14" height="10" viewBox="0 0 14 10" fill="none">
+              <path d="M7 9a1 1 0 100-2 1 1 0 000 2z" fill="currentColor" />
+              <path d="M3 6a5 5 0 018 0" stroke="currentColor" strokeWidth="1.2" />
+              <path d="M0.5 3.5a11 11 0 0113 0" stroke="currentColor" strokeWidth="1.2" opacity="0.6" />
+            </svg>
+            <div style={{ width:22, height:10, border:'1.5px solid currentColor', borderRadius:2, padding:1, position:'relative' }}>
+              <div style={{ width:`${battery}%`, height:'100%', background:'currentColor', borderRadius:1 }} />
+            </div>
+            <span style={androidFrameStyles.batteryText}>{battery}%</span>
+          </div>
+        </div>
+        <div style={androidFrameStyles.punchHole} />
+        <div style={androidFrameStyles.content}>{children}</div>
+        {navStyle === 'gesture' && (
+          <div style={androidFrameStyles.navBar}>
+            <div style={{ ...androidFrameStyles.navButton, width:100, height:4,
+              background: darkMode ? 'rgba(255,255,255,0.5)' : 'rgba(0,0,0,0.4)' }} />
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+window.AndroidFrame = AndroidFrame;
+})();
+</script>
+
+<!-- ============ 组件语言：从 v2 原样内联（Icon 新增一个 bin 图标，其余一字未改） ============ -->
+<script type="text/babel" data-presets="react">
+(function(){
+  const h = React.createElement;
+
+  /* ---------- 图标：18 单线，currentColor，不做彩色图标底 ---------- */
+  const S = (p) => <svg width={p.s||18} height={p.s||18} viewBox="0 0 18 18" fill="none"
+      stroke="currentColor" strokeWidth={p.w||1.5} strokeLinecap="round" strokeLinejoin="round">{p.children}</svg>;
+
+  function Icon(p){
+    const s = p.s || 18;
+    switch(p.n){
+      case 'chat': return <S s={s} w={p.w}><path d="M2.9 6.1A2.6 2.6 0 015.5 3.5h7A2.6 2.6 0 0115.1 6.1v3.5a2.6 2.6 0 01-2.6 2.6H8.3l-3.6 2.4v-2.4h-.2A2.6 2.6 0 012.9 9.6z"/></S>;
+      case 'workbench': return <S s={s} w={p.w}><path d="M3 4.6h6.6M3 9h6.6M3 13.4h4.2M13.4 3.6v10.8"/></S>;
+      case 'settings': return <S s={s} w={p.w}><path d="M2.8 6.2h5.4M11.4 6.2h3.8M2.8 11.8h3.4M9.4 11.8h5.8"/><circle cx="9.9" cy="6.2" r="1.5"/><circle cx="7.6" cy="11.8" r="1.5"/></S>;
+      case 'search': return <S s={s} w={p.w}><circle cx="8" cy="8" r="4.6"/><path d="M11.4 11.4l3.4 3.4"/></S>;
+      case 'refresh': return <S s={s} w={p.w}><path d="M14.4 9a5.4 5.4 0 11-1.6-3.8"/><path d="M14.6 3.4v3.4h-3.4"/></S>;
+      case 'more': return <S s={s} w={p.w}><circle cx="3.9" cy="9" r="1.05" fill="currentColor" stroke="none"/><circle cx="9" cy="9" r="1.05" fill="currentColor" stroke="none"/><circle cx="14.1" cy="9" r="1.05" fill="currentColor" stroke="none"/></S>;
+      case 'plus': return <S s={s} w={p.w}><path d="M9 3.6v10.8M3.6 9h10.8"/></S>;
+      case 'right': return <S s={s} w={p.w||1.4}><path d="M7 4.4L11.6 9 7 13.6"/></S>;
+      case 'down': return <S s={s} w={p.w||1.4}><path d="M4.4 7L9 11.6 13.6 7"/></S>;
+      case 'up': return <S s={s} w={p.w||1.4}><path d="M4.4 11L9 6.4 13.6 11"/></S>;
+      case 'left': return <S s={s} w={p.w}><path d="M11 3.8L5.8 9 11 14.2"/></S>;
+      case 'close': return <S s={s} w={p.w}><path d="M4.6 4.6l8.8 8.8M13.4 4.6l-8.8 8.8"/></S>;
+      case 'check': return <S s={s} w={p.w}><path d="M3.6 9.4l3.4 3.4L14.4 5.4"/></S>;
+      case 'send': return <S s={s} w={p.w}><path d="M9 14.6V4.2M4.4 8.6L9 4l4.6 4.6"/></S>;
+      case 'stop': return <S s={s} w={p.w}><rect x="5.2" y="5.2" width="7.6" height="7.6" rx="1.4" fill="currentColor" stroke="none"/></S>;
+      case 'filter': return <S s={s} w={p.w}><path d="M3 5.2h12M5.4 9h7.2M7.6 12.8h2.8"/></S>;
+      case 'import': return <S s={s} w={p.w}><path d="M9 3v7.4M5.9 7.4L9 10.5l3.1-3.1M3.6 14.2h10.8"/></S>;
+      case 'branch': return <S s={s} w={p.w}><path d="M5 3.6v8.4M5 12h5.6a2.4 2.4 0 002.4-2.4V8"/><circle cx="5" cy="3" r="1.4"/><circle cx="13" cy="6.4" r="1.4"/></S>;
+      case 'folder': return <S s={s} w={p.w}><path d="M2.8 5.4A1.6 1.6 0 014.4 3.8h2.4l1.4 1.6h5.4a1.6 1.6 0 011.6 1.6v6.2a1.6 1.6 0 01-1.6 1.6H4.4a1.6 1.6 0 01-1.6-1.6z"/></S>;
+      case 'file': return <S s={s} w={p.w}><path d="M4.6 3.4h5.2l3.6 3.6v7.6H4.6z"/><path d="M9.6 3.6v3.6h3.6"/></S>;
+      case 'bin': return <S s={s} w={p.w}><path d="M4.6 3.4h5.2l3.6 3.6v7.6H4.6z"/><path d="M9.6 3.6v3.6h3.6"/><rect x="6.6" y="10.2" width="4.8" height="3" rx="0.6" fill="currentColor" stroke="none"/></S>;
+      case 'terminal': return <S s={s} w={p.w}><path d="M3.4 5.4L6.8 9l-3.4 3.6M9 12.6h5.6"/></S>;
+      case 'device': return <S s={s} w={p.w}><rect x="4.6" y="2.6" width="8.8" height="12.8" rx="1.8"/><path d="M7.8 12.8h2.4"/></S>;
+      case 'package': return <S s={s} w={p.w}><path d="M9 2.6l5.6 3v6.8L9 15.4 3.4 12.4V5.6z"/><path d="M3.4 5.6L9 8.6l5.6-3M9 8.6v6.8"/></S>;
+      case 'key': return <S s={s} w={p.w}><circle cx="6.2" cy="6.2" r="3"/><path d="M8.4 8.4l6 6M12.2 12.2l1.4-1.4M13.9 13.9l1.4-1.4"/></S>;
+      case 'shield': return <S s={s} w={p.w}><path d="M9 2.6l5.2 1.8v4.4c0 3.2-2.2 5.4-5.2 6.6-3-1.2-5.2-3.4-5.2-6.6V4.4z"/></S>;
+      case 'doc': return <S s={s} w={p.w}><path d="M4.4 3.2h6.2l3 3v8.6H4.4z"/><path d="M6.6 8.4h4.8M6.6 11.2h4.8"/></S>;
+      case 'pulse': return <S s={s} w={p.w}><path d="M2.4 9.6h3l1.6-4 2.4 7 1.8-4.6h4.4"/></S>;
+      case 'image': return <S s={s} w={p.w}><rect x="2.8" y="3.6" width="12.4" height="10.8" rx="1.6"/><path d="M2.8 11.4l3.4-3 3 2.6 2.6-2.4 3.4 3"/></S>;
+      case 'warn': return <S s={s} w={p.w}><path d="M9 3.2l6.2 11H2.8z"/><path d="M9 7.4v3.2M9 12.6v.1"/></S>;
+      case 'info': return <S s={s} w={p.w}><circle cx="9" cy="9" r="6"/><path d="M9 8.2v4M9 6.1v.1"/></S>;
+      case 'share': return <S s={s} w={p.w}><path d="M9 11V3.4M6.2 6.2L9 3.4l2.8 2.8M4.4 10.6v3.4h9.2v-3.4"/></S>;
+      default: return <S s={s} w={p.w}><circle cx="9" cy="9" r="5.4"/></S>;
+    }
+  }
+
+  /* ---------- 三重编码（C 的纪律）：状态 = 字 + 符号 + 颜色 ---------- */
+  const ST = {
+    pending:  {c:'var(--warning)',      rgb:'255,255,0',    g:'…', w:'运行中', bg:'var(--tool-pending)'},
+    success:  {c:'var(--success)',      rgb:'181,189,104',  g:'✓', w:'成功',   bg:'var(--tool-success)'},
+    error:    {c:'var(--error)',        rgb:'204,102,102',  g:'✗', w:'失败',   bg:'var(--tool-error)'},
+    rejected: {c:'var(--body-on-tool)', rgb:'158,158,158',  g:'⊘', w:'被拒',   bg:'var(--tool-pending)'},
+  };
+  const ENGINE = {
+    '就绪':      {g:'✓', c:'var(--success)'},
+    '工作中':    {g:'…', c:'var(--warning)'},
+    '启动中':    {g:'◌', c:'var(--warning)'},
+    '排队中':    {g:'≡', c:'var(--warning)'},
+    '引擎已退出':{g:'✗', c:'var(--error)'},
+    '引擎已停止':{g:'■', c:'var(--error)'},
+  };
+  function Engine(p){
+    const t = p.text || '就绪';
+    const e = ENGINE[t] || {g:'…', c:'var(--warning)'};
+    return (
+      <span className="rw" style={{gap:5,flex:'none',minWidth:0}}>
+        <span className="mono t12" style={{color:e.c}}>{e.g}</span>
+        <span className="t12 ell" style={{color:'var(--text)'}}>{t}</span>
+      </span>
+    );
+  }
+
+  /* ---------- A 的耗时刻度：1px 横线，总长 ∝ log₂(ms)，按量级分段 ---------- */
+  function Tick(p){
+    const ms = Math.max(p.ms || 0, 1);
+    const band = ms < 1000 ? 1 : ms < 10000 ? 2 : 3;
+    const total = Math.max(6, Math.min(34, Math.round(Math.log2(ms) * 3.2)));
+    const segW = Math.max(2, Math.round((total - (band - 1) * 2) / band));
+    return (
+      <span className="tick" role="img" aria-label={'耗时 ' + p.ms + ' 毫秒'}>
+        {Array.from({length:band}).map((_, i) => (
+          <i key={i} style={{width:segW, background:p.color || 'var(--muted)'}}/>
+        ))}
+      </span>
+    );
+  }
+
+  /* ---------- 顶栏：chrome 落到 --surf-dim ---------- */
+  function TopBar(p){
+    return (
+      <div style={{flex:'none',background:'var(--surf-dim)',borderBottom:'1px solid var(--border-muted)',padding:'0 14px'}}>
+        <div className="rw" style={{height:48,gap:10}}>
+          {p.onBack ? (
+            <div className="press" onClick={p.onBack} style={{marginLeft:-6,width:32,height:32,borderRadius:8,display:'flex',alignItems:'center',justifyContent:'center',color:'var(--text)'}}>
+              <Icon n="left" s={18}/>
+            </div>
+          ) : null}
+          <div className={"fl1"+(p.onTitleClick?" press":"")} onClick={p.onTitleClick}
+            style={{minWidth:0,borderRadius:8,cursor:p.onTitleClick?'pointer':'default'}}>
+            <div className="rw" style={{gap:6}}>
+              <span className="t17 w6 ell" style={{minWidth:0}}>{p.title}</span>
+              {p.onTitleClick ? <Icon n="down" s={14}/> : null}
+            </div>
+            {p.meta ? (
+              p.statusMeta
+                ? <div style={{marginTop:1}}><Engine text={p.meta}/></div>
+                : <div className="t12 c-muted ell" style={{marginTop:1}}>{p.meta}</div>
+            ) : null}
+          </div>
+          <div className="rw" style={{gap:4,flex:'none'}}>{p.right}</div>
+        </div>
+      </div>
+    );
+  }
+
+  /* ---------- 底栏：三个目的地。激活项按语义用 accent（选中 / 当前位置），另加 1px 底线 ---------- */
+  function TabBar(p){
+    const items = [
+      {k:'chat', label:'对话', n:'chat'},
+      {k:'workbench', label:'工作区', n:'workbench'},
+      {k:'settings', label:'设置', n:'settings'},
+    ];
+    return (
+      <div style={{flex:'none',height:56,background:'var(--surf-dim)',borderTop:'1px solid var(--border-muted)',display:'flex'}}>
+        {items.map(it => {
+          const on = p.active === it.k;
+          return (
+            <div key={it.k} className="press" onClick={()=>p.onChange(it.k)}
+              style={{flex:1,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:3,position:'relative'}}>
+              <span style={{display:'flex',color:on?'var(--accent)':'var(--muted)'}}><Icon n={it.n} s={20}/></span>
+              <span className="t12" style={{color:on?'var(--accent)':'var(--text)',fontWeight:on?500:400}}>{it.label}</span>
+              {on ? <span style={{position:'absolute',bottom:6,width:18,height:1,background:'var(--accent)'}}/> : null}
+            </div>
+          );
+        })}
+      </div>
+    );
+  }
+
+  /* ---------- 表面 ---------- */
+  function Card(p){
+    return <div style={{background:p.bg||'var(--surf-low)',borderRadius:10,margin:'0 14px',overflow:'hidden',...p.style}}>{p.children}</div>;
+  }
+  function Section(p){
+    return (
+      <div style={{marginTop:18}}>
+        <div className="rw" style={{padding:'0 14px',marginBottom:7,gap:8}}>
+          <span className="t12 w5" style={{color:'var(--text)',letterSpacing:'.02em'}}>{p.label}</span>
+          {p.count!=null ? <span className="t12 c-muted">{p.count}</span> : null}
+          <span className="fl1"/>
+          {p.aside ? <span className="t12 c-muted">{p.aside}</span> : null}
+        </div>
+        {p.children}
+      </div>
+    );
+  }
+  function Rows(p){
+    const kids = React.Children.toArray(p.children).filter(Boolean);
+    return (
+      <Card>
+        {kids.map((c,i)=>(
+          <React.Fragment key={i}>
+            {i>0 ? <div className="div" style={{marginLeft:p.inset==null?14:p.inset}}/> : null}
+            {c}
+          </React.Fragment>
+        ))}
+      </Card>
+    );
+  }
+
+  /* ---------- 通用行：标题 + 属性（右对齐，tabular） ---------- */
+  function Row(p){
+    return (
+      <div className={p.flat?'press':'press2'} onClick={p.onClick}
+        style={{position:'relative',background:p.selected?'var(--selected-bg)':'transparent',padding:'10px 12px',display:'flex',alignItems:'center',gap:10,
+          cursor:p.onClick?'pointer':'default'}}>
+        {p.accentBar ? <span style={{position:'absolute',left:0,top:8,bottom:8,width:2,background:'var(--accent)'}}/> : null}
+        {p.lead ? <span style={{flex:'none',color:'var(--muted)',display:'flex'}}>{p.lead}</span> : null}
+        <div className="fl1" style={{minWidth:0}}>
+          <div className="rw" style={{gap:7}}>
+            <span className={"t15 ell "+(p.mono?'mono t14':'')} style={{fontWeight:p.strong?600:500,color:p.tone||'var(--text)'}}>{p.title}</span>
+            {p.badge ? <Badge {...p.badge}/> : null}
+          </div>
+          {p.meta ? <div className={"t12 c-muted "+(p.metaMono?'mono':'')} style={{marginTop:3,...(p.metaMono?{fontSize:12}:null)}}>{p.meta}</div> : null}
+        </div>
+        {p.value!=null ? <span className={"t13 "+(p.valueMono?'mono tab':'')} style={{flex:'none',color:p.valueTone||'var(--text)',textAlign:'right'}}>{p.value}</span> : null}
+        {p.chevron !== false && p.onClick ? <Icon n="right" s={14}/> : (p.chevron ? <Icon n="right" s={14}/> : null)}
+        {p.trail}
+      </div>
+    );
+  }
+
+  /* ---------- 徽标：色块在最前，字用中性色（可读性优先） ---------- */
+  function Badge(p){
+    const c = p.tone || 'var(--muted)';
+    return (
+      <span className="rw" style={{flex:'none',gap:5,border:'1px solid var(--border-muted)',borderRadius:999,padding:'1px 7px 1px 6px'}}>
+        <span style={{width:5,height:5,borderRadius:1,background:c,flex:'none'}}/>
+        {p.glyph ? <span className="mono t12" style={{color:c,lineHeight:'16px'}}>{p.glyph}</span> : null}
+        <span className="t12" style={{color:'var(--text)',lineHeight:'16px'}}>{p.text}</span>
+      </span>
+    );
+  }
+
+  function Chip(p){
+    return (
+      <span className={"t12 "+(p.mono?'mono ':'')+(p.onClick?'press':'')} onClick={p.onClick}
+        style={{display:'inline-flex',alignItems:'center',gap:5,flex:'none',height:26,padding:'0 9px',borderRadius:999,
+          border:'1px solid '+(p.active?'var(--border-accent)':'var(--border-muted)'),
+          background:p.active?'var(--surf-high)':'transparent',
+          color:p.active?'var(--text)':(p.tone||'var(--text)'),cursor:p.onClick?'pointer':'default'}}>
+        {p.glyph ? <span className="mono" style={{color:p.glyphTone||p.tone||'var(--muted)'}}>{p.glyph}</span> : null}
+        {p.dot ? <span style={{width:6,height:6,borderRadius:999,background:p.dot,flex:'none'}}/> : null}
+        {p.children}
+      </span>
+    );
+  }
+
+  function Seg(p){
+    return (
+      <div className="rw" style={{gap:2,background:'var(--surf-high)',border:'1px solid var(--border-muted)',borderRadius:8,padding:2,flex:'none'}}>
+        {p.items.map(it=>(
+          <span key={it.k} className="press t12" onClick={()=>p.onChange(it.k)}
+            style={{height:24,padding:'0 10px',display:'inline-flex',alignItems:'center',borderRadius:6,cursor:'pointer',
+              background:p.value===it.k?'var(--selected-bg)':'transparent',color:p.value===it.k?'var(--text)':'var(--muted)',fontWeight:p.value===it.k?500:400}}>
+            {it.label}
+          </span>
+        ))}
+      </div>
+    );
+  }
+
+  /* ---------- 底部 sheet / 对话框（scrim 都是 pi 的 0.32；不加阴影） ---------- */
+  function Sheet(p){
+    if(!p.open) return null;
+    return (
+      <div className="b-sheetwrap">
+        <div className="b-scrim" onClick={p.onClose}/>
+        <div className="b-sheet">
+          <div style={{flex:'none',padding:'8px 0 0',display:'flex',justifyContent:'center'}}>
+            <span style={{width:32,height:3,borderRadius:999,background:'var(--border-muted)'}}/>
+          </div>
+          <div style={{flex:'none',padding:'12px 14px 8px'}}>
+            <div className="rw" style={{gap:8}}>
+              <span className="t15 w6 fl1">{p.title}</span>
+              {p.right}
+              <div className="press" onClick={p.onClose} style={{width:28,height:28,marginRight:-6,borderRadius:8,display:'flex',alignItems:'center',justifyContent:'center',color:'var(--muted)'}}>
+                <Icon n="close" s={16}/>
+              </div>
+            </div>
+            {p.sub ? <div className="t12 c-muted" style={{marginTop:4}}>{p.sub}</div> : null}
+          </div>
+          <div className="b-scroll" style={{paddingBottom:8,maxHeight:p.maxBody||420}}>{p.children}</div>
+          {p.footer ? <div className="t12 c-muted" style={{flex:'none',padding:'10px 14px 14px',borderTop:'1px solid var(--border-muted)'}}>{p.footer}</div> : null}
+        </div>
+      </div>
+    );
+  }
+
+  function Dialog(p){
+    if(!p.open) return null;
+    return (
+      <div className="b-dlgwrap">
+        <div className="b-scrim" onClick={p.onClose}/>
+        <div className="b-dlg">
+          <div className="rw" style={{gap:7}}>
+            {p.glyph ? <span className="mono t14" style={{color:p.glyphTone||'var(--muted)'}}>{p.glyph}</span> : null}
+            <span className="t15 w6 fl1">{p.title}</span>
+          </div>
+          {p.sub ? <div className="t12 c-muted" style={{marginTop:4}}>{p.sub}</div> : null}
+          {p.children ? <div className="t14 c-text" style={{marginTop:10,lineHeight:1.62}}>{p.children}</div> : null}
+          <div className="rw" style={{justifyContent:'flex-end',gap:6,marginTop:14}}>
+            {(p.actions||[]).map((a,i)=>(
+              <span key={i} className="press t14" onClick={a.onClick}
+                style={{padding:'7px 12px',borderRadius:8,cursor:'pointer',fontWeight:a.primary?600:400,
+                  color:a.tone||(a.primary?'var(--accent)':'var(--text)')}}>
+                {a.label}
+              </span>
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  /* ---------- diff：pi 的行级纹理（符号列 16 / 行号列 30 / 行底 8%） ---------- */
+  function DiffBody(p){
+    return (
+      <div className="mono" style={{fontSize:13,lineHeight:'19px',paddingBottom:4}}>
+        {p.lines.map((l,i)=>{
+          if(l.fold){
+            return (
+              <div key={i} className="c-body" style={{display:'flex',alignItems:'center',gap:8,padding:'3px 0',fontSize:12}}>
+                <span style={{width:46,textAlign:'right',flex:'none'}}/>
+                <span>… {l.fold} 行未变</span>
+              </div>
+            );
+          }
+          const mark = l.t==='add' ? '+' : l.t==='del' ? '-' : ' ';
+          const markColor = l.t==='add' ? 'var(--diff-add)' : l.t==='del' ? 'var(--diff-del)' : 'var(--body-on-tool)';
+          const tint = l.t==='add' ? 'rgba(181,189,104,0.08)' : l.t==='del' ? 'rgba(204,102,102,0.08)' : 'transparent';
+          return (
+            <div key={i} style={{display:'flex',alignItems:'baseline',background:tint}}>
+              <span style={{width:16,flex:'none',color:markColor,textAlign:'center'}}>{mark}</span>
+              <span style={{width:30,flex:'none',color:'var(--body-on-tool)',textAlign:'right',paddingRight:8}}>{l.n}</span>
+              <span className="fl1" style={{color:l.t==='ctx'?'var(--body-on-tool)':'var(--text)',whiteSpace:'pre-wrap'}}>{l.s}</span>
+            </div>
+          );
+        })}
+      </div>
+    );
+  }
+
+  /* 空态：π 字形只做主标识，不铺开当装饰 */
+  function PiMark(p){
+    const s = p.s || 30;
+    return (
+      <svg viewBox="0 0 108 108" width={s} height={s} aria-hidden="true" style={{display:'block'}}>
+        <path fill={p.c||'var(--muted)'} d="M30,38 H78 V46 H71 V74 H63 V46 H45 V74 H37 V46 H30 Z"/>
+      </svg>
+    );
+  }
+  function EmptyState(p){
+    return (
+      <div style={{padding:'86px 34px',textAlign:'center'}}>
+        <span style={{display:'inline-flex',color:'var(--muted)'}}>{p.pi ? <PiMark s={34}/> : <Icon n={p.icon||'chat'} s={30}/>}</span>
+        <div className="t17 w6" style={{marginTop:12}}>{p.title}</div>
+        <div className="t14 c-muted" style={{marginTop:8,lineHeight:1.6,textAlign:'left'}}>{p.body}</div>
+        {p.actions ? <div className="rw" style={{gap:8,marginTop:16,justifyContent:'center'}}>{p.actions}</div> : null}
+      </div>
+    );
+  }
+
+  /* Notice 行：前缀「·」+ 文本 + 时间；三档 tone */
+  function Notice(p){
+    const c = p.tone==='Error' ? 'var(--error)' : p.tone==='Warning' ? 'var(--warning)' : 'var(--muted)';
+    return (
+      <div className="rw" style={{gap:8,marginBottom:10}}>
+        <span className="mono t13" style={{color:c}}>{p.glyph || '·'}</span>
+        <span className="t13 fl1" style={{color:c}}>{p.text}</span>
+        {p.time ? <span className="mono t12 c-muted" style={{flex:'none'}}>{p.time}</span> : null}
+      </div>
+    );
+  }
+
+  /* Snackbar */
+  function Snack(p){
+    const tone = p.tone || 'Info';
+    const box = tone==='Error' ? {background:'var(--tool-error)',color:'var(--error)'}
+      : tone==='Warning' ? {background:'var(--info)',color:'var(--warning)'}
+      : {background:'var(--card)',color:'var(--text)'};
+    const glyph = tone==='Error' ? '✗' : tone==='Warning' ? '!' : '·';
+    return (
+      <div className="b-snack" style={Object.assign({bottom:12}, box)}>
+        <span className="mono t14" style={{flex:'none'}}>{glyph}</span>
+        <span className="t14 fl1" style={{color:'var(--text)'}}>{p.text}</span>
+        {p.action ? <span className="press t13 w5" style={{color:'var(--text)',flex:'none',cursor:'pointer'}}>{p.action}</span> : null}
+      </div>
+    );
+  }
+
+  Object.assign(window, {BUI:{Icon, ST, ENGINE, Engine, Tick, TopBar, TabBar, Card, Section, Rows, Row,
+    Badge, Chip, Seg, Sheet, Dialog, DiffBody, PiMark, EmptyState, Notice, Snack}});
+})();
+</script>
+
+<!-- ============ 数据：这一屏只放能真实取到的东西（会话改写记录 + 工作区文件树 + pi 的四类资源） ============ -->
+<script type="text/babel" data-presets="react">
+(function(){
+  /* ---------------- ③ 本次会话改过：pi 的 write / edit 记录（最近改动在上） ---------------- */
+  const W_CHANGED = [
+    {p:'src/session/order.kt',         tool:'write', add:24, del:3, ms:'—',     pending:true},
+    {p:'src/session/SessionList.kt',   tool:'edit',  add:6,  del:5, ms:'214ms', when:'12 分钟前'},
+    {p:'build.gradle.kts',             tool:'edit',  add:12, del:2, ms:'96ms',  when:'26 分钟前'},
+    {p:'README.md',                    tool:'write', add:12, del:0, ms:'132ms', when:'1 小时前'},
+  ];
+
+  /* 就地展开的那几块 diff（行级纹理与 v2 的 DiffBody 同源；SessionList.kt 这块与 v2 逐字一致） */
+  const W_DIFF = {
+    'src/session/SessionList.kt': [
+      {n:'188', t:'ctx', s:'            } else {'},
+      {n:'189', t:'ctx', s:'                val groups = visible'},
+      {n:'190', t:'del', s:'                    .groupBy { it.cwd }'},
+      {n:'190', t:'add', s:'                    .groupBy { it.group }'},
+      {n:'191', t:'del', s:'                    .toList()'},
+      {n:'191', t:'add', s:'                    .map { (g, rows) -> g to rows.sortedByDescending { it.lastActiveAt } }'},
+      {n:'192', t:'del', s:'                    .sortedByDescending { (_, rows) -> rows.maxOf { it.lastActiveAt } }'},
+      {n:'192', t:'add', s:'                    .sortedByDescending { (_, rows) ->'},
+      {n:'193', t:'add', s:'                        rows.firstOrNull()?.lastActiveAt ?: 0L'},
+      {n:'194', t:'add', s:'                    }'},
+      {n:'195', t:'ctx', s:'            }'},
+      {fold:12},
+      {n:'330', t:'ctx', s:'            Spacer(Modifier.width(12.dp))'},
+      {n:'331', t:'del', s:'        Text(relativeTime(row.lastActiveAt), style = Text.meta)'},
+      {n:'332', t:'add', s:'        Text(relativeTime(row.lastActiveAt), style = Text.meta, maxLines = 1)'},
+      {n:'333', t:'del', s:'        Text("按时间", style = Text.meta)'},
+      {n:'334', t:'add', s:'        Text("按时间", style = Text.meta, maxLines = 1)'},
+    ],
+    'build.gradle.kts': [
+      {n:'18', t:'ctx', s:'dependencies {'},
+      {n:'19', t:'ctx', s:'    implementation("androidx.compose.ui:ui:1.7.6")'},
+      {n:'20', t:'del', s:'    implementation("androidx.compose.material3:material3:1.3.0")'},
+      {n:'20', t:'add', s:'    implementation("androidx.compose.material3:material3:1.3.2")'},
+      {n:'21', t:'add', s:'    implementation("androidx.datastore:datastore:1.1.2")'},
+      {n:'22', t:'ctx', s:'    testImplementation("junit:junit:4.13.2")'},
+      {fold:6},
+      {n:'41', t:'del', s:'    kotlinOptions { jvmTarget = "17" }'},
+      {n:'41', t:'add', s:'    kotlinOptions {'},
+      {n:'42', t:'add', s:'        jvmTarget = "17"'},
+      {n:'43', t:'add', s:'        freeCompilerArgs += "-Xjvm-default=all"'},
+      {n:'44', t:'add', s:'    }'},
+    ],
+    'README.md': [
+      {n:'12', t:'ctx', s:'## 跑起来'},
+      {n:'13', t:'ctx', s:''},
+      {n:'14', t:'add', s:'工作区就是 App 私有目录里的一个文件夹；文件读写走宿主 File I/O，'},
+      {n:'15', t:'add', s:'所以引擎没起来的时候，工作区这一屏照样能打开 / 编辑 / 删除文件。'},
+      {n:'16', t:'add', s:''},
+      {fold:24},
+      {n:'41', t:'ctx', s:'## 目录'},
+      {n:'42', t:'add', s:''},
+      {n:'43', t:'add', s:'- `src/session` — 会话列表与排序'},
+      {n:'44', t:'add', s:'- `.pi` — 技能 / 提示词 / 扩展 / 主题（pi 的资源目录）'},
+    ],
+  };
+
+  /* ---------------- 查看器里的原文（与上面那块 diff 同源：diff 的「新」版本就是这里的现状） ---------------- */
+  const K_SESSION_LIST = [
+    'package dev.pi.android.session',
+    '',
+    'import androidx.compose.foundation.layout.Spacer',
+    'import androidx.compose.foundation.layout.height',
+    'import androidx.compose.foundation.layout.padding',
+    'import androidx.compose.foundation.layout.width',
+    'import androidx.compose.foundation.lazy.LazyColumn',
+    'import androidx.compose.runtime.Composable',
+    'import dev.pi.android.ui.Text',
+    '',
+    '/** 按分组列会话；组内按最后一次活动时间排。 */',
+    '@Composable',
+    'fun SessionList(',
+    '    sessions: List<Session>,',
+    '    onSelect: (Session) -> Unit,',
+    '    modifier: Modifier = Modifier,',
+    ') {',
+    '    val visible = sessions.filterNot { it.archived }',
+    '    val groups =',
+    '        if (grouped) {',
+    '            visible',
+    '                .groupBy { it.group }',
+    '                .map { (g, rows) -> g to rows.sortedByDescending { it.lastActiveAt } }',
+    '                .sortedByDescending { (_, rows) ->',
+    '                    rows.firstOrNull()?.lastActiveAt ?: 0L',
+    '                }',
+    '        } else {',
+    '            listOf("" to visible.sortedByDescending { it.lastActiveAt })',
+    '        }',
+    '',
+    '    LazyColumn(modifier = modifier) {',
+    '        groups.forEach { (group, rows) ->',
+    '            item(key = "head-" + group) { GroupHeader(group, rows.size) }',
+    '            items(rows, key = { it.id }) { row ->',
+    '                SessionRow(',
+    '                    row = row,',
+    '                    current = row.id == currentId,',
+    '                    onClick = { onSelect(row) },',
+    '                )',
+    '            }',
+    '            item(key = "gap-" + group) { Spacer(Modifier.height(18.dp)) }',
+    '        }',
+    '    }',
+    '}',
+    '',
+    '@Composable',
+    'private fun GroupHeader(group: String, count: Int) {',
+    '    Row(Modifier.padding(horizontal = 14.dp, vertical = 6.dp)) {',
+    '        Text(group.ifEmpty { "未分组" }, style = Text.label)',
+    '        Spacer(Modifier.width(12.dp))',
+    '        Text(relativeTime(row.lastActiveAt), style = Text.meta, maxLines = 1)',
+    '        Spacer(Modifier.weight(1f))',
+    '        Text("按时间", style = Text.meta, maxLines = 1)',
+    '    }',
+    '}',
+  ];
+  const K_ORDER = [
+    'package dev.pi.android.session',
+    '',
+    '/** 空组不参与排序；组里的时间取最近一条。 */',
+    'fun orderGroups(rows: List<Session>): List<Pair<String, List<Session>>> =',
+    '    rows.groupBy { it.group }',
+    '        .map { (g, list) -> g to list.sortedByDescending { it.lastActiveAt } }',
+    '        .sortedByDescending { (_, list) -> list.firstOrNull()?.lastActiveAt ?: 0L }',
+  ];
+  const K_ORDER_TEST = [
+    'package dev.pi.android.session',
+    '',
+    'import org.junit.Assert.assertEquals',
+    'import org.junit.Test',
+    '',
+    'class SessionGroupOrderTest {',
+    '    @Test fun busiestGroupFirst() {',
+    '        val groups = orderGroups(listOf(a(3L), a(9L), b(1L)))',
+    '        assertEquals(listOf("a", "b"), groups.map { it.first })',
+    '    }',
+    '',
+    '    @Test fun emptyInputGivesNoGroups() {',
+    '        assertEquals(emptyList<Pair<String, List<Session>>>(), orderGroups(emptyList()))',
+    '    }',
+    '}',
+  ];
+  const K_SESSION_ROW = [
+    'package dev.pi.android.session',
+    '',
+    '@Composable',
+    'fun SessionRow(row: Session, current: Boolean, onClick: () -> Unit) {',
+    '    Row(',
+    '        modifier = Modifier.clickable(onClick = onClick).padding(14.dp),',
+    '        verticalAlignment = Alignment.CenterVertically,',
+    '    ) {',
+    '        Text(row.title, style = if (current) Text.current else Text.body, maxLines = 1)',
+    '        Spacer(Modifier.weight(1f))',
+    '        Text(relativeTime(row.lastActiveAt), style = Text.meta)',
+    '    }',
+    '}',
+  ];
+  const M_README = [
+    '# pi-android',
+    '',
+    'PI 的安卓客户端：把 pi 跑在手机本地的私有目录里，工作区就是那个目录。',
+    '',
+    '## 跑起来',
+    '',
+    '工作区就是 App 私有目录里的一个文件夹；文件读写走宿主 File I/O，',
+    '所以引擎没起来的时候，工作区这一屏照样能打开 / 编辑 / 删除文件。',
+    '',
+    '```sh',
+    './gradlew :app:assembleDebug',
+    '```',
+    '',
+    '## 目录',
+    '',
+    '- `src/session` — 会话列表与排序',
+    '- `.pi` — 技能 / 提示词 / 扩展 / 主题（pi 的资源目录）',
+  ];
+  const G_BUILD = [
+    'plugins {',
+    '    id("com.android.application")',
+    '    id("org.jetbrains.kotlin.android")',
+    '}',
+    '',
+    'android {',
+    '    namespace = "dev.pi.android"',
+    '    compileSdk = 35',
+    '    defaultConfig { minSdk = 26 }',
+    '}',
+    '',
+    'dependencies {',
+    '    implementation("androidx.compose.ui:ui:1.7.6")',
+    '    implementation("androidx.compose.material3:material3:1.3.2")',
+    '    implementation("androidx.datastore:datastore:1.1.2")',
+    '    testImplementation("junit:junit:4.13.2")',
+    '',
+    '    implementation("dev.pi:runtime:0.9.4")',
+    '}',
+    '',
+    'kotlin {',
+    '    kotlinOptions {',
+    '        jvmTarget = "17"',
+    '        freeCompilerArgs += "-Xjvm-default=all"',
+    '    }',
+    '}',
+  ];
+  const T_GOLDEN = [
+    'group a',
+    '  3 条 · 最近 2026-09-14 14:31',
+    'group b',
+    '  1 条 · 最近 2026-09-13 22:18',
+    'group c',
+    '  7 条 · 最近 2026-09-12 09:04',
+  ];
+  const J_SMALL = [
+    '{"role":"user","at":"2026-09-14T14:28:02Z","text":"会话列表排序错了"}',
+    '{"role":"assistant","at":"2026-09-14T14:28:31Z","text":"我按分组重排一遍。"}',
+    '{"role":"tool","at":"2026-09-14T14:31:10Z","name":"edit","path":"src/session/SessionList.kt"}',
+  ];
+  const J_LARGE = [
+    '{"role":"user","at":"2026-09-12T09:04:11Z","text":"把 diff 卡片的高度收紧"}',
+    '{"role":"assistant","at":"2026-09-12T09:04:20Z","text":"先量一下现在的高度。"}',
+    '{"role":"tool","at":"2026-09-12T09:04:26Z","name":"read","path":"src/session/SessionRow.kt"}',
+    '{"role":"assistant","at":"2026-09-12T09:04:41Z","text":"行高改 19，上下各留 6。"}',
+    '{"role":"tool","at":"2026-09-12T09:05:02Z","name":"edit","path":"src/session/SessionRow.kt"}',
+    '{"role":"tool","at":"2026-09-12T09:05:03Z","name":"edit","path":"src/session/SessionRow.kt"}',
+    '{"role":"user","at":"2026-09-12T09:06:00Z","text":"工具卡的展开按钮点不到"}',
+    '{"role":"assistant","at":"2026-09-12T09:06:12Z","text":"命中区只有 12dp，太窄了。"}',
+    '{"role":"tool","at":"2026-09-12T09:06:30Z","name":"grep","pattern":"clickable"}',
+    '{"role":"tool","at":"2026-09-12T09:06:33Z","name":"read","path":"src/ui/ToolCard.kt"}',
+    '{"role":"assistant","at":"2026-09-12T09:07:04Z","text":"改成整行可点，右侧图标只做指示。"}',
+    '{"role":"tool","at":"2026-09-12T09:07:20Z","name":"edit","path":"src/ui/ToolCard.kt"}',
+    '{"role":"user","at":"2026-09-12T09:09:00Z","text":"设置里 reserveTokens 该填多少"}',
+    '{"role":"assistant","at":"2026-09-12T09:09:31Z","text":"默认留空，交给 pi 自己算。"}',
+    '{"role":"tool","at":"2026-09-12T09:10:02Z","name":"bash","command":"./gradlew :app:testDebugUnitTest"}',
+    '{"role":"tool","at":"2026-09-12T09:10:38Z","name":"bash","status":"ok","lines":18}',
+    '{"role":"user","at":"2026-09-12T09:12:00Z","text":"检查一下 @ 提及补全超时"}',
+    '{"role":"assistant","at":"2026-09-12T09:12:20Z","text":"补全走了网络，本地缓存没命中。"}',
+    '{"role":"tool","at":"2026-09-12T09:12:44Z","name":"grep","pattern":"mention"}',
+    '{"role":"assistant","at":"2026-09-12T09:13:10Z","text":"先加 120ms 的本地去抖。"}',
+    '{"role":"tool","at":"2026-09-12T09:13:31Z","name":"edit","path":"src/ui/Mention.kt"}',
+    '{"role":"user","at":"2026-09-12T09:15:00Z","text":"主题的对比度在深色下不达标"}',
+    '{"role":"assistant","at":"2026-09-12T09:15:22Z","text":"meta 那档 3:1，抬到 4.5:1。"}',
+    '{"role":"tool","at":"2026-09-12T09:15:40Z","name":"edit","path":"src/ui/Theme.kt"}',
+    '{"role":"assistant","at":"2026-09-12T09:16:02Z","text":"改完了，两处。"}',
+  ];
+
+  /* ---------------- 文件元信息 + 原文（查看器用；键 = 工作区相对路径） ---------------- */
+  const W_FILES = {
+    'build.gradle.kts':                          {name:'build.gradle.kts', kind:'text', lang:'kt',   size:'2.4 KB', time:'今天 14:26', src:G_BUILD},
+    'settings.gradle.kts':                       {name:'settings.gradle.kts', kind:'text', lang:'kt', size:'648 B', time:'昨天 21:04', src:['rootProject.name = "pi-android"','include(":app")']},
+    'gradle.properties':                         {name:'gradle.properties', kind:'text', lang:'txt', size:'1.1 KB', time:'昨天 21:04', src:['org.gradle.jvmargs=-Xmx2048m','android.useAndroidX=true','kotlin.code.style=official']},
+    '.gitignore':                                {name:'.gitignore', kind:'text', lang:'txt', size:'220 B', time:'昨天 21:04', src:['build/','.gradle/','local.properties','*.apk']},
+    'README.md':                                 {name:'README.md', kind:'text', lang:'md',   size:'3.8 KB', time:'今天 13:40', src:M_README},
+    'src/session/SessionList.kt':                {name:'SessionList.kt', kind:'text', lang:'kt', size:'4.2 KB', time:'今天 14:32', src:K_SESSION_LIST},
+    'src/session/order.kt':                      {name:'order.kt', kind:'text', lang:'kt', size:'1.9 KB', time:'今天 14:33', src:K_ORDER},
+    'src/session/order.test.kt':                 {name:'order.test.kt', kind:'text', lang:'kt', size:'2.2 KB', time:'今天 14:31', src:K_ORDER_TEST},
+    'src/session/SessionRow.kt':                 {name:'SessionRow.kt', kind:'text', lang:'kt', size:'3.1 KB', time:'昨天 22:18', src:K_SESSION_ROW},
+    'src/session/session-cache.bin':             {name:'session-cache.bin', kind:'bin', size:'1.2 MB', time:'今天 14:30'},
+    'src/session/fixtures/session-small.jsonl':  {name:'session-small.jsonl', kind:'text', lang:'json', size:'18 KB', time:'昨天 20:02', src:J_SMALL},
+    'src/session/fixtures/session-large.jsonl':  {name:'session-large.jsonl', kind:'text', lang:'json', size:'2.4 MB', time:'昨天 20:02', big:true, src:J_LARGE},
+    'src/session/fixtures/golden-order.txt':     {name:'golden-order.txt', kind:'text', lang:'txt', size:'1.4 KB', time:'前天 18:40', src:T_GOLDEN},
+  };
+  /* 目录：项数 + 最后改动时间（副行用） */
+  const W_DIR = {
+    '':                      {label:'工作区', n:8, time:'今天 14:30'},
+    'src':                   {label:'src', n:2, time:'今天 14:31'},
+    'src/session':           {label:'session', n:6, time:'今天 14:33'},
+    'src/session/fixtures':  {label:'fixtures', n:3, time:'昨天 20:02'},
+    'src/generated':         {label:'generated', n:0, time:'今天 14:35'},
+    '.pi':                   {label:'.pi', n:4, time:'今天 14:12'},
+    'gradle':                {label:'gradle', n:2, time:'昨天 21:04'},
+  };
+  /* 目录在前，文件在后；顺序就是列表顺序 */
+  const W_TREE = {
+    '':                      {dirs:['src','.pi','gradle'], files:['build.gradle.kts','settings.gradle.kts','gradle.properties','README.md','.gitignore']},
+    'src':                   {dirs:['src/session','src/generated'], files:[]},
+    'src/session':           {dirs:['src/session/fixtures'], files:['src/session/SessionList.kt','src/session/order.kt','src/session/order.test.kt','src/session/SessionRow.kt','src/session/session-cache.bin']},
+    'src/session/fixtures':  {dirs:[], files:['src/session/fixtures/session-large.jsonl','src/session/fixtures/session-small.jsonl','src/session/fixtures/golden-order.txt']},
+    'src/generated':         {dirs:[], files:[]},
+    '.pi':                   {dirs:['.pi/skills','.pi/prompts','.pi/themes','.pi/extensions'], files:[]},
+    'gradle':                {dirs:[], files:[]},
+  };
+
+  /* ---------------- ⑤ 这个目录的资源：来源族 = 徽标的短标签；状态只有异常才标记 ---------------- */
+  /* fam: pi = 项目 .pi / agents = .agents / global = 全局 / pkg = 包 · <包名> / ext = 扩展贡献
+     order：排序按 pi 的优先级（项目 .pi → .agents → 全局 → 包），扩展贡献跟在它实际的来源之后 */
+  const RES_NORMAL = {
+    skill: [
+      {name:'review',        fam:'pi',     meta:'按项目约定做一次代码审查', path:'.pi/skills/review/SKILL.md', doc:'skill'},
+      {name:'changelog',     fam:'pi',     meta:'从这次会话的改动里写一条更新日志', path:'.pi/skills/changelog/SKILL.md', doc:'skill'},
+      {name:'device-check',  fam:'ext',    meta:'由设备桥扩展写入', path:'.pi/skills/device-check/SKILL.md', doc:'skill'},
+      {name:'commit-msg',    fam:'agents', meta:'用仓库的提交信息约定写 commit message', path:'.agents/skills/commit-msg/SKILL.md', doc:'skill'},
+      {name:'deploy',        fam:'global', meta:'把 debug 包推到连着的设备上', path:'~/.pi/skills/deploy/SKILL.md', doc:'skill'},
+      {name:'release-notes', fam:'pkg', pkg:'pi-skills', meta:'从提交记录生成发布说明', path:'pi-skills/skills/release-notes/SKILL.md', doc:'skill'},
+    ],
+    prompt: [
+      {name:'提测前的自查清单', fam:'pi',     meta:'提测前把这几项过一遍', path:'.pi/prompts/preflight.md', doc:'prompt'},
+      {name:'写迁移脚本',       fam:'ext',    meta:'由设备桥扩展写入', path:'.pi/prompts/migrate.md', doc:'prompt'},
+      {name:'weekly-report',   fam:'global', meta:'把这一周的会话汇总成一段', path:'~/.pi/prompts/weekly-report.md', doc:'prompt'},
+    ],
+    ext: [
+      {name:'device-bridge.ts',   fam:'pi',     meta:'设备桥扩展 · 1.4.0', path:'.pi/extensions/device-bridge.ts', doc:'ext'},
+      {name:'theme-sync.ts',      fam:'global', meta:'主题同步扩展 · 0.6.2', path:'~/.pi/extensions/theme-sync.ts', doc:'ext'},
+      {name:'pi-skills/index.ts', fam:'pkg', pkg:'pi-skills', meta:'资源包入口 · 2.1.0', path:'pi-skills/index.ts', doc:'ext'},
+    ],
+    theme: [
+      {name:'pi-dark',      fam:'pi',     meta:'dark · 跟随 App 主题', path:'.pi/themes/pi-dark.json', doc:'theme'},
+      {name:'solarized',    fam:'global', meta:'light / dark 配对', path:'~/.pi/themes/solarized.json', doc:'theme'},
+      {name:'device-amber', fam:'ext',    meta:'由设备桥扩展写入', path:'.pi/themes/device-amber.json', doc:'theme'},
+    ],
+  };
+  /* resourcesBad：同名冲突 + 解析失败 + 被禁用同时出现（项目未受信任是整段的另一层） */
+  const RES_BAD = {
+    skill: [
+      {name:'review',        fam:'pi',     meta:'按项目约定做一次代码审查', path:'.pi/skills/review/SKILL.md', doc:'skill'},
+      {name:'review',        fam:'agents', meta:'用上游仓库的审查清单', path:'.agents/skills/review/SKILL.md', doc:'skill', status:'conflict', withFam:'项目 .pi'},
+      {name:'changelog',     fam:'pi',     meta:'从这次会话的改动里写一条更新日志', path:'.pi/skills/changelog/SKILL.md', doc:'skill', status:'disabled'},
+      {name:'commit-msg',    fam:'global', meta:'用仓库的提交信息约定写 commit message', path:'~/.pi/skills/commit-msg/SKILL.md', doc:'skill'},
+      {name:'release-notes', fam:'pkg', pkg:'pi-skills', meta:'从提交记录生成发布说明', path:'pi-skills/skills/release-notes/SKILL.md', doc:'skill', status:'parsefail', reason:'front matter 缺 name'},
+    ],
+    prompt: RES_NORMAL.prompt,
+    ext: RES_NORMAL.ext,
+    theme: RES_NORMAL.theme,
+  };
+
+  /* ---------------- 工作区切换面板里的现有工作区 ---------------- */
+  const W_WS = [
+    {name:'pi-android',        n:124, time:'最后打开 2 小时前', cur:true},
+    {name:'pi-android-device', n:86,  time:'最后打开 昨天'},
+    {name:'pi-skills',         n:12,  time:'最后打开 3 天前'},
+  ];
+
+  window.WDATA = {W_CHANGED, W_DIFF, W_FILES, W_DIR, W_TREE, RES_NORMAL, RES_BAD, W_WS};
+})();
+</script>
+
+<!-- ============ 工作区这一屏：一屏五段 + 全部浮层 ============ -->
+<script type="text/babel" data-presets="react">
+(function(){
+  const U = window.BUI, D = window.WDATA;
+  const {Icon, TopBar, Section, Rows, Row, Badge, Card, Seg, Sheet, Dialog, DiffBody, Tick, Notice, Snack} = U;
+  const {W_CHANGED, W_DIFF, W_FILES, W_DIR, W_TREE, RES_NORMAL, RES_BAD, W_WS} = D;
+
+  /* ================= 语法着色：角色 → pi 的语法令牌（与 v2 的 CodeBlock 同一套色） ================= */
+  const KW = 'package|import|fun|val|var|class|object|data|private|public|internal|override|suspend|' +
+    'return|if|else|when|null|true|false|is|as|in|for|by|lateinit|const|companion|init|interface|enum|sealed|type|export|default|async|await|new';
+  const TOK = new RegExp('(\\/\\/[^\\n]*)|("(?:[^"\\\\]|\\\\.)*")|(\\b\\d+(?:\\.\\d+)?[LfFd]?\\b)|(@\\w+)|\\b(' + KW +
+    ')\\b|(\\b[A-Z][A-Za-z0-9_]*\\b)|(\\b[a-z][A-Za-z0-9_]*(?=\\())', 'g');
+  const TOKC = {1:'var(--syn-comment)', 2:'var(--syn-string)', 3:'var(--syn-number)',
+    4:'var(--syn-function)', 5:'var(--syn-keyword)', 6:'var(--syn-type)', 7:'var(--syn-function)'};
+
+  function hl(line, lang){
+    if(lang==='txt') return [[line, 'var(--syn-op)']];
+    const out = []; let last = 0; let m;
+    TOK.lastIndex = 0;
+    while((m = TOK.exec(line)) !== null){
+      if(m.index > last) out.push([line.slice(last, m.index), 'var(--syn-op)']);
+      let gi = 1; for(let k=1;k<=7;k++){ if(m[k] != null){ gi = k; break; } }
+      out.push([m[0], TOKC[gi] || 'var(--syn-op)']);
+      last = m.index + m[0].length;
+      if(m[0].length === 0) TOK.lastIndex++;
+    }
+    if(last < line.length) out.push([line.slice(last), 'var(--syn-op)']);
+    return out.length ? out : [['', 'var(--syn-op)']];
+  }
+  function mdSegs(line, inFence){
+    const t = line.trim();
+    if(t.indexOf('```') === 0) return [[line, 'var(--md-codeblock-border)']];
+    if(inFence) return [[line, 'var(--md-codeblock)']];
+    if(line.indexOf('#') === 0) return [[line, 'var(--md-heading)']];
+    if(t === '---') return [[line, 'var(--syn-comment)']];
+    const bi = line.indexOf('- ');
+    if(bi >= 0 && line.slice(0, bi).trim() === '') return [[line.slice(0, bi + 2), 'var(--md-bullet)'], [line.slice(bi + 2), 'var(--text)']];
+    return [[line, 'var(--text)']];
+  }
+
+  /* ================= 代码正文：行号列 34 + 正文（查看态换行，和 v2 的 diff 同一套行距 19px） ================= */
+  function CodeView(p){
+    const lines = p.src || [];
+    let inFence = false;
+    return (
+      <div style={{padding:'10px 14px 6px'}}>
+        {lines.map((s, i) => {
+          let segs;
+          if(p.lang === 'md'){ segs = mdSegs(s, inFence); if(s.trim().indexOf('```') === 0) inFence = !inFence; }
+          else segs = hl(s, p.lang);
+          return (
+            <div key={i} style={{display:'flex',alignItems:'baseline'}}>
+              <span className="mono" style={{width:34,flex:'none',textAlign:'right',paddingRight:10,
+                color:'var(--body-on-tool)',fontSize:12,lineHeight:'19px'}}>{i + 1}</span>
+              <span className="mono" style={{flex:1,minWidth:0,fontSize:13,lineHeight:'19px',whiteSpace:'pre-wrap'}}>
+                {segs.map((g, j) => <span key={j} style={{color:g[1]}}>{g[0]}</span>)}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    );
+  }
+
+  /* ================= 错误块：v2 的 ErrorCard 原样（3px 竖条 + toolError 底 + ✗ + 详情 + 动作） ================= */
+  function ErrBlock(p){
+    const [open, setOpen] = React.useState(!!p.openDefault);
+    return (
+      <div style={{background:'var(--tool-error)',border:'1px solid rgba(204,102,102,.45)',borderRadius:10,
+        margin:'0 14px',display:'flex',overflow:'hidden'}}>
+        <span style={{width:3,background:'var(--error)',flex:'none'}}/>
+        <div style={{padding:'10px 12px',flex:1,minWidth:0}}>
+          <div className="rw" style={{gap:7}}>
+            <span className="mono t14" style={{color:'var(--error)',flex:'none'}}>✗</span>
+            <span className="t12" style={{color:'var(--error)',flex:'none'}}>{p.title}</span>
+          </div>
+          {p.message ? <div className="t14" style={{marginTop:6,lineHeight:1.62}}>{p.message}</div> : null}
+          {p.detail ? (
+            <div className="rw" style={{gap:8,marginTop:6}}>
+              <span className="t12 c-err press3" onClick={()=>setOpen(!open)} style={{cursor:'pointer'}}>{open ? '收起' : '详情'}</span>
+            </div>
+          ) : null}
+          {open && p.detail ? (
+            <div className="mono c-body" style={{fontSize:13,lineHeight:'19px',marginTop:6,whiteSpace:'pre-wrap',wordBreak:'break-all'}}>{p.detail}</div>
+          ) : null}
+          {p.actions ? <div className="rw" style={{gap:14,marginTop:10}}>{p.actions}</div> : null}
+        </div>
+      </div>
+    );
+  }
+
+  /* ================= 查看器：查看 / 编辑 / 保存中 / 保存失败 都走这一个（复用④的查看器） ================= */
+  function Viewer(p){
+    const f = p.file, dir = p.dir, mode = p.mode, dirty = p.dirty;
+    const editing = mode !== 'view';
+    const path2 = dir ? dir + ' / ' + f.name : f.name;
+
+    const metaNode = (
+      <span className="ell">
+        <span className="mono">{path2}</span>
+        <span> · {f.size} · {f.time}</span>
+        {editing && dirty ? <span style={{color:'var(--warning)'}}> · <span className="mono">●</span> 未保存</span> : null}
+        {mode === 'saving' ? <span> · 正在写盘</span> : null}
+      </span>
+    );
+    const right = f.kind === 'bin'
+      ? <MoreBtn onClick={()=>p.onMore(f.name)}/>
+      : mode === 'saving'
+        ? <span className="rw" style={{gap:6,flex:'none'}}><span className="mono t12" style={{color:'var(--warning)'}}>…</span><span className="t12 c-muted">保存中</span></span>
+        : editing
+          ? <span className="press t13" onClick={dirty ? p.onSave : null}
+              style={{padding:'5px 9px',borderRadius:8,flex:'none',fontWeight:dirty?600:400,
+                color:dirty?'var(--accent)':'var(--muted)',cursor:dirty?'pointer':'default'}}>保存</span>
+          : (<React.Fragment>
+              <span className="press t13" onClick={p.onEdit} style={{padding:'5px 9px',borderRadius:8,color:'var(--text)',flex:'none',cursor:'pointer'}}>编辑</span>
+              <MoreBtn onClick={()=>p.onMore(f.name)}/>
+            </React.Fragment>);
+
+    return (
+      <div className="b-overlay">
+        <TopBar title={<span className="mono">{f.name}</span>} onBack={p.onBack} meta={metaNode} right={right}/>
+        {mode === 'failed' ? (
+          <div style={{padding:'10px 0 0'}}>
+            <ErrBlock title="保存失败" openDefault
+              message="改过的地方还在编辑器里，磁盘上还是旧的。"
+              detail={"java.io.IOException: write failed: EBUSY (file is being written by pi)\n  at FileOutputStream.write(FileOutputStream.java:215)\n  path: " + (dir ? dir + '/' : '') + f.name}
+              actions={<React.Fragment>
+                <span className="press t13 c-accent" onClick={p.onSave}>重试</span>
+                <span className="press t13 c-accent" onClick={p.onCopyError}>复制错误</span>
+              </React.Fragment>}/>
+          </div>
+        ) : null}
+        {f.big ? (
+          <div style={{padding:'10px 14px 0'}}>
+            <Notice tone="Warning" text={'文件 2.4 MB。查看器不整份载入，只给前 25 行；要看全部就到「对话」里让 pi 读它。'}/>
+          </div>
+        ) : null}
+        <div className="b-scroll" style={{paddingBottom:22}}>
+          {f.kind === 'bin' ? (
+            <div style={{padding:'44px 30px 0',textAlign:'center'}}>
+              <span style={{display:'inline-flex',color:'var(--muted)'}}><Icon n="bin" s={30}/></span>
+              <div className="t15 w6" style={{marginTop:12}}>这是二进制文件</div>
+              <div className="t13 c-muted" style={{marginTop:8,lineHeight:1.6,textAlign:'left'}}>
+                pi 的查看器只打开文本；「{f.name}」有 {f.size}，不在这里展开。
+              </div>
+              <div className="rw" style={{gap:14,marginTop:14,justifyContent:'center'}}>
+                <span className="press t13 c-accent">导出到 Download</span>
+                <span className="press t13 c-accent">分享</span>
+              </div>
+            </div>
+          ) : editing ? (
+            <div style={{padding:'10px 14px 0'}}>
+              <textarea key={mode} defaultValue={(f.src || []).join('\n')} readOnly={mode === 'saving'}
+                onChange={()=>p.onDirty()} spellCheck={false} rows={Math.min((f.src || []).length + 2, 34)}
+                className="mono"
+                style={{width:'100%',display:'block',background:'var(--surf-low)',border:'1px solid var(--border-accent)',
+                  borderRadius:10,padding:'10px 12px',color:'var(--text)',fontSize:13,lineHeight:'19px',
+                  resize:'none',outline:'none',caretColor:'var(--accent)',overflowY:'auto'}}/>
+              <div className="t12 c-muted" style={{marginTop:8}}>
+                {mode === 'saving' ? '正在把整份文件写回工作区。' : '返回时如果还没保存，会先问你一次。'}
+              </div>
+            </div>
+          ) : (
+            <React.Fragment>
+              <CodeView src={f.src} lang={f.lang}/>
+              {f.big ? (
+                <div className="rw" style={{padding:'4px 14px 0',gap:10}}>
+                  <span className="mono t12 c-body" style={{width:34,flex:'none',textAlign:'right',paddingRight:10}}>⋮</span>
+                  <span className="t12 c-body">… 其余 41,208 行未显示</span>
+                </div>
+              ) : null}
+            </React.Fragment>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  /* ================= 小零件 ================= */
+  function MoreBtn(p){
+    return (
+      <span className="press" onClick={(e)=>{ if(e && e.stopPropagation) e.stopPropagation(); p.onClick(); }}
+        style={{width:26,height:26,flex:'none',marginRight:-6,borderRadius:7,display:'flex',alignItems:'center',
+          justifyContent:'center',color:'var(--muted)',cursor:'pointer'}}>
+        <Icon n="more" s={16}/>
+      </span>
+    );
+  }
+  function mid(s, max){
+    if(s.length <= max) return s;
+    const keep = max - 1, head = Math.ceil(keep / 2), tail = Math.floor(keep / 2);
+    return s.slice(0, head) + '…' + s.slice(s.length - tail);
+  }
+  function baseName(p){ return p ? String(p).split('/').pop() : ''; }
+  function diffValue(c){
+    return (
+      <span className="mono t12 tab">
+        <span style={{color:'var(--diff-add)'}}>+{c.add}</span>
+        {c.del ? <span style={{color:'var(--diff-del)'}}> −{c.del}</span> : null}
+      </span>
+    );
+  }
+  /* 来源徽标：标签本身就是来源族；这个点只编码「项目内 / 项目外」（同名时项目内赢） */
+  function srcBadge(r){
+    if(r.fam === 'pi') return {tone:'var(--accent)', text:<span>项目 <span className="mono">.pi</span></span>};
+    if(r.fam === 'agents') return {tone:'var(--muted)', text:<span className="mono">.agents</span>};
+    if(r.fam === 'global') return {tone:'var(--muted)', text:'全局'};
+    if(r.fam === 'pkg') return {tone:'var(--muted)', text:<span>包 · <span className="mono">{r.pkg}</span></span>};
+    return {tone:'var(--muted)', text:'扩展贡献'};
+  }
+  /* 资源原文：技能给 front matter（解析失败那条故意缺 name）；扩展给入口；主题给 json */
+  function docFor(r){
+    if(r.doc === 'ext') return [
+      '// ' + r.name + ' — ' + r.meta,
+      "import type { Extension } from 'pi'",
+      '',
+      'export default {',
+      "  name: '" + r.name.replace(/\\.ts$/, '') + "',",
+      '  activate(pi) {',
+      "    pi.registerTool('device_info', { description: '读设备状态' })",
+      "    pi.registerPrompt('device-check', './prompts/device-check.md')",
+      '  },',
+      '} as Extension',
+    ];
+    if(r.doc === 'theme') return [
+      '{',
+      '  "name": "' + r.name + '",',
+      '  "dark": {',
+      '    "accent": "#8ABEB7",',
+      '    "text": "#D4D4D4",',
+      '    "page": "#18181E"',
+      '  }',
+      '}',
+    ];
+    const head = ['---'];
+    if(r.status !== 'parsefail') head.push('name: ' + r.name);
+    head.push('description: ' + r.meta);
+    head.push('---');
+    if(r.doc === 'prompt') return head.concat(['', r.meta + '。', '', '1. 先读这次会话改动过的文件', '2. 按项目约定改，改完自己跑一次', '3. 把结论写回会话里']);
+    return head.concat(['', '# ' + r.name, '', r.meta + '。', '', '## 怎么做', '', '1. 先读这次会话改动过的文件', '2. 按项目约定改，改完自己跑一次', '3. 把结论写回会话里']);
+  }
+  function resFile(r){
+    const base = r.path.split('/').pop();
+    const lang = /\\.ts$/.test(r.path) ? 'ts' : /\\.md$/.test(r.path) ? 'md' : /\\.json$/.test(r.path) ? 'json' : 'txt';
+    return {name:base, kind:'text', lang:lang, size:'1.1 KB', time:'今天 14:12', src:docFor(r)};
+  }
+  const CATS = [{k:'skill', label:'技能'}, {k:'prompt', label:'提示词'}, {k:'ext', label:'扩展'}, {k:'theme', label:'主题'}];
+  const CAT_LABEL = {skill:'技能', prompt:'提示词', ext:'扩展', theme:'主题'};
+  const RUNNING = {cmd:'./gradlew :app:test', ms:12300, segs:9, of:24, out:'18 行'};
+
+  /* ================= 这一屏 ================= */
+  function WorkbenchScreen(p){
+    const st = p.state || 'default';
+    const engineDown = st === 'engineDown';
+    const clean = st === 'clean';
+    const running = st === 'running';
+    const bad = st === 'resourcesBad';
+
+    const [exp, setExp] = React.useState(st === 'default' ? {'src/session/SessionList.kt':true} : {});
+    const [path, setPath] = React.useState(st === 'empty' ? ['src','generated'] : ['src','session']);
+    const [cat, setCat] = React.useState('skill');
+    const [menu, setMenu] = React.useState(null);
+    const [root, setRoot] = React.useState(st === 'rootsheet');
+    const [dlg, setDlg] = React.useState(
+      st === 'deleteConfirm' ? {kind:'delete', path:'src/session/SessionList.kt'} :
+      st === 'unsavedLeave' ? {kind:'unsaved'} : null);
+    const FO = {
+      list: W_FILES['src/session/SessionList.kt'],
+      bin:  W_FILES['src/session/session-cache.bin'],
+      big:  W_FILES['src/session/fixtures/session-large.jsonl'],
+    };
+    const [view, setView] = React.useState(
+      st === 'viewing'   ? {path:'src/session/SessionList.kt', mode:'view', dirty:false, file:FO.list} :
+      st === 'editing'   ? {path:'src/session/SessionList.kt', mode:'edit', dirty:true, file:FO.list} :
+      st === 'saving'    ? {path:'src/session/SessionList.kt', mode:'saving', dirty:true, file:FO.list} :
+      st === 'savefailed'? {path:'src/session/SessionList.kt', mode:'failed', dirty:true, file:FO.list} :
+      st === 'unsavedLeave' ? {path:'src/session/SessionList.kt', mode:'edit', dirty:true, file:FO.list} :
+      st === 'binary'    ? {path:'src/session/session-cache.bin', mode:'view', dirty:false, file:FO.bin} :
+      st === 'toolarge'  ? {path:'src/session/fixtures/session-large.jsonl', mode:'view', dirty:false, file:FO.big} : null);
+    const [snack, setSnack] = React.useState(null);
+    const scrollRef = React.useRef(null);
+
+    /* ⑤ 的两个状态要停在资源段上（原型里直接给滚动位置，不做滚动动画） */
+    React.useEffect(()=>{
+      const el = scrollRef.current;
+      if(el && (st === 'resources' || st === 'resourcesBad')) el.scrollTop = 99999;
+    }, [st]);
+    React.useEffect(()=>{
+      if(!snack) return;
+      const t = setTimeout(()=>setSnack(null), 2600);
+      return ()=>clearTimeout(t);
+    }, [snack]);
+
+    const dirKey = path.join('/');
+    const dirMeta = W_DIR[dirKey] || {label:dirKey || '工作区', n:0, time:'—'};
+    const tree = W_TREE[dirKey] || {dirs:[], files:[]};
+    const changed = (clean || engineDown) ? []
+      : running
+        ? W_CHANGED.map(c => c.pending ? Object.assign({}, c, {pending:false, ms:'88ms', when:'刚刚'}) : c)
+        : W_CHANGED;
+    const res = bad ? RES_BAD : RES_NORMAL;
+    const resRows = res[cat] || [];
+    const untrusted = bad;
+
+    const open = (fp, mode, fo) => setView({path:fp, mode:mode || 'view', dirty:false, file:fo || W_FILES[fp] || null});
+    const copy = (t) => {
+      try{ if(navigator.clipboard) navigator.clipboard.writeText(t); }catch(e){}
+      setSnack({text:'已复制 · ' + t});
+    };
+    const summary = engineDown ? '引擎没起来，现场摘要没有数据'
+      : clean ? '本次会话还没动过文件 · 没有命令在跑'
+      : running ? '本次会话改过 ' + changed.length + ' 个文件 · 正在跑 1 条命令'
+      : '本次会话改过 ' + changed.length + ' 个文件 · 没有命令在跑';
+
+    /* ---- ③ 里每一条改动行 ---- */
+    const changedRow = (c) => {
+      const f = W_FILES[c.p] || {name:c.p};
+      const isOpen = !!exp[c.p];
+      return (
+        <div key={c.p} style={c.pending ? {background:'var(--tool-pending)',
+          borderTop:'1px solid rgba(255,255,0,.35)',borderBottom:'1px solid rgba(255,255,0,.35)'} : null}>
+          <Row title={baseName(c.p)} mono strong lead={<Icon n="file" s={16}/>}
+            badge={{text:'本次会话', tone:'var(--accent)', glyph:'●'}}
+            meta={c.pending ? null : ((c.p.indexOf('/') >= 0 ? c.p.split('/').slice(0, -1).join('/') + ' · ' : '') + c.tool + ' · ' + c.ms + ' · ' + c.when)}
+            value={diffValue(c)}
+            onClick={()=>setExp(s=>Object.assign({}, s, {[c.p]:!s[c.p]}))}
+            chevron={false}
+            trail={<MoreBtn onClick={()=>setMenu({kind:'changed', path:c.p})}/>}/>
+          {c.pending ? (
+            <div className="rw" style={{padding:'0 12px 9px',gap:8}}>
+              <span className="mono t12" style={{color:'var(--warning)'}}>…</span>
+              <span className="t12 fl1" style={{color:'var(--text)'}}>pi 正在写入这个文件 · 已收到 24 行</span>
+              <Tick ms={1800} color="var(--warning)"/>
+            </div>
+          ) : null}
+          {isOpen && c.pending ? (
+            <div className="t12 c-muted" style={{padding:'0 12px 10px'}}>pi 还在写这个文件；落盘之后这块 diff 才会出现。</div>
+          ) : null}
+          {isOpen && !c.pending ? (
+            <div style={{background:'var(--tool-pending)',borderTop:'1px solid var(--border-muted)',
+              borderBottom:'1px solid var(--border-muted)',padding:'2px 6px 6px'}}>
+              <DiffBody lines={W_DIFF[c.p] || []}/>
+            </div>
+          ) : null}
+        </div>
+      );
+    };
+
+    /* ---- ④ 的目录行 / 文件行 ---- */
+    const dirRow = (dp) => {
+      const d = W_DIR[dp] || {n:0, time:'—'};
+      return (
+        <Row key={dp} title={dp.split('/').pop()} mono strong lead={<Icon n="folder" s={16}/>}
+          meta={d.n + ' 项 · ' + d.time}
+          onClick={()=>setPath(dp.split('/'))}
+          chevron={false}
+          trail={<MoreBtn onClick={()=>setMenu({kind:'dir', path:dp})}/>}/>
+      );
+    };
+    const fileRow = (fp) => {
+      const f = W_FILES[fp];
+      const ch = changed.filter(c=>c.p === fp)[0];
+      return (
+        <Row key={fp} title={f.name} mono strong
+          lead={<Icon n={f.kind === 'bin' ? 'bin' : 'file'} s={16}/>}
+          badge={ch ? {text:'本次会话', tone:'var(--accent)', glyph:'●'} : null}
+          meta={f.size + ' · ' + f.time}
+          value={ch ? diffValue(ch) : null}
+          onClick={()=>open(fp, 'view')}
+          chevron={false}
+          trail={<MoreBtn onClick={()=>setMenu({kind:'file', path:fp})}/>}/>
+      );
+    };
+
+    /* ---- ⑤ 的资源行：名字 + 来源徽标 + 状态点（只有异常才标记） ---- */
+    const resRow = (r) => {
+      let value = null, meta = r.meta;
+      if(r.status === 'conflict'){
+        value = <span className="rw" style={{gap:5}}>
+          <span className="mono t12" style={{color:'var(--warning)'}}>!</span>
+          <span className="t12" style={{color:'var(--warning)'}}>与「{r.withFam}」同名</span></span>;
+      } else if(r.status === 'parsefail'){
+        value = <span className="rw" style={{gap:5}}>
+          <span className="mono t12" style={{color:'var(--error)'}}>✗</span>
+          <span className="t12" style={{color:'var(--error)'}}>解析失败</span></span>;
+        meta = r.reason;
+      } else if(r.status === 'disabled'){
+        value = <span className="rw" style={{gap:5}}>
+          <span className="mono t12" style={{color:'var(--muted)'}}>⊘</span>
+          <span className="t12" style={{color:'var(--muted)'}}>已禁用</span></span>;
+      }
+      const piRow = untrusted && r.fam === 'pi';
+      if(piRow) meta = r.meta + ' · 不会加载（项目未受信任）';
+      const canUse = cat === 'skill' || cat === 'prompt';
+      return (
+        <Row key={r.path} title={r.name} mono={cat === 'ext'} strong={cat === 'ext'}
+          tone={r.status === 'disabled' ? 'var(--muted)' : 'var(--text)'}
+          badge={srcBadge(r)}
+          meta={meta}
+          value={value}
+          onClick={()=>open(r.path, 'view', resFile(r))}
+          chevron={false}
+          trail={canUse ? (
+            <span className="press t12 c-accent" style={{flex:'none',cursor:'pointer'}}
+              onClick={(e)=>{ if(e && e.stopPropagation) e.stopPropagation(); setSnack({text:'已把 /' + r.name + ' 插进输入框'}); }}>在对话里用</span>
+          ) : null}/>
+      );
+    };
+
+    /* ---- ⋮ 菜单的动作表 ---- */
+    const menuActs = () => {
+      if(!menu) return [];
+      if(menu.kind === 'changed') return [
+        {k:'打开'}, {k:'编辑'}, {k:'重命名'}, {k:'删除', tone:'var(--error)', glyph:'✗'}, {k:'看它在对话里的那一步'}];
+      if(menu.kind === 'file') return [
+        {k:'打开'}, {k:'编辑'}, {k:'重命名'}, {k:'删除', tone:'var(--error)', glyph:'✗'}, {k:'复制路径'}];
+      return [{k:'进入'}, {k:'重命名'}, {k:'删除', tone:'var(--error)', glyph:'✗'}, {k:'复制路径'}];
+    };
+    const runAct = (a) => {
+      const fp = menu.path;
+      if(a.k === '看它在对话里的那一步'){
+        /* 正式版会切到「对话」tab 并定位到那一步；原型不改导航，所以只关菜单 */
+      } else if(a.k === '打开'){ open(fp, 'view', menu.file); }
+      else if(a.k === '编辑'){ open(fp, 'edit', menu.file); }
+      else if(a.k === '进入'){ setPath(fp.split('/')); }
+      else if(a.k === '重命名'){ setDlg({kind:'rename', path:fp}); }
+      else if(a.k === '删除'){ setDlg({kind:'delete', path:fp}); }
+      else if(a.k === '复制路径'){ copy(fp); }
+      setMenu(null);
+    };
+
+    const vIdx = dirKey ? dirKey.split('/').length : 0;
+    const viewerFile = view ? view.file : null;
+
+    return (
+      <React.Fragment>
+        <div className="b-screen">
+          <TopBar title="工作区" statusMeta meta={engineDown ? '引擎已停止' : '就绪'}
+            right={<div className="press" onClick={()=>setSnack({text:'已重新读一遍工作区'})}
+              style={{width:30,height:30,borderRadius:8,display:'flex',alignItems:'center',justifyContent:'center',color:'var(--text)',cursor:'pointer'}}>
+              <Icon n="refresh" s={17}/></div>}/>
+          <div className="b-scroll" ref={scrollRef} style={{paddingBottom:16}}>
+
+            {/* 顶栏下一行细提示：这一屏的文件能力不依赖引擎 */}
+            <div style={{padding:'12px 14px 0'}}>
+              <Notice tone={engineDown ? 'Warning' : 'Info'} glyph={engineDown ? '!' : '·'}
+                text={engineDown
+                  ? '引擎没起来：正在跑与本次会话改过没有数据；下面的文件与资源照常可用，文件照样能打开 · 编辑 · 删除。'
+                  : '这个会话的项目现场。文件走宿主 File I/O，引擎没起来也能打开 · 编辑 · 删除。'}/>
+            </div>
+
+            {/* ① 当前目录卡：整张可点 → 工作区切换面板 */}
+            <div style={{padding:'2px 14px 0'}}>
+              <div className="press2" onClick={()=>setRoot(true)}
+                style={{background:'var(--surf-low)',borderRadius:10,padding:'12px 14px',position:'relative',overflow:'hidden',cursor:'pointer'}}>
+                <span style={{position:'absolute',left:0,top:8,bottom:8,width:2,background:'var(--accent)'}}/>
+                <div className="rw" style={{gap:10}}>
+                  <span style={{color:'var(--muted)',display:'flex'}}><Icon n="folder" s={18}/></span>
+                  <div className="fl1" style={{minWidth:0}}>
+                    <div className="t17 w6">pi-android</div>
+                    <div className="t12 c-muted" style={{marginTop:2}}>{summary}</div>
+                  </div>
+                  <Badge text="切换" tone="var(--muted)"/>
+                  <Icon n="right" s={14}/>
+                </div>
+              </div>
+            </div>
+
+            {/* ② 正在跑：没有在跑的命令就整段不画 */}
+            {running ? (
+              <Section label="正在跑" count="1 条命令" aside="进入上下文">
+                <Rows inset={14}>
+                  <Row title={RUNNING.cmd} mono strong lead={<Icon n="terminal" s={16}/>}
+                    meta={'运行中 · 已运行 12.3 秒 · ' + RUNNING.out} metaMono
+                    badge={{text:'运行中', tone:'var(--warning)', glyph:'…'}}
+                    trail={<Tick ms={RUNNING.ms} color="var(--warning)"/>} chevron={false}/>
+                </Rows>
+                <div style={{padding:'10px 14px 0'}}>
+                  <div className="rw" style={{gap:3}}>
+                    {Array.from({length:RUNNING.of}).map((_,i)=>(
+                      <span key={i} style={{flex:1,height:3,borderRadius:1,
+                        background:i < RUNNING.segs ? 'var(--warning)' : 'var(--border-muted)'}}/>
+                    ))}
+                  </div>
+                </div>
+              </Section>
+            ) : null}
+
+            {/* ③ 本次会话改过：这一屏的主角 */}
+            {engineDown ? (
+              <Section label="本次会话改过" count="无数据">
+                <Rows inset={14}>
+                  <Row title="引擎没起来，读不到本次会话的改动" lead={<Icon n="file" s={16}/>} chevron={false}
+                    meta="下面的文件与资源照常可用；改写过的文件自己打开也一样能看。"/>
+                </Rows>
+              </Section>
+            ) : clean ? (
+              <Section label="本次会话改过" count="0 个文件">
+                <Rows inset={14}>
+                  <Row title="这次会话还没动过文件" lead={<Icon n="check" s={16}/>} chevron={false}
+                    meta="下面照旧能浏览、打开、编辑、删除工作区里的文件。"/>
+                </Rows>
+              </Section>
+            ) : (
+              <Section label="本次会话改过" count={changed.length + ' 个文件'} aside="最近改动在上">
+                <Rows inset={14}>{changed.map(changedRow)}</Rows>
+              </Section>
+            )}
+
+            {/* ④ 全部文件：这一版补的那块缺口 */}
+            <Section label="全部文件" count={st === 'error' ? null : dirMeta.n + ' 项'}
+              aside={st === 'error' ? null : (
+                <span className="press" onClick={()=>setDlg({kind:'new'})}
+                  style={{color:'var(--accent)',display:'inline-flex',alignItems:'center',gap:4,cursor:'pointer'}}>
+                  <Icon n="plus" s={13}/>新建</span>
+              )}>
+              <div className="rw w-crumb" style={{padding:'0 14px 8px',gap:2,flexWrap:'wrap'}}>
+                {['工作区'].concat(path).map((n, i, arr) => {
+                  const last = i === arr.length - 1;
+                  const go = i === 0 ? [] : path.slice(0, i);
+                  return (
+                    <React.Fragment key={i}>
+                      {i > 0 ? <span className="mono t12 c-muted" style={{padding:'0 3px'}}>/</span> : null}
+                      <span className={"t12" + (i > 0 ? ' mono' : '') + (last ? '' : ' press')}
+                        onClick={last ? null : ()=>setPath(go)}
+                        style={{color:last ? 'var(--text)' : 'var(--muted)',cursor:last ? 'default' : 'pointer',
+                          maxWidth:170,display:'inline-block',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
+                        {mid(n, 16)}</span>
+                    </React.Fragment>
+                  );
+                })}
+              </div>
+              {st === 'error' ? (
+                <ErrBlock title="读不到这个目录" openDefault
+                  message="这个目录已经不在了，可能被重命名或删掉；工作区里别的地方不受影响。"
+                  detail={"java.io.FileNotFoundException: /data/user/0/dev.pi.android/files/workspaces/pi-android/src/session\n  (No such file or directory)"}
+                  actions={<React.Fragment>
+                    <span className="press t13 c-accent" onClick={()=>setSnack({text:'已重试 · 还是读不到'})}>重试</span>
+                    <span className="press t13 c-accent" onClick={()=>setPath([])}>回到工作区</span>
+                  </React.Fragment>}/>
+              ) : (
+                <Rows inset={14}>
+                  {tree.dirs.map(dirRow)}
+                  {tree.files.map(fileRow)}
+                  {tree.dirs.length + tree.files.length === 0 ? (
+                    <div style={{padding:'20px 14px 18px',textAlign:'center'}}>
+                      <div className="t13 c-muted">这个目录是空的</div>
+                      <div className="rw" style={{justifyContent:'center',marginTop:12}}>
+                        <span className="press rw" onClick={()=>setDlg({kind:'newfile'})}
+                          style={{height:32,padding:'0 14px',borderRadius:999,background:'var(--accent)',gap:6,cursor:'pointer'}}>
+                          <Icon n="plus" s={15}/>
+                          <span className="t13 w6" style={{color:'var(--page)'}}>新建文件</span>
+                        </span>
+                      </div>
+                      <div className="t12 c-muted" style={{marginTop:10}}>也可以从段头的「新建」里建一个文件夹。</div>
+                    </div>
+                  ) : null}
+                </Rows>
+              )}
+            </Section>
+
+            {/* ⑤ 这个目录的资源：与 pi 官方一致的四类 + 五种来源 + 四种状态 */}
+            <Section label="这个目录的资源" aside={CAT_LABEL[cat] + ' ' + resRows.length + ' 项'}>
+              {untrusted ? (
+                <div style={{padding:'0 14px'}}>
+                  <Notice tone="Warning" glyph="!"
+                    text="项目未受信任：pi 不会加载这个项目里的 .pi 资源。"/>
+                  <div className="t12 c-muted" style={{marginTop:-4,marginBottom:10}}>要改就去「设置 → 扩展包与项目信任」。</div>
+                </div>
+              ) : (
+                <div className="t12 c-muted" style={{padding:'0 14px 10px'}}>
+                  来源按 pi 的优先级排：项目 .pi → .agents → 全局 → 包。
+                </div>
+              )}
+              <div className="rw" style={{padding:'0 14px 8px',gap:8}}>
+                <Seg value={cat} onChange={setCat} items={CATS}/>
+              </div>
+              <Rows inset={14}>
+                {resRows.map(r => (
+                  <div key={r.path + r.fam} style={untrusted ? {opacity:.5} : null}>{resRow(r)}</div>
+                ))}
+              </Rows>
+            </Section>
+
+            <div className="t12 c-muted" style={{padding:'18px 14px 6px',lineHeight:1.65}}>
+              工作区在 App 私有目录里，路径由 App 固定；文件读写走宿主 File I/O，不需要额外授权。
+            </div>
+          </div>
+
+          {snack ? <Snack tone={snack.tone} text={snack.text}/> : null}
+        </div>
+
+        {/* ---------------- 浮层：工作区切换面板 ---------------- */}
+        <Sheet open={root} title="切换工作区" onClose={()=>setRoot(false)} maxBody={520}
+          sub="工作区就是 pi 的现场目录；它就在 App 私有目录里。"
+          footer="换工作区等于换一个现场：会新建一个 pi 会话，当前会话不会被删除。">
+          <div style={{padding:'0 14px'}}>
+            <div className="t12 w5" style={{padding:'10px 0 7px',letterSpacing:'.02em'}}>现有工作区</div>
+            <Card style={{margin:0}}>
+              {W_WS.map((w, i)=>(
+                <React.Fragment key={w.name}>
+                  {i > 0 ? <div className="div" style={{marginLeft:14}}/> : null}
+                  <Row title={w.name} mono strong lead={<Icon n="folder" s={16}/>}
+                    meta={w.n + ' 个文件 · ' + w.time}
+                    badge={w.cur ? {text:'当前', tone:'var(--accent)', glyph:'●'} : null}
+                    chevron={!w.cur}
+                    onClick={()=>{ if(!w.cur) setSnack({text:'已切到工作区 · ' + w.name}); setRoot(false); }}/>
+                </React.Fragment>
+              ))}
+            </Card>
+            <div className="t12 w5" style={{padding:'16px 0 7px',letterSpacing:'.02em'}}>加一个</div>
+            <Card style={{margin:0}}>
+              <Row title="新建工作区" lead={<Icon n="plus" s={16}/>} tone="var(--accent)" strong
+                meta="在 App 私有目录里建一个空目录，不需要任何权限。"
+                chevron={false}
+                onClick={()=>{ setRoot(false); setDlg({kind:'newdir'}); }}/>
+              <div className="div" style={{marginLeft:14}}/>
+              <Row title="从设备目录选择（需授权）" lead={<Icon n="device" s={16}/>} tone="var(--accent)" strong
+                meta="需要「所有文件访问」权限；只有从设备目录里选工作区时才需要。"
+                chevron={false}
+                onClick={()=>{ setRoot(false); setSnack({text:'要先在系统设置里给「所有文件访问」权限', tone:'Warning'}); }}/>
+            </Card>
+            <div className="t12 c-muted" style={{padding:'14px 4px 18px',lineHeight:1.6}}>
+              新建的工作区落在 App 私有目录里，不需要授权；只有「从设备目录选择」那一条要系统权限。
+            </div>
+          </div>
+        </Sheet>
+
+        {/* ---------------- 浮层：⋮ 的文件菜单 ---------------- */}
+        <Sheet open={!!menu} title={menu ? mid(menu.path.split('/').pop(), 22) : ''} onClose={()=>setMenu(null)}
+          sub={menu ? <span className="mono">{menu.path}</span> : null}>
+          {menuActs().map(a=>(
+            <div key={a.k} className="press2" onClick={()=>runAct(a)} style={{padding:'12px 14px',cursor:'pointer'}}>
+              <span className="t14" style={{color:a.tone || 'var(--text)'}}>{a.glyph ? a.glyph + ' ' : ''}{a.k}</span>
+            </div>
+          ))}
+        </Sheet>
+
+        {/* ---------------- 浮层：新建（选文件还是文件夹） ---------------- */}
+        <Sheet open={!!dlg && dlg.kind === 'new'} title="新建" onClose={()=>setDlg(null)}
+          sub={'建在「工作区' + (path.length ? ' / ' + path.join(' / ') : '') + '」里'}>
+          <div className="press2" onClick={()=>setDlg({kind:'newfile'})} style={{padding:'12px 14px',cursor:'pointer'}}>
+            <div className="rw" style={{gap:9}}>
+              <span style={{color:'var(--muted)',display:'flex'}}><Icon n="file" s={16}/></span>
+              <span className="t14 fl1">新建文件</span>
+              <Icon n="right" s={14}/>
+            </div>
+            <div className="t12 c-muted" style={{marginTop:3,marginLeft:25}}>建完直接进编辑态，写什么由你。</div>
+          </div>
+          <div className="div" style={{marginLeft:14}}/>
+          <div className="press2" onClick={()=>setDlg({kind:'newdir'})} style={{padding:'12px 14px',cursor:'pointer'}}>
+            <div className="rw" style={{gap:9}}>
+              <span style={{color:'var(--muted)',display:'flex'}}><Icon n="folder" s={16}/></span>
+              <span className="t14 fl1">新建文件夹</span>
+              <Icon n="right" s={14}/>
+            </div>
+            <div className="t12 c-muted" style={{marginTop:3,marginLeft:25}}>放在当前目录下。</div>
+          </div>
+        </Sheet>
+
+        {/* ---------------- 浮层：新建文件 / 新建文件夹 / 重命名（同一支输入框） ---------------- */}
+        <Dialog open={!!dlg && (dlg.kind === 'newfile' || dlg.kind === 'newdir' || dlg.kind === 'rename')}
+          title={dlg && dlg.kind === 'rename' ? '重命名' : dlg && dlg.kind === 'newdir' ? '新建文件夹' : '新建文件'}
+          sub={<span className="mono">{(dlg && dlg.kind === 'rename') ? dlg.path : ('工作区' + (path.length ? ' / ' + path.join(' / ') : ''))}</span>}
+          onClose={()=>setDlg(null)}
+          actions={[
+            {label:'确定', primary:true, onClick:()=>{
+              if(dlg && dlg.kind === 'rename') setSnack({text:'已重命名 · ' + dlg.path.split('/').pop()});
+              else setSnack({text:(dlg && dlg.kind === 'newdir' ? '已新建文件夹' : '已新建文件') + ' · 未命名'});
+              setDlg(null);
+            }},
+            {label:'取消', onClick:()=>setDlg(null)}]}>
+          <div className="rw" style={{height:38,border:'1px solid var(--border-accent)',borderRadius:9,padding:'0 10px',
+            gap:8,background:'var(--surf-low)'}}>
+            <input defaultValue={dlg && dlg.kind === 'rename' ? dlg.path.split('/').pop() : ''}
+              placeholder={dlg && dlg.kind === 'newdir' ? '文件夹名' : '文件名，例如 Note.md'}
+              className="mono fl1"
+              style={{background:'transparent',border:'none',outline:'none',color:'var(--text)',fontSize:13}}/>
+          </div>
+          <div className="t12 c-muted" style={{marginTop:8}}>
+            {dlg && dlg.kind === 'rename' ? '只改文件名，内容不动。' : '建在当前目录下。'}
+          </div>
+        </Dialog>
+
+        {/* ---------------- 浮层：删除确认（永久删除） ---------------- */}
+        <Dialog open={!!dlg && dlg.kind === 'delete'} glyph="!" glyphTone="var(--error)" title="删除文件"
+          sub={dlg && dlg.path ? <span className="mono">{dlg.path}</span> : null}
+          onClose={()=>setDlg(null)}
+          actions={[
+            {label:'永久删除', primary:true, tone:'var(--error)', onClick:()=>{
+              setSnack({text:'已删除 · ' + baseName(dlg && dlg.path)}); setDlg(null);
+            }},
+            {label:'取消', onClick:()=>setDlg(null)}]}>
+          删除「{baseName(dlg && dlg.path)}」？文件会从工作区里永久删除，不进回收站，也恢复不了。
+          {W_CHANGED.some(c=>dlg && c.p === dlg.path) ? ' pi 在本次会话里对它做过的改动不会保留。' : ''}
+        </Dialog>
+
+        {/* ---------------- 浮层：未保存就返回 ---------------- */}
+        <Dialog open={!!dlg && dlg.kind === 'unsaved'} glyph="!" glyphTone="var(--warning)" title="还没保存"
+          onClose={()=>setDlg(null)}
+          actions={[
+            {label:'保存并返回', primary:true, onClick:()=>{ setView(null); setDlg(null); setSnack({text:'已保存并返回'}); }},
+            {label:'不保存', tone:'var(--error)', onClick:()=>{ setView(null); setDlg(null); setSnack({text:'改动已丢掉'}); }},
+            {label:'继续编辑', onClick:()=>setDlg(null)}]}>
+          「{baseName(view && view.path)}」有 2 处改动还没保存。返回之后这些改动就没了。
+        </Dialog>
+
+        {/* ---------------- 浮层：文件查看器 / 编辑器 ---------------- */}
+        {view && viewerFile ? (
+          <Viewer file={viewerFile} dir={view.path.split('/').slice(0, -1).join(' / ')}
+            mode={view.mode} dirty={view.dirty}
+            onBack={()=>{
+              if(view.mode === 'saving') return;
+              if(view.dirty) setDlg({kind:'unsaved'});
+              else setView(null);
+            }}
+            onEdit={()=>setView(Object.assign({}, view, {mode:'edit'}))}
+            onDirty={()=>{ if(!view.dirty) setView(Object.assign({}, view, {dirty:true})); }}
+            onSave={()=>{
+              setView(Object.assign({}, view, {mode:'saving'}));
+              setTimeout(()=>{ if(st !== 'saving') setView(v=>v && Object.assign({}, v, {mode:'view', dirty:false})); }, 900);
+            }}
+            onCopyError={()=>copy('java.io.IOException: write failed: EBUSY')}
+            onMore={(nm)=>setMenu({kind:'file', path:view.path, file:view.file})}/>
+        ) : null}
+      </React.Fragment>
+    );
+  }
+
+  window.WSCREEN = {WorkbenchScreen};
+})();
+</script>
+
+<!-- ============ 这一版的原型外壳：一排状态控件 + 一台 412×892 的机器 + 编码图例与没定的问题 ============ -->
+<script type="text/babel" data-presets="react">
+(function(){
+  const U = window.BUI;
+  const {Icon, TabBar, Badge} = U;
+  const {WorkbenchScreen} = window.WSCREEN;
+
+  const STATES = [
+    {k:'default', d:'五段齐全：① 当前目录卡（整张可点）③ 本次会话改过（含一条 pi 正在写）④ 全部文件 ⑤ 目录资源。② 因为当下没有命令在跑，按规则整段不画 —— 切到 running 就能看到它。'},
+    {k:'running', d:'有命令在跑：② 出现 —— 命令行等宽 +「运行中 · 已运行 12.3 秒 · 18 行」+ 24 段进度点阵 + Tick。③ 这时没有 pending 那一条（pi 一次只走一步）。'},
+    {k:'clean', d:'这次会话什么都没改：③ 给一句话空态，④⑤ 照旧能浏览、打开、编辑、删除。'},
+    {k:'empty', d:'空目录（工作区 / src / generated）：④ 一句话 +「新建文件」按钮；段头的「新建」里还有「新建文件夹」。'},
+    {k:'error', d:'读目录失败：④ 给原因（FileNotFoundException）+ 重试 / 回到工作区；面包屑还停在失败前的那个位置。'},
+    {k:'resources', d:'⑤ 资源段：分段按钮切四类、段头右侧给该项计数；技能这一类里五种来源徽标（项目 .pi / 扩展贡献 / .agents / 全局 / 包 · pi-skills）都在。点一行看它的原文。'},
+    {k:'resourcesBad', d:'⑤ 三种异常同时出现：同名冲突（review 撞在 .agents 上）、解析失败（front matter 缺 name）、被禁用；顶上一条「项目未受信任」，整段压暗。'},
+    {k:'engineDown', d:'引擎没起来：②③ 显示成不可用 / 无数据，④⑤ 照常可用 —— 这就是顶栏下一行那句「文件走宿主 File I/O」要兑现的东西。'},
+    {k:'rootsheet', d:'工作区切换面板：现有工作区列表（当前那个带 accent 徽标）+「新建工作区」+「从设备目录选择（需授权）」。'},
+    {k:'viewing', d:'查看器打开 src/session/SessionList.kt 的原文：行号列 + 语法色；右上「编辑」进编辑态，⋮ 是同一套文件菜单。'},
+    {k:'editing', d:'编辑中：纯文本域 + accent 聚焦边，标题行给「● 未保存」；点左上角返回会先问你一次。'},
+    {k:'saving', d:'保存中：宿主 File I/O 正在写盘，保存键收成「… 保存中」，返回键暂时不响应。'},
+    {k:'savefailed', d:'保存失败：错误块给原因 + 重试 / 复制错误；未保存标记还在，磁盘上还是旧的。'},
+    {k:'unsavedLeave', d:'未保存就返回：三选一 —— 保存并返回 / 不保存 / 继续编辑。'},
+    {k:'binary', d:'二进制文件：查看器不展开，给一句说明 + 导出到 Download / 分享。'},
+    {k:'toolarge', d:'超大文件（2.4 MB 的 jsonl）：只给前 25 行 + 一行说明，末尾标出还有多少行没显示。'},
+    {k:'deleteConfirm', d:'删除确认：说清是永久删除、不进回收站、也恢复不了；主按钮用错误色。'},
+  ];
+
+  /* 图例里的徽标：与屏内 srcBadge() 同一套写法 */
+  const SRC = [
+    {b:{tone:'var(--accent)', text:<span>项目 <span className="mono">.pi</span></span>},
+     d:'项目自己的 .pi 目录。优先级最高：同名时它赢；项目未受信任时这一族不加载。'},
+    {b:{tone:'var(--muted)', text:<span className="mono">.agents</span>},
+     d:'.agents 约定目录，跨工具共用，排在项目 .pi 之后。'},
+    {b:{tone:'var(--muted)', text:'全局'},
+     d:'你自己全局的那一份，排在 .agents 之后。'},
+    {b:{tone:'var(--muted)', text:<span>包 · <span className="mono">pi-skills</span></span>},
+     d:'由包的资源清单带进来，排最后；包名用等宽，跟来源标签区分开。'},
+    {b:{tone:'var(--muted)', text:'扩展贡献'},
+     d:'运行中的扩展自己写出去的 —— 设备桥写出来的那个技能就是这一种；排在贡献它的那一族后面。'},
+  ];
+  const STATUS = [
+    {b:<span className="t12 c-muted">（什么都不加）</span>, d:'正常。只有异常才留痕迹，这是 v2 的纪律。'},
+    {b:<span className="rw" style={{gap:5}}><span className="mono t12" style={{color:'var(--warning)'}}>!</span><span className="t12" style={{color:'var(--warning)'}}>与「项目 .pi」同名</span></span>,
+     d:'同名冲突（warning）：pi 只加载优先级高的那一条，所以行内直接写清跟谁撞了。'},
+    {b:<span className="rw" style={{gap:5}}><span className="mono t12" style={{color:'var(--error)'}}>✗</span><span className="t12" style={{color:'var(--error)'}}>解析失败</span></span>,
+     d:'解析失败（error）：副行给 pi 的原因，例如「front matter 缺 name」。'},
+    {b:<span className="rw" style={{gap:5}}><span className="mono t12" style={{color:'var(--muted)'}}>⊘</span><span className="t12" style={{color:'var(--muted)'}}>已禁用</span></span>,
+     d:'被禁用（muted）：仍然列出来。禁用不是失败，所以不给它 error 色。'},
+  ];
+
+  function App(){
+    const [st, setSt] = React.useState('default');
+    const cur = STATES.filter(s=>s.k === st)[0] || STATES[0];
+    return (
+      <div className="b-page">
+        <div className="b-head">
+          <div className="b-head-t">PI · 工作区（最终方案）—— 从「只读的项目现场」补成「现场 + 能动手」</div>
+          <div className="b-head-s">
+            底栏第二个 tab，不新增页面、不改导航。手机框、CSS 变量、构件（<em>TopBar / Section / Rows / Row / Badge / Seg /
+            Sheet / Dialog / DiffBody / Tick</em>）全部沿用已冻结的 <em>direction-b-v2.html</em>，一个色值都没改；
+            v2 那张当前目录卡上的「分支 main · 3 个文件有改动」<b>删掉了</b> —— pi 没有 git 这条通道，取不到。
+            <br/>
+            这一版补的是 <b>④ 全部文件</b>与 <b>⑤ 这个目录的资源</b>，并把 <b>③ 本次会话改过</b>变成能动手的地方：
+            点行就地开 diff，行尾 ⋮ 才是打开 / 编辑 / 重命名 / 删除 / 复制路径。文件操作走<b>宿主 File I/O</b>，
+            所以引擎没起来时这一屏的文件功能照样能用 —— 顶栏下面那一行就是在说这件事，切到 <em>engineDown</em> 看它怎么兑现。
+            <br/>
+            下面 17 个状态都能点：一排控件切状态，机器里的每一行、每个 ⋮、每个浮层也都能点。
+          </div>
+        </div>
+
+        <div className="b-ctl">
+          {STATES.map(s=>(
+            <span key={s.k} className={'b-ctl-i' + (s.k === st ? ' on' : '')} onClick={()=>setSt(s.k)}>{s.k}</span>
+          ))}
+        </div>
+        <div className="b-ctlx">
+          <span className="k">{st}</span><span className="v">{cur.d}</span>
+        </div>
+
+        <div className="b-frames">
+          <div className="b-phone">
+            <div className="b-cap">
+              <b>工作区 · 底栏第二个 tab（412×892）</b>
+              <span>五段顺序：当前目录 → 正在跑 → 本次会话改过 → 全部文件 → 这个目录的资源。
+                点当前目录卡开切换面板；点带「本次会话」的那一行就地展开 diff；点行尾 ⋮ 开文件菜单；进目录点文件夹行、也可以点面包屑回上层。</span>
+            </div>
+            <window.AndroidFrame width={412} height={892} darkMode time="9:41" battery={86}>
+              <div className="b-root">
+                <div className="b-stage">
+                  <WorkbenchScreen key={st} state={st}/>
+                </div>
+                <TabBar active="workbench" onChange={()=>{}}/>
+              </div>
+            </window.AndroidFrame>
+          </div>
+        </div>
+
+        <div className="b-block">
+          <div className="b-block-h">⑤ 的来源徽标（五种）与状态（四种）—— 这一屏最需要对齐的一套编码</div>
+          {SRC.map((s, i)=>(
+            <div className="b-lg" key={i}>
+              <span className="b"><Badge {...s.b}/></span>
+              <span className="d">{s.d}</span>
+            </div>
+          ))}
+          <div style={{height:10}}/>
+          {STATUS.map((s, i)=>(
+            <div className="b-lg" key={i}>
+              <span className="b">{s.b}</span>
+              <span className="d">{s.d}</span>
+            </div>
+          ))}
+          <div className="b-qs" style={{paddingTop:12}}>
+            五种来源不靠颜色区分，靠三件事：<b>短标签本身</b>（项目 .pi / .agents / 全局 / 包 · 包名 / 扩展贡献）、
+            <b>那个 5px 点只有两档</b>（项目内 accent、项目外 muted —— 同名时项目内赢，这是来源之间唯一有结果差别的分野）、
+            <b>等宽还是文本</b>（路径型来源用等宽，抽象来源用文本）。硬造五个色相就是自创配色，而且会跟右边的状态色打架。
+          </div>
+        </div>
+
+        <div className="b-block">
+          <div className="b-block-h">这一屏里我没有拍板的产品问题（要 pi 那侧确认，我不替它决定）</div>
+          <div className="b-qs">
+            <b>1 · default 里 ② 和 ③ 的 pending 能不能同时出现。</b>pi 一次只跑一个工具，所以我把「命令在跑」和「正在写文件」
+            分成两个状态：default 有 pending 写入、没有 ②；running 有 ②、没有 pending。如果现场摘要另有取法，这两个态可以合成一个 ——
+            但你的清单里 default 写的是「五段齐全」、② 的规则又是「没有在跑的命令就不画」，这两条本身是互斥的，我按后者做。
+            <br/>
+            <b>2 ·「本次会话改过」的取数口径。</b>我按「本次会话里 write / edit 过的文件 + 你自己的 File I/O 编辑」画，
+            没有 git，所以没有「改动数」这类东西。两个来源合成一张列表、按什么排序（我用了最近改动在上），要 pi 侧定。
+            <br/>
+            <b>3 · pending 那一条能读到什么。</b>我画成「pi 正在写入这个文件 · 已收到 24 行」。pi 的 write 是不是流式、
+            能不能给出「已收到多少」，我不确定；给不出就只留「正在写入」，右侧的 Tick 也要撤掉。
+            <br/>
+            <b>4 · 查看器 / 编辑器要不要行号、长行要不要换行。</b>现在是查看态有行号 + 长行换行，编辑态是纯文本域（无行号、软换行）。
+            如果 pi 侧希望两边一致，这是要定的一条。
+            <br/>
+            <b>5 · 资源段能不能改。</b>这一屏只给了「打开」与「在对话里用」；重命名 / 删除 / 禁用资源一条都没画，
+            因为不确定 pi 允许在工作区屏里动 .pi 里的东西。
+            <br/>
+            <b>6 · 资源行的副行放什么。</b>技能 / 提示词 / 主题用了 front matter 的 description，扩展用了「名字 · 版本」。
+            这个字段是不是每个来源族都取得到，要确认；取不到就只留名字 + 徽标。
+            <br/>
+            <b>7 · 同名冲突的展示深度。</b>只在撞车的那一行写「与「项目 .pi」同名」，没有画「被压下去那一条在设置里怎么看」。
+            要不要给一个「都列出来」的入口，是产品决定。
+            <br/>
+            <b>8 · 大文件预览的阈值。</b>「超过 1 MB 只给前 25 行」里两个数字都是我填的占位，
+            等 pi 侧给真实上限（v2 的 read 卡用过「输出超过 200 KB」这类阈值）。
+            <br/>
+            <b>9 · 二进制文件的动作。</b>我给了「导出到 Download / 分享」（和设置里诊断报告同源）。
+            如果工作区屏不该有导出，这两颗要删。
+            <br/>
+            <b>10 ·「在对话里用」的落点。</b>按需求是把 /名字 插进输入框；原型只弹一条 Snack。
+            要不要顺手把 tab 切到「对话」并聚焦输入框，是交互决定。
+            <br/>
+            <b>11 · 我这一版自己改掉的两处。</b>(a) v2 的「当前目录卡」写了 git 分支与改动数，按你的要求删了；
+            (b) 项目未受信任时你说「整体压暗」，我照做了，但额外给 .pi 那几行加了「不会加载（项目未受信任）」的副行 ——
+            因为真正不生效的只有项目 .pi 那一族，压暗只是说这一段处于降级状态。
+          </div>
+        </div>
+
+        <div className="b-foot">
+          <div className="b-block-h">自检</div>
+          <div className="b-qs">
+            · 17 个状态都画了：default / running / clean / empty / error / resources / resourcesBad / engineDown /
+            rootsheet / viewing / editing / saving / savefailed / unsavedLeave / binary / toolarge / deleteConfirm。
+            <br/>
+            · 屏内可点：当前目录卡 → 切换面板；③ 行 → 就地 diff；③/④ 行尾 ⋮ → 文件菜单（打开 / 编辑 / 重命名 / 删除 /
+            复制路径 / 看它在对话里的那一步）；④ 文件夹行 → 进目录；面包屑 → 回上层；④ 段头「新建」→ 新建文件 / 新建文件夹；
+            ⑤ 分段按钮 → 四类资源；⑤ 行 → 看原文；技能与提示词行的「在对话里用」；查看器右上「编辑 / 保存」、左上返回（有未保存先问）；
+            文件菜单里的「删除」→ 永久删除确认。
+            <br/>
+            · 只用 v2 的令牌与构件；零渐变、零模糊、零阴影、零循环动画、零 emoji、零外部图片；文件名与路径全部等宽，中文文案用「」。
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const root = ReactDOM.createRoot(document.getElementById('root'));
+  root.render(<App/>);
+})();
+</script>
+</body>
+</html>

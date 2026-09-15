@@ -1,0 +1,537 @@
+package app.pi.ui.screens
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import app.pi.ui.settings.PiSettingsMetrics
+import app.pi.ui.theme.PiTheme
+import app.pi.ui.theme.StateTone
+import app.pi.ui.theme.stateToneColor
+
+/**
+ * 工作区这一屏自己的 v2 构件。
+ *
+ * ## 为什么不加进 `ui/components/PiCommon.kt`
+ *
+ * 这一批的边界是「只改 `ProjectScreen.kt` 与同包新增文件，`PiCommon.kt` 只可新增构件」。
+ * 这些构件目前只有工作区一屏用（`Ws` 前缀就是「工作区」），而 `PiCommon.kt` 是别人也在
+ * 动的共享文件 —— 放在同包的新文件里，既不与那边冲突，也不把一屏的私有形状塞进公共层。
+ *
+ * ## 每一个的出处
+ *
+ * 全部照 `design/ui-refactor/design-demos/workspace-final.html`（它自己又是
+ * `direction-b-v2.html` 的构件原样内联），逐条对齐：
+ *
+ * | 构件 | 稿子里的位置 | 几何 |
+ * |---|---|---|
+ * | [WsBadge] | `function Badge` (`:474-483`) | 5×5 圆角 1 的点 + 可选 12 等宽符号 + 12 文字，`1px border-muted`、圆角 999、`padding:1px 7px 1px 6px` |
+ * | [WsChip] | `function Chip` (`:485-497`) | 高 26、圆角 999、`padding:0 9px`、`1px` 描边（选中 `border-accent`） |
+ * | [WsSeg] | `function Seg` (`:499-511`) | 外框 `surf-high` + `border-muted` + 圆角 8、内项高 24 圆角 6，选中 `selected-bg` |
+ * | [WsNotice] | `function Notice` (`:615-625`) | 等宽前缀（`·` / `!` / `✗`）+ 13 文本，三档 tone |
+ * | [WsErrBlock] | `function ErrBlock` (`:1048-1072`) | 3px 竖条 + `tool-error` 底 + `1px rgba(error,.45)` 边 + 圆角 10 |
+ * | [WsSnack] | `function Snack` (`:627-643`) | 底部一条：符号 + 文本 + 可选动作，三档底/字 |
+ * | [WsSectionHeader] | `function Section` (`:424-435`) | `padding:0 14px`、`margin-bottom:7px`、12 标签 + 12 计数 + 右侧 aside |
+ * | [WsRow] | `function Row` (`:452-471`) | `padding:10px 12px`、`gap:10`、标题 15/500（等宽时 14）+ 副行 12 + 右值 13 |
+ */
+
+// ------------------------------------------------------------------ 段头 ----
+
+/**
+ * 段头：左边标签 + 计数，右边一个 slot（design 稿 ④ 的「新建」入口、⑤ 的计数都在那儿）。
+ *
+ * 与设置页的 `PiSettingsSectionHeader` 同几何（`06 §2`「分组头 padding:0 14px;
+ * margin-bottom:7px」+「分组块 marginTop:18px」），差别只有一个：aside 是**可点的
+ * slot**而不是一行字 —— 稿子 ④ 段头右侧那颗「+ 新建」是一个控件。
+ */
+@Composable
+internal fun WsSectionHeader(
+    label: String,
+    count: String? = null,
+    aside: (@Composable () -> Unit)? = null,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(
+                start = PiSettingsMetrics.pageHorizontal,
+                end = PiSettingsMetrics.pageHorizontal,
+                top = PiSettingsMetrics.groupGap,
+                bottom = PiSettingsMetrics.groupHeaderGap,
+            ),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(PiSettingsMetrics.titleGap),
+    ) {
+        Text(
+            label,
+            style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
+            color = MaterialTheme.colorScheme.onSurface,
+        )
+        if (count != null) {
+            Text(
+                count,
+                style = PiTheme.text.meta,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Spacer(Modifier.weight(1f))
+        aside?.invoke()
+    }
+}
+
+// ------------------------------------------------------------------ 徽标 ----
+
+/**
+ * `字 + 符号 + 颜色` 的状态徽标（`ui/theme/PiStateChip.kt` 的 `StateChip` 是它的正文色
+ * 版本）。这里的差别是**来源徽标需要混排**：`项目 .pi` 的「.pi」、`包 · pi-skills` 的包名
+ * 必须等宽，而前面的汉字不是 —— 稿子把这件事写成「路径型来源用等宽，抽象来源用文本」。
+ */
+@Composable
+internal fun WsBadge(
+    text: String,
+    tone: StateTone,
+    modifier: Modifier = Modifier,
+    mono: String? = null,
+    glyph: String? = null,
+    dot: Boolean = false,
+) {
+    val palette = PiTheme.palette
+    val color = stateToneColor(tone, palette)
+    Row(
+        modifier = modifier
+            .border(PiSettingsMetrics.hairline, palette.borderMuted, CircleShape)
+            .padding(start = 6.dp, end = 7.dp, top = 1.dp, bottom = 1.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(PiSettingsMetrics.badgeGap),
+    ) {
+        if (dot) {
+            Box(
+                Modifier
+                    .size(PiSettingsMetrics.badgeDot)
+                    .background(color, RoundedCornerShape(PiSettingsMetrics.badgeDotRadius)),
+            )
+        }
+        if (glyph != null) {
+            Text(glyph, style = PiTheme.text.monoSmall, color = color, maxLines = 1)
+        }
+        if (text.isNotEmpty()) {
+            Text(
+                text,
+                style = MaterialTheme.typography.labelSmall,
+                color = palette.text,
+                maxLines = 1,
+            )
+        }
+        if (mono != null) {
+            Text(mono, style = PiTheme.text.monoSmall, color = palette.text, maxLines = 1)
+        }
+    }
+}
+
+// ------------------------------------------------------------------ 分段 ----
+
+/** 分段按钮的一项。 */
+internal data class WsSegment<T>(val value: T, val label: String)
+
+/**
+ * v2 的 `Seg`：一个外框里并排几档，选中的那一档换底换字色。
+ *
+ * 全应用的资源段（技能 / 提示词 / 扩展 / 主题）与「会话列表 / 会话树」共用一个形状；
+ * 这里不复用设置页的 `PiSettingsChip`，因为那是**筛选胶囊**（可以多选、可以都不选），
+ * 而分段的语义是「有且只有一个当前项」。
+ */
+@Composable
+internal fun <T> WsSeg(
+    items: List<WsSegment<T>>,
+    value: T,
+    onChange: (T) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val palette = PiTheme.palette
+    Row(
+        modifier = modifier
+            .clip(RoundedCornerShape(WsSegRadius))
+            .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+            .border(
+                PiSettingsMetrics.hairline,
+                palette.borderMuted,
+                RoundedCornerShape(WsSegRadius),
+            )
+            .padding(WsSegPadding),
+        horizontalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
+        items.forEach { item ->
+            val active = item.value == value
+            Box(
+                modifier = Modifier
+                    .height(WsSegItemHeight)
+                    .clip(RoundedCornerShape(WsSegItemRadius))
+                    .background(
+                        if (active) palette.selectedBg else Color.Transparent,
+                    )
+                    .clickable { onChange(item.value) }
+                    .padding(horizontal = WsSegItemPadding),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    item.label,
+                    style = PiTheme.text.meta.copy(
+                        fontWeight = if (active) FontWeight.Medium else FontWeight.Normal,
+                    ),
+                    color = if (active) palette.text else palette.muted,
+                    maxLines = 1,
+                )
+            }
+        }
+    }
+}
+
+private val WsSegRadius = 8.dp
+private val WsSegPadding = 2.dp
+private val WsSegItemHeight = 24.dp
+private val WsSegItemRadius = 6.dp
+private val WsSegItemPadding = 10.dp
+
+// ------------------------------------------------------------------ 胶囊 ----
+
+/** 一颗可点的小胶囊（稿子的 `Chip`）：`⋮` 之外的表头动作、空态的「新建文件」用它。 */
+@Composable
+internal fun WsChip(
+    text: String,
+    onClick: (() -> Unit)? = null,
+    modifier: Modifier = Modifier,
+    active: Boolean = false,
+    glyph: String? = null,
+    glyphIcon: ImageVector? = null,
+) {
+    val palette = PiTheme.palette
+    Row(
+        modifier = modifier
+            .height(PiSettingsMetrics.chipHeight)
+            .clip(CircleShape)
+            .border(
+                PiSettingsMetrics.hairline,
+                if (active) palette.borderAccent else palette.borderMuted,
+                CircleShape,
+            )
+            .background(if (active) MaterialTheme.colorScheme.surfaceContainerHigh else Color.Transparent)
+            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
+            .padding(horizontal = PiSettingsMetrics.chipPaddingHorizontal),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(PiSettingsMetrics.badgeGap),
+    ) {
+        if (glyphIcon != null) {
+            Icon(
+                glyphIcon,
+                contentDescription = null,
+                modifier = Modifier.size(PiSettingsMetrics.searchIconSize),
+                tint = palette.muted,
+            )
+        }
+        if (glyph != null) {
+            Text(glyph, style = PiTheme.text.monoSmall, color = palette.muted, maxLines = 1)
+        }
+        Text(
+            text,
+            style = PiTheme.text.meta,
+            color = palette.text,
+            maxLines = 1,
+        )
+    }
+}
+
+// ------------------------------------------------------------------ 提示 ----
+
+/** 稿子的 `Notice`：一行提示，三档 tone。`tone` 为 null 就是 Info（muted）。 */
+@Composable
+internal fun WsNotice(
+    text: String,
+    modifier: Modifier = Modifier,
+    tone: StateTone = StateTone.Muted,
+    glyph: String = "·",
+) {
+    val color = stateToneColor(tone, PiTheme.palette)
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(
+                horizontal = PiSettingsMetrics.pageHorizontal,
+                vertical = PiSettingsMetrics.notePaddingVertical,
+            ),
+        horizontalArrangement = Arrangement.spacedBy(PiSettingsMetrics.rowGap),
+    ) {
+        Text(glyph, style = PiTheme.text.monoSmall, color = color, maxLines = 1)
+        Text(
+            text,
+            modifier = Modifier.weight(1f),
+            style = MaterialTheme.typography.bodyMedium,
+            color = color,
+        )
+    }
+}
+
+// ------------------------------------------------------------------ 错误块 ----
+
+/**
+ * 稿子的 `ErrBlock`：3px 竖条 + `tool-error` 底 + `✗` + 一句给人看的话 + 可展开的详情
+ * + 动作。读目录失败、读文件失败、保存失败三处共用它（稿子就是这么复用的）。
+ *
+ * @param detail 原文（异常栈、pi 的原因）；给出时多一行「详情」开关。
+ */
+@Composable
+internal fun WsErrBlock(
+    title: String,
+    message: String?,
+    modifier: Modifier = Modifier,
+    detail: String? = null,
+    actions: (@Composable RowScope.() -> Unit)? = null,
+) {
+    val palette = PiTheme.palette
+    var open by remember { mutableStateOf(false) }
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(
+                horizontal = PiSettingsMetrics.pageHorizontal,
+                vertical = PiSettingsMetrics.notePaddingVertical,
+            )
+            .clip(RoundedCornerShape(PiSettingsMetrics.cardRadius))
+            .background(palette.toolErrorBg)
+            .border(
+                PiSettingsMetrics.hairline,
+                palette.error.copy(alpha = 0.45f),
+                RoundedCornerShape(PiSettingsMetrics.cardRadius),
+            ),
+    ) {
+        Box(
+            Modifier
+                .width(3.dp)
+                .height(WsErrBarHeight)
+                .background(palette.error),
+        )
+        Column(
+            Modifier
+                .weight(1f)
+                .padding(
+                    horizontal = PiSettingsMetrics.cardPadding,
+                    vertical = PiSettingsMetrics.rowPaddingVertical,
+                ),
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(PiSettingsMetrics.titleGap),
+            ) {
+                Text("✗", style = PiTheme.text.monoSmall, color = palette.error, maxLines = 1)
+                Text(
+                    title,
+                    style = MaterialTheme.typography.labelLarge,
+                    color = palette.error,
+                )
+            }
+            if (message != null) {
+                Text(
+                    message,
+                    modifier = Modifier.padding(top = PiSettingsMetrics.supportingGap),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+            }
+            if (detail != null) {
+                Text(
+                    if (open) "收起" else "详情",
+                    modifier = Modifier
+                        .padding(top = PiSettingsMetrics.notePaddingVertical)
+                        .clickable { open = !open },
+                    style = PiTheme.text.meta,
+                    color = palette.error,
+                )
+                if (open) {
+                    Text(
+                        detail,
+                        modifier = Modifier.padding(top = PiSettingsMetrics.supportingGap),
+                        style = PiTheme.text.monoSmall,
+                        color = palette.bodyOnTool,
+                    )
+                }
+            }
+            if (actions != null) {
+                Row(
+                    modifier = Modifier.padding(top = PiSettingsMetrics.notePaddingVertical),
+                    horizontalArrangement = Arrangement.spacedBy(PiSettingsMetrics.pageHorizontal),
+                    verticalAlignment = Alignment.CenterVertically,
+                    content = actions,
+                )
+            }
+        }
+    }
+}
+
+/**
+ * 竖条的高度。稿子的竖条是 `flex` 撑满整块，Compose 里让它跟内容走：
+ * 这个高度是错误块两行正文加内边距的下限，短错误与长错误都不会看见一条比内容矮的条。
+ */
+private val WsErrBarHeight = 78.dp
+
+/** 错误块里的一个文字动作（`重试` / `回到工作区` / `复制错误`）。 */
+@Composable
+internal fun WsErrAction(label: String, tone: Color? = null, onClick: () -> Unit) {
+    Text(
+        label,
+        modifier = Modifier
+            .clip(RoundedCornerShape(PiSettingsMetrics.cardRadius))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 2.dp, vertical = 2.dp),
+        style = MaterialTheme.typography.bodyMedium,
+        color = tone ?: PiTheme.palette.accent,
+    )
+}
+
+// ------------------------------------------------------------------ 行 ----
+
+/**
+ * 这一屏的通用行（稿子的 `Row`）。
+ *
+ * 四个槽从左到右：前置图标、标题（可等宽、可粗）+ 徽标、右值、尾部（⋮ 或读数）。
+ * 副行在标题下面。整行可点（稿子的行都是可点的），没有 `onClick` 时不可点。
+ *
+ * @param mono 标题用等宽（**文件名与路径一律等宽**，稿子的规矩）。
+ * @param value 右侧读数（`+N −M`、`12 项`），等宽。
+ */
+@Composable
+internal fun WsRow(
+    title: String,
+    modifier: Modifier = Modifier,
+    lead: (@Composable () -> Unit)? = null,
+    mono: Boolean = false,
+    strong: Boolean = false,
+    titleColor: Color? = null,
+    badge: (@Composable () -> Unit)? = null,
+    meta: String? = null,
+    metaMono: Boolean = false,
+    value: (@Composable () -> Unit)? = null,
+    trail: (@Composable () -> Unit)? = null,
+    onClick: (() -> Unit)? = null,
+) {
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
+            .padding(
+                horizontal = PiSettingsMetrics.rowPaddingHorizontal,
+                vertical = PiSettingsMetrics.rowPaddingVertical,
+            ),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(PiSettingsMetrics.rowGap),
+    ) {
+        if (lead != null) {
+            Box(Modifier.size(PiSettingsMetrics.cardIconSize), contentAlignment = Alignment.Center) {
+                lead()
+            }
+        }
+        Column(Modifier.weight(1f)) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(PiSettingsMetrics.titleGap),
+            ) {
+                Text(
+                    title,
+                    modifier = Modifier.weight(1f, fill = false),
+                    style = if (mono) {
+                        PiTheme.text.mono
+                    } else {
+                        MaterialTheme.typography.bodyLarge
+                    },
+                    color = titleColor ?: MaterialTheme.colorScheme.onSurface,
+                    fontWeight = if (strong) FontWeight.SemiBold else null,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                badge?.invoke()
+            }
+            if (meta != null) {
+                Text(
+                    meta,
+                    modifier = Modifier.padding(top = PiSettingsMetrics.supportingGap),
+                    style = if (metaMono) PiTheme.text.monoSmall else PiTheme.text.meta,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+        value?.invoke()
+        trail?.invoke()
+    }
+}
+
+/** 行之间的 inset hairline（与设置页那条同值、同一根线）。 */
+@Composable
+internal fun WsHairline(inset: Boolean = true) {
+    HorizontalDivider(
+        modifier = if (inset) {
+            Modifier.padding(start = PiSettingsMetrics.pageHorizontal + PiSettingsMetrics.dividerInset)
+        } else {
+            Modifier
+        },
+        thickness = PiSettingsMetrics.hairline,
+        color = MaterialTheme.colorScheme.outlineVariant,
+    )
+}
+
+/** 一行里那个「更多」按钮（稿子的 `MoreBtn`：26×26 圆角 7）。 */
+@Composable
+internal fun WsMoreButton(onClick: () -> Unit) {
+    Box(
+        Modifier
+            .size(26.dp)
+            .clip(RoundedCornerShape(7.dp))
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text("⋮", style = PiTheme.text.mono, color = PiTheme.palette.muted, maxLines = 1)
+    }
+}
+
+/** 一张卡（稿子的 `Card`）：`surf-low` 底、圆角 10、左右 14 的页边。 */
+@Composable
+internal fun WsCard(modifier: Modifier = Modifier, content: @Composable () -> Unit) {
+    Surface(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = PiSettingsMetrics.pageHorizontal),
+        shape = RoundedCornerShape(PiSettingsMetrics.cardRadius),
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
+    ) {
+        Column { content() }
+    }
+}
