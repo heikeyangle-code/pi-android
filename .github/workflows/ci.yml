@@ -62,7 +62,30 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
+      # `setup-android` 只是把 runner **已经装好**的 SDK 接上环境并接受许可；它自己
+      # 那次 `sdkmanager --licenses` 是整条流水线里唯一会「因为 runner 侧的仓库/网络
+      # 抖动而 exit 1」的步骤 —— 实测在 4cc3003 与 47129a2 两次运行里连环失败，而同一
+      # 批次里 5 个代码检查（注释守卫 / 纯逻辑 / 协议单测 / pi 契约）全绿。所以它改成
+      # **失败不致命**，后面那一步负责把环境变量补齐并自己接受许可：action 正常时是幂等
+      # 的空操作，action 挂掉时构建照常进行。SDK 本身缺失会在这里明确报错，不会静默
+      # 走到 Gradle 才炸。
       - uses: android-actions/setup-android@v3
+        continue-on-error: true
+      - name: Ensure an Android SDK is on the environment
+        run: |
+          SDK="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          if [ ! -d "$SDK" ]; then
+            echo "::error::no Android SDK found at $SDK on this runner"
+            exit 1
+          fi
+          {
+            echo "ANDROID_HOME=$SDK"
+            echo "ANDROID_SDK_ROOT=$SDK"
+            echo "PATH=$SDK/cmdline-tools/latest/bin:$SDK/platform-tools:$PATH"
+          } >> "$GITHUB_ENV"
+          # 2>/dev/null + `|| true`：许可早就接受过时 sdkmanager 仍可能因为仓库不可达
+          # 而返回非零，那不该让构建失败；真缺平台时 Gradle 会用它自己的下载器去取。
+          yes 2>/dev/null | "$SDK/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null 2>&1 || true
       - uses: gradle/actions/setup-gradle@v4
 
       # The runtime is assembled from pinned upstreams rather than committed:
