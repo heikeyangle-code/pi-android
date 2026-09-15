@@ -112,7 +112,7 @@
 
 | # | 入口 | 行为 | 生效条件 |
 |---|---|---|---|
-| 1 | 设置 → 运行时与诊断 → **进程** → 「自定义系统提示」 | 传 `--system-prompt`，**整份替换** pi 自带的系统提示词。留空 = 不传，pi 用自带提示词（不是传空串） | 保存后点「重启引擎」（或下次启动 App） |
+| 1 | 设置 → **提示词** → 「自定义系统提示」 | 传 `--system-prompt`，**整份替换** pi 自带的系统提示词。留空 = 不传，pi 用自带提示词（不是传空串） | 保存后点「重启引擎」（或下次启动 App） |
 | 2 | 同处 → 「**追加系统提示**」（本轮新增） | 传 `--append-system-prompt`，**追加**到 pi 组装好的提示词末尾，不替换。`pi` 先做「替换/自带 + 追加」再拼上下文文件与技能（`core/system-prompt.ts:34-41`），所以第 1、2 行可以同时设置：先替换再追加 | 同上 |
 | 3 | agent 目录里的 `SYSTEM.md`（项目 `.pi/SYSTEM.md`，项目被信任时） | pi 自己发现并当作替换提示词 | **前提是第 1 行留空**：`resource-loader.ts:526` 是 `systemPromptSource ?? discoverSystemPromptFile()`，显式参数一有值就不再发现文件 |
 | 4 | agent 目录里的 `APPEND_SYSTEM.md`（项目同上） | pi 自己发现并追加 | **前提是第 2 行留空**：`resource-loader.ts:532-534` 是 `if (!appendSources)` |
@@ -120,6 +120,8 @@
 几个必须知道的前提与后果：
 
 - **只在启动时读。** 两行的值由 App 读出后写进新进程的 argv；正在跑的引擎改不动（RPC 没有对应命令，`rpc-types.ts:20-74`）。所以文案统一写「改动在重启引擎后生效」，标签是「需重启引擎」。
+- **这两行住在「提示词」分组（本轮从 运行时与诊断 → 进程 搬过来）。** 只搬显示位置：键一个字没改（`app.runtime.systemPrompt` / `app.runtime.appendSystemPrompt`），已经写在 `settings.json` 里的值照旧读得出来。搬家的理由是「用户在哪里找它」——这两行是「模型被交代了什么」，不是「引擎怎么跑」，pi 自己的 CLI 里 `--model` 与 `--system-prompt` 也是挨着的（`cli/args.ts:108-112`），所以设置首页把「提示词」排在「模型与推理」之后。`pre-spawn` 检查的契约随之从「一个分组」改成「两个登记在册的 pre-spawn 分组」（见 §3）。
+- **两行的编辑器是多行框。** 整份系统提示词是几千字的 Markdown，`PiSetting.multiline = true` 让 `PiTextEditorSheet` 给多行、框内可滚动的输入框（`PiSettingsEditors.kt` 的 `PiTextEditorMaxLines`）。以前「多行」是从 `depth > 1` 推出来的，`app.runtime.systemPrompt` 漏了 `depth`，于是落进单行框、只显示第一行 —— 这正是「几千字只进去几十字」那个缺陷；`depth` 现在不再决定字段画几行。
 - **重启不会丢值。** 值存在 pi 的 `settings.json`（全局文档，键名以 `app.` 开头，pi 不校验、直接忽略）；agent 目录是 bind 进 guest 的，换载荷、重解包 rootfs 都不动它（`docs/pi-contract.md` 版本升级一节）。
 - **替换与追加是两回事，不互相顶掉。** 同时设置时两条参数都在命令行上，pi 分别消费。
 - **第 3、4 条是本应用没有界面的专家路径。** 用户可以在 工作区 → 终端 里放文件；本应用不写这两个文件，避免和上面两行互相遮蔽出第三种状态。
@@ -140,13 +142,13 @@
 
 ## 3. 本轮改了什么
 
-1. **`app.runtime.appendSystemPrompt`**（新行，`RestartEngine`，多行编辑器 `depth = 2`）：接进 `PiLaunchOptions.fromSettingValues`；文案写清「追加，不是替换」与「重启引擎后生效」。
+1. **`app.runtime.appendSystemPrompt`**（新行，`RestartEngine`，多行编辑器 `PiSetting.multiline = true`；当时是用 `depth = 2` 冒充的，现已被 `multiline` 取代）：接进 `PiLaunchOptions.fromSettingValues`；文案写清「追加，不是替换」与「重启引擎后生效」。
 2. **`app.runtime.noContextFiles`**（新行，`RestartEngine`）：接 `--no-context-files`，手机上有明确意义（关掉工作区上下文文件对系统提示的注入）且 pi 无 settings 键。
 3. **纯函数**：`PiLaunchOptions.fromSettingValues(offline, cacheRetention, systemPrompt, appendSystemPrompt, noContextFiles)`——把「空串=未设置、只有 `long` 才算长保留、布尔缺省=false」这三条归一化从 ViewModel 挪进 `:rpc`；`PiSessionViewModel.launchOptions()` 只留文件 IO。
 4. **`rpc/.../PiPreSpawnConfig.kt`**（新文件）：启动期表 + 三条规则（暴露项不得有 pi 设置键；覆盖项不得与暴露项重叠；未暴露项必须写理由）+ `piPreSpawnKnob()` 判定。
 5. **`pre-spawn` bare-JVM harness**（`app/src/test/.../PiPreSpawnCheck.kt` + `tools/run-app-pure-checks.sh` 注册）：断言五个键都真的进 argv/env、注册表里都是 `RestartEngine`、ViewModel 里都读、暴露项与设置键不重叠。
 6. **`tools/pi-contract.mjs`**：新增一条 surface 断言——表中每个 CLI 参数名/环境变量名必须仍出现在钉住的引擎产物里。失败信息写明「pi 把未知 `--flag` 当扩展参数而不报错，所以开关会静默失效 → 重读 `cli/args.ts` 的 `parseArgs` 并更新 `PiPreSpawnConfig.kt` + `PiLaunchOptions.kt`」。
-7. **修过期注释/文案**：注册表「进程」一节原注释说 `effective` 用 `Reload`（与代码实际的 `RestartEngine` 矛盾），已改正并把五行的清单写全；`app.runtime.systemPrompt` 文案补上「整份替换」并指向新的追加行。
+7. **修过期注释/文案**：注册表「进程」一节原注释说 `effective` 用 `Reload`（与代码实际的 `RestartEngine` 矛盾），已改正并把五行的清单写全（这五行里的两行提示词现在住在「提示词」分组，注册表注释已同步成「三行 + 另两行的去处」）；`app.runtime.systemPrompt` 文案补上「整份替换」并指向新的追加行。
 
 ## 4. 不确定项与设备判据
 

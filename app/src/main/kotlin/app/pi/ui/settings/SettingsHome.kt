@@ -44,7 +44,7 @@ import app.pi.ui.theme.PiThinkingLevel
 
 /**
  * Settings level 0 (spec §6.1), 按 v2 重排：搜索入口 → 当前模型卡 → 设备 / 扩展 /
- * 关于 → 全部设置（12 个分组）→ 页脚说明。
+ * 关于 → 全部设置（13 个分组：spec §6.4 的 12 组 + 本应用自己的「提示词」）→ 页脚说明。
  *
  * 层级与取值来自 `06-v2-construction-reference.md` §2：屏水平 14、分组容器圆角 10
  * 且无描边无阴影、行 `padding:10px 12px`、标题 15/500、副行 12 灰、chevron 14、
@@ -96,7 +96,7 @@ fun SettingsHome(
      * （`direction-b-v2.html:2153-2156`，副行「这台设备上配好的厂商与模型」）。
      *
      * 它不是 pi 的一个设置项：这一页列的是这台设备上已经配好的厂商与模型，读的是
-     * `models.json` 与引擎，所以它既不属于 12 个分组，也不在「设备 / 扩展」两节里。
+     * `models.json` 与引擎，所以它既不属于 13 个分组，也不在「设备 / 扩展」两节里。
      * `null` 隐藏这一行（预览与测试用）。
      */
     onOpenModels: (() -> Unit)? = null,
@@ -166,7 +166,7 @@ fun SettingsHome(
             }
             // 其他：终端 + 模型。v2 的首页把这两行放在同一节（`phone4` / `phone33`），
             // 因为它们都不是 pi 的设置项 —— 一个是 TUI 回退口，一个是本应用自己扫
-            // 出来的模型清单 —— 也都不属于 12 个分组里的任何一个。
+            // 出来的模型清单 —— 也都不属于 13 个分组里的任何一个。
             if (onOpenTerminal != null || onOpenModels != null) {
                 item {
                     PiSettingsSectionHeader("其他")
@@ -217,8 +217,9 @@ fun SettingsHome(
                     }
                 }
             }
-            // v2 把 12 个分组放进**一张**卡片，行间是 1px inset hairline；12 行不
-            // 多，所以整块是一个 LazyColumn item，不拆成 12 个 item。
+            // v2 把当时的 12 个分组放进**一张**卡片，行间是 1px inset hairline；分组
+            // 行数不多（现在是 13 行，见 `PiSettingsCatalog.groups`），所以整块是一个
+            // LazyColumn item，不拆成一个个 item。
             item {
                 PiSettingsSectionHeader(
                     label = "全部设置",

@@ -417,8 +417,23 @@ fun PiNumberEditorSheet(
 }
 
 /**
- * Text editor (spec §6.2 TextRow). Long values such as `externalEditor` need more
- * than one line, so anything deeper than level 1 gets a multi-line field.
+ * Text editor (spec §6.2 TextRow).
+ *
+ * One line or many is [PiSetting.multiline], never a reading of `depth`: `depth`
+ * is the navigation property, and reading it here is what gave the several-
+ * thousand-character 自定义系统提示 a one-line box whose layout only ever draws
+ * the first line — the paste looked like it had only taken a few dozen
+ * characters. A multi-line value gets a field that is bounded to
+ * [PiTextEditorMaxLines] lines and **scrolls internally** from there (see that
+ * constant), so the whole document is reachable without pushing 保存 / 清除 off
+ * the sheet.
+ *
+ * The value itself is handed over verbatim in both directions: `initial` is the
+ * stored string exactly as `PiSettingsStore.read` returned it, this screen only
+ * replaces the state with what `onValueChange` gives back, and 保存 calls
+ * [onSet] with that string unchanged — no `trim`, no line joining, no
+ * truncation, so newlines, leading/trailing whitespace and Markdown structure
+ * survive the round trip.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -457,23 +472,26 @@ fun PiTextEditorSheet(
             // 只读行不抢焦点：那里没有可输入的东西，弹键盘等于骗人。
             if (!setting.readOnly) PiAutoFocus(focusRequester)
             // 多行态照 v2（HTML:2313-2321）：`minHeight:80`、圆角 9、`surf-low`、内
-            // `10px 12px`、等宽 13。`singleLine` 仍由 `setting.depth` 决定（字段语义不动），
-            // 只是单行时用 v2 的单行框高。
+            // `10px 12px`、等宽 13。单行/多行由 `setting.multiline` 决定 —— 不再从
+            // `depth` 读（见这个函数的 KDoc）：单行用 v2 的单行框高，多行用 v2 的
+            // `minHeight:80`，并**封顶到 `PiTextEditorMaxLines` 行**，让框自己滚。
+            val multiline = setting.multiline
             PiEditorField(
                 value = text,
                 onValueChange = { text = it },
                 modifier = Modifier.fillMaxWidth(),
                 label = setting.key,
-                singleLine = setting.depth <= 1,
+                singleLine = !multiline,
+                maxLines = if (multiline) PiTextEditorMaxLines else 1,
                 readOnly = setting.readOnly,
                 enabled = !setting.readOnly,
                 focusRequester = focusRequester,
-                height = if (setting.depth <= 1) PiNumberFieldHeight else null,
-                minHeight = if (setting.depth <= 1) null else PiTextFieldMinHeight,
-                contentPadding = if (setting.depth <= 1) {
-                    PiFieldPaddingSingleLine
-                } else {
+                height = if (multiline) null else PiNumberFieldHeight,
+                minHeight = if (multiline) PiTextFieldMinHeight else null,
+                contentPadding = if (multiline) {
                     PiFieldPaddingBlock
+                } else {
+                    PiFieldPaddingSingleLine
                 },
             )
             if (setting.readOnly) {
@@ -995,6 +1013,11 @@ internal fun PiSettingsSheet(
  * @param trailing 框内右端的读数（数字编辑器的单位）：v2 `mono t14 c-muted`。
  * @param idleBorder 未聚焦时的边色；v2 的列表框用它自己的 `borderMuted`。
  * @param container 框底色；v2 列表框是 `surf-highest`，其余是 `surf-low`。
+ * @param maxLines 多行框的可见行数上限（`singleLine = false` 时才有意义）。它交给
+ *   `BasicTextField` 自己的 `maxLines`：`CoreTextField` 会经 `heightInLines` 把框高
+ *   封顶到这么多行，并挂上 `textFieldScroll`（`VerticalScrollLayoutModifier`），
+ *   于是**框内部可滚动、且光标始终在视野内** —— 比外面再套一个 `verticalScroll`
+ *   正确（自己套那个的话，输入到框底时光标会跑到视野外）。单行框固定 1。
  */
 @Composable
 private fun PiEditorField(
@@ -1003,6 +1026,7 @@ private fun PiEditorField(
     modifier: Modifier = Modifier,
     label: String? = null,
     singleLine: Boolean = true,
+    maxLines: Int = if (singleLine) 1 else Int.MAX_VALUE,
     enabled: Boolean = true,
     readOnly: Boolean = false,
     focusRequester: FocusRequester? = null,
@@ -1053,6 +1077,7 @@ private fun PiEditorField(
                 enabled = enabled,
                 readOnly = readOnly,
                 singleLine = singleLine,
+                maxLines = maxLines,
                 textStyle = textStyle.copy(color = MaterialTheme.colorScheme.onSurface),
                 cursorBrush = SolidColor(PiTheme.palette.accent),
                 interactionSource = interaction,
@@ -1112,6 +1137,17 @@ private val PiFieldPaddingBlock = PaddingValues(horizontal = 12.dp, vertical = 1
 /** 数字框 `height:44`；文本多行框 `minHeight:80`。 */
 private val PiNumberFieldHeight = 44.dp
 private val PiTextFieldMinHeight = 80.dp
+
+/**
+ * 多行文本框最多显示多少行，超出部分由框自己滚（见 `PiEditorField` 的 `maxLines`）。
+ *
+ * 为什么必须封顶：系统提示词可以是几千字，而这个框是这一页里唯一会长高的东西 ——
+ * 不封顶就会把 sheet 的「保存 / 清除」顶到屏幕外，用户既看不全文本也按不到按钮。
+ * 12 行 × `mono` 的 20sp 行高 = 240，加上标题、说明与页脚仍在
+ * `ModalBottomSheet` 的高度之内；框内部可滚动且光标跟随，所以内容一个字都看不
+ * 到的情形不存在。
+ */
+private const val PiTextEditorMaxLines = 12
 
 /** label 与框之间那一线。 */
 private val PiFieldLabelGap = 4.dp

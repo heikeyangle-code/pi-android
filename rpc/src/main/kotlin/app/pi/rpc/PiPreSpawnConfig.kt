@@ -377,7 +377,16 @@ val NOT_EXPOSED_PRE_SPAWN: List<PiPreSpawnSkipped> = listOf(
     ),
 )
 
-/** The settings keys the app's 进程 section is built from, in table order. */
+/**
+ * The settings keys the app's pre-spawn surface is built from, in table order.
+ *
+ * Two groups show them, not one: `运行时与诊断 → 进程` carries the engine knobs
+ * (offline / cache retention / context files) and `提示词` carries the two prompt
+ * flags (`app.runtime.systemPrompt` / `app.runtime.appendSystemPrompt`), which
+ * moved there because a user looks for them next to the model — pi's CLI keeps
+ * `--model` and `--system-prompt` adjacent (`cli/args.ts:108-112`). The
+ * `pre-spawn` harness asserts every key here lives in one of those two groups.
+ */
 fun appExposedPreSpawnKeys(): Set<String> = APP_EXPOSED_PRE_SPAWN.map { it.appKey }.toSet()
 
 /** The knob for [appKey], or null when the key is not a pre-spawn row. */

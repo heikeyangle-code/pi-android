@@ -11,7 +11,12 @@ package app.pi.rpc
 //   * a knob exposed both as a settings key *and* as a CLI flag, which gives
 //     the engine two sources for one value (the §M12 shape: two truths, one of
 //     which silently wins),
-//   * a `RestartEngine` claim on the row that is not actually restart-only.
+//   * a `RestartEngine` claim on the row that is not actually restart-only,
+//   * a pre-spawn row that left the two groups which document the pre-spawn
+//     contract (`运行时与诊断 → 进程` for the engine knobs, `提示词` for the two
+//     prompt flags — see the `preSpawnGroups` comment below). The second group is
+//     new: the prompt rows moved there because that is where a user looks for
+//     them, and this check is what keeps that move deliberate rather than drift.
 //
 // `PiPreSpawnConfig.kt` and `PiLaunchOptions.kt` are pure Kotlin, so they are
 // compiled here directly. `PiSettingsRegistry.kt` imports Compose and
@@ -228,6 +233,21 @@ fun main() {
     )
 
     // ------------------------------------------------------- the registry rows
+    // A pre-spawn row has to sit in one of the two groups that document the
+    // pre-spawn contract, and nowhere else:
+    //
+    //  * 运行时与诊断 → 进程 — the engine knobs (offline / cache retention /
+    //    context files). This was the only home until the two prompt flags moved.
+    //  * 提示词 — `app.runtime.systemPrompt` and `app.runtime.appendSystemPrompt`
+    //    (`--system-prompt` / `--append-system-prompt`, `cli/args.ts:110` / `:112`).
+    //    They are the same kind of value — written into pi's argv once, at spawn —
+    //    but a user looks for them next to the model, not under 运行时: pi's own CLI
+    //    keeps `--model` and `--system-prompt` adjacent (`cli/args.ts:108-112`), and
+    //    the settings home orders the groups the same way.
+    //
+    // The predicate stays discriminating on purpose: a row moved anywhere else
+    // fails, which is what this check is for. It is not `true`.
+    val preSpawnGroups = listOf("group = G_RUNTIME", "group = G_PROMPTS")
     for (knob in APP_EXPOSED_PRE_SPAWN) {
         val block = blockFor(registry, knob.appKey)
         check(
@@ -244,9 +264,12 @@ fun main() {
                 "promises a change the running process cannot make. See docs/pre-spawn-config.md.",
         )
         check(
-            "the pre-spawn row lives in the 进程 section: ${knob.appKey}",
-            block.contains("group = G_RUNTIME"),
-            "the whole 进程 section is the app's pre-spawn surface; a row elsewhere hides that contract.",
+            "the pre-spawn row lives in a pre-spawn group: ${knob.appKey}",
+            preSpawnGroups.any { block.contains(it) },
+            "pre-spawn rows live in 运行时与诊断 → 进程 (the engine knobs) or in 提示词 (the two prompt " +
+                "flags, moved there because a user looks for them next to the model). A row anywhere else " +
+                "hides that contract; put it back, or register the new group here and in " +
+                "PiSettingsRegistry.kt. See docs/pre-spawn-config.md.",
         )
         check(
             "the pre-spawn row is read by the launch mapping: ${knob.appKey}",

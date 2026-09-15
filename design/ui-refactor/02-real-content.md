@@ -758,91 +758,94 @@ AppBar: 设置                        右侧图标无障碍名 搜索设置     
 
 ### 4.4 代表行
 
-> 任务书允许「只列最代表性的 ~40 行」；这里给到了 12 个分组共 **67 行**（68 项里只剩 1 项未列）。
+> 任务书允许「只列最代表性的 ~40 行」；这里给到了 13 个分组共 **67 行**（68 项里只剩 1 项未列）。
 > 多出来的部分是为了让设计稿能画出「分组页很长」这件事本身——每行的**格式**都是代码事实，可以直接复制粘贴。
 
 格式：`分组 → 标题（key）｜类型｜尾部值示例｜徽标｜源`
 
 ```
 模型与推理
- 已导入的模型（app.models.inventory）            Action   尾部空                          —        :249
- 默认厂商（defaultProvider）                     Value    DeepSeek / 未设置               新会话    :258
- 默认模型（defaultModel）                        Value    deepseek/deepseek-chat / 未设置  新会话    :270
- 默认思考等级（defaultThinkingLevel）            Value    中 / 未设置                     新会话    :281
- 逐模型思考等级（modelThinkingLevels）           List     2 项 / 无覆盖                   新会话    :292
- 思考预算（thinkingBudgets）                     List     未设置                          新会话    :305
- 隐藏思考块（hideThinkingBlock）                 Switch   开/关                            —        :318
- 缓存未命中提示（showCacheMissNotices）          Switch   开/关                            —        :328
- 循环模型（enabledModels）                       List     全部模型 / 3 项                  需重启引擎 :338
- API Key（app.credentials.apiKey）               Action   尾部空                           —        :357
- 订阅登录（app.credentials.oauth）               Action   尾部空                           —        :369
- 本地模型（llama.cpp）（app.localModels.manage） Action   尾部空                           —        :395
+ 已导入的模型（app.models.inventory）            Action   尾部空                          —        :272
+ 默认厂商（defaultProvider）                     Value    DeepSeek / 未设置               新会话    :281
+ 默认模型（defaultModel）                        Value    deepseek/deepseek-chat / 未设置  新会话    :293
+ 默认思考等级（defaultThinkingLevel）            Value    中 / 未设置                     新会话    :304
+ 逐模型思考等级（modelThinkingLevels）           List     2 项 / 无覆盖                   新会话    :315
+ 思考预算（thinkingBudgets）                     List     未设置                          新会话    :328
+ 隐藏思考块（hideThinkingBlock）                 Switch   开/关                            —        :341
+ 缓存未命中提示（showCacheMissNotices）          Switch   开/关                            —        :351
+ 循环模型（enabledModels）                       List     全部模型 / 3 项                  需重启引擎 :361
+ API Key（app.credentials.apiKey）               Action   尾部空                           —        :380
+ 订阅登录（app.credentials.oauth）               Action   尾部空                           —        :392
+ 本地模型（llama.cpp）（app.localModels.manage） Action   尾部空                           —        :419
+提示词
+ 自定义系统提示（app.runtime.systemPrompt）      Text     未设置（多行编辑器）              需重启引擎 :450
+ 追加系统提示（app.runtime.appendSystemPrompt）  Text     未设置（多行编辑器）              需重启引擎 :467
 消息与网络
- 穿插模式（steeringMode）                        Value    逐条                             —        :408
- 后续模式（followUpMode）                        Value    全部                             —        :419
- 传输方式（transport）                           Value    自动                             新会话    :431
- HTTP 空闲超时（httpIdleTimeoutMs）              Number   30000 ms                         需重启引擎 :443
- WebSocket 连接超时（websocketConnectTimeoutMs） Number   10000 ms                         新会话    :458
- HTTP 代理（httpProxy）                          Text     未设置                           需重启引擎 :473
+ 穿插模式（steeringMode）                        Value    逐条                             —        :486
+ 后续模式（followUpMode）                        Value    全部                             —        :497
+ 传输方式（transport）                           Value    自动                             新会话    :508
+ HTTP 空闲超时（httpIdleTimeoutMs）              Number   30000 ms                         需重启引擎 :520
+ WebSocket 连接超时（websocketConnectTimeoutMs） Number   10000 ms                         新会话    :535
+ HTTP 代理（httpProxy）                          Text     未设置                           需重启引擎 :550
 上下文与压缩
- 自动压缩（compaction.enabled）                  Switch   开/关                            —        :488
- 保留 token（compaction.reserveTokens）          Number   400000                           新会话    :498
- 保留最近 token（compaction.keepRecentTokens）   Number   20000                            新会话    :513
- 逐模型覆盖（compaction.modelOverrides）         List     无覆盖                           新会话    :528
- 分支摘要保留 token（branchSummary.reserveTokens）Number  未设置                           新会话    :541
- 立即压缩（app.compaction.runNow）               Action   尾部空                           —        :561
+ 自动压缩（compaction.enabled）                  Switch   开/关                            —        :565
+ 保留 token（compaction.reserveTokens）          Number   400000                           新会话    :575
+ 保留最近 token（compaction.keepRecentTokens）   Number   20000                            新会话    :590
+ 逐模型覆盖（compaction.modelOverrides）         List     无覆盖                           新会话    :605
+ 分支摘要保留 token（branchSummary.reserveTokens）Number  未设置                           新会话    :618
+ 立即压缩（app.compaction.runNow）               Action   尾部空                           —        :638
 重试与网络
- 自动重试（retry.enabled）                       Switch   开/关                            —        :575
- 最大重试次数（retry.maxRetries）                Number   3                                新会话    :585
- 基础延迟（retry.baseDelayMs）                   Number   1000                             新会话    :600
- 最大重试延迟（retry.maxAgentDelayMs）           Number   未设置                           新会话    :615
- Provider 超时（retry.provider.timeoutMs）       Number   未设置                           新会话    :630
- Provider 重试次数（retry.provider.maxRetries）  Number   未设置                           新会话    :644
+ 自动重试（retry.enabled）                       Switch   开/关                            —        :652
+ 最大重试次数（retry.maxRetries）                Number   3                                新会话    :662
+ 基础延迟（retry.baseDelayMs）                   Number   1000                             新会话    :677
+ 最大重试延迟（retry.maxAgentDelayMs）           Number   未设置                           新会话    :692
+ Provider 超时（retry.provider.timeoutMs）       Number   未设置                           新会话    :707
+ Provider 重试次数（retry.provider.maxRetries）  Number   未设置                           新会话    :721
 工具
- 内建工具（defaultTools）                        List     默认 read/bash/edit/write         新会话    :678
- 工具输出默认展开（app.tools.expandByDefault）   Switch   开/关                            —        :701
+ 内建工具（defaultTools）                        List     默认 read/bash/edit/write         新会话    :755
+ 工具输出默认展开（app.tools.expandByDefault）   Switch   开/关                            —        :778
 会话
- 启动续接最近会话（app.sessions.resumeLast）     Switch   开/关                            需重启    :734
+ 启动续接最近会话（app.sessions.resumeLast）     Switch   开/关                            需重启    :811
 扩展与资源
- 扩展（extensions）                              List     0 项 / 空                        需重启引擎 :749
- 资源包（packages）                              List     0 项 / 空                        需重启引擎 :772
- 技能（skills）                                  List     空                               需重启引擎 :787
- 提示模板（prompts）                             List     空                               需重启引擎 :800
- 主题（themes）                                  List     空                               需重启引擎 :813
- 技能命令（enableSkillCommands）                 Switch   开/关                            —        :826
+ 扩展（extensions）                              List     0 项 / 空                        需重启引擎 :826
+ 资源包（packages）                              List     0 项 / 空                        需重启引擎 :849
+ 技能（skills）                                  List     空                               需重启引擎 :864
+ 提示模板（prompts）                             List     空                               需重启引擎 :877
+ 主题（themes）                                  List     空                               需重启引擎 :890
+ 技能命令（enableSkillCommands）                 Switch   开/关                            —        :903
 外观
- 主题（theme）                                   Value    dark / light/dark                需重载    :860
- 字号微调（app.appearance.fontScaleDelta）       Number   0                                 —        :877
- 消息密度（app.appearance.messageDensity）       Value   舒适/紧凑/宽松（按代码分支）        —        :891
- 显示时间戳（app.appearance.showTimestamps）     Switch   开/关                            —        :906
- 思考块默认折叠（app.appearance.thinkingCollapsedByDefault） Switch 开/关                    —        :916
- 图片自动缩放（images.autoResize）               Switch   开/关                            新会话    :926
- 屏蔽图片（images.blockImages）                  Switch   开/关                            新会话    :937
+ 主题（theme）                                   Value    dark / light/dark                需重载    :937
+ 字号微调（app.appearance.fontScaleDelta）       Number   0                                 —        :954
+ 消息密度（app.appearance.messageDensity）       Value   舒适/紧凑/宽松（按代码分支）        —        :968
+ 显示时间戳（app.appearance.showTimestamps）     Switch   开/关                            —        :983
+ 思考块默认折叠（app.appearance.thinkingCollapsedByDefault） Switch 开/关                    —        :993
+ 图片自动缩放（images.autoResize）               Switch   开/关                            新会话    :1003
+ 屏蔽图片（images.blockImages）                  Switch   开/关                            新会话    :1014
 终端与 Shell
- Shell 路径（shellPath）                         Text     默认 /bin/bash                   新会话    :952
- 命令前缀（shellCommandPrefix）                  Text     未设置                           新会话    :964
- npm 命令（npmCommand）                          List     默认 npm                          新会话    :976
- 终端字号（app.terminal.fontSize）               Number   13                                需重载    :990
- 键盘按键条（app.terminal.keyBar）               List     预设 11 个键                      需重载    :1006
+ Shell 路径（shellPath）                         Text     默认 /bin/bash                   新会话    :1029
+ 命令前缀（shellCommandPrefix）                  Text     未设置                           新会话    :1041
+ npm 命令（npmCommand）                          List     默认 npm                          新会话    :1053
+ 终端字号（app.terminal.fontSize）               Number   13                                需重载    :1067
+ 键盘按键条（app.terminal.keyBar）               List     预设 11 个键                      需重载    :1083
 安全与信任
- 项目信任策略（defaultProjectTrust）             Value    询问 / 总是信任 / 从不信任        需重启引擎 :1022
- 紧急停止（app.security.emergencyStop）          Action   尾部空（危险色）                  —        :1040
+ 项目信任策略（defaultProjectTrust）             Value    询问 / 总是信任 / 从不信任        需重启引擎 :1099
+ 紧急停止（app.security.emergencyStop）          Action   尾部空（危险色）                  —        :1117
 运行时与诊断
- pi 版本（app.runtime.piVersion）                Text     只读                              —        :1065
- Node 版本（app.runtime.nodeVersion）            Text     只读                              —        :1089
- 运行时占用（app.runtime.rootfsUsage）           Text     只读                              —        :1100
- 引擎启动耗时（app.runtime.engineStartup）       Text     只读，默认文案 未读取               —        :1111
- 离线模式（app.runtime.offline）                 Switch   开/关                            需重启引擎 :1141
- 自定义系统提示（app.runtime.systemPrompt）      Text     未设置                           需重启引擎 :1153
- 追加系统提示（app.runtime.appendSystemPrompt）  Text     未设置（depth 2）                 需重启引擎 :1166
- 缓存保留策略（app.runtime.cacheRetention）      Value    未设置                           需重启引擎 :1182
- 不加载上下文文件（app.runtime.noContextFiles）  Switch   开/关                            需重启引擎 :1198
- 重启引擎（app.runtime.restartEngine）           Action   尾部空                           —        :1210
- 后台保活（app.runtime.keepAlive）               Switch   开/关                            需重启    :1228
- 唤醒锁状态（app.runtime.wakeLock）              Text     只读                              —        :1239
- 导出诊断报告（app.runtime.diagnostics）         Action   尾部空                           —        :1260
+ pi 版本（app.runtime.piVersion）                Text     只读                              —        :1142
+ Node 版本（app.runtime.nodeVersion）            Text     只读                              —        :1166
+ 运行时占用（app.runtime.rootfsUsage）           Text     只读                              —        :1177
+ 引擎启动耗时（app.runtime.engineStartup）       Text     只读，默认文案 未读取               —        :1188
+ 离线模式（app.runtime.offline）                 Switch   开/关                            需重启引擎 :1222
+ 自定义系统提示（app.runtime.systemPrompt）      Text     未设置                           需重启引擎 :450
+ 追加系统提示（app.runtime.appendSystemPrompt）  Text     未设置（depth 2）                 需重启引擎 :467
+ 缓存保留策略（app.runtime.cacheRetention）      Value    未设置                           需重启引擎 :1234
+ 不加载上下文文件（app.runtime.noContextFiles）  Switch   开/关                            需重启引擎 :1250
+ 重启引擎（app.runtime.restartEngine）           Action   尾部空                           —        :1262
+ 后台保活（app.runtime.keepAlive）               Switch   开/关                            需重启    :1280
+ 唤醒锁状态（app.runtime.wakeLock）              Text     只读                              —        :1291
+ 导出诊断报告（app.runtime.diagnostics）         Action   尾部空                           —        :1312
 隐私与关于
- 安装遥测（enableInstallTelemetry）              Switch   开/关                            新会话    :1275
+ 安装遥测（enableInstallTelemetry）              Switch   开/关                            新会话    :1327
 ```
 
 > 其中 4 行的默认值/副文案我按代码里的 `defaultValue` 填了示例值（`30000 ms`、`10000 ms`、`400000`、`20000`、`3`、`1000`、`13`、`11 个键`）；**显示格式**是代码事实（`PiSettingsJson.kt:150`），**具体数字**请以 `defaultValue` 声明为准再核一遍。

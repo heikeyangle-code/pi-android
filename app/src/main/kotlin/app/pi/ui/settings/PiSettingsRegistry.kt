@@ -6,6 +6,7 @@ import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.ColorLens
 import androidx.compose.material.icons.filled.CompareArrows
 import androidx.compose.material.icons.filled.Compress
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Extension
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Info
@@ -104,6 +105,18 @@ data class PiSetting(
     val aliases: List<String> = emptyList(),
     /** 2 or 3 means the row opens a further editor (spec §6.1 L2 / L3). */
     val depth: Int = 1,
+    /**
+     * 文本行的编辑器用**多行**框（`PiTextEditorSheet`），单行框只给「一格值」。
+     *
+     * 这是独立字段，不从 [depth] 读：`depth` 是**导航**属性（2/3 = 这一行还能再进
+     * 一层编辑器），跟字段该画几行是两件事。两者混为一谈正是这个 bug 的形状 ——
+     * `app.runtime.systemPrompt` 是几千字的整份系统提示词却没有 `depth`，于是
+     * `singleLine = setting.depth <= 1` 给了它一个单行框：粘进去的文本只画得出第一
+     * 行（换行之后的行落在 `maxLines = 1` 的布局之外），用户看到的就是「几万字只
+     * 进去几十字」。判断标准是「这个值是不是一份文档」，凡是文档都写
+     * `multiline = true`，不要靠 `depth` 猜。
+     */
+    val multiline: Boolean = false,
     val emptyListLabel: String = "空",
 ) {
     /**
@@ -116,7 +129,10 @@ data class PiSetting(
     fun wireElement(wire: String): JsonElement = JsonPrimitive(wire)
 }
 
-/** One of the 14 groups of docs/pi-android-ui-spec.md §6.4. */
+/**
+ * 一个设置分组。分组 id 的语义见 [PiSettingsCatalog.groups]：spec §6.4 那 12 组
+ * 加上本应用自己的「提示词」组，一共 13 组。
+ */
 class PiSettingsGroup(
     val id: String,
     val title: String,
@@ -136,6 +152,13 @@ data class PiSearchHit(
 }
 
 private const val G_MODEL = "model"
+/**
+ * 本应用自己的第 13 个分组。pi 的 settings 里没有系统提示词那两行（它们是
+ * `--system-prompt` / `--append-system-prompt` 启动参数），spec §6.4 的 12 组里
+ * 也就没有它们的落点 —— 这是它们原来挂在「运行时与诊断 → 进程」下的原因。
+ * 这个 id 与 registry 里那个 `prompts` **键**无关：那条是「提示模板」的路径数组。
+ */
+private const val G_PROMPTS = "prompts"
 private const val G_MESSAGES = "messages"
 private const val G_COMPACTION = "compaction"
 private const val G_RETRY = "retry"
@@ -404,7 +427,61 @@ object PiSettingsCatalog {
         ),
 
         // ------------------------------------------------------------------
-        // 2 消息与网络
+        // 2 提示词（本应用自己的分组，spec §6.4 的 12 组里没有它）
+        // ------------------------------------------------------------------
+        //
+        // 这两行是 pi 的**进程启动参数**，不是 pi 的 settings 键：pi 的 `Settings`
+        // 接口（`core/settings-manager.ts:106-158`）里没有 systemPrompt，值由 App 组
+        // 进 `PiLaunchOptions`（`rpc/PiLaunchOptions.kt`）在启动 `pi --mode rpc` 时
+        // 传下去，也就是 `--system-prompt` / `--append-system-prompt`
+        // （`cli/args.ts:110` / `:112`，后者可重复）。它们原来挂在「运行时与诊断 →
+        // 进程」下面，和离线模式、缓存保留并列 —— 那是「引擎怎么跑」的位置，而这两
+        // 行是「模型被交代了什么」。用户报的就是找不到/以为没存进去，所以独立成组，
+        // 并且在设置首页排在「模型与推理」之后（pi 自己的 CLI 里 `--model` 与
+        // `--system-prompt` 也是挨着的，`cli/args.ts:108-112`）。
+        //
+        // 只搬显示位置：**键一个字没改**（`app.runtime.*`，与 pi 的
+        // `--system-prompt` / `--append-system-prompt` 一一对应），所以已经写在
+        // settings.json 里的老值照旧读得出来。
+        //
+        // 两行的 `effective` 都保持 `RestartEngine`：值在进程启动时写进 argv/env，
+        // 进程内没有写回通道（`rpc-types.ts:20-74` 没有改系统提示词的命令），界面
+        // 标签仍是「需重启引擎」，改动说明照旧。
+        PiSetting(
+            key = "app.runtime.systemPrompt",
+            title = "自定义系统提示",
+            description = "整份替换 pi 自带的系统提示词；留空用 pi 自己的。" +
+                "只想补充几条偏好、不想丢掉 pi 原有的提示词时，用下面的「追加系统提示」。" +
+                "改动在重启引擎后生效。",
+            kind = PiRowKind.Text,
+            group = G_PROMPTS,
+            section = "系统提示词",
+            defaultValue = str(""),
+            // 几千字的 Markdown：编辑器必须给多行框，且框自己能在 sheet 里滚动
+            // （`PiTextEditorSheet` 的 `multiline` 分支）。这一行**曾经**漏掉这个
+            // 标记，于是落进单行框，粘进去只剩第一行可见。
+            multiline = true,
+            effective = EffectiveKind.RestartEngine,
+            aliases = listOf("system", "prompt"),
+        ),
+        PiSetting(
+            key = "app.runtime.appendSystemPrompt",
+            title = "追加系统提示",
+            description = "在 pi 自己拼好的系统提示词末尾追加一段文字，不替换它" +
+                "（整份替换请用上面的「自定义系统提示」，两者可以同时设置）。" +
+                "适合写长期偏好。改动在重启引擎后生效。",
+            kind = PiRowKind.Text,
+            group = G_PROMPTS,
+            section = "系统提示词",
+            defaultValue = str(""),
+            // 同上一行：追加的通常是几段文字，不是一条命令。
+            multiline = true,
+            effective = EffectiveKind.RestartEngine,
+            aliases = listOf("system", "prompt", "append"),
+        ),
+
+        // ------------------------------------------------------------------
+        // 3 消息与网络
         // ------------------------------------------------------------------
         PiSetting(
             key = "steeringMode",
@@ -483,7 +560,7 @@ object PiSettingsCatalog {
         ),
 
         // ------------------------------------------------------------------
-        // 3 上下文与压缩
+        // 4 上下文与压缩
         // ------------------------------------------------------------------
         PiSetting(
             key = "compaction.enabled",
@@ -570,7 +647,7 @@ object PiSettingsCatalog {
         ),
 
         // ------------------------------------------------------------------
-        // 4 重试与网络
+        // 5 重试与网络
         // ------------------------------------------------------------------
         PiSetting(
             key = "retry.enabled",
@@ -673,7 +750,7 @@ object PiSettingsCatalog {
         ),
 
         // ------------------------------------------------------------------
-        // 5 工具
+        // 6 工具
         // ------------------------------------------------------------------
         PiSetting(
             key = "defaultTools",
@@ -710,7 +787,7 @@ object PiSettingsCatalog {
         ),
 
         // ------------------------------------------------------------------
-        // 6 会话
+        // 7 会话
         // ------------------------------------------------------------------
         // `sessionDir` is deliberately absent even though pi has the key
         // (`settings-manager.ts:150`, read at `main.ts:675`). This app pins the
@@ -744,7 +821,7 @@ object PiSettingsCatalog {
         ),
 
         // ------------------------------------------------------------------
-        // 7 扩展与资源
+        // 8 扩展与资源
         // ------------------------------------------------------------------
         PiSetting(
             key = "extensions",
@@ -855,7 +932,7 @@ object PiSettingsCatalog {
         // is not to offer the switch.
 
         // ------------------------------------------------------------------
-        // 8 外观
+        // 9 外观
         // ------------------------------------------------------------------
         PiSetting(
             key = "theme",
@@ -947,7 +1024,7 @@ object PiSettingsCatalog {
         ),
 
         // ------------------------------------------------------------------
-        // 9 终端与 Shell
+        // 10 终端与 Shell
         // ------------------------------------------------------------------
         PiSetting(
             key = "shellPath",
@@ -1017,7 +1094,7 @@ object PiSettingsCatalog {
         ),
 
         // ------------------------------------------------------------------
-        // 10 安全与信任
+        // 11 安全与信任
         // ------------------------------------------------------------------
         PiSetting(
             key = "defaultProjectTrust",
@@ -1049,7 +1126,7 @@ object PiSettingsCatalog {
         ),
 
         // ------------------------------------------------------------------
-        // 11 设备能力 — moved out of the settings catalog
+        // 12 设备能力 — moved out of the settings catalog
         // ------------------------------------------------------------------
         // The seven `app.device.*` rows lived here and were the *only* occurrence
         // of those keys: the enforcement and the real switches both read
@@ -1060,7 +1137,7 @@ object PiSettingsCatalog {
         // screen is the single authority now.
 
         // ------------------------------------------------------------------
-        // 12 运行时与诊断
+        // 13 运行时与诊断
         // ------------------------------------------------------------------
         PiSetting(
             key = "app.runtime.piVersion",
@@ -1124,19 +1201,23 @@ object PiSettingsCatalog {
         // ------------------------------------------------------------------
         // 进程开关（pi 的启动参数 / 环境变量）
         //
-        // 这五行都是 pi 的**进程级**配置，pi 自己的 settings 文档里没有对应的键
+        // 这里的三行都是 pi 的**进程级**配置，pi 自己的 settings 文档里没有对应的键
         // （`core/settings-manager.ts:106-158` 的 `Settings` 里没有 offline /
         // systemPrompt / appendSystemPrompt / cacheRetention / noContextFiles），
         // 所以键是我们自己的（`app.` 前缀），值由 App 组进 `PiLaunchOptions`
         // （`rpc/PiLaunchOptions.kt`）在启动 `pi --mode rpc` 时传下去 —— 这与 pi
         // 的 CLI 参数一一对应，表的权威副本是 `rpc/PiPreSpawnConfig.kt`：
         //   `--offline`（`cli/args.ts:223`，等价 `PI_OFFLINE=1`，`:433`）
-        //   `--system-prompt` / `--append-system-prompt`（`:110` / `:112`，后者可重复）
         //   `PI_CACHE_RETENTION=long`（`packages/ai/src/api/anthropic-messages.ts:57`）
         //   `--no-context-files`（`:194`）
         // 因为进程启动后这些值不再变（值是 App 读 settings 后写进 argv/env 的，
         // 新会话不会重读 argv），`effective` 必须是 `RestartEngine`（界面标签
         // 「需重启引擎」），每一行的说明里写明需要重启引擎。
+        //
+        // 同一张 `PiLaunchOptions` 表里的另外两个键（`--system-prompt` /
+        // `--append-system-prompt`，`:110` / `:112`）**不在这里**：它们是「模型被
+        // 交代了什么」，用户不会到「运行时」下面找，所以显示位置搬到了 2 提示词组
+        // （键没变）。搬走两行不影响本节的性质，本节仍是「引擎怎么跑」。
         // ------------------------------------------------------------------
         PiSetting(
             key = "app.runtime.offline",
@@ -1149,35 +1230,6 @@ object PiSettingsCatalog {
             defaultValue = bool(false),
             effective = EffectiveKind.RestartEngine,
             aliases = listOf("offline", "network"),
-        ),
-        PiSetting(
-            key = "app.runtime.systemPrompt",
-            title = "自定义系统提示",
-            description = "整份替换 pi 自带的系统提示词；留空用 pi 自己的。" +
-                "只想补充几条偏好、不想丢掉 pi 原有的提示词时，用下面的「追加系统提示」。" +
-                "改动在重启引擎后生效。",
-            kind = PiRowKind.Text,
-            group = G_RUNTIME,
-            section = "进程",
-            defaultValue = str(""),
-            effective = EffectiveKind.RestartEngine,
-            aliases = listOf("system", "prompt"),
-        ),
-        PiSetting(
-            key = "app.runtime.appendSystemPrompt",
-            title = "追加系统提示",
-            description = "在 pi 自己拼好的系统提示词末尾追加一段文字，不替换它" +
-                "（整份替换请用上面的「自定义系统提示」，两者可以同时设置）。" +
-                "适合写长期偏好。改动在重启引擎后生效。",
-            kind = PiRowKind.Text,
-            group = G_RUNTIME,
-            section = "进程",
-            defaultValue = str(""),
-            // Text 的 depth > 1 让编辑器用多行输入框：追加内容通常是几行而不
-            // 是一条命令（`PiSettingsEditors.kt` 的 `singleLine = setting.depth <= 1`）。
-            depth = 2,
-            effective = EffectiveKind.RestartEngine,
-            aliases = listOf("system", "prompt", "append"),
         ),
         PiSetting(
             key = "app.runtime.cacheRetention",
@@ -1270,7 +1322,7 @@ object PiSettingsCatalog {
         ),
 
         // ------------------------------------------------------------------
-        // 13 隐私与关于
+        // 14 隐私与关于
         // ------------------------------------------------------------------
         PiSetting(
             key = "enableInstallTelemetry",
@@ -1353,7 +1405,13 @@ object PiSettingsCatalog {
         "enableInstallTelemetry" to "pi 读：settings-manager.ts:1055 → core/telemetry.ts:12（安装上报与厂商归因头）",
     )
 
-    /** The 12 groups of spec §6.4, in order, each with a live summary. */
+    /**
+     * The app's 13 groups, in order, each with a live summary: spec §6.4's 12, plus
+     * 提示词 — a group this app needs because the two system-prompt rows correspond
+     * to pi's `--system-prompt` / `--append-system-prompt` CLI flags and have no
+     * `settings.json` key to belong to, so the spec has no slot for them. It sits
+     * second because that is where a user looks for "what the model is told".
+     */
     val groups: List<PiSettingsGroup> = listOf(
         PiSettingsGroup(G_MODEL, "模型与推理", Icons.Filled.Psychology) { store ->
             val model = PiSettingsCatalog.summaryText(store, "defaultModel")
@@ -1361,6 +1419,20 @@ object PiSettingsCatalog {
             val configured = row != null && row.isExplicit(store)
             val level = PiSettingsCatalog.summaryText(store, "defaultThinkingLevel")
             if (configured) "默认 $model · ◐ $level" else "未配置模型，启动时再选"
+        },
+        PiSettingsGroup(G_PROMPTS, "提示词", Icons.Filled.Edit) { store ->
+            // 摘要只报**长度**，不报开头：这两项的值是几千字的提示词，截出开头几十
+            // 个字既要多一行省略号，又正是用户报的那个 bug 的表象（「只进去几十
+            // 字」）。长度是这里唯一说得清、也不会被误读的读数。
+            val replaced = byKey["app.runtime.systemPrompt"]?.textIn(store).orEmpty()
+            val appended = byKey["app.runtime.appendSystemPrompt"]?.textIn(store).orEmpty()
+            // 空白值等于没设：pi 那边也是这么判断的
+            // （`PiLaunchOptions.commandLineSuffix` 的 `takeIf { it.isNotBlank() }`）。
+            val parts = buildList {
+                if (replaced.isNotBlank()) add("整份替换 ${replaced.length} 字")
+                if (appended.isNotBlank()) add("追加 ${appended.length} 字")
+            }
+            if (parts.isEmpty()) "用 pi 自带的提示词" else parts.joinToString(" · ")
         },
         PiSettingsGroup(G_MESSAGES, "消息与网络", Icons.Filled.CompareArrows) { store ->
             "穿插：${summaryText(store, "steeringMode")} · 后续：${summaryText(store, "followUpMode")}"

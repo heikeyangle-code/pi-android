@@ -671,11 +671,13 @@ L0 设置首页       13 个分组，每组右侧显示"当前值摘要"
 | **SwitchRow** | 标题 + 说明 + 右侧 Switch | 布尔设置 |
 | **ValueRow** | 标题 + 说明 + 右侧当前值 + `⟩` | 枚举/对象（点击开 L2 选择器） |
 | **NumberRow** | 标题 + 说明 + 右侧数值；展开为滑杆 + 输入框 | 数值（`reserveTokens` 等） |
-| **TextRow** | 标题 + 说明 + 右侧值 | 字符串（路径、URL、代理） |
+| **TextRow** | 标题 + 说明 + 右侧值；编辑器单行或多行由 **`PiSetting.multiline`** 决定（多行框封顶 12 行、框内可滚动且光标跟随） | 字符串（路径、URL、代理）与整份文档（系统提示词：几千字的 Markdown） |
 | **ListRow** | 标题 + 「N 项」+ `⟩` | 数组（packages / extensions / skills / prompts / themes / enabledModels / defaultTools） |
 | **ActionRow** | 标题（危险时 `error` 色） | 动作（导出、重置、安全模式） |
 
 **辅助元素**：`SectionHeader`（分组标题）、`InfoNote`（灰色说明卡，用于解释性文字）、`EffectiveBadge`（生效方式，见 6.5）、`ExperimentalBadge`。
+
+> **单行 / 多行不再看 `depth`。** 注册表里 `PiSetting.depth` 是**导航**属性（2/3 = 这一行还能再进一层编辑器，L2/L3），字段画几行是 `PiSetting.multiline`。两者混用过一次，代价是一个 bug：`app.runtime.systemPrompt`（几千字的整份系统提示词）漏了 `depth`，于是拿到单行框，粘进去的文本只画得出第一行 —— 用户看到的是「几千字只进去几十字」。凡值是一份文档的行都写 `multiline = true`。
 
 **每行必带说明文字** —— 直接采用 pi 文档里的描述（中文化），不自己编。
 
@@ -687,9 +689,16 @@ L0 设置首页       13 个分组，每组右侧显示"当前值摘要"
 
 ### 6.4 完整设置清单（按层级）
 
+> **本节的组数 vs 本应用实际的组数。** 这一节是**规格**，按 14 组写（含「交互」「设备能力」两组）。本应用落地的设置注册表是 **13 组**（`PiSettingsCatalog.groups`，`PiSettingsRegistry.kt:1415-1500`）：这 14 组里作为设置分组实现的 12 组 —— `模型与推理`、`消息与网络`、`上下文与压缩`、`重试与网络`、`工具`、`会话`、`扩展与资源`、`外观`、`终端与 Shell`、`安全与信任`、`运行时与诊断`、`隐私与关于` —— 加上本应用自己的第 13 组 **`提示词`**（下面紧跟 L0-1 列出；两行系统提示词没有 pi 的 settings 键，规格里没有它们的落点）。`交互` 与 `设备能力` 在本应用里不是设置分组（设备能力是设置首页的独立入口）。
+
 **L0-1 模型与推理**
 - L1：默认厂商（ValueRow，40 个 Provider 选择器）· 默认模型（ValueRow）· 默认思考等级（ValueRow，7 档）· 逐模型思考等级（ListRow → L2 列表 → L3 单模型）· 思考预算（ListRow → L3，4 档数值）· 循环模型（ListRow，勾选+排序）· 隐藏思考块（Switch）· 缓存未命中提示（Switch，高级）· 传输方式（ValueRow：auto/sse/websocket/websocket-cached）
 - 凭证：API Key / OAuth（L2 表单 + Custom Tabs 登录 + 登出）
+
+**提示词（本应用新增的分组；§6.4 原 14 组里没有它）**
+- 自定义系统提示（TextRow，多行）· 追加系统提示（TextRow，多行），两行都是 `需重启引擎`
+- 这两行对应 pi 的 `--system-prompt` / `--append-system-prompt` 启动参数（`cli/args.ts:110` / `:112`），pi 的 `Settings` 里没有对应的键，所以它们没有能归属的 pi 设置分组 —— 原先挂在「运行时与诊断 → 进程」下。用户不会到「运行时」下面找「模型被交代了什么」；pi 自己的 CLI 里 `--model` 与 `--system-prompt` 是相邻的（`cli/args.ts:108-112`），所以这一组排在「模型与推理」**之后**。整份系统提示词是几千字的 Markdown，编辑器必须是**多行 + 框内可滚动**（`PiSetting.multiline = true`，见 §6.2）。
+- 只搬显示位置：键仍是 `app.runtime.systemPrompt` / `app.runtime.appendSystemPrompt`（`app.` 前缀，App 自己组进启动参数），已经写在 `settings.json` 里的值照旧读得出来。
 
 **L0-2 消息与队列**
 - 穿插模式（ValueRow：逐条/全部）· 后续模式（ValueRow）· HTTP 空闲超时（Number，0=禁用）· WebSocket 连接超时（Number）· HTTP 代理（Text，全局）
@@ -974,7 +983,7 @@ pi 的不同设置生效时机不同，App 必须明确标注，否则用户会�
 | 历史提示词 | 键盘工具条 `↑` | |
 | 草稿持久化 | 自动 | |
 | 全部 23 个斜杠命令 | 见 §6.7 映射表 | 11 个需 App 自实现 |
-| 全部 80+ 设置项 | 设置 14 组（§6.4） | 1:1 覆盖，含 2 个未文档化字段 |
+| 全部 80+ 设置项 | 设置 13 组（§6.4 的 12 组 + 本应用新增的「提示词」组） | 1:1 覆盖，含 2 个未文档化字段 |
 | 键位自定义 | 设置·交互·快捷键（终端页 + 蓝牙键盘用） | 读写 `keybindings.json` |
 | 主题 | 设置·外观（含自动模式字面量 + 导入） | 读写主题 JSON |
 | 技能 | 设置·扩展与资源·技能；命令面板 `/skill:` | |
@@ -1003,7 +1012,7 @@ pi 的不同设置生效时机不同，App 必须明确标注，否则用户会�
 
 # 附录 B　设置字段 → 层级映射（完整清单）
 
-（按 §6.4 的 14 组，共 80+ 字段。此处省略逐行展开，以 §6.4 为准。关键点：）
+（按 §6.4 的 14 组 + 本应用新增的「提示词」组，共 80+ 字段。此处省略逐行展开，以 §6.4 为准。关键点：）
 
 - **两个文档里没有但源码里有的字段**必须支持：`terminal.showTerminalProgress`（bool，默认 false）、`packages[].autoload`（bool）
 - **主题自动模式的字面量**：`theme` 存 `"浅色主题名/深色主题名"`，必须原样往返
