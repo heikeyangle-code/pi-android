@@ -24,10 +24,8 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Terminal
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -47,8 +45,11 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.viewModelScope
 import app.pi.engine.PiEngineSession
 import app.pi.packages.AgentLayout
 import app.pi.packages.ProjectTrust
@@ -58,10 +59,12 @@ import app.pi.rpc.ToolDiff
 import app.pi.rpc.ToolStatus
 import app.pi.rpc.TranscriptItem
 import app.pi.runtime.PtyLauncher
+import app.pi.runtime.WorkspaceStore
 import app.pi.ui.BashRun
 import app.pi.ui.PiSessionViewModel
 import app.pi.ui.PiTopBar
 import app.pi.ui.PiTopBarIcon
+import app.pi.ui.WorkspaceSwitch
 import app.pi.ui.blocks.DiffBlock
 import app.pi.ui.blocks.argString
 import app.pi.ui.blocks.lineCount
@@ -72,6 +75,7 @@ import app.pi.ui.components.PiDialogActions
 import app.pi.ui.components.PiDialogBody
 import app.pi.ui.components.PiDialogTitle
 import app.pi.ui.settings.PiSettingsMetrics
+import app.pi.ui.theme.PiShapes
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
 import app.pi.ui.theme.StateChip
@@ -118,11 +122,15 @@ import kotlinx.serialization.json.JsonPrimitive
  *
  * ## 它不是什么
  *
- * 它**不挂** `ExtensionUiHost`（全局只挂一次，在 `PiRoot`），它**不注册** `BackHandler`
- * （全应用只有 `PiRoot` 那一处；这一屏的浮层都是 `Dialog` / `ModalBottomSheet`，返回键由
- * 它们各自的窗口处理），它也**不碰** `ui/terminal`。
+ * 它**不挂** `ExtensionUiHost`（全局只挂一次，在 `PiRoot`），它也**不碰** `ui/terminal`。
+ *
+ * 返回键：这一屏**仍然没有**自己的 `BackHandler`。三处底部面板换成了自绘的 `WsSheet`，
+ * 它去掉了 `ModalBottomSheet` 那副壳、但**仍然是一层窗口**（Compose 的 `Dialog`）：稿子的
+ * `.b-sheetwrap` 要连屏底那条 tab bar 一起盖住，而 `Scaffold` 的底栏是画在 body 之上的，
+ * 画在屏内的 Box 浮层会被底栏压掉一截。窗口这一层顺带把返回键也带回来了 ——
+ * `dismissOnBackPress` 走 `onDismissRequest`，与 `ModalBottomSheet` 同一条路径，也正是
+ * `PiImageViewer` 记下的全应用惯例：浮层用窗口，屏里不再出现第二个 `BackHandler`。
  */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ProjectScreen(
     contentPadding: PaddingValues,
@@ -135,7 +143,15 @@ fun ProjectScreen(
 
     // 工作区主目录由应用固定（`GuestWorkspacePath.RELATIVE`），`AgentLayout` 的
     // `hostProjectConfigDir()` 就是 `<workspace>/.pi`——pi 的项目资源根。
-    val workspace = remember(context) { PtyLauncher.workspaceHost(context) }
+    //
+    // 键是**工作区路径**，不只是 context：切换工作区换的是目录
+    // （`PtyLauncher.workspaceHost` 走 `WorkspaceStore.currentHost`，`WorkspaceStore.setCurrent`
+    // 只改设置里的名字），而 Activity 的 context 不变 —— `remember(context)` 会把这一屏
+    // 钉在首次组合时那个工作区上，切换之后一路读旧目录。`PiSettingsStack.kt:206-212` /
+    // `PiModelsScreen.kt:94-97` / `PiCredentialScreen.kt:122-125` 那三处是同一手法。
+    // 路径是一次设置读取，不是一次目录扫描。
+    val workspacePath = PtyLauncher.workspaceHost(context).absolutePath
+    val workspace = remember(context, workspacePath) { PtyLauncher.workspaceHost(context) }
     val layout = remember(context, workspace) {
         AgentLayout(context.applicationContext, workspace)
     }
@@ -188,11 +204,14 @@ fun ProjectScreen(
     var resources by remember { mutableStateOf<List<WorkspaceResource>>(emptyList()) }
     var resourceKind by remember { mutableStateOf(WorkspaceResourceKind.Skill) }
     var projectUntrusted by remember { mutableStateOf(false) }
-    // 工作区的兄弟目录列表：它是一次真实的磁盘读取，所以和资源扫描一样在 IO 线程上跑，
-    // 不能放在 composition 里（`listFiles()` 在组合期间就是一次掉帧）。
-    var workspaces by remember { mutableStateOf<List<SiblingWorkspace>>(emptyList()) }
-    LaunchedEffect(refreshTick, workspace) {
-        workspaces = withContext(Dispatchers.IO) { siblingWorkspaces(workspace) }
+    // 切换面板里那份「现有工作区」清单：取自引擎的真实入口
+    // （`session.workspaceEntries()` → `WorkspaceStore.list`），不是拿当前工作区的兄弟目录
+    // 凑出来的 —— 名字、label、`isCurrent` 与切换时 `switchWorkspace` 用的是同一份判据。
+    // 它是一次真实的磁盘读取，所以照旧在 IO 线程上跑，不放在 composition 里。
+    // 键里的 `revision` 是「换过工作区」的信号（`WorkspaceState`），切换之后重读一遍。
+    var workspaceEntries by remember { mutableStateOf<List<WorkspaceStore.Entry>>(emptyList()) }
+    LaunchedEffect(refreshTick, state.workspace.revision) {
+        workspaceEntries = withContext(Dispatchers.IO) { session.workspaceEntries() }
     }
     LaunchedEffect(refreshTick, workspace, agentDir) {
         withContext(Dispatchers.IO) {
@@ -262,6 +281,12 @@ fun ProjectScreen(
     var inputDialog by remember { mutableStateOf<WorkspaceInputDialog?>(null) }
     var deleteFor by remember { mutableStateOf<WorkspaceMenuTarget?>(null) }
     var snack by remember { mutableStateOf<WorkspaceSnack?>(null) }
+    /** 切换面板里某个工作区行尾 ⋮ 选中的那一行（重命名 / 删除）。 */
+    var workspaceMenuFor by remember { mutableStateOf<WorkspaceStore.Entry?>(null) }
+    /** 删除确认框：`previewWorkspaceDelete` 的 `Ok`，里面既有要展示的读数，也有删除凭据。 */
+    var workspaceDelete by remember { mutableStateOf<WorkspaceStore.Preview.Ok?>(null) }
+    /** 这一轮回合正跑着、用户选了别的工作区时，先问一次的那一格。 */
+    var workspaceInterrupt by remember { mutableStateOf<WorkspaceStore.Entry?>(null) }
 
     fun say(text: String, tone: StateTone = StateTone.Muted) {
         snack = WorkspaceSnack(text, tone)
@@ -333,6 +358,119 @@ fun ProjectScreen(
         }
     }
 
+    // ------------------------------------------------------ 工作区级操作（非文件）
+
+    /**
+     * 新建工作区。
+     *
+     * 名字由引擎分配（下一个空闲的 `workspace-N`），**不在这里输入名字**：能改的只有
+     * 显示名（label），而那正是重命名那一条。建完也**不切过去** —— 建一个目录和把引擎
+     * 搬进它是两个决定，`WorkspaceStore.create` 的 KDoc 把这条写死了。
+     */
+    fun createNewWorkspace() {
+        scope.launch {
+            when (val result = withContext(Dispatchers.IO) { session.createWorkspace() }) {
+                is WorkspaceStore.Create.Ok -> {
+                    say("已新建工作区 · ${result.entry.displayName}")
+                    refreshTick++
+                }
+                is WorkspaceStore.Create.Failed -> say(result.message, StateTone.Warning)
+            }
+        }
+    }
+
+    /**
+     * 重命名工作区：只写 label，目录不动（`WorkspaceStore.rename`）。
+     *
+     * 显示名是 label 而不是文件名，所以**不走** [WorkspaceFiles.nameProblem] 那套文件名
+     * 规矩（可以带空格、可以留空）；留空与「填回目录名」由 `renameWorkspace` 自己裁决，
+     * 它的 `Failed.message` 就是给人看的那句话。
+     */
+    fun renameWorkspaceTo(name: String, label: String) {
+        scope.launch {
+            val result = withContext(Dispatchers.IO) { session.renameWorkspace(name, label) }
+            when (result) {
+                is WorkspaceStore.Rename.Ok -> {
+                    say("已重命名工作区 · ${result.entry.displayName}")
+                    refreshTick++
+                }
+                is WorkspaceStore.Rename.Failed -> say(result.message, StateTone.Warning)
+            }
+        }
+    }
+
+    /**
+     * 删除前的计数。
+     *
+     * `previewWorkspaceDelete` 是唯一能拿到 `WorkspaceStore.DeleteConfirmation` 的入口，
+     * 也就是「先把里面有多少东西报告给用户、用户同意的是那一次统计」这条规矩的 API 形状；
+     * 所以删除不可能绕过这一格。`Preview.Refused` 的原话（比如「是当前工作区……请先切换」）
+     * 照显示，不吞也不改写。
+     */
+    fun previewWorkspaceDeleteFor(entry: WorkspaceStore.Entry) {
+        scope.launch {
+            val preview = withContext(Dispatchers.IO) { session.previewWorkspaceDelete(entry.name) }
+            when (preview) {
+                is WorkspaceStore.Preview.Ok -> workspaceDelete = preview
+                is WorkspaceStore.Preview.Refused -> say(preview.message, StateTone.Warning)
+            }
+        }
+    }
+
+    /** 用户对着那份读数点了「永久删除」：凭据原样交给 `deleteWorkspace`。 */
+    fun deleteWorkspaceNow(preview: WorkspaceStore.Preview.Ok) {
+        scope.launch {
+            val result = withContext(Dispatchers.IO) { session.deleteWorkspace(preview.confirmation) }
+            when (result) {
+                is WorkspaceStore.Delete.Ok -> {
+                    say("已删除工作区 · ${result.name}（${result.files} 个文件）")
+                    refreshTick++
+                }
+                // `Refused` / `Failed` 的 message 都是给人看的一句话，照原话说。
+                is WorkspaceStore.Delete.Refused -> say(result.message, StateTone.Error)
+                is WorkspaceStore.Delete.Failed -> say(result.message, StateTone.Error)
+            }
+        }
+    }
+
+    /**
+     * 真的切过去。
+     *
+     * 调用点（[WorkspaceRootSheet] 的 `onPick`）**在调它之前就把面板关了**，这不是随手
+     * 关窗：`switchWorkspace` 的四种返回里，`Refused` / `Failed` 的那句话是 VM 推进
+     * `state.notices` 的，而通知是全应用那一条 M3 snackbar（`ExtensionUiHost`），画在
+     * **主窗口**里 —— 面板是一层 `Dialog` 窗口，盖在它上面，面板开着的时候那条通知会
+     * 被盖住、然后在 4 秒后照常被消费掉，用户什么都看不到。先关面板，四种返回才都看得见。
+     * `Failed` 与 `Refused` 因而在这里无事可做：VM 已经把话说完了，屏幕不再拼一句。
+     *
+     * 协程跑在**引擎那个 scope**（`session.viewModelScope`）上，不是这一屏的
+     * `rememberCoroutineScope()`：切换会把旧引擎停掉、再在新目录里起一个，中间有几秒的
+     * 窗口期，而这一屏在用户点「对话」tab 时会被 `PiRoot` 整个卸掉。挂在屏上的 scope 会在
+     * 那一刻把 `host.restart` 从中间取消 —— 旧引擎已经停了、新引擎没起来、`Failed` 那条
+     * 回滚代码也不会执行。VM 自己的 KDoc 要的也正是「从 `viewModelScope` 里调」
+     * （`switchWorkspace` 的 `Call from a main-dispatcher coroutine`），这是同一件事的
+     * 屏幕侧写法。下面那几个非 suspend 的工作区增删改留在本屏 scope 上：它们是一次
+     * `java.io.File` 操作，没有可被取消的中间态。
+     */
+    fun switchWorkspaceTo(entry: WorkspaceStore.Entry) {
+        session.viewModelScope.launch {
+            when (val result = session.switchWorkspace(entry.name, allowInterrupt = true)) {
+                is WorkspaceSwitch.Ok -> {
+                    // 新工作区是一个新的现场：文件浏览回到根目录，这一屏记的「我手工保存过
+                    // 哪些文件」也作废（那些是旧工作区里的路径）。草稿那一半由
+                    // `state.workspace.revision` 在 `ChatScreen` 里清（引擎已经把 revision
+                    // 加一了）。
+                    crumbs = emptyList()
+                    localEdits = emptySet()
+                    refreshTick++
+                }
+                is WorkspaceSwitch.AlreadyCurrent -> say("已经在这个工作区里。")
+                is WorkspaceSwitch.Refused -> Unit
+                is WorkspaceSwitch.Failed -> Unit
+            }
+        }
+    }
+
     Box(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize().padding(contentPadding)) {
             PiTopBar(
@@ -364,6 +502,16 @@ fun ProjectScreen(
                         tone = if (engineDown) StateTone.Warning else StateTone.Muted,
                         glyph = if (engineDown) "!" else "·",
                     )
+                }
+
+                // 启动时被迫回退过工作区（设置里那个名字不可用）：VM 已经把这句话推过一次
+                // notice，但那是一条 2.6 秒的提示；回退是**一直在**的状态（这一整条会话都跑在
+                // 默认工作区里，设置也已被改写），所以在工作区名上面常驻一行。`note` 在切换成功
+                // 之后由 VM 置回 null，这行随之消失。
+                state.workspace.note?.let { note ->
+                    item {
+                        WsNotice(text = note, tone = StateTone.Warning, glyph = "!")
+                    }
                 }
 
                 // -------------------------------------------------------- ①
@@ -745,35 +893,114 @@ fun ProjectScreen(
     // ------------------------------------------------------------ 浮层：切换工作区
     if (rootSheet) {
         WorkspaceRootSheet(
-            workspaces = workspaces,
-            currentName = workspace.name,
+            entries = workspaceEntries,
             onClose = { rootSheet = false },
-            onPick = { picked ->
+            // 面板先关，再决定切不切：`switchWorkspace` 的 `Refused` / `Failed` 那句话是
+            // VM 推的 notice（主窗口里那一条 snackbar），面板是一层 `Dialog` 窗口，开着就
+            // 把它盖住了 —— 先关才看得见。`Ok` 也因此不用再关一次面板。
+            onPick = { entry ->
                 rootSheet = false
-                if (picked == workspace.name) {
-                    say("已经在这个工作区里。")
-                } else {
-                    // 切换工作区要动引擎的 cwd 与挂载（`PiEngineHost.kt:548-555`），
-                    // 那是本批之后的事。这里给一个明确的不可用状态，不假装做到了。
-                    say("切换工作区要重开引擎并换挂载，这一批还没接上。", StateTone.Warning)
+                when {
+                    // 当前工作区：`switchWorkspace` 会返回 `AlreadyCurrent`（下面那一支处理的是
+                    // 列表过期时的同一个答案）。在这里先拦一道，是因为回合正跑着时
+                    // `wouldInterruptTurn()` 为 true，而切到当前工作区根本不会中断任何东西 ——
+                    // 不该拿一句「会中断回合」去吓用户。
+                    entry.isCurrent -> say("已经在这个工作区里。")
+                    session.wouldInterruptTurn() -> workspaceInterrupt = entry
+                    else -> switchWorkspaceTo(entry)
                 }
             },
             onNew = {
                 rootSheet = false
-                inputDialog = WorkspaceInputDialog(
-                    kind = WorkspaceInputKind.NewWorkspace,
-                    title = "新建工作区",
-                    where = "App 私有的工作区目录",
-                    relativeParent = null,
-                    absoluteParent = workspace.parentFile,
-                    initial = "",
-                )
+                createNewWorkspace()
             },
-            onPickDeviceDir = {
+            onMenu = { entry ->
                 rootSheet = false
-                say("从设备目录选择需要「所有文件访问」权限，这一批没接上。", StateTone.Warning)
+                workspaceMenuFor = entry
             },
         )
+    }
+
+    // ------------------------------------------------------------ 浮层：工作区行 ⋮
+    workspaceMenuFor?.let { entry ->
+        WorkspaceRowMenuSheet(
+            entry = entry,
+            onClose = { workspaceMenuFor = null },
+            onRename = {
+                workspaceMenuFor = null
+                inputDialog = WorkspaceInputDialog(
+                    kind = WorkspaceInputKind.RenameWorkspace,
+                    title = "重命名工作区",
+                    where = entry.relative,
+                    relativeParent = null,
+                    absoluteParent = null,
+                    initial = entry.displayName,
+                    workspaceName = entry.name,
+                )
+            },
+            onDelete = {
+                workspaceMenuFor = null
+                previewWorkspaceDeleteFor(entry)
+            },
+        )
+    }
+
+    // ------------------------------------------------------ 浮层：删除工作区的确认
+    workspaceDelete?.let { preview ->
+        val target = preview.target
+        PiDialog(onDismissRequest = { workspaceDelete = null }) {
+            PiDialogTitle(
+                title = "删除工作区",
+                glyph = "!",
+                glyphTone = PiTheme.palette.error,
+            )
+            PiDialogBody(target.host.absolutePath)
+            // 要展示的就是引擎数出来的那三个数：文件数 / 目录数 / 总字节。用户同意的是
+            // **这一次统计**，而 `confirmation` 是它唯一的凭据（`deleteWorkspace` 只收它）。
+            PiDialogBody(
+                "这个工作区里有 ${target.files} 个文件 / ${target.dirs} 个目录，" +
+                    "共 ${WorkspaceFiles.formatSize(target.bytes)}。" +
+                    "删除后永久消失，不进回收站，也恢复不了。",
+            )
+            PiDialogActions {
+                PiDialogAction(label = "取消", primary = false, onClick = { workspaceDelete = null })
+                PiDialogAction(
+                    label = "永久删除",
+                    primary = true,
+                    tone = PiTheme.palette.error,
+                    onClick = {
+                        workspaceDelete = null
+                        deleteWorkspaceNow(preview)
+                    },
+                )
+            }
+        }
+    }
+
+    // -------------------------------------------------------- 浮层：中断回合的询问
+    workspaceInterrupt?.let { entry ->
+        PiDialog(onDismissRequest = { workspaceInterrupt = null }) {
+            PiDialogTitle(
+                title = "切换会中断正在运行的回合",
+                glyph = "!",
+                glyphTone = PiTheme.palette.warning,
+            )
+            PiDialogBody("即将切到「${entry.displayName}」。")
+            PiDialogBody(
+                "切换会中断正在运行的回合（模型调用与工具都会被停掉），新工作区从空白会话开始。",
+            )
+            PiDialogActions {
+                PiDialogAction(label = "取消", primary = false, onClick = { workspaceInterrupt = null })
+                PiDialogAction(
+                    label = "仍然切换",
+                    primary = true,
+                    onClick = {
+                        workspaceInterrupt = null
+                        switchWorkspaceTo(entry)
+                    },
+                )
+            }
+        }
     }
 
     // ------------------------------------------------------------ 浮层：行尾 ⋮ 菜单
@@ -861,44 +1088,48 @@ fun ProjectScreen(
         WorkspaceNameDialog(
             dialog = dialog,
             onClose = { inputDialog = null },
-            onSubmit = { name ->
-                val problem = WorkspaceFiles.nameProblem(name)
+            onSubmit = { typed ->
+                // 工作区显示名不是文件名：它可以是带空格的一句话，`nameProblem` 那套规矩
+                // （不许 `/`、不许 `..`、不许为空…）在这里不适用，交给 `renameWorkspace`
+                // 裁决 —— 它的 `Failed.message` 就是给人看的那句话。
+                val problem = if (dialog.kind == WorkspaceInputKind.RenameWorkspace) {
+                    null
+                } else {
+                    WorkspaceFiles.nameProblem(typed)
+                }
                 if (problem == null) {
                     inputDialog = null
                     when (dialog.kind) {
                         WorkspaceInputKind.NewFile -> {
                             val parent = File(workspace, dialog.relativeParent.orEmpty())
-                            val relative = listOf(dialog.relativeParent, name)
+                            val relative = listOf(dialog.relativeParent, typed)
                                 .filterNotNull()
                                 .filter { it.isNotEmpty() }
                                 .joinToString("/")
                             runFileOp(
-                                what = "已新建文件 · $name",
+                                what = "已新建文件 · $typed",
                                 onDone = { ok ->
                                     // 稿子：「建完直接进编辑态，写什么由你。」
                                     if (ok) {
-                                        openRelative(relative, File(parent, name), startInEdit = true)
+                                        openRelative(relative, File(parent, typed), startInEdit = true)
                                     }
                                 },
                             ) {
-                                WorkspaceFiles.createFile(parent, name)
+                                WorkspaceFiles.createFile(parent, typed)
                             }
                         }
 
-                        WorkspaceInputKind.NewDir -> runFileOp("已新建文件夹 · $name") {
-                            WorkspaceFiles.createDir(File(workspace, dialog.relativeParent.orEmpty()), name)
-                        }
-
-                        WorkspaceInputKind.NewWorkspace -> runFileOp("已新建工作区 · $name") {
-                            WorkspaceFiles.createDir(
-                                dialog.absoluteParent ?: workspace.parentFile ?: workspace,
-                                name,
-                            )
+                        WorkspaceInputKind.NewDir -> runFileOp("已新建文件夹 · $typed") {
+                            WorkspaceFiles.createDir(File(workspace, dialog.relativeParent.orEmpty()), typed)
                         }
 
                         WorkspaceInputKind.Rename -> {
                             val target = File(dialog.absoluteParent ?: workspace, dialog.initial)
-                            runFileOp("已重命名 · $name") { WorkspaceFiles.rename(target, name) }
+                            runFileOp("已重命名 · $typed") { WorkspaceFiles.rename(target, typed) }
+                        }
+
+                        WorkspaceInputKind.RenameWorkspace -> dialog.workspaceName?.let { target ->
+                            renameWorkspaceTo(target, typed)
                         }
                     }
                 } else {
@@ -1639,153 +1870,178 @@ private fun StatusWord(glyph: String, text: String, color: androidx.compose.ui.g
 
 // ================================================================ 浮层：切换工作区
 
-/** 工作区切换面板里的一条现有工作区。 */
-private data class SiblingWorkspace(val name: String, val fileCount: Int, val modifiedAt: Long)
-
 /**
- * `<files>/pi/workspaces/` 下的兄弟目录。工作区的根由 App 固定
- * （`GuestWorkspacePath.RELATIVE`），所以「现有工作区」在磁盘上就是那些兄弟目录 ——
- * 数出来的是真的，不是编的一张表。
+ * 切换工作区：这一屏的「其它底部面板」之一，用同一支自绘的 [WsSheet]。
+ *
+ * 头与页脚的归属照稿子（`workspace-final.html:1577-1608`）：副标题是那句「工作区就是
+ * pi 的现场目录」，正文末尾那句「新建的工作区落在 App 私有目录里……」留在滚动区里，
+ * 而「换工作区等于换一个现场」是**页脚**（`p.footer`），钉在面板底部不随内容滚。
+ * 正文上限是稿子给这一处的 `maxBody={520}`（默认那档是 420）。
+ *
+ * ## 清单来自引擎，不是兄弟目录
+ *
+ * [entries] 是 `session.workspaceEntries()` 的读数（`WorkspaceStore.Entry`）：`displayName`
+ * 是显示名（没改过就是目录名）、`isCurrent` 是当前那一格。稿子的行副行是
+ * 「N 个文件 · 最后打开 X」—— 那两个数**这一版没有**：目录的 mtime 只说明里面有东西被
+ * 加/删过（改内容不动它），而完整数一遍要遍历整棵树，引擎只在**删除前的统计**
+ * （`previewWorkspaceDelete`）里提供 —— 那也正是需要那个数的地方。副行改印工作区
+ * 相对 files 目录的路径（`pi/workspaces/workspace-1`），与副标题那句「它就在 App
+ * 私有目录里」对得上。这是与稿子的一处**有意偏离**。
+ *
+ * ## 行尾 ⋮
+ *
+ * 稿子的每一行只有「当前」徽标与一次整行点击。重命名与删除是引擎侧（`renameWorkspace`
+ * / `previewWorkspaceDelete`）新开的两条路，这一版给每行加了一颗 ⋮（[WsMoreButton]，
+ * 与 ③④ 的文件行同一个构件、同一支菜单面板），点击整行仍然是切换。这是第二处**有意
+ * 偏离**：行里并排两个按钮比一颗 ⋮ 更挤，也不像这一屏别处的做法。
  */
-private fun siblingWorkspaces(workspace: File): List<SiblingWorkspace> {
-    val parent = workspace.parentFile ?: return listOf(
-        SiblingWorkspace(workspace.name, 0, workspace.lastModified()),
-    )
-    val siblings = parent.listFiles().orEmpty()
-        .filter { it.isDirectory }
-        .map { dir ->
-            SiblingWorkspace(
-                name = dir.name,
-                fileCount = dir.listFiles()?.size ?: 0,
-                modifiedAt = dir.lastModified(),
+@Composable
+private fun WorkspaceRootSheet(
+    entries: List<WorkspaceStore.Entry>,
+    onClose: () -> Unit,
+    onPick: (WorkspaceStore.Entry) -> Unit,
+    onNew: () -> Unit,
+    onMenu: (WorkspaceStore.Entry) -> Unit,
+) {
+    WsSheet(
+        title = "切换工作区",
+        onClose = onClose,
+        subtitle = "工作区就是 pi 的现场目录；它就在 App 私有目录里。",
+        footer = "换工作区等于换一个现场：会新建一个 pi 会话，当前会话不会被删除。",
+        maxBodyHeight = ROOT_SHEET_BODY_MAX,
+    ) {
+        Text(
+            "现有工作区",
+            modifier = Modifier.padding(
+                start = PiSettingsMetrics.pageHorizontal,
+                end = PiSettingsMetrics.pageHorizontal,
+                top = PiSettingsMetrics.groupGap,
+                bottom = PiSettingsMetrics.groupHeaderGap,
+            ),
+            style = PiTheme.text.meta,
+            color = MaterialTheme.colorScheme.onSurface,
+        )
+        WsCard {
+            entries.forEachIndexed { index, item ->
+                if (index > 0) WsHairline()
+                val renamed = item.label != item.name
+                WsRow(
+                    // 显示名是 label；它就是 `switchWorkspace` 里那条 notice 印的名字。
+                    title = item.displayName,
+                    // 稿子的规矩：路径型的东西等宽。目录名是路径段，label 是人取的名字。
+                    mono = !renamed,
+                    strong = true,
+                    lead = { FolderGlyph() },
+                    badge = if (renamed || item.isCurrent) {
+                        {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(PiSettingsMetrics.badgeGap),
+                            ) {
+                                // 改过显示名之后，身份（目录名）还得看得见：pi 的会话与信任都挂在
+                                // 目录路径上，而不是这个名字上。
+                                if (renamed) {
+                                    WsBadge(text = "", tone = StateTone.Muted, mono = item.name)
+                                }
+                                if (item.isCurrent) {
+                                    WsBadge(text = "当前", tone = StateTone.Accent, glyph = "●")
+                                }
+                            }
+                        }
+                    } else {
+                        null
+                    },
+                    meta = item.relative,
+                    metaMono = true,
+                    trail = { WsMoreButton(onClick = { onMenu(item) }) },
+                    onClick = { onPick(item) },
+                )
+            }
+        }
+        Text(
+            "加一个",
+            modifier = Modifier.padding(
+                start = PiSettingsMetrics.pageHorizontal,
+                end = PiSettingsMetrics.pageHorizontal,
+                top = PiSettingsMetrics.groupGap,
+                bottom = PiSettingsMetrics.groupHeaderGap,
+            ),
+            style = PiTheme.text.meta,
+            color = MaterialTheme.colorScheme.onSurface,
+        )
+        WsCard {
+            WsRow(
+                title = "新建工作区",
+                strong = true,
+                titleColor = PiTheme.palette.accent,
+                lead = {
+                    Icon(
+                        Icons.Filled.Add,
+                        contentDescription = null,
+                        modifier = Modifier.size(PiSettingsMetrics.searchIconSize),
+                        tint = PiTheme.palette.accent,
+                    )
+                },
+                meta = "在 App 私有目录里建一个空目录，不需要任何权限。",
+                onClick = onNew,
+            )
+            WsHairline()
+            // 「从设备目录选择」这一条**保持 UI、但明确不可用**：它要的是 SAF/「所有文件
+            // 访问」授权加另一条挂载通道，这一版没有。所以它没有 `onClick`（不可点）、
+            // 标题不画成 accent（不假装是一条能走的路），并在名字旁边挂一颗「未接」徽标；
+            // 稿子那一行是 accent + 点击弹一句提示，这是与稿子的第三处**有意偏离** ——
+            // 弹一句「还没接上」比一行灰着的徽标更像一条能走的路。
+            WsRow(
+                title = "从设备目录选择（需授权）",
+                strong = true,
+                titleColor = PiTheme.palette.muted,
+                lead = { FolderGlyph() },
+                badge = { WsBadge(text = "未接", tone = StateTone.Muted) },
+                meta = "需要「所有文件访问」权限；只有从设备目录里选工作区时才需要。",
             )
         }
-        .sortedBy { it.name }
-    return if (siblings.any { it.name == workspace.name }) {
-        siblings
-    } else {
-        listOf(SiblingWorkspace(workspace.name, 0, workspace.lastModified())) + siblings
+        Text(
+            "新建的工作区落在 App 私有目录里，不需要授权；只有「从设备目录选择」那一条要系统权限。",
+            modifier = Modifier.padding(
+                start = PiSettingsMetrics.pageHorizontal,
+                end = PiSettingsMetrics.pageHorizontal,
+                top = PiSettingsMetrics.cardPaddingLoose,
+                bottom = PiSettingsMetrics.groupGap,
+            ),
+            style = PiTheme.text.meta,
+            color = PiTheme.palette.muted,
+        )
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+/** 稿子给这一处的 `maxBody={520}`（`Sheet` 的默认那档是 420）。 */
+private val ROOT_SHEET_BODY_MAX = 520.dp
+
+/**
+ * 工作区行尾 ⋮ 的菜单：重命名 / 删除。
+ *
+ * 与文件行的 [WorkspaceMenuSheet] 同一副壳、同一支 [MenuAction]：标题是显示名，副标题是
+ * **等宽**的相对路径（这个对象是路径型的，与那支菜单的规矩一致），删除用错误色（它是唯一
+ * 不可逆的那一个）。不在这里放「切换」—— 整行点击就是切换。
+ *
+ * 稿子的 rootsheet 每一行只有一个「当前」徽标和一次整行点击，没有行级动作；这两条是引擎
+ * 接口带来的新入口（见 [WorkspaceRootSheet] 的 KDoc）。
+ */
 @Composable
-private fun WorkspaceRootSheet(
-    workspaces: List<SiblingWorkspace>,
-    currentName: String,
+private fun WorkspaceRowMenuSheet(
+    entry: WorkspaceStore.Entry,
     onClose: () -> Unit,
-    onPick: (String) -> Unit,
-    onNew: () -> Unit,
-    onPickDeviceDir: () -> Unit,
+    onRename: () -> Unit,
+    onDelete: () -> Unit,
 ) {
-    ModalBottomSheet(onDismissRequest = onClose) {
-        Column(Modifier.fillMaxWidth()) {
-            Text(
-                "切换工作区",
-                modifier = Modifier.padding(horizontal = PiSettingsMetrics.pageHorizontal),
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.onSurface,
-            )
-            Text(
-                "工作区就是 pi 的现场目录；它就在 App 私有目录里。",
-                modifier = Modifier.padding(
-                    start = PiSettingsMetrics.pageHorizontal,
-                    end = PiSettingsMetrics.pageHorizontal,
-                    top = PiSettingsMetrics.supportingGap,
-                ),
-                style = PiTheme.text.meta,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Text(
-                "现有工作区",
-                modifier = Modifier.padding(
-                    start = PiSettingsMetrics.pageHorizontal,
-                    end = PiSettingsMetrics.pageHorizontal,
-                    top = PiSettingsMetrics.groupGap,
-                    bottom = PiSettingsMetrics.groupHeaderGap,
-                ),
-                style = PiTheme.text.meta,
-                color = MaterialTheme.colorScheme.onSurface,
-            )
-            WsCard {
-                workspaces.forEachIndexed { index, item ->
-                    if (index > 0) WsHairline()
-                    WsRow(
-                        title = item.name,
-                        mono = true,
-                        strong = true,
-                        lead = { FolderGlyph() },
-                        badge = if (item.name == currentName) {
-                            {
-                                WsBadge(text = "当前", tone = StateTone.Accent, glyph = "●")
-                            }
-                        } else {
-                            null
-                        },
-                        meta = "${item.fileCount} 项 · ${WorkspaceFiles.formatTime(item.modifiedAt)}",
-                        onClick = { onPick(item.name) },
-                    )
-                }
-            }
-            Text(
-                "加一个",
-                modifier = Modifier.padding(
-                    start = PiSettingsMetrics.pageHorizontal,
-                    end = PiSettingsMetrics.pageHorizontal,
-                    top = PiSettingsMetrics.groupGap,
-                    bottom = PiSettingsMetrics.groupHeaderGap,
-                ),
-                style = PiTheme.text.meta,
-                color = MaterialTheme.colorScheme.onSurface,
-            )
-            WsCard {
-                WsRow(
-                    title = "新建工作区",
-                    strong = true,
-                    titleColor = PiTheme.palette.accent,
-                    lead = {
-                        Icon(
-                            Icons.Filled.Add,
-                            contentDescription = null,
-                            modifier = Modifier.size(PiSettingsMetrics.searchIconSize),
-                            tint = PiTheme.palette.accent,
-                        )
-                    },
-                    meta = "在 App 私有目录里建一个空目录，不需要任何权限。",
-                    onClick = onNew,
-                )
-                WsHairline()
-                WsRow(
-                    title = "从设备目录选择（需授权）",
-                    strong = true,
-                    titleColor = PiTheme.palette.accent,
-                    lead = { FolderGlyph() },
-                    meta = "需要「所有文件访问」权限；只有从设备目录里选工作区时才需要。",
-                    onClick = onPickDeviceDir,
-                )
-            }
-            Text(
-                "新建的工作区落在 App 私有目录里，不需要授权；只有「从设备目录选择」那一条要系统权限。",
-                modifier = Modifier.padding(
-                    start = PiSettingsMetrics.pageHorizontal,
-                    end = PiSettingsMetrics.pageHorizontal,
-                    top = PiSettingsMetrics.cardPaddingLoose,
-                    bottom = PiSettingsMetrics.groupGap,
-                ),
-                style = PiTheme.text.meta,
-                color = PiTheme.palette.muted,
-            )
-            Text(
-                "换工作区等于换一个现场：会新建一个 pi 会话，当前会话不会被删除。",
-                modifier = Modifier.padding(
-                    start = PiSettingsMetrics.pageHorizontal,
-                    end = PiSettingsMetrics.pageHorizontal,
-                    bottom = PiSettingsMetrics.groupGap,
-                ),
-                style = PiTheme.text.meta,
-                color = PiTheme.palette.muted,
-            )
-        }
+    WsSheet(
+        title = entry.displayName,
+        onClose = onClose,
+        subtitle = entry.relative,
+        subtitleMono = true,
+    ) {
+        MenuAction("重命名", onRename)
+        MenuAction("删除", onDelete, tone = PiTheme.palette.error)
     }
 }
 
@@ -1818,8 +2074,11 @@ private fun menuTargetFor(path: String, file: File, fromSession: Boolean): Works
  * 稿子的动作表：③ 的行是「打开 / 编辑 / 重命名 / 删除 / 看它在对话里的那一步」，④ 的文件是
  * 「打开 / 编辑 / 重命名 / 删除 / 复制路径」，④ 的目录是「进入 / 重命名 / 删除 / 复制路径」。
  * 删除用错误色（它是唯一不可逆的那一个）。
+ *
+ * 壳是 [WsSheet]：标题是 `mid(文件名, 22)`（稿子 `:1613`），副标题是**等宽**的完整路径
+ * （稿子那儿是一个 `span.mono`），动作行自己带 `12px 14px` 的内边距，所以头下面不再垫
+ * 一个空档 —— 头的 8 加上行的 12 就是稿子的那道缝。
  */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun WorkspaceMenuSheet(
     target: WorkspaceMenuTarget,
@@ -1832,41 +2091,27 @@ private fun WorkspaceMenuSheet(
     onCopyPath: () -> Unit,
     onLocateInChat: () -> Unit,
 ) {
-    ModalBottomSheet(onDismissRequest = onClose) {
-        Column(Modifier.fillMaxWidth()) {
-            Column(Modifier.padding(horizontal = PiSettingsMetrics.pageHorizontal)) {
-                Text(
-                    WorkspaceFiles.middleEllipsis(target.file.name, MENU_TITLE_MAX_CHARS),
-                    style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.onSurface,
-                )
-                Text(
-                    target.path,
-                    modifier = Modifier.padding(top = PiSettingsMetrics.supportingGap),
-                    style = PiTheme.text.monoSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-            Spacer(Modifier.height(PiSettingsMetrics.cardPadding))
-            if (target.isDirectory) {
-                MenuAction("进入", onEnter)
-                MenuAction("重命名", onRename)
-                MenuAction("删除", onDelete, tone = PiTheme.palette.error)
-                MenuAction("复制路径", onCopyPath)
+    WsSheet(
+        title = WorkspaceFiles.middleEllipsis(target.file.name, MENU_TITLE_MAX_CHARS),
+        onClose = onClose,
+        subtitle = target.path,
+        subtitleMono = true,
+    ) {
+        if (target.isDirectory) {
+            MenuAction("进入", onEnter)
+            MenuAction("重命名", onRename)
+            MenuAction("删除", onDelete, tone = PiTheme.palette.error)
+            MenuAction("复制路径", onCopyPath)
+        } else {
+            MenuAction("打开", onOpen)
+            MenuAction("编辑", onEdit)
+            MenuAction("重命名", onRename)
+            MenuAction("删除", onDelete, tone = PiTheme.palette.error)
+            if (target.fromSession) {
+                MenuAction("看它在对话里的那一步", onLocateInChat)
             } else {
-                MenuAction("打开", onOpen)
-                MenuAction("编辑", onEdit)
-                MenuAction("重命名", onRename)
-                MenuAction("删除", onDelete, tone = PiTheme.palette.error)
-                if (target.fromSession) {
-                    MenuAction("看它在对话里的那一步", onLocateInChat)
-                } else {
-                    MenuAction("复制路径", onCopyPath)
-                }
+                MenuAction("复制路径", onCopyPath)
             }
-            Spacer(Modifier.height(PiSettingsMetrics.groupGap))
         }
     }
 }
@@ -1900,8 +2145,10 @@ private fun MenuAction(
 
 // ================================================================ 浮层：新建
 
-/** 「新建」先问文件还是文件夹（稿子的 `dlg.kind === 'new'`）。 */
-@OptIn(ExperimentalMaterial3Api::class)
+/**
+ * 「新建」先问文件还是文件夹（稿子的 `dlg.kind === 'new'`，`:1623`）：同一支 [WsSheet]，
+ * 标题「新建」、副标题「建在「…」里」、两条选择各自带 `12px 14px` 内边距。
+ */
 @Composable
 private fun WorkspaceNewSheet(
     where: String,
@@ -1909,37 +2156,24 @@ private fun WorkspaceNewSheet(
     onNewFile: () -> Unit,
     onNewDir: () -> Unit,
 ) {
-    ModalBottomSheet(onDismissRequest = onClose) {
-        Column(Modifier.fillMaxWidth()) {
-            Column(Modifier.padding(horizontal = PiSettingsMetrics.pageHorizontal)) {
-                Text(
-                    "新建",
-                    style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.onSurface,
-                )
-                Text(
-                    "建在「$where」里",
-                    modifier = Modifier.padding(top = PiSettingsMetrics.supportingGap),
-                    style = PiTheme.text.meta,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            Spacer(Modifier.height(PiSettingsMetrics.cardPadding))
-            NewChoice(
-                title = "新建文件",
-                supporting = "建完直接进编辑态，写什么由你。",
-                glyph = { EntryGlyph(WorkspaceEntryKind.Text) },
-                onClick = onNewFile,
-            )
-            WsHairline()
-            NewChoice(
-                title = "新建文件夹",
-                supporting = "放在当前目录下。",
-                glyph = { EntryGlyph(WorkspaceEntryKind.Directory) },
-                onClick = onNewDir,
-            )
-            Spacer(Modifier.height(PiSettingsMetrics.groupGap))
-        }
+    WsSheet(
+        title = "新建",
+        onClose = onClose,
+        subtitle = "建在「$where」里",
+    ) {
+        NewChoice(
+            title = "新建文件",
+            supporting = "建完直接进编辑态，写什么由你。",
+            glyph = { EntryGlyph(WorkspaceEntryKind.Text) },
+            onClick = onNewFile,
+        )
+        WsHairline()
+        NewChoice(
+            title = "新建文件夹",
+            supporting = "放在当前目录下。",
+            glyph = { EntryGlyph(WorkspaceEntryKind.Directory) },
+            onClick = onNewDir,
+        )
     }
 }
 
@@ -1981,9 +2215,9 @@ private fun NewChoice(
 
 // ================================================================ 浮层：名字输入
 
-private enum class WorkspaceInputKind { NewFile, NewDir, NewWorkspace, Rename }
+private enum class WorkspaceInputKind { NewFile, NewDir, Rename, RenameWorkspace }
 
-/** 新建文件 / 新建文件夹 / 新建工作区 / 重命名共用的一支输入框（稿子就是这么复用的）。 */
+/** 新建文件 / 新建文件夹 / 重命名 / 重命名工作区共用的一支输入框（稿子就是这么复用的）。 */
 private data class WorkspaceInputDialog(
     val kind: WorkspaceInputKind,
     val title: String,
@@ -1991,10 +2225,12 @@ private data class WorkspaceInputDialog(
     val where: String,
     /** 相对工作区的父目录；只有新建文件 / 文件夹用它。 */
     val relativeParent: String?,
-    /** 绝对父目录；重命名与新建工作区用它。 */
+    /** 绝对父目录；文件重命名用它。 */
     val absoluteParent: File?,
     val initial: String,
     val dialogSub: String? = null,
+    /** 要改显示名的那个工作区（目录名 = identity）；只有重命名工作区用它。 */
+    val workspaceName: String? = null,
 )
 
 @Composable
@@ -2036,10 +2272,13 @@ private fun WorkspaceNameDialog(
             )
         }
         Text(
-            if (dialog.kind == WorkspaceInputKind.Rename) {
-                "只改文件名，内容不动。"
-            } else {
-                "建在当前目录下。"
+            when (dialog.kind) {
+                WorkspaceInputKind.Rename -> "只改文件名，内容不动。"
+                // 显示名（label）与目录名是两回事：改它不移动目录，所以 pi 的会话记录与
+                // 项目信任（都挂在目录路径上）一条都不会丢 —— 这是 `WorkspaceStore.rename`
+                // 特意选的做法，输入框旁边得把这件事说出来。
+                WorkspaceInputKind.RenameWorkspace -> "只改显示名：目录名与路径不动，pi 的会话和项目信任都挂在路径上。"
+                else -> "建在当前目录下。"
             },
             modifier = Modifier.padding(top = PiSpacing.inline),
             style = PiTheme.text.meta,
@@ -2064,56 +2303,100 @@ private val NAME_FIELD_RADIUS = 9.dp
 
 private data class WorkspaceSnack(val text: String, val tone: StateTone)
 
+/** Snack 右侧那个可选动作：一个标签 + 一下点击（稿子 `Snack` 的 `p.action`）。 */
+private data class WorkspaceSnackAction(val label: String, val onClick: () -> Unit)
+
 /**
- * 底部一条提示（稿子的 `Snack`）：三档 tone，2.6 秒后自己走（稿子的
- * `setTimeout(…, 2600)`）。它是这一屏唯一的反馈通道 —— 复制、导出、保存、文件操作的结果
- * 都在这里说，而不是弹一个对话框要用户点掉。
+ * 底部一条提示（稿子的 `Snack`，`workspace-final.html:627-640`）：三档 tone，2.6 秒后自己走
+ * （稿子的 `setTimeout(…, 2600)`）。它是这一屏唯一的反馈通道 —— 复制、导出、保存、文件操作
+ * 的结果都在这里说，而不是弹一个对话框要用户点掉。
+ *
+ * ## 三档的底与字（照稿子）
+ *
+ * ```
+ * Error    toolErrorBg    error     ✗
+ * Warning  infoBg         warning   !
+ * Info     cardBg         text      ·
+ * ```
+ *
+ * Info 那一档原来用 `surfaceContainerHigh` 画底、`stateToneColor(Muted)` 画符号，两处各偏一
+ * 格（`--card` 是 `cardBg`；`·` 的颜色在稿子里是 `--text`），这里收回来。符号与动作用
+ * `ui/extension/ExtensionUiHost.kt` 的 `ExtensionSnack` 同一套角色（等宽 `mono`、动作
+ * `bodyMedium` + 500）—— 那是全应用同一套「符号 + 颜色 + 一句话」的编码，只是那一支挂在
+ * `PiRoot` 上管全局通知，这一支属于工作区一屏。
+ *
+ * @param action 右侧可选动作（稿子 `p.action`），可空。这一屏目前**一个调用点都没接**：
+ *   现在这些提示（复制、新建、删除的结果）都不需要用户再点一下，「删除后撤销」才需要，
+ *   所以构件先把槽留出来。
  */
 @Composable
-private fun WorkspaceSnackBar(message: WorkspaceSnack, modifier: Modifier = Modifier) {
+private fun WorkspaceSnackBar(
+    message: WorkspaceSnack,
+    modifier: Modifier = Modifier,
+    action: WorkspaceSnackAction? = null,
+) {
+    val palette = PiTheme.palette
     val glyph = when (message.tone) {
         StateTone.Error -> "✗"
         StateTone.Warning -> "!"
         else -> "·"
     }
-    val color = app.pi.ui.theme.stateToneColor(message.tone, PiTheme.palette)
+    val glyphColor = when (message.tone) {
+        StateTone.Error -> palette.error
+        StateTone.Warning -> palette.warning
+        else -> palette.text
+    }
     Row(
         modifier = modifier
             .fillMaxWidth()
+            // `.b-snack{left:12px;right:12px;border-radius:12px;padding:10px 12px;gap:10px}`
+            // （`workspace-final.html:185-186`，与 `06 §2`「Snackbar：左右 12、圆角 12、
+            // `padding:10px 12px` gap 10」同一组数）。**没有描边** —— 那一圈
+            // `1px borderMuted` 是本屏早期自造的，稿子里三种语气都只有底色。
             .padding(
-                start = PiSettingsMetrics.pageHorizontal,
-                end = PiSettingsMetrics.pageHorizontal,
+                start = PiSettingsMetrics.cardPadding,
+                end = PiSettingsMetrics.cardPadding,
                 bottom = PiSettingsMetrics.cardPadding,
             )
-            .clip(RoundedCornerShape(PiSettingsMetrics.cardRadius))
+            .clip(PiShapes.snackbar)
             .background(
                 when (message.tone) {
-                    StateTone.Error -> PiTheme.palette.toolErrorBg
-                    StateTone.Warning -> PiTheme.palette.infoBg
-                    else -> MaterialTheme.colorScheme.surfaceContainerHigh
+                    StateTone.Error -> palette.toolErrorBg
+                    StateTone.Warning -> palette.infoBg
+                    else -> palette.cardBg
                 },
             )
-            .border(
-                PiSettingsMetrics.hairline,
-                PiTheme.palette.borderMuted,
-                RoundedCornerShape(PiSettingsMetrics.cardRadius),
-            )
             .padding(
-                horizontal = PiSettingsMetrics.cardPaddingLoose,
+                horizontal = PiSettingsMetrics.cardPadding,
                 vertical = PiSettingsMetrics.rowPaddingVertical,
             ),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(PiSettingsMetrics.rowGap),
     ) {
-        Text(glyph, style = PiTheme.text.monoSmall, color = color, maxLines = 1)
+        Text(glyph, style = PiTheme.text.mono, color = glyphColor, maxLines = 1)
         Text(
             message.text,
             modifier = Modifier.weight(1f),
             style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurface,
+            color = palette.text,
         )
+        if (action != null) {
+            Text(
+                action.label,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(SNACK_ACTION_RADIUS))
+                    .clickable(role = Role.Button, onClick = action.onClick)
+                    .padding(vertical = SNACK_ACTION_PADDING_VERTICAL),
+                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
+                color = palette.text,
+            )
+        }
     }
 }
+
+/** 动作标签的按压面：稿子只给了它一个 `press`，圆角与内边距取 `ExtensionSnack` 那一档。 */
+private val SNACK_ACTION_RADIUS = 8.dp
+private val SNACK_ACTION_PADDING_VERTICAL = 4.dp
 
 // ================================================================ 通用
 
