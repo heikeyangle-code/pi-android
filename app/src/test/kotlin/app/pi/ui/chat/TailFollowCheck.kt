@@ -535,6 +535,152 @@ fun main() {
         check("H11 a negative index clamps to the sentinel case", prependAnchoredIndex(-1, 50, 1, 1), 51)
     }
 
+    // ================================ I. "I was at the bottom, I sent, and it stopped" ===
+    //
+    // The user's own reproduction, verbatim: 「有时候我明明就在屏幕底部给它发消息，发完了它
+    // 就不跟随，还得手滑。」 No up-scroll ever happened, so every one of these observations
+    // has the viewport at its end, and the only reason the follow can be lost is that
+    // something *stopped observing the machine* at the moment the message went out.
+    //
+    // The rules themselves already say the right thing (rule 3 re-arms at the end, and a
+    // gesture that ends at the end re-arms regardless of the `pausedByNavigation`
+    // suppression). What these checks pin is the **caller's obligation** those rules
+    // depend on, which is the half that was wrong in `ChatScreen`: a paused machine that
+    // is not fed can never re-arm, and a pause written by the caller from a layout-driven
+    // `isScrollInProgress` (rather than from an anchor movement) latches
+    // `pausedByNavigation` and can then never be undone by the position alone.
+    run {
+        // The wiring, in the shape the fixed effect has: feed the machine, then mirror
+        // its answer. `following` is the state the UI shows; `stale` would be the state
+        // the removed `if (!following) return` produced by skipping the feed.
+        fun feed(machine: TailFollow, snapshot: TailSnapshot): Boolean = machine.onSnapshot(snapshot).following
+
+        // At the end, the follow armed, the user sends.
+        val send = TailFollow()
+        val before = feed(send, TailSnapshot(10, viewport(10, atBottom = true)))
+        check("I1 at the bottom before sending, following", before, true)
+
+        // The optimistic echo arrives, so the list no longer reaches its end, and a
+        // layout pass (the keyboard collapsing is the one that does it) starts what
+        // *looks* like a scroll session while the anchor has not moved at all.
+        val duringSend = feed(
+            send,
+            TailSnapshot(
+                11,
+                viewport(11, atBottom = false, firstVisibleIndex = 6, isScrollInProgress = true),
+            ),
+        )
+        check("I2 a layout-driven scroll session with a still anchor does not pause", duringSend, true)
+
+        // Same session, one frame later, still nothing moved, and the tail is taller
+        // than the viewport (a long streaming answer): still the follow's job.
+        val tallDuringSend = feed(
+            send,
+            TailSnapshot(
+                11,
+                viewport(
+                    11,
+                    atBottom = false,
+                    firstVisibleIndex = 10,
+                    lastVisibleOffsetPx = 0,
+                    lastVisibleSizePx = 4000,
+                    isScrollInProgress = true,
+                ),
+            ),
+        )
+        check("I3 and a tall streaming tail keeps it armed", tallDuringSend, true)
+
+        // The session ends where it started — at the end. This is the observation the
+        // old effect could not make, because it had already returned on `!following`.
+        val afterSend = feed(send, TailSnapshot(11, viewport(11, atBottom = true, firstVisibleIndex = 6)))
+        check("I4 the session ending at the bottom keeps following", afterSend, true)
+
+        // And the token that follows the send is pinned, not left a few pixels short:
+        // the list grew by a row while the follow was armed.
+        val firstToken = feed(
+            send,
+            TailSnapshot(
+                11,
+                viewport(11, atBottom = false, firstVisibleIndex = 6, lastVisibleOffsetPx = 900),
+            ),
+        )
+        check("I5 the next token is still following", firstToken, true)
+
+        // The stale-wiring counter-example, executed: a pause stamped by the *caller*
+        // for that same layout-driven session. `pause()` sets the navigation
+        // suppression, and then rule 3 can no longer undo it even though the viewport
+        // never left the end — this is the permanent "发完就不跟随". The follow flag is
+        // the point; the count is the row that arrived after the pause (`pause()` zeroed
+        // the machine's own `unseenRows`, and this observation adds the one new row).
+        val callerPaused = TailFollow()
+        callerPaused.onSnapshot(TailSnapshot(10, viewport(10, atBottom = true)))
+        callerPaused.pause()
+        val afterCallerPause = callerPaused.onSnapshot(TailSnapshot(11, viewport(11, atBottom = true)))
+        check("I6 a caller-paused follow stays paused at the end", state(afterCallerPause), "false/1")
+
+        // Whereas a pause the *machine* derived from a real gesture is the one the user
+        // can undo by coming back down: the anchor moved, and then the end was reached.
+        val userPaused = TailFollow()
+        userPaused.onSnapshot(TailSnapshot(10, viewport(10, atBottom = true)))
+        userPaused.onSnapshot(
+            TailSnapshot(10, viewport(10, atBottom = false, firstVisibleIndex = 3, isScrollInProgress = true)),
+        )
+        val userBackAtEnd = userPaused.onSnapshot(TailSnapshot(10, viewport(10, atBottom = true)))
+        check("I7 the machine's own gesture pause re-arms at the end", state(userBackAtEnd), "true/0")
+
+        // A pause that came from the machine must also *accumulate* while the user is
+        // away (the badge's `transcriptRows - pausedRows`), which is why the caller
+        // stamps its baseline on the pause transition and not on every snapshot.
+        val counting = TailFollow()
+        counting.onSnapshot(TailSnapshot(20, viewport(20, atBottom = true, firstVisibleIndex = 15)))
+        counting.onSnapshot(
+            TailSnapshot(20, viewport(20, atBottom = false, firstVisibleIndex = 5, isScrollInProgress = true)),
+        )
+        val grew = counting.onSnapshot(TailSnapshot(25, viewport(25, atBottom = false, firstVisibleIndex = 5)))
+        check("I8 a paused follow counts the rows that arrive", state(grew), "false/5")
+        val grewMore = counting.onSnapshot(TailSnapshot(29, viewport(29, atBottom = false, firstVisibleIndex = 5)))
+        check("I9 and keeps counting them", state(grewMore), "false/9")
+
+        // The end reached by the user's *hand* after a navigation pause clears the
+        // suppression (pi's `disableFollow` is undone by a gesture, and the harness's
+        // existing E6 covers the same rule from the other direction). Pinned here for
+        // the send path, where a reveal and a send can land in the same second.
+        val navigated = TailFollow()
+        navigated.onSnapshot(TailSnapshot(30, viewport(30, atBottom = true, firstVisibleIndex = 25)))
+        navigated.pause()
+        navigated.onSnapshot(TailSnapshot(30, viewport(30, atBottom = false, firstVisibleIndex = 8)))
+        val gestureAtEnd = navigated.onSnapshot(
+            TailSnapshot(30, viewport(30, atBottom = true, firstVisibleIndex = 25, isScrollInProgress = true)),
+        )
+        check("I10 a gesture that ends at the bottom clears the navigation pause", state(gestureAtEnd), "true/0")
+
+        // `pause()` forgets the tail it was following, so a pin that was already issued
+        // cannot suppress the one the position needs after an explicit re-arm.
+        val forgotten = TailFollow()
+        val longTail = TailSnapshot(
+            6,
+            viewport(6, atBottom = false, lastVisibleIndex = 2, lastVisibleSizePx = 2000),
+        )
+        check("I11 the tail is pinned once", forgotten.onSnapshot(longTail).pin, TailPin(5, 0))
+        forgotten.pause()
+        forgotten.reArm()
+        check(
+            "I12 a pause does not remember the old pin",
+            forgotten.onSnapshot(longTail).pin,
+            TailPin(5, 0),
+        )
+
+        // The exact end geometry this whole group turns on: at `!canScrollForward` the
+        // machine asks for nothing, so "I am at the bottom and nothing is happening" is
+        // never a stuck pin — it is the state the follow is supposed to be in.
+        val atEnd = TailFollow()
+        val atEndDecision = atEnd.onSnapshot(TailSnapshot(11, viewport(11, atBottom = true, firstVisibleIndex = 6)))
+        check("I13 the end is a state with nothing to pin", atEndDecision.pin, null)
+        val atEndAgain = atEnd.onSnapshot(TailSnapshot(12, viewport(12, atBottom = true, firstVisibleIndex = 7)))
+        check("I14 and another row at the end still pins nothing", atEndAgain.pin, null)
+        check("I15 while the follow stays armed", state(atEndAgain), "true/0")
+    }
+
     println(if (failures == 0) "\nharness: OK (all checks passed)" else "\nharness: FAILED ($failures)")
     if (failures != 0) kotlin.system.exitProcess(1)
 }

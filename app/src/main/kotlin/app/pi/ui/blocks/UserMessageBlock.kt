@@ -18,10 +18,40 @@ import app.pi.ui.theme.PiTheme
 import app.pi.ui.theme.PiSpacing
 
 /**
- * `user-message` (docs/pi-android-ui-spec.md §7.4): a full-width container in
- * `userMessageBg`, 16dp radius, 14dp padding, with the body rendered as the
- * markdown pi draws, any images below it, and the turn's timestamp once in the
- * bottom-right corner.
+ * `user-message`, to the **frozen v2 board** (`design/ui-refactor/design-demos/
+ * direction-b-v2.html:1599-1605`, and again at `:2454-2460`):
+ *
+ * ```jsx
+ * <div style={{background:'var(--user-bg)',borderRadius:12,padding:12,marginBottom:10}}>
+ *   <div className="t14" style={{color:'var(--user-text)'}}>…正文…</div>
+ *   <ImageGrid n={1} mb={8}/>
+ *   <div className="rw" style={{justifyContent:'flex-end'}}>
+ *     <span className="mono t12 c-muted">14:02</span>
+ *   </div>
+ * </div>
+ * ```
+ *
+ * So the bubble is **full width** — the board's own caption for the row is 「用户消息：
+ * 满宽气泡，右下角时间」 — in `--user-bg` (`#343541`) with `--user-text` (`#D4D4D4`)
+ * prose, radius 12, padding 12, a 10 bottom margin, and the turn's timestamp once in
+ * the bottom-right corner in the machine face at 12. It is deliberately **not** a
+ * right-aligned chat bubble: the container is what distinguishes the user's turn from
+ * the assistant's container-less prose (`06 §2`), and a bubble with a tail would say
+ * the opposite.
+ *
+ * **Frozen board vs the older prose specs (for the owner of the design docs — not
+ * changed here).** `docs/pi-android-ui-spec.md:447`/`:824` and
+ * `design/ui-refactor/02-real-content.md:222` still describe 16dp radius, 14dp padding
+ * and a 15/23 body, and `design/ui-refactor/05-compose-migration-plan.md:253` records an
+ * explicit decision to keep the bubble at 16dp. The board is the newer, frozen artefact,
+ * so this file follows 12 / 12 / `t14` (14/23). That is also why the radius no longer
+ * comes from `PiShapes.card`: `card` is still the older spec's 16dp and is shared with
+ * other blocks.
+ *
+ * Functionality is unchanged: the ⋮ ([BlockActionMenu]) with 复制 and 编辑并从此分叉,
+ * the system text-selection scope ([SelectableContent]) and the attachment grid that
+ * opens the full-screen viewer ([onImageClick]) all keep working — only geometry and
+ * colour moved.
  *
  * F15 (`docs/rendering-review.md`): pi sends the user's own text through
  * `Markdown` with `userMessageText` as `defaultTextStyle.color`
@@ -67,14 +97,25 @@ fun UserMessageBlock(
         // menu's 复制. The ⋮ above keeps that whole-bubble copy for a single tap.
         SelectableContent {
         Surface(
-            modifier = Modifier.fillMaxWidth(),
-            shape = PiShapes.card,
+            // The board's `marginBottom:10`, verbatim. It is deliberately a literal and
+            // not `PiSpacing.blockGap` (8): the board's own number is 10, and this file
+            // may not add a token. Applied outside the `Surface`, so it stacks with the
+            // list's `Arrangement.spacedBy` instead of replacing it, and the gap is
+            // never painted in `userMessageBg`.
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(bottom = 10.dp),
+            // `borderRadius:12`.
+            shape = PiShapes.cardInner,
             color = palette.userMessageBg,
         ) {
             Column(
-                // §7.4's user-message 内边距 14dp, by name.
-                modifier = Modifier.padding(PiSpacing.bubble),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
+                // The board's `padding:12`, both axes.
+                modifier = Modifier.padding(PiSpacing.cardPadding),
+                // `ImageGrid mb={8}`: the gap that follows the grid. The board has no
+                // gap between the body and the grid, and 8 is the nearest step of v2's
+                // own rhythm to the 10 this used to be.
+                verticalArrangement = Arrangement.spacedBy(PiSpacing.blockGap),
             ) {
                 if (item.text.isNotEmpty()) {
                     PiMarkdownText(
@@ -93,14 +134,16 @@ fun UserMessageBlock(
                 Text(
                     text = formatClock(item.ts),
                     modifier = Modifier.align(Alignment.End),
-                    style = PiTheme.text.meta,
-                    // F12 (`docs/rendering-review.md`): `dim` is 2.11:1 on
-                    // `userMessageBg`, under spec §9's 3:1 metadata floor. The
-                    // token itself is pi's own (`dark.json` `vars.dimGray`), so the
-                    // fix is which colour this bubble's least readable line uses:
-                    // `userMessageText` lifted to 62 % clears the floor without
-                    // inventing a palette entry.
-                    color = palette.userMessageText.copy(alpha = 0.62f),
+                    // `mono t12`: the machine face at v2's label step, which is exactly
+                    // the `monoSmall` role (12/18, `PiMonoFamily`). `meta` is the same
+                    // size in the *system* face, and the board's markup asks for `.mono`
+                    // on this timestamp specifically.
+                    style = PiTheme.text.monoSmall,
+                    // `c-muted` (`--muted: #808080`), the v2 palette's `muted` token.
+                    // It measures 3.07:1 on `userMessageBg`: over spec §9's 3:1
+                    // metadata floor, which is why the board's colour can be used
+                    // literally here (F12 kept `dim` — 2.11:1 — out of this bubble).
+                    color = palette.muted,
                 )
             }
         }

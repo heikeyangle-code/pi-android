@@ -134,11 +134,25 @@ internal class TailFollow(initiallyFollowing: Boolean = true) {
      * /「下一条」, any "reveal this row for me" request. pi's `disableFollow`
      * (`scroll-view.ts:131`, used by the search reveal at
      * `tui-alt-screen.ts:636`), including the "stays paused at the end" half.
+     *
+     * The caller owns the *pixels*; this owns the *flag*. In particular a caller must
+     * never pause from its own reading of "is a scroll in flight": an
+     * `isScrollInProgress` that a layout pass started (an optimistic row landing, an
+     * inset change, a fling settling) is not the user's hand, and once this method has
+     * set `pausedByNavigation` rule 3 below cannot undo it — which is the shape of the
+     * reported 「明明就在屏幕底部给它发消息，发完了它就不跟随」. Only the anchor
+     * movement [onSnapshot] can see is evidence of a hand.
      */
     fun pause() {
         following = false
         unseenRows = 0
         pausedByNavigation = true
+        // Symmetry with [reArm]: the remembered pin describes the position the machine
+        // was following, and a paused machine must not let it suppress the pin of the
+        // position the user comes back to. Harmless today — a paused machine issues no
+        // pin at all, which clears the memory on the next observation — and it keeps
+        // "a pause forgets the tail" true without relying on that.
+        lastPin = null
     }
 
     /**
@@ -171,6 +185,16 @@ internal class TailFollow(initiallyFollowing: Boolean = true) {
      * returned [TailDecision.pin] is the argument pair for
      * `LazyListState.requestScrollToItem` ([TailPin]). It is `null` in every other
      * case, so a paused transcript is never scrolled by the streaming code.
+     *
+     * ## The caller's obligation, because rules 2 and 3 are observations
+     *
+     * Rules 2 and 3 are facts about a *sequence* of snapshots, so a caller that stops
+     * calling this method while paused freezes the machine: the pause can then only be
+     * undone by an explicit [reArm]. A paused machine must therefore still be fed —
+     * every publication, plus both edges of a scroll session and the moment the
+     * viewport reaches the end. That is what makes "the user scrolled back down"
+     * resume on its own, and it is why `ChatScreen`'s follow effect has no
+     * `if (!following) return` and is not keyed on `following`.
      */
     fun onSnapshot(snapshot: TailSnapshot): TailDecision {
         val viewport = snapshot.viewport

@@ -310,12 +310,60 @@ private fun ChatBody(
     // `pausedRows` above: those describe an *opening of a session*, while a draft is
     // the user's unsent writing. This screen has never dropped the draft when the
     // session changed underneath it (the composable stays mounted for a switch), and
-    // making it session-keyed would start silently deleting text on a switch. The
-    // risk that carries — a draft typed for one session being sent to another — is
-    // the one the screen already had.
-    var draft by rememberSaveable { mutableStateOf("") }
-    var attachments by rememberSaveable(stateSaver = AttachmentListSaver) {
+    // making it session-keyed would start silently deleting text on a switch.
+    //
+    // `state.workspace.revision` **is** a key, and it is the one exception the user
+    // ruled on (草稿就清空就行): a workspace switch ends the session context the text
+    // was typed for — a new engine process in a new directory — so a draft typed for
+    // the old workspace must not be sendable to the new one. The ViewModel owns the
+    // fact (`WorkspaceState.revision`, bumped once per successful switch and on the
+    // startup fallback).
+    //
+    // **These inputs alone do not clear it, which is why `draftRevision` exists below.**
+    // `rememberSaveable(inputs)` compares its inputs only inside *one live composition*:
+    // runtime-saveable 1.12.1 decides with `SaveableHolder.getValueIfInputsDidntChange(inputs)
+    // ?: init()`, and it calls `consumeRestored` exactly once — when the holder is
+    // created. A switch can only be started from 工作区, so the moment it lands this
+    // screen has already left the composition (PiRoot.kt:544/552/668 wraps each
+    // destination in a `SaveableStateHolder.SaveableStateProvider`), the draft was
+    // saved by the holder on the way out, and coming back **creates** a fresh holder
+    // whose `consumeRestored` hands the old draft straight back — the inputs are never
+    // consulted on that path. The inputs therefore cover only the case where the
+    // revision moves while this screen is composed (the startup fallback, or a switch
+    // driven from this very screen); the saveable marker below covers the other one.
+    // Anyone touching this: the root of the bug is "restoration is not an input".
+    var draft by rememberSaveable(state.workspace.revision) { mutableStateOf("") }
+    var attachments by rememberSaveable(state.workspace.revision, stateSaver = AttachmentListSaver) {
         mutableStateOf<List<PiImage>>(emptyList())
+    }
+    // The revision the draft on screen was written in. **Saveable on purpose**: a plain
+    // `remember` would be re-initialised to the live revision on the way back in, the
+    // comparison below would always find them equal, and the clearing would never run.
+    var draftRevision by rememberSaveable { mutableStateOf(state.workspace.revision) }
+    val workspaceRevision = state.workspace.revision
+    LaunchedEffect(workspaceRevision) {
+        if (draftRevision == workspaceRevision) return@LaunchedEffect
+        // A switch, and **only** a switch, clears: same revision means either the first
+        // composition of this screen or a restore (rotation / process death), and the
+        // user's own writing must survive those untouched — the ruling is about the
+        // workspace changing, not about the app being restarted.
+        //
+        // `>` rather than `!=` for the restore case: `revision` only ever grows inside
+        // one process, so a live value *below* the stored one means this mark came from
+        // a previous process (where the counter restarted from 0) — that is a recovery,
+        // not a switch, and it must not delete the draft that was restored with it. The
+        // mark is re-aligned either way, so the next real switch still clears.
+        if (workspaceRevision > draftRevision) {
+            // Only these two states, on purpose: the queue's steering/follow-up counts
+            // and the running turn live in the ViewModel (`state.queueSteering`,
+            // `state.streaming`), so a draft going away cannot disturb them. (Text that
+            // a dequeue put into the editor *is* `draft` from that moment on —
+            // `restoreQueue` drains pi's queue into it — and it belongs to the old
+            // workspace, which is exactly what the ruling says must not cross over.)
+            draft = ""
+            attachments = emptyList()
+        }
+        draftRevision = workspaceRevision
     }
     // One-shot overlays: a menu or a sheet that survives a trip to 工作区 would
     // reappear on a screen the user has moved on from, so these stay plain
@@ -648,8 +696,24 @@ private fun ChatBody(
     // `isScrollInProgress` *alone*. That input cannot be written by anything this code
     // calls — `requestScrollToItem` starts no scroll session (`TailFollow`'s KDoc, from
     // `LazyListState`'s own source) — so, unlike the old observation, this one cannot
-    // see its own effect. All it does on a rising edge is pause, a state the user can
-    // always undo with the affordance.
+    // see its own effect.
+    //
+    // **But the collector no longer pauses the follow by itself.** Pausing is a decision
+    // about a *movement* (the anchor went backwards) and only the machine can make it:
+    // an `isScrollInProgress` that a layout pass started (an optimistic row landing, an
+    // inset change, a fling settling) is not the user's hand, and a pause written from
+    // it could not be taken back — which is exactly the reported 「明明就在底部发消息，
+    // 发完就不跟随」. The collector keeps `scrolling` as a *key* so the machine re-decides
+    // on both edges of a session, and only mirrors the row count into `pausedRows` while
+    // the machine is still deciding; the machine's own `TailDecision.following` is what
+    // writes the state.
+    //
+    // **The machine is the only owner of `following`.** It is written by a `TailDecision`
+    // (and by `pauseTail()`/`reArmTail()` for the explicit navigation and "go to newest"
+    // actions, which set their own machine flags); the effect that feeds it is therefore
+    // **not keyed on `following`**, or its own write would cancel and restart it. It must
+    // also never return early while paused: a machine that is not observed cannot learn
+    // that the user scrolled back to the end, which is the second half of the same report.
     //
     // `rememberSaveable(sessionKey, ...)`: the rules belong to one opening of one
     // session, and a rotation must not resurrect a paused follow as "keep following"
@@ -686,21 +750,58 @@ private fun ChatBody(
         tailPoke++
     }
 
+    /** Stamp the unread counter's baseline without touching the machine. */
+    fun markPausedRows() {
+        pausedRows = transcriptRows
+    }
+
+    // The user's hand, mirrored into snapshot state: the follow effect needs the session's
+    // two edges as keys, and the "load earlier" rule below needs a session as a key too.
+    // Started once; `collect` sees the current value first, and every later `true` is a
+    // drag or a fling — this code starts no scroll session (`requestScrollToItem` is not
+    // one, and the two jumps below use it for exactly that reason).
+    var scrolling by remember { mutableStateOf(false) }
+
+    // `!canScrollForward` — the end test `TailFollow` uses (`TailViewport.atBottom`), and
+    // for the same reason: it is true exactly when the last row's bottom is inside the
+    // viewport, including the tail of a row taller than the viewport. Declared here
+    // because it is a *key* of the follow effect: the moment the user's own scroll reaches
+    // the end is the moment a paused follow has to be observed again so it can re-arm.
+    val atBottom by remember(listState) {
+        derivedStateOf { !listState.canScrollForward }
+    }
+
     LaunchedEffect(
         state.revision,
         state.streaming,
         renderedItems.size,
-        following,
+        // `following` is deliberately **not** a key (see above: the machine owns it and
+        // writing it here would restart this effect). The two keys that replace its old
+        // two jobs are `scrolling` (the gesture edges) and `atBottom` (the moment the
+        // user's own scroll reaches the end, which is when a paused follow has to be
+        // observed again so it can re-arm).
+        scrolling,
+        atBottom,
         tailPoke,
         sessionKey,
         bottomInset,
     ) {
-        if (!following) return@LaunchedEffect
+        // **No early return while paused.** A transcript that is not following must still
+        // be observed: "the user scrolled back to the bottom" and "a new row arrived
+        // while the viewport happened to be at the end" are both facts only the machine
+        // can turn back into `following = true` (`TailFollow.onSnapshot`'s rule 3, and
+        // harness group I), and a machine that is skipped while paused can never see
+        // either. Feeding it costs one arithmetic pass per publication and issues no
+        // scroll while paused (`TailDecision.pin` is null whenever `!following`).
+        //
         // One frame, so the rows this publication added have been measured: reading
         // `layoutInfo` before the layout pass would compute the pin from the previous
         // frame's geometry. This is a *wait*, not an observation — nothing here is
         // re-triggered by the measure that follows it.
         withFrameNanos { }
+        // The state the machine went into this observation with, for the pause
+        // transition below.
+        val wasFollowing = following
         val info = listState.layoutInfo
         val last = info.visibleItemsInfo.lastOrNull()
         val decision = tail.onSnapshot(
@@ -720,7 +821,15 @@ private fun ChatBody(
                 ),
             ),
         )
-        if (following != decision.following) following = decision.following
+        // Unconditional. The removed `if (following != decision.following)` guard was a
+        // second writer that could leave the mirror armed while the machine was paused
+        // (and the badge counting as if it were not), so the two states could disagree
+        // for as long as nothing else moved a key.
+        following = decision.following
+        // The machine pauses on the gesture frame (rule 2), not in the collector: read
+        // `pausedRows` off the transition, never on every snapshot, or the accumulated
+        // unread count would be re-baselined by each token that arrives while paused.
+        if (wasFollowing && !decision.following) pausedRows = transcriptRows
         val pin = decision.pin
         // `requestScrollToItem` is the whole reason this is not a stutter: it applies
         // the position at the next remeasure instead of animating, so it starts no
@@ -732,19 +841,19 @@ private fun ChatBody(
         }
     }
 
-    // The user's hand: the rising edge of a scroll session. Started once; `collect`
-    // sees the current value first, and every later `true` is a drag or a fling —
-    // this code starts no scroll session (`requestScrollToItem` is not one, and the
-    // two jumps below use it for exactly that reason), so a `true` here is the user.
-    // `isScrollInProgress` is a plain field on `LazyListState`, not snapshot state, so
-    // it is mirrored into one here: the "load earlier" rule needs it as a *key*, and a
-    // `derivedStateOf` cannot see it change. This collector already existed for the
-    // pause; it now feeds both readers.
-    var scrolling by remember { mutableStateOf(false) }
+    // The user's hand, mirrored into snapshot state: the "load earlier" rule below needs
+    // a scroll session as a *key*, and the follow effect needs the session's two edges.
+    // Started once; `collect` sees the current value first, and every later `true` is a
+    // drag or a fling — this code starts no scroll session (`requestScrollToItem` is not
+    // one, and the two jumps below use it for exactly that reason).
     LaunchedEffect(listState) {
         snapshotFlow { listState.isScrollInProgress }.collect { inProgress ->
             scrolling = inProgress
-            if (inProgress) pauseTail()
+            // The gesture that pauses the follow is the machine's to make (see above), but
+            // the unread count has to start from the row the user left. Stamping it on the
+            // session's rising edge is early by one frame at most, and is what keeps the
+            // badge honest if the machine's own pause is a frame later.
+            if (inProgress && following) markPausedRows()
         }
     }
     // Spec §4.5: "向上滚动时分批加载更早的 entry". Reaching the top grows the window by
@@ -756,12 +865,7 @@ private fun ChatBody(
     val atTop by remember(listState) {
         derivedStateOf { listState.firstVisibleItemIndex == 0 }
     }
-    // `!canScrollForward` — the same end test `TailFollow` uses (`TailViewport.atBottom`),
-    // and for the same reason: it is true exactly when the last row's bottom is inside
-    // the viewport, including the tail of a row taller than the viewport.
-    val atBottom by remember(listState) {
-        derivedStateOf { !listState.canScrollForward }
-    }
+    // (`atBottom` is declared above, next to the follow effect that is keyed on it.)
     var earlierArmed by rememberSaveable(sessionKey) { mutableStateOf(false) }
     LaunchedEffect(atTop, hiddenCount, scrolling) {
         if (!atTop) {
