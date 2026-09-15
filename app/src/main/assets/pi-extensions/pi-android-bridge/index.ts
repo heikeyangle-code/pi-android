@@ -760,7 +760,7 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 	{
 		name: "android_app",
 		label: "应用列表 / 启动",
-		description: "List installed apps, or launch one by exact package name (find it with action="list" first).",
+		description: "List installed apps, or launch one by exact package name (find it with action=\"list\" first).",
 		promptSnippet: "List or launch apps",
 		parameters: Type.Object({
 			action: StringEnum(["list", "launch"] as const, {
