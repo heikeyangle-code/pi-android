@@ -22,12 +22,17 @@
  *  1. **Surface** — every RPC command string the app sends, every event type it
  *     parses, and every extension-UI method it answers must still appear in the
  *     pinned engine. Renames and removals fail here, cheaply.
- *  2. **Behaviour** — `models.json` semantics, asserted by running the pinned
+ *  2. **Theme values** — `PiPalette.kt`'s literal transcriptions of pi's built-in
+ *     `dark`/`light` themes, asserted against the pinned engine's own
+ *     `dist/modes/interactive/theme/{dark,light}.json`. This is the one pi fact the
+ *     app **copies** rather than reads, so nothing else in this file — or in the
+ *     build — would notice a re-colouring upstream. See [checkThemeValues].
+ *  3. **Behaviour** — `models.json` semantics, asserted by running the pinned
  *     engine: a declaration that omits `input`/`contextWindow` really does replace
  *     the catalog entry with pi's defaults (that is why the app must not declare
  *     models pi knows), and `modelOverrides` really does merge (that is why it is
  *     the safe way to adjust one).
- *  3. **Extensions** — the extensions this app ships still load into the pinned
+ *  4. **Extensions** — the extensions this app ships still load into the pinned
  *     engine. Their API surface is the one thing here with no static substitute.
  *
  * Every failure prints **the App code that depends on the fact**, because the
@@ -37,6 +42,16 @@
  *
  *   node tools/pi-contract.mjs                 # install the pinned version, run all
  *   node tools/pi-contract.mjs --pi <dir>      # use an already-installed package
+ *   node tools/pi-contract.mjs --pi <dir> --only=theme
+ *                                              # one group only: surface | theme |
+ *                                              # bundled | behaviour | extensions
+ *
+ * `--only` exists because the four groups cost very different things: `surface` and
+ * `theme` are static reads of `dist/`, while `behaviour` and the startup-reload check
+ * spawn the engine and `extensions` loads this app's own extension tree. A group that
+ * fails for a reason outside its own subject (a work-in-progress file under
+ * `app/src/main/assets/pi-extensions/`, say) should not be able to hide a verdict
+ * about the palette.
  *
  * Exit code 0 = every assertion holds. Non-zero = read the last line.
  */
@@ -268,6 +283,243 @@ function checkMentionArgv(dist) {
 			"the pinned engine and update `fdCommand` + the `mentions` harness — otherwise the " +
 			"App's completion offers a different file set than pi's own `@`.",
 	);
+}
+
+// ------------------------------------------------------------ part 1b: theme values
+
+/**
+ * pi's five optional colour tokens and the token each one falls back to
+ * (`withThemeColorFallbacks`, `theme.ts:261-276`; the same five are re-applied in
+ * `Theme`'s constructor at `:303-316`).
+ *
+ * These are the **five fallback targets the built-in themes do not exercise**:
+ * `dark.json` and `light.json` both declare all five tokens explicitly, so a bug in
+ * this map cannot show up in the value comparison below. It is written down here so
+ * the mapping itself is reviewable, and it is asserted against the App's own copy by
+ * [checkThemeValues] rather than left implicit.
+ */
+const THEME_OPTIONAL_FALLBACKS = {
+	scrollbarTrack: "muted",
+	scrollbarThumb: "text",
+	thinkingMax: "thinkingXhigh",
+	searchMatchBg: "selectedBg",
+	searchMatchText: "text",
+};
+
+/** Where the pinned engine keeps the two built-in themes. */
+function builtinThemePath(piDir, name) {
+	return join(piDir, "dist", "modes", "interactive", "theme", `${name}.json`);
+}
+
+/**
+ * `resolveVarRefs` (`theme.ts:228-244`): a hex string, an empty string and a 0-255
+ * integer are literal; anything else names a `vars` entry and resolves recursively.
+ * Returns `null` for a reference pi would reject (missing target, or a cycle), so the
+ * caller reports it instead of throwing the whole script away.
+ */
+function resolveThemeValue(value, vars, seen = new Set()) {
+	if (typeof value === "number" || value === "" || value.startsWith("#")) return value;
+	if (seen.has(value) || !(value in vars)) return null;
+	seen.add(value);
+	return resolveThemeValue(vars[value], vars, seen);
+}
+
+/**
+ * Every `colors` token plus the three `export` surfaces of one built-in theme,
+ * resolved the way pi resolves them: `vars` references followed, the five optional
+ * tokens filled from their fallbacks, `export` folded in.
+ *
+ * Returns `null` when the file is missing (a package that moved its themes) or when
+ * any value refuses to resolve, so the caller can say which of those happened.
+ */
+function builtinThemeColors(piDir, name) {
+	const file = builtinThemePath(piDir, name);
+	if (!existsSync(file)) return null;
+	const json = JSON.parse(readFileSync(file, "utf8"));
+	const vars = json.vars ?? {};
+	// pi's fallback map points at the *unresolved* sibling value, which is then
+	// resolved with everything else — `{...colors, thinkingMax: colors.thinkingMax ??
+	// colors.thinkingXhigh}`.
+	const raw = { ...json.colors };
+	for (const [token, fallback] of Object.entries(THEME_OPTIONAL_FALLBACKS)) {
+		if (raw[token] === undefined) raw[token] = raw[fallback];
+	}
+	for (const [token, value] of Object.entries(json.export ?? {})) raw[token] = value;
+	const out = {};
+	for (const [token, value] of Object.entries(raw)) {
+		const resolved = resolveThemeValue(value, vars);
+		if (resolved === null) return null;
+		out[token] = resolved;
+	}
+	return out;
+}
+
+/**
+ * One `PiPalette.Dark` / `PiPalette.Light` body, as `token → "#rrggbb"`.
+ *
+ * Reads the Kotlin as text for the reason `checkProjectConfigDir` does: this script
+ * is JavaScript and the App is Kotlin. Returns `null` when the declaration is not
+ * shaped the way this reads it — the closing paren of the constructor call is the
+ * anchor, because a regex that silently matched nothing would make every comparison
+ * downstream vacuous.
+ */
+function appPalette(theme) {
+	const text = readFileSync(join(ROOT, "app/src/main/kotlin/app/pi/ui/theme/PiPalette.kt"), "utf8");
+	const body = new RegExp(`val ${theme} = PiPalette\\(([\\s\\S]*?)\\n {8}\\)`).exec(text);
+	if (!body) return null;
+	const out = {};
+	for (const match of body[1].matchAll(/^\s*(\w+) = Color\(0x([0-9A-Fa-f]{8})\)/gm)) {
+		out[match[1]] = `#${match[2].slice(2).toLowerCase()}`;
+	}
+	return out;
+}
+
+/** One `#RRGGBB` out of a `res/values…/colors.xml`, or `null` if it is not there. */
+function resourceColor(file, name) {
+	const text = readFileSync(join(ROOT, file), "utf8");
+	const match = new RegExp(`<color name="${name}">\\s*(#[0-9A-Fa-f]{6})\\s*</color>`).exec(text);
+	return match ? match[1].toLowerCase() : null;
+}
+
+/** The pinned engine's own version, for a failure that has to name what changed. */
+function engineVersion(piDir) {
+	try {
+		return JSON.parse(readFileSync(join(piDir, "package.json"), "utf8")).version ?? "unknown";
+	} catch {
+		return "unknown";
+	}
+}
+
+/**
+ * `PiPalette.kt` against the pinned engine's built-in `dark`/`light` themes, plus the
+ * two launch-window literals that copy two of their values.
+ *
+ * ## Why this group exists
+ *
+ * `PiPalette.Dark` / `PiPalette.Light` are the **only** pi facts in this app that are
+ * *copied* rather than *read*: 51 required tokens + 5 optional ones + the 3 `export`
+ * surfaces, transcribed from `dark.json` / `light.json` because a phone needs them
+ * synchronously (the first frame cannot wait for a theme file). Everything else in
+ * `ui/` is either derived from those values (`PiContrast`'s five contrast-corrected
+ * tokens, `PiTheme.colorScheme()`'s `surfaceContainer*` ladder) or read from the
+ * engine at runtime (`PiThemeFiles.kt` resolves a user's theme file). So if pi
+ * re-colours a built-in theme, **nothing else in this repository can notice**: the
+ * app keeps compiling and keeps painting pi's previous colours, and a user's imported
+ * theme would suddenly disagree with the built-ins it was tuned beside.
+ *
+ * ## What it asserts, and what it deliberately does not
+ *
+ * It asserts, per theme: the token **names** match both ways (no token dropped from
+ * `PiPalette.kt`, none invented), the parsed **count** is at least 50 (56 + 3 export
+ * is the real number; the floor is what turns "the regex stopped matching" into a
+ * failure instead of 59 silent passes), and every **value** is equal ignoring case.
+ * Then it asserts the two `res/values…/colors.xml` launch-window literals against the
+ * matching `export.pageBg`, because those are the only other place a palette value is
+ * written down outside Kotlin.
+ *
+ * It does **not** assert `THEME_OPTIONAL_FALLBACKS` against pi: the built-in themes
+ * declare all five optional tokens, so the fallback path never runs for them. A pi
+ * that re-pointed a fallback at a different token with the same colour would still
+ * pass here; `PiThemeFiles.kt:126-132` remains a transcription that only a re-read of
+ * `theme.ts:261-276` can check.
+ *
+ * ## What to do when it fails
+ *
+ * Two honest answers, and this check cannot pick between them:
+ *
+ *  - **re-transcribe** — edit the named token(s) in `PiPalette.kt` to the values this
+ *    check prints. That is what the current design wants: the palette is a compile-time
+ *    constant, so the first frame is instant and works with no engine on disk;
+ *  - **read at runtime** — make `PiPalette.Dark`/`Light` load `dist/.../dark.json` from
+ *    the payload instead of holding literals. That couples the app's start-up path to
+ *    the engine package's layout (`docs/pi-android-ui-spec.md` §2.1 makes pi's theme
+ *    JSON the single source of truth, so this is not a violation of it) and gives up
+ *    the "palette exists before anything is provisioned" property the current shape
+ *    buys — which is why the literals were chosen.
+ */
+function checkThemeValues(piDir) {
+	const version = engineVersion(piDir);
+
+	for (const theme of ["Dark", "Light"]) {
+		const name = theme.toLowerCase();
+		const file = builtinThemePath(piDir, name);
+		const pi = builtinThemeColors(piDir, name);
+		check(
+			`the pinned engine still ships ${file}`,
+			pi !== null,
+			`PiPalette.${theme} is a transcription of that file, and every screen reads it through ` +
+				`PiTheme.palette. If the built-in themes moved inside the package, re-read the package ` +
+				`layout and re-point this check — do not delete it: nothing else notices a re-colouring.`,
+		);
+		if (pi === null) continue;
+
+		const app = appPalette(theme);
+		check(
+			`PiPalette.kt still declares \`val ${theme} = PiPalette(...)\` with all of its tokens (>= 50)`,
+			app !== null && Object.keys(app).length >= 50,
+			`app/src/main/kotlin/app/pi/ui/theme/PiPalette.kt is the app's whole colour system. This ` +
+				`check reads its \`name = Color(0xFF……)\` lines as text; if the declaration was renamed, ` +
+				`reformatted or split, re-point the reader (the >= 50 floor is what makes a reader that ` +
+				`stopped matching fail instead of passing vacuously).`,
+		);
+		if (app === null) continue;
+
+		const missing = Object.keys(pi).filter((token) => !(token in app));
+		const extra = Object.keys(app).filter((token) => !(token in pi));
+		check(
+			`PiPalette.${theme} names exactly pi ${version}'s ${name} tokens`,
+			missing.length === 0 && extra.length === 0,
+			`pi ${version}'s ${name}.json: ${Object.keys(pi).length} tokens; PiPalette.${theme}: ` +
+				`${Object.keys(app).length}. ` +
+				(missing.length > 0 ? `Missing from PiPalette.kt: ${missing.join(", ")}. ` : "") +
+				(extra.length > 0 ? `Not in pi's theme any more: ${extra.join(", ")}. ` : "") +
+				`Token names are the contract between a user's theme file and this app ` +
+				`(PiThemeFiles.kt maps them by name); re-read the pinned theme-schema.json and update ` +
+				`PiPalette.kt, PiThemeFiles.kt's REQUIRED_TOKENS/OPTIONAL_FALLBACKS and ` +
+				`ChromeColor.kt's match list together.`,
+		);
+
+		const mismatches = Object.keys(pi)
+			.filter((token) => token in app)
+			.filter((token) => app[token] !== String(pi[token]).toLowerCase())
+			.map((token) => `${token}: app ${app[token]} vs pi ${String(pi[token]).toLowerCase()}`);
+		check(
+			`PiPalette.${theme} values equal pi ${version}'s ${name}.json (${Object.keys(pi).length} tokens)`,
+			mismatches.length === 0 && Object.keys(app).length >= 50,
+			`pi ${version} changed ${mismatches.length} value(s) in its built-in ${name} theme:\n` +
+				mismatches.map((line) => `        ${line}`).join("\n") +
+				`\n      → PiPalette.${theme} (app/src/main/kotlin/app/pi/ui/theme/PiPalette.kt) is a ` +
+				`literal transcription, and every screen paints through PiTheme.palette, so the app is ` +
+				`still showing the previous colours. Either re-transcribe the tokens above into ` +
+				`PiPalette.kt (the current design: a compile-time constant that exists before any theme ` +
+				`is read) or change PiPalette.Dark/Light to load ${file} from the payload at start-up ` +
+				`(which couples start-up to the engine package's layout). Do not silence this check: ` +
+				`it is the only one covering colours.`,
+		);
+	}
+
+	// The launch-window ground cannot be a Compose colour (it is drawn before the
+	// first composition), so it is the one palette value written down outside Kotlin.
+	// `values/` is the day resource, `values-night/` the night one; MainActivity
+	// replaces both with the *resolved* theme's `pageBg` as soon as the theme file has
+	// been read, which is why only the pre-resolution frame depends on these two.
+	for (const [qualifier, file, themeName] of [
+		["values", "app/src/main/res/values/colors.xml", "light"],
+		["values-night", "app/src/main/res/values-night/colors.xml", "dark"],
+	]) {
+		const pi = builtinThemeColors(piDir, themeName);
+		const expected = pi === null ? null : String(pi.pageBg).toLowerCase();
+		const actual = resourceColor(file, "pi_window_background");
+		check(
+			`${file} pi_window_background equals pi ${version}'s ${themeName} export.pageBg`,
+			expected !== null && actual === expected,
+			`${file} is the window ground for the frames before Compose has a theme: it must be the ` +
+				`${themeName} (\`${qualifier}\`) export surface, and it is currently ${actual ?? "missing"}. ` +
+				`PiPalette.${themeName === "dark" ? "Dark" : "Light"}.pageBg is that same value in Kotlin ` +
+				`(PiTheme.colorScheme maps it to Surface), so both move together — re-read ` +
+				`res/values/colors.xml + res/values-night/colors.xml and PiPalette.kt.`,
+		);
+	}
 }
 
 // -------------------------------------------------------------- part 2: behaviour
@@ -612,6 +864,23 @@ function checkExtensions(piDir) {
 
 // ------------------------------------------------------------------------- main
 
+/** The groups `--only` accepts, in the order a full run prints them. */
+const GROUPS = [
+	["surface", "--- surface ---"],
+	["theme", "--- theme values ---"],
+	["bundled", "--- bundled entry ---"],
+	["behaviour", "--- behaviour ---"],
+	["extensions", "--- extensions ---"],
+];
+
+const onlyArg = process.argv.find((argument) => argument.startsWith("--only="));
+const only = onlyArg ? onlyArg.slice("--only=".length) : null;
+if (only !== null && !GROUPS.some(([name]) => name === only)) {
+	console.error(`unknown --only=${only}; expected one of ${GROUPS.map(([name]) => name).join(", ")}`);
+	process.exit(2);
+}
+const runs = (name) => only === null || only === name;
+
 const explicit = process.argv.indexOf("--pi");
 let piDir = explicit >= 0 ? resolve(process.argv[explicit + 1]) : null;
 if (!piDir) {
@@ -629,15 +898,31 @@ if (!existsSync(join(piDir, "dist"))) {
 	process.exit(2);
 }
 
-console.log("\n--- surface ---");
-checkSurface(piDir);
-console.log("\n--- bundled entry ---");
-checkBundledEntry(piDir);
-console.log("\n--- behaviour ---");
-checkBehaviour(piDir);
-await checkStartupOnlyReload(piDir);
-console.log("\n--- extensions ---");
-checkExtensions(piDir);
+// `surface` and `theme` are static reads of the package; `behaviour` and
+// `extensions` spawn the engine, so they are the two a failure elsewhere in the tree
+// (or a missing runtime) can turn into a throw before the static verdicts are read.
+// A full run keeps its historical order; `--only=<group>` runs exactly one.
+if (runs("surface")) {
+	console.log("\n--- surface ---");
+	checkSurface(piDir);
+}
+if (runs("theme")) {
+	console.log("\n--- theme values ---");
+	checkThemeValues(piDir);
+}
+if (runs("bundled")) {
+	console.log("\n--- bundled entry ---");
+	checkBundledEntry(piDir);
+}
+if (runs("behaviour")) {
+	console.log("\n--- behaviour ---");
+	checkBehaviour(piDir);
+	await checkStartupOnlyReload(piDir);
+}
+if (runs("extensions")) {
+	console.log("\n--- extensions ---");
+	checkExtensions(piDir);
+}
 
 if (failures.length > 0) {
 	console.error(`\npi contract: FAILED (${failures.length})`);

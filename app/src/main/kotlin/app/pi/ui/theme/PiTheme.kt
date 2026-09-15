@@ -1,6 +1,8 @@
 package app.pi.ui.theme
 
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.selection.LocalTextSelectionColors
+import androidx.compose.foundation.text.selection.TextSelectionColors
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Shapes
 import androidx.compose.material3.Typography
@@ -305,6 +307,46 @@ private fun TextStyle.shifted(deltaSp: Int): TextStyle = copy(
 val LocalPiPalette = staticCompositionLocalOf { PiPalette.Dark }
 val LocalPiTextStyles = staticCompositionLocalOf { PiTextStyles.Default }
 
+/**
+ * The colours Android paints a **text selection** with — the long-press highlight
+ * and its drag handles.
+ *
+ * ## Why the highlight is `selectedBg`
+ *
+ * pi marks "this region is selected" with exactly one token, and it is a
+ * *background* token: `ThemeBg` is the union pi partitions its background colours
+ * into (`theme.ts:92-99`), and `selectedBg` is the one pi spends on selection —
+ * a whole session row (`session-selector.ts:507`, `theme.bg("selectedBg", line)`), a
+ * whole tree row (`tree-selector.ts:751-752`) and the jump-to-latest pill
+ * (`tui-renderer.ts:32`). A Compose selection highlight is the same thing at a
+ * smaller size, so it takes the same token. Opaque, not tinted: pi paints its
+ * selected rows with an opaque `bg`, and the pair that has to survive is the one
+ * `searchMatchBg`/`searchMatchText` already relies on — `selectedBg` under `text`
+ * measures **7.52:1** in `dark` and **10.37:1** in `light`.
+ *
+ * ## Why the handles are `accent`
+ *
+ * A terminal has no selection handles, so pi declares no token for them, and this is
+ * the one half of the pair that stays the platform's choice: Material's own
+ * `DefaultTextSelectionColors` sources `handleColor` from `colorScheme.primary`
+ * (`foundation`, `TextSelectionColors.kt`), and this palette maps `primary` to
+ * `accent` (`colorScheme()` below). Handing the handles `selectedBg` instead would
+ * make them near-invisible against a light page (`#D0D0E0` on `#F8F8F8`), and the
+ * handle is an *affordance*, not the selected region.
+ *
+ * ## Why this is not a departure from the frozen board
+ *
+ * The board draws no selection style at all — a browser's own `::selection` is what
+ * its prototype shows — so nothing here is contradicted. What the board *did* freeze
+ * is the mechanism, in `07-construction-decisions.md:311`: 「长按文本 = 系统自由选择」,
+ * implemented as one `SelectableContent` ([androidx.compose.foundation.text.selection.SelectionContainer])
+ * scope per block. Until this provider existed that mechanism ran on Material's
+ * default colours, i.e. `accent` at 40 % behind the text — a colour pi would never
+ * have chosen for it. This is the missing half of that same decision.
+ */
+private val PiPalette.textSelectionColors: TextSelectionColors
+    get() = TextSelectionColors(handleColor = accent, backgroundColor = selectedBg)
+
 /** Access the raw pi token set: `PiTheme.palette.toolSuccessBg`. */
 object PiTheme {
     val palette: PiPalette
@@ -434,6 +476,12 @@ fun PiTheme(
     CompositionLocalProvider(
         LocalPiPalette provides palette,
         LocalPiTextStyles provides styles,
+        // The long-press highlight, from pi's own selection token — see
+        // [textSelectionColors]. Provided here rather than through the M3
+        // `ColorScheme` because M3 has no slot for it: it is a Compose-foundation
+        // composition local, and every `SelectionContainer` in `ui/blocks/**`
+        // (one scope per card, `BlockChrome.kt`'s `SelectableContent`) reads it.
+        LocalTextSelectionColors provides palette.textSelectionColors,
     ) {
         MaterialTheme(
             colorScheme = palette.colorScheme(),

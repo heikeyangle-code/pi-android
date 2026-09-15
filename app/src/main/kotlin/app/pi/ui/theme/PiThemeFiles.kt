@@ -108,7 +108,11 @@ private class ThemeParseException(message: String) : Exception(message)
 
 object PiThemeLoader {
 
-    /** The 54 `colors` tokens of `theme-schema.json`, required ones first. */
+    /**
+     * `theme-schema.json`'s **51 required** `colors` tokens — the five optional ones
+     * live in [OPTIONAL_FALLBACKS] below, so the schema's whole set is 56 (plus the
+     * three `export` surfaces, which `parseThemeJson` reads separately).
+     */
     private val REQUIRED_TOKENS = listOf(
         "accent", "border", "borderAccent", "borderMuted", "success", "error", "warning",
         "muted", "dim", "text", "thinkingText", "selectedBg", "userMessageBg",
