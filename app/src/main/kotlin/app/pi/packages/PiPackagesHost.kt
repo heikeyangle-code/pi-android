@@ -144,10 +144,18 @@ fun PiPackagesHost(
     defaultProjectTrust: String = "ask",
 ) {
     val context = LocalContext.current
-    val layout = remember(context) {
+    // The workspace is resolved on every composition and used as a `remember` key,
+    // not merely read inside the block: `PtyLauncher.workspaceHost` reads
+    // `WorkspaceStore`, so after the user switches workspace this composable must
+    // rebuild `AgentLayout` — whose `hostWorkspace`, `guestWorkspace` and
+    // `workspaceBind()` are all derived from the directory it was constructed with.
+    // A plain `remember(context)` would keep running `pi install`, `pi list` and the
+    // trust questions in the *old* workspace while the engine runs in the new one.
+    val hostWorkspace = PtyLauncher.workspaceHost(context)
+    val layout = remember(context, hostWorkspace.absolutePath) {
         AgentLayout(
             context = context.applicationContext,
-            hostWorkspace = PtyLauncher.workspaceHost(context),
+            hostWorkspace = hostWorkspace,
         )
     }
     val guest = remember(layout) { GuestCommand(layout) }

@@ -203,7 +203,13 @@ fun PiSettingsStack(
     // and therefore re-reads the values. No timer, and nothing at all while the
     // settings destination is not on screen.
     var filesEpoch by remember { mutableStateOf(0) }
-    val workspace = remember(context) { PtyLauncher.workspaceHost(context) }
+    // Keyed on the **path**, not just the context: 切换工作区 changes the directory
+    // without changing the Activity's context, and a bare `remember(context)` would
+    // keep reading the old workspace for the rest of the process's life
+    // (`PiSessionViewModel.switchWorkspace`). The path is computed once per
+    // composition — it is a settings read, not a directory scan.
+    val workspacePath = PtyLauncher.workspaceHost(context).absolutePath
+    val workspace = remember(context, workspacePath) { PtyLauncher.workspaceHost(context) }
     PiDirectoryWatch(
         directories = remember(paths, workspace) { listOf(paths.agentDir, PiProjectConfig.root(workspace)) },
         names = remember { SETTINGS_WATCHED },

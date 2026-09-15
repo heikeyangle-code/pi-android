@@ -48,6 +48,14 @@ import kotlinx.serialization.json.JsonPrimitive
  * directory". Re-deriving `workspace-1` here would have been a second truth about
  * which file the user just edited.
  *
+ * Since the workspace is user-selectable, "the workspace" in that sentence means
+ * the **current** one: `PtyLauncher.workspaceHost` resolves it from
+ * `WorkspaceStore`, so the project document this store reads
+ * (`<workspace>/.pi/settings.json`, via `PiSettingsFileStore.forWorkspace`) is the
+ * one belonging to the workspace the engine is in. A terminal tab opened after a
+ * switch sees the new workspace's project settings; the tab is re-entered rather
+ * than hot-swapped, which is also why no rebuild hook is needed here.
+ *
  * Reads happen once per composition of the Workbench screen, and `app.terminal.*`
  * commands are documented as needing a reload; the tab is re-entered rather than
  * hot-swapped, which matches `EffectiveKind.Reload` on the key-bar row.

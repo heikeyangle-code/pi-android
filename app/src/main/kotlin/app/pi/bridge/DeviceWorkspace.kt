@@ -12,13 +12,15 @@ import java.io.File
  * ### Where the path comes from
  *
  * [PtyLauncher.workspaceHost] is the runtime layer's single source of truth for
- * "the directory the user selected as the workspace" (today it is
- * `<filesDir>/pi/workspaces/workspace-1`; `PiRuntime.baseBinds` adds the
- * shared-storage binds). This object deliberately *reads* that function instead of
- * repeating the constant, so if the workspace ever becomes user-selectable the
- * boundary follows it without a second edit — a gate that decided "inside" from a
- * stale hardcoded copy of the path would be worse than no gate, because it would
- * look like it worked.
+ * "the directory the user selected as the workspace"; it reads
+ * [app.pi.runtime.WorkspaceStore], so the boundary follows a workspace switch with
+ * no edit here (`PiRuntime.baseBinds` adds the shared-storage binds). This object
+ * deliberately *reads* that function instead of repeating the path, and the
+ * fallback below is the store's own default rather than a second literal — a gate
+ * that decided "inside" from a stale hardcoded copy of the path would be worse
+ * than no gate, because it would look like it worked. [refresh] is called on every
+ * `/app/health` and every shell request (`DeviceBridgeRouter`), so the boundary is
+ * recomputed from the store rather than cached across a switch.
  *
  * ### The guest spells that one directory two ways
  *
@@ -57,8 +59,14 @@ import java.io.File
  */
 object DeviceWorkspace : ShellWriteBoundary {
 
-    /** Only used if the runtime layer's accessor itself fails. */
-    private const val FALLBACK_RELATIVE = "pi/workspaces/workspace-1"
+    /**
+     * Only used if the runtime layer's accessor itself fails.
+     *
+     * The store's default, not a copy of it: `workspace-1` is the default because
+     * `GuestWorkspacePath.DEFAULT_RELATIVE` says so, and this object has no
+     * business being a second place that knows it.
+     */
+    private val FALLBACK_RELATIVE = GuestWorkspacePath.DEFAULT_RELATIVE
 
     @Volatile
     private var aliases: List<String> = emptyList()

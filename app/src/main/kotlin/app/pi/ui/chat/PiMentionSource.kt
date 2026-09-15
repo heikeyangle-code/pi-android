@@ -33,7 +33,13 @@ import java.io.File
  * guest" path: it reuses the engine's own proot argv and environment
  * (`ProotCommand.build`/`environment`, `GuestCommand.kt:105-115`) and carries the
  * same workspace and agent-dir binds the engine uses (`:198-206`), so fd sees the
- * workspace this chat session actually works in. It starts its own proot, which is
+ * workspace this chat session actually works in. **That is a property of the
+ * instance, not of the class**: the `hostWorkspace` constructor argument is
+ * captured once, so an instance built for one workspace keeps completing paths out
+ * of it. A workspace switch
+ * must therefore drop the instance rather than keep it —
+ * `PiSessionViewModel.rebuildWorkspaceScopedCaches` is where that happens. It
+ * starts its own proot, which is
  * the second reason it is used here rather than the RPC `bash` command: `bash`
  * joins the model's context on the next prompt (`PiEngineApi.kt:245-249`), competes
  * with the `!` panel's single running command and its `abort_bash`

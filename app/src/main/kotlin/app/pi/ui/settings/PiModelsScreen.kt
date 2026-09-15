@@ -91,7 +91,11 @@ fun PiModelsScreen(
     onOpenCredentials: (String?) -> Unit = {},
 ) {
     val context = LocalContext.current
-    val layout = remember(context) {
+    // Keyed on the workspace path as well as the context: switching workspaces moves
+    // the directory without touching the context, so `remember(context)` alone would
+    // pin this screen to the workspace that was current when it first composed.
+    val workspacePath = PtyLauncher.workspaceHost(context).absolutePath
+    val layout = remember(context, workspacePath) {
         AgentLayout(
             context = context.applicationContext,
             hostWorkspace = PtyLauncher.workspaceHost(context),

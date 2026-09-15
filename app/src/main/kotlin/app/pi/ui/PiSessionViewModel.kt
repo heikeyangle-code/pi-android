@@ -32,6 +32,7 @@ import app.pi.runtime.GuestWorkspacePath
 import app.pi.runtime.PiProjectConfig
 import app.pi.runtime.PtyLauncher
 import app.pi.runtime.RuntimeProvisioner
+import app.pi.runtime.WorkspaceStore
 import app.pi.session.PiSessionStore
 import app.pi.session.SessionExportNaming
 import app.pi.session.SessionImport
@@ -108,6 +109,93 @@ sealed interface Boot {
      * diagnosed remotely.
      */
     data class Failed(val message: String, val detail: String?) : Boot
+}
+
+/**
+ * Which workspace the engine is in, and the one signal the composer needs about a
+ * switch.
+ *
+ * Top-level for the same reason as [Boot]: the chat screen renders it, and the
+ * screen is not allowed to know how a workspace is chosen — only that one was.
+ *
+ * ## [revision] is the draft-clearing signal
+ *
+ * The user's ruling on the composer is "草稿就清空就行": a draft typed for one
+ * workspace must not be sendable to another. The draft lives in the screen
+ * (`ChatScreen`'s `rememberSaveable`), so the ViewModel cannot clear it — and it
+ * should not: a screen that owned the text is the only place it can be dropped
+ * without the ViewModel rewriting UI state. What the ViewModel owns is the *fact*
+ * that a new session context has begun, which is [revision]:
+ *
+ * > **The screen keys the composer's `draft` and `attachments` `remember` on
+ * > `state.workspace.revision`.** When it changes, the draft and the staged images
+ * > are re-created empty, which is the clearing. Nothing else needs to happen in
+ * > the screen.
+ *
+ * It is bumped **once per successful switch** — and also when the startup
+ * reconcile has to move the process back to the default workspace, because that is
+ * a different session context too even though the user did not press anything. It
+ * is never bumped for a switch that failed or was refused, because nothing about
+ * the session changed.
+ */
+data class WorkspaceState(
+    /** The current workspace's directory name — the identity, e.g. `workspace-1`. */
+    val name: String = WorkspaceStore.DEFAULT_NAME,
+    /** [name] as a path relative to the files directory (`pi/workspaces/…`). */
+    val relative: String = GuestWorkspacePath.DEFAULT_RELATIVE,
+    /** The host directory, for a screen that wants to show it. Null if not resolvable. */
+    val hostPath: String? = null,
+    /** Bumped on every successful switch; see the class KDoc. Starts at 0. */
+    val revision: Int = 0,
+    /**
+     * Why the current workspace is not the stored choice, when the stored choice
+     * was unusable. Shown to the user once; null on the normal path.
+     */
+    val note: String? = null,
+)
+
+/**
+ * The outcome of a workspace switch.
+ *
+ * Four shapes, and they exist so the screen can say the right thing without
+ * inspecting engine internals: a refusal changed nothing, a failure changed the
+ * engine but not the workspace, and only [Ok] means "you are now in the new one".
+ *
+ * @see PiSessionViewModel.switchWorkspace
+ */
+sealed interface WorkspaceSwitch {
+    /**
+     * The engine is now running in [name].
+     *
+     * @param interruptedTurn true when a turn was in flight and the switch
+     *        deliberately killed it (`allowInterrupt`). The screen asked first
+     *        ([PiSessionViewModel.wouldInterruptTurn]) and the ViewModel posts the
+     *        warning notice after, so this is only the machine-readable half of a
+     *        warning the user has already had twice.
+     */
+    data class Ok(val name: String, val interruptedTurn: Boolean) : WorkspaceSwitch
+
+    /** [name] was already current; the engine was not touched. */
+    data class AlreadyCurrent(val name: String) : WorkspaceSwitch
+
+    /**
+     * **Nothing changed.** The target is not a workspace we own, is not writable,
+     * or a turn is running and the caller did not accept interrupting it. The old
+     * engine is still running in the old workspace.
+     */
+    data class Refused(val message: String) : WorkspaceSwitch
+
+    /**
+     * The switch was attempted and did not complete. [rolledBackTo] names the
+     * workspace the engine was put back into, or null when it could not be
+     * restarted at all — in which case [message] and [detail] are the only
+     * description of a stopped engine, and the persisted choice was never changed.
+     */
+    data class Failed(
+        val message: String,
+        val detail: String? = null,
+        val rolledBackTo: String? = null,
+    ) : WorkspaceSwitch
 }
 
 /**
@@ -462,6 +550,13 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
          * app itself consumes — see [onSettingWritten].
          */
         val prefs: UiPrefs = UiPrefs(),
+        /**
+         * Which workspace this session is in, and [WorkspaceState.revision] — the
+         * draft-clearing signal the composer keys on. Seeded from
+         * [WorkspaceStore] when the ViewModel is built, moved by
+         * [switchWorkspace].
+         */
+        val workspace: WorkspaceState = WorkspaceState(),
     )
 
     private val host = PiEngineHost(app)
@@ -563,13 +658,23 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * than from a second guess at where things live. Reads merge the project
      * document over the global one the way pi does; writes land in whichever file
      * already carries the key, so a project override is not shadowed.
+     *
+     * **Rebuildable, not `by lazy`.** The project document is
+     * `<workspace>/.pi/settings.json`, so the store is bound to a workspace, and a
+     * workspace switch moves it. A `lazy` value would keep reading and writing the
+     * *old* project's settings while the engine runs in the new workspace — the
+     * exact split this batch exists to remove. [rebuildWorkspaceScopedCaches] drops
+     * this field, and the next read builds a store bound to the new cwd. Between
+     * switches the instance is stable, so a reader that holds it sees no churn.
      */
-    val settingsStore: PiSettingsStore by lazy {
-        PiSettingsFileStore.forWorkspace(
+    @Volatile
+    private var settingsStoreCache: PiSettingsStore? = null
+
+    val settingsStore: PiSettingsStore
+        get() = settingsStoreCache ?: PiSettingsFileStore.forWorkspace(
             agentDir = host.paths().agentDir,
             workspace = defaultWorkspace(),
-        )
-    }
+        ).also { settingsStoreCache = it }
 
     /**
      * pi's session index, read straight off disk.
@@ -586,13 +691,24 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * The `@` mention candidate source: the guest's own `fd`, run through the
      * app-side guest command channel. Built lazily because it touches the runtime
      * layout, and with the same workspace the engine is given
-     * (`PtyLauncher.workspaceHost`, `PtyLauncher.kt:255` — the one authority the
-     * terminal tab and the engine already share) rather than a second spelling of
-     * that path.
+     * (`PtyLauncher.workspaceHost`, the one authority the terminal tab, the package
+     * commands and the engine already share) rather than a second spelling of that
+     * path.
+     *
+     * **Dropped on a workspace switch** by [rebuildWorkspaceScopedCaches]: its
+     * `AgentLayout` carries `hostWorkspace` and `guestWorkspace` as fields, so a
+     * kept instance would keep completing `@` paths out of the previous workspace
+     * while the model works in the new one. Rebuilding is one `File` and one
+     * `proot` argv; the first query after a switch pays for it once.
      */
-    private val mentionSource: PiMentionSource by lazy {
-        PiMentionSource(getApplication(), PtyLauncher.workspaceHost(getApplication()))
-    }
+    @Volatile
+    private var mentionSourceCache: PiMentionSource? = null
+
+    private val mentionSource: PiMentionSource
+        get() = mentionSourceCache ?: PiMentionSource(
+            getApplication(),
+            PtyLauncher.workspaceHost(getApplication()),
+        ).also { mentionSourceCache = it }
 
     /**
      * Which mention request is the current one. Only this class writes it, and only
@@ -948,6 +1064,268 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         getApplication<Application>().filesDir.absolutePath,
         defaultWorkspace().absolutePath,
     )
+
+    // ------------------------------------------------------------ workspaces
+
+    /**
+     * The workspaces the user can choose between, for a screen to render.
+     *
+     * A pass-through to [WorkspaceStore] on purpose: the store owns the layout and
+     * the safety rules, and this ViewModel method exists so a screen mounted with a
+     * `PiSessionViewModel` needs no second import to list them. Blocking file IO,
+     * called from a composition-driven refresh path — the same shape the settings
+     * stack already uses for pi's own directories.
+     */
+    fun workspaceEntries(): List<WorkspaceStore.Entry> = WorkspaceStore.list(getApplication())
+
+    /** Create the next `workspace-N`. Does **not** switch to it; see [switchWorkspace]. */
+    fun createWorkspace(): WorkspaceStore.Create = WorkspaceStore.create(getApplication())
+
+    /** Give a workspace a display label. Never moves the directory — see [WorkspaceStore.rename]. */
+    fun renameWorkspace(name: String, label: String): WorkspaceStore.Rename =
+        WorkspaceStore.rename(getApplication(), name, label)
+
+    /**
+     * Count what deleting [name] would destroy. The returned
+     * [WorkspaceStore.DeleteConfirmation] is the only thing [deleteWorkspace]
+     * accepts, which is how "report the file count and ask again" stops being a
+     * convention and becomes the API shape.
+     */
+    fun previewWorkspaceDelete(name: String): WorkspaceStore.Preview =
+        WorkspaceStore.previewDelete(getApplication(), name)
+
+    /** Delete what [confirmation] described. Never the current workspace. */
+    fun deleteWorkspace(confirmation: WorkspaceStore.DeleteConfirmation): WorkspaceStore.Delete =
+        WorkspaceStore.delete(getApplication(), confirmation)
+
+    /**
+     * Move the engine into another workspace: persist the choice, stop the current
+     * engine, boot a new one in the target directory.
+     *
+     * ## Ordering, and every failure in it
+     *
+     * 1. **Resolve the target first, with the old engine still alive.** A name we do
+     *    not own, a directory that is gone, or one this app cannot write into is a
+     *    refusal ([WorkspaceSwitch.Refused]) and changes nothing at all.
+     * 2. **Move the engine through [PiEngineHost.restart]**, not by hand: that is
+     *    the process-wide `PROCESS_LOCK` and the stop-before-start ordering the host
+     *    exists to enforce, and it is the same path the extension-install restart
+     *    uses. The provider passed is the **target directory**, so the engine's cwd
+     *    comes from this decision rather than from a settings file that has not been
+     *    written yet — which is what makes the next step safe.
+     * 3. **Persist only after the new engine is up** ([WorkspaceStore.setCurrent]).
+     *    A crash between 2 and 3 therefore leaves the stored choice pointing at the
+     *    previous workspace, which is the one a fresh boot will use; the app is never
+     *    left with a setting that claims a workspace the engine never entered.
+     * 4. **Re-key everything bound to the old cwd** ([rebuildWorkspaceScopedCaches]).
+     * 5. **Bump [WorkspaceState.revision]**, which is the screen's draft-clearing
+     *    signal — see [WorkspaceState].
+     *
+     * When [PiEngineHost.restart] fails it has already stopped the old engine. The
+     * old workspace's engine is then booted again, so the outcome is either "back to
+     * where you were" ([WorkspaceSwitch.Failed.rolledBackTo] non-null) or an explicit
+     * stopped state with the reason (null) — never "setting says A, engine runs B".
+     * A refusal changes nothing by construction.
+     *
+     * ## A running turn
+     *
+     * [allowInterrupt] = false turns a busy engine into a refusal
+     * ([PiEngineHost.Restart.RefusedTurnRunning]), which is what a caller that wants
+     * to confirm first should pass. The default is true — this is an explicit "move
+     * me to that workspace" tap, and a composer that silently did nothing while the
+     * tap looked accepted would be worse. The "before" half of the warning is
+     * [wouldInterruptTurn], which the screen asks before offering the choice; the
+     * "after" half is the notice this method pushes plus
+     * [WorkspaceSwitch.Ok.interruptedTurn] — so the user is never left wondering why
+     * the answer they were waiting for stopped arriving.
+     *
+     * Call from a main-dispatcher coroutine (`viewModelScope`), like
+     * [restartEngine].
+     */
+    suspend fun switchWorkspace(name: String, allowInterrupt: Boolean = true): WorkspaceSwitch {
+        val app = getApplication<Application>()
+        val previous = WorkspaceStore.refresh(app).name
+        if (name == previous) return WorkspaceSwitch.AlreadyCurrent(name)
+
+        val target = WorkspaceStore.existing(app, name)
+            ?: return WorkspaceSwitch.Refused("工作区「$name」不存在或不是本应用创建的，没有切换。")
+        if (!target.host.isDirectory || !target.host.canWrite()) {
+            return WorkspaceSwitch.Refused(
+                "工作区「${target.displayName}」的目录不可写（${target.host.absolutePath}），没有切换。",
+            )
+        }
+        val oldHost = WorkspaceStore.currentHost(app)
+        // Captured *before* the restart: `host.turnRunning` reads the live engine's
+        // pi state, and the live engine after a successful restart is a different
+        // process that has never run a turn.
+        val wasBusy = host.turnRunning
+
+        engineTransition = true
+        val result = try {
+            host.restart(
+                reason = "切换工作区到「${target.displayName}」",
+                // The target itself, not `::defaultWorkspace`: the stored choice is
+                // written *after* this succeeds (step 3 above), so the provider
+                // cannot be the thing that decides where the new engine starts.
+                workspaceProvider = { target.host },
+                allowInterrupt = allowInterrupt,
+                launch = launchOptions(),
+            )
+        } finally {
+            engineTransition = false
+        }
+
+        return when (result) {
+            is PiEngineHost.Restart.Ok -> {
+                // Persist, then adopt the new engine — that order, not the reverse:
+                // `attach` (and everything after it) resolves `defaultWorkspace()`,
+                // which reads the store, so the stored choice has to name the new
+                // workspace by the time those run.
+                val stored = WorkspaceStore.setCurrent(app, name)
+                afterWorkspaceChanged(name, result.session)
+                when {
+                    wasBusy -> pushNotice(
+                        "切换工作区中断了正在运行的回合：新引擎在「${target.displayName}」里，" +
+                            "上一轮未完成的模型调用与工具都被停掉了。",
+                        Notice.Tone.Warning,
+                    )
+
+                    else -> pushNotice("已切换到工作区「${target.displayName}」。", Notice.Tone.Info)
+                }
+                if (!stored) {
+                    pushNotice(
+                        "工作区已切换，但这次选择没有保存成功（设置文件不可写）；" +
+                            "重启应用后会回到「$previous」。",
+                        Notice.Tone.Warning,
+                    )
+                }
+                WorkspaceSwitch.Ok(name, interruptedTurn = wasBusy)
+            }
+
+            is PiEngineHost.Restart.RefusedTurnRunning -> {
+                // Nothing changed: `restart` refuses before it stops anything.
+                pushNotice(result.detail, Notice.Tone.Warning)
+                WorkspaceSwitch.Refused(result.detail)
+            }
+
+            is PiEngineHost.Restart.RefusedNeedsProvisioning -> {
+                pushNotice(result.detail, Notice.Tone.Warning)
+                WorkspaceSwitch.Refused(result.detail)
+            }
+
+            is PiEngineHost.Restart.Failed -> rollBackWorkspace(app, previous, oldHost, target, result)
+        }
+    }
+
+    /**
+     * Whether a workspace switch right now would kill a turn. The screen asks this
+     * before offering the choice, so `allowInterrupt = true` is an informed tap
+     * rather than a surprise.
+     */
+    fun wouldInterruptTurn(): Boolean = host.turnRunning
+
+    /**
+     * Everything that was resolved against the old cwd, refreshed for the new one.
+     *
+     * Four things are bound to a workspace and are easy to miss:
+     *  - [settingsStoreCache] — pi's *project* settings are `<workspace>/.pi/settings.json`;
+     *  - [mentionSourceCache] — `fd` runs inside the workspace;
+     *  - the theme and its entries — project themes come from the workspace;
+     *  - the session list — pi records a session's cwd, and the list is filtered by it
+     *    (`SessionsScreen` compares against [GuestWorkspacePath.RELATIVE], which
+     *    [WorkspaceStore.setCurrent] has already moved).
+     */
+    private fun afterWorkspaceChanged(name: String, engine: PiEngineSession?) {
+        // The caches first: `attach` reads `settingsStore` (to invalidate it), and
+        // that getter would otherwise hand it a store still bound to the previous
+        // workspace's project document.
+        rebuildWorkspaceScopedCaches()
+        // `attach` is not optional and not cosmetic: `PiEngineHost.restart` closed
+        // the old engine before starting the new one, and every action here checks
+        // `api != null`, so without it the UI would be inert until the next boot.
+        if (engine != null) attach(engine)
+        refreshPrefs()
+        refreshTheme()
+        refreshSessions()
+        publishWorkspaceState(name, note = null, bumped = true)
+    }
+
+    private fun rebuildWorkspaceScopedCaches() {
+        settingsStoreCache = null
+        mentionSourceCache = null
+    }
+
+    /**
+     * Put the workspace into [UiState], re-reading the directory for [hostPath].
+     *
+     * [bumped] is what tells the chat screen "this is a freshly switched session";
+     * a call that only re-reads the path (or reports a fallback) passes true only
+     * when the workspace genuinely moved.
+     */
+    private fun publishWorkspaceState(name: String, note: String?, bumped: Boolean) {
+        val current = _state.value.workspace
+        val host = runCatching { WorkspaceStore.existing(getApplication(), name)?.host?.absolutePath }
+            .getOrNull()
+        _state.value = _state.value.copy(
+            workspace = current.copy(
+                name = name,
+                relative = WorkspaceStore.relativeOf(name),
+                hostPath = host,
+                revision = current.revision + if (bumped) 1 else 0,
+                note = note,
+            ),
+        )
+        if (note != null) pushNotice(note, Notice.Tone.Warning)
+    }
+
+    /**
+     * The switch failed after the old engine was already stopped. Put the app back
+     * on its feet: boot the **previous** workspace again, and report honestly which
+     * of the two outcomes happened.
+     *
+     * Nothing here writes the workspace setting — it still names [previous], and the
+     * point of this recovery is to make that true of the running engine as well.
+     */
+    private suspend fun rollBackWorkspace(
+        app: Application,
+        previous: String,
+        oldHost: File,
+        target: WorkspaceStore.Entry,
+        failure: PiEngineHost.Restart.Failed,
+    ): WorkspaceSwitch {
+        engineTransition = true
+        val back = try {
+            host.boot(workspaceProvider = { oldHost }, launch = launchOptions()) { step ->
+                _state.value = _state.value.copy(boot = Boot.Working(step))
+            }
+        } finally {
+            engineTransition = false
+        }
+        val headline = "切换到「${target.displayName}」失败：${failure.message}"
+        return when (back) {
+            is PiEngineHost.Boot.Ready -> {
+                // No cache rebuild here: the workspace never moved — `setCurrent`
+                // was not reached, so the stored choice and `GuestWorkspacePath` both
+                // still name [previous], and every cwd-bound cache is still correct.
+                attach(back.session)
+                val message = "$headline，已回到「$previous」并重新启动引擎。"
+                pushNotice(message, Notice.Tone.Warning)
+                WorkspaceSwitch.Failed(message, failure.detail, rolledBackTo = previous)
+            }
+
+            else -> {
+                val detail = (back as? PiEngineHost.Boot.Failed)?.detail ?: failure.detail
+                val why = (back as? PiEngineHost.Boot.Failed)?.message ?: "引擎未能重新启动"
+                _state.value = _state.value.copy(boot = Boot.Failed(headline, detail))
+                syncEngineService(engineAttached = false, bootInProgress = false)
+                reportWakeLockNeed()
+                val message = "$headline；在「$previous」重新启动也失败了（$why）。" +
+                    "引擎现在是停止的，工作区设置仍然是「$previous」。"
+                pushNotice(message, Notice.Tone.Error)
+                WorkspaceSwitch.Failed(message, detail, rolledBackTo = null)
+            }
+        }
+    }
 
     /**
      * pi's **process** configuration, assembled from the five App-side keys of
@@ -3560,6 +3938,30 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      */
     fun engineStarting(current: UiState = _state.value): Boolean =
         current.boot is Boot.Ready && current.engine == PiEngineSession.EngineState.Starting
+
+    /**
+     * Resolve the current workspace before anything can read it, and publish it.
+     *
+     * Placed at the **end** of the class body on purpose: an `init` block runs in
+     * declaration order, and this one pushes a notice, which touches state declared
+     * further down ([noticeSeq]). Running it up next to [_state] would read that
+     * counter before its initializer and let a later notice reuse a sequence number.
+     *
+     * What this does beyond [WorkspaceStore.refresh]: if the stored workspace was
+     * deleted or is not one of ours, the store has already moved the process to the
+     * default and written that correction back — this records it in the UI state
+     * and, when the answer was *not* what the user chose, pushes the sentence
+     * explaining the move. "明确回退，不要静默换目录" is this notice plus the write in
+     * [WorkspaceStore.refresh]; neither half stands alone.
+     *
+     * Synchronous and tiny (one cached JSON read, one `isDirectory`), on the same
+     * thread the ViewModel is constructed on — the settings stack's own stores are
+     * built the same way.
+     */
+    init {
+        val resolved = WorkspaceStore.reconcile(getApplication())
+        publishWorkspaceState(resolved.name, resolved.note, bumped = resolved.note != null)
+    }
 
     override fun onCleared() {
         // Answer anything outstanding before the engine is torn down, so a

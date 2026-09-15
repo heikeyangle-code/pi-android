@@ -13,6 +13,29 @@ import java.io.File
  * call sites re-derive is a rule with five chances to differ. So the rule lives
  * here and the call sites read it.
  *
+ * ## One rule, and one *current* workspace for the process
+ *
+ * The rule has two halves and this object owns both:
+ *
+ *  1. **Where** a workspace lives: under the app's files directory, at
+ *     [ROOT_RELATIVE], one directory per workspace. [DEFAULT_RELATIVE] is the
+ *     workspace an install that has never chosen one uses — `workspace-1`, the one
+ *     this app shipped with, never migrated and never rebuilt.
+ *  2. **Which** workspace is current: there is exactly one per process, because
+ *     there is exactly one engine, one terminal and one write boundary. That name
+ *     is persisted in the app's own settings key and resolved by
+ *     [WorkspaceStore]; this object only holds the *resolved* answer, in
+ *     [RELATIVE], and [adoptRelative] is how the store publishes a decision.
+ *
+ * [RELATIVE] used to be a `const` spelling of `workspace-1`. It is a `val` with a
+ * getter now so that every existing reader — including two screens this batch may
+ * not touch (`ui/screens/SessionsScreen.kt`, `ui/screens/ProjectResources.kt`,
+ * which compare pi's recorded cwd against this prefix to label a session) —
+ * follows the current workspace without a second edit. A reader that kept a copy
+ * of the old constant would show the *previous* workspace's sessions under the
+ * new engine, which is exactly the "引擎在一个目录、你在另一个目录" split this
+ * object exists to prevent.
+ *
  * ## The engine spelling, and why it is not `/workspace`
  *
  * `PiEngineHost` mirrors the *files directory* at [GUEST_ROOT] and mounts the
@@ -42,11 +65,35 @@ import java.io.File
  * that can be wrong. It was wrong: `PtyLauncher`'s KDoc called its `/workspace`
  * "the path [PiEngineHost] maps a workspace to". `bridge/DeviceWorkspace` and the
  * `/app/health` payload publish both spellings, so nothing has to guess.
+ *
+ * The terminal's mount point is fixed; what it *binds there* is the current
+ * workspace and moves with it. That is the whole point of the split: the guest
+ * path `/workspace` is the terminal's contract with the user and must not change,
+ * while the host directory behind it must.
  */
 object GuestWorkspacePath {
 
-    /** Where the workspace lives under the files directory. */
-    const val RELATIVE: String = "pi/workspaces/workspace-1"
+    /**
+     * The workspace an install that has never chosen one uses.
+     *
+     * `workspace-1`, the directory this app has always had. Kept as a constant
+     * because it is also the fallback target of [WorkspaceStore]'s recovery rule:
+     * a persisted choice that no longer names a real workspace must land here, and
+     * landing on a *default* rather than on "whichever directory is left" is what
+     * keeps the failure explainable.
+     */
+    const val DEFAULT_RELATIVE: String = "pi/workspaces/workspace-1"
+
+    /** The directory every workspace is a child of, under the files directory. */
+    const val ROOT_RELATIVE: String = "pi/workspaces"
+
+    /**
+     * The leaf name of the default workspace (`workspace-1`).
+     *
+     * Derived from [DEFAULT_RELATIVE] rather than written again: the two are the
+     * same fact, and a second literal is how they would come apart.
+     */
+    val DEFAULT_NAME: String = DEFAULT_RELATIVE.substringAfterLast('/')
 
     /** The mount point every launch path except the terminal uses. */
     const val GUEST_ROOT: String = "/workspace"
@@ -60,8 +107,42 @@ object GuestWorkspacePath {
      */
     const val TERMINAL_GUEST_PATH: String = "/workspace"
 
-    /** The workspace directory itself. */
-    fun host(filesDir: File): File = File(filesDir, RELATIVE)
+    /**
+     * The workspace in effect for this process, relative to the files directory.
+     *
+     * Defaults to [DEFAULT_RELATIVE] and is changed only by [adoptRelative], which
+     * [WorkspaceStore] calls once it has resolved (and, when necessary, corrected)
+     * the persisted choice. `@Volatile` because the store may adopt from the main
+     * thread while `DeviceWorkspace.refresh` — which the bridge's request threads
+     * call — reads it.
+     */
+    @Volatile
+    private var adopted: String = DEFAULT_RELATIVE
+
+    /** [adopted], as a property so every existing reader follows it. */
+    val RELATIVE: String get() = adopted
+
+    /**
+     * Publish [relative] as the process's current workspace.
+     *
+     * Public because [WorkspaceStore] lives in this package and Kotlin's
+     * `internal` is module-wide rather than package-wide, so there is no narrower
+     * modifier that would actually restrict it. **Call it only from
+     * `WorkspaceStore`**: it is the object that has resolved the persisted choice,
+     * validated the directory, and is about to (or has just) moved the engine to
+     * it. A blank or relative-less value is ignored rather than adopted, because
+     * the one thing worse than a wrong workspace is a workspace that is not one.
+     */
+    fun adoptRelative(relative: String) {
+        if (relative.isBlank()) return
+        adopted = relative
+    }
+
+    /** The workspace directory itself, for the current workspace. */
+    fun host(filesDir: File): File = host(filesDir, RELATIVE)
+
+    /** The workspace directory [relative] names, relative to [filesDir]. */
+    fun host(filesDir: File, relative: String): File = File(filesDir, relative)
 
     /**
      * [host], **created if it is missing**, and returned either way.
@@ -69,7 +150,7 @@ object GuestWorkspacePath {
      * The app cannot assume this directory exists. It is app-private storage, so
      * Android may clear it between launches, and nothing creates it at install time;
      * only two of the paths that need it used to create it — the engine before it
-     * binds `workspace.absolutePath` (`PiEngineHost.kt:259-260`) and the terminal
+     * binds `workspace.absolutePath` (`PiEngineHost.kt:257-258`) and the terminal
      * before the same bind (`PtyLauncher.prepare`). Everything else that resolves a
      * path under it assumed it was there: proot binds nothing that does not exist on
      * the host side, `pi install -l` writes `<cwd>/.pi`, and `export_html` writes a
@@ -81,9 +162,18 @@ object GuestWorkspacePath {
      * that must keep working on a full disk, and each already handles a missing
      * directory (an empty `@` list, a setting that does not persist). What they could
      * not handle was a directory that looked configured and did not exist.
+     *
+     * **No fallback here.** If the current workspace's directory was deleted
+     * externally, this recreates *that* directory rather than quietly moving to
+     * another one. Deciding that the user must be moved back to the default is
+     * [WorkspaceStore.refresh]'s job, and it says so in words; a `mkdirs()` that
+     * picked a different directory would be the silent switch that rule forbids.
      */
-    fun ensureHost(filesDir: File): File {
-        val dir = host(filesDir)
+    fun ensureHost(filesDir: File): File = ensureHost(filesDir, RELATIVE)
+
+    /** [ensureHost] for an explicit workspace, which may be one that is not current. */
+    fun ensureHost(filesDir: File, relative: String): File {
+        val dir = host(filesDir, relative)
         dir.mkdirs()
         return dir
     }

@@ -7,6 +7,7 @@ import app.pi.runtime.PiPaths
 import app.pi.runtime.ProotCommand
 import app.pi.runtime.RuntimeProvisioner
 import app.pi.runtime.RuntimeSelfCheck
+import app.pi.runtime.WorkspaceStore
 import app.pi.rpc.PiLaunchOptions
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -181,7 +182,12 @@ class PiEngineHost(private val appContext: Context) {
     /**
      * @param workspaceProvider returns the host path of the workspace directory
      *        that will become the guest's cwd. Called lazily so first launch can
-     *        create one.
+     *        create one. The default reads [WorkspaceStore] — the process-wide
+     *        "which workspace" authority — so a caller that does not care about the
+     *        workspace cannot accidentally pin an old one; a caller that *is*
+     *        moving the engine into a specific directory (a workspace switch) passes
+     *        that directory explicitly, because then the engine must follow the
+     *        target and not whatever the settings file currently says.
      * @param launch pi's pre-spawn configuration — see [PiLaunchOptions]. The
      *        default reproduces the previous hard-wired launch byte for byte.
      */
@@ -191,7 +197,7 @@ class PiEngineHost(private val appContext: Context) {
         // instead is exactly how a changed payload would keep every device on the
         // tree it already unpacked, silently.
         revision: String = RuntimeProvisioner.packagedRevision(appContext.assets),
-        workspaceProvider: () -> File,
+        workspaceProvider: () -> File = { WorkspaceStore.currentHost(appContext) },
         launch: PiLaunchOptions = PiLaunchOptions(),
         // `onStep` must stay LAST: callers pass it as a trailing lambda
         // (`boot { step -> ... }`), and a trailing lambda always binds to the
@@ -412,10 +418,15 @@ class PiEngineHost(private val appContext: Context) {
      *        process knobs must pass the new set here: those knobs are read only
      *        when the process starts ([PiLaunchOptions]), so replaying the old set
      *        would silently keep the old behaviour and report success.
+     * @param workspaceProvider the workspace for the **new** engine. Defaults to
+     *        [WorkspaceStore]'s current one, exactly like [boot]. A workspace
+     *        switch passes the target directory here, so the engine's new cwd is
+     *        the caller's decision rather than something read back out of a
+     *        settings file that might not have been written yet.
      */
     suspend fun restart(
         reason: String,
-        workspaceProvider: () -> File,
+        workspaceProvider: () -> File = { WorkspaceStore.currentHost(appContext) },
         allowInterrupt: Boolean = false,
         // Same derived value as `boot`, for the same reason — and it matters more
         // here: `restart` compares it before deciding, so a stale constant would

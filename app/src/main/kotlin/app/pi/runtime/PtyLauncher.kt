@@ -290,7 +290,8 @@ object PtyLauncher {
     }
 
     /**
-     * The host directory bind-mounted as the guest's `/workspace`.
+     * The host directory bind-mounted as the guest's `/workspace` — **the current
+     * workspace**, resolved from [WorkspaceStore].
      *
      * This is the one accessor the chat engine, the terminal, the `@` completion, the
      * package commands and the device shell's write boundary all read (see
@@ -300,8 +301,20 @@ object PtyLauncher {
      * settings, skills, prompt templates, themes and extensions are read from — and
      * before this line only the engine and the terminal created it. It is app-private
      * storage, so "it was there last launch" is not a guarantee.
+     *
+     * The two steps are ordered and both are load-bearing: [WorkspaceStore.refresh]
+     * decides *which* workspace is current (reading the persisted choice, falling
+     * back to the default with an explanation when that choice no longer names a
+     * real directory, and publishing the answer to [GuestWorkspacePath]), and
+     * `ensureHost` then creates that directory. Resolving must not be skipped here:
+     * this function is the funnel every one of those five consumers goes through,
+     * so it is the one place where "which workspace" is answered once for all of
+     * them. A caller that kept a `File` from before a switch is holding the previous
+     * workspace — which is why the package screens re-key their `remember` on the
+     * resolved path.
      */
-    fun workspaceHost(context: Context): File = GuestWorkspacePath.ensureHost(context.filesDir)
+    fun workspaceHost(context: Context): File =
+        WorkspaceStore.currentHost(context.applicationContext ?: context)
 
     /**
      * The workspace, as this launcher mounts it: the *same host directory* the
