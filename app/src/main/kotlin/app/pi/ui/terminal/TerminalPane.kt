@@ -10,7 +10,6 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -20,12 +19,12 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.sp
 import app.pi.runtime.PtyLauncher
+import app.pi.ui.theme.PiTheme
 import kotlinx.coroutines.delay
 import org.connectbot.terminal.ModifierManager
 import org.connectbot.terminal.Terminal
@@ -84,8 +83,12 @@ import org.connectbot.terminal.VTermKey
 @Composable
 fun TerminalPane(modifier: Modifier = Modifier) {
     val context = LocalContext.current
-    val isDark = MaterialTheme.colorScheme.background.luminanceIsDark()
-    val palette = remember(isDark) { if (isDark) TerminalPalette.dark() else TerminalPalette.light() }
+    // The terminal's surface is derived from the resolved pi theme, not from a
+    // dark/light coin flip: a theme the user authored changes this pane too, the
+    // same way it changes every other surface. The ANSI table inside the guest is
+    // untouched — `TerminalPalette`'s KDoc has the why.
+    val piPalette = PiTheme.palette
+    val palette = remember(piPalette) { TerminalPalette.of(piPalette) }
     // The `app.terminal.*` settings, read from the same documents the Settings
     // screen writes. A read happens once per Workbench composition, and the keys
     // the user edits are `EffectiveKind.Reload` rows, so re-entering the tab is the
@@ -352,6 +355,3 @@ private const val MIN_ROWS = 5
 private const val MAX_ROWS = 300
 private const val MIN_COLUMNS = 20
 private const val MAX_COLUMNS = 500
-
-private fun Color.luminanceIsDark(): Boolean =
-    (0.2126f * red + 0.7152f * green + 0.0722f * blue) < 0.5f

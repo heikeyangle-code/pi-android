@@ -205,7 +205,14 @@ internal fun ToolHeader(
             text = subject,
             modifier = Modifier.weight(1f),
             style = PiTheme.text.monoSmall,
-            color = palette.toolTitle,
+            // `text`, not `toolTitle`: pi's `toolTitle` is the colour of the tool's
+            // *name* (`renderers/bash.ts:40`, `tool-execution.ts:410` pass it to
+            // `bash`/`read`/`write`/`ls`), and this row's subject is the call's own
+            // argument summary, which v2 draws `c-text` (`direction-b-v2.html:742`).
+            // The two tokens hold the same value in both built-in themes, so this
+            // only shows up on a theme that distinguishes them — which is exactly
+            // the kind of drift the palette exists to prevent.
+            color = palette.text,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )

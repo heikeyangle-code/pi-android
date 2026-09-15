@@ -1,12 +1,27 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <!--
-      pi's dark export surface: docs/pi-android-ui-spec.md §2.1 maps
-      export.pageBg -> Surface, export.cardBg -> SurfaceContainer.
-      Keeping the literal values here (rather than only in Kotlin) means the
-      window background matches the Compose canvas on the very first frame.
+      The window ground for the frames Android draws before Compose has one.
+
+      `pi_window_background` is the **day** value here and the night value lives in
+      `values-night/`: at this point in the launch there is no theme information at
+      all — pi's `theme` setting is a file the engine has not been asked to read —
+      so the only polarity available is the system's, which is exactly the input
+      `PiThemeLoader.load` itself falls back to. Day = pi's `light` export page
+      (`#F8F8F8`), night = pi's `dark` export page (`#18181E`); both are the same
+      literals as `PiPalette.Light.pageBg` / `PiPalette.Dark.pageBg`, so this
+      resource can never disagree with the Compose canvas it hands over to.
+      `MainActivity` replaces it with the *resolved* theme's `pageBg` as soon as
+      that exists, which is what covers a pi theme pinned to the opposite polarity.
+
+      docs/pi-android-ui-spec.md §2.1 maps export.pageBg -> Surface and
+      export.cardBg -> SurfaceContainer; only the first is needed before Compose.
+
+      The two launcher colours are the icon's own and deliberately do not follow
+      the theme: a launcher icon that changed with a pi theme file would be an
+      icon nobody could recognise.
     -->
-    <color name="pi_window_background">#18181E</color>
+    <color name="pi_window_background">#F8F8F8</color>
     <color name="ic_launcher_background">#18181E</color>
     <color name="ic_launcher_foreground">#8ABEB7</color>
 </resources>

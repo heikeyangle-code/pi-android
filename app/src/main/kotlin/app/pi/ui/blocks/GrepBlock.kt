@@ -168,7 +168,10 @@ internal fun GrepBlock(
 private fun GrepGroupHeading(path: String, matches: Int) {
     val palette = PiTheme.palette
     Row(modifier = Modifier.padding(top = PiSpacing.gutter)) {
-        MonoText(text = path, color = palette.toolTitle, modifier = Modifier.weight(1f), maxLines = 1)
+        // `text`, which is v2's own colour for this row (`direction-b-v2.html:1664`
+        // draws the file name `c-text`). pi's `toolTitle` is the tool *name*'s
+        // colour, not a body row's.
+        MonoText(text = path, color = palette.text, modifier = Modifier.weight(1f), maxLines = 1)
         Text(text = "$matches 处", style = PiTheme.text.numeric, color = palette.muted, maxLines = 1)
     }
 }
@@ -188,7 +191,12 @@ private fun GrepRow(match: GrepMatch) {
             text = match.line?.toString().orEmpty(),
             modifier = Modifier.width(PiSpacing.lineNumberColumn),
             style = PiTheme.text.monoSmall,
-            color = palette.dim,
+            // `muted`, not `dim`: `dim` is 2.54:1 on `toolPendingBg` and 2.32:1 on
+            // `toolSuccessBg`, under spec §9's 3:1 metadata floor — the same defect
+            // F12 kept out of the user bubble. v2 draws this column `c-muted`
+            // (`direction-b-v2.html:1665`), and the sibling gutter in
+            // `ToolBodyText.kt:71` is `muted` too.
+            color = palette.muted,
             textAlign = TextAlign.End,
             maxLines = 1,
         )

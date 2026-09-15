@@ -2,6 +2,7 @@ package app.pi.ui
 
 import android.app.Application
 import android.content.Intent
+import android.content.res.Configuration
 import android.net.Uri
 import android.os.SystemClock
 import android.provider.OpenableColumns
@@ -741,8 +742,15 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * here — rather than keeping two hand-written palettes in `PiPalette` — is
      * what makes a desktop-tuned theme change this app, which is the written
      * intent of `PiPalette.kt`.
+     *
+     * The value before the settings have been read follows the **system** night
+     * mode, which is the same input `PiThemeLoader.load` uses when the `theme`
+     * setting names nothing (`defaultSetting(systemDark)`) or names the automatic
+     * pair. Hard-coding `true` here is what made a light-theme device paint one
+     * dark frame and then swap: the composition's first frame read this flow, and
+     * the resolved theme only arrived after a file read on `Dispatchers.IO`.
      */
-    private val _theme = MutableStateFlow(PiResolvedTheme.fallback(systemDark = true))
+    private val _theme = MutableStateFlow(PiResolvedTheme.fallback(systemDark = systemDarkAtStartup(app)))
     val theme: StateFlow<PiResolvedTheme> = _theme.asStateFlow()
 
     /**
@@ -4053,3 +4061,16 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         const val CURRENT_SESSION_VERSION = 3
     }
 }
+
+/**
+ * The system night mode at the moment this view model was built.
+ *
+ * Read synchronously from the application's configuration so the very first
+ * composition — which happens before any theme file has been read — can already
+ * paint the right polarity. `isSystemInDarkTheme()` is the same value, but it is
+ * `@Composable` and therefore unavailable here; the caller supplies it again on
+ * every `LaunchedEffect(systemDark)` so a later switch re-resolves the theme.
+ */
+private fun systemDarkAtStartup(application: Application): Boolean =
+    (application.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
+        Configuration.UI_MODE_NIGHT_YES

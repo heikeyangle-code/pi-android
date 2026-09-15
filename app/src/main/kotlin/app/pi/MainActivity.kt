@@ -1,6 +1,7 @@
 package app.pi
 
 import android.graphics.Color
+import android.graphics.drawable.ColorDrawable
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
@@ -10,6 +11,7 @@ import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.graphics.toArgb
 import androidx.lifecycle.viewmodel.compose.viewModel
 import app.pi.ui.PiRoot
 import app.pi.ui.PiSessionViewModel
@@ -70,6 +72,20 @@ class MainActivity : ComponentActivity() {
             // The palette is the resolved pi theme, not two hand-written
             // constants: a theme file the user tuned on their desktop changes
             // this app as well, which is the stated intent of `PiPalette.kt`.
+            //
+            // The window's own ground is re-pointed at that palette's page colour
+            // here. `res/values/colors.xml` (day) and `res/values-night/colors.xml`
+            // (night) can only carry the *system* polarity's page, because at the
+            // moment the starting window is drawn nothing has read pi's `theme`
+            // setting yet. Once it has been resolved, a pi theme pinned to the
+            // opposite polarity would otherwise leave the window ground on the
+            // wrong side of the hand-over for every later frame the system draws
+            // (a resize, an activity recreate). The colour is opaque, so this
+            // cannot leak a previous frame through.
+            LaunchedEffect(theme.palette.pageBg) {
+                window.setBackgroundDrawable(ColorDrawable(theme.palette.pageBg.toArgb()))
+            }
+
             PiTheme(
                 dark = theme.dark,
                 palette = theme.palette,

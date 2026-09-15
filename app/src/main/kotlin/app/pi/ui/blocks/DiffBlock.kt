@@ -38,9 +38,10 @@ import app.pi.ui.theme.StateTone
 /**
  * `tool-diff` (docs/pi-android-ui-spec.md §7.4): path plus `+N −N` up top, then
  * the hunks. Every line carries a 16dp symbol column (`+`, `-`, space) in
- * addition to its colour and a 8% wash — the spec requires the symbol because
- * colour alone must never be the only signal. Long runs of unchanged lines fold
- * to "… N 行未变", and the whole block folds to a stats line past 200 lines.
+ * addition to its colour, and the two **changed** kinds carry an 8% wash — the
+ * spec requires the symbol because colour alone must never be the only signal.
+ * Long runs of unchanged lines fold to "… N 行未变", and the whole block folds to
+ * a stats line past 200 lines.
  *
  * The colouring is pi's own, from `components/diff.ts`:
  *
@@ -51,18 +52,26 @@ import app.pi.ui.theme.StateTone
  *    that is a text background of the line's colour with the card's colour as the
  *    text (see [diffBody]) — the only place this app paints a text background.
  *
- * Two things here are the app's, not pi's, and are deliberate: the 8% wash and the
- * separate symbol column (a terminal has no background wash, and the spec asks for
- * a non-colour signal), and the line-number column (pi carries the number inside
- * the coloured line, `diff.ts:127-152`; a phone column reads better and keeps the
- * numbers aligned).
+ * Three things here are the app's, not pi's, and are deliberate: the 8% wash on
+ * the two changed kinds (a terminal has no background wash, and the spec asks for
+ * a non-colour signal), the separate symbol column, and the line-number column
+ * (pi carries the number inside the coloured line, `diff.ts:127-152`; a phone
+ * column reads better and keeps the numbers aligned).
  *
  * The rows themselves are untouched by the v2 batch — `09-highlight-fidelity.md`
- * settled them 1:1 with pi, so their colours and the 8 % wash stay byte for byte.
+ * settled them 1:1 with pi, so their colours and the 8 % wash (on the changed rows
+ * v2 gives it to, and only those) stay byte for byte.
  */
 
 /** `06 §2` diff 卡's rail node: `±`, the one node that is not a state. */
 private const val DIFF_NODE_GLYPH = "±"
+
+/**
+ * v2's line wash for the two changed kinds — `rgba(181,189,104,.08)` on an added
+ * line, `rgba(204,102,102,.08)` on a removed one, which is each token's own colour
+ * at 8%. Context rows carry no wash at all; see [DiffLineRow].
+ */
+private const val DIFF_LINE_WASH_ALPHA = 0.08f
 
 @Composable
 fun DiffBlock(
@@ -125,7 +134,11 @@ fun DiffBlock(
                         text = item.path.ifEmpty { "未命名文件" },
                         modifier = Modifier.weight(1f),
                         style = PiTheme.text.monoSmall,
-                        color = palette.toolTitle,
+                        // `text`: the path is the card's subject, which v2 sets
+                        // `c-text` (`direction-b-v2.html:742`). `toolTitle` is pi's
+                        // tool-*name* token (`renderers/edit.ts:85`), which this row
+                        // already carries in `muted` on the left.
+                        color = palette.text,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
@@ -238,13 +251,27 @@ private fun DiffLineRow(row: DiffRow.Line) {
         // so they take the corrected variant, not pi's 3.69:1 value.
         else -> palette.contextOnTool
     }
+    // The 8% wash belongs to the changed rows only. v2 gives the two changed kinds
+    // their own tint and **context rows `transparent`**
+    // (`direction-b-v2.html:773`: `const tint = l.t==='add' ? 'rgba(181,189,104,.08)'
+    // : l.t==='del' ? 'rgba(204,102,102,.08)' : 'transparent'`;
+    // `06-v2-construction-reference.md:76` states the same two values and no third).
+    // Painting it on every row tinted unchanged lines with a lifted grey, which
+    // both invented a texture v2 does not have and softened the two bands that make
+    // a diff readable at a glance. `Color.Transparent.copy(alpha = …)` would still
+    // be a *black* wash, so the context case is spelled out rather than left to the
+    // alpha arithmetic.
+    val wash = when (line.kind) {
+        DiffLineKind.Added, DiffLineKind.Removed -> lineColor.copy(alpha = DIFF_LINE_WASH_ALPHA)
+        else -> Color.Transparent
+    }
     val body = remember(row, lineColor, palette.toolPendingBg) {
         diffBody(line.text.ifEmpty { " " }, row.changed, lineColor, palette.toolPendingBg)
     }
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .background(lineColor.copy(alpha = 0.08f))
+            .background(wash)
             .padding(vertical = PiSpacing.hairline),
         verticalAlignment = Alignment.Top,
     ) {

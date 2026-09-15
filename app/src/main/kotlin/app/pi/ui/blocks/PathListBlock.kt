@@ -238,7 +238,10 @@ private fun PathGroupHeading(group: PathGroup) {
     Row(modifier = Modifier.padding(top = PiSpacing.gutter)) {
         MonoText(
             text = group.label?.takeIf { it.isNotEmpty() } ?: ".",
-            color = palette.toolTitle,
+            // `text`: this is a body row naming what the group holds, not the tool's
+            // own name (`toolTitle`'s pi meaning), and it keeps the grep card's
+            // sibling heading (`GrepBlock.kt`'s `GrepGroupHeading`) on one colour.
+            color = palette.text,
             modifier = Modifier.weight(1f),
             maxLines = 1,
         )
