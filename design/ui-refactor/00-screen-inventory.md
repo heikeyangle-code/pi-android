@@ -71,7 +71,7 @@
   - 提示：`长按一行可删除该会话；当前会话要切换后才能删除。`
   - 空态 1：`还没有会话` / `会话按工作目录分组，这里会列出每一个目录的对话。`
   - 空态 2：`没有匹配的会话` / `换一个关键词，或关掉「仅命名」筛选。`
-  - 行内：`当前` 徽章；副行 `{cwd 组名} · {model}`；第三行 `{n} 条` +（` · 分支`）+（` · 已命名`）；右侧相对时间 `刚刚` / `{n} 分钟前` / `{n} 小时前` / `{n} 天前` / `{n} 周前`。
+  - 行内：`当前` 徽章；**两行**（不是三行）—— 第 1 行是标题 + 当前徽章 + 右对齐相对时间，第 2 行是 `{cwd 组名} · {model}` + 右对齐的 `{n} 条` +（` · 分支`）+（` · 已命名`）；右侧相对时间的取值 `刚刚` / `{n} 分钟前` / `{n} 小时前` / `{n} 天前` / `{n} 周前`。<!-- 依据：方向 B 的 SwipeRow 本来就是两行（direction-b-v2.html:1814-1822），D1 台原文「三行字段压成两行」，冻结截图 design-demos/shots-v2/phone19.png 渲染出来也是两行。原写「副行 …；第三行 …」是三行形态，已按冻结稿更正。 -->
   - 长按对话框：标题=会话名，正文 `对这个会话做什么？`，动作 `新建子会话`、`删除`、`取消`。
   - 删除确认：标题 `删除会话`；正文 `删除「{name}」？这个会话会被移除，无法恢复。` 或当前会话 `「{name}」是当前会话，pi 正在写入这个文件。先切换到别的会话再删除。`；按钮 `删除` / `取消`。
   - 分组名：本应用工作区显示 `工作区`，无 cwd 显示 `工作目录未记录`，其余取路径最后一段。
@@ -504,7 +504,7 @@
 6. **`PiElevation` / `PiIcons` 已确认零调用点**（见 5.3）；全 App 仅 4 处显式 elevation：`SlashPalette.kt:56`、`MentionPalette.kt:54`、`BashPanel.kt:59`（均 `tonalElevation = 2.dp`）与 `ChatScreen.kt:1059`（`shadowElevation = 3.dp`）。
 7. **终端 xterm 16 色**：`TerminalPalette.kt:5-13` 的注释说 16 色由 libvterm 自带；本次未在依赖源码中核对具体值。
 8. **`PiLatex` 的公式排版细节**：只读了文件头（`:1-40`）与在 `PiMarkdownComponents.kt:179-197` 的绘制方式；987 行里的符号表未逐项核对。
-9. **`SessionsScreen` 的 `listItem=72dp` / `bottomBar=64dp`**：`PiSpacing` 里定义但未见引用（会话行是自己 pad 出来的）；实际列表项高度由 `12dp` 上下 padding + 三行文本决定，**不是** 72dp。
+9. **`SessionsScreen` 的 `listItem=72dp` / `bottomBar=64dp`**：`PiSpacing` 里定义但未见引用（会话行是自己 pad 出来的）；实际列表项高度由 `12dp` 上下 padding + **两行**文本决定，**不是** 72dp。<!-- 依据：会话行是两行（direction-b-v2.html:1814-1822 的 SwipeRow；D1 台原文「三行字段压成两行」；冻结截图 design-demos/shots-v2/phone19.png）。原文写「三行文本」，已更正。 -->
 10. **主题切换时的重绘路径**：`PiTheme` 用 `LocalPiPalette` 注入；`rememberPiHighlightedCode` 以 `palette` 为键重算颜色（`PiMarkdownComponents.kt:433`），但高亮 span 本身缓存（不重跑后端）——非流式块在切换主题时是否立即重绘，本次未做运行时验证（无设备）。
 11. **`onAccent` 的推导可能与 pi 不一致**：`PiPalette.colorScheme()` 用 `accent` 的亮度推导 `onPrimary/onSecondary/onTertiary/onError`（`PiTheme.kt:399`），而 pi 主题文件里并没有这些"前景色"字段——这是 App 的自造规则。**不确定**：pi 的终端主题是否有更合适的对应 token（如 `text`）；未在 pi 侧核对，列为设计决策点。
 12. **pi 主题的 `notes` / `error` 展示面**：`PiThemeLoader` 会产出中文告警（`PiThemeFiles.kt:362-375` 的"缺少这些颜色定义…"、"256 色索引颜色…"等）与 `error` 文案（`:239-243, :258`），`PiSettingsStack` 把它们作为 `themeNotes`/`themeError` 传给主题编辑器（`PiSettingsStack.kt:174-176, 389-391`）；**未确认**主题错误是否还有第二个展示点（例如启动时的 Snackbar）。

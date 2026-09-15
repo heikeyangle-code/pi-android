@@ -317,7 +317,8 @@ DurationMeter(elapsedMs: Long?, status: ToolStatus)     ← 只在 ToolFooter �
 5. **新增 `BackHandler(onBack = onClose)`**（当前无，`00-screen-inventory.md` §1.4）。若 `PiRoot` 也加了统一 `BackHandler`（§3.1 第 7 条），**二者只能留一个** —— 建议只留 `PiRoot` 的那一个，`SessionsScreen` 不自带，避免两个 handler 竞争。**这是执行者最容易做错的点之一**。
 6. 行渲染 `SessionRow`(`:298-365`) 的 v2 改动（`04 §4` 要求补长按操作框/删除确认/排序筛选选中态）：
    - `:313-334` 当前徽章 `Surface(PiShapes.badge, color = primaryContainer)` → 保留，但补一个 `StateChip` 形态的符号（`● 当前`）。
-   - `:337-346` 副行 `{组名} · {model}` 与 `:348-356` 第三行 `{n} 条 · 分支 · 已命名` → 保持文案（这些是 `02-real-content.md:78-86` 的字段公式，**不许改写**）。
+     <!-- ⚠️ 已由实现取代（2026-09 会话覆盖层批次）：当前徽章**不再是** `Surface(PiShapes.badge, color = primaryContainer)` 实底胶囊，而是冻结稿的 `Badge` —— 描边环 + accent 色块 + `●` + 正文色文字，见 `SessionsScreen.kt` 的 `CurrentBadge()`（`:835-872`）与冻结稿 `direction-b-v2.html:1816`（`<Badge text="当前" tone="var(--accent)" glyph="●"/>`）。上面这一行是当年的计划原文，按本仓库处理历史文档的惯例**保持原样、不改写**，只在此加注。 -->
+   - `:337-346` 与 `:348-356` 是**同一行（第 2 行）的两半**：`{组名} · {model}` 与 `{n} 条 · 分支 · 已命名` → 保持文案（这些是 `02-real-content.md` §1.2 的字段公式，**不许改写**；三段字段折成两行）。<!-- 依据：方向 B 的 SwipeRow 本来就是两行（direction-b-v2.html:1814-1822），同稿 D1 台原文「三行字段压成两行」，冻结截图 design-demos/shots-v2/phone19.png。原文写「副行 … 与 … 第三行 …」是三行形态，已按冻结稿更正。 -->
    - `:359-363` 右侧 `relativeTime` → 已是 `meta` 字；加 `numeric`（`PiTheme.text.numeric`，`PiTheme.kt:374`）保证不抖动。
    - 分组头 `:200` `PiSectionHeader(groupLabel(cwd))` → 保留。
 7. 两套空态文案(`:177-189`)与长按对话框(`:238-259`)、删除确认(`:266-293`)**一字不改**（它们是真实文案）。

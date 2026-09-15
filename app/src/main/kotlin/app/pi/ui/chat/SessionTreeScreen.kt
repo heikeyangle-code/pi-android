@@ -1,6 +1,9 @@
 package app.pi.ui.chat
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -11,18 +14,21 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -42,6 +48,7 @@ import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.PathParser
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import app.pi.rpc.PiMessage
 import app.pi.rpc.SessionEntry
@@ -165,6 +172,17 @@ fun SessionTreeScreen(
 private val TREE_TABS = listOf("分支", "条目")
 
 /**
+ * 筛选框的取值，全部照 v2 的 tree 台（`direction-b-v2.html` 的 `SessionsOverlay` tree
+ * 分支）：高 36、圆角 9、内 10、`gap:8`、图标 15。筛选档位那句用的是同一个 `gap` 作为
+ * 它与框之间的 `marginTop:8`（v2 那句说明文字的位置）。
+ */
+private val TREE_FILTER_HEIGHT = 36.dp
+private val TREE_FILTER_RADIUS = 9.dp
+private val TREE_FILTER_PADDING = 10.dp
+private val TREE_FILTER_GAP = 8.dp
+private val TREE_FILTER_ICON = 15.dp
+
+/**
  * 树本身：分支 / 条目两个 tab + 筛选行 + 列表。
  *
  * 抽出来只为了 [SessionTreeScreen] 的两种外壳（整屏 / 嵌进覆盖层）共用同一份内容——
@@ -209,37 +227,69 @@ private fun TreeContent(
             )
         }
         if (tab == 0) {
+            // 筛选行：v2 在 tree 台上画的是**和会话列表同一个**方框（`SessionsOverlay`
+            // 的 tree 分支：`height:36`、圆角 9、`surf-low` 底、1px `borderMuted`、内
+            // `padding:0 10px`、`gap:8`、图标 15、文字 `mono t12`），筛选档位是框内**右端
+            // 那句 12 号灰字**（点它循环下一档）。旧实现是 M3 的 `OutlinedTextField` +
+            // `TextButton`：56 高、带浮动 label、按 Material 自己的描边画，夹在 v2 的框与
+            // 卡片之间，两样的语言都不一样 —— `phone27`/`phone28` 两张图里都是一个扁框加
+            // 一个「默认」。
             Row(
                 Modifier.fillMaxWidth().padding(horizontal = PiSpacing.pageHorizontal, vertical = 4.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                OutlinedTextField(
-                    value = query,
-                    onValueChange = onQueryChange,
-                    modifier = Modifier.weight(1f),
-                    singleLine = true,
-                    placeholder = { Text("筛选条目文字") },
-                    textStyle = PiTheme.text.mono,
-                )
-                Spacer(Modifier.width(8.dp))
-                TextButton(onClick = onCycleFilter) { Text(filter.label) }
+                Surface(
+                    modifier = Modifier.fillMaxWidth().height(TREE_FILTER_HEIGHT),
+                    shape = RoundedCornerShape(TREE_FILTER_RADIUS),
+                    color = MaterialTheme.colorScheme.surfaceContainerLow,
+                    border = BorderStroke(PiSpacing.hairline, MaterialTheme.colorScheme.outline),
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = TREE_FILTER_PADDING),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(TREE_FILTER_GAP),
+                    ) {
+                        Icon(
+                            Icons.Filled.Search,
+                            contentDescription = null,
+                            modifier = Modifier.size(TREE_FILTER_ICON),
+                            tint = PiTheme.palette.muted,
+                        )
+                        Box(Modifier.weight(1f)) {
+                            if (query.isEmpty()) {
+                                Text(
+                                    "筛选条目文字",
+                                    style = PiTheme.text.monoSmall,
+                                    color = PiTheme.palette.muted,
+                                )
+                            }
+                            BasicTextField(
+                                value = query,
+                                onValueChange = onQueryChange,
+                                modifier = Modifier.fillMaxWidth(),
+                                singleLine = true,
+                                textStyle = PiTheme.text.monoSmall.copy(
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                ),
+                                cursorBrush = SolidColor(PiTheme.palette.accent),
+                            )
+                        }
+                        Text(
+                            filter.label,
+                            modifier = Modifier.clickable(onClick = onCycleFilter),
+                            style = PiTheme.text.meta,
+                            color = PiTheme.palette.muted,
+                            maxLines = 1,
+                        )
+                    }
+                }
             }
-            Text(
-                // The question this line answers is the one the empty button used to
-                // raise: "can I tap a row and continue from there?". pi's `/tree` can,
-                // but only in-process — `navigateTree` lives in the TUI
-                // (`interactive-mode.ts:5288`) and `rpc-mode.ts` has no command for it
-                // (its full `case` list: `get_entries`, `get_tree`, `fork`, `clone`,
-                // `switch_session`, `new_session`). So the app's button forks, and the
-                // sentence says so instead of leaving a 分支-looking tree to imply a
-                // jump it cannot make.
-                "pi 的 RPC 没有「跳到这一点」的命令（那是终端界面的内部功能），所以这里只能新建分支。",
-                modifier = Modifier.padding(horizontal = PiSpacing.pageHorizontal),
-                style = PiTheme.text.meta,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
         }
-        Spacer(Modifier.height(PiSpacing.unit))
+        // 说明句连同它下面那道 18dp 间距**都搬进了列表**（`TreeForkHint` /
+        // `TREE_HINT_ITEM_KEY`），所以固定 chrome 里只剩「条目」页签还需要这段间距。
+        // 取舍写在 `TREE_FORK_HINT` 的 KDoc 里：手机竖屏最贵的是列表视口，而那句
+        // 只在第一次进树时有用，让它跟列表一起滚走就能把这约 62dp 还给树。
+        if (tab != 0) Spacer(Modifier.height(PiSpacing.unit))
         if (tab == 0) {
             BranchTab(
                 state = state,
@@ -252,6 +302,70 @@ private fun TreeContent(
             EntriesTab(entries = state.entries, modifier = Modifier.weight(1f))
         }
     }
+}
+
+/**
+ * 树页签那句说明的**唯一一份文案**，以及它现在画在哪里。
+ *
+ * ## 文案一个字没改
+ *
+ * The question this sentence answers is the one the empty button used to raise: "can I
+ * tap a row and continue from there?". pi's `/tree` can, but only in-process —
+ * `navigateTree` lives in the TUI (`interactive-mode.ts:5288`) and `rpc-mode.ts` has no
+ * command for it (its full `case` list: `get_entries`, `get_tree`, `fork`, `clone`,
+ * `switch_session`, `new_session`). So the app's button forks, and the sentence says so
+ * instead of leaving a 分支-looking tree to imply a jump it cannot make. 它替掉的是 v2
+ * 那句「分叉会新建一个会话文件，原会话保持不变。」：两句说的是同一件事，这一句多说了
+ * 「为什么只能新建分支」，而 `11-designer-adjudication.md` 的 A-08 已经裁定「删掉等于把
+ * 这些能力从界面上抹掉」。所以它只是搬家，不是删改；间距也仍是 v2 那句的 `marginTop:8`。
+ *
+ * ## 为什么从固定行搬进列表（**相对稿子的有意偏离**）
+ *
+ * 稿子里这句是**固定行**：`direction-b-v2.html:1918`，紧跟筛选框（`marginTop:8`，和这里
+ * 的 `TREE_FILTER_GAP` 同一个值）。但同一个稿子在 `:1946` 又画了它一遍——**在滚动区里**
+ * （`b-scroll`，列表/空态之后，`padding:16px 14px 4px`）。也就是说「这句话是可以滚走的
+ * 正文」本来就是稿子的意思；这里只是换了一头：放在**列表第一条**而不是末尾，因为手机竖屏
+ * 最贵的资源就是列表视口，而这句话只在第一次进树时有用——放末尾要滑到底才看得见，也就不
+ * 可能把视口还回来。（另：`workspace-final.html` 是工作区那台，里面没有会话树，那份稿子
+ * 对这条没有发言权。）
+ *
+ * ## 回收了多少
+ *
+ * 滚走的是它的**整条**：8dp 上间距（`TREE_FILTER_GAP`）+ 两行 18sp 行高（`PiTheme.text.meta`
+ * 是 12sp/18sp，360dp 屏上这句 44 个字符正好两行，≈36dp）+ 18dp 下间距（`PiSpacing.unit`，
+ * 搬进来的那道，见下）≈ **62dp**。列表没滚动时（scroll 0）它与搬运前逐像素一致：固定
+ * chrome 里删掉的那 18dp 间距正好被这条的下间距补上。
+ *
+ * 空态仍留在原位（说明在上、空态在下，与搬运前逐像素一致）：空态没有东西可滚，而那两句
+ * 正文都不重复「分叉 ≠ 分支」这个区分，删掉它等于把 A-08 的措辞又抹一次。
+ *
+ * 也就是说：**只有真有一条条节点时**这句才滚得走，滚走的正是那 62dp。
+ */
+private const val TREE_FORK_HINT =
+    "pi 的 RPC 没有「跳到这一点」的命令（那是终端界面的内部功能），所以这里只能新建分支。"
+
+/**
+ * 说明句在列表里的 key：**常量**，不随筛选档位、查询词或会话变化。
+ *
+ * `LazyColumn` 靠 key 认条目，key 一变就等于换了一批内容——用 `rows.size`、索引或会话 id
+ * 当 key 都会在筛选/搜索时把这行判成"新条目"，连带把滚动位置重置。一个常量 key 让这行在
+ * 整屏生命周期里始终是同一条，滚动位置因此不会因为它的存在而跳。
+ */
+private const val TREE_HINT_ITEM_KEY = "tree:fork-hint"
+
+/** 说明句本体：样式、颜色、水平边距与从前的固定行完全相同，只有位置变了。 */
+@Composable
+private fun TreeForkHint(modifier: Modifier = Modifier) {
+    Text(
+        TREE_FORK_HINT,
+        modifier = modifier.padding(
+            start = PiSpacing.pageHorizontal,
+            end = PiSpacing.pageHorizontal,
+            top = TREE_FILTER_GAP,
+        ),
+        style = PiTheme.text.meta,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
 }
 
 @Composable
@@ -278,29 +392,38 @@ private fun BranchTab(
         }
     }
     if (tree.isEmpty()) {
-        PiEmptyState(
-            icon = BRANCH_GLYPH,
-            // v2's session-tree empty states use their own icon, not the π mark
-            // (`direction-b-v2.html:1922`: `icon="branch"`). `PiEmptyState` defaults
-            // to the mark because the *chat's* two engine empty states carry it.
-            markPi = false,
-            title = if (state.busy != null) "正在读取…" else "还没有分支",
-            body = "会话有第一条消息后，这里会显示分支结构。",
-            modifier = modifier,
-        )
+        // 空态不滚动，所以说明句留在原位（上），空态占满剩下的空间（下）——与搬运前
+        // 逐像素一致。`modifier` 是父级给这一层的 `weight(1f)`，所以它落在外面这个
+        // `Column` 上，里面的空态再自己吃一份 `weight(1f)`。
+        Column(modifier) {
+            TreeForkHint(Modifier.padding(bottom = PiSpacing.unit))
+            PiEmptyState(
+                icon = BRANCH_GLYPH,
+                // v2's session-tree empty states use their own icon, not the π mark
+                // (`direction-b-v2.html:1922`: `icon="branch"`). `PiEmptyState` defaults
+                // to the mark because the *chat's* two engine empty states carry it.
+                markPi = false,
+                title = if (state.busy != null) "正在读取…" else "还没有分支",
+                body = "会话有第一条消息后，这里会显示分支结构。",
+                modifier = Modifier.weight(1f),
+            )
+        }
         return
     }
     if (rows.isEmpty()) {
-        PiEmptyState(
-            icon = BRANCH_GLYPH,
-            // v2's session-tree empty states use their own icon, not the π mark
-            // (`direction-b-v2.html:1922`: `icon="branch"`). `PiEmptyState` defaults
-            // to the mark because the *chat's* two engine empty states carry it.
-            markPi = false,
-            title = "没有匹配的条目",
-            body = "当前筛选是「${filter.label}」。换一个关键词，或再按一次筛选按钮循环到下一种模式。",
-            modifier = modifier,
-        )
+        Column(modifier) {
+            TreeForkHint(Modifier.padding(bottom = PiSpacing.unit))
+            PiEmptyState(
+                icon = BRANCH_GLYPH,
+                // v2's session-tree empty states use their own icon, not the π mark
+                // (`direction-b-v2.html:1922`: `icon="branch"`). `PiEmptyState` defaults
+                // to the mark because the *chat's* two engine empty states carry it.
+                markPi = false,
+                title = "没有匹配的条目",
+                body = "当前筛选是「${filter.label}」。换一个关键词，或再按一次筛选按钮循环到下一种模式。",
+                modifier = Modifier.weight(1f),
+            )
+        }
         return
     }
     LazyColumn(
@@ -308,9 +431,34 @@ private fun BranchTab(
         contentPadding = PaddingValues(
             start = PiSpacing.pageHorizontal,
             end = PiSpacing.pageHorizontal,
-            bottom = PiSpacing.unit,
+            // **The bottom inset is already reserved above this list, and this is the
+            // proof, not a guess.** `SessionsScreen`'s overlay is one
+            // `Column(Modifier.fillMaxSize().padding(contentPadding))` fed by `PiRoot`'s
+            // `Scaffold`, and the embedded tree is a weighted child of it — so the tree
+            // never reaches the window's bottom edge. Material3 makes that padding's
+            // *bottom* the bottom bar's height whenever the `bottomBar` slot is
+            // non-empty, and `PiRoot`'s slot is always composed: `PiBottomBar`, a
+            // `height(BOTTOM_BAR_HEIGHT = 56.dp)` column. The list's viewport therefore
+            // already ends at the bar's top edge, clear of the gesture area.
+            //
+            // So this value is the list's *own* breathing room, not the inset: the
+            // design's 「滚动区底部留 14–18px」 (`06 §2`, `PiSpacing.scrollBottom`).
+            // The sibling session list is padded by that same Column and then adds
+            // `SESSIONS_LIST_BOTTOM = 14.dp` of its own — i.e. exactly this pattern.
+            // Reserving the 56dp here *again* would leave a 56dp dead band under the
+            // last row: the same "框住" complaint, mirrored. All the last row needs is a
+            // scroll range that runs past it, and a `LazyColumn`'s `contentPadding`
+            // extends the range by exactly this much — scrolling to the end puts the
+            // last row fully in view with this 18dp, plus the row's own 6dp, below it.
+            bottom = PiSpacing.scrollBottom,
         ),
     ) {
+        // 说明句 = 列表第一条（取舍与回收量见 `TREE_FORK_HINT` 的 KDoc）。它是**滚动
+        // 内容**，所以往下一滑就整条滚走，把这 62dp 还给树；`key` 是常量，筛选/搜索不会
+        // 把它判成新条目、也就不会重置滚动位置。下间距 18dp 接着的是行自己的 6dp 上间距。
+        item(key = TREE_HINT_ITEM_KEY) {
+            TreeForkHint(Modifier.padding(bottom = PiSpacing.unit))
+        }
         items(rows, key = { it.node.entry.id ?: it.path }) { row ->
             BranchRow(
                 row = row,
@@ -499,6 +647,90 @@ private fun treeRowText(row: TreeRow): String =
     listOfNotNull(entryLabel(row.node.entry), entrySummary(row.node.entry), row.node.label)
         .joinToString("\n")
 
+// ------------------------------------------------------------ the row's indent
+//
+// The indent *rate* is the design's (`direction-b-v2.html:3390`: 「缩进 = depth ×
+// 14px」). What the design cannot have known is how deep a real session gets: this
+// app forks session files constantly, and `flattenTree` steps the indent in at every
+// branch point, so `depth` is unbounded in practice. Multiply an unbounded depth by a
+// per-level step and the row's own text is what pays.
+//
+// The budget on a 360dp phone, with the old numbers:
+//
+//   item width        360 − 2×14 (LazyColumn's page margins)          = 332dp
+//   fixed children    2dp rule + 8dp gap + M3 TextButton「分叉新会话」
+//                     (5×14sp text + 2×12dp content padding)          = 104dp
+//   text column       332 − 12·depth − 104  →  228dp at depth 0
+//                                              156dp at depth 6
+//                                               96dp at depth 11
+//                                                0dp at depth 19
+//
+// Two defects live in that line, and they are the two the user reported. (1) The
+// column shrinks *before* anything else does — every extra level is taken out of the
+// label and the two-line summary, so the deeper the row, the more of its text is
+// ellipsized away at the right edge ("右边那截看不到"), with no horizontal affordance
+// because the list scrolls vertically only ("只能上下滑"). (2) Past ~depth 19 the
+// weighted `Column` is allocated nothing at all; the row still occupies its full
+// height and draws its rule, so it renders as a **blank band**. The deepest nodes are
+// at the end of the depth-first flatten, i.e. exactly what the user scrolls to — which
+// is what "往下滑…下面就空了" actually is. It is not a missing bottom inset: the
+// overlay's `Column` has already reserved the bottom bar (see the note on
+// `BranchTab`'s `LazyColumn`).
+//
+// So the step is capped, in two stages rather than with a hard clamp:
+//
+//   depth 0..4   12dp per level   (the design's rate, where it is legible)
+//   depth 5..10   4dp per level   (still a visible step, so 6 and 7 stay tellable
+//                                  apart; a hard clamp would draw them identically)
+//   depth ≥ 10    flat at 72dp    (the ceiling is reached at depth 10)
+//
+// Worst case, the row at the ceiling on a 360dp phone: 332 − 72 − 10 − 58 = **192dp**
+// of text column; on a 320dp phone, 152dp — still positive, so no row can collapse and
+// nothing needs to be reached by dragging sideways. That is why this fix is "make the
+// content stop overflowing" and **not** a horizontal scroll: a two-axis scroll inside
+// a vertically-scrolling `LazyColumn` needs a nested-scroll arrangement to keep the
+// vertical drag, and getting it wrong reproduces "只能上下滑" in the other direction.
+//
+// Only the *drawn* indent is compressed. `flattenTree` still computes pi's own depth,
+// so ordering, filters, the active-path highlight and the fork action are untouched.
+
+/** Levels drawn at the full [TREE_INDENT_STEP] before the step shortens. */
+private const val TREE_INDENT_FULL_LEVELS = 4
+
+/** The design's rate: 12dp per branch point, while it is still legible. */
+private val TREE_INDENT_STEP = 12.dp
+
+/** The shortened rate past [TREE_INDENT_FULL_LEVELS]: a step that still reads as one. */
+private val TREE_INDENT_TAIL_STEP = 4.dp
+
+/** How many levels past [TREE_INDENT_FULL_LEVELS] the shortened step keeps growing. */
+private const val TREE_INDENT_TAIL_LEVELS = 6
+
+/**
+ * The deepest indent the row will ever draw: 4×12 + 6×4 = **72dp**.
+ *
+ * `internal` alongside [treeRowIndent] so both the function's shape and the ceiling it
+ * promises can be asserted in a unit test — the 192dp text column of the worst case on
+ * a 360dp phone is `360 − 2×14 − 72 − 10 − 58`.
+ */
+internal val TREE_INDENT_MAX =
+    TREE_INDENT_STEP * TREE_INDENT_FULL_LEVELS + TREE_INDENT_TAIL_STEP * TREE_INDENT_TAIL_LEVELS
+
+/**
+ * The left inset a row at [depth] draws, in two stages (see the block above):
+ * 0/12/24/36/48dp for depths 0–4, then +4dp per level up to a 72dp ceiling at depth 10.
+ *
+ * `internal` rather than `private` so the shape is testable without a device — the
+ * stages and the ceiling are the whole fix, and a phone is not needed to see that
+ * depth 40 draws the same 72dp as depth 10.
+ */
+internal fun treeRowIndent(depth: Int): Dp {
+    if (depth <= 0) return 0.dp
+    val full = depth.coerceAtMost(TREE_INDENT_FULL_LEVELS)
+    val tail = (depth - TREE_INDENT_FULL_LEVELS).coerceIn(0, TREE_INDENT_TAIL_LEVELS)
+    return TREE_INDENT_STEP * full + TREE_INDENT_TAIL_STEP * tail
+}
+
 @Composable
 private fun BranchRow(row: TreeRow, isLeaf: Boolean, onFork: (String) -> Unit) {
     val entry = row.node.entry
@@ -507,7 +739,10 @@ private fun BranchRow(row: TreeRow, isLeaf: Boolean, onFork: (String) -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(start = (row.depth * 12).dp, top = 6.dp, bottom = 6.dp),
+            // `treeRowIndent`, not `depth × 12dp`: an unbounded depth took the row's own
+            // text off the right edge (see the block above). The *structure* still comes
+            // from the depth — only the drawn step is capped.
+            .padding(start = treeRowIndent(row.depth), top = 6.dp, bottom = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         // A thin rule instead of box-drawing characters: it survives the phone's
@@ -533,19 +768,36 @@ private fun BranchRow(row: TreeRow, isLeaf: Boolean, onFork: (String) -> Unit) {
         Spacer(Modifier.width(8.dp))
         Column(Modifier.weight(1f)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
+                // The label row is *bounded* now, and that is part of the same fix: its
+                // children used to be unweighted `Text`s, and a squeezed row made them
+                // wrap instead of ellipsize — a 20dp-wide box turns 「toolResult」 into a
+                // ten-line column and the row's height with it, which reads as "the list
+                // went empty below". `weight(1f, fill = false)` on the two variable-length
+                // pieces gives each a share it cannot exceed, "当前" is unweighted so it is
+                // measured first and always keeps its room, and `maxLines = 1` +
+                // `Ellipsis` means the worst case is a truncated word, never a taller row.
                 Text(
                     entryLabel(entry),
+                    modifier = Modifier.weight(1f, fill = false),
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.primary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
                 row.node.label?.let { label ->
                     Spacer(Modifier.width(6.dp))
-                    Surface(shape = PiShapes.badge, color = MaterialTheme.colorScheme.tertiaryContainer) {
+                    Surface(
+                        modifier = Modifier.weight(1f, fill = false),
+                        shape = PiShapes.badge,
+                        color = MaterialTheme.colorScheme.tertiaryContainer,
+                    ) {
                         Text(
                             label,
                             modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.dp),
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onTertiaryContainer,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
                         )
                     }
                 }
@@ -567,9 +819,40 @@ private fun BranchRow(row: TreeRow, isLeaf: Boolean, onFork: (String) -> Unit) {
             )
         }
         if (canFork && id != null) {
-            // "分叉为新会话" and not "分支": the action writes a new session file,
-            // it does not move the leaf inside this session.
-            TextButton(onClick = { onFork(id) }) { Text("分叉新会话") }
+            // "分叉" and not "分支": the action writes a new session file, it does not
+            // move the leaf inside this session. That distinction is the load-bearing
+            // part of the label and it is kept.
+            //
+            // What is gone is the full-width M3 button. 「分叉新会话」 at `labelLarge`
+            // measured ~94dp (5×14sp + 2×12dp of `TextButton`'s default content padding),
+            // a third of a 360dp row before the indent was even counted — this action was
+            // the second-largest consumer of the width the row's own summary needed. The
+            // compact form is the branch glyph plus the verb at `labelMedium` with 6dp of
+            // content padding: ~58dp, `ButtonDefaults.MinWidth` being the floor. 「新会话」
+            // is the part that is dropped, and the header sentence above the list already
+            // says a fork writes a new session file — the row does not have to say it five
+            // times over. The `TextButton` is kept (rather than a bare `Text` link, which
+            // the design draws) because it carries the 48dp touch target, and the action
+            // itself is unchanged: `onFork(id)`.
+            TextButton(
+                onClick = { onFork(id) },
+                contentPadding = PaddingValues(horizontal = 6.dp),
+            ) {
+                Icon(
+                    BRANCH_GLYPH,
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp),
+                )
+                Spacer(Modifier.width(4.dp))
+                Text(
+                    "分叉",
+                    // One line, always: a wrapped action label is what blew the row's
+                    // height up on a narrow row before.
+                    maxLines = 1,
+                    softWrap = false,
+                    style = MaterialTheme.typography.labelMedium,
+                )
+            }
         }
     }
 }

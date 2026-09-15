@@ -719,6 +719,40 @@ fun PiEmptyState(
 /** `06 §2` 空态「padding:86px 34px」: the horizontal half, the only one Compose needs. */
 private val EMPTY_STATE_INSET = 34.dp
 
+/**
+ * `06 §2` 空态「padding:86px 34px」的**纵向**那一半：空态块从内容区顶下移 86dp，而不是
+ * 在内容区里垂直居中。
+ *
+ * [PiEmptyState] 自己只做横向的 34，并把纵向这半交给宿主居中——它的 KDoc 认为 86 只是
+ * 原型在固定高度画框里居中用的。`shots-v2/phone21`（还没有会话）与 `phone28`（没有条目）
+ * 说明不是：两张图里那块空态离筛选行的下沿都是 ~86px，下面留着几百像素的空白，是**顶对齐**
+ * 而不是居中。这个包一层 `Box` 的构件把那半个取值还回来，**只给要照稿子的那一屏用**；
+ * [PiEmptyState] 本身不动，别的屏的居中原样保留。
+ *
+ * @param icon the screen's own icon; ignored while [markPi] is on.
+ */
+@Composable
+fun PiEmptyStateTopAnchored(
+    icon: ImageVector,
+    title: String,
+    body: String,
+    modifier: Modifier = Modifier,
+    markPi: Boolean = true,
+) {
+    Box(modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
+        PiEmptyState(
+            icon = icon,
+            title = title,
+            body = body,
+            modifier = Modifier.padding(top = EMPTY_STATE_TOP_INSET),
+            markPi = markPi,
+        )
+    }
+}
+
+/** `06 §2` 空态「padding:86px 34px」: the vertical half [PiEmptyStateTopAnchored] restores. */
+private val EMPTY_STATE_TOP_INSET = 86.dp
+
 /** `06 §2` 空态: the mark-to-title gap is v2's `marginTop:12`. */
 private val EMPTY_STATE_TITLE_GAP = 12.dp
 

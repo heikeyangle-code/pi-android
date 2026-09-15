@@ -3377,7 +3377,11 @@ if (typeof window !== 'undefined') {
       dev('C3','C3','引擎失败态（引擎已退出）','状态行三重编码成「✗ 引擎已退出」；错误块给「出错了 + 详情」；下面两个动作是「重试 / 诊断报告」；页面明确写出「卡住不动」的三条真实表现，不发明「没有响应」。', null, ()=><S.EngineDown/>),
     ]},
     {g:'04', t:'会话列表覆盖层', d:'从对话页左上角的会话名进入，列表与会话树在同一层切换', items:[
-      dev('D1','D1','默认（12 条真实字段形状）','三行字段压成两行：标题 + 当前徽章 + 右对齐相对时间；第二行是「目录 · 模型」+「N 条 · 分支 · 已命名」。当前会话用 accent 徽章 + 左缘 2px 条标出。点一行看操作框，左滑露出两个动作。', 'chat', ()=><ScreenSessions onClose={()=>{}}/>),
+      // 依据：`SwipeRow`（本文件 :1814-1822）里没有左缘竖条 —— 它的 `cur` 分支只渲染
+      // `<Badge text="当前" tone="var(--accent)" glyph="●"/>`；冻结截图 `shots-v2/phone19.png`
+      // 放大后（当前行 y≈265-300）也看不到任何左缘 2px 条。原句「+ 左缘 2px 条」是错的，
+      // 已删。设置页的通用 `Row`（:577 的 `p.accentBar`）才有那根条，别混。
+      dev('D1','D1','默认（12 条真实字段形状）','三行字段压成两行：标题 + 当前徽章 + 右对齐相对时间；第二行是「目录 · 模型」+「N 条 · 分支 · 已命名」。当前会话用 accent 徽章标出（Badge：描边环 + accent 色块 + ● + 正文色文字）。点一行看操作框，左滑露出两个动作。', 'chat', ()=><ScreenSessions onClose={()=>{}}/>),
       dev('D2','D2','搜索命中（含筛选激活）','输入 diff 的命中结果；「仅命名」筛选激活后只剩已命名的行；命中词条被保留，未命中的目录整组消失；顶部右侧给出命中条数。', 'chat', ()=><ScreenSessions q="diff" onlyNamed onClose={()=>{}}/>),
       dev('D3','D3','空态①：还没有会话','「还没有会话 / 会话按工作目录分组，这里会列出每一个目录的对话。」（会话列表的另一套空态与「没有匹配的会话」在不同状态里，下面是它的兄弟台。）', 'chat', ()=><ScreenSessions empty="no-sessions" onClose={()=>{}}/>),
       dev('D4','D4','空态②：没有匹配的会话','「没有匹配的会话 / 换一个关键词，或关掉「仅命名」筛选。」—— 输入任何搜不到的词都能到这个态。', 'chat', ()=><ScreenSessions q="zzz" onClose={()=>{}}/>),
@@ -3386,7 +3390,12 @@ if (typeof window !== 'undefined') {
     {g:'05', t:'会话列表 · 删除与会话树', d:'两个删除确认变体、排序筛选选中态、会话树的两页', items:[
       dev('E1','E1','删除确认（非当前会话）','「删除「把 diff 卡片的高度收紧」？这个会话会被移除，无法恢复。」主按钮是删除、错误色。', 'chat', ()=><ScreenSessions sel="把 diff 卡片的高度收紧" ask="normal" onClose={()=>{}}/>),
       dev('E2','E2','删除确认（当前会话：禁止删除）','「「会话列表排序错了 · 对话页顶部状态行」是当前会话，pi 正在写入这个文件。先切换到别的会话再删除。」主按钮置灰、不可点 —— 这是 pi 的真实禁止态，不是设计加的。', 'chat', ()=><ScreenSessions sel="会话列表排序错了 · 对话页顶部状态行" ask="current" onClose={()=>{}}/>),
-      dev('E3','E3','排序与筛选的选中态','「按名称」与「仅命名」同时激活：两个 chip 都用 borderAccent + 表面阶表示选中，字仍是正文色（不靠颜色就能读出选中）。', 'chat', ()=><ScreenSessions byTime={false} onlyNamed onClose={()=>{}}/>),
+      // 依据：本台的 `byTime={false}` 走的正是 `SessionsOverlay` 里的
+      // `<Chip active={byTime} ...>`（本文件 :1869）——`active` 取的是 `byTime`，
+      // 所以这一台上「↕ 按名称」是**未选中**、「✓ 仅命名」是选中。冻结截图
+      // `shots-v2/phone26.png` 画的就是一亮一暗。原句「两个 chip 都用 borderAccent」
+      // 与代码和截图都不符，已按截图更正。
+      dev('E3','E3','排序与筛选的选中态','排序 chip 的选中态跟随当前排序（active={byTime}）：本台 byTime=false，所以「↕ 按名称」未选中（borderMuted 描边、透明底）、「✓ 仅命名」选中（borderAccent 描边 + 表面阶），两个字都用正文色（不靠颜色也能读出选中）。', 'chat', ()=><ScreenSessions byTime={false} onlyNamed onClose={()=>{}}/>),
       dev('E4','E4','会话树 · 分支（分叉）','缩进 = depth × 14px，左侧一条 2px 竖线；当前那条打「当前」徽章；每行末尾是「分叉新会话」（accent 的链接式动作）；顶部说明「分叉会新建一个会话文件，原会话保持不变。」', 'chat', ()=><ScreenSessions view="tree" onClose={()=>{}}/>),
       dev('E5','E5','会话树 · 条目（空态）','「没有条目 / 当前筛选是「默认」。换一个关键词，或再按一次筛选按钮循环到下一种模式。」', 'chat', ()=><ScreenSessions view="tree" treeEmpty onClose={()=>{}}/>),
     ]},

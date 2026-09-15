@@ -70,25 +70,36 @@
 | 分组头 | `工作区`（本应用自己的工作区）/ 其它 cwd 取最后一段 / 无 cwd 时 `工作目录未记录` | `:379-385` |
 | 右下 FAB | `新建会话`（图标 Add） | `:228` |
 
-### 1.2 行字段公式（三段，逐字）
+### 1.2 行字段公式（三段，逐字 → 折成两行）
 
-每行是「标题 + 当前徽标 + 第二行 + 第三行 + 右侧相对时间」：
+三段真实字段折成 v2 的**两行**。
+
+> **本节此前写的是三行（「标题 + 当前徽标 + 第二行 + 第三行 + 右侧相对时间」），已于本轮按冻结稿更正为两行。**
+> 依据：① 冻结稿的 `SwipeRow` 本身就是两行（`design-demos/direction-b-v2.html:1814-1822`：
+> `rw{gap:7}` 里是「标题 + 当前徽章 + `mono t12` 时间」，`rw{marginTop:3,gap:8}` 里是「目录·模型 + N 条·分支·已命名」）；
+> ② 同一张稿子的 D1 台原文就是「**三行字段压成两行**：标题 + 当前徽章 + 右对齐相对时间；第二行是
+> 「目录 · 模型」+「N 条 · 分支 · 已命名」」（`direction-b-v2.html` 的 `dev('D1', …)`，本轮补注后位于 `:3384`）；
+> ③ 冻结截图 `design-demos/shots-v2/phone19.png` 渲染出来就是两行。三份材料一致。
+>
+> **同一处三行提法在文档里另有 4 处，本轮已一并更正**（父代理授权）：`01-design-spec.md:59`、`00-screen-inventory.md:74`、`00-screen-inventory.md:507`、`05-compose-migration-plan.md:320`，四处都按上面同一组依据改成了两行并在原位写了依据注释。
+>
+> 本轮改了六处：**本节 + §1.4**（三行 → 两行）、**`06 §2` 的「会话行」行**（三行 → 两行）、**`01-design-spec.md:59` / `00-screen-inventory.md:74` / `:507` / `05-compose-migration-plan.md:320`**（三行 → 两行）、**稿子 D1 台**（删掉不存在的「左缘 2px 条」）、**稿子 E3 台**（chip 选中态按 `active={byTime}` 与 phone26 更正）。
 
 ```
-第 1 行   summary.displayName            ← pi 的 set_session_name；未命名时由列表推导
-          [当前]   ← 仅当该行是 pi 正在写入的会话（badge，:326-333）
+第 1 行   summary.displayName            ← pi 的 set_session_name；未命名时由列表推导（15/500，可省略）
+          [当前]   ← 仅当该行是 pi 正在写入的会话（v2 的 `Badge`：描边环 + accent 色块 + `●` + 正文色文字；`SessionsScreen.kt:835` 的 `CurrentBadge()`）
+          relativeTime(lastActivityAt)   ← 12 等宽、右对齐（`SessionsScreen.kt:797-801`）
 第 2 行   groupLabel(cwd)                ← 「工作区」或目录末段
-          + " · " + model                ← model 为 null 时整段省略（:338-341）
-第 3 行   "<messageCount> 条"
-          + " · 分支"                    ← 仅当 parentSession != null（:351）
-          + " · 已命名"                  ← 仅当 name 非空（:352）
-右侧      relativeTime(lastActivityAt)    ← :391-401
+          + " · " + model                ← model 为 null 时整段省略（`SessionsScreen.kt:808-818`）
+          "<messageCount> 条" + " · 分支" + " · 已命名"   ← 右对齐；后两段按条件（`SessionsScreen.kt:819-827`）
 ```
 
-相对时间的真实措辞（`relativeTime()` `:393-400`）：
+相对时间的真实措辞（`relativeTime()` `SessionsScreen.kt:902-915`）：
 `刚刚` · `N 分钟前` · `N 小时前` · `N 天前` · `N 周前`（未来时间也显示 `刚刚`）。
 
-排序与分组的事实（做排序态 mockup 时用）：先按 `cwd` 分组，组内行顺序来自 store；组之间按 **`rows.maxOf { it.lastActivityAt }` 降序**（`:191-194`）。「按名称」时按 `displayName.lowercase()` 排序（`:129`）。
+排序与分组的事实（做排序态 mockup 时用）：先按 `cwd` 分组，组内行顺序来自 store；组之间按 **`rows.maxOf { it.lastActivityAt }` 降序**（`SessionsScreen.kt:378-381`）。「按名称」时按 `displayName.lowercase()` 排序（`SessionsScreen.kt:170-175`）。
+
+> `SessionsScreen.kt` 的行号是**本轮修复之后**的行号。此前本节引的 `:326-333` / `:338-341` / `:351` / `:352` / `:391-401` / `:191-194` / `:129` 都指不到东西了（那几行要么被这次修复改写、要么本来就有偏移），一并更正。
 
 未命名会话的标题：`displayName` 由 store 从会话内容推导。<!-- 示例 --> 下面 12 条的标题按「未命名 = 首条用户消息的前几字」的形状编，命名过的用「已命名」标记。
 
@@ -108,7 +119,7 @@
 
 ### 1.4 12 条会话样例 <!-- 示例：标题与数字为编造，字段形状来自 1.2 -->
 
-字段顺序固定为：`标题 | 当前? | 第二行 | 第三行 | 右侧`。
+字段顺序固定为：`标题 | 当前? | 右侧时间` ‖ `目录·模型 | N 条·分支·已命名`（**两行**，见 §1.2；旧写的「第二行 | 第三行」与冻结稿 `SwipeRow` `direction-b-v2.html:1814-1822` 和 `design-demos/shots-v2/phone19.png` 都不符）。
 
 ```
 工作区（分组头）                                        ‹源› groupLabel → SessionsScreen.kt:383
