@@ -79,9 +79,45 @@ object DeviceAppActions {
         }
     }
 
+    /**
+     * Launch [packageName] **and check that it actually came to the front**.
+     *
+     * `startActivity` returning without throwing is not evidence of anything on
+     * Android 10+: a background activity start is dropped by the system with no
+     * exception, no log line the app can see and no callback. That made this
+     * endpoint the worst kind of silent failure — a 200 whose list of effects is
+     * empty. Three mechanisms now cover it, in order of cost:
+     *
+     *  1. `startActivity`, then verify the foreground package within 500 ms
+     *     (only possible while the accessibility service is up; without it the
+     *     reply says `verified: false` rather than pretending).
+     *  2. If the foreground package did not change and Shizuku is ready,
+     *     `am start -n pkg/cls` under uid 2000 — the ADB identity is exempt from
+     *     the background-activity-start restriction, which is exactly why the
+     *     Shizuku path is the one that makes this reliable.
+     *  3. Otherwise a notification carrying the same launch intent as a
+     *     `PendingIntent`: a tap is user-initiated, so the system allows it. The
+     *     reply then fails with `BLOCKED_BACKGROUND` and says the notification is
+     *     waiting, instead of reporting a launch that did not happen.
+     */
     fun launch(context: Context, packageName: String): JSONObject {
         requireExactPackage(packageName)
         val manager = context.packageManager
+
+        // Launching ourselves is not a launch: the app is already the thing
+        // running this request, and `startActivity` on our own launcher activity
+        // can restart the task that owns the engine. Bring our task forward
+        // instead, and never touch the activity stack.
+        if (packageName == context.packageName) {
+            return JSONObject().apply {
+                put("packageName", packageName)
+                put("mode", "self")
+                put("movedToFront", moveOwnTaskToFront(context))
+                put("verified", true)
+                put("note", "目标就是 PI 自身；已把 PI 的任务切到前台，没有重新启动任何界面。")
+            }
+        }
+
         val intent: Intent? = manager.getLaunchIntentForPackage(packageName)
         if (intent == null) {
             val known = isInstalled(manager, packageName)
@@ -98,26 +134,161 @@ object DeviceAppActions {
             )
         }
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+
+        val foregroundBefore = foregroundPackage(context)
+        // Verification needs the accessibility service; without it, "the foreground
+        // did not change" is unknowable, and treating an unknown as a failure would
+        // break launching in the common case (基础 capability on, 无障碍 off).
+        val canVerify = DeviceAccessibilityService.isRunning()
         val error = try {
             context.startActivity(intent)
             null
         } catch (exception: Exception) {
             exception
         }
-        if (error != null) {
-            throw DeviceActionException(
-                DeviceDenial(
-                    code = DeviceDenial.UNSUPPORTED,
-                    reason = "启动「$packageName」失败：${error::class.java.simpleName}: ${error.message}",
-                    hint = "Android 10+ 限制后台启动界面，请让用户先切到 PI 前台后重试。",
-                ),
-            )
+        if (error == null) {
+            if (!canVerify) {
+                return launchedPayload(
+                    packageName,
+                    intent,
+                    mode = "startActivity",
+                    foreground = null,
+                    verified = false,
+                ).put(
+                    "note",
+                    "已调用 startActivity，但无障碍服务没有运行，无法验证前台是否真的切换。" +
+                        "要确认结果，让用户打开「设备能力 → 无障碍」，或先用 android_bridge_status 看「前台」行。",
+                )
+            }
+            verifiedForeground(context, packageName)?.let { seen ->
+                return launchedPayload(packageName, intent, mode = "startActivity", foreground = seen, verified = true)
+            }
+            // Shizuku: uid 2000 may start activities from the background.
+            amStart(packageName, intent)?.let {
+                verifiedForeground(context, packageName)?.let { seen ->
+                    return launchedPayload(
+                        packageName,
+                        intent,
+                        mode = "am_start_uid2000",
+                        foreground = seen,
+                        verified = true,
+                    )
+                }
+            }
         }
-        return JSONObject().apply {
-            put("packageName", packageName)
-            put("component", intent.component?.flattenToShortString() ?: "")
+
+        val notified = notifyLaunchFallback(context, packageName, intent)
+        val detail = when {
+            error != null -> "startActivity 抛出了 ${error::class.java.simpleName}: ${error.message}"
+            foregroundBefore == null ->
+                "系统没有抛出异常，但读不到前台包名（无障碍服务不可用），无法确认是否启动"
+            else ->
+                "系统没有抛出异常，但前台仍然是「$foregroundBefore」"
+        }
+        throw DeviceActionException(
+            DeviceDenial(
+                code = DeviceDenial.BLOCKED_BACKGROUND,
+                reason = "启动「$packageName」没有生效：$detail。Android 10+ 会静默丢弃后台界面启动。",
+                hint = buildString {
+                    append("下一步按顺序试：")
+                    append("① 让用户把 pi-android 切到前台后重试；")
+                    append("② 在「设置 → 设备能力 → Shell」启用 Shizuku（ADB 身份可以后台启动界面）；")
+                    if (notified) {
+                        append("③ 已发一条通知，用户可以点它直接打开「$packageName」。")
+                    } else {
+                        append("③ 或者让用户自己从桌面打开「$packageName」。")
+                    }
+                },
+            ),
+        )
+    }
+
+    private fun launchedPayload(
+        packageName: String,
+        intent: Intent,
+        mode: String,
+        foreground: String?,
+        verified: Boolean,
+    ): JSONObject = JSONObject().apply {
+        put("packageName", packageName)
+        put("component", intent.component?.flattenToShortString() ?: "")
+        put("mode", mode)
+        put("foreground", foreground ?: JSONObject.NULL)
+        put("verified", verified)
+        if (mode == "am_start_uid2000") {
+            put("note", "startActivity 被系统丢弃，已改用 Shizuku 的 ADB 身份（uid=2000）执行 am start 并确认前台已切换。")
         }
     }
+
+    /**
+     * The foreground package, or null when it cannot be observed.
+     *
+     * Only the accessibility service can answer this without a special
+     * permission (`getRunningTasks`/`getRunningAppProcesses` return only this app
+     * on every supported API level), so an absent service means an honest null —
+     * never a guess.
+     */
+    private fun foregroundPackage(context: Context): String? = runCatching {
+        DeviceAccessibilityService.running()?.let { service ->
+            service.rootInActiveWindow?.packageName?.toString()
+                ?: service.windows?.firstNotNullOfOrNull { it.root?.packageName?.toString() }
+        }
+    }.getOrNull()
+
+    /** Poll up to [timeoutMs] for [packageName] to become the foreground package. */
+    private fun verifiedForeground(context: Context, packageName: String, timeoutMs: Long = 500): String? {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        var seen = foregroundPackage(context)
+        while (System.currentTimeMillis() < deadline) {
+            if (seen == packageName) return seen
+            runCatching { Thread.sleep(60) }
+            seen = foregroundPackage(context) ?: seen
+        }
+        return if (seen == packageName) seen else null
+    }
+
+    /**
+     * `am start` under the ADB identity. Returns the shell result only when the
+     * backend really is uid 2000 and the command completed; `null` otherwise, so
+     * the caller can fall through to the notification.
+     */
+    private fun amStart(packageName: String, intent: Intent): DeviceShellResult? {
+        val backend = DeviceShellGuard.active()
+        if (backend.id != ShizukuShellBackend.id) return null
+        val component = intent.component?.flattenToShortString() ?: return null
+        // Validated rather than escaped: the component goes into a command string
+        // and `am` has no quoting of its own. Package/class names are [A-Za-z0-9_.$].
+        if (!Regex("^[A-Za-z0-9_.]+/[A-Za-z0-9_.$]+$").matches(component)) return null
+        val result = runCatching { backend.run("am start -n $component", 15_000) }.getOrNull() ?: return null
+        if (result.exitCode != 0) return null
+        if (result.stdout.contains("Error", ignoreCase = true)) return null
+        return result
+    }
+
+    /** Bring our own task forward without restarting any activity. */
+    private fun moveOwnTaskToFront(context: Context): Boolean = runCatching {
+        val manager = context.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager ?: return false
+        val task = manager.appTasks.firstOrNull() ?: return false
+        task.moveToFront()
+        true
+    }.getOrDefault(false)
+
+    /**
+     * The user-initiated escape hatch: a notification whose content intent is the
+     * launch intent that was dropped. Returns false when notifications cannot be
+     * posted, so the hint never promises a notification that does not exist.
+     */
+    private fun notifyLaunchFallback(context: Context, packageName: String, intent: Intent): Boolean =
+        runCatching {
+            DeviceSystemActions.notifyIntent(
+                context = context,
+                title = "点一下打开「$packageName」",
+                text = "PI 尝试启动「$packageName」，但系统拦截了后台启动。点这条通知即可打开。",
+                id = (packageName.hashCode() and 0x7fffffff) % 100000 + 1,
+                intent = intent,
+            )
+            true
+        }.getOrDefault(false)
 
     /**
      * Stop a **user** app after refreshing the classification.

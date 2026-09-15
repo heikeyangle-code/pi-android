@@ -115,6 +115,37 @@ async function guarded(run: () => Promise<ToolOutcome>): Promise<ToolOutcome> {
 }
 
 /**
+ * The device-side node selector, as the bridge wants it: one nested object.
+ *
+ * Nested rather than flat so it can never be confused with a tool's own
+ * parameters — `android_input` already has a `text` (the string to type) that
+ * would otherwise be read as a node selector by name.
+ */
+function selectorBody(p: { text?: string; desc?: string; resourceId?: string; packageName?: string }): Record<string, unknown> {
+	const selector: Record<string, unknown> = {};
+	if (p.text !== undefined) selector.text = p.text;
+	if (p.desc !== undefined) selector.desc = p.desc;
+	if (p.resourceId !== undefined) selector.resourceId = p.resourceId;
+	if (p.packageName !== undefined) selector.packageName = p.packageName;
+	return Object.keys(selector).length > 0 ? { selector } : {};
+}
+
+/**
+ * The verification every UI action carries back: the foreground package before
+ * and after, and whether the screen changed at all. A gesture that was sent but
+ * changed nothing is the failure mode a plain "已点按" hides.
+ */
+function actionEnvelope(data: ActionData): string {
+	const bits: string[] = [];
+	if (data.before !== undefined || data.after !== undefined) {
+		bits.push(`前台 ${data.before ?? "?"} → ${data.after ?? "?"}`);
+	}
+	if (data.changed === false) bits.push("屏幕没有变化（动作可能没有生效）");
+	else if (data.changed === true) bits.push("屏幕已变化");
+	return bits.length > 0 ? `（${bits.join("；")}）` : "";
+}
+
+/**
  * A parameter mistake the schema cannot catch, in the bridge's own refusal shape
  * (`[CODE] 原因` + `提示：`), naming the parameter and its allowed values.
  */
@@ -143,6 +174,14 @@ interface DumpData {
 	totalNodeCount: number;
 	truncated: boolean;
 	screen: { width: number; height: number };
+	/** Always `display`: the unscaled pixel grid every x/y/region is in. */
+	coordinateSpace?: string;
+	snapshotId?: number;
+	diff?: boolean;
+	added?: number;
+	changed?: number;
+	removed?: number;
+	unchanged?: number;
 	text: string;
 }
 interface ScreenshotData {
@@ -151,6 +190,15 @@ interface ScreenshotData {
 	width: number;
 	height: number;
 	bytes: number;
+	coordinateSpace?: string;
+	/** Full-display size of the frame before crop/scale (display pixels). */
+	sourceWidth?: number;
+	sourceHeight?: number;
+	/** image = (display - region.topLeft) * scale */
+	scale?: number;
+	region?: number[] | null;
+	markedIndices?: number;
+	marksNote?: string;
 }
 interface AppEntry {
 	label: string;
@@ -176,6 +224,11 @@ interface ActionData {
 	index?: number;
 	x?: number;
 	y?: number;
+	/** Foreground package before/after, plus whether the screen changed at all. */
+	before?: string | null;
+	after?: string | null;
+	changed?: boolean;
+	selector?: string;
 }
 interface ClipboardData {
 	text: string;
@@ -262,12 +315,12 @@ interface ShellData {
 const ScreenKey = StringEnum(
 	["back", "home", "recents", "notifications", "quicksettings", "powermenu", "lock", "screenshot", "split"] as const,
 	{
-		description: "要执行的系统全局动作：lock 需 Android 9+、screenshot 11+、split 12+。无障碍通道只能做这些。",
+		description: "Global action: lock needs Android 9+, screenshot 11+, split 12+. The accessibility channel does only these.",
 	},
 );
 
 const ScreenshotFormat = StringEnum(["jpeg", "png"] as const, {
-	description: "图片格式：jpeg 更小（默认），png 无损。",
+	description: "Image format: jpeg is smaller (default), png is lossless.",
 });
 
 const DEVICE_TOOLS: DeviceToolSpec[] = [
@@ -276,10 +329,10 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 		name: "android_bridge_status",
 		label: "设备桥状态",
 		description:
-			"报告设备桥状态：各能力分组的开关与可用性、无障碍服务状态、缺失的系统权限、截图支持度。",
-		promptSnippet: "查看设备桥与各设备能力的授权状态",
+			"Report bridge state: capability switches, availability, accessibility service state, missing permissions, screenshot support.",
+		promptSnippet: "Check device bridge and capability status",
 		promptGuidelines: [
-			"任何 android_* 工具返回 [DISABLED] / [NO_PERMISSION] 时，用 android_bridge_status 查明原因并原样转述给用户，不要重试同一次调用。",
+			"On [DISABLED]/[NO_PERMISSION] from any android_* tool, use android_bridge_status to find the cause, relay it verbatim, and do not retry the same call.",
 		],
 		parameters: Type.Object({}),
 		run: async () => {
@@ -295,9 +348,26 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 			const lines: string[] = [];
 			lines.push(`设备桥：运行中（127.0.0.1:${health.port}，协议 v${health.version}）`);
 			lines.push(`设备：Android ${health.androidRelease}（SDK ${health.sdkInt}）`);
+			// Decisive context for an agent: which app it is about to act on. Printed
+			// before anything else so a stale assumption is visible immediately.
+			if (health.foreground) {
+				lines.push(`前台：${health.foreground.packageName ?? "未知"}${health.foreground.class ? `/${health.foreground.class}` : ""}`);
+			} else {
+				lines.push("前台：未知（无障碍服务未连接，无法读取前台应用）");
+			}
+			if (health.audit?.lastUnpaired) {
+				lines.push(`上次执行异常终止：${health.audit.lastUnpaired}`);
+			}
 			lines.push(
-				`无障碍服务：${health.accessibilityRunning ? "运行中" : "未运行"}` +
-					`（系统设置中${health.accessibilityEnabledInSettings ? "已启用" : "未启用"}）`,
+				`无障碍服务：${
+					health.accessibilityState === "connected"
+						? "运行中"
+						: health.accessibilityState === "enabled_not_connected"
+							? "已启用，正在连接中（稍等重试即可）"
+							: health.accessibilityRunning
+								? "运行中"
+								: "未运行"
+				}（系统设置中${health.accessibilityEnabledInSettings ? "已启用" : "未启用"}）`,
 			);
 			lines.push(`截图：${health.screenshotSupported ? "支持" : "不支持（需要 Android 11+）"}`);
 			lines.push(
@@ -323,7 +393,14 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 			lines.push(`Shell 后端：${shells.length > 0 ? shells.join("、") : "无"}`);
 			const shizuku = health.shizuku;
 			if (shizuku) {
-				lines.push(`Shizuku：${shizuku.backendLabel}（${shizuku.note}）`);
+				// The identity, not just a label: "已就绪（ADB 身份，uid=2000）" is what
+				// tells the model that input/am/screencap are actually available.
+				const identity = shizuku.ready
+					? shizuku.uid === 0
+						? "已就绪（root，uid=0）"
+						: `已就绪（ADB 身份，uid=${shizuku.uid}）`
+					: "未就绪";
+				lines.push(`Shizuku：${identity} —— ${shizuku.note}`);
 			}
 			const workspace = health.workspace;
 			if (workspace) {
@@ -371,30 +448,62 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 		name: "android_ui_dump",
 		label: "读取屏幕",
 		description:
-			"读取当前屏幕的控件树（带编号的 class、文本、resource id、bounds、clickable/editable 标记）；" +
-			"编号供 android_tap / android_input 使用。需要「无障碍」能力与系统无障碍服务。",
-		promptSnippet: "读取当前屏幕的控件树（带编号）",
+			"Read the screen node tree: indexed class/text/resource id/bounds/clickable/editable flags; indices feed android_tap and android_input. " +
+			"waitForText/waitForId wait on-device for that node (up to waitMs, default 5000) before dumping; diff=true returns only changes since the last dump. " +
+			"Coordinates are display pixels. Requires Accessibility.",
+		promptSnippet: "Read the current screen node tree (indexed)",
 		promptGuidelines: [
-			"操作界面前先用 android_ui_dump，用它给出的编号调用 android_tap / android_input；界面会变化，连续点按前重新 dump，index 报 NOT_FOUND 时也重新 dump。",
+			"Dump before acting; on NOT_FOUND for an index, dump again or pass text/desc/resourceId to android_tap so the device resolves it.",
+			"To wait for a screen to load, use waitForText/waitForId, not repeated dumps.",
 		],
 		parameters: Type.Object({
 			filter: Type.Optional(
-				Type.String({ description: "只保留文本/描述/资源 id 含该子串的控件及其祖先。" }),
+				Type.String({ description: "Keep only nodes whose text/description/resource id contains this substring, plus ancestors." }),
 			),
 			maxNodes: Type.Optional(
-				Type.Number({ description: `最多返回多少个控件，默认 ${400}，上限 2000。` }),
+				Type.Number({ description: `Max nodes returned, default ${400}, cap 2000.` }),
+			),
+			waitForText: Type.Optional(
+				Type.String({ description: "Wait for a node whose text contains this, then dump; NOT_FOUND on timeout." }),
+			),
+			waitForId: Type.Optional(
+				Type.String({ description: "Wait for a node whose resource id contains this, then dump." }),
+			),
+			waitMs: Type.Optional(
+				Type.Number({ description: "Wait timeout in ms, default 5000, cap 30000; only with waitForText/waitForId." }),
+			),
+			diff: Type.Optional(
+				Type.Boolean({ description: "Return only changes since the last dump (added/changed/removed), default false." }),
 			),
 		}),
 		run: async (params) =>
 			guarded(async () => {
-				const p = params as { filter?: string; maxNodes?: number };
+				const p = params as {
+					filter?: string;
+					maxNodes?: number;
+					waitForText?: string;
+					waitForId?: string;
+					waitMs?: number;
+					diff?: boolean;
+				};
+				const waiting = p.waitForText !== undefined || p.waitForId !== undefined;
 				const data = await bridgePost<DumpData>("/app/ui/dump", {
 					filter: p.filter,
 					maxNodes: p.maxNodes,
+					diff: p.diff === true,
+					...(waiting
+						? {
+								selector: { text: p.waitForText, resourceId: p.waitForId },
+								waitMs: p.waitMs ?? 5000,
+							}
+						: {}),
 				});
 				const header =
 					`包名 ${data.packageName} · 屏幕 ${data.screen.width}×${data.screen.height} · ` +
-					`控件 ${data.nodeCount}/${data.totalNodeCount}${data.truncated ? "（已按上限截断）" : ""}`;
+					`控件 ${data.nodeCount}/${data.totalNodeCount}` +
+					`${data.coordinateSpace ? ` · 坐标 ${data.coordinateSpace}` : ""}` +
+					`${data.diff ? ` · 差异 新增${data.added ?? 0}/变化${data.changed ?? 0}/消失${data.removed ?? 0}` : ""}` +
+					`${data.truncated ? "（已按上限截断）" : ""}`;
 				const body = data.text.length > 0 ? data.text : "（没有可读控件：界面可能是空白，或无障碍服务被限制）";
 				return textResult(`${header}\n\n${truncateForModel(body, "屏幕控件树")}`, {
 					packageName: data.packageName,
@@ -407,60 +516,80 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 		name: "android_tap",
 		label: "点按",
 		description:
-			"点按控件或坐标：优先用 android_ui_dump 的 index（走控件点击动作，最可靠），也可直接给 x/y；" +
-			"longPress=true 长按。要写文本用 android_input，拖动或滚动用 android_swipe。需要「无障碍」能力。",
-		promptSnippet: "点按屏幕控件（用 dump 的编号）或坐标",
+			"Tap a node or coordinate: prefer a android_ui_dump index (node click action, most reliable), else x/y, else text/desc/resourceId resolved on-device. " +
+			"longPress=true long-presses. Text goes to android_input, drag/scroll to android_swipe. Requires Accessibility.",
+		promptSnippet: "Tap a control (dump index, text/id, or coordinates)",
 		parameters: Type.Object({
-			index: Type.Optional(Type.Number({ description: "android_ui_dump 输出里的控件编号。" })),
-			x: Type.Optional(Type.Number({ description: "横坐标（像素）。与 y 一起使用时忽略 index。" })),
-			y: Type.Optional(Type.Number({ description: "纵坐标（像素）。" })),
-			longPress: Type.Optional(Type.Boolean({ description: "是否长按，默认 false。" })),
+			index: Type.Optional(Type.Number({ description: "Node index from android_ui_dump output." })),
+			x: Type.Optional(Type.Number({ description: "X in display pixels. With y, index is ignored." })),
+			y: Type.Optional(Type.Number({ description: "Y in display pixels." })),
+			text: Type.Optional(Type.String({ description: "Resolve target by node text (substring, case-insensitive); exclusive with index/x/y." })),
+			desc: Type.Optional(Type.String({ description: "Resolve target by contentDescription substring." })),
+			resourceId: Type.Optional(Type.String({ description: "Resolve target by resource id substring, e.g. btn_send." })),
+			longPress: Type.Optional(Type.Boolean({ description: "Long-press instead of tap, default false." })),
 		}),
 		run: async (params) =>
 			guarded(async () => {
-				const p = params as { index?: number; x?: number; y?: number; longPress?: boolean };
+				const p = params as {
+					index?: number;
+					x?: number;
+					y?: number;
+					text?: string;
+					desc?: string;
+					resourceId?: string;
+					longPress?: boolean;
+				};
 				const data = await bridgePost<ActionData>("/app/ui/tap", {
 					index: p.index,
 					x: p.x,
 					y: p.y,
 					longPress: p.longPress === true,
+					...selectorBody(p),
 				});
 				const target = typeof data.target === "string" ? data.target : p.index !== undefined ? `#${p.index}` : "";
-				const where = data.x !== undefined ? `(${data.x}, ${data.y})` : target;
-				return textResult(`已${p.longPress === true ? "长按" : "点按"} ${where}${target && where !== target ? ` ${target}` : ""}（方式：${data.mode}）`, {
-					mode: data.mode,
-				});
+				const where = data.x !== undefined ? `(${data.x}, ${data.y})` : target || data.selector || "";
+				return textResult(
+					`已${p.longPress === true ? "长按" : "点按"} ${where}${target && where !== target ? ` ${target}` : ""}（方式：${data.mode}）${actionEnvelope(data)}`,
+					{ mode: data.mode, changed: data.changed, after: data.after },
+				);
 			}),
 	},
 	{
 		name: "android_input",
 		label: "输入文本",
 		description:
-			"向当前界面的输入框写入文本：默认获得焦点的输入框，也可指定 android_ui_dump 里的 index。" +
-			"先试直接写入（ACTION_SET_TEXT），被拒绝时自动改用「剪贴板 + 粘贴」（会替换剪贴板内容，返回里会说明）。" +
-			"submit=true 会尝试回车提交（Android 11+）。需要「无障碍」能力。",
-		promptSnippet: "向焦点输入框写入文本（需确认）",
+			"Write text into a field: the focused input by default, or a android_ui_dump index. " +
+			"Tries the direct set action (ACTION_SET_TEXT); when refused, falls back to clipboard + paste (replaces the clipboard contents, noted in the reply). " +
+			"submit=true attempts enter (Android 11+). Requires the Accessibility capability.",
+		promptSnippet: "Type text into a field (confirm)",
 		parameters: Type.Object({
-			text: Type.String({ description: "要写入的文本（会替换输入框原有内容）。" }),
-			index: Type.Optional(Type.Number({ description: "android_ui_dump 里的输入框编号；省略则用当前焦点。" })),
-			submit: Type.Optional(Type.Boolean({ description: "写入后是否尝试回车提交，默认 false。" })),
+			text: Type.String({ description: "Text to write (replaces the field contents)." }),
+			index: Type.Optional(Type.Number({ description: "Field index from android_ui_dump; omit to use the focused field." })),
+			desc: Type.Optional(Type.String({ description: "Resolve the field by contentDescription substring (instead of index)." })),
+			resourceId: Type.Optional(Type.String({ description: "Resolve the field by resource id substring, e.g. input_box (instead of index)." })),
+			submit: Type.Optional(Type.Boolean({ description: "Attempt enter after writing, default false." })),
 		}),
 		run: async (params) =>
 			guarded(async () => {
-				const p = params as { text: string; index?: number; submit?: boolean };
+				const p = params as { text: string; index?: number; desc?: string; resourceId?: string; submit?: boolean };
 				const data = await bridgePost<{
 					chars: number;
 					submitted: boolean;
 					submitHint?: string;
 					mechanism?: string;
 					clipboardNote?: string;
+					before?: string | null;
+					after?: string | null;
+					changed?: boolean;
 				}>("/app/ui/input", {
 					text: p.text,
 					index: p.index,
 					submit: p.submit === true,
+					...selectorBody({ desc: p.desc, resourceId: p.resourceId }),
 				});
 				let text = `已写入 ${data.chars} 个字符${data.submitted ? "，并已提交" : ""}`;
 				if (data.mechanism === "clipboard_paste") text += "（改用剪贴板粘贴完成）";
+				text += actionEnvelope(data);
 				if (data.clipboardNote) text += `\n${data.clipboardNote}`;
 				if (data.submitHint) text += `\n${data.submitHint}`;
 				return textResult(text, { chars: data.chars, submitted: data.submitted, mechanism: data.mechanism });
@@ -470,11 +599,11 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 		name: "android_key",
 		label: "系统按键",
 		description:
-			"执行系统全局动作（取值见 key）。需要「无障碍」能力，不需要额外权限；" +
-			"原始按键（enter、delete、方向键）用 android_keyevent（需 Shizuku）。",
-		promptSnippet: "执行 Android 系统全局动作（返回/主页/锁屏…）",
+			"Perform a system global action (values in key). Requires the Accessibility capability, no extra permission. " +
+			"For raw keys (enter, delete, arrows) use android_keyevent (needs Shizuku).",
+		promptSnippet: "Run an Android global action (back/home/lock…)",
 		promptGuidelines: [
-			"全局动作（返回、主页、锁屏、通知栏）用 android_key；只有确实需要 enter、delete、方向键时才用 android_keyevent。",
+			"Use android_key for global actions (back, home, lock, notifications); use android_keyevent only when enter, delete or arrow keys are actually needed.",
 		],
 		parameters: Type.Object({
 			key: ScreenKey,
@@ -490,12 +619,12 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 		name: "android_keyevent",
 		label: "注入原始按键",
 		description:
-			"向当前焦点注入原始按键（按键名见 keys）。需要 ADB 身份（uid=2000），也就是装好并授权 Shizuku；" +
-			"没有 Shizuku 时会明确拒绝。按键会送到当前前台应用，等同于你亲手按。",
-		promptSnippet: "注入原始按键（需 Shizuku，需确认）",
+			"Inject raw key events into the focused window (names in keys). Requires the ADB identity (uid=2000), i.e. Shizuku installed and authorized; refuses without it. " +
+			"Keys go to the foreground app, same as pressing them by hand.",
+		promptSnippet: "Inject raw key events (Shizuku, confirm)",
 		parameters: Type.Object({
-			keys: Type.String({ description: "按键名，空格或逗号分隔，例如 \"ENTER\" 或 \"DPAD_DOWN DPAD_DOWN\"；KEYCODE_ 前缀可省略。" }),
-			repeat: Type.Optional(Type.Number({ description: "重复次数 1–20，默认 1。" })),
+			keys: Type.String({ description: "Key names, space- or comma-separated, e.g. \"ENTER\" or \"DPAD_DOWN DPAD_DOWN\"; the KEYCODE_ prefix is optional." }),
+			repeat: Type.Optional(Type.Number({ description: "Repeat count 1–20, default 1." })),
 		}),
 		run: async (params) =>
 			guarded(async () => {
@@ -512,61 +641,139 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 	},
 	{
 		name: "android_swipe",
-		label: "滑动",
-		description: "从 (x1,y1) 滑到 (x2,y2)，用于滚动、翻页、关闭卡片、拖动。需要「无障碍」能力。",
-		promptSnippet: "在屏幕上滑动（滚动/翻页/拖动）",
+		label: "滑动 / 滚动",
+		description:
+			"Swipe (x1,y1)→(x2,y2) in display pixels: scroll, page, dismiss, drag. " +
+			"With direction, scroll the list at index/selector via the accessibility scroll action (no guessed distance, no clash with system gesture navigation); x1..y2 are then unneeded. " +
+			"Requires the Accessibility capability.",
+		promptSnippet: "Swipe the screen, or scroll a list by node",
 		parameters: Type.Object({
-			x1: Type.Number({ description: "起点横坐标。" }),
-			y1: Type.Number({ description: "起点纵坐标。" }),
-			x2: Type.Number({ description: "终点横坐标。" }),
-			y2: Type.Number({ description: "终点纵坐标。" }),
-			durationMs: Type.Optional(Type.Number({ description: "手势时长（毫秒），默认 300；越短越快。" })),
+			x1: Type.Optional(Type.Number({ description: "Start x in display pixels." })),
+			y1: Type.Optional(Type.Number({ description: "Start y." })),
+			x2: Type.Optional(Type.Number({ description: "End x." })),
+			y2: Type.Optional(Type.Number({ description: "End y." })),
+			durationMs: Type.Optional(Type.Number({ description: "Gesture duration in ms, default 300; shorter is faster." })),
+			direction: Type.Optional(
+				StringEnum(["forward", "backward"] as const, {
+					description: "Use the node scroll action: forward = later in the list, backward = earlier; needs index/selector.",
+				}),
+			),
+			index: Type.Optional(Type.Number({ description: "Scrollable node index (with direction)." })),
+			text: Type.Optional(Type.String({ description: "Resolve the scrollable node by text substring (with direction)." })),
+			resourceId: Type.Optional(Type.String({ description: "Resolve the scrollable node by resource id substring." })),
 		}),
 		run: async (params) =>
 			guarded(async () => {
-				const p = params as { x1: number; y1: number; x2: number; y2: number; durationMs?: number };
-				const data = await bridgePost<{ durationMs: number }>("/app/ui/swipe", {
+				const p = params as {
+					x1?: number;
+					y1?: number;
+					x2?: number;
+					y2?: number;
+					durationMs?: number;
+					direction?: string;
+					index?: number;
+					text?: string;
+					resourceId?: string;
+				};
+				if (p.direction !== undefined) {
+					if (p.index === undefined && p.text === undefined && p.resourceId === undefined) {
+						throw new Error(
+							"[BAD_PARAM] android_swipe 用 direction 滚动时还需要指明滚哪个控件：index、text 或 resourceId 至少给一个。" +
+								"\n提示：先在 android_ui_dump 里找带 scrollable 的控件，或直接给它一个 text/resourceId。",
+						);
+					}
+					const data = await bridgePost<ActionData>("/app/ui/scroll", {
+						direction: p.direction,
+						index: p.index,
+						...selectorBody({ text: p.text, resourceId: p.resourceId }),
+					});
+					return textResult(
+						`已${p.direction === "forward" ? "向后" : "向前"}滚动列表（方式：${data.mode}）${actionEnvelope(data)}`,
+						{ mode: data.mode, changed: data.changed },
+					);
+				}
+				if (p.x1 === undefined || p.y1 === undefined || p.x2 === undefined || p.y2 === undefined) {
+					throw new Error(
+						"[BAD_PARAM] android_swipe 需要 x1/y1/x2/y2，或者 direction + index/selector（滚动控件）。" +
+							"\n提示：滚动列表优先用 direction，坐标滑动留给画布类界面。",
+					);
+				}
+				const data = await bridgePost<ActionData & { durationMs: number }>("/app/ui/swipe", {
 					x1: p.x1,
 					y1: p.y1,
 					x2: p.x2,
 					y2: p.y2,
 					durationMs: p.durationMs,
 				});
-				return textResult(`已从 (${p.x1}, ${p.y1}) 滑动到 (${p.x2}, ${p.y2})，用时 ${data.durationMs}ms`, {
-					durationMs: data.durationMs,
-				});
+				return textResult(
+					`已从 (${p.x1}, ${p.y1}) 滑动到 (${p.x2}, ${p.y2})，用时 ${data.durationMs}ms${actionEnvelope(data)}`,
+					{ durationMs: data.durationMs, changed: data.changed },
+				);
 			}),
 	},
 	{
 		name: "android_screenshot",
 		label: "截屏",
 		description:
-			"截取当前屏幕并作为图片返回，模型可以直接看到画面。默认缩放到最长边 1280 的 JPEG；" +
-			"安全窗口（支付、密码界面）无法截取。需要「无障碍」能力、系统无障碍服务与 Android 11+。",
-		promptSnippet: "截取手机屏幕交给模型查看",
+			"Capture the screen as an image. Default JPEG, longest side 1280. " +
+			"region=[left,top,right,bottom] crops first (display pixels, crop then scale, so small text stays legible); " +
+			"marks=true draws the last dump's clickable indices onto the image (dump first). " +
+			"Secure windows (payments, passwords) cannot be captured. Requires Accessibility and Android 11+.",
+		promptSnippet: "Capture the phone screen for the model",
 		promptGuidelines: [
-			"android_ui_dump 的控件树读不出内容（自绘界面、游戏、视频、图片）时，改用 android_screenshot 直接看屏幕。",
+			"When android_ui_dump returns no useful nodes (custom-drawn UI, games, video, images), use android_screenshot to look at the screen.",
+			"For small text or one area, crop with region instead of raising maxDimension (sharper, fewer tokens).",
 		],
 		parameters: Type.Object({
 			format: Type.Optional(ScreenshotFormat),
-			maxDimension: Type.Optional(Type.Number({ description: "最长边缩放上限（像素），默认 1280，范围 240–4096。" })),
-			quality: Type.Optional(Type.Number({ description: "JPEG 质量 20–100，默认 82。" })),
+			maxDimension: Type.Optional(Type.Number({ description: "Longest-side scale cap in pixels, default 1280, range 240–4096." })),
+			quality: Type.Optional(Type.Number({ description: "JPEG quality 20–100, default 82." })),
+			region: Type.Optional(
+				Type.Array(Type.Number(), { description: "Crop area [left,top,right,bottom] in display pixels; omit for the full screen." }),
+			),
+			marks: Type.Optional(
+				Type.Boolean({ description: "Draw clickable indices from the last android_ui_dump onto the image, default false." }),
+			),
 		}),
 		run: async (params) =>
 			guarded(async () => {
-				const p = params as { format?: "jpeg" | "png"; maxDimension?: number; quality?: number };
+				const p = params as {
+					format?: "jpeg" | "png";
+					maxDimension?: number;
+					quality?: number;
+					region?: number[];
+					marks?: boolean;
+				};
 				const data = await bridgePost<ScreenshotData>(
 					"/app/screenshot",
-					{ format: p.format, maxDimension: p.maxDimension, quality: p.quality },
+					{
+						format: p.format,
+						maxDimension: p.maxDimension,
+						quality: p.quality,
+						region: p.region,
+						marks: p.marks === true,
+					},
 					60_000,
 				);
-				const note =
-					`截图 ${data.width}×${data.height}（${data.mimeType}，${formatSize(data.bytes)}）。` +
-					"如果画面文字看不清，可以调大 maxDimension 或改用 png 重新截取。";
-				return imageResult(data.base64, data.mimeType, note, {
+				const mapping =
+					data.scale !== undefined && data.scale !== 1
+						? `，已缩放 ×${data.scale.toFixed(3)}（原图 ${data.sourceWidth}×${data.sourceHeight}，坐标空间 ${data.coordinateSpace ?? "display"}）`
+						: "";
+				const notes: string[] = [
+					`截图 ${data.width}×${data.height}（${data.mimeType}，${formatSize(data.bytes)}）${mapping}。`,
+				];
+				if (data.region) notes.push(`裁剪区域（display 像素）：[${data.region.join(", ")}]。`);
+				if (data.marks === true || data.markedIndices !== undefined) {
+					notes.push(`已标注 ${data.markedIndices ?? 0} 个可点控件编号，可以直接用这些编号调用 android_tap。`);
+				}
+				if (data.marksNote) notes.push(data.marksNote);
+				notes.push("如果画面文字看不清，可以调大 maxDimension、改用 png，或用 region 只截需要的那一块。");
+				return imageResult(data.base64, data.mimeType, notes.join(""), {
 					width: data.width,
 					height: data.height,
 					bytes: data.bytes,
+					scale: data.scale,
+					coordinateSpace: data.coordinateSpace,
 				});
 			}),
 	},
@@ -576,20 +783,20 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 		name: "android_app",
 		label: "应用列表 / 启动",
 		description:
-			"action=\"list\" 列出已安装应用（默认只看可启动的；Android 11 起未声明 QUERY_ALL_PACKAGES 时只能看到系统允许可见的包）。" +
-			"action=\"launch\" 按 package 的精确包名启动。action 必填。",
-		promptSnippet: "列出已安装应用 / 按包名启动应用",
+			"action=\"list\" lists installed apps (launchable only by default; on Android 11+ without QUERY_ALL_PACKAGES only visible packages appear). " +
+			"action=\"launch\" starts an app by exact package. action is required.",
+		promptSnippet: "List installed apps / launch by package",
 		promptGuidelines: [
-			"android_app 的 action=\"launch\" 只接受精确包名，先用 action=\"list\" 查到它。",
+			"android_app action=\"launch\" accepts exact package names only; find it first with action=\"list\".",
 		],
 		parameters: Type.Object({
 			action: StringEnum(["list", "launch"] as const, {
-				description: "list 列出应用，launch 启动应用。",
+				description: "list = list apps, launch = start an app.",
 			}),
-			q: Type.Optional(Type.String({ description: "按名称或包名过滤的子串；仅 action=\"list\"。" })),
-			includeSystem: Type.Optional(Type.Boolean({ description: "是否包含系统应用，默认 false；仅 action=\"list\"。" })),
-			limit: Type.Optional(Type.Number({ description: "最多返回多少条，默认 60，上限 500；仅 action=\"list\"。" })),
-			package: Type.Optional(Type.String({ description: "精确包名，例如 org.telegram.messenger；action=\"launch\" 必填。" })),
+			q: Type.Optional(Type.String({ description: "Substring filter on app name or package; action=\"list\" only." })),
+			includeSystem: Type.Optional(Type.Boolean({ description: "Include system apps, default false; action=\"list\" only." })),
+			limit: Type.Optional(Type.Number({ description: "Max rows, default 60, cap 500; action=\"list\" only." })),
+			package: Type.Optional(Type.String({ description: "Exact package name, e.g. org.telegram.messenger; required for action=\"launch\"." })),
 		}),
 		run: async (params) =>
 			guarded(async () => {
@@ -617,10 +824,28 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 								"\n提示：请传入 package 后重新调用 android_app。",
 						);
 					}
-					const data = await bridgePost<{ packageName: string; component: string }>("/app/apps/launch", {
+					const data = await bridgePost<{
+						packageName: string;
+						component: string;
+						mode?: string;
+						foreground?: string;
+						verified?: boolean;
+						movedToFront?: boolean;
+						note?: string;
+					}>("/app/apps/launch", {
 						package: p.package,
 					});
-					return textResult(`[action launch] 已启动 ${data.packageName}${data.component ? `（${data.component}）` : ""}`, data as unknown as Record<string, unknown>);
+					// The bridge verifies that the foreground package really changed; a
+					// launch that was dropped by Android 10+ arrives as an error instead,
+					// so reaching this line means it happened.
+					const how = data.verified
+						? `，前台已切到 ${data.foreground ?? data.packageName}（${data.mode}）`
+						: "（未能验证前台，请以 android_bridge_status 的「前台」行为准）";
+					return textResult(
+						`[action launch] 已启动 ${data.packageName}${data.component ? `（${data.component}）` : ""}${how}` +
+							`${data.note ? `\n${data.note}` : ""}`,
+						data as unknown as Record<string, unknown>,
+					);
 				}
 				throw badParam("android_app", "action", ["list", "launch"], p.action);
 			}),
@@ -629,10 +854,10 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 		name: "android_stop_app",
 		label: "结束应用",
 		description:
-			"结束一个用户安装应用的后台进程。只接受精确包名；系统应用、关键进程与 pi-android 自身一律拒绝。",
-		promptSnippet: "结束后台应用进程（需确认）",
+			"Kill a user-installed app's background process. Exact package name only; system apps, critical processes and pi-android itself are always refused.",
+		promptSnippet: "Kill a background app process (confirm)",
 		parameters: Type.Object({
-			package: Type.String({ description: "精确包名。" }),
+			package: Type.String({ description: "Exact package name." }),
 		}),
 		run: async (params) =>
 			guarded(async () => {
@@ -650,20 +875,20 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 		name: "android_say",
 		label: "通知 / 短提示 / 朗读",
 		description:
-			"kind=\"notification\" 发系统通知（点击回到 pi-android）；kind=\"toast\" 弹屏幕上的短提示，不进通知栏；" +
-			"kind=\"speak\" 用系统 TTS 朗读文本。kind 必填。",
-		promptSnippet: "发系统通知 / 弹短提示 / 朗读文本",
+			"kind=\"notification\" posts a system notification (tapping returns to pi-android); kind=\"toast\" shows a short on-screen message, not in the shade; " +
+			"kind=\"speak\" reads the text with system TTS. kind is required.",
+		promptSnippet: "System notification / toast / speak",
 		parameters: Type.Object({
 			kind: StringEnum(["notification", "toast", "speak"] as const, {
-				description: "notification 发通知，toast 弹屏内短提示，speak 朗读。",
+				description: "notification = post a notification, toast = short on-screen message, speak = read aloud.",
 			}),
-			text: Type.String({ description: "要发送或朗读的文本。" }),
-			title: Type.Optional(Type.String({ description: "通知标题，默认 pi；仅 kind=\"notification\"。" })),
-			id: Type.Optional(Type.Number({ description: "通知 id，用于覆盖同一通知；省略则自动生成；仅 kind=\"notification\"。" })),
-			long: Type.Optional(Type.Boolean({ description: "是否使用长时长，默认 false；仅 kind=\"toast\"。" })),
-			language: Type.Optional(Type.String({ description: "BCP-47 语言标签，例如 zh-CN、en-US，默认系统语言；仅 kind=\"speak\"。" })),
-			rate: Type.Optional(Type.Number({ description: "语速 0.1–3.0，默认 1.0；仅 kind=\"speak\"。" })),
-			pitch: Type.Optional(Type.Number({ description: "音调 0.1–3.0，默认 1.0；仅 kind=\"speak\"。" })),
+			text: Type.String({ description: "Text to send or read." }),
+			title: Type.Optional(Type.String({ description: "Notification title, default pi; kind=\"notification\" only." })),
+			id: Type.Optional(Type.Number({ description: "Notification id, overwrites the same notification; auto-generated when omitted; kind=\"notification\" only." })),
+			long: Type.Optional(Type.Boolean({ description: "Use the long duration, default false; kind=\"toast\" only." })),
+			language: Type.Optional(Type.String({ description: "BCP-47 language tag, e.g. zh-CN, en-US; default system language; kind=\"speak\" only." })),
+			rate: Type.Optional(Type.Number({ description: "Speech rate 0.1–3.0, default 1.0; kind=\"speak\" only." })),
+			pitch: Type.Optional(Type.Number({ description: "Pitch 0.1–3.0, default 1.0; kind=\"speak\" only." })),
 		}),
 		run: async (params) =>
 			guarded(async () => {
@@ -706,12 +931,12 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 	{
 		name: "android_vibrate",
 		label: "震动",
-		description: "让手机震动。",
-		promptSnippet: "让手机震动（可自定义节奏）",
+		description: "Vibrate the phone.",
+		promptSnippet: "Vibrate the phone (custom pattern allowed)",
 		parameters: Type.Object({
-			ms: Type.Optional(Type.Number({ description: "震动时长（毫秒），默认 200，上限 10000。" })),
+			ms: Type.Optional(Type.Number({ description: "Vibration length in ms, default 200, cap 10000." })),
 			pattern: Type.Optional(
-				Type.Array(Type.Number(), { description: "自定义节奏的毫秒数组，例如 [0, 120, 80, 120]；按「停-动-停-动」解释，给了它则忽略 ms。" }),
+				Type.Array(Type.Number(), { description: "Custom pattern in ms, e.g. [0, 120, 80, 120]; read as off-on-off-on; overrides ms." }),
 			),
 		}),
 		run: async (params) =>
@@ -725,12 +950,12 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 		name: "android_share",
 		label: "分享",
 		description:
-			"把文本或链接交给系统分享面板，由用户选择目标应用；要直接用默认应用打开 URL 用 android_open。",
-		promptSnippet: "交给系统分享面板（需确认）",
+			"Hand text or a link to the system share sheet; the user picks the target app. To open a URL directly use android_open.",
+		promptSnippet: "Open the system share sheet (confirm)",
 		parameters: Type.Object({
-			text: Type.Optional(Type.String({ description: "分享的正文。" })),
-			url: Type.Optional(Type.String({ description: "要附加的链接。" })),
-			subject: Type.Optional(Type.String({ description: "标题/主题。" })),
+			text: Type.Optional(Type.String({ description: "Body to share." })),
+			url: Type.Optional(Type.String({ description: "Link to attach." })),
+			subject: Type.Optional(Type.String({ description: "Title / subject." })),
 		}),
 		run: async (params) =>
 			guarded(async () => {
@@ -747,10 +972,15 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 		name: "android_open",
 		label: "打开链接",
 		description:
-			"用系统默认应用打开 URL 或深链（含自定义 scheme）；要让用户自己选应用分享内容用 android_share。",
-		promptSnippet: "用系统应用打开 URL/深链（需确认）",
+			"Open a URL or deep link with the system default app (custom schemes and intent: URLs included); " +
+			"an intent: URL with no match falls back to its browser_fallback_url. " +
+			"To let the user pick an app for sharing use android_share.",
+		promptSnippet: "Open a URL/deep link with a system app (confirm)",
 		parameters: Type.Object({
-			url: Type.String({ description: "完整 URL，必须带 scheme，例如 https://pi.dev 或 mailto:a@b.c。" }),
+			url: Type.String({
+				description:
+					"Full URL: https://…, mailto:…, or intent://…#Intent;scheme=…;package=…;S.browser_fallback_url=…;end.",
+			}),
 		}),
 		run: async (params) =>
 			guarded(async () => {
@@ -765,10 +995,10 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 		name: "android_clipboard",
 		label: "剪贴板",
 		description:
-			"读或写系统剪贴板：给 text 写入，不给 text 读取。Android 10 起只有前台应用能读剪贴板，读不到时会说明原因。",
-		promptSnippet: "读写系统剪贴板",
+			"Read or write the system clipboard: pass text to write, omit it to read. Since Android 10 only a foreground app can read the clipboard; a failed read says why.",
+		promptSnippet: "Read/write the system clipboard",
 		parameters: Type.Object({
-			text: Type.Optional(Type.String({ description: "要写入的文本；省略则读剪贴板。" })),
+			text: Type.Optional(Type.String({ description: "Text to write; omit to read the clipboard." })),
 		}),
 		run: async (params) =>
 			guarded(async () => {
@@ -794,20 +1024,20 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 		name: "android_download",
 		label: "公共 Download 读写",
 		description:
-			"读写公共 Download 目录里的文件。" +
-			"op=\"write\" 需要 name + content（文本）或 base64 + mimeType（二进制）；op=\"read\" 需要 name，可选 maxBytes。" +
-			"write 在 API 29+ 无需权限、Android 8/9 需存储权限；" +
-			"read 在 API 33+ 只能读本应用导出过的文件、API 30–32 需存储权限。用户自己指定的目录用 android_files。op 必填。",
-		promptSnippet: "读写公共 Download 文件（需确认）",
+			"Read/write files in the public Download folder. " +
+			"op=\"write\" needs name + content (text) or base64 + mimeType (binary); op=\"read\" needs name, optional maxBytes. " +
+			"write needs no permission on API 29+, needs storage permission on Android 8/9; " +
+			"read can only see files this app exported on API 33+, needs storage permission on API 30–32. For user-chosen directories use android_files. op is required.",
+		promptSnippet: "Read/write public Download files (confirm)",
 		parameters: Type.Object({
 			op: StringEnum(["write", "read"] as const, {
-				description: "write 导出文件，read 读入文件。",
+				description: "write = export a file, read = import a file.",
 			}),
-			name: Type.String({ description: "文件名（不含路径），例如 report.md。" }),
-			content: Type.Optional(Type.String({ description: "文本内容；op=\"write\"，与 base64 二选一。" })),
-			base64: Type.Optional(Type.String({ description: "二进制内容的 base64；op=\"write\"，与 content 二选一。" })),
-			mimeType: Type.Optional(Type.String({ description: "MIME 类型，默认 text/plain；op=\"write\"。" })),
-			maxBytes: Type.Optional(Type.Number({ description: "最多读取多少字节，默认 1MB，上限 4MB；op=\"read\"。" })),
+			name: Type.String({ description: "File name (no path), e.g. report.md." }),
+			content: Type.Optional(Type.String({ description: "Text content; op=\"write\", exclusive with base64." })),
+			base64: Type.Optional(Type.String({ description: "Base64 of binary content; op=\"write\", exclusive with content." })),
+			mimeType: Type.Optional(Type.String({ description: "MIME type, default text/plain; op=\"write\"." })),
+			maxBytes: Type.Optional(Type.Number({ description: "Max bytes to read, default 1MB, cap 4MB; op=\"read\"." })),
 		}),
 		run: async (params) =>
 			guarded(async () => {
@@ -853,14 +1083,14 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 		name: "android_files_list",
 		label: "已授权目录",
 		description:
-			"列出用户授权（SAF）的目录及其内容：不传 path 时列出已授权的根目录名。" +
-			"读写用户自己的文件用 android_files；公共 Download 目录用 android_download。",
-		promptSnippet: "列出已授权（SAF）的目录与文件",
+			"List user-authorized (SAF) directories and their contents: omit path to list authorized root names. " +
+			"Use android_files to read/write those files; use android_download for the public Download folder.",
+		promptSnippet: "List authorized (SAF) directories and files",
 		promptGuidelines: [
-			"读写用户自己的文件前，先用 android_files_list 看清已授权的根目录名；路径必须以根目录名开头。",
+			"Before reading or writing the user's files, list authorized root names with android_files_list; paths must start with a root name.",
 		],
 		parameters: Type.Object({
-			path: Type.Optional(Type.String({ description: "「根目录名/相对路径」，省略则列出所有已授权根目录。" })),
+			path: Type.Optional(Type.String({ description: "\"root name/relative path\"; omit to list all authorized roots." })),
 		}),
 		run: async (params) =>
 			guarded(async () => {
@@ -888,19 +1118,19 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 		name: "android_files",
 		label: "授权目录读写",
 		description:
-			"读写用户已授权（SAF）目录里的文件。" +
-			"op=\"write\" 需要 path + content（文本）或 base64（二进制，可配 mimeType），不存在的中间目录会自动创建、同名文件会被覆盖；" +
-			"op=\"read\" 只需 path，可选 maxBytes，文本直接返回、二进制给 base64。公共 Download 目录用 android_download。op 必填。",
-		promptSnippet: "读写授权目录里的文件（需确认）",
+			"Read/write files in user-authorized (SAF) directories. " +
+			"op=\"write\" needs path + content (text) or base64 (binary, optional mimeType); missing parent dirs are created and an existing file is overwritten; " +
+			"op=\"read\" needs path, optional maxBytes; text is returned directly, binary as base64. For the public Download folder use android_download. op is required.",
+		promptSnippet: "Read/write files in authorized directories (confirm)",
 		parameters: Type.Object({
 			op: StringEnum(["write", "read"] as const, {
-				description: "write 写文件，read 读文件。",
+				description: "write = write a file, read = read a file.",
 			}),
-			path: Type.String({ description: "「根目录名/相对路径」，例如 Documents/notes/todo.md。" }),
-			content: Type.Optional(Type.String({ description: "文本内容；op=\"write\"，与 base64 二选一。" })),
-			base64: Type.Optional(Type.String({ description: "二进制内容的 base64；op=\"write\"，与 content 二选一。" })),
-			mimeType: Type.Optional(Type.String({ description: "MIME 类型，默认 text/plain；op=\"write\"。" })),
-			maxBytes: Type.Optional(Type.Number({ description: "最多读取多少字节，默认 1MB，上限 4MB；op=\"read\"。" })),
+			path: Type.String({ description: "\"root name/relative path\", e.g. Documents/notes/todo.md." }),
+			content: Type.Optional(Type.String({ description: "Text content; op=\"write\", exclusive with base64." })),
+			base64: Type.Optional(Type.String({ description: "Base64 of binary content; op=\"write\", exclusive with content." })),
+			mimeType: Type.Optional(Type.String({ description: "MIME type, default text/plain; op=\"write\"." })),
+			maxBytes: Type.Optional(Type.Number({ description: "Max bytes to read, default 1MB, cap 4MB; op=\"read\"." })),
 		}),
 		run: async (params) =>
 			guarded(async () => {
@@ -948,22 +1178,22 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 		name: "android_device_state",
 		label: "设备状态",
 		description:
-			"读设备状态。what=\"battery\" 电量/充电/温度；what=\"location\" 最近一次已知位置；" +
-			"what=\"sensors\" 列出所有传感器；" +
-			"what=\"sensor\" 读一次采样值（accelerometer、light、pressure 等；step_counter 之类不适合单次采样），给 typeName 或 type。" +
-			"需要「位置·传感器·相机」能力，location 还需系统定位权限。what 必填。",
-		promptSnippet: "读电池 / 位置 / 传感器",
+			"Read device state. what=\"battery\" level/charging/temperature; what=\"location\" last known position; " +
+			"what=\"sensors\" lists all sensors; " +
+			"what=\"sensor\" reads one sample (accelerometer, light, pressure…; step_counter and similar do not fit single sampling), with typeName or type. " +
+			"Requires the location·sensors·camera capability; location also needs the system location permission. what is required.",
+		promptSnippet: "Read battery / location / sensors",
 		parameters: Type.Object({
 			what: StringEnum(["battery", "location", "sensors", "sensor"] as const, {
-				description: "battery 电量，location 位置，sensors 传感器列表，sensor 一次采样。",
+				description: "battery = level, location = position, sensors = sensor list, sensor = one sample.",
 			}),
 			typeName: Type.Optional(
-				Type.String({ description: "传感器类型名，例如 accelerometer；仅 what=\"sensor\"，与 type 二选一。" }),
+				Type.String({ description: "Sensor type name, e.g. accelerometer; what=\"sensor\" only, exclusive with type." }),
 			),
 			type: Type.Optional(
-				Type.Number({ description: "传感器数字类型（Android Sensor.TYPE_*）；仅 what=\"sensor\"，与 typeName 二选一。" }),
+				Type.Number({ description: "Sensor numeric type (Android Sensor.TYPE_*); what=\"sensor\" only, exclusive with typeName." }),
 			),
-			timeoutMs: Type.Optional(Type.Number({ description: "等待一次采样的超时（毫秒），默认 1500；仅 what=\"sensor\"。" })),
+			timeoutMs: Type.Optional(Type.Number({ description: "Sample wait timeout in ms, default 1500; what=\"sensor\" only." })),
 		}),
 		run: async (params) =>
 			guarded(async () => {
@@ -1021,10 +1251,10 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 	{
 		name: "android_torch",
 		label: "手电筒",
-		description: "开关手电筒（相机闪光灯）；某些 ROM 需要相机权限。",
-		promptSnippet: "开关手电筒",
+		description: "Turn the flashlight (camera LED) on or off; some ROMs need the camera permission.",
+		promptSnippet: "Turn the flashlight on/off",
 		parameters: Type.Object({
-			on: Type.Boolean({ description: "true 打开，false 关闭。" }),
+			on: Type.Boolean({ description: "true = on, false = off." }),
 		}),
 		run: async (params) =>
 			guarded(async () => {
@@ -1039,18 +1269,18 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 		name: "android_shell",
 		label: "设备 Shell",
 		description:
-			"执行一条受策略守卫限制的设备 Shell 命令（需要用户开启「Shell」能力）。有命令白名单，未知命令一律拒绝；" +
-			"硬性禁用（与授权无关）：mount/umount、setenforce、setprop、settings put、mknod、dd、mkfs、pm clear/uninstall、su/sudo/magisk、/dev/block。" +
-			"只允许写工作区之内（含工作区本身就是 DCIM、Pictures、Download 等目录时），之外拒绝。" +
-			"`$(...)` 与反引号默认拒绝，除非用户在「设置 → 设备能力 → Shell」打开「放宽模式」。" +
-			"以后端身份运行：授权了 Shizuku 就是 ADB（uid=2000），否则是应用自身身份。",
-		promptSnippet: "执行受策略守卫的设备 Shell 命令（需确认）",
+			"Run one device shell command under the policy guard (needs the user's Shell capability). Commands are whitelisted; unknown commands are refused. " +
+			"Hard-blocked regardless of authorization: mount/umount, setenforce, setprop, settings put, mknod, dd, mkfs, pm clear/uninstall, su/sudo/magisk, /dev/block. " +
+			"Writes are allowed only inside the workspace (including when the workspace itself is DCIM, Pictures or Download). " +
+			"`$(...)` and backticks are refused unless the user enables relaxed mode. " +
+			"Runs as the active backend identity: Shizuku authorized = ADB (uid=2000), otherwise this app's own uid.",
+		promptSnippet: "Run a policy-guarded device shell command (confirm)",
 		promptGuidelines: [
-			"android_shell 只在确实需要设备级身份时才用；工作区里的文件、git、npm、构建用内置 bash，写用户自己的文件用 android_files（op=\"write\"）。",
+			"Use android_shell only when device-level identity is genuinely needed; for workspace files, git, npm and builds use the built-in bash, and to write the user's files use android_files (op=\"write\").",
 		],
 		parameters: Type.Object({
-			command: Type.String({ description: "要执行的命令。多个动作请拆成多次调用。" }),
-			timeoutMs: Type.Optional(Type.Number({ description: "超时（毫秒），默认 15000，上限 60000。" })),
+			command: Type.String({ description: "Command to run. Split multiple actions into separate calls." }),
+			timeoutMs: Type.Optional(Type.Number({ description: "Timeout in ms, default 15000, cap 60000." })),
 		}),
 		run: async (params) =>
 			guarded(async () => {
@@ -1083,58 +1313,64 @@ const SKILL_SENTINEL = `name: ${SKILL_NAME}`;
 function skillMarkdown(): string {
 	return `---
 name: ${SKILL_NAME}
-description: Android 手机的界面、应用、文件、通知与传感器工具用法。
+description: Using pi-android device tools for screen, apps, files, notifications and sensors.
 ---
 
-# pi-android 设备环境
+# pi-android device environment
 
-你不是在电脑上，而是在一台 Android 手机里运行的 pi-android 客户端中。pi 内核跑在
-proot 的 Ubuntu 用户态里，App 进程另外提供一组设备能力工具。
+The pi kernel runs in a proot Ubuntu; the app process provides the device tools.
 
-## 路径
+## Paths
 
-| 位置 | 说明 |
+| Path | Meaning |
 |---|---|
-| \`/root/.pi/agent\` | pi 的 agentDir：settings、extensions、skills、sessions、auth.json |
-| \`/workspace\` | 当前工作区（App 私有存储，速度快，适合 build/npm） |
-| \`/sdcard\`、\`/storage/emulated/0\` | 用户共享存储（FUSE，慢，适合放用户可见的文件） |
-| \`/tmp\` | 可写的临时目录 |
+| \`/root/.pi/agent\` | pi agentDir: settings, extensions, skills, sessions, auth.json |
+| \`/workspace\` | current workspace (app-private storage, fast, good for build/npm) |
+| \`/sdcard\`, \`/storage/emulated/0\` | user shared storage (FUSE, slow, good for user-visible files) |
+| \`/tmp\` | writable temporary directory |
 
-## 手机能力工具
+## Device tools
 
-- 看屏幕：\`android_ui_dump\`（控件树，带编号）→ \`android_tap\`（按编号点按）→ 再 dump。
-  文本/自绘界面用 \`android_screenshot\` 直接看图，\`android_input\` 写输入框。
-- 应用：\`android_app\`（\`action="list"\` 列应用、\`action="launch"\` 启动）；\`android_stop_app\` 结束用户应用（危险，需确认）。
-- 与用户交互：\`android_say\`（\`kind\` = notification / toast / speak）、\`android_vibrate\`。
-- 数据：\`android_clipboard\`（给 \`text\` 写、不给则读）；\`android_download\`（\`op="write"\` 写公共 Download、\`op="read"\` 读回）；
-  用户自己指定的目录用 \`android_files_list\` + \`android_files\`（\`op="read"\` / \`"write"\`，需要他先在「设置 → 设备能力 → 存储」授权目录）。
-- 设备状态：\`android_device_state\`（\`what\` = battery / location / sensors / sensor）、\`android_torch\`。
+- Screen: \`android_ui_dump\` (indexed node tree). Prefer text/desc/resourceId in \`android_tap\` so the device
+  resolves the target (indices are valid only within one dump). Wait for a screen with the dump's
+  waitForText/waitForId. For text or custom-drawn UI use \`android_screenshot\` (region crop, marks labels
+  clickable indices). \`android_input\` writes into fields.
+- Apps: \`android_app\` (\`action="list"\`, \`action="launch"\`); \`android_stop_app\` kills user apps (dangerous, confirm).
+- User: \`android_say\` (\`kind\` = notification / toast / speak), \`android_vibrate\`.
+- Data: \`android_clipboard\` (pass \`text\` to write, omit to read); \`android_download\` (\`op="write"\` / \`op="read"\`) for public
+  Download; \`android_files_list\` + \`android_files\` (\`op="read"\` / \`"write"\`) for directories the user authorized in
+  Settings → Device capabilities → Storage.
+- State: \`android_device_state\` (\`what\` = battery / location / sensors / sensor), \`android_torch\`.
 
-## 规则
+## Rules
 
-1. **能力默认关闭。** 用户没有授权的能力会返回 \`[DISABLED]\` 或 \`[NO_PERMISSION]\` 加一句中文原因。
-   把这句话原样转述给用户，并告诉他去哪打开（「设置 → 设备能力」）。不要自己编造解释，也不要反复重试。
-2. **危险操作会请求确认。** 结束应用、Shell、分享、打开链接、向输入框写入、跨沙箱读写文件、注入按键都会弹确认；
-   确认框里有「同意并记住本次会话」——用户选了它，本会话内同类操作就不再问（结束会话后恢复）。用户拒绝时就停下来。
-   没有确认通道时这些操作会被直接拒绝。
-3. **点按要基于最新的屏幕。** \`android_tap\` 的编号来自最近一次 \`android_ui_dump\`；界面变化后要重新 dump。
-4. **不要假装做过。** 工具失败就是失败；把工具的返回内容如实告诉用户。
-5. **设备策略只管辖 android_* 工具。** 你在工作区里用内置 \`bash\` / read / write 跑 git、npm、rg、构建，
-   不受任何设备策略限制——那是你的工作台。设备 Shell（\`android_shell\`）是另一回事：它有命令白名单、
-   硬性禁用清单，而且只允许写工作区之内（工作区之外要写用户文件，用 \`android_files\`（\`op="write"\`））。
+1. **Capabilities are off by default.** Unauthorized ones return \`[DISABLED]\` / \`[NO_PERMISSION]\` with a Chinese
+   reason: relay it verbatim, tell the user where to enable it (Settings → Device capabilities), do not invent an
+   explanation and do not retry.
+2. **Dangerous actions confirm.** Stopping an app, shell, share, open, typing into a field, cross-sandbox file access
+   and raw key injection prompt; the prompt offers "allow and remember for this session", which silences that class
+   until the session ends. On refusal, stop. Without a confirmation channel they are refused outright.
+3. **Taps follow the latest screen.** An index is valid only within the latest \`android_ui_dump\`; prefer
+   text/desc/resourceId selectors, or wait with waitForText/waitForId. The reply's "foreground A → B" and "screen did
+   not change" are the self-check.
+4. **Never pretend.** A failed call is a failure; report the tool output as it is.
+5. **Device policy governs \`android_*\` only.** Built-in bash/read/write for git, npm, rg and builds inside the
+   workspace are unrestricted. \`android_shell\` differs: command whitelist, hard blocklist, writes only inside the
+   workspace (use \`android_files\` (\`op="write"\`) for the user's files elsewhere).
 
-## 与 Termux 的区别
+## vs Termux
 
-pi 官方在 Termux 上的做法是调用 \`termux-open-url\`、\`termux-notification\` 之类的命令。
-在这个 App 里请使用上面的 \`android_*\` 工具，它们不需要 Termux:API，并且会把失败原因说清楚。
+Upstream pi on Termux uses \`termux-open-url\` and similar. Here use the \`android_*\` tools; no Termux:API needed, and
+failures state their reason.
 
-## 设备 Shell 的实际能力
+## Device shell reality
 
-- 默认后端是应用自身身份，很多设备命令会因缺少权限而失败；用户装了并授权 **Shizuku** 之后，
-  后端会变成 ADB 身份（uid=2000），\`input\`、\`pm\`、\`am\`、\`settings get\`、\`dumpsys\` 才真正可用。
-  用 \`android_bridge_status\` 看当前后端，不要在报告里猜。
-- 白名单、硬性禁用清单、写入边界都会写进工具的返回里（\`policy\` 字段）；被拒绝时先读它，不要重复重试同一条命令。
-- \`$(...)\` 与反引号默认被拒，只有用户打开「放宽模式」才允许，而且那会同时放宽嵌套命令的检查。
+- The default backend is the app's own identity, so many commands fail on privilege; with **Shizuku** installed and
+  authorized the backend is ADB (uid=2000) and \`input\`, \`pm\`, \`am\`, \`settings get\` and \`dumpsys\` work. Read the
+  backend from \`android_bridge_status\`; do not guess.
+- The whitelist, hard blocklist and write boundary are echoed in the tool reply (\`policy\` field); read it before
+  retrying a refused command.
+- \`$(...)\` and backticks are refused unless the user enables relaxed mode, which also relaxes nested-command checks.
 `;
 }
 
@@ -1142,11 +1378,11 @@ pi 官方在 Termux 上的做法是调用 \`termux-open-url\`、\`termux-notific
 function environmentGuidance(): string {
 	return [
 		"",
-		"## Android 设备环境（pi-android）",
+		"## Android device environment (pi-android)",
 		"",
-		"pi 内核在 proot 的 Ubuntu 里，App 另外提供以 android_ 开头的设备工具。",
-		"- 工作区 `/workspace` 快、`/sdcard` 慢但用户可见；设备策略**只**管 android_* 工具，工作区里用内置 bash 跑 git / npm / 构建不受限。",
-		"- 危险设备操作会弹确认，用户可选「同意并记住本次会话」；被拒绝就停下并说明。",
+		"The pi kernel runs in a proot Ubuntu; the app provides device tools prefixed android_.",
+		"- Workspace `/workspace` is fast, `/sdcard` slow but user-visible; device policy governs **only** android_* tools, so git / npm / builds via the built-in bash in the workspace are unrestricted.",
+		"- Dangerous device actions confirm, with an \"allow and remember for this session\" option; on refusal, stop and explain.",
 	].join("\n");
 }
 
@@ -1191,7 +1427,7 @@ export default function (pi: ExtensionAPI) {
 	// afterwards. A caller who needs proof that the scan finished can wait for the
 	// `session_start` event with `reason: "reload"`, which pi emits at the end.
 	pi.registerCommand("device-reload", {
-		description: "重新扫描扩展、技能与提示模板（无需重启引擎）",
+		description: "Re-scan extensions, skills and prompt templates (no engine restart)",
 		handler: async (_args, ctx) => {
 			ctx.ui.notify("正在重新扫描扩展、技能与提示模板…", "info");
 			await ctx.reload();
@@ -1201,7 +1437,9 @@ export default function (pi: ExtensionAPI) {
 	// Tell the agent what environment it woke up in, every turn. The sentinel
 	// guards against double-appending if this extension is loaded twice.
 	pi.on("before_agent_start", async (event) => {
-		if (event.systemPrompt.includes("## Android 设备环境（pi-android）")) return undefined;
+		// Sentinel must match the heading `environmentGuidance()` emits, or the
+		// block is appended twice per turn.
+		if (event.systemPrompt.includes("## Android device environment (pi-android)")) return undefined;
 		return { systemPrompt: event.systemPrompt + environmentGuidance() };
 	});
 

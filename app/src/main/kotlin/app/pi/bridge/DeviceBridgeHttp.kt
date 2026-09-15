@@ -71,10 +71,17 @@ class BridgeHttpResponse(
         fun denial(denial: DeviceDenial, capability: DeviceCapability? = null): BridgeHttpResponse {
             val status = when (denial.code) {
                 DeviceDenial.UNAUTHORIZED -> 401
-                DeviceDenial.DISABLED, DeviceDenial.BLOCKED_BY_POLICY -> 403
+                DeviceDenial.DISABLED, DeviceDenial.BLOCKED_BY_POLICY, DeviceDenial.BLOCKED_BACKGROUND -> 403
                 DeviceDenial.NO_PERMISSION -> 403
                 DeviceDenial.NOT_FOUND -> 404
                 DeviceDenial.BAD_REQUEST -> 400
+                // 409/503 are the two "same call, later" answers. They are distinct
+                // on purpose: 409 means another operation holds the channel (wait a
+                // second), 503 means a dependency is down (the a11y service is
+                // rebinding, or Shizuku/the bridge is not there). A client that
+                // treats them as one thing gives the wrong advice for one of them.
+                DeviceDenial.BUSY -> 409
+                DeviceDenial.NOT_CONNECTED, DeviceDenial.BRIDGE_DOWN -> 503
                 else -> 500
             }
             return BridgeHttpResponse(status, denialJson(denial, capability).toString())
@@ -87,6 +94,10 @@ class BridgeHttpResponse(
                 put("reason", denial.reason)
                 if (denial.hint != null) put("hint", denial.hint)
                 if (capability != null) put("capability", capability.id)
+                // Explicit on every denial, including `false`: the model has to be
+                // able to branch on "retry" vs "go find a human" without guessing
+                // from the code string.
+                put("retryable", denial.retryable)
             }
     }
 }
@@ -176,6 +187,7 @@ class DeviceBridgeHttpServer(
 
     private fun handle(client: Socket) {
         val id = requestCounter.incrementAndGet()
+        val startedAt = System.currentTimeMillis()
         var request: BridgeHttpRequest? = null
         try {
             client.soTimeout = 20_000
@@ -185,10 +197,26 @@ class DeviceBridgeHttpServer(
                 // without a trace: no response, no audit line. That makes "why is the
                 // bridge not answering?" unanswerable from the log, so the drop is
                 // recorded even though there is nobody to answer.
-                audit(BridgeAuditEvent(id, "?", "?", 400, false, "请求无法解析（空连接或请求头超过上限）"))
+                audit(
+                    BridgeAuditEvent(
+                        requestId = id,
+                        method = "?",
+                        path = "?",
+                        status = 400,
+                        ok = false,
+                        note = "请求无法解析（空连接或请求头超过上限）",
+                        denialCode = DeviceDenial.BAD_REQUEST,
+                    ),
+                )
                 return
             }
             request = parsed
+            // Write-ahead: the start line lands *before* the handler runs, so a
+            // request that dies inside a handler (a crash, an OOM kill, a process
+            // restart mid-gesture) still leaves evidence of what was attempted.
+            // Without this, the last thing an agent did before killing the bridge
+            // was the one thing the audit could not show.
+            audit(parsed, id, phase = "start", status = 0, ok = true, note = "", durationMs = -1, facts = null)
             val response = when {
                 !authorized(parsed) -> BridgeHttpResponse.denial(
                     DeviceDenial(
@@ -200,18 +228,28 @@ class DeviceBridgeHttpServer(
                 else -> handler(parsed)
             }
             write(client.getOutputStream(), response)
+            val facts = factsOf(response)
             audit(
-                BridgeAuditEvent(
-                    requestId = id,
-                    method = parsed.method,
-                    path = parsed.path,
-                    status = response.status,
-                    ok = response.status in 200..299,
-                    note = noteOf(response),
-                ),
+                parsed,
+                id,
+                phase = "result",
+                status = response.status,
+                ok = response.status in 200..299,
+                note = facts.note,
+                durationMs = System.currentTimeMillis() - startedAt,
+                facts = facts,
             )
         } catch (timeout: SocketTimeoutException) {
-            audit(BridgeAuditEvent(id, "?", "?", 408, false, "请求超时"))
+            audit(
+                request,
+                id,
+                phase = "result",
+                status = 408,
+                ok = false,
+                note = "请求超时",
+                durationMs = System.currentTimeMillis() - startedAt,
+                facts = null,
+            )
         } catch (denial: DeviceActionException) {
             // `readRequest` refuses an oversized body by throwing a BAD_REQUEST denial
             // (`:277-284`). Falling into the generic branch below turned that 400 into
@@ -219,15 +257,16 @@ class DeviceBridgeHttpServer(
             // it had actually rejected the request on purpose.
             val response = BridgeHttpResponse.denial(denial.denial)
             runCatching { write(client.getOutputStream(), response) }
+            val facts = factsOf(response)
             audit(
-                BridgeAuditEvent(
-                    id,
-                    request?.method ?: "?",
-                    request?.path ?: "?",
-                    response.status,
-                    false,
-                    noteOf(response),
-                ),
+                request,
+                id,
+                phase = "result",
+                status = response.status,
+                ok = false,
+                note = facts.note,
+                durationMs = System.currentTimeMillis() - startedAt,
+                facts = facts,
             )
         } catch (error: Exception) {
             runCatching {
@@ -242,26 +281,81 @@ class DeviceBridgeHttpServer(
                 )
             }
             audit(
-                BridgeAuditEvent(
-                    id,
-                    request?.method ?: "?",
-                    request?.path ?: "?",
-                    500,
-                    false,
-                    error::class.java.simpleName,
-                ),
+                request,
+                id,
+                phase = "result",
+                status = 500,
+                ok = false,
+                note = "${error::class.java.simpleName}: ${error.message}",
+                durationMs = System.currentTimeMillis() - startedAt,
+                facts = null,
             )
         } finally {
             runCatching { client.close() }
         }
     }
 
-    private fun noteOf(response: BridgeHttpResponse): String {
-        if (response.status in 200..299) return ""
-        return runCatching {
-            val json = JSONObject(response.body)
-            (json.optString("code") + " " + json.optString("reason")).trim()
-        }.getOrDefault("")
+    private fun audit(
+        request: BridgeHttpRequest?,
+        id: Int,
+        phase: String,
+        status: Int,
+        ok: Boolean,
+        note: String,
+        durationMs: Long,
+        facts: ResponseFacts?,
+    ) {
+        audit(
+            BridgeAuditEvent(
+                requestId = id,
+                method = request?.method ?: "?",
+                path = request?.path ?: "?",
+                status = status,
+                ok = ok,
+                note = note,
+                phase = phase,
+                durationMs = durationMs,
+                targetPackage = facts?.targetPackage,
+                backend = facts?.backend,
+                exitCode = facts?.exitCode,
+                denialCode = facts?.denialCode,
+            ),
+        )
+    }
+
+    private class ResponseFacts(
+        val note: String,
+        val denialCode: String?,
+        val targetPackage: String?,
+        val backend: String?,
+        val exitCode: Int?,
+    )
+
+    /**
+     * The structured half of an audit line: a denial's code, and the fields the
+     * caller actually cares about later (which package, which backend, which exit
+     * code). Read out of the response body rather than threaded through every
+     * handler, because the body is already the contract the model sees.
+     */
+    private fun factsOf(response: BridgeHttpResponse): ResponseFacts {
+        if (response.status in 200..299) {
+            val data = runCatching { JSONObject(response.body).optJSONObject("data") }.getOrNull()
+            return ResponseFacts(
+                note = "",
+                denialCode = null,
+                targetPackage = data?.optString("packageName")?.takeIf { it.isNotEmpty() },
+                backend = data?.optString("backend")?.takeIf { it.isNotEmpty() },
+                exitCode = data?.takeIf { it.has("exitCode") }?.optInt("exitCode"),
+            )
+        }
+        val json = runCatching { JSONObject(response.body) }.getOrNull()
+        return ResponseFacts(
+            note = ((json?.optString("code") ?: "") + " " + (json?.optString("reason") ?: "")).trim(),
+            denialCode = json?.optString("code")?.takeIf { it.isNotEmpty() },
+            targetPackage = null,
+            backend = null,
+            exitCode = null,
+        )
     }
 
     private fun authorized(request: BridgeHttpRequest): Boolean {
@@ -371,6 +465,8 @@ class DeviceBridgeHttpServer(
         403 -> "Forbidden"
         404 -> "Not Found"
         408 -> "Request Timeout"
+        409 -> "Conflict"
+        503 -> "Service Unavailable"
         else -> "Internal Server Error"
     }
 
@@ -382,7 +478,14 @@ class DeviceBridgeHttpServer(
     }
 }
 
-/** One audited bridge request (design §23.6: 设备操作全进本地审计日志). */
+/**
+ * One audited bridge request (design §23.6: 设备操作全进本地审计日志).
+ *
+ * [phase] is what makes the trail crash-proof: `start` is written before the
+ * handler runs, `result` after it answers. A `start` with no matching `result` is
+ * the signature of a request that killed the process — the one failure mode a
+ * post-hoc-only log cannot express.
+ */
 data class BridgeAuditEvent(
     val requestId: Int,
     val method: String,
@@ -390,11 +493,23 @@ data class BridgeAuditEvent(
     val status: Int,
     val ok: Boolean,
     val note: String,
+    val phase: String = "result",
+    val durationMs: Long = -1,
+    val targetPackage: String? = null,
+    val backend: String? = null,
+    val exitCode: Int? = null,
+    val denialCode: String? = null,
 )
 
 /**
- * Append-only audit trail. Bounded, because a runaway agent loop must not be able
- * to fill the user's storage — the log is a diagnostic, not a database.
+ * Append-only audit trail, one JSON object per line.
+ *
+ * Why JSON per line rather than the previous free-text line: the log is read by
+ * three very different consumers — a human in 设置 → 设备能力, the model through
+ * `/app/audit`, and `lastUnpaired()` at bridge start — and only a structured
+ * record can answer "how long did it take / which backend / which package / which
+ * denial code" without a regex. Bounded, because a runaway agent loop must not be
+ * able to fill the user's storage: the log is a diagnostic, not a database.
  */
 class DeviceAuditLog(private val file: java.io.File) {
 
@@ -402,27 +517,89 @@ class DeviceAuditLog(private val file: java.io.File) {
     val path: String get() = file.absolutePath
 
     fun record(event: BridgeAuditEvent) {
-        val line = buildString {
-            append(java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US).format(java.util.Date()))
-            append("  #").append(event.requestId)
-            append(' ').append(event.method).append(' ').append(event.path)
-            append(" -> ").append(event.status)
-            if (!event.ok && event.note.isNotEmpty()) append("  ").append(event.note)
-            append('\n')
-        }
+        val line = JSONObject().apply {
+            put("ts", java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", java.util.Locale.US)
+                .format(java.util.Date()))
+            put("id", event.requestId)
+            put("phase", event.phase)
+            put("method", event.method)
+            put("path", event.path)
+            put("status", event.status)
+            put("ok", event.ok)
+            if (event.durationMs >= 0) put("ms", event.durationMs)
+            event.targetPackage?.let { put("package", it) }
+            event.backend?.let { put("backend", it) }
+            event.exitCode?.let { put("exitCode", it) }
+            event.denialCode?.let { put("code", it) }
+            if (event.note.isNotEmpty()) put("note", event.note.take(400))
+        }.toString()
         synchronized(this) {
             runCatching {
                 file.parentFile?.mkdirs()
-                file.appendText(line)
+                file.appendText(line + "\n")
                 if (file.length() > MAX_BYTES) rotate()
             }
         }
     }
 
+    /** Raw JSON lines — what `/app/audit` returns and what the tool reads. */
     fun tail(maxLines: Int): List<String> = synchronized(this) {
         if (!file.isFile) return emptyList()
         val lines = runCatching { file.readLines() }.getOrDefault(emptyList())
         lines.takeLast(maxLines.coerceIn(1, 2000))
+    }
+
+    /**
+     * The same trail for a human: `12:03:41.220 #7 POST /app/ui/tap 200 137ms`.
+     * Kept next to [tail] rather than parsed in the UI, because the UI is not the
+     * only caller that may want a one-line summary and a JSON blob in a LazyColumn
+     * reads as noise.
+     */
+    fun prettyTail(maxLines: Int): List<String> = tail(maxLines).map { line ->
+        val json = runCatching { JSONObject(line) }.getOrNull() ?: return@map line
+        val time = json.optString("ts").substringAfter(' ')
+        buildString {
+            append(time.ifEmpty { json.optString("ts") })
+            append(" #").append(json.optInt("id"))
+            if (json.optString("phase") == "start") append(" → 执行中")
+            append(' ').append(json.optString("method")).append(' ').append(json.optString("path"))
+            val status = json.optInt("status")
+            if (status > 0) append(" ").append(status)
+            if (json.has("ms")) append(" ").append(json.optLong("ms")).append("ms")
+            json.optString("backend").takeIf { it.isNotEmpty() }?.let { append(" [").append(it).append(']') }
+            json.optString("package").takeIf { it.isNotEmpty() }?.let { append(" ").append(it) }
+            json.optString("code").takeIf { it.isNotEmpty() }?.let { append(" ").append(it) }
+            json.optString("note").takeIf { it.isNotEmpty() }?.let { append("  ").append(it) }
+        }
+    }
+
+    /**
+     * The crash report: a `start` line whose request never produced a `result`.
+     *
+     * Called once at bridge start, so the very first thing anyone sees after a
+     * process death is what was running when it died — instead of the log simply
+     * ending.
+     */
+    fun lastUnpaired(): String? = synchronized(this) {
+        if (!file.isFile) return null
+        val lines = runCatching { file.readLines() }.getOrDefault(emptyList()).takeLast(KEEP_LINES)
+        val started = LinkedHashMap<Int, String>()
+        val finished = HashSet<Int>()
+        for (line in lines) {
+            val json = runCatching { JSONObject(line) }.getOrNull() ?: continue
+            val id = json.optInt("id", -1)
+            if (id < 0) continue
+            if (json.optString("phase") == "start") {
+                started[id] = json.optString("ts") + " " + json.optString("method") + " " + json.optString("path")
+            } else {
+                finished.add(id)
+            }
+        }
+        val pending = started.filterKeys { it !in finished }
+        if (pending.isEmpty()) return null
+        val last = pending.entries.last()
+        "上次有 ${pending.size} 条请求开始后没有结果（很可能在执行中被中断，例如进程被杀）：" +
+            "#${last.key} ${last.value}"
     }
 
     private fun rotate() {

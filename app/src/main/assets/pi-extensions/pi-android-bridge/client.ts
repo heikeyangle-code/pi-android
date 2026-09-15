@@ -29,24 +29,31 @@ export interface BridgeFailure {
 	code: string;
 	reason: string;
 	hint?: string;
+	/** The bridge said the identical call can succeed if it is sent again. */
+	retryable?: boolean;
 }
 
 /** A refusal or transport failure, carrying the text meant for the user. */
 export class BridgeError extends Error {
 	readonly code: string;
 	readonly hint: string | undefined;
+	readonly retryable: boolean;
 
 	constructor(failure: BridgeFailure) {
 		super(failure.reason);
 		this.name = "BridgeError";
 		this.code = failure.code;
 		this.hint = failure.hint;
+		this.retryable = failure.retryable === true;
 	}
 
 	/** The message handed to the model, including the actionable hint. */
 	toModelMessage(): string {
 		const lines = [`[${this.code}] ${this.message}`];
 		if (this.hint) lines.push(`提示：${this.hint}`);
+		// Said once, in the code that knows: a retryable refusal is the one case
+		// where the model's correct next move is the call it just made.
+		if (this.retryable) lines.push("这一条可以重试：稍等约 1 秒后原样再调用一次。");
 		return lines.join("\n");
 	}
 }
@@ -132,6 +139,12 @@ export interface HealthPayload {
 	capabilities: HealthCapability[];
 	accessibilityRunning: boolean;
 	accessibilityEnabledInSettings: boolean;
+	/** `connected` | `enabled_not_connected` | `not_enabled` (see DeviceAccessibilityService.State). */
+	accessibilityState?: string;
+	/** Which app is on screen right now; absent/null when the a11y service is not connected. */
+	foreground?: { packageName: string | null; class: string | null } | null;
+	/** Cursor state of the UI-automation layer, for diagnostics. */
+	uiSnapshot?: { snapshotId: number; packageName: string; nodeCount: number; gestureBusy: boolean };
 	screenshotSupported: boolean;
 	locationPermissionGranted: boolean;
 	notificationPermissionGranted: boolean;
@@ -194,6 +207,8 @@ export interface HealthPayload {
 	androidRelease: string;
 	sdkInt: number;
 	auditLogPath: string;
+	/** Structured trail facts: the last request that started and never finished. */
+	audit?: { path: string; lastUnpaired: string | null };
 }
 
 interface Envelope {
@@ -201,10 +216,28 @@ interface Envelope {
 	code?: string;
 	reason?: string;
 	hint?: string;
+	retryable?: boolean;
 	data?: unknown;
 }
 
 type QueryValue = string | number | boolean | undefined;
+
+function sleep(ms: number): Promise<void> {
+	return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * How many times in a row the bridge has been unreachable, and what the first
+ * failure looked like. Kept so that a bridge that is down produces one clear,
+ * counted message instead of the same sentence hanging off every tool result —
+ * the repeated text is not extra information, it is the *count* that is.
+ */
+let consecutiveFailures = 0;
+let lastFailureReason = "";
+
+export function bridgeFailureCount(): number {
+	return consecutiveFailures;
+}
 
 function buildUrl(port: number, path: string, query?: Record<string, QueryValue>): string {
 	const url = new URL(`http://127.0.0.1:${port}${path}`);
@@ -218,9 +251,19 @@ function buildUrl(port: number, path: string, query?: Record<string, QueryValue>
 }
 
 /**
- * One bridge call. Retries exactly once after re-reading the token file, because
- * the app mints a new token on every start and a long-lived guest session can
- * outlive one.
+ * One bridge call, with three retry reasons kept apart because they need
+ * different waits:
+ *
+ *  - **transport failure** — the app may have restarted the bridge (it mints a
+ *    new token on every start), so the token file is re-read and the call is
+ *    retried with exponential backoff (250/500/1000 ms). This is the reconnect
+ *    loop: a bridge that comes back within ~1.7 s is invisible to the agent.
+ *  - **401** — a stale token, retried once after re-reading credentials.
+ *  - **`retryable:true`** — the device said "same call, later" (`BUSY`,
+ *    `NOT_CONNECTED`); retried once with a short wait.
+ *
+ * A cap of 4 attempts bounds the worst case, and every attempt is on the same
+ * loopback socket, so a real failure still surfaces in seconds.
  */
 async function request<T>(
 	method: "GET" | "POST",
@@ -237,8 +280,10 @@ async function request<T>(
 		throw new BridgeError({ code: "ERROR", reason: String(error) });
 	}
 
+	const maxAttempts = 4;
 	let lastError: unknown = null;
-	for (let attempt = 0; attempt < 2; attempt += 1) {
+	let retriedRetryable = false;
+	for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
 		const current = attempt === 0 ? credentials : await loadCredentials(true);
 		let response: Response;
 		try {
@@ -254,8 +299,12 @@ async function request<T>(
 		} catch (error) {
 			lastError = error;
 			// Transport failure: the app may have just restarted the bridge, so a
-			// fresh token read is worth one retry.
-			if (attempt === 0) continue;
+			// fresh token read is worth retrying — with backoff, because an engine
+			// boot takes longer than one round trip.
+			if (attempt < maxAttempts - 1) {
+				await sleep(250 * 2 ** attempt);
+				continue;
+			}
 			break;
 		}
 
@@ -276,10 +325,17 @@ async function request<T>(
 			continue;
 		}
 		if (envelope.ok === false) {
+			const retryable = envelope.retryable === true;
+			if (retryable && !retriedRetryable && attempt < maxAttempts - 1) {
+				retriedRetryable = true;
+				await sleep(400);
+				continue;
+			}
 			throw new BridgeError({
 				code: typeof envelope.code === "string" ? envelope.code : "ERROR",
 				reason: typeof envelope.reason === "string" ? envelope.reason : `设备桥拒绝了 ${path}`,
 				hint: typeof envelope.hint === "string" ? envelope.hint : undefined,
+				retryable,
 			});
 		}
 		if (!response.ok) {
@@ -288,6 +344,9 @@ async function request<T>(
 				reason: `设备桥返回 HTTP ${response.status}（${path}）。`,
 			});
 		}
+		// A successful call is the end of the outage, whatever it was.
+		consecutiveFailures = 0;
+		lastFailureReason = "";
 		// Two envelope shapes exist on the wire and both are intentional:
 		//   `{ ok, data }`  — the capability-gated endpoints (`BridgeHttpResponse.ok`)
 		//   `{ ok, ...flat }` — `/app/health`, `/app/capabilities`, `/app/audit` and
@@ -300,12 +359,21 @@ async function request<T>(
 	}
 
 	const reason = lastError instanceof Error ? lastError.message : String(lastError);
+	consecutiveFailures += 1;
+	lastFailureReason = reason;
 	throw new BridgeError({
-		code: "DISABLED",
+		code: "BRIDGE_DOWN",
 		reason:
-			`连不上 pi-android 设备桥（127.0.0.1:${credentials.port}）：${reason}。` +
+			`连不上 pi-android 设备桥（127.0.0.1:${credentials.port}），已经重试 ${maxAttempts} 次：${reason}。` +
 			"设备桥只在 pi-android 应用进程存活时运行。",
-		hint: "请让用户打开 pi-android，并在「设置 → 设备能力」确认状态显示为「已监听」。",
+		hint:
+			consecutiveFailures > 1
+				? `这是连续第 ${consecutiveFailures} 次失败：请不要再重复调用设备工具，` +
+					`直接告诉用户 pi-android 可能已经停止或被杀，需要重新打开 App（「设置 → 设备能力」会显示桥是否在监听）。`
+				: "请让用户打开 pi-android，并在「设置 → 设备能力」确认状态显示为「已监听」，然后重试一次。",
+		// A dropped bridge is exactly the case where retrying *is* the fix once the
+		// app is back; the hint above says when that is not true any more.
+		retryable: true,
 	});
 }
 

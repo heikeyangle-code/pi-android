@@ -101,6 +101,23 @@ object DeviceSystemActions {
     // --------------------------------------------------------- notifications ----
 
     fun notify(context: Context, title: String, text: String, id: Int): JSONObject {
+        val launch = context.packageManager.getLaunchIntentForPackage(context.packageName)
+        return notifyIntent(context, title, text, id, launch)
+    }
+
+    /**
+     * A notification with an explicit content intent.
+     *
+     * The launcher intent is the fallback `DeviceAppActions.launch` uses when the
+     * system drops a background activity start: tapping a notification is a
+     * user-initiated start, which Android 10+ allows, so this is the one escape
+     * hatch that needs no extra permission, no overlay and no Shizuku.
+     *
+     * @param intent the exact intent to fire; `null` posts the notification
+     *   without a content intent (still useful as a message, never as a button
+     *   that lies).
+     */
+    fun notifyIntent(context: Context, title: String, text: String, id: Int, intent: Intent?): JSONObject {
         if (!DeviceCapabilityStore.get(context).hasNotificationPermission()) {
             throw DeviceActionException(
                 DeviceDenial(
@@ -111,7 +128,7 @@ object DeviceSystemActions {
             )
         }
         ensureChannel(context)
-        val launch = context.packageManager.getLaunchIntentForPackage(context.packageName)
+        val safeId = id.coerceIn(1, 100000)
         val builder = NotificationCompat.Builder(context, NOTIFICATION_CHANNEL_ID)
             .setSmallIcon(android.R.drawable.stat_notify_chat)
             .setContentTitle(title)
@@ -119,18 +136,22 @@ object DeviceSystemActions {
             .setStyle(NotificationCompat.BigTextStyle().bigText(text))
             .setAutoCancel(true)
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
-        if (launch != null) {
+        if (intent != null) {
+            // Distinct request code per notification: `FLAG_UPDATE_CURRENT` with a
+            // shared code would let two pending launches overwrite each other's
+            // target intent.
             builder.setContentIntent(
                 PendingIntent.getActivity(
                     context,
-                    0,
-                    launch,
+                    safeId,
+                    intent,
                     PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
                 ),
             )
         }
-        NotificationManagerCompat.from(context).notify(id.coerceIn(1, 100000), builder.build())
-        return JSONObject().put("id", id).put("channel", NOTIFICATION_CHANNEL_ID)
+        NotificationManagerCompat.from(context).notify(safeId, builder.build())
+        return JSONObject().put("id", safeId).put("channel", NOTIFICATION_CHANNEL_ID)
+            .put("hasContentIntent", intent != null)
     }
 
     private fun ensureChannel(context: Context) {
@@ -212,7 +233,13 @@ object DeviceSystemActions {
     // ------------------------------------------------------------------- open ----
 
     fun open(context: Context, url: String): JSONObject {
-        val uri = runCatching { Uri.parse(url) }.getOrNull()
+        val raw = url.trim()
+        // `intent:` URLs are how a link carries a whole Intent — action, data,
+        // extras and a browser fallback. Deep links that a page generates (Play
+        // Store, app-specific schemes) are usually written this way, and without
+        // this branch the only working input was a bare scheme.
+        if (raw.startsWith("intent:", ignoreCase = true)) return openIntentUri(context, raw)
+        val uri = runCatching { Uri.parse(raw) }.getOrNull()
             ?: throw DeviceActionException(DeviceDenial(DeviceDenial.BAD_REQUEST, "无法解析的 URL：$url"))
         if (uri.scheme.isNullOrEmpty()) {
             throw DeviceActionException(
@@ -224,6 +251,63 @@ object DeviceSystemActions {
             )
         }
         return launch(context, Intent(Intent.ACTION_VIEW, uri), "打开链接")
+    }
+
+    /**
+     * `Intent.parseUri(url, URI_INTENT_SCHEME)` with the two guards the platform
+     * documents for untrusted intent URLs, plus the documented fallback.
+     *
+     * The guards matter because the URL comes from a model, which may have read it
+     * off a page it does not trust: without clearing the component and selector,
+     * an `intent:` URL can name an arbitrary internal component of this app, and
+     * without the BROWSABLE category it can reach non-exported targets. Both are
+     * the standard hardening from Android's own "intent: URI" guidance.
+     */
+    private fun openIntentUri(context: Context, raw: String): JSONObject {
+        val parsed = try {
+            Intent.parseUri(raw, Intent.URI_INTENT_SCHEME)
+        } catch (error: Exception) {
+            throw DeviceActionException(
+                DeviceDenial(
+                    code = DeviceDenial.BAD_REQUEST,
+                    reason = "无法解析 intent: URL：${error::class.java.simpleName}: ${error.message}",
+                    hint = "intent: URL 的写法是 intent://<data>#Intent;scheme=…;package=…;end。",
+                ),
+            )
+        }
+        parsed.addCategory(Intent.CATEGORY_BROWSABLE)
+        parsed.component = null
+        parsed.selector = null
+        parsed.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+
+        val fallback = parsed.getStringExtra("browser_fallback_url")
+        parsed.removeExtra("browser_fallback_url")
+
+        val resolvable = parsed.resolveActivity(context.packageManager) != null
+        if (!resolvable) {
+            if (!fallback.isNullOrBlank()) {
+                val uri = runCatching { Uri.parse(fallback) }.getOrNull()
+                if (uri?.scheme != null) {
+                    val result = launch(context, Intent(Intent.ACTION_VIEW, uri), "打开链接（回落）")
+                    result.put("fallback", fallback)
+                    result.put("note", "intent: URL 在本机没有匹配的应用，已改用它的 browser_fallback_url。")
+                    return result
+                }
+            }
+            throw DeviceActionException(
+                DeviceDenial(
+                    code = DeviceDenial.UNSUPPORTED,
+                    reason = "这台设备上没有应用能处理这个 intent: URL" +
+                        (if (fallback.isNullOrBlank()) "，" else "，它给的 browser_fallback_url 也无法使用，") +
+                        "没有打开任何东西。",
+                    hint = "可以先用 android_shell 的 pm resolve-activity 确认目标应用是否安装，" +
+                        "或者改用普通的 https 链接。",
+                ),
+            )
+        }
+        val result = launch(context, parsed, "打开链接")
+        result.put("mode", "intent_uri")
+        return result
     }
 
     /**

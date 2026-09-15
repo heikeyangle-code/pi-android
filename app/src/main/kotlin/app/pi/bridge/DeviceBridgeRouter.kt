@@ -44,11 +44,53 @@ class DeviceBridgeRouter(
 
                 "/app/ui/dump" -> withCapability(DeviceCapability.Accessibility) {
                     val service = requireAccessibilityService()
+                    // `waitMs` turns a dump into a wait-then-dump: the selector is
+                    // resolved on the device, so "wait for the list to load, then
+                    // read it" is one call instead of a poll loop from the guest.
+                    val selector = params.selector()
+                    val waitMs = params.int("waitMs", 0)
+                    if (waitMs > 0 || params.bool("requireMatch", false)) {
+                        if (selector.isEmpty) {
+                            throw DeviceActionException(
+                                DeviceDenial(
+                                    DeviceDenial.BAD_REQUEST,
+                                    "waitMs / requireMatch 需要一个选择器（text/desc/resourceId/package/className）。",
+                                    hint = "要么去掉 waitMs，要么用 selector 指定要等待的控件。",
+                                ),
+                            )
+                        }
+                        DeviceUiAutomation.wait(
+                            service = service,
+                            selector = selector,
+                            timeoutMs = if (waitMs > 0) waitMs else 1,
+                            requireGone = params.bool("gone", false),
+                        )
+                    }
                     DeviceUiAutomation.dump(
                         service = service,
                         filter = params.str("filter"),
                         maxNodes = params.int("maxNodes", DeviceUiAutomation.DEFAULT_MAX_NODES),
                         maxDepth = params.int("maxDepth", 32),
+                        diff = params.bool("diff", false),
+                    )
+                }
+
+                "/app/ui/wait" -> withCapability(DeviceCapability.Accessibility) {
+                    val service = requireAccessibilityService()
+                    DeviceUiAutomation.wait(
+                        service = service,
+                        selector = params.selector(),
+                        timeoutMs = params.int("timeoutMs", 5000),
+                        requireGone = params.bool("gone", false),
+                    )
+                }
+
+                "/app/ui/verify" -> withCapability(DeviceCapability.Accessibility) {
+                    val service = requireAccessibilityService()
+                    DeviceUiAutomation.verify(
+                        service = service,
+                        x = params.intRequired("x"),
+                        y = params.intRequired("y"),
                     )
                 }
 
@@ -61,8 +103,19 @@ class DeviceBridgeRouter(
                             x = params.intOrNull("x"),
                             y = params.intOrNull("y"),
                             longPress = params.bool("longPress", false),
+                            selector = params.selector(),
                         )
                     }
+                }
+
+                "/app/ui/scroll" -> withCapability(DeviceCapability.Accessibility) {
+                    val service = requireAccessibilityService()
+                    DeviceUiAutomation.scroll(
+                        service = service,
+                        selector = params.selector(),
+                        index = params.intOrNull("index"),
+                        direction = params.str("direction") ?: "forward",
+                    )
                 }
 
                 "/app/ui/input" -> withCapability(DeviceCapability.Accessibility) {
@@ -72,6 +125,9 @@ class DeviceBridgeRouter(
                         text = params.str("text").orEmpty(),
                         index = params.intOrNull("index"),
                         submit = params.bool("submit", false),
+                        // The flat `text` key is the string to type here, so only a
+                        // nested selector (or the non-colliding keys) may select a node.
+                        selector = params.selector(allowFlatText = false),
                     )
                 }
 
@@ -101,6 +157,8 @@ class DeviceBridgeRouter(
                         format = params.str("format") ?: "jpeg",
                         maxDimension = params.int("maxDimension", 1280),
                         quality = params.int("quality", 82),
+                        region = params.rect("region"),
+                        marks = params.bool("marks", false),
                     )
                 }
 
@@ -243,6 +301,7 @@ class DeviceBridgeRouter(
                         keys = params.strRequired("keys"),
                         repeat = params.int("repeat", 1),
                         backend = DeviceShellGuard.active(),
+                        service = DeviceAccessibilityService.running(),
                     )
                 }
 
@@ -306,14 +365,45 @@ class DeviceBridgeRouter(
         }
     }
 
+    /**
+     * The service, waiting briefly for a rebind before refusing.
+     *
+     * "已启用但还没连上" is a real and common state (the switch was just flipped,
+     * a reboot, an app update), and it is not the same failure as "the user never
+     * enabled it": one resolves itself in about a second, the other needs the user
+     * in Settings. The old code collapsed both into NO_PERMISSION + "go to
+     * Settings", which is why the surrounding text was wrong half the time.
+     */
     private fun requireAccessibilityService(): android.accessibilityservice.AccessibilityService =
-        DeviceAccessibilityService.running() ?: throw DeviceActionException(
-            DeviceDenial(
-                code = DeviceDenial.NO_PERMISSION,
-                reason = "无障碍服务未运行。",
-                hint = "请让用户在「设置 → 无障碍」中启用 PI 设备桥。",
-            ),
-        )
+        DeviceAccessibilityService.awaitRunning(attempts = 2, delayMs = 500) ?: run {
+            when (DeviceAccessibilityService.state(context)) {
+                DeviceAccessibilityService.State.ENABLED_NOT_CONNECTED -> throw DeviceActionException(
+                    DeviceDenial(
+                        code = DeviceDenial.NOT_CONNECTED,
+                        reason = "无障碍服务已启用，但系统还没有把它连上（正在重连，通常一两秒内完成）。",
+                        hint = "请稍等约 1 秒后重试同一次调用；不需要改任何设置。",
+                        retryable = true,
+                    ),
+                )
+
+                DeviceAccessibilityService.State.NOT_ENABLED -> throw DeviceActionException(
+                    DeviceDenial(
+                        code = DeviceDenial.NO_PERMISSION,
+                        reason = "无障碍服务未启用，无法读取或操作屏幕。",
+                        hint = "请让用户在「设置 → 无障碍」中启用 PI 设备桥，然后重试。",
+                    ),
+                )
+
+                DeviceAccessibilityService.State.CONNECTED -> throw DeviceActionException(
+                    DeviceDenial(
+                        code = DeviceDenial.NOT_CONNECTED,
+                        reason = "无障碍服务刚刚断开（可能被系统重启）。",
+                        hint = "请稍等约 1 秒后重试。",
+                        retryable = true,
+                    ),
+                )
+            }
+        }
 
     private fun health(): JSONObject = JSONObject().apply {
         put("service", "pi-android-device-bridge")
@@ -323,6 +413,24 @@ class DeviceBridgeRouter(
         put("capabilities", capabilityArray())
         put("accessibilityRunning", DeviceAccessibilityService.isRunning())
         put("accessibilityEnabledInSettings", DeviceAccessibilityService.isEnabledInSettings(context))
+        // Three states, one stable name: the model needs to tell "you never turned
+        // it on" from "it is coming back up" — the two call for opposite actions.
+        put("accessibilityState", DeviceAccessibilityService.stateName(context))
+        // Decisive context for an agent: which app is on screen right now. Null
+        // (not a guess) when the accessibility service is not connected.
+        put(
+            "foreground",
+            DeviceAccessibilityService.running()?.let { service ->
+                val root = service.rootInActiveWindow
+                JSONObject()
+                    .put("packageName", root?.packageName?.toString() ?: JSONObject.NULL)
+                    .put(
+                        "class",
+                        DeviceUiText.simpleClassName(root?.className).takeIf { it.isNotEmpty() } ?: JSONObject.NULL,
+                    )
+            } ?: JSONObject.NULL,
+        )
+        DeviceUiAutomation.lastSnapshotInfo().let { put("uiSnapshot", it) }
         put("screenshotSupported", Build.VERSION.SDK_INT >= Build.VERSION_CODES.R)
         put("locationPermissionGranted", store.hasLocationPermission())
         put("notificationPermissionGranted", store.hasNotificationPermission())
@@ -373,6 +481,14 @@ class DeviceBridgeRouter(
         put("androidRelease", Build.VERSION.RELEASE)
         put("sdkInt", Build.VERSION.SDK_INT)
         put("auditLogPath", auditLog.path)
+        put(
+            "audit",
+            JSONObject()
+                .put("path", auditLog.path)
+                // Set at bridge start from the write-ahead lines: a `start` with no
+                // `result` is the trace of a request that killed the process.
+                .put("lastUnpaired", DeviceBridgeController.lastUnpairedReport() ?: JSONObject.NULL),
+        )
     }
 
     private fun capabilityArray(): JSONArray = JSONArray().apply {
@@ -497,6 +613,63 @@ class DeviceBridgeRouter(
             if (text.isEmpty()) return null
             return text.split(',').mapNotNull { it.trim().toLongOrNull() }.ifEmpty { null }
         }
+
+        /**
+         * The selector for the UI primitives. Two spellings, one meaning:
+         *  - `selector: { text: "发送", resourceId: "btn_send" }` in the body, or
+         *  - the flat keys `selectorText` / `desc` / `resourceId` / `packageName` /
+         *    `className` / `clickable`, which also work in the query string.
+         *
+         * The nested form exists because `/app/ui/input` already uses `text` for
+         * the string to type; [allowFlatText] turns the flat `text` fallback off
+         * there so a typed message can never be mistaken for a node selector.
+         */
+        fun selector(allowFlatText: Boolean = true): DeviceUiAutomation.Selector {
+            val nested = json.optJSONObject("selector")
+            fun pick(vararg names: String): String? {
+                if (nested != null) {
+                    for (name in names) {
+                        val candidate = nested.optString(name)
+                        if (candidate.isNotEmpty()) return candidate
+                    }
+                }
+                for (name in names) str(name)?.let { return it }
+                return null
+            }
+            return DeviceUiAutomation.Selector(
+                text = if (allowFlatText) pick("selectorText", "text") else pick("selectorText"),
+                description = pick("desc", "description"),
+                resourceId = pick("resourceId"),
+                packageName = pick("packageName", "pkg"),
+                className = pick("className"),
+                clickableOnly = nested?.optBoolean("clickable") == true || bool("clickable", false),
+            )
+        }
+
+        /** A display-pixel rectangle from `region=[l,t,r,b]`, `x,y,w,h`, or a JSON object. */
+        fun rect(name: String): android.graphics.Rect? {
+            val raw = value(name) ?: return null
+            val numbers = ArrayList<Int>(4)
+            when (raw) {
+                is JSONArray -> for (i in 0 until minOf(4, raw.length())) numbers.add(raw.optInt(i))
+                is JSONObject -> {
+                    numbers.add(raw.optInt("x"))
+                    numbers.add(raw.optInt("y"))
+                    numbers.add(raw.optInt("x") + raw.optInt("width"))
+                    numbers.add(raw.optInt("y") + raw.optInt("height"))
+                }
+                else -> {
+                    // A comma-separated string carries the same two shapes; four
+                    // numbers are left/top/right/bottom, so `x,y,w,h` must be
+                    // spelled as an array to stay unambiguous.
+                    for (part in raw.toString().split(',')) {
+                        numbers.add(part.trim().toIntOrNull() ?: return null)
+                    }
+                }
+            }
+            if (numbers.size != 4) return null
+            return android.graphics.Rect(numbers[0], numbers[1], numbers[2], numbers[3])
+        }
     }
 
     companion object {
@@ -515,7 +688,10 @@ class DeviceBridgeRouter(
             "GET  /app/capabilities",
             "GET  /app/audit",
             "POST /app/ui/dump",
+            "POST /app/ui/wait",
+            "POST /app/ui/verify",
             "POST /app/ui/tap",
+            "POST /app/ui/scroll",
             "POST /app/ui/input",
             "POST /app/ui/key",
             "POST /app/ui/keyevent",

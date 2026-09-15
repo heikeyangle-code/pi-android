@@ -111,6 +111,10 @@ fun DeviceCapabilityScreen(
     // the workspace can all change outside this screen while it is in the
     // foreground, and the user expects to come back and see the truth.
     var accessibilityRunning by remember { mutableStateOf(DeviceAccessibilityService.isRunning()) }
+    // The tri-state spelling of the same fact: 「已启用但还没连上」 is not 「未启用」,
+    // and sending the user to Settings for a service that is already on is the
+    // single most common wrong instruction this screen used to give.
+    var accessibilityState by remember { mutableStateOf(DeviceAccessibilityService.stateName(context)) }
     var bridgeStatus by remember { mutableStateOf(DeviceBridgeController.statusReport()) }
     var bridgeRunning by remember { mutableStateOf(DeviceBridgeController.isRunning()) }
     var revision by remember { mutableStateOf(0) }
@@ -131,7 +135,10 @@ fun DeviceCapabilityScreen(
     var notificationPermission by remember { mutableStateOf(store.hasNotificationPermission()) }
     var approvals by remember { mutableStateOf(DeviceApprovalLedger.summaryLines()) }
     var note by remember { mutableStateOf<String?>(null) }
-    val auditTail = remember(revision) { DeviceBridgeController.auditTail(5) }
+    val auditTail = remember(revision) { DeviceBridgeController.auditPrettyTail(5) }
+    // Set at bridge start from the write-ahead trail: a request that started and
+    // never produced a result is how an in-flight crash is told to the user.
+    val aborted = remember(revision) { DeviceBridgeController.lastUnpairedReport() }
 
     // The SAF picker is the whole reason this group is no longer documented as
     // "无": a picker needs an Activity, and this screen is one. Persisting the URI
@@ -209,6 +216,7 @@ fun DeviceCapabilityScreen(
         if (!visible) return@LaunchedEffect
         while (true) {
             accessibilityRunning = DeviceAccessibilityService.isRunning()
+            accessibilityState = DeviceAccessibilityService.stateName(context)
             bridgeRunning = DeviceBridgeController.isRunning()
             bridgeStatus = DeviceBridgeController.statusReport()
             shizuku = DeviceShizuku.status(context)
@@ -249,6 +257,7 @@ fun DeviceCapabilityScreen(
                     running = bridgeRunning,
                     status = bridgeStatus,
                     auditTail = auditTail,
+                    aborted = aborted,
                     onStart = {
                         bridgeStatus = DeviceBridgeController.start(context)
                         bridgeRunning = DeviceBridgeController.isRunning()
@@ -275,6 +284,7 @@ fun DeviceCapabilityScreen(
                 DeviceCapabilityCard(
                     state = state,
                     accessibilityRunning = accessibilityRunning,
+                    accessibilityState = accessibilityState,
                     onToggle = { enabled ->
                         store.setEnabled(capability, enabled)
                         revision += 1
@@ -305,8 +315,28 @@ fun DeviceCapabilityScreen(
                     },
                     shizuku = shizuku,
                     onRequestShizuku = {
-                        if (!DeviceShizuku.requestPermission()) {
-                            note = "无法发起 Shizuku 授权：Shizuku 没有在运行，或本机没有安装它。"
+                        // Two different jobs hide behind one button, and the old code
+                        // only did the second: if the binder is not running there is
+                        // nobody to ask, so the honest move is to open Shizuku (which
+                        // is what the user has to start on Android 11+ after a reboot)
+                        // instead of failing with "无法发起授权".
+                        when {
+                            !DeviceShizuku.binderAlive() && DeviceShizuku.isInstalled(context) -> {
+                                note = if (openShizukuManager(context)) {
+                                    "已打开 Shizuku。请在它里面启动服务（Android 11+ 用系统「无线调试」即可，不需要电脑），" +
+                                        "回到这里再点一次「请求 Shizuku 授权」。"
+                                } else {
+                                    "无法打开 Shizuku：请用户自己从桌面启动它，回到这里再点「请求 Shizuku 授权」。"
+                                }
+                            }
+                            !DeviceShizuku.requestPermission() -> {
+                                note = "无法发起 Shizuku 授权：Shizuku 没有在运行，或本机没有安装它。"
+                            }
+                        }
+                    },
+                    onOpenShizuku = {
+                        if (!openShizukuManager(context)) {
+                            note = "无法打开 Shizuku：请用户自己从桌面启动它。"
                         }
                     },
                     grants = grants,
@@ -430,6 +460,7 @@ private fun DeviceBridgeCard(
     running: Boolean,
     status: String,
     auditTail: List<String>,
+    aborted: String?,
     onStart: () -> Unit,
 ) {
     Card(loose = true) {
@@ -457,6 +488,14 @@ private fun DeviceBridgeCard(
             Spacer(Modifier.height(PiSpacing.inline))
             TextButton(onClick = onStart) { Text("启动设备桥") }
         }
+        if (aborted != null) {
+            Spacer(Modifier.height(PiSpacing.inline))
+            Text(
+                "上次执行中异常终止：$aborted",
+                style = MaterialTheme.typography.bodyMedium,
+                color = PiTheme.palette.warning,
+            )
+        }
         val logPath = DeviceBridgeController.auditLogPath()
         if (logPath != null) {
             Spacer(Modifier.height(PiSpacing.gutter))
@@ -481,6 +520,7 @@ private fun DeviceBridgeCard(
 private fun DeviceCapabilityCard(
     state: DeviceCapabilityState,
     accessibilityRunning: Boolean,
+    accessibilityState: String,
     onToggle: (Boolean) -> Unit,
     onSessionToggle: (Boolean) -> Unit,
     onOpenSystemSettings: () -> Unit,
@@ -488,6 +528,7 @@ private fun DeviceCapabilityCard(
     onRelaxedChange: (Boolean) -> Unit,
     shizuku: JSONObject,
     onRequestShizuku: () -> Unit,
+    onOpenShizuku: () -> Unit,
     grants: List<DeviceSafStore.Grant>,
     onGrantDirectory: () -> Unit,
     onRevokeDirectory: (String) -> Unit,
@@ -578,19 +619,25 @@ private fun DeviceCapabilityCard(
             DeviceCapability.Accessibility -> {
                 Spacer(Modifier.height(PiSpacing.inline))
                 Text(
-                    if (accessibilityRunning) {
-                        "系统无障碍服务：运行中。"
-                    } else {
-                        "系统无障碍服务：未运行 —— 即使上面的开关打开，Agent 也无法读取或操作屏幕。"
+                    when (accessibilityState) {
+                        "connected" -> "系统无障碍服务：运行中。"
+                        "enabled_not_connected" ->
+                            "系统无障碍服务：已启用，正在连接中 —— 通常一两秒内就绪，稍等再试即可，不需要改设置。"
+                        else ->
+                            "系统无障碍服务：未启用 —— 即使上面的开关打开，Agent 也无法读取或操作屏幕。"
                     },
                     style = MaterialTheme.typography.bodyMedium,
-                    color = if (accessibilityRunning) {
-                        MaterialTheme.colorScheme.onSurfaceVariant
-                    } else {
-                        PiTheme.palette.error
+                    color = when (accessibilityState) {
+                        "connected" -> MaterialTheme.colorScheme.onSurfaceVariant
+                        // Not an error the user has to fix; a warning colour would
+                        // contradict the sentence right next to it.
+                        "enabled_not_connected" -> MaterialTheme.colorScheme.onSurfaceVariant
+                        else -> PiTheme.palette.error
                     },
                 )
-                TextButton(onClick = onOpenSystemSettings) { Text("前往系统设置") }
+                if (accessibilityState != "connected") {
+                    TextButton(onClick = onOpenSystemSettings) { Text("前往系统设置") }
+                }
                 if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
                     // The group is usable — dump/tap/input all work — but this one
                     // endpoint is not, and the switch above must not imply otherwise:
@@ -660,11 +707,27 @@ private fun DeviceCapabilityCard(
                     style = PiTheme.text.meta,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                if (!shizuku.optBoolean("ready")) {
+                    // The onboarding is the whole gap between "the Shizuku code
+                    // exists" and "the user has uid 2000": every step that can be
+                    // done on the phone itself, in the order they have to happen.
+                    Spacer(Modifier.height(PiSpacing.small))
+                    for (line in shizukuSteps(shizuku)) {
+                        Text(
+                            "· $line",
+                            style = PiTheme.text.meta,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     TextButton(
                         onClick = onRequestShizuku,
-                        enabled = shizuku.optBoolean("binderAlive"),
-                    ) { Text("请求 Shizuku 授权") }
+                        enabled = shizuku.optBoolean("binderAlive") || shizuku.optBoolean("installed"),
+                    ) { Text(if (shizuku.optBoolean("binderAlive")) "请求 Shizuku 授权" else "启动并授权 Shizuku") }
+                    if (shizuku.optBoolean("installed")) {
+                        TextButton(onClick = onOpenShizuku) { Text("打开 Shizuku") }
+                    }
                     if (shizuku.optBoolean("ready") && shizuku.optInt("uid", -1) == 0) {
                         Text(
                             "Shizuku 以 root 运行",
@@ -1001,6 +1064,48 @@ private fun iconFor(capability: DeviceCapability): ImageVector = when (capabilit
     DeviceCapability.Accessibility -> Icons.Filled.TouchApp
     DeviceCapability.Sensors -> Icons.Filled.Security
     DeviceCapability.Shell -> Icons.Filled.Terminal
+}
+
+/** Open the Shizuku manager app, if this device has one. */
+private fun openShizukuManager(context: android.content.Context): Boolean = runCatching {
+    val intent = context.packageManager.getLaunchIntentForPackage(DeviceShizuku.MANAGER_PACKAGE) ?: return false
+    intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+    context.startActivity(intent)
+    true
+}.getOrDefault(false)
+
+/**
+ * The self-serve Shizuku onboarding, derived from the live status object rather
+ * than written once: the steps a user still has to take are exactly the fields
+ * that are not there yet (installed → running → granted).
+ *
+ * Android 11+ is the reason this is onboarding and not a README: 无线调试 lets
+ * the user start Shizuku on the phone itself, with no computer and no ADB cable —
+ * which is the difference between "uid 2000 is possible" and "uid 2000 is what
+ * this app actually gets".
+ */
+private fun shizukuSteps(shizuku: JSONObject): List<String> {
+    if (!shizuku.optBoolean("installed")) {
+        return listOf(
+            "装 Shizuku：从应用商店或它的 GitHub Releases 安装「Shizuku」；它本身不需要 root。",
+            "装好后回到这里，下面会出现「启动并授权 Shizuku」。",
+        )
+    }
+    if (!shizuku.optBoolean("binderAlive")) {
+        return listOf(
+            "打开 Shizuku，在它的界面里点「通过无线调试启动」（Android 11+，全程在这台手机上，不需要电脑）。",
+            "系统设置 → 开发者选项 → 无线调试：打开它，再在 Shizuku 里按提示配对。",
+            "Shizuku 启动后回到这里，点「请求 Shizuku 授权」。",
+            "注意：重启手机后 Shizuku 会停止，需要再做一次这一步（这是 Android 的限制，不是本应用的）。",
+        )
+    }
+    if (!shizuku.optBoolean("permissionGranted")) {
+        return listOf("点「请求 Shizuku 授权」，在 Shizuku 自己的弹窗里选择允许。")
+    }
+    if (shizuku.optBoolean("preV11")) {
+        return listOf("这台设备上的 Shizuku 是 v11 之前的版本，API 不支持；请升级 Shizuku。")
+    }
+    return emptyList()
 }
 
 /**

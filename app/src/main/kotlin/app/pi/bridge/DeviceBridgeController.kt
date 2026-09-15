@@ -85,6 +85,17 @@ object DeviceBridgeController {
     @Volatile
     private var lastReport = "未启动"
 
+    /**
+     * What the previous bridge session left half-done, read from the write-ahead
+     * audit trail the moment a new one starts. Published on `/app/health`, so the
+     * first tool call after a crash can report "上次执行中异常终止" instead of
+     * silently starting from a clean slate.
+     */
+    @Volatile
+    private var lastUnpaired: String? = null
+
+    fun lastUnpairedReport(): String? = lastUnpaired
+
     fun store(context: Context): DeviceCapabilityStore = DeviceCapabilityStore.get(context)
 
     fun isRunning(): Boolean = server?.isRunning() == true
@@ -100,7 +111,11 @@ object DeviceBridgeController {
 
     fun auditLogPath(): String? = auditLog?.path
 
+    /** Raw JSON lines, for `/app/audit` and the model. */
     fun auditTail(lines: Int): List<String> = auditLog?.tail(lines) ?: emptyList()
+
+    /** One-line-per-request rendering for the diagnostics card. */
+    fun auditPrettyTail(lines: Int): List<String> = auditLog?.prettyTail(lines) ?: emptyList()
 
     /**
      * Start (or restart) the bridge. Idempotent; calling it again mints a new token
@@ -120,6 +135,9 @@ object DeviceBridgeController {
         val store = DeviceCapabilityStore.get(appContext)
         val log = DeviceAuditLog(File(paths.home, "device-bridge-audit.log"))
         auditLog = log
+        // Read the trail *before* this session writes into it: a `start` line with
+        // no `result` is the fingerprint of a request that killed the process.
+        lastUnpaired = log.lastUnpaired()
 
         // The shell's write boundary is the user's workspace; re-read it on every
         // start so a workspace change is picked up without a rebuild.

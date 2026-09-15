@@ -18,6 +18,15 @@ data class DeviceDenial(
     val code: String,
     val reason: String,
     val hint: String? = null,
+    /**
+     * True when calling the exact same endpoint again, unchanged, has a real
+     * chance of succeeding. This is the one field that tells the model the
+     * difference between 「重试」 and 「找人」, so it is a property of the code
+     * rather than something each call site has to remember to state:
+     * `BUSY`, `NOT_CONNECTED` and a dropped bridge are retryable; a disabled
+     * capability, a policy block and a bad parameter never are.
+     */
+    val retryable: Boolean = false,
 ) {
     companion object {
         const val DISABLED = "DISABLED"
@@ -28,6 +37,38 @@ data class DeviceDenial(
         const val UNAUTHORIZED = "UNAUTHORIZED"
         const val ERROR = "ERROR"
         const val BLOCKED_BY_POLICY = "BLOCKED_BY_POLICY"
+
+        /**
+         * Another gesture is already in flight on the accessibility channel, or
+         * the platform cancelled ours. Nothing about the request is wrong: wait
+         * ~1s and send it again. Distinct from [UNSUPPORTED] on purpose — the old
+         * code returned UNSUPPORTED for both, which reads as "this device cannot
+         * do it" and sends the model (and the user) down the wrong path.
+         */
+        const val BUSY = "BUSY"
+
+        /**
+         * The accessibility service is enabled in Settings but the platform has
+         * not (re)bound it yet — the normal state for a second or two after the
+         * user flips the switch, after a reboot, or after the app is updated.
+         * Not a settings problem, so the wording must not send the user back to
+         * Settings: it is a "wait 1s and retry" state.
+         */
+        const val NOT_CONNECTED = "NOT_CONNECTED"
+
+        /**
+         * `startActivity` returned without throwing (Android 10+ does not throw
+         * for a dropped background start) and the foreground package never
+         * changed. The request was not delivered, so this must never be reported
+         * as a success.
+         */
+        const val BLOCKED_BACKGROUND = "BLOCKED_BACKGROUND"
+
+        /**
+         * The engine could not reach the loopback bridge at all: the app process
+         * is gone, the bridge is stopped, or the token is stale after a restart.
+         */
+        const val BRIDGE_DOWN = "BRIDGE_DOWN"
     }
 
     fun toMessage(): String = buildString {
@@ -134,12 +175,19 @@ class DeviceCapabilityStore private constructor(context: Context) {
     fun check(capability: DeviceCapability): DeviceDenial? {
         val state = state(capability)
         if (state.usable) return null
+        val denial = androidPrecondition(capability)
+        if (denial != null && denial.retryable && state.enabled && state.enabledForSession) {
+            // A transient system-side state (the accessibility service is still
+            // rebinding) must keep its own code: reporting it as NO_PERMISSION
+            // reads as "go to Settings", which is exactly what the user should
+            // *not* do. `state.reason` is the same sentence, kept single-sourced.
+            return denial.copy(reason = state.reason ?: denial.reason)
+        }
         val code = if (!state.enabled || !state.enabledForSession) {
             DeviceDenial.DISABLED
         } else {
             DeviceDenial.NO_PERMISSION
         }
-        val denial = androidPrecondition(capability)
         return DeviceDenial(
             code = code,
             reason = state.reason ?: "设备能力不可用。",
@@ -154,16 +202,27 @@ class DeviceCapabilityStore private constructor(context: Context) {
      * and does nothing), so it is checked here rather than at call time.
      */
     private fun androidPrecondition(capability: DeviceCapability): DeviceDenial? = when (capability) {
-        DeviceCapability.Accessibility ->
-            if (DeviceAccessibilityService.isRunning()) {
-                null
-            } else {
-                DeviceDenial(
-                    code = DeviceDenial.NO_PERMISSION,
-                    reason = "无障碍能力已开启，但系统的无障碍服务没有在运行，因此无法读取或操作屏幕。",
-                    hint = "请让用户打开 PI，在「设置 → 设备能力 → 无障碍」点「前往系统设置」并启用「PI 设备桥」，然后重试。",
-                )
-            }
+        DeviceCapability.Accessibility -> when (DeviceAccessibilityService.state(appContext)) {
+            DeviceAccessibilityService.State.CONNECTED -> null
+
+            // Enabled in Settings but not bound yet. Two opposite mistakes live
+            // here and both were made before: telling the user to go to Settings
+            // (they already did), or reporting a flat failure (it recovers by
+            // itself). It is a retry state, so it says so and carries a code the
+            // caller can act on.
+            DeviceAccessibilityService.State.ENABLED_NOT_CONNECTED -> DeviceDenial(
+                code = DeviceDenial.NOT_CONNECTED,
+                reason = "无障碍服务已启用，但系统还没有把它连上（正在重连，通常一两秒内完成）。",
+                hint = "请稍等约 1 秒后重试同一次调用；不需要改任何设置。若持续如此，再让用户关闭并重新打开「设置 → 无障碍 → PI 设备桥」。",
+                retryable = true,
+            )
+
+            DeviceAccessibilityService.State.NOT_ENABLED -> DeviceDenial(
+                code = DeviceDenial.NO_PERMISSION,
+                reason = "无障碍能力已开启，但系统的无障碍服务没有启用，因此无法读取或操作屏幕。",
+                hint = "请让用户打开 PI，在「设置 → 设备能力 → 无障碍」点「前往系统设置」并启用「PI 设备桥」，然后重试。",
+            )
+        }
 
         DeviceCapability.Sensors -> sensorsPrecondition()
 
