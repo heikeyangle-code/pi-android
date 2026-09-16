@@ -62,6 +62,24 @@ private fun args(vararg pairs: Pair<String, Any?>): JsonObject = buildJsonObject
     }
 }
 
+/**
+ * A call line's runs, rendered so that a failure message is readable **and the tokens are part
+ * of the assertion**.
+ *
+ * A tool card's argument line makes two separate claims about pi's source — the text, and which
+ * `theme.fg(...)` run each piece of it is — and both have to be pinned. The shapes below quote
+ * pi's own runs (`renderers/grep.js:19-26`, `find.js:18-24`, `ls.js:12-19`), where the subject
+ * (a search pattern, a path) is `accent` and everything around it is `toolOutput`, so a change
+ * that keeps the text but moves the pattern out of `accent` is exactly the drift this check
+ * exists to catch. Printing `token(text)` in pi's own order pins both at once; `bold` is printed
+ * only where pi bolds more than a tool's name (`core/tools/renderers/bash.js:31`).
+ */
+private fun runs(parts: List<ToolCallPart>): String =
+    parts.joinToString(" ") { part ->
+        val bold = if (part.bold) "bold " else ""
+        "$bold${part.token}(${part.text})"
+    }
+
 fun main() {
     // ------------------------------------------------------------------ grep
 
@@ -296,15 +314,31 @@ fun main() {
     check("read call: a limit alone starts at 1", readRange(args("limit" to 10)), ":1-10")
 
     check(
-        "grep call: pi's line",
-        grepSubject(args("pattern" to "foo", "path" to "src", "glob" to "*.kt", "limit" to 50)),
-        "/foo/ in src (*.kt) limit 50",
+        "grep call: pattern is accent, ` in src`, glob and limit are toolOutput",
+        runs(grepSubject(args("pattern" to "foo", "path" to "src", "glob" to "*.kt", "limit" to 50))),
+        "Accent(/foo/) ToolOutput( in src) ToolOutput( (*.kt)) ToolOutput( limit 50)",
     )
-    check("grep call: pi's default path", grepSubject(args("pattern" to "foo")), "/foo/ in .")
-    check("find call: pi's line", findSubject(args("pattern" to "*.kt", "path" to "src")), "*.kt in src")
-    check("find call: pi's limit suffix", findSubject(args("pattern" to "*.kt", "path" to "src", "limit" to 20)), "*.kt in src (limit 20)")
-    check("ls call: pi's default path", lsSubject(null), ".")
-    check("ls call: pi's limit suffix", lsSubject(args("path" to "src", "limit" to 10)), "src (limit 10)")
+    check(
+        "grep call: pi's default path",
+        runs(grepSubject(args("pattern" to "foo"))),
+        "Accent(/foo/) ToolOutput( in .)",
+    )
+    check(
+        "find call: pattern is accent, ` in src` is toolOutput",
+        runs(findSubject(args("pattern" to "*.kt", "path" to "src"))),
+        "Accent(*.kt) ToolOutput( in src)",
+    )
+    check(
+        "find call: the limit suffix is toolOutput too",
+        runs(findSubject(args("pattern" to "*.kt", "path" to "src", "limit" to 20))),
+        "Accent(*.kt) ToolOutput( in src) ToolOutput( (limit 20))",
+    )
+    check("ls call: pi's default path is accent", runs(lsSubject(null)), "Accent(.)")
+    check(
+        "ls call: the limit suffix is toolOutput",
+        runs(lsSubject(args("path" to "src", "limit" to 10))),
+        "Accent(src) ToolOutput( (limit 10))",
+    )
 
     // ------------------------------------- helpers moved out of ToolCallBlock
 

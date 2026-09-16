@@ -1054,15 +1054,23 @@ fun RenameSessionDialog(
 
 // ------------------------------------------------------------------- helpers
 
-/** pi's level name, or the raw wire value when this build does not know it. */
+/**
+ * pi's own thinking-level identifier — **not** a translation of it.
+ *
+ * The engine and the TUI spell these exactly as pi's identifier does: the TUI's
+ * footer concatenates the raw level (`modes/interactive/footer.ts:185-187`) and its
+ * selector builds each option's label from the identifier itself
+ * (`thinking-selector.ts:64-66`); `cli/args.ts:60` validates the same seven words.
+ * A translated label would be a name the engine never uses, on the one surface
+ * whose whole point is to report what the engine is set to — translation belongs
+ * somewhere else, and this is not that place.
+ *
+ * Which of the seven a model can actually be set to is pi's own
+ * `getSupportedThinkingLevels(model)`, so on a phone the list is often only three
+ * or four of them; the fallback keeps a newer pi's level readable rather than blank.
+ */
 fun thinkingLabelOf(level: String): String = when (level.lowercase()) {
-    "off" -> "关闭"
-    "minimal" -> "极简"
-    "low" -> "低"
-    "medium" -> "中"
-    "high" -> "高"
-    "xhigh" -> "很高"
-    "max" -> "最高"
+    "off", "minimal", "low", "medium", "high", "xhigh", "max" -> level.lowercase()
     else -> level
 }
 

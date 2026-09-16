@@ -492,18 +492,42 @@ class PiEngineSession(
      * that is what actually happened.
      *
      * Reachable in practice: `get_entries` returns a whole session in **one** record,
-     * and a long coding session with large tool outputs (pi's own cap is 50 KB per
-     * result) or an inline image can exceed the framer's 8 MiB
-     * (`JsonlFramer.DEFAULT_MAX_RECORD_CHARS`).
+     * and a session with a few inline images reaches tens of megabytes no matter how
+     * few messages it has. "请重试" was the operative word in the old sentence and it
+     * was false: the same request would produce the same record, so retrying could
+     * only fail identically. See [recordTooLargeReason] for what replaced it.
      */
     private fun onRecordDropped() {
-        // User-visible through `PiSessionViewModel.fail` → the transcript's error row and
-        // its notice, so it says what happened and what to do, not which object dropped
-        // what: "a message from the engine was too large to read" is the whole of it.
-        val reason = "引擎发来的一条内容太大，没能读取，这次操作没有完成。请重试。"
-        pending.values.forEach { it.complete(failure(reason)) }
+        pending.values.forEach { it.complete(failure(recordTooLargeReason())) }
         pending.clear()
     }
+
+    /**
+     * What the user is told when a record was destroyed by the framer's cap.
+     *
+     * The three things a user-visible failure has to carry, in order:
+     *
+     *  1. **what happened** — one message from the engine was larger than the app can
+     *     read. Naming the transport rather than the command is deliberate: the
+     *     record that was dropped is gone, so the command it answered is not
+     *     knowable here (`onRecordDropped`'s KDoc).
+     *  2. **what the app did** — nothing was changed, nothing was sent, the session
+     *     on disk is intact. It failed the *read*, not the conversation.
+     *  3. **what the user can do** — and this is the part "请重试" got wrong. There
+     *     is no retry that helps. What helps is a path that does not depend on that
+     *     record: the transcript is rebuilt from the session **file**, which has no
+     *     record cap, and the tree/entry overlay is the one remaining whole-session
+     *     read. So the sentence names the file-backed action rather than a hopeful
+     *     repeat.
+     *
+     * Kept as a function rather than a constant so the wording can be asserted by
+     * the `engine` pure checks without the same string being copied into the test.
+     */
+    private fun recordTooLargeReason(): String =
+        "这次读取没有完成：引擎把太多内容放在了一条消息里，超过了 App 能读取的上限。" +
+            "会话本身没有问题，已经保存的内容都在。" +
+            "重新打开这个会话会改为直接读会话文件，通常就能正常显示；" +
+            "如果仍然失败，说明这条消息本身异常大，可以把会话文件导出后再处理。"
 
     private fun handle(record: String) {
         val event = PiEvents.parse(record)

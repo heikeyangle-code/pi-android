@@ -323,7 +323,18 @@ internal object WorkspaceResourceScan {
     /**
      * 把候选排成界面上那一列：按来源优先级、判出冲突与解析失败、标出被禁用的。
      *
-     * 同名的那两条会挨着出现（排序按来源），这正是稿子要的：「冲突不需要用户自己去两处找」。
+     * 同名的那两条会挨着出现，这正是稿子要的：「冲突不需要用户自己去两处找」
+     * （`workspace-final.html:65-66` 把这句话写成这一屏的设计目的）。
+     *
+     * ## 排序单位是**同名组**，不是单条
+     *
+     * 这里原来先按同名分组、再整体按 `(kind, source.rank, name)` 重排 —— 那一步会把刚分好的
+     * 对拆开：`项目 .pi` 的 `review`（rank 0）与 `全局` 的 `review`（rank 2）之间，只要夹着
+     * 一条 `.agents`（rank 1）的**别的**名字，这一对就不相邻了，上面那句承诺也就落空。
+     *
+     * 所以键是 `(kind, 组内最小 rank, name, 本条 rank)`：同名组按它**最好的那一条**的优先级
+     * 落位，组内仍按来源排。于是同名对永远相邻，且赢家（组内第一条、标 `Conflict` 的那条）
+     * 仍然排在它前面 —— 与稿子的「同名时项目内赢」是同一件事。
      */
     private fun resolve(candidates: List<Candidate>): List<WorkspaceResource> {
         val byName = candidates.groupBy { it.kind to it.name }
@@ -355,11 +366,14 @@ internal object WorkspaceResourceScan {
                 out += resolved
             }
         }
+        val groupRank = out.groupBy { it.kind to it.name }
+            .mapValues { (_, group) -> group.minOf { it.source.rank } }
         return out.sortedWith(
             compareBy(
                 { WorkspaceResourceKind.order.indexOf(it.kind) },
-                { it.source.rank },
+                { groupRank[it.kind to it.name] ?: it.source.rank },
                 { it.name.lowercase(Locale.US) },
+                { it.source.rank },
             ),
         )
     }

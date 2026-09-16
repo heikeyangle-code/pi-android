@@ -129,7 +129,15 @@ fun ToolCallBlock(
                 ToolHeader(
                     item = item,
                     title = item.toolName.ifEmpty { "工具" },
-                    subject = item.argsSummary,
+                    // **The one card pi leaves uncoloured.** This block is the fallback for a tool
+                    // pi gives no renderer at all, and pi's own fallback path builds the whole
+                    // body with no `fg` call: `contentText.setText(this.formatToolExecution())`,
+                    // which is `theme.fg("toolTitle", theme.bold(this.toolName))` followed by the
+                    // raw JSON arguments (`components/tool-execution.js:274-278` → `:315-322`).
+                    // So the name is `toolTitle` (the header's title cell, one line up) and the
+                    // arguments are the terminal's default foreground — `Uncoloured`, which the
+                    // palette maps onto pi's `text` — not `accent` and not a segmented line.
+                    subject = listOf(ToolCallPart(item.argsSummary, ToolCallToken.Uncoloured)),
                     expanded = expanded,
                     expandable = item.output.isNotEmpty(),
                 )

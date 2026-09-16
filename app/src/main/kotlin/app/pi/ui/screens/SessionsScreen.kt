@@ -250,6 +250,7 @@ fun SessionsScreen(
                 onRefresh = { session.refreshTree() },
                 onClose = onClose,
                 embedded = true,
+                onLoadEntries = { session.refreshEntries() },
                 modifier = Modifier.weight(1f),
             )
         } else {

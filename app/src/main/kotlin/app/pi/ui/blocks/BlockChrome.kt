@@ -383,11 +383,19 @@ internal fun ExpandLabel(
                 Icons.Filled.KeyboardArrowRight
             },
             contentDescription = null,
-            modifier = Modifier.size(14.dp),
+            // 13, not 14: v2 sizes *this* chevron — the one on the `展开 / 收起` label — at
+            // `s={13}` on the thinking row (`direction-b-v2.html:911`) and on the custom card's
+            // head (`:951`). The 14 dp in `06 §2` is the **tool card's** title-row chevron, which
+            // is a separate inline `Icon` (`ToolBlockChrome.kt`'s `ToolHeader`, `DiffBlock.kt`'s
+            // header) and does not go through this composable.
+            modifier = Modifier.size(EXPAND_CHEVRON_SIZE),
             tint = tint,
         )
     }
 }
+
+/** v2's `展开 / 收起` chevron: `s={13}` (`direction-b-v2.html:911`, `:951`). */
+private val EXPAND_CHEVRON_SIZE = 13.dp
 
 /**
  * The single expand/collapse gesture: **the content is the hit target**.

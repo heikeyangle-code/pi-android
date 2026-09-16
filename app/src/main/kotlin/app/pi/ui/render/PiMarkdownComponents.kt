@@ -487,7 +487,14 @@ private fun PiCodeHeader(language: String?, code: String, palette: PiPalette) {
         Text(
             text = language.orEmpty(),
             modifier = Modifier.weight(1f, fill = false),
-            style = MaterialTheme.typography.labelMedium,
+            // The fence's info string is the machine's own identifier (`kotlin`, `bash`,
+            // `json`) and it labels a body that is entirely monospace — `06 §3` 构件 13
+            // gives CodeBlock「card 底 + 1px mdCodeBlockBorder + 圆角 12 + 语法令牌着色」
+            // over a mono body. Rule #7 (`docs/pi-android-ui-spec.md` §1) puts the
+            // identifier on the machine face; `labelMedium` was the UI face, so the
+            // label disagreed with the block it labels. 「复制」, the affordance beside
+            // it, stays in the UI face on purpose: it is our word, not the machine's.
+            style = PiTheme.text.monoSmall,
             color = palette.mdCodeBlockBorder,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,

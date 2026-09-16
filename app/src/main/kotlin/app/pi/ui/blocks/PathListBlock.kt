@@ -96,12 +96,16 @@ internal fun LsBlock(
  * @param parse the one thing that is not shared: which tool's parser reads the result
  *   (`ToolOutputParse.findBody` / `lsBody`). A lambda rather than a flag, so the card cannot
  *   be handed the other tool's rows.
+ * @param subject the call line's runs in pi's own tokens — `find` paints its pattern `accent`
+ *   and everything after it `toolOutput` (`renderers/find.js:18-24`), `ls` paints the path
+ *   `accent` and its limit `toolOutput` (`renderers/ls.js:14-17`); [findSubject] and [lsSubject]
+ *   build exactly those runs, and nothing about the text changes.
  */
 @Composable
 private fun PathListBlock(
     item: ToolCall,
     title: String,
-    subject: String,
+    subject: List<ToolCallPart>,
     emptyText: String,
     preview: Int,
     parse: (String) -> PathBody?,

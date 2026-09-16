@@ -62,6 +62,7 @@ import app.pi.bridge.DeviceShizuku
 import app.pi.bridge.DeviceWorkspace
 import app.pi.ui.PiTopBar
 import app.pi.ui.PiTopBarIcon
+import app.pi.ui.components.PiMixedLine
 import app.pi.ui.rememberPiScreenVisible
 import app.pi.ui.settings.PiSettingsCardShape
 import app.pi.ui.settings.PiSettingsMetrics
@@ -499,9 +500,14 @@ private fun DeviceBridgeCard(
         val logPath = DeviceBridgeController.auditLogPath()
         if (logPath != null) {
             Spacer(Modifier.height(PiSpacing.gutter))
-            Text(
-                "审计日志：$logPath",
-                style = PiTheme.text.monoSmall,
+            // 两段声音（规则 #7）：「审计日志：」是我们的标注 → 系统字；路径是机器值 → 等宽。
+            // 裁决 ②-2：混排行一律拆两段，不许整行 mono。同卡片下面的白名单/日志尾巴本就是
+            // `monoSmall`，那里没有我们的话，所以不动。
+            PiMixedLine(
+                prefix = "审计日志：",
+                machine = logPath,
+                suffix = "",
+                style = PiTheme.text.meta,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
@@ -868,7 +874,13 @@ private fun ShellPolicyCard(relaxed: Boolean, workspace: String) {
         )
         Text(
             workspace,
-            style = PiTheme.text.meta,
+            // `DeviceWorkspace.summary()` is a machine line and nothing else:
+            // 「写入边界 = 工作区：/data/user/0/app.pi/files/workspace（guest 内：/root/pi；
+            // 终端标签页：/root）」. Three absolute paths in the UI face was the one place on
+            // this screen where a path was not already mono — the audit log one card above
+            // (`审计日志：$logPath`) and `DeviceShellGuard.allowedSummary()` below both are
+            // (`monoSmall`), which is rule #7 applied to a path.
+            style = PiTheme.text.monoSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         for (line in DeviceShellGuard.writeBoundarySummary()) {

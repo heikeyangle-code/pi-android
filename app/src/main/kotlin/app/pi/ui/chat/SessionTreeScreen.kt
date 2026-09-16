@@ -34,6 +34,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -117,8 +118,20 @@ fun SessionTreeScreen(
     onClose: () -> Unit,
     modifier: Modifier = Modifier,
     embedded: Boolean = false,
+    /**
+     * Read the raw entry log (the 条目 tab).
+     *
+     * Supplied by the overlay's owner, which holds the ViewModel. The log is a
+     * whole-session `get_entries` — by far the most expensive read on this screen —
+     * so it is requested when the tab that shows it is opened rather than when the
+     * tree is, and the tree therefore paints without waiting for it.
+     */
+    onLoadEntries: () -> Unit = {},
 ) {
     var tab by rememberSaveable { mutableStateOf(0) }
+    // The 条目 tab's data on first sight of it: the tree view is what opens, and the
+    // raw record is a second, heavier read (`PiSessionViewModel.refreshEntries`).
+    LaunchedEffect(tab) { if (tab != 0) onLoadEntries() }
     var filter by rememberSaveable { mutableStateOf(TreeFilter.Default) }
     var query by rememberSaveable { mutableStateOf("") }
     if (embedded) {

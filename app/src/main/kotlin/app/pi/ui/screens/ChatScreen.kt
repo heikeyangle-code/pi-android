@@ -301,10 +301,21 @@ private fun ChatBody(
     bottomInset: Dp,
     onOpenSessions: () -> Unit,
 ) {
-    // `draft` and `attachments` are **saveable**: they are the user's own input, and
-    // leaving the chat destination (工作区 / 设置) used to throw them away, because
-    // `PiRoot`'s `when (current)` drops this screen's composition entirely. Coming
-    // back now finds the text and the pending images where they were left.
+    // `draft` and `attachments` are the **ViewModel's** state, not this composable's:
+    // `session.composerDraft` ([ComposerDraft]). Nothing about them reaches the Bundle.
+    //
+    // They were `rememberSaveable` here until that turned out to kill the app. The
+    // staged images were saved as their base64 text (`AttachmentListSaver`, deleted
+    // with that change), and one phone photo in the saved instance state is already
+    // past Binder's ~1 MB transaction limit — so opening the picker for a *second*
+    // image (`onSaveInstanceState` → Binder → `TransactionTooLargeException`) exited
+    // the app. `ComposerDraft`'s KDoc has the whole chain.
+    //
+    // The behaviour D28/D30 asked for is kept, and kept better: leaving the chat
+    // destination (工作区 / 设置) used to drop this composition entirely, and the
+    // `SaveableStateHolder` in `PiRoot` was what gave the text and images back on the
+    // way in. A ViewModel outlives the composition, so they are simply still there —
+    // and a rotation is now safe as well.
     //
     // Deliberately **not** keyed on `sessionKey`, unlike `renderWindow` / `tail` /
     // `pausedRows` above: those describe an *opening of a session*, while a draft is
@@ -312,59 +323,16 @@ private fun ChatBody(
     // session changed underneath it (the composable stays mounted for a switch), and
     // making it session-keyed would start silently deleting text on a switch.
     //
-    // `state.workspace.revision` **is** a key, and it is the one exception the user
-    // ruled on (草稿就清空就行): a workspace switch ends the session context the text
-    // was typed for — a new engine process in a new directory — so a draft typed for
-    // the old workspace must not be sendable to the new one. The ViewModel owns the
-    // fact (`WorkspaceState.revision`, bumped once per successful switch and on the
-    // startup fallback).
-    //
-    // **These inputs alone do not clear it, which is why `draftRevision` exists below.**
-    // `rememberSaveable(inputs)` compares its inputs only inside *one live composition*:
-    // runtime-saveable 1.12.1 decides with `SaveableHolder.getValueIfInputsDidntChange(inputs)
-    // ?: init()`, and it calls `consumeRestored` exactly once — when the holder is
-    // created. A switch can only be started from 工作区, so the moment it lands this
-    // screen has already left the composition (PiRoot.kt:544/552/668 wraps each
-    // destination in a `SaveableStateHolder.SaveableStateProvider`), the draft was
-    // saved by the holder on the way out, and coming back **creates** a fresh holder
-    // whose `consumeRestored` hands the old draft straight back — the inputs are never
-    // consulted on that path. The inputs therefore cover only the case where the
-    // revision moves while this screen is composed (the startup fallback, or a switch
-    // driven from this very screen); the saveable marker below covers the other one.
-    // Anyone touching this: the root of the bug is "restoration is not an input".
-    var draft by rememberSaveable(state.workspace.revision) { mutableStateOf("") }
-    var attachments by rememberSaveable(state.workspace.revision, stateSaver = AttachmentListSaver) {
-        mutableStateOf<List<PiImage>>(emptyList())
-    }
-    // The revision the draft on screen was written in. **Saveable on purpose**: a plain
-    // `remember` would be re-initialised to the live revision on the way back in, the
-    // comparison below would always find them equal, and the clearing would never run.
-    var draftRevision by rememberSaveable { mutableStateOf(state.workspace.revision) }
-    val workspaceRevision = state.workspace.revision
-    LaunchedEffect(workspaceRevision) {
-        if (draftRevision == workspaceRevision) return@LaunchedEffect
-        // A switch, and **only** a switch, clears: same revision means either the first
-        // composition of this screen or a restore (rotation / process death), and the
-        // user's own writing must survive those untouched — the ruling is about the
-        // workspace changing, not about the app being restarted.
-        //
-        // `>` rather than `!=` for the restore case: `revision` only ever grows inside
-        // one process, so a live value *below* the stored one means this mark came from
-        // a previous process (where the counter restarted from 0) — that is a recovery,
-        // not a switch, and it must not delete the draft that was restored with it. The
-        // mark is re-aligned either way, so the next real switch still clears.
-        if (workspaceRevision > draftRevision) {
-            // Only these two states, on purpose: the queue's steering/follow-up counts
-            // and the running turn live in the ViewModel (`state.queueSteering`,
-            // `state.streaming`), so a draft going away cannot disturb them. (Text that
-            // a dequeue put into the editor *is* `draft` from that moment on —
-            // `restoreQueue` drains pi's queue into it — and it belongs to the old
-            // workspace, which is exactly what the ruling says must not cross over.)
-            draft = ""
-            attachments = emptyList()
-        }
-        draftRevision = workspaceRevision
-    }
+    // `state.workspace.revision` is the one exception the user ruled on (草稿就清空就行):
+    // a workspace switch ends the session context the text was typed for — a new engine
+    // process in a new directory — so a draft typed for the old workspace must not be
+    // sendable to the new one. That rule now lives where the state lives
+    // (`PiSessionViewModel.alignComposerToWorkspace`, called from
+    // `publishWorkspaceState`), because a screen cannot clear state it does not own —
+    // and it is `>` there for the reason it was `>` here: only a *switch* clears, a
+    // revision that merely gets aligned (the startup reconcile) does not.
+    var draft by session.composerDraft.text
+    var attachments by session.composerDraft.attachments
     // One-shot overlays: a menu or a sheet that survives a trip to 工作区 would
     // reappear on a screen the user has moved on from, so these stay plain
     // `remember` on purpose.
@@ -615,9 +583,17 @@ private fun ChatBody(
         if (windowOpen) visibleItems else visibleItems.takeLast(renderWindow)
     }
     val hiddenCount = visibleItems.size - renderedItems.size
-    // While anything is hidden the loading row is item 0, so a full-list index is a
-    // rendered index plus `hiddenCount` plus that one row.
-    val headerRows = if (hiddenCount > 0) 1 else 0
+    // While anything is above the rendered window the loading row is item 0, so a
+    // full-list index is a rendered index plus `hiddenCount` plus that one row — the
+    // arithmetic every jump/reveal below relies on.
+    //
+    // The second term is why this is not just `hiddenCount > 0`: the same row is also
+    // where "the transcript holds everything loaded, but the session file has more
+    // above it" is stated, and it is shown in exactly that case (the reader's
+    // `HistoryCursor.hasEarlier`). Leaving it out would put every jump one row off the
+    // moment the loaded rows are exhausted.
+    val showsEarlierRow = hiddenCount > 0 || state.history?.hasEarlier == true
+    val headerRows = if (showsEarlierRow) 1 else 0
     val searchMatches = remember(visibleItems, searchQuery, prefs.hideThinkingBlock) {
         if (searchQuery.isBlank()) {
             emptyList()
@@ -867,10 +843,25 @@ private fun ChatBody(
     }
     // (`atBottom` is declared above, next to the follow effect that is keyed on it.)
     var earlierArmed by rememberSaveable(sessionKey) { mutableStateOf(false) }
-    LaunchedEffect(atTop, hiddenCount, scrolling) {
+    // Spec §4.5's second half. The client-side window below only re-reveals rows the
+    // **transcript already holds**, and what the transcript holds used to be the whole
+    // session (one `get_entries`), so the two were the same list. It now starts as the
+    // newest window of the session *file* and grows backwards on demand, which means
+    // reaching the top of it is no longer the same as reaching the start of the
+    // conversation. This is what asks for more: `history.hasEarlier` is the reader's
+    // own position (`HistoryCursor.startOffset`), not an inference from the row count,
+    // so it stops exactly when the file's first entry has been loaded.
+    val earlierHistory = state.history
+    LaunchedEffect(atTop, hiddenCount, scrolling, earlierHistory) {
         if (!atTop) {
             earlierArmed = true
             return@LaunchedEffect
+        }
+        // Asked for only once the loaded rows are exhausted: while `hiddenCount > 0`
+        // the batch below is a slice of rows already in memory, and starting a file
+        // read at the same moment would do both jobs for one gesture.
+        if (hiddenCount == 0 && earlierHistory != null && earlierHistory.hasEarlier) {
+            session.expandEarlierHistory()
         }
         // `mayLoadEarlier` is the whole fix for 「用力往旧消息方向一划就跳到最顶部」: a
         // batch may only be prepended once the gesture is over. Prepending *while a
@@ -886,7 +877,12 @@ private fun ChatBody(
         // that row is the first visible item — the content slides by the whole batch
         // under a stationary index. Asking for the anchored index is the other half of
         // the fix (`prependAnchoredIndex`, `ui/chat/TailFollow.kt`).
-        val headerAfter = if (hiddenCount - prepended > 0) 1 else 0
+        // `headerRows`' own rule, one prepend later: the earlier row is still item 0
+        // when either hidden rows remain or the file has more above (see
+        // `showsEarlierRow`). Hard-coding `hiddenCount - prepended > 0` would drop the
+        // header on the last batch of a partially loaded session and land the anchor
+        // one row off.
+        val headerAfter = if (hiddenCount - prepended > 0 || earlierHistory?.hasEarlier == true) 1 else 0
         listState.requestScrollToItem(
             prependAnchoredIndex(
                 firstVisibleIndex = listState.firstVisibleItemIndex,
@@ -1456,12 +1452,28 @@ private fun ChatBody(
                 // spinner would be animating nothing. The row states what it does and
                 // how much is left, and is itself the tap target as well as the
                 // scroll-to-top trigger above.
-                if (hiddenCount > 0) {
+                //
+                // The second case is the one the reader added: the loaded rows are
+                // exhausted but the session **file** has more above them. Unlike the
+                // first case that read lands on `Dispatchers.IO`, so this row is what
+                // says a read is in flight instead of leaving the top looking like the
+                // start of the conversation. It is also the tap target, so a user who
+                // prefers tapping to flinging can drive it. There is nothing to count
+                // — the file is not indexed, and inventing a number would be worse than
+                // saying what is happening.
+                val moreOnDisk = hiddenCount == 0 && earlierHistory?.hasEarlier == true
+                if (hiddenCount > 0 || moreOnDisk) {
                     item(key = "transcript-earlier", contentType = "transcript-earlier") {
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clickable { renderWindow += TRANSCRIPT_WINDOW_STEP }
+                                .clickable {
+                                    if (hiddenCount > 0) {
+                                        renderWindow += TRANSCRIPT_WINDOW_STEP
+                                    } else {
+                                        session.expandEarlierHistory()
+                                    }
+                                }
                                 .padding(vertical = 8.dp),
                             horizontalArrangement = Arrangement.Center,
                             verticalAlignment = Alignment.CenterVertically,
@@ -1473,7 +1485,13 @@ private fun ChatBody(
                             )
                             Spacer(Modifier.width(6.dp))
                             Text(
-                                text = "加载更早的 $hiddenCount 条",
+                                text = if (hiddenCount > 0) {
+                                    "加载更早的 $hiddenCount 条"
+                                } else if (earlierHistory?.loading == true) {
+                                    "正在读取更早的内容…"
+                                } else {
+                                    "加载更早的内容"
+                                },
                                 style = PiTheme.text.meta,
                                 color = PiTheme.palette.muted,
                             )
@@ -2948,26 +2966,6 @@ private fun ScrollArrowButton(
  * the anchors are deliberately not among them, because they describe a single layout
  * pass and a fresh layout compared against a stale one would read as a user gesture.
  */
-/**
- * `rememberSaveable`'s saver for the composer's pending attachments.
- *
- * A flat list of `base64, mimeType, base64, mimeType, …`: both halves are Strings, so
- * the pair needs no `Parcelable` and no custom `Bundle` handling. Written out rather
- * than left to `remember` because an attachment is up to ~6 MB of base64 the user
- * picked on purpose — losing it to a trip to 工作区 is the same data loss as losing
- * the draft.
- */
-private val AttachmentListSaver: Saver<List<PiImage>, Any> = listSaver(
-    save = { images -> images.flatMap { image -> listOf<Any>(image.base64, image.mimeType) } },
-    restore = { flat ->
-        flat.chunked(2).mapNotNull { pair ->
-            val base64 = pair.getOrNull(0) as? String ?: return@mapNotNull null
-            val mime = pair.getOrNull(1) as? String ?: return@mapNotNull null
-            PiImage(base64 = base64, mimeType = mime)
-        }
-    },
-)
-
 private val TailFollowSaver: Saver<TailFollow, Any> = listSaver(
     save = { it.savedState() },
     restore = { saved -> TailFollow.fromSavedState(saved) },

@@ -18,11 +18,13 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -39,6 +41,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -63,7 +66,11 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.vector.PathParser
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
@@ -78,6 +85,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.window.DialogWindowProvider
@@ -104,15 +112,17 @@ import kotlinx.coroutines.launch
  *
  * | 构件 | 稿子里的位置 | 几何 |
  * |---|---|---|
- * | [WsBadge] | `function Badge` (`:474-483`) | 5×5 圆角 1 的点 + 可选 12 等宽符号 + 12 文字，`1px border-muted`、圆角 999、`padding:1px 7px 1px 6px` |
- * | [WsChip] | `function Chip` (`:485-497`) | 高 26、圆角 999、`padding:0 9px`、`1px` 描边（选中 `border-accent`） |
+ * | [WsBadge] | `function Badge` (`:474-483`) | **无条件**的 5×5 圆角 1 色块 + 可选 12 等宽符号 + 12 文字，`1px border-muted`、圆角 999、`padding:1px 7px 1px 6px` |
+ * | [WsChip] | `function Chip` (`:485-497`) + 空目录那颗主按钮（`:1531-1537`） | 两档：胶囊 高 26、圆角 999、`padding:0 9px`、`1px` 描边（选中 `border-accent`）；`solid` 高 32、`padding:0 14px`、**accent 实底无描边**、字色 `var(--page)` |
+ * | [WsSectionAction] | ④ 段头的「+ 新建」(`:1496-1499`) | accent 纯文本 + 13 的加号，**无描边无底** |
  * | [WsSeg] | `function Seg` (`:499-511`) | 外框 `surf-high` + `border-muted` + 圆角 8、内项高 24 圆角 6，选中 `selected-bg` |
- * | [WsNotice] | `function Notice` (`:615-625`) | 等宽前缀（`·` / `!` / `✗`）+ 13 文本，三档 tone |
- * | [WsErrBlock] | `function ErrBlock` (`:1048-1072`) | 3px 竖条 + `tool-error` 底 + `1px rgba(error,.45)` 边 + 圆角 10 |
- * | `WorkspaceSnackBar`（`ProjectScreen.kt`） | `function Snack` (`:627-643`) | 底部一条：符号 + 文本 + 可选动作，三档底/字 |
+ * | [WsNotice] | `function Notice` (`:615-625`) | 等宽前缀（`·` / `!` / `✗`）+ 13 文本（本 App 取 12 的 `meta`，见构件注释），三档 tone |
+ * | [WsErrBlock] | `function ErrBlock` (`:1048-1072`) | 3px 竖条（`IntrinsicSize.Min` + `fillMaxHeight()`，撑满整块）+ `tool-error` 底 + `1px rgba(error,.45)` 边 + 圆角 10；标题 `t12` |
+ * | `WorkspaceSnackBar`（`ProjectScreen.kt`） | `function Snack` (`:627-643`) | 底部一条：`mono t14` 符号 + 14 文本 + 可选动作，三档底/字 |
  * | [WsSheet] | `function Sheet` (`:514-532`) | scrim `.32` + `surf-high` + 上圆角 16 + 1px 上边；抓手 `32×3`、头 `12px 14px 8px`、标题 15/600 + ✕ `28×28` 圆角 8、副标题 12 muted `mt 4`、正文 `maxHeight 420` / 底部 8、页脚 `10px 14px 14px` |
- * | [WsSectionHeader] | `function Section` (`:424-435`) | `padding:0 14px`、`margin-bottom:7px`、12 标签 + 12 计数 + 右侧 aside |
- * | [WsRow] | `function Row` (`:452-471`) | `padding:10px 12px`、`gap:10`、标题 15/500（等宽时 14）+ 副行 12 + 右值 13 |
+ * | [WsSectionHeader] | `function Section` (`:424-435`) | `padding:0 14px`、`margin-bottom:7px`、12 标签（`.02em`）+ 12 计数 + 右侧 aside |
+ * | [WsRow] | `function Row` (`:452-471`) | `padding:10px 12px`、`gap:10`、标题 15（字重 **500**，strong 时 600；等宽行 `mono` 14）+ 副行 12 + 右值 13 |
+ * | [WsCard] / [WsCardSlice] | `function Card` (`:421-423`) + `Rows` (`:437-449`) | 卡壳：`surf-low` 底、圆角 10、左右 14 页边；列表里由**每一片**自带卡壳（首片圆上角、末片圆下角、行间线在卡内），这样 `LazyColumn` 的懒加载不被 `Rows` 的整列写法牺牲 |
  */
 
 // ------------------------------------------------------------------ 段头 ----
@@ -144,7 +154,15 @@ internal fun WsSectionHeader(
     ) {
         Text(
             label,
-            style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
+            // `.02em` 在 12sp 上是 0.24sp，`letterSpacing` 只吃绝对值 —— 与
+            // `SessionsScreen` 的分组头（`SESSIONS_GROUP_TRACKING`）同一个取值：稿子里
+            // 这两处都是同一个 `Section` 构件（`workspace-final.html:424-435` 的
+            // `letterSpacing:'.02em'`）。`PiTheme.text.meta` 本身不带字距，所以这里不是
+            // 覆盖既有档位，而是补上稿子写死的那一档。
+            style = PiTheme.text.meta.copy(
+                fontWeight = FontWeight.Medium,
+                letterSpacing = WS_SECTION_TRACKING,
+            ),
             color = MaterialTheme.colorScheme.onSurface,
         )
         if (count != null) {
@@ -159,12 +177,21 @@ internal fun WsSectionHeader(
     }
 }
 
+/** 稿子 `Section` 的 `letterSpacing:'.02em'`，在 12sp 上就是 0.24sp。 */
+private val WS_SECTION_TRACKING = 0.24.sp
+
 // ------------------------------------------------------------------ 徽标 ----
 
 /**
  * `字 + 符号 + 颜色` 的状态徽标（`ui/theme/PiStateChip.kt` 的 `StateChip` 是它的正文色
  * 版本）。这里的差别是**来源徽标需要混排**：`项目 .pi` 的「.pi」、`包 · pi-skills` 的包名
  * 必须等宽，而前面的汉字不是 —— 稿子把这件事写成「路径型来源用等宽，抽象来源用文本」。
+ *
+ * @param dot 那颗 5×5 色块。**默认开，因为稿子无条件先画它**：`function Badge`
+ *   （`workspace-final.html:474-483`）第一件事就是 `<span style={{width:5,height:5,
+ *   background:c}}/>`，`06 §2` 的「徽标」行也是「色块 5×5 圆角 1」在前。这一屏原来只有 ⑤
+ *   的来源徽标传了 `true`，于是 ① 的「切换」、③ 的「本次会话」、工作区面板的「当前」
+ *   「未接」都成了没有色块的空描边胶囊 —— 三重编码里少了一层。
  */
 @Composable
 internal fun WsBadge(
@@ -173,7 +200,7 @@ internal fun WsBadge(
     modifier: Modifier = Modifier,
     mono: String? = null,
     glyph: String? = null,
-    dot: Boolean = false,
+    dot: Boolean = true,
 ) {
     val palette = PiTheme.palette
     val color = stateToneColor(tone, palette)
@@ -274,51 +301,142 @@ private val WsSegItemPadding = 10.dp
 
 // ------------------------------------------------------------------ 胶囊 ----
 
-/** 一颗可点的小胶囊（稿子的 `Chip`）：`⋮` 之外的表头动作、空态的「新建文件」用它。 */
+/**
+ * 一颗可点的小胶囊（稿子的 `Chip`）：表头动作、空态的「新建文件」用它。
+ *
+ * ## 两档形态，都是稿子画过的
+ *
+ * - **默认** —— 稿子的 `function Chip`（`workspace-final.html:485-497`）：高 26、
+ *   圆角 999、`padding:0 9px`、1px `borderMuted`。
+ * - **[solid]** —— 稿子空目录里那颗「+ 新建文件」（`:1531-1537`）：高 32、`padding:0 14px`、
+ *   **accent 实底、无描边、字色 `var(--page)`**、图标 15、`gap:6`。它不是 chip 的选中态，
+ *   是这一屏**唯一**的主按钮，所以单独一档。
+ *
+ * 稿子的 `Chip` 还有一个 `on` 选中态（`borderAccent` + `surf-high`）——本批之后**没有调用方**了
+ * （段头那颗改走 `WsSectionAction`、空目录那颗改走 [solid]），所以连同它的两个分支一并删掉，
+ * 不留没有调用方的形态（`07` D38.2 如无必要勿增实体）；将来真要"选中的胶囊"，照
+ * `06 §2` 补回来即可，几何数值仍在上面这份 KDoc 里。
+ *
+ * 字号取 `bodyMedium`（14/SemiBold）而不是稿子的 `t13 w6`：本 App 的系统字角色里没有 13sp
+ * 这一档（`PiTextStyles` 是 12/14，5 档是 12/13/14/15/17 但 13 只给了等宽），而**按钮标签**
+ * 在本项目里的既有角色就是 `bodyMedium` + 字重（`ui/components/PiDialog.PiDialogAction`）。
+ */
 @Composable
 internal fun WsChip(
     text: String,
     onClick: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
-    active: Boolean = false,
+    solid: Boolean = false,
     glyph: String? = null,
     glyphIcon: ImageVector? = null,
 ) {
     val palette = PiTheme.palette
+    val contentColor = if (solid) palette.pageBg else palette.text
     Row(
         modifier = modifier
-            .height(PiSettingsMetrics.chipHeight)
+            .height(if (solid) WS_SOLID_BUTTON_HEIGHT else PiSettingsMetrics.chipHeight)
             .clip(CircleShape)
-            .border(
-                PiSettingsMetrics.hairline,
-                if (active) palette.borderAccent else palette.borderMuted,
-                CircleShape,
+            .then(
+                if (solid) {
+                    Modifier
+                } else {
+                    Modifier.border(
+                        PiSettingsMetrics.hairline,
+                        palette.borderMuted,
+                        CircleShape,
+                    )
+                },
             )
-            .background(if (active) MaterialTheme.colorScheme.surfaceContainerHigh else Color.Transparent)
+            .background(if (solid) palette.accent else Color.Transparent)
             .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
-            .padding(horizontal = PiSettingsMetrics.chipPaddingHorizontal),
+            .padding(
+                horizontal = if (solid) {
+                    WS_SOLID_BUTTON_PADDING
+                } else {
+                    PiSettingsMetrics.chipPaddingHorizontal
+                },
+            ),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(PiSettingsMetrics.badgeGap),
+        horizontalArrangement = Arrangement.spacedBy(
+            if (solid) WS_SOLID_BUTTON_GAP else PiSettingsMetrics.badgeGap,
+        ),
     ) {
         if (glyphIcon != null) {
             Icon(
                 glyphIcon,
                 contentDescription = null,
-                modifier = Modifier.size(PiSettingsMetrics.searchIconSize),
-                tint = palette.muted,
+                modifier = Modifier.size(
+                    if (solid) WS_SOLID_BUTTON_ICON else PiSettingsMetrics.searchIconSize,
+                ),
+                tint = if (solid) contentColor else palette.muted,
             )
         }
         if (glyph != null) {
-            Text(glyph, style = PiTheme.text.monoSmall, color = palette.muted, maxLines = 1)
+            Text(
+                glyph,
+                style = PiTheme.text.monoSmall,
+                color = if (solid) contentColor else palette.muted,
+                maxLines = 1,
+            )
         }
         Text(
             text,
-            style = PiTheme.text.meta,
-            color = palette.text,
+            style = if (solid) {
+                MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold)
+            } else {
+                PiTheme.text.meta
+            },
+            color = contentColor,
             maxLines = 1,
         )
     }
 }
+
+/** 稿子空目录那颗实底按钮：`height:32`。 */
+private val WS_SOLID_BUTTON_HEIGHT = 32.dp
+
+/** 它的 `padding:0 14px`。 */
+private val WS_SOLID_BUTTON_PADDING = 14.dp
+
+/** 它的图标 15、`gap:6`。 */
+private val WS_SOLID_BUTTON_ICON = 15.dp
+private val WS_SOLID_BUTTON_GAP = 6.dp
+
+/**
+ * 段头右侧那颗「+ 新建」（稿子 `:1496-1499`）：**accent 纯文本 + 13 的加号，无描边无底**。
+ *
+ * 它不是 [WsChip]：稿子在这里画的是一个 `press` 的 inline-flex 文本动作，不是胶囊。这一屏
+ * 原来把它画成了描边胶囊，于是整屏唯一的主按钮语言（实底 accent）被稀释成了第二颗胶囊。
+ */
+@Composable
+internal fun WsSectionAction(label: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    Row(
+        modifier = modifier
+            .clip(RoundedCornerShape(WS_SECTION_ACTION_RADIUS))
+            .clickable(onClick = onClick)
+            .padding(horizontal = WS_SECTION_ACTION_PADDING, vertical = 3.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Icon(
+            Icons.Filled.Add,
+            contentDescription = null,
+            modifier = Modifier.size(WS_SECTION_ACTION_ICON),
+            tint = PiTheme.palette.accent,
+        )
+        Text(
+            label,
+            style = PiTheme.text.meta,
+            color = PiTheme.palette.accent,
+            maxLines = 1,
+        )
+    }
+}
+
+/** 稿子给段头动作 `gap:4`、图标 13；按压面只有一点圆角，让点按落点不至于是一条线。 */
+private val WS_SECTION_ACTION_ICON = 13.dp
+private val WS_SECTION_ACTION_RADIUS = 8.dp
+private val WS_SECTION_ACTION_PADDING = 4.dp
 
 // ------------------------------------------------------------------ 提示 ----
 
@@ -344,7 +462,11 @@ internal fun WsNotice(
         Text(
             text,
             modifier = Modifier.weight(1f),
-            style = MaterialTheme.typography.bodyMedium,
+            // 稿子的 `Notice` 正文是 `t13`（`workspace-final.html:615-625`）。本 App 的系统字
+            // 角色里没有 13sp，取 12 的 `meta` —— 这也正是**同一个构件在对话页的取值**：
+            // `ui/blocks/NoticeBlock.kt:76` 把稿子同样写 `t13` 的提示正文画成 `meta`。
+            // `bodyMedium`(14) 比稿子大 1px，是这一屏「小字号走形」里的一员。
+            style = PiTheme.text.meta,
             color = color,
         )
     }
@@ -381,12 +503,17 @@ internal fun WsErrBlock(
                 PiSettingsMetrics.hairline,
                 palette.error.copy(alpha = 0.45f),
                 RoundedCornerShape(PiSettingsMetrics.cardRadius),
-            ),
+            )
+            // 竖条要**撑满整块**（稿子 `:1052-1054` 的 `display:flex` + `width:3` 让那条
+            // flex 子项拉伸到内容高度）。原来给它一个固定的 78dp，展开「详情」之后错误块
+            // ≈140dp，竖条就在中间断了 —— 于是这里有 `IntrinsicSize.Min`：这一行的最小高度
+            // 由右边那一列决定，竖条再 `fillMaxHeight()` 跟上，多长的错误都不会断。
+            .height(IntrinsicSize.Min),
     ) {
         Box(
             Modifier
                 .width(3.dp)
-                .height(WsErrBarHeight)
+                .fillMaxHeight()
                 .background(palette.error),
         )
         Column(
@@ -404,7 +531,10 @@ internal fun WsErrBlock(
                 Text("✗", style = PiTheme.text.monoSmall, color = palette.error, maxLines = 1)
                 Text(
                     title,
-                    style = MaterialTheme.typography.labelLarge,
+                    // 稿子的标题是 `t12`（`workspace-final.html:1058`）：`✗` + 一句短标题，
+                    // 两半同色同档。`labelLarge`(14/Medium) 比稿子大一档、还带了 M3 的字重，
+                    // 与旁边 12 的符号不齐。
+                    style = PiTheme.text.meta,
                     color = palette.error,
                 )
             }
@@ -447,10 +577,10 @@ internal fun WsErrBlock(
 }
 
 /**
- * 竖条的高度。稿子的竖条是 `flex` 撑满整块，Compose 里让它跟内容走：
- * 这个高度是错误块两行正文加内边距的下限，短错误与长错误都不会看见一条比内容矮的条。
+ * 竖条的高度不再由常量钉住：`WsErrBlock` 用 `IntrinsicSize.Min` + `fillMaxHeight()` 让它跟
+ * 内容走（稿子的竖条是 flex 拉伸，`workspace-final.html:1052-1054`）。原来的 78dp 是
+ * 「两行正文加内边距」的下限，但它挡不住展开「详情」之后的块高，竖条会断。
  */
-private val WsErrBarHeight = 78.dp
 
 /** 错误块里的一个文字动作（`重试` / `回到工作区` / `复制错误`）。 */
 @Composable
@@ -461,7 +591,10 @@ internal fun WsErrAction(label: String, tone: Color? = null, onClick: () -> Unit
             .clip(RoundedCornerShape(PiSettingsMetrics.cardRadius))
             .clickable(onClick = onClick)
             .padding(horizontal = 2.dp, vertical = 2.dp),
-        style = MaterialTheme.typography.bodyMedium,
+        // 稿子的动作是 `t13 c-accent`（`workspace-final.html:1063-1068`）。同 `WsNotice`
+        // 正文：13 在本 App 的系统字角色里没有，取 12 的 `meta`（对话页的同类提示同一取值），
+        // `bodyMedium`(14) 是它原来偏大的那一档。
+        style = PiTheme.text.meta,
         color = tone ?: PiTheme.palette.accent,
     )
 }
@@ -516,13 +649,23 @@ internal fun WsRow(
                 Text(
                     title,
                     modifier = Modifier.weight(1f, fill = false),
+                    // 稿子的标题是 `t15 w5`，等宽行是 `mono t14`
+                    // （`workspace-final.html:461`：`className={"t15 ell "+(p.mono?'mono t14':'')}`
+                    // + `fontWeight:p.strong?600:500`）。所以两档字重都要显式给：非 strong 是
+                    // **500**（`bodyLarge` 自己是 15/Normal=400，比稿子轻一档），strong 是 600；
+                    // 等宽标题按稿子的 14 而不是 `PiTheme.text.mono` 的 13（那一档是机器正文，
+                    // 不是行标题）—— 字号就地定，`PiTextStyles` 不动。
                     style = if (mono) {
-                        PiTheme.text.mono
+                        // 稿子的等宽行标题是 14（`mono t14`），而 `PiTheme.text.mono` 是 13
+                        // 的机器正文档；就地定尺寸，`PiTextStyles` 与 `piTypography` 都不动 ——
+                        // 同一手法在 `BootScreen.BootBadge`(17) 与
+                        // `PiSettingsEditors` 的数字框(17) 上都用过。
+                        PiTheme.text.mono.copy(fontSize = 14.sp, lineHeight = 20.sp)
                     } else {
                         MaterialTheme.typography.bodyLarge
                     },
                     color = titleColor ?: MaterialTheme.colorScheme.onSurface,
-                    fontWeight = if (strong) FontWeight.SemiBold else null,
+                    fontWeight = if (strong) FontWeight.SemiBold else FontWeight.Medium,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
@@ -554,6 +697,12 @@ internal fun WsHairline(inset: Boolean = true) {
             Modifier
         },
         thickness = PiSettingsMetrics.hairline,
+        // **55% 的 `borderMuted`，这是与稿子的一处已定偏离。** 稿子的行间线是
+        // `.div{background:var(--border-muted)}` —— 不透明（`workspace-final.html:177`），
+        // 而稿子另一处的 `.hair` 才是 `opacity:.55`（`:178`）；本项目自己的
+        // `06 §2`「分组容器：组内 inset hairline（`borderMuted` 55%）」写的是 55%。
+        // 两侧矛盾，以 **`06 §2` 为准**（它是冻结规范，稿子是原型），所以这里保持
+        // `outlineVariant`（= `borderMuted` 的 55%）。要改回去的话，先改 `06 §2`。
         color = MaterialTheme.colorScheme.outlineVariant,
     )
 }
@@ -568,9 +717,85 @@ internal fun WsMoreButton(onClick: () -> Unit) {
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
-        Text("⋮", style = PiTheme.text.mono, color = PiTheme.palette.muted, maxLines = 1)
+        // 稿子的 `MoreBtn` 是 `Icon n="more" s={16}` —— **横排**三点（`Icon` 的 `more`
+        // 分支，`workspace-final.html:296`）。这里原来画的是竖排的字符 `⋮`：同一颗按钮，
+        // 一个是图形、一个是标点，字重与基线都不听指挥，26 的圆角方块里也偏小。
+        Icon(
+            imageVector = WsMoreGlyph,
+            contentDescription = null,
+            modifier = Modifier.size(16.dp),
+            tint = PiTheme.palette.muted,
+        )
     }
 }
+
+/**
+ * 稿子的横排三点（`workspace-final.html:296`：三个 `r=1.05` 的实心圆，`cx` 3.9 / 9 / 14.1，
+ * viewport 18）。三个圆用「两段半弧」写出来 —— `ImageVector` 的 path builder 没有
+ * `circle()`，这与 `SessionTreeScreen.BRANCH_GLYPH` 用的是同一个写法。
+ *
+ * `Icon` 的 `tint` 会覆盖整张矢量，所以这里的填充色只是一个到不了屏幕的占位（与
+ * `BRANCH_GLYPH` 的说明一致）。
+ */
+private val WsMoreGlyph: ImageVector = ImageVector.Builder(
+    name = "WsMore",
+    defaultWidth = 18.dp,
+    defaultHeight = 18.dp,
+    viewportWidth = 18f,
+    viewportHeight = 18f,
+).addPath(
+    pathData = PathParser().parsePathString(
+        "M2.85 9a1.05 1.05 0 102.1 0a1.05 1.05 0 10-2.1 0" +
+            "M7.95 9a1.05 1.05 0 102.1 0a1.05 1.05 0 10-2.1 0" +
+            "M13.05 9a1.05 1.05 0 102.1 0a1.05 1.05 0 10-2.1 0",
+    ).toNodes(),
+    fill = SolidColor(Color.Black),
+).build()
+
+/**
+ * 稿子那两个方向图标里的右尖括号：`M7 4.4L11.6 9 7 13.6`、`strokeWidth:1.4`
+ * （`workspace-final.html:291`，`p.w||1.4`）。① 的目录卡末端用它，而不是一个 `Text("›")`。
+ */
+internal val WsChevronRightGlyph: ImageVector = ImageVector.Builder(
+    name = "WsChevronRight",
+    defaultWidth = 18.dp,
+    defaultHeight = 18.dp,
+    viewportWidth = 18f,
+    viewportHeight = 18f,
+).addPath(
+    pathData = PathParser().parsePathString("M7 4.4L11.6 9 7 13.6").toNodes(),
+    fill = null,
+    stroke = SolidColor(Color.Black),
+    strokeLineWidth = 1.4f,
+    strokeLineCap = StrokeCap.Round,
+    strokeLineJoin = StrokeJoin.Round,
+).build()
+
+/**
+ * 稿子专门为**二进制**加的第三个文件态图标（`workspace-final.html:311`：文件轮廓 + 右下角
+ * 一块实心矩形）。目录树、查看器与导入提示都用它，替掉原来那个字符 `▤`。
+ */
+internal val WsBinaryFileGlyph: ImageVector = ImageVector.Builder(
+    name = "WsBinaryFile",
+    defaultWidth = 18.dp,
+    defaultHeight = 18.dp,
+    viewportWidth = 18f,
+    viewportHeight = 18f,
+).addPath(
+    pathData = PathParser().parsePathString(
+        "M4.6 3.4h5.2l3.6 3.6v7.6H4.6z" + "M9.6 3.6v3.6h3.6",
+    ).toNodes(),
+    fill = null,
+    stroke = SolidColor(Color.Black),
+    strokeLineWidth = 1.5f,
+    strokeLineCap = StrokeCap.Round,
+    strokeLineJoin = StrokeJoin.Round,
+).addPath(
+    pathData = PathParser().parsePathString(
+        "M6 10.2h4.8a0.6 0.6 0 010.6 0.6v1.8a0.6 0.6 0 01-0.6 0.6H6a0.6 0.6 0 01-0.6-0.6v-1.8a0.6 0.6 0 010.6-0.6z",
+    ).toNodes(),
+    fill = SolidColor(Color.Black),
+).build()
 
 /** 一张卡（稿子的 `Card`）：`surf-low` 底、圆角 10、左右 14 的页边。 */
 @Composable
@@ -583,6 +808,48 @@ internal fun WsCard(modifier: Modifier = Modifier, content: @Composable () -> Un
         color = MaterialTheme.colorScheme.surfaceContainerLow,
     ) {
         Column { content() }
+    }
+}
+
+/**
+ * 一张卡在 `LazyColumn` 里的**一片**。
+ *
+ * 稿子的 `Rows` 是「一个 `Card` 里塞整列 + 行间 `.div`」（`workspace-final.html:437-449`），
+ * 那是原型写法：④ 的目录可能有几千个文件，把整列放进一个 item 就等于放弃懒加载。
+ * 所以卡壳由**每一片自己带**：左右 14 的页边、`surf-low` 底、圆角 10 —— 只有首片圆上角、
+ * 末片圆下角，中间不圆；行间那条 hairline 由非首片画在卡片**内部**（与稿子
+ * `i>0 ? <div className="div"/>` 同一个位置）。屏幕上一列相邻的片因此看起来仍是一张卡。
+ *
+ * 行构件自己**不再**画末尾那条线（原来是 `ChangedFileRow`/`WorkspaceEntryRow` 各自收尾），
+ * 于是④ 最后一行下面不会多出一条悬空的 hairline。
+ *
+ * @param index 这一片在列表里的序号；0 的那一片圆上角、不画上方的线。
+ * @param lastIndex 最后一片的序号；它圆下角。
+ */
+@Composable
+internal fun WsCardSlice(
+    index: Int,
+    lastIndex: Int,
+    modifier: Modifier = Modifier,
+    content: @Composable () -> Unit,
+) {
+    val radius = PiSettingsMetrics.cardRadius
+    Surface(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = PiSettingsMetrics.pageHorizontal),
+        shape = RoundedCornerShape(
+            topStart = if (index == 0) radius else 0.dp,
+            topEnd = if (index == 0) radius else 0.dp,
+            bottomStart = if (index == lastIndex) radius else 0.dp,
+            bottomEnd = if (index == lastIndex) radius else 0.dp,
+        ),
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
+    ) {
+        Column {
+            if (index > 0) WsHairline()
+            content()
+        }
     }
 }
 

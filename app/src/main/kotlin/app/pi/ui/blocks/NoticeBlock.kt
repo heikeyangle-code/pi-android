@@ -55,8 +55,13 @@ fun NoticeBlock(
     modifier: Modifier = Modifier,
 ) {
     val palette = PiTheme.palette
+    // pi's own informational status line is `dim`, and only its warning branch leaves that
+    // token: `const color = status.type === "warning" ? "warning" : "dim";`
+    // (`modes/interactive/interactive-mode.js:2866-2867`, `showManagedToolStatus`). The three
+    // tones were `muted` / `warning` / `error`; `dim` is the one pi states for the Info case,
+    // and the palette keeps the two tokens distinct for a hand-written theme.
     val color = when (item.tone) {
-        Notice.Tone.Info -> palette.muted
+        Notice.Tone.Info -> palette.dim
         Notice.Tone.Warning -> palette.warning
         Notice.Tone.Error -> palette.error
     }

@@ -36,6 +36,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -45,9 +46,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
@@ -59,6 +64,8 @@ import app.pi.ui.components.PiDialogAction
 import app.pi.ui.components.PiDialogActions
 import app.pi.ui.components.PiDialogBody
 import app.pi.ui.components.PiDialogTitle
+import app.pi.ui.render.PiCodeLanguage
+import app.pi.ui.render.rememberPiHighlightedCode
 import app.pi.ui.settings.PiSettingsMetrics
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
@@ -278,6 +285,10 @@ internal fun WorkspaceViewer(
                             onRetry = { reloadTick++ },
                             onRetrySave = { save() },
                             fileName = target.file.name,
+                            // 高亮语言按工作区相对路径判（`PiCodeLanguage.forPath`），与对话里
+                            // read/write 卡同一条路径；pi 也一样按路径后缀决定语言
+                            // （`renderers/read.ts:126-127`）。
+                            path = target.relativePath,
                             onExport = {
                                 onMessage(exportBinary(context, target.file))
                             },
@@ -392,15 +403,33 @@ private fun ViewerTopBar(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
+                // One line, two voices — which is exactly how the frozen board draws it:
+                // `<span className="mono">{path2}</span><span> · {f.size} · {f.time}</span>`
+                // (`workspace-final.html:1081-1085`, the viewer's `metaNode`; the `TopBar` it
+                // is handed to renders its meta in `t12 c-muted`, i.e. the UI face). So the
+                // **path** is the machine span and the size/time reading beside it is not.
+                //
+                // The whole line used to be `monoSmall`, which is the case `05 §4.3` names as
+                // the reason the mono face is bundled at all: 「中文会掉出 mono 回退」 —
+                // `WorkspaceFiles.formatTime` returns Chinese (「今天 14:26」), JetBrains Mono
+                // ships no CJK glyphs, so that half fell back to the system face while still
+                // being asked for a fixed advance width.
+                val monoFamily = PiTheme.text.monoSmall.fontFamily
+                // The non-path half is built by the stdlib: `AnnotatedString.Builder`
+                // implements `Appendable`, so chaining `append(…).append(…)` on it resolves
+                // through `Appendable.append(CharSequence?)` and stops returning a Builder.
+                val tail = buildString {
+                    append(" · ").append(WorkspaceFiles.formatSize(sizeBytes))
+                    append(" · ").append(WorkspaceFiles.formatTime(modifiedAt))
+                    if (saving) append(" · 正在写盘")
+                }
                 Text(
-                    buildString {
-                        append(relativePath)
-                        append(" · ").append(WorkspaceFiles.formatSize(sizeBytes))
-                        append(" · ").append(WorkspaceFiles.formatTime(modifiedAt))
-                        if (saving) append(" · 正在写盘")
+                    buildAnnotatedString {
+                        withStyle(SpanStyle(fontFamily = monoFamily)) { append(relativePath) }
+                        append(tail)
                     },
                     modifier = Modifier.padding(top = 1.dp),
-                    style = PiTheme.text.monoSmall,
+                    style = PiTheme.text.meta,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
@@ -459,6 +488,12 @@ private fun ViewerBody(
     opened: WorkspaceOpen?,
     saveError: WorkspaceOpen.Failed?,
     fileName: String,
+    /**
+     * 工作区相对路径。只做两件事：给正文挑高亮语言（`PiCodeLanguage.forPath`，与对话里的
+     * `read`/`write` 卡同一条路径），以及 [`TooLargeBody`] 的提示。**显示**用的是
+     * [fileName] 与顶栏那份 meta。
+     */
+    path: String,
     onRetry: () -> Unit,
     onRetrySave: () -> Unit,
     onExport: () -> Unit,
@@ -485,10 +520,10 @@ private fun ViewerBody(
         is WorkspaceOpen.Text -> if (opened.lines.isEmpty()) {
             EmptyFileBody(fileName)
         } else {
-            CodeBody(opened.lines, opened.totalLines, opened.truncated)
+            CodeBody(opened.lines, opened.totalLines, opened.truncated, path)
         }
 
-        is WorkspaceOpen.TooLarge -> TooLargeBody(opened)
+        is WorkspaceOpen.TooLarge -> TooLargeBody(opened, path)
         is WorkspaceOpen.Binary -> BinaryBody(opened, fileName, onExport, onShare)
         is WorkspaceOpen.Failed -> Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
             Spacer(Modifier.height(PiSettingsMetrics.notePaddingVertical))
@@ -540,9 +575,50 @@ private fun EmptyFileBody(fileName: String) {
  *
  * `LazyColumn` 而不是 `Column`：文本上限是 [WorkspaceFiles.MAX_TEXT_LINES] 行，一次性
  * 组合 5000 个 `Text` 会把首帧拖住。
+ *
+ * ## 语法着色（稿子的 `CodeView` 是逐段上色的，`workspace-final.html:1025-1046`）
+ *
+ * 用的是**现成**的那条高亮通道 —— `blocks/ToolBodyText.SourceLines` 与 markdown 码块
+ * 共用的 `rememberPiHighlightedCode`（引擎里的 highlight.js）。没有任何新的服务、客户端、
+ * 线程池或端口，也没有新的请求节奏：
+ *
+ *  - **整份正文问一次**。请求的文本就是行号切片的那份文本，所以字符偏移天然对齐；**不是**
+ *    每行一次 —— 多行结构（注释块、字符串）会因此错色，而且请求数会变成行数量级。
+ *  - **按行惰性切片**。整块结果是一段 `AnnotatedString`，只有**可见行**才做一次
+ *    `subSequence`；行首偏移预先算成一个 `IntArray`（一个对象、每行一个 int），所以 5000 行
+ *    不会预生成 5000 个对象，`LazyColumn` 的结构一行没动。
+ *  - **高亮服务自己的上限照旧**（>64 KiB 或 >400 行不上色，见 `PiNodeCodeHighlighter`），
+ *    这一屏不为查看器抬预算；超限就是原来的单色。
+ *  - **引擎没起来 → 空 spans → 单色**，与这一屏原来**完全一样**：不提示、不重试、不占位
+ *    （`PiCodeLanguage.isUnspecified` 时那条路连请求都不发）。
+ *  - **编辑态不上色**：`EditBody` 走自己的 `BasicTextField`，这里根本不会被调用。
  */
 @Composable
-private fun CodeBody(lines: List<String>, totalLines: Int?, truncated: Boolean) {
+private fun CodeBody(lines: List<String>, totalLines: Int?, truncated: Boolean, path: String) {
+    val palette = PiTheme.palette
+    // 一次请求，问的是「将要被切片的这段文本」。
+    val code = remember(lines) { lines.joinToString("\n") }
+    // `key(path)`：`rememberPiHighlightedCode` 用「同一个调用点是不是又变了一次」来判断正文
+    // 还在不在流式产出，而它据此会把第二次以后的变化延后 `STREAM_SETTLE_MS`（200 ms）再发问
+    // —— 那对流式 markdown 是对的，对查看器是错的：这里每一次变化都是**换了一个文件**，
+    // 正文已经落定。按 `path` 分组就等于「换文件 = 一个新的调用点」，首帧立刻着色，且仍然
+    // 只有一次请求、`ui/render/**` 一行未动。
+    val highlighted = key(path) {
+        rememberPiHighlightedCode(code, remember(path) { PiCodeLanguage.forPath(path) })
+    }
+    // 每一行在整块文本里的起始偏移。`IntArray` 而不是 List<IntRange>：一行一个 int。
+    val offsets = remember(lines) {
+        val out = IntArray(lines.size)
+        var cursor = 0
+        lines.forEachIndexed { index, line ->
+            out[index] = cursor
+            cursor += line.length + 1
+        }
+        out
+    }
+    // 引擎知道这门语言时，它没包进 span 的字符按 pi 的规矩保持正文色；不知道（或引擎不在）
+    // 时就是这一屏原来那一个颜色。
+    val baseColor = if (highlighted.languageKnown) palette.text else MaterialTheme.colorScheme.onSurface
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(
@@ -560,15 +636,19 @@ private fun CodeBody(lines: List<String>, totalLines: Int?, truncated: Boolean) 
                         .width(ViewerLineNumberWidth)
                         .padding(end = PiSettingsMetrics.rowGap),
                     style = PiTheme.text.monoSmall,
-                    color = PiTheme.palette.bodyOnTool,
+                    color = palette.bodyOnTool,
                     textAlign = TextAlign.End,
                     maxLines = 1,
                 )
+                val start = offsets[index].coerceIn(0, highlighted.text.length)
+                val end = (start + line.length).coerceIn(start, highlighted.text.length)
                 Text(
-                    line,
+                    // 只有可见行会走到这里；偏移越界时退回原始那一行，宁可不上色也不抛异常
+                    // （与 `SourceLines.numberLines` 同一条规矩）。
+                    text = if (start < end) highlighted.text.subSequence(start, end) else AnnotatedString(line),
                     modifier = Modifier.weight(1f),
                     style = PiTheme.text.code,
-                    color = MaterialTheme.colorScheme.onSurface,
+                    color = baseColor,
                 )
             }
         }
@@ -601,7 +681,7 @@ private val ViewerLineNumberWidth = 34.dp
 
 /** 超大文件：先一条说明，再前 25 行，末尾写清还有多少行没显示。 */
 @Composable
-private fun TooLargeBody(opened: WorkspaceOpen.TooLarge) {
+private fun TooLargeBody(opened: WorkspaceOpen.TooLarge, path: String) {
     Column(Modifier.fillMaxSize()) {
         WsNotice(
             text = "文件 ${WorkspaceFiles.formatSize(opened.sizeBytes)}。" +
@@ -610,7 +690,12 @@ private fun TooLargeBody(opened: WorkspaceOpen.TooLarge) {
             tone = StateTone.Warning,
             glyph = "!",
         )
-        CodeBody(opened.lines, opened.omittedLines?.plus(opened.lines.size), truncated = true)
+        CodeBody(
+            lines = opened.lines,
+            totalLines = opened.omittedLines?.plus(opened.lines.size),
+            truncated = true,
+            path = path,
+        )
     }
 }
 
@@ -630,7 +715,14 @@ private fun BinaryBody(
             modifier = Modifier.padding(horizontal = 30.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Text("▤", style = PiTheme.text.mono, color = PiTheme.palette.muted)
+            // 稿子给二进制正文画的是 `Icon n="bin" s={30}`（`workspace-final.html:1120`）：
+            // 与目录树里那个文件态同一个图标，只是放大到 30。原来这里是一个字符 `▤`。
+            Icon(
+                imageVector = WsBinaryFileGlyph,
+                contentDescription = null,
+                modifier = Modifier.size(30.dp),
+                tint = PiTheme.palette.muted,
+            )
             Text(
                 "这是二进制文件",
                 modifier = Modifier.padding(top = PiSettingsMetrics.rowGap),

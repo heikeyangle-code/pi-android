@@ -469,6 +469,7 @@ App 侧**没有任何 UI**：没有选图、没有粘贴、没有拖入。**只�
 - [ ] `Composer` 改 `TextFieldValue`，把真实光标带上，去掉偏离 1；**—— 仍未做（复核于本轮，工作树）**：输入框仍是 `OutlinedTextField(value = draft: String)`（`ui/screens/ChatScreen.kt` 的 composer，符号 `ChatScreen` 里那一处 `OutlinedTextField(value = draft, …)`），只有末尾那个 token 会补全。
 - [x] ~~把 `app/src/test/kotlin/app/pi/ui/chat/PiFileMentionsCheck.kt` 注册进 `tools/run-app-pure-checks.sh`~~ **—— 已完成（复核于 `d54beb7`；`tools/run-app-pure-checks.sh:270` 的 `run_harness mentions`）**，而且"两处写死的 2 harnesses"已改成**计算出来的计数**（脚本末尾注释明写这个数字曾撒谎）。同批注册的还有 `guest-paths` 与 `agent-tool-paths`。
 - [x] ~~**真机验证 `fd` 在 agent 目录 bind 之后仍可执行**~~ **—— 已解决（不是真机问题，是构建期就能定的 bug；复核于 `d54beb7`）**：`/usr/local/bin/{rg,fd}` 的软链目标确实会被 bind 遮蔽，且**首启时必然悬空**（`migrateGuestAgentDir()` 在 `ensureReady()` 之前跑，那时 rootfs 里还没有 `bin/`）。修法是两份都写 + 重放：`PiPaths.agentBinDir()`（绑定源）与 `rootfsAgentBinDir()`（rootfs 副本），`RuntimeProvisioner.ensureToolsVisible()` 在 stamp 未变的早退路径上补回缺失的那份；自检 `AgentToolPathsCheck.kt`（13 项断言，含"两个目录互不包含"）已注册（`run-app-pure-checks.sh:282`）。**"没查证过的已知风险"这句已经不成立。**
+  **追加（本轮）**：「目录里有文件」到「真的能跑」之间还差一步，现在也有了一条自动对照——`runtime/GuestToolProbe.kt` 在 guest 里跑 `rg --version`/`fd --version` **加各一次真实搜索**，退出码或输出任一不满足就逐条报原因为 ✗，结果出现在 `设置 → 运行时与诊断 → 导出诊断报告` 的「工具链自检（真调用）」一节；判定逻辑（127 = 悬空、脚本缺失标记行、退出码 0 但输出为空、搜索无命中）钉在 `app/src/test/kotlin/app/pi/runtime/GuestToolProbeCheck.kt`，由 `run-app-pure-checks.sh` 的 `guest-tool-probe` 跑。它覆盖的是终端那条解析路径（不带 agent 目录 bind）；durable 那一份仍由本条的构建期不变量与 `docs/device-verification.md` A5 保证。
 
 
 ### E5. 懒启动引擎 + 无引擎浏览会话 —— **已定：不做（2026-09-12，用户决定）**
@@ -1458,3 +1459,68 @@ M11/M12 是**打补丁**：先发现"申报模型会覆盖能力"，加了一个
 **未验证**：无真机。上机判据三条：① 加一个 pi 自带目录的厂商（DeepSeek）保存后，
 `models.json` 那个块**没有 `models` 键**、而 pi 仍列出模型；② 会话头从 `128k` 变成 `1M`；
 ③ 手写的 `headers`/`compat`/`modelOverrides` 在一次 App 保存后仍在。
+
+---
+
+## N. proroot 作为**可选**运行时（本轮 D44 落地；仍未上真机）
+
+用户要的是「一个设置项、默认关、打开后真正走 proroot、不可用时自动回退、装机路径永远 proot」，
+已知取舍是「闭源、提速未量化、**永远不做默认**」。落地范围、逐项映射与裁决在
+`design/ui-refactor/07-construction-decisions.md` D44 与 `docs/pi-android-app-design.md` §2.3.2。
+**这一节只记"还没销账的东西"。**
+
+### N1. 🔴 raw / inline syscall 不被翻译 → **静默读到宿主文件**（否决级；靠探针门禁挡）
+
+`docs/proroot-research.md` §5.P0-2 是实测：绕过 libc 的 raw `openat("/etc/passwd")` **成功返回一个 fd，
+内容是宿主 Android 的 `/etc/passwd`**，而同一路径走 libc 拿到的是 guest 的。**没有任何报错**——
+程序以为自己在读 guest 的文件。proroot 补这个洞的手段是"加载时改写主可执行文件里的 inline `svc`"
+（§1.2 第 2 层，v1.2.2 起）与"少量 syscall 的 seccomp 兜底"（第 3 层，v1.2.4 起），两者都是**启发式/白名单**，
+不是全覆盖。
+
+**这一条的形态与本仓库反复修的那类缺陷完全一致**（`GuestToolProbe` 的 KDoc 引的"悬空的
+`/usr/local/bin/fd` 与'从没装过'无法区分"）：**静默、无错误、能力或边界悄悄消失**。
+
+**我们的处置**（不是"接受"，而是"用探针把它变成显式失败"）：proroot 只有在**探针门禁**通过后才会被使用
+（`runtime/ProrootRawProbe.kt` + `runtime/ProrootProbe.kt`）：
+① guest 里种一个 marker 文件，用 raw `openat`（arm64 nr 56）读回——必须翻译到 guest 文件系统，
+且同一路径的 raw 内容**不得**与 libc 内容不同；后者（leaked）是否决级。
+② `rg`/`fd` 真调用（musl 静态，不走走动态链接器），必须 exit 0 且输出非空。
+两条都过才允许；**结论按解包 revision + 5 个 `.so` 的 sha256 缓存**。
+
+**仍未销账的部分**：
+1. **门禁本身没有在真机上跑过**（构建机是 proot 容器，不是 proroot 客户机）。所以"这台手机上 proroot 到底
+   能不能通过门禁"**未知**，而且很可能**不通过** —— 公开 v1.2.8 是否覆盖 `perl`/`rg`/`fd` 的调用点没有实测。
+   上机判据见 `docs/device-verification.md` §J1/J2/J3。
+2. **门禁只覆盖我们知道的两种缺口形状**。raw `renameat2`（§8.2：DSHA 的原子发布因此直接抛 ENOENT）、
+   dirfd 相对 `linkat`（§5.P1-3：`EACCES`）**不在门禁里**；它们目前不在我们的**写入**路径上
+   （我们不做 raw syscall 的文件发布，见 §10.2 的纪律："用 libc 的 `open(O_EXCL)` + `rename`，不要用 syscall 号"），
+   但这条纪律**靠人守**，没有测试拦住。
+3. **探针不过 ≠ 没用**：`REQUIRE_TRANSLATION = true` 是 D44 的裁决（"raw 必须看到 guest 文件系统"），
+   它会让一台 proroot 其实"只是 raw 层没翻译、但日常工具都正常"的机器也**用不了 proroot**。
+   这是**故意的保守**（另一边是静默越界），但它是"收益为 0"的可能来源，值得在真机数字出来后再裁一次。
+
+### N2. proroot 的其它已知差异（记在账上，不是待办）
+
+来自 `docs/proroot-research.md` §4.4/§5，逐条都**没在真机上对过**：
+
+| 项 | 差异 | 我们的处置 |
+|---|---|---|
+| `/proc/version` | **合成**的（v1.2.3 明确） | 诊断报告不据它判断环境；`RuntimeFacts` 读的是 rootfs 内的文件 |
+| `/proc/<pid>/exe` | 伪造；**读别的进程的 exe 会返回读取者自己**（§4.4-2） | 不用它做进程身份判定（我们用 pid + starttime，见 `GuestProcessTree`） |
+| `/proc/self/maps` | 被改写成 guest 路径 | 无处置（我们不解析 maps） |
+| `/dev/dri`、`/proc/bus/pci/devices` | 被自动遮罩；`/vendor` 自动加入 | 无处置（我们不读它们） |
+| 32 位 guest | **不支持**（arm64-only） | `jniLibs` 本来只有 arm64-v8a（§2.3 已按删除处理） |
+| PTY / 信号 / 退出码 | **两套机制逐项未对比** | `PtyLauncher` 的 `script(1)` 探测仍固定走 proot，所以探测结论不受影响；终端本身在 proroot 下**未验**（§J4） |
+| `PROROOT_NO_SECCOMP` | 语义未文档化 | **不设**（`ProrootCommand` 只设文档化 + DSHA 实测过的四个） |
+| 闭源/不可审计 | 无法自行修 bug；上游重心转向 proroom | 三层兜底 + 永不默认（D44） |
+
+### N3. 已经能自动跑的验证（构建机，`applied (uncommitted)`）
+
+- `tools/typecheck.sh`：`:rpc 0 / :app 0`（本批触到的文件；`DiagnosticsReport.kt` 的 3 条 `BuildConfig`
+  未解析是**既有的假阳性**，与本批无关 —— 该文件在 `git diff` 里只有新增行，`import app.pi.BuildConfig` 那两行没被碰）。
+- `tools/check-nested-comments.py`：0 处嵌套块注释。
+- `tools/run-app-pure-checks.sh`：新增 `proroot` harness（纯逻辑：§2.3.1 映射、选择判序与 3 次边界、
+  `.proroot-config` 存活/上限判定、进程树闭包与 `/proc/<pid>/stat` 解析、门禁缓存 key、raw 探针判据解析、
+  启动 pid 句柄的真实文件驱动、共享绑定表一致性），并把 `agent-tool-paths` / `guest-tool-probe`
+  两个既有 harness 的闭包补齐（它们现在依赖 `GuestRecipe`/`RuntimeChoice`/`GuestCommandLine`/`ProrootCommand`）。
+- **没有**真机验证；`docs/device-verification.md` §J 是上机清单（含"探针不过就别开"的判据）。

@@ -76,10 +76,19 @@ fun ErrorBlock(
                     // The header above already says 出错了, so an empty message is left
                     // out rather than repeated: pi prints the sentence it was given, and
                     // nothing when there is none.
+                    //
+                    // `error`, because every error **sentence** pi prints carries that token and
+                    // none of them uses the body colour: the assistant-side error is
+                    // `theme.fg("error", `Error: ${errorMsg}`)`
+                    // (`components/assistant-message.js:153`), and the same token paints pi's
+                    // three chat-level error texts (`interactive-mode.js:2232`, `:2795`, `:3522`)
+                    // as well as the tool renderers' own error branches
+                    // (`renderers/edit.js:67`, `write.js:122`). This sentence used to be the one
+                    // error text in the app painted `text`.
                     if (item.message.isNotBlank()) {
                         ProseText(
                             text = item.message,
-                            color = palette.text,
+                            color = palette.error,
                         )
                     }
                 }

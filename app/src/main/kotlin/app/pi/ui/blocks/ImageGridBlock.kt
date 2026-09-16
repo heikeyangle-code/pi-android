@@ -14,7 +14,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -28,6 +27,7 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import app.pi.rpc.PiImage
 import app.pi.ui.theme.PiShapes
 import app.pi.ui.theme.PiTheme
@@ -239,21 +239,40 @@ private fun ImageCell(
                         Text(
                             text = "图片 ${index + 1}",
                             style = PiTheme.text.monoSmall,
-                            color = palette.muted,
+                            // The whole placeholder is pi's image **fallback** — the text a terminal
+                            // that cannot show a picture prints in its place — and pi paints that
+                            // string with `toolOutput`:
+                            //   `new Image(…, { fallbackColor: (s) => theme.fg("toolOutput", s) }, …)`
+                            // (`modes/interactive/components/tool-execution.js:307`). Both lines take
+                            // it; leaving one of them `muted` would split one label across two colours
+                            // that neither v2 nor pi draws.
+                            color = palette.toolOutput,
                         )
                         Text(
                             text = image.mimeType.ifEmpty { "image" },
-                            style = PiTheme.text.meta,
-                            // F13/F14: `dim` on a card is 2.89:1 in pi's dark theme;
-                            // `metaOnCard` is the palette's corrected meta token.
-                            color = palette.metaOnCard,
+                            // A MIME type is a machine identifier, and the placeholder above is
+                            // already in the machine face: v2 draws both halves of this label in
+                            // one monospace span (`direction-b-v2.html:854`, `className="mono
+                            // t12 c-muted"` — 「第 N 张图片<br/>image/png」). `meta` split one label
+                            // across two voices.
+                            style = PiTheme.text.monoSmall,
+                            // Same fallback token as the line above (pi's `fallbackColor`), which is
+                            // also what the derived `metaOnCard` it replaced was standing in for.
+                            color = palette.toolOutput,
                         )
                     }
                 }
                 if (overflow > 0) {
                     Text(
                         text = "+$overflow",
-                        style = MaterialTheme.typography.titleMedium,
+                        // The overflow count is a reading, and it is machine language: v2 draws it
+                        // `mono t14` (`direction-b-v2.html:855`). It used to take M3's
+                        // `titleMedium` — 17 sp of the *UI* face, i.e. the largest step on the
+                        // screen for a "+1", two families and four sizes away from the board.
+                        // The board's step is stated inline because `PiTextStyles.mono` is the
+                        // app's 13 sp machine body and this card's tile label is the one place
+                        // v2 draws the count at 14.
+                        style = PiTheme.text.mono.copy(fontSize = 14.sp, lineHeight = 20.sp),
                         color = palette.text,
                     )
                 }

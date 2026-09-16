@@ -307,7 +307,13 @@ internal object WorkspaceFiles {
     private fun oneDecimal(value: Double): String =
         String.format(Locale.US, "%.1f", value)
 
-    /** `今天 14:12` / `昨天 14:12` / `9月3日 14:12` / `2025年9月3日`。 */
+    /**
+     * `今天 14:26` / `昨天 21:04` / **`前天 18:40`** / `9月3日 14:12` / `2025年9月3日`。
+     *
+     * 「前天」这一档是稿子写死的：`workspace-final.html:908` 的
+     * `'src/session/fixtures/golden-order.txt'` 就是 `前天 18:40`。少了它，昨天以前、今年以内
+     * 的日期直接从「昨天」跳到「9月3日」，两天前与三周前读起来一样模糊。
+     */
     fun formatTime(millis: Long, now: Long = System.currentTimeMillis()): String {
         if (millis <= 0L) return "时间未知"
         val stamp = SimpleDateFormat("HH:mm", Locale.US).format(Date(millis))
@@ -317,10 +323,15 @@ internal object WorkspaceFiles {
             timeInMillis = now
             add(Calendar.DAY_OF_YEAR, -1)
         }
+        val dayBefore = Calendar.getInstance().apply {
+            timeInMillis = now
+            add(Calendar.DAY_OF_YEAR, -2)
+        }
         val sameYear = then.get(Calendar.YEAR) == today.get(Calendar.YEAR)
         return when {
             sameDay(then, today) -> "今天 $stamp"
             sameDay(then, yesterday) -> "昨天 $stamp"
+            sameDay(then, dayBefore) -> "前天 $stamp"
             sameYear -> "${then.get(Calendar.MONTH) + 1}月${then.get(Calendar.DAY_OF_MONTH)}日 $stamp"
             else -> "${then.get(Calendar.YEAR)}年${then.get(Calendar.MONTH) + 1}月" +
                 "${then.get(Calendar.DAY_OF_MONTH)}日"

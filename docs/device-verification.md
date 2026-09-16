@@ -115,12 +115,21 @@ node -e 'const j=require("/root/.pi/highlight-bridge.json");fetch("http://127.0.
 **判据**：三个 IP 都在
 **失败含义**：`RuntimeProvisioner.configureGuest()` 没跑到（它在 `ensureReady` 的「配置 DNS 与目录」那一步）。缺了它，glibc 看不见 Android 的按网络解析器，**所有域名解析都会失败而网络本身是好的**——这是 proot 用户态最迷惑的失败模式（设计文档 §13）。
 
-### A5. guest 里的运行时与工具在 PATH 上
+### A5. guest 里的运行时与工具在 PATH 上，而且**真的能跑**
 **状态**：未验
-**操作**：Shell 标签 `command -v node pi rg fd git script bash; node -v; pi --version`
-**预期**：七个 `command -v` 都有输出；`node -v` 是 v24.x；`pi --version` 是 `0.85.1`
-**判据**：`pi --version` 打印版本号，不是 `command not found`
-**失败含义**：按缺哪个分头查——`node` 缺 → `RuntimeProvisioner.extractNode` 的符号链接（`/usr/local/bin/node` → `/opt/node/bin/node`）；`pi` 缺 → `extractEngine` 没找到 `dist/cli.js`（载荷里没有引擎）；`rg`/`fd` 缺 → `installTool`，且注意**两份目录都要有**：`PiPaths.agentBinDir` 与 `PiPaths.rootfsAgentBinDir`，缺一份就是"某一条启动路径上静默失效"；`git` 缺 → `installGit`；`script` 缺 → 见 C1。
+**操作**：Shell 标签
+```bash
+command -v node pi rg fd git script bash; node -v; pi --version
+# 「在 PATH 上」不等于「能跑」：下面这四条是真实调用，不是看文件是否存在
+rg --version; fd --version
+rg -N '^root' /etc/passwd
+fd -H '^passwd$' /etc
+```
+**预期**：七个 `command -v` 都有输出；`node -v` 是 v24.x；`pi --version` 是 `0.85.1`；`rg --version` / `fd --version` 各打印一行版本；两条搜索各有一行命中（`root:…` 与 `/etc/passwd`）
+**判据**：`pi --version` 打印版本号，不是 `command not found`；**`rg --version` 与 `fd --version` 退出码都是 0 且输出非空**；**两条搜索退出码都是 0 且输出非空**。只满足 `command -v` 不算通过
+**失败含义**：按缺哪个分头查——`node` 缺 → `RuntimeProvisioner.extractNode` 的符号链接（`/usr/local/bin/node` → `/opt/node/bin/node`）；`pi` 缺 → `extractEngine` 没找到 `dist/cli.js`（载荷里没有引擎）；`git` 缺 → `installGit`；`script` 缺 → 见 C1。
+`rg`/`fd` 要分三种形状看：① `command -v` 也没有 → 没装（`installTool`）；② `command -v` 有、`--version` 退出码 127 / `No such file or directory` → **软链悬空**（`/usr/local/bin/<tool>` 指向 guest 的 `/root/.pi/agent/bin/<tool>`，而那一份被 agent 目录的 bind 遮蔽了——`known-gaps` §K2 记录的真实断链）；③ `--version` 好但**搜索**读不到 guest 文件（ENOENT / 输出为空）→ 二进制本身能 exec，坏的是它读到的路径，属于"路径翻译"那一层的问题，不是安装问题。无论哪种，**两份目录都必须在**：`PiPaths.agentBinDir()` 与 `PiPaths.rootfsAgentBinDir()`，缺一份就是"某一条启动路径上静默失效"。
+> **这一条有自动版**：`设置 → 运行时与诊断 → 导出诊断报告` 的「工具链自检（真调用）」一节会跑同样的调用并逐条报 ✓/✗（`runtime/GuestToolProbe.kt` + `ui/settings/DiagnosticsReport.kt`，超时 20 秒）。本条目是它的上机对照，仍然要跑——自动版只覆盖终端那条解析路径（不带 agent 目录的 bind）。
 
 ### A6. 引擎真的 unpack 了
 **状态**：未验
@@ -167,6 +176,43 @@ cd /tmp && echo hi > a && ln a b && ls -li a b && cat b
 **预期**：`apt-get update` 打印 `Get:` / `Hit:` 行，不出现 `Temporary failure resolving`
 **判据**：至少一个源成功
 **失败含义**：A4（resolv.conf）或设备本身无网。`apt-get` 的源是载荷里就有的（ubuntu-base 的 `/etc/apt/sources.list`），除非被 wipe 掉。
+
+### B4. 去掉 `--link2symlink` 的实验（**只能由出包方跑**；六条全过就把 l2s 那一整类隐患销账）
+
+> **proroot 落地之后先看这一句**：下面六条是 **proot 专属**的对照实验，**不要**把它推广到 proroot ——
+> proroot 下这个 flag **同样必须带**（去掉即 `link()` `EACCES`，`docs/proroot-research.md` §5.P1-3），
+> 区别只是 proot 用它做**符号链模拟**、proroot 给出**真硬链接**（同 inode、写穿透）。
+> 也就是说：这次实验最多能把 **proot 侧**的 l2s 隐患销账，proroot 侧要单独验（§J）。
+> 反过来，**`PiRuntime.kt`/`ProrootCommand.kt` 里这个 flag 两边都留着**是当前裁决，见 `07-construction-decisions.md` D44。
+**状态**：未验 —— **本构建容器跑不了**：`aapt2` 只有 x86-64 版本、容器是 aarch64，打不出 APK，所以这一条要出包方带一个改了 argv 的 **debug 包**上机。
+**为什么要试**：`docs/proroot-research.md` §5.P1-3 在本机实测到 **proroot 下的 `--link2symlink` 给的是真硬链接**（同 inode / `nlink=2` / 写穿透），而 proot 给的是 `.l2s` 符号链模拟 —— `--link2symlink` 正是 `.l2s` 那一整类隐患的根源（悬空链、`tar` 撞 ELOOP、dpkg 备份链接 ENOENT；五条待办见 `07` D42）。**但 proroot 与 proot 是两个实现**，那一份实测不能直接推断本 App 用的这一套，只能上机量。
+**准备**（只改一处，且只在 debug 包里）：
+1. `runtime/PiRuntime.kt` 的 proot argv 去掉 `--link2symlink`（`:210` `argv += "--link2symlink"`）。
+2. 同文件的 `PROOT_L2S_DIR`（`:259` `put("PROOT_L2S_DIR", paths.l2s.path)`）与那条把它绑回自身绝对路径的 `-b`（`:216` `argv += listOf("-b", "${paths.l2s.path}:${paths.l2s.path}")`）一并注释掉 —— 这个 store 只为该 flag 存在，留着既没用又会误导下一个人。
+3. 打 debug APK。其它什么都不要动；`PiPaths.l2s`（`:110`）的 `mkdirs()` 留着无害（它只是建个空目录）。
+**操作**（App `工作区 → 终端 → Shell` 逐条跑。① 之前先清干净探针目录，否则复用会把 `EEXIST` 误读成失败）：
+```bash
+# ① 硬链接本身
+mkdir -p /root/hl && echo hi > /root/hl/a && ln /root/hl/a /root/hl/b && stat -c '%h %i %F' /root/hl/a /root/hl/b
+# ② 写穿透
+echo two > /root/hl/b && cat /root/hl/a
+# ③ 跨文件系统：必须 EINVAL，且**不回退**成拷贝
+ln /root/hl/a /sdcard/hl-test
+# ④ dpkg 的备份链接（历史上真正炸过的那条）
+apt-get install --reinstall -y ca-certificates
+# ⑤ npm 的 link+unlink 缓存路径
+npm install --prefix /root/.pi/agent/npm --no-audit --no-fund is-number
+# ⑥ git 的硬链接与 gc
+git init /root/g && cd /root/g && echo x > f && git add . && git commit -m t && git gc
+```
+**两个计数**（跑前、跑后各一次；`<rootfs>` 见 §0.2 的路径对照表 = `<files>/pi/runtime/rootfs`）：
+```bash
+ls <rootfs>/.l2s | wc -l
+```
+**预期**：① `nlink=2`、两个 inode 相同、`%F` 都是 `regular file`；② 打印 `two`；③ 报 `Invalid cross-device link`（EINVAL）**且没有文件被创建**（不回退成拷贝或符号链）；④ 走到 `Setting up ca-certificates …`、退出码 0、**不出现** `unable to make backup link of './usr/...' before installing new version: No such file or directory`；⑤ 退出码 0；⑥ 四条命令退出码都是 0，`git gc` 不报错。
+**判据**：六条全过 **且 `.l2s` 计数前后不变**（不再增长 = 这个 flag 的痕迹彻底消失），**且下面那组对照能复现现状** → 去掉 flag，并删掉 `.l2s` 整套管道（argv 那一行、`PROOT_L2S_DIR`、`-b`、`PiPaths.l2s`、以及 A3 这条验单），把 `07` D42 的五条 l2s 待办销账。
+**对照**（必做，否则"六条全过"也可能是探针没打中）：把 `--link2symlink` 加回去（`PROOT_L2S_DIR` 与 `-b` 一起恢复），重跑 ① —— 应看到 `nlink=1` 且 `%F` 是 `symbolic link`，也就是现状。
+**失败含义**：④ 或 ⑥ 失败（dpkg/git 报 ENOENT、ELOOP 或权限错）→ **保留 flag，实验作废且零损失** —— 对照那一步顺手验证了现状是好的，这一条不产生任何待修项。只有 ③ 失败（跨文件系统时回退成了拷贝）另判：那是"少了安全性"而不是"少了功能"，**不要**算作通过。
 
 ---
 
@@ -499,7 +545,30 @@ ls -l /root/.pi/highlight-bridge.json /root/.pi/agent/highlight-bridge.json 2>&1
 
 ## I. 转录渲染窗口（F34；`ui/screens/ChatScreen.kt`）
 
-> 这两条来自 F34 的实现（`applied (uncommitted)`），**写清单时只读了代码，没有在设备上跑过**。两条都是"看起来对但没人看过"的假设，而且失败时用户会直接看到。
+> 这三条来自 F34 与「大会话打开」这两批实现（`applied (uncommitted)`），**写清单时只读了代码，没有在设备上跑过**（I0 的纯逻辑侧例外：`session-replay-cost` harness 已经跑绿，并且**顺手量出了那个 `readBefore` 的早停 bug**）。三条都是"看起来对但没人看过"的假设，而且失败时用户会直接看到。
+
+### I0. 大会话 / 带图片的会话**能打开**，而且首屏代价不随历史增长
+**状态**：未验
+**为什么要单列**：这一条修的正是用户报的两个现象 ——「两张图片就进不去聊天历史」和「纯文本的旧会话也要一两秒」。根因是打开会话走 `get_entries`，pi 没有分页（`modes/rpc/rpc-mode.ts:638-648`），整条会话塞在**一条** JSONL 记录里，所以代价是 O(全部历史)，而且**超过 `JsonlFramer.DEFAULT_MAX_RECORD_CHARS`（8 MiB）时整条记录被丢弃** —— 那不是"慢"，是什么都没有。现在打开走 `SessionFileReader.readTail`（读那条会话文件本身，固定字符预算），往上滚走 `readBefore`。**纯逻辑侧已由 `session-replay-cost` harness 钉住**（窗口化读取与全文件读取逐条等价），本条目是它的上机对照。
+**操作**：
+```bash
+# 造一条"图片超标"的会话：在会话里连发两张照片（手机截图各约 2~3 MB），退出聊天，再从会话列表点进去
+# 造一条"很长"的会话：pi 里连问 40 轮以上，或直接用一条已有的长会话
+```
+1. 点进那条**含两张照片**的会话；
+2. 点进那条**很长**的会话，数第一帧出现的时间；
+3. 在长会话里一路往上滚，或点顶部「加载更早的 N 条」，连点 3 次；
+4. 打开**会话树**覆盖层（树/分支那个入口），看它的条目数；
+5. 用一条**混合类型**的会话（含 compaction / branch summary / 模型切换 / 思考等级切换 / 图片）逐条扫一遍。
+**预期**：① 含两张照片的会话**能打开**，直接看到最后几条（不再空白、不再卡在加载）；② 长会话第一帧很快出现，**而且时间与历史长度无关**（一条 1 MB 的会话和一条 20 MB 的会话，首屏感觉应当差不多）；③ 上滚能逐段把更早的内容接上，不重复、不跳号、不闪；④ 树覆盖层的条目数与 pi 侧（终端里 `/export` 或直接数 `.jsonl` 的非 header 行数）**一致**；⑤ 13 种块都在，没有哪一种因为窗口化读取而消失。
+**判据**：① 是关键项 —— 之前是**必然失败**，所以"能看到"就有信息量；② 不要求某个具体毫秒数（本容器量不了手机的引擎往返），要求的是**比较**：给同一条会话加长 10 倍，首屏时间不跟着长 10 倍；③ 顶部「…N 条」计数逐次变小，`reachedStart` 到了以后那一行消失；④⑤ 逐条对照。
+**失败含义**：按形状分——
+- **①仍然打不开** → `replayHistory` 的磁盘分支没走通（`resolveSessionFile()` 返回 null，或 `readTail` 返回 null / `complete=false`），于是回落到 `replayHistoryOverRpc` 那条老路，而它在 8 MiB 上仍然是丢弃。看日志里的责任符号是 `readTail` / `complete` / `resolveSessionFile`。
+- **②仍然随历史变慢** → 窗口预算没生效：`HISTORY_WINDOW_CHARS`（8 MiB）/ `HISTORY_WINDOW_ENTRIES`（4000）在这条会话上等于"整条"，或者 `seedHistory` 之后又做了一次全量投影。
+- **③上滚接不上 / 早停** → `readBefore` 的 `reachedStart`：这条改动之前它只看"是否读到字节 0"，**不看这一窗口有没有截留**（`capped` = 条目上限截断、`budgetStopped` = 字符预算截断）。后果正是"往上滚一次就声称没有更早的历史"，而 `session-replay-cost` 的 `mixed` 夹具实测到 14 条只走回 2 条。责任符号：`SessionFileReader.readBefore` 的 `reachedStart`。
+- **③重复条目** → 边界偏移算错：`readRange` 的 `firstOffset`（窗口起点必须落在**行首**，否则下一个窗口会再交付一次同一行）。
+- **④树覆盖层缺条目** → 那是另一条读路径（`SessionFileReader.readEntries`，流式扫描 + 逐条 `sanitize`），它**故意**在遇到超长行时返回 false 让调用方回落 `get_entries`；返回 false 却被当成"扫完了"就会少条目。
+- **⑤某种块消失** → 窗口化读取漏了该类型，或 `Window.complete=false` 时的回落没接上。`session-replay-cost` 的 `mixed` 夹具列了全部 14 种（含一个"更新版 pi 才会有的"未知类型，未知类型必须保留）。
 
 ### I1. 点「加载更早」时滚动位置**不动**（前插保锚点）
 **状态**：未验
@@ -514,6 +583,121 @@ ls -l /root/.pi/highlight-bridge.json /root/.pi/agent/highlight-bridge.json 2>&1
 **预期**：目标行**先被渲染出来**（窗口自动扩展，顶部「加载更早的 N 条」计数随之变化），**然后**平滑滚到它；最终目标行在视口里
 **判据**：目标行真的可见（不是停在原地、不是滚到列表末尾）；搜索那条还要**带 `searchMatchBg` 高亮 + 当前命中的反色加粗**
 **失败含义**：`ChatScreen.kt` 的两阶段跳转 —— `reveal(row)`（按 `visibleItems.size - row` 扩 `renderWindow`）与随后消费 `pendingJump` 的 `LaunchedEffect`（`index = row - hiddenCount + headerRows`）。只扩窗不滚 → `pendingJump` 没被消费（effect 的 key 或 `index in 0 until renderedItems.size + headerRows` 这个越界条件不满足）；滚到**错的行** → 索引换算（`hiddenCount` / `headerRows`）错了；高亮错行 → `searchMatches`（全表索引）与 `index = sliceIndex + hiddenCount` 不一致。
+
+---
+
+## J. proroot 可选运行时（D44；`runtime/**` + `ui/settings/**`）
+
+> 这一段来自 D44 的落地（`applied (uncommitted)`）：**代码与纯逻辑测试在构建机上跑过，真机一次都没跑过**。
+> 这一节能验的东西比别处多，因为 proroot 的失败模式是**静默**的（`docs/proroot-research.md` §5.P0-2：raw syscall
+> 读到的是宿主文件，没有任何报错），所以"看起来能用"不算通过。**顺序别换：先在 J0 关闭状态下确认一切照旧，再开开关。**
+
+**J0. 默认关等于完全没接（回归）**
+**状态**：未验
+**操作**：装好后**不动**设置，正常聊天、开一次终端、装一次包（`设置 → 扩展`）
+**预期**：与引入 proroot 之前**逐字节一致**：引擎、终端、装包都走 proot
+**判据**：`设置 → 运行时与诊断` 的摘要行是「运行时：未开启（走 proot） · 保活：…」；
+`设置 → 运行时与诊断 → 运行时（实际生效）` = 「未开启（走 proot）」；
+导出诊断报告里「运行时选择」段的 `实际生效：Proot`，`proroot 探针：尚未运行`
+**失败含义**：`RuntimePreferences` 默认值被改成 true，或 `AppOnlySettingsStore` 把开关写进了 pi 的
+`settings.json`（去 guest 里 `cat /root/.pi/agent/settings.json` 看有没有 `app.runtime.proroot` —— **不该有**）。
+
+**J1. 打开开关 → 第一次使用时跑探针 → 只有两条都过才真的走 proroot**
+**状态**：未验
+**操作**：① 设置 →「运行时加速（实验性）」打开（此时出现「需重启引擎」徽标）；② 回聊天页，用
+`设置 →「重启引擎」` 重启；③ 打开一次**终端**（或发一条消息触发引擎启动）；④ 等几秒，再看
+`设置 →「运行时（实际生效）」`，⑤ 导出诊断报告
+**预期**：第一次真正启动 guest 之前，guest 里会跑一次探针（raw syscall + `rg`/`fd` 真调用），
+结果被缓存到 `<files>/pi/runtime/.proroot-probe`
+**判据**：
+- **走 proroot 的成功形态**：`运行时（实际生效）` = 「proroot 正在使用」；报告「运行时选择」段
+  `proroot 探针：已通过（缓存）`，且下面三行形如 `guestpath=translated`、`passwd=translated`；
+  「工具链自检（真调用）」那一段写着「本次通过 Proroot 调用」且 rg/fd 两条 ✓
+- **探针不过（很可能就是这台机器的结果）**：`运行时（实际生效）` = 「已回退 proot：探针未通过」，
+  报告里 `guestpath=untranslated（errno=2）` 或 `passwd=leaked`。**这时不要试图绕过**：
+  `untranslated` 意味着 raw/inline svc 调用看不到 guest 文件系统，`leaked` 意味着它**静默读到了宿主文件** ——
+  后者是否决级，前者按 D44 的裁决也不允许启用。**探针不过就别开**：关掉开关即可回到 proot
+**失败含义**：探针结论不落盘 → `ProrootProbeCache` 的 key（revision + 5 个 `.so` 的 sha256）或
+`PiPaths.prorootProbeCache()` 的位置不对；探针每次都重跑 → 缓存没写成功（`<files>/pi/runtime` 权限或 `wipe()` 时序）；
+开关打开但没有任何探针痕迹 → `RuntimeSelection.plan` 没被调用（`allowProroot` 传错，或调用点还在直接用 `ProotCommand`）。
+
+**J2. raw syscall 探针**（单独看，因为它可能独立于 rg/fd 失败）
+**状态**：未验
+**操作**：同上 J1③，或直接在终端里跑（把 `<files>` 换成 `/data/user/0/app.pi/files`）：
+```
+perl -e 'my $fd = syscall(56, -100, "/etc/passwd", 0, 0); print "raw fd=$fd errno=$!
+";'
+```
+（在 proroot 下打开终端才会走 proroot；proot 终端里跑这条永远成功，因为它用 ptrace 拦所有 syscall）
+**预期**：这条**故意**不通过 libc 的 `open` —— 它测的是"绕过 libc 的 syscall 有没有被翻译"
+**判据**：**能读到 guest 的 `/etc/passwd`**（例如 `head -1` 是 `root:x:0:0:root:/root:/bin/bash`）
+= 翻译成功；**报 ENOENT** = 没翻译（看不到 guest 文件系统，按 D44 不开 proroot）；
+**成功但内容是宿主 Android 的** `/etc/passwd`（`/` 结尾是 `/system/bin/sh`、home 不是 `/root`）= **静默越界，否决级**，
+立刻关开关并把这个输出贴进 `docs/known-gaps.md` §N1
+**失败含义**：探针本身没跑起来（guest 里没有 `perl`？`command -v perl` 确认）—— 那种情况门禁判 **未通过**，
+不会静默放行（`ProrootRawProbe.parse` 的 `interpreter` 分支）。
+
+**J3. `rg`/`fd` 在 proroot 下的真调用**
+**状态**：未验
+**操作**：proroot 引擎起来后，在聊天里让 pi 用 `find`/`grep` 工具各搜一次（或终端里 `rg -N '^root' /etc/passwd`、`fd -H '^passwd$' /etc`）
+**预期**：两者都返回结果，且**读的是 guest 的文件**
+**判据**：`fd -H . /var/lib/dpkg | head` **非空**（`/var/lib/dpkg` 只在 guest 里有）；
+若报 ENOENT 或列空 → **否决级**：`rg`/`fd` 是 **musl 静态** Rust 二进制，proroot 的 `--static-loader`
++ inline `svc` 改写没覆盖到它们，而 pi 的 `find`/`grep` 工具与 `@` 提及**全靠它们**（静默变空）
+**失败含义**：`ProrootCommand` 没带 `--static-loader`（或没给 `PROROOT_STUB_LOADER`）→ 静态二进制没兜住；
+或探针门禁被绕过（它本该先拦住）。关开关，记账。
+
+**J4. proroot 下停止 = 整棵 guest 树真的没了**（`--kill-on-exit` 的替代）
+**状态**：未验
+**操作**：proroot 引擎运行中，让引擎起一个长时间命令（聊天里让 pi 跑 `sleep 600 &`，或终端里 `sleep 600 &`），
+然后① 在终端页按返回关掉终端 ② 用 `设置 → 重启引擎`；每次之后在**设备 shell**（不是 guest 终端）里看：
+```
+ps -A | grep -E "proroot|node|sleep" | grep -v grep
+```
+**预期**：那次启动的 `libproroot.so`、`bash`、`node`、`sleep` 全部消失
+**判据**：`ps -A` 里没有**本次**那棵树留下的进程；`ls <files>/pi/runtime/proroot-tmp` 里**没有**刚停止那次的
+`.proroot-config-<pid>`（停止时就该被删掉）
+**失败含义**：`GuestTreeReaper` 没跑（`PtySession.close` 的 engine 判断 / `GuestCommand` 的超时分支），
+或者拿不到 launcher pid（`ProrootLaunchHandle.resolveLauncherPid` 超时 → `lastError`/stderr 里会写
+「拿不到 proroot 的 launcher pid」）。**注意**：`Process.pid()` 在本项目不可用，pid 只能来自 proroot 自己的表名，
+所以这条一旦失败，症状就是"进程泄漏"而不是"报错"。
+
+**J5. `.proroot-config-*` 的存活清理与上限**
+**状态**：未验
+**操作**：proroot 下反复重启引擎/开终端 10 次以上，然后
+```
+ls -la <files>/pi/runtime/proroot-tmp/ | wc -l
+```
+再制造一次"死文件"：手工造一份 `touch <files>/pi/runtime/proroot-tmp/.proroot-config-999999`（一个不存在的 pid），
+然后**再启动一次 proroot**（重启引擎），看它有没有被删
+**预期**：每次 proroot 启动前扫一遍：**只删 `/proc/<pid>` 不存在的**；活着的一次都不删；份数不超过 32
+**判据**：`.proroot-config-999999` 消失了；同时**正在跑的**引擎/终端那两份仍在；总数 ≤ 32；
+`logcat -s PiRuntimeSelection` 里能看到 `清理了 N 份属主进程已不存在的 .proroot-config 文件`，
+超过 32 时还能看到那条 cap 日志
+**失败含义**：存活判定写成了"除了我全删"（会**拆掉正在工作的 guest**，比不清理更糟）；或上限没生效（`ProrootConfigSweep.DEFAULT_LIMIT`）；
+或 `PROROOT_TMP_DIR` 没指到 `<files>/pi/runtime/proroot-tmp`（那清理扫的是别的目录）。
+
+**J6. 三层兜底的第三层：连续 3 次失败后强制回退（并且告知）**
+**状态**：未验（**需要一个"能失败的 proroot"**：例如把 `<nativeLibDir>/libproroot-runtime.so` 临时改名 —
+`nativeLibraryDir` 是只读的，所以更现实的做法是**在 debug 构建里**让 `RuntimeChoice.decide` 的 `probePassed` 恒为 false，
+或在 guest 里把 `PROROOT_TMP_DIR` 指到一个不可写目录）
+**操作**：让 proroot 连续启动失败 3 次（例如连开 3 次终端），第 4 次再开
+**预期**：前 3 次逐次计数；第 3 次之后**强制 proot**
+**判据**：`设置 → 运行时（实际生效）` = 「已回退 proot：连续 3 次启动失败」；
+重新**关掉再打开**开关后回到「已回退 proot：探针尚未运行」（计数清零）；
+`logcat -s PiRuntimeSelection` 有 3 条 `proroot 启动失败（n/3）` 与那条「强制回退 proot」的 W 级日志
+**失败含义**：计数没持久化（`RuntimePreferences.prorootFailures`）→ App 重启后计数归零、永远到不了 3；
+或计数在成功启动时没清零（把 `recordProrootSuccess` 漏了）→ 偶发失败累积成永久回退。
+
+**J7. 引擎/终端/装包**三条都真的走 proroot**（不是只有一条）
+**状态**：未验
+**操作**：proroot 生效（J1 通过）后，分别：① 发一条消息（引擎）② 开终端跑 `id`
+③ `设置 → 扩展` 装一个小包（`pi install npm:…`）
+**预期**：三条都走 proroot —— 这正是用户要求的「别让 proroot 只在边角用」
+**判据**：每条期间在设备 shell 里 `ps -A | grep libproroot` **都能看到** `libproroot.so`；
+若只有终端有、引擎没有 → `PiEngineHost` 还在用 `ProotCommand`（或 `allowProroot=false` 传错了）
+**失败含义**：调用点漏改。逐个查 `engine/PiEngineHost.kt`、`runtime/PtyLauncher.kt`、`packages/GuestCommand.kt`
+是否都走 `RuntimeSelection.plan(...)`。
 
 ---
 

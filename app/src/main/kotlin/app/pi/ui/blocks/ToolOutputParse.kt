@@ -723,40 +723,72 @@ internal fun readRange(args: JsonObject?): String {
 }
 
 /**
- * The part of pi's `grep` call line after the tool name (`renderers/grep.ts:17-35`):
+ * The part of pi's `grep` call line after the tool name (`renderers/grep.js:16-27`):
  * `/pattern/ in path`, then ` (glob)` and ` limit N` when the call carried them.
  *
- * pi shortens the path for display (`shortenPath(rawPath || ".")`, `:23`); this app shows
+ * Returned as pi's own runs, because pi paints them with **two** tokens
+ * (`renderers/grep.js:19-26`):
+ *
+ * ```js
+ * let text = theme.fg("toolTitle", theme.bold("grep")) +
+ *     " " +
+ *     (pattern === null ? invalidArg : theme.fg("accent", `/${pattern || ""}/`)) +
+ *     theme.fg("toolOutput", ` in ${path === null ? invalidArg : path}`);
+ * if (glob) text += theme.fg("toolOutput", ` (${glob})`);
+ * if (limit !== undefined) text += theme.fg("toolOutput", ` limit ${limit}`);
+ * ```
+ *
+ * so the pattern is `accent` and everything after it — the ` in <path>`, the glob and the
+ * limit — is `toolOutput`. The text and its order are unchanged.
+ *
+ * pi shortens the path for display (`shortenPath(rawPath || ".")`, `:20`); this app shows
  * the argument as it was sent, with pi's own `"."` fallback for an absent path.
  */
-internal fun grepSubject(args: JsonObject?): String {
+internal fun grepSubject(args: JsonObject?): List<ToolCallPart> = buildList {
     val pattern = argString(args, "pattern").orEmpty()
     val path = argString(args, "path")?.takeIf { it.isNotEmpty() } ?: "."
-    var text = "/$pattern/ in $path"
-    argString(args, "glob")?.let { text += " ($it)" }
-    argInt(args, "limit")?.let { text += " limit $it" }
-    return text
+    add(ToolCallPart("/$pattern/", ToolCallToken.Accent))
+    add(ToolCallPart(" in $path", ToolCallToken.ToolOutput))
+    argString(args, "glob")?.let { add(ToolCallPart(" ($it)", ToolCallToken.ToolOutput)) }
+    argInt(args, "limit")?.let { add(ToolCallPart(" limit $it", ToolCallToken.ToolOutput)) }
 }
 
 /**
- * The part of pi's `find` call line after the tool name (`renderers/find.ts:17-32`):
+ * The part of pi's `find` call line after the tool name (`renderers/find.js:15-25`):
  * `<pattern> in <path>`, then ` (limit N)` when the call carried one.
+ *
+ * pi's own runs (`renderers/find.js:18-24`) — the pattern in `accent`, then ` in <path>` and
+ * the limit in `toolOutput`:
+ *
+ * ```js
+ * let text = theme.fg("toolTitle", theme.bold("find")) +
+ *     " " +
+ *     (pattern === null ? invalidArg : theme.fg("accent", pattern || "")) +
+ *     theme.fg("toolOutput", ` in ${path === null ? invalidArg : path}`);
+ * if (limit !== undefined) { text += theme.fg("toolOutput", ` (limit ${limit})`); }
+ * ```
  */
-internal fun findSubject(args: JsonObject?): String {
+internal fun findSubject(args: JsonObject?): List<ToolCallPart> = buildList {
     val pattern = argString(args, "pattern").orEmpty()
     val path = argString(args, "path")?.takeIf { it.isNotEmpty() } ?: "."
-    var text = "$pattern in $path"
-    argInt(args, "limit")?.let { text += " (limit $it)" }
-    return text
+    add(ToolCallPart(pattern, ToolCallToken.Accent))
+    add(ToolCallPart(" in $path", ToolCallToken.ToolOutput))
+    argInt(args, "limit")?.let { add(ToolCallPart(" (limit $it)", ToolCallToken.ToolOutput)) }
 }
 
 /**
- * The part of pi's `ls` call line after the tool name (`renderers/ls.ts:17-25`): the path
- * (pi's `renderToolPath(..., { emptyFallback: "." })`) and ` (limit N)`.
+ * The part of pi's `ls` call line after the tool name (`renderers/ls.js:12-19`): the path
+ * (pi's `renderToolPath(..., { emptyFallback: "." })`, i.e. `accent`) and ` (limit N)` in
+ * `toolOutput`:
+ *
+ * ```js
+ * const pathDisplay = renderToolPath(str(args?.path), theme, cwd, { emptyFallback: "." });
+ * let text = `${theme.fg("toolTitle", theme.bold("ls"))} ${pathDisplay}`;
+ * if (limit !== undefined) { text += theme.fg("toolOutput", ` (limit ${limit})`); }
+ * ```
  */
-internal fun lsSubject(args: JsonObject?): String {
+internal fun lsSubject(args: JsonObject?): List<ToolCallPart> = buildList {
     val path = argString(args, "path")?.takeIf { it.isNotEmpty() } ?: "."
-    var text = path
-    argInt(args, "limit")?.let { text += " (limit $it)" }
-    return text
+    add(ToolCallPart(path, ToolCallToken.Accent))
+    argInt(args, "limit")?.let { add(ToolCallPart(" (limit $it)", ToolCallToken.ToolOutput)) }
 }

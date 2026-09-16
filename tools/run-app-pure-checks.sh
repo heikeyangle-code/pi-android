@@ -347,6 +347,39 @@ run_harness sessions \
   "$ROOT/rpc/src/main/kotlin/app/pi/rpc/PiJson.kt" \
   "$ROOT/rpc/src/main/kotlin/app/pi/rpc/internal/Json.kt"
 
+# app.pi.session: the open-a-session cost, and the equivalence the new replay source
+# rests on. Registered here for the two reasons the other harnesses are: the numbers
+# in the change report have to be reproducible (`kotlinc` + a JVM, no device and no
+# Node), and **`SessionFileReader` may not become a second source of truth for a
+# session** — so the harness asserts that walking a session file backwards in
+# bounded windows reproduces the whole file's entries exactly, and that the rows
+# projected from that windowed replay equal the rows projected from a single
+# whole-session replay. It also prints what actually pushes a `get_entries` response
+# past the framer's 8 MiB cap (inline base64 images) and what the same work costs on
+# a tail window instead of on the whole session.
+#
+# `SessionFileReader` is Android-free by construction (java.io + kotlinx.serialization
+# through `:rpc`'s `PiJson`); if it ever grows an Android import, this compile fails,
+# which is the point. `SessionFileScan` is deliberately **not** in this closure: the
+# replay reader counts bytes per line, which that scanner cannot report, so it has
+# its own LF loop and the two are compared by the `sessions` harness's fixtures.
+run_harness session-replay-cost \
+  app.pi.session.SessionReplayCostCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/session/SessionReplayCostCheck.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/session/SessionFileReader.kt" \
+  "$ROOT/rpc/src/main/kotlin/app/pi/rpc/PiJson.kt" \
+  "$ROOT/rpc/src/main/kotlin/app/pi/rpc/Jsonl.kt" \
+  "$ROOT/rpc/src/main/kotlin/app/pi/rpc/internal/Json.kt" \
+  "$ROOT/rpc/src/main/kotlin/app/pi/rpc/Transcript.kt" \
+  "$ROOT/rpc/src/main/kotlin/app/pi/rpc/Events.kt" \
+  "$ROOT/rpc/src/main/kotlin/app/pi/rpc/Messages.kt" \
+  "$ROOT/rpc/src/main/kotlin/app/pi/rpc/Ansi.kt" \
+  "$ROOT/rpc/src/main/kotlin/app/pi/rpc/ExtensionErrorText.kt" \
+  "$ROOT/rpc/src/main/kotlin/app/pi/rpc/Responses.kt" \
+  "$ROOT/rpc/src/main/kotlin/app/pi/rpc/Commands.kt" \
+  "$ROOT/rpc/src/main/kotlin/app/pi/rpc/SessionEntries.kt" \
+  "$ROOT/rpc/src/main/kotlin/app/pi/rpc/SkillBlock.kt"
+
 # :rpc: `extension_error`'s attribution. pi sends an absolute file path, which may
 # not reach user-visible copy, and most packaged extensions are loaded from
 # `index.ts` — so the naive "last path segment" names every broken extension
@@ -497,7 +530,8 @@ run_harness engine-exit-cause \
 run_harness tool-output-parse \
   app.pi.ui.blocks.ToolOutputParseCheckKt \
   "$ROOT/app/src/test/kotlin/app/pi/ui/blocks/ToolOutputParseCheck.kt" \
-  "$ROOT/app/src/main/kotlin/app/pi/ui/blocks/ToolOutputParse.kt"
+  "$ROOT/app/src/main/kotlin/app/pi/ui/blocks/ToolOutputParse.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/ui/blocks/ToolCallPart.kt"
 
 # --- 4. verdict ---------------------------------------------------------------
 # The counts are computed, not written down. They were hardcoded once ("2

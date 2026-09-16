@@ -451,7 +451,19 @@ private fun piTypography(textScaleDelta: Int = 0): Typography {
             fontSize = 12.sp, lineHeight = 16.sp, fontWeight = FontWeight.Medium,
         ).shift(),
         labelSmall = base.labelSmall.copy(
-            fontSize = 11.5.sp, lineHeight = 16.sp, fontWeight = FontWeight.Normal,
+            // B7's 同类收尾 (final font audit): this slot was the last 11.5 sp step in the app.
+            // B7 raised `meta`/`monoSmall` off 11.5 sp for exactly this reason — it is under the
+            // spec's own floor, `01-design-spec.md` §2 「正文 ≥14px、标签/注释 ≥12px」 — and left
+            // this one behind because it is reached through M3's slot rather than through
+            // `PiTextStyles`. It is **this app's** number, not M3's: the line below overrides the
+            // framework's default (11 sp Medium) with an explicit size, so the floor is ours to
+            // keep. `06 §2` 字号 5 档 (12/13/14/15/17) has no 11.5 either.
+            //
+            // Leading stays 16, which is M3's own leading for this slot and the pairing
+            // `labelMedium` already uses (12/16) — only the size was off the floor. `meta` and
+            // `monoSmall` are the app's 12/18 roles; a badge drawn at 16 keeps its row height and
+            // this is a badge/label slot, not a body one.
+            fontSize = 12.sp, lineHeight = 16.sp, fontWeight = FontWeight.Normal,
         ).shift(),
     )
 }

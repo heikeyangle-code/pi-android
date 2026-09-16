@@ -67,7 +67,10 @@
 
 **执行轨道**：左内边距 26；竖线 `left 9`、宽 1px、上下各缩进 16；节点 `17×17` 圆、`left 1 / top 8`，描边 1px 状态色 45%，字形 12 等宽居中。
 
-**工具卡**：圆角 10，描边 1px 状态色 35%，底色 pending/success/error 三档；标题行 `padding:7px 10px` gap 7（工具名 12 muted、主体 12 正文、右读数 12 muted tab、chevron 14）；正文 13/19；页脚 `padding:0 10px 8px` gap 6（状态字形 + 状态词 + 右侧耗时刻度）。**块间距 8**。
+**工具卡**：圆角 10，描边 1px 状态色 35%，底色 pending/success/error 三档；标题行 `padding:7px 10px` gap 7（工具名 12 `toolTitle`+粗体、主体 12 **按 pi 分段取色**、右读数 12 muted tab、chevron 14）；正文 13/19；页脚 `padding:0 10px 8px` gap 6（状态字形 + 状态词 + 右侧耗时刻度）。**块间距 8**。
+> 标题行的两半都不是 v2 原型的取色，按用户裁决「全修的一致」以 pi 的语义为准：
+> **工具名**用 `toolTitle` + 粗体（每个内置渲染器都这么画它的名字，`core/tools/renderers/bash.js:31`、`read.js:27`、`write.js:90`、`edit.js:53`；卡壳的回退头在 `modes/interactive/components/tool-execution.js:91`、`:316`）；
+> **主体**按每个渲染器自己的 `theme.fg(...)` 分段——`read`/`write`/`edit`/`ls` 的路径 = `accent`（`core/tools/render-utils.js:57-63` 的 `renderToolPath`）、`read` 的 `:1-50` = `warning`（`read.js:19-23`）、`grep`/`find` 的 pattern = `accent` 而 ` in <path>` / `(glob)` / `(limit N)` = `toolOutput`（`grep.js:19-26`、`find.js:18-24`）、`bash`/`powershell` 的整行 `$ command` = `toolTitle`+粗体（`bash.js:26-32`）、通用回退卡 = 无 `fg`（`tool-execution.js:274-278`）。pi 自带两个主题里 `toolTitle = text`，所以只有导入别的主题时才看得出差别。见 `07` D40.1 / D40.12。
 
 **耗时刻度（从 A 移入）**：高 1px 横线，总长 = `clamp(round(log2(ms) * 3.2), 6, 34)` px；段数 = `ms<1000→1`、`<10000→2`、`≥10000→3`；段间 2px；每段宽 = `max(2, round((总长-(段数-1)*2)/段数))`；颜色 = 该块状态色。
 实测：40ms→17px/1 段，96ms→21/1，132ms→23/1，214ms→25/1，6.4s→34/2（各 16），12.3s→34/3（各 10）。

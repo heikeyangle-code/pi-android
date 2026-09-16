@@ -392,3 +392,344 @@ case 收成 `android_download` / `android_files` 两个并按 `input.op` 给不�
    桥只在 Activity 里）→ 能力（选择器/等待原语、SoM 截图、前台包名、包可见性、`intent:`）→ **Shizuku 引导**（单点收益最大：
    能力从「无障碍模拟」升到 ADB 级）；审计日志结构化，但**不做**外部建议里的「shell 逐次确认」与「UDS + uid 校验」（那是收紧授权）。
 
+## D39 · 工作区屏：把 21 条与冻结稿的偏差收掉 + 查看器语法着色
+**依据**：`design/ui-refactor/design-demos/workspace-final.html`（工作区专稿，构件与 `direction-b-v2.html` 同源）。
+**收掉的偏差**：③④ 整段缺卡片容器（行内容从 12dp 起 → 14+12=26dp）；面包屑 `width(170)` 定宽把当前目录挤出屏外
+（→ `widthIn(max=170)` + `FlowRow` 换行）；③ 行标题用完整内部路径（→ 叶子名 + 目录进副行，并删掉自造的「· 就地看这次 diff」）；
+计数把 pending 扣掉（→ 计数/摘要用含 pending 的 `changed`，去重只留在列表行层面）；同名资源对被全局重排拆开
+（→ 排序单位改为「同名组」）；用户可见文案里出现稿子段号（→ 改成段名）；pending 行缺上下 1px 状态色、末尾多一条线；
+段头「新建」被画成描边胶囊（→ 无底 accent 文本 + 13 加号）而空目录主按钮被画成描边（→ accent 实底 32 高胶囊）；
+行标题字重（非 strong 500、等宽行标题 `mono` 14）；Notice/ErrBlock 标题与动作的 `t13`/`t12` 取 12 的 `meta`；
+徽标无条件色块；`⋮` 字符 → 16px 横排三点矢量；资源行去掉文件夹图标、解析失败换原因、禁用不追加原因；
+② 每条命令各一张卡 → 段内共一片卡；引擎没起来那条空态用 file 图标；① 的 `›` 字符 → 14px 描边 chevron；
+二进制 `▤` 字符 → 稿子的 `bin` 矢量；`formatTime` 补「前天」档；查看器只读正文接上**现成的**高亮通道
+（`rememberPiHighlightedCode`，整份一次请求 + 按可见行惰性切片，引擎不在就是原来的单色，编辑态不上色）。
+**与裁决/规范的冲突，以及处理（逐条）**：
+1. **列表里的卡**：稿子的 `Rows` 是一个 `Card` 塞整列，手机上 ④ 可能有几千行、把整列放进一个 lazy item 等于放弃懒加载。
+   所以卡壳由「每一片」自带（`WsCardSlice`：首片圆上角、末片圆下角、行间线画在卡内），屏幕上仍是一张卡。**有意偏离原型写法**。
+2. **行间线透明度**：稿子的 `.div` 是不透明 `borderMuted`，而本项目 `06 §2` 写「组内 inset hairline（`borderMuted` 55%）」。
+   以 **`06 §2` 为准**（冻结规范优先于原型），保持 `outlineVariant`；矛盾写在 `WsHairline` 的 KDoc 里，谁想改回去先改 `06 §2`。
+3. **未受信任的压暗范围**：稿子整段 `opacity:.5`；这里只压暗「项目 .pi」那一族 —— 受项目信任影响的只有从**这个项目**读来的资源，
+   `.agents`/全局/包里的资源照旧会被 pi 加载，一起压暗等于谎报。行内另有文字说明，颜色不是唯一信号。**有意偏离**。
+4. **对话框按钮顺序**：稿子主项在左，本项目全应用是「取消在左」，保持全应用一致，不改。
+5. **② 段头 aside**：稿子只有一条命令所以 `aside="进入上下文"` 是常量；这一屏最多四条、各条可能不同。改成
+   「全部一致时才提到段头（这时行里不重复写），不一致时段头不表态」——既不重复也不自相矛盾。行副行本身照稿子（那半句稿子没有）。
+6. **`!` / `!!` 那条命令没有刻度与进度段**：`ToolCall.elapsedMs` 是 `endedAt - ts`，流式中恒为 null；转录里的 bash 调用另有 `ts`，
+   所以照 `ShellBlock` 的先例现算（不起计时器）。而 `BashRun`（`ui/PiSessionViewModel.kt`）**没有时间戳字段**，算不出来 ——
+   拿不到就不画，不编一个数。补它要给 `BashRun` 加字段，那个文件不在这一批边界里。
+7. **`t13` 系统字没有对应角色**：`PiTextStyles`/`piTypography` 的系统字只有 12/14/15/17，稿子写 `t13` 的几处（Notice 正文、
+   ErrBlock 动作、空目录标题）取 12 的 `meta` —— 与对话页 `NoticeBlock` 对同一个 `t13` 的既有取法一致；空目录主按钮的
+   `t13 w6` 取 `bodyMedium`（14）+ SemiBold，因为**按钮标签**在本项目里的既有角色就是它（`PiDialogAction`）。
+8. **D14 复现一次**：本批在 `WorkspaceChrome` 的表格里把「15，加粗 500」写成连排的字面量时，恰好拼出了块注释的开头序列
+   （斜杠 + 两个星号），`check-nested-comments.py` 一次报了 38 处。改成「字重 **500**」的写法后通过 ——
+   D14 那条教训在 Markdown 表格里同样成立（`.md` 不被该脚本扫描，所以这里只是说明，不是另一处待修）。
+
+## D40 · 主题语义 1:1：面积占比审查 + 滚动条（只对话页）+ 撤掉 5 个派生色
+
+**用户裁决**（原话）：①「各种色的占据屏幕比例要和我的软件的比例差不多」；②「不用弄什么对比度调整啥的。用默认的」；
+③「全修的一致」（指所有"pi 有、我们没按 pi 语义用"的地方）；④「滚动条别做了，把滚动条这个着色弄到上下按钮上」→ 后改成
+「V2 有滚动条吗？有 就按 v 二的去做，并且按 pi token 一比一」→ 最终「对话界面有一个就行。别的地方不用做」；
+⑤「整行是指的搜索时候是吧？如果是搜索时就不要管了，保持现在就行」。
+**审查依据**：`design/ui-refactor/12-color-area-and-scrollbar-plan.md`（面积占比逐 token 对照表 + 改法清单，全为估算，
+方法在 §1/附录 A，两组灵敏度的差值排序不变）。
+
+**面积审查结论**：同一份会话内容下，`bashMode` 是**唯一**的真配色差（pi 6.45% vs 我们 0.72%，因为 `!` 面板缺 pi 的两条全宽
+`bashMode` 边框）；`toolSuccessBg` 几乎一致（15.15% / 14.62%）；其余大差值（`userMessageBg`、图片口径）是**结构差** ——
+pi 的 TUI 不画用户图片附件、不画卡片底；`toolOutput`/`text`/`muted`/`toolTitle` 是**归属差**（派生 token 顶替）；
+列表光标行 `selectedBg` 是唯一真·面积缺口（10.0% vs 0）。
+
+**决定与落地**：
+1. **工具名用 `toolTitle`，并且加粗**（`ui/blocks/ToolBlockChrome.kt` 的 `ToolHeader`）。pi 每个内置渲染器都用它画工具名
+   （`core/tools/renderers/bash.ts:40` 等），且是 `theme.fg("toolTitle", theme.bold(toolName))`
+   （`components/tool-execution.js:91`、`:316`）—— 字重也要跟。随包字体只有 Regular + Bold（`PiMonoFamily`），
+   所以取 `FontWeight.Bold`（用真字形，不合成 SemiBold）。v2 原型画的是 `muted`，**被用户裁决推翻**；
+   `06 §2` 与 `docs/pi-android-ui-spec.md` §2.5 两处文档同步改成 `toolTitle`，否则文档和实现互相说谎。
+2. **撤掉 5 个对比度修正 token**，改回 pi 原 token：`bodyOnTool→toolOutput`、`contextOnTool→toolDiffContext`、
+   `thinkingBodyOnCanvas→thinkingText`、`metaOnCanvas→muted`、`metaOnCard→dim`（26 个消费点 / 18 文件，
+   `ui/theme/PiContrast.kt` 一并删除）。**已知取舍**：pi 自己的 `toolOutput #808080` 在 `toolSuccessBg #283228` 上是
+   **3.37:1**、在 `toolPendingBg` 上 3.69:1，低于 `docs/pi-android-ui-spec.md` §9 的 4.5:1 地板 —— 这是 **pi 的原值**，
+   按用户裁决照用，不再由我们改写（`gap-disposition.md` 的 F13/F14 记录同步更新）。
+3. **滚动条只做对话转录视口**（`ChatScreen.kt` 的 `LazyColumn`），其它任何容器都不加 —— 这一收窄同时就是 1:1 pi：
+   pi 全仓只有一处接线（`interactive-mode.js:629-630`）且 `createChatViewport` 只建一个 `ScrollView`。几何按 v2
+   （`direction-b-v2.html:143-146`：3dp 宽、滑块圆角 2dp、贴右缘），颜色按 pi 原值（轨道 `scrollbarTrack`、滑块
+   `scrollbarThumb`），只新增 `ui/components/PiScrollbar.kt` 一个文件 + `ChatScreen.kt` 两行接线；不加依赖、不留计时器、
+   状态不进 `Bundle`、**不加"滚动条模式"设置项**（D38.2 勿增实体）。
+   四处与 v2/pi 的冲突在此定案：**(a)** v2 写 `track: transparent`，按"pi token 1:1"**画出轨道**（pi 就是铺满一列 track 再盖
+   thumb，`layout.js:216-220`）；**(b)** pi 的 `auto` 模式 1 秒后整条消失、而用户要求默认可点，故取 pi **自己的 `always`
+   模式**当基线（不发明），1000ms 降级为"激活态回落"；**(c)** 命中区取 **24dp**（视觉 3dp / 激活 6dp），不用 48dp 的理由
+   是它占 360dp 屏的 13.3% 且与右下角两枚箭头、系统返回边带重叠；**(d)** 「回到最新」那颗改 `selectedBg` 底 + `text` 字形
+   （1:1 pi 的「↓ Jump to latest message」指示条 `tui-renderer.js:14-18`），但**保留 `borderMuted` 描边** —— 否则
+   `selectedBg` 对页面底只有 1.59/1.43，按钮认不出来。「回到顶部」pi 没有对应物，保持现状，不发明映射。
+4. **列表光标行用 `selectedBg` 整行底**，落点＝**正在被长按/操作框打开的那一行**（`SessionsScreen.kt` 的 `actions` 状态，
+   改 3 处）。依据：pi 的 `selectedBg` 画的是**键盘光标行**（`session-selector.js:421`、`tree-selector.js:603-604`），
+   而"当前会话"pi 只把**名字染 accent**；v2 原型与 pi 一致（`:1812` 的 SwipeRow 用 `--selected-bg`，`:1891` 的 `sel`
+   就是长按那一行）。**会话树不加** —— 我们没有光标行，加了等于发明新交互。
+5. **搜索高亮保持现状**（命中整块变色）：用户裁决。我们只有行级索引（`ChatScreen.kt:1516-1526`），pi 是逐字区间
+   （`tui-renderer.js:9`），逐字改要给每种 block 传区间并各写测试。
+6. **`!` 面板不补循环转圈**（`06 §5` 明令没有循环动画；pi 的 loader 是终端字符动画，手机上可点的 Stop 更合适）。
+7. **`infoBg` 不动**：pi 的 TUI 零消费（export-only），我们只用在两处小面积提示条上（`ProjectScreen.kt`、
+   `ExtensionUiHost.kt`），属"pi 没有对应构件"的部分。
+
+**实施顺序**（P0 记账 → P1 滚动条 → P2 `!` 面板两条全宽线 → P3 工具名 → P4 列表光标行 → P5 下箭头 → P6 撤派生 token，
+P6 按 token 分 5 批提交）。P3 已随本条落地；其余等对应批次让出文件。
+
+**D39 那批留下的四个问题，裁决如下**（同批落地）：
+8. **被禁用资源的原因不进副行，也不加"详情"入口**：稿子的 Disabled 行本来就没有原因（`:1370-1374`），
+   而"包设了 `autoload:false` / 筛选没命中"这两句话是**我们自己**写的解释。加了就是给一个稿子没有的
+   构件开洞，且原因本就能在设置里查到（过滤规则、包设置）。所以按稿子只留 `⊘ 已禁用` 徽标。
+9. **`WsChip.active` 删除**：段头改走 `WsSectionAction`、空目录改走 `solid` 之后它没有调用方了。没有调用方的
+   形态不给它留着（如无必要勿增实体），几何数值仍写在 `WsChip` 的 KDoc 里，将来要"选中的胶囊"照着补回来。
+10. **查看器换文件的一拍延迟**：`rememberPiHighlightedCode` 的 `hasStreamed` 是按**调用点**记的，所以同一个查看器
+    打开第二个文件时会被当成"又变了一次"，延后 `STREAM_SETTLE_MS`（200 ms）才发请求。修法是查看器侧
+    `key(path) { … }`（换文件＝新的调用点，首帧就着色，仍然只发一次请求），**没有动 `ui/render/**`**。
+11. **超大文件的「… 其余 N 行未显示」保持 `meta`**：稿子 `:1140-1146` 画的是 `mono t12`，但那是一句**中文句子**
+    而不是机器分类词，按规则 #7 与人写给人的文案同族（与 D39-7 对 `t13` 的取法一致）。要改的话先改稿子那一行。
+12. **工具卡的参数区按 pi 分段上色**（接第 1 条：第 1 条管工具名那一半，这条管同一条行的另一半）。用户要求
+   「每一处都对着 pi 官方源码改，不许凭印象」，逐条核过 `dist/core/tools/renderers/*.js` 与
+   `dist/core/tools/render-utils.js`，每个内置渲染器的调用行都是**若干个 `theme.fg(token, …)` 拼起来的**，
+   而 v2 原型把整个主体画成 `c-text` —— 与第 1 条同一条裁决（「全修的一致」）推翻。落法：新增
+   `ToolCallPart`（text + **pi 的 token 名** + 可选 bold）与 `ToolHeader(subject: List<ToolCallPart>)`，
+   由 `ToolHeader` 一处把 token 解析成 `PiPalette` 的颜色（与 `PiSyntaxToken` 同一分工，这样每个 block 只
+   需要引用 pi 的 `fg(...)`，不碰颜色值）；**文字内容、顺序、间距、字号、等宽全部未动**，颜色是这条参数唯一携带的通道。逐工具配方与源码行：
+   - **read**（`read.js:24-28`）：`${fg("toolTitle", bold("read"))} ${pathDisplay}${formatReadLineRange(args, theme)}`；
+     路径 = `accent`（`render-utils.js:57-63` 的 `renderToolPath` → `fg("accent", shortenPath(value))`），
+     行范围 = `warning`（`read.js:19-23`：`theme.fg("warning", …)` 画 `:startLine` 或 `:startLine-endLine`），无 offset/limit 时它是空串。
+   - **write**（`write.js:87-90`）：同样的 `toolTitle` 名 + `renderToolPath` → 路径 `accent`。
+   - **edit**（`edit.js:51-54`）：同上（`formatEditCall` 只有名字和路径两段）。
+   - **grep**（`grep.js:16-27`）：`fg("accent", …)` 画 `/pattern/` + `fg("toolOutput", …)` 画 ` in <path>`，
+     再按需 `fg("toolOutput", …)` 画 ` (glob)` 与 ` limit N`。
+   - **find**（`find.js:15-25`）：`fg("accent", pattern)` + `fg("toolOutput", …)` 画 ` in <path>` + `fg("toolOutput", …)` 画 ` (limit N)`。
+   - **ls**（`ls.js:12-19`）：`renderToolPath(str(args?.path), theme, cwd, { emptyFallback: "." })` → 路径 `accent`，
+     再按需 `fg("toolOutput", …)` 画 ` (limit N)`。
+   - **bash / powershell**（`bash.js:26-32` 的 `formatShellCall`）：**整行**（prompt 与 command 一起）
+     `fg("toolTitle", bold(...))`，只有 timeout 后缀 `fg("muted", …)` 画 ` (timeout Ns)`；命令缺失时
+     该段走 `invalidArgText`（`error`）/ `fg("toolOutput", "...")`。这是唯一一条**粗体超过工具名**的公式，
+     所以命令那一段带 `bold = true`——否则同一行的 `$` 与命令会一半粗一半不粗，与 pi 的 `bold(...)` 不一致
+     （这一处是「只改颜色」之外的唯一越界，已在交付报告里单列）。
+   - **缺参数**：`render-utils.js:57-63` 的三条分支 —— `rawPath === null` → `invalidArgText`（`error`）、
+     空值 → `fg("toolOutput", "...")`、否则 `accent`。本 App 的空值文案是我们自己的词（「文件」/「未命名文件」），
+     所以**只取 token**（`toolOutput`），文案不动。
+   - **通用回退卡**（`tool-execution.js:274-278` → `:315-322`）：pi 对这一类**整段不上色** ——
+     `theme.fg("toolTitle", theme.bold(this.toolName))` 之后直接拼原始 JSON 参数，没有任何 `fg`。
+     所以 `ToolCallBlock` 的副行取 `ToolCallToken.Uncoloured`（＝本 App 的 `text`，即「终端默认前景」的等价物），
+     而不是 `accent`，也不分段。
+   - **diff 卡**（本 App 自己的卡，pi 没有对应物）：它的名字格是从调用里抬上来的工具名
+     （`rpc/.../Transcript.kt:541-564`），所以按 pi 的**工具名**取 `toolTitle`；路径格按 `renderToolPath` 取 `accent`
+     （`render-utils.js:57-63`）。**只改颜色**：pi 对工具名另有 `bold`，这张卡的名字没有跟着加粗（它不是 pi 的调用行），
+     要 1:1 对齐粗体的话说一声。
+13. **shell 卡补 pi 的两样（收起预览、warnings 行），同时保留 v2 的三样（右端读数、页脚、chevron）**。
+   用户裁决「多的三样保留」，所以这一条只做加法：v2 那套（header 右端的耗时刻度读数、页脚的
+   `状态字形 + 状态词 + 耗时刻度`、展开 chevron）一格没动，补的是 pi 有而我们缺的两处。
+   - **收起时也画尾部预览**。pi：`const BASH_PREVIEW_LINES = 5;`（`dist/core/tools/renderers/bash.js:14`），
+     收起分支调 `truncateToVisualLines(styledOutput, BASH_PREVIEW_LINES, width)` 取**最后 5 个可见行**
+     （`:56-65`；命令的结论在末尾，pi 自己的 bash 工具也是截尾，`core/tools/bash.ts:234`），
+     `state.cachedSkipped > 0` 时在预览之前插一行 `theme.fg("muted", …)`（`:63-64`）。
+     本 App 原来**收起时什么都不画** —— 一条跑完的命令在收起态连一行结果都看不到。现在收起＝最后 5 行
+     + 一行 `muted` 提示（措辞沿用既有中文「上方还有 N 行未显示」）。**展开后的行为不变**：
+     展开仍是 5 行 + 可点的「展开全部（上方还有 N 行）」（`fullOutput` 后到本 App 的 200 行预算）。
+     两个实现细节：① 画哪一窗随状态走（`expanded && fullOutput` 才用大预算），否则「展开过再收起」
+     会退回成 200 行的"预览"；② 提示行放在预览**之后**（pi 放在之前）—— 我们的措辞是「**上方**还有 N 行」，
+     放在上面这句就不成立，且与展开态那句位置一致。
+   - **warnings 行按 pi 的位置与颜色，且与展开无关**。pi：`if (truncation?.truncated || fullOutputPath)`
+     时在**正文之后**追加一行 `theme.fg("warning", …)`，内容是方括号包起来的 `warnings.join(". ")`
+     （`bash.js:78-90`，`warnings` 由 `Full output: <path>` 与 `Truncated: showing X of Y lines` 拼成）。
+     本 App 对应的数据是 `item.outputTruncated` / `fullOutputPath`，句子早就由 `truncationNotice`
+     按 pi 的拼法翻译好了（`ToolOutputParse.kt`），但它原来挂在 `if (expanded)` 里 —— 收起时被截断了也不说。
+     现在移出展开分支、位置在正文之后、颜色是 `palette.warning`（`ToolNotice` 本来就是 warning 色）。
+     **不重复**：pi 的 bash 工具会把这句同时追加到自己的输出末尾，`stripFullOutputFooter` 在画正文前
+     先把它从正文里剥掉（`bash.js:59-64`），所以这条信息全卡只出现一次。
+
+## D41 · 逐点 token 对齐（来源 `13-pi-token-callsite-diff.md`）
+**用户裁决**（原话）：「能和 pi 一模一样的，全都一模一样」+「全修的一致」。审计表逐点核过 pi 0.85.1 的
+`dist/modes/interactive/**`、`dist/core/tools/renderers/**`、`dist/modes/interactive/theme/theme.js`（下面每条的行号都出自这份 dist，
+即「你手上那份 app 里跑的 pi」；同一个语句在上游 `.ts` 里行号不同，凡引用 `.ts` 的地方都是既有注释留下的）。
+**落地（10 处，全部内置主题下零观感风险或已批准）**：
+1. `ui/blocks/HookMessageBlock.kt:83` 补 `textColor = palette.customMessageText`。pi：`components/custom-message.js:83-85`
+   `color: (text) => theme.fg("customMessageText", text)`。
+2. `ui/blocks/CompactionBlock.kt:137` 同上。pi：`components/compaction-summary-message.js:35`（展开分支；收起分支同 token，`:38-40`）。
+3. `ui/blocks/BranchSummaryBlock.kt:119` 同上。pi：`components/branch-summary-message.js:34-36`。
+4. `ui/blocks/SkillInvocationBlock.kt:95` 标题里的技能名 `text` → `customMessageText`（正文那处早在 `:127` 就是它）。
+   pi：`components/skill-invocation-message.js:39-42` 的 `fg("customMessageLabel","[skill] ") + fg("customMessageText", name) + fg("dim", " (… to expand)")`。
+   —— 这四处合起来消掉「同族四张卡只有 Skill 传了 `customMessageText`」的不一致（`PiMarkdownTheme` 的 `body = textColor ?: palette.text`）。
+5. `ui/blocks/GrepBlock.kt:212` 去掉 `if (match.context) contextOnTool else bodyOnTool` → 一律 `palette.toolOutput`。
+   pi：`core/tools/renderers/grep.js:30-37` 的 `displayLines.map((line) => theme.fg("toolOutput", line))`，**没有**上下文分支；
+   `toolDiffContext` 在整个 pi 里只出现在 diff 渲染器（`components/diff.js:78`、`:127`）与主题 schema（`theme/theme-json.js:63`）。
+   `ToolOutputParse.GrepMatch.context` **保留**（`app/src/test/.../ToolOutputParseCheck.kt:82`、`:88` 断言它），只是 UI 不再分叉。
+6. `ui/render/PiMarkdownTheme.kt:295` 的 `quote` 加 `fontStyle = FontStyle.Italic`。pi 的引用是**两层**：主题给颜色
+   （`theme/theme.js:936` `quote: (text) => theme.fg("mdQuote", text)`），渲染器再套 italic
+   （pi-tui `components/markdown.js:417`；本机核到的是打包副本 `dist/bundle/chunks/chunk-JVUZSMYM.js:584`：
+   `case"blockquote":{let quoteStyle=text=>this.theme.quote(this.theme.italic(text)) …`）。竖条只取该 style 的颜色，所以竖条不动。
+7. `ui/blocks/ErrorBlock.kt:91` 错误句子 `text` → `palette.error`。pi 的错误**文字**全是 `error`，没有一处用正文色：
+   `components/assistant-message.js:153`（`fg("error", "Error: " + errorMsg)`）、`interactive-mode.js:2232`/`:2795`/`:3522`、
+   工具栏错误分支 `renderers/edit.js:67`、`write.js:122`。（审计文里写「7 处」，实数为 `modes/` + `core/` 共 **17 处** `fg("error", …)`，
+   里面既有文字也有 `(exit N)` 之类读数；**"错误文字没有一处是正文色"这个判断成立**，只是条数要更正。）
+8. `ui/blocks/NoticeBlock.kt:64` `Notice.Tone.Info` 的 `muted` → `palette.dim`。pi 的信息态状态行：
+   `interactive-mode.js:2866-2867` `const color = status.type === "warning" ? "warning" : "dim";`。
+9. **压缩卡改成 pi 的整卡满宽 `customMessageBg`**（`ui/blocks/CompactionBlock.kt:77-101`）。pi：
+   `components/compaction-summary-message.js:13` `super(1, 1, (t) => theme.bg("customMessageBg", t))` —— 整块底色、满宽。
+   随之删掉 v2 的两条 hairline 与 chip 自己的 `Surface`（同色 chip 在卡内不可见、hairline 会把卡切成两半），
+   标签行改成与另外三张同族卡一致的「3px `customMessageLabel` 条 + 等宽标签」，副行由居中改为左对齐（chip 没了就没有对齐基准）。
+   外框取同族的 `customMessageLabel@35%`（pi 的盒子无边框，这条是 App 自己的家族约定）。
+10. `ui/blocks/ImageGridBlock.kt:249`、`:261` 图片占位标签 → `palette.toolOutput`。pi：工具图片的 fallback 文字
+   `new Image(…, { fallbackColor: (s) => theme.fg("toolOutput", s) }, …)`（`components/tool-execution.js:307`）。
+   同一段 fallback 的两行一起改，否则一个标签会被拆成两种颜色。
+
+**保持不动（记账，逐条给理由）**：
+- **R3（D4）Boot 品牌行**：保持 `text`/`muted`。pi 的等效屏是**首启向导**（`first-time-setup.js:32`/`:34` 把 logo 与欢迎句染 `accent`），
+  本 App 的 `BootScreen` 是 v2 自己的启动/安装进度屏 —— 屏不同，`11` 的「颜色听 pi」针对同一个构件，这里没有同一个构件可对。
+- **R5（§5.2）M3 surface 阶梯**：实现保持，**已把「派生槽位」写进 `docs/pi-android-ui-spec.md` §2.1**（表格一行 + 规则一条，
+  含五个混合比例、为什么 pi 做不到、以及"导入自定义主题时的真实差异来源"）。理由：pi 只有 `pageBg`/`cardBg` 两档底色，
+  终端表达不了中间调；手机需要层次，`06 §2` 的面板本身就要 `surf-low`/`surf-high` 两档。严格 1:1 只能收敛回两档，观感会塌。
+- **R6（D10）扩展对话框标题**：保持「扩展给什么色用什么色，没给就 `text`」。pi 给的是 `accent` + bold（`extension-selector.js:29` 等三处），
+  但本 App 的扩展对话框与设置对话框**共用同一构件**（`11` D-5 的合并），改标题色会让这两者标题不同色；pi 的两者本来就是两种壳。
+- **R8（D11b）信任提示的选项标签**：保持 `success`/`error`。pi 的 trust selector 是键盘列表，选中的一项染 `accent`、其余 `text`
+  （`components/trust-selector.js:64-66`）；这里是**一次性安全决策**的两枚按钮，绿/红比「光标在哪」更直接表达"信任与否"。
+- **R4（P6 连带）`StateTone.Rejected` 的落点**：`ui/theme/PiStateChip.kt` 的 `StateTone.Rejected` 现在是 `palette.bodyOnTool`
+  （`07` D2 单独裁过）。**P6 撤掉派生 token 时改成 `toolOutput`**，本批不动（P6 单独做，避免两批拆不开）。
+**D41 补充 · 文档与实现同步**：`docs/pi-android-ui-spec.md` §2.2 的排版表原来写着「正文 15 / 元信息 11.5 / 机器小 11.5」，
+那是 B7 收敛字号**之前**的旧值（11.5 低于该表自己写的 12 标签地板；15 是行标题那一档，不是聊天正文）。已按 `PiTextStyles` 的实际值改成
+`prose 14/23` · `meta 12/18` · `monoSmall 12/18`，并补一行 `code 13/19`、`numeric` = `mono`，口径写明「5 档以 `06 §2` 为准、落地以 `PiTextStyles` 为准」，
+同时点明 15/17 两档来自 M3 的 `bodyLarge`/`titleMedium`（行/屏标题步进），不在 `PiTextStyles` 里 —— 这样这两份文档不会再各自漂移。
+
+## D42 · 记在账上的两件待办：proot 的 l2s 隐患、proroot 作为可选运行时
+
+**来源**：用户问「DSHA 的这个 proot 的坑我们避免了吗 / proroot 不也有坑吗」，考察对象是本机运行的 DSHA（`com.dsh.client`）与它自带的修复脚本
+`/root/.dsh/flatten-l2s.py`。**结论：一半避开、一半没处理，另有一条我们自己特有的暴露点。**
+
+**已避开的三条**（有码为证）：
+1. `--link2symlink` 的 store 必须先存在（proot 自己从不创建，缺了 guest 里每次硬链接都 ENOENT）。我们建了 `PiPaths.l2s`
+   （`runtime/PiRuntime.kt:110`）并把它绑回自己的绝对路径（`:206-209`）；`docs/device-verification.md` 的 A3/B1 就是验它。
+2. store 放在**持久**的 rootfs 内（`<rootfs>/.l2s`）而不是 `/tmp`，所以"临时目录被清理 → 目标悬空"这个触发条件不成立。
+3. 本仓库**不打包/备份 guest**（Kotlin 侧没有任何 tar/zip 输出流），所以 DSHA 那个"tar 遍历撞 ELOOP、备份必失败"的症状结构性不会出现。
+
+**未处理的五条（待办）**：
+1. **没有写入侧纪律**：DSHA 的治本是让写入一律 `rename`（`fs-write-patch.sh`）。我们 guest 里跑 npm
+   （`packages/PiPackageService.kt:14`）、apt/dpkg、git，它们都会 `link()` → 照样生成 `.l2s.*` 链。
+2. **没有实体化/修复工具**：DSHA 有 `flatten-l2s.py`（只碰含 `.l2s.` 的 symlink；先写同目录临时文件 + fsync + md5 校验，再 `os.replace`
+   原子替换；读不出的只报告不删；孤儿数据文件默认保留）。我们没有对应物。
+3. **升级会悬空（我们特有，DSHA 那份文档没覆盖）**：`runtime/RuntimeProvisioner.kt:171-173` 的 `wipe()` 在运行时 revision 变化时
+   整个删掉 `<files>/pi/runtime` 重铺（`:19` 自己写明这一层是 volatile），而 `.l2s` 就在里面。任何落在**持久区**、指向 rootfs 内 l2s 目标的链，
+   升级后会全部悬空、读 ENOENT —— 因为我们不打包，它不会在备份时报错，只会某天"某个文件读不出来"。
+   判定：`find /data/data/app.pi/files/pi/workspace /data/data/app.pi/files/pi/.pi -name "*.l2s.*"`（**上机量**；构建机上 `/data/data/app.pi` 不存在）。
+4. `git commit`/`gc` 在 `--link2symlink` 下的可靠性：`docs/known-gaps.md:870` 自己写着"下结论前先量"，**仍未量**。
+5. 修法优先级（派活时照这个顺序）：① 把 `.l2s` 移出 volatile 目录（或 wipe 时保留它）② 加实体化修复（照 DSHA 的安全设计）
+   ③ 上机判定有没有隐患链并写进 `device-verification.md` ④ 我们自己的写入路径一律 `rename` ⑤ 量 git commit/gc。
+
+**proroot（`https://github.com/coderredlab/proroot`）作为可选运行时**：用户要「放设置里一个、默认关、打开获得更好性能」。
+已核到的官方事实（README）：rootless、**自称零 ptrace 开销**、proot 的 drop-in；**5 个 .so** 放 `jniLibs/arm64-v8a`；要求
+**Android 8.0+/arm64-v8a/Ubuntu arm64 + glibc**；选项 `-r/-w/-b/-0/--link2symlink/--static-loader`；env `PROROOT_TMP_DIR` 等；
+**`--link2symlink` 仍然存在，自述是 "anchor + symlink groups"**（所以上面那五条**不会**因为换 proroot 而自动消失，这一条更正我此前对用户的口头结论）；
+**源码不公开、License 是 Proprietary（"free to use in your projects"，不许分发修改过的二进制）**，作者重心已转向 proroom。
+**待交付**：`docs/proroot-research.md`（机制/性能数字有无/依赖与探测/回退/许可与登记/维护风险/最好方案/验证命令）——研究代理产出后据此再裁。
+
+
+## D43 · `!` / `!!` 面板按 pi 对齐（排期 P2）
+> 编号说明：本条原本按派活当时的下一号写成 D42，但同一时间 D42 已被另一条
+> （「记在账上的两件待办：proot 的 l2s 隐患、proroot 作为可选运行时」，`:594`）占用 —— 于是顺延为 **D43**，
+> 文件里不再有两个同号条目。引用本条的地方（`ui/chat/BashPanel.kt` 的 KDoc、`02-real-content.md` 的面板行）已同步。
+**用户裁决**：排期里的 P2 —— 「`!` 命令面板按 pi 源码对齐」。pi 源码：`dist/modes/interactive/components/bash-execution.js`
+（逐条核过，下面引号里的行号都是这一份 dist，即 app 里实际跑的那份）。
+**pi 原文（构造函数 `:26-43`）**：
+```
+27:  const colorKey = excludeFromContext ? "dim" : "bashMode";
+28:  const borderColor = (str) => theme.fg(colorKey, str);
+30:  this.addChild(new Spacer(1));
+32:  this.addChild(new DynamicBorder(borderColor));          // 上边：整宽
+37:  const header = new Text(theme.fg(colorKey, theme.bold(`$ ${command}`)), 1, 0);
+43:  this.addChild(new DynamicBorder(borderColor));          // 下边：整宽
+```
+`components/dynamic-border.js`：`render(width) { return [this.color("─".repeat(Math.max(1, width)))]; }` —— 整宽的一条 `─`。
+输出正文（`:106` 展开 / `:111` 收起）：`availableLines.map((line) => theme.fg("muted", line))`。
+状态行（`:131-158`）：只有 `cancelled` → `warning`、`error` → `error` 两种状态词，成功（`setComplete` 的 `"complete"`，`:72-77`）
+**不贡献任何一段**；剩下的只有收起时的「还有 N 行」提示与截断告警 `warning`（`:155`）。
+**落地**：
+1. **补上整框**：`ui/chat/BashPanel.kt` 的 `Modifier.bashPanelEdges(color)`（`bashPanelEdges`）在卡片上下各画一条 1dp 线，
+   颜色 = `dim`（`!!`）/ `bashMode`（否则）。**为什么用路径而不是 `border()`**：v2 给这条面板的几何是 12dp 圆角卡
+   （`PiShapes.cardInner`），`border()` 是四面、而 pi 只要两面；直线会被 `Surface` 自己的 `clip(shape)` 在两个圆角处切掉两端，
+   而「整宽」正是这条边框要表达的东西 —— 所以线沿圆角弧走（与 `WorkspaceChrome.wsSheetTopEdge` 同一手法）。
+   **为什么 `onDrawWithContent` 而不是 `drawBehind`**：`Surface(modifier = …)` 把自己的 `.background().clip()` 接在调用方
+   modifier **之后**，`drawBehind` 画在卡片底色底下、永远看不见；先 `drawContent()` 再画两条路径才对。线宽取全应用唯一的
+   1px（`06 §2` 线宽）——终端里那条边是一整行字符，1dp 是手机上的等价物。
+2. **输出正文** `palette.toolOutput` → `palette.muted`（`BashPanel.kt` 的正文那处）。`toolOutput` 是**工具卡**正文的 token，
+   组件不同、底色不同，只在 pi 自带主题里同值。
+3. **命令头**保持 `bashMode`/`dim`，并按 `:37` **补粗体**。pi 的更新路径（`:100`
+   `new Text(theme.fg("bashMode", theme.bold(...)))`）**丢掉了 `colorKey`**：`!!` 的命令一旦产出输出就不再 dim。那是上游
+   自己的不一致，不是规则 —— 本 App 每次组合都从 `run` 重建面板，只有构造函数那条规则可循，所以以 `:27`/`:37` 为准。
+4. **状态行照 pi：成功的命令不画**。原来成功会画一条 `success` 色的「成功 · 进入上下文」，`已结束`/`退出码 N` 也在同一函数里；
+   现在 `statusText` 只在 `cancelled`（warning）/ 非零退出（error）/ 截断（warning）三种情况下有内容，干净跑完返回 null。
+   **去 v2 板核过**：`direction-b-v2.html` 里 `停止命令`、`关闭输出`、`bashMode` **零命中**，`06`/`11` 也没有这颗面板的条款，
+   所以板子没有要求过状态行 —— 按 pi 改，不留偏离。
+5. **loader 不补**：pi 运行中画的是 `Loader`（转圈 + muted 文字，`:40`），本 App 保持 **Stop 按钮**。依据已有的两条裁决：
+   `06 §5`「没有循环动画」，以及 `07` D40.6「这条面板是运行中的 `!` 命令唯一能停下来的地方」。
+**有意偏离（记账，1 条）**：**`进入/不进上下文` 这半句 pi 不写**。pi 在构造标题前就把 `!!` 剥掉了
+（`interactive-mode.js:2503-2504` `const command = isExcluded ? text.slice(2).trim() : text.slice(1).trim();`），
+只让边框颜色说明这件事；我们保留文字，依据本仓库自己的 §9 / `06 §4`「颜色不能是唯一信号」—— 1dp 的边框色不足以承载
+「这次跑进不进上下文」这个事实，而这正是这条面板要报告的东西。文字跟着**哪一条状态行被画出来**就走哪一条。
+**随之出现的文档漂移（不在本批边界，留给后续）**：`design/ui-refactor/02-real-content.md:656` 那一行的「状态行」列还列着
+`成功 · 不进上下文` / `已结束 · 输出被截断，完整输出：<path>` 这些串，前者已经不画、后者只剩截断那半句；`BashPanel.kt:64,73,81`
+的行号也早已漂移。
+
+## D44 · proroot 作为**可选**运行时落地（默认关；装机与维护永远 proot）
+**用户裁决**（原话）：「proroot 现在能用了吗？让他全都做完，做完美？推到分支上能用啊？」——
+即 **做成真的能用**：一个设置项（**默认关**）、打开后真正走 proroot、不可用时自动回退 proot、
+**这个分支推到远端后能装能跑**。用户已知并接受的取舍：**闭源、提速幅度未量化、永远不做默认**。
+**父代补充澄清的边界**（用户追问「只有执行命令用 proroot 不就白装了」）：
+proroot 覆盖的「执行命令这一层」**包括全部日常重头戏** —— ① **引擎进程本身**（Node + pi，最大头、启动耗时主体）
+② **终端 PTY**（`PtyLauncher`）③ **pi 的工具执行**（引擎进程内跑命令/读写文件那条路）④ **用户后续装包**
+（`packages/GuestCommand` 的 `npm install` / `pi install`）。**只有两类留在 proot**：
+① **首次装机/解压**（rootfs、工具、node、pnpm、harness、guard 那六步：一次性、必须万无一失、且没有性能收益）
+② **维护类**（备份/恢复、配置快照、`RuntimeSelfCheck`、`PtyLauncher` 的 `script(1)` 能力探测）。
+**别读成「proroot 只在边角用」**：性能敏感的那条日常路径全部走 proroot，proot 只兜「装机 + 维护 + 回退」。
+
+**决策点**：`runtime/RuntimeSelection.kt` 是唯一的「用哪个运行时」的地方（纯判定在 `RuntimeChoice.decide`）；
+argv/env 由 `runtime/GuestCommandLine.kt` 分派到 `ProotCommand` / `ProrootCommand`，两者**共用**
+`runtime/GuestRecipe.kt`（绑定表 + 公共 env + `/bin/bash -c` 尾巴）——**不存在第二份会漂移的绑定清单**。
+`allowProroot = false` 是装机/维护路径显式传入的，分界线在调用点可见，不藏在某个默认值里。
+
+**选择逻辑（四条全成立才用 proroot）**：① 设置开着 ② 5 个 `.so` 都在 `nativeLibraryDir`
+③ **探针门禁**在该解包 revision + 这 5 个文件的 sha256 上通过 ④ 连续失败 < 3。
+判序 = 开关 → 文件 → 门禁 → 失败预算；任何一条不成立即 proot（`RuntimeChoice.decide` 是纯函数，harness 逐个条件钉死）。
+
+**三层兜底**（照 DSHA 的形态，`docs/proroot-research.md` §7.1 原文，写进代码注释注明来源）：
+① **文件缺失** → 直接 proot，说明里列出缺哪些文件；
+② **proroot 启动失败** → 计一次失败并**用 proot 重试一次**（`GuestCommand.execute` 的护窗期归属判定：
+快退 + 输出里有 `[proroot]`/`libproroot.so` 才算启动失败；引擎侧 `PiEngineHost` 在 `spawn` 抛异常时同样回退一次）；
+③ **连续 3 次失败** → 强制回退 proot **直到用户重新打开开关**（计数持久化在 `RuntimePreferences`，重开即清零）。
+「告知用户」的落点：设置行「运行时（实际生效）」+ 导出诊断报告的「运行时选择」段 + 一条 log（App 内没有 toast 通道，
+而聊天/会话层不在本批边界）。
+
+**探针门禁**（这是敢默认安全的唯一依据）：第一次用 proroot 之前跑一次并**按 revision + `.so` 的 sha256 缓存**
+（`<runtime>/.proroot-probe`，随 `wipe()` 失效；失败结论也缓存，因为门禁是一次测量不是重试循环）。两条都要过：
+① **raw syscall 探针**（`ProrootRawProbe`）：guest 里种一个 marker 文件再**用 raw `openat` 读回**，
+判定 = **必须翻译到 guest 文件系统**，并且**同一路径的 raw 内容与 libc 内容不得不同**——后者（静默读到宿主文件）是**否决级**；
+② **`rg`/`fd` 真调用**（复用 `GuestToolProbe`，参数化到 proroot）：两者是 **musl 静态** Rust 二进制，
+不走走动态链接器，全靠 proroot 的 `--static-loader` + inline `svc` 改写，`--version` 正常而 guest 路径读空是这类缺口的形状。
+**这两条不过 → 不许用 proroot**（上机判据见 `docs/device-verification.md` §F）。
+
+**`--kill-on-exit` 的替代**（proroot 拒收该 flag）：`GuestTreeReaper` 自己回收 guest 树。
+root 的**闭包**由 `/proc/<pid>/stat` 的父子关系算出（`GuestProcessTree`，纯逻辑），**先 TERM 后 KILL**，
+各自 3 s / 2 s 超时并轮询；**最深优先、root 最后**（先杀父会把子 reparent 到 init，边就没了）；
+每次观测带 `(pid, starttime)` 身份，pid 回收不会误杀；**幸存者在报告里写出来**，不假装清干净。
+只能杀「我们自己启动的那棵树」：root 来自 `ProrootLaunchHandle`（`Process.pid()` 在本项目的编译类路径上不可用），
+而它识别的是 **proroot 自己写的那张表** —— `.proroot-config-<launcher pid>`。
+
+**`.proroot-config-*` 清理策略**：`PROROOT_TMP_DIR` = `<files>/pi/runtime/proroot-tmp`（**宿主真实路径**、volatile）；
+**每次 proroot 启动之前**扫一遍，**只删 `/proc/<pid>` 不存在的**（引擎 + 终端 + 装包可能同时在跑，
+按"除了我全删"会拆掉正在工作的 guest）；停止那次 guest 时由该次启动的 handle **删掉它自己那份**；
+**兜底上限 32 份**，扫完仍超量就按 mtime 从旧到新删到上限并**记一条日志**（`keepNames` 保护本次启动）。
+**不用"年龄"当唯一判据，也不留常驻计时器**（清扫只发生在启动前，那是唯一可能新增一份的时刻）。
+
+**永不默认**：默认关。DSHA 反过来是默认开（自研自用，§7.1），我们是通用 App，所以抄它的**机制**不抄它的**默认**。
+
+**一个 App-only 的存储决定**：设置项**不写进 pi 的 `settings.json`**——它决定在 pi 存在之前用哪个二进制启动 guest，
+pi 没有读者。落地形态沿用本仓库已有的「app-only pref」存法（`SharedPreferences`，与 `DeviceCapabilityStore` 同一种），
+并在设置栈里用一个 store 装饰器（`ui/settings/AppOnlySettingsStore.kt`）接管两行：
+`app.runtime.proroot`（开关，写 prefs）与 `app.runtime.prorootStatus`（**派生只读**：实际生效的运行时 + 回退原因）。
+分组摘要也改读后者，因为「设置里写了什么 ≠ 实际生效什么」。
+
+**影响**：`runtime/`（新增 12 个文件：`RuntimeSelection`/`RuntimePreferences`/`ProrootCommand`/`GuestRecipe`/`GuestCommandLine`/
+`RuntimeChoice`/`ProrootProbe`/`ProrootRawProbe`/`ProrootProbeCache`/`ProrootLaunchHandle`/`ProrootConfigSweep`/
+`GuestProcessTree`/`GuestTreeReaper`/`ShellQuote`；改 `PiRuntime`/`PtyLauncher`/`PtySession`/`RuntimeSelfCheck`/`GuestToolProbe`）、
+`packages/GuestCommand.kt`、`engine/PiEngineHost.kt`、`ui/settings/`（`AppOnlySettingsStore`、`PiSettingsRegistry` 两行、
+`PiSettingsStack`、`DiagnosticsReport`）、`tools/run-app-pure-checks.sh` 的 `proroot` harness（新增），
+以及 `docs/pi-android-app-design.md` §2.3.1、`docs/device-verification.md` §F、`docs/known-gaps.md` §N。

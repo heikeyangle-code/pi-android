@@ -7,7 +7,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -65,7 +64,16 @@ fun BranchSummaryBlock(
                 Column(Modifier.weight(1f)) {
                     Text(
                         text = "分支摘要",
-                        style = MaterialTheme.typography.labelLarge,
+                        // The custom card's label slot is the machine face, which is what makes
+                        // this card family read as one thing: `06 §3` 构件 9 says the 自定义消息卡
+                        // （分支摘要 / 技能 / 扩展条目共用）carries a 「左 3px customLabel 条 + **等宽
+                        // 标签**」, and v2's `CustomHead` renders that label `mono t12` for both of
+                        // the Chinese ones it draws (`direction-b-v2.html:943-951`, used at
+                        // `:2601` 「分支摘要」 and `:2622` 「技能」). The two siblings already did
+                        // this — `SkillInvocationBlock.kt:78` and `HookMessageBlock.kt:57` both use
+                        // `monoSmall`. `labelLarge` was the only UI-face label in the family, so
+                        // the same slot had two voices depending on which card you looked at.
+                        style = PiTheme.text.monoSmall,
                         color = palette.customMessageLabel,
                     )
                     val branchId = item.branchId
@@ -101,9 +109,14 @@ fun BranchSummaryBlock(
                 // the summary (`packages/coding-agent/src/modes/interactive/components/branch-summary-message.ts:41-45`),
                 // so headings, lists and fences in a model-written summary read
                 // as structure instead of as source.
+                // The base colour of that `Markdown` is `customMessageText`, not `text`:
+                //   `color: (text) => theme.fg("customMessageText", text)`
+                // (`components/branch-summary-message.js:34-36`). This card and its three
+                // siblings share one background, so they share one foreground too.
                 PiMarkdownText(
                     markdown = item.summary.ifEmpty { "（无摘要）" },
                     modifier = Modifier.fillMaxWidth(),
+                    textColor = palette.customMessageText,
                 )
             } else {
                 // Collapsed: plain text cut to the same preview this block has
