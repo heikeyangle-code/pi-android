@@ -58,6 +58,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.pi.ui.components.EffectiveKind
 import app.pi.ui.components.PiAutoFocus
+import app.pi.ui.components.PiMixedLine
 import app.pi.ui.theme.PiShapes
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
@@ -889,9 +890,13 @@ fun PiThemeEditorSheet(
                 )
             }
             Spacer(Modifier.height(PiSpacing.gutter))
-            Text(
-                "保存为 " + lightTheme.trim() + "/" + darkTheme.trim(),
-                style = PiTheme.text.monoSmall,
+            // 两段声音（规则 #7）：「保存为 」是我们的词 → 系统字；`dark/light` 是主题 id，
+            // 是这一行唯一的机器值 → 等宽。裁决 ②-2：混排行一律拆两段，不许整行 mono。
+            PiMixedLine(
+                prefix = "保存为 ",
+                machine = lightTheme.trim() + "/" + darkTheme.trim(),
+                suffix = "",
+                style = PiTheme.text.meta,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Spacer(Modifier.height(PiSettingsMetrics.sheetHeadBottom))

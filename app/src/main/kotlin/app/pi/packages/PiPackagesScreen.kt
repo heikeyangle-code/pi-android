@@ -31,6 +31,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import app.pi.ui.components.PiMixedLine
 import app.pi.ui.settings.PiInfoNote
 import app.pi.ui.settings.PiSettingsBadge
 import app.pi.ui.settings.PiSettingsCard
@@ -391,8 +392,15 @@ private fun DiscoveredCard(rows: List<PiAutoExtensions.Found>) {
                     overflow = TextOverflow.Ellipsis,
                 )
                 Text(
+                    // An App sentence (「pi 会加载它」), in the slot the board gives a row's
+                    // status word — and the board draws *that* slot in the UI face: the 扩展
+                    // section's rows are `<Row title={e.t} mono value={e.s} …>`
+                    // (`direction-b-v2.html:2966`), i.e. only the **title** is mono and the
+                    // word beside it is `t13` system. JetBrains Mono was the wrong voice for
+                    // our own sentence; the ✓ above it keeps the machine face, which is where
+                    // the glyph belongs.
                     PackageStrings.DISCOVERED_PRESENCE,
-                    style = PiTheme.text.monoSmall,
+                    style = PiTheme.text.meta,
                     color = PiTheme.palette.success,
                 )
             }
@@ -444,14 +452,50 @@ private fun ResourcesCard(rows: List<PiResourceDiscovery.Found>) {
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
-                    Text(
-                        PackageStrings.resourceOrigin(found),
-                        style = PiTheme.text.monoSmall,
-                        color = palette.muted,
-                    )
+                    ResourceOriginText(found = found, kindLabel = "")
                 }
             }
         }
+    }
+}
+
+/**
+ * Where one scanned resource came from, in **two voices** (rule #7 + 裁决 ②-2).
+ *
+ * `PackageStrings.resourceOrigin` renders both halves as one sentence —
+ * 「（资源包：pi-skills）」 or 「（当前工作区）」. On this row the package name is the only
+ * value a machine produced, so it is the only part that takes the machine face
+ * ([PiMixedLine]); the parentheses and the scope word are ours. The no-package branch
+ * therefore keeps using `resourceOrigin` verbatim (there is no machine value on it at all,
+ * so it stays one plain `Text`), and only the package branch opens the two literals.
+ *
+ * @param kindLabel our own kind word and its space (`技能 `, `提示模板 `), or `""` for the
+ *   top-level card, where the section header already carries the kind.
+ */
+@Composable
+private fun ResourceOriginText(
+    found: PiResourceDiscovery.Found,
+    kindLabel: String,
+) {
+    val packageName = found.packageName
+    if (packageName != null) {
+        PiMixedLine(
+            prefix = "$kindLabel（资源包：",
+            machine = packageName,
+            suffix = "）",
+            style = PiTheme.text.meta,
+            color = PiTheme.palette.muted,
+            maxLines = 1,
+        )
+    } else {
+        Text(
+            // `PiMixedLine` has no "machine == empty" case: a line with nothing
+            // machine-produced on it is a plain `Text`, not a mixed one with an empty span.
+            text = kindLabel + PackageStrings.resourceOrigin(found),
+            style = PiTheme.text.meta,
+            color = PiTheme.palette.muted,
+            maxLines = 1,
+        )
     }
 }
 
@@ -495,15 +539,16 @@ private fun PackageResourcesCard(scan: PiPackagesUiState.PackageScan) {
             scan.extensions.forEach { extension ->
                 ResourceLine(
                     name = extension.name,
-                    origin = PackageStrings.EXTENSION_KIND,
+                    kindLabel = PackageStrings.EXTENSION_KIND,
+                    found = null,
                 )
             }
             PiResourceDiscovery.Kind.entries.forEach { kind ->
                 scan.resources.filter { it.kind == kind }.forEach { found ->
                     ResourceLine(
                         name = found.name,
-                        origin = "${PackageStrings.resourceKind(kind)} " +
-                            PackageStrings.resourceOrigin(found),
+                        kindLabel = "${PackageStrings.resourceKind(kind)} ",
+                        found = found,
                     )
                 }
             }
@@ -511,9 +556,19 @@ private fun PackageResourcesCard(scan: PiPackagesUiState.PackageScan) {
     }
 }
 
-/** One scanned resource inside a package: name + where it came from. */
+/**
+ * One scanned resource inside a package: name + where it came from.
+ *
+ * [kindLabel] is our own kind word (`技能 `, `扩展`) and [found] is the discovery, when the
+ * line came from one — its package name is the only machine value, so it is the only part
+ * that takes the machine face ([ResourceOriginText]).
+ */
 @Composable
-private fun ResourceLine(name: String, origin: String) {
+private fun ResourceLine(
+    name: String,
+    kindLabel: String,
+    found: PiResourceDiscovery.Found?,
+) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -529,11 +584,19 @@ private fun ResourceLine(name: String, origin: String) {
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
-        Text(
-            origin,
-            style = PiTheme.text.monoSmall,
-            color = PiTheme.palette.muted,
-        )
+        if (found != null) {
+            ResourceOriginText(found = found, kindLabel = kindLabel)
+        } else {
+            // A shipped extension: the kind word is the whole origin, and there is nothing
+            // machine-produced on the line (the `—` on this card is the package's own root,
+            // one row above).
+            Text(
+                text = kindLabel,
+                style = PiTheme.text.meta,
+                color = PiTheme.palette.muted,
+                maxLines = 1,
+            )
+        }
     }
 }
 
@@ -560,7 +623,12 @@ private fun BuiltinRowView(row: PiPackagesUiState.BuiltinRow) {
         Column(Modifier.weight(1f)) {
             Text(
                 row.extension.name,
-                style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Medium),
+                // The built-in extension's own name (`pi-android-bridge`, `pi-highlight`) —
+                // v2 draws every extension row's title with the `mono` prop
+                // (`direction-b-v2.html:2966`), and `HookMessageBlock` already prints the
+                // same field (`item.customType`) in `monoSmall`. `bodyLarge` was the UI face,
+                // so the identifier and the purpose sentence below it shared one voice.
+                style = PiTheme.text.mono,
                 color = palette.text,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
@@ -581,8 +649,15 @@ private fun BuiltinRowView(row: PiPackagesUiState.BuiltinRow) {
             color = presenceColor,
         )
         Text(
+            // `builtinPresence` is one of our own sentences — 「已安装：pi 会加载它」 /
+            // 「只装在了旧位置：pi 这次不会加载它」 / 「未安装：对应的能力会缺失」. The board
+            // gives a row's status word the UI face (`direction-b-v2.html:2966`: `<Row
+            // title={e.t} mono value={e.s} …>` — the `mono` prop is on the title only), and
+            // this app's own status words are already there (`PiModelsScreen.StatusTag`,
+            // `PiSettingsStyle.PiSettingsEffectiveBadge`). The glyph to the left stays mono:
+            // that is the one half of the pair that is machine language.
             PackageStrings.builtinPresence(row.presence),
-            style = PiTheme.text.monoSmall,
+            style = PiTheme.text.meta,
             color = presenceColor,
         )
     }

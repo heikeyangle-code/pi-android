@@ -346,7 +346,17 @@ private fun LinkRow(title: String, value: String, onClick: () -> Unit) {
     ) {
         Column(Modifier.weight(1f)) {
             Text(title, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurface)
-            Text(value, style = PiTheme.text.meta, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(
+                value,
+                // Both callers pass a machine value: 默认模型 is a model id
+                // (`deepseek/deepseek-chat`) and 循环模型 is a list of the same ids. v2 marks
+                // both rows `valueMono` (`direction-b-v2.html:3001`, `:3003` — including the
+                // 「全部模型」 case), and every other value row in the app is already mono
+                // (`PiSettingsRows.kt`'s `PiSettingRow`). `meta` was this screen's only
+                // UI-face value slot.
+                style = PiTheme.text.mono,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
         Text("修改", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
     }

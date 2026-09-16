@@ -30,6 +30,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import app.pi.ui.components.EffectiveKind
 import app.pi.ui.theme.PiShapes
+import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
 
 /**
@@ -104,12 +105,25 @@ fun PiSettingRow(
                 },
             )
             // v2 的危险行在尾部写「! 执行」（error 色），普通 Action 行尾部为空。
+            // 两个声音（规则 #7 + 裁决 ②-2）：`!` 是符号层 → 等宽；「执行」是我们的词 →
+            // 系统字。形状与 `WsBadge` / `PiSettingsEffectiveBadge`（符号等宽 + 词系统字）
+            // 相同，整条改 mono 会让一个动词读成标识符。
             if (setting.dangerous) {
-                Text(
-                    "! 执行",
-                    style = PiTheme.text.mono,
-                    color = PiTheme.palette.error,
-                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(PiSpacing.small),
+                ) {
+                    Text(
+                        text = "!",
+                        style = PiTheme.text.monoSmall,
+                        color = PiTheme.palette.error,
+                    )
+                    Text(
+                        text = "执行",
+                        style = PiTheme.text.meta,
+                        color = PiTheme.palette.error,
+                    )
+                }
             }
         }
 
