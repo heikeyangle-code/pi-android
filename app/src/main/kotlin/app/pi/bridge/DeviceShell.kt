@@ -97,12 +97,21 @@ object AppUidShellBackend : DeviceShellBackend {
             exitCode = if (finished) process.exitValue() else -1,
             backend = id,
             uid = Process.myUid(),
-            truncated = stdout.length >= MAX_OUTPUT_BYTES,
+            truncated = stdout.length >= MAX_OUTPUT_BYTES || stderr.length >= MAX_OUTPUT_BYTES,
             timedOut = !finished,
         )
     }
 
     private fun readCapped(stream: java.io.InputStream, into: StringBuilder) {
+        // **One decoder for the whole stream, not one per read.** Decoding each 8 KiB
+        // buffer on its own splits any multi-byte character that straddles a read
+        // boundary into two malformed halves, and a `REPLACE` decoder turns each half
+        // into U+FFFD — so Chinese output (three bytes per character, and this bridge's
+        // usual input on a Chinese device) came back with replacement characters at
+        // 8192-byte intervals. `Utf8StreamDecoder` carries the partial sequence into the
+        // next read, and `flush()` closes the last one; it is the class the engine's own
+        // stdout pump uses for exactly this reason (`PiEngineSession.kt:448`).
+        val decoder = app.pi.rpc.Utf8StreamDecoder()
         stream.use { input ->
             val buffer = ByteArray(8192)
             while (true) {
@@ -113,10 +122,11 @@ object AppUidShellBackend : DeviceShellBackend {
                 }
                 if (read <= 0) break
                 if (into.length < MAX_OUTPUT_BYTES) {
-                    into.append(String(buffer, 0, read, Charsets.UTF_8))
+                    into.append(decoder.decode(buffer, read))
                 }
             }
         }
+        if (into.length < MAX_OUTPUT_BYTES) into.append(decoder.flush())
     }
 }
 

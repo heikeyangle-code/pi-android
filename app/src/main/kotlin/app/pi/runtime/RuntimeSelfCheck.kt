@@ -107,22 +107,39 @@ class RuntimeSelfCheck(private val paths: PiPaths) {
         val outcome = runCatching {
             val process = ProcessBuilder(argv)
                 .directory(paths.runtime)
+                // stderr merged, and **wait before reading**. Both halves matter and both
+                // were wrong here before: reading stdout to EOF first, then stderr, then
+                // waiting means a guest that writes more than a pipe buffer to stderr
+                // (64 KiB) blocks in `write` with stdout never closing — the parent sits
+                // in the first `readText()` for ever and the 60 s budget below is never
+                // even reached. A guest that produces nothing at all hangs there too, and
+                // "proot 挂住" is one of the states this check exists to *report*
+                // (`Status.ProotFailed`) rather than to spin on. `GuestToolProbe` already
+                // had the right shape; this is that shape.
+                .redirectErrorStream(true)
                 .also { it.environment().putAll(env) }
                 .start()
 
-            val stdout = process.inputStream.bufferedReader().readText()
-            val stderr = process.errorStream.bufferedReader().readText()
             val finished = process.waitFor(60, TimeUnit.SECONDS)
+            // Read whatever arrived, whether the process finished or not: after a
+            // `destroyForcibly()` this is the partial output the diagnostic needs.
+            val text = process.inputStream.bufferedReader().use { it.readText() }
             if (!finished) {
                 process.destroyForcibly()
                 return@runCatching Outcome(
                     Status.ProotFailed,
                     "proot 启动后 60 秒没有返回——通常是 ptrace 被 SELinux 拦下，" +
                         "或 loader 无法执行",
-                    stderr = stderr.take(2000),
+                    stderr = text.take(2000),
                 )
             }
 
+            // One stream, so both fields carry the same text. That is the price of not
+            // being able to deadlock, and it costs nothing here: this check only looks
+            // for one marker and for the exec-denial markers, and the diagnostic report
+            // prints what it got.
+            val stdout = text
+            val stderr = text
             when {
                 stdout.contains(marker) -> Outcome(
                     Status.Ok,
