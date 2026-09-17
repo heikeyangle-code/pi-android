@@ -15,6 +15,8 @@ import androidx.compose.foundation.Image
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.os.Environment
 import android.provider.DocumentsContract
 import android.util.Base64
@@ -94,7 +96,6 @@ import app.pi.rpc.CompactionMarker
 import app.pi.rpc.DateSeparator
 import app.pi.rpc.ErrorText
 import app.pi.rpc.HookMessage
-import app.pi.rpc.JsonlFramer
 import app.pi.rpc.ModelChange
 import app.pi.rpc.Notice
 import app.pi.rpc.SkillInvocation
@@ -463,7 +464,7 @@ private fun ChatBody(
                         )
 
                         WorkspaceCopy.TooLarge -> session.notifyUser(
-                            "文件太大：上限是 ${MAX_ATTACHMENT_BYTES / (1024 * 1024)} MB。" +
+                            "文件太大：上限是 ${mibLabel(AttachmentBudget.MESSAGE_BYTES)} MB。" +
                                 "它还没有被复制进工作区，也没有加进这条消息；请先裁剪或压缩。",
                             warning = true,
                         )
@@ -481,18 +482,21 @@ private fun ChatBody(
                     // runs on the main thread (`rememberLauncherForActivityResult`
                     // resumes the Activity), and the previous shape read *everything*
                     // the provider would give it — `readBytes()` on the whole
-                    // `InputStream` — and only then compared the length with
-                    // `MAX_ATTACHMENT_BYTES`. A cloud/gallery provider happily hands
-                    // out tens of megabytes, so "the image is too large" was decided
-                    // after allocating it, twice (the byte array, then the base64
-                    // string), on the thread that draws: on a phone with ~1 GB free
-                    // that is an OutOfMemoryError for the app, not a warning.
-                    // `readBounded` stops at the cap and reports "too large" without
-                    // ever holding more than the cap, and the encode happens on IO.
+                    // `InputStream` — and only then compared the length with the cap.
+                    // A cloud/gallery provider happily hands out tens of megabytes, so
+                    // "the image is too large" was decided after allocating it, twice
+                    // (the byte array, then the base64 string), on the thread that
+                    // draws: on a phone with ~1 GB free that is an OutOfMemoryError for
+                    // the app, not a warning. `readBounded` stops at the guard and
+                    // reports it without ever holding more than the guard, the decode and
+                    // the encode happen on IO, and the **acceptance test is the whole
+                    // message's budget**, not this image's size — see [AttachmentBudget].
                     pickerScope.launch {
+                        val staged = attachments.map { it.base64.length }
                         val bytes = withContext(Dispatchers.IO) {
                             runCatching {
-                                resolver.openInputStream(uri)?.use { readBounded(it, MAX_ATTACHMENT_BYTES) }
+                                resolver.openInputStream(uri)
+                                    ?.use { readBounded(it, AttachmentBudget.MAX_PICKED_IMAGE_BYTES) }
                             }.getOrNull()
                         }
                         when {
@@ -501,21 +505,44 @@ private fun ChatBody(
                                 warning = true,
                             )
 
-                            bytes.size > MAX_ATTACHMENT_BYTES -> session.notifyUser(
-                                "图片太大，上限是 " +
-                                    "${MAX_ATTACHMENT_BYTES / (1024 * 1024)} MB；它要整段随消息发送。" +
-                                    "请先压缩或裁剪后再试。",
+                            // A reading guard, not the message's limit: pi's own resize
+                            // has no input bound, and an image this big could still have
+                            // been compressed under the budget. It is refused for what it
+                            // costs to hold on the phone.
+                            bytes.size > AttachmentBudget.MAX_PICKED_IMAGE_BYTES -> session.notifyUser(
+                                "图片太大：超过 " +
+                                    "${mibLabel(AttachmentBudget.MAX_PICKED_IMAGE_BYTES)} MB 的原图没有读取" +
+                                    "（要整张读进内存才能按 pi 的规则压缩到最长边 " +
+                                    "${AttachmentBudget.PI_MAX_DIMENSION}、base64 " +
+                                    "${mibLabel(AttachmentBudget.PI_MAX_BASE64_CHARS)} MB 以内）。" +
+                                    "请先裁剪或缩小后再试。",
                                 warning = true,
                             )
 
                             else -> {
-                                val image = withContext(Dispatchers.IO) {
-                                    PiImage(
-                                        base64 = Base64.encodeToString(bytes, Base64.NO_WRAP),
-                                        mimeType = mime.ifEmpty { "image/*" },
+                                val image = withContext(Dispatchers.IO) { compressAttachment(bytes, mime) }
+                                if (image == null) {
+                                    // The two failure shapes a codec can have are not
+                                    // distinguishable from here, so the sentence names both.
+                                    session.notifyUser(
+                                        "这张图读不出像素，或者压到 pi 的上限（最长边 " +
+                                            "${AttachmentBudget.PI_MAX_DIMENSION}、base64 " +
+                                            "${mibLabel(AttachmentBudget.PI_MAX_BASE64_CHARS)} MB）以内" +
+                                            "都失败；它没有加进这条消息。请换一张图，或先裁剪。",
+                                        warning = true,
                                     )
+                                } else {
+                                    when (val verdict = AttachmentBudget.decide(staged, image.base64.length)) {
+                                        // `image` is non-null here: the verdict is only
+                                        // asked for once there is something to add.
+                                        AttachmentBudget.Verdict.Fits -> attachments = attachments + image
+
+                                        is AttachmentBudget.Verdict.MessageFull -> session.notifyUser(
+                                            messageFullText(verdict),
+                                            warning = true,
+                                        )
+                                    }
                                 }
-                                attachments = attachments + image
                             }
                         }
                     }
@@ -1817,9 +1844,15 @@ private fun ChatBody(
                 }
                 Spacer(Modifier.width(8.dp))
                 // The consequence is stated where the user acts, not after the send:
-                // these bytes travel inside the message and count against the model.
+                // these bytes travel inside the message and count against the model — and
+                // the **count and the running total** are what the message's limit is made
+                // of, so both are shown. The total is the bytes the staged base64 encodes,
+                // the same unit the refusal sentence uses, so "合计 X MB / 上限 Y MB" and
+                // "还能放约 Z MB" are one arithmetic rather than two.
+                val stagedBytes = AttachmentBudget.base64CharsToBytes(attachments.sumOf { it.base64.length })
                 Text(
-                    "随消息一起发送",
+                    "随消息一起发送：${attachments.size} 张，合计 ${mibLabel(stagedBytes)} MB" +
+                        "（上限 ${mibLabel(AttachmentBudget.MESSAGE_BYTES)} MB）",
                     style = PiTheme.text.meta,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -2365,9 +2398,11 @@ private fun SearchChip(glyph: String, label: String, enabled: Boolean, onClick: 
  * gives the actual cause ([WorkspaceCopy]) and inserts **nothing** — never a
  * `content://` string and never a guessed path.
  *
- * The cap is the same number as the image cap on purpose: one limit for the user to
- * learn, and the copy is streamed and bounded, so a 2 GB provider stream is refused
- * without ever being held in memory.
+ * The bound is [AttachmentBudget.MESSAGE_BYTES], reusing the number the image path shows
+ * on purpose — one limit for the user to learn — even though a workspace file is not sent
+ * inline at all: it is read by the agent from disk, and the bound is purely about how much
+ * the app will stream before refusing. The copy is streamed and bounded, so a 2 GB
+ * provider stream is refused without ever being held in memory.
  */
 private fun copyIntoWorkspace(context: Context, uri: android.net.Uri): WorkspaceCopy {
     val directory = java.io.File(
@@ -2394,7 +2429,7 @@ private fun copyIntoWorkspace(context: Context, uri: android.net.Uri): Workspace
         if (resolved != "$root${java.io.File.separator}$name") return WorkspaceCopy.WriteFailed
 
         val written = runCatching {
-            target.outputStream().use { sink -> copyBounded(input, sink, MAX_ATTACHMENT_BYTES) }
+            target.outputStream().use { sink -> copyBounded(input, sink, AttachmentBudget.MESSAGE_BYTES) }
         }.getOrNull() ?: return WorkspaceCopy.WriteFailed
         when {
             written < 0 -> {
@@ -2428,7 +2463,7 @@ private sealed interface WorkspaceCopy {
     /** The provider would not open the document: permission, or it is gone. */
     data object Unreadable : WorkspaceCopy
 
-    /** Larger than [MAX_ATTACHMENT_BYTES]; the partial file was removed. */
+    /** Larger than [AttachmentBudget.MESSAGE_BYTES]; the partial file was removed. */
     data object TooLarge : WorkspaceCopy
 
     /** The workspace could not be created, or the copy failed — disk full, read-only. */
@@ -3291,34 +3326,6 @@ private fun AttachmentThumb(
 }
 
 /**
- * Inline attachments are base64 inside the RPC message, so a huge image bloats
- * every prompt and every transcript row. This is the app's own guard: the
- * protocol carries no size field to check against (`ImageContent`).
- *
- * **Derived from the transport's own cap, not chosen.** pi echoes an attachment
- * back inside the records the app has to read — the `message` entries a
- * `get_entries` response carries, and the `message_start`/`message_end` events —
- * and the framer discards any single record longer than
- * [JsonlFramer.DEFAULT_MAX_RECORD_CHARS]. Base64 costs 4 characters per 3 bytes, so
- * an attachment of `B` bytes becomes a `4B/3`-character substring in that record;
- * allowing `B` anywhere near the record cap means the app accepts an image whose
- * own echo the app then refuses to read. At 8 MiB the cap was exactly the framer's
- * limit, so *every* legal maximum-size attachment was guaranteed to break the
- * session it was sent in.
- *
- * The arithmetic below keeps the two consistent: `(cap - slack) / 4 * 3`, where
- * `slack` is headroom for the rest of the record (entry id, role, timestamp,
- * mime type, JSON punctuation). `MAX_ATTACHMENT_BYTES` is therefore an `Int` and
- * stays one — `bytes.size` is an `Int`, and a `Long` constant here would silently
- * make that comparison a widening one nobody re-checks.
- */
-private val MAX_ATTACHMENT_BYTES: Int =
-    (JsonlFramer.DEFAULT_MAX_RECORD_CHARS - FRAMING_SLACK_CHARS) / 4 * 3
-
-/** Headroom for everything in a record that is not the base64 payload. 64 KiB. */
-private const val FRAMING_SLACK_CHARS = 64 * 1024
-
-/**
  * Read at most `limit + 1` bytes, so "bigger than the limit" is answered without
  * ever materialising the whole input.
  *
@@ -3326,6 +3333,11 @@ private const val FRAMING_SLACK_CHARS = 64 * 1024
  * a gallery or cloud provider can offer hundreds of megabytes. One byte past the
  * limit is all the caller's comparison needs, and it bounds both the allocation and
  * the time spent on a file that is about to be rejected.
+ *
+ * The limit callers pass is [AttachmentBudget.MAX_PICKED_IMAGE_BYTES]: the app's own
+ * memory guard, not pi's rule and not the message's budget — pi's resize has no input
+ * bound at all, and the image is compressed after this read, so a file over the guard
+ * is refused for what it costs to hold, not for how big it would have been on the wire.
  */
 private fun readBounded(input: java.io.InputStream, limit: Int): ByteArray {
     val cap = limit + 1
@@ -3338,3 +3350,137 @@ private fun readBounded(input: java.io.InputStream, limit: Int): ByteArray {
     }
     return out.toByteArray()
 }
+
+/**
+ * pi's inline-image normalization on Android's codecs — the thin half that needs a
+ * `Bitmap`.
+ *
+ * Every number and every ordering decision comes from [AttachmentBudget] (pi's
+ * `maxWidth`/`maxHeight`, the 4.5 MB base64 ceiling, the quality ladder, the
+ * three-quarter shrink, and which encodings to try when); this function only performs
+ * them. That split is deliberate: it is the difference between "the harness checks the
+ * sizes and orderings that decide whether a picture fits" and "the harness checks
+ * nothing, because `BitmapFactory` needs a phone".
+ *
+ * ## pi's flow, and where this differs
+ *
+ *  1. **Fast path** (`image-resize-core.ts:82-93`): a picture already within both limits
+ *     goes on the wire **byte for byte**, with its own MIME type. This is the only path
+ *     that does not re-encode, and it is what keeps an ordinary photo from being
+ *     re-compressed for nothing. One condition is added to pi's: the MIME must be one pi
+ *     accepts inline ([AttachmentBudget.piInlineSupported]). pi converts everything else
+ *     to PNG first (`image-process.ts:49-65`); without this, a `image/heic` under the
+ *     limits would be forwarded as HEIC and rejected by the provider — a case pi cannot
+ *     have.
+ *  2. **Resize loop** (`:95-160`): clamp the long edge to 2000, then try the encodings at
+ *     that size, then shrink by three quarters and try again, down to 1×1. pi uses
+ *     Lanczos3 through Photon; Android's `Bitmap.createScaledBitmap(..., filter = true)`
+ *     is bilinear, which is a resampling difference, not a size or an ordering one — it
+ *     is listed as device-only in the change report.
+ *  3. **Alpha picks the format** (`AttachmentBudget.encodings`): PNG for a picture that
+ *     can carry alpha, JPEG otherwise. `Bitmap.hasAlpha()` is the test, and on a decoded
+ *     `ARGB_8888` it reports whether the *source* had an alpha channel, which is why an
+ *     opaque JPEG does not get encoded as a PNG.
+ *
+ * Returns null when the bytes do not decode, or when even 1×1 cannot be encoded under
+ * pi's ceiling. The caller tells the user which of the two happened is not knowable
+ * here, so it says both.
+ *
+ * Runs on `Dispatchers.IO` — one 2000×2000 decode plus one encode is tens of
+ * milliseconds and a few megabytes, which must not happen on the frame thread.
+ */
+private fun compressAttachment(bytes: ByteArray, mime: String): PiImage? {
+    // Header only: `inJustDecodeBounds` reads the size without allocating pixels, which
+    // is also how the fast path is decided without decoding anything.
+    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+    val width = bounds.outWidth
+    val height = bounds.outHeight
+    if (width <= 0 || height <= 0) return null
+
+    if (width <= AttachmentBudget.PI_MAX_DIMENSION &&
+        height <= AttachmentBudget.PI_MAX_DIMENSION &&
+        AttachmentBudget.piInlineSupported(mime) &&
+        AttachmentBudget.base64Chars(bytes.size) < AttachmentBudget.PI_MAX_BASE64_CHARS
+    ) {
+        return PiImage(Base64.encodeToString(bytes, Base64.NO_WRAP), mime)
+    }
+
+    val source = BitmapFactory.decodeByteArray(
+        bytes,
+        0,
+        bytes.size,
+        BitmapFactory.Options().apply { inPreferredConfig = Bitmap.Config.ARGB_8888 },
+    ) ?: return null
+    try {
+        for (attempt in AttachmentBudget.attemptPlan(source.hasAlpha(), width, height)) {
+            val scaled = scaleForAttachment(source, attempt.width, attempt.height) ?: continue
+            try {
+                val encoded = encodeForAttachment(scaled, attempt.encoding) ?: continue
+                // pi's own test is strict (`encodedSize < maxBytes`).
+                if (encoded.base64.length < AttachmentBudget.PI_MAX_BASE64_CHARS) return encoded
+            } finally {
+                // `scaleForAttachment` returns the source itself when the target is the
+                // source's own size, and the outer `finally` owns that one.
+                if (scaled !== source) scaled.recycle()
+            }
+        }
+        return null
+    } finally {
+        source.recycle()
+    }
+}
+
+/** One resize step; the source itself when the target is already its size. */
+private fun scaleForAttachment(source: Bitmap, width: Int, height: Int): Bitmap? =
+    if (width == source.width && height == source.height) {
+        source
+    } else {
+        runCatching { Bitmap.createScaledBitmap(source, width, height, true) }.getOrNull()
+    }
+
+/** One encode step, as the wire value it becomes — the base64 the budget counts. */
+private fun encodeForAttachment(bitmap: Bitmap, encoding: AttachmentBudget.Encoding): PiImage? {
+    val out = java.io.ByteArrayOutputStream()
+    val ok = when (encoding) {
+        // PNG's quality parameter is ignored by the platform encoder; 100 is what pi's
+        // `get_bytes()` is equivalent to (lossless).
+        is AttachmentBudget.Encoding.Png -> bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
+        is AttachmentBudget.Encoding.Jpeg -> bitmap.compress(Bitmap.CompressFormat.JPEG, encoding.quality, out)
+    }
+    if (!ok) return null
+    return PiImage(
+        base64 = Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP),
+        mimeType = when (encoding) {
+            is AttachmentBudget.Encoding.Png -> "image/png"
+            is AttachmentBudget.Encoding.Jpeg -> "image/jpeg"
+        },
+    )
+}
+
+/**
+ * The sentence for a message whose image total is full, built only from the verdict's
+ * own numbers ([AttachmentBudget.Verdict.MessageFull]) so it can never disagree with the
+ * decision that refused the image.
+ *
+ * It says how much room **this message** has left, not what one image may be: the limit
+ * is the whole message's, and the same images can be fine spread over two messages.
+ */
+private fun messageFullText(verdict: AttachmentBudget.Verdict.MessageFull): String =
+    "这条消息的图片总量放不下了：已经 ${verdict.stagedImages} 张（共 ${mibLabel(verdict.usedBytes)} MB），" +
+        "这张压缩后 ${mibLabel(verdict.candidateBytes)} MB，" +
+        "合计会超过上限 ${mibLabel(verdict.limitBytes)} MB；本条消息还能放约 " +
+        "${mibLabel(verdict.remainingBytes)} MB（约 ${verdict.piSizedImages} 张 pi 上限大小的图是一条消息的全部）。" +
+        "请先移除一张，或把这张另发一条。"
+
+/**
+ * One count in MiB, one decimal, locale-stable.
+ *
+ * A plain formatter rather than a unit conversion: the copies count **base64
+ * characters** for pi's ceiling and **bytes** for the message budget, and both are
+ * shown in the same MiB so the two numbers can be compared. `%.1f` rather than an
+ * integer, because pi's own ceiling is 4.5 and truncating it to "4" would understate
+ * what the composer is allowed to send by half a megabyte.
+ */
+private fun mibLabel(count: Int): String =
+    String.format(java.util.Locale.US, "%.1f", count / 1024.0 / 1024.0)

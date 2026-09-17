@@ -1,5 +1,6 @@
 package app.pi.session
 
+import app.pi.rpc.JsonlFramer
 import app.pi.rpc.PiJson
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -46,15 +47,35 @@ import java.io.Reader
  *  - [readBefore] asks for the range that ends where the loaded range begins, which
  *    is what scrolling up needs.
  *
- * The range is `[from, until)`. `from` is snapped **past** a line boundary, so it
- * never sits inside a line; `until` may land inside one, and the resulting partial
- * line is dropped, because an unterminated line at a range end is not an entry. That
- * is the whole boundary rule, and it is why no window duplicates or loses an entry.
+ * The range is `[from, until)`. `from` is snapped **back to the start of the line that
+ * contains** the byte the caller asked for, so it never sits inside a line *and* the
+ * line at the boundary is part of the range instead of being skipped; `until` may land
+ * inside one, and the resulting partial line is dropped, because an unterminated line at
+ * a range end is not an entry. That is the whole boundary rule, and it is why no window
+ * duplicates or loses an entry.
+ *
+ * The snap used to go **forwards** (the byte after the first LF at or after the target),
+ * which looks equivalent and is not: when the target sat inside an entry larger than one
+ * window's budget — one message carrying several inline images — that entry was skipped,
+ * and skipping it is unrecoverable. A window never starting inside a line is preserved
+ * either way; what the forward snap also did was start *after* the big line, so the
+ * range began with the entries that follow it while [readBefore] could not reach it from
+ * the other side (its own target landed inside the same line and snapped to the same
+ * place, an empty range). Measured with a 13.3 MB image entry and an 8 MiB window: the
+ * tail window came back `complete = true` without it, and the backward walk made **0**
+ * steps. That is the silent half of "两张图片就进不去聊天历史" — the open succeeds and the
+ * entry is simply not there.
  *
  * ## The bounds
  *
  *  - [readRange] accumulates at most `maxChars` characters, keeping the **newest**,
- *    and at most `maxEntries` entries. Both are real bounds on what one step holds.
+ *    and at most `maxEntries` entries. Both are real bounds on what one step holds, and
+ *    they are enforced by dropping the **oldest** lines — the scan itself runs to the end
+ *    of its (already bounded) range. An entry is indivisible, so the newest line is never
+ *    dropped: a window whose last line alone exceeds `maxChars` still returns it, and
+ *    that is the one case where a window is bigger than its budget. Without it, a
+ *    30 MB message could be evicted from the tail window by the newer assistant reply
+ *    and would then be unreachable from both directions.
  *  - Nothing materialises the whole file: one 8 KiB chunk at a time, decoded
  *    incrementally by an [java.io.InputStreamReader] so a multi-byte character
  *    straddling two reads is decoded correctly (the defect `Utf8StreamDecoder` exists
@@ -74,9 +95,9 @@ import java.io.Reader
  *
  * pi's reader has no per-line cap, so a corrupt file can make it allocate without limit;
  * this one drops a line past [DEFAULT_MAX_LINE_CHARS] and reports it in
- * [Window.complete]. The cap is 8 MiB because one image entry can legitimately be that
- * large (see [DEFAULT_MAX_LINE_CHARS]), and [Window.complete] is how a caller finds out
- * rather than silently rendering a session with a missing entry.
+ * [Window.complete]. The cap is the wire's own record cap because one image entry can
+ * legitimately be that large (see [DEFAULT_MAX_LINE_CHARS]), and [Window.complete] is how
+ * a caller finds out rather than silently rendering a session with a missing entry.
  *
  * `leafId` is pi's own rule: the id of the last entry **in file order** (`_buildIndex`
  * sets `leafId = entry.id` for every non-header entry, `core/session-manager.ts:975-990`).
@@ -165,6 +186,13 @@ internal object SessionFileReader {
      * The slice is `getEntries().takeLast(n)` for the `n` returned: contiguous, in
      * order, ending at the file's last entry. Returns null when the file is not a
      * session, so a caller falls back rather than showing an empty conversation.
+     *
+     * The newest entry is **always** in the window. [maxChars] bounds the older entries
+     * that come with it, and an entry is indivisible, so a window whose last line alone
+     * exceeds `maxChars` still returns it — the alternative is an entry no window can
+     * ever contain. That matters for exactly the message this app allows to be sent: a
+     * message carrying several inline images is one line of several megabytes while the
+     * app's window budget is 8 MiB (`PiSessionViewModel.HISTORY_WINDOW_CHARS`).
      */
     fun readTail(
         file: File,
@@ -175,7 +203,7 @@ internal object SessionFileReader {
         val total = sizeOf(file)
         if (total <= 0L) return null
         if (readHeader(file) == null) return null
-        val from = snapPastLineBoundary(file, (total - maxChars.toLong()).coerceAtLeast(0L))
+        val from = snapToLineStart(file, (total - maxChars.toLong()).coerceAtLeast(0L))
         val range = readRange(file, from, total, maxChars, maxEntries, maxLineChars)
         val entries = range.entries()
         if (entries.isEmpty()) return null
@@ -204,7 +232,7 @@ internal object SessionFileReader {
     ): Window? {
         if (startOffset <= 0L) return null
         if (readHeader(file) == null) return null
-        val from = snapPastLineBoundary(file, (startOffset - maxChars.toLong()).coerceAtLeast(0L))
+        val from = snapToLineStart(file, (startOffset - maxChars.toLong()).coerceAtLeast(0L))
         val range = readRange(file, from, startOffset, maxChars, maxEntries, maxLineChars)
         val entries = range.entries()
         if (entries.isEmpty()) return null
@@ -218,14 +246,14 @@ internal object SessionFileReader {
             // wrong: byte 0 says nothing about what the range withheld, and both
             // withholding rules apply here exactly as they do in `readTail` —
             // `maxEntries` (an argument this function takes) and the character budget
-            // (a range whose first line alone exceeds `maxChars` stops right after
-            // that line, because the first line is always admitted). Either one
-            // leaves entries unread between the range's start and `startOffset`;
-            // reporting `reachedStart` there tells the caller "no earlier history" and
-            // the walk stops, which is precisely the failure mode
-            // [Window.reachedStart] documents. Measured, not argued: the
-            // `session-replay-cost` harness walks a 14-entry fixture one entry per
-            // window and got 2 entries before this was fixed.
+            // (which evicts the oldest lines of the range, and may leave only the newest
+            // one when that line alone exceeds `maxChars`). Either one leaves entries
+            // unread between the range's start and `startOffset`; reporting
+            // `reachedStart` there tells the caller "no earlier history" and the walk
+            // stops, which is precisely the failure mode [Window.reachedStart]
+            // documents. Measured, not argued: the `session-replay-cost` harness walks a
+            // 14-entry fixture one entry per window and got 2 entries before this was
+            // fixed.
             reachedStart = from == 0L && !range.capped && !range.budgetStopped,
             complete = !range.droppedLine,
         )
@@ -305,6 +333,7 @@ internal object SessionFileReader {
         val lines: List<String>,
         val firstOffset: Long,
         val capped: Boolean,
+        /** True when [maxChars] evicted older lines from the front of the range. */
         val budgetStopped: Boolean,
         val droppedLine: Boolean,
     )
@@ -312,8 +341,14 @@ internal object SessionFileReader {
     /**
      * The complete lines in `[from, until)`, oldest first.
      *
-     * @param maxChars characters to accumulate; null means everything. The **oldest**
-     *   lines are dropped first, because every caller wants the newest entries.
+     * The whole range is read (callers snap `from` so it is at most one line longer than
+     * the budget they ask for); the caps below then trim the **front**, because every
+     * caller wants the newest entries. Trimming rather than stopping is what keeps the
+     * newest line in the window — see the class KDoc.
+     *
+     * @param maxChars characters to keep; null means everything. The **oldest** lines are
+     *   dropped first, and the newest one is never dropped even when it alone exceeds the
+     *   budget, because an entry is indivisible.
      * @param maxEntries entries to keep; the oldest are dropped first.
      * @param onLine when given, each line is handed to it and the list is not built.
      *   Returning false stops the scan. Used by [readEntries] so a whole-session scan
@@ -333,7 +368,6 @@ internal object SessionFileReader {
         var seenChars = 0L
         var stopped = false
         var dropped = false
-        var eof = false
 
         val reader = openAt(file, from, until)
         try {
@@ -348,7 +382,6 @@ internal object SessionFileReader {
             while (!stopped) {
                 val got = reader.read(chunk, 0, chunk.size)
                 if (got < 0) {
-                    eof = true
                     break
                 }
                 if (got == 0) continue
@@ -369,12 +402,6 @@ internal object SessionFileReader {
                         lineStartBytes = reader.offsetOf(chunk, index)
                         firstLine = false
                         if (line.isBlank()) continue
-                        if (maxChars != null && !collected.isEmpty() &&
-                            seenChars + line.length > maxChars
-                        ) {
-                            stopped = true
-                            break
-                        }
                         // `thisOffset` is relative to the range start, so the file
                         // offset is the base plus it. Getting this wrong is how a
                         // backward window ends up 15 KB off and re-delivers entries the
@@ -402,36 +429,42 @@ internal object SessionFileReader {
             runCatching { reader.close() }
         }
 
-        // "The budget ran out" is only true when the range still had bytes left: when
-        // the budget-hitting line was also the last one, the scan had already read
-        // everything. Reporting a budget stop there would make `readTail` refuse to say
-        // `reachedStart` for a session it had just read in full, and the screen would
-        // keep offering an earlier-history row with nothing behind it.
-        val budgetStopped = stopped && !eof
-        val capped = collected.size > maxEntries
-        if (!capped) {
-            return Range(
-                lines = collected,
-                firstOffset = firstOffset,
-                capped = false,
-                budgetStopped = budgetStopped,
-                droppedLine = dropped,
-            )
+        // Both caps trim the **front**, because every caller wants the newest entries:
+        // `maxChars` (a character budget) and `maxEntries` (an entry count). The budget
+        // is enforced here rather than by stopping the scan, and that is the second half
+        // of the fix the class KDoc describes: stopping at the budget left the window
+        // holding the lines that came *before* the cap was reached — the older ones — and
+        // dropped everything after them, so a message whose line exceeded the budget
+        // displaced the newer reply instead of merely being evicted itself.
+        //
+        // Neither cap may empty the range: an entry is indivisible, so the newest line
+        // survives even when it alone is over budget. That is the one case where a window
+        // holds more than `maxChars` characters, and it is deliberate — the alternative is
+        // an entry that can never be displayed at all.
+        var keepFrom = 0
+        var keptChars = seenChars
+        if (maxChars != null) {
+            while (keepFrom < collected.size - 1 && keptChars > maxChars) {
+                keptChars -= collected[keepFrom].length
+                keepFrom++
+            }
         }
-        // The entry cap trims the **front**, because every caller wants the newest
-        // entries, and the reported offset has to follow the trim: it is the byte the
-        // next backward window will end at, so an offset left on a dropped line would
-        // make that window re-deliver it.
-        val kept = collected.subList(collected.size - maxEntries, collected.size).toList()
-        var trimmedOffset = firstOffset
-        for (i in 0 until collected.size - maxEntries) {
-            trimmedOffset += collected[i].toByteArray(Charsets.UTF_8).size + 1L
+        val budgetDropped = keepFrom > 0
+        val capped = collected.size - keepFrom > maxEntries
+        if (capped) keepFrom = collected.size - maxEntries
+        // The reported offset has to follow whichever trim ran: it is the byte the next
+        // backward window will end at, so an offset left on a dropped line would make that
+        // window re-deliver it. The dropped lines are re-measured in **bytes** rather than
+        // characters because their UTF-8 width is what the offset counts.
+        var keptOffset = firstOffset
+        for (i in 0 until keepFrom) {
+            keptOffset += collected[i].toByteArray(Charsets.UTF_8).size + 1L
         }
         return Range(
-            lines = kept,
-            firstOffset = trimmedOffset,
-            capped = true,
-            budgetStopped = budgetStopped,
+            lines = if (keepFrom == 0) collected else collected.subList(keepFrom, collected.size).toList(),
+            firstOffset = keptOffset,
+            capped = capped,
+            budgetStopped = budgetDropped,
             droppedLine = dropped,
         )
     }
@@ -508,30 +541,39 @@ internal object SessionFileReader {
     }
 
     /**
-     * The first byte **after** the first LF at or after [target], or [target] when
-     * there is none.
+     * The first byte of the line **containing** [target] — the start of the file when
+     * there is no earlier LF — so a slice beginning here contains that line whole.
      *
-     * Beginning a slice here means the partial line [target] may sit inside is not read
-     * at all — no fragment to drop, and therefore no way to lose an entry to that
-     * dropping. Starting *after* the byte target also guarantees the budget is covered:
-     * a character is at most four bytes, so `maxChars` bytes spans at most `maxChars`
-     * characters.
+     * This is the backwards half of the boundary rule, and the direction is the whole
+     * point: the previous version returned the byte after the first LF at or after
+     * [target], which beginning a slice with means the line [target] sits inside is
+     * *excluded*. That is invisible while every line is smaller than a window's budget
+     * and loses the entry that matters as soon as one is not — see the class KDoc. A
+     * line that starts exactly at [target] is still "containing" it, so the scan is
+     * strictly backwards and never skips a line.
+     *
+     * The cost is that starting a slice here can cover up to one line more than
+     * `maxChars` bytes, which is the overshoot [readRange] already documents for its
+     * newest line; the budget is a target, not an exact allocation. The probe walks
+     * backwards in [PROBE_BYTES] steps, so a multi-megabyte line costs a scan of its own
+     * length and a normal one costs a single read.
      */
-    private fun snapPastLineBoundary(file: File, target: Long): Long {
+    private fun snapToLineStart(file: File, target: Long): Long {
         if (target <= 0L) return 0L
         RandomAccessFile(file, "r").use { raf ->
-            var pos = target
             val buf = ByteArray(PROBE_BYTES)
-            while (true) {
-                raf.seek(pos)
-                val got = raf.read(buf, 0, buf.size)
-                if (got <= 0) return target
-                for (i in 0 until got) {
-                    if (buf[i] == '\n'.code.toByte()) return pos + i + 1
+            var end = target
+            while (end > 0L) {
+                val start = (end - buf.size).coerceAtLeast(0L)
+                raf.seek(start)
+                val got = raf.read(buf, 0, (end - start).toInt())
+                for (i in got - 1 downTo 0) {
+                    if (buf[i] == '\n'.code.toByte()) return start + i + 1
                 }
-                pos += got.toLong()
+                end = start
             }
         }
+        return 0L
     }
 
     // ------------------------------------------------------------------ sanitising
@@ -593,16 +635,29 @@ internal object SessionFileReader {
     private const val HEADER_BUDGET = 1 shl 20
 
     /**
-     * Per-line cap for a **replay** read: 8 MiB.
+     * Per-line cap for a **replay** read: the wire's own record cap, 32 MiB.
      *
      * A bound, not a policy — it exists so a corrupted file cannot make the open path
-     * allocate without limit. It has to be large because of what a session contains: one
-     * entry carries an inline base64 image at four characters per three bytes, so a
-     * 2.5 MB phone photo is a single **3.4 MB line** and two of them in one turn are
-     * 6.7 MB. A cap near that (4 MiB was the first attempt) drops the very entries the
-     * reader exists to read, and does it silently: the window comes back without them.
+     * allocate without limit. It has to be at least [JsonlFramer.DEFAULT_MAX_RECORD_CHARS]
+     * because one entry carries an inline base64 image at four characters per three
+     * bytes, and **the two caps are one coupling, not two numbers**: the same message pi
+     * echoes in a `message_start`/`message_end` event is the line this reader parses, and
+     * the record carries an envelope (event type, `message` wrapper) the line does not.
+     * So every legal line is *strictly smaller* than a legal record, and a line cap below
+     * the record cap can only ever drop a line the framer would have delivered — which is
+     * the failure this reader's `complete = false` then reports, and the caller falls back
+     * to the whole-session `get_entries` record that is *bigger* than the line was. That
+     * is the user's "两张图片就进不去聊天历史", so the two are spelled as one value
+     * deliberately: a future raise of either has to be a raise of both.
+     *
+     * The cost is a bound relaxed, not removed: this is the ceiling that stops a corrupt
+     * file from allocating without limit, and it is now 32 MiB instead of 8 MiB. It is
+     * also **not** the largest window an entry can land in — that is
+     * `HISTORY_WINDOW_CHARS` (8 MiB) — and it must not be lowered to meet it: a window
+     * smaller than one line is handled by [readTail]/[readBefore] keeping the newest
+     * line whole, and a line cap that *drops* such a line would be silent data loss.
      */
-    const val DEFAULT_MAX_LINE_CHARS = 8 shl 20
+    const val DEFAULT_MAX_LINE_CHARS = JsonlFramer.DEFAULT_MAX_RECORD_CHARS
 
     /**
      * Per-line cap for the **entry-log scan** ([readEntries]): 512 KiB.

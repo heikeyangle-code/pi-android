@@ -355,8 +355,9 @@ run_harness sessions \
 # bounded windows reproduces the whole file's entries exactly, and that the rows
 # projected from that windowed replay equal the rows projected from a single
 # whole-session replay. It also prints what actually pushes a `get_entries` response
-# past the framer's 8 MiB cap (inline base64 images) and what the same work costs on
-# a tail window instead of on the whole session.
+# past the framer's record cap (inline base64 images) and what the same work costs on
+# a tail window instead of on the whole session — both measured against
+# `JsonlFramer.DEFAULT_MAX_RECORD_CHARS` rather than a literal, so the two cannot drift.
 #
 # `SessionFileReader` is Android-free by construction (java.io + kotlinx.serialization
 # through `:rpc`'s `PiJson`); if it ever grows an Android import, this compile fails,
@@ -379,6 +380,30 @@ run_harness session-replay-cost \
   "$ROOT/rpc/src/main/kotlin/app/pi/rpc/Commands.kt" \
   "$ROOT/rpc/src/main/kotlin/app/pi/rpc/SessionEntries.kt" \
   "$ROOT/rpc/src/main/kotlin/app/pi/rpc/SkillBlock.kt"
+
+# app.pi.ui.screens: 输入区附件的**体积预算**，也是「这张图能不能加进这条消息」的唯一判定处。
+# 为什么它必须在这里：解码/缩放/编码要 `Bitmap`，本机编译不了 `ChatScreen`（Compose），而真正
+# 决定一张图能不能发出去的是算术 —— pi 自己的上限（最长边 2000、base64 4.5 MB、质量阶梯
+# `[80,85,70,55,40]`、每轮缩 0.75）、由 `JsonlFramer.DEFAULT_MAX_RECORD_CHARS` 反推的**每条
+# 消息** base64 预算、以及拒绝那句话要用的每个数字（句子的数字全部来自判定本身，所以文案与
+# 判定不可能对不上）。`ChatScreen` 只剩编解码那一薄层。
+#
+# 三件不能靠读代码保证的事：(1) pi 的常量是**逐值**钉死的 —— 对另一个程序的主张会无声过期；
+# (2) e2e：7 张 pi 上限大小的图放得下、第 8 张放不下（pi 自己是严格 `< maxBytes`）；
+# (3) 与 `SessionFileReader.DEFAULT_MAX_LINE_CHARS` 的耦合 —— 合法的一行 entry 严格小于合法的
+# 单条消息记录（记录外面还有一层信封），所以读会话的行上限必须 ≥ 帧记录上限；这条正是
+# 「打开时丢行 → 回落旧路径 → 会话打不开」的复发条件。
+#
+# Android-free：本文件与 reader 只 import stdlib 与 kotlinx.serialization（经 `:rpc` 的
+# `PiJson`）；`AttachmentBudget` 一旦长出 Android import，这里就编译失败，这正是目的。
+run_harness image-attachment-budget \
+  app.pi.ui.screens.AttachmentBudgetCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/ui/screens/AttachmentBudgetCheck.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/ui/screens/AttachmentBudget.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/session/SessionFileReader.kt" \
+  "$ROOT/rpc/src/main/kotlin/app/pi/rpc/Jsonl.kt" \
+  "$ROOT/rpc/src/main/kotlin/app/pi/rpc/PiJson.kt" \
+  "$ROOT/rpc/src/main/kotlin/app/pi/rpc/internal/Json.kt"
 
 # :rpc: `extension_error`'s attribution. pi sends an absolute file path, which may
 # not reach user-visible copy, and most packaged extensions are loaded from

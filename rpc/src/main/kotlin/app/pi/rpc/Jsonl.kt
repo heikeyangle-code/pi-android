@@ -102,10 +102,32 @@ class JsonlFramer(private val maxRecordChars: Int = DEFAULT_MAX_RECORD_CHARS) {
 
     companion object {
         /**
-         * 8 MiB. pi's largest legitimate single record is a tool result, which
-         * pi itself truncates at 50 KB / 2000 lines; the headroom is for large
-         * image payloads echoed back in transcript entries.
+         * 32 MiB. pi's largest legitimate single record is a tool result, which pi
+         * itself truncates at 50 KB / 2000 lines; this cap exists for the one
+         * payload pi does *not* truncate: an inline base64 image, at four
+         * characters per three bytes, echoed back inside a `message_start` /
+         * `message_end` event and inside one entry of a `get_entries` response.
+         *
+         * The number is derived from what the composer is allowed to send, not
+         * chosen: the app compresses every attachment to pi's own inline limits
+         * (`maxWidth`/`maxHeight` 2000, base64 < 4.5 MB — see
+         * `utils/image-resize-core.ts` in the pinned engine) and caps the base64 of
+         * **one message's** images at this cap minus a framing allowance, so a legal
+         * message can be 7 pi-maximum images and its record approaches 32 MiB. The
+         * sender's arithmetic lives in `AttachmentBudget` (`app.pi.ui.screens`); if
+         * this constant moves, that one moves with it, because a legal message whose
+         * own echo is over this cap is a message the app cannot read back.
+         *
+         * The cost of the size is real and is not paid only by legal records: this
+         * is a **cumulative** bound on one record, so a malformed or over-long
+         * record buffers up to 32 MiB before [JsonlFramer] gives up on it. The
+         * buffering is incremental (one `feed` chunk at a time) and the record is
+         * discarded, not truncated, once it passes — [JsonlFramer.droppedRecords]
+         * counts it — but the peak allocation is 32 MiB of `pending` plus the chunk
+         * that crossed the line, not the chunk size. 8 MiB used to bound that; the
+         * larger cap trades the bound for the ability to read back what the app is
+         * allowed to send.
          */
-        const val DEFAULT_MAX_RECORD_CHARS = 8 * 1024 * 1024
+        const val DEFAULT_MAX_RECORD_CHARS = 32 * 1024 * 1024
     }
 }

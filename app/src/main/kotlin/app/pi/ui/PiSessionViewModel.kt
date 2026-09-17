@@ -423,11 +423,14 @@ data class UiPrefs(
  *
  * Both halves used to be `rememberSaveable` in `ChatScreen`, and the attachments
  * went into the saved state as their **base64 text** (the `AttachmentListSaver` that
- * was deleted with this move). One picked image is allowed to be up to
- * `MAX_ATTACHMENT_BYTES`, which `ChatScreen` derives from pi's own framing cap —
- * `(JsonlFramer.DEFAULT_MAX_RECORD_CHARS - 64 KiB) / 4 * 3` ≈ **5.95 MB of bytes**,
- * i.e. ≈ 7.9 MB of base64 characters — and an ordinary phone photo is 1–3 MB
- * (≈ 1.4–4 MB of base64) with nothing clipped.
+ * was deleted with this move). What `ChatScreen` stages is now compressed to pi's own
+ * inline limits — longest edge 2000, base64 under 4.5 MB per image — and one message's
+ * images are budgeted **together** against the framing cap (`AttachmentBudget`:
+ * `JsonlFramer.DEFAULT_MAX_RECORD_CHARS` − 64 KiB ≈ **31.94 MiB of base64**, i.e.
+ * ≈ 23.95 MB of bytes, or 7 pi-maximum images). That budget is what makes this type
+ * necessary rather than optional: the smallest contribution one image can make to the
+ * Bundle is still megabytes of text, and a legal message is up to seven of them, while
+ * Binder's per-transaction limit is ~1 MB — so the *first* image was already over it.
  *
  * `rememberSaveable` does not write those strings to a file. They go to
  * `androidx.compose.ui.platform.DisposableSaveableStateRegistry`, which registers a
@@ -4526,16 +4529,23 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
          *    characters per three bytes, so two 2.5 MB photos in one turn are 6.7 MB
          *    of a single window — the shape that used to be an over-cap record and an
          *    unopenable conversation. At ~500 characters per text entry the same
-         *    budget is on the order of 16 000 entries.
+         *    budget is on the order of 16 000 entries. It is deliberately **not**
+         *    raised to `SessionFileReader.DEFAULT_MAX_LINE_CHARS` (32 MiB): one
+         *    oversized entry must not cost every text session its first-paint bound.
          *  - **Small enough** to stay a background blur rather than a stall. The whole
          *    open on this window is measured in the `session-replay-cost` harness;
          *    the phone's share beyond it is one `LazyColumn` measure pass over the
          *    rows produced.
          *
-         * The first line of a window is admitted even when it alone exceeds the
-         * budget — see `SessionFileReader.readLines` — so a window is never empty
-         * merely because one entry is large; the caps bound memory without turning a
-         * big entry into a missing one.
+         * The newest entry of a window is admitted even when it alone exceeds the
+         * budget — `SessionFileReader.readTail`/`readBefore` keep the newest line whole
+         * and evict older ones, and the boundary snap goes back to the start of the line
+         * it lands in — so a window is never empty merely because one entry is large,
+         * and a big entry is never *skipped* by the window that follows it either. That
+         * second half is what the harness's `img-1msg-2x5MB` fixture pins: a message
+         * over one window (up to 31.94 MiB of base64 images is legal) arrives in a
+         * window of its own instead of falling between two. The caps bound memory
+         * without turning a big entry into a missing one.
          *
          * The entry cap is the second bound: a session of tiny entries (a `/mode` ping
          * per turn) would otherwise put tens of thousands of rows through the

@@ -13,7 +13,8 @@ package app.pi.session
 //
 //  1. the byte cost of one `get_entries` response for a session of a given shape,
 //     split into entries/text/tool output/inline base64 images — i.e. **what
-//     actually pushes a record past the framer's 8 MiB cap**;
+//     actually pushes a record past the framer's record cap** (32 MiB since the cap
+//     moved; the harness reads the cap from `JsonlFramer` rather than spelling it);
 //  2. the wall-clock cost of the two stages the app performs on that response:
 //     `JSON -> JsonObject` per line (the engine's read loop) and
 //     `JsonObject -> rows` (`TranscriptReducer.seedFromHistory`). Measured against
@@ -22,7 +23,11 @@ package app.pi.session
 //     first-paint work independent of total history;
 //  4. **equivalence**: `SessionFileReader` windows concatenated must equal the
 //     whole-file read, and the rows they project must equal the rows the
-//     `get_entries`-shaped replay projects.
+//     `get_entries`-shaped replay projects — walked with the **app's own window**
+//     (`PiSessionViewModel.HISTORY_WINDOW_CHARS`), not with a wider one, because a
+//     harness whose bound is looser than production cannot fail for the reason
+//     production fails. The `img-1msg-2x5MB` fixture is the case that distinction
+//     exists for: one message whose line is bigger than one window.
 //
 // ## What it cannot measure, and why (stated rather than guessed)
 //
@@ -72,6 +77,26 @@ private inline fun medianMs(repeats: Int = 5, block: () -> Unit): Double {
 }
 
 private fun mb(chars: Long): String = "%.2f".format(chars / 1024.0 / 1024.0)
+
+/**
+ * The app's own history window, written out rather than imported because
+ * `PiSessionViewModel` is not Android-free (`HISTORY_WINDOW_CHARS` /
+ * `HISTORY_WINDOW_ENTRIES`).
+ *
+ * §3 measures inside it and §4 **walks** inside it. The walk used to use
+ * `SessionFileReader.DEFAULT_MAX_LINE_CHARS * 3` for image-heavy fixtures on the
+ * reasoning that a budget smaller than one line cannot yield a whole entry — which was
+ * true of the reader at the time and is exactly the property the multi-image fixture
+ * disproves: the reader now returns one whole line even when it alone exceeds the
+ * budget, and the app is the thing being modelled. A wider-than-app budget reads the
+ * whole fixture in one window and passes without ever exercising the boundary the
+ * user's bug lives on.
+ */
+private const val APP_WINDOW_CHARS = 8 * 1024 * 1024
+private const val APP_WINDOW_ENTRIES = 4_000
+
+/** The one-message-many-images fixture's name in `shapes`. */
+private const val MULTI_IMAGE_SHAPE = "img-1msg-2x5MB"
 
 // ------------------------------------------------------------- synthetic sessions
 
@@ -190,6 +215,39 @@ private fun buildMixedSession(file: File): File {
     return file
 }
 
+/**
+ * **One** message carrying **two** 5 MB images — the reported defect, kept as a fixture.
+ *
+ * The images are inline, so the whole message is one line: 2 × 5 MB of bytes is 13.3 MB
+ * of base64, which was over the framer's old 8 MiB record cap *and* over the reader's old
+ * 8 MiB line cap at the same time. The user saw "两张图片就进不去聊天历史"; the halves this
+ * fixture pins are that the entry is readable at all under the new caps, and — the part
+ * that stays broken if only the caps move — that an entry larger than one **window** is
+ * still delivered, by the tail window or by the backward walk that follows it.
+ *
+ * The small reply after the message is what makes that second half bite: with an 8 MiB
+ * tail window the newest line is the reply, so the big entry can only arrive through
+ * `readBefore`, and the snap that decides where a backward range starts is what used to
+ * lose it silently (`complete` stayed true, so the app did not even fall back).
+ */
+private fun buildMultiImageMessage(file: File): File {
+    file.parentFile?.mkdirs()
+    val images = List(2) { _ ->
+        val b64Chars = (5L * 1024 * 1024 * 4 / 3).toInt()
+        val payload = "iVBORw0KGgoAAAANSUhEUg".repeat(b64Chars / 22 + 1).substring(0, b64Chars)
+        "{\"type\":\"image\",\"mimeType\":\"image/png\",\"data\":\"$payload\"}"
+    }
+    val lines = ArrayList<String>()
+    lines += header("one-message")
+    lines += userEntry("q1", null, "two photos")
+    lines += "{\"type\":\"message\",\"id\":\"big\",\"parentId\":\"q1\"," +
+        "\"timestamp\":\"2025-11-20T00:00:00.700Z\",\"message\":{\"role\":\"user\",\"content\":[" +
+        images.joinToString(",") + "],\"timestamp\":1}}"
+    lines += assistantEntry("big-a", "big", 300, 0)
+    file.writeText(lines.joinToString("\n") + "\n", StandardCharsets.UTF_8)
+    return file
+}
+
 private fun allLines(file: File): List<String> =
     file.readLines(StandardCharsets.UTF_8).filter { it.isNotBlank() }
 
@@ -262,6 +320,7 @@ fun main() {
         "tool-400x50KB" to buildSession(File(root, "tool.jsonl"), turns = 400, toolChars = 50 * 1024),
         "img-2x2.5MB" to buildSession(File(root, "img2.jsonl"), turns = 40, images = listOf(2_500_000, 2_500_000)),
         "img-20x2.5MB" to buildSession(File(root, "img20.jsonl"), turns = 40, images = List(20) { 2_500_000 }),
+        MULTI_IMAGE_SHAPE to buildMultiImageMessage(File(root, "img-1msg.jsonl")),
         "mixed-entries" to buildMixedSession(File(root, "mixed.jsonl")),
     )
 
@@ -272,9 +331,10 @@ fun main() {
 
     // ------------------------------------------------- 1. what is in the record
     println("-- 1. 一条 get_entries 响应有多大，谁占的 --")
+    val recordCap = app.pi.rpc.JsonlFramer.DEFAULT_MAX_RECORD_CHARS.toLong()
     println(
         "%-16s %9s %8s %11s %11s %11s %8s".format(
-            "shape", "file MB", "entries", "resp MB", "entries MB", "image MB", "over 8MiB",
+            "shape", "file MB", "entries", "resp MB", "entries MB", "image MB", "over cap",
         ),
     )
     val responseChars = HashMap<String, Long>()
@@ -296,14 +356,30 @@ fun main() {
         println(
             "%-16s %9s %8d %11s %11s %11s %8s".format(
                 name, mb(file.length()), lines.size, mb(total), mb(entriesBytes), mb(image),
-                if (total > 8L * 1024 * 1024) "YES" else "-",
+                if (total > recordCap) "YES" else "-",
             ),
         )
     }
     println()
-    val two = responseChars["img-2x2.5MB"]!!
-    println("两张 2.5MB 照片 = ${mb(two)} MB vs 上限 8.00 MB -> " + if (two > 8L * 1024 * 1024) "帧被丢弃、会话打不开" else "未超")
-    println("20 张 2.5MB 照片 = ${mb(responseChars["img-20x2.5MB"]!!)} MB")
+    // The numbers the change is about, printed against the cap in force rather than
+    // against a literal: `recordCap` is read from the framer, and the composer's budget
+    // is spelled here for the same reason the window is (it lives in
+    // `app.pi.ui.screens`, which this closure does not compile).
+    println("帧记录上限（新）= ${mb(recordCap)} MB；旧上限 = 8.00 MB")
+    val oneMessage = responseChars[MULTI_IMAGE_SHAPE]!!
+    println(
+        "一条消息两张 5MB 原图 = ${mb(oneMessage)} MB -> 旧上限 8.00 MB：" +
+            if (oneMessage > 8L * 1024 * 1024) "记录被丢弃、会话打不开（用户报的那个）" else "未超",
+    )
+    println("  同一夹具在新上限下：" + if (oneMessage > recordCap) "仍然超" else "可读回")
+    println("两张 2.5MB 照片（分两条消息）= ${mb(responseChars["img-2x2.5MB"]!!)} MB")
+    println("20 张 2.5MB 照片 = ${mb(responseChars["img-20x2.5MB"]!!)} MB -> 超过新上限的记录仍会被丢弃")
+    val messageBase64 = recordCap - 64L * 1024
+    val piImageBase64 = 4_718_592L
+    println(
+        "每条消息的图片预算 = ${mb(messageBase64)} MB base64（${mb(messageBase64 / 4 * 3)} MB 字节）；" +
+            "pi 上限的图（${mb(piImageBase64)} MB base64）可放 ${messageBase64 / piImageBase64} 张",
+    )
     println()
 
     // -------------------------------------------- 2. stage cost vs session size
@@ -324,11 +400,10 @@ fun main() {
 
     // ---------------------------------------- 3. the same work on a tail window
     println("-- 3. 尾部窗口（同样的两段耗时，只处理最近 N 条）--")
-    // The app's own window (`PiSessionViewModel.HISTORY_WINDOW_CHARS` /
-    // `HISTORY_WINDOW_ENTRIES`), written out rather than imported because the
-    // ViewModel is not Android-free.
-    val windowEntries = 4_000
-    val windowChars = 8 * 1024 * 1024
+    // The app's own window, so this section and §4 measure and walk the same shape the
+    // screen does. See [APP_WINDOW_CHARS].
+    val windowEntries = APP_WINDOW_ENTRIES
+    val windowChars = APP_WINDOW_CHARS
     println("%-16s %14s %14s %14s %10s".format("shape", "read ms", "parse+rows ms", "total ms", "window MB"))
     var worstWindow = 0.0
     val tailAfter = HashMap<String, Double>()
@@ -365,34 +440,32 @@ fun main() {
         // Walk the file backwards in bounded windows from the end. The window is
         // small on purpose so a 40-entry file needs several steps; the loop is the
         // exact shape the app's "load earlier history" uses.
-        // The window's first entry is admitted whatever its size (see
-        // `SessionFileReader.readLines`), so even a session whose entries are single
-        // multi-megabyte image lines must produce a non-empty tail. That is the
-        // property that keeps `readTail` from reporting "the conversation starts
-        // here" for a session that is merely image-heavy.
-        // One window budget for the whole walk. It must be **larger than one entry's
-        // line**, or no step can yield a whole entry (the reader drops a partial final
-        // line by design) and the harness would be measuring its own arithmetic rather
-        // than the reader's. Three times the line cap is a few image entries; on a
-        // text session that is also small enough to need many steps, which is what
-        // exercises the boundary between one window and the next.
+        // The window's first entry is admitted whatever its size, so even a session whose
+        // entries are single multi-megabyte image lines must produce a non-empty tail.
+        // That is the property that keeps `readTail` from reporting "the conversation
+        // starts here" for a session that is merely image-heavy — and since the reader
+        // began trimming the *front* of a window instead of stopping at the budget, it
+        // also means an entry bigger than one window is delivered by a window of its own
+        // rather than being skipped by the snap that chooses the window's start.
         //
         // It is deliberately a constant and not derived from the file: a budget that
         // grew with the file would make this loop pass on exactly the property the
         // change exists to establish, that first-paint work does not grow with the
         // session.
-        // Two regimes, both needed. On a **text** session the budget is small, so the
-        // walk really does cross many window boundaries — that is the arithmetic the
-        // change is most likely to get wrong, and a single-step walk would never
-        // execute it. On a session whose entries are multi-megabyte image lines the
-        // budget is the reader's own line cap times three, because a budget smaller
-        // than one line can never yield a whole entry.
+        //
+        // Two regimes, both needed, and **the image-heavy one is the app's own window**.
+        // On a **text** session the budget is small, so the walk really does cross many
+        // window boundaries — that is the arithmetic the change is most likely to get
+        // wrong, and a single-step walk would never execute it. On an image-heavy session
+        // the budget is [APP_WINDOW_CHARS], the number the screen actually passes: it
+        // used to be `DEFAULT_MAX_LINE_CHARS * 3`, which after the cap moved to 32 MiB
+        // would be 96 MiB and would read `img-1msg-2x5MB` in a single window. That is a
+        // harness bound looser than production's, and a bound looser than production's
+        // cannot fail for the reason production fails — the false green this repository
+        // keeps finding. [MULTI_IMAGE_SHAPE]'s explicit block below is the same walk,
+        // asserted on its own so the reason is legible.
         val imageHeavy = name.startsWith("img-")
-        val budget = if (imageHeavy) {
-            SessionFileReader.DEFAULT_MAX_LINE_CHARS * 3
-        } else {
-            64 * 1024
-        }
+        val budget = if (imageHeavy) APP_WINDOW_CHARS else 64 * 1024
         val tail = SessionFileReader.readTail(file, budget, Int.MAX_VALUE)
         checkTrue("$name: 尾部窗口非空", tail != null)
         val collected = ArrayList<JsonObject>()
@@ -461,6 +534,66 @@ fun main() {
             "mixed: 反推窗口与全文件逐条一致",
             fingerprint(back),
             fingerprint(SessionFileReader.readAll(mixed)!!.entries),
+        )
+    }
+
+    // (b4) the message whose line is bigger than one window: prove it is *reachable*.
+    //
+    // This is the regression [MULTI_IMAGE_SHAPE] exists for, and it is the half that
+    // moving the caps does not fix by itself. A 13.3 MB image entry under an 8 MiB tail
+    // window used to be skipped in both directions: the window's start snapped to the
+    // byte *after* the big line, so the window came back `complete = true` without it,
+    // and `readBefore` snapped to the same place — an empty range, so the backward walk
+    // made **zero** steps. The user's own message was invisible, and because `complete`
+    // was true the ViewModel did not even fall back to `get_entries`. Measured before the
+    // reader was fixed; the numbers are in the change report.
+    run {
+        val file = shapes.first { it.first == MULTI_IMAGE_SHAPE }.second
+
+        // (a) the line cap admits the whole file, so `complete` is a statement about the
+        // reader and not a silent fallback to the record that used to be unreadable.
+        val wide = SessionFileReader.readAll(file)!!
+        check("$MULTI_IMAGE_SHAPE: 新的行上限下全文件完整", wide.complete, true)
+        check("$MULTI_IMAGE_SHAPE: 全文件条数", wide.entries.size, 3)
+
+        // The tail window is the app's window. The multi-image entry is *older* than the
+        // reply that follows it, so the newest line is the reply — the big entry has to
+        // arrive through `readBefore`.
+        val tail = SessionFileReader.readTail(file, APP_WINDOW_CHARS, APP_WINDOW_ENTRIES)!!
+        checkTrue("$MULTI_IMAGE_SHAPE: 尾部窗口完整", tail.complete)
+        check("$MULTI_IMAGE_SHAPE: 尾部窗口以最新一条结尾", idOf(tail.entries.last()), "big-a")
+
+        val collected = ArrayList<JsonObject>(tail.entries)
+        var w = tail
+        var steps = 0
+        while (!w.reachedStart && steps < 1_000) {
+            val before = SessionFileReader.readBefore(file, w.startOffset, APP_WINDOW_CHARS, APP_WINDOW_ENTRIES) ?: break
+            collected.addAll(0, before.entries)
+            w = before
+            steps++
+        }
+        checkTrue(
+            "$MULTI_IMAGE_SHAPE: 反向前推走了不止一步（多图那条占满一个窗口）",
+            steps >= 1,
+            "steps=$steps",
+        )
+        check("$MULTI_IMAGE_SHAPE: 反向前推到了文件头", collected.firstOrNull(), wide.entries.firstOrNull())
+        val big = collected.firstOrNull { idOf(it) == "big" }
+        checkTrue("$MULTI_IMAGE_SHAPE: 多图 entry 在某个窗口里", big != null)
+        val bigChars = big?.toString()?.length ?: 0
+        checkTrue(
+            "$MULTI_IMAGE_SHAPE: 多图 entry 的 JSON 比旧上限 8 MiB 还大",
+            bigChars > 8 * 1024 * 1024,
+            "chars=$bigChars",
+        )
+        check("$MULTI_IMAGE_SHAPE: 窗口化读取 == 全文件（逐条 id/类型）", fingerprint(collected), fingerprint(wide.entries))
+        // And the fixture must contain those bytes in one entry, not spread over lines:
+        // two images in one content array is what makes the record, the line and the
+        // window budget collide.
+        check(
+            "$MULTI_IMAGE_SHAPE: 两条图片在同一条消息里",
+            big?.get("message")?.toString()?.split("\"type\":\"image\"")?.size?.minus(1),
+            2,
         )
     }
 
@@ -541,22 +674,26 @@ fun main() {
     }
 
     // (c) the framer's cap is what drops the big one: prove the same bytes are
-    // unreadable at 8 MiB and readable once the cap is raised, so the ceiling (not
-    // the file) is the defect.
-    val bigResponse = "x".repeat(9 * 1024 * 1024) + "\n"
+    // unreadable at the cap and readable once it is raised, so the ceiling (not the
+    // file) is the defect. The size is `cap + 1` read from the framer, never a literal:
+    // this check used to spell "9 MiB" against an 8 MiB cap, and the moment the cap moved
+    // above 9 MiB it would have gone on passing while testing nothing. The framer drops a
+    // record of exactly `maxRecordChars` characters, so one character past it is the
+    // smallest honest fixture.
+    val overCap = "x".repeat(app.pi.rpc.JsonlFramer.DEFAULT_MAX_RECORD_CHARS + 1) + "\n"
     val default = app.pi.rpc.JsonlFramer()
-    val defaultRecords = default.feed(bigResponse)
-    check("8 MiB 上限：9 MiB 记录被丢弃", defaultRecords.isEmpty() && default.droppedRecords == 1L, true)
-    val raised = app.pi.rpc.JsonlFramer(maxRecordChars = 64 * 1024 * 1024)
-    val raisedRecords = raised.feed(bigResponse)
+    val defaultRecords = default.feed(overCap)
+    check("记录上限：cap+1 的记录被丢弃并计数", defaultRecords.isEmpty() && default.droppedRecords == 1L, true)
+    val raised = app.pi.rpc.JsonlFramer(maxRecordChars = overCap.length + 1)
+    val raisedRecords = raised.feed(overCap)
     check("放宽上限：同一条记录可读出", raisedRecords.size, 1)
     println()
 
     // ---------------------------------------------------------- 5. framer cost
-    println("-- 5. 帧读取吞吐（8 MiB 一条记录）--")
-    val payload = "x".repeat(8 * 1024 * 1024)
+    println("-- 5. 帧读取吞吐（一条上限大小的记录）--")
+    val payload = "x".repeat(app.pi.rpc.JsonlFramer.DEFAULT_MAX_RECORD_CHARS)
     val feedMs = medianMs(repeats = 3) {
-        val f = app.pi.rpc.JsonlFramer(maxRecordChars = 64 * 1024 * 1024)
+        val f = app.pi.rpc.JsonlFramer(maxRecordChars = payload.length + 1)
         var i = 0
         while (i < payload.length) {
             val n = minOf(64 * 1024, payload.length - i)
@@ -565,7 +702,7 @@ fun main() {
         }
         f.feed("\n")
     }
-    println("8 MiB 逐块喂入 + 成帧 = %.1f ms（与设备无关）".format(feedMs))
+    println("上限大小（${payload.length / 1024 / 1024} MiB）逐块喂入 + 成帧 = %.1f ms（与设备无关）".format(feedMs))
     println()
 
     // ---------------------------------------------------------------- summary
