@@ -811,3 +811,31 @@ pi 是终端，本来没有这个按钮。
 `ui/chat/TailFollow.kt`、`ui/screens/ChatScreen.kt`、`app/src/test/kotlin/app/pi/ui/chat/TailFollowCheck.kt`。
 **颜色一处未动。** 只能上机看的：⋮ 删掉之后各块的宽度是否真的回来了（尤其工具卡的命令行与输出）、
 `回到最新` 是否一按就贴底、以及折叠态下往上滑/点「加载更早」是否连续接出更早的内容。
+
+---
+
+## D47 · 附件：两条路线各是什么，以及删掉「已放入工作区」那条提示
+**用户提问**（原话）：「我现在发送附件是把东西复制到工作区吗？走的什么路线？发送完为什么有个提示呢？
+占住我的输入框了好几秒，去不掉，把这个提示删掉。」
+
+### 两条路线（按 MIME 分，`ChatScreen.kt` 的 picker 回调）
+- **图片**（`image/*`）→ **不复制任何东西**。`readBounded` 读进内存（有读取上限，避免先分配再判断），
+  `compressAttachment` 按 pi 的参数压（最长边 2000、base64 < 4.5 MB、质量阶梯、每轮缩 0.75），
+  `AttachmentBudget.decide` 按**本条消息的总量**判定，通过就进 `attachments`；发送时以
+  **base64 内联**进 RPC 消息（pi 的 `ImageContent`）。所以图片是"随消息走"，工作区里不留副本。
+- **非图片**（其余一切）→ **复制进工作区**：`copyIntoWorkspace` 写到
+  `<workspace>/attachments/<清洗过的唯一文件名>`（名字做过清洗，并且落点被 `canonicalPath` 再校验一次
+  必须在该目录内），然后把**相对路径**（`attachments/<name>`）当**文本**插进输入框 —— pi 的 agent 按
+  这个路径自己去读，与用户手打一个路径完全同路。**不复制就不行**：App 手里只有 `content://` URI（pi 读不到），
+  而"猜一个设备路径"会让 pi 报一个用户从没提过的文件。
+
+### 删掉那条提示
+`WorkspaceCopy.Copied` 原来会 `notifyUser("已放入工作区：<path>")`。删掉，理由有两条：**那句提示说的就是
+"路径"，而路径这一刻已经落在输入框里**（信息重复）；而它走的是全应用那一条 M3 snackbar
+（`ExtensionUiHost`，`Info` → `SnackbarDuration.Short`、`actionLabel = null`），画在底部、**压住输入框约 4 秒
+且没有可点的关闭**。
+**失败那三条提示全部保留**（读不到 / 太大 / 写不进）：它们解释"为什么什么都没复制"，
+而输入框里没有路径可以替它们说话。
+
+**影响**：`ui/screens/ChatScreen.kt` 一处（`WorkspaceCopy.Copied` 分支）。只能上机看：选一个非图片文件后
+输入框里出现 `attachments/<name>`、工作区里确有该文件、且**不再弹那条提示**。

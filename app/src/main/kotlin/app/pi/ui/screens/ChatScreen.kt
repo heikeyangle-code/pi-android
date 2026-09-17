@@ -451,9 +451,17 @@ private fun ChatBody(
                             } else {
                                 draft + " " + result.relativePath
                             }
-                            // Named, because the file is now visible in 工作区 and an
-                            // unexplained new file there is worse than the copy was.
-                            session.notifyUser("已放入工作区：${result.relativePath}")
+                            // **No notice here on purpose.** There used to be one
+                            // (「已放入工作区：<path>」) so that a new file in 工作区 was not
+                            // unexplained; the path that has just landed in the composer says
+                            // the same thing, and it says it without covering the composer for
+                            // four seconds with a snackbar that has no dismiss action (the
+                            // app-wide `ExtensionUiHost` host, `Info` tone →
+                            // `SnackbarDuration.Short`, `actionLabel = null`). The user asked
+                            // for it to go: 「发送完为什么有个提示呢？占住我的输入框了好几秒，
+                            // 去不掉，把这个提示删掉。」 The **failure** arms below stay — those
+                            // explain why nothing was copied, and there is no path in the
+                            // composer to say it for them.
                         }
                         // Each failure names its own cause and inserts nothing: a
                         // `content://` string or a guessed path would be answered by pi
