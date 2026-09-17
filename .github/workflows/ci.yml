@@ -10,7 +10,14 @@ name: ci
 
 on:
   push:
-    branches: [main]
+    # `main` 是发布线，`proroot-*` 是长期存在的实验线：那条线上的东西（见
+    # `design/ui-refactor/07-construction-decisions.md` D44）**只能在真机上验证**，
+    # 而真机验证需要一份能装的包 —— 所以它必须和 main 一样每次都跑，否则分支推上去
+    # 既没有 CI 也没有 artifact，只能靠人手点 `workflow_dispatch`。
+    #
+    # 这里故意不写 `branches: ['**']`：一次性的分支不值得每次都花掉两个 targetSdk
+    # 变体的完整构建（含 ~65 MB 运行时装配），而 PR 那一侧本来就覆盖了评审场景。
+    branches: [main, 'proroot-*']
   pull_request:
   workflow_dispatch:
 
