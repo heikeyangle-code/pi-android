@@ -84,7 +84,11 @@ import kotlin.math.min
  * ## Decoding
  *
  * The bitmap is decoded **once**, sampled to this view's own pixel size
- * ([decodePiImage] with a target box), on [Dispatchers.IO]. Three things follow:
+ * ([decodePiImage] with a target box), on [Dispatchers.IO] and under
+ * [piImageDecodeGate] — the same bound the transcript's cells wait on, because this
+ * viewer is opened *from* a scroll and its full-screen decode must not be one more
+ * allocation competing with a list that is still filling its own cells in. Three things
+ * follow:
  * the viewer never holds a second full-resolution copy of what the grid cell
  * already decoded, a 4000 px screenshot cannot OOM the app, and pinching to 1:1
  * magnifies the *sampled* pixels — the honest ceiling, because decoding the
@@ -135,7 +139,14 @@ fun PiImageViewer(
 
             val bitmap by produceState<Bitmap?>(null, image.base64, boxWidthPx, boxHeightPx) {
                 value = withContext(Dispatchers.IO) {
-                    decodePiImage(image.base64, boxWidthPx, boxHeightPx)
+                    // Through the same gate the transcript's cells use: the viewer is opened
+                    // *from* a scroll (the user taps a picture the list may still be
+                    // decoding), so this decode queues behind those instead of becoming one
+                    // more full-resolution allocation competing with the frame. The box
+                    // stays the whole window — see the class KDoc on the zoom ceiling.
+                    piImageDecodeGate.withPermit {
+                        decodePiImage(image.base64, boxWidthPx, boxHeightPx)
+                    }
                 }
             }
 

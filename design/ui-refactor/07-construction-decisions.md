@@ -852,3 +852,73 @@ pi 是终端，本来没有这个按钮。
 - 代价：关掉开关**之后**，之前 proroot 留下的那几份 `.proroot-config-*` 不再被立刻收走；下一次**打开**
   开关启动 guest 时收，或者运行环境 revision 变化时随 `wipe()` 一起没。条数上限本来就是 32 份 × 274 KB，
   这是有界的。
+
+---
+
+## D48 · 对话流里的图片：单图上限 0.6 → 0.35，以及"上滑时行高不变"
+**用户原话**：①「占大半个屏幕了都。让它再缩小 1/3~1/2。美观一点」；
+②「我慢慢的滑它会比较正常。如果我速度稍稍微微快一点，这个图片会从底部直接闪现到全面露出来……往上滑有图片的时候不流畅」。
+
+### ① 单图高度上限：0.6 → 0.35（`SINGLE_IMAGE_MAX_HEIGHT_FRACTION`）
+0.6 → 0.35 就是用户要的"缩小 1/3~1/2"（0.6 → 0.4~0.3，取中间）。常量从 `ImageGridBlock.kt`
+**搬到** `ui/blocks/ImageSize.kt`：它是用户对"图多大"唯一的把手，搬到一个 bare JVM 能跑的文件里，
+`image-size` harness 才能钉住它（`in 0.30f..0.40f` 且 `< 0.6f`）。
+
+**顺手修的两处**（都属于"让单图看起来更整齐"，都不动颜色）：
+- 单图分支原来把调用者的 `modifier` **丢掉**了（多图分支用 `modifier.fillMaxWidth()`，单图写的是
+  `Modifier.fillMaxWidth()`）→ `ToolCallBlock` 传的 `padding(top = PiSpacing.tiny)` 在只有一张图时消失。
+  现在两个分支一致。
+- **cap 原来根本没压住行**。`Modifier.fillMaxWidth().aspectRatio(r).heightIn(max = cap)` 读起来像在给行设上限，
+  实际不是：modifier 从外往里量，`aspectRatio` 拿到的 `maxHeight` 是**无界**的，于是它取 `width / ratio`
+  （`AspectRatioNode.findSize` → `tryMaxWidth`：只要 `isSatisfiedBy(constraints, w, h)` 成立就返回，`Infinity` 全都成立），
+  而 `heightIn` 只把**画出来的内容**压小。后果：一张 1080×2400 的截图在 360dp 宽的屏上，**行高 = 一整个屏高**，
+  卡片只有 0.6 屏 —— 用户看到的"大半个屏幕"是卡片，图下面那截空白是行。现在行高是显式
+  `.height(boxHeightPx)`，由 `singleImageBoxHeightPx(宽度, 报头比例, cap)` 一个函数给出。
+- 代价（写清楚）：cap 生效后，比 cap 更高的图会在**全宽卡片**里被 `Fit` 缩小居中，左右留 `cardBg` 色的边。
+  这是"整张可见、不裁剪"与"高度不超过 0.35 屏"两条硬要求同时成立的唯一形状（`Crop` 是早先被用户否掉的缺陷）。
+  如果上机看着别扭，可选项是让卡片**贴住图片**（宽 = `cap × 比例`，居中）——那会改变"单图总是占满宽度"的观感，
+  这次不做。
+
+### ② 上滑闪现：把"行高"从解码结果里拿出来
+**机制确认（先把用户/委派方的假设对一遍代码，其中一条需要更正）**：
+- 现象确实是**行高变了一次**，而且尺寸确实来自**解码后**的位图：`ImageCell` 用
+  `decoded.width / decoded.height` 算 `aspectRatio`，解码完成前走 `Modifier.fillMaxSize()`。
+- **更正**：解码前的行高**不是 0**。`fillMaxSize` 在无界轴上原样透传
+  （`FillNode.measure` 只在 `constraints.hasBoundedHeight` 时算固定高；`compose/foundation/foundation-layout/.../Size.kt`，
+  用 `javap` 读了本次构建解析到的那份 artifact），`Column` 里高度约束是无界的，所以那时行高 = **占位标签自身的高度**
+  （两行 `monoSmall` + padding）。也就是说：一张能解码的图进视口时，先闪一下「图片 1 / image/png」，
+  再"跳"到全宽×真实比例。位移是真的，起点不是 0 而是那两行字。
+- "滑得越快越明显"也对：每张图各自一个 `produceState` → `decodePiImage`，`Dispatchers.IO` 上 64 路并发，
+  快速甩动时同一帧起十几个解码（每个都把 base64 解一遍、再分配位图），和正在滚的那一帧抢主线程/内存。
+
+**选的路（三条候选的取舍）**：
+- ✅ **同步读报头拿真实比例**（`ImageSize.kt` 的 `readImageHeader` / `naturalImageAspect`）。png/gif/bmp/webp 的尺寸都在
+  头 32 字节里，base64 解码是顺序的 → **O(前缀)**，不是 O(payload)；jpeg 是唯一例外（EXIF 缩略图把 `SOF` 推到后面），
+  给它第二次 64 KiB 预算 + 标记链走查。这样**第一次组合时**比例就是已知的，行高从第一帧起就是终值。
+  五种格式不是猜的：那是 pi 的内联集合（`image-process.ts:33-47`，见 `AttachmentBudget.piInlineSupported`）
+  也是本仓库自己的嗅探集合（`bridge/GuestImageBytes.kt:250-283`）。
+- ❌ **`BitmapFactory.Options(inJustDecodeBounds = true)`**：要 `image.base64` 的**全部**字节（base64 解码 O(n)），
+  在组合期同步做就是把大字符串处理放回主线程。它作为 decode 的第一趟仍然保留（`decodePiImage` 里没动）。
+- ❌ **按 payload 键的进程级 LRU**：键要么用字符串身份（`remember` 已经是），要么用 `hashCode()` ——
+  而 `String.hashCode()` 首次是 O(payload)，几 MB 的 base64 是几毫秒**正好花在滚动的帧上**。省下的只是一次
+  前缀解析（几十微秒）。所以只留 `remember(image.base64)`（`equals` 先比引用，O(1)）。
+- ❌ **固定比例占位（4:3）直到真实比例已知**：那仍然会变一次行高，直接违反判据。4:3 只用在**报头读不出来**的
+  兜底上（`SINGLE_IMAGE_FALLBACK_ASPECT`），而且是**认下来就不再改**：宁可让一张"安卓能解、我们读不出头"的图
+  永远套在 4:3 信箱里，也不让行高动第二次。这条路径按上面的集合论证是到不了的。
+- ✅ **并发上限**：`piImageDecodeGate`（`ImageDecodeGate`，2 个许可）把 cell 和查看器的解码一起管住；
+  `produceState` 被取消时 `withPermit` 会释放许可，所以甩动不会漏许可把后面的图卡死。
+- ✅ **解码取样 = 真正画出来的像素**：`fitBoxPx`。卡片不是图片——1:5 的图在满宽卡片里只是一根窄柱，
+  按卡片取样会解出 4 倍于实际绘制的像素。这条对单图和多图格子都成立（多图的**布局**一个像素都没动，只动取样框）。
+  查看器**故意**仍按整个窗口取样：捏合放大最多 8×，那些像素要留着。
+
+**判据（硬要求，不是愿望）**：**同一张图从第一次进入视口到最终渲染，行高不允许变化。** 现在它是算术的性质：
+`boxHeightPx` 的全部输入（可用宽度、报头比例、cap）在解码开始前就已确定，位图不在任何一条输入里。
+另外"解码中"和"解不出来"在 cell 里被分开（`CellImage.Pending` / `Ready(null)`），所以在跑的解码期间**不画**
+那个标签，只留一块最终尺寸的空卡片。
+
+**影响**：`ui/blocks/ImageSize.kt`（新增，Android-free）、`ui/blocks/ImageGridBlock.kt`、
+`ui/blocks/PiImageViewer.kt`（解码过同一道 gate）、`app/src/test/.../ImageSizeCheck.kt`（新增 harness，
+`tools/run-app-pure-checks.sh` 的 `image-size`，96 条）。**颜色/主题一个字节没动。**
+只能上机看：滚动是否真的顺、真实解码耗时与内存、竖图/横图/长图在 0.35 下的观感（判据见
+`docs/device-verification.md` §H5/H6）。本机连 Compose 都编不了（`tools/typecheck.sh` 不跑 Compose 编译器插件，
+APK 也打不出来：AAPT2 只有 x86-64），所以 composable 的真实行为**没有**在这里验证过。

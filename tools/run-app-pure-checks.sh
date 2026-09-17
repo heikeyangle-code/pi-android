@@ -558,6 +558,25 @@ run_harness tool-output-parse \
   "$ROOT/app/src/main/kotlin/app/pi/ui/blocks/ToolOutputParse.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/ui/blocks/ToolCallPart.kt"
 
+# app.pi.ui.blocks: the arithmetic of a transcript image's box — how tall a lone picture
+# may be, the shape its own header declares, the pixels that actually get drawn, and how
+# many decodes may run at once. Why it has to be pinned here: both defects it answers are
+# invisible to every other check in this repository. ① the single image's size is one float
+# constant (`SINGLE_IMAGE_MAX_HEIGHT_FRACTION`, moved here out of `ImageGridBlock.kt`)
+# applied by arithmetic that no build step evaluates; ② 「往上滑有图片的时候不流畅」 was a
+# *row height change* — the cell sized its box from the decoded bitmap, and the fix states
+# the height from the payload's own header before anything is decoded, which makes "the same
+# picture never moves the row" a property of this file's functions. `ImageSize.kt` imports
+# neither Android nor Compose (kotlinx.coroutines' `Semaphore` for the gate, the stdlib for
+# the rest — this compile fails if that ever changes, which is the point). The two
+# composable call sites cannot be compiled here at all, so the harness also reads them as
+# source text and requires every `decodePiImage` call in them to sit inside the shared gate;
+# `pi.repo.root` is what that read uses.
+run_harness image-size \
+  app.pi.ui.blocks.ImageSizeCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/ui/blocks/ImageSizeCheck.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/ui/blocks/ImageSize.kt"
+
 # --- 4. verdict ---------------------------------------------------------------
 # The counts are computed, not written down. They were hardcoded once ("2
 # harnesses"), and adding a third would have left the message lying about how much
