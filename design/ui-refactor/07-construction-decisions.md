@@ -704,7 +704,13 @@ argv/env 由 `runtime/GuestCommandLine.kt` 分派到 `ProotCommand` / `ProrootCo
 判定 = **必须翻译到 guest 文件系统**，并且**同一路径的 raw 内容与 libc 内容不得不同**——后者（静默读到宿主文件）是**否决级**；
 ② **`rg`/`fd` 真调用**（复用 `GuestToolProbe`，参数化到 proroot）：两者是 **musl 静态** Rust 二进制，
 不走走动态链接器，全靠 proroot 的 `--static-loader` + inline `svc` 改写，`--version` 正常而 guest 路径读空是这类缺口的形状。
-**这两条不过 → 不许用 proroot**（上机判据见 `docs/device-verification.md` §F）。
+**这两条不过 → 不许用 proroot**（上机判据见 `docs/device-verification.md` §J1–J3）。
+**门禁结论的失效条件（补记，2026-09-16）**：缓存 key = 解包 revision + 5 个 `.so` 的 sha256，**开关不在 key 里** ——
+所以一条"未通过"会活过拨开关（哪怕它只是一次瞬时原因），而设置行承诺过"关掉再打开就是再试一次"。
+修复：**用户把开关从关→开时删掉探针缓存**（`runtime/ProrootRetry.kt`，`RuntimeSelection.setProrootEnabled` 调用；
+纯判定 + 注入回调，所以 harness 是**执行**生产的那条转移而不是断言一份副本）；**关掉时不删**（结论描述的是运行时树，
+不是开关）；**正常重启不重跑门禁** —— 缓存继续生效，那正是缓存存在的意义（`ProrootRetry` 只管开关那一次写入，
+不碰普通启动路径）。上机判据 §J8。
 
 **`--kill-on-exit` 的替代**（proroot 拒收该 flag）：`GuestTreeReaper` 自己回收 guest 树。
 root 的**闭包**由 `/proc/<pid>/stat` 的父子关系算出（`GuestProcessTree`，纯逻辑），**先 TERM 后 KILL**，
@@ -727,9 +733,39 @@ pi 没有读者。落地形态沿用本仓库已有的「app-only pref」存法�
 `app.runtime.proroot`（开关，写 prefs）与 `app.runtime.prorootStatus`（**派生只读**：实际生效的运行时 + 回退原因）。
 分组摘要也改读后者，因为「设置里写了什么 ≠ 实际生效什么」。
 
-**影响**：`runtime/`（新增 12 个文件：`RuntimeSelection`/`RuntimePreferences`/`ProrootCommand`/`GuestRecipe`/`GuestCommandLine`/
+**影响**：`runtime/`（新增 16 个文件：`RuntimeSelection`/`RuntimePreferences`/`ProrootCommand`/`GuestRecipe`/`GuestCommandLine`/
 `RuntimeChoice`/`ProrootProbe`/`ProrootRawProbe`/`ProrootProbeCache`/`ProrootLaunchHandle`/`ProrootConfigSweep`/
-`GuestProcessTree`/`GuestTreeReaper`/`ShellQuote`；改 `PiRuntime`/`PtyLauncher`/`PtySession`/`RuntimeSelfCheck`/`GuestToolProbe`）、
+`GuestProcessTree`/`GuestTreeReaper`/`ShellQuote`/`ProrootRetry`/`GuestToolProbe`〔原本只在 main 之外，随本批一起进来〕；
+改 `PiRuntime`/`PtyLauncher`/`PtySession`/`RuntimeSelfCheck`）、`app/src/test/kotlin/app/pi/runtime/`（新增两个 harness 源：
+`ProrootCheck`、`GuestToolProbeCheck`）、
 `packages/GuestCommand.kt`、`engine/PiEngineHost.kt`、`ui/settings/`（`AppOnlySettingsStore`、`PiSettingsRegistry` 两行、
 `PiSettingsStack`、`DiagnosticsReport`）、`tools/run-app-pure-checks.sh` 的 `proroot` harness（新增），
-以及 `docs/pi-android-app-design.md` §2.3.1、`docs/device-verification.md` §F、`docs/known-gaps.md` §N。
+许可资产两份（`assets/licenses/{proprietary-third-party,proroot-license}.txt`），
+以及 `docs/pi-android-app-design.md` §2.3.1、`docs/device-verification.md` §J、`docs/known-gaps.md` §N。
+
+---
+
+## D45 · shell 命令卡：折叠态**不画**输出（主动偏离 pi；换取手机屏幕高度）
+**用户裁决**（原话）：「弄成和原来一样的吧，现在这样太占面积了，本来手机屏幕就不大，只把这一个地方弄成原来的就行。」
+
+**背景**：D41 那一批把工具卡逐点对齐 pi 时，`ui/blocks/ShellBlock.kt` 的折叠态从「什么都不画」
+改成了 pi 的形状 —— pi 的折叠 shell 卡画最后 `BASH_PREVIEW_LINES`（=5）行
+（`dist/core/tools/renderers/bash.js:56-70`，`truncateToVisualLines(styledOutput, 5, width)`），
+再上面加一行 muted 的「… (N earlier lines, … to expand)」；同时截断警告行也从「只展开时显示」
+改成「两种状态都显示」（pi 的 `:78-90` 与 `expanded` 无关）。
+
+**裁决**：**这两处都退回原来的形状** —— 折叠时只留标题行（命令 + `›`）与页脚（状态 / 退出码 / 行数 / 「已截断」），
+输出正文与截断警告都只在展开后出现。
+
+**为什么明知不一致也要退**：一次 shell 调用在折叠时要多占 **5 行尾巴 + 1 行提示**，而「一连串 shell 调用」
+正是对话流最吃高度的地方 —— 手机上这是「一屏看四轮」和「一屏看两轮」的差别。信息并没有丢：
+标题行说了**跑了什么**，页脚说了**结果如何**（状态、退出码、行数、是否截断），而要点开看全文的动作本来就在。
+即：pi 的折叠态是给**终端**设计的（终端一屏 50 行），手机不是。
+
+**代价与边界**：这一处是本仓库**主动偏离 pi 的清单**里的一条（与 D41 的 R5 派生色、D40 的滚动条并列），
+所以 ledger 记名、代码里两处 KDoc 都写明「pi 是 X，这里故意不是 X，理由是什么」，而不是把注释留在旧的
+"in both states" 上。**改回去是一行**：`ShellBlock.kt` 的两个守卫（正文 `if (expanded && bodyText.isNotEmpty())`、
+警告 `if (expanded && notice != null)`）。
+
+**颜色一个字都没动**：同一批里 `shellSubject` 的两段式上色（命令 `toolTitle` + bold、` (timeout Ns)` 为 `muted`）
+保留 —— 这次只回退「折叠时显示什么」。

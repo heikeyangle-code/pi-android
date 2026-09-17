@@ -22,14 +22,23 @@ import app.pi.ui.theme.PiTheme
  *
  *  - the command as the title (`formatShellCall`, `:26-32`: `${prompt} ${command}`, with
  *    ` (timeout Ns)` when the call set one);
- *  - the output as **the tail**, not the head, **in both states** (`:53-70`): expanded paints
- *    everything, collapsed paints the last `BASH_PREVIEW_LINES` terminal rows
- *    (`truncateToVisualLines(styledOutput, BASH_PREVIEW_LINES, width)`, pi's five rows) plus a
- *    `muted` hint when rows were skipped — a command's outcome is at the end, and pi's own
- *    bash tool truncates to the *last* lines for the same reason (`core/tools/bash.ts:234`);
- *  - `[Full output: <path>. Truncated: …]` as a warning line (`:78-90`) — **added after the
- *    body whether or not the card is expanded**, so a collapsed card reports a truncated
- *    result too. The sentence the tool already appended to its own text is stripped first
+ *  - the output as **the tail**, not the head (`:53-55`): a command's outcome is at the end, so
+ *    the body is the last lines, and pi's own bash tool truncates to the *last* lines for the
+ *    same reason (`core/tools/bash.ts:234`);
+ *  - the output **only while the card is expanded** — a deliberate deviation from pi, and the
+ *    one place in this card where the shape is not pi's. pi's collapsed card is not blank: it
+ *    paints the last `BASH_PREVIEW_LINES` rows (`truncateToVisualLines(styledOutput,
+ *    BASH_PREVIEW_LINES, width)`, `:56-70`) plus a `muted` 「… (N earlier lines, … to expand)」
+ *    hint. That is five tail rows *and* a hint line on **every** collapsed shell call, and a
+ *    run of shell calls is where a transcript spends most of its height — on a phone that is
+ *    the difference between seeing four turns at once and seeing two. The header line already
+ *    says what ran and the footer already says how it ended (state, exit code, line count,
+ *    「已截断」), so a collapsed card is readable without the tail. Going back to pi's shape is
+ *    the single guard around the body below. Ledger: `07-construction-decisions.md` D45;
+ *  - `[Full output: <path>. Truncated: …]` as a warning line (`:78-90`) — the same sentence in
+ *    the same place, but **inside the expanded branch** here, for the same reason (D45): the
+ *    footer's 「已截断」 carries the fact while collapsed, and the notice is what names the file
+ *    to copy from. The sentence the tool already appended to its own text is stripped first
  *    (`:59-64`), which is what [stripFullOutputFooter] does, so the fact is printed once;
  *  - `Elapsed 12.3s` while the command runs and `Took 12.3s` afterwards (`:91-96`), pi
  *    refreshing it once a second (`:113-115`).
@@ -88,18 +97,16 @@ internal fun ShellBlock(
         Ansi.strip(text)
     }
     val lines = remember(bodyText) { lineCount(bodyText) }
-    // The painted window. pi's **collapsed** shell card is its last five terminal rows
-    // (`BASH_PREVIEW_LINES`, `renderers/bash.js:14`; `truncateToVisualLines(styledOutput,
-    // BASH_PREVIEW_LINES, width)`, `:56-65`), and that is what the card shows now — this app
-    // used to print nothing at all until the card was expanded, which left a collapsed shell
-    // card with no reading even though a command's outcome is at the *end* of its output.
-    //
-    // The window therefore depends on the card's state, and only the collapsed one changed:
-    // expanded is still five rows until 「展开全部」 is taken (`fullOutput`) and the app's own
-    // budget after that. Without this a card that had once been expanded to 200 lines and then
-    // collapsed would come back as a 200-line "preview".
-    val budget = if (expanded && fullOutput) TOOL_BODY_MAX_LINES else SHELL_PREVIEW_LINES
-    val painted = remember(bodyText, budget) { tailLines(bodyText, budget) }
+    // The window the **expanded** card paints: five rows until 「展开全部」 is taken
+    // (`fullOutput`), the app's own budget after that. `SHELL_PREVIEW_LINES` is pi's
+    // `BASH_PREVIEW_LINES`, and pi also uses it for the **collapsed** card — which this app
+    // deliberately does not draw (D45, see the class KDoc): a collapsed shell call shows its
+    // header and footer and nothing else. `painted` is still computed while collapsed (it is
+    // the same `remember` either way, and the first expand must not pay for the tail twice),
+    // it is simply not placed.
+    val painted = remember(bodyText, fullOutput) {
+        tailLines(bodyText, if (fullOutput) TOOL_BODY_MAX_LINES else SHELL_PREVIEW_LINES)
+    }
     val hidden = remember(bodyText, painted) { hiddenLineCount(lines, painted) }
     val subject = remember(command, timeout) { shellSubject(command, timeout) }
     // The live clock: one read per composition, no timer of its own. See the KDoc. The
@@ -127,17 +134,18 @@ internal fun ShellBlock(
                     expanded = expanded,
                     expandable = bodyText.isNotEmpty() || notice != null,
                 )
-                // The body is drawn in **both** states, which is pi's own shape: expanded is the
-                // whole output (`renderers/bash.js:53-55`), collapsed is the last
-                // `BASH_PREVIEW_LINES` of it plus a `muted` hint about what was skipped
-                // (`:56-70`).
-                if (bodyText.isNotEmpty()) {
+                // The body is drawn **only while expanded** (D45): pi paints the collapsed tail
+                // too (`renderers/bash.js:56-70`), and that is the one shape here this app does
+                // not copy — see the class KDoc for why (phone height, and the footer already
+                // carries the outcome). Everything the guard controls is pi's: the tail, the
+                // five-row window and the second disclosure level.
+                if (expanded && bodyText.isNotEmpty()) {
                     MonoText(
                         text = painted,
                         color = palette.bodyOnTool,
                         modifier = Modifier.padding(top = PiSpacing.tiny),
                     )
-                    if (expanded && hidden > 0 && !fullOutput) {
+                    if (hidden > 0 && !fullOutput) {
                         // The **second** level of disclosure, and this app's own: while expanded
                         // the card still paints five rows, so this label is the way to the rest of
                         // the budget. pi has a single level (its expanded card is the whole
@@ -169,18 +177,18 @@ internal fun ShellBlock(
                 // which is where pi's own card reports the same thing; the body has nothing
                 // to print either way.
                 //
-                // pi's warning line, **outside the expanded branch**: its condition is
-                // `if (truncation?.truncated || fullOutputPath)` and it is appended to the
-                // result component after the body
+                // pi's warning line, at pi's own place *within the expanded body*
                 // (`renderers/bash.js:78-90`: `component.addChild(new Text(`\n${theme.fg("warning",
-                // `[${warnings.join(". ")}]`)}`, 0, 0))`), so a *collapsed* card reports a
-                // truncated result too. This used to sit under `expanded`, which made the card
-                // silent about it exactly when the user had not opened it.
+                // `[${warnings.join(". ")}]`)}`, 0, 0))`), but **inside the expanded branch** here:
+                // pi's condition (`if (truncation?.truncated || fullOutputPath)`) is independent
+                // of `expanded`, so its collapsed card reports a truncated result too (D45 — the
+                // same decision that hides the collapsed tail hides its notice; the footer's
+                // 「已截断」 is what carries the fact while collapsed).
                 //
                 // It is the same information as the sentence pi's bash tool appends to its own
                 // output, so it appears once: [stripFullOutputFooter] removes that sentence from
                 // the body first (`:59-64`), and nothing else in this card prints it.
-                if (notice != null) {
+                if (expanded && notice != null) {
                     ToolNotice(text = notice, copyOnTap = fullOutputPath)
                 }
                 ToolFooter(
@@ -253,8 +261,11 @@ private fun shellFooter(item: ToolCall, state: ToolState, exitCode: Int?, lines:
 }
 
 /**
- * Shell output lines painted when the card is collapsed, and while it is expanded but has not
- * taken 「展开全部」 yet — pi's five terminal rows: `const BASH_PREVIEW_LINES = 5;`
+ * Shell output lines painted while the card is expanded but has not taken 「展开全部」 yet —
+ * pi's five terminal rows: `const BASH_PREVIEW_LINES = 5;`
  * (`dist/core/tools/renderers/bash.js:14`, the same number the app has always used).
+ *
+ * pi uses the same five rows for its **collapsed** card as well (`:56-70`); this app draws no
+ * body at all while collapsed, which is the deliberate deviation D45 records.
  */
 private const val SHELL_PREVIEW_LINES = 5
