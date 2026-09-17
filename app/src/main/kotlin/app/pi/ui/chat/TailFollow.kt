@@ -248,8 +248,9 @@ internal class TailFollow(initiallyFollowing: Boolean = true) {
         // Compare the **pin**, not the geometry it came from. Requiring an identical
         // viewport too defeated this guard in the one case it exists for: when the
         // tail row is taller than the viewport, `pinToTail()` returns the fixed
-        // `TailPin(tail, 0)` — a value that does not depend on the offsets — and the
-        // list cannot satisfy it (the requested position is clamped). The remeasure
+        // `TailPin(tail, PIN_TO_END_PX)` — a value that does not depend on the offsets —
+        // and the list cannot satisfy it *exactly* (the requested position is clamped to
+        // the content end). The remeasure
         // that `requestScrollToItem` schedules therefore produces a *different*
         // geometry with the **same** pin, the old condition let it through, and the
         // follow re-issued the unsatisfiable request on every frame: a remeasure loop
@@ -363,14 +364,28 @@ internal data class TailViewport(
      *    measure pass clamps an overshoot at the content end by scrolling back
      *    (`LazyListMeasure.kt:246-269`), so this lands at the end, never past it;
      *  - the tail row is not visible at all (its whole body is below the fold): ask
-     *    for its top, [TailPin.offsetPx] 0. The next layout reports its measured
-     *    size, so the *next* snapshot aligns its bottom. One extra frame, only ever
-     *    for a row that has just appeared or just outgrown the viewport.
+     *    for its **end**, [PIN_TO_END_PX], not its top.
+     *
+     * **Why the second case no longer asks for the tail's top.** It used to return
+     * `offsetPx = 0` — put the tail row's top at the viewport's top — and rely on the
+     * *next* snapshot to align its bottom once the row had been measured ("one extra
+     * frame"). That next snapshot only exists if one of the follow effect's **keys**
+     * changes (`ChatScreen`'s `LaunchedEffect(state.revision, state.streaming,
+     * renderedItems.size, scrolling, atBottom, tailPoke, …)`), and in exactly the case
+     * this branch is for it does not: a tail row taller than the viewport leaves
+     * `!canScrollForward` false both before and after the jump, no scroll session is
+     * started (`requestScrollToItem` starts none by design) and nothing else moves — so
+     * the correction was never requested and "回到最新" parked with the tail row's top at
+     * the top of the screen and its newest lines still below the fold. The user's report
+     * was 「下点了它到不了屏幕最底部」, and it is the *delivery* that was broken, not the
+     * arithmetic. Asking for the end clamps to the end in **one** step and needs no second
+     * snapshot at all; `PinToEnd` is the value, and the harness pins both the one-shot
+     * property and the fact that it is not a second pin.
      */
     fun pinToTail(): TailPin? {
         if (totalItems <= 0) return null
         val tail = tailIndex
-        if (lastVisibleIndex < tail) return TailPin(index = tail, offsetPx = 0)
+        if (lastVisibleIndex < tail) return TailPin(index = tail, offsetPx = PIN_TO_END_PX)
         if (lastVisibleIndex > tail) return null
         val hidden = lastVisibleOffsetPx + lastVisibleSizePx - viewportEndOffsetPx
         if (hidden <= 0) return null
@@ -386,6 +401,21 @@ internal data class TailViewport(
  * and never needs the row heights.
  */
 internal data class TailPin(val index: Int, val offsetPx: Int)
+
+/**
+ * The offset [TailViewport.pinToTail] asks for when the tail row is not on screen at all.
+ *
+ * `requestScrollToItem(index, offset)` places the item's **start** `offset` px above the
+ * viewport's top, and the measure pass clamps the result to the content
+ * (`LazyListMeasure.kt:246-269`), so any offset beyond the content's height means "as far
+ * down as this list goes" — the end. The number only has to exceed the longest content a
+ * transcript can have; ~16.7 M px is about sixteen thousand phone screens, which is also
+ * far below `Int.MAX_VALUE` so no offset arithmetic in the measure pass can wrap.
+ *
+ * `internal` rather than private so the `tail-follow` harness can assert the exact value
+ * instead of a literal that could drift from it.
+ */
+internal const val PIN_TO_END_PX = 1 shl 24
 
 /** One observation of the list. See [TailFollow.onSnapshot]. */
 internal data class TailSnapshot(
@@ -454,6 +484,32 @@ internal fun mayLoadEarlier(
     hiddenRows: Int,
     isScrollInProgress: Boolean,
 ): Boolean = atWindowTop && armed && hiddenRows > 0 && !isScrollInProgress
+
+/**
+ * Whether the "load earlier" rule may be **re-armed** on this frame.
+ *
+ * ## The defect this second edge exists for
+ *
+ * Arming used to be one thing only: "the user scrolled away from the window's top", so a
+ * batch could not be prepended twice for one gesture. But a transcript whose rows are
+ * **short** — which is what collapsing tool cards produces — is shorter than the viewport,
+ * and then the list **cannot scroll at all**: `atTop` is permanently true, the
+ * away-from-the-top edge never happens, and the flag could never be re-armed. The
+ * consequence is a wedged window, not a slow one: the first batch is prepended, the
+ * `hiddenCount > 0` rows can never be revealed (the rule that reveals them needs the flag),
+ * so `hiddenCount` stays above zero for ever — and because reaching the session **file**
+ * is gated on `hiddenCount == 0`, the file read never runs either. The user's report was
+ * 「屏幕最上方，如果消息被折叠的话，加载历史对话根本就加载不出来」, and tapping the
+ * 「加载更早」 row was the only way out.
+ *
+ * A viewport that cannot scroll forward is therefore the second arming edge: the user is at
+ * the top *and* has nowhere to go, so "wait until they scroll away" is a wait that never
+ * ends. The loop this creates is bounded by construction — each pass prepends one batch and
+ * stops as soon as the content is taller than the viewport (or the history runs out), which
+ * is exactly "fill the screen with the conversation".
+ */
+internal fun reArmsEarlier(atWindowTop: Boolean, canScrollForward: Boolean): Boolean =
+    !atWindowTop || !canScrollForward
 
 /**
  * The index the list has to be moved to so that prepending [prependedRows] rows at

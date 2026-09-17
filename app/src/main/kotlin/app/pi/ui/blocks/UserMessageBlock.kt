@@ -48,10 +48,11 @@ import app.pi.ui.theme.PiSpacing
  * comes from `PiShapes.card`: `card` is still the older spec's 16dp and is shared with
  * other blocks.
  *
- * Functionality is unchanged: the ⋮ ([BlockActionMenu]) with 复制 and 编辑并从此分叉,
- * the system text-selection scope ([SelectableContent]) and the attachment grid that
- * opens the full-screen viewer ([onImageClick]) all keep working — only geometry and
- * colour moved.
+ * The block's actions (复制 / 编辑并从此分叉) come from **long-pressing the bubble's own
+ * chrome** — there is no ⋮ beside it (see [BlockActionMenu]: the button cost 32 dp of width
+ * per row, and the chrome long press opens the same menu). The system text-selection scope
+ * ([SelectableContent]) and the attachment grid that opens the full-screen viewer
+ * ([onImageClick]) are unchanged.
  *
  * F15 (`docs/rendering-review.md`): pi sends the user's own text through
  * `Markdown` with `userMessageText` as `defaultTextStyle.color`
@@ -90,7 +91,6 @@ fun UserMessageBlock(
                     add(BlockAction("编辑并从此分叉") { onForkFromMessage(item.key) })
                 }
             },
-            menuButton = true,
         ) {
         // The bubble's body is one selection scope: the user's own words are the
         // first thing anyone tries to copy, and before this the only way was the

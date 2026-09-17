@@ -769,3 +769,45 @@ pi 没有读者。落地形态沿用本仓库已有的「app-only pref」存法�
 
 **颜色一个字都没动**：同一批里 `shellSubject` 的两段式上色（命令 `toolTitle` + bold、` (timeout Ns)` 为 `muted`）
 保留 —— 这次只回退「折叠时显示什么」。
+
+---
+
+## D46 · 对话页三处：删掉每行的 ⋮、`回到最新` 一步到底、折叠态也能加载更早
+**用户裁决**（原话）：「那三个点彻底删掉，恢复原来的显示面积。那些功能我试了，长按都能出来。
+大不了就是点空白的地方呗。」＋「下箭头这个。就是停在半路。这么简单的功能，怎么修这么多次修不好？」
+＋「屏幕最上方，如果消息被折叠的话，加载历史对话根本就加载不出来呀。」
+
+### 1. 删掉 ⋮（每条消息少占 32 dp）
+`a15aba8`（2026-09-15「对话十项修复」）为了让**自由选字**生效（`SelectableContent`），把长按让给了系统
+选择条，于是给每个有动作的块加了一个 ⋮（`BlockChrome.BlockMenuButton`，16 dp 图标 / 32 dp 热区）。
+它的布局是 `Row { Box(weight 1f){内容}; ⋮ }`，所以**每条用户消息、每段助手正文、每张工具卡都少 32 dp 宽**。
+用户实测「长按都能出来」，因此**整个删掉**：`BlockActionMenu` 去掉 `menuButton` 参数与那个 Row，
+三处调用点（`UserMessageBlock` / `AssistantTextBlock` / `ToolBlockChrome`）同步去掉，`BlockMenuButton`
+与 `MoreVert`/`IconButton` 两个 import 一并删。**文字选择保留不动** —— 长按卡片自身的 chrome
+（留白、轨道、边距）仍然打开同一个菜单，这是那条 KDoc 一直写着的分工。取消它不构成 pi 的偏离：
+pi 是终端，本来没有这个按钮。
+
+### 2. `回到最新` 停在半路：是**投递**坏了，不是算术
+`pinToTail()` 在「最后一行完全不在屏幕上」时给的是 `TailPin(tail, 0)` —— 让最后一行**贴着视口顶部**，
+并指望**下一帧**再对齐它的底部（KDoc 原文："One extra frame"）。但那一帧只在跟随效应的**某个 key
+变化**时才会到来（`LaunchedEffect(state.revision, state.streaming, renderedItems.size, scrolling, atBottom, tailPoke, …)`），
+而在这条分支真正服务的情形里它**不变**：尾部行比视口高时，跳转前后 `!canScrollForward` 都是 false，
+`requestScrollToItem` 又按设计**不开启滚动会话**，于是"下一帧"永远不来 —— 视图停在"最后一行贴着屏幕顶部、
+最新几行还在折线以下"，再点也没用。**修法**：这一分支直接要**行末**（`PIN_TO_END_PX`，比任何内容都大的
+偏移，测量阶段会夹到内容末端，见 `LazyListMeasure.kt:246-269`），一步到底，不依赖第二帧。常量取 `1 shl 24`
+（约一万六千屏）：足够大，又远未到 `Int.MAX_VALUE`，测量阶段的偏移加法不会回绕。harness 除了钉这个值，
+还钉了「一步之后不再要求第二次」（F2 + F2b）与「它仍然与偏移无关，所以去重仍然必要」（G9/G10）。
+
+### 3. 折叠态加载不出更早：`earlierArmed` 只有一条武装边
+武装条件原来只有一条：「离开窗口顶部」。而**行短到列表根本滚不动**时（折叠工具卡就是这个形状），
+`atTop` 永远为真、那条边永不发生 → 一批之后 `hiddenCount` 永久 > 0，而到达会话**文件**的读取又被
+`hiddenCount == 0` 把着门 → 两边都卡死，只剩手动点那一行能出来。**修法**：把「视口无处可滚」
+（`!canScrollForward`）作为**第二条武装边**（纯函数 `reArmsEarlier`，harness 钉 H12–H16，其中 H16 把旧
+行为当作缺陷本身断言下来）。产生的循环是**有界**的：每轮前置一批，一旦内容高过视口就停（或历史读完）
+—— 也就是"把一屏填满"。
+
+### 影响
+`ui/blocks/{BlockChrome,UserMessageBlock,AssistantTextBlock,ToolBlockChrome}.kt`、
+`ui/chat/TailFollow.kt`、`ui/screens/ChatScreen.kt`、`app/src/test/kotlin/app/pi/ui/chat/TailFollowCheck.kt`。
+**颜色一处未动。** 只能上机看的：⋮ 删掉之后各块的宽度是否真的回来了（尤其工具卡的命令行与输出）、
+`回到最新` 是否一按就贴底、以及折叠态下往上滑/点「加载更早」是否连续接出更早的内容。

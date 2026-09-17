@@ -519,13 +519,14 @@ internal const val TOOL_CARD_BORDER_ALPHA: Float = 0.35f
  * `headLines` / the renderer's preview count and a `已截断` footer when that is less than
  * what pi returned, so `复制输出` taking `output` — pi's full result — is the only thing
  * that makes the truncated card safe to work from. That was already true and stays true;
- * it is restated here because the ⋮ below now competes with the text's own selection, and
- * a selection can only ever grab the preview.
+ * the distinction matters more now that the body is a selection scope, because a selection
+ * can only ever grab the preview on screen.
  *
- * The ⋮ is on because the card body became a selection scope (`BlockCard` →
- * [SelectableContent]): a long press on the output now selects it, so the menu needs a
- * trigger that is not a gesture over text. Long-pressing the card's chrome — the rail, the
- * padding outside a text node — still opens it exactly as before.
+ * The body is a selection scope (`BlockCard` → [SelectableContent]), so a long press on the
+ * output selects it and the menu is reached by long-pressing the card's **chrome** — the
+ * rail, the padding outside a text node. There is no ⋮ button: it would cost 32 dp of width
+ * on every tool card, which on a phone is width the command line and the output do not have
+ * (see [BlockActionMenu]).
  */
 @Composable
 internal fun ToolActionMenu(
@@ -547,7 +548,6 @@ internal fun ToolActionMenu(
                 add(BlockAction("复制完整输出路径") { clipboard.setText(AnnotatedString(fullOutputPath)) })
             }
         },
-        menuButton = true,
         content = content,
     )
 }

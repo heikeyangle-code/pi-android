@@ -22,9 +22,7 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowRight
-import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -152,11 +150,12 @@ internal data class BlockAction(val label: String, val onSelect: () -> Unit)
  *    footer can be selected in a single gesture. Cross-*row* selection (from one
  *    transcript item into the next) stays impossible — that is the `LazyColumn`'s
  *    per-item composition limit, and moving the scope would not fix it.
- *  - **A long press on selectable text no longer opens the block menu**, so every
- *    block that owns a scope and has actions also draws the ⋮ trigger
- *    ([BlockMenuButton]). Long-pressing the card's chrome (padding, rail, margins)
- *    still opens the menu exactly as before, and a block with no selectable content
- *    is untouched.
+ *  - **A long press on selectable text does not open the block menu.** The two live on
+ *    different targets and that is final: text keeps the platform's selection, and the
+ *    card's own chrome (padding, rail, margins) keeps the block menu. There used to be a
+ *    ⋮ button beside every scoped block so the menu could not be missed; it is gone — see
+ *    [BlockActionMenu] for the reason (it cost 32 dp of width on every row, which on a
+ *    phone is width the transcript does not have).
  *  - **No nesting.** The scope is applied once per block, at the highest point that
  *    still excludes the other blocks, and [MonoText] / [ProseText] deliberately do
  *    *not* wrap themselves: an inner registrar silently shadows the outer one for
@@ -181,11 +180,19 @@ internal fun SelectableContent(
  * [SelectableContent]), and whatever is left of the *card* carries the block
  * actions.
  *
- * Because the text really does take the long press once a scope is in play,
- * [menuButton] is how a block that owns one keeps its actions reachable without
- * hunting for a stretch of bare card chrome: it draws the same menu behind a
- * visible ⋮. Blocks with no selectable content leave it off and behave exactly as
- * before.
+ * ## Why there is no ⋮ trigger
+ *
+ * There used to be one: because text takes the long press once a scope is in play, a
+ * scoped block also drew a 32 dp ⋮ beside its content so the menu could not be missed.
+ * It was removed on the user's own report — 「那三个点好像占了我的显示面积了…彻底删掉，
+ * 恢复原来的显示面积。那些功能我试了，长按都能出来。大不了就是点空白的地方呗」 — and
+ * that report was right on both counts: the button was a `Row { Box(weight 1f); button }`,
+ * so **every** user message, assistant paragraph and tool card lost 32 dp of width, and
+ * the long press on the card's chrome does still open the same menu (the user verified it
+ * on the device). On a phone the width is worth more than the discoverability.
+ *
+ * So a block's actions are reachable exactly two ways: long-press the card's chrome, or
+ * long-press a block that owns no selectable content (those never had a button).
  *
  * The menu is a plain drop-down: no animation, no scrim, no ripple, per the
  * project's no-decoration rule.
@@ -195,8 +202,6 @@ internal fun SelectableContent(
 internal fun BlockActionMenu(
     actions: List<BlockAction>,
     modifier: Modifier = Modifier,
-    /** Draw the ⋮ trigger beside the content as well as the long press. */
-    menuButton: Boolean = false,
     content: @Composable () -> Unit,
 ) {
     if (actions.isEmpty()) {
@@ -212,14 +217,7 @@ internal fun BlockActionMenu(
             onClick = {},
         ),
     ) {
-        if (menuButton) {
-            Row(verticalAlignment = Alignment.Top) {
-                Box(Modifier.weight(1f)) { content() }
-                BlockMenuButton(onOpen = { open = true })
-            }
-        } else {
-            content()
-        }
+        content()
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
             actions.forEach { action ->
                 DropdownMenuItem(
@@ -231,31 +229,6 @@ internal fun BlockActionMenu(
                 )
             }
         }
-    }
-}
-
-/**
- * The ⋮ that opens [BlockActionMenu] once its long press has been handed to text
- * selection.
- *
- * Deliberately small and in the `dim` token: it is an affordance, not a
- * decoration, and `06 §2`'s palette has no slot for a third kind of chrome. The hit
- * target is 32 dp — v2's own dense row height — rather than Material's 48 dp,
- * because a 48 dp column beside every assistant paragraph would be the loudest
- * thing on the screen.
- */
-@Composable
-private fun BlockMenuButton(onOpen: () -> Unit) {
-    IconButton(
-        onClick = onOpen,
-        modifier = Modifier.size(32.dp),
-    ) {
-        Icon(
-            imageVector = Icons.Filled.MoreVert,
-            contentDescription = "更多操作",
-            modifier = Modifier.size(16.dp),
-            tint = PiTheme.palette.dim,
-        )
     }
 }
 

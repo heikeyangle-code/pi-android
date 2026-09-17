@@ -130,6 +130,7 @@ import app.pi.ui.chat.TailSnapshot
 import app.pi.ui.chat.TailViewport
 import app.pi.ui.chat.ThinkingPickerSheet
 import app.pi.ui.chat.mayLoadEarlier
+import app.pi.ui.chat.reArmsEarlier
 import app.pi.ui.chat.mergeRestoredQueue
 import app.pi.ui.chat.routeComposerText
 import app.pi.ui.chat.prependAnchoredIndex
@@ -861,12 +862,25 @@ private fun ChatBody(
     }
     // Spec §4.5: "向上滚动时分批加载更早的 entry". Reaching the top grows the window by
     // one step. The `earlierArmed` guard is what keeps that from looping: while the
-    // user stays at the top the flag is cleared by the load itself, and it is only
-    // re-armed once they scroll away — after a prepend, `LazyColumn` keeps the row
-    // they were looking at anchored by key, so "still at the top" means the same
-    // batch would otherwise be requested again on the next frame.
+    // user stays at the top the flag is cleared by the load itself, and it is re-armed
+    // once they scroll away — after a prepend, `LazyColumn` keeps the row they were
+    // looking at anchored by key, so "still at the top" means the same batch would
+    // otherwise be requested again on the next frame.
+    //
+    // The flag has a **second** arming edge, and it is what keeps a collapsed transcript
+    // from wedging: a viewport that cannot scroll forward at all (`reArmsEarlier`). Short
+    // rows — collapsed tool cards are exactly that — make the list shorter than the screen,
+    // `atTop` is then true for ever, and the original single edge could never fire again:
+    // one batch was prepended and `hiddenCount` stayed above zero permanently, which also
+    // gated off the session-file read (`hiddenCount == 0`). See `reArmsEarlier`'s KDoc.
     val atTop by remember(listState) {
         derivedStateOf { listState.firstVisibleItemIndex == 0 }
+    }
+    // A key of the rule below: entering or leaving "the list cannot scroll" is precisely
+    // when the second arming edge becomes true, and nothing else about the list changes
+    // when it happens.
+    val canScrollForward by remember(listState) {
+        derivedStateOf { listState.canScrollForward }
     }
     // (`atBottom` is declared above, next to the follow effect that is keyed on it.)
     var earlierArmed by rememberSaveable(sessionKey) { mutableStateOf(false) }
@@ -879,11 +893,12 @@ private fun ChatBody(
     // own position (`HistoryCursor.startOffset`), not an inference from the row count,
     // so it stops exactly when the file's first entry has been loaded.
     val earlierHistory = state.history
-    LaunchedEffect(atTop, hiddenCount, scrolling, earlierHistory) {
-        if (!atTop) {
-            earlierArmed = true
-            return@LaunchedEffect
-        }
+    LaunchedEffect(atTop, canScrollForward, hiddenCount, scrolling, earlierHistory) {
+        // Two arming edges, one rule: away from the top, or a viewport with nowhere left to
+        // scroll (a transcript shorter than the screen — see `reArmsEarlier`). Armed *and*
+        // at the top is the only state that loads.
+        if (reArmsEarlier(atTop, canScrollForward)) earlierArmed = true
+        if (!atTop) return@LaunchedEffect
         // Asked for only once the loaded rows are exhausted: while `hiddenCount > 0`
         // the batch below is a slice of rows already in memory, and starting a file
         // read at the same moment would do both jobs for one gesture.

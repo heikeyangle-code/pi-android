@@ -313,7 +313,34 @@ fun main() {
         check("F1 the pin is the hidden pixel count", visibleTall.pinToTail(), TailPin(17, 140))
 
         val notVisible = viewport(totalItems = 20, atBottom = false, lastVisibleIndex = 18)
-        check("F2 a tail that is not on screen is pinned by index", notVisible.pinToTail(), TailPin(19, 0))
+        // The offset is not 0: it asks for the tail row's **end**
+        // (`PIN_TO_END_PX`). Asking for its top put the newest lines of a tall row one
+        // viewport below the fold and relied on a second snapshot to correct it — and that
+        // second snapshot only exists if one of the caller's effect keys changes, which in
+        // this branch it does not (see `pinToTail`'s KDoc). The user's report was
+        // 「下点了它到不了屏幕最底部」.
+        check(
+            "F2 a tail that is not on screen is pinned to the end in one step",
+            notVisible.pinToTail(),
+            TailPin(19, PIN_TO_END_PX),
+        )
+        // The one-shot property itself: the geometry the request above produces — the tail
+        // row is now the last visible row and fully inside the viewport, which is what the
+        // measure pass clamps to — asks for nothing more. F2 + F2b together are "no second
+        // frame needed", the thing the old pin got wrong.
+        val landedAtEnd = viewport(
+            totalItems = 20,
+            atBottom = true,
+            firstVisibleIndex = 19,
+            lastVisibleOffsetPx = 0,
+            lastVisibleSizePx = 500,
+            viewportEndOffsetPx = 1000,
+        )
+        check("F2b and that position needs no second snapshot", landedAtEnd.pinToTail(), null)
+        // A guard on the constant itself: it has to be past any plausible content
+        // (a 1000 px viewport × thousands of rows) and still far from `Int.MAX_VALUE`, so
+        // the measure pass cannot wrap when it adds it to a row's own offset.
+        check("F2c the end offset is large but not at the int boundary", PIN_TO_END_PX in (1 shl 20)..(1 shl 28), true)
 
         val fullyVisible = viewport(
             totalItems = 20,
@@ -393,17 +420,17 @@ fun main() {
         check("G8 new geometry is pinned again", grown.pin, TailPin(0, 1340))
 
         // The loop the repeat guard exists for, in the shape that used to defeat it.
-        // When the tail row is taller than the viewport the pin is the *fixed*
-        // `TailPin(tail, 0)`: it does not depend on the offsets, and the list cannot
-        // satisfy it (the requested position is clamped), so the remeasure reports a
-        // different geometry with the same pin. Requiring an identical geometry as
-        // well let that through once per frame — a remeasure loop with nothing left to
-        // fix, which is the reported "卡住不动 / 没有响应".
+        // When the tail row is taller than the viewport the pin is a *fixed*
+        // `TailPin(tail, PIN_TO_END_PX)`: it does not depend on the offsets, and the list
+        // cannot satisfy it exactly (the requested position is clamped to the content end),
+        // so the remeasure reports a different geometry with the same pin. Requiring an
+        // identical geometry as well let that through once per frame — a remeasure loop with
+        // nothing left to fix, which is the reported "卡住不动 / 没有响应".
         val unreachable = TailFollow()
         val asked = unreachable.onSnapshot(
             TailSnapshot(6, viewport(6, atBottom = false, lastVisibleIndex = 2)),
         )
-        check("G9 a tail above the viewport pins to its index", asked.pin, TailPin(5, 0))
+        check("G9 a tail above the viewport is pinned to the end", asked.pin, TailPin(5, PIN_TO_END_PX))
         val remeasured = unreachable.onSnapshot(
             TailSnapshot(6, viewport(6, atBottom = false, firstVisibleIndex = 1, lastVisibleIndex = 2)),
         )
@@ -462,7 +489,7 @@ fun main() {
         val afterReArm = reArmed.onSnapshot(
             TailSnapshot(6, viewport(6, atBottom = false, lastVisibleIndex = 2)),
         )
-        check("G11 an explicit re-arm pins again", afterReArm.pin, TailPin(5, 0))
+        check("G11 an explicit re-arm pins again", afterReArm.pin, TailPin(5, PIN_TO_END_PX))
 
         // Rotation: the paused state and its count survive, the anchors do not.
         val paused = TailFollow()
@@ -533,6 +560,28 @@ fun main() {
         // to "the sentinel was the first visible item", which is the same answer H6
         // pins.
         check("H11 a negative index clamps to the sentinel case", prependAnchoredIndex(-1, 50, 1, 1), 51)
+
+        // The **second arming edge** (`reArmsEarlier`), and the wedged window it exists
+        // for: a transcript whose rows are short — collapsing tool cards is exactly that —
+        // is shorter than the viewport, so the list cannot scroll, `atTop` is true for
+        // ever, and the original single edge (「the user scrolled away」) can never fire
+        // again. One batch was prepended, `hiddenCount` stayed above zero permanently, and
+        // because reaching the session **file** is gated on `hiddenCount == 0` that never
+        // ran either. The report was 「屏幕最上方，如果消息被折叠的话，加载历史对话根本就
+        // 加载不出来」.
+        check("H12 leaving the top re-arms", reArmsEarlier(atWindowTop = false, canScrollForward = true), true)
+        check("H13 a viewport with nowhere to scroll re-arms", reArmsEarlier(true, false), true)
+        check("H14 the ordinary case does not", reArmsEarlier(true, true), false)
+        // The two halves, executed together: the rule above is what makes the load
+        // possible at all in the wedged state…
+        check(
+            "H15 the second edge is what un-wedges the window",
+            mayLoadEarlier(true, reArmsEarlier(true, false), 500, false),
+            true,
+        )
+        // …and this is the old behaviour, kept as the statement of the defect: armed only
+        // by the away-from-top edge, the same frame loads nothing, for ever.
+        check("H16 the old single edge leaves it wedged", mayLoadEarlier(true, false, 500, false), false)
     }
 
     // ================================ I. "I was at the bottom, I sent, and it stopped" ===
@@ -661,13 +710,13 @@ fun main() {
             6,
             viewport(6, atBottom = false, lastVisibleIndex = 2, lastVisibleSizePx = 2000),
         )
-        check("I11 the tail is pinned once", forgotten.onSnapshot(longTail).pin, TailPin(5, 0))
+        check("I11 the tail is pinned once", forgotten.onSnapshot(longTail).pin, TailPin(5, PIN_TO_END_PX))
         forgotten.pause()
         forgotten.reArm()
         check(
             "I12 a pause does not remember the old pin",
             forgotten.onSnapshot(longTail).pin,
-            TailPin(5, 0),
+            TailPin(5, PIN_TO_END_PX),
         )
 
         // The exact end geometry this whole group turns on: at `!canScrollForward` the
