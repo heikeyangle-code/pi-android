@@ -95,34 +95,61 @@ class RuntimeSelfCheck(private val paths: PiPaths) {
 
         // `echo` from the guest's own coreutils: if this prints, then exec of a
         // guest binary worked, which is the entire question.
+        //
+        // **proot, always.** This is the maintenance path, and it is one of the two
+        // things `RuntimeSelection`'s division of labour keeps off the opt-in runtime
+        // (`docs/proroot-research.md` §7.1/§9.2: install and maintenance stay on
+        // proot; only the daily execute path may switch). The reason is not caution
+        // for its own sake: this check is what tells the user whether the runtime can
+        // execute a guest binary *at all*, so running it through the thing that is
+        // itself optional would make a proroot problem look like a broken device.
+        // The stop path stays proot's own (`--kill-on-exit`), so no reaper is needed.
         val marker = "pi-runtime-ok"
-        val argv = ProotCommand.build(
+        val argv = GuestCommandLine.build(
             paths = paths,
+            engine = GuestEngine.Proot,
             guestCommand = "echo $marker",
             cwd = "/",
             storage = storage,
         )
-        val env = ProotCommand.environment(paths)
+        val env = GuestCommandLine.environment(paths, GuestEngine.Proot)
 
         val outcome = runCatching {
             val process = ProcessBuilder(argv)
                 .directory(paths.runtime)
+                // stderr merged, and **wait before reading**. Both halves matter and both
+                // were wrong here before: reading stdout to EOF first, then stderr, then
+                // waiting means a guest that writes more than a pipe buffer to stderr
+                // (64 KiB) blocks in `write` with stdout never closing — the parent sits
+                // in the first `readText()` for ever and the 60 s budget below is never
+                // even reached. A guest that produces nothing at all hangs there too, and
+                // "proot 挂住" is one of the states this check exists to *report*
+                // (`Status.ProotFailed`) rather than to spin on. `GuestToolProbe` already
+                // had the right shape; this is that shape.
+                .redirectErrorStream(true)
                 .also { it.environment().putAll(env) }
                 .start()
 
-            val stdout = process.inputStream.bufferedReader().readText()
-            val stderr = process.errorStream.bufferedReader().readText()
             val finished = process.waitFor(60, TimeUnit.SECONDS)
+            // Read whatever arrived, whether the process finished or not: after a
+            // `destroyForcibly()` this is the partial output the diagnostic needs.
+            val text = process.inputStream.bufferedReader().use { it.readText() }
             if (!finished) {
                 process.destroyForcibly()
                 return@runCatching Outcome(
                     Status.ProotFailed,
                     "proot 启动后 60 秒没有返回——通常是 ptrace 被 SELinux 拦下，" +
                         "或 loader 无法执行",
-                    stderr = stderr.take(2000),
+                    stderr = text.take(2000),
                 )
             }
 
+            // One stream, so both fields carry the same text. That is the price of not
+            // being able to deadlock, and it costs nothing here: this check only looks
+            // for one marker and for the exec-denial markers, and the diagnostic report
+            // prints what it got.
+            val stdout = text
+            val stderr = text
             when {
                 stdout.contains(marker) -> Outcome(
                     Status.Ok,
@@ -161,8 +188,14 @@ class RuntimeSelfCheck(private val paths: PiPaths) {
         // Only a pass is remembered. A failure has to be re-reported at the next
         // boot with its own diagnostic text — that text is the only thing that makes
         // "the runtime cannot run here" actionable.
+        //
+        // Written atomically for the same reason the provisioning stamp is
+        // ([writeStampAtomically]): this file is compared for equality, and a kill
+        // mid-write would leave a short one — which reads as "no pass", so the next
+        // boot spends a whole proot probe re-learning a result that had already been
+        // established. A failure here is silent by design: the cost is one probe.
         if (outcome.ok && !revision.isNullOrEmpty()) {
-            runCatching { paths.selfCheckStamp().writeText(revision + "\n") }
+            writeStampAtomically(paths.selfCheckStamp(), revision + "\n")
         }
         outcome
     }
@@ -184,7 +217,18 @@ class RuntimeSelfCheck(private val paths: PiPaths) {
         return markers.any { stderr.contains(it, ignoreCase = true) }
     }
 
-    /** Human-readable summary for the settings screen. */
+    /**
+     * One outcome as the text a boot failure shows: a `✓`/`·`/`✗` marker, the
+     * sentence that names the cause, and up to 12 lines of what the probe wrote.
+     *
+     * The caller is `PiEngineHost.bootLocked`, which puts it in `Boot.Failed.detail`
+     * (the body of the boot failure card, under the headline). It is a method rather
+     * than a `String` field on [Outcome] because the marker depends on the *status*
+     * and the stderr tail is trimmed here — and it exists at all so the three
+     * causes that are easy to confuse (proot would not start / the guest binary was
+     * refused / the runtime is not unpacked) read differently on screen instead of
+     * all arriving as "proot 返回了非预期结果".
+     */
     fun summarize(result: Outcome): String = buildString {
         append(
             when (result.status) {

@@ -289,15 +289,31 @@ data class PiPalette(
     }
 }
 
-/** pi's thinking levels, in ascending order (used by cycle + the picker). */
+/**
+ * pi's thinking levels, in ascending order (used by cycle + the picker).
+ *
+ * [label] is **pi's own word for the level**, not a translation of it: the TUI prints the
+ * raw identifier everywhere it names a level — the footer appends the level itself
+ * (`footer.ts:185-187`: `${modelName} • ${thinkingLevel}`, and the one special case
+ * `thinking off`), the selector labels every option `${level}` ("Thinking Level",
+ * `thinking-selector.ts:64-66`), and `--thinking` validates against the same seven
+ * identifiers (`cli/args.ts:60`). A translated label was the one place the app named a
+ * concept differently from the engine the user is configuring; keeping the wire word
+ * also means a screenshot and the session file say the same thing.
+ *
+ * The seven are pi's whole set (`core/defaults.ts:3-11`); which of them a *model* offers is
+ * a separate question — `getSupportedThinkingLevels(model)` returns `["off"]` for a model
+ * without `reasoning`, and hides `xhigh`/`max` unless that model's `thinkingLevelMap`
+ * declares them, so a phone usually shows three or four.
+ */
 enum class PiThinkingLevel(val wire: String, val label: String) {
-    Off("off", "关闭"),
-    Minimal("minimal", "极简"),
-    Low("low", "低"),
-    Medium("medium", "中"),
-    High("high", "高"),
-    XHigh("xhigh", "很高"),
-    Max("max", "最高");
+    Off("off", "off"),
+    Minimal("minimal", "minimal"),
+    Low("low", "low"),
+    Medium("medium", "medium"),
+    High("high", "high"),
+    XHigh("xhigh", "xhigh"),
+    Max("max", "max");
 
     companion object {
         fun fromWire(value: String?): PiThinkingLevel =

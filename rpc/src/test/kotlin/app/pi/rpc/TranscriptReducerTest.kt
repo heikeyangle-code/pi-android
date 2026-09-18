@@ -85,6 +85,10 @@ class TranscriptReducerTest {
         r.onEvent(PiEvents.parse("""{"type":"message_update","assistantMessageEvent":{"type":"toolcall_start","id":"tc1","toolName":"bash"}}"""))
         r.onEvent(PiEvents.parse("""{"type":"tool_execution_start","toolCallId":"tc1","toolName":"bash","args":{"command":"npm test"}}"""))
         r.onEvent(PiEvents.parse("""{"type":"tool_execution_update","toolCallId":"tc1","partialResult":{"content":[{"type":"text","text":"PASS a"}]}}"""))
+        // Apart by more than the throttle window, so both chunks reach the row through a
+        // publication. A suppressed chunk is deliberately *not* in the row until one of
+        // the three flush points — see the throttle test below.
+        clock += 1_000
         r.onEvent(PiEvents.parse("""{"type":"tool_execution_update","toolCallId":"tc1","partialResult":{"content":[{"type":"text","text":"PASS b"}]}}"""))
 
         val mid = r.transcript.single() as ToolCall
@@ -218,8 +222,11 @@ class TranscriptReducerTest {
         assertEquals(TranscriptChange.None, r.onEvent(toolUpdate("tc1", "b")))
         clock = 1_199
         assertEquals(TranscriptChange.None, r.onEvent(toolUpdate("tc1", "c")))
-        // The stored row never lags, only the publication.
-        assertEquals("abc", (r.transcript.single() as ToolCall).output)
+        // Only the *publication* is coalesced. What the reduction keeps is: the row holds
+        // the text as of the last publication, the reducer's accumulator holds the rest
+        // (`TranscriptReducer.pendingToolOutput`), and the next publication that goes
+        // through carries all of it — which is the half a consumer can see.
+        assertEquals("a", (r.transcript.single() as ToolCall).output)
 
         clock = 1_200
         val change = r.onEvent(toolUpdate("tc1", "d"))

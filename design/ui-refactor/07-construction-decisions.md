@@ -392,3 +392,716 @@ case 收成 `android_download` / `android_files` 两个并按 `input.op` 给不�
    桥只在 Activity 里）→ 能力（选择器/等待原语、SoM 截图、前台包名、包可见性、`intent:`）→ **Shizuku 引导**（单点收益最大：
    能力从「无障碍模拟」升到 ADB 级）；审计日志结构化，但**不做**外部建议里的「shell 逐次确认」与「UDS + uid 校验」（那是收紧授权）。
 
+## D39 · 工作区屏：把 21 条与冻结稿的偏差收掉 + 查看器语法着色
+**依据**：`design/ui-refactor/design-demos/workspace-final.html`（工作区专稿，构件与 `direction-b-v2.html` 同源）。
+**收掉的偏差**：③④ 整段缺卡片容器（行内容从 12dp 起 → 14+12=26dp）；面包屑 `width(170)` 定宽把当前目录挤出屏外
+（→ `widthIn(max=170)` + `FlowRow` 换行）；③ 行标题用完整内部路径（→ 叶子名 + 目录进副行，并删掉自造的「· 就地看这次 diff」）；
+计数把 pending 扣掉（→ 计数/摘要用含 pending 的 `changed`，去重只留在列表行层面）；同名资源对被全局重排拆开
+（→ 排序单位改为「同名组」）；用户可见文案里出现稿子段号（→ 改成段名）；pending 行缺上下 1px 状态色、末尾多一条线；
+段头「新建」被画成描边胶囊（→ 无底 accent 文本 + 13 加号）而空目录主按钮被画成描边（→ accent 实底 32 高胶囊）；
+行标题字重（非 strong 500、等宽行标题 `mono` 14）；Notice/ErrBlock 标题与动作的 `t13`/`t12` 取 12 的 `meta`；
+徽标无条件色块；`⋮` 字符 → 16px 横排三点矢量；资源行去掉文件夹图标、解析失败换原因、禁用不追加原因；
+② 每条命令各一张卡 → 段内共一片卡；引擎没起来那条空态用 file 图标；① 的 `›` 字符 → 14px 描边 chevron；
+二进制 `▤` 字符 → 稿子的 `bin` 矢量；`formatTime` 补「前天」档；查看器只读正文接上**现成的**高亮通道
+（`rememberPiHighlightedCode`，整份一次请求 + 按可见行惰性切片，引擎不在就是原来的单色，编辑态不上色）。
+**与裁决/规范的冲突，以及处理（逐条）**：
+1. **列表里的卡**：稿子的 `Rows` 是一个 `Card` 塞整列，手机上 ④ 可能有几千行、把整列放进一个 lazy item 等于放弃懒加载。
+   所以卡壳由「每一片」自带（`WsCardSlice`：首片圆上角、末片圆下角、行间线画在卡内），屏幕上仍是一张卡。**有意偏离原型写法**。
+2. **行间线透明度**：稿子的 `.div` 是不透明 `borderMuted`，而本项目 `06 §2` 写「组内 inset hairline（`borderMuted` 55%）」。
+   以 **`06 §2` 为准**（冻结规范优先于原型），保持 `outlineVariant`；矛盾写在 `WsHairline` 的 KDoc 里，谁想改回去先改 `06 §2`。
+3. **未受信任的压暗范围**：稿子整段 `opacity:.5`；这里只压暗「项目 .pi」那一族 —— 受项目信任影响的只有从**这个项目**读来的资源，
+   `.agents`/全局/包里的资源照旧会被 pi 加载，一起压暗等于谎报。行内另有文字说明，颜色不是唯一信号。**有意偏离**。
+4. **对话框按钮顺序**：稿子主项在左，本项目全应用是「取消在左」，保持全应用一致，不改。
+5. **② 段头 aside**：稿子只有一条命令所以 `aside="进入上下文"` 是常量；这一屏最多四条、各条可能不同。改成
+   「全部一致时才提到段头（这时行里不重复写），不一致时段头不表态」——既不重复也不自相矛盾。行副行本身照稿子（那半句稿子没有）。
+6. **`!` / `!!` 那条命令没有刻度与进度段**：`ToolCall.elapsedMs` 是 `endedAt - ts`，流式中恒为 null；转录里的 bash 调用另有 `ts`，
+   所以照 `ShellBlock` 的先例现算（不起计时器）。而 `BashRun`（`ui/PiSessionViewModel.kt`）**没有时间戳字段**，算不出来 ——
+   拿不到就不画，不编一个数。补它要给 `BashRun` 加字段，那个文件不在这一批边界里。
+7. **`t13` 系统字没有对应角色**：`PiTextStyles`/`piTypography` 的系统字只有 12/14/15/17，稿子写 `t13` 的几处（Notice 正文、
+   ErrBlock 动作、空目录标题）取 12 的 `meta` —— 与对话页 `NoticeBlock` 对同一个 `t13` 的既有取法一致；空目录主按钮的
+   `t13 w6` 取 `bodyMedium`（14）+ SemiBold，因为**按钮标签**在本项目里的既有角色就是它（`PiDialogAction`）。
+8. **D14 复现一次**：本批在 `WorkspaceChrome` 的表格里把「15，加粗 500」写成连排的字面量时，恰好拼出了块注释的开头序列
+   （斜杠 + 两个星号），`check-nested-comments.py` 一次报了 38 处。改成「字重 **500**」的写法后通过 ——
+   D14 那条教训在 Markdown 表格里同样成立（`.md` 不被该脚本扫描，所以这里只是说明，不是另一处待修）。
+
+## D40 · 主题语义 1:1：面积占比审查 + 滚动条（只对话页）+ 撤掉 5 个派生色
+
+**用户裁决**（原话）：①「各种色的占据屏幕比例要和我的软件的比例差不多」；②「不用弄什么对比度调整啥的。用默认的」；
+③「全修的一致」（指所有"pi 有、我们没按 pi 语义用"的地方）；④「滚动条别做了，把滚动条这个着色弄到上下按钮上」→ 后改成
+「V2 有滚动条吗？有 就按 v 二的去做，并且按 pi token 一比一」→ 最终「对话界面有一个就行。别的地方不用做」；
+⑤「整行是指的搜索时候是吧？如果是搜索时就不要管了，保持现在就行」。
+**审查依据**：`design/ui-refactor/12-color-area-and-scrollbar-plan.md`（面积占比逐 token 对照表 + 改法清单，全为估算，
+方法在 §1/附录 A，两组灵敏度的差值排序不变）。
+
+**面积审查结论**：同一份会话内容下，`bashMode` 是**唯一**的真配色差（pi 6.45% vs 我们 0.72%，因为 `!` 面板缺 pi 的两条全宽
+`bashMode` 边框）；`toolSuccessBg` 几乎一致（15.15% / 14.62%）；其余大差值（`userMessageBg`、图片口径）是**结构差** ——
+pi 的 TUI 不画用户图片附件、不画卡片底；`toolOutput`/`text`/`muted`/`toolTitle` 是**归属差**（派生 token 顶替）；
+列表光标行 `selectedBg` 是唯一真·面积缺口（10.0% vs 0）。
+
+**决定与落地**：
+1. **工具名用 `toolTitle`，并且加粗**（`ui/blocks/ToolBlockChrome.kt` 的 `ToolHeader`）。pi 每个内置渲染器都用它画工具名
+   （`core/tools/renderers/bash.ts:40` 等），且是 `theme.fg("toolTitle", theme.bold(toolName))`
+   （`components/tool-execution.js:91`、`:316`）—— 字重也要跟。随包字体只有 Regular + Bold（`PiMonoFamily`），
+   所以取 `FontWeight.Bold`（用真字形，不合成 SemiBold）。v2 原型画的是 `muted`，**被用户裁决推翻**；
+   `06 §2` 与 `docs/pi-android-ui-spec.md` §2.5 两处文档同步改成 `toolTitle`，否则文档和实现互相说谎。
+2. **撤掉 5 个对比度修正 token**，改回 pi 原 token：`bodyOnTool→toolOutput`、`contextOnTool→toolDiffContext`、
+   `thinkingBodyOnCanvas→thinkingText`、`metaOnCanvas→muted`、`metaOnCard→dim`（26 个消费点 / 18 文件，
+   `ui/theme/PiContrast.kt` 一并删除）。**已知取舍**：pi 自己的 `toolOutput #808080` 在 `toolSuccessBg #283228` 上是
+   **3.37:1**、在 `toolPendingBg` 上 3.69:1，低于 `docs/pi-android-ui-spec.md` §9 的 4.5:1 地板 —— 这是 **pi 的原值**，
+   按用户裁决照用，不再由我们改写（`gap-disposition.md` 的 F13/F14 记录同步更新）。
+3. **滚动条只做对话转录视口**（`ChatScreen.kt` 的 `LazyColumn`），其它任何容器都不加 —— 这一收窄同时就是 1:1 pi：
+   pi 全仓只有一处接线（`interactive-mode.js:629-630`）且 `createChatViewport` 只建一个 `ScrollView`。几何按 v2
+   （`direction-b-v2.html:143-146`：3dp 宽、滑块圆角 2dp、贴右缘），颜色按 pi 原值（轨道 `scrollbarTrack`、滑块
+   `scrollbarThumb`），只新增 `ui/components/PiScrollbar.kt` 一个文件 + `ChatScreen.kt` 两行接线；不加依赖、不留计时器、
+   状态不进 `Bundle`、**不加"滚动条模式"设置项**（D38.2 勿增实体）。
+   四处与 v2/pi 的冲突在此定案：**(a)** v2 写 `track: transparent`，按"pi token 1:1"**画出轨道**（pi 就是铺满一列 track 再盖
+   thumb，`layout.js:216-220`）；**(b)** pi 的 `auto` 模式 1 秒后整条消失、而用户要求默认可点，故取 pi **自己的 `always`
+   模式**当基线（不发明），1000ms 降级为"激活态回落"；**(c)** 命中区取 **24dp**（视觉 3dp / 激活 6dp），不用 48dp 的理由
+   是它占 360dp 屏的 13.3% 且与右下角两枚箭头、系统返回边带重叠；**(d)** 「回到最新」那颗改 `selectedBg` 底 + `text` 字形
+   （1:1 pi 的「↓ Jump to latest message」指示条 `tui-renderer.js:14-18`），但**保留 `borderMuted` 描边** —— 否则
+   `selectedBg` 对页面底只有 1.59/1.43，按钮认不出来。「回到顶部」pi 没有对应物，保持现状，不发明映射。
+4. **列表光标行用 `selectedBg` 整行底**，落点＝**正在被长按/操作框打开的那一行**（`SessionsScreen.kt` 的 `actions` 状态，
+   改 3 处）。依据：pi 的 `selectedBg` 画的是**键盘光标行**（`session-selector.js:421`、`tree-selector.js:603-604`），
+   而"当前会话"pi 只把**名字染 accent**；v2 原型与 pi 一致（`:1812` 的 SwipeRow 用 `--selected-bg`，`:1891` 的 `sel`
+   就是长按那一行）。**会话树不加** —— 我们没有光标行，加了等于发明新交互。
+5. **搜索高亮保持现状**（命中整块变色）：用户裁决。我们只有行级索引（`ChatScreen.kt:1516-1526`），pi 是逐字区间
+   （`tui-renderer.js:9`），逐字改要给每种 block 传区间并各写测试。
+6. **`!` 面板不补循环转圈**（`06 §5` 明令没有循环动画；pi 的 loader 是终端字符动画，手机上可点的 Stop 更合适）。
+7. **`infoBg` 不动**：pi 的 TUI 零消费（export-only），我们只用在两处小面积提示条上（`ProjectScreen.kt`、
+   `ExtensionUiHost.kt`），属"pi 没有对应构件"的部分。
+
+**实施顺序**（P0 记账 → P1 滚动条 → P2 `!` 面板两条全宽线 → P3 工具名 → P4 列表光标行 → P5 下箭头 → P6 撤派生 token，
+P6 按 token 分 5 批提交）。P3 已随本条落地；其余等对应批次让出文件。
+
+**D39 那批留下的四个问题，裁决如下**（同批落地）：
+8. **被禁用资源的原因不进副行，也不加"详情"入口**：稿子的 Disabled 行本来就没有原因（`:1370-1374`），
+   而"包设了 `autoload:false` / 筛选没命中"这两句话是**我们自己**写的解释。加了就是给一个稿子没有的
+   构件开洞，且原因本就能在设置里查到（过滤规则、包设置）。所以按稿子只留 `⊘ 已禁用` 徽标。
+9. **`WsChip.active` 删除**：段头改走 `WsSectionAction`、空目录改走 `solid` 之后它没有调用方了。没有调用方的
+   形态不给它留着（如无必要勿增实体），几何数值仍写在 `WsChip` 的 KDoc 里，将来要"选中的胶囊"照着补回来。
+10. **查看器换文件的一拍延迟**：`rememberPiHighlightedCode` 的 `hasStreamed` 是按**调用点**记的，所以同一个查看器
+    打开第二个文件时会被当成"又变了一次"，延后 `STREAM_SETTLE_MS`（200 ms）才发请求。修法是查看器侧
+    `key(path) { … }`（换文件＝新的调用点，首帧就着色，仍然只发一次请求），**没有动 `ui/render/**`**。
+11. **超大文件的「… 其余 N 行未显示」保持 `meta`**：稿子 `:1140-1146` 画的是 `mono t12`，但那是一句**中文句子**
+    而不是机器分类词，按规则 #7 与人写给人的文案同族（与 D39-7 对 `t13` 的取法一致）。要改的话先改稿子那一行。
+12. **工具卡的参数区按 pi 分段上色**（接第 1 条：第 1 条管工具名那一半，这条管同一条行的另一半）。用户要求
+   「每一处都对着 pi 官方源码改，不许凭印象」，逐条核过 `dist/core/tools/renderers/*.js` 与
+   `dist/core/tools/render-utils.js`，每个内置渲染器的调用行都是**若干个 `theme.fg(token, …)` 拼起来的**，
+   而 v2 原型把整个主体画成 `c-text` —— 与第 1 条同一条裁决（「全修的一致」）推翻。落法：新增
+   `ToolCallPart`（text + **pi 的 token 名** + 可选 bold）与 `ToolHeader(subject: List<ToolCallPart>)`，
+   由 `ToolHeader` 一处把 token 解析成 `PiPalette` 的颜色（与 `PiSyntaxToken` 同一分工，这样每个 block 只
+   需要引用 pi 的 `fg(...)`，不碰颜色值）；**文字内容、顺序、间距、字号、等宽全部未动**，颜色是这条参数唯一携带的通道。逐工具配方与源码行：
+   - **read**（`read.js:24-28`）：`${fg("toolTitle", bold("read"))} ${pathDisplay}${formatReadLineRange(args, theme)}`；
+     路径 = `accent`（`render-utils.js:57-63` 的 `renderToolPath` → `fg("accent", shortenPath(value))`），
+     行范围 = `warning`（`read.js:19-23`：`theme.fg("warning", …)` 画 `:startLine` 或 `:startLine-endLine`），无 offset/limit 时它是空串。
+   - **write**（`write.js:87-90`）：同样的 `toolTitle` 名 + `renderToolPath` → 路径 `accent`。
+   - **edit**（`edit.js:51-54`）：同上（`formatEditCall` 只有名字和路径两段）。
+   - **grep**（`grep.js:16-27`）：`fg("accent", …)` 画 `/pattern/` + `fg("toolOutput", …)` 画 ` in <path>`，
+     再按需 `fg("toolOutput", …)` 画 ` (glob)` 与 ` limit N`。
+   - **find**（`find.js:15-25`）：`fg("accent", pattern)` + `fg("toolOutput", …)` 画 ` in <path>` + `fg("toolOutput", …)` 画 ` (limit N)`。
+   - **ls**（`ls.js:12-19`）：`renderToolPath(str(args?.path), theme, cwd, { emptyFallback: "." })` → 路径 `accent`，
+     再按需 `fg("toolOutput", …)` 画 ` (limit N)`。
+   - **bash / powershell**（`bash.js:26-32` 的 `formatShellCall`）：**整行**（prompt 与 command 一起）
+     `fg("toolTitle", bold(...))`，只有 timeout 后缀 `fg("muted", …)` 画 ` (timeout Ns)`；命令缺失时
+     该段走 `invalidArgText`（`error`）/ `fg("toolOutput", "...")`。这是唯一一条**粗体超过工具名**的公式，
+     所以命令那一段带 `bold = true`——否则同一行的 `$` 与命令会一半粗一半不粗，与 pi 的 `bold(...)` 不一致
+     （这一处是「只改颜色」之外的唯一越界，已在交付报告里单列）。
+   - **缺参数**：`render-utils.js:57-63` 的三条分支 —— `rawPath === null` → `invalidArgText`（`error`）、
+     空值 → `fg("toolOutput", "...")`、否则 `accent`。本 App 的空值文案是我们自己的词（「文件」/「未命名文件」），
+     所以**只取 token**（`toolOutput`），文案不动。
+   - **通用回退卡**（`tool-execution.js:274-278` → `:315-322`）：pi 对这一类**整段不上色** ——
+     `theme.fg("toolTitle", theme.bold(this.toolName))` 之后直接拼原始 JSON 参数，没有任何 `fg`。
+     所以 `ToolCallBlock` 的副行取 `ToolCallToken.Uncoloured`（＝本 App 的 `text`，即「终端默认前景」的等价物），
+     而不是 `accent`，也不分段。
+   - **diff 卡**（本 App 自己的卡，pi 没有对应物）：它的名字格是从调用里抬上来的工具名
+     （`rpc/.../Transcript.kt:541-564`），所以按 pi 的**工具名**取 `toolTitle`；路径格按 `renderToolPath` 取 `accent`
+     （`render-utils.js:57-63`）。**只改颜色**：pi 对工具名另有 `bold`，这张卡的名字没有跟着加粗（它不是 pi 的调用行），
+     要 1:1 对齐粗体的话说一声。
+13. **shell 卡补 pi 的两样（收起预览、warnings 行），同时保留 v2 的三样（右端读数、页脚、chevron）**。
+   用户裁决「多的三样保留」，所以这一条只做加法：v2 那套（header 右端的耗时刻度读数、页脚的
+   `状态字形 + 状态词 + 耗时刻度`、展开 chevron）一格没动，补的是 pi 有而我们缺的两处。
+   - **收起时也画尾部预览**。pi：`const BASH_PREVIEW_LINES = 5;`（`dist/core/tools/renderers/bash.js:14`），
+     收起分支调 `truncateToVisualLines(styledOutput, BASH_PREVIEW_LINES, width)` 取**最后 5 个可见行**
+     （`:56-65`；命令的结论在末尾，pi 自己的 bash 工具也是截尾，`core/tools/bash.ts:234`），
+     `state.cachedSkipped > 0` 时在预览之前插一行 `theme.fg("muted", …)`（`:63-64`）。
+     本 App 原来**收起时什么都不画** —— 一条跑完的命令在收起态连一行结果都看不到。现在收起＝最后 5 行
+     + 一行 `muted` 提示（措辞沿用既有中文「上方还有 N 行未显示」）。**展开后的行为不变**：
+     展开仍是 5 行 + 可点的「展开全部（上方还有 N 行）」（`fullOutput` 后到本 App 的 200 行预算）。
+     两个实现细节：① 画哪一窗随状态走（`expanded && fullOutput` 才用大预算），否则「展开过再收起」
+     会退回成 200 行的"预览"；② 提示行放在预览**之后**（pi 放在之前）—— 我们的措辞是「**上方**还有 N 行」，
+     放在上面这句就不成立，且与展开态那句位置一致。
+   - **warnings 行按 pi 的位置与颜色，且与展开无关**。pi：`if (truncation?.truncated || fullOutputPath)`
+     时在**正文之后**追加一行 `theme.fg("warning", …)`，内容是方括号包起来的 `warnings.join(". ")`
+     （`bash.js:78-90`，`warnings` 由 `Full output: <path>` 与 `Truncated: showing X of Y lines` 拼成）。
+     本 App 对应的数据是 `item.outputTruncated` / `fullOutputPath`，句子早就由 `truncationNotice`
+     按 pi 的拼法翻译好了（`ToolOutputParse.kt`），但它原来挂在 `if (expanded)` 里 —— 收起时被截断了也不说。
+     现在移出展开分支、位置在正文之后、颜色是 `palette.warning`（`ToolNotice` 本来就是 warning 色）。
+     **不重复**：pi 的 bash 工具会把这句同时追加到自己的输出末尾，`stripFullOutputFooter` 在画正文前
+     先把它从正文里剥掉（`bash.js:59-64`），所以这条信息全卡只出现一次。
+
+## D41 · 逐点 token 对齐（来源 `13-pi-token-callsite-diff.md`）
+**用户裁决**（原话）：「能和 pi 一模一样的，全都一模一样」+「全修的一致」。审计表逐点核过 pi 0.85.1 的
+`dist/modes/interactive/**`、`dist/core/tools/renderers/**`、`dist/modes/interactive/theme/theme.js`（下面每条的行号都出自这份 dist，
+即「你手上那份 app 里跑的 pi」；同一个语句在上游 `.ts` 里行号不同，凡引用 `.ts` 的地方都是既有注释留下的）。
+**落地（10 处，全部内置主题下零观感风险或已批准）**：
+1. `ui/blocks/HookMessageBlock.kt:83` 补 `textColor = palette.customMessageText`。pi：`components/custom-message.js:83-85`
+   `color: (text) => theme.fg("customMessageText", text)`。
+2. `ui/blocks/CompactionBlock.kt:137` 同上。pi：`components/compaction-summary-message.js:35`（展开分支；收起分支同 token，`:38-40`）。
+3. `ui/blocks/BranchSummaryBlock.kt:119` 同上。pi：`components/branch-summary-message.js:34-36`。
+4. `ui/blocks/SkillInvocationBlock.kt:95` 标题里的技能名 `text` → `customMessageText`（正文那处早在 `:127` 就是它）。
+   pi：`components/skill-invocation-message.js:39-42` 的 `fg("customMessageLabel","[skill] ") + fg("customMessageText", name) + fg("dim", " (… to expand)")`。
+   —— 这四处合起来消掉「同族四张卡只有 Skill 传了 `customMessageText`」的不一致（`PiMarkdownTheme` 的 `body = textColor ?: palette.text`）。
+5. `ui/blocks/GrepBlock.kt:212` 去掉 `if (match.context) contextOnTool else bodyOnTool` → 一律 `palette.toolOutput`。
+   pi：`core/tools/renderers/grep.js:30-37` 的 `displayLines.map((line) => theme.fg("toolOutput", line))`，**没有**上下文分支；
+   `toolDiffContext` 在整个 pi 里只出现在 diff 渲染器（`components/diff.js:78`、`:127`）与主题 schema（`theme/theme-json.js:63`）。
+   `ToolOutputParse.GrepMatch.context` **保留**（`app/src/test/.../ToolOutputParseCheck.kt:82`、`:88` 断言它），只是 UI 不再分叉。
+6. `ui/render/PiMarkdownTheme.kt:295` 的 `quote` 加 `fontStyle = FontStyle.Italic`。pi 的引用是**两层**：主题给颜色
+   （`theme/theme.js:936` `quote: (text) => theme.fg("mdQuote", text)`），渲染器再套 italic
+   （pi-tui `components/markdown.js:417`；本机核到的是打包副本 `dist/bundle/chunks/chunk-JVUZSMYM.js:584`：
+   `case"blockquote":{let quoteStyle=text=>this.theme.quote(this.theme.italic(text)) …`）。竖条只取该 style 的颜色，所以竖条不动。
+7. `ui/blocks/ErrorBlock.kt:91` 错误句子 `text` → `palette.error`。pi 的错误**文字**全是 `error`，没有一处用正文色：
+   `components/assistant-message.js:153`（`fg("error", "Error: " + errorMsg)`）、`interactive-mode.js:2232`/`:2795`/`:3522`、
+   工具栏错误分支 `renderers/edit.js:67`、`write.js:122`。（审计文里写「7 处」，实数为 `modes/` + `core/` 共 **17 处** `fg("error", …)`，
+   里面既有文字也有 `(exit N)` 之类读数；**"错误文字没有一处是正文色"这个判断成立**，只是条数要更正。）
+8. `ui/blocks/NoticeBlock.kt:64` `Notice.Tone.Info` 的 `muted` → `palette.dim`。pi 的信息态状态行：
+   `interactive-mode.js:2866-2867` `const color = status.type === "warning" ? "warning" : "dim";`。
+9. **压缩卡改成 pi 的整卡满宽 `customMessageBg`**（`ui/blocks/CompactionBlock.kt:77-101`）。pi：
+   `components/compaction-summary-message.js:13` `super(1, 1, (t) => theme.bg("customMessageBg", t))` —— 整块底色、满宽。
+   随之删掉 v2 的两条 hairline 与 chip 自己的 `Surface`（同色 chip 在卡内不可见、hairline 会把卡切成两半），
+   标签行改成与另外三张同族卡一致的「3px `customMessageLabel` 条 + 等宽标签」，副行由居中改为左对齐（chip 没了就没有对齐基准）。
+   外框取同族的 `customMessageLabel@35%`（pi 的盒子无边框，这条是 App 自己的家族约定）。
+10. `ui/blocks/ImageGridBlock.kt:249`、`:261` 图片占位标签 → `palette.toolOutput`。pi：工具图片的 fallback 文字
+   `new Image(…, { fallbackColor: (s) => theme.fg("toolOutput", s) }, …)`（`components/tool-execution.js:307`）。
+   同一段 fallback 的两行一起改，否则一个标签会被拆成两种颜色。
+
+**保持不动（记账，逐条给理由）**：
+- **R3（D4）Boot 品牌行**：保持 `text`/`muted`。pi 的等效屏是**首启向导**（`first-time-setup.js:32`/`:34` 把 logo 与欢迎句染 `accent`），
+  本 App 的 `BootScreen` 是 v2 自己的启动/安装进度屏 —— 屏不同，`11` 的「颜色听 pi」针对同一个构件，这里没有同一个构件可对。
+- **R5（§5.2）M3 surface 阶梯**：实现保持，**已把「派生槽位」写进 `docs/pi-android-ui-spec.md` §2.1**（表格一行 + 规则一条，
+  含五个混合比例、为什么 pi 做不到、以及"导入自定义主题时的真实差异来源"）。理由：pi 只有 `pageBg`/`cardBg` 两档底色，
+  终端表达不了中间调；手机需要层次，`06 §2` 的面板本身就要 `surf-low`/`surf-high` 两档。严格 1:1 只能收敛回两档，观感会塌。
+- **R6（D10）扩展对话框标题**：保持「扩展给什么色用什么色，没给就 `text`」。pi 给的是 `accent` + bold（`extension-selector.js:29` 等三处），
+  但本 App 的扩展对话框与设置对话框**共用同一构件**（`11` D-5 的合并），改标题色会让这两者标题不同色；pi 的两者本来就是两种壳。
+- **R8（D11b）信任提示的选项标签**：保持 `success`/`error`。pi 的 trust selector 是键盘列表，选中的一项染 `accent`、其余 `text`
+  （`components/trust-selector.js:64-66`）；这里是**一次性安全决策**的两枚按钮，绿/红比「光标在哪」更直接表达"信任与否"。
+- **R4（P6 连带）`StateTone.Rejected` 的落点**：`ui/theme/PiStateChip.kt` 的 `StateTone.Rejected` 现在是 `palette.bodyOnTool`
+  （`07` D2 单独裁过）。**P6 撤掉派生 token 时改成 `toolOutput`**，本批不动（P6 单独做，避免两批拆不开）。
+**D41 补充 · 文档与实现同步**：`docs/pi-android-ui-spec.md` §2.2 的排版表原来写着「正文 15 / 元信息 11.5 / 机器小 11.5」，
+那是 B7 收敛字号**之前**的旧值（11.5 低于该表自己写的 12 标签地板；15 是行标题那一档，不是聊天正文）。已按 `PiTextStyles` 的实际值改成
+`prose 14/23` · `meta 12/18` · `monoSmall 12/18`，并补一行 `code 13/19`、`numeric` = `mono`，口径写明「5 档以 `06 §2` 为准、落地以 `PiTextStyles` 为准」，
+同时点明 15/17 两档来自 M3 的 `bodyLarge`/`titleMedium`（行/屏标题步进），不在 `PiTextStyles` 里 —— 这样这两份文档不会再各自漂移。
+
+## D42 · 记在账上的两件待办：proot 的 l2s 隐患、proroot 作为可选运行时
+
+**来源**：用户问「DSHA 的这个 proot 的坑我们避免了吗 / proroot 不也有坑吗」，考察对象是本机运行的 DSHA（`com.dsh.client`）与它自带的修复脚本
+`/root/.dsh/flatten-l2s.py`。**结论：一半避开、一半没处理，另有一条我们自己特有的暴露点。**
+
+**已避开的三条**（有码为证）：
+1. `--link2symlink` 的 store 必须先存在（proot 自己从不创建，缺了 guest 里每次硬链接都 ENOENT）。我们建了 `PiPaths.l2s`
+   （`runtime/PiRuntime.kt:110`）并把它绑回自己的绝对路径（`:206-209`）；`docs/device-verification.md` 的 A3/B1 就是验它。
+2. store 放在**持久**的 rootfs 内（`<rootfs>/.l2s`）而不是 `/tmp`，所以"临时目录被清理 → 目标悬空"这个触发条件不成立。
+3. 本仓库**不打包/备份 guest**（Kotlin 侧没有任何 tar/zip 输出流），所以 DSHA 那个"tar 遍历撞 ELOOP、备份必失败"的症状结构性不会出现。
+
+**未处理的五条（待办）**：
+1. **没有写入侧纪律**：DSHA 的治本是让写入一律 `rename`（`fs-write-patch.sh`）。我们 guest 里跑 npm
+   （`packages/PiPackageService.kt:14`）、apt/dpkg、git，它们都会 `link()` → 照样生成 `.l2s.*` 链。
+2. **没有实体化/修复工具**：DSHA 有 `flatten-l2s.py`（只碰含 `.l2s.` 的 symlink；先写同目录临时文件 + fsync + md5 校验，再 `os.replace`
+   原子替换；读不出的只报告不删；孤儿数据文件默认保留）。我们没有对应物。
+3. **升级会悬空（我们特有，DSHA 那份文档没覆盖）**：`runtime/RuntimeProvisioner.kt:171-173` 的 `wipe()` 在运行时 revision 变化时
+   整个删掉 `<files>/pi/runtime` 重铺（`:19` 自己写明这一层是 volatile），而 `.l2s` 就在里面。任何落在**持久区**、指向 rootfs 内 l2s 目标的链，
+   升级后会全部悬空、读 ENOENT —— 因为我们不打包，它不会在备份时报错，只会某天"某个文件读不出来"。
+   判定：`find /data/data/app.pi/files/pi/workspace /data/data/app.pi/files/pi/.pi -name "*.l2s.*"`（**上机量**；构建机上 `/data/data/app.pi` 不存在）。
+4. `git commit`/`gc` 在 `--link2symlink` 下的可靠性：`docs/known-gaps.md:870` 自己写着"下结论前先量"，**仍未量**。
+5. 修法优先级（派活时照这个顺序）：① 把 `.l2s` 移出 volatile 目录（或 wipe 时保留它）② 加实体化修复（照 DSHA 的安全设计）
+   ③ 上机判定有没有隐患链并写进 `device-verification.md` ④ 我们自己的写入路径一律 `rename` ⑤ 量 git commit/gc。
+
+**proroot（`https://github.com/coderredlab/proroot`）作为可选运行时**：用户要「放设置里一个、默认关、打开获得更好性能」。
+已核到的官方事实（README）：rootless、**自称零 ptrace 开销**、proot 的 drop-in；**5 个 .so** 放 `jniLibs/arm64-v8a`；要求
+**Android 8.0+/arm64-v8a/Ubuntu arm64 + glibc**；选项 `-r/-w/-b/-0/--link2symlink/--static-loader`；env `PROROOT_TMP_DIR` 等；
+**`--link2symlink` 仍然存在，自述是 "anchor + symlink groups"**（所以上面那五条**不会**因为换 proroot 而自动消失，这一条更正我此前对用户的口头结论）；
+**源码不公开、License 是 Proprietary（"free to use in your projects"，不许分发修改过的二进制）**，作者重心已转向 proroom。
+**待交付**：`docs/proroot-research.md`（机制/性能数字有无/依赖与探测/回退/许可与登记/维护风险/最好方案/验证命令）——研究代理产出后据此再裁。
+
+
+## D43 · `!` / `!!` 面板按 pi 对齐（排期 P2）
+> 编号说明：本条原本按派活当时的下一号写成 D42，但同一时间 D42 已被另一条
+> （「记在账上的两件待办：proot 的 l2s 隐患、proroot 作为可选运行时」，`:594`）占用 —— 于是顺延为 **D43**，
+> 文件里不再有两个同号条目。引用本条的地方（`ui/chat/BashPanel.kt` 的 KDoc、`02-real-content.md` 的面板行）已同步。
+**用户裁决**：排期里的 P2 —— 「`!` 命令面板按 pi 源码对齐」。pi 源码：`dist/modes/interactive/components/bash-execution.js`
+（逐条核过，下面引号里的行号都是这一份 dist，即 app 里实际跑的那份）。
+**pi 原文（构造函数 `:26-43`）**：
+```
+27:  const colorKey = excludeFromContext ? "dim" : "bashMode";
+28:  const borderColor = (str) => theme.fg(colorKey, str);
+30:  this.addChild(new Spacer(1));
+32:  this.addChild(new DynamicBorder(borderColor));          // 上边：整宽
+37:  const header = new Text(theme.fg(colorKey, theme.bold(`$ ${command}`)), 1, 0);
+43:  this.addChild(new DynamicBorder(borderColor));          // 下边：整宽
+```
+`components/dynamic-border.js`：`render(width) { return [this.color("─".repeat(Math.max(1, width)))]; }` —— 整宽的一条 `─`。
+输出正文（`:106` 展开 / `:111` 收起）：`availableLines.map((line) => theme.fg("muted", line))`。
+状态行（`:131-158`）：只有 `cancelled` → `warning`、`error` → `error` 两种状态词，成功（`setComplete` 的 `"complete"`，`:72-77`）
+**不贡献任何一段**；剩下的只有收起时的「还有 N 行」提示与截断告警 `warning`（`:155`）。
+**落地**：
+1. **补上整框**：`ui/chat/BashPanel.kt` 的 `Modifier.bashPanelEdges(color)`（`bashPanelEdges`）在卡片上下各画一条 1dp 线，
+   颜色 = `dim`（`!!`）/ `bashMode`（否则）。**为什么用路径而不是 `border()`**：v2 给这条面板的几何是 12dp 圆角卡
+   （`PiShapes.cardInner`），`border()` 是四面、而 pi 只要两面；直线会被 `Surface` 自己的 `clip(shape)` 在两个圆角处切掉两端，
+   而「整宽」正是这条边框要表达的东西 —— 所以线沿圆角弧走（与 `WorkspaceChrome.wsSheetTopEdge` 同一手法）。
+   **为什么 `onDrawWithContent` 而不是 `drawBehind`**：`Surface(modifier = …)` 把自己的 `.background().clip()` 接在调用方
+   modifier **之后**，`drawBehind` 画在卡片底色底下、永远看不见；先 `drawContent()` 再画两条路径才对。线宽取全应用唯一的
+   1px（`06 §2` 线宽）——终端里那条边是一整行字符，1dp 是手机上的等价物。
+2. **输出正文** `palette.toolOutput` → `palette.muted`（`BashPanel.kt` 的正文那处）。`toolOutput` 是**工具卡**正文的 token，
+   组件不同、底色不同，只在 pi 自带主题里同值。
+3. **命令头**保持 `bashMode`/`dim`，并按 `:37` **补粗体**。pi 的更新路径（`:100`
+   `new Text(theme.fg("bashMode", theme.bold(...)))`）**丢掉了 `colorKey`**：`!!` 的命令一旦产出输出就不再 dim。那是上游
+   自己的不一致，不是规则 —— 本 App 每次组合都从 `run` 重建面板，只有构造函数那条规则可循，所以以 `:27`/`:37` 为准。
+4. **状态行照 pi：成功的命令不画**。原来成功会画一条 `success` 色的「成功 · 进入上下文」，`已结束`/`退出码 N` 也在同一函数里；
+   现在 `statusText` 只在 `cancelled`（warning）/ 非零退出（error）/ 截断（warning）三种情况下有内容，干净跑完返回 null。
+   **去 v2 板核过**：`direction-b-v2.html` 里 `停止命令`、`关闭输出`、`bashMode` **零命中**，`06`/`11` 也没有这颗面板的条款，
+   所以板子没有要求过状态行 —— 按 pi 改，不留偏离。
+5. **loader 不补**：pi 运行中画的是 `Loader`（转圈 + muted 文字，`:40`），本 App 保持 **Stop 按钮**。依据已有的两条裁决：
+   `06 §5`「没有循环动画」，以及 `07` D40.6「这条面板是运行中的 `!` 命令唯一能停下来的地方」。
+**有意偏离（记账，1 条）**：**`进入/不进上下文` 这半句 pi 不写**。pi 在构造标题前就把 `!!` 剥掉了
+（`interactive-mode.js:2503-2504` `const command = isExcluded ? text.slice(2).trim() : text.slice(1).trim();`），
+只让边框颜色说明这件事；我们保留文字，依据本仓库自己的 §9 / `06 §4`「颜色不能是唯一信号」—— 1dp 的边框色不足以承载
+「这次跑进不进上下文」这个事实，而这正是这条面板要报告的东西。文字跟着**哪一条状态行被画出来**就走哪一条。
+**随之出现的文档漂移（不在本批边界，留给后续）**：`design/ui-refactor/02-real-content.md:656` 那一行的「状态行」列还列着
+`成功 · 不进上下文` / `已结束 · 输出被截断，完整输出：<path>` 这些串，前者已经不画、后者只剩截断那半句；`BashPanel.kt:64,73,81`
+的行号也早已漂移。
+
+## D44 · proroot 作为**可选**运行时落地（默认关；装机与维护永远 proot）
+**用户裁决**（原话）：「proroot 现在能用了吗？让他全都做完，做完美？推到分支上能用啊？」——
+即 **做成真的能用**：一个设置项（**默认关**）、打开后真正走 proroot、不可用时自动回退 proot、
+**这个分支推到远端后能装能跑**。用户已知并接受的取舍：**闭源、提速幅度未量化、永远不做默认**。
+**父代补充澄清的边界**（用户追问「只有执行命令用 proroot 不就白装了」）：
+proroot 覆盖的「执行命令这一层」**包括全部日常重头戏** —— ① **引擎进程本身**（Node + pi，最大头、启动耗时主体）
+② **终端 PTY**（`PtyLauncher`）③ **pi 的工具执行**（引擎进程内跑命令/读写文件那条路）④ **用户后续装包**
+（`packages/GuestCommand` 的 `npm install` / `pi install`）。**只有两类留在 proot**：
+① **首次装机/解压**（rootfs、工具、node、pnpm、harness、guard 那六步：一次性、必须万无一失、且没有性能收益）
+② **维护类**（备份/恢复、配置快照、`RuntimeSelfCheck`、`PtyLauncher` 的 `script(1)` 能力探测）。
+**别读成「proroot 只在边角用」**：性能敏感的那条日常路径全部走 proroot，proot 只兜「装机 + 维护 + 回退」。
+
+**决策点**：`runtime/RuntimeSelection.kt` 是唯一的「用哪个运行时」的地方（纯判定在 `RuntimeChoice.decide`）；
+argv/env 由 `runtime/GuestCommandLine.kt` 分派到 `ProotCommand` / `ProrootCommand`，两者**共用**
+`runtime/GuestRecipe.kt`（绑定表 + 公共 env + `/bin/bash -c` 尾巴）——**不存在第二份会漂移的绑定清单**。
+`allowProroot = false` 是装机/维护路径显式传入的，分界线在调用点可见，不藏在某个默认值里。
+
+**选择逻辑（四条全成立才用 proroot）**：① 设置开着 ② 5 个 `.so` 都在 `nativeLibraryDir`
+③ **探针门禁**在该解包 revision + 这 5 个文件的 sha256 上通过 ④ 连续失败 < 3。
+判序 = 开关 → 文件 → 门禁 → 失败预算；任何一条不成立即 proot（`RuntimeChoice.decide` 是纯函数，harness 逐个条件钉死）。
+
+**三层兜底**（照 DSHA 的形态，`docs/proroot-research.md` §7.1 原文，写进代码注释注明来源）：
+① **文件缺失** → 直接 proot，说明里列出缺哪些文件；
+② **proroot 启动失败** → 计一次失败并**用 proot 重试一次**（`GuestCommand.execute` 的护窗期归属判定：
+快退 + 输出里有 `[proroot]`/`libproroot.so` 才算启动失败；引擎侧 `PiEngineHost` 在 `spawn` 抛异常时同样回退一次）；
+③ **连续 3 次失败** → 强制回退 proot **直到用户重新打开开关**（计数持久化在 `RuntimePreferences`，重开即清零）。
+「告知用户」的落点：设置行「运行时（实际生效）」+ 导出诊断报告的「运行时选择」段 + 一条 log（App 内没有 toast 通道，
+而聊天/会话层不在本批边界）。
+
+**探针门禁**（这是敢默认安全的唯一依据）：第一次用 proroot 之前跑一次并**按 revision + `.so` 的 sha256 缓存**
+（`<runtime>/.proroot-probe`，随 `wipe()` 失效；失败结论也缓存，因为门禁是一次测量不是重试循环）。两条都要过：
+① **raw syscall 探针**（`ProrootRawProbe`）：guest 里种一个 marker 文件再**用 raw `openat` 读回**，
+判定 = **必须翻译到 guest 文件系统**，并且**同一路径的 raw 内容与 libc 内容不得不同**——后者（静默读到宿主文件）是**否决级**；
+② **`rg`/`fd` 真调用**（复用 `GuestToolProbe`，参数化到 proroot）：两者是 **musl 静态** Rust 二进制，
+不走走动态链接器，全靠 proroot 的 `--static-loader` + inline `svc` 改写，`--version` 正常而 guest 路径读空是这类缺口的形状。
+**这两条不过 → 不许用 proroot**（上机判据见 `docs/device-verification.md` §J1–J3）。
+**门禁结论的失效条件（补记，2026-09-16）**：缓存 key = 解包 revision + 5 个 `.so` 的 sha256，**开关不在 key 里** ——
+所以一条"未通过"会活过拨开关（哪怕它只是一次瞬时原因），而设置行承诺过"关掉再打开就是再试一次"。
+修复：**用户把开关从关→开时删掉探针缓存**（`runtime/ProrootRetry.kt`，`RuntimeSelection.setProrootEnabled` 调用；
+纯判定 + 注入回调，所以 harness 是**执行**生产的那条转移而不是断言一份副本）；**关掉时不删**（结论描述的是运行时树，
+不是开关）；**正常重启不重跑门禁** —— 缓存继续生效，那正是缓存存在的意义（`ProrootRetry` 只管开关那一次写入，
+不碰普通启动路径）。上机判据 §J8。
+
+**`--kill-on-exit` 的替代**（proroot 拒收该 flag）：`GuestTreeReaper` 自己回收 guest 树。
+root 的**闭包**由 `/proc/<pid>/stat` 的父子关系算出（`GuestProcessTree`，纯逻辑），**先 TERM 后 KILL**，
+各自 3 s / 2 s 超时并轮询；**最深优先、root 最后**（先杀父会把子 reparent 到 init，边就没了）；
+每次观测带 `(pid, starttime)` 身份，pid 回收不会误杀；**幸存者在报告里写出来**，不假装清干净。
+只能杀「我们自己启动的那棵树」：root 来自 `ProrootLaunchHandle`（`Process.pid()` 在本项目的编译类路径上不可用），
+而它识别的是 **proroot 自己写的那张表** —— `.proroot-config-<launcher pid>`。
+
+**`.proroot-config-*` 清理策略**：`PROROOT_TMP_DIR` = `<files>/pi/runtime/proroot-tmp`（**宿主真实路径**、volatile）；
+**每次 proroot 启动之前**扫一遍，**只删 `/proc/<pid>` 不存在的**（引擎 + 终端 + 装包可能同时在跑，
+按"除了我全删"会拆掉正在工作的 guest）；停止那次 guest 时由该次启动的 handle **删掉它自己那份**；
+**兜底上限 32 份**，扫完仍超量就按 mtime 从旧到新删到上限并**记一条日志**（`keepNames` 保护本次启动）。
+**不用"年龄"当唯一判据，也不留常驻计时器**（清扫只发生在启动前，那是唯一可能新增一份的时刻）。
+
+**永不默认**：默认关。DSHA 反过来是默认开（自研自用，§7.1），我们是通用 App，所以抄它的**机制**不抄它的**默认**。
+
+**一个 App-only 的存储决定**：设置项**不写进 pi 的 `settings.json`**——它决定在 pi 存在之前用哪个二进制启动 guest，
+pi 没有读者。落地形态沿用本仓库已有的「app-only pref」存法（`SharedPreferences`，与 `DeviceCapabilityStore` 同一种），
+并在设置栈里用一个 store 装饰器（`ui/settings/AppOnlySettingsStore.kt`）接管两行：
+`app.runtime.proroot`（开关，写 prefs）与 `app.runtime.prorootStatus`（**派生只读**：实际生效的运行时 + 回退原因）。
+分组摘要也改读后者，因为「设置里写了什么 ≠ 实际生效什么」。
+
+**影响**：`runtime/`（新增 16 个文件：`RuntimeSelection`/`RuntimePreferences`/`ProrootCommand`/`GuestRecipe`/`GuestCommandLine`/
+`RuntimeChoice`/`ProrootProbe`/`ProrootRawProbe`/`ProrootProbeCache`/`ProrootLaunchHandle`/`ProrootConfigSweep`/
+`GuestProcessTree`/`GuestTreeReaper`/`ShellQuote`/`ProrootRetry`/`GuestToolProbe`〔原本只在 main 之外，随本批一起进来〕；
+改 `PiRuntime`/`PtyLauncher`/`PtySession`/`RuntimeSelfCheck`）、`app/src/test/kotlin/app/pi/runtime/`（新增两个 harness 源：
+`ProrootCheck`、`GuestToolProbeCheck`）、
+`packages/GuestCommand.kt`、`engine/PiEngineHost.kt`、`ui/settings/`（`AppOnlySettingsStore`、`PiSettingsRegistry` 两行、
+`PiSettingsStack`、`DiagnosticsReport`）、`tools/run-app-pure-checks.sh` 的 `proroot` harness（新增），
+许可资产两份（`assets/licenses/{proprietary-third-party,proroot-license}.txt`），
+以及 `docs/pi-android-app-design.md` §2.3.1、`docs/device-verification.md` §J、`docs/known-gaps.md` §N。
+
+---
+
+## D45 · shell 命令卡：折叠态**不画**输出（主动偏离 pi；换取手机屏幕高度）
+**用户裁决**（原话）：「弄成和原来一样的吧，现在这样太占面积了，本来手机屏幕就不大，只把这一个地方弄成原来的就行。」
+
+**背景**：D41 那一批把工具卡逐点对齐 pi 时，`ui/blocks/ShellBlock.kt` 的折叠态从「什么都不画」
+改成了 pi 的形状 —— pi 的折叠 shell 卡画最后 `BASH_PREVIEW_LINES`（=5）行
+（`dist/core/tools/renderers/bash.js:56-70`，`truncateToVisualLines(styledOutput, 5, width)`），
+再上面加一行 muted 的「… (N earlier lines, … to expand)」；同时截断警告行也从「只展开时显示」
+改成「两种状态都显示」（pi 的 `:78-90` 与 `expanded` 无关）。
+
+**裁决**：**这两处都退回原来的形状** —— 折叠时只留标题行（命令 + `›`）与页脚（状态 / 退出码 / 行数 / 「已截断」），
+输出正文与截断警告都只在展开后出现。
+
+**为什么明知不一致也要退**：一次 shell 调用在折叠时要多占 **5 行尾巴 + 1 行提示**，而「一连串 shell 调用」
+正是对话流最吃高度的地方 —— 手机上这是「一屏看四轮」和「一屏看两轮」的差别。信息并没有丢：
+标题行说了**跑了什么**，页脚说了**结果如何**（状态、退出码、行数、是否截断），而要点开看全文的动作本来就在。
+即：pi 的折叠态是给**终端**设计的（终端一屏 50 行），手机不是。
+
+**代价与边界**：这一处是本仓库**主动偏离 pi 的清单**里的一条（与 D41 的 R5 派生色、D40 的滚动条并列），
+所以 ledger 记名、代码里两处 KDoc 都写明「pi 是 X，这里故意不是 X，理由是什么」，而不是把注释留在旧的
+"in both states" 上。**改回去是一行**：`ShellBlock.kt` 的两个守卫（正文 `if (expanded && bodyText.isNotEmpty())`、
+警告 `if (expanded && notice != null)`）。
+
+**颜色一个字都没动**：同一批里 `shellSubject` 的两段式上色（命令 `toolTitle` + bold、` (timeout Ns)` 为 `muted`）
+保留 —— 这次只回退「折叠时显示什么」。
+
+---
+
+## D46 · 对话页三处：删掉每行的 ⋮、`回到最新` 一步到底、折叠态也能加载更早
+**用户裁决**（原话）：「那三个点彻底删掉，恢复原来的显示面积。那些功能我试了，长按都能出来。
+大不了就是点空白的地方呗。」＋「下箭头这个。就是停在半路。这么简单的功能，怎么修这么多次修不好？」
+＋「屏幕最上方，如果消息被折叠的话，加载历史对话根本就加载不出来呀。」
+
+### 1. 删掉 ⋮（每条消息少占 32 dp）
+`a15aba8`（2026-09-15「对话十项修复」）为了让**自由选字**生效（`SelectableContent`），把长按让给了系统
+选择条，于是给每个有动作的块加了一个 ⋮（`BlockChrome.BlockMenuButton`，16 dp 图标 / 32 dp 热区）。
+它的布局是 `Row { Box(weight 1f){内容}; ⋮ }`，所以**每条用户消息、每段助手正文、每张工具卡都少 32 dp 宽**。
+用户实测「长按都能出来」，因此**整个删掉**：`BlockActionMenu` 去掉 `menuButton` 参数与那个 Row，
+三处调用点（`UserMessageBlock` / `AssistantTextBlock` / `ToolBlockChrome`）同步去掉，`BlockMenuButton`
+与 `MoreVert`/`IconButton` 两个 import 一并删。**文字选择保留不动** —— 长按卡片自身的 chrome
+（留白、轨道、边距）仍然打开同一个菜单，这是那条 KDoc 一直写着的分工。取消它不构成 pi 的偏离：
+pi 是终端，本来没有这个按钮。
+
+### 2. `回到最新` 停在半路：是**投递**坏了，不是算术
+`pinToTail()` 在「最后一行完全不在屏幕上」时给的是 `TailPin(tail, 0)` —— 让最后一行**贴着视口顶部**，
+并指望**下一帧**再对齐它的底部（KDoc 原文："One extra frame"）。但那一帧只在跟随效应的**某个 key
+变化**时才会到来（`LaunchedEffect(state.revision, state.streaming, renderedItems.size, scrolling, atBottom, tailPoke, …)`），
+而在这条分支真正服务的情形里它**不变**：尾部行比视口高时，跳转前后 `!canScrollForward` 都是 false，
+`requestScrollToItem` 又按设计**不开启滚动会话**，于是"下一帧"永远不来 —— 视图停在"最后一行贴着屏幕顶部、
+最新几行还在折线以下"，再点也没用。**修法**：这一分支直接要**行末**（`PIN_TO_END_PX`，比任何内容都大的
+偏移，测量阶段会夹到内容末端，见 `LazyListMeasure.kt:246-269`），一步到底，不依赖第二帧。常量取 `1 shl 24`
+（约一万六千屏）：足够大，又远未到 `Int.MAX_VALUE`，测量阶段的偏移加法不会回绕。harness 除了钉这个值，
+还钉了「一步之后不再要求第二次」（F2 + F2b）与「它仍然与偏移无关，所以去重仍然必要」（G9/G10）。
+
+### 3. 折叠态加载不出更早：`earlierArmed` 只有一条武装边
+武装条件原来只有一条：「离开窗口顶部」。而**行短到列表根本滚不动**时（折叠工具卡就是这个形状），
+`atTop` 永远为真、那条边永不发生 → 一批之后 `hiddenCount` 永久 > 0，而到达会话**文件**的读取又被
+`hiddenCount == 0` 把着门 → 两边都卡死，只剩手动点那一行能出来。**修法**：把「视口无处可滚」
+（`!canScrollForward`）作为**第二条武装边**（纯函数 `reArmsEarlier`，harness 钉 H12–H16，其中 H16 把旧
+行为当作缺陷本身断言下来）。产生的循环是**有界**的：每轮前置一批，一旦内容高过视口就停（或历史读完）
+—— 也就是"把一屏填满"。
+
+### 影响
+`ui/blocks/{BlockChrome,UserMessageBlock,AssistantTextBlock,ToolBlockChrome}.kt`、
+`ui/chat/TailFollow.kt`、`ui/screens/ChatScreen.kt`、`app/src/test/kotlin/app/pi/ui/chat/TailFollowCheck.kt`。
+**颜色一处未动。** 只能上机看的：⋮ 删掉之后各块的宽度是否真的回来了（尤其工具卡的命令行与输出）、
+`回到最新` 是否一按就贴底、以及折叠态下往上滑/点「加载更早」是否连续接出更早的内容。
+
+---
+
+## D47 · 附件：两条路线各是什么，以及删掉「已放入工作区」那条提示
+**用户提问**（原话）：「我现在发送附件是把东西复制到工作区吗？走的什么路线？发送完为什么有个提示呢？
+占住我的输入框了好几秒，去不掉，把这个提示删掉。」
+
+### 两条路线（按 MIME 分，`ChatScreen.kt` 的 picker 回调）
+- **图片**（`image/*`）→ **不复制任何东西**。`readBounded` 读进内存（有读取上限，避免先分配再判断），
+  `compressAttachment` 按 pi 的参数压（最长边 2000、base64 < 4.5 MB、质量阶梯、每轮缩 0.75），
+  `AttachmentBudget.decide` 按**本条消息的总量**判定，通过就进 `attachments`；发送时以
+  **base64 内联**进 RPC 消息（pi 的 `ImageContent`）。所以图片是"随消息走"，工作区里不留副本。
+- **非图片**（其余一切）→ **复制进工作区**：`copyIntoWorkspace` 写到
+  `<workspace>/attachments/<清洗过的唯一文件名>`（名字做过清洗，并且落点被 `canonicalPath` 再校验一次
+  必须在该目录内），然后把**相对路径**（`attachments/<name>`）当**文本**插进输入框 —— pi 的 agent 按
+  这个路径自己去读，与用户手打一个路径完全同路。**不复制就不行**：App 手里只有 `content://` URI（pi 读不到），
+  而"猜一个设备路径"会让 pi 报一个用户从没提过的文件。
+
+### 删掉那条提示
+`WorkspaceCopy.Copied` 原来会 `notifyUser("已放入工作区：<path>")`。删掉，理由有两条：**那句提示说的就是
+"路径"，而路径这一刻已经落在输入框里**（信息重复）；而它走的是全应用那一条 M3 snackbar
+（`ExtensionUiHost`，`Info` → `SnackbarDuration.Short`、`actionLabel = null`），画在底部、**压住输入框约 4 秒
+且没有可点的关闭**。
+**失败那三条提示全部保留**（读不到 / 太大 / 写不进）：它们解释"为什么什么都没复制"，
+而输入框里没有路径可以替它们说话。
+
+**影响**：`ui/screens/ChatScreen.kt` 一处（`WorkspaceCopy.Copied` 分支）。只能上机看：选一个非图片文件后
+输入框里出现 `attachments/<name>`、工作区里确有该文件、且**不再弹那条提示**。
+
+**补记（2026-09-17）· 关着的时候一次检查都不做**：上面那版是「每次 guest 启动前扫一遍配置表」＋「每次
+都查 5 个 `.so` 在不在」。用户指出这是白做：「如果没打开，根本没必要检查。如果打开了，能用了，检查也没用。」
+两条都对，所以：
+
+- `RuntimeSelection.plan()` / `status()` 在开关**没开**时**根本不调** `missingProrootComponents()`，
+  也**不扫**配置表 —— 判定函数的第一条就是开关，后面两个条件的结果在那种情况下必然被丢掉；
+- 开关**开着**时，`missingProrootComponents()` 改成**每进程最多算一次**（键是 `nativeLibraryDir` 路径，
+  与 `ProrootProbe.digestOf` 同一个套路）。理由是这五个文件来自**已安装的 APK**：一个进程活着的期间它们
+  不可能出现或消失，换一套就是一次升级，而升级会杀掉进程 —— 所以它是"这次安装"的属性，不是"这次启动"的。
+- 代价：关掉开关**之后**，之前 proroot 留下的那几份 `.proroot-config-*` 不再被立刻收走；下一次**打开**
+  开关启动 guest 时收，或者运行环境 revision 变化时随 `wipe()` 一起没。条数上限本来就是 32 份 × 274 KB，
+  这是有界的。
+
+---
+
+## D48 · 对话流里的图片：单图上限 0.6 → 0.35，以及"上滑时行高不变"
+**用户原话**：①「占大半个屏幕了都。让它再缩小 1/3~1/2。美观一点」；
+②「我慢慢的滑它会比较正常。如果我速度稍稍微微快一点，这个图片会从底部直接闪现到全面露出来……往上滑有图片的时候不流畅」。
+
+### ① 单图高度上限：0.6 → 0.35（`SINGLE_IMAGE_MAX_HEIGHT_FRACTION`）
+0.6 → 0.35 就是用户要的"缩小 1/3~1/2"（0.6 → 0.4~0.3，取中间）。常量从 `ImageGridBlock.kt`
+**搬到** `ui/blocks/ImageSize.kt`：它是用户对"图多大"唯一的把手，搬到一个 bare JVM 能跑的文件里，
+`image-size` harness 才能钉住它（`in 0.30f..0.40f` 且 `< 0.6f`）。
+
+**顺手修的两处**（都属于"让单图看起来更整齐"，都不动颜色）：
+- 单图分支原来把调用者的 `modifier` **丢掉**了（多图分支用 `modifier.fillMaxWidth()`，单图写的是
+  `Modifier.fillMaxWidth()`）→ `ToolCallBlock` 传的 `padding(top = PiSpacing.tiny)` 在只有一张图时消失。
+  现在两个分支一致。
+- **cap 原来根本没压住行**。`Modifier.fillMaxWidth().aspectRatio(r).heightIn(max = cap)` 读起来像在给行设上限，
+  实际不是：modifier 从外往里量，`aspectRatio` 拿到的 `maxHeight` 是**无界**的，于是它取 `width / ratio`
+  （`AspectRatioNode.findSize` → `tryMaxWidth`：只要 `isSatisfiedBy(constraints, w, h)` 成立就返回，`Infinity` 全都成立），
+  而 `heightIn` 只把**画出来的内容**压小。后果：一张 1080×2400 的截图在 360dp 宽的屏上，**行高 = 一整个屏高**，
+  卡片只有 0.6 屏 —— 用户看到的"大半个屏幕"是卡片，图下面那截空白是行。现在行高是显式
+  `.height(boxHeightPx)`，由 `singleImageBoxHeightPx(宽度, 报头比例, cap)` 一个函数给出。
+- 代价（写清楚）：cap 生效后，比 cap 更高的图会在**全宽卡片**里被 `Fit` 缩小居中，左右留 `cardBg` 色的边。
+  这是"整张可见、不裁剪"与"高度不超过 0.35 屏"两条硬要求同时成立的唯一形状（`Crop` 是早先被用户否掉的缺陷）。
+  如果上机看着别扭，可选项是让卡片**贴住图片**（宽 = `cap × 比例`，居中）——那会改变"单图总是占满宽度"的观感，
+  这次不做。
+
+### ② 上滑闪现：把"行高"从解码结果里拿出来
+**机制确认（先把用户/委派方的假设对一遍代码，其中一条需要更正）**：
+- 现象确实是**行高变了一次**，而且尺寸确实来自**解码后**的位图：`ImageCell` 用
+  `decoded.width / decoded.height` 算 `aspectRatio`，解码完成前走 `Modifier.fillMaxSize()`。
+- **更正**：解码前的行高**不是 0**。`fillMaxSize` 在无界轴上原样透传
+  （`FillNode.measure` 只在 `constraints.hasBoundedHeight` 时算固定高；`compose/foundation/foundation-layout/.../Size.kt`，
+  用 `javap` 读了本次构建解析到的那份 artifact），`Column` 里高度约束是无界的，所以那时行高 = **占位标签自身的高度**
+  （两行 `monoSmall` + padding）。也就是说：一张能解码的图进视口时，先闪一下「图片 1 / image/png」，
+  再"跳"到全宽×真实比例。位移是真的，起点不是 0 而是那两行字。
+- "滑得越快越明显"也对：每张图各自一个 `produceState` → `decodePiImage`，`Dispatchers.IO` 上 64 路并发，
+  快速甩动时同一帧起十几个解码（每个都把 base64 解一遍、再分配位图），和正在滚的那一帧抢主线程/内存。
+
+**选的路（三条候选的取舍）**：
+- ✅ **同步读报头拿真实比例**（`ImageSize.kt` 的 `readImageHeader` / `naturalImageAspect`）。png/gif/bmp/webp 的尺寸都在
+  头 32 字节里，base64 解码是顺序的 → **O(前缀)**，不是 O(payload)；jpeg 是唯一例外（EXIF 缩略图把 `SOF` 推到后面），
+  给它第二次 64 KiB 预算 + 标记链走查。这样**第一次组合时**比例就是已知的，行高从第一帧起就是终值。
+  五种格式不是猜的：那是 pi 的内联集合（`image-process.ts:33-47`，见 `AttachmentBudget.piInlineSupported`）
+  也是本仓库自己的嗅探集合（`bridge/GuestImageBytes.kt:250-283`）。
+- ❌ **`BitmapFactory.Options(inJustDecodeBounds = true)`**：要 `image.base64` 的**全部**字节（base64 解码 O(n)），
+  在组合期同步做就是把大字符串处理放回主线程。它作为 decode 的第一趟仍然保留（`decodePiImage` 里没动）。
+- ❌ **按 payload 键的进程级 LRU**：键要么用字符串身份（`remember` 已经是），要么用 `hashCode()` ——
+  而 `String.hashCode()` 首次是 O(payload)，几 MB 的 base64 是几毫秒**正好花在滚动的帧上**。省下的只是一次
+  前缀解析（几十微秒）。所以只留 `remember(image.base64)`（`equals` 先比引用，O(1)）。
+- ❌ **固定比例占位（4:3）直到真实比例已知**：那仍然会变一次行高，直接违反判据。4:3 只用在**报头读不出来**的
+  兜底上（`SINGLE_IMAGE_FALLBACK_ASPECT`），而且是**认下来就不再改**：宁可让一张"安卓能解、我们读不出头"的图
+  永远套在 4:3 信箱里，也不让行高动第二次。这条路径按上面的集合论证是到不了的。
+- ✅ **并发上限**：`piImageDecodeGate`（`ImageDecodeGate`，2 个许可）把 cell 和查看器的解码一起管住；
+  `produceState` 被取消时 `withPermit` 会释放许可，所以甩动不会漏许可把后面的图卡死。
+- ✅ **解码取样 = 真正画出来的像素**：`fitBoxPx`。卡片不是图片——1:5 的图在满宽卡片里只是一根窄柱，
+  按卡片取样会解出 4 倍于实际绘制的像素。这条对单图和多图格子都成立（多图的**布局**一个像素都没动，只动取样框）。
+  查看器**故意**仍按整个窗口取样：捏合放大最多 8×，那些像素要留着。
+
+**判据（硬要求，不是愿望）**：**同一张图从第一次进入视口到最终渲染，行高不允许变化。** 现在它是算术的性质：
+`boxHeightPx` 的全部输入（可用宽度、报头比例、cap）在解码开始前就已确定，位图不在任何一条输入里。
+另外"解码中"和"解不出来"在 cell 里被分开（`CellImage.Pending` / `Ready(null)`），所以在跑的解码期间**不画**
+那个标签，只留一块最终尺寸的空卡片。
+
+**影响**：`ui/blocks/ImageSize.kt`（新增，Android-free）、`ui/blocks/ImageGridBlock.kt`、
+`ui/blocks/PiImageViewer.kt`（解码过同一道 gate）、`app/src/test/.../ImageSizeCheck.kt`（新增 harness，
+`tools/run-app-pure-checks.sh` 的 `image-size`，96 条）。**颜色/主题一个字节没动。**
+只能上机看：滚动是否真的顺、真实解码耗时与内存、竖图/横图/长图在 0.35 下的观感（判据见
+`docs/device-verification.md` §H5/H6）。本机连 Compose 都编不了（`tools/typecheck.sh` 不跑 Compose 编译器插件，
+APK 也打不出来：AAPT2 只有 x86-64），所以 composable 的真实行为**没有**在这里验证过。
+
+## D49 · 对话页与渲染管线：主线程与流式热路径的 14 处修正（5 处判定不修）
+
+**来源**：用户「全面检查所有 bug、所有性能问题、所有拖慢的地方、所有可以优化流畅性的地方」→ 对话/渲染这一半的逐行审查（`738fde48`），19 条里 **14 条真修、5 条判定不修并写明理由**。
+
+**P0（唯一一条）**：**整段历史的 JSON 序列化在主线程上**。`entryChars` 量的是「一条 entry 序列化后多长」，原来三处调用点都在 `viewModelScope`（Main）里，打开大会话/含图会话就是几百毫秒的单帧。
+- 修法：抽成 Android-free 的 `ui/HistoryRetention.kt`（`entryChars`/`entryCharsOf`，行为逐字不变），三处调用点全部落进 `Dispatchers.IO`；`expandEarlierHistory` 从「每次重算全部」改成**增量相加** —— 成立的前提是那个度量对拼接**可加**，这条由新 harness 钉住（旧表达式 `combined.sumOf = loaded + loadedHistory` 与新值恒等）。
+- **顺手更正了审查自己上轮的一处夸大**：`session/SessionFileReader.readBefore` 返回 null 有三种原因（到文件头 / 不是会话文件 / 该范围没有完整行），它表达的是「上面没有可用内容」，**不是**「这一批读失败」，所以「一次 IO 抖动会永久禁用加载更早」的说法不成立。
+
+**P1（4 条）**
+- **查找条每 token 全量重扫** → 流式期间 200 ms 节流重扫、改查询即时、流式结束必扫一次；`searchTextOf`（为每行拼一份完整输出）改成谓词 `searchHits`；命中集合从小列表线性 `contains` 改成 `Set`（`SearchHits.ordered/present`）。
+- **`!` 面板输出无上限 + O(n²) 拼接 + 单 `Text`** → 抽成 `ui/chat/BashOutput.kt`：`StringBuilder` 追加 + 200 ms 节流发布 + **pi 自己的 50 KiB 尾部上限**（`bash-execution.js:93-98` `truncateTail({maxLines:2000, maxBytes:50*1024})`）+ 粘性 `truncated`。**面板本身没动**（累积有界后它最多画 50 KiB，与 pi 同上限）。
+- **`attach` 的三个收集器永不取消** → 三个 job 存字段，`attach` 开头逐个 cancel；publication/events 两条各加 `if (session !== engine) return@collect`。
+- **reducer 里正文/工具输出的逐 delta 拼接** → **判定不修**：在 `Dispatchers.IO` 的读者线程上、量级被 pi 自己夹住（工具结果 50 KB/2000 行）、实测病态 delta 粒度也只有约 70 µs/delta；若将来要动，正确做法是「按 contentIndex 持有 builder、只在 publish 时物化」。
+
+**P2（11 条已修）**：`PiMenu` 仅在展开时组合 ×2；`ExtensionWidgetStack` 每行两次 ANSI 解析 → 一次（空行判定改读 spans，逐字等价）；`ChatSheets` 模型筛选每键 lowercase → `remember(query, models)`；`AttachmentThumb` 原尺寸解码 → 48dp 像素框 + **共用** `piImageDecodeGate`；`lastModelChange` 每发布回扫 → 只在两个都为空时算；`DiffBlock` 兜底分支无上限单 `Text` → `tailLines(..., TOOL_BODY_MAX_LINES)` + 既有句式「上方还有 N 行未显示」；`ExtensionUiHost` snackbar tone 错挂 → 按正在画的那条查；`entryChars` 的错误 KDoc；新发现 `SlashPalette.filterPalette` 每次组合两趟 filter → `remember(commands, query)`。
+
+**5 条判定不修（理由都在审查报告里）**：reducer 逐 delta 拼接；`PiMentionSource` 把「运行时没起/超时」与「没匹配」合并成空列表（注释写明是有意取舍，要区分得跨半边）；`ExtensionUiHost` 的排队纪律（那个 host 的存在理由就是「一次一条、最旧优先」，改它是对通知顺序保证的行为改动）；`ChatSheets` 两处非惰性列表（`ModalBottomSheet` 里换 LazyColumn 会吃掉 `heightIn(max)` 的整个高度，两个模型也会撑出 420dp 空白，收益只有打开那一帧）；`expandEarlierHistory` 的 `reachedStart` 语义。
+
+**三条用户可见的行为变化（单独列出，附回滚点）**：
+1. **流式期间查找结果最多滞后 200 ms**（改查询即时、结束必扫）——回滚点：查找节流 effect 与它的 `remember` 键。
+2. **`!` 面板超 50 KiB 只留尾部，并显式显示「输出被截断」** —— pi 在同一处是**静默**截断；本仓库的规矩是「看得见的截断必须说得出」（工具输出、shell 卡早就这么做）。回滚点：`BASH_OUTPUT_MAX_CHARS` + `truncated` 的合并表达式。
+3. **`DiffBlock` 兜底分支** >200 行时出现同一句式的省略提示（仅「解析不出结构且超 200 行」这一种情形）。回滚点：`DiffBlock.kt` 那两行。
+
+**判据**（硬要求）：① 打开 2000 条/含图会话不再有 >500 ms 单帧（`dumpsys gfxinfo`）；② 开着查找、模型持续输出 10 s 内列表可滑动、长帧不再与 token 同频；③ `!yes | head -c 2000000` 期间面板可滑动、内存不随时间线性增长、状态行出现「输出被截断」；④ 连续「重启引擎」5 次不出现旧会话残影。
+
+**影响**：`ui/HistoryRetention.kt`（新增）、`ui/chat/BashOutput.kt`（新增）、`ui/PiSessionViewModel.kt`、`ui/screens/ChatScreen.kt`、`ui/chat/SlashPalette.kt`、`ui/chat/ChatSheets.kt`、`ui/blocks/DiffBlock.kt`、`ui/extension/ExtensionChrome.kt`、`ui/extension/ExtensionUiHost.kt`、`rpc/Transcript.kt`（仅 KDoc 交叉引用改名）、`app/src/test/.../HistoryRetentionCheck.kt` + `.../chat/BashOutputCheck.kt`（新增 harness `history-retention` / `bash-output`）。**颜色/主题一个字节没动。**
+
+**未验证**：本机无 Compose 编译器插件、打不出 APK，所以 composable 的真实帧行为**没有**在本机验证；上机判据见上。审查同时确认 `run-app-pure-checks.sh` 22/22 绿、`typecheck.sh` 只剩 `DiagnosticsReport.kt` 那 3 条已知 `BuildConfig` 假阳性。
+
+## D50 · 引擎/运行时/桥/其余页：14 处修正 + 3 处新发现（5 处判定不修）
+
+**来源**：用户「全面检查所有 bug、所有性能问题、所有拖慢的地方、所有可以优化流畅性的地方」→ 引擎/运行时/设备桥/其余页这一半的逐行审查，**全部修完**；本机三条门槛全绿：`run-app-pure-checks.sh` 22/22（0 FAIL）、`typecheck.sh` 只剩 `DiagnosticsReport.kt` 的 3 条 `BuildConfig` 假阳性、`check-nested-comments.py` OK。
+
+**P1（3 条）**
+- **事件流会无声丢事件，且丢掉的可能是 pi 正在等的对话框**。`PiEngineSession` 的 `MutableSharedFlow(extraBufferCapacity = 256)` 只能靠 `tryEmit` 投递（读者线程不能挂起），而返回值被丢弃：订阅者一被堵住（主线程长帧/ANR），256 槽满之后的每一条都不存在。实测：`tryEmit ok=256 refused=744`。其中 `extension_ui_request` 最狠 —— pi **阻塞扩展**直到 App 回话，丢了就是「回合永远不结束也不报错」。修法：返回值必查 + 计数（`droppedEvents`/`reducerFailures`/`lastRecordProblem` 进诊断报告与 logcat）；`extension_ui_request`/`agent_settled`/`agent_end`/`compaction_start|end` 走无界兜底 Channel 由协程挂起 `emit`；兜底投递有 30 s 上限，超时的**阻塞对话框**由 App 用 `extensionUiConfirmed/Cancelled` 按 pi 自己的超时语义代为回复（pi 不再被永久堵住），其余放弃并计数。
+- **会话列表每次重扫全部文件，且扫描期谎报「还没有会话」**。每个 `.jsonl` 最多消费 1 MiB 并逐行解析，`limit` 只在全部读完后裁剪；实测 300 文件/92.4 MB = 1.5–2.4 s（桌面 JVM）。修法：`(length, mtime)` 键的 Summary 缓存（pi 只追加不原地改写）+ `scanMutex` 去重 + 消失文件修剪；`sessionsLoading` 把首次空态换成「正在读取会话…」。
+- **打开终端页在主线程跑一次无超时的 guest proot**。`LaunchedEffect` 体在主线程，链到 `PtyLauncher.prepare → probe → ProcessBuilder + readText()`，且探针**没有超时**（挂住的 proot 会冻死 UI）。修法：启动整体进 `Dispatchers.IO`；探针改「先 `waitFor(8 s)` 再读残留」；用 `onStarted()` 让失败文案能刷新。
+
+**P2（11 条）**：④ 我的 UTF-8 修复有一个**孪生副本**没被覆盖 —— `DeviceShizuku` 的 reader 仍按 8 KiB 块解码、`truncated` 仍只看 stdout；删副本改用 `AppUidShellBackend.readCapped`（一份定义不可能再漂移）。`PiSettingsFileStore` 文档缓存无锁（`write` 是读-改-写）→ 加锁 + `@Volatile`（跨实例问题 KDoc 写明、归后续 B2/B3）。两个「已解包/已自检」戳记非原子写 → `writeStampAtomically`（temp+rename），写失败**不致命**只写进 boot 文案。`GuestCommand` stdout/stderr 无上限 → 每流 2 MiB + `outputTruncated`，并在 `PiPackageService` 的 summary 里说出来（不往 stdout/stderr 塞标记，它们要被解析）。`mostRecentForResume` 为找最新读全部文件头 → 按 mtime 降序取首个匹配。`TarExtractor` 每条目两次 realpath → `canonicalBase by lazy`（逐条目检查保留，那是安全边界）。`/app/apps` 每次全量枚举 → 30 s TTL 缓存（`stop` 仍按包名直查）；桥启动按钮在 UI 线程做文件 IO → 协程 + IO；审计 `tail` 从 `readLines()` 全读改成文件尾按需加宽窗口；每事件一个 `SimpleDateFormat` → `ThreadLocal`。能力页 1.5 s 轮询体（4 次权限查询 + AccessibilityManager binder + Shizuku + workspace 重读）从帧线程搬进 `Dispatchers.IO`。`DeviceUiText.clip` 每节点编译正则 → 预编译 `Pattern`。
+
+**3 处新发现（本轮新查出，同样已修）**
+- **tar 在条目边界被截断会「静默成功」**：`readFully` 把「一个字节都没有」与「读满了」都当成正常结束，于是截断的载荷会解出**半棵 rootfs 并写上解包戳记**。实测旧代码对某个条目边界截断的 `ubuntu-base.tgz` 报 `OK: 1415 files`（真实 2564），新代码抛 `payload ended before its end-of-archive marker`（由既有 `extractAsset` 包成带载荷审计的失败）。
+- **`WorkspaceFiles.countLines` 报假总数**：超过 `COUNT_CAP` 后把「已数到的」当总数返回，90 万行日志显示成 20 万行（KDoc 一直写着「不编一个数字」）。改成按块扫字节 + 32 MB 预算，**没读到 EOF 就返回 null**（UI 本就空值安全）。
+- **终端 reader 线程静默死亡**：`catch (_: IOException)` 把「不是关闭引起的读取失败」也吞掉，而那之后没人排空 guest 输出 → 程序阻塞在 `write`、屏幕永不更新。只在非 `closed` 状态写 `lastError`。
+
+**5 处判定不修**：`PiPaths` 的 `mkdirs()` getter（4–8 次 `mkdir`/次启动，1–3 µs；改 lazy 会削弱「proot 绑定时目录必存在」）；`assetFingerprint` 每 boot 对 150 143 B 资产做 SHA-256（内容哈希是唯一能抓「等长改写」的键，不在帧线程）；`workspaceHost` 在 composition 里调用（剩下的是必须实时的解析）；`DeviceAuditLog.rotate` 的 `readLines()`（512 KiB 硬上限、非帧线程）；兜底 Channel 无界（只有用户/回合级事件 + 30 s 上限）。
+
+**5 处用户可见的行为变化（附回滚点）**：① 扫描期文案「正在读取会话…」（`SessionsScreen` 分支 + `sessionsLoading`）；② 30 s 送不到的扩展对话框被自动取消/拒绝（`RESCUE_DELIVERY_TIMEOUT_MS`/`undeliverable`）；③ 包命令输出超 2 MiB 多一句截断说明（`withTruncationNote` 调用点）；④ 超大文件行数由「假数字」变「未知」（`countLines` 的 `reachedEnd`）；⑤ 截断载荷由「静默半解包」变明确失败（`extractTar` 的 `throw`）。
+
+**判据**（真机）：终端首开无 >100 ms 帧且探针 8 s 有界；300 会话首次进列表 <500 ms、二次 <100 ms 且不谎报空态；`yes | head -c 20000000` 的 RSS <100 MB 并显示截断；开 Shizuku 后中文 `\uFFFD` 计数 0；`/app/apps` 第 2 次起 <30 ms；主线程堵 30 s 时扩展对话框被自动拒绝且日志有对应行。
+
+**影响**：`engine/PiEngineSession.kt`、`engine/PiEngineHost.kt`、`session/PiSessionStore.kt`、`runtime/{PtyLauncher,PtySession,PiRuntime,RuntimeProvisioner,RuntimeSelfCheck,TarExtractor}.kt`、`bridge/{DeviceAppActions,DeviceBridgeHttp,DeviceAccessibilityService,DeviceShell,DeviceShizuku}.kt`、`packages/{GuestCommand,PackageService}.kt`、`settings/PiSettingsFileStore.kt`、`ui/terminal/TerminalPane.kt`、`ui/device/DeviceCapabilityScreen.kt`、`ui/settings/DiagnosticsReport.kt`、`ui/screens/{SessionsScreen,WorkspaceFiles}.kt`、`ui/PiSessionViewModel.kt`（各 0–12 行）。**颜色/主题一个字节没动**；未动 `run-app-pure-checks.sh`。
+
+## D51 · 滚动位置按**行 key** 记（不按下标）；首帧不信 `canScrollForward`；markdown 行高跨切屏留住
+
+**用户原话**：①「怎么感觉看屏幕上方的消息，用手指往下滑，怎么都不如手指往上滑看下面的消息那么自然。有时候会跳、会刷会蹦说不上来什么观感。上下让它一样自然。上滑看下面的消息就挺好的」；
+②「我聊天界面，我切到别的屏，再切回来，为什么会跳一下呢？修了好几次没修好。我要的效果就是，切走之前在什么位置，切回来就是什么位置，不要蹦，不要刷，不要跳。现在有时候还会变位置」。
+
+诊断（只查不改的那一轮）全部落在 `docs/scroll-diagnosis.md`，探针在 `/tmp/probe/scroll/`。这里只记**裁决与改动**。
+
+### ① 位置的主键：从「第几行」改成「哪一行」
+`rememberLazyListState()` 恢复位置走 `LazyListState.Saver`，而它存的是
+**`(firstVisibleItemIndex, firstVisibleItemScrollOffset)` 两个整数，没有 key**（`foundation-android:1.8.3` 字节码：
+`listOf(getFirstVisibleItemIndex, getFirstVisibleItemScrollOffset)`）。下标只在「列表还是同一个列表」时才是位置，
+而这屏渲染的是转录的**后缀**（`renderedItems = visibleItems.takeLast(renderWindow)`）——用户切到工作区/设置期间，
+引擎每发布一次就把内容往下挪：`item@同一个下标` 变成 **g 行更新**的那一行（g = 这期间到达的行数）。
+现在 `ChatScreen` 另存 `anchorKey`（`rememberSaveable(sessionKey)`，按 `TranscriptItem.key`）与 `anchorOffset`：
+一个跟踪器（`snapshotFlow(firstVisibleItemIndex to offset)`，只在真的变了时写）记录「视口顶部那一行」，
+一个纠正 effect（键是 `hiddenCount`/`headerRows`/`visibleItems.size`，也就是 item 列表**形状**变了才重跑）
+把那一行放回视口顶部。**它让位给三件事**：手势在飞（`isScrollInProgress`）、跟随态（`following`，那是 pin 的活）、
+以及任何导航跳转（`pendingJump != null`，搜索/上一条提问/回到顶部都走它）。
+
+同一个纠正也顺手补上了文件读取那条路：`expandEarlierHistory` 在转录**头部**插入行、`takeLast` 从尾部重切，
+于是有 `renderWindow - rows` ∈ [0,49] 行落在哨兵行与阅读位置**之间**（探针 C 组：`N=4123 R=4150 k=4000` → 27 行；
+而 `renderWindow - rows == 0` 时**一行都不跳** —— 这就是用户说的「有时候」）。纠正按行 key 复位，
+行号不够时先把窗口撑到那一行（`reveal` 的两段式，只是不带导航语义）。
+
+### ② 首帧不许武装：`mayArmEarlier(…, hasLaidOut)`
+`LazyListState` 的构造器把 `canScrollForward` 初始化成 `false`，只有一次测量才会写它（同一份字节码）。
+于是**任何**新 state（每次切回对话都是新的）在第一帧都报「前面滚不动了」，而 `reArmsEarlier` 正是把
+`!canScrollForward` 当作「屏幕顶住了」的武装边 ⇒ 恢复出来的位置若停在窗口最顶（索引 0）且上面有隐藏行，
+effect 会在**首帧**就再加载一批并 `requestScrollToItem(≈51)` —— 一帧挪 50 行。现在武装要求
+`listState.layoutInfo.totalItemsCount > 0`（测量过）。开屏时同一条路径也会命中，只是被跟随的 pin 压住了，
+所以用户在「切回来」时才看得见。
+
+### ③ markdown 行高：先 spike，答案是不能复用库状态，于是走**有界**高度档位
+`MarkdownState` 初态是 `State.Loading`，它的 loading 槽是**空 `Box`（0 高）**（`Markdown.kt:112`），
+而 `rememberMarkdownState` 用的是裸 `remember`（不 saveable）⇒ 切回来时**每一行都从 0 高开始长**，
+行下面的东西跟着往下滑。`retainState = true` 救不了这一条：它保的是「上一次的内容」，而首次组合没有上一次。
+**spike 结论（字节码，`multiplatform-markdown-renderer-android-0.45.0`）**：库**没有**公开的入口能把已解析结果
+塞回一个 `MarkdownState` —— `state` 是只读 `StateFlow`，`updateInput`/`parseBlocking` 是 internal 名字改写过的，
+`parseMarkdown(...)` 虽然公开、同步、返回 `State`，但没有任何公共 API 能把它写进 state；而
+`Markdown(MarkdownState, …)` 只 `collectAsState(state.state)`、**不驱动解析**（驱动只在 `rememberMarkdownState` 里，
+它也不把 state 交给调用方）。**所以进程级 LRU 这条路不可达**，走退路：
+`ui/render/RowHeightCache.kt`（纯逻辑、固定容量 LRU，默认 96 条）+ `ui/render/TranscriptRowHeight.kt` 的
+`Modifier.rememberedRowHeight(rowKey)` —— 一行**重新组合**的头三帧用「上次实测高度」当 `heightIn(min=…)`，
+之后放手（所以展开/折叠全部工具卡、改字号这类**合法变矮**最多错 3 帧 ≈ 50 ms，而不会卡住）。
+新行（「加载更早」刚取回、从没量过）没有档位，行为与今天一致 —— 那是诊断里的 P3，靠 ① 保住锚点行来解决。
+同一张图那条老判据（D48「同一张图从第一次进入视口到最终渲染，行高不允许变化」）在这里被推广到 markdown 行：
+**同一个 key 的行，重新组合后第一帧就必须是它离开时的高度。**
+
+### ④ 一处**诊断有误、因此没做**的
+诊断 §3.4 建议「atTop 的自动加载不要再 `requestScrollToItem(prependAnchoredIndex(...))`，靠 LazyColumn 自己的 key 锚定」。
+**实施前重算了一遍像素，这条是错的**：`mayLoadEarlier` 只在 `atWindowTop` 放行，而那一刻
+`firstVisibleItemIndex == 0` **就是哨兵行**（「加载更早的 N 条」），它在新列表里仍是 index 0、key 未变 ——
+LazyColumn 的 key 锚定会让它**不动**，于是内容整体下移**整整一批（50 行，约一屏）**；
+而现在的调用把哨兵行顶出屏幕，可见内容只上移**哨兵行的高度**（30–45dp）。也就是说它是把一个 50 行的跳
+换成了 1 行的跳，删掉它是**倒退**。这段算术写进了 `prependAnchoredIndex` 的 KDoc，免得下一个人再删一次。
+真正能消掉那 30–45dp 的唯一办法是把哨兵行**移出 `LazyColumn`**（浮在列表上方），那是「加载更早」这个
+affordance 的形状改动，不在这一轮。
+
+**顺带一条**：轨线判定（`firstOfRun`/`lastOfRun`）原来读**渲染切片**的邻行，前插之后锚点行自己的
+轨线缩进可能从「run 首」变「run 中」⇒ 行高变 16–32dp。现在读 `visibleItems` 的邻行（窗口内部结果完全一样，
+只有切片两端改看真邻居），run 是整条转录的属性，也就不会因为加载更早而抖。
+
+### 判据
+- **S1**（切走再切回、没有任何新行）：滚到会话中段，切到「工作区」停 10 秒再切回 —— 从切回来的**第一帧**起，
+  屏幕上最上面那行的文字仍在原来的高度（±2px），不得先出现在别处再回来。
+- **S2**（切走期间有新行，最容易一眼看出）：让 pi 正在流式输出，记住某一句，切走 5 秒再切回 ——
+  仍停在**同一句话**上；改动前会按这 5 秒新增的行数整体上移 g 行。
+- **S3**（停在窗口最顶切走再切回）：`N` 不变、位置一帧不动；改动前会看到「N 立刻少 50」且哨兵行被顶出屏幕。
+- **U1**（往旧消息方向）：停在窗口最顶、松手后 2–3 帧内，被跟踪的**内容行**不得整体上移
+  （哨兵行滚出屏幕上方是允许的，那是它本来该做的）。
+- **U2**（往上滚的观感）：连做 5 次「滑到顶、松手」，录屏里不应出现「已读内容整块换掉」的帧；
+  且不再出现「某一行先塌成 0 高再长回来」的帧（③）。
+- **U3**（文件读取那条路，需要一条 >4000 entry 的会话）：一路爬到哨兵行变成「正在读取更早的内容…」那一刻，
+  落地的那一帧内容不得整块替换、阅读位置不得移动。
+- 量化：系统录屏 → `ffmpeg -i rec.mp4 -vf fps=240 -vsync 0 f/%05d.png`，逐帧跟踪一个独特短字符串上边缘的 y；
+  一帧内 >4px 记一次「跳」。**本机一条都验不了**（打不出 APK；这台容器也没有设备 shell/logcat）。
+
+**影响**：`ui/screens/ChatScreen.kt`（锚点/纠正/跟踪器、`mayArmEarlier`、`pendingJump` 带 offset、轨线邻行、
+行高档位接线）、`ui/chat/TailFollow.kt`（新增纯函数 `mayArmEarlier` / `hiddenRows` / `itemIndexOfVisibleRow` /
+`visibleRowOfItemIndex`，并把 ④ 的算术写进 KDoc）、`ui/render/RowHeightCache.kt`（新增，Android-free）、
+`ui/render/TranscriptRowHeight.kt`（新增）、`app/src/test/kotlin/app/pi/ui/chat/TailFollowCheck.kt`
+（新增 J 组 22 条，见 §「验证」）。**颜色/主题一个字节没动**，`ui/settings/**`、`settings/**`、
+`ui/screens/PiFilesScreen.kt`、`tools/run-app-pure-checks.sh` 一行没碰。
+
+## D52 · 设置面的信息架构：先按「这行是谁的」分四类，再按 pi 的分节归属
+
+**用户原话**：「设置那一屏幕的所有东西这么乱呢？」。**乱不是文案问题**，是四种东西同形同色地混在一屏：pi 键（写 `settings.json`、pi 读）/ app 偏好（`app.*`、我们自己读）/ 只读事实 / 动作·指路牌。本轮把区分做在**分组与 section**上（**颜色不动、任何键的语义/默认值/`EffectiveKind` 不动**）：70 行由 **13 组 30 节收成 12 组 24 节**，行数一行不增不减。
+
+- **只读事实独占一节**：`运行时与诊断 / 运行时状态`（pi 版本、Node 版本、占用、引擎启动耗时、唤醒锁、运行时实际生效 —— 6 行）。
+- **动作独占各自组的「动作」节**：`上下文与压缩 / 动作`（立即压缩 1 行）、`运行时与诊断 / 动作`（重启引擎、导出诊断报告、紧急停止 3 行）。**组内不再出现「一个开关 + 四个读数」同节。**
+- **控件搬出事实节**：`app.runtime.proroot`（运行时状态→进程）、`app.runtime.keepAlive`（后台→进程）。
+- **单行节从 7 个降到 3 个**（其中两个是动作/只读事实，一个是整组只有一节）。
+- **组名与内容对齐**：`重试与网络`→`重试`（组内根本没有网络）、`提示词`→`系统提示词`、`安全与信任`→`安全与隐私`；**`G_ABOUT` 删除**（只有一行却叫「隐私与关于」），那一行与「项目信任」合成 `信任与隐私`。
+- **按 pi 文档归属**：`images.autoResize`/`blockImages` 按 `docs/settings.md:215-226` 移到 `终端与 Shell / 图片`。
+- **两条可机检规则进了 `settings-audit`**（只加严、未削弱）：「一节一种」——任何 section 不得同时含动作/只读事实与可编辑设置行；「多节组里不得有单行+可编辑的 section」；另加「组与行互相声明、组名唯一」。**这类重组因此不能再悄悄退化。**
+- 与 `docs/settings-audit-pi-gap.md` §5.4 的**两处偏差已认**：那份骨架正文写「11 组」却列了 12 条，且它对「外观/终端」自相矛盾（正文合并、搬动理由表却把 `images.*` 送进终端）。本轮取更具体的理由表 → 12 组、外观与终端分开。
+- **仍混合的两处**：`工具`（pi 的 `defaultTools` + app 的 `app.tools.expandByDefault`）与 `外观`（pi 的 `theme` + app 的 `app.appearance.*`）。拆开会各产生一个「单行可编辑节」，比合在一起更吵；真正区分需要**行级「pi/本应用」标记**（行形状改动），本轮不许碰，记在 `docs/settings-audit-impl.md` §9.2 备注。
+
+**影响**：`ui/settings/PiSettingsRegistry.kt`（重排 + 12 组）、`app/src/test/.../PiSettingsAuditCheck.kt`（+3 规则，`settings-audit` 23 PASS）、`docs/settings-audit-impl.md`（§9 骨架/搬动表/真机判据）。`SettingsHome.kt` **一行未动**（组列表由 `PiSettingsCatalog.groups` 生成，删掉 `G_ABOUT` 后首页自动变 12 行），所以与 D53 的「Pi 文件」入口无冲突。**未验证**：`PiSettingsRegistry.kt` 本机没编译过（导入 Compose），只做了括号/花括号与列表闭合的差值比对；五条真机判据（首页 12 行、运行时组首屏是 6 行读数、动作不再与开关同形相邻、图片两行在终端组、单行节只剩动作/只读）全部未上机。
+
+## D53 · pi 的 28 个「不搬进设置页」的键：不补；判据从「够不着」改成「终端页能改 + 用户决定」；以及「Pi 文件」屏
+
+### ① 缺的那 28 个键：**一个都不补**（用户裁决）
+
+pi 的 `Settings` 是 51 顶层 / 69 叶子，本应用注册 41 个。其余 28 个分四类：
+
+| 类 | 键 | 为什么不进设置页 |
+|---|---|---|
+| 被本应用钉死 | `sessionDir`、`lastChangelogVersion`、`collapseChangelog` | App 把会话根目录同时写进 `--session-dir` 与 `PI_CODING_AGENT_SESSION_DIR`；版本检查钉成 `PI_SKIP_VERSION_CHECK=1`（引擎与终端两处）。写进设置也不会被读 |
+| 设备上做不到 / 设了有害 | `terminal.images`、`terminal.showImages`、`terminal.imageWidthCells`、`terminal.hyperlinks`、`externalEditor` | 终端组件（`org.connectbot:termlib 0.0.13`）没有内联图片与 OSC 8，而 pi 把设置**展开在环境探测之后**（`packages/tui/src/terminal-image.ts:160-170`）→ 设了就与 App 自己钉的能力声明矛盾；guest 载荷里没有可用的编辑器（`tools/fetch-runtime.mjs`）。`showImages`/`imageWidthCells` 更硬：pi 自己在不支持图片的终端里隐藏这两行（`settings-selector.ts:449`、`:719-733`） |
+| pi 自己也不读 | `enableAnalytics`、`trackingId` | 全树只有 getter、没有消费者 |
+| **只有原版 TUI 读** | 其余 **18** 个（`outputPad`、`editorPaddingX`、`autocompleteMaxVisible`、`showHardwareCursor`、`markdown.*`、`quietStartup`、`doubleEscapeAction`、`treeFilterMode`、`tuiMode`、`fullscreen*`、`warnings.anthropicExtraUsage`、`branchSummary.skipPrompt`、`terminal.clearOnShrink`、`terminal.showTerminalProgress`、`terminal.trueColor`） | **这是 TUI 的旋钮：终端页里能改，不搬进设置页**（用户裁决） |
+
+**判据（换掉了旧理由）**：旧理由「读者只在交互式 TUI，而本应用的引擎是 RPC、不渲染 TUI，所以手机上够不着」**不成立** —— 终端页就是一个能跑原版 pi 的 shell（`SettingsHome` 的终端行原文：「输入 pi 回车进入原版 TUI：订阅登录、会话导入、以及需要终端的扩展都在那边。」），而那个 pi 读**同一份** `settings.json`（`PtyLauncher` 把宿主 agent dir bind 到 `/root/.pi/agent`，并设 `PI_CODING_AGENT_DIR`）。正确表述是两句：① 它们的读者是原版 TUI，本应用自己的界面不消费它们；② 要去调，走**终端页**或**「Pi 文件」屏**。这是一条**用户决定**，不是可达性结论。
+
+**被否的旧理由**：`docs/settings-review.md` §1.2/§9 的「读者够不着」，以及承载它的那句话 —— `rpc/.../PiPreSpawnConfig.kt` 里的「pi's TUI never runs here」（本轮已改成事实陈述，只改那一句，逻辑未动）。
+
+### ② 「Pi 文件」屏（用户选了「建：两个根 + 危险文件只读」）
+
+pi 自己的文件以前**一个都进不去**（工作区的文件查看器只以工作区根为根；项目页的「资源」只读列了 skills/prompts/themes/extensions），而 `<workspace>/.pi/settings.json` 反而能从工作区文件树**整份覆盖改**（非原子、无锁）—— 与「不提供原始编辑器」的旧决定自相矛盾。本屏补上了这一面：
+
+- **两个根**：agent dir（`PiPaths.agentDir`，guest 里是 `/root/.pi/agent`）与 `<workspace>/.pi`（`PiProjectConfig.root`）；没有硬编码路径。
+- **三档白名单，默认拒绝**（`piFilesAccessFor`）：可写 = `settings.json`、`models.json`、`AGENTS*`/`CLAUDE*`、`SYSTEM.md`、`APPEND_SYSTEM.md`、`themes/*.json`、`skills/**`、`prompts/**`、`extensions/**`；只读 = `auth.json`、`models-store.json`、`trust.json`、`keybindings.json`、`sessions/**`、`npm/**`、`bin/**`、`tools/`、`pi-debug.log`、任何 `*.lock`、**任何未知名字** —— 每一类都给一句中文原因，凭据类指向「API Key」页。
+- **查看复用** `WorkspaceViewer`（`editable = false`，一行未改它）；**编辑由本屏自建**，因为那个查看器的保存路径硬编码 `WorkspaceFiles.writeText`（整份覆盖、非原子、无锁），与「写必须走 `PiConfigFiles`」冲突。
+- **写入唯一路径**：`PiConfigFiles.withLock { PiConfigFiles.write(...) }`（proper-lockfile 语义 + 原子写），没有第二套锁/写盘。
+- **写前三道闸**：只读不给编辑入口；纯函数 `checkPiFileWrite` 拦掉「pi 会抛」的形状（`httpIdleTimeoutMs`/`websocketConnectTimeoutMs` 的 `null`、compaction token 的 `null`/负数/小数、`modelOverrides[model]` 非对象、`models.json` 结构、主题 `name` 必填且不含 `/`……）；打开时记 `(size, mtime)`，保存前不一致就拒绝写。JSON 校验在主线程外，未保存返回先问一次，未知键原样保留（整份文本编辑，不重建 schema）。
+- 与 §6.3 的四处偏差（按现实改的，`docs/settings-audit-pi-gap.md` §6.4 有记录）：查看与编辑不同组件；`keybindings.json` 落只读（白名单是穷举的）；主题校验比方案严但不抄 pi 的色表（抄一份就是第二个会漂移的真相）；入口最初自托管在 `SettingsHome`（`PiRoot` 只渲染 `PiSettingsStack`，接不上）→ 已改为经 `PiSettingsStack` 接线。
+
+**影响**：`settings/PiFiles.kt`（新增，Android-free）、`ui/screens/PiFilesScreen.kt`（新增）、`app/src/test/.../settings/PiFilesCheck.kt`（新增 harness `pi-files`，115 断言）、`ui/settings/SettingsHome.kt`（「其他」段一行入口）、`ui/settings/PiSettingsStack.kt`（接线）、`rpc/.../PiPreSpawnConfig.kt`（一句错误断言）。**未验证**：Compose 编译器规则只能在 CI 暴露；两个根在设备上的实际指向、软键盘下的编辑器、保存后设置页是否经 `PiDirectoryWatch` 立刻刷新 —— 全部未上机。**仍未处理**：`<workspace>/.pi/settings.json` 仍能从工作区文件树自由编辑（落在 `ui/screens/Workspace*.kt`，归另一批）。

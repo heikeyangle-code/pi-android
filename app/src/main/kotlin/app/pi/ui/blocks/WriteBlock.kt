@@ -64,17 +64,24 @@ internal fun WriteBlock(
                 ToolHeader(
                     item = item,
                     title = "write",
-                    subject = body.path.ifEmpty { "文件" },
+                    // pi's `formatWriteCall` (`renderers/write.js:87-90`):
+                    //   `${fg("toolTitle", bold("write"))} ${pathDisplay}`
+                    // with `pathDisplay = renderToolPath(...)` → `fg("accent", …)`
+                    // (`core/tools/render-utils.js:57-63`).
+                    subject = listOf(toolPathPart(body.path, fallback = "文件")),
                     expanded = expanded,
                     expandable = hasBody,
                 )
                 if (expanded) {
                     if (body.lines.isEmpty()) {
                         if (failed) {
-                            // pi's result half on an error (`renderers/write.ts:134-142`).
+                            // pi's result half on an error (`renderers/write.ts:134-142`). The
+                            // machine face: it is the tool's own result inside the tool card, and
+                            // rule #7 puts tool output in mono (裁决 ②-4). The `ErrorBlock`'s
+                            // message is a different thing and stays prose.
                             Text(
                                 text = item.output,
-                                style = PiTheme.text.meta,
+                                style = PiTheme.text.monoSmall,
                                 color = palette.error,
                             )
                         } else if (!pending) {
@@ -106,9 +113,11 @@ internal fun WriteBlock(
                             )
                         }
                         if (failed) {
+                            // The same tool result on the branch that did render source lines —
+                            // machine output inside the tool card (裁决 ②-4), as above.
                             Text(
                                 text = item.output,
-                                style = PiTheme.text.meta,
+                                style = PiTheme.text.monoSmall,
                                 color = palette.error,
                                 modifier = Modifier.padding(top = PiSpacing.tiny),
                             )

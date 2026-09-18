@@ -25,7 +25,9 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.sp
 import app.pi.runtime.PtyLauncher
 import app.pi.ui.theme.PiTheme
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import org.connectbot.terminal.ModifierManager
 import org.connectbot.terminal.Terminal
 import org.connectbot.terminal.VTermKey
@@ -131,6 +133,17 @@ fun TerminalPane(modifier: Modifier = Modifier) {
     var ctrlArmed by remember { mutableStateOf(false) }
     var altArmed by remember { mutableStateOf(false) }
 
+    /**
+     * How many start attempts have finished, for the bridge that is on screen.
+     *
+     * Keyed on [bridge] so that a restart (which builds a new bridge) starts the
+     * count over, and read by the status line below. It exists because the start now
+     * completes on a worker thread: finishing a `LaunchedEffect` does not recompose
+     * anything by itself, so without a state write the failure text `lastError`
+     * carries would never be rendered.
+     */
+    var startAttempt by remember(bridge) { mutableStateOf(0) }
+
     LaunchedEffect(statusText) {
         if (statusText != null) {
             delay(2500)
@@ -174,6 +187,7 @@ fun TerminalPane(modifier: Modifier = Modifier) {
                 preferences = preferences,
                 palette = palette,
                 modifierManager = modifierManager,
+                onStarted = { startAttempt += 1 },
             )
         }
 
@@ -185,7 +199,12 @@ fun TerminalPane(modifier: Modifier = Modifier) {
             // tab strip there is nothing for it to label. What this line carries is
             // the two things the user cannot otherwise see — that an OSC 52 copy
             // happened, and that the guest itself failed to start.
-            statusText = statusText ?: bridge.lastError?.let { "终端未能启动：$it" },
+            //
+            // `startAttempt` is read here so that the *end* of the start (which now
+            // happens on another thread) recomposes this line: without it a failed
+            // start would set `lastError` and nothing would ever show it.
+            statusText = statusText
+                ?: bridge.lastError?.takeIf { startAttempt > 0 }?.let { "终端未能启动：$it" },
             rows = preferences.keyBar,
             onKey = { key ->
                 val sticky = key.sticky
@@ -247,6 +266,8 @@ private fun TerminalSurface(
     preferences: TerminalPreferences,
     palette: TerminalPalette,
     modifierManager: ModifierManager,
+    /** Called on the frame thread once [bridge] has finished starting (or failed). */
+    onStarted: () -> Unit,
 ) {
     val focusRequester = remember { FocusRequester() }
     val emulator = bridge.emulator
@@ -271,8 +292,28 @@ private fun TerminalSurface(
 
         // Starting is idempotent, so this re-runs usefully after a restart (a new
         // bridge) and is a no-op for the same bridge.
+        //
+        // **On `Dispatchers.IO`, because starting a terminal is not a frame-thread
+        // operation.** A `LaunchedEffect` body runs on the composition's own
+        // dispatcher, i.e. the main thread, and `bridge.start` leads to
+        // `PtyLauncher.prepare` → `probe` → a whole guest process (`bash` inside the
+        // rootfs asking `script(1)` what it supports), plus `RuntimeSelection.plan`
+        // and `ProcessBuilder.start()`. On a cold cache that is a proot launch of
+        // hundreds of milliseconds to a few seconds with the UI frozen for all of it
+        // — and the probe had no timeout at all, so a wedged proot froze the app for
+        // good. `TerminalBridge.start` touches only `@Volatile` fields and the
+        // emulator (which serialises its own calls), so moving it off the frame
+        // thread changes nothing else.
+        //
+        // The result is published as [startAttempt] rather than read straight off
+        // `bridge.lastError`: a `LaunchedEffect` that finishes does not recompose
+        // anything, and without a state write the "终端未能启动" line would never
+        // appear. It counts *attempts*, so a retry after a restart republishes too.
         LaunchedEffect(bridge, pinned) {
-            bridge.start(rows = pinned.first, columns = pinned.second)
+            withContext(Dispatchers.IO) {
+                bridge.start(rows = pinned.first, columns = pinned.second)
+            }
+            onStarted()
         }
 
         Box(

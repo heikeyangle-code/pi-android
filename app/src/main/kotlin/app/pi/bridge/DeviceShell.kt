@@ -18,9 +18,32 @@ data class DeviceShellResult(
     val exitCode: Int,
     val backend: String,
     val uid: Int,
-    val truncated: Boolean,
     val timedOut: Boolean,
-)
+) {
+
+    /**
+     * True when `stdout` is a **prefix** — it stopped at the shared cap
+     * ([AppUidShellBackend.MAX_OUTPUT_BYTES]) while the command kept writing.
+     *
+     * Derived from the string rather than passed in, and that is the point: this used
+     * to be one constructor flag named `truncated` that each backend computed for
+     * itself, so the two backends disagreed (the app-uid backend looked only at stdout
+     * while both streams are capped) and no caller could tell *which* stream had been
+     * cut — a model that saw a complete-looking `stdout` next to `truncated: true` had
+     * no way to know it was the stderr that was clipped.
+     */
+    val stdoutTruncated: Boolean get() = stdout.length >= AppUidShellBackend.MAX_OUTPUT_BYTES
+
+    /** True when `stderr` is a prefix, by the same rule as [stdoutTruncated]. */
+    val stderrTruncated: Boolean get() = stderr.length >= AppUidShellBackend.MAX_OUTPUT_BYTES
+
+    /**
+     * Either stream was cut. Kept because it is the field existing readers use
+     * (`DeviceShell.toJson`, and the extension's `ShellData`), and it is now a
+     * definition rather than two backends' separate opinions.
+     */
+    val truncated: Boolean get() = stdoutTruncated || stderrTruncated
+}
 
 /**
  * A shell execution backend. Two ship today:
@@ -49,7 +72,19 @@ object AppUidShellBackend : DeviceShellBackend {
     override val label: String = "应用自身身份（uid=${Process.myUid()}）"
     override val available: Boolean = true
 
-    private const val MAX_OUTPUT_BYTES = 50 * 1024
+    /**
+     * The output cap, and the drain that enforces it — **shared with the Shizuku
+     * backend** (`ShizukuShellBackend.exec`), which used to carry its own copy.
+     *
+     * That copy is exactly how the U+FFFD bug outlived its fix: the decoder here was
+     * corrected to carry a partial multi-byte sequence across reads
+     * (`app.pi.rpc.Utf8StreamDecoder`), and the identical-looking reader in
+     * `DeviceShizuku.kt` kept decoding each 8 KiB buffer on its own — so the *elevated*
+     * backend (the one a user enables precisely because they want the better path)
+     * still returned 乱码 for Chinese output, and its `truncated` flag still ignored
+     * stderr. One definition is the only version of this that cannot drift again.
+     */
+    internal const val MAX_OUTPUT_BYTES = 50 * 1024
 
     override fun run(command: String, timeoutMs: Int): DeviceShellResult {
         val builder = ProcessBuilder("/system/bin/sh", "-c", command)
@@ -97,12 +132,24 @@ object AppUidShellBackend : DeviceShellBackend {
             exitCode = if (finished) process.exitValue() else -1,
             backend = id,
             uid = Process.myUid(),
-            truncated = stdout.length >= MAX_OUTPUT_BYTES,
+            // No `truncated = …` argument: both per-stream flags are derived on
+            // `DeviceShellResult` from the strings and the shared cap, so this backend
+            // and the Shizuku one cannot state it differently again.
             timedOut = !finished,
         )
     }
 
-    private fun readCapped(stream: java.io.InputStream, into: StringBuilder) {
+    /** See [MAX_OUTPUT_BYTES]: shared with the Shizuku backend, one definition. */
+    internal fun readCapped(stream: java.io.InputStream, into: StringBuilder) {
+        // **One decoder for the whole stream, not one per read.** Decoding each 8 KiB
+        // buffer on its own splits any multi-byte character that straddles a read
+        // boundary into two malformed halves, and a `REPLACE` decoder turns each half
+        // into U+FFFD — so Chinese output (three bytes per character, and this bridge's
+        // usual input on a Chinese device) came back with replacement characters at
+        // 8192-byte intervals. `Utf8StreamDecoder` carries the partial sequence into the
+        // next read, and `flush()` closes the last one; it is the class the engine's own
+        // stdout pump uses for exactly this reason (`PiEngineSession.kt:448`).
+        val decoder = app.pi.rpc.Utf8StreamDecoder()
         stream.use { input ->
             val buffer = ByteArray(8192)
             while (true) {
@@ -113,10 +160,11 @@ object AppUidShellBackend : DeviceShellBackend {
                 }
                 if (read <= 0) break
                 if (into.length < MAX_OUTPUT_BYTES) {
-                    into.append(String(buffer, 0, read, Charsets.UTF_8))
+                    into.append(decoder.decode(buffer, read))
                 }
             }
         }
+        if (into.length < MAX_OUTPUT_BYTES) into.append(decoder.flush())
     }
 }
 
@@ -642,7 +690,13 @@ object DeviceShellGuard {
         put("stderr", result.stderr)
         put("exitCode", result.exitCode)
         put("timedOut", result.timedOut)
+        // Three fields, on purpose: `truncated` is the compatibility spelling (either
+        // stream, and what existing readers check), and the two per-stream flags are
+        // what make the answer *actionable* — "my grep printed nothing" is a different
+        // conclusion depending on whether it was stdout that was clipped or stderr.
         put("truncated", result.truncated)
+        put("stdoutTruncated", result.stdoutTruncated)
+        put("stderrTruncated", result.stderrTruncated)
         put("backend", result.backend)
         put("uid", result.uid)
         put("backendLabel", labelFor(result))

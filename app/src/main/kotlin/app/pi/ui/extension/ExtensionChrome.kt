@@ -136,13 +136,22 @@ fun ExtensionWidgetStack(
                     verticalArrangement = Arrangement.spacedBy(2.dp),
                 ) {
                     boundedWidgetLines(widget.lines).forEach { line ->
-                        // A blank line is meaningful spacing in a text widget,
-                        // which a Text("") would collapse to zero height. A line
-                        // that is nothing but colour escapes is blank in the same
-                        // sense — it paints no glyphs — so it takes the same path.
-                        val text = if (chromeText(line).isEmpty()) " " else line
+                        // One parse per line, not two. `chromeText(line).isEmpty()` used to
+                        // strip the whole line (allocating a second copy of it) just to
+                        // answer a yes/no question, and the answer is already in the spans:
+                        // `Ansi.parse` returns one span per styled run, so "paints no
+                        // glyphs" is "every run is empty". Reading the blank test off the
+                        // spans also means the test and the drawing cannot disagree about a
+                        // line made only of colour escapes — they were two parses of the
+                        // same string.
+                        //
+                        // A blank line is meaningful spacing in a text widget, which a
+                        // Text("") would collapse to zero height. A line that is nothing
+                        // but colour escapes is blank in the same sense — it paints no
+                        // glyphs — so it takes the same path.
+                        val spans = chromeSpans(line)
                         ExtensionSpans(
-                            spans = chromeSpans(text),
+                            spans = if (spans.all { it.text.isEmpty() }) listOf(Ansi.Span(" ")) else spans,
                             defaultColor = palette.muted,
                             style = PiTheme.text.monoSmall,
                         )

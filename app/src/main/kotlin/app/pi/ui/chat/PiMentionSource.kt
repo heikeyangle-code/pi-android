@@ -76,12 +76,22 @@ class PiMentionSource(
      * command ran - the caller uses that to keep a stale keystroke's result from
      * replacing the current list.
      *
-     * An empty list is a real answer: fd found nothing, or fd is not there. pi
-     * behaves the same way when it has no fd to run - no suggestions, and its
+     * An empty [MentionLookup.Candidates] is a real answer: fd found nothing, or fd is not
+     * there. pi behaves the same way when it has no fd to run - no suggestions, and its
      * autocomplete closes instead of showing an empty list
      * (`autocomplete.ts:305`, `:372`, `:741`).
+     *
+     * **[MentionLookup.Unavailable] is the other half, and it used to be silent.** "fd
+     * matched nothing", "the runtime is not provisioned" and "the fd run failed" all
+     * answered `emptyList()` before, so the composer drew the same nothing for a real
+     * answer and for a lookup that never happened. Which one it is comes from the guest's
+     * own report (`GuestCommand.Outcome`), never from a guess here —
+     * [mentionUnavailableSentence] holds that decision and the harness pins every arm.
      */
-    suspend fun query(prefix: String, superseded: () -> Boolean): List<PiFileMentions.Item>? {
+    // `internal` because its answer type is (`MentionLookup`), and the only caller is this
+    // module's ViewModel — the alternative would be widening the type to public for a
+    // class that no other module can construct.
+    internal suspend fun query(prefix: String, superseded: () -> Boolean): MentionLookup? {
         if (superseded()) return null
         return withContext(Dispatchers.IO) {
             lock.withLock {
@@ -90,9 +100,13 @@ class PiMentionSource(
         }
     }
 
-    private fun run(prefix: String): List<PiFileMentions.Item> {
+    private fun run(prefix: String): MentionLookup {
         // No runtime, no fd: pi without fd offers no file suggestions at all.
-        if (!layout.runtimeReady()) return emptyList()
+        if (!layout.runtimeReady()) {
+            // A fact about the install, not about a command: the sentence exists before
+            // anything is run, so this arm needs no classifier and no assertion.
+            return MentionLookup.Unavailable(mentionRuntimeNotReadySentence())
+        }
 
         val plan = PiFileMentions.plan(prefix, layout.guestWorkspace, layout.guestHome)
         val outcome = guest.run(
@@ -100,13 +114,26 @@ class PiMentionSource(
             cwd = layout.guestWorkspace,
             timeoutMs = TIMEOUT_MS,
         )
-        // fd exits non-zero when it matches nothing, and pi treats any non-zero exit
-        // as "no candidates" (`autocomplete.ts:196-200`), so this is the same
-        // outcome rather than an error the user needs to see. A timeout or a proot
-        // launch failure lands here too; the composer simply shows no list.
-        if (!outcome.ok) return emptyList()
+        // fd exits non-zero when it matches nothing, and pi treats any non-zero exit as
+        // "no candidates" (`autocomplete.ts:196-200`), so a non-zero exit is still this
+        // same answer rather than an error the user needs to see. What is *not* that
+        // answer — a missing runtime, a proot that would not start, a timeout, a process
+        // killed before it exited — is reported instead of being folded into it.
+        // A `null` here means the guest **ran and answered** — including "nothing matched"
+        // — so it is a real answer and becomes an (empty) candidate list, never a failure
+        // sentence. The classifier is the only place that decides which is which.
+        val unavailable = mentionUnavailableSentence(
+            runtimeReady = true,
+            timedOut = outcome.timedOut,
+            exitCode = outcome.exitCode,
+            launchError = outcome.launchError,
+            stderr = outcome.stderr,
+        )
+        if (unavailable != null) return MentionLookup.Unavailable(unavailable)
 
-        return PiFileMentions.items(outcome.stdout, outcome.stderr, plan, prefix)
+        return MentionLookup.Candidates(
+            PiFileMentions.items(outcome.stdout, outcome.stderr, plan, prefix),
+        )
     }
 
     companion object {

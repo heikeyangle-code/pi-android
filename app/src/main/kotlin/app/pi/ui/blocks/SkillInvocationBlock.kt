@@ -85,7 +85,14 @@ fun SkillInvocationBlock(
                         text = "/skill:" + item.skillName.ifEmpty { "未知技能" },
                         modifier = Modifier.weight(1f),
                         style = PiTheme.text.mono,
-                        color = palette.text,
+                        // pi paints this name with `customMessageText`:
+                        //   `theme.fg("customMessageLabel", "[skill] ") + theme.fg("customMessageText",
+                        //    this.skillBlock.name) + theme.fg("dim", " (… to expand)")`
+                        // (`components/skill-invocation-message.js:39-42`). This cell carries that
+                        // name, and its two neighbours already use their own tokens
+                        // (`customMessageLabel` for 「技能」), so `text` was the one value on this
+                        // row that pi's own line does not use.
+                        color = palette.customMessageText,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )

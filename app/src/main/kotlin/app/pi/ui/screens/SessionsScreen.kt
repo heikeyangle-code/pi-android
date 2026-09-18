@@ -133,6 +133,9 @@ fun SessionsScreen(
     initialView: SessionsView = SessionsView.List,
 ) {
     val sessions by session.sessions.collectAsState()
+    // True only while the first scan is still running with nothing to show; see
+    // `PiSessionViewModel.sessionsLoading`.
+    val loading by session.sessionsLoading.collectAsState()
     val state by session.state.collectAsState()
 
     var query by rememberSaveable { mutableStateOf("") }
@@ -250,6 +253,7 @@ fun SessionsScreen(
                 onRefresh = { session.refreshTree() },
                 onClose = onClose,
                 embedded = true,
+                onLoadEntries = { session.refreshEntries() },
                 modifier = Modifier.weight(1f),
             )
         } else {
@@ -355,7 +359,20 @@ fun SessionsScreen(
                 }
             }
             Box(Modifier.weight(1f).fillMaxWidth()) {
-                if (sessions.isEmpty()) {
+                if (loading && sessions.isEmpty()) {
+                    // The scan reads every session file, so on a phone with a long
+                    // history the first one takes seconds. Rendering that as "还没有会话"
+                    // was a claim about the user's data that had not been checked yet.
+                    // Same empty-state component, honest words — no new visual
+                    // vocabulary, and it disappears the moment the list arrives.
+                    PiEmptyStateTopAnchored(
+                        icon = Icons.Filled.Refresh,
+                        title = "正在读取会话…",
+                        body = "会话文件较多时需要几秒，读完后列表会显示在这里。",
+                        modifier = Modifier.fillMaxSize(),
+                        markPi = false,
+                    )
+                } else if (sessions.isEmpty()) {
                     PiEmptyStateTopAnchored(
                         icon = Icons.Filled.Forum,
                         title = "还没有会话",

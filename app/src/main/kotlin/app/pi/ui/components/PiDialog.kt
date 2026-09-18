@@ -173,14 +173,24 @@ fun PiDialogTitle(
 /**
  * v2's dialog body paragraph: `t14 c-text`, `margin-top:10`, `line-height:1.62`
  * (`direction-b-v2.html:694`).
+ *
+ * [mono] switches the paragraph to the machine face, for the bodies that *are* machine
+ * output rather than a sentence — a path being deleted, the workspace being removed
+ * (`rule #7`, `docs/pi-android-ui-spec.md` §1: 人写给人的用系统字体；机器输出的用等宽).
+ * The board draws exactly that split in its own sheets: the file menu's subtitle is
+ * `<span className="mono">{menu.path}</span>` while its footer is plain copy
+ * (`design-demos/workspace-final.html:1622-1623`).
+ *
+ * It is one flag rather than a `TextStyle` parameter on purpose: the two states differ in
+ * *family* only, and every caller's choice is "is this a path or a sentence".
  */
 @Composable
-fun PiDialogBody(text: String, modifier: Modifier = Modifier) {
+fun PiDialogBody(text: String, modifier: Modifier = Modifier, mono: Boolean = false) {
     Spacer(Modifier.height(PiDialogControlGap))
     Text(
         text = text,
         modifier = modifier,
-        style = MaterialTheme.typography.bodyMedium,
+        style = if (mono) PiTheme.text.mono else MaterialTheme.typography.bodyMedium,
         color = MaterialTheme.colorScheme.onSurface,
     )
 }

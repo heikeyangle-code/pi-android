@@ -42,6 +42,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -62,6 +63,7 @@ import app.pi.bridge.DeviceShizuku
 import app.pi.bridge.DeviceWorkspace
 import app.pi.ui.PiTopBar
 import app.pi.ui.PiTopBarIcon
+import app.pi.ui.components.PiMixedLine
 import app.pi.ui.rememberPiScreenVisible
 import app.pi.ui.settings.PiSettingsCardShape
 import app.pi.ui.settings.PiSettingsMetrics
@@ -69,7 +71,10 @@ import app.pi.ui.settings.PiSettingsSectionHeader
 import app.pi.ui.theme.PiShapes
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.json.JSONObject
 
 /**
@@ -106,6 +111,8 @@ fun DeviceCapabilityScreen(
 ) {
     val context = LocalContext.current
     val safStore = remember { DeviceSafStore.get(context) }
+    // For the bridge's start button, which does file work (see its onClick).
+    val scope = rememberCoroutineScope()
 
     // Status is polled rather than observed: the accessibility service, Shizuku and
     // the workspace can all change outside this screen while it is in the
@@ -211,25 +218,38 @@ fun DeviceCapabilityScreen(
     // (`rememberPiScreenVisible` reads the Activity's lifecycle; the whole loop is a
     // re-read of already-published facts, so stopping it costs nothing but staleness
     // for one frame after 切回前台, which the loop then fixes.)
+    //
+    // **On `Dispatchers.IO`, because one iteration is several binder round trips and
+    // file reads**, not a state read: `DeviceAccessibilityService.stateName` asks the
+    // AccessibilityManager (`getEnabledAccessibilityServiceList`),
+    // `DeviceShizuku.status` talks to the Shizuku service,
+    // `DeviceWorkspace.refresh` re-reads the workspace from `settings.json`, the four
+    // `store.has*Permission` calls are package-manager/permission lookups and
+    // `DeviceApprovalLedger.summaryLines` reads the ledger. All of it used to run on
+    // the frame thread every 1.5 s, which is a long frame per interval on a screen
+    // that is otherwise just a list of rows. The writes target Compose state, which is
+    // safe from any thread, so only the reads had to move.
     val visible = rememberPiScreenVisible()
     LaunchedEffect(visible) {
         if (!visible) return@LaunchedEffect
         while (true) {
-            accessibilityRunning = DeviceAccessibilityService.isRunning()
-            accessibilityState = DeviceAccessibilityService.stateName(context)
-            bridgeRunning = DeviceBridgeController.isRunning()
-            bridgeStatus = DeviceBridgeController.statusReport()
-            shizuku = DeviceShizuku.status(context)
-            DeviceWorkspace.refresh(context)
-            workspace = DeviceWorkspace.summary()
-            storagePermissionsNeeded = !store.hasLegacyStoragePermission()
-            cameraPermission = store.hasCameraPermission()
-            locationPermission = store.hasLocationPermission()
-            notificationPermission = store.hasNotificationPermission()
-            // The pi-side gate reports through POST /app/gate/report; nothing in that
-            // item reads a polled value, so without this the ledger would render once
-            // and never change while the screen is open.
-            approvals = DeviceApprovalLedger.summaryLines()
+            withContext(Dispatchers.IO) {
+                accessibilityRunning = DeviceAccessibilityService.isRunning()
+                accessibilityState = DeviceAccessibilityService.stateName(context)
+                bridgeRunning = DeviceBridgeController.isRunning()
+                bridgeStatus = DeviceBridgeController.statusReport()
+                shizuku = DeviceShizuku.status(context)
+                DeviceWorkspace.refresh(context)
+                workspace = DeviceWorkspace.summary()
+                storagePermissionsNeeded = !store.hasLegacyStoragePermission()
+                cameraPermission = store.hasCameraPermission()
+                locationPermission = store.hasLocationPermission()
+                notificationPermission = store.hasNotificationPermission()
+                // The pi-side gate reports through POST /app/gate/report; nothing in that
+                // item reads a polled value, so without this the ledger would render once
+                // and never change while the screen is open.
+                approvals = DeviceApprovalLedger.summaryLines()
+            }
             delay(REFRESH_INTERVAL_MS)
         }
     }
@@ -259,9 +279,20 @@ fun DeviceCapabilityScreen(
                     auditTail = auditTail,
                     aborted = aborted,
                     onStart = {
-                        bridgeStatus = DeviceBridgeController.start(context)
-                        bridgeRunning = DeviceBridgeController.isRunning()
-                        revision += 1
+                        // Starting the bridge mints a token, walks the shipped extension
+                        // assets (a SHA-256 over all of them), rewrites the token file in
+                        // two places, reads the workspace out of `settings.json` and
+                        // binds a socket. That is file and binder work, not a state
+                        // change, so it happens off the frame thread; the button stays
+                        // tappable and the card updates when it finishes.
+                        scope.launch {
+                            val started = withContext(Dispatchers.IO) {
+                                DeviceBridgeController.start(context)
+                            }
+                            bridgeStatus = started
+                            bridgeRunning = DeviceBridgeController.isRunning()
+                            revision += 1
+                        }
                     },
                 )
             }
@@ -499,9 +530,14 @@ private fun DeviceBridgeCard(
         val logPath = DeviceBridgeController.auditLogPath()
         if (logPath != null) {
             Spacer(Modifier.height(PiSpacing.gutter))
-            Text(
-                "审计日志：$logPath",
-                style = PiTheme.text.monoSmall,
+            // 两段声音（规则 #7）：「审计日志：」是我们的标注 → 系统字；路径是机器值 → 等宽。
+            // 裁决 ②-2：混排行一律拆两段，不许整行 mono。同卡片下面的白名单/日志尾巴本就是
+            // `monoSmall`，那里没有我们的话，所以不动。
+            PiMixedLine(
+                prefix = "审计日志：",
+                machine = logPath,
+                suffix = "",
+                style = PiTheme.text.meta,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
@@ -868,7 +904,13 @@ private fun ShellPolicyCard(relaxed: Boolean, workspace: String) {
         )
         Text(
             workspace,
-            style = PiTheme.text.meta,
+            // `DeviceWorkspace.summary()` is a machine line and nothing else:
+            // 「写入边界 = 工作区：/data/user/0/app.pi/files/workspace（guest 内：/root/pi；
+            // 终端标签页：/root）」. Three absolute paths in the UI face was the one place on
+            // this screen where a path was not already mono — the audit log one card above
+            // (`审计日志：$logPath`) and `DeviceShellGuard.allowedSummary()` below both are
+            // (`monoSmall`), which is rule #7 applied to a path.
+            style = PiTheme.text.monoSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         for (line in DeviceShellGuard.writeBoundarySummary()) {

@@ -14,12 +14,17 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import app.pi.rpc.ToolCall
 import app.pi.rpc.ToolStatus
@@ -151,22 +156,58 @@ internal fun toolStateOf(item: ToolCall): ToolState = when {
     else -> ToolState.Failed
 }
 
+/** The colour pi's token resolves to in this palette. */
+private fun ToolCallToken.color(palette: PiPalette): Color = when (this) {
+    ToolCallToken.ToolTitle -> palette.toolTitle
+    ToolCallToken.Accent -> palette.accent
+    ToolCallToken.ToolOutput -> palette.toolOutput
+    ToolCallToken.Warning -> palette.warning
+    ToolCallToken.Muted -> palette.muted
+    ToolCallToken.Uncoloured -> palette.text
+}
+
+/**
+ * pi's `renderToolPath` (`core/tools/render-utils.js:57-63`), as one run: the path in
+ * `accent`, or [fallback] in `toolOutput` where pi has no path to print.
+ *
+ * pi's three branches are `rawPath === null` → `[invalid arg]` in `error`, an empty value →
+ * `theme.fg("toolOutput", "...")`, and otherwise `theme.fg("accent", shortenPath(value))`.
+ * This app's callers always have a string, and they name the empty case in words
+ * （「文件」/「未命名文件」）rather than with pi's `...` — the **text** is theirs, the **token**
+ * is pi's, which is why only the token is taken from the source here.
+ */
+internal fun toolPathPart(path: String, fallback: String): ToolCallPart =
+    if (path.isEmpty()) {
+        ToolCallPart(fallback, ToolCallToken.ToolOutput)
+    } else {
+        ToolCallPart(path, ToolCallToken.Accent)
+    }
+
 /**
  * The card's title row, transcribed from v2's `ToolCard` header
  * (`direction-b-v2.html:740-747`, and `06 §2` 工具卡):
  *
  * ```
  * padding:7px 10px, gap 7
- *   工具名    mono 12 muted        <- the tool, or its prompt
- *   主体      mono 12 text         <- the call's one-line argument summary
- *   右读数    mono 12 muted tab    <- the call's own reading (a duration, or a count)
- *   chevron   14, bodyOnTool       <- right while collapsed, down while expanded
+ *   工具名    mono 12 toolTitle + Bold  <- pi: fg("toolTitle", bold(toolName))
+ *   主体      mono 12 分段取色          <- pi: the renderer's own fg(token, …) runs
+ *   右读数    mono 12 muted tab         <- the call's own reading (a duration, or a count)
+ *   chevron   14, bodyOnTool            <- right while collapsed, down while expanded
  * ```
  *
  * **Everything on this row is monospace**, because everything on it is machine
  * language (rule 7 / `06 §2`「机器语言层一律等宽」). It used to set the subject in
  * M3's `bodyLarge` (15 sp, sans) and the tool name in `dim`; both were two steps
  * off v2 on a row the eye lands on first.
+ *
+ * **The subject is not one colour, because pi's is not.** Every built-in renderer builds its
+ * call line out of several `theme.fg(token, …)` runs — `read`'s path is `accent` and its
+ * `:1-50` is `warning`, `grep`'s pattern is `accent` while ` in <path>` is `toolOutput`, a
+ * shell's whole line is `toolTitle`. v2 paints the whole subject `c-text`, and the user's
+ * 「全修的一致」 ruling puts pi's semantics first, so the subject arrives as the runs the
+ * renderer actually emits ([ToolCallPart]) and this composable only resolves their tokens.
+ * Text, order, spacing, size and the monospace face are unchanged: **colour is the only
+ * channel this parameter carries**.
  *
  * **The state is not on this row.** `06 §4` puts the tool card's triple encoding in
  * the footer — 「页脚**永远同时有符号与状态词**」 — and v2's header carries a
@@ -175,6 +216,14 @@ internal fun toolStateOf(item: ToolCall): ToolState = when {
  * The word and the glyph stay one row below, in [ToolFooter], which is what keeps
  * the encoding intact without printing it twice.
  *
+ * Nothing shifts under pi's own two themes: `toolTitle`, `text` and `accent` are the same
+ * value there (`theme.ts`'s dark/light `toolTitle = text`, and both ship `accent` as the one
+ * non-neutral hue), so this — like the name's `toolTitle` — only becomes visible under an
+ * imported theme that distinguishes them. That is exactly the drift the palette exists to
+ * prevent, and exactly the case the ruling is about.
+ *
+ * @param subject the call line's runs, in pi's order. A block with no pi recipe for its
+ *   arguments passes one [ToolCallToken.Uncoloured] run.
  * @param right the right-hand reading. Defaults to [ToolHeaderReading] of [item];
  *   a block whose tool reads out as a *count* rather than a duration (`find`, `ls`)
  *   passes its own string.
@@ -186,33 +235,56 @@ internal fun toolStateOf(item: ToolCall): ToolState = when {
 internal fun ToolHeader(
     item: ToolCall,
     title: String,
-    subject: String,
+    subject: List<ToolCallPart>,
     modifier: Modifier = Modifier,
     expanded: Boolean = false,
     expandable: Boolean = true,
     right: String? = toolHeaderReading(item),
 ) {
     val palette = PiTheme.palette
+    // One `AnnotatedString` with one span per run. Built here rather than at the seven call
+    // sites: the row's style (`monoSmall`, single line, ellipsis) stays in one place, so no
+    // block can accidentally change anything but a colour.
+    val subjectText = remember(subject, palette) {
+        buildAnnotatedString {
+            subject.forEach { part ->
+                withStyle(
+                    SpanStyle(
+                        color = part.token.color(palette),
+                        fontWeight = if (part.bold) FontWeight.Bold else null,
+                    ),
+                ) { append(part.text) }
+            }
+        }
+    }
     Row(modifier = modifier, verticalAlignment = Alignment.CenterVertically) {
         Text(
             text = title,
-            style = PiTheme.text.monoSmall,
-            color = palette.muted,
+            // **Bold, because pi bolds it**: `theme.fg("toolTitle", theme.bold(toolName))`
+            // (`components/tool-execution.js:91`, and `:316` for the same header rebuilt on
+            // update). The bundled family carries Regular + Bold and nothing between
+            // (`PiMonoFamily`), so `Bold` is the face pi's bold actually maps onto here —
+            // asking for SemiBold would make Android synthesise a weight the font does not have.
+            style = PiTheme.text.monoSmall.copy(fontWeight = FontWeight.Bold),
+            // **`toolTitle` — the token pi paints a tool's *name* with.** Every built-in
+            // renderer passes it (`core/tools/renderers/bash.ts:40` and the same line in
+            // `read`/`write`/`edit`/`grep`/`find`/`ls`), and this cell is exactly that name.
+            // It used to be `muted` because v2's prototype draws it `c-muted`; the user's
+            // ruling is that pi's own semantics win (「全修的一致」), so that board line was
+            // superseded and `06 §2` + `docs/pi-android-ui-spec.md` §2.5 were updated with it —
+            // otherwise both documents would describe a colour this row no longer has.
+            //
+            // Nothing moves under pi's own two themes (`toolTitle = text` there), which is why
+            // the difference was invisible until now — and why a theme that *does* distinguish
+            // them is the case this fixes.
+            color = palette.toolTitle,
             maxLines = 1,
         )
         Spacer(Modifier.width(TOOL_HEADER_GAP))
         Text(
-            text = subject,
+            text = subjectText,
             modifier = Modifier.weight(1f),
             style = PiTheme.text.monoSmall,
-            // `text`, not `toolTitle`: pi's `toolTitle` is the colour of the tool's
-            // *name* (`renderers/bash.ts:40`, `tool-execution.ts:410` pass it to
-            // `bash`/`read`/`write`/`ls`), and this row's subject is the call's own
-            // argument summary, which v2 draws `c-text` (`direction-b-v2.html:742`).
-            // The two tokens hold the same value in both built-in themes, so this
-            // only shows up on a theme that distinguishes them — which is exactly
-            // the kind of drift the palette exists to prevent.
-            color = palette.text,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
@@ -447,13 +519,14 @@ internal const val TOOL_CARD_BORDER_ALPHA: Float = 0.35f
  * `headLines` / the renderer's preview count and a `已截断` footer when that is less than
  * what pi returned, so `复制输出` taking `output` — pi's full result — is the only thing
  * that makes the truncated card safe to work from. That was already true and stays true;
- * it is restated here because the ⋮ below now competes with the text's own selection, and
- * a selection can only ever grab the preview.
+ * the distinction matters more now that the body is a selection scope, because a selection
+ * can only ever grab the preview on screen.
  *
- * The ⋮ is on because the card body became a selection scope (`BlockCard` →
- * [SelectableContent]): a long press on the output now selects it, so the menu needs a
- * trigger that is not a gesture over text. Long-pressing the card's chrome — the rail, the
- * padding outside a text node — still opens it exactly as before.
+ * The body is a selection scope (`BlockCard` → [SelectableContent]), so a long press on the
+ * output selects it and the menu is reached by long-pressing the card's **chrome** — the
+ * rail, the padding outside a text node. There is no ⋮ button: it would cost 32 dp of width
+ * on every tool card, which on a phone is width the command line and the output do not have
+ * (see [BlockActionMenu]).
  */
 @Composable
 internal fun ToolActionMenu(
@@ -475,7 +548,6 @@ internal fun ToolActionMenu(
                 add(BlockAction("复制完整输出路径") { clipboard.setText(AnnotatedString(fullOutputPath)) })
             }
         },
-        menuButton = true,
         content = content,
     )
 }

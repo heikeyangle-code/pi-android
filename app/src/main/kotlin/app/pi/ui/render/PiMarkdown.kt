@@ -79,6 +79,12 @@ internal fun PiMarkdownText(
     markdown: String,
     modifier: Modifier = Modifier,
     textColor: Color? = null,
+    // Defaulted from the composition so the eight block call sites do not have to carry it:
+    // who is allowed to pay for a synchronous parse is a property of the *row* (is this row
+    // entering the viewport from above, has it ever been measured, is its text still
+    // arriving), and the row's owner is `ChatScreen`. See `PiMarkdownImmediate.kt` for the
+    // defect, the bound and the cost.
+    immediate: Boolean = LocalPiMarkdownImmediate.current,
 ) {
     val context = LocalContext.current
     // `remember(context)`: attach() is idempotent and cheap, but this keeps it to
@@ -236,6 +242,17 @@ internal fun PiMarkdownText(
             // which is everything the wrapper would have supplied.
             retainState = true,
             animations = markdownAnimations(animateTextSize = { this }),
+            // 3. `immediate`: upstream defaults it to `false`, i.e. every first composition
+            //    of a row draws `State.Loading` — an **empty `Box`**, zero height — for one
+            //    frame or more while the parse runs on `Dispatchers.Default`
+            //    (`model/MarkdownState.kt`; the `true` branch is the `parseBlocking()` call
+            //    right after the state is constructed). A row entering the viewport from
+            //    *below* grows under the fold and nobody notices; a row entering from
+            //    *above* — which is what 「加载更早」 hands the reader — pushes every visible
+            //    row down by its own height when it arrives. `RowHeightCache` covers a row
+            //    that has been measured before; this covers the one that has not, and the
+            //    caller decides which rows those are (`PiMarkdownImmediate.kt`).
+            immediate = immediate,
             modifier = modifier,
         )
     }

@@ -12,14 +12,14 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asImageBitmap
@@ -28,6 +28,7 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import app.pi.rpc.PiImage
 import app.pi.ui.theme.PiShapes
 import app.pi.ui.theme.PiTheme
@@ -63,7 +64,8 @@ import kotlinx.coroutines.withContext
  *
  * So the two shapes answer the two cases differently, on purpose:
  *
- *  - **one image** — the natural aspect ratio of the decoded picture, capped at
+ *  - **one image** — the payload's own ratio ([naturalImageAspect], read out of the
+ *    bytes' header before anything is decoded), capped at
  *    [SINGLE_IMAGE_MAX_HEIGHT_FRACTION] of the window's height. A lone picture is the
  *    main content of its row and letterboxing it inside a full-width square would
  *    waste the row; the cap is what keeps a 1:5 screenshot from becoming five screens
@@ -75,16 +77,51 @@ import kotlinx.coroutines.withContext
  *    own `cardBg` as the letterbox. Tidiness is what the grid is for; a complete
  *    picture is the hard requirement, and `Fit` satisfies both.
  *
+ * ## The row has its final height before the picture does
+ *
+ * 「我速度稍稍微微快一点，这个图片会从底部直接闪现到全面露出来」 is a **row height
+ * change**, and the cell used to make one every time a picture entered the viewport: its
+ * box came from the *decoded* bitmap (`decoded.width / decoded.height`) and, until that
+ * decode returned, from `Modifier.fillMaxSize()`. On the height axis the constraint is
+ * unbounded and `fillMaxSize` passes it straight through (`FillNode.measure` computes a
+ * fixed size only `if (constraints.hasBoundedHeight)`, `compose/foundation/foundation-layout
+ * .../Size.kt`; checked in the `fillMaxSize` implementation this build resolves), so the
+ * pre-decode height was whatever the contents measured — the labelled fallback's two
+ * lines — and then the picture landed and the row jumped to the full natural height.
+ * Both halves are fixed here:
+ *
+ *  - the box is stated from the payload's header, so it is final on the first frame and
+ *    the decode cannot move it: [singleImageBoxHeightPx] is the only place a
+ *    single-image row's height comes from;
+ *  - the labelled fallback is no longer what sits under a running decode — the box is
+ *    empty until the bitmap (or the codec's refusal) arrives, so a picture does not flash
+ *    「图片 1 / image/png」 on its way in.
+ *
+ * The cap is an explicit `height`, not `aspectRatio(...).heightIn(max = …)`. The latter
+ * reads as if it capped the row and does not: modifiers are measured outside-in, so
+ * `aspectRatio` — handed an unbounded height by `fillMaxWidth` — took `width / ratio`
+ * (`AspectRatioNode.findSize` → `tryMaxWidth`, which accepts any height the incoming
+ * constraints allow, and `Infinity` allows every one of them) and `heightIn` only shrank
+ * what was drawn *inside* that too-tall box. A 1080×2400 screenshot therefore made a row
+ * as tall as the window itself with a 0.6-window card at its top: the picture was capped,
+ * the row was not. Stating the height directly makes the row exactly as tall as
+ * [singleImageBoxHeightPx] says — and since both of its inputs are known before the
+ * decode, that height never changes either.
+ *
  * The bytes are already here: `PiImage` carries base64 inline
  * (`rpc/Commands.kt:13`), so the cell decodes them with the platform codec and
  * only falls back to a labelled placeholder when the payload is not decodable.
- * Decoding runs on [Dispatchers.IO] — a base64 image is not composition work — and is
- * sampled to the cell's own box, not the image's. Each cell decodes **once** per
- * (payload, box) pair: `produceState` is keyed on both, and the single-image cell's
- * box comes from its incoming constraints rather than from the decoded bitmap, so the
- * "box depends on the ratio depends on the box" cycle cannot form. The viewer decodes
- * its own copy at screen size — a *second* decode, deliberately: it is a different
- * resolution for a different surface, not a repeat of the same one.
+ * Decoding runs on [Dispatchers.IO] — a base64 image is not composition work — under
+ * [piImageDecodeGate], so a fling cannot start a dozen screenshot decodes at once, and is
+ * sampled to the pixels that will be drawn ([fitBoxPx]) instead of to the card: a 1:5
+ * screenshot in a full-width card is a narrow column in the middle, and sampling to the
+ * card would decode four times the pixels that reach the screen. Each cell decodes
+ * **once** per (payload, box) pair: `produceState` is keyed on both, and the
+ * single-image cell's box comes from the payload's header rather than from the decoded
+ * bitmap, so the "box depends on the ratio depends on the box" cycle cannot form. The
+ * viewer decodes its own copy at screen size — a *second* decode, deliberately: it is a
+ * different resolution for a different surface, not a repeat of the same one (its box
+ * stays the whole window because pinching magnifies those pixels up to 8×).
  *
  * @param onImageClick null keeps the cells inert, which is what a preview or a test
  *   that has no viewer to raise passes.
@@ -99,12 +136,14 @@ fun ImageGridBlock(
     val spacing = PiSpacing.gutter
 
     if (images.size == 1) {
-        // No `height`/`aspectRatio` here: the cell takes its height from the picture's
-        // own ratio (see [ImageCell]'s `naturalAspect`).
+        // No `aspectRatio` here: the cell takes its height from the payload's own header
+        // (see [ImageCell]'s `naturalAspect`). The caller's modifier is applied like it is
+        // for the grid below — it used to be dropped on this branch, which is how a tool
+        // card's lone screenshot lost the `top` padding every other block kept.
         ImageCell(
             image = images[0],
             index = 0,
-            modifier = Modifier.fillMaxWidth(),
+            modifier = modifier.fillMaxWidth(),
             onClick = onImageClick,
             naturalAspect = true,
         )
@@ -153,53 +192,70 @@ private fun ImageCell(
     overflow: Int = 0,
     onClick: ((PiImage) -> Unit)? = null,
     /**
-     * Size the box from the decoded picture's own ratio (the single-image case) and
-     * cap that height at [SINGLE_IMAGE_MAX_HEIGHT_FRACTION] of the window, instead of
-     * filling the box the caller imposed. The picture is drawn with `Fit` either way,
-     * so the cap letterboxes rather than crops.
+     * Size the box from the payload's own header (the single-image case) and cap that
+     * height at [SINGLE_IMAGE_MAX_HEIGHT_FRACTION] of the window, instead of filling the
+     * box the caller imposed. The picture is drawn with `Fit` either way, so the cap
+     * letterboxes rather than crops.
      */
     naturalAspect: Boolean = false,
 ) {
     val palette = PiTheme.palette
     val density = LocalDensity.current
-    // A single image's cell is `fillMaxWidth()` inside a `Column`, so its incoming
-    // height constraint is infinite and cannot be the sampling box's height. The
-    // window is the honest ceiling for it: nothing larger than a screen is ever shown.
-    val windowHeightPx = with(density) {
+    // The cap, in pixels. A single image's cell is `fillMaxWidth()` inside a `Column`, so
+    // its incoming height constraint is infinite and cannot be the box's height; the
+    // window is the honest ceiling, and no transcript picture is ever drawn taller than
+    // this fraction of it.
+    val capPx = with(density) {
         (LocalConfiguration.current.screenHeightDp * SINGLE_IMAGE_MAX_HEIGHT_FRACTION).dp.roundToPx()
     }
-    // The cell's own pixel size decides the sample, so a 180 dp row never allocates a
+    // The picture's shape, read out of its own bytes before anything is decoded: this is
+    // what lets the box below be final on the first frame. The four fixed-prologue formats
+    // need 32 decoded bytes; only a JPEG pays for the walk behind its EXIF segment
+    // ([naturalImageAspect]).
+    val headerAspect = remember(image.base64) { naturalImageAspect(image.base64) }
+    // The cell's own pixel size decides the sample, so a grid cell never allocates a
     // full-screen bitmap. `BoxWithConstraints` is the only place the real size is known
     // before layout; the decode then runs off the main thread.
     BoxWithConstraints(modifier) {
         val targetWidthPx = constraints.maxWidth
-        val targetHeightPx = constraints.maxHeight
-            .takeIf { it != Constraints.Infinity }
-            ?: windowHeightPx
+        // The single-image box: the full width is the caller's, the height is stated here
+        // from data already in hand. A grid cell is the other way round — the caller fixed
+        // the square (`weight(1f).aspectRatio(1f)`), so the cell fills what it was given.
+        val boxAspect = if (naturalAspect) headerAspect ?: SINGLE_IMAGE_FALLBACK_ASPECT else 0f
+        val boxHeightPx = if (naturalAspect) {
+            singleImageBoxHeightPx(targetWidthPx, boxAspect, capPx)
+        } else {
+            constraints.maxHeight.takeIf { it != Constraints.Infinity } ?: capPx
+        }
+        // Sampled to what will be drawn, not to the card it sits in (see [fitBoxPx]).
+        val sample = fitBoxPx(targetWidthPx, boxHeightPx, headerAspect ?: boxAspect)
         // Decoded off the main thread, keyed on the payload *and* the box: a streaming
         // transcript recomposes often, and the decode must not repeat for the same
-        // bytes at the same size. The keys come from the *incoming* constraints, never
-        // from the decoded bitmap below, so an image-sized box cannot re-key its own
-        // decode.
-        val bitmap by produceState<Bitmap?>(null, image.base64, targetWidthPx, targetHeightPx) {
-            value = withContext(Dispatchers.IO) {
-                decodePiImage(image.base64, targetWidthPx, targetHeightPx)
-            }
+        // bytes at the same size. The keys come from the box stated above, never from the
+        // decoded bitmap below, so an image-sized box cannot re-key its own decode; the
+        // decode also waits on the shared gate, so a fling cannot start a dozen of them.
+        val state by produceState<CellImage>(
+            CellImage.Pending,
+            image.base64,
+            targetWidthPx,
+            boxHeightPx,
+        ) {
+            value = CellImage.Ready(
+                withContext(Dispatchers.IO) {
+                    piImageDecodeGate.withPermit {
+                        decodePiImage(image.base64, sample.width, sample.height)
+                    }
+                },
+            )
         }
-        val decoded = bitmap
-        val drawnAspect = if (decoded != null && decoded.height > 0) {
-            decoded.width.toFloat() / decoded.height
-        } else {
-            null
-        }
+        val decoded = (state as? CellImage.Ready)?.bitmap
         Surface(
             modifier = Modifier
                 .then(
-                    if (naturalAspect && drawnAspect != null && drawnAspect > 0f) {
+                    if (naturalAspect) {
                         Modifier
                             .fillMaxWidth()
-                            .aspectRatio(drawnAspect)
-                            .heightIn(max = with(density) { windowHeightPx.toDp() })
+                            .height(with(density) { boxHeightPx.toDp() })
                     } else {
                         Modifier.fillMaxSize()
                     },
@@ -229,9 +285,12 @@ private fun ImageCell(
                         contentScale = ContentScale.Fit,
                         modifier = Modifier.fillMaxSize(),
                     )
-                } else {
-                    // Only for bytes the platform codec refuses: the label states the
-                    // mime type rather than showing an unlabelled empty box.
+                } else if (state is CellImage.Ready) {
+                    // Only for bytes the platform codec refuses, and only once it has
+                    // actually refused them: while the decode is still running the box
+                    // above is already its final size and stays empty, which is what keeps
+                    // a picture from flashing this label on its way in. The label states
+                    // the mime type rather than showing an unlabelled empty box.
                     Column(
                         modifier = Modifier.padding(PiSpacing.inline),
                         horizontalAlignment = Alignment.CenterHorizontally,
@@ -239,27 +298,66 @@ private fun ImageCell(
                         Text(
                             text = "图片 ${index + 1}",
                             style = PiTheme.text.monoSmall,
-                            color = palette.muted,
+                            // The whole placeholder is pi's image **fallback** — the text a terminal
+                            // that cannot show a picture prints in its place — and pi paints that
+                            // string with `toolOutput`:
+                            //   `new Image(…, { fallbackColor: (s) => theme.fg("toolOutput", s) }, …)`
+                            // (`modes/interactive/components/tool-execution.js:307`). Both lines take
+                            // it; leaving one of them `muted` would split one label across two colours
+                            // that neither v2 nor pi draws.
+                            color = palette.toolOutput,
                         )
                         Text(
                             text = image.mimeType.ifEmpty { "image" },
-                            style = PiTheme.text.meta,
-                            // F13/F14: `dim` on a card is 2.89:1 in pi's dark theme;
-                            // `metaOnCard` is the palette's corrected meta token.
-                            color = palette.metaOnCard,
+                            // A MIME type is a machine identifier, and the placeholder above is
+                            // already in the machine face: v2 draws both halves of this label in
+                            // one monospace span (`direction-b-v2.html:854`, `className="mono
+                            // t12 c-muted"` — 「第 N 张图片<br/>image/png」). `meta` split one label
+                            // across two voices.
+                            style = PiTheme.text.monoSmall,
+                            // Same fallback token as the line above (pi's `fallbackColor`), which is
+                            // also what the derived `metaOnCard` it replaced was standing in for.
+                            color = palette.toolOutput,
                         )
                     }
                 }
                 if (overflow > 0) {
                     Text(
                         text = "+$overflow",
-                        style = MaterialTheme.typography.titleMedium,
+                        // The overflow count is a reading, and it is machine language: v2 draws it
+                        // `mono t14` (`direction-b-v2.html:855`). It used to take M3's
+                        // `titleMedium` — 17 sp of the *UI* face, i.e. the largest step on the
+                        // screen for a "+1", two families and four sizes away from the board.
+                        // The board's step is stated inline because `PiTextStyles.mono` is the
+                        // app's 13 sp machine body and this card's tile label is the one place
+                        // v2 draws the count at 14.
+                        style = PiTheme.text.mono.copy(fontSize = 14.sp, lineHeight = 20.sp),
                         color = palette.text,
                     )
                 }
             }
         }
     }
+}
+
+/**
+ * One cell's picture, with "not decoded yet" told apart from "the platform codec refused
+ * these bytes".
+ *
+ * The distinction is a sizing requirement, not bookkeeping. The labelled fallback belongs
+ * to bytes that cannot be a picture, and showing it while a decode is still running is
+ * what the cell used to do — on a decode that takes a tenth of a second that is a visible
+ * flash of 「图片 1 / image/png」 exactly where the picture is about to appear. A
+ * `produceState<Bitmap?>` whose initial value is `null` cannot express the difference
+ * (both "in flight" and "failed" read as null), so the cell's state is three-valued and
+ * the pending case draws an empty box of the final size.
+ */
+private sealed interface CellImage {
+    /** The decode is still running — or still queued behind [piImageDecodeGate]. */
+    data object Pending : CellImage
+
+    /** The decode finished; [bitmap] is null when the bytes are not decodable. */
+    data class Ready(val bitmap: Bitmap?) : CellImage
 }
 
 /**
@@ -276,8 +374,10 @@ private fun ImageCell(
  * given the decode is sampled with Android's `inSampleSize`, so the result stays
  * within 2× of the box on each axis. That matters because these bytes are a
  * full-resolution screenshot as often as not: a 1080×2400 ARGB result is ~10 MB
- * decoded, and both the grid cell (180 dp) and the viewer (one screen) would
- * otherwise pay for all of it — the same picture twice.
+ * decoded, and the viewer (one screen) would otherwise pay for all of it. The cell
+ * hands in [fitBoxPx] — the pixels that will actually be drawn inside its card, which is
+ * smaller than the card whenever the picture is much taller or wider than it — so the
+ * transcript never decodes a full-width bitmap to paint a narrow column.
  *
  * The box rule is Android's canonical one (halve while **both** axes still cover the
  * box), which never decodes below what will be drawn — but it is blind to aspect
@@ -329,14 +429,3 @@ private const val DECODE_AREA_BUDGET_FACTOR = 4L
 
 /** Spec cap: more than four images collapse into a grid with a `+N` badge. */
 private const val MAX_GRID_IMAGES = 4
-
-/**
- * How tall a **single** transcript image may be, as a fraction of the window.
- *
- * The cap exists for the extreme case the user named: a long screenshot (1:5 or
- * worse) at its natural ratio would take several screens and bury the conversation
- * around it. Past the cap the cell stops growing and `ContentScale.Fit` shows the whole
- * picture smaller, which is "看个大概" — and the tap target is unchanged, so the full
- * view is one tap away.
- */
-private const val SINGLE_IMAGE_MAX_HEIGHT_FRACTION = 0.6f

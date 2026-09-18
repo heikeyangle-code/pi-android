@@ -223,9 +223,10 @@ data class Notice(
      * `custom` entries (an extension's `ctx.ui.appendEntry(customType, data)`).
      *
      * **[text] is not replaced by this and must keep its whole original string**:
-     * the transcript's search index reads it (`screens/ChatScreen.kt`'s
-     * `searchTextOf`), and so does the session export. The rows are a *reading* of
-     * the same data, drawn under the line rather than instead of it.
+     * the transcript's search reads it (`screens/ChatScreen.kt`'s `searchHits`, which
+     * asks each row's own fields rather than a joined copy of them), and so does the
+     * session export. The rows are a *reading* of the same data, drawn under the line
+     * rather than instead of it.
      *
      * Empty for every other producer, which is why it is a defaulted parameter: the
      * two exhaustive `when`s over [TranscriptItem] (`ui/blocks/BlockRenderer.kt` and
@@ -804,11 +805,23 @@ private val TURN_FAILURE_REASONS = setOf("length", "aborted", "error")
  * (`packages/tui/src/tui.ts:477`, `:952-1005`, `:986-1005`). The app's 200 ms is
  * that same coalescing at a phone-appropriate interval.
  *
- * Only the *publication* is coalesced; the stored row is always current (see
- * [TranscriptReducer.onToolUpdate]), which is what keeps the throttle from
- * becoming data loss.
+ * Only the *publication* is coalesced; the accumulated text is never lost — the row holds
+ * it as of the last publication and the reducer's accumulator holds the rest
+ * ([TranscriptReducer.pendingToolOutput]), which is what keeps the throttle from becoming
+ * data loss.
  */
 private const val TOOL_UPDATE_THROTTLE_MS = 200L
+
+/**
+ * How many characters of a tool call's accumulated output a chunk has to begin with to be
+ * read as a cumulative snapshot rather than a delta.
+ *
+ * The merge decision in [TranscriptReducer.onToolUpdate] compares this prefix (the same
+ * 64-character probe the rule has always used) on the `chunk.length >= accumulated.length`
+ * branch, which is the branch where a snapshot is plausible at all: a shorter chunk cannot
+ * be a snapshot of a longer text.
+ */
+private const val PREFIX_COMPARE_CHARS = 64
 
 /**
  * What the last event did to the stream, so the UI can update one row instead
@@ -888,6 +901,47 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
      * reports its own row unconditionally, so the normal path never needs it.
      */
     private var suppressedToolUpdate: Int? = null
+
+    /**
+     * The **unpublished** tail of a running tool call's output, per call id.
+     *
+     * ## Why the row is not the whole truth while a tool streams
+     *
+     * [onToolUpdate] merges every chunk, and the 200 ms throttle above publishes at most
+     * one of five of them. Building the merged `String` per chunk copied the whole
+     * accumulated output per chunk — O(n) per chunk, quadratic over a stream — for text
+     * the UI was not going to be shown anyway. Measured on a desktop JVM: accumulating
+     * 1 MiB from 200-byte chunks costs ~530 ms that way and ~12 ms when only the
+     * published chunks materialise (1 in 50), i.e. **44×**. The assistant-text path is
+     * deliberately *not* built this way: it publishes every delta, so the row must be
+     * materialised per delta either way and the two shapes measure within 20% of each
+     * other (94 KiB in 4-char deltas: 196 ms with `+`, 160 ms with a builder + `toString`).
+     *
+     * The invariant is therefore: **the row holds the output as of the last publication;
+     * this map holds everything since.** Every path that reads a running card's output
+     * flushes first, and there are exactly three — [finalizeTool], [finishStreaming]
+     * (the turn boundary, which is the throttle's own tail flush) and [failTurn] (which
+     * rewrites pending cards). A publication materialises its own row before returning
+     * [TranscriptChange.Updated], so a consumer never receives a stale row.
+     *
+     * A card the engine stops talking about (a process that dies mid-turn) never flushes:
+     * its unpublished tail is dropped, which is the same text the throttle had already
+     * decided not to show, and the transcript's interrupted-turn projection rewrites that
+     * row anyway.
+     */
+    private val pendingToolOutput = mutableMapOf<String, StringBuilder>()
+
+    /** Write every accumulator into its row, then forget it. See [pendingToolOutput]. */
+    private fun flushToolOutputs() {
+        if (pendingToolOutput.isEmpty()) return
+        for ((callId, acc) in pendingToolOutput) {
+            val index = toolIndexByCallId[callId] ?: continue
+            val row = items.getOrNull(index) as? ToolCall ?: continue
+            val text = acc.toString()
+            if (row.output != text) items[index] = row.copy(output = text)
+        }
+        pendingToolOutput.clear()
+    }
 
     /**
      * The [Notice] row a `summarization_retry_scheduled` opened, so the matching
@@ -1555,13 +1609,23 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
         val chunk = event.partialText ?: return TranscriptChange.None
         // Engine updates are cumulative snapshots for some tools and deltas for
         // others; take the longer of "append" and "replace" so neither regresses.
-        val merged = when {
-            chunk.isEmpty() -> current.output
-            current.output.isEmpty() -> chunk
-            chunk.length >= current.output.length && chunk.startsWith(current.output.take(64)) -> chunk
-            else -> current.output + chunk
+        //
+        // Decided against the **accumulator**, not against the row: the row is only as new
+        // as the last publication ([pendingToolOutput]), and a cumulative snapshot
+        // compared against a stale row would be appended to it instead of replacing it.
+        // The two agree whenever the row is current, so the decision is the same one the
+        // code always meant to make.
+        val acc = pendingToolOutput.getOrPut(event.toolCallId) { StringBuilder(current.output) }
+        when {
+            chunk.isEmpty() -> Unit
+            acc.isEmpty() -> acc.append(chunk)
+            chunk.length >= acc.length &&
+                chunk.startsWith(acc.substring(0, minOf(PREFIX_COMPARE_CHARS, acc.length))) -> {
+                acc.setLength(0)
+                acc.append(chunk)
+            }
+            else -> acc.append(chunk)
         }
-        items[index] = current.copy(output = merged)
         // F8: the row above is the truth; only the repaint is coalesced. Before
         // this, every chunk published a whole transcript, so a `bash`/`grep`
         // emitting hundreds of chunks a second drove hundreds of publications a
@@ -1576,6 +1640,11 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
         }
         lastToolPublishAt[event.toolCallId] = now
         suppressedToolUpdate = null
+        // This publication materialises the row — the only point at which the accumulated
+        // text becomes a `String` — and the accumulator is dropped with it, so the next
+        // chunk starts from what was just published.
+        items[index] = current.copy(output = acc.toString())
+        pendingToolOutput.remove(event.toolCallId)
         return TranscriptChange.Updated(index)
     }
 
@@ -1603,6 +1672,10 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
         ts: Long,
         images: List<PiImage> = emptyList(),
     ): TranscriptChange {
+        // The throttle may be holding output this card has not published yet, and
+        // everything below reads (and can rewrite) its `output`: flush first, or a tool
+        // end would finalise a card missing its last chunks.
+        flushToolOutputs()
         val index = toolIndexByCallId[callId]
         val change: TranscriptChange
         if (index != null && items.getOrNull(index) is ToolCall) {
@@ -1798,6 +1871,9 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
 
         // pi closes the cards on `aborted`/`error` only — never on `length`.
         if (reason == "aborted" || reason == "error") {
+            // The loop below keeps a card's own output when it has one (`ifEmpty`), so the
+            // unpublished tail has to be in the row before it runs.
+            flushToolOutputs()
             for (i in items.indices) {
                 val call = items.getOrNull(i) as? ToolCall ?: continue
                 if (call.status != ToolStatus.Pending) continue
@@ -2431,8 +2507,12 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
         // so the row the throttle was still holding is reported now — otherwise a
         // chunk that arrived inside the 200 ms window could stay unpublished for
         // as long as the tool is silent.
+        // The row the throttle was holding is materialised here, not just reported: the
+        // engine publishes whatever this returns, and a published row must be current
+        // ([pendingToolOutput]).
         val flushed = suppressedToolUpdate?.takeIf { items.getOrNull(it) is ToolCall }
         suppressedToolUpdate = null
+        flushToolOutputs()
         var touched = -1
         val ts = now()
         for (i in items.indices) {
@@ -2492,6 +2572,7 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
         thinkingIndexByContentIndex.clear()
         lastToolPublishAt.clear()
         suppressedToolUpdate = null
+        pendingToolOutput.clear()
         lastUsage = null
         turnUsage = null
         currentDay = null

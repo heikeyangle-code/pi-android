@@ -58,11 +58,13 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.pi.ui.components.EffectiveKind
 import app.pi.ui.components.PiAutoFocus
+import app.pi.ui.components.PiMixedLine
 import app.pi.ui.theme.PiShapes
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
 import app.pi.ui.theme.PiThemeEntry
 import app.pi.ui.theme.PiThemeScope
+import kotlinx.serialization.json.JsonPrimitive
 
 /**
  * Level-2 editors for the settings stack (spec §6.1).
@@ -282,23 +284,33 @@ fun PiNumberEditorSheet(
     val start = initial ?: setting.defaultValue?.intValueOrNull() ?: low
     val high = setting.max ?: (start + 1000).coerceAtLeast(start + 1)
     val step = (setting.step ?: 1).coerceAtLeast(1)
-    val bounded = start.coerceIn(low, high)
     val range = low.toFloat()..high.toFloat()
     // Material draws one tick per step; a million-token range would draw
     // hundreds of them, so only quantise when the count stays readable.
     val rawSteps = (((high - low) / step) - 1).coerceAtLeast(0)
     val sliderSteps = if (rawSteps <= 24) rawSteps else 0
 
-    var value by remember(bounded) { mutableStateOf(bounded) }
-    var typed by remember(bounded) { mutableStateOf(bounded.toString()) }
+    // The field's text is the only source of truth: it starts as what the store holds — `""`
+    // when the key is not set, which *is* the truth, with pi's built-in default shown as a
+    // hint beside it — and every save parses that text. There used to be a second `Int` that
+    // only moved when the text parsed, so typing `abc` (or a number too large for `Int`) and
+    // tapping 保存 wrote the **previous** value with no message at all, and typing an
+    // out-of-range number showed one value while saving a clamped one
+    // (`docs/settings-audit-impl.md` §B6).
+    var typed by remember(initial) { mutableStateOf(initial?.toString() ?: "") }
+    var problem by remember(initial) { mutableStateOf<String?>(null) }
+    val parsed = parseEditedInt(typed)
+    val inRange = parsed == null || parsed in low..high
+    val sliderValue = (parsed ?: start).coerceIn(low, high)
     // 同文本编辑器：`phone41` 的数字编辑器画的就是「框已聚焦」（1px borderAccent + 光标）。
     val focusRequester = remember { FocusRequester() }
     PiAutoFocus(focusRequester)
 
-    fun update(next: Int) {
-        val clamped = next.coerceIn(low, high)
-        value = clamped
-        typed = clamped.toString()
+    /** The slider and ± are **range widgets**: they stay inside the row's bounds. Only the
+     *  hand-typed value is exempt from clamping (it is reported, never rewritten). */
+    fun setWithinRange(next: Int) {
+        typed = next.coerceIn(low, high).toString()
+        problem = null
     }
 
     PiSettingsSheet(onDismiss = onDismiss) {
@@ -337,8 +349,8 @@ fun PiNumberEditorSheet(
                     color = PiTheme.palette.muted,
                 )
                 Slider(
-                    value = value.toFloat(),
-                    onValueChange = { raw -> update(raw.toInt()) },
+                    value = sliderValue.toFloat(),
+                    onValueChange = { raw -> setWithinRange(raw.toInt()) },
                     modifier = Modifier.weight(1f),
                     valueRange = range,
                     steps = sliderSteps,
@@ -356,12 +368,12 @@ fun PiNumberEditorSheet(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                TextButton(onClick = { update(value - step) }) { Text("−") }
+                TextButton(onClick = { setWithinRange(sliderValue - step) }) { Text("−") }
                 PiEditorField(
                     value = typed,
                     onValueChange = { text ->
                         typed = text
-                        text.trim().toIntOrNull()?.let { parsed -> value = parsed.coerceIn(low, high) }
+                        problem = null
                     },
                     modifier = Modifier.weight(1f),
                     focusRequester = focusRequester,
@@ -380,13 +392,31 @@ fun PiNumberEditorSheet(
                         }
                     },
                 )
-                TextButton(onClick = { update(value + step) }) { Text("+") }
+                TextButton(onClick = { setWithinRange(sliderValue + step) }) { Text("+") }
             }
             Spacer(Modifier.height(PiSpacing.small))
+            // 读数行同时承担三件事：范围的建议值、pi 自带默认值（键没设时）、以及"这串字
+            // 不能保存"的原因。越界**只提示不夹值**：pi 接受的值必须能写进去。
             Text(
-                "取值范围 $low 到 $high",
+                problem ?: when {
+                    typed.isBlank() -> {
+                        val fallback = setting.defaultValue?.intValueOrNull()
+                        if (fallback != null) {
+                            "未设置，pi 用自带的 $fallback${setting.unit?.let { " $it" } ?: ""}。"
+                        } else {
+                            "未设置。留空保存就是把这个键删掉。"
+                        }
+                    }
+
+                    !inRange -> "建议 $low 到 $high；保存会原样写入 ${parsed}，不会替你改。"
+                    else -> "取值范围 $low 到 $high"
+                },
                 style = PiTheme.text.meta,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                color = if (problem != null) {
+                    PiTheme.palette.error
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                },
             )
             // v2 的 sheet 页脚：1px 上边（`borderMuted` 55%）+ `10px 14px 14px` 内边距。
             HorizontalDivider(
@@ -400,14 +430,36 @@ fun PiNumberEditorSheet(
             ) {
                 TextButton(
                     onClick = {
+                        // "Restore the default" is a **deletion** (`PiSettingsStore.remove`), which
+                        // is pi's own "unset": the file must not end up with `"key": null`, because
+                        // pi's `parseTimeoutSetting` throws on `null` and `pi --mode rpc` then fails
+                        // to start (`docs/settings-audit-impl.md` §B1).
                         onSet(null)
                         onDismiss()
                     },
                 ) { Text("恢复默认") }
                 TextButton(
                     onClick = {
-                        onSet(value)
-                        onDismiss()
+                        val text = typed.trim()
+                        // 「留空」= remove（pi 里的 `undefined`），不是写 0：0 在 pi 侧是一个**值**
+                        // （`retry.provider.timeoutMs` 写 0 就是把超时设成 0）。
+                        if (text.isEmpty()) {
+                            onSet(null)
+                            onDismiss()
+                            return@TextButton
+                        }
+                        val next = parseEditedInt(text)
+                        if (next == null) {
+                            problem = "要一个整数：不接受小数、文字或超出整数范围的值。"
+                            return@TextButton
+                        }
+                        when (val verdict = piValueVerdict(setting.key, JsonPrimitive(next))) {
+                            is PiValueVerdict.Rejected -> problem = verdict.message
+                            else -> {
+                                onSet(next)
+                                onDismiss()
+                            }
+                        }
                     },
                 ) { Text("保存") }
             }
@@ -548,9 +600,18 @@ fun PiListEditorSheet(
     initialEntries: List<String>,
     onSet: (List<String>) -> Unit,
     onDismiss: () -> Unit,
+    /**
+     * Returns the sentence to show **instead of saving**, or null when the lines are
+     * acceptable. Supplied by the host from `PiSetting.validateEntries`, which applies pi's
+     * own rules for the object-valued rows: a `compaction.modelOverrides` entry that pi cannot
+     * read makes pi throw on every turn's compaction check, and a line without `=` was silently
+     * dropped by our own parser (`docs/settings-audit-impl.md` §B5).
+     */
+    validate: (List<String>) -> String? = { null },
 ) {
     var entries by remember(initialEntries) { mutableStateOf(initialEntries) }
     var draft by remember { mutableStateOf("") }
+    var problem by remember(initialEntries) { mutableStateOf<String?>(null) }
 
     PiSettingsSheet(onDismiss = onDismiss) {
         Column(
@@ -710,15 +771,36 @@ fun PiListEditorSheet(
                 color = MaterialTheme.colorScheme.outlineVariant,
             )
             Spacer(Modifier.height(PiSettingsMetrics.sheetFooterTop))
+            // The refusal is shown where the decision is made, not as a toast that vanishes:
+            // a value pi cannot read must not reach the file (`PiSetting.validateEntries`).
+            val refusal = problem
+            if (refusal != null) {
+                Text(
+                    refusal,
+                    style = PiTheme.text.meta,
+                    color = PiTheme.palette.error,
+                )
+                Spacer(Modifier.height(PiSpacing.small))
+            }
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.End,
             ) {
-                TextButton(onClick = { entries = emptyList() }) { Text("清空") }
                 TextButton(
                     onClick = {
-                        onSet(entries)
-                        onDismiss()
+                        entries = emptyList()
+                        problem = null
+                    },
+                ) { Text("清空") }
+                TextButton(
+                    onClick = {
+                        val rejected = validate(entries)
+                        if (rejected == null) {
+                            onSet(entries)
+                            onDismiss()
+                        } else {
+                            problem = rejected
+                        }
                     },
                 ) { Text("保存") }
             }
@@ -889,9 +971,13 @@ fun PiThemeEditorSheet(
                 )
             }
             Spacer(Modifier.height(PiSpacing.gutter))
-            Text(
-                "保存为 " + lightTheme.trim() + "/" + darkTheme.trim(),
-                style = PiTheme.text.monoSmall,
+            // 两段声音（规则 #7）：「保存为 」是我们的词 → 系统字；`dark/light` 是主题 id，
+            // 是这一行唯一的机器值 → 等宽。裁决 ②-2：混排行一律拆两段，不许整行 mono。
+            PiMixedLine(
+                prefix = "保存为 ",
+                machine = lightTheme.trim() + "/" + darkTheme.trim(),
+                suffix = "",
+                style = PiTheme.text.meta,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Spacer(Modifier.height(PiSettingsMetrics.sheetHeadBottom))

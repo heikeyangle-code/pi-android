@@ -30,6 +30,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import app.pi.ui.components.EffectiveKind
 import app.pi.ui.theme.PiShapes
+import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
 
 /**
@@ -104,12 +105,25 @@ fun PiSettingRow(
                 },
             )
             // v2 的危险行在尾部写「! 执行」（error 色），普通 Action 行尾部为空。
+            // 两个声音（规则 #7 + 裁决 ②-2）：`!` 是符号层 → 等宽；「执行」是我们的词 →
+            // 系统字。形状与 `WsBadge` / `PiSettingsEffectiveBadge`（符号等宽 + 词系统字）
+            // 相同，整条改 mono 会让一个动词读成标识符。
             if (setting.dangerous) {
-                Text(
-                    "! 执行",
-                    style = PiTheme.text.mono,
-                    color = PiTheme.palette.error,
-                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(PiSpacing.small),
+                ) {
+                    Text(
+                        text = "!",
+                        style = PiTheme.text.monoSmall,
+                        color = PiTheme.palette.error,
+                    )
+                    Text(
+                        text = "执行",
+                        style = PiTheme.text.meta,
+                        color = PiTheme.palette.error,
+                    )
+                }
             }
         }
 
@@ -120,7 +134,10 @@ fun PiSettingRow(
                 highlighted = highlighted,
                 current = current,
                 modifier = modifier,
-                onClick = onOpen,
+                // 只读行（运行时事实）没有可打开的东西，所以**点击与 chevron 用同一个条件**：
+                // 以前只藏了 chevron，行却还能点开一个空的、禁用的编辑器 —— 行上写着
+                // `0.85.1`，sheet 里是空白（`docs/settings-audit-impl.md` §B4）。
+                onClick = if (setting.readOnly) null else onOpen,
                 enabled = enabled,
             ) {
                 RowBody(

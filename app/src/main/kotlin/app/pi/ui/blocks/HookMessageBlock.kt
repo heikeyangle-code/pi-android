@@ -70,9 +70,17 @@ fun HookMessageBlock(
                 // `Markdown` over the message body
                 // (`packages/coding-agent/src/modes/interactive/components/custom-message.ts:107-111`),
                 // and the engine names the field `markdown` for the same reason.
+                // `custom-message.ts:107-111` builds the `Markdown` with an explicit base
+                // colour, and it is not `text`:
+                //   `color: (text) => theme.fg("customMessageText", text)`
+                // (`components/custom-message.js:83-85`). All four `customMessageBg` cards take
+                // that same token — this one used to fall through to `text` (`PiMarkdownTheme`'s
+                // `textColor ?: palette.text`), which is the one thing that made it a different
+                // card from `SkillInvocationBlock`.
                 PiMarkdownText(
                     markdown = item.markdown.ifEmpty { "（空消息）" },
                     modifier = Modifier.fillMaxWidth(),
+                    textColor = palette.customMessageText,
                 )
             } else {
                 // Collapsed preview, unchanged: plain text cut to four lines.

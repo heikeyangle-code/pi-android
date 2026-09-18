@@ -126,7 +126,15 @@ fun DiffBlock(
                     Text(
                         text = item.toolName.ifEmpty { "diff" },
                         style = PiTheme.text.monoSmall,
-                        color = palette.muted,
+                        // The leading cell of a tool card is the tool's **name**, and pi paints every
+                        // tool name with `toolTitle` (`core/tools/renderers/edit.js:53`, `write.js:90`,
+                        // `read.js:27`, and the fallback header at
+                        // `components/tool-execution.js:91`). This card's name is the one from the call
+                        // it was lifted out of (`rpc/.../Transcript.kt:541-564` passes `toolName`
+                        // through), so it is the same cell and takes the same token. It used to be
+                        // `muted` because v2's prototype draws it so; the 「全修的一致」 ruling puts
+                        // pi's semantics first (`07` D40.1).
+                        color = palette.toolTitle,
                         maxLines = 1,
                     )
                     Spacer(Modifier.width(PiSpacing.inline))
@@ -134,11 +142,14 @@ fun DiffBlock(
                         text = item.path.ifEmpty { "未命名文件" },
                         modifier = Modifier.weight(1f),
                         style = PiTheme.text.monoSmall,
-                        // `text`: the path is the card's subject, which v2 sets
-                        // `c-text` (`direction-b-v2.html:742`). `toolTitle` is pi's
-                        // tool-*name* token (`renderers/edit.ts:85`), which this row
-                        // already carries in `muted` on the left.
-                        color = palette.text,
+                        // A path in a tool card is `accent`: pi's `renderToolPath` returns
+                        // `theme.fg("accent", shortenPath(value))`
+                        // (`core/tools/render-utils.js:57-63`), and `edit`/`write` hand that to the
+                        // card's path cell (`renderers/edit.js:52`, `write.js:89`). `text` was v2's
+                        // `c-text`; pi's token wins on the same ruling as the name above. Same shape
+                        // as `ToolHeader`'s `toolPathPart`, spelled out here because this card has its
+                        // own header row instead of going through `ToolHeader`.
+                        color = palette.accent,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
@@ -186,12 +197,32 @@ fun DiffBlock(
 
                 if (expanded) {
                     if (plan.isEmpty()) {
+                        // A diff `parseDiff` could not structure (neither unified nor pi's
+                        // readable shape). Its text has no cap of its own — it comes from
+                        // the tool's `details`, not from a truncated tool result — so it
+                        // is painted through the same app-side budget the other bodies
+                        // use, and the omission is said in the app's existing sentence
+                        // (`ShellBlock`'s 「上方还有 N 行未显示」). Without this, one
+                        // unparsable diff was the only transcript body with no ceiling:
+                        // a single `Text` holding all of it, re-measured on every
+                        // publication while the turn streamed.
+                        val raw = item.diffText
+                        val painted = remember(raw) { tailLines(raw, TOOL_BODY_MAX_LINES) }
+                        val hidden = remember(raw, painted) { hiddenLineCount(lineCount(raw), painted) }
                         MonoText(
-                            text = item.diffText.ifEmpty { "（无差异内容）" },
+                            text = painted.ifEmpty { "（无差异内容）" },
                             // F13: `toolOutput` is 3.37:1 on the success card; the
                             // derived variant clears §9's 4.5:1 body floor.
                             color = palette.bodyOnTool,
                         )
+                        if (hidden > 0) {
+                            Text(
+                                text = "上方还有 $hidden 行未显示",
+                                style = PiTheme.text.meta,
+                                color = palette.muted,
+                                modifier = Modifier.padding(top = PiSpacing.tiny),
+                            )
+                        }
                     } else {
                         for (row in plan) {
                             when (row) {
@@ -214,7 +245,15 @@ fun DiffBlock(
                                         top = PiSpacing.tiny,
                                         bottom = PiSpacing.tiny,
                                     ),
-                                    style = PiTheme.text.meta,
+                                    // The fold is the one line of this body that is not code, but it
+                                    // is still machine output: v2 draws it **inside** the body's own
+                                    // monospace container and only overrides the size to 12
+                                    // (`direction-b-v2.html:762-768`, `06 §2`「折叠行 12」), and its
+                                    // number is a row count — one of the six readings `05 §4.2` keeps
+                                    // on the machine face (「耗时/退出码/行数/token/费用/秒数 六类改成
+                                    // `numeric`」). `meta` was the only mono-block line in the UI face,
+                                    // which broke the column rhythm the comment above protects.
+                                    style = PiTheme.text.monoSmall,
                                     color = palette.muted,
                                 )
 

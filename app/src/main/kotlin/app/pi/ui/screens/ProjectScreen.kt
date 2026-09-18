@@ -6,6 +6,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -15,6 +17,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -42,13 +45,17 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewModelScope
 import app.pi.engine.PiEngineSession
 import app.pi.packages.AgentLayout
@@ -59,6 +66,7 @@ import app.pi.rpc.ToolDiff
 import app.pi.rpc.ToolStatus
 import app.pi.rpc.TranscriptItem
 import app.pi.runtime.PtyLauncher
+import app.pi.runtime.WorkspaceChoice
 import app.pi.runtime.WorkspaceStore
 import app.pi.ui.BashRun
 import app.pi.ui.PiSessionViewModel
@@ -101,7 +109,7 @@ import kotlinx.serialization.json.JsonPrimitive
  *
  * | 段 | 内容 | 数据从哪来 |
  * |---|---|---|
- * | ① 当前目录卡 | 工作区名 + 现场摘要 + 「切换」 | 会话 cwd（`PiProject.workspaceName`）+ 下两段的读数 |
+ * | ① 当前目录卡 | 工作区名 + 现场摘要 + 「切换」 | 当前工作区（`WorkspaceState.name` + `WorkspaceStore` 的 label）+ 下两段的读数 |
  * | ② 正在跑 | 没有在跑的命令就整段不画 | `UiState.bash` + 转录里 `Pending` 的 shell 卡 |
  * | ③ 本次会话改过 | 点行就地开 diff；行尾 ⋮ = 打开 / 编辑 / 重命名 / 删除 / 定位到对话 | 转录里 `write`/`edit` 的路径 + `ToolDiff` 的 `+N −M` |
  * | ④ 全部文件 | 面包屑 + 目录在前 + 行尾 ⋮ + 段头「新建」 | **宿主 File I/O**，`java.io.File` |
@@ -137,7 +145,6 @@ fun ProjectScreen(
     session: PiSessionViewModel,
 ) {
     val state by session.state.collectAsState()
-    val sessions by session.sessions.collectAsState()
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
@@ -159,14 +166,37 @@ fun ProjectScreen(
     val agentDir = layout.agentMirrorDir
     val guestWorkspace = layout.guestWorkspace
 
-    // 当前会话的 cwd。`sessionFile` 是唯一说明「pi 现在在写哪个文件」的线上字段
-    // （`SessionsScreen.kt:117` 用同一招判当前行），而 cwd 只存在于会话列表的摘要里——
-    // 那是磁盘上会话头的读数，不是猜的。
-    val activeFile = state.meta.sessionFile?.substringAfterLast('/')
-    val currentCwd = remember(sessions, activeFile) {
-        activeFile?.let { name -> sessions.firstOrNull { it.file.name == name }?.cwd }
+    var refreshTick by remember { mutableIntStateOf(0) }
+
+    // 工作区清单 —— 切换面板里那份「现有工作区」，也是 ① 卡上那个名字的 label 来源。
+    // 取自引擎的真实入口（`session.workspaceEntries()` → `WorkspaceStore.list`），不是拿当前
+    // 工作区的兄弟目录凑出来的 —— 名字、label、`isCurrent` 与切换时 `switchWorkspace` 用的是
+    // 同一份判据。它是一次真实的磁盘读取，所以在 IO 线程上跑，不放在 composition 里。
+    // 键里的 `revision` 是「换过工作区」的信号（`WorkspaceState`），切换之后重读一遍。
+    var workspaceEntries by remember { mutableStateOf<List<WorkspaceStore.Entry>>(emptyList()) }
+    LaunchedEffect(refreshTick, state.workspace.revision) {
+        workspaceEntries = withContext(Dispatchers.IO) { session.workspaceEntries() }
     }
-    val workspaceName = currentCwd?.let { PiProject.workspaceName(it) } ?: WorkspaceFiles.ROOT_LABEL
+
+    // 当前工作区**叫什么**：一份真相，就是 ViewModel 发布的那份身份 —— 工作区**目录名**
+    // （`WorkspaceState.name`，由 `WorkspaceStore.reconcile` 与 `switchWorkspace` 写），label 从
+    // 上面那份 `workspaceEntries` 里按这个名字取（也就是切换面板里同一行印的名字）。
+    //
+    // 这里**原来**是从会话 cwd 推的（`state.meta.sessionFile` → 会话列表的 `cwd` →
+    // `PiProject.workspaceName`）。那是第二份真相，而且是会过期的那一份：改过显示名之后
+    // ① 卡印目录名、切换面板印 label（同一个工作区两个名字）；刚切完的头一两秒还会印着
+    // **上一个**工作区的名字（新会话头要等 pi 起来才写，`state.meta.sessionFile` 在那之前
+    // 还是旧值）。会话头里的 `cwd` 是「那一次会话在哪儿跑过」的记录，不是「现在在哪儿」——
+    // pi 那边只有一个答案（`process.cwd()`，`main.ts:580`），本应用对这个答案的唯一权威是
+    // `WorkspaceStore`。
+    //
+    // 引擎没起来时这一行照样对：它读的是设置，不是引擎。`workspaceEntries` 还没读回来
+    // （第一帧）时先印目录名 —— `displayName` 在没有 label 时就是这个答案，所以不会印出
+    // 一个错名字，只会晚一帧变成显示名。
+    val workspaceName = WorkspaceChoice.displayName(
+        name = state.workspace.name,
+        label = workspaceEntries.firstOrNull { it.name == state.workspace.name }?.label,
+    )
 
     // 引擎没起来：②③ 没有数据，④⑤ 与全部文件操作照常。判据是引擎状态本身，不是转录的
     // 长度——转录为空既可能是引擎没起来，也可能是这个会话真的什么都没做。
@@ -174,8 +204,6 @@ fun ProjectScreen(
     val engineDown = engine == null ||
         engine == PiEngineSession.EngineState.Stopped ||
         engine == PiEngineSession.EngineState.Failed
-
-    var refreshTick by remember { mutableIntStateOf(0) }
 
     // ---------------------------------------------------------------- ④ 浏览
     var crumbs by remember { mutableStateOf<List<String>>(emptyList()) }
@@ -204,15 +232,6 @@ fun ProjectScreen(
     var resources by remember { mutableStateOf<List<WorkspaceResource>>(emptyList()) }
     var resourceKind by remember { mutableStateOf(WorkspaceResourceKind.Skill) }
     var projectUntrusted by remember { mutableStateOf(false) }
-    // 切换面板里那份「现有工作区」清单：取自引擎的真实入口
-    // （`session.workspaceEntries()` → `WorkspaceStore.list`），不是拿当前工作区的兄弟目录
-    // 凑出来的 —— 名字、label、`isCurrent` 与切换时 `switchWorkspace` 用的是同一份判据。
-    // 它是一次真实的磁盘读取，所以照旧在 IO 线程上跑，不放在 composition 里。
-    // 键里的 `revision` 是「换过工作区」的信号（`WorkspaceState`），切换之后重读一遍。
-    var workspaceEntries by remember { mutableStateOf<List<WorkspaceStore.Entry>>(emptyList()) }
-    LaunchedEffect(refreshTick, state.workspace.revision) {
-        workspaceEntries = withContext(Dispatchers.IO) { session.workspaceEntries() }
-    }
     LaunchedEffect(refreshTick, workspace, agentDir) {
         withContext(Dispatchers.IO) {
             resources = runCatching {
@@ -494,7 +513,10 @@ fun ProjectScreen(
                 item {
                     WsNotice(
                         text = if (engineDown) {
-                            "引擎没起来：②③ 暂时没有数据；④ 全部文件与 ⑤ 目录资源照常可用，" +
+                            // 稿子的原话（`workspace-final.html:1436-1438`）。**用户可见的文案里
+                            // 不出现稿子的段号**（②③④⑤ 只该活在文档与 KDoc 里）；这里原来写的是
+                            // 「②③ 暂时没有数据；④ 全部文件与 ⑤ 目录资源照常可用」。
+                            "引擎没起来：正在跑与本次会话改过没有数据；下面的文件与资源照常可用，" +
                                 "文件照样能打开 · 编辑 · 删除。"
                         } else {
                             "这个会话的项目现场。文件走宿主 File I/O，引擎没起来也能打开 · 编辑 · 删除。"
@@ -518,7 +540,12 @@ fun ProjectScreen(
                 item {
                     CurrentDirectoryCard(
                         name = workspaceName,
-                        summary = summaryText(engineDown, visibleChanged.size, runs.size),
+                        // 计数用 `changed`（**含**正在写的那一条）：稿子的现场摘要是
+                        // `'本次会话改过 ' + changed.length + ' 个文件'`，而 `changed` 里就带着
+                        // pending 那条（`workspace-final.html:1290-1293`）。原来传的是
+                        // `visibleChanged.size` —— 只存在一条 pending 写入时，摘要与 ③ 的段头
+                        // 都会写「0 个文件」，而正下方那行写着「pi 正在写入这个文件」。
+                        summary = summaryText(engineDown, changed.size, runs.size),
                         onClick = { rootSheet = true },
                     )
                 }
@@ -529,17 +556,18 @@ fun ProjectScreen(
                         WsSectionHeader(
                             label = "正在跑",
                             count = "${runs.size} 条命令",
-                            aside = {
-                                Text(
-                                    "进入上下文",
-                                    style = PiTheme.text.meta,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            },
+                            aside = runningAside(runs),
                         )
                     }
-                    runs.forEach { run ->
-                        item(key = "run:${run.key}") { RunningCommandRow(run) }
+                    for (index in runs.indices) {
+                        val run = runs[index]
+                        item(key = "run:${run.key}") {
+                            RunningCommandRow(
+                                run = run,
+                                sliceIndex = index,
+                                lastSliceIndex = runs.lastIndex,
+                            )
+                        }
                     }
                 }
 
@@ -549,8 +577,10 @@ fun ProjectScreen(
                         label = "本次会话改过",
                         count = when {
                             engineDown -> "无数据"
-                            visibleChanged.isEmpty() && pendingWrite == null -> "0 个文件"
-                            else -> "${visibleChanged.size} 个文件"
+                            // 同上：段头计数是 `changed.length`，含 pending 那条
+                            // （`workspace-final.html:1488` 的 `count={changed.length + ' 个文件'}`）。
+                            changed.isEmpty() -> "0 个文件"
+                            else -> "${changed.size} 个文件"
                         },
                         aside = if (engineDown) {
                             null
@@ -565,69 +595,85 @@ fun ProjectScreen(
                         },
                     )
                 }
+                // ③ 整段是一张卡：稿子把它放在 `Rows→Card` 里（`workspace-final.html:437-449`），
+                // 于是行内容从屏边 14+12=26 起。这里用 [WsCardSlice] 逐片带卡壳与行间线 ——
+                // 一个 item 一张整卡会把 ③ 的行数上限绑死在一次组合里（见该构件的 KDoc）。
                 if (engineDown) {
                     item {
-                        WsRow(
-                            title = "引擎没起来，读不到本次会话的改动",
-                            lead = { FolderGlyph() },
-                            meta = "④ 全部文件与 ⑤ 目录资源照常可用；改写过的文件自己打开也一样能看。",
-                        )
+                        WsCardSlice(index = 0, lastIndex = 0) {
+                            WsRow(
+                                title = "引擎没起来，读不到本次会话的改动",
+                                // 稿子这一行是 `file` 图标（`:1476`），不是文件夹：它说的是
+                                // 「读不到改动」，不是「这里是个目录」。
+                                lead = { FileGlyph() },
+                                meta = "下面的文件与资源照常可用；改写过的文件自己打开也一样能看。",
+                            )
+                        }
                     }
                 } else if (visibleChanged.isEmpty() && pendingWrite == null) {
                     item {
-                        WsRow(
-                            title = "这次会话还没动过文件",
-                            lead = {
-                                Icon(
-                                    Icons.Filled.Check,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(PiSettingsMetrics.searchIconSize),
-                                    tint = PiTheme.palette.muted,
-                                )
-                            },
-                            meta = "下面照旧能浏览、打开、编辑、删除工作区里的文件。",
-                        )
-                    }
-                } else {
-                    if (pendingWrite != null) {
-                        item(key = "pending:${pendingWrite.path}") {
-                            PendingWriteRow(pendingWrite)
-                        }
-                    }
-                    visibleChanged.forEach { file ->
-                        item(key = "changed:${file.path}") {
-                            ChangedFileRow(
-                                file = file,
-                                diff = remember(state.transcript, file.path) {
-                                    diffFor(state.transcript, file.path)
-                                },
-                                durationMs = remember(state.transcript, file.path, guestWorkspace) {
-                                    WorkspaceFiles.durationFor(
-                                        state.transcript,
-                                        file.path,
-                                        guestWorkspace,
+                        WsCardSlice(index = 0, lastIndex = 0) {
+                            WsRow(
+                                title = "这次会话还没动过文件",
+                                lead = {
+                                    Icon(
+                                        Icons.Filled.Check,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(PiSettingsMetrics.searchIconSize),
+                                        tint = PiTheme.palette.muted,
                                     )
                                 },
-                                onClick = {
-                                    val resolved = diffPathFor(file.path, guestWorkspace)
-                                    val target = resolveInside(resolved)
-                                    if (target != null) {
-                                        openRelative(resolved, target)
-                                    } else {
-                                        say("这个文件不在工作区里，打不开。", StateTone.Warning)
-                                    }
-                                },
-                                onMenu = {
-                                    val resolved = diffPathFor(file.path, guestWorkspace)
-                                    val target = resolveInside(resolved)
-                                    if (target == null) {
-                                        say("这个文件不在工作区里。", StateTone.Warning)
-                                    } else {
-                                        menuFor =
-                                            menuTargetFor(resolved, target, fromSession = true)
-                                    }
-                                },
+                                meta = "下面照旧能浏览、打开、编辑、删除工作区里的文件。",
                             )
+                        }
+                    }
+                } else {
+                    val pending = pendingWrite
+                    val totalSlices = (if (pending != null) 1 else 0) + visibleChanged.size
+                    if (pending != null) {
+                        item(key = "pending:${pending.path}") {
+                            WsCardSlice(index = 0, lastIndex = totalSlices - 1) {
+                                PendingWriteRow(pending)
+                            }
+                        }
+                    }
+                    visibleChanged.forEachIndexed { index, file ->
+                        val slice = (if (pending != null) 1 else 0) + index
+                        item(key = "changed:${file.path}") {
+                            WsCardSlice(index = slice, lastIndex = totalSlices - 1) {
+                                ChangedFileRow(
+                                    file = file,
+                                    diff = remember(state.transcript, file.path) {
+                                        diffFor(state.transcript, file.path)
+                                    },
+                                    durationMs = remember(state.transcript, file.path, guestWorkspace) {
+                                        WorkspaceFiles.durationFor(
+                                            state.transcript,
+                                            file.path,
+                                            guestWorkspace,
+                                        )
+                                    },
+                                    onClick = {
+                                        val resolved = diffPathFor(file.path, guestWorkspace)
+                                        val target = resolveInside(resolved)
+                                        if (target != null) {
+                                            openRelative(resolved, target)
+                                        } else {
+                                            say("这个文件不在工作区里，打不开。", StateTone.Warning)
+                                        }
+                                    },
+                                    onMenu = {
+                                        val resolved = diffPathFor(file.path, guestWorkspace)
+                                        val target = resolveInside(resolved)
+                                        if (target == null) {
+                                            say("这个文件不在工作区里。", StateTone.Warning)
+                                        } else {
+                                            menuFor =
+                                                menuTargetFor(resolved, target, fromSession = true)
+                                        }
+                                    },
+                                )
+                            }
                         }
                     }
                 }
@@ -640,13 +686,10 @@ fun ProjectScreen(
                         aside = if (listingError != null) {
                             null
                         } else {
-                            {
-                                WsChip(
-                                    text = "新建",
-                                    glyph = "+",
-                                    onClick = { newSheet = true },
-                                )
-                            }
+                            // 稿子这一颗是**无描边无底的 accent 文本 + 13 的加号**
+                            // （`workspace-final.html:1496-1499`），不是胶囊：整屏唯一的主按钮
+                            // 语言（实底 accent）在空目录那一颗上，这里只是段头的一个文本动作。
+                            { WsSectionAction(label = "新建", onClick = { newSheet = true }) }
                         },
                     )
                 }
@@ -672,50 +715,62 @@ fun ProjectScreen(
                     }
                 } else if (entries == null) {
                     item {
-                        WsRow(
-                            title = "正在读这个目录…",
-                            lead = { FolderGlyph() },
-                        )
-                    }
-                } else if (entries.isEmpty()) {
-                    item {
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = PiSettingsMetrics.groupGap),
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                        ) {
-                            Text(
-                                "这个目录是空的",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = PiTheme.palette.muted,
-                            )
-                            Spacer(Modifier.height(PiSettingsMetrics.cardPadding))
-                            WsChip(
-                                text = "新建文件",
-                                glyph = "+",
-                                active = true,
-                                onClick = {
-                                    inputDialog = WorkspaceInputDialog(
-                                        kind = WorkspaceInputKind.NewFile,
-                                        title = "新建文件",
-                                        where = "工作区" + crumbs.joinToString("") { " / $it" },
-                                        relativeParent = crumbs.joinToString("/"),
-                                        absoluteParent = null,
-                                        initial = "",
-                                    )
-                                },
-                            )
-                            Text(
-                                "也可以从段头的「新建」里建一个文件夹。",
-                                modifier = Modifier.padding(top = PiSettingsMetrics.cardPadding),
-                                style = PiTheme.text.meta,
-                                color = PiTheme.palette.muted,
+                        WsCardSlice(index = 0, lastIndex = 0) {
+                            WsRow(
+                                title = "正在读这个目录…",
+                                lead = { FolderGlyph() },
                             )
                         }
                     }
+                } else if (entries.isEmpty()) {
+                    item {
+                        // 空态也在卡里（稿子把它放在 `Rows` 内：`workspace-final.html:1526-1541`），
+                        // 内边距是它的 `padding:'20px 14px 18px'`。
+                        WsCardSlice(index = 0, lastIndex = 0) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(
+                                        start = WS_EMPTY_DIR_INSET,
+                                        end = WS_EMPTY_DIR_INSET,
+                                        top = WS_EMPTY_DIR_TOP,
+                                        bottom = WS_EMPTY_DIR_BOTTOM,
+                                    ),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                            ) {
+                                Text(
+                                    "这个目录是空的",
+                                    // 稿子是 `t13 c-muted`；本 App 取 12 的 `meta`（同 `WsNotice`）。
+                                    style = PiTheme.text.meta,
+                                    color = PiTheme.palette.muted,
+                                )
+                                Spacer(Modifier.height(WS_EMPTY_DIR_BUTTON_GAP))
+                                WsChip(
+                                    text = "新建文件",
+                                    glyphIcon = Icons.Filled.Add,
+                                    solid = true,
+                                    onClick = {
+                                        inputDialog = WorkspaceInputDialog(
+                                            kind = WorkspaceInputKind.NewFile,
+                                            title = "新建文件",
+                                            where = "工作区" + crumbs.joinToString("") { " / $it" },
+                                            relativeParent = crumbs.joinToString("/"),
+                                            absoluteParent = null,
+                                            initial = "",
+                                        )
+                                    },
+                                )
+                                Text(
+                                    "也可以从段头的「新建」里建一个文件夹。",
+                                    modifier = Modifier.padding(top = WS_EMPTY_DIR_HINT_GAP),
+                                    style = PiTheme.text.meta,
+                                    color = PiTheme.palette.muted,
+                                )
+                            }
+                        }
+                    }
                 } else {
-                    entries.forEach { entry ->
+                    entries.forEachIndexed { index, entry ->
                         item(key = "entry:${entry.path}") {
                             val matched = if (engineDown) {
                                 null
@@ -727,26 +782,28 @@ fun ProjectScreen(
                             val entryDiff = matched?.let { path ->
                                 remember(state.transcript, path) { diffFor(state.transcript, path) }
                             }
-                            WorkspaceEntryRow(
-                                entry = entry,
-                                sessionChanged = matched,
-                                diff = entryDiff,
-                                onOpen = {
-                                    if (entry.isDirectory) {
-                                        crumbs = crumbs + entry.name
-                                    } else {
-                                        val file = File(currentDir, entry.name)
-                                        openRelative(entry.path, file)
-                                    }
-                                },
-                                onMenu = {
-                                    menuFor = menuTargetFor(
-                                        path = entry.path,
-                                        file = File(currentDir, entry.name),
-                                        fromSession = false,
-                                    )
-                                },
-                            )
+                            WsCardSlice(index = index, lastIndex = entries.lastIndex) {
+                                WorkspaceEntryRow(
+                                    entry = entry,
+                                    sessionChanged = matched,
+                                    diff = entryDiff,
+                                    onOpen = {
+                                        if (entry.isDirectory) {
+                                            crumbs = crumbs + entry.name
+                                        } else {
+                                            val file = File(currentDir, entry.name)
+                                            openRelative(entry.path, file)
+                                        }
+                                    },
+                                    onMenu = {
+                                        menuFor = menuTargetFor(
+                                            path = entry.path,
+                                            file = File(currentDir, entry.name),
+                                            fromSession = false,
+                                        )
+                                    },
+                                )
+                            }
                         }
                     }
                 }
@@ -793,7 +850,8 @@ fun ProjectScreen(
                             modifier = Modifier.padding(
                                 start = PiSettingsMetrics.pageHorizontal,
                                 end = PiSettingsMetrics.pageHorizontal,
-                                bottom = PiSettingsMetrics.cardPadding,
+                                // 稿子这一句是 `padding:'0 14px 10px'`（`:1512-1514`）。
+                                bottom = WS_SOURCE_NOTE_BOTTOM,
                             ),
                             style = PiTheme.text.meta,
                             color = PiTheme.palette.muted,
@@ -810,19 +868,23 @@ fun ProjectScreen(
                         modifier = Modifier.padding(
                             start = PiSettingsMetrics.pageHorizontal,
                             end = PiSettingsMetrics.pageHorizontal,
-                            bottom = PiSettingsMetrics.cardPadding,
+                            // 稿子分段行是 `padding:'0 14px 8px'`（`:1533-1535`）。
+                            bottom = WS_SEG_BOTTOM,
                         ),
                     )
                 }
                 val shownResources = resources.filter { it.kind == resourceKind }
                 if (shownResources.isEmpty()) {
                     item {
-                        WsRow(
-                            title = "这一类还没有资源",
-                            lead = { FolderGlyph() },
-                            meta = "把「${resourceKind.label}」放进 .pi、.agents 或全局目录之后，" +
-                                "点这一屏的刷新键就能看到它。",
-                        )
+                        WsCardSlice(index = 0, lastIndex = 0) {
+                            WsRow(
+                                title = "这一类还没有资源",
+                                // 空态说的是「这一类没有」，不是「这里有个目录」。
+                                lead = { FileGlyph() },
+                                meta = "把「${resourceKind.label}」放进 .pi、.agents 或全局目录之后，" +
+                                    "点这一屏的刷新键就能看到它。",
+                            )
+                        }
                     }
                 } else {
                     item {
@@ -830,7 +892,21 @@ fun ProjectScreen(
                             shownResources.forEachIndexed { index, resource ->
                                 if (index > 0) WsHairline()
                                 Box(
-                                    Modifier.alpha(if (projectUntrusted && resource.source == WorkspaceSource.ProjectPi) 0.5f else 1f),
+                                    // **只压暗「项目 .pi」那一族，这是与稿子的一处有意偏离。**
+                                    // 稿子在未受信任时把整段都套了 `opacity:.5`
+                                    // （`workspace-final.html:1549`），但受这个信任决定影响的只有
+                                    // 从**这个项目**里读来的 .pi 资源：`.agents`、全局目录与已安装
+                                    // 资源包里的资源照旧会被 pi 加载（`PiResourceDiscovery` 的来源
+                                    // 优先级就是这件事），把它们一起压暗等于谎报「这些也不能用」。
+                                    // 每一行仍然另有文字层的说明（`ResourceRow.resourceMeta`），
+                                    // 所以颜色不是唯一信号。
+                                    Modifier.alpha(
+                                        if (projectUntrusted && resource.source == WorkspaceSource.ProjectPi) {
+                                            0.5f
+                                        } else {
+                                            1f
+                                        },
+                                    ),
                                 ) {
                                     ResourceRow(
                                         resource = resource,
@@ -900,14 +976,15 @@ fun ProjectScreen(
             // 把它盖住了 —— 先关才看得见。`Ok` 也因此不用再关一次面板。
             onPick = { entry ->
                 rootSheet = false
-                when {
-                    // 当前工作区：`switchWorkspace` 会返回 `AlreadyCurrent`（下面那一支处理的是
-                    // 列表过期时的同一个答案）。在这里先拦一道，是因为回合正跑着时
-                    // `wouldInterruptTurn()` 为 true，而切到当前工作区根本不会中断任何东西 ——
-                    // 不该拿一句「会中断回合」去吓用户。
-                    entry.isCurrent -> say("已经在这个工作区里。")
-                    session.wouldInterruptTurn() -> workspaceInterrupt = entry
-                    else -> switchWorkspaceTo(entry)
+                // 三条分支的顺序是判定的一部分，所以它住在纯函数
+                // `WorkspaceChoice.decidePick` 里、由 harness 钉死，而不是这个 lambda 的
+                // `when` 顺序里：**先问是不是当前工作区**。理由在那一支的 KDoc 上（回合正跑着时
+                // 点当前那一行不该得到「会中断回合」）。
+                when (WorkspaceChoice.decidePick(entry.isCurrent, session.wouldInterruptTurn())) {
+                    WorkspaceChoice.Pick.AlreadyHere -> say("已经在这个工作区里。")
+                    // 会中断一轮正在跑的回合：先问一次再切（`workspaceInterrupt` 那一格）。
+                    WorkspaceChoice.Pick.ConfirmInterrupt -> workspaceInterrupt = entry
+                    WorkspaceChoice.Pick.Switch -> switchWorkspaceTo(entry)
                 }
             },
             onNew = {
@@ -954,7 +1031,8 @@ fun ProjectScreen(
                 glyph = "!",
                 glyphTone = PiTheme.palette.error,
             )
-            PiDialogBody(target.host.absolutePath)
+            // 路径一律等宽（规则 #7）：这是工作区在磁盘上的绝对路径，不是一句话。
+            PiDialogBody(target.host.absolutePath, mono = true)
             // 要展示的就是引擎数出来的那三个数：文件数 / 目录数 / 总字节。用户同意的是
             // **这一次统计**，而 `confirmation` 是它唯一的凭据（`deleteWorkspace` 只收它）。
             PiDialogBody(
@@ -1147,7 +1225,8 @@ fun ProjectScreen(
                 glyph = "!",
                 glyphTone = PiTheme.palette.error,
             )
-            PiDialogBody(target.path)
+            // 被删的那个路径：等宽（规则 #7）。
+            PiDialogBody(target.path, mono = true)
             PiDialogBody(
                 "删除「${target.file.name}」？文件会从工作区里永久删除，不进回收站，也恢复不了。" +
                     if (target.fromSession) {
@@ -1266,7 +1345,15 @@ private fun CurrentDirectoryCard(name: String, summary: String, onClick: () -> U
                     )
                 }
                 WsBadge(text = "切换", tone = StateTone.Muted)
-                Text("›", style = PiTheme.text.mono, color = PiTheme.palette.muted, maxLines = 1)
+                // 稿子这里是 `Icon n="right" s={14}`（`workspace-final.html:1452`）：一颗 14px
+                // 的描边尖括号。原来画的是 `Text("›")` —— 一个标点，笔画粗细跟着字重走，
+                // 与旁边两个真图标的笔画不是一回事。
+                Icon(
+                    imageVector = WsChevronRightGlyph,
+                    contentDescription = null,
+                    modifier = Modifier.size(WS_CARD_CHEVRON),
+                    tint = PiTheme.palette.muted,
+                )
             }
         }
     }
@@ -1274,6 +1361,9 @@ private fun CurrentDirectoryCard(name: String, summary: String, onClick: () -> U
 
 /** 左缘 accent 条的高度（v2 的 `top:8;bottom:8` 撑出来的那一段）。 */
 private val CURRENT_BAR_HEIGHT = 40.dp
+
+/** 稿子 ① 卡右端那颗 chevron 的尺寸（`Icon n="right" s={14}`）。 */
+private val WS_CARD_CHEVRON = 14.dp
 
 /** ① 的现场摘要，三句话对应三种真实状态，没有一句是编的。 */
 private fun summaryText(engineDown: Boolean, changedCount: Int, runningCount: Int): String = when {
@@ -1292,22 +1382,97 @@ private fun FolderGlyph() {
     )
 }
 
+/**
+ * 文件图标。稿子给「读不到改动」那条空态与视图里的文件行都是 `file` 图标
+ * （`workspace-final.html:1476`），它说的是「这是一份文件」，不是一个目录。
+ */
+@Composable
+private fun FileGlyph() {
+    Icon(
+        Icons.AutoMirrored.Filled.InsertDriveFile,
+        contentDescription = null,
+        modifier = Modifier.size(PiSettingsMetrics.searchIconSize),
+        tint = PiTheme.palette.muted,
+    )
+}
+
+/** 稿子空目录块的 `padding:'20px 14px 18px'` + 内部 `marginTop:12` / `:10`。 */
+private val WS_EMPTY_DIR_TOP = 20.dp
+private val WS_EMPTY_DIR_BOTTOM = 18.dp
+private val WS_EMPTY_DIR_INSET = 14.dp
+private val WS_EMPTY_DIR_BUTTON_GAP = 12.dp
+private val WS_EMPTY_DIR_HINT_GAP = 10.dp
+
+/** 稿子「来源按 pi 的优先级排」那一句的 `padding:'0 14px 10px'`。 */
+private val WS_SOURCE_NOTE_BOTTOM = 10.dp
+
+/** 稿子资源分段行的 `padding:'0 14px 8px'`。 */
+private val WS_SEG_BOTTOM = 8.dp
+
 // ================================================================ ② 正在跑
 
 /** One command the session has running, from either of the two places it can be. */
 private data class RunningCommand(
     val key: String,
     val command: String,
-    /** Null while pi has reported no duration (a `!` run never reports one). */
-    val elapsedMs: Long?,
+    /**
+     * 行开始的那一刻，用来算**流式中的**读数。
+     *
+     * `ToolCall.elapsedMs` 是 `endedAt - ts`（`rpc/.../Transcript.kt:89`），调用还在跑时
+     * `endedAt` 为 null，所以它**在流式中恒为 null** —— 稿子那种 running 态一定要有点阵与
+     * 刻度，不能只靠它。转录里的 `bash` / `powershell` 调用带着自己的 `ts`，于是这里照
+     * `blocks/ShellBlock` 的既有做法现算（`System.currentTimeMillis() - ts`，**不自己起计时器**，
+     * 一次组合读一次）。`!` / `!!` 那条来自 `BashRun`，它没有时间戳可算，所以那一条仍然没有
+     * 读数（见 [runningCommands]）。
+     */
+    val startedAt: Long?,
+    /** pi 报过的时长（调用结束后才有值）；有值时以它为准，不再现算。 */
+    val reportedMs: Long?,
     val lines: Int,
     val inContext: Boolean,
-)
+) {
+    /** 该显示给用户的时长：pi 报过的优先，其次按 [startedAt] 现算。 */
+    fun elapsedMs(now: Long): Long? = reportedMs ?: startedAt?.let { (now - it).coerceAtLeast(0) }
+}
+
+/**
+ * 段头右侧那句话（稿子 `aside="进入上下文"`）。
+ *
+ * 稿子只有一条命令，所以那句话是常量；这一屏同时可能有四条，而「进不进上下文」是**每一条
+ * 各自的**事实。所以这里只在**全部一致**时才把它提到段头（这时行里不再重复写 —— 稿子的行副行
+ * 本来也没有这半句：`:1471` 是 `'运行中 · 已运行 12.3 秒 · ' + RUNNING.out`），不一致时
+ * 段头不表态，各行自己说自己的。这样既不会同一信息写两遍，也不会在混着 `!` 与普通 bash 时
+ * 出现「段头说进入上下文、行里说不进」那种直接矛盾。
+ */
+private fun runningAside(runs: List<RunningCommand>): (@Composable () -> Unit)? = when {
+    runs.all { it.inContext } -> {
+        {
+            Text(
+                "进入上下文",
+                style = PiTheme.text.meta,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+
+    runs.none { it.inContext } -> {
+        {
+            Text(
+                "不进上下文",
+                style = PiTheme.text.meta,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+
+    else -> null
+}
 
 /**
  * 正在跑的命令，取自**两个**真实来源：`state.bash`（`!` / `!!` 前缀的 [BashRun]）与转录里
- * `status = Pending` 的 `bash`/`powershell` 工具卡。时长只来自 `ToolCall.elapsedMs`
- * （= `endedAt - ts`），这一屏**不自己计时** —— 那量的是手机的重组，不是命令。
+ * `status = Pending` 的 `bash`/`powershell` 工具卡。时长优先用 `ToolCall.elapsedMs`
+ * （= `endedAt - ts`，结束后才有），流式中则按行自己的 `ts` 现算 —— 这一屏**不自己计时**，
+ * 那量的是手机的重组，不是命令。
  */
 private fun runningCommands(
     items: List<TranscriptItem>,
@@ -1318,7 +1483,11 @@ private fun runningCommands(
         out += RunningCommand(
             key = "bash",
             command = bash.command,
-            elapsedMs = null,
+            // `BashRun`（`ui/PiSessionViewModel.kt`）没有时间戳字段：这一条算不出「已运行
+            // 多久」，于是它没有刻度也没有进度段（拿不到就不画，不编一个数）。要补上它需要
+            // 给 `BashRun` 加一个 `startedAt`，那个文件不在这一批的边界里。
+            startedAt = null,
+            reportedMs = null,
             lines = lineCount(bash.output),
             inContext = !bash.excludeFromContext,
         )
@@ -1331,7 +1500,8 @@ private fun runningCommands(
             out += RunningCommand(
                 key = item.key,
                 command = argString(item.args, "command") ?: item.argsSummary,
-                elapsedMs = item.elapsedMs,
+                startedAt = item.ts,
+                reportedMs = item.elapsedMs,
                 lines = lineCount(item.output),
                 inContext = true,
             )
@@ -1343,15 +1513,21 @@ private fun runningCommands(
 /** 顶多这么多条——「正在跑」超过四条的时候，它已经不是「正在跑」了。 */
 private const val MAX_RUNNING_ROWS = 4
 
-/** 一条正在跑的命令：标题行 + 状态徽章 + 页脚读数 + 进度段（稿子 ②）。 */
+/**
+ * 一条正在跑的命令（稿子 ②）：行 + 卡下的 24 段进度条。
+ *
+ * 多条命令时每一条占**同一张卡的一片**（[WsCardSlice]）：稿子是一个 `Rows` 一张卡带行间
+ * 线（`workspace-final.html:1455-1466`），原来每条命令各起一张卡，于是三四条命令会画出三四张
+ * 圆角卡片，而它们其实是同一段信息。
+ *
+ * @param sliceIndex 这一条在 ② 里的序号（决定卡的上/下圆角与上方的行间线）。
+ */
 @Composable
-private fun RunningCommandRow(run: RunningCommand) {
-    Column(
-        Modifier
-            .fillMaxWidth()
-            .padding(horizontal = PiSettingsMetrics.pageHorizontal),
-    ) {
-        WsCard {
+private fun RunningCommandRow(run: RunningCommand, sliceIndex: Int, lastSliceIndex: Int) {
+    val now = System.currentTimeMillis()
+    val elapsed = run.elapsedMs(now)
+    Column(Modifier.fillMaxWidth()) {
+        WsCardSlice(index = sliceIndex, lastIndex = lastSliceIndex) {
             WsRow(
                 title = run.command,
                 mono = true,
@@ -1367,29 +1543,33 @@ private fun RunningCommandRow(run: RunningCommand) {
                 badge = {
                     StateChip(label = "运行中", tone = StateTone.Warning, glyph = "…")
                 },
+                // 稿子的副行只有这三个读数（`workspace-final.html:1471`）：`运行中 · 已运行
+                // 12.3 秒 · 18 行`。「进入上下文/不进上下文」不在这里 —— 它由段头的 aside 说一次
+                // （见 [runningAside]）。
                 meta = buildString {
                     append("运行中")
-                    run.elapsedMs?.let { append(" · 已运行 ").append(secondsText(it)) }
+                    elapsed?.let { append(" · 已运行 ").append(secondsText(it)) }
                     if (run.lines > 0) append(" · ").append(run.lines).append(" 行")
-                    append(" · ").append(if (run.inContext) "进入上下文" else "不进上下文")
                 },
                 metaMono = true,
                 trail = {
                     app.pi.ui.theme.DurationMeter(
-                        ms = run.elapsedMs,
+                        ms = elapsed,
                         color = PiTheme.palette.warning,
-                        contentDescription = "这条命令已运行 " + (run.elapsedMs?.let { secondsText(it) } ?: "未知"),
+                        contentDescription = "这条命令已运行 " +
+                            (elapsed?.let { secondsText(it) } ?: "未知"),
                     )
                 },
             )
         }
-        val elapsed = run.elapsedMs
         if (elapsed != null) {
+            // 进度条在**卡外**，是它的兄弟：稿子把它画在 `Rows` 之后
+            // （`workspace-final.html:1467-1475`），`padding:'10px 14px 0'`。
             Row(
                 modifier = Modifier.padding(
-                    start = PiSettingsMetrics.rowPaddingHorizontal,
-                    end = PiSettingsMetrics.rowPaddingHorizontal,
-                    top = PiSettingsMetrics.rowPaddingVertical,
+                    start = WS_RUNNING_METER_INSET,
+                    end = WS_RUNNING_METER_INSET,
+                    top = WS_RUNNING_METER_TOP,
                 ),
                 horizontalArrangement = Arrangement.spacedBy(PROGRESS_SEGMENT_GAP),
             ) {
@@ -1414,6 +1594,10 @@ private fun RunningCommandRow(run: RunningCommand) {
     }
 }
 
+/** 稿子进度条的 `padding:'10px 14px 0'`。 */
+private val WS_RUNNING_METER_INSET = 14.dp
+private val WS_RUNNING_METER_TOP = 10.dp
+
 /** v2 的进度条是 24 段（`direction-b-v2.html` 的 `Array.from({length:24})`）。 */
 private const val TOTAL_PROGRESS_SEGMENTS = 24
 
@@ -1437,25 +1621,43 @@ private fun secondsText(ms: Long): String =
 // ================================================================ ③ 本次会话改过
 
 /**
- * pi 正在写的那个文件（稿子 ③ 里的 pending 行）：`--tool-pending` 底 + 一行说明。
+ * pi 正在写的那个文件（稿子 ③ 里的 pending 行）：`--tool-pending` 底 + 上下各 1px 状态色
+ * + 一行说明。
  *
  * 「已收到 24 行」那半句只在 pi 真的流出了行的时候写 —— 给不出就只留「正在写入」，
  * 右侧的刻度也一并撤掉（稿子底部第 3 条自己就是这么要求的）。
+ *
+ * 卡壳与行间线由调用方的 [WsCardSlice] 提供，所以这里既不自己加页边、也不在末尾收一条
+ * hairline（原来那条会把 ③ 的最后一行下面多画一条线，稿子只在行之间画）。
  */
 @Composable
 private fun PendingWriteRow(pending: WorkspacePendingWrite) {
     var expanded by rememberSaveable(pending.path) { mutableStateOf(false) }
+    // 稿子这一块是 `bg:--tool-pending` + `borderTop/Bottom:1px solid rgba(255,255,0,.35)`
+    // （`workspace-final.html:1303-1304`）。`rgba(255,255,0,…)` 就是 pi 的 `warning`
+    // （深色主题里 `warning = #FFFF00`），`.35` 也正是本 App 的状态描边 alpha
+    // （`06 §2`「描边 1px 状态色 35%」），所以不写死颜色字面量。
+    val pendingEdge = PiTheme.palette.warning.copy(alpha = 0.35f)
+    val palette = PiTheme.palette
     Column(
         Modifier
             .fillMaxWidth()
-            .background(PiTheme.palette.toolPendingBg)
-            .padding(horizontal = PiSettingsMetrics.pageHorizontal),
+            .background(palette.toolPendingBg)
+            .drawBehind {
+                val line = PiSettingsMetrics.hairline.toPx()
+                drawRect(pendingEdge, size = Size(size.width, line))
+                drawRect(
+                    pendingEdge,
+                    topLeft = Offset(0f, size.height - line),
+                    size = Size(size.width, line),
+                )
+            },
     ) {
         WsRow(
             title = pending.path,
             mono = true,
             strong = true,
-            lead = { FolderGlyph() },
+            lead = { FileGlyph() },
             badge = {
                 WsBadge(text = "本次会话", tone = StateTone.Accent, glyph = "●")
             },
@@ -1464,7 +1666,7 @@ private fun PendingWriteRow(pending: WorkspacePendingWrite) {
                 if (pending.receivedLines > 0) {
                     app.pi.ui.theme.DurationMeter(
                         ms = MID_WRITE_TICK_MS,
-                        color = PiTheme.palette.warning,
+                        color = palette.warning,
                         contentDescription = "pi 正在写入这个文件",
                     )
                 }
@@ -1472,14 +1674,15 @@ private fun PendingWriteRow(pending: WorkspacePendingWrite) {
             onClick = { expanded = !expanded },
         )
         Row(
+            // 稿子的说明行是 `padding:'0 12px 9px'`。
             modifier = Modifier.padding(
                 start = PiSettingsMetrics.rowPaddingHorizontal,
-                bottom = PiSettingsMetrics.rowPaddingVertical,
+                bottom = WS_PENDING_NOTE_BOTTOM,
             ),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(PiSettingsMetrics.rowGap),
         ) {
-            Text("…", style = PiTheme.text.monoSmall, color = PiTheme.palette.warning, maxLines = 1)
+            Text("…", style = PiTheme.text.monoSmall, color = palette.warning, maxLines = 1)
             Text(
                 buildString {
                     append("pi 正在")
@@ -1502,12 +1705,14 @@ private fun PendingWriteRow(pending: WorkspacePendingWrite) {
                     bottom = PiSettingsMetrics.rowPaddingVertical,
                 ),
                 style = PiTheme.text.meta,
-                color = PiTheme.palette.muted,
+                color = palette.muted,
             )
         }
-        WsHairline(inset = false)
     }
 }
+
+/** 稿子 pending 说明行的 `padding:'0 12px 9px'`。 */
+private val WS_PENDING_NOTE_BOTTOM = 9.dp
 
 /** 写入中的刻度用它的时长（稿子画的是 `Tick ms={1800}`）。 */
 private const val MID_WRITE_TICK_MS = 1_800L
@@ -1518,6 +1723,14 @@ private const val MID_WRITE_TICK_MS = 1_800L
  * 点行**就地展开那块 diff**（`blocks/DiffBlock`，这一批不许改它，所以只调用）；行尾 ⋮
  * 才是打开 / 编辑 / 重命名 / 删除 / 定位到对话。状态是三重编码：`本次会话` 徽标 + `+N −M`
  * 两色 + 符号，颜色从来不是唯一信号。
+ *
+ * 标题是**叶子名**、目录写进副行 —— 稿子的 `changedRow` 就是
+ * `title={baseName(c.p)}` + `meta={目录 + ' · ' + tool + ' · ' + ms + ' · ' + when}`
+ * （`workspace-final.html:1300-1309`）。整条内部路径当标题会把行挤成一句没人读完的长串，
+ * 而且和 ④ 的目录树读起来是两种东西。
+ *
+ * 行末**不画** hairline：行间线由调用方的 [WsCardSlice] 在卡内画（稿子只在行**之间**画），
+ * 否则这一段最后一行下面会多出一条悬空的线。
  */
 @Composable
 private fun ChangedFileRow(
@@ -1530,28 +1743,27 @@ private fun ChangedFileRow(
     var expanded by rememberSaveable(file.path) { mutableStateOf(false) }
     Column(Modifier.fillMaxWidth()) {
         WsRow(
-            title = file.path,
+            title = changedTitle(file.path),
             mono = true,
             strong = true,
-            lead = {
-                Icon(
-                    Icons.AutoMirrored.Filled.InsertDriveFile,
-                    contentDescription = null,
-                    modifier = Modifier.size(PiSettingsMetrics.searchIconSize),
-                    tint = PiTheme.palette.muted,
-                )
-            },
+            lead = { FileGlyph() },
             badge = {
                 WsBadge(text = "本次会话", tone = StateTone.Accent, glyph = "●")
             },
             meta = buildString {
+                // 目录前缀（稿子的 `c.p.split('/').slice(0,-1).join('/') + ' · '`）。pi 的
+                // path 可能是 guest 拼法（`ProjectResources.kt:165-166`），所以这里只按分隔符
+                // 取，不改写它。
+                changedDirectory(file.path)?.let { append(it).append(" · ") }
                 append(file.action.label)
                 // pi 报过耗时才写它 —— 稿子的副行是 `edit · 214ms · 12 分钟前`。
                 durationMs?.takeIf { it > 0 }?.let {
                     append(" · ").append(app.pi.ui.blocks.formatDuration(it))
                 }
                 append(" · ").append(relativeTime(file.at))
-                if (diff != null) append(if (expanded) " · 收起 diff" else " · 就地看这次 diff")
+                // 这里原来自造过一句「· 就地看这次 diff / · 收起 diff」：稿子的副行没有它
+                // （`workspace-final.html:1303-1305` 只写 `目录 · tool · ms · when`），而
+                // 「这点一下会展开」已经由整行可点与 `+N −M` 说出了。删除于本轮审查。
             },
             value = if (file.hasDiff) {
                 {
@@ -1580,13 +1792,20 @@ private fun ChangedFileRow(
         if (expanded && diff != null) {
             DiffBlock(
                 item = diff,
-                modifier = Modifier.padding(horizontal = PiSettingsMetrics.pageHorizontal),
+                modifier = Modifier.padding(horizontal = PiSettingsMetrics.cardPadding),
                 defaultExpanded = true,
             )
         }
-        WsHairline()
     }
 }
+
+/** 稿子的 `baseName(c.p)`。 */
+private fun changedTitle(path: String): String =
+    path.trimEnd('/').substringAfterLast('/').ifEmpty { path }
+
+/** 稿子把路径的目录那半写进副行；工作区根部没有目录，返回 null。 */
+private fun changedDirectory(path: String): String? =
+    path.trimEnd('/').substringBeforeLast('/', "").ifEmpty { null }
 
 /**
  * 这次会话为某个路径留下的 diff，或 null。
@@ -1610,19 +1829,32 @@ private fun diffPathFor(path: String, guestWorkspace: String): String {
  *
  * 每一段可点回那一层（最后一段是当前目录，点了不动）；长名字中间省略（稿子的
  * `mid(n, 16)`）—— 省略中间而不是末尾，因为路径的两端才是有信息的那两端。
+ *
+ * ## 会换行，而且每一段是 `maxWidth` 而不是定宽
+ *
+ * 稿子这一行是 `className="rw w-crumb"` + `flexWrap:'wrap'`（`workspace-final.html:1500`），
+ * 每一段是 `maxWidth:170`（`.w-crumb :189` 的 `min-width:0` 加 inline 的 `maxWidth`）。
+ * 这一屏原来把每段钉成 `width(170dp)`：三段就是 534dp，一行的可用宽远小于它，于是**最后一段
+ * （当前目录）被推出屏外** —— 一段也看不见当前在哪。这里改成 `widthIn(max = 170)` + `FlowRow`：
+ * 名字短就按内容宽、长就截到 170，整行放不下就折到第二行。
+ *
+ * 选 [FlowRow] 而不是横向滚动：稿子写死的就是 `flexWrap`，而且「当前目录必须在屏内」这条要求
+ * 只有换行能无条件满足 —— 横向滚动时最后一段仍然要先滑一下才看得见。
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun BreadcrumbRow(crumbs: List<String>, onGo: (Int) -> Unit) {
     val palette = PiTheme.palette
-    Row(
+    FlowRow(
         modifier = Modifier
             .fillMaxWidth()
             .padding(
                 start = PiSettingsMetrics.pageHorizontal,
                 end = PiSettingsMetrics.pageHorizontal,
-                bottom = PiSettingsMetrics.cardPadding,
+                // 稿子这一行的 `padding:'0 14px 8px'`。
+                bottom = WS_CRUMB_BOTTOM,
             ),
-        verticalAlignment = Alignment.CenterVertically,
+        verticalArrangement = Arrangement.Center,
     ) {
         Crumb(
             text = WorkspaceFiles.ROOT_LABEL,
@@ -1648,6 +1880,9 @@ private fun BreadcrumbRow(crumbs: List<String>, onGo: (Int) -> Unit) {
     }
 }
 
+/** 稿子面包屑那一行的 `padding:'0 14px 8px'`。 */
+private val WS_CRUMB_BOTTOM = 8.dp
+
 /** 稿子的 `mid(n, 16)`。 */
 private const val CRUMB_MAX_CHARS = 16
 
@@ -1657,7 +1892,10 @@ private fun Crumb(text: String, mono: Boolean, current: Boolean, onClick: () -> 
         text,
         modifier = Modifier
             .then(if (current) Modifier else Modifier.clickable(onClick = onClick))
-            .width(CRUMB_MAX_WIDTH),
+            // `widthIn(max = …)`，不是 `width(…)`：稿子每一段是 `maxWidth:170`
+            // （`workspace-final.html:1500` + `.w-crumb`）：短名字按内容宽排，一行放不下就折行。
+            // 定宽 170 让「工作区 / src / session」恒占 534dp，当前目录必然被挤出屏外。
+            .widthIn(max = CRUMB_MAX_WIDTH),
         style = if (mono) PiTheme.text.monoSmall else PiTheme.text.meta,
         color = if (current) MaterialTheme.colorScheme.onSurface else PiTheme.palette.muted,
         maxLines = 1,
@@ -1725,7 +1963,6 @@ private fun WorkspaceEntryRow(
             trail = { WsMoreButton(onClick = onMenu) },
             onClick = onOpen,
         )
-        WsHairline()
     }
 }
 
@@ -1743,11 +1980,14 @@ private fun EntryGlyph(kind: WorkspaceEntryKind) {
             tint = PiTheme.palette.muted,
         )
 
-        WorkspaceEntryKind.Binary -> Text(
-            "▤",
-            style = PiTheme.text.mono,
-            color = PiTheme.palette.muted,
-            maxLines = 1,
+        // 稿子给二进制**单加了一个图标态**（`workspace-final.html:311` 的 `Icon n="bin"`：
+        // 文件轮廓 + 右下角一块实心矩形）。原来这里画的是字符 `▤` —— 一个标点当图标，
+        // 与旁边两个真矢量笔画不同源，字号一变就不齐。
+        WorkspaceEntryKind.Binary -> Icon(
+            imageVector = WsBinaryFileGlyph,
+            contentDescription = null,
+            modifier = Modifier.size(PiSettingsMetrics.searchIconSize),
+            tint = PiTheme.palette.muted,
         )
 
         WorkspaceEntryKind.Html, WorkspaceEntryKind.Text -> Icon(
@@ -1780,7 +2020,9 @@ private fun ResourceRow(
         title = resource.name,
         mono = isExtension,
         strong = isExtension,
-        lead = { FolderGlyph() },
+        // 稿子的资源行**没有 `lead`**（`workspace-final.html:1379-1389` 的 `resRow`：
+        // title / badge / meta / value / trail，没有图标）：资源是一份文件，不是目录，而
+        // 每行都挂一个文件夹图标既说谎又把来源徽标挤到第二位。删除于本轮审查。
         badge = {
             WsBadge(
                 text = resource.sourceLabel,
@@ -1793,27 +2035,7 @@ private fun ResourceRow(
                 dot = true,
             )
         },
-        meta = buildString {
-            val description = resource.description
-            if (!description.isNullOrBlank()) append(description)
-            when (resource.status) {
-                WorkspaceResourceStatus.ParseFail -> {
-                    if (isNotEmpty()) append(" · ")
-                    append(resource.reason.orEmpty())
-                }
-
-                WorkspaceResourceStatus.Disabled -> {
-                    if (isNotEmpty()) append(" · ")
-                    append(resource.reason.orEmpty())
-                }
-
-                else -> Unit
-            }
-            if (untrusted && piRow) {
-                if (isNotEmpty()) append(" · ")
-                append("不会加载（项目未受信任）")
-            }
-        }.ifEmpty { resource.displayPath },
+        meta = resourceMeta(resource, untrusted = untrusted, piRow = piRow),
         value = {
             when (resource.status) {
                 WorkspaceResourceStatus.Normal -> Unit
@@ -1854,6 +2076,33 @@ private fun ResourceRow(
         },
         onClick = { if (resource.openable) onOpen() },
     )
+}
+
+/**
+ * 资源行的副行。
+ *
+ * 稿子的两条规则不一样（`workspace-final.html:1369-1377`）：
+ *
+ *  - **解析失败**：副行**换成**原因（`meta = r.reason`）—— 解析不了的时候
+ *    `description` 本身就没读到，留着它只会占地方；
+ *  - **其余状态**（含**已禁用**）：副行是 `description`，**不追加**原因 —— 禁用的原因是
+ *    「包设了 `autoload:false` / 筛选没命中」这类设置事实，而状态词「已禁用」已经说了结论。
+ *
+ * 原来两种状态都往 description 后面追加原因，副行就成了半句描述 + 半句原因。
+ *
+ * [untrusted] 只标「项目 .pi」那一族（稿子是整段压暗，见 `WorkspaceResourcesCard` 里
+ * `alpha` 的注释）：只有从**这个项目**读来的资源才受项目信任决定影响。
+ */
+private fun resourceMeta(resource: WorkspaceResource, untrusted: Boolean, piRow: Boolean): String {
+    val parts = buildList {
+        if (resource.status == WorkspaceResourceStatus.ParseFail) {
+            (resource.reason ?: resource.description)?.takeIf { it.isNotBlank() }?.let { add(it) }
+        } else {
+            resource.description?.takeIf { it.isNotBlank() }?.let { add(it) }
+        }
+        if (untrusted && piRow) add("不会加载（项目未受信任）")
+    }
+    return parts.joinToString(" · ").ifEmpty { resource.displayPath }
 }
 
 /** 状态那半格：符号 + 词，同一个字色。 */
@@ -2244,7 +2493,9 @@ private fun WorkspaceNameDialog(
     PiAutoFocus(focus)
     PiDialog(onDismissRequest = onClose) {
         PiDialogTitle(title = dialog.title)
-        PiDialogBody(dialog.dialogSub ?: dialog.where)
+        // 这一行永远是路径/位置（`dialogSub` 是重命名时那条绝对路径，`where` 是
+        // 「工作区 / src」这种拼法）—— 规则 #7：机器产出的路径走等宽。
+        PiDialogBody(dialog.dialogSub ?: dialog.where, mono = true)
         Box(
             Modifier
                 .fillMaxWidth()
@@ -2373,7 +2624,14 @@ private fun WorkspaceSnackBar(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(PiSettingsMetrics.rowGap),
     ) {
-        Text(glyph, style = PiTheme.text.mono, color = glyphColor, maxLines = 1)
+        // 稿子的 Snack 符号是 `mono t14`（`workspace-final.html:635`）：比正文大一号的
+        // 等宽符号，与 14 的消息正文同档；`PiTheme.text.mono` 是 13 的机器正文档。
+        Text(
+            glyph,
+            style = PiTheme.text.mono.copy(fontSize = 14.sp, lineHeight = 20.sp),
+            color = glyphColor,
+            maxLines = 1,
+        )
         Text(
             message.text,
             modifier = Modifier.weight(1f),

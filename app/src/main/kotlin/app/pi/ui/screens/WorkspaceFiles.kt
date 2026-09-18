@@ -119,6 +119,17 @@ internal object WorkspaceFiles {
     /** 行数扫描的上限：超过就报「还有更多」，不再往下数。 */
     private const val COUNT_CAP = 200_000
 
+    /**
+     * 数行数时的字符预算：32 MB。
+     *
+     * 一份「还有 N 行」的提示不值得为它读完一个几百 MB 的文件。读满就走 null（见
+     * [countLines]），与超过 [COUNT_CAP] 时同一种答案。
+     */
+    private const val COUNT_BUDGET_CHARS = 32 * 1024 * 1024
+
+    /** [countLines] 每次读的块大小。 */
+    private const val COUNT_CHUNK_CHARS = 8 * 1024
+
     /** 已知的二进制后缀（`.so` / 图片 / 压缩包 / 数据库 …）。 */
     private val BINARY_SUFFIXES = setOf(
         "png", "jpg", "jpeg", "gif", "webp", "bmp", "ico", "heic", "avif",
@@ -228,16 +239,48 @@ internal object WorkspaceFiles {
         }
     }
 
-    /** 行数（封顶 [COUNT_CAP]），拿不到就是 null —— 不编一个数字回填。 */
+    /**
+     * 行数，**读到文件末尾**才算数；到不了末尾就是 null。
+     *
+     * 两处都不许编数字：
+     *
+     *  - 到不了 EOF（超过 [COUNT_CAP] 行或 [COUNT_BUDGET_CHARS] 个字符）就返回 null。
+     *    原来的实现在到达上限时把**已经数到的**那个数当成总数返回，而调用方拿它算
+     *    「还有 N 行」（`WorkspaceViewer` 的 `totalLines`）—— 一个 90 万行的日志会被
+     *    报成 20 万行。KDoc 一直写着「不编一个数字回填」，代码在这一点上没有照做。
+     *  - 顺带按**字节**封顶：原来用 `readLine()` 逐行数，等于为一句提示把整个文件读完，
+     *    而且每行都分配一个 `String`（200 MB 的日志就是 200 MB 的临时对象）。按块扫字节
+     *    既没有逐行分配，也在读满预算时立刻停下。
+     *
+     * `omittedLines`/`totalLines` 在 UI 上本来就是可空处理的（`TooLargeBody` 用
+     * `?.plus`），所以 null 只是少一行数字，不会少一块界面。
+     */
     private fun countLines(file: File): Int? = runCatching {
         var count = 0
+        var consumed = 0L
+        var openLine = false
+        var reachedEnd = false
         file.bufferedReader().use { reader ->
-            while (count < COUNT_CAP) {
-                reader.readLine() ?: break
-                count++
+            val buffer = CharArray(COUNT_CHUNK_CHARS)
+            while (true) {
+                if (consumed >= COUNT_BUDGET_CHARS || count >= COUNT_CAP) break
+                val read = reader.read(buffer)
+                if (read < 0) {
+                    reachedEnd = true
+                    break
+                }
+                consumed += read
+                for (index in 0 until read) {
+                    if (buffer[index] == '\n') {
+                        count++
+                        openLine = false
+                    } else {
+                        openLine = true
+                    }
+                }
             }
         }
-        count
+        if (!reachedEnd) null else if (openLine) count + 1 else count
     }.getOrNull()
 
     // ------------------------------------------------------------------ 写 ----
@@ -307,7 +350,13 @@ internal object WorkspaceFiles {
     private fun oneDecimal(value: Double): String =
         String.format(Locale.US, "%.1f", value)
 
-    /** `今天 14:12` / `昨天 14:12` / `9月3日 14:12` / `2025年9月3日`。 */
+    /**
+     * `今天 14:26` / `昨天 21:04` / **`前天 18:40`** / `9月3日 14:12` / `2025年9月3日`。
+     *
+     * 「前天」这一档是稿子写死的：`workspace-final.html:908` 的
+     * `'src/session/fixtures/golden-order.txt'` 就是 `前天 18:40`。少了它，昨天以前、今年以内
+     * 的日期直接从「昨天」跳到「9月3日」，两天前与三周前读起来一样模糊。
+     */
     fun formatTime(millis: Long, now: Long = System.currentTimeMillis()): String {
         if (millis <= 0L) return "时间未知"
         val stamp = SimpleDateFormat("HH:mm", Locale.US).format(Date(millis))
@@ -317,10 +366,15 @@ internal object WorkspaceFiles {
             timeInMillis = now
             add(Calendar.DAY_OF_YEAR, -1)
         }
+        val dayBefore = Calendar.getInstance().apply {
+            timeInMillis = now
+            add(Calendar.DAY_OF_YEAR, -2)
+        }
         val sameYear = then.get(Calendar.YEAR) == today.get(Calendar.YEAR)
         return when {
             sameDay(then, today) -> "今天 $stamp"
             sameDay(then, yesterday) -> "昨天 $stamp"
+            sameDay(then, dayBefore) -> "前天 $stamp"
             sameYear -> "${then.get(Calendar.MONTH) + 1}月${then.get(Calendar.DAY_OF_MONTH)}日 $stamp"
             else -> "${then.get(Calendar.YEAR)}年${then.get(Calendar.MONTH) + 1}月" +
                 "${then.get(Calendar.DAY_OF_MONTH)}日"

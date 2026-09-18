@@ -76,39 +76,122 @@ $ printf '%s\n' '{"id":"1","type":"get_state"}' '{"id":"2","type":"get_available
 | DNS | 静态 `/etc/resolv.conf`：`nameserver 8.8.8.8` + `223.5.5.5` |
 | TMPDIR | `/tmp`（已有，必须保证） |
 
-### 2.3 本机 DSH App 的 proot 配方（**直接抄**）`[实测]`
+### 2.3 我们自己 pin 的 Termux proot 配方（现在的**回退**与**装机/维护**路径）`[实测]+[文件]`
 
-从运行中的 `/proc/6754/environ` 与 `/proc/6754/cmdline` 完整提取：
+> **这份配方是「我们自己的」，不是「照 DSHA 抄的」。** 它最早确实是从当时的 DSHA 进程
+> （`/proc/6754/environ`）读回来的，但那份记录是 DSHA **还在用 Termux proot** 的时期；
+> **今天 DSHA 跑的是 proroot，环境里一个 `PROOT_*` 都没有**（`docs/proroot-research.md` §8.1）。
+> 下面列的是 **app.pi 实际在跑、且仍然有效**的那一套，唯一实现是
+> `runtime/PiRuntime.kt` 的 `ProotCommand`——两者冲突时以代码为准（`[文件]`）。
 
-**环境变量**
+**环境变量**（`ProotCommand.environment()`，`PiRuntime.kt:246-276`）
 ```
-PROOT_TMP_DIR   = /data/user/0/<pkg>/files/linux/tmp
-PROOT_LOADER    = <nativeLibraryDir>/libprootloader.so      ← 关键
-PROOT_LOADER_32 = <nativeLibraryDir>/libprootloader32.so
-PROOT_L2S_DIR   = <rootfs>/.l2s
-LD_LIBRARY_PATH = <pkg>/files/linux/lib:<nativeLibraryDir>
+PROOT_TMP_DIR   = <files>/pi/runtime/tmp                    ← 宿主真实路径
+PROOT_LOADER    = <nativeLibraryDir>/libprootloader.so      ← 关键：targetSdk≥29 时 loader 唯一可执行的位置
+PROOT_L2S_DIR   = <rootfs>/.l2s                             ← 必须已存在，且必须 bind 回相同的宿主绝对路径
+LD_LIBRARY_PATH = <files>/pi/runtime/lib:<nativeLibraryDir> ← 让 libtalloc.so.2 别名可解析
+NARB_DISABLE_NATIVE_CACHE = 1                               ← 见下方「两套机制都要带」
 TMPDIR          = /tmp
 HOME            = /root
+TERM/LANG/PATH/GIT_SSL_CAINFO/SSL_CERT_FILE …
 ```
 
-**nativeLibraryDir 内的文件**：`libproot.so`、`libprootloader.so`、`libprootloader32.so`
+**nativeLibraryDir 内的文件**：`libproot.so`、`libprootloader.so`、`libtalloc.so`、`libandroid-shmem.so`
+（`tools/fetch-runtime.mjs` 的 `JNI_PAYLOAD`，即 jniLibs 实际释放的全部四项）。
 
-**命令行**
+> **`PROOT_LOADER_32` / `libprootloader32.so` 不存在，按删除处理。** 旧记录里出现过它们，
+> 但 `JNI_PAYLOAD` 没有 32 位条目，`PiPaths` 里也没有任何 32 位路径。
+> 另外——若将来引入 proroot，它是 **arm64-only**，32 位 guest 支持本来就会丢
+> （`docs/proroot-research.md` §3、§10.4 第 2 条）。
+
+**命令行**（`ProotCommand.build()`，`PiRuntime.kt:197-234`）
 ```
 <lib>/libproot.so \
   --link2symlink \
   -b <rootfs>/.l2s:<rootfs>/.l2s \
-  -L --kill-on-exit -0 \
-  --rootfs=<rootfs> --cwd=/root \
+  -L --kill-on-exit -0 \           ← 前三个是 proot 专有；proroot 会直接拒收，见 §2.3.1
+  --rootfs=<rootfs> --cwd=/root \  ← 这两个写法也是 proot 专有
   -b /dev -b /dev/urandom:/dev/random \
   -b /proc -b /sys -b /system -b /apex \
   -b /proc/self/fd:/dev/fd \
   -b /storage/emulated/0:/sdcard \
   -b /storage/emulated/0:/storage/emulated/0 \
+  -b <files>/pi/runtime/tmp:/tmp \
   /bin/bash -c "<命令>"
 ```
 
-**进程树**：`libproot.so`(PID 6754) → `node dsh web`(6757) → `bash` → …
+**进程树**：`libproot.so` → `/bin/bash -c …` → `node …`。**proot 下**整棵树的回收靠 `--kill-on-exit`；
+App 侧的 `process.destroyForcibly()` 只杀直接子进程。**proroot 拒收 `--kill-on-exit`**（§2.3.1），
+所以那条路径上的回收由 `runtime/GuestTreeReaper.kt` 自己做（TERM → 超时 → KILL，最深优先、root 最后，
+只杀本次启动的子树）；root pid 来自 proroot 自己的 `.proroot-config-<launcher pid>` 表名
+（`runtime/ProrootLaunchHandle.kt`），因为 `java.lang.Process.pid()` 在本项目的编译类路径上不可用。
+
+**两套机制都要带 `NARB_DISABLE_NATIVE_CACHE=1`**：原生扩展缓存默认用 `link+unlink` 发布，
+在 `--link2symlink` 下**首次会悬空**（`docs/proroot-research.md` §10.3，来源 `[DSHA]`
+AGENTS.md 的已知 trap 第 5 条）。而 `--link2symlink` 是我们**现在**就必须带的
+（`PiRuntime.kt:206`：去掉它 guest 的 `link()` 直接 EACCES），按 §5.P1-3 换到 proroot
+之后也**必须继续带**——所以这个变量不属于任何一套机制，两套都该有。它加在
+`ProotCommand.environment()` 这一个地方，因此对全部四个 guest 入口同时生效
+（引擎 `PiEngineHost`、终端 `PtyLauncher`、包安装 `GuestCommand`、自检 `RuntimeSelfCheck`）。
+
+#### 2.3.1 「照这个抄」的陷阱：四个 proot 专有选项 `[实测]`
+
+`docs/proroot-research.md` §4.2 逐个跑过 proroot 的 launcher：`-L`、`--kill-on-exit`、
+`--rootfs=`、`--cwd=` **全部 `unknown option` 并以 usage 退出**——不是静默降级。
+所以「把 `libproot.so` 换成 proroot 的那个就能跑」不成立。真要做，必须按下表逐项改写
+（完整依据在 `docs/proroot-research.md` §4.3 与 §5）。
+
+| 现在（proot，`PiRuntime.kt`） | 换 proroot 时 | 依据 |
+|---|---|---|
+| `--link2symlink`（`:206`） | **保留**（去掉即 `link()` `EACCES`；但 proroot 下给的是**真硬链接**，不是 `.l2s` 符号链模拟） | §5.P1-3 |
+| `-b <rootfs>/.l2s:<rootfs>/.l2s`（`:212`） | 可删（proroot 固定用 `<rootfs>/.l2s`）；**目录本身保留** | §4.3 |
+| `-L`（`:214`） | **必须删**（proroot 无此选项；proroot 下 guest 绝对软链本来就能解析） | §4.2、§7.3 |
+| `--kill-on-exit`（`:214`） | **必须删，并自己实现 guest 进程树回收**（否则泄漏整棵树） | §4.2、§5.P1-5 |
+| `-0`（`:214`） | 不变（同样是「假的 root」） | §4.3、§5.P2-3 |
+| `--rootfs=<x>`（`:215`） | 改 `-r <x>` | §4.2、§4.3 |
+| `--cwd=<x>`（`:216`） | 改 `-w <x>` | §4.2、§4.3 |
+| 其余 `-b`、`/bin/bash -c`（`:180-191`、`:222-232`） | 不变 | §4.4 |
+
+| 现在（proot env） | 换 proroot 时 | 依据 |
+|---|---|---|
+| `PROOT_LOADER` | 不认。proroot 从 `/proc/self/exe` 目录按**固定文件名**自动发现，或显式传 `PROROOT_LINKER_PATH`/`PROROOT_LIB_PATH`/`PROROOT_STUB_LOADER` | §4.3、§5.P1-4 |
+| `PROOT_TMP_DIR` | 改名 `PROROOT_TMP_DIR`，且**必须是宿主真实路径**（我们本来就是宿主路径，这点已对） | §4.3 |
+| `PROOT_L2S_DIR` | 不认（目录本身保留） | §4.3 |
+| `LD_LIBRARY_PATH`（为 `libtalloc.so.2` 别名） | 不需要（proroot 不依赖 talloc）；继续设会把宿主路径注入 guest | §4.3 |
+| `NARB_DISABLE_NATIVE_CACHE=1` | **不变，继续带** | §10.3 |
+| `HOME`/`TMPDIR`/`TERM`/`LANG`/`PATH`/`GIT_SSL_CAINFO`/`SSL_CERT_FILE` | 不变 | §4.3 |
+
+> **已落地（本分支）。** proroot 现在是**可选**运行时：设置 →「运行时与诊断」→
+> **运行时加速（实验性）**，**默认关**，打开后引擎、终端、pi 的工具执行与装包走 proroot，
+> 装机与维护路径**始终** proot（分界线见 §2.3.2）。上表逐项都在代码里，且被
+> `tools/run-app-pure-checks.sh` 的 `proroot` harness 按值钉住。裁决与理由：`design/ui-refactor/07-construction-decisions.md` D44。
+> 两个仍然成立的限制：**永不默认**（DSHA 反过来默认开，它是自研自用），以及
+> **探针不过就不开**（`docs/proroot-research.md` §6.5 ②/§10.5 的两条，落地实况见 §2.3.2）。
+
+#### 2.3.2 落地实况（每一行对应哪个文件）`[文件]`
+
+| §2.3.1 的行 | 落点 |
+|---|---|
+| 决策点：开关 / 文件 / 门禁 / 失败预算 | `runtime/RuntimeChoice.kt`（纯判定）、`runtime/RuntimeSelection.kt`（读 prefs、跑门禁、记账、扫配置表）、`runtime/RuntimePreferences.kt`（app-only `SharedPreferences`，默认关，重开开关清零失败计数） |
+| argv 映射（`-r`/`-w`/去掉 `-L`/`--kill-on-exit`/`--rootfs=`/`--cwd=`） | `runtime/ProrootCommand.kt` |
+| env 映射（`PROROOT_TMP_DIR`/`PROROOT_LINKER_PATH`/`PROROOT_LIB_PATH`/`PROROOT_STUB_LOADER`；删 `PROOT_LOADER`/`PROOT_L2S_DIR`/`LD_LIBRARY_PATH`） | `runtime/ProrootCommand.kt:environment` |
+| 两套 builder 共用一张绑定表 + 公共 env + shell 尾巴 | `runtime/GuestRecipe.kt`；分派在 `runtime/GuestCommandLine.kt` |
+| 装机/维护永远 proot | `RuntimeSelfCheck`（自检）、`PtyLauncher.runGuest`（`script(1)` 探测）、`RuntimeProvisioner`（它本来就不跑 guest 命令）；调用点写 `allowProroot = false` |
+| 探针门禁（raw syscall + `rg`/`fd` 真调用，按 revision + sha256 缓存） | `runtime/ProrootProbe.kt` + `runtime/ProrootRawProbe.kt` + `runtime/ProrootProbeCache.kt`；`rg`/`fd` 那一半复用 `runtime/GuestToolProbe.kt`（参数化到 proroot） |
+| `--kill-on-exit` 的替代 | `runtime/GuestTreeReaper.kt` + `runtime/GuestProcessTree.kt`；root 的 pid 来自 `runtime/ProrootLaunchHandle.kt` |
+| `.proroot-config-*` 清理 | `runtime/ProrootConfigSweep.kt`（纯判定）+ `RuntimeSelection.sweepProrootConfigs`（存活判定与删除）+ `ProrootLaunchHandle.deleteConfig`（停自己那次） |
+| 设置行（默认关 / 实际生效 / 回退原因） | `ui/settings/AppOnlySettingsStore.kt` + `PiSettingsRegistry.kt` 的两行（`app.runtime.proroot`、`app.runtime.prorootStatus`）+ `PiSettingsStack.kt` 的装配 |
+| 诊断分引擎 | `ui/settings/DiagnosticsReport.kt` 的「运行时选择」段 |
+
+> **两条探针的判据（这是"能不能开"的唯一依据）**：
+> ① **raw syscall**：guest 里种一个 marker 文件，用 raw `openat`（arm64 nr 56）读回 ——
+> **必须翻译到 guest 文件系统**，且**同一路径的 raw 内容不得与 libc 内容不同**（后者 = 静默读到宿主文件 = 否决）。
+> 解释器用 **`perl`** 而不是 `docs/proroot-research.md` §6.5 ② 的 `python3`：`python3` 不在随包载荷里
+> （`tools/fetch-runtime.mjs` 没有 python 条目，pinned ubuntu-base 也没有），而 `perl-base` 是 essential；
+> Perl 的 `syscall` builtin 与 `ctypes` 走的是同一个 libc `syscall()` 入口，测的是同一条未翻译路径。
+> ② **`rg`/`fd` 真调用**：`--version` 与"真的搜一个 guest 文件"都要退出码 0 且输出非空。
+> 两条都过才允许 proroot；**门禁结论按解包 revision + 5 个 `.so` 的 sha256 缓存**，写在
+> `<runtime>/.proroot-probe`，随 `wipe()` 失效。
 
 ### 2.4 下载目录可写 `[实测]`
 
@@ -701,7 +784,9 @@ Android 10（API 29）起，对 `targetSdk ≥ 29` 的应用，`untrusted_app_29
 **四条出路**
 - **(a) targetSdkVersion 28** —— Termux 的做法（维护者 twaik：*"这正是 Termux 使用 targetSdkLevel 28 的原因"*）。Play 完全不兼容。
 - **(b) 可执行文件伪装成 `lib*.so` 放进 `jniLibs`** → 释放到 `nativeLibraryDir`。三个硬要求：**PIE**；ELF interpreter 必须是 **`/system/bin/linker64`**（glibc interpreter 的二进制会被**静默地不释放**）；必须开 `android.packagingOptions.jniLibs.useLegacyPackaging true`（否则从 APK zip 里 mmap 而不落盘）。
-- **(c) `PROOT_LOADER=<nativeLibDir>/libprootloader.so`** —— proot 默认把 loader 解到临时目录（被禁）。这是**已被验证在 targetSdk 35/36、Android 16、SELinux enforcing、无 root 下可用**的 Play 可行路线。**本机 DSH 正是这么做的。** `[实测]+[文献]`
+- **(c) `PROOT_LOADER=<nativeLibDir>/libprootloader.so`** —— proot 默认把 loader 解到临时目录（被禁）。这是**已被验证在 targetSdk 35/36、Android 16、SELinux enforcing、无 root 下可用**的 Play 可行路线。**本机 app.pi 正是这么做的**（`PiPaths.prootLoader()`，`PiRuntime.kt:123` 与 `:247`）`[实测]+[文献]+[文件]`。
+  > 这**不是**「照 DSH App 抄」：DSHA 今天跑的是 proroot（`docs/proroot-research.md` §8.1），
+  > 它的环境里没有 `PROOT_LOADER`。当前配方见 §2.3。
 - **(d)** 自定义 ELF loader 或 exec broker。
 
 **分发渠道由此决定**
@@ -1188,9 +1273,11 @@ printf '%s\n' '{"id":"1","type":"get_state"}' \
               '{"id":"3","type":"get_commands"}' \
   | node node_modules/@earendil-works/pi-coding-agent/dist/cli.js --mode rpc --no-session
 
-# 4) proot 配方（取自运行中的 DSH App，PID 6754）
+# 4) proot 配方（历史记录：取自当时的 DSH App，PID 6754，DSHA 还在用 Termux proot）
+#    ⚠️ 不要照抄：`PROOT_LOADER_32` 在 app.pi 里不存在（jniLibs 只有 4 项，见 §2.3），
+#       且 `-L`/`--kill-on-exit`/`--rootfs=`/`--cwd=` 是 proot 专有（proroot 会拒收，见 §2.3.1）。
+#       当前配方、逐项依据与 proroot 对照表都在 §2.3。
 #   PROOT_LOADER=<nativeLibraryDir>/libprootloader.so
-#   PROOT_LOADER_32=<nativeLibraryDir>/libprootloader32.so
 #   PROOT_TMP_DIR=<pkg>/files/linux/tmp
 #   PROOT_L2S_DIR=<rootfs>/.l2s
 #   LD_LIBRARY_PATH=<pkg>/files/linux/lib:<nativeLibraryDir>
@@ -1211,7 +1298,7 @@ printf '%s\n' '{"id":"1","type":"get_state"}' \
 
 # 附录 C　证据分级与不确定项
 
-**已实测（本机真机）**：pi RPC 跑通；运行时环境参数；DSH 的 proot 配方与进程树；proot 内可访问 127.0.0.1；Download 可写；预置资源 HTTP 可达。
+**已实测（本机真机）**：pi RPC 跑通；运行时环境参数；**DSHA 在 Termux proot 时期的** proot 配方与进程树（今天 DSHA 已换成 proroot，见 `docs/proroot-research.md` §8.1）；proot 内可访问 127.0.0.1；Download 可写；预置资源 HTTP 可达。
 
 **源码直读**：第二部分的全部内容（RPC 协议、扩展 API、事件表、工具行为、会话格式、依赖清单、平台 API 使用点、export-html 渲染器）。
 

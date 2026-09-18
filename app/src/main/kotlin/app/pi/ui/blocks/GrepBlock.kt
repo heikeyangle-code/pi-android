@@ -202,7 +202,14 @@ private fun GrepRow(match: GrepMatch) {
         )
         MonoText(
             text = match.text,
-            color = if (match.context) palette.contextOnTool else palette.bodyOnTool,
+            // **One token for every match line**, context or not: pi's grep renderer paints the
+            // whole result body with `toolOutput` and has no context branch at all —
+            //   `text += `\n${displayLines.map((line) => theme.fg("toolOutput", line)).join("\n")}``
+            // (`core/tools/renderers/grep.js:30-37`). `toolDiffContext` exists precisely for the
+            // diff renderer's unchanged lines (`components/diff.js:78`, `:127`) and nowhere else
+            // in pi, so this row was borrowing a diff token for a grep line — and it only showed
+            // on a theme where the two differ.
+            color = palette.toolOutput,
             modifier = Modifier.weight(1f),
         )
     }

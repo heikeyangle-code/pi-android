@@ -324,8 +324,9 @@ class PiPackageService(
             val fromPi = outcome.stdout.lineSequence()
                 .map { it.trim() }
                 .firstOrNull { it.startsWith("Installed ") || it.startsWith("Removed ") }
-            val summary = fromPi
-                ?: successSummary(spec).let { if (warnings.isEmpty()) it else "$it（有警告）" }
+            val summary = (fromPi
+                ?: successSummary(spec).let { if (warnings.isEmpty()) it else "$it（有警告）" })
+                .withTruncationNote(outcome)
             return Done.Ok(
                 argv = outcome.argv,
                 stdout = outcome.stdout,
@@ -339,12 +340,31 @@ class PiPackageService(
             argv = outcome.argv,
             stdout = outcome.stdout,
             stderr = outcome.stderr,
-            message = failureMessage(outcome),
+            message = failureMessage(outcome).withTruncationNote(outcome),
             exitCode = outcome.exitCode,
             warnings = warnings,
             projectResourcesSkipped = skipped,
         )
     }
+
+    /**
+     * Append the truncation sentence to a result's summary when the guest wrote more
+     * than `GuestCommand` keeps.
+     *
+     * The summary is what the outcome sheet leads with and what the row shows; the
+     * `stdout`/`stderr` fields below it are the prefixes that were kept. Without this
+     * a 30 MB npm log would be presented as if it were the whole log — the silent
+     * truncation `Outcome.outputTruncated` exists to prevent. Applied here rather than
+     * inside `GuestCommand` because `stdout`/`stderr` are also *parsed*
+     * (`PiListOutput.parse`, `warningsIn`), and a marker appended to them would be
+     * read as output.
+     */
+    private fun String.withTruncationNote(outcome: GuestCommand.Outcome): String =
+        if (!outcome.outputTruncated) {
+            this
+        } else {
+            "$this\n（命令输出过长，已截断：每个流只保留前 ${GuestCommand.MAX_STREAM_CHARS / 1024} KB）"
+        }
 
     /**
      * pi's error surface is `console.error(chalk.red(\`Error: ${message}\`))`

@@ -110,7 +110,11 @@ fun SettingsGroupScreen(
             hostAction()
         } else if (setting.kind == PiRowKind.Action) {
             confirming = setting
-        } else if (setting.kind != PiRowKind.Switch) {
+        } else if (setting.kind != PiRowKind.Switch && !setting.readOnly) {
+            // 只读行（运行时那六行）没有可打开的东西：`PiSettingRow` 早就没给它们 chevron，
+            // 但点击一直通着 —— 点「pi 版本」（行上是 `0.85.1`）会打开一个空的、禁用的
+            // 文本框。判据与 chevron 用同一个 `readOnly`，两处不再分叉
+            // （`docs/settings-audit-impl.md` §B4）。
             editing = setting
         }
     }
@@ -120,6 +124,14 @@ fun SettingsGroupScreen(
         // callback; a switch the app reads (the thinking toggle, timestamps, tool
         // expansion) would otherwise stay inert.
         onSettingWritten(setting.key)
+    }
+
+    // 换一个分组就回到顶部：`listState` 由 `rememberLazyListState()` 持有，而它**不随
+    // `groupId` 重置**，所以从长分组（运行时与诊断）退到短分组时列表会停在分组底部之外
+    // （`docs/settings-audit-impl.md` §B15）。放在命中跳转之前，让"从搜索跳进来"仍然
+    // 滚到命中的那一节。
+    LaunchedEffect(groupId) {
+        listState.scrollToItem(0)
     }
 
     LaunchedEffect(highlightKey, groupId) {
@@ -227,6 +239,9 @@ fun SettingsGroupScreen(
         PiSettingEditorSheet(
             setting = openEditor,
             store = store,
+            // The sheet must start from the value the row showed: the 运行时 rows render a
+            // `RuntimeFacts` override, not the store value (`docs/settings-audit-impl.md` §B4).
+            valueOverrides = valueOverrides,
             knownThemes = knownThemes,
             themeNotes = themeNotes,
             themeError = themeError,

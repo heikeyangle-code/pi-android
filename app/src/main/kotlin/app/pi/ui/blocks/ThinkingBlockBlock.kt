@@ -19,6 +19,7 @@ import app.pi.rpc.ThinkingBlock
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
 import app.pi.ui.theme.PiThinkingLevel
+import app.pi.ui.theme.numeric
 
 /**
  * `thinking-block` (docs/pi-android-ui-spec.md §7.4): collapsed to a 32dp line
@@ -39,11 +40,15 @@ fun ThinkingBlockBlock(
     var expanded by remember(defaultExpanded) { mutableStateOf(defaultExpanded) }
     val pen = palette.thinking(item.level ?: "medium")
     val levelLabel = item.level?.takeIf { it.isNotBlank() }?.let { PiThinkingLevel.fromWire(it).label }
-    val headline = if (item.streaming) {
-        "思考中…"
-    } else {
-        "思考" + (item.elapsedMs?.let { " ${formatDuration(it)}" } ?: "")
-    }
+    // The row is a **two-voice** line, which is rule #7 (`docs/pi-android-ui-spec.md` §1) applied
+    // to a row that used to speak with three: the word 「思考」 and the streaming verb are the
+    // app's own copy (UI face), while the elapsed time is a measurement the engine produced —
+    // so it is set in the machine face, exactly like the tool card's own footer reading
+    // (`ToolBlockChrome.toolHeaderReading` → `monoSmall`). Keeping the duration inside the
+    // Chinese string was the odd one out: it changed the sentence's advance width as it
+    // ticked, and it left the row with one voice per fragment.
+    val headline = if (item.streaming) "思考中…" else "思考"
+    val headlineDuration = if (item.streaming) null else item.elapsedMs?.let { formatDuration(it) }
 
     BlockColumn(modifier) {
         // F28: the whole block is the toggle target, which is what pi does —
@@ -67,11 +72,32 @@ fun ThinkingBlockBlock(
                     // theme; 4.47:1 on the canvas is under the floor).
                     color = palette.thinkingBodyOnCanvas,
                 )
+                if (headlineDuration != null) {
+                    // The engine's own measurement, in the machine face (rule #7). The gap
+                    // is the same 8 dp the stripe/level use, so the row still has one
+                    // rhythm; the colour is the body colour rather than the level's pen,
+                    // because the duration is not a level.
+                    Spacer(Modifier.width(THINK_ROW_GAP))
+                    Text(
+                        text = headlineDuration,
+                        style = PiTheme.text.numeric,
+                        color = palette.thinkingBodyOnCanvas,
+                    )
+                }
                 if (levelLabel != null) {
                     Spacer(Modifier.width(THINK_ROW_GAP))
                     Text(
                         text = levelLabel,
-                        style = PiTheme.text.meta,
+                        // The level is now pi's own identifier (`off`…`max`, see
+                        // `PiThinkingLevel`), so it takes the app's *machine* face rather
+                        // than the UI one — rule #7 (`docs/pi-android-ui-spec.md` §1):
+                        // anything the engine emitted is set in mono, and that is what
+                        // makes it read as a tag beside the Chinese headline instead of as
+                        // a second word in the sentence. Same 12 sp step as `meta`, so the
+                        // row's rhythm is unchanged; the colour stays the level's pen
+                        // (`getThinkingBorderColor`'s ramp), which is the one channel that
+                        // already carries the level.
+                        style = PiTheme.text.monoSmall,
                         color = pen,
                     )
                 }

@@ -1,11 +1,10 @@
 package app.pi.ui.blocks
 
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
+import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -14,21 +13,22 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.unit.dp
 import app.pi.rpc.CompactionMarker
 import app.pi.ui.components.PiBilledCostLine
 import app.pi.ui.render.PiMarkdownText
-import app.pi.ui.theme.PiShapes
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
 
 /**
- * `compaction` (docs/pi-android-ui-spec.md §7.4): a hairline across the stream
- * with a centred chip in `customMessageLabel`, stating what happened. The
- * summary is collapsed to a two-line plain-text preview and expands to the full
- * markdown document in place — the split pi's own
+ * `compaction` (docs/pi-android-ui-spec.md §7.4): a full-width `customMessageBg` card whose
+ * label row states what happened. The summary is collapsed to a two-line plain-text preview
+ * and expands to the full markdown document in place — the split pi's own
  * `compaction-summary-message.ts:40-57` makes, for the same reason.
+ *
+ * The card shape (and its `customMessageBg` fill) is pi's own
+ * (`compaction-summary-message.js:13`), shared with the app's other three
+ * `customMessageBg` messages; v2's prototype drew this one as a chip between two hairlines
+ * on the canvas, which is the shape this block used to have — see the note at the card below.
  *
  * [showBilledCost] is pi's `showCacheMissNotices` (`core/settings-manager.ts:120`,
  * default `false`). pi prints a separate `compaction_cost` row for the
@@ -62,87 +62,98 @@ fun CompactionBlock(
         else -> item.reason?.let { "原因：$it" } ?: ""
     }
 
-    // F28: the whole block is the content region that toggles (pi's rule); the
-    // chip below stays a label, and the hairline/caption/summary are reachable
-    // because they are inside this region.
-    BlockColumn(modifier.toggleContent(expanded, { expanded = !expanded })) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            HorizontalDivider(
-                modifier = Modifier.weight(1f),
-                thickness = PiSpacing.hairline,
-                color = palette.borderMuted.copy(alpha = 0.5f),
-            )
-            Surface(
-                // F28: the chip is a label. pi's toggle is the content region
-                // (`ToggleContent`), which for this block is the whole hairline +
-                // caption + summary column below.
-                modifier = Modifier.padding(horizontal = PiSpacing.inline),
-                shape = PiShapes.chip,
-                color = palette.customMessageBg,
-            ) {
+    // F28: the whole block is the content region that toggles (pi's rule).
+    //
+    // It is also a **card now**, because pi's is: the compaction component's constructor paints
+    // the whole box with `customMessageBg` —
+    //   `super(1, 1, (t) => theme.bg("customMessageBg", t))`
+    // (`modes/interactive/components/compaction-summary-message.js:13`) — full width, not a
+    // chip. This block was the only one of the four `customMessageBg` messages that was not a
+    // card (a chip between two hairlines drawn on the canvas), which is where the "5.6 pp of
+    // colour" the area audit measured had gone. The two hairlines and the chip's own `Surface`
+    // go with it: a chip of the card's own colour inside the card is invisible, and a hairline
+    // across a card cuts it in half.
+    BlockColumn(modifier) {
+        BlockCard(
+            color = palette.customMessageBg,
+            // The same 35 % `customMessageLabel` frame the three sibling cards carry
+            // (`ui/blocks/BranchSummaryBlock.kt`, `SkillInvocationBlock.kt`, `HookMessageBlock.kt`).
+            // pi's own box declares no border (`super(1, 1, …)` sets a background only), so this
+            // is the family's convention in this app — applied for the same reason the other
+            // three have it, so the four cards are one component.
+            borderColor = palette.customMessageLabel.copy(alpha = 0.35f),
+            modifier = Modifier.toggleContent(expanded, { expanded = !expanded }),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                AccentStripe(palette.customMessageLabel, PiSpacing.accentStripe)
+                Spacer(Modifier.width(PiSpacing.inner))
                 Text(
                     text = label,
-                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
-                    style = MaterialTheme.typography.labelSmall,
+                    // The custom card's label slot is the machine face — `06 §3` 构件 9
+                    //「左 3px customLabel 条 + **等宽标签**」, which is the rule the other three
+                    // cards' labels already follow (`BranchSummaryBlock.kt`, `SkillInvocationBlock.kt`,
+                    // `HookMessageBlock.kt`). pi's own label is `customMessageLabel` + bold.
+                    style = PiTheme.text.monoSmall,
                     color = palette.customMessageLabel,
                 )
             }
-            HorizontalDivider(
-                modifier = Modifier.weight(1f),
-                thickness = PiSpacing.hairline,
-                color = palette.borderMuted.copy(alpha = 0.5f),
-            )
-        }
-        if (caption.isNotEmpty()) {
-            Text(
-                text = caption,
-                modifier = Modifier.fillMaxWidth(),
-                style = PiTheme.text.meta,
-                color = palette.muted,
-                textAlign = TextAlign.Center,
-            )
-        }
-        if (item.summary.isNotEmpty()) {
-            // Collapsed: plain text cut to a preview. Expanded: markdown.
-            //
-            // pi makes the same split for the same reason: its collapsed branch
-            // is a plain `Text` carrying the expand hint
-            // (`packages/coding-agent/src/modes/interactive/components/compaction-summary-message.ts:47-57`)
-            // and only the expanded branch builds a `Markdown`
-            // (`compaction-summary-message.ts:40-46`). The renderer has no
-            // `maxLines`, so the collapsed branch staying a `Text` is exactly
-            // what keeps the preview alive.
-            // Both branches are one selection scope: the summary is model prose the
-            // user may want to quote. It sits outside the `if` because the expanded
-            // branch paints several `Text` nodes through the markdown renderer (a
-            // per-paragraph scope could not be dragged across), while the collapsed
-            // branch is a single [ProseText] — one scope covers both shapes, and
-            // neither branch contains another one, so nothing is nested.
-            SelectableContent {
-                if (expanded) {
-                    PiMarkdownText(
-                        markdown = item.summary,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(top = PiSpacing.tiny),
-                    )
-                } else {
-                    ProseText(
-                        text = item.summary,
-                        modifier = Modifier.fillMaxWidth(),
-                        color = palette.customMessageText,
-                        maxLines = COLLAPSED_SUMMARY_LINES,
-                    )
+            if (caption.isNotEmpty()) {
+                Text(
+                    // Left-aligned: it used to be centred under the chip, and with the chip gone
+                    // there is nothing left in the card for it to be centred against (pi's own
+                    // collapsed line sits under the label, at the card's left edge).
+                    text = caption,
+                    modifier = Modifier.fillMaxWidth(),
+                    style = PiTheme.text.meta,
+                    color = palette.muted,
+                )
+            }
+            if (item.summary.isNotEmpty()) {
+                // Collapsed: plain text cut to a preview. Expanded: markdown.
+                //
+                // pi makes the same split for the same reason: its collapsed branch
+                // is a plain `Text` carrying the expand hint
+                // (`packages/coding-agent/src/modes/interactive/components/compaction-summary-message.ts:47-57`)
+                // and only the expanded branch builds a `Markdown`
+                // (`compaction-summary-message.ts:40-46`). The renderer has no
+                // `maxLines`, so the collapsed branch staying a `Text` is exactly
+                // what keeps the preview alive.
+                // Both branches are one selection scope: the summary is model prose the
+                // user may want to quote. It sits outside the `if` because the expanded
+                // branch paints several `Text` nodes through the markdown renderer (a
+                // per-paragraph scope could not be dragged across), while the collapsed
+                // branch is a single [ProseText] — one scope covers both shapes, and
+                // neither branch contains another one, so nothing is nested.
+                SelectableContent {
+                    if (expanded) {
+                        PiMarkdownText(
+                            markdown = item.summary,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = PiSpacing.tiny),
+                            // pi's `Markdown` base colour for this card is `customMessageText`
+                            // (`compaction-summary-message.js:35`), the same token its three
+                            // siblings use.
+                            textColor = palette.customMessageText,
+                        )
+                    } else {
+                        ProseText(
+                            text = item.summary,
+                            modifier = Modifier.fillMaxWidth(),
+                            color = palette.customMessageText,
+                            maxLines = COLLAPSED_SUMMARY_LINES,
+                        )
+                    }
                 }
             }
-        }
-        // F18: the summarization's own billing, gated by pi's switch.
-        if (showBilledCost) {
-            PiBilledCostLine(
-                label = "Compaction",
-                usage = item.usage,
-                modifier = Modifier.fillMaxWidth().padding(top = PiSpacing.tiny),
-            )
+            // F18: the summarization's own billing, gated by pi's switch.
+            if (showBilledCost) {
+                PiBilledCostLine(
+                    label = "Compaction",
+                    usage = item.usage,
+                    modifier = Modifier.fillMaxWidth().padding(top = PiSpacing.tiny),
+                )
+            }
         }
     }
 }

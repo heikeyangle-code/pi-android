@@ -197,6 +197,8 @@ interface ScreenshotData {
 	/** image = (display - region.topLeft) * scale */
 	scale?: number;
 	region?: number[] | null;
+	/** True when the caller asked for set-of-marks overlays (`marks=true`). */
+	marks?: boolean;
 	markedIndices?: number;
 	marksNote?: string;
 }
@@ -300,7 +302,11 @@ interface ShellData {
 	stderr: string;
 	exitCode: number;
 	timedOut: boolean;
+	/** Either stream stopped at the bridge's cap. Kept for older bridges. */
 	truncated: boolean;
+	/** Per stream, because *which* one was cut decides what the output means. */
+	stdoutTruncated?: boolean;
+	stderrTruncated?: boolean;
 	backend: string;
 	uid: number;
 	backendLabel: string;
@@ -1235,6 +1241,22 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 				if (data.stdout.trim().length > 0) parts.push(data.stdout.trimEnd());
 				if (data.stderr.trim().length > 0) parts.push(`[stderr]\n${data.stderr.trimEnd()}`);
 				parts.push(`[退出码 ${data.exitCode}${data.timedOut ? "，超时被杀" : ""}]`);
+				// Without this line the bridge's 50 KiB cap was invisible to the model:
+				// `ShellData.truncated` existed but nothing read it, so a clipped
+				// `stdout` (or a `stderr` cut while stdout looked complete) arrived
+				// looking like the whole output. Name the stream, because the two mean
+				// different things: a clipped stdout is a lost result, a clipped stderr
+				// is a lost explanation.
+				const clipped = [data.stdoutTruncated ? "stdout" : "", data.stderrTruncated ? "stderr" : ""].filter(
+					(name) => name.length > 0,
+				);
+				if (clipped.length > 0) {
+					parts.push(`[输出被截断：${clipped.join(" 与 ")} 只保留了前 50 KB；要看全部请缩小命令的输出]`);
+				} else if (data.truncated) {
+					// A bridge that predates the per-stream fields: it can say "something
+					// was cut" but not which.
+					parts.push("[输出被截断：stdout 或 stderr 只保留了前 50 KB；要看全部请缩小命令的输出]");
+				}
 				parts.push(`[后端 ${data.backendLabel}，uid=${data.uid}]`);
 				parts.push(data.note);
 				if (data.policy) parts.push(data.policy);

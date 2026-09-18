@@ -209,10 +209,15 @@ object DeviceShizuku {
             // ParcelFileDescriptor.AutoCloseInputStream closes the PFD for us; the
             // remote end writes into it, so the streams must be drained on their
             // own threads or a chatty command deadlocks on a full pipe.
+            //
+            // The drain itself is the app-uid backend's (`AppUidShellBackend.readCapped`),
+            // deliberately: this file used to carry its own copy, which is how it kept
+            // decoding each 8 KiB chunk separately (中文输出变 U+FFFD) after that bug
+            // had been fixed in the other backend.
             val outStream = ParcelFileDescriptor.AutoCloseInputStream(remote.inputStream)
             val errStream = ParcelFileDescriptor.AutoCloseInputStream(remote.errorStream)
-            val outReader = Thread { readCapped(outStream, stdout) }
-            val errReader = Thread { readCapped(errStream, stderr) }
+            val outReader = Thread { AppUidShellBackend.readCapped(outStream, stdout) }
+            val errReader = Thread { AppUidShellBackend.readCapped(errStream, stderr) }
             outReader.isDaemon = true
             errReader.isDaemon = true
             outReader.start()
@@ -248,28 +253,13 @@ object DeviceShizuku {
             exitCode = exitCode,
             backend = ShizukuShellBackend.id,
             uid = uid(),
-            truncated = stdout.length >= MAX_OUTPUT_BYTES,
+            // No `truncated = …` argument any more: `DeviceShellResult` derives both
+            // per-stream flags from the strings and the shared cap, so the two backends
+            // cannot answer this question differently — which is exactly how the
+            // stdout-only version survived here after the app-uid backend had been
+            // corrected.
             timedOut = timedOut,
         )
-    }
-
-    private const val MAX_OUTPUT_BYTES = 50 * 1024
-
-    private fun readCapped(stream: java.io.InputStream, into: StringBuilder) {
-        stream.use { input ->
-            val buffer = ByteArray(8192)
-            while (true) {
-                val read = try {
-                    input.read(buffer)
-                } catch (closed: Exception) {
-                    -1
-                }
-                if (read <= 0) break
-                if (into.length < MAX_OUTPUT_BYTES) {
-                    into.append(String(buffer, 0, read, Charsets.UTF_8))
-                }
-            }
-        }
     }
 }
 

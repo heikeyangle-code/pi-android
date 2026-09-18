@@ -466,7 +466,17 @@ fun PiCredentialScreen(
                         },
                     )
                     Column(Modifier.weight(1f)) {
-                        Text(id, style = MaterialTheme.typography.bodyLarge)
+                        Text(
+                            id,
+                            // The model id is the provider's own identifier
+                            // (`deepseek/deepseek-chat`), and v2 draws this picker's rows
+                            // `mono` (`direction-b-v2.html:3067`, `<Row key={id} title={id}
+                            // mono …>`); the app's own settings rows already print every
+                            // trailing value in the machine face (`PiSettingsRows.kt`).
+                            // `bodyLarge` was the UI face, so the one machine string in the
+                            // row was the only thing not set as machine language.
+                            style = PiTheme.text.mono,
+                        )
                         Text(
                             candidateMeta(
                                 id = id,

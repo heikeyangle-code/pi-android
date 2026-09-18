@@ -161,8 +161,18 @@ class RuntimeProvisioner(
                 next(); extractEngine()
                 index++
 
-                next(); paths.prepareLibraryAliases(); writeStamp(revision)
-                onStep(Step(steps.last(), steps.size, steps.size))
+                next(); paths.prepareLibraryAliases()
+                // A stamp that could not be written is shown where the user is
+                // already looking (the boot screen's step label) instead of failing a
+                // boot whose runtime is complete. See [writeStamp].
+                val stampWarning = writeStamp(revision)
+                onStep(
+                    if (stampWarning == null) {
+                        Step(steps.last(), steps.size, steps.size)
+                    } else {
+                        Step(stampWarning, steps.size, steps.size)
+                    },
+                )
             }
         }
 
@@ -737,9 +747,31 @@ class RuntimeProvisioner(
         return stamp.isFile && stamp.readText().trim() == revision
     }
 
-    private fun writeStamp(revision: String) {
-        stampFile().writeText(revision + "\n")
-    }
+    /**
+     * Write the stamp that says this revision is unpacked. Returns null on success, or
+     * the sentence to show when it could not be written.
+     *
+     * Atomic rather than `writeText` (see [writeStampAtomically]): this file is the
+     * only thing that says the runtime is unpacked and it is read back by an equality
+     * test, so a kill between the truncate and the write used to leave a short stamp
+     * that reads as "not unpacked" — the next launch unpacks the whole runtime again,
+     * and on a revision change `wipe()`s the guest tree first.
+     *
+     * A failure to write it is **reported, not fatal**. The runtime on disk is
+     * complete and usable; refusing to boot because the *bookkeeping* failed would
+     * turn "storage is full" into "the app will not start", and the honest cost of
+     * continuing is that the next launch repeats this work (and says so again). The
+     * caller puts the sentence in the last step's label, so it is on screen during
+     * the boot that failed to record itself, and the diagnostic report shows the
+     * stamp as empty on the next one.
+     */
+    private fun writeStamp(revision: String): String? =
+        if (writeStampAtomically(stampFile(), revision + "\n")) {
+            null
+        } else {
+            "运行时版本戳记写入失败（${stampFile().absolutePath}）：本次解包可用，" +
+                "但下次启动会重新解包。请检查存储空间。"
+        }
 
     companion object {
         /**

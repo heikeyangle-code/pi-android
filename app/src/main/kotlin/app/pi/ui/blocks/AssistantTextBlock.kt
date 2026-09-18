@@ -36,9 +36,10 @@ import app.pi.ui.theme.PiSpacing
  * fixes (「长按只能出现一个特别丑的框，是复制全部，没法用系统的自由复制」). One scope
  * around the whole markdown, not one per paragraph: [PiMarkdownText] paints several
  * `Text` nodes and a selection has to be able to run out of one into the next.
- * Because the text now takes the long press, the block's one action (复制全部) also
- * gets the ⋮ trigger; a long press on the row's own chrome (the gap beside the
- * streaming cursor, the block's margins) still opens the old menu.
+ * Because the text takes the long press, the block's one action (复制全部) is reached by
+ * long-pressing the row's own chrome (the gap beside the streaming cursor, the block's
+ * margins). There is **no ⋮ button**: it would cost 32 dp of width on every paragraph, and
+ * the chrome long press reaches the same menu (see [BlockActionMenu]).
  *
  * **Do not throttle the text this block hands to [PiMarkdownText].** A 140 ms
  * "settled text" window was tried here to cut the renderer's per-update cost
@@ -71,7 +72,6 @@ fun AssistantTextBlock(
                     clipboard.setText(androidx.compose.ui.text.AnnotatedString(item.text))
                 },
             ),
-            menuButton = true,
         ) {
         SelectableContent {
             Row(verticalAlignment = Alignment.Bottom) {

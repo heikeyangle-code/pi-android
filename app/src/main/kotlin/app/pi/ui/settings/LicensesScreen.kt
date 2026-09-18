@@ -221,14 +221,27 @@ private fun NoticeRow(notice: LicenceNotice, onClick: () -> Unit) {
         Text(
             notice.title,
             modifier = Modifier.weight(1f),
-            style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Medium),
+            // The title is the component's own identifier, straight out of
+            // `assets/licenses/manifest.txt` — `git 1:2.43.0-1ubuntu7.3`,
+            // `libbrotli1 1.1.0-2build2`, `LGPL-2.1`, `ca-certificates 20260601~24.04.1`.
+            // v2 draws exactly this row `mono` (`direction-b-v2.html:3104`,
+            // `<Row title={r[0]} value={r[1]} mono …>`), which is rule #7 on a value the
+            // user is comparing against `dpkg -l` output. `bodyLarge` was the UI face at
+            // 15 sp — the one step that made two version strings hardest to line up.
+            style = PiTheme.text.mono,
             color = MaterialTheme.colorScheme.onSurface,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
         Text(
+            // The action word is ours, not the file's: v2 draws this row's *value* slot
+            // untinted and in the UI face (`direction-b-v2.html:3104`), and the two
+            // sibling rows on the settings home do the same thing (「打开」 at
+            // `SettingsHome.kt`'s `LinkRow`, 「查看」 at `DeviceCapabilityScreen.kt`).
+            // JetBrains Mono was the only face in this row that made a verb look like
+            // an identifier.
             "阅读",
-            style = PiTheme.text.mono,
+            style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Icon(

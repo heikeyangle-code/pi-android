@@ -6,6 +6,8 @@ import android.content.res.Configuration
 import android.net.Uri
 import android.os.SystemClock
 import android.provider.OpenableColumns
+import androidx.compose.runtime.MutableState
+import androidx.compose.runtime.mutableStateOf
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -22,6 +24,7 @@ import app.pi.rpc.PiEvent
 import app.pi.rpc.PiImage
 import app.pi.rpc.PiLaunchOptions
 import app.pi.rpc.PiResponses
+import app.pi.rpc.parseSessionEntry
 import app.pi.rpc.QueueMode
 import app.pi.rpc.SessionEntry
 import app.pi.rpc.StreamingBehavior
@@ -36,6 +39,7 @@ import app.pi.runtime.RuntimeProvisioner
 import app.pi.runtime.WorkspaceStore
 import app.pi.session.PiSessionStore
 import app.pi.session.SessionExportNaming
+import app.pi.session.SessionFileReader
 import app.pi.session.SessionImport
 import app.pi.service.PiEngineController
 import app.pi.service.PiEngineLifecyclePolicy
@@ -43,12 +47,15 @@ import app.pi.service.PiEngineService
 import app.pi.settings.PiSettingsFileStore
 import app.pi.settings.readBoolean
 import app.pi.settings.readString
+import app.pi.ui.chat.BASH_OUTPUT_MAX_CHARS
 import app.pi.ui.chat.PiCommandAction
 import app.pi.ui.chat.PiCommandSource
 import app.pi.ui.chat.PiFileMentions
+import app.pi.ui.chat.MentionLookup
 import app.pi.ui.chat.PiMentionSource
 import app.pi.ui.chat.PiSlashCommand
 import app.pi.ui.chat.TuiOnlyExtension
+import app.pi.ui.chat.appendTailBounded
 import app.pi.ui.chat.piCommandPalette
 import app.pi.ui.chat.tuiOnlyMarkers
 import app.pi.ui.extension.ComposerFill
@@ -62,6 +69,7 @@ import app.pi.ui.extension.ExtensionWidget
 import app.pi.ui.extension.WidgetPlacement
 import app.pi.ui.extension.chromeText
 import app.pi.ui.extension.noticeToneOf
+import app.pi.ui.extension.trimNoticeQueue
 import app.pi.ui.settings.EngineDiagnostics
 import app.pi.ui.settings.PiSettingsStore
 import app.pi.ui.theme.PiResolvedTheme
@@ -122,16 +130,18 @@ sealed interface Boot {
  * ## [revision] is the draft-clearing signal
  *
  * The user's ruling on the composer is "草稿就清空就行": a draft typed for one
- * workspace must not be sendable to another. The draft lives in the screen
- * (`ChatScreen`'s `rememberSaveable`), so the ViewModel cannot clear it — and it
- * should not: a screen that owned the text is the only place it can be dropped
- * without the ViewModel rewriting UI state. What the ViewModel owns is the *fact*
- * that a new session context has begun, which is [revision]:
+ * workspace must not be sendable to another. [revision] is the *fact* that a new
+ * session context has begun; the composer's unsent content now lives in this
+ * ViewModel (`PiSessionViewModel.composerDraft`, [ComposerDraft]), so the clearing
+ * happens here too — at the one place this state is published,
+ * [PiSessionViewModel.publishWorkspaceState], through
+ * `PiSessionViewModel.alignComposerToWorkspace`. The `>` rule in that method is the
+ * whole ruling: **a switch clears, an alignment does not.**
  *
- * > **The screen keys the composer's `draft` and `attachments` `remember` on
- * > `state.workspace.revision`.** When it changes, the draft and the staged images
- * > are re-created empty, which is the clearing. Nothing else needs to happen in
- * > the screen.
+ * (Until this moved, the screen keyed its own `rememberSaveable` on this field. The
+ * field is unchanged; only its reader is. What forced the move is in [ComposerDraft]:
+ * the pending images' base64 text was being written into the saved instance state,
+ * and a phone photo is past Binder's transaction limit on its own.)
  *
  * It is bumped **once per successful switch** — and also when the startup
  * reconcile has to move the process back to the default workspace, because that is
@@ -345,6 +355,42 @@ data class ExportedSession(
  * repeated here: `ui/terminal/TerminalSettings.kt` is their consumer, so a second
  * reader in the ViewModel would be a second truth about the same key.
  */
+/**
+ * How much of a session's history the transcript currently holds.
+ *
+ * The transcript is no longer "the whole session": it is the **newest window** of
+ * it, extended backwards on demand. This cursor is what makes that progressive, and
+ * it is deliberately *not* part of `get_entries` — pi's `since` cursor only moves
+ * forwards (`modes/rpc/rpc-mode.ts:638-648`), so the backward direction has to be
+ * answered by the session file, which [SessionFileReader] reads in bounded windows.
+ * The `session-replay-cost` harness pins that the two agree.
+ *
+ * **Not a second source of truth for the session.** It is not itself an entry list
+ * and nothing outside the ViewModel's transcript path reads it: the tree overlay,
+ * fork messages, export and search still go through pi. It is the *reader's*
+ * position, the same way a file offset is, and it is dropped whenever the
+ * transcript comes from somewhere else ([UiState.history] becomes null).
+ */
+data class HistoryCursor(
+    /**
+     * Byte offset in the session file of the **first** entry [UiState.transcript]
+     * holds. Zero means the loaded range starts at the file's first entry.
+     *
+     * A byte offset rather than an entry index on purpose: the reader has to seek to
+     * it, and pi's `get_entries` cursor is an *entry id* whose index pi computes by
+     * scanning its own list — which is the O(history) work this whole path exists to
+     * avoid.
+     */
+    val startOffset: Long,
+    /** True when [startOffset] is the beginning of the file: no earlier history. */
+    val reachedStart: Boolean,
+    /** A backward window is being read right now; the screen must not ask again. */
+    val loading: Boolean = false,
+) {
+    /** Whether the screen should offer to load more when scrolled to the top. */
+    val hasEarlier: Boolean get() = !reachedStart && !loading
+}
+
 data class UiPrefs(
     val fontScaleDelta: Int = 0,
     val messageDensity: String = "comfortable",
@@ -372,6 +418,80 @@ data class UiPrefs(
      */
     val showCacheMissNotices: Boolean = false,
 )
+
+/**
+ * The composer's unsent content: the text in the editor, and the images staged for
+ * the message that has not been sent yet.
+ *
+ * ## Why this is not `rememberSaveable` — the crash this type exists to prevent
+ *
+ * Both halves used to be `rememberSaveable` in `ChatScreen`, and the attachments
+ * went into the saved state as their **base64 text** (the `AttachmentListSaver` that
+ * was deleted with this move). What `ChatScreen` stages is now compressed to pi's own
+ * inline limits — longest edge 2000, base64 under 4.5 MB per image — and one message's
+ * images are budgeted **together** against the framing cap (`AttachmentBudget`:
+ * `JsonlFramer.DEFAULT_MAX_RECORD_CHARS` − 64 KiB ≈ **31.94 MiB of base64**, i.e.
+ * ≈ 23.95 MB of bytes, or 7 pi-maximum images). That budget is what makes this type
+ * necessary rather than optional: the smallest contribution one image can make to the
+ * Bundle is still megabytes of text, and a legal message is up to seven of them, while
+ * Binder's per-transaction limit is ~1 MB — so the *first* image was already over it.
+ *
+ * `rememberSaveable` does not write those strings to a file. They go to
+ * `androidx.compose.ui.platform.DisposableSaveableStateRegistry`, which registers a
+ * `SavedStateRegistry` provider whose answer is
+ * `SaveableStateRegistry.performSave().toBundle()` — `Bundle.putParcelableArrayList`
+ * of exactly those strings (verified in the bytecode of `ui-android:1.12.1`,
+ * `DisposableSaveableStateRegistry_androidKt.toBundle`) — and that Bundle is the
+ * Activity's saved instance state, which `ActivityThread` hands to the system server
+ * **over Binder**. Binder's per-transaction limit is ~1 MB, so as soon as the screen
+ * was stopped with one image staged, the write blew the limit and the process was
+ * killed. The picker is what stops it, which is the reported shape exactly:
+ * 选一张不发送没事 (staged state is still empty when the picker opens the first time),
+ * 再选第二张就退出软件 (the first image's base64 is in the saved state when the picker
+ * opens the second time). A rotation with one image staged crashed the same way.
+ *
+ * ## Why the ViewModel holds it
+ *
+ * Everything the user keeps survives here, and **none of it is ever serialised**.
+ * `AndroidViewModel` lives as long as the Activity's `ViewModelStore`, so
+ *  - 切到工作区 / 设置 and back keeps the text and the images — which is the ruling
+ *    D28/D30 actually makes ("切走之前是什么样，切回来什么样就可以了",
+ *    `design/ui-refactor/07-construction-decisions.md:184`, `:194`), now kept by the
+ *    ViewModel instead of by `PiRoot`'s `SaveableStateHolder`; and
+ *  - a rotation keeps them (a config change does not clear the store); and
+ *  - the saved instance state never sees them, whatever their size.
+ *
+ * What is given up is the restore **after process death**. That part was incidental:
+ * D28's ruling is about a destination switch, and the Bundle was only ever the
+ * mechanism, not the requirement. It is also the half that cannot be kept — the
+ * Bundle is the one thing that survives process death, and it is exactly the thing
+ * that cannot hold these bytes. Saving the *text* alone (it is small) was considered
+ * and rejected: it would leave the staged images to vanish while the text stayed,
+ * which reads as the app having eaten the pictures.
+ *
+ * ## Clearing
+ *
+ * "草稿就清空就行": a workspace switch ends the session context the text was typed
+ * for, so both halves are emptied on a switch and only on a switch —
+ * [PiSessionViewModel.alignComposerToWorkspace].
+ *
+ * The two values are Compose snapshot state rather than `StateFlow`s because they are
+ * per-keystroke: a `UiState` copy per character would recompose the whole transcript
+ * for a text field that lives above it.
+ */
+class ComposerDraft {
+    /** The editor's text. */
+    val text: MutableState<String> = mutableStateOf("")
+
+    /** The images staged for the next message, in the order the user picked them. */
+    val attachments: MutableState<List<PiImage>> = mutableStateOf(emptyList())
+
+    /** Both halves — what a workspace switch clears. */
+    fun clear() {
+        text.value = ""
+        attachments.value = emptyList()
+    }
+}
 
 /**
  * Owns the engine for the life of the UI and projects it into renderable state.
@@ -500,6 +620,14 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         val tree: PiResponses.TreePage? = null,
         /** `get_entries` — the append-only entry log, for the same overlay. */
         val entries: List<SessionEntry> = emptyList(),
+        /**
+         * How much of the session's history the transcript currently holds.
+         *
+         * Null means "the transcript was not built from the session file" (no
+         * session yet, or a `get_entries` replay in flight), which the UI reads as
+         * "no earlier history to fetch" rather than as an error. See [HistoryCursor].
+         */
+        val history: HistoryCursor? = null,
         /** `get_fork_messages` — user messages a fork can start from. */
         val forkMessages: List<PiResponses.ForkMessage> = emptyList(),
         /** The running or last `bash` command, if any. */
@@ -562,6 +690,38 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
 
     private val host = PiEngineHost(app)
     private var session: PiEngineSession? = null
+
+    /**
+     * The entries the current transcript was seeded from, in file order.
+     *
+     * Held **only to be re-seeded**: [expandEarlierHistory] rebuilds the transcript
+     * from an older window plus this list, and the reducer cannot give the list back
+     * because it stores rows (day separators, merged tool cards, optimistic echoes),
+     * not entries. It is therefore bounded by what the user has actually scrolled
+     * through — never by the session — and it is replaced wholesale, never appended
+     * to, so a session switch cannot leave one session's entries in the next one's
+     * rebuild. [replayHistory] is the only writer.
+     */
+    private var loadedHistory: List<JsonObject> = emptyList()
+
+    /** Retained characters in [loadedHistory], against [HISTORY_RETAINED_CHARS]. */
+    private var loadedHistoryChars: Long = 0L
+
+    /**
+     * The retained size of one entry, as the bound in [HISTORY_RETAINED_CHARS] counts it.
+     *
+     * The measurement itself lives in `HistoryRetention.kt` — the same package, and a
+     * file with no Android dependency — because its cost is what moved every caller onto
+     * `Dispatchers.IO` and `tools/run-app-pure-checks.sh` pins its arithmetic there. Read
+     * that file's KDoc before changing how a window is counted here.
+     *
+     * **Every call site must be off the frame thread.** `viewModelScope` is
+     * `Dispatchers.Main.immediate`, and the measure renders each entry back to JSON: ~135
+     * ms for one 6 MiB base64 entry, ~460 ms for a 4000-entry text window, ~830 ms for the
+     * same window with twenty 2 MiB images (desktop JVM, measured). All three loaders used
+     * to sum it inline on the frame thread, which is the freeze this fixes.
+     */
+    private fun retainedChars(entries: List<JsonObject>): Long = entryCharsOf(entries)
 
     /**
      * Prompts typed before an engine attached, replayed in order by [attach].
@@ -719,17 +879,87 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     @Volatile
     private var mentionRequestId: Int = 0
 
+    /**
+     * The last `@` failure the user was told about, so the 150 ms debounce cannot turn one
+     * broken runtime into a notice per keystroke. Main-dispatcher only, like the state it
+     * gates; cleared by any successful lookup.
+     */
+    private var lastMentionFailure: String? = null
+
     private val _sessions = MutableStateFlow<List<PiSessionStore.Summary>>(emptyList())
     val sessions: StateFlow<List<PiSessionStore.Summary>> = _sessions.asStateFlow()
 
+    /**
+     * Whether a [refreshSessions] scan is in flight **and has nothing to show yet**.
+     *
+     * The scan itself is cached per file and serialised inside [PiSessionStore], but
+     * the *first* one still walks every session file, which is seconds on a phone.
+     * Without this flag the screen had exactly two states — the list and "还没有会话"
+     * — so the honest "still reading" moment rendered as **"you have no sessions"**,
+     * and then the list appeared on its own.
+     *
+     * Deliberately false once [sessions] is non-empty: a refresh of a list that is
+     * already on screen must not replace it with a spinner.
+     */
+    private val _sessionsLoading = MutableStateFlow(false)
+    val sessionsLoading: StateFlow<Boolean> = _sessionsLoading.asStateFlow()
+
     fun refreshSessions() {
         viewModelScope.launch {
-            _sessions.value = runCatching { sessionStore.list() }.getOrDefault(emptyList())
+            _sessionsLoading.value = _sessions.value.isEmpty()
+            try {
+                _sessions.value = runCatching { sessionStore.list() }.getOrDefault(emptyList())
+            } finally {
+                _sessionsLoading.value = false
+            }
         }
     }
 
     private val _state = MutableStateFlow(UiState())
     val state: StateFlow<UiState> = _state.asStateFlow()
+
+    /**
+     * The composer's unsent text and staged images — see [ComposerDraft] for why the
+     * ViewModel owns them rather than the screen and the Bundle.
+     *
+     * Declared before the `init` block at the end of this class on purpose:
+     * `publishWorkspaceState` calls [alignComposerToWorkspace], which touches this
+     * value, and property initialisers run in declaration order.
+     */
+    val composerDraft = ComposerDraft()
+
+    /**
+     * The workspace [WorkspaceState.revision] the content in [composerDraft] was
+     * written in, or null until the first publication.
+     *
+     * The marker is what makes the clearing a *switch* rule rather than a
+     * *revision-changed* rule. It replaces the `draftRevision` `rememberSaveable` the
+     * screen used to carry, and it keeps that marker's semantics: it is aligned (never
+     * cleared against) the first time this ViewModel publishes a workspace, which is
+     * the startup reconcile — a fresh process has nothing to delete, and a draft typed
+     * in the second before that reconcile lands must not be treated as belonging to an
+     * old workspace.
+     */
+    private var composerRevision: Int? = null
+
+    /**
+     * Apply the user's ruling to the composer: **only a real workspace switch empties
+     * it.**
+     *
+     * `>` rather than `!=`, from the screen version of this rule and for the same
+     * reason: `revision` only ever grows inside one process, so a value below the
+     * marker cannot be a switch. (In the screen that case was a marker restored from a
+     * previous process, where the counter had restarted from 0; here the marker never
+     * outlives the process, but the comparison is kept as the readable form of "a
+     * switch moves the number forward".) A `false` [WorkspaceState.revision] bump —
+     * the startup reconcile of a workspace the user did not choose — is an alignment,
+     * and an alignment must not delete what the user wrote.
+     */
+    private fun alignComposerToWorkspace(revision: Int) {
+        val mark = composerRevision
+        if (mark != null && revision > mark) composerDraft.clear()
+        composerRevision = revision
+    }
 
     // ------------------------------------------------------- theme and prefs
 
@@ -961,6 +1191,55 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      */
     private var appliedRevision = 0
 
+    /**
+     * The three collectors [attach] starts for one engine, so the next [attach] can
+     * stop them.
+     *
+     * `viewModelScope` is the ViewModel's scope, not the engine's, so without these
+     * handles every engine ever attached left a permanent subscriber behind: three per
+     * restart, three per workspace switch, each one still reading its retired engine's
+     * flows. Cancelling them is the first half of the fix; the `session !== engine`
+     * guards inside each collector are the second, because cancellation is
+     * cooperative — a `PiEngineSession` reader already inside `handle()` finishes that
+     * record and publishes (see the guards for the full chain).
+     */
+    private var engineStateJob: Job? = null
+    private var enginePublicationJob: Job? = null
+    private var engineEventsJob: Job? = null
+
+    /**
+     * The running `bash` command's output, accumulated in place.
+     *
+     * A builder rather than `String` concatenation because a chatty command streams
+     * hundreds of chunks: `output + delta` is quadratic in the output's length (measured:
+     * ~2.4 s to accumulate 1 MiB from 200-char chunks on a desktop JVM), while an append
+     * is amortised O(1). It is published as a `String` only when the throttle lets a
+     * publication through ([BASH_UPDATE_THROTTLE_MS]), and the `bash` response replaces
+     * the whole output at the end of the run, so the builder never has to be handed out
+     * mid-stream.
+     *
+     * Written and read on the main dispatcher only: the deltas arrive on the events
+     * collector and the response replaces the state in `runBash`, both on
+     * `viewModelScope`.
+     */
+    private val bashStream = StringBuilder()
+
+    /**
+     * Whether [bashStream] has had its front dropped for the run in flight.
+     *
+     * Sticky per run, and reset with the builder: the panel's 「输出被截断」 sentence is
+     * driven by `BashRun.truncated`, and a run that once passed the bound must keep
+     * saying so even on a publication that happens not to trim.
+     */
+    private var bashStreamTrimmed = false
+
+    /**
+     * When [bashStream] was last published, as [SystemClock.elapsedRealtime], or `0` for
+     * "the run has not published yet" — the first chunk of a command must appear at once
+     * rather than after the first window.
+     */
+    private var lastBashPublishAt = 0L
+
     /** Monotonic ids for snackbar notices and composer fills. */
     private var noticeSeq = 0L
     private var composerFillSeq = 0L
@@ -1126,8 +1405,10 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      *    previous workspace, which is the one a fresh boot will use; the app is never
      *    left with a setting that claims a workspace the engine never entered.
      * 4. **Re-key everything bound to the old cwd** ([rebuildWorkspaceScopedCaches]).
-     * 5. **Bump [WorkspaceState.revision]**, which is the screen's draft-clearing
-     *    signal — see [WorkspaceState].
+     * 5. **Bump [WorkspaceState.revision]**, which clears the composer's draft and
+     *    staged images alongside it ([afterWorkspaceChanged] →
+     *    [publishWorkspaceState] → [alignComposerToWorkspace]) — see [WorkspaceState]
+     *    and [ComposerDraft].
      *
      * When [PiEngineHost.restart] fails it has already stopped the old engine. The
      * old workspace's engine is then booted again, so the outcome is either "back to
@@ -1266,23 +1547,27 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     /**
      * Put the workspace into [UiState], re-reading the directory for [hostPath].
      *
-     * [bumped] is what tells the chat screen "this is a freshly switched session";
-     * a call that only re-reads the path (or reports a fallback) passes true only
-     * when the workspace genuinely moved.
+     * [bumped] is what tells the composer "this is a freshly switched session"; a call
+     * that only re-reads the path (or reports a fallback) passes true only when the
+     * workspace genuinely moved. Either way [alignComposerToWorkspace] runs here,
+     * because this is the only place [WorkspaceState.revision] changes — see
+     * [ComposerDraft] for why the clearing lives in the ViewModel now.
      */
     private fun publishWorkspaceState(name: String, note: String?, bumped: Boolean) {
         val current = _state.value.workspace
         val host = runCatching { WorkspaceStore.existing(getApplication(), name)?.host?.absolutePath }
             .getOrNull()
+        val revision = current.revision + if (bumped) 1 else 0
         _state.value = _state.value.copy(
             workspace = current.copy(
                 name = name,
                 relative = WorkspaceStore.relativeOf(name),
                 hostPath = host,
-                revision = current.revision + if (bumped) 1 else 0,
+                revision = revision,
                 note = note,
             ),
         )
+        alignComposerToWorkspace(revision)
         if (note != null) pushNotice(note, Notice.Tone.Warning)
     }
 
@@ -1544,6 +1829,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             pendingPrompts.clear()
             queued.forEach { it() }
         }
+        engineStateJob?.cancel()
         viewModelScope.launch {
             engine.state.collect { engineState ->
                 // Only the engine that is still current may write state. A
@@ -1593,7 +1879,20 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                         // recorded — for the one failure both exist to explain.
                         stderr = engine.stderr.toString().ifBlank { null },
                         startupMs = PiEngineSession.lastServingMs,
+                        // The reader-thread losses: an event the engine's flow could not
+                        // hand to this ViewModel, or a transcript fold that threw. Both
+                        // used to be invisible; a non-zero count here is what turns
+                        // "引擎好像没回话" into a number and a sentence.
+                        droppedEvents = engine.droppedEvents,
+                        reducerFailures = engine.reducerFailures,
+                        lastRecordProblem = engine.lastRecordProblem,
                     )
+                    // The dead engine can never deliver the `bash` response that would
+                    // have replaced this accumulation, and the panel is dropped just
+                    // below — so the builder goes with it.
+                    bashStream.setLength(0)
+                    lastBashPublishAt = 0L
+                    bashStreamTrimmed = false
                     _state.value = _state.value.copy(
                         bash = null,
                         busy = null,
@@ -1630,23 +1929,50 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                 }
                 reportWakeLockNeed()
             }
-        }
+        }.also { engineStateJob = it }
         // The publication stream starts over with this engine (a fresh
         // `PiEngineSession` counts from 1), so the consumer's marker must too:
         // otherwise the first publication of the new engine could look like the
         // continuation of the old one's revisions, and its `changedIndices` would
         // be applied to the previous session's rows.
         appliedRevision = 0
+        // Every collector this function starts is torn down here, before the next one
+        // replaces it. They used to live for the whole ViewModel (`viewModelScope`
+        // outlives an engine), so a restart or a workspace switch left one set per
+        // retired engine running; each of those sets keeps folding its own engine's
+        // values, and the guard below is what makes that harmless rather than
+        // visible.
+        enginePublicationJob?.cancel()
+        engineEventsJob?.cancel()
         viewModelScope.launch {
             // The publication, not `revision`: it carries the rows that moved
             // (`TranscriptPublication.changedIndices`), which is the whole point
             // of F7/RR-P7. A `revision` collector can only re-read the reducer's
             // list and diff it here — an O(n) scan per streamed delta.
-            engine.publication.collect { pub -> syncTranscript(engine, pub) }
-        }
+            engine.publication.collect { pub ->
+                // Only the engine that is still current may write state — the same
+                // rule the state collector below states for `Stopped`/`Failed`, and
+                // the reason it is needed here too: `PiEngineSession.close()` cancels
+                // its reader cooperatively (`PiEngineSession.kt:1018`), so a `handle()`
+                // already in flight still folds its record and publishes. Without this
+                // guard `syncTranscript` would take that publication — the *previous*
+                // session's rows — and write it into the state the new engine has
+                // already installed, with `appliedRevision` moved to the retired
+                // engine's revision as well.
+                if (session !== engine) return@collect
+                syncTranscript(engine, pub)
+            }
+        }.also { enginePublicationJob = it }
         viewModelScope.launch {
-            engine.events.collect { event -> onEvent(event) }
-        }
+            engine.events.collect { event ->
+                // Same guard, same reason: `onEvent` writes `queueSteering`,
+                // `queueFollowUp`, `bash`, `lastError` and the compaction flag
+                // unconditionally, and `afterSessionReplaced` has just zeroed the
+                // queue counts for the new session.
+                if (session !== engine) return@collect
+                onEvent(event)
+            }
+        }.also { engineEventsJob = it }
         // A fresh engine has no transcript in this process. pi owns the session
         // file, so the rows are rebuilt from `get_entries` rather than from memory
         // (audit §6.7) — this is also what makes an extension's `appendEntry`
@@ -1960,12 +2286,53 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
 
             // pi streams a running `bash` command as deltas and emits nothing else
             // until the response; accumulate here so the panel grows live.
+            //
+            // **The accumulation is a builder and the publication is throttled**, for the
+            // two costs that made a chatty command (`yes`, a build log) stall the frame
+            // thread:
+            //
+            //  - `current.output + delta` rebuilt the whole accumulated string per chunk,
+            //    which is quadratic in the output's length: measured on a desktop JVM,
+            //    ~2.4 s of CPU to accumulate 1 MiB from 200-char chunks. A builder appends
+            //    in place and only `toString()`s at publication time.
+            //  - every chunk published a new `UiState`, so the panel's single `Text` was
+            //    re-laid out over the whole output per chunk. `TranscriptReducer` already
+            //    has this exact rule for tool output (F8,
+            //    `rpc/.../Transcript.kt:811` `TOOL_UPDATE_THROTTLE_MS`); bash had none.
+            //
+            // Nothing is lost by waiting: the deltas all land in the builder, and the
+            // `bash` response replaces the whole output when the command ends
+            // (`runBash`), so the tail cannot be dropped by a coalesced publication.
+            //
+            // The builder is also **bounded at the tail**, at the same number pi truncates
+            // its own panel and its `bash` response at ([BASH_OUTPUT_MAX_CHARS],
+            // `bash-execution.js:93-98`). Without that, a long-running command
+            // (`!yes`, a build log) grew a `String` and a `Text` without any ceiling at
+            // all; with it the panel shows the same window pi would, and nothing is
+            // hidden about it — a trim sets `truncated`, which is the flag `BashPanel`
+            // already turns into its 「输出被截断」 sentence.
             is PiEvent.BashExecutionUpdate -> {
                 val delta = event.delta.orEmpty()
                 val current = _state.value.bash ?: return
-                if (delta.isNotEmpty()) {
-                    _state.value = _state.value.copy(bash = current.copy(output = current.output + delta))
+                if (delta.isEmpty()) return
+                val trimmed = appendTailBounded(bashStream, delta, BASH_OUTPUT_MAX_CHARS)
+                if (trimmed) bashStreamTrimmed = true
+                val now = SystemClock.elapsedRealtime()
+                if (lastBashPublishAt != 0L && now - lastBashPublishAt < BASH_UPDATE_THROTTLE_MS) {
+                    return
                 }
+                lastBashPublishAt = now
+                _state.value = _state.value.copy(
+                    bash = current.copy(
+                        output = bashStream.toString(),
+                        // Sticky for this run: once the front has been dropped the panel
+                        // is showing a window, and a later publication that happens not to
+                        // trim must not take the sentence away again. The `bash` response
+                        // replaces the whole run at the end, so pi's own answer (and its
+                        // own `fullOutputPath`) wins then.
+                        truncated = current.truncated || bashStreamTrimmed,
+                    ),
+                )
             }
 
             // The only ground truth for "the model changed behind our back":
@@ -2387,7 +2754,11 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         noticeSeq += 1
         val notice = ExtensionNotice(seq = noticeSeq, message = message, tone = tone)
         _state.value = _state.value.copy(
-            notices = (_state.value.notices + notice).takeLast(MAX_PENDING_NOTICES),
+            // The eviction rule lives in `ui/extension/NoticeQueue.kt` and is pinned by a
+            // bare-JVM harness: an overflowing queue drops the oldest **pending** notice,
+            // never the head — the head is the one `ExtensionUiHost` is showing, and
+            // `takeLast` used to delete it out from under the reader.
+            notices = trimNoticeQueue(_state.value.notices + notice, MAX_PENDING_NOTICES),
         )
     }
 
@@ -2512,31 +2883,129 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     // ----------------------------------------------------------- session facts
 
     /**
-     * Rebuild the transcript from pi's own records.
+     * Rebuild the transcript from the session's own records, **newest first**.
      *
-     * `get_entries` is the documented re-attach path (`docs/rpc.md` §get_entries)
-     * and `TranscriptReducer.seedFromHistory` is the reducer's matching entry
-     * point — it resets first, so this is also exactly what a session switch
-     * needs: pi's `switch_session`/`new_session`/`fork`/`clone` replace the
-     * session in the same process and emit no replay, so without this the screen
-     * would keep showing the previous session's rows (audit §6.7).
+     * ## Why the file and not `get_entries`
      *
-     * The response is read through [PiResponses.entries], the raw-object reader,
-     * because the reducer projects pi's own record shape — the typed
-     * [SessionEntry] tree is for the tree screen, not for the reducer.
+     * `get_entries` is the documented re-attach path (`docs/rpc.md` §get_entries),
+     * but it has no pagination: it answers with the **whole session inside one
+     * JSONL record** and its `since` cursor only moves forwards
+     * (`modes/rpc/rpc-mode.ts:638-648`). Opening a conversation that way therefore
+     * cost O(entire history) on the frame path — and past
+     * `JsonlFramer.DEFAULT_MAX_RECORD_CHARS` it cost nothing at all, because the
+     * record was discarded, which is the user's "两张图片就进不去聊天历史".
      *
-     * **Both failure paths are reported, not swallowed.** They used to `return`
-     * silently, and that is what "tapping an old conversation does nothing" looked
-     * like from the user's seat: `get_entries` returns the whole session inside
-     * **one** JSONL record, so a record past the framer's cap never arrives, and
-     * the app then left the previous transcript on screen with no message, no
-     * cleared `busy` and no way to tell a slow open from a dead one
-     * (`docs/hang-and-crash-review.md` §A1; the engine layer now fails such a
-     * request immediately with a Chinese reason on the same channel). Saying
-     * something is strictly better here — the transcript is not cleared either way,
-     * because a failed rebuild must not destroy rows it cannot repopulate.
+     * The session file is the same truth pi reads: `SessionManager.open` loads this
+     * exact file and `getEntries()` returns its non-header entries in file order
+     * (`core/session-manager.ts:659-663`, `:1315-1317`). [SessionFileReader] reads
+     * the **tail** of it inside a fixed character budget, so the first paint is
+     * bounded by the window and not by the session. Everything older is loaded by
+     * [expandEarlierHistory] when the user scrolls up, and the `session-replay-cost`
+     * harness asserts the windowed read reproduces the whole-file read exactly
+     * (order, ids, types, branches, compaction and `custom` entries).
+     *
+     * ## The fallback is not dead code
+     *
+     * A file this reader cannot use — not a session, unreadable, or a line past
+     * [SessionFileReader.DEFAULT_MAX_LINE_CHARS] — falls back to the old
+     * whole-session `get_entries`. That path still exists for the tree overlay and
+     * for export, so it is exercised either way; and a session pi holds in memory
+     * before writing a header is answered by `get_entries` and not by disk.
+     *
+     * ## Failure is reported, not swallowed
+     *
+     * Both failure paths used to `return` silently, which is what "tapping an old
+     * conversation does nothing" looked like from the user's seat
+     * (`docs/hang-and-crash-review.md` §A1). The transcript is still not cleared on
+     * failure: a rebuild that cannot repopulate its rows must not destroy them.
      */
     private suspend fun replayHistory(engine: PiEngineSession) {
+        // Cleared first: the replay either replaces it or fails, and a stale list
+        // would let the next scroll-up prepend one session's entries onto another's.
+        loadedHistory = emptyList()
+        loadedHistoryChars = 0L
+        val file = resolveSessionFile()
+        if (file != null) {
+            // The read and the retained-size accounting are one IO hop, not two: the
+            // accounting serialises every entry to measure it ([entryChars]) and it is
+            // the same decision ("are we about to retain this window?") as the read
+            // itself. It also keeps the count and the rows it describes in one
+            // publication: a scroll-up on the next frame must not read a stale 0 and
+            // take an extra window.
+            val (window, windowChars) = withContext(Dispatchers.IO) {
+                val read = SessionFileReader.readTail(file, HISTORY_WINDOW_CHARS, HISTORY_WINDOW_ENTRIES)
+                val chars =
+                    if (read != null && read.entries.isNotEmpty() && read.complete) {
+                        retainedChars(read.entries)
+                    } else {
+                        0L
+                    }
+                read to chars
+            }
+            if (window != null && window.entries.isNotEmpty() && window.complete) {
+                engine.seedHistory(window.entries)
+                loadedHistory = window.entries
+                loadedHistoryChars = windowChars
+                _state.value = _state.value.copy(
+                    history = HistoryCursor(
+                        startOffset = window.startOffset,
+                        reachedStart = window.reachedStart,
+                    ),
+                )
+                syncTranscript(engine, engine.publication.value)
+                return
+            }
+        }
+        replayHistoryOverRpc(engine)
+    }
+
+    /**
+     * The host file pi is on, or null when it cannot be resolved *safely*.
+     *
+     * Two independent identifications, because a wrong file here would show the
+     * previous conversation in the new session's place:
+     *
+     *  1. [UiState.meta]'s `sessionFile` must be pi's own path for the session pi is
+     *     on **right now**, so it is only trusted once the header's `id` matches the
+     *     `sessionId` from the same `get_state`. `switch_session` / `new_session` /
+     *     `fork` / `clone` rebind in place and emit no replay, so between the command
+     *     and the next `get_state` the meta still describes the session the user just
+     *     left — reading its file would replay the wrong history, which is worse than
+     *     the slow open this path replaces.
+     *  2. [SessionHints.file] is set by the one caller that already knows the answer
+     *     from disk ([switchSession] holds the `PiSessionStore.Summary` the user
+     *     tapped, and [importSession] the file it just copied), so the common case —
+     *     opening a conversation from the list — needs no round trip at all.
+     */
+    private fun resolveSessionFile(): File? {
+        val meta = _state.value.meta
+        val hinted = SessionHints.file
+        if (hinted != null && hinted.isFile) {
+            return hinted
+        }
+        val file = hostSessionFile(meta.sessionFile) ?: return null
+        val sessionId = meta.sessionId
+        if (sessionId != null) {
+            val header = SessionFileReader.readHeader(file) ?: return null
+            val headerId = (header["id"] as? JsonPrimitive)?.takeIf { it.isString }?.content
+            if (headerId != null && headerId != sessionId) return null
+        }
+        return file
+    }
+
+    /** The one file a session command already knows, until the meta catches up. */
+    private object SessionHints {
+        var file: File? = null
+    }
+
+    /**
+     * The whole-session `get_entries` replay — the fallback, and the path the tree
+     * overlay and export still take.
+     *
+     * Kept in one place so the two callers cannot drift, and so the reason it is now
+     * the *second* choice is written down next to it.
+     */
+    private suspend fun replayHistoryOverRpc(engine: PiEngineSession) {
         val response = runCatching {
             engine.request({ PiCommands.getEntries(it) })
         }.getOrNull() ?: run {
@@ -2548,7 +3017,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             // error (that is the success branch below); a real error means the
             // transcript cannot be rebuilt — and `response.error` already carries
             // the engine's own reason, e.g. the oversized-record sentence.
-            fail("读取会话内容失败：${response.error ?: "原因未知"}。可以重新打开这个会话再试一次。")
+            fail("读取会话内容失败：${response.error ?: "原因未知"}。")
             return
         }
         // `seedHistory`, not `transcript.seedFromHistory`: the reducer path mutates
@@ -2556,13 +3025,150 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         // list (and its `replaced` flag) to this consumer. It **suspends**: the
         // projection runs on `Dispatchers.Default` and takes over the engine's
         // reducer under its transcript lock, so this await is where the frame thread
-        // is released. The expensive half of a replay is that projection — the JSON
-        // parse was already off the frame thread in the engine's read loop.
-        engine.seedHistory(PiResponses.entries(response))
+        // is released.
+        val entries = PiResponses.entries(response)
+        // This path is a **whole session** in one answer (`get_entries` has no
+        // pagination), so the retained-size accounting is the largest of the three
+        // callers and the one that used to be worst on the frame thread. See
+        // [entryChars] for the measurement; the sum runs on IO for the same reason the
+        // read above does.
+        val chars = withContext(Dispatchers.IO) { retainedChars(entries) }
+        engine.seedHistory(entries)
+        loadedHistory = entries
+        loadedHistoryChars = chars
+        // A whole-session replay has nothing above it, so there is nothing for the
+        // scroll path to fetch — the cursor says so rather than staying null, which
+        // the UI would have to read as "unknown".
+        _state.value = _state.value.copy(
+            history = HistoryCursor(startOffset = 0L, reachedStart = true),
+        )
         // The collector would wake on its own, but not until this coroutine
         // suspends; syncing here makes the rebuilt session visible in the same
         // frame.
         syncTranscript(engine, engine.publication.value)
+    }
+
+    /**
+     * Load the window of history that sits **above** what is on screen.
+     *
+     * Called when the transcript is scrolled near its top (the screen owns the
+     * gesture; this owns the read). Each call moves [HistoryCursor.startOffset]
+     * backwards by a fixed budget, so one step costs a constant and reaching the
+     * top of a 40 000-turn session costs that constant times the number of windows
+     * the user actually passed — never one unbounded read.
+     *
+     * ## Why a rebuild rather than a prepend
+     *
+     * The reducer's projection is order- and prefix-sensitive: day separators
+     * depend on the preceding timestamp, `turnUsage` is "assistant entries after the
+     * last `user` entry", and a `compaction`/`branch_summary` is resolved against
+     * what came before it. Appending a *newer* segment is safe; prepending an
+     * *older* one is not, because the older entries must be folded in before the
+     * rows they contextualise. [PiEngineSession.seedHistory] already does exactly
+     * that (reset, then fold the list in order), so the expansion hands it the
+     * concatenation: `newlyRead + loadedHistory`. That is O(loaded), which is why
+     * the load is gated on the engine being idle — during a turn the live rows in
+     * the reducer are not reproducible from a file read, and dropping them to add
+     * older history would remove something the user is watching.
+     */
+    fun expandEarlierHistory() {
+        val engine = session ?: return
+        val cursor = _state.value.history ?: return
+        if (cursor.reachedStart || cursor.loading) return
+        if (engine.transcript.streaming) return
+        if (_state.value.engine != PiEngineSession.EngineState.Ready) return
+        val file = resolveSessionFile() ?: return
+        _state.value = _state.value.copy(history = cursor.copy(loading = true))
+        viewModelScope.launch {
+            val loaded = withContext(Dispatchers.IO) {
+                // The retention cap: a user who keeps scrolling up through a session
+                // of 3 MB image entries would otherwise accumulate every window they
+                // passed, which is the unbounded-memory failure this whole change
+                // exists to remove. Past the cap the expansion simply stops —
+                // `reachedStart` stays false, so the row above keeps offering the next
+                // window and the user stays in control of what is held.
+                if (loadedHistoryChars >= HISTORY_RETAINED_CHARS) {
+                    _state.value = _state.value.copy(
+                        history = cursor.copy(loading = false),
+                    )
+                    return@withContext null
+                }
+                SessionFileReader.readBefore(
+                    file,
+                    cursor.startOffset,
+                    HISTORY_WINDOW_CHARS,
+                    HISTORY_WINDOW_ENTRIES,
+                )
+            }
+            // Nothing readable above: stop asking. This is not a failure to report —
+            // the conversation is not damaged, it simply starts where the loaded
+            // range starts (an unreadable header, a file that is not a session, or a
+            // range with no complete line all mean the same thing here, and saying so
+            // would be noise on a session that renders fine).
+            //
+            // **A withheld line is the exception, and it is not the same statement.**
+            // `Window.complete = !range.droppedLine` (`SessionFileReader.kt:258`): false
+            // means the range scanned a line it could not keep — one longer than
+            // `HISTORY_WINDOW_CHARS`/`DEFAULT_MAX_LINE_CHARS` — so there *is* more above
+            // it, and the reader's own KDoc says the next window starts past it
+            // (`:242-257`), which is why continuing makes progress instead of looping.
+            // Marking `reachedStart` there told the reader the whole conversation had been
+            // loaded: `HistoryCursor.hasEarlier` went false, the row that offers the next
+            // batch disappeared for the rest of the session, and the entries above that
+            // line became unreachable. The sentence stays absent either way — a capped
+            // line is not a failure to report — but the cursor must not claim the start
+            // of the file. (The sentinel row therefore stays on screen after such a batch,
+            // which is the correct state: there is still history above.)
+            val moreAbove = loaded != null && !loaded.complete
+            if (loaded == null || !loaded.complete || loaded.entries.isEmpty()) {
+                _state.value = _state.value.copy(
+                    history = _state.value.history?.copy(loading = false, reachedStart = !moreAbove),
+                )
+                return@launch
+            }
+            val combined = loaded.entries + loadedHistory
+            engine.seedHistory(combined)
+            loadedHistory = combined
+            // The **increment**, not a re-sum over `combined`: this used to measure every
+            // retained entry again for each batch, so the cost grew with how far the user
+            // had scrolled — and the measure serialises each entry to take its length
+            // ([entryChars]). `loadedHistory`'s own count is already in the field and
+            // `combined` is exactly `loaded.entries` plus that list, so adding the new
+            // window's count is the same number the old sum produced, at one window's
+            // cost instead of all of them. It runs on IO for the same reason.
+            loadedHistoryChars += withContext(Dispatchers.IO) { retainedChars(loaded.entries) }
+            _state.value = _state.value.copy(
+                history = HistoryCursor(
+                    startOffset = loaded.startOffset,
+                    reachedStart = loaded.reachedStart,
+                ),
+            )
+            syncTranscript(engine, engine.publication.value)
+        }
+    }
+
+    /**
+     * Host path of a guest session path, or null.
+     *
+     * The inverse of [guestSessionPath], and the same mapping [sessionHeaderOf] and
+     * `exportJsonl` already apply. The guards matter: `get_state`'s `sessionFile`
+     * comes from pi, so a malformed or escaping value must not become an arbitrary
+     * read — only a path under the guest's session directory that resolves inside
+     * the host's is accepted, and only when it is a regular file.
+     */
+    private fun hostSessionFile(guestPath: String?): File? {
+        val path = guestPath ?: return null
+        val prefix = "${host.guestAgentDir}/sessions/"
+        if (!path.startsWith(prefix)) return null
+        val relative = path.removePrefix(prefix)
+        if (relative.isEmpty() || relative.contains("..")) return null
+        val root = File(host.paths().agentDir, "sessions")
+        val file = File(root, relative)
+        val rootPath = root.absolutePath
+        val filePath = file.absolutePath
+        if (filePath != rootPath && !filePath.startsWith(rootPath + File.separator)) return null
+        if (!file.isFile) return null
+        return file
     }
 
     /**
@@ -2652,18 +3258,75 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
-     * `get_tree` + `get_entries`, for the session tree overlay.
+     * `get_tree` for the session tree overlay.
      *
-     * Both are read because they answer different questions: the tree is the
-     * branch structure with pi-resolved labels, while the entry log is the
-     * append-only record — the only place an extension's `custom` entries are
-     * visible at all (audit §1.5, §5.8).
+     * Only the tree. The overlay's other tab is the raw entry log, and that is a
+     * **whole-session** read either way — from the file now ([refreshEntries]), not
+     * from `get_entries`. Keeping the two apart is what lets the branch view, which
+     * is what the overlay opens on, paint as soon as pi answers without waiting on a
+     * read proportional to the conversation.
      */
     fun refreshTree() {
         call("读取会话树") { api ->
-            val tree = api.getTree()
-            val entries = api.getEntries().entries
-            _state.value = _state.value.copy(tree = tree, entries = entries)
+            _state.value = _state.value.copy(tree = api.getTree())
+        }
+    }
+
+    /**
+     * The raw entry log, for the tree screen's 条目 tab — read from the **session
+     * file**, streamed, and sanitised.
+     *
+     * This was the last whole-session `get_entries` in the app, and it was the one
+     * that needed the framer's record cap raised to survive a session with pictures
+     * in it. It does not, now: [SessionFileReader.readEntries] walks the file line by
+     * line and reduces each entry to the small part this screen reads (identity,
+     * `type`, the printed fields, and a bounded text preview), so a session whose
+     * file is 40 MB of inline images produces an entry list of a few hundred
+     * kilobytes and never holds an image in memory.
+     *
+     * That is also why this is **not** the transcript's window: the tab is a list of
+     * the whole session (that is what it is for — including the `label`,
+     * `session_info` and `custom` entries the reducer ignores), so a window of it
+     * would present a partial log as the whole one. All of it is read; none of the
+     * bulk is kept.
+     *
+     * `get_entries` remains the fallback for the case the file cannot answer — a
+     * session pi holds in memory before it has written a header — and it is
+     * deliberately reached only then. When even that is unreadable the screen says so
+     * through [fail] instead of showing an empty log, because an empty log and an
+     * unreadable one look identical and only one of them is the truth.
+     */
+    fun refreshEntries() {
+        val file = resolveSessionFile()
+        if (file == null) {
+            refreshEntriesOverRpc()
+            return
+        }
+        call("读取会话条目", NoEngine.Quiet) {
+            val parsed = withContext(Dispatchers.IO) {
+                val out = ArrayList<SessionEntry>()
+                val complete = SessionFileReader.readEntries(file) { raw ->
+                    out += parseSessionEntry(raw)
+                }
+                if (complete) out else null
+            }
+            if (parsed == null) {
+                // The scan hit [SessionFileReader.DEFAULT_MAX_SCAN_LINE_CHARS], so
+                // this list is missing an entry — which for this screen is worse than
+                // a slower read, because it presents a partial log as the whole one.
+                // pi's own whole-session answer is the only other source; that path is
+                // why `JsonlFramer`'s cap exists.
+                refreshEntriesOverRpc()
+                return@call
+            }
+            _state.value = _state.value.copy(entries = parsed)
+        }
+    }
+
+    /** `get_entries` for the entry log — see [refreshEntries] for when this is used. */
+    private fun refreshEntriesOverRpc() {
+        call("读取会话条目", NoEngine.Quiet) { api ->
+            _state.value = _state.value.copy(entries = api.getEntries().entries)
         }
     }
 
@@ -3086,9 +3749,34 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     fun requestMentions(prefix: String) {
         val id = ++mentionRequestId
         viewModelScope.launch {
-            val items = mentionSource.query(prefix) { id != mentionRequestId }
+            val answer = mentionSource.query(prefix) { id != mentionRequestId }
             if (id != mentionRequestId) return@launch
-            _state.value = _state.value.copy(mentions = MentionList(query = prefix, items = items.orEmpty()))
+            when (answer) {
+                // Superseded between the run and this line; the id check above is the
+                // authority, this branch only keeps the `when` exhaustive.
+                null -> Unit
+
+                is MentionLookup.Candidates -> {
+                    lastMentionFailure = null
+                    _state.value =
+                        _state.value.copy(mentions = MentionList(query = prefix, items = answer.items))
+                }
+
+                is MentionLookup.Unavailable -> {
+                    // The lookup did not happen, so no list may stay on screen claiming to
+                    // be one — and the reason is said **once per distinct failure**: the
+                    // composer asks on a 150 ms debounce, and one notice per keystroke
+                    // would bury the message the user needs to read. Cleared when a lookup
+                    // succeeds, so a later failure of the same shape is reported again.
+                    if (_state.value.mentions != null) {
+                        _state.value = _state.value.copy(mentions = null)
+                    }
+                    if (lastMentionFailure != answer.sentence) {
+                        lastMentionFailure = answer.sentence
+                        pushNotice(answer.sentence, Notice.Tone.Warning)
+                    }
+                }
+            }
         }
     }
 
@@ -3118,6 +3806,9 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             pushNotice("已有 bash 命令在运行，先停止再执行新的命令", Notice.Tone.Warning)
             return
         }
+        bashStream.setLength(0)
+        lastBashPublishAt = 0L
+        bashStreamTrimmed = false
         _state.value = _state.value.copy(
             bash = BashRun(command = trimmed, excludeFromContext = excludeFromContext),
         )
@@ -3145,6 +3836,11 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun dismissBash() {
+        // The panel is gone, so its accumulation has no reader. Dropping it here is what
+        // keeps a dismissed 50 MiB output from sitting in the heap until the next run.
+        bashStream.setLength(0)
+        lastBashPublishAt = 0L
+        bashStreamTrimmed = false
         _state.value = _state.value.copy(bash = null)
     }
 
@@ -3237,8 +3933,15 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
         call("切换会话") { api ->
+            // The file is known here and nowhere else on this path: pi's `get_state`
+            // only reports it after the switch has been answered, and waiting for
+            // that would add a round trip to every open. `replayHistory` consumes
+            // the hint, and `resolveSessionFile` still cross-checks the header's id
+            // against `meta.sessionId` before trusting any *other* path.
+            SessionHints.file = summary.file
             val result = api.switchSession(path)
             if (result.cancelled) {
+                SessionHints.file = null
                 pushNotice("扩展取消了切换会话", Notice.Tone.Warning)
                 return@call
             }
@@ -3292,6 +3995,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                     is ImportPrep.Rejected -> fail(prepared.sentence)
 
                     is ImportPrep.Ready -> {
+                        SessionHints.file = hostSessionFile(prepared.guestPath)
                         val result = api.switchSession(prepared.guestPath)
                         if (result.cancelled) {
                             pushNotice("扩展取消了导入会话", Notice.Tone.Warning)
@@ -3857,11 +4561,22 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      */
     private suspend fun afterSessionReplaced() {
         val engine = session ?: return
-        replayHistory(engine)
+        // `refreshState` **before** the replay, not after: the replay's source is the
+        // session file, and the only trustworthy name for that file is the one
+        // `get_state` just reported. Reading it first would use the meta of the
+        // session the user just left on the `new_session` / `fork` / `clone` paths,
+        // which rebind in place and emit no event — i.e. it would replay the wrong
+        // conversation. `switchSession` / `importSession` set [SessionHints] so the
+        // common path is unaffected, and this ordering costs one round trip that
+        // replaces a whole-session read.
         refreshState()
+        replayHistory(engine)
         refreshStats()
         refreshCommands()
         refreshSessions()
+        // One-shot: a hint is only valid for the command that set it. Left behind, it
+        // would let a later attach replay the file of a session pi is no longer on.
+        SessionHints.file = null
         if (_state.value.queueSteering != 0 || _state.value.queueFollowUp != 0) {
             _state.value = _state.value.copy(queueSteering = 0, queueFollowUp = 0)
         }
@@ -4040,6 +4755,69 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
 
         /** Notifications held for the snackbar before the oldest is dropped. */
         const val MAX_PENDING_NOTICES = 8
+
+        /**
+         * How often a running `bash` command's accumulated output is published.
+         *
+         * The same number and the same rule as the transcript's tool-output throttle
+         * (`rpc/.../Transcript.kt` `TOOL_UPDATE_THROTTLE_MS`), because it answers the
+         * same problem for the same reason: pi emits a chunk per read and a chatty
+         * command emits hundreds a second, while a panel of that shape has nothing to
+         * say about the difference between two chunks 5 ms apart. It is a bound on the
+         * *repaint* only — every chunk is kept in `bashStream`, and the `bash` response
+         * replaces the output when the run ends, so the panel still shows everything.
+         */
+        const val BASH_UPDATE_THROTTLE_MS = 200L
+
+        /**
+         * How much of a session file one history window may read, in characters.
+         *
+         * 8 MiB. The number is a phone trade, and both directions matter:
+         *
+         *  - **Large enough** that the first window covers what the screen shows, a
+         *    comfortable scroll beyond it, *and* the image case that used to fail
+         *    outright. A session entry carries an inline base64 image at four
+         *    characters per three bytes, so two 2.5 MB photos in one turn are 6.7 MB
+         *    of a single window — the shape that used to be an over-cap record and an
+         *    unopenable conversation. At ~500 characters per text entry the same
+         *    budget is on the order of 16 000 entries. It is deliberately **not**
+         *    raised to `SessionFileReader.DEFAULT_MAX_LINE_CHARS` (32 MiB): one
+         *    oversized entry must not cost every text session its first-paint bound.
+         *  - **Small enough** to stay a background blur rather than a stall. The whole
+         *    open on this window is measured in the `session-replay-cost` harness;
+         *    the phone's share beyond it is one `LazyColumn` measure pass over the
+         *    rows produced.
+         *
+         * The newest entry of a window is admitted even when it alone exceeds the
+         * budget — `SessionFileReader.readTail`/`readBefore` keep the newest line whole
+         * and evict older ones, and the boundary snap goes back to the start of the line
+         * it lands in — so a window is never empty merely because one entry is large,
+         * and a big entry is never *skipped* by the window that follows it either. That
+         * second half is what the harness's `img-1msg-2x5MB` fixture pins: a message
+         * over one window (up to 31.94 MiB of base64 images is legal) arrives in a
+         * window of its own instead of falling between two. The caps bound memory
+         * without turning a big entry into a missing one.
+         *
+         * The entry cap is the second bound: a session of tiny entries (a `/mode` ping
+         * per turn) would otherwise put tens of thousands of rows through the
+         * projection for a window a screen shows three of.
+         */
+        const val HISTORY_WINDOW_CHARS = 8 * 1024 * 1024
+
+        /** Entries in one history window. See [HISTORY_WINDOW_CHARS]. */
+        const val HISTORY_WINDOW_ENTRIES = 4_000
+
+        /**
+         * Upper bound on the entries the transcript keeps from progressive loading:
+         * 64 MiB of measured entry text.
+         *
+         * Eight windows' worth. It exists because "load earlier on demand" is bounded
+         * per *step* but not per *session*: a reader who scrolls to the top of an
+         * image-heavy conversation would otherwise hold every window passed. Past this
+         * the expansion stops and the row above says there is more, so the failure
+         * mode is "you have to scroll down and up again" rather than an OOM.
+         */
+        const val HISTORY_RETAINED_CHARS = 64L * 1024 * 1024
 
         /**
          * How many recorded failures the diagnostic report carries.

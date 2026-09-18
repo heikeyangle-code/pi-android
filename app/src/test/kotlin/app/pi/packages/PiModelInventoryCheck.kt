@@ -249,10 +249,22 @@ fun main() {
     check("an unsupported pattern is listed as unjudged", exotic.unjudgedPatterns, listOf("{a,b}-*"))
     check("a supported glob is not unjudged", PiModelInventory.hasUnsupportedGlobSyntax("qwen*"), false)
     check("a brace pattern is unjudged", PiModelInventory.hasUnsupportedGlobSyntax("{a,b}*"), true)
-    check("a character class is unjudged", PiModelInventory.hasUnsupportedGlobSyntax("[ab]*"), true)
+    // pi treats `[` as the start of a glob (`core/model-resolver.ts:291`), so a character
+    // class is a pattern it can judge, not an unjudgeable one.
+    check("a character class is a supported glob", PiModelInventory.hasUnsupportedGlobSyntax("[ab]*"), false)
+    check("a character class matches", PiModelInventory.matches("[qd]wen*", "ollama", "qwen3"), true)
+    check("a character class that does not match is false", PiModelInventory.matches("[xy]wen*", "ollama", "qwen3"), false)
+    check("a negated character class matches", PiModelInventory.matches("[!x]wen*", "ollama", "qwen3"), true)
     check("an empty pattern matches nothing", PiModelInventory.matches("", "a", "b"), false)
     check("a question mark matches exactly one character", PiModelInventory.matches("qwen?", "ollama", "qwen3"), true)
     check("a question mark does not match two characters", PiModelInventory.matches("qwen?", "ollama", "qwen33"), false)
+    // pi's fallback for a pattern with no glob characters is a case-insensitive substring
+    // (`core/model-resolver.ts:338` -> `tryMatchModel`), not an exact match.
+    check("a bare substring matches a model id", PiModelInventory.matches("sonnet", "anthropic", "claude-sonnet-4"), true)
+    check("a bare substring matches the provider-qualified id", PiModelInventory.matches("anthropic/claude", "anthropic", "claude-sonnet-4"), true)
+    check("a substring that is nowhere in the id does not match", PiModelInventory.matches("gpt", "anthropic", "claude-sonnet-4"), false)
+    check("a glob star does not cross a slash", PiModelInventory.matches("anthropic*sonnet*", "anthropic", "claude-sonnet-4"), false)
+    check("a glob star still matches within a segment", PiModelInventory.matches("*sonnet*", "anthropic", "claude-sonnet-4"), true)
 
     // ------------------------------------------------------- 4 settings.json
 

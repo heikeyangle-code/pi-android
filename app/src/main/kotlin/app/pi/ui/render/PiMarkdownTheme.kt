@@ -6,6 +6,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextLinkStyles
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.Dp
@@ -282,7 +283,16 @@ internal fun piMarkdownTypography(
         text = base.copy(color = body),
         code = code.copy(color = palette.mdCodeBlock),
         inlineCode = mono.copy(fontSize = 12.5.sp, lineHeight = 18.sp, color = palette.mdCode),
-        quote = base.copy(color = palette.mdQuote),
+        // pi's markdown renderer puts **two** decorations on a blockquote, not one: the theme
+        // supplies the colour (`quote: (text) => theme.fg("mdQuote", text)`,
+        // `modes/interactive/theme/theme.js:936`) and the renderer's blockquote case wraps that
+        // in italic —
+        //   `case"blockquote":{let quoteStyle=text=>this.theme.quote(this.theme.italic(text)) …`
+        // (bundled pi-tui, `@earendil-works/pi-tui/dist/components/markdown.js:417`; the bundle
+        // copy is `dist/bundle/chunks/chunk-JVUZSMYM.js:584`, which is where this was verified).
+        // The colour was here and the italic was not, so a quote read as body text in a slightly
+        // different hue instead of as a quote.
+        quote = base.copy(color = palette.mdQuote, fontStyle = FontStyle.Italic),
         paragraph = base.copy(color = body),
         ordered = base.copy(color = body),
         bullet = base.copy(color = palette.mdListBullet),

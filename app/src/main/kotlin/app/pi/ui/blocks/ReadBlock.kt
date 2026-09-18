@@ -72,7 +72,16 @@ internal fun ReadBlock(
                 ToolHeader(
                     item = item,
                     title = "read",
-                    subject = body.path.ifEmpty { "文件" } + range,
+                    // pi's `formatReadCall` (`renderers/read.js:24-28`):
+                    //   `${fg("toolTitle", bold("read"))} ${pathDisplay}${formatReadLineRange(args, theme)}`
+                    // `pathDisplay` is `renderToolPath` → `fg("accent", shortenPath(path))`
+                    // (`core/tools/render-utils.js:57-63`), and the range is
+                    // `fg("warning", ":1-50")` (`renderers/read.js:19-23`). Two tokens on one
+                    // line, so the subject is the two runs pi emits — text and order untouched.
+                    subject = buildList {
+                        add(toolPathPart(body.path, fallback = "文件"))
+                        if (range.isNotEmpty()) add(ToolCallPart(range, ToolCallToken.Warning))
+                    },
                     expanded = expanded,
                     expandable = hasBody,
                 )

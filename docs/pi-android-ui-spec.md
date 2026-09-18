@@ -90,9 +90,13 @@
 | `thinkingOff…Max`（7 个） | **思考等级色温**（App 签名元素） |
 | `bashMode` | Shell 模式强调色 |
 | `export.pageBg` / `cardBg` / `infoBg` | `Surface` / `SurfaceContainer` / `SurfaceContainerHigh` 的基准 |
+| **（派生，不是 pi 令牌）**`surfaceContainer` / `High` / `Highest` / `Bright` / `Dim` | M3 surface 阶梯的中间调，由 `cardBg` 向 `text` 混合得到 —— 见下面的「派生槽位」 |
 
 **规则**
 - **语义色保真，中性色可动态**：`success/error/warning/toolDiff*/thinking*/bashMode` 必须用 pi 主题的值；`surface`/`outline` 这类中性色允许被系统动态取色（Android 12+ Monet）覆盖 —— 用户可关。
+- **派生槽位（M3 surface 阶梯）**：`surfaceContainer` / `surfaceContainerHigh` / `surfaceContainerHighest` / `surfaceBright` / `surfaceDim` 这五档**不在 pi 的令牌表里** —— pi 只有 `pageBg` 与 `cardBg` 两个底色，它没有表达中间调的手段，所以这五档是 `ui/theme/PiTheme.kt` 的 `colorScheme()` 用 `cardBg` 向 `text` 混合出来的（依次 3% / 6% / 10% / 12%，`surfaceDim` 是 `pageBg` 向 `text` 2%），用来把卡片、命中行、chip 的底分出层次。
+  - **这是导入自定义主题时的真实差异来源**：这五档不跟着 pi 主题走，只跟着该主题的 `cardBg` + `text` 走；同一个 pi 主题在桌面 TUI 与 App 里的「中间调」因此不会逐像素相同（`pi-tui` 只有 `bg`/`fg` 两种通道，也没有第三档底色可比）。
+  - **裁决（2026-02 主题语义审查）**：保留实现。pi 是终端所以做不到，手机可以；`06 §2` 的面板本身就要 `surf-low`/`surf-high` 两档（= `cardBg` + 一档派生）。要严格 1:1 只能把它们收敛回 `cardBg`/`pageBg` 两档，观感会塌（卡片与页面失去层次），因此**记账保留**而不是改实现。见 `07` D41 的 R5。
 - **暗色优先**，浅色派生。pi 的 dark/light 已经是同 token 的两套值。
 - **主题自动模式**：pi 把 `"lightTheme/darkTheme"` 这个**字面量字符串**存进 `theme` 字段。App 的主题选择器必须**原样往返**，不能拆成两个字段，否则桌面端读不懂。
 - **对比度**：正文 ≥4.5:1；`muted` 在浅色主题下需微调（pi 的 light 主题这项偏弱，App 要给一个修正档）。
@@ -104,15 +108,17 @@
 | 展示 | 系统字 | 28 / 36 / Medium | 空态主标题、向导标题 |
 | 标题大 | 系统字 | 22 / 28 / Semibold | 页面主标题 |
 | 标题小 | 系统字 | 17 / 24 / Semibold | 卡片标题、会话名 |
-| **正文** | 系统字 | **15 / 23 / Regular** | 助手与用户消息（中文行高要松） |
+| **正文** | 系统字 | **14 / 23 / Regular** | 助手与用户消息、错误句子（`prose`；v2 的 `t14`，中文行高要松） |
 | 正文紧 | 系统字 | 14 / 20 / Regular | 列表副标题、设置说明 |
 | 标签 | 系统字 | 12 / 16 / Medium | Chip、徽章、分组标题 |
-| 元信息 | 系统字 | 11.5 / 16 / Regular | 时间戳、token、cwd |
-| **机器** | **等宽** | **13 / 20 / Regular** | 代码、命令、工具输出、diff、终端 |
-| 机器小 | 等宽 | 11.5 / 17 | 行号、状态字符号、工具名 |
-| 数字 | 等宽数字（tabular） | 继承 | token / 成本 / 行号 / 进度 |
+| 元信息 | 系统字 | 12 / 18 / Regular | 时间戳、token、cwd、工具页脚（`meta`） |
+| **机器** | **等宽** | **13 / 20 / Regular** | 命令、路径、工具输出（`mono`）；**码块与 diff 固定 13 / 19**（`code`）；终端页保留系统等宽（`07` D8，`ui/terminal/**` 划出范围） |
+| 机器小 | 等宽 | 12 / 18 / Regular | 行号、状态符号、工具名、读数（`monoSmall`） |
+| 数字 | 等宽数字（tabular） | 继承（= `mono`） | token / 成本 / 行号 / 进度（`numeric`） |
 
 **细则**
+- **口径以 `06 §2` 的 5 档为准（12 / 13 / 14 / 15 / 17），落地以 `PiTextStyles` 为准**：`meta` 12/18（系统字）· `mono` 13/20 · `monoSmall` 12/18 · `prose` 14/23（系统字）· `code` 13/19 · `numeric` = `mono`（`ui/theme/PiTheme.kt`）。上表就是这几个角色的实际值 —— 曾经写过的「正文 15 / 元信息 11.5 / 机器小 11.5」是 B7 收敛字号之前的旧值（11.5 低于本表 12 的标签地板，15 是行标题那一档），已对齐。
+- 15 与 17 两档不在 `PiTextStyles` 里：它们来自 M3 的 `bodyLarge`（15/23，**行标题**）与 `titleMedium`（17/24，屏标题），也就是 `piTypography` 给的行/屏标题步进。
 - 中文与等宽混排时，代码块加 0.5dp 字距。
 - 段落间距 = 0.55 × 行高；列表缩进 = 1 × 行高。
 - 长路径/URL 用 `overflow-wrap: anywhere`。
@@ -153,7 +159,7 @@ v1 说"无阴影"，这是错的。现代 App 需要层级线索。改为 **M3 t
 ### 2.5 图标与插图
 
 - **图标**：Material Symbols Rounded，线性、20dp（内联）/ 24dp（导航），可选填充态表示选中。
-- **工具类型不用图标**：用等宽小字（`bash` `read` `edit` `write` `grep` `find` `ls`），`muted` 色 —— 比图标更准确，也更"pi"。扩展工具用通用方块字符 + 工具名。
+- **工具类型不用图标**：用等宽小字（`bash` `read` `edit` `write` `grep` `find` `ls`），`toolTitle` 色 —— 比图标更准确，也更"pi"。扩展工具用通用方块字符 + 工具名。（`toolTitle` 是 pi 给工具**名字**的 token；pi 自带主题里它与 `text` 同值，v2 原型画的是 `muted`，见 `07` D40。）
 - **状态用色与形状**，不用图标堆砌。错误时才加一个 8dp 的 `error` 圆点。
 - **思考等级**：一个 3 段的弧形/阶梯点阵，颜色取对应 token；旁边永远带文字（`off/minimal/low/medium/high/xhigh/max`）以满足色盲与无障碍。
 - **插图**：空态用**极简线稿**（1.5dp 描边、单色 `outlineVariant`），不搞彩色 3D 插画 —— 与工具调性一致。

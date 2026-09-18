@@ -7,8 +7,13 @@ import android.os.StatFs
 import app.pi.BuildConfig
 import app.pi.bridge.DeviceActionException
 import app.pi.bridge.DeviceSystemActions
+import app.pi.runtime.GuestEngine
+import app.pi.runtime.GuestToolProbe
 import app.pi.runtime.PiPaths
+import app.pi.runtime.ProrootConfigSweep
+import app.pi.runtime.RuntimeChoice
 import app.pi.runtime.RuntimeProvisioner
+import app.pi.runtime.RuntimeSelection
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -46,6 +51,25 @@ data class EngineDiagnostics(
     val stderr: String?,
     /** `PiEngineSession.lastServingMs` — the startup measurement, in ms. */
     val startupMs: Long?,
+    /**
+     * Events the engine's reader thread could not hand to the app's collector
+     * (`PiEngineSession.droppedEvents`).
+     *
+     * A number rather than a flag because the failure it describes is a *backlog*:
+     * the flow's buffer filled because the main-thread collector was held up, and
+     * the events after that are lost until it catches up. Zero is the expected
+     * value; anything else means the transcript may be missing deltas.
+     */
+    val droppedEvents: Long = 0L,
+    /**
+     * Events whose fold into the transcript threw (`PiEngineSession.reducerFailures`).
+     *
+     * Separate from [droppedEvents] on purpose: a drop is a delivery problem, a throw
+     * is a bug in the projection, and the two need different words.
+     */
+    val reducerFailures: Long = 0L,
+    /** The newest of either, as one sentence, or null when there has been none. */
+    val lastRecordProblem: String? = null,
 )
 
 /**
@@ -77,7 +101,13 @@ data class EngineDiagnostics(
  *  - The whole report is passed through [redact] before it is returned, so a
  *    token that reached stderr cannot leave the device through this channel.
  *  - Reading is blocking IO (a tree walk for the runtime size, an asset read per
- *    payload); callers run [build] off the main thread.
+ *    payload, and one bounded guest invocation for the tool-chain section); callers
+ *    run [build] off the main thread.
+ *  - The tool-chain section is a **real** invocation, not a file-existence check,
+ *    and it is bounded: [`GuestToolProbe.TIMEOUT_MS`][GuestToolProbe.TIMEOUT_MS].
+ *    A tool that cannot be executed must appear here as a failure with its exit
+ *    code, because the callers that lose their backend when it is missing (pi's
+ *    `find` and the `@` completion) fail silently.
  */
 object DiagnosticsReport {
 
@@ -144,6 +174,20 @@ object DiagnosticsReport {
                     },
                 )
                 appendLine("最近一次启动耗时：${formatDuration(engine.startupMs)}")
+                // The two reader-thread losses, printed even when they are zero: a
+                // report that only shows them on failure cannot tell "never happened"
+                // apart from "this build does not count them".
+                appendLine(
+                    if (engine.droppedEvents == 0L && engine.reducerFailures == 0L) {
+                        "事件投递：无丢失（事件流未溢出，转录投影未抛异常）"
+                    } else {
+                        "事件投递：丢失 ${engine.droppedEvents} 个事件，" +
+                            "转录投影失败 ${engine.reducerFailures} 次"
+                    },
+                )
+                engine.lastRecordProblem?.takeIf { it.isNotBlank() }?.let {
+                    appendLine("最近一条：$it")
+                }
                 appendLine()
                 appendLine("已捕获的 stderr（引擎侧上限 64 KB，这里取尾部最多 $STDERR_TAIL_CHARS 字符）：")
                 val stderr = engine.stderr?.trim()
@@ -198,6 +242,77 @@ object DiagnosticsReport {
             pathLine(this, "proot 二进制", paths.prootBinary())
             pathLine(this, "proot loader", paths.prootLoader())
             pathLine(this, "stamp", paths.stampFile())
+            appendLine()
+
+            // ---- 运行时选择（proroot）--------------------------------------
+            // The effective runtime and *why*, plus the five binaries whose presence
+            // is only one of the three conditions. `status()` reads the cached gate
+            // verdict and never runs the gate: a report must not be the thing that
+            // starts the closed-source runtime, and it must not spend seconds
+            // probing on the way out of a crash.
+            appendLine("── 运行时选择 ──")
+            val runtimeSelection = RuntimeSelection.of(context, paths)
+            val runtimeStatus = runCatching { runtimeSelection.status() }.getOrNull()
+            if (runtimeStatus == null) {
+                appendLine("（读不到运行时选择状态）")
+            } else {
+                appendLine("  实际生效：${runtimeStatus.engine}（${runtimeStatus.summary}）")
+                appendLine("  开关：${if (runtimeStatus.enabled) "开" else "关"}" +
+                    " · 连续失败：${runtimeStatus.failures}/${RuntimeChoice.MAX_CONSECUTIVE_FAILURES}")
+                appendLine(
+                    "  proroot 探针：" + when (runtimeStatus.probePassed) {
+                        true -> "已通过（缓存）"
+                        false -> "未通过（缓存）"
+                        null -> "尚未运行（下次真正启动 guest 时会跑一次）"
+                    },
+                )
+                if (runtimeStatus.missingComponents.isNotEmpty()) {
+                    appendLine("  缺少运行时文件：${runtimeStatus.missingComponents.joinToString("、")}")
+                }
+                runtimeStatus.probeDetail.forEach { appendLine("  $it") }
+            }
+            pathLine(this, "proroot launcher", paths.prorootLauncher())
+            pathLine(this, "proroot runtime", paths.prorootRuntimeHook())
+            pathLine(this, "proroot linker", paths.prorootLinker())
+            pathLine(this, "proroot trampoline", paths.prorootBridge())
+            pathLine(this, "proroot stub loader", paths.prorootStubLoader())
+            // `prorootTmpDir`, not `prorootTmp`: reading a report must not create a
+            // directory, or every proot-only user would grow an empty `proroot-tmp`
+            // just by exporting diagnostics.
+            pathLine(this, "proroot tmp", paths.prorootTmpDir())
+            // What proroot leaves behind: one fixed-size table per launch, named for
+            // the launcher's pid. Counted here because the sweep only runs before a
+            // proroot launch, so a device that stopped using proroot keeps whatever it
+            // had until then.
+            val prorootConfigs = runCatching {
+                paths.prorootTmpDir().listFiles()
+                    ?.count { it.name.startsWith(ProrootConfigSweep.PREFIX) } ?: 0
+            }.getOrDefault(0)
+            appendLine("  .proroot-config 现存 $prorootConfigs 份")
+            appendLine()
+
+            appendLine("── 工具链自检（真调用） ──")
+            appendLine(
+                "说明：这里不看文件是否存在，而是在 guest 里真的运行一次 rg / fd：" +
+                    "先 --version，再真的搜索一个 guest 文件，两次都要求退出码 0 且有输出。" +
+                    "软链悬空、二进制跑不起来、或它读不到 guest 路径，都会在这里变成一条 ✗。",
+            )
+            // Probed through the runtime that would actually run, so the report shows
+            // the same answer a real tool call would get. When proroot is in effect
+            // this doubles as the second half of the gate's evidence; `GuestToolProbe`
+            // takes the engine as a parameter for exactly this reason.
+            val probeEngine = runtimeStatus?.engine ?: GuestEngine.Proot
+            appendLine("  （本次通过 ${probeEngine} 调用）")
+            val toolProbe = runCatching {
+                GuestToolProbe.run(paths, android.os.Environment.getExternalStorageDirectory(), probeEngine)
+            }.getOrElse { error ->
+                GuestToolProbe.Report(
+                    emptyList(),
+                    launchError = "探针本身抛了异常：${error::class.java.simpleName}: ${error.message}",
+                )
+            }
+            toolProbe.describe().forEach { appendLine("  $it") }
+            if (toolProbe.exitCode != null) appendLine("  （guest 命令退出码 ${toolProbe.exitCode}）")
             appendLine()
 
             appendLine("── 最近的失败与错误 ──")

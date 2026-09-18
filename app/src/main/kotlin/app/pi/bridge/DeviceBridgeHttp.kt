@@ -518,8 +518,7 @@ class DeviceAuditLog(private val file: java.io.File) {
 
     fun record(event: BridgeAuditEvent) {
         val line = JSONObject().apply {
-            put("ts", java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", java.util.Locale.US)
-                .format(java.util.Date()))
+            put("ts", TIMESTAMP.get().format(java.util.Date()))
             put("id", event.requestId)
             put("phase", event.phase)
             put("method", event.method)
@@ -542,11 +541,49 @@ class DeviceAuditLog(private val file: java.io.File) {
         }
     }
 
-    /** Raw JSON lines — what `/app/audit` returns and what the tool reads. */
+    /**
+     * Raw JSON lines — what `/app/audit` returns and what the tool reads.
+     *
+     * Read from the **end** of the file, not by `readLines()`: the trail is bounded at
+     * [MAX_BYTES] (512 KiB) but a tail of 5–200 lines does not need the other half
+     * megabyte, and this is called from the frame thread by the diagnostics card
+     * (`DeviceCapabilityScreen`'s `remember(revision) { auditPrettyTail(5) }`) as well
+     * as from `/app/audit` on the bridge's pool. Reading the last chunk and splitting
+     * it keeps the frame cost proportional to what is shown.
+     *
+     * The window starts small and **widens until the request is satisfied** (or the
+     * whole file is in hand): a line is ~160 bytes here, but a `note` may carry up to
+     * 400 characters (`record`), so a fixed `wanted × 256` window would answer a
+     * 200-line request with fewer lines than asked for. Widening is bounded by
+     * [MAX_BYTES] — the whole trail — and only happens for a request that actually
+     * needs more than the first window.
+     */
     fun tail(maxLines: Int): List<String> = synchronized(this) {
         if (!file.isFile) return emptyList()
-        val lines = runCatching { file.readLines() }.getOrDefault(emptyList())
-        lines.takeLast(maxLines.coerceIn(1, 2000))
+        val wanted = maxLines.coerceIn(1, 2000)
+        val lines = runCatching { readTailLines(wanted) }.getOrDefault(emptyList())
+        lines.takeLast(wanted)
+    }
+
+    private fun readTailLines(wanted: Int): List<String> {
+        java.io.RandomAccessFile(file, "r").use { raf ->
+            val length = raf.length()
+            var window = (wanted.toLong() * LINE_BYTES_ESTIMATE).coerceIn(8L * 1024, MAX_BYTES)
+            while (true) {
+                val from = (length - window).coerceAtLeast(0L)
+                raf.seek(from)
+                val buffer = ByteArray((length - from).toInt())
+                raf.readFully(buffer)
+                val text = String(buffer, Charsets.UTF_8)
+                // A window that starts mid-line drops that one partial line; at the head
+                // of the file there is nothing to drop.
+                val body = if (from > 0L) text.substringAfter('\n', "") else text
+                val lines = body.split('\n').filter { it.isNotBlank() }
+                // Enough lines, the whole file, or no room to grow: this is the answer.
+                if (lines.size >= wanted || from == 0L || window >= MAX_BYTES) return lines
+                window = (window * 4).coerceAtMost(MAX_BYTES)
+            }
+        }
     }
 
     /**
@@ -611,5 +648,30 @@ class DeviceAuditLog(private val file: java.io.File) {
     companion object {
         private const val MAX_BYTES = 512L * 1024L
         private const val KEEP_LINES = 2000
+
+        /**
+         * Upper bound, in bytes, on one rendered audit line.
+         *
+         * Used to size [tail]'s read window. A line is a dozen short JSON fields plus
+         * a note capped at 400 characters (`record`), so 256 bytes is generous — and
+         * being generous is the safe direction: the window is a *starting* point for
+         * "how far back do I have to read", and the caller still takes the last
+         * `maxLines` of what it got.
+         */
+        private const val LINE_BYTES_ESTIMATE = 256L
+
+        /**
+         * `SimpleDateFormat` for the trail's timestamps, one per thread.
+         *
+         * `record` used to construct a formatter per event, and a formatter is one of
+         * the most expensive small objects on Android (locale data, a calendar, a
+         * number-format tree) — for a value written twice per bridge request.
+         * `SimpleDateFormat` is not thread-safe, and `record` is called from the
+         * bridge's request pool, so it is a `ThreadLocal` rather than a shared field.
+         */
+        private val TIMESTAMP: ThreadLocal<java.text.SimpleDateFormat> =
+            ThreadLocal.withInitial {
+                java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", java.util.Locale.US)
+            }
     }
 }

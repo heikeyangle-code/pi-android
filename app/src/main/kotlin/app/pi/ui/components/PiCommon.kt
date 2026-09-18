@@ -39,9 +39,12 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Popup
@@ -625,9 +628,75 @@ fun PiBilledCostLine(
     Text(
         text = "$label: ${piFormatTokens(tokens)} tokens billed$cost",
         modifier = modifier,
-        style = PiTheme.text.meta,
+        // pi's own English billing line, and the only place the app prints a token count
+        // *and* a cost together: v2 draws it `mono t12` (`direction-b-v2.html:2597`,
+        // 「Compaction: 42k tokens billed (~$0.03)」), `06 §3` 构件 8 calls it the
+        // 「可选英文计费行」, and `05 §4.2` keeps token and 费用 on the machine face
+        // （「耗时/退出码/行数/token/费用/秒数 六类改成 `numeric`」）. `meta` was the UI
+        // face, so the two readings this line exists for were the one part of it not
+        // set as machine language.
+        style = PiTheme.text.monoSmall,
         // pi paints it with `theme.fg("warning", …)`.
         color = PiTheme.palette.warning,
+    )
+}
+
+/**
+ * One line, **two voices**: the app's own wording in the UI face and the machine value it
+ * carries in the machine face.
+ *
+ * Rule #7 (`docs/pi-android-ui-spec.md` §1) splits text by *who wrote it*, and a line like
+ * `审计日志：/data/user/0/app.pi/files/audit.log` has both authors on it: the four Chinese
+ * characters are ours and the path is the engine's. One face for the whole line is wrong
+ * whichever face is picked — the UI face puts a path in the reading font, the machine face
+ * puts a Chinese label in the machine's. The frozen board draws this shape by nesting spans,
+ * both with the machine half first and ours after:
+ *
+ *  - the workspace viewer's meta line is `<span className="mono">{path2}</span><span> · {size}
+ *    · {time}</span>` (`design-demos/workspace-final.html:1081-1085`, handed to a `TopBar`
+ *    whose meta slot is `t12 c-muted`);
+ *  - a session row is `<span className="mono t12 c-muted">{row.time}</span>` beside
+ *    `<span className="t12 c-muted">{row.sub}</span>` (`direction-b-v2.html:1817-1824`).
+ *
+ * [machine] takes the machine face; [prefix] and [suffix] and [style] are ours. There is no
+ * "machine == empty" case: a line with nothing machine-produced on it is a plain `Text`, and
+ * the callers branch rather than pass `""` (see `PiPackagesScreen.ResourceOriginText`).
+ *
+ * Every parameter is required rather than defaulted: `PiContextRing`'s `placeholderStyle` set
+ * this project's precedent that it does not read `PiTheme.text` inside a default argument — it
+ * compiles, but nothing else here does it.
+ *
+ * @param prefix our wording before the value (`审计日志：`, `保存为 `).
+ * @param machine the machine-produced value: a path, an id, a pair of ids.
+ * @param suffix our wording after it (`）`), or `""`.
+ */
+@Composable
+fun PiMixedLine(
+    prefix: String,
+    machine: String,
+    suffix: String,
+    style: TextStyle,
+    color: Color,
+    modifier: Modifier = Modifier,
+    maxLines: Int = Int.MAX_VALUE,
+) {
+    val machineFamily = PiTheme.text.monoSmall.fontFamily
+    // Built with the stdlib: `AnnotatedString.Builder` implements `Appendable`, so a chained
+    // `append(…).append(…)` on it resolves through `Appendable.append(CharSequence?)` and
+    // stops returning a `Builder` (`WorkspaceViewer.ViewerTopBar` hit the same thing).
+    val value = machine
+    val text = buildAnnotatedString {
+        append(prefix)
+        withStyle(SpanStyle(fontFamily = machineFamily)) { append(value) }
+        append(suffix)
+    }
+    Text(
+        text = text,
+        modifier = modifier,
+        style = style,
+        color = color,
+        maxLines = maxLines,
+        overflow = TextOverflow.Ellipsis,
     )
 }
 

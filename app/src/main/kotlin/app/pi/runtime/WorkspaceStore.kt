@@ -37,9 +37,17 @@ import java.nio.file.attribute.BasicFileAttributes
  *
  * [resolve] never throws and never invents a directory. When the persisted name
  * is missing, malformed, or names a directory that no longer exists, it answers
- * the default workspace and a [Resolution.note] that says so in words;
- * [reconcile] additionally writes the correction back, because the one state the
- * app must never be left in is "the setting says A while the process runs B".
+ * the default workspace and a [WorkspaceChoice.Current.note] that says so in
+ * words; [reconcile] additionally writes the correction back, because the one
+ * state the app must never be left in is "the setting says A while the process
+ * runs B".
+ *
+ * The **rule** behind that answer is not written here: it is
+ * [WorkspaceChoice.decide], Android-free and pinned by
+ * `app/src/test/kotlin/app/pi/runtime/WorkspaceChoiceCheck.kt`. This object owns
+ * the file IO (which name is in which document, is that a real directory) and the
+ * three name/label rules delegate to the same object, so the harness executes the
+ * rule that decides where the engine runs rather than a copy of it.
  *
  * ## One writer, and why it is this object
  *
@@ -81,20 +89,6 @@ object WorkspaceStore {
     /** The workspace an install that has never chosen one uses. */
     val DEFAULT_NAME: String = GuestWorkspacePath.DEFAULT_NAME
 
-    /**
-     * The directory names this app creates and is therefore allowed to delete.
-     *
-     * Deliberately a pattern and not "any child directory": `pi/workspaces` sits in
-     * app-private storage but a directory there can also be something a user pushed
-     * in over adb or that a future feature wrote. Deleting it because it happened to
-     * sit in our folder is not a risk this object takes. The digit run is bounded so
-     * the number survives `toInt()`.
-     */
-    private val OWNED: Regex = Regex("^workspace-([1-9][0-9]{0,5})$")
-
-    /** Labels are shown in a list row; long ones are a rendering problem, not data. */
-    private const val MAX_LABEL_CHARS = 40
-
     // ---------------------------------------------------------------- model
 
     /**
@@ -102,7 +96,8 @@ object WorkspaceStore {
      *
      * [name] is the directory name — the identity. [label] is the app-owned
      * display name and equals [name] until the user renames it; [displayName] is
-     * the single thing a row should print.
+     * the single thing a row should print, and it is [WorkspaceChoice.displayName]
+     * rather than a second copy of that rule.
      */
     data class Entry(
         val name: String,
@@ -113,22 +108,13 @@ object WorkspaceStore {
         val isCurrent: Boolean,
     ) {
         /** What a list row shows. */
-        val displayName: String get() = label.trim().ifEmpty { name }
+        val displayName: String get() = WorkspaceChoice.displayName(name, label)
     }
 
-    /**
-     * The answer to "which workspace is this process in", with the correction that
-     * was needed to get there.
-     *
-     * [requested] is what the settings file said (null when it said nothing), and
-     * [note] is non-null exactly when [name] is **not** what was asked for — the
-     * caller shows it rather than letting the switch look like it worked.
-     */
-    data class Resolution(
-        val name: String,
-        val requested: String?,
-        val note: String?,
-    )
+    // `Resolution` used to be declared here. It is [WorkspaceChoice.Current] now: the
+    // shape ("the name, what the settings asked for, and the sentence explaining a
+    // correction") is the *answer to the rule*, so it lives next to the rule instead of
+    // being restated by the object that only does the file IO.
 
     sealed interface Create {
         data class Ok(val entry: Entry) : Create
@@ -189,8 +175,8 @@ object WorkspaceStore {
     /** `pi/workspaces/<name>` — the spelling `GuestWorkspacePath` needs. */
     fun relativeOf(name: String): String = "$ROOT_RELATIVE/$name"
 
-    /** True for the directory names this app creates (see [OWNED]). */
-    fun isOwned(name: String): Boolean = OWNED.matches(name)
+    /** True for the directory names this app creates — [WorkspaceChoice.isOwned], the one rule. */
+    fun isOwned(name: String): Boolean = WorkspaceChoice.isOwned(name)
 
     /**
      * Which workspace the process should be in, and the correction needed to get
@@ -200,51 +186,26 @@ object WorkspaceStore {
      * not a fallback — it is the first launch, and every caller already creates
      * the directory it is about to use (`GuestWorkspacePath.ensureHost`).
      */
-    fun resolve(context: Context): Resolution {
+    fun resolve(context: Context): WorkspaceChoice.Current {
         val requested = runCatching { store(context).read(SETTING_KEY) }
             .getOrNull()
             ?.let { (it as? JsonPrimitive)?.content }
-            ?.trim()
-            ?.takeIf { it.isNotEmpty() }
-            ?: return Resolution(DEFAULT_NAME, null, null)
-
-        if (!isOwned(requested)) {
-            return Resolution(
-                name = DEFAULT_NAME,
-                requested = requested,
-                note = "设置里的当前工作区「$requested」不是本应用创建的工作区，已回到默认工作区「$DEFAULT_NAME」。",
+        // The rule is [WorkspaceChoice.decide]'s; this object supplies the two facts it
+        // refuses to guess at — whether that name is one of ours, and whether the
+        // directory behind it is a real directory. `look` is only reached for a name that
+        // passed `isOwned`, so `../..` never gets `stat`ed.
+        return WorkspaceChoice.decide(requested, DEFAULT_NAME) { name ->
+            val dir = File(root(context), name)
+            WorkspaceChoice.Look(
+                isDirectory = dir.isDirectory,
+                // A symlink is refused for the same reason it is refused a delete: the
+                // workspace is the device shell's write boundary and the engine's cwd,
+                // and both of those should describe a real directory this app owns
+                // rather than wherever a link happens to point. Only a link is refused —
+                // the default workspace is recreated on demand and never a link.
+                isSymlink = Files.isSymbolicLink(dir.toPath()),
             )
         }
-        val dir = File(root(context), requested)
-        // A symlink is refused for the same reason it is refused a delete: the
-        // workspace is the device shell's write boundary and the engine's cwd, and
-        // both of those should describe a real directory this app owns rather than
-        // wherever a link happens to point. Only a link is refused — the default
-        // workspace is recreated on demand and never a link.
-        if (Files.isSymbolicLink(dir.toPath())) {
-            return Resolution(
-                name = DEFAULT_NAME,
-                requested = requested,
-                note = if (requested == DEFAULT_NAME) {
-                    "默认工作区「$DEFAULT_NAME」是一个符号链接，不是一个真实目录；请把它换成真实目录。"
-                } else {
-                    "工作区「$requested」是一个符号链接，不是一个真实目录，已回到默认工作区「$DEFAULT_NAME」。"
-                },
-            )
-        }
-        if (!dir.isDirectory) {
-            if (requested == DEFAULT_NAME) {
-                // The default may simply not have been created yet; every launch
-                // path makes it on demand, so this is not a fallback.
-                return Resolution(DEFAULT_NAME, requested, null)
-            }
-            return Resolution(
-                name = DEFAULT_NAME,
-                requested = requested,
-                note = "工作区「$requested」的目录不存在（可能被外部删除了），已回到默认工作区「$DEFAULT_NAME」。",
-            )
-        }
-        return Resolution(requested, requested, null)
     }
 
     /**
@@ -255,10 +216,10 @@ object WorkspaceStore {
      * The write-back is what keeps a deleted workspace from producing the same
      * correction on every launch — and, more importantly, from leaving the stored
      * choice pointing at a directory nothing runs in. It is a correction of a
-     * broken value, not a silent change of the user's choice: [Resolution.note]
-     * carries the sentence the caller must show.
+     * broken value, not a silent change of the user's choice:
+     * [WorkspaceChoice.Current.note] carries the sentence the caller must show.
      */
-    fun refresh(context: Context): Resolution {
+    fun refresh(context: Context): WorkspaceChoice.Current {
         val resolved = resolve(context)
         GuestWorkspacePath.adoptRelative(relativeOf(resolved.name))
         if (resolved.note != null && resolved.requested != null) {
@@ -268,7 +229,7 @@ object WorkspaceStore {
     }
 
     /** [refresh] for a caller that also wants to know whether the fix was stored. */
-    fun reconcile(context: Context): Resolution = refresh(context)
+    fun reconcile(context: Context): WorkspaceChoice.Current = refresh(context)
 
     /** The current workspace's directory name, without publishing or writing. */
     fun currentName(context: Context): String = resolve(context).name
@@ -301,13 +262,13 @@ object WorkspaceStore {
             .filter { it.isDirectory && isOwned(it.name) }
             .filterNot { Files.isSymbolicLink(it.toPath()) }
             .map { entry(context, it.name, it, names[it.name], current) }
-            .sortedBy { OWNED.find(it.name)?.groupValues?.get(1)?.toIntOrNull() ?: Int.MAX_VALUE }
+            .sortedBy { WorkspaceChoice.number(it.name) ?: Int.MAX_VALUE }
             .toList()
         if (entries.none { it.name == DEFAULT_NAME }) {
             val dir = File(root, DEFAULT_NAME)
             dir.mkdirs()
             return (entries + entry(context, DEFAULT_NAME, dir, names[DEFAULT_NAME], current))
-                .sortedBy { OWNED.find(it.name)?.groupValues?.get(1)?.toIntOrNull() ?: Int.MAX_VALUE }
+                .sortedBy { WorkspaceChoice.number(it.name) ?: Int.MAX_VALUE }
         }
         return entries
     }
@@ -354,7 +315,7 @@ object WorkspaceStore {
         if (!isOwned(name) || !dir.isDirectory) {
             return Rename.Failed("工作区「$name」不存在或不是本应用创建的，无法重命名。")
         }
-        val cleaned = sanitizeLabel(label)
+        val cleaned = WorkspaceChoice.label(label)
             ?: return Rename.Failed("名称不能为空（也可以清空它，恢复为「$name」）。")
         val next = labels(context).toMutableMap()
         if (cleaned == name) next.remove(name) else next[name] = cleaned
@@ -493,17 +454,8 @@ object WorkspaceStore {
         isCurrent = name == current,
     )
 
-    private fun nextFreeName(root: File): String? {
-        val used = root.listFiles().orEmpty()
-            .mapNotNull { OWNED.find(it.name)?.groupValues?.get(1)?.toIntOrNull() }
-            .toHashSet()
-        return (1..999_999).firstOrNull { it !in used }?.let { "workspace-$it" }
-    }
-
-    private fun sanitizeLabel(raw: String): String? {
-        val cleaned = raw.filterNot { it.isISOControl() }.trim().take(MAX_LABEL_CHARS)
-        return cleaned.ifEmpty { null }
-    }
+    private fun nextFreeName(root: File): String? =
+        WorkspaceChoice.nextFreeName(root.listFiles().orEmpty().map { it.name })
 
     private fun tally(dir: File): Tally? = runCatching {
         val tally = Tally()

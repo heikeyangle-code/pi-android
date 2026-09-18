@@ -60,14 +60,25 @@ internal fun EditBlock(
                 ToolHeader(
                     item = item,
                     title = "edit",
-                    subject = path.ifEmpty { "文件" },
+                    // pi's `formatEditCall` (`renderers/edit.js:51-54`):
+                    //   `${fg("toolTitle", bold("edit"))} ${pathDisplay}`
+                    // with `pathDisplay = renderToolPath(...)` → `fg("accent", …)`
+                    // (`core/tools/render-utils.js:57-63`). `write` and `read` are the same shape.
+                    subject = listOf(toolPathPart(path, fallback = "文件")),
                     expanded = expanded,
                     expandable = failed,
                 )
                 if (expanded && failed) {
                     // pi's error branch (`renderers/edit.ts:97-106`): the result text, unless
                     // it is the preview's own error, which this app never has.
-                    Text(text = item.output, style = PiTheme.text.meta, color = palette.error)
+                    //
+                    // The machine face, because this is pi's **tool result** rendered inside the
+                    // tool card: rule #7 puts tool output in mono, and every other result body on
+                    // these cards already is (`ToolBodyText`'s `mono`, `BlockChrome.MonoText`).
+                    // It is deliberately not the `ErrorBlock`'s treatment — that block is a
+                    // standalone error surface and its message is a sentence
+                    // (`ProseText`), which stays as it is.
+                    Text(text = item.output, style = PiTheme.text.monoSmall, color = palette.error)
                 }
                 ToolFooter(
                     text = footer,
