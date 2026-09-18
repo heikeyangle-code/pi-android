@@ -306,6 +306,8 @@ fun ProjectScreen(
     var workspaceDelete by remember { mutableStateOf<WorkspaceStore.Preview.Ok?>(null) }
     /** 这一轮回合正跑着、用户选了别的工作区时，先问一次的那一格。 */
     var workspaceInterrupt by remember { mutableStateOf<WorkspaceStore.Entry?>(null) }
+    /** 「从设备目录选择」那一层（权限说明 + 真目录浏览器）。 */
+    var externalPicker by remember { mutableStateOf(false) }
 
     fun say(text: String, tone: StateTone = StateTone.Muted) {
         snack = WorkspaceSnack(text, tone)
@@ -486,6 +488,51 @@ fun ProjectScreen(
                 is WorkspaceSwitch.AlreadyCurrent -> say("已经在这个工作区里。")
                 is WorkspaceSwitch.Refused -> Unit
                 is WorkspaceSwitch.Failed -> Unit
+            }
+        }
+    }
+
+    /**
+     * 用户在设备目录浏览器里点了「就选这个目录」。
+     *
+     * 两件事，顺序固定：**先登记，再按已有的切换判定搬引擎**。
+     *
+     *  - 登记是宿主侧的一次设置写入（`app.workspace.external`，app 自己的 sidecar，**不进
+     *    pi 的 `settings.json`**）。它走的是 [WorkspaceStore] 而不是 ViewModel 的转发，因为
+     *    这个动作与引擎无关：登记一个目录不会动引擎、不会开会话；ViewModel 那边只有「切工作区」
+     *    必须由它做（要 `engineTransition`、要重开会话）。ViewModel 的 settings 缓存与这里读的
+     *    是同一个 `PiSettingsFileStore` 文档（按规范路径共享、`(size, mtime)` 变了就重读），
+     *    所以这里写下去的值最多 250 ms 后在那边也看得到。
+     *  - 搬引擎复用 [switchWorkspaceTo]，也就是**同一个** `decidePick`：正在跑的回合要先问过
+     *    用户（`workspaceInterrupt` 那一格），不会因为「刚从选择器里出来」就默认可以杀掉一轮。
+     *    用户绕了权限页和一层层目录才选中这个目录，所以登记完直接切过去是他说要的事；但杀回合
+     *    仍然是另一件事，仍然要问。
+     */
+    fun useExternalDirectory(path: String) {
+        scope.launch {
+            val app = context.applicationContext ?: context
+            when (val result = withContext(Dispatchers.IO) { WorkspaceStore.registerExternal(app, path) }) {
+                is WorkspaceStore.Create.Ok -> {
+                    val entry = result.entry
+                    say("已加入工作区 · ${entry.displayName}")
+                    refreshTick++
+                    when (
+                        WorkspaceChoice.decidePick(
+                            isCurrent = entry.isCurrent,
+                            turnRunning = session.wouldInterruptTurn(),
+                            available = entry.available,
+                        )
+                    ) {
+                        WorkspaceChoice.Pick.Unavailable ->
+                            say("「${entry.displayName}」现在读不到，已登记但没有切过去。", StateTone.Warning)
+
+                        WorkspaceChoice.Pick.AlreadyHere -> Unit
+                        WorkspaceChoice.Pick.ConfirmInterrupt -> workspaceInterrupt = entry
+                        WorkspaceChoice.Pick.Switch -> switchWorkspaceTo(entry)
+                    }
+                }
+
+                is WorkspaceStore.Create.Failed -> say(result.message, StateTone.Warning)
             }
         }
     }
@@ -980,7 +1027,20 @@ fun ProjectScreen(
                 // `WorkspaceChoice.decidePick` 里、由 harness 钉死，而不是这个 lambda 的
                 // `when` 顺序里：**先问是不是当前工作区**。理由在那一支的 KDoc 上（回合正跑着时
                 // 点当前那一行不该得到「会中断回合」）。
-                when (WorkspaceChoice.decidePick(entry.isCurrent, session.wouldInterruptTurn())) {
+                when (
+                    WorkspaceChoice.decidePick(
+                        isCurrent = entry.isCurrent,
+                        turnRunning = session.wouldInterruptTurn(),
+                        available = entry.available,
+                    )
+                ) {
+                    // 目录现在拿不到（SD 卡拔出 / 权限被撤销 / 被别的文件管理器删了）：说实话，
+                    // 不动引擎。这一支排在「当前工作区」之前，因为一个读不到的当前工作区会让
+                    // 「已经在这个工作区里」变成一句假话 —— 启动时的回退规则早就把引擎挪回默认
+                    // 工作区了。
+                    WorkspaceChoice.Pick.Unavailable ->
+                        say("「${entry.displayName}」现在读不到（可能是卡被拔出、正在卸载，或者权限被撤销了），没有切换。", StateTone.Warning)
+
                     WorkspaceChoice.Pick.AlreadyHere -> say("已经在这个工作区里。")
                     // 会中断一轮正在跑的回合：先问一次再切（`workspaceInterrupt` 那一格）。
                     WorkspaceChoice.Pick.ConfirmInterrupt -> workspaceInterrupt = entry
@@ -991,9 +1051,24 @@ fun ProjectScreen(
                 rootSheet = false
                 createNewWorkspace()
             },
+            onPickExternal = {
+                rootSheet = false
+                externalPicker = true
+            },
             onMenu = { entry ->
                 rootSheet = false
                 workspaceMenuFor = entry
+            },
+        )
+    }
+
+    // ---------------------------------------------- 浮层：从设备目录选择（真目录）
+    if (externalPicker) {
+        WorkspaceExternalPicker(
+            onClose = { externalPicker = false },
+            onPick = { path ->
+                externalPicker = false
+                useExternalDirectory(path)
             },
         )
     }
@@ -1033,19 +1108,29 @@ fun ProjectScreen(
             )
             // 路径一律等宽（规则 #7）：这是工作区在磁盘上的绝对路径，不是一句话。
             PiDialogBody(target.host.absolutePath, mono = true)
-            // 要展示的就是引擎数出来的那三个数：文件数 / 目录数 / 总字节。用户同意的是
-            // **这一次统计**，而 `confirmation` 是它唯一的凭据（`deleteWorkspace` 只收它）。
-            PiDialogBody(
-                "这个工作区里有 ${target.files} 个文件 / ${target.dirs} 个目录，" +
-                    "共 ${WorkspaceFiles.formatSize(target.bytes)}。" +
-                    "删除后永久消失，不进回收站，也恢复不了。",
-            )
+            if (target.removesFiles) {
+                // 要展示的就是引擎数出来的那三个数：文件数 / 目录数 / 总字节。用户同意的是
+                // **这一次统计**，而 `confirmation` 是它唯一的凭据（`deleteWorkspace` 只收它）。
+                PiDialogBody(
+                    "这个工作区里有 ${target.files} 个文件 / ${target.dirs} 个目录，" +
+                        "共 ${WorkspaceFiles.formatSize(target.bytes)}。" +
+                        "删除后永久消失，不进回收站，也恢复不了。",
+                )
+            } else {
+                // 外部工作区：**一个字都不许让用户以为文件会消失**。这不是「删除」，是取消登记
+                // （`WorkspaceStore.delete` 的外部那一条只改设置，从不碰磁盘）。
+                PiDialogBody(
+                    "这是设备上的目录，不是 App 建的：这一个动作只是把它从工作区列表里去掉，" +
+                        "**目录和里面的文件一个都不会动**。想切回来，重新「从设备目录选择」同一个目录就行。",
+                )
+            }
             PiDialogActions {
                 PiDialogAction(label = "取消", primary = false, onClick = { workspaceDelete = null })
                 PiDialogAction(
-                    label = "永久删除",
+                    // 按钮上的字必须与后果一致：外部工作区不删文件，就不该写着「永久删除」。
+                    label = if (target.removesFiles) "永久删除" else "取消登记",
                     primary = true,
-                    tone = PiTheme.palette.error,
+                    tone = if (target.removesFiles) PiTheme.palette.error else null,
                     onClick = {
                         workspaceDelete = null
                         deleteWorkspaceNow(preview)
@@ -2150,12 +2235,13 @@ private fun WorkspaceRootSheet(
     onClose: () -> Unit,
     onPick: (WorkspaceStore.Entry) -> Unit,
     onNew: () -> Unit,
+    onPickExternal: () -> Unit,
     onMenu: (WorkspaceStore.Entry) -> Unit,
 ) {
     WsSheet(
         title = "切换工作区",
         onClose = onClose,
-        subtitle = "工作区就是 pi 的现场目录；它就在 App 私有目录里。",
+        subtitle = "工作区就是 pi 的现场目录；App 私有目录里的、设备目录里的都算。",
         footer = "换工作区等于换一个现场：会新建一个 pi 会话，当前会话不会被删除。",
         maxBodyHeight = ROOT_SHEET_BODY_MAX,
     ) {
@@ -2181,7 +2267,7 @@ private fun WorkspaceRootSheet(
                     mono = !renamed,
                     strong = true,
                     lead = { FolderGlyph() },
-                    badge = if (renamed || item.isCurrent) {
+                    badge = if (renamed || item.isCurrent || item.external || !item.available) {
                         {
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
@@ -2191,6 +2277,13 @@ private fun WorkspaceRootSheet(
                                 // 目录路径上，而不是这个名字上。
                                 if (renamed) {
                                     WsBadge(text = "", tone = StateTone.Muted, mono = item.name)
+                                }
+                                // 外部工作区标出来：它的文件在设备上，删除只是取消登记。
+                                if (item.external) {
+                                    WsBadge(text = "设备", tone = StateTone.Muted)
+                                }
+                                if (!item.available) {
+                                    WsBadge(text = "读不到", tone = StateTone.Warning)
                                 }
                                 if (item.isCurrent) {
                                     WsBadge(text = "当前", tone = StateTone.Accent, glyph = "●")
@@ -2235,22 +2328,28 @@ private fun WorkspaceRootSheet(
                 onClick = onNew,
             )
             WsHairline()
-            // 「从设备目录选择」这一条**保持 UI、但明确不可用**：它要的是 SAF/「所有文件
-            // 访问」授权加另一条挂载通道，这一版没有。所以它没有 `onClick`（不可点）、
-            // 标题不画成 accent（不假装是一条能走的路），并在名字旁边挂一颗「未接」徽标；
-            // 稿子那一行是 accent + 点击弹一句提示，这是与稿子的第三处**有意偏离** ——
-            // 弹一句「还没接上」比一行灰着的徽标更像一条能走的路。
+            // 「从设备目录选择」：把设备上一个**真目录**登记成工作区。
+            //
+            // 它要的是「所有文件访问」（`MANAGE_EXTERNAL_STORAGE`），**不是** SAF：工作区必须是
+            // 真实文件路径 —— 引擎把它 bind 进 guest 并当 cwd（`PiEngineHost.kt:407`、`:451`），
+            // 而文档选择器给的是内容 URI，绑不了。这一句在说明页里也印（`WorkspaceExternalIntro`），
+            // 免得用户以为随便给个授权就够了。
+            //
+            // 这条行没有「未接」徽标了：它现在是一条真能走的路。有没有权限是**点下去之后**才知道
+            // 的事（`WorkspaceExternalPicker` 自己判定并给出说明），所以这里不预判 —— 一行灰着的
+            // 徽标会让有权限的用户以为它还没做。
             WsRow(
                 title = "从设备目录选择（需授权）",
                 strong = true,
-                titleColor = PiTheme.palette.muted,
+                titleColor = PiTheme.palette.accent,
                 lead = { FolderGlyph() },
-                badge = { WsBadge(text = "未接", tone = StateTone.Muted) },
-                meta = "需要「所有文件访问」权限；只有从设备目录里选工作区时才需要。",
+                meta = "选一个设备上的目录当工作区：文件留在原处，只有 .pi 项目资源会从那里读。",
+                onClick = onPickExternal,
             )
         }
         Text(
-            "新建的工作区落在 App 私有目录里，不需要授权；只有「从设备目录选择」那一条要系统权限。",
+            "新建的工作区落在 App 私有目录里，不需要授权；「从设备目录选择」那一条要「所有文件访问」，" +
+                "选中的目录不会被复制也不会被移动 —— 取消登记只是不再列在这里，文件一直留在设备上。",
             modifier = Modifier.padding(
                 start = PiSettingsMetrics.pageHorizontal,
                 end = PiSettingsMetrics.pageHorizontal,

@@ -48,11 +48,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.pi.runtime.GuestWorkspacePath
+import app.pi.runtime.WorkspaceChoice
+import app.pi.runtime.WorkspaceStore
 import app.pi.session.PiSessionStore
 import app.pi.ui.PiSeg
 import app.pi.ui.PiSessionViewModel
@@ -169,6 +172,16 @@ fun SessionsScreen(
     // it is a guest path — the file name is the part that matches the on-disk
     // index.
     val activeFile = state.meta.sessionFile?.substringAfterLast('/')
+
+    // 工作区组标题要用的名字：目录名 → label，取自 `WorkspaceStore`（和工作区页的切换面板同一
+    // 份读数）。一次设置文件读取 + 每个 label 一次目录判断，所以按组合算一次、不在每一行每一帧
+    // 里算。键是 `sessions`：每次列表刷新就会重读（改名之后回到这一屏必然拿到新名字 —— 这一屏
+    // 是覆盖层，关掉就整个卸载，改名只能在它关着的时候发生）。
+    val context = LocalContext.current
+    val workspaceLabels = remember(sessions) { WorkspaceStore.labels(context) }
+    // 本应用所有工作区的 guest 根（`/workspace/pi/workspaces`）。由 `GuestWorkspacePath` 的两个
+    // 常量拼出来，而不是猜一个字符串 —— 同一个对象也给出单个工作区的拼法。
+    val workspacesRoot = GuestWorkspacePath.GUEST_ROOT + "/" + GuestWorkspacePath.ROOT_RELATIVE
 
     val visible = remember(sessions, query, byName, namedOnly) {
         sessions
@@ -401,7 +414,9 @@ fun SessionsScreen(
                         contentPadding = PaddingValues(bottom = SESSIONS_LIST_BOTTOM),
                     ) {
                         groups.forEach { (cwd, rows) ->
-                            item(key = "hdr:$cwd") { GroupHeading(groupLabel(cwd), rows.size) }
+                            item(key = "hdr:$cwd") {
+                                GroupHeading(groupLabel(cwd, workspacesRoot, workspaceLabels), rows.size)
+                            }
                             // 组内的行共用一张**卡片**（v2 的 `Card`：`surf-low` 底、圆角
                             // 10、`margin:0 14px`，行之间才有分隔线，且那条线在卡内再缩进
                             // 14）。旧实现是每行一条通栏横线、没有卡，一屏看下来就是一片
@@ -412,6 +427,9 @@ fun SessionsScreen(
                                     active = activeFile != null && summary.file.name == activeFile,
                                     first = index == 0,
                                     last = index == rows.lastIndex,
+                                    // 第二行的第一个字段是这一组的工作区名，与标题同一个算法
+                                    // （同一个 cwd，所以必须印同一个名字）。
+                                    workspaceLabel = groupLabel(cwd, workspacesRoot, workspaceLabels),
                                     onOpen = {
                                         session.switchSession(summary)
                                         onOpenChat()
@@ -762,6 +780,7 @@ private fun SessionRow(
     active: Boolean,
     first: Boolean,
     last: Boolean,
+    workspaceLabel: String,
     onOpen: () -> Unit,
     onLongPress: () -> Unit,
 ) {
@@ -824,7 +843,7 @@ private fun SessionRow(
             ) {
                 Text(
                     buildString {
-                        append(groupLabel(summary.cwd))
+                        append(workspaceLabel)
                         summary.model?.let { append(" · ").append(it) }
                     },
                     modifier = Modifier.weight(1f),
@@ -889,28 +908,23 @@ private fun CurrentBadge() {
 }
 
 /**
- * The heading a group of sessions is listed under, given the working directory pi
- * recorded in each session's header.
+ * 一组会话的标题（以及行内第二行的第一个字段），给定 pi 记在会话头里的工作目录。
  *
- * The raw value is a **guest** path (`/workspace/pi/workspaces/workspace-1` for this
- * app's own workspace, `/root` for a session started by typing `pi` in the terminal —
- * see `PiSessionStore`), and printing it was both wrong for a person to read and the
- * only place in this app that showed an internal directory. So the app's own
- * workspace is named, and anything else is shown as its last segment: two projects
- * with the same folder name look alike in the heading, which is a smaller problem
- * than a path nobody can act on.
+ * 规则本身不在这里：它是 `WorkspaceChoice.sessionGroupLabel` 的 **一个** 实现，与工作区页的
+ * ① 卡、切换面板、行内第二行共用同一套名字。这个函数只是把这一屏手上的三个输入递给它。
  *
- * `ProjectResources.kt` carries the same rule for the project screen; the two copies
- * exist because the screens are owned by different batches and a shared helper would
- * couple them.
+ * 为什么这件事必须做（而不是好看）：这个标题原来把**当前**工作区那一组印成通用词「工作区」、
+ * 其余组印目录名，于是同一个工作区在会话页叫「工作区」、在工作区页叫「我的项目」；而这里以前
+ * 的注释承认它是 `ProjectResources.workspaceName` 的第二份拷贝（「两个屏幕属于不同批次」）。
+ * 现在**所有**工作区组都用工作区页那套名字。
+ *
+ * 原始值是一个 **guest** 路径（本应用的工作区是 `/workspace/pi/workspaces/workspace-1`，终端里
+ * 自己起的 pi 是 `/root`，见 `PiSessionStore`），直接印既没人能读，也是全应用唯一会露出内部
+ * 目录的地方。不是本应用工作区的 cwd 仍取末段：两个同名目录在标题里看起来一样，这比一条谁也
+ * 用不上的路径问题小。
  */
-private fun groupLabel(path: String): String {
-    val clean = path.trimEnd('/')
-    if (clean.isEmpty()) return "工作目录未记录"
-    val workspacePrefix = GuestWorkspacePath.GUEST_ROOT + "/" + GuestWorkspacePath.RELATIVE
-    if (clean == workspacePrefix) return "工作区"
-    return clean.substringAfterLast('/').ifEmpty { clean }
-}
+private fun groupLabel(path: String, workspacesRoot: String, labels: Map<String, String>): String =
+    WorkspaceChoice.sessionGroupLabel(path, workspacesRoot, labels)
 
 /**
  * Coarse on purpose: a precise timestamp on every row is noise, and the list is

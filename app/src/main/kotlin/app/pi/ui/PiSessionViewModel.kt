@@ -1819,6 +1819,27 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         // pre-write values. See [invalidateSettingsCache].
         invalidateSettingsCache()
         _state.value = _state.value.copy(boot = Boot.Ready)
+        // The queue counters describe **this engine process's** queues, and the engine in
+        // hand is brand new, so its queues are empty. pi sends `queue_update` only when
+        // the queue changes (`agent-session.ts:592-597`, `:650-656`), so a fresh process
+        // never re-states the empty queue — and the counters would keep saying 「排队中 N」
+        // about messages no pi process is holding. Reachable by: queue a message while a
+        // turn runs, switch workspace (the switch kills that turn), land in the new one.
+        //
+        // Why this does **not** duplicate [afterSessionReplaced]'s copy of the same reset,
+        // and cannot conflict with it: the two answer different facts. That one is 「the
+        // engine's session was replaced」 — the five RPC commands (`newSession` /
+        // `switchSession` / `importSession` / fork / clone): same process, new session
+        // file, and pi re-binds the queues without the app hearing about it. This one is
+        // 「the engine is a different process」 — workspace switch, restart, rollback, cold
+        // boot — where the queue cannot survive by construction. The two sets of events are
+        // disjoint (no caller of [afterSessionReplaced] restarts the engine, and [attach] is
+        // never reached by a session-only switch), and even if a future path triggered both,
+        // this is an idempotent write of the same value. Dropping either one re-opens its own
+        // leak; the session half's argument is on the [UiState.queueSteering] note there.
+        if (_state.value.queueSteering != 0 || _state.value.queueFollowUp != 0) {
+            _state.value = _state.value.copy(queueSteering = 0, queueFollowUp = 0)
+        }
         // Anything typed before this engine attached is deliverable now: replay it in
         // order ([pendingPrompts]). The list is copied and cleared **before** the
         // closures run, so a replay that re-reaches `send` cannot append to the list

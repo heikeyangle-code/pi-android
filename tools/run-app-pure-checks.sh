@@ -700,6 +700,29 @@ run_harness pi-files \
   "$ROOT/app/src/main/kotlin/app/pi/settings/PiFiles.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/packages/PiJsonComments.kt"
 
+# app.pi.ui.screens: the workspace tree's pi-file write rule. A save under the workspace's own
+# `.pi/` is a write to a file pi reads, and it used to be a whole-file overwrite — a second
+# writer next to the 「Pi 文件」screen's locked, atomic, validated one. This pins which save
+# takes which path, that the validation is `checkPiFileWrite` (the same function the other
+# screen runs), and the stale-stamp refusal.
+run_harness workspace-pi-write \
+  app.pi.ui.screens.WorkspacePiWriteCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/ui/screens/WorkspacePiWriteCheck.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/ui/screens/WorkspacePiWrite.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/settings/PiFiles.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/packages/PiJsonComments.kt"
+
+# app.pi.runtime: the workspace lifecycle's own rules, lifted out of the screen and the store
+# so they can be pinned — which of the app's directories count as workspaces, how a workspace
+# is named and displayed, which workspace the process actually starts in, and what clicking a
+# row does (the order of those branches is part of the answer). Every one of these used to be
+# a private rule inside `ProjectScreen` or `WorkspaceStore`, and two screens disagreed about
+# the current workspace's name; this is the single copy both now call.
+run_harness workspace-choice \
+  app.pi.runtime.WorkspaceChoiceCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/runtime/WorkspaceChoiceCheck.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/runtime/WorkspaceChoice.kt"
+
 # app.pi.ui.extension: the notice queue's eviction rule. The host shows one snackbar at a
 # time, oldest first, and consumes an entry only after it has been shown — so the head of
 # the list is the message on screen. `takeLast` used to evict it, deleting the sentence the

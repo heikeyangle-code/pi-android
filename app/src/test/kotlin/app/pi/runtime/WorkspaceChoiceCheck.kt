@@ -50,6 +50,9 @@ fun main() {
     nextFreeChecks()
     labelChecks()
     displayNameChecks()
+    sessionGroupChecks()
+    externalChecks()
+    deviceDirectoryChecks()
     decideChecks()
     lookOnlyForOursChecks()
     pickChecks()
@@ -177,7 +180,167 @@ private fun displayNameChecks() {
     check("the name is never blank when the label is", WorkspaceChoice.displayName("workspace-1", " "), "workspace-1")
 }
 
+/**
+ * 会话列表那一组的标题。这一组钉的是**跨屏一致**这件事 —— 同一个工作区在会话页、工作区页的
+ * ① 卡、切换面板三处必须是同一个名字。
+ *
+ * 改之前：当前工作区那一组印 `工作区`（通用词），其余组印目录名，而工作区页印的是 label。
+ * 于是「我的项目」在会话页叫「工作区」，在同一时刻的另两处叫「我的项目」。
+ */
+private fun sessionGroupChecks() {
+    val root = "/workspace/pi/workspaces"
+    val labels = mapOf("workspace-2" to "我的项目")
+    fun at(cwd: String, labelMap: Map<String, String> = labels, rootPath: String = root) =
+        WorkspaceChoice.sessionGroupLabel(cwd, rootPath, labelMap)
+
+    // 正好是一个自己的工作区：与工作区页同一套名字（label 优先）。
+    check("a workspace with a label is headed by it", at("$root/workspace-2"), "我的项目")
+    check(
+        "a workspace without a label is headed by its directory name",
+        at("$root/workspace-1"),
+        "workspace-1",
+    )
+    check("a trailing slash does not change the answer", at("$root/workspace-2/"), "我的项目")
+    check("the head and the row's second line agree by construction", at("$root/workspace-1"), at("$root/workspace-1"))
+
+    // **恰好一层**才算工作区：更深一层是终端里 `cd` 进去起过的 pi，是另一个目录。
+    check("one level deeper is not the workspace", at("$root/workspace-2/src"), "src")
+    check("and it is not labelled with the workspace's label", at("$root/workspace-2/src") == "我的项目", false)
+    check(
+        "a second level still shows the last segment",
+        at("$root/workspace-2/a/b"),
+        "b",
+    )
+
+    // 不是我们的目录：照旧取末段。
+    check("a foreign directory under the root keeps its own name", at("$root/projects"), "projects")
+    check("the root itself is not a workspace", at(root), "workspaces")
+    check("a terminal session's cwd is its last segment", at("/root"), "root")
+    check("a path that merely starts with the root's text is not under it", at("${root}Extra"), "workspacesExtra")
+    check("an unrelated project keeps its own name", at("/data/projects/pi-android"), "pi-android")
+    check("an empty cwd says so instead of printing nothing", at(""), "工作目录未记录")
+    // `/` 是**记下来了**的 cwd（在 guest 根上起的 pi），所以不能印成「未记录」——那句话是关于
+    // pi 的文件的一个事实，印错就是本应用在编。改这一条是有意偏离改前的行为（改前它走
+    // `trimEnd('/')` 之后变成空串，于是也印「未记录」）。
+    check("a cwd of the guest root is the root, not a missing record", at("/"), "/")
+    check("and an all-slash spelling is the same root", at("///"), "/")
+
+    // label 表的缺项不是错误：那个工作区只是没改过名。
+    check("a missing label falls back to the directory name", at("$root/workspace-7", emptyMap()), "workspace-7")
+
+    // 与 `displayName` 的同一条不变量：永远不印空。
+    check(
+        "the heading is never blank for a workspace",
+        at("$root/workspace-2", mapOf("workspace-2" to "   ")),
+        "workspace-2",
+    )
+
+    // 一个反例：`workspace-01` 不是本应用的名字（`isOwned` 的前导零规则），所以它只能取末段
+    // ——即便它看起来像工作区编号。这条把「标题」与「身份」绑在同一份判据上。
+    check("a leading-zero directory is not a workspace, even under the root", at("$root/workspace-01"), "workspace-01")
+}
+
+// ------------------------------------------------------------ 外部工作区 ----
+
+/**
+ * 「这个工作区目录在不在 App 的私有目录里」。
+ *
+ * 判据错了的代价不对称：把外部目录判成内部，`delete` 就会递归删掉用户设备上的目录
+ * （`WorkspaceChoice.deleteRemovesFiles` 是同一个判据的第二个使用者）。
+ */
+private fun externalChecks() {
+    val filesRoot = "/data/user/0/app.pi/files"
+    check("an app-owned workspace is not external", WorkspaceChoice.isExternal("$filesRoot/pi/workspaces/workspace-1", filesRoot), false)
+    check("the files root itself is not external", WorkspaceChoice.isExternal(filesRoot, filesRoot), false)
+    check("a trailing slash does not change it", WorkspaceChoice.isExternal("$filesRoot/", filesRoot), false)
+    check("shared storage is external", WorkspaceChoice.isExternal("/storage/emulated/0/Foo", filesRoot), true)
+    check("a removable volume is external", WorkspaceChoice.isExternal("/storage/1AB2-3C4D/Foo", filesRoot), true)
+    check("the terminal's /root is external", WorkspaceChoice.isExternal("/root", filesRoot), true)
+    // 前缀必须落在目录分隔符上：`files-extra` 与 `files` 是两个目录。
+    check("a sibling with the root's prefix is external", WorkspaceChoice.isExternal("$filesRoot-extra/x", filesRoot), true)
+    check("an empty path is not answered as external", WorkspaceChoice.isExternal("", filesRoot), false)
+
+    check(
+        "an external guest spelling goes through the same rule",
+        WorkspaceChoice.guestPathOf("/storage/emulated/0/Foo", filesRoot),
+        "/workspace/storage/emulated/0/Foo",
+    )
+    check(
+        "an app-owned guest spelling is unchanged",
+        WorkspaceChoice.guestPathOf("$filesRoot/pi/workspaces/workspace-1", filesRoot),
+        "/workspace/pi/workspaces/workspace-1",
+    )
+    check(
+        "the workspace maps to /workspace itself when it *is* the files root",
+        WorkspaceChoice.guestPathOf(filesRoot, filesRoot),
+        "/workspace",
+    )
+}
+
+/**
+ * 设备目录选择器的纯规则：能选哪些卷根、什么不能选、删的时候会不会动文件。
+ *
+ * 三组断言，各自对应一次会在设备上造成损失的错误：把系统目录当工作区、把「没权限/卡不在」
+ * 画成「空目录」、以及把「取消登记」实现成 `rm -rf`。
+ */
+private fun deviceDirectoryChecks() {
+    val primary = "/storage/emulated/0"
+    val sd = "/storage/1AB2-3C4D"
+    val volumes = WorkspaceChoice.volumeRoots(primary, listOf(sd))
+
+    check("the primary volume comes first", volumes.first(), primary)
+    check("a removable volume is offered", volumes.contains(sd), true)
+    check("the order is primary then removable", volumes, listOf(primary, sd))
+    check("a duplicate root is offered once", WorkspaceChoice.volumeRoots(primary, listOf(primary, sd)), listOf(primary, sd))
+    check("a blank root is dropped", WorkspaceChoice.volumeRoots(null, listOf("", "  ")), emptyList<String>())
+    check("a trailing slash is normalised away", WorkspaceChoice.volumeRoots("$primary/", listOf("$sd/")), listOf(primary, sd))
+    check(
+        "no volume at all is an empty list, not a crash",
+        WorkspaceChoice.volumeRoots(null, emptyList()),
+        emptyList<String>(),
+    )
+
+    // 允许选：卷根本身与它下面的目录。
+    check("the volume root is selectable", WorkspaceChoice.pickRefusal(primary, volumes, readable = true), null)
+    check("a directory under it is selectable", WorkspaceChoice.pickRefusal("$primary/Foo/Bar", volumes, readable = true), null)
+    check("a directory on the card is selectable", WorkspaceChoice.pickRefusal("$sd/Foo", volumes, readable = true), null)
+    check("a trailing slash is tolerated", WorkspaceChoice.pickRefusal("$primary/Foo/", volumes, readable = true), null)
+
+    // 拒绝，而且每一句都说得出为什么。
+    listOf("/", "/system", "/data", "/proc", "/sys", "/dev", "/apex", "/storage", "/root").forEach { bad ->
+        val reason = WorkspaceChoice.pickRefusal(bad, volumes, readable = true)
+        check("「$bad」is refused", reason != null, true)
+        check("and the reason names it", reason?.contains(bad) == true, true)
+    }
+    // 前缀相似但不是系统目录的：走「必须在卷里」那一档，理由不同但同样拒绝。
+    check("a path outside every volume is refused", WorkspaceChoice.pickRefusal("/opt/pi", volumes, readable = true) != null, true)
+    check("a relative path is refused", WorkspaceChoice.pickRefusal("relative/dir", volumes, readable = true) != null, true)
+    check("an empty path is refused", WorkspaceChoice.pickRefusal("", volumes, readable = true) != null, true)
+    check(
+        "the refusal for an unlisted path names the volumes it would accept",
+        WorkspaceChoice.pickRefusal("/opt/pi", volumes, readable = true)?.contains(sd),
+        true,
+    )
+    check(
+        "an unreadable directory is refused for that reason",
+        WorkspaceChoice.pickRefusal("$primary/Foo", volumes, readable = false),
+        "这个目录现在读不到（可能是存储卡被拔出、正在卸载，或者没有权限），先换一个。",
+    )
+    check(
+        "no volume at all still refuses with a sentence",
+        WorkspaceChoice.pickRefusal("/x", emptyList(), readable = true) != null,
+        true,
+    )
+
+    // 删除语义：只有本应用建的名字才删文件。
+    check("an app-owned workspace is deleted with its files", WorkspaceChoice.deleteRemovesFiles("workspace-1"), true)
+    check("an external path is never deleted", WorkspaceChoice.deleteRemovesFiles("/storage/emulated/0/Foo"), false)
+    check("a card root is never deleted", WorkspaceChoice.deleteRemovesFiles("/storage/1AB2-3C4D"), false)
+    check("a path that looks like one of ours is still external", WorkspaceChoice.deleteRemovesFiles("/tmp/workspace-1"), false)
+}
+
 // ------------------------------------------------------------ 当前工作区 ----
+
 
 private val DEFAULT = "workspace-1"
 
@@ -250,6 +413,21 @@ private fun decideChecks() {
 
     // ⑤ 正常路径：就是它，没有话要说。
     val ok = WorkspaceChoice.decide("workspace-3", DEFAULT) { REAL }
+    // 已登记的外部目录走同一条正常路径。**没有这一条**，用户切到设备目录之后重启一次就会被
+    // 「不是本应用创建的工作区」踢回默认工作区，而那句解释还是错的（那个目录是他自己选的）。
+    val externalPath = "/storage/emulated/0/Foo"
+    val external = WorkspaceChoice.decide(externalPath, DEFAULT, externals = setOf(externalPath)) { REAL }
+    check("a registered device directory is adopted", external.name, externalPath)
+    check("and it explains nothing", external.note, null)
+    val unregistered = WorkspaceChoice.decide(externalPath, DEFAULT) { REAL }
+    check("the same path without a registration falls back", unregistered.name, DEFAULT)
+    check("and says which value it refused", unregistered.requested, externalPath)
+    check(
+        "a registered path still needs its directory",
+        WorkspaceChoice.decide(externalPath, DEFAULT, externals = setOf(externalPath)) { GONE }.name,
+        DEFAULT,
+    )
+
     check("a usable choice is adopted", ok.name, "workspace-3")
     check("a usable choice keeps the asked-for name", ok.requested, "workspace-3")
     check("a usable choice explains nothing", ok.note, null)
@@ -281,7 +459,7 @@ private fun decideChecks() {
     var noteWithoutAChoice = 0
     var quietAdoptionDisagrees = 0
     for ((requested, look) in cases) {
-        val answer = WorkspaceChoice.decide(requested, DEFAULT, look)
+        val answer = WorkspaceChoice.decide(requested, DEFAULT, look = look)
         val present = requested?.trim()?.takeIf { it.isNotEmpty() }
         if (answer.note != null && answer.name != DEFAULT) noteNotOnDefault++
         if (present == null && answer.note != null) noteWithoutAChoice++
@@ -304,19 +482,19 @@ private fun lookOnlyForOursChecks() {
     var calls = 0
     val counting: (String) -> WorkspaceChoice.Look = { calls++; REAL }
 
-    WorkspaceChoice.decide(null, DEFAULT, counting)
+    WorkspaceChoice.decide(null, DEFAULT, look = counting)
     check("no stored choice probes nothing", calls, 0)
 
-    WorkspaceChoice.decide("  ", DEFAULT, counting)
+    WorkspaceChoice.decide("  ", DEFAULT, look = counting)
     check("a blank stored choice probes nothing", calls, 0)
 
-    check("a foreign name still answers", WorkspaceChoice.decide("projects", DEFAULT, counting).name, DEFAULT)
+    check("a foreign name still answers", WorkspaceChoice.decide("projects", DEFAULT, look = counting).name, DEFAULT)
     check("a foreign name is not probed", calls, 0)
 
-    check("a path is not probed", WorkspaceChoice.decide("../..", DEFAULT, counting).name, DEFAULT)
+    check("a path is not probed", WorkspaceChoice.decide("../..", DEFAULT, look = counting).name, DEFAULT)
     check("a path left the probe count alone", calls, 0)
 
-    WorkspaceChoice.decide("workspace-2", DEFAULT, counting)
+    WorkspaceChoice.decide("workspace-2", DEFAULT, look = counting)
     check("a name of ours is probed once", calls, 1)
 }
 
@@ -348,6 +526,23 @@ private fun pickChecks() {
         "another row while a turn runs: ask first",
         WorkspaceChoice.decidePick(isCurrent = false, turnRunning = true),
         WorkspaceChoice.Pick.ConfirmInterrupt,
+    )
+    // 读不到那一行优先于其他三支：一个读不到的**当前**工作区如果先判 `isCurrent`，用户会得到
+    // 「已经在这个工作区里」，而引擎其实早就按回退规则跑在默认工作区了。
+    check(
+        "a row whose directory is gone is unavailable, not current",
+        WorkspaceChoice.decidePick(isCurrent = true, turnRunning = false, available = false),
+        WorkspaceChoice.Pick.Unavailable,
+    )
+    check(
+        "a missing directory beats the interrupt question too",
+        WorkspaceChoice.decidePick(isCurrent = false, turnRunning = true, available = false),
+        WorkspaceChoice.Pick.Unavailable,
+    )
+    check(
+        "an available row is unaffected",
+        WorkspaceChoice.decidePick(isCurrent = false, turnRunning = false, available = true),
+        WorkspaceChoice.Pick.Switch,
     )
 
     // 顺序本身：只要有回合在跑，唯一能返回 AlreadyHere 的输入就是「点的就是当前工作区」。

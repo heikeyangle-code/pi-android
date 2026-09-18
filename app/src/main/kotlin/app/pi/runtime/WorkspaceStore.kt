@@ -2,6 +2,7 @@ package app.pi.runtime
 
 import android.content.Context
 import app.pi.settings.PiSettingsFileStore
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -83,6 +84,23 @@ object WorkspaceStore {
      */
     const val NAMES_KEY: String = "app.workspace.names"
 
+    /**
+     * The workspaces that are **real device directories** the user picked, as a JSON
+     * array of absolute host paths. App-owned, sidecar-only, for the same reason as
+     * [SETTING_KEY].
+     *
+     * A path is the entry's **identity** here, exactly as a `workspace-N` directory
+     * name is for an internal one, and for the same reason: pi records the cwd in
+     * every session header and keys the project's trust entry by it. The label lives
+     * in [NAMES_KEY] under that path, so a rename still cannot move anything.
+     *
+     * Why an array of paths and not a JSON object of records: the only field a record
+     * would carry *besides* the path is the label, and the label already has a home
+     * that both kinds of workspace share. Two homes for a label is how the two would
+     * come apart.
+     */
+    const val EXTERNAL_KEY: String = "app.workspace.external"
+
     /** `<files>/pi/workspaces`, from the one object that owns the layout. */
     const val ROOT_RELATIVE: String = GuestWorkspacePath.ROOT_RELATIVE
 
@@ -94,10 +112,22 @@ object WorkspaceStore {
     /**
      * One workspace, as a screen needs it: name, path, and whether it is current.
      *
-     * [name] is the directory name — the identity. [label] is the app-owned
-     * display name and equals [name] until the user renames it; [displayName] is
-     * the single thing a row should print, and it is [WorkspaceChoice.displayName]
-     * rather than a second copy of that rule.
+     * [name] is the identity — the directory name for an app-owned workspace
+     * (`workspace-N`), the **absolute host path** for an external one ([external]).
+     * [label] is the app-owned display name and equals [name] until the user renames
+     * it; [displayName] is the single thing a row should print, and it is
+     * [WorkspaceChoice.displayName] rather than a second copy of that rule.
+     *
+     * [external] is not a cosmetic flag: it is what decides whether [delete] may
+     * remove the directory ([WorkspaceChoice.deleteRemovesFiles]) and whether
+     * [currentHost] is allowed to `mkdirs()` it. An external workspace is the user's
+     * own directory on shared storage; this app must never create or delete anything
+     * there it was not asked to.
+     *
+     * [available] is false when the directory cannot be stat'ed right now (an SD card
+     * that is out, a permission that was revoked, a directory the user deleted from a
+     * file manager). Such an entry is still **listed** — the registration is not lost
+     * and the row says so — but it cannot be switched to.
      */
     data class Entry(
         val name: String,
@@ -106,6 +136,8 @@ object WorkspaceStore {
         val relative: String,
         val guestPath: String,
         val isCurrent: Boolean,
+        val external: Boolean = false,
+        val available: Boolean = true,
     ) {
         /** What a list row shows. */
         val displayName: String get() = WorkspaceChoice.displayName(name, label)
@@ -129,7 +161,15 @@ object WorkspaceStore {
         data class Failed(val message: String) : Rename
     }
 
-    /** What a delete would remove, measured before anything is removed. */
+    /**
+     * What a delete would remove, measured before anything is removed.
+     *
+     * [removesFiles] is the load-bearing field for an external workspace: false means
+     * the operation is **unregistering** the directory, and the confirmation must say
+     * so in words. When it is false [files]/[dirs]/[bytes] are all zero because
+     * nothing was counted — printing "0 个文件" for a directory full of holiday
+     * photos would be this app stating a fact it never measured.
+     */
     data class DeleteTarget(
         val name: String,
         val label: String,
@@ -137,6 +177,8 @@ object WorkspaceStore {
         val files: Int,
         val dirs: Int,
         val bytes: Long,
+        val removesFiles: Boolean = true,
+        val external: Boolean = false,
     )
 
     /**
@@ -190,12 +232,14 @@ object WorkspaceStore {
         val requested = runCatching { store(context).read(SETTING_KEY) }
             .getOrNull()
             ?.let { (it as? JsonPrimitive)?.content }
-        // The rule is [WorkspaceChoice.decide]'s; this object supplies the two facts it
-        // refuses to guess at — whether that name is one of ours, and whether the
-        // directory behind it is a real directory. `look` is only reached for a name that
-        // passed `isOwned`, so `../..` never gets `stat`ed.
-        return WorkspaceChoice.decide(requested, DEFAULT_NAME) { name ->
-            val dir = File(root(context), name)
+        // The rule is [WorkspaceChoice.decide]'s; this object supplies the facts it refuses
+        // to guess at — whether that name is one of ours (an app-owned `workspace-N` or a
+        // registered external path), and whether the directory behind it is a real
+        // directory. `look` is only reached for a name in that set, so `../..` never gets
+        // `stat`ed.
+        val known = externals(context)
+        return WorkspaceChoice.decide(requested, DEFAULT_NAME, externals = known) { name ->
+            val dir = if (isOwned(name)) File(root(context), name) else File(name)
             WorkspaceChoice.Look(
                 isDirectory = dir.isDirectory,
                 // A symlink is refused for the same reason it is refused a delete: the
@@ -221,7 +265,7 @@ object WorkspaceStore {
      */
     fun refresh(context: Context): WorkspaceChoice.Current {
         val resolved = resolve(context)
-        GuestWorkspacePath.adoptRelative(relativeOf(resolved.name))
+        GuestWorkspacePath.adoptRelative(if (isOwned(resolved.name)) relativeOf(resolved.name) else resolved.name)
         if (resolved.note != null && resolved.requested != null) {
             writeCurrent(context, resolved.name)
         }
@@ -234,23 +278,52 @@ object WorkspaceStore {
     /** The current workspace's directory name, without publishing or writing. */
     fun currentName(context: Context): String = resolve(context).name
 
-    /** The current workspace's host directory, created if missing. */
-    fun currentHost(context: Context): File =
-        GuestWorkspacePath.ensureHost(context.filesDir, relativeOf(refresh(context).name))
+    /**
+     * The current workspace's host directory, created if missing.
+     *
+     * **Only an app-owned workspace is created.** `workspace-N` lives in app-private
+     * storage and every launch path needs it to exist before a bind (`GuestWorkspacePath`
+     * explains why); an external workspace is the user's own directory on shared
+     * storage, and a `mkdirs()` there would create a directory on their device because
+     * a settings value happened to name it. If the external directory is gone, [refresh]
+     * has already fallen back to the default with a sentence — this accessor never
+     * invents it.
+     */
+    fun currentHost(context: Context): File {
+        val current = refresh(context).name
+        if (!isOwned(current)) return File(current)
+        return GuestWorkspacePath.ensureHost(context.filesDir, relativeOf(current))
+    }
 
-    /** The entry for [name], or null when it is not one of ours or its directory is gone. */
+    /**
+     * The entry for [name], or null when it is neither ours nor registered, or its
+     * directory is gone.
+     *
+     * "Gone" includes an external workspace whose directory cannot be stat'ed right
+     * now, because every caller of this uses it to decide whether the engine may be
+     * moved there — and an engine cannot run in a directory that is not there.
+     * [list] is the accessor that still *shows* such an entry (see [Entry.available]).
+     */
     fun existing(context: Context, name: String): Entry? {
-        if (!isOwned(name)) return null
-        val dir = File(root(context), name)
+        if (!isOwned(name) && !externals(context).contains(name)) return null
+        val dir = if (isOwned(name)) File(root(context), name) else File(name)
         if (!dir.isDirectory || Files.isSymbolicLink(dir.toPath())) return null
         return entry(context, name, dir)
     }
 
     /**
-     * Every workspace this app owns, oldest number first, with the current one
-     * flagged. Creates the root and the default workspace if they are missing —
-     * the same `mkdirs()` the engine and the terminal already do before binding
-     * them, so a first launch lists the default instead of an empty list.
+     * Every workspace the user can switch to: the app-owned `workspace-N` directories
+     * (oldest number first) followed by the registered external directories (in the
+     * order they were added), with the current one flagged.
+     *
+     * Creates the root and the default workspace if they are missing — the same
+     * `mkdirs()` the engine and the terminal already do before binding them, so a
+     * first launch lists the default instead of an empty list. **Nothing is ever
+     * created for an external entry.**
+     *
+     * An external entry whose directory is not there right now is still listed, with
+     * `available = false`: dropping the row would read as "the registration is gone",
+     * and re-adding the card would silently restore it while the row had vanished.
      */
     fun list(context: Context): List<Entry> {
         val root = root(context)
@@ -264,14 +337,31 @@ object WorkspaceStore {
             .map { entry(context, it.name, it, names[it.name], current) }
             .sortedBy { WorkspaceChoice.number(it.name) ?: Int.MAX_VALUE }
             .toList()
-        if (entries.none { it.name == DEFAULT_NAME }) {
+        val owned = if (entries.none { it.name == DEFAULT_NAME }) {
             val dir = File(root, DEFAULT_NAME)
             dir.mkdirs()
-            return (entries + entry(context, DEFAULT_NAME, dir, names[DEFAULT_NAME], current))
+            (entries + entry(context, DEFAULT_NAME, dir, names[DEFAULT_NAME], current))
                 .sortedBy { WorkspaceChoice.number(it.name) ?: Int.MAX_VALUE }
+        } else {
+            entries
         }
-        return entries
+        return owned + externalEntries(context, names, current)
     }
+
+    /** The registered external workspaces, in registration order. */
+    private fun externalEntries(context: Context, names: Map<String, String>, current: String): List<Entry> =
+        externals(context).map { path ->
+            val dir = File(path)
+            entry(
+                context = context,
+                name = path,
+                dir = dir,
+                label = names[path],
+                current = current,
+                external = true,
+                available = dir.isDirectory && !Files.isSymbolicLink(dir.toPath()),
+            )
+        }
 
     // ------------------------------------------------------------- mutating
 
@@ -311,34 +401,70 @@ object WorkspaceStore {
      * An empty label, or one that equals the directory name, clears the label.
      */
     fun rename(context: Context, name: String, label: String): Rename {
-        val dir = File(root(context), name)
-        if (!isOwned(name) || !dir.isDirectory) {
+        val external = !isOwned(name)
+        if (external && name !in externals(context)) {
+            return Rename.Failed("工作区「$name」不存在或不是本应用登记的工作区，无法重命名。")
+        }
+        val dir = if (external) File(name) else File(root(context), name)
+        if (!external && !dir.isDirectory) {
             return Rename.Failed("工作区「$name」不存在或不是本应用创建的，无法重命名。")
         }
         val cleaned = WorkspaceChoice.label(label)
             ?: return Rename.Failed("名称不能为空（也可以清空它，恢复为「$name」）。")
-        val next = labels(context).toMutableMap()
-        if (cleaned == name) next.remove(name) else next[name] = cleaned
+        // The **raw** map, not [labels]: that one drops entries whose directory is gone
+        // (a card that is out, a workspace the user deleted from a file manager), and
+        // renaming one workspace must not delete the labels of the others.
+        val next = labelsRaw(context).toMutableMap()
+        if (cleaned == name || cleaned == dir.name) next.remove(name) else next[name] = cleaned
         if (!writeLabels(context, next)) {
             return Rename.Failed("名称没有保存成功（无法写入设置文件）。")
         }
-        return Rename.Ok(entry(context, name, dir))
+        return Rename.Ok(entry(context, name, dir, external = external))
     }
 
     /**
      * Count what a delete of [name] would remove, and hand back the only token
      * [delete] accepts.
      *
-     * The count is *reported*, not acted on: it is the number the confirmation has
-     * to show. Counting and deleting both walk with `Files.walkFileTree` without
-     * following links, so a symlink inside the workspace is counted and removed as
-     * the link it is rather than followed out of the tree.
+     * Two shapes, and the difference is the point:
+     *
+     *  - an app-owned `workspace-N` is **counted** — the number the confirmation has to
+     *    show, because the directory is about to be removed;
+     *  - an external workspace is **not counted at all**, because nothing will be
+     *    removed. It is unregistered. Counting would cost a full walk of the user's
+     *    directory (their photos, their project) to produce a number that decides
+     *    nothing, and showing it next to "删除" would be the app implying it is about
+     *    to delete them.
+     *
+     * Both walks use `Files.walkFileTree` without following links, so a symlink inside
+     * the workspace is counted and removed as the link it is rather than followed out
+     * of the tree.
      */
     fun previewDelete(context: Context, name: String): Preview {
-        if (!isOwned(name)) {
+        val external = !isOwned(name)
+        if (external && name !in externals(context)) {
             return Preview.Refused("只能删除本应用创建的工作区（workspace-N），「$name」不是。")
         }
-        val dir = File(root(context), name)
+        val dir = if (external) File(name) else File(root(context), name)
+        if (external) {
+            if (name == currentName(context)) {
+                return Preview.Refused("「${displayOf(context, name)}」是当前工作区，引擎正运行在里面。请先切换到别的工作区，再删掉它。")
+            }
+            // Deliberately no existence check: a registered directory that is not there
+            // right now (the card is out) is exactly when a user wants to stop having it
+            // registered, and unregistering it cannot fail for lack of a directory.
+            val target = DeleteTarget(
+                name = name,
+                label = labels(context)[name] ?: name,
+                host = dir,
+                files = 0,
+                dirs = 0,
+                bytes = 0,
+                removesFiles = false,
+                external = true,
+            )
+            return Preview.Ok(target, DeleteConfirmation(target))
+        }
         if (!dir.isDirectory) {
             return Preview.Refused("工作区「$name」的目录不存在，没有可删除的内容。")
         }
@@ -361,18 +487,41 @@ object WorkspaceStore {
     }
 
     /**
-     * Delete the workspace a [DeleteConfirmation] describes. **The directory is
-     * removed recursively**; there is no "empty it but keep it" mode, on purpose —
-     * a workspace whose contents were cleared still looks like a workspace to
-     * every list and to pi, and the user asked for removal.
+     * Carry out what a [DeleteConfirmation] describes.
      *
-     * Re-counts before deleting, so a tree that changed between the preview and
-     * the confirmation is reported with the number that was actually removed
-     * rather than the stale one the user agreed to.
+     * **The two kinds do different things, and that is not a detail.** An app-owned
+     * `workspace-N` is removed recursively — this app created that directory, and
+     * there is no "empty it but keep it" mode on purpose: a workspace whose contents
+     * were cleared still looks like a workspace to every list and to pi, and the user
+     * asked for removal.
+     *
+     * An **external** workspace is only *unregistered*: its path leaves
+     * [EXTERNAL_KEY] and its label leaves [NAMES_KEY], and **not one file or directory
+     * on the user's storage is touched**. The user picked that directory; it existed
+     * before this app knew about it and it is not this app's to delete
+     * ([WorkspaceChoice.deleteRemovesFiles] is the rule, and it is pinned by a harness
+     * so a future refactor cannot turn "forget this" into `rm -rf`).
+     *
+     * The app-owned branch re-counts before deleting, so a tree that changed between
+     * the preview and the confirmation is reported with the number that was actually
+     * removed rather than the stale one the user agreed to.
      */
     fun delete(context: Context, confirmation: DeleteConfirmation): Delete {
         val name = confirmation.target.name
-        if (!isOwned(name)) return Delete.Refused("只能删除本应用创建的工作区（workspace-N）。")
+        if (!isOwned(name)) {
+            if (name !in externals(context)) {
+                return Delete.Refused("只能删除本应用创建或登记过的工作区，「$name」不是。")
+            }
+            if (name == currentName(context)) {
+                return Delete.Refused("「${displayOf(context, name)}」是当前工作区，请先切换到别的工作区。")
+            }
+            if (!writeExternals(context, externals(context) - name)) {
+                return Delete.Failed("取消登记失败：无法写入设置文件，工作区仍在列表里。")
+            }
+            val labelled = labelsRaw(context).toMutableMap()
+            if (labelled.remove(name) != null) writeLabels(context, labelled)
+            return Delete.Ok(name, 0, 0)
+        }
         val dir = File(root(context), name)
         if (!dir.isDirectory) return Delete.Refused("工作区「$name」已经不存在了。")
         if (Files.isSymbolicLink(dir.toPath())) {
@@ -395,13 +544,60 @@ object WorkspaceStore {
         // entries whose directory no longer exists, so asking it afterwards would
         // report "no label for this name" and the stale `app.workspace.names`
         // entry would survive to be inherited by the next `workspace-N`.
-        val labelled = labels(context)
+        val labelled = labelsRaw(context)
         if (!deleteTree(dir)) {
             return Delete.Failed("删除工作区「$name」失败，可能有文件正被占用。")
         }
         val next = labelled.toMutableMap()
         if (next.remove(name) != null) writeLabels(context, next)
         return Delete.Ok(name, before.files, before.bytes)
+    }
+
+    // --------------------------------------------------------- external roots
+
+    /**
+     * Register a **real device directory** as a workspace, and return its entry.
+     *
+     * The path is the identity ([Entry.name]) and the only thing that is written is
+     * [EXTERNAL_KEY] — one JSON array in the app's sidecar. Nothing on the device is
+     * read, moved, created or deleted: the directory may be empty, and if it is not, it
+     * becomes the engine's cwd with whatever it already contains.
+     *
+     * Registering twice is idempotent (the second call returns the same entry) rather
+     * than an error, because the picker can be opened again and the user's intent is
+     * unambiguous. It does **not** switch to it: registering a directory and moving the
+     * engine into it are two decisions — the same rule [create] follows.
+     *
+     * The caller is responsible for having checked the user's permission and for
+     * [WorkspaceChoice.pickRefusal]; this object does not ask for permissions, and it
+     * deliberately does not require the directory to exist right now (the registration
+     * is a statement of intent, and [Entry.available] reports the rest).
+     */
+    fun registerExternal(context: Context, path: String): Create {
+        val clean = path.trim().trimEnd('/')
+        if (clean.isEmpty() || !clean.startsWith("/")) {
+            return Create.Failed("只能登记设备上的绝对路径。")
+        }
+        val dir = File(clean)
+        val current = externals(context)
+        if (clean !in current) {
+            if (!writeExternals(context, current + clean)) {
+                return Create.Failed("没有保存成功（无法写入设置文件），这个目录没有被登记。")
+            }
+        }
+        return Create.Ok(entry(context, clean, dir, external = true, available = dir.isDirectory))
+    }
+
+    /** The registered external workspace paths, in registration order. */
+    fun externals(context: Context): List<String> {
+        val raw = runCatching { store(context).read(EXTERNAL_KEY) }.getOrNull()
+        val array = raw as? JsonArray ?: return emptyList()
+        val seen = LinkedHashSet<String>()
+        array.forEach { element ->
+            val path = (element as? JsonPrimitive)?.content?.trim()?.trimEnd('/')
+            if (!path.isNullOrEmpty() && path.startsWith("/")) seen += path
+        }
+        return seen.toList()
     }
 
     /**
@@ -416,17 +612,37 @@ object WorkspaceStore {
     fun setCurrent(context: Context, name: String): Boolean {
         if (existing(context, name) == null) return false
         if (!writeCurrent(context, name)) return false
-        GuestWorkspacePath.adoptRelative(relativeOf(name))
+        // `RELATIVE` is the spelling internal readers use for the current workspace, and
+        // an external workspace has no such spelling (it is not under the files
+        // directory). Publishing its absolute path keeps `GuestWorkspacePath.host()` and
+        // `PiProject.workspaceName` from silently describing a directory under `<files>`
+        // that does not exist; nothing that *decides* where the engine runs reads this
+        // value — `currentHost` and `PiEngineHost` both derive from the store.
+        GuestWorkspacePath.adoptRelative(if (isOwned(name)) relativeOf(name) else name)
         return true
     }
 
-    /** The labels currently stored, without the ones for workspaces that are gone. */
+    /**
+     * The labels currently stored, without the ones for workspaces that are gone.
+     *
+     * A **view**: it drops entries whose directory cannot be listed right now, so a
+     * screen never prints a label for a workspace that is not there. Writes must use
+     * [labelsRaw] instead — writing this filtered map back would erase the labels of
+     * everything that happened to be unavailable at that moment.
+     */
     fun labels(context: Context): Map<String, String> {
-        val raw = runCatching { store(context).read(NAMES_KEY) }.getOrNull() as? JsonObject ?: return emptyMap()
+        val known = externals(context)
         val root = root(context)
+        return labelsRaw(context).filterKeys { key ->
+            if (isOwned(key)) File(root, key).isDirectory else key in known && File(key).isDirectory
+        }
+    }
+
+    /** The stored label map exactly as it is on disk (see [labels]). */
+    fun labelsRaw(context: Context): Map<String, String> {
+        val raw = runCatching { store(context).read(NAMES_KEY) }.getOrNull() as? JsonObject ?: return emptyMap()
         return raw.mapNotNull { (key, value) ->
             val label = (value as? JsonPrimitive)?.content?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
-            if (!isOwned(key) || !File(root, key).isDirectory) return@mapNotNull null
             key to label
         }.toMap()
     }
@@ -445,13 +661,22 @@ object WorkspaceStore {
         dir: File,
         label: String? = labels(context)[name],
         current: String = currentName(context),
+        external: Boolean = false,
+        available: Boolean = true,
     ): Entry = Entry(
         name = name,
         label = label ?: name,
         host = dir,
-        relative = relativeOf(name),
+        // `relative` is the workspace's path relative to the files directory, and that is
+        // what `GuestWorkspacePath` needs. An external workspace is not under it, so the
+        // honest relative form is the absolute path itself — and `guestPath` below is what
+        // anything that wants the guest's spelling must read (they are not the same thing
+        // for an external workspace, which is exactly why both fields exist).
+        relative = if (external) dir.absolutePath else relativeOf(name),
         guestPath = GuestWorkspacePath.under(context.filesDir.absolutePath, dir.absolutePath),
         isCurrent = name == current,
+        external = external,
+        available = available,
     )
 
     private fun nextFreeName(root: File): String? =
@@ -513,6 +738,21 @@ object WorkspaceStore {
             NAMES_KEY,
             JsonObject(labels.mapValues { (_, label) -> JsonPrimitive(label) as JsonElement }),
         )
+
+    private fun writeExternals(context: Context, paths: List<String>): Boolean =
+        writeSetting(context, EXTERNAL_KEY, JsonArray(paths.map { JsonPrimitive(it) as JsonElement }))
+
+    /**
+     * A name for a sentence when the label may not be known: the stored label, else the
+     * last path segment (an external path's `name` is a whole path and reading it out
+     * loud in a dialog is worse than the folder name).
+     */
+    private fun displayOf(context: Context, name: String): String {
+        val label = labelsRaw(context)[name]
+        if (!label.isNullOrBlank()) return label
+        if (isOwned(name)) return name
+        return File(name).name.ifEmpty { name }
+    }
 
     private fun writeSetting(context: Context, key: String, value: JsonElement): Boolean =
         runCatching { store(context).write(key, value) }.isSuccess
