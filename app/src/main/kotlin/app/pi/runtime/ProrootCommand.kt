@@ -229,9 +229,8 @@ object ProrootCommand {
      * `mkdirs()`，而 `..` 能让它落到 rootfs 外面去。
      */
     fun workdirUnder(rootfs: File, cwd: String): File? {
-        val clean = cwd.trimEnd('/')
-        if (!clean.startsWith("/")) return null
-        val relative = clean.trimStart('/')
+        if (!cwd.startsWith("/")) return null
+        val relative = cwd.trim('/')
         if (relative.isEmpty()) return rootfs
         val segments = relative.split('/')
         if (segments.any { it.isEmpty() || it == "." || it == ".." }) return null

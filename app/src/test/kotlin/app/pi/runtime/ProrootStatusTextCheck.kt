@@ -59,7 +59,7 @@ private fun rawEvidence(vararg markerLines: String): List<String> =
 private fun toolEvidence(vararg markerLines: String): List<String> =
     GuestToolProbe.parse(markerLines.joinToString("\n")).describe().map { "  $it" }
 
-private const val BASE = "已回退 proot：探针未通过"
+private const val BASE = "proot（探针未通过）"
 
 /** The seccomp档 the sentence has to name, from the production constant. */
 private const val MODE = "默认档"
@@ -90,9 +90,14 @@ fun main() {
         true,
     )
     check(
-        "尚未运行 keeps the three-launch clarification",
+        "尚未运行 says the verdict is missing, not that a launch is pending",
+        ProrootProbeNarrative.summary(EngineFallback.ProbeNotRun, emptyList()),
+        "proot（探针尚未运行）",
+    )
+    check(
+        "尚未运行 no longer promises anything about the next launch",
         ProrootProbeNarrative.summary(EngineFallback.ProbeNotRun, emptyList())
-            .contains("下一次启动 guest 会跑一次，那一次仍用 proot，再下一次才可能接管"),
+            .let { !it.contains("下一次") && !it.contains("再下一次") },
         true,
     )
 

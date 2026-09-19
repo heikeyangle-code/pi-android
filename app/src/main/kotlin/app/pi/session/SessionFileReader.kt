@@ -260,6 +260,51 @@ internal object SessionFileReader {
     }
 
     /**
+     * The complete entries in the byte range `[from, until)`, oldest first: the
+     * exact-range sibling of [readTail] and [readBefore], and the one an evicted copy is
+     * read back with.
+     *
+     * Why a third direction is worth having: `PiSessionViewModel` bounds how much of a
+     * loaded session it keeps **in RAM** by dropping the window farthest from the reader
+     * and remembering its byte range. A rebuild of the transcript needs the *whole*
+     * loaded range — the projection is folded from one list, and a list with a hole would
+     * silently drop rows — so the dropped range has to come back exactly. Neither
+     * existing direction can do that: [readTail] answers the file's newest entries and
+     * [readBefore] snaps `from` back by `maxChars`, which at the low end of a small range
+     * reaches *above* it and re-delivers retained entries (which would duplicate rows).
+     *
+     * [from] must be the first byte of a line — the offsets recorded from
+     * [Window.startOffset] are, which is the only caller — because the range is read from
+     * exactly there: a `from` inside a line would hand back that line's tail as if it were
+     * a line of its own. The range is deliberately **not** capped: the caller is reading
+     * back a bounded, known range, and dropping part of it would be the hole this exists
+     * to prevent. Returns null when [file] is not a session or the range holds no
+     * complete parseable entry, like its two siblings.
+     *
+     * [Window.reachedStart] is reported honestly (`from == 0L` with nothing withheld) but
+     * no caller of this function uses it for the cursor: the evicted range is at the
+     * reading end of the loaded range, never at the file's first entry.
+     */
+    fun readBetween(
+        file: File,
+        from: Long,
+        until: Long,
+        maxLineChars: Int = DEFAULT_MAX_LINE_CHARS,
+    ): Window? {
+        if (from < 0L || until <= from) return null
+        if (readHeader(file) == null) return null
+        val range = readRange(file, from, until, null, Int.MAX_VALUE, maxLineChars)
+        val entries = range.entries()
+        if (entries.isEmpty()) return null
+        return Window(
+            entries = entries,
+            startOffset = range.firstOffset,
+            reachedStart = from == 0L && !range.droppedLine,
+            complete = !range.droppedLine,
+        )
+    }
+
+    /**
      * The whole file as one window.
      *
      * Deliberately **not** what the open path uses — it exists for export and for the

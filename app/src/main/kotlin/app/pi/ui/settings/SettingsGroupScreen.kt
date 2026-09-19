@@ -100,6 +100,12 @@ fun SettingsGroupScreen(
      * [EffectiveKind.RestartEngine] row ("重启引擎"). Null hides that button, which
      * is right where no engine hook exists: the row's own explanation still says
      * what has to happen.
+     *
+     * [EffectiveKind.AutoRestartEngine] rows deliberately do **not** use it, even
+     * when this is non-null: their write already restarted the engine, so a button
+     * would either repeat that or fall through to the generic action channel and
+     * answer 「当前不可用」 for a row that is working. See the `when` at the
+     * `PiEffectiveDialog` call.
      */
     onRestartEngine: (() -> Unit)? = null,
     /**
@@ -236,9 +242,13 @@ fun SettingsGroupScreen(
                 }
             }
             item {
-                // v2 分组页页脚：说明徽标的四种时机（06 §2「页脚说明 16px 14px 0」）。
+                // v2 分组页页脚：说明徽标的时机（06 §2「页脚说明 16px 14px 0」）。
+                // 五个词与 `PiSettingsStyle.PiSettingsEffectiveBadge` 的标签一一对应：
+                // 这句是用户唯一一处能看到「徽标有哪几种」的地方，少写一个就会让人以为
+                // 「自动重启引擎」是别的东西。
                 Text(
-                    "每一行末尾那枚徽标说明改动什么时候生效：新会话 / 需重载 / 需重启引擎 / 需重启。",
+                    "每一行末尾那枚徽标说明改动什么时候生效：新会话 / 需重载 / 需重启引擎 / " +
+                        "自动重启引擎 / 需重启。",
                     modifier = Modifier.padding(
                         start = PiSettingsMetrics.pageHorizontal,
                         end = PiSettingsMetrics.pageHorizontal,
@@ -283,8 +293,14 @@ fun SettingsGroupScreen(
             // `RestartEngine` that action is the engine restart itself, which the
             // host owns (设置 → 进程 → 重启引擎) — the generic action channel is for
             // `PiRowKind.Action` rows and would answer "not implemented" here.
+            //
+            // `AutoRestartEngine` deliberately has **no** action: the write already
+            // restarted the engine, so a button here would either do it twice or —
+            // worse — fall through to the generic channel, whose answer for a
+            // non-Action row is 「当前不可用」. Null gives the dialog its 知道了.
             onRunAction = when {
                 openExplanation.effective == EffectiveKind.RestartEngine -> onRestartEngine
+                openExplanation.effective == EffectiveKind.AutoRestartEngine -> null
                 run != null -> { { run(openExplanation) } }
                 else -> null
             },

@@ -7,6 +7,8 @@ import android.os.StatFs
 import app.pi.BuildConfig
 import app.pi.bridge.DeviceActionException
 import app.pi.bridge.DeviceSystemActions
+import app.pi.runtime.BootAudit
+import app.pi.runtime.DurableLayout
 import app.pi.runtime.GuestEngine
 import app.pi.runtime.GuestToolProbe
 import app.pi.runtime.PiPaths
@@ -114,6 +116,15 @@ object DiagnosticsReport {
 
     /** How much of the engine's captured stderr the report carries, from the tail. */
     private const val STDERR_TAIL_CHARS = 20_000
+
+    /**
+     * How much of the boot audit's text the report prints, from the tail.
+     *
+     * The audit file is itself bounded ([BootAudit.MAX_LINES] lines, each one small), so
+     * this rarely trims anything; it exists so a file written by some other build cannot
+     * push the report past [MAX_REPORT_CHARS]. When it does trim, the report says so.
+     */
+    private const val AUDIT_TAIL_CHARS = 24_000
 
     /** Upper bound on the whole report, so a share intent stays well under Binder. */
     private const val MAX_REPORT_CHARS = 120_000
@@ -236,6 +247,8 @@ object DiagnosticsReport {
             appendLine("── 关键路径 ──")
             pathLine(this, "home", paths.home)
             pathLine(this, "agentDir", paths.agentDir)
+            pathLine(this, "workspaces", paths.workspaces)
+            pathLine(this, "persist", paths.persist)
             pathLine(this, "runtime", paths.runtime)
             pathLine(this, "rootfs", paths.rootfs)
             pathLine(this, "engines", paths.engines)
@@ -243,6 +256,47 @@ object DiagnosticsReport {
             pathLine(this, "proot 二进制", paths.prootBinary())
             pathLine(this, "proot loader", paths.prootLoader())
             pathLine(this, "stamp", paths.stampFile())
+            // The structural promise behind "an upgrade cannot delete the workspace": the
+            // three durable directories are outside the volatile tree. `PiPaths`' own
+            // construction asserts the same thing and throws, so this line is what a
+            // report shows when the assertion is not in the build the user has. Empty =
+            // correct; anything else names the directory and the tree it fell inside.
+            val layoutViolations = DurableLayout.violations(paths.home, paths.runtime)
+            appendLine(
+                "耐久目录是否落在易失树内：" +
+                    if (layoutViolations.isEmpty()) {
+                        "否（工作区、agentDir、persist 都在 ${paths.runtime.name}/ 之外）"
+                    } else {
+                        layoutViolations.joinToString("；")
+                    },
+            )
+            appendLine()
+
+            appendLine("── 启动审计（耐久，一次升级一行）──")
+            val auditFile = BootAudit.file(paths.persist)
+            appendLine(
+                "文件：${auditFile.absolutePath}" +
+                    "（每次启动检查一次，只有 APK 的 lastUpdateTime/versionCode 或运行时 revision " +
+                    "相对上次记录发生变化时才追加一行；只保留最近 ${BootAudit.MAX_LINES} 行，" +
+                    "被挤掉的条数写在文件头部）",
+            )
+            val auditText = BootAudit.readTail(auditFile)
+            when {
+                auditText == null && !auditFile.isFile ->
+                    appendLine("（还没有记录：这台设备上还没有出现过一次「升级后的首次启动」。）")
+                auditText == null ->
+                    appendLine("（读取失败：文件在，但内容读不出来——不是「没有记录」。）")
+                auditText.isBlank() ->
+                    appendLine("（读取成功，但文件是空的。）")
+                else -> {
+                    if (auditText.length > AUDIT_TAIL_CHARS) {
+                        appendLine("（已截断，只打印最后 $AUDIT_TAIL_CHARS 字符）")
+                        appendLine(auditText.takeLast(AUDIT_TAIL_CHARS))
+                    } else {
+                        appendLine(auditText.trimEnd())
+                    }
+                }
+            }
             appendLine()
 
             // ---- 运行时选择（proroot）--------------------------------------
@@ -257,7 +311,11 @@ object DiagnosticsReport {
             if (runtimeStatus == null) {
                 appendLine("（读不到运行时选择状态）")
             } else {
-                appendLine("  实际生效：${runtimeStatus.engine}（${runtimeStatus.summary}）")
+                // 句子本身已经先写运行时（`RuntimeChoice.describe`），所以这里不再前置
+                // `runtimeStatus.engine` 的枚举名 —— 那会印成
+                // 「实际生效：Proot（proot（探针未通过）…）」，同一个答案说两遍，还一遍是
+                // Kotlin 枚举名。开关的状态在下一行单独报。
+                appendLine("  实际生效：${runtimeStatus.summary}")
                 appendLine("  开关：${if (runtimeStatus.enabled) "开" else "关"}" +
                     " · 连续失败：${runtimeStatus.failures}/${RuntimeChoice.MAX_CONSECUTIVE_FAILURES}")
                 // The 档 in force, named here rather than only implied by a probe verdict:

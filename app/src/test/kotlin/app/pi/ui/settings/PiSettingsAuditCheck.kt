@@ -64,6 +64,24 @@ private fun check(name: String, ok: Boolean, detail: String = "") {
 private val keyPattern = Regex("""^\s*key = "([^"]+)",\s*$""")
 private val piOwnedPattern = Regex("""^\s*"([^"]+)" to "([^"]*)",\s*$""")
 
+/**
+ * The one section that is allowed to mix an editable row with a read-only one:
+ * a **control and the reading derived from it**, control first.
+ *
+ * Why the exemption exists: the proroot switch and the 「运行时（实际生效）」 row are
+ * two halves of one feature — the switch asks for a runtime, the row reports which
+ * one is running and why not. They used to live in two different sections of the
+ * same group, and the user could not tell they were related
+ * (「下面那个加速开关和它是一个功能吧？你把它拆到两个部分干啥？」). Rule 9 exists to
+ * keep read-only *facts* from being scattered among settings, and this pair is the
+ * opposite case: one control plus its own result.
+ *
+ * It is declared as `group constant to section label` and then pinned to the exact
+ * two keys below, so it can never widen into "any section may mix" — a third row
+ * appearing here fails, and a declaration whose section disappeared fails as stale.
+ */
+private val PAIRED_CONTROL_SECTION = "G_RUNTIME" to "运行时选择"
+
 /** Every `key = "..."` of the registry, in file order. */
 private fun registeredKeys(registry: String): List<String> =
     registry.lineSequence().mapNotNull { keyPattern.find(it)?.groupValues?.get(1) }.toList()
@@ -451,15 +469,40 @@ fun main() {
 
     // Rule 9: one section, one kind. An Action or a read-only fact next to editable
     // settings is exactly how "the mess" reads on screen.
+    //
+    // One declared exception, `PAIRED_CONTROL_SECTION`: a control and the reading
+    // derived from it belong together (control first), and the pair below pins the
+    // exemption to exactly those two keys — an unrelated read-only row cannot hide
+    // behind it, and a stale declaration fails instead of excusing nothing.
     val mixedSections = shapes.groupBy { it.group to it.section }.filterValues { rowsIn ->
         rowsIn.any { it.nonEditable } && rowsIn.any { !it.nonEditable }
     }
+    val unexcusedMixed = mixedSections.filterKeys { it != PAIRED_CONTROL_SECTION }
     check(
-        "no section mixes non-editable rows with settings",
-        mixedSections.isEmpty(),
-        mixedSections.keys.joinToString("\n  ") { (group, section) ->
+        "no section mixes non-editable rows with settings (outside the declared control/reading pair)",
+        unexcusedMixed.isEmpty(),
+        unexcusedMixed.keys.joinToString("\n  ") { (group, section) ->
             "$group/$section mixes actions or read-only rows with editable settings"
         },
+    )
+    val pairRows = shapes.filter { (it.group to it.section) == PAIRED_CONTROL_SECTION }
+    check(
+        "the declared control/reading section exists",
+        pairRows.isNotEmpty(),
+        "${PAIRED_CONTROL_SECTION.first}/${PAIRED_CONTROL_SECTION.second} is declared as the " +
+            "control/reading pair but holds no row — a stale exemption",
+    )
+    check(
+        "the control/reading section is exactly the switch and its derived reading",
+        pairRows.map { it.key } == listOf("app.runtime.proroot", "app.runtime.prorootStatus"),
+        "expected [app.runtime.proroot, app.runtime.prorootStatus] (control first), got " +
+            pairRows.joinToString { it.key },
+    )
+    check(
+        "the control is editable, the reading below it is a read-only fact",
+        pairRows.firstOrNull()?.let { !it.nonEditable && it.kind == "Switch" } == true &&
+            pairRows.getOrNull(1)?.let { it.nonEditable && it.readOnly && it.kind == "Text" } == true,
+        pairRows.joinToString { "${it.key} kind=${it.kind} readOnly=${it.readOnly}" },
     )
 
     // Rule 10: no one-row section inside a group that has several sections — a header for a

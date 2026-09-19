@@ -330,35 +330,43 @@ object RuntimeChoice {
      * One sentence for the settings row and the diagnostic report — the **evidence-free**
      * form.
      *
-     * [EngineFallback.ProbeNotPassed] comes out as "已回退 proot：探针未通过", which is
-     * the half-sentence a user cannot act on, because the probe records *which* stage
-     * refused. A caller that holds the cached evidence must use
-     * [ProrootProbeNarrative.summary], which appends the failing stage and the recorded
-     * line to exactly this sentence; this overload stays the form for callers that
-     * genuinely have no evidence (the report leaves for the probe: its own notes) and
-     * for the harness's "every reason has a sentence" check.
+     * ## 这一行答的是「在跑哪个」，不是「开关在哪一档」
      *
-     * [EngineFallback.ProbeNotRun] spells out the three-launch sequence on purpose: the
-     * first launch after the switch is turned on is the one that runs the probe **and
-     * still uses proot**, and only a later launch can end up on proroot. The old wording
-     * ("首次使用时会自动跑一次") described the probe but not what the user sees in
-     * between, which is the sentence users got stuck on.
+     * 读它的那一行标题是「运行时（实际生效）」（`app.runtime.prorootStatus`），所以每个值
+     * 都**先写实际在跑的那个运行时**（`proot` / `proroot`），原因才跟在括号里。旧的一组句子
+     * 是反过来的：关掉时它写「未开启（走 proot）」——把开关的状态当成了运行时的状态，于是
+     * 一个问「在跑哪个」的行回答「没打开」，用户直接问了出来（「关掉 Pro Root 为什么要写着
+     * 未开启」）。原因仍然逐条写明，因为它们各自指向一件不同的事，而这一行又紧贴在开关下面：
+     * 探针没过（哪一档由 [ProrootProbeNarrative.summary] 补上）、运行时文件缺失、连续失败、
+     * 装机路径不参与 proroot。
      *
-     * The [EngineFallback.None] sentence names the [PROROOT_SECCOMP] in effect **and what
-     * that档 gives up**, in the same line: a runtime that quietly traded inline-`svc`
-     * translation away would be behaviour the user cannot see, which is the same defect as
-     * a row that says "proroot" while every launch falls back to proot. It is one clause,
-     * not a manual — the row renders it as one line.
+     * [EngineFallback.ProbeNotPassed] 的这句是**半句话**：用户没法据它行动，因为探针会记下
+     * *哪一阶段* 拒绝了。手里有缓存证据的调用者必须用 [ProrootProbeNarrative.summary]，它
+     * 把失败的阶段与探针原话接在这句后面；这个重载留给真没有证据的调用者（报告的备注）与
+     * harness 的「每个理由都有一句话」检查。
+     *
+     * [EngineFallback.None] 那句仍然写清生效的 [PROROOT_SECCOMP] **以及这个档放弃了什么**：
+     * 一个悄悄把 inline-`svc` 翻译换掉的运行时是用户看不见的行为，与「行上写 proroot、每次
+     * 启动却回退」是同一类缺陷。它是一句话，不是说明书——行只画一行。
+     *
+     * ## 为什么 [EngineFallback.ProbeNotRun] 不再讲「下一次 / 再下一次」
+     *
+     * 那段三趟车的说明描述的是旧行为：拨开开关**只**写下偏好，探针要等下一次启动 guest 才
+     * 跑，那一次仍走 proot，再下一次才可能接管。现在拨开开关会当场跑探针、通过了当场重启引擎
+     * （`ui/settings/RuntimeSwitchAction` 与 `PiSessionViewModel.onSettingWritten`），所以
+     * 「下一次启动」既不是用户看到的事，也和开关那一行的文案互相矛盾。这一档剩下的含义只有
+     * 一个：**此刻没有这个 revision 的探针结论**——正在测（那时状态行显示「正在测…」，读不到
+     * 这句）、或上一次探测没能留下结论。它就说这一件事，不猜下一步。
      */
     fun describe(fallback: EngineFallback): String = when (fallback) {
-        EngineFallback.None -> "proroot 正在使用（${PROROOT_SECCOMP.disclosure}）"
-        EngineFallback.SwitchOff -> "未开启（走 proot）"
-        EngineFallback.RuntimeFilesMissing -> "已回退 proot：运行时文件缺失"
-        EngineFallback.ProbeNotPassed -> "已回退 proot：探针未通过"
-        EngineFallback.ProbeNotRun ->
-            "已回退 proot：探针尚未运行——下一次启动 guest 会跑一次，那一次仍用 proot，再下一次才可能接管"
+        EngineFallback.None -> "proroot（${PROROOT_SECCOMP.disclosure}）"
+        EngineFallback.SwitchOff -> "proot"
+        EngineFallback.RuntimeFilesMissing -> "proot（运行时文件缺失）"
+        EngineFallback.ProbeNotPassed -> "proot（探针未通过）"
+        EngineFallback.ProbeNotRun -> "proot（探针尚未运行）"
+        EngineFallback.FailureStreak ->
+            "proot（连续 $MAX_CONSECUTIVE_FAILURES 次启动失败，重新打开开关可清零重试）"
 
-        EngineFallback.FailureStreak -> "已回退 proot：连续 $MAX_CONSECUTIVE_FAILURES 次启动失败"
-        EngineFallback.InstallPath -> "安装与维护固定走 proot"
+        EngineFallback.InstallPath -> "proot（装机与维护路径不参与 proroot）"
     }
 }

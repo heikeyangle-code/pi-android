@@ -129,6 +129,18 @@ fun PiSettingsStack(
      * `null` 时那一行不画（与 设备能力 / 扩展包 / 开源许可 三行的约定一致）。
      */
     onOpenTerminal: (() -> Unit)? = null,
+    /**
+     * 「运行时加速（实验性）」开关**当场生效**的进度（`PiSessionViewModel.runtimeSwitch`）。
+     *
+     * 拨完那个开关要跑一次门禁探针、10~60 秒，通过后再重启引擎。这段时间屏幕上必须说它在
+     * 跑，否则用户看到的就是「点了开关什么都没发生」——这个改动要消灭的正是那个形状。用的
+     * 是这一屏**已有的**那两个位置：`运行时（实际生效）` 那一行的值（见 [runtimeStatusText]）
+     * 和它下面那块逐阶段记录；不新造进度控件、不新造弹窗。
+     *
+     * 值同时是那个 `LaunchedEffect` 的键：动作结束回到 `Idle` 时它变一次，状态行于是重读
+     * `RuntimeSelection.status()` —— 探针的新结论、被回滚的开关值都在那一刻落到行上。
+     */
+    runtimeSwitch: RuntimeSwitchAction.Step = RuntimeSwitchAction.Step.Idle,
 ) {
     val activeStore = store ?: rememberInMemoryPiSettingsStore()
     // Every level of this stack is `rememberSaveable`, not `remember`: the settings
@@ -271,10 +283,21 @@ fun PiSettingsStack(
     // Null until the first IO read lands: the row shows its own 未读取 for that frame and
     // the detail block renders nothing, rather than a default that looks like a reading.
     var runtimeStatus by remember { mutableStateOf<RuntimeSelection.Status?>(null) }
-    LaunchedEffect(runtimeSelection, filesEpoch, runtimeStatusEpoch) {
+    // `runtimeSwitch` is a key for the reason its KDoc gives: the toggle's own flow changes
+    // the switch value (a refused restart rolls it back) and the cached verdict (a probe just
+    // ran), and neither bump reaches this screen on its own — the epoch above only fires on
+    // the write itself, which happens *before* the probe. It also covers a plain
+    // `Probing → Idle` transition for a probe that changed nothing.
+    LaunchedEffect(runtimeSelection, filesEpoch, runtimeStatusEpoch, runtimeSwitch) {
         runtimeStatus = withContext(Dispatchers.IO) { runtimeSelection.status() }
     }
-    val runtimeStatusText = runtimeStatus?.summary ?: "未读取"
+    // While the toggle's flow is doing something, the row says so instead of showing the
+    // previous verdict: the probe runs for tens of seconds and a row that keeps showing the
+    // old sentence is the "switch did nothing" shape this change removes. `null` (Idle) means
+    // "show the real reading" — see `RuntimeSwitchAction.statusLine`.
+    val runtimeStatusText = RuntimeSwitchAction.statusLine(runtimeSwitch)
+        ?: runtimeStatus?.summary
+        ?: "未读取"
 
     // 「扩展与资源」那四个只读事实行的读数。**复用项目页资源段那个扫描器**
     // （`WorkspaceResourceScan`，纯磁盘读取，不需要引擎在跑），不新写一份扫描：两份实现会
@@ -546,7 +569,17 @@ fun PiSettingsStack(
                 valueOverrides = runtimeOverrides(facts) + resourceOverrides,
                 // The raw per-phase evidence under 运行时（实际生效）: read once with the
                 // sentence above, rendered as a bounded string. See the state's comment.
-                detailOverrides = runtimeDetailOverrides(runtimeStatus),
+                //
+                // Suppressed while the switch's own flow is running: the reading in hand was
+                // taken before the probe started, so it says 「探针尚未运行」 under a value that
+                // says 「正在测 proroot 探针」. Two sentences contradicting each other is worse
+                // than the block arriving one step later — it does, at `Idle`, with the verdict
+                // the probe just recorded.
+                detailOverrides = if (runtimeSwitch.inFlight) {
+                    emptyMap()
+                } else {
+                    runtimeDetailOverrides(runtimeStatus)
+                },
                 // The same restart the 进程 section's action row asks for, offered
                 // from the badge explanation of a 需重启引擎 row.
                 onRestartEngine = { restartPrompt = true },

@@ -30,6 +30,14 @@
  *                            closure and a generated CA bundle that no single
  *                            upstream tarball provides.
  *
+ *   assets/runtime-payloads/ One `<name>.digest` and one `<name>.list` per payload
+ *                            (see writePayloadMeta). The app compares a device's
+ *                            recorded digest per payload and re-extracts only the
+ *                            ones whose bytes changed, instead of deleting the whole
+ *                            runtime tree on any change. A sibling of
+ *                            `assets/runtime/`, because that directory's CI invariant
+ *                            is "every entry is a payload, byte for byte".
+ *
  *                            Every one of them is named with PAYLOAD_SUFFIX, and
  *                            that suffix must never be `.gz` — read the constant's
  *                            comment before renaming anything here.
@@ -61,6 +69,16 @@ const CACHE = join(ROOT, "build", "downloads");
 const STAGE = join(ROOT, "build", "runtime");
 const JNI = join(ROOT, "app", "src", "main", "jniLibs", "arm64-v8a");
 const ASSETS = join(ROOT, "app", "src", "main", "assets", "runtime");
+/**
+ * The per-payload metadata the app reads to decide what to re-extract:
+ * `app/src/main/assets/runtime-payloads/<name>.digest` and `<name>.list`.
+ *
+ * A **sibling** of `assets/runtime/`, never inside it: CI's APK step asserts that every
+ * entry under `assets/runtime/` is one of the payloads, byte for byte, and these files
+ * are text *about* the payloads, not payloads. Read `writePayloadMeta` for the layout
+ * and for why each list holds exactly the paths it holds.
+ */
+const PAYLOAD_META = join(ROOT, "app", "src", "main", "assets", "runtime-payloads");
 const LOCK = join(ROOT, "runtime.lock.json");
 
 const TERMUX = "https://packages.termux.dev/apt/termux-main";
@@ -958,12 +976,150 @@ function main() {
     );
   }
 
-  writeRevision(produced);
+  const payloadDigests = writePayloadMeta([
+    // Every path below is relative to `<files>/pi/runtime`, which is the tree the app
+    // extracts into: `rootfs/...` for things that land inside the Ubuntu userland,
+    // `rootfs/root/.pi/agent/bin/...` for the two tools, and nothing at all for the
+    // proroot `.so` files (Android's native-library extractor installs those into
+    // `nativeLibraryDir`, outside this tree; the app never prunes from them).
+    { name: "ubuntu-base", archive: join(ASSETS, `ubuntu-base${PAYLOAD_SUFFIX}`), prefix: "rootfs" },
+    {
+      name: "node",
+      archive: join(ASSETS, `node${PAYLOAD_SUFFIX}`),
+      prefix: "rootfs/opt/node",
+      // The archive has one top-level `node-vX-linux-arm64/` directory, which
+      // RuntimeProvisioner.extractNode strips by moving that directory to
+      // `<rootfs>/opt/node`. The version in the name is why this strips the first
+      // component instead of matching a literal.
+      stripFirst: true,
+      extra: [
+        "rootfs/usr/local/bin/node",
+        "rootfs/usr/local/bin/npm",
+        "rootfs/usr/local/bin/npx",
+      ],
+    },
+    {
+      // The archive is a whole distribution tree, but `installTool` installs exactly
+      // one binary — the file named `rg` inside it — and writes it to two places. Only
+      // the rootfs copy is inside the volatile tree and therefore listed. The durable
+      // copy at `<files>/pi/.pi/agent/bin/rg` is deliberately **not** in any list: it
+      // lives in the user's own directory, and "never delete anything outside the
+      // lists" is precisely what keeps this feature from touching it.
+      name: "ripgrep",
+      archive: join(ASSETS, `ripgrep${PAYLOAD_SUFFIX}`),
+      literal: ["rootfs/root/.pi/agent/bin/rg", "rootfs/usr/local/bin/rg"],
+    },
+    {
+      name: "fd",
+      archive: join(ASSETS, `fd${PAYLOAD_SUFFIX}`),
+      literal: ["rootfs/root/.pi/agent/bin/fd", "rootfs/usr/local/bin/fd"],
+    },
+    { name: "git", archive: join(ASSETS, `git${PAYLOAD_SUFFIX}`), prefix: "rootfs" },
+    {
+      name: "pi-engine",
+      archive: join(ASSETS, `pi-engine${PAYLOAD_SUFFIX}`),
+      prefix: "rootfs/opt/pi",
+      // `bin/pi` is the launcher wrapper `extractEngine` writes by hand, and
+      // `/usr/local/bin/pi` is the symlink to it; neither is inside the archive.
+      extra: ["rootfs/opt/pi/bin/pi", "rootfs/usr/local/bin/pi"],
+    },
+    ...PROROOT_JNI_PAYLOAD.map((item) => ({
+      name: item.to,
+      archive: join(JNI, item.to),
+      literal: [],
+    })),
+  ]);
+
+  writeRevision(payloadDigests);
 }
 
 /**
- * Record, in `assets/runtime-revision.txt`, the digest of every byte this run
- * assembled — the value `RuntimeProvisioner.ensureReady` stamps a device with.
+ * Write `assets/runtime-payloads/<name>.digest` and `<name>.list` for every payload, and
+ * return the `name digest` lines the revision is derived from.
+ *
+ * ## Why the app needs these two files per payload
+ *
+ * `RuntimeProvisioner` used to compare one global digest with `<files>/pi/runtime/.stamp`
+ * and, on any difference, delete the whole runtime tree and re-extract all six archives.
+ * Any single payload change therefore destroyed everything the user had installed inside
+ * the guest. Per-payload state is what replaces that:
+ *
+ *  - `<name>.digest` is 16 hex characters of the payload's SHA-256. The same truncation
+ *    `runtime-revision.txt` has always used, and it detects a changed payload; it is not
+ *    a signature. A device whose recorded digest for a payload equals this one does not
+ *    touch that payload at all.
+ *  - `<name>.list` is every **non-directory** path the payload installs, relative to
+ *    `<files>/pi/runtime`, sorted, one per line, no leading `./`. After extracting a
+ *    changed payload over the tree, the app deletes exactly `oldList − newList` among
+ *    the paths that are still present — so a file in neither list (anything the user
+ *    created) can never be in the delete set, and a directory is never deleted (a
+ *    directory delete could take files the lists do not own).
+ *
+ * ## Why the lists are generated here rather than recorded on the device
+ *
+ * Because the *installed* layout is not the archive's layout: node's top directory is
+ * renamed to `opt/node`, ripgrep/fd are hunted by name and installed as one binary,
+ * pi-engine gets a launcher wrapper that is not in its archive. Only the assembler knows
+ * all of that, and `tar -tzf` on the archive it just wrote is the exact answer for the
+ * four payloads whose bytes are copied through.
+ */
+function writePayloadMeta(payloads) {
+  mkdirSync(PAYLOAD_META, { recursive: true });
+  const digests = [];
+  console.log("\npayload metadata:");
+  for (const payload of payloads) {
+    if (!existsSync(payload.archive)) {
+      throw new Error(`payload metadata: ${payload.archive} is missing`);
+    }
+    const digest = sha256(payload.archive).slice(0, 16);
+    const paths = payload.literal ?? payloadPaths(payload.archive, payload);
+    writeFileSync(join(PAYLOAD_META, `${payload.name}.digest`), `${digest}\n`);
+    writeFileSync(
+      join(PAYLOAD_META, `${payload.name}.list`),
+      paths.length === 0 ? "" : `${paths.join("\n")}\n`,
+    );
+    digests.push(`${payload.name} ${digest}`);
+    const kib = (statSync(join(PAYLOAD_META, `${payload.name}.list`)).size / 1024).toFixed(1);
+    console.log(
+      `  ${(payload.name + ".list").padEnd(28)} ${String(paths.length).padStart(6)} paths ${kib.padStart(9)} KiB`,
+    );
+  }
+  return digests;
+}
+
+/**
+ * The paths one payload installs into `<files>/pi/runtime`, relative to that tree.
+ *
+ * Read from the archive with `tar -tzf` rather than by walking the staged tree: the
+ * archive *is* what the device receives, so a discrepancy between the two is impossible
+ * by construction. Directory entries (`tar` prints them with a trailing `/`) are
+ * dropped — they are never deleted on device, see `writePayloadMeta` — and the optional
+ * `prefix` / `stripFirst` / `extra` describe the transforms `RuntimeProvisioner` applies
+ * when it installs that particular payload.
+ */
+function payloadPaths(archive, { prefix = "", stripFirst = false, extra = [] } = {}) {
+  const out = new Set(extra);
+  const listing = execFileSync("tar", ["-tzf", archive], {
+    encoding: "utf8",
+    maxBuffer: 512 * 1024 * 1024,
+  });
+  for (const raw of listing.split("\n")) {
+    let name = raw.trim().replace(/^\.\//, "");
+    if (name.length === 0 || name.endsWith("/")) continue;
+    if (stripFirst) {
+      const slash = name.indexOf("/");
+      if (slash < 0) continue;
+      name = name.slice(slash + 1);
+      if (name.length === 0) continue;
+    }
+    out.add(prefix.length > 0 ? `${prefix}/${name}` : name);
+  }
+  return [...out].sort();
+}
+
+/**
+ * Record, in `assets/runtime-revision.txt`, the digest **of the per-payload digests** —
+ * the value `RuntimeProvisioner.ensureReady` stamps a device with.
  *
  * ## Why this is generated and not a constant someone remembers to bump
  *
@@ -974,8 +1130,8 @@ function main() {
  *    already unpacked. The new APK installs, the app looks fine, and it is running
  *    the previous Node and the previous pi. The build produced nothing. Nobody
  *    finds out, because nothing on the device disagrees with anything else.
- *  - bump it when nothing changed, and every device re-unpacks 110 MiB for nothing,
- *    after `wipe()` has deleted everything the user installed inside the guest.
+ *  - bump it when nothing changed, and every device re-reads and re-compares state for
+ *    nothing.
  *
  * Deriving it removes the first case entirely — the digest changes exactly when the
  * payload bytes do — and makes the second case impossible to do by accident, because
@@ -983,15 +1139,21 @@ function main() {
  * `assets/runtime/` on purpose: that directory's invariant, checked by CI, is that
  * every entry in it is one of these payloads, byte for byte.
  *
- * The digest is over the *file names as well as the contents*, sorted, so renaming
- * a payload is a change too — which it is: the app asks for these names.
+ * ## What it is a digest *of*, and what that decides
+ *
+ * The input is the sorted `name digest` lines from `writePayloadMeta`, so a rename is a
+ * change too — which it is: the app asks for these names. Because the app's fast path
+ * compares this one value with `.stamp`, a device whose stamp matches reads no
+ * per-payload state at all; the revision is the *cheap* question ("is this the payload
+ * set I already have?") and the per-payload digests are the *precise* one, asked only
+ * when the answer is no. Adding a payload therefore moves the revision once, and the
+ * payloads that did not change are still not re-extracted.
  */
-function writeRevision(produced) {
+function writeRevision(payloadDigests) {
   const digest = createHash("sha256");
-  for (const path of [...produced].sort()) {
-    digest.update(basename(path));
-    digest.update("\0");
-    digest.update(readFileSync(path));
+  for (const line of [...payloadDigests].sort()) {
+    digest.update(line);
+    digest.update("\n");
   }
   const value = digest.digest("hex").slice(0, 16);
   const dst = join(dirname(ASSETS), "runtime-revision.txt");

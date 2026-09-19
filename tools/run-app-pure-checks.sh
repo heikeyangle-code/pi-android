@@ -324,6 +324,7 @@ run_harness mentions \
 run_harness agent-tool-paths \
   app.pi.runtime.AgentToolPathsCheckKt \
   "$ROOT/app/src/test/kotlin/app/pi/runtime/AgentToolPathsCheck.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/runtime/VolatileTree.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/runtime/PiRuntime.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/runtime/GuestRecipe.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/runtime/RuntimeChoice.kt" \
@@ -346,6 +347,7 @@ run_harness guest-tool-probe \
   app.pi.runtime.GuestToolProbeCheckKt \
   "$ROOT/app/src/test/kotlin/app/pi/runtime/GuestToolProbeCheck.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/runtime/GuestToolProbe.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/runtime/VolatileTree.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/runtime/PiRuntime.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/runtime/GuestRecipe.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/runtime/RuntimeChoice.kt" \
@@ -365,6 +367,7 @@ run_harness proroot \
   app.pi.runtime.ProrootCheckKt \
   "$ROOT/app/src/test/kotlin/app/pi/runtime/ProrootCheck.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/runtime/PiRuntime.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/runtime/VolatileTree.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/runtime/GuestRecipe.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/runtime/ProrootCommand.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/runtime/GuestCommandLine.kt" \
@@ -590,18 +593,62 @@ run_harness lifecycle-policy \
   "$ROOT/app/src/test/kotlin/app/pi/service/PiEngineLifecyclePolicyCheck.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/service/PiEngineLifecyclePolicy.kt"
 
-# app.pi.runtime: the unpack's free-space budget. `RuntimeProvisioner.ensureReady`
-# deletes the whole runtime tree and then extracts ~440 MB of payloads into it, and
-# nothing checked free space: on a phone that is out of room the user lost the
-# runtime that worked, the new one was half written, and - because the revision stamp
-# is only written at the end - every later launch repeated the wipe. The failing path
-# only exists on a device that is out of space, so nothing in the build could notice
-# it. The object imports nothing at all; the file read (`File.usableSpace`) and the
-# call site stay in the provisioner, which this harness deliberately does not compile.
+# app.pi.runtime: the extraction's free-space budget, measured against the payloads an
+# attempt will actually extract. `RuntimeProvisioner.ensureReady` writes ~440 MB of tree
+# for a first install (and much less for a single changed payload now that provisioning is
+# per payload), and nothing checked free space: on a phone that is out of room the runtime
+# was half written, and - because each payload's digest is only written once that payload
+# is complete - every later launch repeated the work. The failing path only exists on a
+# device that is out of space, so nothing in the build could notice it. The object imports
+# nothing at all; the file read (`File.usableSpace`) and the call site stay in the
+# provisioner, which this harness deliberately does not compile.
 run_harness runtime-space \
   app.pi.runtime.RuntimeSpaceBudgetCheckKt \
   "$ROOT/app/src/test/kotlin/app/pi/runtime/RuntimeSpaceBudgetCheck.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/runtime/RuntimeSpaceBudget.kt"
+
+# app.pi.runtime: the two decisions that keep an update from deleting the user's files.
+# ① The prune: `PayloadPrune.victims(old, new, present)` is what replaced "one global
+# digest changed, so delete the whole runtime tree and re-extract 110 MiB", and its whole
+# safety argument is arithmetic — a file in neither list (anything the user created) can
+# never be in the delete set, a path in both lists is kept, only an old-only path that is
+# still present is removed. A device cannot show you that before it has already gone
+# wrong, which is why it is pinned here. ② The boundary: `VolatileTree` answers "is this
+# inside the volatile tree", `PiPaths` asserts at construction that the workspace root,
+# the agent dir and `persist/` are outside it, and every recursive delete in the
+# provisioner is checked with it first — so "wipe() cannot touch the workspace" is a
+# property of the code, with the counterexample (a durable dir inside the runtime tree)
+# driven through the same function. `PiRuntime.kt` is in this closure for `PiPaths` and
+# it imports only `java.io.File`, so this compile fails if any of the three files ever
+# grows an Android import — which is the point.
+run_harness runtime-payload-state \
+  app.pi.runtime.RuntimePayloadStateCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/runtime/RuntimePayloadStateCheck.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/runtime/PayloadPrune.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/runtime/VolatileTree.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/runtime/PiRuntime.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/runtime/GuestRecipe.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/runtime/RuntimeChoice.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/runtime/GuestWorkspacePath.kt"
+
+# app.pi.runtime: the durable boot audit (`BootAudit` + `TreeSnapshot`), the only evidence a
+# user can hand us about an update that deleted their workspace root. Every way it can lie is
+# silent, and each one is a check here: a budgeted walk that stopped at 2000 entries without
+# saying so, a child list capped at 32 without the omitted count, a rolling file that dropped
+# old lines without the number saying how many, "unreadable" reading as "0", and a failure to
+# record on the one boot that mattered. It also drives the end-to-end upgrade shape the audit
+# exists for — record, then the workspace root's children disappear, then record again — so
+# the `before`/`after` lines a user exports really do show the change. Android-free: `java.io`
+# and `java.time` only, plus `PiRuntime.kt` for the atomic writer both files use.
+run_harness boot-audit \
+  app.pi.runtime.BootAuditCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/runtime/BootAuditCheck.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/runtime/BootAudit.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/runtime/TreeSnapshot.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/runtime/VolatileTree.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/runtime/PiRuntime.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/runtime/GuestRecipe.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/runtime/RuntimeChoice.kt"
 
 # app.pi.engine: the engine's exit translator. pi exits with code 1 for a handful of
 # reasons and prints the reason to stderr; the app captured that stderr and then never
@@ -713,6 +760,19 @@ run_harness text-cache \
   app.pi.ui.blocks.TextCacheCheckKt \
   "$ROOT/app/src/test/kotlin/app/pi/ui/blocks/TextCacheCheck.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/ui/blocks/ImageSize.kt"
+
+# app.pi.ui.settings: 「运行时加速（实验性）」开关**当场生效**的那条判定。用户原话是
+# 「只要在开关里点开开关，就自动重启切换。为什么还要退出软件重进呢？」——于是写完这个开关
+# 要清掉探针结论与失败计数、现在就跑一次门禁、通过了当场把引擎重启到 proroot，被拒时还要
+# 把开关退回写入前的值。每一种走错都安静：半切换、探针结论被丢掉、开关说 proroot 而引擎在
+# proot 上跑。执行它的 `PiSessionViewModel` 带 Android 与 Compose，本机编译不了，所以判定
+# 被抽成纯对象，由这个 harness 真跑一遍（含「只要还有引擎在跑，开关的值就必须等于它的运行时」
+# 这条不变量在六个组合上的展开）。Android-free：`RuntimeSwitchAction.kt` 一个 import 都没有，
+# 长出 import 这里就编译失败，这正是目的。
+run_harness runtime-switch \
+  app.pi.ui.settings.RuntimeSwitchActionCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/ui/settings/RuntimeSwitchActionCheck.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/ui/settings/RuntimeSwitchAction.kt"
 
 # app.pi.ui.settings: what the editors are allowed to write into pi's files. pi throws on
 # some values (a `null` timeout, a compaction override whose value is not a number) and
@@ -840,6 +900,7 @@ run_harness proroot-status-text \
   "$ROOT/app/src/main/kotlin/app/pi/runtime/ProrootProbeCache.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/runtime/GuestRecipe.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/runtime/GuestCommandLine.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/runtime/VolatileTree.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/runtime/PiRuntime.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/runtime/ShellQuote.kt"
 
@@ -857,6 +918,7 @@ run_harness proroot-probe-detail \
   "$ROOT/app/src/main/kotlin/app/pi/runtime/ProrootProbeCache.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/runtime/GuestRecipe.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/runtime/GuestCommandLine.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/runtime/VolatileTree.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/runtime/PiRuntime.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/runtime/ShellQuote.kt"
 

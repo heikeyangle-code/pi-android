@@ -251,17 +251,48 @@ fun main() {
     check("all four conditions satisfied means proroot", RuntimeChoice.decide(enabled = true, filesPresent = true, probePassed = true, consecutiveFailures = 0), EngineDecision(GuestEngine.Proroot, EngineFallback.None))
     check("the switch is checked before the files", RuntimeChoice.decide(enabled = false, filesPresent = false, probePassed = false, consecutiveFailures = 5), EngineDecision(GuestEngine.Proot, EngineFallback.SwitchOff))
     check("every failure reason has a sentence", EngineFallback.entries.all { RuntimeChoice.describe(it).isNotBlank() }, true)
-    // 尚未运行 is the sentence users got stuck on: the first launch after the switch is
-    // turned on is the one that runs the probe **and still uses proot**, and only a later
-    // launch can end up on proroot. The old text ("首次使用时会自动跑一次") described the
-    // probe but not what the user sees in between. Pinned here because this sentence is
-    // in `RuntimeChoice` — a symbol this harness already owns — and the settings row and
-    // the report both render it verbatim.
+    // 这一组句子读出来的是「运行时（实际生效）」那一行的值：标题问「在跑哪个」，所以每个值
+    // 都必须**先写那个运行时**，原因才跟在括号里。旧的一组是反过来的（关掉时写「未开启（走
+    // proot）」），用户直接问了出来：「关掉 Pro Root 为什么要写着未开启」。这条不变量逐值
+    // 钉住「谁在最前面」，改文案时最先被它拦住。
+    val sentences = EngineFallback.entries.associateWith { RuntimeChoice.describe(it) }
+    check(
+        "every sentence leads with the runtime that is in effect",
+        sentences.values.map { it.substringBefore('（') }.distinct().sorted(),
+        listOf("proot", "proroot"),
+    )
+    check(
+        "the sentence for proroot leads with proroot, every proot fallback with proot",
+        sentences[EngineFallback.None]?.substringBefore('（'),
+        "proroot",
+    )
+    check(
+        "every proot fallback leads with proot",
+        EngineFallback.entries.filter { it != EngineFallback.None }
+            .associateWith { sentences[it]?.substringBefore('（') },
+        EngineFallback.entries.filter { it != EngineFallback.None }.associateWith { "proot" },
+    )
+    check(
+        "turning the switch off reads as the runtime, not as the switch",
+        sentences[EngineFallback.SwitchOff],
+        "proot",
+    )
+    // 尚未运行 不再讲「下一次 / 再下一次」：拨开开关现在会**当场**跑探针并重启引擎
+    // （`ui/settings/RuntimeSwitchAction`），所以三趟车的说明既不是用户看到的事，也和开关
+    // 那一行的文案互相矛盾。这一档只剩一个含义：此刻没有这个 revision 的探针结论。
     val notRun = RuntimeChoice.describe(EngineFallback.ProbeNotRun)
-    check("尚未运行 says the next launch runs the probe", notRun.contains("下一次启动 guest 会跑一次"), true)
-    check("尚未运行 says that launch still uses proot", notRun.contains("那一次仍用 proot"), true)
-    check("尚未运行 says proroot can only take over after that", notRun.contains("再下一次"), true)
+    check("尚未运行 names the missing probe verdict", notRun.contains("探针尚未运行"), true)
+    check("尚未运行 no longer promises a next launch", notRun.contains("下一次"), false)
+    check("尚未运行 no longer counts launches", notRun.contains("再下一次"), false)
     check("尚未运行 is still one line", notRun.none { it == '\n' || it == '\r' }, true)
+    check(
+        "the failure streak names the count and the way out",
+        listOf(
+            sentences[EngineFallback.FailureStreak]?.contains("3 次启动失败") == true,
+            sentences[EngineFallback.FailureStreak]?.contains("重新打开开关") == true,
+        ),
+        listOf(true, true),
+    )
     check("the failure budget is three", RuntimeChoice.MAX_CONSECUTIVE_FAILURES, 3)
     check("a failure advances the counter", RuntimeChoice.afterFailure(0), 1)
     check("a failure at the boundary is exhausted", RuntimeChoice.exhausted(RuntimeChoice.afterFailure(2)), true)
@@ -781,6 +812,109 @@ fun main() {
     check("the probe cache is inside the volatile runtime tree", p.prorootProbeCache().path, "$FILES/pi/runtime/.proroot-probe")
     check("the CA bundle is the payload's path", GuestRecipe.GUEST_CA_BUNDLE, "/etc/ssl/certs/ca-certificates.crt")
     check("quoting survives an embedded single quote", ShellQuote.quote("a'b"), "'a'\\''b'")
+
+    // ============================== 9. 开关关着 = 另一条线「一点活都没干」
+    //
+    // The user's sentence this section answers is not about the *decision*: it is
+    // 「就算完全没用，也不影响另一个，一点不影响」. The decision half is pinned above
+    // (`decide(enabled = false, …)` is `SwitchOff`), and that alone is not enough —
+    // `RuntimeSelection.plan()`/`status()` could still have stat'ed the five proroot
+    // components, read the cache and hashed the binaries *before* reaching the decision,
+    // and every one of those results would be discarded. That would be work on every guest
+    // start for a user who never enabled proroot, and no decision-level check can see it.
+    //
+    // Two layers are pinned here, and this is exactly how far a bare JVM can go:
+    //
+    //  1. **The decision cannot depend on any proroot fact while the switch is off.**
+    //     The full cross-product of the other three inputs is enumerated: if the answer is
+    //     `SwitchOff` for all 16, then nothing those inputs describe can be consulted on
+    //     that path in the first place.
+    //  2. **The side effects are guarded in the source.** `RuntimeSelection.kt` imports
+    //     Android (`Context`, `Log`), so this harness cannot compile it and cannot call
+    //     `plan()`/`status()`. What it can do — the way `shell-policy-mirror` reads the
+    //     device guard — is read the file as text and require every expression that
+    //     touches proroot to sit inside an `enabled` guard: the five stats
+    //     (`missingProrootComponents()`), the cache read (`ProrootProbe.cached(`), the
+    //     config sweep and the gate call itself. A future edit that hoists one of them out
+    //     of its guard fails this harness instead of silently costing every user 5 stats,
+    //     a digest and a directory listing per launch.
+    //
+    // What this does **not** prove: that the guarded call is not reached at runtime by
+    // some other path, and that the gate really spawns nothing when it is not called. That
+    // layer needs `RuntimeSelection` compiled with android.jar and a device that logs the
+    // syscalls; it is stated as a gap rather than papered over.
+    //
+    // (1) The decision ignores the other three facts entirely when the switch is off.
+    val offDecisions = buildList {
+        for (files in listOf(true, false)) {
+            for (probe in listOf(true, false)) {
+                for (fail in listOf(0, 1, 3, 99)) {
+                    add(RuntimeChoice.decide(enabled = false, filesPresent = files, probePassed = probe, consecutiveFailures = fail))
+                }
+            }
+        }
+    }
+    check("the switch off answers SwitchOff for every combination", offDecisions.size, 16)
+    check(
+        "…and none of the other three facts can change that answer",
+        offDecisions.all { it == EngineDecision(GuestEngine.Proot, EngineFallback.SwitchOff) },
+        true,
+    )
+    // The reverse half: components missing outranks a passing probe, so an enabled switch
+    // on a device without the five files can never run the gate either.
+    check(
+        "a missing component outranks a passing gate",
+        RuntimeChoice.decide(enabled = true, filesPresent = false, probePassed = true, consecutiveFailures = 0),
+        EngineDecision(GuestEngine.Proot, EngineFallback.RuntimeFilesMissing),
+    )
+
+    // (2) On a tree with no proroot components, nothing proroot-shaped appears just from
+    // asking the path questions — and the one accessor that *does* create the directory is
+    // the one `plan()`/`sweepProrootConfigs` does not use when the switch is off.
+    val offRoot = java.io.File(System.getProperty("java.io.tmpdir"), "pi-proroot-off-${System.nanoTime()}")
+    val offPaths = PiPaths(
+        filesDir = java.io.File(offRoot, "files").also { it.mkdirs() },
+        nativeLibDir = java.io.File(offRoot, "lib").also { it.mkdirs() },
+    )
+    check("the fixture has no proroot component", offPaths.missingProrootComponents().size, 5)
+    check("the non-creating scratch accessor creates no proroot-tmp", offPaths.prorootTmpDir().exists(), false)
+    check("asking for the probe cache creates nothing", offPaths.prorootProbeCache().exists(), false)
+    check("asking for the autopsy path creates nothing", offPaths.prorootEngineForensics().exists(), false)
+    // The pair's contract, stated in `PiPaths.prorootTmp`: the sweep must be able to look
+    // without creating, and only a launch creates. Both halves are asserted so a swap of
+    // the two accessors cannot pass.
+    check("the creating accessor does create it", offPaths.prorootTmp.isDirectory, true)
+    check("…and the non-creating one still only looks", offPaths.prorootTmpDir().isDirectory, true)
+
+    // (3) The source-level guards. Whitespace is normalised so this pins the *structure*
+    // and not the formatting.
+    val selectionSource = java.io.File(
+        java.io.File(System.getProperty("pi.repo.root") ?: "."),
+        "app/src/main/kotlin/app/pi/runtime/RuntimeSelection.kt",
+    ).readText().replace(Regex("\\s+"), " ")
+    val statsGuard = "val missing = if (enabled) paths.missingProrootComponents() else emptyList()"
+    check("both entry points guard the five stats with `enabled`", selectionSource.split(statsGuard).size - 1, 2)
+    check(
+        "the five stats are called nowhere else",
+        selectionSource.split("missingProrootComponents()").size - 1,
+        2,
+    )
+    check(
+        "the gate is called only behind `enabled && filesPresent && not exhausted`",
+        selectionSource.contains("val probePassed = if (enabled && filesPresent && !RuntimeChoice.exhausted(failures)) { probe = gate(storage)"),
+        true,
+    )
+    check(
+        "the cache is read only behind `enabled && missing.isEmpty()`",
+        selectionSource.contains("val cached = if (enabled && missing.isEmpty()) { runCatching { ProrootProbe.cached("),
+        true,
+    )
+    check(
+        "the config sweep runs only when the switch is on",
+        selectionSource.split("if (enabled) sweepProrootConfigs()").size - 1,
+        1,
+    )
+    offRoot.deleteRecursively()
 
     println(if (failures == 0) "\nharness: OK (all checks passed)" else "\nharness: FAILED ($failures)")
     if (failures != 0) kotlin.system.exitProcess(1)

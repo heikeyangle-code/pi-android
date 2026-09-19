@@ -571,6 +571,10 @@ fun PiRoot() {
     val theme by session.theme.collectAsState()
     val themeEntries by session.themeEntries.collectAsState()
 
+    // 「运行时加速（实验性）」开关当场生效的进度。拨完开关探针要跑 10~60 秒，设置页那一行
+    // 必须在那段时间里说它在跑 —— 这是这个状态唯一的用途（见 `RuntimeSwitchAction`）。
+    val runtimeSwitch by session.runtimeSwitch.collectAsState()
+
     // Commands that need a destination are requested by the ViewModel through
     // state, because they finish inside a coroutine after an RPC answer — by then
     // there is no composable left to call back into. Consuming the request here
@@ -798,6 +802,9 @@ fun PiRoot() {
                     // `/scoped-models`: open the group and highlight the key.
                     focusKey = settingsFocus,
                     onFocusConsumed = { settingsFocus = null },
+                    // 「运行时加速（实验性）」那一行拨完之后的进度：探针在跑的时候，「运行时
+                    // （实际生效）」那一行显示「正在测探针」而不是上一次的旧结论。
+                    runtimeSwitch = runtimeSwitch,
                     // The credential form writes settings.json through the packages
                     // layer, which invalidates a store instance of its own; the store
                     // this app reads belongs to the ViewModel, so dropping its cache

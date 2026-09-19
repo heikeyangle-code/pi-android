@@ -946,6 +946,17 @@ fun PiValueRow(
  *    `PI_CACHE_RETENTION`) and the resources its loader caches at startup.
  *    Nothing short of a new process applies it, so the badge must not say
  *    "重载" — a word that promises the change is one tap away.
+ *  - [AutoRestartEngine] — the same timing as [RestartEngine] (a new process is
+ *    still what makes the value true) **but the app performs it itself** as part
+ *    of the write: the row is `app.runtime.proroot`, whose toggle runs the probe
+ *    and then restarts the engine onto the chosen runtime
+ *    (`RuntimeSwitchAction`). The badge says 「自动重启引擎」 rather than
+ *    「需重启引擎」 so it does not ask the user for a step that already happened —
+ *    and the row is never left claiming a value the running engine does not have
+ *    (a refused restart is rolled back). Use this kind only where the write path
+ *    really does the restart; a row without that wiring must stay
+ *    [RestartEngine], or its badge tells the user the change is applied while
+ *    nothing has happened.
  *  - [RestartApp] — read while *this* app starts (the foreground-service switch).
  *  - [Immediate] — nothing to wait for.
  *
@@ -960,5 +971,13 @@ fun PiValueRow(
  * unreachable spelling of the same pill. The enum stays: it is the registry's
  * type and the settings package references it, and this batch does not own that
  * package.
+ *
+ * Every value here has a reader in `ui/settings`: the badge label
+ * (`PiSettingsStyle.PiSettingsEffectiveBadge`), the explanation dialog
+ * (`PiSettingsEditors.PiEffectiveDialog`, which is a `when` — exhaustive on
+ * purpose, so a new kind cannot be added without deciding what it means and
+ * whether it offers an action), and the badge's action
+ * (`SettingsGroupScreen`, where only [RestartEngine] routes to the manual
+ * restart).
  */
-enum class EffectiveKind { Immediate, Reload, RestartEngine, NewSession, RestartApp }
+enum class EffectiveKind { Immediate, Reload, RestartEngine, AutoRestartEngine, NewSession, RestartApp }

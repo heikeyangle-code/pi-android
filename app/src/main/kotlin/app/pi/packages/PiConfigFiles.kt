@@ -218,8 +218,9 @@ class PiAuthStorage(
     private val file: File,
     /**
      * The durable copy. See [AgentLayout]: pi reads the file inside the rootfs, and
-     * `RuntimeProvisioner.wipe()` deletes that tree on every runtime revision bump,
-     * so a credential written only there disappears on the next app update.
+     * that tree is volatile — the explicit repair path
+     * (`RuntimeProvisioner.ensureReady(rebuild = true)`) deletes it — so a credential
+     * written only there can disappear.
      */
     private val mirror: File? = null,
 ) {

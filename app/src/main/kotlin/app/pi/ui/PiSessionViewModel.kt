@@ -35,7 +35,9 @@ import app.pi.rpc.extensionErrorHeadline
 import app.pi.runtime.GuestWorkspacePath
 import app.pi.runtime.PiProjectConfig
 import app.pi.runtime.PtyLauncher
+import app.pi.runtime.RuntimePreferences
 import app.pi.runtime.RuntimeProvisioner
+import app.pi.runtime.RuntimeSelection
 import app.pi.runtime.WorkspaceStore
 import app.pi.session.PiSessionStore
 import app.pi.session.SessionExportNaming
@@ -76,8 +78,10 @@ import app.pi.ui.extension.WidgetPlacement
 import app.pi.ui.extension.chromeText
 import app.pi.ui.extension.noticeToneOf
 import app.pi.ui.extension.trimNoticeQueue
+import app.pi.ui.settings.AppOnlySettingsStore
 import app.pi.ui.settings.EngineDiagnostics
 import app.pi.ui.settings.PiSettingsStore
+import app.pi.ui.settings.RuntimeSwitchAction
 import app.pi.ui.theme.PiResolvedTheme
 import app.pi.ui.theme.PiThemeEntry
 import app.pi.ui.theme.PiThemeLoader
@@ -98,6 +102,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import java.io.File
+import java.io.IOException
 import java.time.Instant
 import java.time.temporal.ChronoUnit
 
@@ -388,13 +393,34 @@ data class HistoryCursor(
      * avoid.
      */
     val startOffset: Long,
-    /** True when [startOffset] is the beginning of the file: no earlier history. */
+    /**
+     * True when [startOffset] is the beginning of the file: no earlier history.
+     *
+     * **Only a read that establishes it may set this** — a window
+     * `SessionFileReader.readBefore` flagged `reachedStart`, or a range that already
+     * begins at byte 0 ([BackwardRead]). Neither a read that failed nor a step that
+     * delivered nothing may set it: doing so deletes the 「加载更早」 row and makes every
+     * entry above the loaded range unreachable for the rest of the session, which is the
+     * reported 「之前的内容都被截掉了，都没了」.
+     */
     val reachedStart: Boolean,
     /** A backward window is being read right now; the screen must not ask again. */
     val loading: Boolean = false,
+    /**
+     * Why the last backward step delivered nothing, or null when it delivered.
+     *
+     * The reason the screen shows. A non-null stop means "do not ask again by yourself,
+     * but the reader may press the row" — [hasEarlier] is false for the scroll effect
+     * (`ChatScreen.kt:1312`), while the row itself stays because [showsEarlierRow] is
+     * about whether there is anything to say, not about whether a step is automatic.
+     */
+    val stop: HistoryStop? = null,
 ) {
-    /** Whether the screen should offer to load more when scrolled to the top. */
-    val hasEarlier: Boolean get() = !reachedStart && !loading
+    /** Whether the scroll effect may ask for another window without the reader's press. */
+    val hasEarlier: Boolean get() = !reachedStart && !loading && stop == null
+
+    /** Whether the 「加载更早」 row belongs on screen at all. */
+    val showsEarlierRow: Boolean get() = !reachedStart
 }
 
 data class UiPrefs(
@@ -698,7 +724,8 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     private var session: PiEngineSession? = null
 
     /**
-     * The entries the current transcript was seeded from, in file order.
+     * The entries the current transcript was seeded from, held as the windows they were
+     * read in and **newest window first**.
      *
      * Held **only to be re-seeded**: [expandEarlierHistory] rebuilds the transcript
      * from an older window plus this list, and the reducer cannot give the list back
@@ -707,11 +734,42 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * through — never by the session — and it is replaced wholesale, never appended
      * to, so a session switch cannot leave one session's entries in the next one's
      * rebuild. [replayHistory] is the only writer.
+     *
+     * **It is a copy.** The rows it was folded into live in the reducer; this list only
+     * exists so a later rebuild can reproduce them. That is what makes it the one thing
+     * an eviction may drop, and why an eviction costs no row: the dropped range is
+     * `[evictedFrom, loadedUntil)`, and the next rebuild reads it back from the file.
+     *
+     * The **chunk** boundaries (one per window the reader walked through) are what
+     * `evictablePrefix` needs: eviction has to drop whole windows, and it has to know
+     * where a window starts in the file to read it back.
      */
-    private var loadedHistory: List<JsonObject> = emptyList()
+    private var retainedChunks: List<RetainedChunk> = emptyList()
 
-    /** Retained characters in [loadedHistory], against [HISTORY_RETAINED_CHARS]. */
+    /**
+     * Retained characters in [retainedChunks], against [HISTORY_RETAINED_CHARS].
+     *
+     * Kept **incrementally** — a read adds its own window's count and an eviction
+     * subtracts the dropped chunks' — rather than re-summed, because the measure
+     * serialises every entry ([entryChars]) and re-summing would make each step cost
+     * the whole retained range. Additivity is what makes that the same number, and the
+     * `history-retention` harness pins it.
+     */
     private var loadedHistoryChars: Long = 0L
+
+    /**
+     * The byte range of the loaded session that is **no longer in RAM**:
+     * `[evictedFrom, loadedUntil)`, read back on the next rebuild.
+     *
+     * `evictedFrom == loadedUntil` means nothing has been evicted. Both are line-start
+     * byte offsets of the session file, and both stay valid while pi appends to it,
+     * because [loadedUntil] is fixed at the file's size when it was replayed.
+     */
+    private var evictedFrom: Long = 0L
+    private var loadedUntil: Long = 0L
+
+    /** Entries in `[evictedFrom, loadedUntil)`, so a read-back that disagrees is refused. */
+    private var evictedEntries: Int = 0
 
     /**
      * The retained size of one entry, as the bound in [HISTORY_RETAINED_CHARS] counts it.
@@ -1124,6 +1182,14 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * session are pushed over RPC (see the `when` below). Everything else the
      * settings page writes is picked up by pi the next time it reads a settings
      * document — a new session, or a new process.
+     *
+     * The one exception to that last sentence is `app.runtime.proroot`: which binary
+     * launches the guest is decided **per launch**, before pi exists, so no document
+     * pi reads is involved — but the engine that is already running will not change
+     * runtime on its own. That row used to require the user to exit the app
+     * (「为什么还要退出软件重进呢？」), so the write is now the trigger for the
+     * probe-then-restart sequence; see [applyRuntimeSwitch] and
+     * `RuntimeSwitchAction` (the pure decision, executed by a bare-JVM harness).
      */
     fun onSettingWritten(key: String) {
         if (key == "theme") {
@@ -1167,6 +1233,202 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             // (`piCommandPalette`).
             refreshCommands()
         }
+        if (key == AppOnlySettingsStore.KEY_PROROOT) {
+            // 开关当场生效：清结论（写入本身已经做了）→ 现在跑探针 → 通过就当场重启引擎。
+            // 见 [applyRuntimeSwitch] 与 `RuntimeSwitchAction`。
+            applyRuntimeSwitch()
+        }
+    }
+
+    // ------------------------------------------------- 运行时加速开关（当场生效）
+    //
+    // 用户原话：「只要在开关里点开开关，就自动重启切换。为什么还要退出软件重进呢？」
+    //
+    // 「写完这个开关该做什么」是纯逻辑，在 `ui/settings/RuntimeSwitchAction.kt`：判定、
+    // 回滚目标、「只要还有引擎在跑，开关的值就必须等于它的运行时」这条不变量，以及状态行
+    // 的那句话，都由 `runtime-switch` harness 在裸 JVM 上真跑。这里只有 IO 与重启。
+    //
+    // 为什么这一层在 ViewModel 而不是 `PiSettingsStack`（它已经持有 `RuntimeSelection`、
+    // 状态行与重启入口）：探针要 10~60 秒，而设置目的地一旦离开组合就被销毁，
+    // `rememberCoroutineScope()` 随之取消 —— 拨完开关就回对话页是完全正常的动作，那会把
+    // 探针连同「要么切过去、要么回滚」的收尾一起丢掉，留下一个开着却什么都没发生的开关。
+    // `viewModelScope` 活到 Activity 结束；这里也是唯一同时拿得到 `restartEngine`（私有的
+    // `host`）与偏好存储的地方。
+
+    /** 开关切换的进度，[RuntimeSwitchAction.Step.Idle] 表示没有动作在跑。 */
+    private val _runtimeSwitch = MutableStateFlow(RuntimeSwitchAction.Step.Idle)
+
+    /**
+     * 给设置页看的进度：`true == inFlight` 的取值让「运行时（实际生效）」那一行显示
+     * 「正在测探针 / 正在重启」，值回到 [RuntimeSwitchAction.Step.Idle] 时那一行重新读
+     * `RuntimeSelection.status()`——探针最长一分钟，没有这个状态，屏幕在那一分钟里什么都
+     * 不说（用户会以为开关没反应，这正是这个改动要消灭的形状）。
+     */
+    val runtimeSwitch: StateFlow<RuntimeSwitchAction.Step> = _runtimeSwitch.asStateFlow()
+
+    /** 最后一次写入的序号：探针跑完时用它判断这次写入是否已被后来的写入取代。 */
+    private var runtimeSwitchGeneration = 0
+
+    /** 手上那一次切换。新的一次写入会取消它；取消不打断阻塞中的探针，见 [applyRuntimeSwitch]。 */
+    private var runtimeSwitchJob: Job? = null
+
+    /**
+     * 用户在设置里拨动了「运行时加速（实验性）」。
+     *
+     * 这个键**不在** pi 的 `settings.json` 里（`AppOnlySettingsStore` 拦下了它），它的
+     * 权威副本是 `RuntimePreferences`；写入本身已经清了失败计数与缓存的探针结论
+     * （`RuntimeSelection.setProrootEnabled` → `ProrootRetry`），也就是「关掉再打开＝重试
+     * 一次」那件事 —— 这个改动把它从「下一次启动 guest 时重测」变成「现在重测、现在切换」。
+     */
+    private fun applyRuntimeSwitch() {
+        val context = getApplication<Application>()
+        val prefs = RuntimePreferences.get(context)
+        val selection = RuntimeSelection.of(context, host.paths())
+        val nowEnabled = prefs.prorootEnabled
+        val generation = ++runtimeSwitchGeneration
+        // 用户可以在探针跑着的时候把开关拨回去。上一次切换停在挂起点上被取消，这一次写入
+        // 自己的流程接管屏幕上的状态。探针是阻塞调用（`Process.waitFor`），取消不会把它
+        // 打断，所以下面每一步都重新核对 `generation`，而不是依赖取消 —— 过期的结论绝不
+        // 能再去重启引擎。
+        runtimeSwitchJob?.cancel()
+        runtimeSwitchJob = viewModelScope.launch {
+            _runtimeSwitch.value = RuntimeSwitchAction.onWrite(nowEnabled)
+            if (nowEnabled) {
+                notifyUser("已打开运行时加速：正在这台设备上测 proroot 探针（最长约 60 秒），通过后会立刻重启引擎。")
+                probeThenSwitch(generation, selection, prefs)
+            } else {
+                notifyUser("已关闭运行时加速：正在重启引擎，把运行时换回 proot。")
+                restartForRuntimeSwitch(generation, selection, prefs, nowEnabled = false)
+            }
+        }
+    }
+
+    /**
+     * 现在跑一次门禁，再按结论决定要不要重启引擎。
+     *
+     * 门禁就在 `plan()` 后面，而这里要问的正是「引擎此刻启动会用哪个运行时」：`plan()` 不
+     * 启动任何进程（它只组装 argv/env），在允许 proroot 时咨询或运行门禁
+     * （`RuntimeSelection.gate`），用的 revision、二进制 digest 与缓存 key 都和真正那次
+     * 启动一模一样。另写一套 `ProrootProbe.run(revision, digest)` 会把「解包 revision 怎么
+     * 读」抄成第二份 —— 抄错的那天，这里写下的结论 `status()` 读不到，状态行就会在 proroot
+     * 明明在用的时候说「探针尚未运行」。
+     */
+    private suspend fun probeThenSwitch(
+        generation: Int,
+        selection: RuntimeSelection,
+        prefs: RuntimePreferences,
+    ) {
+        val plan = withContext(Dispatchers.IO) {
+            runCatching {
+                selection.plan(
+                    // 这条命令永远不会被执行，它进不了任何日志或界面（`Plan.argv` 在这里
+                    // 就被丢掉）：`plan` 只拼字符串、不起进程，签名要求一个 guest 命令而已。
+                    guestCommand = "true",
+                    cwd = "/",
+                    // 与引擎启动时给门禁的值相同（`PiEngineHost` 传的是同一份外部存储根）：
+                    // 探针要在那里种一个 marker 再用 raw syscall 读回来。
+                    storage = android.os.Environment.getExternalStorageDirectory(),
+                )
+            }.getOrNull()
+        }
+        if (generation != runtimeSwitchGeneration) return
+        if (plan == null) {
+            // 探针本身没跑起来（读不到运行时、拿不到 digest、起了进程但抛了）。不编一个
+            // 结论：状态行会显示 `RuntimeSelection.status()` 的真实读数（多半是「探针尚未
+            // 运行」），通知只说这里测不成。
+            _runtimeSwitch.value = RuntimeSwitchAction.Step.Idle
+            notifyUser("proroot 探针没能跑完：仍然走 proot。稍后再拨一次这个开关可以重测。", warning = true)
+            return
+        }
+        _runtimeSwitch.value = RuntimeSwitchAction.afterProbe(prefs.prorootEnabled, plan.usingProroot)
+        if (!plan.usingProroot) {
+            // 探针没通过（或运行时文件缺失）：引擎本来就在 proot 上，重启它只是白打断一个
+            // 回合。原因用**状态行接下来要显示的那一句**说——`status()` 读的就是刚写下的
+            // 缓存结论，所以通知与那一行不会各说一套（`plan.summary` 是同一份证据的即时
+            // 形态，只在缓存里没有结论时两者才会分叉，那种情况下行上的读数是权威）。
+            val rowSentence = withContext(Dispatchers.IO) {
+                runCatching { selection.status() }.getOrNull()?.summary
+            }
+            notifyUser(
+                "没有切换到 proroot。实际生效：${rowSentence ?: plan.summary}——" +
+                    "逐阶段记录在「运行时（实际生效）」那一行下面。",
+                warning = true,
+            )
+            return
+        }
+        restartForRuntimeSwitch(generation, selection, prefs, nowEnabled = true)
+    }
+
+    /**
+     * 重启引擎换运行时，再按结论定下开关的最终值。
+     *
+     * 走的是「重启引擎」那一行完全同一条路（`restartEngine` + `allowInterrupt = false`）：
+     * 正在跑的回合既不会被悄悄打断，也不会被阻塞 —— 引擎自己在 `Busy` 时拒绝
+     * （`PiEngineHost.restart`），那句拒绝原话就是用户看到的那句。这就是为什么被拒时不写
+     * 「已生效」，而是把开关退回写入前的值（`RuntimeSwitchAction.settle`）：引擎还在原来的
+     * 运行时上，开关必须跟它一致，否则屏幕上就出现「开关说 proroot、跑的是 proot」。
+     */
+    private suspend fun restartForRuntimeSwitch(
+        generation: Int,
+        selection: RuntimeSelection,
+        prefs: RuntimePreferences,
+        nowEnabled: Boolean,
+    ) {
+        _runtimeSwitch.value = if (nowEnabled) {
+            RuntimeSwitchAction.Step.RestartingToProroot
+        } else {
+            RuntimeSwitchAction.Step.RestartingToProot
+        }
+        val outcome = restartEngine(
+            reason = if (nowEnabled) {
+                "在设置里打开了运行时加速（proroot）"
+            } else {
+                "在设置里关掉了运行时加速（proroot）"
+            },
+            // 与设置页「重启引擎」那一行同一个值：一个回合都不会被杀。
+            allowInterrupt = false,
+        )
+        if (generation != runtimeSwitchGeneration) return
+        val result = when (outcome) {
+            is EngineRestartCoordinator.Outcome.Ok -> RuntimeSwitchAction.RestartResult.Ok
+            is EngineRestartCoordinator.Outcome.Refused -> RuntimeSwitchAction.RestartResult.Refused
+            is EngineRestartCoordinator.Outcome.Failed -> RuntimeSwitchAction.RestartResult.Failed
+        }
+        if (!RuntimeSwitchAction.settle(nowEnabled, result)) {
+            // 回滚：这次切换没有发生过（引擎仍在原来的运行时上），开关回到写入前的值。
+            if (RuntimeSwitchAction.rollbackValue(nowEnabled)) {
+                // 回到「开」：只写偏好，**不删缓存的探针结论**。设置页那条写法
+                // （`RuntimeSelection.setProrootEnabled(true)`）会把结论当成「再试一次」删掉，
+                // 于是状态行会在引擎明明还在跑 proroot 的时候说「探针尚未运行」—— 一句真的
+                // 假话。结论描述的是这台机器，不是这个开关。
+                prefs.setProrootEnabled(true)
+            } else {
+                // 回到「关」：与设置页同一条写法。开关一关，每条启动路径都按 proot 走
+                // （`RuntimeChoice.decide` 的第一条就是开关），失败计数清零、结论保留。
+                selection.setProrootEnabled(false)
+            }
+        }
+        _runtimeSwitch.value = RuntimeSwitchAction.Step.Idle
+        val message = when (outcome) {
+            is EngineRestartCoordinator.Outcome.Ok -> if (nowEnabled) {
+                "引擎已在 proroot 上重启，运行时加速已生效。"
+            } else {
+                "引擎已按 proot 重启，运行时加速已关闭。"
+            }
+
+            is EngineRestartCoordinator.Outcome.Refused -> outcome.message + if (nowEnabled) {
+                "开关已退回关闭：等这一段跑完再打开，就能切到 proroot。"
+            } else {
+                "开关已恢复打开：等这一段跑完再关一次。"
+            }
+
+            is EngineRestartCoordinator.Outcome.Failed -> outcome.message + if (nowEnabled) {
+                "探针已经通过，下次启动引擎时会用 proroot。"
+            } else {
+                "下次启动引擎时会走 proot。"
+            }
+        }
+        notifyUser(message, warning = outcome !is EngineRestartCoordinator.Outcome.Ok)
     }
 
     /**
@@ -1719,7 +1981,19 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         return seen.toList().take(MAX_REPORTED_FAILURES)
     }
 
-    fun boot() {
+    /**
+     * Boot the engine, optionally through the **explicit repair path**.
+     *
+     * @param rebuild true only for the 「重建运行时」 action on the boot-failure card:
+     *        it deletes the volatile runtime tree and extracts every payload again, so
+     *        everything installed inside the guest (apt/pip packages, `npm -g`,
+     *        `/usr/local/bin`, `/root` outside the bound agent dir) goes with it. The
+     *        workspace, sessions, settings and credentials are outside that tree and
+     *        survive. Forwarded verbatim to `PiEngineHost.boot(rebuild = …)`, which is
+     *        the only path in the app that may delete the tree; a payload change never
+     *        reaches it.
+     */
+    fun boot(rebuild: Boolean = false) {
         if (_state.value.boot is Boot.Working) return
         viewModelScope.launch {
             // Read the preferences first: `app.runtime.keepAlive` decides whether
@@ -1744,7 +2018,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             val launchOptions = launchOptions()
             reportExtensionArgsRefusal(launchOptions)
             val boot = try {
-                host.boot(workspaceProvider = ::defaultWorkspace, launch = launchOptions) { step ->
+                host.boot(workspaceProvider = ::defaultWorkspace, launch = launchOptions, rebuild = rebuild) { step ->
                     _state.value = _state.value.copy(boot = Boot.Working(step))
                 }
             } finally {
@@ -2992,8 +3266,13 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     private suspend fun replayHistory(engine: PiEngineSession) {
         // Cleared first: the replay either replaces it or fails, and a stale list
         // would let the next scroll-up prepend one session's entries onto another's.
-        loadedHistory = emptyList()
         loadedHistoryChars = 0L
+        retainedChunks = emptyList()
+        // No evicted copy and no defined end until a file is actually read: the whole
+        // range is in RAM, so `evictedFrom == loadedUntil` and nothing is re-read.
+        evictedFrom = 0L
+        loadedUntil = 0L
+        evictedEntries = 0
         val file = resolveSessionFile()
         if (file != null) {
             // The read and the retained-size accounting are one IO hop, not two: the
@@ -3002,7 +3281,11 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             // itself. It also keeps the count and the rows it describes in one
             // publication: a scroll-up on the next frame must not read a stale 0 and
             // take an extra window.
-            val (window, windowChars) = withContext(Dispatchers.IO) {
+            //
+            // `sizeOf` is in the same hop because it is the *end* of the loaded range
+            // ([loadedUntil]): it is where the first eviction range starts from, and it
+            // must be the size the read above saw, not a later one.
+            val (window, windowChars, until) = withContext(Dispatchers.IO) {
                 val read = SessionFileReader.readTail(file, HISTORY_WINDOW_CHARS, HISTORY_WINDOW_ENTRIES)
                 val chars =
                     if (read != null && read.entries.isNotEmpty() && read.complete) {
@@ -3010,12 +3293,17 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                     } else {
                         0L
                     }
-                read to chars
+                Triple(read, chars, SessionFileReader.sizeOf(file))
             }
             if (window != null && window.entries.isNotEmpty() && window.complete) {
                 engine.seedHistory(window.entries)
-                loadedHistory = window.entries
                 loadedHistoryChars = windowChars
+                retainedChunks = listOf(RetainedChunk(window.entries, window.startOffset, windowChars))
+                // The tail window ends at the file's end, so the evicted range is empty:
+                // `[until, until)`.
+                loadedUntil = until
+                evictedFrom = until
+                evictedEntries = 0
                 _state.value = _state.value.copy(
                     history = HistoryCursor(
                         startOffset = window.startOffset,
@@ -3104,8 +3392,14 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         // read above does.
         val chars = withContext(Dispatchers.IO) { retainedChars(entries) }
         engine.seedHistory(entries)
-        loadedHistory = entries
         loadedHistoryChars = chars
+        // This path has no byte offsets at all (`get_entries` answers entries, not
+        // ranges), so there is no evicted range to read back: `0 == 0` is "nothing was
+        // evicted", and the cursor below says the walk is over, so nothing ever asks.
+        retainedChunks = listOf(RetainedChunk(entries, 0L, chars))
+        evictedFrom = 0L
+        loadedUntil = 0L
+        evictedEntries = 0
         // A whole-session replay has nothing above it, so there is nothing for the
         // scroll path to fetch — the cursor says so rather than staying null, which
         // the UI would have to read as "unknown".
@@ -3136,10 +3430,36 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * *older* one is not, because the older entries must be folded in before the
      * rows they contextualise. [PiEngineSession.seedHistory] already does exactly
      * that (reset, then fold the list in order), so the expansion hands it the
-     * concatenation: `newlyRead + loadedHistory`. That is O(loaded), which is why
+     * concatenation: `newlyRead + retained + readBack`. That is O(loaded), which is why
      * the load is gated on the engine being idle — during a turn the live rows in
      * the reducer are not reproducible from a file read, and dropping them to add
      * older history would remove something the user is watching.
+     *
+     * ## What each answer means, and what it may not mean
+     *
+     * The step is reduced to a [BackwardRead] in one place ([backwardRead]) and turned
+     * into a cursor in another ([cursorAfter]), because that pair is the defect this
+     * replaces: 「聊天内容多了，回到聊天顶部，之前的内容都被截掉了，都没了。」 A step that
+     * delivered nothing — because the range above was unreadable, because a line was
+     * too long to keep, or because the read threw — used to fall into the same branch
+     * as "the file has nothing above it" and set `reachedStart = true`. That made
+     * `HistoryCursor.hasEarlier` false, deleted the 「加载更早」 row, and left every
+     * entry above the loaded range unreachable for the rest of the session. Only
+     * [BackwardRead.Window] with the reader's own `reachedStart`, or a range already at
+     * byte 0, may claim the start; a failure is *reported* ([HistoryStop]) instead of
+     * ending the walk.
+     *
+     * ## The budget is a soft, silent knob, not a stop
+     *
+     * `HISTORY_RETAINED_CHARS` bounds the retained **copy** of the loaded entries, and
+     * nothing else: the transcript keeps every row it has, and the reader can keep
+     * walking up for as long as the file has anything above. When the copy would go over
+     * it, the window **farthest from the reader** is dropped
+     * (`evictablePrefix`, never the chunk under the reader's eyes) and its byte range is
+     * read back from the file on the next rebuild — so nothing is lost and no row
+     * moves. The reader is never told about it: the row above the transcript has exactly
+     * three things to say (a count, a read in progress, or why a read could not happen),
+     * and the budget is not one of them.
      */
     fun expandEarlierHistory() {
         val engine = session ?: return
@@ -3148,74 +3468,196 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         if (engine.transcript.streaming) return
         if (_state.value.engine != PiEngineSession.EngineState.Ready) return
         val file = resolveSessionFile() ?: return
-        _state.value = _state.value.copy(history = cursor.copy(loading = true))
+        _state.value = _state.value.copy(history = cursor.copy(loading = true, stop = null))
         viewModelScope.launch {
-            val loaded = withContext(Dispatchers.IO) {
-                // The retention cap: a user who keeps scrolling up through a session
-                // of 3 MB image entries would otherwise accumulate every window they
-                // passed, which is the unbounded-memory failure this whole change
-                // exists to remove. Past the cap the expansion simply stops —
-                // `reachedStart` stays false, so the row above keeps offering the next
-                // window and the user stays in control of what is held.
-                if (loadedHistoryChars >= HISTORY_RETAINED_CHARS) {
-                    _state.value = _state.value.copy(
-                        history = cursor.copy(loading = false),
-                    )
-                    return@withContext null
-                }
-                SessionFileReader.readBefore(
-                    file,
-                    cursor.startOffset,
-                    HISTORY_WINDOW_CHARS,
-                    HISTORY_WINDOW_ENTRIES,
-                )
-            }
-            // Nothing readable above: stop asking. This is not a failure to report —
-            // the conversation is not damaged, it simply starts where the loaded
-            // range starts (an unreadable header, a file that is not a session, or a
-            // range with no complete line all mean the same thing here, and saying so
-            // would be noise on a session that renders fine).
-            //
-            // **A withheld line is the exception, and it is not the same statement.**
-            // `Window.complete = !range.droppedLine` (`SessionFileReader.kt:258`): false
-            // means the range scanned a line it could not keep — one longer than
-            // `HISTORY_WINDOW_CHARS`/`DEFAULT_MAX_LINE_CHARS` — so there *is* more above
-            // it, and the reader's own KDoc says the next window starts past it
-            // (`:242-257`), which is why continuing makes progress instead of looping.
-            // Marking `reachedStart` there told the reader the whole conversation had been
-            // loaded: `HistoryCursor.hasEarlier` went false, the row that offers the next
-            // batch disappeared for the rest of the session, and the entries above that
-            // line became unreachable. The sentence stays absent either way — a capped
-            // line is not a failure to report — but the cursor must not claim the start
-            // of the file. (The sentinel row therefore stays on screen after such a batch,
-            // which is the correct state: there is still history above.)
-            val moreAbove = loaded != null && !loaded.complete
-            if (loaded == null || !loaded.complete || loaded.entries.isEmpty()) {
+            // One IO hop, and **nothing in it touches `_state`**: the window above, the
+            // evicted range read back, and the measures. The old budget branch wrote the
+            // cursor from inside this hop, which is how it beat the caller's own update
+            // and how a "stop" became invisible to the code path that reported it.
+            val step = withContext(Dispatchers.IO) { backwardStep(file, cursor.startOffset) }
+            val decision = cursorAfter(step.read)
+            if (step.window == null) {
+                // Nothing to fold. The cursor carries the reading: a real failure gets a
+                // reason on screen and keeps `reachedStart` false, so the row stays and
+                // the reader can press it again; `AtFileStart` is the only empty-handed
+                // step that may claim the start, and it does so through `cursorAfter`.
                 _state.value = _state.value.copy(
-                    history = _state.value.history?.copy(loading = false, reachedStart = !moreAbove),
+                    history = _state.value.history?.copy(
+                        loading = false,
+                        reachedStart = decision.reachedStart,
+                        stop = decision.stop,
+                    ),
                 )
                 return@launch
             }
-            val combined = loaded.entries + loadedHistory
+            // A rebuild needs the *whole* retained range: the projection is folded from
+            // one list, so `combined` is the window just read, the retained chunks (oldest
+            // first), and the evicted range read back. The read-back's entry count is
+            // checked against what was evicted before we get here ([readEvictedRange]),
+            // because a rebuild with a hole in it would silently drop rows — the same
+            // loss this change exists to remove.
+            val combined = step.window.entries +
+                retainedChunks.asReversed().flatMap { it.entries } +
+                step.readback
             engine.seedHistory(combined)
-            loadedHistory = combined
-            // The **increment**, not a re-sum over `combined`: this used to measure every
-            // retained entry again for each batch, so the cost grew with how far the user
-            // had scrolled — and the measure serialises each entry to take its length
-            // ([entryChars]). `loadedHistory`'s own count is already in the field and
-            // `combined` is exactly `loaded.entries` plus that list, so adding the new
-            // window's count is the same number the old sum produced, at one window's
-            // cost instead of all of them. It runs on IO for the same reason.
-            loadedHistoryChars += withContext(Dispatchers.IO) { retainedChars(loaded.entries) }
+            // The **increment**, not a re-sum over `combined`: the measure serialises
+            // every entry to take its length ([entryChars]), so a re-sum would make each
+            // step cost the whole retained range. Both halves are measured on the IO hop
+            // above, and the count is only the same number because the measure is
+            // additive — which is what the `history-retention` harness pins.
+            loadedHistoryChars += step.windowChars + step.readbackChars
+            retainedChunks = buildList {
+                if (step.readback.isNotEmpty()) {
+                    add(RetainedChunk(step.readback, evictedFrom, step.readbackChars))
+                }
+                addAll(retainedChunks)
+                add(RetainedChunk(step.window.entries, step.window.startOffset, step.windowChars))
+            }
+            // The read-back is in RAM again, so the evicted range is empty unless the
+            // trim below empties it out; `evictRetainedCopy` owns both fields.
+            evictedFrom = loadedUntil
+            evictedEntries = 0
+            evictRetainedCopy()
             _state.value = _state.value.copy(
                 history = HistoryCursor(
-                    startOffset = loaded.startOffset,
-                    reachedStart = loaded.reachedStart,
+                    startOffset = step.window.startOffset,
+                    reachedStart = step.window.reachedStart,
                 ),
             )
             syncTranscript(engine, engine.publication.value)
         }
     }
+
+    /**
+     * One backward step's IO hop: the window above, and the evicted copy read back.
+     *
+     * All of it is wrapped, because every one of these failures is a reading the cursor
+     * has to report rather than an exception the scope should swallow: a file pi deleted
+     * under us ([SessionFileReader.readBetween] throws from `RandomAccessFile`), a
+     * read-back whose entry count disagrees with what was evicted, and a read-back with a
+     * withheld line — the last two are refused on purpose, because rebuilding from a list
+     * with a hole would drop rows from the transcript.
+     */
+    private fun backwardStep(file: File, startOffset: Long): BackwardStep = runCatching {
+        val window = SessionFileReader.readBefore(
+            file,
+            startOffset,
+            HISTORY_WINDOW_CHARS,
+            HISTORY_WINDOW_ENTRIES,
+        )
+        val read = backwardRead(startOffset, window)
+        // `backwardRead` only answers `Window` for a non-null window, and the check is
+        // spelled out here so the compiler knows it too.
+        if (read !is BackwardRead.Window || window == null) return@runCatching BackwardStep(read)
+        val readback = readEvictedRange(file)
+        BackwardStep(
+            read = read,
+            window = window,
+            readback = readback.entries,
+            windowChars = retainedChars(window.entries),
+            readbackChars = readback.chars,
+        )
+    }.getOrElse { error ->
+        BackwardStep(BackwardRead.ReadFailed(readFailureDetail(file, error)))
+    }
+
+    /**
+     * Which of [BackwardRead]'s readings `readBefore`'s answer is.
+     *
+     * `null` is two different answers and the whole defect was treating them as one:
+     * `startOffset <= 0L` means the loaded range already begins at byte 0, so nothing can
+     * be above it; any other null means there are bytes above that the reader did not
+     * deliver, which is *cannot read*. A window that withheld a line
+     * (`Window.complete == false`, `SessionFileReader.kt:258`) is cannot-read too: there
+     * is an entry above it and it did not arrive.
+     */
+    private fun backwardRead(startOffset: Long, window: SessionFileReader.Window?): BackwardRead = when {
+        window == null && startOffset <= 0L -> BackwardRead.AtFileStart
+        window == null -> BackwardRead.UnreadableRange
+        !window.complete -> BackwardRead.WithheldLine
+        window.entries.isEmpty() -> BackwardRead.UnreadableRange
+        else -> BackwardRead.Window(window.reachedStart)
+    }
+
+    /**
+     * The evicted range `[evictedFrom, loadedUntil)`, read back exactly, or a refusal.
+     *
+     * Exactness is the point: [SessionFileReader.readBetween] reads a byte range whose
+     * low end is a line start, so it cannot pick up a retained entry above it, and the
+     * entry count is compared with what [evictRetainedCopy] dropped. A disagreement means
+     * the bookkeeping is wrong, and the honest response is to refuse the step (the row
+     * says the content cannot be read) rather than to rebuild the transcript from a list
+     * with a hole in it.
+     */
+    private fun readEvictedRange(file: File): ReadBack {
+        if (evictedFrom >= loadedUntil) return ReadBack(emptyList(), 0L)
+        val range = SessionFileReader.readBetween(file, evictedFrom, loadedUntil)
+            ?: throw IOException("被淘汰的那一段读不回来")
+        if (!range.complete) throw IOException("被淘汰的那一段里有一条太长，读不出来")
+        if (range.entries.size != evictedEntries) {
+            throw IOException("被淘汰的那一段读回来对不上（${range.entries.size} ≠ $evictedEntries）")
+        }
+        return ReadBack(range.entries, retainedChars(range.entries))
+    }
+
+    /**
+     * Bring the retained copy back inside [HISTORY_RETAINED_CHARS] by dropping whole
+     * windows from the end **farther from the reader**, and remember the byte range so
+     * the next rebuild can read it back.
+     *
+     * The rule itself is [evictablePrefix] — a pure function in `HistoryRetention.kt`,
+     * pinned by the `history-retention` harness including the counterexample that no
+     * chunk the reader is on may ever appear among the victims. This function is only the
+     * bookkeeping around it, and it runs *after* the read, on the caller's coroutine:
+     * never on the scroll gesture's path, and never before the rows it describes have
+     * been published.
+     */
+    private fun evictRetainedCopy() {
+        val dropped = evictablePrefix(retainedChunks, HISTORY_RETAINED_CHARS)
+        if (dropped == 0) {
+            evictedFrom = loadedUntil
+            evictedEntries = 0
+            return
+        }
+        val victims = retainedChunks.take(dropped)
+        retainedChunks = retainedChunks.drop(dropped)
+        loadedHistoryChars -= victims.sumOf { it.chars }
+        // The victims are the newest windows, so their range is contiguous and its low end
+        // is the oldest victim's first line — which is exactly what `readBetween` needs.
+        evictedFrom = victims.last().startOffset
+        evictedEntries = victims.sumOf { it.entries.size }
+    }
+
+    /**
+     * A short, user-facing reason for a thrown read.
+     *
+     * The row prints it, so it says what happened in the reader's terms: the file is gone,
+     * it is no longer a session, or reading it failed. The exception's own message is
+     * appended when there is one — it is the device's wording (a permission failure, an
+     * I/O error) and inventing a translation for it would be a claim this code cannot
+     * check.
+     */
+    private fun readFailureDetail(file: File, error: Throwable): String {
+        val kind = when {
+            !file.isFile -> "文件不在了"
+            runCatching { SessionFileReader.isSessionFile(file) }.getOrDefault(false) -> "文件读取出错"
+            else -> "它已不是一个会话文件"
+        }
+        val message = error.message?.trim()?.take(120)?.takeIf { it.isNotEmpty() }
+        return if (message == null) kind else "$kind（$message）"
+    }
+
+    /** What one backward step's IO hop produced: the reading, and what to fold. */
+    private class BackwardStep(
+        val read: BackwardRead,
+        val window: SessionFileReader.Window? = null,
+        val readback: List<JsonObject> = emptyList(),
+        val windowChars: Long = 0L,
+        val readbackChars: Long = 0L,
+    )
+
+    /** The evicted range read back, with its measured size. */
+    private class ReadBack(val entries: List<JsonObject>, val chars: Long)
 
     /**
      * Host path of a guest session path, or null.
@@ -4515,8 +4957,14 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         val branch = activeBranch(entries, PiResponses.sessionEntries(response)?.leafId)
         val chars = withContext(Dispatchers.IO) { retainedChars(branch) }
         engine.seedHistory(branch)
-        loadedHistory = branch
         loadedHistoryChars = chars
+        // Same as the whole-session fallback above: a branch replay starts at the
+        // branch's root and the cursor is `reachedStart`, so no byte range is ever read
+        // back and there is no evicted copy.
+        retainedChunks = listOf(RetainedChunk(branch, 0L, chars))
+        evictedFrom = 0L
+        loadedUntil = 0L
+        evictedEntries = 0
         _state.value = _state.value.copy(
             history = HistoryCursor(startOffset = 0L, reachedStart = true),
         )
@@ -5067,14 +5515,31 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         const val HISTORY_WINDOW_ENTRIES = 4_000
 
         /**
-         * Upper bound on the entries the transcript keeps from progressive loading:
-         * 64 MiB of measured entry text.
+         * How much of a session's history this process keeps **as a second copy**, in
+         * measured entry characters: 64 MiB, eight windows' worth.
          *
-         * Eight windows' worth. It exists because "load earlier on demand" is bounded
-         * per *step* but not per *session*: a reader who scrolls to the top of an
-         * image-heavy conversation would otherwise hold every window passed. Past this
-         * the expansion stops and the row above says there is more, so the failure
-         * mode is "you have to scroll down and up again" rather than an OOM.
+         * 「为什么有 64 兆的上限呢？没有上限不行吗？」 — the session file has no limit; every
+         * entry pi wrote is on disk and nothing here deletes any of it. What this bounds
+         * is how much of it is held **in RAM at once**, because an unbounded transcript is
+         * how the app gets OOM-killed, and that is how the reader really loses the
+         * conversation.
+         *
+         * It is not a stop and it is not a message. It used to be both: past this the
+         * expansion simply ended, and — because the empty-handed branch below conflated
+         * "over budget" with "nothing above" — the cursor claimed the start of the file,
+         * the 「加载更早」 row disappeared, and everything above the loaded range became
+         * unreachable. That is the reported 「回到聊天顶部，之前的内容都被截掉了，都没了」.
+         *
+         * What it does now: the copy is trimmed by dropping the window **farthest from the
+         * reader** (`evictablePrefix`, which never drops the window under the reader's
+         * eyes), the dropped range is read back from the file on the next rebuild, and the
+         * walk up continues for as long as the file has anything above. Nothing on screen
+         * moves, and the reader is not told: where the copy lives is an internal matter.
+         *
+         * It is a target, not a hard ceiling. A single window may be up to
+         * `HISTORY_WINDOW_CHARS` plus one indivisible entry, and the protected chunk is
+         * never dropped, so the retained copy can sit one window over this number — a
+         * correct screen beats a smaller number.
          */
         const val HISTORY_RETAINED_CHARS = 64L * 1024 * 1024
 

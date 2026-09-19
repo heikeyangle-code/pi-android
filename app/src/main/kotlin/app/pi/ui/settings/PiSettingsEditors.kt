@@ -89,6 +89,10 @@ internal fun splitAutoTheme(raw: String): Pair<String, String>? {
 /**
  * What the effective badge means, plus the action that applies it (spec §6.5).
  * pi has four different timings; a badge without this explanation is just noise.
+ *
+ * `AutoRestartEngine` is the fifth and the only one that needs no action from the
+ * user: the write itself restarts the engine (`RuntimeSwitchAction`), so the body
+ * says so and `SettingsGroupScreen` passes no action — the dialog is a 知道了.
  */
 @Composable
 fun PiEffectiveDialog(
@@ -115,6 +119,13 @@ fun PiEffectiveDialog(
             "需要重启引擎",
             "改动已保存，重启引擎后生效。重启会终止正在进行的回合，已写入磁盘的会话不会丢失。",
             "重启引擎",
+        )
+
+        EffectiveKind.AutoRestartEngine -> Triple(
+            "自动重启引擎",
+            "改动已保存，并且这个开关会自己重启引擎来让它生效——不用你再动手。" +
+                "探针没通过、或重启被正在运行的回合拒绝时，行上会写明发生了什么。",
+            "知道了",
         )
 
         EffectiveKind.RestartApp -> Triple(

@@ -16,7 +16,28 @@ class PiPaths(private val filesDir: File, private val nativeLibDir: File) {
     val home: File = File(filesDir, "pi")
 
     /** pi's `PI_HOME`; `agentDir` below it is `PI_CODING_AGENT_DIR`. */
-    val agentDir: File get() = File(home, ".pi/agent")
+    val agentDir: File get() = File(home, DurableLayout.AGENT_RELATIVE)
+
+    /**
+     * The workspace root: `<files>/pi/workspaces`, one directory per workspace.
+     *
+     * The spelling is [DurableLayout.WORKSPACES_RELATIVE]'s, and
+     * `GuestWorkspacePath.ROOT_RELATIVE` (`pi/workspaces`, relative to the *files*
+     * directory) is the other side of the same fact; a bare-JVM harness compares the
+     * two, so the workspace cannot end up somewhere else than this accessor says.
+     */
+    val workspaces: File get() = File(home, DurableLayout.WORKSPACES_RELATIVE)
+
+    /**
+     * This app's own durable directory: `<files>/pi/persist`.
+     *
+     * Durable means "must outlive an update", which is why the boot audit lives here
+     * ([BootAudit]) — a file whose whole purpose is to compare a boot before an update
+     * with the boot after it cannot live in the volatile tree. Not under
+     * `<files>/pi/.pi/agent`: that directory is pi's own home, and this app's
+     * bookkeeping does not belong in it.
+     */
+    val persist: File get() = File(home, DurableLayout.PERSIST_RELATIVE)
 
     /**
      * Where a guest-resolvable tool binary has to live — in **both** of the two
@@ -31,10 +52,10 @@ class PiPaths(private val filesDir: File, private val nativeLibDir: File) {
      *    the guest resolves it to [agentBinDir] and the rootfs copy at
      *    [rootfsAgentBinDir] is **shadowed**.
      *  - The rootfs copy is therefore no longer "the other launch path's copy". It is
-     *    the copy that answers *before the next provision*: `wipe()` deletes the whole
-     *    volatile tree, `installTool` recreates both, and anything that runs in the
-     *    window between a wipe and the next successful provision falls through to the
-     *    rootfs copy. Keeping it costs two small files.
+     *    the copy that answers *after a tree deletion and before the next provision*: the
+     *    explicit repair path (`ensureReady(rebuild = true)`) deletes the whole volatile
+     *    tree, `installTool` recreates both, and anything that runs in that window falls
+     *    through to the rootfs copy. Keeping it costs two small files.
      *
      * ## The history, because the shape only makes sense with it
      *
@@ -55,22 +76,56 @@ class PiPaths(private val filesDir: File, private val nativeLibDir: File) {
      * writes both and [ensureToolsVisible] repairs both.
      *
      * The two are genuinely different directories and neither contains the other:
-     * [agentDir] is `<files>/pi/.pi/agent` (durable — `RuntimeProvisioner.wipe()`
-     * deletes only `<files>/pi/runtime`), while [rootfsAgentBinDir] is inside the
-     * volatile tree and is destroyed by every runtime revision bump.
+     * [agentDir] is `<files>/pi/.pi/agent` (durable — `RuntimeProvisioner` deletes
+     * nothing outside `<files>/pi/runtime`), while [rootfsAgentBinDir] is inside the
+     * volatile tree and disappears only with the whole tree, on the explicit repair path.
      */
     fun agentBinDir(): File = File(agentDir, "bin")
 
     /**
      * The rootfs copy of [agentBinDir]. Read [agentBinDir]'s KDoc first: since every
      * launch path binds the agent dir, this copy answers only in the window between a
-     * `wipe()` and the next successful provision, and it is the one
-     * `RuntimeProvisioner.wipe()` deletes whenever the runtime revision changes.
+     * tree deletion (the explicit rebuild) and the next successful provision.
      */
     fun rootfsAgentBinDir(): File = File(rootfs, "root/.pi/agent/bin")
 
-    /** Volatile: re-extracted whenever the packaged runtime version changes. */
+    /** Volatile: the tree a payload change may rewrite, and only the repair path deletes. */
     val runtime: File = File(home, "runtime")
+
+    /**
+     * Where this class refuses to be built: a durable directory inside [runtime].
+     *
+     * The user's report is that an update deletes the workspace root, and the only
+     * structural way that can happen is a durable directory — the workspace root, pi's
+     * agent dir, or this app's persist dir — being spelled *inside* the volatile tree
+     * that provisioning rebuilds. So the invariant is asserted where the paths are
+     * built, not left to a comment: with the layout above it can never fire, and if a
+     * later change moves one of them under `runtime/` the app fails loudly with the
+     * path and the relative offset instead of deleting the user's files on the next
+     * update. The same sentence also appears in the diagnostic report's path section,
+     * so a build that somehow shipped without this assertion still tells the user.
+     */
+    init {
+        val violations = DurableLayout.violations(home, runtime)
+        if (violations.isNotEmpty()) {
+            throw IllegalStateException(
+                "耐久目录落在易失树内，升级会删掉用户数据：\n" + violations.joinToString("\n"),
+            )
+        }
+    }
+
+    /**
+     * The one place per-payload state lives: `<files>/pi/runtime/.payloads`.
+     *
+     * Inside the volatile tree on purpose. Each payload gets a `<name>.digest` (the
+     * digest of the bytes it was extracted from) and a `<name>.list` (every non-directory
+     * path it owns, relative to [runtime]) beside it, so the next provision can tell
+     * "this payload did not change, touch nothing" from "this payload changed, extract it
+     * over the tree and prune only what the old list owned". Deleting the whole tree —
+     * the explicit repair path — takes this state with it, which is exactly right: a
+     * rebuilt tree has no previous owner to prune against.
+     */
+    fun payloadStateDir(): File = File(runtime, ".payloads")
 
     /** The Ubuntu userland (glibc). */
     val rootfs: File get() = File(runtime, "rootfs")
@@ -413,16 +468,17 @@ object ProotCommand {
 /**
  * Replace a small text file's contents atomically, for the runtime's stamp files.
  *
- * The two files this is used for ([PiPaths.stampFile], [PiPaths.selfCheckStamp]) are
- * both read back with "does the text equal the revision?" and both are written with
- * `writeText`, which truncates first. A process killed between the truncate and the
- * write therefore leaves a **short** stamp, and a short stamp is read as "this
- * revision is not unpacked": the next boot re-unpacks the whole runtime (tens of
- * seconds, and on a revision change a destructive `wipe()`), and
+ * The files this is used for ([PiPaths.stampFile], [PiPaths.selfCheckStamp], and the
+ * per-payload `.digest`/`.list` files under `PiPaths.payloadStateDir`) are all read back
+ * and compared, and all were written with `writeText`, which truncates first. A process
+ * killed between the truncate and the write therefore leaves a **short** value, and a
+ * short stamp is read as "this revision is not unpacked": the next boot re-reads and
+ * re-compares every payload's state (and, for a short *payload* digest, re-extracts a
+ * payload that was fine — or, for a short list, makes the next prune miss entries), and
  * `PiEngineHost.restart` refuses to restart at all. The same pattern is already the
  * house rule for `settings.json` and `auth.json` (`PiConfigFiles.write`,
  * `PiSettingsFileStore.writeDocument`); this is the runtime's copy of it, kept here
- * because both writers live in this package and a third spelling of it is exactly
+ * because the writers live in this package and a third spelling of it is exactly
  * what would drift.
  *
  * `Files.move` with `REPLACE_EXISTING` is an atomic rename within the same

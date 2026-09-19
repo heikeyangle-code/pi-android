@@ -1203,10 +1203,9 @@ object PiSettingsCatalog {
         // because a phone app should not make it behind the user's back), and its
         // replacement, `pi update --self`, is an npm self-update
         // (`package-manager-cli.ts:1033-1068`) that this app's engine cannot use:
-        // the engine is an APK asset extracted by revision
-        // (`RuntimeProvisioner.extractEngine`, `:505-528`) and re-extracted by
-        // `wipe()` (`:122`) whenever that revision changes, so an in-guest update
-        // is either overwritten or diverges from the shipped version. pi has no
+        // the engine is an APK payload that `RuntimeProvisioner` extracts over the tree
+        // (`extractEngine`) whenever the packaged engine's own digest changes, so an
+        // in-guest update is overwritten the next time that payload moves. pi has no
         // rollback at all (no such subcommand in `cli.ts` /
         // `package-manager-cli.ts`). The read-only 「pi 版本」 row above is what
         // tells the user which version they are on.
@@ -1259,62 +1258,75 @@ object PiSettingsCatalog {
             readOnly = true,
             aliases = listOf("wakelock"),
         ),
-        PiSetting(
-            key = "app.runtime.prorootStatus",
-            title = "运行时（实际生效）",
-            // 这一行的值现在会带上"是哪一档没过"，值下面还会列出探针逐阶段的原始判读：
-            // 说明文字必须指向那两块内容，否则用户仍然不知道"探针未通过"到底卡在哪一步
-            // （缺陷原形：开关开着，行上只有半句话，唯一能看到证据的地方是导出的报告）。
-            description = "这次运行实际用的是哪个运行时。没有用 proroot 时会写明原因；" +
-                "原因出在探针上时，还会写出是哪一档没过（proroot 启动、raw syscall、" +
-                "或 rg/fd 真实调用那一档）和探针原话。这一行下面列出探针逐阶段的原始判读：" +
-                "行数有上限，超出会写明截断了多少行——完整内容始终在导出的诊断报告里。",
-            kind = PiRowKind.Text,
-            group = G_RUNTIME,
-            section = "运行时状态",
-            defaultValue = str("未读取"),
-            readOnly = true,
-            aliases = listOf("proroot", "proot", "runtime", "状态"),
-        ),
 
         // ------------------------------------------------------------------
-        // 运行时选择（proroot）—— 这两行是本应用自己的状态，**不写进 pi 的
-        // settings.json**：它决定用哪个二进制启动 guest，在 pi 存在之前就要定下来，
-        // pi 那边没有读者。值由 `AppOnlySettingsStore` 拦下，落在
-        // `RuntimePreferences`（SharedPreferences，与 `DeviceCapabilityStore` 同一种
-        // 存法）。行仍然放在注册表里，因为「运行时与诊断」正是用户找它的地方。
+        // 运行时选择（proroot）—— 开关与它的派生读数**同属一节、上下紧挨**：它们是
+        // 同一个功能的两半（控件在上、结果紧贴在下）。拆到两节里曾让用户以为下面那行
+        // 在说另一件事（「关掉 Pro Root 为什么要写着未开启」）——那一行的值现在也永远
+        // 先写「实际在跑的那个运行时」，原因跟在括号里。
+        //
+        // 这两行是本应用自己的状态，**不写进 pi 的 settings.json**：它决定用哪个二进制
+        // 启动 guest，在 pi 存在之前就要定下来，pi 那边没有读者。值由
+        // `AppOnlySettingsStore` 拦下，落在 `RuntimePreferences`（SharedPreferences，
+        // 与 `DeviceCapabilityStore` 同一种存法）。行仍然放在注册表里，因为
+        // 「运行时与诊断」正是用户找它的地方。
         //
         // 文案必须诚实，四件事缺一不可：实验性 / 默认关 / 不可用时自动回退 proot /
         // 装机与维护始终 proot；再加两条已知取舍：闭源不可审计、提速幅度未量化
         // （`docs/proroot-research.md` §2.3 只有 DSHA 自己的一组数字，机型还不同）。
         //
-        // `effective = RestartEngine`：运行时是在**进程启动时**选定的，正在跑的引擎
-        // 不会换运行时，所以拨动开关后要重启引擎才看得到效果。
+        // `effective = AutoRestartEngine`：这个开关**自己**会重启引擎来换运行时
+        // （`AppOnlySettingsStore.write` 清结论 → `PiSessionViewModel.onSettingWritten`
+        // → `RuntimeSwitchAction` 的判定），所以徽标是「自动重启引擎」——「需重启引擎」
+        // 会让用户以为还要自己动手，而那正是他要修掉的东西（「为什么还要退出软件重进呢」）。
         // ------------------------------------------------------------------
         PiSetting(
             key = "app.runtime.proroot",
             title = "运行时加速（实验性）",
             description = "用第三方闭源运行时 proroot 代替 proot 执行命令，覆盖引擎、终端、" +
                 "工具执行与装包这几条日常路径；装机与维护路径始终走 proot。" +
-                "默认关闭。若运行时文件缺失、或首次使用前的探针（proroot 必须真的启动起来、" +
-                "raw syscall 必须被翻译到 guest 文件系统、rg/fd 必须真调用成功）" +
-                "没有通过、或连续 3 次启动失败，都会自动回退 proot，并在上面的" +
-                "「运行时（实际生效）」里写明原因。" +
-                "打开这个开关后的**下一次**启动 guest 会跑一次探针，那一次仍然走 proot；" +
-                "探针过了，再下一次启动才会真正用上 proroot。" +
-                "关掉再打开这个开关会清零失败计数、并让探针重测一次（普通重启不会重测）。" +
+                "默认关闭。打开这个开关会**当场**生效：先在这台设备上跑一次探针" +
+                "（proroot 必须真的启动起来、raw syscall 必须被翻译到 guest 文件系统、" +
+                "rg/fd 必须真调用成功，最长约一分钟，行上会显示正在测），" +
+                "通过了就立刻重启引擎切到 proroot —— 不用退出 App，也不用去按「重启引擎」。" +
+                "没有通过时不会硬切：引擎继续走 proot，紧挨着的「运行时（实际生效）」" +
+                "那一行会写明卡在哪一档并列出探针原话。" +
+                "运行时文件缺失、或连续 3 次启动失败，同样自动回退 proot，" +
+                "也都写在那一行上。关掉这个开关会立刻把引擎重启回 proot；" +
+                "关掉再打开等于再试一次：清零失败计数、让探针重测。" +
                 "档位：走 proroot 的**默认档**（seccomp 兜底）——libc 调用与 inline svc 调用" +
                 "都走翻译，代价是探针因此必须证明 raw syscall 也被翻译；" +
                 "另一档「无 seccomp 档」只翻译 libc 调用、直接发 raw syscall 的程序会绕过翻译，" +
                 "但 v1.2.8 的启动器不读这个变量（它只给子进程写上标记），所以本应用无法选择它，" +
                 "也就没有以它换取更宽的通过条件。proroot 闭源、无法审计，" +
-                "提速幅度在本机未量化。改动在重启引擎后生效。",
+                "提速幅度在本机未量化。",
             kind = PiRowKind.Switch,
             group = G_RUNTIME,
-            section = "进程",
+            section = "运行时选择",
             defaultValue = bool(false),
-            effective = EffectiveKind.RestartEngine,
+            effective = EffectiveKind.AutoRestartEngine,
             aliases = listOf("proroot", "proot", "runtime", "engine", "加速", "运行时"),
+        ),
+        PiSetting(
+            key = "app.runtime.prorootStatus",
+            title = "运行时（实际生效）",
+            // 值先说「在跑哪个运行时」，原因跟在括号里——这一行答的是「在跑哪个」，不是
+            // 「开关在哪一档」；`RuntimeChoice.describe` 的那组句子因此全部改成了这个形状。
+            // 值下面还会列出探针逐阶段的原始判读：说明文字必须指向那两块内容，否则用户仍然
+            // 不知道「探针未通过」到底卡在哪一步（缺陷原形：开关开着，行上只有半句话，
+            // 唯一能看到证据的地方是导出的报告）。
+            description = "这次实际用的是哪个运行时。值永远先写那个运行时（proot / proroot），" +
+                "没用上 proroot 时原因跟在括号里：探针没过（并写明是哪一档——proroot 启动、" +
+                "raw syscall 或 rg/fd 真实调用）、运行时文件缺失、或连续失败次数。" +
+                "这一行就贴在开关下面，是同一个功能的另一半。" +
+                "值下面列出探针逐阶段的原始判读：行数有上限，超出会写明截断了多少行——" +
+                "完整内容始终在导出的诊断报告里。",
+            kind = PiRowKind.Text,
+            group = G_RUNTIME,
+            section = "运行时选择",
+            defaultValue = str("未读取"),
+            readOnly = true,
+            aliases = listOf("proroot", "proot", "runtime", "状态"),
         ),
 
         // ------------------------------------------------------------------

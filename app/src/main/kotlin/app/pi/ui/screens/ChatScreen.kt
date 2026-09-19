@@ -121,6 +121,7 @@ import app.pi.ui.Boot
 import app.pi.ui.ExportedSession
 import app.pi.ui.NavRequest
 import app.pi.ui.PiSessionViewModel
+import app.pi.ui.earlierRowText
 import app.pi.ui.blocks.BlockRenderer
 import app.pi.ui.blocks.PiImageViewer
 import app.pi.ui.chat.BashPanel
@@ -236,6 +237,9 @@ fun ChatScreen(
         BootScreen(
             boot = boot,
             onRetry = { session.boot() },
+            // The explicit repair path (`ensureReady(rebuild = true)`), reachable from
+            // this one button and nowhere else. A plain retry never deletes anything.
+            onRebuild = { session.boot(rebuild = true) },
             modifier = Modifier.padding(bottom = bottomInset),
         )
         return
@@ -777,10 +781,20 @@ private fun ChatBody(
     //
     // The second term is why this is not just `hiddenCount > 0`: the same row is also
     // where "the transcript holds everything loaded, but the session file has more
-    // above it" is stated, and it is shown in exactly that case (the reader's
-    // `HistoryCursor.hasEarlier`). Leaving it out would put every jump one row off the
-    // moment the loaded rows are exhausted.
-    val showsEarlierRow = hiddenCount > 0 || state.history?.hasEarlier == true
+    // above it" is stated. `earlierRowText` is the one owner of what that row says (and
+    // of whether it exists at all): it distinguishes a count already in memory, a read
+    // in flight, a read that could not happen — with its reason — and the two states in
+    // which there is nothing to offer. It answers null exactly when the reader is
+    // holding the file's first entry, so the screen can never offer to load earlier when
+    // the reader believes it is at the start. See `ui/HistoryRetention.kt`.
+    val earlierText = earlierRowText(
+        hiddenCount = hiddenCount,
+        cursorKnown = state.history != null,
+        loading = state.history?.loading == true,
+        reachedStart = state.history?.reachedStart == true,
+        stop = state.history?.stop,
+    )
+    val showsEarlierRow = earlierText != null
     val searchMatches = remember { mutableStateOf(SearchHits.None) }
     // Published-scan counter: the reveal effect below is keyed on it rather than on the
     // result object, so it re-runs when a scan *lands* (not while one is running) and
@@ -1123,9 +1137,13 @@ private fun ChatBody(
     // session (one `get_entries`), so the two were the same list. It now starts as the
     // newest window of the session *file* and grows backwards on demand, which means
     // reaching the top of it is no longer the same as reaching the start of the
-    // conversation. This is what asks for more: `history.hasEarlier` is the reader's
-    // own position (`HistoryCursor.startOffset`), not an inference from the row count,
-    // so it stops exactly when the file's first entry has been loaded.
+    // conversation. This is what asks for more: `history.hasEarlier` is the reader's own
+    // position (`HistoryCursor.startOffset`), not an inference from the row count, so it
+    // stops exactly when the file's first entry has been loaded — and, since the row is
+    // the only way to ask again, a step that delivered nothing (a range that could not be
+    // read) clears it too, so a failed read cannot become a retry loop. That second half
+    // is why the row's own visibility is `HistoryCursor.showsEarlierRow` rather than
+    // `hasEarlier`: a failure still has to be on screen to say what happened.
     val earlierHistory = state.history
 
     // ------------------------------------------------- the reader's place, by row key
@@ -1937,12 +1955,7 @@ private fun ChatBody(
             // The list keeps `Arrangement.spacedBy(blockSpacing)` for its own rows, and the
             // reserved band is `earlierRowHeight + blockSpacing` so the first row sits
             // where it did when the sentinel was an item with a gap under it.
-            val earlierText = when {
-                hiddenCount > 0 -> "加载更早的 $hiddenCount 条"
-                earlierHistory?.loading == true -> "正在读取更早的内容…"
-                else -> "加载更早的内容"
-            }
-            val earlierRowHeightValue = earlierRowHeight(earlierText)
+            val earlierRowHeightValue = earlierRowHeight(earlierText.orEmpty())
             // Where the overlay sits, and how much of the list's own top padding is the band
             // it occupies: exactly the row's height plus the block gap the list no longer
             // inserts between it and the first message.
@@ -2120,7 +2133,7 @@ private fun ChatBody(
             // geometry, read at layout time (`Modifier.offset`'s lambda runs there, so this
             // costs no recomposition per frame): one band above the list's first item, which
             // is exactly where the item was.
-            if (showsEarlierRow) {
+            if (earlierText != null) {
                 val bandPx = with(LocalDensity.current) { earlierBand.roundToPx() }
                 EarlierRowsRow(
                     text = earlierText,
@@ -2128,6 +2141,9 @@ private fun ChatBody(
                         if (hiddenCount > 0) {
                             renderWindow += TRANSCRIPT_WINDOW_STEP
                         } else {
+                            // The press is also the retry after a failed reading: the
+                            // cursor keeps `reachedStart` false and carries the reason,
+                            // so this is the reader asking again, not the effect looping.
                             session.expandEarlierHistory()
                         }
                     },
