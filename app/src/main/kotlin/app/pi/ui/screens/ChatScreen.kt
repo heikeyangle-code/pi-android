@@ -4015,10 +4015,14 @@ private fun readBounded(input: java.io.InputStream, limit: Int): ByteArray {
  *     Lanczos3 through Photon; Android's `Bitmap.createScaledBitmap(..., filter = true)`
  *     is bilinear, which is a resampling difference, not a size or an ordering one — it
  *     is listed as device-only in the change report.
- *  3. **Alpha picks the format** (`AttachmentBudget.encodings`): PNG for a picture that
- *     can carry alpha, JPEG otherwise. `Bitmap.hasAlpha()` is the test, and on a decoded
- *     `ARGB_8888` it reports whether the *source* had an alpha channel, which is why an
- *     opaque JPEG does not get encoded as a PNG.
+ *  3. **Alpha, and a PNG source, pick the format**
+ *     (`AttachmentBudget.encodings`): PNG first for a picture whose decoded bitmap can
+ *     carry alpha **or** whose source MIME is `image/png`; JPEG otherwise. `Bitmap.hasAlpha()`
+ *     is the alpha test, and on a decoded `ARGB_8888` it reports whether the *source* had
+ *     an alpha channel, which is why an opaque JPEG does not get encoded as a PNG. pi
+ *     pushes that PNG candidate for every source that needs a re-encode; asking for it only
+ *     where it can win is the app's one deliberate difference — `AttachmentBudget`'s class
+ *     KDoc has the reasoning and the residual difference.
  *
  * Returns null when the bytes do not decode, or when even 1×1 cannot be encoded under
  * pi's ceiling. The caller tells the user which of the two happened is not knowable
@@ -4051,7 +4055,10 @@ private fun compressAttachment(bytes: ByteArray, mime: String): PiImage? {
         BitmapFactory.Options().apply { inPreferredConfig = Bitmap.Config.ARGB_8888 },
     ) ?: return null
     try {
-        for (attempt in AttachmentBudget.attemptPlan(source.hasAlpha(), width, height)) {
+        // `mime` is the *source's* type and it decides the candidate order: a PNG source
+        // (or any source whose decoded bitmap carries alpha) gets pi's PNG candidate
+        // first, everything else starts at JPEG 80. See `AttachmentBudget.pngFirst`.
+        for (attempt in AttachmentBudget.attemptPlan(mime, source.hasAlpha(), width, height)) {
             val scaled = scaleForAttachment(source, attempt.width, attempt.height) ?: continue
             try {
                 val encoded = encodeForAttachment(scaled, attempt.encoding) ?: continue

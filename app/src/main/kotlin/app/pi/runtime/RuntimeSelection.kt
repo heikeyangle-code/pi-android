@@ -370,12 +370,13 @@ class RuntimeSelection(
      *
      * ## Why the main thread is special-cased
      *
-     * The gate is a real proroot invocation plus an `rg`/`fd` probe, bounded by
-     * `ProrootProbe.RAW_TIMEOUT_MS` + `GuestToolProbe.TIMEOUT_MS` — up to ~40 s on a
+     * The gate is three real proroot invocations (a raw-syscall probe, an `rg`/`fd` probe and
+     * a dynamic-binary probe), bounded by `ProrootProbe.RAW_TIMEOUT_MS` +
+     * `GuestToolProbe.TIMEOUT_MS` + `ProrootProbe.EXEC_TIMEOUT_MS` — up to ~60 s on a
      * device where something is wrong. Most callers are already on a background
      * dispatcher (the engine boots on `Dispatchers.IO`, the package commands run in
      * coroutines), but **the terminal does not**: `TerminalPane` starts its bridge from
-     * a `LaunchedEffect`, i.e. on the main thread. Blocking there for 40 s is an ANR,
+     * a `LaunchedEffect`, i.e. on the main thread. Blocking there for a minute is an ANR,
      * and an ANR is a worse outcome than starting this one launch on proot.
      *
      * So on the main thread, with no cached verdict, the gate is **started in the

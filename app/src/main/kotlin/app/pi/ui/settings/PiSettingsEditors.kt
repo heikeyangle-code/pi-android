@@ -638,11 +638,13 @@ fun PiListEditorSheet(
             PiInfoNote(
                 if (setting.container == PiValueContainer.Object) {
                     "每行一项，写成「键 = 值」，键按精确匹配不认通配符。值以 { 或 [ 开头时按 JSON 解析，" +
-                        "例如逐模型压缩覆盖写成 model-id = {\"reserveTokens\": 400000}，其余按字符串/数字/布尔解析。"
+                        "例如逐模型压缩覆盖写成 model-id = {\"reserveTokens\": 400000}，其余按字符串/数字/布尔解析。" +
+                        "清空并保存 = 删掉这项设置、回到 pi 的默认（不是写一个空对象）。"
                 } else {
                     "每行一项，支持 glob 与排除标记：!pattern 排除、+path 强制包含、-path 强制排除。" +
                         "值以 { 或 [ 开头时按 JSON 解析，例如 packages 的对象形式 " +
-                        "{\"source\": \"pi-skills\", \"autoload\": false}。"
+                        "{\"source\": \"pi-skills\", \"autoload\": false}。" +
+                        "清空并保存 = 删掉这项设置、回到 pi 的默认（不是写一个空列表）。"
                 },
             )
             Spacer(Modifier.height(PiSpacing.inline))
@@ -802,7 +804,11 @@ fun PiListEditorSheet(
                             problem = rejected
                         }
                     },
-                ) { Text("保存") }
+                ) {
+                    // The button names the outcome before it happens: an empty list removes the
+                    // key (= pi's default), it does not store an empty list.
+                    Text(if (entries.isEmpty()) "恢复默认" else "保存")
+                }
             }
             Spacer(Modifier.height(PiSettingsMetrics.sheetFooterBottom))
         }

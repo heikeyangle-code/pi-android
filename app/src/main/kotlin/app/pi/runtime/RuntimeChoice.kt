@@ -217,7 +217,7 @@ object RuntimeChoice {
      * The probe gate's rule — **the whole of it**, pure, so the `proroot` harness executes
      * it instead of a copy of it.
      *
-     * Three inputs, and the order they are combined in is the safety property:
+     * Four inputs, and the order they are combined in is the safety property:
      *
      *  1. **A leak refuses proroot in every档.** `rawVetoed` is [ProrootRawProbe.Report.leaked]
      *     — a raw read that returned the *host's* file where libc returned the guest's. It is
@@ -226,7 +226,16 @@ object RuntimeChoice {
      *     decisive measurement in both档: it is the only one that proves path translation on
      *     a real guest path, and in [ProrootSeccomp.NoSeccomp] it is the only one left that
      *     still can refuse proroot. A probe that could not run is not a pass.
-     *  3. **Raw translation is required only where it was promised**
+     *  3. **The engine's own class of binary must really run** (`execOk`,
+     *     [ProrootExecProbe]). Node is a dynamically linked glibc ELF, and on 2026-09-19 the
+     *     other two measurements passed while the engine exited 126 — so this input is what
+     *     makes the verdict an answer about the process the app cannot do without. It is
+     *     required in **every**档 and it is **all-or-nothing**: a runtime that cannot start
+     *     the engine is refused entirely rather than used for the launch paths that happen to
+     *     work. The only mixture this app allows is the pre-existing `allowProroot = false`
+     *     install/maintenance line (`RuntimeSelection`), which is a division of labour and
+     *     not a second verdict.
+     *  4. **Raw translation is required only where it was promised**
      *     ([ProrootSeccomp.requiresRawTranslation]). In the seccomp档 an untranslated raw
      *     syscall is a hole and refuses proroot; in the no-seccomp档 it is the documented
      *     shape of the档, so [rawTranslated] is reported and not consulted.
@@ -239,9 +248,12 @@ object RuntimeChoice {
         rawTranslated: Boolean,
         /** [GuestToolProbe.Report.ok]: required, never inferred. */
         toolsOk: Boolean,
+        /** [ProrootExecProbe.Report.ok]: required, never inferred. See the KDoc. */
+        execOk: Boolean,
     ): Boolean = when {
         rawVetoed -> false
         !toolsOk -> false
+        !execOk -> false
         mode.requiresRawTranslation -> rawTranslated
         else -> true
     }

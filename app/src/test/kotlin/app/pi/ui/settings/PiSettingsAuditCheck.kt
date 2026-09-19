@@ -496,6 +496,43 @@ fun main() {
         groups.entries.groupBy { it.value }.filterValues { it.size > 1 }.keys.joinToString(),
     )
 
+    // Rules 12-14: the "clear" gesture must mean pi's default, not an empty container.
+    // Writing `[]` is a *value* (for `defaultTools` it disables every built-in tool, while the
+    // row is labelled 「默认 read/bash/edit/write」), so the editors route "empty" to `remove`
+    // exactly as the Number row routes `null`. These are source-text assertions because the
+    // editors are Compose and cannot be compiled here — the same division `settings-audit`
+    // already uses for the registry.
+    val host = File(root, "app/src/main/kotlin/app/pi/ui/settings/PiSettingEditorHost.kt")
+        .takeIf { it.isFile }
+        ?.readText()
+        ?.let(::stripComments)
+    check("the editor host was found", host != null)
+    val numberBranch = host?.substringAfter("PiRowKind.Number ->", "")?.substringBefore("PiRowKind.Text ->", "").orEmpty()
+    check(
+        "the number editor restores the default by removing the key",
+        numberBranch.contains("store.remove(setting.key)"),
+        "a `null` from 恢复默认 must delete the key, not write JSON null (docs/settings-audit-impl.md §B1)",
+    )
+    val listBranch = host?.substringAfter("PiRowKind.List ->", "").orEmpty()
+    check(
+        "clearing a list row removes the key instead of storing an empty list",
+        listBranch.contains("entries.isEmpty()") && listBranch.contains("store.remove(setting.key)"),
+        "saving an empty list must call store.remove: `[]` is a value in pi, and for `defaultTools` " +
+            "it means 'no built-in tool at all' (core/sdk.ts:256-262) while the row promises the default",
+    )
+
+    // Rule 14: no preset may offer a tool this platform cannot run. `powershell` is in pi's
+    // `ToolName` union (`core/tools/index.ts:95`) but its implementation throws on anything but
+    // Windows (`utils/shell.ts` getPowerShellConfig), and the guest has no `pwsh` — a chip for it
+    // would hand the user a tool that fails on first use.
+    val presets = Regex("""private val builtinTools = listOf\(([^)]*)\)""").find(registry)?.groupValues?.get(1)
+    check("the built-in tool preset list was found", presets != null)
+    check(
+        "the tool presets do not offer the Windows-only powershell",
+        presets?.contains("powershell") == false,
+        "presets: $presets",
+    )
+
     // One layer up from a dead row: a search hint whose chip selects a query that
     // matches nothing. Only the `examples` list is read — taking every standalone
     // string in the file would let an unrelated literal fail the build later — and a

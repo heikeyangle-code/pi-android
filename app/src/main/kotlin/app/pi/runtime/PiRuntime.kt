@@ -237,6 +237,25 @@ class PiPaths(private val filesDir: File, private val nativeLibDir: File) {
     fun clearProrootProbeCache(): Boolean = prorootProbeCache().delete()
 
     /**
+     * The **engine-failure autopsy** of the last proroot engine launch
+     * ([ProrootProbe.autopsy]), or a missing file when there has not been one.
+     *
+     * It lives next to [prorootProbeCache] and inside the same volatile tree for the same
+     * reason: it is a statement about *this* unpacked rootfs, this Node and these proroot
+     * bytes, so it must not outlive them — a forensic block from an older tree would send
+     * the next reader after a defect that is already gone.
+     *
+     * A file rather than a field of the live session because the failure outlives the
+     * session: `PiEngineHost.publish(null)` drops the engine that produced it, and the
+     * diagnostic report is assembled later, from `Context` + [PiPaths] alone. Writing it
+     * here is also what makes the report's own reader (`DiagnosticsReport`) independent of
+     * whoever happens to hold the engine — it reads the same file the settings row can.
+     *
+     * Written **only after a launch failure**; a normal start neither creates nor reads it.
+     */
+    fun prorootEngineForensics(): File = File(runtime, ".proroot-engine-forensics")
+
+    /**
      * proot links against `libtalloc.so.2`, but jniLibs only lets files named
      * `lib*.so` through. The real file ships as `libtalloc.so`; this alias is
      * what satisfies the SONAME.

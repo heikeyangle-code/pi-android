@@ -6,8 +6,8 @@ package app.pi.runtime
  * ## Why the key is what it is
  *
  * The gate answers "does proroot work **on this device, with these bytes, over this
- * guest tree, in this configuration**". Four things can change that answer, and the key
- * has to cover the three the app can see:
+ * guest tree, in this configuration, measured by these stages**". Four things can change
+ * that answer, and the key has to cover the three the app can see:
  *
  *  - the **unpacked runtime revision** (`PiPaths.stampFile()`) — a new rootfs, a new
  *    Node, a new `rg`/`fd` binary, or a new pi engine all invalidate a verdict;
@@ -22,6 +22,11 @@ package app.pi.runtime
  *    even though production pins [RuntimeChoice.PROROOT_SECCOMP], because a key that
  *    forgot it would make the档 invisible to the cache — the same defect as a row that
  *    says "proroot" while every launch falls back.
+ *
+ * The fourth — **which stages the verdict is made of** — cannot go in the key, because
+ * the stages are a property of the *build*, not of the device. It is [VERSION] instead:
+ * adding a stage changes what "PASS" means, so every earlier file must stop being
+ * readable. `v3` is that bump (`ProrootExecProbe`).
  *
  * The last — the device's ROM and kernel — cannot change without a process restart
  * at minimum, and a stale verdict there is precisely what the three-failure fallback
@@ -50,8 +55,20 @@ object ProrootProbeCache {
      * could not tell the two seccomp configurations apart, so none of them is an
      * answer to a `v2` question — and a `v1` failure would otherwise keep proroot
      * disabled on a device whose real defect has since been fixed in `ProrootCommand`.
+     *
+     * `v3` is the **dynamic-binary** stage. A `v2` verdict was earned by a probe that
+     * never executed the engine's own kind of binary (`ProrootExecProbe`), so it is not an
+     * answer to a `v3` question — and the concrete consequence of trusting one is the one
+     * this stage was added for: on 2026-09-19 a `v2` PASS was cached on a device where
+     * `/opt/node/bin/node` could not be exec'd under proroot and every engine launch died
+     * with exit code 126. A `v2` **failure** is equally stale in the other direction: it was
+     * earned under a gate that could refuse proroot for a reason this build no longer
+     * consults, so re-reading it would keep the switch off for a defect that is fixed.
+     * Bumping the version is therefore the whole of the "a new stage invalidates old
+     * verdicts" rule — the key needs no new field, because a verdict is only ever an answer
+     * to the question *this* build asks.
      */
-    const val VERSION = "v2"
+    const val VERSION = "v3"
 
     private const val PASS = "PASS"
     private const val FAIL = "FAIL"

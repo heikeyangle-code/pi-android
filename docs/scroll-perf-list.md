@@ -599,3 +599,102 @@ piImageDecodeGate.withPermit {
 **上机判据**：装两张图、发出去再撤回/重进输入框，第二次进入同一张图不应再有整次 codec 解码（`atrace` 里
 `BitmapFactory`/`nativeDecode` 段只在第一次出现）；连续切走再切回若干次，`dumpsys meminfo` 的 bitmap 占用应停在
 32 MiB 界内而不是随次数增长。
+
+---
+
+## 10. 追加：附件候选序对齐方案 (a)（`AttachmentBudget` + `ChatScreen` + `AttachmentBudgetCheck`；与滚动无关，为可追溯记在这里）
+
+**用户拍板**：截图/PNG 源走无损，相机 JPEG 不多付一次 PNG 编码。即 PNG 候选的进入条件从「只在带 alpha 时」
+放宽为「**源 MIME 是 `image/png`（或带 alpha）**」，其余与 pi 的候选序/质量阶梯一致
+（`image-resize-core.ts:112-122`：「第一个塞得下的候选」语义不变）。
+
+**符号级改动**
+
+| 文件 | 改动 |
+|---|---|
+| `ui/screens/AttachmentBudget.kt` | 新增 `fun pngFirst(sourceMime: String, hasAlpha: Boolean): Boolean`（= `hasAlpha \|\| baseMimeType(sourceMime) == "image/png"`）；`fun encodings(sourceMime, hasAlpha)`（原 `encodings(hasAlpha)`）；`fun attemptPlan(sourceMime, hasAlpha, width, height)`（原 3 参）；抽出 `private fun baseMimeType(mime)`（`piInlineSupported` 与 `pngFirst` 共用，规约方式 = pi 的 `image-process.ts:29-31`）；类 KDoc 的「一处刻意差异」整段重写（见下） |
+| `ui/screens/ChatScreen.kt` | `compressAttachment` 一处实参：`AttachmentBudget.attemptPlan(mime, source.hasAlpha(), width, height)`（**只有这一行是必须改的**；`mime` 本就在作用域里，没有新增参数、没有改调用链）；顺带更新该函数 KDoc 第 3 条（「Alpha picks the format」→「Alpha, and a PNG source, pick the format」）与一行行内注释，避免文档说旧话 |
+| `app/src/test/.../AttachmentBudgetCheck.kt` | 原来的两条 `encodings` 断言更新签名；新增 12 条断言（下表）；文件头注释同步（差异描述 + 「ChatScreen 的接线以源文本读」）；新增 `import java.io.File` |
+
+**KDoc 里如实写下的残余差异**（要求原文）：pi 对**任何**需要重编码的源都先试 PNG（包括相机 JPEG，
+`image-resize-core.ts:112-114`），本应用只对 PNG 源/带 alpha 的位图先试 PNG（`pngFirst`）——理由是 Android 上给
+2000×2000 的照片编 PNG 又慢又大（原文那句保留）。**用户可见的差别现在只剩**：一个**不透明、非 PNG 且需要重编码**
+的源（相机 JPEG，以及 pi 会先转 PNG 的 HEIC/BMP/WebP，`image-process.ts:49-65`）直接走 JPEG 阶梯，因此可能发出
+JPEG 而 pi 会先给 PNG —— 对照片而言这只是名字上的差别（PNG 只会更大），而**快速路径不受影响**：限制内的
+PNG/JPEG/GIF/WebP 仍然**逐字节**原样转发，所以限制内的不透明 PNG 仍然以 PNG 原样发出。
+
+**新断言（12 条，全部 PASS）**
+
+| # | 断言 | 覆盖要求 |
+|---|---|---|
+| 1 | `an opaque non-PNG source skips PNG (the one deliberate difference from pi)` | ②（改前就有，签名更新） |
+| 2 | `an alpha source tries PNG first, then JPEG` | ③（改前就有） |
+| 3 | `a PNG source tries PNG first even when the bitmap is opaque` | ① |
+| 4 | `a PNG source's first candidate is PNG` | ① |
+| 5 | `an opaque JPEG source starts at JPEG 80` | ② |
+| 6 | `and its candidates contain no PNG at all` | ② |
+| 7 | `an alpha source gets PNG whatever its MIME says`（jpeg/heic/webp/octet-stream × alpha） | ③ |
+| 8 | `a PNG source is recognised with parameters and casing`（`IMAGE/PNG`、`image/png; charset=binary` …） | ① + 规约方式 |
+| 9 | `a JPEG-ish source that is not PNG is not`（jpg/gif/webp/png8/空） | ①的反面 |
+| 10 | `the whole candidate order is pi's when PNG is in` = `png, jpeg80, jpeg85, jpeg70, jpeg55, jpeg40` | ④ |
+| 11 | `and the JPEG ladder itself is untouched for every source`（三种源的 JPEG 序列都恒为 80/85/70/55/40） | ④/⑤ |
+| 12 | `a PNG source's plan starts at PNG, an opaque JPEG's at JPEG 80` | ①/② 在 `attemptPlan` 上也成立 |
+| 13 | `the fast path still returns the original bytes for an under-limits, inline-MIME picture`（源文本：那次 `return PiImage(Base64.encodeToString(bytes, Base64.NO_WRAP), mime)` 恰好一次） | ⑤ |
+| 14 | `and it is still evaluated before any encoding plan is built`（源文本：该 return 的位置 < `for (attempt in AttachmentBudget.attemptPlan(mime, source.hasAlpha(), width, height))` 的位置） | ⑤ |
+
+（⑤「快速路径不受影响」只能读源码：`ChatScreen` 导 Compose/Android，本 harness 编不了它；做法与
+`ImageSizeCheck` 对解码点的源文本断言一致，`pi.repo.root` 由脚本传给每个 harness。）
+
+**门槛输出**
+
+```
+$ # 复刻 tools/run-app-pure-checks.sh 的 image-attachment-budget 注册行（编译 + 运行）
+$ java -Dpi.repo.root=<repo> -cp out:libs app.pi.ui.screens.AttachmentBudgetCheckKt
+…
+PASS a PNG source tries PNG first even when the bitmap is opaque
+PASS a PNG source's first candidate is PNG
+PASS an opaque JPEG source starts at JPEG 80
+PASS and its candidates contain no PNG at all
+PASS an alpha source gets PNG whatever its MIME says
+PASS a PNG source is recognised with parameters and casing
+PASS a JPEG-ish source that is not PNG is not
+PASS the whole candidate order is pi's when PNG is in
+PASS and the JPEG ladder itself is untouched for every source
+PASS a PNG source's plan starts at PNG, an opaque JPEG's at JPEG 80
+PASS the fast path still returns the original bytes for an under-limits, inline-MIME picture
+PASS and it is still evaluated before any encoding plan is built
+…
+harness: OK (all checks passed)          # 67 条 PASS，0 FAIL
+```
+
+`python3 tools/check-nested-comments.py` → `nested-comments: OK (280 Kotlin file(s) scanned)`。
+
+`tools/typecheck.sh`（全量，改动落盘后）：
+
+```
+app/src/main/kotlin/app/pi/ui/settings/DiagnosticsReport.kt:7:15: error: unresolved reference 'BuildConfig'.
+app/src/main/kotlin/app/pi/ui/settings/DiagnosticsReport.kt:156:34: error: unresolved reference 'BuildConfig'.
+app/src/main/kotlin/app/pi/ui/settings/DiagnosticsReport.kt:156:75: error: unresolved reference 'BuildConfig'.
+typecheck: FAILED in :app — 3 error diagnostic(s)
+```
+
+**只有那 3 条已知的 `BuildConfig` 假阳性**（`ui/settings/**`，我从未碰）；`AttachmentBudget.kt`、
+`ChatScreen.kt`、`AttachmentBudgetCheck.kt` **0 error**——`encodings`/`attemptPlan` 的新参数与 `pngFirst`
+都通过了编译器。（这次运行里上一轮看到的 `PiPackagesScreen.kt`/`PiSettingsRegistry.kt` 中间态错误已经消失，
+说明那两个代理收尾了。）
+
+**真机判据（发一张大截图）**
+
+1. **文字还糊不糊**：截一张屏幕上满是 12–14px 文字的图（例如设置页/一篇文章），通过 `+` 选进输入框，看 48dp 缩略图；
+   再把它发出去，看转录里那张缩略图/点开大图后的文字边缘。**方案 (a) 的收益就在这里**：PNG 源（截图就是 PNG）
+   现在第一个候选就是 PNG，所以在**不缩边**的情形下它是逐字节无损；只有在需要缩边或 PNG 超出 4.5 MB base64 上限时
+   才会落到 JPEG@80。判据：**同一张截图在本次改动前后，发出去的那张图的文字锐利度不得变差**（改动只会让候选序更靠前
+   取到 PNG，不会更差）；若变差，说明 PNG 编码在设备上抛异常/超时走到了 JPEG，需要把 `Bitmap.compress(PNG)` 的失败
+   打进日志复核。
+2. **相机 JPEG 不多付一次编码**：选一张 12MP 相机 JPEG（>2000 边长），观察发送耗时。判据：**不再出现"先试一次
+   PNG 编码再退回 JPEG"的那一秒级延迟**（这类源现在直接从 JPEG@80 开始）；用 `atrace`/systrace 看
+   `Bitmap.compress` 只被调用一次（同一尺寸上）。
+3. **旁证**：`settings` 里看不到这些数据；导出报告（`DiagnosticsReport`）里的附件统计可以作旁证——发同一张截图
+   前后，记录里那张图的 base64 长度应与"PNG 候选胜出"一致（比 JPEG 大或小都正常，关键是与 pi 侧记录一致，
+   即 MIME 为 `image/png`）。
+4. **回归**：连续选 7 张 pi 上限附近的图 + 1 张（第 8 张应被拒）——`MESSAGE_BYTES` 那条拒绝文案不变（已有 66 条断言覆盖）。

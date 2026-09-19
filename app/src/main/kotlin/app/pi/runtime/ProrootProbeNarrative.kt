@@ -76,12 +76,18 @@ object ProrootProbeNarrative {
     const val MAX_DETAIL_LINES = 6
 
     /**
-     * The stage label for each half of the gate. They name the measurement, not a
+     * The stage label for each stage of the gate. They name the measurement, not a
      * verdict: "raw syscall" is `ProrootRawProbe`, "rg/fd 真调用" is `GuestToolProbe`
-     * invoked through the candidate runtime.
+     * invoked through the candidate runtime, and [STAGE_EXEC] is
+     * [ProrootExecProbe] — the engine's own class of binary, run for real.
+     *
+     * [STAGE_EXEC] reads its label from `ProrootExecProbe` rather than repeating the
+     * string, so the word the row shows and the word the probe's own `✗` line carries
+     * cannot drift apart.
      */
     const val STAGE_RAW = "raw syscall"
     const val STAGE_TOOLS = "rg/fd 真调用"
+    const val STAGE_EXEC = ProrootExecProbe.LABEL
 
     /**
      * The stage for a run proroot itself killed before the guest existed
@@ -185,6 +191,18 @@ object ProrootProbeNarrative {
             return FailedStage(
                 STAGE_TOOLS,
                 line.substringAfter(ProrootRawProbe.HEADER_SEPARATOR).trim(),
+            )
+        }
+
+        // The engine-class stage, checked last because `RuntimeChoice.probeGate` consults it
+        // after the tools. This is the stage whose failure means "proroot cannot start the
+        // engine at all" — the measurement added after a device where the first two passed
+        // and every engine launch died with 126 — so the row naming it is the difference
+        // between "探针未通过" and a sentence that names `/opt/node/bin/node`.
+        lines.firstOrNull { it.startsWith(ProrootExecProbe.FAIL_MARK) }?.let { line ->
+            return FailedStage(
+                STAGE_EXEC,
+                line.removePrefix(ProrootExecProbe.FAIL_MARK).trim(),
             )
         }
         return null

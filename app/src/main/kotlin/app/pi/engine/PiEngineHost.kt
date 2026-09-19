@@ -6,7 +6,9 @@ import app.pi.bridge.DeviceBridgeController
 import app.pi.runtime.GuestTreeReaper
 import app.pi.runtime.GuestWorkspacePath
 import app.pi.runtime.PiPaths
+import app.pi.runtime.ProrootExecProbe
 import app.pi.runtime.ProrootLaunchHandle
+import app.pi.runtime.ProrootProbe
 import app.pi.runtime.RuntimeProvisioner
 import app.pi.runtime.RuntimeSelection
 import app.pi.runtime.RuntimeSelfCheck
@@ -132,6 +134,71 @@ class PiEngineHost(private val appContext: Context) {
     }
 
     /**
+     * Turn "the proroot engine ended with 126/127" into bounded, readable evidence.
+     *
+     * ## What it does, in order
+     *
+     *  1. re-runs the dynamic-binary stage through the **same** proroot launch shape
+     *     ([ProrootProbe.autopsy]) — `/usr/bin/env true` and
+     *     `/opt/node/bin/node --version`, with a timeout and an output cap;
+     *  2. keeps the result in memory ([lastProrootForensics]) and in
+     *     [PiPaths.prorootEngineForensics] so the report and the settings row can read it
+     *     after this host (and its session) is gone;
+     *  3. logs it, because a device with no UI access still has logcat;
+     *  4. counts the failure in the runtime's three-strike budget **only when the engine
+     *     really exited** — the spawn-time failure is already counted by the caller's own
+     *     `recordProrootFailure`, and counting one launch twice would abandon proroot after
+     *     two attempts instead of three.
+     *
+     * ## What it deliberately does not do
+     *
+     * It never runs on a healthy start (only a launch-failure exit code gets here), it never
+     * quotes anything but the probe's own marker lines and proroot's `[proroot] …` lines
+     * ([ProrootExecProbe.launcherLinesFrom]), and it never throws: a broken autopsy is a
+     * line of evidence saying so, not a second failure.
+     */
+    private fun autopsyProrootFailure(
+        selection: RuntimeSelection,
+        storage: File?,
+        exitCode: Int?,
+        launcherSource: String?,
+        cwd: String? = null,
+        extraBinds: List<Pair<String, String>> = emptyList(),
+    ) {
+        val lines = runCatching {
+            // The engine's own `-w` and its own extra binds, not the probe's shape: a guest
+            // working directory that does not exist or a bind the launcher refuses is a
+            // launch-shape failure the gate cannot see, and this is the only place that can
+            // reproduce it without slowing a healthy start.
+            ProrootProbe.autopsy(
+                paths = paths,
+                storage = storage,
+                exitCode = exitCode,
+                launcherSource = launcherSource,
+                cwd = cwd,
+                extraBinds = extraBinds,
+            )
+        }.getOrElse { error ->
+            listOf(
+                "proroot 引擎启动失败取证没能运行：" +
+                    "${error::class.java.simpleName}: ${error.message}",
+            )
+        }
+        lastProrootForensics = lines
+        lines.forEach { Log.w(TAG, "proroot 引擎失败取证：$it") }
+        runCatching {
+            val file = paths.prorootEngineForensics()
+            file.parentFile?.mkdirs()
+            file.writeText(lines.joinToString("\n") + "\n")
+        }
+        if (ProrootExecProbe.isLaunchFailure(exitCode)) {
+            selection.recordProrootFailure(
+                "引擎启动失败（退出码 $exitCode）：${lines.firstOrNull().orEmpty()}",
+            )
+        }
+    }
+
+    /**
      * Stop a captured engine tree, without blocking the caller.
      *
      * Asynchronous on purpose: `restart` is driven from a UI coroutine, and a reap that
@@ -194,6 +261,31 @@ class PiEngineHost(private val appContext: Context) {
      * looks identical to one that worked, and the difference matters to the user.
      */
     var lastAgentDirMigration: String? = null
+        private set
+
+    /**
+     * The **engine-failure autopsy** of the most recent proroot launch that ended with
+     * `126`/`127`, or null when there has not been one.
+     *
+     * ## Why the number alone was not enough
+     *
+     * On the reference device the whole report was `引擎以退出码 126 退出。` — a sentence that
+     * names no binary, no stage and no next step, produced by a runtime whose own components
+     * write exactly that information to stderr (`[proroot] child: stage=… target=… errno=…`)
+     * and by a shell that names the file it could not execute. Neither line reached a surface
+     * a user could read: `EngineExitCause` did not know the shapes, and the boot had already
+     * returned `Ready` by the time the process died.
+     *
+     * So a proroot engine that dies with a *launch* code ([ProrootExecProbe.isLaunchFailure])
+     * gets one bounded re-run of the dynamic-binary stage under the same proroot launch shape
+     * ([ProrootProbe.autopsy]), and this field holds what it found. It is written to
+     * [PiPaths.prorootEngineForensics] as well, because the failure outlives the session that
+     * produced it (`DiagnosticsReport` reads the file).
+     *
+     * Null is a real state — "no proroot launch failure to explain" — not "not collected yet".
+     */
+    @Volatile
+    var lastProrootForensics: List<String>? = null
         private set
 
     sealed interface Boot {
@@ -479,8 +571,14 @@ class PiEngineHost(private val appContext: Context) {
             // rather than failing the boot. `spawn` throwing means the process never
             // existed, which is the only engine-side failure this layer can attribute
             // without reading `PiEngineSession`'s internals (deliberately out of scope).
+            //
+            // Kept rather than only logged: this is the one proroot failure that still
+            // produces a `Boot.Failed`, and the autopsy below is what turns it into
+            // evidence a user can read (`lastProrootForensics`).
+            var prorootSpawnError: Throwable? = null
             val spawned = first.recoverCatching { error ->
                 if (!firstPlan.usingProroot) throw error
+                prorootSpawnError = error
                 selection.recordProrootFailure("${error::class.java.simpleName}: ${error.message}")
                 val retry = selection.plan(
                     guestCommand = guestCommand,
@@ -525,9 +623,27 @@ class PiEngineHost(private val appContext: Context) {
                             // publishes `Stopped` the launcher has usually exited, and a
                             // dead launcher's children can no longer be identified as
                             // ours. When the capture comes back empty the log says so —
-                            // `docs/known-gaps.md` §N2 records the residual case.
+                            // `docs/known-gaps.md` §N2 records the residual case. The
+                            // capture stays **before** the autopsy for that reason.
+                            //
+                            // A proroot engine that ends with 126/127 never ran the guest
+                            // command: the number is the whole failure, and it is the one
+                            // shape the boot-time `Boot.Failed` cannot carry (the boot had
+                            // already returned `Ready`). This is where it becomes evidence —
+                            // bounded, after the fact, never on a healthy start
+                            // (`autopsyProrootFailure`).
                             val tree = captureEngineTree(engineHandle)
                             reapEngineTree(tree, engineHandle, "引擎自行结束（$end）")
+                            if (session.lastExitCode?.let { ProrootExecProbe.isLaunchFailure(it) } == true) {
+                                autopsyProrootFailure(
+                                    selection = selection,
+                                    storage = android.os.Environment.getExternalStorageDirectory(),
+                                    exitCode = session.lastExitCode,
+                                    launcherSource = session.stderr.toString(),
+                                    cwd = guestWorkspace,
+                                    extraBinds = extraBinds,
+                                )
+                            }
                             if (engineLaunch === engineHandle) engineLaunch = null
                         }
                     }
@@ -550,9 +666,29 @@ class PiEngineHost(private val appContext: Context) {
                     // Fail closed: whoever was holding the previous session must not keep
                     // talking to a process that is no longer the engine.
                     publish(null)
+                    // If the first attempt was proroot and it never produced a process, run
+                    // the autopsy here: this is the `Boot.Failed` the failure card renders,
+                    // and "无法启动 pi 引擎 / Java 异常名" alone says nothing about *why* the
+                    // runtime refused.
+                    if (firstPlan.usingProroot && prorootSpawnError != null) {
+                        autopsyProrootFailure(
+                            selection = selection,
+                            storage = storage,
+                            exitCode = null,
+                            launcherSource = prorootSpawnError?.message,
+                            cwd = guestWorkspace,
+                            extraBinds = extraBinds,
+                        )
+                    }
                     Boot.Failed(
                         "无法启动 pi 引擎",
-                        "${error::class.java.simpleName}: ${error.message}",
+                        buildString {
+                            append("${error::class.java.simpleName}: ${error.message}")
+                            lastProrootForensics?.let { forensics ->
+                                append("\n\n")
+                                forensics.forEach { line -> append(line).append('\n') }
+                            }
+                        }.trimEnd(),
                     )
                 },
             )

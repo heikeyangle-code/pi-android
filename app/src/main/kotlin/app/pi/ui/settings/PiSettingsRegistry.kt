@@ -257,7 +257,19 @@ private val trustOptions = choices(
 )
 
 
-private val builtinTools = listOf("read", "bash", "powershell", "edit", "write", "grep", "find", "ls")
+/**
+ * The names offered as chips on the 内建工具 row.
+ *
+ * **`powershell` is deliberately absent** even though pi knows it
+ * (`core/tools/index.ts:95` — the `ToolName` union is exactly these eight): its implementation
+ * resolves a PowerShell binary and **throws on anything but Windows**
+ * (`utils/shell.ts` `getPowerShellConfig`: "The powershell tool is only available on Windows."),
+ * and this app's guest is a Linux rootfs with no `pwsh`. Offering it would let the user pick a
+ * tool that fails the first time the model calls it; the chip list is the one place we can keep
+ * an unusable value out of reach. The row's description says so, and the default set
+ * (read/bash/edit/write) is spelled out separately from the optional ones.
+ */
+private val builtinTools = listOf("read", "bash", "edit", "write", "grep", "find", "ls")
 
 
 private val termKeyBarPresets = listOf("esc", "tab", "ctrl", "up", "down", "left", "right", "pipe", "tilde", "slash", "dash")
@@ -383,7 +395,8 @@ object PiSettingsCatalog {
             // 会话都会重新执行一次**（`agent-session-runtime.ts:226-252` 重建 runtime），所以新
             // 会话就会重新解析这份作用域，不必换进程。（原先这里标 `RestartEngine`，理由只看了
             // "一个进程里调用点只有一处"，漏了闭包本身每会话重跑。）
-            description = "循环切换时使用的模型，支持通配符。pi 在开新会话时解析一次，改完要开新会话才生效。",
+            description = "循环切换时使用的模型，支持通配符。pi 在开新会话时解析一次，改完要开新会话才生效。" +
+                "清空并保存 = 回到默认（全部模型都能循环）。",
             kind = PiRowKind.List,
             group = G_MODEL,
             section = "默认模型",
@@ -395,7 +408,8 @@ object PiSettingsCatalog {
         PiSetting(
             key = "modelThinkingLevels",
             title = "逐模型思考等级",
-            description = "按 \"厂商/模型 ID\" 覆盖启动思考等级。键必须精确匹配，不认通配符。",
+            description = "按 \"厂商/模型 ID\" 覆盖启动思考等级。键必须精确匹配，不认通配符。" +
+                "清空并保存 = 回到默认（没有逐模型覆盖）。",
             kind = PiRowKind.List,
             group = G_MODEL,
             section = "逐模型与预算",
@@ -407,7 +421,8 @@ object PiSettingsCatalog {
         PiSetting(
             key = "thinkingBudgets",
             title = "思考预算",
-            description = "逐等级的思考 token 预算（minimal/low/medium/high）。Anthropic、Google、Bedrock 原生使用；OpenAI 兼容模型需要模型声明支持。",
+            description = "逐等级的思考 token 预算（minimal/low/medium/high）。Anthropic、Google、Bedrock 原生使用；OpenAI 兼容模型需要模型声明支持。" +
+                "清空并保存 = 回到默认（用各厂商自己的预算）。",
             kind = PiRowKind.List,
             group = G_MODEL,
             section = "逐模型与预算",
@@ -616,7 +631,8 @@ object PiSettingsCatalog {
         PiSetting(
             key = "compaction.modelOverrides",
             title = "逐模型覆盖",
-            description = "按精确的 \"厂商/模型 ID\" 覆盖 reserveTokens 与 keepRecentTokens。模型 ID 可以含斜杠，例如 openrouter/anthropic/claude-sonnet-4。",
+            description = "按精确的 \"厂商/模型 ID\" 覆盖 reserveTokens 与 keepRecentTokens。模型 ID 可以含斜杠，例如 openrouter/anthropic/claude-sonnet-4。" +
+                "清空并保存 = 回到默认（没有逐模型覆盖）。",
             kind = PiRowKind.List,
             group = G_COMPACTION,
             section = "压缩",
@@ -765,7 +781,12 @@ object PiSettingsCatalog {
         PiSetting(
             key = "defaultTools",
             title = "内建工具",
-            description = "启动时启用的内建工具。建议额外开启 grep、find、ls，否则模型只能靠 bash 跑 rg 和 fd，手机上更慢。",
+            description = "启动时启用哪些内建工具。**默认只有 4 个：read、bash、edit、write**；" +
+                "可选的是再加 grep、find、ls（建议开，否则模型只能靠 bash 跑 rg 和 fd，手机上更慢）。" +
+                "清空并保存 = 回到这 4 个默认值（删掉这个键）。" +
+                "pi 还有一个 powershell 工具，但它只在 Windows 上能跑，本应用不提供。" +
+                "想一个内建工具都不开（pi 的 `defaultTools: []` 语义，与「默认」是两件事），" +
+                "在「Pi 文件」里直接编辑 `settings.json`。",
             kind = PiRowKind.List,
             group = G_TOOLS,
             section = "工具",
@@ -1092,7 +1113,8 @@ object PiSettingsCatalog {
         PiSetting(
             key = "npmCommand",
             title = "npm 命令",
-            description = "npm 包查找与安装使用的 argv 数组，例如 mise exec node@20 -- npm。按进程启动参数逐项填写。",
+            description = "npm 包查找与安装使用的 argv 数组，例如 mise exec node@20 -- npm。按进程启动参数逐项填写。" +
+                "清空并保存 = 回到默认（直接调用 npm）。",
             kind = PiRowKind.List,
             group = G_TERMINAL,
             section = "Shell",
@@ -1121,7 +1143,8 @@ object PiSettingsCatalog {
         PiSetting(
             key = "app.terminal.keyBar",
             title = "键盘按键条",
-            description = "终端页顶部按键条的按键与顺序，可增删。改动需要重载。",
+            description = "终端页顶部按键条的按键与顺序，可增删。改动需要重载。" +
+                "清空并保存 = 回到默认（预设的那一排按键）。",
             kind = PiRowKind.List,
             group = G_TERMINAL,
             section = "终端显示",

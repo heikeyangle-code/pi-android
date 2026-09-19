@@ -121,6 +121,17 @@ enum class SessionsView(val label: String) {
  * `clone` 都不接会话参数，只作用于当前会话（`rpc-mode.ts:600-631`、`:661-668`），放在一条
  * 非当前行上会去动另一个会话。它们在对话页的溢出菜单里，那里的目标不含糊。
  *
+ * ## 底部的「＋ 新建会话」是浮动的（D58）
+ *
+ * 它 `align(BottomEnd)` 压在列表内容之上，**不占列表的布局高度** —— 所以列表视口一直铺到
+ * 底部导航栏的上沿，按钮那一层下面不会露出页面底色。v2 把这一件画成列表**下面**属于自己的
+ * 一行（`flex:'none'`，`padding:'0 16px 14px'`），本应用曾经照做，代价就是按钮高度那一条
+ * 全是裸页面底色（深色主题下是一条近黑带）；用户裁决回到浮动。
+ *
+ * 当年那个真 bug（最后几行被按钮盖住、点不到）由**列表自己的** `contentPadding` 解决：
+ * 它的底是 [SESSIONS_LIST_BOTTOM_RESERVE]，最后一条会话永远能滚到按钮上方。位置与可达性
+ * 分开给，两条同时成立 —— 见那段 KDoc 里两个加数各自管什么。
+ *
  * @param onOpenChat 选中一行之后：关掉覆盖层，并落在对话页。
  * @param onClose 顶栏的关闭键。系统返回键走 `PiRoot` 那一处 `BackHandler`，同一个动作。
  * @param initialView 打开时停在哪个视图。`/tree` 与「分支摘要」行要求直接落在树上——
@@ -422,7 +433,10 @@ fun SessionsScreen(
                         .sortedByDescending { (_, rows) -> rows.maxOf { it.lastActivityAt } }
                     LazyColumn(
                         modifier = Modifier.fillMaxSize(),
-                        contentPadding = PaddingValues(bottom = SESSIONS_LIST_BOTTOM),
+                        // 列表底要给浮在它上面的按钮让出空间，否则滚到底时最后一条会话停在
+                        // 按钮底下（看得见、点不到）。算法与两个数的分工见
+                        // [SESSIONS_LIST_BOTTOM_RESERVE] 的 KDoc。
+                        contentPadding = PaddingValues(bottom = SESSIONS_LIST_BOTTOM_RESERVE),
                     ) {
                         groups.forEach { (cwd, rows) ->
                             item(key = "hdr:$cwd") {
@@ -466,28 +480,42 @@ fun SessionsScreen(
                         }
                     }
                 }
-            }
-            // 新建会话：v2 画的是 accent 底的胶囊（`height:42; padding:0 16px; gap:7`，
-            // 图标 16 + 14/600 文字，`color:var(--page)`），不是 M3 的 FAB —— 没有
-            // 阴影、没有 tonal 容器色。
-            //
-            // 而且它是**列表下面自己的一行**（v2 里那个 `flex:'none'` 的行，
-            // `padding:'0 16px 14px'` + `justify-content:flex-end`），不是浮在内容上的
-            // 覆盖件：旧实现用 `align(BottomEnd)` 把它压在列表上，最后一两行永远被按钮
-            // 盖住、点不到，这是这一屏真实存在的点击目标 bug。
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(
-                        start = SESSIONS_NEW_SESSION_INSET,
-                        end = SESSIONS_NEW_SESSION_INSET,
-                        bottom = SESSIONS_NEW_SESSION_BOTTOM,
-                    ),
-                horizontalArrangement = Arrangement.End,
-            ) {
-                NewSessionButton {
-                    session.newSession()
-                    onOpenChat()
+
+                // 新建会话：v2 画的是 accent 底的胶囊（`height:42; padding:0 16px; gap:7`，
+                // 图标 16 + 14/600 文字，`color:var(--page)`），不是 M3 的 FAB —— 没有
+                // 阴影、没有 tonal 容器色。
+                //
+                // **位置（D58）：浮在列表内容之上，不占布局高度。** 这一条是用户裁决，
+                // 不是稿子的画法：v2 把它画成列表**下面**为自己一行（那个 `flex:'none'`
+                // 的行，`padding:'0 16px 14px'` + `justify-content:flex-end`），本应用曾经
+                // 照做，代价是那一行吃掉了列表底部约 70dp 的布局高度 —— 列表在它之上就结束
+                // （`Box(weight(1f))` 的下沿），按钮那一条只剩**页面底色**，深色主题下就是
+                // 一条近黑的空带（用户：「原来按钮浮动到屏幕上，现在那一排全黑了」）。
+                // 回到浮动之后，列表视口一直铺到这一层的下沿（也就是底部导航栏的上沿），
+                // 内容还有更多时卡片会一直画到底，不存在那条带子。
+                //
+                // **可达性不是靠"盖住"解决的。** 当年那个真 bug 不在 `align(BottomEnd)`
+                // 本身，而在浮了却没给列表留空间：最后一两行被压在按钮底下，点不到、
+                // 也长按不到（长按是本屏的删除动作）。所以这里**同时**给列表加了
+                // `contentPadding(bottom = SESSIONS_LIST_BOTTOM_RESERVE)`，最后一条会话
+                // 永远能滚到按钮上方。两条要一起成立，不许用一个换另一个。
+                //
+                // 它在 `Box`（列表那一层）里，而不是像"下面一行"那样做 `Column` 的兄弟：
+                // 只有 `BoxScope` 的 `align` 才是"压在内容上"，`Column` 的子项必然各占一行
+                // —— 这正是那条空带的来源，位置（浮/不浮）与可达性（留不留空间）也因此
+                // 必须分开说。
+                Row(
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(
+                            end = SESSIONS_NEW_SESSION_INSET,
+                            bottom = SESSIONS_NEW_SESSION_BOTTOM,
+                        ),
+                ) {
+                    NewSessionButton {
+                        session.newSession()
+                        onOpenChat()
+                    }
                 }
             }
         }
@@ -673,7 +701,13 @@ private val SESSIONS_SEARCH_ICON = 15.dp
 private val SESSIONS_CHIP_TOP = 8.dp
 private val SESSIONS_CHIP_GAP = 7.dp
 
-/** `SessionsOverlay` 列表底：`paddingBottom:14`；那句提示 `16px 14px 4px`。 */
+/**
+ * `SessionsOverlay` 列表底：`paddingBottom:14` —— 列表**内容**与底边之间的最小间距。
+ *
+ * 与 [SESSIONS_LIST_BOTTOM_RESERVE] 是两件事，别混：这一条管"内容离底边至少留 14"
+ * （稿子的值），那一条管"最后一条不被浮在上面的按钮盖住"（可达性的下界）。列表的
+ * `contentPadding` 把两个数**相加**，谁也不替谁。
+ */
 private val SESSIONS_LIST_BOTTOM = 14.dp
 private val SESSIONS_HINT_TOP = 16.dp
 private val SESSIONS_HINT_BOTTOM = 4.dp
@@ -684,9 +718,34 @@ private val SESSIONS_NEW_SESSION_PADDING = 16.dp
 private val SESSIONS_NEW_SESSION_GAP = 7.dp
 private val SESSIONS_NEW_SESSION_ICON = 16.dp
 
-/** 按钮那一行：`padding:0 16px 14px`。 */
+/** 浮动按钮那一条：`padding:0 16px 14px` 只剩右边与下边两个数（横向不再占一行，见 D58）。 */
 private val SESSIONS_NEW_SESSION_INSET = 16.dp
 private val SESSIONS_NEW_SESSION_BOTTOM = 14.dp
+
+/**
+ * 列表底要给浮在它上面的按钮让出的空间 = [SESSIONS_NEW_SESSION_BOTTOM]（按钮离底边 14）
+ * + [SESSIONS_NEW_SESSION_HEIGHT]（胶囊 42）+ [SESSIONS_LIST_BOTTOM]（v2 的列表底 14）
+ * = **70dp**。
+ *
+ * 取值的依据是两件必须同时成立的事，不是"看着够"：
+ *  - **不被穿模**：`contentPadding` 的底必须 ≥ 胶囊高 + 它自己的下沿 = 56dp，否则滚到底时
+ *    最后一条会话会停在按钮底下 —— 看得见、点不到（长按删除也够不着）。56 是这一条的**下界**。
+ *  - **列表底仍保留 v2 的 14**：浮动没有取消 `SESSIONS_LIST_BOTTOM`，所以在下界之上再加它，
+ *    滚到底时最后一条会话与按钮之间还有那 14 的呼吸。两件事因此是两个加数，不是二选一。
+ *
+ * **底部 inset 不在这里加，也不该在这里加。** 这一屏的根 `Column` 已经
+ * `.padding(contentPadding)`，而这个 `contentPadding` 的底边**就是** Scaffold 的底部导航栏
+ * （56dp）加系统导航条 inset —— 浮层画在 scaffold 的内容盒里、不替换它，所以那条栏永远在
+ * （`PiRoot.kt` 的 `OVERLAY_SNACKBAR_INSET` 那段 KDoc 记着这件事）。列表与按钮都活在那个
+ * **已经缩进过**的盒子里，inset 再加一次就是双份，会凭空多出约 56dp 的空白。同一个理由在
+ * 会话树上已经量过一次（`07-construction-decisions.md` D36：「被框住」不是缺底部 inset，
+ * 再加一次会变成最后一行下面的**死带**），这里不重复走那条错路。
+ *
+ * 声明位置必须在三个被加数**之后**：Kotlin 的顶层属性按文件里的声明顺序初始化，写在前面会
+ * 读到 `Dp` 的零值。
+ */
+private val SESSIONS_LIST_BOTTOM_RESERVE =
+    SESSIONS_NEW_SESSION_BOTTOM + SESSIONS_NEW_SESSION_HEIGHT + SESSIONS_LIST_BOTTOM
 
 /** sheet 里的一行：`padding:12px 14px`。 */
 private val SESSIONS_ACTION_ROW_PADDING = 12.dp

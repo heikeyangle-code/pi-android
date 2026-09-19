@@ -652,3 +652,103 @@ run_harness settings-resources \
   的文件，本轮不许改）。我只**调用**它，没有改它；如果那一批改了它的签名，这里要跟着改一行。
 - 计数把"被包筛选/不自动加载"的资源也算作"已发现"（它们确实在磁盘上、pi 也确实看到了，只是没加载）。
   项目页资源段把它们显示为 muted；这一屏不做第二次状态分类。真要区分需要新的纯逻辑与文案。
+
+---
+
+## 11. 「工具」组的两个问题：List 行的"清空"语义 + `powershell` 预设（`applied (uncommitted)`）
+
+### 11.1 清空的最终语义：**删键**（与 Text/Number 行一致）
+
+**症状（真 bug）**：`PiSettingEditorHost` 的 List 分支无条件 `store.write(key, elementFromEntries(entries))`，
+空 entries 产出空数组。对 `defaultTools` 这就是**写 `"defaultTools": []`** —— 而 pi 的实现是
+`configuredDefaultToolNames ?? defaultActiveToolNames`（`core/sdk.ts:256-262`），**空数组不是 null**，
+所以那是"一个内建工具都不开"。行上的 `emptyListLabel` 却写着「默认 read/bash/edit/write」——
+**界面在说假话**（B1 那一族的漏网：Text/Number 已经改成删键，List 没有）。
+
+**修法（选"删键"）**：
+
+| 符号 | 改动 |
+|---|---|
+| `PiSettingEditorHost` 的 `PiRowKind.List` 分支 | `if (entries.isEmpty()) store.remove(setting.key) else store.write(...)`；KDoc 里逐行写明为什么（含每行的 pi 依据） |
+| `PiListEditorSheet`（`PiSettingsEditors.kt`） | 保存按钮在列表为空时**改叫「恢复默认」**（点之前就知道结果）；两种容器的说明各加一句"清空并保存 = 删掉这项设置、回到 pi 的默认（不是写一个空列表/空对象）" |
+| 注册表 7 条文案 | `defaultTools` 重写（默认 4 个 vs 可选 3 个 + powershell 说明 + "0 个工具"怎么表达）；`enabledModels`/`modelThinkingLevels`/`thinkingBudgets`/`compaction.modelOverrides`/`npmCommand`/`app.terminal.keyBar` 各加一句"清空并保存 = 回到默认（…）" |
+
+**"一个内建工具都不开"仍然可达、但不在这条路上**：这是 pi 的 `defaultTools: []` 语义（与默认是两件事），
+要它就按行说明去「Pi 文件」屏直接编辑 `settings.json`。理由：在手机上让 agent 一个工具都没有不是需要
+一个 UI 入口的需求，而**留着一个"看着是恢复默认、实际把工具全关掉"的按钮**是确定的伤害。
+
+### 11.2 所有 List/Array 行的自查（逐个给结论）
+
+| 行 | 容器 | 空（`[]`/`{}`）在 pi / App 里的真实语义 | 与"未设置"相同？ | 结论 |
+|---|---|---|---|---|
+| `defaultTools` | Array | `configuredDefaultToolNames ?? defaultActiveToolNames`：`[]` **非 null** → **0 个内建工具**（`core/sdk.ts:256-262`） | **不同** | **本次修的真 bug**；清空→删键→pi 的 4 个默认；行说明写清"0 个"要走 `settings.json` |
+| `enabledModels` | Array | `main.ts:788`：`modelPatterns && length > 0 ? resolveModelScope(…) : []`；`agent-session.cycleModel` 的注释写"Uses scoped models if available, **otherwise all available models**" | 相同（都=没有作用域→循环全部） | 删键行为一致；行标签「全部模型」为真，文案补一句 |
+| `npmCommand` | Array | `core/package-manager.ts:1747-1753`：`!configuredCommand \|\| length === 0` → 默认 `{command:"npm",args:[]}` | 相同 | 同上；标签「默认 npm」为真 |
+| `app.terminal.keyBar` | Array | App 侧 `TerminalSettings.keyBarOf`：absent → `defaultRows`；**空数组也 `return defaultRows`**；名字全解析不出也回默认 | 相同 | 同上；文案补一句 |
+| `modelThinkingLevels` | Object | `getAllModelThinkingLevels()` = `{...(settings.modelThinkingLevels ?? {})}`，查表 `?.[key]` → `{}` 等价于没有覆盖 | 相同 | 同上 |
+| `thinkingBudgets` | Object | `getThinkingBudgets()` 原样返回；消费侧 `options.thinkingBudgets?.[level] ?? default` → `{}` 等价于未设置 | 相同 | 同上 |
+| `compaction.modelOverrides` | Object | `compaction?.modelOverrides?.[modelKey]` → `{}` 等价于未设置 | 相同 | 同上 |
+| `packages` | Array | **只读**行：编辑器路径被 `hostActions` 拦下（开店包管理页）；pi 侧包清单 `?? []`，两者都是"没有包" | 相同 | 无编辑器路径，无需改动 |
+
+**唯一写空容器的地方**：`grep elementFromEntries` 全树只有 `PiSettingEditorHost:134` 一处，且已落在
+`else` 分支里；没有第二个写入方（`write("defaultTools"/…)` 之类 0 命中）。`inMemoryDefaultStore()`
+会把 `packages`/`npmCommand` 的 `defaultValue`（空数组）种进**内存预览** store —— 那不是文件写入，
+只影响"没接运行时的预览"。
+
+### 11.3 `powershell`：从候选里去掉（保留说明）
+
+- 证据：pi 的 `ToolName` 联合确实是 8 个（`core/tools/index.ts:95`：
+  `read | bash | powershell | edit | write | grep | find | ls`），但 `powershell` 的实现
+  `getPowerShellConfig()`（`utils/shell.ts`）在**非 Windows 上直接抛**
+  "The powershell tool is only available on Windows."；我们的 guest 是 Linux rootfs + Node，没有 `pwsh`。
+  给了这个 chip = 让用户选一个"第一次被调用就失败"的工具。
+- 选择：**从 `builtinTools` 预设里删掉**（7 个候选），并在行说明里点明"pi 还有 powershell，但它只在
+  Windows 上能跑，本应用不提供"。`builtinTools` 的 KDoc 写明依据，`settings-audit` 规则 14 守着
+  （"预设里不得出现 powershell"）。
+- **手输**仍可写出 `powershell`：List 行的自由文本是我们有意保留的能力（pi 接受任意工具名，用一个
+  它不认识的只会静默少一个工具）。硬拦一个 pi 自己接受的名字等于发明规范；所以这里只把**我们能控的
+  那个入口**（chip 列表）堵住，并在文案里说清后果。
+- 默认 vs 可选的区分：行说明现在写「**默认只有 4 个：read、bash、edit、write**；可选的是再加
+  grep、find、ls」，`emptyListLabel` 仍是「默认 read/bash/edit/write」，两个数字不再混淆。
+
+### 11.4 门槛
+
+```
+settings-audit      : OK (26 PASS)   ← 新增规则 12/13/14
+audit: 72 registered keys (37 pi, 35 app): 49 read by this app, 23 declared pi-owned, 9 search hints, 21 PiSetting fields
+nested-comments     : OK (280 files)
+pre-spawn           : OK
+settings-resources  : OK（本轮未改它的输入；上一轮注册行待加）
+```
+
+`tools/typecheck.sh`（本轮全量重跑）：`:app` **3 个 error，全部是 `ui/settings/DiagnosticsReport.kt`
+的 `BuildConfig`（typecheck 盲区：脚本只为 `R` 造 stub，`BuildConfig` 由 AGP 生成）**；
+本轮改动的 4 个文件（`PiSettingEditorHost`/`PiSettingsEditors`/`PiSettingsRegistry`/`PiSettingsAuditCheck`）
+**0 error**。（上一轮那条 `runtime/RuntimeProvisioner.kt` 的 `ensureAndroidGroups` 已由那个批次修掉。）
+
+新增的三条审计规则（都不放宽既有规则）：
+
+| 规则 | 判据 | 为什么可机检 |
+|---|---|---|
+| 12 | `PiSettingEditorHost` 的 Number 分支必须 `store.remove(setting.key)` | 钉住 §B1：`null` 不能写进文件 |
+| 13 | List 分支必须同时出现 `entries.isEmpty()` 与 `store.remove(setting.key)` | 钉住本次修法：空列表=删键，不许再写 `[]`/`{}` |
+| 14 | `builtinTools` 预设里不得出现 `powershell` | 钉住 11.3：不让用户选出这台机器上跑不了的工具 |
+
+### 11.5 真机判据
+
+1. **清空内建工具**（把 7 个 chip 全取消，或删光文本行）→ 保存按钮已显示「恢复默认」→ 点它 →
+   行读数回到「默认 read/bash/edit/write」，`settings.json` 里 `defaultTools` 这个键**不存在**（不是 `[]`）。
+2. **再开一个新会话**：pi 的工具集是**默认那 4 个**（read/bash/edit/write），不是 0 个 ——
+   判据：让模型跑一次 `read` 或 `bash` 能成功；或直接看会话里工具清单。
+3. **选 `grep`/`find`/`ls`** 后保存 → 新会话里这三个真的出现在工具列表里（让模型调用即知）。
+4. **其它 List 行同样回默认**：清空「循环模型」→ 又变回全部模型可循环；清空「npm 命令」→ 回默认 npm；
+   清空「键盘按键条」→ 回预设那排按键（这三条都是"空=未设置"的行，删键与写空值行为一致）。
+5. **工具行文案**：一眼能分清默认 4 个与可选 3 个；chip 里**没有** `powershell`，而行说明交代了它为什么不在。
+
+### 11.6 未做 / 未验证
+
+- 「一个内建工具都不开」没有 UI 入口（有意）：只能去「Pi 文件」改 `settings.json`。若以后要放进设置页，
+  必须是一个**独立**的、写明后果的开关，而不是复用「清空」。
+- 手输 `powershell` 仍会被写进 `defaultTools`（pi 不会因此起不来，只是那个工具一用即失败）——
+  见 11.3 的理由；真机上没有验证"手输 powershell 后工具列表长什么样"。
+- 真机判据 1–5 未上机；Compose 侧只过到 typecheck 前端。

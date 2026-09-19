@@ -306,6 +306,25 @@ object DiagnosticsReport {
                     ?.count { it.name.startsWith(ProrootConfigSweep.PREFIX) } ?: 0
             }.getOrDefault(0)
             appendLine("  .proroot-config 现存 $prorootConfigs 份")
+            // The engine-failure autopsy: written by `PiEngineHost` when a proroot engine
+            // exited 126/127, and read here **from the file** because the session that
+            // produced it is gone by the time a report is exported — publishing null is what
+            // a failed boot does, so an in-memory-only copy would make this section empty
+            // exactly when it matters (`PiPaths.prorootEngineForensics`).
+            //
+            // An absent file is stated with its meaning ("no proroot engine died this way"),
+            // not left blank: a missing block and an empty block are the two things a reader
+            // cannot tell apart, and the whole point of this section is that 126 should stop
+            // being a bare number.
+            val forensicsFile = paths.prorootEngineForensics()
+            if (forensicsFile.isFile) {
+                appendLine("  proroot 引擎失败取证（${forensicsFile.name}）：")
+                runCatching { forensicsFile.readLines() }
+                    .getOrElse { error -> listOf("（读不到取证文件：${error::class.java.simpleName}: ${error.message}）") }
+                    .forEach { appendLine("    $it") }
+            } else {
+                appendLine("  proroot 引擎失败取证：没有（本运行时树里还没有 proroot 引擎以 126/127 退出的记录）")
+            }
             appendLine()
 
             appendLine("── 工具链自检（真调用） ──")

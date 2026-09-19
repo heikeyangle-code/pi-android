@@ -313,7 +313,8 @@ fun main() {
     // configurations answer different questions: a verdict earned under one is not an
     // answer about the other (`ProrootProbeCache.key`).
     val key = ProrootProbeCache.key("2026-06-17.3", "abc123", ProrootSeccomp.Seccomp.tag)
-    check("the key carries the cache version", key.startsWith("v2"), true)
+    check("the key carries the cache version", key.startsWith(ProrootProbeCache.VERSION), true)
+    check("the cache version is the dynamic-binary one", ProrootProbeCache.VERSION, "v3")
     check("the key carries the revision", key.contains("2026-06-17.3"), true)
     check("the key carries the digest", key.contains("abc123"), true)
     val rendered = ProrootProbeCache.render(key, passed = true, detail = listOf("guestpath=translated", "passwd=translated"))
@@ -337,9 +338,17 @@ fun main() {
     // on a device whose real defect has since been fixed.)
     val legacy = "v1\t2026-06-17.3\tabc123\nFAIL\n  guestpath=untranslated（errno=2）"
     check("a v1 verdict is not reused", ProrootProbeCache.parse(legacy, key), null)
+    // ... and `v2` is stale for the same reason, one stage later: it was earned by a probe
+    // that never executed the engine's own binary (`ProrootExecProbe`), so a `v2` PASS was
+    // cached on the device where every engine launch died with 126. The exact bytes a `v2`
+    // build wrote are unreadable now, PASS and FAIL alike.
+    val v2Pass = "v2\t${ProrootSeccomp.Seccomp.tag}\t2026-06-17.3\tabc123\nPASS\n  ✓ raw syscall 探针通过"
+    val v2Fail = "v2\t${ProrootSeccomp.Seccomp.tag}\t2026-06-17.3\tabc123\nFAIL\n  ✗ raw syscall 探针未通过"
+    check("a v2 pass is not reused", ProrootProbeCache.parse(v2Pass, key), null)
+    check("a v2 failure is not reused either", ProrootProbeCache.parse(v2Fail, key), null)
     check("an empty file is no verdict", ProrootProbeCache.parse("", key), null)
     check("a missing file is no verdict", ProrootProbeCache.parse(null, key), null)
-    check("a truncated file is no verdict", ProrootProbeCache.parse("v2\t${ProrootSeccomp.Seccomp.tag}\t2026-06-17.3\tabc123\n", key), null)
+    check("a truncated file is no verdict", ProrootProbeCache.parse("v3\t${ProrootSeccomp.Seccomp.tag}\t2026-06-17.3\tabc123\n", key), null)
     check("an unknown verdict word is no verdict", ProrootProbeCache.parse("$key\nMAYBE\n", key), null)
     check("CRLF is tolerated", ProrootProbeCache.parse("$key\r\nPASS\r\n", key)?.passed, true)
 
@@ -451,18 +460,37 @@ fun main() {
 
     // ================================================ 6b. 门禁按档位区分
     // The gate rule itself, executed rather than copied (`RuntimeChoice.probeGate` is what
-    // `ProrootProbe.run` calls). Four inputs and the measurement's own verdicts: the leak is
-    // a veto in **every** 档, the real `rg`/`fd` invocation is required in **every** 档, and
-    // only the promise of raw translation is档-dependent.
-    check("a leak vetoes proroot in the shipping mode", RuntimeChoice.probeGate(ProrootSeccomp.Seccomp, rawVetoed = true, rawTranslated = true, toolsOk = true), false)
-    check("a leak vetoes proroot in the no-seccomp mode too", RuntimeChoice.probeGate(ProrootSeccomp.NoSeccomp, rawVetoed = true, rawTranslated = true, toolsOk = true), false)
-    check("a leak vetoes even when nothing else is wrong", RuntimeChoice.probeGate(ProrootSeccomp.NoSeccomp, rawVetoed = true, rawTranslated = false, toolsOk = true), false)
-    check("broken tools veto proroot in the shipping mode", RuntimeChoice.probeGate(ProrootSeccomp.Seccomp, rawVetoed = false, rawTranslated = true, toolsOk = false), false)
-    check("broken tools veto proroot in the no-seccomp mode", RuntimeChoice.probeGate(ProrootSeccomp.NoSeccomp, rawVetoed = false, rawTranslated = true, toolsOk = false), false)
-    check("tools that never ran are not a pass in either mode", listOf(ProrootSeccomp.Seccomp, ProrootSeccomp.NoSeccomp).map { RuntimeChoice.probeGate(it, false, true, false) }, listOf(false, false))
-    check("untranslated raw vetoes proroot where translation was promised", RuntimeChoice.probeGate(ProrootSeccomp.Seccomp, rawVetoed = false, rawTranslated = false, toolsOk = true), false)
-    check("untranslated raw is only information in the no-seccomp mode", RuntimeChoice.probeGate(ProrootSeccomp.NoSeccomp, rawVetoed = false, rawTranslated = false, toolsOk = true), true)
-    check("a good run passes in both modes", listOf(ProrootSeccomp.Seccomp, ProrootSeccomp.NoSeccomp).map { RuntimeChoice.probeGate(it, false, true, true) }, listOf(true, true))
+    // `ProrootProbe.run` calls). Five inputs and the measurements' own verdicts: the leak is
+    // a veto in **every** 档, the real `rg`/`fd` invocation is required in **every** 档, the
+    // engine-class binary is required in **every** 档, and only the promise of raw
+    // translation is档-dependent.
+    check("a leak vetoes proroot in the shipping mode", RuntimeChoice.probeGate(ProrootSeccomp.Seccomp, rawVetoed = true, rawTranslated = true, toolsOk = true, execOk = true), false)
+    check("a leak vetoes proroot in the no-seccomp mode too", RuntimeChoice.probeGate(ProrootSeccomp.NoSeccomp, rawVetoed = true, rawTranslated = true, toolsOk = true, execOk = true), false)
+    check("a leak vetoes even when nothing else is wrong", RuntimeChoice.probeGate(ProrootSeccomp.NoSeccomp, rawVetoed = true, rawTranslated = false, toolsOk = true, execOk = true), false)
+    check("broken tools veto proroot in the shipping mode", RuntimeChoice.probeGate(ProrootSeccomp.Seccomp, rawVetoed = false, rawTranslated = true, toolsOk = false, execOk = true), false)
+    check("broken tools veto proroot in the no-seccomp mode", RuntimeChoice.probeGate(ProrootSeccomp.NoSeccomp, rawVetoed = false, rawTranslated = true, toolsOk = false, execOk = true), false)
+    check("tools that never ran are not a pass in either mode", listOf(ProrootSeccomp.Seccomp, ProrootSeccomp.NoSeccomp).map { RuntimeChoice.probeGate(it, false, true, false, true) }, listOf(false, false))
+    check("untranslated raw vetoes proroot where translation was promised", RuntimeChoice.probeGate(ProrootSeccomp.Seccomp, rawVetoed = false, rawTranslated = false, toolsOk = true, execOk = true), false)
+    check("untranslated raw is only information in the no-seccomp mode", RuntimeChoice.probeGate(ProrootSeccomp.NoSeccomp, rawVetoed = false, rawTranslated = false, toolsOk = true, execOk = true), true)
+    check("a good run passes in both modes", listOf(ProrootSeccomp.Seccomp, ProrootSeccomp.NoSeccomp).map { RuntimeChoice.probeGate(it, false, true, true, true) }, listOf(true, true))
+
+    // ---- the third stage, and the defect that added it (2026-09-19) --------------
+    // ① The device: `guestpath=translated` + `✓ rg: ripgrep 15.2.0` + `✓ fd: fd 10.2.0` all
+    //    passed **and** every engine launch exited 126. So a failed dynamic-binary stage must
+    //    refuse proroot entirely — not "fall back for the engine only", because a runtime on
+    //    which the engine cannot start is not a runtime with a hole in it.
+    check("① a failed dynamic-binary stage refuses proroot (shipping mode)", RuntimeChoice.probeGate(ProrootSeccomp.Seccomp, rawVetoed = false, rawTranslated = true, toolsOk = true, execOk = false), false)
+    check("① and it refuses in the no-seccomp mode too", RuntimeChoice.probeGate(ProrootSeccomp.NoSeccomp, rawVetoed = false, rawTranslated = true, toolsOk = true, execOk = false), false)
+    check("① it outranks a passing raw stage", RuntimeChoice.probeGate(ProrootSeccomp.Seccomp, rawVetoed = false, rawTranslated = true, toolsOk = true, execOk = false), false)
+    check("① a leak still outranks it (nothing is reported as 'just' the exec stage)", RuntimeChoice.probeGate(ProrootSeccomp.Seccomp, rawVetoed = true, rawTranslated = true, toolsOk = true, execOk = false), false)
+    // ② Everything passing — including the engine's own binary — is the only pass.
+    check("② exec + raw + tools all passing is the only pass", listOf(ProrootSeccomp.Seccomp, ProrootSeccomp.NoSeccomp).map { RuntimeChoice.probeGate(it, false, true, true, true) }, listOf(true, true))
+    check("② a no-seccomp run that only lacks raw translation still passes", RuntimeChoice.probeGate(ProrootSeccomp.NoSeccomp, false, false, true, true), true)
+    check("② and the same run is refused where raw translation was promised", RuntimeChoice.probeGate(ProrootSeccomp.Seccomp, false, false, true, true), false)
+    // ③ The cache key covers the new stage: `ProrootProbeCache.VERSION` is bumped, so a `v2`
+    //    verdict (earned without the stage) is not readable as a current one. Pinned above in
+    //    section 5, and the version is what makes it structural rather than conventional.
+    check("③ the verdict's version is the stage-aware one", ProrootProbeCache.key("r", "d", ProrootSeccomp.Seccomp.tag).startsWith("v3\t"), true)
     // The configuration this app actually launches under. It is the **strict** one, and
     // that is a decision with a reason (`ProrootSeccomp`'s KDoc): `PROROOT_NO_SECCOMP` has
     // no reader in v1.2.8, and the device measurement shows raw translation working under
@@ -482,6 +510,91 @@ fun main() {
     check("the no-seccomp disclosure says it is not selectable", ProrootSeccomp.NoSeccomp.disclosure.contains("不可选"), true)
     check("every mode has a disclosure", ProrootSeccomp.entries.all { it.disclosure.isNotBlank() }, true)
     check("the in-use sentence names the shipping mode", RuntimeChoice.describe(EngineFallback.None).contains(RuntimeChoice.PROROOT_SECCOMP.disclosure), true)
+
+    // ================================================ 6c. 动态二进制档（ProrootExecProbe）
+    // The stage added after the device where the first two passed and the engine still exited
+    // 126. What is pinned here is the part that has to be right *before* a device is
+    // available: which binaries it runs, that a non-zero exit or a missing `+x` is a failure
+    // rather than a reading, and that the failure-side rendering is bounded and quotes only
+    // proroot's own lines.
+    check("the stage has a label the row can print", ProrootExecProbe.LABEL, "动态二进制")
+    check("the targets are env and the engine's own node", ProrootExecProbe.TARGETS.map { it.exe }, listOf("/usr/bin/env", "/opt/node/bin/node"))
+    check("the engine's target is the path the engine execs", ProrootExecProbe.TARGETS.last().commandLine, "/opt/node/bin/node --version")
+    val execScript = ProrootExecProbe.guestCommand()
+    check("the script runs the engine's own binary", execScript.contains("/opt/node/bin/node --version"), true)
+    check("the script also runs a smaller dynamic binary", execScript.contains("/usr/bin/env true"), true)
+    check("the script reports existence before running", execScript.contains(ProrootExecProbe.PHASE_EXISTS), true)
+    check("the script reports the run's exit code and output", execScript.contains(ProrootExecProbe.PHASE_RUN), true)
+
+    fun execLine(phase: String, exe: String, vararg rest: String): String =
+        (listOf(ProrootExecProbe.MARKER, phase, exe) + rest).joinToString(ProrootExecProbe.SEPARATOR)
+
+    val execPass = ProrootExecProbe.parse(
+        execLine(ProrootExecProbe.PHASE_EXISTS, "/usr/bin/env", ProrootExecProbe.STATE_EXEC) + "\n" +
+            execLine(ProrootExecProbe.PHASE_RUN, "/usr/bin/env", "0", "true") + "\n" +
+            execLine(ProrootExecProbe.PHASE_EXISTS, "/opt/node/bin/node", ProrootExecProbe.STATE_EXEC) + "\n" +
+            execLine(ProrootExecProbe.PHASE_RUN, "/opt/node/bin/node", "0", "v24.19.0"),
+    )
+    check("a healthy run passes", execPass.ok, true)
+    check("a passing run has one result per target", execPass.results.size, ProrootExecProbe.TARGETS.size)
+    check("a pass never carries a reason", execPass.results.map { it.reason }, listOf(null, null))
+    check("the pass names the engine's binary and its version", execPass.describe().any { it.contains("/opt/node/bin/node --version") && it.contains("v24.19.0") }, true)
+    check("a passing line starts with the pass mark", execPass.describe().first().startsWith(ProrootExecProbe.PASS_MARK), true)
+
+    // The device's shape: both binaries exist with +x, and the engine's own one still exits 126.
+    val execBroken = ProrootExecProbe.parse(
+        execLine(ProrootExecProbe.PHASE_EXISTS, "/usr/bin/env", ProrootExecProbe.STATE_EXEC) + "\n" +
+            execLine(ProrootExecProbe.PHASE_RUN, "/usr/bin/env", "0", "true") + "\n" +
+            execLine(ProrootExecProbe.PHASE_EXISTS, "/opt/node/bin/node", ProrootExecProbe.STATE_EXEC) + "\n" +
+            execLine(ProrootExecProbe.PHASE_RUN, "/opt/node/bin/node", "126", "Permission denied"),
+    )
+    check("a 126 on the engine's binary fails the stage", execBroken.ok, false)
+    check("the failing line names the binary", execBroken.describe().any { it.startsWith(ProrootExecProbe.FAIL_MARK) && it.contains("/opt/node/bin/node") }, true)
+    check("the failing line carries the exit code", execBroken.describe().any { it.contains("126") }, true)
+    check("the failing line carries the binary's own words", execBroken.describe().any { it.contains("Permission denied") }, true)
+    // The other two shapes, which have different fixes and must not look like one another.
+    val execMissing = ProrootExecProbe.parse(execLine(ProrootExecProbe.PHASE_EXISTS, "/opt/node/bin/node", ProrootExecProbe.STATE_MISSING))
+    check("a missing binary fails with its own reason", execMissing.results.last().reason?.contains("不存在") ?: false, true)
+    val execNoX = ProrootExecProbe.parse(execLine(ProrootExecProbe.PHASE_EXISTS, "/opt/node/bin/node", ProrootExecProbe.STATE_NOEXEC))
+    check("a binary without +x fails with its own reason", execNoX.results.last().reason?.contains("执行位") ?: false, true)
+    // A run that never reached the guest is a failure, and it keeps the launcher's sentence.
+    val execLauncherDied = ProrootExecProbe.parse("[proroot] child: stage=execve target=/opt/node/bin/node errno=13")
+    check("a launcher death fails every target", execLauncherDied.ok, false)
+    check("the launcher's sentence is kept as evidence", execLauncherDied.describe().any { it.contains("[proroot] child: stage=execve") }, true)
+    check("no output at all is not a pass", ProrootExecProbe.parse("").ok, false)
+    check("shell noise alone is not a pass", ProrootExecProbe.parse("warning: something\nUsage: x").ok, false)
+    // A run the caller killed: no target has a result line, and the reason says *timeout*
+    // rather than "the launcher never started" — the two have the same missing markers and
+    // different fixes.
+    val execTimeout = ProrootExecProbe.parse(
+        ProrootRawProbe.TIMEOUT_MARKER + ProrootExecProbe.SEPARATOR + "proroot 探针 20 秒没有返回",
+    )
+    check("a timed-out run fails the stage", execTimeout.ok, false)
+    check("a timed-out run is reported as a timeout", execTimeout.results.all { it.reason?.contains("超时") ?: false }, true)
+    check("only [proroot] lines are quoted", ProrootExecProbe.launcherLinesFrom("secret=1\n[proroot] x\nPI-EXEC=1"), listOf("[proroot] x"))
+    check("a hostile long launcher line is bounded", ProrootExecProbe.launcherLinesFrom("[proroot] " + "x".repeat(4000)).first().length, ProrootExecProbe.MAX_DETAIL_CHARS)
+
+    // The launch-failure predicate: exactly the two codes that mean "the exec never happened".
+    check("126 is a launch failure", ProrootExecProbe.isLaunchFailure(126), true)
+    check("127 is a launch failure", ProrootExecProbe.isLaunchFailure(127), true)
+    check("a real engine exit is not a launch failure", listOf(0, 1, 2, 134).map { ProrootExecProbe.isLaunchFailure(it) }, listOf(false, false, false, false))
+    check("no exit code is not a launch failure", ProrootExecProbe.isLaunchFailure(null), false)
+
+    // The autopsy: header + the stage's own lines + the launcher's words, and bounded.
+    val autopsy = ProrootExecProbe.autopsyLines(
+        exitCode = 126,
+        report = execBroken,
+        launcherLines = listOf("[proroot] child: stage=execve target=/opt/node/bin/node errno=13"),
+    )
+    check("the autopsy names the exit code", autopsy.first().contains("126"), true)
+    check("the autopsy carries the binary", autopsy.any { it.contains("/opt/node/bin/node") }, true)
+    check("the autopsy carries the launcher's line", autopsy.any { it.contains("[proroot] child: stage=execve") }, true)
+    val boundedAutopsy = ProrootExecProbe.autopsyLines(126, execBroken, List(40) { "[proroot] line $it" }, limit = 4)
+    check("the autopsy is bounded", boundedAutopsy.size, 4)
+    check("and says how much it left out", boundedAutopsy.last().contains("还有"), true)
+    val failedAutopsy = ProrootExecProbe.autopsyLines(126, null, emptyList(), probeNote = "IOException: x")
+    check("an autopsy that could not run says so", failedAutopsy.any { it.contains("IOException") }, true)
+    check("an autopsy that could not run still names the exit code", failedAutopsy.first().contains("126"), true)
 
     // ================================================================ 7. 启动 pid 句柄
     // Driven against a real directory: `arm` records what was there, `resolveLauncherPid`

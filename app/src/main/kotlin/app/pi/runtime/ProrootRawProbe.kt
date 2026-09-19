@@ -1,5 +1,23 @@
 package app.pi.runtime
 
+/*
+ * This file holds the probe gate's two **guest-side measurements**. They are together
+ * because they are the same kind of thing — a shell script built here and a pure parser
+ * that turns the run's marker lines into verdicts — and because the `proroot` harness's
+ * source list (`tools/run-app-pure-checks.sh`) compiles *files*:
+ *
+ *  1. `ProrootRawProbe` — does a syscall issued outside libc's wrappers still see the
+ *     guest's filesystem?
+ *  2. `ProrootExecProbe` — **can the engine's own class of binary be executed at all?**
+ *     A dynamically linked glibc ELF with a `PT_INTERP`, which is what Node is. Measured
+ *     2026-09-19: the gate passed on `perl` (dynamic) and `rg`/`fd` (static musl) while
+ *     the engine still died with exit code 126, so the gate had no stage that spoke about
+ *     the engine's own binary. `ProrootExecProbe` is that stage; its KDoc carries the
+ *     evidence.
+ *
+ * Neither object touches `java.io`: a built string in, a parsed verdict out.
+ */
+
 /**
  * The **raw-syscall** half of the proroot probe gate: does a syscall issued
  * outside libc's wrappers still see the guest's filesystem?
@@ -107,6 +125,15 @@ object ProrootRawProbe {
 
     /** Field separator inside a marker line. */
     const val SEPARATOR = "\t"
+
+    /**
+     * The line a run that did not return is reported with, built from the two constants
+     * above so the producer (`ProrootProbe.runGuest`) and the readers
+     * ([ProrootExecProbe.parse] and this probe's own [parse]) cannot spell it differently.
+     * A timed-out run produced no measurement, and the dynamic-binary stage has to be able to
+     * say *that* rather than "the launcher or bash did not start".
+     */
+    const val TIMEOUT_MARKER = "$MARKER$SEPARATOR" + "interpreter$SEPARATOR" + "timeout"
 
     /** The planted marker file's name; also what the host side deletes afterwards. */
     const val PLANTED_NAME = "pi-proroot-raw-probe"
@@ -362,4 +389,351 @@ object ProrootRawProbe {
         }
         return Report(phases = phases, interpreter = interpreter, launchLines = launch)
     }
+}
+
+/**
+ * The **dynamic-binary** stage of the proroot probe gate: *can the engine's own class of
+ * binary be executed under this runtime at all?*
+ *
+ * ## The defect this stage exists for (measured 2026-09-19)
+ *
+ * `ProrootProbe` ran two measurements and both passed on the device:
+ *
+ *  - `ProrootRawProbe`, whose guest script runs **`perl`** — a dynamically linked glibc
+ *    binary with `PT_INTERP=/lib/ld-linux-aarch64.so.1`, so the loader *was* exercised —
+ *    and whose marker lines came back (`guestpath=translated`, `passwd=translated`);
+ *  - `GuestToolProbe`, whose `rg`/`fd` are **static musl** binaries.
+ *
+ * …and the engine still exited **126** ("command found but cannot be executed"). So the
+ * gate's verdict was about the right device and the wrong question: nothing in it asked
+ * about `/opt/node/bin/node`, the one binary the app cannot do without, and no cached
+ * verdict ever said so. `docs/proroot-research.md` §5.P0-2 already warns that proroot's
+ * failures are silent; this one was silent *through* the gate.
+ *
+ * ## What it measures, and why these two targets
+ *
+ *  1. **`/usr/bin/env true`** — the smallest dynamically linked glibc ELF in the pinned
+ *     Ubuntu base (68 KB). It isolates "a dynamic binary can be exec'd here" from "Node
+ *     specifically can be exec'd here".
+ *  2. **`/opt/node/bin/node --version`** — the engine's own interpreter, invoked for
+ *     real. This is the measurement that matters: a runtime that cannot start this
+ *     binary cannot start the engine, and a gate that passes anyway hands the user a
+ *     switch that produces `引擎以退出码 126 退出`.
+ *
+ * Each target also reports an **existence/permission state** before it is run, because
+ * "missing", "present but not executable" (+x never applied by an unpack step) and
+ * "exec failed anyway" have three different fixes and would otherwise all look like one
+ * non-zero exit code.
+ *
+ * ## Why a failure here refuses proroot **entirely**
+ *
+ * The one process the app cannot run without is the engine. A runtime that can start
+ * `bash`, `rg`, `fd` and `perl` but not Node is not "proroot with a hole in it" — it is a
+ * runtime on which the whole engine fails, and the app's rule is all-or-nothing: the
+ * whole runtime falls back to proot rather than half of the launch paths using proroot
+ * (`RuntimeChoice.probeGate`). The install/maintenance exception is the pre-existing,
+ * explicit `allowProroot = false` line, not a second semantics.
+ *
+ * ## Bounds
+ *
+ * [parse] keeps one bounded line per target ([MAX_DETAIL_CHARS]); [guestCommand] writes
+ * nothing else. The run itself is bounded by the caller's timeout
+ * (`ProrootProbe.EXEC_TIMEOUT_MS`). [launcherLinesFrom] keeps **only** the lines proroot's
+ * own launcher writes (`[proroot] …`), which is what stops a diagnostic from dumping an
+ * environment or a guest program's output into the failure state.
+ */
+object ProrootExecProbe {
+
+    /** The stage name the settings row, the report and the narrative all render. */
+    const val LABEL = "动态二进制"
+
+    /**
+     * The stage's mark prefixes. [LABEL] is shared with `ProrootProbeNarrative`, which reads
+     * a **cached** verdict's lines and has to name the failing stage from them — the cache
+     * holds these human lines and nothing else, so the mark they start with is the only place
+     * the stage's identity survives a process restart.
+     */
+    const val PASS_MARK = "✓ $LABEL"
+    const val FAIL_MARK = "✗ $LABEL"
+
+    /** Every result line starts with this, so shell noise is ignored. */
+    const val MARKER = "PI-EXEC"
+
+    /** Field separator inside a marker line. */
+    const val SEPARATOR = "\t"
+
+    /** The existence phase: `<exe>` is present, absent, or present without `+x`. */
+    const val PHASE_EXISTS = "exists"
+
+    /** The execution phase: the target was run and this is its exit code and first line. */
+    const val PHASE_RUN = "run"
+
+    /** The three states [PHASE_EXISTS] can report. */
+    const val STATE_EXEC = "exec"
+    const val STATE_NOEXEC = "noexec"
+    const val STATE_MISSING = "missing"
+
+    /** Bound for one recorded output line, so a hostile binary cannot fill the cache. */
+    const val MAX_DETAIL_CHARS = 240
+
+    /**
+     * Exit codes that mean "this process never ran" rather than "this process ran and
+     * returned". `126` is `libproroot.so`'s own code for a child that could not be set up
+     * (`_exit(126)` at `0xb5cc` in `run_child_exec` and at `0xaa54` in
+     * `launcher_child_wait_for_foreground`, v1.2.8, sha256 `a4e74d75…`) and also POSIX
+     * shell's "found but cannot be executed"; `127` is the launcher's other failure code
+     * (`0xb534`, `0xb590`) and the shell's "command not found". Both are the runtime
+     * failing, not the guest program.
+     */
+    const val EXIT_CANNOT_EXEC = 126
+    const val EXIT_NOT_FOUND = 127
+
+    /**
+     * Whether an engine exit code belongs to the *runtime* rather than to the engine.
+     *
+     * Deliberately exact rather than `!= 0`: an engine that started and then failed
+     * (a broken extension, an unknown flag, `pi` exiting on its own) uses 1 or a signal
+     * code and is a **result**, and counting those would abandon proroot because a user's
+     * extension was broken. 126/127 mean the exec never happened.
+     */
+    fun isLaunchFailure(exitCode: Int?): Boolean =
+        exitCode == EXIT_CANNOT_EXEC || exitCode == EXIT_NOT_FOUND
+
+    /** One binary this stage really executes. */
+    data class Target(val exe: String, val args: String) {
+        /** For the report and the harness: the exact command line that was run. */
+        val commandLine: String get() = if (args.isEmpty()) exe else "$exe $args"
+    }
+
+    /**
+     * The two targets, in report order.
+     *
+     * `/opt/node/bin/node` is the engine's own path (`PiEngineHost`'s guest command) and
+     * not the `/usr/local/bin/node` symlink: the symlink is what PATH resolves to, but the
+     * engine execs the real path, and a probe that tested a different spelling would not
+     * be an answer about the engine.
+     */
+    val TARGETS: List<Target> = listOf(
+        Target("/usr/bin/env", "true"),
+        Target("/opt/node/bin/node", "--version"),
+    )
+
+    /** One target's measured outcome. */
+    data class TargetResult(
+        val exe: String,
+        val args: String,
+        /** [STATE_EXEC], [STATE_NOEXEC], [STATE_MISSING], or null when no line arrived. */
+        val state: String?,
+        val exitCode: Int?,
+        /** The run's first output line (stdout and stderr merged), bounded. */
+        val firstLine: String?,
+        /** Why this is not ok; null exactly when the target passed. */
+        val reason: String?,
+    ) {
+        val ok: Boolean get() = reason == null
+
+        /** The exact command line this result is about, as the script ran it. */
+        val commandLine: String get() = if (args.isEmpty()) exe else "$exe $args"
+
+        /** One line for the report, the row and the autopsy. */
+        fun describe(): String = if (ok) {
+            "$PASS_MARK $commandLine：退出码 0（${firstLine.orEmpty()}）"
+        } else {
+            "$FAIL_MARK $commandLine：$reason"
+        }
+    }
+
+    /**
+     * The whole stage: one verdict per target, plus whatever proroot's launcher said.
+     *
+     * [results] always has exactly [TARGETS].size entries — a target whose result line
+     * never arrived is a **failure**, not a missing row, so a script that died half-way
+     * cannot be read as "the first target passed".
+     */
+    data class Report(
+        val results: List<TargetResult>,
+        /** Only `[proroot] …` lines, bounded; see [launcherLinesFrom]. */
+        val launchLines: List<String> = emptyList(),
+    ) {
+        /** True only when every target was found executable, ran, and exited 0 with output. */
+        val ok: Boolean get() = results.isNotEmpty() && results.all { it.ok }
+
+        /** The recorded evidence lines, in target order. */
+        fun describe(): List<String> = buildList {
+            if (results.isEmpty()) {
+                add("$FAIL_MARK：探针没有输出任何结果行（proroot 启动器或 guest 的 bash 没跑到）")
+            } else {
+                results.forEach { add(it.describe()) }
+            }
+            launchLines.forEach { add("  启动器原话：$it") }
+        }
+    }
+
+    /**
+     * The guest script: probe existence and `+x`, then **really run** each target with
+     * stderr merged, and emit one marker line per phase.
+     *
+     * `set -- $spec` splits a literal from [TARGETS] on purpose (word splitting and no
+     * globbing hazard: the strings are fixed here, hold no spaces, and are passed to a
+     * command whose arguments are its own).
+     */
+    fun guestCommand(targets: List<Target> = TARGETS): String {
+        val tab = SEPARATOR
+        val specs = targets.joinToString(" ") { "\"${it.commandLine}\"" }
+        return listOf(
+            "# proroot 动态二进制探针（见 ProrootExecProbe 的 KDoc）",
+            "for spec in $specs; do",
+            "  set -- \$spec",
+            "  exe=\$1; shift",
+            "  if [ ! -e \"\$exe\" ]; then state=$STATE_MISSING",
+            "  elif [ ! -x \"\$exe\" ]; then state=$STATE_NOEXEC",
+            "  else state=$STATE_EXEC",
+            "  fi",
+            "  echo \"$MARKER$tab$PHASE_EXISTS$tab\$exe$tab\$state\"",
+            "  out=\$(\"\$exe\" \"\$@\" 2>&1); rc=\$?",
+            "  first=\$(printf '%s' \"\$out\" | head -n 1)",
+            "  echo \"$MARKER$tab$PHASE_RUN$tab\$exe$tab\$rc$tab\$first\"",
+            "done",
+        ).joinToString("\n")
+    }
+
+    /**
+     * Turn the run's stdout into verdicts. Pure.
+     *
+     * A missing marker line for a target is reported as a failure (see [Report]); a blank
+     * first output line on a 0 exit is a failure too, because "exit 0 and said nothing" is
+     * exactly what a wrapper script that silently does nothing looks like.
+     */
+    fun parse(output: String, targets: List<Target> = TARGETS): Report {
+        val states = LinkedHashMap<String, String>()
+        val runs = LinkedHashMap<String, Pair<Int?, String?>>()
+        val launch = mutableListOf<String>()
+        // A run that hit the caller's timeout: the process was killed, so *no* target has a
+        // result line. Reported as a timeout rather than as "the launcher never started",
+        // because the two have different fixes and the same missing marker lines.
+        val timeout = output.lineSequence()
+            .map { it.trimEnd('\r') }
+            .firstOrNull { it.startsWith(ProrootRawProbe.TIMEOUT_MARKER) }
+            ?.substringAfter(ProrootRawProbe.TIMEOUT_MARKER)
+            ?.trimStart(ProrootRawProbe.SEPARATOR.single())
+            ?.trim()
+            ?.takeIf { it.isNotEmpty() }
+        val prefix = "$MARKER$SEPARATOR"
+        output.lineSequence().forEach { raw ->
+            val line = raw.trimEnd('\r')
+            if (!line.startsWith(prefix)) {
+                // The launcher's own diagnostics — and anything else the shell said.
+                val text = line.trim()
+                if (text.isNotEmpty() && launch.size < ProrootRawProbe.MAX_LAUNCH_LINES &&
+                    text.startsWith(ProrootRawProbe.LAUNCHER_PREFIX)
+                ) {
+                    launch += bound(text)
+                }
+                return@forEach
+            }
+            val fields = line.split(SEPARATOR)
+            if (fields.size < 4) return@forEach
+            val phase = fields[1]
+            val exe = fields[2]
+            when (phase) {
+                PHASE_EXISTS -> states[exe] = fields[3].trim()
+
+                PHASE_RUN -> {
+                    val rc = fields[3].trim().toIntOrNull()
+                    val detail = fields.drop(4).joinToString(SEPARATOR).trim()
+                    runs[exe] = rc to detail.ifBlank { null }
+                }
+
+                else -> Unit
+            }
+        }
+        val results = targets.map { target ->
+            val state = states[target.exe]
+            val run = runs[target.exe]
+            val reason = when {
+                state == null && timeout != null -> "探针超时（$timeout）"
+                state == null -> "没有输出这个目标的探测行（proroot 启动器或 guest 的 bash 没跑到）"
+                state == STATE_MISSING -> "`${target.exe}` 在 guest 里不存在（探针读不到这个文件）"
+                state == STATE_NOEXEC -> "`${target.exe}` 存在但没有执行位（+x 未置位）"
+                run == null -> "没有输出这个目标的运行结果行（探测中途死了）"
+                run.first != 0 -> "`${target.commandLine}` 退出码 ${run.first}" + suffix(run.second)
+                run.second == null -> "`${target.commandLine}` 退出码 0 但没有任何输出"
+                else -> null
+            }
+            TargetResult(
+                exe = target.exe,
+                args = target.args,
+                state = state,
+                exitCode = run?.first,
+                firstLine = run?.second,
+                reason = reason,
+            )
+        }
+        return Report(results = results, launchLines = launch)
+    }
+
+    /**
+     * The launcher's own lines, bounded. **The only** free text this stage ever quotes:
+     * a diagnostic that quoted a run's whole output would be a way to dump an environment
+     * or a program's data into a failure state, and the launcher's lines are the ones that
+     * name the stage that failed (`[proroot] child: stage=… target=… errno=…`).
+     */
+    fun launcherLinesFrom(output: String?): List<String> = output.orEmpty()
+        .lineSequence()
+        .map { it.trim() }
+        .filter { it.startsWith(ProrootRawProbe.LAUNCHER_PREFIX) }
+        .take(ProrootRawProbe.MAX_LAUNCH_LINES)
+        .map { bound(it) }
+        .toList()
+
+    /** How many lines the engine-failure autopsy writes at most. */
+    const val MAX_AUTOPSY_LINES = 8
+
+    /**
+     * The **failure-side** rendering of this stage: the block `PiEngineHost` records when
+     * a proroot engine exited with [EXIT_CANNOT_EXEC]/[EXIT_NOT_FOUND].
+     *
+     * It is a rendering and not a decision — it states the exit code, what the same
+     * dynamic-binary probe saw on a fresh run, and proroot's own sentence; nothing here
+     * guesses a cause. `report == null` means the autopsy itself could not run, and that is
+     * said out loud ([probeNote]) rather than left as an empty block.
+     */
+    fun autopsyLines(
+        exitCode: Int?,
+        report: Report?,
+        launcherLines: List<String> = emptyList(),
+        probeNote: String? = null,
+        cwd: String? = null,
+        limit: Int = MAX_AUTOPSY_LINES,
+    ): List<String> {
+        require(limit >= 2) { "the autopsy must be able to hold a header and one result" }
+        val lines = buildList {
+            // `cwd` is named when the caller repeated the engine's own working directory and
+            // binds: the first thing a reader has to be able to tell is whether this was a
+            // probe-shaped run or a launch-shaped one, because the engine's shape is exactly
+            // what the probe gate does *not* cover (`ProrootProbe.autopsy`).
+            val shape = cwd?.let { "，cwd=$it，同一组 bind" } ?: ""
+            add(
+                "proroot 引擎启动失败取证：用同一种 proroot 启动方式重跑动态二进制$shape" +
+                    "（引擎退出码 ${exitCode?.toString() ?: "未记录"}）",
+            )
+            if (report == null) {
+                add("  取证没能跑起来：${probeNote ?: "探针没有返回任何结果"}")
+            } else {
+                addAll(report.describe())
+            }
+            launcherLines.forEach { add("  启动器原话：$it") }
+        }
+        if (lines.size <= limit) return lines
+        return lines.take(limit - 1) + "……还有 ${lines.size - (limit - 1)} 行，导出诊断报告可看全文"
+    }
+
+    /** One line, bounded to [MAX_DETAIL_CHARS], with the cut marked. */
+    private fun bound(text: String): String {
+        val clean = text.replace('\n', ' ').replace('\r', ' ').trim()
+        return if (clean.length <= MAX_DETAIL_CHARS) clean else clean.take(MAX_DETAIL_CHARS - 1) + "…"
+    }
+
+    private fun suffix(output: String?): String =
+        output?.let { "：" + bound(it) } ?: "（没有任何输出）"
 }

@@ -109,8 +109,30 @@ fun PiSettingEditorSheet(
             // (`docs/settings-audit-impl.md` §B5). `validateEntries` returns the sentence to
             // show instead of saving, or null when the lines are acceptable.
             validate = { entries -> setting.validateEntries(entries) },
+            // An empty list **removes the key** instead of writing `[]` / `{}`.
+            //
+            // Writing the empty container is a *value* in pi, and for one row it means the
+            // opposite of what the row's label promises (`docs/settings-audit-impl.md` §11):
+            //
+            //  - `defaultTools`: pi does `configuredDefaultToolNames ?? defaultActiveToolNames`
+            //    (`core/sdk.ts:256-262`), so `[]` means **no built-in tool at all**, while the
+            //    row is labelled 「默认 read/bash/edit/write」. Clearing it used to disable every
+            //    tool while the screen said "default" — the row was lying.
+            //  - everything else here treats empty as unset already, so removing is
+            //    behaviour-identical and leaves pi's document sparse: `enabledModels`
+            //    (`main.ts:788`: `length > 0` else cycle all models), `npmCommand`
+            //    (`core/package-manager.ts:1747-1753`: empty → `npm`), the three object rows
+            //    (`?.` / `?? {}` lookups), and the app's own `app.terminal.keyBar`
+            //    (`TerminalSettings.keyBarOf`: absent *and* empty both mean the default bar).
+            //
+            // A user who genuinely wants pi's "no built-in tools" reads it from `settings.json`
+            // itself in the 「Pi 文件」 screen; the row's description says so.
             onSet = { entries ->
-                store.write(setting.key, setting.elementFromEntries(entries))
+                if (entries.isEmpty()) {
+                    store.remove(setting.key)
+                } else {
+                    store.write(setting.key, setting.elementFromEntries(entries))
+                }
                 onWritten(setting)
             },
             onDismiss = onDismiss,
