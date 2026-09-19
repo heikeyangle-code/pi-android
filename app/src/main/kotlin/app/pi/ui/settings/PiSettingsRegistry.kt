@@ -992,7 +992,18 @@ object PiSettingsCatalog {
             group = G_APPEARANCE,
             section = "外观",
             defaultValue = str("dark"),
-            effective = EffectiveKind.Reload,
+            // **`Immediate`，不是 `Reload`。** 这一行原来带「需重载」徽标，而它写下去的那一刻
+            // 就生效了：设置栈把写入转给 `PiSessionViewModel.onSettingWritten`，那里第一件事就是
+            // `if (key == "theme") { refreshTheme(); return }`（`PiSessionViewModel.kt:1128-1130`）
+            // —— `refreshTheme()` 重新 `PiThemeLoader.load` 并发布 `_theme`，`MainActivity.kt:89-93`
+            // 收着它构造 `PiTheme(palette = …)`，所以整个界面连同代码高亮（`PiSyntaxToken.color(palette)`，
+            // `ui/render/PiCodeHighlight.kt:73-77`）与窗口底色（`MainActivity.kt:83-85`）当场换色。
+            // 没有任何东西在等一次"重载"：徽标说「需重载」就是在说假话（`docs/known-gaps.md:701`
+            // 记过同一形状 —— 三个进程开关借用 `Reload` 时也是这么被改掉的）。
+            //
+            // 唯一"晚一点"的是 pi 自己的 TUI（终端页里那个 pi 进程按自己的启动读主题），那不是这一行
+            // 承诺的对象，也不是"重载"能解决的 —— 那条路要重开终端。alias 里的 `reload` 留着：
+            // 它是 pi 自己的词（pi 的 TUI 用 `/reload` 应用主题），是搜索用的，不是时间承诺。
             allowCustom = true,
             aliases = listOf("appearance", "dark", "light", "reload"),
         ),
@@ -1004,7 +1015,7 @@ object PiSettingsCatalog {
         PiSetting(
             key = "app.appearance.fontScaleDelta",
             title = "字号微调",
-            description = "在系统字号基础上再加减 2sp。正文默认 15/23，元信息 11.5/16。",
+            description = "在系统字号基础上再加减 2sp。正文默认 15/23，元信息 12/18。",
             kind = PiRowKind.Number,
             group = G_APPEARANCE,
             section = "外观",
