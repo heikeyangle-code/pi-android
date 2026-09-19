@@ -316,16 +316,26 @@ object PiSettingsCatalog {
         ),
         PiSetting(
             key = "app.credentials.oauth",
-            title = "订阅登录（本应用暂无入口）",
-            // 这行原来写的是「点执行会切到 工作区 → 终端，输入 pi 后运行 /login」。终端不是
-            // 可用面，那句指引指向一个做不到的动作 —— 和这个仓库一直在修的那类缺陷同形
-            // （界面上写着一个不存在的动作）。改成如实说明：本应用只支持填 API Key。
-            // 为什么不能在应用里做：pi 的 OAuth 流程整个长在它自己的交互式界面里
-            // （`interactive-mode.ts:5485` `handleLoginCommand`），RPC 命令全集
-            // （`modes/rpc/rpc-types.ts:20-74`）里没有任何登录命令。
+            title = "订阅登录（在终端页里运行 pi）",
+            // This row used to say "本应用暂无入口" while the terminal page's own header
+            // said the opposite ("输入 pi 回车进入原版 TUI：订阅登录…都在那边"), and the
+            // terminal page is right: `PtyLauncher` starts the guest shell with the same
+            // `PI_CODING_AGENT_DIR` / `PI_CODING_AGENT_SESSION_DIR` the engine uses
+            // (`runtime/PtyLauncher.kt:396-404`), so a `/login` run there writes the same
+            // `auth.json` this app's credential page reads. Two surfaces disagreeing about
+            // whether an action exists is the defect class this repository keeps fixing,
+            // so the app's half now names where the action lives.
+            //
+            // What is still true, and why there is no *native* entry: pi's OAuth flow is
+            // implemented inside its interactive UI (`interactive-mode.ts:5485`
+            // `handleLoginCommand`, reached from `/login` at `:3052-3060`), and the RPC
+            // command union (`modes/rpc/rpc-types.ts:20-74`) has no login command at all.
+            // The terminal page is the only surface that can run it; saying so is the
+            // honest form of "not built in".
             description = "Anthropic Claude Pro/Max、OpenAI Codex、GitHub Copilot、OpenRouter、" +
                 "Kimi Code、xAI、Radius 支持用订阅账号登录，授权在浏览器里完成。" +
-                "本应用目前只支持填厂商 API Key，订阅登录还没有入口。",
+                "本应用没有内建登录表单：到 工作区 → 终端 里输入 pi 回车，再运行 /login。" +
+                "只想填厂商 API Key 的话，用上面那行。",
             kind = PiRowKind.Action,
             group = G_MODEL,
             section = "凭证",
@@ -823,6 +833,31 @@ object PiSettingsCatalog {
         // ------------------------------------------------------------------
 
         PiSetting(
+            key = "app.extensions.args",
+            title = "扩展启动参数",
+            // The one row here whose value is **not** a pi settings key: pi has no
+            // settings key for an extension-registered flag, so this text is kept in
+            // the app's own sidecar and passed as arguments at spawn
+            // (`ExtensionArgsStore`, `ExtensionFlagArgs`). The description says the
+            // shape a user has to write, because the flag *names* belong to whatever
+            // extension they installed — pi accepts any `--flag` it does not know and
+            // hands it to the extensions that declared it, so there is nothing to pick
+            // from a list here (`core/agent-session-services.ts:107-111`).
+            description = "照你在命令行上给 pi 的方式写，例如 --plan 或 --ssh user@host:/path。" +
+                "只对声明了该参数的扩展生效，重启引擎后生效。" +
+                "没有扩展注册这个参数时 pi 只会在 stderr 里写一行提示，不影响启动。",
+            kind = PiRowKind.Text,
+            group = G_RESOURCES,
+            // The existing section, deliberately not a one-row section of its own: the
+            // `settings-audit` harness forbids "a single editable row holding a section
+            // of its own inside a multi-section group", and this row belongs next to
+            // the extension *paths* it is about anyway.
+            section = "本地资源",
+            defaultValue = "",
+            effective = EffectiveKind.RestartEngine,
+            aliases = listOf("extension flags", "cli flags", "args", "参数", "启动参数"),
+        ),
+        PiSetting(
             key = "extensions",
             title = "扩展",
             description = "本地扩展文件或目录的路径。相对路径分别以全局设置目录与项目目录为基准。",
@@ -1170,9 +1205,13 @@ object PiSettingsCatalog {
         PiSetting(
             key = "app.runtime.prorootStatus",
             title = "运行时（实际生效）",
-            description = "这次运行实际用的是哪个运行时，以及没有用 proroot 的原因。" +
-                "打开上面的开关后，第一次真正启动 guest 之前会在 guest 里跑一次探针：" +
-                "不通过就不会使用 proroot。",
+            // 这一行的值现在会带上"是哪一档没过"，值下面还会列出探针逐阶段的原始判读：
+            // 说明文字必须指向那两块内容，否则用户仍然不知道"探针未通过"到底卡在哪一步
+            // （缺陷原形：开关开着，行上只有半句话，唯一能看到证据的地方是导出的报告）。
+            description = "这次运行实际用的是哪个运行时。没有用 proroot 时会写明原因；" +
+                "原因出在探针上时，还会写出是哪一档没过（raw syscall、或 rg/fd 真实调用那一档）" +
+                "和探针原话。这一行下面列出探针逐阶段的原始判读：" +
+                "行数有上限，超出会写明截断了多少行——完整内容始终在导出的诊断报告里。",
             kind = PiRowKind.Text,
             group = G_RUNTIME,
             section = "运行时状态",
@@ -1201,8 +1240,10 @@ object PiSettingsCatalog {
             description = "用第三方闭源运行时 proroot 代替 proot 执行命令，覆盖引擎、终端、" +
                 "工具执行与装包这几条日常路径；装机与维护路径始终走 proot。" +
                 "默认关闭。若运行时文件缺失、或首次使用前的探针（raw syscall + rg/fd 真实调用）" +
-                "没有通过、或连续 3 次启动失败，都会自动回退 proot，并在下面的" +
+                "没有通过、或连续 3 次启动失败，都会自动回退 proot，并在上面的" +
                 "「运行时（实际生效）」里写明原因。" +
+                "打开这个开关后的**下一次**启动 guest 会跑一次探针，那一次仍然走 proot；" +
+                "探针过了，再下一次启动才会真正用上 proroot。" +
                 "关掉再打开这个开关会清零失败计数、并让探针重测一次（普通重启不会重测）。" +
                 "proroot 闭源、无法审计，提速幅度在本机未量化。改动在重启引擎后生效。",
             kind = PiRowKind.Switch,

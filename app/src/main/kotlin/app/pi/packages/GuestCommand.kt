@@ -429,6 +429,15 @@ class GuestCommand(private val layout: AgentLayout) {
          */
         const val INSTALL_TIMEOUT_MS: Long = 10 * 60 * 1000L
 
+        /**
+         * `pi update`, which does the same network work as an install for **every**
+         * configured source in one run (npm registry lookups plus a git reconcile for
+         * each; `core/package-manager.ts:1091-1148`), so it gets the same budget
+         * rather than the install timeout per package. A partial answer is not
+         * available here: pi prints one result line at the end, after all sources.
+         */
+        const val UPDATE_TIMEOUT_MS: Long = 10 * 60 * 1000L
+
         /** `pi list` reads two JSON files; it should never take a minute. */
         const val LIST_TIMEOUT_MS: Long = 60 * 1000L
 

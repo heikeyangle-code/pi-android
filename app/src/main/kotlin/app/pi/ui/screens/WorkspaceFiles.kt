@@ -312,9 +312,11 @@ internal object WorkspaceFiles {
     /** 改名（只动名字，内容不动）。目标已存在就是失败。 */
     fun rename(file: File, newName: String): Result<File> = runCatching {
         val target = File(file.parentFile, newName)
-        // 改名搬的是磁盘上已有的字节，同样不经过写前校验：把 `notes.json` 改成 `settings.json`
-        // 就等于让 pi 开始读一份没人校验过的设置。目的地是 `.pi/` 下的 JSON 文档就拒绝。
-        if (WorkspacePiWrite.isPiJsonTarget(target)) {
+        // 改名搬的是磁盘上已有的字节，同样不经过写前校验：把外面的 `notes.json` 改成
+        // `.pi/settings.json` 就等于让 pi 开始读一份没人校验过的设置 —— **搬进来**才拒绝。
+        // `.pi` 内部改名（例如主题 `dark.json → dark2.json`）只换个名字，不改变"它本来就在 pi
+        // 的项目目录里"这件事，所以放行（判定在 `WorkspacePiWrite.isPiJsonImport`）。
+        if (WorkspacePiWrite.isPiJsonImport(file, target)) {
             throw java.io.IOException(WorkspacePiWrite.creationRefusalSentence())
         }
         if (target.exists()) throw java.io.IOException("这个目录里已经有「$newName」了。")

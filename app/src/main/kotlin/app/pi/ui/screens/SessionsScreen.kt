@@ -263,6 +263,17 @@ fun SessionsScreen(
                     session.forkFrom(entryId)
                     onClose()
                 },
+                // 跳转 = pi's `navigateTree`: same session file, leaf moved. The overlay
+                // stays open on purpose — unlike a fork, which replaces the conversation
+                // and therefore closes it, a navigation lands the user back in the chat
+                // they are already looking at, and pi's own `/tree` also returns to the
+                // conversation after asking its summary question
+                // (`interactive-mode.ts:5293-5317`). Closing here would hide the summary
+                // card the user just asked for.
+                onNavigate = { entryId, choice, instructions ->
+                    session.navigateTo(entryId, choice, instructions)
+                },
+                skipSummaryPrompt = { session.branchSummarySkipPrompt() },
                 onRefresh = { session.refreshTree() },
                 onClose = onClose,
                 embedded = true,

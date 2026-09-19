@@ -101,11 +101,19 @@ internal fun ShellBlock(
     // (`fullOutput`), the app's own budget after that. `SHELL_PREVIEW_LINES` is pi's
     // `BASH_PREVIEW_LINES`, and pi also uses it for the **collapsed** card — which this app
     // deliberately does not draw (D45, see the class KDoc): a collapsed shell call shows its
-    // header and footer and nothing else. `painted` is still computed while collapsed (it is
-    // the same `remember` either way, and the first expand must not pay for the tail twice),
-    // it is simply not placed.
-    val painted = remember(bodyText, fullOutput) {
-        tailLines(bodyText, if (fullOutput) TOOL_BODY_MAX_LINES else SHELL_PREVIEW_LINES)
+    // header and footer and nothing else.
+    //
+    // **`expanded` is a key, and that is the point**: while the card is collapsed the tail is
+    // neither painted nor needed, and this used to compute it anyway ("the first expand must
+    // not pay for the tail twice") — on a row that recomposes for every 200 ms publication
+    // while a command streams. Measured on pi's own 2000-line / ~68 KB result cap, the split
+    // and re-join is ~1.9–2.0 ms per call on a phone, per publication, for a value nothing
+    // reads (probe and numbers: `docs/scroll-perf-items.md` §2). The trade is the other way
+    // round from the old comment: the *common* case (collapsed, streaming) pays nothing and a
+    // re-expand pays one tail, once. Nothing user-visible changes — the same text is painted
+    // when `expanded` is true, which is the only place `painted`/`hidden` are read.
+    val painted = remember(bodyText, fullOutput, expanded) {
+        if (!expanded) "" else tailLines(bodyText, if (fullOutput) TOOL_BODY_MAX_LINES else SHELL_PREVIEW_LINES)
     }
     val hidden = remember(bodyText, painted) { hiddenLineCount(lines, painted) }
     val subject = remember(command, timeout) { shellSubject(command, timeout) }

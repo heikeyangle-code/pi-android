@@ -86,8 +86,11 @@ internal object WorkspacePiWrite {
      * The **innermost** `.pi` ancestor wins (`a/.pi/b/.pi/c.json` is relative to the second one),
      * which is the nearest pi root for that file.
      */
-    fun piDirOf(target: File): File? {
-        var dir = canonical(target).parentFile ?: return null
+    fun piDirOf(target: File): File? = piDirIn(canonical(target)) ?: piDirIn(lexical(target))
+
+    /** The nearest `.pi` ancestor of one spelling of a path. See [piDirOf]. */
+    private fun piDirIn(path: File): File? {
+        var dir = path.parentFile ?: return null
         while (true) {
             if (dir.name.equals(PI_DIR, ignoreCase = true)) return dir
             dir = dir.parentFile ?: return null
@@ -158,6 +161,25 @@ internal object WorkspacePiWrite {
      */
     fun isPiJsonTarget(target: File): Boolean =
         target.name.endsWith(".json") && piDirOf(target) != null
+
+    /**
+     * Renaming [source] to [target]: is this a JSON document being **moved into** a `.pi`
+     * directory it was not already in?
+     *
+     * This is the rename half of [isPiJsonTarget], narrowed to what is actually dangerous. A
+     * rename inside one `.pi` (`.pi/themes/dark.json` → `.pi/themes/dark2.json`) changes a name,
+     * not a fact: the file was already in pi's project directory and its bytes were already
+     * there, so it is allowed. What must not happen is a document **arriving** in `.pi` from
+     * outside — `notes.json` → `.pi/settings.json` is how an unvalidated file becomes the
+     * settings pi reads — and that is refused. A source under a *different* `.pi` counts as
+     * arriving too.
+     */
+    fun isPiJsonImport(source: File, target: File): Boolean {
+        if (!isPiJsonTarget(target)) return false
+        val targetPi = piDirOf(target) ?: return false
+        val sourcePi = piDirOf(source) ?: return true
+        return canonical(targetPi).path != canonical(sourcePi).path
+    }
 
     /**
      * What the user is told when a creation or a rename is refused by [isPiJsonTarget].

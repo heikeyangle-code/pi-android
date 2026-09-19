@@ -48,6 +48,8 @@ import app.pi.settings.PiSettingsFileStore
 import app.pi.settings.readBoolean
 import app.pi.settings.readString
 import app.pi.ui.chat.BASH_OUTPUT_MAX_CHARS
+import app.pi.ui.chat.BranchSummaryChoice
+import app.pi.ui.chat.NavigateOutcome
 import app.pi.ui.chat.PiCommandAction
 import app.pi.ui.chat.PiCommandSource
 import app.pi.ui.chat.PiFileMentions
@@ -55,8 +57,12 @@ import app.pi.ui.chat.MentionLookup
 import app.pi.ui.chat.PiMentionSource
 import app.pi.ui.chat.PiSlashCommand
 import app.pi.ui.chat.TuiOnlyExtension
+import app.pi.ui.chat.activeBranch
 import app.pi.ui.chat.appendTailBounded
+import app.pi.ui.chat.navigateCommandArgs
+import app.pi.ui.chat.navigateOutcome
 import app.pi.ui.chat.piCommandPalette
+import app.pi.ui.chat.wantsSummary
 import app.pi.ui.chat.tuiOnlyMarkers
 import app.pi.ui.extension.ComposerFill
 import app.pi.ui.extension.ExtensionAnswer
@@ -836,6 +842,29 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             agentDir = host.paths().agentDir,
             workspace = defaultWorkspace(),
         ).also { settingsStoreCache = it }
+
+    /**
+     * The store the **settings screen** must be handed: [settingsStore] with
+     * `app.extensions.args` served from the app-only sidecar
+     * ([ExtensionArgsStoreDecorator]).
+     *
+     * A separate accessor rather than decorating [settingsStore] itself, because the
+     * launch mapping and the credential screens read pi's document directly and have
+     * no business with a row that is not pi's (`settingsStoreForSettingsUi` is the
+     * one caller that renders and writes it).
+     */
+    fun settingsStoreForSettingsUi(): PiSettingsStore =
+        ExtensionArgsStoreDecorator(settingsStore, extensionArgsStore)
+
+    /**
+     * The app-only sidecar behind `app.extensions.args`.
+     *
+     * The launch mapping reads it ([launchOptions]) and the settings stack writes it
+     * through [ExtensionArgsStoreDecorator]; this is the one instance the mapping
+     * needs. App-only on purpose — pi has no settings key for extension flags, so a
+     * value in `settings.json` would be a key pi never reads (see [ExtensionArgsStore]).
+     */
+    private val extensionArgsStore: ExtensionArgsStore by lazy { ExtensionArgsStore(getApplication()) }
 
     /**
      * pi's session index, read straight off disk.
@@ -1651,6 +1680,10 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         systemPrompt = settingsStore.readString("app.runtime.systemPrompt"),
         appendSystemPrompt = settingsStore.readString("app.runtime.appendSystemPrompt"),
         noContextFiles = settingsStore.readBoolean("app.runtime.noContextFiles"),
+        // App-only (`ExtensionArgsStore`), deliberately not pi's settings.json: pi has
+        // no key for extension flags, and the text is parsed with pi's own rules for an
+        // unrecognised `--flag` (`ExtensionFlagArgs`) before it becomes argv.
+        extensionArgs = extensionArgsStore.read(),
     )
 
     /**
@@ -1708,8 +1741,10 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             // state collector releases it once the engine is up and idle
             // (`reportWork`).
             engineTransition = true
+            val launchOptions = launchOptions()
+            reportExtensionArgsRefusal(launchOptions)
             val boot = try {
-                host.boot(workspaceProvider = ::defaultWorkspace, launch = launchOptions()) { step ->
+                host.boot(workspaceProvider = ::defaultWorkspace, launch = launchOptions) { step ->
                     _state.value = _state.value.copy(boot = Boot.Working(step))
                 }
             } finally {
@@ -2770,6 +2805,20 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * is dropped when nothing is on screen to show them. Dialog requests are
      * never dropped: they are the blocking half and live in their own queue.
      */
+    /**
+     * Say, in words, when `app.extensions.args` could not be handed to pi.
+     *
+     * The parser refuses the same texts pi would have ended the run over — a
+     * single-dash option, an `@file`, `--`, a stray word (`ExtensionFlagArgs.Refusal`)
+     * — and the honest consequence is that **nothing** from the row is passed
+     * (`PiLaunchOptions.extensionFlags` is empty). Saying so here, at the moment the
+     * engine is asked to start, is what keeps that from looking like "my flag was
+     * ignored". It is a notice rather than a boot failure: the engine is fine.
+     */
+    private fun reportExtensionArgsRefusal(launch: PiLaunchOptions) {
+        launch.extensionArgsRefusal?.let { pushNotice(message = it, tone = Notice.Tone.Warning) }
+    }
+
     private fun pushNotice(message: String, tone: Notice.Tone) {
         if (message.isBlank()) return
         noticeSeq += 1
@@ -4327,6 +4376,195 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    // ------------------------------------- pi 的会话内跳转（`navigateTree`）
+
+    /**
+     * pi's **in-session** tree navigation: move the leaf to an earlier point and continue
+     * there, optionally writing a summary of the path being abandoned.
+     *
+     * ## Why this is not `fork`
+     *
+     * `fork` writes a **new session file** (`agent-session-runtime.ts:289-352`) and that is
+     * all the RPC protocol offers for the tree (`rpc-types.ts:20-74`). `navigateTree` moves
+     * the leaf **inside the current file** — its own doc comment says so
+     * (`core/agent-session.ts:3126-3127`) — and RPC exposes no command for it. The way in is
+     * the one `rpc-mode.ts` does wire: `commandContextActions.navigateTree` (`:329-335`),
+     * reachable from an extension command as `ctx.navigateTree` (`extensions/types.ts:375`).
+     * The shipped bridge extension registers `pi-android-navigate` for exactly this, and
+     * [navigateTo] dispatches it as a `prompt` whose text starts with `/`
+     * (`core/agent-session.ts:1183-1184`).
+     *
+     * ## The two things that make that dispatch safe
+     *
+     *  1. **The command must exist.** `_tryExecuteExtensionCommand` returns `false` for an
+     *     unregistered name (`:1338`) and `prompt` then sends the text to the model as an
+     *     ordinary user turn (`:1198-1218`) — the user would see an
+     *     `/pi-android-navigate {...}` sentence in the conversation and pay for it. So the
+     *     existence check against `get_commands` happens first, and a missing command is
+     *     reported instead of dispatched.
+     *  2. **There is no event when it finishes.** pi emits the *extension* event
+     *     `session_tree` (`:3315-3321`) and RPC forwards `AgentSessionEvent` only
+     *     (`rpc-mode.ts:356`). What the response *does* give is completion: the handler is
+     *     awaited before `preflightResult(true)` (`:1184-1188`), which is what emits the
+     *     `prompt` response (`rpc-mode.ts:401-406`). So the response is the "navigation is
+     *     over" signal, and the leaf is re-read afterwards to learn whether it moved.
+     *
+     * ## Preconditions are pi's, not ours
+     *
+     * No local streaming guard: `navigateTree` refuses on its own while a turn is streaming
+     * (`:3140-3142`) or while compacting (`:3143-3147`), and the extension turns that thrown
+     * sentence into a notice. (pi's *TUI* aborts the running turn first,
+     * `interactive-mode.ts:5266-5269` — that is a UI convenience on top of the core rule,
+     * and aborting a user's in-flight turn without asking is not something this app does
+     * implicitly.) The summary question is asked by the caller with pi's own three answers;
+     * see [BranchSummaryChoice] and [summaryPromptShown].
+     *
+     * @param entryId pi's entry id, straight from `get_tree` — never resolved here.
+     * @param choice the answer to pi's "Summarize branch?" question.
+     * @param customInstructions the text from the "Summarize with custom prompt" form.
+     */
+    fun navigateTo(
+        entryId: String,
+        choice: BranchSummaryChoice,
+        customInstructions: String? = null,
+    ) {
+        val engine = session
+        if (engine == null) {
+            fail("引擎未就绪：pi 现在不在运行，跳转没有执行。")
+            return
+        }
+        if (entryId.isBlank()) return
+        call(NAVIGATE_BUSY_LABEL, errorText = ::navigateFailureText) { api ->
+            if (api.getCommands().none { it.name == NAVIGATE_COMMAND }) {
+                pushNotice(
+                    "设备扩展没有提供「$NAVIGATE_COMMAND」命令，所以没有跳转。" +
+                        "它是随包扩展：到「包」里确认 pi-android-bridge 已启用，再重启引擎。",
+                    Notice.Tone.Warning,
+                )
+                return@call
+            }
+
+            val before = api.getTree().leafId
+            val text = "/$NAVIGATE_COMMAND " + navigateCommandArgs(
+                targetId = entryId,
+                summarize = wantsSummary(choice, branchSummarySkipPrompt()),
+                customInstructions = customInstructions,
+            )
+            // Straight to the session rather than through [PiEngineSession.prompt]: that
+            // one mirrors the message into the transcript before sending it, and a command
+            // line is not something the user said. `SLOW_TIMEOUT_MS` because this can run a
+            // full summarization before it answers.
+            val response = engine.request(
+                { PiCommands.prompt(it, text) },
+                PiEngineApi.SLOW_TIMEOUT_MS,
+            )
+            if (!response.success) {
+                throw PiRpcException("prompt", response.error ?: "pi 拒绝了这次跳转")
+            }
+
+            // The only authoritative "did it move": both `get_tree` and `get_entries`
+            // report pi's **in-memory** leaf (`rpc-mode.ts:653`, `:648`), which is what
+            // `branch()`/`branchWithSummary()` just changed.
+            when (navigateOutcome(before, api.getTree().leafId, refused = false)) {
+                NavigateOutcome.Moved -> {
+                    replayActiveBranch(engine)
+                    // The tree's own view is a second surface of the same fact, and the
+                    // summary it now contains is a new row (pi appends a `branch_summary`
+                    // entry, `session-manager.ts:1395-1416`).
+                    refreshTree()
+                    // `contextUsage` is the current branch's reading, so it moved too.
+                    refreshStats()
+                }
+                // The extension has already said why through pi's own notice channel
+                // ("already there" / cancelled / aborted). Rebuilding here would be the
+                // half-screen-of-stale-data bug in reverse: a reset with nothing to show.
+                NavigateOutcome.NoMove, NavigateOutcome.Refused -> Unit
+            }
+        }
+    }
+
+    /**
+     * Rebuild the transcript from the **active branch** — pi's `getBranch(leafId)`.
+     *
+     * This is deliberately not [replayHistory] and not [replayHistoryOverRpc]. Both fold the
+     * entries they are given in order, and neither walks `parentId`:
+     * [SessionFileReader.readTail] returns the file's *physical* tail, and
+     * `TranscriptReducer.seedFromHistory` folds whatever list it receives
+     * (`rpc/Transcript.kt:2051-2068`). After `navigateTree` the file still holds the
+     * abandoned path — `branch()`/`branchWithSummary()` never delete entries
+     * (`session-manager.ts:1374-1416`) — so either path would paint messages that are **not**
+     * in pi's context, which is exactly the "half a screen of old data" this refetch exists
+     * to prevent. `get_entries` carries pi's in-memory `leafId` (`rpc-mode.ts:648`), so the
+     * branch can be filtered from the same answer.
+     *
+     * The history cursor is set to `reachedStart = true` for the same reason: the rebuild
+     * starts at the branch's root, so there is nothing above it to fetch — and letting
+     * [expandEarlierHistory] read further back would prepend the abandoned branch's entries
+     * onto the new context.
+     */
+    private suspend fun replayActiveBranch(engine: PiEngineSession) {
+        val response = runCatching { engine.request({ PiCommands.getEntries(it) }) }.getOrNull() ?: run {
+            fail("跳转成功，但没能读回这个会话的内容；重新打开会话即可看到新的位置。")
+            return
+        }
+        if (!response.success) {
+            fail("跳转成功，但读回会话内容失败：${response.error ?: "原因未知"}。重新打开会话即可看到新的位置。")
+            return
+        }
+        val entries = PiResponses.entries(response)
+        val branch = activeBranch(entries, PiResponses.sessionEntries(response)?.leafId)
+        val chars = withContext(Dispatchers.IO) { retainedChars(branch) }
+        engine.seedHistory(branch)
+        loadedHistory = branch
+        loadedHistoryChars = chars
+        _state.value = _state.value.copy(
+            history = HistoryCursor(startOffset = 0L, reachedStart = true),
+        )
+        syncTranscript(engine, engine.publication.value)
+    }
+
+    /**
+     * `branchSummary.skipPrompt`, read from the settings document.
+     *
+     * The key has no row in [app.pi.ui.settings.PiSettingsCatalog] because pi reads it only
+     * in its own TUI (`interactive-mode.ts:5236`) — but the flow it governs is the one
+     * [navigateTo] now implements, so ignoring it would make the app ask a question the
+     * user has already turned off. Reading it (rather than exposing it) is the same
+     * treatment `ProjectScreen` gives `defaultProjectTrust`.
+     */
+    fun branchSummarySkipPrompt(): Boolean =
+        settingsStore.readBoolean("branchSummary.skipPrompt") ?: false
+
+    /**
+     * pi's failures on the navigation path, said with the next step attached.
+     *
+     * Same shape as [forkFailureText]: the reason is pi's own sentence, quoted, and each one
+     * has a knowable cause. The states are the ones `navigateTree` refuses
+     * (`core/agent-session.ts:3140-3147`、`:3157-3159`) plus the two the RPC layer can add.
+     */
+    private fun navigateFailureText(error: Throwable): String {
+        val reason = error.message?.takeIf { it.isNotBlank() } ?: "原因未知"
+        val next = when {
+            reason.contains("Wait for the current response") ->
+                "这一轮还在回复。等它结束（或按停止）之后再跳。"
+
+            reason.contains("compaction or tree navigation") ->
+                "pi 正在压缩上下文或处理上一次跳转。等它结束再试。"
+
+            reason.contains("No model available for summarization") ->
+                "要摘要就得有一个可用的模型。先在「模型」里选一个，或改成「不摘要」再跳。"
+
+            reason.contains("not found") ->
+                "这个会话点已经不在 pi 的会话文件里了。点「刷新」重读会话树再选。"
+
+            reason.contains("timed out") ->
+                "这次跳转（含摘要）超过了等待时间。摘要可能仍在 pi 里进行，稍后用「刷新」看结果。"
+
+            else -> "可以重新打开这个会话再试一次。"
+        }
+        return "跳转失败：$reason。$next"
+    }
+
     /**
      * `set_session_name`. pi trims and rejects an empty name with
      * `success: false` (`rpc-mode.ts:661-668`), which the façade turns into an
@@ -4860,6 +5098,25 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         const val CURRENT_SESSION_VERSION = 3
     }
 }
+
+/**
+ * The extension command that reaches pi's in-session tree navigation.
+ *
+ * `pi-android-bridge` registers it; see [PiSessionViewModel.navigateTo] for why a command
+ * is the only way in. Not a user-facing name: it never appears in the composer, because it
+ * is dispatched straight to the session rather than through the prompt path that echoes.
+ */
+private const val NAVIGATE_COMMAND = "pi-android-navigate"
+
+/**
+ * What the status line says while a navigation is in flight.
+ *
+ * It can legitimately last minutes: the leaf move is instant, but a requested branch
+ * summary is a full model call (`core/agent-session.ts:3229-3240`). Saying what is being
+ * waited on — rather than the generic 读取 — is the difference between "stuck" and
+ * "summarizing".
+ */
+private const val NAVIGATE_BUSY_LABEL = "跳转到会话位置…"
 
 /**
  * The system night mode at the moment this view model was built.

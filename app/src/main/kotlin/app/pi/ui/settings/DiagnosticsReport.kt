@@ -11,6 +11,7 @@ import app.pi.runtime.GuestEngine
 import app.pi.runtime.GuestToolProbe
 import app.pi.runtime.PiPaths
 import app.pi.runtime.ProrootConfigSweep
+import app.pi.runtime.ProrootProbeNarrative
 import app.pi.runtime.RuntimeChoice
 import app.pi.runtime.RuntimeProvisioner
 import app.pi.runtime.RuntimeSelection
@@ -263,13 +264,23 @@ object DiagnosticsReport {
                     "  proroot 探针：" + when (runtimeStatus.probePassed) {
                         true -> "已通过（缓存）"
                         false -> "未通过（缓存）"
-                        null -> "尚未运行（下次真正启动 guest 时会跑一次）"
+                        null -> "尚未运行"
                     },
                 )
                 if (runtimeStatus.missingComponents.isNotEmpty()) {
                     appendLine("  缺少运行时文件：${runtimeStatus.missingComponents.joinToString("、")}")
                 }
-                runtimeStatus.probeDetail.forEach { appendLine("  $it") }
+                // The same assembly the settings row uses (`ProrootProbeNarrative`): the
+                // report prints it **unbounded**, because the export is where the whole
+                // evidence belongs, while the row shows a capped prefix and says how many
+                // lines it left out. Two renderings of one list, so a line here and a line
+                // under the row cannot disagree, and the "尚未运行/读不到" cases say so in
+                // both places instead of printing nothing.
+                ProrootProbeNarrative.detailLines(
+                    fallback = runtimeStatus.fallback,
+                    probePassed = runtimeStatus.probePassed,
+                    probeDetail = runtimeStatus.probeDetail,
+                ).forEach { appendLine("  $it") }
             }
             pathLine(this, "proroot launcher", paths.prorootLauncher())
             pathLine(this, "proroot runtime", paths.prorootRuntimeHook())

@@ -29,10 +29,21 @@ import kotlinx.serialization.json.JsonPrimitive
  *    the way in, clears both the failure counter and the cached gate verdict — the two
  *    things that otherwise outlive a retry.
  *  - `app.runtime.prorootStatus` — a **derived, read-only** sentence: the runtime
- *    that is actually in effect and, when it is not proroot, why. Derived from the
- *    probe cache and the failure counter by `RuntimeSelection.status()`, which the
- *    host computes once per composition and passes in — reading it per frame would
- *    hash five `.so` files on the composition thread.
+ *    that is actually in effect and, when it is not proroot, why — including *which*
+ *    probe stage refused and the recorded line that says so, because the gate's verdict
+ *    is cached as evidence lines and a row that stopped at "探针未通过" was showing less
+ *    than the app knew (`runtime/ProrootProbeNarrative`). Derived from the probe cache
+ *    and the failure counter by `RuntimeSelection.status()`, which the host computes
+ *    once per epoch on `Dispatchers.IO` and passes in — reading it per frame would hash
+ *    five `.so` files on the composition thread.
+ *
+ *    The same `status()` read also feeds the row's **detail block**: the recorded
+ *    per-phase lines, bounded with a sentence saying how many were left out, handed to
+ *    the group screen as a precomputed string (`runtimeDetailOverrides` in
+ *    `RuntimeFacts.kt`). It stays a string rather than a key on this class on purpose:
+ *    `read(key)` here must remain a lookup over values the host already produced, and a
+ *    key that computed the block would reintroduce the per-frame probe-cache read (and
+ *    `.so` hash) this split exists to prevent.
  *
  * Every other key is delegated unchanged, so this is invisible to the rest of the
  * settings stack: search, the group screen, `EffectiveKind` badges and the audit

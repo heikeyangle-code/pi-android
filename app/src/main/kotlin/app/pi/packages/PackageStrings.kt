@@ -66,6 +66,40 @@ object PackageStrings {
 
     const val RUNNING = "正在执行…"
 
+    // ------------------------------------------------------------------ update
+    //
+    // `pi update --extensions` / `pi update <来源>`. The sentences below exist
+    // because pi's own output cannot answer the two questions an update button
+    // raises: it prints one and the same `Updated …` line whether or not anything
+    // moved, and there is no "is there a newer version?" query on this path at all.
+    // The file:line evidence lives in [PiPackageUpdate]'s KDoc and in the ledgers,
+    // **not** on screen — the note above forbids doc paths and design rationale in
+    // strings. A screen that showed pi's line as if it meant "something new was
+    // installed" is the "the UI says it can, and it cannot" shape this package keeps
+    // paying for.
+
+    const val UPDATE_ALL_LABEL = "全部更新"
+    const val UPDATE_LABEL = "更新"
+
+    /** What the update command really does, and the question it cannot answer. */
+    const val UPDATE_NOTE =
+        "更新由 pi 自己执行：非精确版本的 npm 包只在新版本时才重新安装，精确版本会被跳过，" +
+            "git 来源会重新检出。无论有没有真的改动，pi 都只回答一句「已更新」，" +
+            "它不报告有没有新版本，本应用也查不到。"
+
+    /** Shown instead of the button when nothing installed can be changed. */
+    const val UPDATE_NOTHING_TO_UPDATE =
+        "没有可更新的包：精确版本的 npm 包与本地路径不会被更新命令改动。"
+
+    /** Per-row reason a package gets no 更新 button. */
+    const val UPDATE_SKIP_PINNED = "精确版本：更新会跳过它，换版本请改来源后重新安装。"
+    const val UPDATE_SKIP_LOCAL = "本地路径：没有可拉取的内容，更新不会改动它。"
+
+    /** pi's positional `self`/`pi` means pi itself; the app never emits that. */
+    const val UPDATE_REFUSED_SELF =
+        "「self」与「pi」在 pi 里指更新 pi 自己，那会换掉本应用钉住的引擎版本，所以这里不提供。" +
+            "要更新资源包请用「全部更新」，或点某个包的「更新」。"
+
     // --------------------------------------------------- built in vs installed
     //
     // E7 (`docs/known-gaps.md` §E): the screen must say which rows the app shipped

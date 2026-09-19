@@ -25,6 +25,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -76,20 +77,27 @@ import app.pi.ui.theme.PiTheme
  *    treats them as inert, and `entry_appended` carries them only live
  *    (`agent-session.ts:2616-2621`; audit §1.5, §5.8).
  *
- * A tree node offers 分支 only where pi accepts one: `fork` without options
+ * A tree node offers 分叉 only where pi accepts one: `fork` without options
  * requires a **user** `message` entry and throws "Invalid entry ID for forking"
  * for anything else (`agent-session-runtime.ts:274-287`). Offering it on every
  * row would produce a guaranteed error, so the rule is enforced in the UI with
  * pi's own condition.
  *
- * **What 分支 is not.** pi's `/tree` moves the active leaf to a previous point
- * and lets you continue there *without creating a file* (`docs/sessions.md:71`,
- * `interactive-mode.ts:5216-5322`); the RPC protocol exposes no command for that
- * — the only tree commands are `get_tree` and `fork` (`rpc-types.ts:20-74`). The
- * button on each row is therefore a **fork**: it writes a *new* session file
- * (`docs/sessions.md:118-127`). The header above the tree says so, because a
- * button labelled 分支 next to a tree view otherwise reads as "jump to this
- * point", which it cannot do.
+ * ## Two actions, two different pi behaviours
+ *
+ * They are not two spellings of one thing, and this screen keeps them apart:
+ *
+ *  - **跳转** is `navigateTree`: the leaf moves **inside this session file** — nothing new
+ *    is created, and the conversation continues from the chosen point
+ *    (`core/agent-session.ts:3126-3127`). It is offered on **every** row, because
+ *    `navigateTree` accepts any entry id; where the leaf actually lands depends on the
+ *    entry, and that rule is pinned in [NavigateLanding].
+ *  - **分叉** is `fork`: it writes a **new session file**
+ *    (`agent-session-runtime.ts:289-352`), leaving the original untouched.
+ *
+ * 跳转 reaches pi through the shipped bridge extension's `pi-android-navigate` command,
+ * because RPC exposes no navigate command (`rpc-types.ts:20-74`) while `rpc-mode.ts` does
+ * wire `ctx.navigateTree` for extensions (`:329-335`).
  *
  * The filter modes are pi's own (`interactive-mode.ts`'s tree selector,
  * `FilterMode` in `components/tree-selector.ts:95`): default, no-tools,
@@ -127,6 +135,18 @@ fun SessionTreeScreen(
      * tree is, and the tree therefore paints without waiting for it.
      */
     onLoadEntries: () -> Unit = {},
+    /**
+     * 跳转 — pi's `navigateTree` (see [NavigateLanding] for where the leaf lands). The
+     * caller dispatches it; this screen only asks pi's own "Summarize branch?" question
+     * first and hands the answer over.
+     */
+    onNavigate: (String, BranchSummaryChoice, String?) -> Unit = { _, _, _ -> },
+    /**
+     * `branchSummary.skipPrompt`. Read lazily at tap time rather than passed as a value:
+     * it is a pi setting, the ViewModel owns the settings document, and a copy in this
+     * screen's state would go stale the moment the user changed it in pi's own terminal.
+     */
+    skipSummaryPrompt: () -> Boolean = { false },
 ) {
     var tab by rememberSaveable { mutableStateOf(0) }
     // The 条目 tab's data on first sight of it: the tree view is what opens, and the
@@ -148,6 +168,8 @@ fun SessionTreeScreen(
             query = query,
             onQueryChange = { query = it },
             onFork = onFork,
+            onNavigate = onNavigate,
+            skipSummaryPrompt = skipSummaryPrompt,
             modifier = modifier,
         )
     } else {
@@ -174,6 +196,8 @@ fun SessionTreeScreen(
                     query = query,
                     onQueryChange = { query = it },
                     onFork = onFork,
+                    onNavigate = onNavigate,
+                    skipSummaryPrompt = skipSummaryPrompt,
                     modifier = Modifier.fillMaxSize(),
                 )
             }
@@ -211,8 +235,15 @@ private fun TreeContent(
     query: String,
     onQueryChange: (String) -> Unit,
     onFork: (String) -> Unit,
+    onNavigate: (String, BranchSummaryChoice, String?) -> Unit,
+    skipSummaryPrompt: () -> Boolean,
     modifier: Modifier = Modifier,
 ) {
+    // The row whose 跳转 is being decided. pi asks its own question before navigating
+    // (`interactive-mode.ts:5236-5263`), so the answer is collected here and the caller is
+    // told once — the dialog is dismissed first, because pi closes its selector before
+    // asking (`:5229`).
+    var navigateTarget by remember { mutableStateOf<String?>(null) }
     Column(modifier.fillMaxSize()) {
         // 分支 / 条目 是真功能（分支 = pi 的 `get_tree`，条目 = entries），**不删**；
         // 换的是组件语言：v2 的分段控件是 `Seg`（`direction-b-v2.html:644-657`），
@@ -309,28 +340,136 @@ private fun TreeContent(
                 filter = filter,
                 query = query,
                 onFork = onFork,
+                onJump = { entryId ->
+                    // pi's `/tree` answers a pick on the current leaf with "Already at this
+                    // point" and does nothing (`interactive-mode.ts:5221-5226`), so the
+                    // question is not asked at all; the ViewModel says the sentence.
+                    if (entryId == state.tree?.leafId) {
+                        onNavigate(entryId, BranchSummaryChoice.NoSummary, null)
+                    } else if (skipSummaryPrompt()) {
+                        // `branchSummary.skipPrompt` = "always default to no summary"
+                        // (`interactive-mode.ts:5235-5236`), so the question is skipped
+                        // entirely rather than answered for the user.
+                        onNavigate(entryId, BranchSummaryChoice.NoSummary, null)
+                    } else {
+                        navigateTarget = entryId
+                    }
+                },
                 modifier = Modifier.weight(1f),
             )
         } else {
             EntriesTab(entries = state.entries, modifier = Modifier.weight(1f))
         }
     }
+
+    // pi's own question, asked after the pick and before the navigation
+    // (`interactive-mode.ts:5229-5262`). Composed outside the `Column` above so it is not
+    // a layout child of the list — it draws in its own window.
+    navigateTarget?.let { target ->
+        NavigateSummaryDialog(
+            onDismiss = { navigateTarget = null },
+            onChoose = { choice, instructions ->
+                navigateTarget = null
+                onNavigate(target, choice, instructions)
+            },
+        )
+    }
+}
+
+/**
+ * "Summarize branch?" — pi's three answers, verbatim
+ * (`interactive-mode.ts:5238-5242`: "No summary" / "Summarize" / "Summarize with custom
+ * prompt"), plus the instructions editor the third one opens (`:5252-5258`).
+ *
+ * The labels are translated because this is a question *this app* is asking, not a string
+ * pi sent us — pi's own sentences are only ever quoted where they arrive from the wire
+ * (see `navigateFailureText`). The three answers map one-to-one onto [BranchSummaryChoice]
+ * and nothing is added: no "always do this" checkbox, no default that pi does not have.
+ * pi's fourth behaviour — Escape at this question abandons the whole navigation rather than
+ * answering it (`:5244-5248`) — is what 取消 does here.
+ */
+@Composable
+private fun NavigateSummaryDialog(
+    onDismiss: () -> Unit,
+    onChoose: (BranchSummaryChoice, String?) -> Unit,
+) {
+    // Which answer is being refined: null = the question, non-null = the instructions editor
+    // for the custom form. One dialog with two steps rather than two, because pi's loop
+    // returns to the question if the editor is cancelled (`interactive-mode.ts:5254-5257`).
+    var instructing by remember { mutableStateOf(false) }
+    var instructions by remember { mutableStateOf("") }
+
+    if (instructing) {
+        AlertDialog(
+            onDismissRequest = { instructing = false },
+            title = { Text("摘要指令") },
+            text = {
+                Column {
+                    Text(
+                        "告诉 pi 这次摘要要留住什么。它会替换掉默认的摘要提示词。",
+                        style = PiTheme.text.meta,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.height(PiSpacing.inner))
+                    BasicTextField(
+                        value = instructions,
+                        onValueChange = { instructions = it },
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 96.dp),
+                        textStyle = PiTheme.text.monoSmall.copy(
+                            color = MaterialTheme.colorScheme.onSurface,
+                        ),
+                        cursorBrush = SolidColor(PiTheme.palette.accent),
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { onChoose(BranchSummaryChoice.SummarizeWithPrompt, instructions) }) {
+                    Text("开始摘要")
+                }
+            },
+            // Back to the question, exactly as pi loops (`:5254-5257`) — not out of the
+            // navigation.
+            dismissButton = { TextButton(onClick = { instructing = false }) { Text("返回") } },
+        )
+        return
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("要摘要被放弃的那一段吗？") },
+        text = {
+            Text(
+                "pi 可以把你要离开的那段对话总结成一条分支摘要，留在新的位置上。" +
+                    "摘要是一次模型调用，可能等一会儿。",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+        },
+        confirmButton = {
+            TextButton(onClick = { onChoose(BranchSummaryChoice.Summarize, null) }) { Text("摘要") }
+        },
+        dismissButton = {
+            Row {
+                TextButton(onClick = { instructing = true }) { Text("用自定义指令") }
+                TextButton(onClick = { onChoose(BranchSummaryChoice.NoSummary, null) }) { Text("不摘要") }
+            }
+        },
+    )
 }
 
 /**
  * 树页签那句说明的**唯一一份文案**，以及它现在画在哪里。
  *
- * ## 文案一个字没改
+ * ## 文案改过一次（D1，2025 会话内跳转）
  *
- * The question this sentence answers is the one the empty button used to raise: "can I
- * tap a row and continue from there?". pi's `/tree` can, but only in-process —
- * `navigateTree` lives in the TUI (`interactive-mode.ts:5288`) and `rpc-mode.ts` has no
- * command for it (its full `case` list: `get_entries`, `get_tree`, `fork`, `clone`,
- * `switch_session`, `new_session`). So the app's button forks, and the sentence says so
- * instead of leaving a 分支-looking tree to imply a jump it cannot make. 它替掉的是 v2
- * 那句「分叉会新建一个会话文件，原会话保持不变。」：两句说的是同一件事，这一句多说了
- * 「为什么只能新建分支」，而 `11-designer-adjudication.md` 的 A-08 已经裁定「删掉等于把
- * 这些能力从界面上抹掉」。所以它只是搬家，不是删改；间距也仍是 v2 那句的 `marginTop:8`。
+ * 它从前写的是「pi 的 RPC 没有『跳到这一点』的命令（那是终端界面的内部功能），所以这里只能
+ * 新建分支。」——**当时是对的，现在不是**：`pi-android-navigate` 命令（随包扩展
+ * `pi-android-bridge`）把 `ctx.navigateTree` 接了进来（`rpc-mode.ts:329-335`），树行上因此
+ * 多了一个**真的会跳**的动作。留着旧句子就等于在界面上说一个谎，所以这句换成了现在这两件事
+ * 的分工说明：点一行是跳转（同一个会话文件内换 leaf），「分叉」是新建一个会话文件。
+ *
+ * 它替掉的仍是 v2 那句「分叉会新建一个会话文件，原会话保持不变。」——`11-designer-adjudication.md`
+ * 的 A-08 裁定「删掉等于把这些能力从界面上抹掉」，所以这句在，只是把「两个动作分别是什么」
+ * 说全；间距也仍是一个 `TREE_FILTER_GAP` + 一个 `PiSpacing.unit`。
  *
  * ## 为什么从固定行搬进列表（**相对稿子的有意偏离**）
  *
@@ -349,13 +488,16 @@ private fun TreeContent(
  * 搬进来的那道，见下）≈ **62dp**。列表没滚动时（scroll 0）它与搬运前逐像素一致：固定
  * chrome 里删掉的那 18dp 间距正好被这条的下间距补上。
  *
- * 空态仍留在原位（说明在上、空态在下，与搬运前逐像素一致）：空态没有东西可滚，而那两句
- * 正文都不重复「分叉 ≠ 分支」这个区分，删掉它等于把 A-08 的措辞又抹一次。
+ * 空态仍留在原位（说明在上、空态在下，与搬运前逐像素一致）：空态没有东西可滚，而这两句
+ * 正文都不重复「跳转 ≠ 分叉」这个区分，删掉它等于把 A-08 的措辞又抹一次。
  *
  * 也就是说：**只有真有一条条节点时**这句才滚得走，滚走的正是那 62dp。
+ *
+ * 长度与旧句相当（旧句 44 个字符、两行；这句 48 个字符，同样是两行），所以上面那笔 62dp
+ * 的账不用重算。
  */
 private const val TREE_FORK_HINT =
-    "pi 的 RPC 没有「跳到这一点」的命令（那是终端界面的内部功能），所以这里只能新建分支。"
+    "点一行是跳转：在同一个会话文件里回到那一点继续。分叉则会新建一个会话文件。"
 
 /**
  * 说明句在列表里的 key：**常量**，不随筛选档位、查询词或会话变化。
@@ -387,6 +529,7 @@ private fun BranchTab(
     filter: TreeFilter,
     query: String,
     onFork: (String) -> Unit,
+    onJump: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val tree = state.tree?.tree.orEmpty()
@@ -477,6 +620,7 @@ private fun BranchTab(
                 row = row,
                 isLeaf = row.node.entry.id != null && row.node.entry.id == state.tree?.leafId,
                 onFork = onFork,
+                onJump = onJump,
             )
         }
     }
@@ -745,7 +889,12 @@ internal fun treeRowIndent(depth: Int): Dp {
 }
 
 @Composable
-private fun BranchRow(row: TreeRow, isLeaf: Boolean, onFork: (String) -> Unit) {
+private fun BranchRow(
+    row: TreeRow,
+    isLeaf: Boolean,
+    onFork: (String) -> Unit,
+    onJump: (String) -> Unit,
+) {
     val entry = row.node.entry
     val id = entry.id
     val canFork = entry is SessionEntry.Message && entry.message.role == "user" && id != null
@@ -755,7 +904,15 @@ private fun BranchRow(row: TreeRow, isLeaf: Boolean, onFork: (String) -> Unit) {
             // `treeRowIndent`, not `depth × 12dp`: an unbounded depth took the row's own
             // text off the right edge (see the block above). The *structure* still comes
             // from the depth — only the drawn step is capped.
-            .padding(start = treeRowIndent(row.depth), top = 6.dp, bottom = 6.dp),
+            .padding(start = treeRowIndent(row.depth), top = 6.dp, bottom = 6.dp)
+            // 跳转 is the row's own action, on the whole row rather than a third button:
+            // the row already carries a label, an optional badge, 「当前」and 分叉, and the
+            // KDoc on the 分叉 button records what a second full-width action cost the
+            // summary's width. `navigateTree` accepts **any** entry id
+            // (`agent-session.ts:3161-3164`), so unlike 分叉 this is offered everywhere —
+            // and a row whose entry has no id cannot be named to pi at all, so it is not
+            // clickable.
+            .clickable(enabled = id != null) { id?.let(onJump) },
         verticalAlignment = Alignment.CenterVertically,
     ) {
         // A thin rule instead of box-drawing characters: it survives the phone's

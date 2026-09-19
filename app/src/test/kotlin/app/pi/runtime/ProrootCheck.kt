@@ -150,6 +150,17 @@ fun main() {
     check("all four conditions satisfied means proroot", RuntimeChoice.decide(enabled = true, filesPresent = true, probePassed = true, consecutiveFailures = 0), EngineDecision(GuestEngine.Proroot, EngineFallback.None))
     check("the switch is checked before the files", RuntimeChoice.decide(enabled = false, filesPresent = false, probePassed = false, consecutiveFailures = 5), EngineDecision(GuestEngine.Proot, EngineFallback.SwitchOff))
     check("every failure reason has a sentence", EngineFallback.entries.all { RuntimeChoice.describe(it).isNotBlank() }, true)
+    // 尚未运行 is the sentence users got stuck on: the first launch after the switch is
+    // turned on is the one that runs the probe **and still uses proot**, and only a later
+    // launch can end up on proroot. The old text ("首次使用时会自动跑一次") described the
+    // probe but not what the user sees in between. Pinned here because this sentence is
+    // in `RuntimeChoice` — a symbol this harness already owns — and the settings row and
+    // the report both render it verbatim.
+    val notRun = RuntimeChoice.describe(EngineFallback.ProbeNotRun)
+    check("尚未运行 says the next launch runs the probe", notRun.contains("下一次启动 guest 会跑一次"), true)
+    check("尚未运行 says that launch still uses proot", notRun.contains("那一次仍用 proot"), true)
+    check("尚未运行 says proroot can only take over after that", notRun.contains("再下一次"), true)
+    check("尚未运行 is still one line", notRun.none { it == '\n' || it == '\r' }, true)
     check("the failure budget is three", RuntimeChoice.MAX_CONSECUTIVE_FAILURES, 3)
     check("a failure advances the counter", RuntimeChoice.afterFailure(0), 1)
     check("a failure at the boundary is exhausted", RuntimeChoice.exhausted(RuntimeChoice.afterFailure(2)), true)

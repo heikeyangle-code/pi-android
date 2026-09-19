@@ -255,13 +255,22 @@ fun PiSettingsStack(
     //
     // `status()` reads the digest of five `.so` files plus one small cache file, so it
     // runs once per epoch on IO — never per frame, and never inside `read(key)`.
+    //
+    // One read feeds **both** strings the row needs: the sentence (which now names the
+    // probe stage that refused) and the bounded block of raw per-phase lines under it.
+    // Both come out of the same `Status`, so the expensive read above is still paid
+    // once; `runtimeDetailOverrides` is pure string work over fields already in hand
+    // (see its KDoc), which is why the block cannot turn into a per-frame `.so` hash.
     val runtimePrefs = remember(context) { RuntimePreferences.get(context) }
     val runtimeSelection = remember(paths, runtimePrefs) { RuntimeSelection(paths, runtimePrefs) }
     var runtimeStatusEpoch by remember { mutableStateOf(0) }
-    var runtimeStatusText by remember { mutableStateOf("未读取") }
+    // Null until the first IO read lands: the row shows its own 未读取 for that frame and
+    // the detail block renders nothing, rather than a default that looks like a reading.
+    var runtimeStatus by remember { mutableStateOf<RuntimeSelection.Status?>(null) }
     LaunchedEffect(runtimeSelection, filesEpoch, runtimeStatusEpoch) {
-        runtimeStatusText = withContext(Dispatchers.IO) { runtimeSelection.status().summary }
+        runtimeStatus = withContext(Dispatchers.IO) { runtimeSelection.status() }
     }
+    val runtimeStatusText = runtimeStatus?.summary ?: "未读取"
     val effectiveStore = remember(activeStore, runtimeSelection, runtimeStatusText) {
         AppOnlySettingsStore(activeStore, runtimeSelection, runtimeStatusText)
     }
@@ -476,6 +485,9 @@ fun PiSettingsStack(
                 onRunAction = onRunAction,
                 hostActions = hostActions,
                 valueOverrides = runtimeOverrides(facts),
+                // The raw per-phase evidence under 运行时（实际生效）: read once with the
+                // sentence above, rendered as a bounded string. See the state's comment.
+                detailOverrides = runtimeDetailOverrides(runtimeStatus),
                 // The same restart the 进程 section's action row asks for, offered
                 // from the badge explanation of a 需重启引擎 row.
                 onRestartEngine = { restartPrompt = true },

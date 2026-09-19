@@ -152,7 +152,9 @@ import app.pi.ui.chat.thinkingLabelOf
 import app.pi.ui.chat.unlistedBuiltinHint
 import app.pi.ui.components.PiContextRing
 import app.pi.ui.render.LocalPiMarkdownImmediate
+import app.pi.ui.render.LocalPiMarkdownParsed
 import app.pi.ui.render.RowHeightCache
+import app.pi.ui.render.piMarkdownParseBudget
 import app.pi.ui.render.rememberedRowHeight
 import app.pi.ui.components.PiMenu
 import app.pi.ui.components.PiMenuItem
@@ -778,23 +780,47 @@ private fun ChatBody(
     // `HistoryCursor.hasEarlier`). Leaving it out would put every jump one row off the
     // moment the loaded rows are exhausted.
     val showsEarlierRow = hiddenCount > 0 || state.history?.hasEarlier == true
-    val searchMatches = remember(searchQuery, prefs.hideThinkingBlock, searchScan) {
-        if (searchQuery.isBlank()) {
+    val searchMatches = remember { mutableStateOf(SearchHits.None) }
+    // Published-scan counter: the reveal effect below is keyed on it rather than on the
+    // result object, so it re-runs when a scan *lands* (not while one is running) and
+    // never has to compare two multi-thousand-element lists.
+    var searchMatchesSeq by remember { mutableIntStateOf(0) }
+    // **The scan itself runs off the frame thread.**
+    //
+    // It used to be a `remember(searchQuery, hideThinkingBlock, searchScan)` — a
+    // synchronous pass over the whole loaded transcript, taken *during composition*.
+    // The pass is `searchHits` over every row, and the dominant term is the
+    // case-insensitive `contains` over each tool card's output: measured on this
+    // device's JVM against the real `TranscriptItem`s, 500 rows (375×2 KB prose +
+    // 125×20 KB tool output) cost a median **80.6 ms** (min 32.3 ms) per pass. The
+    // streaming tick below re-runs it every `SEARCH_RESCAN_MS` (200 ms) while a turn
+    // is in flight, so with the search bar open the frame thread was busy ~40 % of
+    // the time in 80 ms slabs — every scroll taken during a stream dropped frames.
+    //
+    // The same pass on `Dispatchers.Default`, published into snapshot state when it
+    // lands, costs the UI nothing: the frame thread only reads the result. The
+    // answer is identical (the items are immutable data classes and the list is
+    // captured at launch); what changes is that it appears one dispatch later
+    // instead of in the frame that asked for it — a frame or two, invisible next to
+    // the 80 ms it used to block with.
+    //
+    // It deliberately does **not** compete with the frame thread's own markdown
+    // parses: those run on the same `Dispatchers.Default` pool, but the pool is as
+    // wide as the device's cores and the alternative is blocking the only thread
+    // that can draw. The last key (`searchScan`) is the streaming/settle tick.
+    LaunchedEffect(searchQuery, prefs.hideThinkingBlock, searchScan) {
+        val items = visibleItems
+        val query = searchQuery
+        val hideThinking = prefs.hideThinkingBlock
+        val hits = if (query.isBlank()) {
             SearchHits.None
         } else {
-            val ordered = ArrayList<Int>()
-            val present = HashSet<Int>()
-            visibleItems.forEachIndexed { index, item ->
-                // A block the user asked to hide cannot be a search result: the
-                // row is not on screen to scroll to.
-                if (prefs.hideThinkingBlock && item is ThinkingBlock) return@forEachIndexed
-                if (searchHits(item, searchQuery)) {
-                    ordered += index
-                    present += index
-                }
-            }
-            SearchHits(ordered, present)
+            // `withContext` re-checks cancellation on the way back, so a superseded
+            // scan (a new keystroke, a new tick) can never publish over a newer one.
+            withContext(Dispatchers.Default) { scanSearchHits(items, query, hideThinking) }
         }
+        searchMatches.value = hits
+        searchMatchesSeq++
     }
     LaunchedEffect(searchQuery) { searchCursor = 0 }
 
@@ -809,6 +835,43 @@ private fun ChatBody(
     // keeps the jumps working across rows the window has not rendered yet.
     fun userRowIndices(): List<Int> =
         visibleItems.mapIndexedNotNull { index, item -> if (item is UserMessage) index else null }
+
+    // §4.8's 编辑并从此分叉, hoisted out of the item lambda and given a **stable
+    // identity** on purpose.
+    //
+    // It was written inline in the `itemsIndexed` content lambda, where it captured
+    // `visibleItems` — a list the reducer replaces whenever a row changes. Under the
+    // Compose compiler's strong skipping (on by default since Kotlin 2.0.20; this
+    // tree is 2.2.21) a lambda with unstable captures is memoized **keyed on those
+    // captures by instance equality**, so a new `visibleItems` produced a new
+    // lambda, `BlockRenderer`'s parameter was
+    // never equal, and every visible `UserMessage` row re-executed its whole block
+    // on every publication — the 「发完消息、回答在流式输出时滑动发顿」 half that
+    // has nothing to do with layout. Reading the list through
+    // `rememberUpdatedState` at *call* time instead of capturing it keeps the
+    // lambda (and therefore the row's skippability) stable, while the callback
+    // still sees the current list because it is read when it runs.
+    //
+    // The other two callbacks are already stable under the same rule: `onBranchClick`
+    // captures `session` (one instance for the ViewModel's life) and `onImageClick`
+    // captures the `viewedImage` state object, not its value.
+    val latestVisibleItems = rememberUpdatedState(visibleItems)
+    val onForkFromMessage: (String) -> Unit = remember(session) {
+        { key ->
+            // The order that is reliable lives here: a bubble drawn for a prompt sent
+            // in this run carries a synthetic key, so the row's position among the user
+            // rows and its text are read from the full list (not just the rendered
+            // window) and handed to the ViewModel, which matches them against
+            // `get_fork_messages` — pi's own list of legal fork points.
+            val items = latestVisibleItems.value
+            val row = items.firstOrNull { it is UserMessage && it.key == key } as? UserMessage
+            session.forkFromMessage(
+                key = key,
+                ordinal = userMessageOrdinal(items, key),
+                text = row?.text.orEmpty(),
+            )
+        }
+    }
 
     // F34: a jump target may sit in the part of the session the window has not
     // rendered, and `LazyListState` cannot be asked for an index the current item list
@@ -1265,12 +1328,14 @@ private fun ChatBody(
         // `docs/scroll-diagnosis.md` §3.4 called the only way to remove the last few tens of
         // dp of movement, and it removes the function's whole reason to exist.
     }
-    // Keyed on the scan counter and the query rather than on the match list itself: the
-    // list is rebuilt by every scan, and a `LaunchedEffect` keyed on it would compare two
-    // thousand-element lists with `equals` on every recomposition. The two keys below say
-    // the same thing about when the answer changed.
-    LaunchedEffect(searchScan, searchQuery, searchCursor) {
-        val matches = searchMatches.ordered
+    // Keyed on the **published-scan counter**, the cursor and nothing else: the list is
+    // rebuilt by every scan, and a `LaunchedEffect` keyed on it would compare two
+    // thousand-element lists with `equals` on every recomposition. The counter moves
+    // exactly when a scan *lands* (see the scan effect above), which is also the moment
+    // this reveal has a fresh answer to act on — the old code was keyed on the tick
+    // that *started* a scan, so it could reveal against the previous scan's list.
+    LaunchedEffect(searchMatchesSeq, searchCursor) {
+        val matches = searchMatches.value.ordered
         val index = matches.getOrNull(searchCursor.coerceIn(0, (matches.size - 1).coerceAtLeast(0)))
         if (index != null) {
             // Jumping to a match is navigation, so following stops until the user
@@ -1739,16 +1804,18 @@ private fun ChatBody(
             SearchBar(
                 query = searchQuery,
                 onQueryChange = { searchQuery = it },
-                matchCount = searchMatches.ordered.size,
+                matchCount = searchMatches.value.ordered.size,
                 cursor = searchCursor,
                 onPrevious = {
-                    if (searchMatches.ordered.isNotEmpty()) {
-                        searchCursor = (searchCursor - 1 + searchMatches.ordered.size) % searchMatches.ordered.size
+                    val count = searchMatches.value.ordered.size
+                    if (count > 0) {
+                        searchCursor = (searchCursor - 1 + count) % count
                     }
                 },
                 onNext = {
-                    if (searchMatches.ordered.isNotEmpty()) {
-                        searchCursor = (searchCursor + 1) % searchMatches.ordered.size
+                    val count = searchMatches.value.ordered.size
+                    if (count > 0) {
+                        searchCursor = (searchCursor + 1) % count
                     }
                 },
                 onClose = {
@@ -1919,8 +1986,18 @@ private fun ChatBody(
                     // `present` is a `Set`: this line runs once per rendered row on every
                     // frame the list composes, and the old `List<Int>.contains` was a
                     // linear scan of every match in the session.
-                    val isMatch = searchMatches.present.contains(index)
-                    val isCurrentMatch = isMatch && searchMatches.ordered.getOrNull(searchCursor) == index
+                    val isMatch = searchMatches.value.present.contains(index)
+                    val isCurrentMatch = isMatch && searchMatches.value.ordered.getOrNull(searchCursor) == index
+                    // This row's markdown has finished parsing — the library's own
+                    // `State.Success`, reported up from `PiMarkdownText` through
+                    // `LocalPiMarkdownParsed`. It is what releases the height floor
+                    // `rememberedRowHeight` holds a freshly composed row at: "the parse
+                    // landed" rather than "enough frames passed" or "the content happened to
+                    // measure something", which is what makes the release exact. Both are
+                    // per-row state, keyed on the row's own key so a recycled item slot
+                    // cannot inherit the previous row's answer.
+                    val markdownParsed = remember(item.key) { mutableStateOf(false) }
+                    val onMarkdownParsed: () -> Unit = remember(markdownParsed) { { markdownParsed.value = true } }
                     val rowModifier = when {
                         isCurrentMatch -> Modifier
                             .border(1.dp, PiTheme.palette.searchMatchText, PiShapes.cardInner)
@@ -1929,14 +2006,14 @@ private fun ChatBody(
                         isMatch -> Modifier.background(PiTheme.palette.searchMatchBg, PiShapes.cardInner)
                         else -> Modifier
                     }
-                        // The height this row had before, for the first frames of a *fresh*
+                        // The height this row had before, for the frames of a *fresh*
                         // composition of it: markdown's parse state is built with a plain
                         // `remember`, so a row that leaves and comes back (a destination
                         // switch, a scroll past it and back) is composed at zero height and
                         // grows when the parse lands — and every row below it moves with it.
-                        // A floor, not a size, and dropped after three frames: see
+                        // A floor, not a size, released by the parse itself: see
                         // `ui/render/TranscriptRowHeight.kt` (and `RowHeightCache`'s bound).
-                        .rememberedRowHeight(item.key)
+                        .rememberedRowHeight(item.key, contentReady = markdownParsed.value)
                     // The execution rail's two ends (`06 §2` 执行轨道「竖线上下各缩进 16」).
                     // A run is a property of *consecutive transcript rows*, so the one
                     // place that can answer "is this the first/last tool card of a run"
@@ -1962,13 +2039,22 @@ private fun ChatBody(
                     // measured never asks again, so the synchronous parse happens at most
                     // once per row — and streaming text never asks: its content changes on
                     // every token, and that parse belongs off the frame thread.
+                    //
+                    // The last term is the **frame budget**: `piMarkdownParseBudget` is billed
+                    // with the measured cost of every eager parse this frame (`PiMarkdown.kt`
+                    // times the `Markdown(state = …)` call), and when a frame has spent its
+                    // 4 ms the rest of its new rows take the asynchronous path. So a crowd of
+                    // expensive rows is thinned out while a lone row is unaffected — the
+                    // common case — and no row's fate is decided by its character count.
                     val streamingRow = (item as? AssistantText)?.streaming == true ||
                         (item as? ThinkingBlock)?.streaming == true
                     val immediateMarkdown = !streamingRow &&
                         RowHeightCache.shared.of(item.key) == null &&
-                        (item.key in freshRowKeys || restoring)
+                        (item.key in freshRowKeys || restoring) &&
+                        piMarkdownParseBudget.allow(System.nanoTime())
                     CompositionLocalProvider(
                         LocalPiMarkdownImmediate provides immediateMarkdown,
+                        LocalPiMarkdownParsed provides onMarkdownParsed,
                     ) {
                         BlockRenderer(
                             item = item,
@@ -2010,21 +2096,11 @@ private fun ChatBody(
                             // id only on the replay path — a bubble drawn for a prompt sent
                             // in this run carries a synthetic key (`Transcript.kt:982`,
                             // `:1010`), and sending that to `fork` is exactly what pi
-                            // answered with `Invalid entry ID for forking`. The order that
-                            // *is* reliable lives here, so the row's position among the user
-                            // rows and its text are read from the full list (not just the
-                            // rendered window) and handed to the ViewModel, which matches
-                            // them against `get_fork_messages` — pi's own list of legal fork
-                            // points.
-                            onForkFromMessage = { key ->
-                                val row = visibleItems
-                                    .firstOrNull { it is UserMessage && it.key == key } as? UserMessage
-                                session.forkFromMessage(
-                                    key = key,
-                                    ordinal = userMessageOrdinal(visibleItems, key),
-                                    text = row?.text.orEmpty(),
-                                )
-                            },
+                            // answered with `Invalid entry ID for forking`. What makes the
+                            // order reliable — reading the *full* list rather than the
+                            // rendered window — lives in `onForkFromMessage` above, which
+                            // is hoisted out of this lambda to keep its identity stable.
+                            onForkFromMessage = onForkFromMessage,
                             // F19 (`docs/rendering-review.md`) deleted `onImageClick`
                             // because no viewer existed to receive it. One does now, so
                             // the callback is back and supplied: every image anywhere in
@@ -2633,6 +2709,35 @@ private fun searchHits(item: TranscriptItem, query: String): Boolean = when (ite
 
 /** pi's `searchMatch` is a case-insensitive substring test over the row's text. */
 private fun String.hits(query: String): Boolean = contains(query, ignoreCase = true)
+
+/**
+ * One full pass of the search over [items]: the ordered hits and the membership set the
+ * transcript reads per rendered row.
+ *
+ * Extracted so it can be run **off the frame thread** — the caller dispatches it to
+ * `Dispatchers.Default` and publishes the result (see `ChatBody`'s scan effect). It is a
+ * pure function of its three arguments, over an immutable list, so nothing is read that
+ * the dispatcher change could make stale.
+ *
+ * A block the user asked to hide cannot be a search result: the row is not on screen to
+ * scroll to.
+ */
+private fun scanSearchHits(
+    items: List<TranscriptItem>,
+    query: String,
+    hideThinking: Boolean,
+): SearchHits {
+    val ordered = ArrayList<Int>()
+    val present = HashSet<Int>()
+    items.forEachIndexed { index, item ->
+        if (hideThinking && item is ThinkingBlock) return@forEachIndexed
+        if (searchHits(item, query)) {
+            ordered += index
+            present += index
+        }
+    }
+    return SearchHits(ordered, present)
+}
 
 // The "pi has this command but this palette does not list it" table lives in
 // `ui/chat/PiSlashCommands.kt` (`PI_UNLISTED_BUILTIN_COMMANDS` /

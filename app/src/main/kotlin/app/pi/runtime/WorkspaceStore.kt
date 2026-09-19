@@ -673,7 +673,12 @@ object WorkspaceStore {
         // anything that wants the guest's spelling must read (they are not the same thing
         // for an external workspace, which is exactly why both fields exist).
         relative = if (external) dir.absolutePath else relativeOf(name),
-        guestPath = GuestWorkspacePath.under(context.filesDir.absolutePath, dir.absolutePath),
+        // The guest spelling, through the named door: the rule is `GuestWorkspacePath`'s, and
+        // `WorkspaceChoice.guestPathOf` is how this object reaches it. An external workspace is
+        // deliberately the *same* rule — `/storage/emulated/0/Foo` becomes
+        // `/workspace/storage/emulated/0/Foo` inside the guest, which is the path `PiEngineHost`
+        // binds it to and starts pi in, so its `.pi` project directory is the one on the device.
+        guestPath = WorkspaceChoice.guestPathOf(dir.absolutePath, context.filesDir.absolutePath),
         isCurrent = name == current,
         external = external,
         available = available,

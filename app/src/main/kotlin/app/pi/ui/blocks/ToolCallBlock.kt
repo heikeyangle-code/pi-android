@@ -58,7 +58,11 @@ fun ToolCallBlock(
     // recomposes for every streamed chunk (F8's 200 ms throttle bounds how often),
     // so they are keyed on the value they scan rather than re-run per composition.
     val outputLineCount = remember(item.output) { lineCount(item.output) }
-    val outputOversize = remember(item.output) { item.output.toByteArray(Charsets.UTF_8).size > MAX_OUTPUT_BYTES }
+    // `utf8ByteSizeExceeds` rather than `output.toByteArray(Charsets.UTF_8).size >
+    // MAX_OUTPUT_BYTES`: the same answer with no allocation. The byte array was built
+    // on the frame thread once per publication (every 200 ms while the row streams) and
+    // dropped immediately — see that function's KDoc in `BlockChrome.kt`.
+    val outputOversize = remember(item.output) { utf8ByteSizeExceeds(item.output, MAX_OUTPUT_BYTES) }
     // pi makes two separate decisions about a truncated result, and this mirrors
     // both. It *prints* a warning line whenever the result was truncated or names a
     // full-output path (`core/tools/renderers/bash.ts:100`), and it *strips* that

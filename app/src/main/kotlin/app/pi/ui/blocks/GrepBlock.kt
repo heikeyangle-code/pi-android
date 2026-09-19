@@ -179,9 +179,14 @@ private fun GrepGroupHeading(path: String, matches: Int) {
 /**
  * One match: pi's line number in the gutter, its text beside it.
  *
- * `context` rows — the lines a `context` argument pulled in around a match — take pi's
- * `contextOnTool` colour, so a hit is still distinguishable from its surroundings without
- * relying on the glyph.
+ * `context` rows — the lines a `context` argument pulled in around a match — are painted
+ * exactly like the match rows, and that is deliberate: pi's grep renderer has no context
+ * branch at all (`core/tools/renderers/grep.ts:44` paints every line of the result with
+ * `toolOutput`). This KDoc used to claim they take a `contextOnTool` colour; **no such
+ * token exists in pi's theme** — the diff renderer uses `toolDiffContext`
+ * (`modes/interactive/components/diff.ts:89`、`:141`, declared at
+ * `modes/interactive/theme/theme.ts:73`) and it is the only consumer. See [GrepRow]'s
+ * comment on the `toolOutput` token below.
  */
 @Composable
 private fun GrepRow(match: GrepMatch) {

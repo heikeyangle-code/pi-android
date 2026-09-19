@@ -206,6 +206,8 @@ fun PiPackagesHost(
                 onScopeChange = { controller.chooseScope(it) },
                 onInstall = { scope.launch { controller.install() } },
                 onRemove = { entry -> scope.launch { controller.remove(entry) } },
+                onUpdate = { entry -> scope.launch { controller.update(entry) } },
+                onUpdateAll = { scope.launch { controller.updateAll() } },
                 onFilterAdd = { entry, type, pattern ->
                     scope.launch { controller.addFilter(entry, type, pattern) }
                 },
@@ -407,6 +409,56 @@ class PiPackagesController(
             }
             val done = io { service.remove(entry.source.raw, entry.scope, trust) }
             finish(done)
+        } finally {
+            busy = false
+        }
+    }
+
+    // ----------------------------------------------------------------- update
+
+    /**
+     * `pi update <entry>` — one package's own source string, exactly as `pi list`
+     * spelled it, so pi's identity match (`getPackageIdentity`) sees what settings
+     * holds.
+     *
+     * Refused for a source pi itself would not touch ([PiPackageUpdate.canUpdate]):
+     * the row offers no button in that case, and this guard is the second half of
+     * the same statement rather than a separate policy.
+     */
+    suspend fun update(entry: PiPackageEntry) {
+        if (!PiPackageUpdate.canUpdate(entry.source)) return
+        runUpdate(source = entry.source.raw, projectScope = entry.scope == PiPackageScope.Project)
+    }
+
+    /** `pi update --extensions` — every configured package, both scopes. */
+    suspend fun updateAll() {
+        runUpdate(
+            source = null,
+            // A project-scope package only becomes visible to the command when the
+            // project is trusted (`createCommandSettingsManager` reads the saved
+            // decision for `update`, `package-manager-cli.ts:932`/`:753-756`), so the
+            // `--approve` decision has to be made on "did the user declare one",
+            // which the listing cannot answer for an untrusted project. Passing it
+            // for a trusted project with project packages is the same rule install
+            // and remove already follow; an untrusted project gets `None` and pi's
+            // saved decision, never an override.
+            projectScope = entries.any { it.scope == PiPackageScope.Project },
+        )
+    }
+
+    private suspend fun runUpdate(source: String?, projectScope: Boolean) {
+        val label = source ?: PiPackageUpdate.ALL_WHAT
+        if (!lifecycle.beginInstall("update", label)) return
+        busy = true
+        try {
+            val facts = readTrust()
+            val trust = if (projectScope && facts.trusted) {
+                PiPackageService.TrustPass.Approve
+            } else {
+                PiPackageService.TrustPass.None
+            }
+            val done = io { service.update(source, trust) }
+            finish(done, PiPackageService.RESTART_DETAIL_UPDATE)
         } finally {
             busy = false
         }
@@ -707,7 +759,7 @@ class PiPackagesController(
         return TrustFacts(resolution.trusted)
     }
 
-    private fun finish(done: PiPackageService.Done) {
+    private fun finish(done: PiPackageService.Done, restartDetail: String = PiPackageService.RESTART_DETAIL_INSTALL) {
         val headline = when (done) {
             is PiPackageService.Done.Ok -> done.summary
             is PiPackageService.Done.Failed -> "失败：${done.message}"
@@ -718,7 +770,7 @@ class PiPackagesController(
         record(headline, done.argv.joinToString(" "), done.stdout, done.stderr, done.warnings)
         when (done) {
             is PiPackageService.Done.Ok -> {
-                val required = service.restartRequirement(done)
+                val required = service.restartRequirement(done, restartDetail)
                 if (required != null) {
                     lifecycle.installSucceeded(required.changes, required.detail)
                 } else {

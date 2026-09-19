@@ -53,6 +53,16 @@ private fun spellings(value: String?): List<String> =
 private fun containsFlag(suffix: String, flag: String): Boolean =
     Regex("(^|\\s)" + Regex.escape(flag) + "(\\s|$)").containsMatchIn(suffix)
 
+/**
+ * The text the `everything` fixture writes into `app.extensions.args`.
+ *
+ * One constant, used by the fixture *and* by the assertion that parses the built
+ * command line back: the pass-through row's spelling belongs to the user, so this is
+ * the only place the harness can state what should come out, and a second copy could
+ * drift from the fixture without either side looking wrong.
+ */
+private const val PASS_THROUGH_FIXTURE_ARGS = "--plan --ssh user@host:/path"
+
 fun main() {
     val root = System.getProperty("pi.repo.root")?.let(::File)
         ?: File(System.getProperty("user.dir") ?: ".")
@@ -67,6 +77,12 @@ fun main() {
     }
     val registry = registryFile.readText()
     val viewModel = viewModelFile.readText()
+    // The app-only sidecar's own file: it is where `app.extensions.args` is spelled
+    // out as a key (the row is not a pi key, so the mapping reads it through
+    // `ExtensionArgsStore` rather than inline). Read as source text for the same
+    // reason the other two are: it imports Android.
+    val extensionArgsStoreFile = File(root, "app/src/main/kotlin/app/pi/ui/ExtensionArgsSettingsStore.kt")
+    val extensionArgsStore = extensionArgsStoreFile.takeIf { it.isFile }?.readText().orEmpty()
 
     // ---------------------------------------------------------------- mapping
     // The defaults are what pi gets with no options at all: nothing on either
@@ -114,12 +130,16 @@ fun main() {
     check("cacheRetention=short omits PI_CACHE_RETENTION", !cacheShort.environment().containsKey("PI_CACHE_RETENTION"))
 
     // ------------------------------------------------- every exposed knob emits
+    // The fixture sets **every** knob, including the extension pass-through: a knob
+    // listed in the table and not carried by `PiLaunchOptions` is the §I11 defect this
+    // whole section exists to catch.
     val everything = PiLaunchOptions.fromSettingValues(
         offline = true,
         cacheRetention = "long",
         systemPrompt = "base prompt",
         appendSystemPrompt = "extra preference",
         noContextFiles = true,
+        extensionArgs = PASS_THROUGH_FIXTURE_ARGS,
     )
     val suffix = everything.commandLineSuffix()
     val environment = everything.environment()
@@ -153,12 +173,31 @@ fun main() {
                 flagEmitted || envEmitted,
                 "neither ${knob.flag} nor ${knob.envVar} reached pi. $why",
             )
+
+            // The pass-through knob has no fixed spelling to look for: its flag names
+            // are the extensions'. So this is asserted by **parsing the built command
+            // line back** — which is the property that matters (the emission
+            // round-trips) and not merely that some string appears in it. The app's own
+            // flags are filtered out first: the suffix carries all of them on purpose.
+            PiPreSpawnChannel.ExtensionFlagsPassThrough -> {
+                val expected = ExtensionFlagArgs.parse(PASS_THROUGH_FIXTURE_ARGS).flags
+                val actual = ExtensionFlagArgs.parse(suffix).flags
+                    .filter { flag -> expected.any { it.name == flag.name } }
+                check(
+                    "the pass-through knob emits the flags written in its row: ${knob.appKey}",
+                    actual == expected,
+                    "the row's $PASS_THROUGH_FIXTURE_ARGS came back as $actual out of " +
+                        "${suffix.ifBlank { "(empty suffix)" }}. $why",
+                )
+            }
         }
         // The channel field is documentation, but a wrong one would mislead the doc.
         val consistent = when (knob.channel) {
             PiPreSpawnChannel.CliFlag -> knob.flag != null && knob.envVar == null
             PiPreSpawnChannel.EnvVar -> knob.flag == null && knob.envVar != null
             PiPreSpawnChannel.CliFlagOrEnv -> knob.flag != null && knob.envVar != null
+            // null/null is the whole point here: there is no spelling to name.
+            PiPreSpawnChannel.ExtensionFlagsPassThrough -> knob.flag == null && knob.envVar == null
         }
         check(
             "the channel describes the spellings: ${knob.appKey}",
@@ -247,7 +286,13 @@ fun main() {
     //
     // The predicate stays discriminating on purpose: a row moved anywhere else
     // fails, which is what this check is for. It is not `true`.
-    val preSpawnGroups = listOf("group = G_RUNTIME", "group = G_PROMPTS")
+    //
+    // `G_RESOURCES` was added for `app.extensions.args`: the row is a pre-spawn value
+    // (it becomes argv at spawn, hence `RestartEngine`), and 扩展与资源 is the group a
+    // user looks in for anything about extensions — the same "the row lives where the
+    // user looks for it, and that choice is asserted rather than assumed" reasoning
+    // that moved the two prompt flags into 提示词.
+    val preSpawnGroups = listOf("group = G_RUNTIME", "group = G_PROMPTS", "group = G_RESOURCES")
     for (knob in APP_EXPOSED_PRE_SPAWN) {
         val block = blockFor(registry, knob.appKey)
         check(
@@ -273,7 +318,16 @@ fun main() {
         )
         check(
             "the pre-spawn row is read by the launch mapping: ${knob.appKey}",
-            viewModel.contains("\"${knob.appKey}\""),
+            // Normally the launch mapping names the key itself. The pass-through row
+            // is the one exception: its key is not a pi key, so it is spelled in the
+            // app-only store and the mapping reaches it through that store — and both
+            // halves are required, or a row nobody reads would still pass.
+            viewModel.contains("\"${knob.appKey}\"") ||
+                (
+                    knob.channel == PiPreSpawnChannel.ExtensionFlagsPassThrough &&
+                        extensionArgsStore.contains("\"${knob.appKey}\"") &&
+                        viewModel.contains("extensionArgsStore.read()")
+                    ),
             "PiSessionViewModel.kt never mentions this key, so the settings row writes a value no launch " +
                 "reads — the §I11 defect.",
         )

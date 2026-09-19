@@ -1105,3 +1105,46 @@ pi 自己的文件以前**一个都进不去**（工作区的文件查看器只�
 - 与 §6.3 的四处偏差（按现实改的，`docs/settings-audit-pi-gap.md` §6.4 有记录）：查看与编辑不同组件；`keybindings.json` 落只读（白名单是穷举的）；主题校验比方案严但不抄 pi 的色表（抄一份就是第二个会漂移的真相）；入口最初自托管在 `SettingsHome`（`PiRoot` 只渲染 `PiSettingsStack`，接不上）→ 已改为经 `PiSettingsStack` 接线。
 
 **影响**：`settings/PiFiles.kt`（新增，Android-free）、`ui/screens/PiFilesScreen.kt`（新增）、`app/src/test/.../settings/PiFilesCheck.kt`（新增 harness `pi-files`，115 断言）、`ui/settings/SettingsHome.kt`（「其他」段一行入口）、`ui/settings/PiSettingsStack.kt`（接线）、`rpc/.../PiPreSpawnConfig.kt`（一句错误断言）。**未验证**：Compose 编译器规则只能在 CI 暴露；两个根在设备上的实际指向、软键盘下的编辑器、保存后设置页是否经 `PiDirectoryWatch` 立刻刷新 —— 全部未上机。**仍未处理**：`<workspace>/.pi/settings.json` 仍能从工作区文件树自由编辑（落在 `ui/screens/Workspace*.kt`，归另一批）。
+
+## D54 · 「选择工作区」是接上的；修的是「当前工作区叫什么」的第二份真相
+
+**用户原话**：「把我工作区那个选择工作区那个功能给我做了，看看现在是不是没接」（`RAEF` 在 `.kt/.md/.ts/.json` 里搜不到，按输入误差取「工作区（项目）的选择/切换」）。
+
+**结论：接了，不是没接。** 七条用户能碰到的路逐条有接线：①卡整卡 → `WorkspaceRootSheet`；面板整行点 → `WorkspaceChoice.decidePick` → `switchWorkspaceTo` → `session.switchWorkspace`；新建 → `session.createWorkspace`；行尾 ⋮ → `WorkspaceRowMenuSheet`；重命名 → `WorkspaceStore.rename`（**只写 label，不搬目录**）；删除 → `previewDelete` 的凭据 + `delete`；回合进行中切换 → 先确认「仍然切换」再走同一入口。切换成功后真正发生的也全在：`PiEngineHost.restart(workspaceProvider=…)`（新 cwd）→ `WorkspaceStore.setCurrent` 持久化 → 作废按工作区缓存 → `attach`（新引擎接管 + 重放历史 + 刷新状态）→ 主题/会话/偏好刷新 → `revision`+1 清草稿。
+
+**全屏只有两条「看得见没接」，且都自己说清了**：面板里的「从设备目录选择（需授权）」（无 `onClick` + 「未接」徽标 —— 本次之后由 D56 落地）与树屏 ⋮ 的「看它在对话里的那一步」（`say(…没接上)`，缺 `NavRequest` 的 entry 定位变体）。
+
+**真缺陷（已修）：①卡的工作区名有第二份真相。** 它原来从**会话记录的 cwd** 反推（`state.meta.sessionFile` → 会话列表 `cwd` → `PiProject.workspaceName`），于是改过显示名的工作区在卡上印 `workspace-2`、切换面板印「我的项目」；刚切完的一两秒 `sessionFile` 还是旧值，卡上印的是**上一个**工作区。会话头里的 `cwd` 是「那次会话在哪跑过」的历史，而 pi 只有一个当前 cwd（`process.cwd()`，`main.ts:580`）。现在三处（①卡 / 切换面板「当前」行 / 新建面板「建在…里」）统一走 `WorkspaceChoice.displayName(state.workspace.name, entries…label)`；`sessions.collectAsState()`（唯一消费者是那段推导）一并删除，该屏不再因会话列表变化重组。
+
+**规则抽成纯函数 + 83 条断言**：`runtime/WorkspaceChoice.kt`（Android-free）—— 哪些目录算工作区（`isOwned`）、编号与 label 规则、当前工作区裁决（`decide`，`look` 只在 `isOwned` 通过后被调用）、点一行的决策顺序（`decidePick`，**顺序是判定的一部分**）。`WorkspaceStore`（含原私有 `OWNED`/`sanitizeLabel`/`nextFreeName`/`resolve`）与 `ProjectScreen.onPick` 全部转调，**没有第二份实现**；四条用户可见句子与改前**逐字相同**（normalized diff 验证）。harness `workspace-choice` **83 PASS / 0 FAIL**（第一次跑就抓出作者自己写错的一条不变量：默认工作区是符号链接时 `note ⟺ name≠requested` 不成立）。
+
+**pi 的机制（判据）**：pi **没有** `--cwd` 标志，cwd 只来自 `process.cwd()`（`main.ts:580`），全树**没有** `process.chdir` → 所以 **pi 里没有「切换工作区」这个概念**，本应用的实现 = 重启引擎进程到新 cwd；会话根由 `--session-dir` > `PI_CODING_AGENT_SESSION_DIR` > `settings.sessionDir` > 按 cwd 分组决定（`main.ts:669-673`、`session-manager.ts:476-486`），我们两条都传 → **平铺**一个目录、归属靠会话头 `cwd`（`:33/37`、`:1590-1591`）；项目设置是 `<cwd>/.pi/settings.json`（`settings-manager.ts:233/359`）；信任按 cwd 路径存 `trust.json`（`trust-manager.ts:213`）—— 所以 `rename` 只改 label 是对的。
+
+**未做（已附理由与 patch）**：①**切换后队列计数残留** —— `queueSteering/queueFollowUp` 唯一写入者是 `PiEvent.QueueUpdate`、唯一清零点是 `afterSessionReplaced`，它的 5 个调用者没有一个是工作区切换；pi 只在队列变动时发 `queue_update`（`agent-session.ts:592-597`），新引擎不会补发空队列 → 回合跑着时排队一条再切工作区，新工作区会一直显示「排队中」。修法是 `attach()` 里照 `:4580` 补 3 行（patch 在 `build/d54-queue-reset.patch`）。②`SessionsScreen.groupLabel` 把当前工作区那组印成通用词「工作区」，而它自己的 KDoc 承认是 `ProjectResources.workspaceName` 的第二份拷贝。③`state.workspace.hostPath/relative` 仍无人读；④`WorkspaceSnackBar(action=)` 槽位仍 0 调用点。
+
+**影响**：`runtime/WorkspaceChoice.kt`（新）、`runtime/WorkspaceStore.kt`、`ui/screens/ProjectScreen.kt`、`app/src/test/.../WorkspaceChoiceCheck.kt`（新 harness）。**颜色/主题一个字节没动。**
+
+**判据（本机一条都验不了：打不出 APK、无设备 shell）**：S1 切换后**第一帧**①卡就是新名字，不得先闪旧名字；S2 改过显示名的三处印同一个名字；S3 引擎未启动时①卡仍印当前工作区名；S4 切完终端 `pwd` = 新工作区 guest 拼法；S5 切完第一条消息落成新会话文件、头部 `cwd` = 新工作区、归组正确；S6（应用队列 patch 后）排队中切换不再显示「排队中」；S7 新工作区的 `.pi` 技能出现、切走后消失；S8 面板里返回键先关面板。
+
+## D55 · pi 能力面全量审查：真欠账 3~4 条；「per-tool 审批」被证否
+
+**动因**：用户问「pi 到底还有啥功能我没做？怎么这次又审出 3 个来？」。此前各轮审查按**我们的屏/半边**划范围（设置面、对话/渲染、引擎/运行时/桥），审的是「我们写的代码有没有 bug」；上一轮那 3 条是拿**别人家功能**反照出来的。本轮首次按 **pi 的能力面**做全量对照（两份文档：`docs/pi-surface-audit-cli.md` 477 行、`docs/pi-surface-audit-tools.md` 413 行，逐条带 `file:line`；TUI-only 单列附录，按用户裁定不计欠账）。
+
+**真欠账（pi 有、手机可用、我们没接）**：
+1. **会话内分支跳转 + 分支摘要（高）** —— pi 有 `navigateTree`（`agent-session.ts:3136-3332`，唯一的 `BranchSummaryEntry` 生产点）+ `/tree` + 扩展口 `ctx.navigateTree`（RPC 模式已接线 `rpc-mode.ts:329-335`）；我们 33 条 RPC 命令**无一**能触发它，树屏只有 fork（**新建会话文件**，语义不同）。刺眼之处：`Transcript.kt:156/:2304` 已投影 `BranchSummary`、`BranchSummaryBlock.kt` 已渲染它 —— **数据永远没有输入**。另：导航完成**没有任何事件**（只有扩展事件 `session_tree`，而 RPC 只转发 `AgentSessionEvent`），所以换 leaf 后必须整屏重取。
+2. **扩展注册的 CLI flag 透传（中）** —— pi 的扩展 flag 只能从 argv 进（`cli/args.ts:227-240` → `main.ts:737` → `agent-session-services.ts:82-124` → `ctx.getFlag`；注册 `extensions/types.ts:1329-1345`），我们 argv 拼死（`PiEngineHost` 的 `guestCommand`），依赖 flag 的扩展永远读默认值、**静默失效**；逃生口只有终端页。
+3. **已安装资源包无法更新（中低）** —— pi 有 `pi update --extensions` / `pi update <source>`（`package-manager-cli.ts:1013-1021`），我们只有 install/remove/list。（`--models` 那一半不算欠账：pi 启动时已后台刷新，`main.ts:921-928`。）
+4. **`pi auth print-api-key` / `print-bearer-token`（低，判为不做）** —— 凭据只写不显示是刻意的安全取舍，且手机屏幕上的 key 风险更高；理由写进 `docs/pi-surface-audit-cli.md`。
+
+**不是欠账但必须修的一致性缺陷**：`/login` 有三处互相矛盾的说法 —— `TerminalScreen.kt:72` 说终端页可做订阅登录（**真的**），而 `PiSettingsRegistry.kt` 的 `app.credentials.oauth` 行与 `PiSlashCommands.kt` 说「本应用没有对应入口」。
+
+**三条重要否证（本轮最大价值）**：
+- **「per-tool allow/ask/deny」不是 pi 的功能**：pi 没有内建工具门控（`--approve` 是*项目信任*；pi 只提供示例扩展 `examples/extensions/permission-gate.ts`）。而**我们已经用了**那个钩子（`pi-android-permission-gate.ts` + `ctx.ui.select`），只守 `android_*` 设备工具。所以「通用 per-tool 审批」= **pi 无对应物 → 按规则不做**。这也**修正了 `docs/agent-runtime-comparison.md` 里那条「真欠账①」** —— 它是拿竞品功能反照的，不是 pi 的能力面。
+- `enableAnalytics`/`trackingId` 不暴露是**对的**：pi 写进去也没有消费者（只有测试读）。
+- `--dangerously-*`、`pi doctor` **在 pi 里不存在**；`pi experimental server|client` 与 `packages/protocol` **被 `package.json` 排除出发行物**。
+
+**协议面没有缺口**：33/33 命令有 builder、**31/33 有真实发送方**（从不发的只有 `cycle_model` 与 `get_messages`，都有书面理由；`docs/rpc-coverage.md` 的「32/33 有入口」已过期）；**26 个 stdout 记录 + 12 个 delta 全部有解析与投影、零静默丢弃**；`extension_ui_request` pi 在 RPC 模式**只发 9 个 method**，**9/9 我们全部处理且都有界面落点**，协议里其余那些（`custom`/`setFooter`/`setTheme`/`setWorkingMessage`…）在 pi 自己的 `rpc-mode.ts:163-310` 就是 no-op。
+
+**已 1:1（非"看起来像"）**：8 个内建工具 8/8 有专属卡（**没有一个设 `executionMode`**，所以"顺序执行"不是欠账）；技能面（发现顺序、`.agents/skills`、`SKILL.md` frontmatter、`/skill:name`、列出/看内容/改文件/安装齐备，且**没有虚构** pi 没有的逐技能启停）；上下文与压缩（`--system-prompt`/`--append-system-prompt`/`--no-context-files`、四类 context 文件、`compaction.*` 含 `modelOverrides`、`/compact <指令>`、`branchSummary.*`）；附件预算与图片查看器（2 处**有意**差异：PNG 候选序、整条消息预算更严）；内核四条推送 + `queue_update`/`agent_settled`/`summarization_retry_*`/`tool_execution_update` 的 200 ms 节流。
+
+**顺带查出的文档瑕疵**：`GrepBlock.kt:181-183` 的 KDoc 引用了 **pi 主题里不存在**的 token（`contextOnTool`；diff 用的是 `toolDiffContext`）；`docs/rpc-coverage.md` 的「32/33 有入口」与代码不符（`cycle_model` 的 UI 早按裁决删除）。

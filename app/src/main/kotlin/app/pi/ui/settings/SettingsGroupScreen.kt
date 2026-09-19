@@ -23,6 +23,7 @@ import app.pi.ui.PiTopBar
 import app.pi.ui.PiTopBarIcon
 import app.pi.ui.components.EffectiveKind
 import app.pi.ui.theme.PiSpacing
+import app.pi.ui.theme.PiTheme
 import app.pi.ui.theme.PiThemeEntry
 import kotlinx.serialization.json.JsonPrimitive
 
@@ -80,6 +81,20 @@ fun SettingsGroupScreen(
      * Empty by default: every other row keeps reading the store.
      */
     valueOverrides: Map<String, String> = emptyMap(),
+    /**
+     * **Evidence under a read-only row**, by key: the proroot gate's recorded
+     * per-phase lines, which the 运行时（实际生效）row shows so that "why is proroot
+     * not in use" is answerable without opening the diagnostic report.
+     *
+     * Same shape and same rule as [valueOverrides]: the host already has the lines
+     * (it read the probe cache once, off the main thread, to build the row's value) and
+     * hands the finished, bounded string down. This screen only lays it out — it never
+     * reads a file, a probe cache or a `.so` digest, and it never runs a probe. A row
+     * with no entry renders exactly as before; an entry is a *block* of lines, not a
+     * value, so it is a map of its own rather than a [valueOverrides] value (which the
+     * row draws with `maxLines = 1`).
+     */
+    detailOverrides: Map<String, String> = emptyMap(),
     /**
      * The host's engine restart, offered by the badge explanation of a
      * [EffectiveKind.RestartEngine] row ("重启引擎"). Null hides that button, which
@@ -181,6 +196,7 @@ fun SettingsGroupScreen(
                             setting = setting,
                             store = store,
                             valueOverrides = valueOverrides,
+                            detailOverrides = detailOverrides,
                             highlighted = setting.key == highlightKey,
                             onToggle = toggleRow,
                             onOpen = openRow,
@@ -209,6 +225,7 @@ fun SettingsGroupScreen(
                             setting = danger,
                             store = store,
                             valueOverrides = valueOverrides,
+                            detailOverrides = detailOverrides,
                             highlighted = danger.key == highlightKey,
                             onToggle = toggleRow,
                             onOpen = openRow,
@@ -309,27 +326,52 @@ fun SettingsGroupScreen(
  *
  * 存在的理由是分组页有两处画行（分区里的卡片、页尾固定的危险行），两处必须用同一套
  * 取值 —— 尤其是「当前生效值」的 2px accent 条判定，抄一遍就会分叉。
+ *
+ * 只读行可以再带一块**证据**（[detailOverrides]）：proroot 探针逐阶段的原始判读。
+ * 它写在行下面而不是行里 —— 行的值只有一行（`PiSettingRow` 用 `maxLines = 1` 画），
+ * 而证据是多行；也不做成一个可点开的二级页，因为「为什么没用上 proroot」正是用户
+ * 站在这一页时要回答的问题，多一次点击就是把答案藏起来。文案与截断都由宿主算好
+ * （[runtimeDetailOverrides]），这里只负责排版，不读文件、不碰探针。
  */
 @Composable
 private fun SettingSlot(
     setting: PiSetting,
     store: PiSettingsStore,
     valueOverrides: Map<String, String>,
+    detailOverrides: Map<String, String>,
     highlighted: Boolean,
     onToggle: (PiSetting, Boolean) -> Unit,
     onOpen: (PiSetting) -> Unit,
     onExplain: (PiSetting) -> Unit,
 ) {
-    PiSettingRow(
-        setting = setting,
-        valueText = valueOverrides[setting.key] ?: setting.display(setting.current(store)),
-        checked = setting.boolIn(store, false),
-        current = isCurrentValue(setting, store),
-        highlighted = highlighted,
-        onToggle = { next -> onToggle(setting, next) },
-        onOpen = { onOpen(setting) },
-        onExplainEffect = { onExplain(setting) },
-    )
+    val detail = detailOverrides[setting.key]
+    Column {
+        PiSettingRow(
+            setting = setting,
+            valueText = valueOverrides[setting.key] ?: setting.display(setting.current(store)),
+            checked = setting.boolIn(store, false),
+            current = isCurrentValue(setting, store),
+            highlighted = highlighted,
+            onToggle = { next -> onToggle(setting, next) },
+            onOpen = { onOpen(setting) },
+            onExplainEffect = { onExplain(setting) },
+        )
+        if (!detail.isNullOrBlank()) {
+            // 副行字色（`onSurfaceVariant`）而不是正文色：这是元信息，不是第二个值。
+            // 左内边距与行一致，让它读起来是这一行的下半部分；底部留同样的行内边距，
+            // 一行与下一行之间才不会因为这块文本挤在一起。
+            Text(
+                detail,
+                modifier = Modifier.padding(
+                    start = PiSettingsMetrics.rowPaddingHorizontal,
+                    end = PiSettingsMetrics.rowPaddingHorizontal,
+                    bottom = PiSettingsMetrics.rowPaddingVertical,
+                ),
+                style = PiTheme.text.meta,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
 }
 
 /** v2 固定在分组页页尾的那一行（`phone34`–`phone38`）。 */

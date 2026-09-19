@@ -128,8 +128,16 @@ class RuntimeSelection(
     ) {
         val usingProroot: Boolean get() = engine == GuestEngine.Proroot
 
-        /** One line for the settings row. */
-        val summary: String get() = RuntimeChoice.describe(fallback)
+        /**
+         * One line for the settings row.
+         *
+         * Goes through [ProrootProbeNarrative] so a refusal names the stage that refused
+         * instead of stopping at "探针未通过": [probe] is this plan's own verdict when the
+         * gate was consulted, and every other fallback needs no evidence. Pure string
+         * work over data already in hand — see the narrative's KDoc.
+         */
+        val summary: String
+            get() = ProrootProbeNarrative.summary(fallback, probe?.detail.orEmpty())
     }
 
     /** The effective state, for the settings row and the diagnostic report. */
@@ -143,7 +151,19 @@ class RuntimeSelection(
         val engine: GuestEngine,
         val fallback: EngineFallback,
     ) {
-        val summary: String get() = RuntimeChoice.describe(fallback)
+        /**
+         * The sentence the settings row, the settings-home summary and the report's
+         * 实际生效 line all read.
+         *
+         * [ProrootProbeNarrative.summary] appends the failing stage and its recorded line
+         * when the gate refused, so "看不出是哪一阶段失败" cannot happen unless the cache
+         * holds no evidence — and then the sentence says that instead of guessing. Pure,
+         * over fields this object already holds: reading it runs no probe and hashes
+         * nothing. Filling [probeDetail] is the only expensive part, and the caller does
+         * that once per epoch on `Dispatchers.IO` (`PiSettingsStack`).
+         */
+        val summary: String
+            get() = ProrootProbeNarrative.summary(fallback, probeDetail)
     }
 
     fun plan(
@@ -227,7 +247,17 @@ class RuntimeSelection(
         )
     }
 
-    /** The effective state, from cached facts only. **Runs no probe.** */
+    /**
+     * The effective state, from cached facts only. **Runs no probe.**
+     *
+     * The returned [Status] carries the whole recorded evidence ([Status.probeDetail]),
+     * not a summary of it: the settings row renders the per-phase lines under itself
+     * (bounded, and saying so when it truncates), the report prints them in full, and
+     * both read [Status.summary] for the one-line reason. That is a property of the
+     * *value*, not a licence to call this more often — the five `stat`s plus the digest
+     * are why [PiSettingsStack] calls it once per epoch on `Dispatchers.IO` and hands
+     * the finished strings down, and why the row's `read(key)` never reaches here.
+     */
     fun status(): Status {
         val enabled = prefs?.prorootEnabled ?: false
         val failures = prefs?.prorootFailures ?: 0

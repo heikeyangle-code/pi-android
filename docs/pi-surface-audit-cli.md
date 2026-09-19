@@ -1,14 +1,15 @@
 # pi 能力面全量审查 · 命令行 / 协议 / 会话 / 模型认证 / 包与信任 / 可观测
 
 > 回答一个问题：**pi 到底还有啥功能我们没做？**
-> 只读审查，未改任何代码；本文件是本次唯一新增的文件。
+> 报告本身是只读审查的产物；**§15 记录其后一个批次的改动**（改了哪些符号、没验什么），
+> §1 的计数与 §10–§14 的状态都已随该批次更新。
 
 ## 0. 方法与判据
 
 | | 值 |
 |---|---|
 | pi（权威） | `/root/pi-src` @ `bbb61e3`，`packages/coding-agent` 0.85.1 |
-| App | `/root/pi-android` @ `5a49bdc`（工作树，`docs/**` 有并发写者） |
+| App | `/root/pi-android` @ `5a49bdc`（工作树，`docs/**` 有并发写者）；§15 的改动在此之上，**未提交** |
 | 协议定义 | `packages/coding-agent/src/modes/rpc/{rpc-types.ts,rpc-mode.ts}`、`modes/json-event.ts`、`packages/agent/src/types.ts`、`packages/ai/src/types.ts` |
 | App 协议层 | `rpc/src/main/kotlin/app/pi/rpc/{Commands,Events,Responses,Transcript,PiPreSpawnConfig,PiLaunchOptions}.kt` |
 | App 调用/界面层 | `app/src/main/kotlin/app/pi/{engine/**,ui/**,packages/**,session/**,settings/**}` |
@@ -30,13 +31,23 @@
 
 ## 1. 结论先行
 
-**还剩 3 条真欠账**（pi 有、手机可用、我们没接）：
+> **本节的计数已按本批次（见 §15）更新**：原报告有 3 条真欠账，其中两条已在本批次处理
+> （一条接上、一条按裁定不做），第 3 条仍在。
+
+**还剩 1 条真欠账**（pi 有、手机可用、我们没接）：
 
 1. **扩展注册的 CLI flag 传不进去**（`ctx.registerFlag` / `ctx.getFlag`）。pi 的值只能从 argv 进（`core/agent-session-services.ts:100-113` 从 CLI 的 unknown flags 灌入），而我们的引擎 argv 是固定的（`PiEngineHost` 的 `guestCommand`，`:390-397`），`PiLaunchOptions` 没有字段、设置里没有行、`PiPreSpawnConfig` 的两张表都没收它。装了 plan-mode / preset / sandbox / ssh 这类示例扩展时，它们的 `--plan` / `--preset` / `--no-sandbox` / `--ssh` **永远是未设值**。
-2. **已安装资源包无法更新**（`pi update --extensions` / `pi update <source>`）。`PiPackageService` 只有 `install` / `remove` / `list`，`PiPackagesScreen` 的按钮也只有装 / 卸 / 刷新（`:1036` / `:1151` / `:1039`）。git 源包在 App 里只能"卸了再装"。
-3. **`pi auth print-api-key` / `print-bearer-token` 没有对应动作**（低价值，见 §10.3）。pi 里这两条是给外部客户端取凭据用的（`cli/auth-command.ts:18-22`、`main.ts:161-190`）；App 不显示已存密钥。
 
-**外加 1 条不是欠账但要修的一致性问题**：`app.credentials.oauth` 行与 `/login` 的提示语说"本应用没有对应入口"（`PiSettingsRegistry.kt:315-327`、`PiSlashCommands.kt:287`），而终端页自己的说明写的是"输入 pi 回车进入原版 TUI：**订阅登录**、会话导入…都在那边"（`TerminalScreen.kt:72`），且终端页确实带着同一份 agent 目录启动 pi（`PtyLauncher.kt:396-404`）。两处说法互相矛盾 —— 能力是有的（走终端页），文案各说各话。
+**原第 2 条已接上**：`pi update --extensions` / `pi update <source>` 现在有实现与入口
+（`PiPackageService.update`、`PiPackagesController.update/updateAll`、`PiPackagesScreen` 的
+「全部更新」与行内「更新」），诚实边界写在界面上而不是埋在日志里 —— 见 §10.2 与 §15。
+
+**原第 3 条按裁定不做**：`pi auth print-api-key` / `print-bearer-token` 判为**有意不做**
+（凭据只写不显示是刻意的安全取舍），理由已记进 §11 的对应行 —— 见 §10.3。
+
+**原一致性缺陷已修**：`app.credentials.oauth` 行、`/login` `/logout` 的提示语、以及
+`PiRoot` 里那一行的动作答复，现在都指向终端页这一条**事实**路径（`TerminalScreen.kt:72` 的
+说法本来就是对的，未改）。见 §10.4 与 §15。
 
 **三条"pi 有、但 pi 自己的 RPC 够不着"**（不是欠账，属协议边界，见 §5.4）：`/tree` 跳转 + 分支摘要（`navigateTree`）、会话标签的**写**、`/reload`。它们在 pi 里只有 L2/L3 入口（`modes/rpc/rpc-types.ts` 里 `navigate` / `label` / `reload` 三个词**一次都没出现**）。
 
@@ -171,7 +182,7 @@ pi 的 `RpcCommand` 联合体在 `modes/rpc/rpc-types.ts:20-74`，**33 个** `ty
 | 消息 | `get_messages` `:71`/`:674-676` | `getMessages` | **无调用者** | **从不发送**（有意：全量在 `session.messages`，压缩后与记录不同，用它替换会丢历史） |
 | 命令 | `get_commands` `:74`/`:682-713` | `getCommands` | 命令面板 | 已接 |
 
-**结论：33/33 有 builder，31/33 有真实发送方；两条不发的都有书面理由。** 与 `docs/rpc-coverage.md` 的"32/33 有入口"说法**不一致**：那份文档给 `cycle_model` 标了 UI（`ChatScreen.kt:659`），但当前树的 UI 已按用户裁决删掉该入口（`Commands.kt:133-141` 的 KDoc 记着），`grep "cycleModel(" app/src/main` 只有 `PiEngineApi.kt:152` 一处。**以代码为准：`cycle_model` 与 `get_messages` 都是"从不发送"。**
+**结论：33/33 有 builder，31/33 有真实发送方；两条不发的都有书面理由。** 审查当时与 `docs/rpc-coverage.md` 的"32/33 有入口"**不一致**：那份文档给 `cycle_model` 标了 UI（`ChatScreen.kt:659`），但当前树的 UI 已按用户裁决删掉该入口（`Commands.kt:133-141` 的 KDoc 记着），`grep "cycleModel(" app/src/main` 只有 `PiEngineApi.kt:152` 一处。**以代码为准：`cycle_model` 与 `get_messages` 都是"从不发送"。** 该文档已在**本批次**按代码改正（见 §15.1）。
 
 ### 4.2 事件：26 个 stdout 记录 + 12 个 delta
 
@@ -346,33 +357,46 @@ pi 侧的上线集合 = `session.subscribe` 的事件（`AgentSessionEvent`，`c
 1. 一个自由文本的进程参数行（`RestartEngine` 生效），最省事，风险是拼错 flag 会让 pi `exit(1)`（`agent-session-services.ts:118-124` 的 "Unknown option" 是 error 级诊断）。
 2. 或者先枚举再选：`pi --help` 在加载扩展后会把注册的 flag 打出来（`main.ts:853-860` 的 `printHelp(extensionFlags)`，格式 `args.ts:252-261`），App 可以在 guest 里跑一次 `--help` 解析出清单，再做开关行。这条更贴 pi、也更贵。
 
-### 10.2 已安装资源包无法更新 —— 严重度：中低
+### 10.2 已安装资源包无法更新 —— **本批次已接上**（原严重度：中低）
 
 **pi 侧**：`pi update --extensions`（`package-manager-cli.ts:1013-1021`）与 `pi update <source>`（`updateTarget.type === "extensions"`，`:533-544`）都会走 `DefaultPackageManager.update`（`package-manager.ts:1059+`）；另有 `checkForAvailableUpdates`（`:1186-1250`）供提示"有 N 个更新"。
 
-**我们侧**：`PiPackageService` 的公开动作只有 `install`（`:195-196`）、`remove`（`:199-200`）、`list`（`:222-245`）；`PiPackagesHost` 只有 `install()`（`:374`）、`remove()`（`:398`）、`removeFilter()`（`:432`）；`PiPackagesScreen` 的三个按钮是安装（`:1036`）、刷新列表（`:1039`）、卸载（`:1151`）。**没有任何地方拼 `update`。**
+**我们侧（原状）**：`PiPackageService` 的公开动作只有 `install`、`remove`、`list`；`PiPackagesHost` 只有 `install()`/`remove()`/`removeFilter()`；`PiPackagesScreen` 的三个按钮是安装、刷新列表、卸载。**没有任何地方拼 `update`。**
 
-**手机上有意义吗**：有。装包本来就在 App 里做（同一个 `GuestCommand` 通道、`INSTALL_TIMEOUT_MS`），更新是同一套 argv 的下一个动词。
+**本批次做了什么**：新增纯逻辑 `PiPackageUpdate`（argv 词、`self`/`pi` 拒绝、哪些来源可更新、结果行识别）；
+`PiPackageService.update(source, trust)` + `updateCommandLine`；`PiPackagesController.update(entry)` / `updateAll()`；
+界面上的「全部更新」与行内「更新」。命令走 pi 自己的 argv：
+`update --extensions` 或 `update '<来源>'`，**不加 `-l`**（pi 对 update 拒绝它，`:409-416`），
+`--approve` 只在项目作用域且项目已受信任时加（与 install/remove 同一规则，`:755`）。
 
-**注意**：`pi update --models`（`package-manager-cli.ts:914-923` → `refreshModelCatalogs`）**不算欠账** —— pi 在 RPC 启动时已经后台刷新目录（`main.ts:921-928`），能力等效存在。`pi update`（self）**不算欠账**，归 §11。
+**诚实边界（写进界面，不埋在日志里）**：pi 在 `:1013-1021` **无条件**打印 `Updated packages` /
+`Updated <source>`，无论是否真的换到新版本；而"有没有新版本"这个问题在此路径上**问不出来**——
+`checkForAvailableUpdates` 只有 pi 的终端界面会调（`interactive-mode.ts:1054`、`:1143`）。
+所以：精确版本的 npm 与本地路径**不提供按钮**（pi 自己的候选收集器就跳过它们，
+`package-manager.ts:1103-1110`），其余情况按钮下面直接写明"pi 不报告有没有新版本"。
 
-### 10.3 `pi auth print-api-key` / `print-bearer-token` 无对应动作 —— 严重度：低（存疑）
+**注意**：`pi update --models`（`:914-923` → `refreshModelCatalogs`）**不算欠账** —— pi 在 RPC 启动时已经后台刷新目录（`main.ts:921-928`），能力等效存在。`pi update`（self）**不算欠账**，归 §11。
+
+### 10.3 `pi auth print-api-key` / `print-bearer-token` —— **按裁定：有意不做**（原严重度：低，存疑）
 
 **pi 侧**：`cli/auth-command.ts:18-22`（用法）、`main.ts:161-173`（解析凭据并打印，含刷新过期 OAuth）、`cli/credential-print.ts`。用途是给**外部客户端**取凭据。
 
 **我们侧**：凭证页只在"填写 / 覆盖"方向工作（`PiCredentialScreen`、`PiCredentialService.save`），没有任何"显示已存密钥"的动作；`auth.json` 的写模式是 `0600`（`PiConfigFiles` 收紧不放宽）。
 
-**为什么列出来**：题面规矩是"pi 有的必须 1:1"，而这一项既没有实现、也没有任何地方记录过"我们决定不做"（全仓只有 `docs/pi-android-app-design.md:652` 顺带提到这两条子命令）。**它是不是欠账取决于产品判断**：手机上没有外部客户端，而把长期密钥明文显示在屏幕上通常是要刻意避免的（对比 `print-bearer-token` 还会触发 OAuth 刷新，这在手机上反而有意义）。
-**我的判断**（推断）：归入"知道就好"，真要补也只值得补 `print-bearer-token` 的"显示/复制"一种，且需要用户确认。
+**裁定与理由**（已记进 §11 的对应行，不再算欠账）：凭据**只写不显示**是刻意的安全取舍；手机上本来没有"外部客户端"这个消费者，而把长期有效的 API Key / bearer token 明文打到屏幕上（或复制进剪贴板，Android 上任何应用都能读）是净增风险、不增能力。`print-bearer-token` 会顺带刷新 OAuth 令牌这一点，在终端页跑一次 `/login` 也能达到。**如果以后要做，只做 `print-bearer-token` 的"显示/复制"一种，且需要用户再确认一次。**
 
-### 10.4 一致性缺陷（不是欠账，但要修）
+### 10.4 一致性缺陷 —— **本批次已修**（原状：不是欠账，但要修）
 
-`/login`（订阅登录）现在有**两个互相矛盾的说法**：
+原来 `/login`（订阅登录）有**四处互相矛盾的说法**，其中三处由本报告点名：
 - `TerminalScreen.kt:72`：`"输入 pi 回车进入原版 TUI：订阅登录、会话导入、以及需要终端的扩展都在那边。"`（真的：`PtyLauncher.environment()` 带 `PI_CODING_AGENT_DIR`/`PI_CODING_AGENT_SESSION_DIR`，`:396-404`）
-- `PiSettingsRegistry.kt:315-327`（`app.credentials.oauth` 行，标题"订阅登录（本应用暂无入口）"）：注释写着「终端不是可用面」，正文说"订阅登录还没有入口"。
-- `PiSlashCommands.kt:287`：`"login" to "pi 有 /login；本应用没有对应入口。"`
+- `PiSettingsRegistry.kt:315-327`（`app.credentials.oauth` 行）说"订阅登录还没有入口"，注释还写着「终端不是可用面」。
+- `PiSlashCommands.kt` 的 `/login`、`/logout` 提示语说"本应用没有对应入口"。
+- **我上一轮漏报的第四处**：`PiRoot.kt` 里该行的动作答复也是"本应用没有入口"（点击后弹出的那句话）。
 
-能力上是对的（终端页能跑 `/login`，`interactive-mode.ts:3052-3060` → `handleLoginCommand:5485`）；错的是**其中两处文案否认了它**。仓库自己的规矩是「界面必须说真话，指向 pi TUI」，这里正好违反。建议以 `TerminalScreen.kt:72` 的措辞为准，统一成"本应用无原生入口，可在 工作区 → 终端 里运行 `pi` 后 `/login`"。
+**本批次**：三处改成指向事实路径（`PiSettingsRegistry` 的标题与正文、`PiSlashCommands` 的
+`login`/`logout` 两条、`PiRoot` 的动作答复），`PiSlashCommands` 的 KDoc 也按"哪里真的能跑"
+重新分组（login/logout 与另外七条不再共用一句"没有入口"）。`TerminalScreen.kt:72` 本来就是
+真话，**未改**。逻辑、颜色、导航都没动：动作仍然只给一句通知，不跳转。
 
 ---
 
@@ -380,7 +404,8 @@ pi 侧的上线集合 = `session.subscribe` 的事件（`AgentSessionEvent`，`c
 
 | 项 | pi 证据 | 为什么不做 |
 |---|---|---|
-| `pi update`（自更新，含托管安装与 npm/pnpm 两条路） | `package-manager-cli.ts:1022-1092`；`getSelfUpdatePlan` | App 钉死 `PI_VERSION = "0.85.1"`（`tools/fetch-runtime.mjs:190`）并按 revision 校验/解压载荷（`RuntimeProvisioner`）。让它自更新等于让被校验的产物自己变，`tools/pi-contract.mjs` 的全部断言（命令名、语义、扩展 API）会一起失效 |
+| `pi update`（自更新，含托管安装与 npm/pnpm 两条路） | `package-manager-cli.ts:1022-1092`；`getSelfUpdatePlan` | App 钉死 `PI_VERSION = "0.85.1"`（`tools/fetch-runtime.mjs:190`）并按 revision 校验/解压载荷（`RuntimeProvisioner`）。让它自更新等于让被校验的产物自己变，`tools/pi-contract.mjs` 的全部断言（命令名、语义、扩展 API）会一起失效。**代码层还有一道**：`PiPackageUpdate.plan` 直接拒绝位置参数 `self`/`pi`（pi 把它们编译成自更新目标，`package-manager-cli.ts:534-536`），所以界面上不存在能触发它的路径 |
+| `pi auth print-api-key` / `print-bearer-token` | `cli/auth-command.ts:18-22`；`main.ts:161-190`；`cli/credential-print.ts` | **有意不做**（本批次裁定）。凭据只写不显示是刻意的安全取舍：`auth.json` 由 App 以 `0600` 维护（`PiConfigFiles` 只收紧不放宽），而把长期 API Key / bearer token 明文显示或复制到剪贴板，在 Android 上任何应用都能读——净增风险、不增能力（凭证页 `PiCredentialScreen` 没有"显示已存密钥"，这是设计而非缺口）。这两条 pi 命令的用途是给**外部客户端**取凭据，手机上这个消费者不存在；`print-bearer-token` 顺带刷新 OAuth 令牌这一半，在终端页跑一次 `/login` 即可达到。**要重开的话只做 `print-bearer-token` 的显示/复制，并需再次确认** |
 | `--session-id <id>` | `args.ts:125-127`、`main.ts:431-443` | 只有外部编排器需要"我要这个 ID"；App 的 `new_session` 不需要 |
 | `--print` / `-p` | `args.ts:157-163`、`main.ts:118-120` | 给脚本一问一答；App 的对话页就是交互面 |
 | `pi experimental server` / `client`、`packages/protocol` | `cli/experimental/**`；`package.json:31-34` 把 `dist/cli/experimental`、`dist/experimental` 排除出发布物；`protocol.ts:5` `PROTOCOL_VERSION = 8` | **不在随包发出的产物里**，与我们的 RPC 协议是两套东西 |
@@ -462,7 +487,8 @@ App 的处置：`TuiOnlyScan.kt` 扫扩展源码给出提示 —— 这是能做
 | `cycle_model`（命令存在、无 UI） | `Commands.kt:133-141` | 用户裁决删除了溢出菜单入口；模型选择器已列出全部模型 |
 | `get_messages`（命令存在、无调用） | `PiEngineApi.kt:61-63` | 压缩后与 `get_entries` 不同，用它替换会丢历史 |
 | `setStatus` 收到但不绘制 | `PiSessionViewModel.onExtensionChrome`（`setStatus` 分支）+ `setExtensionStatus` 的 KDoc | 用户裁决 D-3 删除了扩展状态行；数据保留（"重新出现的成本是一个调用点"） |
-| 订阅登录（OAuth） | §10.4 | 无原生入口（终端页可达）；**但文案有两处说反了** |
+| 订阅登录（OAuth） | §10.4 | 无原生**表单**（终端页可达且是唯一入口）；文案已按事实统一（本批次） |
+| `pi auth print-api-key` / `print-bearer-token` | §11 的对应行 | 不在这张表里，归 §11「明确不做」：凭据只写不显示是安全取舍 |
 
 ---
 
@@ -472,7 +498,109 @@ App 的处置：`TuiOnlyScan.kt` 扫扩展源码给出提示 —— 这是能做
 2. **`--no-tools` / `--no-builtin-tools` 是否真的没有 App 入口。** 我读了 `defaultTools` 行与 `app.security.emergencyStop`（`PiSettingsRegistry.kt:1330-1340` + `PiRoot.kt:751-756`，它是 `abort`+`clear_queue`+`abort_bash`，**不是**关工具），也确认 `PiPreSpawnConfig` 两张表都没收这两个 flag。缺的证据：产品意图记录（"要不要一个读-only 会话"）。功能上 `defaultTools: []` 能关内置工具；"连扩展工具也关"没有通道（`sdk.ts:258-262` 的 `noTools:"all"` 只在 CLI）。
 3. **cache 浪费 / 按厂商成本拆分要不要复算。** 数据在 `get_entries` 里（每条 assistant 的 `usage`），pi 的算法在 `cache-stats.ts:138`/`usage-totals.ts:37`，而入口是 TUI 内建 `/session`（`interactive-mode.ts:6216-6222`）。我**没有**逐个语义核对这两段算法（例如"上一请求"的定义 `cache-stats.ts:107-147`），所以不主张"可以照抄"。缺的证据：`cache-stats.ts` 的逐行语义核对。
 4. **`pi auth check` 与 App 的"检测并扫描模型"是否在所有 provider 上等价。** pi 的判定是"本地有没有可用凭据 + 能不能解析"（`cli/auth-check.ts`），App 的是"发一次 `GET /models`"。对无模型列举接口的厂商（例如只支持 chat 的自定义端点）两者可能给出不同结论。缺的证据：`cli/auth-check.ts` 逐分支阅读 + 一次真机对比。
-5. **`docs/rpc-coverage.md` 的"32/33 有入口"已过期**（`cycle_model` 现在没有 UI）。我按代码判定为 31/33 有真实发送方。缺的证据：无 —— 这是**已确认的账本与代码冲突**，留给该文档的作者。
+5. **`docs/rpc-coverage.md` 的"32/33 有入口"已过期**（`cycle_model` 现在没有 UI）。我按代码判定为 31/33 有真实发送方。**该文档在本批次已按代码改正**（`cycle_model` 行 + 命令小结 + 结论 §7），不再算未确认。
 6. **`--session-id` / `--print` 的"手机不可用"分级**是我的产品判断（推断），没有代码依据可引。
 7. **`setSessionName` 的规范化提示。** pi 的 TUI 在名字被规范化时会提示（`interactive-mode.ts:6211-6213`），RPC 只回 `success`；App 拿不到"被规范化成了什么"，只能重读 `get_state`。这是 pi RPC 的信息缺失，不是我漏读 —— 但如果以后要显示，需要先确认 `get_state.sessionName` 足够。
+
+---
+
+## 15. 本批次（在 §0 的 revision 之上）：改了什么、没验什么
+
+### 15.1 符号清单
+
+| 模块 | 改动 |
+|---|---|
+| `packages/PiPackageUpdate.kt`（**新**） | 纯逻辑：`Plan`/`plan`（含 `self`/`pi` 拒绝）、`words`（注入 quoting）、`canUpdate`/`skipReason`、`resultLine`、`fallbackSummary` |
+| `packages/PiPackageService.kt` | `update(source, trust)`、`updateCommandLine(words, trust)`；`classify(..., timeoutMs)`；`restartRequirement(done, detail)`；`RESTART_DETAIL_INSTALL`/`RESTART_DETAIL_UPDATE`；结果行识别改用 `PiPackageUpdate.resultLine`（一个读者，三种动词） |
+| `packages/GuestCommand.kt` | `UPDATE_TIMEOUT_MS`（10 分钟，与 install 同：这条命令对每个来源做一次网络工作） |
+| `packages/PiPackagesHost.kt` | `PiPackagesController.update(entry)` / `updateAll()` / `runUpdate`；`finish(done, restartDetail)`；两个新回调接到屏幕 |
+| `packages/PiPackagesScreen.kt` | 新参数 `onUpdate` / `onUpdateAll`；`UpdateAllRow`；列表头下的 `UPDATE_NOTE` / `UPDATE_NOTHING_TO_UPDATE`；行内「更新」按钮（不可更新的来源显示理由句而不是按钮） |
+| `packages/PackageStrings.kt` | 6 条新字符串（`UPDATE_ALL_LABEL`、`UPDATE_LABEL`、`UPDATE_NOTE`、`UPDATE_NOTHING_TO_UPDATE`、`UPDATE_SKIP_PINNED`、`UPDATE_SKIP_LOCAL`、`UPDATE_REFUSED_SELF`） |
+| `ui/settings/PiSettingsRegistry.kt` | `app.credentials.oauth` 的标题与正文改为指向终端页；KDoc 更正 |
+| `ui/chat/PiSlashCommands.kt` | `login` / `logout` 提示语指向终端页；KDoc 把"没有入口"的说法收窄到另外七条 |
+| `ui/PiRoot.kt`（**越界一处，见 15.4**） | 该行的动作答复改成"到 工作区 → 终端 输入 pi 后 /login"；注释更正 |
+| `app/src/test/kotlin/app/pi/packages/PiPackageUpdateCheck.kt`（**新**） | 纯逻辑 harness（28 项断言），编译并跑绿（`harness: OK`），**尚未注册进脚本**（见 15.3） |
+| `docs/rpc-coverage.md` | `cycle_model` 行按代码改正；命令小结 32/33 → 31/33 并写明两条不发送的理由；§7 结论两处同步 |
+| `docs/pi-surface-audit-cli.md` | 本文件：§1 计数、§10.2/10.3/10.4、§11、§13、§14 第 5 条、新增 §15 |
+
+### 15.2 零副作用：调用点普查
+
+- `PiPackageService.update` 的调用点：**1 个**（`PiPackagesController.runUpdate`）。
+- `updateCommandLine`：1 个（`update` 内部）。
+- `PiPackageUpdate.*`：`PiPackageService`（plan/words/resultLine/fallbackSummary）、`PiPackagesController`（`canUpdate`、`ALL_WHAT`）、`PiPackagesScreen`（`canUpdate`、`skipReason`），以及新的 harness。
+- `restartRequirement` 新增的 `detail` **有默认值**，唯一的旧调用点（`finish`）签名也扩了默认值 → install/remove 的行为与文案**一字未变**。
+- `classify` 新增的 `timeoutMs` **有默认值**（`INSTALL_TIMEOUT_MS`），`mutate` 未改调用 → install/remove 的 TimedOut 文案不变。
+- 结果行识别由原来的"两动词内联"改成 `PiPackageUpdate.resultLine`（**加了第三个动词 `Updated `**）。对 install/remove 的输入集没有变化：那两个动词仍优先匹配第一条。
+- `PiPackagesScreen` 的 `PackageRow` 多了一个参数，唯一调用点是同一文件的列表循环；`UpdateAllRow` 是新私有 composable，无其他引用。
+- `GuestCommand.UPDATE_TIMEOUT_MS` 是新增常量，不改任何既有常量。
+
+### 15.3 harness 注册（`tools/run-app-pure-checks.sh` —— 本批次**没有**改它）
+
+把下面这一块贴在 `run_harness packages …` 之后（本文件不拥有该脚本，故只给命令行）：
+
+```bash
+# app.pi.packages: `pi update` 的 argv 形状、self/pi 拒绝、哪些来源可更新，以及
+# pi 自己的结果行识别（不能把 Updating 进度行当成结果）。纯 kotlin stdlib。
+run_harness pi-package-update \
+  app.pi.packages.PiPackageUpdateCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/packages/PiPackageUpdateCheck.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/packages/PiPackageUpdate.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/packages/PiPackageSource.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/packages/PackageStrings.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/packages/PiResourceDiscovery.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/packages/PiPackageModel.kt"
+```
+
+（最后两个文件是 `PackageStrings` 的签名里点名 `PiResourceDiscovery.Kind` 与
+`PiBuiltinExtension.Presence` 才需要，不是新依赖。）
+
+**本批次已经用上面这段配方手工跑过一次**（同一组文件、同一 `LIB_CP`/`KOTLINC_CP`，
+`build/pure-checks/out-audit-*`）：编译零诊断、`harness: OK (all checks passed)`。
+所以它是"验过、但还没写进脚本"的状态 —— 脚本本身不在本批次的所有权内，注册那一行留给它的主人。
+这一跑同时证明了一件事：`PiPackageUpdate.kt` 与它引用的 `PackageStrings.kt` 是**真纯的**
+（没有 `android.jar`、没有 Compose 也能编译），否则这一步会像设计那样失败。
+
+### 15.4 越界说明（请求追认或回退）
+
+任务给的边界里没有 `ui/PiRoot.kt`。但该文件里**还有同一处矛盾的第四份文案**（我在上一轮
+审计里漏报了它）：`app.credentials.oauth` 行点击后弹出的通知原文是"订阅登录要在 pi 的原版 TUI
+里做，**本应用没有入口**"。只改设置行的标题/正文、却让这一行的**点击结果**继续否认它，等于把
+矛盾留在同一个控件上。所以我把那句话改成了与其余三处一致的事实路径（**一行字符串 + 一段注释，
+没有动 `when` 的结构、没有动 `warning`、没有加导航**）。如果这条越界不被接受，回退
+`ui/PiRoot.kt` 即可，其余改动不依赖它。
+
+### 15.5 真机判据（更新一个已装包）
+
+1. **能拿到新版本**：装一个非精确版本的 npm 包（例如 `npm:@scope/name` 或 `npm:pkg@^1.0.0`），
+   在包管理页点该行「更新」→ 应看到 `pi update '<来源>'` 的 argv（日志卡）、pi 自己的
+   `Updated <来源>` 行、以及"需要重启引擎"卡片；点「全部更新」应看到 argv 是
+   `pi update --extensions`（**不是**裸 `pi update`）。
+2. **git 来源**：`git:host/u/r` 应能更新；精确版本的 npm 与本地路径**行内没有按钮**，
+   显示的是理由句。
+3. **失败有话说**：断网或在 `settings.json` 里改掉来源后点更新 → 应看到 pi 的原文
+   （`Error: …` / `No matching package found for …`），而不是空白或无提示。
+4. **诚实句在场**：列表头下的说明必须在按钮**上方**（不是结果之后），且点完更新后
+   `Done.Ok` 的行首句是 pi 的 `Updated …`，不是 App 自造的"已更新到新版本"。
+5. **设置里那行现在指向终端页**：设置 → 模型与推理 → 凭证 → 「订阅登录（在终端页里运行 pi）」，
+   标题与正文都指向 工作区 → 终端；点击后弹出的通知也指向同一个地方（不是"没有入口"）。
+   在终端页真的跑 `pi` → `/login` → 会看到 pi 的登录界面（这同时验证文案说的是真的）。
+6. **`/login` 手输**：在对话页输入 `/login` 回车 → 提示语应指向终端页，而不是"没有对应入口"。
+
+### 15.6 未做 / 未验证
+
+- **没有运行 Gradle / 没有跑 `:rpc:test` / 没有跑真机。** 静态检查只做了两项：
+  `tools/typecheck.sh`（全 `:app` 主源码，唯一报错是**未改动的**
+  `ui/settings/DiagnosticsReport.kt` 里 3 条 `unresolved reference 'BuildConfig'` —— 该脚本不生成
+  AAPT2 的 `BuildConfig` 存根，是既有环境缺口，与本批次无关），以及 §15.3 那次手工 harness。
+  **Compose 编译器插件的 composable 调用规则仍未验证**：新增的 `UpdateAllRow` 与改过的
+  `PackageRow` 没有编译器背书（`typecheck.sh` 明确不跑该插件）。
+- **新增 harness 没写进 `tools/run-app-pure-checks.sh`**（该文件不在本批次所有权内，且并发批次
+  正在改它）。注册块与"已手工跑绿"的说明都在 §15.3。
+- **`pi update --models` 仍然没有入口**（有意：pi 在 RPC 启动时已后台刷新目录）。
+- **"有没有新版本"仍然看不到**，且这是有证据的不可达（`checkForAvailableUpdates` 只有
+  pi 的终端界面会调），不是没做；若以后要，得走终端页或自己实现一次 npm/git 版本比较
+  （那会是新功能，不属于"1:1"）。
+- **`--no-tools` / `--no-builtin-tools`、扩展 flag** 未动（前者仍在 §14，后者仍是 §10.1 的欠账）。
+- **`ui/PiRoot.kt` 的越界改动没有被真机看过**（§15.4）：文案与设置行的指向一致，但
+  "点一下那一行"的端到端只有真机能证（判据见 §15.5 第 5 条）。
 <br>

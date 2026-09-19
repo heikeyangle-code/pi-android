@@ -267,6 +267,19 @@ run_harness packages \
   "$ROOT/app/src/main/kotlin/app/pi/packages/ExtensionLifecycle.kt" \
   "$ROOT/rpc/src/main/kotlin/app/pi/rpc/Ansi.kt"
 
+# app.pi.packages: `pi update`'s argv shape, the refusal of pi's self-update targets
+# (`self`/`pi` would replace the pinned engine payload), which sources are updateable at
+# all, and the recognition of pi's own result line — the progress line must not be mistaken
+# for a result. Pure kotlin stdlib.
+run_harness pi-package-update \
+  app.pi.packages.PiPackageUpdateCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/packages/PiPackageUpdateCheck.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/packages/PiPackageUpdate.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/packages/PiPackageSource.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/packages/PackageStrings.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/packages/PiResourceDiscovery.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/packages/PiPackageModel.kt"
+
 # app.pi.bridge: the A3 guest→host candidate order. Pure string arithmetic, no
 # Android and no filesystem — see the file header.
 run_harness guest-paths \
@@ -721,7 +734,8 @@ run_harness workspace-pi-write \
 run_harness workspace-choice \
   app.pi.runtime.WorkspaceChoiceCheckKt \
   "$ROOT/app/src/test/kotlin/app/pi/runtime/WorkspaceChoiceCheck.kt" \
-  "$ROOT/app/src/main/kotlin/app/pi/runtime/WorkspaceChoice.kt"
+  "$ROOT/app/src/main/kotlin/app/pi/runtime/WorkspaceChoice.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/runtime/GuestWorkspacePath.kt"
 
 # app.pi.ui.extension: the notice queue's eviction rule. The host shows one snackbar at a
 # time, oldest first, and consumes an entry only after it has been shown — so the head of
@@ -742,6 +756,18 @@ run_harness mentions-unavailable \
   "$ROOT/app/src/test/kotlin/app/pi/ui/chat/MentionLookupCheck.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/ui/chat/MentionLookup.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/ui/chat/PiFileMentions.kt"
+
+# app.pi.ui.chat: in-session branch navigation (`navigateTree`), which pi's RPC surface
+# cannot reach directly — the app drives it through a command its own extension registers,
+# so "the prompt call returned" is the only completion signal there is, and the branch that
+# has to be *excluded* is the abandoned one (the session file keeps it; only the in-memory
+# leaf says which line is live). This pins the landing rules, the summary choice, the
+# command arguments, and the outcome classification — including the arms that must not
+# rebuild the transcript, because "reset with nothing to show" is its own bug.
+run_harness tree-navigation \
+  app.pi.ui.chat.PiTreeNavigationCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/ui/chat/PiTreeNavigationCheck.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/ui/chat/PiTreeNavigation.kt"
 
 # --- 4. verdict ---------------------------------------------------------------
 # The counts are computed, not written down. They were hardcoded once ("2

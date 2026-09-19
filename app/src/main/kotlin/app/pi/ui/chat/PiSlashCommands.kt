@@ -268,11 +268,21 @@ val PI_BUILTIN_SLASH_COMMANDS: List<PiSlashCommand> = listOf(
  * point; both are stable. The three entries that name a surface do so because the
  * user ruled that the *palette* should not be a second door to a screen that is
  * already on the chat page — they are not navigation targets, so nothing here
- * needs to be wired to a `NavRequest`. The other nine say only that pi has the
- * command and this app has no entry for it: **do not** turn them into Settings
- * paths. That is precisely the shape that was deleted (a row that tells the user
- * to go and configure something themselves), and re-adding it here would put it
- * back on a different surface.
+ * needs to be wired to a `NavRequest`.
+ *
+ * The rest fall into two shapes, and the difference is a fact about pi rather than
+ * a wording choice:
+ *
+ *  - **`login` / `logout` name where the ability actually lives**: pi's OAuth flow
+ *    exists only inside its interactive UI (`interactive-mode.ts:5485`
+ *    `handleLoginCommand`, from `/login` at `:3052-3060`), and the terminal page runs
+ *    exactly that (`PtyLauncher` hands the guest shell the same agent dir the engine
+ *    uses). So the sentence points at the terminal, because that is where the command
+ *    works — it is **not** a Settings path, which is the shape that was deleted.
+ *  - **the remaining seven say only that pi has the command and this app has no
+ *    entry**: **do not** turn them into Settings paths. That is precisely the shape
+ *    that was deleted (a row that tells the user to go and configure something
+ *    themselves), and re-adding it here would put it back on a different surface.
  */
 val PI_UNLISTED_BUILTIN_COMMANDS: Map<String, String> = mapOf(
     // Group B in [PI_BUILTIN_SLASH_COMMANDS]: the ability has a direct surface on
@@ -284,8 +294,10 @@ val PI_UNLISTED_BUILTIN_COMMANDS: Map<String, String> = mapOf(
     // states that honestly and stops there — no path, no "go and do it".
     "scoped-models" to "pi 有 /scoped-models；本应用没有对应入口。",
     "trust" to "pi 有 /trust；本应用没有对应入口。",
-    "login" to "pi 有 /login；本应用没有对应入口。",
-    "logout" to "pi 有 /logout；本应用没有对应入口。",
+    // Not "no entry": pi's login is an interactive-TUI command and the terminal page
+    // runs that TUI, so the true sentence is where to run it. Same for logout.
+    "login" to "pi 有 /login；本应用没有内建表单——到 工作区 → 终端 输入 pi 回车，再运行 /login。",
+    "logout" to "pi 有 /logout；同上，到 工作区 → 终端 的原版 TUI 里运行。",
     "reload" to "pi 有 /reload；本应用没有对应入口。",
     // Group A: this platform cannot deliver the ability at all.
     "share" to "pi 有 /share；本应用没有对应入口。",

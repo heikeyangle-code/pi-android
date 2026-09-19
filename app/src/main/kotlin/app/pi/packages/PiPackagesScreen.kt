@@ -184,6 +184,16 @@ fun PiPackagesScreen(
     onInstall: () -> Unit,
     onRemove: (PiPackageEntry) -> Unit,
     /**
+     * `pi update <entry>` — one package, by the source string `pi list` printed.
+     *
+     * The screen decides *whether* to offer it from [PiPackageUpdate.canUpdate], and
+     * the host refuses the same sources again; both read pi's own rule (pinned npm and
+     * local paths are not update candidates, `core/package-manager.ts:1103-1110`).
+     */
+    onUpdate: (PiPackageEntry) -> Unit,
+    /** `pi update --extensions` — every configured package. */
+    onUpdateAll: () -> Unit,
+    /**
      * Edit one of the four glob arrays of a package's object form. pi stores them
      * in `settings.json` (`core/settings-manager.ts:95-104`) and reads them when
      * it starts, so the host writes them and reports that a restart is needed.
@@ -273,6 +283,22 @@ fun PiPackagesScreen(
             if (state.projectPackagesHidden) {
                 PiInfoNote(PackageStrings.PROJECT_PACKAGES_HIDDEN, tone = palette.warning)
             }
+            // The update action, and the two sentences that make it honest. Both are
+            // shown *above* the rows so the caveat is read before the button, not after
+            // a result that cannot be told apart from a no-op: pi prints one and the
+            // same `Updated …` line either way (`package-manager-cli.ts:1013-1021`),
+            // and it has no "is there a newer version?" query on this path at all
+            // (`checkForAvailableUpdates` exists but only pi's terminal UI calls it,
+            // `modes/interactive/interactive-mode.ts:1054`). Offering the button only
+            // when pi can actually change something is the other half.
+            if (state.entries.isNotEmpty()) {
+                if (state.entries.any { PiPackageUpdate.canUpdate(it.source) }) {
+                    UpdateAllRow(state.busy, onUpdateAll)
+                    PiInfoNote(PackageStrings.UPDATE_NOTE)
+                } else {
+                    PiInfoNote(PackageStrings.UPDATE_NOTHING_TO_UPDATE)
+                }
+            }
             if (state.entries.isEmpty()) {
                 // Three different facts, three different sentences. "Nothing ran" must
                 // never read as "nothing is installed" — that is the lie this branch
@@ -291,7 +317,7 @@ fun PiPackagesScreen(
                 PiSettingsCard {
                     state.entries.forEachIndexed { index, entry ->
                         if (index > 0) PiSettingsHairline()
-                        PackageRow(entry, state.busy, onRemove, onFilterAdd, onFilterRemove)
+                        PackageRow(entry, state.busy, onRemove, onUpdate, onFilterAdd, onFilterRemove)
                     }
                 }
             }
@@ -1044,6 +1070,34 @@ private fun InstallCard(
     }
 }
 
+// ---------------------------------------------------------------- update action
+
+/**
+ * The one "update everything" affordance, above the rows.
+ *
+ * An `OutlinedButton` in the same shape the install card's 刷新列表 uses, rather than
+ * a bare `TextButton`: this is a command that goes to the network for every installed
+ * package, and it should not look like a row's inline edit link. The caveat it needs
+ * (`PackageStrings.UPDATE_NOTE`) is rendered by the caller, directly under it, so the
+ * button and the sentence that limits what it can claim travel together.
+ */
+@Composable
+private fun UpdateAllRow(busy: Boolean, onUpdateAll: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(
+                start = PiSettingsMetrics.pageHorizontal,
+                end = PiSettingsMetrics.pageHorizontal,
+                top = PiSettingsMetrics.cardPaddingLoose,
+            ),
+    ) {
+        OutlinedButton(onClick = onUpdateAll, enabled = !busy) {
+            Text(if (busy) PackageStrings.RUNNING else PackageStrings.UPDATE_ALL_LABEL)
+        }
+    }
+}
+
 // ----------------------------------------------------------------- package row
 
 @Composable
@@ -1051,6 +1105,7 @@ private fun PackageRow(
     entry: PiPackageEntry,
     busy: Boolean,
     onRemove: (PiPackageEntry) -> Unit,
+    onUpdate: (PiPackageEntry) -> Unit,
     onFilterAdd: (PiPackageEntry, String, String) -> Unit,
     onFilterRemove: (PiPackageEntry, String, String) -> Unit,
 ) {
@@ -1148,8 +1203,21 @@ private fun PackageRow(
                 )
             }
             Spacer(Modifier.height(PiSpacing.inline))
-            TextButton(onClick = { onRemove(entry) }, enabled = !busy) {
-                Text(PackageStrings.REMOVE_LABEL, color = palette.error)
+            Row(horizontalArrangement = Arrangement.spacedBy(PiSpacing.inline)) {
+                TextButton(onClick = { onRemove(entry) }, enabled = !busy) {
+                    Text(PackageStrings.REMOVE_LABEL, color = palette.error)
+                }
+                // A source pi would not touch gets the sentence instead of a button:
+                // the button would run a command whose only possible outcome is the
+                // same `Updated …` line over nothing (`PiPackageUpdate.canUpdate`).
+                val skip = PiPackageUpdate.skipReason(entry.source)
+                if (skip == null) {
+                    TextButton(onClick = { onUpdate(entry) }, enabled = !busy) {
+                        Text(PackageStrings.UPDATE_LABEL, color = palette.accent)
+                    }
+                } else {
+                    Text(text = skip, style = PiTheme.text.meta, color = palette.dim)
+                }
             }
         }
     }

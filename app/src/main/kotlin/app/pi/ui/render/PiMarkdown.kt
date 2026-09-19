@@ -3,6 +3,9 @@ package app.pi.ui.render
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -12,7 +15,9 @@ import app.pi.highlight.PiNodeCodeHighlighter
 import app.pi.ui.theme.PiTheme
 import com.mikepenz.markdown.compose.Markdown
 import com.mikepenz.markdown.model.ReferenceLinkHandlerImpl
+import com.mikepenz.markdown.model.State
 import com.mikepenz.markdown.model.markdownAnimations
+import com.mikepenz.markdown.model.rememberMarkdownState
 import org.intellij.markdown.flavours.gfm.GFMFlavourDescriptor
 import org.intellij.markdown.parser.MarkdownParser
 
@@ -153,6 +158,39 @@ internal fun PiMarkdownText(
     val flavour = remember { GFMFlavourDescriptor() }
     val parser = remember(flavour) { MarkdownParser(flavour) }
     val references = remember { ReferenceLinkHandlerImpl() }
+    // The library's parse state, built here instead of inside `Markdown(content = …)` for one
+    // reason: **the state is the only place the parse's completion can be seen**, and the
+    // row's height floor has to be released by it (see `LocalPiMarkdownParsed`, and
+    // `TranscriptRowHeight` for the collapse-then-grow the frame-count window it replaces
+    // could produce).
+    //
+    // The arguments are exactly the ones the library's `content` overload would have built
+    // its own state with — `rememberMarkdownState(content, lookupLinks, retainState, flavour,
+    // parser, referenceLinkHandler, immediate)` (renderer 0.45.0 metadata; `lookupLinks`
+    // defaults to `true`, which the parse's reference-link handler relies on, so it is passed
+    // explicitly rather than inherited) — and `retainState = true` / `immediate = immediate`
+    // are the two behavioural switches the KDoc below argues for. Nothing else changes: the
+    // rendering call below is the library's own `Markdown(state = …)` overload, which is what
+    // the `content` overload delegates to anyway.
+    val markdownState = rememberMarkdownState(
+        content = content,
+        lookupLinks = true,
+        retainState = true,
+        flavour = flavour,
+        parser = parser,
+        referenceLinkHandler = references,
+        immediate = immediate,
+    )
+    // The completion signal for the row above. `collectAsState` on the library's own
+    // `StateFlow`; the effect is keyed on the state so it fires once per transition into
+    // `State.Success` (a content change puts the state back to `Loading` — `retainState` only
+    // keeps the *previous content* visible — so this correctly fires again for the new
+    // document).
+    val parsedState by markdownState.state.collectAsState()
+    val onParsed = LocalPiMarkdownParsed.current
+    LaunchedEffect(parsedState, onParsed) {
+        if (onParsed != null && parsedState is State.Success) onParsed()
+    }
     // A3, the image seam — three wiring points, and all three are needed:
     //
     //  1. this provider fills **our** local, which is what [PiImagePlaceholder]
@@ -176,25 +214,28 @@ internal fun PiMarkdownText(
     // silent request from composition would leak the user's IP. Those links keep the
     // alt + source fallback.
     val imageTransformer = rememberPiGuestImageTransformer()
+    // What one eager row actually costs the frame, measured rather than estimated: the parse
+    // (`parseBlocking`, run inside `rememberMarkdownState`) **and** the composition of the
+    // node tree it produces, both of which are inside the `Markdown` call below. It is billed
+    // to the shared frame budget that decided this row was allowed to be eager — see
+    // `MarkdownParseBudget` for the measurements the 4 ms figure rests on and for why the bill
+    // is elapsed time and not a character count.
+    val parseStartedNanos = if (immediate) System.nanoTime() else 0L
     CompositionLocalProvider(
         LocalPiCodeHighlighter provides PiNodeCodeHighlighter,
         LocalPiImageTransformer provides imageTransformer,
     ) {
         Markdown(
-            content = content,
+            // The state built above, not the `content` overload: the state is what makes the
+            // parse's completion observable to the row. Every other argument is the same one
+            // the content overload would have received.
+            markdownState = markdownState,
             colors = colors,
             typography = typography,
             padding = piMarkdownPadding,
             dimens = piMarkdownDimens,
             imageTransformer = imageTransformer,
             components = components,
-            // The three stable instances built above. Omitting them is what let the library
-            // rebuild its own per execution and re-parse the whole document per
-            // recomposition; see the KDoc on those `remember`s for the mechanism and the
-            // measured numbers.
-            flavour = flavour,
-            parser = parser,
-            referenceLinkHandler = references,
             // Two library defaults this renderer must not inherit. Both are about the
             // *streaming* case, and both were inherited silently until
             // `docs/streaming-review.md` §2.3/§2.4 — the streaming row is the one row
@@ -240,7 +281,8 @@ internal fun PiMarkdownText(
             // wrapper contributed nothing else here: this call already passes its own
             // colours, typography, dimens, padding, components and image transformer,
             // which is everything the wrapper would have supplied.
-            retainState = true,
+            // (Now an argument of `rememberMarkdownState` above: it is a property of the
+            // *state*, not of the rendering call.)
             animations = markdownAnimations(animateTextSize = { this }),
             // 3. `immediate`: upstream defaults it to `false`, i.e. every first composition
             //    of a row draws `State.Loading` — an **empty `Box`**, zero height — for one
@@ -251,10 +293,17 @@ internal fun PiMarkdownText(
             //    *above* — which is what 「加载更早」 hands the reader — pushes every visible
             //    row down by its own height when it arrives. `RowHeightCache` covers a row
             //    that has been measured before; this covers the one that has not, and the
-            //    caller decides which rows those are (`PiMarkdownImmediate.kt`).
-            immediate = immediate,
+            //    caller decides which rows those are (`PiMarkdownImmediate.kt`, where the
+            //    frame budget that thins a crowd of eager rows is also described).
+            //    (Now an argument of `rememberMarkdownState` above, like `retainState`.)
             modifier = modifier,
         )
+        if (immediate) {
+            piMarkdownParseBudget.chargeNanos(
+                nowNanos = System.nanoTime(),
+                costNanos = System.nanoTime() - parseStartedNanos,
+            )
+        }
     }
 }
 
@@ -326,16 +375,36 @@ internal fun piMarkdownSource(markdown: String): String {
 private fun applyMath(text: String, start: Int, end: Int): String {
     val run = text.substring(start, end)
     if (!run.contains('$')) return run
-    val block = BLOCK_MATH.replace(run) { match ->
-        // The trailing newline is part of the match, so a display formula keeps
-        // its own line instead of being glued into the following paragraph.
-        PiLatex.toDisplayUnicode(match.value) ?: match.value
+    // **Both passes are guarded, and both guards are exact.** The `contains('$')` above
+    // already skips the whole run when nothing can match; the extra `$$` test below skips
+    // only the display-math pass, whose pattern cannot match without that literal pair
+    // (its lookbehind is zero-width, so the match still has to start at `$$`). Without it
+    // that pass walks the entire run to conclude "no display formula here" — measured at
+    // 0.36–1.32 ms for a 5.9 KB run on a phone, against 0.40 ms for the guarded version,
+    // on every recomposition where the markdown text changed, i.e. once per streamed token
+    // update while a message is arriving (`docs/scroll-perf-items.md` §3). `Regex.replace`
+    // with no match returns its input, so skipping the call can only change which *instance*
+    // of an identical string reaches the next pass.
+    val block = if (run.contains(BLOCK_MATH_MARKER)) {
+        BLOCK_MATH.replace(run) { match ->
+            // The trailing newline is part of the match, so a display formula keeps
+            // its own line instead of being glued into the following paragraph.
+            PiLatex.toDisplayUnicode(match.value) ?: match.value
+        }
+    } else {
+        run
     }
     return INLINE_MATH.replace(block) { match ->
         val source = match.value
         PiLatex.toUnicode(source.substring(1, source.length - 1)) ?: source
     }
 }
+
+/**
+ * The one literal `BLOCK_MATH`'s pattern requires. Kept beside the pattern so the guard in
+ * [applyMath] cannot drift away from it.
+ */
+private const val BLOCK_MATH_MARKER = "\$\$"
 
 /**
  * An opening code fence at the current position: up to three spaces, then three

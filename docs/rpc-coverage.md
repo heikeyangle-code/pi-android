@@ -48,7 +48,7 @@
 | `new_session` | `rpc-types.ts:27`；`rpc-mode.ts:437-444` | 完整 | `Commands.kt:91`；`PiEngineApi.kt:297`；`PiSessionViewModel.kt:2067-2076`；UI：`ChatScreen.kt:531,611`、`SessionsScreen.kt:205,233` | 已经有 | `pi 有 rpc-types.ts:27`；一致。`cancelled`（`session_before_switch` 否决）会提示用户 |
 | `get_state` | `rpc-types.ts:30`；`rpc-mode.ts:450-466` | 完整 | `Commands.kt:99`；`PiEngineApi.kt:58`；`PiSessionViewModel.kt:1556-1573`；另有 `PiEngineSession.kt:345`（就绪探针）、`:743-748`（收尾时用 `isStreaming`/`isCompacting` 判断要不要先 abort） | 已经有 | `pi 有 rpc-types.ts:30`；一致。`isCompacting`/`pendingMessageCount` 被解析但只有 `isStreaming`/`isCompacting` 在引擎收尾路径用（`PiEngineSession.kt:743-748`）；UI 的“正在压缩”来自 `compaction_start`/`end` 事件而不是这个字段 |
 | `set_model` | `rpc-types.ts:33`；`rpc-mode.ts:472-480` | 完整 | `Commands.kt:105`；`PiEngineApi.kt:137`；`PiSessionViewModel.kt:1879-1893`；UI：`ChatScreen.kt:1070-1073`（模型选择器） | 已经有 | `pi 有 rpc-types.ts:33`；一致 |
-| `cycle_model` | `rpc-types.ts:34`；`rpc-mode.ts:482-488` | 完整 | `Commands.kt:112`；`PiEngineApi.kt:149`；`PiSessionViewModel.kt:1896-1911`；UI：`ChatScreen.kt:659`（模型行点击） | 已经有 | `pi 有 rpc-types.ts:34`；一致。`data: null`（只有一个模型）有提示；响应里的 `isScoped` 解析后未展示（内部状态，无 UI 义务） |
+| `cycle_model` | `rpc-types.ts:34`；`rpc-mode.ts:482-488` | 完整（协议 + 封装） | `Commands.kt:142`；`PiEngineApi.kt:149-153` | **不需要**（有理由，已复核于 `5a49bdc` 工作树） | **一致或有意偏离**。全树没有调用者：`PiSessionViewModel` 里没有这个函数，`ChatScreen` 也没有模型行点击入口——溢出菜单里那个入口按用户裁决删除了（理由写在 `Commands.kt:133-141` 的 KDoc：循环是键位习惯，而模型选择器已经列出全部模型）。本行原来写的 `PiSessionViewModel.kt:1896-1911` / `ChatScreen.kt:659` 已随该裁决消失，**这一句是过期证据，本次按代码改正**。响应里的 `isScoped` 仍被解析但无处展示（内部状态，无 UI 义务） |
 | `get_available_models` | `rpc-types.ts:35`；`rpc-mode.ts:490-493` | 完整 | `Commands.kt:114`；`PiEngineApi.kt:108`；`PiSessionViewModel.kt:1593-1597`；UI：`ChatScreen.kt:506,575,672,849,1074` | 已经有 | `pi 有 rpc-types.ts:35`；一致 |
 | `set_thinking_level` | `rpc-types.ts:38`；`rpc-mode.ts:499-502` | 完整 | `Commands.kt:118`；`PiEngineApi.kt:158`；`PiSessionViewModel.kt:1857-1859`；UI：`ChatScreen.kt:1081` | 已经有 | `pi 有 rpc-types.ts:38`；一致。显示值以 `thinking_level_changed` 为准（pi 会钳制） |
 | `cycle_thinking_level` | `rpc-types.ts:39`；`rpc-mode.ts:504-510` | 完整 | `Commands.kt:124`；`PiEngineApi.kt:169`；`PiSessionViewModel.kt:1862-1876`；UI：`ChatScreen.kt:668,992` | 已经有 | `pi 有 rpc-types.ts:39`；一致 |
@@ -74,7 +74,7 @@
 | `get_messages` | `rpc-types.ts:71`；`rpc-mode.ts:674-676` | 完整（协议 + 封装） | `Commands.kt:101`；`Responses.kt:453-455`（函数在 `:454`）；`PiEngineApi.kt:62` | **不需要**（有理由） | **一致或有意偏离**。全树没有 UI 调用点：App 的对话流以 `get_entries` 的会话记录为准（`TranscriptReducer.seedFromHistory`），那才是 pi 自己 TUI 也画的那份；`get_messages` 返回的是进程内 `session.messages`，在压缩后与记录不同，用它替换会**丢掉历史**。因此不做界面，且不在本文件里把它算成缺口。`PiMessage` 类型本身仍被 `SessionEntries.kt` 用来解析记录里的消息 |
 | `get_commands` | `rpc-types.ts:74`；`rpc-mode.ts:682-713` | 完整 | `Commands.kt:229`；`PiEngineApi.kt:128`；`PiSessionViewModel.kt:1610-1619`；UI：`PiSlashCommands.kt:199-224`、`ChatScreen.kt:907-930` | 已经有 | `pi 有 rpc-types.ts:74`；一致。扩展命令、模板、技能（`skill:`）都进 `/` 面板，带 `sourceInfo` 来源标记 |
 
-**命令小结**：33/33 有 builder，33/33 有调用层封装，32/33 有用户可见入口；唯一没有界面的是 `get_messages`，且理由是“用了会丢历史”。
+**命令小结**：33/33 有 builder，33/33 有调用层封装，**31/33 有用户可见入口**。两条**从不发送**，理由不同：`get_messages` 是"用了会丢历史"（见本行），`cycle_model` 是溢出菜单入口按用户裁决删除（见本行）。两条都保留 builder 与封装：`:rpc` 是 pi 命令面的完整转录，去掉就再也无法声明"协议面 1:1"。
 
 ---
 
@@ -244,20 +244,22 @@
 - 真机行为没有验证：改动 1、2 需要一台跑着 pi 引擎的设备才能端到端确认（队列里真有消息
   时按 Stop、回合中从面板选模板）。代码路径与 pi 源码的对照是确定的，端到端仍是“需要设备上的
   X”。
-- `get_messages` 保持无界面，理由见 §1；如果以后要“给模型看的上下文”视图（而不是对话记录），
-  那才是它的用途，属于新功能而不是协议缺口。
+- `get_messages` 与 `cycle_model` 保持无界面，理由见 §1；如果以后要“给模型看的上下文”视图
+  （而不是对话记录），那才是 `get_messages` 的用途，属于新功能而不是协议缺口；
+  `cycle_model` 要回来只需给模型选择器加一个“下一个”按钮，同样是新功能。
 
 ## 7. 结论（直接回答三个问题）
 
 1. **不是“缺协议项”，而是“协议面已经 100% 抵达 App”**：33/33 命令、9/9 扩展 UI 方法、
    26/26 事件记录类型、12/12 delta 都有解析与处理（§1–§3 每行都有 grep 出来的证据）。
    真正缺的只有两类：**(a) pi 在 RPC 模式下根本不发的东西**（§4 标 `pi 有但我们够不着`
-   的那些 no-op / 无命令项，属于“协议里没有”）；**(b) 三项接了但用错/没落 UI**
-   （`get_messages` 无消费者——有意偏离；`extension_error` 的归因字段没人用——已补；
+   的那些 no-op / 无命令项，属于“协议里没有”）；**(b) 两条命令有封装但从不发送**
+   （`get_messages`——用它替换会丢历史；`cycle_model`——入口按用户裁决删除；
+   `extension_error` 的归因字段没人用——已补；
    `clear_queue`/`streamingBehavior` 两处语义用错——已修）。
 2. **必须体现在 UI 上的**：失败要能归因（改动 3）、Stop 要能拿回排队文本（改动 1）、
    回合中选模板/技能要能排队而不是报错（改动 2）。**不需要 UI 的**：`get_messages`
-   （与对话记录重复且更差）、`cycle_model.isScoped`、`get_state.pendingMessageCount`、
+   （与对话记录重复且更差）、`cycle_model` 及其 `isScoped`、`get_state.pendingMessageCount`、
    `bash_execution_update.id`、`turn_end` 的逐条 `toolResults`——纯内部状态，用户没有可看/可点的东西。
 3. **扩展协议面的界面落点**：dialog 四件套、fire-and-forget 五件套、`extension_error`、
    注册命令（`/` 面板）、状态栏、部件、三个可被否决的钩子（switch/fork/compact）现在都有；

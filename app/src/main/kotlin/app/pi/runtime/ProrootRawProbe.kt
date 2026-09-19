@@ -60,6 +60,24 @@ package app.pi.runtime
  */
 object ProrootRawProbe {
 
+    /**
+     * The three headers [Report.describe] writes, as constants rather than literals.
+     *
+     * They are read back by [ProrootProbeNarrative], which has to name the failing
+     * stage of a **cached** verdict: the cache stores these human lines and nothing
+     * else, so a header is the only place a stage name survives a process restart.
+     * Sharing the constants is what keeps a reworded header from silently degrading
+     * the settings row to "缓存里没有逐阶段记录"; both the `proroot` and the
+     * `proroot-probe-detail` harnesses build lines through [Report.describe] and read
+     * them back through the narrative, so the pairing is executed rather than asserted.
+     */
+    const val PASS_HEADER = "✓ raw syscall 探针通过"
+    const val FAILURE_HEADER = "✗ raw syscall 探针未通过"
+    const val NOT_RUN_HEADER = "raw syscall 探针未运行"
+
+    /** `header：detail` — the separator all three headers above use. */
+    const val HEADER_SEPARATOR = "："
+
     /** Every output line starts with this, so shell noise is ignored. */
     const val MARKER = "PI-PROROOT-RAW"
 
@@ -78,6 +96,20 @@ object ProrootRawProbe {
      * named in one place and can be cited by the docs and the device checklist.
      */
     const val REQUIRE_TRANSLATION = true
+
+    /**
+     * The phase verdicts the guest script emits and this parser compares against, as
+     * constants: [ProrootProbeNarrative] names the failing phase of a **cached** verdict
+     * from these tokens, so a token spelled twice would let the two disagree.
+     *
+     * [LEAKED] and [MISMATCH] are the two spellings of `Report.leaked`;
+     * [UNTRANSLATED] is the token behind `!Report.translated`, and [TRANSLATED] the one
+     * behind it.
+     */
+    const val TRANSLATED = "translated"
+    const val UNTRANSLATED = "untranslated"
+    const val LEAKED = "leaked"
+    const val MISMATCH = "mismatch"
 
     /** One measured phase. */
     data class Phase(val verdict: String, val detail: String)
@@ -101,7 +133,7 @@ object ProrootRawProbe {
 
         /** The raw syscall read a *different* file than libc did for the same path. */
         val leaked: Boolean
-            get() = verdict("passwd") == "leaked" || verdict("guestpath") == "mismatch"
+            get() = verdict("passwd") == LEAKED || verdict("guestpath") == MISMATCH
 
         /** proroot translated at least one raw path read. */
         val translated: Boolean
@@ -125,16 +157,18 @@ object ProrootRawProbe {
 
         /** The evidence lines, for the diagnostic report. */
         fun describe(): List<String> {
-            if (interpreter != null) return listOf("raw syscall 探针未运行：guest 里没有 $interpreter")
+            if (interpreter != null) {
+                return listOf("$NOT_RUN_HEADER$HEADER_SEPARATOR" + "guest 里没有 $interpreter")
+            }
             val order = listOf("guestpath", "hostpath", "passwd")
             val lines = order.mapNotNull { phase ->
                 phases[phase]?.let { "  $phase=${it.verdict}（${it.detail}）" }
             }
-            return listOf(if (passed) "✓ raw syscall 探针通过" else "✗ raw syscall 探针未通过：$failure") + lines
+            return listOf(
+                if (passed) PASS_HEADER else "$FAILURE_HEADER$HEADER_SEPARATOR$failure",
+            ) + lines
         }
     }
-
-    private const val TRANSLATED = "translated"
 
     /**
      * The guest script.

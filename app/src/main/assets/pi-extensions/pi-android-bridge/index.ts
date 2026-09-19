@@ -1388,6 +1388,139 @@ export default function (pi: ExtensionAPI) {
 		},
 	});
 
+	// pi's in-session tree navigation, as a command the app can dispatch.
+	//
+	// ## Why a command is the only way in
+	//
+	// `navigateTree` moves the leaf **inside the current session file** — unlike `fork`,
+	// which writes a new one (`core/agent-session.ts:3126-3127`). The RPC protocol has no
+	// command for it (`modes/rpc/rpc-types.ts:20-74`: the whole tree surface is `get_tree`,
+	// `get_entries`, `fork`, `clone`, `switch_session`, `new_session`), but `rpc-mode.ts`
+	// **does** wire it for extensions (`commandContextActions.navigateTree`, `:329-335`),
+	// and `ctx.navigateTree` is declared on the command context
+	// (`core/extensions/types.ts:375-379`).
+	//
+	// The app dispatches it as a `prompt` whose text starts with `/`
+	// (`agent-session.ts:1183-1184` → `_tryExecuteExtensionCommand`), the same shape
+	// `device-reload` above uses. Two properties of that path matter to the caller and are
+	// relied on by `PiSessionViewModel.navigateTo`:
+	//
+	//  - the handler is **awaited before the RPC response is emitted**
+	//    (`agent-session.ts:1184-1188` calls `preflightResult(true)` after the await, and
+	//    `rpc-mode.ts:401-406` outputs the success response from there), so a caller that
+	//    awaits the response knows the navigation is over. There is no event otherwise: pi
+	//    emits the *extension* event `session_tree` (`:3315-3321`) and RPC forwards
+	//    `AgentSessionEvent` only (`rpc-mode.ts:356`);
+	//  - an **unregistered** command name is not an error — `_tryExecuteExtensionCommand`
+	//    returns false (`:1338`) and the text goes to the model as an ordinary user turn
+	//    (`:1198-1218`). The app therefore checks `get_commands` before dispatching.
+	//
+	// ## The argument text
+	//
+	// pi splits the command line on the **first space only** (`:1333-1335`), so everything
+	// after the command name arrives verbatim — including spaces, quotes and newlines. The
+	// app sends one JSON object for that reason (`ui/chat/PiTreeNavigation.kt`
+	// `navigateCommandArgs`), and `JSON.parse` is the whole parser here:
+	// `customInstructions` is text a user typed, so a positional grammar would be ambiguous
+	// the first time it contained a space.
+	//
+	// ## What it does not decide
+	//
+	// Nothing about the *question* ("Summarize branch?") — that is the caller's, and the app
+	// asks it with pi's own three answers, honouring `branchSummary.skipPrompt`
+	// (`interactive-mode.ts:5236-5263`). This handler maps exactly the four options
+	// `navigateTree` takes, reports pi's outcome, and hands back the text pi says belongs in
+	// the editor. The app applies the "only into an empty editor" half of that rule
+	// (`:5313`), because `ctx.ui.getEditorText()` is hardwired to `""` in RPC mode
+	// (`rpc-mode.ts:248-252`) and this handler cannot read the editor at all.
+	pi.registerCommand("pi-android-navigate", {
+		description: "Move the session leaf to a previous point, optionally summarizing the abandoned branch",
+		handler: async (args, ctx) => {
+			const raw = args.trim();
+			if (raw.length === 0) {
+				ctx.ui.notify("pi-android-navigate 需要一段 JSON 参数，但它拿到的是空字符串。", "error");
+				return;
+			}
+
+			let parsed: {
+				targetId?: unknown;
+				summarize?: unknown;
+				customInstructions?: unknown;
+				replaceInstructions?: unknown;
+				label?: unknown;
+			};
+			try {
+				parsed = JSON.parse(raw);
+			} catch (error) {
+				ctx.ui.notify(
+					`pi-android-navigate 的参数不是合法 JSON（${error instanceof Error ? error.message : String(error)}），所以没有跳转。`,
+					"error",
+				);
+				return;
+			}
+
+			const targetId = typeof parsed.targetId === "string" ? parsed.targetId : "";
+			if (targetId.length === 0) {
+				ctx.ui.notify("pi-android-navigate 的参数里没有 targetId，所以没有跳转。", "error");
+				return;
+			}
+			const summarize = parsed.summarize === true;
+			const customInstructions =
+				typeof parsed.customInstructions === "string" ? parsed.customInstructions : undefined;
+			const replaceInstructions =
+				typeof parsed.replaceInstructions === "boolean" ? parsed.replaceInstructions : undefined;
+			const label = typeof parsed.label === "string" ? parsed.label : undefined;
+
+			try {
+				const result = await ctx.navigateTree(targetId, {
+					summarize,
+					customInstructions,
+					replaceInstructions,
+					label,
+				});
+
+				// **Only `cancelled` is readable here**, and that is worth stating precisely
+				// because it is narrower than the feature:
+				//
+				//   - `AgentSession.navigateTree` returns
+				//     `{ editorText?, cancelled, aborted?, summaryEntry? }`
+				//     (`core/agent-session.ts:3139`) and pi's own TUI reads all of it
+				//     (`interactive-mode.ts:5299-5315`, including the "only into an empty
+				//     editor" test at `:5313`);
+				//   - but the extension-facing wiring in RPC mode returns exactly
+				//     `{ cancelled: result.cancelled }` and drops the rest
+				//     (`modes/rpc/rpc-mode.ts:329-335`) — which is also all its declared type
+				//     promises (`core/extensions/types.ts:375-379`).
+				//
+				// So out here an **aborted** summarization is indistinguishable from a
+				// completed navigation, and the target message's text cannot be handed back
+				// for editing. Both are pi's own omissions in RPC mode, not decisions of this
+				// extension, and the app says so where it matters rather than inventing a
+				// substitute.
+				if (result.cancelled) {
+					ctx.ui.notify(
+						"这次跳转被一个扩展取消了（session_before_tree 返回 cancel），会话位置没有改变。",
+						"warning",
+					);
+					return;
+				}
+				ctx.ui.notify("已跳到所选位置。", "info");
+			} catch (error) {
+				// `navigateTree` throws for the states it refuses rather than reporting them:
+				// a turn still streaming (`:3140-3142`), a compaction in progress
+				// (`:3143-3147`), a summary with no model (`:3157-3159`), an unknown entry id
+				// (`:3162-3164`). Each message is pi's own sentence, quoted, because the app
+				// cannot translate a fact it does not own. Catching here also keeps the
+				// refusal off the `extension_error` channel, which the app shows as "an
+				// extension crashed".
+				ctx.ui.notify(
+					`跳转没有完成，pi 说：${error instanceof Error ? error.message : String(error)}`,
+					"error",
+				);
+			}
+		},
+	});
+
 	// Tell the agent what environment it woke up in, every turn. The sentinel
 	// guards against double-appending if this extension is loaded twice.
 	pi.on("before_agent_start", async (event) => {

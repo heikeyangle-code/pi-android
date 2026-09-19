@@ -4,7 +4,7 @@ import app.pi.runtime.PtyLauncher
 import java.io.File
 
 /**
- * `pi install` / `pi remove` / `pi list`, run in the guest.
+ * `pi install` / `pi remove` / `pi update` / `pi list`, run in the guest.
  *
  * ## Why the CLI and not `settings.json`
  *
@@ -14,12 +14,14 @@ import java.io.File
  * runs `npm install --prefix <agentDir>/npm --legacy-peer-deps`
  * (`:1785-1812`) or `git clone` (`:1831-1863`), and only afterwards does
  * `installAndPersist` append the source to settings (`:1029-1032`). A settings
- * write alone produces a configured package with no files on disk.
+ * write alone produces a configured package with no files on disk. `update` is the
+ * same story from the other end: it re-runs npm/git for the sources settings already
+ * lists (`:1059-1090`, `:1091-1148`), so no settings edit can express it either.
  *
  * There is also no RPC command for any of this. Verified against the protocol's
  * own type: `RpcCommand` (`modes/rpc/rpc-types.ts:20-74`) has no `install`,
- * `remove`, `list` or `reload`. So the app must do it at its own layer, and the
- * honest way is to run pi's own CLI, in the guest, and show what it said.
+ * `remove`, `update`, `list` or `reload`. So the app must do it at its own layer, and
+ * the honest way is to run pi's own CLI, in the guest, and show what it said.
  *
  * ## The exact command line
  *
@@ -35,8 +37,10 @@ import java.io.File
  *
  * Placement of flags mirrors pi's parser (`package-manager-cli.ts:375-573`):
  * `-l`/`--local` is only meaningful for `install`/`remove` (`:409-416`),
- * `--approve` is accepted by all three (`:454-462`), and `list` accepts neither
- * `source` nor `-l`. The spec is quoted as one shell word
+ * `--approve` is accepted by all four (`:454-462`), `update` takes its target
+ * either as `--extensions` or as one positional source (`:515-556`, a second
+ * positional is a conflicting-options error at `:499-501`), and `list` accepts
+ * neither `source` nor `-l`. The spec is quoted as one shell word
  * ([PtyLauncher.Shell.quote]) so a `@`-bearing spec, a URL with `&`, or a path
  * with a space survives.
  *
@@ -199,6 +203,54 @@ class PiPackageService(
     fun remove(spec: String, scope: PiPackageScope, trust: TrustPass = TrustPass.None): Done =
         mutate("remove", spec, scope, trust)
 
+    /**
+     * `pi update --extensions` (`source == null`) or `pi update <source>`.
+     *
+     * The target, the refusal of pi's self-update spellings, and the sentence the
+     * result is allowed to claim all live in [PiPackageUpdate]; this method is the
+     * process, the timeout and the classification.
+     *
+     * [GuestCommand.UPDATE_TIMEOUT_MS] rather than the list timeout: this command
+     * talks to the npm registry and to git remotes for every configured source, which
+     * is the same work `install` does and can legitimately take minutes.
+     *
+     * **What a success means here** is deliberately narrow: pi exits 0 and prints
+     * `Updated …` whether or not anything moved (see [PiPackageUpdate]'s KDoc), so
+     * [Done.Ok] means "pi ran and did not fail", never "something newer was
+     * installed". The screen's note carries that distinction.
+     */
+    fun update(source: String?, trust: TrustPass = TrustPass.None): Done =
+        when (val plan = PiPackageUpdate.plan(source)) {
+            is PiPackageUpdate.Plan.Refused -> Done.Refused(plan.message)
+
+            is PiPackageUpdate.Plan.Run -> {
+                readiness()?.let { return it }
+                val words = PiPackageUpdate.words(plan) { PtyLauncher.Shell.quote(it) }
+                val outcome = guest.run(
+                    guestCommand = updateCommandLine(words, trust),
+                    cwd = layout.guestWorkspace,
+                    timeoutMs = GuestCommand.UPDATE_TIMEOUT_MS,
+                )
+                classify(
+                    outcome = outcome,
+                    timeoutMs = GuestCommand.UPDATE_TIMEOUT_MS,
+                    successSummary = { PiPackageUpdate.fallbackSummary(it) },
+                    spec = plan.what,
+                )
+            }
+        }
+
+    /**
+     * `update`'s own argv builder. Separate from [commandLine] because `update`
+     * takes no scope flag at all (`package-manager-cli.ts:409-416` rejects `-l` for
+     * it), and reusing the scope-parameterised form would silently invite one.
+     */
+    fun updateCommandLine(words: List<String>, trust: TrustPass): String {
+        val all = words.toMutableList()
+        if (trust == TrustPass.Approve) all += "--approve"
+        return "exec ${layout.guestNode} ${layout.guestEngineCli} ${all.joinToString(" ")}"
+    }
+
     private fun mutate(command: String, spec: String, scope: PiPackageScope, trust: TrustPass): Done {
         PiPackageSource.validate(command, spec)?.let { return Done.Refused(it.message) }
         readiness()?.let { return it }
@@ -276,12 +328,16 @@ class PiPackageService(
         return "exec ${layout.guestNode} ${layout.guestEngineCli} ${words.joinToString(" ")}"
     }
 
-    /** [RestartRequired] for a completed mutation, or null when nothing changed. */
-    fun restartRequirement(done: Done): RestartRequired? = when (done) {
-        is Done.Ok -> RestartRequired(
-            changes = listOf(done.summary),
-            detail = "新装的包要重启引擎之后才生效。",
-        )
+    /**
+     * [RestartRequired] for a completed mutation, or null when nothing changed.
+     *
+     * [detail] says *why* a restart is needed, and it differs per verb: an install
+     * adds resources the running engine never loaded, an update replaces resources it
+     * already has. Both sentences are the truth; using the install one for an update
+     * would tell the user something that did not happen.
+     */
+    fun restartRequirement(done: Done, detail: String = RESTART_DETAIL_INSTALL): RestartRequired? = when (done) {
+        is Done.Ok -> RestartRequired(changes = listOf(done.summary), detail = detail)
         else -> null
     }
 
@@ -301,6 +357,7 @@ class PiPackageService(
         outcome: GuestCommand.Outcome,
         successSummary: (String) -> String,
         spec: String,
+        timeoutMs: Long = GuestCommand.INSTALL_TIMEOUT_MS,
     ): Done {
         val warnings = warningsIn(outcome.stderr)
         val skipped = PROJECT_SKIP_MARKERS.any { outcome.stderr.contains(it) }
@@ -313,17 +370,16 @@ class PiPackageService(
                 argv = outcome.argv,
                 stdout = outcome.stdout,
                 stderr = outcome.stderr,
-                timeoutMs = GuestCommand.INSTALL_TIMEOUT_MS,
+                timeoutMs = timeoutMs,
                 projectResourcesSkipped = skipped,
             )
         }
         if (outcome.exitCode == 0) {
-            // pi's own success line is in stdout; if it is missing (a future pi, or
-            // output pi suppressed) fall back to the equivalent pi wording rather
-            // than showing an empty result.
-            val fromPi = outcome.stdout.lineSequence()
-                .map { it.trim() }
-                .firstOrNull { it.startsWith("Installed ") || it.startsWith("Removed ") }
+            // pi's own success line is in stdout (one reader for all three verbs —
+            // [PiPackageUpdate.resultLine]); if it is missing (a future pi, or output
+            // pi suppressed) fall back to the caller's wording rather than showing an
+            // empty result.
+            val fromPi = PiPackageUpdate.resultLine(outcome.stdout)
             val summary = (fromPi
                 ?: successSummary(spec).let { if (warnings.isEmpty()) it else "$it（有警告）" })
                 .withTruncationNote(outcome)
@@ -380,6 +436,18 @@ class PiPackageService(
     }
 
     companion object {
+        /**
+         * Why a restart is needed after an install / after an update.
+         *
+         * Both are about *when* the engine reads packages: pi resolves and loads them
+         * while it starts (`main.ts:762-776` hands the resource loader the resolved
+         * paths), so a package that appeared or changed on disk is not visible to the
+         * process that is already running. The sentences differ because the user's
+         * situation differs.
+         */
+        const val RESTART_DETAIL_INSTALL = "新装的包要重启引擎之后才生效。"
+        const val RESTART_DETAIL_UPDATE = "更新后的包要重启引擎之后才生效。"
+
         /**
          * pi's two trust-denial strings for package commands
          * (`package-manager-cli.ts:937`, applied to `install`/`remove`/`list`

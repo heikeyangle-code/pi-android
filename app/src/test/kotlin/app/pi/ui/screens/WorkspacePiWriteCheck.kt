@@ -149,6 +149,21 @@ fun main() {
                 WorkspacePiWrite.problem("", dangerousLink, "{ not json") != null,
             )
         }
+        // The rename directions on real paths: the same `.pi` (the theme-rename case) is
+        // allowed, an arrival is not.
+        val themeDir = File(piDir, "themes").apply { mkdirs() }
+        val theme = File(themeDir, "dark.json").apply { writeText("{}") }
+        check(
+            "a real rename inside .pi is allowed",
+            WorkspacePiWrite.isPiJsonImport(theme, File(themeDir, "dark2.json")),
+            false,
+        )
+        val outsideJson = File(ws, "notes.json").apply { writeText("{}") }
+        check(
+            "a real rename into .pi is refused",
+            WorkspacePiWrite.isPiJsonImport(outsideJson, File(piDir, "imported.json")),
+            true,
+        )
         temp.deleteRecursively()
     }
 
@@ -201,6 +216,46 @@ fun main() {
     check("a .jsonl under .pi is allowed (it is not a JSON document)", WorkspacePiWrite.isPiJsonTarget(File("/tmp/w/.pi/sessions/s.jsonl")), false)
     check("a .json outside .pi is allowed", WorkspacePiWrite.isPiJsonTarget(File("/tmp/w/src/x.json")), false)
     check("the document name is matched exactly", WorkspacePiWrite.isPiJsonTarget(File("/tmp/w/.pi/SETTINGS.JSON")), false)
+
+    // The rename half, narrowed: what is refused is a document **arriving** in a `.pi` from
+    // outside it — `notes.json` → `.pi/settings.json` is how an unvalidated file becomes the
+    // settings pi reads. A rename *inside* one `.pi` only changes a name; the file was already
+    // pi's project file and its bytes were already there.
+    check(
+        "a rename from outside .pi into it is refused",
+        WorkspacePiWrite.isPiJsonImport(File("/tmp/w/notes.json"), File("/tmp/w/.pi/settings.json")),
+        true,
+    )
+    check(
+        "a rename inside one .pi is allowed",
+        WorkspacePiWrite.isPiJsonImport(File("/tmp/w/.pi/themes/dark.json"), File("/tmp/w/.pi/themes/dark2.json")),
+        false,
+    )
+    check(
+        "a rename from a different .pi is refused (it is still an arrival)",
+        WorkspacePiWrite.isPiJsonImport(File("/tmp/w/a/.pi/x.json"), File("/tmp/w/.pi/settings.json")),
+        true,
+    )
+    check(
+        "a rename inside one .pi via a .. spelling is still the same .pi",
+        WorkspacePiWrite.isPiJsonImport(File("/tmp/w/.pi/../.pi/themes/dark.json"), File("/tmp/w/.pi/themes/new.json")),
+        false,
+    )
+    check(
+        "a rename out of .pi is allowed",
+        WorkspacePiWrite.isPiJsonImport(File("/tmp/w/.pi/settings.json"), File("/tmp/w/settings.json")),
+        false,
+    )
+    check(
+        "a rename inside .pi to a non-JSON name is allowed",
+        WorkspacePiWrite.isPiJsonImport(File("/tmp/w/.pi/a.json"), File("/tmp/w/.pi/a.md")),
+        false,
+    )
+    check(
+        "a rename to a .json outside .pi is allowed",
+        WorkspacePiWrite.isPiJsonImport(File("/tmp/w/.pi/a.json"), File("/tmp/w/b.json")),
+        false,
+    )
 
     val refusal = WorkspacePiWrite.creationRefusalSentence()
     checkTrue("the refusal explains itself", refusal.contains(".pi") && refusal.isNotBlank())
