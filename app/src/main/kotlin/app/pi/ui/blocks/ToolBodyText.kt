@@ -138,3 +138,46 @@ internal fun tailLines(text: String, max: Int): String {
 /** How many lines a tail painted from a [total]-line body left out. */
 internal fun hiddenLineCount(total: Int, painted: String): Int =
     (total - lineCount(painted)).coerceAtLeast(0)
+
+/**
+ * Where the tail window of [maxVisualLines] **visual** lines starts, as a character
+ * offset into a laid-out paragraph.
+ *
+ * This is pi's rule, and it is the rule [ShellBlock] paints an expanded shell card with.
+ * pi truncates a shell result's body by rendering it and taking the **last N visual
+ * lines** — `truncateToVisualLines(text, maxVisualLines, width)` in
+ * `packages/coding-agent/src/modes/interactive/components/visual-truncate.ts:27-48`:
+ *
+ * ```ts
+ * const allVisualLines = tempText.render(width);
+ * if (allVisualLines.length <= maxVisualLines) return { visualLines: allVisualLines, skippedCount: 0 };
+ * const truncatedLines = allVisualLines.slice(-maxVisualLines);
+ * const skippedCount = allVisualLines.length - maxVisualLines;
+ * ```
+ *
+ * so the window is the last `maxVisualLines` entries of the rendered (already wrapped)
+ * line list, and a body that fits is shown whole. `slice(-N)` puts the window's first
+ * line at index `lineCount - N`, which is this function's whole content: the character
+ * offset of visual line `lineCount - N`, or `0` when everything fits.
+ *
+ * **Why a character offset and not the lines themselves.** pi can hand its layout a
+ * list of strings because its `Text` re-renders each as one line. Compose's `Text`
+ * takes one string, so the equivalent is to start it at the window's first character:
+ * the same width and the same start offset reproduce the same line breaking, which is
+ * what makes the drawn window identical to pi's.
+ *
+ * `lineStarts` is `TextLayoutResult`'s own table (`getLineStart(i)` for every visual
+ * line), so a wrapped logical line contributes several entries and a body of five long
+ * logical lines can still be windowed to five visual rows.
+ *
+ * @param lineStarts the character offset of each visual line, in order (non-empty).
+ * @param lineCount the number of visual lines; may be less than `lineStarts.size` only
+ *   if the caller passed a longer table, which is clamped away rather than trusted.
+ * @param maxVisualLines the window size; `<= 0` means "no window" and answers 0.
+ */
+internal fun visualTailWindowStart(lineStarts: IntArray, lineCount: Int, maxVisualLines: Int): Int {
+    if (maxVisualLines <= 0 || lineStarts.isEmpty()) return 0
+    if (lineCount <= maxVisualLines) return 0
+    val index = (lineCount - maxVisualLines).coerceIn(0, lineStarts.size - 1)
+    return lineStarts[index].coerceAtLeast(0)
+}

@@ -1,5 +1,8 @@
 package app.pi.ui.blocks
 
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -8,6 +11,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.unit.Constraints
 import app.pi.rpc.Ansi
 import app.pi.rpc.ToolCall
 import app.pi.ui.theme.PiSpacing
@@ -94,7 +100,12 @@ internal fun ShellBlock(
         // (`core/export-html/ansi-to-html.ts:15-31`). This is the second of those two
         // strips, in the one place this app draws captured shell text, which is what
         // makes the two agree instead of relying on the guest having done it.
-        Ansi.strip(text)
+        //
+        // `ParseCaches.stripped` rather than `Ansi.strip` directly: this `remember` dies
+        // with the composition, and a card the list disposed and recomposed used to pay the
+        // strip again (2.4 ms on a 2000-line coloured result) every time the reader scrolled
+        // back to it. A body with no escapes is returned untouched, memo or not.
+        ParseCaches.stripped(text)
     }
     val lines = remember(bodyText) { lineCount(bodyText) }
     // The window the **expanded** card paints: five rows until 「展开全部」 is taken
@@ -111,11 +122,24 @@ internal fun ShellBlock(
     // reads (probe and numbers: `docs/scroll-perf-items.md` §2). The trade is the other way
     // round from the old comment: the *common* case (collapsed, streaming) pays nothing and a
     // re-expand pays one tail, once. Nothing user-visible changes — the same text is painted
-    // when `expanded` is true, which is the only place `painted`/`hidden` are read.
+    // when `expanded` is true, which is the only place `painted` is read.
+    //
+    // This is the **logical** tail, and while the card is merely expanded it is only the input
+    // to pi's visual-line window ([ShellPreviewBody]): the last five *logical* lines always
+    // contain the last five *visual* ones (a visual line never spans two logical lines), so the
+    // window taken from this substring is exactly the window pi takes from the whole body.
+    //
+    // `ParseCaches.tail` rather than `tailLines` directly, for the same reason as the strip
+    // above: a collapsed-then-expanded card that was disposed in between re-split the whole
+    // result for a 5-line answer, and this is the row most likely to be recycled while the
+    // reader scrolls a run of shell calls.
     val painted = remember(bodyText, fullOutput, expanded) {
-        if (!expanded) "" else tailLines(bodyText, if (fullOutput) TOOL_BODY_MAX_LINES else SHELL_PREVIEW_LINES)
+        if (!expanded) {
+            ""
+        } else {
+            ParseCaches.tail(bodyText, if (fullOutput) TOOL_BODY_MAX_LINES else SHELL_PREVIEW_LINES)
+        }
     }
-    val hidden = remember(bodyText, painted) { hiddenLineCount(lines, painted) }
     val subject = remember(command, timeout) { shellSubject(command, timeout) }
     // The live clock: one read per composition, no timer of its own. See the KDoc. The
     // same number feeds the footer's text and its tick (`04 §1.1`: 刻度与读数同源), so a
@@ -147,39 +171,21 @@ internal fun ShellBlock(
                 // not copy — see the class KDoc for why (phone height, and the footer already
                 // carries the outcome). Everything the guard controls is pi's: the tail, the
                 // five-row window and the second disclosure level.
+                //
+                // While merely expanded the window is pi's, **in visual lines**: five wrapped
+                // rows, tail-anchored ([ShellPreviewBody]). pi takes five *visual* lines
+                // (`renderers/bash.ts:78` → `visual-truncate.ts:27-48`), and the difference is
+                // not cosmetic — five *logical* lines wrap to a varying number of rows as the
+                // tail slides, so the card's height used to change while a command streamed and
+                // everything below it moved with it.
                 if (expanded && bodyText.isNotEmpty()) {
-                    MonoText(
+                    ShellPreviewBody(
                         text = painted,
+                        totalLines = lines,
+                        fullOutput = fullOutput,
                         color = palette.bodyOnTool,
-                        modifier = Modifier.padding(top = PiSpacing.tiny),
+                        onExpandAll = { fullOutput = true },
                     )
-                    if (hidden > 0 && !fullOutput) {
-                        // The **second** level of disclosure, and this app's own: while expanded
-                        // the card still paints five rows, so this label is the way to the rest of
-                        // the budget. pi has a single level (its expanded card is the whole
-                        // output), so pi draws no such label — it is kept here because the app
-                        // caps a body at [TOOL_BODY_MAX_LINES] and must say so.
-                        ExpandAllLabel(
-                            text = "展开全部（上方还有 $hidden 行）",
-                            onClick = { fullOutput = true },
-                        )
-                    } else if (hidden > 0) {
-                        // pi's hint line, minus the key hint a phone does not have:
-                        // `theme.fg("muted", `... (${skipped} earlier lines,`) + … + fg("muted", ")")`
-                        // (`renderers/bash.js:63-64`). The words are this app's («上方还有 N 行
-                        // 未显示» — the same sentence the expanded state already used).
-                        //
-                        // **Order differs from pi on purpose.** pi returns `[hint, …preview]`, so
-                        // its hint sits *above* the preview; ours says 「**上方**还有 N 行」, which
-                        // is only true when it sits *below* it. Keeping the sentence we already
-                        // ship (rather than pi's 「N earlier lines」) is what pins the order.
-                        Text(
-                            text = "上方还有 $hidden 行未显示",
-                            style = PiTheme.text.meta,
-                            color = palette.muted,
-                            modifier = Modifier.padding(top = PiSpacing.tiny),
-                        )
-                    }
                 }
                 // A settled command with no output says so in the footer ([shellFooter]),
                 // which is where pi's own card reports the same thing; the body has nothing
@@ -266,6 +272,117 @@ private fun shellFooter(item: ToolCall, state: ToolState, exitCode: Int?, lines:
     if (item.outputTruncated) parts += "已截断"
     if (!pending && item.output.isEmpty()) parts += "无输出"
     return parts.joinToString(" · ")
+}
+
+/**
+ * The card's body while it is expanded: pi's preview window, and the app's own second
+ * level of disclosure underneath it.
+ *
+ * ## The window is pi's, in visual lines
+ *
+ * pi's collapsed card paints the tail of a shell result as **five wrapped rows** —
+ * `truncateToVisualLines(styledOutput, BASH_PREVIEW_LINES, width)`
+ * (`core/tools/renderers/bash.ts:78`, the rule itself in
+ * `modes/interactive/components/visual-truncate.ts:27-48`): it renders the whole body at
+ * the terminal width, keeps the last five **visual** lines and reports how many it
+ * skipped. This app paints the same window on the *expanded* card (D45: the collapsed
+ * card has no body at all), so the rows must be visual here too — [painted] is the
+ * logical tail, whose last five visual lines are exactly pi's
+ * ([visualTailWindowStart]).
+ *
+ * **Why this is not cosmetic.** Five *logical* lines wrap to a number of rows that
+ * changes as the tail slides: a command whose newest lines are long used to make the
+ * card one row taller, then one row shorter, on every 200 ms publication — and every
+ * row below it moved with the card. With the visual window the body's height is
+ * exactly [SHELL_PREVIEW_LINES] rows for as long as the command runs, which is the
+ * stability pi gets from its terminal grid.
+ *
+ * ## What the label says, and where it differs from pi
+ *
+ * pi's hint is part of its *collapsed* preview: `... (N earlier lines, to expand)` with
+ * `N = skippedCount`, a count of **visual** lines (`renderers/bash.ts:63-64`,
+ * `visual-truncate.ts:39-42`). This app's sentence is its own («上方还有 N 行未显示»,
+ * and the order note below) and its `N` is a count of
+ * **logical** lines still fully above the window — the number of lines the reader is
+ * missing, which is what the sentence claims. Counting visual lines instead would mean
+ * laying the whole body out at the current width on every publication (pi does that per
+ * render; a 2000-line Compose layout is not something to do every 200 ms), so the app
+ * keeps its own sentence and its own count. The window is pi's; the sentence is ours.
+ *
+ * @param text the logical tail to window: [tailLines] of the body at
+ *   [SHELL_PREVIEW_LINES] logical lines, or the app's [TOOL_BODY_MAX_LINES] budget once
+ *   「展开全部」 has been taken.
+ * @param totalLines the body's logical line count, for the label.
+ */
+@Composable
+private fun ShellPreviewBody(
+    text: String,
+    totalLines: Int,
+    fullOutput: Boolean,
+    color: Color,
+    onExpandAll: () -> Unit,
+) {
+    val style = PiTheme.text.mono
+    // 「展开全部」 is the app's own budget, not a window: the whole point of taking it is to
+    // stop cutting the body at the preview, so no visual window applies and the label below
+    // is the app's plain hint (pi's expanded card is its whole output and has no window at
+    // all). Its height is allowed to change with the content, exactly as pi's is.
+    if (fullOutput) {
+        MonoText(text = text, color = color, modifier = Modifier.padding(top = PiSpacing.tiny))
+        val hidden = remember(text, totalLines) { hiddenLineCount(totalLines, text) }
+        if (hidden > 0) {
+            // pi's hint line, minus the key hint a phone does not have. The words are this
+            // app's («上方还有 N 行未显示» — the same sentence the preview state uses).
+            //
+            // **Order differs from pi on purpose.** pi returns `[hint, …preview]`, so its hint
+            // sits *above* the preview; ours says 「**上方**还有 N 行」, which is only true when
+            // it sits *below* it. Keeping the sentence we already ship (rather than pi's
+            // 「N earlier lines」) is what pins the order.
+            Text(
+                text = "上方还有 $hidden 行未显示",
+                style = PiTheme.text.meta,
+                color = PiTheme.palette.muted,
+                modifier = Modifier.padding(top = PiSpacing.tiny),
+            )
+        }
+        return
+    }
+
+    // The width a body line actually gets is a layout fact, so it has to be read before the
+    // window can be computed: `BoxWithConstraints` is the one place Compose exposes it
+    // (`ImageGridBlock`'s cell reads its own box the same way). The measurement below is a
+    // *pre*-measure with the same width, style and layout direction the `Text` underneath
+    // will be laid out with, which is what makes the window's first character a line
+    // boundary for that `Text` too.
+    val measurer = rememberTextMeasurer()
+    BoxWithConstraints(modifier = Modifier.padding(top = PiSpacing.tiny)) {
+        val widthPx = constraints.maxWidth
+        val window = remember(text, widthPx, style, measurer) {
+            val layout = measurer.measure(
+                text = text,
+                style = style,
+                constraints = Constraints(maxWidth = widthPx.coerceAtLeast(0)),
+            )
+            val starts = IntArray(layout.lineCount) { layout.getLineStart(it) }
+            val start = visualTailWindowStart(starts, layout.lineCount, SHELL_PREVIEW_LINES)
+            if (start <= 0) text else text.substring(start)
+        }
+        Column(verticalArrangement = Arrangement.spacedBy(PiSpacing.gutter)) {
+            Text(text = window, style = style, color = color)
+            // The **second** level of disclosure, and this app's own: while expanded the card
+            // still paints one window, so this label is the way to the rest of the budget. pi
+            // has a single level (its expanded card is the whole output), so pi draws no such
+            // label — it is kept here because the app caps a body at [TOOL_BODY_MAX_LINES] and
+            // must say so. The count is the logical lines fully above the window (see the KDoc).
+            val hidden = remember(window, totalLines) { hiddenLineCount(totalLines, window) }
+            if (hidden > 0) {
+                ExpandAllLabel(
+                    text = "展开全部（上方还有 $hidden 行）",
+                    onClick = onExpandAll,
+                )
+            }
+        }
+    }
 }
 
 /**

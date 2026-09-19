@@ -8,7 +8,7 @@
 
 | 文件 | 改前 md5 | 改后 md5（第二轮：每帧预算 + 解析信号） |
 |---|---|---|
-| `app/src/main/kotlin/app/pi/ui/screens/ChatScreen.kt` | `f5c8b9448a3617d483f39b32e5028a78` | `f4c70f341b9acef933bcdc144487fe03` |
+| `app/src/main/kotlin/app/pi/ui/screens/ChatScreen.kt` | `f5c8b9448a3617d483f39b32e5028a78` | `dcb5222e2865e3b6d6ef5a7964b59703`（含 §9 的缩略图缓存 patch） |
 | `app/src/main/kotlin/app/pi/ui/render/TranscriptRowHeight.kt` | `e182130a5775f26d70038eea61e670e4` | `ec7fb24c04ded58d026fe6f4c1963ea9` |
 | `app/src/main/kotlin/app/pi/ui/render/RowHeightCache.kt` | `126a9928bfd83fcb0b67f0f9682ff641` | `88f66495aa4c82c1b6a38fd367684712` |
 | `app/src/main/kotlin/app/pi/ui/render/PiMarkdownImmediate.kt` | `（第一轮改前）` | `479582615862282a16b787f5f0c46d5d` |
@@ -432,8 +432,14 @@ val immediateMarkdown = eagerCandidate && markdownCharCountOf(item) <= IMMEDIATE
   第 4 条不是我的：`ui/settings/PiSettingsRegistry.kt` 的 mtime 是 **2026-09-19 13:04:52**（就在这次 typecheck
   运行期间），是另一个代理在飞的改动；它是 `ui/settings/**`（本轮边界之外），我也从未碰过。第一轮那次是 3 条。
 
-* `python3 tools/check-nested-comments.py` → `nested-comments: OK (274 Kotlin file(s) scanned)`（第二轮后；
-  第一轮是 271，文件数含其它代理这一轮新建的文件）。
+  **第三轮**（§9 的缩略图 patch 落盘后，2026-09-19 稍晚）：`:app` 报了 **15 条**，**没有一条在我的文件里**——
+  12 条在另一个代理正在改的 `app/pi/packages/PiPackagesScreen.kt`（`WsBadge`/`StateTone`/`PiSettingsCollapseAbove`
+  等未定义引用，典型的改到一半的中间态），3 条是那 3 个已知 `BuildConfig` 假阳性。这一轮同时验证了 §9：
+  `PiImageCache.readThrough` 在 `withPermit`/`withContext(Dispatchers.IO)` 里可编译（否则会在 `ChatScreen.kt`
+  报 unresolved reference 或 suspend 相关错误）。
+
+* `python3 tools/check-nested-comments.py` → 第一轮 271、第二轮 274、第三轮 **280** 个文件全部 OK（文件数含其它
+  代理这一轮新建的）。
 * `MarkdownParseBudget` 的纯逻辑：`/tmp/audit/probe/BudgetProbe.kt`（用**真的** `RowHeightCache.kt` 编译）
   → `harness: OK (all checks passed)`，13 条断言即 §8.6 的 I1–I13；同一支探针跑 2 000 帧滚动模拟（§1.1b）。
 * 未跑 Gradle 编译、未提交、未推送、未派子代理；我改的文件是 `ChatScreen.kt`、`ui/render/TranscriptRowHeight.kt`、
@@ -553,3 +559,43 @@ I13 一帧的第一行永远放行（哪怕上一帧刚花掉 20 ms）
 
 （按本轮边界，唯一允许新建的文件是本报告，所以我没有新建 `...Check.kt`；这 13 条断言已经由探针在 bare JVM 上
 跑通。）
+
+---
+
+## 9. 追加：附件缩略图接进 `PiImageCache`（别人交来的 patch，落在我的文件里）
+
+**改动**：`ChatScreen.kt` 的 `AttachmentThumb`（`produceState` → `withContext(Dispatchers.IO)` 之内）：
+
+```kotlin
+piImageDecodeGate.withPermit {
+    PiImageCache.readThrough(image.base64, thumbPx, thumbPx) {
+        decodePiImage(image.base64, thumbPx, thumbPx)
+    }
+}
+```
+
+（`import app.pi.ui.blocks.PiImageCache` 一并加上；`PiImageCache` 是 `internal object`，同模块可见。）
+
+**四条要求逐条核对**：
+
+1. **仍在 `piImageDecodeGate.withPermit` 之内** —— 是；`readThrough` 整个调用（含命中时的查表）都在许可内，
+   所以闸门语义（最多 `MAX_CONCURRENT_IMAGE_DECODES` 个并发）一字不改；命中只多占一次许可、立刻释放。
+2. **仍在 `Dispatchers.IO`** —— 是；`withContext(Dispatchers.IO)` 是最外层，`readThrough` 的 KDoc 也要求调用方
+   在后台调度器上（等值 payload 的比较是 MB 级 `memcmp`、未命中是整次解码，都不属于帧线程）。
+3. **源文本计数** —— `ChatScreen.kt` 里 `decodePiImage(image.base64` = **1**、`piImageDecodeGate.withPermit` = **1**
+   （改后实测），`PiImageCache.readThrough` = 1。**更正一处前提**：`ImageSizeCheck` 的 `wiringChecks` 实际上
+   **不读 `ChatScreen.kt`**（它的两份文件是 `ImageGridBlock.kt` 与 `PiImageViewer.kt`，注释里写明「ChatScreen.kt's
+   composer preview is deliberately not in the list」——`app/src/test/.../ImageSizeCheck.kt:515-544`）。也就是说
+   ③ 的断言本来就不覆盖这个文件；我仍然保持了它的计数不变，并**手工跑了那支 harness**：
+   `image-size` → `harness: OK (all checks passed)`（26 条，含「every payload decode in ImageGridBlock.kt /
+   PiImageViewer.kt is under the shared gate」两条源文本断言，两者当前都是 1/1 且都已走 `readThrough`）。
+4. **与手上的改动冲突？** 没有。这条落在 `AttachmentThumb`（输入框附件区），我这一轮/上一轮的改动在 `ChatBody` 的
+   `itemsIndexed` item lambda、搜索扫描 `LaunchedEffect`、`onForkFromMessage` 与渲染层的三个文件，互不重叠；
+   `ChatScreen.kt` 内没有第二处 `decodePiImage`/闸门调用，导入也没有重名。
+
+**代价/收益与边界**：缓存键 = payload + 盒子（`PiImageCache.Key`），所以「同一张图换一个缩略图尺寸」是两条目；
+只缓存**成功的解码**（`decode()` 返回 null 不写），一次内存不足造成的失败不会被固化。风险与既有 cache 路径同源，
+且这个对象已被 `ImageGridBlock`/`PiImageViewer` 用在同一形状上（两者的 1/1 计数与 `readThrough` 都已在树里）。
+**上机判据**：装两张图、发出去再撤回/重进输入框，第二次进入同一张图不应再有整次 codec 解码（`atrace` 里
+`BitmapFactory`/`nativeDecode` 段只在第一次出现）；连续切走再切回若干次，`dumpsys meminfo` 的 bitmap 占用应停在
+32 MiB 界内而不是随次数增长。

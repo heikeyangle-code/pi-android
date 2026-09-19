@@ -139,7 +139,9 @@ fun SettingsHome(
         return
     }
     val openPiFiles: () -> Unit = onOpenPiFiles ?: { piFilesOpen = true }
-    Column(Modifier.fillMaxSize()) {
+    // 手绘 `PiTopBar` 不吃状态栏 inset，而这一屏只消费 `contentPadding` 的底边 ——
+    // 顶边在这里补一次（见 `settingsPageTopInset`）。
+    Column(Modifier.fillMaxSize().settingsPageTopInset(contentPadding)) {
         PiTopBar(
             title = "设置",
             actions = {

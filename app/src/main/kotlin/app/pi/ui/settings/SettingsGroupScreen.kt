@@ -159,7 +159,8 @@ fun SettingsGroupScreen(
         if (index >= 0) listState.animateScrollToItem(index)
     }
 
-    Column(Modifier.fillMaxSize()) {
+    // 同 `SettingsHome`：顶栏从状态栏之下开始，见 `settingsPageTopInset`。
+    Column(Modifier.fillMaxSize().settingsPageTopInset(contentPadding)) {
         PiTopBar(
             title = group?.title ?: "设置",
             onBack = onBack,

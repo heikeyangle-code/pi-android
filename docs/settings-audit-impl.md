@@ -381,8 +381,9 @@
 
 ## 7. 本次没有做的事
 
-- 没有修改任何已有文件；没有跑 Gradle；没有跑 `tools/typecheck.sh` 或 `tools/run-app-pure-checks.sh`
-  （本机不编译是站内约束，交给 CI）。
+- 第一轮（纯诊断）没有修改任何已有文件；没有跑 Gradle；没有跑 `tools/typecheck.sh` 或
+  `tools/run-app-pure-checks.sh`。（第二轮之后的落地批次里，harness 用与脚本同样的 kotlinc 方式各跑过；
+  `tools/typecheck.sh` 在 §10.4 跑过一次全量，结果与归属写在那里。）
 - 对 `PiSettingsAuditCheck` 的五条断言，我是用等价的 Python 脚本在工作区**当前**文本上重放的
   （70 键 / 23 白名单 / 0 无读者 / 0 注释假消费者 / 0 重复 / 0 过期白名单 / 9 chip 可解析），
   并把 23 条白名单理由逐条对到 pi 源码。**真正的 harness 仍需 CI 跑一次**（注册表在被并发改动）。
@@ -504,3 +505,150 @@
 3. 上下文与压缩：最下面「立即压缩」独占一段；运行时与诊断最下面「重启引擎 / 导出诊断报告 / 紧急停止」三行一段 —— 动作不再和开关同形相邻。
 4. 终端与 Shell：图片两行与 Shell/终端显示同一屏（与 pi 文档一致）；外观组只剩主题 + 排版。
 5. 每个分组的 section 头不再出现「1 项」（只读事实节与动作节除外，它们是整块的不同种类）。
+
+---
+
+## 10. 「扩展与资源」：从"五条空路径"改成"实际发现了什么 + 一个出口"（`applied (uncommitted)`）
+
+用户真机反馈：设置 →「扩展与资源」点进去是空的，而他真正能看到资源的地方在别处（项目页资源段 /
+包管理页）。核过的原因是**这一屏只列手填的额外搜索路径**（`extensions`/`skills`/`prompts`/`themes`
+默认都空），而 pi 真正加载的是它**自动发现**的资源。结论：那四条路径行删掉，换成**只读事实**+
+**一条出口**。
+
+### 10.1 删了什么、留了什么（72 键）
+
+| 处置 | 键 | 说明 |
+|---|---|---|
+| **删** | `extensions` | 手填的"额外扩展路径"数组，默认空 |
+| **删** | `skills` | 同上（额外技能路径） |
+| **删** | `prompts` | 同上（额外提示模板路径） |
+| **删** | `themes` | 同上（自定义主题目录） |
+| **留** | `packages` | 资源包（只读 + 开包管理页） |
+| **留** | `enableSkillCommands` | 技能命令（开关） |
+| **留** | `app.extensions.args` | 扩展启动参数（另一批加的行，未动） |
+| **新增（只读事实）** | `app.resources.discovered.skills` / `.themes` / `.prompts` / `.extensions` | 实际发现的数量 + 来源分布 |
+| **新增（动作）** | `app.resources.openFiles` | 「查看资源文件」→ 本栈已有的「Pi 文件」层级（`piFiles`），不新造导航 |
+
+组内 section 变成四节（每节一种，规则 9/10 全过）：**实际发现**(4 只读) → **技能命令与扩展参数**(2
+可编辑) → **资源包**(1 只读) → **动作**(1 动作)。
+
+**能力没有减少**（这条写给以后的人）：删的是**设置页的行**，不是 pi 的键。`settings.json` 里的
+`extensions`/`skills`/`prompts`/`themes` 仍然被 pi 读取，扫描资源的代码路径（`PiResourceDiscovery`、
+`ExtensionLifecycle`、`WorkspaceResourceScan`、`PiPackageFilters`、`ProjectTrust`）一行没动。要加
+资源有两条更直接的路：**「Pi 文件」屏**里直接编辑 `~/.pi/agent/settings.json`，或者把文件放进
+标准目录（`~/.pi/agent/{skills,prompts,themes,extensions}`、工作区 `.pi/**`、`.agents/**`）——
+pi 本来就自动发现它们，不需要登记路径。
+
+### 10.2 数字从哪来（复用扫描器，不新写第二份）
+
+- 扫描：`app.pi.ui.screens.WorkspaceResourceScan.scan(workspace, configDir, agentDir)` —— 项目页
+  资源段用的**同一个**扫描器（纯磁盘读取，不需要引擎在跑）。设置栈在 IO 上调用它（`LaunchedEffect`
+  按 `workspacePath`/`filesEpoch` 重跑），**没有**第二份扫描实现。
+- 纯计算：`ui/settings/PiResourceFacts.kt`（Android-free）。同名去重保留优先级最高的来源
+  （项目 `.pi` > `.agents` > `~/.pi/agent` > 已装包 > 扩展贡献，与 pi 的解析顺序一致），
+  所以报的是"实际会生效的那一份来自哪"；同名冲突的展示仍归项目页资源段。
+- 三种读数**分开且不许互相冒充**：
+
+| 情况 | 行文本 | 为什么 |
+|---|---|---|
+| 扫到 N 个 | `3 个 · 项目 .pi 1 · ~/.pi/agent 2` | 只给数字不给来源，用户不知道在哪、要不要动 |
+| 扫到 0 个 | `还没有发现任何资源` | `0 个` 会被读成"坏了/没装好"；真相是"还没有"，行说明里写了该放哪 |
+| 读不到 | `读不到：<原因>` | 用 `0 个` 冒充读数正是这一批要消灭的形状 |
+| 还没扫完 | `未读取` | "还没读"不等于"读不到"，也不等于"没有" |
+
+### 10.3 分组摘要现在报什么
+
+`G_RESOURCES` 摘要从「设置里 N 条扩展路径 · M 个资源包」（N 恒为 0，因为那个键没了）改成：
+
+- 有扫描结果：`"2 个资源包 · 已发现 3 个技能 · 1 个主题"`
+- 没扫描过（用户还没进过设置目的地）：`"2 个资源包"` —— **不提**那一句，而不是说 `已发现 0 个`。
+
+机制：`PiResourceFactsCache`（写入方是设置栈那次真实扫描；读的人只有这个摘要）。摘要是设置首页
+画的，它的签名拿不到扫描结果，所以只能是"最近一次扫描"；过期窗口是"切换工作区且停留在设置首页"
+这段（重新进入设置就会重扫）。
+
+### 10.4 审计与验证
+
+`PiSettingsAuditCheck` 同步：没有任何 `piOwnedKeys` 涉及这 4 个键（无需移除），键数从 71 → **72**；
+规则 9/10（一节一种、多节组不得有单行可编辑节）在新结构下全过；那次修掉的组摘要也不再有
+"恒为 0 的数字"。
+
+```
+settings-audit      : OK (23 PASS)
+audit: 72 registered keys (37 pi, 35 app): 49 read by this app, 23 declared pi-owned, 9 search hints, 21 PiSetting fields
+settings-resources  : OK (all checks passed)   ← 新增 harness
+pre-spawn           : OK
+nested-comments     : OK (278 files)
+```
+
+`tools/typecheck.sh`（本机全量跑）：**`:app` 4 个 error，全部不在本轮改过的文件里**，我一个都没碰：
+
+```
+runtime/RuntimeProvisioner.kt:87:21: error: unresolved reference 'ensureAndroidGroups'      ← 运行时批次的在制品（文件 M）
+ui/settings/DiagnosticsReport.kt:7:15 / :156:34 / :156:75: error: unresolved reference 'BuildConfig'  ← 另一批的文件
+```
+
+- 本轮所有文件（`PiSettingsRegistry`/`PiSettingsStack`/`PiResourceFacts`/…）**0 error** ——
+  这一条比括号平衡强得多：Compose 侧真的过了一遍前端。
+- `BuildConfig` 那三条是 **typecheck 的盲区**，不是代码错误：`BuildConfig` 由 AGP 生成，而
+  `tools/typecheck.sh` 只为 `R` 生成 stub（`grep BuildConfig tools/typecheck.sh` 无命中），
+  Gradle/CI 那边能编过。全树只有 `DiagnosticsReport.kt` 引用它。
+- `ensureAndroidGroups` 那条**看起来是在制品/快照问题**：`private fun ensureAndroidGroups()` 就声明在
+  同一个 `class RuntimeProvisioner` 的 `:748`，而 `:87` 在同一个类的 `ensureReady` 里；该文件当前是
+  `M`（运行时批次正在改）。我不改它，只报告。
+
+新 harness 的注册命令行（`tools/run-app-pure-checks.sh` 由父代理加）：
+
+```
+run_harness settings-resources \
+  app.pi.ui.settings.PiResourceFactsCheckKt \
+  "$ROOT/app/src/main/kotlin/app/pi/ui/settings/PiResourceFacts.kt" \
+  "$ROOT/app/src/test/kotlin/app/pi/ui/settings/PiResourceFactsCheck.kt"
+```
+
+它钉住的是：同名去重与来源优先级、每类只数自己那一类、来源按优先级排序且**扩展贡献**不被折进全局、
+三种读数与"未读取"四态互不冒充（尤其：空扫描与不可读都**不许**出现数字）、摘要行在没扫描/读不到时
+返回 null（不给假 0）、缓存取最近一次。
+
+### 10.5 真机判据
+
+1. 点进「扩展与资源」：**不再有** `扩展`/`技能`/`提示模板`/`自定义主题目录` 四行；第一段是
+   「实际发现」的四个只读读数（已发现的技能/主题/提示模板/扩展），值与**你实际装的东西对得上**，
+   且带来源（`项目 .pi 1 · ~/.pi/agent 2` 这种）。
+2. 一个资源都没有时，写的是「还没有发现任何资源」，行说明里写着该往哪放（`skills/` 等标准目录），
+   **不是空屏**、也不是 `0 个`。
+3. 扫描失败时写「读不到：<原因>」（例如引擎目录还没解包）；**任何情况下都不会显示 `0 个`** 冒充读数。
+4. 「查看资源文件」能点到「Pi 文件」屏，返回键回到设置（这一屏是设置栈自己的层级）。
+5. 那四条被删的行确实**不影响能力**：在「Pi 文件」屏里给 `~/.pi/agent/settings.json` 加一条
+   `"skills": ["/some/dir"]`，pi 仍然会读它（键没删、扫描代码没动）；把文件放进
+   `~/.pi/agent/skills/` 或工作区 `.pi/skills/` 也照样被自动发现，这一屏的「已发现的技能」数字
+   会跟着涨（监视器 bump `filesEpoch` 后重扫）。
+
+### 10.6 D56 文本（给台账，父代理粘贴）
+
+> **D56 「扩展与资源」：删掉四条手填路径，改成"实际发现了什么" + 一个出口**
+> 结论：设置页删掉 `extensions`/`skills`/`prompts`/`themes` 四行（都是"额外搜索目录"清单，手机上
+> 更直接的路是往标准目录里放文件），这一组保留 `packages`/`enableSkillCommands`/`app.extensions.args`，
+> 新增四个**只读事实行**（已发现的技能/主题/提示模板/扩展，带来源分布：项目 `.pi`、`.agents`、
+> `~/.pi/agent`、已装包、扩展贡献）与一条**动作行**「查看资源文件」→ 本栈已有的「Pi 文件」屏。
+> 为什么删：这四行只表达"额外路径"、默认空，用户点进来看到一屏空值，会以为这一屏没用；而 pi 的
+> 资源是**自动发现**的 —— `~/.pi/agent/{skills,prompts,themes,extensions}`、工作区 `.pi/**`、
+> `.agents/**`、已装包自带的，不需要在设置里登记路径。**能力没有减少**：`settings.json` 里这些键
+> 仍然被 pi 读取（删的是行，不是键），要加就用「Pi 文件」屏直接编辑 `~/.pi/agent/settings.json`，
+> 或者把文件放进上面那些标准目录。
+> 数字来源：复用项目页资源段那个扫描器（`WorkspaceResourceScan`），纯磁盘读取、不需要引擎在跑；
+> 同名按名字去重、来源取优先级最高的一份（与 pi 的解析顺序一致）。三种读数分开且**不许互相冒充**：
+> `N 个 · 来源…` / `还没有发现任何资源` / `读不到：<原因>`，扫描未落地时显示「未读取」——**从不**用
+> `0 个` 冒充读数。
+> 组摘要：不再报那个恒为 0 的"扩展路径条数"，改成"资源包 N 个 · 已发现 …"（没有扫描结果时只报
+> 资源包条数，绝不说 0）。审计同步：规则 9/10 在新结构下全过，键数 72。
+
+### 10.7 未做 / 未验证
+
+- Compose 侧（`PiSettingsStack.kt` 的扫描与覆盖、`PiSettingsRegistry.kt` 的新行）**本机没有编译过**：
+  只做了括号平衡、结构解析（72 行、12 组、G_RESOURCES 4 节）、审计 23 条与 pre-spawn。编译结果见
+  §10.4 的 `typecheck`（本机跑，日志在 `build/`）。
+- `WorkspaceResourceScan` 是**跨批依赖**：它住在 `ui/screens/WorkspaceResources.kt`（滚动/工作区批次
+  的文件，本轮不许改）。我只**调用**它，没有改它；如果那一批改了它的签名，这里要跟着改一行。
+- 计数把"被包筛选/不自动加载"的资源也算作"已发现"（它们确实在磁盘上、pi 也确实看到了，只是没加载）。
+  项目页资源段把它们显示为 muted；这一屏不做第二次状态分类。真要区分需要新的纯逻辑与文案。

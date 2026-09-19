@@ -76,6 +76,7 @@ import app.pi.ui.settings.PiSettingsChip
 import app.pi.ui.settings.PiSettingsHairline
 import app.pi.ui.settings.PiSettingsMetrics
 import app.pi.ui.settings.PiSettingsSectionHeader
+import app.pi.ui.settings.settingsPageTopInset
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
 import java.io.File
@@ -263,7 +264,9 @@ internal fun PiFilesScreen(
         if (relative.isNotEmpty()) relative = piFilesParent(relative) else onBack()
     }
 
-    Column(Modifier.fillMaxSize()) {
+    // 这一屏由设置栈托管（`SettingsHome` 的退路里也可能自托管），顶栏同样是手绘的，
+    // 所以顶边照设置面那一套补：见 `settingsPageTopInset`。
+    Column(Modifier.fillMaxSize().settingsPageTopInset(contentPadding)) {
         PiTopBar(title = "Pi 文件", onBack = onBack)
 
         Column(

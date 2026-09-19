@@ -24,6 +24,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -31,18 +32,21 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
-import app.pi.ui.components.PiMixedLine
+import app.pi.ui.screens.WsBadge
 import app.pi.ui.settings.PiInfoNote
 import app.pi.ui.settings.PiSettingsBadge
 import app.pi.ui.settings.PiSettingsCard
 import app.pi.ui.settings.PiSettingsCardShape
+import app.pi.ui.settings.PiSettingsCollapseAbove
 import app.pi.ui.settings.PiSettingsDialog
+import app.pi.ui.settings.PiSettingsListExpander
 import app.pi.ui.settings.PiSettingsHairline
 import app.pi.ui.settings.PiSettingsMetrics
 import app.pi.ui.settings.PiSettingsSectionHeader
 import app.pi.ui.theme.PiMonoFamily
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
+import app.pi.ui.theme.StateTone
 
 /**
  * The whole install / list / remove / restart / trust surface, as one state-driven
@@ -229,6 +233,11 @@ fun PiPackagesScreen(
     }
 
     val palette = PiTheme.palette
+    // 长列表的收敛状态。一屏里的一类东西可能有十几行（实机：主题 14 个），整段铺出来会把
+    // 下面所有分区推到屏外。与「模型」屏的厂商卡同一个手法（`remember { mutableStateMapOf }`），
+    // 阈值也共用同一个数字（`PiSettingsCollapseAbove`）。
+    var extensionsExpanded by remember { mutableStateOf(false) }
+    val expandedKinds = remember { mutableStateMapOf<PiResourceDiscovery.Kind, Boolean>() }
     // v2 的页面节奏（06 §2）：卡片自带左右 14px 页边（`PiSettingsCard`），分区头自带
     // `marginTop:18px / margin-bottom:7px`，所以整列不再要水平内边距，也不要统一的
     // 10px 行距 —— 那会把分区的层级压平。整页第一块用 14px 顶距代替 v2 的页首留白。
@@ -249,32 +258,47 @@ fun PiPackagesScreen(
         item { LifecycleCard(state, onRestartClick, onRestartConfirm, onRestartCancel) }
         item { InstallCard(state, onSpecChange, onScopeChange, onInstall, onRefresh) }
 
-        if (state.builtins.isNotEmpty()) {
-            item {
-                PiSettingsSectionHeader(PackageStrings.BUILTIN_TITLE)
-                BuiltinCard(state.builtins)
+        // 扩展：**一节**。随 App 自带的那几个与磁盘 `extensions/` 里发现的那几个是同一类东西
+        // （都是 pi 会加载的扩展），差别在**每一行的来源徽标**上（`App 自带` / `全局`），不在
+        // 标题上。原来它们是两张卡、两个标题，其中一个标题写着「其他扩展（不是随 App 安装的）」
+        // —— 标题本身就在说这些是次要的东西，而它们每一个都是 pi 会加载的扩展。见
+        // `PackageStrings.EXTENSIONS_TITLE` 上面那段。
+        item(key = "extensions") {
+            val count = state.builtins.size + state.discovered.size
+            PiSettingsSectionHeader(
+                label = PackageStrings.EXTENSIONS_TITLE,
+                count = "$count 个",
+            )
+            ExtensionsCard(
+                builtins = state.builtins,
+                discovered = state.discovered,
+                expanded = extensionsExpanded,
+                onToggle = { extensionsExpanded = !extensionsExpanded },
+            )
+            // 徽标说得下结论（在哪儿、是不是应用带的），说不下的那条事实留在这里：
+            // 自带的那几个 pi 卸载不了。
+            PiInfoNote(PackageStrings.EXTENSIONS_NOTE)
+        }
+
+        // 技能 / 提示模板 / 主题：**三类各一节**，各带自己的标题与数量。原来是三段挤在同一张
+        // 卡里、卡内各画一行 12 号小字（`技能（2）`），外面再套一个「其他资源（不是随 App 安装的）」
+        // 的标题 —— 三件不同的事共用一个「其他」，读者看不出这是三类资源还是三类杂项。
+        PiResourceDiscovery.Kind.entries.forEach { kind ->
+            val rows = state.resources.filter { it.kind == kind }
+            item(key = "resources:${kind.name}") {
+                PiSettingsSectionHeader(
+                    label = PackageStrings.resourceKind(kind),
+                    count = "${rows.size} 个",
+                )
+                ResourceKindCard(
+                    kind = kind,
+                    rows = rows,
+                    expanded = expandedKinds[kind] ?: false,
+                    onToggle = { expandedKinds[kind] = !(expandedKinds[kind] ?: false) },
+                )
             }
         }
 
-        // Extensions that arrived the other way: pi loads them, `pi list` knows
-        // nothing about them, and only the filesystem can say they are there. Shown
-        // right after the app's own so the two origins stay two lists.
-        if (state.discovered.isNotEmpty()) {
-            item {
-                PiSettingsSectionHeader(PackageStrings.DISCOVERED_TITLE)
-                DiscoveredCard(state.discovered)
-            }
-        }
-
-        // The same question for the other three kinds pi discovers by looking at a
-        // directory. A skill or theme written by hand used to be absent from this
-        // screen entirely.
-        if (state.resources.isNotEmpty()) {
-            item {
-                PiSettingsSectionHeader(PackageStrings.RESOURCES_TITLE)
-                ResourcesCard(state.resources)
-            }
-        }
         item {
             PiSettingsSectionHeader(
                 label = PackageStrings.LIST_SECTION_TITLE,
@@ -359,169 +383,162 @@ fun PiPackagesScreen(
 }
 
 
-// ------------------------------------------------------------- built in block
+// ------------------------------------------------------------- 扩展 ----
 
 /**
- * The extensions the app ships, marked as the app's own claim rather than pi's.
+ * 一节扩展：应用自带的那几个 + 磁盘 `extensions/` 里被发现的那些，**同一张卡**。
  *
- * There is no remove button here *by construction*: pi does not know these are
- * packages (`pi list` never shows them) and `pi remove <name>` would answer
- * `No matching package found` with exit code 1
- * (`package-manager-cli.ts:959-966`). Offering a button for that would be the
- * "the UI says it can, and it cannot" shape this project keeps paying for.
- */
-@Composable
-private fun BuiltinCard(rows: List<PiPackagesUiState.BuiltinRow>) {
-    if (rows.isEmpty()) return
-    // 分区名现在由页面的分区头承担（v2 的 Section），卡里只剩行。
-    PiSettingsCard {
-        rows.forEachIndexed { index, row ->
-            if (index > 0) PiSettingsHairline()
-            BuiltinRowView(row)
-        }
-    }
-}
-
-/**
- * The extensions found in the agent's `extensions/` directory, listed because pi
- * loads them — the app's own list could not see them, so work the model did itself
- * was invisible on this screen.
- */
-@Composable
-private fun DiscoveredCard(rows: List<PiAutoExtensions.Found>) {
-    // v2 的扩展行：行首状态符号（✓）+ 等宽标题 + 尾部状态词，颜色只是第三层编码
-    // （06 §4「扩展/资源状态」）。
-    PiSettingsCard {
-        rows.forEachIndexed { index, found ->
-            if (index > 0) PiSettingsHairline()
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(
-                        horizontal = PiSettingsMetrics.rowPaddingHorizontal,
-                        vertical = PiSettingsMetrics.rowPaddingVertical,
-                    ),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(PiSettingsMetrics.rowGap),
-            ) {
-                Text(
-                    "✓",
-                    style = PiTheme.text.monoSmall,
-                    color = PiTheme.palette.success,
-                )
-                Text(
-                    found.name,
-                    modifier = Modifier.weight(1f),
-                    style = PiTheme.text.mono,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Text(
-                    // An App sentence (「pi 会加载它」), in the slot the board gives a row's
-                    // status word — and the board draws *that* slot in the UI face: the 扩展
-                    // section's rows are `<Row title={e.t} mono value={e.s} …>`
-                    // (`direction-b-v2.html:2966`), i.e. only the **title** is mono and the
-                    // word beside it is `t13` system. JetBrains Mono was the wrong voice for
-                    // our own sentence; the ✓ above it keeps the machine face, which is where
-                    // the glyph belongs.
-                    PackageStrings.DISCOVERED_PRESENCE,
-                    style = PiTheme.text.meta,
-                    color = PiTheme.palette.success,
-                )
-            }
-        }
-    }
-}
-
-/**
- * Skills, prompt templates and themes found on disk, grouped by kind.
+ * 两者是同一类东西（pi 启动时都会加载），差别只在来源：自带的那几个在行上带一枚
+ * `App 自带` 徽标，磁盘上的带 `全局`。所以它们不该是两张卡、两个标题 —— 其中「其他扩展
+ * （不是随 App 安装的）」这个标题本身就把磁盘上的那批说成了次要的东西。
  *
- * Shown because pi loads them from a directory rather than from `settings.json`, so
- * neither of this screen's other two sources can see them.
+ * 「不能用 pi 卸载」那条事实由页面上的说明承担（`PackageStrings.EXTENSIONS_NOTE`）：徽标说得下
+ * 「在哪儿、是不是应用带的」，说不下「能不能卸」。
  */
 @Composable
-private fun ResourcesCard(rows: List<PiResourceDiscovery.Found>) {
-    val palette = PiTheme.palette
+private fun ExtensionsCard(
+    builtins: List<PiPackagesUiState.BuiltinRow>,
+    discovered: List<PiAutoExtensions.Found>,
+    expanded: Boolean,
+    onToggle: () -> Unit,
+) {
+    // 两类行合成一条**有序**列表：自带的在前（它们是应用自己的声明），磁盘上的在后
+    // ——顺序与这一节原来的两张卡一致，所以读者不会因为合并而找不到东西。
+    val rows: List<ExtensionRow> =
+        builtins.map { ExtensionRow.Shipped(it) } + discovered.map { ExtensionRow.Found(it) }
+    val shown = if (expanded || rows.size <= PiSettingsCollapseAbove) {
+        rows
+    } else {
+        rows.take(PiSettingsCollapseAbove)
+    }
     PiSettingsCard {
-        PiResourceDiscovery.Kind.entries.forEach { kind ->
-            val ofKind = rows.filter { it.kind == kind }
-            if (ofKind.isEmpty()) return@forEach
-            // 卡内的种类小标题：与行同左缘，12 灰。
+        if (rows.isEmpty()) {
             Text(
-                PackageStrings.resourceKind(kind) + "（${ofKind.size}）",
+                PackageStrings.EXTENSIONS_EMPTY,
                 modifier = Modifier.padding(
-                    start = PiSettingsMetrics.rowPaddingHorizontal,
-                    end = PiSettingsMetrics.rowPaddingHorizontal,
-                    top = PiSettingsMetrics.rowPaddingVertical,
-                    bottom = PiSettingsMetrics.supportingGap,
+                    horizontal = PiSettingsMetrics.rowPaddingHorizontal,
+                    vertical = PiSettingsMetrics.cardPadding,
                 ),
                 style = PiTheme.text.meta,
-                color = palette.muted,
+                color = PiTheme.palette.muted,
             )
-            ofKind.forEach { found ->
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(
-                            horizontal = PiSettingsMetrics.rowPaddingHorizontal,
-                            vertical = PiSettingsMetrics.supportingGap,
-                        ),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(PiSettingsMetrics.rowGap),
-                ) {
-                    Text(
-                        found.name,
-                        modifier = Modifier.weight(1f),
-                        style = PiTheme.text.mono,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    ResourceOriginText(found = found, kindLabel = "")
-                }
+        }
+        shown.forEachIndexed { index, row ->
+            if (index > 0) PiSettingsHairline()
+            when (row) {
+                is ExtensionRow.Shipped -> BuiltinRowView(row.row)
+                is ExtensionRow.Found -> DiscoveredRowView(row.found)
             }
+        }
+        if (rows.size > PiSettingsCollapseAbove) {
+            PiSettingsListExpander(
+                label = if (expanded) {
+                    PackageStrings.COLLAPSE_RESOURCES
+                } else {
+                    PackageStrings.showAllResources(rows.size)
+                },
+                onClick = onToggle,
+                modifier = Modifier.padding(horizontal = PiSettingsMetrics.rowPaddingHorizontal),
+            )
+        }
+    }
+}
+
+/** 一节里的两种扩展行。合成一个类型只是为了**一条**列表能收敛（见 [ExtensionsCard]）。 */
+private sealed interface ExtensionRow {
+    data class Shipped(val row: PiPackagesUiState.BuiltinRow) : ExtensionRow
+
+    data class Found(val found: PiAutoExtensions.Found) : ExtensionRow
+}
+
+// ------------------------------------------------------------- 三类资源 ----
+
+/**
+ * 技能 / 提示模板 / 主题各一节：**分区头带数量，卡里只有行**。
+ *
+ * 原来是三类挤在一张卡里、卡内自画小标题（`技能（2）`），外面只有一个「其他资源（不是随 App
+ * 安装的）」的头 —— 三件不同的事共用一个「其他」，而每一种的**数量**（读者最想知道的一件事）
+ * 被降成了卡内 12 号灰字。现在数量回到分区头（v2 的 `Section` 的 `count`，也是这一页
+ * 「已安装的资源包」一直在用的形状），每一类各有自己的标题。
+ *
+ * 空态也说：空**不等于**读不到，所以这里只能说「还没有发现任何 X」。这个页面拿不到一个
+ * 「读不到」的读数（`PiResourceDiscovery` 两种情况的空表是同一个答案），就不许把它编出来。
+ */
+@Composable
+private fun ResourceKindCard(
+    kind: PiResourceDiscovery.Kind,
+    rows: List<PiResourceDiscovery.Found>,
+    expanded: Boolean,
+    onToggle: () -> Unit,
+) {
+    val shown = if (expanded || rows.size <= PiSettingsCollapseAbove) {
+        rows
+    } else {
+        rows.take(PiSettingsCollapseAbove)
+    }
+    PiSettingsCard {
+        if (rows.isEmpty()) {
+            Text(
+                PackageStrings.resourceEmpty(kind),
+                modifier = Modifier.padding(
+                    horizontal = PiSettingsMetrics.rowPaddingHorizontal,
+                    vertical = PiSettingsMetrics.cardPadding,
+                ),
+                style = PiTheme.text.meta,
+                color = PiTheme.palette.muted,
+            )
+        }
+        shown.forEachIndexed { index, found ->
+            if (index > 0) PiSettingsHairline()
+            ResourceRowView(found)
+        }
+        if (rows.size > PiSettingsCollapseAbove) {
+            PiSettingsListExpander(
+                label = if (expanded) {
+                    PackageStrings.COLLAPSE_RESOURCES
+                } else {
+                    PackageStrings.showAllResources(rows.size)
+                },
+                onClick = onToggle,
+                modifier = Modifier.padding(horizontal = PiSettingsMetrics.rowPaddingHorizontal),
+            )
         }
     }
 }
 
 /**
- * Where one scanned resource came from, in **two voices** (rule #7 + 裁决 ②-2).
+ * 一行自动发现的资源：名字 + **来源徽标**。
  *
- * `PackageStrings.resourceOrigin` renders both halves as one sentence —
- * 「（资源包：pi-skills）」 or 「（当前工作区）」. On this row the package name is the only
- * value a machine produced, so it is the only part that takes the machine face
- * ([PiMixedLine]); the parentheses and the scope word are ours. The no-package branch
- * therefore keeps using `resourceOrigin` verbatim (there is no machine value on it at all,
- * so it stays one plain `Text`), and only the package branch opens the two literals.
+ * 名字用行标题那一档（15/500），因为它是这一行的主信息，而且**别处就是这么画的**：工作区屏
+ * 的「这个目录的资源」列的是同一份资源、同一个读取器，技能与主题在那里就是标题
+ * （`ProjectScreen.ResourceRow`，只有扩展是等宽——扩展名是机器入口名）。这一页原来给三类都
+ * 套了等宽 13，于是同一个技能名在两个屏上是两种字。
  *
- * @param kindLabel our own kind word and its space (`技能 `, `提示模板 `), or `""` for the
- *   top-level card, where the section header already carries the kind.
+ * 来源从「每行一句 `（全局）`」变成右侧一枚徽标：字面量少一个括号、少一次重复，位置固定，
+ * 一列扫下去能对齐（v2 的来源徽标就在这个位置：`WorkspaceResource.sourceLabel`）。
  */
 @Composable
-private fun ResourceOriginText(
-    found: PiResourceDiscovery.Found,
-    kindLabel: String,
-) {
-    val packageName = found.packageName
-    if (packageName != null) {
-        PiMixedLine(
-            prefix = "$kindLabel（资源包：",
-            machine = packageName,
-            suffix = "）",
-            style = PiTheme.text.meta,
-            color = PiTheme.palette.muted,
-            maxLines = 1,
-        )
-    } else {
+private fun ResourceRowView(found: PiResourceDiscovery.Found) {
+    val badge = PackageStrings.resourceOriginBadge(found.scope)
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(
+                horizontal = PiSettingsMetrics.rowPaddingHorizontal,
+                vertical = PiSettingsMetrics.rowPaddingVertical,
+            ),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(PiSettingsMetrics.rowGap),
+    ) {
         Text(
-            // `PiMixedLine` has no "machine == empty" case: a line with nothing
-            // machine-produced on it is a plain `Text`, not a mixed one with an empty span.
-            text = kindLabel + PackageStrings.resourceOrigin(found),
-            style = PiTheme.text.meta,
-            color = PiTheme.palette.muted,
+            found.name,
+            modifier = Modifier.weight(1f),
+            style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Medium),
+            color = MaterialTheme.colorScheme.onSurface,
             maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
         )
+        OriginBadgeView(badge)
     }
 }
 
@@ -531,6 +548,10 @@ private fun ResourceOriginText(
  * The caption is the point: the reader has to be able to tell this list from `pi
  * list`'s, because pi reports none of it. A package with no discoverable root says
  * so instead of showing an empty list, which would read as "the package is empty".
+ *
+ * 行上**不重复包名**：这一张卡就是一个包，卡头已经写着它的来源与安装路径。原来每行都拖一句
+ * 「（资源包：x）」，而同一个名字在这一区里只会从这一个包里来 —— 重复的是读者已经读到过的东西。
+ * 行尾留下的是**哪一种**（技能 / 提示模板 / 主题 / 扩展），那是卡头说不出的信息。
  */
 @Composable
 private fun PackageResourcesCard(scan: PiPackagesUiState.PackageScan) {
@@ -563,19 +584,11 @@ private fun PackageResourcesCard(scan: PiPackagesUiState.PackageScan) {
                 )
             }
             scan.extensions.forEach { extension ->
-                ResourceLine(
-                    name = extension.name,
-                    kindLabel = PackageStrings.EXTENSION_KIND,
-                    found = null,
-                )
+                ResourceLine(name = extension.name, kindWord = PackageStrings.EXTENSION_KIND)
             }
             PiResourceDiscovery.Kind.entries.forEach { kind ->
                 scan.resources.filter { it.kind == kind }.forEach { found ->
-                    ResourceLine(
-                        name = found.name,
-                        kindLabel = "${PackageStrings.resourceKind(kind)} ",
-                        found = found,
-                    )
+                    ResourceLine(name = found.name, kindWord = PackageStrings.resourceKind(kind))
                 }
             }
         }
@@ -583,18 +596,14 @@ private fun PackageResourcesCard(scan: PiPackagesUiState.PackageScan) {
 }
 
 /**
- * One scanned resource inside a package: name + where it came from.
+ * One scanned resource inside a package: name + which kind it is.
  *
- * [kindLabel] is our own kind word (`技能 `, `扩展`) and [found] is the discovery, when the
- * line came from one — its package name is the only machine value, so it is the only part
- * that takes the machine face ([ResourceOriginText]).
+ * 名字与上面三节同一种声音（行标题 15/500）：这是**同一个资源**在两个地方出现，读者不该在两个
+ * 地方看到两种字。行尾那半格是这一类的名字（我们自己的词，所以走 `text.meta`），不是来源 ——
+ * 来源是这张卡本身。
  */
 @Composable
-private fun ResourceLine(
-    name: String,
-    kindLabel: String,
-    found: PiResourceDiscovery.Found?,
-) {
+private fun ResourceLine(name: String, kindWord: String) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -605,24 +614,17 @@ private fun ResourceLine(
         Text(
             name,
             modifier = Modifier.weight(1f),
-            style = PiTheme.text.mono,
+            style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Medium),
             color = MaterialTheme.colorScheme.onSurface,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
-        if (found != null) {
-            ResourceOriginText(found = found, kindLabel = kindLabel)
-        } else {
-            // A shipped extension: the kind word is the whole origin, and there is nothing
-            // machine-produced on the line (the `—` on this card is the package's own root,
-            // one row above).
-            Text(
-                text = kindLabel,
-                style = PiTheme.text.meta,
-                color = PiTheme.palette.muted,
-                maxLines = 1,
-            )
-        }
+        Text(
+            text = kindWord,
+            style = PiTheme.text.meta,
+            color = PiTheme.palette.muted,
+            maxLines = 1,
+        )
     }
 }
 
@@ -647,18 +649,28 @@ private fun BuiltinRowView(row: PiPackagesUiState.BuiltinRow) {
         horizontalArrangement = Arrangement.spacedBy(PiSettingsMetrics.rowGap),
     ) {
         Column(Modifier.weight(1f)) {
-            Text(
-                row.extension.name,
-                // The built-in extension's own name (`pi-android-bridge`, `pi-highlight`) —
-                // v2 draws every extension row's title with the `mono` prop
-                // (`direction-b-v2.html:2966`), and `HookMessageBlock` already prints the
-                // same field (`item.customType`) in `monoSmall`. `bodyLarge` was the UI face,
-                // so the identifier and the purpose sentence below it shared one voice.
-                style = PiTheme.text.mono,
-                color = palette.text,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
+            // 标题行里跟着**来源徽标**（v2 的 `Row` 把 badge 放在标题行，不是钉在最右侧）：
+            // 「App 自带」是这一行的来源，它原来占着一个分区标题，于是磁盘上发现的那批就被
+            // 标题说成了「其他」。徽标只说事实，不分主次。
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(PiSettingsMetrics.titleGap),
+            ) {
+                Text(
+                    row.extension.name,
+                    modifier = Modifier.weight(1f, fill = false),
+                    // The built-in extension's own name (`pi-android-bridge`, `pi-highlight`) —
+                    // v2 draws every extension row's title with the `mono` prop
+                    // (`direction-b-v2.html:2966`), and `HookMessageBlock` already prints the
+                    // same field (`item.customType`) in `monoSmall`. `bodyLarge` was the UI face,
+                    // so the identifier and the purpose sentence below it shared one voice.
+                    style = PiTheme.text.mono,
+                    color = palette.text,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                OriginBadgeView(PackageStrings.ORIGIN_SHIPPED)
+            }
             val purpose = PackageStrings.builtinPurpose(row.extension.name)
             if (purpose.isNotEmpty()) {
                 Text(
@@ -687,6 +699,72 @@ private fun BuiltinRowView(row: PiPackagesUiState.BuiltinRow) {
             color = presenceColor,
         )
     }
+}
+
+/**
+ * 磁盘 `extensions/` 目录里被发现的扩展：**和自带的那些同一节**，只是来源徽标不同。
+ *
+ * 探到的根只有一个（agent dir），所以来源固定是「全局」；这条事实以前靠分区标题
+ * 「其他扩展（不是随 App 安装的）」表达，代价是它读起来像杂项。
+ */
+@Composable
+private fun DiscoveredRowView(found: PiAutoExtensions.Found) {
+    val palette = PiTheme.palette
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(
+                horizontal = PiSettingsMetrics.rowPaddingHorizontal,
+                vertical = PiSettingsMetrics.rowPaddingVertical,
+            ),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(PiSettingsMetrics.rowGap),
+    ) {
+        Column(Modifier.weight(1f)) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(PiSettingsMetrics.titleGap),
+            ) {
+                Text(
+                    found.name,
+                    modifier = Modifier.weight(1f, fill = false),
+                    style = PiTheme.text.mono,
+                    color = palette.text,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                OriginBadgeView(PackageStrings.ORIGIN_GLOBAL)
+            }
+        }
+        Text(
+            "✓",
+            style = PiTheme.text.monoSmall,
+            color = palette.success,
+        )
+        Text(
+            // An App sentence (「pi 会加载它」), in the slot the board gives a row's
+            // status word — and the board draws *that* slot in the UI face: the 扩展
+            // section's rows are `<Row title={e.t} mono value={e.s} …>`
+            // (`direction-b-v2.html:2966`), i.e. only the **title** is mono and the
+            // word beside it is `t13` system. JetBrains Mono was the wrong voice for
+            // our own sentence; the ✓ above it keeps the machine face, which is where the
+            // glyph belongs.
+            PackageStrings.DISCOVERED_PRESENCE,
+            style = PiTheme.text.meta,
+            color = palette.success,
+        )
+    }
+}
+
+/**
+ * 一枚来源徽标（`项目 .pi` / `全局` / `App 自带`）。
+ *
+ * 用工作区屏已经有的 `WsBadge`，不新画一个：两个屏列的是同一份资源，来源徽标只有一个构件 ——
+ * 混排的两半（汉字 + 等宽）在它里面已经解决了（`WorkspaceChrome.WsBadge` 的 KDoc）。
+ */
+@Composable
+private fun OriginBadgeView(badge: PackageStrings.OriginBadge) {
+    WsBadge(text = badge.text, mono = badge.mono, tone = StateTone.Muted)
 }
 
 // 列表区的标题由页面的分区头承担（`PiSettingsSectionHeader`，v2 的 Section）：

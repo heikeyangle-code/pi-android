@@ -832,6 +832,60 @@ object PiSettingsCatalog {
         // 8 扩展与资源
         // ------------------------------------------------------------------
 
+        // 这一节回答的是"我到底有什么"：数字来自**真实扫描**（`WorkspaceResourceScan`，项目页
+        // 资源段用的同一个），由 `PiResourceFacts.kt` 做纯计算、由 `PiSettingsStack` 在 IO 上
+        // 跑并把文本塞进 `valueOverrides`。它不是设置行：四个键都没有写入方，`readOnly = true`。
+        //
+        // 为什么这一节必须存在：删掉下面那四条"额外搜索路径"之后，如果这一屏只剩开关与资源包，
+        // 用户看到的仍然是"空"——而真相是 pi 一直在自动发现 `~/.pi/agent/<kind>`、工作区
+        // `.pi/<kind>`、`.agents/<kind>` 与已装包自带的资源。数字是**读数**，不是承诺。
+        PiSetting(
+            key = "app.resources.discovered.skills",
+            title = "已发现的技能",
+            description = "pi 自动发现的技能：工作区 `.pi/skills`、`~/.pi/agent/skills`、`.agents/skills` " +
+                "与已装资源包自带的。要加新的，在下面的「查看资源文件」里把 `<名字>/SKILL.md` 放进 `skills/`。",
+            kind = PiRowKind.Text,
+            group = G_RESOURCES,
+            section = "实际发现",
+            defaultValue = str("未读取"),
+            readOnly = true,
+            aliases = listOf("skills", "技能", "发现"),
+        ),
+        PiSetting(
+            key = "app.resources.discovered.themes",
+            title = "已发现的主题",
+            description = "pi 自动发现的主题（`themes/*.json`），来源与技能相同。当前用哪一个在「外观」里的「主题」。",
+            kind = PiRowKind.Text,
+            group = G_RESOURCES,
+            section = "实际发现",
+            defaultValue = str("未读取"),
+            readOnly = true,
+            aliases = listOf("themes", "主题", "发现"),
+        ),
+        PiSetting(
+            key = "app.resources.discovered.prompts",
+            title = "已发现的提示模板",
+            description = "pi 自动发现的提示模板（`prompts/*.md`），来源与技能相同。" +
+                "模板支持 `$1`、`$@` 这类参数，用 `/名字` 调用。",
+            kind = PiRowKind.Text,
+            group = G_RESOURCES,
+            section = "实际发现",
+            defaultValue = str("未读取"),
+            readOnly = true,
+            aliases = listOf("prompts", "提示模板", "发现"),
+        ),
+        PiSetting(
+            key = "app.resources.discovered.extensions",
+            title = "已发现的扩展",
+            description = "pi 自动发现的扩展（`extensions/` 下的 `.ts`/`.js` 或带入口的目录），" +
+                "以及扩展自己写出去的资源（例如设备桥那个技能）。",
+            kind = PiRowKind.Text,
+            group = G_RESOURCES,
+            section = "实际发现",
+            defaultValue = str("未读取"),
+            readOnly = true,
+            aliases = listOf("extensions", "扩展", "发现"),
+        ),
         PiSetting(
             key = "app.extensions.args",
             title = "扩展启动参数",
@@ -848,61 +902,10 @@ object PiSettingsCatalog {
                 "没有扩展注册这个参数时 pi 只会在 stderr 里写一行提示，不影响启动。",
             kind = PiRowKind.Text,
             group = G_RESOURCES,
-            // The existing section, deliberately not a one-row section of its own: the
-            // `settings-audit` harness forbids "a single editable row holding a section
-            // of its own inside a multi-section group", and this row belongs next to
-            // the extension *paths* it is about anyway.
-            section = "本地资源",
-            defaultValue = "",
+            section = "技能命令与扩展参数",
+            defaultValue = str(""),
             effective = EffectiveKind.RestartEngine,
             aliases = listOf("extension flags", "cli flags", "args", "参数", "启动参数"),
-        ),
-        PiSetting(
-            key = "extensions",
-            title = "扩展",
-            description = "本地扩展文件或目录的路径。相对路径分别以全局设置目录与项目目录为基准。",
-            kind = PiRowKind.List,
-            group = G_RESOURCES,
-            section = "本地资源",
-            defaultValue = list(),
-            effective = EffectiveKind.RestartEngine,
-            aliases = listOf("extensions", "reload"),
-        ),
-        PiSetting(
-            key = "skills",
-            title = "技能",
-            description = "本地技能文件或目录的路径。每个技能是一个带名称与描述的文件。",
-            kind = PiRowKind.List,
-            group = G_RESOURCES,
-            section = "本地资源",
-            defaultValue = list(),
-            effective = EffectiveKind.RestartEngine,
-            aliases = listOf("skills", "reload"),
-        ),
-        PiSetting(
-            key = "prompts",
-            title = "提示模板",
-            description = "本地提示模板路径。模板支持 \$1、\$@ 与 \${1:-default} 形式的参数。",
-            kind = PiRowKind.List,
-            group = G_RESOURCES,
-            section = "本地资源",
-            defaultValue = list(),
-            effective = EffectiveKind.RestartEngine,
-            aliases = listOf("prompts", "templates", "reload"),
-        ),
-        PiSetting(
-            key = "themes",
-            // 不是「主题」：这一行是**自定义主题文件/目录的路径数组**（pi 从这里发现可选主题），
-            // 而 `theme`（外观组）才是"当前用哪一个"。两行同名曾让搜索结果与分组的读数无法
-            // 区分（`docs/settings-audit-impl.md` §B8，`settings-audit` 规则 6 现在会拦）。
-            title = "自定义主题目录",
-            description = "本地主题文件或目录的路径。它决定 pi 能发现哪些主题；当前用哪一个由「外观」里的「主题」决定。",
-            kind = PiRowKind.List,
-            group = G_RESOURCES,
-            section = "本地资源",
-            defaultValue = list(),
-            effective = EffectiveKind.RestartEngine,
-            aliases = listOf("themes", "reload"),
         ),
         PiSetting(
             key = "enableSkillCommands",
@@ -910,7 +913,7 @@ object PiSettingsCatalog {
             description = "把技能注册成 /skill:name 斜杠命令。关掉之后技能仍然可以被模型读取，只是不再出现在命令面板里。",
             kind = PiRowKind.Switch,
             group = G_RESOURCES,
-            section = "本地资源",
+            section = "技能命令与扩展参数",
             defaultValue = bool(true),
             // `Immediate`, not `Reload`: pi reads this setting only in its own TUI
             // (`interactive-mode.ts:716`, `:4570`) and its RPC `get_commands` lists
@@ -944,6 +947,20 @@ object PiSettingsCatalog {
             effective = EffectiveKind.RestartEngine,
             readOnly = true,
             aliases = listOf("install", "packages", "npm", "git"),
+        ),
+        // 出口：这一节报的是"发现了什么"，而看/改它们的地方是「Pi 文件」屏（`PiFilesScreen`，
+        // 本栈已有的层级 `piFiles`，不新造导航）。它同时替掉被删掉的那四条手填路径：想加资源
+        // 就是往标准目录里放文件，标准目录本来就自动发现，不需要在设置里登记路径。
+        PiSetting(
+            key = "app.resources.openFiles",
+            title = "查看资源文件",
+            description = "打开「Pi 文件」：`~/.pi/agent` 与工作区 `.pi` 下的 `skills/`、`prompts/`、" +
+                "`themes/`、`extensions/` 都能直接看和改。放进这些目录的资源 pi 会自动发现，" +
+                "不需要在设置里登记路径。",
+            kind = PiRowKind.Action,
+            group = G_RESOURCES,
+            section = "动作",
+            aliases = listOf("files", "pi files", "资源", "目录", "skill", "theme"),
         ),
         // ------------------------------------------------------------------
         // 9 外观
@@ -1529,14 +1546,15 @@ object PiSettingsCatalog {
             "由本应用固定（与 pi 共用）· 续接：${summaryText(store, "app.sessions.resumeLast")}"
         },
         PiSettingsGroup(G_RESOURCES, "扩展与资源", Icons.Filled.Extension) { store ->
-            // 这两个数都是**设置里写了多少条**，不是 pi 加载了多少个：`extensions` 是
-            // 一个路径数组（`settings.json`），`packages` 是包来源数组，而 pi 实际加载的
-            // 扩展还会来自每个包自己的 `extensions/`、以及工作区 `.pi/extensions`。
-            // 原来的写法「N 个扩展」会被读成「pi 加载了 N 个扩展」——设置里写了 0 条不
-            // 等于 pi 一个扩展都没加载，那是两件事。所以这里只说设置里的条数。
-            val extensionPaths = byKey["extensions"]?.countIn(store) ?: 0
+            // 只报**真实存在**的两个数，一个都不编：
+            //  - 资源包条数来自 store（`packages`），它确实在设置文件里；
+            //  - 已发现的数量来自上一次真实扫描（`PiResourceFactsCache`，写入方是设置栈里那次
+            //    IO 扫描）。**没有扫描过就不提这一句** —— 摘要是首页画的，那时可能还没扫过；
+            //    写一个恒为 0 的"已发现 0 个"就是拿假读数冒充事实，这一批要删掉的正是这种东西。
+            // 手填的"额外路径"四条已从设置页删除，所以这里不再有 `extensions` 计数。
             val packages = byKey["packages"]?.countIn(store) ?: 0
-            "设置里 $extensionPaths 条扩展路径 · $packages 个资源包"
+            val discovered = discoveredSummaryLine(PiResourceFactsCache.lastScan())
+            if (discovered == null) "$packages 个资源包" else "$packages 个资源包 · $discovered"
         },
         PiSettingsGroup(G_APPEARANCE, "外观", Icons.Filled.ColorLens) { store ->
             val themeValue = summaryText(store, "theme")

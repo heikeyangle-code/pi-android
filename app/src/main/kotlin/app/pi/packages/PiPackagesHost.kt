@@ -33,6 +33,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import app.pi.runtime.PtyLauncher
 import app.pi.ui.PiTopBar
 import app.pi.ui.settings.PiSettingsMetrics
+import app.pi.ui.settings.settingsPageTopInset
 import app.pi.ui.theme.PiTheme
 import java.io.File
 import kotlinx.coroutines.Dispatchers
@@ -197,9 +198,15 @@ fun PiPackagesHost(
 
     LaunchedEffect(Unit) { controller.refresh() }
 
-    Column(Modifier.fillMaxSize()) {
+    // **顶边归顶栏，底边归内容。** 这一屏原来把 `contentPadding` **整份**套在顶栏**下面**
+    // 的 `Box` 上，于是状态栏那一条被花了两次：顶栏 48dp 从 y=0 起画（和状态栏叠在同一条
+    // 带子里 —— 实机截图里时钟 19:54 压在标题「扩展包与项目信任」中间），而它下面的
+    // `Box` 又把同一条高度留成一条空带子（截图里标题与第一张卡之间那段空白）。设置面同族
+    // 其它屏的写法是「容器吃顶边（`settingsPageTopInset`）、列表吃底边」，这一屏照它对齐，
+    // 一处不多一处不少。
+    Column(Modifier.fillMaxSize().settingsPageTopInset(contentPadding)) {
         PiTopBar(title = PackageStrings.TITLE, onBack = onBack)
-        Box(Modifier.fillMaxSize().padding(contentPadding)) {
+        Box(Modifier.fillMaxSize().padding(bottom = contentPadding.calculateBottomPadding())) {
             PiPackagesScreen(
                 state = controller.state(lifecycleState),
                 onSpecChange = { controller.spec = it },

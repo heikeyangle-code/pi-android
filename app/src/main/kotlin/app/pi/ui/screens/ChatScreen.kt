@@ -1,5 +1,6 @@
 package app.pi.ui.screens
 
+import app.pi.ui.blocks.PiImageCache
 import app.pi.ui.blocks.decodePiImage
 import app.pi.ui.blocks.piImageDecodeGate
 import kotlinx.coroutines.withContext
@@ -3921,7 +3922,17 @@ private fun AttachmentThumb(
             // The same gate the transcript's decodes go through
             // (`MAX_CONCURRENT_IMAGE_DECODES`): staging five photos must not start five
             // simultaneous full-res codec runs on the frame's behalf.
-            piImageDecodeGate.withPermit { decodePiImage(image.base64, thumbPx, thumbPx) }
+            piImageDecodeGate.withPermit {
+                // …and the same process-wide bitmap cache the transcript's cells use
+                // (`PiImageCache`, keyed by payload + box), so re-staging the same picture — or
+                // leaving the composer and coming back — reuses the decode instead of running
+                // the codec again. The permit is held for the lookup too; a hit is a reference
+                // compare or one `memcmp` over the payload and costs no codec work, and the
+                // 32 MiB bound (payloads charged) lives in that object.
+                PiImageCache.readThrough(image.base64, thumbPx, thumbPx) {
+                    decodePiImage(image.base64, thumbPx, thumbPx)
+                }
+            }
         }
     }
     Surface(

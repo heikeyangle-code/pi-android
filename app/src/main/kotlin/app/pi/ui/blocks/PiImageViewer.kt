@@ -144,8 +144,16 @@ fun PiImageViewer(
                     // decoding), so this decode queues behind those instead of becoming one
                     // more full-resolution allocation competing with the frame. The box
                     // stays the whole window — see the class KDoc on the zoom ceiling.
-                    piImageDecodeGate.withPermit {
-                        decodePiImage(image.base64, boxWidthPx, boxHeightPx)
+                    //
+                    // And through [PiImageCache], keyed on that same window: closing and
+                    // reopening the viewer (or a rotation) used to decode the whole picture
+                    // again. The viewer's entry is deliberately separate from a cell's — a
+                    // different box for a different surface (the gate's KDoc, the class KDoc
+                    // above, and `decodePiImage`'s sampling rule all say why).
+                    PiImageCache.readThrough(image.base64, boxWidthPx, boxHeightPx) {
+                        piImageDecodeGate.withPermit {
+                            decodePiImage(image.base64, boxWidthPx, boxHeightPx)
+                        }
                     }
                 }
             }

@@ -100,8 +100,13 @@ fun DiffBlock(
     // tap the user just made. Nothing user-visible changes: the same rows are built for the
     // same input, and `plan.isEmpty()` (the unparsable-diff branch) is only consulted while
     // expanded.
+    //
+    // And it goes through [DiffPlanCache], because "the first expand of each card" is per
+    // *composition*: a diff card that scrolls out of the list's reuse pool and back is
+    // expanded again with no plan in hand, which paid the 3.9–13.2 ms a second time. The cache
+    // is keyed on the same two values this `remember` is, so a hit is the same list of rows.
     val plan = remember(item.key, item.diffText, expanded) {
-        if (expanded) diffPlan(item.hunks, MAX_DIFF_ROWS) else emptyList()
+        if (expanded) DiffPlanCache.plan(item.key, item.diffText, item.hunks, MAX_DIFF_ROWS) else emptyList()
     }
     val omitted = item.lineCount > MAX_DIFF_ROWS || item.truncated
 
@@ -681,3 +686,83 @@ private const val MAX_INTRA_LINE_TOKENS = 512
 
 private const val CONTEXT_FOLD_THRESHOLD = 4
 private const val MAX_DIFF_ROWS = 200
+
+/**
+ * The process-wide memo of [diffPlan] results — the cross-composition half of `DiffBlock`'s
+ * `remember`.
+ *
+ * `diffPlan` is the most expensive single parse in the transcript (measured 3.9 ms for a
+ * 60-row diff with 15 changed pairs, 13.2 ms for a 400-row diff with 80 pairs, 11.8 ms for
+ * one pair whose lines carry 512 tokens each — `docs/scroll-perf-items.md` §2), and its
+ * result was state of one composition: a diff card the `LazyColumn` disposed and recomposed
+ * paid it again even though nothing about its input had changed. Diff cards are also the
+ * rows most likely to be recycled in a run of tool calls, which is what made this the
+ * largest item in the ranking.
+ *
+ * Bounded by [MAX_PLAN_BYTES] with the same rules as the other caches: bytes, honest
+ * accounting, a hit that is the same list of rows, an entry that cannot fit is not stored,
+ * and no failure to cache (the function cannot fail). The budget is 4 MiB — a quarter of
+ * what the pictures may hold, because a plan is cheap next to a decode; a 200-row plan with
+ * 60-character lines weighs roughly 74 KB (rows plus the diff text key), so this holds
+ * several dozen diffs.
+ *
+ * The key is `(row key, diff text, max rows)`. `hunks` is deliberately **not** part of it:
+ * it is `parsePiDiff(diffText)`'s projection, which is exactly the assumption the
+ * `remember` this cache mirrors already made. If the two ever disagreed, the reducer —
+ * which builds both from the same entry — would be the bug, not this cache.
+ */
+private object DiffPlanCache {
+
+    /** Bytes the plans may hold, keys included. See the KDoc for the number. */
+    private const val MAX_PLAN_BYTES: Long = 4L * 1024 * 1024
+
+    private val lru = ByteBoundedLru<PlanKey, List<DiffRow>>(MAX_PLAN_BYTES) { key, plan ->
+        key.bytes + planWeight(plan)
+    }
+
+    /** [diffPlan] of `(key, diffText)`, from the memo when it has it. */
+    fun plan(rowKey: String, diffText: String, hunks: List<DiffHunk>, maxRows: Int): List<DiffRow> =
+        lru.getOrCompute(PlanKey(rowKey, diffText, maxRows)) { diffPlan(hunks, maxRows) }
+
+    /**
+     * What one plan costs, in bytes: every row's own text at two bytes a character, plus a
+     * flat [ROW_OVERHEAD] for the row object, its `changed` list and the list slot. `DiffRow`
+     * holds no other string — the numbers it prints are derived at draw time — so this is an
+     * estimate with a stated constant rather than a guess.
+     */
+    private fun planWeight(plan: List<DiffRow>): Long {
+        var weight = ROW_OVERHEAD * plan.size
+        for (row in plan) {
+            val text = when (row) {
+                is DiffRow.Header -> row.text
+                is DiffRow.Fold -> null
+                is DiffRow.Line -> row.line.text
+            }
+            if (text != null) weight += text.length.toLong() * 2
+            if (row is DiffRow.Line) weight += row.changed.size.toLong() * CHANGED_RUN_BYTES
+        }
+        return weight
+    }
+
+    /** Per-row overhead: two object headers, the list slot and the `changed` list. */
+    private const val ROW_OVERHEAD = 64L
+
+    /** Per intra-line run: two ints and a list slot. */
+    private const val CHANGED_RUN_BYTES = 20L
+
+    /**
+     * A plan's key. `equals` compares the diff text without hashing it (the map never calls
+     * `hashCode`); [hashCode] is built from the (short) transcript key and the row cap, so it
+     * is O(1) — the same pair of rules `PiImageCache.Key` documents.
+     */
+    private class PlanKey(val rowKey: String, val diffText: String, val maxRows: Int) {
+        val bytes: Long = (rowKey.length.toLong() + diffText.length.toLong()) * 2
+
+        override fun equals(other: Any?): Boolean = other is PlanKey &&
+            maxRows == other.maxRows &&
+            rowKey == other.rowKey &&
+            diffText == other.diffText
+
+        override fun hashCode(): Int = 31 * rowKey.hashCode() + maxRows
+    }
+}

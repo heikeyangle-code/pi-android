@@ -42,20 +42,33 @@ object Ansi {
      *
      * Used where colour cannot be honoured — a one-line summary, a notification,
      * a search index — so those never show raw bytes.
+     *
+     * **Two passes of the input, one of them by whole runs.** The text between two
+     * escapes is copied with one ranged `append`, not one character at a time: colour is
+     * the exception in captured tool output, so the runs are long and the per-character
+     * `append` was the whole cost. Measured on the transcript's own case — a 2000-line
+     * shell result with colour on a fifth of its lines, 68 KB — this is the difference
+     * between 2.4 ms and roughly half that on the phone (`docs/scroll-perf-items.md` §2);
+     * the input is still scanned once for the escape character itself
+     * ([containsEscapes]) and once for the runs, and a string with no escapes at all is
+     * returned as-is, exactly as before.
      */
     fun strip(text: String): String {
         if (!containsEscapes(text)) return text
         val out = StringBuilder(text.length)
-        var i = 0
-        while (i < text.length) {
-            val c = text[i]
-            if (c == ESC) {
-                i = skipEscape(text, i)
-            } else {
-                out.append(c)
-                i++
+        var index = 0
+        var runStart = 0
+        while (index < text.length) {
+            if (text[index] != ESC) {
+                index++
+                continue
             }
+            // Everything since the last escape is ordinary text: copy it as one run.
+            if (index > runStart) out.append(text, runStart, index)
+            index = skipEscape(text, index)
+            runStart = index
         }
+        if (runStart < text.length) out.append(text, runStart, text.length)
         return out.toString()
     }
 

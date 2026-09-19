@@ -26,6 +26,10 @@ import app.pi.runtime.RuntimePreferences
 import app.pi.runtime.RuntimeSelection
 import app.pi.ui.device.DeviceCapabilityScreen
 import app.pi.ui.screens.PiFilesScreen
+import app.pi.ui.screens.WorkspaceResource
+import app.pi.ui.screens.WorkspaceResourceKind
+import app.pi.ui.screens.WorkspaceResourceScan
+import app.pi.ui.screens.WorkspaceSource
 import app.pi.ui.theme.PiThemeEntry
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -271,6 +275,57 @@ fun PiSettingsStack(
         runtimeStatus = withContext(Dispatchers.IO) { runtimeSelection.status() }
     }
     val runtimeStatusText = runtimeStatus?.summary ?: "未读取"
+
+    // 「扩展与资源」那四个只读事实行的读数。**复用项目页资源段那个扫描器**
+    // （`WorkspaceResourceScan`，纯磁盘读取，不需要引擎在跑），不新写一份扫描：两份实现会
+    // 各自漂移，而"到底发现了什么"是最不能漂移的那种数。
+    //
+    // 键里有 `filesEpoch`：外部往 `skills/`/`themes/`/… 里放了东西时，监视器会 bump 它，
+    // 这一屏的数字跟着变。读数在 IO 上跑；未扫出结果前是 `null`，行显示「未读取」而不是 0。
+    var resourceScan by remember { mutableStateOf<ResourceScan?>(null) }
+    LaunchedEffect(workspacePath, filesEpoch, paths) {
+        val scanned = withContext(Dispatchers.IO) {
+            runCatching {
+                WorkspaceResourceScan.scan(
+                    workspace = workspace,
+                    configDir = PiProjectConfig.root(workspace),
+                    agentDir = paths.agentDir,
+                )
+            }
+        }
+        val outcome = scanned.fold(
+            onSuccess = { resources ->
+                ResourceScan.Found(
+                    resources.mapNotNull { resource ->
+                        val kind = when (resource.kind) {
+                            WorkspaceResourceKind.Skill -> DiscoveredKind.Skills
+                            WorkspaceResourceKind.Theme -> DiscoveredKind.Themes
+                            WorkspaceResourceKind.Prompt -> DiscoveredKind.Prompts
+                            WorkspaceResourceKind.Extension -> DiscoveredKind.Extensions
+                        }
+                        val source = when (resource.source) {
+                            WorkspaceSource.ProjectPi -> DiscoverySource.ProjectPi
+                            WorkspaceSource.Agents -> DiscoverySource.Agents
+                            WorkspaceSource.Global -> DiscoverySource.Global
+                            WorkspaceSource.Package -> DiscoverySource.Package
+                            WorkspaceSource.Extension -> DiscoverySource.Extension
+                        }
+                        DiscoveredResource(kind, resource.name, source)
+                    },
+                )
+            },
+            // 读不到就说读不到：这是 `ResourceScan.Unreadable` 存在的全部理由。把它吞成
+            // `Found(emptyList())` 会让行显示「还没有发现任何资源」——一个看起来像真读数的假话。
+            onFailure = { error ->
+                ResourceScan.Unreadable(error.message ?: error::class.java.simpleName)
+            },
+        )
+        resourceScan = outcome
+        // 摘要（`SettingsHome` 画的那一行）拿不到这个 LaunchedEffect 的结果，只能读缓存。
+        PiResourceFactsCache.put(workspacePath, outcome)
+    }
+    // 扫描落地前显示「未读取」；落地后按三种读数之一显示，绝不显示一个假的 0。
+    val resourceOverrides = resourceScan?.let { resourceFactOverrides(it) } ?: resourceFactPlaceholders()
     val effectiveStore = remember(activeStore, runtimeSelection, runtimeStatusText) {
         AppOnlySettingsStore(activeStore, runtimeSelection, runtimeStatusText)
     }
@@ -341,6 +396,10 @@ fun PiSettingsStack(
         // 看不到 logcat。这一行把 App 此刻还能读到的一切汇总成一份纯文本交给用户，报告
         // 的抓取发生在引擎退出的一瞬间（`engineDiagnostics`），所以引擎死了也能导。
         "app.runtime.diagnostics" to { diagnostics = true },
+        // 「查看资源文件」：这一屏的出口，指向「Pi 文件」屏。它走的是本栈**已有**的层级
+        // `piFiles`（`SettingsHome` 的入口行用的是同一个），不新造导航；那一屏是目录浏览器，
+        // `skills/`、`prompts/`、`themes/`、`extensions/` 都在里面能看到和编辑。
+        "app.resources.openFiles" to { piFiles = true },
     )
 
     BackHandler(
@@ -461,7 +520,7 @@ fun PiSettingsStack(
                 contentPadding = contentPadding,
                 onBack = { searching = false },
                 onOpenSetting = openSetting,
-                valueOverrides = runtimeOverrides(facts),
+                valueOverrides = runtimeOverrides(facts) + resourceOverrides,
             )
 
             currentGroup != null -> SettingsGroupScreen(
@@ -484,7 +543,7 @@ fun PiSettingsStack(
                 onSettingWritten = handleSettingWritten,
                 onRunAction = onRunAction,
                 hostActions = hostActions,
-                valueOverrides = runtimeOverrides(facts),
+                valueOverrides = runtimeOverrides(facts) + resourceOverrides,
                 // The raw per-phase evidence under 运行时（实际生效）: read once with the
                 // sentence above, rendered as a bounded string. See the state's comment.
                 detailOverrides = runtimeDetailOverrides(runtimeStatus),

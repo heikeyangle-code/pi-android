@@ -557,7 +557,23 @@ run_harness pre-spawn \
   app.pi.rpc.PiPreSpawnCheckKt \
   "$ROOT/app/src/test/kotlin/app/pi/rpc/PiPreSpawnCheck.kt" \
   "$ROOT/rpc/src/main/kotlin/app/pi/rpc/PiLaunchOptions.kt" \
-  "$ROOT/rpc/src/main/kotlin/app/pi/rpc/PiPreSpawnConfig.kt"
+  "$ROOT/rpc/src/main/kotlin/app/pi/rpc/PiPreSpawnConfig.kt" \
+  "$ROOT/rpc/src/main/kotlin/app/pi/rpc/ExtensionFlagArgs.kt"
+
+# app.pi.rpc: the launch arguments an *extension* declared (`pi.registerFlag`) and the user
+# types into the app. pi's own parser is the specification — `cli/args.ts:227-241` decides
+# what a `--flag` means from the tokens around it — so this harness is that table, line for
+# line: the `=` form (first `=` splits, the value is taken verbatim, may be empty), the
+# space form (the next token counts only if it does not start with `-`/`@`, and is then
+# consumed), a bare flag meaning `true`, last-one-wins, and the shapes pi turns into a
+# startup error *before* anything else runs (`-x`, `@file`, `--`, a stray word). It
+# deliberately does **not** check registration: that set exists only inside the pi process,
+# so a whitelist here could only be a guess.
+run_harness extension-flags \
+  app.pi.rpc.ExtensionFlagArgsCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/rpc/ExtensionFlagArgsCheck.kt" \
+  "$ROOT/rpc/src/main/kotlin/app/pi/rpc/ExtensionFlagArgs.kt" \
+  "$ROOT/rpc/src/main/kotlin/app/pi/rpc/PiLaunchOptions.kt"
 
 # app.pi.service: the foreground service's lifecycle decisions — what a start
 # command means (including the null intent a killed `START_STICKY` service is
@@ -672,6 +688,32 @@ run_harness row-height-cache \
   "$ROOT/app/src/test/kotlin/app/pi/ui/render/RowHeightCacheCheck.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/ui/render/RowHeightCache.kt"
 
+# app.pi.ui.blocks: the transcript image cache's arithmetic — a byte-bounded LRU whose keys
+# are multi-megabyte payloads. Two properties matter and neither is visible in the UI: the
+# byte accounting must include the key itself (a cache that forgets what its keys weigh is a
+# memory leak with extra steps), and the lookup must never hash the payload — `hashCode()` on
+# a 4 MiB string measured 22.8 ms, which is why this is a linear `==` scan rather than a
+# `LinkedHashMap`. The harness checks the LRU against an independent reference implementation
+# and asserts that `hashCode` is never called. `PiImageCache.kt` itself imports `Bitmap` and
+# therefore cannot be compiled here; this pins the class it delegates to.
+run_harness pi-image-cache \
+  app.pi.ui.blocks.PiImageCacheCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/ui/blocks/PiImageCacheCheck.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/ui/blocks/ImageSize.kt"
+
+# app.pi.ui.blocks: the *text* parse caches — the same bounded-by-bytes discipline as the
+# image one, for the work a row repeats whenever it leaves the reuse pool and comes back
+# (a diff plan is 3.9–13.2 ms, a coloured `Ansi.strip` 2.9 ms, `tailLines` ~2 ms). A row
+# that scrolls out and returns, or a screen switch, must not redo it — but "must not" has
+# to hold without growing: every cache is byte-bounded, the byte accounting includes the
+# key, a big key is never hashed, and a failed compute is not cached. The incremental line
+# count is pinned against the full count over random growths and rewrites, because "faster"
+# is only acceptable while it answers the same number.
+run_harness text-cache \
+  app.pi.ui.blocks.TextCacheCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/ui/blocks/TextCacheCheck.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/ui/blocks/ImageSize.kt"
+
 # app.pi.ui.settings: what the editors are allowed to write into pi's files. pi throws on
 # some values (a `null` timeout, a compaction override whose value is not a number) and
 # silently ignores others (a line with no `=`), so an editor that only *looks* checked
@@ -683,6 +725,17 @@ run_harness settings-validation \
   app.pi.ui.settings.PiSettingsValidationCheckKt \
   "$ROOT/app/src/test/kotlin/app/pi/ui/settings/PiSettingsValidationCheck.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/ui/settings/PiSettingsValidation.kt"
+
+# app.pi.ui.settings: what the 「扩展与资源」group reports as *discovered*. The four rows that
+# used to list hand-written search paths were removed because pi finds resources by itself —
+# so this screen has to state what is actually there, with its sources, and it must never
+# invent a reading: a count, "nothing found yet", "could not read: why" and "not read yet"
+# are four different answers that must not impersonate each other (an empty directory and an
+# unreadable one look identical on disk, which is exactly the kind of lie this pins out).
+run_harness settings-resources \
+  app.pi.ui.settings.PiResourceFactsCheckKt \
+  "$ROOT/app/src/main/kotlin/app/pi/ui/settings/PiResourceFacts.kt" \
+  "$ROOT/app/src/test/kotlin/app/pi/ui/settings/PiResourceFactsCheck.kt"
 
 # app.pi.settings: the settings document itself — deleting a key (pi's own "use the
 # default": writing `null` makes pi throw), one shared document per file, and the lock and
