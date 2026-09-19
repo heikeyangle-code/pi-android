@@ -32,17 +32,71 @@ import java.io.File
  *    spellings print `unknown option`).
  *  - `-0`  unchanged: proroot fakes uid 0 the same way, and `chown` "succeeds"
  *    without doing anything in both (§5.P2-3).
- *  - everything else (the bind table, `/bin/bash -c`) is shared with proot
+ *  - the **bind values** are respelled: proot accepts `-b <path>` (host == guest) and
+ *    that is what [GuestRecipe.binds] emits, but proroot's launcher requires the
+ *    `host:guest` form and *rejects the whole invocation* without it. See
+ *    [bindArgument]; this is the one place where "shared bind table" could not mean
+ *    "shared spelling".
+ *  - everything else (`/bin/bash -c`, the bind *table*) is shared with proot
  *    verbatim through [GuestRecipe].
  *
+ * ## The `-b` spelling is load-bearing, and it was wrong (2026-09-19)
+ *
+ * `GuestRecipe.binds` returns the proot spelling (`-b /proc`, `-b /dev`, …) because
+ * proot accepts a bare host path as host==guest. proroot v1.2.8 does **not**: its
+ * argument parser runs `strchr(value, ':')` on the `-b` value and, when it comes back
+ * null, prints
+ *
+ * ```
+ * [proroot] bad bind format (expected host:guest): /dev
+ * Usage: libproroot.so [-r rootfs] [-0] [--link2symlink] …
+ * ```
+ *
+ * to **stderr** and exits — before forking, before writing its `.proroot-config-<pid>`
+ * table, before running any guest command. Evidence:
+ *
+ *  - **binary**: `libproroot.so` v1.2.8 (sha256 `a4e74d75…`, byte-identical to the
+ *    published release asset) at `0x7904` calls `strchr(value, ':')` and at `0x7908`
+ *    branches to the address loading `"[proroot] bad bind format (expected host:guest)"`
+ *    when it returns null;
+ *  - **reference implementation**: DSH App's live launcher command line on this device
+ *    spells *every* bind with a colon (`-b /dev:/dev`, `-b /proc:/proc`, …) — it never
+ *    relies on the bare form, even though its README-documented option table lists
+ *    `-b <host>` as valid.
+ *
+ * The consequence of the old spelling was not a degraded proroot: it was **no proroot
+ * at all**. The launcher's stdout/stderr went through [ProrootRawProbe.parse], which
+ * only recognises marker lines, so the probe saw an empty run and reported it as
+ * "raw/inline svc 调用没有被翻译" — a translation verdict for a process that never
+ * reached translation. That misreading is why the settings row could not explain
+ * itself; the launcher's own sentence is now carried as evidence
+ * ([ProrootRawProbe.launcherLines]).
+ *
  * Environment: proroot recognises **no** `PROOT_*` variable, so none is set here.
- * In their place the launcher is told where its own components are. DSH App passes
- * the same three (`docs/proroot-research.md` §8.1 is its measured environment), and
- * doing so is the recommendation of §5.P1-4: upstream discovers
- * `libproroot-runtime.so` / `-linker.so` / `-stub-loader.so` by **fixed name in the
- * directory of `/proc/self/exe`**, which happens to be `nativeLibraryDir` today
- * (jniLibs keeps upstream's names — `tools/fetch-runtime.mjs` renames nothing), but
- * a rename would break that discovery silently. Naming them removes the coupling.
+ * In their place the launcher is told where its own components are. This is
+ * **byte-for-byte the set DSH App exports** — measured from the live launcher's
+ * `/proc/<pid>/environ` on this device, which holds exactly `PROROOT_TMP_DIR`,
+ * `PROROOT_LIB_PATH`, `PROROOT_LINKER_PATH` and `PROROOT_STUB_LOADER`, and nothing
+ * else proroot-shaped. Naming them is §5.P1-4's recommendation: upstream discovers
+ * `libproroot-runtime.so` / `-linker.so` / `-bridge.so` / `-stub-loader.so` by
+ * **fixed name in the directory of `/proc/self/exe`**, which happens to be
+ * `nativeLibraryDir` today (jniLibs keeps upstream's names — `tools/fetch-runtime.mjs`
+ * renames nothing), but a rename would break that discovery silently.
+ *
+ * ## The two variables we deliberately do **not** set
+ *
+ * `PROROOT_NO_SECCOMP` and `PROROOT_TRAMPOLINE_PATH` are both *missing* from the
+ * reference implementation's environment, and both omissions are correct:
+ *
+ *  - **`PROROOT_TRAMPOLINE_PATH`** — the launcher resolves `libproroot-bridge.so`
+ *    itself, from the same directory (the string `libproroot-bridge.so` is in the
+ *    launcher, and it `setenv`s the resolved path for its children). DSHA does not set
+ *    it either.
+ *  - **`PROROOT_NO_SECCOMP`** ([NO_SECCOMP_ENV]) — measured to have **no reader** in
+ *    v1.2.8; see [RuntimeChoice.ProrootSeccomp] for the disassembly, the release-note
+ *    search and the live-device proof. Setting it would change our environment and
+ *    nothing else, so it is not set, and `RuntimeChoice.PROROOT_SECCOMP` is the
+ *    launcher's default configuration.
  *
  * `LD_LIBRARY_PATH` is deliberately **not** set: it exists in the proot recipe only
  * so the dynamic loader can find the `libtalloc.so.2` alias proot needs, and
@@ -59,6 +113,31 @@ import java.io.File
  * environment on a bare JVM and pins the §2.3.1 mapping table by value.
  */
 object ProrootCommand {
+
+    /**
+     * The variable DSH App's children carry and the launcher's own code writes into
+     * them. **Never set by this app** — see the class KDoc and
+     * [RuntimeChoice.ProrootSeccomp]. Named here so the decision has an identifier
+     * instead of surviving as an absence, and so a harness can assert that a launch's
+     * environment does not contain it.
+     */
+    const val NO_SECCOMP_ENV = "PROROOT_NO_SECCOMP"
+
+    /** `host:guest` — the only `-b` value shape proroot v1.2.8 accepts. */
+    const val BIND_SEPARATOR = ":"
+
+    /**
+     * One bind value in proroot's spelling.
+     *
+     * proot treats `-b /proc` as `/proc:/proc`; proroot v1.2.8 parses the value with
+     * `strchr(value, ':')` and rejects the invocation outright when there is no colon
+     * (class KDoc has the addresses and the message). An already-qualified value is
+     * passed through untouched so this can never mangle `host:guest` pairs, and the
+     * function is deliberately pure and public: the `proroot` harness pins both
+     * directions, because the failure it prevents is silent.
+     */
+    fun bindArgument(value: String): String =
+        if (value.contains(BIND_SEPARATOR)) value else "$value$BIND_SEPARATOR$value"
 
     /**
      * @param guestCommand passed to `bash -c` **inside** the rootfs, so it may use
@@ -83,7 +162,13 @@ object ProrootCommand {
         // make proroot exit with its usage line (`docs/proroot-research.md` §4.2).
         argv += listOf("-r", paths.rootfs.path)
         argv += listOf("-w", cwd)
-        GuestRecipe.binds(paths, storage).forEach { argv += it }
+        // The shared *table*, respelled for proroot: every entry goes out as
+        // `-b host:guest`, including the ones the shared recipe spells as a lone host
+        // path. Keep the flag from the pair rather than retyping "-b" here, so the
+        // shared recipe stays the only place that decides what is bound.
+        GuestRecipe.binds(paths, storage).forEach { (flag, value) ->
+            argv += listOf(flag, bindArgument(value))
+        }
         extraBinds.forEach { (host, guest) -> argv += listOf("-b", "$host:$guest") }
         argv += GuestRecipe.tmpBind(paths)
         argv += GuestRecipe.shellArgs(guestCommand)
@@ -91,7 +176,8 @@ object ProrootCommand {
     }
 
     /**
-     * The launcher process's environment.
+     * The launcher process's environment: **exactly** the four `PROROOT_*` variables DSH
+     * App exports, and no others (class KDoc is the measurement).
      *
      * [PiPaths.prorootTmp] **must be a host path**, and it is: the launcher is a
      * host-side process (raw `execve`, proroot's hook not yet installed), so a guest
@@ -99,6 +185,12 @@ object ProrootCommand {
      * directory` (`docs/proroot-research.md` §4.3, which hit exactly that). The
      * proot recipe already had this right (`PROOT_TMP_DIR` is a `File.absolutePath`),
      * so this is a rename rather than a fix.
+     *
+     * There is deliberately **no** `PROROOT_NO_SECCOMP` here. It is not an omission:
+     * v1.2.8's five binaries contain the name only in the launcher, which writes `1`
+     * into every guest child itself, and no component reads it — so exporting it
+     * changes nothing except making our environment differ from the reference
+     * implementation's. `RuntimeChoice.ProrootSeccomp` carries the full evidence.
      */
     fun environment(paths: PiPaths, extra: Map<String, String> = emptyMap()): Map<String, String> = buildMap {
         put("PROROOT_TMP_DIR", paths.prorootTmp.path)

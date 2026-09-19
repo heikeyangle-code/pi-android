@@ -150,6 +150,14 @@ class RuntimeSelection(
         val probeDetail: List<String>,
         val engine: GuestEngine,
         val fallback: EngineFallback,
+        /**
+         * The seccomp档 a proroot launch would run under, and the one every cached verdict
+         * was earned under (the cache key pins it — [ProrootProbeCache.key]). Carried on
+         * the status so the settings row, the group summary and the report can all name
+         * the configuration in force **and what it gives up** from one value, and so the
+         * row's sentence can say which档 refused.
+         */
+        val mode: ProrootSeccomp = RuntimeChoice.PROROOT_SECCOMP,
     ) {
         /**
          * The sentence the settings row, the settings-home summary and the report's
@@ -163,7 +171,7 @@ class RuntimeSelection(
          * that once per epoch on `Dispatchers.IO` (`PiSettingsStack`).
          */
         val summary: String
-            get() = ProrootProbeNarrative.summary(fallback, probeDetail)
+            get() = ProrootProbeNarrative.summary(fallback, probeDetail, mode)
     }
 
     fun plan(
@@ -446,6 +454,15 @@ class RuntimeSelection(
         add(decision.engine.let { engine ->
             if (engine == GuestEngine.Proroot) "proroot（实验性）：本次 guest 进程使用 proroot" else "本次 guest 进程使用 proot"
         })
+        // The 档 goes out with the two notes where it is part of the answer: a launch that
+        // is about to use proroot has to say what it promised, and a refusal by the gate has
+        // to say which promise was in force when it was refused. Not on every proot launch —
+        // the switch being off is already the whole reason there, and a per-command line
+        // about a runtime nobody selected is noise. One line, the same string the settings
+        // row shows, so the log and the UI cannot disagree about it.
+        if (decision.engine == GuestEngine.Proroot || decision.fallback == EngineFallback.ProbeNotPassed) {
+            add("proroot 档：${RuntimeChoice.PROROOT_SECCOMP.tag}（${RuntimeChoice.PROROOT_SECCOMP.disclosure}）")
+        }
         if (decision.fallback != EngineFallback.None) add(RuntimeChoice.describe(decision.fallback))
         when (decision.fallback) {
             EngineFallback.RuntimeFilesMissing ->

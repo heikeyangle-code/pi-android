@@ -36,12 +36,29 @@ package app.pi.runtime
  *
  * [REQUIRE_TRANSLATION] is `true`, which is the strict reading of the requirement
  * this was built against: an inline `svc` call **must** see the guest filesystem, so
- * a run where it cannot is a run where proroot is not used. That makes the whole
- * opt-in inert on a build whose raw path is untranslated — deliberately, because the
- * alternative is a silent host-file read somewhere in pi's toolchain, and the user
- * can always fall back to proot. The flag exists so that this is a decision with a
- * name rather than a condition buried in a parser, and so a device test can tell the
- * two failure modes apart.
+ * a run where it cannot is a run where proroot is not used. Production reaches that
+ * rule through [RuntimeChoice.probeGate], which is the same rule with the seccomp档
+ * as an explicit input — and the档 this app ships ([ProrootSeccomp.Seccomp]) is the
+ * strict one, so the constant and the gate agree.
+ *
+ * ## When the launcher never got as far as the guest (the defect this closes)
+ *
+ * The probe's evidence used to be **only** the marker lines. That made a run in which
+ * the launcher exited during argument parsing — printing
+ * `[proroot] bad bind format (expected host:guest): /dev` to stderr and nothing to
+ * stdout — indistinguishable from a run in which translation did not happen: both
+ * parsed to an empty [Report], and an empty report's `failure` is the untranslated
+ * sentence. The gate then refused proroot for a reason that was never measured (the
+ * settings row said "raw/inline svc 调用没有被翻译" about a process that never reached
+ * translation), and the real cause was invisible everywhere.
+ *
+ * So [parse] now keeps the run's **own words**: up to [MAX_LAUNCH_LINES] lines that
+ * are not marker lines, bounded by [MAX_LAUNCH_CHARS], in [Report.launchLines]. When a
+ * run produced no phase and no interpreter line and at least one of those lines is the
+ * launcher's (`[proroot] …`), that is a **launch failure**, not a translation verdict:
+ * it becomes its own phase (`launcher=failed（<the launcher's sentence>）`) and its own
+ * header ([LAUNCH_FAILURE_HEADER]), so the failure sentence quotes proroot instead of
+ * guessing about it. Everything else keeps the readings above.
  *
  * ## Why perl and not python3 (`docs/proroot-research.md` §6.5 ②)
  *
@@ -74,6 +91,13 @@ object ProrootRawProbe {
     const val PASS_HEADER = "✓ raw syscall 探针通过"
     const val FAILURE_HEADER = "✗ raw syscall 探针未通过"
     const val NOT_RUN_HEADER = "raw syscall 探针未运行"
+
+    /**
+     * The header for a run the launcher killed before the guest existed. Its own header
+     * and not [FAILURE_HEADER]: "the raw syscall was not translated" is a statement about
+     * a measurement, and no measurement happened.
+     */
+    const val LAUNCH_FAILURE_HEADER = "✗ proroot 启动器未通过"
 
     /** `header：detail` — the separator all three headers above use. */
     const val HEADER_SEPARATOR = "："
@@ -111,6 +135,26 @@ object ProrootRawProbe {
     const val LEAKED = "leaked"
     const val MISMATCH = "mismatch"
 
+    /**
+     * The synthetic phase [parse] adds when the run never reached the guest: the launcher
+     * exited first, and the sentence it printed is the whole evidence.
+     */
+    const val LAUNCHER_PHASE = "launcher"
+    const val LAUNCHER_FAILED = "failed"
+
+    /**
+     * Every line proroot's launcher writes about itself starts with this — the one prefix
+     * that lets [parse] tell "proroot said something and died" from "the guest ran and
+     * said nothing".
+     */
+    const val LAUNCHER_PREFIX = "[proroot]"
+
+    /** How many of the run's own (non-marker) lines are kept as evidence. */
+    const val MAX_LAUNCH_LINES = 4
+
+    /** Bound for one of those lines, so a pathological message cannot flood the cache. */
+    const val MAX_LAUNCH_CHARS = 240
+
     /** One measured phase. */
     data class Phase(val verdict: String, val detail: String)
 
@@ -122,6 +166,13 @@ object ProrootRawProbe {
         val phases: Map<String, Phase>,
         /** Non-null when the probe's own interpreter was not available. */
         val interpreter: String?,
+        /**
+         * What the run said that the probe's markers do not account for: the launcher's
+         * own `[proroot] …` lines, and any other non-marker output. Bounded. Empty for a
+         * healthy run — which is information too, because it is what makes the two
+         * failure modes tellable apart.
+         */
+        val launchLines: List<String> = emptyList(),
     ) {
         private fun verdict(phase: String): String? = phases[phase]?.verdict
 
@@ -139,6 +190,18 @@ object ProrootRawProbe {
         val translated: Boolean
             get() = guestPathTranslated || verdict("passwd") == TRANSLATED
 
+        /**
+         * The launcher exited before the guest ran, and this is the sentence it printed.
+         * Null when the guest was reached — including when it was reached and failed.
+         */
+        val launcherFailure: String?
+            get() = phases[LAUNCHER_PHASE]
+                ?.takeIf { it.verdict == LAUNCHER_FAILED }
+                ?.detail
+
+        /** True when there is nothing to measure because proroot refused to start. */
+        val launcherFailed: Boolean get() = launcherFailure != null
+
         val passed: Boolean
             get() = interpreter == null && !leaked && (translated || !REQUIRE_TRANSLATION)
 
@@ -149,24 +212,44 @@ object ProrootRawProbe {
                 leaked -> "raw syscall 读到了宿主文件（libc 与 raw 对同一路径给出不同内容）——" +
                     "这属于静默越界，proroot 不使用"
 
+                // Before the translation branch, because nothing was translated *or not
+                // translated*: the guest process never existed. Quoting the launcher is the
+                // only honest answer, and it is the line the user can act on.
+                launcherFailed -> "proroot 启动器在运行 guest 之前就退出了：" +
+                    "$launcherFailure——本次启动没有产生任何 guest 输出。"
+
                 !translated -> "raw/inline svc 调用没有被翻译（看不到 guest 文件系统）——" +
                     "proroot 不使用"
 
                 else -> null
             }
 
-        /** The evidence lines, for the diagnostic report. */
+        /**
+         * The evidence lines, for the diagnostic report.
+         *
+         * A launch failure gets its own header ([LAUNCH_FAILURE_HEADER]) and the launcher's
+         * sentence as its phase, so neither the row nor the report can render it as a
+         * translation verdict.
+         */
         fun describe(): List<String> {
             if (interpreter != null) {
                 return listOf("$NOT_RUN_HEADER$HEADER_SEPARATOR" + "guest 里没有 $interpreter")
             }
-            val order = listOf("guestpath", "hostpath", "passwd")
+            val header = when {
+                launcherFailed -> "$LAUNCH_FAILURE_HEADER$HEADER_SEPARATOR$failure"
+                passed -> PASS_HEADER
+                else -> "$FAILURE_HEADER$HEADER_SEPARATOR$failure"
+            }
+            val order = listOf("guestpath", "hostpath", "passwd", LAUNCHER_PHASE)
             val lines = order.mapNotNull { phase ->
                 phases[phase]?.let { "  $phase=${it.verdict}（${it.detail}）" }
             }
-            return listOf(
-                if (passed) PASS_HEADER else "$FAILURE_HEADER$HEADER_SEPARATOR$failure",
-            ) + lines
+            // Anything else the run said, verbatim: a `[proroot]` line that did not stop
+            // the guest (so it is not the phase above) is still the reason to look here.
+            val extra = launchLines
+                .filter { it != launcherFailure }
+                .map { "  未识别输出：$it" }
+            return listOf(header) + lines + extra
         }
     }
 
@@ -227,19 +310,37 @@ object ProrootRawProbe {
     }
 
     /**
-     * Turn the probe's stdout into a [Report]. Pure.
+     * Turn the probe's stdout (with stderr merged) into a [Report]. Pure.
      *
      * A missing marker line is not a pass: an empty or truncated run parses to an
      * empty report, whose `passed` is false because nothing was translated and (with
      * [REQUIRE_TRANSLATION]) nothing else can rescue it.
+     *
+     * The run's non-marker output is **kept** rather than discarded
+     * ([Report.launchLines]), and a run that produced no probe result at all but did
+     * produce the launcher's own `[proroot] …` sentence is classified as a launch
+     * failure — see the class KDoc for the defect that closes.
      */
     fun parse(output: String): Report {
         var interpreter: String? = null
         val phases = LinkedHashMap<String, Phase>()
+        val launch = mutableListOf<String>()
         val prefix = "$MARKER$SEPARATOR"
         output.lineSequence().forEach { raw ->
             val line = raw.trimEnd('\r')
-            if (!line.startsWith(prefix)) return@forEach
+            if (!line.startsWith(prefix)) {
+                // Not a probe result. The launcher's own diagnostics arrive here, and so
+                // does anything the shell said before the markers started.
+                val text = line.trim()
+                if (text.isNotEmpty() && launch.size < MAX_LAUNCH_LINES) {
+                    launch += if (text.length <= MAX_LAUNCH_CHARS) {
+                        text
+                    } else {
+                        text.take(MAX_LAUNCH_CHARS - 1).trimEnd() + "…"
+                    }
+                }
+                return@forEach
+            }
             val fields = line.split(SEPARATOR)
             if (fields.size < 4) return@forEach
             val phase = fields[1]
@@ -251,6 +352,14 @@ object ProrootRawProbe {
             }
             phases[phase] = Phase(verdict, detail)
         }
-        return Report(phases = phases, interpreter = interpreter)
+        // Nothing was measured and proroot said why: that is a launch failure, and it gets
+        // a phase of its own so every reader (`describe`, the narrative, the report) can
+        // name it without re-deciding what it means.
+        if (phases.isEmpty() && interpreter == null) {
+            launch.firstOrNull { it.startsWith(LAUNCHER_PREFIX) }?.let { sentence ->
+                phases[LAUNCHER_PHASE] = Phase(LAUNCHER_FAILED, sentence)
+            }
+        }
+        return Report(phases = phases, interpreter = interpreter, launchLines = launch)
     }
 }

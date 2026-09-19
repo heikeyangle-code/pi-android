@@ -88,7 +88,7 @@ v1.2.3 另有一条针对小米的特例：`faccessat2` → `faccessat` seccomp 
 
 `439` = arm64 `faccessat2`，`x0=ffffffffffffff9c` = `-100` = `AT_FDCWD`。**`SIGSYS trapped` 就是 `SECCOMP_RET_TRAP` 的直接指纹**：proroot 用 seccomp 把 `faccessat2` 变成信号，在自己的 SIGSYS handler 里处理。`[实测]`
 
-> 注意一个**未能确定**的点：DSHA 给子进程显式设了 `PROROOT_NO_SECCOMP=1`（见 §8.1），语义未文档化。我在 7 次嵌套运行里用不同取值跑同样的三项探针（绝对 `link`、dirfd `linkat`、raw `openat`），**raw `openat` 在所有配置下都返回 ENOENT**，即这一层对 `openat` 从不生效；`=1`/`=0` 的对比因探针残留状态而**失效，不能下结论**。语义：**未找到**。
+> **已结案（2026-09-19，见 `known-gaps.md` 与 `07-construction-decisions.md` D57）**：`PROROOT_NO_SECCOMP` 的语义**已查明，它不是开关，是标签**。五个 `.so` 里只有 `libproroot.so` 含该串（`getenv` 打一行 verbose 日志 + `setenv(...,"1",1)` 写进**子进程**环境），**没有任何读者**；活证是同一台机器上 DSHA 的 launcher 环境里**没有**它、而它 fork 出的 guest 子进程**有**。该状态下 seccomp 层始终活着（`SIGSYS trapped syscall=439` 持续刷新），raw 翻译也正常（把本仓库探针的 Perl 原文放进 DSHA guest 得到 `guestpath=translated / hostpath=unreachable / passwd=translated`）。**代价 0、收益 0，不要设它。**
 
 ### 1.3 五个 `.so` 的分工
 
@@ -362,11 +362,10 @@ libc open("/etc/hostname")                        -> localhost.localdomain   # �
 
 **⚠️ 对本项目特别重要**：pi 的 `find`/`grep` 工具与 `@` 文件提及依赖 **`rg`/`fd`（Rust）**，而 Rust 正是 v1.2.2 点名的 "inline `svc` emitters" 一类。**本机 DSHA 客户机里没有 `rg`/`fd`**（`command -v rg fd` 无输出；`/usr/local/bin` 只有 corepack/dsh/node/npm/npx/playwright），所以**我没能实测它们**（§9.5 给出必须在 pi 自己的 rootfs 里跑的探针）。
 
-### 🟠 P1-1 `PROROOT_NO_SECCOMP=1`：参考实现关掉了兜底层，语义不明
-
-`[实测]` DSHA 的子进程环境里有 `PROROOT_NO_SECCOMP=1`（`/proc/22921/environ`），而上游 README 的环境变量表**完全没有这个变量**（只有 `PROROOT_VERBOSE`/`GUEST_EXE`/`TMP_DIR`/`STUB_LOADER`/`LOG_APPEND`）。
-
-**含义（推断）**：它很可能关掉的是第 3 层 seccomp 兜底——而第 3 层恰好是**唯一能救 raw/dirfd-relative syscall 的层**。如果这个推断成立，那么 DSHA 目前运行在"没有兜底"的配置下，这正好解释了它自己代码里那些 raw syscall 都拿不到翻译（§8.2）。**语义：未找到**；我做的 `=1`/`=0` 对照实验因探针残留而失效，**不能下结论**。
+### ✅ P1-1（已结案）`PROROOT_NO_SECCOMP=1`：**是标签，不是开关**——不设是对的
+**结论（2026-09-19 反汇编 + 活证）**：该串只出现在 `libproroot.so`：一处 `getenv`（verbose 日志）、一处 `setenv("PROROOT_NO_SECCOMP","1",1)`（写在准备**子进程** env 的直线上，无分支）。**没有任何代码读它**。活证：DSHA 的 **launcher**（`/proc/<pid>/environ`）没有它，其 **guest 子进程**有 —— 值是 launcher 自己写的。因此它既不关 seccomp，也不改变翻译层：同机 `SIGSYS trapped syscall=439` 持续刷新，且把本仓库探针的 Perl 原文放进 DSHA guest 得到 `guestpath=translated / hostpath=unreachable / passwd=translated`。
+**因此**：`ProrootCommand` 保持"只设文档化 + 实测过的四个 `PROROOT_*`"，**不设它**；生产档仍是**严格档**（raw 未翻译照旧否决）。
+> 原先这里写的「语义未找到 / 可能关掉第 3 层兜底」是**错的**，已由上面的反汇编与活证取代（原文保留在 git 历史里）。
 
 **规避**：我们**不要**照抄这个变量（保持默认）；改为在自检里分别跑一次"raw syscall 探针"和"libc 探针"，把结果记进诊断。
 

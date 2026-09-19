@@ -822,6 +822,44 @@ run_harness tree-navigation \
   "$ROOT/app/src/test/kotlin/app/pi/ui/chat/PiTreeNavigationCheck.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/ui/chat/PiTreeNavigation.kt"
 
+# app.pi.runtime: the proroot status *sentences*. When the gate refuses, the row is the only
+# place the user can learn why — so the four answers ("not run yet" / "did not pass, and here
+# is the stage" / "passed, takes effect next launch" / "in use, and in which mode") must be
+# exact, bounded and include the probe's own words. This harness would have caught the bug
+# that shipped: the launcher died on `-b` format *before* forking, the raw probe parsed an
+# empty report and reported "raw svc not translated" — a diagnosis that named the wrong
+# stage. The parser now classifies a launcher-level failure as its own stage.
+run_harness proroot-status-text \
+  app.pi.runtime.ProrootStatusTextCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/runtime/ProrootStatusTextCheck.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/runtime/ProrootProbeNarrative.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/runtime/ProrootRawProbe.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/runtime/GuestToolProbe.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/runtime/RuntimeChoice.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/runtime/ProrootCommand.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/runtime/ProrootProbeCache.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/runtime/GuestRecipe.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/runtime/GuestCommandLine.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/runtime/PiRuntime.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/runtime/ShellQuote.kt"
+
+# app.pi.runtime: the probe's *evidence lines*, the half the diagnostic report prints. The
+# same defect made them empty, so an empty report has to be a stated outcome rather than
+# something the reader is left to infer from four absent phases.
+run_harness proroot-probe-detail \
+  app.pi.runtime.ProrootProbeDetailCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/runtime/ProrootProbeDetailCheck.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/runtime/ProrootProbeNarrative.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/runtime/ProrootRawProbe.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/runtime/GuestToolProbe.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/runtime/RuntimeChoice.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/runtime/ProrootCommand.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/runtime/ProrootProbeCache.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/runtime/GuestRecipe.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/runtime/GuestCommandLine.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/runtime/PiRuntime.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/runtime/ShellQuote.kt"
+
 # --- 4. verdict ---------------------------------------------------------------
 # The counts are computed, not written down. They were hardcoded once ("2
 # harnesses"), and adding a third would have left the message lying about how much

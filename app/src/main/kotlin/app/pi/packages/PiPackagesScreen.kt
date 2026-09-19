@@ -283,6 +283,11 @@ fun PiPackagesScreen(
         // 技能 / 提示模板 / 主题：**三类各一节**，各带自己的标题与数量。原来是三段挤在同一张
         // 卡里、卡内各画一行 12 号小字（`技能（2）`），外面再套一个「其他资源（不是随 App 安装的）」
         // 的标题 —— 三件不同的事共用一个「其他」，读者看不出这是三类资源还是三类杂项。
+        //
+        // 四类的先后是 **pi 自己的加载顺序**：扩展在上一节，然后 skills → prompts → themes
+        // （`core/package-manager.ts:203-204` 的 `RESOURCE_TYPES`；`resource-loader.ts` 的 reload
+        // 照它走：extensions `:456` → skills `:468` → prompts `:483` → themes `:502`）。
+        // 组页的「实际发现」那四个只读事实行用的是同一个顺序（`PiResourceFacts.DiscoveredKind`）。
         PiResourceDiscovery.Kind.entries.forEach { kind ->
             val rows = state.resources.filter { it.kind == kind }
             item(key = "resources:${kind.name}") {

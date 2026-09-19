@@ -17,6 +17,13 @@ package app.pi.runtime
 //  2. **"no evidence" is stated, not filled in.** A verdict with no recorded lines, or a
 //     probe that has never run, yields a sentence saying exactly that — never an empty
 //     block where a reading is expected, and never a stage made up here.
+//  3. **a run proroot's launcher killed before the guest existed is readable here too**
+//     (added 2026-09-19). Its header, its phase and the launcher's own sentence are what
+//     make "why is this not using proroot" answerable from the settings screen, and the
+//     cache round trip has to reproduce them exactly.
+//  4. **a verdict earned in the other seccomp档 is not ours** (added 2026-09-19). The key
+//     carries the档, so a stale file from before the fix (or from a different
+//     configuration) reads as "no verdict" instead of being trusted.
 //
 // The lines fed in below are produced by the production `describe()`s
 // (`ProrootRawProbe.Report`, `GuestToolProbe.Report`, `ProrootProbeCache`), so a reworded
@@ -180,7 +187,7 @@ fun main() {
     // The row reads a verdict that a **previous process** wrote. If the round trip
     // through the cache file changed a line, the row and the exported report would
     // disagree while both looked right in isolation.
-    val key = ProrootProbeCache.key("2026-06-17.3", "digest")
+    val key = ProrootProbeCache.key("2026-06-17.3", "digest", RuntimeChoice.PROROOT_SECCOMP.tag)
     val text = ProrootProbeCache.render(key, passed = false, detail = recordedFailure)
     val cached = ProrootProbeCache.parse(text, key)
     check("the cached verdict is read back", cached?.passed, false)
@@ -208,8 +215,61 @@ fun main() {
     )
     check(
         "a stale-key cache yields no verdict, so the row falls back to 尚未运行",
-        ProrootProbeCache.parse(text, ProrootProbeCache.key("another-revision", "digest")),
+        ProrootProbeCache.parse(text, ProrootProbeCache.key("another-revision", "digest", RuntimeChoice.PROROOT_SECCOMP.tag)),
         null,
+    )
+    // ... and a verdict earned in the *other* seccomp档 is equally not ours (2026-09-19).
+    check(
+        "a verdict from the other mode is not read back",
+        ProrootProbeCache.parse(text, ProrootProbeCache.key("2026-06-17.3", "digest", ProrootSeccomp.NoSeccomp.tag)),
+        null,
+    )
+
+    // ================================================= 5. 启动失败也逐字进详情
+    // The run proroot's launcher killed before the guest existed is now its own evidence
+    // shape: its header, its phase and the launcher's own sentence. The row's detail block
+    // and the exported report are the same list, so "why is it not using proroot" is
+    // answerable without leaving the settings screen.
+    val launchFailure: List<String> = ProrootRawProbe.parse(
+        "[proroot] bad bind format (expected host:guest): /dev\n" +
+            "Usage: libproroot.so [-r rootfs] [-0] [--link2symlink] [-b host:guest] command\n",
+    ).describe()
+    check(
+        "the launch failure detail starts with its own header",
+        launchFailure.first().startsWith(ProrootRawProbe.LAUNCH_FAILURE_HEADER),
+        true,
+    )
+    check(
+        "the launcher's sentence is in the detail block",
+        launchFailure.any { it.contains("[proroot] bad bind format (expected host:guest): /dev") },
+        true,
+    )
+    check(
+        "the launcher's second line is too",
+        launchFailure.any { it.contains("Usage: libproroot.so") },
+        true,
+    )
+    check(
+        "the launch failure travels through the cache unchanged",
+        ProrootProbeCache.parse(
+            ProrootProbeCache.render(key, false, launchFailure),
+            key,
+        )?.detail,
+        launchFailure,
+    )
+    check(
+        "and the row names the launch stage, not the raw one",
+        ProrootProbeNarrative.summary(EngineFallback.ProbeNotPassed, launchFailure)
+            .contains(ProrootProbeNarrative.STAGE_LAUNCH) &&
+            !ProrootProbeNarrative.summary(EngineFallback.ProbeNotPassed, launchFailure)
+                .contains(ProrootProbeNarrative.STAGE_RAW),
+        true,
+    )
+    check(
+        "the unparseable-output shape is bounded before it reaches the row",
+        ProrootProbeNarrative.boundedDetailLines(EngineFallback.ProbeNotPassed, false, launchFailure)
+            .all { it.length <= ProrootRawProbe.MAX_LAUNCH_CHARS + 16 },
+        true,
     )
 
     println(if (failures == 0) "\nharness: OK (all checks passed)" else "\nharness: FAILED ($failures)")

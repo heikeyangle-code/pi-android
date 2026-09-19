@@ -18,7 +18,14 @@ package app.pi.runtime
 //  3. a refusal with no recognised evidence says exactly that instead of inventing a
 //     stage — the default-value-in-a-reading's-clothes shape this repository keeps fixing;
 //  4. the row draws this with `maxLines = 1`, so the sentence must stay one line and the
-//     quote must be bounded **without** truncating the stage name away.
+//     quote must be bounded **without** truncating the stage name away;
+//  5. the sentence carries the **seccomp档** in force, because "the raw syscall was not
+//     translated" is a verdict about a promise and which promise was in force is part of
+//     the answer (added 2026-09-19);
+//  6. a run proroot's own launcher killed before the guest existed is named as its own
+//     stage (`proroot 启动`) and quoted verbatim — reporting it as "raw syscall 未翻译"
+//     was the misdiagnosis that made the settings row unable to explain itself (added
+//     2026-09-19).
 //
 // Android-free by construction: the closure is Kotlin stdlib plus `java.io` (through
 // `ProrootRawProbe`/`GuestToolProbe`, neither of which is started here — this harness only
@@ -54,18 +61,26 @@ private fun toolEvidence(vararg markerLines: String): List<String> =
 
 private const val BASE = "已回退 proot：探针未通过"
 
+/** The seccomp档 the sentence has to name, from the production constant. */
+private const val MODE = "默认档"
+
 fun main() {
     // ================================================= 1. 基础句子与其它回退原因
     check(
         "a refusal with no evidence says so instead of naming a stage",
         ProrootProbeNarrative.summary(EngineFallback.ProbeNotPassed, emptyList()),
-        "$BASE（缓存里没有逐阶段记录）",
+        "$BASE（$MODE，缓存里没有逐阶段记录）",
     )
     check(
         "the refusal sentence is the base sentence plus a bracket",
         ProrootProbeNarrative.summary(EngineFallback.ProbeNotPassed, emptyList())
             .startsWith(RuntimeChoice.describe(EngineFallback.ProbeNotPassed)),
         true,
+    )
+    check(
+        "the production mode is the one the sentence names",
+        RuntimeChoice.PROROOT_SECCOMP.shortLabel,
+        MODE,
     )
     check(
         "every other reason is passed through verbatim",
@@ -93,13 +108,36 @@ fun main() {
     check(
         "an untranslated raw syscall names the raw stage and the phase line",
         ProrootProbeNarrative.summary(EngineFallback.ProbeNotPassed, untranslated),
-        "$BASE（raw syscall：guestpath=untranslated（errno=2））",
+        "$BASE（$MODE·raw syscall：guestpath=untranslated（errno=2））",
     )
     check(
         "the stage it names is the one the report blames",
         ProrootProbeNarrative.summary(EngineFallback.ProbeNotPassed, untranslated)
             .contains(ProrootRawProbe.UNTRANSLATED),
         true,
+    )
+    // The 档 is not decoration: it is part of the refusal's meaning. "The raw syscall was
+    // not translated" is a verdict about a promise, so the sentence says which promise was
+    // in force — and the value comes from the production constant, not from the recorded
+    // lines (the cache key already pins a valid verdict to a 档).
+    check(
+        "the sentence names the mode in force",
+        ProrootProbeNarrative.summary(EngineFallback.ProbeNotPassed, untranslated)
+            .contains(RuntimeChoice.PROROOT_SECCOMP.shortLabel),
+        true,
+    )
+    check(
+        "both modes produce different sentences",
+        ProrootProbeNarrative.summary(
+            EngineFallback.ProbeNotPassed,
+            untranslated,
+            ProrootSeccomp.Seccomp,
+        ) == ProrootProbeNarrative.summary(
+            EngineFallback.ProbeNotPassed,
+            untranslated,
+            ProrootSeccomp.NoSeccomp,
+        ),
+        false,
     )
 
     // A leak is the disqualifying outcome, and `Report.failure` reports it before the
@@ -131,6 +169,41 @@ fun main() {
         "a probe that could not run says why, named as the raw stage",
         ProrootProbeNarrative.failedStage(noInterpreter),
         ProrootProbeNarrative.FailedStage(ProrootProbeNarrative.STAGE_RAW, "guest 里没有 perl"),
+    )
+
+    // The run proroot itself killed before the guest existed (2026-09-19): the launcher's
+    // argument parser refuses the invocation and prints its sentence to stderr, so there is
+    // no measurement at all. The row must name *that* stage — reporting it as "raw syscall
+    // 未翻译" is a verdict about a process that never reached translation, which is exactly
+    // the misdiagnosis the fix closes.
+    val launcherDied = ProrootRawProbe.parse(
+        "[proroot] bad bind format (expected host:guest): /dev\n" +
+            "Usage: libproroot.so [-r rootfs] [-0] [--link2symlink] [-b host:guest] command\n",
+    ).describe()
+    check(
+        "a launcher that never reached the guest is its own stage",
+        ProrootProbeNarrative.failedStage(launcherDied),
+        ProrootProbeNarrative.FailedStage(
+            ProrootProbeNarrative.STAGE_LAUNCH,
+            "[proroot] bad bind format (expected host:guest): /dev",
+        ),
+    )
+    check(
+        "the launcher stage is quoted verbatim in the sentence",
+        ProrootProbeNarrative.summary(EngineFallback.ProbeNotPassed, launcherDied)
+            .contains("[proroot] bad bind format"),
+        true,
+    )
+    check(
+        "the launcher stage does not borrow the raw stage's name",
+        ProrootProbeNarrative.summary(EngineFallback.ProbeNotPassed, launcherDied)
+            .contains(ProrootProbeNarrative.STAGE_LAUNCH),
+        true,
+    )
+    check(
+        "the launcher stage outranks the headers",
+        ProrootProbeNarrative.failedStage(launcherDied)?.label,
+        ProrootProbeNarrative.STAGE_LAUNCH,
     )
 
     // A refusal whose phases carry no verdict this object knows (the planted file could
@@ -275,6 +348,18 @@ fun main() {
         "a failing raw record starts with the failure header",
         untranslated.first().startsWith(ProrootRawProbe.FAILURE_HEADER),
         true,
+    )
+    // A fourth header, added 2026-09-19: a launch failure is not a translation verdict, so it
+    // must not wear the translation verdict's header either.
+    check(
+        "a launch failure starts with its own header",
+        launcherDied.first().startsWith(ProrootRawProbe.LAUNCH_FAILURE_HEADER),
+        true,
+    )
+    check(
+        "the launch header is not the translation header",
+        ProrootRawProbe.LAUNCH_FAILURE_HEADER == ProrootRawProbe.FAILURE_HEADER,
+        false,
     )
 
     println(if (failures == 0) "\nharness: OK (all checks passed)" else "\nharness: FAILED ($failures)")

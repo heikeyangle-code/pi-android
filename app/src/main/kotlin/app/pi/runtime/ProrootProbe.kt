@@ -33,13 +33,20 @@ import java.util.concurrent.TimeUnit
  *
  * Both must pass. A leak fails the gate outright.
  *
+ * "Both must pass" is exactly true in the seccomp档 this app ships
+ * ([RuntimeChoice.PROROOT_SECCOMP]): the raw probe has to show translation, and the tool
+ * probe has to show a real `rg`/`fd` invocation working. The rule itself lives in
+ * [RuntimeChoice.probeGate] and takes the档 as an input, so a档 that does not promise raw
+ * translation would refuse proroot on a leak or on broken tools but not on
+ * "untranslated" — reported either way, never hidden.
+ *
  * ## The cache
  *
- * The verdict is keyed by the unpacked runtime revision **and** the digest of the
- * five proroot binaries, and stored in the volatile runtime tree
- * ([ProrootProbeCache], [PiPaths.prorootProbeCache]). It is therefore re-earned
- * whenever either of the two things it is about changes, and it cannot outlive the
- * tree it describes. A **failed** verdict is cached too: the gate is a measurement,
+ * The verdict is keyed by the unpacked runtime revision, the digest of the five proroot
+ * binaries **and the seccomp档** ([ProrootProbeCache.key]), and stored in the volatile
+ * runtime tree ([ProrootProbeCache], [PiPaths.prorootProbeCache]). It is therefore
+ * re-earned whenever any of the three things it is about changes, and it cannot outlive
+ * the tree it describes. A **failed** verdict is cached too: the gate is a measurement,
  * not a retry loop, and re-running a probe that just failed on every launch would
  * spend seconds to learn the same thing.
  *
@@ -118,8 +125,12 @@ object ProrootProbe {
         return md.digest().joinToString("") { "%02x".format(it.toInt() and 0xff) }
     }
 
-    /** The cache key for a revision and a digest. */
-    fun key(revision: String, digest: String): String = ProrootProbeCache.key(revision, digest)
+    /** The cache key for a revision, a digest and the seccomp档 in effect. */
+    fun key(
+        revision: String,
+        digest: String,
+        mode: ProrootSeccomp = RuntimeChoice.PROROOT_SECCOMP,
+    ): String = ProrootProbeCache.key(revision, digest, mode.tag)
 
     /** The cached verdict for this revision + digest, or null when there is none. */
     fun cached(paths: PiPaths, revision: String, digest: String): Verdict? {
@@ -132,11 +143,26 @@ object ProrootProbe {
     /**
      * Run both probes and write the verdict. Blocking; see the class KDoc.
      *
+     * ## Why the tool probe runs even when the raw one did not pass
+     *
+     * It used to run only when the raw half had produced an *interpreter* line — i.e. only
+     * when the absence of a result was explainable by a missing `perl`. Any other raw
+     * failure short-circuited it, which is how a report came to say
+     * `rg: 没有输出 rg --version 的结果行（探针没跑到，或这个命令没被执行）` about a probe
+     * that had never been started. The two halves answer different questions — "is an
+     * inline `svc` translated" and "do the real tools work" — and the second is the gate's
+     * decisive measurement in **every** seccomp档 ([RuntimeChoice.probeGate]): it is the
+     * only one that proves path translation on a real guest path, and under a档 that does
+     * not promise raw translation it is the only one left that can still refuse proroot. A
+     * probe that was never run is not a pass, and a probe that was skipped must not be
+     * reported as one either.
+     *
      * The planted probe file is deleted on the way out in every path — it is the
      * app's own file in the app's own tmp directory.
      */
     fun run(paths: PiPaths, storage: File?, revision: String, digest: String): Verdict {
-        val key = key(revision, digest)
+        val mode = RuntimeChoice.PROROOT_SECCOMP
+        val key = key(revision, digest, mode)
         val plantedHost = File(paths.tmp, ProrootRawProbe.PLANTED_NAME)
         val token = UUID.randomUUID().toString()
 
@@ -155,19 +181,25 @@ object ProrootProbe {
         val detail = mutableListOf<String>()
         detail += raw.describe()
 
-        var tools: GuestToolProbe.Report? = null
-        if (raw.interpreter == null) {
-            tools = runCatching { GuestToolProbe.run(paths, storage, GuestEngine.Proroot) }
-                .getOrElse { error ->
-                    GuestToolProbe.Report(
-                        emptyList(),
-                        launchError = "proroot 工具链探针抛了异常：${error::class.java.simpleName}: ${error.message}",
-                    )
-                }
-            detail += tools.describe().map { "  $it" }
-        }
+        val tools = runCatching { GuestToolProbe.run(paths, storage, GuestEngine.Proroot) }
+            .getOrElse { error ->
+                GuestToolProbe.Report(
+                    emptyList(),
+                    launchError = "proroot 工具链探针抛了异常：${error::class.java.simpleName}: ${error.message}",
+                )
+            }
+        detail += tools.describe().map { "  $it" }
 
-        val passed = raw.passed && (tools?.ok ?: false)
+        // The gate itself: `RuntimeChoice.probeGate` owns the rule, pure, so the harness
+        // executes production's own combination instead of a copy. A leak refuses proroot
+        // in every档; the tools must really have run in every档; raw translation is
+        // required only where it was promised (`mode`).
+        val passed = RuntimeChoice.probeGate(
+            mode = mode,
+            rawVetoed = raw.leaked,
+            rawTranslated = raw.translated,
+            toolsOk = tools.ok,
+        )
         val verdict = Verdict(
             passed = passed,
             key = key,

@@ -6,8 +6,8 @@ package app.pi.runtime
  * ## Why the key is what it is
  *
  * The gate answers "does proroot work **on this device, with these bytes, over this
- * guest tree**". Three things can change that answer, and the key has to cover the
- * two that the app can see:
+ * guest tree, in this configuration**". Four things can change that answer, and the key
+ * has to cover the three the app can see:
  *
  *  - the **unpacked runtime revision** (`PiPaths.stampFile()`) — a new rootfs, a new
  *    Node, a new `rg`/`fd` binary, or a new pi engine all invalidate a verdict;
@@ -16,8 +16,14 @@ package app.pi.runtime
  *    says nothing about the new ones. (`docs/proroot-research.md` §3.1 is the
  *    reason this must not be a version string: the bytes on the reference device do
  *    not match any published release, so "v1.2.8" is not an identity.)
+ *  - the **seccomp档** the launch ran under ([ProrootSeccomp.tag]) — the two档 answer
+ *    different questions (one promises inline-`svc` translation, the other does not),
+ *    so a verdict earned under one is not an answer about the other. It is in the key
+ *    even though production pins [RuntimeChoice.PROROOT_SECCOMP], because a key that
+ *    forgot it would make the档 invisible to the cache — the same defect as a row that
+ *    says "proroot" while every launch falls back.
  *
- * The third — the device's ROM and kernel — cannot change without a process restart
+ * The last — the device's ROM and kernel — cannot change without a process restart
  * at minimum, and a stale verdict there is precisely what the three-failure fallback
  * covers.
  *
@@ -30,7 +36,8 @@ package app.pi.runtime
  * self-check stamp was split out to avoid (`PiPaths.selfCheckStamp()`'s KDoc).
  *
  * Android-free: string in, string out, so the `proroot` harness can pin the key,
- * the round-trip, and the rejection of a stale or malformed cache file.
+ * the round-trip, the rejection of a stale or malformed cache file, and that the two
+ * seccomp档 cannot read each other's verdict.
  */
 object ProrootProbeCache {
 
@@ -38,14 +45,24 @@ object ProrootProbeCache {
      * Bumped when the *meaning* of the stored verdict changes (a rule added to the
      * gate, a field reinterpreted). An old file then reads as "no verdict" instead
      * of being trusted.
+     *
+     * `v2` is the 档-aware key: every `v1` file was written by a probe whose verdict
+     * could not tell the two seccomp configurations apart, so none of them is an
+     * answer to a `v2` question — and a `v1` failure would otherwise keep proroot
+     * disabled on a device whose real defect has since been fixed in `ProrootCommand`.
      */
-    const val VERSION = "v1"
+    const val VERSION = "v2"
 
     private const val PASS = "PASS"
     private const val FAIL = "FAIL"
 
-    /** The key a verdict is valid for. */
-    fun key(revision: String, digest: String): String = "$VERSION\t${revision.trim()}\t${digest.trim()}"
+    /**
+     * The key a verdict is valid for.
+     *
+     * @param modeTag [ProrootSeccomp.tag] of the configuration the probe ran under.
+     */
+    fun key(revision: String, digest: String, modeTag: String): String =
+        "$VERSION\t${modeTag.trim()}\t${revision.trim()}\t${digest.trim()}"
 
     data class Cached(
         val key: String,

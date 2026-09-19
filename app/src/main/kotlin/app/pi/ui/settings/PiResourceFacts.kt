@@ -19,26 +19,33 @@ package app.pi.ui.settings
  *
  * | 情况 | 行文本 | 为什么不这样写会撒谎 |
  * |---|---|---|
- * | 扫到 N 个 | `3 个 · 项目 .pi 1 · ~/.pi/agent 2` | 只有数字不给来源，用户不知道"在哪、要不要动" |
+ * | 扫到 N 个 | `3 个 · 项目（<工作区>/.pi） 1 · 全局（~/.pi/agent） 2` | 只有数字不给来源，用户不知道"在哪、要不要动" |
  * | 扫到 0 个 | `还没有发现任何资源` | 写 `0 个` 会被读成"这个功能是坏的/没装好"；真相是"还没有" |
  * | 读不到 | `读不到：<原因>` | 写 `0 个` 就是**拿假值冒充读数** —— 这个仓库反复在修的形状 |
  *
  * ## 去重与来源归属
  *
  * 扫描器会为同名资源返回**每一份拷贝**（它要把冲突画出来）。"我有几个技能"问的是**名字**，
- * 所以这里按 `(kind, name)` 去重，保留**优先级最高**的来源（项目 `.pi` > `.agents` >
- * `~/.pi/agent` > 已装包 > 扩展贡献），与 pi 的解析顺序一致 —— 也就是说这一行报的是"实际
+ * 所以这里按 `(kind, name)` 去重，保留**优先级最高**的来源（项目（`<工作区>/.pi`）> `.agents` >
+ * 全局（`~/.pi/agent`）> 已装包 > 扩展贡献），与 pi 的解析顺序一致 —— 也就是说这一行报的是"实际
  * 会生效的那一份来自哪"。同名冲突本身由项目页资源段展示，不在这里重复。
  */
 internal enum class DiscoverySource(val label: String, val rank: Int) {
-    /** 工作区 `<workspace>/.pi/<kind>`。 */
-    ProjectPi("项目 .pi", 0),
+    /**
+     * 工作区 `<workspace>/.pi/<kind>`。
+     *
+     * **词必须与徽标同源**：这一行说「项目（<工作区>/.pi）」，包管理页那一行的来源徽标说
+     * 「项目 .pi」——同一个地方两处用同一个词（`PackageStrings.ORIGIN_PROJECT`）。先前事实行
+     * 只写路径、徽标只写「全局」，读者得自己猜它们是一回事。括号里的路径是补一次的对得上的
+     * 凭证，不是第二个名字。
+     */
+    ProjectPi("项目（<工作区>/.pi）", 0),
 
     /** 工作区 `<workspace>/.agents/<kind>`。 */
     Agents(".agents", 1),
 
-    /** agent dir（`~/.pi/agent/<kind>`，engine bind 成 guest 的那份）。 */
-    Global("~/.pi/agent", 2),
+    /** agent dir（`~/.pi/agent/<kind>`，engine bind 成 guest 的那份）——与徽标的「全局」同一个词。 */
+    Global("全局（~/.pi/agent）", 2),
 
     /** 已装资源包自带的（`packages` 里那些）。 */
     Package("已装包", 3),
@@ -53,12 +60,20 @@ internal enum class DiscoverySource(val label: String, val rank: Int) {
  * [extraDir] 是 pi 自动发现它的目录名，写进行的说明里（"要加新的放哪"）—— 这个文件名来自
  * pi 自己的 `FILE_PATTERNS`（`core/package-manager.ts:206-211`），由 `PiResourceDiscovery.Kind`
  * 转录，这里只引用同一个拼写，不再抄一遍语义。
+ *
+ * ## 声明顺序 = pi 自己的加载顺序
+ *
+ * `extensions / skills / prompts / themes`，不是我们习惯的顺序：这是 pi 的常量
+ * `RESOURCE_TYPES`（`core/package-manager.ts:203-204`），`resource-loader.ts` 的 reload 也照它走
+ * （extensions `:456` → skills `:468` → prompts `:483` → themes `:502`），
+ * `package-manager.ts:933`/`:2160-2190` 的合并也按同一个数组遍历。这一页的四个只读事实行、
+ * 分组摘要里的那句"已发现 …"，以及「扩展包与项目信任」页的四节，用的是**同一个**顺序。
  */
 internal enum class DiscoveredKind(val key: String, val label: String, val extraDir: String) {
-    Skills("app.resources.discovered.skills", "技能", "skills"),
-    Themes("app.resources.discovered.themes", "主题", "themes"),
-    Prompts("app.resources.discovered.prompts", "提示模板", "prompts"),
     Extensions("app.resources.discovered.extensions", "扩展", "extensions"),
+    Skills("app.resources.discovered.skills", "技能", "skills"),
+    Prompts("app.resources.discovered.prompts", "提示模板", "prompts"),
+    Themes("app.resources.discovered.themes", "主题", "themes"),
 }
 
 /** 扫描给出的一条资源：[name] 是去重的依据，[source] 是它落在哪个根下。 */

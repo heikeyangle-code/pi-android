@@ -58,26 +58,56 @@ data class EngineDecision(
  * Which **seccomp configuration** a proroot launch runs under, and the one thing that
  * differs between the two: whether an inline `svc` call has to be translated.
  *
- * ## Why the two are not the same runtime
+ * ## What was believed, and what the evidence says (2026-09-19)
  *
- * proroot translates paths in two layers, and they do not come from the same machinery:
- * libc calls are intercepted in-process, while an `svc` instruction compiled *into* a
- * binary is covered by the seccomp filter proroot installs. On a device where that filter
- * cannot do its job — and the reference device is one, where the probe recorded `raw/inline
- * svc 调用没有被翻译` while every libc-level read was translated — the documented answer is
- * to run proroot **without** it (`PROROOT_NO_SECCOMP=1`, the variable DSH App runs with on
- * that same phone, and a string the pinned `libproroot.so` carries).
+ * proroot translates paths in two layers: libc calls are intercepted in-process, and an
+ * `svc` instruction compiled *into* a binary is covered by the seccomp `RET_TRAP` filter
+ * proroot installs (`PROROOT_SIGSYS_LOG_HOST_PATH`, upstream v1.2.4's "narrow path/exec
+ * seccomp fallback filters"). The reference device recorded
+ * `raw/inline svc 调用没有被翻译` while every libc-level read was translated, which read
+ * as "this kernel's seccomp cannot do the job" — and the planned answer was to run
+ * proroot without that layer via `PROROOT_NO_SECCOMP=1`, a string the pinned
+ * `libproroot.so` carries and a variable DSH App's *children* carry.
  *
- * So a档 is not a preference and not a fallback: it is the configuration the launch path
- * uses, it changes what proroot can promise, and it therefore has to be visible in the
- * decision (this file), in the gate that refuses proroot ([probeGate]), in the cache that
- * remembers a verdict ([ProrootProbeCache.key]) and in the settings sentence ([describe]).
+ * Three measurements overturned that reading, and they are why [PROROOT_SECCOMP] is
+ * [Seccomp] rather than [NoSeccomp]:
  *
- * [NoSeccomp] stops treating an untranslated raw `svc` call as a reason to refuse proroot —
- * in that档 it is the documented shape, not a hole that was tolerated — and changes nothing
- * about the two outcomes that stay disqualifying: a raw read that comes back as the
- * **host's** file (libc and raw disagreeing about the same path), and an `rg`/`fd`
- * invocation that does not really work.
+ *  1. **The variable has no reader in v1.2.8.** Of the five pinned binaries
+ *     (byte-identical to the published v1.2.8 assets, sha256 `a4e74d75…` /
+ *     `8c47a0a7…` / `51a0ec5b…` / `1c5bc953…` / `06c6624d…`), only `libproroot.so`
+ *     contains the name at all — and there it appears exactly twice: a `getenv` inside
+ *     the `PROROOT_VERBOSE` line `[proroot] launcher: env PROROOT_NO_SECCOMP=%s`
+ *     (`0x90b4`), and `setenv("PROROOT_NO_SECCOMP","1",1)` on the unconditional path
+ *     that prepares the **child** environment (`0xa088`). `libproroot-runtime.so`,
+ *     `-linker.so`, `-bridge.so` and `-stub-loader.so` do not mention it. Upstream's
+ *     README environment table (five variables: `VERBOSE`, `GUEST_EXE`, `TMP_DIR`,
+ *     `STUB_LOADER`, `LOG_APPEND`) and every release note from v1.2.2 to v1.2.8 omit
+ *     it. So the launcher **labels every guest child `no-seccomp`** and nothing acts
+ *     on the label: the value is not a configuration, it is a comment.
+ *  2. **DSHA — the reference implementation — does not set it.** Its live launcher
+ *     (`/proc/<pid>/environ` on this device) exports exactly `PROROOT_TMP_DIR`,
+ *     `PROROOT_LIB_PATH`, `PROROOT_LINKER_PATH`, `PROROOT_STUB_LOADER`. What earlier
+ *     measurement saw in a *child* was the launcher's own `setenv`, not DSHA's input.
+ *  3. **Raw translation works on this device, in that state.** Running
+ *     [ProrootRawProbe]'s own Perl probe inside a working DSHA guest here — with
+ *     `PROROOT_NO_SECCOMP=1` in its environment — returned
+ *     `guestpath=translated hostpath=unreachable passwd=translated`, and
+ *     `/tmp/proroot-sigsys-last.txt` refreshed with `SIGSYS trapped syscall=439`
+ *     (arm64 `faccessat2`) at the same moment, i.e. the seccomp trap layer is *active*.
+ *
+ * The device's own failure had a different cause entirely and is fixed in
+ * [ProrootCommand.bindArgument]. So [Seccomp] is the configuration production uses: the
+ * launcher's default, where both layers are promised **and delivered**.
+ *
+ * ## Why the alternative is still here
+ *
+ * [NoSeccomp] is not reachable by setting anything in v1.2.8, but it is not deleted: it
+ * is the honest description of the configuration the plan originally called for, the
+ * gate's rule is genuinely different under it, and the cache key must be able to keep
+ * the two apart the day a launcher honours the variable. Keeping it named is what makes
+ * "this档 needs no raw translation" a decision with a name instead of a condition
+ * buried in a parser; **shipping it as production would have been a claim the device
+ * measurement contradicts.**
  */
 enum class ProrootSeccomp(
     /** The token [ProrootProbeCache.key] carries, so the two档 cannot share a verdict. */
@@ -85,10 +115,19 @@ enum class ProrootSeccomp(
     /** The value of [ProrootCommand.NO_SECCOMP_ENV]; null when the档 needs no variable. */
     val envValue: String?,
 ) {
-    /** proroot's default: libc calls and inline `svc` instructions both go through it. */
+    /**
+     * proroot's default and the configuration this app ships: libc calls *and* inline
+     * `svc` instructions are translated, the latter through the launcher's seccomp
+     * `RET_TRAP` filter (`libproroot.so` sets the diagnostic variable for its children,
+     * so this is also the state [NoSeccomp] would describe — see the class KDoc).
+     */
     Seccomp(tag = "seccomp", envValue = null),
 
-    /** `PROROOT_NO_SECCOMP=1`: only libc calls are translated. */
+    /**
+     * `PROROOT_NO_SECCOMP=1`: only libc calls are translated. **Not reachable in
+     * v1.2.8** — nothing reads the variable — so this is a specification, not a
+     * setting the app can select.
+     */
     NoSeccomp(tag = "no-seccomp", envValue = "1"),
     ;
 
@@ -98,14 +137,22 @@ enum class ProrootSeccomp(
      */
     val requiresRawTranslation: Boolean get() = this == Seccomp
 
+    /** The two-character-wide label a one-line sentence can carry. */
+    val shortLabel: String
+        get() = when (this) {
+            Seccomp -> "默认档"
+            NoSeccomp -> "无 seccomp 档"
+        }
+
     /**
      * The one sentence a user must be able to read: which档 is live **and what it gives
      * up**. Deliberately not "等价于 seccomp 档", because it is not.
      */
     val disclosure: String
         get() = when (this) {
-            Seccomp -> "seccomp 档：libc 调用与 inline svc 调用都走翻译"
-            NoSeccomp -> "无 seccomp 档：只翻译 libc 调用；直接发 raw syscall 的程序会绕过翻译"
+            Seccomp -> "默认档（seccomp 兜底）：libc 调用与 inline svc 调用都走翻译"
+            NoSeccomp -> "无 seccomp 档（v1.2.8 不可选，未启用）：只翻译 libc 调用；" +
+                "直接发 raw syscall 的程序会绕过翻译"
         }
 }
 
@@ -158,8 +205,13 @@ object RuntimeChoice {
      * ([probeGate]), which verdict the cache key identifies ([ProrootProbeCache.key]), and
      * what the settings sentence tells the user ([describe]). A no-seccomp behaviour that
      * no surface names is the failure mode this constant exists to make impossible.
+     *
+     * It is [ProrootSeccomp.Seccomp] — the launcher's default — and the enum's KDoc is the
+     * evidence that the alternative is not a reachable configuration in v1.2.8. This is a
+     * **stricter** setting than the plan's `NoSeccomp`: under it an untranslated raw
+     * syscall still refuses proroot.
      */
-    val PROROOT_SECCOMP: ProrootSeccomp = ProrootSeccomp.NoSeccomp
+    val PROROOT_SECCOMP: ProrootSeccomp = ProrootSeccomp.Seccomp
 
     /**
      * The probe gate's rule — **the whole of it**, pure, so the `proroot` harness executes

@@ -1148,3 +1148,50 @@ pi 自己的文件以前**一个都进不去**（工作区的文件查看器只�
 **已 1:1（非"看起来像"）**：8 个内建工具 8/8 有专属卡（**没有一个设 `executionMode`**，所以"顺序执行"不是欠账）；技能面（发现顺序、`.agents/skills`、`SKILL.md` frontmatter、`/skill:name`、列出/看内容/改文件/安装齐备，且**没有虚构** pi 没有的逐技能启停）；上下文与压缩（`--system-prompt`/`--append-system-prompt`/`--no-context-files`、四类 context 文件、`compaction.*` 含 `modelOverrides`、`/compact <指令>`、`branchSummary.*`）；附件预算与图片查看器（2 处**有意**差异：PNG 候选序、整条消息预算更严）；内核四条推送 + `queue_update`/`agent_settled`/`summarization_retry_*`/`tool_execution_update` 的 200 ms 节流。
 
 **顺带查出的文档瑕疵**：`GrepBlock.kt:181-183` 的 KDoc 引用了 **pi 主题里不存在**的 token（`contextOnTool`；diff 用的是 `toolDiffContext`）；`docs/rpc-coverage.md` 的「32/33 有入口」与代码不符（`cycle_model` 的 UI 早按裁决删除）。
+
+## D57 · proroot 上不了真机的真根因：`-b` 的拼写（一次误诊的完整复盘）
+
+**症状**：用户开「运行时加速（实验性）」后，「运行时（实际生效）」一直写「已回退 proot：探针未通过」，导出报告里是
+`✗ raw syscall 探针未通过：raw/inline svc 调用没有被翻译（看不到 guest 文件系统）` + `✗ rg` / `✗ fd`（"探针没跑到"）。
+
+**真根因（反汇编 + 活证）**：proroot v1.2.8 的启动器要求 **`-b host:guest`**，而共享绑定表 `GuestRecipe.binds` 是用
+**proot 的简写**拼的（`-b /dev`、`/proc`、`/sys`、`/system`、`/apex`）。启动器在**解析参数阶段**就打印
+`[proroot] bad bind format (expected host:guest): %s` 并退出 —— **在 fork 之前就死**，所以 guest 从来没起来过。
+证据链：① `libproroot.so`（sha256 与上游 v1.2.8 逐字节相同）里 `strchr(值, ':')` → 无冒号即走那条错误分支；
+② 同一台手机上 **DSHA 常驻启动器的 10 条 bind 全部是 `host:guest`**（读 `/proc/<pid>/cmdline`）；
+③ 用户报告的全部特征吻合：错误在 stderr、stdout 为空 → `ProrootRawProbe.parse` 只认 marker 行 → 空 Report →
+落进"未翻译"那一支；旁证是报告里**没有任何** `guestpath=/hostpath=/passwd=` 行，且 `.proroot-config 现存 0 份`
+（从没走到写配置表）。**上游 README 把 `-b <host>` 也写成合法，那是过时文档。**
+
+**修法：只改一处** —— `ProrootCommand` 把共享表里的 `-b` 值逐条改写成 `host:guest`（`bindArgument()`），
+**env 一个变量都不加**；`ProotCommand`/`GuestCommandLine`/`ProrootRetry` 零 diff（proot argv 由 harness 钉住）。
+修完**严格档本来就能过**（同机同字节的 DSHA 已证），所以生产档**没有**降级。
+
+**被推翻的两个假设（都要记住，别再犯）**：
+1. **不是 `PROROOT_NO_SECCOMP`**：五个 `.so` 里只有 `libproroot.so` 含该串 —— 一处 verbose 日志 `getenv`、
+   一处 `setenv(...,"1",1)` 写进**子进程** env，**没有任何读者**。活证：DSHA 的 **launcher** 没有它、
+   它的 **guest 子进程**有（值由 launcher 自己写）。该状态下 seccomp 一直是活的（`SIGSYS trapped syscall=439`
+   持续刷新），把本仓库探针的 Perl 原文放进 DSHA guest 还得到 `guestpath=translated / hostpath=unreachable /
+   passwd=translated`。**代价 0、收益 0 —— 不要设它**（`proroot-research.md` §1.2 与 §P1-1、`known-gaps.md` §N2 已更正）。
+2. **不是"漏传 env"**：与 DSHA 逐项对比，我们传的四个 `PROROOT_*` 与它一致，`TRAMPOLINE/NO_SECCOMP/CFG_FD/
+   ESCAPE_FD/GUEST_EXE/ROOTFS/SIGSYS_LOG_HOST_PATH` 它**也不传**（那些是 launcher 给子进程的）。
+
+**顺带修掉的三个真 bug（都是"门禁在说假话"这一类）**：
+- **探针短路**：raw 阶段失败会**跳过** `rg`/`fd` 真调用探针 —— 于是报告里的"探针没跑到"本身是被短路出来的；
+  现在工具探针**永远跑**；
+- **误诊没有兜底**：空输出被判成"未翻译"。现在**启动器级失败是独立阶段**，句子带档位 + 阶段 + 有界原话，
+  详情含 `guestpath/hostpath/passwd` 与未识别输出；
+- **harness 自身**：一个局部 `failures` 变量**遮蔽**了全局计数器 → **FAIL 也会打印 OK 并 exit 0**（门禁是假的）。
+  已修，并加了四条新断言（`-b` 归一化双向、proroot 不带 bare 值、env 只有那四个、probeGate 两档七种组合、
+  cache key 区分档位、v1 缓存不复用、启动器失败分类）。`proroot` harness **228/228**。
+另有 `parsePhase` 把 detail 当 verdict 的老 bug、缓存 key v1→v2（带档位）一并修掉。
+
+**真机判据（最灵敏的一条放最前）**：① 开开关后**第一次**启动 guest，`.proroot-config-*` 应出现 **≥1 份**
+（改前恒为 0 —— 这是"到底有没有真启动 proroot"最灵敏的指标）；② **第二次**启动后「运行时（实际生效）」=
+proroot；③ guest 内 `id` 是 fake root、`pwd` 是 `-w` 的 guest 路径、写文件**落在 rootfs 里**（宿主
+`<files>/pi/runtime/` 之外不得出现同名文件）；④ proroot 下 `rg --version` / `rg -N '^root' /etc/passwd` /
+`fd -H '^passwd$' /etc` 全 exit 0 且非空；⑤ 未通过时行上能看到「档位 + 阶段 + 原话」。
+
+**未验证**：本容器无 ADB，装不了 APK —— 上述 1–5 是判据不是实测；我方 rootfs 的首次真跑仍需上机。
+**风险声明**：生产档保持**严格**（raw 未翻译仍否决）；若发现某机型严格档过不了而日常工具正常，那是一次
+**需要新证据**的裁决，不许为了让门禁通过而删判据。

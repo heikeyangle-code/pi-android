@@ -29,6 +29,21 @@ package app.pi.runtime
 //  6. **`GuestProcessTree` computes what gets signalled.** Killing the wrong pid means
 //     killing a guest that was doing something else; the child-first order is what
 //     keeps a stop from orphaning the tree it is stopping.
+//  7. **The `-b` value has to be `host:guest`** (added 2026-09-19). proroot v1.2.8 refuses
+//     the whole invocation on a bare host path, so the shared bind table is respelled by
+//     the proroot builder and both halves are pinned: proot keeps its spelling, proroot's
+//     argv contains no value without a colon. This was the defect that made every proroot
+//     launch die before forking.
+//  8. **The gate is档-aware, and the shipping档 is the strict one** (added 2026-09-19).
+//     `RuntimeChoice.probeGate` is executed for all four inputs in both seccomp档 — a leak
+//     vetoes in both, broken tools veto in both, an untranslated raw syscall vetoes only
+//     where translation was promised — the cache key carries the档 so the two can never
+//     share a verdict, and the settings sentence's disclosure is pinned as two different
+//     sentences.
+//  9. **A launcher that never reached the guest is not a translation verdict** (added
+//     2026-09-19). `ProrootRawProbe.parse` keeps the run's own words and classifies an
+//     argument-parsing death as its own phase, so the row and the report quote proroot
+//     instead of claiming the raw syscall was untranslated.
 //
 // Android-free by construction: every file listed in this harness's closure imports
 // `java.io` and the Kotlin stdlib and nothing else. If one of them ever grows an
@@ -96,9 +111,26 @@ fun main() {
     val prootBinds = binds(ProotCommand.build(p, command, "/root", storage))
     val prorootBinds = binds(ProrootCommand.build(p, command, "/root", storage))
     check("proot's binds are the shared table plus l2s and tmp", prootBinds.toSet(), (sharedBinds + l2sBind + "${p.tmp.path}:/tmp").toSet())
-    check("proroot's binds are the shared table plus tmp", prorootBinds.toSet(), (sharedBinds + "${p.tmp.path}:/tmp").toSet())
     check("both runtimes bind /dev, /proc, /sys, /system, /apex and /dev/fd", sharedBinds.any { it == "/dev" } && sharedBinds.any { it == "/proc" } && sharedBinds.any { it == "/sys" } && sharedBinds.any { it == "/system" } && sharedBinds.any { it == "/apex" } && sharedBinds.any { it == "/proc/self/fd:/dev/fd" }, true)
     check("both runtimes bind external storage twice", sharedBinds.count { it.startsWith(storage.path) }, 2)
+
+    // ---- the `-b` spelling, which is where proroot actually died ---------------
+    // proroot v1.2.8 parses a `-b` value with `strchr(value, ':')` and refuses the whole
+    // invocation when there is no colon (`[proroot] bad bind format (expected
+    // host:guest)`), while proot accepts the bare form as host == guest. The shared
+    // table therefore has to be *respelled* by the proroot builder — and the failure it
+    // prevents is a launcher that exits before forking, which is indistinguishable from
+    // "translation did not happen" everywhere else. Both halves are pinned: the shared
+    // table keeps proot's spelling, and proroot's argv contains no value without a colon.
+    check("the shared table keeps proot's bare spelling", sharedBinds.contains("/dev"), true)
+    check("proot still emits the bare form", prootBinds.contains("/dev"), true)
+    check("the normalizer qualifies a bare host path", ProrootCommand.bindArgument("/dev"), "/dev:/dev")
+    check("the normalizer leaves a pair alone", ProrootCommand.bindArgument("/dev/urandom:/dev/random"), "/dev/urandom:/dev/random")
+    check("the separator is the one proroot parses", ProrootCommand.BIND_SEPARATOR, ":")
+    check("proroot qualifies the shared table", prorootBinds.toSet(), (sharedBinds.map { ProrootCommand.bindArgument(it) } + "${p.tmp.path}:/tmp").toSet())
+    check("proroot emits no unqualified bind value", prorootBinds.all { it.contains(ProrootCommand.BIND_SEPARATOR) }, true)
+    check("proroot binds /dev to /dev", prorootBinds.contains("/dev:/dev"), true)
+    check("proot's bind count is unchanged by the respelling", prootBinds.size, sharedBinds.size + 2)
 
     // The tail is the shared shell invocation, identical in both.
     check("proroot ends with the shared shell tail", prorootArgv.takeLast(3), listOf("/bin/bash", "-c", command))
@@ -132,6 +164,21 @@ fun main() {
     check("both runtimes name the same CA bundle", listOf(prootEnv["SSL_CERT_FILE"], prorootEnv["SSL_CERT_FILE"]), listOf(GuestRecipe.GUEST_CA_BUNDLE, GuestRecipe.GUEST_CA_BUNDLE))
     check("the forwarded CA constant is the shared one", ProotCommand.GUEST_CA_BUNDLE, GuestRecipe.GUEST_CA_BUNDLE)
     check("extra environment is merged, not dropped", ProrootCommand.environment(p, mapOf("X" to "1"))["X"], "1")
+    // The launcher's environment is exactly the four variables the reference
+    // implementation exports (measured from its live `/proc/<pid>/environ` on the device:
+    // `PROROOT_TMP_DIR`, `PROROOT_LIB_PATH`, `PROROOT_LINKER_PATH`, `PROROOT_STUB_LOADER`
+    // and nothing else proroot-shaped). `PROROOT_TRAMPOLINE_PATH` is discovered by the
+    // launcher itself, and `PROROOT_NO_SECCOMP` is *deliberately absent* — v1.2.8 has no
+    // reader for it (it writes `1` into its own children and nothing consumes it), so
+    // exporting it would change our environment and nothing else.
+    check(
+        "proroot exports the four launcher variables",
+        prorootEnv.keys.filter { it.startsWith("PROROOT_") }.sorted(),
+        listOf("PROROOT_LIB_PATH", "PROROOT_LINKER_PATH", "PROROOT_STUB_LOADER", "PROROOT_TMP_DIR"),
+    )
+    check("the no-seccomp variable is not exported", prorootEnv.containsKey(ProrootCommand.NO_SECCOMP_ENV), false)
+    check("the trampoline path is left to the launcher", prorootEnv.containsKey("PROROOT_TRAMPOLINE_PATH"), false)
+    check("the no-seccomp name is the binary's", ProrootCommand.NO_SECCOMP_ENV, "PROROOT_NO_SECCOMP")
 
     // ---- the dispatcher -----------------------------------------------------------
     check("GuestCommandLine dispatches to the proot builder", GuestCommandLine.build(p, GuestEngine.Proot, command, "/root", null), prootArgv)
@@ -262,8 +309,11 @@ fun main() {
     check("no observation and no identity is still not a match", GuestProcessTree.isSameProcess(null, null), false)
 
     // ================================================================ 5. 探针缓存
-    val key = ProrootProbeCache.key("2026-06-17.3", "abc123")
-    check("the key carries the cache version", key.startsWith("v1"), true)
+    // The key is `version + 档 + revision + digest`, and the 档 is in it because the two
+    // configurations answer different questions: a verdict earned under one is not an
+    // answer about the other (`ProrootProbeCache.key`).
+    val key = ProrootProbeCache.key("2026-06-17.3", "abc123", ProrootSeccomp.Seccomp.tag)
+    check("the key carries the cache version", key.startsWith("v2"), true)
     check("the key carries the revision", key.contains("2026-06-17.3"), true)
     check("the key carries the digest", key.contains("abc123"), true)
     val rendered = ProrootProbeCache.render(key, passed = true, detail = listOf("guestpath=translated", "passwd=translated"))
@@ -272,11 +322,24 @@ fun main() {
     check("the evidence is kept", parsed?.detail, listOf("guestpath=translated", "passwd=translated"))
     check("a failure round-trips as a failure", ProrootProbeCache.parse(ProrootProbeCache.render(key, false, emptyList<String>()), key)?.passed, false)
     // The point of the key: a verdict is only an answer to the question it was asked.
-    check("a verdict for another revision is not reused", ProrootProbeCache.parse(rendered, ProrootProbeCache.key("2026-06-18.1", "abc123")), null)
-    check("a verdict for other binaries is not reused", ProrootProbeCache.parse(rendered, ProrootProbeCache.key("2026-06-17.3", "def456")), null)
+    check("a verdict for another revision is not reused", ProrootProbeCache.parse(rendered, ProrootProbeCache.key("2026-06-18.1", "abc123", ProrootSeccomp.Seccomp.tag)), null)
+    check("a verdict for other binaries is not reused", ProrootProbeCache.parse(rendered, ProrootProbeCache.key("2026-06-17.3", "def456", ProrootSeccomp.Seccomp.tag)), null)
+    // ... and the third question: which seccomp configuration was measured. A key that
+    // forgot the 档 would let the two share a verdict, which is the same defect as a row
+    // that says "proroot" while every launch falls back.
+    val keyNoSeccomp = ProrootProbeCache.key("2026-06-17.3", "abc123", ProrootSeccomp.NoSeccomp.tag)
+    check("the key carries the mode tag", key.contains(ProrootSeccomp.Seccomp.tag), true)
+    check("the two modes get different keys", key == keyNoSeccomp, false)
+    check("a verdict for another mode is not reused", ProrootProbeCache.parse(rendered, keyNoSeccomp), null)
+    check("the other mode's verdict round-trips under its own key", ProrootProbeCache.parse(ProrootProbeCache.render(keyNoSeccomp, true, emptyList<String>()), keyNoSeccomp)?.passed, true)
+    // `v1` files cannot be read: their verdict could not tell the two 档 apart, so it is not
+    // an answer to a `v2` question. (A `v1` *failure* would otherwise keep proroot disabled
+    // on a device whose real defect has since been fixed.)
+    val legacy = "v1\t2026-06-17.3\tabc123\nFAIL\n  guestpath=untranslated（errno=2）"
+    check("a v1 verdict is not reused", ProrootProbeCache.parse(legacy, key), null)
     check("an empty file is no verdict", ProrootProbeCache.parse("", key), null)
     check("a missing file is no verdict", ProrootProbeCache.parse(null, key), null)
-    check("a truncated file is no verdict", ProrootProbeCache.parse("v1\t2026-06-17.3\tabc123\n", key), null)
+    check("a truncated file is no verdict", ProrootProbeCache.parse("v2\t${ProrootSeccomp.Seccomp.tag}\t2026-06-17.3\tabc123\n", key), null)
     check("an unknown verdict word is no verdict", ProrootProbeCache.parse("$key\nMAYBE\n", key), null)
     check("CRLF is tolerated", ProrootProbeCache.parse("$key\r\nPASS\r\n", key)?.passed, true)
 
@@ -349,6 +412,76 @@ fun main() {
     check("the script uses the shared quoting rule", script.contains(ShellQuote.quote("TOKEN-1")), true)
     check("the arm64 openat number is the one §6.5 ② used", script.contains("syscall(56,"), true)
     check("the script checks for perl instead of assuming it", script.contains("command -v perl"), true)
+
+    // ---- the launcher's own words are evidence, not noise ------------------------
+    // The defect: proroot's launcher exits during argument parsing, writes
+    // `[proroot] bad bind format (expected host:guest): /dev` to stderr and nothing to
+    // stdout. `parse` used to keep only marker lines, so that run became an *empty*
+    // report whose `failure` is the untranslated sentence — proroot was refused for a
+    // measurement that never happened, and the reason was invisible in the row and the
+    // report alike. The classification below is what makes the two failure modes
+    // tellable apart, and it is the sentence the user can act on.
+    val launcherDied = ProrootRawProbe.parse(
+        "[proroot] bad bind format (expected host:guest): /dev\n" +
+            "Usage: libproroot.so [-r rootfs] [-0] [--link2symlink] [-b host:guest] command\n",
+    )
+    check("a launcher killed before the guest is a launch failure", launcherDied.launcherFailed, true)
+    check("the launcher's sentence is quoted verbatim", launcherDied.launcherFailure, "[proroot] bad bind format (expected host:guest): /dev")
+    check("a launch failure never passes", launcherDied.passed, false)
+    check("a launch failure is not reported as a translation verdict", launcherDied.failure?.contains("启动器") ?: false, true)
+    check("a launch failure is not reported as untranslated", launcherDied.failure?.contains("没有被翻译") ?: false, false)
+    check("the launch failure has its own header", launcherDied.describe().first().startsWith(ProrootRawProbe.LAUNCH_FAILURE_HEADER), true)
+    check("the launch failure renders as its own phase", launcherDied.describe().any { it.trim().startsWith("${ProrootRawProbe.LAUNCHER_PHASE}=") }, true)
+    check("the phase carries the launcher's sentence", launcherDied.describe().any { it.contains("[proroot] bad bind format") }, true)
+    check("the second launcher line is kept as evidence", launcherDied.launchLines.any { it.startsWith("Usage:") }, true)
+    check("what the launcher said is bounded", launcherDied.launchLines.size <= ProrootRawProbe.MAX_LAUNCH_LINES, true)
+    check("a bounded launcher line is marked", ProrootRawProbe.parse("[proroot] ${"x".repeat(400)}").launchLines.first().length, ProrootRawProbe.MAX_LAUNCH_CHARS)
+    // A run that *did* measure something is never reclassified: the launcher may print a
+    // warning and still work, and then the phases decide.
+    check(
+        "a warning does not hide a real measurement",
+        ProrootRawProbe.parse(
+            "[proroot] something odd\n${ProrootRawProbe.MARKER}\tguestpath\tuntranslated\terrno=2\n",
+        ).launcherFailed,
+        false,
+    )
+    check("a healthy run has no launch lines", translated.launchLines, emptyList<String>())
+    check("a missing interpreter is not a launch failure", noPerl.launcherFailed, false)
+    check("an empty run is not a launch failure", empty.launcherFailed, false)
+
+    // ================================================ 6b. 门禁按档位区分
+    // The gate rule itself, executed rather than copied (`RuntimeChoice.probeGate` is what
+    // `ProrootProbe.run` calls). Four inputs and the measurement's own verdicts: the leak is
+    // a veto in **every** 档, the real `rg`/`fd` invocation is required in **every** 档, and
+    // only the promise of raw translation is档-dependent.
+    check("a leak vetoes proroot in the shipping mode", RuntimeChoice.probeGate(ProrootSeccomp.Seccomp, rawVetoed = true, rawTranslated = true, toolsOk = true), false)
+    check("a leak vetoes proroot in the no-seccomp mode too", RuntimeChoice.probeGate(ProrootSeccomp.NoSeccomp, rawVetoed = true, rawTranslated = true, toolsOk = true), false)
+    check("a leak vetoes even when nothing else is wrong", RuntimeChoice.probeGate(ProrootSeccomp.NoSeccomp, rawVetoed = true, rawTranslated = false, toolsOk = true), false)
+    check("broken tools veto proroot in the shipping mode", RuntimeChoice.probeGate(ProrootSeccomp.Seccomp, rawVetoed = false, rawTranslated = true, toolsOk = false), false)
+    check("broken tools veto proroot in the no-seccomp mode", RuntimeChoice.probeGate(ProrootSeccomp.NoSeccomp, rawVetoed = false, rawTranslated = true, toolsOk = false), false)
+    check("tools that never ran are not a pass in either mode", listOf(ProrootSeccomp.Seccomp, ProrootSeccomp.NoSeccomp).map { RuntimeChoice.probeGate(it, false, true, false) }, listOf(false, false))
+    check("untranslated raw vetoes proroot where translation was promised", RuntimeChoice.probeGate(ProrootSeccomp.Seccomp, rawVetoed = false, rawTranslated = false, toolsOk = true), false)
+    check("untranslated raw is only information in the no-seccomp mode", RuntimeChoice.probeGate(ProrootSeccomp.NoSeccomp, rawVetoed = false, rawTranslated = false, toolsOk = true), true)
+    check("a good run passes in both modes", listOf(ProrootSeccomp.Seccomp, ProrootSeccomp.NoSeccomp).map { RuntimeChoice.probeGate(it, false, true, true) }, listOf(true, true))
+    // The configuration this app actually launches under. It is the **strict** one, and
+    // that is a decision with a reason (`ProrootSeccomp`'s KDoc): `PROROOT_NO_SECCOMP` has
+    // no reader in v1.2.8, and the device measurement shows raw translation working under
+    // the launcher's default — so weakening the gate would buy nothing and cost the one
+    // reading that catches a silent host-file read.
+    check("the shipping mode is the strict one", RuntimeChoice.PROROOT_SECCOMP, ProrootSeccomp.Seccomp)
+    check("the shipping mode requires raw translation", RuntimeChoice.PROROOT_SECCOMP.requiresRawTranslation, true)
+    check("the shipping mode needs no variable", RuntimeChoice.PROROOT_SECCOMP.envValue, null)
+    check("only the no-seccomp mode carries a value", listOf(ProrootSeccomp.Seccomp.envValue, ProrootSeccomp.NoSeccomp.envValue), listOf(null, "1"))
+    check("the two modes are named differently", listOf(ProrootSeccomp.Seccomp.shortLabel, ProrootSeccomp.NoSeccomp.shortLabel).toSet().size, 2)
+    check("the two tags differ", listOf(ProrootSeccomp.Seccomp.tag, ProrootSeccomp.NoSeccomp.tag).toSet().size, 2)
+    // The settings row and the report read this sentence, so the two 档 must not be made to
+    // sound equivalent: the shipping one promises both layers, the other admits the gap.
+    check("the shipping disclosure names both layers", listOf("libc", "svc").all { RuntimeChoice.PROROOT_SECCOMP.disclosure.contains(it) }, true)
+    check("the no-seccomp disclosure admits the raw gap", ProrootSeccomp.NoSeccomp.disclosure.contains("raw syscall"), true)
+    check("the disclosures are not the same sentence", ProrootSeccomp.Seccomp.disclosure == ProrootSeccomp.NoSeccomp.disclosure, false)
+    check("the no-seccomp disclosure says it is not selectable", ProrootSeccomp.NoSeccomp.disclosure.contains("不可选"), true)
+    check("every mode has a disclosure", ProrootSeccomp.entries.all { it.disclosure.isNotBlank() }, true)
+    check("the in-use sentence names the shipping mode", RuntimeChoice.describe(EngineFallback.None).contains(RuntimeChoice.PROROOT_SECCOMP.disclosure), true)
 
     // ================================================================ 7. 启动 pid 句柄
     // Driven against a real directory: `arm` records what was there, `resolveLauncherPid`
@@ -428,7 +561,7 @@ fun main() {
     // (2) The key really is insensitive to the switch — which is *why* deleting the file
     // is load-bearing rather than decorative. A cached failure stays valid for its key
     // across any number of toggles; only the unlink changes the answer.
-    val failKey = ProrootProbeCache.key("2026-06-17.3", "abc123")
+    val failKey = ProrootProbeCache.key("2026-06-17.3", "abc123", ProrootSeccomp.Seccomp.tag)
     val failText = ProrootProbeCache.render(failKey, passed = false, detail = listOf("✗ 探针未通过"))
     check("a cached failure is valid for its key", ProrootProbeCache.parse(failText, failKey)?.passed, false)
     check("and the key does not mention the switch", failKey.contains("enabled") || failKey.contains("proroot"), false)
@@ -440,15 +573,19 @@ fun main() {
     check("invalidating a cache that does not exist is not an error", retryPaths.clearProrootProbeCache(), true)
     check("the stale verdict is gone", retryPaths.prorootProbeCache().exists(), false)
 
-    var failures = 3
+    // Named `retryFailures`, **not** `failures`: a local reusing the harness counter's name
+    // shadows it for the rest of `main`, and the final verdict then reads the local — which
+    // the transition under test sets to 0 — instead of the number of failed checks. That is
+    // how this harness printed `OK` over a failing assertion before 2026-09-19.
+    var retryFailures = 3
     retryPaths.prorootProbeCache().writeText(failText)
     val applied = ProrootRetry.apply(
         nowEnabled = true,
-        resetFailures = { failures = 0 },
+        resetFailures = { retryFailures = 0 },
         invalidateProbeCache = { retryPaths.clearProrootProbeCache() },
     )
     check("the executed transition reports both effects", applied, ProrootRetry.Plan(failureCounterReset = true, probeCacheInvalidated = true))
-    check("the executed transition cleared the counter", failures, 0)
+    check("the executed transition cleared the counter", retryFailures, 0)
     check("the executed transition removed the cached failure", retryPaths.prorootProbeCache().exists(), false)
     // What `RuntimeSelection.status()` does with no cache under the current key: the row
     // says "the next launch will probe", not "probe failed" — the user-visible half of
@@ -457,14 +594,14 @@ fun main() {
 
     // (4) Turning it **off** keeps the verdict: the cache describes the runtime tree, not
     // the switch, and there is nothing to re-earn on the way out.
-    failures = 1
+    retryFailures = 1
     retryPaths.prorootProbeCache().writeText(failText)
     val off = ProrootRetry.apply(
         nowEnabled = false,
-        resetFailures = { failures = 0 },
+        resetFailures = { retryFailures = 0 },
         invalidateProbeCache = { retryPaths.clearProrootProbeCache() },
     )
-    check("switching off still resets the counter", failures, 0)
+    check("switching off still resets the counter", retryFailures, 0)
     check("switching off does not touch the cache", retryPaths.prorootProbeCache().isFile, true)
     check("and says so in its plan", off.probeCacheInvalidated, false)
     check("the kept verdict is still readable", ProrootProbeCache.parse(retryPaths.prorootProbeCache().readText(), failKey)?.passed, false)

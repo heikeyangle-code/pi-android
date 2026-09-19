@@ -260,6 +260,12 @@ object DiagnosticsReport {
                 appendLine("  实际生效：${runtimeStatus.engine}（${runtimeStatus.summary}）")
                 appendLine("  开关：${if (runtimeStatus.enabled) "开" else "关"}" +
                     " · 连续失败：${runtimeStatus.failures}/${RuntimeChoice.MAX_CONSECUTIVE_FAILURES}")
+                // The 档 in force, named here rather than only implied by a probe verdict:
+                // it is what the probe's rules are relative to ("is an untranslated raw
+                // syscall disqualifying?") and what the cache key identifies. The `tag` is
+                // the machine-readable half and the disclosure is the user-readable one, so
+                // a report can be matched to a `ProrootProbeCache` file without guessing.
+                appendLine("  proroot 档：${runtimeStatus.mode.tag}（${runtimeStatus.mode.disclosure}）")
                 appendLine(
                     "  proroot 探针：" + when (runtimeStatus.probePassed) {
                         true -> "已通过（缓存）"

@@ -839,6 +839,24 @@ object PiSettingsCatalog {
         // 为什么这一节必须存在：删掉下面那四条"额外搜索路径"之后，如果这一屏只剩开关与资源包，
         // 用户看到的仍然是"空"——而真相是 pi 一直在自动发现 `~/.pi/agent/<kind>`、工作区
         // `.pi/<kind>`、`.agents/<kind>` 与已装包自带的资源。数字是**读数**，不是承诺。
+        // 顺序 = pi 自己的加载顺序（`core/package-manager.ts:203-204` 的 `RESOURCE_TYPES`：
+        // extensions / skills / prompts / themes；`resource-loader.ts` 的 reload 照它走，
+        // extensions `:456` → skills `:468` → prompts `:483` → themes `:502`）。
+        // 「扩展包与项目信任」页的四节与分组摘要里的"已发现 …"都是这一个顺序 —— 不按我们自己的
+        // 习惯排。
+
+        PiSetting(
+            key = "app.resources.discovered.extensions",
+            title = "已发现的扩展",
+            description = "pi 自动发现的扩展（`extensions/` 下的 `.ts`/`.js` 或带入口的目录），" +
+                "以及扩展自己写出去的资源（例如设备桥那个技能）。",
+            kind = PiRowKind.Text,
+            group = G_RESOURCES,
+            section = "实际发现",
+            defaultValue = str("未读取"),
+            readOnly = true,
+            aliases = listOf("extensions", "扩展", "发现"),
+        ),
         PiSetting(
             key = "app.resources.discovered.skills",
             title = "已发现的技能",
@@ -850,17 +868,6 @@ object PiSettingsCatalog {
             defaultValue = str("未读取"),
             readOnly = true,
             aliases = listOf("skills", "技能", "发现"),
-        ),
-        PiSetting(
-            key = "app.resources.discovered.themes",
-            title = "已发现的主题",
-            description = "pi 自动发现的主题（`themes/*.json`），来源与技能相同。当前用哪一个在「外观」里的「主题」。",
-            kind = PiRowKind.Text,
-            group = G_RESOURCES,
-            section = "实际发现",
-            defaultValue = str("未读取"),
-            readOnly = true,
-            aliases = listOf("themes", "主题", "发现"),
         ),
         PiSetting(
             key = "app.resources.discovered.prompts",
@@ -875,16 +882,15 @@ object PiSettingsCatalog {
             aliases = listOf("prompts", "提示模板", "发现"),
         ),
         PiSetting(
-            key = "app.resources.discovered.extensions",
-            title = "已发现的扩展",
-            description = "pi 自动发现的扩展（`extensions/` 下的 `.ts`/`.js` 或带入口的目录），" +
-                "以及扩展自己写出去的资源（例如设备桥那个技能）。",
+            key = "app.resources.discovered.themes",
+            title = "已发现的主题",
+            description = "pi 自动发现的主题（`themes/*.json`），来源与技能相同。当前用哪一个在「外观」里的「主题」。",
             kind = PiRowKind.Text,
             group = G_RESOURCES,
             section = "实际发现",
             defaultValue = str("未读取"),
             readOnly = true,
-            aliases = listOf("extensions", "扩展", "发现"),
+            aliases = listOf("themes", "主题", "发现"),
         ),
         PiSetting(
             key = "app.extensions.args",
@@ -1226,8 +1232,8 @@ object PiSettingsCatalog {
             // 说明文字必须指向那两块内容，否则用户仍然不知道"探针未通过"到底卡在哪一步
             // （缺陷原形：开关开着，行上只有半句话，唯一能看到证据的地方是导出的报告）。
             description = "这次运行实际用的是哪个运行时。没有用 proroot 时会写明原因；" +
-                "原因出在探针上时，还会写出是哪一档没过（raw syscall、或 rg/fd 真实调用那一档）" +
-                "和探针原话。这一行下面列出探针逐阶段的原始判读：" +
+                "原因出在探针上时，还会写出是哪一档没过（proroot 启动、raw syscall、" +
+                "或 rg/fd 真实调用那一档）和探针原话。这一行下面列出探针逐阶段的原始判读：" +
                 "行数有上限，超出会写明截断了多少行——完整内容始终在导出的诊断报告里。",
             kind = PiRowKind.Text,
             group = G_RUNTIME,
@@ -1256,13 +1262,19 @@ object PiSettingsCatalog {
             title = "运行时加速（实验性）",
             description = "用第三方闭源运行时 proroot 代替 proot 执行命令，覆盖引擎、终端、" +
                 "工具执行与装包这几条日常路径；装机与维护路径始终走 proot。" +
-                "默认关闭。若运行时文件缺失、或首次使用前的探针（raw syscall + rg/fd 真实调用）" +
+                "默认关闭。若运行时文件缺失、或首次使用前的探针（proroot 必须真的启动起来、" +
+                "raw syscall 必须被翻译到 guest 文件系统、rg/fd 必须真调用成功）" +
                 "没有通过、或连续 3 次启动失败，都会自动回退 proot，并在上面的" +
                 "「运行时（实际生效）」里写明原因。" +
                 "打开这个开关后的**下一次**启动 guest 会跑一次探针，那一次仍然走 proot；" +
                 "探针过了，再下一次启动才会真正用上 proroot。" +
                 "关掉再打开这个开关会清零失败计数、并让探针重测一次（普通重启不会重测）。" +
-                "proroot 闭源、无法审计，提速幅度在本机未量化。改动在重启引擎后生效。",
+                "档位：走 proroot 的**默认档**（seccomp 兜底）——libc 调用与 inline svc 调用" +
+                "都走翻译，代价是探针因此必须证明 raw syscall 也被翻译；" +
+                "另一档「无 seccomp 档」只翻译 libc 调用、直接发 raw syscall 的程序会绕过翻译，" +
+                "但 v1.2.8 的启动器不读这个变量（它只给子进程写上标记），所以本应用无法选择它，" +
+                "也就没有以它换取更宽的通过条件。proroot 闭源、无法审计，" +
+                "提速幅度在本机未量化。改动在重启引擎后生效。",
             kind = PiRowKind.Switch,
             group = G_RUNTIME,
             section = "进程",

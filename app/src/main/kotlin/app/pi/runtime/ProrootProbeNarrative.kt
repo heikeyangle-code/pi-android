@@ -61,11 +61,13 @@ object ProrootProbeNarrative {
     /**
      * Cap for the summary line the settings row renders with `maxLines = 1`.
      *
-     * Chosen from the sentence's own shape: prefix (16) + longest stage label (11) +
-     * separator (1) + [MAX_QUOTE_CHARS] + closing bracket (1) = 69. Anything longer
-     * would be the quote's fault, and the quote is what gets bounded first.
+     * Chosen from the sentence's own shape: base sentence (16) + opening bracket (1) +
+     * 档 label and its separator (5, `默认档·`) + longest stage label (11) + separator (1)
+     * + [MAX_QUOTE_CHARS] + closing bracket (1) = 75. 88 leaves room for the
+     * "缓存里没有逐阶段记录" form and keeps the stage label from ever being the part that
+     * gets truncated; the quote is bounded first.
      */
-    const val MAX_SUMMARY_CHARS = 72
+    const val MAX_SUMMARY_CHARS = 88
 
     /** Cap for the recorded quote inside the summary — the part that may be cut. */
     const val MAX_QUOTE_CHARS = 40
@@ -81,6 +83,13 @@ object ProrootProbeNarrative {
     const val STAGE_RAW = "raw syscall"
     const val STAGE_TOOLS = "rg/fd 真调用"
 
+    /**
+     * The stage for a run proroot itself killed before the guest existed
+     * ([ProrootRawProbe.LAUNCHER_PHASE]). It is not a measurement, and it must not be
+     * rendered as one: the row says "proroot 启动" and quotes the launcher.
+     */
+    const val STAGE_LAUNCH = "proroot 启动"
+
     /** The sentence [detailLines] gives when the cache has no evidence to show. */
     const val DETAIL_NOT_RUN = "探针尚未运行：没有逐阶段记录。"
     const val DETAIL_NOT_PASSED_WITHOUT_EVIDENCE =
@@ -88,8 +97,21 @@ object ProrootProbeNarrative {
             "重新打开「运行时加速（实验性）」开关可让探针重测一次。"
     const val DETAIL_PASSED_WITHOUT_EVIDENCE = "缓存里只有「已通过」的结论，没有逐阶段记录。"
 
-    /** The one-line reason, with the failing stage appended when it is known. */
-    fun summary(fallback: EngineFallback, probeDetail: List<String>): String {
+    /**
+     * The one-line reason, with the failing stage appended when it is known.
+     *
+     * The 档 is named in the same bracket as the stage (`默认档·raw syscall：…`) because it
+     * is what makes the refusal actionable: "the raw syscall was not translated" is a
+     * verdict about a promise, and which promise was in force is part of the answer. It
+     * comes from [RuntimeChoice.PROROOT_SECCOMP] rather than from the recorded lines: the
+     * cache key already pins a valid verdict to a档 ([ProrootProbeCache.key]), so the 档 a
+     * cached refusal belongs to is the production one by construction.
+     */
+    fun summary(
+        fallback: EngineFallback,
+        probeDetail: List<String>,
+        mode: ProrootSeccomp = RuntimeChoice.PROROOT_SECCOMP,
+    ): String {
         // Every other reason is already complete: the switch, the missing files and the
         // failure streak have nothing to add from the probe, and this object has no
         // business restating them.
@@ -98,9 +120,9 @@ object ProrootProbeNarrative {
         // Reuse the base sentence rather than retyping it, so the two forms cannot drift.
         val base = RuntimeChoice.describe(EngineFallback.ProbeNotPassed)
         val stage = failedStage(probeDetail)
-            ?: return bounded("$base（缓存里没有逐阶段记录）", MAX_SUMMARY_CHARS)
+            ?: return bounded("$base（${mode.shortLabel}，缓存里没有逐阶段记录）", MAX_SUMMARY_CHARS)
         return bounded(
-            "$base（${stage.label}${ProrootRawProbe.HEADER_SEPARATOR}" +
+            "$base（${mode.shortLabel}·${stage.label}${ProrootRawProbe.HEADER_SEPARATOR}" +
                 "${bounded(stage.quote, MAX_QUOTE_CHARS)}）",
             MAX_SUMMARY_CHARS,
         )
@@ -128,6 +150,15 @@ object ProrootProbeNarrative {
 
         // The phases, exactly as `Report.describe` writes them: "  guestpath=untranslated（errno=2）".
         val phases = lines.mapNotNull { parsePhase(it) }
+        // The launcher never reached the guest, so there is no measurement to rank against
+        // the others — and this is the shape a broken argv takes, which must not be
+        // reported as "raw syscall 未翻译" (`ProrootRawProbe`'s KDoc owns the case).
+        phases.firstOrNull { it.verdict == ProrootRawProbe.LAUNCHER_FAILED }?.let { phase ->
+            // The *detail*, not the whole `launcher=failed（…）` line: the recorded line's
+            // prefix would add nothing to a sentence that already says "proroot 启动", and
+            // the user wants proroot's own words.
+            return FailedStage(STAGE_LAUNCH, phase.detail)
+        }
         // `Report.leaked` outranks `!translated` in the report's own `failure` branch,
         // so a leak is the stage that gets named when both hold.
         val leak = phases.firstOrNull {
@@ -218,11 +249,19 @@ object ProrootProbeNarrative {
     ): String = boundedDetailLines(fallback, probePassed, probeDetail).joinToString("\n")
 
     /** One `  <phase>=<verdict>（<detail>）` line, as `Report.describe` writes it. */
-    private data class RecordedPhase(val raw: String, val verdict: String)
+    private data class RecordedPhase(val raw: String, val verdict: String, val detail: String)
 
     private fun parsePhase(line: String): RecordedPhase? {
         val match = PHASE.matchEntire(line) ?: return null
-        return RecordedPhase(raw = match.groupValues[0], verdict = match.groupValues[2])
+        // Group 1 is the verdict token (`untranslated`, `leaked`, `failed`); group 2 is the
+        // parenthesised detail. Reading group 2 as the verdict would have made every verdict
+        // compare against its own detail and never match — masked, because the fallback below
+        // names the same stage for a raw refusal, and visible only as a worse quote.
+        return RecordedPhase(
+            raw = match.groupValues[0],
+            verdict = match.groupValues[1],
+            detail = match.groupValues[2],
+        )
     }
 
     private val PHASE = Regex("^[a-z]+=([a-z-]+)（(.*)）$")

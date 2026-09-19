@@ -54,14 +54,14 @@ fun main() {
         val texts = resourceFactOverrides(scan)
         check(
             "a found skill count is reported with its sources",
-            texts[skillsKey] == "3 个 · 项目 .pi 1 · ~/.pi/agent 2",
+            texts[skillsKey] == "3 个 · 项目（<工作区>/.pi） 1 · 全局（~/.pi/agent） 2",
             "got: ${texts[skillsKey]}",
         )
         check(
             "each kind counts only its own resources",
-            texts[DiscoveredKind.Themes.key] == "1 个 · ~/.pi/agent 1" &&
+            texts[DiscoveredKind.Themes.key] == "1 个 · 全局（~/.pi/agent） 1" &&
                 texts[DiscoveredKind.Prompts.key] == "1 个 · 已装包 1" &&
-                texts[DiscoveredKind.Extensions.key] == "1 个 · ~/.pi/agent 1",
+                texts[DiscoveredKind.Extensions.key] == "1 个 · 全局（~/.pi/agent） 1",
             texts.toString(),
         )
         check(
@@ -215,6 +215,18 @@ fun main() {
             PiResourceFactsCache.lastScan().toString(),
         )
     }
+
+    // ------------------------------------------------------- 顺序 = pi 自己的顺序
+    // 四个种类在组页的「实际发现」节、分组摘要里那句"已发现 …"、以及「扩展包与项目信任」页的四节
+    // 必须是同一个顺序，而且那个顺序是 pi 的：`core/package-manager.ts:203-204` 的
+    // `RESOURCE_TYPES = ["extensions","skills","prompts","themes"]`（`resource-loader.ts` 的
+    // reload 与 `package-manager.ts:2160-2190` 的合并都按它遍历）。以前是「技能/主题/提示模板/
+    // 扩展」——一个我们自己的习惯顺序，于是两个屏各排各的。
+    check(
+        "the four kinds are enumerated in pi's own load order",
+        DiscoveredKind.entries.map { it.label } == listOf("扩展", "技能", "提示模板", "主题"),
+        DiscoveredKind.entries.joinToString { it.label },
+    )
 
     check(
         "the four fact keys are distinct and namespaced under app.resources",

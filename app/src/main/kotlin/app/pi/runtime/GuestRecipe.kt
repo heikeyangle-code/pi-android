@@ -29,6 +29,21 @@ object GuestRecipe {
      * `proroot` both spell a bind as two argv entries (`-b`, `host:guest`), and
      * keeping them paired here is what stops one builder from emitting the flag
      * without its value.
+     *
+     * ## The value that is shared is the *table*, not the spelling (2026-09-19)
+     *
+     * A bare host path (`-b /proc`) is proot's shorthand for `host == guest`, and that is
+     * what this list returns. **proroot v1.2.8 rejects it**: its parser runs
+     * `strchr(value, ':')` on the `-b` value and exits with
+     * `[proroot] bad bind format (expected host:guest): /dev` before it forks anything.
+     *
+     * So `ProrootCommand` respells each entry through `ProrootCommand.bindArgument` while
+     * proot takes this list verbatim. That asymmetry is deliberate and is the *only* thing
+     * the two builders are allowed to disagree about beyond the documented flag table
+     * (`docs/pi-android-app-design.md` §2.3.1) — the entries, their order and which flag
+     * carries them still come from here, so a bind added once still reaches both runtimes.
+     * Guessing the convention at the call site instead would put the same bug back one
+     * layer up.
      */
     fun binds(paths: PiPaths, storage: File?): List<List<String>> = buildList {
         add(listOf("-b", "/dev"))

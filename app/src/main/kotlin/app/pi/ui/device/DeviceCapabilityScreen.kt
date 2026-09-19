@@ -68,6 +68,7 @@ import app.pi.ui.rememberPiScreenVisible
 import app.pi.ui.settings.PiSettingsCardShape
 import app.pi.ui.settings.PiSettingsMetrics
 import app.pi.ui.settings.PiSettingsSectionHeader
+import app.pi.ui.settings.settingsPageTopInset
 import app.pi.ui.theme.PiShapes
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
@@ -254,7 +255,9 @@ fun DeviceCapabilityScreen(
         }
     }
 
-    Column(Modifier.fillMaxSize()) {
+    // 这一屏同样是设置面的一层（`PiSettingsStack` 的 `deviceCapabilities`），顶栏也是手绘的
+    // `PiTopBar`：顶边照设置面那一套补一次，见 `settingsPageTopInset`。
+    Column(Modifier.fillMaxSize().settingsPageTopInset(contentPadding)) {
         PiTopBar(
             title = "设备能力",
             onBack = onBack,
