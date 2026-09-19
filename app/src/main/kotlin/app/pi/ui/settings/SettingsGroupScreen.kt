@@ -23,6 +23,7 @@ import app.pi.ui.PiTopBar
 import app.pi.ui.PiTopBarIcon
 import app.pi.ui.components.EffectiveKind
 import app.pi.ui.theme.PiSpacing
+import app.pi.ui.theme.PiTheme
 import app.pi.ui.theme.PiThemeEntry
 import kotlinx.serialization.json.JsonPrimitive
 
@@ -81,6 +82,20 @@ fun SettingsGroupScreen(
      */
     valueOverrides: Map<String, String> = emptyMap(),
     /**
+     * **Evidence under a read-only row**, by key: the recorded per-phase lines a
+     * read-only row shows under its value, so that a verdict is answerable without
+     * opening the diagnostic report.
+     *
+     * Same shape and same rule as [valueOverrides]: the host already has the lines
+     * (it read the probe cache once, off the main thread, to build the row's value) and
+     * hands the finished, bounded string down. This screen only lays it out — it never
+     * reads a file, a probe cache or a `.so` digest, and it never runs a probe. A row
+     * with no entry renders exactly as before; an entry is a *block* of lines, not a
+     * value, so it is a map of its own rather than a [valueOverrides] value (which the
+     * row draws with `maxLines = 1`).
+     */
+    detailOverrides: Map<String, String> = emptyMap(),
+    /**
      * The host's engine restart, offered by the badge explanation of a
      * [EffectiveKind.RestartEngine] row ("重启引擎"). Null hides that button, which
      * is right where no engine hook exists: the row's own explanation still says
@@ -110,7 +125,11 @@ fun SettingsGroupScreen(
             hostAction()
         } else if (setting.kind == PiRowKind.Action) {
             confirming = setting
-        } else if (setting.kind != PiRowKind.Switch) {
+        } else if (setting.kind != PiRowKind.Switch && !setting.readOnly) {
+            // 只读行（运行时那六行）没有可打开的东西：`PiSettingRow` 早就没给它们 chevron，
+            // 但点击一直通着 —— 点「pi 版本」（行上是 `0.85.1`）会打开一个空的、禁用的
+            // 文本框。判据与 chevron 用同一个 `readOnly`，两处不再分叉
+            // （`docs/settings-audit-impl.md` §B4）。
             editing = setting
         }
     }
@@ -120,6 +139,14 @@ fun SettingsGroupScreen(
         // callback; a switch the app reads (the thinking toggle, timestamps, tool
         // expansion) would otherwise stay inert.
         onSettingWritten(setting.key)
+    }
+
+    // 换一个分组就回到顶部：`listState` 由 `rememberLazyListState()` 持有，而它**不随
+    // `groupId` 重置**，所以从长分组（运行时与诊断）退到短分组时列表会停在分组底部之外
+    // （`docs/settings-audit-impl.md` §B15）。放在命中跳转之前，让"从搜索跳进来"仍然
+    // 滚到命中的那一节。
+    LaunchedEffect(groupId) {
+        listState.scrollToItem(0)
     }
 
     LaunchedEffect(highlightKey, groupId) {
@@ -132,7 +159,8 @@ fun SettingsGroupScreen(
         if (index >= 0) listState.animateScrollToItem(index)
     }
 
-    Column(Modifier.fillMaxSize()) {
+    // 同 `SettingsHome`：顶栏从状态栏之下开始，见 `settingsPageTopInset`。
+    Column(Modifier.fillMaxSize().settingsPageTopInset(contentPadding)) {
         PiTopBar(
             title = group?.title ?: "设置",
             onBack = onBack,
@@ -169,6 +197,7 @@ fun SettingsGroupScreen(
                             setting = setting,
                             store = store,
                             valueOverrides = valueOverrides,
+                            detailOverrides = detailOverrides,
                             highlighted = setting.key == highlightKey,
                             onToggle = toggleRow,
                             onOpen = openRow,
@@ -197,6 +226,7 @@ fun SettingsGroupScreen(
                             setting = danger,
                             store = store,
                             valueOverrides = valueOverrides,
+                            detailOverrides = detailOverrides,
                             highlighted = danger.key == highlightKey,
                             onToggle = toggleRow,
                             onOpen = openRow,
@@ -227,6 +257,9 @@ fun SettingsGroupScreen(
         PiSettingEditorSheet(
             setting = openEditor,
             store = store,
+            // The sheet must start from the value the row showed: the 运行时 rows render a
+            // `RuntimeFacts` override, not the store value (`docs/settings-audit-impl.md` §B4).
+            valueOverrides = valueOverrides,
             knownThemes = knownThemes,
             themeNotes = themeNotes,
             themeError = themeError,
@@ -294,27 +327,52 @@ fun SettingsGroupScreen(
  *
  * 存在的理由是分组页有两处画行（分区里的卡片、页尾固定的危险行），两处必须用同一套
  * 取值 —— 尤其是「当前生效值」的 2px accent 条判定，抄一遍就会分叉。
+ *
+ * 只读行可以再带一块**证据**（[detailOverrides]）：逐阶段的原始判读。
+ * 它写在行下面而不是行里 —— 行的值只有一行（`PiSettingRow` 用 `maxLines = 1` 画），
+ * 而证据是多行；也不做成一个可点开的二级页，因为「这个读数为什么是这样」正是用户
+ * 站在这一页时要回答的问题，多一次点击就是把答案藏起来。文案与截断都由宿主算好，
+ * 这里只负责排版，不读文件、不碰探针。
  */
 @Composable
 private fun SettingSlot(
     setting: PiSetting,
     store: PiSettingsStore,
     valueOverrides: Map<String, String>,
+    detailOverrides: Map<String, String>,
     highlighted: Boolean,
     onToggle: (PiSetting, Boolean) -> Unit,
     onOpen: (PiSetting) -> Unit,
     onExplain: (PiSetting) -> Unit,
 ) {
-    PiSettingRow(
-        setting = setting,
-        valueText = valueOverrides[setting.key] ?: setting.display(setting.current(store)),
-        checked = setting.boolIn(store, false),
-        current = isCurrentValue(setting, store),
-        highlighted = highlighted,
-        onToggle = { next -> onToggle(setting, next) },
-        onOpen = { onOpen(setting) },
-        onExplainEffect = { onExplain(setting) },
-    )
+    val detail = detailOverrides[setting.key]
+    Column {
+        PiSettingRow(
+            setting = setting,
+            valueText = valueOverrides[setting.key] ?: setting.display(setting.current(store)),
+            checked = setting.boolIn(store, false),
+            current = isCurrentValue(setting, store),
+            highlighted = highlighted,
+            onToggle = { next -> onToggle(setting, next) },
+            onOpen = { onOpen(setting) },
+            onExplainEffect = { onExplain(setting) },
+        )
+        if (!detail.isNullOrBlank()) {
+            // 副行字色（`onSurfaceVariant`）而不是正文色：这是元信息，不是第二个值。
+            // 左内边距与行一致，让它读起来是这一行的下半部分；底部留同样的行内边距，
+            // 一行与下一行之间才不会因为这块文本挤在一起。
+            Text(
+                detail,
+                modifier = Modifier.padding(
+                    start = PiSettingsMetrics.rowPaddingHorizontal,
+                    end = PiSettingsMetrics.rowPaddingHorizontal,
+                    bottom = PiSettingsMetrics.rowPaddingVertical,
+                ),
+                style = PiTheme.text.meta,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
 }
 
 /** v2 固定在分组页页尾的那一行（`phone34`–`phone38`）。 */

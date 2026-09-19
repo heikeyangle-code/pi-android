@@ -135,14 +135,34 @@ fun ExtensionWidgetStack(
                     modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
                     verticalArrangement = Arrangement.spacedBy(2.dp),
                 ) {
-                    boundedWidgetLines(widget.lines).forEach { line ->
-                        // A blank line is meaningful spacing in a text widget,
-                        // which a Text("") would collapse to zero height. A line
-                        // that is nothing but colour escapes is blank in the same
-                        // sense — it paints no glyphs — so it takes the same path.
-                        val text = if (chromeText(line).isEmpty()) " " else line
+                    // The cap is a pure function of the list, and the list only changes when the
+                    // extension pushes a widget: without the `remember` this rebuilt it on every
+                    // recomposition of this stack.
+                    val shown = remember(widget.lines) { boundedWidgetLines(widget.lines) }
+                    shown.forEach { line ->
+                        // One parse per line, not two. `chromeText(line).isEmpty()` used to
+                        // strip the whole line (allocating a second copy of it) just to
+                        // answer a yes/no question, and the answer is already in the spans:
+                        // `Ansi.parse` returns one span per styled run, so "paints no
+                        // glyphs" is "every run is empty". Reading the blank test off the
+                        // spans also means the test and the drawing cannot disagree about a
+                        // line made only of colour escapes — they were two parses of the
+                        // same string.
+                        //
+                        // A blank line is meaningful spacing in a text widget, which a
+                        // Text("") would collapse to zero height. A line that is nothing
+                        // but colour escapes is blank in the same sense — it paints no
+                        // glyphs — so it takes the same path.
+                        //
+                        // **Remembered per line**, because this stack recomposes whenever the
+                        // screen around the composer does (every 200 ms publication while
+                        // anything streams, every keystroke), and `Ansi.parse` is not free: 11
+                        // lines of ≈40 characters measured ~0.7 ms per recomposition
+                        // (`docs/scroll-perf-items.md` §3). The key is the line's own text, so a
+                        // widget that did not change parses nothing.
+                        val spans = remember(line) { chromeSpans(line) }
                         ExtensionSpans(
-                            spans = chromeSpans(text),
+                            spans = if (spans.all { it.text.isEmpty() }) listOf(Ansi.Span(" ")) else spans,
                             defaultColor = palette.muted,
                             style = PiTheme.text.monoSmall,
                         )

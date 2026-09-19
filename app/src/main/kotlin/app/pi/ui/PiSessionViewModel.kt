@@ -47,13 +47,22 @@ import app.pi.service.PiEngineService
 import app.pi.settings.PiSettingsFileStore
 import app.pi.settings.readBoolean
 import app.pi.settings.readString
+import app.pi.ui.chat.BASH_OUTPUT_MAX_CHARS
+import app.pi.ui.chat.BranchSummaryChoice
+import app.pi.ui.chat.NavigateOutcome
 import app.pi.ui.chat.PiCommandAction
 import app.pi.ui.chat.PiCommandSource
 import app.pi.ui.chat.PiFileMentions
+import app.pi.ui.chat.MentionLookup
 import app.pi.ui.chat.PiMentionSource
 import app.pi.ui.chat.PiSlashCommand
 import app.pi.ui.chat.TuiOnlyExtension
+import app.pi.ui.chat.activeBranch
+import app.pi.ui.chat.appendTailBounded
+import app.pi.ui.chat.navigateCommandArgs
+import app.pi.ui.chat.navigateOutcome
 import app.pi.ui.chat.piCommandPalette
+import app.pi.ui.chat.wantsSummary
 import app.pi.ui.chat.tuiOnlyMarkers
 import app.pi.ui.extension.ComposerFill
 import app.pi.ui.extension.ExtensionAnswer
@@ -66,6 +75,7 @@ import app.pi.ui.extension.ExtensionWidget
 import app.pi.ui.extension.WidgetPlacement
 import app.pi.ui.extension.chromeText
 import app.pi.ui.extension.noticeToneOf
+import app.pi.ui.extension.trimNoticeQueue
 import app.pi.ui.settings.EngineDiagnostics
 import app.pi.ui.settings.PiSettingsStore
 import app.pi.ui.theme.PiResolvedTheme
@@ -704,23 +714,20 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     private var loadedHistoryChars: Long = 0L
 
     /**
-     * The retained size of one entry, as the bound in [HISTORY_RETAINED_CHARS] counts
-     * it.
+     * The retained size of one entry, as the bound in [HISTORY_RETAINED_CHARS] counts it.
      *
-     * The message's own text, not its JSON: an inline image's base64 is the single
-     * biggest thing an entry carries, and this is the measurement that decides
-     * whether retaining it is affordable — so it is exactly what is measured. The
-     * constant term covers the ids and envelope of a small entry, which the transcript
-     * row also holds.
+     * The measurement itself lives in `HistoryRetention.kt` — the same package, and a
+     * file with no Android dependency — because its cost is what moved every caller onto
+     * `Dispatchers.IO` and `tools/run-app-pure-checks.sh` pins its arithmetic there. Read
+     * that file's KDoc before changing how a window is counted here.
+     *
+     * **Every call site must be off the frame thread.** `viewModelScope` is
+     * `Dispatchers.Main.immediate`, and the measure renders each entry back to JSON: ~135
+     * ms for one 6 MiB base64 entry, ~460 ms for a 4000-entry text window, ~830 ms for the
+     * same window with twenty 2 MiB images (desktop JVM, measured). All three loaders used
+     * to sum it inline on the frame thread, which is the freeze this fixes.
      */
-    private fun entryChars(entry: JsonObject): Long {
-        val type = (entry["type"] as? JsonPrimitive)?.content
-        val message = entry["message"] as? JsonObject
-        if (type == "message" && message != null) {
-            return message.toString().length.toLong() + 64L
-        }
-        return entry.toString().length.toLong() + 64L
-    }
+    private fun retainedChars(entries: List<JsonObject>): Long = entryCharsOf(entries)
 
     /**
      * Prompts typed before an engine attached, replayed in order by [attach].
@@ -837,6 +844,29 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         ).also { settingsStoreCache = it }
 
     /**
+     * The store the **settings screen** must be handed: [settingsStore] with
+     * `app.extensions.args` served from the app-only sidecar
+     * ([ExtensionArgsStoreDecorator]).
+     *
+     * A separate accessor rather than decorating [settingsStore] itself, because the
+     * launch mapping and the credential screens read pi's document directly and have
+     * no business with a row that is not pi's (`settingsStoreForSettingsUi` is the
+     * one caller that renders and writes it).
+     */
+    fun settingsStoreForSettingsUi(): PiSettingsStore =
+        ExtensionArgsStoreDecorator(settingsStore, extensionArgsStore)
+
+    /**
+     * The app-only sidecar behind `app.extensions.args`.
+     *
+     * The launch mapping reads it ([launchOptions]) and the settings stack writes it
+     * through [ExtensionArgsStoreDecorator]; this is the one instance the mapping
+     * needs. App-only on purpose — pi has no settings key for extension flags, so a
+     * value in `settings.json` would be a key pi never reads (see [ExtensionArgsStore]).
+     */
+    private val extensionArgsStore: ExtensionArgsStore by lazy { ExtensionArgsStore(getApplication()) }
+
+    /**
      * pi's session index, read straight off disk.
      *
      * pi's RPC surface has no list-sessions command — it can only switch to a path
@@ -878,12 +908,39 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     @Volatile
     private var mentionRequestId: Int = 0
 
+    /**
+     * The last `@` failure the user was told about, so the 150 ms debounce cannot turn one
+     * broken runtime into a notice per keystroke. Main-dispatcher only, like the state it
+     * gates; cleared by any successful lookup.
+     */
+    private var lastMentionFailure: String? = null
+
     private val _sessions = MutableStateFlow<List<PiSessionStore.Summary>>(emptyList())
     val sessions: StateFlow<List<PiSessionStore.Summary>> = _sessions.asStateFlow()
 
+    /**
+     * Whether a [refreshSessions] scan is in flight **and has nothing to show yet**.
+     *
+     * The scan itself is cached per file and serialised inside [PiSessionStore], but
+     * the *first* one still walks every session file, which is seconds on a phone.
+     * Without this flag the screen had exactly two states — the list and "还没有会话"
+     * — so the honest "still reading" moment rendered as **"you have no sessions"**,
+     * and then the list appeared on its own.
+     *
+     * Deliberately false once [sessions] is non-empty: a refresh of a list that is
+     * already on screen must not replace it with a spinner.
+     */
+    private val _sessionsLoading = MutableStateFlow(false)
+    val sessionsLoading: StateFlow<Boolean> = _sessionsLoading.asStateFlow()
+
     fun refreshSessions() {
         viewModelScope.launch {
-            _sessions.value = runCatching { sessionStore.list() }.getOrDefault(emptyList())
+            _sessionsLoading.value = _sessions.value.isEmpty()
+            try {
+                _sessions.value = runCatching { sessionStore.list() }.getOrDefault(emptyList())
+            } finally {
+                _sessionsLoading.value = false
+            }
         }
     }
 
@@ -1162,6 +1219,55 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * for exactly that reason. See [syncTranscript].
      */
     private var appliedRevision = 0
+
+    /**
+     * The three collectors [attach] starts for one engine, so the next [attach] can
+     * stop them.
+     *
+     * `viewModelScope` is the ViewModel's scope, not the engine's, so without these
+     * handles every engine ever attached left a permanent subscriber behind: three per
+     * restart, three per workspace switch, each one still reading its retired engine's
+     * flows. Cancelling them is the first half of the fix; the `session !== engine`
+     * guards inside each collector are the second, because cancellation is
+     * cooperative — a `PiEngineSession` reader already inside `handle()` finishes that
+     * record and publishes (see the guards for the full chain).
+     */
+    private var engineStateJob: Job? = null
+    private var enginePublicationJob: Job? = null
+    private var engineEventsJob: Job? = null
+
+    /**
+     * The running `bash` command's output, accumulated in place.
+     *
+     * A builder rather than `String` concatenation because a chatty command streams
+     * hundreds of chunks: `output + delta` is quadratic in the output's length (measured:
+     * ~2.4 s to accumulate 1 MiB from 200-char chunks on a desktop JVM), while an append
+     * is amortised O(1). It is published as a `String` only when the throttle lets a
+     * publication through ([BASH_UPDATE_THROTTLE_MS]), and the `bash` response replaces
+     * the whole output at the end of the run, so the builder never has to be handed out
+     * mid-stream.
+     *
+     * Written and read on the main dispatcher only: the deltas arrive on the events
+     * collector and the response replaces the state in `runBash`, both on
+     * `viewModelScope`.
+     */
+    private val bashStream = StringBuilder()
+
+    /**
+     * Whether [bashStream] has had its front dropped for the run in flight.
+     *
+     * Sticky per run, and reset with the builder: the panel's 「输出被截断」 sentence is
+     * driven by `BashRun.truncated`, and a run that once passed the bound must keep
+     * saying so even on a publication that happens not to trim.
+     */
+    private var bashStreamTrimmed = false
+
+    /**
+     * When [bashStream] was last published, as [SystemClock.elapsedRealtime], or `0` for
+     * "the run has not published yet" — the first chunk of a command must appear at once
+     * rather than after the first window.
+     */
+    private var lastBashPublishAt = 0L
 
     /** Monotonic ids for snackbar notices and composer fills. */
     private var noticeSeq = 0L
@@ -1574,6 +1680,10 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         systemPrompt = settingsStore.readString("app.runtime.systemPrompt"),
         appendSystemPrompt = settingsStore.readString("app.runtime.appendSystemPrompt"),
         noContextFiles = settingsStore.readBoolean("app.runtime.noContextFiles"),
+        // App-only (`ExtensionArgsStore`), deliberately not pi's settings.json: pi has
+        // no key for extension flags, and the text is parsed with pi's own rules for an
+        // unrecognised `--flag` (`ExtensionFlagArgs`) before it becomes argv.
+        extensionArgs = extensionArgsStore.read(),
     )
 
     /**
@@ -1631,8 +1741,10 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             // state collector releases it once the engine is up and idle
             // (`reportWork`).
             engineTransition = true
+            val launchOptions = launchOptions()
+            reportExtensionArgsRefusal(launchOptions)
             val boot = try {
-                host.boot(workspaceProvider = ::defaultWorkspace, launch = launchOptions()) { step ->
+                host.boot(workspaceProvider = ::defaultWorkspace, launch = launchOptions) { step ->
                     _state.value = _state.value.copy(boot = Boot.Working(step))
                 }
             } finally {
@@ -1742,6 +1854,27 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         // pre-write values. See [invalidateSettingsCache].
         invalidateSettingsCache()
         _state.value = _state.value.copy(boot = Boot.Ready)
+        // The queue counters describe **this engine process's** queues, and the engine in
+        // hand is brand new, so its queues are empty. pi sends `queue_update` only when
+        // the queue changes (`agent-session.ts:592-597`, `:650-656`), so a fresh process
+        // never re-states the empty queue — and the counters would keep saying 「排队中 N」
+        // about messages no pi process is holding. Reachable by: queue a message while a
+        // turn runs, switch workspace (the switch kills that turn), land in the new one.
+        //
+        // Why this does **not** duplicate [afterSessionReplaced]'s copy of the same reset,
+        // and cannot conflict with it: the two answer different facts. That one is 「the
+        // engine's session was replaced」 — the five RPC commands (`newSession` /
+        // `switchSession` / `importSession` / fork / clone): same process, new session
+        // file, and pi re-binds the queues without the app hearing about it. This one is
+        // 「the engine is a different process」 — workspace switch, restart, rollback, cold
+        // boot — where the queue cannot survive by construction. The two sets of events are
+        // disjoint (no caller of [afterSessionReplaced] restarts the engine, and [attach] is
+        // never reached by a session-only switch), and even if a future path triggered both,
+        // this is an idempotent write of the same value. Dropping either one re-opens its own
+        // leak; the session half's argument is on the [UiState.queueSteering] note there.
+        if (_state.value.queueSteering != 0 || _state.value.queueFollowUp != 0) {
+            _state.value = _state.value.copy(queueSteering = 0, queueFollowUp = 0)
+        }
         // Anything typed before this engine attached is deliverable now: replay it in
         // order ([pendingPrompts]). The list is copied and cleared **before** the
         // closures run, so a replay that re-reaches `send` cannot append to the list
@@ -1752,6 +1885,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             pendingPrompts.clear()
             queued.forEach { it() }
         }
+        engineStateJob?.cancel()
         viewModelScope.launch {
             engine.state.collect { engineState ->
                 // Only the engine that is still current may write state. A
@@ -1801,7 +1935,20 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                         // recorded — for the one failure both exist to explain.
                         stderr = engine.stderr.toString().ifBlank { null },
                         startupMs = PiEngineSession.lastServingMs,
+                        // The reader-thread losses: an event the engine's flow could not
+                        // hand to this ViewModel, or a transcript fold that threw. Both
+                        // used to be invisible; a non-zero count here is what turns
+                        // "引擎好像没回话" into a number and a sentence.
+                        droppedEvents = engine.droppedEvents,
+                        reducerFailures = engine.reducerFailures,
+                        lastRecordProblem = engine.lastRecordProblem,
                     )
+                    // The dead engine can never deliver the `bash` response that would
+                    // have replaced this accumulation, and the panel is dropped just
+                    // below — so the builder goes with it.
+                    bashStream.setLength(0)
+                    lastBashPublishAt = 0L
+                    bashStreamTrimmed = false
                     _state.value = _state.value.copy(
                         bash = null,
                         busy = null,
@@ -1838,23 +1985,50 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                 }
                 reportWakeLockNeed()
             }
-        }
+        }.also { engineStateJob = it }
         // The publication stream starts over with this engine (a fresh
         // `PiEngineSession` counts from 1), so the consumer's marker must too:
         // otherwise the first publication of the new engine could look like the
         // continuation of the old one's revisions, and its `changedIndices` would
         // be applied to the previous session's rows.
         appliedRevision = 0
+        // Every collector this function starts is torn down here, before the next one
+        // replaces it. They used to live for the whole ViewModel (`viewModelScope`
+        // outlives an engine), so a restart or a workspace switch left one set per
+        // retired engine running; each of those sets keeps folding its own engine's
+        // values, and the guard below is what makes that harmless rather than
+        // visible.
+        enginePublicationJob?.cancel()
+        engineEventsJob?.cancel()
         viewModelScope.launch {
             // The publication, not `revision`: it carries the rows that moved
             // (`TranscriptPublication.changedIndices`), which is the whole point
             // of F7/RR-P7. A `revision` collector can only re-read the reducer's
             // list and diff it here — an O(n) scan per streamed delta.
-            engine.publication.collect { pub -> syncTranscript(engine, pub) }
-        }
+            engine.publication.collect { pub ->
+                // Only the engine that is still current may write state — the same
+                // rule the state collector below states for `Stopped`/`Failed`, and
+                // the reason it is needed here too: `PiEngineSession.close()` cancels
+                // its reader cooperatively (`PiEngineSession.kt:1018`), so a `handle()`
+                // already in flight still folds its record and publishes. Without this
+                // guard `syncTranscript` would take that publication — the *previous*
+                // session's rows — and write it into the state the new engine has
+                // already installed, with `appliedRevision` moved to the retired
+                // engine's revision as well.
+                if (session !== engine) return@collect
+                syncTranscript(engine, pub)
+            }
+        }.also { enginePublicationJob = it }
         viewModelScope.launch {
-            engine.events.collect { event -> onEvent(event) }
-        }
+            engine.events.collect { event ->
+                // Same guard, same reason: `onEvent` writes `queueSteering`,
+                // `queueFollowUp`, `bash`, `lastError` and the compaction flag
+                // unconditionally, and `afterSessionReplaced` has just zeroed the
+                // queue counts for the new session.
+                if (session !== engine) return@collect
+                onEvent(event)
+            }
+        }.also { engineEventsJob = it }
         // A fresh engine has no transcript in this process. pi owns the session
         // file, so the rows are rebuilt from `get_entries` rather than from memory
         // (audit §6.7) — this is also what makes an extension's `appendEntry`
@@ -2168,12 +2342,53 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
 
             // pi streams a running `bash` command as deltas and emits nothing else
             // until the response; accumulate here so the panel grows live.
+            //
+            // **The accumulation is a builder and the publication is throttled**, for the
+            // two costs that made a chatty command (`yes`, a build log) stall the frame
+            // thread:
+            //
+            //  - `current.output + delta` rebuilt the whole accumulated string per chunk,
+            //    which is quadratic in the output's length: measured on a desktop JVM,
+            //    ~2.4 s of CPU to accumulate 1 MiB from 200-char chunks. A builder appends
+            //    in place and only `toString()`s at publication time.
+            //  - every chunk published a new `UiState`, so the panel's single `Text` was
+            //    re-laid out over the whole output per chunk. `TranscriptReducer` already
+            //    has this exact rule for tool output (F8,
+            //    `rpc/.../Transcript.kt:811` `TOOL_UPDATE_THROTTLE_MS`); bash had none.
+            //
+            // Nothing is lost by waiting: the deltas all land in the builder, and the
+            // `bash` response replaces the whole output when the command ends
+            // (`runBash`), so the tail cannot be dropped by a coalesced publication.
+            //
+            // The builder is also **bounded at the tail**, at the same number pi truncates
+            // its own panel and its `bash` response at ([BASH_OUTPUT_MAX_CHARS],
+            // `bash-execution.js:93-98`). Without that, a long-running command
+            // (`!yes`, a build log) grew a `String` and a `Text` without any ceiling at
+            // all; with it the panel shows the same window pi would, and nothing is
+            // hidden about it — a trim sets `truncated`, which is the flag `BashPanel`
+            // already turns into its 「输出被截断」 sentence.
             is PiEvent.BashExecutionUpdate -> {
                 val delta = event.delta.orEmpty()
                 val current = _state.value.bash ?: return
-                if (delta.isNotEmpty()) {
-                    _state.value = _state.value.copy(bash = current.copy(output = current.output + delta))
+                if (delta.isEmpty()) return
+                val trimmed = appendTailBounded(bashStream, delta, BASH_OUTPUT_MAX_CHARS)
+                if (trimmed) bashStreamTrimmed = true
+                val now = SystemClock.elapsedRealtime()
+                if (lastBashPublishAt != 0L && now - lastBashPublishAt < BASH_UPDATE_THROTTLE_MS) {
+                    return
                 }
+                lastBashPublishAt = now
+                _state.value = _state.value.copy(
+                    bash = current.copy(
+                        output = bashStream.toString(),
+                        // Sticky for this run: once the front has been dropped the panel
+                        // is showing a window, and a later publication that happens not to
+                        // trim must not take the sentence away again. The `bash` response
+                        // replaces the whole run at the end, so pi's own answer (and its
+                        // own `fullOutputPath`) wins then.
+                        truncated = current.truncated || bashStreamTrimmed,
+                    ),
+                )
             }
 
             // The only ground truth for "the model changed behind our back":
@@ -2590,12 +2805,30 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * is dropped when nothing is on screen to show them. Dialog requests are
      * never dropped: they are the blocking half and live in their own queue.
      */
+    /**
+     * Say, in words, when `app.extensions.args` could not be handed to pi.
+     *
+     * The parser refuses the same texts pi would have ended the run over — a
+     * single-dash option, an `@file`, `--`, a stray word (`ExtensionFlagArgs.Refusal`)
+     * — and the honest consequence is that **nothing** from the row is passed
+     * (`PiLaunchOptions.extensionFlags` is empty). Saying so here, at the moment the
+     * engine is asked to start, is what keeps that from looking like "my flag was
+     * ignored". It is a notice rather than a boot failure: the engine is fine.
+     */
+    private fun reportExtensionArgsRefusal(launch: PiLaunchOptions) {
+        launch.extensionArgsRefusal?.let { pushNotice(message = it, tone = Notice.Tone.Warning) }
+    }
+
     private fun pushNotice(message: String, tone: Notice.Tone) {
         if (message.isBlank()) return
         noticeSeq += 1
         val notice = ExtensionNotice(seq = noticeSeq, message = message, tone = tone)
         _state.value = _state.value.copy(
-            notices = (_state.value.notices + notice).takeLast(MAX_PENDING_NOTICES),
+            // The eviction rule lives in `ui/extension/NoticeQueue.kt` and is pinned by a
+            // bare-JVM harness: an overflowing queue drops the oldest **pending** notice,
+            // never the head — the head is the one `ExtensionUiHost` is showing, and
+            // `takeLast` used to delete it out from under the reader.
+            notices = trimNoticeQueue(_state.value.notices + notice, MAX_PENDING_NOTICES),
         )
     }
 
@@ -2763,13 +2996,26 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         loadedHistoryChars = 0L
         val file = resolveSessionFile()
         if (file != null) {
-            val window = withContext(Dispatchers.IO) {
-                SessionFileReader.readTail(file, HISTORY_WINDOW_CHARS, HISTORY_WINDOW_ENTRIES)
+            // The read and the retained-size accounting are one IO hop, not two: the
+            // accounting serialises every entry to measure it ([entryChars]) and it is
+            // the same decision ("are we about to retain this window?") as the read
+            // itself. It also keeps the count and the rows it describes in one
+            // publication: a scroll-up on the next frame must not read a stale 0 and
+            // take an extra window.
+            val (window, windowChars) = withContext(Dispatchers.IO) {
+                val read = SessionFileReader.readTail(file, HISTORY_WINDOW_CHARS, HISTORY_WINDOW_ENTRIES)
+                val chars =
+                    if (read != null && read.entries.isNotEmpty() && read.complete) {
+                        retainedChars(read.entries)
+                    } else {
+                        0L
+                    }
+                read to chars
             }
             if (window != null && window.entries.isNotEmpty() && window.complete) {
                 engine.seedHistory(window.entries)
                 loadedHistory = window.entries
-                loadedHistoryChars = window.entries.sumOf { entryChars(it) }
+                loadedHistoryChars = windowChars
                 _state.value = _state.value.copy(
                     history = HistoryCursor(
                         startOffset = window.startOffset,
@@ -2851,9 +3097,15 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         // reducer under its transcript lock, so this await is where the frame thread
         // is released.
         val entries = PiResponses.entries(response)
+        // This path is a **whole session** in one answer (`get_entries` has no
+        // pagination), so the retained-size accounting is the largest of the three
+        // callers and the one that used to be worst on the frame thread. See
+        // [entryChars] for the measurement; the sum runs on IO for the same reason the
+        // read above does.
+        val chars = withContext(Dispatchers.IO) { retainedChars(entries) }
         engine.seedHistory(entries)
         loadedHistory = entries
-        loadedHistoryChars = entries.sumOf { entryChars(it) }
+        loadedHistoryChars = chars
         // A whole-session replay has nothing above it, so there is nothing for the
         // scroll path to fetch — the cursor says so rather than staying null, which
         // the UI would have to read as "unknown".
@@ -2920,18 +3172,41 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             }
             // Nothing readable above: stop asking. This is not a failure to report —
             // the conversation is not damaged, it simply starts where the loaded
-            // range starts (an unparseable or capped line does the same thing, and
-            // saying so would be noise on a session that renders fine).
+            // range starts (an unreadable header, a file that is not a session, or a
+            // range with no complete line all mean the same thing here, and saying so
+            // would be noise on a session that renders fine).
+            //
+            // **A withheld line is the exception, and it is not the same statement.**
+            // `Window.complete = !range.droppedLine` (`SessionFileReader.kt:258`): false
+            // means the range scanned a line it could not keep — one longer than
+            // `HISTORY_WINDOW_CHARS`/`DEFAULT_MAX_LINE_CHARS` — so there *is* more above
+            // it, and the reader's own KDoc says the next window starts past it
+            // (`:242-257`), which is why continuing makes progress instead of looping.
+            // Marking `reachedStart` there told the reader the whole conversation had been
+            // loaded: `HistoryCursor.hasEarlier` went false, the row that offers the next
+            // batch disappeared for the rest of the session, and the entries above that
+            // line became unreachable. The sentence stays absent either way — a capped
+            // line is not a failure to report — but the cursor must not claim the start
+            // of the file. (The sentinel row therefore stays on screen after such a batch,
+            // which is the correct state: there is still history above.)
+            val moreAbove = loaded != null && !loaded.complete
             if (loaded == null || !loaded.complete || loaded.entries.isEmpty()) {
                 _state.value = _state.value.copy(
-                    history = _state.value.history?.copy(loading = false, reachedStart = true),
+                    history = _state.value.history?.copy(loading = false, reachedStart = !moreAbove),
                 )
                 return@launch
             }
             val combined = loaded.entries + loadedHistory
             engine.seedHistory(combined)
             loadedHistory = combined
-            loadedHistoryChars = combined.sumOf { entryChars(it) }
+            // The **increment**, not a re-sum over `combined`: this used to measure every
+            // retained entry again for each batch, so the cost grew with how far the user
+            // had scrolled — and the measure serialises each entry to take its length
+            // ([entryChars]). `loadedHistory`'s own count is already in the field and
+            // `combined` is exactly `loaded.entries` plus that list, so adding the new
+            // window's count is the same number the old sum produced, at one window's
+            // cost instead of all of them. It runs on IO for the same reason.
+            loadedHistoryChars += withContext(Dispatchers.IO) { retainedChars(loaded.entries) }
             _state.value = _state.value.copy(
                 history = HistoryCursor(
                     startOffset = loaded.startOffset,
@@ -3544,9 +3819,34 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     fun requestMentions(prefix: String) {
         val id = ++mentionRequestId
         viewModelScope.launch {
-            val items = mentionSource.query(prefix) { id != mentionRequestId }
+            val answer = mentionSource.query(prefix) { id != mentionRequestId }
             if (id != mentionRequestId) return@launch
-            _state.value = _state.value.copy(mentions = MentionList(query = prefix, items = items.orEmpty()))
+            when (answer) {
+                // Superseded between the run and this line; the id check above is the
+                // authority, this branch only keeps the `when` exhaustive.
+                null -> Unit
+
+                is MentionLookup.Candidates -> {
+                    lastMentionFailure = null
+                    _state.value =
+                        _state.value.copy(mentions = MentionList(query = prefix, items = answer.items))
+                }
+
+                is MentionLookup.Unavailable -> {
+                    // The lookup did not happen, so no list may stay on screen claiming to
+                    // be one — and the reason is said **once per distinct failure**: the
+                    // composer asks on a 150 ms debounce, and one notice per keystroke
+                    // would bury the message the user needs to read. Cleared when a lookup
+                    // succeeds, so a later failure of the same shape is reported again.
+                    if (_state.value.mentions != null) {
+                        _state.value = _state.value.copy(mentions = null)
+                    }
+                    if (lastMentionFailure != answer.sentence) {
+                        lastMentionFailure = answer.sentence
+                        pushNotice(answer.sentence, Notice.Tone.Warning)
+                    }
+                }
+            }
         }
     }
 
@@ -3576,6 +3876,9 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             pushNotice("已有 bash 命令在运行，先停止再执行新的命令", Notice.Tone.Warning)
             return
         }
+        bashStream.setLength(0)
+        lastBashPublishAt = 0L
+        bashStreamTrimmed = false
         _state.value = _state.value.copy(
             bash = BashRun(command = trimmed, excludeFromContext = excludeFromContext),
         )
@@ -3603,6 +3906,11 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun dismissBash() {
+        // The panel is gone, so its accumulation has no reader. Dropping it here is what
+        // keeps a dismissed 50 MiB output from sitting in the heap until the next run.
+        bashStream.setLength(0)
+        lastBashPublishAt = 0L
+        bashStreamTrimmed = false
         _state.value = _state.value.copy(bash = null)
     }
 
@@ -4068,6 +4376,195 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    // ------------------------------------- pi 的会话内跳转（`navigateTree`）
+
+    /**
+     * pi's **in-session** tree navigation: move the leaf to an earlier point and continue
+     * there, optionally writing a summary of the path being abandoned.
+     *
+     * ## Why this is not `fork`
+     *
+     * `fork` writes a **new session file** (`agent-session-runtime.ts:289-352`) and that is
+     * all the RPC protocol offers for the tree (`rpc-types.ts:20-74`). `navigateTree` moves
+     * the leaf **inside the current file** — its own doc comment says so
+     * (`core/agent-session.ts:3126-3127`) — and RPC exposes no command for it. The way in is
+     * the one `rpc-mode.ts` does wire: `commandContextActions.navigateTree` (`:329-335`),
+     * reachable from an extension command as `ctx.navigateTree` (`extensions/types.ts:375`).
+     * The shipped bridge extension registers `pi-android-navigate` for exactly this, and
+     * [navigateTo] dispatches it as a `prompt` whose text starts with `/`
+     * (`core/agent-session.ts:1183-1184`).
+     *
+     * ## The two things that make that dispatch safe
+     *
+     *  1. **The command must exist.** `_tryExecuteExtensionCommand` returns `false` for an
+     *     unregistered name (`:1338`) and `prompt` then sends the text to the model as an
+     *     ordinary user turn (`:1198-1218`) — the user would see an
+     *     `/pi-android-navigate {...}` sentence in the conversation and pay for it. So the
+     *     existence check against `get_commands` happens first, and a missing command is
+     *     reported instead of dispatched.
+     *  2. **There is no event when it finishes.** pi emits the *extension* event
+     *     `session_tree` (`:3315-3321`) and RPC forwards `AgentSessionEvent` only
+     *     (`rpc-mode.ts:356`). What the response *does* give is completion: the handler is
+     *     awaited before `preflightResult(true)` (`:1184-1188`), which is what emits the
+     *     `prompt` response (`rpc-mode.ts:401-406`). So the response is the "navigation is
+     *     over" signal, and the leaf is re-read afterwards to learn whether it moved.
+     *
+     * ## Preconditions are pi's, not ours
+     *
+     * No local streaming guard: `navigateTree` refuses on its own while a turn is streaming
+     * (`:3140-3142`) or while compacting (`:3143-3147`), and the extension turns that thrown
+     * sentence into a notice. (pi's *TUI* aborts the running turn first,
+     * `interactive-mode.ts:5266-5269` — that is a UI convenience on top of the core rule,
+     * and aborting a user's in-flight turn without asking is not something this app does
+     * implicitly.) The summary question is asked by the caller with pi's own three answers;
+     * see [BranchSummaryChoice] and [summaryPromptShown].
+     *
+     * @param entryId pi's entry id, straight from `get_tree` — never resolved here.
+     * @param choice the answer to pi's "Summarize branch?" question.
+     * @param customInstructions the text from the "Summarize with custom prompt" form.
+     */
+    fun navigateTo(
+        entryId: String,
+        choice: BranchSummaryChoice,
+        customInstructions: String? = null,
+    ) {
+        val engine = session
+        if (engine == null) {
+            fail("引擎未就绪：pi 现在不在运行，跳转没有执行。")
+            return
+        }
+        if (entryId.isBlank()) return
+        call(NAVIGATE_BUSY_LABEL, errorText = ::navigateFailureText) { api ->
+            if (api.getCommands().none { it.name == NAVIGATE_COMMAND }) {
+                pushNotice(
+                    "设备扩展没有提供「$NAVIGATE_COMMAND」命令，所以没有跳转。" +
+                        "它是随包扩展：到「包」里确认 pi-android-bridge 已启用，再重启引擎。",
+                    Notice.Tone.Warning,
+                )
+                return@call
+            }
+
+            val before = api.getTree().leafId
+            val text = "/$NAVIGATE_COMMAND " + navigateCommandArgs(
+                targetId = entryId,
+                summarize = wantsSummary(choice, branchSummarySkipPrompt()),
+                customInstructions = customInstructions,
+            )
+            // Straight to the session rather than through [PiEngineSession.prompt]: that
+            // one mirrors the message into the transcript before sending it, and a command
+            // line is not something the user said. `SLOW_TIMEOUT_MS` because this can run a
+            // full summarization before it answers.
+            val response = engine.request(
+                { PiCommands.prompt(it, text) },
+                PiEngineApi.SLOW_TIMEOUT_MS,
+            )
+            if (!response.success) {
+                throw PiRpcException("prompt", response.error ?: "pi 拒绝了这次跳转")
+            }
+
+            // The only authoritative "did it move": both `get_tree` and `get_entries`
+            // report pi's **in-memory** leaf (`rpc-mode.ts:653`, `:648`), which is what
+            // `branch()`/`branchWithSummary()` just changed.
+            when (navigateOutcome(before, api.getTree().leafId, refused = false)) {
+                NavigateOutcome.Moved -> {
+                    replayActiveBranch(engine)
+                    // The tree's own view is a second surface of the same fact, and the
+                    // summary it now contains is a new row (pi appends a `branch_summary`
+                    // entry, `session-manager.ts:1395-1416`).
+                    refreshTree()
+                    // `contextUsage` is the current branch's reading, so it moved too.
+                    refreshStats()
+                }
+                // The extension has already said why through pi's own notice channel
+                // ("already there" / cancelled / aborted). Rebuilding here would be the
+                // half-screen-of-stale-data bug in reverse: a reset with nothing to show.
+                NavigateOutcome.NoMove, NavigateOutcome.Refused -> Unit
+            }
+        }
+    }
+
+    /**
+     * Rebuild the transcript from the **active branch** — pi's `getBranch(leafId)`.
+     *
+     * This is deliberately not [replayHistory] and not [replayHistoryOverRpc]. Both fold the
+     * entries they are given in order, and neither walks `parentId`:
+     * [SessionFileReader.readTail] returns the file's *physical* tail, and
+     * `TranscriptReducer.seedFromHistory` folds whatever list it receives
+     * (`rpc/Transcript.kt:2051-2068`). After `navigateTree` the file still holds the
+     * abandoned path — `branch()`/`branchWithSummary()` never delete entries
+     * (`session-manager.ts:1374-1416`) — so either path would paint messages that are **not**
+     * in pi's context, which is exactly the "half a screen of old data" this refetch exists
+     * to prevent. `get_entries` carries pi's in-memory `leafId` (`rpc-mode.ts:648`), so the
+     * branch can be filtered from the same answer.
+     *
+     * The history cursor is set to `reachedStart = true` for the same reason: the rebuild
+     * starts at the branch's root, so there is nothing above it to fetch — and letting
+     * [expandEarlierHistory] read further back would prepend the abandoned branch's entries
+     * onto the new context.
+     */
+    private suspend fun replayActiveBranch(engine: PiEngineSession) {
+        val response = runCatching { engine.request({ PiCommands.getEntries(it) }) }.getOrNull() ?: run {
+            fail("跳转成功，但没能读回这个会话的内容；重新打开会话即可看到新的位置。")
+            return
+        }
+        if (!response.success) {
+            fail("跳转成功，但读回会话内容失败：${response.error ?: "原因未知"}。重新打开会话即可看到新的位置。")
+            return
+        }
+        val entries = PiResponses.entries(response)
+        val branch = activeBranch(entries, PiResponses.sessionEntries(response)?.leafId)
+        val chars = withContext(Dispatchers.IO) { retainedChars(branch) }
+        engine.seedHistory(branch)
+        loadedHistory = branch
+        loadedHistoryChars = chars
+        _state.value = _state.value.copy(
+            history = HistoryCursor(startOffset = 0L, reachedStart = true),
+        )
+        syncTranscript(engine, engine.publication.value)
+    }
+
+    /**
+     * `branchSummary.skipPrompt`, read from the settings document.
+     *
+     * The key has no row in [app.pi.ui.settings.PiSettingsCatalog] because pi reads it only
+     * in its own TUI (`interactive-mode.ts:5236`) — but the flow it governs is the one
+     * [navigateTo] now implements, so ignoring it would make the app ask a question the
+     * user has already turned off. Reading it (rather than exposing it) is the same
+     * treatment `ProjectScreen` gives `defaultProjectTrust`.
+     */
+    fun branchSummarySkipPrompt(): Boolean =
+        settingsStore.readBoolean("branchSummary.skipPrompt") ?: false
+
+    /**
+     * pi's failures on the navigation path, said with the next step attached.
+     *
+     * Same shape as [forkFailureText]: the reason is pi's own sentence, quoted, and each one
+     * has a knowable cause. The states are the ones `navigateTree` refuses
+     * (`core/agent-session.ts:3140-3147`、`:3157-3159`) plus the two the RPC layer can add.
+     */
+    private fun navigateFailureText(error: Throwable): String {
+        val reason = error.message?.takeIf { it.isNotBlank() } ?: "原因未知"
+        val next = when {
+            reason.contains("Wait for the current response") ->
+                "这一轮还在回复。等它结束（或按停止）之后再跳。"
+
+            reason.contains("compaction or tree navigation") ->
+                "pi 正在压缩上下文或处理上一次跳转。等它结束再试。"
+
+            reason.contains("No model available for summarization") ->
+                "要摘要就得有一个可用的模型。先在「模型」里选一个，或改成「不摘要」再跳。"
+
+            reason.contains("not found") ->
+                "这个会话点已经不在 pi 的会话文件里了。点「刷新」重读会话树再选。"
+
+            reason.contains("timed out") ->
+                "这次跳转（含摘要）超过了等待时间。摘要可能仍在 pi 里进行，稍后用「刷新」看结果。"
+
+            else -> "可以重新打开这个会话再试一次。"
+        }
+        return "跳转失败：$reason。$next"
+    }
+
     /**
      * `set_session_name`. pi trims and rejects an empty name with
      * `success: false` (`rpc-mode.ts:661-668`), which the façade turns into an
@@ -4519,6 +5016,19 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         const val MAX_PENDING_NOTICES = 8
 
         /**
+         * How often a running `bash` command's accumulated output is published.
+         *
+         * The same number and the same rule as the transcript's tool-output throttle
+         * (`rpc/.../Transcript.kt` `TOOL_UPDATE_THROTTLE_MS`), because it answers the
+         * same problem for the same reason: pi emits a chunk per read and a chatty
+         * command emits hundreds a second, while a panel of that shape has nothing to
+         * say about the difference between two chunks 5 ms apart. It is a bound on the
+         * *repaint* only — every chunk is kept in `bashStream`, and the `bash` response
+         * replaces the output when the run ends, so the panel still shows everything.
+         */
+        const val BASH_UPDATE_THROTTLE_MS = 200L
+
+        /**
          * How much of a session file one history window may read, in characters.
          *
          * 8 MiB. The number is a phone trade, and both directions matter:
@@ -4588,6 +5098,25 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         const val CURRENT_SESSION_VERSION = 3
     }
 }
+
+/**
+ * The extension command that reaches pi's in-session tree navigation.
+ *
+ * `pi-android-bridge` registers it; see [PiSessionViewModel.navigateTo] for why a command
+ * is the only way in. Not a user-facing name: it never appears in the composer, because it
+ * is dispatched straight to the session rather than through the prompt path that echoes.
+ */
+private const val NAVIGATE_COMMAND = "pi-android-navigate"
+
+/**
+ * What the status line says while a navigation is in flight.
+ *
+ * It can legitimately last minutes: the leaf move is instant, but a requested branch
+ * summary is a full model call (`core/agent-session.ts:3229-3240`). Saying what is being
+ * waited on — rather than the generic 读取 — is the difference between "stuck" and
+ * "summarizing".
+ */
+private const val NAVIGATE_BUSY_LABEL = "跳转到会话位置…"
 
 /**
  * The system night mode at the moment this view model was built.

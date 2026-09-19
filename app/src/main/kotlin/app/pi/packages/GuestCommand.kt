@@ -4,6 +4,7 @@ import android.os.Environment
 import app.pi.runtime.ProotCommand
 import java.io.InputStream
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Runs one non-interactive command inside the guest, and reports exactly what
@@ -61,7 +62,7 @@ class GuestCommand(private val layout: AgentLayout) {
     data class Outcome(
         /** The exact argv handed to proot; reported so the user can reproduce it. */
         val argv: List<String>,
-        /** The guest command string, i.e. what `bash -lc` received. */
+        /** The guest command string, i.e. what `bash -c` received. */
         val guestCommand: String,
         /** Null when the process never started or was killed on timeout. */
         val exitCode: Int?,
@@ -70,6 +71,13 @@ class GuestCommand(private val layout: AgentLayout) {
         val timedOut: Boolean,
         /** Non-null when proot itself could not be started. */
         val launchError: String? = null,
+        /**
+         * True when the guest wrote more than [MAX_STREAM_CHARS] to stdout (`stdout`
+         * or `stderr`). The kept text is a **prefix**, and the caller must say so: a
+         * partially shown npm log that looks complete is the silent-failure shape this
+         * field exists to remove.
+         */
+        val outputTruncated: Boolean = false,
     ) {
         val ok: Boolean get() = launchError == null && !timedOut && exitCode == 0
 
@@ -80,6 +88,12 @@ class GuestCommand(private val layout: AgentLayout) {
                 if (isNotEmpty()) append('\n')
                 append(stderr.trimEnd())
             }
+            // Last, so the sentence is not itself cut off, and only when something
+            // was: the UI's whole promise here is that what it shows is what happened.
+            if (outputTruncated) {
+                if (isNotEmpty()) append('\n')
+                append("（输出过长，已截断：只保留每个流的前 ${MAX_STREAM_CHARS / 1024} KB）")
+            }
         }
 
         /** True when the guest produced no output at all. */
@@ -87,7 +101,7 @@ class GuestCommand(private val layout: AgentLayout) {
     }
 
     /**
-     * @param guestCommand a command string evaluated by `bash -lc` **inside** the
+     * @param guestCommand a command string evaluated by `bash -c` **inside** the
      *        rootfs, so it may name guest paths (`/opt/node/bin/node`, `/workspace`).
      * @param cwd the guest cwd. For anything pi does with project settings this
      *        must be the workspace, because pi resolves `<cwd>/.pi/settings.json`
@@ -137,8 +151,12 @@ class GuestCommand(private val layout: AgentLayout) {
         // buffer's worth.
         val out = StringBuilder()
         val err = StringBuilder()
-        val outThread = pump(process.inputStream, out)
-        val errThread = pump(process.errorStream, err)
+        // Per stream, because "stdout was cut" and "stderr was cut" are different
+        // facts for whoever reads the outcome; both are reported.
+        val outOverflow = AtomicBoolean(false)
+        val errOverflow = AtomicBoolean(false)
+        val outThread = pump(process.inputStream, out, outOverflow)
+        val errThread = pump(process.errorStream, err, errOverflow)
 
         val finished = process.waitFor(timeoutMs, TimeUnit.MILLISECONDS)
         if (!finished) {
@@ -157,10 +175,27 @@ class GuestCommand(private val layout: AgentLayout) {
             stdout = out.toString(),
             stderr = err.toString(),
             timedOut = !finished,
+            outputTruncated = outOverflow.get() || errOverflow.get(),
         )
     }
 
-    private fun pump(stream: InputStream, into: StringBuilder): Thread {
+    /**
+     * Drain one pipe into [into] forever, keeping at most [MAX_STREAM_CHARS] of it.
+     *
+     * The reader must never stop reading — a full pipe blocks the guest mid-command,
+     * and `npm install` prints far more than one pipe buffer — but nothing bounds what
+     * it *keeps*: `pi install` runs npm, whose output on a bad dependency tree (or a
+     * package that prints in a loop) is unbounded, and the app process would be holding
+     * every byte of it as strings until the command finished. This is the same
+     * reasoning `DeviceShell.readCapped` (50 KiB) and `PiEngineSession`'s stderr drain
+     * (64 KB) already apply; the cap here is generous because these strings become the
+     * user-visible result of an install.
+     *
+     * Past the cap the bytes are still read and dropped, and [Outcome.outputTruncated]
+     * says so: a silent truncation would let the UI present a partial npm log as the
+     * whole one.
+     */
+    private fun pump(stream: InputStream, into: StringBuilder, overflow: AtomicBoolean): Thread {
         val thread = Thread {
             runCatching {
                 stream.bufferedReader().use { reader ->
@@ -168,7 +203,13 @@ class GuestCommand(private val layout: AgentLayout) {
                     while (true) {
                         val read = reader.read(buffer)
                         if (read < 0) break
-                        synchronized(into) { into.append(buffer, 0, read) }
+                        synchronized(into) {
+                            if (into.length >= MAX_STREAM_CHARS) {
+                                overflow.set(true)
+                                return@synchronized
+                            }
+                            into.append(buffer, 0, read)
+                        }
                     }
                 }
             }
@@ -233,8 +274,28 @@ class GuestCommand(private val layout: AgentLayout) {
          */
         const val INSTALL_TIMEOUT_MS: Long = 10 * 60 * 1000L
 
+        /**
+         * `pi update`, which does the same network work as an install for **every**
+         * configured source in one run (npm registry lookups plus a git reconcile for
+         * each; `core/package-manager.ts:1091-1148`), so it gets the same budget
+         * rather than the install timeout per package. A partial answer is not
+         * available here: pi prints one result line at the end, after all sources.
+         */
+        const val UPDATE_TIMEOUT_MS: Long = 10 * 60 * 1000L
+
         /** `pi list` reads two JSON files; it should never take a minute. */
         const val LIST_TIMEOUT_MS: Long = 60 * 1000L
+
+        /**
+         * How much of each stream is kept, in characters.
+         *
+         * Generous, because these strings are the user-visible result of an install
+         * and a real `npm install` log is tens of KB. It exists only to put a ceiling
+         * on a command whose output is unbounded: past it the reader keeps draining
+         * (a full pipe blocks the guest) and stops keeping, and
+         * [Outcome.outputTruncated] says so.
+         */
+        const val MAX_STREAM_CHARS: Int = 2 * 1024 * 1024
 
         private const val READER_JOIN_MS = 2_000L
 

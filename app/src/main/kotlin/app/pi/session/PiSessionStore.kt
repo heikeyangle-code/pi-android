@@ -1,6 +1,8 @@
 package app.pi.session
 
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -78,6 +80,53 @@ class PiSessionStore(private val sessionsRoot: File) {
     private val headerScanBudget = 1 shl 20
 
     /**
+     * One file's summary, as of the (length, mtime) it was scanned at.
+     *
+     * The scan behind a summary reads up to [headerScanBudget] characters and parses
+     * every line in them, so re-deriving one for a file that has not changed is the
+     * whole cost of the sessions screen: 300 files of ~300 KB measured 1.5–2.4 s on a
+     * desktop JVM, i.e. seconds on a phone, on **every** entry to the screen
+     * (`.pi/agent/sessions` grows without bound and `list`'s `limit` only trims the
+     * result, never the work).
+     *
+     * ## Why (length, mtime) is a sound key
+     *
+     * pi appends to a session file and never rewrites it in place:
+     * `SessionManager` opens a session's JSONL for append and every new entry is a
+     * new line (`session-manager.ts`, `_persist`/`appendMessage`), and the only
+     * other writer is the app's own import, which creates a *new* file. So a file
+     * whose length and mtime are unchanged cannot have a different summary, and a
+     * changed file is re-scanned in full — which is correct rather than merely
+     * cheap, because `lastActivityAt`/`title`/`messageCount` all come from a prefix
+     * of the file.
+     *
+     * Cost of being wrong: a stale row for a file that changed twice within one
+     * filesystem timestamp tick **and** kept its byte length (a same-length rewrite).
+     * Nothing in this app or in pi produces that; the refresh button and every
+     * `refreshSessions()` caller re-derive as soon as either number moves.
+     *
+     * The fallback cwd is part of the key because [readSummary]'s `cwd` depends on
+     * it: the list path passes a group directory's decoded name while
+     * [mostRecentForResume] passes null, and one entry serving both would make the
+     * two disagree about the same file.
+     */
+    private class Cached(val length: Long, val modified: Long, val summary: Summary)
+
+    private val summaryCache = HashMap<String, Cached>()
+
+    private val cacheLock = Any()
+
+    /**
+     * Serialises whole-directory scans.
+     *
+     * `refreshSessions()` has no in-flight guard of its own (the screen's
+     * `LaunchedEffect` and the refresh button can overlap), and two concurrent scans
+     * are two full passes over the same files. One mutex makes the second wait for
+     * the first — whose results it then reuses straight out of [summaryCache].
+     */
+    private val scanMutex = Mutex()
+
+    /**
      * Every session under [sessionsRoot], most recent activity first.
      *
      * Ordering matches pi's picker: `SessionManager.list` sorts by
@@ -88,30 +137,37 @@ class PiSessionStore(private val sessionsRoot: File) {
      * list order here and the list order in the desktop picker agree for any session
      * this reader can see in full.
      */
-    suspend fun list(limit: Int = 300): List<Summary> = withContext(Dispatchers.IO) {
-        if (!sessionsRoot.isDirectory) return@withContext emptyList()
-        val out = ArrayList<Summary>()
-        sessionsRoot.listFiles()?.forEach { entry ->
-            when {
-                // pi's default layout: one directory per cwd, one level deep
-                // (`session-manager.ts:1706-1718` reads `readdir(sessionsDir)` and
-                // then each directory's files — never deeper).
-                entry.isDirectory -> {
-                    // Group directory names encode the cwd; used only as a fallback
-                    // when a file's header carries no `cwd` of its own.
-                    val groupCwd = encodedCwdFromGroupName(entry.name)
-                    entry.listFiles()?.forEach { file ->
-                        if (isSessionFile(file)) readSummary(file, groupCwd)?.let { out += it }
+    suspend fun list(limit: Int = 300): List<Summary> = scanMutex.withLock {
+        withContext(Dispatchers.IO) {
+            if (!sessionsRoot.isDirectory) return@withContext emptyList()
+            val out = ArrayList<Summary>()
+            val seen = HashSet<String>()
+            sessionsRoot.listFiles()?.forEach { entry ->
+                when {
+                    // pi's default layout: one directory per cwd, one level deep
+                    // (`session-manager.ts:1706-1718` reads `readdir(sessionsDir)` and
+                    // then each directory's files — never deeper).
+                    entry.isDirectory -> {
+                        // Group directory names encode the cwd; used only as a fallback
+                        // when a file's header carries no `cwd` of its own.
+                        val groupCwd = encodedCwdFromGroupName(entry.name)
+                        entry.listFiles()?.forEach { file ->
+                            if (isSessionFile(file)) readSummary(file, groupCwd, seen)?.let { out += it }
+                        }
                     }
+                    // The layout our engine actually writes (`:1551-1552`): the session
+                    // files sit directly in the session directory, so there is no group
+                    // name to fall back to.
+                    isSessionFile(entry) -> readSummary(entry, null, seen)?.let { out += it }
                 }
-                // The layout our engine actually writes (`:1551-1552`): the session
-                // files sit directly in the session directory, so there is no group
-                // name to fall back to.
-                isSessionFile(entry) -> readSummary(entry, null)?.let { out += it }
             }
+            // Forget summaries for files that are gone, so a deleted (or imported and
+            // later removed) session cannot keep a row's worth of memory alive for the
+            // life of the process. Cheap: one pass over the fresh key set.
+            synchronized(cacheLock) { summaryCache.keys.retainAll(seen) }
+            out.sortByDescending { it.lastActivityAt }
+            if (out.size > limit) out.subList(0, limit) else out
         }
-        out.sortByDescending { it.lastActivityAt }
-        if (out.size > limit) out.subList(0, limit) else out
     }
 
     /**
@@ -140,10 +196,17 @@ class PiSessionStore(private val sessionsRoot: File) {
      */
     suspend fun mostRecentForResume(cwd: String?): Summary? = withContext(Dispatchers.IO) {
         if (!sessionsRoot.isDirectory) return@withContext null
+        // Order first, then look: `maxByOrNull` over a `filter` that reads every
+        // file's header opened one session file per candidate to answer a question
+        // about exactly one of them (`readHeaderCwd` reads an 8 KiB chunk of each, so
+        // 300 sessions cost 300 opens; 152 ms measured on a desktop JVM). Sorting by
+        // mtime first and taking the first cwd match is the same answer — `maxByOrNull`
+        // returns the first maximum, and the ordering is the same key — for one file's
+        // header read instead of all of them.
         val target = sessionsRoot.listFiles().orEmpty()
             .filter { isSessionFile(it) }
-            .filter { cwd == null || readHeaderCwd(it) == cwd }
-            .maxByOrNull { it.lastModified() } ?: return@withContext null
+            .sortedByDescending { it.lastModified() }
+            .firstOrNull { cwd == null || readHeaderCwd(it) == cwd } ?: return@withContext null
         readSummary(target, null)
     }
 
@@ -216,8 +279,23 @@ class PiSessionStore(private val sessionsRoot: File) {
      *        (`SessionHeader.cwd` is `string` in this pi version, but old files
      *        exist); it never *replaces* the header's own value, and null simply
      *        means "this file has no group name to fall back to".
+     * @param seen when non-null, the cache keys this scan touched are collected into
+     *        it so [list] can drop summaries for files that no longer exist. Null
+     *        from a caller that is not a whole-directory scan
+     *        ([mostRecentForResume]).
      */
-    private fun readSummary(file: File, fallbackCwd: String?): Summary? {
+    private fun readSummary(file: File, fallbackCwd: String?, seen: MutableSet<String>? = null): Summary? {
+        // The fallback cwd is part of the key: the same file has two legitimate
+        // summaries depending on who asks (see [Cached]).
+        val key = file.absolutePath + '\u0000' + (fallbackCwd ?: "")
+        seen?.add(key)
+        val length = file.length()
+        val modified = file.lastModified()
+        synchronized(cacheLock) {
+            summaryCache[key]?.let { cached ->
+                if (cached.length == length && cached.modified == modified) return cached.summary
+            }
+        }
         var id: String? = null
         var cwd: String? = fallbackCwd
         var startedAt: Long? = null
@@ -322,7 +400,7 @@ class PiSessionStore(private val sessionsRoot: File) {
         // resort (`:749`), and an upper bound on the file's real last write.
         val activity = if (truncated) mtime else lastActivityAt ?: startedAt ?: mtime
 
-        return Summary(
+        val summary = Summary(
             file = file,
             id = id ?: file.nameWithoutExtension,
             cwd = cwd.orEmpty(),
@@ -336,6 +414,10 @@ class PiSessionStore(private val sessionsRoot: File) {
             messageCount = messageCount,
             parentSession = parentSession,
         )
+        // Only a real session is remembered; "this file is not a session" is not
+        // cached, so a `.jsonl` that becomes one is described on the next scan.
+        synchronized(cacheLock) { summaryCache[key] = Cached(length, modified, summary) }
+        return summary
     }
 
     /**

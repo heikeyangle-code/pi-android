@@ -1,5 +1,6 @@
 package app.pi.ui.screens
 
+import app.pi.packages.PiConfigFiles
 import app.pi.rpc.ToolCall
 import app.pi.rpc.TranscriptItem
 import app.pi.rpc.ToolStatus
@@ -119,6 +120,17 @@ internal object WorkspaceFiles {
     /** 行数扫描的上限：超过就报「还有更多」，不再往下数。 */
     private const val COUNT_CAP = 200_000
 
+    /**
+     * 数行数时的字符预算：32 MB。
+     *
+     * 一份「还有 N 行」的提示不值得为它读完一个几百 MB 的文件。读满就走 null（见
+     * [countLines]），与超过 [COUNT_CAP] 时同一种答案。
+     */
+    private const val COUNT_BUDGET_CHARS = 32 * 1024 * 1024
+
+    /** [countLines] 每次读的块大小。 */
+    private const val COUNT_CHUNK_CHARS = 8 * 1024
+
     /** 已知的二进制后缀（`.so` / 图片 / 压缩包 / 数据库 …）。 */
     private val BINARY_SUFFIXES = setOf(
         "png", "jpg", "jpeg", "gif", "webp", "bmp", "ico", "heic", "avif",
@@ -228,16 +240,48 @@ internal object WorkspaceFiles {
         }
     }
 
-    /** 行数（封顶 [COUNT_CAP]），拿不到就是 null —— 不编一个数字回填。 */
+    /**
+     * 行数，**读到文件末尾**才算数；到不了末尾就是 null。
+     *
+     * 两处都不许编数字：
+     *
+     *  - 到不了 EOF（超过 [COUNT_CAP] 行或 [COUNT_BUDGET_CHARS] 个字符）就返回 null。
+     *    原来的实现在到达上限时把**已经数到的**那个数当成总数返回，而调用方拿它算
+     *    「还有 N 行」（`WorkspaceViewer` 的 `totalLines`）—— 一个 90 万行的日志会被
+     *    报成 20 万行。KDoc 一直写着「不编一个数字回填」，代码在这一点上没有照做。
+     *  - 顺带按**字节**封顶：原来用 `readLine()` 逐行数，等于为一句提示把整个文件读完，
+     *    而且每行都分配一个 `String`（200 MB 的日志就是 200 MB 的临时对象）。按块扫字节
+     *    既没有逐行分配，也在读满预算时立刻停下。
+     *
+     * `omittedLines`/`totalLines` 在 UI 上本来就是可空处理的（`TooLargeBody` 用
+     * `?.plus`），所以 null 只是少一行数字，不会少一块界面。
+     */
     private fun countLines(file: File): Int? = runCatching {
         var count = 0
+        var consumed = 0L
+        var openLine = false
+        var reachedEnd = false
         file.bufferedReader().use { reader ->
-            while (count < COUNT_CAP) {
-                reader.readLine() ?: break
-                count++
+            val buffer = CharArray(COUNT_CHUNK_CHARS)
+            while (true) {
+                if (consumed >= COUNT_BUDGET_CHARS || count >= COUNT_CAP) break
+                val read = reader.read(buffer)
+                if (read < 0) {
+                    reachedEnd = true
+                    break
+                }
+                consumed += read
+                for (index in 0 until read) {
+                    if (buffer[index] == '\n') {
+                        count++
+                        openLine = false
+                    } else {
+                        openLine = true
+                    }
+                }
             }
         }
-        count
+        if (!reachedEnd) null else if (openLine) count + 1 else count
     }.getOrNull()
 
     // ------------------------------------------------------------------ 写 ----
@@ -245,6 +289,12 @@ internal object WorkspaceFiles {
     /** 新建一个空文件；已存在就是失败（不覆盖）。 */
     fun createFile(parent: File, name: String): Result<File> = runCatching {
         val target = File(parent, name)
+        // 新建出来的是**空**文件，而 pi 会严格解析 `.pi/` 里的 JSON 文档：空文件就是"pi 读不了
+        // 它"。新建这条路上没有任何内容可校验，所以拒绝（判定在 `WorkspacePiWrite.isPiJsonTarget`，
+        // 基于真实路径），并给一句指向能改这类文件的地方的提示。
+        if (WorkspacePiWrite.isPiJsonTarget(target)) {
+            throw java.io.IOException(WorkspacePiWrite.creationRefusalSentence())
+        }
         if (target.exists()) throw java.io.IOException("这个目录里已经有「$name」了。")
         target.parentFile?.mkdirs()
         if (!target.createNewFile()) throw java.io.IOException("无法在这个目录里新建文件。")
@@ -262,6 +312,13 @@ internal object WorkspaceFiles {
     /** 改名（只动名字，内容不动）。目标已存在就是失败。 */
     fun rename(file: File, newName: String): Result<File> = runCatching {
         val target = File(file.parentFile, newName)
+        // 改名搬的是磁盘上已有的字节，同样不经过写前校验：把外面的 `notes.json` 改成
+        // `.pi/settings.json` 就等于让 pi 开始读一份没人校验过的设置 —— **搬进来**才拒绝。
+        // `.pi` 内部改名（例如主题 `dark.json → dark2.json`）只换个名字，不改变"它本来就在 pi
+        // 的项目目录里"这件事，所以放行（判定在 `WorkspacePiWrite.isPiJsonImport`）。
+        if (WorkspacePiWrite.isPiJsonImport(file, target)) {
+            throw java.io.IOException(WorkspacePiWrite.creationRefusalSentence())
+        }
         if (target.exists()) throw java.io.IOException("这个目录里已经有「$newName」了。")
         if (!file.renameTo(target)) throw java.io.IOException("重命名失败：${file.name} → $newName")
         target
@@ -273,11 +330,67 @@ internal object WorkspaceFiles {
         if (!deleted || file.exists()) throw java.io.IOException("删除失败：${file.absolutePath}")
     }
 
-    /** 把编辑器的内容写回整个文件（覆盖写）。 */
+    /**
+     * 把编辑器的内容写回整个文件（覆盖写）。
+     *
+     * **这是「工作区里任何普通文件」的写法**：无锁、非原子、没有内容校验 —— 对用户自己的
+     * 文档正是编辑器的意义。写 pi 会读的文件请用 [save]：它对工作区自己的 `.pi/` 目录换用
+     * pi 的锁 + 原子替换（必要时还先过写前校验）。这个函数不再被编辑器的保存路径直接调用。
+     */
     fun writeText(file: File, text: String): Result<Unit> = runCatching {
         file.parentFile?.mkdirs()
         file.writeText(text)
     }
+
+    /**
+     * 编辑器保存一次改动：走对的那条写入路径。
+     *
+     * `<workspace>/.pi/` 里的文件是 pi 会读的文件。以前这里和「Pi 文件」屏是两个写者：这一屏
+     * 整份覆盖（`writeText`），那一屏是 `PiConfigFiles.withLock` + 原子替换 + 写前校验。
+     * 同一个文件两条写法就是第二份真相，而且第二份还是坏的那份 —— 非原子的覆盖可以和 pi
+     * 自己的写交织，把键丢掉；也没有任何东西拦住「写下去 pi 会抛」的内容。
+     *
+     * 现在只有一条：`.pi/` 里的路径一律走 [PiConfigFiles]（锁与原子替换的唯一实现，这里不写第二
+     * 套），并且先过 [WorkspacePiWrite.problem]（`checkPiFileWrite`，与「Pi 文件」屏同一份
+     * 判据）。其余路径保持原来的整份覆盖。
+     *
+     * @param relativePath 相对工作区根、`/` 分隔的路径（树里的显示路径）；由它决定这次写是
+     *   不是 pi 的文件，**不是**由文件对象猜。
+     * @return 失败时带一句给用户看的原因：校验不通过（原来写下去 pi 会抛/会整份忽略）、锁拿不
+     *   到、或原子替换失败。三种都在磁盘上什么都没改。
+     */
+    fun save(
+        file: File,
+        relativePath: String,
+        text: String,
+        openedStamp: String? = null,
+    ): Result<Unit> = runCatching {
+        WorkspacePiWrite.problem(relativePath, file, text)?.let { throw java.io.IOException(it) }
+        if (!WorkspacePiWrite.isPiDocumentPath(relativePath, file)) {
+            writeText(file, text).getOrThrow()
+            return@runCatching
+        }
+        val written = PiConfigFiles.withLock(file) {
+            // 变更检测在锁**里面**：这样「比指纹 → 写」对 pi 自己的写是原子的，否则检查过了、
+            // 写完之前 pi 还是能插进来。指纹就是 [stampOf]（与「Pi 文件」屏同一个判据），
+            // [openedStamp] 为 null（打开时没记下）时跳过检查。
+            if (WorkspacePiWrite.stampChanged(openedStamp, stampOf(file))) {
+                throw java.io.IOException(WorkspacePiWrite.staleStampSentence())
+            }
+            PiConfigFiles.write(file, text, mode600 = WorkspacePiWrite.restrictToOwner(relativePath, file))
+        }
+        if (!written) {
+            throw java.io.IOException("写盘失败：${file.name}（原子替换没有成功，磁盘上的内容没有被改）")
+        }
+    }
+
+    /**
+     * `(size, mtime)` 指纹 —— 只用来发现「变过」，不追求唯一。
+     *
+     * 与 `PiFilesScreen` 的 `stampOf` 同一种判据（那边写在文件里，这里提出来给 [save] 的变更
+     * 检测用）：同一种形状换来的是两个界面不会对「这个文件变了吗」给出不同答案。
+     */
+    fun stampOf(file: File): String = "${file.length()}:${file.lastModified()}"
 
     /**
      * 一个名字能不能用：非空、不是 `.`/`..`、不含路径分隔符、不以空格结尾。

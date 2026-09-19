@@ -66,35 +66,84 @@ object PackageStrings {
 
     const val RUNNING = "正在执行…"
 
+    // ------------------------------------------------------------------ update
+    //
+    // `pi update --extensions` / `pi update <来源>`. The sentences below exist
+    // because pi's own output cannot answer the two questions an update button
+    // raises: it prints one and the same `Updated …` line whether or not anything
+    // moved, and there is no "is there a newer version?" query on this path at all.
+    // The file:line evidence lives in [PiPackageUpdate]'s KDoc and in the ledgers,
+    // **not** on screen — the note above forbids doc paths and design rationale in
+    // strings. A screen that showed pi's line as if it meant "something new was
+    // installed" is the "the UI says it can, and it cannot" shape this package keeps
+    // paying for.
+
+    const val UPDATE_ALL_LABEL = "全部更新"
+    const val UPDATE_LABEL = "更新"
+
+    /** What the update command really does, and the question it cannot answer. */
+    const val UPDATE_NOTE =
+        "更新由 pi 自己执行：非精确版本的 npm 包只在新版本时才重新安装，精确版本会被跳过，" +
+            "git 来源会重新检出。无论有没有真的改动，pi 都只回答一句「已更新」，" +
+            "它不报告有没有新版本，本应用也查不到。"
+
+    /** Shown instead of the button when nothing installed can be changed. */
+    const val UPDATE_NOTHING_TO_UPDATE =
+        "没有可更新的包：精确版本的 npm 包与本地路径不会被更新命令改动。"
+
+    /** Per-row reason a package gets no 更新 button. */
+    const val UPDATE_SKIP_PINNED = "精确版本：更新会跳过它，换版本请改来源后重新安装。"
+    const val UPDATE_SKIP_LOCAL = "本地路径：没有可拉取的内容，更新不会改动它。"
+
+    /** pi's positional `self`/`pi` means pi itself; the app never emits that. */
+    const val UPDATE_REFUSED_SELF =
+        "「self」与「pi」在 pi 里指更新 pi 自己，那会换掉本应用钉住的引擎版本，所以这里不提供。" +
+            "要更新资源包请用「全部更新」，或点某个包的「更新」。"
+
     // --------------------------------------------------- built in vs installed
     //
     // E7 (`docs/known-gaps.md` §E): the screen must say which rows the app shipped
-    // itself and which the user installed. pi has no such distinction — the evidence
+    // itself and which arrived another way. pi has no such distinction — the evidence
     // (`package-manager.ts:2352-2362`, `:2470-2475`; `pi list` reads only settings'
     // `packages`, `package-manager-cli.ts:970-1002`) lives in [PiBuiltinExtension]'s
     // KDoc and in the ledgers, **not** on screen: the file-level note above forbids doc
-    // paths and design rationale in strings. The built-in rows are marked by the title
-    // alone, which is all the user needs.
+    // paths and design rationale in strings.
+    //
+    // **That distinction is a per-row origin badge now, not a section title.** It used
+    // to be two titles — 随 App 提供的扩展（不能用 pi 卸载） / 其他扩展（不是随 App 安装的）
+    // — and a title that says 其他 tells the reader the rows under it are the leftovers,
+    // while every one of them is an extension pi loads. One section per kind with the
+    // origin on the row (`App 自带` / `全局`) keeps every fact and ranks nothing: the
+    // category is the title, the provenance is the badge.
 
-    const val BUILTIN_TITLE = "随 App 提供的扩展（不能用 pi 卸载）"
-
-    const val LIST_SECTION_TITLE = "已安装的资源包"
+    const val EXTENSIONS_TITLE = "扩展"
 
     /**
-     * Extensions found in the agent's extensions directory that the app did not
-     * install. They are not packages, so `pi list` says nothing about them; the fact
-     * worth stating is that pi does load them, which is what was invisible.
+     * The one fact the old title carried that a badge cannot: the shipped extensions
+     * cannot be removed through pi (`pi list` never shows them, so `pi remove <name>`
+     * answers `No matching package found`, `package-manager-cli.ts:959-966`). It stays
+     * on screen as the section's note instead of as a title qualifier.
      */
-    const val DISCOVERED_TITLE = "其他扩展（不是随 App 安装的）"
+    const val EXTENSIONS_NOTE =
+        "「App 自带」的三个扩展是应用自己带进来的，pi 卸载不了它们；" +
+            "其余扩展是磁盘上 extensions/ 目录里的，pi 启动时会加载。"
+
+    const val EXTENSIONS_EMPTY =
+        "还没有发现任何扩展。要加一个，把 .ts 或 .js 放进 extensions/（或放一个带入口的目录）。"
+
+    const val LIST_SECTION_TITLE = "已安装的资源包"
 
     const val DISCOVERED_PRESENCE = "pi 会加载它"
 
     /**
-     * Skills, prompt templates and themes found on disk. Same reasoning as
-     * [DISCOVERED_TITLE]: pi loads them by looking at a directory, so neither the
-     * shipped list nor `pi list` mentions them.
+     * 一类资源排在卡里的行数超过 `PiSettingsCollapseAbove` 时，收敛成一条动作：
+     * `显示全部 14 个` ↔ `收起`。「主题」实机就是 14 行，整段铺出来会把「已安装的资源包」
+     * 整个推到屏外。措辞与设置面同族的那条动作（模型屏的厂商卡）一致：说清**还剩多少**，
+     * 不说「更多」。
      */
-    const val RESOURCES_TITLE = "其他资源（不是随 App 安装的）"
+    fun showAllResources(count: Int): String = "显示全部 $count 个"
+
+    const val COLLAPSE_RESOURCES = "收起"
 
     fun resourceKind(kind: PiResourceDiscovery.Kind): String = when (kind) {
         PiResourceDiscovery.Kind.Skills -> "技能"
@@ -103,29 +152,57 @@ object PackageStrings {
     }
 
     /**
-     * Where one scanned resource was found.
+     * 一类资源的空态（**不是**「读不到」）。
      *
-     * `Project` says 当前工作区 rather than pi's literal `project` on purpose: every
-     * other label on this screen (项目信任, 项目包, 本工作区) says 工作区, and one row
-     * calling the same place by pi's wire word while the row above calls it 工作区 is
-     * how two names for one thing get established. The scope value itself is still
-     * pi's (`settings.json`'s project scope), only the noun is the app's.
+     * 这一页的读取器是 `PiResourceDiscovery`：目录不在、或目录里没有匹配的文件，都返回空表，
+     * 而且两种情况的空表是**同一个答案**。所以这里只能说「还没有发现任何 X」，不能写「读不到」
+     * —— 那会是一个这一屏拿不到的读数（07 的「四种读数不许互相冒充」）。句子顺带说清这一类
+     * 长什么样、放哪里，因为空态是读者唯一一次需要知道这件事的时候。
      */
-    fun resourceScope(scope: PiResourceDiscovery.Found.Scope): String = when (scope) {
-        PiResourceDiscovery.Found.Scope.Global -> "（全局）"
-        PiResourceDiscovery.Found.Scope.Project -> "（当前工作区）"
-        PiResourceDiscovery.Found.Scope.Package -> "（资源包）"
+    fun resourceEmpty(kind: PiResourceDiscovery.Kind): String = when (kind) {
+        PiResourceDiscovery.Kind.Skills ->
+            "还没有发现任何技能。一个技能就是 skills/ 下的一个目录，目录里有 SKILL.md。"
+
+        PiResourceDiscovery.Kind.Prompts ->
+            "还没有发现任何提示模板。模板是 prompts/ 下的 .md，正文里可以带 \$1、\$@ 这类参数。"
+
+        PiResourceDiscovery.Kind.Themes ->
+            "还没有发现任何主题。主题是 themes/ 下的 .json。"
     }
 
     /**
-     * The origin of one scanned resource, package name first when there is one.
+     * One row's **origin badge**, in two voices: the app's own word (`项目 ` / `全局`) in the
+     * UI face, the machine-produced half (`.pi`) in the mono face. Without the mono half the
+     * one path-shaped origin on the screen would be drawn in the wrong voice.
      *
-     * A package's resources are the only ones whose *owner* matters to the reader:
-     * "this theme comes from the package I installed" is the whole reason the row is
-     * on screen, and 资源包 alone would not say which one.
+     * The spellings are the workspace screen's, verbatim
+     * (`ui/screens/WorkspaceResources.kt`: `项目 ` + `.pi`, `全局`, `包 · ` + name):
+     * both screens list the same resources, so an origin must have one spelling. This
+     * page used to say 「（当前工作区）」 where the workspace screen said 「项目 .pi」 for
+     * the same directory.
      */
-    fun resourceOrigin(found: PiResourceDiscovery.Found): String =
-        found.packageName?.let { "（资源包：$it）" } ?: resourceScope(found.scope)
+    data class OriginBadge(val text: String, val mono: String? = null)
+
+    /** The extensions the APK ships. */
+    val ORIGIN_SHIPPED = OriginBadge("App 自带")
+
+    /** `<workspace>/.pi/<kind>` — the root pi resolves first. */
+    val ORIGIN_PROJECT = OriginBadge("项目 ", ".pi")
+
+    /** The engine's agent dir (`~/.pi/agent/<kind>`). */
+    val ORIGIN_GLOBAL = OriginBadge("全局")
+
+    /**
+     * 自动发现的那三类资源用哪一枚来源徽标。
+     *
+     * 包作用域走不到这里：包里的资源由**那一张包卡**承担来源（卡头就是这个包的来源与安装
+     * 路径），每一行再印一遍包名正是这一轮删掉的那种重复。所以这一支只是兜底。
+     */
+    fun resourceOriginBadge(scope: PiResourceDiscovery.Found.Scope): OriginBadge = when (scope) {
+        PiResourceDiscovery.Found.Scope.Global -> ORIGIN_GLOBAL
+        PiResourceDiscovery.Found.Scope.Project -> ORIGIN_PROJECT
+        PiResourceDiscovery.Found.Scope.Package -> OriginBadge("包")
+    }
 
     /**
      * The section that shows what each **installed package** carries.

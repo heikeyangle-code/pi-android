@@ -51,10 +51,15 @@ import kotlinx.serialization.json.JsonPrimitive
  *
  * ## 有意偏离 / 够不着的地方
  *
- *  - **glob 只实现 `*` 与 `?`**（minimatch 的其它语法 `{}`/`[]`/`!`/`()` 不实现）。遇到
- *    这类模式不猜：它进 [Inventory.unjudgedPatterns]，界面照着说"还有 N 条规则无法在
- *    这里判断"，而不是把它当成"没启用"。App 自己写出的是精确的 `provider/id`，所以这条
- *    偏离只影响手写/别的工具写出来的模式。
+ *  - **glob 实现 `*`、`?` 与 `[...]` 字符类**，与 pi 的选择一致（`core/model-resolver.ts:291`
+ *    把 `*`/`?`/`[` 任一都当作 glob）；扩展 minimatch 的其余语法（`{}`/`!`/`()`）不实现，
+ *    遇到就不猜：它进 [Inventory.unjudgedPatterns]，界面照着说"还有 N 条规则无法在这里
+ *    判断"，而不是把它当成"没启用"。
+ *  - **没有 glob 字符的模式按 pi 的"子串"回退**（`core/model-resolver.ts:338` →
+ *    `tryMatchModel` 的 `id.includes(pattern)`）。原先这里只做精确匹配，于是
+ *    `enabledModels: ["sonnet"]` 这种手写模式在本页显示成"没启用"，而 pi 其实选中了它。
+ *    pi 还会拿模型 **name** 做同样的子串匹配，本页的这条判据只有 id/provider（`Model` 的
+ *    名字在另一条读取路径上），所以 name 那一半够不着——这是**少报**而不是多报。
  *  - **`:思考等级` 后缀**照 pi 的解析剥掉（`core/model-resolver.ts:295-301`），只影响
  *    匹配，不改写用户的值。
  *  - **项目级 `settings.json`** 与全局的合并只做这三个键：它们分别是标量/数组，而 pi 的
@@ -273,29 +278,57 @@ object PiModelInventory {
     /**
      * `enabledModels` 的一条模式是否命中这个模型。
      *
-     * pi 的规则（`core/model-resolver.ts:295-317`）：先剥掉 `:思考等级` 后缀，然后对
-     * `provider/modelId` **或**裸 `modelId` 做大小写不敏感的 minimatch。这里实现了其中的
-     * `*` 与 `?`；其余语法对应的模式由 [hasUnsupportedGlobSyntax] 标出来，而不是猜。
+     * pi 的规则（`core/model-resolver.ts:281-361` `resolveModelScopeFromModels`）：
+     *
+     *  1. 含 `*`/`?`/`[` 的模式 → 先试精确引用，再对 `provider/modelId` **或**裸 `modelId`
+     *     做大小写不敏感的 minimatch；`*` 不跨 `/`（minimatch 的默认），这一条照做。
+     *  2. 不含 glob 字符的模式 → `parseModelPattern` → `tryMatchModel`：先精确，再**子串**
+     *     （`m.id.toLowerCase().includes(pattern)`；pi 还看 name，本方法只看得到 id/provider）。
+     *
+     * 其余语法（`{}`/`!`/`()`…）由 [hasUnsupportedGlobSyntax] 标出来，而不是猜。
      */
     fun matches(pattern: String, providerId: String, modelId: String): Boolean {
         val trimmed = pattern.trim()
         if (trimmed.isEmpty()) return false
         val glob = stripThinkingSuffix(trimmed)
         if (glob.isEmpty()) return false
-        if (glob.equals("$providerId/$modelId", ignoreCase = true)) return true
+        val fullId = "$providerId/$modelId"
+        if (glob.equals(fullId, ignoreCase = true)) return true
         if (glob.equals(modelId, ignoreCase = true)) return true
+        val hasGlobSyntax = glob.any { it == '*' || it == '?' || it == '[' }
+        if (!hasGlobSyntax) {
+            // pi 的"部分匹配"回退；`ignoreCase` 与 minimatch 的 `nocase: true` 一致。
+            return fullId.contains(glob, ignoreCase = true) || modelId.contains(glob, ignoreCase = true)
+        }
         if (hasUnsupportedGlobSyntax(glob)) return false
         val regex = globToRegex(glob) ?: return false
-        return regex.matches("$providerId/$modelId") || regex.matches(modelId)
+        return regex.matches(fullId) || regex.matches(modelId)
     }
 
     /**
-     * 这条模式用了本实现不支持的 minimatch 语法（`{}`/`[]`/`!`/`()`/`+`/`@`/`|`）。
+     * 这条模式用了本实现不支持的 minimatch 语法（`{}`/`!`/`()`/`+`/`@`/`|`）。
      * 界面据此说"无法在这里判断"，而不是把它当成"没启用"。
+     *
+     * `[...]` **不在**这里：pi 把 `[` 当作 glob 的起始（`core/model-resolver.ts:291`），
+     * [globToRegex] 已经实现字符类。
      */
     fun hasUnsupportedGlobSyntax(pattern: String): Boolean {
         val glob = stripThinkingSuffix(pattern.trim())
-        return glob.any { it in "{}[]()!+@|\\" }
+        var index = 0
+        while (index < glob.length) {
+            val ch = glob[index]
+            if (ch == '[') {
+                // 字符类整体跳过：`[!abc]` 里的 `!` 是**取反**（minimatch 与正则都这样），
+                // 不是 extglob 的否定号，不能按"不支持"处理。
+                val close = glob.indexOf(']', index + 1)
+                if (close <= index + 1) return true
+                index = close + 1
+                continue
+            }
+            if (ch in "{}()!+@|\\") return true
+            index++
+        }
+        return false
     }
 
     /** `sonnet:high` → `sonnet`；后缀不是思考等级时原样保留（pi 只在有效等级时剥）。 */
@@ -306,14 +339,40 @@ object PiModelInventory {
         return if (suffix.lowercase() in THINKING_LEVELS) pattern.substring(0, colon) else pattern
     }
 
+    /**
+     * minimatch 的一个近似：`*` 与 `?` **不跨 `/`**（minimatch 默认），`[...]` 是字符类
+     * （`[!abc]` / `[^abc]` 取反）。pi 对 `provider/modelId` 与裸 id 各匹配一次，所以
+     * 「星号不跨斜杠」正是它能把带厂商前缀的通配写法与裸 id 两种写法都服务好的原因。
+     */
     private fun globToRegex(glob: String): Regex? {
         val out = StringBuilder("^")
-        for (ch in glob) {
-            when (ch) {
-                '*' -> out.append(".*")
-                '?' -> out.append('.')
+        var index = 0
+        while (index < glob.length) {
+            when (val ch = glob[index]) {
+                '*' -> out.append("[^/]*")
+                '?' -> out.append("[^/]")
+                '[' -> {
+                    val close = glob.indexOf(']', index + 1)
+                    if (close <= index + 1) {
+                        // 没有闭合的 `[`：minimatch 会把它当普通字符。
+                        out.append(Regex.escape("["))
+                        index++
+                        continue
+                    }
+                    val body = glob.substring(index + 1, close)
+                    val negated = body.startsWith("!") || body.startsWith("^")
+                    val characters = if (negated) body.substring(1) else body
+                    out.append('[')
+                    if (negated) out.append('^')
+                    out.append(characters.replace("\\", "\\\\"))
+                    out.append(']')
+                    index = close + 1
+                    continue
+                }
+
                 else -> out.append(Regex.escape(ch.toString()))
             }
+            index++
         }
         out.append('$')
         return runCatching { Regex(out.toString(), RegexOption.IGNORE_CASE) }.getOrNull()

@@ -134,7 +134,10 @@ fun PiSettingRow(
                 highlighted = highlighted,
                 current = current,
                 modifier = modifier,
-                onClick = onOpen,
+                // 只读行（运行时事实）没有可打开的东西，所以**点击与 chevron 用同一个条件**：
+                // 以前只藏了 chevron，行却还能点开一个空的、禁用的编辑器 —— 行上写着
+                // `0.85.1`，sheet 里是空白（`docs/settings-audit-impl.md` §B4）。
+                onClick = if (setting.readOnly) null else onOpen,
                 enabled = enabled,
             ) {
                 RowBody(

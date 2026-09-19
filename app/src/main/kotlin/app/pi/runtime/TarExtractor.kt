@@ -2,6 +2,7 @@ package app.pi.runtime
 
 import java.io.BufferedInputStream
 import java.io.File
+import java.io.IOException
 import java.io.InputStream
 import java.nio.file.Files
 import java.nio.file.Path
@@ -64,7 +65,21 @@ class TarExtractor(
         var paxLink: String? = null
 
         while (true) {
-            if (!readFully(input, header, 512)) break
+            if (!readFully(input, header, 512)) {
+                // The stream ran out where a header should start. A well-formed archive
+                // ends with a zero block (the check below), so reaching here means the
+                // payload is truncated — and this is the one truncation that used to
+                // look like success: `readFully` reported "no bytes at all" the same way
+                // it reported the end of the data, so an archive cut exactly on a
+                // 512-byte boundary extracted a **partial rootfs** and then had its
+                // provisioning stamp written, i.e. a device that boots into a
+                // half-extracted runtime with nothing on screen saying so.
+                //
+                // `IOException` rather than `IllegalStateException` so
+                // `RuntimeProvisioner.extractAsset` wraps it with the payload audit and
+                // names the archive.
+                throw IOException("tar payload ended before its end-of-archive marker（档案被截断？）")
+            }
             if (header.all { it == 0.toByte() }) break // end-of-archive marker
 
             val nameRaw = header.string(0, 100)
@@ -188,6 +203,18 @@ class TarExtractor(
      * Both absolute paths and `..` traversal are refused. The archives are
      * downloaded from the network and unpacked with the app's own privileges, so
      * this is a boundary, not a formality.
+     *
+     * The destination's own canonical path is computed **once** ([canonicalBase]) and
+     * the candidate's per entry. Recomputing the base was pure waste — it is a
+     * constant — and it is not free: `getCanonicalFile()` resolves every component
+     * with `realpath`, measured at 27 µs per call, and a rootfs payload is tens of
+     * thousands of entries (20 000 entries × 2 calls = 557 ms in isolation, on top of
+     * an 8–25 s extraction).
+     *
+     * The per-entry `canonicalFile` on the candidate stays: it is what refuses an
+     * entry whose path goes *through a symlink this same extraction just created* (a
+     * tar can put `bin -> /` before `bin/evil`), and a purely lexical check cannot see
+     * that. Removing it would be a security regression dressed as an optimisation.
      */
     private fun resolveSafely(rawName: String): File? {
         val cleaned = rawName.removePrefix("./").trimStart('/')
@@ -195,14 +222,24 @@ class TarExtractor(
         val parts = cleaned.split('/')
         if (parts.any { it == ".." }) return null
         val resolved = File(destination, cleaned)
-        val base = destination.canonicalFile
+        val base = canonicalBase
         val candidate = resolved.canonicalFile
-        return if (candidate.path == base.path || candidate.path.startsWith(base.path + File.separator)) {
+        return if (candidate.path == base || candidate.path.startsWith(base + File.separator)) {
             candidate
         } else {
             null
         }
     }
+
+    /**
+     * [destination]'s canonical path, computed once per extractor.
+     *
+     * `by lazy` rather than a constructor field: the caller creates the destination and
+     * `extractGzip` calls `mkdirs()` on it before the first entry, so the first use is
+     * always after it exists — and an extractor that never reaches an entry never pays
+     * for it.
+     */
+    private val canonicalBase: String by lazy { destination.canonicalFile.path }
 
     private fun applyMode(file: File, mode: Long) {
         // Only the executable bits are meaningful for us: Android cannot carry
@@ -237,11 +274,19 @@ class TarExtractor(
         return out
     }
 
+    /**
+     * Fill [buffer] with exactly [length] bytes; `false` means the stream ended short.
+     *
+     * The old answer was `offset != 0` on EOF, i.e. "a partial read is a success and no
+     * bytes at all is the end of the data" — backwards for a tar header, and it is what
+     * made a block-boundary truncation look like a clean archive. The caller now treats
+     * `false` as truncation, and the reused `header` array is never read half-filled.
+     */
     private fun readFully(input: InputStream, buffer: ByteArray, length: Int): Boolean {
         var offset = 0
         while (offset < length) {
             val read = input.read(buffer, offset, length - offset)
-            if (read < 0) return offset != 0
+            if (read < 0) return false
             offset += read
         }
         return true

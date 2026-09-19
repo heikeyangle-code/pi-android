@@ -1,6 +1,7 @@
 package app.pi.engine
 
 import android.content.Context
+import android.util.Log
 import app.pi.bridge.DeviceBridgeController
 import app.pi.runtime.GuestWorkspacePath
 import app.pi.runtime.PiPaths
@@ -241,11 +242,21 @@ class PiEngineHost(private val appContext: Context) {
             // 2. Prove the runtime can actually execute before pretending it can.
             //    Cheap, and it converts an inscrutable mid-turn failure into a clear
             //    diagnosis (see RuntimeSelfCheck for why this cannot be assumed).
-            val check = RuntimeSelfCheck(paths).run(storage = android.os.Environment.getExternalStorageDirectory())
+            val selfCheck = RuntimeSelfCheck(paths)
+            val check = selfCheck.run(storage = android.os.Environment.getExternalStorageDirectory())
             if (!check.ok) {
+                // `summarize` is the check's own rendering of an outcome — it carries
+                // the ✗/· marker that says whether proot failed or the guest binary was
+                // refused, the sentence naming the cause, and the last 12 lines of what
+                // the probe actually wrote. This is its only caller: the boot failure
+                // card is the one place a user can act on any of that, and its
+                // `message`/`detail` pair is exactly the headline-plus-body shape
+                // `BootErrorCard` renders. Using it here also removes the hand-rolled
+                // `check.stderr.takeIf { … }` that could only ever show the stderr and
+                // never the marker or the reason.
                 return@withContext Boot.Failed(
-                    message = check.detail,
-                    detail = check.stderr.takeIf { it.isNotBlank() },
+                    message = "运行时自检未通过",
+                    detail = selfCheck.summarize(check),
                 )
             }
 
@@ -375,6 +386,13 @@ class PiEngineHost(private val appContext: Context) {
                     cwd = paths.runtime,
                     scope = scope,
                 )
+                // The engine's own record-level problems (an event the flow could
+                // not deliver, a transcript fold that threw) are counted inside the
+                // session and read back by the diagnostic report; this is where they
+                // also reach logcat. `PiEngineSession` is deliberately Android-free
+                // (no `android.util.Log`), so the host owns the line — and the
+                // session rate-limits the overflow case, which arrives as a burst.
+                session.onRecordProblem = { message -> Log.w(TAG, message) }
                 // A boot that succeeds while an engine is already attached must not
                 // leave the old process alive: two pi processes on one cwd would both
                 // append to the same session file and both hold the same settings.
@@ -644,6 +662,9 @@ class PiEngineHost(private val appContext: Context) {
         GuestWorkspacePath.under(appContext.filesDir.absolutePath, host.absolutePath)
 
     companion object {
+        /** Log tag for the engine's record-level problem lines. */
+        private const val TAG = "PiEngineHost"
+
         /** Where the packaged engine lands inside the rootfs. */
         const val ENGINE_GUEST_ROOT = "/opt/pi"
 

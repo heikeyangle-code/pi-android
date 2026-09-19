@@ -22,6 +22,21 @@ import kotlin.math.roundToInt
  * `tools/run-app-pure-checks.sh` → `image-size`. Everything here is bytes, integers and
  * floats — a header parser, a cap, and two boxes.
  *
+ * ## What else lives here, and why
+ *
+ * The file is also the module's home for the **Android-free, JVM-verifiable** helpers the
+ * transcript's caches and counters are built from, because a class that references
+ * Android or Compose cannot be compiled by a bare-JVM harness and would therefore need a
+ * phone to test:
+ *
+ *  - [ByteBoundedLru], the bounded map both image and text caches use;
+ *  - [TextMemo], a typed memo of `String -> String` parses (the cross-composition cache
+ *    behind `ParseCaches`);
+ *  - [IncrementalLineCount], the append-only line counter the streaming tool footer uses.
+ *
+ * None of them knows anything about pictures; they are here so the same harness can
+ * execute them.
+ *
  * ## The rule the whole file exists for
  *
  * **A single image's row has its final height before its bitmap exists.** That height is
@@ -294,6 +309,144 @@ internal class ImageDecodeGate(permits: Int) {
 /** The gate every image decode in the app shares. See [MAX_CONCURRENT_IMAGE_DECODES]. */
 internal val piImageDecodeGate = ImageDecodeGate(MAX_CONCURRENT_IMAGE_DECODES)
 
+/**
+ * A least-recently-used map bounded by the **weight of its entries**, in bytes.
+ *
+ * Written by hand rather than taken from the platform for two reasons, and both are
+ * properties of the keys this app has:
+ *
+ *  - **It never hashes a key.** The keys are transcript image payloads: base64 strings
+ *    of megabytes. `String.hashCode()` is O(payload) and was measured at 22.8 ms for a
+ *    fresh 4 MiB string on the phone (`docs/scroll-perf-items.md` §2.2), which is the
+ *    reason `ImageSize.kt`'s `naturalImageAspect` KDoc already refuses to key anything
+ *    on a payload hash. A `LinkedHashMap` — the shape the markdown image cache uses —
+ *    hashes on every `get`, so it cannot be used here. This map scans a handful of
+ *    entries with `==`/`equals` instead: an identity hit is one reference comparison,
+ *    and a re-created but equal payload is one `memcmp`.
+ *  - **It charges for the key's own bytes too.** The caller's [weigh] decides what an
+ *    entry costs; for a payload-keyed image cache that has to include the payload the
+ *    map is keeping alive, or the bound would be a lie.
+ *
+ * The scan is O(entries) on purpose, and the entries are few by construction: the
+ * budget is a byte budget, so a 32 MiB bound over multi-megabyte entries holds a
+ * handful. `get` marks the entry most recently used; `put` replaces and then evicts
+ * from the least recently used end until the total is inside the budget again.
+ *
+ * Pure Kotlin (no Android), so the eviction rule and the accounting are pinned by the
+ * bare-JVM harness `app/src/test/kotlin/app/pi/ui/blocks/PiImageCacheCheck.kt`.
+ *
+ * @param maxBytes the budget; `<= 0` disables the map (nothing is stored). An entry
+ *   heavier than the whole budget is **not stored**: evicting everything else could not
+ *   make room for it, and storing it would evict the cache for one item.
+ * @param weigh what one `(key, value)` pair costs, in bytes. Must be non-negative;
+ *   a negative weight is clamped to zero rather than trusted.
+ */
+internal class ByteBoundedLru<K, V>(private val maxBytes: Long, private val weigh: (K, V) -> Long) {
+
+    private class Entry<K, V>(val key: K, val value: V, val bytes: Long)
+
+    /** Index 0 is the most recently used entry; the last index is the eviction end. */
+    private val entries = ArrayList<Entry<K, V>>()
+    private var totalBytes = 0L
+
+    /** Entries currently held. */
+    val size: Int get() = entries.size
+
+    /** Bytes currently accounted for, never above [maxBytes]. */
+    val bytes: Long get() = totalBytes
+
+    /**
+     * The keys held, **most recently used first**.
+     *
+     * Diagnostics and the harness's model-based fuzz; the cache itself never iterates. It
+     * exists because "which entry is evicted next" is the one piece of this class's state
+     * that [size] and [bytes] cannot express.
+     */
+    @Synchronized
+    fun keys(): List<K> = entries.map { it.key }
+
+    /** The value for [key], marking it most recently used, or null. */
+    @Synchronized
+    fun get(key: K): V? {
+        for (index in entries.indices) {
+            val entry = entries[index]
+            if (entry.key == key) {
+                if (index > 0) {
+                    entries.removeAt(index)
+                    entries.add(0, entry)
+                }
+                return entry.value
+            }
+        }
+        return null
+    }
+
+    /**
+     * Stores [value] under [key], evicting the least recently used entries as needed.
+     *
+     * A `null` [value] is not representable: a caller that must not cache a failure
+     * simply does not call this (see `PiImageCache`).
+     */
+    @Synchronized
+    fun put(key: K, value: V) {
+        if (maxBytes <= 0) return
+        val weight = weigh(key, value).coerceAtLeast(0L)
+        if (weight > maxBytes) {
+            // Cannot ever fit; drop it and leave the rest of the cache alone.
+            remove(key)
+            return
+        }
+        remove(key)
+        entries.add(0, Entry(key, value, weight))
+        totalBytes += weight
+        while (totalBytes > maxBytes && entries.size > 1) {
+            val evicted = entries.removeAt(entries.size - 1)
+            totalBytes -= evicted.bytes
+        }
+    }
+
+    /** Forgets everything. A process-wide cache calls this when its owner goes away. */
+    @Synchronized
+    fun clear() {
+        entries.clear()
+        totalBytes = 0L
+    }
+
+    /**
+     * [key]'s value, computed by [compute] and stored when the map does not have it.
+     *
+     * This is the shape every process-wide parse cache needs — "a hit must not recompute" —
+     * so it lives here, where the bare-JVM harness can execute it, rather than being spelled
+     * out at each cache.
+     *
+     * **Not atomic, on purpose.** Two threads may find the same key missing and both compute
+     * it; the second `put` replaces the first with an equal value. A per-key lock would cost
+     * more than the duplicate work it prevents, and every caller's [compute] is a
+     * deterministic function of its key. A [compute] that throws propagates and stores
+     * nothing (the entry was never inserted).
+     */
+    fun getOrCompute(key: K, compute: (K) -> V): V {
+        get(key)?.let { return it }
+        val value = compute(key)
+        put(key, value)
+        return value
+    }
+
+    /** Drops [key] if present, keeping the accounting exact. */
+    @Synchronized
+    private fun remove(key: K): Boolean {
+        for (index in entries.indices) {
+            val entry = entries[index]
+            if (entry.key == key) {
+                entries.removeAt(index)
+                totalBytes -= entry.bytes
+                return true
+            }
+        }
+        return false
+    }
+}
+
 // ------------------------------------------------------------------ internals ----
 
 private val GIF_SIGNATURES = setOf("GIF87a", "GIF89a")
@@ -424,4 +577,137 @@ private fun base64Value(character: Char): Int = when (character) {
     '+' -> 62
     '/' -> 63
     else -> -1
+}
+
+// ---------------------------------------------------------------- parse memos ----
+
+/**
+ * A bounded memo of a **pure** `String -> String` parse — the cross-composition half of
+ * what `remember` does inside one composition.
+ *
+ * ## Why this exists
+ *
+ * `remember(output) { Ansi.strip(output) }` is state of a *composition*: a row the
+ * `LazyColumn` disposes takes its remembered parse with it, and scrolling back to it
+ * re-runs the scan. The user's report — 「上下滑动出现一些东西的时候会有点顿…出现这些东西的
+ * 时候，滑动不流畅」 — has this as its single largest item-level cause, because the most
+ * expensive parses in the transcript are exactly the ones on the rows most likely to be
+ * recycled: a shell result's strip (2.4 ms at pi's 2000-line cap), its tail split
+ * (1.9 ms), a diff's plan (3.9–13.2 ms, the row-internal LCS included).
+ *
+ * ## The rules it follows (the same ones as `PiImageCache`)
+ *
+ *  - **Bounded, and the bound is bytes.** The budget is enforced by [ByteBoundedLru],
+ *    which charges `key.length * 2 + value.length * 2` — the input *and* the result are
+ *    held, so both count. An entry that cannot fit is not stored.
+ *  - **Honest accounting**: UTF-16 characters are two bytes each, which is what a
+ *    `String` actually costs here.
+ *  - **A hit cannot change what is drawn**: every caller memoises a deterministic
+ *    function of its key (`Ansi.strip`, `tailLines`), so a hit and a recomputation
+ *    produce equal strings. The one thing that could differ is *identity*, and no caller
+ *    compares strings by identity.
+ *  - **Nothing is cached on failure**, because these functions cannot fail: they answer a
+ *    string for every input. (The cache is also not a place for exceptions — a `compute`
+ *    lambda that throws propagates and stores nothing.)
+ *  - **`getOrCompute` is not atomic.** Two threads may compute the same key at once, both
+ *    storing the same value; that is deliberate — a per-key lock would cost more than the
+ *    duplicate work it prevents, and the result is identical either way.
+ *
+ * The key is compared with `==`/`equals` and **never hashed** ([ByteBoundedLru]'s
+ * contract), which is what keeps a 200 KB result off `String.hashCode()`.
+ *
+ * Pure Kotlin, so `app/src/test/kotlin/app/pi/ui/blocks/TextCacheCheck.kt` executes its
+ * eviction, accounting and hit semantics on a bare JVM.
+ */
+internal class TextMemo(maxBytes: Long) {
+
+    private val lru = ByteBoundedLru<String, String>(maxBytes) { key, value ->
+        (key.length.toLong() + value.length.toLong()) * 2
+    }
+
+    /** The remembered parse of [key], or null. Marks the entry most recently used. */
+    fun get(key: String): String? = lru.get(key)
+
+    /** Remembers [value] as [key]'s parse. */
+    fun put(key: String, value: String) {
+        lru.put(key, value)
+    }
+
+    /**
+     * [key]'s parse: the memo's answer when it has one, otherwise `compute(key)` — which
+     * is then stored. Delegates to [ByteBoundedLru.getOrCompute], which states the
+     * not-atomic-but-idempotent rule.
+     */
+    fun getOrCompute(key: String, compute: (String) -> String): String = lru.getOrCompute(key, compute)
+
+    /** Bytes currently accounted for. Diagnostics and the harness. */
+    val bytes: Long get() = lru.bytes
+
+    /** Entries currently held. Diagnostics and the harness. */
+    val size: Int get() = lru.size
+
+    /** Forgets everything. See `PiImageCache.clear` for the lifetime argument. */
+    fun clear() {
+        lru.clear()
+    }
+}
+
+/**
+ * Line count of a growing blob, without re-counting the part that did not change.
+ *
+ * pi republishes a streaming tool row on every `tool_execution_update`, throttled to
+ * 200 ms (`rpc/.../Transcript.kt:618`), and the footer's 「N 行」 reading is
+ * `1 + count('\n')` over the whole result — 0.3 ms for a 2000-line result, 4.1 ms for a
+ * 200 KB one, per publication, on the frame thread. A tool result only ever **grows**
+ * (`output` is appended to), so the count can be carried forward: the new text starts
+ * with the previous text, and the number of new lines is the number of newlines in the
+ * suffix.
+ *
+ * Three cases, and the exactness of the third is what the harness pins:
+ *
+ *  - the same instance (or equal text) → the count in hand;
+ *  - the previous text is a **prefix** of the new one → the count plus the newlines in
+ *    the appended suffix, which is exact because `lineCount` is `1 + newlines` and no
+ *    newline is ever *removed* by appending;
+ *  - anything else (a replaced or truncated result, a recycled row that now holds a
+ *    different item) → a full recount.
+ *
+ * Not thread-safe, and it must not be shared between rows: it is one counter per row,
+ * held in a `remember`. A counter that is asked about a text it has never seen recounts,
+ * so being wrong about ownership costs time, never correctness — the same property the
+ * harness asserts against [lineCount] over random growth sequences.
+ */
+internal class IncrementalLineCount {
+
+    private var previous: String? = null
+    private var count = 0
+
+    /** `lineCount(text)` — via the carried count whenever [text] grew from the last one. */
+    fun of(text: String): Int {
+        // `lineCount("")` is 0, not 1: an empty body is no lines, and the counter keeps that
+        // case exact rather than deriving it.
+        if (text.isEmpty()) return remember(text, 0)
+        val last = previous
+        // Anything that is not a continuation (a replaced result, a truncated one, a recycled
+        // row holding a different item) is counted from scratch. An empty prefix belongs here
+        // too: there is no carried newline count to add to.
+        if (last == null || last.isEmpty() || !text.startsWith(last)) {
+            return remember(text, 1 + newlinesIn(text, 0, text.length))
+        }
+        // `startsWith` already compared the prefix; only the appended suffix is new. Exact
+        // because the count is `1 + newlines` and appending can only add newlines.
+        return remember(text, count + newlinesIn(text, last.length, text.length))
+    }
+
+    private fun remember(text: String, lines: Int): Int {
+        previous = text
+        count = lines
+        return lines
+    }
+
+    private fun newlinesIn(text: String, from: Int, to: Int): Int {
+        var lines = 0
+        for (index in from until to) if (text[index] == '\n') lines++
+        return lines
+    }
 }

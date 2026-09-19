@@ -34,6 +34,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
@@ -698,7 +699,12 @@ fun PiRoot() {
                     // pi merges them. Without it the stack would read and write an
                     // in-memory map and the app would appear to accept changes
                     // that never reach the engine.
-                    store = session.settingsStore,
+                    //
+                    // Wrapped for the one row whose value must **not** go to pi's file:
+                    // `app.extensions.args` is extension CLI flags, and pi has no
+                    // settings key for them (`ExtensionArgsStoreDecorator` delegates
+                    // every other key unchanged).
+                    store = remember(session) { session.settingsStoreForSettingsUi() },
                     knownThemes = themeEntries,
                     themeNotes = theme.notes,
                     themeError = theme.error,
@@ -714,23 +720,27 @@ fun PiRoot() {
                     // There used to be a `TERMINAL_ONLY_ACTIONS` map holding three
                     // signposts to pi's own TUI (`/login`, `/import`, `/changelog`).
                     // All three are gone now: a settings row whose only content is "go
-                    // somewhere else" is not a setting. The last survivor — the OAuth
-                    // row — used to move the user to the terminal tab; the terminal is
-                    // not a usable surface, so that action could not be completed and
-                    // the row now answers with what the app actually supports.
+                    // somewhere else" is not a setting. The OAuth row stays, because no
+                    // other surface in this app can start it — and its answer now names
+                    // the one that can (工作区 → 终端), instead of saying "本应用没有入口",
+                    // which contradicted the terminal page's own header and was a claim
+                    // this app could not back up.
                     onRunAction = { setting ->
                         when (setting.key) {
                             // pi keeps OAuth in its own interactive shell
                             // (`interactive-mode.ts:3052-3055` → `handleLoginCommand`
                             // `:5485`) and the `RpcCommand` union has no login command
-                            // (`modes/rpc/rpc-types.ts:20-74`), so there is no surface
-                            // in this app that can start it. Say that, and say what
-                            // this app does support (an API key, on the row above);
-                            // do not navigate anywhere. Protocol detail stays in the
-                            // KDoc, not on screen.
+                            // (`modes/rpc/rpc-types.ts:20-74`), so no screen in this app
+                            // can start it. The terminal page can: `PtyLauncher` hands the
+                            // guest shell the same `PI_CODING_AGENT_DIR` the engine uses
+                            // (`runtime/PtyLauncher.kt:396-404`), so `/login` there writes
+                            // the same `auth.json` the credential page reads. Say where,
+                            // and say what this app supports natively (an API key, on the
+                            // row above). Protocol detail stays in the KDoc, not on screen.
                             "app.credentials.oauth" -> {
                                 session.notifyUser(
-                                    "订阅登录要在 pi 的原版 TUI 里做，本应用没有入口。" +
+                                    "本应用没有内建登录表单。订阅登录要走 pi 的原版 TUI：" +
+                                        "到 工作区 → 终端 里输入 pi 回车，再运行 /login。" +
                                         "用 API Key 的厂商可以在上面的「API Key」里配置。",
                                     warning = true,
                                 )

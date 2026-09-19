@@ -512,36 +512,168 @@ internal fun reArmsEarlier(atWindowTop: Boolean, canScrollForward: Boolean): Boo
     !atWindowTop || !canScrollForward
 
 /**
- * The index the list has to be moved to so that prepending [prependedRows] rows at
- * its head does **not** move the rows the user is reading — the second half of the
- * same defect.
+ * Whether that second arming edge may fire **on this frame at all**.
  *
- * A `LazyColumn` anchors its scroll position on the **key of its first visible
- * item**, and this list's head row is the synthetic "load earlier" row: it keeps the
- * same key (`transcript-earlier`) at index 0 for as long as anything is hidden. So
- * when the first visible item is that row, the anchoring sees the same key at the
- * same index and the viewport stays at index 0 while the *content* under it changes
- * by the whole prepended batch — the list appears to jump towards the beginning even
- * though the fling has stopped. When the first visible item is a real transcript row
- * the anchoring is correct, which is why only the window's head needed this.
+ * ## The defect the `hasLaidOut` term exists for
  *
- * The arithmetic, in one line: a row's index is `headerRows + its content index`, and
- * prepending shifts every content index by [prependedRows]. A first visible item that
- * *is* the header (`firstVisibleIndex - headerRowsBefore` negative) has no content row
- * to preserve, so the batch's first row becomes the anchor instead — that is the
- * `coerceAtLeast(0)`, and it is what makes "read from the oldest loaded row" the
- * landing point rather than "stay on the sentinel".
+ * `LazyListState.canScrollForward` is a `MutableState` seeded `false` in the
+ * constructor and only written by a measure pass (`LazyListState.<init>`, verified
+ * against `foundation-android:1.8.3`'s bytecode: `mutableStateOf(false)` →
+ * `canScrollForward$delegate`). A **brand-new** `LazyListState` — which is what
+ * every re-entry into the chat destination creates, because `rememberLazyListState`
+ * restores an index and offset into a *fresh* state object — therefore reports
+ * `canScrollForward == false` until its first measure, and `reArmsEarlier` reads that
+ * as "the viewport has nowhere left to go".
  *
- * @param firstVisibleIndex `LazyListState.firstVisibleItemIndex` before the prepend.
- * @param headerRowsBefore/After whether the "load earlier" row is present before and
- *   after (it disappears once nothing is hidden, shifting everything by one).
+ * The consequence is a load that nothing asked for: if the restored position is the
+ * window's top (`atTop`) and there are rows above it (`hiddenCount > 0`), the effect
+ * that owns this rule sees "at the top **and** cannot scroll" on its very first run,
+ * arms itself, and immediately prepends a batch *and* teleports the viewport to
+ * `prependAnchoredIndex(...)` — a 50-row move on the first frame after coming back
+ * from 工作区 / 设置. On the first composition of a session the same thing happens and
+ * is invisible only because the follow's pin lands on the tail in the same frames.
+ *
+ * `canScrollForward == false` is only *evidence* of a stuck viewport when a viewport
+ * has been measured. `hasLaidOut` is that precondition, and it is deliberately a
+ * parameter rather than a read of `layoutInfo` inside this function: the pure half
+ * stays pure, and the harness can pin both edges of it.
+ *
+ * @param atWindowTop the window's first item is the viewport's first item.
+ * @param canScrollForward `LazyListState.canScrollForward` as this frame sees it.
+ * @param hasLaidOut the list has been measured at least once
+ *   (`layoutInfo.totalItemsCount > 0`; the pre-measure `EmptyLazyListMeasureResult`
+ *   reports `totalItemsCount == 0`, also from the bytecode).
  */
-internal fun prependAnchoredIndex(
-    firstVisibleIndex: Int,
-    prependedRows: Int,
-    headerRowsBefore: Int,
-    headerRowsAfter: Int,
-): Int {
-    val contentIndex = (firstVisibleIndex - headerRowsBefore).coerceAtLeast(0)
-    return headerRowsAfter + contentIndex + prependedRows
+internal fun mayArmEarlier(
+    atWindowTop: Boolean,
+    canScrollForward: Boolean,
+    hasLaidOut: Boolean,
+): Boolean = hasLaidOut && reArmsEarlier(atWindowTop, canScrollForward)
+
+/**
+ * Rows the *rendered* window is holding back (`ChatScreen`'s `hiddenCount`).
+ *
+ * The window is `visibleItems.takeLast(renderWindow)` unless the user opened it all
+ * the way (`windowOpen`, the 「回到顶部」 arrow), so it is always a **suffix** of the
+ * transcript and the hidden rows are always the *oldest* ones. Two properties follow
+ * from that, and both are used by the anchor below: the window's head moves towards
+ * newer rows as the transcript grows, and a row that is inserted at the *head* of the
+ * transcript (the session-file read) does not move the window's tail at all.
+ */
+internal fun hiddenRows(visibleRows: Int, renderWindow: Int, windowOpen: Boolean): Int =
+    if (windowOpen) 0 else (visibleRows - minOf(renderWindow, visibleRows)).coerceAtLeast(0)
+
+/**
+ * The `LazyColumn` index of [visibleRow] — an index into `visibleItems` — as the
+ * `LazyColumn` counts its own items, which is `renderedItems` **plus** the
+ * 「加载更早的 N 条」 sentinel row when that row exists.
+ *
+ * This is the one place the screen's two index spaces meet (`ChatScreen`'s
+ * `index = row - hiddenCount + headerRows`), so it lives here where
+ * `tools/run-app-pure-checks.sh` can pin it: the anchor restore below asks for the
+ * index of a *row* it knows by key, and a sign error here is a `requestScrollToItem`
+ * to the wrong row — which is exactly the class of bug this round is about.
+ *
+ * May be negative: a [visibleRow] inside the hidden prefix (`< hiddenRows`) has no
+ * item index at all until the window grows to include it.
+ */
+internal fun itemIndexOfVisibleRow(
+    visibleRow: Int,
+    visibleRows: Int,
+    renderWindow: Int,
+    windowOpen: Boolean,
+    headerRows: Int,
+): Int = visibleRow - hiddenRows(visibleRows, renderWindow, windowOpen) + headerRows
+
+/** The inverse of [itemIndexOfVisibleRow]: an item index back to a `visibleItems` index. */
+internal fun visibleRowOfItemIndex(
+    itemIndex: Int,
+    visibleRows: Int,
+    renderWindow: Int,
+    windowOpen: Boolean,
+    headerRows: Int,
+): Int = itemIndex + hiddenRows(visibleRows, renderWindow, windowOpen) - headerRows
+
+/**
+ * The height the 「加载更早」 row measures itself at, in pixels.
+ *
+ * The row is `Row(padding(vertical = 8.dp)) { Icon(24.dp), Spacer(6.dp), Text(meta) }`, so
+ * its height is `max(icon, the text's line box) + 8 + 8` — a `Row` is as tall as its tallest
+ * child plus its own padding, and the icon is a fixed 24 dp (`Icon`'s default size) while
+ * the text is one line in every state the affordance has.
+ *
+ * **Why the caller needs the number before the list lays out.** The row is no longer an item
+ * of the `LazyColumn` (`docs/scroll-diagnosis.md` §3.4, landed as D51): it is drawn as an
+ * overlay at the position the item used to occupy, and the list reserves the band it sits in
+ * through `contentPadding.top`. Both the reservation and the overlay's offset are this
+ * height, so the two have to agree exactly — a millimetre of disagreement is a gap or an
+ * overlap between the affordance and the first message. Computing it here (from integers the
+ * caller measured, not from a layout pass) is what lets it be right on the *first* frame,
+ * with no measure → pad → measure feedback.
+ *
+ * @param iconPx the `Icon`'s height, which is its width too (`Icon`'s default 24 dp box).
+ * @param textHeightPx the text's measured line box (`TextMeasurer` with the same style,
+ *   density and font resolver the `Text` will use).
+ * @param verticalPaddingPx the row's top + bottom padding (2 × 8 dp).
+ */
+internal fun earlierRowHeightPx(iconPx: Int, textHeightPx: Int, verticalPaddingPx: Int): Int =
+    maxOf(iconPx, textHeightPx) + verticalPaddingPx
+
+/**
+ * [previous] plus the keys a batch has just brought into the window, trimmed to [max] keys —
+ * the gate for the one synchronous markdown parse a row may pay for (P3 of
+ * `docs/scroll-diagnosis.md` §1.2).
+ *
+ * ## Why a set of keys, and not "every row whose markdown is not parsed yet"
+ *
+ * A synchronous parse on the frame a row first appears is the only way for that row to have its
+ * real height on that frame, and the frame that matters is the one where a row enters the
+ * viewport from **above**: the rows a 「加载更早」 batch hands the reader, whose arrival otherwise
+ * pushes every visible row down by their own height (`State.Loading` is an empty `Box`). Paying
+ * for it everywhere would move markdown parsing onto the frame thread for *every* first
+ * composition — including the rows a fling brings in from below, where the same correction
+ * happens off-screen and nobody sees it. The batch is therefore the bound: at most a
+ * `TRANSCRIPT_WINDOW_STEP`-ish rows per load, and each of them at most once, because the height
+ * cache stops asking once a row has been measured.
+ *
+ * ## The trim, and why the order is load-bearing
+ *
+ * A reader consumes a batch from its bottom up (they are scrolling into rows that sit *above*
+ * the viewport), so the batch just loaded is the one about to be used and the oldest entries
+ * are the ones to drop. The result therefore keeps [previous]'s insertion order, and the
+ * caller is expected to pass back what it was given. A key dropped here costs that row the old
+ * behaviour — one frame at zero height — and nothing else.
+ *
+ * @param max how many keys are remembered; must be positive.
+ */
+internal fun freshRowKeysAfter(
+    previous: Collection<String>,
+    added: Collection<String>,
+    max: Int,
+): Set<String> {
+    require(max > 0) { "max must be positive, was $max" }
+    if (added.isEmpty()) return LinkedHashSet(previous)
+    val next = LinkedHashSet<String>(previous)
+    next += added
+    while (next.size > max) next.remove(next.first())
+    return next
 }
+
+/**
+ * ## Where the prepend compensation went
+ *
+ * `prependAnchoredIndex` used to live here: the index the list had to be asked for so that a
+ * batch prepended at the window's head did not move the rows under the viewport. It existed
+ * because 「加载更早」 was the list's **item 0**, whose key (`transcript-earlier`) stayed at
+ * index 0 across a prepend — so `LazyColumn`'s key anchoring held *it* still and the content
+ * slid by the whole batch underneath. Compensating by hand moved the anchor to the first
+ * content row instead, at the cost of the sentinel's own height (~30–45 dp) on every batch.
+ *
+ * The sentinel is no longer an item: it is drawn as an overlay above the list, and the list
+ * reserves its band in `contentPadding.top` (`ChatScreen`). The viewport's first item is now
+ * a real transcript row whose key survives a prepend, so the anchoring is simply correct and
+ * **there is nothing left to compensate** — see `itemIndexOfVisibleRow`, which is what the
+ * screen uses to convert a row's index, and the `tail-follow` harness's J group, which pins
+ * that a row inserted at the *transcript's* head moves the reader's row by exactly the number
+ * of rows inserted and that the reader stays on the same row.
+ */

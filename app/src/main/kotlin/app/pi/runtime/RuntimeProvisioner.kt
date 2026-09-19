@@ -80,6 +80,11 @@ class RuntimeProvisioner(
                     // repair a tool the agent-dir migration moved out of the rootfs —
                     // see [ensureToolsVisible]. Cheap: two file-existence probes.
                     ensureToolsVisible()
+                    // Same shape, same reason: a device that already unpacked keeps its
+                    // rootfs, so a boot that does *not* re-unpack is the only path that
+                    // can repair the guest's `/etc/group` ([ensureAndroidGroups]).
+                    // Idempotent, and free when there is nothing to add.
+                    ensureAndroidGroups()
                     return@runCatching
                 }
                 val steps = buildList {
@@ -155,14 +160,29 @@ class RuntimeProvisioner(
                 next(); installGit()
                 index++
 
-                next(); configureGuest()
+                // The guest's `/etc/group` repair reports through the last step's label
+                // (like the stamp below): the runtime is complete either way, and the
+                // only thing at stake is whether the terminal still prints coreutils'
+                // "cannot find name for group ID" lines.
+                val groupWarning = configureGuest()
                 index++
 
                 next(); extractEngine()
                 index++
 
-                next(); paths.prepareLibraryAliases(); writeStamp(revision)
-                onStep(Step(steps.last(), steps.size, steps.size))
+                next(); paths.prepareLibraryAliases()
+                // A stamp that could not be written is shown where the user is
+                // already looking (the boot screen's step label) instead of failing a
+                // boot whose runtime is complete. See [writeStamp].
+                val stampWarning = writeStamp(revision)
+                val warning = listOfNotNull(groupWarning, stampWarning).firstOrNull()
+                onStep(
+                    if (warning == null) {
+                        Step(steps.last(), steps.size, steps.size)
+                    } else {
+                        Step(warning, steps.size, steps.size)
+                    },
+                )
             }
         }
 
@@ -643,7 +663,7 @@ class RuntimeProvisioner(
      * fails while the network is otherwise fine — the single most confusing
      * failure mode of a proot'd userland (docs/pi-android-app-design.md §13).
      */
-    private fun configureGuest() {
+    private fun configureGuest(): String? {
         val etc = File(paths.rootfs, "etc").also { it.mkdirs() }
         File(etc, "resolv.conf").writeText(
             """
@@ -665,6 +685,127 @@ class RuntimeProvisioner(
         // settings, skills, extensions and themes are interchangeable.
         File(paths.rootfs, "root/.pi/agent").mkdirs()
         File(paths.rootfs, "workspace").mkdirs()
+
+        // The guest's group database, repaired from this process's own supplementary
+        // groups. See [ensureAndroidGroups]; the returned warning travels to the boot
+        // screen's last step label.
+        return ensureAndroidGroups()
+    }
+
+    /**
+     * Make the guest's `/etc/group` know the gids this process actually has.
+     *
+     * ## What was wrong
+     *
+     * A freshly opened terminal printed five lines before the first prompt:
+     *
+     * ```
+     * groups: cannot find name for group ID 3003
+     * … 20531 / 50531 / 99909997 / 9997
+     * root@localhost:/workspace#
+     * ```
+     *
+     * The printer is **`/etc/bash.bashrc`**, not our code and not proot: Ubuntu's
+     * interactive-shell rc runs `case " $(groups) " in *\ admin\ *|*\ sudo\ *)` (the
+     * default `bash -i` sources it) to decide whether to print its sudo hint, and that
+     * block is guarded only by `$HOME/.sudo_as_admin_successful` and
+     * `$HOME/.hushlogin` — neither exists in this rootfs. coreutils' `groups` writes one
+     * `cannot find name for group ID N` line to stderr for every gid it cannot resolve
+     * through `/etc/group`. It is **not** a proot message: proot fakes uid/gid 0 (`-0`)
+     * but does not touch the supplementary list, so the guest inherits the Android app's
+     * groups — `inet` (3003), `everybody` (9997) and the per-install dynamic ids Android
+     * assigned this install — while the payload's `/etc/group` carries only a stock
+     * Ubuntu set (38 lines, none above gid 1000). Filtering the output would have hidden
+     * it from the one place that can still show it, and `id`, `groups` and `ls -l` would
+     * keep printing the same thing whenever the user ran them by hand.
+     *
+     * ## Why this is the fix, and what it costs
+     *
+     * The missing data is a *name* for a numeric id, so the fix writes the name — what a
+     * desktop's `groupadd -g <id> <name>` does. Properties, each deliberate:
+     *
+     *  - **Deterministic**: the ids come from `/proc/self/status`'s `Groups:` line of the
+     *    app process, i.e. exactly the numbers the guest sees. No time, no device state,
+     *    nothing invented.
+     *  - **Append-only and idempotent**: a gid that already has a line is left alone,
+     *    name included, so an existing group never changes meaning; when nothing is
+     *    missing there is **no write at all**, so repeated boots cannot drift the file.
+     *  - **Verified**: the file is re-read and every gid looked up again, because
+     *    `appendText` can "succeed" on a full filesystem. An unverified repair is the
+     *    failure this is meant to remove.
+     *  - **Names are namespaced** (`android-inet`, `android-gid-20531`) so they cannot
+     *    collide with a real Ubuntu group — and, the one that matters, none of them is
+     *    `sudo` or `admin`, which would flip the `bash.bashrc` branch above and print
+     *    Ubuntu's sudo hint into the terminal instead of the errors.
+     *
+     * **What it affects:** the *names* `groups` / `id` / `ls -l` print for those gids
+     * inside the guest, and nothing else. **What it does not:** permissions. proot and
+     * Android enforce the numeric uid/gid, so a name grants no access, changes no file's
+     * owner, and is invisible outside the guest. It touches no other `/etc` file and not
+     * proot's `-0` fiction.
+     *
+     * Called from both ends of [ensureReady]: after a fresh unpack (the file is new) and
+     * on the early-return path, because a device that already unpacked keeps its rootfs
+     * and would otherwise need a runtime revision bump to lose the five lines.
+     *
+     * @return null when nothing needed doing (or the repair verified), otherwise a
+     *   one-line warning, which the caller shows rather than swallows.
+     */
+    private fun ensureAndroidGroups(): String? {
+        val file = File(paths.rootfs, "etc/group")
+        if (!file.isFile) return null
+        val wanted = androidGroupIds()
+        if (wanted.isEmpty()) return null
+        val text = runCatching { file.readText() }.getOrNull() ?: return null
+        val present = groupIdsIn(text)
+        val missing = wanted.filter { it !in present }
+        if (missing.isEmpty()) return null
+        val appended = buildString {
+            if (text.isNotEmpty() && !text.endsWith("\n")) append('\n')
+            missing.forEach { gid -> append(androidGroupName(gid)).append(":x:").append(gid).append(":\n") }
+        }
+        runCatching { file.appendText(appended) }
+        val after = runCatching { file.readText() }.getOrNull().orEmpty()
+        val stillMissing = missing.filter { it !in groupIdsIn(after) }
+        return if (stillMissing.isEmpty()) {
+            null
+        } else {
+            "guest 的 /etc/group 没能补全（缺 ${stillMissing.joinToString()}）：开终端可能仍看到 groups 报错"
+        }
+    }
+
+    /** The third field of every `/etc/group` line — the numeric gid. */
+    private fun groupIdsIn(text: String): Set<Int> = text.lineSequence()
+        .mapNotNull { line -> line.split(':').getOrNull(2)?.trim()?.toIntOrNull() }
+        .toSet()
+
+    /**
+     * This process's supplementary group ids, from `/proc/self/status`.
+     *
+     * `/proc` rather than `android.system.Os.getgroups()` or a shell `id -G`: the same
+     * kernel data, no permission needed, and it is what the guest inherits through
+     * proot. An unreadable file answers "none", which leaves the group database
+     * untouched rather than guessing.
+     */
+    private fun androidGroupIds(): List<Int> {
+        val status = runCatching { File("/proc/self/status").readText() }.getOrNull() ?: return emptyList()
+        val line = status.lineSequence().firstOrNull { it.startsWith("Groups:") } ?: return emptyList()
+        return line.removePrefix("Groups:").trim().split(' ', '\t')
+            .mapNotNull { it.toIntOrNull() }
+            .distinct()
+    }
+
+    /**
+     * The name a repaired gid gets: `android-<aid>` for the Android AIDs this app can
+     * plausibly hold, `android-gid-<n>` otherwise.
+     *
+     * The `android-` prefix is load-bearing twice: it makes the origin of the line
+     * obvious to anyone reading `/etc/group` in the guest, and it keeps the name from
+     * ever being `sudo`/`admin` — see [ensureAndroidGroups].
+     */
+    private fun androidGroupName(gid: Int): String {
+        val aid = ANDROID_AID_GROUPS[gid]
+        return if (aid == null) "android-gid-$gid" else "android-$aid"
     }
 
     private fun extractEngine() {
@@ -737,9 +878,31 @@ class RuntimeProvisioner(
         return stamp.isFile && stamp.readText().trim() == revision
     }
 
-    private fun writeStamp(revision: String) {
-        stampFile().writeText(revision + "\n")
-    }
+    /**
+     * Write the stamp that says this revision is unpacked. Returns null on success, or
+     * the sentence to show when it could not be written.
+     *
+     * Atomic rather than `writeText` (see [writeStampAtomically]): this file is the
+     * only thing that says the runtime is unpacked and it is read back by an equality
+     * test, so a kill between the truncate and the write used to leave a short stamp
+     * that reads as "not unpacked" — the next launch unpacks the whole runtime again,
+     * and on a revision change `wipe()`s the guest tree first.
+     *
+     * A failure to write it is **reported, not fatal**. The runtime on disk is
+     * complete and usable; refusing to boot because the *bookkeeping* failed would
+     * turn "storage is full" into "the app will not start", and the honest cost of
+     * continuing is that the next launch repeats this work (and says so again). The
+     * caller puts the sentence in the last step's label, so it is on screen during
+     * the boot that failed to record itself, and the diagnostic report shows the
+     * stamp as empty on the next one.
+     */
+    private fun writeStamp(revision: String): String? =
+        if (writeStampAtomically(stampFile(), revision + "\n")) {
+            null
+        } else {
+            "运行时版本戳记写入失败（${stampFile().absolutePath}）：本次解包可用，" +
+                "但下次启动会重新解包。请检查存储空间。"
+        }
 
     companion object {
         /**
@@ -879,6 +1042,55 @@ class RuntimeProvisioner(
          * See [installGit].
          */
         private val TOOL_BINARIES = listOf("rg", "fd")
+
+        /**
+         * Android's own names for the group ids an app can hold, used by
+         * [androidGroupName] when it writes a missing gid into the guest's
+         * `/etc/group`.
+         *
+         * Only ids an app process can legitimately appear in — the ones Android grants
+         * through the manifest and the storage/permission model: `inet`/`net_raw` and
+         * the bandwidth counters (a network-using app), `everybody` (present in every
+         * app's group list), the storage ids (an app with `READ/WRITE_EXTERNAL_STORAGE`
+         * on older releases), and `log`/`shell`/`cache`/`graphics`/`input`/`audio` for
+         * the media and debug cases. Anything else — `20531`, `50531`, `99909997` in the
+         * report are Android's dynamic per-install ids — gets a neutral
+         * `android-gid-<n>`: naming them after an AID they are not would be a guess
+         * written into a system file, and the numbers are what matter.
+         *
+         * The *names* carry the `android-` prefix at the call site, so this table can
+         * never produce `sudo`/`admin` (`ensureAndroidGroups` says why that matters).
+         */
+        private val ANDROID_AID_GROUPS: Map<Int, String> = mapOf(
+            1000 to "system",
+            1001 to "radio",
+            1002 to "bluetooth",
+            1003 to "graphics",
+            1004 to "input",
+            1005 to "audio",
+            1006 to "camera",
+            1007 to "log",
+            1008 to "compass",
+            1009 to "mount",
+            1010 to "wifi",
+            1011 to "adb",
+            1012 to "install",
+            1013 to "media",
+            1015 to "sdcard_rw",
+            1023 to "media_rw",
+            1028 to "sdcard_r",
+            2000 to "shell",
+            2001 to "cache",
+            2002 to "diag",
+            3001 to "net_bt_admin",
+            3002 to "net_bt",
+            3003 to "inet",
+            3004 to "net_raw",
+            3005 to "net_admin",
+            3006 to "net_bw_stats",
+            3007 to "net_bw_acct",
+            9997 to "everybody",
+        )
 
         /**
          * Every payload archive `tools/fetch-runtime.mjs` writes into

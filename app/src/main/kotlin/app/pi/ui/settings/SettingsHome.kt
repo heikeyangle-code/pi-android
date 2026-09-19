@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Terminal
@@ -28,6 +29,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -39,6 +44,7 @@ import app.pi.packages.PiPackagesEntryRow
 import app.pi.ui.PiTopBar
 import app.pi.ui.PiTopBarIcon
 import app.pi.ui.device.DeviceCapabilityEntryRow
+import app.pi.ui.screens.PiFilesScreen
 import app.pi.ui.theme.PiTheme
 import app.pi.ui.theme.PiThinkingLevel
 
@@ -51,8 +57,10 @@ import app.pi.ui.theme.PiThinkingLevel
  * 搜索框 40 高圆角 9。当前模型卡是 v2 里 accent 的合法用法之一：卡内左缘一条
  * 2px accent 条 + 模型 id 用 accent。
  *
- * The screen is stateless apart from the store it reads; navigation is the
- * caller's job, which is why it takes three callbacks rather than owning routes.
+ * The screen owns no routes: every destination is the caller's, which is why it takes
+ * callbacks rather than owning navigation. The one exception is a fallback — the
+ * 「Pi 文件」screen hosts itself here only when the caller passes no `onOpenPiFiles`
+ * (the app passes one, from `PiSettingsStack`; see that parameter).
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -108,9 +116,32 @@ fun SettingsHome(
      * 给一条路径是因为引擎已经退出时用户最先翻的是「关于」。`null` 隐藏这一行。
      */
     onOpenDiagnostics: (() -> Unit)? = null,
+    /**
+     * 设置 → 「Pi 文件」（[app.pi.ui.screens.PiFilesScreen]）。
+     *
+     * 本应用传的是 `PiSettingsStack` 的 `{ piFiles = true }`：这一屏是那个栈里的一个层级，
+     * 所以它的返回语义、层级与 `rememberSaveable` 状态都在栈里，与搜索 / 分组页同一套。
+     * 首页只把点击转上去。
+     *
+     * `null` 只留作**没有宿主时的退路**（预览、单屏测试）：那一屏由首页自己托管，点开就地
+     * 替换首页内容。行在两种情况下都在 —— 一个点了没反应的行比一个自托管的行更坏。
+     */
+    onOpenPiFiles: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
-    Column(Modifier.fillMaxSize()) {
+    // 退路用的自托管状态。放在早退之前，所以两个分支都走同一份 remember。
+    var piFilesOpen by remember { mutableStateOf(false) }
+    if (onOpenPiFiles == null && piFilesOpen) {
+        PiFilesScreen(
+            contentPadding = contentPadding,
+            onBack = { piFilesOpen = false },
+        )
+        return
+    }
+    val openPiFiles: () -> Unit = onOpenPiFiles ?: { piFilesOpen = true }
+    // 手绘 `PiTopBar` 不吃状态栏 inset，而这一屏只消费 `contentPadding` 的底边 ——
+    // 顶边在这里补一次（见 `settingsPageTopInset`）。
+    Column(Modifier.fillMaxSize().settingsPageTopInset(contentPadding)) {
         PiTopBar(
             title = "设置",
             actions = {
@@ -164,30 +195,32 @@ fun SettingsHome(
                     }
                 }
             }
-            // 其他：终端 + 模型。v2 的首页把这两行放在同一节（`phone4` / `phone33`），
-            // 因为它们都不是 pi 的设置项 —— 一个是 TUI 回退口，一个是本应用自己扫
-            // 出来的模型清单 —— 也都不属于 13 个分组里的任何一个。
-            if (onOpenTerminal != null || onOpenModels != null) {
-                item {
-                    PiSettingsSectionHeader("其他")
-                }
-                item {
-                    PiSettingsCard {
-                        if (onOpenTerminal != null) {
-                            PiTerminalEntryRow(onClick = onOpenTerminal)
-                        }
-                        if (onOpenTerminal != null && onOpenModels != null) {
-                            PiSettingsHairline()
-                        }
-                        if (onOpenModels != null) {
-                            PiEntryRow(
-                                icon = Icons.Filled.Timeline,
-                                title = "模型",
-                                supporting = "这台设备上配好的厂商与模型",
-                                onClick = onOpenModels,
-                            )
-                        }
+            // 其他：终端 + 模型 + Pi 文件。v2 的首页把前两行放在同一节（`phone4` /
+            // `phone33`），因为它们都不是 pi 的设置项 —— 一个是 TUI 回退口，一个是本应用
+            // 自己扫出来的模型清单 —— 也都不属于 13 个分组里的任何一个。
+            //
+            // 「Pi 文件」是第三行，按同一条件成立：它既不是 pi 的设置键，也不是 pi 的功能，
+            // 而是 **pi 的文件**（`docs/settings-audit-pi-gap.md` §6.3 说它为什么在这里）。
+            // 这一节现在**没有条件**：Pi 文件那一行永远可用，所以整节永远该在。
+            item {
+                PiSettingsSectionHeader("其他")
+            }
+            item {
+                PiSettingsCard {
+                    if (onOpenTerminal != null) {
+                        PiTerminalEntryRow(onClick = onOpenTerminal)
+                        PiSettingsHairline()
                     }
+                    if (onOpenModels != null) {
+                        PiEntryRow(
+                            icon = Icons.Filled.Timeline,
+                            title = "模型",
+                            supporting = "这台设备上配好的厂商与模型",
+                            onClick = onOpenModels,
+                        )
+                        PiSettingsHairline()
+                    }
+                    PiFilesEntryRow(onClick = openPiFiles)
                 }
             }
             // 关于：开源许可 + 诊断报告。许可不是 pi 的设置也不是 pi 的功能：这个 App
@@ -515,6 +548,24 @@ private fun PiTerminalEntryRow(onClick: () -> Unit) {
         icon = Icons.Filled.Terminal,
         title = "终端",
         supporting = "输入 pi 回车进入原版 TUI：订阅登录、会话导入、以及需要终端的扩展都在那边。",
+        onClick = onClick,
+    )
+}
+
+/**
+ * 「Pi 文件」入口行 —— `PiFilesScreen` 的门。
+ *
+ * 副行只讲**这一屏能做什么**，不讲它在哪：pi 的文件分两处（agent 目录与项目 `.pi`），
+ * 把它们写成路径只会多一行用户不需要记的字，进去以后第一件看到的就是那两个根的名字。
+ *
+ * 与终端那行一样，这一段是应用里**唯一**说这句话的地方，不在别处重复。
+ */
+@Composable
+private fun PiFilesEntryRow(onClick: () -> Unit) {
+    PiEntryRow(
+        icon = Icons.AutoMirrored.Filled.InsertDriveFile,
+        title = "Pi 文件",
+        supporting = "看 pi 读的那些文件：设置、模型、提示词、主题、技能。只给看的不给改。",
         onClick = onClick,
     )
 }

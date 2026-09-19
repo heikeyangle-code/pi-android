@@ -91,7 +91,8 @@ fun DiagnosticsScreen(
         working = false
     }
 
-    Column(Modifier.fillMaxSize()) {
+    // 同 `SettingsHome`：顶栏从状态栏之下开始，见 `settingsPageTopInset`。
+    Column(Modifier.fillMaxSize().settingsPageTopInset(contentPadding)) {
         PiTopBar(title = "诊断报告", onBack = onBack)
         Column(
             Modifier

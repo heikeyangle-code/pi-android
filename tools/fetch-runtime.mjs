@@ -10,10 +10,10 @@
  *                            app_data_file, and nativeLibraryDir is the one
  *                            location we may write to that is executable — but
  *                            the extractor only unpacks files matching
- *                            `lib*.so`. Hence the rename, and hence the hard
- *                            requirement that each file is PIE with
- *                            `/system/bin/linker64` as its interpreter
- *                            (verified for these exact binaries: see
+ *                            `lib*.so`. Hence proot's rename from `usr/bin/proot`,
+ *                            and hence the hard requirement that each exec'd file
+ *                            is PIE with `/system/bin/linker64` as its
+ *                            interpreter (verified for these exact binaries: see
  *                            verifyElfDisguise below).
  *
  *   assets/runtime/*         Everything that runs *inside* proot: the Ubuntu
@@ -36,7 +36,7 @@
  *   node tools/fetch-runtime.mjs --resolve-only  # (re)write runtime.lock.json
  */
 
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   cpSync,
@@ -124,6 +124,52 @@ const TERMUX = "https://packages.termux.dev/apt/termux-main";
  * whether it is deflated.
  */
 const PAYLOAD_SUFFIX = ".tgz";
+
+/**
+ * GNU tar flags that make an archive a function of its contents and nothing else.
+ *
+ * ## Why this is not cosmetic
+ *
+ * `writeRevision` below hashes every payload this build assembled, and
+ * `RuntimeProvisioner` re-unpacks the runtime tree whenever that digest changes —
+ * `wipe()` deletes the whole tree, and everything the user installed inside the
+ * guest goes with it (apt/pip packages, `npm -g`, `/usr/local/bin`, and all of
+ * `/root` except the bind-mounted `.pi/agent`). The digest is derived precisely so
+ * that a *payload* change is the only thing that triggers that.
+ *
+ * A plain `tar` breaks that promise. **A tar header carries the mtime of the file it
+ * describes**, so archiving the same tree twice a second apart yields two different
+ * archives — measured, and it is why `runtime-revision.txt` came out different on
+ * every clean build: `ae0b51b9…`, `376b6bfc…` and `1088976d…` across three
+ * consecutive runs. Every release therefore wiped every user's guest environment,
+ * which is exactly the failure the derived digest was introduced to remove. The two
+ * tar-built payloads were `git.tgz` and `pi-engine.tgz`; `node.tgz` was stable
+ * because it is a pipe, not a tar of a staged tree.
+ *
+ *  - `--mtime=@0`                          every entry gets the epoch, so file mtimes
+ *                                          cannot leak in
+ *  - `--owner=0 --group=0 --numeric-owner` uid/gid and the user/group *names* are the
+ *                                          build host's; normalise both
+ *  - `--sort=name`                         a specified archive order, because
+ *                                          `tar -C dir .` otherwise walks in readdir
+ *                                          order, which is not a specified order
+ *
+ * The gzip layer needs nothing: GNU tar pipes into it, so gzip sees stdin and records
+ * no name and no timestamp. Measured — `gzip -9` over the same stdin is
+ * byte-identical run to run, and identical to `gzip -9n`.
+ *
+ * This changes `runtime-revision.txt` **once**, by construction: the bytes of
+ * `git.tgz` and `pi-engine.tgz` change here (their entry mtimes become 0) while no
+ * payload *content* does. That one extra wipe is the price of the fix; leaving it
+ * unfixed costs a wipe on every future release.
+ */
+const DETERMINISTIC_TAR = [
+  "--mtime=@0",
+  "--owner=0",
+  "--group=0",
+  "--numeric-owner",
+  "--sort=name",
+];
 
 /**
  * Ubuntu's arm64 archive. NOT `archive.ubuntu.com`: the primary archive has no
@@ -554,10 +600,10 @@ function assembleGitPayload() {
   const dst = join(ASSETS, `git${PAYLOAD_SUFFIX}`);
   // `gzip -9` rather than tar's `-z` (gzip -6) to match the node repack below:
   // measured, the difference is 7.26 vs 7.28 MiB, so this is consistency, not
-  // savings.
+  // savings. DETERMINISTIC_TAR is the load-bearing part — see its comment.
   execFileSync("bash", [
     "-c",
-    `tar -cf - -C ${JSON.stringify(stage)} . | gzip -9 > ${JSON.stringify(dst)}`,
+    `tar ${DETERMINISTIC_TAR.join(" ")} -cf - -C ${JSON.stringify(stage)} . | gzip -9 > ${JSON.stringify(dst)}`,
   ]);
   rmSync(stage, { recursive: true, force: true });
   rmSync(libStage, { recursive: true, force: true });
@@ -687,12 +733,38 @@ function main() {
     mkdirSync(stage, { recursive: true });
     const spec = `@earendil-works/pi-coding-agent@${PI_VERSION}`;
     console.log(`\nengine: ${spec}`);
-    execFileSync(
+    // Output is captured rather than inherited so the extraction warning below can be
+    // seen; it is echoed either way, so the progress a person reads on a terminal is
+    // unchanged apart from arriving at the end of the install.
+    const npm = spawnSync(
       "npm",
       ["install", "--ignore-scripts", "--omit=dev", "--omit=optional", "--no-audit", "--no-fund", spec],
-      { cwd: stage, stdio: "inherit" },
+      { cwd: stage, encoding: "utf8" },
     );
-    execFileSync("tar", ["-czf", dst, "-C", stage, "."]);
+    if (npm.stdout) process.stdout.write(npm.stdout);
+    if (npm.stderr) process.stderr.write(npm.stderr);
+    if (npm.status !== 0) {
+      throw new Error(`npm install ${spec} failed with status ${npm.status}`);
+    }
+    // npm unpacks 128 packages in parallel and can fail to create an entry while still
+    // exiting 0. Measured once in four consecutive builds: a single
+    //   npm warn tar TAR_ENTRY_ERROR ENOENT: ... lstat '.../openai/resources/beta'
+    // and the payload that run produced was a *different, smaller* engine tree. Nothing
+    // else noticed — a changed digest is indistinguishable from a legitimate payload
+    // change, and the revision it produced was simply the new one. So a warning here is
+    // treated as a truncated payload and fails the build: an engine missing files would
+    // otherwise reach a device as "some pi feature does not work".
+    if (/TAR_ENTRY_ERROR/.test(npm.stderr ?? "")) {
+      throw new Error(
+        `npm install ${spec} reported a tar extraction error, so the engine payload ` +
+          `would be incomplete. Re-run the build; if it repeats, the npm cache ` +
+          `(npm cache verify) or the registry response for one of the 128 packages is bad.`,
+      );
+    }
+    // DETERMINISTIC_TAR: without it this archive carries the mtime of every file
+    // `npm install` just wrote, so the same pinned engine produced a different
+    // pi-engine.tgz — and a different runtime-revision.txt — on every build.
+    execFileSync("tar", [...DETERMINISTIC_TAR, "-czf", dst, "-C", stage, "."]);
     const mib = (statSync(dst).size / 1024 / 1024).toFixed(1);
     console.log(`  ${"pi-engine.tgz".padEnd(24)} ${mib.padStart(8)} MiB  ok (pi ${PI_VERSION})`);
     rmSync(stage, { recursive: true, force: true });

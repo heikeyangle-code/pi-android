@@ -9,7 +9,6 @@ import androidx.compose.material.icons.filled.Compress
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Extension
 import androidx.compose.material.icons.filled.Folder
-import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Memory
 import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.Refresh
@@ -96,27 +95,31 @@ data class PiSetting(
     val max: Int? = null,
     val step: Int? = null,
     val unit: String? = null,
-    val globAware: Boolean = false,
     /** Value rows whose choices are open-ended (models, providers) allow typing. */
     val allowCustom: Boolean = false,
     val readOnly: Boolean = false,
     val dangerous: Boolean = false,
     /** Slash commands and alternate spellings that should also find this row. */
     val aliases: List<String> = emptyList(),
-    /** 2 or 3 means the row opens a further editor (spec §6.1 L2 / L3). */
-    val depth: Int = 1,
     /**
      * 文本行的编辑器用**多行**框（`PiTextEditorSheet`），单行框只给「一格值」。
      *
-     * 这是独立字段，不从 [depth] 读：`depth` 是**导航**属性（2/3 = 这一行还能再进
-     * 一层编辑器），跟字段该画几行是两件事。两者混为一谈正是这个 bug 的形状 ——
-     * `app.runtime.systemPrompt` 是几千字的整份系统提示词却没有 `depth`，于是
-     * `singleLine = setting.depth <= 1` 给了它一个单行框：粘进去的文本只画得出第一
-     * 行（换行之后的行落在 `maxLines = 1` 的布局之外），用户看到的就是「几万字只
-     * 进去几十字」。判断标准是「这个值是不是一份文档」，凡是文档都写
-     * `multiline = true`，不要靠 `depth` 猜。
+     * 判断标准是「这个值是不是一份文档」，凡是文档都写 `multiline = true`：这一行曾经按
+     * 「还能不能再进一层编辑器」去猜行数，于是 `app.runtime.systemPrompt`（几千字的整份系统
+     * 提示词）落进单行框，粘进去的文本只画得出第一行（换行之后的行落在 `maxLines = 1` 的
+     * 布局之外），用户看到的就是「几万字只进去几十字」。
+     *
+     * `depth` 与 `globAware` 曾经是这里的两个字段（"还能再进一层编辑器" / "编辑器懂 glob"），
+     * 全树没有任何读取方 —— 19 行数据在承诺一个没人实现的机制。它们已删除
+     * （`docs/settings-audit-impl.md` §B9），`settings-audit` 的规则 8 让这种字段无法再回来：
+     * `PiSetting` 的每个属性都必须有 `setting.<属性>` 的读者。
      */
     val multiline: Boolean = false,
+    /**
+     * 空列表那一行的读数（"无覆盖"、"默认 npm"…）。**这个字段有读者**：`PiSetting.display`
+     * 以接收者属性（裸名）读它，6 行用了非默认值。`settings-audit` 的字段检查为它保留了一条
+     * 带理由的豁免，而不是把它算成"没读"——把它删掉会静默丢掉那 6 句文案。
+     */
     val emptyListLabel: String = "空",
 ) {
     /**
@@ -131,7 +134,8 @@ data class PiSetting(
 
 /**
  * 一个设置分组。分组 id 的语义见 [PiSettingsCatalog.groups]：spec §6.4 那 12 组
- * 加上本应用自己的「提示词」组，一共 13 组。
+ * 加上本应用自己的「系统提示词」组，去掉并入「安全与隐私」的遥测组，一共 **12 组**
+ * （`docs/settings-audit-impl.md` §9 记了这次信息架构重排的每一条搬动理由）。
  */
 class PiSettingsGroup(
     val id: String,
@@ -153,9 +157,11 @@ data class PiSearchHit(
 
 private const val G_MODEL = "model"
 /**
- * 本应用自己的第 13 个分组。pi 的 settings 里没有系统提示词那两行（它们是
- * `--system-prompt` / `--append-system-prompt` 启动参数），spec §6.4 的 12 组里
- * 也就没有它们的落点 —— 这是它们原来挂在「运行时与诊断 → 进程」下的原因。
+ * 本应用自己的分组（spec §6.4 的 12 组里没有它）。pi 的 settings 里没有系统提示词那两行
+ * （它们是 `--system-prompt` / `--append-system-prompt` 启动参数），所以 spec 没有它们的
+ * 落点 —— 这是它们原来挂在「运行时与诊断 → 进程」下的原因。组名就叫「系统提示词」，与它
+ * 唯一的那个 section 同名：这一组只有这一类东西。
+ *
  * 这个 id 与 registry 里那个 `prompts` **键**无关：那条是「提示模板」的路径数组。
  */
 private const val G_PROMPTS = "prompts"
@@ -169,7 +175,6 @@ private const val G_APPEARANCE = "appearance"
 private const val G_TERMINAL = "terminal"
 private const val G_SECURITY = "security"
 private const val G_RUNTIME = "runtime"
-private const val G_ABOUT = "about"
 
 private fun str(value: String): JsonElement = JsonPrimitive(value)
 
@@ -252,7 +257,19 @@ private val trustOptions = choices(
 )
 
 
-private val builtinTools = listOf("read", "bash", "powershell", "edit", "write", "grep", "find", "ls")
+/**
+ * The names offered as chips on the 内建工具 row.
+ *
+ * **`powershell` is deliberately absent** even though pi knows it
+ * (`core/tools/index.ts:95` — the `ToolName` union is exactly these eight): its implementation
+ * resolves a PowerShell binary and **throws on anything but Windows**
+ * (`utils/shell.ts` `getPowerShellConfig`: "The powershell tool is only available on Windows."),
+ * and this app's guest is a Linux rootfs with no `pwsh`. Offering it would let the user pick a
+ * tool that fails the first time the model calls it; the chip list is the one place we can keep
+ * an unusable value out of reach. The row's description says so, and the default set
+ * (read/bash/edit/write) is spelled out separately from the optional ones.
+ */
+private val builtinTools = listOf("read", "bash", "edit", "write", "grep", "find", "ls")
 
 
 private val termKeyBarPresets = listOf("esc", "tab", "ctrl", "up", "down", "left", "right", "pipe", "tilde", "slash", "dash")
@@ -262,13 +279,13 @@ object PiSettingsCatalog {
     /** Every registered key, in spec §6.4 order. */
     val settings: List<PiSetting> = listOf(
 
-        // ------------------------------------------------------------------
-        // 1 模型与推理
-        // ------------------------------------------------------------------
         // 这个分组的入口是 App 侧的一页，不是一个 pi 设置：设置 → 模型 把"这台设备上配了
         // 哪些厂商、有哪些模型、哪些已经生效"一次说清（`PiModelInventory`，实现见
         // `PiModelsScreen`）。它是分组的第一行是故意的——在它之前，这个问题在设置页里没有
         // 任何地方能回答，而"导入过的模型看不到"正是用户报的那个问题。
+        // ------------------------------------------------------------------
+        // 1 模型与推理
+        // ------------------------------------------------------------------
         PiSetting(
             key = "app.models.inventory",
             title = "已导入的模型",
@@ -277,6 +294,64 @@ object PiSettingsCatalog {
             group = G_MODEL,
             section = "本机模型",
             aliases = listOf("model", "models", "provider", "模型", "厂商"),
+        ),
+        // The half of pi's `/llama` this row can actually do is the endpoint:
+        // `models.json` plus a placeholder credential, which is what the form
+        // behind this row writes. Loading/unloading models and downloading GGUF
+        // is the other half, and the extension refuses to run it outside the TUI
+        // (`extensions/llama/index.ts:186-189` returns unless `ctx.mode === "tui"`;
+        // `ctx.ui.custom()` is a documented no-op in RPC mode). The description
+        // states what this form does and stops there: "there is more in the
+        // terminal" is said once, on the settings home's 终端 row
+        // (`SettingsHome.kt` 的 `PiTerminalEntryRow`)，不在每个与 TUI 有关的行上重复。
+        // 那条注释以前写的是 `WorkbenchScreen.kt` —— 那个屏已经随终端一起退役了。
+        PiSetting(
+            key = "app.localModels.manage",
+            title = "本地模型（llama.cpp）",
+            description = "配置 pi 使用的 llama.cpp router 端点（默认 http://127.0.0.1:8080）。",
+            kind = PiRowKind.Action,
+            group = G_MODEL,
+            section = "本机模型",
+            aliases = listOf("llama", "local"),
+        ),
+        PiSetting(
+            key = "app.credentials.apiKey",
+            title = "API Key",
+            // The old text named the credential file and settings.json on screen. The
+            // rule for this pass is that the UI shows what a user can do, not where
+            // the bytes go, so it now describes the flow instead.
+            description = "填写厂商 API Key。",
+            kind = PiRowKind.Action,
+            group = G_MODEL,
+            section = "凭证",
+            aliases = listOf("auth", "login", "key"),
+        ),
+        PiSetting(
+            key = "app.credentials.oauth",
+            title = "订阅登录（在终端页里运行 pi）",
+            // This row used to say "本应用暂无入口" while the terminal page's own header
+            // said the opposite ("输入 pi 回车进入原版 TUI：订阅登录…都在那边"), and the
+            // terminal page is right: `PtyLauncher` starts the guest shell with the same
+            // `PI_CODING_AGENT_DIR` / `PI_CODING_AGENT_SESSION_DIR` the engine uses
+            // (`runtime/PtyLauncher.kt:396-404`), so a `/login` run there writes the same
+            // `auth.json` this app's credential page reads. Two surfaces disagreeing about
+            // whether an action exists is the defect class this repository keeps fixing,
+            // so the app's half now names where the action lives.
+            //
+            // What is still true, and why there is no *native* entry: pi's OAuth flow is
+            // implemented inside its interactive UI (`interactive-mode.ts:5485`
+            // `handleLoginCommand`, reached from `/login` at `:3052-3060`), and the RPC
+            // command union (`modes/rpc/rpc-types.ts:20-74`) has no login command at all.
+            // The terminal page is the only surface that can run it; saying so is the
+            // honest form of "not built in".
+            description = "Anthropic Claude Pro/Max、OpenAI Codex、GitHub Copilot、OpenRouter、" +
+                "Kimi Code、xAI、Radius 支持用订阅账号登录，授权在浏览器里完成。" +
+                "本应用没有内建登录表单：到 工作区 → 终端 里输入 pi 回车，再运行 /login。" +
+                "只想填厂商 API Key 的话，用上面那行。",
+            kind = PiRowKind.Action,
+            group = G_MODEL,
+            section = "凭证",
+            aliases = listOf("login", "auth", "oauth"),
         ),
         PiSetting(
             key = "defaultProvider",
@@ -313,28 +388,46 @@ object PiSettingsCatalog {
             aliases = listOf("thinking"),
         ),
         PiSetting(
-            key = "modelThinkingLevels",
-            title = "逐模型思考等级",
-            description = "按 \"厂商/模型 ID\" 覆盖启动思考等级。键必须精确匹配，不认通配符。",
+            key = "enabledModels",
+            title = "循环模型",
+            // 「新会话生效」，不是「重启引擎」：pi 的 `resolveModelScope` 在 `createRuntime` 闭包里
+            // 跑（`main.ts:788`，调用它的 `main.ts:797` 也在同一个闭包内），而那个闭包**每个新
+            // 会话都会重新执行一次**（`agent-session-runtime.ts:226-252` 重建 runtime），所以新
+            // 会话就会重新解析这份作用域，不必换进程。（原先这里标 `RestartEngine`，理由只看了
+            // "一个进程里调用点只有一处"，漏了闭包本身每会话重跑。）
+            description = "循环切换时使用的模型，支持通配符。pi 在开新会话时解析一次，改完要开新会话才生效。" +
+                "清空并保存 = 回到默认（全部模型都能循环）。",
             kind = PiRowKind.List,
             group = G_MODEL,
             section = "默认模型",
             effective = EffectiveKind.NewSession,
+            presets = listOf("claude-*", "gpt-*", "gemini-*", "deepseek-*", "qwen-*"),
+            emptyListLabel = "全部模型",
+            aliases = listOf("cycle", "model"),
+        ),
+        PiSetting(
+            key = "modelThinkingLevels",
+            title = "逐模型思考等级",
+            description = "按 \"厂商/模型 ID\" 覆盖启动思考等级。键必须精确匹配，不认通配符。" +
+                "清空并保存 = 回到默认（没有逐模型覆盖）。",
+            kind = PiRowKind.List,
+            group = G_MODEL,
+            section = "逐模型与预算",
+            effective = EffectiveKind.NewSession,
             container = PiValueContainer.Object,
-            depth = 3,
             emptyListLabel = "无覆盖",
             aliases = listOf("thinking", "model-thinking"),
         ),
         PiSetting(
             key = "thinkingBudgets",
             title = "思考预算",
-            description = "逐等级的思考 token 预算（minimal/low/medium/high）。Anthropic、Google、Bedrock 原生使用；OpenAI 兼容模型需要模型声明支持。",
+            description = "逐等级的思考 token 预算（minimal/low/medium/high）。Anthropic、Google、Bedrock 原生使用；OpenAI 兼容模型需要模型声明支持。" +
+                "清空并保存 = 回到默认（用各厂商自己的预算）。",
             kind = PiRowKind.List,
             group = G_MODEL,
-            section = "默认模型",
+            section = "逐模型与预算",
             effective = EffectiveKind.NewSession,
             container = PiValueContainer.Object,
-            depth = 3,
             emptyListLabel = "未设置",
             aliases = listOf("thinking", "budget"),
         ),
@@ -358,77 +451,10 @@ object PiSettingsCatalog {
             defaultValue = bool(false),
             aliases = listOf("cache"),
         ),
-        PiSetting(
-            key = "enabledModels",
-            title = "循环模型",
-            description = "循环切换时使用的模型，支持通配符。pi 在引擎启动时解析一次，改完要重启引擎才生效。",
-            kind = PiRowKind.List,
-            group = G_MODEL,
-            section = "循环模型",
-            // 这一行原先是 `NewSession`，那是错的。pi 把它解析成 `--models` 的作用域：
-            // `main.ts:788-791` 在**进程启动**时调 `resolveModelScope(modelPatterns, …)`，
-            // 而调用它的 `buildSessionOptions` 在 `main.ts` 里只有 `:797` 一处，也就是说
-            // 一个 `pi --mode rpc` 进程只解析一次。所以"新开一个会话"不会让它生效，只有新
-            // 进程会（`agent-session.ts:1717` 的循环用的就是这份 `_scopedModels`）。
-            effective = EffectiveKind.RestartEngine,
-            presets = listOf("claude-*", "gpt-*", "gemini-*", "deepseek-*", "qwen-*"),
-            globAware = true,
-            depth = 2,
-            emptyListLabel = "全部模型",
-            aliases = listOf("cycle", "model"),
-        ),
-        PiSetting(
-            key = "app.credentials.apiKey",
-            title = "API Key",
-            // The old text named the credential file and settings.json on screen. The
-            // rule for this pass is that the UI shows what a user can do, not where
-            // the bytes go, so it now describes the flow instead.
-            description = "填写厂商 API Key。",
-            kind = PiRowKind.Action,
-            group = G_MODEL,
-            section = "凭证",
-            aliases = listOf("auth", "login", "key"),
-        ),
-        PiSetting(
-            key = "app.credentials.oauth",
-            title = "订阅登录（本应用暂无入口）",
-            // 这行原来写的是「点执行会切到 工作区 → 终端，输入 pi 后运行 /login」。终端不是
-            // 可用面，那句指引指向一个做不到的动作 —— 和这个仓库一直在修的那类缺陷同形
-            // （界面上写着一个不存在的动作）。改成如实说明：本应用只支持填 API Key。
-            // 为什么不能在应用里做：pi 的 OAuth 流程整个长在它自己的交互式界面里
-            // （`interactive-mode.ts:5485` `handleLoginCommand`），RPC 命令全集
-            // （`modes/rpc/rpc-types.ts:20-74`）里没有任何登录命令。
-            description = "Anthropic Claude Pro/Max、OpenAI Codex、GitHub Copilot、OpenRouter、" +
-                "Kimi Code、xAI、Radius 支持用订阅账号登录，授权在浏览器里完成。" +
-                "本应用目前只支持填厂商 API Key，订阅登录还没有入口。",
-            kind = PiRowKind.Action,
-            group = G_MODEL,
-            section = "凭证",
-            aliases = listOf("login", "auth", "oauth"),
-        ),
-        // The half of pi's `/llama` this row can actually do is the endpoint:
-        // `models.json` plus a placeholder credential, which is what the form
-        // behind this row writes. Loading/unloading models and downloading GGUF
-        // is the other half, and the extension refuses to run it outside the TUI
-        // (`extensions/llama/index.ts:186-189` returns unless `ctx.mode === "tui"`;
-        // `ctx.ui.custom()` is a documented no-op in RPC mode). The description
-        // states what this form does and stops there: "there is more in the
-        // terminal" is said once, on the settings home's 终端 row
-        // (`SettingsHome.kt` 的 `PiTerminalEntryRow`)，不在每个与 TUI 有关的行上重复。
-        // 那条注释以前写的是 `WorkbenchScreen.kt` —— 那个屏已经随终端一起退役了。
-        PiSetting(
-            key = "app.localModels.manage",
-            title = "本地模型（llama.cpp）",
-            description = "配置 pi 使用的 llama.cpp router 端点（默认 http://127.0.0.1:8080）。",
-            kind = PiRowKind.Action,
-            group = G_MODEL,
-            section = "凭证",
-            aliases = listOf("llama", "local"),
-        ),
+        // ------------------------------------------------------------------
+        // 2 系统提示词
+        // ------------------------------------------------------------------
 
-        // ------------------------------------------------------------------
-        // 2 提示词（本应用自己的分组，spec §6.4 的 12 组里没有它）
-        // ------------------------------------------------------------------
         //
         // 这两行是 pi 的**进程启动参数**，不是 pi 的 settings 键：pi 的 `Settings`
         // 接口（`core/settings-manager.ts:106-158`）里没有 systemPrompt，值由 App 组
@@ -479,10 +505,10 @@ object PiSettingsCatalog {
             effective = EffectiveKind.RestartEngine,
             aliases = listOf("system", "prompt", "append"),
         ),
-
         // ------------------------------------------------------------------
         // 3 消息与网络
         // ------------------------------------------------------------------
+
         PiSetting(
             key = "steeringMode",
             title = "穿插模式",
@@ -511,7 +537,7 @@ object PiSettingsCatalog {
             description = "支持多种传输的厂商优先使用哪一种。自动会挑当前最合适的一种。",
             kind = PiRowKind.Value,
             group = G_MESSAGES,
-            section = "传输",
+            section = "网络",
             defaultValue = str("auto"),
             effective = EffectiveKind.NewSession,
             options = transportOptions,
@@ -520,7 +546,7 @@ object PiSettingsCatalog {
         PiSetting(
             key = "httpIdleTimeoutMs",
             title = "HTTP 空闲超时",
-            description = "HTTP 头/体的空闲超时（毫秒），有显式流空闲超时的厂商也用它。设为 0 表示不超时。",
+            description = "HTTP 头/体的空闲超时（毫秒），有显式流空闲超时的厂商也用它。0 表示不超时（pi 也认字符串 disabled，两者等价）。",
             kind = PiRowKind.Number,
             group = G_MESSAGES,
             section = "网络",
@@ -558,10 +584,10 @@ object PiSettingsCatalog {
             effective = EffectiveKind.RestartEngine,
             aliases = listOf("proxy"),
         ),
-
         // ------------------------------------------------------------------
         // 4 上下文与压缩
         // ------------------------------------------------------------------
+
         PiSetting(
             key = "compaction.enabled",
             title = "自动压缩",
@@ -605,13 +631,13 @@ object PiSettingsCatalog {
         PiSetting(
             key = "compaction.modelOverrides",
             title = "逐模型覆盖",
-            description = "按精确的 \"厂商/模型 ID\" 覆盖 reserveTokens 与 keepRecentTokens。模型 ID 可以含斜杠，例如 openrouter/anthropic/claude-sonnet-4。",
+            description = "按精确的 \"厂商/模型 ID\" 覆盖 reserveTokens 与 keepRecentTokens。模型 ID 可以含斜杠，例如 openrouter/anthropic/claude-sonnet-4。" +
+                "清空并保存 = 回到默认（没有逐模型覆盖）。",
             kind = PiRowKind.List,
             group = G_COMPACTION,
             section = "压缩",
             effective = EffectiveKind.NewSession,
             container = PiValueContainer.Object,
-            depth = 3,
             emptyListLabel = "无覆盖",
             aliases = listOf("override", "compact"),
         ),
@@ -621,7 +647,7 @@ object PiSettingsCatalog {
             description = "选择分支历史时为提示词与回复预留的 token（输出上限 4096）。",
             kind = PiRowKind.Number,
             group = G_COMPACTION,
-            section = "分支摘要",
+            section = "压缩",
             effective = EffectiveKind.NewSession,
             defaultValue = num(16384),
             min = 0,
@@ -645,10 +671,10 @@ object PiSettingsCatalog {
             section = "动作",
             aliases = listOf("compact"),
         ),
+        // ------------------------------------------------------------------
+        // 5 重试
+        // ------------------------------------------------------------------
 
-        // ------------------------------------------------------------------
-        // 5 重试与网络
-        // ------------------------------------------------------------------
         PiSetting(
             key = "retry.enabled",
             title = "自动重试",
@@ -748,20 +774,24 @@ object PiSettingsCatalog {
             unit = "ms",
             aliases = listOf("retry", "provider"),
         ),
-
         // ------------------------------------------------------------------
         // 6 工具
         // ------------------------------------------------------------------
+
         PiSetting(
             key = "defaultTools",
             title = "内建工具",
-            description = "启动时启用的内建工具。建议额外开启 grep、find、ls，否则模型只能靠 bash 跑 rg 和 fd，手机上更慢。",
+            description = "启动时启用哪些内建工具。**默认只有 4 个：read、bash、edit、write**；" +
+                "可选的是再加 grep、find、ls（建议开，否则模型只能靠 bash 跑 rg 和 fd，手机上更慢）。" +
+                "清空并保存 = 回到这 4 个默认值（删掉这个键）。" +
+                "pi 还有一个 powershell 工具，但它只在 Windows 上能跑，本应用不提供。" +
+                "想一个内建工具都不开（pi 的 `defaultTools: []` 语义，与「默认」是两件事），" +
+                "在「Pi 文件」里直接编辑 `settings.json`。",
             kind = PiRowKind.List,
             group = G_TOOLS,
-            section = "内建工具",
+            section = "工具",
             effective = EffectiveKind.NewSession,
             presets = builtinTools,
-            depth = 2,
             emptyListLabel = "默认 read/bash/edit/write",
             aliases = listOf("tools", "builtin"),
         ),
@@ -781,14 +811,14 @@ object PiSettingsCatalog {
             description = "对话流里的工具卡默认展开输出，而不是只显示一行摘要。手机上通常关掉更省事。",
             kind = PiRowKind.Switch,
             group = G_TOOLS,
-            section = "展示",
+            section = "工具",
             defaultValue = bool(false),
             aliases = listOf("tools", "expand"),
         ),
-
         // ------------------------------------------------------------------
         // 7 会话
         // ------------------------------------------------------------------
+
         // `sessionDir` is deliberately absent even though pi has the key
         // (`settings-manager.ts:150`, read at `main.ts:675`). This app pins the
         // session root on the command line *and* in the environment
@@ -819,22 +849,108 @@ object PiSettingsCatalog {
             effective = EffectiveKind.RestartApp,
             aliases = listOf("continue", "resume", "last"),
         ),
-
         // ------------------------------------------------------------------
         // 8 扩展与资源
         // ------------------------------------------------------------------
+
+        // 这一节回答的是"我到底有什么"：数字来自**真实扫描**（`WorkspaceResourceScan`，项目页
+        // 资源段用的同一个），由 `PiResourceFacts.kt` 做纯计算、由 `PiSettingsStack` 在 IO 上
+        // 跑并把文本塞进 `valueOverrides`。它不是设置行：四个键都没有写入方，`readOnly = true`。
+        //
+        // 为什么这一节必须存在：删掉下面那四条"额外搜索路径"之后，如果这一屏只剩开关与资源包，
+        // 用户看到的仍然是"空"——而真相是 pi 一直在自动发现 `~/.pi/agent/<kind>`、工作区
+        // `.pi/<kind>`、`.agents/<kind>` 与已装包自带的资源。数字是**读数**，不是承诺。
+        // 顺序 = pi 自己的加载顺序（`core/package-manager.ts:203-204` 的 `RESOURCE_TYPES`：
+        // extensions / skills / prompts / themes；`resource-loader.ts` 的 reload 照它走，
+        // extensions `:456` → skills `:468` → prompts `:483` → themes `:502`）。
+        // 「扩展包与项目信任」页的四节与分组摘要里的"已发现 …"都是这一个顺序 —— 不按我们自己的
+        // 习惯排。
+
         PiSetting(
-            key = "extensions",
-            title = "扩展",
-            description = "本地扩展文件或目录的路径。相对路径分别以全局设置目录与项目目录为基准。",
-            kind = PiRowKind.List,
+            key = "app.resources.discovered.extensions",
+            title = "已发现的扩展",
+            description = "pi 自动发现的扩展（`extensions/` 下的 `.ts`/`.js` 或带入口的目录），" +
+                "以及扩展自己写出去的资源（例如设备桥那个技能）。",
+            kind = PiRowKind.Text,
             group = G_RESOURCES,
-            section = "本地资源",
-            defaultValue = list(),
+            section = "实际发现",
+            defaultValue = str("未读取"),
+            readOnly = true,
+            aliases = listOf("extensions", "扩展", "发现"),
+        ),
+        PiSetting(
+            key = "app.resources.discovered.skills",
+            title = "已发现的技能",
+            description = "pi 自动发现的技能：工作区 `.pi/skills`、`~/.pi/agent/skills`、`.agents/skills` " +
+                "与已装资源包自带的。要加新的，在下面的「查看资源文件」里把 `<名字>/SKILL.md` 放进 `skills/`。",
+            kind = PiRowKind.Text,
+            group = G_RESOURCES,
+            section = "实际发现",
+            defaultValue = str("未读取"),
+            readOnly = true,
+            aliases = listOf("skills", "技能", "发现"),
+        ),
+        PiSetting(
+            key = "app.resources.discovered.prompts",
+            title = "已发现的提示模板",
+            description = "pi 自动发现的提示模板（`prompts/*.md`），来源与技能相同。" +
+                "模板支持 `$1`、`$@` 这类参数，用 `/名字` 调用。",
+            kind = PiRowKind.Text,
+            group = G_RESOURCES,
+            section = "实际发现",
+            defaultValue = str("未读取"),
+            readOnly = true,
+            aliases = listOf("prompts", "提示模板", "发现"),
+        ),
+        PiSetting(
+            key = "app.resources.discovered.themes",
+            title = "已发现的主题",
+            description = "pi 自动发现的主题（`themes/*.json`），来源与技能相同。当前用哪一个在「外观」里的「主题」。",
+            kind = PiRowKind.Text,
+            group = G_RESOURCES,
+            section = "实际发现",
+            defaultValue = str("未读取"),
+            readOnly = true,
+            aliases = listOf("themes", "主题", "发现"),
+        ),
+        PiSetting(
+            key = "app.extensions.args",
+            title = "扩展启动参数",
+            // The one row here whose value is **not** a pi settings key: pi has no
+            // settings key for an extension-registered flag, so this text is kept in
+            // the app's own sidecar and passed as arguments at spawn
+            // (`ExtensionArgsStore`, `ExtensionFlagArgs`). The description says the
+            // shape a user has to write, because the flag *names* belong to whatever
+            // extension they installed — pi accepts any `--flag` it does not know and
+            // hands it to the extensions that declared it, so there is nothing to pick
+            // from a list here (`core/agent-session-services.ts:107-111`).
+            description = "照你在命令行上给 pi 的方式写，例如 --plan 或 --ssh user@host:/path。" +
+                "只对声明了该参数的扩展生效，重启引擎后生效。" +
+                "没有扩展注册这个参数时 pi 只会在 stderr 里写一行提示，不影响启动。",
+            kind = PiRowKind.Text,
+            group = G_RESOURCES,
+            section = "技能命令与扩展参数",
+            defaultValue = str(""),
             effective = EffectiveKind.RestartEngine,
-            globAware = true,
-            depth = 2,
-            aliases = listOf("extensions", "reload"),
+            aliases = listOf("extension flags", "cli flags", "args", "参数", "启动参数"),
+        ),
+        PiSetting(
+            key = "enableSkillCommands",
+            title = "技能命令",
+            description = "把技能注册成 /skill:name 斜杠命令。关掉之后技能仍然可以被模型读取，只是不再出现在命令面板里。",
+            kind = PiRowKind.Switch,
+            group = G_RESOURCES,
+            section = "技能命令与扩展参数",
+            defaultValue = bool(true),
+            // `Immediate`, not `Reload`: pi reads this setting only in its own TUI
+            // (`interactive-mode.ts:716`, `:4570`) and its RPC `get_commands` lists
+            // skill commands unconditionally (`rpc-mode.ts:702-708`), so nothing
+            // inside pi would ever change. The command panel this row is about is
+            // *this app's*, built by `piCommandPalette`, and it filters on the write
+            // (`PiSessionViewModel.onSettingWritten` → `refreshCommands`) — so the
+            // row takes effect at once, which is also what pi's TUI does.
+            effective = EffectiveKind.Immediate,
+            aliases = listOf("skills", "commands"),
         ),
         // Read-only on purpose, and an entry point rather than an editor. The
         // array is written by the package manager: `pi install` records a source
@@ -857,67 +973,25 @@ object PiSettingsCatalog {
             defaultValue = list(),
             effective = EffectiveKind.RestartEngine,
             readOnly = true,
-            globAware = true,
-            depth = 3,
             aliases = listOf("install", "packages", "npm", "git"),
         ),
+        // 出口：这一节报的是"发现了什么"，而看/改它们的地方是「Pi 文件」屏（`PiFilesScreen`，
+        // 本栈已有的层级 `piFiles`，不新造导航）。它同时替掉被删掉的那四条手填路径：想加资源
+        // 就是往标准目录里放文件，标准目录本来就自动发现，不需要在设置里登记路径。
         PiSetting(
-            key = "skills",
-            title = "技能",
-            description = "本地技能文件或目录的路径。每个技能是一个带名称与描述的文件。",
-            kind = PiRowKind.List,
+            key = "app.resources.openFiles",
+            title = "查看资源文件",
+            description = "打开「Pi 文件」：`~/.pi/agent` 与工作区 `.pi` 下的 `skills/`、`prompts/`、" +
+                "`themes/`、`extensions/` 都能直接看和改。放进这些目录的资源 pi 会自动发现，" +
+                "不需要在设置里登记路径。",
+            kind = PiRowKind.Action,
             group = G_RESOURCES,
-            section = "本地资源",
-            defaultValue = list(),
-            effective = EffectiveKind.RestartEngine,
-            globAware = true,
-            depth = 2,
-            aliases = listOf("skills", "reload"),
+            section = "动作",
+            aliases = listOf("files", "pi files", "资源", "目录", "skill", "theme"),
         ),
-        PiSetting(
-            key = "prompts",
-            title = "提示模板",
-            description = "本地提示模板路径。模板支持 \$1、\$@ 与 \${1:-default} 形式的参数。",
-            kind = PiRowKind.List,
-            group = G_RESOURCES,
-            section = "本地资源",
-            defaultValue = list(),
-            effective = EffectiveKind.RestartEngine,
-            globAware = true,
-            depth = 2,
-            aliases = listOf("prompts", "templates", "reload"),
-        ),
-        PiSetting(
-            key = "themes",
-            title = "主题",
-            description = "本地主题文件或目录的路径。",
-            kind = PiRowKind.List,
-            group = G_RESOURCES,
-            section = "本地资源",
-            defaultValue = list(),
-            effective = EffectiveKind.RestartEngine,
-            globAware = true,
-            depth = 2,
-            aliases = listOf("themes", "reload"),
-        ),
-        PiSetting(
-            key = "enableSkillCommands",
-            title = "技能命令",
-            description = "把技能注册成 /skill:name 斜杠命令。关掉之后技能仍然可以被模型读取，只是不再出现在命令面板里。",
-            kind = PiRowKind.Switch,
-            group = G_RESOURCES,
-            section = "本地资源",
-            defaultValue = bool(true),
-            // `Immediate`, not `Reload`: pi reads this setting only in its own TUI
-            // (`interactive-mode.ts:716`, `:4570`) and its RPC `get_commands` lists
-            // skill commands unconditionally (`rpc-mode.ts:702-708`), so nothing
-            // inside pi would ever change. The command panel this row is about is
-            // *this app's*, built by `piCommandPalette`, and it filters on the write
-            // (`PiSessionViewModel.onSettingWritten` → `refreshCommands`) — so the
-            // row takes effect at once, which is also what pi's TUI does.
-            effective = EffectiveKind.Immediate,
-            aliases = listOf("skills", "commands"),
-        ),
+        // ------------------------------------------------------------------
+        // 9 外观
+        // ------------------------------------------------------------------
         // `app.contextFiles` used to sit here and is **deleted on purpose**. Its
         // description promised "全局与项目级的上下文文件。它们会被追加进系统提示" and
         // nothing in the tree read the key — a search for `contextFiles` across
@@ -931,18 +1005,26 @@ object PiSettingsCatalog {
         // it. `pi 无对应物`, and the honest form of "the app decides not to do this"
         // is not to offer the switch.
 
-        // ------------------------------------------------------------------
-        // 9 外观
-        // ------------------------------------------------------------------
         PiSetting(
             key = "theme",
             title = "主题",
             description = "主题名：dark、light 或自定义主题。自动模式可分别指定浅色与深色主题名。",
             kind = PiRowKind.Value,
             group = G_APPEARANCE,
-            section = "主题",
+            section = "外观",
             defaultValue = str("dark"),
-            effective = EffectiveKind.Reload,
+            // **`Immediate`，不是 `Reload`。** 这一行原来带「需重载」徽标，而它写下去的那一刻
+            // 就生效了：设置栈把写入转给 `PiSessionViewModel.onSettingWritten`，那里第一件事就是
+            // `if (key == "theme") { refreshTheme(); return }`（`PiSessionViewModel.kt:1128-1130`）
+            // —— `refreshTheme()` 重新 `PiThemeLoader.load` 并发布 `_theme`，`MainActivity.kt:89-93`
+            // 收着它构造 `PiTheme(palette = …)`，所以整个界面连同代码高亮（`PiSyntaxToken.color(palette)`，
+            // `ui/render/PiCodeHighlight.kt:73-77`）与窗口底色（`MainActivity.kt:83-85`）当场换色。
+            // 没有任何东西在等一次"重载"：徽标说「需重载」就是在说假话（`docs/known-gaps.md:701`
+            // 记过同一形状 —— 三个进程开关借用 `Reload` 时也是这么被改掉的）。
+            //
+            // 唯一"晚一点"的是 pi 自己的 TUI（终端页里那个 pi 进程按自己的启动读主题），那不是这一行
+            // 承诺的对象，也不是"重载"能解决的 —— 那条路要重开终端。alias 里的 `reload` 留着：
+            // 它是 pi 自己的词（pi 的 TUI 用 `/reload` 应用主题），是搜索用的，不是时间承诺。
             allowCustom = true,
             aliases = listOf("appearance", "dark", "light", "reload"),
         ),
@@ -954,10 +1036,10 @@ object PiSettingsCatalog {
         PiSetting(
             key = "app.appearance.fontScaleDelta",
             title = "字号微调",
-            description = "在系统字号基础上再加减 2sp。正文默认 15/23，元信息 11.5/16。",
+            description = "在系统字号基础上再加减 2sp。正文默认 15/23，元信息 12/18。",
             kind = PiRowKind.Number,
             group = G_APPEARANCE,
-            section = "排版",
+            section = "外观",
             defaultValue = num(0),
             min = -2,
             max = 2,
@@ -971,7 +1053,7 @@ object PiSettingsCatalog {
             description = "对话流的块间距与内边距档位。舒适是默认值，紧凑更适合小屏一次看更多内容。",
             kind = PiRowKind.Value,
             group = G_APPEARANCE,
-            section = "排版",
+            section = "外观",
             defaultValue = str("comfortable"),
             options = choices(
                 "comfortable" to "舒适",
@@ -986,7 +1068,7 @@ object PiSettingsCatalog {
             description = "每轮首次出现处显示一次时间戳；跨天时插入日期分隔。关掉之后对话流只剩内容。",
             kind = PiRowKind.Switch,
             group = G_APPEARANCE,
-            section = "排版",
+            section = "外观",
             defaultValue = bool(true),
             aliases = listOf("timestamp", "time"),
         ),
@@ -996,36 +1078,14 @@ object PiSettingsCatalog {
             description = "思考块默认收起成一行「思考 12s」，点击展开。这是本应用的显示偏好，不改 pi 对思考块的隐藏设置。",
             kind = PiRowKind.Switch,
             group = G_APPEARANCE,
-            section = "排版",
+            section = "外观",
             defaultValue = bool(true),
             aliases = listOf("thinking", "collapse"),
         ),
-        PiSetting(
-            key = "images.autoResize",
-            title = "图片自动缩放",
-            description = "把图片缩到最大 2000x2000，对 @file 附件、read 工具与工具返回的图片都生效。",
-            kind = PiRowKind.Switch,
-            group = G_APPEARANCE,
-            section = "图片",
-            effective = EffectiveKind.NewSession,
-            defaultValue = bool(true),
-            aliases = listOf("images", "resize"),
-        ),
-        PiSetting(
-            key = "images.blockImages",
-            title = "屏蔽图片",
-            description = "阻止所有图片发送给模型。这是给模型设的闸门：图片仍然可以附加，只是不会随请求发出去。",
-            kind = PiRowKind.Switch,
-            group = G_APPEARANCE,
-            section = "图片",
-            effective = EffectiveKind.NewSession,
-            defaultValue = bool(false),
-            aliases = listOf("images", "block"),
-        ),
-
         // ------------------------------------------------------------------
         // 10 终端与 Shell
         // ------------------------------------------------------------------
+
         PiSetting(
             key = "shellPath",
             title = "Shell 路径",
@@ -1053,14 +1113,14 @@ object PiSettingsCatalog {
         PiSetting(
             key = "npmCommand",
             title = "npm 命令",
-            description = "npm 包查找与安装使用的 argv 数组，例如 mise exec node@20 -- npm。按进程启动参数逐项填写。",
+            description = "npm 包查找与安装使用的 argv 数组，例如 mise exec node@20 -- npm。按进程启动参数逐项填写。" +
+                "清空并保存 = 回到默认（直接调用 npm）。",
             kind = PiRowKind.List,
             group = G_TERMINAL,
             section = "Shell",
             defaultValue = list(),
             effective = EffectiveKind.NewSession,
             container = PiValueContainer.Array,
-            depth = 2,
             emptyListLabel = "默认 npm",
             aliases = listOf("npm", "packages"),
         ),
@@ -1083,51 +1143,41 @@ object PiSettingsCatalog {
         PiSetting(
             key = "app.terminal.keyBar",
             title = "键盘按键条",
-            description = "终端页顶部按键条的按键与顺序，可增删。改动需要重载。",
+            description = "终端页顶部按键条的按键与顺序，可增删。改动需要重载。" +
+                "清空并保存 = 回到默认（预设的那一排按键）。",
             kind = PiRowKind.List,
             group = G_TERMINAL,
-            section = "按键条",
+            section = "终端显示",
             effective = EffectiveKind.Reload,
             presets = termKeyBarPresets,
-            depth = 2,
             aliases = listOf("keybar", "keys"),
         ),
-
-        // ------------------------------------------------------------------
-        // 11 安全与信任
-        // ------------------------------------------------------------------
         PiSetting(
-            key = "defaultProjectTrust",
-            title = "项目信任策略",
-            description = "非交互模式下没有已保存的信任决定时的回退行为：询问会忽略项目资源，总是信任会加载并执行它们，从不信任始终忽略。仅全局设置支持。",
-            kind = PiRowKind.Value,
-            group = G_SECURITY,
-            section = "信任",
-            defaultValue = str("ask"),
-            effective = EffectiveKind.RestartEngine,
-            options = trustOptions,
-            aliases = listOf("trust", "approve"),
+            key = "images.autoResize",
+            title = "图片自动缩放",
+            description = "把图片缩到最大 2000x2000，对 @file 附件、read 工具与工具返回的图片都生效。",
+            kind = PiRowKind.Switch,
+            group = G_TERMINAL,
+            section = "图片",
+            effective = EffectiveKind.NewSession,
+            defaultValue = bool(true),
+            aliases = listOf("images", "resize"),
         ),
-        // Implemented, and each clause of the description is one RPC command:
-        // "中止当前轮次" + "清空队列" are `clear_queue` and `abort`
-        // (`rpc-mode.ts:428`, `:433`, reached through
-        // `PiEngineSession.stopAndDrainQueue` `:480-486`), and "杀掉全部后台 bash
-        // 作业" is `abort_bash` (`rpc-mode.ts:586`), which aborts every running
-        // bash command rather than one (`agent-session.ts:3073-3077`).
         PiSetting(
-            key = "app.security.emergencyStop",
-            title = "紧急停止",
-            description = "立刻中止当前轮次、停掉正在运行的 bash 命令并清空队列。会话与文件保持原样，不会回滚已写入的改动。",
-            kind = PiRowKind.Action,
-            group = G_SECURITY,
-            section = "动作",
-            dangerous = true,
-            aliases = listOf("stop", "abort", "kill"),
+            key = "images.blockImages",
+            title = "屏蔽图片",
+            description = "阻止所有图片发送给模型。这是给模型设的闸门：图片仍然可以附加，只是不会随请求发出去。",
+            kind = PiRowKind.Switch,
+            group = G_TERMINAL,
+            section = "图片",
+            effective = EffectiveKind.NewSession,
+            defaultValue = bool(false),
+            aliases = listOf("images", "block"),
         ),
+        // ------------------------------------------------------------------
+        // 11 运行时与诊断
+        // ------------------------------------------------------------------
 
-        // ------------------------------------------------------------------
-        // 12 设备能力 — moved out of the settings catalog
-        // ------------------------------------------------------------------
         // The seven `app.device.*` rows lived here and were the *only* occurrence
         // of those keys: the enforcement and the real switches both read
         // `DeviceCapabilityStore`'s SharedPreferences
@@ -1136,16 +1186,13 @@ object PiSettingsCatalog {
         // consulted — two screens for one grant, only one connected. The real
         // screen is the single authority now.
 
-        // ------------------------------------------------------------------
-        // 13 运行时与诊断
-        // ------------------------------------------------------------------
         PiSetting(
             key = "app.runtime.piVersion",
             title = "pi 版本",
             description = "当前内置的 pi 版本。运行时尚未解包或读不到时会写明原因。",
             kind = PiRowKind.Text,
             group = G_RUNTIME,
-            section = "版本",
+            section = "运行时状态",
             defaultValue = str("未读取"),
             readOnly = true,
             aliases = listOf("version", "update"),
@@ -1169,7 +1216,7 @@ object PiSettingsCatalog {
             description = "内置运行时里的 Node 版本。运行时尚未解包或读不到时会写明原因。",
             kind = PiRowKind.Text,
             group = G_RUNTIME,
-            section = "运行时",
+            section = "运行时状态",
             defaultValue = str("未读取"),
             readOnly = true,
             aliases = listOf("node", "version"),
@@ -1180,7 +1227,7 @@ object PiSettingsCatalog {
             description = "Linux 运行时与包缓存的磁盘占用。运行时尚未解包或读不到时会写明原因。",
             kind = PiRowKind.Text,
             group = G_RUNTIME,
-            section = "运行时",
+            section = "运行时状态",
             defaultValue = str("未读取"),
             readOnly = true,
             aliases = listOf("storage", "disk"),
@@ -1192,10 +1239,25 @@ object PiSettingsCatalog {
                 "这段时间就是消息在等待的时间。",
             kind = PiRowKind.Text,
             group = G_RUNTIME,
-            section = "运行时",
+            section = "运行时状态",
             defaultValue = str("未读取"),
             readOnly = true,
             aliases = listOf("startup", "engine"),
+        ),
+        PiSetting(
+            key = "app.runtime.wakeLock",
+            title = "唤醒锁状态",
+            // The policy changed with this row's wording: the lock is held while the
+            // engine starts or a turn runs, and released when idle (`PiEngineLifecyclePolicy`),
+            // so "未持有" while the app sits idle is normal — the old text ("最长 6
+            // 小时") described the old always-held lock and would now read as a fault.
+            description = "持有中表示引擎正在启动或正有回合在跑，此时息屏也能继续；空闲时自动释放以省电。",
+            kind = PiRowKind.Text,
+            group = G_RUNTIME,
+            section = "运行时状态",
+            defaultValue = str("未读取"),
+            readOnly = true,
+            aliases = listOf("wakelock"),
         ),
 
         // ------------------------------------------------------------------
@@ -1259,17 +1321,6 @@ object PiSettingsCatalog {
             effective = EffectiveKind.RestartEngine,
             aliases = listOf("context", "agents"),
         ),
-        PiSetting(
-            key = "app.runtime.restartEngine",
-            title = "重启引擎",
-            description = "让上面的进程开关生效。重启会终止正在进行的回合" +
-                "（模型调用、工具调用、正在跑的命令都不会恢复），已写入磁盘的会话不会丢失。",
-            kind = PiRowKind.Action,
-            group = G_RUNTIME,
-            section = "进程",
-            dangerous = true,
-            aliases = listOf("restart", "reload"),
-        ),
         // `app.runtime.cleanNpmCache` was removed rather than wired: pi has no
         // cache-clearing command (nothing in `cli.ts` or `package-manager-cli.ts`
         // touches an npm store), and the app has no console that could call
@@ -1283,25 +1334,21 @@ object PiSettingsCatalog {
             description = "用前台服务与唤醒锁让 Agent 轮次在后台继续。关闭后引擎仍会启动，但不再有前台服务保命，后台被杀时回合会中断。改动在下次启动 App 时生效。",
             kind = PiRowKind.Switch,
             group = G_RUNTIME,
-            section = "后台",
+            section = "进程",
             defaultValue = bool(true),
             effective = EffectiveKind.RestartApp,
             aliases = listOf("keepalive", "wakelock", "background"),
         ),
         PiSetting(
-            key = "app.runtime.wakeLock",
-            title = "唤醒锁状态",
-            // The policy changed with this row's wording: the lock is held while the
-            // engine starts or a turn runs, and released when idle (`PiEngineLifecyclePolicy`),
-            // so "未持有" while the app sits idle is normal — the old text ("最长 6
-            // 小时") described the old always-held lock and would now read as a fault.
-            description = "持有中表示引擎正在启动或正有回合在跑，此时息屏也能继续；空闲时自动释放以省电。",
-            kind = PiRowKind.Text,
+            key = "app.runtime.restartEngine",
+            title = "重启引擎",
+            description = "让上面的进程开关生效。重启会终止正在进行的回合" +
+                "（模型调用、工具调用、正在跑的命令都不会恢复），已写入磁盘的会话不会丢失。",
+            kind = PiRowKind.Action,
             group = G_RUNTIME,
-            section = "后台",
-            defaultValue = str("未读取"),
-            readOnly = true,
-            aliases = listOf("wakelock"),
+            section = "动作",
+            dangerous = true,
+            aliases = listOf("restart", "reload"),
         ),
         // 为线上事故加的入口：界面只显示 "rpc: engine exited with code 1"，而用户没有
         // ADB、看不到 logcat，`PiEngineSession` 捕获的 stderr 又只留在已经死掉的对象里。
@@ -1317,20 +1364,49 @@ object PiSettingsCatalog {
                 "引擎已经退出时同样可用。报告不会进入对话上下文，敏感值已做脱敏。",
             kind = PiRowKind.Action,
             group = G_RUNTIME,
-            section = "诊断",
+            section = "动作",
             aliases = listOf("diagnostics", "report", "log", "stderr", "crash", "日志", "崩溃"),
         ),
+        // Implemented, and each clause of the description is one RPC command:
+        // "中止当前轮次" + "清空队列" are `clear_queue` and `abort`
+        // (`rpc-mode.ts:428`, `:433`, reached through
+        // `PiEngineSession.stopAndDrainQueue` `:480-486`), and "杀掉全部后台 bash
+        // 作业" is `abort_bash` (`rpc-mode.ts:586`), which aborts every running
+        // bash command rather than one (`agent-session.ts:3073-3077`).
+        PiSetting(
+            key = "app.security.emergencyStop",
+            title = "紧急停止",
+            description = "立刻中止当前轮次、停掉正在运行的 bash 命令并清空队列。会话与文件保持原样，不会回滚已写入的改动。",
+            kind = PiRowKind.Action,
+            group = G_RUNTIME,
+            section = "动作",
+            dangerous = true,
+            aliases = listOf("stop", "abort", "kill"),
+        ),
+        // ------------------------------------------------------------------
+        // 12 安全与隐私
+        // ------------------------------------------------------------------
 
-        // ------------------------------------------------------------------
-        // 14 隐私与关于
-        // ------------------------------------------------------------------
+        PiSetting(
+            key = "defaultProjectTrust",
+            title = "项目信任策略",
+            description = "非交互模式下没有已保存的信任决定时的回退行为：询问会忽略项目资源，总是信任会加载并执行它们，从不信任始终忽略。仅全局设置支持。",
+            kind = PiRowKind.Value,
+            group = G_SECURITY,
+            section = "信任与隐私",
+            defaultValue = str("ask"),
+            effective = EffectiveKind.RestartEngine,
+            options = trustOptions,
+            aliases = listOf("trust", "approve"),
+        ),
+
         PiSetting(
             key = "enableInstallTelemetry",
             title = "安装遥测",
             description = "发送匿名的安装/更新上报，并在 OpenRouter、NVIDIA NIM、Cloudflare 请求里带上来源标识。关掉之后两者都停，但不影响版本更新检查。",
             kind = PiRowKind.Switch,
-            group = G_ABOUT,
-            section = "隐私",
+            group = G_SECURITY,
+            section = "信任与隐私",
             effective = EffectiveKind.NewSession,
             defaultValue = bool(true),
             aliases = listOf("telemetry", "privacy"),
@@ -1420,7 +1496,7 @@ object PiSettingsCatalog {
             val level = PiSettingsCatalog.summaryText(store, "defaultThinkingLevel")
             if (configured) "默认 $model · ◐ $level" else "未配置模型，启动时再选"
         },
-        PiSettingsGroup(G_PROMPTS, "提示词", Icons.Filled.Edit) { store ->
+        PiSettingsGroup(G_PROMPTS, "系统提示词", Icons.Filled.Edit) { store ->
             // 摘要只报**长度**，不报开头：这两项的值是几千字的提示词，截出开头几十
             // 个字既要多一行省略号，又正是用户报的那个 bug 的表象（「只进去几十
             // 字」）。长度是这里唯一说得清、也不会被误读的读数。
@@ -1443,7 +1519,7 @@ object PiSettingsCatalog {
             val keep = summaryText(store, "compaction.keepRecentTokens")
             "$enabled · $reserve / $keep"
         },
-        PiSettingsGroup(G_RETRY, "重试与网络", Icons.Filled.Refresh) { store ->
+        PiSettingsGroup(G_RETRY, "重试", Icons.Filled.Refresh) { store ->
             val retries = summaryText(store, "retry.maxRetries")
             "${summaryText(store, "retry.enabled")} · $retries 次"
         },
@@ -1459,14 +1535,15 @@ object PiSettingsCatalog {
             "由本应用固定（与 pi 共用）· 续接：${summaryText(store, "app.sessions.resumeLast")}"
         },
         PiSettingsGroup(G_RESOURCES, "扩展与资源", Icons.Filled.Extension) { store ->
-            // 这两个数都是**设置里写了多少条**，不是 pi 加载了多少个：`extensions` 是
-            // 一个路径数组（`settings.json`），`packages` 是包来源数组，而 pi 实际加载的
-            // 扩展还会来自每个包自己的 `extensions/`、以及工作区 `.pi/extensions`。
-            // 原来的写法「N 个扩展」会被读成「pi 加载了 N 个扩展」——设置里写了 0 条不
-            // 等于 pi 一个扩展都没加载，那是两件事。所以这里只说设置里的条数。
-            val extensionPaths = byKey["extensions"]?.countIn(store) ?: 0
+            // 只报**真实存在**的两个数，一个都不编：
+            //  - 资源包条数来自 store（`packages`），它确实在设置文件里；
+            //  - 已发现的数量来自上一次真实扫描（`PiResourceFactsCache`，写入方是设置栈里那次
+            //    IO 扫描）。**没有扫描过就不提这一句** —— 摘要是首页画的，那时可能还没扫过；
+            //    写一个恒为 0 的"已发现 0 个"就是拿假读数冒充事实，这一批要删掉的正是这种东西。
+            // 手填的"额外路径"四条已从设置页删除，所以这里不再有 `extensions` 计数。
             val packages = byKey["packages"]?.countIn(store) ?: 0
-            "设置里 $extensionPaths 条扩展路径 · $packages 个资源包"
+            val discovered = discoveredSummaryLine(PiResourceFactsCache.lastScan())
+            if (discovered == null) "$packages 个资源包" else "$packages 个资源包 · $discovered"
         },
         PiSettingsGroup(G_APPEARANCE, "外观", Icons.Filled.ColorLens) { store ->
             val themeValue = summaryText(store, "theme")
@@ -1474,16 +1551,21 @@ object PiSettingsCatalog {
         },
         PiSettingsGroup(G_TERMINAL, "终端与 Shell", Icons.Filled.Terminal) { store ->
             val row = byKey["shellPath"]
-            val shell = if (row != null && row.isExplicit(store)) {
-                row.display(row.current(store))
-            } else {
-                "默认 /bin/bash"
-            }
+            // 判据是"值非空"，不是 `isExplicit`：清空一个文本行在修好之后是**删键**
+            // （`PiSettingsStore.remove`），但历史上它写的是 `""`，而 `isExplicit` 只看
+            // "键在不在"，于是摘要会在 pi 仍在用 /bin/bash 的时候显示「未设置」
+            // （`docs/settings-audit-impl.md` §B8）。按值判就与 pi 的 `if (customShellPath)`
+            // 同一条规则。
+            val shellPath = row?.textIn(store).orEmpty()
+            val shell = if (shellPath.isNotBlank()) shellPath else "默认 /bin/bash"
             val size = PiSettingsCatalog.summaryText(store, "app.terminal.fontSize")
             "$shell · 等宽 $size"
         },
-        PiSettingsGroup(G_SECURITY, "安全与信任", Icons.Filled.Security) { store ->
-            "项目信任：${summaryText(store, "defaultProjectTrust")}"
+        // 「安全与隐私」：信任策略（项目资源能不能被加载/执行）与安装遥测是同一种东西 ——
+        // 都是"这个应用/项目能对外做什么"的闸门。原先遥测单独一组（`G_ABOUT` 只有一行却叫
+        // 「隐私与关于」），现在并入这里；摘要同时报两项，否则这一组的另一行在首页看不见。
+        PiSettingsGroup(G_SECURITY, "安全与隐私", Icons.Filled.Security) { store ->
+            "信任：${summaryText(store, "defaultProjectTrust")} · 遥测：${summaryText(store, "enableInstallTelemetry")}"
         },
         PiSettingsGroup(G_RUNTIME, "运行时与诊断", Icons.Filled.Memory) { store ->
             // Deliberately not the pi version. `app.runtime.piVersion` is a read-only
@@ -1493,9 +1575,6 @@ object PiSettingsCatalog {
             // the store really holds.
             val keepAlive = summaryText(store, "app.runtime.keepAlive")
             "保活：$keepAlive"
-        },
-        PiSettingsGroup(G_ABOUT, "隐私与关于", Icons.Filled.Info) { store ->
-            "遥测：${summaryText(store, "enableInstallTelemetry")}"
         },
     )
 

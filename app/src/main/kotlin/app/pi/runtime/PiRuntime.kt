@@ -156,9 +156,10 @@ class PiPaths(private val filesDir: File, private val nativeLibDir: File) {
 /**
  * Builds proot's command line and environment.
  *
- * The argument set is not invented: it is the recipe a shipping Android app in
- * this exact environment uses, read back from a live process
- * (docs/pi-android-app-design.md §2.3). Each flag earns its place:
+ * The argument set is **our own pinned Termux proot recipe**, documented in
+ * `docs/pi-android-app-design.md` §2.3. It is not "what a shipping app does
+ * today": it was first read back from a live process, and that process is no
+ * longer the definition — this file is. Each flag earns its place:
  *
  *  - `--link2symlink`    the rootfs is on a filesystem where the hardlinks a
  *                        Linux userland normally relies on cannot be created,
@@ -191,7 +192,7 @@ object ProotCommand {
     }
 
     /**
-     * @param guestCommand passed to `bash -lc` **inside** the rootfs, so it may
+     * @param guestCommand passed to `bash -c` **inside** the rootfs, so it may
      *        use guest paths (`/opt/pi/node`, `/workspace`, …).
      */
     fun build(
@@ -234,7 +235,13 @@ object ProotCommand {
     }
 
     /**
-     * proot's own environment. These four variables are load-bearing:
+     * The guest process's environment. This is the **only** place a guest env is
+     * built: every launch path goes through it, which is what keeps the engine, the
+     * terminal, the package commands and the self-check from handing the guest four
+     * different environments (`PtyLauncher`'s KDoc records what happened the one
+     * time a path filtered part of this map out).
+     *
+     * The load-bearing proot-specific entries are:
      *
      *  - `PROOT_LOADER` — without it proot writes its loader into a temp dir it
      *    can no longer execute from (Android 10+ W^X). Pointing at the
@@ -248,6 +255,18 @@ object ProotCommand {
         put("PROOT_TMP_DIR", paths.tmp.path)
         put("PROOT_L2S_DIR", paths.l2s.path)
         put("LD_LIBRARY_PATH", "${paths.lib.path}:${paths.nativeLib.path}")
+        // The guest runs Node, and Node's native-addon build cache publishes a cached
+        // artefact with `link()` + `unlink()`. Under `--link2symlink` — which this
+        // recipe must always pass, because without it every guest `link()` fails with
+        // EACCES on this filesystem — that first publication can dangle. The failure is
+        // silent on the Node side, so the cache is turned off here instead of being
+        // left for a device to discover; the cost is one rebuild per native extension.
+        // It belongs in this map and not in the guest's `/etc/profile.d`, because a
+        // non-interactive `bash -c` never sources a profile script.
+        //
+        // Source: docs/proroot-research.md §10.3, recorded from DSH App's AGENTS.md
+        // ("其默认 link+unlink 缓存会在 --link2symlink 下首次悬空").
+        put("NARB_DISABLE_NATIVE_CACHE", "1")
         put("HOME", "/root")
         put("TMPDIR", "/tmp")
         put("TERM", "xterm-256color")
@@ -282,3 +301,43 @@ object ProotCommand {
      */
     const val GUEST_CA_BUNDLE = "/etc/ssl/certs/ca-certificates.crt"
 }
+
+/**
+ * Replace a small text file's contents atomically, for the runtime's stamp files.
+ *
+ * The two files this is used for ([PiPaths.stampFile], [PiPaths.selfCheckStamp]) are
+ * both read back with "does the text equal the revision?" and both are written with
+ * `writeText`, which truncates first. A process killed between the truncate and the
+ * write therefore leaves a **short** stamp, and a short stamp is read as "this
+ * revision is not unpacked": the next boot re-unpacks the whole runtime (tens of
+ * seconds, and on a revision change a destructive `wipe()`), and
+ * `PiEngineHost.restart` refuses to restart at all. The same pattern is already the
+ * house rule for `settings.json` and `auth.json` (`PiConfigFiles.write`,
+ * `PiSettingsFileStore.writeDocument`); this is the runtime's copy of it, kept here
+ * because both writers live in this package and a third spelling of it is exactly
+ * what would drift.
+ *
+ * `Files.move` with `REPLACE_EXISTING` is an atomic rename within the same
+ * directory, which is the same volume by construction (the temp file is created
+ * beside the target). No `fsync`: these stamps describe work that has already been
+ * flushed to the same filesystem, and the failure this prevents is a *truncated*
+ * stamp, not a lost one.
+ *
+ * @return true when the target now holds [text].
+ */
+internal fun writeStampAtomically(target: File, text: String): Boolean = runCatching {
+    target.parentFile?.mkdirs()
+    // Suffixed with the wall clock rather than a pid: `android.os.Process` would make
+    // this file Android-dependent (the bare-JVM checks compile it) and
+    // `java.lang.ProcessHandle` is not on every API level this app supports. Two
+    // writers of the same target would have to start within a nanosecond to collide.
+    val temp = File(target.parentFile, "${target.name}.tmp-${System.nanoTime()}")
+    temp.writeText(text)
+    java.nio.file.Files.move(
+        temp.toPath(),
+        target.toPath(),
+        java.nio.file.StandardCopyOption.REPLACE_EXISTING,
+    )
+    temp.delete()
+    true
+}.getOrDefault(false)

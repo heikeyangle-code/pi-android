@@ -14,6 +14,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
@@ -48,7 +49,12 @@ fun SlashPalette(
     onPick: (PiSlashCommand) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val matches = filterPalette(commands, query)
+    // Remembered on the two inputs the ranking reads. The filter lowercases every
+    // command's name twice (once per pass) and allocates two lists per call, and this
+    // composable is on screen exactly while the user types a `/` name — which is also
+    // when the chat screen below it recomposes once per streamed token. Same answer,
+    // computed when the query or the command list moves rather than on every frame.
+    val matches = remember(commands, query) { filterPalette(commands, query) }
     Surface(
         modifier = modifier.fillMaxWidth(),
         color = MaterialTheme.colorScheme.surfaceContainer,

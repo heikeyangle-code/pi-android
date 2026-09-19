@@ -188,22 +188,27 @@ PI_ENGINE_NOTICES = [
 ]
 
 
-def engine_version() -> str:
-    """The pi version the engine payload is built from.
+def pinned_constant(name: str) -> str:
+    """Read `const <name> = "...";` out of `tools/fetch-runtime.mjs`.
 
-    Read out of `tools/fetch-runtime.mjs` rather than repeated here, so a version
-    bump has one place to change and this script cannot silently pin a licence from
-    a different release than the engine it describes.
+    Every version this script talks about is read from there rather than repeated here,
+    so a bump has one place to change and this script cannot silently pin a licence from
+    a different release than the artifact it describes.
     """
     fetch_script = os.path.join(ROOT, "tools", "fetch-runtime.mjs")
     try:
         text = open(fetch_script, encoding="utf-8").read()
     except OSError as error:
         sys.exit(f"cannot read {fetch_script}: {error}")
-    m = re.search(r'^const PI_VERSION = "([^"]+)";', text, re.M)
+    m = re.search(rf'^const {name} = "([^"]+)";', text, re.M)
     if not m:
-        sys.exit("PI_VERSION not found in tools/fetch-runtime.mjs; the engine version must be pinned somewhere")
+        sys.exit(f"{name} not found in tools/fetch-runtime.mjs; the pin must live in exactly one place")
     return m.group(1)
+
+
+def engine_version() -> str:
+    """The pi version the engine payload is built from."""
+    return pinned_constant("PI_VERSION")
 
 
 def sha256(path: str) -> str:
@@ -431,6 +436,17 @@ def components_text(rows: list[tuple[str, str, str, str, str]]) -> str:
 MANIFEST_HEADER = "# 文件名\t标题\t分区\n"
 
 
+def set_output(path: str) -> None:
+    """Point `OUT` at the directory `build()` should fill.
+
+    A module-level global because every write in `build()` addresses its destination as
+    `os.path.join(OUT, name)`, and the install step below needs to redirect all of them
+    at once without threading a second argument through the whole function.
+    """
+    global OUT
+    OUT = path
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -445,11 +461,30 @@ def main() -> None:
         sys.exit("runtime.lock.json not found")
     lock = json.load(open(LOCK))
 
+    # Assemble into scratch space and install only after every check has passed.
+    #
+    # `build()` writes the directory from scratch, so building in place means a hard
+    # stop part-way through — a pin mismatch, a missing artifact, an unpinned download —
+    # leaves the committed licence assets deleted and half-rebuilt. Those files are
+    # reproducible, but a failure that also destroys the previous good output is a
+    # failure that hides what it was checking. Nothing is touched here until `build()`
+    # has returned.
+    final = OUT
     stage = tempfile.mkdtemp(prefix="pi-licences-")
+    working = os.path.join(stage, "out")
+    set_output(working)
     try:
         build(lock, args.fetch_missing, stage)
+        # Only reachable once `build()` returned, i.e. once every pin, artifact and
+        # coverage check in it has passed.
+        set_output(final)
+        shutil.rmtree(final, ignore_errors=True)
+        shutil.copytree(working, final)
     finally:
+        set_output(final)
         shutil.rmtree(stage, ignore_errors=True)
+
+    print(f"  installed into {os.path.relpath(final, ROOT)}")
 
 
 def build(lock: dict, fetch_missing: bool, stage: str) -> None:
@@ -640,6 +675,37 @@ def build(lock: dict, fetch_missing: bool, stage: str) -> None:
         shutil.copyfile(cached, os.path.join(OUT, out_name))
         manifest.append((out_name, out_name[:-4], "许可证全文"))
 
+    # ------------------------------------------------------------- pinned texts
+    # Two licence texts come from a URL rather than from something the app ships: the
+    # bundled font's OFL and pi's LICENSE. Each has a pinned sha256 beside its URL, and
+    # each is cached under `build/downloads/` so a build after the first needs no
+    # network.
+    #
+    # The fetch path checks the pin against what came back. That alone leaves the one
+    # hole that matters: a *cached* file that was altered after it was fetched — or
+    # written by an older pin — would be copied into the APK unverified, and the licence
+    # shipped would not be the licence the pin names. So the bytes are re-checked on
+    # every build, at the moment they are installed, and a mismatch is a hard stop. It
+    # costs one sha256 over a few KiB.
+    def install_pinned_text(cache: str, out_name: str, title: str, pinned: str, missing_note: str) -> None:
+        if not os.path.isfile(cache):
+            notes.append(missing_note)
+            return
+        digest = sha256(cache)
+        if digest != pinned:
+            sys.exit(
+                f"{out_name}: the cached licence text does not match its pin\n"
+                f"  cache   {cache}\n"
+                f"  pinned  {pinned}\n"
+                f"  actual  {digest}\n"
+                f"  Refusing to ship a licence text that is not the one the pin names. Delete the\n"
+                f"  cached file and re-run with --fetch-missing to fetch it again; if the bytes that\n"
+                f"  come back still differ from the pin, the upstream text changed and the pin, the\n"
+                f"  notice and the component it describes all have to be reviewed together."
+            )
+        shutil.copyfile(cache, os.path.join(OUT, out_name))
+        manifest.append((out_name, title, "许可证全文"))
+
     # ------------------------------------------------------------- font licences
     # The bundled typeface's obligation. Same shape as the npm and pi texts above:
     # pinned URL + pinned sha256, cached, fetched only under --fetch-missing, and a
@@ -668,13 +734,13 @@ def build(lock: dict, fetch_missing: bool, stage: str) -> None:
                 )
             with open(font_licence, "wb") as fh:
                 fh.write(body)
-    if not os.path.isfile(font_licence):
-        notes.append(f"{JETBRAINS_MONO_LICENCE_OUT} not cached; re-run with --fetch-missing")
-    else:
-        shutil.copyfile(font_licence, os.path.join(OUT, JETBRAINS_MONO_LICENCE_OUT))
-        manifest.append(
-            (JETBRAINS_MONO_LICENCE_OUT, JETBRAINS_MONO_LICENCE_TITLE, "许可证全文")
-        )
+    install_pinned_text(
+        font_licence,
+        JETBRAINS_MONO_LICENCE_OUT,
+        JETBRAINS_MONO_LICENCE_TITLE,
+        JETBRAINS_MONO_LICENCE_SHA256,
+        f"{JETBRAINS_MONO_LICENCE_OUT} not cached; re-run with --fetch-missing",
+    )
 
     # ------------------------------------- pi's own licence + the packages that lack one
     # pi is the one component whose licence text we must supply ourselves, because
@@ -706,11 +772,13 @@ def build(lock: dict, fetch_missing: bool, stage: str) -> None:
                 )
             with open(pi_licence, "wb") as fh:
                 fh.write(body)
-    if not os.path.isfile(pi_licence):
-        notes.append("pi licence text not cached; re-run with --fetch-missing")
-    else:
-        shutil.copyfile(pi_licence, os.path.join(OUT, "pi-license.txt"))
-        manifest.append(("pi-license.txt", f"pi 引擎 {version}（MIT）", "许可证全文"))
+    install_pinned_text(
+        pi_licence,
+        "pi-license.txt",
+        f"pi 引擎 {version}（MIT）",
+        PI_LICENCE_SHA256,
+        "pi licence text not cached; re-run with --fetch-missing",
+    )
 
     gaps = [
         "未随包提供许可文本的 pi 依赖组件",
@@ -776,7 +844,9 @@ def build(lock: dict, fetch_missing: bool, stage: str) -> None:
     total = sum(
         os.path.getsize(os.path.join(OUT, f)) for f in os.listdir(OUT) if os.path.isfile(os.path.join(OUT, f))
     )
-    print(f"wrote {len(manifest)} entries + manifest to {os.path.relpath(OUT, ROOT)}")
+    # The destination is printed by `main()` after it installs the directory: `OUT`
+    # here is the scratch directory this ran in, not where the files end up.
+    print(f"wrote {len(manifest)} entries + manifest")
     print(f"  {len(os.listdir(OUT))} files, {total / 1024:.0f} KiB")
     print(f"  {sum(1 for e in manifest if e[2] == '软件包版权与许可')} package copyright files, one per package")
     for note in notes:

@@ -32,11 +32,50 @@ object DeviceAppActions {
 
     private val packageNamePattern = Regex("^[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z0-9_]+)+$")
 
+    /**
+     * The last successful enumeration, and when it was taken.
+     *
+     * `getInstalledApplications(GET_META_DATA)` is a full PackageManager walk —
+     * binder round trips plus a record parse per installed package, 150–500 ms on a
+     * phone with a few hundred apps — and the model reaches `/app/apps` several times
+     * in one task ("find the app", "check it is there", "list again after launching").
+     * A short TTL turns those into one walk.
+     *
+     * ## Why a TTL and not a correctness-critical cache
+     *
+     * An app installed or uninstalled during the window is reported one query late.
+     * That is acceptable for a *listing* (the result is advisory: the model picks a
+     * package name and then `/app/apps/launch` acts on it, and a launch of a package
+     * that is gone fails loudly on its own). It would **not** be acceptable for
+     * [stop]'s safety check, so that path still asks the manager directly for the
+     * single package it is about to kill.
+     *
+     * Only a **successful** walk is cached: caching the empty list a failed call
+     * produces would turn a transient PackageManager error into 30 s of "no apps".
+     */
+    private class InstalledApps(val at: Long, val apps: List<ApplicationInfo>)
+
+    /** How long one enumeration serves `/app/apps` queries. See [installedApplications]. */
+    private const val INSTALLED_CACHE_TTL_MS = 30_000L
+
+    @Volatile
+    private var installedCache: InstalledApps? = null
+
+    private fun installedApplications(manager: PackageManager): List<ApplicationInfo> {
+        val now = android.os.SystemClock.elapsedRealtime()
+        installedCache?.let { cached ->
+            if (now - cached.at <= INSTALLED_CACHE_TTL_MS) return cached.apps
+        }
+        val fresh = runCatching {
+            manager.getInstalledApplications(PackageManager.GET_META_DATA)
+        }.getOrNull() ?: return emptyList()
+        installedCache = InstalledApps(now, fresh)
+        return fresh
+    }
+
     fun list(context: Context, query: String?, includeSystem: Boolean, limit: Int): JSONObject {
         val manager = context.packageManager
-        val all = runCatching {
-            manager.getInstalledApplications(PackageManager.GET_META_DATA)
-        }.getOrDefault(emptyList())
+        val all = installedApplications(manager)
 
         val needle = query?.trim()?.lowercase()
         val array = JSONArray()

@@ -108,6 +108,11 @@ fun main() {
         true,
     )
     check("PROOT_TMP_DIR is the app's own tmp", env["PROOT_TMP_DIR"], p.tmp.path)
+    // The guest runs Node, and Node's native-addon cache publishes with link()+unlink(),
+    // which dangles the first time under `--link2symlink` — the flag this recipe must
+    // always pass. Its absence is the same "silent on the Node side" shape as the
+    // dangling tool link above, which is why it is pinned rather than left to a device.
+    check("the guest's native-addon cache is disabled", env["NARB_DISABLE_NATIVE_CACHE"], "1")
     val argv = ProotCommand.build(p, "true", "/root", null)
     check(
         "the store is bound at its own absolute path",

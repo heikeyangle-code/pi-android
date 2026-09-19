@@ -46,6 +46,25 @@ data class EngineDiagnostics(
     val stderr: String?,
     /** `PiEngineSession.lastServingMs` — the startup measurement, in ms. */
     val startupMs: Long?,
+    /**
+     * Events the engine's reader thread could not hand to the app's collector
+     * (`PiEngineSession.droppedEvents`).
+     *
+     * A number rather than a flag because the failure it describes is a *backlog*:
+     * the flow's buffer filled because the main-thread collector was held up, and
+     * the events after that are lost until it catches up. Zero is the expected
+     * value; anything else means the transcript may be missing deltas.
+     */
+    val droppedEvents: Long = 0L,
+    /**
+     * Events whose fold into the transcript threw (`PiEngineSession.reducerFailures`).
+     *
+     * Separate from [droppedEvents] on purpose: a drop is a delivery problem, a throw
+     * is a bug in the projection, and the two need different words.
+     */
+    val reducerFailures: Long = 0L,
+    /** The newest of either, as one sentence, or null when there has been none. */
+    val lastRecordProblem: String? = null,
 )
 
 /**
@@ -144,6 +163,20 @@ object DiagnosticsReport {
                     },
                 )
                 appendLine("最近一次启动耗时：${formatDuration(engine.startupMs)}")
+                // The two reader-thread losses, printed even when they are zero: a
+                // report that only shows them on failure cannot tell "never happened"
+                // apart from "this build does not count them".
+                appendLine(
+                    if (engine.droppedEvents == 0L && engine.reducerFailures == 0L) {
+                        "事件投递：无丢失（事件流未溢出，转录投影未抛异常）"
+                    } else {
+                        "事件投递：丢失 ${engine.droppedEvents} 个事件，" +
+                            "转录投影失败 ${engine.reducerFailures} 次"
+                    },
+                )
+                engine.lastRecordProblem?.takeIf { it.isNotBlank() }?.let {
+                    appendLine("最近一条：$it")
+                }
                 appendLine()
                 appendLine("已捕获的 stderr（引擎侧上限 64 KB，这里取尾部最多 $STDERR_TAIL_CHARS 字符）：")
                 val stderr = engine.stderr?.trim()

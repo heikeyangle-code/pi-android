@@ -29,13 +29,22 @@ import app.pi.rpc.JsonlFramer
  *     `:146-150`) and try again, down to 1×1.
  *
  * The candidate order at one size is pi's: PNG first, then JPEG at
- * [PI_JPEG_QUALITIES] (`:112-114`, `:122`). **One deliberate difference:** pi always
- * tries PNG, even for an opaque picture, while [encodings] includes PNG only when the
- * source can carry alpha. On Android a PNG encode of a 2000×2000 photo is both slow and
- * larger than the JPEG pi would fall through to, so making the try conditional is what
- * keeps one picked photo one encode; the case it changes is an *opaque* image pi would
- * have kept as a PNG, which this app sends as a JPEG instead. Fast path 1 still keeps
- * such a file byte-for-byte, so an opaque PNG already within both limits is untouched.
+ * [PI_JPEG_QUALITIES] (`:112-114`, `:122`). **One deliberate difference**, and only one:
+ * pi pushes that PNG candidate for **every** source that reaches the resize loop,
+ * including an opaque camera JPEG, while [pngFirst] asks for it only when the source MIME
+ * is `image/png` **or** the decoded bitmap reports alpha.
+ *
+ * The reason is Android's encoder: a PNG encode of a 2000×2000 photo is both slow and
+ * larger than the JPEG the loop would fall through to, so paying it unconditionally costs
+ * one full-size encode per picked photo to almost never win. The residual, user-visible
+ * difference is therefore exactly this: an **opaque, non-PNG source that needs a
+ * re-encode** — a camera JPEG, a HEIC or BMP or WebP that pi would have converted to PNG
+ * first (`image-process.ts:49-65`) — is offered the JPEG ladder straight away, so the app
+ * may send a JPEG where pi would have sent a PNG. For a photograph that is a difference
+ * in name only: it is the one class that could not have benefited, because the PNG of it
+ * is larger. Fast path 1 is untouched by this: a PNG/JPEG/GIF/WebP already within both
+ * limits is still forwarded **byte for byte**, so an opaque PNG under the limits is still
+ * sent as the original PNG.
  *
  * `maxBytes` is 4.5 MB of **base64 characters** — `4.5 * 1024 * 1024`, compared against
  * the encoded string's length, not the picture's byte count (`:22`, `:129`) — and the
@@ -207,13 +216,29 @@ internal object AttachmentBudget {
         if (axis <= 1) 1 else maxOf(1, axis * SHRINK_NUMERATOR / SHRINK_DENOMINATOR)
 
     /**
-     * The candidate encodings at one size, in pi's order — PNG first when the source can
-     * carry alpha, then JPEG at every quality step. See the class KDoc for the one
-     * deliberate difference from pi (PNG only for a picture that has alpha).
+     * Whether this source gets pi's PNG candidate before the JPEG ladder.
+     *
+     * `true` for a PNG source (any variant — `image/png` is what pi's own conversion
+     * emits, `image-process.ts:56-60`) and for anything whose decoded bitmap carries
+     * alpha, which is the only case where a JPEG re-encode would lose information. `false`
+     * for every other source, including a camera JPEG: see the class KDoc for why that is
+     * the app's one deliberate difference from pi and what it costs the user.
+     *
+     * The MIME is reduced the way pi reduces it (`baseMimeType`, `image-process.ts:29-31`):
+     * everything from the first `;`, trimmed and lower-cased, so `image/png; charset=binary`
+     * qualifies.
      */
-    fun encodings(hasAlpha: Boolean): List<Encoding> {
+    fun pngFirst(sourceMime: String, hasAlpha: Boolean): Boolean =
+        hasAlpha || baseMimeType(sourceMime) == "image/png"
+
+    /**
+     * The candidate encodings at one size, in pi's order — PNG first when [pngFirst], then
+     * JPEG at every quality step. See the class KDoc for the one deliberate difference
+     * from pi (PNG for a PNG source or an alpha-carrying bitmap, not for every source).
+     */
+    fun encodings(sourceMime: String, hasAlpha: Boolean): List<Encoding> {
         val out = ArrayList<Encoding>(PI_JPEG_QUALITIES.size + 1)
-        if (hasAlpha) out += Encoding.Png
+        if (pngFirst(sourceMime, hasAlpha)) out += Encoding.Png
         for (quality in PI_JPEG_QUALITIES) out += Encoding.Jpeg(quality)
         return out
     }
@@ -229,10 +254,10 @@ internal object AttachmentBudget {
      * A source already within both limits never reaches this: `ChatScreen` keeps pi's
      * fast path and sends the original bytes.
      */
-    fun attemptPlan(hasAlpha: Boolean, width: Int, height: Int): Sequence<Attempt> = sequence {
+    fun attemptPlan(sourceMime: String, hasAlpha: Boolean, width: Int, height: Int): Sequence<Attempt> = sequence {
         var target = initialTarget(width, height)
         while (true) {
-            for (encoding in encodings(hasAlpha)) {
+            for (encoding in encodings(sourceMime, hasAlpha)) {
                 yield(Attempt(target.width, target.height, encoding))
             }
             if (target.width == 1 && target.height == 1) break
@@ -255,10 +280,13 @@ internal object AttachmentBudget {
      * from the first `;`, trimmed and lower-cased, so `image/jpeg; charset=binary`
      * qualifies. `lowercase()` is locale-independent, unlike JS's `toLowerCase()`.
      */
-    fun piInlineSupported(mime: String): Boolean = when (mime.substringBefore(';').trim().lowercase()) {
+    fun piInlineSupported(mime: String): Boolean = when (baseMimeType(mime)) {
         "image/png", "image/jpeg", "image/jpg", "image/gif", "image/webp" -> true
         else -> false
     }
+
+    /** pi's `baseMimeType`: drop the parameters, trim, lower-case (`image-process.ts:29-31`). */
+    private fun baseMimeType(mime: String): String = mime.substringBefore(';').trim().lowercase()
 
     /** Base64 characters the staged images occupy, i.e. what the record has to carry. */
     fun usedChars(base64Lengths: List<Int>): Int = base64Lengths.sum()

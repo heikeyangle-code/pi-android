@@ -196,3 +196,61 @@ internal fun PiSetting.countIn(store: PiSettingsStore): Int {
 }
 
 internal fun PiSetting.isExplicit(store: PiSettingsStore): Boolean = store.read(key) != null
+
+/**
+ * 这一行即将写入的值，pi 能不能接受。
+ *
+ * 判定本身在 `PiSettingsValidation.kt`（纯函数、不依赖 `PiSetting`、不 import Compose），因为
+ * bare-JVM 的 `settings-validation` harness 要把它和 `main` 一起编译——本文件里的这些
+ * `PiSetting` 扩展做不到这一点。这里只负责把行的 `key` 接上去。
+ *
+ * 编辑器接线后必须按结果分档处置：`Rejected` **禁止保存**并在 sheet 内联报错
+ * （`httpIdleTimeoutMs: null` 会让 pi 起不来，见 `docs/settings-audit-impl.md` §B1）；
+ * `Suspicious` 提示但允许保存（pi 自己就允许）。
+ */
+internal fun PiSetting.verdictForWrite(value: JsonElement): PiValueVerdict =
+    piValueVerdict(key, value)
+
+/**
+ * 对象型列表编辑器（`compaction.modelOverrides` / `thinkingBudgets` / `modelThinkingLevels`）
+ * 里**一行**的判定，消息指到具体是哪一行。
+ */
+internal fun PiSetting.verdictForLine(name: String, value: JsonElement): PiValueVerdict =
+    piObjectLineVerdict(key, name, value)
+
+/**
+ * 这个列表行当前的行文本能不能保存；返回要显示的问题句，能保存则返回 null。
+ *
+ * 两个来源的问题，都是"保存下去就坏"：
+ *
+ *  1. **pi 会 `throw` 的值** —— 交给 `PiSettingsValidation`（纯函数、有 bare-JVM harness）。
+ *     例：`compaction.modelOverrides` 的 `x = abc` → pi 在每回合的压缩判定里抛
+ *     （`core/settings-manager.ts:854-880` → `core/agent-session.ts:540`）。
+ *  2. **我们自己会静默丢掉的行** —— 没有 `=` 的行、`=` 前为空的行。`elementFromEntries`
+ *     现在把它们 `mapNotNull` 掉，用户敲的字就这么没了。这不是 pi 的规则，是我们自己的
+ *     解析器的数据丢失，所以同样拒绝保存。
+ *
+ * `Suspicious` **不拦**：pi 接受它（数组/对象里多一个它不读的键、`thinkingBudgets` 里一个
+ * 它只透传给厂商的值），把它做成硬错误就是发明一条 pi 没有的规范。
+ */
+internal fun PiSetting.validateEntries(entries: List<String>): String? {
+    if (container != PiValueContainer.Object) return null
+    entries.forEachIndexed { index, line ->
+        val text = line.trim()
+        if (text.isEmpty()) return@forEachIndexed
+        val separator = text.indexOf('=')
+        if (separator <= 0) {
+            return "第 ${index + 1} 行没有 `=`，保存下去它会被丢掉。写成 `名字 = 值`。"
+        }
+        val name = text.substring(0, separator).trim()
+        if (name.isEmpty()) {
+            return "第 ${index + 1} 行 `=` 前面没有名字，保存下去它会被丢掉。"
+        }
+        val value = valueElementOf(text.substring(separator + 1).trim())
+        when (val verdict = verdictForLine(name, value)) {
+            is PiValueVerdict.Rejected -> return verdict.message
+            else -> Unit
+        }
+    }
+    return null
+}

@@ -234,6 +234,13 @@ private fun ImageCell(
         // bytes at the same size. The keys come from the box stated above, never from the
         // decoded bitmap below, so an image-sized box cannot re-key its own decode; the
         // decode also waits on the shared gate, so a fling cannot start a dozen of them.
+        //
+        // The decode also goes through [PiImageCache], because `produceState` is state of a
+        // *composition*: without the cache, a row the list disposes and later re-creates —
+        // the ordinary result of scrolling past a picture and back — decoded the same bytes
+        // again. A hit neither waits on the gate nor decodes; a failure is not cached, so it
+        // is re-tried exactly as before, and the cell's `Pending`/`Ready` geometry is
+        // unchanged (the cache only fills the value in sooner).
         val state by produceState<CellImage>(
             CellImage.Pending,
             image.base64,
@@ -242,8 +249,10 @@ private fun ImageCell(
         ) {
             value = CellImage.Ready(
                 withContext(Dispatchers.IO) {
-                    piImageDecodeGate.withPermit {
-                        decodePiImage(image.base64, sample.width, sample.height)
+                    PiImageCache.readThrough(image.base64, sample.width, sample.height) {
+                        piImageDecodeGate.withPermit {
+                            decodePiImage(image.base64, sample.width, sample.height)
+                        }
                     }
                 },
             )

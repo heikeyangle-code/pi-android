@@ -66,6 +66,21 @@ object EngineExitCause {
             exitCode == 1 ->
                 "引擎以退出码 1 退出，但这次没有向 stderr 写下原因。这类无输出的退出最常见的是" +
                     "Linux 兼容层启动失败，或引擎被系统杀死。"
+            // ---- 126 / 127: the process never ran (2026-09-19) -----------------------
+            // Both are POSIX shell codes for "found but cannot be executed" and "command
+            // not found". The literals are used rather than a constant from the runtime
+            // package on purpose: this object is compiled alone by the
+            // `engine-exit-cause` harness, which must not depend on that package (see the
+            // class KDoc).
+            exitCode == 126 ->
+                "引擎以退出码 126 退出：要执行的命令存在，但**没法执行它**（exec 失败）——" +
+                    "这一层失败发生在 Node 起来之前，所以没有任何 pi 的输出。" +
+                    "最常见的原因是一个二进制没有执行权限，或 Linux 兼容层的装载器没能把它装起来。" +
+                    "哪个二进制、退出码和原话都在「设置 → 诊断报告」里。"
+            exitCode == 127 ->
+                "引擎以退出码 127 退出：要执行的命令**找不到**。" +
+                    "运行时里的 Node 可能没有装好或被移走了；" +
+                    "「设置 → 诊断报告」里有路径清单。"
             else -> "引擎以退出码 $exitCode 退出。"
         }
     }
@@ -121,6 +136,20 @@ object EngineExitCause {
                 "引擎内存不足被系统终止。请关掉其它 App、少开大会话后重试。"
             t.contains("proot error") ->
                 "Linux 兼容层启动失败，问题不在引擎本身。请把下面这一行原文发回。"
+            // ---- the runtime's and the shell's own words (2026-09-19) ----------------
+            // The device's failure was reported as `引擎以退出码 126 退出。` and nothing else,
+            // while the process had in fact written one of the lines below to stderr: the
+            // `bash` that ran the guest command names the file it could not execute. Keeping
+            // only pi-shaped patterns threw that away and left the one failure nobody could
+            // act on. These rules are ordered after pi's own so a real pi message always wins,
+            // and each quotes the line verbatim through `evidence()`.
+            t.contains("cannot execute binary file") || t.contains("Exec format error") ->
+                "要执行的二进制存在，但系统拒绝执行它（文件格式或解释器不对）。" +
+                    "下面这一行是当时的原话。"
+            t.contains("bash:") && t.contains("Permission denied") ->
+                "有一个要执行的二进制没有执行权限，或被执行策略拒绝。下面这一行是当时的原话。"
+            t.contains("bash:") && t.contains("No such file or directory") ->
+                "要执行的二进制或它的解释器不在了。下面这一行是当时的原话。"
             else -> null
         }
     }

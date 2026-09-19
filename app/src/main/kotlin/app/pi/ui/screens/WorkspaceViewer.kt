@@ -159,6 +159,9 @@ internal fun WorkspaceViewer(
     var dirty by remember(target.relativePath) { mutableStateOf(false) }
     var saving by remember(target.relativePath) { mutableStateOf(false) }
     var saveError by remember(target.relativePath) { mutableStateOf<WorkspaceOpen.Failed?>(null) }
+    // 打开（或上次保存后重读）时的 `(size, mtime)`：`.pi/` 里的文件保存前会比一次，发现被
+    // pi 或别处改过就拒绝覆盖。null = 还没读到过内容，那时不做变更检测。
+    var openedStamp by remember(target.relativePath) { mutableStateOf<String?>(null) }
     var askUnsaved by remember(target.relativePath) { mutableStateOf(false) }
     var htmlReload by remember(target.relativePath) { mutableIntStateOf(0) }
 
@@ -169,7 +172,14 @@ internal fun WorkspaceViewer(
     LaunchedEffect(target.file.absolutePath, reloadTick, isHtml) {
         if (isHtml) return@LaunchedEffect
         opened = null
-        opened = withContext(Dispatchers.IO) { WorkspaceFiles.open(target.file, target.kind) }
+        // 读内容与记指纹在同一跳 IO 里：指纹必须是**这次读到的**那一版，晚一步记就等于把
+        // 两次读之间的改动算成"我看到的"。保存成功后 `reloadTick` 会让这个 effect 再跑一次，
+        // 指纹跟着刷新，所以连续编辑两次不会被自己的上一次保存拦住。
+        val loaded = withContext(Dispatchers.IO) {
+            WorkspaceFiles.open(target.file, target.kind) to WorkspaceFiles.stampOf(target.file)
+        }
+        opened = loaded.first
+        openedStamp = loaded.second
     }
 
     // 「编辑」可以直接从行菜单进来，那时文本还没读完：读完就把草稿铺上。
@@ -193,7 +203,13 @@ internal fun WorkspaceViewer(
         saving = true
         saveError = null
         scope.launch {
-            val result = withContext(Dispatchers.IO) { WorkspaceFiles.writeText(target.file, draft) }
+            // `save`, not `writeText`: a save to the workspace's own `.pi/**` is a write to a
+            // file pi reads, and it has to go through pi's lock + atomic replace (and its
+            // content check) rather than a whole-file overwrite. The rule and the check live in
+            // `WorkspacePiWrite`; the write itself is still `PiConfigFiles`'s one implementation.
+            val result = withContext(Dispatchers.IO) {
+                WorkspaceFiles.save(target.file, target.relativePath, draft, openedStamp)
+            }
             saving = false
             result.fold(
                 onSuccess = {

@@ -36,6 +36,19 @@ enum class PiPreSpawnChannel {
 
     /** Either the CLI flag or an equivalent environment variable. */
     CliFlagOrEnv,
+
+    /**
+     * Flags whose **names belong to an extension**, not to the app: the row holds
+     * text the user writes, parsed with pi's own rules for an unrecognised `--flag`
+     * ([ExtensionFlagArgs]) before it becomes argv.
+     *
+     * `flag`/`envVar` are null for this channel and that is the point — the app
+     * cannot know which names exist (pi builds that set from the extensions it
+     * loaded, `core/agent-session-services.ts:13-19`), so there is no spelling to
+     * write down. The `pre-spawn` harness asserts this knob emits the flags of its
+     * fixture instead of looking for one fixed `--flag`.
+     */
+    ExtensionFlagsPassThrough,
 }
 
 /**
@@ -125,6 +138,19 @@ val APP_EXPOSED_PRE_SPAWN: List<PiPreSpawnKnob> = listOf(
         envVar = null,
         channel = PiPreSpawnChannel.CliFlag,
         piReader = "cli/args.ts:194 (parse, alias -nc); main.ts:771; core/resource-loader.ts:516",
+    ),
+    PiPreSpawnKnob(
+        appKey = "app.extensions.args",
+        // No spelling: the names are the extensions'. See the channel's KDoc.
+        flag = null,
+        envVar = null,
+        channel = PiPreSpawnChannel.ExtensionFlagsPassThrough,
+        piReader = "cli/args.ts:217-233 (any unrecognised `--flag` → unknownFlags: `=` form, space form, " +
+            "bare → true, repeat wins); main.ts:737 (parsed.unknownFlags → extensionFlagValues); " +
+            "core/agent-session-services.ts:8-43 (only a flag an extension registered is written; a boolean " +
+            "flag takes `true`; a registered non-boolean given `true` is an error diagnostic; unregistered " +
+            "names are reported as `Unknown option` on stderr without exiting); " +
+            "core/extensions/loader.ts:288-292 (getFlag returns a value only for a registered name)",
     ),
 )
 
@@ -360,8 +386,21 @@ val NOT_EXPOSED_PRE_SPAWN: List<PiPreSpawnSkipped> = listOf(
         flag = null,
         envVar = "PI_HARDWARE_CURSOR / PI_HYPERLINKS / PI_IMAGE_PROTOCOL / PI_TRUE_COLOR / PI_TUI_ESC_TIMEOUT",
         piReader = "docs/environment-variables.md:89-93 (pi's terminal renderer)",
-        reason = "read only by pi's own terminal renderer. The app's terminal is its own Compose pane " +
-            "(ui/terminal/**); pi's TUI never runs here.",
+        // This used to say "pi's TUI never runs here", which is false and was load-bearing:
+        // the terminal page opens a plain shell and the user starts `pi` themselves, so the
+        // TUI *does* run. That is exactly why `PtyLauncher.Spec.environment()` pins the
+        // capability statements for it (`COLORTERM=truecolor`, `PI_HYPERLINKS=0`,
+        // `PI_IMAGE_PROTOCOL=none`, `PI_TUI_ESC_TIMEOUT=150`). Two different reasons, not one:
+        //  - the capability ones have a `settings.json` twin (`terminal.hyperlinks` /
+        //    `terminal.images` / `terminal.trueColor`), and pi spreads the setting **after**
+        //    environment detection (`packages/tui/src/terminal-image.ts:160-170`), so such a row
+        //    would be a second control that can contradict the terminal it draws into;
+        //  - `PI_HARDWARE_CURSOR` has no twin here at all: its settings key `showHardwareCursor`
+        //    is a TUI cursor knob, and the terminal page's cursor is the app's own concern.
+        reason = "the capability statements are pinned by the terminal itself, from the one place that " +
+            "knows what it can render (`PtyLauncher.Spec.environment()`), and pi applies the matching " +
+            "`terminal.*` setting over them — a row would be a second, contradictable control. " +
+            "`PI_HARDWARE_CURSOR`/`showHardwareCursor` is a TUI cursor knob instead; not exposed.",
     ),
     PiPreSpawnSkipped(
         flag = null,

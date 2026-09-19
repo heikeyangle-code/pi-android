@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -160,6 +161,47 @@ internal object PiSettingsMetrics {
 /** `06 §2`「分组容器 / 卡片：圆角 10，无描边无阴影」。 */
 internal val PiSettingsCardShape = RoundedCornerShape(PiSettingsMetrics.cardRadius)
 
+/**
+ * `PiSettingsCard` 内部一次显示多少行之后开始收敛（多出来的折进一条「显示全部 N 个」）。
+ *
+ * 一处一个数字：原来的 8 是「模型」那一屏私有的 `COLLAPSE_ABOVE`
+ * （`PiModelsScreen.kt`），而「扩展包与项目信任」这一屏的主题段同样是**长列表**
+ * （实机一张卡里 14 行），两份阈值各写一遍就会各漂各的 —— 同一个构件、同一个屏幕族，
+ * 只能有一个数字。
+ */
+internal const val PiSettingsCollapseAbove = 8
+
+/**
+ * 设置面每一屏最外层容器要吃掉的**状态栏顶距**，一处一次。
+ *
+ * ## 为什么需要它（这不是审美，是布局事实）
+ *
+ * 应用是 edge-to-edge 的（`MainActivity.enableEdgeToEdge()`），所以状态栏**不再预留**位置，
+ * 它变成 `Scaffold` 的 inner padding 交下来 —— material3 的 `ScaffoldLayout` 在没有 `topBar`
+ * 时 `innerPadding.top = contentWindowInsets` 的顶距（`Scaffold.kt`，1.3.2），也就是状态栏
+ * 高度。于是：
+ *
+ *  - M3 的 `TopAppBar` 自己带 `TopAppBarDefaults.windowInsets`，会把这一条吃掉（许可页、
+ *    终端页就是这样，`TerminalScreen.kt` 的 KDoc 原话：「the status bar is consumed by the
+ *    `TopAppBar` itself」）；
+ *  - 本应用**手绘**的 [app.pi.ui.PiTopBar] 不吃 —— `ChatScreen.kt` 的手绘顶栏因此必须自己
+ *    `.statusBarsPadding()`，那里的注释写的正是这件事。
+ *
+ * 设置面十屏全部是手绘顶栏，而它们此前只消费了 `contentPadding` 的**底边**，顶边无人认领：
+ * 顶栏 48dp 从 y=0 开始画，**和状态栏画在同一条带子里**（实机截图：标题「扩展包与项目信任」
+ * 被时钟 19:54 与状态栏图标压在中间）。这是布局 bug，不是风格选择 —— `06 §2`「设备：状态栏
+ * 32、屏幕可布局区从它之下开始」说的就是 UI 从状态栏之下起算。
+ *
+ * ## 为什么放在这里而不是塞进 `PiTopBar`
+ *
+ * `PiTopBar` 的调用者里已经有按 `contentPadding` 自己补过这一条的屏
+ * （`ProjectScreen.kt:541`、`SessionsScreen.kt:195` 的 `.padding(contentPadding)`），改
+ * `PiTopBar` 会让它们**补两次**（正是 `TerminalScreen` KDoc 里那个「第二条空带子」）。所以
+ * 这条补在「只吃底边」的那一族身上，一处一个 `Modifier`，不多不少。
+ */
+internal fun Modifier.settingsPageTopInset(contentPadding: PaddingValues): Modifier =
+    padding(top = contentPadding.calculateTopPadding())
+
 /** `06 §2`「搜索框 / 输入框：圆角 9」。 */
 internal val PiSettingsFieldShape = RoundedCornerShape(PiSettingsMetrics.searchFieldRadius)
 
@@ -222,13 +264,43 @@ internal fun PiSettingsSectionHeader(
  *
  * `outlineVariant` 就是 `borderMuted.copy(alpha = 0.55f)`（`PiPalette.colorScheme()`），
  * 所以这里直接用它，不再自造一个透明度。
- */
-@Composable
+ */@Composable
 internal fun PiSettingsHairline(inset: Dp = PiSettingsMetrics.dividerInset) {
     HorizontalDivider(
         modifier = Modifier.padding(start = inset),
         thickness = PiSettingsMetrics.hairline,
         color = MaterialTheme.colorScheme.outlineVariant,
+    )
+}
+
+/**
+ * 卡内长列表的收敛动作：一条**正文动作**（v2 `Models()` 那一版），不是第二颗按钮。
+ *
+ * 「模型」屏的厂商卡与「扩展包与项目信任」屏的三个资源种类是同一个需要：一屏里的一类东西
+ * 可能有十几行（实机：主题 14 个），整段铺出来会把下面所有分区推到屏外。原来这条动作只在
+ * `PiModelsScreen` 里内联写过一次，第二个调用点各写一遍就会各自决定字色、字号与按压面 ——
+ * 本仓库已经有「同一个语义两处两种写法」的账（来源徽标就曾在这页写「（当前工作区）」、
+ * 在工作区屏写「项目 .pi」）。所以它是共用件，放在设置面的取值表文件里。
+ *
+ * 字色与字号照 v2：`t12` + `--accent`（这里就是 `text.meta` + `primary`，与
+ * `PiModelsScreen` 原来那条逐字相同，不新增任何颜色）；按压面是整行加
+ * `notePaddingVertical`。**水平位置由调用方给**：本页的卡里行自带 `0 12px` 内边距，
+ * 而模型屏的厂商卡外层已经缩进 14，两种落点只能由卡自己决定。
+ */
+@Composable
+internal fun PiSettingsListExpander(
+    label: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Text(
+        label,
+        modifier = modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(vertical = PiSettingsMetrics.notePaddingVertical),
+        style = PiTheme.text.meta,
+        color = MaterialTheme.colorScheme.primary,
     )
 }
 

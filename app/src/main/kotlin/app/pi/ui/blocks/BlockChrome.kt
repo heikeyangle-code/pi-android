@@ -477,6 +477,67 @@ internal fun formatTokens(count: Long): String = when {
 internal fun lineCount(text: String): Int =
     if (text.isEmpty()) 0 else text.count { it == '\n' } + 1
 
+/**
+ * Whether [text] needs more than [maxBytes] bytes once encoded as UTF-8 —
+ * `text.toByteArray(Charsets.UTF_8).size > maxBytes`, without the copy.
+ *
+ * The allocation is the whole point of this function. [ToolCallBlock] asks that
+ * question about a tool result on every composition whose `output` changed, and a
+ * `bash` row changes every 200 ms while it streams (`rpc/.../Transcript.kt:618`);
+ * the old spelling therefore encoded the whole result — up to pi's own 50 KiB /
+ * 2000-line cap, and up to our 200 KiB rendering budget — into a throwaway byte
+ * array on the frame thread, once per publication, to answer a boolean.
+ *
+ * Two steps, both exact:
+ *
+ *  - `length > maxBytes` is already an answer: every UTF-16 character costs at
+ *    least one byte, so a longer string cannot fit. That settles ordinary ASCII
+ *    machine output with a field read.
+ *  - otherwise walk the characters. The widths are UTF-8's own; a well-formed
+ *    surrogate **pair** is four bytes counted once, at its high half, and an
+ *    unpaired surrogate counts **one**, which is what `String.getBytes(UTF_8)`
+ *    writes for it (Java's encoder replaces a malformed surrogate with a single
+ *    `?`). Getting that last case wrong would make this predicate disagree with
+ *    the expression it replaces, and the caller uses the answer to decide whether
+ *    to paint a body at all.
+ *
+ * Pure, allocation-free, and it stops as soon as the running total passes
+ * [maxBytes]. Pinned against the byte-array spelling (see
+ * `docs/scroll-perf-items.md` for the probe and its output).
+ */
+internal fun utf8ByteSizeExceeds(text: String, maxBytes: Int): Boolean {
+    if (maxBytes <= 0) return text.isNotEmpty()
+    // One byte per character at the very least, so this settles every large body
+    // without reading a character.
+    if (text.length > maxBytes) return true
+    var bytes = 0
+    var index = 0
+    while (index < text.length) {
+        val code = text[index].code
+        val width = when {
+            code < 0x80 -> 1
+            code < 0x800 -> 2
+            code in 0xD800..0xDBFF -> {
+                val low = if (index + 1 < text.length) text[index + 1].code else 0
+                if (low in 0xDC00..0xDFFF) {
+                    // The pair is four bytes; count them here and skip the low half.
+                    index++
+                    4
+                } else {
+                    1
+                }
+            }
+            // A lone low surrogate is malformed input and encodes as one byte too.
+            code in 0xDC00..0xDFFF -> 1
+            else -> 3
+        }
+        bytes += width
+        if (bytes > maxBytes) return true
+        index++
+    }
+    return false
+}
+
 /** First [max] lines of a machine-output blob (the collapse rule). */
 internal fun headLines(text: String, max: Int): String {
     if (max <= 0) return ""

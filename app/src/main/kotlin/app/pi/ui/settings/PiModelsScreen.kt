@@ -144,7 +144,8 @@ fun PiModelsScreen(
     val expanded = remember { mutableStateMapOf<String, Boolean>() }
 
     val data = inventory
-    Column(Modifier.fillMaxSize()) {
+    // 同 `SettingsHome`：顶栏从状态栏之下开始，见 `settingsPageTopInset`。
+    Column(Modifier.fillMaxSize().settingsPageTopInset(contentPadding)) {
         PiTopBar(title = "模型", onBack = onBack)
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
@@ -195,7 +196,16 @@ fun PiModelsScreen(
                 }
                 item { Note("循环模型在引擎启动时确定，改完要重启引擎才会生效。") }
 
-                item { PiSettingsSectionHeader("这台设备上配好的模型") }
+                // 分区头带数量（v2 的 `Section` 的 `count`，模型页那一节写的是
+                // `count="3 个厂商"`，`direction-b-v2.html:2996`）。这一节原来没有数量，
+                // 而「有几个厂商」正是读者点进来要的第一件事；同一个形状在本页的
+                // 「默认与循环」那节也一致。
+                item {
+                    PiSettingsSectionHeader(
+                        label = "这台设备上配好的模型",
+                        count = "${data.providers.size} 个厂商",
+                    )
+                }
                 if (data.providers.isEmpty()) {
                     item { Note("还没有配置任何厂商。点下面的「导入模型」选一个厂商、粘上 Key。") }
                 }
@@ -401,26 +411,16 @@ private fun ProviderCard(
             )
         }
         shown.forEach { model -> ModelLine(model) }
+        // 收敛动作走共用件（`PiSettingsListExpander`）：与「扩展包与项目信任」屏三个资源种类
+        // 是同一个构件、同一档字色与按压面。原来这里内联了两条同样的 `Text`，第二处再抄一遍
+        // 就会开始漂。
         if (provider.models.size > shown.size) {
-            Text(
-                "还有 ${provider.models.size - shown.size} 个 pi 目录里的模型",
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable(onClick = onToggle)
-                    .padding(vertical = PiSettingsMetrics.notePaddingVertical),
-                style = PiTheme.text.meta,
-                color = MaterialTheme.colorScheme.primary,
+            PiSettingsListExpander(
+                label = "还有 ${provider.models.size - shown.size} 个 pi 目录里的模型",
+                onClick = onToggle,
             )
-        } else if (provider.models.size > COLLAPSE_ABOVE) {
-            Text(
-                "收起",
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable(onClick = onToggle)
-                    .padding(vertical = PiSettingsMetrics.notePaddingVertical),
-                style = PiTheme.text.meta,
-                color = MaterialTheme.colorScheme.primary,
-            )
+        } else if (provider.models.size > PiSettingsCollapseAbove) {
+            PiSettingsListExpander(label = "收起", onClick = onToggle)
         }
         Text(
             if (provider.hasCredential) "换 Key 或改模型" else "填写凭证并导入模型",
@@ -501,12 +501,10 @@ private fun Note(text: String) {
     )
 }
 
-/** 超过这个数量就默认收起，只留「有事要做」的那几行。 */
-private const val COLLAPSE_ABOVE = 8
-
 /** 收起时也值得占一行：已启用、默认、等待重启、缺凭证。 */
 private val PiModelInventory.Model.noteworthy: Boolean
     get() = enabled || isDefault || status != PiModelInventory.Status.READY
 
+/** 超过 `PiSettingsCollapseAbove` 就默认收起（共用那一档数字）。 */
 private val PiModelInventory.Provider.defaultExpanded: Boolean
-    get() = models.size <= COLLAPSE_ABOVE
+    get() = models.size <= PiSettingsCollapseAbove

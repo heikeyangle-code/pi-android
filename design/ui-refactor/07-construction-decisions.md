@@ -922,3 +922,338 @@ pi 是终端，本来没有这个按钮。
 只能上机看：滚动是否真的顺、真实解码耗时与内存、竖图/横图/长图在 0.35 下的观感（判据见
 `docs/device-verification.md` §H5/H6）。本机连 Compose 都编不了（`tools/typecheck.sh` 不跑 Compose 编译器插件，
 APK 也打不出来：AAPT2 只有 x86-64），所以 composable 的真实行为**没有**在这里验证过。
+
+## D49 · 对话页与渲染管线：主线程与流式热路径的 14 处修正（5 处判定不修）
+
+**来源**：用户「全面检查所有 bug、所有性能问题、所有拖慢的地方、所有可以优化流畅性的地方」→ 对话/渲染这一半的逐行审查（`738fde48`），19 条里 **14 条真修、5 条判定不修并写明理由**。
+
+**P0（唯一一条）**：**整段历史的 JSON 序列化在主线程上**。`entryChars` 量的是「一条 entry 序列化后多长」，原来三处调用点都在 `viewModelScope`（Main）里，打开大会话/含图会话就是几百毫秒的单帧。
+- 修法：抽成 Android-free 的 `ui/HistoryRetention.kt`（`entryChars`/`entryCharsOf`，行为逐字不变），三处调用点全部落进 `Dispatchers.IO`；`expandEarlierHistory` 从「每次重算全部」改成**增量相加** —— 成立的前提是那个度量对拼接**可加**，这条由新 harness 钉住（旧表达式 `combined.sumOf = loaded + loadedHistory` 与新值恒等）。
+- **顺手更正了审查自己上轮的一处夸大**：`session/SessionFileReader.readBefore` 返回 null 有三种原因（到文件头 / 不是会话文件 / 该范围没有完整行），它表达的是「上面没有可用内容」，**不是**「这一批读失败」，所以「一次 IO 抖动会永久禁用加载更早」的说法不成立。
+
+**P1（4 条）**
+- **查找条每 token 全量重扫** → 流式期间 200 ms 节流重扫、改查询即时、流式结束必扫一次；`searchTextOf`（为每行拼一份完整输出）改成谓词 `searchHits`；命中集合从小列表线性 `contains` 改成 `Set`（`SearchHits.ordered/present`）。
+- **`!` 面板输出无上限 + O(n²) 拼接 + 单 `Text`** → 抽成 `ui/chat/BashOutput.kt`：`StringBuilder` 追加 + 200 ms 节流发布 + **pi 自己的 50 KiB 尾部上限**（`bash-execution.js:93-98` `truncateTail({maxLines:2000, maxBytes:50*1024})`）+ 粘性 `truncated`。**面板本身没动**（累积有界后它最多画 50 KiB，与 pi 同上限）。
+- **`attach` 的三个收集器永不取消** → 三个 job 存字段，`attach` 开头逐个 cancel；publication/events 两条各加 `if (session !== engine) return@collect`。
+- **reducer 里正文/工具输出的逐 delta 拼接** → **判定不修**：在 `Dispatchers.IO` 的读者线程上、量级被 pi 自己夹住（工具结果 50 KB/2000 行）、实测病态 delta 粒度也只有约 70 µs/delta；若将来要动，正确做法是「按 contentIndex 持有 builder、只在 publish 时物化」。
+
+**P2（11 条已修）**：`PiMenu` 仅在展开时组合 ×2；`ExtensionWidgetStack` 每行两次 ANSI 解析 → 一次（空行判定改读 spans，逐字等价）；`ChatSheets` 模型筛选每键 lowercase → `remember(query, models)`；`AttachmentThumb` 原尺寸解码 → 48dp 像素框 + **共用** `piImageDecodeGate`；`lastModelChange` 每发布回扫 → 只在两个都为空时算；`DiffBlock` 兜底分支无上限单 `Text` → `tailLines(..., TOOL_BODY_MAX_LINES)` + 既有句式「上方还有 N 行未显示」；`ExtensionUiHost` snackbar tone 错挂 → 按正在画的那条查；`entryChars` 的错误 KDoc；新发现 `SlashPalette.filterPalette` 每次组合两趟 filter → `remember(commands, query)`。
+
+**5 条判定不修（理由都在审查报告里）**：reducer 逐 delta 拼接；`PiMentionSource` 把「运行时没起/超时」与「没匹配」合并成空列表（注释写明是有意取舍，要区分得跨半边）；`ExtensionUiHost` 的排队纪律（那个 host 的存在理由就是「一次一条、最旧优先」，改它是对通知顺序保证的行为改动）；`ChatSheets` 两处非惰性列表（`ModalBottomSheet` 里换 LazyColumn 会吃掉 `heightIn(max)` 的整个高度，两个模型也会撑出 420dp 空白，收益只有打开那一帧）；`expandEarlierHistory` 的 `reachedStart` 语义。
+
+**三条用户可见的行为变化（单独列出，附回滚点）**：
+1. **流式期间查找结果最多滞后 200 ms**（改查询即时、结束必扫）——回滚点：查找节流 effect 与它的 `remember` 键。
+2. **`!` 面板超 50 KiB 只留尾部，并显式显示「输出被截断」** —— pi 在同一处是**静默**截断；本仓库的规矩是「看得见的截断必须说得出」（工具输出、shell 卡早就这么做）。回滚点：`BASH_OUTPUT_MAX_CHARS` + `truncated` 的合并表达式。
+3. **`DiffBlock` 兜底分支** >200 行时出现同一句式的省略提示（仅「解析不出结构且超 200 行」这一种情形）。回滚点：`DiffBlock.kt` 那两行。
+
+**判据**（硬要求）：① 打开 2000 条/含图会话不再有 >500 ms 单帧（`dumpsys gfxinfo`）；② 开着查找、模型持续输出 10 s 内列表可滑动、长帧不再与 token 同频；③ `!yes | head -c 2000000` 期间面板可滑动、内存不随时间线性增长、状态行出现「输出被截断」；④ 连续「重启引擎」5 次不出现旧会话残影。
+
+**影响**：`ui/HistoryRetention.kt`（新增）、`ui/chat/BashOutput.kt`（新增）、`ui/PiSessionViewModel.kt`、`ui/screens/ChatScreen.kt`、`ui/chat/SlashPalette.kt`、`ui/chat/ChatSheets.kt`、`ui/blocks/DiffBlock.kt`、`ui/extension/ExtensionChrome.kt`、`ui/extension/ExtensionUiHost.kt`、`rpc/Transcript.kt`（仅 KDoc 交叉引用改名）、`app/src/test/.../HistoryRetentionCheck.kt` + `.../chat/BashOutputCheck.kt`（新增 harness `history-retention` / `bash-output`）。**颜色/主题一个字节没动。**
+
+**未验证**：本机无 Compose 编译器插件、打不出 APK，所以 composable 的真实帧行为**没有**在本机验证；上机判据见上。审查同时确认 `run-app-pure-checks.sh` 22/22 绿、`typecheck.sh` 只剩 `DiagnosticsReport.kt` 那 3 条已知 `BuildConfig` 假阳性。
+
+## D50 · 引擎/运行时/桥/其余页：14 处修正 + 3 处新发现（5 处判定不修）
+
+**来源**：用户「全面检查所有 bug、所有性能问题、所有拖慢的地方、所有可以优化流畅性的地方」→ 引擎/运行时/设备桥/其余页这一半的逐行审查，**全部修完**；本机三条门槛全绿：`run-app-pure-checks.sh` 22/22（0 FAIL）、`typecheck.sh` 只剩 `DiagnosticsReport.kt` 的 3 条 `BuildConfig` 假阳性、`check-nested-comments.py` OK。
+
+**P1（3 条）**
+- **事件流会无声丢事件，且丢掉的可能是 pi 正在等的对话框**。`PiEngineSession` 的 `MutableSharedFlow(extraBufferCapacity = 256)` 只能靠 `tryEmit` 投递（读者线程不能挂起），而返回值被丢弃：订阅者一被堵住（主线程长帧/ANR），256 槽满之后的每一条都不存在。实测：`tryEmit ok=256 refused=744`。其中 `extension_ui_request` 最狠 —— pi **阻塞扩展**直到 App 回话，丢了就是「回合永远不结束也不报错」。修法：返回值必查 + 计数（`droppedEvents`/`reducerFailures`/`lastRecordProblem` 进诊断报告与 logcat）；`extension_ui_request`/`agent_settled`/`agent_end`/`compaction_start|end` 走无界兜底 Channel 由协程挂起 `emit`；兜底投递有 30 s 上限，超时的**阻塞对话框**由 App 用 `extensionUiConfirmed/Cancelled` 按 pi 自己的超时语义代为回复（pi 不再被永久堵住），其余放弃并计数。
+- **会话列表每次重扫全部文件，且扫描期谎报「还没有会话」**。每个 `.jsonl` 最多消费 1 MiB 并逐行解析，`limit` 只在全部读完后裁剪；实测 300 文件/92.4 MB = 1.5–2.4 s（桌面 JVM）。修法：`(length, mtime)` 键的 Summary 缓存（pi 只追加不原地改写）+ `scanMutex` 去重 + 消失文件修剪；`sessionsLoading` 把首次空态换成「正在读取会话…」。
+- **打开终端页在主线程跑一次无超时的 guest proot**。`LaunchedEffect` 体在主线程，链到 `PtyLauncher.prepare → probe → ProcessBuilder + readText()`，且探针**没有超时**（挂住的 proot 会冻死 UI）。修法：启动整体进 `Dispatchers.IO`；探针改「先 `waitFor(8 s)` 再读残留」；用 `onStarted()` 让失败文案能刷新。
+
+**P2（11 条）**：④ 我的 UTF-8 修复有一个**孪生副本**没被覆盖 —— `DeviceShizuku` 的 reader 仍按 8 KiB 块解码、`truncated` 仍只看 stdout；删副本改用 `AppUidShellBackend.readCapped`（一份定义不可能再漂移）。`PiSettingsFileStore` 文档缓存无锁（`write` 是读-改-写）→ 加锁 + `@Volatile`（跨实例问题 KDoc 写明、归后续 B2/B3）。两个「已解包/已自检」戳记非原子写 → `writeStampAtomically`（temp+rename），写失败**不致命**只写进 boot 文案。`GuestCommand` stdout/stderr 无上限 → 每流 2 MiB + `outputTruncated`，并在 `PiPackageService` 的 summary 里说出来（不往 stdout/stderr 塞标记，它们要被解析）。`mostRecentForResume` 为找最新读全部文件头 → 按 mtime 降序取首个匹配。`TarExtractor` 每条目两次 realpath → `canonicalBase by lazy`（逐条目检查保留，那是安全边界）。`/app/apps` 每次全量枚举 → 30 s TTL 缓存（`stop` 仍按包名直查）；桥启动按钮在 UI 线程做文件 IO → 协程 + IO；审计 `tail` 从 `readLines()` 全读改成文件尾按需加宽窗口；每事件一个 `SimpleDateFormat` → `ThreadLocal`。能力页 1.5 s 轮询体（4 次权限查询 + AccessibilityManager binder + Shizuku + workspace 重读）从帧线程搬进 `Dispatchers.IO`。`DeviceUiText.clip` 每节点编译正则 → 预编译 `Pattern`。
+
+**3 处新发现（本轮新查出，同样已修）**
+- **tar 在条目边界被截断会「静默成功」**：`readFully` 把「一个字节都没有」与「读满了」都当成正常结束，于是截断的载荷会解出**半棵 rootfs 并写上解包戳记**。实测旧代码对某个条目边界截断的 `ubuntu-base.tgz` 报 `OK: 1415 files`（真实 2564），新代码抛 `payload ended before its end-of-archive marker`（由既有 `extractAsset` 包成带载荷审计的失败）。
+- **`WorkspaceFiles.countLines` 报假总数**：超过 `COUNT_CAP` 后把「已数到的」当总数返回，90 万行日志显示成 20 万行（KDoc 一直写着「不编一个数字」）。改成按块扫字节 + 32 MB 预算，**没读到 EOF 就返回 null**（UI 本就空值安全）。
+- **终端 reader 线程静默死亡**：`catch (_: IOException)` 把「不是关闭引起的读取失败」也吞掉，而那之后没人排空 guest 输出 → 程序阻塞在 `write`、屏幕永不更新。只在非 `closed` 状态写 `lastError`。
+
+**5 处判定不修**：`PiPaths` 的 `mkdirs()` getter（4–8 次 `mkdir`/次启动，1–3 µs；改 lazy 会削弱「proot 绑定时目录必存在」）；`assetFingerprint` 每 boot 对 150 143 B 资产做 SHA-256（内容哈希是唯一能抓「等长改写」的键，不在帧线程）；`workspaceHost` 在 composition 里调用（剩下的是必须实时的解析）；`DeviceAuditLog.rotate` 的 `readLines()`（512 KiB 硬上限、非帧线程）；兜底 Channel 无界（只有用户/回合级事件 + 30 s 上限）。
+
+**5 处用户可见的行为变化（附回滚点）**：① 扫描期文案「正在读取会话…」（`SessionsScreen` 分支 + `sessionsLoading`）；② 30 s 送不到的扩展对话框被自动取消/拒绝（`RESCUE_DELIVERY_TIMEOUT_MS`/`undeliverable`）；③ 包命令输出超 2 MiB 多一句截断说明（`withTruncationNote` 调用点）；④ 超大文件行数由「假数字」变「未知」（`countLines` 的 `reachedEnd`）；⑤ 截断载荷由「静默半解包」变明确失败（`extractTar` 的 `throw`）。
+
+**判据**（真机）：终端首开无 >100 ms 帧且探针 8 s 有界；300 会话首次进列表 <500 ms、二次 <100 ms 且不谎报空态；`yes | head -c 20000000` 的 RSS <100 MB 并显示截断；开 Shizuku 后中文 `\uFFFD` 计数 0；`/app/apps` 第 2 次起 <30 ms；主线程堵 30 s 时扩展对话框被自动拒绝且日志有对应行。
+
+**影响**：`engine/PiEngineSession.kt`、`engine/PiEngineHost.kt`、`session/PiSessionStore.kt`、`runtime/{PtyLauncher,PtySession,PiRuntime,RuntimeProvisioner,RuntimeSelfCheck,TarExtractor}.kt`、`bridge/{DeviceAppActions,DeviceBridgeHttp,DeviceAccessibilityService,DeviceShell,DeviceShizuku}.kt`、`packages/{GuestCommand,PackageService}.kt`、`settings/PiSettingsFileStore.kt`、`ui/terminal/TerminalPane.kt`、`ui/device/DeviceCapabilityScreen.kt`、`ui/settings/DiagnosticsReport.kt`、`ui/screens/{SessionsScreen,WorkspaceFiles}.kt`、`ui/PiSessionViewModel.kt`（各 0–12 行）。**颜色/主题一个字节没动**；未动 `run-app-pure-checks.sh`。
+
+## D51 · 滚动位置按**行 key** 记（不按下标）；首帧不信 `canScrollForward`；markdown 行高跨切屏留住
+
+**用户原话**：①「怎么感觉看屏幕上方的消息，用手指往下滑，怎么都不如手指往上滑看下面的消息那么自然。有时候会跳、会刷会蹦说不上来什么观感。上下让它一样自然。上滑看下面的消息就挺好的」；
+②「我聊天界面，我切到别的屏，再切回来，为什么会跳一下呢？修了好几次没修好。我要的效果就是，切走之前在什么位置，切回来就是什么位置，不要蹦，不要刷，不要跳。现在有时候还会变位置」。
+
+诊断（只查不改的那一轮）全部落在 `docs/scroll-diagnosis.md`，探针在 `/tmp/probe/scroll/`。这里只记**裁决与改动**。
+
+### ① 位置的主键：从「第几行」改成「哪一行」
+`rememberLazyListState()` 恢复位置走 `LazyListState.Saver`，而它存的是
+**`(firstVisibleItemIndex, firstVisibleItemScrollOffset)` 两个整数，没有 key**（`foundation-android:1.8.3` 字节码：
+`listOf(getFirstVisibleItemIndex, getFirstVisibleItemScrollOffset)`）。下标只在「列表还是同一个列表」时才是位置，
+而这屏渲染的是转录的**后缀**（`renderedItems = visibleItems.takeLast(renderWindow)`）——用户切到工作区/设置期间，
+引擎每发布一次就把内容往下挪：`item@同一个下标` 变成 **g 行更新**的那一行（g = 这期间到达的行数）。
+现在 `ChatScreen` 另存 `anchorKey`（`rememberSaveable(sessionKey)`，按 `TranscriptItem.key`）与 `anchorOffset`：
+一个跟踪器（`snapshotFlow(firstVisibleItemIndex to offset)`，只在真的变了时写）记录「视口顶部那一行」，
+一个纠正 effect（键是 `hiddenCount`/`headerRows`/`visibleItems.size`，也就是 item 列表**形状**变了才重跑）
+把那一行放回视口顶部。**它让位给三件事**：手势在飞（`isScrollInProgress`）、跟随态（`following`，那是 pin 的活）、
+以及任何导航跳转（`pendingJump != null`，搜索/上一条提问/回到顶部都走它）。
+
+同一个纠正也顺手补上了文件读取那条路：`expandEarlierHistory` 在转录**头部**插入行、`takeLast` 从尾部重切，
+于是有 `renderWindow - rows` ∈ [0,49] 行落在哨兵行与阅读位置**之间**（探针 C 组：`N=4123 R=4150 k=4000` → 27 行；
+而 `renderWindow - rows == 0` 时**一行都不跳** —— 这就是用户说的「有时候」）。纠正按行 key 复位，
+行号不够时先把窗口撑到那一行（`reveal` 的两段式，只是不带导航语义）。
+
+### ② 首帧不许武装：`mayArmEarlier(…, hasLaidOut)`
+`LazyListState` 的构造器把 `canScrollForward` 初始化成 `false`，只有一次测量才会写它（同一份字节码）。
+于是**任何**新 state（每次切回对话都是新的）在第一帧都报「前面滚不动了」，而 `reArmsEarlier` 正是把
+`!canScrollForward` 当作「屏幕顶住了」的武装边 ⇒ 恢复出来的位置若停在窗口最顶（索引 0）且上面有隐藏行，
+effect 会在**首帧**就再加载一批并 `requestScrollToItem(≈51)` —— 一帧挪 50 行。现在武装要求
+`listState.layoutInfo.totalItemsCount > 0`（测量过）。开屏时同一条路径也会命中，只是被跟随的 pin 压住了，
+所以用户在「切回来」时才看得见。
+
+### ③ markdown 行高：先 spike，答案是不能复用库状态，于是走**有界**高度档位
+`MarkdownState` 初态是 `State.Loading`，它的 loading 槽是**空 `Box`（0 高）**（`Markdown.kt:112`），
+而 `rememberMarkdownState` 用的是裸 `remember`（不 saveable）⇒ 切回来时**每一行都从 0 高开始长**，
+行下面的东西跟着往下滑。`retainState = true` 救不了这一条：它保的是「上一次的内容」，而首次组合没有上一次。
+**spike 结论（字节码，`multiplatform-markdown-renderer-android-0.45.0`）**：库**没有**公开的入口能把已解析结果
+塞回一个 `MarkdownState` —— `state` 是只读 `StateFlow`，`updateInput`/`parseBlocking` 是 internal 名字改写过的，
+`parseMarkdown(...)` 虽然公开、同步、返回 `State`，但没有任何公共 API 能把它写进 state；而
+`Markdown(MarkdownState, …)` 只 `collectAsState(state.state)`、**不驱动解析**（驱动只在 `rememberMarkdownState` 里，
+它也不把 state 交给调用方）。**所以进程级 LRU 这条路不可达**，走退路：
+`ui/render/RowHeightCache.kt`（纯逻辑、固定容量 LRU，默认 96 条）+ `ui/render/TranscriptRowHeight.kt` 的
+`Modifier.rememberedRowHeight(rowKey)` —— 一行**重新组合**的头三帧用「上次实测高度」当 `heightIn(min=…)`，
+之后放手（所以展开/折叠全部工具卡、改字号这类**合法变矮**最多错 3 帧 ≈ 50 ms，而不会卡住）。
+新行（「加载更早」刚取回、从没量过）没有档位，行为与今天一致 —— 那是诊断里的 P3，靠 ① 保住锚点行来解决。
+同一张图那条老判据（D48「同一张图从第一次进入视口到最终渲染，行高不允许变化」）在这里被推广到 markdown 行：
+**同一个 key 的行，重新组合后第一帧就必须是它离开时的高度。**
+
+### ④ 一处**诊断有误、因此没做**的
+诊断 §3.4 建议「atTop 的自动加载不要再 `requestScrollToItem(prependAnchoredIndex(...))`，靠 LazyColumn 自己的 key 锚定」。
+**实施前重算了一遍像素，这条是错的**：`mayLoadEarlier` 只在 `atWindowTop` 放行，而那一刻
+`firstVisibleItemIndex == 0` **就是哨兵行**（「加载更早的 N 条」），它在新列表里仍是 index 0、key 未变 ——
+LazyColumn 的 key 锚定会让它**不动**，于是内容整体下移**整整一批（50 行，约一屏）**；
+而现在的调用把哨兵行顶出屏幕，可见内容只上移**哨兵行的高度**（30–45dp）。也就是说它是把一个 50 行的跳
+换成了 1 行的跳，删掉它是**倒退**。这段算术写进了 `prependAnchoredIndex` 的 KDoc，免得下一个人再删一次。
+真正能消掉那 30–45dp 的唯一办法是把哨兵行**移出 `LazyColumn`**（浮在列表上方），那是「加载更早」这个
+affordance 的形状改动，不在这一轮。
+
+**顺带一条**：轨线判定（`firstOfRun`/`lastOfRun`）原来读**渲染切片**的邻行，前插之后锚点行自己的
+轨线缩进可能从「run 首」变「run 中」⇒ 行高变 16–32dp。现在读 `visibleItems` 的邻行（窗口内部结果完全一样，
+只有切片两端改看真邻居），run 是整条转录的属性，也就不会因为加载更早而抖。
+
+### 判据
+- **S1**（切走再切回、没有任何新行）：滚到会话中段，切到「工作区」停 10 秒再切回 —— 从切回来的**第一帧**起，
+  屏幕上最上面那行的文字仍在原来的高度（±2px），不得先出现在别处再回来。
+- **S2**（切走期间有新行，最容易一眼看出）：让 pi 正在流式输出，记住某一句，切走 5 秒再切回 ——
+  仍停在**同一句话**上；改动前会按这 5 秒新增的行数整体上移 g 行。
+- **S3**（停在窗口最顶切走再切回）：`N` 不变、位置一帧不动；改动前会看到「N 立刻少 50」且哨兵行被顶出屏幕。
+- **U1**（往旧消息方向）：停在窗口最顶、松手后 2–3 帧内，被跟踪的**内容行**不得整体上移
+  （哨兵行滚出屏幕上方是允许的，那是它本来该做的）。
+- **U2**（往上滚的观感）：连做 5 次「滑到顶、松手」，录屏里不应出现「已读内容整块换掉」的帧；
+  且不再出现「某一行先塌成 0 高再长回来」的帧（③）。
+- **U3**（文件读取那条路，需要一条 >4000 entry 的会话）：一路爬到哨兵行变成「正在读取更早的内容…」那一刻，
+  落地的那一帧内容不得整块替换、阅读位置不得移动。
+- 量化：系统录屏 → `ffmpeg -i rec.mp4 -vf fps=240 -vsync 0 f/%05d.png`，逐帧跟踪一个独特短字符串上边缘的 y；
+  一帧内 >4px 记一次「跳」。**本机一条都验不了**（打不出 APK；这台容器也没有设备 shell/logcat）。
+
+**影响**：`ui/screens/ChatScreen.kt`（锚点/纠正/跟踪器、`mayArmEarlier`、`pendingJump` 带 offset、轨线邻行、
+行高档位接线）、`ui/chat/TailFollow.kt`（新增纯函数 `mayArmEarlier` / `hiddenRows` / `itemIndexOfVisibleRow` /
+`visibleRowOfItemIndex`，并把 ④ 的算术写进 KDoc）、`ui/render/RowHeightCache.kt`（新增，Android-free）、
+`ui/render/TranscriptRowHeight.kt`（新增）、`app/src/test/kotlin/app/pi/ui/chat/TailFollowCheck.kt`
+（新增 J 组 22 条，见 §「验证」）。**颜色/主题一个字节没动**，`ui/settings/**`、`settings/**`、
+`ui/screens/PiFilesScreen.kt`、`tools/run-app-pure-checks.sh` 一行没碰。
+
+### D51 补记 · 行高档位第二轮：下限挪到 placement 期，「解除」交给解析完成信号；eager 解析按帧计价
+
+**动因**：D51 ③ 那套档位在真机上仍看得到「某一行先塌成 0 高再长回来」，以及「重新组合后第一帧不是它离开时的高度」。整轮诊断、候选与实测数字在 `docs/scroll-perf-list.md`（§2.3 / §2.4 / §2.5），这里只记结论、判据与代价。
+
+**D51 ③ 的两半错在同一个方向**（`ui/render/TranscriptRowHeight.kt:44-67` 的 KDoc 是权威版本）：原来的写法是 `Modifier.heightIn(min = floor)` 加一个**固定三帧窗**（`frames < 3`），而
+- `heightIn` 会置 `enforceIncoming = true`（`foundation-layout` 字节码：`SizeKt.heightIn-VpY3zN4` 构造 `SizeElement(…, enforceIncoming = true)`，`SizeNode.measure` 用被抬过的约束量孩子）⇒ 行**无论解析没解析都报 `floor`**，「就绪」与「还在加载」不可观测；
+- 于是唯一的到期方式只能是帧数 —— 一场跟 `Dispatchers.Default` 的赛跑。输了（主线程忙时一次解析 ≳50 ms），档位就在**内容还空着**的时候消失：第 3 帧塌成 0 高、列表重新测量、下面全部上跳，解析落地再全部下跳 —— 两次几何变化，而这个文件存在的意义是消掉一次。
+
+**改法（三处，都在 `ui/render/`）**
+1. **下限给在 placement 期，量的是原始约束**：`Modifier.rememberedRowHeight(rowKey, contentReady)` 先 `measurable.measure(constraints)` 拿内容的**真高度**，再把行报成 `max(contentHeight, floor)`。内容因此一直把未抬高的高度交给 `onSizeChanged`（它在链上位于 layout modifier **之后**，由内层 coordinator 派发，看到的是内容自己的尺寸），缓存里不再回写假高度。
+2. **解除的主信号是 `contentReady`**（库自己的 `State.Success`，经 `LocalPiMarkdownParsed` 由 `PiMarkdownText` 报出）—— 档位只覆盖「新组合」到「解析完成」这段窗口，而这就是该窗口的结束，无论谁赢了那场赛跑。另两条兜底按到达顺序：**非零实测高度**（没有 markdown 的行本来就第一帧到位，同一趟布局就解除）与 `REMEMBERED_ROW_HEIGHT_FRAMES`（12 帧 ≈ 200 ms，给永不解析也永不测量的内容：隐藏的思考块、空文本、`State.Error`）。**它是界，不是机制**，最多触发一次。
+3. **eager 解析按帧计价**：`RowHeightCache.kt` 的 `MarkdownParseBudget`（默认 4 ms / 16.67 ms 令牌桶，`DEFAULT_BUDGET_NANOS` / `DEFAULT_PERIOD_NANOS`）+ 全局 `piMarkdownParseBudget`；`PiMarkdown.kt:302` 解析前先问预算，`PiMarkdownImmediate.kt` 记的是同一条规矩。上千行会话里「每帧把可见行全解析一遍」是掉帧的直接原因，预算耗尽就顺延到下一帧。
+
+**代价（正面的一半）**：一次重新组合 ≈ 一次额外重组（写 `settled` 的那次）+ 一次重新测量（链上失去下限，尺寸内容已自证相等），此后每帧零成本；被替换掉的三帧窗则是**三帧各写一次**，每次写都让行失效。**合法变矮**（展开/折叠工具卡、关掉思考块、改字号）在**下一次测量**就被纠正，而不是被按住三帧、还要在内容没就绪时照样塌。
+
+**判据（真机；量化：录屏 → `ffmpeg -vf fps=240`，逐帧跟踪一个独特短字符串上边缘的 y，一帧内 >4px 记一次「跳」）**：① 同一个 key 的行重新组合后**第一帧**就是它离开时的高度（±2px）；② 不得再出现「某行先塌成 0 高再长回来」的帧；③ 展开/折叠工具卡这类合法变矮在一帧内收敛；④ 长会话快滚不出现跳帧。
+
+**刻意不做**：它不让**从未测量过**的行变正确 —— 第一次进视口（刚前插的「加载更早」那批）没有档位，行为与今天一致，那是 `docs/scroll-diagnosis.md` §1.2 P3，它的修法是 `ChatScreen` 的 eager-parse 闸（`PiMarkdownImmediate.kt`），不在这里。
+
+**门槛**：`row-height-cache` 已注册进 `tools/run-app-pure-checks.sh`（`RowHeightCache.kt` 是 Android-free 的纯逻辑，进得了 bare-JVM harness；`TranscriptRowHeight.kt` 是 Compose 文件，进不了，靠上面 ①–④ 判）。**未验证**：本容器打不出 APK，①–④ 是判据不是实测。
+
+## D52 · 设置面的信息架构：先按「这行是谁的」分四类，再按 pi 的分节归属
+
+**用户原话**：「设置那一屏幕的所有东西这么乱呢？」。**乱不是文案问题**，是四种东西同形同色地混在一屏：pi 键（写 `settings.json`、pi 读）/ app 偏好（`app.*`、我们自己读）/ 只读事实 / 动作·指路牌。本轮把区分做在**分组与 section**上（**颜色不动、任何键的语义/默认值/`EffectiveKind` 不动**）：70 行由 **13 组 30 节收成 12 组 24 节**，行数一行不增不减。
+
+- **只读事实独占一节**：`运行时与诊断 / 运行时状态`（pi 版本、Node 版本、占用、引擎启动耗时、唤醒锁、运行时实际生效 —— 6 行）。
+- **动作独占各自组的「动作」节**：`上下文与压缩 / 动作`（立即压缩 1 行）、`运行时与诊断 / 动作`（重启引擎、导出诊断报告、紧急停止 3 行）。**组内不再出现「一个开关 + 四个读数」同节。**
+- **控件搬出事实节**：`app.runtime.proroot`（运行时状态→进程）、`app.runtime.keepAlive`（后台→进程）。
+- **单行节从 7 个降到 3 个**（其中两个是动作/只读事实，一个是整组只有一节）。
+- **组名与内容对齐**：`重试与网络`→`重试`（组内根本没有网络）、`提示词`→`系统提示词`、`安全与信任`→`安全与隐私`；**`G_ABOUT` 删除**（只有一行却叫「隐私与关于」），那一行与「项目信任」合成 `信任与隐私`。
+- **按 pi 文档归属**：`images.autoResize`/`blockImages` 按 `docs/settings.md:215-226` 移到 `终端与 Shell / 图片`。
+- **两条可机检规则进了 `settings-audit`**（只加严、未削弱）：「一节一种」——任何 section 不得同时含动作/只读事实与可编辑设置行；「多节组里不得有单行+可编辑的 section」；另加「组与行互相声明、组名唯一」。**这类重组因此不能再悄悄退化。**
+- 与 `docs/settings-audit-pi-gap.md` §5.4 的**两处偏差已认**：那份骨架正文写「11 组」却列了 12 条，且它对「外观/终端」自相矛盾（正文合并、搬动理由表却把 `images.*` 送进终端）。本轮取更具体的理由表 → 12 组、外观与终端分开。
+- **仍混合的两处**：`工具`（pi 的 `defaultTools` + app 的 `app.tools.expandByDefault`）与 `外观`（pi 的 `theme` + app 的 `app.appearance.*`）。拆开会各产生一个「单行可编辑节」，比合在一起更吵；真正区分需要**行级「pi/本应用」标记**（行形状改动），本轮不许碰，记在 `docs/settings-audit-impl.md` §9.2 备注。
+
+**影响**：`ui/settings/PiSettingsRegistry.kt`（重排 + 12 组）、`app/src/test/.../PiSettingsAuditCheck.kt`（+3 规则，`settings-audit` 23 PASS）、`docs/settings-audit-impl.md`（§9 骨架/搬动表/真机判据）。`SettingsHome.kt` **一行未动**（组列表由 `PiSettingsCatalog.groups` 生成，删掉 `G_ABOUT` 后首页自动变 12 行），所以与 D53 的「Pi 文件」入口无冲突。**未验证**：`PiSettingsRegistry.kt` 本机没编译过（导入 Compose），只做了括号/花括号与列表闭合的差值比对；五条真机判据（首页 12 行、运行时组首屏是 6 行读数、动作不再与开关同形相邻、图片两行在终端组、单行节只剩动作/只读）全部未上机。
+
+## D53 · pi 的 28 个「不搬进设置页」的键：不补；判据从「够不着」改成「终端页能改 + 用户决定」；以及「Pi 文件」屏
+
+### ① 缺的那 28 个键：**一个都不补**（用户裁决）
+
+pi 的 `Settings` 是 51 顶层 / 69 叶子，本应用注册 41 个。其余 28 个分四类：
+
+| 类 | 键 | 为什么不进设置页 |
+|---|---|---|
+| 被本应用钉死 | `sessionDir`、`lastChangelogVersion`、`collapseChangelog` | App 把会话根目录同时写进 `--session-dir` 与 `PI_CODING_AGENT_SESSION_DIR`；版本检查钉成 `PI_SKIP_VERSION_CHECK=1`（引擎与终端两处）。写进设置也不会被读 |
+| 设备上做不到 / 设了有害 | `terminal.images`、`terminal.showImages`、`terminal.imageWidthCells`、`terminal.hyperlinks`、`externalEditor` | 终端组件（`org.connectbot:termlib 0.0.13`）没有内联图片与 OSC 8，而 pi 把设置**展开在环境探测之后**（`packages/tui/src/terminal-image.ts:160-170`）→ 设了就与 App 自己钉的能力声明矛盾；guest 载荷里没有可用的编辑器（`tools/fetch-runtime.mjs`）。`showImages`/`imageWidthCells` 更硬：pi 自己在不支持图片的终端里隐藏这两行（`settings-selector.ts:449`、`:719-733`） |
+| pi 自己也不读 | `enableAnalytics`、`trackingId` | 全树只有 getter、没有消费者 |
+| **只有原版 TUI 读** | 其余 **18** 个（`outputPad`、`editorPaddingX`、`autocompleteMaxVisible`、`showHardwareCursor`、`markdown.*`、`quietStartup`、`doubleEscapeAction`、`treeFilterMode`、`tuiMode`、`fullscreen*`、`warnings.anthropicExtraUsage`、`branchSummary.skipPrompt`、`terminal.clearOnShrink`、`terminal.showTerminalProgress`、`terminal.trueColor`） | **这是 TUI 的旋钮：终端页里能改，不搬进设置页**（用户裁决） |
+
+**判据（换掉了旧理由）**：旧理由「读者只在交互式 TUI，而本应用的引擎是 RPC、不渲染 TUI，所以手机上够不着」**不成立** —— 终端页就是一个能跑原版 pi 的 shell（`SettingsHome` 的终端行原文：「输入 pi 回车进入原版 TUI：订阅登录、会话导入、以及需要终端的扩展都在那边。」），而那个 pi 读**同一份** `settings.json`（`PtyLauncher` 把宿主 agent dir bind 到 `/root/.pi/agent`，并设 `PI_CODING_AGENT_DIR`）。正确表述是两句：① 它们的读者是原版 TUI，本应用自己的界面不消费它们；② 要去调，走**终端页**或**「Pi 文件」屏**。这是一条**用户决定**，不是可达性结论。
+
+**被否的旧理由**：`docs/settings-review.md` §1.2/§9 的「读者够不着」，以及承载它的那句话 —— `rpc/.../PiPreSpawnConfig.kt` 里的「pi's TUI never runs here」（本轮已改成事实陈述，只改那一句，逻辑未动）。
+
+### ② 「Pi 文件」屏（用户选了「建：两个根 + 危险文件只读」）
+
+pi 自己的文件以前**一个都进不去**（工作区的文件查看器只以工作区根为根；项目页的「资源」只读列了 skills/prompts/themes/extensions），而 `<workspace>/.pi/settings.json` 反而能从工作区文件树**整份覆盖改**（非原子、无锁）—— 与「不提供原始编辑器」的旧决定自相矛盾。本屏补上了这一面：
+
+- **两个根**：agent dir（`PiPaths.agentDir`，guest 里是 `/root/.pi/agent`）与 `<workspace>/.pi`（`PiProjectConfig.root`）；没有硬编码路径。
+- **三档白名单，默认拒绝**（`piFilesAccessFor`）：可写 = `settings.json`、`models.json`、`AGENTS*`/`CLAUDE*`、`SYSTEM.md`、`APPEND_SYSTEM.md`、`themes/*.json`、`skills/**`、`prompts/**`、`extensions/**`；只读 = `auth.json`、`models-store.json`、`trust.json`、`keybindings.json`、`sessions/**`、`npm/**`、`bin/**`、`tools/`、`pi-debug.log`、任何 `*.lock`、**任何未知名字** —— 每一类都给一句中文原因，凭据类指向「API Key」页。
+- **查看复用** `WorkspaceViewer`（`editable = false`，一行未改它）；**编辑由本屏自建**，因为那个查看器的保存路径硬编码 `WorkspaceFiles.writeText`（整份覆盖、非原子、无锁），与「写必须走 `PiConfigFiles`」冲突。
+- **写入唯一路径**：`PiConfigFiles.withLock { PiConfigFiles.write(...) }`（proper-lockfile 语义 + 原子写），没有第二套锁/写盘。
+- **写前三道闸**：只读不给编辑入口；纯函数 `checkPiFileWrite` 拦掉「pi 会抛」的形状（`httpIdleTimeoutMs`/`websocketConnectTimeoutMs` 的 `null`、compaction token 的 `null`/负数/小数、`modelOverrides[model]` 非对象、`models.json` 结构、主题 `name` 必填且不含 `/`……）；打开时记 `(size, mtime)`，保存前不一致就拒绝写。JSON 校验在主线程外，未保存返回先问一次，未知键原样保留（整份文本编辑，不重建 schema）。
+- 与 §6.3 的四处偏差（按现实改的，`docs/settings-audit-pi-gap.md` §6.4 有记录）：查看与编辑不同组件；`keybindings.json` 落只读（白名单是穷举的）；主题校验比方案严但不抄 pi 的色表（抄一份就是第二个会漂移的真相）；入口最初自托管在 `SettingsHome`（`PiRoot` 只渲染 `PiSettingsStack`，接不上）→ 已改为经 `PiSettingsStack` 接线。
+
+**影响**：`settings/PiFiles.kt`（新增，Android-free）、`ui/screens/PiFilesScreen.kt`（新增）、`app/src/test/.../settings/PiFilesCheck.kt`（新增 harness `pi-files`，115 断言）、`ui/settings/SettingsHome.kt`（「其他」段一行入口）、`ui/settings/PiSettingsStack.kt`（接线）、`rpc/.../PiPreSpawnConfig.kt`（一句错误断言）。**未验证**：Compose 编译器规则只能在 CI 暴露；两个根在设备上的实际指向、软键盘下的编辑器、保存后设置页是否经 `PiDirectoryWatch` 立刻刷新 —— 全部未上机。**仍未处理**：`<workspace>/.pi/settings.json` 仍能从工作区文件树自由编辑（落在 `ui/screens/Workspace*.kt`，归另一批）。
+
+## D54 · 「选择工作区」是接上的；修的是「当前工作区叫什么」的第二份真相
+
+**用户原话**：「把我工作区那个选择工作区那个功能给我做了，看看现在是不是没接」（`RAEF` 在 `.kt/.md/.ts/.json` 里搜不到，按输入误差取「工作区（项目）的选择/切换」）。
+
+**结论：接了，不是没接。** 七条用户能碰到的路逐条有接线：①卡整卡 → `WorkspaceRootSheet`；面板整行点 → `WorkspaceChoice.decidePick` → `switchWorkspaceTo` → `session.switchWorkspace`；新建 → `session.createWorkspace`；行尾 ⋮ → `WorkspaceRowMenuSheet`；重命名 → `WorkspaceStore.rename`（**只写 label，不搬目录**）；删除 → `previewDelete` 的凭据 + `delete`；回合进行中切换 → 先确认「仍然切换」再走同一入口。切换成功后真正发生的也全在：`PiEngineHost.restart(workspaceProvider=…)`（新 cwd）→ `WorkspaceStore.setCurrent` 持久化 → 作废按工作区缓存 → `attach`（新引擎接管 + 重放历史 + 刷新状态）→ 主题/会话/偏好刷新 → `revision`+1 清草稿。
+
+**全屏只有两条「看得见没接」，且都自己说清了**：面板里的「从设备目录选择（需授权）」（无 `onClick` + 「未接」徽标 —— 本次之后由 D56 落地）与树屏 ⋮ 的「看它在对话里的那一步」（`say(…没接上)`，缺 `NavRequest` 的 entry 定位变体）。
+
+**真缺陷（已修）：①卡的工作区名有第二份真相。** 它原来从**会话记录的 cwd** 反推（`state.meta.sessionFile` → 会话列表 `cwd` → `PiProject.workspaceName`），于是改过显示名的工作区在卡上印 `workspace-2`、切换面板印「我的项目」；刚切完的一两秒 `sessionFile` 还是旧值，卡上印的是**上一个**工作区。会话头里的 `cwd` 是「那次会话在哪跑过」的历史，而 pi 只有一个当前 cwd（`process.cwd()`，`main.ts:580`）。现在三处（①卡 / 切换面板「当前」行 / 新建面板「建在…里」）统一走 `WorkspaceChoice.displayName(state.workspace.name, entries…label)`；`sessions.collectAsState()`（唯一消费者是那段推导）一并删除，该屏不再因会话列表变化重组。
+
+**规则抽成纯函数 + 83 条断言**：`runtime/WorkspaceChoice.kt`（Android-free）—— 哪些目录算工作区（`isOwned`）、编号与 label 规则、当前工作区裁决（`decide`，`look` 只在 `isOwned` 通过后被调用）、点一行的决策顺序（`decidePick`，**顺序是判定的一部分**）。`WorkspaceStore`（含原私有 `OWNED`/`sanitizeLabel`/`nextFreeName`/`resolve`）与 `ProjectScreen.onPick` 全部转调，**没有第二份实现**；四条用户可见句子与改前**逐字相同**（normalized diff 验证）。harness `workspace-choice` **83 PASS / 0 FAIL**（第一次跑就抓出作者自己写错的一条不变量：默认工作区是符号链接时 `note ⟺ name≠requested` 不成立）。
+
+**pi 的机制（判据）**：pi **没有** `--cwd` 标志，cwd 只来自 `process.cwd()`（`main.ts:580`），全树**没有** `process.chdir` → 所以 **pi 里没有「切换工作区」这个概念**，本应用的实现 = 重启引擎进程到新 cwd；会话根由 `--session-dir` > `PI_CODING_AGENT_SESSION_DIR` > `settings.sessionDir` > 按 cwd 分组决定（`main.ts:669-673`、`session-manager.ts:476-486`），我们两条都传 → **平铺**一个目录、归属靠会话头 `cwd`（`:33/37`、`:1590-1591`）；项目设置是 `<cwd>/.pi/settings.json`（`settings-manager.ts:233/359`）；信任按 cwd 路径存 `trust.json`（`trust-manager.ts:213`）—— 所以 `rename` 只改 label 是对的。
+
+**未做（已附理由与 patch）**：①**切换后队列计数残留** —— `queueSteering/queueFollowUp` 唯一写入者是 `PiEvent.QueueUpdate`、唯一清零点是 `afterSessionReplaced`，它的 5 个调用者没有一个是工作区切换；pi 只在队列变动时发 `queue_update`（`agent-session.ts:592-597`），新引擎不会补发空队列 → 回合跑着时排队一条再切工作区，新工作区会一直显示「排队中」。修法是 `attach()` 里照 `:4580` 补 3 行（patch 在 `build/d54-queue-reset.patch`）。②`SessionsScreen.groupLabel` 把当前工作区那组印成通用词「工作区」，而它自己的 KDoc 承认是 `ProjectResources.workspaceName` 的第二份拷贝。③`state.workspace.hostPath/relative` 仍无人读；④`WorkspaceSnackBar(action=)` 槽位仍 0 调用点。
+
+**影响**：`runtime/WorkspaceChoice.kt`（新）、`runtime/WorkspaceStore.kt`、`ui/screens/ProjectScreen.kt`、`app/src/test/.../WorkspaceChoiceCheck.kt`（新 harness）。**颜色/主题一个字节没动。**
+
+**判据（本机一条都验不了：打不出 APK、无设备 shell）**：S1 切换后**第一帧**①卡就是新名字，不得先闪旧名字；S2 改过显示名的三处印同一个名字；S3 引擎未启动时①卡仍印当前工作区名；S4 切完终端 `pwd` = 新工作区 guest 拼法；S5 切完第一条消息落成新会话文件、头部 `cwd` = 新工作区、归组正确；S6（应用队列 patch 后）排队中切换不再显示「排队中」；S7 新工作区的 `.pi` 技能出现、切走后消失；S8 面板里返回键先关面板。
+
+## D55 · pi 能力面全量审查：真欠账 3~4 条；「per-tool 审批」被证否
+
+**动因**：用户问「pi 到底还有啥功能我没做？怎么这次又审出 3 个来？」。此前各轮审查按**我们的屏/半边**划范围（设置面、对话/渲染、引擎/运行时/桥），审的是「我们写的代码有没有 bug」；上一轮那 3 条是拿**别人家功能**反照出来的。本轮首次按 **pi 的能力面**做全量对照（两份文档：`docs/pi-surface-audit-cli.md` 477 行、`docs/pi-surface-audit-tools.md` 413 行，逐条带 `file:line`；TUI-only 单列附录，按用户裁定不计欠账）。
+
+**真欠账（pi 有、手机可用、我们没接）**：
+1. **会话内分支跳转 + 分支摘要（高）** —— pi 有 `navigateTree`（`agent-session.ts:3136-3332`，唯一的 `BranchSummaryEntry` 生产点）+ `/tree` + 扩展口 `ctx.navigateTree`（RPC 模式已接线 `rpc-mode.ts:329-335`）；我们 33 条 RPC 命令**无一**能触发它，树屏只有 fork（**新建会话文件**，语义不同）。刺眼之处：`Transcript.kt:156/:2304` 已投影 `BranchSummary`、`BranchSummaryBlock.kt` 已渲染它 —— **数据永远没有输入**。另：导航完成**没有任何事件**（只有扩展事件 `session_tree`，而 RPC 只转发 `AgentSessionEvent`），所以换 leaf 后必须整屏重取。
+2. **扩展注册的 CLI flag 透传（中）** —— pi 的扩展 flag 只能从 argv 进（`cli/args.ts:227-240` → `main.ts:737` → `agent-session-services.ts:82-124` → `ctx.getFlag`；注册 `extensions/types.ts:1329-1345`），我们 argv 拼死（`PiEngineHost` 的 `guestCommand`），依赖 flag 的扩展永远读默认值、**静默失效**；逃生口只有终端页。
+3. **已安装资源包无法更新（中低）** —— pi 有 `pi update --extensions` / `pi update <source>`（`package-manager-cli.ts:1013-1021`），我们只有 install/remove/list。（`--models` 那一半不算欠账：pi 启动时已后台刷新，`main.ts:921-928`。）
+4. **`pi auth print-api-key` / `print-bearer-token`（低，判为不做）** —— 凭据只写不显示是刻意的安全取舍，且手机屏幕上的 key 风险更高；理由写进 `docs/pi-surface-audit-cli.md`。
+
+**不是欠账但必须修的一致性缺陷**：`/login` 有三处互相矛盾的说法 —— `TerminalScreen.kt:72` 说终端页可做订阅登录（**真的**），而 `PiSettingsRegistry.kt` 的 `app.credentials.oauth` 行与 `PiSlashCommands.kt` 说「本应用没有对应入口」。
+
+**三条重要否证（本轮最大价值）**：
+- **「per-tool allow/ask/deny」不是 pi 的功能**：pi 没有内建工具门控（`--approve` 是*项目信任*；pi 只提供示例扩展 `examples/extensions/permission-gate.ts`）。而**我们已经用了**那个钩子（`pi-android-permission-gate.ts` + `ctx.ui.select`），只守 `android_*` 设备工具。所以「通用 per-tool 审批」= **pi 无对应物 → 按规则不做**。这也**修正了 `docs/agent-runtime-comparison.md` 里那条「真欠账①」** —— 它是拿竞品功能反照的，不是 pi 的能力面。
+- `enableAnalytics`/`trackingId` 不暴露是**对的**：pi 写进去也没有消费者（只有测试读）。
+- `--dangerously-*`、`pi doctor` **在 pi 里不存在**；`pi experimental server|client` 与 `packages/protocol` **被 `package.json` 排除出发行物**。
+
+**协议面没有缺口**：33/33 命令有 builder、**31/33 有真实发送方**（从不发的只有 `cycle_model` 与 `get_messages`，都有书面理由；`docs/rpc-coverage.md` 的「32/33 有入口」已过期）；**26 个 stdout 记录 + 12 个 delta 全部有解析与投影、零静默丢弃**；`extension_ui_request` pi 在 RPC 模式**只发 9 个 method**，**9/9 我们全部处理且都有界面落点**，协议里其余那些（`custom`/`setFooter`/`setTheme`/`setWorkingMessage`…）在 pi 自己的 `rpc-mode.ts:163-310` 就是 no-op。
+
+**已 1:1（非"看起来像"）**：8 个内建工具 8/8 有专属卡（**没有一个设 `executionMode`**，所以"顺序执行"不是欠账）；技能面（发现顺序、`.agents/skills`、`SKILL.md` frontmatter、`/skill:name`、列出/看内容/改文件/安装齐备，且**没有虚构** pi 没有的逐技能启停）；上下文与压缩（`--system-prompt`/`--append-system-prompt`/`--no-context-files`、四类 context 文件、`compaction.*` 含 `modelOverrides`、`/compact <指令>`、`branchSummary.*`）；附件预算与图片查看器（2 处**有意**差异：PNG 候选序、整条消息预算更严）；内核四条推送 + `queue_update`/`agent_settled`/`summarization_retry_*`/`tool_execution_update` 的 200 ms 节流。
+
+**顺带查出的文档瑕疵**：`GrepBlock.kt:181-183` 的 KDoc 引用了 **pi 主题里不存在**的 token（`contextOnTool`；diff 用的是 `toolDiffContext`）；`docs/rpc-coverage.md` 的「32/33 有入口」与代码不符（`cycle_model` 的 UI 早按裁决删除）。
+
+## D56 · 设置审查的收尾批次：手写的「搜索路径」四行删掉，换成只读的「实际发现」；List/Number 清空语义修正；工具行与主题徽标
+
+**用户原话**：「设置那一屏幕的所有东西这么乱呢？找个子代理审查所有功能，对比 Pi 源代码，看缺了什么，有哪些没用的？哪些功能有 bug？全都弄成完美和 Pi 一比一的样子。很多设置的意义就是修改 Pi 的文件吧？Pi 内置文件的修改器。查看器？」——本轮是那场审查的落地批次（信息架构那一半是 D52，pi 没有的键那一半是 D53）。判据全部回到 pi 源码，不是「看起来像」。
+
+**一、「不是 pi 的键」的行：删掉，不补**。「扩展与资源」里原有 4 行手写的搜索路径（扩展 / 技能 / 提示 / 主题），**pi 没有这四个设置键**：这些目录是 pi 按固定位置发现的（加 `packages` 里的资源包），写一个不存在的键进去既不会改变发现位置，又让这一屏看起来像能改。用户的裁决是**「删吧」** —— 删掉，也不发明对应的 app 侧键。
+
+删掉之后那一节**不留空**，换成 5 行**只读**的「实际发现」：`app.resources.discovered.extensions / .skills / .prompts / .themes`（各自报**真的**发现了几个、从哪儿发现）与 `app.resources.openFiles`（指路到「Pi 文件」屏 / 那个目录）。它们读的是运行时真状态，不是我们写的默认值 —— 「四个读数不许互相冒充」这条规则在设置页的落点：**没发现**、**读不到**、**还没读**是三句话，不许都说成「0 个」。
+
+**二、三个真 bug（都是「界面在说假话」这一类）**
+1. **清空一个 List 行会把 `[]` 写进 `settings.json`** —— 而 pi 里 `[]` 是**一个值**，不是「没设置」：`defaultTools: []` 的语义是**一个内建工具都不开**（`configuredDefaultToolNames ?? defaultActiveToolNames`），跟「回到默认」是两件事。修法：列表清空一律 `store.remove(key)`（`PiSettingEditorHost.kt:131-132`），Number 那一支同样（`:96`）。于是「清空并保存」= 删键 = pi 回到自己的默认。
+2. **`powershell` 出现在内建工具的预设里** —— pi 的 8 个工具名里有它，但它**在非 Windows 上必抛**；把它做成一个能点的 chip，就是把一个必然失败的选择摆在用户面前。预设改成 7 个（`read bash edit write grep find ls`）。
+3. **`defaultTools` 那一行说不清「默认」与「零」**。现在：预设 = 那 7 个工具名，`emptyListLabel` = **「默认 read/bash/edit/write」**（pi 的默认活跃集是 4 个），行文案明说「清空并保存 = 回到这 4 个默认值（删掉这个键）」，并指出**一个都不开**（`defaultTools: []`）是另一件事。
+
+**三、两个「说得不准」的徽标/文案**
+- `theme` 行的徽标 `Reload` → **`Immediate`**：写下去的那一刻就生效（`PiSessionViewModel.kt:1128-1130` 的 `refreshTheme()` → `PiThemeLoader.load` → `MainActivity.kt:89-93` 重建 `PiTheme`，连代码高亮与窗口底色一起换）。徽标写「需重载」就是在说假话；alias 里的 `reload` 留着，那是 pi 自己的词、给搜索用的。
+- 7 行补上「清空并保存 = 回到默认」的判据（删键之后 pi 读到什么），空列表按钮的文案从「清空」改为**「恢复默认」**。
+
+**四、防复发**：`PiSettingsAuditCheck` 加三条规则 —— 规则 12（Number 支路必须 `store.remove`）、规则 13（List 支路必须 `entries.isEmpty()` + `store.remove`，「存空数组」直接判失败）、规则 14（工具预设里不得出现 `powershell`）。`settings-audit` harness **26 PASS**；`PiSettingsRegistry` 共 **72 个键**。
+
+**未验证**：本轮没有设备侧改动（改的是设置页的数据与文案），真机观感仍需上机看一眼「实际发现」四行报的数对不对。
+
+## D57 · proroot 上不了真机的真根因：`-b` 的拼写（一次误诊的完整复盘）
+
+**症状**：用户开「运行时加速（实验性）」后，「运行时（实际生效）」一直写「已回退 proot：探针未通过」，导出报告里是
+`✗ raw syscall 探针未通过：raw/inline svc 调用没有被翻译（看不到 guest 文件系统）` + `✗ rg` / `✗ fd`（"探针没跑到"）。
+
+**真根因（反汇编 + 活证）**：proroot v1.2.8 的启动器要求 **`-b host:guest`**，而共享绑定表 `GuestRecipe.binds` 是用
+**proot 的简写**拼的（`-b /dev`、`/proc`、`/sys`、`/system`、`/apex`）。启动器在**解析参数阶段**就打印
+`[proroot] bad bind format (expected host:guest): %s` 并退出 —— **在 fork 之前就死**，所以 guest 从来没起来过。
+证据链：① `libproroot.so`（sha256 与上游 v1.2.8 逐字节相同）里 `strchr(值, ':')` → 无冒号即走那条错误分支；
+② 同一台手机上 **DSHA 常驻启动器的 10 条 bind 全部是 `host:guest`**（读 `/proc/<pid>/cmdline`）；
+③ 用户报告的全部特征吻合：错误在 stderr、stdout 为空 → `ProrootRawProbe.parse` 只认 marker 行 → 空 Report →
+落进"未翻译"那一支；旁证是报告里**没有任何** `guestpath=/hostpath=/passwd=` 行，且 `.proroot-config 现存 0 份`
+（从没走到写配置表）。**上游 README 把 `-b <host>` 也写成合法，那是过时文档。**
+
+**修法：只改一处** —— `ProrootCommand` 把共享表里的 `-b` 值逐条改写成 `host:guest`（`bindArgument()`），
+**env 一个变量都不加**；`ProotCommand`/`GuestCommandLine`/`ProrootRetry` 零 diff（proot argv 由 harness 钉住）。
+修完**严格档本来就能过**（同机同字节的 DSHA 已证），所以生产档**没有**降级。
+
+**被推翻的两个假设（都要记住，别再犯）**：
+1. **不是 `PROROOT_NO_SECCOMP`**：五个 `.so` 里只有 `libproroot.so` 含该串 —— 一处 verbose 日志 `getenv`、
+   一处 `setenv(...,"1",1)` 写进**子进程** env，**没有任何读者**。活证：DSHA 的 **launcher** 没有它、
+   它的 **guest 子进程**有（值由 launcher 自己写）。该状态下 seccomp 一直是活的（`SIGSYS trapped syscall=439`
+   持续刷新），把本仓库探针的 Perl 原文放进 DSHA guest 还得到 `guestpath=translated / hostpath=unreachable /
+   passwd=translated`。**代价 0、收益 0 —— 不要设它**（`proroot-research.md` §1.2 与 §P1-1、`known-gaps.md` §N2 已更正）。
+2. **不是"漏传 env"**：与 DSHA 逐项对比，我们传的四个 `PROROOT_*` 与它一致，`TRAMPOLINE/NO_SECCOMP/CFG_FD/
+   ESCAPE_FD/GUEST_EXE/ROOTFS/SIGSYS_LOG_HOST_PATH` 它**也不传**（那些是 launcher 给子进程的）。
+
+**顺带修掉的三个真 bug（都是"门禁在说假话"这一类）**：
+- **探针短路**：raw 阶段失败会**跳过** `rg`/`fd` 真调用探针 —— 于是报告里的"探针没跑到"本身是被短路出来的；
+  现在工具探针**永远跑**；
+- **误诊没有兜底**：空输出被判成"未翻译"。现在**启动器级失败是独立阶段**，句子带档位 + 阶段 + 有界原话，
+  详情含 `guestpath/hostpath/passwd` 与未识别输出；
+- **harness 自身**：一个局部 `failures` 变量**遮蔽**了全局计数器 → **FAIL 也会打印 OK 并 exit 0**（门禁是假的）。
+  已修，并加了四条新断言（`-b` 归一化双向、proroot 不带 bare 值、env 只有那四个、probeGate 两档七种组合、
+  cache key 区分档位、v1 缓存不复用、启动器失败分类）。`proroot` harness **228/228**。
+另有 `parsePhase` 把 detail 当 verdict 的老 bug、缓存 key v1→v2（带档位）一并修掉。
+
+**真机判据（最灵敏的一条放最前）**：① 开开关后**第一次**启动 guest，`.proroot-config-*` 应出现 **≥1 份**
+（改前恒为 0 —— 这是"到底有没有真启动 proroot"最灵敏的指标）；② **第二次**启动后「运行时（实际生效）」=
+proroot；③ guest 内 `id` 是 fake root、`pwd` 是 `-w` 的 guest 路径、写文件**落在 rootfs 里**（宿主
+`<files>/pi/runtime/` 之外不得出现同名文件）；④ proroot 下 `rg --version` / `rg -N '^root' /etc/passwd` /
+`fd -H '^passwd$' /etc` 全 exit 0 且非空；⑤ 未通过时行上能看到「档位 + 阶段 + 原话」。
+
+**未验证**：本容器无 ADB，装不了 APK —— 上述 1–5 是判据不是实测；我方 rootfs 的首次真跑仍需上机。
+**风险声明**：生产档保持**严格**（raw 未翻译仍否决）；若发现某机型严格档过不了而日常工具正常，那是一次
+**需要新证据**的裁决，不许为了让门禁通过而删判据。
+
+## D58 · 会话列表的「＋ 新建会话」回到浮动；可达性改由列表 `contentPadding` 给（D37 ② 的**修法**被推翻，症状仍成立）
+
+**用户原话**：「原来按钮浮动到屏幕上，现在那一排全黑了」。裁决 = **要回浮动**，不接受按钮那一整条页面底色。
+
+**症状（真机 1373×3051 + 取像素）**：「＋ 新建会话」自己占了 `Column` 的一行 —— 胶囊 42 + 下沿 14，加上行内上边距 ≈ **70dp**；`Box(weight(1f))` 里的 `LazyColumn` 在那一行**之上**就结束，于是这 70dp 全是**页面底色**（用户主题 `#05010f`，卡片 `#12092c`）。**不是新画了一条带子**：胶囊颜色一直是对的（accent `#ff2f96` + `onPrimary`），裸的是它下面那条底色。
+
+**与 D37 ② 的关系（两份诊断都对，错的是「只能二选一」）**：D37 ② 记的是真 bug —— 旧浮动按钮（`ExtendedFloatingActionButton` + `align(BottomEnd)`）压在内容上而**列表没给它留空间**，最后一两行永远被盖住、点不到。但 `4b82e13` 的修法（照 v2 稿子 `flex:'none'` 改成列表下面独立一行）是**用一个 bug 换另一个**：可达性好了，代价是 70dp 布局高度从列表手里被拿走，换来一条与内容无关的页面底色空带。
+
+**修法（两步同时做，不许只做一步）**
+1. **位置回浮动** —— 按钮移进列表那一层的 `Box`（`BoxScope.align(Alignment.BottomEnd)`，`SessionsScreen.kt:509`），不占列表的布局高度，列表视口因此铺到 Scaffold 内容盒下沿（= 常驻底栏 `BOTTOM_BAR_HEIGHT = 56dp` 的上沿）。**只有 `BoxScope.align` 是「压在内容上」**，`Column` 子项必然各占一行 —— 那正是黑带的来源。胶囊样式与点击行为**零 diff**（accent 填充 + `onPrimary`、无阴影、圆角 999、42 高、`session.newSession()` + `onOpenChat()`），横向 16 / 下沿 14 不变。
+2. **可达性给列表** —— `LazyColumn.contentPadding.bottom` 换成 `SESSIONS_LIST_BOTTOM_RESERVE = 14 + 42 + 14 = 70dp`。**下界**是「胶囊高 + 它自己的下沿」= **56dp**（滚到底时最后一条不许停在按钮底下、看得见点不到），在其上再加 v2 的列表底 14 → 70。**底部 inset 故意不加**：根 `Column` 已经 `.padding(contentPadding)` 消费掉它（底边 = 底栏 56 + 系统 inset），再加一次就是 D36 在会话树上量到的「最后一行下面的死带」。
+
+**两个数的分工（写进常量 KDoc，防止日后变成互相矛盾的两个数）**：`SESSIONS_LIST_BOTTOM` 管「列表内容与底边至少留 14」（稿子的值）；`SESSIONS_LIST_BOTTOM_RESERVE` 管「最后一条不被浮在它上面的按钮盖住」（可达性下界 + v2 的 14）。列表 `contentPadding` 把两者**相加**，谁也不替谁。常量声明位置必须在三个被加数**之后**（Kotlin 顶层属性按声明顺序初始化，写在前面会读到 Dp 零值）。
+
+**真机判据（最灵敏的放最前）**：① 还有更多会话没显示时，内容区最下沿应当是**被视口裁切的卡片**（左下角取像素 ≈ `#12092c`），不允许再出现约 70dp 的 `#05010f` 带；② 滚到**底**时最后一条会话**完整可见、可点（切换）、可长按（删除 sheet）**，与胶囊留 14dp，胶囊不压任何一行（*滚到底时最后一条下方有 70dp 让步空间是**预期**，不是本 bug*）；③ 胶囊仍贴右下、在底栏之上，改前改后逐像素相同（`#ff2f96` + `onPrimary`、无阴影、圆角 999）；④ **空列表**两态（「还没有会话」/「正在读取会话…」）与**筛选后为空**（「没有匹配的会话」）：空态块顶对齐（离筛选行 86dp，`PiEmptyStateTopAnchored`），胶囊在右下 → 不重叠；空态 `fillMaxSize` 的 Box 不吃点击，胶囊是后绘制的子项，仍可点；⑤ 筛选后列表变短（不足以滚动）同样成立 —— 短列表最后一条下面就是那 70dp 让步空间，胶囊落在其中；⑥ 软键盘：`Scaffold(Modifier.imePadding())` 抬的是整块内容（含底栏），胶囊跟着内容走，不会落到输入法下面。
+
+**风险声明**：浮动件会盖住滚动中经过它下面的行 —— 这是「浮动」的定义，换来的是列表铺满 + 最后一条可达。日后若有人为了「不被盖住」再改回占位的一行，必须先推翻本条 ①。
+
+**未验证**：本容器无可用 AAPT2/真机 APK 产物（同 D57 的限制），①–⑥ 是判据不是实测。**门槛**：`tools/typecheck.sh` 对 `SessionsScreen.kt` 0 error（`:app` 只剩 `ui/settings/DiagnosticsReport.kt` 的 `BuildConfig`，脚本自述盲区）；`check-nested-comments.py` OK（211 个 Kotlin 文件）。**D37 ② 更正**：症状仍成立，修法不再是「改成列表下面一行」；以本条为准 —— **浮动 + `contentPadding`**。

@@ -14,6 +14,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -36,6 +37,7 @@ import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * A conversation with one pi engine process.
@@ -175,9 +177,93 @@ class PiEngineSession(
     /** Set once a write has failed; every later [send] answers false without trying. */
     private val writeBroken = AtomicBoolean(false)
 
-    private val _events = MutableSharedFlow<PiEvent>(extraBufferCapacity = 256)
-    /** Every event, in order, for screens that need more than the transcript. */
+    /**
+     * Everything pi sends, in order, for screens that need more than the transcript.
+     *
+     * `extraBufferCapacity` with the default `onBufferOverflow` (SUSPEND) is only
+     * half a contract, and the missing half used to be silent: [handle] runs on the
+     * **reader thread** and cannot suspend, so it hands the event to `tryEmit`,
+     * which never waits. Once a collector has let [EVENT_BUFFER] events pile up —
+     * the app's only collector is a `viewModelScope` coroutine, i.e. the **main
+     * thread**, which stops draining for as long as anything blocks it — `tryEmit`
+     * starts returning `false` and the event does not exist for anyone. Every later
+     * event is lost the same way, for as long as the collector stays behind.
+     *
+     * Not every event can be lost. `extension_ui_request` is the worst: pi *blocks
+     * the extension* until the answer arrives, so a dropped one is a turn that never
+     * finishes and reports nothing (`ui/extension/ExtensionUi.kt` documents the
+     * blocking contract). `agent_settled`/`agent_end` drive the App's own
+     * `refreshState`/stats and `compaction_start`/`compaction_end` decide whether a
+     * message may be sent as a `prompt` or has to be a `follow_up`. Those travel
+     * through [emitEvent]'s rescue path instead; everything else is a delta the
+     * transcript's own reducer has already folded, so dropping it costs a repaint
+     * and nothing else — and it is **counted** either way ([droppedEvents],
+     * [lastRecordProblem], [onRecordProblem]).
+     */
+    private val _events = MutableSharedFlow<PiEvent>(extraBufferCapacity = EVENT_BUFFER)
     val events: SharedFlow<PiEvent> = _events.asSharedFlow()
+
+    /**
+     * The overflow path for the event kinds that must not be dropped.
+     *
+     * Only [CRITICAL_EVENT_TYPES] reach it, and only after `tryEmit` has already
+     * failed, so it is empty on every ordinary run. It is unbounded on purpose: its
+     * producer is the reader thread, which must never block (a blocked reader is the
+     * ~64 KB stdout pipe filling and the engine freezing mid-turn), and its contents
+     * are user- and turn-paced — one blocking dialogue, one turn boundary, one
+     * compaction — never a delta stream. The drain emits with the suspending `emit`,
+     * so a collector that is merely slow does not lose them; order among the rescued
+     * events is preserved, and their order relative to dropped deltas is not
+     * (documented, not a bug: a rescued event is delivered as soon as the collector
+     * drains, while deltas that were already dropped are gone).
+     */
+    private val rescue = Channel<PiEvent>(Channel.UNLIMITED)
+
+    /** The one coroutine that drains [rescue]; cancelled by [close]. */
+    private var rescueJob: Job? = null
+
+    /**
+     * True once [close] has begun.
+     *
+     * Read by [readLoop]'s error path, which must not report the `IOException` that
+     * destroying the process produces on every ordinary teardown as a read failure.
+     */
+    @Volatile
+    private var closing = false
+
+    private val droppedCount = AtomicLong(0)
+    private val reducerFailureCount = AtomicLong(0)
+
+    /** Events this session could not hand to [events] because it was full. */
+    val droppedEvents: Long get() = droppedCount.get()
+
+    /** Events whose fold into the transcript threw. See [handle]'s catch. */
+    val reducerFailures: Long get() = reducerFailureCount.get()
+
+    /**
+     * The most recent dropped event or reducer failure, as one sentence, or null
+     * while nothing has gone wrong.
+     *
+     * Kept as state rather than only as a log line because the reader is 设置 →
+     * 运行时与诊断, which cannot listen to a log: the same shape as
+     * [lastExitCode], and for the same reason (the diagnostic report is the only
+     * surface that outlives the session).
+     */
+    @Volatile
+    var lastRecordProblem: String? = null
+        private set
+
+    /**
+     * Where a dropped event or a reducer failure is announced. Called on the
+     * **reader thread**, and rate-limited by the caller of [reportProblem] for the
+     * drop case (an overflow arrives as a burst, and one line per drop would bury
+     * the first one — which is the one carrying the count).
+     *
+     * Null means "count it, do not log it": this class stays Android-free
+     * (no `android.util.Log`), so the host wires the logger in.
+     */
+    @Volatile
+    var onRecordProblem: ((String) -> Unit)? = null
 
     private val _state = MutableStateFlow(EngineState.Starting)
     val state: StateFlow<EngineState> = _state.asStateFlow()
@@ -341,6 +427,28 @@ class PiEngineSession(
 
     fun start() {
         readerJob = scope.launch { readLoop(process.inputStream) }
+        // The overflow drain for the events that must not be lost. Started with the
+        // session and cancelled by `close`, so a restart cannot leave the previous
+        // engine's channel being drained by a coroutine nothing owns.
+        rescueJob = scope.launch {
+            for (event in rescue) {
+                // Suspending on purpose: the collector being *slow* is exactly the
+                // condition this path exists for, and waiting is what makes the event
+                // survive it. With no collector at all `emit` returns immediately, so a
+                // session nothing listens to buffers nothing.
+                //
+                // **Bounded**, because "delivered eventually" is not the same as "pi
+                // unblocked": the collector can be wedged for good (an ANR-grade main
+                // thread, a dead ViewModel), and an `extension_ui_request` waiting
+                // behind it is a running turn that never finishes and never says why.
+                // See [undeliverable].
+                val delivered = withTimeoutOrNull(RESCUE_DELIVERY_TIMEOUT_MS) {
+                    _events.emit(event)
+                    true
+                } ?: false
+                if (!delivered) undeliverable(event)
+            }
+        }
         // stderr MUST be drained. pi and Node write warnings there; if nobody
         // reads the pipe, the ~64 KB kernel buffer fills and the engine blocks
         // forever mid-turn — a failure that looks like "the model hung".
@@ -452,7 +560,23 @@ class PiEngineSession(
             while (true) {
                 val read = try {
                     input.read(buffer)
-                } catch (_: Throwable) {
+                } catch (error: Exception) {
+                    // A closed stream is how [close] asks this loop to stop, and it is
+                    // not a problem. Anything *else* here ends the process's only reader
+                    // of pi's stdout: pi keeps writing until the ~64 KB pipe fills and
+                    // then blocks in `write`, so the engine freezes mid-turn and every
+                    // later `request` waits out its own timeout — the same "the app hangs
+                    // and nothing ever comes back" state the reducer catch above exists
+                    // for. Reported rather than swallowed as EOF.
+                    //
+                    // `closing` distinguishes the two: `close()` destroys the process,
+                    // which makes this read throw on every normal teardown.
+                    if (!closing) {
+                        reportProblem(
+                            "读取引擎输出失败，已停止读取：${error::class.java.simpleName}: ${error.message}",
+                            rateLimited = false,
+                        )
+                    }
                     -1
                 }
                 if (read < 0) break
@@ -572,14 +696,123 @@ class PiEngineSession(
         // of it behind a stalled engine.
         try {
             synchronized(transcriptLock) { foldEvent(event) }
-        } catch (_: Exception) {
-            // Deliberately swallowed per record: the response above is already
-            // completed, the event is still emitted below, and the next record gets a
-            // clean run at the reducer.
+        } catch (error: Exception) {
+            // Swallowed per record so the reader keeps running (see above), but no
+            // longer *silently*: the count and the last message are readable from the
+            // diagnostic report, and the host logs them. A reducer that throws on
+            // every event is a broken transcript that otherwise looks like pi sending
+            // nothing.
+            val total = reducerFailureCount.incrementAndGet()
+            reportProblem(
+                "事件投影失败（第 $total 次）：${event.type} ${error::class.java.simpleName}: ${error.message}",
+                rateLimited = false,
+            )
         }
-        // Outside the lock: `tryEmit` touches no reducer state, and keeping it out
+        // Outside the lock: `emitEvent` touches no reducer state, and keeping it out
         // shortens the section the reader thread holds.
-        _events.tryEmit(event)
+        emitEvent(event)
+    }
+
+    /**
+     * A rescued event that [RESCUE_DELIVERY_TIMEOUT_MS] could not get into [events].
+     *
+     * Two outcomes, and the difference matters:
+     *
+     *  - a **blocking extension dialogue** (`select` / `confirm` / `input` / `editor`)
+     *    is answered here, on the App's behalf, so the extension stops waiting. The
+     *    answer is pi's own documented timeout resolution — `confirm()` resolves to
+     *    `false`, the other three to "cancelled" — which is the same thing pi would
+     *    have produced had the request timed out on its side. Declining is a visible
+     *    (and truthful) outcome for the user; a turn that hangs forever is not.
+     *  - anything else is dropped. Every other kind of rescued event is informational
+     *    or state-carrying but never *awaited* by pi, and holding the drain open would
+     *    starve the dialogue behind it — i.e. reintroduce the hang this path exists to
+     *    prevent.
+     *
+     * Both are reported, so the diagnostic report says the App lost an event rather
+     * than leaving the user to infer it from a cancelled dialogue.
+     */
+    private fun undeliverable(event: PiEvent) {
+        val dialogue = event as? PiEvent.ExtensionUiRequest
+            ?: return reportProblem(
+                "事件流持续不可用（${RESCUE_DELIVERY_TIMEOUT_MS / 1000} 秒），已放弃投递 ${event.type}",
+                rateLimited = false,
+            )
+        if (dialogue.method !in BLOCKING_DIALOG_METHODS) {
+            return reportProblem(
+                "事件流持续不可用（${RESCUE_DELIVERY_TIMEOUT_MS / 1000} 秒），已放弃投递 ${event.type}",
+                rateLimited = false,
+            )
+        }
+        val answered = if (dialogue.uiId.isEmpty()) {
+            false
+        } else {
+            send(
+                if (dialogue.method == "confirm") {
+                    PiCommands.extensionUiConfirmed(dialogue.uiId, false)
+                } else {
+                    PiCommands.extensionUiCancelled(dialogue.uiId)
+                },
+            )
+        }
+        reportProblem(
+            "扩展对话框「${dialogue.method}」${RESCUE_DELIVERY_TIMEOUT_MS / 1000} 秒内没能送到界面，" +
+                if (answered) {
+                    "已按 pi 的超时语义代为回复，避免扩展被永久堵住"
+                } else {
+                    "且回复也发不出去，扩展会一直等到 pi 自己的超时"
+                },
+            rateLimited = false,
+        )
+    }
+
+    /**
+     * Hand one event to [events], and make a failure to do so **visible**.
+     *
+     * The reader thread cannot suspend, so this is `tryEmit` — but a `tryEmit` whose
+     * `false` used to be thrown away. See [_events] for what an overflow means and
+     * why [CRITICAL_EVENT_TYPES] take the [rescue] path instead of being counted as a
+     * drop.
+     */
+    private fun emitEvent(event: PiEvent) {
+        if (_events.tryEmit(event)) return
+        if (event.type in CRITICAL_EVENT_TYPES) {
+            val queued = rescue.trySend(event).isSuccess
+            reportProblem(
+                if (queued) {
+                    "事件流已满：${event.type} 改由兜底队列投递（会晚于相邻事件到达）"
+                } else {
+                    // Only reachable after `close()` closed the channel; the event is
+                    // genuinely gone and saying so is the point.
+                    "事件流已满且兜底队列已关闭，${event.type} 已丢弃"
+                },
+                rateLimited = false,
+            )
+            return
+        }
+        reportProblem(
+            "事件流已满：${event.type} 已丢弃（累计 ${droppedCount.incrementAndGet()}）",
+            rateLimited = true,
+        )
+    }
+
+    /**
+     * Record a reader-thread problem: always as state, and through [onRecordProblem]
+     * when the host wired a logger.
+     *
+     * @param rateLimited true for the drop burst, where only the first line and every
+     *        [DROP_LOG_EVERY]-th after it are announced. The state
+     *        ([lastRecordProblem]) is written every time either way, so the report
+     *        always shows the newest sentence.
+     */
+    private fun reportProblem(message: String, rateLimited: Boolean) {
+        lastRecordProblem = message
+        val hook = onRecordProblem ?: return
+        if (rateLimited) {
+            val at = droppedCount.get()
+            if (at != 1L && at % DROP_LOG_EVERY != 0L) return
+        }
+        runCatching { hook(message) }
     }
 
     /**
@@ -660,9 +893,11 @@ class PiEngineSession(
         val rolled = replaced || previous.isEmpty() || current.size < previous.size
         // `change == None` does **not** mean "no row moved", so it must not be used
         // to reuse the previous snapshot: F8's throttled `tool_execution_update`
-        // mutates its row (the `items[index] = current.copy(…)` write in
-        // `TranscriptReducer.onToolUpdate`) and returns `None` on purpose; the contract
-        // is on `TranscriptChange` itself, in its `[None]` paragraph. A row reused on
+        // returns `None` on purpose and leaves the row holding the text **as of the
+        // last publication** — the reducer's `pendingToolOutput` accumulator owns
+        // everything since (`TranscriptReducer`), and the engine never publishes a
+        // throttled update, so no consumer ever sees that lag. The contract is on
+        // `TranscriptChange` itself, in its `[None]` paragraph. A row reused on
         // a size check alone would be a stale row that nothing ever republishes. The
         // rows are therefore compared, not the change trusted.
         //
@@ -1003,6 +1238,11 @@ class PiEngineSession(
             _state.value == EngineState.Failed
 
     fun close() {
+        // First, so the reader's own error path can tell "we are tearing this down"
+        // from "the read failed": destroying the process makes `input.read` throw on
+        // every normal close, and reporting that as a failure would put a spurious
+        // sentence in the diagnostic report of every healthy session.
+        closing = true
         // Close stdin *before* killing the process, and let the writer thread be the
         // one that does it: every queued command is written and flushed first, and a
         // write parked on a full pipe unblocks as soon as the pipe's read end goes
@@ -1018,6 +1258,12 @@ class PiEngineSession(
         readerJob?.cancel()
         stderrJob?.cancel()
         waitJob?.cancel()
+        // The rescue drain belongs to this session, not to the scope it was launched
+        // in (the host's IO scope outlives every session). Closing the channel ends
+        // the `for` loop, and the cancel covers the case where the drain is parked in
+        // `emit` because a collector is behind.
+        runCatching { rescue.close() }
+        rescueJob?.cancel()
         _state.value = EngineState.Stopped
     }
 
@@ -1027,6 +1273,68 @@ class PiEngineSession(
     companion object {
         /** Keep diagnostics bounded; the settings screen shows the tail. */
         private const val MAX_STDERR_CHARS = 64 * 1024
+
+        /**
+         * How many events may be in flight for a collector that is behind, before
+         * [emitEvent] starts losing them.
+         *
+         * 256 was already the value; it is named now because the number is a
+         * behaviour boundary rather than a detail: it is how far the **main thread**
+         * may fall behind the reader thread (a long frame, a dialog, a synchronous
+         * call) before anything is dropped.
+         */
+        private const val EVENT_BUFFER = 256
+
+        /**
+         * The event kinds [emitEvent] refuses to drop, by wire type.
+         *
+         * Each one is a *decision* the App makes rather than a delta it paints:
+         *
+         *  - `extension_ui_request` — pi blocks the extension until the App answers
+         *    (`ui/extension/ExtensionUi.kt`), so a dropped one is a turn that never
+         *    ends and never says why;
+         *  - `agent_settled` / `agent_end` — the turn boundary the ViewModel turns
+         *    into `refreshState` and the stats refresh;
+         *  - `compaction_start` / `compaction_end` — the flag that decides whether the
+         *    next message may be sent as a `prompt` or has to be a `follow_up`;
+         *    losing the end leaves the App believing a compaction is still running.
+         *
+         * Deliberately **not** here: `response` (its caller is the pending
+         * `CompletableDeferred`, which `handle` completes directly, so the flow copy
+         * is a convenience) and every delta (`message_update`,
+         * `tool_execution_update`, …), which the transcript reducer has already folded
+         * by the time this runs.
+         */
+        private val CRITICAL_EVENT_TYPES = setOf(
+            "extension_ui_request",
+            "agent_settled",
+            "agent_end",
+            "compaction_start",
+            "compaction_end",
+        )
+
+        /** One log line per this many dropped events, plus the first. */
+        private const val DROP_LOG_EVERY = 100L
+
+        /**
+         * How long a rescued event may wait for the collector before it is abandoned
+         * (and, for a blocking dialogue, answered — see [undeliverable]).
+         *
+         * Long enough that a merely busy phone (`StateFlow` delivery is on the frame
+         * thread) never hits it, short enough that "pi is waiting for a dialogue the App
+         * cannot show" is a bounded state rather than a hang. pi's own dialog timeouts,
+         * when an extension sets one, are shorter and resolve the request first; this is
+         * the App's own floor under that.
+         */
+        private const val RESCUE_DELIVERY_TIMEOUT_MS = 30_000L
+
+        /**
+         * The `extension_ui_request` methods that **block the extension** until they are
+         * answered (`ExtensionDialogMethod`'s wire names, which the UI layer routes to a
+         * dialog). The remaining methods (`notify`, `setStatus`, `setWidget`,
+         * `set_editor_text`) are one-way and must not be answered here.
+         */
+        private val BLOCKING_DIALOG_METHODS = setOf("select", "confirm", "input", "editor")
 
         /**
          * How much of the captured stderr travels in the failure sentence a waiting

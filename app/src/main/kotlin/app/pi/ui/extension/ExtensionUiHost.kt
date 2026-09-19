@@ -100,8 +100,18 @@ fun ExtensionUiHost(
                     bottom = snackbarBottomPadding + SnackbarBarGap,
                 ),
         ) { data ->
+            // The tone belongs to the message being drawn. `shownTone` alone was the
+            // answer until the notice queue filled: the queue is capped
+            // (`MAX_PENDING_NOTICES`) and the *oldest* entry is the one dropped, so a
+            // ninth notice can make `head` the next one while the current snackbar is
+            // still on screen — and the effect below writes `shownTone` for its own
+            // notice, repainting the visible one in the wrong tone. Looking the tone up by
+            // the message the host is actually drawing closes that, and `shownTone` stays
+            // as the fallback for the frames after a notice was consumed, when the
+            // snackbar is still animating out and must keep its colour.
+            val tone = state.notices.firstOrNull { it.message == data.visuals.message }?.tone ?: shownTone
             ExtensionSnack(
-                tone = shownTone,
+                tone = tone,
                 // `data.visuals.message` is pi's `notify` text verbatim: the tone
                 // glyph is drawn beside it, never prepended to it.
                 message = data.visuals.message,

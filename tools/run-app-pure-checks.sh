@@ -267,6 +267,19 @@ run_harness packages \
   "$ROOT/app/src/main/kotlin/app/pi/packages/ExtensionLifecycle.kt" \
   "$ROOT/rpc/src/main/kotlin/app/pi/rpc/Ansi.kt"
 
+# app.pi.packages: `pi update`'s argv shape, the refusal of pi's self-update targets
+# (`self`/`pi` would replace the pinned engine payload), which sources are updateable at
+# all, and the recognition of pi's own result line — the progress line must not be mistaken
+# for a result. Pure kotlin stdlib.
+run_harness pi-package-update \
+  app.pi.packages.PiPackageUpdateCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/packages/PiPackageUpdateCheck.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/packages/PiPackageUpdate.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/packages/PiPackageSource.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/packages/PackageStrings.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/packages/PiResourceDiscovery.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/packages/PiPackageModel.kt"
+
 # app.pi.bridge: the A3 guest→host candidate order. Pure string arithmetic, no
 # Android and no filesystem — see the file header.
 run_harness guest-paths \
@@ -495,7 +508,23 @@ run_harness pre-spawn \
   app.pi.rpc.PiPreSpawnCheckKt \
   "$ROOT/app/src/test/kotlin/app/pi/rpc/PiPreSpawnCheck.kt" \
   "$ROOT/rpc/src/main/kotlin/app/pi/rpc/PiLaunchOptions.kt" \
-  "$ROOT/rpc/src/main/kotlin/app/pi/rpc/PiPreSpawnConfig.kt"
+  "$ROOT/rpc/src/main/kotlin/app/pi/rpc/PiPreSpawnConfig.kt" \
+  "$ROOT/rpc/src/main/kotlin/app/pi/rpc/ExtensionFlagArgs.kt"
+
+# app.pi.rpc: the launch arguments an *extension* declared (`pi.registerFlag`) and the user
+# types into the app. pi's own parser is the specification — `cli/args.ts:227-241` decides
+# what a `--flag` means from the tokens around it — so this harness is that table, line for
+# line: the `=` form (first `=` splits, the value is taken verbatim, may be empty), the
+# space form (the next token counts only if it does not start with `-`/`@`, and is then
+# consumed), a bare flag meaning `true`, last-one-wins, and the shapes pi turns into a
+# startup error *before* anything else runs (`-x`, `@file`, `--`, a stray word). It
+# deliberately does **not** check registration: that set exists only inside the pi process,
+# so a whitelist here could only be a guess.
+run_harness extension-flags \
+  app.pi.rpc.ExtensionFlagArgsCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/rpc/ExtensionFlagArgsCheck.kt" \
+  "$ROOT/rpc/src/main/kotlin/app/pi/rpc/ExtensionFlagArgs.kt" \
+  "$ROOT/rpc/src/main/kotlin/app/pi/rpc/PiLaunchOptions.kt"
 
 # app.pi.service: the foreground service's lifecycle decisions — what a start
 # command means (including the null intent a killed `START_STICKY` service is
@@ -576,6 +605,173 @@ run_harness image-size \
   app.pi.ui.blocks.ImageSizeCheckKt \
   "$ROOT/app/src/test/kotlin/app/pi/ui/blocks/ImageSizeCheck.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/ui/blocks/ImageSize.kt"
+
+# app.pi.ui: the retained-history budget's measure. `PiSessionViewModel` decides whether
+# to keep reading older history from a running character total, and that total is
+# accumulated *incrementally* — which is the same number only while the measure is
+# additive over a concatenation. The additivity, and what the number *is* (an entry's
+# serialised length, so an inline image's base64 counts), are what this pins.
+run_harness history-retention \
+  app.pi.ui.HistoryRetentionCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/ui/HistoryRetentionCheck.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/ui/HistoryRetention.kt"
+
+# app.pi.ui.chat: the `!` panel's output window. pi bounds its own panel at the tail
+# (`modes/interactive/components/bash-execution.js:93-98`, `truncateTail` with
+# DEFAULT_MAX_LINES/DEFAULT_MAX_BYTES); this is the same bound on the app's side, and the
+# harness pins the three properties that keep a chatty command from growing a String and a
+# single Text without a ceiling: the bound holds, the tail survives, a trim is reported.
+run_harness bash-output \
+  app.pi.ui.chat.BashOutputCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/ui/chat/BashOutputCheck.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/ui/chat/BashOutput.kt"
+
+# app.pi.ui.render: the row-height floor that keeps a re-composed transcript row from
+# growing back from zero. The markdown library cannot hand back a parsed state, so the
+# fallback is "remember the height this row measured last time and hold it for the first
+# frames after a recomposition" - which is only safe while the memory is *bounded* and
+# never answers with a stale height. This harness pins exactly those two properties (the
+# LRU's capacity and access order, nothing recorded for a zero-height loading frame, an
+# evicted key answering null rather than its old value), because an unbounded or
+# forgetful cache would trade a visual jump for a memory leak or a wrong row height.
+run_harness row-height-cache \
+  app.pi.ui.render.RowHeightCacheCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/ui/render/RowHeightCacheCheck.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/ui/render/RowHeightCache.kt"
+
+# app.pi.ui.blocks: the transcript image cache's arithmetic — a byte-bounded LRU whose keys
+# are multi-megabyte payloads. Two properties matter and neither is visible in the UI: the
+# byte accounting must include the key itself (a cache that forgets what its keys weigh is a
+# memory leak with extra steps), and the lookup must never hash the payload — `hashCode()` on
+# a 4 MiB string measured 22.8 ms, which is why this is a linear `==` scan rather than a
+# `LinkedHashMap`. The harness checks the LRU against an independent reference implementation
+# and asserts that `hashCode` is never called. `PiImageCache.kt` itself imports `Bitmap` and
+# therefore cannot be compiled here; this pins the class it delegates to.
+run_harness pi-image-cache \
+  app.pi.ui.blocks.PiImageCacheCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/ui/blocks/PiImageCacheCheck.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/ui/blocks/ImageSize.kt"
+
+# app.pi.ui.blocks: the *text* parse caches — the same bounded-by-bytes discipline as the
+# image one, for the work a row repeats whenever it leaves the reuse pool and comes back
+# (a diff plan is 3.9–13.2 ms, a coloured `Ansi.strip` 2.9 ms, `tailLines` ~2 ms). A row
+# that scrolls out and returns, or a screen switch, must not redo it — but "must not" has
+# to hold without growing: every cache is byte-bounded, the byte accounting includes the
+# key, a big key is never hashed, and a failed compute is not cached. The incremental line
+# count is pinned against the full count over random growths and rewrites, because "faster"
+# is only acceptable while it answers the same number.
+run_harness text-cache \
+  app.pi.ui.blocks.TextCacheCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/ui/blocks/TextCacheCheck.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/ui/blocks/ImageSize.kt"
+
+# app.pi.ui.settings: what the editors are allowed to write into pi's files. pi throws on
+# some values (a `null` timeout, a compaction override whose value is not a number) and
+# silently ignores others (a line with no `=`), so an editor that only *looks* checked
+# turns a typo into a broken engine or a setting that does nothing. This harness pins the
+# verdicts themselves — the accepted domains, the bounds message, and the rejection of the
+# exact shapes pi refuses — because the Compose sheets that call them cannot be compiled
+# here at all.
+run_harness settings-validation \
+  app.pi.ui.settings.PiSettingsValidationCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/ui/settings/PiSettingsValidationCheck.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/ui/settings/PiSettingsValidation.kt"
+
+# app.pi.ui.settings: what the 「扩展与资源」group reports as *discovered*. The four rows that
+# used to list hand-written search paths were removed because pi finds resources by itself —
+# so this screen has to state what is actually there, with its sources, and it must never
+# invent a reading: a count, "nothing found yet", "could not read: why" and "not read yet"
+# are four different answers that must not impersonate each other (an empty directory and an
+# unreadable one look identical on disk, which is exactly the kind of lie this pins out).
+run_harness settings-resources \
+  app.pi.ui.settings.PiResourceFactsCheckKt \
+  "$ROOT/app/src/main/kotlin/app/pi/ui/settings/PiResourceFacts.kt" \
+  "$ROOT/app/src/test/kotlin/app/pi/ui/settings/PiResourceFactsCheck.kt"
+
+# app.pi.settings: the settings document itself — deleting a key (pi's own "use the
+# default": writing `null` makes pi throw), one shared document per file, and the lock and
+# temp-file discipline around a write. Every property here answers a defect that shipped:
+# a "restore default" that bricked startup, a second store instance that erased the first
+# one's key, and a temp name two writers could collide on.
+run_harness settings-store \
+  app.pi.settings.PiSettingsStoreCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/settings/PiSettingsStoreCheck.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/ui/settings/PiSettingsStore.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/settings/PiSettingsFileStore.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/settings/PiSettingsLock.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/runtime/PiProjectConfig.kt" \
+  "$ROOT/rpc/src/main/kotlin/app/pi/rpc/SettingsDocument.kt" \
+  "$ROOT/rpc/src/main/kotlin/app/pi/rpc/PiJson.kt" \
+  "$ROOT/rpc/src/main/kotlin/app/pi/rpc/internal/Json.kt"
+
+# app.pi.settings: the 「Pi 文件」screen's pure logic — the two roots, the writable
+# whitelist (default deny), the document classes, and the write-time JSON checks that keep
+# a `null`/bad value out of the files pi *throws* on (settings-manager.ts:188-197, :860-877).
+# Android-free: java.io.File, kotlinx.serialization and the stdlib; PiJsonComments is the
+# same comment stripper models.json is read with. What this pins is the part a screen
+# cannot be trusted with: that an unknown name is refused rather than edited, and that
+# every "pi would reject this" shape is refused before the write, not after.
+run_harness pi-files \
+  app.pi.settings.PiFilesCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/settings/PiFilesCheck.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/settings/PiFiles.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/packages/PiJsonComments.kt"
+
+# app.pi.ui.screens: the workspace tree's pi-file write rule. A save under the workspace's own
+# `.pi/` is a write to a file pi reads, and it used to be a whole-file overwrite — a second
+# writer next to the 「Pi 文件」screen's locked, atomic, validated one. This pins which save
+# takes which path, that the validation is `checkPiFileWrite` (the same function the other
+# screen runs), and the stale-stamp refusal.
+run_harness workspace-pi-write \
+  app.pi.ui.screens.WorkspacePiWriteCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/ui/screens/WorkspacePiWriteCheck.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/ui/screens/WorkspacePiWrite.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/settings/PiFiles.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/packages/PiJsonComments.kt"
+
+# app.pi.runtime: the workspace lifecycle's own rules, lifted out of the screen and the store
+# so they can be pinned — which of the app's directories count as workspaces, how a workspace
+# is named and displayed, which workspace the process actually starts in, and what clicking a
+# row does (the order of those branches is part of the answer). Every one of these used to be
+# a private rule inside `ProjectScreen` or `WorkspaceStore`, and two screens disagreed about
+# the current workspace's name; this is the single copy both now call.
+run_harness workspace-choice \
+  app.pi.runtime.WorkspaceChoiceCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/runtime/WorkspaceChoiceCheck.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/runtime/WorkspaceChoice.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/runtime/GuestWorkspacePath.kt"
+
+# app.pi.ui.extension: the notice queue's eviction rule. The host shows one snackbar at a
+# time, oldest first, and consumes an entry only after it has been shown — so the head of
+# the list is the message on screen. `takeLast` used to evict it, deleting the sentence the
+# user was reading and replacing the visible snackbar; this pins "never drop the head".
+run_harness notice-queue \
+  app.pi.ui.extension.NoticeQueueCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/ui/extension/NoticeQueueCheck.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/ui/extension/NoticeQueue.kt"
+
+# app.pi.ui.chat: the `@` lookup's failure classification. The composer draws nothing for an
+# empty candidate list, which is right for "fd matched nothing" and was also the answer for
+# a missing runtime / a proot launch failure / a timeout / a killed process. Which is which
+# is a decision about `GuestCommand.Outcome`'s fields that nothing else checks — including
+# the arm that must stay silent (a non-zero exit is pi's no-candidates).
+run_harness mentions-unavailable \
+  app.pi.ui.chat.MentionLookupCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/ui/chat/MentionLookupCheck.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/ui/chat/MentionLookup.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/ui/chat/PiFileMentions.kt"
+
+# app.pi.ui.chat: in-session branch navigation (`navigateTree`), which pi's RPC surface
+# cannot reach directly — the app drives it through a command its own extension registers,
+# so "the prompt call returned" is the only completion signal there is, and the branch that
+# has to be *excluded* is the abandoned one (the session file keeps it; only the in-memory
+# leaf says which line is live). This pins the landing rules, the summary choice, the
+# command arguments, and the outcome classification — including the arms that must not
+# rebuild the transcript, because "reset with nothing to show" is its own bug.
+run_harness tree-navigation \
+  app.pi.ui.chat.PiTreeNavigationCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/ui/chat/PiTreeNavigationCheck.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/ui/chat/PiTreeNavigation.kt"
 
 # --- 4. verdict ---------------------------------------------------------------
 # The counts are computed, not written down. They were hardcoded once ("2

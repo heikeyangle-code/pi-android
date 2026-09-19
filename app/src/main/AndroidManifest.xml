@@ -68,6 +68,29 @@
         android:name="android.permission.READ_EXTERNAL_STORAGE"
         android:maxSdkVersion="32" />
 
+    <!--
+      「从设备目录选择」——把一个设备上的真目录当作工作区。
+
+      工作区必须是**真实文件路径**：`PiEngineHost.bootLocked` 把
+      `workspace.absolutePath` 绑进 guest 并把它当作引擎的 cwd
+      （`PiEngineHost.kt:407`、`:451`），而 proot 的绑定点只吃真路径。
+      SAF 给的是 `content://` 树 URI，能经 `/app/saf/*` 读写，但**不能当工作区根** ——
+      所以这里要的是「所有文件访问」，不是文档选择器。
+
+      No `maxSdkVersion`: on API 30+ this is the only way to reach an arbitrary real
+      directory, and below 30 the OS simply ignores it (the classic
+      WRITE/READ_EXTERNAL_STORAGE pair above is what works there — the runtime check
+      in `WorkspaceExternalPicker` asks for those on old versions and for this one on
+      API 30+, never the old pair on a modern device, where it is meaningless).
+
+      `tools:ignore="ScopedStorage"` is the lint id for this permission: the app uses
+      it for exactly the documented exception (a user-picked directory that a
+      container has to bind-mount), not for broad file browsing for its own sake.
+    -->
+    <uses-permission
+        android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
+        tools:ignore="ScopedStorage" />
+
     <!-- Package visibility for the manager app, so the status card can say
          「未安装」 instead of 「未运行」. -->
     <queries>

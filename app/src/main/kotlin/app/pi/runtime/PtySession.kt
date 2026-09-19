@@ -138,8 +138,17 @@ class PtySession private constructor(
                     bytesRead += read
                     onOutput(buffer, read)
                 }
-            } catch (_: IOException) {
-                // A closed stream is how this thread is asked to stop.
+            } catch (error: IOException) {
+                // A closed stream is how this thread is asked to stop, and [close] is
+                // the only thing that closes it — so a failure while the session is
+                // still open is not the normal path. It is also the one failure this
+                // thread can cause silently: nothing else drains the guest's output, so
+                // the pipe fills and the program inside blocks in `write` with a screen
+                // that never updates. That is rule 1 of the class KDoc ("Output can
+                // never block the guest"), and `lastError` is what the key bar shows.
+                if (!closed.get()) {
+                    lastError = "读取终端输出失败，已停止读取：${error.message ?: error::class.java.simpleName}"
+                }
             }
         }, "pi-pty-reader")
         reader.isDaemon = true

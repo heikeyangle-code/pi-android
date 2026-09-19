@@ -66,6 +66,7 @@ import app.pi.rpc.ToolDiff
 import app.pi.rpc.ToolStatus
 import app.pi.rpc.TranscriptItem
 import app.pi.runtime.PtyLauncher
+import app.pi.runtime.WorkspaceChoice
 import app.pi.runtime.WorkspaceStore
 import app.pi.ui.BashRun
 import app.pi.ui.PiSessionViewModel
@@ -108,7 +109,7 @@ import kotlinx.serialization.json.JsonPrimitive
  *
  * | 段 | 内容 | 数据从哪来 |
  * |---|---|---|
- * | ① 当前目录卡 | 工作区名 + 现场摘要 + 「切换」 | 会话 cwd（`PiProject.workspaceName`）+ 下两段的读数 |
+ * | ① 当前目录卡 | 工作区名 + 现场摘要 + 「切换」 | 当前工作区（`WorkspaceState.name` + `WorkspaceStore` 的 label）+ 下两段的读数 |
  * | ② 正在跑 | 没有在跑的命令就整段不画 | `UiState.bash` + 转录里 `Pending` 的 shell 卡 |
  * | ③ 本次会话改过 | 点行就地开 diff；行尾 ⋮ = 打开 / 编辑 / 重命名 / 删除 / 定位到对话 | 转录里 `write`/`edit` 的路径 + `ToolDiff` 的 `+N −M` |
  * | ④ 全部文件 | 面包屑 + 目录在前 + 行尾 ⋮ + 段头「新建」 | **宿主 File I/O**，`java.io.File` |
@@ -144,7 +145,6 @@ fun ProjectScreen(
     session: PiSessionViewModel,
 ) {
     val state by session.state.collectAsState()
-    val sessions by session.sessions.collectAsState()
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
@@ -166,14 +166,37 @@ fun ProjectScreen(
     val agentDir = layout.agentMirrorDir
     val guestWorkspace = layout.guestWorkspace
 
-    // 当前会话的 cwd。`sessionFile` 是唯一说明「pi 现在在写哪个文件」的线上字段
-    // （`SessionsScreen.kt:117` 用同一招判当前行），而 cwd 只存在于会话列表的摘要里——
-    // 那是磁盘上会话头的读数，不是猜的。
-    val activeFile = state.meta.sessionFile?.substringAfterLast('/')
-    val currentCwd = remember(sessions, activeFile) {
-        activeFile?.let { name -> sessions.firstOrNull { it.file.name == name }?.cwd }
+    var refreshTick by remember { mutableIntStateOf(0) }
+
+    // 工作区清单 —— 切换面板里那份「现有工作区」，也是 ① 卡上那个名字的 label 来源。
+    // 取自引擎的真实入口（`session.workspaceEntries()` → `WorkspaceStore.list`），不是拿当前
+    // 工作区的兄弟目录凑出来的 —— 名字、label、`isCurrent` 与切换时 `switchWorkspace` 用的是
+    // 同一份判据。它是一次真实的磁盘读取，所以在 IO 线程上跑，不放在 composition 里。
+    // 键里的 `revision` 是「换过工作区」的信号（`WorkspaceState`），切换之后重读一遍。
+    var workspaceEntries by remember { mutableStateOf<List<WorkspaceStore.Entry>>(emptyList()) }
+    LaunchedEffect(refreshTick, state.workspace.revision) {
+        workspaceEntries = withContext(Dispatchers.IO) { session.workspaceEntries() }
     }
-    val workspaceName = currentCwd?.let { PiProject.workspaceName(it) } ?: WorkspaceFiles.ROOT_LABEL
+
+    // 当前工作区**叫什么**：一份真相，就是 ViewModel 发布的那份身份 —— 工作区**目录名**
+    // （`WorkspaceState.name`，由 `WorkspaceStore.reconcile` 与 `switchWorkspace` 写），label 从
+    // 上面那份 `workspaceEntries` 里按这个名字取（也就是切换面板里同一行印的名字）。
+    //
+    // 这里**原来**是从会话 cwd 推的（`state.meta.sessionFile` → 会话列表的 `cwd` →
+    // `PiProject.workspaceName`）。那是第二份真相，而且是会过期的那一份：改过显示名之后
+    // ① 卡印目录名、切换面板印 label（同一个工作区两个名字）；刚切完的头一两秒还会印着
+    // **上一个**工作区的名字（新会话头要等 pi 起来才写，`state.meta.sessionFile` 在那之前
+    // 还是旧值）。会话头里的 `cwd` 是「那一次会话在哪儿跑过」的记录，不是「现在在哪儿」——
+    // pi 那边只有一个答案（`process.cwd()`，`main.ts:580`），本应用对这个答案的唯一权威是
+    // `WorkspaceStore`。
+    //
+    // 引擎没起来时这一行照样对：它读的是设置，不是引擎。`workspaceEntries` 还没读回来
+    // （第一帧）时先印目录名 —— `displayName` 在没有 label 时就是这个答案，所以不会印出
+    // 一个错名字，只会晚一帧变成显示名。
+    val workspaceName = WorkspaceChoice.displayName(
+        name = state.workspace.name,
+        label = workspaceEntries.firstOrNull { it.name == state.workspace.name }?.label,
+    )
 
     // 引擎没起来：②③ 没有数据，④⑤ 与全部文件操作照常。判据是引擎状态本身，不是转录的
     // 长度——转录为空既可能是引擎没起来，也可能是这个会话真的什么都没做。
@@ -181,8 +204,6 @@ fun ProjectScreen(
     val engineDown = engine == null ||
         engine == PiEngineSession.EngineState.Stopped ||
         engine == PiEngineSession.EngineState.Failed
-
-    var refreshTick by remember { mutableIntStateOf(0) }
 
     // ---------------------------------------------------------------- ④ 浏览
     var crumbs by remember { mutableStateOf<List<String>>(emptyList()) }
@@ -211,15 +232,6 @@ fun ProjectScreen(
     var resources by remember { mutableStateOf<List<WorkspaceResource>>(emptyList()) }
     var resourceKind by remember { mutableStateOf(WorkspaceResourceKind.Skill) }
     var projectUntrusted by remember { mutableStateOf(false) }
-    // 切换面板里那份「现有工作区」清单：取自引擎的真实入口
-    // （`session.workspaceEntries()` → `WorkspaceStore.list`），不是拿当前工作区的兄弟目录
-    // 凑出来的 —— 名字、label、`isCurrent` 与切换时 `switchWorkspace` 用的是同一份判据。
-    // 它是一次真实的磁盘读取，所以照旧在 IO 线程上跑，不放在 composition 里。
-    // 键里的 `revision` 是「换过工作区」的信号（`WorkspaceState`），切换之后重读一遍。
-    var workspaceEntries by remember { mutableStateOf<List<WorkspaceStore.Entry>>(emptyList()) }
-    LaunchedEffect(refreshTick, state.workspace.revision) {
-        workspaceEntries = withContext(Dispatchers.IO) { session.workspaceEntries() }
-    }
     LaunchedEffect(refreshTick, workspace, agentDir) {
         withContext(Dispatchers.IO) {
             resources = runCatching {
@@ -294,6 +306,8 @@ fun ProjectScreen(
     var workspaceDelete by remember { mutableStateOf<WorkspaceStore.Preview.Ok?>(null) }
     /** 这一轮回合正跑着、用户选了别的工作区时，先问一次的那一格。 */
     var workspaceInterrupt by remember { mutableStateOf<WorkspaceStore.Entry?>(null) }
+    /** 「从设备目录选择」那一层（权限说明 + 真目录浏览器）。 */
+    var externalPicker by remember { mutableStateOf(false) }
 
     fun say(text: String, tone: StateTone = StateTone.Muted) {
         snack = WorkspaceSnack(text, tone)
@@ -474,6 +488,51 @@ fun ProjectScreen(
                 is WorkspaceSwitch.AlreadyCurrent -> say("已经在这个工作区里。")
                 is WorkspaceSwitch.Refused -> Unit
                 is WorkspaceSwitch.Failed -> Unit
+            }
+        }
+    }
+
+    /**
+     * 用户在设备目录浏览器里点了「就选这个目录」。
+     *
+     * 两件事，顺序固定：**先登记，再按已有的切换判定搬引擎**。
+     *
+     *  - 登记是宿主侧的一次设置写入（`app.workspace.external`，app 自己的 sidecar，**不进
+     *    pi 的 `settings.json`**）。它走的是 [WorkspaceStore] 而不是 ViewModel 的转发，因为
+     *    这个动作与引擎无关：登记一个目录不会动引擎、不会开会话；ViewModel 那边只有「切工作区」
+     *    必须由它做（要 `engineTransition`、要重开会话）。ViewModel 的 settings 缓存与这里读的
+     *    是同一个 `PiSettingsFileStore` 文档（按规范路径共享、`(size, mtime)` 变了就重读），
+     *    所以这里写下去的值最多 250 ms 后在那边也看得到。
+     *  - 搬引擎复用 [switchWorkspaceTo]，也就是**同一个** `decidePick`：正在跑的回合要先问过
+     *    用户（`workspaceInterrupt` 那一格），不会因为「刚从选择器里出来」就默认可以杀掉一轮。
+     *    用户绕了权限页和一层层目录才选中这个目录，所以登记完直接切过去是他说要的事；但杀回合
+     *    仍然是另一件事，仍然要问。
+     */
+    fun useExternalDirectory(path: String) {
+        scope.launch {
+            val app = context.applicationContext ?: context
+            when (val result = withContext(Dispatchers.IO) { WorkspaceStore.registerExternal(app, path) }) {
+                is WorkspaceStore.Create.Ok -> {
+                    val entry = result.entry
+                    say("已加入工作区 · ${entry.displayName}")
+                    refreshTick++
+                    when (
+                        WorkspaceChoice.decidePick(
+                            isCurrent = entry.isCurrent,
+                            turnRunning = session.wouldInterruptTurn(),
+                            available = entry.available,
+                        )
+                    ) {
+                        WorkspaceChoice.Pick.Unavailable ->
+                            say("「${entry.displayName}」现在读不到，已登记但没有切过去。", StateTone.Warning)
+
+                        WorkspaceChoice.Pick.AlreadyHere -> Unit
+                        WorkspaceChoice.Pick.ConfirmInterrupt -> workspaceInterrupt = entry
+                        WorkspaceChoice.Pick.Switch -> switchWorkspaceTo(entry)
+                    }
+                }
+
+                is WorkspaceStore.Create.Failed -> say(result.message, StateTone.Warning)
             }
         }
     }
@@ -964,23 +1023,52 @@ fun ProjectScreen(
             // 把它盖住了 —— 先关才看得见。`Ok` 也因此不用再关一次面板。
             onPick = { entry ->
                 rootSheet = false
-                when {
-                    // 当前工作区：`switchWorkspace` 会返回 `AlreadyCurrent`（下面那一支处理的是
-                    // 列表过期时的同一个答案）。在这里先拦一道，是因为回合正跑着时
-                    // `wouldInterruptTurn()` 为 true，而切到当前工作区根本不会中断任何东西 ——
-                    // 不该拿一句「会中断回合」去吓用户。
-                    entry.isCurrent -> say("已经在这个工作区里。")
-                    session.wouldInterruptTurn() -> workspaceInterrupt = entry
-                    else -> switchWorkspaceTo(entry)
+                // 三条分支的顺序是判定的一部分，所以它住在纯函数
+                // `WorkspaceChoice.decidePick` 里、由 harness 钉死，而不是这个 lambda 的
+                // `when` 顺序里：**先问是不是当前工作区**。理由在那一支的 KDoc 上（回合正跑着时
+                // 点当前那一行不该得到「会中断回合」）。
+                when (
+                    WorkspaceChoice.decidePick(
+                        isCurrent = entry.isCurrent,
+                        turnRunning = session.wouldInterruptTurn(),
+                        available = entry.available,
+                    )
+                ) {
+                    // 目录现在拿不到（SD 卡拔出 / 权限被撤销 / 被别的文件管理器删了）：说实话，
+                    // 不动引擎。这一支排在「当前工作区」之前，因为一个读不到的当前工作区会让
+                    // 「已经在这个工作区里」变成一句假话 —— 启动时的回退规则早就把引擎挪回默认
+                    // 工作区了。
+                    WorkspaceChoice.Pick.Unavailable ->
+                        say("「${entry.displayName}」现在读不到（可能是卡被拔出、正在卸载，或者权限被撤销了），没有切换。", StateTone.Warning)
+
+                    WorkspaceChoice.Pick.AlreadyHere -> say("已经在这个工作区里。")
+                    // 会中断一轮正在跑的回合：先问一次再切（`workspaceInterrupt` 那一格）。
+                    WorkspaceChoice.Pick.ConfirmInterrupt -> workspaceInterrupt = entry
+                    WorkspaceChoice.Pick.Switch -> switchWorkspaceTo(entry)
                 }
             },
             onNew = {
                 rootSheet = false
                 createNewWorkspace()
             },
+            onPickExternal = {
+                rootSheet = false
+                externalPicker = true
+            },
             onMenu = { entry ->
                 rootSheet = false
                 workspaceMenuFor = entry
+            },
+        )
+    }
+
+    // ---------------------------------------------- 浮层：从设备目录选择（真目录）
+    if (externalPicker) {
+        WorkspaceExternalPicker(
+            onClose = { externalPicker = false },
+            onPick = { path ->
+                externalPicker = false
+                useExternalDirectory(path)
             },
         )
     }
@@ -1020,19 +1108,29 @@ fun ProjectScreen(
             )
             // 路径一律等宽（规则 #7）：这是工作区在磁盘上的绝对路径，不是一句话。
             PiDialogBody(target.host.absolutePath, mono = true)
-            // 要展示的就是引擎数出来的那三个数：文件数 / 目录数 / 总字节。用户同意的是
-            // **这一次统计**，而 `confirmation` 是它唯一的凭据（`deleteWorkspace` 只收它）。
-            PiDialogBody(
-                "这个工作区里有 ${target.files} 个文件 / ${target.dirs} 个目录，" +
-                    "共 ${WorkspaceFiles.formatSize(target.bytes)}。" +
-                    "删除后永久消失，不进回收站，也恢复不了。",
-            )
+            if (target.removesFiles) {
+                // 要展示的就是引擎数出来的那三个数：文件数 / 目录数 / 总字节。用户同意的是
+                // **这一次统计**，而 `confirmation` 是它唯一的凭据（`deleteWorkspace` 只收它）。
+                PiDialogBody(
+                    "这个工作区里有 ${target.files} 个文件 / ${target.dirs} 个目录，" +
+                        "共 ${WorkspaceFiles.formatSize(target.bytes)}。" +
+                        "删除后永久消失，不进回收站，也恢复不了。",
+                )
+            } else {
+                // 外部工作区：**一个字都不许让用户以为文件会消失**。这不是「删除」，是取消登记
+                // （`WorkspaceStore.delete` 的外部那一条只改设置，从不碰磁盘）。
+                PiDialogBody(
+                    "这是设备上的目录，不是 App 建的：这一个动作只是把它从工作区列表里去掉，" +
+                        "**目录和里面的文件一个都不会动**。想切回来，重新「从设备目录选择」同一个目录就行。",
+                )
+            }
             PiDialogActions {
                 PiDialogAction(label = "取消", primary = false, onClick = { workspaceDelete = null })
                 PiDialogAction(
-                    label = "永久删除",
+                    // 按钮上的字必须与后果一致：外部工作区不删文件，就不该写着「永久删除」。
+                    label = if (target.removesFiles) "永久删除" else "取消登记",
                     primary = true,
-                    tone = PiTheme.palette.error,
+                    tone = if (target.removesFiles) PiTheme.palette.error else null,
                     onClick = {
                         workspaceDelete = null
                         deleteWorkspaceNow(preview)
@@ -2137,12 +2235,13 @@ private fun WorkspaceRootSheet(
     onClose: () -> Unit,
     onPick: (WorkspaceStore.Entry) -> Unit,
     onNew: () -> Unit,
+    onPickExternal: () -> Unit,
     onMenu: (WorkspaceStore.Entry) -> Unit,
 ) {
     WsSheet(
         title = "切换工作区",
         onClose = onClose,
-        subtitle = "工作区就是 pi 的现场目录；它就在 App 私有目录里。",
+        subtitle = "工作区就是 pi 的现场目录；App 私有目录里的、设备目录里的都算。",
         footer = "换工作区等于换一个现场：会新建一个 pi 会话，当前会话不会被删除。",
         maxBodyHeight = ROOT_SHEET_BODY_MAX,
     ) {
@@ -2168,7 +2267,7 @@ private fun WorkspaceRootSheet(
                     mono = !renamed,
                     strong = true,
                     lead = { FolderGlyph() },
-                    badge = if (renamed || item.isCurrent) {
+                    badge = if (renamed || item.isCurrent || item.external || !item.available) {
                         {
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
@@ -2178,6 +2277,13 @@ private fun WorkspaceRootSheet(
                                 // 目录路径上，而不是这个名字上。
                                 if (renamed) {
                                     WsBadge(text = "", tone = StateTone.Muted, mono = item.name)
+                                }
+                                // 外部工作区标出来：它的文件在设备上，删除只是取消登记。
+                                if (item.external) {
+                                    WsBadge(text = "设备", tone = StateTone.Muted)
+                                }
+                                if (!item.available) {
+                                    WsBadge(text = "读不到", tone = StateTone.Warning)
                                 }
                                 if (item.isCurrent) {
                                     WsBadge(text = "当前", tone = StateTone.Accent, glyph = "●")
@@ -2222,22 +2328,28 @@ private fun WorkspaceRootSheet(
                 onClick = onNew,
             )
             WsHairline()
-            // 「从设备目录选择」这一条**保持 UI、但明确不可用**：它要的是 SAF/「所有文件
-            // 访问」授权加另一条挂载通道，这一版没有。所以它没有 `onClick`（不可点）、
-            // 标题不画成 accent（不假装是一条能走的路），并在名字旁边挂一颗「未接」徽标；
-            // 稿子那一行是 accent + 点击弹一句提示，这是与稿子的第三处**有意偏离** ——
-            // 弹一句「还没接上」比一行灰着的徽标更像一条能走的路。
+            // 「从设备目录选择」：把设备上一个**真目录**登记成工作区。
+            //
+            // 它要的是「所有文件访问」（`MANAGE_EXTERNAL_STORAGE`），**不是** SAF：工作区必须是
+            // 真实文件路径 —— 引擎把它 bind 进 guest 并当 cwd（`PiEngineHost.kt:407`、`:451`），
+            // 而文档选择器给的是内容 URI，绑不了。这一句在说明页里也印（`WorkspaceExternalIntro`），
+            // 免得用户以为随便给个授权就够了。
+            //
+            // 这条行没有「未接」徽标了：它现在是一条真能走的路。有没有权限是**点下去之后**才知道
+            // 的事（`WorkspaceExternalPicker` 自己判定并给出说明），所以这里不预判 —— 一行灰着的
+            // 徽标会让有权限的用户以为它还没做。
             WsRow(
                 title = "从设备目录选择（需授权）",
                 strong = true,
-                titleColor = PiTheme.palette.muted,
+                titleColor = PiTheme.palette.accent,
                 lead = { FolderGlyph() },
-                badge = { WsBadge(text = "未接", tone = StateTone.Muted) },
-                meta = "需要「所有文件访问」权限；只有从设备目录里选工作区时才需要。",
+                meta = "选一个设备上的目录当工作区：文件留在原处，只有 .pi 项目资源会从那里读。",
+                onClick = onPickExternal,
             )
         }
         Text(
-            "新建的工作区落在 App 私有目录里，不需要授权；只有「从设备目录选择」那一条要系统权限。",
+            "新建的工作区落在 App 私有目录里，不需要授权；「从设备目录选择」那一条要「所有文件访问」，" +
+                "选中的目录不会被复制也不会被移动 —— 取消登记只是不再列在这里，文件一直留在设备上。",
             modifier = Modifier.padding(
                 start = PiSettingsMetrics.pageHorizontal,
                 end = PiSettingsMetrics.pageHorizontal,

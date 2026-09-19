@@ -1,5 +1,7 @@
 package app.pi.ui.screens
 
+import java.io.File
+
 // Bare-JVM harness for the composer's image budget. Registered in
 // `tools/run-app-pure-checks.sh` as `image-attachment-budget`.
 //
@@ -15,9 +17,11 @@ package app.pi.ui.screens
 //  2. **pi's resize arithmetic.** `initialTarget`'s two sequential clamps (which can
 //     round the aspect ratio once) and `shrink`'s `floor(axis * 0.75)`, floored at 1, are
 //     pinned on the values pi's own loop produces. The `attemptPlan` sequence is pinned
-//     as a sequence: same order pi tries, monotonically shrinking, ending at 1×1, and
-//     PNG present only when the source has alpha — the one deliberate difference from pi,
-//     asserted here so it cannot be mistaken for an accident later.
+//     as a sequence: same order pi tries, monotonically shrinking, ending at 1×1, and the
+//     PNG candidate present exactly when `pngFirst` says so (a PNG source, or any source
+//     whose decoded bitmap carries alpha) — the one deliberate difference from pi, asserted
+//     here so it cannot be mistaken for an accident later. The fast path that must *not* be
+//     affected by that order is pinned too, as source text.
 //  3. **The per-message budget and its derivation.** The budget is
 //     `JsonlFramer.DEFAULT_MAX_RECORD_CHARS - FRAMING_SLACK_CHARS`; the line cap the
 //     session reader uses must be at least the record cap; and the end-to-end claim the
@@ -36,8 +40,10 @@ package app.pi.ui.screens
 //    4.5 MB, how `Bitmap.hasAlpha()` reports an opaque PNG on a given Android version,
 //    and the peak memory of one decode are all device questions, listed as such in the
 //    change report.
-//  - `ChatScreen`'s wiring. It imports Compose and Android, so it cannot be compiled
-//    here; the harness pins the numbers and the verdict it consumes, not the call.
+//  - `ChatScreen`'s wiring as *code*. It imports Compose and Android, so it cannot be
+//    compiled here; the harness pins the numbers and the verdict it consumes, and reads the
+//    one call site it has to (the fast path's early return, and that it precedes the encoding
+//    plan) as source text — the same thing `ImageSizeCheck` does for the decode sites.
 //
 // Android-free: `kotlin` stdlib only, plus `:rpc`'s `JsonlFramer` and
 // `SessionFileReader` for the two caps it cross-checks.
@@ -105,16 +111,77 @@ fun main() {
     check("an axis of 1 stays at 1", AttachmentBudget.shrink(AttachmentBudget.Target(1, 5)), AttachmentBudget.Target(1, 3))
     check("1x1 is the fixed point", AttachmentBudget.shrink(AttachmentBudget.Target(1, 1)), AttachmentBudget.Target(1, 1))
 
-    // encodings: PNG only for alpha; JPEG at every step, in pi's order, for both.
+    // encodings: pi's candidate order, with the PNG candidate asked for only where it can
+    // win — a PNG source or an alpha-carrying bitmap (`pngFirst`). pi pushes it for every
+    // source that needs a re-encode (`image-resize-core.ts:112-114`); that difference and
+    // its residual cost are argued in `AttachmentBudget`'s class KDoc.
     check(
         "an alpha source tries PNG first, then JPEG",
-        AttachmentBudget.encodings(hasAlpha = true).map(::describe),
+        AttachmentBudget.encodings(sourceMime = "image/jpeg", hasAlpha = true).map(::describe),
         listOf("png", "jpeg80", "jpeg85", "jpeg70", "jpeg55", "jpeg40"),
     )
     check(
-        "an opaque source skips PNG (the one deliberate difference from pi)",
-        AttachmentBudget.encodings(hasAlpha = false).map(::describe),
+        "an opaque non-PNG source skips PNG (the one deliberate difference from pi)",
+        AttachmentBudget.encodings(sourceMime = "image/jpeg", hasAlpha = false).map(::describe),
         listOf("jpeg80", "jpeg85", "jpeg70", "jpeg55", "jpeg40"),
+    )
+    // (a) 方案 (a)：源是 PNG 时第一个候选就是 PNG，哪怕位图报告不透明（一张不透明的截图/
+    // PNG 源仍然走无损，只有相机 JPEG 这类源不再多试一次 PNG）。
+    check(
+        "a PNG source tries PNG first even when the bitmap is opaque",
+        AttachmentBudget.encodings(sourceMime = "image/png", hasAlpha = false).first(),
+        AttachmentBudget.Encoding.Png,
+    )
+    check(
+        "a PNG source's first candidate is PNG",
+        AttachmentBudget.encodings(sourceMime = "image/png", hasAlpha = false).map(::describe).first(),
+        "png",
+    )
+    // (b) 源是 JPEG 且无 alpha：第一个是 JPEG@80，且整条候选里**没有** PNG。
+    check(
+        "an opaque JPEG source starts at JPEG 80",
+        AttachmentBudget.encodings(sourceMime = "image/jpeg", hasAlpha = false).first(),
+        AttachmentBudget.Encoding.Jpeg(80),
+    )
+    checkTrue(
+        "and its candidates contain no PNG at all",
+        AttachmentBudget.encodings(sourceMime = "image/jpeg", hasAlpha = false)
+            .none { it is AttachmentBudget.Encoding.Png },
+    )
+    // (c) 带 alpha 的源，MIME 与 alpha 无关：任意 MIME 都要出现 PNG。
+    checkTrue(
+        "an alpha source gets PNG whatever its MIME says",
+        listOf("image/jpeg", "image/heic", "image/webp", "application/octet-stream")
+            .map { AttachmentBudget.encodings(sourceMime = it, hasAlpha = true).first() }
+            .all { it is AttachmentBudget.Encoding.Png },
+    )
+    // MIME 的规约方式与 `piInlineSupported` 同一条（`baseMimeType`，`image-process.ts:29-31`）。
+    check(
+        "a PNG source is recognised with parameters and casing",
+        listOf("image/png", "IMAGE/PNG", "image/png; charset=binary", " image/PNG ; x=1")
+            .map { AttachmentBudget.pngFirst(sourceMime = it, hasAlpha = false) },
+        listOf(true, true, true, true),
+    )
+    check(
+        "a JPEG-ish source that is not PNG is not",
+        listOf("image/jpeg", "image/jpg", "image/gif", "image/webp", "image/png8", "")
+            .map { AttachmentBudget.pngFirst(sourceMime = it, hasAlpha = false) },
+        List(6) { false },
+    )
+    // (d) PNG 在时，顺序恒为 pi 的那一串：`image-resize-core.ts:112-122`。
+    check(
+        "the whole candidate order is pi's when PNG is in",
+        AttachmentBudget.encodings(sourceMime = "image/png", hasAlpha = true).map(::describe),
+        listOf("png", "jpeg80", "jpeg85", "jpeg70", "jpeg55", "jpeg40"),
+    )
+    check(
+        "and the JPEG ladder itself is untouched for every source",
+        listOf(
+            AttachmentBudget.encodings(sourceMime = "image/jpeg", hasAlpha = false),
+            AttachmentBudget.encodings(sourceMime = "image/png", hasAlpha = false),
+            AttachmentBudget.encodings(sourceMime = "image/webp", hasAlpha = true),
+        ).map { list -> list.filterIsInstance<AttachmentBudget.Encoding.Jpeg>().map { it.quality } },
+        List(3) { listOf(80, 85, 70, 55, 40) },
     )
 
     // The inline MIME list is pi's `normalizeSupportedImageMimeType`
@@ -140,7 +207,7 @@ fun main() {
     )
 
     // attemptPlan: pi's order, shrinking monotonically, ending at 1x1.
-    val plan = AttachmentBudget.attemptPlan(hasAlpha = false, width = 4000, height = 1000).toList()
+    val plan = AttachmentBudget.attemptPlan(sourceMime = "image/jpeg", hasAlpha = false, width = 4000, height = 1000).toList()
     check("the plan starts at the clamped target", plan.first(), AttachmentBudget.Attempt(2000, 500, AttachmentBudget.Encoding.Jpeg(80)))
     check("the plan's last attempt is the smallest JPEG at 1x1", plan.last(), AttachmentBudget.Attempt(1, 1, AttachmentBudget.Encoding.Jpeg(40)))
     check("the plan has one JPEG per quality per size", plan.size, 5 * plan.map { it.width to it.height }.distinct().size)
@@ -152,7 +219,42 @@ fun main() {
     )
     checkTrue(
         "the plan is lazy: taking the first attempt encodes once, not six times",
-        AttachmentBudget.attemptPlan(hasAlpha = true, width = 8000, height = 6000).take(1).toList().size == 1,
+        AttachmentBudget.attemptPlan(sourceMime = "image/jpeg", hasAlpha = true, width = 8000, height = 6000)
+            .take(1).toList().size == 1,
+    )
+    check(
+        "a PNG source's plan starts at PNG, an opaque JPEG's at JPEG 80",
+        listOf(
+            AttachmentBudget.attemptPlan(sourceMime = "image/png", hasAlpha = false, width = 4000, height = 1000).first().encoding,
+            AttachmentBudget.attemptPlan(sourceMime = "image/jpeg", hasAlpha = false, width = 4000, height = 1000).first().encoding,
+        ),
+        listOf(AttachmentBudget.Encoding.Png, AttachmentBudget.Encoding.Jpeg(80)),
+    )
+
+    // (e) 快速路径不受影响。这是源文本断言：`ChatScreen` 导 Compose/Android，本 harness 编不了它，
+    // 而「限制内 + MIME 受支持 → 原字节直接返回」正是这次候选序改动**不该**碰到的那条路径。
+    // 断言两件事：那次原字节返回仍在（恰好一次），且仍排在**任何**编码计划之前。
+    // `pi.repo.root` 由 `tools/run-app-pure-checks.sh` 传给每个 harness（与 `ImageSizeCheck` 同法）。
+    val chatScreen = System.getProperty("pi.repo.root")?.let {
+        File(it, "app/src/main/kotlin/app/pi/ui/screens/ChatScreen.kt")
+    }
+    val chatText = if (chatScreen != null && chatScreen.isFile) chatScreen.readText() else ""
+    val fastPathReturn = Regex(
+        "return PiImage\\(Base64\\.encodeToString\\(bytes, Base64\\.NO_WRAP\\), mime\\)",
+    ).findAll(chatText).toList()
+    check(
+        "the fast path still returns the original bytes for an under-limits, inline-MIME picture",
+        fastPathReturn.size,
+        1,
+    )
+    val planCall = Regex(
+        "for \\(attempt in AttachmentBudget\\.attemptPlan\\(mime, source\\.hasAlpha\\(\\), width, height\\)\\)",
+    ).find(chatText)
+    checkTrue(
+        "and it is still evaluated before any encoding plan is built",
+        fastPathReturn.size == 1 && planCall != null &&
+            fastPathReturn.first().range.first < planCall.range.first,
+        "fastPathReturns=${fastPathReturn.size} planAt=${planCall?.range?.first}",
     )
 
     // ------------------------------------- 4. the per-message budget, derived

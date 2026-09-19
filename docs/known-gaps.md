@@ -1499,6 +1499,15 @@ M11/M12 是**打补丁**：先发现"申报模型会覆盖能力"，加了一个
    它会让一台 proroot 其实"只是 raw 层没翻译、但日常工具都正常"的机器也**用不了 proroot**。
    这是**故意的保守**（另一边是静默越界），但它是"收益为 0"的可能来源，值得在真机数字出来后再裁一次。
 
+**补记（2026-09-19，D57）——上面第 1 条的那次"很可能不通过"已经被解释掉了，而且解释不是它。**
+用户真机上第一次跑出来的判定是「✗ raw syscall 探针未通过：raw/inline svc 调用没有被翻译」。
+真根因是**启动器参数的拼写**：proroot v1.2.8 要求 `-b host:guest`，而共享绑定表沿用了 proot 简写
+（`-b /dev` 等）→ 启动器在**解析参数阶段**就退出（fork 之前），**探针其实什么都没测**；空输出被解析成
+"未翻译"，是一次**误诊**。修法只有一处（`ProrootCommand` 把 `-b` 值改写成 `host:guest`），env 一个不加。
+配套：**启动器级失败现在是独立阶段**（不再冒充 raw 判定）、工具探针**不再被 raw 阶段短路**、
+缓存 key 带档位（v2）、harness 里一个**遮蔽全局计数器导致"FAIL 也报 OK"**的 bug 一并修掉。
+所以第 1 条的正确表述是：**门禁本身在真机上仍未验证，但已知的首次失败与门禁判据无关**。
+
 ### N2. proroot 的其它已知差异（记在账上，不是待办）
 
 来自 `docs/proroot-research.md` §4.4/§5，逐条都**没在真机上对过**：
@@ -1511,8 +1520,9 @@ M11/M12 是**打补丁**：先发现"申报模型会覆盖能力"，加了一个
 | `/dev/dri`、`/proc/bus/pci/devices` | 被自动遮罩；`/vendor` 自动加入 | 无处置（我们不读它们） |
 | 32 位 guest | **不支持**（arm64-only） | `jniLibs` 本来只有 arm64-v8a（§2.3 已按删除处理） |
 | PTY / 信号 / 退出码 | **两套机制逐项未对比** | `PtyLauncher` 的 `script(1)` 探测仍固定走 proot，所以探测结论不受影响；终端本身在 proroot 下**未验**（§J4） |
-| `PROROOT_NO_SECCOMP` | 语义未文档化 | **不设**（`ProrootCommand` 只设文档化 + DSHA 实测过的四个） |
+| `PROROOT_NO_SECCOMP` | **已查明（2026-09-19）**：不是开关，是**标签** —— 只有 `libproroot.so` 含该串（verbose 日志 `getenv` + `setenv` 写进**子进程** env），**无读者**；DSHA 的 launcher 不设、其 guest 子进程有（launcher 自己写的）。该状态下 seccomp 与 raw 翻译都正常 | **不设**（`ProrootCommand` 只设文档化 + 实测过的四个）；生产档仍是**严格档**。详见 `proroot-research.md` §P1-1 与 D57 |
 | 闭源/不可审计 | 无法自行修 bug；上游重心转向 proroom | 三层兜底 + 永不默认（D44） |
+| guest 树回收 | proroot 没有 `--kill-on-exit` | 自己回收：`GuestTreeReaper` 的 capture-then-reap（**先捕获再杀直接子进程**，否则父子边没了就找不到树）、`(pid,starttime)` 身份、per-launch `PI_LAUNCH_TOKEN`；覆盖终端关闭、装包超时、引擎重启/停止。**残留**：引擎**自行崩溃**时 launcher 可能已经先退出，那一瞬间捕获不到树（`PiEngineHost` 会记一条 W 级日志，不假装清干净）——与 proot 被 SIGKILL 时的行为同类 |
 
 ### N3. 已经能自动跑的验证（构建机，`applied (uncommitted)`）
 
@@ -1523,4 +1533,12 @@ M11/M12 是**打补丁**：先发现"申报模型会覆盖能力"，加了一个
   `.proroot-config` 存活/上限判定、进程树闭包与 `/proc/<pid>/stat` 解析、门禁缓存 key、raw 探针判据解析、
   启动 pid 句柄的真实文件驱动、共享绑定表一致性），并把 `agent-tool-paths` / `guest-tool-probe`
   两个既有 harness 的闭包补齐（它们现在依赖 `GuestRecipe`/`RuntimeChoice`/`GuestCommandLine`/`ProrootCommand`）。
-- **没有**真机验证；`docs/device-verification.md` §J 是上机清单（含"探针不过就别开"的判据）。
+- **没有**真机验证；`docs/device-verification.md` §J 是上机清单（含"探针不过就别开"的判据与 §J8 的"关→开=重跑门禁"）。
+
+### N4. 已修：门禁结论会粘住拨开关（`ProrootRetry`）
+
+缓存 key 只含解包 revision + 5 个 `.so` 的 sha256，**不含开关**；一条"未通过"因此会活过一次"再试一次"，
+而设置行承诺过拨开关就是再试。现在用户**关→开**时删掉缓存（`runtime/ProrootRetry.kt` + `PiPaths.clearProrootProbeCache()`），
+下次 proroot 启动重跑门禁；**关掉时不删**（结论描述运行时树，不是开关）；**普通重启不重跑**。
+纯逻辑侧用注入了两个副作用的 `ProrootRetry.apply` 真跑一遍（不是断言副本），真实文件由 harness 在临时 `PiPaths` 上驱动；
+上机判据 §J8。

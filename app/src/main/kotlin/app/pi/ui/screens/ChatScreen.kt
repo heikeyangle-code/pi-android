@@ -1,11 +1,14 @@
 package app.pi.ui.screens
 
+import app.pi.ui.blocks.PiImageCache
 import app.pi.ui.blocks.decodePiImage
+import app.pi.ui.blocks.piImageDecodeGate
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.Dispatchers
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.PathParser
@@ -41,6 +44,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -65,10 +69,12 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -82,7 +88,13 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.material3.LocalTextStyle
+import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.unit.Constraints
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -130,13 +142,21 @@ import app.pi.ui.chat.TailSnapshot
 import app.pi.ui.chat.TailViewport
 import app.pi.ui.chat.ThinkingPickerSheet
 import app.pi.ui.chat.mayLoadEarlier
-import app.pi.ui.chat.reArmsEarlier
 import app.pi.ui.chat.mergeRestoredQueue
 import app.pi.ui.chat.routeComposerText
-import app.pi.ui.chat.prependAnchoredIndex
+import app.pi.ui.chat.earlierRowHeightPx
+import app.pi.ui.chat.freshRowKeysAfter
+import app.pi.ui.chat.hiddenRows
+import app.pi.ui.chat.itemIndexOfVisibleRow
+import app.pi.ui.chat.mayArmEarlier
 import app.pi.ui.chat.thinkingLabelOf
 import app.pi.ui.chat.unlistedBuiltinHint
 import app.pi.ui.components.PiContextRing
+import app.pi.ui.render.LocalPiMarkdownImmediate
+import app.pi.ui.render.LocalPiMarkdownParsed
+import app.pi.ui.render.RowHeightCache
+import app.pi.ui.render.piMarkdownParseBudget
+import app.pi.ui.render.rememberedRowHeight
 import app.pi.ui.components.PiMenu
 import app.pi.ui.components.PiMenuItem
 import app.pi.ui.components.PiMenuPlacement
@@ -149,6 +169,7 @@ import app.pi.ui.theme.PiTheme
 import app.pi.ui.theme.StateTone
 import app.pi.ui.theme.stateToneColor
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.launch
 
 /**
@@ -267,6 +288,95 @@ private fun ChatTopBarIcon(onClick: () -> Unit, contentDescription: String, icon
             tint = MaterialTheme.colorScheme.onSurface,
         )
     }
+}
+
+/** `Icon`'s default box, which is what the 「加载更早」 row's glyph measures at. */
+private val EARLIER_ROW_ICON = 24.dp
+
+/** The 6 dp between that glyph and its label (`Spacer(Modifier.width(6.dp))`). */
+private val EARLIER_ROW_ICON_GAP = 6.dp
+
+/** The row's own vertical padding (`padding(vertical = 8.dp)`), 8 top and 8 bottom. */
+private val EARLIER_ROW_PADDING = 8.dp
+
+/**
+ * 「加载更早」 drawn as an **overlay** over the transcript list, not as its item 0.
+ *
+ * It is the same row it always was — same `Icon`, same 6 dp, same `Text(PiTheme.text.meta)`,
+ * same centred `Row`, same `fillMaxWidth().clickable{…}.padding(vertical = 8.dp)` order so the
+ * ripple covers the same area and the tap target is the same one. What changed is where it
+ * lives: `docs/scroll-diagnosis.md` §3.4 (landed as D51) took it out of the `LazyColumn`
+ * because while it was item 0 its key stayed at index 0 across a prepend, which defeated the
+ * list's own key anchoring and made every 「加载更早」 batch move the content under the reader.
+ * The caller owns its position and the band the list reserves for it.
+ */
+@Composable
+private fun EarlierRowsRow(
+    text: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(vertical = EARLIER_ROW_PADDING),
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            Icons.Filled.KeyboardArrowUp,
+            contentDescription = null,
+            tint = PiTheme.palette.muted,
+            modifier = Modifier.size(EARLIER_ROW_ICON),
+        )
+        Spacer(Modifier.width(EARLIER_ROW_ICON_GAP))
+        Text(
+            text = text,
+            style = PiTheme.text.meta,
+            color = PiTheme.palette.muted,
+        )
+    }
+}
+
+/**
+ * The height that row occupies, in dp — computed **before** the list is laid out, because two
+ * things depend on it and both would otherwise need a second layout pass: the band the list
+ * reserves in `contentPadding.top`, and the overlay's own offset. A measure → pad → measure
+ * dependency is what this avoids (`design/ui-refactor/08-hang-diagnosis.md`).
+ *
+ * `Row` is as tall as its tallest child plus its padding, so the number is
+ * `max(icon, the label's line box) + 16` — `earlierRowHeightPx` in `ui/chat/TailFollow.kt`,
+ * where the harness pins the arithmetic. The label's line box is measured with the same
+ * `TextMeasurer` the `Text` composable uses internally: the same merged `TextStyle` (the
+ * composition's `LocalTextStyle` merged with `PiTheme.text.meta`, which is exactly what
+ * `Text(text, style = …)` renders), the same `LocalDensity` (font scale included), the same
+ * font resolver and the same `softWrap`/`maxLines`/`overflow` defaults, and the width the
+ * `Row` leaves it — the window minus the list's own horizontal padding, the icon and the
+ * spacer. That is what makes this exact rather than an estimate of "one line of meta text".
+ *
+ * Keyed on the inputs, so a recomposition per streamed token re-measures nothing.
+ */
+@Composable
+private fun earlierRowHeight(text: String): Dp {
+    val density = LocalDensity.current
+    val measurer = rememberTextMeasurer()
+    val labelStyle = LocalTextStyle.current.merge(PiTheme.text.meta)
+    val windowWidthPx = with(density) { LocalConfiguration.current.screenWidthDp.dp.roundToPx() }
+    val heightPx = remember(text, labelStyle, density, windowWidthPx, measurer) {
+        val pagePx = with(density) { PiSpacing.pageHorizontal.roundToPx() }
+        val iconPx = with(density) { EARLIER_ROW_ICON.roundToPx() }
+        val gapPx = with(density) { EARLIER_ROW_ICON_GAP.roundToPx() }
+        val paddingPx = with(density) { (EARLIER_ROW_PADDING * 2).roundToPx() }
+        val availablePx = (windowWidthPx - pagePx * 2 - iconPx - gapPx).coerceAtLeast(0)
+        val linePx = measurer.measure(
+            text = text,
+            style = labelStyle,
+            constraints = Constraints(maxWidth = availablePx),
+        ).size.height
+        earlierRowHeightPx(iconPx = iconPx, textHeightPx = linePx, verticalPaddingPx = paddingPx)
+    }
+    return with(density) { heightPx.toDp() }
 }
 
 /**
@@ -571,6 +681,44 @@ private fun ChatBody(
     var searchQuery by rememberSaveable { mutableStateOf("") }
     var searchCursor by rememberSaveable { mutableStateOf(0) }
 
+    // When the match scan last ran, as a counter the `remember` below is keyed on.
+    //
+    // **Why the scan is not keyed on the transcript.** It used to be
+    // (`remember(visibleItems, searchQuery, …)`), and `visibleItems` is a new list on
+    // every publication — so while a turn streamed, the whole session was re-scanned and
+    // every row's search text rebuilt once per token. Measured on a desktop JVM, one
+    // pass over 800 rows (600 × 2 KB of prose plus 150 rows of 20 KB tool output) is
+    // 110 ms; the old shape paid that per token, which is a frozen screen for as long as
+    // the search bar is open.
+    //
+    // The query itself still scans at once: the `remember` below is keyed on it, so a
+    // keystroke is answered in the frame it happens. What this counter adds is the
+    // **streaming** half — a tick while rows keep arriving, and one final scan when the
+    // transcript settles.
+    var searchScan by remember { mutableIntStateOf(0) }
+    val searchActive = searchQuery.isNotBlank()
+    // Keyed on the two *edges* and never on the query's text: keying it on the query
+    // would restart this effect per keystroke, and the leading scan the composition
+    // already did would be paid a second time.
+    LaunchedEffect(searchActive, state.streaming) {
+        if (!searchActive) return@LaunchedEffect
+        // A loop, not a `delay` per publication: a wait restarted by every token would
+        // never fire while tokens arrive faster than the window, and the match count
+        // would sit at `0 / 0` for the length of a long answer.
+        while (state.streaming) {
+            delay(SEARCH_RESCAN_MS)
+            searchScan++
+        }
+        // The settled scan. It runs on both edges this effect is keyed on: when a turn
+        // stops streaming (the ticks are cancelled mid-window, so rows that arrived since
+        // the last one are not in the match list yet) and when the search first becomes
+        // active. The second case is one redundant scan — the composition's own `remember`
+        // has just run with the same query — and it is paid deliberately, because the
+        // alternative is to track "was this instance streaming" and get the turn's last
+        // window wrong in the case that matters.
+        searchScan++
+    }
+
     val visibleItems = remember(state.transcript, prefs.showTimestamps) {
         if (prefs.showTimestamps) {
             state.transcript
@@ -618,7 +766,11 @@ private fun ChatBody(
     val renderedItems = remember(visibleItems, renderWindow, windowOpen) {
         if (windowOpen) visibleItems else visibleItems.takeLast(renderWindow)
     }
-    val hiddenCount = visibleItems.size - renderedItems.size
+    // The same number `renderedItems` implies, but computed from the *window* rather
+    // than from the list it produced: the anchor restore below needs to know how many
+    // rows sit above a given row without having to build that list
+    // (`TailFollow.hiddenRows`, pinned by the `tail-follow` harness).
+    val hiddenCount = hiddenRows(visibleItems.size, renderWindow, windowOpen)
     // While anything is above the rendered window the loading row is item 0, so a
     // full-list index is a rendered index plus `hiddenCount` plus that one row — the
     // arithmetic every jump/reveal below relies on.
@@ -629,18 +781,47 @@ private fun ChatBody(
     // `HistoryCursor.hasEarlier`). Leaving it out would put every jump one row off the
     // moment the loaded rows are exhausted.
     val showsEarlierRow = hiddenCount > 0 || state.history?.hasEarlier == true
-    val headerRows = if (showsEarlierRow) 1 else 0
-    val searchMatches = remember(visibleItems, searchQuery, prefs.hideThinkingBlock) {
-        if (searchQuery.isBlank()) {
-            emptyList()
+    val searchMatches = remember { mutableStateOf(SearchHits.None) }
+    // Published-scan counter: the reveal effect below is keyed on it rather than on the
+    // result object, so it re-runs when a scan *lands* (not while one is running) and
+    // never has to compare two multi-thousand-element lists.
+    var searchMatchesSeq by remember { mutableIntStateOf(0) }
+    // **The scan itself runs off the frame thread.**
+    //
+    // It used to be a `remember(searchQuery, hideThinkingBlock, searchScan)` — a
+    // synchronous pass over the whole loaded transcript, taken *during composition*.
+    // The pass is `searchHits` over every row, and the dominant term is the
+    // case-insensitive `contains` over each tool card's output: measured on this
+    // device's JVM against the real `TranscriptItem`s, 500 rows (375×2 KB prose +
+    // 125×20 KB tool output) cost a median **80.6 ms** (min 32.3 ms) per pass. The
+    // streaming tick below re-runs it every `SEARCH_RESCAN_MS` (200 ms) while a turn
+    // is in flight, so with the search bar open the frame thread was busy ~40 % of
+    // the time in 80 ms slabs — every scroll taken during a stream dropped frames.
+    //
+    // The same pass on `Dispatchers.Default`, published into snapshot state when it
+    // lands, costs the UI nothing: the frame thread only reads the result. The
+    // answer is identical (the items are immutable data classes and the list is
+    // captured at launch); what changes is that it appears one dispatch later
+    // instead of in the frame that asked for it — a frame or two, invisible next to
+    // the 80 ms it used to block with.
+    //
+    // It deliberately does **not** compete with the frame thread's own markdown
+    // parses: those run on the same `Dispatchers.Default` pool, but the pool is as
+    // wide as the device's cores and the alternative is blocking the only thread
+    // that can draw. The last key (`searchScan`) is the streaming/settle tick.
+    LaunchedEffect(searchQuery, prefs.hideThinkingBlock, searchScan) {
+        val items = visibleItems
+        val query = searchQuery
+        val hideThinking = prefs.hideThinkingBlock
+        val hits = if (query.isBlank()) {
+            SearchHits.None
         } else {
-            visibleItems.mapIndexedNotNull { index, item ->
-                // A block the user asked to hide cannot be a search result: the
-                // row is not on screen to scroll to.
-                if (prefs.hideThinkingBlock && item is ThinkingBlock) return@mapIndexedNotNull null
-                if (searchTextOf(item).contains(searchQuery, ignoreCase = true)) index else null
-            }
+            // `withContext` re-checks cancellation on the way back, so a superseded
+            // scan (a new keystroke, a new tick) can never publish over a newer one.
+            withContext(Dispatchers.Default) { scanSearchHits(items, query, hideThinking) }
         }
+        searchMatches.value = hits
+        searchMatchesSeq++
     }
     LaunchedEffect(searchQuery) { searchCursor = 0 }
 
@@ -656,6 +837,43 @@ private fun ChatBody(
     fun userRowIndices(): List<Int> =
         visibleItems.mapIndexedNotNull { index, item -> if (item is UserMessage) index else null }
 
+    // §4.8's 编辑并从此分叉, hoisted out of the item lambda and given a **stable
+    // identity** on purpose.
+    //
+    // It was written inline in the `itemsIndexed` content lambda, where it captured
+    // `visibleItems` — a list the reducer replaces whenever a row changes. Under the
+    // Compose compiler's strong skipping (on by default since Kotlin 2.0.20; this
+    // tree is 2.2.21) a lambda with unstable captures is memoized **keyed on those
+    // captures by instance equality**, so a new `visibleItems` produced a new
+    // lambda, `BlockRenderer`'s parameter was
+    // never equal, and every visible `UserMessage` row re-executed its whole block
+    // on every publication — the 「发完消息、回答在流式输出时滑动发顿」 half that
+    // has nothing to do with layout. Reading the list through
+    // `rememberUpdatedState` at *call* time instead of capturing it keeps the
+    // lambda (and therefore the row's skippability) stable, while the callback
+    // still sees the current list because it is read when it runs.
+    //
+    // The other two callbacks are already stable under the same rule: `onBranchClick`
+    // captures `session` (one instance for the ViewModel's life) and `onImageClick`
+    // captures the `viewedImage` state object, not its value.
+    val latestVisibleItems = rememberUpdatedState(visibleItems)
+    val onForkFromMessage: (String) -> Unit = remember(session) {
+        { key ->
+            // The order that is reliable lives here: a bubble drawn for a prompt sent
+            // in this run carries a synthetic key, so the row's position among the user
+            // rows and its text are read from the full list (not just the rendered
+            // window) and handed to the ViewModel, which matches them against
+            // `get_fork_messages` — pi's own list of legal fork points.
+            val items = latestVisibleItems.value
+            val row = items.firstOrNull { it is UserMessage && it.key == key } as? UserMessage
+            session.forkFromMessage(
+                key = key,
+                ordinal = userMessageOrdinal(items, key),
+                text = row?.text.orEmpty(),
+            )
+        }
+    }
+
     // F34: a jump target may sit in the part of the session the window has not
     // rendered, and `LazyListState` cannot be asked for an index the current item list
     // does not have. So a jump is two-phased: grow the window until the target is the
@@ -663,9 +881,17 @@ private fun ChatBody(
     // exists. `hiddenCount` then equals the target's full index, which is why the
     // second phase can compute its index from state rather than from a captured one.
     var pendingJump by remember { mutableStateOf<Int?>(null) }
+    // The pixel offset that goes with [pendingJump]. Every *navigation* jump lands its
+    // target at the top of the viewport (offset 0, pi's own reveal — see the consumer
+    // below); the one caller that needs a real offset is the anchor restore
+    // ([anchorKey]), which is putting back the exact position the reader left rather
+    // than navigating to a row. A separate slot instead of an extra parameter on
+    // `reveal` keeps the four navigation call sites unchanged.
+    var pendingJumpOffset by remember { mutableIntStateOf(0) }
     fun reveal(row: Int) {
         val needed = visibleItems.size - row
         if (needed > renderWindow) renderWindow = needed
+        pendingJumpOffset = 0
         pendingJump = row
     }
 
@@ -901,11 +1127,181 @@ private fun ChatBody(
     // own position (`HistoryCursor.startOffset`), not an inference from the row count,
     // so it stops exactly when the file's first entry has been loaded.
     val earlierHistory = state.history
+
+    // ------------------------------------------------- the reader's place, by row key
+    //
+    // **What was wrong without this.** `rememberLazyListState()` restores its position
+    // through `LazyListState.Saver`, which saves **`firstVisibleItemIndex` and
+    // `firstVisibleItemScrollOffset` and nothing else** (verified against
+    // `foundation-android:1.8.3`'s bytecode: the saver is
+    // `listOf(getFirstVisibleItemIndex, getFirstVisibleItemScrollOffset)`). An index is
+    // only a position while the *item list* is the same list — and this list is a
+    // **suffix** of the transcript (`renderedItems = visibleItems.takeLast(renderWindow)`).
+    // Every row the engine publishes while the user is on 工作区 / 设置 moves the
+    // content under that index towards the newest row: come back and the same index is
+    // `g` rows further along, where `g` is how many rows arrived. Measured with
+    // `/tmp/probe/scroll/WindowAnchorProbe.kt` (group A): `g = 3 → 3 rows`, `g = 40 →
+    // 40 rows`, `g = 250 → 250 rows`. At the bottom the suffix window makes the
+    // *relative* index invariant, which is why the symptom is "sometimes".
+    //
+    // The fix is to save the **key of the row the reader is on** next to the offset, and
+    // to put that row back when the item list has changed underneath the position. It
+    // also covers the two head-side disturbances the same window arithmetic causes
+    // (both in `docs/scroll-diagnosis.md` §1.2): the session-file read inserts rows at
+    // the *transcript* head, which re-cuts the suffix window and adds up to
+    // `renderWindow - rows` rows *between* the sentinel and the reading position (P2),
+    // and the sentinel itself disappears when a read starts (`hasEarlier` is false while
+    // `HistoryCursor.loading`) or when the last batch lands, which shifts every index by
+    // one (`headerRows`).
+    //
+    // The anchor is **not** the row at index 0 when index 0 is the sentinel — that row's
+    // key means "the 加载更早 row", not "the message the reader is on"; the tracker below
+    // therefore records the first *content* row (`index - headerRows`), and skips the
+    // frame where that is negative. Keeping that row pinned is what `prependAnchoredIndex`
+    // already does for the client-side batch, and what the file read and the destination
+    // switch were missing.
+    var anchorKey by rememberSaveable(sessionKey) { mutableStateOf<String?>(null) }
+    var anchorOffset by rememberSaveable(sessionKey) { mutableIntStateOf(0) }
+    // False until the correction below has run once for this composition. The tracker
+    // must not write before that: on the frame a destination is re-entered, the position
+    // it would read is the *restored, already drifted* one, and recording that would
+    // destroy the very value the correction needs. (The two effects are launched in the
+    // same apply-changes batch and this is what makes their order irrelevant.)
+    val anchorSettled = remember { mutableStateOf(false) }
+    // Read by the tracker at the moment it fires, not captured at composition: the
+    // tracker outlives every individual item list.
+    val anchorWindow by rememberUpdatedState(renderedItems)
+    // The correction. Keyed on the three numbers that describe the *shape* of the item
+    // list — how many rows are hidden, whether the sentinel is there, and how big the
+    // loaded list is — rather than on the item list itself. `visibleItems.size` is a key
+    // on purpose: while the reader is paused and a turn streams in, an append can push
+    // their row out of the suffix window entirely, and that is the live version of the
+    // same drift (the destination-switch case is only the most visible one). A pure
+    // content update costs one early return (the guard below runs first) plus, while
+    // paused, one `indexOfFirst` over the loaded list. It never runs for a position it
+    // does not own — a gesture in flight, a navigation jump, or a following tail.
+    LaunchedEffect(hiddenCount, visibleItems.size) {
+        // The user's hand, a reveal/search jump, or the follow: all three own the
+        // position, and one of them is where the reader asked to be.
+        if (listState.isScrollInProgress || following || pendingJump != null) {
+            anchorSettled.value = true
+            return@LaunchedEffect
+        }
+        val key = anchorKey
+        if (key != null) {
+            val visibleRow = visibleItems.indexOfFirst { it.key == key }
+            if (visibleRow >= 0) {
+                val index = itemIndexOfVisibleRow(
+                    visibleRow = visibleRow,
+                    visibleRows = visibleItems.size,
+                    renderWindow = renderWindow,
+                    windowOpen = windowOpen,
+                    headerRows = 0,
+                )
+                if (index < 0) {
+                    // The row is in the hidden prefix: enough rows arrived that the suffix
+                    // window no longer reaches their row. Grow the window until it is the
+                    // window's head, and let the deferred consumer below land on it — that
+                    // is what computes the index in the *new* list's coordinates
+                    // (`reveal`'s two-phase trick, without the navigation).
+                    renderWindow = maxOf(renderWindow, visibleItems.size - visibleRow)
+                    pendingJumpOffset = anchorOffset
+                    pendingJump = visibleRow
+                } else if (index != listState.firstVisibleItemIndex) {
+                    listState.requestScrollToItem(index, anchorOffset)
+                }
+            }
+        }
+        anchorSettled.value = true
+    }
+    // The tracker: remember which row the viewport is parked on, so the next re-entry
+    // has a key to restore. Written only on a real change, so a settled screen writes
+    // nothing; and only after the correction above has had its one shot.
+    LaunchedEffect(listState) {
+        var firstEmission = true
+        snapshotFlow { listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset }
+            .collect { (index, offset) ->
+                // The first value a `snapshotFlow` reads is the state as it is *now*,
+                // which on the frame a destination is re-entered is the restored (and
+                // possibly drifted) position — never record it.
+                if (firstEmission) {
+                    firstEmission = false
+                    return@collect
+                }
+                if (!anchorSettled.value) return@collect
+                val key = anchorWindow.getOrNull(index)?.key
+                if (key != null && key != anchorKey) anchorKey = key
+                if (offset != anchorOffset) anchorOffset = offset
+            }
+    }
+
+    // ------------------------------------------------- rows that must not arrive at zero height
+    //
+    // `RowHeightCache`/`rememberedRowHeight` restore the height of a row that has been
+    // measured *before* it was composed again (a destination switch, a scroll back into
+    // known content). A row a batch has just brought in has never been measured, so there is
+    // no height to restore — and it is the one that matters most: a row entering the viewport
+    // from **above** (which is what 「加载更早」 hands the reader) pushes every visible row down
+    // by its own height on the frame its markdown parse lands. That is P3 of
+    // `docs/scroll-diagnosis.md` §1.2.
+    //
+    // The only way to have that height on the first frame is to have the content ready on the
+    // first frame, which is the library's `immediate = true` (`LocalPiMarkdownImmediate`).
+    // This is the gate that makes paying for it bounded:
+    //
+    //  - the rows the *window* has just gained at its head — the client batches, the session
+    //    file read (whose rows the window picks up when it is re-cut from the tail), the two
+    //    navigation paths that grow it (`reveal`, the anchor restore). One effect computes
+    //    them all from the one thing they have in common: `renderedItems.size` grew, so the
+    //    rows `[hiddenCount, hiddenCount + gained)` are the ones that just became visible;
+    //  - only while the transcript is **not streaming**: a row published mid-turn arrives at
+    //    the *bottom*, where its height correction is off-screen, and marking it would make
+    //    every streamed tool card parse synchronously for nothing;
+    //  - and each row at most once: `RowHeightCache` is the latch (the item lambda asks only
+    //    when there is no remembered height), so a row that has been measured — including one
+    //    that scrolls out and back — never asks again.
+    //
+    // The set is bounded by `FRESH_ROW_KEYS_MAX` keys and never accumulates with the session.
+    var freshRowKeys by remember(sessionKey) { mutableStateOf<Set<String>>(emptySet()) }
+    var lastRenderedRows by remember(sessionKey) { mutableIntStateOf(renderedItems.size) }
+    LaunchedEffect(renderedItems.size, hiddenCount, state.streaming) {
+        val gained = renderedItems.size - lastRenderedRows
+        lastRenderedRows = renderedItems.size
+        if (gained <= 0 || state.streaming) return@LaunchedEffect
+        val keys = ArrayList<String>(minOf(gained, FRESH_ROW_KEYS_MAX))
+        for (i in hiddenCount until minOf(hiddenCount + gained, visibleItems.size)) {
+            keys += visibleItems[i].key
+        }
+        if (keys.isEmpty()) return@LaunchedEffect
+        // `freshRowKeysAfter` owns the trim and its bound (`ui/chat/TailFollow.kt`, where the
+        // harness pins it): the keys the window has just gained are the rows whose first
+        // layout must not be a zero-height one, and the set may not grow with the session.
+        freshRowKeys = freshRowKeysAfter(freshRowKeys, keys, FRESH_ROW_KEYS_MAX)
+    }
+    // True for the first composition of a *restored* screen (a destination switch, a
+    // rotation): its visible rows have remembered heights but no parsed content yet, so
+    // without this the reader gets a column of correctly-sized **blank** rows for a frame.
+    // Best-effort on purpose — the height cache is what makes the geometry correct; this only
+    // removes the blank frame. It is a `remember`, so a fresh composition starts it again.
+    var restoring by remember { mutableStateOf(true) }
+    LaunchedEffect(Unit) {
+        withFrameNanos { }
+        restoring = false
+    }
+
     LaunchedEffect(atTop, canScrollForward, hiddenCount, scrolling, earlierHistory) {
         // Two arming edges, one rule: away from the top, or a viewport with nowhere left to
         // scroll (a transcript shorter than the screen — see `reArmsEarlier`). Armed *and*
         // at the top is the only state that loads.
-        if (reArmsEarlier(atTop, canScrollForward)) earlierArmed = true
+        //
+        // `mayArmEarlier` and not `reArmsEarlier`: a `LazyListState` reports
+        // `canScrollForward == false` until its **first measure** (`mutableStateOf(false)`
+        // in its constructor, bytecode again), so on the first frame of every re-entered
+        // destination the second edge is true for a reason that has nothing to do with the
+        // content — see that function's KDoc.
+        if (mayArmEarlier(atTop, canScrollForward, listState.layoutInfo.totalItemsCount > 0)) {
+            earlierArmed = true
+        }
         if (!atTop) return@LaunchedEffect
         // Asked for only once the loaded rows are exhausted: while `hiddenCount > 0`
         // the batch below is a slice of rows already in memory, and starting a file
@@ -919,32 +1315,29 @@ private fun ChatBody(
         // so the fling never reaches an end and one flick walks the whole session.
         if (!mayLoadEarlier(atTop, earlierArmed, hiddenCount, scrolling)) return@LaunchedEffect
         earlierArmed = false
-        val headerBefore = headerRows
-        val prepended = minOf(TRANSCRIPT_WINDOW_STEP, hiddenCount)
         renderWindow += TRANSCRIPT_WINDOW_STEP
-        // The "load earlier" row keeps its key at index 0 for as long as anything is
-        // hidden, so the `LazyColumn`'s own key anchoring cannot see this prepend when
-        // that row is the first visible item — the content slides by the whole batch
-        // under a stationary index. Asking for the anchored index is the other half of
-        // the fix (`prependAnchoredIndex`, `ui/chat/TailFollow.kt`).
-        // `headerRows`' own rule, one prepend later: the earlier row is still item 0
-        // when either hidden rows remain or the file has more above (see
-        // `showsEarlierRow`). Hard-coding `hiddenCount - prepended > 0` would drop the
-        // header on the last batch of a partially loaded session and land the anchor
-        // one row off.
-        val headerAfter = if (hiddenCount - prepended > 0 || earlierHistory?.hasEarlier == true) 1 else 0
-        listState.requestScrollToItem(
-            prependAnchoredIndex(
-                firstVisibleIndex = listState.firstVisibleItemIndex,
-                prependedRows = prepended,
-                headerRowsBefore = headerBefore,
-                headerRowsAfter = headerAfter,
-            ),
-            listState.firstVisibleItemScrollOffset,
-        )
+        // **No position request here any more.** While 「加载更早」 was the list's item 0,
+        // a batch had to be compensated for by hand: the sentinel kept its key at index 0,
+        // so the `LazyColumn`'s own key anchoring held *it* still while the whole batch was
+        // inserted under it. Now that the row lives outside the list, the viewport's first
+        // item is a real transcript row whose key survives the prepend, and the anchoring
+        // does exactly what this call used to do by hand — with the padding rather than the
+        // viewport top as the reference (the old call landed the row at the content start,
+        // which is where it already was).
+        //
+        // `prependAnchoredIndex` is gone with it: the sentinel leaving the list is what
+        // `docs/scroll-diagnosis.md` §3.4 called the only way to remove the last few tens of
+        // dp of movement, and it removes the function's whole reason to exist.
     }
-    LaunchedEffect(searchMatches, searchCursor) {
-        val index = searchMatches.getOrNull(searchCursor.coerceIn(0, (searchMatches.size - 1).coerceAtLeast(0)))
+    // Keyed on the **published-scan counter**, the cursor and nothing else: the list is
+    // rebuilt by every scan, and a `LaunchedEffect` keyed on it would compare two
+    // thousand-element lists with `equals` on every recomposition. The counter moves
+    // exactly when a scan *lands* (see the scan effect above), which is also the moment
+    // this reveal has a fresh answer to act on — the old code was keyed on the tick
+    // that *started* a scan, so it could reveal against the previous scan's list.
+    LaunchedEffect(searchMatchesSeq, searchCursor) {
+        val matches = searchMatches.value.ordered
+        val index = matches.getOrNull(searchCursor.coerceIn(0, (matches.size - 1).coerceAtLeast(0)))
         if (index != null) {
             // Jumping to a match is navigation, so following stops until the user
             // asks for the newest block again — pi's `disableFollow` semantics, which
@@ -955,18 +1348,30 @@ private fun ChatBody(
             reveal(index)
         }
     }
-    LaunchedEffect(pendingJump, renderedItems.size, hiddenCount, headerRows) {
+    LaunchedEffect(pendingJump, renderedItems.size, hiddenCount) {
         val row = pendingJump ?: return@LaunchedEffect
-        val index = row - hiddenCount + headerRows
-        if (renderedItems.isNotEmpty() && index in 0 until renderedItems.size + headerRows) {
+        val index = itemIndexOfVisibleRow(
+            visibleRow = row,
+            visibleRows = visibleItems.size,
+            renderWindow = renderWindow,
+            windowOpen = windowOpen,
+            headerRows = 0,
+        )
+        if (renderedItems.isNotEmpty() && index in 0 until renderedItems.size) {
             // A direct position change, not `animateScrollToItem`: the jump is a
             // navigation, and an animation is a *scroll session*, which the follow
             // machine would read as the user's own hand and which would clear the
             // "this was navigation" suppression that keeps a reveal to the last row
             // from re-arming the follow. pi's own reveal is a direct `scrollTo`
             // (`tui-alt-screen.ts:636` → `scroll-view.ts:127`).
-            listState.requestScrollToItem(index, 0)
+            //
+            // The offset is `pendingJumpOffset`, which every navigation leaves at 0
+            // (`reveal` resets it) and the anchor restore sets to the pixel offset the
+            // reader left — the one caller for which "put the target at the top" is not
+            // the same as "put the reader back where they were".
+            listState.requestScrollToItem(index, pendingJumpOffset)
             pendingJump = null
+            pendingJumpOffset = 0
         }
     }
 
@@ -1208,11 +1613,22 @@ private fun ChatBody(
                     // `meta.model` keeps its meaning ("what pi reports now") and stays
                     // the first choice; this only fills a hole.
                     if (!state.transcript.isEmpty()) {
-                        val lastModelChange = remember(state.transcript) {
-                            state.transcript.asReversed().firstNotNullOfOrNull { item ->
-                                (item as? ModelChange)?.modelId?.takeIf { it.isNotBlank() }
+                        // The scan is the fallback, so it is only run when it can be the
+                        // answer: `meta.model` is the chip's first choice, and while it is
+                        // present this walked the whole transcript backwards on every
+                        // publication — once per streamed token — to compute a value that
+                        // was then discarded. Keyed on the transcript (not on its size) so
+                        // the fallback cannot go stale when rows are rewritten in place.
+                        val lastModelChange =
+                            if (state.meta.model?.id == null && state.meta.model?.name == null) {
+                                remember(state.transcript) {
+                                    state.transcript.asReversed().firstNotNullOfOrNull { item ->
+                                        (item as? ModelChange)?.modelId?.takeIf { it.isNotBlank() }
+                                    }
+                                }
+                            } else {
+                                null
                             }
-                        }
                         ModelChip(
                             state.meta.model?.id
                                 ?: state.meta.model?.name
@@ -1246,8 +1662,15 @@ private fun ChatBody(
                             contentDescription = "更多",
                             icon = Icons.Filled.MoreVert,
                         )
-                        PiMenu(
-                            expanded = overflow,
+                        // Composed only while it is open. `PiMenu` returns immediately
+                        // when `!expanded`, but `items = buildList { … }` is evaluated at
+                        // *this* call site, so the ~20 rows, their lambdas and their
+                        // captured state were rebuilt on every recomposition of this
+                        // screen — which is once per streamed token — for a menu nobody
+                        // had opened. The popup still anchors to the same `Box`, so
+                        // nothing about its position changes.
+                        if (overflow) PiMenu(
+                            expanded = true,
                             onDismiss = { overflow = false },
                             // This anchor is at the top of the screen, so the menu
                             // opens **downwards**; the composer's ⋮ is the mirror
@@ -1304,7 +1727,7 @@ private fun ChatBody(
                                         // `visibleItems`, and the hidden prefix does
                                         // not exist in the rendered list.
                                         val firstFull =
-                                            listState.firstVisibleItemIndex - headerRows + hiddenCount
+                                            listState.firstVisibleItemIndex + hiddenCount
                                         userRowIndices().lastOrNull { it < firstFull }?.let { row ->
                                             pauseTail()
                                             reveal(row)
@@ -1314,7 +1737,7 @@ private fun ChatBody(
                                 add(
                                     PiMenuItem("跳到下一条提问") {
                                         val firstFull =
-                                            listState.firstVisibleItemIndex - headerRows + hiddenCount
+                                            listState.firstVisibleItemIndex + hiddenCount
                                         userRowIndices().firstOrNull { it > firstFull }?.let { row ->
                                             pauseTail()
                                             reveal(row)
@@ -1382,16 +1805,18 @@ private fun ChatBody(
             SearchBar(
                 query = searchQuery,
                 onQueryChange = { searchQuery = it },
-                matchCount = searchMatches.size,
+                matchCount = searchMatches.value.ordered.size,
                 cursor = searchCursor,
                 onPrevious = {
-                    if (searchMatches.isNotEmpty()) {
-                        searchCursor = (searchCursor - 1 + searchMatches.size) % searchMatches.size
+                    val count = searchMatches.value.ordered.size
+                    if (count > 0) {
+                        searchCursor = (searchCursor - 1 + count) % count
                     }
                 },
                 onNext = {
-                    if (searchMatches.isNotEmpty()) {
-                        searchCursor = (searchCursor + 1) % searchMatches.size
+                    val count = searchMatches.value.ordered.size
+                    if (count > 0) {
+                        searchCursor = (searchCursor + 1) % count
                     }
                 },
                 onClose = {
@@ -1459,7 +1884,7 @@ private fun ChatBody(
         // `bottomInset` is untouched by it: the trailing spacer and the boot page's
         // padding keep exactly the semantics they had (see the `Spacer` below and
         // `ChatScreen`'s boot branch).
-        Box(Modifier.weight(1f).fillMaxWidth()) {
+        Box(Modifier.weight(1f).fillMaxWidth().clipToBounds()) {
         if (!emptyTranscript) {
             // `app.appearance.messageDensity`: the transcript's block rhythm,
             // scaled around v2's own gap. F11 (`docs/rendering-review.md`):
@@ -1483,71 +1908,62 @@ private fun ChatBody(
             // compact step used to narrow it to 12 as well, which put the transcript's
             // left edge out of line with the AppBar's own 14 and with every other
             // screen; the density preference moves the *block rhythm*, not the page.
+            //
+            // ---------------------------------------------------------------- 加载更早
+            //
+            // **The 「加载更早」 row is not an item of this list any more** — it is drawn as
+            // an overlay over the list's own top padding, at the exact place the item used
+            // to occupy (`docs/scroll-diagnosis.md` §3.4, landed as D51).
+            //
+            // Why it had to leave: while it was item 0, its key (`transcript-earlier`)
+            // stayed at index 0 across a batch, so the `LazyColumn`'s key anchoring held
+            // *it* still and the content slid by the whole batch underneath. Compensating by
+            // hand (`prependAnchoredIndex`, now deleted) moved the viewport top to the old
+            // first content row instead, which cost the sentinel's own height — 30–45 dp of
+            // movement on every batch. With the row outside the list, the viewport's first
+            // item is a real transcript row and the anchoring is simply correct.
+            //
+            // What must stay identical, and how it is kept:
+            //  - **the same height and the same place.** `earlierRowHeightPx` is the height
+            //    the `Row` below measures itself at (`max(24 dp icon, the text's measured
+            //    line box) + 8 + 8`), measured *before* the list composes, so the list can
+            //    put it in `contentPadding.top` and the overlay can sit above the first row
+            //    by exactly that much plus the block gap the list no longer inserts for it;
+            //  - **the same appearance**: the same `Icon` + 6 dp + `Text(PiTheme.text.meta)`
+            //    in the same centred `Row`, painted on the page's own ground;
+            //  - **the same click**: `fillMaxWidth().clickable{…}.padding(vertical = 8.dp)`,
+            //    the same order, so the ripple covers the same area.
+            //
+            // The list keeps `Arrangement.spacedBy(blockSpacing)` for its own rows, and the
+            // reserved band is `earlierRowHeight + blockSpacing` so the first row sits
+            // where it did when the sentinel was an item with a gap under it.
+            val earlierText = when {
+                hiddenCount > 0 -> "加载更早的 $hiddenCount 条"
+                earlierHistory?.loading == true -> "正在读取更早的内容…"
+                else -> "加载更早的内容"
+            }
+            val earlierRowHeightValue = earlierRowHeight(earlierText)
+            // Where the overlay sits, and how much of the list's own top padding is the band
+            // it occupies: exactly the row's height plus the block gap the list no longer
+            // inserts between it and the first message.
+            val earlierBand = if (showsEarlierRow) earlierRowHeightValue + blockSpacing else 0.dp
             LazyColumn(
                 state = listState,
                 modifier = Modifier.fillMaxSize(),
                 // The vertical ends are not the block gap: they are the scroll
-                // container's own `10` top and `12` bottom.
+                // container's own `10` top (plus the sentinel's reserved band, when there
+                // is one) and `12` bottom.
                 contentPadding = PaddingValues(
                     start = PiSpacing.pageHorizontal,
                     end = PiSpacing.pageHorizontal,
-                    top = 10.dp,
+                    top = 10.dp + earlierBand,
                     bottom = 12.dp,
                 ),
                 verticalArrangement = Arrangement.spacedBy(blockSpacing),
             ) {
-                // Spec §4.5's "顶部显示加载指示". There is deliberately no spinner: the
-                // earlier rows are already in memory (the reducer never dropped them),
-                // so between the tap and the rows there is nothing but a slice, and a
-                // spinner would be animating nothing. The row states what it does and
-                // how much is left, and is itself the tap target as well as the
-                // scroll-to-top trigger above.
+                // The 「加载更早」 row is the overlay below, not an item here — see the block
+                // above for why, and for the three things that had to stay identical.
                 //
-                // The second case is the one the reader added: the loaded rows are
-                // exhausted but the session **file** has more above them. Unlike the
-                // first case that read lands on `Dispatchers.IO`, so this row is what
-                // says a read is in flight instead of leaving the top looking like the
-                // start of the conversation. It is also the tap target, so a user who
-                // prefers tapping to flinging can drive it. There is nothing to count
-                // — the file is not indexed, and inventing a number would be worse than
-                // saying what is happening.
-                val moreOnDisk = hiddenCount == 0 && earlierHistory?.hasEarlier == true
-                if (hiddenCount > 0 || moreOnDisk) {
-                    item(key = "transcript-earlier", contentType = "transcript-earlier") {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable {
-                                    if (hiddenCount > 0) {
-                                        renderWindow += TRANSCRIPT_WINDOW_STEP
-                                    } else {
-                                        session.expandEarlierHistory()
-                                    }
-                                }
-                                .padding(vertical = 8.dp),
-                            horizontalArrangement = Arrangement.Center,
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Icon(
-                                Icons.Filled.KeyboardArrowUp,
-                                contentDescription = null,
-                                tint = PiTheme.palette.muted,
-                            )
-                            Spacer(Modifier.width(6.dp))
-                            Text(
-                                text = if (hiddenCount > 0) {
-                                    "加载更早的 $hiddenCount 条"
-                                } else if (earlierHistory?.loading == true) {
-                                    "正在读取更早的内容…"
-                                } else {
-                                    "加载更早的内容"
-                                },
-                                style = PiTheme.text.meta,
-                                color = PiTheme.palette.muted,
-                            )
-                        }
-                    }
-                }
                 // Keyed by the reducer's stable per-block key, which is what lets
                 // Compose animate the row that changed while streaming instead of
                 // recomposing the list.
@@ -1568,8 +1984,21 @@ private fun ChatBody(
                     // front of this item — translate once, here, so everything below
                     // keeps using `index` as before.
                     val index = sliceIndex + hiddenCount
-                    val isMatch = searchMatches.contains(index)
-                    val isCurrentMatch = isMatch && searchMatches.getOrNull(searchCursor) == index
+                    // `present` is a `Set`: this line runs once per rendered row on every
+                    // frame the list composes, and the old `List<Int>.contains` was a
+                    // linear scan of every match in the session.
+                    val isMatch = searchMatches.value.present.contains(index)
+                    val isCurrentMatch = isMatch && searchMatches.value.ordered.getOrNull(searchCursor) == index
+                    // This row's markdown has finished parsing — the library's own
+                    // `State.Success`, reported up from `PiMarkdownText` through
+                    // `LocalPiMarkdownParsed`. It is what releases the height floor
+                    // `rememberedRowHeight` holds a freshly composed row at: "the parse
+                    // landed" rather than "enough frames passed" or "the content happened to
+                    // measure something", which is what makes the release exact. Both are
+                    // per-row state, keyed on the row's own key so a recycled item slot
+                    // cannot inherit the previous row's answer.
+                    val markdownParsed = remember(item.key) { mutableStateOf(false) }
+                    val onMarkdownParsed: () -> Unit = remember(markdownParsed) { { markdownParsed.value = true } }
                     val rowModifier = when {
                         isCurrentMatch -> Modifier
                             .border(1.dp, PiTheme.palette.searchMatchText, PiShapes.cardInner)
@@ -1578,84 +2007,140 @@ private fun ChatBody(
                         isMatch -> Modifier.background(PiTheme.palette.searchMatchBg, PiShapes.cardInner)
                         else -> Modifier
                     }
+                        // The height this row had before, for the frames of a *fresh*
+                        // composition of it: markdown's parse state is built with a plain
+                        // `remember`, so a row that leaves and comes back (a destination
+                        // switch, a scroll past it and back) is composed at zero height and
+                        // grows when the parse lands — and every row below it moves with it.
+                        // A floor, not a size, released by the parse itself: see
+                        // `ui/render/TranscriptRowHeight.kt` (and `RowHeightCache`'s bound).
+                        .rememberedRowHeight(item.key, contentReady = markdownParsed.value)
                     // The execution rail's two ends (`06 §2` 执行轨道「竖线上下各缩进 16」).
                     // A run is a property of *consecutive transcript rows*, so the one
                     // place that can answer "is this the first/last tool card of a run"
                     // is the list that holds the order — the blocks themselves only ever
-                    // see one item. `previous`/`next` come from the same rendered slice
-                    // the `LazyColumn` is building, so the answer cannot disagree with
-                    // what is on screen: `ToolCall` and `ToolDiff` are the only two kinds
-                    // that draw a rail (`ui/blocks/ToolRail.kt`).
-                    val previous = renderedItems.getOrNull(sliceIndex - 1)
-                    val next = renderedItems.getOrNull(sliceIndex + 1)
+                    // see one item. `previous`/`next` therefore come from `visibleItems`,
+                    // the whole loaded list, and not from the rendered slice: inside the
+                    // window the two are the same row (`renderedItems[i] ==
+                    // visibleItems[hiddenCount + i]`), but at the window's two ends the
+                    // slice has no neighbour where the transcript has one. Reading the
+                    // slice made the boundary row's rail insets flip the moment a batch
+                    // was prepended *under* it — and that boundary row is exactly the one
+                    // the anchor above is holding still, so the flip was a few tens of dp
+                    // of movement on the reader's own row, once per load-earlier batch.
+                    // `ToolCall` and `ToolDiff` are the only two kinds that draw a rail
+                    // (`ui/blocks/ToolRail.kt`).
+                    val previous = visibleItems.getOrNull(hiddenCount + sliceIndex - 1)
+                    val next = visibleItems.getOrNull(hiddenCount + sliceIndex + 1)
                     val firstOfRun = previous !is ToolCall && previous !is ToolDiff
                     val lastOfRun = next !is ToolCall && next !is ToolDiff
-                    BlockRenderer(
-                        item = item,
-                        modifier = rowModifier,
-                        firstOfRun = firstOfRun,
-                        lastOfRun = lastOfRun,
-                        // pi's `hideThinkingBlock` (`settings-manager.ts:119`) and
-                        // the app's collapse-by-default preference both land here;
-                        // the renderer already honours both.
-                        hideThinking = prefs.hideThinkingBlock,
-                        thinkingDefaultExpanded = !prefs.thinkingCollapsedByDefault,
-                        toolsDefaultExpanded = toolsExpanded,
-                        // F18 (`docs/rendering-review.md`): pi's own
-                        // `showCacheMissNotices` switch now reaches the blocks that
-                        // print the summarization billing line. pi's default is
-                        // `false` (`core/settings-manager.ts:120`), so an install
-                        // that never touched that row shows nothing new.
-                        showBilledCost = prefs.showCacheMissNotices,
-                        // F19 (`docs/rendering-review.md`) / RR-P10: the one
-                        // remaining callback of the renderer's original five whose
-                        // target already exists in this app is supplied here instead of
-                        // leaving the block's gated label unreachable — the branch
-                        // summary → the session tree, which is where the app can move
-                        // the leaf (the same target the palette's 会话树 action uses,
-                        // `:404-407`). The model row's own tap used to be the second;
-                        // the row no longer renders (see `BlockRenderer`), so its
-                        // callback is gone with it and the model is reached from the
-                        // AppBar chip.
-                        onBranchClick = {
-                            // Navigation refreshes the tree — see the `/tree` arm in
-                            // `pick`; this pair used to run the same two RPCs twice.
-                            session.requestNav(NavRequest.SessionTree)
-                        },
-                        // §4.8's 编辑并从此分叉: pi's user-message row opens the
-                        // fork picker and re-runs from that message
-                        // (`interactive-mode.ts:5216` / `docs/sessions.md:31`).
-                        //
-                        // The block hands over its transcript key, which is pi's entry
-                        // id only on the replay path — a bubble drawn for a prompt sent
-                        // in this run carries a synthetic key (`Transcript.kt:982`,
-                        // `:1010`), and sending that to `fork` is exactly what pi
-                        // answered with `Invalid entry ID for forking`. The order that
-                        // *is* reliable lives here, so the row's position among the user
-                        // rows and its text are read from the full list (not just the
-                        // rendered window) and handed to the ViewModel, which matches
-                        // them against `get_fork_messages` — pi's own list of legal fork
-                        // points.
-                        onForkFromMessage = { key ->
-                            val row = visibleItems
-                                .firstOrNull { it is UserMessage && it.key == key } as? UserMessage
-                            session.forkFromMessage(
-                                key = key,
-                                ordinal = userMessageOrdinal(visibleItems, key),
-                                text = row?.text.orEmpty(),
-                            )
-                        },
-                        // F19 (`docs/rendering-review.md`) deleted `onImageClick`
-                        // because no viewer existed to receive it. One does now, so
-                        // the callback is back and supplied: every image anywhere in
-                        // the transcript — a user attachment, an assistant's picture,
-                        // a tool's screenshot — opens [PiImageViewer]. The other two
-                        // (`onDiffOpenFull`, `onErrorRetry`) still have no target and
-                        // stay deleted.
-                        onImageClick = { viewedImage = it },
-                    )
+                    // Whether this row's markdown must be parsed before its first layout:
+                    // see `PiMarkdownImmediate.kt` for the defect, and the block above for
+                    // the gate. `RowHeightCache` is the latch — a row that has already been
+                    // measured never asks again, so the synchronous parse happens at most
+                    // once per row — and streaming text never asks: its content changes on
+                    // every token, and that parse belongs off the frame thread.
+                    //
+                    // The last term is the **frame budget**: `piMarkdownParseBudget` is billed
+                    // with the measured cost of every eager parse this frame (`PiMarkdown.kt`
+                    // times the `Markdown(state = …)` call), and when a frame has spent its
+                    // 4 ms the rest of its new rows take the asynchronous path. So a crowd of
+                    // expensive rows is thinned out while a lone row is unaffected — the
+                    // common case — and no row's fate is decided by its character count.
+                    val streamingRow = (item as? AssistantText)?.streaming == true ||
+                        (item as? ThinkingBlock)?.streaming == true
+                    val immediateMarkdown = !streamingRow &&
+                        RowHeightCache.shared.of(item.key) == null &&
+                        (item.key in freshRowKeys || restoring) &&
+                        piMarkdownParseBudget.allow(System.nanoTime())
+                    CompositionLocalProvider(
+                        LocalPiMarkdownImmediate provides immediateMarkdown,
+                        LocalPiMarkdownParsed provides onMarkdownParsed,
+                    ) {
+                        BlockRenderer(
+                            item = item,
+                            modifier = rowModifier,
+                            firstOfRun = firstOfRun,
+                            lastOfRun = lastOfRun,
+                            // pi's `hideThinkingBlock` (`settings-manager.ts:119`) and
+                            // the app's collapse-by-default preference both land here;
+                            // the renderer already honours both.
+                            hideThinking = prefs.hideThinkingBlock,
+                            thinkingDefaultExpanded = !prefs.thinkingCollapsedByDefault,
+                            toolsDefaultExpanded = toolsExpanded,
+                            // F18 (`docs/rendering-review.md`): pi's own
+                            // `showCacheMissNotices` switch now reaches the blocks that
+                            // print the summarization billing line. pi's default is
+                            // `false` (`core/settings-manager.ts:120`), so an install
+                            // that never touched that row shows nothing new.
+                            showBilledCost = prefs.showCacheMissNotices,
+                            // F19 (`docs/rendering-review.md`) / RR-P10: the one
+                            // remaining callback of the renderer's original five whose
+                            // target already exists in this app is supplied here instead of
+                            // leaving the block's gated label unreachable — the branch
+                            // summary → the session tree, which is where the app can move
+                            // the leaf (the same target the palette's 会话树 action uses,
+                            // `:404-407`). The model row's own tap used to be the second;
+                            // the row no longer renders (see `BlockRenderer`), so its
+                            // callback is gone with it and the model is reached from the
+                            // AppBar chip.
+                            onBranchClick = {
+                                // Navigation refreshes the tree — see the `/tree` arm in
+                                // `pick`; this pair used to run the same two RPCs twice.
+                                session.requestNav(NavRequest.SessionTree)
+                            },
+                            // §4.8's 编辑并从此分叉: pi's user-message row opens the
+                            // fork picker and re-runs from that message
+                            // (`interactive-mode.ts:5216` / `docs/sessions.md:31`).
+                            //
+                            // The block hands over its transcript key, which is pi's entry
+                            // id only on the replay path — a bubble drawn for a prompt sent
+                            // in this run carries a synthetic key (`Transcript.kt:982`,
+                            // `:1010`), and sending that to `fork` is exactly what pi
+                            // answered with `Invalid entry ID for forking`. What makes the
+                            // order reliable — reading the *full* list rather than the
+                            // rendered window — lives in `onForkFromMessage` above, which
+                            // is hoisted out of this lambda to keep its identity stable.
+                            onForkFromMessage = onForkFromMessage,
+                            // F19 (`docs/rendering-review.md`) deleted `onImageClick`
+                            // because no viewer existed to receive it. One does now, so
+                            // the callback is back and supplied: every image anywhere in
+                            // the transcript — a user attachment, an assistant's picture,
+                            // a tool's screenshot — opens [PiImageViewer]. The other two
+                            // (`onDiffOpenFull`, `onErrorRetry`) still have no target and
+                            // stay deleted.
+                            onImageClick = { viewedImage = it },
+                        )
+                    }
                 }
             }
+            // 「加载更早」 — the same row, drawn *outside* the list so that inserting a batch
+            // cannot move it and cannot move the reader (the block above has the mechanism
+            // and the three things that stay identical). Its position is the list's own
+            // geometry, read at layout time (`Modifier.offset`'s lambda runs there, so this
+            // costs no recomposition per frame): one band above the list's first item, which
+            // is exactly where the item was.
+            if (showsEarlierRow) {
+                val bandPx = with(LocalDensity.current) { earlierBand.roundToPx() }
+                EarlierRowsRow(
+                    text = earlierText,
+                    onClick = {
+                        if (hiddenCount > 0) {
+                            renderWindow += TRANSCRIPT_WINDOW_STEP
+                        } else {
+                            session.expandEarlierHistory()
+                        }
+                    },
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .offset {
+                            val first = listState.layoutInfo.visibleItemsInfo.firstOrNull { it.index == 0 }
+                            IntOffset(0, if (first == null) -bandPx else first.offset - bandPx)
+                        }
+                        .padding(horizontal = PiSpacing.pageHorizontal),
+                )
+            }
+
             // Spec §4.5's affordance, in its second shape. It used to be one bordered
             // pill reading 「回到最新 · N」; the user's ruling was 「弄得小一点，只剩一个
             // 箭头，半透明一点，现在太遮挡视线了。弄成上下两个箭头」, so it is now two
@@ -1764,7 +2249,14 @@ private fun ChatBody(
         }
 
         ExtensionWidgetStack(
-            widgets = state.extensionWidgets.filter { it.placement == WidgetPlacement.AboveEditor },
+            // Remembered on the widget list, which only changes when an extension
+            // pushes one: the filter used to allocate a new list on every recomposition
+            // of this screen, i.e. once per streamed token, for an answer that had not
+            // changed. `remember` rather than a cached field because the placement is a
+            // property of the widget, not of this screen.
+            widgets = remember(state.extensionWidgets) {
+                state.extensionWidgets.filter { it.placement == WidgetPlacement.AboveEditor }
+            },
         )
 
         state.bash?.let { bashRun ->
@@ -2024,7 +2516,9 @@ private fun ChatBody(
         // the app's footer; pi puts them between editor and footer, and the
         // difference is invisible at this density.
         ExtensionWidgetStack(
-            widgets = state.extensionWidgets.filter { it.placement == WidgetPlacement.BelowEditor },
+            widgets = remember(state.extensionWidgets) {
+                state.extensionWidgets.filter { it.placement == WidgetPlacement.BelowEditor }
+            },
         )
 
         Spacer(Modifier.height(bottomInset + 8.dp))
@@ -2158,7 +2652,27 @@ private fun userMessageOrdinal(items: List<TranscriptItem>, key: String): Int {
 }
 
 /**
- * The text a block contributes to transcript search.
+ * The transcript's search results for one query.
+ *
+ * Two shapes of the same answer, because the two readers want different operations:
+ * [ordered] is the navigation order (`cursor / total` and the reveal), and [present] is
+ * the per-row membership test the transcript runs once per rendered row per frame.
+ *
+ * A `List<Int>` served both before this, and the membership half was a linear scan of
+ * every match in the session — a session with a common word in it has thousands of them,
+ * and the transcript asks per visible row. Both halves are built in one pass over the
+ * transcript (see `ChatBody`'s match scan).
+ */
+private data class SearchHits(val ordered: List<Int>, val present: Set<Int>) {
+    companion object {
+        /** A blank query, or one that matched nothing. */
+        val None = SearchHits(emptyList(), emptySet())
+    }
+}
+
+/**
+ * Whether [item] is a search result for [query] — the same coverage the old
+ * `searchTextOf` had, asked as a predicate instead of built as a string.
  *
  * (`mergeRestoredQueue` — pi's queue/editor merge rule, shared by Stop and the
  * queue row's dequeue — lives in `ui/chat/QueueRestore.kt`: both actions must merge
@@ -2167,22 +2681,63 @@ private fun userMessageOrdinal(items: List<TranscriptItem>, key: String): Int {
  *
  * Every rendered block kind is covered, because a search that silently skips a
  * kind would report "no matches" for text the user can see. Kinds with no text of
- * their own (a date separator, a model change) contribute nothing.
+ * their own (a date separator) contribute nothing.
+ *
+ * **Why a predicate and not a string.** The old form joined each row's parts and then
+ * ran `contains` on the result, which copied a tool's whole output — the largest thing
+ * in a transcript — once per row per scan (measured: 0.86 ms per 20 KB row on a desktop
+ * JVM). Where a row's parts were joined with a newline the two forms are *identical*,
+ * because the query cannot contain one: the search field is `singleLine`
+ * (`ChatScreen.kt`'s `SearchBar`), so a match could never have straddled the separator.
+ * The joins that remain are the tiny ones, kept as they were so the behaviour of a `/`
+ * or newline inside a query is unchanged rather than accidentally "cleaned up".
  */
-private fun searchTextOf(item: TranscriptItem): String = when (item) {
-    is UserMessage -> item.text
-    is AssistantText -> item.text
-    is ThinkingBlock -> item.text
-    is ToolCall -> listOf(item.toolName, item.argsSummary, item.output).joinToString("\n")
-    is ToolDiff -> listOf(item.path, item.diffText).joinToString("\n")
-    is CompactionMarker -> item.summary
-    is BranchSummary -> item.summary
-    is HookMessage -> item.markdown
-    is ModelChange -> listOfNotNull(item.provider, item.modelId).joinToString("/")
-    is SkillInvocation -> listOf(item.skillName, item.body).joinToString("\n")
-    is ErrorText -> listOfNotNull(item.message, item.detail).joinToString("\n")
-    is Notice -> item.text
-    is DateSeparator -> ""
+private fun searchHits(item: TranscriptItem, query: String): Boolean = when (item) {
+    is UserMessage -> item.text.hits(query)
+    is AssistantText -> item.text.hits(query)
+    is ThinkingBlock -> item.text.hits(query)
+    is ToolCall -> item.toolName.hits(query) || item.argsSummary.hits(query) || item.output.hits(query)
+    is ToolDiff -> item.path.hits(query) || item.diffText.hits(query)
+    is CompactionMarker -> item.summary.hits(query)
+    is BranchSummary -> item.summary.hits(query)
+    is HookMessage -> item.markdown.hits(query)
+    is ModelChange -> listOfNotNull(item.provider, item.modelId).joinToString("/").hits(query)
+    is SkillInvocation -> listOf(item.skillName, item.body).joinToString("\n").hits(query)
+    is ErrorText -> listOfNotNull(item.message, item.detail).joinToString("\n").hits(query)
+    is Notice -> item.text.hits(query)
+    is DateSeparator -> false
+}
+
+/** pi's `searchMatch` is a case-insensitive substring test over the row's text. */
+private fun String.hits(query: String): Boolean = contains(query, ignoreCase = true)
+
+/**
+ * One full pass of the search over [items]: the ordered hits and the membership set the
+ * transcript reads per rendered row.
+ *
+ * Extracted so it can be run **off the frame thread** — the caller dispatches it to
+ * `Dispatchers.Default` and publishes the result (see `ChatBody`'s scan effect). It is a
+ * pure function of its three arguments, over an immutable list, so nothing is read that
+ * the dispatcher change could make stale.
+ *
+ * A block the user asked to hide cannot be a search result: the row is not on screen to
+ * scroll to.
+ */
+private fun scanSearchHits(
+    items: List<TranscriptItem>,
+    query: String,
+    hideThinking: Boolean,
+): SearchHits {
+    val ordered = ArrayList<Int>()
+    val present = HashSet<Int>()
+    items.forEachIndexed { index, item ->
+        if (hideThinking && item is ThinkingBlock) return@forEachIndexed
+        if (searchHits(item, query)) {
+            ordered += index
+            present += index
+        }
+    }
+    return SearchHits(ordered, present)
 }
 
 // The "pi has this command but this palette does not list it" table lives in
@@ -2933,6 +3488,23 @@ private fun bashModeOf(draft: String): Boolean = draft.trimStart().startsWith("!
 private const val MENTION_DEBOUNCE_MS: Long = 150L
 
 /**
+ * How often the transcript's search may re-scan while a turn is streaming.
+ *
+ * The same number and the same argument as the transcript's tool-output throttle
+ * (`rpc/.../Transcript.kt` `TOOL_UPDATE_THROTTLE_MS`): pi publishes once per streamed
+ * event, and a search over the whole session is expensive enough (110 ms for 800 rows
+ * of realistic size, measured on a desktop JVM) that paying it per token is a frozen
+ * screen. A search is a reading of the transcript, not a live feed — a match list that
+ * is 200 ms behind the newest text is imperceptible, and the turn's last publication is
+ * always scanned because the scan is repeated once the transcript stops streaming.
+ *
+ * The residual cost is bounded by what the scan has to read, which is the session's own
+ * text: the follow-up (if this is ever still felt) is to cache each row's search text in
+ * the reducer, not to lengthen this window.
+ */
+private const val SEARCH_RESCAN_MS: Long = 200L
+
+/**
  * F34 (`docs/rendering-review.md`) / spec §4.5: how many transcript rows are rendered
  * at once, and how many more each "load earlier" step (or a scroll to the top) reveals.
  * The spec's number is 50 for the first paint; the same step is used for the batches,
@@ -2943,6 +3515,19 @@ private const val MENTION_DEBOUNCE_MS: Long = 150L
  * reducer's own replay independent of how much is on screen.
  */
 private const val TRANSCRIPT_WINDOW_STEP = 50
+
+/**
+ * How many row keys are remembered as "the window has just brought this row in, and it has
+ * never been measured" — the gate for the one synchronous markdown parse a row may pay for
+ * (`LocalPiMarkdownImmediate`, P3 of `docs/scroll-diagnosis.md` §1.2).
+ *
+ * One batch is at most [TRANSCRIPT_WINDOW_STEP] rows (the file read's rows enter the *window*
+ * at that step too, however many entries it read), and the window's head can be grown again
+ * before the reader has composed the previous batch's rows — so this holds several batches'
+ * worth. A key dropped off the end costs that row the old behaviour (one frame at zero
+ * height); it never costs correctness, and the set cannot grow with the session.
+ */
+private const val FRESH_ROW_KEYS_MAX = 200
 
 /** The two floating scroll arrows: v2's dense control step, and 8dp apart. */
 private val SCROLL_ARROWS_GAP = 8.dp
@@ -3111,8 +3696,10 @@ private fun ComposerMenu(
                 tint = MaterialTheme.colorScheme.onSurface,
             )
         }
-        PiMenu(
-            expanded = open,
+        // The same rule as the top bar's menu: the item list is built at this call site,
+        // so a closed menu must not build it. See that site's note.
+        if (open) PiMenu(
+            expanded = true,
             onDismiss = { open = false },
             placement = PiMenuPlacement.Above,
             items = buildList {
@@ -3310,20 +3897,48 @@ private fun KeyChip(
  * runs off the main thread, because a camera JPEG is not composition work. A
  * payload the platform codec refuses still gets a tappable chip with its MIME
  * type, so the user can see *what* will be sent and remove it.
+ *
+ * The decode is bounded by [ATTACHMENT_THUMB_SIZE] instead of left at its natural size: a
+ * staged photo is up to pi's 2000 px ceiling and this paints a 48 dp square. The note
+ * inside has the arithmetic and the shared decode gate.
  */
+private val ATTACHMENT_THUMB_SIZE = 48.dp
+
 @Composable
 private fun AttachmentThumb(
     image: PiImage,
     index: Int,
     onRemove: () -> Unit,
 ) {
-    val bitmap by produceState<android.graphics.Bitmap?>(initialValue = null, image.base64) {
-        value = withContext(Dispatchers.IO) { decodePiImage(image.base64) }
+    // The decode is bounded by the box it is drawn in, the same way the transcript's
+    // cells bound theirs (`decodePiImage`'s `targetWidth`/`targetHeight`). Without it the
+    // default is "the natural size": a staged photo is up to pi's 2000 px ceiling, i.e.
+    // ~16 MB of ARGB per attachment held to paint a 48 dp square, and a message may carry
+    // seven of them. `decodePiImage` keeps the result within 2× of this box on each axis,
+    // so the thumbnail is still sampled above its drawn size at any density.
+    val thumbPx = with(LocalDensity.current) { ATTACHMENT_THUMB_SIZE.roundToPx() }
+    val bitmap by produceState<android.graphics.Bitmap?>(initialValue = null, image.base64, thumbPx) {
+        value = withContext(Dispatchers.IO) {
+            // The same gate the transcript's decodes go through
+            // (`MAX_CONCURRENT_IMAGE_DECODES`): staging five photos must not start five
+            // simultaneous full-res codec runs on the frame's behalf.
+            piImageDecodeGate.withPermit {
+                // …and the same process-wide bitmap cache the transcript's cells use
+                // (`PiImageCache`, keyed by payload + box), so re-staging the same picture — or
+                // leaving the composer and coming back — reuses the decode instead of running
+                // the codec again. The permit is held for the lookup too; a hit is a reference
+                // compare or one `memcmp` over the payload and costs no codec work, and the
+                // 32 MiB bound (payloads charged) lives in that object.
+                PiImageCache.readThrough(image.base64, thumbPx, thumbPx) {
+                    decodePiImage(image.base64, thumbPx, thumbPx)
+                }
+            }
+        }
     }
     Surface(
         modifier = Modifier
             .padding(end = 6.dp)
-            .size(48.dp)
+            .size(ATTACHMENT_THUMB_SIZE)
             .clickable(onClickLabel = "移除第 ${index + 1} 张图片", onClick = onRemove),
         shape = PiShapes.cardInner,
         color = MaterialTheme.colorScheme.surfaceContainerHigh,
@@ -3400,10 +4015,14 @@ private fun readBounded(input: java.io.InputStream, limit: Int): ByteArray {
  *     Lanczos3 through Photon; Android's `Bitmap.createScaledBitmap(..., filter = true)`
  *     is bilinear, which is a resampling difference, not a size or an ordering one — it
  *     is listed as device-only in the change report.
- *  3. **Alpha picks the format** (`AttachmentBudget.encodings`): PNG for a picture that
- *     can carry alpha, JPEG otherwise. `Bitmap.hasAlpha()` is the test, and on a decoded
- *     `ARGB_8888` it reports whether the *source* had an alpha channel, which is why an
- *     opaque JPEG does not get encoded as a PNG.
+ *  3. **Alpha, and a PNG source, pick the format**
+ *     (`AttachmentBudget.encodings`): PNG first for a picture whose decoded bitmap can
+ *     carry alpha **or** whose source MIME is `image/png`; JPEG otherwise. `Bitmap.hasAlpha()`
+ *     is the alpha test, and on a decoded `ARGB_8888` it reports whether the *source* had
+ *     an alpha channel, which is why an opaque JPEG does not get encoded as a PNG. pi
+ *     pushes that PNG candidate for every source that needs a re-encode; asking for it only
+ *     where it can win is the app's one deliberate difference — `AttachmentBudget`'s class
+ *     KDoc has the reasoning and the residual difference.
  *
  * Returns null when the bytes do not decode, or when even 1×1 cannot be encoded under
  * pi's ceiling. The caller tells the user which of the two happened is not knowable
@@ -3436,7 +4055,10 @@ private fun compressAttachment(bytes: ByteArray, mime: String): PiImage? {
         BitmapFactory.Options().apply { inPreferredConfig = Bitmap.Config.ARGB_8888 },
     ) ?: return null
     try {
-        for (attempt in AttachmentBudget.attemptPlan(source.hasAlpha(), width, height)) {
+        // `mime` is the *source's* type and it decides the candidate order: a PNG source
+        // (or any source whose decoded bitmap carries alpha) gets pi's PNG candidate
+        // first, everything else starts at JPEG 80. See `AttachmentBudget.pngFirst`.
+        for (attempt in AttachmentBudget.attemptPlan(mime, source.hasAlpha(), width, height)) {
             val scaled = scaleForAttachment(source, attempt.width, attempt.height) ?: continue
             try {
                 val encoded = encodeForAttachment(scaled, attempt.encoding) ?: continue

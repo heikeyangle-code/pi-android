@@ -2,6 +2,7 @@ package app.pi.runtime
 
 import android.content.Context
 import java.io.File
+import java.util.concurrent.TimeUnit
 
 /**
  * Starts a real PTY for the Workbench terminal, without a JNI `forkpty`.
@@ -266,9 +267,19 @@ object PtyLauncher {
         val builder = ProcessBuilder(argv).directory(paths.runtime).redirectErrorStream(true)
         builder.environment().putAll(ProotCommand.environment(paths))
         val process = builder.start()
-        val text = process.inputStream.bufferedReader().use { it.readText() }
-        process.waitFor()
-        return text
+        // **Wait first, then read** — and with a bound. stderr is merged into stdout
+        // (`redirectErrorStream(true)`), so there is only one pipe and no two-pipe
+        // deadlock; what was missing was any limit at all: reading to EOF before
+        // waiting means a guest that never writes and never exits blocks this call for
+        // good, and this call is on the path that opens the terminal. `waitFor` first
+        // converts that into a bounded, reportable answer.
+        val finished = runCatching { process.waitFor(PROBE_TIMEOUT_MS, TimeUnit.MILLISECONDS) }
+            .getOrDefault(false)
+        if (!finished) {
+            process.destroyForcibly()
+            return "$PROBE_PREFIX$PROBE_MISSING flags=\n"
+        }
+        return runCatching { process.inputStream.bufferedReader().use { it.readText() } }.getOrDefault("")
     }
 
     private fun parseProbe(output: String?): ScriptFlags {
@@ -409,6 +420,18 @@ object PtyLauncher {
     private const val PROBE_MISSING = "missing"
 
     /**
+     * How long the `script(1)` capability probe may take.
+     *
+     * The probe is a whole proot launch of a guest `bash`, which is why it is cached
+     * ([probe]); on a phone it is normally well under a second even cold, and this
+     * bound exists for the wedged case, not the slow one. Reaching it falls back to
+     * the plain-pipe terminal with the same banner a missing `script(1)` produces —
+     * a terminal that works without a pty is a better answer than a screen that never
+     * finishes starting.
+     */
+    private const val PROBE_TIMEOUT_MS = 8_000L
+
+    /**
      * Ask the guest shell what its `script(1)` supports. Runs in the same rootfs
      * as the terminal itself and prints exactly one probe line.
      */
@@ -433,7 +456,8 @@ object PtyLauncher {
 
     private const val BANNER_MISSING_SCRIPT =
         "工作区终端需要 guest 里的 util-linux script(1)（用于在内部分配真实 PTY）。\n" +
-            "当前 rootfs 没有它，已回退到普通管道：全屏交互程序（如 pi TUI）可能显示异常。\n\n"
+            "当前 rootfs 没有它，或探测命令 ${PROBE_TIMEOUT_MS / 1000} 秒内没有返回，" +
+            "已回退到普通管道：全屏交互程序（如 pi TUI）可能显示异常。\n\n"
 
     private const val BANNER_NO_EXIT_STATUS =
         "提示：guest 的 script(1) 不支持 -e，命令的退出码不会被上报。\n\n"

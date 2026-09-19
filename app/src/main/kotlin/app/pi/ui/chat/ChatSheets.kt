@@ -9,6 +9,9 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
@@ -72,13 +75,20 @@ fun ModelPickerSheet(
 ) {
     var filter by remember { mutableStateOf("") }
     val query = filter.trim().lowercase()
-    val shown = if (query.isEmpty()) {
-        models
-    } else {
-        models.filter {
-            it.id.lowercase().contains(query) ||
-                it.name.lowercase().contains(query) ||
-                it.provider.orEmpty().lowercase().contains(query)
+    // Remembered on the two inputs it reads: `list()` can be hundreds of entries (a
+    // provider like OpenRouter publishes its whole catalogue), and the filter lowercases
+    // three fields per model, so recomputing it per composition made every keystroke
+    // allocate a few hundred strings for an answer that only changes when the query or
+    // the list does.
+    val shown = remember(query, models) {
+        if (query.isEmpty()) {
+            models
+        } else {
+            models.filter {
+                it.id.lowercase().contains(query) ||
+                    it.name.lowercase().contains(query) ||
+                    it.provider.orEmpty().lowercase().contains(query)
+            }
         }
     }
     ModalBottomSheet(onDismissRequest = onDismiss) {
@@ -113,10 +123,18 @@ fun ModelPickerSheet(
                 Spacer(Modifier.height(PiSpacing.unit))
                 TextButton(onClick = onRefresh) { Text("重新读取") }
             } else {
-                Column(
-                    Modifier.fillMaxWidth().heightIn(max = 420.dp).verticalScroll(rememberScrollState()),
+                // Lazy, so only the rows on screen are composed: the list can be a
+                // provider's whole catalogue (hundreds of entries), and a plain `Column`
+                // built every one of them when the sheet opened. `heightIn(max = …)` is
+                // what bounds the viewport — the same shape the `/` palette already uses
+                // (`SlashPalette.kt`), where a `LazyColumn` under a max-height constraint
+                // still wraps its content, so three models do not leave a 420 dp empty
+                // sheet. No `key`: these rows never reorder and a duplicate `id` across
+                // two providers would collide a key and crash the list.
+                LazyColumn(
+                    Modifier.fillMaxWidth().heightIn(max = 420.dp),
                 ) {
-                    shown.forEach { model ->
+                    items(shown) { model ->
                         ModelRow(
                             model = model,
                             selected = model.id == current?.id && model.provider == current.provider,
@@ -965,8 +983,10 @@ fun ForkPickerSheet(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             } else {
-                Column(Modifier.fillMaxWidth().heightIn(max = 420.dp).verticalScroll(rememberScrollState())) {
-                    messages.forEachIndexed { index, message ->
+                // Lazy for the same reason as the model list above: a long session's fork
+                // points are hundreds of rows, and this sheet is opened on a tap.
+                LazyColumn(Modifier.fillMaxWidth().heightIn(max = 420.dp)) {
+                    itemsIndexed(messages) { index, message ->
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()

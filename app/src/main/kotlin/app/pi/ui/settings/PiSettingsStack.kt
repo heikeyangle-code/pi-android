@@ -9,6 +9,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -22,6 +23,11 @@ import app.pi.runtime.PiPaths
 import app.pi.runtime.PiProjectConfig
 import app.pi.runtime.PtyLauncher
 import app.pi.ui.device.DeviceCapabilityScreen
+import app.pi.ui.screens.PiFilesScreen
+import app.pi.ui.screens.WorkspaceResource
+import app.pi.ui.screens.WorkspaceResourceKind
+import app.pi.ui.screens.WorkspaceResourceScan
+import app.pi.ui.screens.WorkspaceSource
 import app.pi.ui.theme.PiThemeEntry
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -123,33 +129,45 @@ fun PiSettingsStack(
     onOpenTerminal: (() -> Unit)? = null,
 ) {
     val activeStore = store ?: rememberInMemoryPiSettingsStore()
-    var groupId by remember { mutableStateOf<String?>(null) }
-    var highlightKey by remember { mutableStateOf<String?>(null) }
-    var searching by remember { mutableStateOf(false) }
-    var backReturnsToSearch by remember { mutableStateOf(false) }
+    // Every level of this stack is `rememberSaveable`, not `remember`: the settings
+    // destination is hosted in a `SaveableStateProvider`, so rotation and process
+    // recreation used to drop the user back on 设置首页 with the search text and the open
+    // group gone — while the whole point of that provider is that this screen survives
+    // (`docs/settings-audit-impl.md` §B15). All of these are String?/Boolean, so they save
+    // as they are; editor state that holds a `PiSetting` deliberately does not.
+    var groupId by rememberSaveable { mutableStateOf<String?>(null) }
+    var highlightKey by rememberSaveable { mutableStateOf<String?>(null) }
+    var searching by rememberSaveable { mutableStateOf(false) }
+    var backReturnsToSearch by rememberSaveable { mutableStateOf(false) }
     // The device capability screen is the one branch of this stack that is not a
     // group in pi's settings catalog — the switches grant the *phone's* abilities
     // to the agent, and pi has no such settings (docs/pi-android-app-design.md §21).
-    var deviceCapabilities by remember { mutableStateOf(false) }
+    var deviceCapabilities by rememberSaveable { mutableStateOf(false) }
     // pi installs resources with `pi install`, which has no RPC command, so the
     // app owns this UI; the screen is `app.pi.packages.PiPackagesHost`.
-    var packages by remember { mutableStateOf(false) }
+    var packages by rememberSaveable { mutableStateOf(false) }
     // The credential form. `app.credentials.apiKey` (`PiSettingsRegistry.kt:358`)
     // and `app.localModels.manage` (`:389`) are Action rows whose work is a
     // multi-step flow, so they own a screen instead of a confirm dialog.
-    var credentials by remember { mutableStateOf(false) }
-    var credentialPreset by remember { mutableStateOf<String?>(null) }
+    var credentials by rememberSaveable { mutableStateOf(false) }
+    var credentialPreset by rememberSaveable { mutableStateOf<String?>(null) }
     // The open-source licence notices. Not a pi screen either — see §L: publishing
     // the licences of what this app redistributes is the distributor's obligation,
     // so the screen is the app's own.
-    var licenses by remember { mutableStateOf(false) }
+    var licenses by rememberSaveable { mutableStateOf(false) }
     // 设置 → 模型：App 侧的一页，列出这台设备上配好的厂商与模型（`PiModelsScreen`）。
-    var models by remember { mutableStateOf(false) }
+    var models by rememberSaveable { mutableStateOf(false) }
     // 设置 → 运行时与诊断 → 导出诊断报告（`app.runtime.diagnostics`）。报告的正文是
     // 被交付的那件东西，所以它先被看到、再被送出：一页屏幕而不是一次静默的保存 ——
     // 用户能亲眼看到退出码是空的、stderr 是空的、哪个载荷读不出来，再决定发不发。
     // 它不碰引擎，因此引擎已经退出时同样可用（这正是它存在的场景）。
-    var diagnostics by remember { mutableStateOf(false) }
+    var diagnostics by rememberSaveable { mutableStateOf(false) }
+    // 设置首页「其他」里的「Pi 文件」（`app.pi.ui.screens.PiFilesScreen`）。它既不是 pi
+    // 的设置键也不是 pi 的功能，而是 **pi 的文件**（`docs/settings-audit-pi-gap.md` §6.3），
+    // 所以与上面几页同一档：这个栈里的一个层级，而不是首页自己托管的一屏 —— 层级的
+    // 返回语义与 `rememberSaveable` 都归这里（自托管那条退路只在没有宿主时用，见
+    // `SettingsHome` 的 `onOpenPiFiles`）。
+    var piFiles by rememberSaveable { mutableStateOf(false) }
 
     // The 运行时 group's four read-only rows: their facts live in the runtime
     // tree and in the engine's foreground service, not in the settings store, so
@@ -168,6 +186,7 @@ fun PiSettingsStack(
     LaunchedEffect(runtimeFacts) {
         facts = withContext(Dispatchers.IO) { runtimeFacts.read() }
     }
+
     // A restart asked for from the 进程 section. It is not routed through
     // `EngineRestartCoordinator`: that machine answers "a *resource* change is
     // waiting to be picked up", while these are process options that only take
@@ -214,10 +233,72 @@ fun PiSettingsStack(
         directories = remember(paths, workspace) { listOf(paths.agentDir, PiProjectConfig.root(workspace)) },
         names = remember { SETTINGS_WATCHED },
         onChanged = {
+            // Drop the caches, then warm them **on IO** before bumping the epoch. The rows
+            // read `store.read(...)` during composition, so a cold cache made the frame that
+            // noticed an external change parse the whole document on the main thread — the
+            // second half of §B10. `theme` covers the global and project documents (it is
+            // read through the merge); the appearance key covers the app-local sidecar.
             onExternalSettingsWrite()
-            filesEpoch++
+            scope.launch {
+                withContext(Dispatchers.IO) {
+                    runCatching { activeStore.read("theme") }
+                    runCatching { activeStore.read("app.appearance.messageDensity") }
+                }
+                filesEpoch++
+            }
         },
     )
+
+    // 「扩展与资源」那四个只读事实行的读数。**复用项目页资源段那个扫描器**
+    // （`WorkspaceResourceScan`，纯磁盘读取，不需要引擎在跑），不新写一份扫描：两份实现会
+    // 各自漂移，而"到底发现了什么"是最不能漂移的那种数。
+    //
+    // 键里有 `filesEpoch`：外部往 `skills/`/`themes/`/… 里放了东西时，监视器会 bump 它，
+    // 这一屏的数字跟着变。读数在 IO 上跑；未扫出结果前是 `null`，行显示「未读取」而不是 0。
+    var resourceScan by remember { mutableStateOf<ResourceScan?>(null) }
+    LaunchedEffect(workspacePath, filesEpoch, paths) {
+        val scanned = withContext(Dispatchers.IO) {
+            runCatching {
+                WorkspaceResourceScan.scan(
+                    workspace = workspace,
+                    configDir = PiProjectConfig.root(workspace),
+                    agentDir = paths.agentDir,
+                )
+            }
+        }
+        val outcome = scanned.fold(
+            onSuccess = { resources ->
+                ResourceScan.Found(
+                    resources.mapNotNull { resource ->
+                        val kind = when (resource.kind) {
+                            WorkspaceResourceKind.Skill -> DiscoveredKind.Skills
+                            WorkspaceResourceKind.Theme -> DiscoveredKind.Themes
+                            WorkspaceResourceKind.Prompt -> DiscoveredKind.Prompts
+                            WorkspaceResourceKind.Extension -> DiscoveredKind.Extensions
+                        }
+                        val source = when (resource.source) {
+                            WorkspaceSource.ProjectPi -> DiscoverySource.ProjectPi
+                            WorkspaceSource.Agents -> DiscoverySource.Agents
+                            WorkspaceSource.Global -> DiscoverySource.Global
+                            WorkspaceSource.Package -> DiscoverySource.Package
+                            WorkspaceSource.Extension -> DiscoverySource.Extension
+                        }
+                        DiscoveredResource(kind, resource.name, source)
+                    },
+                )
+            },
+            // 读不到就说读不到：这是 `ResourceScan.Unreadable` 存在的全部理由。把它吞成
+            // `Found(emptyList())` 会让行显示「还没有发现任何资源」——一个看起来像真读数的假话。
+            onFailure = { error ->
+                ResourceScan.Unreadable(error.message ?: error::class.java.simpleName)
+            },
+        )
+        resourceScan = outcome
+        // 摘要（`SettingsHome` 画的那一行）拿不到这个 LaunchedEffect 的结果，只能读缓存。
+        PiResourceFactsCache.put(workspacePath, outcome)
+    }
+    // 扫描落地前显示「未读取」；落地后按三种读数之一显示，绝不显示一个假的 0。
+    val resourceOverrides = resourceScan?.let { resourceFactOverrides(it) } ?: resourceFactPlaceholders()
 
     val openSetting: (String) -> Unit = { key ->
         val setting = PiSettingsCatalog.byKey[key]
@@ -278,12 +359,22 @@ fun PiSettingsStack(
         // 看不到 logcat。这一行把 App 此刻还能读到的一切汇总成一份纯文本交给用户，报告
         // 的抓取发生在引擎退出的一瞬间（`engineDiagnostics`），所以引擎死了也能导。
         "app.runtime.diagnostics" to { diagnostics = true },
+        // 「查看资源文件」：这一屏的出口，指向「Pi 文件」屏。它走的是本栈**已有**的层级
+        // `piFiles`（`SettingsHome` 的入口行用的是同一个），不新造导航；那一屏是目录浏览器，
+        // `skills/`、`prompts/`、`themes/`、`extensions/` 都在里面能看到和编辑。
+        "app.resources.openFiles" to { piFiles = true },
     )
 
     BackHandler(
-        enabled = searching || groupId != null || deviceCapabilities || packages || credentials || licenses || models || diagnostics,
+        enabled = searching || groupId != null || deviceCapabilities || packages || credentials || licenses || models || diagnostics || piFiles,
     ) {
-        if (searching) {
+        // `piFiles` 排在最前：它是这一栈里最深的一层，返回键先关它（回到设置首页），
+        // 而不是继续往外退。正常情况下 `PiFilesScreen` 自己那个 `BackHandler` 会先拿到
+        // 按键（组合顺序在后 → `OnBackPressedDispatcher` 的 LIFO），在那里"返回"是**退到
+        // 上一级目录**、到根才是 `onBack()`；这一支是它不在组合里时的兜底。
+        if (piFiles) {
+            piFiles = false
+        } else if (searching) {
             searching = false
         } else if (licenses) {
             licenses = false
@@ -313,6 +404,15 @@ fun PiSettingsStack(
     val currentGroup = groupId
     Box(Modifier.fillMaxSize()) {
         when {
+            // 设置首页「其他 → Pi 文件」的目的地。放在最前与 BackHandler 的判定同序：
+            // 它是这一栈里最深的一层。入口由 `SettingsHome` 的 `onOpenPiFiles` 传来
+            // （见下面那处 `else ->`），所以这一屏的返回语义、层级与 `rememberSaveable`
+            // 状态都留在这个栈里，与搜索 / 分组页同一套。
+            piFiles -> PiFilesScreen(
+                contentPadding = contentPadding,
+                onBack = { piFiles = false },
+            )
+
             licenses -> LicensesScreen(
                 contentPadding = contentPadding,
                 onBack = { licenses = false },
@@ -383,7 +483,7 @@ fun PiSettingsStack(
                 contentPadding = contentPadding,
                 onBack = { searching = false },
                 onOpenSetting = openSetting,
-                valueOverrides = runtimeOverrides(facts),
+                valueOverrides = runtimeOverrides(facts) + resourceOverrides,
             )
 
             currentGroup != null -> SettingsGroupScreen(
@@ -406,7 +506,7 @@ fun PiSettingsStack(
                 onSettingWritten = onSettingWritten,
                 onRunAction = onRunAction,
                 hostActions = hostActions,
-                valueOverrides = runtimeOverrides(facts),
+                valueOverrides = runtimeOverrides(facts) + resourceOverrides,
                 // The same restart the 进程 section's action row asks for, offered
                 // from the badge explanation of a 需重启引擎 row.
                 onRestartEngine = { restartPrompt = true },
@@ -438,6 +538,9 @@ fun PiSettingsStack(
                 // 两个状态开关接上去，不多开任何一页。
                 onOpenModels = openModels,
                 onOpenDiagnostics = { diagnostics = true },
+                // 首页「其他」里的第三行。走这个栈自己的层级（`piFiles`），所以它的返回
+                // 语义与状态恢复与上面几页完全一致；`SettingsHome` 只是把点击转上来。
+                onOpenPiFiles = { piFiles = true },
             )
         }
     }

@@ -177,13 +177,25 @@ object DeviceUiText {
         return if (cut >= 0 && cut < value.length - 1) value.substring(cut + 1) else value
     }
 
-    /** Collapse whitespace and clip, so one node never becomes a wall of text. */
+    /**
+     * Collapse whitespace and clip, so one node never becomes a wall of text.
+     *
+     * The pattern is compiled once ([WHITESPACE_ANY]) rather than per call: this runs
+     * twice per node on every dump (`DeviceUiAutomation.collect` for `text` and
+     * `contentDescription`, and again in `walk` for selector matching), so a 400-node
+     * dump asked for one regex object 800 times. Measured at ~1 ms per 800
+     * `Pattern.compile`s on a desktop JVM — small, but it is pure waste on the path
+     * whose whole job is to be fast enough for a model to poll.
+     */
     fun clip(raw: CharSequence?, max: Int = 160): String {
         val value = raw?.toString().orEmpty().trim()
         if (value.isEmpty()) return ""
-        val collapsed = value.replace(Regex("\\s+"), " ")
+        val collapsed = WHITESPACE_ANY.matcher(value).replaceAll(" ")
         return if (collapsed.length <= max) collapsed else collapsed.substring(0, max) + "…"
     }
 
     fun isBlank(raw: CharSequence?): Boolean = TextUtils.isEmpty(raw?.toString()?.trim())
+
+    /** One compiled `\s+`, for [clip]. `String.replaceAll` recompiles it every call. */
+    private val WHITESPACE_ANY: java.util.regex.Pattern = java.util.regex.Pattern.compile("\\s+")
 }

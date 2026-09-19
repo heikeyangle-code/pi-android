@@ -3,6 +3,7 @@ package app.pi.ui.settings
 import android.os.FileObserver
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.lifecycle.Lifecycle
@@ -10,6 +11,10 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import app.pi.packages.PiFileStamps
 import java.io.File
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 
 /**
  * **外部改动 → 界面更新**的统一做法，一个 Composable 就是全部。
@@ -31,7 +36,19 @@ import java.io.File
  *     内存紧张时会静默丢掉监视，这是**已知的平台行为**——所以生命周期这一层不是冗余，
  *     是兜底）。
  *
- * 两者都只在判据为"变了"的时候才回调，回调本身不做解析：解析是页面收到通知之后按需做的。
+ * ## 一次改动只报一次，且不在主线程上碰文件
+ *
+ * 上面两个来源都**只往一个 `CONFLATED` 通道里投一个信号**，真正的判定在一个消费协程里做：
+ *
+ *  - **合并**：App 自己写一次文件会产生**两个**事件（临时文件 `CREATE` + 正式名
+ *    `MOVED_TO`），`ATTRIB`/`CLOSE_WRITE` 还会再添几个。以前每个事件都回调一次，于是
+ *    "改一个开关"会让整页重读两遍。现在通道是 conflated（最多留一个待处理信号），消费端
+ *    再等 [COALESCE_WINDOW_MS] 把同一串事件收成一个。
+ *  - **读盘不在主线程**：`PiFileStamps.Baseline` 的构造与 `consume()` 都会对每个被监视的
+ *    文件做 `stat`。以前前者发生在**组合期**、后者发生在 **`ON_RESUME` 的观察者里**，都在
+ *    主线程；现在两者都在 `Dispatchers.IO` 上，回调本身回到组合的调度器（主线程）。
+ *
+ * 判据仍然是"变了才回调"，回调本身不做解析：解析是页面收到通知之后按需做的。
  *
  * ## 为什么监视**目录**而不是文件
  *
@@ -46,6 +63,8 @@ import java.io.File
  *  - 不认识"改了但大小和 mtime 都没变"的情况。取舍写在 [PiFileStamps] 的头部。
  *  - 不管写入是不是本进程做的：App 自己写文件也会回调一次，处理方式就是再读一遍（读不写
  *    文件，所以不会成环）。
+ *  - 不消除"页面收到通知后在组合期读 store"这件事：那是行自己的读取（缓存已被宿主丢掉了），
+ *    不由本文件决定；`docs/settings-audit-impl.md` §B10 给了宿主的预热点补法。
  */
 @Composable
 fun PiDirectoryWatch(
@@ -65,36 +84,69 @@ fun PiDirectoryWatch(
     // inside a `DisposableEffect` block works, but it is one more thing to have to be
     // right about on a machine where Compose cannot be compiled.
     val owner = LocalLifecycleOwner.current
-    // Keyed on *what* is watched, so a different agent dir rebuilds both the
-    // observers and the resume baseline.
+    // Keyed on *what* is watched, so a different agent dir rebuilds the observers, the
+    // coalescing channel and the resume baseline together.
     val key = directories.joinToString("|") { it.absolutePath } + "#" + (names?.joinToString(",") ?: "*")
-    val baseline = remember(key) { PiFileStamps.Baseline(watchedFiles(directories, names)) }
+    val files = remember(key) { watchedFiles(directories, names) }
+    // `CONFLATED` is the whole point: a burst of events (temp file, rename, attrib)
+    // leaves at most one pending signal, so one user-visible change is one refresh.
+    val signals = remember(key) { Channel<Unit>(Channel.CONFLATED) }
 
     DisposableEffect(key) {
         val observers = directories.mapNotNull { directory ->
             if (!directory.isDirectory) return@mapNotNull null
-            val observer = fileObserver(directory, names, callback.value)
+            val observer = fileObserver(directory, names) { signals.trySend(Unit) }
             runCatching { observer.startWatching() }
             observer
         }
 
         val lifecycleObserver = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME && baseline.consume()) callback.value()
+            // Goes through the same channel as inotify: one code path, one coalescing
+            // rule, and the `(size, mtime)` comparison runs on IO (below), not here.
+            if (event == Lifecycle.Event.ON_RESUME) signals.trySend(Unit)
         }
         owner.lifecycle.addObserver(lifecycleObserver)
         onDispose {
             owner.lifecycle.removeObserver(lifecycleObserver)
             observers.forEach { runCatching { it.stopWatching() } }
+            signals.close()
+        }
+    }
+
+    LaunchedEffect(key) {
+        // The baseline is taken on IO: its constructor stats every watched file. It is
+        // taken as the consumer starts (it used to be taken during composition), so a
+        // change landing inside that first hop is still covered by the page's own
+        // initial read of the document.
+        var baseline = withContext(Dispatchers.IO) { PiFileStamps.Baseline(files) }
+        for (unused in signals) {
+            delay(COALESCE_WINDOW_MS)
+            // `consume()` is where the judgement happens, and it stats every file: off
+            // the main thread, every time. `unused` is the conflated signal itself.
+            val changed = withContext(Dispatchers.IO) { baseline.consume() }
+            // Back on the composition's dispatcher: callers write Compose state here.
+            if (changed) callback.value()
         }
     }
 }
 
+/**
+ * How long a burst of events may accumulate before one refresh runs.
+ *
+ * 100 ms is chosen against the two things that matter: the shortest real burst (the
+ * `rename` half of an atomic write lands microseconds after the temp file's `CREATE`)
+ * and the longest a stale value can be shown to a human who is looking at the page.
+ * `PiModelsScreen` already waits 200 ms for the same reason; this window is shorter
+ * because these are the rows the user is looking at while they type.
+ */
+private const val COALESCE_WINDOW_MS = 100L
+
 /** `FileObserver(String, Int)` is the deprecated-but-universal constructor; the `File` one is API 29. */
 @Suppress("DEPRECATION")
-private fun fileObserver(directory: File, names: List<String>?, onChanged: () -> Unit): FileObserver =
+private fun fileObserver(directory: File, names: List<String>?, signal: () -> Unit): FileObserver =
     object : FileObserver(directory.absolutePath, MASK) {
         override fun onEvent(event: Int, path: String?) {
-            if (path == null || names == null || names.any { path.startsWith(it) }) onChanged()
+            if (path == null || names == null || names.any { path.startsWith(it) }) signal()
         }
     }
 
