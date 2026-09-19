@@ -19,7 +19,7 @@ import kotlinx.serialization.json.JsonPrimitive
  * `settings.json` would be a key pi never reads. Worse, it would be *reported* as a
  * live setting by every screen that lists them. So the value lives where this app
  * already keeps the other piece of state that exists before pi does
- * (`DeviceCapabilityStore`): app-only
+ * (`RuntimePreferences`'s proroot switch, `DeviceCapabilityStore`): app-only
  * storage, in this case `SharedPreferences` — no file pi can see, and nothing to
  * migrate.
  *
@@ -28,9 +28,10 @@ import kotlinx.serialization.json.JsonPrimitive
  * The settings stack addresses every row through one [PiSettingsStore]; a row whose
  * value must not go to pi's file is therefore a store concern, not a screen
  * concern. [ExtensionArgsStoreDecorator] intercepts exactly this key and delegates
- * everything else untouched, which is the shape `DeviceCapabilityStore`'s rows
- * already use for state pi must not see. This decorator is the thinner of the two:
- * it keeps one string, with no switch and no failure counter beside it.
+ * everything else untouched, which is the shape `AppOnlySettingsStore` established
+ * for the two proroot rows. The difference between the two is only where the
+ * app-only value is stored (that one needs a failure counter next to the switch;
+ * this one is a single string).
  *
  * `write` stores the text verbatim (including an empty string, which is how the row
  * is cleared) and `remove` deletes it — never `JsonNull`, because a null in a

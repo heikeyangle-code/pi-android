@@ -1259,6 +1259,63 @@ object PiSettingsCatalog {
             readOnly = true,
             aliases = listOf("wakelock"),
         ),
+        PiSetting(
+            key = "app.runtime.prorootStatus",
+            title = "运行时（实际生效）",
+            // 这一行的值现在会带上"是哪一档没过"，值下面还会列出探针逐阶段的原始判读：
+            // 说明文字必须指向那两块内容，否则用户仍然不知道"探针未通过"到底卡在哪一步
+            // （缺陷原形：开关开着，行上只有半句话，唯一能看到证据的地方是导出的报告）。
+            description = "这次运行实际用的是哪个运行时。没有用 proroot 时会写明原因；" +
+                "原因出在探针上时，还会写出是哪一档没过（proroot 启动、raw syscall、" +
+                "或 rg/fd 真实调用那一档）和探针原话。这一行下面列出探针逐阶段的原始判读：" +
+                "行数有上限，超出会写明截断了多少行——完整内容始终在导出的诊断报告里。",
+            kind = PiRowKind.Text,
+            group = G_RUNTIME,
+            section = "运行时状态",
+            defaultValue = str("未读取"),
+            readOnly = true,
+            aliases = listOf("proroot", "proot", "runtime", "状态"),
+        ),
+
+        // ------------------------------------------------------------------
+        // 运行时选择（proroot）—— 这两行是本应用自己的状态，**不写进 pi 的
+        // settings.json**：它决定用哪个二进制启动 guest，在 pi 存在之前就要定下来，
+        // pi 那边没有读者。值由 `AppOnlySettingsStore` 拦下，落在
+        // `RuntimePreferences`（SharedPreferences，与 `DeviceCapabilityStore` 同一种
+        // 存法）。行仍然放在注册表里，因为「运行时与诊断」正是用户找它的地方。
+        //
+        // 文案必须诚实，四件事缺一不可：实验性 / 默认关 / 不可用时自动回退 proot /
+        // 装机与维护始终 proot；再加两条已知取舍：闭源不可审计、提速幅度未量化
+        // （`docs/proroot-research.md` §2.3 只有 DSHA 自己的一组数字，机型还不同）。
+        //
+        // `effective = RestartEngine`：运行时是在**进程启动时**选定的，正在跑的引擎
+        // 不会换运行时，所以拨动开关后要重启引擎才看得到效果。
+        // ------------------------------------------------------------------
+        PiSetting(
+            key = "app.runtime.proroot",
+            title = "运行时加速（实验性）",
+            description = "用第三方闭源运行时 proroot 代替 proot 执行命令，覆盖引擎、终端、" +
+                "工具执行与装包这几条日常路径；装机与维护路径始终走 proot。" +
+                "默认关闭。若运行时文件缺失、或首次使用前的探针（proroot 必须真的启动起来、" +
+                "raw syscall 必须被翻译到 guest 文件系统、rg/fd 必须真调用成功）" +
+                "没有通过、或连续 3 次启动失败，都会自动回退 proot，并在上面的" +
+                "「运行时（实际生效）」里写明原因。" +
+                "打开这个开关后的**下一次**启动 guest 会跑一次探针，那一次仍然走 proot；" +
+                "探针过了，再下一次启动才会真正用上 proroot。" +
+                "关掉再打开这个开关会清零失败计数、并让探针重测一次（普通重启不会重测）。" +
+                "档位：走 proroot 的**默认档**（seccomp 兜底）——libc 调用与 inline svc 调用" +
+                "都走翻译，代价是探针因此必须证明 raw syscall 也被翻译；" +
+                "另一档「无 seccomp 档」只翻译 libc 调用、直接发 raw syscall 的程序会绕过翻译，" +
+                "但 v1.2.8 的启动器不读这个变量（它只给子进程写上标记），所以本应用无法选择它，" +
+                "也就没有以它换取更宽的通过条件。proroot 闭源、无法审计，" +
+                "提速幅度在本机未量化。改动在重启引擎后生效。",
+            kind = PiRowKind.Switch,
+            group = G_RUNTIME,
+            section = "进程",
+            defaultValue = bool(false),
+            effective = EffectiveKind.RestartEngine,
+            aliases = listOf("proroot", "proot", "runtime", "engine", "加速", "运行时"),
+        ),
 
         // ------------------------------------------------------------------
         // 进程开关（pi 的启动参数 / 环境变量）
@@ -1573,8 +1630,16 @@ object PiSettingsCatalog {
             // would print the row's fallback and this one line would tell the user
             // 「pi 未安装」 while they are talking to it. The summary states only what
             // the store really holds.
+            //
+            // The runtime half *is* the point of DSHA's §9.1 note: the summary must
+            // show the engine that is **actually in effect**, not what the switch
+            // says, which is why it reads the derived status row (served by
+            // `AppOnlySettingsStore` from `RuntimeSelection.status()`) rather than the
+            // switch itself. A setting that says "proroot" while every launch falls
+            // back to proot is exactly the lying-row shape this app keeps fixing.
             val keepAlive = summaryText(store, "app.runtime.keepAlive")
-            "保活：$keepAlive"
+            val runtime = summaryText(store, "app.runtime.prorootStatus")
+            "运行时：$runtime · 保活：$keepAlive"
         },
     )
 

@@ -73,7 +73,7 @@
 
       工作区必须是**真实文件路径**：`PiEngineHost.bootLocked` 把
       `workspace.absolutePath` 绑进 guest 并把它当作引擎的 cwd
-      （`PiEngineHost.kt:407`、`:451`），而 proot 的绑定点只吃真路径。
+      （`PiEngineHost.kt:407`、`:451`），而 proot/proroot 的绑定点只吃真路径。
       SAF 给的是 `content://` 树 URI，能经 `/app/saf/*` 读写，但**不能当工作区根** ——
       所以这里要的是「所有文件访问」，不是文档选择器。
 

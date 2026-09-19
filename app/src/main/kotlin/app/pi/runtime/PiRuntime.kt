@@ -122,6 +122,139 @@ class PiPaths(private val filesDir: File, private val nativeLibDir: File) {
 
     fun prootLoader(): File = File(nativeLibDir, "libprootloader.so")
 
+    // ------------------------------------------------------------------ proroot
+    // The five proroot binaries, spelled exactly as `tools/fetch-runtime.mjs`
+    // installs them and `runtime.lock.json` pins them. The names are upstream's and
+    // are load-bearing in two independent ways (`docs/proroot-research.md` §5.P1-4):
+    // Android's native-library extractor only unpacks `lib*.so`, and proroot's own
+    // component discovery looks for these names in the directory of
+    // `/proc/self/exe`. `ProrootCommand` also passes them explicitly, so a rename
+    // would be caught here rather than silently disabling a component.
+    //
+    // None of these is a reason to touch `fetch-runtime.mjs` or the lock file: they
+    // are the *reader* of that contract, and `RuntimeChoice.REQUIRED_FILES` is the
+    // same list in the same order the gate checks it.
+
+    /** The proroot launcher — the one file Android `execve()`s. */
+    fun prorootLauncher(): File = File(nativeLibDir, "libproroot.so")
+
+    /** The in-process hook (path translation, fake id0, `/proc` synthesis). */
+    fun prorootRuntimeHook(): File = File(nativeLibDir, "libproroot-runtime.so")
+
+    /** The clean-room ELF interpreter guest binaries are linked against. */
+    fun prorootLinker(): File = File(nativeLibDir, "libproroot-linker.so")
+
+    /** The entry trampoline a guest child re-enters through. */
+    fun prorootBridge(): File = File(nativeLibDir, "libproroot-bridge.so")
+
+    /** Static/static-pie and `execve` routing — what keeps `rg`/`fd` translated. */
+    fun prorootStubLoader(): File = File(nativeLibDir, "libproroot-stub-loader.so")
+
+    /** The five above, in the order [RuntimeChoice.REQUIRED_FILES] names them. */
+    fun prorootComponents(): List<File> = listOf(
+        prorootLauncher(),
+        prorootRuntimeHook(),
+        prorootLinker(),
+        prorootBridge(),
+        prorootStubLoader(),
+    )
+
+    /**
+     * The proroot components missing from `nativeLibraryDir`, by file name.
+     *
+     * "The files exist" is not the same question as "proroot works" — that is what
+     * the probe gate answers — but it is the cheapest of the three conditions and the
+     * only one that is a property of the APK, so it is answered separately
+     * (`RuntimeChoice` fallback ①).
+     *
+     * **Answered at most once per process.** The five files live in
+     * `nativeLibraryDir`, which is extracted from the *installed* APK: within one
+     * process those bytes cannot appear or disappear, and shipping a different set
+     * means an update, which kills the process. So this is a property of the running
+     * install rather than of a launch, and re-`stat`ing five paths on every guest
+     * start — the engine, the terminal, every command pi runs — buys nothing. Keyed by
+     * the directory path so two installs (or a test fixture) cannot share an entry,
+     * exactly as [ProrootProbe.digestOf] is.
+     *
+     * Callers that must not touch proroot at all while the switch is off (`plan` /
+     * `status`) do not call this at all; this cache is what stops the *enabled* path
+     * from paying for it per launch.
+     */
+    fun missingProrootComponents(): List<String> {
+        val key = nativeLibDir.path
+        missingComponentsCache?.let { if (it.first == key) return it.second }
+        val components = prorootComponents()
+        val missing = RuntimeChoice.REQUIRED_FILES.filterIndexed { index, _ -> !components[index].isFile }
+        missingComponentsCache = key to missing
+        return missing
+    }
+
+    /**
+     * proroot's scratch: the `PROROOT_TMP_DIR` the launcher writes its
+     * `.proroot-config-<pid>` tables into.
+     *
+     * Volatile, like [tmp]: those config files are meaningless after a wipe, and
+     * `RuntimeProvisioner.wipe()` deleting the whole tree is the one cleanup that
+     * cannot leave a stale one behind. It is a **host** path — the launcher is a
+     * host-side process before proroot's hook is installed, so a guest spelling here
+     * fails with `[proroot] open config file: No such file or directory`
+     * (`docs/proroot-research.md` §4.3).
+     */
+    fun prorootTmpDir(): File = File(runtime, "proroot-tmp")
+
+    /**
+     * The same directory, created on demand.
+     *
+     * The pair exists because the two uses differ: proroot's launcher needs the
+     * directory to exist ([prorootTmp], handed to it as `PROROOT_TMP_DIR`), while the
+     * sweep that cleans up after it must be able to **look** without creating anything
+     * ([prorootTmpDir]) — otherwise every proot-only user would grow an empty
+     * `proroot-tmp` on their first guest launch.
+     */
+    val prorootTmp: File get() = prorootTmpDir().also { it.mkdirs() }
+
+    /**
+     * Records the proroot probe gate's verdict for one revision + binary digest
+     * ([ProrootProbeCache]). Inside the volatile tree on purpose: it describes this
+     * unpacked rootfs and these payloads, and a verdict that outlived them would be
+     * a pass for a tree that no longer exists.
+     */
+    fun prorootProbeCache(): File = File(runtime, ".proroot-probe")
+
+    /**
+     * Throw the cached verdict away so the next proroot launch re-runs the gate.
+     *
+     * Called when the user turns the switch on — see
+     * [RuntimeChoice.invalidatesProbeCache] for the defect that makes this necessary
+     * (a cached *failure* whose key cannot change would otherwise disable proroot
+     * permanently, and re-opening the switch would appear to do nothing).
+     *
+     * It lives here, next to [prorootProbeCache], because the file this deletes and the
+     * file the gate reads and writes must be **the same file**; that is the kind of
+     * agreement that drifts when it is spelled twice. Returns whether a file was there —
+     * "nothing to invalidate" is the ordinary case and is not an error.
+     */
+    fun clearProrootProbeCache(): Boolean = prorootProbeCache().delete()
+
+    /**
+     * The **engine-failure autopsy** of the last proroot engine launch
+     * ([ProrootProbe.autopsy]), or a missing file when there has not been one.
+     *
+     * It lives next to [prorootProbeCache] and inside the same volatile tree for the same
+     * reason: it is a statement about *this* unpacked rootfs, this Node and these proroot
+     * bytes, so it must not outlive them — a forensic block from an older tree would send
+     * the next reader after a defect that is already gone.
+     *
+     * A file rather than a field of the live session because the failure outlives the
+     * session: `PiEngineHost.publish(null)` drops the engine that produced it, and the
+     * diagnostic report is assembled later, from `Context` + [PiPaths] alone. Writing it
+     * here is also what makes the report's own reader (`DiagnosticsReport`) independent of
+     * whoever happens to hold the engine — it reads the same file the settings row can.
+     *
+     * Written **only after a launch failure**; a normal start neither creates nor reads it.
+     */
+    fun prorootEngineForensics(): File = File(runtime, ".proroot-engine-forensics")
+
     /**
      * proot links against `libtalloc.so.2`, but jniLibs only lets files named
      * `lib*.so` through. The real file ships as `libtalloc.so`; this alias is
@@ -151,15 +284,34 @@ class PiPaths(private val filesDir: File, private val nativeLibDir: File) {
      * with what it describes.
      */
     fun selfCheckStamp(): File = File(runtime, ".selfcheck")
+
+    companion object {
+        /**
+         * [missingProrootComponents]'s answer, per `nativeLibraryDir`.
+         *
+         * Process-wide rather than per-instance because `PiPaths` is built fresh in a
+         * dozen places (`PiEngineHost`, `PtyLauncher`, the settings stack, the bridge,
+         * …) and a per-instance memo would never hit. The value is a property of the
+         * installed APK, so there is nothing to invalidate: see the function's KDoc.
+         * `@Volatile` because the engine, the terminal and the package commands can
+         * ask from different threads; a lost race recomputes the same answer.
+         */
+        @Volatile
+        private var missingComponentsCache: Pair<String, List<String>>? = null
+    }
 }
 
 /**
- * Builds proot's command line and environment.
+ * Builds proot's command line and environment: the **fallback** runtime, and the
+ * only runtime the install/maintenance paths ever use.
  *
  * The argument set is **our own pinned Termux proot recipe**, documented in
  * `docs/pi-android-app-design.md` §2.3. It is not "what a shipping app does
- * today": it was first read back from a live process, and that process is no
- * longer the definition — this file is. Each flag earns its place:
+ * today": it was first read back from DSH App's process while that app still ran
+ * Termux proot, and DSH App runs proroot now — its environment has no `PROOT_*`
+ * variable left. So this file, not that process, is the definition. The opt-in
+ * second runtime lives in [ProrootCommand], and §2.3.1 is the item-by-item table
+ * between the two; what they share is [GuestRecipe]. Each flag earns its place:
  *
  *  - `--link2symlink`    the rootfs is on a filesystem where the hardlinks a
  *                        Linux userland normally relies on cannot be created,
@@ -168,28 +320,18 @@ class PiPaths(private val filesDir: File, private val nativeLibDir: File) {
  *                        reports ENOENT instead of working: [PiPaths.l2s]
  *  - `-0`                present as uid 0 inside; note this is a *fiction* —
  *                        `chown` appears to succeed and does nothing
- *  - `-b /proc -b /sys -b /dev`  things glibc and Node probe at startup
- *  - `-b /system -b /apex`       Android's own runtime bits, read-only
+ *  - `-b /proc -b /sys -b /dev`  things glibc and Node probe at startup (shared)
+ *  - `-b /system -b /apex`       Android's own runtime bits, read-only (shared)
  *  - `/proc/self/fd:/dev/fd`     `/dev/fd` is a procfs symlink that does not
- *                                resolve across the proot boundary
- *  - `--kill-on-exit`    otherwise a killed app leaks a whole process tree
+ *                                resolve across the proot boundary (shared)
+ *  - `--kill-on-exit`    otherwise a killed app leaks a whole process tree. This
+ *                        one is **proot-only**; proroot rejects it, and on proroot
+ *                        the tree is reaped by [GuestTreeReaper] instead.
+ *
+ * The four `-b` pairs and the shell tail come from [GuestRecipe] rather than being
+ * spelled here, so `ProrootCommand` cannot drift away from this list.
  */
 object ProotCommand {
-
-    /** Bind mounts every launch needs. */
-    private fun baseBinds(paths: PiPaths, storage: File?): List<List<String>> = buildList {
-        add(listOf("-b", "/dev"))
-        add(listOf("-b", "/dev/urandom:/dev/random"))
-        add(listOf("-b", "/proc"))
-        add(listOf("-b", "/sys"))
-        add(listOf("-b", "/system"))
-        add(listOf("-b", "/apex"))
-        add(listOf("-b", "/proc/self/fd:/dev/fd"))
-        if (storage != null) {
-            add(listOf("-b", "${storage.path}:/sdcard"))
-            add(listOf("-b", "${storage.path}:/storage/emulated/0"))
-        }
-    }
 
     /**
      * @param guestCommand passed to `bash -c` **inside** the rootfs, so it may
@@ -210,87 +352,49 @@ object ProotCommand {
         // targets, so the guest must be able to resolve them there. See [PiPaths.l2s]
         // for what happens when this directory is missing - every hard link in the
         // guest fails, and dpkg stops being able to upgrade anything.
+        //
+        // proroot needs none of this: it anchors its own link handling at
+        // `<rootfs>/.l2s` and is not told about it (`docs/proroot-research.md`
+        // §4.3). That is why this pair is not in [GuestRecipe].
         argv += listOf("-b", "${paths.l2s.path}:${paths.l2s.path}")
-        // `-L` keeps the guest's own absolute symlinks meaningful.
+        // `-L` keeps the guest's own absolute symlinks meaningful. Also proot-only:
+        // proroot resolves them itself (§7.3).
         argv += listOf("-L", "--kill-on-exit", "-0")
         argv += "--rootfs=${paths.rootfs.path}"
         argv += "--cwd=$cwd"
-        baseBinds(paths, storage).forEach { argv += it }
+        GuestRecipe.binds(paths, storage).forEach { argv += it }
         extraBinds.forEach { (host, guest) -> argv += listOf("-b", "$host:$guest") }
-        // A writable /tmp: Android has none, and a missing TMPDIR makes pi's
-        // bash tool fail to spill oversized output.
-        argv += listOf("-b", "${paths.tmp.path}:/tmp")
-        argv += "/bin/bash"
-        // `-c`, not `-lc`. A login shell sources `/etc/profile` and every file it
-        // pulls in, which measured ~1.5 s per guest start on this device — and there
-        // is nothing for it to set up: [environment] already hands the guest
-        // `PATH`, `HOME`, `TMPDIR`, `TERM`, `LANG` and `LD_LIBRARY_PATH`
-        // explicitly, and the pinned ubuntu-base ships no `/etc/profile.d` payload
-        // this app depends on. Anything that *did* need a login shell would be a
-        // dependency on a file the runtime tree can be re-extracted without —
-        // exactly the kind of "works until the next wipe" that this file avoids.
-        argv += "-c"
-        argv += guestCommand
+        argv += GuestRecipe.tmpBind(paths)
+        argv += GuestRecipe.shellArgs(guestCommand)
         return argv
     }
 
     /**
-     * The guest process's environment. This is the **only** place a guest env is
-     * built: every launch path goes through it, which is what keeps the engine, the
-     * terminal, the package commands and the self-check from handing the guest four
-     * different environments (`PtyLauncher`'s KDoc records what happened the one
-     * time a path filtered part of this map out).
+     * The guest process's environment. This is the **only** place a proot guest env
+     * is built: every launch path goes through it, which is what keeps the engine,
+     * the terminal, the package commands and the self-check from handing the
+     * guest four different environments (`PtyLauncher`'s KDoc records what
+     * happened the one time a path filtered part of this map out).
      *
-     * The load-bearing proot-specific entries are:
+     * The runtime-independent half (`HOME`, `PATH`, the CA bundle,
+     * `NARB_DISABLE_NATIVE_CACHE`) comes from [GuestRecipe.environment]. The
+     * load-bearing proot-specific entries are:
      *
      *  - `PROOT_LOADER` — without it proot writes its loader into a temp dir it
      *    can no longer execute from (Android 10+ W^X). Pointing at the
      *    nativeLibraryDir copy is what makes this work on modern Android.
      *  - `PROOT_TMP_DIR` — where `--link2symlink` puts its shims.
      *  - `PROOT_L2S_DIR` — link2symlink state, kept inside the rootfs.
-     *  - `LD_LIBRARY_PATH` — so `libtalloc.so.2` resolves to the alias.
+     *  - `LD_LIBRARY_PATH` — so `libtalloc.so.2` resolves to the alias. Deliberately
+     *    absent from [ProrootCommand]: proroot does not link against talloc, and
+     *    keeping it there would inject host paths into a guest with no use for them.
      */
     fun environment(paths: PiPaths, extra: Map<String, String> = emptyMap()): Map<String, String> = buildMap {
         put("PROOT_LOADER", paths.prootLoader().absolutePath)
         put("PROOT_TMP_DIR", paths.tmp.path)
         put("PROOT_L2S_DIR", paths.l2s.path)
         put("LD_LIBRARY_PATH", "${paths.lib.path}:${paths.nativeLib.path}")
-        // The guest runs Node, and Node's native-addon build cache publishes a cached
-        // artefact with `link()` + `unlink()`. Under `--link2symlink` — which this
-        // recipe must always pass, because without it every guest `link()` fails with
-        // EACCES on this filesystem — that first publication can dangle. The failure is
-        // silent on the Node side, so the cache is turned off here instead of being
-        // left for a device to discover; the cost is one rebuild per native extension.
-        // It belongs in this map and not in the guest's `/etc/profile.d`, because a
-        // non-interactive `bash -c` never sources a profile script.
-        //
-        // Source: docs/proroot-research.md §10.3, recorded from DSH App's AGENTS.md
-        // ("其默认 link+unlink 缓存会在 --link2symlink 下首次悬空").
-        put("NARB_DISABLE_NATIVE_CACHE", "1")
-        put("HOME", "/root")
-        put("TMPDIR", "/tmp")
-        put("TERM", "xterm-256color")
-        put("LANG", "C.UTF-8")
-        put("PATH", "/opt/pi/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin")
-        // The trust store, named explicitly because nothing else names it. The
-        // pinned ubuntu-base ships no `/etc/ssl` at all; the git payload installs
-        // [GUEST_CA_BUNDLE] and these two variables are what make anything read it.
-        //
-        // They are not redundant with each other or with the default:
-        //  - `GIT_SSL_CAINFO` is git's own override, passed to libcurl as
-        //    CAINFO, so git's HTTPS transport loads this one file directly;
-        //  - `SSL_CERT_FILE` is the OpenSSL/GnuTLS convention, so the guest's other
-        //    TLS consumers (python, wget, anything not carrying its own store) work
-        //    too — Node does not need it, because Node ships its own CA store.
-        //
-        // The explicit path is load-bearing rather than belt-and-braces: libcurl's
-        // compiled-in default here is the *directory* `/etc/ssl/certs`, which it
-        // reads in `c_rehash` form (`<hash>.0` symlinks). The payload ships the
-        // concatenated bundle and no hashed links, so a lookup through the
-        // directory default would find nothing and every `https://` clone would
-        // fail certificate verification.
-        put("GIT_SSL_CAINFO", GUEST_CA_BUNDLE)
-        put("SSL_CERT_FILE", GUEST_CA_BUNDLE)
+        putAll(GuestRecipe.environment(paths))
         putAll(extra)
     }
 
@@ -298,8 +402,12 @@ object ProotCommand {
      * The CA bundle the git payload installs and [environment] points at
      * (`RuntimeProvisioner.installGit` extracts it from inside `git.tgz`, generated
      * at build time from the pinned `ca-certificates` deb).
+     *
+     * Forwarded from [GuestRecipe.GUEST_CA_BUNDLE], which is the single definition
+     * both runtimes read; this alias stays because callers and harnesses already
+     * spell it here, and a second literal is exactly what would drift.
      */
-    const val GUEST_CA_BUNDLE = "/etc/ssl/certs/ca-certificates.crt"
+    const val GUEST_CA_BUNDLE = GuestRecipe.GUEST_CA_BUNDLE
 }
 
 /**

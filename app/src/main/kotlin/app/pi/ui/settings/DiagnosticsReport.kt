@@ -7,8 +7,14 @@ import android.os.StatFs
 import app.pi.BuildConfig
 import app.pi.bridge.DeviceActionException
 import app.pi.bridge.DeviceSystemActions
+import app.pi.runtime.GuestEngine
+import app.pi.runtime.GuestToolProbe
 import app.pi.runtime.PiPaths
+import app.pi.runtime.ProrootConfigSweep
+import app.pi.runtime.ProrootProbeNarrative
+import app.pi.runtime.RuntimeChoice
 import app.pi.runtime.RuntimeProvisioner
+import app.pi.runtime.RuntimeSelection
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -96,7 +102,13 @@ data class EngineDiagnostics(
  *  - The whole report is passed through [redact] before it is returned, so a
  *    token that reached stderr cannot leave the device through this channel.
  *  - Reading is blocking IO (a tree walk for the runtime size, an asset read per
- *    payload); callers run [build] off the main thread.
+ *    payload, and one bounded guest invocation for the tool-chain section); callers
+ *    run [build] off the main thread.
+ *  - The tool-chain section is a **real** invocation, not a file-existence check,
+ *    and it is bounded: [`GuestToolProbe.TIMEOUT_MS`][GuestToolProbe.TIMEOUT_MS].
+ *    A tool that cannot be executed must appear here as a failure with its exit
+ *    code, because the callers that lose their backend when it is missing (pi's
+ *    `find` and the `@` completion) fail silently.
  */
 object DiagnosticsReport {
 
@@ -231,6 +243,112 @@ object DiagnosticsReport {
             pathLine(this, "proot 二进制", paths.prootBinary())
             pathLine(this, "proot loader", paths.prootLoader())
             pathLine(this, "stamp", paths.stampFile())
+            appendLine()
+
+            // ---- 运行时选择（proroot）--------------------------------------
+            // The effective runtime and *why*, plus the five binaries whose presence
+            // is only one of the three conditions. `status()` reads the cached gate
+            // verdict and never runs the gate: a report must not be the thing that
+            // starts the closed-source runtime, and it must not spend seconds
+            // probing on the way out of a crash.
+            appendLine("── 运行时选择 ──")
+            val runtimeSelection = RuntimeSelection.of(context, paths)
+            val runtimeStatus = runCatching { runtimeSelection.status() }.getOrNull()
+            if (runtimeStatus == null) {
+                appendLine("（读不到运行时选择状态）")
+            } else {
+                appendLine("  实际生效：${runtimeStatus.engine}（${runtimeStatus.summary}）")
+                appendLine("  开关：${if (runtimeStatus.enabled) "开" else "关"}" +
+                    " · 连续失败：${runtimeStatus.failures}/${RuntimeChoice.MAX_CONSECUTIVE_FAILURES}")
+                // The 档 in force, named here rather than only implied by a probe verdict:
+                // it is what the probe's rules are relative to ("is an untranslated raw
+                // syscall disqualifying?") and what the cache key identifies. The `tag` is
+                // the machine-readable half and the disclosure is the user-readable one, so
+                // a report can be matched to a `ProrootProbeCache` file without guessing.
+                appendLine("  proroot 档：${runtimeStatus.mode.tag}（${runtimeStatus.mode.disclosure}）")
+                appendLine(
+                    "  proroot 探针：" + when (runtimeStatus.probePassed) {
+                        true -> "已通过（缓存）"
+                        false -> "未通过（缓存）"
+                        null -> "尚未运行"
+                    },
+                )
+                if (runtimeStatus.missingComponents.isNotEmpty()) {
+                    appendLine("  缺少运行时文件：${runtimeStatus.missingComponents.joinToString("、")}")
+                }
+                // The same assembly the settings row uses (`ProrootProbeNarrative`): the
+                // report prints it **unbounded**, because the export is where the whole
+                // evidence belongs, while the row shows a capped prefix and says how many
+                // lines it left out. Two renderings of one list, so a line here and a line
+                // under the row cannot disagree, and the "尚未运行/读不到" cases say so in
+                // both places instead of printing nothing.
+                ProrootProbeNarrative.detailLines(
+                    fallback = runtimeStatus.fallback,
+                    probePassed = runtimeStatus.probePassed,
+                    probeDetail = runtimeStatus.probeDetail,
+                ).forEach { appendLine("  $it") }
+            }
+            pathLine(this, "proroot launcher", paths.prorootLauncher())
+            pathLine(this, "proroot runtime", paths.prorootRuntimeHook())
+            pathLine(this, "proroot linker", paths.prorootLinker())
+            pathLine(this, "proroot trampoline", paths.prorootBridge())
+            pathLine(this, "proroot stub loader", paths.prorootStubLoader())
+            // `prorootTmpDir`, not `prorootTmp`: reading a report must not create a
+            // directory, or every proot-only user would grow an empty `proroot-tmp`
+            // just by exporting diagnostics.
+            pathLine(this, "proroot tmp", paths.prorootTmpDir())
+            // What proroot leaves behind: one fixed-size table per launch, named for
+            // the launcher's pid. Counted here because the sweep only runs before a
+            // proroot launch, so a device that stopped using proroot keeps whatever it
+            // had until then.
+            val prorootConfigs = runCatching {
+                paths.prorootTmpDir().listFiles()
+                    ?.count { it.name.startsWith(ProrootConfigSweep.PREFIX) } ?: 0
+            }.getOrDefault(0)
+            appendLine("  .proroot-config 现存 $prorootConfigs 份")
+            // The engine-failure autopsy: written by `PiEngineHost` when a proroot engine
+            // exited 126/127, and read here **from the file** because the session that
+            // produced it is gone by the time a report is exported — publishing null is what
+            // a failed boot does, so an in-memory-only copy would make this section empty
+            // exactly when it matters (`PiPaths.prorootEngineForensics`).
+            //
+            // An absent file is stated with its meaning ("no proroot engine died this way"),
+            // not left blank: a missing block and an empty block are the two things a reader
+            // cannot tell apart, and the whole point of this section is that 126 should stop
+            // being a bare number.
+            val forensicsFile = paths.prorootEngineForensics()
+            if (forensicsFile.isFile) {
+                appendLine("  proroot 引擎失败取证（${forensicsFile.name}）：")
+                runCatching { forensicsFile.readLines() }
+                    .getOrElse { error -> listOf("（读不到取证文件：${error::class.java.simpleName}: ${error.message}）") }
+                    .forEach { appendLine("    $it") }
+            } else {
+                appendLine("  proroot 引擎失败取证：没有（本运行时树里还没有 proroot 引擎以 126/127 退出的记录）")
+            }
+            appendLine()
+
+            appendLine("── 工具链自检（真调用） ──")
+            appendLine(
+                "说明：这里不看文件是否存在，而是在 guest 里真的运行一次 rg / fd：" +
+                    "先 --version，再真的搜索一个 guest 文件，两次都要求退出码 0 且有输出。" +
+                    "软链悬空、二进制跑不起来、或它读不到 guest 路径，都会在这里变成一条 ✗。",
+            )
+            // Probed through the runtime that would actually run, so the report shows
+            // the same answer a real tool call would get. When proroot is in effect
+            // this doubles as the second half of the gate's evidence; `GuestToolProbe`
+            // takes the engine as a parameter for exactly this reason.
+            val probeEngine = runtimeStatus?.engine ?: GuestEngine.Proot
+            appendLine("  （本次通过 ${probeEngine} 调用）")
+            val toolProbe = runCatching {
+                GuestToolProbe.run(paths, android.os.Environment.getExternalStorageDirectory(), probeEngine)
+            }.getOrElse { error ->
+                GuestToolProbe.Report(
+                    emptyList(),
+                    launchError = "探针本身抛了异常：${error::class.java.simpleName}: ${error.message}",
+                )
+            }
+            toolProbe.describe().forEach { appendLine("  $it") }
+            if (toolProbe.exitCode != null) appendLine("  （guest 命令退出码 ${toolProbe.exitCode}）")
             appendLine()
 
             appendLine("── 最近的失败与错误 ──")

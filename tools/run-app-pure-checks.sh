@@ -325,8 +325,57 @@ run_harness agent-tool-paths \
   app.pi.runtime.AgentToolPathsCheckKt \
   "$ROOT/app/src/test/kotlin/app/pi/runtime/AgentToolPathsCheck.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/runtime/PiRuntime.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/runtime/GuestRecipe.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/runtime/RuntimeChoice.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/runtime/GuestWorkspacePath.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/runtime/PiProjectConfig.kt"
+
+# app.pi.runtime: the rg/fd "does it really run" probe's verdict logic. Existence is
+# the wrong question — a dangling `/usr/local/bin/{rg,fd}` and a tool that was never
+# installed are the same thing to pi's `find` and the `@` completion (both return
+# nothing, silently), which is why the probe runs a real invocation and why the parser
+# is the only place the difference becomes visible. This harness feeds it a healthy
+# guest, a 127 exit (the dangling-symlink shape), an exit-0-with-no-output shape, a
+# missing marker line, a search that finds nothing, CRLF and non-marker noise, and a
+# tab inside a detail field — and requires a failure to be reported, never assumed
+# away. The command shape is pinned too, because a probe that stops really searching
+# would leave the same blind spot the probe was added to close. Android-free:
+# `GuestToolProbe.kt` imports only `java.io`/`java.util.concurrent`, and `PiRuntime.kt`
+# only `java.io.File`, so `guestCommand()`/`parse()` run here with no device.
+run_harness guest-tool-probe \
+  app.pi.runtime.GuestToolProbeCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/runtime/GuestToolProbeCheck.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/runtime/GuestToolProbe.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/runtime/PiRuntime.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/runtime/GuestRecipe.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/runtime/RuntimeChoice.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/runtime/GuestCommandLine.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/runtime/ProrootCommand.kt"
+
+# app.pi.runtime: the opt-in proroot runtime's pure logic — the §2.3.1 argv/env mapping
+# (including the four proot-only flags proroot *rejects*), the runtime-selection guard
+# order and the three-failure boundary, the `.proroot-config-*` liveness/cap rules, the
+# guest-tree descendant order and `/proc/<pid>/stat` parsing, the probe-cache key, the
+# raw-syscall probe's verdict parser (a leak must never pass), the launch-pid handle
+# driven against a real temporary directory, and the shared bind/env recipe both
+# builders use. Every file in this closure is `java.io` + stdlib, so a future Android
+# import in any of them fails this compile — which is the point, because all of it would
+# otherwise be first exercised on a phone.
+run_harness proroot \
+  app.pi.runtime.ProrootCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/runtime/ProrootCheck.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/runtime/PiRuntime.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/runtime/GuestRecipe.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/runtime/ProrootCommand.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/runtime/GuestCommandLine.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/runtime/RuntimeChoice.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/runtime/ProrootRetry.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/runtime/ProrootConfigSweep.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/runtime/GuestProcessTree.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/runtime/ProrootProbeCache.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/runtime/ProrootRawProbe.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/runtime/ProrootLaunchHandle.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/runtime/ShellQuote.kt"
 
 # app.pi.session: which on-disk files count as sessions, in which of pi's two
 # layouts, in what order, and which one `-c` would resume. It exists because the
@@ -772,6 +821,44 @@ run_harness tree-navigation \
   app.pi.ui.chat.PiTreeNavigationCheckKt \
   "$ROOT/app/src/test/kotlin/app/pi/ui/chat/PiTreeNavigationCheck.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/ui/chat/PiTreeNavigation.kt"
+
+# app.pi.runtime: the proroot status *sentences*. When the gate refuses, the row is the only
+# place the user can learn why — so the four answers ("not run yet" / "did not pass, and here
+# is the stage" / "passed, takes effect next launch" / "in use, and in which mode") must be
+# exact, bounded and include the probe's own words. This harness would have caught the bug
+# that shipped: the launcher died on `-b` format *before* forking, the raw probe parsed an
+# empty report and reported "raw svc not translated" — a diagnosis that named the wrong
+# stage. The parser now classifies a launcher-level failure as its own stage.
+run_harness proroot-status-text \
+  app.pi.runtime.ProrootStatusTextCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/runtime/ProrootStatusTextCheck.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/runtime/ProrootProbeNarrative.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/runtime/ProrootRawProbe.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/runtime/GuestToolProbe.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/runtime/RuntimeChoice.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/runtime/ProrootCommand.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/runtime/ProrootProbeCache.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/runtime/GuestRecipe.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/runtime/GuestCommandLine.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/runtime/PiRuntime.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/runtime/ShellQuote.kt"
+
+# app.pi.runtime: the probe's *evidence lines*, the half the diagnostic report prints. The
+# same defect made them empty, so an empty report has to be a stated outcome rather than
+# something the reader is left to infer from four absent phases.
+run_harness proroot-probe-detail \
+  app.pi.runtime.ProrootProbeDetailCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/runtime/ProrootProbeDetailCheck.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/runtime/ProrootProbeNarrative.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/runtime/ProrootRawProbe.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/runtime/GuestToolProbe.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/runtime/RuntimeChoice.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/runtime/ProrootCommand.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/runtime/ProrootProbeCache.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/runtime/GuestRecipe.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/runtime/GuestCommandLine.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/runtime/PiRuntime.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/runtime/ShellQuote.kt"
 
 # --- 4. verdict ---------------------------------------------------------------
 # The counts are computed, not written down. They were hardcoded once ("2

@@ -20,6 +20,11 @@
       许可证    BSD-3-Clause
       上游      https://github.com/termux/libandroid-shmem
 
+  proroot
+      版本      v1.2.8
+      许可证    Proprietary（专有，闭源；许可证原文见「许可证全文」里的 proroot-license.txt，条款与已知限制见「随包分发的专有组件」）
+      上游      https://github.com/coderredlab/proroot
+
 ■ Linux 运行时（首次启动解包）
 -------------------
   Ubuntu 基础系统

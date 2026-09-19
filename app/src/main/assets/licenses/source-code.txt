@@ -35,6 +35,14 @@ libandroid-shmem
 来源：Termux 软件源，版本 0.7。
 上游：https://github.com/termux/libandroid-shmem  （标签 v0.7）
 
+proroot（无源代码可提供）
+------------------------
+来源：GitHub release，版本 v1.2.8。
+仓库：https://github.com/coderredlab/proroot
+这个组件**闭源**，上游未公开源码，因此无法提供对应的源代码。它的许可证不是
+GPL/LGPL 一类要求提供源代码的许可证，而是一份专有条款；原文、包内位置、
+sha256 与已知限制写在「随包分发的专有组件」那一份里。
+
 其余随 App 分发的程序
 ---------------------
 Apache-2.0、MIT、BSD、ISC 等宽松许可证不要求提供源代码。它们的许可证原文与版权声明

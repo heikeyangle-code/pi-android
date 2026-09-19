@@ -297,9 +297,9 @@ private fun TerminalSurface(
         // operation.** A `LaunchedEffect` body runs on the composition's own
         // dispatcher, i.e. the main thread, and `bridge.start` leads to
         // `PtyLauncher.prepare` → `probe` → a whole guest process (`bash` inside the
-        // rootfs asking `script(1)` what it supports), plus building the proot argv
-        // and environment, and `ProcessBuilder.start()`. On a cold cache that is a
-        // proot launch of hundreds of milliseconds to a few seconds with the UI frozen
+        // rootfs asking `script(1)` what it supports), plus `RuntimeSelection.plan`
+        // and `ProcessBuilder.start()`. On a cold cache that is a proot launch of
+        // hundreds of milliseconds to a few seconds with the UI frozen for all of it
         // — and the probe had no timeout at all, so a wedged proot froze the app for
         // good. `TerminalBridge.start` touches only `@Volatile` fields and the
         // emulator (which serialises its own calls), so moving it off the frame

@@ -82,9 +82,9 @@ fun SettingsGroupScreen(
      */
     valueOverrides: Map<String, String> = emptyMap(),
     /**
-     * **Evidence under a read-only row**, by key: the recorded per-phase lines a
-     * read-only row shows under its value, so that a verdict is answerable without
-     * opening the diagnostic report.
+     * **Evidence under a read-only row**, by key: the proroot gate's recorded
+     * per-phase lines, which the 运行时（实际生效）row shows so that "why is proroot
+     * not in use" is answerable without opening the diagnostic report.
      *
      * Same shape and same rule as [valueOverrides]: the host already has the lines
      * (it read the probe cache once, off the main thread, to build the row's value) and
@@ -328,11 +328,11 @@ fun SettingsGroupScreen(
  * 存在的理由是分组页有两处画行（分区里的卡片、页尾固定的危险行），两处必须用同一套
  * 取值 —— 尤其是「当前生效值」的 2px accent 条判定，抄一遍就会分叉。
  *
- * 只读行可以再带一块**证据**（[detailOverrides]）：逐阶段的原始判读。
+ * 只读行可以再带一块**证据**（[detailOverrides]）：proroot 探针逐阶段的原始判读。
  * 它写在行下面而不是行里 —— 行的值只有一行（`PiSettingRow` 用 `maxLines = 1` 画），
- * 而证据是多行；也不做成一个可点开的二级页，因为「这个读数为什么是这样」正是用户
- * 站在这一页时要回答的问题，多一次点击就是把答案藏起来。文案与截断都由宿主算好，
- * 这里只负责排版，不读文件、不碰探针。
+ * 而证据是多行；也不做成一个可点开的二级页，因为「为什么没用上 proroot」正是用户
+ * 站在这一页时要回答的问题，多一次点击就是把答案藏起来。文案与截断都由宿主算好
+ * （[runtimeDetailOverrides]），这里只负责排版，不读文件、不碰探针。
  */
 @Composable
 private fun SettingSlot(

@@ -2,6 +2,8 @@ package app.pi.ui.settings
 
 import app.pi.engine.PiEngineSession
 import app.pi.runtime.PiPaths
+import app.pi.runtime.ProrootProbeNarrative
+import app.pi.runtime.RuntimeSelection
 import app.pi.service.PiEngineService
 import org.json.JSONObject
 import java.io.File
@@ -190,5 +192,47 @@ internal fun runtimeOverrides(snapshot: RuntimeFacts.Snapshot?): Map<String, Str
             else -> "未持有"
         },
     )
+}
+
+/**
+ * The **detail block** under a read-only runtime row, keyed the same way
+ * [runtimeOverrides] is.
+ *
+ * ## Why it is a second map and not part of the value
+ *
+ * A row's value is one ellipsized line (`PiSettingRow` renders it with
+ * `maxLines = 1`), which is right for a sentence and wrong for evidence: the proroot
+ * gate records four to six lines, one per measured phase, and the whole point of this
+ * block is that they are readable **without exporting the diagnostic report**. The
+ * block is rendered under the row by `SettingsGroupScreen`, from the string handed in
+ * here.
+ *
+ * ## Why it cannot become per-frame work
+ *
+ * The only input is a `RuntimeSelection.Status`, which the caller obtained from
+ * `status()` — the one call that stats five `.so` files and hashes them. This function
+ * is pure string work over fields already in that object: it opens no file, starts no
+ * process and touches no Android API (`ProrootProbeNarrative` is a bare-JVM-tested
+ * object). `PiSettingsStack` computes both strings in the **same** `LaunchedEffect`
+ * pass, on `Dispatchers.IO`, keyed by the settings epoch and the switch epoch, and
+ * `AppOnlySettingsStore` still never reaches the probe from `read(key)` — so the count
+ * of probe-cache reads and `.so` hashes is exactly what it was before this block
+ * existed. A row rendering this map only formats a string it was given.
+ *
+ * ## Honesty
+ *
+ * Empty means "nothing to add" (the switch is off, the files are missing, proroot is in
+ * use) and the row renders no block. A missing probe verdict is **not** empty: it
+ * becomes the narrative's "尚未运行 / 读不到逐阶段记录" line, because a block that
+ * silently disappears where a reading is expected is how the original defect read.
+ */
+internal fun runtimeDetailOverrides(status: RuntimeSelection.Status?): Map<String, String> {
+    if (status == null) return emptyMap()
+    val text = ProrootProbeNarrative.boundedDetailText(
+        fallback = status.fallback,
+        probePassed = status.probePassed,
+        probeDetail = status.probeDetail,
+    )
+    return if (text.isBlank()) emptyMap() else mapOf(AppOnlySettingsStore.KEY_STATUS to text)
 }
 

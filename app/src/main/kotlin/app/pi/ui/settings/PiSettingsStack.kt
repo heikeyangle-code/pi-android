@@ -22,6 +22,8 @@ import app.pi.rpc.PiResponses
 import app.pi.runtime.PiPaths
 import app.pi.runtime.PiProjectConfig
 import app.pi.runtime.PtyLauncher
+import app.pi.runtime.RuntimePreferences
+import app.pi.runtime.RuntimeSelection
 import app.pi.ui.device.DeviceCapabilityScreen
 import app.pi.ui.screens.PiFilesScreen
 import app.pi.ui.screens.WorkspaceResource
@@ -249,6 +251,31 @@ fun PiSettingsStack(
         },
     )
 
+    // ---- 运行时选择（proroot）---------------------------------------------
+    // The switch lives in the app's own SharedPreferences and the effective runtime is
+    // derived from the probe cache plus the failure counter, so both rows are served by
+    // a decorator over the real settings store rather than by pi's `settings.json`
+    // (`AppOnlySettingsStore` says why).
+    //
+    // `status()` reads the digest of five `.so` files plus one small cache file, so it
+    // runs once per epoch on IO — never per frame, and never inside `read(key)`.
+    //
+    // One read feeds **both** strings the row needs: the sentence (which now names the
+    // probe stage that refused) and the bounded block of raw per-phase lines under it.
+    // Both come out of the same `Status`, so the expensive read above is still paid
+    // once; `runtimeDetailOverrides` is pure string work over fields already in hand
+    // (see its KDoc), which is why the block cannot turn into a per-frame `.so` hash.
+    val runtimePrefs = remember(context) { RuntimePreferences.get(context) }
+    val runtimeSelection = remember(paths, runtimePrefs) { RuntimeSelection(paths, runtimePrefs) }
+    var runtimeStatusEpoch by remember { mutableStateOf(0) }
+    // Null until the first IO read lands: the row shows its own 未读取 for that frame and
+    // the detail block renders nothing, rather than a default that looks like a reading.
+    var runtimeStatus by remember { mutableStateOf<RuntimeSelection.Status?>(null) }
+    LaunchedEffect(runtimeSelection, filesEpoch, runtimeStatusEpoch) {
+        runtimeStatus = withContext(Dispatchers.IO) { runtimeSelection.status() }
+    }
+    val runtimeStatusText = runtimeStatus?.summary ?: "未读取"
+
     // 「扩展与资源」那四个只读事实行的读数。**复用项目页资源段那个扫描器**
     // （`WorkspaceResourceScan`，纯磁盘读取，不需要引擎在跑），不新写一份扫描：两份实现会
     // 各自漂移，而"到底发现了什么"是最不能漂移的那种数。
@@ -299,6 +326,16 @@ fun PiSettingsStack(
     }
     // 扫描落地前显示「未读取」；落地后按三种读数之一显示，绝不显示一个假的 0。
     val resourceOverrides = resourceScan?.let { resourceFactOverrides(it) } ?: resourceFactPlaceholders()
+    val effectiveStore = remember(activeStore, runtimeSelection, runtimeStatusText) {
+        AppOnlySettingsStore(activeStore, runtimeSelection, runtimeStatusText)
+    }
+    // Turning the switch must refresh the status row in the same breath; an app-only
+    // write touches no pi document, so nothing else in the stack would notice, and the
+    // status text is exactly what a stale value would lie about.
+    val handleSettingWritten: (String) -> Unit = { key ->
+        if (key == AppOnlySettingsStore.KEY_PROROOT) runtimeStatusEpoch++
+        onSettingWritten(key)
+    }
 
     val openSetting: (String) -> Unit = { key ->
         val setting = PiSettingsCatalog.byKey[key]
@@ -399,7 +436,7 @@ fun PiSettingsStack(
     // missing value to `"ask"` (`settings-manager.ts:85`, `:1014-1017`); the
     // package screen asks the same question when a project declares resources.
     val defaultProjectTrust =
-        (activeStore.read("defaultProjectTrust") as? JsonPrimitive)?.content ?: "ask"
+        (effectiveStore.read("defaultProjectTrust") as? JsonPrimitive)?.content ?: "ask"
 
     val currentGroup = groupId
     Box(Modifier.fillMaxSize()) {
@@ -478,7 +515,7 @@ fun PiSettingsStack(
             )
 
             searching -> SettingsSearchScreen(
-                store = activeStore,
+                store = effectiveStore,
                 freshness = filesEpoch,
                 contentPadding = contentPadding,
                 onBack = { searching = false },
@@ -488,7 +525,7 @@ fun PiSettingsStack(
 
             currentGroup != null -> SettingsGroupScreen(
                 groupId = currentGroup,
-                store = activeStore,
+                store = effectiveStore,
                 // 外部改了 settings.json 之后，值必须在界面上变。store 的缓存由
                 // `onExternalSettingsWrite` 丢掉，而这个 epoch 才是让行重新读它的东西
                 // （行是在 composition 里读 store 的，缓存失效本身不会触发重组）。
@@ -503,10 +540,13 @@ fun PiSettingsStack(
                 knownThemes = knownThemes,
                 themeNotes = themeNotes,
                 themeError = themeError,
-                onSettingWritten = onSettingWritten,
+                onSettingWritten = handleSettingWritten,
                 onRunAction = onRunAction,
                 hostActions = hostActions,
                 valueOverrides = runtimeOverrides(facts) + resourceOverrides,
+                // The raw per-phase evidence under 运行时（实际生效）: read once with the
+                // sentence above, rendered as a bounded string. See the state's comment.
+                detailOverrides = runtimeDetailOverrides(runtimeStatus),
                 // The same restart the 进程 section's action row asks for, offered
                 // from the badge explanation of a 需重启引擎 row.
                 onRestartEngine = { restartPrompt = true },
@@ -520,7 +560,7 @@ fun PiSettingsStack(
             )
 
             else -> SettingsHome(
-                store = activeStore,
+                store = effectiveStore,
                 contentPadding = contentPadding,
                 onOpenGroup = { id ->
                     groupId = id

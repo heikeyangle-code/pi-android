@@ -73,11 +73,12 @@ import java.util.concurrent.TimeUnit
  *
  * ## Environment
  *
- * The environment is [ProotCommand.environment] **verbatim** — the same map the
- * RPC engine gets (`PiEngineHost` hands it to `PiEngineSession.spawn`) — plus the
- * terminal additions below. Keeping one definition matters: the claim this app
- * makes is that the guest is the guest pi expects on a desktop. That verbatim is
- * load-bearing rather than tidiness; [prepare] says why.
+ * The environment is the one the selected runtime's builder produced **verbatim** —
+ * the same map the RPC engine gets (`PiEngineHost` hands it to
+ * `PiEngineSession.spawn`) — plus the terminal additions below. Keeping one
+ * definition matters: the claim this app makes is that the guest is the guest pi
+ * expects on a desktop. That verbatim is load-bearing rather than tidiness;
+ * [prepare] says why.
  */
 object PtyLauncher {
 
@@ -102,6 +103,20 @@ object PtyLauncher {
         /** True when `script(1)` exists in the guest at all; false is a hard failure. */
         val scriptAvailable: Boolean,
         val guestCommand: String,
+        /**
+         * The runtime this terminal will be launched with. The terminal is on the
+         * daily interactive path, so it takes the opt-in proroot runtime when it is
+         * available (`RuntimeSelection`); the engine and this launcher are the two
+         * places a user feels a slow container.
+         */
+        val engine: GuestEngine = GuestEngine.Proot,
+        /**
+         * The plan's per-launch identity token, non-null exactly on proroot. It is what
+         * makes the pid resolved at spawn provably this terminal's
+         * ([ProrootLaunchHandle]), which matters because the terminal and the engine can
+         * be starting at the same moment.
+         */
+        val launchToken: String? = null,
     )
 
     /**
@@ -114,9 +129,11 @@ object PtyLauncher {
      *
      * ## The environment is passed verbatim, on purpose
      *
-     * `ProotCommand.environment` mixes three things: shell basics (`HOME`, `PATH`,
-     * `TERM`), the guest's CA bundle variables, and **proot's own**
-     * `PROOT_LOADER` / `PROOT_TMP_DIR` / `PROOT_L2S_DIR` / `LD_LIBRARY_PATH`. It
+     * The runtime's `environment(...)` mixes three things: shell basics (`HOME`,
+     * `PATH`, `TERM`) and the guest's CA bundle variables (from
+     * [GuestRecipe.environment], shared by both runtimes), plus the **runtime's
+     * own** variables — proot's `PROOT_LOADER` / `PROOT_TMP_DIR` / `PROOT_L2S_DIR`
+     * / `LD_LIBRARY_PATH`, or proroot's `PROROOT_*`. It
      * is tempting to filter the last group out here, on the theory that they are
      * host paths "meaningless once inside", and an earlier revision of this file
      * did exactly that. It is wrong, and it broke the terminal on a real device
@@ -134,12 +151,12 @@ object PtyLauncher {
      *    (`PiRuntime`'s KDoc records that constraint).
      *
      * The engine path is the control group and shows the correct shape:
-     * `PiEngineHost` passes `ProotCommand.environment(...)` to
-     * `PiEngineSession.spawn` **unfiltered**, which is why chat worked while the
-     * terminal did not. Nothing strips these for the guest either — proot forwards
-     * its environment into the rootfs, so the guest on the working engine path
-     * already sees them, and a second, guest-level `unset` here would only make
-     * the two paths differ again for no demonstrated benefit.
+     * `PiEngineHost` passes the plan's environment to `PiEngineSession.spawn`
+     * **unfiltered**, which is why chat worked while the terminal did not. Nothing
+     * strips these for the guest either — both runtimes forward their environment
+     * into the rootfs, so the guest on the working engine path already sees them,
+     * and a second, guest-level `unset` here would only make the two paths differ
+     * again for no demonstrated benefit.
      */
     fun prepare(context: Context, spec: Spec): Prepared {
         val paths = pathsFor(context)
@@ -157,8 +174,12 @@ object PtyLauncher {
         // the package path.
         workspace.mkdirs()
         paths.agentDir.mkdirs()
-        val argv = ProotCommand.build(
-            paths = paths,
+        // The terminal's argv comes from the same decision point the engine uses, so
+        // the terminal and the chat page cannot end up on different runtimes without
+        // one of them saying so. `allowProroot` stays at its default (true): this is
+        // the interactive path, which is exactly what proroot is for.
+        val selection = RuntimeSelection.of(context, paths)
+        val plan = selection.plan(
             guestCommand = guestCommand,
             // A shell starts at home, like a desktop terminal. The workspace is
             // the *bind mount* the chat engine uses, not the cwd.
@@ -183,15 +204,17 @@ object PtyLauncher {
                 // conforming caller.
                 paths.agentDir.absolutePath to guestAgentDir,
             ),
+            extraEnv = spec.environment(),
         )
-        val environment = ProotCommand.environment(paths, extra = spec.environment())
         return Prepared(
             spec = spec,
-            argv = argv,
-            environment = environment,
+            argv = plan.argv,
+            environment = plan.environment,
             exitStatusAvailable = flags.exitStatus,
             scriptAvailable = flags.scriptAvailable,
             guestCommand = guestCommand,
+            engine = plan.engine,
+            launchToken = plan.launchToken,
         )
     }
 
@@ -209,11 +232,23 @@ object PtyLauncher {
         onExit: (Int) -> Unit = {},
     ): PtySession {
         val prepared = prepare(context, spec)
+        val paths = pathsFor(context)
+        val selection = RuntimeSelection.of(context, paths)
         return PtySession.spawn(
             argv = prepared.argv,
             environment = prepared.environment,
-            workingDirectory = pathsFor(context).runtime,
+            workingDirectory = paths.runtime,
             greeting = greetingFor(prepared),
+            engine = prepared.engine,
+            // proroot's scratch directory, so the session can identify this launch by
+            // the config table it writes (the platform has no `Process.pid()` here —
+            // see `ProrootLaunchHandle`) — and then reap its tree on close.
+            prorootTmp = if (prepared.engine == GuestEngine.Proroot) paths.prorootTmp else null,
+            launchToken = prepared.launchToken,
+            // The `.proroot-config-<pid>` table this launch created. Deleting it at
+            // stop is the same cleanup `RuntimeSelection.sweepProrootConfigs` would
+            // do on the next launch, only earlier and with the pid still known.
+            onStopped = { handle -> handle?.deleteConfig() },
             onOutput = onOutput,
             onExit = onExit,
         )
@@ -258,14 +293,15 @@ object PtyLauncher {
     }
 
     private fun runGuest(paths: PiPaths, script: String, storage: File): String {
-        val argv = ProotCommand.build(
-            paths = paths,
-            guestCommand = script,
-            cwd = "/root",
-            storage = storage,
-        )
+        // The `script(1)` capability probe runs on **proot**, deliberately. It is a
+        // one-time measurement cached against the runtime stamp, it has no
+        // performance value, and it must not become a reason to start the
+        // closed-source runtime on a device where the gate has not run yet. This is
+        // the same division of labour `RuntimeSelection` draws for install and
+        // maintenance work.
+        val argv = GuestCommandLine.build(paths, GuestEngine.Proot, script, cwd = "/root", storage = storage)
         val builder = ProcessBuilder(argv).directory(paths.runtime).redirectErrorStream(true)
-        builder.environment().putAll(ProotCommand.environment(paths))
+        builder.environment().putAll(GuestCommandLine.environment(paths, GuestEngine.Proot))
         val process = builder.start()
         // **Wait first, then read** — and with a bound. stderr is merged into stdout
         // (`redirectErrorStream(true)`), so there is only one pipe and no two-pipe
@@ -462,8 +498,15 @@ object PtyLauncher {
     private const val BANNER_NO_EXIT_STATUS =
         "提示：guest 的 script(1) 不支持 -e，命令的退出码不会被上报。\n\n"
 
-    /** POSIX single-quote quoting for a shell word. */
+    /**
+     * POSIX single-quote quoting for a shell word.
+     *
+     * Forwarded to [ShellQuote], which is the single definition: the proroot raw
+     * probe builds a shell script too, and it has to stay Android-free so the
+     * bare-JVM harness can compile it — so the rule moved somewhere both can reach
+     * instead of being spelled twice.
+     */
     internal object Shell {
-        fun quote(value: String): String = "'" + value.replace("'", "'\\''") + "'"
+        fun quote(value: String): String = ShellQuote.quote(value)
     }
 }

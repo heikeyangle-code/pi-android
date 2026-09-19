@@ -114,6 +114,31 @@
 			"url": "https://ports.ubuntu.com/ubuntu-ports/pool/main/o/openldap/libldap2_2.6.7+dfsg-1~exp1ubuntu8_arm64.deb",
 			"sha256": "296e93e99af40c59050b0b18e51de3e0bf85c713936b4ced9dbede799f61298a",
 			"why": "libcurl's DT_NEEDED (libldap.so.2 + liblber.so.2)"
+		},
+		"prorootLauncher": {
+			"url": "https://github.com/coderredlab/proroot/releases/download/v1.2.8/libproroot.so",
+			"sha256": "a4e74d75b66cdc02b080adfe863dbf9951c3b30610d77beddc95488d5fe5de01",
+			"why": "proroot's launcher/CLI — the one file Android execve()s, and the parent of every guest process. Closed-source Proprietary; the digest is upstream v1.2.8's published one (see licenses/proprietary-third-party.txt)"
+		},
+		"prorootRuntime": {
+			"url": "https://github.com/coderredlab/proroot/releases/download/v1.2.8/libproroot-runtime.so",
+			"sha256": "8c47a0a7db32d84c179ebb5bf3640f655a3181860ece5886ae44d92858730c34",
+			"why": "proroot's in-process hook (LD_PRELOAD semantics): path translation, fake id0, /proc synthesis"
+		},
+		"prorootLinker": {
+			"url": "https://github.com/coderredlab/proroot/releases/download/v1.2.8/libproroot-linker.so",
+			"sha256": "51a0ec5bfed00e572a0de09e22d9057e2befc386b78e426613d3e0ab03f4ecee",
+			"why": "proroot's clean-room ELF interpreter (PT_INTERP) for guest binaries"
+		},
+		"prorootBridge": {
+			"url": "https://github.com/coderredlab/proroot/releases/download/v1.2.8/libproroot-bridge.so",
+			"sha256": "1c5bc9537a270e8bf8b1c70222813f57b60b828bfb5503ddf8fe37685092de2f",
+			"why": "proroot's entry trampoline (PROROOT_TRAMPOLINE_PATH), the point a guest child process re-enters"
+		},
+		"prorootStubLoader": {
+			"url": "https://github.com/coderredlab/proroot/releases/download/v1.2.8/libproroot-stub-loader.so",
+			"sha256": "06c6624db3bdc45b9ced151cd781df439a37b47731d244b93e9d6a58cd48cde0",
+			"why": "proroot's static/static-pie and execve routing loader; optional upstream, enabled adaptively when the file is present"
 		}
 	}
 }

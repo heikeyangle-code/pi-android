@@ -6,15 +6,19 @@
  * (docs/pi-android-app-design.md §5.2, §19.1):
  *
  *   jniLibs/arm64-v8a/*.so   Only what Android itself must execve(): proot and
- *                            its loader. Android 10+ denies execve() on
- *                            app_data_file, and nativeLibraryDir is the one
- *                            location we may write to that is executable — but
- *                            the extractor only unpacks files matching
+ *                            its loader, plus proroot's five release assets
+ *                            (the second, optional container runtime — see
+ *                            PROROOT_RELEASE below). Android 10+ denies
+ *                            execve() on app_data_file, and nativeLibraryDir is
+ *                            the one location we may write to that is executable
+ *                            — but the extractor only unpacks files matching
  *                            `lib*.so`. Hence proot's rename from `usr/bin/proot`,
  *                            and hence the hard requirement that each exec'd file
  *                            is PIE with `/system/bin/linker64` as its
  *                            interpreter (verified for these exact binaries: see
- *                            verifyElfDisguise below).
+ *                            verifyElfDisguise below). proroot needs no rename:
+ *                            upstream already names all five `lib*.so`, and the
+ *                            names are load-bearing (PROROOT_JNI_PAYLOAD).
  *
  *   assets/runtime/*         Everything that runs *inside* proot: the Ubuntu
  *                            userland, Node, ripgrep, fd, git. These never need
@@ -186,6 +190,43 @@ const UBUNTU_PORTS = "https://ports.ubuntu.com/ubuntu-ports";
 const PI_VERSION = "0.85.1";
 
 /**
+ * proroot — the optional second container runtime, and the only artifact here whose
+ * bytes nobody outside its author can rebuild.
+ *
+ * It is **closed source and Proprietary**. Upstream's `LICENSE` permits
+ * redistribution of the *unmodified* binaries as part of a complete application
+ * package (APK/AAB), forbids modified ones, and adds two obligations this app
+ * satisfies: ship the licence notice, and attribute "proroot" in the app
+ * description, an about/settings screen, or the third-party notices. Read the
+ * README's one-line summary as the whole licence and it looks like a grey area;
+ * it is not — see `app/src/main/assets/licenses/proprietary-third-party.txt`, which
+ * carries the registration (licence, package locations, digests, why they ship in
+ * the APK, known limits) alongside the verbatim text in `proroot-license.txt`.
+ * Mechanism and pitfalls: `docs/proroot-research.md`.
+ *
+ * ## Why the digest is written down twice (here and in `runtime.lock.json`)
+ *
+ * The `sha256` on each proroot entry below is the value **upstream publishes** for
+ * that asset: the SHA-256 block in the release notes, which GitHub's own per-asset
+ * metadata independently agrees with. The lock file carries the digest this build
+ * pins. Both are checked against the downloaded bytes, and the pair is not
+ * redundant: `--resolve-only` rewrites the lock from whatever the bytes on disk
+ * happen to be, so a substituted binary would be silently *re-pinned* — while this
+ * copy cannot be laundered that way and fails the build instead. Only proroot
+ * carries the field, because only proroot has no other way to be checked: with no
+ * source to rebuild from, these digests are the entire supply-chain check.
+ *
+ * ## Bumping the version
+ *
+ * Edit the tag, the five digests below, the five in the lock, and re-run the probe
+ * set in `docs/proroot-research.md` §6.5. The behavioural contract is what stands in
+ * for the source audit; a version bump without it is an unreviewed change to a
+ * closed binary.
+ */
+const PROROOT_VERSION = "v1.2.8";
+const PROROOT_RELEASE = `https://github.com/coderredlab/proroot/releases/download/${PROROOT_VERSION}`;
+
+/**
  * Pinned upstream artifacts. `sha256: null` means "record on first fetch".
  *
  * The git block below is a **closure, not a list of nice-to-haves**: `git` itself
@@ -328,6 +369,42 @@ const ARTIFACTS = {
     kind: "deb",
     why: "libcurl closure: libldap.so.2 + liblber.so.2",
   },
+  // ---------------------------------------------------------------- proroot
+  // See PROROOT_RELEASE above for the licence, the pinning rule and why `sha256`
+  // appears on these five and nowhere else. `kind: "so"` is documentation, not a
+  // dispatch: extract() never sees these — step 1 downloads them, step 2b copies
+  // them straight into jniLibs. Nothing is wired to them yet; this batch only
+  // fetches, verifies and lands them, so an unusable v1.2.8 cannot affect a build.
+  prorootLauncher: {
+    url: `${PROROOT_RELEASE}/libproroot.so`,
+    kind: "so",
+    sha256: "a4e74d75b66cdc02b080adfe863dbf9951c3b30610d77beddc95488d5fe5de01",
+    why: "proroot's launcher/CLI — the one file Android execve()s, and the parent of every guest process. Closed-source Proprietary; the digest is upstream v1.2.8's published one (see licenses/proprietary-third-party.txt)",
+  },
+  prorootRuntime: {
+    url: `${PROROOT_RELEASE}/libproroot-runtime.so`,
+    kind: "so",
+    sha256: "8c47a0a7db32d84c179ebb5bf3640f655a3181860ece5886ae44d92858730c34",
+    why: "proroot's in-process hook (LD_PRELOAD semantics): path translation, fake id0, /proc synthesis",
+  },
+  prorootLinker: {
+    url: `${PROROOT_RELEASE}/libproroot-linker.so`,
+    kind: "so",
+    sha256: "51a0ec5bfed00e572a0de09e22d9057e2befc386b78e426613d3e0ab03f4ecee",
+    why: "proroot's clean-room ELF interpreter (PT_INTERP) for guest binaries",
+  },
+  prorootBridge: {
+    url: `${PROROOT_RELEASE}/libproroot-bridge.so`,
+    kind: "so",
+    sha256: "1c5bc9537a270e8bf8b1c70222813f57b60b828bfb5503ddf8fe37685092de2f",
+    why: "proroot's entry trampoline (PROROOT_TRAMPOLINE_PATH), the point a guest child process re-enters",
+  },
+  prorootStubLoader: {
+    url: `${PROROOT_RELEASE}/libproroot-stub-loader.so`,
+    kind: "so",
+    sha256: "06c6624db3bdc45b9ced151cd781df439a37b47731d244b93e9d6a58cd48cde0",
+    why: "proroot's static/static-pie and execve routing loader; optional upstream, enabled adaptively when the file is present",
+  },
 };
 
 /**
@@ -410,6 +487,39 @@ const JNI_PAYLOAD = [
   { from: "usr/libexec/proot/loader", to: "libprootloader.so", interpreter: null },
   { from: "usr/lib/libtalloc.so.2.4.3", to: "libtalloc.so", interpreter: null },
   { from: "usr/lib/libandroid-shmem.so", to: "libandroid-shmem.so", interpreter: null },
+];
+
+/**
+ * proroot's five release assets and where they land: `jniLibs/arm64-v8a/`, **under
+ * the names upstream gave them**.
+ *
+ * ## The names are not cosmetic
+ *
+ * Nothing here is renamed, unlike `JNI_PAYLOAD` above. proroot discovers the
+ * linker, the runtime hook and the stub loader by **fixed name in the directory of
+ * `/proc/self/exe`** — i.e. in `nativeLibraryDir` (`docs/proroot-research.md`
+ * §5.P1-4). A `to:` that differed from the asset name would not fail this build; it
+ * would fail on a phone as a runtime that cannot start, or worse, as a launcher
+ * that silently picks up nothing. Upstream already ships every file as `lib*.so`,
+ * which is the only shape Android's native-library extractor will unpack, so there
+ * was never anything to disguise.
+ *
+ * ## `interpreter`
+ *
+ * The same trap `JNI_PAYLOAD` documents: the extractor silently skips a `lib*.so`
+ * that is not linked against Android's linker. Only `libproroot.so` is exec'd — it
+ * is PIE and carries `/system/bin/linker64` as its `PT_INTERP`. The other four are
+ * mapped or `dlopen`ed and carry no `PT_INTERP` at all (`libproroot-bridge.so` is
+ * in fact `ET_EXEC`), so `null` restricts them to the ELF/64-bit check that does
+ * apply. Requiring PIE of all five made the equivalent check fail on a correct
+ * payload once already; see `verifyElfDisguise`.
+ */
+const PROROOT_JNI_PAYLOAD = [
+  { name: "prorootLauncher", to: "libproroot.so", interpreter: "/system/bin/linker64" },
+  { name: "prorootRuntime", to: "libproroot-runtime.so", interpreter: null },
+  { name: "prorootLinker", to: "libproroot-linker.so", interpreter: null },
+  { name: "prorootBridge", to: "libproroot-bridge.so", interpreter: null },
+  { name: "prorootStubLoader", to: "libproroot-stub-loader.so", interpreter: null },
 ];
 
 /**
@@ -631,6 +741,21 @@ function main() {
     const file = join(CACHE, spec.url.split("/").pop());
     download(spec.url, file);
     const digest = sha256(file);
+    // Where upstream publishes a digest for the asset itself, the bytes must match
+    // it — checked before anything is recorded, and therefore also under
+    // `--resolve-only`. That mode rewrites the lock from the bytes on disk, so
+    // without this it would re-pin a substituted binary instead of stopping. See
+    // PROROOT_RELEASE.
+    if (spec.sha256 && digest !== spec.sha256) {
+      throw new Error(
+        `sha256 mismatch against upstream's published digest for ${name}\n` +
+          `  published ${spec.sha256}\n` +
+          `  actual    ${digest}\n` +
+          `These are not the bytes the release notes describe. Do not pin them and do ` +
+          `not re-run with --resolve-only: re-download, compare by hand, and treat a ` +
+          `persistent difference as a supply-chain event.`,
+      );
+    }
     const pinned = lock.artifacts[name]?.sha256 ?? null;
     if (resolveOnly || pinned === null) {
       lock.artifacts[name] = { url: spec.url, sha256: digest, why: spec.why };
@@ -685,6 +810,28 @@ function main() {
     const kib = (statSync(dst).size / 1024).toFixed(1);
     console.log(`  ${item.to.padEnd(24)} ${kib.padStart(8)} KiB  ok`);
   }
+
+  // 2b. proroot's five release assets -> jniLibs, under their own names. There is
+  //     nothing to extract: the assets are the files, already downloaded and
+  //     verified against both upstream's published digests and the lock in step 1.
+  console.log("\njniLibs (proroot):");
+  for (const item of PROROOT_JNI_PAYLOAD) {
+    const spec = ARTIFACTS[item.name];
+    if (!spec) throw new Error(`PROROOT_JNI_PAYLOAD names ${item.name}, which is not in ARTIFACTS`);
+    const src = join(CACHE, basename(spec.url));
+    if (!existsSync(src)) {
+      throw new Error(
+        `missing ${basename(spec.url)} in the download cache; step 1 should have ` +
+          `fetched ${spec.url}`,
+      );
+    }
+    const dst = join(JNI, item.to);
+    writeFileSync(dst, readFileSync(src));
+    verifyElfDisguise(dst, item.interpreter);
+    const kib = (statSync(dst).size / 1024).toFixed(1);
+    console.log(`  ${item.to.padEnd(24)} ${kib.padStart(8)} KiB  ok`);
+  }
+  console.log(`  (proroot ${PROROOT_VERSION}; not wired into argv/env — nothing executes these yet)`);
 
   // 3. Userland payloads stay compressed in assets; the app unpacks them on
   //    first launch into <files>/pi/runtime (volatile) and <files>/pi/pi (kept).
@@ -772,6 +919,17 @@ function main() {
 
   const produced = [
     ...JNI_PAYLOAD.map((i) => join(JNI, i.to)),
+    // proroot is counted here — and therefore in runtime-revision.txt — for the same
+    // reason the proot payloads are: this run put these bytes in the APK. That is not
+    // free. A revision move makes devices re-unpack the runtime tree, and
+    // `RuntimeProvisioner.wipe()` deletes whatever the user installed inside the
+    // guest. It is the cost the proot payloads already carry, and leaving proroot out
+    // would make the digest describe less than the APK contains.
+    //
+    // That cost is only bearable because the digest now actually tracks payload
+    // *content*: until DETERMINISTIC_TAR was applied to `git.tgz` and
+    // `pi-engine.tgz`, it moved on every clean build and the guard never held.
+    ...PROROOT_JNI_PAYLOAD.map((i) => join(JNI, i.to)),
     ...assets.map(([, o]) => join(ASSETS, o)),
     join(ASSETS, `node${PAYLOAD_SUFFIX}`),
     join(ASSETS, `git${PAYLOAD_SUFFIX}`),

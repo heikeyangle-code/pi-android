@@ -1,0 +1,115 @@
+随包分发的专有组件
+==================
+
+本 App 的 APK 里有一个组件不是开源的。它有自己的许可证，条款摘录在下面；
+许可原文（不含本文件）逐字收录在「许可证全文」里的 proroot-license.txt。
+
+这一份登记要说清的是：它是谁、从哪来、包里是哪几个文件、字节是什么、
+为什么必须放在包里、本 App 履行了它的哪些义务，以及它有哪些已知限制。
+
+proroot
+-------
+
+  来源仓库  https://github.com/coderredlab/proroot
+  版本      v1.2.8
+  发行页    https://github.com/coderredlab/proroot/releases/tag/v1.2.8
+  许可文件  https://github.com/coderredlab/proroot/blob/main/LICENSE
+            sha256 0576d93d18783c1dd677c1d412757a20a3098a2585590b760e444201a3ff565e
+            （随包的 proroot-license.txt 是它的逐字副本，同一哈希）
+
+  它是什么  一个面向 Android 的用户态容器运行时，是 proot 的替代实现。
+            本 App 默认使用 proot；proroot 是可选运行时，目前尚未接入启动路径。
+
+  许可证    Proprietary（专有，闭源）。上游 LICENSE 的核心三条原文：
+
+                1. The Software may be used without restriction in any application.
+                2. Redistribution of modified versions of the Software is not permitted.
+                3. Redistribution of the unmodified Software is permitted only as part
+                   of a complete application package (e.g., Android APK/AAB).
+
+            也就是说：**未修改的二进制随完整应用包（APK/AAB）分发是明确允许的**；
+            被禁止的是分发修改过的版本。本 App 分发的正是上游 release 的原始二进制，
+            没有改名、没有重新链接、没有打补丁（字节校验见下）。
+
+            需要注意一处容易读错的地方：上游 README 的 License 一节只有一句摘要 ——
+            *"Proprietary. Free to use in your projects. Redistribution of modified
+            binaries is not permitted."* —— 那句话**不是**完整条款。只看它会以为
+            "原样再分发"没有被授权；完整的允许条件写在仓库的 LICENSE 文件里，
+            第 3 条明确覆盖了随 APK 分发。
+
+  本 App 履行的两项义务
+            上游 LICENSE 第 4、5 条是随包分发的前提条件，本 App 都做到了：
+
+              第 4 条  许可声明必须随所有副本一起分发。
+                       → proroot-license.txt 逐字随包，并登记在「许可证全文」。
+              第 5 条  使用方必须在「应用说明 / 关于页或设置页 / 第三方许可清单」
+                       三者之一中向 "proroot" 署名。
+                       → 组件清单里有一条 proroot，本文件也通篇署名，两者都在
+                         设置 → 开源许可 里呈现给用户。
+
+  包内位置  lib/arm64-v8a/ 下五个文件，文件名与上游 release 资产同名：
+
+                libproroot.so              启动器（launcher / CLI）—— Android 实际 execve 的就是它，也是所有客户机进程的父进程
+                libproroot-runtime.so      进程内 hook（LD_PRELOAD 语义）：路径翻译、伪装 id 0、/proc 合成
+                libproroot-linker.so       客户机二进制的 ELF 解释器（PT_INTERP）
+                libproroot-bridge.so       入口 trampoline（PROROOT_TRAMPOLINE_PATH），子进程重新进入的点
+                libproroot-stub-loader.so  静态 / static-pie 与 execve 路由加载器（上游可选，文件存在时自适应启用）
+
+            它们在 APK 里的路径是 lib/arm64-v8a/，安装后由系统释放到
+            nativeLibraryDir（应用私有、可执行）。
+            五个文件合计 665,920 字节。文件名必须保持原样：proroot 按固定
+            文件名在 nativeLibraryDir 里自动发现 linker / runtime / stub loader，
+            改名会让它在设备上起不来。
+
+  sha256    由本项目的构建脚本（tools/fetch-runtime.mjs）在下载后对实际字节计算，
+            并与上游 release 说明中公布的 SHA-256 逐一比对，两者必须一致，
+            否则构建失败、不落地；同样由它写进 runtime.lock.json 的 pin 条目。
+            本文件里的这五个值就是从那份 pin 与随包的字节直接算出来的。
+
+            这一点值得解释：本项目的另一个参考实现（DSHA）公开声明它分发的是
+            v1.2.8 的原始二进制，但实测其设备上正在运行的字节与任何公开 release
+            都不符（见 docs/proroot-research.md §3.1）。所以哈希不能抄任何一方，
+            必须对**我们自己打包的那一份**计算并登记。
+
+                libproroot.so              a4e74d75b66cdc02b080adfe863dbf9951c3b30610d77beddc95488d5fe5de01
+                libproroot-runtime.so      8c47a0a7db32d84c179ebb5bf3640f655a3181860ece5886ae44d92858730c34
+                libproroot-linker.so       51a0ec5bfed00e572a0de09e22d9057e2befc386b78e426613d3e0ab03f4ecee
+                libproroot-bridge.so       1c5bc9537a270e8bf8b1c70222813f57b60b828bfb5503ddf8fe37685092de2f
+                libproroot-stub-loader.so  06c6624db3bdc45b9ced151cd781df439a37b47731d244b93e9d6a58cd48cde0
+
+            以上五个值与上游 release 说明里的 SHA-256 区块逐一一致，与 GitHub 为该
+            release 资产提供的摘要一致，与上游仓库 arm64-v8a/ 目录下同名文件的字节
+            也完全相同 —— 三处互相印证。核对方式可复核：每次构建都会重新下载并重算，
+            与上游公布的摘要和 runtime.lock.json 的 pin 同时比对，任一不一致即失败。
+
+  为什么随包分发（而不是按需下载）
+            因为按需下载在 Android 上做不到。Android 10 起的 W^X 策略不允许从
+            应用可写目录（filesDir）执行代码：下载到那里的 .so 无法执行，只有放进
+            APK 的 jniLibs、由系统提取到 nativeLibraryDir 才能跑。本 App 现有的
+            proot 出于同一条理由放在同一个位置。这也正好落在上游 LICENSE 第 3 条
+            允许的范围内 —— 作为完整应用包的一部分。
+
+  为什么它不会影响可用性
+            装机与首次解包路径永远走 proot；proroot 只可能作用于「执行命令」
+            这一层，而且默认关闭。运行时文件缺失、或自检不通过时自动回退 proot。
+
+  附：源码不公开
+            上游未公开 proroot 的源码（仓库里只有五个二进制、README 和 LICENSE），
+            因此无法提供对应的源代码，也无法自行审计或修补。「获取源代码」那一份
+            里有对应说明。
+
+### 已知限制
+
+  - 上游未公开源码，无法审计。出问题只能等作者修，我们自己改不了。
+  - 作者已把开发重心转向另一个项目（proroom），上游明说更新会变慢。
+  - 因闭源，Termux 官方仓库拒绝收录（proroot issue #21）。
+  - 它靠 LD_PRELOAD 语义的函数拦截 + 加载时改写主可执行文件里的 inline `svc`
+    指令做路径翻译，**绕过 libc 的裸 syscall 不被翻译**：实测裸 openat 读到的是
+    宿主 Android 的文件，而不是客户机里的同名文件。这是静默失败，不是报错。
+  - /proc 的一部分内容是它合成的：/proc/version 的构建者字段、/proc/<pid>/exe、
+    /proc/self/maps。任何靠它们判断环境的逻辑在 proroot 下会得到不同答案。
+  - 只有 arm64-v8a：没有 32 位对应物。
+  - 要求 Android 8.0+ / arm64 / glibc 的 Ubuntu 客户机；本项目三项都满足
+    （minSdk 26、仅 arm64-v8a、Ubuntu 24.04 arm64 / glibc 2.39）。
+
+  这些限制的实测依据与完整清单在 docs/proroot-research.md（§4.3、§5、§6.6）。

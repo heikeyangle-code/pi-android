@@ -99,6 +99,56 @@ JETBRAINS_MONO_LICENCE_TITLE = f"JetBrains Mono {JETBRAINS_MONO_VERSION}（OFL-1
 PI_LICENCE_URL = "https://raw.githubusercontent.com/earendil-works/pi/v{version}/LICENSE"
 PI_LICENCE_SHA256 = "0457f5bcec3b3b211605dfb5d1a49042fd638f3686a410fe099c24a25af13c48"
 
+# proroot — the one component in the APK that is neither open source nor a standard
+# licence text, and the one whose licence is carried by **no artifact this app ships**:
+# its LICENSE lives in the upstream repository, and it is a bespoke proprietary notice
+# rather than a text from `/usr/share/common-licenses`. Pinned by release tag + sha256
+# exactly like the JetBrains Mono OFL and the pi LICENSE above, cached, fetched only
+# under `--fetch-missing`, and a mismatch is a hard stop.
+#
+# Two things have to be produced for it, and neither may be typed from memory:
+#
+#   * `proroot-license.txt` — the licence text itself, so the "include this notice in all
+#     copies" condition upstream imposes is met by the app rather than by this comment.
+#   * `proprietary-third-party.txt` — the registration: package locations, the digests of
+#     the five shipped binaries, why they have to ship inside the APK, which licence
+#     duties the app discharges, and the known limits.
+#
+# The checks that keep those honest, and why each is where it is:
+#
+#   * the version is read out of `tools/fetch-runtime.mjs` (`proroot_version()`), never
+#     repeated here, so the notice cannot describe a release other than the pinned one;
+#   * the five digests and byte counts are read out of `runtime.lock.json` **and** the
+#     downloaded bytes (`artifact()`), never repeated here, so the notice cannot describe
+#     bytes other than the ones in the APK. `tools/fetch-runtime.mjs` writes those pins
+#     only after checking the bytes against the digests upstream publishes.
+#
+# Read the README's one-line "License" summary as the whole licence and proroot looks
+# like a redistribution grey area. It is not: the repository's LICENSE permits
+# redistribution of the *unmodified* binaries as part of a complete application package,
+# forbids modified ones, and adds the notice + attribution duties above. Attribution is
+# discharged by the component list and this registration both naming "proroot", which is
+# the third of the three places upstream accepts.
+PROROOT_LICENCE_OUT = "proroot-license.txt"
+PROROOT_LICENCE_URL = "https://raw.githubusercontent.com/coderredlab/proroot/{version}/LICENSE"
+PROROOT_LICENCE_SHA256 = "0576d93d18783c1dd677c1d412757a20a3098a2585590b760e444201a3ff565e"
+PROROOT_CACHE = os.path.join(DOWNLOADS, "proroot-licences")
+
+# The five release assets, in the order the registration lists them. The first field is
+# the `runtime.lock.json` artifact name — that is what makes the digests in the notice
+# come from the pin and the bytes instead of from this file. The second is the name the
+# file lands under in the APK, which must stay exactly as upstream ships it: proroot
+# finds the linker, the hook and the stub loader by fixed name in the directory of
+# `/proc/self/exe`, i.e. in nativeLibraryDir.
+# (key, name in the APK, what it does)
+PROROOT_FILES = [
+    ("prorootLauncher", "libproroot.so", "启动器（launcher / CLI）—— Android 实际 execve 的就是它，也是所有客户机进程的父进程"),
+    ("prorootRuntime", "libproroot-runtime.so", "进程内 hook（LD_PRELOAD 语义）：路径翻译、伪装 id 0、/proc 合成"),
+    ("prorootLinker", "libproroot-linker.so", "客户机二进制的 ELF 解释器（PT_INTERP）"),
+    ("prorootBridge", "libproroot-bridge.so", "入口 trampoline（PROROOT_TRAMPOLINE_PATH），子进程重新进入的点"),
+    ("prorootStubLoader", "libproroot-stub-loader.so", "静态 / static-pie 与 execve 路由加载器（上游可选，文件存在时自适应启用）"),
+]
+
 # Packages in the engine payload that **declare** a licence but ship **no licence
 # file**. Derived, not guessed: the `pi-engine` step of tools/fetch-runtime.mjs was
 # run in an isolated directory —
@@ -209,6 +259,11 @@ def pinned_constant(name: str) -> str:
 def engine_version() -> str:
     """The pi version the engine payload is built from."""
     return pinned_constant("PI_VERSION")
+
+
+def proroot_version() -> str:
+    """The proroot release tag the five binaries are pinned to."""
+    return pinned_constant("PROROOT_VERSION")
 
 
 def sha256(path: str) -> str:
@@ -394,6 +449,14 @@ libandroid-shmem
 来源：Termux 软件源，版本 0.7。
 上游：https://github.com/termux/libandroid-shmem  （标签 v0.7）
 
+proroot（无源代码可提供）
+------------------------
+来源：GitHub release，版本 {proroot}。
+仓库：https://github.com/coderredlab/proroot
+这个组件**闭源**，上游未公开源码，因此无法提供对应的源代码。它的许可证不是
+GPL/LGPL 一类要求提供源代码的许可证，而是一份专有条款；原文、包内位置、
+sha256 与已知限制写在「随包分发的专有组件」那一份里。
+
 其余随 App 分发的程序
 ---------------------
 Apache-2.0、MIT、BSD、ISC 等宽松许可证不要求提供源代码。它们的许可证原文与版权声明
@@ -429,6 +492,145 @@ def components_text(rows: list[tuple[str, str, str, str, str]]) -> str:
     return "\n".join(out)
 
 
+def proprietary_registration(
+    version: str,
+    files: list[tuple[str, str, str, int]],
+    licence_sha256: str,
+) -> str:
+    """The registration for proroot: the one component that is not open source.
+
+    `files` is `(name in the APK, what it does, sha256, bytes)` for each of the five
+    release assets. All four come from the pin and the downloaded bytes — see
+    `PROROOT_FILES` and the `artifact()` loop that calls this — so the digests in the
+    text cannot describe bytes other than the ones in the APK. The prose around them is
+    the part that has to be written by hand, and the "已知限制" list is the record of
+    what was actually measured, in `docs/proroot-research.md`.
+
+    Why this is generated rather than hand-written like any other notice: the CI job that
+    verifies the licence assets rebuilds this whole directory from the pinned artifacts
+    and fails on any drift (`.github/workflows/ci.yml`, "Verify the licence assets match
+    the pinned runtime"), so a hand-edited notice is a notice that disappears.
+    """
+    width = max(len(name) for name, *_ in files) + 2
+    total = sum(size for *_, size in files)
+    out = [
+        "随包分发的专有组件",
+        "==================",
+        "",
+        "本 App 的 APK 里有一个组件不是开源的。它有自己的许可证，条款摘录在下面；",
+        f"许可原文（不含本文件）逐字收录在「许可证全文」里的 {PROROOT_LICENCE_OUT}。",
+        "",
+        "这一份登记要说清的是：它是谁、从哪来、包里是哪几个文件、字节是什么、",
+        "为什么必须放在包里、本 App 履行了它的哪些义务，以及它有哪些已知限制。",
+        "",
+        "proroot",
+        "-------",
+        "",
+        "  来源仓库  https://github.com/coderredlab/proroot",
+        f"  版本      {version}",
+        f"  发行页    https://github.com/coderredlab/proroot/releases/tag/{version}",
+        "  许可文件  https://github.com/coderredlab/proroot/blob/main/LICENSE",
+        f"            sha256 {licence_sha256}",
+        f"            （随包的 {PROROOT_LICENCE_OUT} 是它的逐字副本，同一哈希）",
+        "",
+        "  它是什么  一个面向 Android 的用户态容器运行时，是 proot 的替代实现。",
+        "            本 App 默认使用 proot；proroot 是可选运行时，目前尚未接入启动路径。",
+        "",
+        "  许可证    Proprietary（专有，闭源）。上游 LICENSE 的核心三条原文：",
+        "",
+        "                1. The Software may be used without restriction in any application.",
+        "                2. Redistribution of modified versions of the Software is not permitted.",
+        "                3. Redistribution of the unmodified Software is permitted only as part",
+        "                   of a complete application package (e.g., Android APK/AAB).",
+        "",
+        "            也就是说：**未修改的二进制随完整应用包（APK/AAB）分发是明确允许的**；",
+        "            被禁止的是分发修改过的版本。本 App 分发的正是上游 release 的原始二进制，",
+        "            没有改名、没有重新链接、没有打补丁（字节校验见下）。",
+        "",
+        "            需要注意一处容易读错的地方：上游 README 的 License 一节只有一句摘要 ——",
+        '            *"Proprietary. Free to use in your projects. Redistribution of modified',
+        '            binaries is not permitted."* —— 那句话**不是**完整条款。只看它会以为',
+        '            "原样再分发"没有被授权；完整的允许条件写在仓库的 LICENSE 文件里，',
+        "            第 3 条明确覆盖了随 APK 分发。",
+        "",
+        "  本 App 履行的两项义务",
+        "            上游 LICENSE 第 4、5 条是随包分发的前提条件，本 App 都做到了：",
+        "",
+        "              第 4 条  许可声明必须随所有副本一起分发。",
+        f"                       → {PROROOT_LICENCE_OUT} 逐字随包，并登记在「许可证全文」。",
+        '              第 5 条  使用方必须在「应用说明 / 关于页或设置页 / 第三方许可清单」',
+        '                       三者之一中向 "proroot" 署名。',
+        "                       → 组件清单里有一条 proroot，本文件也通篇署名，两者都在",
+        "                         设置 → 开源许可 里呈现给用户。",
+        "",
+        "  包内位置  lib/arm64-v8a/ 下五个文件，文件名与上游 release 资产同名：",
+        "",
+    ]
+    for name, role, _digest, _size in files:
+        out.append(f"                {name:<{width}}{role}")
+    out += [
+        "",
+        "            它们在 APK 里的路径是 lib/arm64-v8a/，安装后由系统释放到",
+        "            nativeLibraryDir（应用私有、可执行）。",
+        f"            五个文件合计 {total:,} 字节。文件名必须保持原样：proroot 按固定",
+        "            文件名在 nativeLibraryDir 里自动发现 linker / runtime / stub loader，",
+        "            改名会让它在设备上起不来。",
+        "",
+        "  sha256    由本项目的构建脚本（tools/fetch-runtime.mjs）在下载后对实际字节计算，",
+        "            并与上游 release 说明中公布的 SHA-256 逐一比对，两者必须一致，",
+        "            否则构建失败、不落地；同样由它写进 runtime.lock.json 的 pin 条目。",
+        "            本文件里的这五个值就是从那份 pin 与随包的字节直接算出来的。",
+        "",
+        "            这一点值得解释：本项目的另一个参考实现（DSHA）公开声明它分发的是",
+        f"            {version} 的原始二进制，但实测其设备上正在运行的字节与任何公开 release",
+        "            都不符（见 docs/proroot-research.md §3.1）。所以哈希不能抄任何一方，",
+        "            必须对**我们自己打包的那一份**计算并登记。",
+        "",
+    ]
+    for name, _role, digest, _size in files:
+        out.append(f"                {name:<{width}}{digest}")
+    out += [
+        "",
+        "            以上五个值与上游 release 说明里的 SHA-256 区块逐一一致，与 GitHub 为该",
+        "            release 资产提供的摘要一致，与上游仓库 arm64-v8a/ 目录下同名文件的字节",
+        "            也完全相同 —— 三处互相印证。核对方式可复核：每次构建都会重新下载并重算，",
+        "            与上游公布的摘要和 runtime.lock.json 的 pin 同时比对，任一不一致即失败。",
+        "",
+        "  为什么随包分发（而不是按需下载）",
+        "            因为按需下载在 Android 上做不到。Android 10 起的 W^X 策略不允许从",
+        "            应用可写目录（filesDir）执行代码：下载到那里的 .so 无法执行，只有放进",
+        "            APK 的 jniLibs、由系统提取到 nativeLibraryDir 才能跑。本 App 现有的",
+        "            proot 出于同一条理由放在同一个位置。这也正好落在上游 LICENSE 第 3 条",
+        "            允许的范围内 —— 作为完整应用包的一部分。",
+        "",
+        "  为什么它不会影响可用性",
+        "            装机与首次解包路径永远走 proot；proroot 只可能作用于「执行命令」",
+        "            这一层，而且默认关闭。运行时文件缺失、或自检不通过时自动回退 proot。",
+        "",
+        "  附：源码不公开",
+        "            上游未公开 proroot 的源码（仓库里只有五个二进制、README 和 LICENSE），",
+        "            因此无法提供对应的源代码，也无法自行审计或修补。「获取源代码」那一份",
+        "            里有对应说明。",
+        "",
+        "### 已知限制",
+        "",
+        "  - 上游未公开源码，无法审计。出问题只能等作者修，我们自己改不了。",
+        "  - 作者已把开发重心转向另一个项目（proroom），上游明说更新会变慢。",
+        "  - 因闭源，Termux 官方仓库拒绝收录（proroot issue #21）。",
+        "  - 它靠 LD_PRELOAD 语义的函数拦截 + 加载时改写主可执行文件里的 inline `svc`",
+        "    指令做路径翻译，**绕过 libc 的裸 syscall 不被翻译**：实测裸 openat 读到的是",
+        "    宿主 Android 的文件，而不是客户机里的同名文件。这是静默失败，不是报错。",
+        "  - /proc 的一部分内容是它合成的：/proc/version 的构建者字段、/proc/<pid>/exe、",
+        "    /proc/self/maps。任何靠它们判断环境的逻辑在 proroot 下会得到不同答案。",
+        "  - 只有 arm64-v8a：没有 32 位对应物。",
+        "  - 要求 Android 8.0+ / arm64 / glibc 的 Ubuntu 客户机；本项目三项都满足",
+        "    （minSdk 26、仅 arm64-v8a、Ubuntu 24.04 arm64 / glibc 2.39）。",
+        "",
+        "  这些限制的实测依据与完整清单在 docs/proroot-research.md（§4.3、§5、§6.6）。",
+    ]
+    return "\n".join(out) + "\n"
+
+
 # --------------------------------------------------------------------------- #
 # assembly
 # --------------------------------------------------------------------------- #
@@ -453,7 +655,7 @@ def main() -> None:
         "--fetch-missing",
         action="store_true",
         help="download the pinned licence texts that no artifact carries "
-        "(NPM_LICENCE_FILES, the pi LICENSE, the JetBrains Mono OFL)",
+        "(NPM_LICENCE_FILES, the pi LICENSE, the JetBrains Mono OFL, the proroot LICENSE)",
     )
     args = parser.parse_args()
 
@@ -465,10 +667,11 @@ def main() -> None:
     #
     # `build()` writes the directory from scratch, so building in place means a hard
     # stop part-way through — a pin mismatch, a missing artifact, an unpinned download —
-    # leaves the committed licence assets deleted and half-rebuilt. Those files are
-    # reproducible, but a failure that also destroys the previous good output is a
-    # failure that hides what it was checking. Nothing is touched here until `build()`
-    # has returned.
+    # leaves the committed licence assets deleted and half-rebuilt. That is not
+    # hypothetical: the first negative test of the proroot pin did exactly that to this
+    # working tree. Those files are reproducible, but a failure that also destroys the
+    # previous good output is a failure that hides what it was checking. Nothing is
+    # touched here until `build()` has returned.
     final = OUT
     stage = tempfile.mkdtemp(prefix="pi-licences-")
     working = os.path.join(stage, "out")
@@ -676,10 +879,10 @@ def build(lock: dict, fetch_missing: bool, stage: str) -> None:
         manifest.append((out_name, out_name[:-4], "许可证全文"))
 
     # ------------------------------------------------------------- pinned texts
-    # Two licence texts come from a URL rather than from something the app ships: the
-    # bundled font's OFL and pi's LICENSE. Each has a pinned sha256 beside its URL, and
-    # each is cached under `build/downloads/` so a build after the first needs no
-    # network.
+    # Three licence texts come from a URL rather than from something the app ships: the
+    # bundled font's OFL, pi's LICENSE, and proroot's LICENSE. Each has a pinned sha256
+    # beside its URL, and each is cached under `build/downloads/` so a build after the
+    # first needs no network.
     #
     # The fetch path checks the pin against what came back. That alone leaves the one
     # hole that matters: a *cached* file that was altered after it was fetched — or
@@ -780,6 +983,68 @@ def build(lock: dict, fetch_missing: bool, stage: str) -> None:
         "pi licence text not cached; re-run with --fetch-missing",
     )
 
+    # -------------------------------------------------------------------- proroot
+    # The one component that is not open source, and the only licence text this app
+    # ships that comes from no artifact at all. Both of its files are built from pins:
+    # the licence from a tag-pinned URL (same shape as the font text above), the
+    # registration from the lock's digests plus the downloaded bytes.
+    proroot = proroot_version()
+    # The component table's row and the pinned tag must be the same release, or the list
+    # entry points at a licence for something else.
+    listed = [v for component, v, *_ in COMPONENTS if component == "proroot"]
+    if listed and listed[0] != proroot:
+        sys.exit(
+            f"proroot version drift: the component table lists {listed[0]} while "
+            f"tools/fetch-runtime.mjs pins {proroot}. A bump must move both, or the list "
+            f"entry and the licence it points at describe different releases."
+        )
+    proroot_files: list[tuple[str, str, str, int]] = []
+    for key, name, role in PROROOT_FILES:
+        path = artifact(key, lock)  # refuses an unpinned or altered download
+        proroot_files.append((name, role, sha256(path), os.path.getsize(path)))
+
+    os.makedirs(PROROOT_CACHE, exist_ok=True)
+    proroot_licence = os.path.join(PROROOT_CACHE, PROROOT_LICENCE_OUT)
+    if not os.path.isfile(proroot_licence) and fetch_missing:
+        url = PROROOT_LICENCE_URL.format(version=proroot)
+        try:
+            with urllib.request.urlopen(url, timeout=60) as response:
+                body = response.read()
+        except Exception as error:  # noqa: BLE001 - reported, not raised
+            notes.append(f"{PROROOT_LICENCE_OUT}: {url} failed ({error})")
+            body = None
+        if body is not None:
+            digest = hashlib.sha256(body).hexdigest()
+            if digest != PROROOT_LICENCE_SHA256:
+                sys.exit(
+                    f"proroot {proroot} LICENSE text changed\n"
+                    f"  pinned  {PROROOT_LICENCE_SHA256}\n"
+                    f"  actual  {digest}\n"
+                    f"  The tag is pinned, so this is not a routine update: read the new\n"
+                    f"  LICENSE and confirm it still permits redistributing the unmodified\n"
+                    f"  binaries inside an application package, and that the attribution it\n"
+                    f"  asks for is still the one this app gives, before moving the pin. A\n"
+                    f"  silent change in those terms is the failure this pin exists to stop."
+                )
+            with open(proroot_licence, "wb") as fh:
+                fh.write(body)
+    install_pinned_text(
+        proroot_licence,
+        PROROOT_LICENCE_OUT,
+        f"proroot {proroot}（Proprietary）",
+        PROROOT_LICENCE_SHA256,
+        f"{PROROOT_LICENCE_OUT} not cached; re-run with --fetch-missing",
+    )
+
+    # Written unconditionally: it needs the pin and the bytes, never the network, so a
+    # build that could not fetch the licence text is still a build that states the terms
+    # and the digests — and one fewer file that can silently vanish from the APK.
+    write(
+        os.path.join(OUT, "proprietary-third-party.txt"),
+        proprietary_registration(proroot, proroot_files, PROROOT_LICENCE_SHA256),
+    )
+    manifest.append(("proprietary-third-party.txt", "随包分发的专有组件（proroot）", "专有组件"))
+
     gaps = [
         "未随包提供许可文本的 pi 依赖组件",
         "=================================",
@@ -830,7 +1095,7 @@ def build(lock: dict, fetch_missing: bool, stage: str) -> None:
     # ------------------------------------------------------------------ prose
     write(os.path.join(OUT, "about.txt"), STATEMENT)
     manifest.insert(0, ("about.txt", "关于这份清单", "说明"))
-    write(os.path.join(OUT, "source-code.txt"), SOURCE_OFFER)
+    write(os.path.join(OUT, "source-code.txt"), SOURCE_OFFER.format(proroot=proroot))
     manifest.insert(1, ("source-code.txt", "获取源代码", "说明"))
 
     write(os.path.join(OUT, "component-list.txt"), components_text(COMPONENTS))
@@ -868,6 +1133,21 @@ COMPONENTS: list[tuple[str, str, str, str, str]] = [
     ("proot", "5.1.107.92", "GPL-2.0", "Android 原生库（随 App 二进制安装）", "https://github.com/termux/proot"),
     ("libtalloc", "2.4.3", "LGPL-3.0（上游 LICENSE 原文；Termux 打包元数据写 GPL-3.0，与上游不符）", "Android 原生库（随 App 二进制安装）", "https://www.samba.org/ftp/talloc/"),
     ("libandroid-shmem", "0.7", "BSD-3-Clause", "Android 原生库（随 App 二进制安装）", "https://github.com/termux/libandroid-shmem"),
+    # Not open source, and therefore also the one row here whose licence is not a standard
+    # text: the terms are upstream's own LICENSE, shipped verbatim as proroot-license.txt,
+    # and the registration — package locations, the five digests, why they ship inside the
+    # APK, known limits — is `proprietary-third-party.txt`. The version is checked against
+    # `PROROOT_VERSION` in tools/fetch-runtime.mjs while building (see `build`), because a
+    # row here and a pin there that disagree would be a list entry pointing at a licence
+    # for a different release.
+    (
+        "proroot",
+        "v1.2.8",
+        "Proprietary（专有，闭源；许可证原文见「许可证全文」里的 proroot-license.txt，"
+        "条款与已知限制见「随包分发的专有组件」）",
+        "Android 原生库（随 App 二进制安装）",
+        "https://github.com/coderredlab/proroot",
+    ),
     # Linux userland
     ("Ubuntu 基础系统", "24.04.3", "各软件包各自的许可证", "Linux 运行时（首次启动解包）", "https://cdimage.ubuntu.com/ubuntu-base/releases/24.04.3/release/"),
     ("Ubuntu 附加软件包", "见清单", "各软件包各自的许可证", "Linux 运行时（首次启动解包）", "https://ports.ubuntu.com/ubuntu-ports/"),

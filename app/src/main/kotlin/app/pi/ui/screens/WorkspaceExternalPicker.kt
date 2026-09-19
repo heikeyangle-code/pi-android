@@ -39,7 +39,7 @@ import kotlinx.coroutines.withContext
  * ## 为什么是「所有文件访问」，不是 SAF
  *
  * 工作区必须是**真实文件路径**：`PiEngineHost` 把 `workspace.absolutePath` 绑进 guest 并把它当
- * 进程的 cwd（`PiEngineHost.kt:407`、`:451`），proot 的绑定点只吃真路径。SAF 给的是
+ * 进程的 cwd（`PiEngineHost.kt:407`、`:451`），proot/proroot 的绑定点只吃真路径。SAF 给的是
  * `content://` 树 URI，它能经 `/app/saf` 下的通道读写，但**不能当工作区根** —— 引擎要的是一个能
  * `bind` 的目录。所以这一屏走 `MANAGE_EXTERNAL_STORAGE`（API 30+ 的「所有文件访问」），而不是
  * 让用户以为随便给个 SAF 授权就够了。这句话在界面上也印出来（[WorkspaceExternalIntro]）。
