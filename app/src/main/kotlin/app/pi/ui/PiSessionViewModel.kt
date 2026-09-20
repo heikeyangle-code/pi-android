@@ -800,7 +800,10 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * `val engine = session ?: return` — **the message vanished, with no bubble and
      * no error**, the exact class of silent drop this round exists to remove. So the
      * call is remembered and replayed verbatim once a session exists; a boot that
-     * fails leaves it parked until a retry succeeds.
+     * fails leaves it parked until a retry succeeds — and both halves of that wait are
+     * said out loud ([parkedNotice] at park time, [reportParkedActions] when the engine
+     * never arrives), because a queue with no visible outcome is the same "点了没反应"
+     * shape one step later.
      *
      * Only the paths a user can reach without an engine are held: [send], [sendFollowUp],
      * [runPromptCommand] and [newSession] (the last one is the 「我新建对话，点第一下新建不了，
@@ -820,6 +823,51 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         if (session != null) return false
         pendingPrompts += action
         return true
+    }
+
+    /**
+     * The **park-time** sentence: what the queue means while the future is still open.
+     *
+     * The old wording ("启动完成后会立刻执行") was a promise about a state that does not
+     * always arrive: when the boot fails there is no attach and therefore no replay, so
+     * the sentence was false for exactly the users who had something queued. The
+     * conditional is the honest shape — the sentence has to hold whether the engine
+     * comes up or not, because at park time neither is known.
+     *
+     * `${what}` is braced on purpose rather than for style: Kotlin reads `$what已经排队`
+     * as **one** identifier (CJK letters are valid identifier characters), so the
+     * unbraced form is a compile error. The same trap applies to any interpolation this
+     * string gains later.
+     */
+    private fun parkedNotice(what: String): String =
+        "${what}已经排队：引擎就绪后会立刻执行；如果这一次启动失败，它会一直留在队列里，" +
+            "等到「重试」或下一次重新启动成功后执行。"
+
+    /**
+     * The **failure-time** half of the same fact: the engine did not come up, so the
+     * parked actions have no engine to run on and no attach that would drain them.
+     *
+     * Called from every path that ends with no engine and none coming ([boot]'s failed
+     * branch, a failed [restartEngine], a failed workspace rollback). Without it the
+     * queue is silent forever and the user is left believing the park-time sentence —
+     * which is the "排队的动作没有确定结局" half of the defect. The parked actions are
+     * deliberately **kept** rather than dropped: the retry button on the same screen
+     * boots an engine, and `attach` replays them, so "still queued, runs after the
+     * retry" is both true and the outcome the user asked for.
+     *
+     * `session != null` is the guard against a second lie: a *refused* restart leaves
+     * the running engine in place, and in that state there is no future attach this
+     * queue could ride on — reporting "still queued" there would describe a wait that
+     * never ends. (That state cannot have a non-empty queue by construction — park
+     * only happens while `session == null` — so this returns quietly.)
+     */
+    private fun reportParkedActions() {
+        if (pendingPrompts.isEmpty() || session != null) return
+        pushNotice(
+            "引擎没有起来：你之前排队的 ${pendingPrompts.size} 个动作还没执行，它们仍在队列里；" +
+                "点「重试」或重新启动引擎后，它们会立刻按原顺序执行。",
+            Notice.Tone.Warning,
+        )
     }
 
     /**
@@ -1949,6 +1997,11 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                     "引擎现在是停止的，工作区设置仍然是「$previous」。"
                 pushNotice(message, Notice.Tone.Error)
                 WorkspaceSwitch.Failed(message, detail, rolledBackTo = null)
+                // Third no-engine-and-none-coming path: the rollback's own boot failed, so
+                // nothing will attach and a parked action has no engine to run on. Its own
+                // sentence stays [reportParkedActions]'s job, kept separate from the
+                // workspace message above so neither has to hedge about the other.
+                reportParkedActions()
             }
         }
     }
@@ -2142,6 +2195,10 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                     // collector never ran (there is no engine to collect).
                     syncEngineService(engineAttached = session != null, bootInProgress = false)
                     reportWakeLockNeed()
+                    // The queue's other half: nothing attached, so nothing will drain it, and
+                    // the park-time sentence's condition ("启动完成后") has resolved to false.
+                    // Say what the user is waiting for instead of leaving it silent.
+                    reportParkedActions()
                 }
                 else -> Unit
             }
@@ -2226,6 +2283,10 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             // released when the transition ends with no engine.
             syncEngineService(engineAttached = session != null, bootInProgress = false)
             reportWakeLockNeed()
+            // Same closing half as [boot]'s failed branch: a failed restart attaches nothing,
+            // so a parked action would wait for a boot that never comes. A *refused* restart
+            // keeps the engine, and `reportParkedActions` returns quietly there.
+            reportParkedActions()
         }
         return result.asOutcome()
     }
@@ -4511,9 +4572,11 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         // [parkUntilAttached]（D31 为同一个窗口加的），这里沿用同一套机制，不新造：
         // 闭包重入本函数，所以重放跑的是**同一条**路径，而不是它的副本。
         if (parkUntilAttached { newSession(parentSession) }) {
-            // **排队也要看得见。** 会话列表那枚「＋ 新建会话」点完就关掉覆盖层（`onOpenChat`），
-            // 用户落在对话页上；没有这句话，他看到的还是「点了没反应」—— 那正是这次要消灭的形状。
-            pushNotice("引擎还在启动：新建会话已经排队，启动完成后会立刻执行。", Notice.Tone.Info)
+            // **排队也要看得见，而且这句话在每种状态下都得是真的。** 会话列表那枚「＋ 新建会话」点完就
+            // 关掉覆盖层（`onOpenChat`），用户落在对话页上；没有这句话，他看到的还是「点了没反应」——
+            // 那正是这次要消灭的形状。而「启动完成后会立刻执行」只有在启动**成功**时才成立，所以
+            // 交给 [parkedNotice] 写成条件句（启动失败那一半由 [reportParkedActions] 收尾）。
+            pushNotice(parkedNotice("新建会话"), Notice.Tone.Info)
             return
         }
         call("新建会话") { api ->

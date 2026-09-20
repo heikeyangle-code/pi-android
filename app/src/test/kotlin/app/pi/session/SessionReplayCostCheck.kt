@@ -810,6 +810,58 @@ fun main() {
         drain.contains("queued.forEach { it() }"),
         drain.take(160),
     )
+    // 排队还有**后半句**：启动失败时没有 `attach`，队列永远不 drain，而 park 时那句话说
+    // 「启动完成后会立刻执行」—— 在那个状态下就是假话，且用户永远等不到结局。钉两句：
+    //   ① park 时那句话必须是**条件句**（把「失败就一直排队」说出来，而不是无条件承诺）；
+    //   ② 每一条「没有引擎、也不会有引擎」的收尾路径都要把队列的处境说出来。
+    // 保留而不是丢弃是有意的：失败页的「重试」会 boot 出新引擎，`attach` 会重放它们，
+    // 所以「还在队列里、重试后按原序执行」既是真的，也正是用户要的结局。
+    val parkedSentence = viewModelText
+        .substringAfter("private fun parkedNotice(what: String): String =", "")
+        .take(400)
+    checkTrue("找到了 parkedNotice（park 时那句话的唯一出处）", parkedSentence.isNotEmpty(), "marker not found")
+    checkTrue(
+        "park 时的话是条件句（说出「启动失败会一直排队」，而不是无条件承诺「启动完成后会立刻执行」）",
+        parkedSentence.contains("如果这一次启动失败"),
+        parkedSentence.take(140),
+    )
+    checkTrue(
+        "而且它真的被 newSession 的排队分支用上（不是写了一句没人调用的文案）",
+        newSessionBody.contains("pushNotice(parkedNotice("),
+        newSessionBody.takeLast(160),
+    )
+    // 三个收尾点各钉一次。窗口取到该分支自己的结束为止，别把下一个收尾点的调用当成这一个的。
+    val bootFail = viewModelText
+        .substringAfter("is PiEngineHost.Boot.Failed -> {", "")
+        .take(2_000)
+    checkTrue("找到了 boot 失败的分支", bootFail.contains("reportWakeLockNeed()"), "marker not found")
+    checkTrue(
+        "boot 失败时报告了排队动作的处境（否则队列永远沉默）",
+        bootFail.contains("reportParkedActions()"),
+        bootFail.takeLast(180),
+    )
+    val restartElse = viewModelText
+        .substringAfter("if (result is PiEngineHost.Restart.Ok) {", "")
+        .substringAfter("} else {", "")
+        // 1_600 而不是贴着当前的 886：窗口要装得下这句话将来长出来的注释，否则它会静默变成
+        // 「marker not found / false」而不是红在真正的原因上。下一个 `reportParkedActions()`
+        // 在几万字符之后，放宽不会串到别的收尾点。
+        .take(1_600)
+    checkTrue("找到了 restart 没成功的那一支", restartElse.contains("syncEngineService("), "marker not found")
+    checkTrue(
+        "restart 失败时报告了（被拒时 reportParkedActions 自己会静默：引擎还在，队列不该说「在等」）",
+        restartElse.contains("reportParkedActions()"),
+        restartElse.takeLast(180),
+    )
+    checkTrue(
+        "换工作区回滚也失败时报告了",
+        viewModelText
+            .substringAfter("WorkspaceSwitch.Failed(message, detail, rolledBackTo = null)", "")
+            // 当前那句话在 371 处，窗口给到 800：容得下注释增长，又远短于下一个收尾点。
+            .take(800)
+            .contains("reportParkedActions()"),
+    )
+
     // 上面那三条钉的是「没被丢弃」；缺陷其实是「被执行之后又被撤销」，两者不相交 —— 所以它们在
     // 用户报「点第一遍没反应」时**全绿**。补的是同一件事的另一个方向：重放之后 `attach` 的尾巴
     // 里不许再有任何「把会话切走」的动作（当时的形状是 `maybeResumeLastSession()` /
