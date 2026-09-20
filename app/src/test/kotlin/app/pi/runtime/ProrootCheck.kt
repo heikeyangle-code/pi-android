@@ -230,6 +230,20 @@ fun main() {
     val shmIndex = sharedBinds.indexOfFirst { it.endsWith(":/dev/shm") }
     check("...and after the /dev bind, so the later bind wins", devIndex >= 0 && shmIndex > devIndex, true)
 
+    // ---- 全 argv 一种拼写：`-r` 必须和每一条 `-b` 的 host 侧同源（2026-09-20 受控实测）------
+    // 受控 A/B（同一目录、两种拼写各绑一次，`-r` 两种拼写各跑一遍，其余 argv 完全相同）：
+    //   host 侧 `/data/data/…`（内核拼写）→ `fs.readdirSync` OK；相对路径（cwd 在该目录）也 OK
+    //   host 侧 `/data/user/0/…`（getFilesDir 原样）→ `fs.readdirSync` **ENOENT**、相对路径 ENOENT
+    // 两个方向都与 `-r` 的拼写无关；`opendir`/`ls`/`find`/读/写全都不受影响（只坏"列目录"那一半）。
+    // 结论：整条 argv 必须用**同一种**拼写，而且必须是内核那一种 —— `-r` 之前留在
+    // `getFilesDir()` 的原样拼写上，正是这次 bug 的最后一环。
+    val prorootArgvForRoot = ProrootCommand.build(p, command, "/root", null)
+    check(
+        "-r goes through the same resolver as every -b host side",
+        prorootArgvForRoot.windowed(2).single { it[0] == "-r" }[1],
+        GuestRecipe.canonicalHost(p.rootfs.path),
+    )
+
     // 两个 builder，在别名上：出去的 host 侧是解析后的路径。
     val aliasExtra = linkedWorkspace to "/workspace/pi/workspaces/workspace-1"
     val prorootAlias = binds(ProrootCommand.build(p, command, "/root", null, listOf(aliasExtra)))

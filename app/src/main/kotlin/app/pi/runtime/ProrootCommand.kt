@@ -341,12 +341,15 @@ object ProrootCommand {
         // `-r` / `-w`: the long spellings `--rootfs=` / `--cwd=` are proot-only and
         // make proroot exit with its usage line (`docs/proroot-research.md` §4.2).
         //
-        // `-r` stays in `PiPaths.rootfs`'s own spelling **on purpose**: proroot resolves the
-        // rootfs prefix itself, and a live measurement inside a proroot guest showed every
-        // rootfs path (`/etc`, `/root`, `/tmp`, `/dev/fd`) reported back correctly even
-        // though the launcher had been given `-r /data/user/0/…`. Canonicalising it here would
-        // be churn with no defect behind it.
-        argv += listOf("-r", paths.rootfs.path)
+        // **One spelling for the whole argv, and it is the kernel's.** `-r` goes through the
+        // same resolver as every `-b` host side ([GuestRecipe.canonicalHost]) — see that
+        // function's KDoc for the measurement: a `getFilesDir()`-spelled value (`/data/user/0/…`)
+        // in one place and the kernel's (`/data/data/…`) in another is what left Node's
+        // `fs.readdirSync` returning ENOENT on a bind mount while `ls` worked. Keeping `-r` out
+        // of that rule was the bug, not a deliberate exception.
+        argv += listOf("-r", GuestRecipe.canonicalHost(paths.rootfs.path))
+        // `-w` is a **guest** path, so it has no host side to spell: the launcher resolves it
+        // inside whatever rootfs `-r` named, and it inherits that spelling.
         argv += listOf("-w", cwd)
         // The bind set, respelled for proroot: every entry goes out as `-b host:guest`,
         // including the ones the shared recipe spells as a lone host path. `-b` is the flag

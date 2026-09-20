@@ -219,6 +219,27 @@ object GuestRecipe {
      *
      * The guest side is **never** touched by any of this.
      *
+     * ## Every **host** path in an argv goes through here — including `-r`
+     *
+     * A proroot argv carries host paths in two places: the bind sources and `-r <rootfs>`. Node's
+     * `fs.readdirSync` (libuv's `uv_fs_scandir`) disagrees with `ls` about a bind mount when the
+     * two are spelled differently. Controlled A/B on this device — one directory bound twice,
+     * both `-r` spellings, everything else identical:
+     *
+     * | bind source | `fs.readdirSync` | relative paths (`cwd` = that dir) |
+     * |---|---|---|
+     * | `/data/data/…` (the kernel's) | **OK** | **OK** |
+     * | `/data/user/0/…` (`getFilesDir()`'s) | `ENOENT` | `ENOENT` |
+     *
+     * `-r`'s own spelling changed neither column; `opendir`/`ls`/`find`/read/write were fine in
+     * every combination — only "list this directory" broke. The rule is therefore: **one spelling
+     * for the whole argv, and it is the kernel's** — [canonicalHost] applied to the bind sources
+     * by [bindValue] and to `-r` by `ProrootCommand`. A `getFilesDir()`-spelled `-r` beside a
+     * canonical `-b` was the last piece of the mixture this KDoc opened with.
+     *
+     * `-w` is not in that list because its value is a **guest** path: the launcher resolves it
+     * inside `-r`, so it inherits `-r`'s spelling and has no host side of its own.
+     *
      * ## Cost
      *
      * One resolution per distinct host **per process** ([canonicalHosts]); every later spawn

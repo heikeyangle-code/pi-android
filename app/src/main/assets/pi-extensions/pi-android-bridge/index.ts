@@ -1320,7 +1320,7 @@ const SKILL_SENTINEL = `name: ${SKILL_NAME}`;
 function skillMarkdown(): string {
 	return `---
 name: ${SKILL_NAME}
-description: pi-android device tools: screen, apps, files, notifications, sensors.
+description: "pi-android device tools: screen, apps, files, notifications, sensors."
 ---
 
 # pi-android device environment
