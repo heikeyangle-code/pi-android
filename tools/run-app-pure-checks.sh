@@ -354,6 +354,19 @@ run_harness guest-tool-probe \
   "$ROOT/app/src/main/kotlin/app/pi/runtime/GuestCommandLine.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/runtime/ProrootCommand.kt"
 
+# app.pi.packages: pi 的「扩展加载失败」那一行的解析（条数 + 第一条原文）。为什么必须钉住：
+# pi 对**每一种**资源目录的发现都是「existsSync 通过 → readdirSync → 出错就吞掉」
+# （`core/extensions/loader.ts:739-741` 的 `catch { return [] }`、`core/package-manager.ts:312-359`
+# 的 `catch { // Ignore errors }`），唯一留下证据的一半是模块加载失败打到 stderr 的那句
+# （`main.ts:98-104`，RPC 模式的调用点 `:900-910`，随后 pi 以退出码 1 结束）。这个解析器一旦不再
+# 认得那句话，诊断报告就会在扩展真的少了的时候说「这里没有」——正是它存在的意义。
+# Android-free：`PiExtensionLoadErrors.kt` 只依赖 `:rpc` 的 `Ansi` 与 stdlib。
+run_harness extension-load-errors \
+  app.pi.packages.PiExtensionLoadErrorsCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/packages/PiExtensionLoadErrorsCheck.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/packages/PiExtensionLoadErrors.kt" \
+  "$ROOT/rpc/src/main/kotlin/app/pi/rpc/Ansi.kt"
+
 # app.pi.runtime: the opt-in proroot runtime's pure logic — the §2.3.1 argv/env mapping
 # (including the four proot-only flags proroot *rejects*), the runtime-selection guard
 # order and the three-failure boundary, the `.proroot-config-*` liveness/cap rules, the
@@ -571,9 +584,17 @@ run_harness utf8-stream \
 # cannot be compiled here) and fails on any key that is neither read by this app nor
 # declared pi-owned with the pi location that reads it. Android-free: java.io.File,
 # regex and the stdlib.
+#
+# `PiQuickAdd.kt` is compiled alongside it — the one app-side file in this harness —
+# because the 内建工具 row's quick-add arithmetic is the part of this audit that must
+# be *executed*, not read: `defaultTools` is a complete allowlist in pi
+# (`core/sdk.ts:258-264`), so a chip that stored just its own name turned the default
+# four off (the row wrote `["grep","find","ls"]` and the model lost bash/read/write/
+# edit). The file is pure Kotlin with no imports, so it costs this harness nothing.
 run_harness settings-audit \
   app.pi.ui.settings.PiSettingsAuditCheckKt \
-  "$ROOT/app/src/test/kotlin/app/pi/ui/settings/PiSettingsAuditCheck.kt"
+  "$ROOT/app/src/test/kotlin/app/pi/ui/settings/PiSettingsAuditCheck.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/ui/settings/PiQuickAdd.kt"
 
 # :rpc: the pre-spawn surface. `PiLaunchOptions` is pure already, but nothing
 # checked that the settings rows in 设置 → 运行时 → 进程 actually reach it, or that

@@ -599,6 +599,96 @@ fun main() {
         "presets: $presets",
     )
 
+    // Rule 15: a chip tap on 内建工具 must never write a value that turns pi's default tools
+    // off. `defaultTools` is a **complete allowlist** — `core/sdk.ts:258-264` enables exactly
+    // the listed names (`options.tools ?? (configuredDefaultToolNames ?? defaultActiveToolNames)`)
+    // and `core/settings-manager.ts:1336-1339` returns the stored array unmerged, which pi's own
+    // `test/default-tools-setting.test.ts:58-67` pins (`["grep","find"]` → active `["grep","find"]`).
+    // Writing just the chip therefore disabled read/bash/edit/write: the user hit exactly that,
+    // his `settings.json` left holding `["grep","find","ls"]` and the model answering
+    // "Tool not found" for bash/read/write/edit.
+    val optional = presetNames.ifEmpty { listOf("grep", "find", "ls") }
+    val defaults = PiQuickAdd.builtinToolDefaults
+    check(
+        "quick-add starts from pi's default four when the key is unset",
+        PiQuickAdd.add(emptyList(), "grep", defaults, optional) == defaults + "grep",
+        "got ${PiQuickAdd.add(emptyList(), "grep", defaults, optional)}",
+    )
+    val afterAllChips = optional.fold(emptyList<String>()) { acc, tool -> PiQuickAdd.add(acc, tool, defaults, optional) }
+    check(
+        "adding every optional chip keeps pi's default four enabled",
+        afterAllChips.size == defaults.size + optional.size && defaults.all { it in afterAllChips },
+        "got $afterAllChips",
+    )
+    check(
+        "no chip path produces 'only the optional three'",
+        afterAllChips != optional,
+        "got $afterAllChips",
+    )
+    check(
+        "the shipped broken value (only the optional three) reopens as the union",
+        PiQuickAdd.effective(optional, defaults, optional) == defaults + optional,
+        "got ${PiQuickAdd.effective(optional, defaults, optional)}",
+    )
+    check(
+        "removing the last optional chip collapses back to unset, not to the baseline written out",
+        PiQuickAdd.remove(defaults + "grep", "grep", defaults, optional).isEmpty(),
+        "got ${PiQuickAdd.remove(defaults + "grep", "grep", defaults, optional)}",
+    )
+    check(
+        "an explicit allowlist the user built row by row is not rewritten",
+        PiQuickAdd.effective(listOf("read", "powershell", "edit", "write"), defaults, optional) ==
+            listOf("read", "powershell", "edit", "write"),
+        "got ${PiQuickAdd.effective(listOf("read", "powershell", "edit", "write"), defaults, optional)}",
+    )
+    check(
+        "a value equal to the baseline is stored as unset (empty), never as a list",
+        PiQuickAdd.persist(defaults, defaults).isEmpty() &&
+            PiQuickAdd.persist(defaults + "grep", defaults) == defaults + "grep",
+    )
+    val editor = File(root, "app/src/main/kotlin/app/pi/ui/settings/PiSettingsEditors.kt")
+        .takeIf { it.isFile }
+        ?.readText()
+        ?.let(::stripComments)
+    check("the list editor source was found", editor != null)
+    check(
+        "the 内建工具 row declares the baseline and the editor routes chips through PiQuickAdd",
+        rows.contains("presetBaseline = PiQuickAdd.builtinToolDefaults") &&
+            editor?.contains("PiQuickAdd.add(") == true &&
+            editor?.contains("PiQuickAdd.remove(") == true &&
+            editor?.contains("PiQuickAdd.persist(") == true,
+        "row baseline: ${rows.contains("presetBaseline = PiQuickAdd.builtinToolDefaults")}, " +
+            "editor add/remove/persist: ${editor?.contains("PiQuickAdd.add(")}/" +
+            "${editor?.contains("PiQuickAdd.remove(")}/${editor?.contains("PiQuickAdd.persist(")}",
+    )
+
+    // Rule 15b: `app.terminal.keyBar` is the same shape — an unset/empty value means the
+    // default row of keys (`TerminalSettings.keyBarOf`: absent *and* empty both mean the
+    // default bar, `ui/terminal/TerminalSettings.kt:112-124`) — so its chips have to add on
+    // that baseline too. Tapping one chip on an unset row used to write a bar holding exactly
+    // that one key: the same "one tap locks you in" defect as the tools row.
+    val keyBarSource =
+        Regex("""private val termKeyBarPresets = listOf\(([^)]*)\)""").find(registry)?.groupValues?.get(1)
+    check("the terminal key-bar preset list was found", keyBarSource != null)
+    val keyBarNames = keyBarSource?.split(",")?.map { it.trim().trim('"') }?.filter { it.isNotEmpty() }.orEmpty()
+    val firstKey = keyBarNames.firstOrNull().orEmpty()
+    val chipFromUnset = PiQuickAdd.add(emptyList(), firstKey, keyBarNames, keyBarNames)
+    check(
+        "a key-bar chip tapped on an unset row never writes a one-key bar",
+        keyBarNames.isNotEmpty() && chipFromUnset != listOf(firstKey) &&
+            PiQuickAdd.persist(chipFromUnset, keyBarNames).isEmpty(),
+        "tapping \"$firstKey\" on an unset row produced $chipFromUnset",
+    )
+    check(
+        "dropping one key-bar chip keeps the other default keys",
+        PiQuickAdd.remove(keyBarNames, firstKey, keyBarNames, keyBarNames) == keyBarNames.filter { it != firstKey },
+        "got ${PiQuickAdd.remove(keyBarNames, firstKey, keyBarNames, keyBarNames)}",
+    )
+    check(
+        "the key-bar row declares the baseline (a chip adds to the default bar)",
+        rows.contains("presetBaseline = termKeyBarPresets"),
+    )
+
     // One layer up from a dead row: a search hint whose chip selects a query that
     // matches nothing. Only the `examples` list is read — taking every standalone
     // string in the file would let an unrelated literal fail the build later — and a

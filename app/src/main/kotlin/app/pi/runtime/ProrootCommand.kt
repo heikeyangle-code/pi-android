@@ -37,6 +37,11 @@ import java.io.File
  *    `host:guest` form and *rejects the whole invocation* without it. See
  *    [bindArgument]; this is the one place where "shared bind table" could not mean
  *    "shared spelling".
+ *  - the **host side of every bind is canonicalised** ([GuestRecipe.canonicalHost]).
+ *    That is not a proroot-only concern — it is the `/data/user/0` vs `/data/data` alias,
+ *    which both recipes carried and which broke the guest's cwd and the extension
+ *    directory under proroot. It lives in [GuestRecipe] so the two runtimes cannot
+ *    diverge; [bindArgument] is simply the proroot-side entry to it.
  *  - everything else (`/bin/bash -c`, the bind *table*) is shared with proot
  *    verbatim through [GuestRecipe].
  *
@@ -161,20 +166,39 @@ object ProrootCommand {
     const val NO_SECCOMP_ENV = "PROROOT_NO_SECCOMP"
 
     /** `host:guest` — the only `-b` value shape proroot v1.2.8 accepts. */
-    const val BIND_SEPARATOR = ":"
+    const val BIND_SEPARATOR: String = GuestRecipe.BIND_SEPARATOR
 
     /**
      * One bind value in proroot's spelling.
      *
-     * proot treats `-b /proc` as `/proc:/proc`; proroot v1.2.8 parses the value with
-     * `strchr(value, ':')` and rejects the invocation outright when there is no colon
-     * (class KDoc has the addresses and the message). An already-qualified value is
-     * passed through untouched so this can never mangle `host:guest` pairs, and the
-     * function is deliberately pure and public: the `proroot` harness pins both
-     * directions, because the failure it prevents is silent.
+     * Two jobs, and the second one is the reason both sides cannot be written by hand here:
+     *
+     *  1. **qualify** — proot treats `-b /proc` as `/proc:/proc`; proroot v1.2.8 parses the
+     *     value with `strchr(value, ':')` and rejects the invocation outright when there is
+     *     no colon (class KDoc has the addresses and the message). A bare value means
+     *     `host == guest`, so the expansion is `canonicalHost(v):v`: the **host** side is
+     *     respelled, the path the shorthand named stays byte-identical on the guest side, and
+     *     the equality the shorthand asserts survives as "both name the same directory" —
+     *     which canonicalising the guest side too would quietly break by moving the mount point;
+     *  2. **canonicalise the host side** ([GuestRecipe.bindValue]) — the table has to spell a
+     *     host directory the way the guest kernel reports it, or the runtime's reverse map
+     *     (a string prefix match) misses and relative paths stop resolving
+     *     ([GuestRecipe.canonicalHost] has the live measurement). An already-qualified value
+     *     keeps its **guest** side exactly as written; only the host side moves.
+     *
+     * Deliberately pure and public: the `proroot` harness pins both directions, because the
+     * failure it prevents is silent.
      */
-    fun bindArgument(value: String): String =
-        if (value.contains(BIND_SEPARATOR)) value else "$value$BIND_SEPARATOR$value"
+    fun bindArgument(value: String): String {
+        if (value.contains(BIND_SEPARATOR)) return GuestRecipe.bindValue(value)
+        // A bare value is proot's `host == guest` shorthand. Expanding it must not move the
+        // **guest** mount point: only the host side is respelled, so the path the shorthand
+        // named stays byte-identical where the guest sees it. (Spelling *both* sides with the
+        // canonical path — the earlier rule — would silently mount a bare `/data/user/0/…` at
+        // `/data/data/…`: today's table has no such entry, but the rule has to hold for the
+        // whole class, and this is the only place it is decided.)
+        return "${GuestRecipe.canonicalHost(value)}$BIND_SEPARATOR$value"
+    }
 
     /**
      * `-w` 的目录在 rootfs 里是什么状态，或者**为什么我们没有动它**。
@@ -261,9 +285,11 @@ object ProrootCommand {
     /**
      * 本次启动的全部 `(host, guest)` 绑定对：共享绑定表 + 调用方的额外绑定 + `/tmp`。
      *
-     * 与 [build] 拼进去的 argv 同源（同一个 [GuestRecipe.binds]、同一个 [GuestRecipe.tmpBind]），
-     * 所以"argv 里绑了什么"与"判断 `-w` 是否在绑定之下时看的是什么"不可能分叉——这正是
-     * [ensureWorkdir] 那条纪律能站住的前提。没有冒号的值按 proot 的 host == guest 读。
+     * 与 [build] 拼进去的 argv 同源（同一个 [GuestRecipe.binds]、同一个 [GuestRecipe.tmpBind]，
+     * 额外绑定同样过 [bindArgument]），所以"argv 里绑了什么"与"判断 `-w` 是否在绑定之下时看的是
+     * 什么"不可能分叉——这正是 [ensureWorkdir] 那条纪律能站住的前提，也是 [WorkdirState.HOST_MISSING]
+     * 检查的 host 目录与 argv 里那一个**逐字相同**的原因（别名拼写会让"存在"与"能被反向映射"
+     * 变成两个不同的问题）。没有冒号的值按 proot 的 host == guest 读。
      */
     fun boundPairs(
         paths: PiPaths,
@@ -271,7 +297,7 @@ object ProrootCommand {
         extraBinds: List<Pair<String, String>>,
     ): List<Pair<String, String>> =
         GuestRecipe.binds(paths, storage).map { (_, value) -> asPair(value) } +
-            extraBinds +
+            extraBinds.map { (host, guest) -> asPair(bindArgument("$host:$guest")) } +
             listOf(asPair(GuestRecipe.tmpBind(paths)[1]))
 
     /** `host:guest` → pair；没有冒号时按 host == guest 读（proot 的简写）。 */
@@ -297,7 +323,13 @@ object ProrootCommand {
         // 必须在 rootfs 里真的存在，否则启动器 `chdir` 失败、子进程 126（类 KDoc 有实测
         // 原文）。**这里是唯一的漏斗**：引擎、装包命令、终端、三个探针阶段和失败取证都
         // 经过 [GuestCommandLine] → 本函数，而失败取证恰恰绕过了 `RuntimeSelection`。
-        ensureWorkdir(paths.rootfs, cwd, boundPairs(paths, storage, extraBinds))
+        //
+        // 绑定对**只算一次**：同一个 [boundPairs] 结果既喂 `ensureWorkdir` 的判断，又是下面
+        // argv 的来源（harness 钉住这两个集合相等）。先前是先把绑定表算一遍给 `ensureWorkdir`、
+        // 再遍历一次 `GuestRecipe.binds` + `extraBinds` 拼 argv —— 同一批 `canonicalHost`
+        // 每次 spawn 算两遍，而 `canonicalPath` 是 syscall。
+        val binds = boundPairs(paths, storage, extraBinds)
+        ensureWorkdir(paths.rootfs, cwd, binds)
         val argv = mutableListOf<String>()
         argv += paths.prorootLauncher().absolutePath
         // Kept from the proot recipe: without it a guest `link()` is EACCES
@@ -308,17 +340,22 @@ object ProrootCommand {
         argv += "-0"
         // `-r` / `-w`: the long spellings `--rootfs=` / `--cwd=` are proot-only and
         // make proroot exit with its usage line (`docs/proroot-research.md` §4.2).
+        //
+        // `-r` stays in `PiPaths.rootfs`'s own spelling **on purpose**: proroot resolves the
+        // rootfs prefix itself, and a live measurement inside a proroot guest showed every
+        // rootfs path (`/etc`, `/root`, `/tmp`, `/dev/fd`) reported back correctly even
+        // though the launcher had been given `-r /data/user/0/…`. Canonicalising it here would
+        // be churn with no defect behind it.
         argv += listOf("-r", paths.rootfs.path)
         argv += listOf("-w", cwd)
-        // The shared *table*, respelled for proroot: every entry goes out as
-        // `-b host:guest`, including the ones the shared recipe spells as a lone host
-        // path. Keep the flag from the pair rather than retyping "-b" here, so the
-        // shared recipe stays the only place that decides what is bound.
-        GuestRecipe.binds(paths, storage).forEach { (flag, value) ->
-            argv += listOf(flag, bindArgument(value))
-        }
-        extraBinds.forEach { (host, guest) -> argv += listOf("-b", "$host:$guest") }
-        argv += GuestRecipe.tmpBind(paths)
+        // The bind set, respelled for proroot: every entry goes out as `-b host:guest`,
+        // including the ones the shared recipe spells as a lone host path. `-b` is the flag
+        // for the whole shared table by construction (`GuestRecipe.binds`/`tmpBind` each pair
+        // their own flag with their value, and the harness pins that every one of them is
+        // `-b`), which is what lets this line reuse [boundPairs] instead of walking the shared
+        // table a second time — the duplication that made every spawn canonicalise its hosts
+        // twice.
+        binds.forEach { (host, guest) -> argv += listOf("-b", "$host$BIND_SEPARATOR$guest") }
         argv += GuestRecipe.shellArgs(guestCommand)
         return argv
     }

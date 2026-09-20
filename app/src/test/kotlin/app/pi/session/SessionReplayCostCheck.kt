@@ -851,14 +851,46 @@ fun main() {
         "重启成功那一支把「刚才那个会话」交给 attach",
         restartBody.contains("attach(result.session, continueFrom = previousSession)"),
     )
+    // **抓取必须在重启之前**：重启会退掉旧引擎（`Stopped` 那一支清 `api`/`session`），期间
+    // `_state.meta` 可能被改写；取在 Ok 分支里就多一个「谁先写」的顺序假设。
+    val captureAt = restartBody.indexOf("val previousSession = _state.value.meta.sessionFile")
+    val restartAt = restartBody.indexOf("host.restart(")
+    checkTrue(
+        "重启前就抓在手里（capture 在 host.restart 之前）",
+        captureAt >= 0 && restartAt >= 0 && captureAt < restartAt,
+        "captureAt=$captureAt restartAt=$restartAt",
+    )
+    // 用户可达的重启只有两个入口：`restartEngine`（本函数，带续接）与 `switchWorkspace`
+    // （带 cwd 变更，刻意的例外）。下面两条把「没有第三条只覆盖一半的路」钉住。
+    check(
+        "全仓 host.restart( 恰好两处",
+        Regex("host\\.restart\\(").findAll(viewModelText).count(),
+        2,
+    )
+    checkTrue(
+        "运行时开关（proroot 开/关）那条路确实走到 restartEngine",
+        viewModelText
+            .substringAfter("private suspend fun restartForRuntimeSwitch(", "")
+            .take(2_000)
+            .contains("restartEngine("),
+    )
+    checkTrue(
+        "另一处 host.restart( 在 switchWorkspace 里，且那里不续接",
+        viewModelText
+            .substringAfter("suspend fun switchWorkspace(", "")
+            .take(8_000)
+            .let { it.contains("host.restart(") && !it.contains("continueFrom") },
+    )
     checkTrue(
         "attach 在它自己全部收尾之后才接续（两次 replay 不许并发）",
         attachBody.contains("continueFrom?.let { continueAfterRestart(it) }") &&
             attachBody.indexOf("continueFrom?.let") > attachBody.indexOf("maybeResumeLastSession()"),
     )
+    // 窗口要盖住 `continueAfterRestart` **加上**它调用的 `discardEmptySessionCreatedByRestart`
+    // 的定义（两者相邻，合起来约 4.7k 字符）；取 8k 留足余量。
     val helperBody = viewModelText
         .substringAfter("private suspend fun continueAfterRestart(", "")
-        .take(4_000)
+        .take(8_000)
     checkTrue("找到了续接的函数体", helperBody.isNotEmpty(), "marker not found")
     // 失败必须可见，且两个分支各有各的话（异常 / 扩展否决），不许混成一句、更不许静默。
     checkTrue(
@@ -872,11 +904,109 @@ fun main() {
         Regex("停在一个新的空会话上").findAll(helperBody).count() == 3,
     )
     // 精确到分支，不用裸的 `afterSessionReplaced()`：KBoc 里也提到了它（带反引号）。
+    // 「重新启动会多一行」那一半：pi 在启动时就建好了那个空会话文件，接回旧的之后必须把它清掉。
+    // 判定本身（只有一行 session 头才算空）在 §9 用真文件钉；这里钉**连线**：只有接回成功那一支
+    // 才清，两个失败分支不清（它们连文件都没接回来，谈不到"这次新建的那个"）。
+    check(
+        "清理只被声明一次、调用一次",
+        Regex("discardEmptySessionCreatedByRestart\\(").findAll(viewModelText).count(),
+        2,
+    )
+    checkTrue(
+        "清理只在接回成功那一支（and 在 afterSessionReplaced() 之后）",
+        helperBody.contains("afterSessionReplaced()") &&
+            helperBody.indexOf("discardEmptySessionCreatedByRestart(") >
+            helperBody.indexOf("else -> {"),
+    )
+    checkTrue(
+        "五道门槛都在源码里（来源比对 / 目录映射 / 只有头 / 两次长度一致 / delete 的结果）",
+        helperBody.contains("if (guestPath == kept) return") &&
+            helperBody.contains("hostSessionFile(guestPath)") &&
+            helperBody.contains("SessionFileReader.isHeaderOnlySession") &&
+            helperBody.contains("if (sizeAfter != sizeBefore) return") &&
+            helperBody.contains("runCatching { file.delete() }"),
+    )
+    checkTrue(
+        "成功与失败都写 logcat（用户对删文件敏感 ⇒ 必须留痕）",
+        Regex("Log\\.[iw]\\(").findAll(helperBody).count() >= 2,
+    )
+    checkTrue(
+        "它被包在 Dispatchers.IO 上（读+删都是阻塞 IO，不占帧线程）",
+        helperBody.contains("withContext(Dispatchers.IO) {") ||
+            viewModelText.substringAfter("private suspend fun continueAfterRestart(", "")
+                .take(2_000).contains("withContext(Dispatchers.IO)"),
+    )
+    // 精确到分支：成功那一支现在是块（`else -> { afterSessionReplaced(); 清理 }`），所以断言
+    // 「`afterSessionReplaced()` 出现在 `else -> {` 之后」，而不是比对一个字面形状。
     checkTrue(
         "只有成功那一支才 afterSessionReplaced()（它是唯一会换转录的收尾）",
-        helperBody.contains("else -> afterSessionReplaced()") &&
+        helperBody.indexOf("afterSessionReplaced()") > helperBody.indexOf("else -> {") &&
             Regex("afterSessionReplaced\\(\\)").findAll(helperBody).count() >= 1,
     )
+
+    // ------------- 9. 「空会话」判定（重启后清理那一行的依据，`isHeaderOnlySession`）
+    //
+    // 用户对「删文件」极敏感，所以这一节用**真文件**把「什么算空」逐条钉住：只有一行 `session`
+    // 头才算空；任何别的条目（message / session_info / model_change / custom…）都不算 —— 也就是
+    // 回答「pi 在启动时若多写了一行（设置或扩展写的 meta）算不算空」：**不算**，我们不删，
+    // 代价只是列表里多一行空会话（保守方向：宁可留一行，不可删掉有内容的文件）。
+    val emptyRoot = File(System.getProperty("java.io.tmpdir"), "pi-empty-session-${System.nanoTime()}")
+    emptyRoot.mkdirs()
+    fun emptyFixture(name: String, content: String): File =
+        File(emptyRoot, name).apply { writeText(content) }
+
+    check(
+        "只有一行 session 头 ⇒ 空",
+        SessionFileReader.isHeaderOnlySession(emptyFixture("header-only.jsonl", header("h1") + "\n")),
+        true,
+    )
+    check(
+        "头 + 空行 ⇒ 仍然算空",
+        SessionFileReader.isHeaderOnlySession(
+            emptyFixture("blank-padded.jsonl", "\n" + header("h2") + "\n\n\n"),
+        ),
+        true,
+    )
+    check(
+        "有一条 message ⇒ 不算空",
+        SessionFileReader.isHeaderOnlySession(
+            emptyFixture("one-message.jsonl", header("h3") + "\n" + userEntry("u1", null, "hi") + "\n"),
+        ),
+        false,
+    )
+    check(
+        "有一条 session_info（例如改过名）⇒ 不算空",
+        SessionFileReader.isHeaderOnlySession(
+            emptyFixture(
+                "with-info.jsonl",
+                header("h4") + "\n" +
+                    "{\"type\":\"session_info\",\"id\":\"i1\",\"parentId\":\"h4\"," +
+                    "\"timestamp\":\"2026-01-01T00:00:00.000Z\",\"name\":\"x\"}\n",
+            ),
+        ),
+        false,
+    )
+    check(
+        "不是会话文件 ⇒ 不算空（头必须真的是 session 头）",
+        SessionFileReader.isHeaderOnlySession(
+            emptyFixture("not-a-session.jsonl", userEntry("u2", null, "hi") + "\n"),
+        ),
+        false,
+    )
+    check(
+        "空文件 ⇒ 不算空",
+        SessionFileReader.isHeaderOnlySession(emptyFixture("empty.jsonl", "")),
+        false,
+    )
+    check(
+        "超过 64 KiB 读上限 ⇒ 一律不算空（不读、也不删）",
+        SessionFileReader.isHeaderOnlySession(
+            emptyFixture("too-big.jsonl", header("h5") + "\n" + " ".repeat(70_000) + "\n"),
+        ),
+        false,
+    )
+    emptyRoot.deleteRecursively()
+    println()
 
     // ---------------------------------------------------------------- summary
     println("-- 结论 --")

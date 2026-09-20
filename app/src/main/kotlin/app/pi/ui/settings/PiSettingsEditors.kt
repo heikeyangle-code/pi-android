@@ -620,7 +620,11 @@ fun PiListEditorSheet(
      */
     validate: (List<String>) -> String? = { null },
 ) {
-    var entries by remember(initialEntries) { mutableStateOf(initialEntries) }
+    var entries by remember(initialEntries) {
+        // `presetBaseline` 非空的行（`defaultTools`）先过一遍 `PiQuickAdd.effective`：未设置显示
+        // 默认四件套，"只写了可选项"的那份写错的值还原成并集。其余行原样返回。
+        mutableStateOf(PiQuickAdd.effective(initialEntries, setting.presetBaseline, setting.presets))
+    }
     var draft by remember { mutableStateOf("") }
     var problem by remember(initialEntries) { mutableStateOf<String?>(null) }
 
@@ -672,10 +676,22 @@ fun PiListEditorSheet(
                                 .padding(end = PiSpacing.inline)
                                 .height(PiSettingsMetrics.chipHeight)
                                 .clickable {
+                                    // 加/减都走 `PiQuickAdd`：加在基线之上（`defaultTools` 的
+                                    // 「只写了可选项」不可能再被写出来），减到基线时塌回未设置。
                                     entries = if (selected) {
-                                        entries.filter { it != preset }
+                                        PiQuickAdd.remove(
+                                            entries,
+                                            preset,
+                                            setting.presetBaseline,
+                                            setting.presets,
+                                        )
                                     } else {
-                                        entries + preset
+                                        PiQuickAdd.add(
+                                            entries,
+                                            preset,
+                                            setting.presetBaseline,
+                                            setting.presets,
+                                        )
                                     }
                                 },
                             shape = PiShapes.badge,
@@ -787,21 +803,26 @@ fun PiListEditorSheet(
                 )
                 Spacer(Modifier.height(PiSpacing.small))
             }
+            // 落盘的值：一份正好等于基线的显式列表和「未设置」是同一个状态，`persist` 把它
+            // 塌回空列表；空列表在 store 里走 `remove`（键删掉），不是写 `[]`。
+            val toSave = PiQuickAdd.persist(entries, setting.presetBaseline)
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.End,
             ) {
                 TextButton(
                     onClick = {
-                        entries = emptyList()
+                        // 「清空」= 回到这一行的默认：有基线的行就是基线本身（落盘时塌回未设置），
+                        // 其余行仍是空列表（键删掉）。
+                        entries = setting.presetBaseline
                         problem = null
                     },
                 ) { Text("清空") }
                 TextButton(
                     onClick = {
-                        val rejected = validate(entries)
+                        val rejected = validate(toSave)
                         if (rejected == null) {
-                            onSet(entries)
+                            onSet(toSave)
                             onDismiss()
                         } else {
                             problem = rejected
@@ -810,7 +831,7 @@ fun PiListEditorSheet(
                 ) {
                     // The button names the outcome before it happens: an empty list removes the
                     // key (= pi's default), it does not store an empty list.
-                    Text(if (entries.isEmpty()) "恢复默认" else "保存")
+                    Text(if (toSave.isEmpty()) "恢复默认" else "保存")
                 }
             }
             Spacer(Modifier.height(PiSettingsMetrics.sheetFooterBottom))

@@ -340,6 +340,61 @@ internal object SessionFileReader {
     }
 
     /**
+     * Whether [file] is a session file whose **only** content is its header — i.e. the empty
+     * session pi creates for itself the moment a process starts (`SessionManager.create`),
+     * before anything has been said in it.
+     *
+     * ## Why this predicate exists (and why it is not a list rule)
+     *
+     * The engine's argv is fixed, so **every** start and every in-process restart makes pi
+     * open a *new* session file. When the app then continues the conversation the user was
+     * on (a `switch_session`, see `PiSessionViewModel.continueAfterRestart`), that fresh file
+     * is left behind with nothing in it — one more row in the session list per restart, which
+     * is indistinguishable there from a conversation. Deleting it needs a fact the list layer
+     * does not have (**provenance**: this file is the one the just-restarted engine created and
+     * has never been written to), and this function is the second half of that fact: "and it
+     * is empty".
+     *
+     * The opposite rule — "hide sessions with no messages when listing" — is deliberately not
+     * taken: a session the *user* created with 「新建会话」 and abandoned is exactly as empty,
+     * and hiding it would make the list drop a session that exists (this repository's rule is
+     * that a read-out may not claim less than the truth any more than it may claim more).
+     *
+     * ## What counts as empty, and what it costs to be wrong
+     *
+     * Exactly one non-blank line, and that line must parse as an object with
+     * `type: "session"` — the header pi writes first (`session-manager.ts:932-939`). **Any**
+     * other entry (a `message`, a `session_info` from a rename, a `model_change`, a `custom`
+     * from an extension, …) means "not empty" and the answer is false. That is the
+     * conservative direction on purpose: a false **true** deletes a file that had content in
+     * it, a false **false** leaves one empty row in the list.
+     *
+     * [maxBytes] is a bound on the read, not a property of "empty": anything larger than a
+     * header-only file is answered "not empty" without being read, which is both cheaper and
+     * safer (a session that is actually long is never even inspected).
+     *
+     * A file that is missing, unreadable, or not a session at all answers false.
+     */
+    fun isHeaderOnlySession(file: File, maxBytes: Long = EMPTY_SESSION_MAX_BYTES): Boolean {
+        val size = sizeOf(file)
+        if (size <= 0L || size > maxBytes) return false
+        // `readAll` requires a valid header, so a stray `.jsonl` cannot be mistaken for an
+        // empty session; it reads the whole file, which `maxBytes` above has already bounded.
+        val window = readAll(file) ?: return false
+        return window.complete && window.entries.isEmpty()
+    }
+
+    /**
+     * The largest file [isHeaderOnlySession] will even look at: 64 KiB.
+     *
+     * A header-only session is a few hundred bytes (the header line plus a newline). The bound
+     * is generous enough for a header carrying a long `cwd` and for a file with trailing blank
+     * lines, and small enough that "not empty" is the answer for anything that has been written
+     * to — see that function's KDoc for why the conservative side is the safe one.
+     */
+    const val EMPTY_SESSION_MAX_BYTES: Long = 64L * 1024
+
+    /**
      * Every entry in [file], delivered to [onEntry] in file order, **sanitised**.
      *
      * This is the whole-session read the session-tree overlay needs without the

@@ -1,6 +1,7 @@
 package app.pi.ui
 
 import android.app.Application
+import android.util.Log
 import android.content.Intent
 import android.content.res.Configuration
 import android.net.Uri
@@ -1509,6 +1510,11 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             )
             return
         }
+        // pi 在**启动那一刻**就为这次重启建好了一个空会话文件，我们要离开的正是它：`attach`
+        // 里的 `refreshState()` 之后 `meta.sessionFile` 指着它，而它**不是**我们接回的那一个
+        // （上面刚比过）。接回成功之后它就成了一个「一次都没说过话的会话」——不清掉的话，
+        // 会话列表每次重启都会多一行，用户看到的仍然是「被切成好几段」。
+        val createdByThisRestart = _state.value.meta.sessionFile
         SessionHints.file = file
         val outcome = runCatching { api.switchSession(target) }.getOrNull()
         when {
@@ -1530,7 +1536,69 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                 )
             }
 
-            else -> afterSessionReplaced()
+            else -> {
+                afterSessionReplaced()
+                // 读 + 删都是阻塞 IO：整段放到 IO 上（这一段本来就是被 `withContext(Dispatchers.IO)`
+                // 允许的挂起上下文，`continueAfterRestart` 的调用者也在协程里）。
+                withContext(Dispatchers.IO) {
+                    discardEmptySessionCreatedByRestart(createdByThisRestart, kept = target)
+                }
+            }
+        }
+    }
+
+    /**
+     * 删掉「**这一次重启刚创建、而且一条消息都没有**」的那个会话文件；任何一条不满足就不删。
+     *
+     * ## 为什么删的是文件而不是「列表里不显示」
+     *
+     * pi 在进程启动的那一刻就建好了这个空文件（`SessionManager.create`）。列表层没有**来源**
+     * 这个事实：用户自己按「＋ 新建会话」又放着不管的那个会话，在数据上与它一模一样，而那是
+     * 用户的东西，**必须**在列表里看得见（丢掉它同样是让界面少说一句话）。所以判定只能发生在
+     * 知道来源的地方 —— 这里：`created` 是 `attach` 刚报出来的那个新会话，`kept` 是我们接回的
+     * 旧会话，两者不同，且前者由**这次重启**产生。
+     *
+     * ## 五道门槛，缺一不删
+     *
+     * 1. `created != kept`：唯一能证明「它是这次新建的那个」的比对（接回成功之后 `meta` 已经
+     *    换成 `kept`，所以这里用的是接回**之前**抓下来的值）；
+     * 2. `hostSessionFile(created)` 非 null：与换会话同一条路径映射，落在 agent 目录之外的一律不动；
+     * 3. `SessionFileReader.isHeaderOnlySession(file)`：**只有一行 session 头**才算空。任何别的
+     *    条目（message / session_info / model_change / custom / …）都算有内容 —— pi 在启动时若
+     *    多写了一行（例如设置或扩展写了一条 `model_change`），这里就**不删**，代价是列表里多
+     *    一行空会话（这是刻意的保守方向：宁可留一行，不可删掉有内容的文件）；
+     * 4. 读之前量一次长度、读完再量一次，两次一致才继续：读的这一刻用户可能刚好发出第一条消息
+     *    （重启到接回之间有几帧），长度变了说明文件正在被写，**不删**；
+     * 5. `delete()` 失败就到此为止（只记一行日志，不抛、不提示）。
+     *
+     * 用户对「删文件」极敏感，所以：删之前**一定先读一遍**（门槛 3），删的是本 App 自己刚刚
+     * 创建的、且这次重启前后都不是当前会话的那一个文件；成功与失败都写 logcat（`Log.i`/`Log.w`），
+     * 这是本仓库里 `runtime`/`engine` 一直在用的那套日志口径。**不**给用户弹提示：这是一次
+     * 内部清理，用户没有做错任何事，也没有需要他采取的动作。
+     *
+     * 调用点把它整个包在 `Dispatchers.IO` 上（读与删都是阻塞 IO，不占帧线程）。
+     *
+     * @param created 这次重启后 `get_state` 报出来的 session 文件（guest 路径），或 null。
+     * @param kept 接回的那个会话的 guest 路径（永远不会被删）。
+     */
+    private fun discardEmptySessionCreatedByRestart(created: String?, kept: String) {
+        val guestPath = created?.takeIf { it.isNotBlank() } ?: return
+        if (guestPath == kept) return
+        val file = hostSessionFile(guestPath) ?: return
+        val sizeBefore = runCatching { file.length() }.getOrDefault(-1L)
+        if (sizeBefore <= 0L) return
+        if (!runCatching { SessionFileReader.isHeaderOnlySession(file) }.getOrDefault(false)) return
+        // 门槛 4：读与删之间被写过（用户刚好发了第一条消息）就不动它。
+        val sizeAfter = runCatching { file.length() }.getOrDefault(-2L)
+        if (sizeAfter != sizeBefore) return
+        val removed = runCatching { file.delete() }.getOrDefault(false)
+        if (removed) {
+            Log.i(
+                TAG,
+                "重启后接回旧会话，已删除本次启动新建的空会话文件：${file.name}",
+            )
+        } else {
+            Log.w(TAG, "重启后接回旧会话，但删不掉本次启动新建的空会话文件：${file.name}")
         }
     }
 
@@ -2197,6 +2265,16 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         reason: String,
         allowInterrupt: Boolean,
     ): EngineRestartCoordinator.Outcome {
+        // **重启前**就把「用户此刻在哪个会话」抓在手里 —— 这是本条路径唯一要做续接的输入，
+        // 而且必须在 `host.restart` **之前**取：重启会退掉旧引擎（`Stopped` 那一支把 `api`/
+        // `session` 清空），期间 `_state.meta` 可能被那次死亡或别的读者改写；取在 Ok 分支里
+        // 就多了一个「谁先写」的顺序假设。取在最前面，任何人、任何顺序都改不了它。
+        //
+        // 它同时覆盖**所有**用户可达的重启：本函数是进程内重启的唯一入口（全仓对这一行的调用
+        // 只有两处，另一处在 `switchWorkspace` —— 换了工作区就该是新会话，那是刻意的例外），
+        // 运行时开关（proroot 开/关）与装包走的是 `EngineRestartCoordinator` → `PiRoot.kt:787`
+        // → 这里。
+        val previousSession = _state.value.meta.sessionFile
         // The old engine publishes `Stopped` while it is being retired, and
         // `session` still points at it — the state collector cannot tell that apart
         // from a crash. [engineTransition] is what tells it: without this the
@@ -2221,9 +2299,9 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             // 那个有意为之的默认。不接回来，一次对话就会在列表里裂成好几段、每段标题各不相同 ——
             // 用户报的正是这个：「之前都没有这种 bug，肯定是最近这几轮修加载时间时引入的」。
             //
-            // 取得**重启前**的 guest 路径：`attach` 里的 `refreshState()` 会把它换成新会话的名字，
-            // 那个名字正是要离开的那个。
-            val previousSession = _state.value.meta.sessionFile
+            // `previousSession` 是上面在**重启前**抓的那个 guest 路径（`meta.sessionFile`），
+            // 交给 `attach`：它会在自己全部收尾之后把新引擎切回那个会话（`continueAfterRestart`），
+            // 所以一次对话不会因为「引擎重启」而裂成两个文件。
             attach(result.session, continueFrom = previousSession)
         } else {
             // A refused restart leaves the old engine running (nothing changes); a
@@ -5663,6 +5741,9 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private companion object {
+        /** logcat 标签：本文件只有这一处日志（重启后清理空会话文件），与 `runtime`/`engine` 同口径。 */
+        const val TAG = "PiSessionViewModel"
+
         /**
          * Where [onCleared]'s teardown runs.
          *

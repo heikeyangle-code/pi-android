@@ -395,15 +395,43 @@ object ProrootProbe {
         extraBinds: List<Pair<String, String>> = emptyList(),
     ): String {
         val argv = GuestCommandLine.build(paths, engine, guestCommand, cwd = cwd, storage = storage, extraBinds = extraBinds)
-        val env = GuestCommandLine.environment(paths, engine)
+        // proroot rejects `--kill-on-exit`, so a probe that times out would leave its whole
+        // guest tree behind: `destroyForcibly()` only kills the direct child. This is the same
+        // discipline the three production stop sites use (`PtySession.close`, `PiEngineHost`'s
+        // engine stop, `GuestCommand`'s timeout) — and it is wired **here** because this was
+        // the one launch path that skipped it. The token names *this* invocation: the
+        // launcher's pid is not otherwise knowable on this platform (`ProrootLaunchHandle`
+        // explains why `/proc/<pid>/environ` is the mechanism).
+        val token = if (engine == GuestEngine.Proroot) UUID.randomUUID().toString() else null
+        val env = GuestCommandLine.environment(
+            paths = paths,
+            engine = engine,
+            extra = if (token == null) emptyMap() else mapOf(ProrootLaunchHandle.TOKEN_ENV to token),
+        )
+        val handle = if (token == null) null else ProrootLaunchHandle.arm(paths.prorootTmpDir(), token)
         val process = ProcessBuilder(argv)
             .directory(paths.runtime)
             .redirectErrorStream(true)
             .also { it.environment().putAll(env) }
             .start()
+        handle?.resolveLauncherPid()
         val finished = runCatching { process.waitFor(timeoutMs, TimeUnit.MILLISECONDS) }.getOrDefault(false)
         if (!finished) {
+            // Capture **before** killing the direct child: the tree is only reachable through
+            // its parent/child edges, and `destroyForcibly()` reparents the children to init
+            // ([GuestTreeReaper.capture]). `capture` checks the start time recorded at resolve
+            // time, so a recycled pid is never signalled.
+            val captured = handle?.let { live ->
+                val pid = live.launcherPid
+                if (pid == null) {
+                    null
+                } else {
+                    runCatching { GuestTreeReaper.capture(pid, live.launcherStartTime) }.getOrNull()
+                }
+            }
             process.destroyForcibly()
+            if (captured != null) runCatching { GuestTreeReaper.reapInBackground(captured) }
+            runCatching { handle?.deleteConfig() }
             val partial = readBounded(process, maxChars)
             // The timeout is reported in the raw probe's marker vocabulary on purpose:
             // `ProrootRawProbe.parse` already knows how to render it, `ProrootExecProbe.parse`
@@ -412,6 +440,10 @@ object ProrootProbe {
             return partial + "\n" + ProrootRawProbe.TIMEOUT_MARKER + "\t" +
                 "proroot 探针 ${timeoutMs / 1000} 秒没有返回"
         }
+        // Delete this launch's config table while its pid is still known — the same cleanup
+        // `RuntimeSelection.sweepProrootConfigs` would do on the next enabled launch, only
+        // earlier.
+        runCatching { handle?.deleteConfig() }
         return readBounded(process, maxChars)
     }
 

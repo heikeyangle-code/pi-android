@@ -44,6 +44,13 @@ package app.pi.runtime
 //     2026-09-19). `ProrootRawProbe.parse` keeps the run's own words and classifies an
 //     argument-parsing death as its own phase, so the row and the report quote proroot
 //     instead of claiming the raw syscall was untranslated.
+// 10. **A bind's host side is spelled the way the guest kernel spells it** (added
+//     2026-09-20). `Context.getFilesDir()` gives `/data/user/0/<pkg>/files` while the
+//     kernel gives `/data/data/<pkg>/files`, and both runtimes reverse-map by string
+//     prefix — so the agent dir and the workspace were unreachable by relative path (and
+//     pi's `readdirSync` of the extension dir failed ENOENT, silently losing every
+//     bundled tool). The alias fixture below is a symlink the harness makes itself, so the
+//     rule is pinned independently of the machine that runs it.
 //
 // Android-free by construction: every file listed in this harness's closure imports
 // `java.io` and the Kotlin stdlib and nothing else. If one of them ever grows an
@@ -110,7 +117,7 @@ fun main() {
     val sharedBinds = GuestRecipe.binds(p, storage).map { it[1] }
     val prootBinds = binds(ProotCommand.build(p, command, "/root", storage))
     val prorootBinds = binds(ProrootCommand.build(p, command, "/root", storage))
-    check("proot's binds are the shared table plus l2s and tmp", prootBinds.toSet(), (sharedBinds + l2sBind + "${p.tmp.path}:/tmp").toSet())
+    check("proot's binds are the shared table plus l2s and tmp", prootBinds.toSet(), (sharedBinds + l2sBind + GuestRecipe.tmpBind(p)[1]).toSet())
     check("both runtimes bind /dev, /proc, /sys, /system, /apex and /dev/fd", sharedBinds.any { it == "/dev" } && sharedBinds.any { it == "/proc" } && sharedBinds.any { it == "/sys" } && sharedBinds.any { it == "/system" } && sharedBinds.any { it == "/apex" } && sharedBinds.any { it == "/proc/self/fd:/dev/fd" }, true)
     check("both runtimes bind external storage twice", sharedBinds.count { it.startsWith(storage.path) }, 2)
 
@@ -127,10 +134,141 @@ fun main() {
     check("the normalizer qualifies a bare host path", ProrootCommand.bindArgument("/dev"), "/dev:/dev")
     check("the normalizer leaves a pair alone", ProrootCommand.bindArgument("/dev/urandom:/dev/random"), "/dev/urandom:/dev/random")
     check("the separator is the one proroot parses", ProrootCommand.BIND_SEPARATOR, ":")
-    check("proroot qualifies the shared table", prorootBinds.toSet(), (sharedBinds.map { ProrootCommand.bindArgument(it) } + "${p.tmp.path}:/tmp").toSet())
+    check("proroot qualifies the shared table", prorootBinds.toSet(), (sharedBinds.map { ProrootCommand.bindArgument(it) } + GuestRecipe.tmpBind(p)[1]).toSet())
     check("proroot emits no unqualified bind value", prorootBinds.all { it.contains(ProrootCommand.BIND_SEPARATOR) }, true)
     check("proroot binds /dev to /dev", prorootBinds.contains("/dev:/dev"), true)
     check("proot's bind count is unchanged by the respelling", prootBinds.size, sharedBinds.size + 2)
+
+    // ---- 绑定源的拼写 == 内核会报告的那一种（别名 `/data/user/0` vs `/data/data`）------
+    // `Context.getFilesDir()` 给的是**符号链接那一侧**（`/data/user/0/<pkg>/files`），而内核给的
+    // 是**物理那一侧**（`/data/data/<pkg>/files`）。两个运行时把宿主路径翻回 guest 路径靠的都是
+    // **字符串前缀匹配**，host 侧拼错的那一条绑定就匹配不上内核报出来的路径：guest 的初始 cwd
+    // 正是绑定的宿主目录，于是 `getcwd()` 漏出宿主拼写，`.`、`..`、`git status`、子进程全挂。
+    //
+    // 本机实测（一台**正在跑的 proroot guest**，launcher argv 里有
+    // `-b /data/user/0/com.dsh.client/cache/shm:/dev/shm`）：
+    //   `cd /dev/shm && /bin/pwd` -> `/data/data/com.dsh.client/cache/shm`（宿主拼写）
+    //   `ls .` -> ENOENT          对照 `cd /sdcard && /bin/pwd` -> `/sdcard`
+    // 同一个 guest 里，八个绑定根里**唯一**拼写不 canonical 的那一个（`/dev/shm`）是**唯一**
+    // 让 Node 的 `readdir` 报 ENOENT 的目录，其余（`/sdcard`、`/system`、`/proc`、`/tmp`、`/root`）
+    // 都能读。`GuestRecipe.canonicalHost` 的 KDoc 记了完整证据链。
+    //
+    // 判据必须与跑它的机器无关，所以别名用**自己造的符号链接**，断言的是规则本身。
+    val aliasRoot = java.io.File(System.getProperty("java.io.tmpdir"), "pi-proroot-bind-alias")
+    aliasRoot.deleteRecursively()
+    val aliasRealDir = java.io.File(aliasRoot, "real")
+    java.io.File(aliasRealDir, "pi/workspaces/workspace-1").mkdirs()
+    val aliasLink = java.io.File(aliasRoot, "link")
+    java.nio.file.Files.createSymbolicLink(aliasLink.toPath(), aliasRealDir.toPath())
+    val linkedWorkspace = "${aliasLink.path}/pi/workspaces/workspace-1"
+    val realWorkspace = java.io.File(aliasRealDir, "pi/workspaces/workspace-1").canonicalPath
+
+    check("the fixture link really is an alias", linkedWorkspace == realWorkspace, false)
+    check("a host path is respelled the kernel's way", GuestRecipe.canonicalHost(linkedWorkspace), realWorkspace)
+    check("canonicalising is idempotent", GuestRecipe.canonicalHost(realWorkspace), realWorkspace)
+    check("an unresolvable path keeps its canonical prefix", GuestRecipe.canonicalHost("$aliasRoot/nope/x"), "${aliasRoot.canonicalPath}/nope/x")
+    check("an empty host is not resolved to the process cwd", GuestRecipe.canonicalHost(""), "")
+    // `/proc` 是合成的、**相对进程**的：`/proc/self` 解析成**本进程**，canonicalPath 会把表里那条
+    // `/proc/self/fd:/dev/fd` 变成 `/proc/<App 的 pid>/fd`——绑错目录，而且每个进程一个不同的字符串。
+    check("the /proc subtree is never respelled", GuestRecipe.canonicalHost("/proc/self/fd"), "/proc/self/fd")
+    check("and neither is /proc itself", GuestRecipe.canonicalHost("/proc"), "/proc")
+    check("the table's /proc entry survives", prorootBinds.contains("/proc/self/fd:/dev/fd"), true)
+    check("the separator is the shared constant", ProrootCommand.BIND_SEPARATOR, GuestRecipe.BIND_SEPARATOR)
+
+    // host 侧会动，guest 侧永不改：这就是 `bindValue` 的全部契约。
+    check("the host side of a pair is canonicalised", GuestRecipe.bindValue("$linkedWorkspace:/workspace/x"), "$realWorkspace:/workspace/x")
+    check("the guest side of a pair is untouched", GuestRecipe.bindValue("$realWorkspace:/workspace/pi/workspaces/workspace-1"), "$realWorkspace:/workspace/pi/workspaces/workspace-1")
+    // 裸值是 proot 的 `host == guest` 简写：没有独立的 host 侧，改它会连 guest 挂载点一起挪。
+    check("a bare value is left exactly as written", GuestRecipe.bindValue(linkedWorkspace), linkedWorkspace)
+    check("a bare canonical value is left alone too", GuestRecipe.bindValue("/dev"), "/dev")
+    // proroot 用不了简写，所以它自己展开——展开**只动 host 侧**，guest 侧逐字不动：简写断言的是
+    // "两边指同一个目录"，把 guest 侧也换成解析后的路径就等于悄悄把挂载点挪了。
+    check("proroot expands a bare value without moving the guest side", ProrootCommand.bindArgument(linkedWorkspace), "$realWorkspace:$linkedWorkspace")
+    check("...so the guest side is byte-identical to what the shorthand named", ProrootCommand.bindArgument(linkedWorkspace).substringAfter(":"), linkedWorkspace)
+    check("...and /dev, which is already canonical, is unchanged on both sides", ProrootCommand.bindArgument("/dev"), "/dev:/dev")
+
+    // ---- 唯一裁决点的边界（A1-1 / A1-2 / A1-4）--------------------------------
+    // 相对路径：`File("rel").canonicalPath` 会拿 **JVM 的 user.dir** 拼出一个宿主绝对路径 ——
+    // 一个调用方从没要过的绑来源。规则是原样返回，让启动器自己报错。
+    check("a relative host is never resolved against the JVM cwd", GuestRecipe.canonicalHost("relative/dir"), "relative/dir")
+    check("...and the same holds through bindValue", GuestRecipe.bindValue("relative/dir:/guest"), "relative/dir:/guest")
+    check("a relative bare value stays bare", ProrootCommand.bindArgument("relative/dir"), "relative/dir:relative/dir")
+    // procfs 的别名拼写与 `/proc` 同一类：合成、**相对进程**。`canonicalPath("/dev/stdin")` 会变成
+    // `/proc/<App 的 pid>/fd/0`，每个进程一个不同的字符串。
+    check("a procfs descriptor alias is never respelled", GuestRecipe.canonicalHost("/dev/stdin"), "/dev/stdin")
+    check("...nor /dev/stdout", GuestRecipe.canonicalHost("/dev/stdout"), "/dev/stdout")
+    check("...nor /dev/stderr", GuestRecipe.canonicalHost("/dev/stderr"), "/dev/stderr")
+    check("...nor /dev/fd", GuestRecipe.canonicalHost("/dev/fd"), "/dev/fd")
+    check("...nor anything under /proc", GuestRecipe.canonicalHost("/proc/self/cwd"), "/proc/self/cwd")
+    // 多用户：`/data/user/0` 是符号链接、`/data/user/10` 不是，规则交给 canonicalPath，两者都
+    // 必须不等于"被 JVM cwd 拼过"的东西（这里用注入的解析器表达，不依赖本机布局）。
+    GuestRecipe.installCanonicalResolverForTest { path -> "canonical:$path" }
+    check("the resolver is consulted for an ordinary absolute host", GuestRecipe.canonicalHost("/data/user/0/x"), "canonical:/data/user/0/x")
+    check("...but not for /proc", GuestRecipe.canonicalHost("/proc/self"), "/proc/self")
+    check("...nor for a procfs alias", GuestRecipe.canonicalHost("/dev/stderr"), "/dev/stderr")
+    check("...nor for a relative path", GuestRecipe.canonicalHost("x"), "x")
+    check("...nor for blank input", GuestRecipe.canonicalHost("  "), "  ")
+    // 热路径：同一个 host 在**进程内只解析一次**（第二次起是查表），并且不同 host 各占一格。
+    val before = GuestRecipe.canonicalHostCacheSizeForTest()
+    check("the second lookup of the same host is a cache hit", GuestRecipe.canonicalHost("/data/user/0/x"), "canonical:/data/user/0/x")
+    check("...so the cache did not grow", GuestRecipe.canonicalHostCacheSizeForTest(), before)
+    check("a new host is resolved once and remembered", GuestRecipe.canonicalHost("/data/user/0/y"), "canonical:/data/user/0/y")
+    check("...and the cache grew by exactly one", GuestRecipe.canonicalHostCacheSizeForTest(), before + 1)
+    GuestRecipe.resetCanonicalResolverForTest()
+
+    // ---- `/dev/shm`：共享表必须有它（实测参考实现的 argv 里有 `-b <cache>/shm:/dev/shm`）------
+    // 没有它，guest 的 `/dev/shm` 就是宿主 `/dev` 里恰好有什么（Android 没有），POSIX 共享内存
+    // 随之失败。两套运行时都要这一条，所以它在共享表里。
+    val shmBinds = binds(ProotCommand.build(p, command, "/root", storage)).filter { it.endsWith(":/dev/shm") }
+    check("the shared table binds /dev/shm", shmBinds.size, 1)
+    check("...from a directory this app owns", shmBinds.single(), "${p.shm.canonicalPath}:/dev/shm")
+    check("...and proroot emits it qualified too", binds(ProrootCommand.build(p, command, "/root", storage)).count { it.endsWith(":/dev/shm") }, 1)
+    check("...with the guest side unchanged", binds(ProrootCommand.build(p, command, "/root", storage)).single { it.endsWith(":/dev/shm") }.substringAfter(":"), "/dev/shm")
+    // `/dev/shm` 必须排在 `-b /dev` **之后**：两套运行时都是后面的绑定覆盖前面的（实测
+    // `/dev/random` 因此指向 urandom，major:minor 1:9）。
+    val devIndex = sharedBinds.indexOf("/dev")
+    val shmIndex = sharedBinds.indexOfFirst { it.endsWith(":/dev/shm") }
+    check("...and after the /dev bind, so the later bind wins", devIndex >= 0 && shmIndex > devIndex, true)
+
+    // 两个 builder，在别名上：出去的 host 侧是解析后的路径。
+    val aliasExtra = linkedWorkspace to "/workspace/pi/workspaces/workspace-1"
+    val prorootAlias = binds(ProrootCommand.build(p, command, "/root", null, listOf(aliasExtra)))
+    check("proroot canonicalises an extra bind's host side", prorootAlias.contains("$realWorkspace:/workspace/pi/workspaces/workspace-1"), true)
+    check("proroot emits no bind through the alias", prorootAlias.none { it.startsWith("${aliasLink.path}:") }, true)
+    val prootAlias = binds(ProotCommand.build(p, command, "/root", null, listOf(aliasExtra)))
+    check("proot canonicalises an extra bind's host side too", prootAlias.contains("$realWorkspace:/workspace/pi/workspaces/workspace-1"), true)
+    check("proot emits no bind through the alias", prootAlias.none { it.startsWith("${aliasLink.path}:") }, true)
+
+    // 引擎自己的形状：工作区绑定 + `-w <guest 工作区>`，也正是用户看到它的地方。
+    // (名字不能叫 `engineCwd`：下面那段 `-w` 的判据在同一个 `main()` 作用域里用它。)
+    val engineGuestCwd = "/workspace/pi/workspaces/workspace-1"
+    val engineArgv = ProrootCommand.build(p, command, engineGuestCwd, storage, listOf(aliasExtra))
+    check("the engine's bind keeps its guest path", binds(engineArgv).contains("$realWorkspace:$engineGuestCwd"), true)
+    check("and -w is still the guest path", engineArgv.windowed(2).any { it == listOf("-w", engineGuestCwd) }, true)
+
+    // 一个漏斗：`ensureWorkdir` 判的绑定对与 argv 里的是同一组（"目录存在"与"能被反向映射"
+    // 必须是同一个问题）。
+    check(
+        "the pair list is the argv's bind set",
+        ProrootCommand.boundPairs(p, storage, listOf(aliasExtra)).map { (host, guest) -> "$host:$guest" }.toSet(),
+        binds(ProrootCommand.build(p, command, "/root", storage, listOf(aliasExtra))).toSet(),
+    )
+
+    // **files 目录本身是符号链接**：`/tmp` 也在 App 数据目录下，所以它也必须解析后输出——
+    // 否则 guest 里 `cd /tmp` 会遇到同一个问题。
+    val aliasPaths = PiPaths(filesDir = aliasLink, nativeLibDir = java.io.File(NATIVE))
+    check("the alias tmp path really differs", aliasPaths.tmp.path == aliasPaths.tmp.canonicalPath, false)
+    check("proroot's tmp bind is the resolved path", binds(ProrootCommand.build(aliasPaths, command, "/", null)).first { it.endsWith(":/tmp") }, "${aliasPaths.tmp.canonicalPath}:/tmp")
+    check("proroot emits nothing through the symlinked files dir", binds(ProrootCommand.build(aliasPaths, command, "/", null)).none { it.startsWith("${aliasLink.path}/") }, true)
+    // proot additionally carries the `-b <l2s>:<l2s>` pair, which is **deliberately left
+    // untouched** (both sides must stay the same string — `PiRuntime.kt`'s comment on that
+    // line), so it is the one value allowed to be spelled through the symlink.
+    val aliasProotBinds = binds(ProotCommand.build(aliasPaths, command, "/", null))
+        .filterNot { it == "${aliasPaths.l2s.path}:${aliasPaths.l2s.path}" }
+    check("proot's tmp bind is the resolved path", aliasProotBinds.first { it.endsWith(":/tmp") }, "${aliasPaths.tmp.canonicalPath}:/tmp")
+    check("proot emits nothing else through the symlinked files dir", aliasProotBinds.none { it.startsWith("${aliasLink.path}/") }, true)
+    check("and the l2s pair really is the exception", binds(ProotCommand.build(aliasPaths, command, "/", null)).any { it == "${aliasPaths.l2s.path}:${aliasPaths.l2s.path}" }, true)
+    aliasRoot.deleteRecursively()
 
     // ---- `-w` 的目录必须在 rootfs 里存在（2026-09-19 实测；引擎 126 的根因） -------
     // proroot v1.2.8 的 `-w` **只按 rootfs 解析**、不看绑定表：`<rootfs>/<cwd>` 不存在时
@@ -861,7 +999,11 @@ fun main() {
 
     // ================================================================ 8. 共享配方常量
     check("the shell tail is bash -c", GuestRecipe.shellArgs("x"), listOf("/bin/bash", "-c", "x"))
-    check("the tmp bind is the app's own directory", GuestRecipe.tmpBind(p), listOf("-b", "${p.tmp.path}:/tmp"))
+    // The expectation comes from the same rule the builder uses (`canonicalHost`), not from a
+    // literal: on a device `<files>` is spelled `/data/user/0/...` while the kernel spells it
+    // `/data/data/...`, so a hand-written literal would pin the machine instead of the rule.
+    // The alias section above is where the rule itself is pinned.
+    check("the tmp bind is the app's own directory", GuestRecipe.tmpBind(p), listOf("-b", "${p.tmp.canonicalPath}:/tmp"))
     check("the proroot scratch is inside the volatile runtime tree", p.prorootTmp.path, "$FILES/pi/runtime/proroot-tmp")
     check("the probe cache is inside the volatile runtime tree", p.prorootProbeCache().path, "$FILES/pi/runtime/.proroot-probe")
     check("the CA bundle is the payload's path", GuestRecipe.GUEST_CA_BUNDLE, "/etc/ssl/certs/ca-certificates.crt")

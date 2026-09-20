@@ -7,6 +7,8 @@ import android.os.StatFs
 import app.pi.BuildConfig
 import app.pi.bridge.DeviceActionException
 import app.pi.bridge.DeviceSystemActions
+import app.pi.packages.PiBuiltinExtension
+import app.pi.packages.PiExtensionLoadErrors
 import app.pi.runtime.BootAudit
 import app.pi.runtime.DurableLayout
 import app.pi.runtime.GuestEngine
@@ -423,6 +425,41 @@ object DiagnosticsReport {
             }
             toolProbe.describe().forEach { appendLine("  $it") }
             if (toolProbe.exitCode != null) appendLine("  （guest 命令退出码 ${toolProbe.exitCode}）")
+            appendLine()
+
+            // ---- 扩展发现 ------------------------------------------------------
+            // 用户报过的形状：「随包扩展注册的工具一个都不在」。它有两半，只有一半会留下
+            // 日志：pi 在 RPC 模式下把「扩展加载失败」打到 stderr 并以退出码 1 结束（那半
+            // 由 `PiExtensionLoadErrors` 从已捕获的 stderr 里解析），而**目录遍历**失败
+            // （`readdir` 出错）被 pi 的 `catch` 吃掉，一个字节都不留 —— 那一半只能靠宿主
+            // 读数 + 一条给用户的手工命令分辨。两半都写在这里，就是为了让读者按顺序排除。
+            appendLine("── 扩展发现 ──")
+            appendLine(
+                "说明：pi 的扩展/技能/提示词/主题都靠「列目录」发现，而列目录失败时它**不打印任何东西**；" +
+                    "只有模块加载失败才会打到 stderr 并以退出码 1 结束。两半在这里分开报。",
+            )
+            val loadErrors = PiExtensionLoadErrors.parse(engine?.stderr)
+            loadErrors.describe().forEach { appendLine(it) }
+            if (engine == null) {
+                appendLine("  （本进程还没有引擎退出的记录，所以没有可解析的 stderr —— 上面这句只针对已捕获的输出）")
+            } else if (loadErrors.failures.isEmpty()) {
+                appendLine("  （有 stderr 可解析，里面没有这一句 ⇒ 不是模块加载失败）")
+            }
+            appendLine("  随包扩展在两个 agent 目录里的存在性（宿主读数，与引擎是否看得见无关）：")
+            PiBuiltinExtension.SHIPPED.forEach { shipped ->
+                val inEngineDir = File(paths.agentDir, "extensions/${shipped.entryUnderExtensions}").isFile
+                val inRootfs = File(paths.rootfs, "root/.pi/agent/extensions/${shipped.entryUnderExtensions}").isFile
+                val presence = when (shipped.presenceIn(inEngineDir, inRootfs)) {
+                    PiBuiltinExtension.Presence.EngineAgentDir -> "在（引擎读的那一份）"
+                    PiBuiltinExtension.Presence.RootfsCopyOnly -> "只在运行时副本里（引擎读的是另一份）"
+                    PiBuiltinExtension.Presence.Missing -> "两份都没有"
+                }
+                appendLine("    ${shipped.name}：$presence")
+            }
+            appendLine("  如果上面是「在」，而 pi 的工具列表里没有它们，就在终端里真的列一次目录（不是看文件在不在）：")
+            appendLine("    ls -A /root/.pi/agent/extensions; ls -A /root/.pi/agent/skills")
+            appendLine("  这两条报 No such file or directory 或输出为空、而上面显示文件在 ⇒ 目录读不出来（运行时环境问题）；")
+            appendLine("  能列出来 ⇒ 是模块加载问题，回到上面看有没有 stderr 那一句。")
             appendLine()
 
             appendLine("── 最近的失败与错误 ──")

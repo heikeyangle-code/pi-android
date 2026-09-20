@@ -134,6 +134,22 @@ class PiPaths(private val filesDir: File, private val nativeLibDir: File) {
     val tmp: File get() = File(runtime, "tmp").also { it.mkdirs() }
 
     /**
+     * The guest's `/dev/shm`, as a host directory this app owns.
+     *
+     * It exists because the shared bind table has to name a **host** directory that is
+     * writable: Android's own `/dev` ships no `shm`, and `-b /dev` (which both runtimes
+     * apply) would otherwise leave the guest without one — POSIX shared memory
+     * (`shm_open`) then fails for whatever needs it (Chromium/Playwright, some native
+     * addons). The reference implementation binds `<app cache>/shm:/dev/shm`; this is the
+     * same bind with a directory inside the volatile tree, so `wipe()` cleans it and no
+     * stale segment outlives the runtime tree.
+     *
+     * Created by the getter, like [tmp]: [GuestRecipe.binds] reads it on every launch and
+     * neither runtime binds a host path that does not exist.
+     */
+    val shm: File get() = File(runtime, "shm").also { it.mkdirs() }
+
+    /**
      * The store proot's `--link2symlink` keeps its intermediates in, and it **must
      * exist before proot starts**.
      *
@@ -411,6 +427,14 @@ object ProotCommand {
         // proroot needs none of this: it anchors its own link handling at
         // `<rootfs>/.l2s` and is not told about it (`docs/proroot-research.md`
         // §4.3). That is why this pair is not in [GuestRecipe].
+        //
+        // **Deliberately not run through [GuestRecipe.bindValue].** Both sides of this pair
+        // are the *same* string on purpose — it is the one bind that is addressed by its host
+        // spelling from inside the guest, and `PROOT_L2S_DIR` below names that same spelling —
+        // so canonicalising one side would split the pair rather than fix it. It is also not
+        // an app-data path in the sense the alias bug is about: the guest reaches it through
+        // the rootfs prefix, which the runtime strips structurally (measured: a cwd under the
+        // rootfs translates correctly even when `-r` is spelled `/data/user/0/...`).
         argv += listOf("-b", "${paths.l2s.path}:${paths.l2s.path}")
         // `-L` keeps the guest's own absolute symlinks meaningful. Also proot-only:
         // proroot resolves them itself (§7.3).
@@ -418,7 +442,13 @@ object ProotCommand {
         argv += "--rootfs=${paths.rootfs.path}"
         argv += "--cwd=$cwd"
         GuestRecipe.binds(paths, storage).forEach { argv += it }
-        extraBinds.forEach { (host, guest) -> argv += listOf("-b", "$host:$guest") }
+        // The caller's binds (the workspace, the agent dir) carry the app's data-directory
+        // path, which `Context.getFilesDir()` spells `/data/user/0/...` while the guest
+        // kernel spells it `/data/data/...`. proot's reverse mapping is the same string
+        // prefix match proroot's is, so both runtimes get the host side respelled by the one
+        // shared rule rather than only the runtime whose failure happened to be measured
+        // (`GuestRecipe.canonicalHost` has the measurement and the `/proc` exception).
+        extraBinds.forEach { (host, guest) -> argv += listOf("-b", GuestRecipe.bindValue("$host:$guest")) }
         argv += GuestRecipe.tmpBind(paths)
         argv += GuestRecipe.shellArgs(guestCommand)
         return argv

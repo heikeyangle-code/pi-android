@@ -157,8 +157,13 @@ object PtyLauncher {
      * into the rootfs, so the guest on the working engine path already sees them,
      * and a second, guest-level `unset` here would only make the two paths differ
      * again for no demonstrated benefit.
+     *
+     * `allowProroot = false` forces this launch onto proot. It exists for exactly one
+     * caller — [start]'s retry after a proroot spawn failed — so that the terminal uses the
+     * same three-layer fallback the engine (`PiEngineHost`) and the package commands
+     * (`GuestCommand.run`) already use, instead of surfacing a raw spawn failure in a tab.
      */
-    fun prepare(context: Context, spec: Spec): Prepared {
+    fun prepare(context: Context, spec: Spec, allowProroot: Boolean = true): Prepared {
         val paths = pathsFor(context)
         val storage = android.os.Environment.getExternalStorageDirectory()
         val flags = probe(paths, storage)
@@ -205,6 +210,10 @@ object PtyLauncher {
                 paths.agentDir.absolutePath to guestAgentDir,
             ),
             extraEnv = spec.environment(),
+            // The one caller that ever passes `false` is [start]'s retry, after a proroot
+            // launch failed to come up: the same "count it, then bring it up on proot"
+            // discipline the engine and the package commands already use.
+            allowProroot = allowProroot,
         )
         return Prepared(
             spec = spec,
@@ -234,25 +243,52 @@ object PtyLauncher {
         val prepared = prepare(context, spec)
         val paths = pathsFor(context)
         val selection = RuntimeSelection.of(context, paths)
-        return PtySession.spawn(
-            argv = prepared.argv,
-            environment = prepared.environment,
-            workingDirectory = paths.runtime,
-            greeting = greetingFor(prepared),
-            engine = prepared.engine,
-            // proroot's scratch directory, so the session can identify this launch by
-            // the config table it writes (the platform has no `Process.pid()` here —
-            // see `ProrootLaunchHandle`) — and then reap its tree on close.
-            prorootTmp = if (prepared.engine == GuestEngine.Proroot) paths.prorootTmp else null,
-            launchToken = prepared.launchToken,
-            // The `.proroot-config-<pid>` table this launch created. Deleting it at
-            // stop is the same cleanup `RuntimeSelection.sweepProrootConfigs` would
-            // do on the next launch, only earlier and with the pid still known.
-            onStopped = { handle -> handle?.deleteConfig() },
-            onOutput = onOutput,
-            onExit = onExit,
-        )
+        return try {
+            spawn(prepared, paths, onOutput, onExit)
+        } catch (startFailure: java.io.IOException) {
+            // proroot could not even start the terminal's process. Same discipline as the
+            // engine (`PiEngineHost` layers ②/③) and the package commands
+            // (`GuestCommand.run`): count the failure, then bring **this** launch up on proot
+            // rather than leaving the user with a dead tab.
+            //
+            // Only `IOException` is retried, and that is a deliberate boundary rather than
+            // convenience: `ProcessBuilder.start()` raises exactly that when the launcher
+            // cannot be executed, whereas anything thrown *after* the process exists (a
+            // thread that will not start, an OOM) would mean a second retry leaks the first
+            // child — proroot has no `--kill-on-exit`. An unattributable failure therefore
+            // propagates, with the first process's fate unchanged.
+            if (prepared.engine != GuestEngine.Proroot) throw startFailure
+            selection.recordProrootFailure(
+                "${startFailure::class.java.simpleName}: ${startFailure.message}",
+            )
+            spawn(prepare(context, spec, allowProroot = false), paths, onOutput, onExit)
+        }
     }
+
+    /** The one `PtySession.spawn` call shape; [start] owns the fallback around it. */
+    private fun spawn(
+        prepared: Prepared,
+        paths: PiPaths,
+        onOutput: (ByteArray, Int) -> Unit,
+        onExit: (Int) -> Unit,
+    ): PtySession = PtySession.spawn(
+        argv = prepared.argv,
+        environment = prepared.environment,
+        workingDirectory = paths.runtime,
+        greeting = greetingFor(prepared),
+        engine = prepared.engine,
+        // proroot's scratch directory, so the session can identify this launch by
+        // the config table it writes (the platform has no `Process.pid()` here —
+        // see `ProrootLaunchHandle`) — and then reap its tree on close.
+        prorootTmp = if (prepared.engine == GuestEngine.Proroot) paths.prorootTmp else null,
+        launchToken = prepared.launchToken,
+        // The `.proroot-config-<pid>` table this launch created. Deleting it at
+        // stop is the same cleanup `RuntimeSelection.sweepProrootConfigs` would
+        // do on the next launch, only earlier and with the pid still known.
+        onStopped = { handle -> handle?.deleteConfig() },
+        onOutput = onOutput,
+        onExit = onExit,
+    )
 
     /**
      * What the tab prints before the guest says anything, so a tab that cannot

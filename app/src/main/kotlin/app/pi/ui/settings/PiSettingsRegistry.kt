@@ -91,6 +91,14 @@ data class PiSetting(
     val container: PiValueContainer = PiValueContainer.Array,
     /** Known universe for list rows, offered as toggle chips. */
     val presets: List<String> = emptyList(),
+    /**
+     * 快捷添加的**基线**：值为空（键不存在）时 pi 实际会启用的那一组，chip 加在它之上。
+     *
+     * 只有 `defaultTools` 用非默认值，因为 pi 的 `defaultTools` 是**完整白名单**而不是增量：
+     * 直接写 `["grep"]` 会关掉 read/bash/edit/write（依据见 `PiQuickAdd` 的 KDoc）。除它以外
+     * 的列表行，空就是空。
+     */
+    val presetBaseline: List<String> = emptyList(),
     val min: Int? = null,
     val max: Int? = null,
     val step: Int? = null,
@@ -808,13 +816,19 @@ object PiSettingsCatalog {
             // 短。用户对这条的裁定：「写这么多描述文字干鸡巴毛呀？」——默认值是哪 4 个、
             // 快捷添加那 3 个是什么、清空等于什么，三件事说完即可；powershell 为什么不出现
             // 写在 `optionalTools` 的 KDoc 里，`defaultTools: []` 那种极端写法由 `Pi 文件` 屏负责。
-            description = "**默认只有 4 个：read、bash、edit、write**。快捷添加里那 3 个是可选的。" +
+            //
+            // `presetBaseline` 是这一行的**写入语义**：pi 的 `defaultTools` 是完整白名单
+            // （`core/settings-manager.ts:1336-1339` 原样返回、`core/sdk.ts:264` 只启用列出的），
+            // 所以 chip 只能加在默认四件套之上 —— 曾经直接写 `["grep"]`，用户实测到工具全灭
+            // （`settings.json` 里只剩 `["grep","find","ls"]`）。见 `PiQuickAdd`。
+            description = "**默认只有 4 个：read、bash、edit、write**。快捷添加会在这 4 个之上再加。" +
                 "清空并保存 = 回到这 4 个默认值。",
             kind = PiRowKind.List,
             group = G_TOOLS,
             section = "工具",
             effective = EffectiveKind.NewSession,
             presets = optionalTools,
+            presetBaseline = PiQuickAdd.builtinToolDefaults,
             emptyListLabel = "默认 read/bash/edit/write",
             aliases = listOf("tools", "builtin"),
         ),
@@ -1165,6 +1179,10 @@ object PiSettingsCatalog {
             section = "终端显示",
             effective = EffectiveKind.Reload,
             presets = termKeyBarPresets,
+            // 与 `defaultTools` 同一个形状，所以同一个修法：空/未设置 = 默认那一排按键
+            // （`TerminalSettings.keyBarOf`: absent *and* empty both mean the default bar），
+            // 所以 chip 只能加在这排之上 —— 曾经从空值点一枚 chip 会写成"整个按键条只有这一个键"。
+            presetBaseline = termKeyBarPresets,
             aliases = listOf("keybar", "keys"),
         ),
         PiSetting(
