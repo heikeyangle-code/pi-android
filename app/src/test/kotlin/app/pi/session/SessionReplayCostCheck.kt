@@ -816,15 +816,20 @@ fun main() {
     // 用户原话：「一个对话在列表里被切成好几段、标题各不相同」「之前都没有这种 bug，肯定是最近
     // 这几轮、修加载时间这些问题的时候引入的」。
     //
-    // 机制（两半，都在下面钉住）：① `PiEngineHost` 的 argv 固定（没有 `-c`/`--resume`），所以每次
-    // 重启起来的 pi 都在**全新**的会话文件上；② `attach` 里原来 `replayHistory(engine)` 在
-    // `refreshState()` **之前**，于是它用**上一个引擎**的 `_state.meta` 去解析源文件 —— 那份 meta
-    // 与旧文件的 header id 一致，校验通过，屏幕重画的是**老对话**，而 pi 已经在新会话上。用户继续
-    // 打字，消息落进新文件 ⇒ 一次对话裂成数段、每段标题不同。`afterSessionReplaced` 的 KDoc 早就
-    // 写明了这条规则（「`refreshState` **before** the replay, not after」），attach 没有遵守。
+    // 机制有两处，都在下面钉住：
+    //   ① 显示那一半：`attach` 里原来 `replayHistory(engine)` 在 `refreshState()` **之前**，
+    //      于是它用**上一个引擎**的 `_state.meta` 去解析源文件 —— 那份 meta 与旧文件的 header id
+    //      一致，校验通过，屏幕重画的是**老对话**，而 pi 已经在新会话上。用户继续打字，消息落进
+    //      新文件 ⇒ 一次对话裂成数段、每段标题不同。`afterSessionReplaced` 的 KDoc 早就写明了这条
+    //      规则（「`refreshState` **before** the replay, not after」），attach 没有遵守。
+    //   ② 真正的分裂：pi 的 argv 是固定的（没有 `-c`/`--session-id`），每一次进程启动都落在**全新**
+    //      的会话文件上；而重启（proroot 开关当场生效、装包之后重启、崩溃后重试）是 **App 的实现
+    //      细节**，不该被用户看见成一段新对话。修法是**在 argv 里钉住 id** —— `restartEngine` 传
+    //      `continueSessionId`（发成 `--session-id <id>`）—— **不是**起来之后补一条
+    //      `switch_session`：那套「事后接回 + 删掉本次新建的空会话」的机制已删（本文件下面钉它
+    //      不许回来；`--session-id` 与 `-c` 的**解析事实**在 `pre-spawn` harness 里执行）。
     val attachBody = viewModelText
-        // 锚点只取到形参开头：`attach` 现在还有 `continueFrom`（重启续接），写死完整签名会让
-        // 这段断言在签名变化时静默变成「marker not found」—— 第一次跑就是这么红的。
+        // 锚点只取到形参开头：写死完整签名会让这段断言在签名变化时静默变成「marker not found」。
         .substringAfter("private fun attach(engine: PiEngineSession", "")
         .take(20_000)
     checkTrue("找到了 attach 的函数体", attachBody.isNotEmpty(), "marker not found")
@@ -835,33 +840,35 @@ fun main() {
         refreshAt >= 0 && replayAt >= 0 && refreshAt < replayAt,
         "refreshAt=$refreshAt replayAt=$replayAt",
     )
-    // 续接恰好一次，且在 `restartEngine` 内 —— 工作区切换走 `host.restart`，不经过它（换了工作区
-    // 就该是新会话：记录在旧 cwd 上的会话在新 cwd 里 pi 也打不开）。
-    val continueCalls = Regex("continueAfterRestart\\(").findAll(viewModelText).count()
-    check("续接只被声明一次、调用一次", continueCalls, 2)
     checkTrue(
-        "工作区切换那条路不接续（换了工作区就该是新会话）",
-        !viewModelText.substringAfter("suspend fun switchWorkspace(", "").take(8_000)
-            .contains("continueFrom"),
+        "attach 不再有「事后接回」这个形参（会话由 argv 钉住）",
+        viewModelText.contains("private fun attach(engine: PiEngineSession) {"),
     )
+    // 窗口取到下一个函数声明为止，正好是 `restartEngine` 加上紧跟其后的那段 KDoc —— 这样
+    // 「函数体里没有 switchSession」这条断言不会因为窗口过长而误判。
     val restartBody = viewModelText
         .substringAfter("suspend fun restartEngine(", "")
-        .take(8_000)
-    checkTrue(
-        "重启成功那一支把「刚才那个会话」交给 attach",
-        restartBody.contains("attach(result.session, continueFrom = previousSession)"),
-    )
-    // **抓取必须在重启之前**：重启会退掉旧引擎（`Stopped` 那一支清 `api`/`session`），期间
-    // `_state.meta` 可能被改写；取在 Ok 分支里就多一个「谁先写」的顺序假设。
-    val captureAt = restartBody.indexOf("val previousSession = _state.value.meta.sessionFile")
+        .substringBefore("private fun attach(engine: PiEngineSession)")
+    checkTrue("找到了 restartEngine 的函数体", restartBody.isNotEmpty(), "marker not found")
+    val pinAt = restartBody.indexOf("val resumeSessionId = _state.value.meta.sessionId")
     val restartAt = restartBody.indexOf("host.restart(")
     checkTrue(
-        "重启前就抓在手里（capture 在 host.restart 之前）",
-        captureAt >= 0 && restartAt >= 0 && captureAt < restartAt,
-        "captureAt=$captureAt restartAt=$restartAt",
+        "重启前就把用户那条对话的 id 抓在手里（pin 在 host.restart 之前）",
+        pinAt >= 0 && restartAt >= 0 && pinAt < restartAt,
+        "pinAt=$pinAt restartAt=$restartAt",
     )
-    // 用户可达的重启只有两个入口：`restartEngine`（本函数，带续接）与 `switchWorkspace`
-    // （带 cwd 变更，刻意的例外）。下面两条把「没有第三条只覆盖一半的路」钉住。
+    checkTrue(
+        "抓住了就交给 argv（`launchOptions(continueSessionId = resumeSessionId)`）",
+        restartBody.contains("launch = launchOptions(continueSessionId = resumeSessionId)"),
+    )
+    checkTrue(
+        "重启成功之后只 attach，没有第二条会话命令",
+        restartBody.contains("attach(result.session)") &&
+            !restartBody.contains("switchSession"),
+    )
+    // 用户可达的重启只有两个入口：`restartEngine`（带 id）与 `switchWorkspace`（带 cwd 变更，
+    // 刻意的例外 —— 换了 cwd 之后旧 id 不是 `findById` 的答案）。下面几条把「没有第三条只覆盖
+    // 一半的路」钉住。
     check(
         "全仓 host.restart( 恰好两处",
         Regex("host\\.restart\\(").findAll(viewModelText).count(),
@@ -875,138 +882,31 @@ fun main() {
             .contains("restartEngine("),
     )
     checkTrue(
-        "另一处 host.restart( 在 switchWorkspace 里，且那里不续接",
+        "另一处 host.restart( 在 switchWorkspace 里，且那里不钉 id",
         viewModelText
+            // 窗口取到 `switchWorkspace` 自己的结尾为止（下一个声明是 `wouldInterruptTurn`）：
+            // 再往后就是 `launchOptions` 的声明，那里面当然有 `continueSessionId`。
             .substringAfter("suspend fun switchWorkspace(", "")
-            .take(8_000)
-            .let { it.contains("host.restart(") && !it.contains("continueFrom") },
+            .substringBefore("fun wouldInterruptTurn()")
+            .let { it.contains("host.restart(") && !it.contains("continueSessionId") },
     )
-    checkTrue(
-        "attach 在它自己全部收尾之后才接续（两次 replay 不许并发）",
-        attachBody.contains("continueFrom?.let { continueAfterRestart(it) }") &&
-            attachBody.indexOf("continueFrom?.let") > attachBody.indexOf("maybeResumeLastSession()"),
-    )
-    // 窗口要盖住 `continueAfterRestart` **加上**它调用的 `discardEmptySessionCreatedByRestart`
-    // 的定义（两者相邻，合起来约 4.7k 字符）；取 8k 留足余量。
-    val helperBody = viewModelText
-        .substringAfter("private suspend fun continueAfterRestart(", "")
-        .take(8_000)
-    checkTrue("找到了续接的函数体", helperBody.isNotEmpty(), "marker not found")
-    // 失败必须可见，且两个分支各有各的话（异常 / 扩展否决），不许混成一句、更不许静默。
-    checkTrue(
-        "失败按真实分支各自有一句话（异常 / 扩展否决 / 文件不在了）",
-        helperBody.contains("没能接回刚才的会话") &&
-            helperBody.contains("取消了重启后的会话接续") &&
-            helperBody.contains("找不到刚才那个会话的文件"),
-    )
-    checkTrue(
-        "三支失败（异常 / 扩展否决 / 文件不在了）都只说「停在新的空会话上」（不假装切成功）",
-        Regex("停在一个新的空会话上").findAll(helperBody).count() == 3,
-    )
-    // 精确到分支，不用裸的 `afterSessionReplaced()`：KBoc 里也提到了它（带反引号）。
-    // 「重新启动会多一行」那一半：pi 在启动时就建好了那个空会话文件，接回旧的之后必须把它清掉。
-    // 判定本身（只有一行 session 头才算空）在 §9 用真文件钉；这里钉**连线**：只有接回成功那一支
-    // 才清，两个失败分支不清（它们连文件都没接回来，谈不到"这次新建的那个"）。
-    check(
-        "清理只被声明一次、调用一次",
-        Regex("discardEmptySessionCreatedByRestart\\(").findAll(viewModelText).count(),
-        2,
-    )
-    checkTrue(
-        "清理只在接回成功那一支（and 在 afterSessionReplaced() 之后）",
-        helperBody.contains("afterSessionReplaced()") &&
-            helperBody.indexOf("discardEmptySessionCreatedByRestart(") >
-            helperBody.indexOf("else -> {"),
-    )
-    checkTrue(
-        "五道门槛都在源码里（来源比对 / 目录映射 / 只有头 / 两次长度一致 / delete 的结果）",
-        helperBody.contains("if (guestPath == kept) return") &&
-            helperBody.contains("hostSessionFile(guestPath)") &&
-            helperBody.contains("SessionFileReader.isHeaderOnlySession") &&
-            helperBody.contains("if (sizeAfter != sizeBefore) return") &&
-            helperBody.contains("runCatching { file.delete() }"),
-    )
-    checkTrue(
-        "成功与失败都写 logcat（用户对删文件敏感 ⇒ 必须留痕）",
-        Regex("Log\\.[iw]\\(").findAll(helperBody).count() >= 2,
-    )
-    checkTrue(
-        "它被包在 Dispatchers.IO 上（读+删都是阻塞 IO，不占帧线程）",
-        helperBody.contains("withContext(Dispatchers.IO) {") ||
-            viewModelText.substringAfter("private suspend fun continueAfterRestart(", "")
-                .take(2_000).contains("withContext(Dispatchers.IO)"),
-    )
-    // 精确到分支：成功那一支现在是块（`else -> { afterSessionReplaced(); 清理 }`），所以断言
-    // 「`afterSessionReplaced()` 出现在 `else -> {` 之后」，而不是比对一个字面形状。
-    checkTrue(
-        "只有成功那一支才 afterSessionReplaced()（它是唯一会换转录的收尾）",
-        helperBody.indexOf("afterSessionReplaced()") > helperBody.indexOf("else -> {") &&
-            Regex("afterSessionReplaced\\(\\)").findAll(helperBody).count() >= 1,
-    )
-
-    // ------------- 9. 「空会话」判定（重启后清理那一行的依据，`isHeaderOnlySession`）
-    //
-    // 用户对「删文件」极敏感，所以这一节用**真文件**把「什么算空」逐条钉住：只有一行 `session`
-    // 头才算空；任何别的条目（message / session_info / model_change / custom…）都不算 —— 也就是
-    // 回答「pi 在启动时若多写了一行（设置或扩展写的 meta）算不算空」：**不算**，我们不删，
-    // 代价只是列表里多一行空会话（保守方向：宁可留一行，不可删掉有内容的文件）。
-    val emptyRoot = File(System.getProperty("java.io.tmpdir"), "pi-empty-session-${System.nanoTime()}")
-    emptyRoot.mkdirs()
-    fun emptyFixture(name: String, content: String): File =
-        File(emptyRoot, name).apply { writeText(content) }
-
-    check(
-        "只有一行 session 头 ⇒ 空",
-        SessionFileReader.isHeaderOnlySession(emptyFixture("header-only.jsonl", header("h1") + "\n")),
-        true,
-    )
-    check(
-        "头 + 空行 ⇒ 仍然算空",
-        SessionFileReader.isHeaderOnlySession(
-            emptyFixture("blank-padded.jsonl", "\n" + header("h2") + "\n\n\n"),
-        ),
-        true,
-    )
-    check(
-        "有一条 message ⇒ 不算空",
-        SessionFileReader.isHeaderOnlySession(
-            emptyFixture("one-message.jsonl", header("h3") + "\n" + userEntry("u1", null, "hi") + "\n"),
-        ),
-        false,
-    )
-    check(
-        "有一条 session_info（例如改过名）⇒ 不算空",
-        SessionFileReader.isHeaderOnlySession(
-            emptyFixture(
-                "with-info.jsonl",
-                header("h4") + "\n" +
-                    "{\"type\":\"session_info\",\"id\":\"i1\",\"parentId\":\"h4\"," +
-                    "\"timestamp\":\"2026-01-01T00:00:00.000Z\",\"name\":\"x\"}\n",
-            ),
-        ),
-        false,
-    )
-    check(
-        "不是会话文件 ⇒ 不算空（头必须真的是 session 头）",
-        SessionFileReader.isHeaderOnlySession(
-            emptyFixture("not-a-session.jsonl", userEntry("u2", null, "hi") + "\n"),
-        ),
-        false,
-    )
-    check(
-        "空文件 ⇒ 不算空",
-        SessionFileReader.isHeaderOnlySession(emptyFixture("empty.jsonl", "")),
-        false,
-    )
-    check(
-        "超过 64 KiB 读上限 ⇒ 一律不算空（不读、也不删）",
-        SessionFileReader.isHeaderOnlySession(
-            emptyFixture("too-big.jsonl", header("h5") + "\n" + " ".repeat(70_000) + "\n"),
-        ),
-        false,
-    )
-    emptyRoot.deleteRecursively()
-    println()
+    // 删掉的那套机制**不许回来**：每个重启入口各自补一条 `switch_session`，正是「一次对话裂成
+    // 好几段」的来源（两次收尾之间用户就能打字，消息落进另一个文件）；而「本次新建的空会话」
+    // 本身也不会再有 —— pi 没有 assistant 消息时不落盘（`_persist` 的 `hasAssistant` 守卫，
+    // `session-manager.ts:1029-1052`）。
+    for (gone in listOf(
+        "continueAfterRestart",
+        "discardEmptySessionCreatedByRestart",
+        "maybeResumeLastSession",
+        "resumeAttempted",
+        "continueFrom",
+    )) {
+        checkTrue(
+            "接回不再有「事后补一条命令」的形状：$gone 已删除",
+            !viewModelText.contains(gone),
+            "argv 里钉 id 是唯一的接回路径；事后 `switch_session` 会与新引擎的首帧抢会话。",
+        )
+    }
 
     // ------------- 10. 换运行时（App 级重启）之后还在同一段对话里
     //
@@ -1016,8 +916,13 @@ fun main() {
     // 而它当时的默认是**关** ⇒ 每一次 App 级重启都在新会话里。用户裁决：默认改成开
     // （「打开 App 接回上次那段对话；想要新对话用「＋ 新建会话」」）。
     //
-    // 这一节钉两件事：① 默认值是 `true`；② **运行时读的就是注册表那一个默认值** —— 否则「翻默认值」
-    // 只改了设置页的显示，行为仍是关（`readBoolean` 对没写过的键回 null）。
+    // 这一节钉三件事：
+    //   ① 默认值是 `true`；
+    //   ② **运行时读的就是注册表那一个默认值** —— 否则「翻默认值」只改了设置页的显示，行为仍是关
+    //      （`readBoolean` 对没写过的键回 null）；
+    //   ③ 它现在**只喂 argv 的 `-c`**（冷启动那一条路，`continueMostRecent`）：进程内重启由
+    //      `--session-id` 精确钉住，与这个开关无关（id 优先于 `-c`；这条优先级在 `pre-spawn`
+    //      harness 里是**执行**出来的，不是读出来的）。
     val registryFile = System.getProperty("pi.repo.root")?.let {
         File(it, "app/src/main/kotlin/app/pi/ui/settings/PiSettingsRegistry.kt")
     }
@@ -1036,26 +941,24 @@ fun main() {
         "那一行仍然是 App 启动时读取（EffectiveKind.RestartApp）——这正是这条默认值的含义",
         resumeRow.contains("effective = EffectiveKind.RestartApp"),
     )
+    // 断言的是**调用形状**（`boolIn(settingsStore)`），不是那三个字：这一节的上下文注释里会提到
+    // `readBoolean` 这个名字，按名字断言只会被自己的注释绊倒。
     val resumeBody = viewModelText
-        .substringAfter("private suspend fun maybeResumeLastSession()", "")
-        .take(2_500)
-    checkTrue("找到了 maybeResumeLastSession 的函数体", resumeBody.isNotEmpty(), "marker not found")
-    // 断言的是**调用形状**（`settingsStore.readBoolean`），不是那三个字：这一节的上下文注释里
-    // 会提到 `readBoolean` 这个名字，按名字断言只会被自己的注释绊倒。
+        .substringAfter("private fun resumeLastEnabled()", "")
+        .take(700)
+    checkTrue("找到了 resumeLastEnabled 的函数体", resumeBody.isNotEmpty(), "marker not found")
     checkTrue(
         "运行时读注册表那一个默认值（不再是 settingsStore.readBoolean 加 ?: false）",
         resumeBody.contains("boolIn(settingsStore)") &&
             !resumeBody.contains("settingsStore.readBoolean"),
     )
     checkTrue(
-        "接回的是**同一工作区**的最近一段（pi 的 `-c` 语义：`mostRecentForResume(guestWorkspace())`）",
-        resumeBody.contains("mostRecentForResume(guestWorkspace())"),
+        "这个开关只喂 argv（`continueMostRecent = resumeLastEnabled()`）",
+        viewModelText.contains("continueMostRecent = resumeLastEnabled()"),
     )
     checkTrue(
-        "App 重启后的第一次不会被跳过（一次进程尝试一次，而字段初值是 false）",
-        resumeBody.contains("if (resumeAttempted) return") &&
-            resumeBody.contains("resumeAttempted = true") &&
-            viewModelText.contains("private var resumeAttempted = false"),
+        "冷启动不再事后切会话去接最近一段（交给 pi 的 `-c` 自己按 cwd + mtime 选）",
+        !viewModelText.contains("mostRecentForResume("),
     )
 
     // ---------------------------------------------------------------- summary

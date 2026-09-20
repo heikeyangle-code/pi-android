@@ -1,7 +1,6 @@
 package app.pi.ui
 
 import android.app.Application
-import android.util.Log
 import android.content.Intent
 import android.content.res.Configuration
 import android.net.Uri
@@ -1478,133 +1477,6 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
-     * 把刚重启起来的引擎接回 [previousGuestPath] 那个会话；接不回来就说出来。
-     *
-     * 走的是**既有**的换会话路径（`SessionHints` + `api.switchSession` + [afterSessionReplaced]，
-     * 与 `importSession` 同一条），所以扩展的 `session_before_switch` 否决、cwd 不存在这类判定
-     * 一个都不会漏。
-     *
-     * **每一种结局都说得出来**：成功则 `afterSessionReplaced()` 把转录与 `meta` 换成那个会话；
-     * 失败（异常 / 扩展否决）则**不假装成功** —— 引擎停在新的空会话上，界面（`attach` 已经按
-     * `get_state` 报的名字重画过）就显示那个空会话，同时推一条通知说明刚才那段对话还在列表里。
-     * 这正是本轮要消灭的形状：「看起来还在老对话里、其实引擎已经把会话切走了」。
-     *
-     * 不处理「工作区切换」：那条路走 `switchWorkspace` → `PiEngineHost.restart`，**不经过这里**，
-     * 因为换了工作区就该是新会话（记录在旧 cwd 上的会话在新 cwd 里 pi 也打不开）。
-     */
-    private suspend fun continueAfterRestart(previousGuestPath: String?) {
-        val api = this.api ?: return
-        val target = previousGuestPath?.takeIf { it.isNotBlank() } ?: return
-        // The host file is what `SessionHints` carries; a path outside the agent dir would
-        // mean the index and pi disagree about where sessions live, and `switchSession` is
-        // not the place to guess (`PiSessionStore`'s KDoc says the file is the truth).
-        // Already there: a restart that somehow kept the session needs no switch, and asking
-        // for one would replay the same transcript twice.
-        if (_state.value.meta.sessionFile == target) return
-        val file = hostSessionFile(target)
-        if (file == null) {
-            // 文件不在了（用户删了、或它落在 agent 目录之外）。**不许静默**：这是「刚才那段对话
-            // 去哪了」的问题，界面必须给出一句可行动的话。
-            pushNotice(
-                "引擎重启后找不到刚才那个会话的文件，现在停在一个新的空会话上；" +
-                    "如果它是在会话列表里，重新点开它就能继续。",
-                Notice.Tone.Warning,
-            )
-            return
-        }
-        // pi 在**启动那一刻**就为这次重启建好了一个空会话文件，我们要离开的正是它：`attach`
-        // 里的 `refreshState()` 之后 `meta.sessionFile` 指着它，而它**不是**我们接回的那一个
-        // （上面刚比过）。接回成功之后它就成了一个「一次都没说过话的会话」——不清掉的话，
-        // 会话列表每次重启都会多一行，用户看到的仍然是「被切成好几段」。
-        val createdByThisRestart = _state.value.meta.sessionFile
-        SessionHints.file = file
-        val outcome = runCatching { api.switchSession(target) }.getOrNull()
-        when {
-            outcome == null -> {
-                SessionHints.file = null
-                pushNotice(
-                    "引擎重启后没能接回刚才的会话，现在停在一个新的空会话上；" +
-                        "刚才那段对话仍在会话列表里，点它就能回去。",
-                    Notice.Tone.Warning,
-                )
-            }
-
-            outcome.cancelled -> {
-                SessionHints.file = null
-                pushNotice(
-                    "扩展取消了重启后的会话接续，现在停在一个新的空会话上；" +
-                        "刚才那段对话仍在会话列表里，点它就能回去。",
-                    Notice.Tone.Warning,
-                )
-            }
-
-            else -> {
-                afterSessionReplaced()
-                // 读 + 删都是阻塞 IO：整段放到 IO 上（这一段本来就是被 `withContext(Dispatchers.IO)`
-                // 允许的挂起上下文，`continueAfterRestart` 的调用者也在协程里）。
-                withContext(Dispatchers.IO) {
-                    discardEmptySessionCreatedByRestart(createdByThisRestart, kept = target)
-                }
-            }
-        }
-    }
-
-    /**
-     * 删掉「**这一次重启刚创建、而且一条消息都没有**」的那个会话文件；任何一条不满足就不删。
-     *
-     * ## 为什么删的是文件而不是「列表里不显示」
-     *
-     * pi 在进程启动的那一刻就建好了这个空文件（`SessionManager.create`）。列表层没有**来源**
-     * 这个事实：用户自己按「＋ 新建会话」又放着不管的那个会话，在数据上与它一模一样，而那是
-     * 用户的东西，**必须**在列表里看得见（丢掉它同样是让界面少说一句话）。所以判定只能发生在
-     * 知道来源的地方 —— 这里：`created` 是 `attach` 刚报出来的那个新会话，`kept` 是我们接回的
-     * 旧会话，两者不同，且前者由**这次重启**产生。
-     *
-     * ## 五道门槛，缺一不删
-     *
-     * 1. `created != kept`：唯一能证明「它是这次新建的那个」的比对（接回成功之后 `meta` 已经
-     *    换成 `kept`，所以这里用的是接回**之前**抓下来的值）；
-     * 2. `hostSessionFile(created)` 非 null：与换会话同一条路径映射，落在 agent 目录之外的一律不动；
-     * 3. `SessionFileReader.isHeaderOnlySession(file)`：**只有一行 session 头**才算空。任何别的
-     *    条目（message / session_info / model_change / custom / …）都算有内容 —— pi 在启动时若
-     *    多写了一行（例如设置或扩展写了一条 `model_change`），这里就**不删**，代价是列表里多
-     *    一行空会话（这是刻意的保守方向：宁可留一行，不可删掉有内容的文件）；
-     * 4. 读之前量一次长度、读完再量一次，两次一致才继续：读的这一刻用户可能刚好发出第一条消息
-     *    （重启到接回之间有几帧），长度变了说明文件正在被写，**不删**；
-     * 5. `delete()` 失败就到此为止（只记一行日志，不抛、不提示）。
-     *
-     * 用户对「删文件」极敏感，所以：删之前**一定先读一遍**（门槛 3），删的是本 App 自己刚刚
-     * 创建的、且这次重启前后都不是当前会话的那一个文件；成功与失败都写 logcat（`Log.i`/`Log.w`），
-     * 这是本仓库里 `runtime`/`engine` 一直在用的那套日志口径。**不**给用户弹提示：这是一次
-     * 内部清理，用户没有做错任何事，也没有需要他采取的动作。
-     *
-     * 调用点把它整个包在 `Dispatchers.IO` 上（读与删都是阻塞 IO，不占帧线程）。
-     *
-     * @param created 这次重启后 `get_state` 报出来的 session 文件（guest 路径），或 null。
-     * @param kept 接回的那个会话的 guest 路径（永远不会被删）。
-     */
-    private fun discardEmptySessionCreatedByRestart(created: String?, kept: String) {
-        val guestPath = created?.takeIf { it.isNotBlank() } ?: return
-        if (guestPath == kept) return
-        val file = hostSessionFile(guestPath) ?: return
-        val sizeBefore = runCatching { file.length() }.getOrDefault(-1L)
-        if (sizeBefore <= 0L) return
-        if (!runCatching { SessionFileReader.isHeaderOnlySession(file) }.getOrDefault(false)) return
-        // 门槛 4：读与删之间被写过（用户刚好发了第一条消息）就不动它。
-        val sizeAfter = runCatching { file.length() }.getOrDefault(-2L)
-        if (sizeAfter != sizeBefore) return
-        val removed = runCatching { file.delete() }.getOrDefault(false)
-        if (removed) {
-            Log.i(
-                TAG,
-                "重启后接回旧会话，已删除本次启动新建的空会话文件：${file.name}",
-            )
-        } else {
-            Log.w(TAG, "重启后接回旧会话，但删不掉本次启动新建的空会话文件：${file.name}")
-        }
-    }
-
-    /**
      * Drop the settings store's cached documents after a write that did not go
      * through it.
      *
@@ -1638,9 +1510,6 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * ticking) and the countdown would never reach zero.
      */
     private var armedDialogId: String? = null
-
-    /** `pi -c` is attempted once per process, not on every engine attach. */
-    private var resumeAttempted = false
 
     /**
      * The engine revision this consumer has already applied to [UiState]; `0` is
@@ -2245,10 +2114,12 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             // state collector releases it once the engine is up and idle
             // (`reportWork`).
             engineTransition = true
-            // 用户此刻那条对话的 **id**（`get_state` 报出来的），交给 argv 钉住。用 id 而不是
-            // 路径：`--session-id` 有"找不到就新建"的分支（`main.ts:442-447`），`--session <path>`
-            // 遇到"文件在、但不是合法会话"会让 pi `exit(1)`（`:337-345`）。
-            val launchOptions = launchOptions(continueSessionId = _state.value.meta.sessionId)
+            // **冷启动不钉 id**：这里交给 pi 的是 `-c`（[launchOptions] 的 `continueMostRecent`，
+            // 受 `app.sessions.resumeLast` 管辖），由 pi 自己按「同一 cwd + mtime 最近」挑一段
+            // （`session-manager.ts:636-653`）。要钉 id 的是 `restartEngine`：只有进程内重启那一刻，
+            // App 才既知道用户在哪条对话上、又保证 cwd 没变。这条 `boot()` 同时是崩溃后「重试」按钮
+            // 走的路，那条路也交给 `-c` —— 与这一行开关对用户的说法一致（关掉就是"每次启动新对话"）。
+            val launchOptions = launchOptions()
             reportExtensionArgsRefusal(launchOptions)
             val boot = try {
                 host.boot(workspaceProvider = ::defaultWorkspace, launch = launchOptions, rebuild = rebuild) { step ->
@@ -2305,11 +2176,17 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         allowInterrupt: Boolean,
     ): EngineRestartCoordinator.Outcome {
         // **接回只有一条路：argv。** `host.restart` 的 `launch` 实参在进程被换掉之前求值
-        // （下面 `launchOptions(continueSessionId = _state.value.meta.sessionId)`），pi 就带着
+        // （下面 `launchOptions(continueSessionId = resumeSessionId)`），pi 就带着
         // `--session-id <id>` 起来：`findById` 找到那个 id 就**追加**，找不到就用同一个 id 新建
         // （`main.ts:435-447`、`core/session-manager.ts:938-961`）⇒ 重启用的是同一条对话，
         // 不需要事后再发一条 `switch_session`。用户报的「一个对话被切成好几段」正是从"每个重启
         // 入口各自补一次 `switch_session`"的缝隙里来的，所以这里删除那套机制、只留 argv。
+        //
+        // **抓在手里再换进程**：`host.restart` 一进去旧引擎就退场（`Stopped` 那一支会清
+        // `api`/`session`），期间的 `meta` 谁先写没有约束；把 `_state.value` 读在 `host.restart`
+        // 的实参位置上，就多了一处「求值顺序由别人决定」的假设。id 取 `get_state` 报出来的那个
+        // （不是文件路径 —— 路径形式带 `process.exit(1)` 的失败面，见 `PiLaunchOptions` 的 KDoc），
+        // 空串按「没有」处理。
         //
         // 覆盖范围：本函数是进程内重启的唯一入口（全仓对该 host 调用的只有两处，另一处在
         // `switchWorkspace` —— 换了 cwd 就该是新会话，那里**不**传 id），运行时开关（proroot
@@ -2318,16 +2195,19 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         // The old engine publishes `Stopped` while it is being retired, and
         // `session` still points at it — the state collector cannot tell that apart
         // from a crash. [engineTransition] is what tells it: without this the
-        // collector would stop the foreground service and reset the resume marker in
-        // the middle of a restart, i.e. drop the wake lock across the *new* engine's
-        // cold start and silently switch sessions when `app.sessions.resumeLast` is on.
+        // collector would stop the foreground service in the middle of a restart,
+        // i.e. drop the wake lock across the *new* engine's cold start.
+        //
+        // 这一行在 `engineTransition = true` **之前**、也在 `host.restart` 之前，见上面那段
+        // 「抓在手里再换进程」。
+        val resumeSessionId = _state.value.meta.sessionId?.takeIf { it.isNotBlank() }
         engineTransition = true
         val result = try {
             host.restart(
                 reason = reason,
                 workspaceProvider = ::defaultWorkspace,
                 allowInterrupt = allowInterrupt,
-                launch = launchOptions(),
+                launch = launchOptions(continueSessionId = resumeSessionId),
             )
         } finally {
             engineTransition = false
@@ -2531,12 +2411,10 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                     )
                     if (!engineTransition) {
                         // Not a restart: nothing is replacing this engine, so the
-                        // foreground service has nothing left to protect, and a
-                        // retry (the new failure screen's button) is a *new*
-                        // engine — which is a new chance to honour
-                        // `app.sessions.resumeLast`. During a restart neither is
-                        // true, which is what `engineTransition` is for.
-                        resumeAttempted = false
+                        // foreground service has nothing left to protect a retry
+                        // (the new failure screen's button) is a *new* engine.
+                        // During a restart that is not true, which is what
+                        // `engineTransition` is for.
                         syncEngineService(engineAttached = false, bootInProgress = false)
                     }
                 }
@@ -2636,66 +2514,6 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             // `switch_session`，也不需要清理"这次新建的空会话"——pi 在没有 assistant 消息时根本
             // 不落盘（`_persist` 的 `hasAssistant` 守卫，`session-manager.ts:1029-1052`）。
         }
-    }
-
-    /**
-     * pi's `-c` / `--continue` (`cli/args.ts:100`): on launch, pick up where the
-     * last session **for this cwd** left off.
-     *
-     * The app's engine always starts a fresh session and its argv is fixed
-     * (`PiEngineHost.kt:275-280`), so the resume is a `switch_session` right after
-     * attach — the same command the session picker sends, which also lets a
-     * `session_before_switch` extension veto it. Behind
-     * `app.sessions.resumeLast` because "opening the app starts a new session" is
-     * a deliberate default that a fix must not silently flip (pi's own default too:
-     * `createSessionManager` returns `SessionManager.create` unless `-c`/`--resume`
-     * is passed, `main.ts:426-443`).
-     *
-     * The *selection* is pi's, not ours: [PiSessionStore.mostRecentForResume] is
-     * `findMostRecentSession(sessionDir, cwd)` (`session-manager.ts:636-653`) — the
-     * function `-c` itself uses (`:1589-1598`). It is deliberately not
-     * `list(limit = 1)`: the picker sorts by "last message activity"
-     * (`:1675`) while `-c` sorts by file mtime and filters the header's `cwd`
-     * against the engine's, so the two can name different sessions. The cwd filter
-     * is what keeps the chat from resuming a session that the guest terminal wrote
-     * under `/root` (`PtyLauncher.kt:321` puts those in the same directory).
-     *
-     * Every way this can end is named: a failure to read the directory is an error
-     * notice, "there are sessions but none for this workspace" is a warning, and
-     * `switchSession` reports pi's own rejection (a `session_before_switch` veto, a
-     * session whose recorded working directory no longer exists — `session-cwd.ts:54-59`
-     * throws `MissingSessionCwdError`, which `rpc-mode.ts:605-611` turns into a
-     * failed response).
-     */
-    private suspend fun maybeResumeLastSession() {
-        if (resumeAttempted) return
-        resumeAttempted = true
-        // **默认值只有一处**：注册表那一行（`PiSettingsCatalog`，`defaultValue = bool(true)`）。
-        // 老写法是「`readBoolean` 加一个 `?: false` 兜底」—— 而 `readBoolean` 对**没写过**的键回
-        // null（pi 的 `settings.json` 里没有这个键就等于没写过），所以「把默认翻成开」如果只改注册表，
-        // 运行时仍然按关处理：设置页显示「开」，行为却是「每次启动新对话」。`boolIn` 正是
-        // 「显式值优先、否则用注册表默认值」的那一处实现。
-        val enabled = runCatching {
-            PiSettingsCatalog.settings
-                .firstOrNull { it.key == RESUME_LAST_SETTING_KEY }
-                ?.boolIn(settingsStore)
-        }.getOrNull() ?: false
-        if (!enabled) return
-        val recent = runCatching { sessionStore.mostRecentForResume(guestWorkspace()) }
-            .getOrElse { error ->
-                fail("读取会话目录失败：${error.message ?: error::class.simpleName}")
-                return
-            }
-        if (recent == null) {
-            // pi's `-c` answers this by starting a new session, silently, and so does
-            // the app. There is nothing here the user could act on, and a snackbar at
-            // every launch for a state that did not change is exactly the
-            // bottom-of-screen noise this app should not have.
-            return
-        }
-        val current = _state.value.meta.sessionFile?.substringAfterLast('/')
-        if (current != null && recent.file.name == current) return
-        switchSession(recent)
     }
 
     /**
@@ -5610,7 +5428,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         // 而那个屏幕**每次挂载都会自己重读**（`SessionsScreen` 的 `LaunchedEffect(Unit)`）——
         // 那也是它唯一能重新变可见的方式：本条函数每一个用户可达的调用点都以
         // `requestNav(NavRequest.Chat)` 收尾，而 `PiRoot` 对它的处理就是 `overlayIndex = null`
-        // （`PiRoot.kt:605-608`），`continueAfterRestart` 则只在设置页里发生（覆盖层本来就关着）。
+        // （`PiRoot.kt:605-608`，覆盖层本来就关着）。
         // 所以这里那次扫描的产物是「没人在看的一份列表」，而覆盖层每次挂载还要再扫一遍。
         // 删它的理由是**那次扫描的结果到不了任何屏幕**，不是「列表可以旧着」：如果将来出现一条路
         // 在覆盖层开着的时候换会话，这一行就是要加回来的那一行。
@@ -5781,9 +5599,6 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private companion object {
-        /** logcat 标签：本文件只有这一处日志（重启后清理空会话文件），与 `runtime`/`engine` 同口径。 */
-        const val TAG = "PiSessionViewModel"
-
         /**
          * 「启动续接最近会话」那一行的键。默认值不在这里 —— 它在注册表那一行
          * （`PiSettingsCatalog`，`defaultValue = bool(true)`），这里只放键名，免得两处各写一遍。

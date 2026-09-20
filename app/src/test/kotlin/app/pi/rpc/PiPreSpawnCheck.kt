@@ -286,6 +286,156 @@ fun main() {
         "got ${quoted.commandLineSuffix()}",
     )
 
+    // ------------------------- the conversation this *new process* starts on
+    //
+    // 用户报的「一个对话在列表里被切成好几段、标题各不相同」的根因是：pi 的 argv 是固定的，
+    // 所以每一次进程启动都落在**全新**的会话文件上；而「重启是 App 的实现细节」（proroot
+    // 开关当场生效、装包之后重启、崩溃后重试）不该被用户看见成一段新对话。修法是**在 argv 里
+    // 钉住**这条对话，而不是起来之后补一条 `switch_session`（那套机制已删）。
+    //
+    // 这一节把 pi 的解析事实**跑出来**（`PiLaunchOptions` 在这台 JVM 上就是产品代码），
+    // 下面再读 `PiSessionViewModel` 的源码把「谁来钉」钉住。
+    val sessionId = "01932f4a-0000-7000-8000-abcdefabcdef"
+    val pinned = PiLaunchOptions(continueSessionId = sessionId).commandLineSuffix()
+    val pinnedTokens = pinned.trim().split(" ").filter { it.isNotEmpty() }
+    check(
+        "a known session is pinned as two tokens: `--session-id <id>`",
+        pinnedTokens == listOf("--session-id", sessionId),
+        "got '$pinned'",
+    )
+    // pi 只把 `--session`/`--session-id` 当成「下一个 token 是我的值」（`cli/args.ts:123-128`）；
+    // `--session-id=<id>` 会掉进未知标志分支（`:227-234`）——**静默**开一段新对话，没有任何报错。
+    // 所以这个 flag 不走 `renderFlag`（那个函数发 `=` 形式，且现在 `require` 拒绝这两个名字）。
+    check(
+        "the `=` spelling is never used for `--session-id` (pi would ignore the flag silently)",
+        !pinned.contains("--session-id=") && !pinned.contains("session-id="),
+        "got '$pinned'",
+    )
+    // `--session <path>`: 路径存在但不是合法 pi 会话时 pi 直接 `exit(1)`（`main.ts:337-345`），
+    // 所以这条路从来不发这个 flag；`--resume` 是交互式选择器，在 RPC 模式下不可用。
+    check(
+        "`--session <path>` / `--resume` are never emitted",
+        !containsFlag(pinned, "--session") && !containsFlag(pinned, "--resume"),
+        "got '$pinned'",
+    )
+    val idBeatsContinue = PiLaunchOptions(
+        continueSessionId = sessionId,
+        continueMostRecent = true,
+    ).commandLineSuffix()
+    check(
+        "an exact id wins over `-c` (never both)",
+        containsFlag(idBeatsContinue, "--session-id") && !containsFlag(idBeatsContinue, "-c"),
+        "got '$idBeatsContinue'",
+    )
+    check(
+        "`-c` is emitted when there is no id (冷启动那条路)",
+        PiLaunchOptions(continueMostRecent = true).commandLineSuffix().trim() == "-c",
+        "got '${PiLaunchOptions(continueMostRecent = true).commandLineSuffix()}'",
+    )
+    check(
+        "the default launch (no id, no `-c`) resumes nothing",
+        defaults.commandLineSuffix() == "",
+        "got '${defaults.commandLineSuffix()}'",
+    )
+    val pinnedWithExtensions = PiLaunchOptions(
+        continueSessionId = sessionId,
+        extensionArgs = PASS_THROUGH_FIXTURE_ARGS,
+    ).commandLineSuffix()
+    check(
+        "`--session-id` sits before the extension pass-through (their tokens cannot eat the id)",
+        pinnedWithExtensions.indexOf("--session-id") >= 0 &&
+            pinnedWithExtensions.indexOf("--session-id") < pinnedWithExtensions.indexOf("--plan"),
+        "got '$pinnedWithExtensions'",
+    )
+    // 一个扩展如果给自己注册了 `--session-id`，它就能把这条对话挤掉（`=` 形式还会被 pi 当未知
+    // 标志交给扩展）—— `renderFlag` 因此 `require` 拒绝这两个名字。执行出来，不靠读源码。
+    val clobber = runCatching {
+        PiLaunchOptions(
+            continueSessionId = sessionId,
+            extensionArgs = "--session-id 0000",
+        ).commandLineSuffix()
+    }
+    check(
+        "an extension cannot claim `--session-id` and overwrite the pinned conversation",
+        clobber.isFailure,
+        "expected a refusal, got '${clobber.getOrNull()}'",
+    )
+
+    // ------------------------------------------------- where those two values come from
+    // 「谁来钉」是**接线**，而 `PiSessionViewModel` import Android、在这里编译不了，所以读源码文本
+    // （与下面读注册表同一套分工）。三条事实：
+    //
+    //  * **只有进程内重启钉 id**：只有那一刻 App 既知道用户在哪条对话上、又保证 cwd 没变。
+    //    冷启动（`boot()`，也是崩溃后「重试」按钮走的路）交给 `-c`；切工作区换了 cwd，旧 id
+    //    不是 `findById` 的答案（它的 cwd 过滤会用同一个 id 再建一个文件）。
+    //  * id 在 `host.restart` **之前**读进局部变量：那次调用一进去旧引擎就退场，`meta` 被清。
+    //  * `-c` 由 `app.sessions.resumeLast` 决定，而那个开关读的是**注册表里的默认值**
+    //    （`boolIn`）—— 「把默认值翻成开」这类改动必须同时改变行为，不只是设置页的显示。
+    val restartBody = viewModel.substringAfter("suspend fun restartEngine(", "").take(6_000)
+    check("找到了 restartEngine 的函数体", restartBody.isNotEmpty(), "marker not found")
+    val pinAt = restartBody.indexOf("val resumeSessionId = _state.value.meta.sessionId")
+    val restartAt = restartBody.indexOf("host.restart(")
+    check(
+        "restartEngine reads the id before it hands the new process its argv",
+        pinAt >= 0 && restartAt >= 0 && pinAt < restartAt,
+        "pinAt=$pinAt restartAt=$restartAt",
+    )
+    check(
+        "restartEngine pins that id in the launch options",
+        restartBody.contains("launch = launchOptions(continueSessionId = resumeSessionId)"),
+    )
+    // 断言的是**实参**形状，不是形参：`private fun launchOptions(continueSessionId: …)` 也以同一个
+    // 前缀开头，只数前缀会把声明和注释里的引用都算进去。三条 `launch = ` 里只有一条带 id。
+    // （计数先落到两个 val 里：模板表达式里再嵌套一层字符串字面量，是这个 harness 里没人需要的
+    // 花活，读起来也更容易出错。）
+    val noArgLaunches = Regex("launch = launchOptions\\(\\)").findAll(viewModel).count()
+    val pinnedLaunches = Regex("launch = launchOptions\\(continueSessionId = ").findAll(viewModel).count()
+    check(
+        "`launch = ` 只有两种形状：两处无参（boot / 切工作区）+ 一处钉 id（进程内重启）",
+        noArgLaunches == 2 && pinnedLaunches == 1,
+        "no-arg=$noArgLaunches pinned=$pinnedLaunches",
+    )
+    val bootBody = viewModel
+        .substringAfter("fun boot(rebuild: Boolean = false) {", "")
+        .substringBefore("suspend fun restartEngine(")
+    check("找到了 boot 的函数体", bootBody.isNotEmpty(), "marker not found")
+    check(
+        "cold start pins no id (it is `-c`, under `app.sessions.resumeLast`)",
+        bootBody.contains("val launchOptions = launchOptions()") &&
+            !bootBody.contains("continueSessionId"),
+    )
+    check(
+        "switching workspace pins no id (the cwd changed, so the old id is not pi's answer)",
+        viewModel
+            // 窗口取到 `switchWorkspace` **自己**的结尾为止（下一个声明是 `wouldInterruptTurn`）：
+            // 再往后就是 `launchOptions` 的声明，那里面当然有 `continueSessionId`。
+            .substringAfter("suspend fun switchWorkspace(", "")
+            .substringBefore("fun wouldInterruptTurn()")
+            .let { it.contains("host.restart(") && !it.contains("continueSessionId") },
+    )
+    check(
+        "`continueMostRecent` is the registry default, read through `boolIn`",
+        viewModel.contains("continueMostRecent = resumeLastEnabled()") &&
+            viewModel.substringAfter("private fun resumeLastEnabled()", "").take(700)
+                .contains("boolIn(settingsStore)"),
+    )
+    // 删掉的那套机制**不许回来**：每个重启入口各自补一条 `switch_session`，正是「一次对话裂成
+    // 好几段」的来源（两处收尾之间用户就能打字，消息落进新文件）。
+    for (gone in listOf(
+        "continueAfterRestart",
+        "discardEmptySessionCreatedByRestart",
+        "maybeResumeLastSession",
+        "resumeAttempted",
+        "continueFrom",
+    )) {
+        check(
+            "the post-hoc switch-back is gone: no `$gone`",
+            !viewModel.contains(gone),
+            "重启后的接回只能由 argv 完成；事后再 `switch_session` 会与新引擎的首帧抢会话，" +
+                "用户在那几帧里发的消息就落进另一个文件了。",
+        )
+    }
+
     // --------------------------------------------------------- the rule: no two truths
     val exposedFlags = APP_EXPOSED_PRE_SPAWN.flatMap { spellings(it.flag) }.toSet()
     val exposedEnv = APP_EXPOSED_PRE_SPAWN.flatMap { spellings(it.envVar) }.toSet()

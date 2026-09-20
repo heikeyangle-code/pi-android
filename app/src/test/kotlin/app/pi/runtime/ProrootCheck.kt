@@ -230,54 +230,6 @@ fun main() {
     val shmIndex = sharedBinds.indexOfFirst { it.endsWith(":/dev/shm") }
     check("...and after the /dev bind, so the later bind wins", devIndex >= 0 && shmIndex > devIndex, true)
 
-    // ---- 引擎启动前的目录自检（`ProrootEngineReadDirProbe`）-------------------------
-    // 为什么它在：受控 A/B 表明 `-b` 的 host 侧用内核拼写时 readdir 正常、用 `getFilesDir()`
-    // 原样拼写时坏，而 `-r` 的拼写无影响；但设备在按该规则修完之后**仍然**报告"有的目录行、
-    // 有的不行"。于是不再赌拼写：引擎启动前用引擎自己的绑定形状真的列一次必须可列的目录，
-    // 任何一条列不出来就让本次启动用 proot —— 用户永远不会看到"资源看不见"的状态。
-    val gateDirs = listOf("/root/.pi/agent/extensions", "/root/.pi/agent/skills", "/workspace/ws", "/tmp")
-    fun gateLine(path: String, count: Int) = "${ProrootEngineReadDirProbe.MARKER}\t$path\t$count"
-    fun gateErr(path: String, code: String) =
-        "${ProrootEngineReadDirProbe.MARKER}\t$path\t${ProrootEngineReadDirProbe.ERROR}\t$code"
-    val gateAllOk = ProrootEngineReadDirProbe.parse(gateDirs.joinToString("\n") { gateLine(it, 3) }, gateDirs)
-    check("every required engine directory listed ⇒ the check passes", gateAllOk.ok, true)
-    check("...and the line says so with the stage's pass mark", gateAllOk.describe().single().startsWith("✓ 引擎目录可列"), true)
-    // 一条坏就整条失败：这正是用户报的"有的目录行、有的不行"。
-    val gateOneBad = ProrootEngineReadDirProbe.parse(
-        listOf(
-            gateLine("/root/.pi/agent/extensions", 3),
-            gateErr("/root/.pi/agent/skills", "ENOENT"),
-            gateLine("/workspace/ws", 6),
-            gateLine("/tmp", 10),
-        ).joinToString("\n"),
-        gateDirs,
-    )
-    check("one unreadable directory fails the whole check", gateOneBad.ok, false)
-    check("...and the failing directory is named with its errno", gateOneBad.describe().single().contains("/root/.pi/agent/skills=ENOENT"), true)
-    // 没输出、噪声、坏计数都不能读成通过（"guest 没回答"不是 pass）。
-    check("silence is a failure", ProrootEngineReadDirProbe.parse("", gateDirs).ok, false)
-    check(
-        "a line the guest never printed is a failure for that directory",
-        ProrootEngineReadDirProbe.parse(gateLine("/tmp", 1), gateDirs).dirs.count { !it.ok },
-        gateDirs.size - 1,
-    )
-    check(
-        "unrelated shell noise is ignored",
-        ProrootEngineReadDirProbe.parse("bash: warning: x\n" + gateDirs.joinToString("\n") { gateLine(it, 0) }, gateDirs).ok,
-        true,
-    )
-    check(
-        "an unparseable count is a failure, not a zero",
-        ProrootEngineReadDirProbe.parse(gateDirs.joinToString("\n") { gateLine(it, 1) }.replaceFirst("\t1", "\t?"), gateDirs).ok,
-        false,
-    )
-    check(
-        "the command runs node (the only reader that shows the defect)",
-        ProrootEngineReadDirProbe.guestCommand(gateDirs).contains("node -e") &&
-            ProrootEngineReadDirProbe.guestCommand(gateDirs).contains("/root/.pi/agent/skills"),
-        true,
-    )
-
     // 两个 builder，在别名上：出去的 host 侧是解析后的路径。
     val aliasExtra = linkedWorkspace to "/workspace/pi/workspaces/workspace-1"
     val prorootAlias = binds(ProrootCommand.build(p, command, "/root", null, listOf(aliasExtra)))
@@ -404,17 +356,33 @@ fun main() {
     check("both runtimes name the same CA bundle", listOf(prootEnv["SSL_CERT_FILE"], prorootEnv["SSL_CERT_FILE"]), listOf(GuestRecipe.GUEST_CA_BUNDLE, GuestRecipe.GUEST_CA_BUNDLE))
     check("the forwarded CA constant is the shared one", ProotCommand.GUEST_CA_BUNDLE, GuestRecipe.GUEST_CA_BUNDLE)
     check("extra environment is merged, not dropped", ProrootCommand.environment(p, mapOf("X" to "1"))["X"], "1")
-    // The launcher's environment is exactly the four variables the reference
-    // implementation exports (measured from its live `/proc/<pid>/environ` on the device:
-    // `PROROOT_TMP_DIR`, `PROROOT_LIB_PATH`, `PROROOT_LINKER_PATH`, `PROROOT_STUB_LOADER`
-    // and nothing else proroot-shaped). `PROROOT_TRAMPOLINE_PATH` is discovered by the
-    // launcher itself, and `PROROOT_NO_SECCOMP` is *deliberately absent* — v1.2.8 has no
-    // reader for it (it writes `1` into its own children and nothing consumes it), so
-    // exporting it would change our environment and nothing else.
+    // The launcher's environment is the four variables the reference implementation exports
+    // (measured from its live `/proc/<pid>/environ` on the device: `PROROOT_TMP_DIR`,
+    // `PROROOT_LIB_PATH`, `PROROOT_LINKER_PATH`, `PROROOT_STUB_LOADER`) **plus the two
+    // documented diagnostic switches** `PROROOT_VERBOSE` / `PROROOT_LOG_APPEND` (upstream
+    // README; they only make proroot say what it translated). `PROROOT_TRAMPOLINE_PATH` is
+    // discovered by the launcher itself, and `PROROOT_NO_SECCOMP` is *deliberately absent* —
+    // v1.2.8 has no reader for it (it writes `1` into its own children and nothing consumes
+    // it), so exporting it would change our environment and nothing else.
     check(
-        "proroot exports the four launcher variables",
+        "proroot exports the four launcher variables plus the two diagnostic switches",
         prorootEnv.keys.filter { it.startsWith("PROROOT_") }.sorted(),
-        listOf("PROROOT_LIB_PATH", "PROROOT_LINKER_PATH", "PROROOT_STUB_LOADER", "PROROOT_TMP_DIR"),
+        listOf(
+            "PROROOT_LIB_PATH",
+            "PROROOT_LINKER_PATH",
+            "PROROOT_LOG_APPEND",
+            "PROROOT_STUB_LOADER",
+            "PROROOT_TMP_DIR",
+            "PROROOT_VERBOSE",
+        ),
+    )
+    // Trace 落点：宿主路径、在 `<files>` 下（不在易失树里），值是 1。
+    check("the trace switch is on", prorootEnv["PROROOT_VERBOSE"], "1")
+    check("the trace file is <files>/proroot-trace.log", prorootEnv["PROROOT_LOG_APPEND"], "$FILES/proroot-trace.log")
+    check(
+        "the trace file is the one the builder names",
+        ProrootCommand.prorootTraceLog(p).path,
+        prorootEnv["PROROOT_LOG_APPEND"],
     )
     check("the no-seccomp variable is not exported", prorootEnv.containsKey(ProrootCommand.NO_SECCOMP_ENV), false)
     check("the trampoline path is left to the launcher", prorootEnv.containsKey("PROROOT_TRAMPOLINE_PATH"), false)

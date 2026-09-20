@@ -887,8 +887,10 @@ object PiSettingsCatalog {
         // 旧的那份 26 条用户消息、新的那份零上下文开局，时间点正是他换完运行时重启 App 的时刻）。
         // 所以默认翻成开：**打开 App 接回上次那段对话；想要新对话用「＋ 新建会话」。**
         //
-        // 运行时的读取必须走注册表这一处默认值（`PiSessionViewModel.maybeResumeLastSession` 用
-        // `boolIn`），否则"翻默认值"只会改设置页的显示、运行时仍按关处理。
+        // 运行时的读取必须走注册表这一处默认值（`PiSessionViewModel.resumeLastEnabled()` 用
+        // `boolIn`），否则"翻默认值"只会改设置页的显示、运行时仍按关处理。它现在只喂**冷启动**
+        // 那条路（`PiLaunchOptions.continueMostRecent` → argv 的 `-c`）：进程内重启（换运行时、
+        // 装包、崩溃后重试）由 `--session-id` 钉住，与这一行无关。
         PiSetting(
             key = "app.sessions.resumeLast",
             title = "启动续接最近会话",

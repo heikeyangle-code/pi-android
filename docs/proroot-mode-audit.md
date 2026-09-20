@@ -397,3 +397,39 @@ $ node -e "process.chdir('/dev/shm'); require('fs').readdirSync('.')" -> ENOENT
 
 **根因一句话**：`android_*` 不是"没加载"，是 **pi 列不出那个目录**；而列不出来是 §1 的绑定别名问题在
 `readdir` 上的表现 —— **proot 没有反向前缀映射，所以 proot 侧一直正常**。A 修好即恢复。
+
+---
+
+## 17. 「proroot 绑定目录不可列」——到此为止的结论（2026-09-20）
+
+**现象**：proroot 下 `fs.readdirSync`（libuv `uv_fs_scandir`）在**绑定挂载的**目录上返回 ENOENT；
+同一目录 `opendirSync`+`readSync`、`ls`、`find`、读、写**全部正常**。rootfs 内的目录完全正常。
+pi 的技能 / 提示词 / 主题 / 扩展**全部靠列目录发现**，而它的 walker 把这些错误整段吞掉，
+所以用户看到的是"命令面板缺东西、`ls` 有的目录行有的不行"，proot 下一切正常。
+
+**受控 A/B（本机，同一目录两种 host 侧拼写各绑一次，`-r` 两种拼写各跑一遍）**：
+
+| 绑定 host 侧 | `fs.readdirSync` | 相对路径（cwd = 该目录） |
+|---|---|---|
+| `/data/data/…`（内核拼写） | **OK** | **OK** |
+| `/data/user/0/…`（`getFilesDir()` 原样） | ENOENT | ENOENT |
+
+`-r` 的拼写对两列都没有影响。
+
+**为什么不能靠拼写根治**：按上表把 `-b` 的 host 侧统一成内核拼写之后，**设备上仍然坏**（"有的目录行、
+有的不行"）。参照实现（DSH App，同一台设备、同一个 launcher 二进制）的 live argv 逐段对比也没有
+任何缺失旗标 —— 它"能用"是因为**它要列的资源全在 rootfs 里**（argv 里没有 agent 目录 / 工作区绑定），
+而它**唯一**一条 app-data 绑定 `/dev/shm` 在本机实测里 `readdirSync` 同样是 ENOENT：**同一个缺陷它也在，
+只是它从不列那个目录**。我们的设计把 agent 目录、工作区、`/tmp` 放在易失 rootfs 之外（都必须绑进去），
+而 pi 的资源发现正是列这三条 ⇒ 缺陷必然暴露。
+
+**结论**：这是 proroot 侧的缺陷（libuv 的 `scandir` 路径与 `opendir`/`readdir` 在绑定目录上行为不一致），
+**不是我们的 argv 能消除的**。我们这边已经做到的、也是保留的全部：
+- `-b` host 侧按内核拼写（`GuestRecipe.canonicalHost`，唯一裁决点；cwd 与相对路径因此正确）；
+- `-r` 保持 `getFilesDir()` 原样（受控 A/B 证明它无影响，回归后带证据的回退）；
+- 边界修法（相对路径原样、`/proc` 子树与 `/dev/fd|stdin|stdout|stderr` 排除、裸值只动 host 侧、
+  进程级 memo + `build` 复用 `boundPairs`）。
+
+**不做的（明确记录，避免下一轮重复提议）**：启动前 readdir 自检 / 失败自动退回 proot（被用户否决，
+"修不好就别修"）；把 agent 目录物化进 rootfs + 双向同步（引入两个真相与同步失败面）。
+**真正根治只能等上游修 `scandir`**，或接受"proroot 下资源不可见"这一既有事实。

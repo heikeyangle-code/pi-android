@@ -387,7 +387,36 @@ object ProrootCommand {
         put("PROROOT_LINKER_PATH", paths.prorootLinker().absolutePath)
         put("PROROOT_LIB_PATH", paths.prorootRuntimeHook().absolutePath)
         put("PROROOT_STUB_LOADER", paths.prorootStubLoader().absolutePath)
+        // ---- 上游自带的诊断开关（只设环境变量；没有新界面、新设置行）----------------
+        // 上游 README 文档化了这两个变量：`PROROOT_VERBOSE=1` 让 launcher / runtime / stub 把诊断
+        // 打到 stderr；`PROROOT_LOG_APPEND=<文件>` 同时落到文件。设备上失败时，上游的 trace 会直接
+        // 说出它把哪条路径翻译成了什么 —— 比我们继续从源码猜强。落点是 `<files>/proroot-trace.log`
+        // （**宿主**路径：launcher 是宿主进程，与 [PiPaths.prorootTmp] 同理）。
+        //
+        // 两件事一起记在这里，避免下一个人以为它们是"我们新加的机制"：
+        //  - 引擎自己的 stderr 由 `PiEngineSession` 抓且**有 64 KB 上限**，所以那一路不会涨；
+        //  - **这个文件按启动追加、不轮转**，所以它只该在定位期间开着：定位完把变量删掉即可
+        //    （`RuntimeProvisioner.wipe()` 不会碰它，它在 `<files>` 而不是易失树里）。
+        //
+        // ⚠️ 一个要盯的点：诊断按上游口径走 **stderr**（引擎的 stderr 是诊断通道，不是协议通道），
+        // 而引擎的 **stdout 是 RPC 流** —— 若某个 proroot 构建把 verbose 写到 stdout，RPC 会被污染。
+        // 真出现那种症状时，正确做法是**只删 `PROROOT_VERBOSE`、保留 `PROROOT_LOG_APPEND`**
+        // （文件那一路与协议无关）。
+        put("PROROOT_VERBOSE", "1")
+        put("PROROOT_LOG_APPEND", prorootTraceLog(paths).path)
         putAll(GuestRecipe.environment(paths))
         putAll(extra)
     }
+
+    /**
+     * `PROROOT_LOG_APPEND` 的落点：`<files>/proroot-trace.log`。
+     *
+     * 放在 `<files>`（而不是易失的 `runtime` 树）是因为它就是给**设备侧一次定位**用的：
+     * `wipe()` 不会删它，所以用户把 trace 交给我们之前它不会消失。代价是它按启动追加、
+     * 不轮转 —— 定位结束就该把 `PROROOT_LOG_APPEND`/`PROROOT_VERBOSE` 删掉（或在设备上删文件）。
+     *
+     * 必须是**宿主**路径：这个环境是给宿主侧的 launcher 读的（与 [PiPaths.prorootTmp] 同理）。
+     */
+    fun prorootTraceLog(paths: PiPaths): File =
+        File(paths.home.parentFile ?: paths.home, "proroot-trace.log")
 }
