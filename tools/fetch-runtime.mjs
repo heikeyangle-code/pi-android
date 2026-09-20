@@ -279,6 +279,43 @@ const PROROOT_VERSION = "v1.2.8";
 const PROROOT_RELEASE = `https://github.com/coderredlab/proroot/releases/download/${PROROOT_VERSION}`;
 
 /**
+ * proroot — the optional second container runtime, and the only artifact here whose
+ * bytes nobody outside its author can rebuild.
+ *
+ * It is **closed source and Proprietary**. Upstream's `LICENSE` permits
+ * redistribution of the *unmodified* binaries as part of a complete application
+ * package (APK/AAB), forbids modified ones, and adds two obligations this app
+ * satisfies: ship the licence notice, and attribute "proroot" in the app
+ * description, an about/settings screen, or the third-party notices. Read the
+ * README's one-line summary as the whole licence and it looks like a grey area;
+ * it is not — see `app/src/main/assets/licenses/proprietary-third-party.txt`, which
+ * carries the registration (licence, package locations, digests, why they ship in
+ * the APK, known limits) alongside the verbatim text in `proroot-license.txt`.
+ * Mechanism and pitfalls: `docs/proroot-research.md`.
+ *
+ * ## Why the digest is written down twice (here and in `runtime.lock.json`)
+ *
+ * The `sha256` on each proroot entry below is the value **upstream publishes** for
+ * that asset: the SHA-256 block in the release notes, which GitHub's own per-asset
+ * metadata independently agrees with. The lock file carries the digest this build
+ * pins. Both are checked against the downloaded bytes, and the pair is not
+ * redundant: `--resolve-only` rewrites the lock from whatever the bytes on disk
+ * happen to be, so a substituted binary would be silently *re-pinned* — while this
+ * copy cannot be laundered that way and fails the build instead. Only proroot
+ * carries the field, because only proroot has no other way to be checked: with no
+ * source to rebuild from, these digests are the entire supply-chain check.
+ *
+ * ## Bumping the version
+ *
+ * Edit the tag, the five digests below, the five in the lock, and re-run the probe
+ * set in `docs/proroot-research.md` §6.5. The behavioural contract is what stands in
+ * for the source audit; a version bump without it is an unreviewed change to a
+ * closed binary.
+ */
+const PROROOT_VERSION = "v1.2.8";
+const PROROOT_RELEASE = `https://github.com/coderredlab/proroot/releases/download/${PROROOT_VERSION}`;
+
+/**
  * Pinned upstream artifacts. `sha256: null` means "record on first fetch".
  *
  * The git block below is a **closure, not a list of nice-to-haves**: `git` itself

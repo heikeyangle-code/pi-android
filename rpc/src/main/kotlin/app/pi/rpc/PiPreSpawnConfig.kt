@@ -182,6 +182,19 @@ val APP_EXPOSED_PRE_SPAWN: List<PiPreSpawnKnob> = listOf(
             "names are reported as `Unknown option` on stderr without exiting); " +
             "core/extensions/loader.ts:288-292 (getFlag returns a value only for a registered name)",
     ),
+    PiPreSpawnKnob(
+        appKey = "app.extensions.args",
+        // No spelling: the names are the extensions'. See the channel's KDoc.
+        flag = null,
+        envVar = null,
+        channel = PiPreSpawnChannel.ExtensionFlagsPassThrough,
+        piReader = "cli/args.ts:217-233 (any unrecognised `--flag` → unknownFlags: `=` form, space form, " +
+            "bare → true, repeat wins); main.ts:737 (parsed.unknownFlags → extensionFlagValues); " +
+            "core/agent-session-services.ts:8-43 (only a flag an extension registered is written; a boolean " +
+            "flag takes `true`; a registered non-boolean given `true` is an error diagnostic; unregistered " +
+            "names are reported as `Unknown option` on stderr without exiting); " +
+            "core/extensions/loader.ts:288-292 (getFlag returns a value only for a registered name)",
+    ),
 )
 
 /**
