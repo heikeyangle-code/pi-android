@@ -875,6 +875,20 @@ object PiSettingsCatalog {
         // only say "go somewhere else" is not a setting. The one sentence that has
         // to exist for discovery lives on the settings home's 终端 row
         // (`SettingsHome.kt`), not once per row here.
+        // **默认开**（用户裁决）。
+        //
+        // D31 当年把「打开 App 开始新会话」定为**有意默认**，理由是 pi 自己不传 `-c`/`--resume`
+        // 时也是新会话（`main.ts:426-443`），而且"打开就是新对话"对终端用户是熟悉的行为。
+        // 这一行的 `effective` 是 `EffectiveKind.RestartApp`：它在**App 启动**时才被读取
+        // （`PiSettingsEditors.kt:131-135` 对用户的说法就是「这个值在 App 启动时读取，必须先结束
+        // App 再启动」）。于是当年的默认意味着：**每一次 App 级重启之后都在一段新对话里**。
+        //
+        // 用户已经反复明确要求：换运行时之后必须还在**同一段对话**里（他的证据是两份会话文件：
+        // 旧的那份 26 条用户消息、新的那份零上下文开局，时间点正是他换完运行时重启 App 的时刻）。
+        // 所以默认翻成开：**打开 App 接回上次那段对话；想要新对话用「＋ 新建会话」。**
+        //
+        // 运行时的读取必须走注册表这一处默认值（`PiSessionViewModel.maybeResumeLastSession` 用
+        // `boolIn`），否则"翻默认值"只会改设置页的显示、运行时仍按关处理。
         PiSetting(
             key = "app.sessions.resumeLast",
             title = "启动续接最近会话",
@@ -882,7 +896,7 @@ object PiSettingsCatalog {
             kind = PiRowKind.Switch,
             group = G_SESSIONS,
             section = "存储",
-            defaultValue = bool(false),
+            defaultValue = bool(true),
             effective = EffectiveKind.RestartApp,
             aliases = listOf("continue", "resume", "last"),
         ),

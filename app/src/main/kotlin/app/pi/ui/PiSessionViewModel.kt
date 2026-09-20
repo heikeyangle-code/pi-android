@@ -81,8 +81,10 @@ import app.pi.ui.extension.noticeToneOf
 import app.pi.ui.extension.trimNoticeQueue
 import app.pi.ui.settings.AppOnlySettingsStore
 import app.pi.ui.settings.EngineDiagnostics
+import app.pi.ui.settings.PiSettingsCatalog
 import app.pi.ui.settings.PiSettingsStore
 import app.pi.ui.settings.RuntimeSwitchAction
+import app.pi.ui.settings.boolIn
 import app.pi.ui.theme.PiResolvedTheme
 import app.pi.ui.theme.PiThemeEntry
 import app.pi.ui.theme.PiThemeLoader
@@ -2639,7 +2641,16 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     private suspend fun maybeResumeLastSession() {
         if (resumeAttempted) return
         resumeAttempted = true
-        val enabled = runCatching { settingsStore.readBoolean("app.sessions.resumeLast") }.getOrNull() ?: false
+        // **默认值只有一处**：注册表那一行（`PiSettingsCatalog`，`defaultValue = bool(true)`）。
+        // 老写法是「`readBoolean` 加一个 `?: false` 兜底」—— 而 `readBoolean` 对**没写过**的键回
+        // null（pi 的 `settings.json` 里没有这个键就等于没写过），所以「把默认翻成开」如果只改注册表，
+        // 运行时仍然按关处理：设置页显示「开」，行为却是「每次启动新对话」。`boolIn` 正是
+        // 「显式值优先、否则用注册表默认值」的那一处实现。
+        val enabled = runCatching {
+            PiSettingsCatalog.settings
+                .firstOrNull { it.key == RESUME_LAST_SETTING_KEY }
+                ?.boolIn(settingsStore)
+        }.getOrNull() ?: false
         if (!enabled) return
         val recent = runCatching { sessionStore.mostRecentForResume(guestWorkspace()) }
             .getOrElse { error ->
@@ -5743,6 +5754,12 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     private companion object {
         /** logcat 标签：本文件只有这一处日志（重启后清理空会话文件），与 `runtime`/`engine` 同口径。 */
         const val TAG = "PiSessionViewModel"
+
+        /**
+         * 「启动续接最近会话」那一行的键。默认值不在这里 —— 它在注册表那一行
+         * （`PiSettingsCatalog`，`defaultValue = bool(true)`），这里只放键名，免得两处各写一遍。
+         */
+        const val RESUME_LAST_SETTING_KEY = "app.sessions.resumeLast"
 
         /**
          * Where [onCleared]'s teardown runs.

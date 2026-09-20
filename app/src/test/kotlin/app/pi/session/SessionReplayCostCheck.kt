@@ -1008,6 +1008,56 @@ fun main() {
     emptyRoot.deleteRecursively()
     println()
 
+    // ------------- 10. 换运行时（App 级重启）之后还在同一段对话里
+    //
+    // 用户证据：旧会话 26 条用户消息、新的那份零上下文开局，而新会话的启动时间正是他换完运行时
+    // 重启 App 的时刻。机制：`app.sessions.resumeLast` 那一行的 `effective` 是
+    // `EffectiveKind.RestartApp`（`PiSettingsEditors` 对用户的说法就是「这个值在 App 启动时读取」），
+    // 而它当时的默认是**关** ⇒ 每一次 App 级重启都在新会话里。用户裁决：默认改成开
+    // （「打开 App 接回上次那段对话；想要新对话用「＋ 新建会话」」）。
+    //
+    // 这一节钉两件事：① 默认值是 `true`；② **运行时读的就是注册表那一个默认值** —— 否则「翻默认值」
+    // 只改了设置页的显示，行为仍是关（`readBoolean` 对没写过的键回 null）。
+    val registryFile = System.getProperty("pi.repo.root")?.let {
+        File(it, "app/src/main/kotlin/app/pi/ui/settings/PiSettingsRegistry.kt")
+    }
+    val registryText = if (registryFile != null && registryFile.isFile) registryFile.readText() else ""
+    checkTrue("读到了 PiSettingsRegistry.kt（读不到这一节就没有意义）", registryText.isNotEmpty())
+    val resumeRow = registryText
+        .substringAfter("key = \"app.sessions.resumeLast\"", "")
+        .take(400)
+    checkTrue("找到了 resumeLast 那一行", resumeRow.isNotEmpty(), "marker not found")
+    checkTrue(
+        "默认值是 true（不再是 false）",
+        resumeRow.contains("defaultValue = bool(true)") &&
+            !resumeRow.contains("defaultValue = bool(false)"),
+    )
+    checkTrue(
+        "那一行仍然是 App 启动时读取（EffectiveKind.RestartApp）——这正是这条默认值的含义",
+        resumeRow.contains("effective = EffectiveKind.RestartApp"),
+    )
+    val resumeBody = viewModelText
+        .substringAfter("private suspend fun maybeResumeLastSession()", "")
+        .take(2_500)
+    checkTrue("找到了 maybeResumeLastSession 的函数体", resumeBody.isNotEmpty(), "marker not found")
+    // 断言的是**调用形状**（`settingsStore.readBoolean`），不是那三个字：这一节的上下文注释里
+    // 会提到 `readBoolean` 这个名字，按名字断言只会被自己的注释绊倒。
+    checkTrue(
+        "运行时读注册表那一个默认值（不再是 settingsStore.readBoolean 加 ?: false）",
+        resumeBody.contains("boolIn(settingsStore)") &&
+            !resumeBody.contains("settingsStore.readBoolean"),
+    )
+    checkTrue(
+        "接回的是**同一工作区**的最近一段（pi 的 `-c` 语义：`mostRecentForResume(guestWorkspace())`）",
+        resumeBody.contains("mostRecentForResume(guestWorkspace())"),
+    )
+    checkTrue(
+        "App 重启后的第一次不会被跳过（一次进程尝试一次，而字段初值是 false）",
+        resumeBody.contains("if (resumeAttempted) return") &&
+            resumeBody.contains("resumeAttempted = true") &&
+            viewModelText.contains("private var resumeAttempted = false"),
+    )
+
     // ---------------------------------------------------------------- summary
     println("-- 结论 --")
     val small = wholeCost["text-40"]!!
