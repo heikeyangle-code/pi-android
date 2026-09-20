@@ -408,8 +408,13 @@ object ProrootProbe {
      * grows the app's heap, and this helper is used by a probe whose subject is a binary
      * that may be misbehaving. Reading stops at [maxChars]; the truncation is visible in
      * the returned text so no caller can mistake a clipped run for a complete one.
+     *
+     * `internal` rather than `private` because the engine's pre-launch directory self-check
+     * (`ProrootEngineReadDirProbe.check`, called from `PiEngineHost`) has to run a guest command
+     * through the **same** launch shape — one implementation of "start a proroot guest with a
+     * bound timeout and a reapable tree", not a second copy of it.
      */
-    private fun runGuest(
+    internal fun runGuest(
         paths: PiPaths,
         engine: GuestEngine,
         guestCommand: String,

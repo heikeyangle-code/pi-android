@@ -230,18 +230,52 @@ fun main() {
     val shmIndex = sharedBinds.indexOfFirst { it.endsWith(":/dev/shm") }
     check("...and after the /dev bind, so the later bind wins", devIndex >= 0 && shmIndex > devIndex, true)
 
-    // ---- 全 argv 一种拼写：`-r` 必须和每一条 `-b` 的 host 侧同源（2026-09-20 受控实测）------
-    // 受控 A/B（同一目录、两种拼写各绑一次，`-r` 两种拼写各跑一遍，其余 argv 完全相同）：
-    //   host 侧 `/data/data/…`（内核拼写）→ `fs.readdirSync` OK；相对路径（cwd 在该目录）也 OK
-    //   host 侧 `/data/user/0/…`（getFilesDir 原样）→ `fs.readdirSync` **ENOENT**、相对路径 ENOENT
-    // 两个方向都与 `-r` 的拼写无关；`opendir`/`ls`/`find`/读/写全都不受影响（只坏"列目录"那一半）。
-    // 结论：整条 argv 必须用**同一种**拼写，而且必须是内核那一种 —— `-r` 之前留在
-    // `getFilesDir()` 的原样拼写上，正是这次 bug 的最后一环。
-    val prorootArgvForRoot = ProrootCommand.build(p, command, "/root", null)
+    // ---- 引擎启动前的目录自检（`ProrootEngineReadDirProbe`）-------------------------
+    // 为什么它在：受控 A/B 表明 `-b` 的 host 侧用内核拼写时 readdir 正常、用 `getFilesDir()`
+    // 原样拼写时坏，而 `-r` 的拼写无影响；但设备在按该规则修完之后**仍然**报告"有的目录行、
+    // 有的不行"。于是不再赌拼写：引擎启动前用引擎自己的绑定形状真的列一次必须可列的目录，
+    // 任何一条列不出来就让本次启动用 proot —— 用户永远不会看到"资源看不见"的状态。
+    val gateDirs = listOf("/root/.pi/agent/extensions", "/root/.pi/agent/skills", "/workspace/ws", "/tmp")
+    fun gateLine(path: String, count: Int) = "${ProrootEngineReadDirProbe.MARKER}\t$path\t$count"
+    fun gateErr(path: String, code: String) =
+        "${ProrootEngineReadDirProbe.MARKER}\t$path\t${ProrootEngineReadDirProbe.ERROR}\t$code"
+    val gateAllOk = ProrootEngineReadDirProbe.parse(gateDirs.joinToString("\n") { gateLine(it, 3) }, gateDirs)
+    check("every required engine directory listed ⇒ the check passes", gateAllOk.ok, true)
+    check("...and the line says so with the stage's pass mark", gateAllOk.describe().single().startsWith("✓ 引擎目录可列"), true)
+    // 一条坏就整条失败：这正是用户报的"有的目录行、有的不行"。
+    val gateOneBad = ProrootEngineReadDirProbe.parse(
+        listOf(
+            gateLine("/root/.pi/agent/extensions", 3),
+            gateErr("/root/.pi/agent/skills", "ENOENT"),
+            gateLine("/workspace/ws", 6),
+            gateLine("/tmp", 10),
+        ).joinToString("\n"),
+        gateDirs,
+    )
+    check("one unreadable directory fails the whole check", gateOneBad.ok, false)
+    check("...and the failing directory is named with its errno", gateOneBad.describe().single().contains("/root/.pi/agent/skills=ENOENT"), true)
+    // 没输出、噪声、坏计数都不能读成通过（"guest 没回答"不是 pass）。
+    check("silence is a failure", ProrootEngineReadDirProbe.parse("", gateDirs).ok, false)
     check(
-        "-r goes through the same resolver as every -b host side",
-        prorootArgvForRoot.windowed(2).single { it[0] == "-r" }[1],
-        GuestRecipe.canonicalHost(p.rootfs.path),
+        "a line the guest never printed is a failure for that directory",
+        ProrootEngineReadDirProbe.parse(gateLine("/tmp", 1), gateDirs).dirs.count { !it.ok },
+        gateDirs.size - 1,
+    )
+    check(
+        "unrelated shell noise is ignored",
+        ProrootEngineReadDirProbe.parse("bash: warning: x\n" + gateDirs.joinToString("\n") { gateLine(it, 0) }, gateDirs).ok,
+        true,
+    )
+    check(
+        "an unparseable count is a failure, not a zero",
+        ProrootEngineReadDirProbe.parse(gateDirs.joinToString("\n") { gateLine(it, 1) }.replaceFirst("\t1", "\t?"), gateDirs).ok,
+        false,
+    )
+    check(
+        "the command runs node (the only reader that shows the defect)",
+        ProrootEngineReadDirProbe.guestCommand(gateDirs).contains("node -e") &&
+            ProrootEngineReadDirProbe.guestCommand(gateDirs).contains("/root/.pi/agent/skills"),
+        true,
     )
 
     // 两个 builder，在别名上：出去的 host 侧是解析后的路径。

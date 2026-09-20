@@ -7,6 +7,7 @@ import app.pi.runtime.BootAudit
 import app.pi.runtime.GuestTreeReaper
 import app.pi.runtime.GuestWorkspacePath
 import app.pi.runtime.PiPaths
+import app.pi.runtime.ProrootEngineReadDirProbe
 import app.pi.runtime.ProrootExecProbe
 import app.pi.runtime.ProrootLaunchHandle
 import app.pi.runtime.ProrootProbe
@@ -676,13 +677,58 @@ class PiEngineHost(private val appContext: Context) {
             // pi works relative to its cwd and stores sessions per cwd, so the guest
             // must start in the workspace rather than at /.
             val storage = android.os.Environment.getExternalStorageDirectory()
-            val firstPlan = selection.plan(
+            // `var`, not `val`: the pre-launch directory self-check below can replace this plan
+            // with a proot one for **this** launch (see `ProrootEngineReadDirProbe`). Every later
+            // use of `firstPlan` in this block therefore reads the plan actually in use, which is
+            // what keeps `usingProroot`/`launchToken`/`argv` consistent with each other.
+            var firstPlan = selection.plan(
                 guestCommand = guestCommand,
                 cwd = guestWorkspace,
                 storage = storage,
                 extraBinds = extraBinds,
                 extraEnv = extraEnv,
             )
+            // The one diagnostic line for the device side: the argv the engine is really about
+            // to run, `-r` and every `-b` included. Without it every "is the bind spelled the
+            // way proroot wants" question is answered by guessing from the source.
+            Log.i(TAG, "引擎 argv（${if (firstPlan.usingProroot) "proroot" else "proot"}）：${firstPlan.argv.joinToString(" ")}")
+
+            // proroot's bind-mounted directories cannot be **relied on** to be listable: a
+            // controlled A/B shows the kernel spelling fixes it for a probe launch, and the
+            // device still reported "some directories list, some do not" under it. pi discovers
+            // *all* of its skills, prompts, themes and extensions by listing directories, and its
+            // walkers swallow the error — so the state to prevent is "proroot is fast but the
+            // resources are invisible". Check the real directories through the engine's own bind
+            // shape and run this launch on proot if any of them cannot be listed.
+            if (firstPlan.usingProroot) {
+                val dirCheck = ProrootEngineReadDirProbe.check(
+                    paths = paths,
+                    storage = storage,
+                    extraBinds = extraBinds,
+                    guestDirs = listOf(
+                        "$guestAgentDir/extensions",
+                        "$guestAgentDir/skills",
+                        guestWorkspace,
+                        "/tmp",
+                    ),
+                    onTimeoutTree = GuestTreeReaper::reapTimeoutedProbe,
+                )
+                Log.i(TAG, "proroot 目录自检：${dirCheck.describe().joinToString()}")
+                if (!dirCheck.ok) {
+                    selection.recordProrootFailure(
+                        "目录自检未通过：${dirCheck.describe().firstOrNull().orEmpty()}",
+                    )
+                    Log.w(TAG, "proroot 的绑定目录列不出来，本次引擎改用 proot")
+                    firstPlan = selection.plan(
+                        guestCommand = guestCommand,
+                        cwd = guestWorkspace,
+                        storage = storage,
+                        extraBinds = extraBinds,
+                        extraEnv = extraEnv,
+                        allowProroot = false,
+                    )
+                }
+            }
             // Armed **before** the process exists: the handle identifies this launch
             // by the config table proroot writes afterwards, matched to this plan's
             // token, which is the only way to learn the launcher's pid on this platform

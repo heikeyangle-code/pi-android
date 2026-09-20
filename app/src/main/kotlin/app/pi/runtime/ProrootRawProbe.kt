@@ -1,5 +1,7 @@
 package app.pi.runtime
 
+import java.io.File
+
 /*
  * This file holds the probe gate's two **guest-side measurements**. They are together
  * because they are the same kind of thing — a shell script built here and a pure parser
@@ -811,4 +813,124 @@ object ProrootExecProbe {
 
     private fun suffix(output: String?): String =
         output?.let { "：" + bound(it) } ?: "（没有任何输出）"
+}
+
+/**
+ * 引擎启动前的**目录自检**：proroot 下那些**必须能被列出来**的绑定目录，真的列一次。
+ *
+ * ## 为什么不能靠拼写保证
+ *
+ * 受控 A/B（同一目录、两种 host 侧拼写、`-r` 两种拼写）显示：`-b` 的 host 侧用**内核拼写**时
+ * `fs.readdirSync` 与相对路径都正常，用 `getFilesDir()` 原样拼写时两者都坏 —— 而 `-r` 的拼写
+ * 对两列都没有影响。`c903995` 按那条规则修完，设备上**仍然**坏（`ls` 有的目录行、有的不行）。
+ * 也就是说：**这条缺陷不能被拼写可靠地消除**（libuv 的 `scandir` 与 `opendir`/`ls` 在绑定目录上
+ * 行为不一致，是 proroot 侧的事）。既然不能保证，就让判定发生在**启动之前**：
+ *
+ *  - 引擎真的启动前，用**引擎自己那份 argv 形状**（同一组 `extraBinds`）在 guest 里对 agent
+ *    目录的 `skills/`、`extensions/`、工作区、`/tmp` 各跑一次 `fs.readdirSync`；
+ *  - 任何一条列不出来 ⇒ 本次引擎改用 **proot**（同一条三层兜底里的 `allowProroot = false`），
+ *    并把结论记进失败计数与 logcat。
+ *
+ * 判据只有一个：**用户永远不会看到"proroot 下资源看不见"的状态**。代价是 proroot 打开时每次
+ * 引擎启动多一次 guest 命令（约 1–3 s，只在这一条路径上）。
+ *
+ * Android-free，所以 bare-JVM 的 `proroot` harness 能编译并逐条覆盖 [parse]。
+ */
+object ProrootEngineReadDirProbe {
+
+    /** Every result line starts with this, so shell noise is ignored. */
+    const val MARKER = "PI-ENGINE-DIR"
+
+    /** Field separator inside a marker line. */
+    const val SEPARATOR = "\t"
+
+    /** The third field when `readdirSync` threw. */
+    const val ERROR = "ERR"
+
+    /** One `node -e` start listing four directories. */
+    const val TIMEOUT_MS: Long = 20_000L
+
+    /** One directory's outcome. */
+    data class DirResult(val path: String, val count: Int?, val error: String?) {
+        val ok: Boolean get() = error == null && count != null
+    }
+
+    /** The whole check. */
+    data class Report(val dirs: List<DirResult>) {
+        /**
+         * All-or-nothing on purpose: one unreadable directory is the defect, and "most of them
+         * work" is exactly the state the user reported as broken（`ls` 有的目录行、有的不行）。
+         */
+        val ok: Boolean get() = dirs.isNotEmpty() && dirs.all { it.ok }
+
+        /** One line for logcat and the failure count. */
+        fun describe(): List<String> = listOf(
+            (if (ok) "✓ 引擎目录可列" else "✗ 引擎目录可列") + "：" + dirs.joinToString("、") { dir ->
+                if (dir.error != null) "${dir.path}=${dir.error}" else "${dir.path}=${dir.count} 项"
+            },
+        )
+    }
+
+    /**
+     * `node` is deliberate: the shell (`ls`) uses `opendir`/`readdir` and **succeeds** on the
+     * broken directories, so a shell check would be a false pass.
+     */
+    fun guestCommand(guestDirs: List<String>): String {
+        val paths = guestDirs.joinToString(",") { "\"$it\"" }
+        return """
+            node -e 'const fs=require("fs");for(const p of [$paths]){try{console.log("$MARKER${SEPARATOR}"+p+"${SEPARATOR}"+fs.readdirSync(p).length)}catch(e){console.log("$MARKER${SEPARATOR}"+p+"${SEPARATOR}$ERROR${SEPARATOR}"+e.code)}}'
+        """.trimIndent()
+    }
+
+    /** Pure, so the harness feeds it real and hostile outputs. */
+    fun parse(output: String, guestDirs: List<String>): Report {
+        val found = LinkedHashMap<String, DirResult>()
+        val prefix = "$MARKER$SEPARATOR"
+        output.lineSequence().forEach { raw ->
+            val line = raw.trimEnd('\r').trim()
+            if (!line.startsWith(prefix)) return@forEach
+            val fields = line.split(SEPARATOR)
+            if (fields.size < 3) return@forEach
+            val path = fields[1]
+            found[path] = if (fields.size >= 4 && fields[2] == ERROR) {
+                DirResult(path, count = null, error = fields[3].ifBlank { "unknown" })
+            } else {
+                val count = fields[2].toIntOrNull()
+                if (count == null) DirResult(path, count = null, error = "无法解析计数：${fields[2]}")
+                else DirResult(path, count = count, error = null)
+            }
+        }
+        return Report(
+            guestDirs.map { path ->
+                found[path] ?: DirResult(path, count = null, error = "guest 没有输出这一行")
+            },
+        )
+    }
+
+    /**
+     * Run the check with the engine's own bind shape and return the verdict.
+     *
+     * Never throws: a check that cannot run is a **failure** ([Report.ok] false), because the
+     * caller's next move is "use proot instead", which is the right answer for both outcomes.
+     */
+    fun check(
+        paths: PiPaths,
+        storage: File?,
+        extraBinds: List<Pair<String, String>>,
+        guestDirs: List<String>,
+        onTimeoutTree: (launcherPid: Int?, launcherStartTime: Long?) -> Unit,
+    ): Report {
+        val output = runCatching {
+            ProrootProbe.runGuest(
+                paths = paths,
+                engine = GuestEngine.Proroot,
+                guestCommand = guestCommand(guestDirs),
+                storage = storage,
+                timeoutMs = TIMEOUT_MS,
+                extraBinds = extraBinds,
+                onTimeoutTree = onTimeoutTree,
+            )
+        }.getOrElse { error -> "自检没能运行：${error::class.java.simpleName}: ${error.message}" }
+        return parse(output, guestDirs)
+    }
 }

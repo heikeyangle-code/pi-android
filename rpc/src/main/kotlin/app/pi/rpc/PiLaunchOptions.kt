@@ -39,6 +39,51 @@ package app.pi.rpc
  *    "keep the shipped ones, drop the rest" wish is a different app-side feature;
  *    it does not belong in this flag (`docs/pre-spawn-config.md` §2.2).
  *
+ *  - [continueSessionId] → `--session-id <id>`: which conversation this **process**
+ *    starts on. pi's own semantics are exactly the ones this app needs — *"Use exact
+ *    project session ID, **creating it if missing**"* (`cli/args.ts:288`) — because
+ *    `createSessionManager` opens the file when `findById` finds that id
+ *    (`main.ts:435-441` → `SessionManager.open`, which **appends**:
+ *    `core/session-manager.ts:938-956` — `loadEntriesFromFile` + `loadedEntries` +
+ *    `flushed = true`) and otherwise creates a new session **with that id**
+ *    (`main.ts:442-447`). So "the first launch creates it, every later launch throws
+ *    a new conversation into the same file" is pi's behaviour, not something this app
+ *    has to arrange with `switch_session`.
+ *
+ *    **Space form only, never `--session-id=<id>`.** pi matches this flag on the
+ *    exact token `--session-id` and takes the next one (`cli/args.ts:126-128`); an
+ *    `=`-spelled token falls into the generic "unknown flag" branch (`:227-234`),
+ *    which pi hands to extensions — the id would be **silently dropped** and pi would
+ *    start a brand-new random session. That is the one failure this app could not
+ *    see, so [renderFlag] refuses these names outright.
+ *
+ *    **`--session <path>` is deliberately never emitted** (there is no field for it).
+ *    It works for a file that exists and for one that does not
+ *    (`core/session-manager.ts:938-961` preserves an explicit path), but a path that
+ *    exists and is **not a valid pi session** makes `_setSessionFile` throw
+ *    (`:945-951`) and `openSessionOrExit` answer with `process.exit(1)`
+ *    (`main.ts:337-345`) — i.e. the engine would not start at all, on every retry,
+ *    where today a refused `switch_session` is one snackbar and the engine keeps
+ *    running. The id form has no such branch: an id that cannot be found is created.
+ *
+ *    Two edges, both handled by that same asymmetry and neither fatal:
+ *    the session file was deleted or renamed ⇒ `findById` finds nothing ⇒ pi creates
+ *    a new session **with the same id** (`main.ts:442-447`), no error, and the old
+ *    file (if it still exists under another name) is still in the list; and a
+ *    **workspace switch** ⇒ the caller passes no id, because `findById` filters by
+ *    cwd only when `--session-dir` is not that cwd's default directory
+ *    (`:1732-1744`, which is this app's case, `PiEngineHost` passes the flat
+ *    `<agentDir>/sessions`) and would otherwise create a *second* file under an id
+ *    that already names a session in the old workspace.
+ *  - [continueMostRecent] → `-c` / `--continue` (`cli/args.ts:100-101`): pi's
+ *    `SessionManager.continueRecent(cwd, sessionDir)` (`main.ts:431-433`), which is
+ *    `findMostRecentSession(dir, cwd)` — the `.jsonl` files of `--session-dir` sorted
+ *    by **file mtime** descending, first one whose header cwd matches
+ *    (`core/session-manager.ts:660-679`; the cwd filter is on because the app passes
+ *    an explicit `--session-dir`, `:1653-1654`). This is what an **App-level** start
+ *    uses, where the process has no memory of which file it was on; the switch
+ *    `app.sessions.resumeLast` decides whether it is passed at all (default **on**).
+ *
  * Every default is "unset", so `PiLaunchOptions()` produces exactly the process
  * pi gets with no options at all.
  */
@@ -86,6 +131,26 @@ data class PiLaunchOptions(
      * instead of logged so the launch path can say it in words.
      */
     val extensionArgsRefusal: String? = null,
+    /**
+     * The conversation this process must start on, as pi's session **id** (not a path —
+     * see the class KDoc for why a path is not offered here). Emitted as
+     * `--session-id <id>`, in the **space** form: pi creates the session when the id is
+     * not found and appends to it when it is, so passing the id the app is already on
+     * makes an engine (re)start land in the same conversation with no `switch_session`
+     * round trip.
+     *
+     * Null means "no opinion" — then [continueMostRecent] decides, and if that is false
+     * too pi creates a brand-new session exactly as it always did.
+     */
+    val continueSessionId: String? = null,
+    /**
+     * Whether to pass `-c` (`--continue`) so a process with no known session resumes the
+     * most recent one for its cwd (`core/session-manager.ts:660-679`).
+     *
+     * Ignored when [continueSessionId] is set: a known id is exact and `-c` is a
+     * heuristic (mtime), so the exact answer wins.
+     */
+    val continueMostRecent: Boolean = false,
 ) {
 
     /**
@@ -139,6 +204,20 @@ data class PiLaunchOptions(
         if (noSkills) append(" --no-skills")
         if (noPromptTemplates) append(" --no-prompt-templates")
         if (noThemes) append(" --no-themes")
+        // The session this process starts on. **Appended as its own two tokens** (never
+        // through [renderFlag], which emits the `=` form the `--session-id` branch of
+        // pi's parser does not recognise — see [continueSessionId]).
+        //
+        // It sits here, before the extension pass-through, for the reason the KDoc's
+        // "Order" section gives: every app flag comes first, and the extension flags —
+        // where a bare `--flag` is possible — are last, so nothing of ours can be
+        // swallowed as someone else's value.
+        val sessionId = continueSessionId
+        if (sessionId != null) {
+            append(" --session-id ").append(quoteIfNeeded(sessionId))
+        } else if (continueMostRecent) {
+            append(" -c")
+        }
         extensionFlags.forEach { append(' ').append(renderFlag(it.name, it.value)) }
     }
 
@@ -174,6 +253,13 @@ data class PiLaunchOptions(
             noSkills: Boolean? = null,
             noPromptTemplates: Boolean? = null,
             noThemes: Boolean? = null,
+            /**
+             * The conversation to start on ([PiLaunchOptions.continueSessionId]). Not a
+             * setting: the caller passes the session the app is *already* on, or null.
+             */
+            continueSessionId: String? = null,
+            /** [PiLaunchOptions.continueMostRecent], normally the `app.sessions.resumeLast` switch. */
+            continueMostRecent: Boolean = false,
         ): PiLaunchOptions {
             val parsed = ExtensionFlagArgs.parse(extensionArgs)
             return PiLaunchOptions(
@@ -188,6 +274,8 @@ data class PiLaunchOptions(
                 noThemes = noThemes ?: false,
                 extensionFlags = parsed.flags,
                 extensionArgsRefusal = parsed.refusal,
+                continueSessionId = continueSessionId,
+                continueMostRecent = continueMostRecent,
             )
         }
 
@@ -208,6 +296,17 @@ data class PiLaunchOptions(
          * adjacent quoted and unquoted segments, so `'--a b'=x` is one token.
          */
         internal fun renderFlag(name: String, value: String?): String {
+            // **The two session flags are not allowed through here.** They take their value
+            // as the *next token* (`cli/args.ts:123-128`), so the `=` form this function
+            // emits would land in pi's unknown-flag branch (`:227-234`) and be handed to
+            // extensions — the id would vanish and pi would open a new session, silently.
+            // `--session <path>` is refused for a different reason: a path that exists but
+            // is not a valid pi session makes pi exit(1) (`main.ts:337-345`), so this app
+            // never emits that flag at all (see [PiLaunchOptions.continueSessionId]).
+            require(name != SESSION_ID_FLAG && name != SESSION_FLAG) {
+                "「--$name」必须发空格形式，不能用 `=`：pi 只把 `--$name` 当成这个标志" +
+                    "（cli/args.ts:123-128），`--$name=<value>` 会掉进未知标志分支被吞掉（:227-234）。"
+            }
             val head = quoteIfNeeded("--$name")
             return if (value == null) head else "$head=${quoteIfNeeded(value)}"
         }
@@ -243,6 +342,10 @@ data class PiLaunchOptions(
          */
         internal fun quoteIfNeeded(token: String): String =
             if (token.isNotEmpty() && token.all { it in SAFE_SHELL_CHARS }) token else quote(token)
+
+        /** The flag names [renderFlag] must never be used for (see its `require`). */
+        private const val SESSION_ID_FLAG = "session-id"
+        private const val SESSION_FLAG = "session"
 
         private val SAFE_SHELL_CHARS: Set<Char> =
             (('a'..'z') + ('A'..'Z') + ('0'..'9') + listOf('_', '-', '.', '/', ':', '@', '+', '=', ',', '%')).toSet()
