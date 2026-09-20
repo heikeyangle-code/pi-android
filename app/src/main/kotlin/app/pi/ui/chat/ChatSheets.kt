@@ -1,14 +1,21 @@
 package app.pi.ui.chat
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -33,8 +40,12 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import app.pi.rpc.PiResponses
 import app.pi.rpc.QueueMode
 import app.pi.rpc.TokenUsage
@@ -44,6 +55,7 @@ import app.pi.ui.extension.ExtensionStatus
 import app.pi.ui.extension.chromeSpans
 import app.pi.ui.components.PiContextRing
 import app.pi.ui.components.PiSectionHeader
+import app.pi.ui.components.piFormatTokens
 import app.pi.ui.components.PiSwitchRow
 import app.pi.ui.components.PiValueRow
 import app.pi.ui.components.contextProgressColor
@@ -537,43 +549,70 @@ fun ContextSheet(
     onDismiss: () -> Unit,
 ) {
     val stats = state.stats
-    ModalBottomSheet(onDismissRequest = onDismiss) {
+    // 外壳按 `design-demos/context-gauge-options.html` 的 `.sheet` 一条条对齐：
+    // `--surf-high` 底 + 1px `borderMuted` 描边 + 圆角 14 + 最大宽 430dp、内容裁切；
+    // 标题栏 11/14 + 下边一条 1px 分隔线；内容区 12/14。
+    //
+    // 为什么用 `MaterialTheme.colorScheme.outline` 当那个描边：稿子的 `--border-muted`
+    // 就是本项目 `outline` 的那一档（`SessionsScreen` 的行内分隔线已经在用同一条对照，
+    // 那里写着「`.div` 是 borderMuted 不透明，所以这里是 outline」）。颜色一个 hex 都没写死。
+    val shape = RoundedCornerShape(14.dp)
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+    ) {
         Column(
-            Modifier.fillMaxWidth().heightIn(max = 560.dp).verticalScroll(rememberScrollState()).padding(
-                horizontal = PiSpacing.pageHorizontal,
-            ),
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = PiSpacing.pageHorizontal)
+                .widthIn(max = 430.dp)
+                .clip(shape)
+                .border(PiSpacing.hairline, MaterialTheme.colorScheme.outline, shape)
+                .background(MaterialTheme.colorScheme.surfaceContainerHigh),
         ) {
             Text(
                 "上下文与用量",
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 14.dp, vertical = 11.dp),
                 style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.onSurface,
             )
-            Spacer(Modifier.height(PiSpacing.unit))
-            if (stats == null) {
-                Text(
-                    "正在读取…",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            } else {
-                ContextBlock(stats = stats, autoCompaction = state.meta.autoCompaction)
-                Spacer(Modifier.height(PiSpacing.unit))
-                UsageBlock(
-                    turn = state.turnUsage,
-                    session = stats.tokens?.let { totals ->
-                        TokenUsage(
-                            input = totals.input,
-                            output = totals.output,
-                            cacheRead = totals.cacheRead,
-                            cacheWrite = totals.cacheWrite,
-                            totalTokens = totals.total,
-                            cost = stats.cost,
-                        )
-                    },
-                    lastMessage = state.lastUsage,
-                )
+            HorizontalDivider(
+                thickness = PiSpacing.hairline,
+                color = MaterialTheme.colorScheme.outline,
+            )
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 560.dp)
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 14.dp, vertical = 12.dp),
+            ) {
+                if (stats == null) {
+                    Text(
+                        "正在读取…",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                } else {
+                    ContextBlock(stats = stats, autoCompaction = state.meta.autoCompaction)
+                    UsageBlock(
+                        turn = state.turnUsage,
+                        session = stats.tokens?.let { totals ->
+                            TokenUsage(
+                                input = totals.input,
+                                output = totals.output,
+                                cacheRead = totals.cacheRead,
+                                cacheWrite = totals.cacheWrite,
+                                totalTokens = totals.total,
+                                cost = stats.cost,
+                            )
+                        },
+                        lastMessage = state.lastUsage,
+                    )
+                }
             }
-            Spacer(Modifier.height(PiSpacing.unit))
         }
     }
 }
@@ -701,44 +740,72 @@ private fun ExtensionStatusLine(status: ExtensionStatus) {
  * (`footer.ts:110` prints `?` for exactly this window): the ring draws its empty
  * track with a `?`, the used count is `—`, and the window is still shown, because the
  * window did not change.
+ *
+ * ## The shape is the design file's, feature by feature
+ *
+ * `design-demos/context-gauge-options.html`（形态 1 的视觉语言）: 56dp 环（描边 4）、右列三行
+ * —— 等宽 17sp 的百分比（阈值色）、等宽 13sp 的 `641k / 1.0M · 自动压缩开`（pi 自己的 k/M
+ * 缩写）、12sp 的估算说明；`?` 的样式由调用方给（等宽 12sp，`PiContextRing` 负责 `bodyOnTool`）。
+ * 颜色全部走 `PiTheme` 令牌，一个 hex 都没写死。
  */
 @Composable
 private fun ContextBlock(stats: PiResponses.SessionStats, autoCompaction: Boolean) {
     val palette = PiTheme.palette
     val usage = stats.contextUsage
     val percent = usage?.percent
-    BlockLabel("上下文")
-    Spacer(Modifier.height(6.dp))
+    // 稿子形态 1 的顶部那一块：左 56dp 环（半径 26、描边 4），右竖排三行 ——
+    // 等宽 17sp 的百分比（阈值色）、等宽 13sp 的窗口行、12sp 的估算说明。
     Row(verticalAlignment = Alignment.CenterVertically) {
         PiContextRing(
             percent = percent,
             diameter = SHEET_RING_DIAMETER,
             stroke = SHEET_RING_STROKE,
-            placeholderStyle = MaterialTheme.typography.titleMedium,
+            // 稿子 `.ringbtn .q{font-family:mono;font-size:12px}`：`?` 是等宽 12sp。
+            placeholderStyle = PiTheme.text.monoSmall,
         )
-        Spacer(Modifier.width(PiSpacing.pageHorizontal))
+        Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
             Text(
                 text = percent?.let { String.format(Locale.US, "%.1f", it) + "%" } ?: "—",
-                style = MaterialTheme.typography.titleMedium,
+                style = PiTheme.text.mono.copy(fontSize = 17.sp),
                 color = percent?.let { contextProgressColor(it, palette) }
                     ?: MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Text(
-                text = "已用 " + (usage?.tokens?.let { exactCount(it) } ?: "—") +
-                    " / 窗口 " + (usage?.contextWindow?.let { exactCount(it) } ?: "—") +
-                    " · " + if (autoCompaction) "自动压缩开" else "自动压缩关",
-                style = PiTheme.text.meta,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                text = contextWindowLine(usage, autoCompaction),
+                modifier = Modifier.padding(top = 2.dp),
+                // 稿子：窗口行是等宽 13sp、正文色 —— 用的是 pi 自己的 k/M 缩写
+                // （`641k / 1.0M`），因为这一行要和底栏/环的口径一致；精确整数只出现在
+                // 下面的两列对比里（稿子 §5 写明这个分工）。
+                style = PiTheme.text.mono,
+                color = MaterialTheme.colorScheme.onSurface,
             )
+            NoteText("这是 pi 的估算：最后一次真实用量 + 之后每条消息按字符数 ÷ 4。")
         }
     }
-    Spacer(Modifier.height(6.dp))
+    // `percent == null` 是 pi 自己的一个窗口（压缩后到下次回复前），不是「还没读到」：
+    // 上面那句 `?` 的行与这一句都只在那个窗口里出现。
     if (percent == null) {
-        NoteText("压缩后 pi 还没有报占用。")
+        NoteText("压缩后 pi 还没有报占用，等下一次回复。")
     }
-    NoteText("百分比是 pi 的估算：最后一次真实用量 + 之后每条消息按字符数 ÷ 4（compaction.ts:270-274）。")
-    NoteText("pi 不提供分类明细（系统提示词 / 工具定义 / 对话消息这类拆项），只有总数。")
+    NoteText("分类明细 pi 不提供（系统提示词 / 工具定义 / 对话消息这类拆项它没有给，只有总数）。")
+}
+
+/**
+ * The window line: `641k / 1.0M · 自动压缩开`, pi's own compact spelling
+ * ([piFormatTokens], `footer.ts:24-30`), with `—` in place of the used count while pi
+ * reports no percentage (the window itself is still known — `agent-session.ts:3441-3445`
+ * nulls `tokens`/`percent` but keeps `contextWindow`).
+ *
+ * A window pi does not report either leaves the same `—`, so the line never invents a
+ * number: the shape is `used / window · auto-state` and any part of it that is unknown
+ * says so.
+ */
+private fun contextWindowLine(usage: PiResponses.ContextUsage?, autoCompaction: Boolean): String {
+    val used = usage?.tokens?.let { piFormatTokens(it) } ?: "—"
+    val window = usage?.contextWindow?.takeIf { it > 0L }?.let { piFormatTokens(it) } ?: "—"
+    val auto = if (autoCompaction) "自动压缩开" else "自动压缩关"
+    return "$used / $window · $auto"
 }
 
 /**
@@ -753,23 +820,38 @@ private fun ContextBlock(stats: PiResponses.SessionStats, autoCompaction: Boolea
  * The transcript's compact forms (`96k`) belong to a one-line reading; a detail sheet
  * exists to be quoted, and `96k` cannot say whether it was 96,400 or 96,900.
  *
- * **命中率 is one row, outside both columns, and it is `lastMessage`'s.** pi defines
- * it on a single message — `cacheRead ÷ (input + cacheRead + cacheWrite)`
- * (`footer.ts:95-98`) — and there is no turn-level equivalent: applying the same
- * formula to a sum would produce a *second* percentage that looks like the first and
- * means something else, which is precisely the confusion this sheet was reported for.
- * So the row says which message it is about, and a turn with no such figure simply
- * does not get one.
+ * **Both hit rates, one row each, outside both columns.** pi defines the first on a single
+ * message — `cacheRead ÷ (input + cacheRead + cacheWrite)` (`footer.ts:95-98`) — and there is
+ * no turn-level equivalent: applying the same formula to a sum would produce a *third*
+ * percentage that looks like the others and means something else, which is precisely the
+ * confusion this sheet was reported for. So each row says which number it is about.
+ *
+ * **Neither row may disappear.** They used to `return` when the ratio was null, so a reader
+ * saw one, then the other, then neither and reported it as 「感觉只有一个总的」. "This
+ * reading has no figure" and "this reading does not exist" are different statements
+ * ([HitRate]): the row stays, the value is `—`, and the reason is that branch's own sentence.
  */
 @Composable
 private fun UsageBlock(turn: TokenUsage?, session: TokenUsage?, lastMessage: TokenUsage?) {
-    BlockLabel("用量")
-    Spacer(Modifier.height(6.dp))
-    Row(Modifier.fillMaxWidth()) {
-        UsageColumn("本轮", turn, Modifier.weight(1f))
-        Spacer(Modifier.width(PiSpacing.pageHorizontal))
-        UsageColumn("本会话累计", session, Modifier.weight(1f))
+    // 稿子的 `.cmp`：两列并排，中间一条 1px `borderMuted` 竖分隔线，两侧各 12dp。
+    // `IntrinsicSize.Min` 是那条竖线能 `fillMaxHeight` 的前提（画到较高那一列的下沿）。
+    SectionTitle("用量对比", trailing = "（服务商回报的真值 · 千分位是精确整数）")
+    Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min)) {
+        UsageColumn("本轮", turn, Modifier.weight(1f), cumulative = false)
+        Spacer(Modifier.width(12.dp))
+        Box(
+            Modifier
+                .width(PiSpacing.hairline)
+                .fillMaxHeight()
+                .background(MaterialTheme.colorScheme.outline),
+        )
+        Spacer(Modifier.width(12.dp))
+        UsageColumn("本会话累计", session, Modifier.weight(1f), cumulative = true)
     }
+    NoteText(
+        "「本轮」＝ 从本回合开始、模型每一次回复的用量之和，正在流式的这一条要等它结束才计入；" +
+            "「本会话累计」＝ 整个会话，含压缩 / 摘要那次调用。",
+    )
     // Two hit rates, and the labels are long on purpose: the user has already read
     // one of these as the other. They are different kinds of number —
     //
@@ -784,109 +866,200 @@ private fun UsageBlock(turn: TokenUsage?, session: TokenUsage?, lastMessage: Tok
     // There is deliberately **no 本轮 hit rate**: a third percentage of the same shape
     // would put three near-synonyms on one screen, which the designer ruled out (and a
     // ratio of sums is not the sum of ratios in any case).
-    HitRateRow("命中率（最后一条回复）", hitRateOf(lastMessage))
-    HitRateRow("命中率（本会话累计）", cumulativeHitRateOf(session))
+    //
+    // **Both rows are always drawn.** They used to `return` when the ratio was null, so
+    // a reader saw one row, then the other, then neither — and reported it as 「感觉只有
+    // 一个总的」. This project's rule is that "this reading has no figure" and "this
+    // reading does not exist" may not look the same: the row stays, the value is `—`, and
+    // the reason is the branch's own sentence ([HitRate.none]).
+    HitRateRow("命中率（最后一条回复）", lastMessageHitRate(lastMessage))
+    HitRateRow("命中率（本会话累计）", cumulativeHitRate(session))
 }
 
-/** One hit-rate line; a rate with no figure draws nothing at all. */
-@Composable
-private fun HitRateRow(label: String, rate: String?) {
-    if (rate == null) return
-    Spacer(Modifier.height(6.dp))
-    Row(Modifier.fillMaxWidth()) {
-        Text(
-            text = label,
-            modifier = Modifier.weight(1f),
-            style = PiTheme.text.meta,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Text(
-            text = rate,
-            style = PiTheme.text.meta,
-            color = MaterialTheme.colorScheme.onSurface,
-            maxLines = 1,
-        )
-    }
+/**
+ * One hit-rate reading: a figure, or **why there is none**.
+ *
+ * The two are separate cases on purpose. A single nullable `String?` is what made the
+ * row disappear, and a row that disappears cannot say which of the four causes it was
+ * (no usage reported yet / a message whose three counters are all zero / the cumulative
+ * counters not read yet / a session with no counters at all).
+ */
+private sealed interface HitRate {
+    data class Value(val percent: String) : HitRate
+    data class None(val reason: String) : HitRate
+}
+
+/**
+ * pi's cache-hit rate for **one message**, or the reason it has none.
+ *
+ * `cacheRead ÷ (input + cacheRead + cacheWrite)` (`components/footer.ts:95-98`), one
+ * decimal — pi's own `toFixed(1)`, and pi's own definition of the number: it is a
+ * per-message field, not a session one.
+ */
+private fun lastMessageHitRate(usage: TokenUsage?): HitRate {
+    if (usage == null) return HitRate.None("本条还没有服务商回报的用量")
+    val read = usage.cacheRead ?: 0L
+    val denominator = (usage.input ?: 0L) + read + (usage.cacheWrite ?: 0L)
+    if (denominator <= 0L) return HitRate.None("本条的三项计数都是 0，算不出比例")
+    return HitRate.Value(String.format(Locale.US, "%.1f", read * 100.0 / denominator) + "%")
 }
 
 /**
  * The same ratio over the **whole session**: `ΣcacheRead ÷ (Σinput + ΣcacheRead +
  * ΣcacheWrite)`.
  *
- * A derived figure; the KDoc on its caller says so where a reader meets it, and its
- * inputs are `get_session_stats`' own cumulative counters, so nothing is estimated.
- * Null when the session has no usage yet, or when all three counters are zero.
+ * A **derived** figure (D30): its inputs are `get_session_stats`' own cumulative
+ * counters, so the arithmetic is four operations on pi's truth, but the ratio itself is
+ * this app's and pi has no field for it. The reason it has no figure says which of the
+ * two it is — the counters have not been read, or the session has none.
  */
-private fun cumulativeHitRateOf(usage: TokenUsage?): String? {
-    if (usage == null) return null
+private fun cumulativeHitRate(usage: TokenUsage?): HitRate {
+    if (usage == null) return HitRate.None("累计计数还没读到")
     val read = usage.cacheRead ?: 0L
     val denominator = (usage.input ?: 0L) + read + (usage.cacheWrite ?: 0L)
-    if (denominator <= 0L) return null
-    return String.format(Locale.US, "%.1f", read * 100.0 / denominator) + "%"
+    if (denominator <= 0L) return HitRate.None("本会话还没有服务商的累计计数")
+    return HitRate.Value(String.format(Locale.US, "%.1f", read * 100.0 / denominator) + "%")
 }
 
+/**
+ * One hit-rate line in the sheet's `kv` shape, and it is **always drawn**.
+ *
+ * The value is the figure or `—`; the note beside it is the branch's own reason when
+ * there is no figure, so the two are never the same blank and never the same sentence.
+ */
 @Composable
-private fun UsageColumn(title: String, usage: TokenUsage?, modifier: Modifier = Modifier) {
-    Column(modifier) {
-        Text(
-            text = title,
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.primary,
-        )
-        Spacer(Modifier.height(2.dp))
-        if (usage == null) {
-            // "No figures", not "zero": a turn in which pi reported no usage has no
-            // row of zeros to show (`TranscriptReducer.turnUsage`).
-            Text(
-                text = "—",
-                style = PiTheme.text.meta,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            return@Column
-        }
-        UsageRow("输入", usage.input?.let { exactCount(it) })
-        UsageRow("输出", usage.output?.let { exactCount(it) })
-        UsageRow("缓存读", usage.cacheRead?.let { exactCount(it) })
-        UsageRow("缓存写", usage.cacheWrite?.let { exactCount(it) })
-        UsageRow("费用", usage.cost?.let { "$" + String.format(Locale.US, "%.3f", it) })
-    }
-}
-
-@Composable
-private fun UsageRow(label: String, value: String?) {
-    Row(Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
-        Text(
-            text = label,
-            modifier = Modifier.weight(1f),
-            style = PiTheme.text.meta,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Text(
-            text = value ?: "—",
-            style = PiTheme.text.meta,
-            color = MaterialTheme.colorScheme.onSurface,
-            maxLines = 1,
-        )
-    }
-}
-
-/** A block's own title inside the sheet: the same weight the row labels carry. */
-@Composable
-private fun BlockLabel(text: String) {
-    Text(
-        text = text,
-        style = MaterialTheme.typography.labelMedium,
-        color = MaterialTheme.colorScheme.primary,
+private fun HitRateRow(label: String, rate: HitRate) {
+    KvRow(
+        key = label,
+        value = when (rate) {
+            is HitRate.Value -> rate.percent
+            is HitRate.None -> "—"
+        },
+        note = (rate as? HitRate.None)?.reason,
+        // 稿子这一行是 `.kv.auto`：标签是中文长句，固定 72dp 装不下，所以键宽自动。
+        keyWidth = null,
     )
 }
 
-/** The two honest sentences and the no-reading state share this style. */
+/**
+ * One usage column: its title, then the five readings in pi's own field order
+ * (`components/footer.ts:106-146`).
+ *
+ * The titles are deliberately different sizes and colours (稿子 §5：左「本轮」13/600 正文色、
+ * 右「本会话累计」12/500 muted) — that structural difference is what keeps the two
+ * columns from being read as one, which is the misreading D30 exists for.
+ */
+@Composable
+private fun UsageColumn(title: String, usage: TokenUsage?, modifier: Modifier = Modifier, cumulative: Boolean) {
+    Column(modifier) {
+        Text(
+            text = title,
+            // 稿子的 `.cmp .ch` **没有** font-family 覆盖 ⇒ 它是无衬线（13/600 正文色；
+            // 右列 `.ch.dim` 是 12/500 muted）。等宽只给数字，中文标题不走机器面。
+            style = if (cumulative) {
+                PiTheme.text.meta.copy(fontWeight = FontWeight.Medium)
+            } else {
+                PiTheme.text.meta.copy(fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+            },
+            color = if (cumulative) {
+                MaterialTheme.colorScheme.onSurfaceVariant
+            } else {
+                MaterialTheme.colorScheme.onSurface
+            },
+            maxLines = 1,
+        )
+        Spacer(Modifier.height(4.dp))
+        if (usage == null) {
+            // "No figures", not "zero": a turn in which pi reported no usage has no
+            // row of zeros to show (`TranscriptReducer.turnUsage`).
+            KvRow(key = "", value = "—", note = null, keyWidth = null)
+            return@Column
+        }
+        // A field pi did not report stays `—`, never `0`: "no figure" and "zero" are
+        // different readings and this sheet may not turn one into the other.
+        KvRow("输入", usage.input?.let { exactCount(it) } ?: "—")
+        KvRow("输出", usage.output?.let { exactCount(it) } ?: "—")
+        KvRow("缓存读", usage.cacheRead?.let { exactCount(it) } ?: "—")
+        KvRow("缓存写", usage.cacheWrite?.let { exactCount(it) } ?: "—")
+        KvRow("费用", usage.cost?.let { "$" + String.format(Locale.US, "%.3f", it) } ?: "—")
+    }
+}
+
+/**
+ * One `kv` line, the sheet's only row shape: `align-items: baseline`、间距 8、上下内边距 3；
+ * 键 12sp muted（[keyWidth] 给固定宽时就是稿子的 72dp）、值等宽 13sp 正文色、tabular。
+ *
+ * @param keyWidth null means "as wide as the label needs" — the design's `.kv.auto`, used
+ *   by the two hit-rate rows whose labels are sentences.
+ * @param note an optional muted sentence after the value (a hit-rate row's reason).
+ */
+@Composable
+private fun KvRow(key: String, value: String, note: String? = null, keyWidth: Dp? = 72.dp) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 3.dp),
+    ) {
+        Text(
+            text = key,
+            modifier = if (keyWidth != null) Modifier.width(keyWidth) else Modifier,
+            style = PiTheme.text.meta,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+        )
+        Spacer(Modifier.width(8.dp))
+        Text(
+            text = value,
+            modifier = Modifier.alignByBaseline(),
+            style = PiTheme.text.mono,
+            color = MaterialTheme.colorScheme.onSurface,
+        )
+        if (note != null) {
+            Spacer(Modifier.width(6.dp))
+            Text(
+                text = note,
+                modifier = Modifier.alignByBaseline().weight(1f),
+                style = PiTheme.text.meta,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+/**
+ * A section title inside the sheet: 12sp/500 in the body colour, with an optional muted
+ * parenthetical at 400 (稿子 `.sheet .sec` + 「（…）」那一半), 上距 12 下距 6.
+ */
+@Composable
+private fun SectionTitle(text: String, trailing: String? = null) {
+    Row(Modifier.fillMaxWidth().padding(top = 12.dp, bottom = 6.dp)) {
+        Text(
+            text = text,
+            style = PiTheme.text.meta.copy(fontWeight = FontWeight.Medium),
+            color = MaterialTheme.colorScheme.onSurface,
+        )
+        if (trailing != null) {
+            Text(
+                text = trailing,
+                style = PiTheme.text.meta.copy(fontWeight = FontWeight.Normal),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+/**
+ * The two honest sentences and the no-reading state share this style: 12sp / line-height 1.6
+ * in the muted colour — the design file's `.note`（`font-size:12px;line-height:1.6`）。
+ * `PiTheme.text.meta` is 12/18 (1.5); the 19.2sp below is that 1.6 written out, because these
+ * are the sentences a reader has to get through, not a label.
+ */
 @Composable
 private fun NoteText(text: String) {
     Text(
         text = text,
         modifier = Modifier.padding(top = 2.dp),
-        style = PiTheme.text.meta,
+        style = PiTheme.text.meta.copy(lineHeight = 19.2.sp),
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
 }
@@ -895,23 +1068,11 @@ private fun NoteText(text: String) {
 private fun exactCount(value: Long): String = String.format(Locale.US, "%,d", value)
 
 /**
- * pi's cache-hit rate for one message, or null when it has no figure.
- *
- * `cacheRead ÷ (input + cacheRead + cacheWrite)` (`components/footer.ts:95-98`). A
- * message that reported no usage at all, or one whose three fields are all zero,
- * answers null rather than `0.0 %`.
+ * The sheet's ring: 稿子形态 1 的 56dp / 描边 4（半径 26，与 `.sheet .ringbtn` 的 svg 同值）。
+ * 「板子没给测量」那条理由在 D27 之后不再成立 —— 现在给了，就是稿子这一处。
  */
-private fun hitRateOf(usage: TokenUsage?): String? {
-    if (usage == null) return null
-    val read = usage.cacheRead ?: 0L
-    val denominator = (usage.input ?: 0L) + read + (usage.cacheWrite ?: 0L)
-    if (denominator <= 0L) return null
-    return String.format(Locale.US, "%.1f", read * 100.0 / denominator) + "%"
-}
-
-/** The sheet's ring: the board gives the detail page no measurement, so 52/3 it is. */
-private val SHEET_RING_DIAMETER = 52.dp
-private val SHEET_RING_STROKE = 3.dp
+private val SHEET_RING_DIAMETER = 56.dp
+private val SHEET_RING_STROKE = 4.dp
 
 @Composable
 private fun StatLine(label: String, value: String) {

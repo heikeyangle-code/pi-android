@@ -58,11 +58,11 @@ OUT = os.path.join(ROOT, "app", "src", "main", "assets", "licenses")
 LOCK = os.path.join(ROOT, "runtime.lock.json")
 
 # npm packages in pi's dependency closure whose licence is not otherwise present
-# in a downloaded artifact. Versions are the ones pi 0.85.1 pins in its shipped
+# in a downloaded artifact. Versions are the ones pi 0.86.1 pins in its shipped
 # shrinkwrap; a bump must move both the version and the pi version together.
 #   tslib       0BSD          (also: `Unlicense` is taken from ripgrep's tarball)
 #   lru-cache   BlueOak-1.0.0
-#   minimatch   BlueOak-1.0.0
+#   minimatch   BlueOak-1.0.0  (ships its own LICENSE.md, so no entry here)
 NPM_LICENCE_FILES = [
     ("0BSD.txt", "tslib", "2.8.1", "LICENSE.txt"),
     ("BlueOak-1.0.0.txt", "lru-cache", "11.4.0", "LICENSE.md"),
@@ -94,8 +94,9 @@ JETBRAINS_MONO_LICENCE_TITLE = f"JetBrains Mono {JETBRAINS_MONO_VERSION}（OFL-1
 # without a copy, so the engine payload carries a `license: MIT` field and no
 # notice — while MIT requires the notice. We therefore ship it ourselves, from the
 # upstream tag matching the engine version. Verified: this URL's bytes are
-# identical to `/root/pi-src/LICENSE` at pi 0.85.1 (sha256 0457f5bcec3b3b21…), so
-# the text is the one we actually distribute.
+# identical to `/root/pi-src/LICENSE` at pi 0.85.1 (sha256 0457f5bcec3b3b21…); the
+# v0.86.1 tag's LICENSE was re-fetched and is **byte-identical** (same sha256), so
+# the text we distribute did not change across the bump.
 PI_LICENCE_URL = "https://raw.githubusercontent.com/earendil-works/pi/v{version}/LICENSE"
 PI_LICENCE_SHA256 = "0457f5bcec3b3b211605dfb5d1a49042fd638f3686a410fe099c24a25af13c48"
 
@@ -153,27 +154,31 @@ PROROOT_FILES = [
 # file**. Derived, not guessed: the `pi-engine` step of tools/fetch-runtime.mjs was
 # run in an isolated directory —
 #     npm install --ignore-scripts --omit=dev --omit=optional \
-#       @earendil-works/pi-coding-agent@0.85.1
+#       @earendil-works/pi-coding-agent@0.86.1
 # — and npm's own installed list (`node_modules/.package-lock.json`) was audited:
-# 128 packages installed, 115 shipping a licence file, these 13 not. Every one of
-# the 13 still declares a field, so this is "no text", never "no licence"; and for
-# the 115 that do ship one, the text was checked to support the declared id (0
-# mismatches at 0.85.1). Pinned here because the assets must build without npm;
+# 118 packages installed, 106 shipping a licence file, these 12 not. Every one of
+# the 12 still declares a field, so this is "no text", never "no licence"; and for
+# the 106 that do ship one, the text was checked to support the declared id (0
+# mismatches at 0.86.1). Pinned here because the assets must build without npm;
 # re-derive on a version bump (docs/known-gaps.md §L5).
+#
+# What the 0.85.1 → 0.86.1 bump changed: the six `@earendil-works/*` packages moved
+# to 0.86.1, the three `@aws-sdk/*` ones to the versions 0.86.1's shrinkwrap pins,
+# `@nodable/entities` and `xml-naming` left the closure entirely, and
+# `proxy-agent-negotiate` entered it.
 PI_ENGINE_NO_LICENCE_TEXT = [
-    ("@earendil-works/pi-coding-agent", "0.85.1", "MIT"),
-    ("@earendil-works/chord", "0.85.1", "MIT"),
-    ("@earendil-works/pi-agent-core", "0.85.1", "MIT"),
-    ("@earendil-works/pi-ai", "0.85.1", "MIT"),
-    ("@earendil-works/pi-telemetry", "0.85.1", "MIT"),
-    ("@earendil-works/pi-tui", "0.85.1", "MIT"),
-    ("@nodable/entities", "2.1.0", "MIT"),
+    ("@earendil-works/pi-coding-agent", "0.86.1", "MIT"),
+    ("@earendil-works/chord", "0.86.1", "MIT"),
+    ("@earendil-works/pi-agent-core", "0.86.1", "MIT"),
+    ("@earendil-works/pi-ai", "0.86.1", "MIT"),
+    ("@earendil-works/pi-telemetry", "0.86.1", "MIT"),
+    ("@earendil-works/pi-tui", "0.86.1", "MIT"),
     ("data-uri-to-buffer", "4.0.1", "MIT"),
+    ("proxy-agent-negotiate", "1.1.0", "MIT"),
     ("standardwebhooks", "1.1.1", "MIT"),
-    ("xml-naming", "0.1.0", "MIT"),
-    ("@aws-sdk/credential-provider-http", "3.972.39", "Apache-2.0"),
-    ("@aws-sdk/credential-provider-login", "3.972.41", "Apache-2.0"),
-    ("@aws-sdk/nested-clients", "3.997.9", "Apache-2.0"),
+    ("@aws-sdk/credential-provider-http", "3.972.72", "Apache-2.0"),
+    ("@aws-sdk/credential-provider-login", "3.972.77", "Apache-2.0"),
+    ("@aws-sdk/nested-clients", "3.997.44", "Apache-2.0"),
 ]
 
 # Where the notice for each of those packages can actually be found, and what was
@@ -187,10 +192,10 @@ PI_ENGINE_NO_LICENCE_TEXT = [
 PI_ENGINE_NOTICES = [
     (
         "6 × @earendil-works/* 包",
-        "0.85.1",
+        "0.86.1",
         "MIT",
-        "正文与版权声明见列表里的『pi 引擎 0.85.1（MIT）』那一份：这六个包与 pi 引擎出自同一 monorepo，根 LICENSE 即它们的许可文本（已按 v0.85.1 标签逐字节核对）",
-        "https://raw.githubusercontent.com/earendil-works/pi/v0.85.1/LICENSE",
+        "正文与版权声明见列表里的『pi 引擎 0.86.1（MIT）』那一份：这六个包与 pi 引擎出自同一 monorepo，根 LICENSE 即它们的许可文本（已按 v0.86.1 标签逐字节核对）",
+        "https://raw.githubusercontent.com/earendil-works/pi/v0.86.1/LICENSE",
         "0457f5bcec3b3b211605dfb5d1a49042fd638f3686a410fe099c24a25af13c48",
     ),
     (
@@ -198,33 +203,28 @@ PI_ENGINE_NOTICES = [
         "见上表",
         "Apache-2.0",
         "正文见列表里的『Apache-2.0』。AWS SDK 的 LICENSE 就是 Apache-2.0 模板本身，不含逐包版权行；"
-        "同一载荷里 22 个 @aws-sdk 包有 19 个带该文件，与上游逐字节相同",
+        "同一载荷里 19 个 @aws-sdk 包有 16 个带该文件，与上游逐字节相同",
         "https://raw.githubusercontent.com/aws/aws-sdk-js-v3/main/LICENSE",
         "edea91454b811f127fbdea3d86f378f6719bd372ed440abf82b232f6fca06c3d",
     ),
     (
-        "@nodable/entities",
-        "2.1.0",
-        "MIT",
-        "Copyright (c) 2026 Nodable —— 取自上游默认分支；该包 2.1.0 的发布标签在上游不存在，未能按版本核对",
-        "https://raw.githubusercontent.com/nodable/val-parsers/master/LICENSE",
-        "750cb3fb6362804957ef52caaf9b5c824015be44d494637330d7cd8834d31d40",
-    ),
-    (
-        "xml-naming",
-        "0.1.0",
-        "MIT",
-        "Copyright (c) 2026 Natural Intelligence —— 同上，取自默认分支，未能按版本核对",
-        "https://raw.githubusercontent.com/NaturalIntelligence/xml-naming/main/LICENSE",
-        "8e75fc0e776c62ccadb8178ece8d3daa9ba7601fb0a49b2dfb0ea9a7a5c0aa07",
-    ),
-    (
         "standardwebhooks",
         "1.1.1",
-        "Apache-2.0",
-        "正文见列表里的『Apache-2.0』；上游该文件是 Apache-2.0 模板，不含版权行",
-        "https://raw.githubusercontent.com/standard-webhooks/standard-webhooks/main/LICENSE",
-        "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+        "MIT",
+        "版权声明取不到：包内 package.json 声明的是 MIT（npm 元数据同此），而它**不带**任何许可文件；"
+        "上游仓库根部的 LICENSE 是 Apache-2.0 模板（c71d239d…，与本仓库 `licenses/apache-2.0.txt` 同源），"
+        "那是规范仓库的许可、不是这个包的 MIT 声明，因此这里没有可指向的 MIT 原文",
+        "",
+        "",
+    ),
+    (
+        "proxy-agent-negotiate",
+        "1.1.0",
+        "MIT",
+        "版权声明取不到：声明的 MIT 与作者（Nathan Rajlich <nathan@tootallnate.net>，取自包内 package.json）可读，"
+        "但上游仓库（TooTallNate/proxy-agents）的 LICENSE 在 main/master 以及 packages/negotiate 下均 404，无法确认版权行原文",
+        "",
+        "",
     ),
     (
         "data-uri-to-buffer",
@@ -1071,7 +1071,7 @@ def build(lock: dict, fetch_missing: bool, stage: str) -> None:
         "pi 引擎依赖的许可与版权声明来源",
         "===============================",
         "",
-        "在「未随包提供许可文本的依赖」那一份里列出的 13 个组件，包里没有许可文件；但其中大多数能在别处找到声明：",
+        f"在「未随包提供许可文本的依赖」那一份里列出的 {len(PI_ENGINE_NO_LICENCE_TEXT)} 个组件，包里没有许可文件；但其中大多数能在别处找到声明：",
         "同一 monorepo、同一载荷里的兄弟包、或上游仓库。",
         "下面是逐个核到的位置。每一项的 sha256 都是实际抓到的字节，可以复核，不需要相信这段话。",
         "",
@@ -1087,7 +1087,7 @@ def build(lock: dict, fetch_missing: bool, stage: str) -> None:
     manifest.append(
         (
             "pi-engine-npm-notices.txt",
-            "pi 引擎依赖的版权声明来源（含 1 个取不到的）",
+            "pi 引擎依赖的版权声明来源（含 %d 个取不到的）" % sum(1 for row in PI_ENGINE_NOTICES if not row[4]),
             "说明",
         )
     )
@@ -1169,8 +1169,11 @@ COMPONENTS: list[tuple[str, str, str, str, str]] = [
     ("libkeyutils1", "1.6.3", "LGPL-2.1+ 或 GPL-2.0+", "Linux 运行时（首次启动解包）", "https://people.redhat.com/~dhowells/keyutils/"),
     ("libldap2", "2.6.7", "OpenLDAP-2.8", "Linux 运行时（首次启动解包）", "https://www.openldap.org/"),
     # pi engine and its closure
-    ("pi 引擎", "0.85.1", "MIT", "Linux 运行时（首次启动解包）", "https://www.npmjs.com/package/@earendil-works/pi-coding-agent"),
-    ("pi 引擎的依赖包", "见 pi 0.85.1 的依赖锁定", "MIT / Apache-2.0 / BSD-3-Clause / ISC（全部为宽松许可证）", "Linux 运行时（首次启动解包）", "https://www.npmjs.com/package/@earendil-works/pi-coding-agent"),
+    # Read from PI_VERSION rather than repeated: this row and the engine payload must
+    # name the same release, and a literal here is what left the list describing
+    # 0.85.1 after the pin moved to 0.86.1.
+    ("pi 引擎", engine_version(), "MIT", "Linux 运行时（首次启动解包）", "https://www.npmjs.com/package/@earendil-works/pi-coding-agent"),
+    ("pi 引擎的依赖包", f"见 pi {engine_version()} 的依赖锁定", "MIT / Apache-2.0 / BSD-3-Clause / ISC（全部为宽松许可证）", "Linux 运行时（首次启动解包）", "https://www.npmjs.com/package/@earendil-works/pi-coding-agent"),
     ("highlight.js", "10.7.3", "BSD-3-Clause", "Linux 运行时（首次启动解包）", "https://highlightjs.org/"),
     ("tslib", "2.8.1", "0BSD", "Linux 运行时（首次启动解包）", "https://www.npmjs.com/package/tslib"),
     ("lru-cache / minimatch", "11.4.0 / 10.2.6", "BlueOak-1.0.0", "Linux 运行时（首次启动解包）", "https://www.npmjs.com/package/lru-cache"),

@@ -5,16 +5,15 @@
 它们使用的标准许可证原文已经收录在本清单里；版权声明以上游发布为准。
 这份文件存在的意义是：不把「没有文本」写成「没有许可证」，也不让清单看起来比实际更完整。
 
-  @earendil-works/pi-coding-agent  0.85.1  MIT
-  @earendil-works/chord  0.85.1  MIT
-  @earendil-works/pi-agent-core  0.85.1  MIT
-  @earendil-works/pi-ai  0.85.1  MIT
-  @earendil-works/pi-telemetry  0.85.1  MIT
-  @earendil-works/pi-tui  0.85.1  MIT
-  @nodable/entities  2.1.0  MIT
+  @earendil-works/pi-coding-agent  0.86.1  MIT
+  @earendil-works/chord  0.86.1  MIT
+  @earendil-works/pi-agent-core  0.86.1  MIT
+  @earendil-works/pi-ai  0.86.1  MIT
+  @earendil-works/pi-telemetry  0.86.1  MIT
+  @earendil-works/pi-tui  0.86.1  MIT
   data-uri-to-buffer  4.0.1  MIT
+  proxy-agent-negotiate  1.1.0  MIT
   standardwebhooks  1.1.1  MIT
-  xml-naming  0.1.0  MIT
-  @aws-sdk/credential-provider-http  3.972.39  Apache-2.0
-  @aws-sdk/credential-provider-login  3.972.41  Apache-2.0
-  @aws-sdk/nested-clients  3.997.9  Apache-2.0
+  @aws-sdk/credential-provider-http  3.972.72  Apache-2.0
+  @aws-sdk/credential-provider-login  3.972.77  Apache-2.0
+  @aws-sdk/nested-clients  3.997.44  Apache-2.0

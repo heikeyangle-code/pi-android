@@ -28,6 +28,11 @@ import kotlinx.serialization.json.JsonPrimitive
  *    `DeviceCapabilityStore` established for app state that is not a pi setting) and, on
  *    the way in, clears both the failure counter and the cached gate verdict — the two
  *    things that otherwise outlive a retry.
+ *
+ *    **This write is also the trigger** for the switch taking effect in this session:
+ *    `PiSessionViewModel.onSettingWritten` reacts to the key by running the probe now and
+ *    restarting the engine onto the chosen runtime (`RuntimeSwitchAction`). Before that,
+ *    the row's own description told the user to exit the app and come back.
  *  - `app.runtime.prorootStatus` — a **derived, read-only** sentence: the runtime
  *    that is actually in effect and, when it is not proroot, why — including *which*
  *    probe stage refused and the recorded line that says so, because the gate's verdict
@@ -51,8 +56,11 @@ import kotlinx.serialization.json.JsonPrimitive
  *
  * One consequence worth stating: a write to the switch reports a change to
  * `onSettingWritten` like any other row, and it does **not** invalidate the settings
- * cache (there is no pi document involved). The host's `RuntimeFacts` refresh is what
- * makes the status row catch up.
+ * cache (there is no pi document involved). Two other things then make the status row
+ * catch up: the host's own epoch bump on that write, and — because the write starts the
+ * probe-then-restart flow — the progress the ViewModel publishes until the flow settles
+ * (`runtimeSwitch`), which is what re-reads `RuntimeSelection.status()` one last time
+ * with the new verdict in place.
  */
 class AppOnlySettingsStore(
     private val base: PiSettingsStore,

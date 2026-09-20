@@ -314,6 +314,41 @@ interface ShellData {
 	policy?: string;
 }
 
+/**
+ * 一次设备 Shell 调用的失败口径，抄 pi 0.86.1 的 `core/tools/bash.ts:363-374`：
+ * 超时被杀、没有退出码、非零退出，**三种都算失败**；成功返回 null。
+ *
+ * ## 为什么是 throw，而不是像 0.85.1 那样把 `[退出码 N]` 写进正文再返回成功
+ *
+ * pi 的 `AgentToolResult`（`packages/agent/src/types.ts:383-396`）**没有** `isError`
+ * 字段：扩展工具唯一的报错通道就是 throw（pi 的 agent loop 捕获后把结果标成错误）。
+ * 返回成功会让一条失败的命令在 pi 的上下文里与成功无法区分 —— 这正是 0.86.0
+ * 给 `user_bash` 换成 fail-closed、并在 #9577 里修「被信号杀掉的命令被报成成功 +
+ * 部分输出」的那个形状。
+ *
+ * ## 为什么不"只 throw"：throw 会丢 `details`，所以正文要背住可解析的那部分
+ *
+ * pi 的错误结果只带正文，没有 `details`。所以失败时正文里保留 pi 的**原句**
+ * `Command exited with code N` —— App 的 `ToolOutputParse.shellExitCode`
+ * （`EXIT_CODE` 正则，`ui/blocks/ToolOutputParse.kt:235-239` 与 `:574`）就是按这句话
+ * 解析退出码的，卡片上的「退出码 N」因此不丢；`fullOutputPath` / `truncation` 本工具
+ * 从来没有写过（它们是 pi 内建 `bash` 的字段，通用卡片 `ToolCallBlock.kt:80-89` 读它们，
+ * 对 `android_shell` 一直是空），所以这里不存在"丢字段"的回归。结构化的
+ * `backend`/`uid` 只在成功路径保留：App 侧全树没有读者（grep 无命中）。
+ *
+ * 超时那一句**不带秒数**：pi 写的是 `Command timed out after N seconds`，而真正生效的
+ * 超时由 App 侧钳制（`DeviceShell.kt:120` 把请求夹在 [500, 60000] ms，扩展拿不到它算出的
+ * 那个值）。在这里复算一遍就是把 App 的钳制抄成第二份真相；宁可少一个数字，不编一个。
+ */
+function shellFailureStatus(data: ShellData): string | null {
+	if (data.timedOut) return "Command timed out";
+	if (typeof data.exitCode !== "number" || !Number.isFinite(data.exitCode)) {
+		return "Command terminated without an exit code";
+	}
+	if (data.exitCode !== 0) return `Command exited with code ${data.exitCode}`;
+	return null;
+}
+
 // ---------------------------------------------------------------------------
 // tool registry
 // ---------------------------------------------------------------------------
@@ -1260,7 +1295,13 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 				parts.push(`[后端 ${data.backendLabel}，uid=${data.uid}]`);
 				parts.push(data.note);
 				if (data.policy) parts.push(data.policy);
-				return textResult(truncateForModel(parts.join("\n"), "Shell 输出", "tail"), {
+				const text = truncateForModel(parts.join("\n"), "Shell 输出", "tail");
+				// pi 的失败口径（`core/tools/bash.ts:368-373`）：超时 / 无退出码 / 非零
+				// 退出都是错误，用 throw 表达。见 `shellFailureStatus` 的 KDoc：正文里
+				// 保留 pi 的原句，App 的退出码解析因此仍然成立。
+				const failure = shellFailureStatus(data);
+				if (failure !== null) throw new Error(`${text}\n\n${failure}`);
+				return textResult(text, {
 					exitCode: data.exitCode,
 					backend: data.backend,
 					uid: data.uid,

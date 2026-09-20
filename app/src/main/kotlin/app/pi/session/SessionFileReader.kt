@@ -142,6 +142,19 @@ internal object SessionFileReader {
      * entry must be a `session` header with a string `id`; blank and malformed lines
      * are skipped while looking (`:503-512`). Reading only the header is what makes
      * this cheap enough to run before every open.
+     *
+     * **答案在第一行，所以扫描在那里就停下**（`onLine` 返回 false，与 [readEntries] 同一条
+     * 早退通道）。改前的写法把 `[0, HEADER_BUDGET)` 整段**读完并切成行**（`range.lines`），
+     * 再只看第一行 —— 而 `HEADER_BUDGET` 是 1 MiB（`:695`），小于 1 MiB 的会话文件等于被整份
+     * 读一遍再切一次行。这个函数在四个地方被调用，其中三个都在用户能感觉到的路径上：
+     * [readTail]（打开一个会话，`:220`）、[readBefore]（每一次「加载更早」，`:249`）、
+     * [readBetween]（被淘汰的那一段读回来，`:310`），以及
+     * `PiSessionViewModel.resolveSessionFile`（`:3347`）——**那一个跑在帧线程上**。
+     *
+     * 为什么早退的答案与「读满再挑」逐字相同：两侧的规则是同一条（跳过空行与解析不出的行，
+     * 第一个能解析的行说了算），上限是同一个 `budget`，而读范围的前端裁剪（`maxChars = budget`）
+     * 在旧写法里**不可能**丢掉第一行 —— 字符数不会超过读到的字节数，字节数又被 `until = budget`
+     * 封住，所以 `keptChars > maxChars` 永远为假，第一行始终在 `range.lines` 里。
      */
     fun readHeader(file: File): JsonObject? {
         if (!file.isFile) return null
@@ -149,15 +162,17 @@ internal object SessionFileReader {
         // The character budget is the real bound here; the entry cap must not apply, or
         // a file with more than a megabyte of entries would have its header trimmed off
         // as though it were the oldest entry.
-        val range = readRange(file, 0L, budget.toLong(), budget, Int.MAX_VALUE, budget)
-        for (line in range.lines) {
-            if (line.isBlank()) continue
-            val obj = PiJson.parseObjectOrNull(line) ?: continue
+        var header: JsonObject? = null
+        readRange(file, 0L, budget.toLong(), budget, Int.MAX_VALUE, budget) { line ->
+            if (line.isBlank()) return@readRange true
+            val obj = PiJson.parseObjectOrNull(line) ?: return@readRange true
             // The first *parseable* line decides, and pi rejects the file when it is
             // not a header (`:551-556`).
-            return if (obj.str("type") == "session" && obj.str("id") != null) obj else null
+            header = if (obj.str("type") == "session" && obj.str("id") != null) obj else null
+            // 判定已经落地：剩下的 1 MiB 不必再读、也不必再切行。
+            false
         }
-        return null
+        return header
     }
 
     /**
@@ -255,6 +270,51 @@ internal object SessionFileReader {
             // 14-entry fixture one entry per window and got 2 entries before this was
             // fixed.
             reachedStart = from == 0L && !range.capped && !range.budgetStopped,
+            complete = !range.droppedLine,
+        )
+    }
+
+    /**
+     * The complete entries in the byte range `[from, until)`, oldest first: the
+     * exact-range sibling of [readTail] and [readBefore], and the one an evicted copy is
+     * read back with.
+     *
+     * Why a third direction is worth having: `PiSessionViewModel` bounds how much of a
+     * loaded session it keeps **in RAM** by dropping the window farthest from the reader
+     * and remembering its byte range. A rebuild of the transcript needs the *whole*
+     * loaded range — the projection is folded from one list, and a list with a hole would
+     * silently drop rows — so the dropped range has to come back exactly. Neither
+     * existing direction can do that: [readTail] answers the file's newest entries and
+     * [readBefore] snaps `from` back by `maxChars`, which at the low end of a small range
+     * reaches *above* it and re-delivers retained entries (which would duplicate rows).
+     *
+     * [from] must be the first byte of a line — the offsets recorded from
+     * [Window.startOffset] are, which is the only caller — because the range is read from
+     * exactly there: a `from` inside a line would hand back that line's tail as if it were
+     * a line of its own. The range is deliberately **not** capped: the caller is reading
+     * back a bounded, known range, and dropping part of it would be the hole this exists
+     * to prevent. Returns null when [file] is not a session or the range holds no
+     * complete parseable entry, like its two siblings.
+     *
+     * [Window.reachedStart] is reported honestly (`from == 0L` with nothing withheld) but
+     * no caller of this function uses it for the cursor: the evicted range is at the
+     * reading end of the loaded range, never at the file's first entry.
+     */
+    fun readBetween(
+        file: File,
+        from: Long,
+        until: Long,
+        maxLineChars: Int = DEFAULT_MAX_LINE_CHARS,
+    ): Window? {
+        if (from < 0L || until <= from) return null
+        if (readHeader(file) == null) return null
+        val range = readRange(file, from, until, null, Int.MAX_VALUE, maxLineChars)
+        val entries = range.entries()
+        if (entries.isEmpty()) return null
+        return Window(
+            entries = entries,
+            startOffset = range.firstOffset,
+            reachedStart = from == 0L && !range.droppedLine,
             complete = !range.droppedLine,
         )
     }

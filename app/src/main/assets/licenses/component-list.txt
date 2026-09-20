@@ -118,12 +118,12 @@
       上游      https://www.openldap.org/
 
   pi 引擎
-      版本      0.85.1
+      版本      0.86.1
       许可证    MIT
       上游      https://www.npmjs.com/package/@earendil-works/pi-coding-agent
 
   pi 引擎的依赖包
-      版本      见 pi 0.85.1 的依赖锁定
+      版本      见 pi 0.86.1 的依赖锁定
       许可证    MIT / Apache-2.0 / BSD-3-Clause / ISC（全部为宽松许可证）
       上游      https://www.npmjs.com/package/@earendil-works/pi-coding-agent
 

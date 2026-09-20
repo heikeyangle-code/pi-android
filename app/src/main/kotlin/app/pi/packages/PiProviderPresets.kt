@@ -24,6 +24,18 @@ package app.pi.packages
  * it wrong makes the provider register and then fail on the first message, which is
  * exactly the class of failure the import screen exists to avoid.
  *
+ * **Two 0.86.1 providers are deliberately not rows here, and both are reachable
+ * anyway.** `meta` (Meta Muse subscription, `providers/meta.ts:8-24`) and `radius`
+ * (offline Radius catalog, `providers/radius.ts`) are OAuth/subscription providers;
+ * their login flow is `/login meta` / `/login radius`, which pi only offers in its
+ * own TUI — the terminal page is where this app already sends the user for
+ * subscription logins (`PiSettingsRegistry`'s `app.credentials.oauth` row). A
+ * `meta` row for the **API-key** half (`META_API_KEY`) is a real, separate decision
+ * and needs one fact this file does not have: which [ScanStyle] `api.meta.ai/v1`
+ * answers, because pi's `openai-responses` says nothing about a `GET /models`
+ * endpoint, and this table's whole discipline is that its scan style is read off a
+ * working probe rather than inferred from the chat API.
+ *
  * Two entries are **app-side** and are marked as such: `ollama` (pi has no built-in
  * Ollama provider; the docs' own example adds it via `models.json`) and the
  * catch-all custom row.

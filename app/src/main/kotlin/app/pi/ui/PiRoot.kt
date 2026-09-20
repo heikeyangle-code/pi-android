@@ -571,6 +571,10 @@ fun PiRoot() {
     val theme by session.theme.collectAsState()
     val themeEntries by session.themeEntries.collectAsState()
 
+    // 「运行时加速（实验性）」开关当场生效的进度。拨完开关探针要跑 10~60 秒，设置页那一行
+    // 必须在那段时间里说它在跑 —— 这是这个状态唯一的用途（见 `RuntimeSwitchAction`）。
+    val runtimeSwitch by session.runtimeSwitch.collectAsState()
+
     // Commands that need a destination are requested by the ViewModel through
     // state, because they finish inside a coroutine after an RPC answer — by then
     // there is no composable left to call back into. Consuming the request here
@@ -789,6 +793,7 @@ fun PiRoot() {
                     // 之前存下的退出码与 stderr），`recentFailures` 来自 App 已经记下的失败。
                     // 没有这两条接线，报告里那两节永远只会写"还没有记录"。
                     engineDiagnostics = { session.engineDiagnostics() },
+                    engineEntry = { session.engineEntryLabel() },
                     recentFailures = { session.recentFailures() },
                     // `get_available_models`: the only model list pi exposes over
                     // RPC, used to mark a scanned id as pi metadata or as an app
@@ -798,6 +803,9 @@ fun PiRoot() {
                     // `/scoped-models`: open the group and highlight the key.
                     focusKey = settingsFocus,
                     onFocusConsumed = { settingsFocus = null },
+                    // 「运行时加速（实验性）」那一行拨完之后的进度：探针在跑的时候，「运行时
+                    // （实际生效）」那一行显示「正在测探针」而不是上一次的旧结论。
+                    runtimeSwitch = runtimeSwitch,
                     // The credential form writes settings.json through the packages
                     // layer, which invalidates a store instance of its own; the store
                     // this app reads belongs to the ViewModel, so dropping its cache
@@ -828,25 +836,38 @@ fun PiRoot() {
                     color = MaterialTheme.colorScheme.background,
                 ) {
                     when (shown) {
-                        PiOverlay.SessionList -> SessionsScreen(
-                            contentPadding = padding,
-                            session = session,
-                            // A pick switches the session and lands on it. The
-                            // overlay closes because otherwise the user stays on
-                            // the list they just answered.
-                            onOpenChat = {
-                                overlayIndex = null
-                                destinationName = PiDestination.Chat.name
-                            },
-                            onClose = { overlayIndex = null },
-                            // Which view to open on: `/tree` and the branch-summary
-                            // row ask for the tree, everything else for the list.
-                            initialView = if (sessionView == SessionViewPreference.Tree.name) {
-                                SessionsView.Tree
-                            } else {
-                                SessionsView.List
-                            },
-                        )
+                        PiOverlay.SessionList -> {
+                            // **两个回调的 identity 固定下来。** 它们只捕获 `overlayIndex` 与
+                            // `destinationName` 这两个 `MutableState`（在本组合的整个生命周期里是
+                            // 同一个对象），所以 `remember` 之后**行为逐字不变** —— 而这一屏的
+                            // 父级每收到一次 `UiState` 发布（流式期间约 200 ms 一次）就重组，从前的
+                            // 字面量 lambda 每次都换新实例，`SessionsScreen` 的参数按 `===` 比较
+                            // 因此不等，整屏（与列表里的行）都得跟着重算。同一条机制与证据写在
+                            // `ChatScreen` 的 `onForkFromMessage` 上（`docs/scroll-perf-list.md` §2.1）。
+                            val onOpenChat: () -> Unit = remember {
+                                {
+                                    overlayIndex = null
+                                    destinationName = PiDestination.Chat.name
+                                }
+                            }
+                            val onCloseSessionList: () -> Unit = remember { { overlayIndex = null } }
+                            SessionsScreen(
+                                contentPadding = padding,
+                                session = session,
+                                // A pick switches the session and lands on it. The
+                                // overlay closes because otherwise the user stays on
+                                // the list they just answered.
+                                onOpenChat = onOpenChat,
+                                onClose = onCloseSessionList,
+                                // Which view to open on: `/tree` and the branch-summary
+                                // row ask for the tree, everything else for the list.
+                                initialView = if (sessionView == SessionViewPreference.Tree.name) {
+                                    SessionsView.Tree
+                                } else {
+                                    SessionsView.List
+                                },
+                            )
+                        }
 
                         // The full-screen terminal, unchanged from when it was a
                         // destination: this batch moves the *door*, not the room

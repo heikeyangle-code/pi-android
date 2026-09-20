@@ -38,9 +38,10 @@ package app.pi.session
 //     result or an inline image).
 //  8. **`/import` and `/export` follow pi's own rules** (`SessionImport.kt`,
 //     `SessionExportNaming.kt`): which first line makes a file a session
-//     (`session-manager.ts:551-556`), what an imported copy is named when the name is
-//     taken (`agent-session-runtime.ts:371-379`), which argument suffix picks which
-//     export writer (`interactive-mode.ts:6062-6066`), and that the user-visible
+//     (`session-manager.ts:538-577` — `loadEntriesFromFile`, header checked at `:573-576`),
+//     what an imported copy is named when the name is
+//     taken (`agent-session-runtime.ts:372-380`), which argument suffix picks which
+//     export writer (`interactive-mode.ts:6188-6198`), and that the user-visible
 //     failure sentences name no internal path.
 
 var failures = 0
@@ -57,7 +58,7 @@ private fun check(name: String, actual: Any?, expected: Any?) {
 private const val CWD = "/workspace/pi/workspaces/workspace-1"
 private const val OTHER_CWD = "/workspace/pi/workspaces/workspace-2"
 
-/** One `session` header, in the shape pi 0.85.1 writes (`session-manager.ts:932-939`). */
+/** One `session` header, in the shape pi 0.86.1 writes (`SessionHeader` at `session-manager.ts:40-47`, written at `:974-981`). */
 private fun header(id: String, iso: String, cwd: String?): String =
     "{\"type\":\"session\",\"version\":3,\"id\":\"$id\",\"timestamp\":\"$iso\"" +
         (cwd?.let { ",\"cwd\":\"$it\"" } ?: "") + "}"
@@ -159,7 +160,8 @@ fun main() {
     )
     // A session whose header only appears past the 1 MiB discovery budget is not a
     // session for this reader — pi's bounded header scan gives up there too
-    // (`session-manager.ts:487-489`, `:571-575`).
+    // (`session-manager.ts:518-523` for the 1 MiB cap and the scan-limit error,
+    // `:604-634` for the bounded scan itself).
     sessionFile(
         root,
         "oversized-header.jsonl",
@@ -285,7 +287,7 @@ fun main() {
         check("the deleted file is gone", toDelete.exists(), false)
 
         // A missing directory is "no sessions", not an error: pi returns an empty list
-        // for one (`session-manager.ts:819-821`).
+        // for one (`session-manager.ts:858`).
         check(
             "a missing session root lists nothing",
             PiSessionStore(java.io.File(root, "nope")).list(),
@@ -376,8 +378,8 @@ fun main() {
         // file *is* a session is therefore pi's rule, not the app's:
         // `loadEntriesFromFile` keeps every parseable line in order and throws the
         // whole list away when the first one is not `{type:"session", id:string}`
-        // (`session-manager.ts:551-556`), after which `_setSessionFile` rejects a
-        // non-empty file with no entries (`:905-908`). These checks pin the app's
+        // (`session-manager.ts:538-577`), after which `_setSessionFile` rejects a
+        // non-empty file with no entries (`:950-953`). These checks pin the app's
         // transcription of exactly that, because a wrong "yes" here imports a file
         // pi will refuse to open, and a wrong "no" refuses a file pi accepts.
 
@@ -431,7 +433,7 @@ fun main() {
         )
 
         // Import naming: pi takes the basename, then `name-1.ext`, `name-2.ext` …
-        // before the extension (`agent-session-runtime.ts:371-379`).
+        // before the extension (`agent-session-runtime.ts:372-380`).
         val taken = mutableSetOf("2024-06-01T00-00-00-000Z_x.jsonl")
         check(
             "a free name is used as is",
@@ -466,7 +468,7 @@ fun main() {
         // 10. `/export`'s naming and typing rules (`SessionExportNaming.kt`).
         //
         // pi picks the writer from the argument's extension
-        // (`interactive-mode.ts:6062-6066`): `.jsonl` → JSONL, anything else (including
+        // (`interactive-mode.ts:6188-6198`): `.jsonl` → JSONL, anything else (including
         // nothing) → HTML. The default HTML name is
         // `<APP_NAME>-session-<会话文件 basename>.html` (`export-html/index.ts:274-281`).
         check("a .jsonl argument goes to the JSONL writer", SessionExportNaming.isJsonl("a.jsonl"), true)
@@ -497,7 +499,7 @@ fun main() {
 
         // The failure sentences are user-visible copy, and this repository's rule is
         // that they name no internal path. pi's raw text for two of the three shapes
-        // does (`session-cwd.ts:35-40`, `session-manager.ts:908`), which is why
+        // does (`session-cwd.ts:35-39`, `session-manager.ts:950-953`), which is why
         // `failureSentence` classifies on pi's wording and writes its own sentence.
         val cwdFailure = SessionImport.failureSentence(
             "Stored session working directory does not exist: /root/somewhere",

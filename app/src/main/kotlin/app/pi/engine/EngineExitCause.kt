@@ -15,13 +15,18 @@ package app.pi.engine
  *
  * ## Why matching stderr is legitimate here
  *
- * Every rule below was reproduced against the pinned engine (pi 0.85.1, node
- * 24.19.0) and the strings are pi's own output, copied from the run - not guessed
- * from reading pi's source. The experiments and their raw stderr are in
- * `docs/engine-exit-review.md` §2. What each one means:
+ * Every rule below is pi's own output, copied from a **run** - not guessed from
+ * reading pi's source. The runs were against pi 0.85.1 (node 24.19.0); the
+ * experiments and their raw stderr are in `docs/engine-exit-review.md` §2. The
+ * 0.86.1 bump re-checked each string against the pinned engine's source, where they
+ * are unchanged: `Failed to load extension` (`core/extensions/loader.ts:578`,
+ * turned into an exit 1 at `main.ts:899-909`), `Unknown option` (`cli/args.ts:242`),
+ * `@file arguments are not supported` (`main.ts:645`) and `Model not found`
+ * (`modes/rpc/rpc-mode.ts:476`); `heap out of memory` / `FATAL ERROR` are V8's
+ * strings, not pi's. What each one means:
  *
  *  - `Failed to load extension` - pi treats an extension load failure as a startup
- *    error and exits 1 (`main.ts:897-906`). On this device the shipped bridge,
+ *    error and exits 1 (`main.ts:899-909`). On this device the shipped bridge,
  *    permission gate and highlight extensions live in `<agentDir>/extensions`, and
  *    a partially written tree or a user-installed extension with a missing module
  *    both land here.

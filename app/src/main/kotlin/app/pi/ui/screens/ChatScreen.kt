@@ -121,6 +121,7 @@ import app.pi.ui.Boot
 import app.pi.ui.ExportedSession
 import app.pi.ui.NavRequest
 import app.pi.ui.PiSessionViewModel
+import app.pi.ui.earlierRowText
 import app.pi.ui.blocks.BlockRenderer
 import app.pi.ui.blocks.PiImageViewer
 import app.pi.ui.chat.BashPanel
@@ -236,6 +237,9 @@ fun ChatScreen(
         BootScreen(
             boot = boot,
             onRetry = { session.boot() },
+            // The explicit repair path (`ensureReady(rebuild = true)`), reachable from
+            // this one button and nowhere else. A plain retry never deletes anything.
+            onRebuild = { session.boot(rebuild = true) },
             modifier = Modifier.padding(bottom = bottomInset),
         )
         return
@@ -582,14 +586,21 @@ private fun ChatBody(
                             warning = true,
                         )
 
-                        WorkspaceCopy.TooLarge -> session.notifyUser(
-                            "文件太大：上限是 ${mibLabel(AttachmentBudget.MESSAGE_BYTES)} MB。" +
-                                "它还没有被复制进工作区，也没有加进这条消息；请先裁剪或压缩。",
+                        // 空间不够是**磁盘**说出来的事，不是「文件太大」：这条路上限只有可用空间
+                        // （见 `AttachmentBudget.workspaceSpace`），所以这句话里的两个数字都来自
+                        // 当时的测量，而 `neededBytes` 是下界，所以说「至少」。
+                        is WorkspaceCopy.OutOfSpace -> session.notifyUser(
+                            "磁盘空间不足：这个文件至少需要 " +
+                                "${mibLabel(result.neededBytes)} MB，工作区所在磁盘可用 " +
+                                "${mibLabel(result.availableBytes)} MB" +
+                                "（要留 ${mibLabel(result.marginBytes)} MB 余量）。" +
+                                "它没有被复制进工作区，也没有加进这条消息；" +
+                                "腾出空间后可以再选一次。",
                             warning = true,
                         )
 
                         WorkspaceCopy.WriteFailed -> session.notifyUser(
-                            "写不进工作区（存储空间不足或目录不可写）。" +
+                            "写不进工作区（目录不可写，或写入过程中空间用尽）。" +
                                 "这个文件没有被复制，也没有加进这条消息。",
                             warning = true,
                         )
@@ -611,6 +622,54 @@ private fun ChatBody(
                     // the encode happen on IO, and the **acceptance test is the whole
                     // message's budget**, not this image's size — see [AttachmentBudget].
                     pickerScope.launch {
+                        // 内联不成时的**一处**收尾：把这份文件放进工作区、把相对路径插进 composer、
+                        // 说清为什么它没有随消息内联。三个原因（原图超过读取上限、按 pi 的上限压不出
+                        // 足够小的版本、本条消息的内联额度不够）走的是同一段代码，所以三处的行为
+                        // 不可能漂移；`bytes` 与 `uri` 二选一由调用方给（见下）。
+                        suspend fun fallbackInline(sourceUri: android.net.Uri?, bytes: ByteArray?, why: String) {
+                            val fallback = withContext(Dispatchers.IO) {
+                                when {
+                                    // **从 URI 流式复制。** 原图超过读取上限那一支只持有
+                                    // `MAX_PICKED_IMAGE_BYTES + 1` 个字节 —— 那是文件的**一段前缀**，
+                                    // 写进工作区会留下一个被截断的文件。流式复制没有这个问题。
+                                    sourceUri != null -> copyIntoWorkspace(context, sourceUri)
+                                    // 名字仍取自用户选的那份文档（外层的 `uri`，这里已知非 null）：
+                                    // `bytes` 那一支手上没有 URI，名字只能从这里来。
+                                    bytes != null -> copyBytesIntoWorkspace(context, bytes, displayNameOf(context, uri))
+                                    else -> WorkspaceCopy.WriteFailed
+                                }
+                            }
+                            when (fallback) {
+                                is WorkspaceCopy.Copied -> {
+                                    draft = if (draft.isBlank()) {
+                                        fallback.relativePath
+                                    } else {
+                                        draft + " " + fallback.relativePath
+                                    }
+                                    // 这一句**不能**省，与纯文件那条路（D47）不同：那次是「用户要的就是
+                                    // 一个路径」，这次是「本来要内联、改成了给路径」——消息的形状与用户预期
+                                    // 不一样，而 composer 里多出来的那个路径自己不解释这件事。
+                                    session.notifyUser(inlineDowngradeText(fallback.relativePath, why))
+                                }
+                                // 降级本身也可能失败；三种原因各自的可读句子。
+                                WorkspaceCopy.Unreadable -> session.notifyUser(
+                                    "读不到这个文件：来源没有把它打开（权限被拒或文件已被删除）。" +
+                                        "请重新选择，或先把文件存到手机上再选。",
+                                    warning = true,
+                                )
+
+                                is WorkspaceCopy.OutOfSpace -> session.notifyUser(
+                                    workspaceOutOfSpaceText(fallback),
+                                    warning = true,
+                                )
+
+                                WorkspaceCopy.WriteFailed -> session.notifyUser(
+                                    "写不进工作区（目录不可写，或写入过程中空间用尽）。" +
+                                        "这个文件没有被复制，也没有加进这条消息。",
+                                    warning = true,
+                                )
+                            }
+                        }
                         val staged = attachments.map { it.base64.length }
                         val bytes = withContext(Dispatchers.IO) {
                             runCatching {
@@ -624,31 +683,27 @@ private fun ChatBody(
                                 warning = true,
                             )
 
-                            // A reading guard, not the message's limit: pi's own resize
-                            // has no input bound, and an image this big could still have
-                            // been compressed under the budget. It is refused for what it
-                            // costs to hold on the phone.
-                            bytes.size > AttachmentBudget.MAX_PICKED_IMAGE_BYTES -> session.notifyUser(
-                                "图片太大：超过 " +
-                                    "${mibLabel(AttachmentBudget.MAX_PICKED_IMAGE_BYTES)} MB 的原图没有读取" +
-                                    "（要整张读进内存才能按 pi 的规则压缩到最长边 " +
-                                    "${AttachmentBudget.PI_MAX_DIMENSION}、base64 " +
-                                    "${mibLabel(AttachmentBudget.PI_MAX_BASE64_CHARS)} MB 以内）。" +
-                                    "请先裁剪或缩小后再试。",
-                                warning = true,
+                            // 读取上限（32 MiB，App 自己的内存门槛），不是消息的额度，也不是「太大」。
+                            // 这一支以前是**拒绝**；现在原图照样进工作区、agent 照样能读它 —— 而且
+                            // 走的是流式复制，所以「不把几十兆读进内存」这条理由一分没丢。
+                            bytes.size > AttachmentBudget.MAX_PICKED_IMAGE_BYTES -> fallbackInline(
+                                sourceUri = uri,
+                                bytes = null,
+                                why = "原图超过 ${mibLabel(AttachmentBudget.MAX_PICKED_IMAGE_BYTES)} MB，" +
+                                    "没有整张读进内存来压缩",
                             )
 
                             else -> {
                                 val image = withContext(Dispatchers.IO) { compressAttachment(bytes, mime) }
                                 if (image == null) {
-                                    // The two failure shapes a codec can have are not
-                                    // distinguishable from here, so the sentence names both.
-                                    session.notifyUser(
-                                        "这张图读不出像素，或者压到 pi 的上限（最长边 " +
-                                            "${AttachmentBudget.PI_MAX_DIMENSION}、base64 " +
-                                            "${mibLabel(AttachmentBudget.PI_MAX_BASE64_CHARS)} MB）以内" +
-                                            "都失败；它没有加进这条消息。请换一张图，或先裁剪。",
-                                        warning = true,
+                                    // 压不出来：读不出像素，或者所有候选（pi 的 4.5 MB 上限）都超。
+                                    // 后者是本条要求里的「全部候选都超预算」，结局改成给路径。
+                                    fallbackInline(
+                                        sourceUri = null,
+                                        bytes = bytes,
+                                        why = "按 pi 的上限（最长边 ${AttachmentBudget.PI_MAX_DIMENSION}、" +
+                                            "base64 ${mibLabel(AttachmentBudget.PI_MAX_BASE64_CHARS)} MB）" +
+                                            "压不出足够小的版本",
                                     )
                                 } else {
                                     when (val verdict = AttachmentBudget.decide(staged, image.base64.length)) {
@@ -656,9 +711,16 @@ private fun ChatBody(
                                         // asked for once there is something to add.
                                         AttachmentBudget.Verdict.Fits -> attachments = attachments + image
 
-                                        is AttachmentBudget.Verdict.MessageFull -> session.notifyUser(
-                                            messageFullText(verdict),
-                                            warning = true,
+                                        // 本条消息的内联额度不够：不拒绝，改成「只给路径」。原图进工作区
+                                        // （不是那份压缩结果 —— agent 读到的是用户选的那份文件），两个数
+                                        // 据仍然来自 verdict 本身，所以句子与判定不可能对不上。
+                                        is AttachmentBudget.Verdict.MessageFull -> fallbackInline(
+                                            sourceUri = null,
+                                            bytes = bytes,
+                                            why = "本条消息的内联额度不够" +
+                                                "（上限 ${mibLabel(verdict.limitBytes)} MB，" +
+                                                "已用 ${mibLabel(verdict.usedBytes)} MB，" +
+                                                "这张压缩后 ${mibLabel(verdict.candidateBytes)} MB）",
                                         )
                                     }
                                 }
@@ -777,10 +839,20 @@ private fun ChatBody(
     //
     // The second term is why this is not just `hiddenCount > 0`: the same row is also
     // where "the transcript holds everything loaded, but the session file has more
-    // above it" is stated, and it is shown in exactly that case (the reader's
-    // `HistoryCursor.hasEarlier`). Leaving it out would put every jump one row off the
-    // moment the loaded rows are exhausted.
-    val showsEarlierRow = hiddenCount > 0 || state.history?.hasEarlier == true
+    // above it" is stated. `earlierRowText` is the one owner of what that row says (and
+    // of whether it exists at all): it distinguishes a count already in memory, a read
+    // in flight, a read that could not happen — with its reason — and the two states in
+    // which there is nothing to offer. It answers null exactly when the reader is
+    // holding the file's first entry, so the screen can never offer to load earlier when
+    // the reader believes it is at the start. See `ui/HistoryRetention.kt`.
+    val earlierText = earlierRowText(
+        hiddenCount = hiddenCount,
+        cursorKnown = state.history != null,
+        loading = state.history?.loading == true,
+        reachedStart = state.history?.reachedStart == true,
+        stop = state.history?.stop,
+    )
+    val showsEarlierRow = earlierText != null
     val searchMatches = remember { mutableStateOf(SearchHits.None) }
     // Published-scan counter: the reveal effect below is keyed on it rather than on the
     // result object, so it re-runs when a scan *lands* (not while one is running) and
@@ -1123,9 +1195,13 @@ private fun ChatBody(
     // session (one `get_entries`), so the two were the same list. It now starts as the
     // newest window of the session *file* and grows backwards on demand, which means
     // reaching the top of it is no longer the same as reaching the start of the
-    // conversation. This is what asks for more: `history.hasEarlier` is the reader's
-    // own position (`HistoryCursor.startOffset`), not an inference from the row count,
-    // so it stops exactly when the file's first entry has been loaded.
+    // conversation. This is what asks for more: `history.hasEarlier` is the reader's own
+    // position (`HistoryCursor.startOffset`), not an inference from the row count, so it
+    // stops exactly when the file's first entry has been loaded — and, since the row is
+    // the only way to ask again, a step that delivered nothing (a range that could not be
+    // read) clears it too, so a failed read cannot become a retry loop. That second half
+    // is why the row's own visibility is `HistoryCursor.showsEarlierRow` rather than
+    // `hasEarlier`: a failure still has to be on screen to say what happened.
     val earlierHistory = state.history
 
     // ------------------------------------------------- the reader's place, by row key
@@ -1937,12 +2013,7 @@ private fun ChatBody(
             // The list keeps `Arrangement.spacedBy(blockSpacing)` for its own rows, and the
             // reserved band is `earlierRowHeight + blockSpacing` so the first row sits
             // where it did when the sentinel was an item with a gap under it.
-            val earlierText = when {
-                hiddenCount > 0 -> "加载更早的 $hiddenCount 条"
-                earlierHistory?.loading == true -> "正在读取更早的内容…"
-                else -> "加载更早的内容"
-            }
-            val earlierRowHeightValue = earlierRowHeight(earlierText)
+            val earlierRowHeightValue = earlierRowHeight(earlierText.orEmpty())
             // Where the overlay sits, and how much of the list's own top padding is the band
             // it occupies: exactly the row's height plus the block gap the list no longer
             // inserts between it and the first message.
@@ -2120,7 +2191,7 @@ private fun ChatBody(
             // geometry, read at layout time (`Modifier.offset`'s lambda runs there, so this
             // costs no recomposition per frame): one band above the list's first item, which
             // is exactly where the item was.
-            if (showsEarlierRow) {
+            if (earlierText != null) {
                 val bandPx = with(LocalDensity.current) { earlierBand.roundToPx() }
                 EarlierRowsRow(
                     text = earlierText,
@@ -2128,6 +2199,9 @@ private fun ChatBody(
                         if (hiddenCount > 0) {
                             renderWindow += TRANSCRIPT_WINDOW_STEP
                         } else {
+                            // The press is also the retry after a failed reading: the
+                            // cursor keeps `reachedStart` false and carries the reason,
+                            // so this is the reader asking again, not the effect looping.
                             session.expandEarlierHistory()
                         }
                     },
@@ -2362,12 +2436,20 @@ private fun ChatBody(
                 // these bytes travel inside the message and count against the model — and
                 // the **count and the running total** are what the message's limit is made
                 // of, so both are shown. The total is the bytes the staged base64 encodes,
-                // the same unit the refusal sentence uses, so "合计 X MB / 上限 Y MB" and
-                // "还能放约 Z MB" are one arithmetic rather than two.
+                // the same unit the downgrade sentence uses, so "合计 X MB / 上限 Y MB" and
+                // "已用 Z MB" are one arithmetic rather than two.
+                //
+                // 「内联」 is in the sentence because this limit is only about what travels
+                // **inside** the record: a file that goes into the workspace is handed over
+                // as a path and is not bounded by it at all (see `AttachmentBudget`'s
+                // `workspaceSpace`). Without that word the row reads as "attachments are
+                // limited to 24 MB", which is the misunderstanding the copy of the refusal
+                // sentence below used to confirm.
                 val stagedBytes = AttachmentBudget.base64CharsToBytes(attachments.sumOf { it.base64.length })
                 Text(
-                    "随消息一起发送：${attachments.size} 张，合计 ${mibLabel(stagedBytes)} MB" +
-                        "（上限 ${mibLabel(AttachmentBudget.MESSAGE_BYTES)} MB）",
+                    "随消息一起内联：${attachments.size} 张，合计 ${mibLabel(stagedBytes)} MB" +
+                        "（内联上限 ${mibLabel(AttachmentBudget.MESSAGE_BYTES)} MB）" +
+                        "；其它文件复制进工作区后只给路径，不受这个上限约束。",
                     style = PiTheme.text.meta,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -2880,15 +2962,23 @@ private fun SearchBar(
 }
 
 /**
- * The context ring in the composer's key row (design decision D23).
+ * The context ring in the composer's key row (design decision D23/D27).
  *
- * The ring is 24 dp across with a 2 dp pen (`r = 11`, circumference 69.12 dp), the
- * touch target is **32** rather than the usual 48, and its slot in the row is **30**
- * — the same as the send disc opposite it. The 32 is the designer's ruling and it is
- * load-bearing: a 48 dp box would grow this row by 18 dp, and the row exists to keep
- * the transcript's display area (the status band it replaces was 32 dp tall).
+ * The ring is [CONTEXT_RING_DIAMETER] across with a 2 dp pen, the touch target is
+ * **32** rather than the usual 48, and its slot in the row is **30** — the same as the
+ * send disc opposite it. The 32 is the designer's ruling and it is load-bearing: a 48 dp
+ * box would grow this row by 18 dp, and the row exists to keep the transcript's display
+ * area (the status band it replaces was 32 dp tall).
+ *
+ * **22 dp, not D27's 24.** D27 fixed the visual at 24 dp; the user's later ruling on this
+ * screen was 「这个圆环缩小一点点」, so the drawn arc is 2 dp smaller. The two numbers D27
+ * also fixed are untouched: the touch box is still 32 dp (D27's floor), and the slot is
+ * still 30 dp, so the row's height and the ring's position in it do not move. The arc is
+ * drawn **centred inside** the caller's box (`PiContextRing` owns the visual, its caller
+ * owns the target), which is what makes "32 dp you can hit, 22 dp you see" one statement
+ * rather than two.
  */
-private val CONTEXT_RING_DIAMETER = 24.dp
+private val CONTEXT_RING_DIAMETER = 22.dp
 private val CONTEXT_RING_STROKE = 2.dp
 private val CONTEXT_RING_TOUCH = 32.dp
 private val CONTEXT_RING_SLOT = 30.dp
@@ -2976,50 +3066,174 @@ private fun SearchChip(glyph: String, label: String, enabled: Boolean, onClick: 
  * gives the actual cause ([WorkspaceCopy]) and inserts **nothing** — never a
  * `content://` string and never a guessed path.
  *
- * The bound is [AttachmentBudget.MESSAGE_BYTES], reusing the number the image path shows
- * on purpose — one limit for the user to learn — even though a workspace file is not sent
- * inline at all: it is read by the agent from disk, and the bound is purely about how much
- * the app will stream before refusing. The copy is streamed and bounded, so a 2 GB
- * provider stream is refused without ever being held in memory.
+ * ## The bound is the **disk**, not the message
+ *
+ * This used to be bounded by [AttachmentBudget.MESSAGE_BYTES] (23.95 MB) — the number that
+ * exists because a message's inline base64 must fit inside one JSONL record. That number
+ * has nothing to do with this path: what is produced here is a **relative path in the
+ * composer** (`attachments/<name>`, a dozen bytes) and the agent reads the file off disk
+ * itself. The user's report is the consequence — 「发个文件还说太大，复制不进去，太傻逼了」:
+ * a 30 MB PDF was refused, and the copy is exactly how it was supposed to become readable.
+ *
+ * So the only bound here is free space, and it is checked twice: up front and then against
+ * every chunk through [AttachmentBudget.workspaceSpace], with
+ * [AttachmentBudget.WORKSPACE_SPACE_MARGIN_BYTES] left unspent. `StatFs` is read **once**
+ * per copy (`availableBytesOf`) and the running total is subtracted locally — this file is
+ * the only writer of the target, so a second syscall per chunk would buy nothing but
+ * latency on a 2 GB stream. A filesystem that will not report its free space is
+ * [AttachmentBudget.DiskSpace.Unknown]: the copy proceeds, and a genuine failure surfaces
+ * as [WorkspaceCopy.WriteFailed].
+ *
+ * The copy is still **streamed**: one 64 KiB buffer, so a 2 GB provider document never
+ * lives in memory. What changed is only which question stops it.
  */
 private fun copyIntoWorkspace(context: Context, uri: android.net.Uri): WorkspaceCopy {
-    val directory = java.io.File(
-        app.pi.runtime.PtyLauncher.workspaceHost(context),
-        ATTACHMENTS_DIR,
-    )
-    if (!directory.isDirectory && !directory.mkdirs()) return WorkspaceCopy.WriteFailed
-
+    // Opened first, so a source that will not open is [WorkspaceCopy.Unreadable] rather
+    // than a directory problem — the same order, and the same two failure arms, as before.
     val source = runCatching { context.contentResolver.openInputStream(uri) }.getOrNull()
         ?: return WorkspaceCopy.Unreadable
+    return source.use { input -> copyAttachment(context, input, displayNameOf(context, uri)) }
+}
 
-    val displayName = displayNameOf(context, uri)
-    return source.use { input ->
-        val name = app.pi.ui.chat.uniqueAttachmentName(
-            app.pi.ui.chat.sanitizeAttachmentName(displayName),
-        ) { candidate -> java.io.File(directory, candidate).exists() }
-        val target = java.io.File(directory, name)
-        // The name is sanitised, and this is the guard that does not depend on the
-        // sanitiser being right: whatever it returned must land *inside* the
-        // attachments directory. A name that escapes it is a path the app would be
-        // writing on a stranger's behalf.
-        val root = runCatching { directory.canonicalPath }.getOrNull() ?: return WorkspaceCopy.WriteFailed
-        val resolved = runCatching { target.canonicalPath }.getOrNull() ?: return WorkspaceCopy.WriteFailed
-        if (resolved != "$root${java.io.File.separator}$name") return WorkspaceCopy.WriteFailed
+/**
+ * The same copy, from bytes the caller already holds: the **inline fallback** for a picked
+ * image ([fallbackInline] in the picker callback).
+ *
+ * It exists because an image that cannot be inlined is still a file the agent should be
+ * able to read, and because the bytes in hand are the user's own pick — writing the
+ * *re-encoded* picture instead would hand the agent a different file than the one that was
+ * chosen. The name goes through the same sanitiser and the same
+ * `attachments/`-containment guard as any other copy, and the space rule is the same one.
+ */
+private fun copyBytesIntoWorkspace(context: Context, bytes: ByteArray, displayName: String?): WorkspaceCopy =
+    java.io.ByteArrayInputStream(bytes).use { copyAttachment(context, it, displayName) }
 
-        val written = runCatching {
-            target.outputStream().use { sink -> copyBounded(input, sink, AttachmentBudget.MESSAGE_BYTES) }
-        }.getOrNull() ?: return WorkspaceCopy.WriteFailed
-        when {
-            written < 0 -> {
-                // The partial file must not stay behind: the user was told the
-                // attachment was refused, so a half file in 工作区 would be a lie.
-                target.delete()
-                WorkspaceCopy.TooLarge
-            }
-            else -> WorkspaceCopy.Copied("$ATTACHMENTS_DIR/$name")
+/** Where one copy will land, after every guard has passed. */
+private class AttachmentTarget(val directory: java.io.File, val file: java.io.File, val relativePath: String)
+
+/**
+ * The file one copy will land in, or null when the workspace cannot be created or the name
+ * would not land inside `attachments/`.
+ *
+ * Both guards are unchanged and neither depends on the other: the name comes from
+ * [app.pi.ui.chat.sanitizeAttachmentName] and [app.pi.ui.chat.uniqueAttachmentName], and
+ * then the **canonical path** of the file about to be written must be exactly
+ * `<attachments>/<that name>`. A name that escapes the directory is a path this app would
+ * be writing on a stranger's behalf.
+ */
+private fun attachmentTarget(context: Context, displayName: String?): AttachmentTarget? {
+    val directory = java.io.File(app.pi.runtime.PtyLauncher.workspaceHost(context), ATTACHMENTS_DIR)
+    if (!directory.isDirectory && !directory.mkdirs()) return null
+    val name = app.pi.ui.chat.uniqueAttachmentName(
+        app.pi.ui.chat.sanitizeAttachmentName(displayName),
+    ) { candidate -> java.io.File(directory, candidate).exists() }
+    val target = java.io.File(directory, name)
+    val root = runCatching { directory.canonicalPath }.getOrNull() ?: return null
+    val resolved = runCatching { target.canonicalPath }.getOrNull() ?: return null
+    if (resolved != "$root${java.io.File.separator}$name") return null
+    return AttachmentTarget(directory, target, "$ATTACHMENTS_DIR/$name")
+}
+
+/**
+ * Stream [input] into a new file under `attachments/`, bounded only by free space.
+ *
+ * The space reading is taken once, before the first byte is written ([availableBytesOf]);
+ * the running total is then compared against it chunk by chunk. That is the honest reading
+ * for a number the user is shown: if some other writer fills the disk while this copy runs,
+ * the `write` throws and the answer is [WorkspaceCopy.WriteFailed] — never a made-up figure.
+ */
+private fun copyAttachment(context: Context, input: java.io.InputStream, displayName: String?): WorkspaceCopy {
+    val target = attachmentTarget(context, displayName) ?: return WorkspaceCopy.WriteFailed
+    val available = availableBytesOf(target.directory)
+    val margin = AttachmentBudget.WORKSPACE_SPACE_MARGIN_BYTES
+    val streamed = runCatching {
+        target.file.outputStream().use { sink -> copyStreamed(input, sink, available, margin) }
+    }.getOrNull()
+    return when (streamed) {
+        is Streamed.Done -> WorkspaceCopy.Copied(target.relativePath)
+
+        // **No half file is ever left behind**, for either reason: the user was told this
+        // file did not make it, so a truncated copy in 工作区 would be a lie. (Only the
+        // over-limit arm deleted before; a mid-write failure used to leave its partial.)
+        is Streamed.NoSpace -> {
+            runCatching { target.file.delete() }
+            WorkspaceCopy.OutOfSpace(
+                neededBytes = streamed.neededBytes,
+                availableBytes = streamed.availableBytes,
+                marginBytes = streamed.marginBytes,
+            )
+        }
+
+        null -> {
+            runCatching { target.file.delete() }
+            WorkspaceCopy.WriteFailed
         }
     }
 }
+
+/** What one [copyStreamed] did. */
+private sealed interface Streamed {
+    data object Done : Streamed
+
+    /**
+     * The disk ran out at [neededBytes] (a **lower bound** — the source had that many
+     * bytes to give). [availableBytes] and [marginBytes] are the two numbers the sentence
+     * needs, carried rather than recomputed.
+     */
+    data class NoSpace(val neededBytes: Long, val availableBytes: Long, val marginBytes: Long) : Streamed
+}
+
+/**
+ * The streaming loop: one 64 KiB buffer, and [AttachmentBudget.workspaceSpace] asked before
+ * every write.
+ *
+ * `availableBytes` is the free space read once before the copy started; `total` is what has
+ * been written. The question asked is about the **next** chunk (`total + read`), so a chunk
+ * is never written into the margin. `null` means the filesystem would not say, and then no
+ * chunk is refused here.
+ */
+private fun copyStreamed(
+    input: java.io.InputStream,
+    sink: java.io.OutputStream,
+    availableBytes: Long?,
+    marginBytes: Long,
+): Streamed {
+    val buffer = ByteArray(COPY_BUFFER_BYTES)
+    var total = 0L
+    while (true) {
+        val read = input.read(buffer)
+        if (read < 0) return Streamed.Done
+        if (read == 0) continue
+        val needed = total + read
+        when (val space = AttachmentBudget.workspaceSpace(needed, availableBytes, marginBytes)) {
+            AttachmentBudget.DiskSpace.Room, AttachmentBudget.DiskSpace.Unknown -> {
+                sink.write(buffer, 0, read)
+                total = needed
+            }
+            is AttachmentBudget.DiskSpace.Insufficient -> return Streamed.NoSpace(
+                neededBytes = space.neededBytes,
+                availableBytes = space.availableBytes,
+                marginBytes = marginBytes,
+            )
+        }
+    }
+}
+
+/**
+ * Free bytes on the filesystem [directory] sits on, or null when it cannot be read.
+ *
+ * `StatFs` on the directory itself, not on the workspace root or the app's `filesDir`: the
+ * attachments directory is where the bytes land, and on a device with an adopted external
+ * `filesDir` those are not necessarily the same filesystem. A reading of 0 or a throw is
+ * reported as **unknown** rather than as "no space" — an unreadable number must not become
+ * a refusal (`RuntimeSpaceBudget.shortfall` makes the same call for the same reason).
+ */
+private fun availableBytesOf(directory: java.io.File): Long? = runCatching {
+    android.os.StatFs(directory.path).availableBytes.takeIf { it > 0L }
+}.getOrNull()
+
+/** One chunk of a workspace copy. 64 KiB, the same size the old bounded copy used. */
+private const val COPY_BUFFER_BYTES = 64 * 1024
 
 /** The picker's own name for a document, or null when the provider will not say. */
 private fun displayNameOf(context: Context, uri: android.net.Uri): String? = runCatching {
@@ -3041,35 +3255,22 @@ private sealed interface WorkspaceCopy {
     /** The provider would not open the document: permission, or it is gone. */
     data object Unreadable : WorkspaceCopy
 
-    /** Larger than [AttachmentBudget.MESSAGE_BYTES]; the partial file was removed. */
-    data object TooLarge : WorkspaceCopy
+    /**
+     * The disk filled up (or was already too full to keep
+     * [AttachmentBudget.WORKSPACE_SPACE_MARGIN_BYTES] spare); the partial file was removed.
+     *
+     * Not a size limit: this path's only bound is free space, and the numbers come from the
+     * measurement that stopped the copy rather than from a constant.
+     */
+    data class OutOfSpace(
+        val neededBytes: Long,
+        val availableBytes: Long,
+        val marginBytes: Long,
+    ) : WorkspaceCopy
 
     /** The workspace could not be created, or the copy failed — disk full, read-only. */
     data object WriteFailed : WorkspaceCopy
 }
-
-/**
- * Stream `input` into `sink`, stopping the moment the total would pass [limit].
- *
- * Returns the number of bytes written, or `-1` when the limit was exceeded — the
- * signal the caller needs before it has read anything more. `readBytes()` on the whole
- * stream is what the image path's KDoc already rejects for the same reason (a cloud
- * provider offers hundreds of megabytes); nothing here ever holds more than one
- * 64 KiB buffer, and the bytes only ever exist on disk.
- */
-private fun copyBounded(input: java.io.InputStream, sink: java.io.OutputStream, limit: Int): Int {
-    var total = 0L
-    val buffer = ByteArray(64 * 1024)
-    while (true) {
-        val read = input.read(buffer)
-        if (read < 0) break
-        total += read
-        if (total > limit) return -1
-        sink.write(buffer, 0, read)
-    }
-    return total.toInt()
-}
-
 
 /** `get_last_assistant_text`, then the system clipboard; this is pi's `/copy`. */
 private fun copyLastAssistant(session: PiSessionViewModel, context: Context) {
@@ -4104,19 +4305,34 @@ private fun encodeForAttachment(bitmap: Bitmap, encoding: AttachmentBudget.Encod
 }
 
 /**
- * The sentence for a message whose image total is full, built only from the verdict's
- * own numbers ([AttachmentBudget.Verdict.MessageFull]) so it can never disagree with the
- * decision that refused the image.
+ * The sentence for a file that was put in the workspace **because it could not be inlined**,
+ * with [why] being the reason the inline path gave up.
  *
- * It says how much room **this message** has left, not what one image may be: the limit
- * is the whole message's, and the same images can be fine spread over two messages.
+ * It has to say three things, and each one is load-bearing: where the file went (the user
+ * can see 工作区), that it did **not** travel inside the message (otherwise the next question
+ * is "why did the model not see it"), and that the model can still read it (the path is in
+ * the composer, and pi's agent resolves it like any other path).
+ *
+ * This is not the 「已放入工作区」 notice D47 deleted: that one repeated a path that was
+ * already in the composer and nothing else. Here the message's shape differs from what the
+ * user asked for, so the composer's own contents cannot explain it.
  */
-private fun messageFullText(verdict: AttachmentBudget.Verdict.MessageFull): String =
-    "这条消息的图片总量放不下了：已经 ${verdict.stagedImages} 张（共 ${mibLabel(verdict.usedBytes)} MB），" +
-        "这张压缩后 ${mibLabel(verdict.candidateBytes)} MB，" +
-        "合计会超过上限 ${mibLabel(verdict.limitBytes)} MB；本条消息还能放约 " +
-        "${mibLabel(verdict.remainingBytes)} MB（约 ${verdict.piSizedImages} 张 pi 上限大小的图是一条消息的全部）。" +
-        "请先移除一张，或把这张另发一条。"
+private fun inlineDowngradeText(relativePath: String, why: String): String =
+    "已放进工作区 $relativePath —— $why，所以没有随消息内联；" +
+        "模型可以用工具读取这个文件。"
+
+/**
+ * The sentence for a copy the disk refused, built only from the measurement that stopped it.
+ *
+ * 「至少需要」 is deliberate: [WorkspaceCopy.OutOfSpace.neededBytes] is the number of bytes
+ * the source had already handed over, which is a lower bound on the file's size, not its
+ * size. Saying "needs X" without the qualifier would be a claim this code cannot check.
+ */
+private fun workspaceOutOfSpaceText(out: WorkspaceCopy.OutOfSpace): String =
+    "磁盘空间不足：这个文件至少需要 ${mibLabel(out.neededBytes)} MB，" +
+        "工作区所在磁盘可用 ${mibLabel(out.availableBytes)} MB" +
+        "（要留 ${mibLabel(out.marginBytes)} MB 余量）。" +
+        "它没有被复制进工作区，也没有加进这条消息；腾出空间后可以再选一次。"
 
 /**
  * One count in MiB, one decimal, locale-stable.
@@ -4126,6 +4342,12 @@ private fun messageFullText(verdict: AttachmentBudget.Verdict.MessageFull): Stri
  * shown in the same MiB so the two numbers can be compared. `%.1f` rather than an
  * integer, because pi's own ceiling is 4.5 and truncating it to "4" would understate
  * what the composer is allowed to send by half a megabyte.
+ *
+ * The [Long] overload is for the disk figures, which are byte counts from `StatFs` and can
+ * legitimately exceed an `Int`.
  */
 private fun mibLabel(count: Int): String =
+    String.format(java.util.Locale.US, "%.1f", count / 1024.0 / 1024.0)
+
+private fun mibLabel(count: Long): String =
     String.format(java.util.Locale.US, "%.1f", count / 1024.0 / 1024.0)

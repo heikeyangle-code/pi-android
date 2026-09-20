@@ -10,19 +10,81 @@ import java.io.InputStream
 import kotlin.math.roundToInt
 
 /**
- * Unpacks the bundled runtime on first launch, and again whenever the packaged
- * runtime revision changes.
+ * Unpacks the bundled runtime on first launch, and keeps it in step with the
+ * packaged payloads afterwards **without deleting anything the user owns**.
  *
  * Two trees, deliberately separated (docs/pi-android-app-design.md §19.1):
- *  - `<files>/pi` holds user data — sessions, settings, extensions, credentials —
- *    and must survive an app update untouched.
- *  - `<files>/pi/runtime` is volatile and is rebuilt wholesale when [revision]
- *    changes. Anything a user cares about living here would be destroyed by an
- *    update, so nothing they care about is allowed to live here.
+ *  - `<files>/pi` holds user data — sessions, settings, extensions, credentials,
+ *    workspaces — and must survive an app update untouched.
+ *  - `<files>/pi/runtime` is volatile: it is what a payload change may rewrite.
+ *
+ * ## Why provisioning is per payload and not one global stamp
+ *
+ * It used to compare one SHA-256 over every payload with `<files>/pi/runtime/.stamp`
+ * and, on any difference, `deleteRecursively()` the whole volatile tree and re-extract
+ * all six archives. So *any* single payload change — a pi version bump, a Node bump, a
+ * new library in the git closure, a proroot `.so` — destroyed the guest environment
+ * the user had built inside that tree: apt/pip packages, `npm -g`, `/usr/local/bin`,
+ * edits to `/etc`, and all of `/root` except the bind-mounted `.pi/agent`. The user's
+ * words are 「我为什么每次升级完软件？很多东西，很多文件都会没有。哪他妈有这样的软件」.
+ *
+ * So each payload now carries its own state under the volatile tree,
+ * `<files>/pi/runtime/.payloads/<name>.digest` and `<name>.list` ([PiPaths.payloadStateDir]):
+ *
+ *  - `<name>.digest` — the digest of the bytes this payload was last extracted from;
+ *  - `<name>.list` — every **non-directory** path that payload owns, relative to
+ *    `paths.runtime`, sorted, one per line.
+ *
+ * The decision, and its cost. A matching `.stamp` reaches none of this (see the fast path
+ * below); these are the cases once it does not match:
+ *
+ *  - **digest unchanged** — the payload is not touched at all. The whole decision is one
+ *    16-byte asset read and one string comparison per payload.
+ *  - **digest changed** — the payload is extracted **over** the existing tree (no
+ *    `deleteRecursively` of anything the payload does not own), and then only
+ *    `old.list − new.list` is deleted ([PayloadPrune.victims]), which is what keeps
+ *    upstream-removed files from lingering while leaving every file the user created —
+ *    those are in neither list — untouchable.
+ *  - **no per-payload state at all** (every install that predates this change) — every
+ *    payload is re-extracted over the tree with **no** whole-tree wipe and **no** prune:
+ *    there is no old list to prune against, so this transition cannot delete anything.
+ *
+ * The payload lists are **21,259 paths / 2.0 MiB** of text in total, measured from the
+ * pinned archives (`ubuntu-base` 2,758, `node` 4,714, `pi-engine` 13,531, `git` 252,
+ * `ripgrep` 2, `fd` 2), against the 121,072,689 bytes (115.5 MiB) of payload archives
+ * these binaries ship. On device each is read once per attempt (only on the slow path),
+ * parsed once into a `Set`, and used for one set difference — never re-read or re-parsed
+ * per payload.
+ *
+ * ## Why this is faster than what it replaced, not only safer
+ *
+ *  - a cold start that changes nothing does exactly what it always did: one 16-character
+ *    asset read and one `.stamp` comparison, then the same two idempotent repairs. No
+ *    digest, no list, no traversal;
+ *  - a revision that moved while no *runtime* payload did (a proroot `.so` change, say)
+ *    reads twelve small digest files — a few hundred bytes — and extracts nothing;
+ *  - a payload that really changed is the only one extracted, over the tree: the archive
+ *    is the only thing written. `pi-engine.tgz` is 22,944,170 bytes compressed (measured
+ *    on this checkout), where the old path deleted the guest environment and re-wrote
+ *    >438 MB of tree ([RuntimeSpaceBudget]'s measurements for the three large payloads
+ *    alone).
+ *
+ * ## The one path that may still delete the tree
+ *
+ * [ensureReady]'s `rebuild` parameter is the explicit repair decision — a genuinely
+ * broken or incomplete tree (a failed boot-time self-check, a missing rootfs, the user
+ * asking for a repair) — and it is the **only** caller of [wipe]. It is never derived
+ * from "the digest changed": a payload change is a re-extraction over the tree, never a
+ * deletion of it. [deleteTreeInsideVolatile] is the structural half of that promise:
+ * every recursive delete in this class is checked against [VolatileTree] first, and
+ * [PiPaths] asserts at construction that the workspace root, the agent dir and
+ * `persist/` are outside the volatile tree.
  *
  * The work is a sequence of named steps so the first launch can show honest
  * progress instead of a spinner: unpacking a rootfs takes tens of seconds on a
- * phone and an unexplained wait reads as a hang.
+ * phone and an unexplained wait reads as a hang. The steps name **only** the work
+ * this attempt actually does, and a boot that finds every payload current says so
+ * instead of showing extraction steps that never ran.
  */
 class RuntimeProvisioner(
     private val paths: PiPaths,
@@ -65,135 +127,516 @@ class RuntimeProvisioner(
     private var payloadReport: String = ""
 
     /**
-     * @param revision any string that changes when the packaged payload changes
-     *        (the app's versionCode plus a payload hash). Recorded in a stamp
-     *        file; a mismatch triggers a clean re-unpack.
+     * What one provisioning attempt actually did.
+     *
+     * Returned rather than kept in a field because two callers need the same answer
+     * about *this* attempt: the boot screen's last step and the boot audit
+     * ([BootAudit]), which records on upgrade whether anything was re-extracted. A
+     * field would be shared state between concurrent attempts; the return value cannot
+     * be.
      */
-    suspend fun ensureReady(revision: String, onStep: (Step) -> Unit = {}): Result<Unit> =
-        withContext(Dispatchers.IO) {
-            runCatching {
-                if (isStampCurrent(revision) && paths.rootfs.isDirectory) {
-                    paths.prepareLibraryAliases()
-                    // The two tools live in *two* directories, and one of them is
-                    // outside the stamped tree ([PiPaths.agentBinDir]). A boot that
-                    // does not re-unpack is therefore still the only thing that can
-                    // repair a tool the agent-dir migration moved out of the rootfs —
-                    // see [ensureToolsVisible]. Cheap: two file-existence probes.
-                    ensureToolsVisible()
-                    // Same shape, same reason: a device that already unpacked keeps its
-                    // rootfs, so a boot that does *not* re-unpack is the only path that
-                    // can repair the guest's `/etc/group` ([ensureAndroidGroups]).
-                    // Idempotent, and free when there is nothing to add.
-                    ensureAndroidGroups()
-                    return@runCatching
+    data class ProvisionOutcome(
+        /** Payload archives re-extracted this attempt, in the order they were unpacked. */
+        val reextracted: List<String>,
+        /**
+         * True when the device had no per-payload state at all, so every payload was
+         * extracted over the tree. See the class KDoc: this is the transition that must
+         * be impossible to lose anything in, and it prunes nothing.
+         */
+        val migrated: Boolean,
+        /** True when the explicit repair path ran and [wipe] deleted the tree first. */
+        val rebuilt: Boolean,
+    )
+
+    /**
+     * Bring the packed runtime up to date.
+     *
+     * The decision is per payload and never deletes the tree: for each payload, compare
+     * its packaged digest with the one recorded in `.payloads/<name>.digest`; extract
+     * over the tree only the ones that differ; prune only the paths the old list owned
+     * and the new one does not. See the class KDoc for the full account and for why a
+     * payload that did not change costs one small read.
+     *
+     * @param revision the digest of the per-payload digests, written to the stamp file at
+     *        the end. It decides nothing about extraction — that is each payload's own
+     *        digest — it records which revision of the payload set this tree holds.
+     * @param rebuild the **explicit repair decision**: delete the volatile tree and
+     *        extract every payload again. The only caller that may pass true is a caller
+     *        that has decided the tree is genuinely broken or incomplete (a failed
+     *        boot-time self-check, a missing rootfs, a user asking for a repair). It is
+     *        never derived from a digest comparison, and this is the only path that may
+     *        delete anything the user could have touched inside the guest.
+     * @param onStep progress, one call per named step. The list names only the work this
+     *        attempt actually does; when every payload is current it says exactly that.
+     */
+    suspend fun ensureReady(
+        revision: String,
+        rebuild: Boolean = false,
+        onStep: (Step) -> Unit = {},
+    ): Result<ProvisionOutcome> = withContext(Dispatchers.IO) {
+        runCatching { provision(revision, rebuild, onStep) }
+    }
+
+    private fun provision(revision: String, rebuild: Boolean, onStep: (Step) -> Unit): ProvisionOutcome {
+        // ---------------------------------------------------------------- fast path
+        // Byte-for-byte the boot this app has always had: read the 16-character
+        // revision from the APK and compare it with `<files>/pi/runtime/.stamp`. Equal
+        // means "this revision is unpacked" and the answer is the same as it was before
+        // per-payload state existed — no digest read, no list read, no traversal, no
+        // count, not even a `mkdirs` the old early return did not perform. A cold start
+        // that changes nothing must not become more expensive because updates got safer.
+        //
+        // `rebuild` deliberately bypasses it: a caller that decided the tree is broken
+        // must be able to rebuild a tree whose stamp happens to match.
+        if (!rebuild && paths.rootfs.isDirectory && isStampCurrent(revision)) {
+            return finishCurrent(revision, migration = false, onStep)
+        }
+
+        // `<files>/pi` may not exist yet on a first boot, and `usableSpace` on a path
+        // that does not exist answers 0 - which [RuntimeSpaceBudget.shortfall] reads as
+        // "cannot tell" and would silently skip the check exactly when a fresh install
+        // on a full phone is the case worth catching. Creating it here costs nothing:
+        // this path is already doing real work.
+        paths.home.mkdirs()
+
+        // ---------------------------------------------------------------- slow path
+        // Reached only when the stamp differs (a new APK, a repaired stamp, a first
+        // install) or when the caller asked for a rebuild. The per-payload digests and
+        // lists are read **here**, once, and never on the fast path.
+        //
+        // Captured before anything creates it: "this device has never had per-payload
+        // state" is the migration condition, and reading it after the first payload was
+        // recorded would answer false. `stateDir.exists()` is not the same question as
+        // "every digest is present" - a crash between two payloads leaves a directory
+        // with one digest in it, and that case must re-extract only the rest.
+        val migration = !paths.payloadStateDir().exists()
+        // A tree without a rootfs is incomplete rather than merely out of date. Treating
+        // it as "every payload changed" re-extracts over what is there (nothing is
+        // deleted), which repairs it without needing the explicit rebuild.
+        val rootfsMissing = !paths.rootfs.isDirectory
+
+        // The three directories [wipe] used to be the only creator of. Creating them on
+        // this path (and not on the fast one) keeps the fast path's fixed cost exactly
+        // where it was.
+        prepareVolatileDirs()
+
+        // Every payload's state and packaged digest is read **once** on this path and the
+        // answers are reused: a comparison for the plan, and then — for the payloads that
+        // are extracted — the same digest and the packaged list for the prune and for the
+        // state write. Nothing is read or parsed twice, and none of it happens at all on
+        // the fast path above.
+        val stateDigests = PAYLOADS.associateWith { readStateDigest(it) }
+        val packagedDigests = PAYLOADS.associateWith { packagedDigest(it) }
+        val plan: List<Payload> = when {
+            rebuild -> PAYLOADS
+            rootfsMissing -> PAYLOADS
+            migration -> PAYLOADS
+            else -> PAYLOADS.filter { payload ->
+                // An APK that carries no engine asset (the assembler always writes one,
+                // but a hand-assembled package need not) has nothing to extract for it and
+                // can never record a digest, so without this it would re-run this whole
+                // slow path on every boot. [extractEngine] already treats a missing engine
+                // asset as provisionable. On a first install the branches above still
+                // include it, which is what creates `<rootfs>/opt/pi`.
+                if (payload.name == ENGINE_ARCHIVE && !assetExists("runtime/$ENGINE_ARCHIVE")) {
+                    return@filter false
                 }
-                val steps = buildList {
-                    add("校验内置载荷")
-                    add("准备存储")
-                    add("解压 Ubuntu 用户态")
-                    add("解压 Node 运行时")
-                    add("安装 rg / fd")
-                    add("安装 git")
-                    add("配置 DNS 与目录")
-                    add("解压 pi 引擎")
-                    add("完成")
-                }.let { it }
-
-                var index = 0
-                fun next(label: String = steps[index]) = onStep(Step(label, index, steps.size))
-
-                // Pre-flight, and deliberately *before* wipe(): the audit is the
-                // step that can prove the APK's payload is unusable, and a package
-                // that cannot be read must not destroy a runtime that works.
-                // `auditPayloads` throws only for the four payloads the unpack
-                // needs; see its KDoc for why the engine is reported but not
-                // required. Its file-and-size list goes on screen in the step
-                // label so the next device failure is self-explanatory.
-                next()
-                val payloads = auditPayloads()
-                onStep(Step(auditLabel(payloads), index, steps.size))
-                index++
-
-                // Pre-flight too, and it has to be *here*: after the audit (so the
-                // real payload sizes are known) and before `wipe()` (the only
-                // destructive step in this method). Without it, a phone that is out
-                // of space loses the runtime that worked, fails half way through the
-                // new one, and - because the stamp below is only written at the very
-                // end - repeats the whole thing on the next launch. The measured
-                // requirement and the sentence the user gets are in
-                // [RuntimeSpaceBudget].
-                //
-                // `usableSpace` on an unreadable path answers 0, and
-                // [RuntimeSpaceBudget.shortfall] treats that as "cannot tell" rather
-                // than "out of space", so this can never refuse a boot because of a
-                // number it could not read.
-                val payloadBytes = payloads.filter { it.ok }.sumOf { it.bytes }
-                // The volume the runtime will live on. `<files>/pi` may not exist yet
-                // on a first boot, and `usableSpace` on a path that does not exist
-                // answers 0 - which [RuntimeSpaceBudget.shortfall] reads as "cannot
-                // tell" and would silently skip the check exactly when a fresh
-                // install on a full phone is the case worth catching. Creating the
-                // directory first costs nothing: the unpack creates it moments later.
-                paths.home.mkdirs()
-                val available = paths.home.usableSpace
-                RuntimeSpaceBudget.shortfall(available, payloadBytes)?.let { missing ->
-                    throw ProvisioningException(
-                        RuntimeSpaceBudget.message(available, payloadBytes) +
-                            "\n（本次预检：可用 $available 字节，内置载荷 $payloadBytes 字节，" +
-                            "预计至少需要 ${RuntimeSpaceBudget.requiredBytes(payloadBytes)} 字节，" +
-                            "还差 $missing 字节）",
-                    )
-                }
-
-                next(); wipe()
-                index++
-
-                next(); extractAsset(UBUNTU_BASE, paths.rootfs)
-                index++
-
-                next(); extractNode()
-                index++
-
-                next(); installTool(RIPGREP_ARCHIVE, "rg"); installTool(FD_ARCHIVE, "fd")
-                index++
-
-                next(); installGit()
-                index++
-
-                // The guest's `/etc/group` repair reports through the last step's label
-                // (like the stamp below): the runtime is complete either way, and the
-                // only thing at stake is whether the terminal still prints coreutils'
-                // "cannot find name for group ID" lines.
-                val groupWarning = configureGuest()
-                index++
-
-                next(); extractEngine()
-                index++
-
-                next(); paths.prepareLibraryAliases()
-                // A stamp that could not be written is shown where the user is
-                // already looking (the boot screen's step label) instead of failing a
-                // boot whose runtime is complete. See [writeStamp].
-                val stampWarning = writeStamp(revision)
-                val warning = listOfNotNull(groupWarning, stampWarning).firstOrNull()
-                onStep(
-                    if (warning == null) {
-                        Step(steps.last(), steps.size, steps.size)
-                    } else {
-                        Step(warning, steps.size, steps.size)
-                    },
-                )
+                stateDigests[payload] != packagedDigests[payload]
             }
         }
 
+        // A revision can move without any *runtime* payload moving: the five proroot
+        // `.so` files are payloads too, and Android's native-library extractor installs
+        // them outside this tree. That case must say "already current" and record the new
+        // revision — not re-extract 110 MiB because a number moved.
+        if (plan.isEmpty()) {
+            return finishCurrent(revision, migration = false, onStep)
+        }
+
+        // The step list is the plan, **in the order the work runs**: a payload that did
+        // not change contributes no step, so the segmented bar's total is the work that is
+        // really about to happen.
+        val steps = buildList {
+            add(AUDIT_STEP)
+            if (migration && !rebuild && !rootfsMissing) add(MIGRATION_STEP)
+            add(PREPARE_STEP)
+            if (rebuild) add(REBUILD_STEP)
+            plan.forEach { add(stepLabel(it)) }
+            add(CONFIGURE_STEP)
+            add(FINAL_STEP)
+        }
+        var index = 0
+        fun next(label: String = steps[index]) = onStep(Step(label, index, steps.size))
+
+        // Pre-flight, and deliberately *before* anything destructive: the audit is the
+        // step that can prove the APK's payload is unusable, and a package that cannot be
+        // read must not destroy a runtime that works. `auditPayloads` throws only for the
+        // payloads the unpack needs; see its KDoc for why the engine is reported but not
+        // required. Its file-and-size list goes on screen in the step label so the next
+        // device failure is self-explanatory.
+        next()
+        val payloads = auditPayloads()
+        onStep(Step(auditLabel(payloads), index, steps.size))
+        index++
+
+        // The migration gets its own named step rather than a silent plan of six
+        // payloads: it is the one transition whose whole point is that it deletes
+        // nothing, and the user should be able to read that on the boot screen.
+        if (migration && !rebuild && !rootfsMissing) {
+            next(); index++
+        }
+
+        // Pre-flight too, and it has to be *here*: after the audit (so the real payload
+        // sizes are known) and before the first extraction. Without it, a phone that is
+        // out of space loses the runtime that worked, fails half way through the new
+        // one, and - because the per-payload digests below are only written after a
+        // payload is complete - repeats the whole thing on the next launch. The measured
+        // requirement and the sentence the user gets are in [RuntimeSpaceBudget].
+        //
+        // Only the planned payloads are counted: a payload that will not be extracted
+        // does not need room.
+        //
+        // `usableSpace` on an unreadable path answers 0, and
+        // [RuntimeSpaceBudget.shortfall] treats that as "cannot tell" rather than "out
+        // of space", so this can never refuse a boot because of a number it could not
+        // read.
+        next()
+        val plannedAssets = plan.mapTo(HashSet()) { "runtime/${it.name}" }
+        val payloadBytes = payloads.filter { it.ok && it.asset in plannedAssets }.sumOf { it.bytes }
+        val available = paths.home.usableSpace
+        RuntimeSpaceBudget.shortfall(available, payloadBytes)?.let { missing ->
+            throw ProvisioningException(
+                RuntimeSpaceBudget.message(available, payloadBytes) +
+                    "\n（本次预检：可用 $available 字节，本次要解的载荷 $payloadBytes 字节，" +
+                    "预计至少需要 ${RuntimeSpaceBudget.requiredBytes(payloadBytes)} 字节，" +
+                    "还差 $missing 字节）",
+            )
+        }
+        index++
+
+        // The explicit repair path: the only place in this class that deletes the tree,
+        // and it is reachable only when the caller passed `rebuild = true`.
+        if (rebuild) {
+            next(); wipe(); index++
+        }
+
+        for (payload in plan) {
+            next()
+            extractPayloadOver(payload)
+            // Order matters: extract over first (the new bytes are in place), then delete
+            // only what the old list owned and the new one does not, then record the new
+            // state. Recording before pruning would lose the old list.
+            //
+            // The packaged list is read once here and handed to both steps; the digest was
+            // already read for the plan. One asset read per payload per attempt, never two.
+            val newList = packagedList(payload)
+            prunePayload(payload, newList)
+            recordPayloadState(payload, packagedDigests[payload], newList)
+            index++
+        }
+
+        // The guest's `/etc/group` repair reports through the last step's label (like
+        // the stamp below): the runtime is complete either way, and the only thing at
+        // stake is whether the terminal still prints coreutils' "cannot find name for
+        // group ID" lines.
+        next()
+        val groupWarning = configureGuest()
+        index++
+
+        paths.prepareLibraryAliases()
+        // A stamp that could not be written is shown where the user is already looking
+        // (the boot screen's step label) instead of failing a boot whose runtime is
+        // complete. See [writeStamp].
+        val stampWarning = writeStamp(revision)
+        val warning = listOfNotNull(groupWarning, stampWarning).firstOrNull()
+        onStep(Step(warning ?: steps[index], index, steps.size))
+
+        return ProvisionOutcome(
+            reextracted = plan.map { it.name },
+            migrated = migration && !rebuild && !rootfsMissing,
+            rebuilt = rebuild,
+        )
+    }
+
+    /**
+     * The boot where nothing needs re-extracting.
+     *
+     * **This is the fast path, and its fixed cost is the one this app always had**: the
+     * revision comparison that got us here ([provision]'s first branch reads `.stamp`),
+     * the idempotent repairs that used to ride the early return, and — only when the
+     * stamp is not already current — one stamp write. It reads no payload digest, no
+     * payload list, and walks no directory; the per-payload state is not touched at all
+     * unless the stamp differed.
+     *
+     * It is also the *only* path that can repair two things [provision] did not touch —
+     * the agent-dir copy of `rg`/`fd` and the guest's `/etc/group` — so both run here;
+     * see [ensureToolsVisible] and [ensureAndroidGroups]. `prepareLibraryAliases`
+     * creates `paths.lib` through its own getter, exactly as the early return always
+     * did; `paths.tmp` is likewise created by its getter wherever it is used, so neither
+     * needs a step of its own here (and adding one would be a new syscall on every cold
+     * start).
+     *
+     * The stamp is rewritten when it does not match, and that is not bookkeeping
+     * pedantry: the revision also covers payloads that never enter this tree (the five
+     * proroot `.so`, installed by Android's native-library extractor). When one of those
+     * changes, no runtime payload did — the honest thing is to say so and to record the
+     * new revision, not to re-extract 110 MiB because a number moved.
+     *
+     * The steps say what happened. "运行时已是最新，无需重解" is the whole answer, and
+     * the screen shows it rather than a sequence of extraction steps that never ran.
+     */
+    private fun finishCurrent(revision: String, migration: Boolean, onStep: (Step) -> Unit): ProvisionOutcome {
+        val steps = listOf(CURRENT_STEP, FINAL_STEP)
+        onStep(Step(steps[0], 0, steps.size))
+        paths.prepareLibraryAliases()
+        // The two tools live in *two* directories, and one of them is outside the
+        // stamped tree ([PiPaths.agentBinDir]). A boot that does not re-extract is
+        // therefore still the only thing that can repair a tool the agent-dir migration
+        // moved out of the rootfs — see [ensureToolsVisible]. Cheap: two file-existence
+        // probes.
+        ensureToolsVisible()
+        // Same shape, same reason: a device that already unpacked keeps its rootfs, so a
+        // boot that does *not* re-extract is the only path that can repair the guest's
+        // `/etc/group` ([ensureAndroidGroups]). Idempotent, and free when there is
+        // nothing to add.
+        val groupWarning = ensureAndroidGroups()
+        val stampWarning = if (isStampCurrent(revision)) null else writeStamp(revision)
+        val warning = listOfNotNull(groupWarning, stampWarning).firstOrNull()
+        onStep(Step(warning ?: steps[steps.size - 1], steps.size - 1, steps.size))
+        return ProvisionOutcome(reextracted = emptyList(), migrated = migration, rebuilt = false)
+    }
+
     // ------------------------------------------------------------------- steps
 
-    private fun wipe() {
-        // Only the volatile tree, never `paths.home`.
-        paths.runtime.deleteRecursively()
+    /**
+     * Create the three directories the volatile tree must have.
+     *
+     * This used to be a side effect of [wipe], which meant the paths below only existed
+     * on a boot that had deleted the tree. `paths.tmp` is proot's `PROOT_TMP_DIR` and
+     * `paths.lib` holds the `libtalloc.so.2` alias; both must exist before proot runs,
+     * and a boot that re-extracts one payload is exactly the boot that changes what is
+     * in them. Calling this on both provisioning paths is what keeps that true now that
+     * most boots do not wipe anything.
+     */
+    private fun prepareVolatileDirs() {
         paths.runtime.mkdirs()
         paths.tmp.mkdirs()
         paths.lib.mkdirs()
+    }
+
+    /**
+     * The explicit, whole-tree repair.
+     *
+     * **Reachable only from `ensureReady(rebuild = true)`** — see the class KDoc. This is
+     * the old behaviour, kept because a genuinely broken tree has to be recoverable, and
+     * it is honest about its cost: everything the user installed inside the guest goes
+     * with it. It deletes nothing outside `paths.runtime`.
+     */
+    private fun wipe() {
+        // Only the volatile tree, never `paths.home`. [deleteTreeInsideVolatile] is the
+        // structural half of that sentence: it refuses any target outside `paths.runtime`,
+        // so a future edit that repoints this call fails loudly instead of deleting a
+        // workspace.
+        deleteTreeInsideVolatile(paths.runtime, "重建运行时（显式修复）")
+        prepareVolatileDirs()
+    }
+
+    /**
+     * Recursively delete [target], but only if it is inside the volatile tree.
+     *
+     * Every recursive delete in this class goes through here. The check is
+     * [VolatileTree.offending] — a pure function a bare-JVM harness pins — and it is the
+     * reason "wipe() 之外一个节点都不许删" is a property of the code rather than a
+     * comment: the only targets this class ever passes are the volatile root and scratch
+     * directories it creates under it, and a target that is not under it throws instead
+     * of being deleted.
+     */
+    private fun deleteTreeInsideVolatile(target: File, why: String) {
+        val offenders = VolatileTree.offending(paths.runtime, listOf(target))
+        if (offenders.isNotEmpty()) {
+            throw ProvisioningException(
+                "拒绝删除易失树之外的路径：${offenders.joinToString { it.path }}（$why）。" +
+                    "易失树是 ${paths.runtime.path}；耐久目录（工作区、agentDir、persist）" +
+                    "永远不在它下面，也永远不在这里被删。",
+            )
+        }
+        // A symlink is refused outright, because `deleteRecursively` follows one while it
+        // walks: a link where a directory is expected would delete the *target's* contents,
+        // which is the one way a lexical containment check cannot see the escape. Nothing
+        // in this app ever replaces one of these directories with a link, so this can only
+        // fire on a state somebody else created — and then refusing is the right answer.
+        if (runCatching { java.nio.file.Files.isSymbolicLink(target.toPath()) }.getOrDefault(false)) {
+            throw ProvisioningException(
+                "拒绝删除符号链接指向的目录：${target.path}（$why）：递归删除会跟随链接，" +
+                    "删掉链接目标里的内容。",
+            )
+        }
+        target.deleteRecursively()
+    }
+
+    // ------------------------------------------------------------ payload state
+
+    /**
+     * One payload's extraction, by name.
+     *
+     * The `when` is exhaustive on purpose and throws on an unknown name: the payload set
+     * and the extraction code have to agree, and a seventh payload added to [PAYLOADS]
+     * without an arm here is a build-time list that silently does nothing on device.
+     */
+    private fun extractPayloadOver(payload: Payload) {
+        when (payload.name) {
+            UBUNTU_BASE -> extractAsset(UBUNTU_BASE, paths.rootfs)
+            NODE_ARCHIVE -> extractNode()
+            RIPGREP_ARCHIVE -> installTool(RIPGREP_ARCHIVE, "rg")
+            FD_ARCHIVE -> installTool(FD_ARCHIVE, "fd")
+            GIT_ARCHIVE -> installGit()
+            ENGINE_ARCHIVE -> extractEngine()
+            else -> throw ProvisioningException("unknown payload ${payload.name}")
+        }
+    }
+
+    /** The screen's name for each payload's work; only planned payloads get one. */
+    private fun stepLabel(payload: Payload): String = when (payload.name) {
+        UBUNTU_BASE -> "解压 Ubuntu 用户态"
+        NODE_ARCHIVE -> "解压 Node 运行时"
+        RIPGREP_ARCHIVE -> "安装 rg"
+        FD_ARCHIVE -> "安装 fd"
+        GIT_ARCHIVE -> "安装 git"
+        ENGINE_ARCHIVE -> "解压 pi 引擎"
+        else -> "解压 ${payload.name}"
+    }
+
+    /** `<name>.tgz` -> `<name>`, the spelling of the payload-state files in `assets/`. */
+    private fun payloadMetaName(payload: Payload): String = payload.name.removeSuffix(PAYLOAD_SUFFIX)
+
+    private fun digestFile(payload: Payload): File =
+        File(paths.payloadStateDir(), "${payloadMetaName(payload)}.digest")
+
+    private fun listFile(payload: Payload): File =
+        File(paths.payloadStateDir(), "${payloadMetaName(payload)}.list")
+
+    /**
+     * The digest of this payload's bytes as this APK carries it, from
+     * `assets/runtime-payloads/<name>.digest` (written by `tools/fetch-runtime.mjs`).
+     *
+     * Null means "this APK does not say" — an asset that is missing, empty or not a
+     * 16-hex digest. Null is deliberately *not* an error: the payload is then treated as
+     * changed and extracted over the tree, which is always safe (it deletes nothing).
+     * That is also what a bare `assembleRelease` without the assembler produces, and
+     * there the payload audit fails first, exactly as before.
+     */
+    private fun packagedDigest(payload: Payload): String? =
+        readAssetText("$PAYLOAD_META_DIR/${payloadMetaName(payload)}.digest")
+            ?.takeIf { it.length == DIGEST_LENGTH && it.all { ch -> ch.isDigit() || ch in 'a'..'f' } }
+
+    /**
+     * The paths this payload owns in this APK, from
+     * `assets/runtime-payloads/<name>.list`: relative to `paths.runtime`, sorted, one per
+     * line, no leading `./`.
+     *
+     * Null means "this APK does not say", and the two callers treat that differently and
+     * conservatively:
+     *
+     *  - [prunePayload] deletes **nothing** — with no new list there is no way to tell a
+     *    stale file from a file the user made;
+     *  - [recordPayloadState] writes no list, so the next attempt prunes nothing either.
+     *
+     * Both are the safe side of "never delete something outside the lists".
+     */
+    private fun packagedList(payload: Payload): List<String>? =
+        readAssetText("$PAYLOAD_META_DIR/${payloadMetaName(payload)}.list")
+            ?.let { PayloadPrune.parseList(it) }
+
+    private fun readAssetText(name: String): String? = runCatching {
+        assets.open(name, AssetManager.ACCESS_BUFFER).use { it.readBytes().decodeToString() }
+    }.getOrNull()?.trim()?.takeIf { it.isNotEmpty() }
+
+    private fun readStateDigest(payload: Payload): String? = digestFile(payload)
+        .takeIf { it.isFile }
+        ?.let { runCatching { it.readText().trim() }.getOrNull() }
+        ?.takeIf { it.isNotEmpty() }
+
+    private fun readStateList(payload: Payload): List<String>? = listFile(payload)
+        .takeIf { it.isFile }
+        ?.let { runCatching { PayloadPrune.parseList(it.readText()) }.getOrNull() }
+
+    /**
+     * Delete exactly the paths the previous version of this payload owned and this one
+     * does not. Nothing else, ever.
+     *
+     * Every step of the reasoning is in [PayloadPrune]: the delete set is
+     * `old ∩ present − new`, so a file in neither list (the user's own) cannot be in it,
+     * a path in both is kept, and only an old-only path is removed. The `present` set is
+     * built here, with a check that does **not** follow symlinks, because a dangling
+     * `/usr/local/bin/<tool>` is exactly the kind of stale entry this has to clean up and
+     * `File.exists()` reports it as absent.
+     *
+     * `File.delete()`, never `deleteRecursively()`: the lists contain no directories
+     * (the build emits files and symlinks only), so a delete can never take a subtree
+     * with it. A no-op for any payload with no recorded state — which is why the
+     * migration to this format deletes nothing at all.
+     *
+     * ## The second gate: the path has to *still* be inside the tree
+     *
+     * A list entry is a legal relative path, but that says nothing about where it points
+     * *now*. The tree is writable by the guest (as the app's uid), so any parent directory
+     * on the way to an entry can have been replaced with a symlink since the payload was
+     * extracted — and `File(runtime, "rootfs/a/b").delete()` would then delete through it,
+     * up to `<files>/pi/.pi/agent/b` if that is where the link points. So every victim's
+     * **canonical** path (symlinks resolved) is checked with [PayloadPrune.within] before
+     * anything is deleted, and a path that now resolves outside the volatile tree is
+     * refused. This is the same rule [TarExtractor.resolveSafely] enforces in the other
+     * direction (nothing may be *written* outside the destination).
+     *
+     * @param newList this APK's list for the payload, already read and parsed by the caller.
+     */
+    private fun prunePayload(payload: Payload, newList: List<String>?) {
+        val old = readStateList(payload) ?: return
+        val new = newList ?: return
+        // An empty *present* list means this APK listed the payload as owning nothing.
+        // There is no such payload in [PAYLOADS]; treating it as "prune everything the
+        // old list owned" would turn a build-side mistake into deleted files, so an
+        // empty list is read as "cannot tell" and nothing is pruned.
+        if (new.isEmpty()) return
+        val present = old.filterTo(HashSet()) { relative -> existsWithoutFollowing(File(paths.runtime, relative)) }
+        val root = runCatching { paths.runtime.canonicalPath }.getOrNull() ?: return
+        PayloadPrune.victims(old, new, present).forEach { relative ->
+            val target = File(paths.runtime, relative)
+            val canonical = runCatching { target.canonicalPath }.getOrNull() ?: return@forEach
+            if (!PayloadPrune.within(root, canonical)) return@forEach
+            runCatching { target.delete() }
+        }
+    }
+
+    /** Existence without following a symlink, so a dangling link still counts as present. */
+    private fun existsWithoutFollowing(file: File): Boolean =
+        file.exists() || runCatching { java.nio.file.Files.isSymbolicLink(file.toPath()) }.getOrDefault(false)
+
+    /**
+     * Record what this payload now is and what it owns, so the next attempt can tell
+     * "unchanged" from "changed" and can prune the right set.
+     *
+     * Written through [writeStampAtomically] for the reason the stamp is: both files are
+     * read back and compared, and a process killed mid-write would otherwise leave a
+     * short digest that reads as "changed" and re-extracts a payload that was fine — or a
+     * short list that makes the *next* prune miss entries. Written **after** the payload
+     * is fully extracted: a digest written before the bytes would claim a tree that is
+     * not there.
+     *
+     * @param digest this APK's digest for the payload, already read by the caller (null =
+     *        this APK does not say; then no state is written and the next attempt reads it
+     *        as changed, which is the safe direction).
+     * @param list the packaged list, already read and parsed.
+     */
+    private fun recordPayloadState(payload: Payload, digest: String?, list: List<String>?) {
+        if (digest == null) return
+        val dir = paths.payloadStateDir().also { it.mkdirs() }
+        writeStampAtomically(File(dir, "${payloadMetaName(payload)}.digest"), digest + "\n")
+        if (list == null) return
+        writeStampAtomically(
+            File(dir, "${payloadMetaName(payload)}.list"),
+            PayloadPrune.encodeList(list),
+        )
     }
 
     private fun extractAsset(assetName: String, into: File) {
@@ -460,26 +903,83 @@ class RuntimeProvisioner(
     /**
      * Node ships as `.tar.xz` upstream and Java cannot decode xz, so
      * `tools/fetch-runtime.mjs` re-packs it as gzip at build time. The archive
-     * contains a single top-level `node-vX-linux-arm64/` directory.
+     * contains a single top-level `node-vX-linux-arm64/` directory, and the guest
+     * expects it at `/opt/node`.
+     *
+     * ## Why this merges instead of replacing
+     *
+     * It used to `deleteRecursively()` `<rootfs>/opt/node` and move the new tree into
+     * place. That directory is where `npm -g` installs its packages, so a Node bump —
+     * which has nothing to do with what the user installed — deleted every globally
+     * installed package. Now the new tree is **merged over** the old one: same-named
+     * files are overwritten, files that only the user has are left alone, and the stale
+     * ones the payload used to ship are removed afterwards by [prunePayload] (from the
+     * old `node.list`), which is the only code allowed to delete anything here.
+     *
+     * [mergeTreeOver] copies rather than renames, so the executable bit has to be
+     * re-applied from the source: `File.copyTo` does not carry POSIX permissions, and a
+     * `/opt/node/bin/node` without `+x` is a guest whose `node` does not run.
      */
     private fun extractNode() {
         val staging = File(paths.runtime, "node-stage")
-        staging.deleteRecursively()
+        // Scratch, under the volatile tree, created by this method; see
+        // [deleteTreeInsideVolatile] for the check that keeps that true.
+        deleteTreeInsideVolatile(staging, "node 暂存目录")
         extractAsset(NODE_ARCHIVE, staging)
         val top = staging.listFiles()?.firstOrNull { it.isDirectory }
             ?: throw ProvisioningException("node archive had no top-level directory")
         val target = File(paths.rootfs, "opt/node")
         target.parentFile?.mkdirs()
-        target.deleteRecursively()
-        if (!top.renameTo(target)) {
-            top.copyRecursively(target, overwrite = true)
-            top.deleteRecursively()
-        }
-        staging.deleteRecursively()
+        mergeTreeOver(top, target)
+        deleteTreeInsideVolatile(staging, "node 暂存目录")
         // Expose it on PATH the way the guest expects.
         guestSymlink("/usr/local/bin/node", "/opt/node/bin/node")
         guestSymlink("/usr/local/bin/npm", "/opt/node/bin/npm")
         guestSymlink("/usr/local/bin/npx", "/opt/node/bin/npx")
+    }
+
+    /**
+     * Merge the tree at [from] into [to]: same-named files are overwritten, missing ones
+     * are added, and **nothing under [to] is deleted**.
+     *
+     * The "nothing is deleted" half is the point. Callers are payload extractions whose
+     * destination is a directory the guest also writes to (`/opt/node` is the clearest
+     * case: `npm -g`), and the old code's `deleteRecursively()` there is what an update
+     * used to cost the user. Removal of payload-owned stale files is [prunePayload]'s
+     * job, driven by the payload's own list.
+     *
+     * Symlinks are recreated as symlinks (a dereferenced `npm -> ../lib/...` copy is a
+     * different, larger tree), and the executable bit is re-applied because
+     * `File.copyTo` does not carry permissions.
+     */
+    private fun mergeTreeOver(from: File, to: File) {
+        val stack = ArrayDeque<Pair<File, File>>()
+        stack.addLast(from to to)
+        while (stack.isNotEmpty()) {
+            val (source, destination) = stack.removeLast()
+            destination.mkdirs()
+            for (child in source.listFiles() ?: continue) {
+                val target = File(destination, child.name)
+                val path = child.toPath()
+                if (java.nio.file.Files.isSymbolicLink(path)) {
+                    val link = runCatching { java.nio.file.Files.readSymbolicLink(path) }.getOrNull() ?: continue
+                    runCatching {
+                        if (java.nio.file.Files.isSymbolicLink(target.toPath()) || target.exists()) target.delete()
+                        java.nio.file.Files.createSymbolicLink(target.toPath(), link)
+                    }
+                    continue
+                }
+                if (child.isDirectory) {
+                    stack.addLast(child to target)
+                    continue
+                }
+                if (!child.isFile) continue
+                runCatching {
+                    child.copyTo(target, overwrite = true)
+                    if (child.canExecute()) target.setExecutable(true, false)
+                }
+            }
+        }
     }
 
     /**
@@ -562,7 +1062,9 @@ class RuntimeProvisioner(
      */
     private fun installTool(archive: String, binaryName: String) {
         val staging = File(paths.runtime, "${archive.removeSuffix(PAYLOAD_SUFFIX)}-stage")
-        staging.deleteRecursively()
+        // Scratch, under the volatile tree, created by this method; see
+        // [deleteTreeInsideVolatile] for the check that keeps that true.
+        deleteTreeInsideVolatile(staging, "$binaryName 暂存目录")
         extractAsset(archive, staging)
         val binary = staging.walkTopDown()
             .filter { it.isFile && it.name == binaryName }
@@ -581,7 +1083,7 @@ class RuntimeProvisioner(
             binary.copyTo(dest, overwrite = true)
             dest.setExecutable(true, false)
         }
-        staging.deleteRecursively()
+        deleteTreeInsideVolatile(staging, "$binaryName 暂存目录")
         publishTool(binaryName)
     }
 
@@ -929,18 +1431,19 @@ class RuntimeProvisioner(
          * absent too and provisioning fails on the payload audit before this value is
          * ever compared against a stamp.
          *
-         * ## What a revision change still costs
+         * ## What a revision change costs now
          *
-         * `wipe()` deletes the whole runtime tree, which holds the extracted guest —
-         * so **everything the user installed inside it goes**: apt and pip packages,
-         * `npm -g` packages, anything dropped into `/usr/local/bin`, edits to
-         * `/etc/hosts`, and all of `/root` except the bind-mounted `.pi/agent`. That
-         * is now automatic rather than forgettable, which makes it *more* important to
-         * know, not less: a payload change is a decision to delete the user's guest
-         * environment. Session history, credentials, settings, extensions and the
-         * workspace are outside the wiped tree and survive. See
-         * `docs/known-gaps.md`; keeping user-installed packages across a wipe is a
-         * provisioning-path change nobody has made, deliberately.
+         * Nothing is deleted. The revision only decides whether the fixed cost of a cold
+         * start applies: while it matches `.stamp` the boot is exactly what it always
+         * was (one 16-character asset read and one string comparison). When it moves,
+         * the per-payload digests are read once, only the payloads whose bytes changed
+         * are extracted over the tree, and only the paths the previous version of a
+         * changed payload owned are pruned. A revision that moves because a proroot
+         * `.so` changed extracts nothing at all. The explicit repair path —
+         * `ensureReady(rebuild = true)` — is the only thing that still deletes the guest
+         * environment, and it exists for a tree that is genuinely broken. Session
+         * history, credentials, settings, extensions, workspaces and the guest's own
+         * `npm -g`/apt installs are all outside that path's reach unless the user asks.
          */
         const val RUNTIME_REVISION = "2"
 
@@ -958,6 +1461,52 @@ class RuntimeProvisioner(
 
         /** The digest length `tools/fetch-runtime.mjs` writes, in hex characters. */
         private const val REVISION_LENGTH = 16
+
+        /**
+         * Where the per-payload metadata lives inside the APK:
+         * `assets/runtime-payloads/<name>.digest` and `<name>.list`.
+         *
+         * A sibling of `assets/runtime/`, not a child: CI asserts that every entry under
+         * `assets/runtime/` is one of the payloads byte for byte, and these are text
+         * describing the payloads, not payloads. `tools/fetch-runtime.mjs` writes both
+         * files; the app reads a payload's pair only after the stamp comparison says
+         * this boot has something to decide.
+         *
+         * [DIGEST_LENGTH] is the same truncation `runtime-revision.txt` has always used:
+         * 16 hex characters of a SHA-256, which is what the whole change-detection scheme
+         * has rested on since the revision became derived. It detects a changed payload;
+         * it is not a signature.
+         */
+        private const val PAYLOAD_META_DIR = "runtime-payloads"
+
+        /** One payload digest's length in hex characters; see [PAYLOAD_META_DIR]. */
+        private const val DIGEST_LENGTH = 16
+
+        // ------------------------------------------------------- boot step labels
+        // Named constants rather than literals at the call sites: the same three
+        // sentences are asserted by the boot screen's own text and by nothing else, and
+        // a step list is the one place a user reads what an update actually did.
+
+        /** Nothing to do: the whole answer of a cold start that changed nothing. */
+        private const val CURRENT_STEP = "运行时已是最新，无需重解"
+
+        /** Pre-flight: what this APK actually carries. */
+        private const val AUDIT_STEP = "校验内置载荷"
+
+        /** The transition every existing install goes through once. */
+        private const val MIGRATION_STEP = "迁移到按载荷更新（只覆盖，不删除）"
+
+        /** The explicit repair path, which is the only one that may delete the tree. */
+        private const val REBUILD_STEP = "重建运行时（清空易失树）"
+
+        /** Free-space pre-flight, and the creation of `runtime/`, `tmp/` and `lib/`. */
+        private const val PREPARE_STEP = "准备存储"
+
+        /** DNS, the guest home and `/etc/group`. */
+        private const val CONFIGURE_STEP = "配置 DNS 与目录"
+
+        /** The last step, replaced by a warning on screen when one has to be shown. */
+        private const val FINAL_STEP = "完成"
 
         /**
          * The revision the packaged payloads carry — a digest of their bytes, or

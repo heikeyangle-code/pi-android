@@ -183,7 +183,9 @@ fun SettingsHome(
             }
             // Extension packages, next to the capability row because they answer
             // the same kind of question — "what can the agent use here?" — and
-            // neither is a pi setting. `pi install` is CLI-only in v0.85.1, so
+            // neither is a pi setting. `pi install` is CLI-only in v0.86.1 (the RPC
+            // command union carries no install/packages command —
+            // `modes/rpc/rpc-types.ts:20-74`), so
             // this screen is the app's own, not a transcription of pi's.
             if (onOpenPackages != null) {
                 item {

@@ -1,17 +1,22 @@
 package app.pi.runtime
 
 /**
- * How much free space the *unpack* needs, and the one sentence to show when there
+ * How much free space the *extraction* needs, and the one sentence to show when there
  * is not enough.
  *
  * ## Why this exists
  *
- * `RuntimeProvisioner.ensureReady` deletes the whole runtime tree (`wipe()`) and
- * then extracts six payload archives into it. Nothing checked free space, so a
- * device that is out of room loses the runtime it already had, fails half way
- * through the new one, and - because the revision stamp is only written at the very
- * end - does the same thing again on the next launch. The user sees "it used to
- * work and now it will not start", and every retry costs minutes.
+ * `RuntimeProvisioner.ensureReady` extracts payload archives into the runtime tree.
+ * Nothing checked free space, so a device that is out of room failed half way through
+ * the extraction, and - because each payload's digest is only written after that
+ * payload is complete - did the same thing again on the next launch. The user sees "it
+ * used to work and now it will not start", and every retry costs minutes.
+ *
+ * Since provisioning became per payload ([RuntimeProvisioner]'s KDoc) the check is
+ * applied to the payloads **this attempt will actually extract**: a boot that changes
+ * nothing is not refused for room it does not need, and a boot that re-extracts one
+ * payload is measured against that payload alone. The explicit repair path
+ * (`rebuild = true`) still measures all of them, because it does extract all of them.
  *
  * ## Where the numbers come from (measured, not estimated)
  *

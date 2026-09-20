@@ -239,18 +239,62 @@ internal object ToolOutputParse {
     }
 
     /**
-     * pi's elapsed line (`renderers/bash.ts:117-121`): `Elapsed 12.3s` while the command
-     * runs, `Took 12.3s` once it has ended.
+     * pi's elapsed line (`renderers/bash.ts:125-129`, 0.86.1): `Elapsed 12.3s` while the
+     * command runs, `Took 12.3s` once it has ended.
      *
      * The clock is *read*, never owned: the caller passes the row's age, so this app adds no
      * timer of its own — a streaming `bash` row already recomposes every 200 ms
      * (`rpc/.../Transcript.kt:618`), and a tool that prints nothing simply holds the last
      * number it showed.
+     *
+     * The **units** follow 0.86.1's `formatDuration` (`renderers/bash.ts:32-42`): under a
+     * minute it is one decimal in seconds, from a minute it is whole minutes + seconds, and
+     * from an hour it adds hours. 0.85.1 printed `%.1fs` for every magnitude, so a
+     * 25-minute `bash` call read "1483.2 秒" here; the shape below is pi's, kept in the
+     * app's own unit words (`分`/`时`/`秒`) the way the rest of this label already is.
      */
     fun elapsedLabel(pending: Boolean, elapsedMs: Long): String =
-        (if (pending) "已运行 " else "耗时 ") + formatSeconds(elapsedMs) + " 秒"
+        (if (pending) "已运行 " else "耗时 ") + elapsedText(elapsedMs)
 
-    /** pi's `formatDuration` (`renderers/bash.ts:32-34`): one decimal, in seconds. */
+    /** [elapsedLabel]'s number, in the app's unit words: `12.3 秒` / `1 分 30 秒` / `1 时 5 分 30 秒`. */
+    fun elapsedText(ms: Long): String {
+        val clamped = ms.coerceAtLeast(0)
+        if (clamped / 1000.0 < 60.0) return formatSeconds(clamped) + " 秒"
+        val totalSeconds = clamped / 1000
+        val minutes = totalSeconds / 60
+        val remainder = totalSeconds % 60
+        return if (minutes < 60) {
+            "$minutes 分 $remainder 秒"
+        } else {
+            "${minutes / 60} 时 ${minutes % 60} 分 $remainder 秒"
+        }
+    }
+
+    /**
+     * pi's `formatDuration` (`renderers/bash.ts:32-42`), byte for byte: `12.3s`, `1m 30s`,
+     * `1h 5m 30s`. The card header prints this spelling (`ToolBlockChrome.toolHeaderReading`)
+     * because pi's own tool header does; [elapsedLabel] carries the same shape in Chinese.
+     */
+    fun formatDuration(ms: Long): String {
+        val seconds = ms.coerceAtLeast(0) / 1000.0
+        if (seconds < 60.0) return String.format(Locale.US, "%.1fs", seconds)
+        val totalSeconds = (seconds).toLong()
+        val minutes = totalSeconds / 60
+        val remainder = totalSeconds % 60
+        return if (minutes < 60) {
+            "${minutes}m ${remainder}s"
+        } else {
+            "${minutes / 60}h ${minutes % 60}m ${remainder}s"
+        }
+    }
+
+    /**
+     * One decimal, in seconds — 0.85.1's whole rule and 0.86.1's **sub-minute branch**.
+     *
+     * Kept as its own function because the two shells' card headers used it directly before
+     * `formatDuration` existed; every caller now goes through the branch that knows about
+     * minutes. Do not add a caller that formats a duration of unknown magnitude with it.
+     */
     fun formatSeconds(ms: Long): String = String.format(Locale.US, "%.1f", ms.coerceAtLeast(0) / 1000.0)
 
     // ---------------------------------------------------------------- readers

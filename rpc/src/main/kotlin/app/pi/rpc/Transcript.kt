@@ -2015,18 +2015,48 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
             // F26: there is deliberately **no** `skill` / `skill_invocation` case
             // here. pi has neither an entry type nor an event with those names —
             // the persisted union is exactly message, thinking_level_change,
-            // model_change, compaction, branch_summary, custom, custom_message,
-            // label and session_info (`core/session-manager.ts:145-155`) —
+            // model_change, usage, compaction, branch_summary, custom,
+            // custom_message, label and session_info
+            // (`core/session-manager.ts:165-176`, 0.86.1) —
             // because `_expandSkillCommand` rewrites the user message itself
             // (`core/agent-session.ts`). The real projection is the `<skill …>`
             // split in [projectUser] from that user message, which is reachable
             // from a live `message` entry and from history. The aliases that used
             // to live here were reachable only by hand-feeding a `JsonObject`.
+            //
+            // `usage` (new in 0.86.1, `UsageEntry` at `core/session-manager.ts:77`)
+            // is in the union and is deliberately **not** projected: pi appends one
+            // per cache-warming refresh (`core/agent-session.ts:403` wires the
+            // warmer's `onWarmed` to `entry_appended`), and its own converter
+            // returns `[]` for it (`sessionEntryToContextMessages`,
+            // `core/session-manager.ts:405-432`), so the entry is not part of the
+            // conversation context. The TUI alone draws it as a dim "cache warmed"
+            // row, and only when `showCacheMissNotices` is on
+            // (`modes/interactive/interactive-mode.ts:3284-3295` live and
+            // `:3880`/`:3892` on replay); RPC mode carries the entry but no
+            // rendering, so a `TranscriptChange.None` here is the same projection
+            // pi's context builder makes.
+            //
+            // **What showing that row would take (0.86.1 gap, not yet closed).**
+            // pi's sentence is `Cache warmed[ (note)]: $<cost>`
+            // (`core/cache-warmer.ts:433-437`, with `cost` = `usage.cost.total`), and
+            // it is drawn only while `showCacheMissNotices` is on
+            // (`interactive-mode.ts:3893` starts `addCacheWarmingUsage` with that
+            // check). This reducer is pure and has no settings, and the app's own
+            // gate (`prefs.showCacheMissNotices`, `PiSessionViewModel.kt:452` read at
+            // `:1201`, passed as `showBilledCost` from `ChatScreen.kt:2147`) only
+            // reaches [CompactionMarker]/[BranchSummary]. Projecting this entry as a
+            // [Notice] without a gate on that path would show the row for users who
+            // turned the switch **off** — i.e. it would lie — so it is left
+            // unprojected until the gate exists. The honest patch is a defaulted
+            // gate flag on [Notice] plus one filter where the renderer's item list is
+            // built, not an unconditional row here.
 
             // pi has no `system_prompt` or `error` entry type — the persisted
             // union is exactly message, thinking_level_change, model_change,
-            // compaction, branch_summary, custom, custom_message, label and
-            // session_info (`core/session-manager.ts:145-155`). The system prompt
+            // usage, compaction, branch_summary, custom, custom_message, label
+            // and session_info (`core/session-manager.ts:165-176`, 0.86.1). The
+            // system prompt
             // is only reachable through `getSystemPrompt()`, which no RPC command
             // exposes (`rpc-types.ts:20-71`), and a failure arrives as a
             // `stopReason`/delta event, so neither is handled here. (The
@@ -2607,8 +2637,8 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
          * Only **real** pi entry types belong here — this is the list's whole
          * point, because a name that pi cannot emit makes an unknown event look
          * projectable and lets a hand-fed record masquerade as wire data. The
-         * persisted union is `core/session-manager.ts:145-155`: message,
-         * thinking_level_change, model_change, compaction, branch_summary,
+         * persisted union is `core/session-manager.ts:165-176` (0.86.1): message,
+         * thinking_level_change, model_change, usage, compaction, branch_summary,
          * custom, custom_message, label, session_info. So `model_select`,
          * `system_prompt` and `error` are absent (the first is extension-only,
          * the other two are not entry types), and F26 removed the former

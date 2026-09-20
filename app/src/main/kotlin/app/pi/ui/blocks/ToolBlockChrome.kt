@@ -317,21 +317,24 @@ private val TOOL_HEADER_GAP = 7.dp
  *
  * v2 hands each card that string by hand (`right="132ms"`, `"96ms"`, `"12.3s"`,
  * `"6.4s"`, `"0.4s"`, `"2.1s"`); the rule that produces all of them is the one the
- * app already uses in its footers — **milliseconds for the file tools, one-decimal
- * seconds for the two shells** — because pi measures those two families with two
- * different formatters (`core/tools/renderers/read.ts:129` prints its own line
- * count; `renderers/bash.ts:32-34` formats `Elapsed`/`Took` as `%.1fs`).
+ * app already uses in its footers — **milliseconds for the file tools, pi's own
+ * duration spelling for the two shells** — because pi measures those two families
+ * with two different formatters (`core/tools/renderers/read.ts:129` prints its own
+ * line count; `renderers/bash.ts:32-42` formats `Elapsed`/`Took` and switches to
+ * `1m 30s` / `1h 5m 30s` once the call passes a minute, which is 0.86.1's change).
  *
  * Nothing here is a new number: [formatDuration] is the file-tool spelling and
- * `ToolOutputParse.formatSeconds` is pi's shell formatter. A call with no measured
- * duration has no reading (v2 passes `right={null}` for exactly that case), and a
- * **被拒** call has none either — nothing ran, so there is nothing to measure.
+ * `ToolOutputParse.formatDuration` is pi's shell formatter, verbatim — including the
+ * unit switch, so an hour-long `bash` card reads `1h 5m 30s` and not `3930.0s`. A
+ * call with no measured duration has no reading (v2 passes `right={null}` for
+ * exactly that case), and a **被拒** call has none either — nothing ran, so there is
+ * nothing to measure.
  */
 internal fun toolHeaderReading(item: ToolCall): String? {
     if (toolStateOf(item) == ToolState.Rejected) return null
     val ms = item.elapsedMs ?: return null
     return if (item.toolName == "bash" || item.toolName == "powershell") {
-        ToolOutputParse.formatSeconds(ms) + "s"
+        ToolOutputParse.formatDuration(ms)
     } else {
         formatDuration(ms)
     }

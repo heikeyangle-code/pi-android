@@ -29,6 +29,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Forum
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -150,6 +151,9 @@ fun SessionsScreen(
     // True only while the first scan is still running with nothing to show; see
     // `PiSessionViewModel.sessionsLoading`.
     val loading by session.sessionsLoading.collectAsState()
+    // 第三种状态：这一次读取失败了（见 `PiSessionViewModel.sessionsFailed`）。它**不是**
+    // 「还没有会话」——那句断言在旧代码里来自一个被吞掉的异常。
+    val sessionsFailed by session.sessionsFailed.collectAsState()
     val state by session.state.collectAsState()
 
     var query by rememberSaveable { mutableStateOf("") }
@@ -194,13 +198,39 @@ fun SessionsScreen(
     // 常量拼出来，而不是猜一个字符串 —— 同一个对象也给出单个工作区的拼法。
     val workspacesRoot = GuestWorkspacePath.GUEST_ROOT + "/" + GuestWorkspacePath.ROOT_RELATIVE
 
-    val visible = remember(sessions, query, byName, namedOnly) {
-        sessions
-            .filter { summary -> sessionMatches(summary, query) && (!namedOnly || hasName(summary)) }
+    // 这一屏**派生**出来的两样东西（筛选/排序后的行，以及按 cwd 分好的组）在同一次
+    // `remember` 里算，键就是它们真正依赖的那六个输入。
+    //
+    // 为什么必须包起来：分组那一段原来写在组合体里（旧的 `val groups = visible.groupBy…`），
+    // 而 `state` 是在本函数顶部读的（`:153`）—— 引擎每发布一次（流式期间约 200 ms 一次）都会
+    // 重组这一屏，于是每次重组都要重跑一遍 `groupBy` + `maxOf` + 排序，虽然它只取决于那六个
+    // 输入。放在同一次 `remember` 里的第二个理由：`remember` 的键是**逐次比较**的，两组分开写
+    // 就要对同一个 `sessions` 列表做两次 O(n) 深比较。
+    //
+    // 值逐字不变：同一组谓词、同一个遍历顺序、同一条排序规则；`sessionQueryTokens` 只是把
+    // 「与行无关」的那一次 tokenisation 提出循环（见 `sessionMatches` 的 KDoc）。
+    //
+    // 这两样的**单位是会话，不是文件**：`sessions` 来自 `PiSessionStore.list()`，而它按会话
+    // 身份去重（`PiSessionStore.kt` 的 `list`/`laterSessionRow`）—— 一段对话在磁盘上留了两份
+    // （组目录副本、`/import` 的拷贝）时也只有一行。所以下面两处计数（副行的 `"${visible.size} 条"`
+    // 与每个组标题的 `rows.size`）说的就是「几条对话」；去重放在 store 里而不是这里，是为了不让
+    // 「同一段对话算几条」有第二个说法。
+    val listView = remember(sessions, query, byName, namedOnly, workspacesRoot, workspaceLabels) {
+        val tokens = sessionQueryTokens(query)
+        val visible = sessions
+            .filter { summary -> sessionMatches(summary, tokens) && (!namedOnly || hasName(summary)) }
             .let { list ->
                 if (byName) list.sortedBy { it.displayName.lowercase() } else list
             }
+        SessionListView(
+            visible = visible,
+            groups = visible
+                .groupBy { it.cwd }
+                .toList()
+                .sortedByDescending { (_, rows) -> rows.maxOf { it.lastActivityAt } },
+        )
     }
+    val visible = listView.visible
 
     Column(Modifier.fillMaxSize().padding(contentPadding)) {
         PiTopBar(
@@ -407,6 +437,18 @@ fun SessionsScreen(
                         modifier = Modifier.fillMaxSize(),
                         markPi = false,
                     )
+                } else if (sessionsFailed && sessions.isEmpty()) {
+                    // **读不到，不等于没有。** 这一支是这次补的第三种状态：旧代码把 `list()` 的异常
+                    // 吞成 `emptyList()`，于是屏幕把「这次没读到」说成了「还没有会话」。
+                    // 文案不引异常类名或消息（那是设备与实现的细节）：说清发生了什么、以及下一步
+                    // 能做什么（右上角的刷新就是那一件事，`session.refreshSessions()`）。
+                    PiEmptyStateTopAnchored(
+                        icon = Icons.Filled.Warning,
+                        title = "读不到会话列表",
+                        body = "这一次读取失败了，不是没有会话。点右上角的刷新可以再试一次。",
+                        modifier = Modifier.fillMaxSize(),
+                        markPi = false,
+                    )
                 } else if (sessions.isEmpty()) {
                     PiEmptyStateTopAnchored(
                         icon = Icons.Filled.Forum,
@@ -427,10 +469,9 @@ fun SessionsScreen(
                         markPi = false,
                     )
                 } else {
-                    val groups = visible
-                        .groupBy { it.cwd }
-                        .toList()
-                        .sortedByDescending { (_, rows) -> rows.maxOf { it.lastActivityAt } }
+                    // 分组与组间排序在上面那次 `remember` 里（与 `visible` 同一组键）：
+                    // 它原来写在这里，于是这一屏**每一次重组**都要重跑一遍。
+                    val groups = listView.groups
                     LazyColumn(
                         modifier = Modifier.fillMaxSize(),
                         // 列表底要给浮在它上面的按钮让出空间，否则滚到底时最后一条会话停在
@@ -1046,9 +1087,16 @@ private val SESSION_SEARCH_WHITESPACE = Regex("\\s+")
  * would find is hidden, but a token whose letters are merely in order somewhere is not
  * found here. Matching pi's matcher would mean porting its scoring, and the tree
  * selector already made the same call.
+ *
+ * **The tokens come in already split** ([sessionQueryTokens]). They are a property of the
+ * *query*, not of a row, so splitting them once per filter pass instead of once per row is
+ * the same list — and the filter pass runs on the frame thread on every keystroke and on
+ * every session-list refresh. The row-dependent half (which text is searched, and the
+ * lowercase of it) stays here, because lowercasing the pieces separately is *not* the same
+ * string as lowercasing their concatenation (the JVM's `lowercase()` is context-sensitive:
+ * a final capital sigma lowercases differently at the end of a word).
  */
-private fun sessionMatches(summary: PiSessionStore.Summary, query: String): Boolean {
-    val tokens = query.lowercase().split(SESSION_SEARCH_WHITESPACE).filter { it.isNotEmpty() }
+private fun sessionMatches(summary: PiSessionStore.Summary, tokens: List<String>): Boolean {
     if (tokens.isEmpty()) return true
     val text = buildString {
         append(summary.name.orEmpty()).append('\n')
@@ -1059,3 +1107,28 @@ private fun sessionMatches(summary: PiSessionStore.Summary, query: String): Bool
     }.lowercase()
     return tokens.all { text.contains(it) }
 }
+
+/**
+ * The search box as pi tokenises it (`session-selector-search.ts:135-183`): lowercased,
+ * split on `\s+`, empties dropped. `SESSION_SEARCH_WHITESPACE` is pi's own tokenizer, shared
+ * with the tree selector.
+ *
+ * One call per filter pass, not one per row — see [sessionMatches]. The expression is the
+ * one that used to live inside [sessionMatches], so the tokens are the same list.
+ */
+private fun sessionQueryTokens(query: String): List<String> =
+    query.lowercase().split(SESSION_SEARCH_WHITESPACE).filter { it.isNotEmpty() }
+
+/**
+ * This screen's two derived readings of [PiSessionStore.Summary], computed together so that
+ * one key set (and therefore one O(n) `remember` comparison) covers both.
+ *
+ * @param visible the rows after the search box and the two filter chips, and after the
+ *   sort chip — the list the count in the view row and the empty state read.
+ * @param groups [visible] by `cwd`, ordered by each group's newest activity, with each group
+ *   keeping [visible]'s order inside it.
+ */
+private data class SessionListView(
+    val visible: List<PiSessionStore.Summary>,
+    val groups: List<Pair<String, List<PiSessionStore.Summary>>>,
+)

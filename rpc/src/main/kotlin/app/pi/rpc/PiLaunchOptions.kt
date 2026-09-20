@@ -28,6 +28,16 @@ package app.pi.rpc
  *    off pi's discovery of `AGENTS.md` / `CLAUDE.md`. pi has no `settings.json`
  *    key for it, so it is one of the few pre-spawn switches with no duplicate
  *    source of truth (`docs/pre-spawn-config.md`).
+ *  - [noExtensions] / [noSkills] / [noPromptTemplates] / [noThemes] →
+ *    `--no-extensions` / `--no-skills` / `--no-prompt-templates` / `--no-themes`
+ *    (`src/cli/args.ts:169`, `:188`, `:190`, `:192`), the four resource-discovery
+ *    suppressions. **1:1 with pi, no exceptions.** `--no-extensions` is *not*
+ *    paired with `-e`: the app's shipped extensions are ordinary extensions in
+ *    `<agentDir>/extensions/`, so disabling discovery disables them too — that is
+ *    what the switch means (`core/resource-loader.ts:452`/`:556`: only
+ *    `cliEnabledExtensions` survive, and the app passes none). The App's own
+ *    "keep the shipped ones, drop the rest" wish is a different app-side feature;
+ *    it does not belong in this flag (`docs/pre-spawn-config.md` §2.2).
  *
  * Every default is "unset", so `PiLaunchOptions()` produces exactly the process
  * pi gets with no options at all.
@@ -41,6 +51,25 @@ data class PiLaunchOptions(
     val appendSystemPrompt: String? = null,
     /** Disables pi's `AGENTS.md` / `CLAUDE.md` discovery (`--no-context-files`). */
     val noContextFiles: Boolean = false,
+    /**
+     * `--no-extensions`: stop pi's extension **discovery**, exactly as pi defines it.
+     *
+     * pi keeps the explicit `-e` sources and drops everything discovery would have
+     * found (`core/resource-loader.ts:452` / `:556`:
+     * `noExtensions ? cliEnabledExtensions : mergePaths(cliEnabledExtensions, enabledExtensions)`).
+     * The app passes no `-e` — not even for its own shipped extensions — so this
+     * switch turns **all** of them off, device layer included. That is deliberate:
+     * the flag is exposed 1:1, and "keep the app's own extensions while hiding the
+     * user's" is a separate app-side feature that must not be smuggled in through
+     * `-e` (`docs/pre-spawn-config.md` §2.2).
+     */
+    val noExtensions: Boolean = false,
+    /** `--no-skills`: stop pi's skill discovery and loading. */
+    val noSkills: Boolean = false,
+    /** `--no-prompt-templates`: stop pi's prompt-template discovery and loading. */
+    val noPromptTemplates: Boolean = false,
+    /** `--no-themes`: stop pi's theme discovery and loading. */
+    val noThemes: Boolean = false,
     /**
      * Flags an **extension** registered, passed through verbatim
      * ([ExtensionFlagArgs]).
@@ -104,6 +133,12 @@ data class PiLaunchOptions(
             append(renderPromptFlag("--append-system-prompt", it))
         }
         if (noContextFiles) append(" --no-context-files")
+        // The four discovery suppressions, each emitted exactly as pi defines it and
+        // nothing else — no `-e` companion (see [noExtensions]).
+        if (noExtensions) append(" --no-extensions")
+        if (noSkills) append(" --no-skills")
+        if (noPromptTemplates) append(" --no-prompt-templates")
+        if (noThemes) append(" --no-themes")
         extensionFlags.forEach { append(' ').append(renderFlag(it.name, it.value)) }
     }
 
@@ -112,7 +147,7 @@ data class PiLaunchOptions(
          * The pure part of the App's settings → launch mapping.
          *
          * `PiSessionViewModel.launchOptions()` reads the raw values out of the
-         * settings document — five pi keys plus the app's own sidecar text for
+         * settings document — nine pi keys plus the app's own sidecar text for
          * [extensionArgs] — and this function turns them into the process inputs, so
          * the normalisation rules — a blank prompt is "unset", not an empty flag;
          * only the exact value `long` enables long cache retention; a missing
@@ -135,6 +170,10 @@ data class PiLaunchOptions(
             appendSystemPrompt: String?,
             noContextFiles: Boolean?,
             extensionArgs: String? = null,
+            noExtensions: Boolean? = null,
+            noSkills: Boolean? = null,
+            noPromptTemplates: Boolean? = null,
+            noThemes: Boolean? = null,
         ): PiLaunchOptions {
             val parsed = ExtensionFlagArgs.parse(extensionArgs)
             return PiLaunchOptions(
@@ -143,6 +182,10 @@ data class PiLaunchOptions(
                 systemPrompt = systemPrompt?.takeIf { it.isNotBlank() },
                 appendSystemPrompt = appendSystemPrompt?.takeIf { it.isNotBlank() },
                 noContextFiles = noContextFiles ?: false,
+                noExtensions = noExtensions ?: false,
+                noSkills = noSkills ?: false,
+                noPromptTemplates = noPromptTemplates ?: false,
+                noThemes = noThemes ?: false,
                 extensionFlags = parsed.flags,
                 extensionArgsRefusal = parsed.refusal,
             )

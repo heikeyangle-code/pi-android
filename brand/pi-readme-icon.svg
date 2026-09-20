@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="108" height="108" viewBox="0 0 108 108" role="img" aria-label="pi-android">
+  <rect width="108" height="108" rx="24" fill="#18181E" />
+  <!-- The launcher glyph, same path as app/src/main/res/drawable/ic_launcher_foreground.xml -->
+  <path fill="#8ABEB7" d="M30,38 H78 V46 H71 V74 H63 V46 H45 V74 H37 V46 H30 Z" />
+</svg>

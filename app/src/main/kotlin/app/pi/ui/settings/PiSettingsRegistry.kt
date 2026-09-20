@@ -258,18 +258,24 @@ private val trustOptions = choices(
 
 
 /**
- * The names offered as chips on the 内建工具 row.
+ * The names offered as chips on the 内建工具 row: **only the ones that are not already on.**
  *
- * **`powershell` is deliberately absent** even though pi knows it
- * (`core/tools/index.ts:95` — the `ToolName` union is exactly these eight): its implementation
- * resolves a PowerShell binary and **throws on anything but Windows**
+ * pi's built-in set is eight names (`core/tools/index.ts:95` — the `ToolName` union) and the
+ * four it enables by default are `read`, `bash`, `edit`, `write` (`defaultActiveToolNames`).
+ * So the chips are the three *optional* ones — `grep`, `find`, `ls` — because a "快捷添加"
+ * list that also offered the four defaults would be offering to add what the row already
+ * says is on, which is what the user rejected: 「默认不是有 4 个工具了吗？…不就给我弄 3 个
+ * 没默认启用的不就完事了吗？」. The defaults themselves are named by the row's
+ * `emptyListLabel` and its description, and clearing the list returns to exactly them (the
+ * editor deletes the key rather than writing `[]`).
+ *
+ * **`powershell` is deliberately absent** even though pi knows it: its implementation resolves
+ * a PowerShell binary and **throws on anything but Windows**
  * (`utils/shell.ts` `getPowerShellConfig`: "The powershell tool is only available on Windows."),
  * and this app's guest is a Linux rootfs with no `pwsh`. Offering it would let the user pick a
- * tool that fails the first time the model calls it; the chip list is the one place we can keep
- * an unusable value out of reach. The row's description says so, and the default set
- * (read/bash/edit/write) is spelled out separately from the optional ones.
+ * tool that fails the first time the model calls it.
  */
-private val builtinTools = listOf("read", "bash", "edit", "write", "grep", "find", "ls")
+private val optionalTools = listOf("grep", "find", "ls")
 
 
 private val termKeyBarPresets = listOf("esc", "tab", "ctrl", "up", "down", "left", "right", "pipe", "tilde", "slash", "dash")
@@ -344,10 +350,8 @@ object PiSettingsCatalog {
             // command union (`modes/rpc/rpc-types.ts:20-74`) has no login command at all.
             // The terminal page is the only surface that can run it; saying so is the
             // honest form of "not built in".
-            description = "Anthropic Claude Pro/Max、OpenAI Codex、GitHub Copilot、OpenRouter、" +
-                "Kimi Code、xAI、Radius 支持用订阅账号登录，授权在浏览器里完成。" +
-                "本应用没有内建登录表单：到 工作区 → 终端 里输入 pi 回车，再运行 /login。" +
-                "只想填厂商 API Key 的话，用上面那行。",
+            description = "Anthropic、OpenAI、GitHub Copilot、OpenRouter、Kimi Code、xAI、Radius 等" +
+                "订阅账号登录请到 工作区 → 终端 里运行 /login；只想填厂商 API Key 用上面那行。",
             kind = PiRowKind.Action,
             group = G_MODEL,
             section = "凭证",
@@ -356,7 +360,7 @@ object PiSettingsCatalog {
         PiSetting(
             key = "defaultProvider",
             title = "默认厂商",
-            description = "启动时使用的厂商，例如 anthropic、openai。在 pi 里用 /model 选中模型后按 Ctrl+S 保存。",
+            description = "启动时使用的厂商，例如 anthropic、openai。",
             kind = PiRowKind.Value,
             group = G_MODEL,
             section = "默认模型",
@@ -379,7 +383,7 @@ object PiSettingsCatalog {
         PiSetting(
             key = "defaultThinkingLevel",
             title = "默认思考等级",
-            description = "启动时的思考等级：off、minimal、low、medium、high、xhigh、max。pi 里用 /thinking 选中后按 Ctrl+S 保存。",
+            description = "启动时的思考等级：off、minimal、low、medium、high、xhigh、max。",
             kind = PiRowKind.Value,
             group = G_MODEL,
             section = "默认模型",
@@ -395,8 +399,7 @@ object PiSettingsCatalog {
             // 会话都会重新执行一次**（`agent-session-runtime.ts:226-252` 重建 runtime），所以新
             // 会话就会重新解析这份作用域，不必换进程。（原先这里标 `RestartEngine`，理由只看了
             // "一个进程里调用点只有一处"，漏了闭包本身每会话重跑。）
-            description = "循环切换时使用的模型，支持通配符。pi 在开新会话时解析一次，改完要开新会话才生效。" +
-                "清空并保存 = 回到默认（全部模型都能循环）。",
+            description = "循环切换时使用的模型，支持通配符。清空并保存 = 回到默认（全部模型都能循环）。",
             kind = PiRowKind.List,
             group = G_MODEL,
             section = "默认模型",
@@ -408,8 +411,8 @@ object PiSettingsCatalog {
         PiSetting(
             key = "modelThinkingLevels",
             title = "逐模型思考等级",
-            description = "按 \"厂商/模型 ID\" 覆盖启动思考等级。键必须精确匹配，不认通配符。" +
-                "清空并保存 = 回到默认（没有逐模型覆盖）。",
+            description = "按 \"厂商/模型 ID\" 覆盖启动思考等级，键必须精确匹配、不支持通配符。" +
+                "清空并保存 = 回到默认。",
             kind = PiRowKind.List,
             group = G_MODEL,
             section = "逐模型与预算",
@@ -421,7 +424,7 @@ object PiSettingsCatalog {
         PiSetting(
             key = "thinkingBudgets",
             title = "思考预算",
-            description = "逐等级的思考 token 预算（minimal/low/medium/high）。Anthropic、Google、Bedrock 原生使用；OpenAI 兼容模型需要模型声明支持。" +
+            description = "逐等级的思考 token 预算（minimal/low/medium/high）。" +
                 "清空并保存 = 回到默认（用各厂商自己的预算）。",
             kind = PiRowKind.List,
             group = G_MODEL,
@@ -442,9 +445,34 @@ object PiSettingsCatalog {
             aliases = listOf("thinking"),
         ),
         PiSetting(
+            key = "cacheWarming",
+            title = "缓存预热",
+            description = "长工具调用里（以及可选的空闲时段）由 pi 按成本决定是否重发请求，把 prompt 缓存续住；"
+                + "每次刷新都要花钱。关闭 / 仅流式中 / 含空闲。",
+            kind = PiRowKind.Value,
+            group = G_MODEL,
+            section = "行为",
+            defaultValue = str("streaming"),
+            // 0.86.0 新键。pi 的取值器是活的（`core/sdk.ts:307-312` 把
+            // `() => settingsManager.getCacheWarmingMode()` 交给 CacheWarmer，
+            // `core/cache-warmer.ts:184` 起每次决策读一次），但它读的是 SettingsManager
+            // 内存里的 globalSettings；外部改 settings.json 要到一次 settings 重读才生效，
+            // 而 pi 的 `ctx.reload()` 正是这条路径（`modes/rpc/rpc-mode.ts:341` →
+            // `core/resource-loader.ts:387-403` → `core/settings-manager.ts:539` 重读全局设置）。
+            // 所以这一行不是 NewSession 也不是 RestartEngine，而是 Reload ——
+            // 与 `app.extensions.*` 那两行同一个徽标。
+            effective = EffectiveKind.Reload,
+            options = listOf(
+                PiOption("off", "关闭"),
+                PiOption("streaming", "仅流式中（默认）"),
+                PiOption("idle", "含空闲时段"),
+            ),
+            aliases = listOf("cache", "prompt cache"),
+        ),
+        PiSetting(
             key = "showCacheMissNotices",
             title = "缓存未命中提示",
-            description = "提示严重的提示词缓存未命中、压缩与分支摘要的用量、以及厂商恢复诊断（例如 Anthropic 思考块被丢弃）。",
+            description = "提示严重的提示词缓存未命中，以及压缩、分支摘要与厂商恢复诊断。",
             kind = PiRowKind.Switch,
             group = G_MODEL,
             section = "行为",
@@ -476,9 +504,7 @@ object PiSettingsCatalog {
         PiSetting(
             key = "app.runtime.systemPrompt",
             title = "自定义系统提示",
-            description = "整份替换 pi 自带的系统提示词；留空用 pi 自己的。" +
-                "只想补充几条偏好、不想丢掉 pi 原有的提示词时，用下面的「追加系统提示」。" +
-                "改动在重启引擎后生效。",
+            description = "整份替换 pi 自带的系统提示词；留空用 pi 自己的。",
             kind = PiRowKind.Text,
             group = G_PROMPTS,
             section = "系统提示词",
@@ -493,9 +519,7 @@ object PiSettingsCatalog {
         PiSetting(
             key = "app.runtime.appendSystemPrompt",
             title = "追加系统提示",
-            description = "在 pi 自己拼好的系统提示词末尾追加一段文字，不替换它" +
-                "（整份替换请用上面的「自定义系统提示」，两者可以同时设置）。" +
-                "适合写长期偏好。改动在重启引擎后生效。",
+            description = "在 pi 自己拼好的系统提示词末尾追加一段文字，不替换它。",
             kind = PiRowKind.Text,
             group = G_PROMPTS,
             section = "系统提示词",
@@ -546,7 +570,7 @@ object PiSettingsCatalog {
         PiSetting(
             key = "httpIdleTimeoutMs",
             title = "HTTP 空闲超时",
-            description = "HTTP 头/体的空闲超时（毫秒），有显式流空闲超时的厂商也用它。0 表示不超时（pi 也认字符串 disabled，两者等价）。",
+            description = "HTTP 头/体的空闲超时（毫秒）。0 表示不超时。",
             kind = PiRowKind.Number,
             group = G_MESSAGES,
             section = "网络",
@@ -561,7 +585,7 @@ object PiSettingsCatalog {
         PiSetting(
             key = "websocketConnectTimeoutMs",
             title = "WebSocket 连接超时",
-            description = "WebSocket 建连握手超时（毫秒），只对支持 WebSocket 传输的厂商生效。设为 0 表示不超时。",
+            description = "WebSocket 建连握手超时（毫秒）。0 表示不超时。",
             kind = PiRowKind.Number,
             group = G_MESSAGES,
             section = "网络",
@@ -576,7 +600,7 @@ object PiSettingsCatalog {
         PiSetting(
             key = "httpProxy",
             title = "HTTP 代理",
-            description = "代理地址，会作为 HTTP_PROXY 与 HTTPS_PROXY 应用。只对 pi 自己发起的请求生效，仅全局设置支持。",
+            description = "代理地址，作为 HTTP_PROXY 与 HTTPS_PROXY 应用；只对 pi 自己发起的请求生效。",
             kind = PiRowKind.Text,
             group = G_MESSAGES,
             section = "网络",
@@ -591,7 +615,7 @@ object PiSettingsCatalog {
         PiSetting(
             key = "compaction.enabled",
             title = "自动压缩",
-            description = "开启后 pi 会在上下文接近上限时自动压缩历史，避免请求溢出。改动立刻作用于当前会话。",
+            description = "开启后 pi 会在上下文接近上限时自动压缩历史，避免请求溢出。",
             kind = PiRowKind.Switch,
             group = G_COMPACTION,
             section = "压缩",
@@ -631,8 +655,8 @@ object PiSettingsCatalog {
         PiSetting(
             key = "compaction.modelOverrides",
             title = "逐模型覆盖",
-            description = "按精确的 \"厂商/模型 ID\" 覆盖 reserveTokens 与 keepRecentTokens。模型 ID 可以含斜杠，例如 openrouter/anthropic/claude-sonnet-4。" +
-                "清空并保存 = 回到默认（没有逐模型覆盖）。",
+            description = "按精确的 \"厂商/模型 ID\" 覆盖上面两项（ID 可以含斜杠）。" +
+                "清空并保存 = 回到默认。",
             kind = PiRowKind.List,
             group = G_COMPACTION,
             section = "压缩",
@@ -664,8 +688,8 @@ object PiSettingsCatalog {
         PiSetting(
             key = "app.compaction.runNow",
             title = "立即压缩",
-            description = "对当前会话手动触发一次压缩。想附带一条自定义指令告诉模型压缩时关注什么，" +
-                "请在 对话 里输入 /compact <指令>；本行只做不带指令的那种压缩。",
+            description = "对当前会话手动触发一次压缩。要附带自定义指令，" +
+                "请在 对话 里输入 /compact <指令>。",
             kind = PiRowKind.Action,
             group = G_COMPACTION,
             section = "动作",
@@ -747,7 +771,7 @@ object PiSettingsCatalog {
         PiSetting(
             key = "retry.provider.maxRetries",
             title = "Provider 重试次数",
-            description = "Provider/SDK 自己的重试次数，默认 0。调高后用量上限一类的错误可能先被 SDK 吞掉并长时间阻塞，除非确有需要否则保持 0。",
+            description = "Provider/SDK 自己的重试次数，默认 0；调高后用量上限一类的错误可能先被 SDK 吞掉并长时间阻塞。",
             kind = PiRowKind.Number,
             group = G_RETRY,
             section = "Provider 重试（高级）",
@@ -781,17 +805,16 @@ object PiSettingsCatalog {
         PiSetting(
             key = "defaultTools",
             title = "内建工具",
-            description = "启动时启用哪些内建工具。**默认只有 4 个：read、bash、edit、write**；" +
-                "可选的是再加 grep、find、ls（建议开，否则模型只能靠 bash 跑 rg 和 fd，手机上更慢）。" +
-                "清空并保存 = 回到这 4 个默认值（删掉这个键）。" +
-                "pi 还有一个 powershell 工具，但它只在 Windows 上能跑，本应用不提供。" +
-                "想一个内建工具都不开（pi 的 `defaultTools: []` 语义，与「默认」是两件事），" +
-                "在「Pi 文件」里直接编辑 `settings.json`。",
+            // 短。用户对这条的裁定：「写这么多描述文字干鸡巴毛呀？」——默认值是哪 4 个、
+            // 快捷添加那 3 个是什么、清空等于什么，三件事说完即可；powershell 为什么不出现
+            // 写在 `optionalTools` 的 KDoc 里，`defaultTools: []` 那种极端写法由 `Pi 文件` 屏负责。
+            description = "**默认只有 4 个：read、bash、edit、write**。快捷添加里那 3 个是可选的。" +
+                "清空并保存 = 回到这 4 个默认值。",
             kind = PiRowKind.List,
             group = G_TOOLS,
             section = "工具",
             effective = EffectiveKind.NewSession,
-            presets = builtinTools,
+            presets = optionalTools,
             emptyListLabel = "默认 read/bash/edit/write",
             aliases = listOf("tools", "builtin"),
         ),
@@ -869,8 +892,7 @@ object PiSettingsCatalog {
         PiSetting(
             key = "app.resources.discovered.extensions",
             title = "已发现的扩展",
-            description = "pi 自动发现的扩展（`extensions/` 下的 `.ts`/`.js` 或带入口的目录），" +
-                "以及扩展自己写出去的资源（例如设备桥那个技能）。",
+            description = "pi 自动发现的扩展（`extensions/` 下的 `.ts`/`.js` 或带入口的目录）。",
             kind = PiRowKind.Text,
             group = G_RESOURCES,
             section = "实际发现",
@@ -882,7 +904,7 @@ object PiSettingsCatalog {
             key = "app.resources.discovered.skills",
             title = "已发现的技能",
             description = "pi 自动发现的技能：工作区 `.pi/skills`、`~/.pi/agent/skills`、`.agents/skills` " +
-                "与已装资源包自带的。要加新的，在下面的「查看资源文件」里把 `<名字>/SKILL.md` 放进 `skills/`。",
+                "与已装资源包自带的。加新技能：在下面的「查看资源文件」里放进 `<名字>/SKILL.md`。",
             kind = PiRowKind.Text,
             group = G_RESOURCES,
             section = "实际发现",
@@ -893,8 +915,7 @@ object PiSettingsCatalog {
         PiSetting(
             key = "app.resources.discovered.prompts",
             title = "已发现的提示模板",
-            description = "pi 自动发现的提示模板（`prompts/*.md`），来源与技能相同。" +
-                "模板支持 `$1`、`$@` 这类参数，用 `/名字` 调用。",
+            description = "pi 自动发现的提示模板（`prompts/*.md`）。支持 `$1`、`$@` 这类参数，用 `/名字` 调用。",
             kind = PiRowKind.Text,
             group = G_RESOURCES,
             section = "实际发现",
@@ -905,7 +926,7 @@ object PiSettingsCatalog {
         PiSetting(
             key = "app.resources.discovered.themes",
             title = "已发现的主题",
-            description = "pi 自动发现的主题（`themes/*.json`），来源与技能相同。当前用哪一个在「外观」里的「主题」。",
+            description = "pi 自动发现的主题（`themes/*.json`）；用哪一个在「外观」里的「主题」。",
             kind = PiRowKind.Text,
             group = G_RESOURCES,
             section = "实际发现",
@@ -925,8 +946,7 @@ object PiSettingsCatalog {
             // hands it to the extensions that declared it, so there is nothing to pick
             // from a list here (`core/agent-session-services.ts:107-111`).
             description = "照你在命令行上给 pi 的方式写，例如 --plan 或 --ssh user@host:/path。" +
-                "只对声明了该参数的扩展生效，重启引擎后生效。" +
-                "没有扩展注册这个参数时 pi 只会在 stderr 里写一行提示，不影响启动。",
+                "只对声明了该参数的扩展生效。",
             kind = PiRowKind.Text,
             group = G_RESOURCES,
             section = "技能命令与扩展参数",
@@ -937,7 +957,7 @@ object PiSettingsCatalog {
         PiSetting(
             key = "enableSkillCommands",
             title = "技能命令",
-            description = "把技能注册成 /skill:name 斜杠命令。关掉之后技能仍然可以被模型读取，只是不再出现在命令面板里。",
+            description = "把技能注册成 /skill:name 斜杠命令；关掉后技能仍能被模型读取，只是不出现在命令面板。",
             kind = PiRowKind.Switch,
             group = G_RESOURCES,
             section = "技能命令与扩展参数",
@@ -965,8 +985,7 @@ object PiSettingsCatalog {
         PiSetting(
             key = "packages",
             title = "资源包",
-            description = "已安装的资源包。手改会写出「看起来装了、其实没生效」的条目；" +
-                "点这一行打开 资源包管理 页去安装、更新或移除。",
+            description = "已安装的资源包。手改会写出「看起来装了、其实没生效」的条目。",
             kind = PiRowKind.List,
             group = G_RESOURCES,
             section = "资源包",
@@ -982,8 +1001,7 @@ object PiSettingsCatalog {
             key = "app.resources.openFiles",
             title = "查看资源文件",
             description = "打开「Pi 文件」：`~/.pi/agent` 与工作区 `.pi` 下的 `skills/`、`prompts/`、" +
-                "`themes/`、`extensions/` 都能直接看和改。放进这些目录的资源 pi 会自动发现，" +
-                "不需要在设置里登记路径。",
+                "`themes/`、`extensions/` 都能直接看和改。",
             kind = PiRowKind.Action,
             group = G_RESOURCES,
             section = "动作",
@@ -1075,7 +1093,7 @@ object PiSettingsCatalog {
         PiSetting(
             key = "app.appearance.thinkingCollapsedByDefault",
             title = "思考块默认折叠",
-            description = "思考块默认收起成一行「思考 12s」，点击展开。这是本应用的显示偏好，不改 pi 对思考块的隐藏设置。",
+            description = "思考块默认收起成一行「思考 12s」，点击展开。",
             kind = PiRowKind.Switch,
             group = G_APPEARANCE,
             section = "外观",
@@ -1089,8 +1107,7 @@ object PiSettingsCatalog {
         PiSetting(
             key = "shellPath",
             title = "Shell 路径",
-            description = "pi 执行自己的命令时使用的 shell，支持开头的 ~ 展开。只影响 pi 执行的命令，" +
-                "不影响工作台终端（那里始终是一个普通的交互式 bash）；改动需要新会话才生效。",
+            description = "pi 执行自己的命令时使用的 shell，支持开头的 ~ 展开。不影响工作台终端。",
             kind = PiRowKind.Text,
             group = G_TERMINAL,
             section = "Shell",
@@ -1101,8 +1118,7 @@ object PiSettingsCatalog {
         PiSetting(
             key = "shellCommandPrefix",
             title = "命令前缀",
-            description = "pi 执行的每条命令前面都会拼上的前缀，例如 shopt -s expand_aliases 用来打开别名。" +
-                "只影响 pi 执行的命令，不影响工作台终端。",
+            description = "pi 执行的每条命令前面都会拼上的前缀，例如 shopt -s expand_aliases。",
             kind = PiRowKind.Text,
             group = G_TERMINAL,
             section = "Shell",
@@ -1113,7 +1129,7 @@ object PiSettingsCatalog {
         PiSetting(
             key = "npmCommand",
             title = "npm 命令",
-            description = "npm 包查找与安装使用的 argv 数组，例如 mise exec node@20 -- npm。按进程启动参数逐项填写。" +
+            description = "npm 包查找与安装使用的 argv 数组，例如 mise exec node@20 -- npm。" +
                 "清空并保存 = 回到默认（直接调用 npm）。",
             kind = PiRowKind.List,
             group = G_TERMINAL,
@@ -1127,8 +1143,7 @@ object PiSettingsCatalog {
         PiSetting(
             key = "app.terminal.fontSize",
             title = "终端字号",
-            description = "工作台终端页的起始字号，之后可以用双指缩放临时调整。重新进入终端页后生效。" +
-                "等宽字体只在这里使用，不影响对话流的正文。",
+            description = "工作台终端页的起始字号，之后可以用双指缩放临时调整，重新进入终端页后生效。",
             kind = PiRowKind.Number,
             group = G_TERMINAL,
             section = "终端显示",
@@ -1143,7 +1158,7 @@ object PiSettingsCatalog {
         PiSetting(
             key = "app.terminal.keyBar",
             title = "键盘按键条",
-            description = "终端页顶部按键条的按键与顺序，可增删。改动需要重载。" +
+            description = "终端页顶部按键条的按键与顺序，可增删。" +
                 "清空并保存 = 回到默认（预设的那一排按键）。",
             kind = PiRowKind.List,
             group = G_TERMINAL,
@@ -1166,7 +1181,7 @@ object PiSettingsCatalog {
         PiSetting(
             key = "images.blockImages",
             title = "屏蔽图片",
-            description = "阻止所有图片发送给模型。这是给模型设的闸门：图片仍然可以附加，只是不会随请求发出去。",
+            description = "阻止所有图片发送给模型；图片仍然可以附加，只是不会随请求发出去。",
             kind = PiRowKind.Switch,
             group = G_TERMINAL,
             section = "图片",
@@ -1203,10 +1218,9 @@ object PiSettingsCatalog {
         // because a phone app should not make it behind the user's back), and its
         // replacement, `pi update --self`, is an npm self-update
         // (`package-manager-cli.ts:1033-1068`) that this app's engine cannot use:
-        // the engine is an APK asset extracted by revision
-        // (`RuntimeProvisioner.extractEngine`, `:505-528`) and re-extracted by
-        // `wipe()` (`:122`) whenever that revision changes, so an in-guest update
-        // is either overwritten or diverges from the shipped version. pi has no
+        // the engine is an APK payload that `RuntimeProvisioner` extracts over the tree
+        // (`extractEngine`) whenever the packaged engine's own digest changes, so an
+        // in-guest update is overwritten the next time that payload moves. pi has no
         // rollback at all (no such subcommand in `cli.ts` /
         // `package-manager-cli.ts`). The read-only 「pi 版本」 row above is what
         // tells the user which version they are on.
@@ -1235,8 +1249,7 @@ object PiSettingsCatalog {
         PiSetting(
             key = "app.runtime.engineStartup",
             title = "引擎启动耗时",
-            description = "上一次引擎从启动进程到能开始响应命令的用时。刚打开 App 就发消息时，" +
-                "这段时间就是消息在等待的时间。",
+            description = "上一次引擎从启动进程到能开始响应命令的用时。",
             kind = PiRowKind.Text,
             group = G_RUNTIME,
             section = "运行时状态",
@@ -1259,76 +1272,79 @@ object PiSettingsCatalog {
             readOnly = true,
             aliases = listOf("wakelock"),
         ),
+
+        // ------------------------------------------------------------------
+        // 运行时选择（proroot）—— 开关与它的派生读数**同属一节、上下紧挨**：它们是
+        // 同一个功能的两半（控件在上、结果紧贴在下）。拆到两节里曾让用户以为下面那行
+        // 在说另一件事（「关掉 Pro Root 为什么要写着未开启」）——那一行的值现在也永远
+        // 先写「实际在跑的那个运行时」，原因跟在括号里。
+        //
+        // 这两行是本应用自己的状态，**不写进 pi 的 settings.json**：它决定用哪个二进制
+        // 启动 guest，在 pi 存在之前就要定下来，pi 那边没有读者。值由
+        // `AppOnlySettingsStore` 拦下，落在 `RuntimePreferences`（SharedPreferences，
+        // 与 `DeviceCapabilityStore` 同一种存法）。行仍然放在注册表里，因为
+        // 「运行时与诊断」正是用户找它的地方。
+        //
+        // 文案必须诚实，四件事缺一不可：实验性 / 默认关 / 不可用时自动回退 proot /
+        // 装机与维护始终 proot；再加两条已知取舍：闭源不可审计、提速幅度未量化
+        // （`docs/proroot-research.md` §2.3 只有 DSHA 自己的一组数字，机型还不同）。
+        //
+        // `effective = AutoRestartEngine`：这个开关**自己**会重启引擎来换运行时
+        // （`AppOnlySettingsStore.write` 清结论 → `PiSessionViewModel.onSettingWritten`
+        // → `RuntimeSwitchAction` 的判定），所以徽标是「自动重启引擎」——「需重启引擎」
+        // 会让用户以为还要自己动手，而那正是他要修掉的东西（「为什么还要退出软件重进呢」）。
+        // ------------------------------------------------------------------
+        PiSetting(
+            key = "app.runtime.proroot",
+            title = "运行时加速（实验性）",
+            description = "用第三方闭源运行时 proroot 代替 proot 执行引擎、终端、工具与装包命令；" +
+                "装机与维护始终走 proot。默认关闭，打开后当场跑一次探针，通过就自动重启引擎切过去；" +
+                "没通过会继续走 proot（原因见下一行）。proroot 闭源、无法审计，提速幅度在本机未量化。",
+            kind = PiRowKind.Switch,
+            group = G_RUNTIME,
+            section = "运行时选择",
+            defaultValue = bool(false),
+            effective = EffectiveKind.AutoRestartEngine,
+            aliases = listOf("proroot", "proot", "runtime", "engine", "加速", "运行时"),
+        ),
         PiSetting(
             key = "app.runtime.prorootStatus",
             title = "运行时（实际生效）",
-            // 这一行的值现在会带上"是哪一档没过"，值下面还会列出探针逐阶段的原始判读：
-            // 说明文字必须指向那两块内容，否则用户仍然不知道"探针未通过"到底卡在哪一步
-            // （缺陷原形：开关开着，行上只有半句话，唯一能看到证据的地方是导出的报告）。
-            description = "这次运行实际用的是哪个运行时。没有用 proroot 时会写明原因；" +
-                "原因出在探针上时，还会写出是哪一档没过（proroot 启动、raw syscall、" +
-                "或 rg/fd 真实调用那一档）和探针原话。这一行下面列出探针逐阶段的原始判读：" +
-                "行数有上限，超出会写明截断了多少行——完整内容始终在导出的诊断报告里。",
+            // 值先说「在跑哪个运行时」，原因跟在括号里——这一行答的是「在跑哪个」，不是
+            // 「开关在哪一档」；`RuntimeChoice.describe` 的那组句子因此全部改成了这个形状。
+            // 值下面还会列出探针逐阶段的原始判读：说明文字必须指向那两块内容，否则用户仍然
+            // 不知道「探针未通过」到底卡在哪一步（缺陷原形：开关开着，行上只有半句话，
+            // 唯一能看到证据的地方是导出的报告）。
+            description = "这次实际用的是哪个运行时；没用上 proroot 时原因跟在括号里。" +
+                "值下面列出探针逐阶段的原始判读，超出上限会写明截断，完整内容在导出的诊断报告里。",
             kind = PiRowKind.Text,
             group = G_RUNTIME,
-            section = "运行时状态",
+            section = "运行时选择",
             defaultValue = str("未读取"),
             readOnly = true,
             aliases = listOf("proroot", "proot", "runtime", "状态"),
         ),
 
         // ------------------------------------------------------------------
-        // 运行时选择（proroot）—— 这两行是本应用自己的状态，**不写进 pi 的
-        // settings.json**：它决定用哪个二进制启动 guest，在 pi 存在之前就要定下来，
-        // pi 那边没有读者。值由 `AppOnlySettingsStore` 拦下，落在
-        // `RuntimePreferences`（SharedPreferences，与 `DeviceCapabilityStore` 同一种
-        // 存法）。行仍然放在注册表里，因为「运行时与诊断」正是用户找它的地方。
-        //
-        // 文案必须诚实，四件事缺一不可：实验性 / 默认关 / 不可用时自动回退 proot /
-        // 装机与维护始终 proot；再加两条已知取舍：闭源不可审计、提速幅度未量化
-        // （`docs/proroot-research.md` §2.3 只有 DSHA 自己的一组数字，机型还不同）。
-        //
-        // `effective = RestartEngine`：运行时是在**进程启动时**选定的，正在跑的引擎
-        // 不会换运行时，所以拨动开关后要重启引擎才看得到效果。
-        // ------------------------------------------------------------------
-        PiSetting(
-            key = "app.runtime.proroot",
-            title = "运行时加速（实验性）",
-            description = "用第三方闭源运行时 proroot 代替 proot 执行命令，覆盖引擎、终端、" +
-                "工具执行与装包这几条日常路径；装机与维护路径始终走 proot。" +
-                "默认关闭。若运行时文件缺失、或首次使用前的探针（proroot 必须真的启动起来、" +
-                "raw syscall 必须被翻译到 guest 文件系统、rg/fd 必须真调用成功）" +
-                "没有通过、或连续 3 次启动失败，都会自动回退 proot，并在上面的" +
-                "「运行时（实际生效）」里写明原因。" +
-                "打开这个开关后的**下一次**启动 guest 会跑一次探针，那一次仍然走 proot；" +
-                "探针过了，再下一次启动才会真正用上 proroot。" +
-                "关掉再打开这个开关会清零失败计数、并让探针重测一次（普通重启不会重测）。" +
-                "档位：走 proroot 的**默认档**（seccomp 兜底）——libc 调用与 inline svc 调用" +
-                "都走翻译，代价是探针因此必须证明 raw syscall 也被翻译；" +
-                "另一档「无 seccomp 档」只翻译 libc 调用、直接发 raw syscall 的程序会绕过翻译，" +
-                "但 v1.2.8 的启动器不读这个变量（它只给子进程写上标记），所以本应用无法选择它，" +
-                "也就没有以它换取更宽的通过条件。proroot 闭源、无法审计，" +
-                "提速幅度在本机未量化。改动在重启引擎后生效。",
-            kind = PiRowKind.Switch,
-            group = G_RUNTIME,
-            section = "进程",
-            defaultValue = bool(false),
-            effective = EffectiveKind.RestartEngine,
-            aliases = listOf("proroot", "proot", "runtime", "engine", "加速", "运行时"),
-        ),
-
-        // ------------------------------------------------------------------
         // 进程开关（pi 的启动参数 / 环境变量）
         //
-        // 这里的三行都是 pi 的**进程级**配置，pi 自己的 settings 文档里没有对应的键
-        // （`core/settings-manager.ts:106-158` 的 `Settings` 里没有 offline /
-        // systemPrompt / appendSystemPrompt / cacheRetention / noContextFiles），
+        // 这里的每一行都是 pi 的**进程级**配置，pi 自己的 settings 文档里没有对应的键
+        // （`core/settings-manager.ts:110-163` 的 `Settings` 里没有 offline /
+        // systemPrompt / appendSystemPrompt / cacheRetention / noContextFiles /
+        // noExtensions / noSkills / noPromptTemplates / noThemes），
         // 所以键是我们自己的（`app.` 前缀），值由 App 组进 `PiLaunchOptions`
         // （`rpc/PiLaunchOptions.kt`）在启动 `pi --mode rpc` 时传下去 —— 这与 pi
         // 的 CLI 参数一一对应，表的权威副本是 `rpc/PiPreSpawnConfig.kt`：
         //   `--offline`（`cli/args.ts:223`，等价 `PI_OFFLINE=1`，`:433`）
-        //   `PI_CACHE_RETENTION=long`（`packages/ai/src/api/anthropic-messages.ts:57`）
+        //   `PI_CACHE_RETENTION=long`（`packages/ai/src/api/anthropic-messages.ts:64`）
         //   `--no-context-files`（`:194`）
+        //   `--no-extensions` / `--no-skills` / `--no-prompt-templates` / `--no-themes`
+        //   （`:169` / `:188` / `:190` / `:192`）
+        // 四个 `--no-*` 与 pi **1:1**：pi 只停「发现」，显式 `-e` / `--skill` /
+        // `--prompt-template` / `--theme` 仍然生效（`core/resource-loader.ts:452` /
+        // `:468` / `:483` / `:502`；帮助文本 `:303`）。**本应用一个显式路径都不传**，
+        // 所以打开「停用扩展发现」时随包扩展也一起停。要「只关别人的、留下自带的」
+        // 是另一个 app 侧功能，不靠 `-e` 绕过这个旗标。
         // 因为进程启动后这些值不再变（值是 App 读 settings 后写进 argv/env 的，
         // 新会话不会重读 argv），`effective` 必须是 `RestartEngine`（界面标签
         // 「需重启引擎」），每一行的说明里写明需要重启引擎。
@@ -1342,7 +1358,7 @@ object PiSettingsCatalog {
             key = "app.runtime.offline",
             title = "离线模式",
             description = "关闭 pi 启动时的联网动作（更新检查、包更新、安装遥测）。" +
-                "开启后模型调用照常联网。改动在重启引擎后生效。",
+                "开启后模型调用照常联网。",
             kind = PiRowKind.Switch,
             group = G_RUNTIME,
             section = "进程",
@@ -1353,8 +1369,7 @@ object PiSettingsCatalog {
         PiSetting(
             key = "app.runtime.cacheRetention",
             title = "缓存保留策略",
-            description = "长保留向厂商申请更长的提示缓存（支持的厂商才有差别）。" +
-                "改动在重启引擎后生效。",
+            description = "长保留向厂商申请更长的提示缓存（支持的厂商才有差别）。",
             kind = PiRowKind.Value,
             group = G_RUNTIME,
             section = "进程",
@@ -1369,14 +1384,65 @@ object PiSettingsCatalog {
         PiSetting(
             key = "app.runtime.noContextFiles",
             title = "不加载上下文文件",
-            description = "开启后 pi 不再自动读取工作区里的上下文文件，模型只看到系统提示与你自己写的内容。" +
-                "适合某个目录里的说明不该影响模型时。改动在重启引擎后生效。",
+            description = "开启后 pi 不再自动读取工作区里的上下文文件，模型只看到系统提示与你自己写的内容。",
             kind = PiRowKind.Switch,
             group = G_RUNTIME,
             section = "进程",
             defaultValue = bool(false),
             effective = EffectiveKind.RestartEngine,
             aliases = listOf("context", "agents"),
+        ),
+        // The four discovery suppressions. They are here (rather than beside the
+        // 扩展与资源 rows they affect) because what they change is *how the engine is
+        // launched*, not what a resource list contains — and because the next tap after
+        // them is 「重启引擎」, which is the only way they take effect.
+        PiSetting(
+            key = "app.runtime.noExtensions",
+            title = "停用扩展发现",
+            description = "打开后 pi 不再扫描扩展目录：本应用自带的扩展、通过资源包安装的扩展、" +
+                "你自己放进扩展目录的扩展都不会加载，设备能力工具会一起消失。",
+            kind = PiRowKind.Switch,
+            group = G_RUNTIME,
+            section = "进程",
+            defaultValue = bool(false),
+            effective = EffectiveKind.RestartEngine,
+            aliases = listOf("extensions", "discover", "扩展"),
+        ),
+        PiSetting(
+            key = "app.runtime.noSkills",
+            title = "停用技能发现",
+            description = "打开后 pi 不再发现和加载技能，技能也不会出现在命令面板里。" +
+                "技能页仍会按目录列出文件，但引擎不会加载它们。",
+            kind = PiRowKind.Switch,
+            group = G_RUNTIME,
+            section = "进程",
+            defaultValue = bool(false),
+            effective = EffectiveKind.RestartEngine,
+            aliases = listOf("skills", "技能"),
+        ),
+        PiSetting(
+            key = "app.runtime.noPromptTemplates",
+            title = "停用提示模板发现",
+            description = "打开后 pi 不再发现和加载提示模板，模板也不会出现在命令面板里。" +
+                "提示模板页仍会按目录列出文件，但引擎不会加载它们。",
+            kind = PiRowKind.Switch,
+            group = G_RUNTIME,
+            section = "进程",
+            defaultValue = bool(false),
+            effective = EffectiveKind.RestartEngine,
+            aliases = listOf("prompts", "templates", "模板"),
+        ),
+        PiSetting(
+            key = "app.runtime.noThemes",
+            title = "停用主题发现",
+            description = "打开后 pi 不再发现和加载主题。本应用自己的界面配色不受影响，" +
+                "那是本应用直接读主题文件渲染的。",
+            kind = PiRowKind.Switch,
+            group = G_RUNTIME,
+            section = "进程",
+            defaultValue = bool(false),
+            effective = EffectiveKind.RestartEngine,
+            aliases = listOf("themes", "主题"),
         ),
         // `app.runtime.cleanNpmCache` was removed rather than wired: pi has no
         // cache-clearing command (nothing in `cli.ts` or `package-manager-cli.ts`
@@ -1388,7 +1454,7 @@ object PiSettingsCatalog {
         PiSetting(
             key = "app.runtime.keepAlive",
             title = "后台保活",
-            description = "用前台服务与唤醒锁让 Agent 轮次在后台继续。关闭后引擎仍会启动，但不再有前台服务保命，后台被杀时回合会中断。改动在下次启动 App 时生效。",
+            description = "用前台服务与唤醒锁让 Agent 轮次在后台继续。关闭后后台被杀时回合会中断。",
             kind = PiRowKind.Switch,
             group = G_RUNTIME,
             section = "进程",
@@ -1399,8 +1465,7 @@ object PiSettingsCatalog {
         PiSetting(
             key = "app.runtime.restartEngine",
             title = "重启引擎",
-            description = "让上面的进程开关生效。重启会终止正在进行的回合" +
-                "（模型调用、工具调用、正在跑的命令都不会恢复），已写入磁盘的会话不会丢失。",
+            description = "让上面的进程开关生效。重启会终止正在进行的回合，已写入磁盘的会话不会丢失。",
             kind = PiRowKind.Action,
             group = G_RUNTIME,
             section = "动作",
@@ -1416,9 +1481,8 @@ object PiSettingsCatalog {
         PiSetting(
             key = "app.runtime.diagnostics",
             title = "导出诊断报告",
-            description = "把引擎最后一次退出的退出码与已捕获的 stderr、运行时与载荷状态、关键路径、" +
-                "最近的失败和设备信息汇总成一份纯文本，保存到 Download 或直接分享。" +
-                "引擎已经退出时同样可用。报告不会进入对话上下文，敏感值已做脱敏。",
+            description = "把引擎最近的失败、运行时与载荷状态和设备信息汇总成一份纯文本，" +
+                "保存到 Download 或直接分享。引擎已经退出时同样可用；报告不进入对话上下文，敏感值已脱敏。",
             kind = PiRowKind.Action,
             group = G_RUNTIME,
             section = "动作",
@@ -1447,7 +1511,8 @@ object PiSettingsCatalog {
         PiSetting(
             key = "defaultProjectTrust",
             title = "项目信任策略",
-            description = "非交互模式下没有已保存的信任决定时的回退行为：询问会忽略项目资源，总是信任会加载并执行它们，从不信任始终忽略。仅全局设置支持。",
+            description = "非交互模式下没有已保存的信任决定时的回退行为：询问会忽略项目资源，" +
+                "总是信任会加载并执行它们，从不信任始终忽略。",
             kind = PiRowKind.Value,
             group = G_SECURITY,
             section = "信任与隐私",
@@ -1460,7 +1525,8 @@ object PiSettingsCatalog {
         PiSetting(
             key = "enableInstallTelemetry",
             title = "安装遥测",
-            description = "发送匿名的安装/更新上报，并在 OpenRouter、NVIDIA NIM、Cloudflare 请求里带上来源标识。关掉之后两者都停，但不影响版本更新检查。",
+            description = "发送匿名的安装/更新上报，并在部分厂商请求里带上来源标识。" +
+                "关掉之后两者都停，不影响版本更新检查。",
             kind = PiRowKind.Switch,
             group = G_SECURITY,
             section = "信任与隐私",
@@ -1513,6 +1579,7 @@ object PiSettingsCatalog {
      * that is persisted and never consulted (`docs/settings-review.md`).
      */
     val piOwnedKeys: Map<String, String> = mapOf(
+        "cacheWarming" to "pi 读：settings-manager.ts:955-958 getCacheWarmingMode（取值 settings-manager.ts:77 的 off/streaming/idle）→ core/sdk.ts:307-312（把取值器交给 CacheWarmer，core/cache-warmer.ts:184 起每次决策读一次；settings 重读到内存的路径是 core/resource-loader.ts:403）",
         "transport" to "pi 读：settings-manager.ts:831 getTransport → core/sdk.ts:369（建会话时决定传输）",
         "modelThinkingLevels" to "pi 读：settings-manager.ts:808 → core/sdk.ts:218（建会话时的逐模型思考等级）",
         "thinkingBudgets" to "pi 读：settings-manager.ts:1174 → core/sdk.ts:370（建会话时的思考预算）",

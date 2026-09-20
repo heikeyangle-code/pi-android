@@ -3,6 +3,7 @@ package app.pi.engine
 import android.content.Context
 import android.util.Log
 import app.pi.bridge.DeviceBridgeController
+import app.pi.runtime.BootAudit
 import app.pi.runtime.GuestTreeReaper
 import app.pi.runtime.GuestWorkspacePath
 import app.pi.runtime.PiPaths
@@ -264,6 +265,19 @@ class PiEngineHost(private val appContext: Context) {
         private set
 
     /**
+     * Why the durable boot audit ([BootAudit]) could not write, or null when it did (or
+     * had nothing to write because this boot is not the first after an upgrade).
+     *
+     * Kept for the same reason as [lastBridgeError]: the audit exists to be evidence
+     * after an update, and a write that failed silently is exactly the case where the
+     * user would later say "no evidence was recorded" and mean it. It is also logged at
+     * write time, so the failure is readable in `logcat` even if nothing reads this field.
+     */
+    @Volatile
+    var lastBootAuditError: String? = null
+        private set
+
+    /**
      * The **engine-failure autopsy** of the most recent proroot launch that ended with
      * `126`/`127`, or null when there has not been one.
      *
@@ -287,6 +301,37 @@ class PiEngineHost(private val appContext: Context) {
     @Volatile
     var lastProrootForensics: List<String>? = null
         private set
+
+    /**
+     * The entry [boot]/[restart] last launched this host's engine on, or null before the
+     * first launch. Written by the launch path, read by the diagnostic report — see
+     * [EngineEntry] for why the reading exists at all.
+     */
+    @Volatile
+    var lastEngineEntry: EngineEntry? = null
+        private set
+
+    /**
+     * Which of pi's two entries this process was launched on.
+     *
+     * It is a value rather than a path so the diagnostic report can say **which** entry was
+     * used without re-parsing a string, and so a future third candidate cannot be added
+     * without saying what it is. The two are the preference order [entryCandidates] states:
+     * the bundled `dist/bundle/rpc-entry.js` (fast — it forces `--mode rpc` itself) and the
+     * unpacked `dist/cli.js` fallback (slow — thousands of modules at boot, needs the flag).
+     *
+     * Why the report needs it: until now the only way to tell which entry a run used was to
+     * guess from the startup time, and the two differ by an order of magnitude (2.0 s against
+     * 18–20 s measured on the workstation). A startup measurement with no entry beside it is
+     * an ambiguous reading.
+     */
+    enum class EngineEntry(val relativePath: String, val label: String) {
+        /** `package.json`'s `exports["./rpc-entry"]` — the packed build. */
+        Bundled("dist/bundle/rpc-entry.js", "打包入口 dist/bundle/rpc-entry.js"),
+
+        /** The unpacked entry, which is also the one `NODE_COMPILE_CACHE` was measured on. */
+        Unpacked("dist/cli.js", "解包兜底入口 dist/cli.js（慢）"),
+    }
 
     sealed interface Boot {
         data class Ready(val session: PiEngineSession) : Boot
@@ -317,10 +362,14 @@ class PiEngineHost(private val appContext: Context) {
 
         /**
          * The runtime itself needs provisioning, so this was not a restart.
-         * Deliberately refused rather than performed: `RuntimeProvisioner.wipe()`
-         * deletes the whole runtime tree, which destroys the guest's
-         * `/root/.pi/agent` — where pi keeps `trust.json`, `packages` and installed
-         * npm/git packages. A "reload my extensions" button must never do that.
+         * Deliberately refused rather than performed, because it would turn a "reload my
+         * extensions" tap into minutes of payload extraction — the payloads whose bytes
+         * changed are extracted at engine boot, not by a restart call.
+         *
+         * It is **not** refused because of data loss: per-payload provisioning extracts
+         * over the tree and deletes nothing the user installed. The one operation that
+         * still deletes the guest environment is the explicit repair path
+         * (`RuntimeProvisioner.ensureReady(rebuild = true)`), which no restart ever takes.
          */
         data class RefusedNeedsProvisioning(val detail: String) : Restart
 
@@ -361,6 +410,18 @@ class PiEngineHost(private val appContext: Context) {
         revision: String = RuntimeProvisioner.packagedRevision(appContext.assets),
         workspaceProvider: () -> File = { WorkspaceStore.currentHost(appContext) },
         launch: PiLaunchOptions = PiLaunchOptions(),
+        /**
+         * The explicit repair decision: delete the volatile runtime tree and extract
+         * every payload again. Forwarded to `RuntimeProvisioner.ensureReady`, which is
+         * the only thing in this app that may delete the guest environment, and which
+         * never reaches that code path from a digest comparison — see its KDoc.
+         *
+         * Pass true only when the tree is known to be broken or incomplete (a failed
+         * boot-time self-check, a missing rootfs, a user asking for a repair). The cost
+         * is everything the user installed inside the guest; the workspace, sessions,
+         * settings and credentials are outside the deleted tree and survive.
+         */
+        rebuild: Boolean = false,
         // `onStep` must stay LAST: callers pass it as a trailing lambda
         // (`boot { step -> ... }`), and a trailing lambda always binds to the
         // final parameter. Adding `launch` after it silently rebound every such
@@ -368,7 +429,7 @@ class PiEngineHost(private val appContext: Context) {
         // put it before this one.
         onStep: (RuntimeProvisioner.Step) -> Unit = {},
     ): Boot = lifecycleLock.withLock {
-        bootLocked(revision, workspaceProvider, onStep, launch)
+        bootLocked(revision, workspaceProvider, onStep, launch, rebuild)
     }
 
     /**
@@ -384,18 +445,58 @@ class PiEngineHost(private val appContext: Context) {
         workspaceProvider: () -> File,
         onStep: (RuntimeProvisioner.Step) -> Unit,
         launch: PiLaunchOptions,
+        rebuild: Boolean = false,
     ): Boot =
         withContext(Dispatchers.IO) {
-            // 0. Rescue the guest's own agent dir *before* provisioning, not after:
-            //    `ensureReady` wipes the whole runtime tree when the revision stamp
-            //    changes (RuntimeProvisioner.wipe), and `<rootfs>/root/.pi/agent` is
-            //    inside it. Migrating first is what makes this a fix rather than a
-            //    one-release reprieve.
+            // 0. Rescue the guest's own agent dir *before* provisioning, not after.
+            //    This used to be load-bearing because `ensureReady` wiped the whole
+            //    runtime tree whenever the revision stamp changed, and
+            //    `<rootfs>/root/.pi/agent` is inside it. Provisioning is per payload now
+            //    and deletes nothing, so the migration is no longer the difference
+            //    between keeping and losing that directory — but it still runs first, and
+            //    it is still worth running: the explicit repair path
+            //    (`rebuild = true`) does delete the tree, and a device upgrading from a
+            //    build that predates this migration has its agent dir on the rootfs side
+            //    only.
             lastAgentDirMigration = runCatching { migrateGuestAgentDir() }
                 .getOrElse { error -> "agent 目录迁移失败：${error.message ?: error::class.java.simpleName}" }
 
             // 1. Runtime payload.
-            val provisioned = provisioner.ensureReady(revision, onStep)
+            val provisioned = provisioner.ensureReady(revision, rebuild, onStep)
+            val outcome = provisioned.getOrNull()
+
+            // 1b. The durable boot audit (BootAudit). Recorded on the background scope,
+            //     never awaited: it walks the workspace root and the agent dir's direct
+            //     children, and even that bounded work must not sit between the user and
+            //     the first frame. It fires only when this boot is the first after an
+            //     upgrade (the APK's lastUpdateTime/versionCode or the runtime revision
+            //     changed since the last line), so an ordinary cold start only reads one
+            //     small state file. A failure is logged as one readable sentence; it
+            //     never fails a boot.
+            scope.launch {
+                val reason = runCatching {
+                    BootAudit.recordIfUpgraded(
+                        persistDir = paths.persist,
+                        apk = apkStamp(),
+                        revision = revision,
+                        payloads = payloadDigestSummary(),
+                        reextracted = outcome?.let { done ->
+                            if (done.reextracted.isEmpty()) {
+                                if (done.rebuilt) "rebuild" else "none"
+                            } else {
+                                done.reextracted.joinToString(",")
+                            }
+                        } ?: "provision-failed",
+                        workspaceRoot = WorkspaceStore.root(appContext),
+                        agentDir = paths.agentDir,
+                    )
+                }.getOrElse { error -> "启动审计异常：${error::class.java.simpleName}: ${error.message}" }
+                if (reason != null) {
+                    lastBootAuditError = reason
+                    Log.w(TAG, reason)
+                }
+            }
+
             provisioned.exceptionOrNull()?.let {
                 return@withContext Boot.Failed("运行时解包失败", it.message)
             }
@@ -462,20 +563,26 @@ class PiEngineHost(private val appContext: Context) {
             // theme features rather than at startup.
             val engineRoot = "$ENGINE_GUEST_ROOT/node_modules/$PI_PACKAGE"
             val entryCandidates = listOf(
-                "$engineRoot/dist/bundle/rpc-entry.js" to false,
-                "$engineRoot/dist/cli.js" to true,
+                EngineEntry.Bundled to "$engineRoot/${EngineEntry.Bundled.relativePath}",
+                EngineEntry.Unpacked to "$engineRoot/${EngineEntry.Unpacked.relativePath}",
             )
-            val chosen = entryCandidates.firstOrNull { (candidate, _) ->
+            val chosen = entryCandidates.firstOrNull { (_, candidate) ->
                 File(paths.rootfs, candidate.removePrefix("/")).isFile
             } ?: return@withContext Boot.Failed(
                 "引擎未安装",
                 "找不到引擎入口，试过这两个：\n" +
-                    entryCandidates.joinToString("\n") { "  · ${it.first}" } +
+                    entryCandidates.joinToString("\n") { "  · ${it.second}" } +
                     "\n打包运行时需要包含 pi 引擎（tools/fetch-runtime.mjs）",
             )
-            val cli = chosen.first
+            val entry = chosen.first
+            val cli = chosen.second
+            // Recorded here rather than threaded through `Boot.Ready`/`Restart.Ok`: it is a
+            // property of *this host's* last launch, and the diagnostic report asks for it
+            // while the engine is running (not only at the exit it captures). Written before
+            // the process exists, so a run that dies immediately still names its entry.
+            lastEngineEntry = entry
             // Only the unpacked entry needs the flag; `rpc-entry.js` injects it.
-            val needsModeFlag = chosen.second
+            val needsModeFlag = entry == EngineEntry.Unpacked
 
             launchOptions = launch
 
@@ -502,8 +609,10 @@ class PiEngineHost(private val appContext: Context) {
                 // `PiPaths.agentDir` (`<files>/pi/.pi/agent`). Every app-side
                 // reader — settings, sessions, and this package's trust.json and
                 // auth.json/models.json — was therefore looking at a directory pi
-                // never touches, and, worse, one that `RuntimeProvisioner.wipe()`
-                // deletes on every runtime revision bump.
+                // never touches, and, worse, one that an update could delete: that
+                // path is inside the volatile tree, and the old provisioning wiped the
+                // whole tree on every revision bump. Binding it is what puts pi's home
+                // in the durable directory instead.
                 paths.agentDir.absolutePath to guestAgentDir,
             )
             val extraEnv = mapOf(
@@ -525,11 +634,36 @@ class PiEngineHost(private val appContext: Context) {
                 // measured *no* effect in this environment: with a real provider
                 // key and an idle container, pi answered a queued prompt at 20.8 s
                 // cold / 20.7 s warm / 19.1 s warm again, and 13.9–18.7 s across
-                // later runs regardless (docs/startup-latency.md). The cost is
-                // node's module *loader* (969 module loads, ~4000 file syscalls
-                // through proot), which a bytecode cache does not avoid. It is
-                // written down instead of deleted because "we tried it and it did
-                // not help" is the thing that stops it being tried again.
+                // later runs regardless (docs/startup-latency.md). It is written
+                // down instead of deleted because "we tried it and it did not help"
+                // is the thing that stops it being tried again.
+                //
+                // ## Those numbers describe the **unpacked** entry, and it is worth
+                // saying so — this block has been quoted as the current truth once too
+                // often, including by us in a user-facing answer (2026-09-19).
+                //
+                // The measurement above was taken on 2026-09-12 (`db0f309`), when the
+                // engine still exec'd `dist/cli.js`: node's module *loader* dominated
+                // there (969 module loads, ~4000 file syscalls through proot), and a
+                // bytecode cache cannot avoid a loader's work.
+                //
+                // Two days later the entry changed (`09b2c26`): `dist/bundle/rpc-entry.js`
+                // is now preferred (see [entryCandidates] below), and *that* is what
+                // removed the module-loading cost — measured on this workstation
+                // (node 24.19.0, no proot): bundled `--version` 1.0 s and a bundled
+                // `get_state` round trip 2.0 s, against ~18–20 s for the unpacked entry.
+                // So on the shipping path this variable's premise is gone, not because
+                // the cache started helping but because the 969 module loads stopped
+                // happening; `dist/cli.js` remains the fallback, and these numbers
+                // still describe it.
+                //
+                // **Not retested on the bundled entry.** Whether a bytecode cache would
+                // shave the remaining 1–2 s has not been measured, and this comment must
+                // not be read as saying it would not: what was measured is that it did
+                // not help the path where the loader was the cost. If someone wants to
+                // re-open it, the honest experiment is the bundled entry ± the variable,
+                // and the number to move is `PiEngineSession.lastServingMs` (the
+                // diagnostic report's 「引擎启动」 row).
                 // The user-chosen pre-spawn knobs. `PiLaunchOptions.environment`
                 // only ever adds keys — pi tests some of them for presence, so a
                 // "0" would be worse than omitting them.
@@ -743,18 +877,20 @@ class PiEngineHost(private val appContext: Context) {
             )
         }
 
-        // Refuse a restart that would silently become a re-provision. `ensureReady`
-        // is only cheap when the stamp matches; otherwise it wipes the whole runtime
-        // tree (RuntimeProvisioner.wipe), taking the guest's /root/.pi/agent with it —
-        // trust.json, settings.json's `packages`, and every installed npm/git package.
-        // That is a different operation from "reload my extensions" and must be a
-        // different button.
+        // Refuse a restart that would silently become a re-provision. `ensureReady` is
+        // cheap only while the stamp matches; when it does not, this boot would first
+        // read and compare every payload's state and then extract the payloads whose
+        // bytes changed — minutes on a big payload, in the middle of an action the user
+        // read as "reload my extensions". The refusal is about *surprise*, not about
+        // data loss: since provisioning became per payload, a re-provision extracts over
+        // the tree and deletes nothing the user installed (only the explicit repair path
+        // does, and that is a different button). The sentence says both, because the old
+        // one claimed the agent dir would be emptied and that is no longer true.
         if (!stampMatches(revision)) {
             return@withLock Restart.RefusedNeedsProvisioning(
-                "运行时需要重新解包（stamp 与 $revision 不一致），这不是一次重启。" +
-                    "重新解包会清空 guest 的 /root/.pi/agent，连带删掉 trust.json、" +
-                    "settings.json 里已安装的资源包和它们下载的文件。请先走首次启动的" +
-                    "boot() 流程，用户需要知道这一点。",
+                "运行时需要按载荷更新（stamp 与 $revision 不一致），这不是一次重启：" +
+                    "更新会重解变化的载荷，可能要几分钟。请先走首次启动的 boot() 流程。" +
+                    "更新只覆盖内置载荷，不删除工作区、会话、设置或 guest 里你自己装的东西。",
             )
         }
 
@@ -929,14 +1065,51 @@ class PiEngineHost(private val appContext: Context) {
      *
      * Mirrors `RuntimeProvisioner.isStampCurrent`, which is private. Both halves are
      * public — `PiPaths.stampFile()` and `RuntimeProvisioner.packagedRevision` — so
-     * this reads the same two facts without duplicating the unpacking logic. If the
-     * two ever disagree the consequence is a refused restart, not a wrong wipe.
+     * this reads the same two facts without duplicating the unpacking logic, and it is
+     * also the fast path's own comparison: a matching stamp is what lets a boot read no
+     * per-payload state at all. If the two ever disagree the consequence is a refused
+     * restart, never a deletion.
      */
     private fun stampMatches(revision: String): Boolean {
         if (!paths.rootfs.isDirectory) return false
         val stamp = paths.stampFile()
         if (!stamp.isFile) return false
         return runCatching { stamp.readText().trim() == revision }.getOrDefault(false)
+    }
+
+    /**
+     * This APK's identity for the boot audit's upgrade trigger: last update time plus
+     * versionCode.
+     *
+     * `lastUpdateTime` is the fact that actually changes on an install/update, and it is
+     * read here rather than inside [BootAudit] because that object is Android-free by
+     * design (a bare-JVM harness compiles it). A failure is a **readable sentence**, not
+     * an empty string: `BootAudit.shouldRecord` treats an unreadable value as "record",
+     * so a device that cannot answer still gets its line.
+     */
+    private fun apkStamp(): String = runCatching {
+        val info = appContext.packageManager.getPackageInfo(appContext.packageName, 0)
+        "${info.lastUpdateTime}-${info.versionCode}"
+    }.getOrElse { error -> "读不到：${error::class.java.simpleName}" }
+
+    /**
+     * The per-payload digests currently recorded in `<files>/pi/runtime/.payloads`, as
+     * one compact string for the audit line.
+     *
+     * Read from the state files rather than from a list in this class, so the line says
+     * what is actually on disk — including "nothing yet", which is itself the migration
+     * evidence. Deliberately not sorted into the payload's canonical order: a stable
+     * alphabetical order is enough to compare two lines, and re-deriving the payload
+     * list here would be a second spelling of it.
+     */
+    private fun payloadDigestSummary(): String {
+        val files = paths.payloadStateDir().listFiles()?.filter { it.isFile && it.name.endsWith(".digest") }
+            ?: return "无（还没有按载荷状态）"
+        if (files.isEmpty()) return "无（还没有按载荷状态）"
+        return files.sortedBy { it.name }.joinToString(",") { file ->
+            val digest = runCatching { file.readText().trim() }.getOrNull() ?: "读不到"
+            "${file.name.removeSuffix(".digest")}:$digest"
+        }
     }
 
     /**

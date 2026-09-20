@@ -31,7 +31,8 @@ fun PiSettingEditorSheet(
      *
      * The row already renders these instead of the store value, so an editor that read the
      * store would show a **different** value from the row the user tapped — the empty sheet
-     * over a row reading `0.85.1` that `docs/settings-audit-impl.md` §B4 records. Text rows
+     * over a row reading the engine version of the day (`0.85.1`) that
+     * `docs/settings-audit-impl.md` §B4 records. Text rows
      * therefore start from the override, exactly like the row does.
      */
     valueOverrides: Map<String, String> = emptyMap(),

@@ -40,6 +40,10 @@ import java.io.File
  * append-only JSONL, first line a `session` header, then entries carrying
  * `id`/`parentId` that form the branch tree. Nothing here is a second index: the
  * file *is* the truth, and this class only reads enough of it to draw a list.
+ *
+ * 两个布局一起读还有第二个后果：**同一个会话可能在两边各有一份**（副本、`/import` 的拷贝），
+ * 于是同一段对话本可以列成两行 —— 用户原话「就那么一个对话……出现了好几个版本，就像被切开
+ * 一样」。所以 [list] 按会话身份去重，两个布局里哪一份留下见 [laterSessionRow]。
  */
 class PiSessionStore(private val sessionsRoot: File) {
 
@@ -136,12 +140,51 @@ class PiSessionStore(private val sessionsRoot: File) {
      * pi's last-resort fallback. [Summary.lastActivityAt] is that same value, so the
      * list order here and the list order in the desktop picker agree for any session
      * this reader can see in full.
+     *
+     * ## 一个会话只有一行
+     *
+     * 上面那两个布局是**分别**遍历的，而一个会话可以在两边各留一份：组目录里的那份是
+     * 某个时刻的副本（用户 `cp` 过、或本 App 的 `/import` 把它复制进会话目录 ——
+     * `PiSessionViewModel.prepareImport`（工作树 `:4738-4750`）只挑一个没占用的名字、**不改
+     * header**，所以副本与原件带同一个 `id`），引擎平铺的那份才是 pi 正在追加的。不去重的话，
+     * 同一段对话会在
+     * 列表里变成两行（用户原话：「就那么一个对话……出现了好几个版本，就像被切开一样」），
+     * 而且 `SessionsScreen` 的两处计数（`"${visible.size} 条"` 与组标题的 `rows.size`）
+     * 跟着虚高。
+     *
+     * 去重的键是**会话自己的身份**：`Summary.id`（header 里的 `id`，也是 pi 文件名
+     * `"<ISO>_<id>.jsonl"` 里 `_` 之后那一段；header 读不出 id 时才退回文件名）。**不是**
+     * 显示名 —— 两个真正不同的会话可以有同一个标题（用户两轮都只打了「继续」），那是两条
+     * 对话，必须留两行（`SessionIdentityCheck.kt` 钉住了这一条）。
+     *
+     * 留下哪一行由 [laterSessionRow] 决定；两行都只是**读数**，这里不删任何一个文件。
+     *
+     * ## 它把「读不到」和「确实没有」压成了同一个 `emptyList()`（已知形状）
+     *
+     * 返回类型是 `List<Summary>`，所以下面两组读数冒充了彼此 —— 本项目「四条读数不许互相冒充」
+     * 的规矩在这里是破的，而破在 store 的签名上，修法不在本文件手里：
+     *
+     *  - 目录不存在（`:180` 的 `!isDirectory`）与 `listFiles()` 返回 `null`（`:186`，权限或 IO
+     *    错误）走的是同一条 `emptyList()`。前者是 pi 自己的答案（`session-manager.ts:819-821`
+     *    对不存在的目录返回空列表），后者是**读不到**；界面两边都写成「还没有会话」。
+     *  - [readSummary] 里那次 `runCatching`（`:409`）会吞掉「打开/读这个文件失败」的异常，之后
+     *    `firstParsed` 仍为 true，于是 `return null`（`:485`）—— **「读不了这个文件」被说成了「这个
+     *    文件不是会话」**，而且不进缓存，每次扫描都再试一遍。
+     *
+     * 建议的修法（本次不动，因为调用方不在这里）：`list()` 改回一个带原因的 sealed 结果
+     * （`Scanned(rows)` / `Unreadable(reason)`），或至少让 `listFiles() == null` 与「目录不存在」
+     * 分开；`readSummary` 侧把 failed 与 notASession 分开记账。在此之前，
+     * `PiSessionViewModel.refreshSessions()` 的 `runCatching { … }.getOrDefault(emptyList())`
+     * （工作树 `PiSessionViewModel.kt:999`）会把异常也变成「没有会话」。
      */
     suspend fun list(limit: Int = 300): List<Summary> = scanMutex.withLock {
         withContext(Dispatchers.IO) {
             if (!sessionsRoot.isDirectory) return@withContext emptyList()
             val out = ArrayList<Summary>()
             val seen = HashSet<String>()
+            // 会话身份 → 已经留下的那一行。`LinkedHashMap` 只是让「同一身份、完全并列的两份」
+            // 也走 [laterSessionRow] 的最后一条规则，而不是看谁的键先被放进来。
+            val bySession = LinkedHashMap<String, Summary>()
             sessionsRoot.listFiles()?.forEach { entry ->
                 when {
                     // pi's default layout: one directory per cwd, one level deep
@@ -152,23 +195,67 @@ class PiSessionStore(private val sessionsRoot: File) {
                         // when a file's header carries no `cwd` of its own.
                         val groupCwd = encodedCwdFromGroupName(entry.name)
                         entry.listFiles()?.forEach { file ->
-                            if (isSessionFile(file)) readSummary(file, groupCwd, seen)?.let { out += it }
+                            if (isSessionFile(file)) {
+                                readSummary(file, groupCwd, seen)?.let { keepOneRowPerSession(bySession, it) }
+                            }
                         }
                     }
                     // The layout our engine actually writes (`:1551-1552`): the session
                     // files sit directly in the session directory, so there is no group
                     // name to fall back to.
-                    isSessionFile(entry) -> readSummary(entry, null, seen)?.let { out += it }
+                    isSessionFile(entry) ->
+                        readSummary(entry, null, seen)?.let { keepOneRowPerSession(bySession, it) }
                 }
             }
             // Forget summaries for files that are gone, so a deleted (or imported and
             // later removed) session cannot keep a row's worth of memory alive for the
             // life of the process. Cheap: one pass over the fresh key set.
             synchronized(cacheLock) { summaryCache.keys.retainAll(seen) }
+            out.addAll(bySession.values)
             out.sortByDescending { it.lastActivityAt }
+            // `limit` 数的是**会话**：去重发生在截断之前，否则一份副本就会占掉一行，
+            // 把一个真实的会话挤出屏幕。见 `SessionIdentityCheck.kt` 的最后一条检查。
             if (out.size > limit) out.subList(0, limit) else out
         }
     }
+
+    /** 把一个会话的候选行放进 [bySession]，同一个身份只留 [laterSessionRow] 选中的那一行。 */
+    private fun keepOneRowPerSession(bySession: MutableMap<String, Summary>, row: Summary) {
+        val previous = bySession[row.id]
+        bySession[row.id] = if (previous == null) row else laterSessionRow(previous, row)
+    }
+
+    /**
+     * 同一个会话的两行里留下哪一行 —— 一个全序，所以答案与文件系统的返回顺序无关。
+     *
+     * 1. **内容更新的赢。** `lastActivityAt` 是 pi 的 `modified`（`:744-749`），也就是这一行
+     *    描述到的那段对话的末尾；两份副本里它更晚的那份拿着的对话更长，正是用户要的那份。
+     * 2. **并列时平铺的那份赢**（直接躺在 [sessionsRoot] 下、不属于任何组目录）。理由是
+     *    「哪一份是活的」：引擎带 `--session-dir <agentDir>/sessions` 启动
+     *    （`PiEngineHost.kt:592`），pi 因此只在平铺目录里创建与追加会话（`session-manager.ts:1551-1552`、
+     *    `:947-949`），`switch_session` 打开的就是这一份、pi 接着往它里面写；组目录里的同名
+     *    副本是别处留下的快照，打开它等于把这次对话接到快照上。
+     *    （这一步**先于**文件时间：一次 `cp` 会让副本的 mtime 比原件新，而两者内容一模一样 ——
+     *    按 mtime 选就会选中那份快照。mtime 只在平铺/分组这个更强的判据并列时才用。）
+     * 3. **同一布局内**才比较文件 mtime，新者赢（谁最后被写过）。
+     * 4. 仍然并列（同一份字节在两处、mtime 也被设成一样）时按绝对路径定序，只为让结果是确定的。
+     */
+    private fun laterSessionRow(a: Summary, b: Summary): Summary {
+        if (a.lastActivityAt != b.lastActivityAt) {
+            return if (a.lastActivityAt > b.lastActivityAt) a else b
+        }
+        val aFlat = isFlatLayout(a.file)
+        val bFlat = isFlatLayout(b.file)
+        if (aFlat != bFlat) return if (aFlat) a else b
+        val aModified = a.file.lastModified()
+        val bModified = b.file.lastModified()
+        if (aModified != bModified) return if (aModified > bModified) a else b
+        return if (a.file.absolutePath <= b.file.absolutePath) a else b
+    }
+
+    /** 这一行来自平铺布局（直接躺在 [sessionsRoot] 下），还是来自某个 cwd 组目录。 */
+    private fun isFlatLayout(file: File): Boolean =
+        file.parentFile?.absolutePath == sessionsRoot.absolutePath
 
     /**
      * The session pi's `-c` / `--continue` would resume, or null when there is none.
@@ -193,6 +280,12 @@ class PiSessionStore(private val sessionsRoot: File) {
      *
      * `PiSessionViewModel.maybeResumeLastSession` is the `-c` equivalent, so it uses
      * this and not `list(limit = 1)`.
+     *
+     * **它不受双布局扫描影响**：这里只读 [sessionsRoot] 自己那一层，组目录一个都不进（pi 的
+     * `-c` 也只读它拿到的那个目录），所以它最多读出一个 `Summary`，不存在 [list] 那种「同一
+     * 会话两行」的膨胀。平铺层里若有两份同一个 `id` 的拷贝（`/import` 那种），它按上面第一条
+     * 规则（文件 mtime）选一份 —— 那是 pi 自己的 `-c` 规则，不是这里新加的去重，所以它选中的
+     * 不一定是 [list] 留下的那一行；这是已知的、与 pi 一致的行为，不是本文件要修的东西。
      */
     suspend fun mostRecentForResume(cwd: String?): Summary? = withContext(Dispatchers.IO) {
         if (!sessionsRoot.isDirectory) return@withContext null

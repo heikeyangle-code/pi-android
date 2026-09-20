@@ -1060,6 +1060,27 @@ affordance 的形状改动，不在这一轮。
 （新增 J 组 22 条，见 §「验证」）。**颜色/主题一个字节没动**，`ui/settings/**`、`settings/**`、
 `ui/screens/PiFilesScreen.kt`、`tools/run-app-pure-checks.sh` 一行没碰。
 
+### D51 补记 · 行高档位第二轮：下限挪到 placement 期，「解除」交给解析完成信号；eager 解析按帧计价
+
+**动因**：D51 ③ 那套档位在真机上仍看得到「某一行先塌成 0 高再长回来」，以及「重新组合后第一帧不是它离开时的高度」。整轮诊断、候选与实测数字在 `docs/scroll-perf-list.md`（§2.3 / §2.4 / §2.5），这里只记结论、判据与代价。
+
+**D51 ③ 的两半错在同一个方向**（`ui/render/TranscriptRowHeight.kt:44-67` 的 KDoc 是权威版本）：原来的写法是 `Modifier.heightIn(min = floor)` 加一个**固定三帧窗**（`frames < 3`），而
+- `heightIn` 会置 `enforceIncoming = true`（`foundation-layout` 字节码：`SizeKt.heightIn-VpY3zN4` 构造 `SizeElement(…, enforceIncoming = true)`，`SizeNode.measure` 用被抬过的约束量孩子）⇒ 行**无论解析没解析都报 `floor`**，「就绪」与「还在加载」不可观测；
+- 于是唯一的到期方式只能是帧数 —— 一场跟 `Dispatchers.Default` 的赛跑。输了（主线程忙时一次解析 ≳50 ms），档位就在**内容还空着**的时候消失：第 3 帧塌成 0 高、列表重新测量、下面全部上跳，解析落地再全部下跳 —— 两次几何变化，而这个文件存在的意义是消掉一次。
+
+**改法（三处，都在 `ui/render/`）**
+1. **下限给在 placement 期，量的是原始约束**：`Modifier.rememberedRowHeight(rowKey, contentReady)` 先 `measurable.measure(constraints)` 拿内容的**真高度**，再把行报成 `max(contentHeight, floor)`。内容因此一直把未抬高的高度交给 `onSizeChanged`（它在链上位于 layout modifier **之后**，由内层 coordinator 派发，看到的是内容自己的尺寸），缓存里不再回写假高度。
+2. **解除的主信号是 `contentReady`**（库自己的 `State.Success`，经 `LocalPiMarkdownParsed` 由 `PiMarkdownText` 报出）—— 档位只覆盖「新组合」到「解析完成」这段窗口，而这就是该窗口的结束，无论谁赢了那场赛跑。另两条兜底按到达顺序：**非零实测高度**（没有 markdown 的行本来就第一帧到位，同一趟布局就解除）与 `REMEMBERED_ROW_HEIGHT_FRAMES`（12 帧 ≈ 200 ms，给永不解析也永不测量的内容：隐藏的思考块、空文本、`State.Error`）。**它是界，不是机制**，最多触发一次。
+3. **eager 解析按帧计价**：`RowHeightCache.kt` 的 `MarkdownParseBudget`（默认 4 ms / 16.67 ms 令牌桶，`DEFAULT_BUDGET_NANOS` / `DEFAULT_PERIOD_NANOS`）+ 全局 `piMarkdownParseBudget`；`PiMarkdown.kt:302` 解析前先问预算，`PiMarkdownImmediate.kt` 记的是同一条规矩。上千行会话里「每帧把可见行全解析一遍」是掉帧的直接原因，预算耗尽就顺延到下一帧。
+
+**代价（正面的一半）**：一次重新组合 ≈ 一次额外重组（写 `settled` 的那次）+ 一次重新测量（链上失去下限，尺寸内容已自证相等），此后每帧零成本；被替换掉的三帧窗则是**三帧各写一次**，每次写都让行失效。**合法变矮**（展开/折叠工具卡、关掉思考块、改字号）在**下一次测量**就被纠正，而不是被按住三帧、还要在内容没就绪时照样塌。
+
+**判据（真机；量化：录屏 → `ffmpeg -vf fps=240`，逐帧跟踪一个独特短字符串上边缘的 y，一帧内 >4px 记一次「跳」）**：① 同一个 key 的行重新组合后**第一帧**就是它离开时的高度（±2px）；② 不得再出现「某行先塌成 0 高再长回来」的帧；③ 展开/折叠工具卡这类合法变矮在一帧内收敛；④ 长会话快滚不出现跳帧。
+
+**刻意不做**：它不让**从未测量过**的行变正确 —— 第一次进视口（刚前插的「加载更早」那批）没有档位，行为与今天一致，那是 `docs/scroll-diagnosis.md` §1.2 P3，它的修法是 `ChatScreen` 的 eager-parse 闸（`PiMarkdownImmediate.kt`），不在这里。
+
+**门槛**：`row-height-cache` 已注册进 `tools/run-app-pure-checks.sh`（`RowHeightCache.kt` 是 Android-free 的纯逻辑，进得了 bare-JVM harness；`TranscriptRowHeight.kt` 是 Compose 文件，进不了，靠上面 ①–④ 判）。**未验证**：本容器打不出 APK，①–④ 是判据不是实测。
+
 ## D52 · 设置面的信息架构：先按「这行是谁的」分四类，再按 pi 的分节归属
 
 **用户原话**：「设置那一屏幕的所有东西这么乱呢？」。**乱不是文案问题**，是四种东西同形同色地混在一屏：pi 键（写 `settings.json`、pi 读）/ app 偏好（`app.*`、我们自己读）/ 只读事实 / 动作·指路牌。本轮把区分做在**分组与 section**上（**颜色不动、任何键的语义/默认值/`EffectiveKind` 不动**）：70 行由 **13 组 30 节收成 12 组 24 节**，行数一行不增不减。
@@ -1149,6 +1170,27 @@ pi 自己的文件以前**一个都进不去**（工作区的文件查看器只�
 
 **顺带查出的文档瑕疵**：`GrepBlock.kt:181-183` 的 KDoc 引用了 **pi 主题里不存在**的 token（`contextOnTool`；diff 用的是 `toolDiffContext`）；`docs/rpc-coverage.md` 的「32/33 有入口」与代码不符（`cycle_model` 的 UI 早按裁决删除）。
 
+## D56 · 设置审查的收尾批次：手写的「搜索路径」四行删掉，换成只读的「实际发现」；List/Number 清空语义修正；工具行与主题徽标
+
+**用户原话**：「设置那一屏幕的所有东西这么乱呢？找个子代理审查所有功能，对比 Pi 源代码，看缺了什么，有哪些没用的？哪些功能有 bug？全都弄成完美和 Pi 一比一的样子。很多设置的意义就是修改 Pi 的文件吧？Pi 内置文件的修改器。查看器？」——本轮是那场审查的落地批次（信息架构那一半是 D52，pi 没有的键那一半是 D53）。判据全部回到 pi 源码，不是「看起来像」。
+
+**一、「不是 pi 的键」的行：删掉，不补**。「扩展与资源」里原有 4 行手写的搜索路径（扩展 / 技能 / 提示 / 主题），**pi 没有这四个设置键**：这些目录是 pi 按固定位置发现的（加 `packages` 里的资源包），写一个不存在的键进去既不会改变发现位置，又让这一屏看起来像能改。用户的裁决是**「删吧」** —— 删掉，也不发明对应的 app 侧键。
+
+删掉之后那一节**不留空**，换成 5 行**只读**的「实际发现」：`app.resources.discovered.extensions / .skills / .prompts / .themes`（各自报**真的**发现了几个、从哪儿发现）与 `app.resources.openFiles`（指路到「Pi 文件」屏 / 那个目录）。它们读的是运行时真状态，不是我们写的默认值 —— 「四个读数不许互相冒充」这条规则在设置页的落点：**没发现**、**读不到**、**还没读**是三句话，不许都说成「0 个」。
+
+**二、三个真 bug（都是「界面在说假话」这一类）**
+1. **清空一个 List 行会把 `[]` 写进 `settings.json`** —— 而 pi 里 `[]` 是**一个值**，不是「没设置」：`defaultTools: []` 的语义是**一个内建工具都不开**（`configuredDefaultToolNames ?? defaultActiveToolNames`），跟「回到默认」是两件事。修法：列表清空一律 `store.remove(key)`（`PiSettingEditorHost.kt:131-132`），Number 那一支同样（`:96`）。于是「清空并保存」= 删键 = pi 回到自己的默认。
+2. **`powershell` 出现在内建工具的预设里** —— pi 的 8 个工具名里有它，但它**在非 Windows 上必抛**；把它做成一个能点的 chip，就是把一个必然失败的选择摆在用户面前。预设改成 7 个（`read bash edit write grep find ls`）。
+3. **`defaultTools` 那一行说不清「默认」与「零」**。现在：预设 = 那 7 个工具名，`emptyListLabel` = **「默认 read/bash/edit/write」**（pi 的默认活跃集是 4 个），行文案明说「清空并保存 = 回到这 4 个默认值（删掉这个键）」，并指出**一个都不开**（`defaultTools: []`）是另一件事。
+
+**三、两个「说得不准」的徽标/文案**
+- `theme` 行的徽标 `Reload` → **`Immediate`**：写下去的那一刻就生效（`PiSessionViewModel.kt:1128-1130` 的 `refreshTheme()` → `PiThemeLoader.load` → `MainActivity.kt:89-93` 重建 `PiTheme`，连代码高亮与窗口底色一起换）。徽标写「需重载」就是在说假话；alias 里的 `reload` 留着，那是 pi 自己的词、给搜索用的。
+- 7 行补上「清空并保存 = 回到默认」的判据（删键之后 pi 读到什么），空列表按钮的文案从「清空」改为**「恢复默认」**。
+
+**四、防复发**：`PiSettingsAuditCheck` 加三条规则 —— 规则 12（Number 支路必须 `store.remove`）、规则 13（List 支路必须 `entries.isEmpty()` + `store.remove`，「存空数组」直接判失败）、规则 14（工具预设里不得出现 `powershell`）。`settings-audit` harness **26 PASS**；`PiSettingsRegistry` 共 **72 个键**。
+
+**未验证**：本轮没有设备侧改动（改的是设置页的数据与文案），真机观感仍需上机看一眼「实际发现」四行报的数对不对。
+
 ## D57 · proroot 上不了真机的真根因：`-b` 的拼写（一次误诊的完整复盘）
 
 **症状**：用户开「运行时加速（实验性）」后，「运行时（实际生效）」一直写「已回退 proot：探针未通过」，导出报告里是
@@ -1195,3 +1237,23 @@ proroot；③ guest 内 `id` 是 fake root、`pwd` 是 `-w` 的 guest 路径、�
 **未验证**：本容器无 ADB，装不了 APK —— 上述 1–5 是判据不是实测；我方 rootfs 的首次真跑仍需上机。
 **风险声明**：生产档保持**严格**（raw 未翻译仍否决）；若发现某机型严格档过不了而日常工具正常，那是一次
 **需要新证据**的裁决，不许为了让门禁通过而删判据。
+
+## D58 · 会话列表的「＋ 新建会话」回到浮动；可达性改由列表 `contentPadding` 给（D37 ② 的**修法**被推翻，症状仍成立）
+
+**用户原话**：「原来按钮浮动到屏幕上，现在那一排全黑了」。裁决 = **要回浮动**，不接受按钮那一整条页面底色。
+
+**症状（真机 1373×3051 + 取像素）**：「＋ 新建会话」自己占了 `Column` 的一行 —— 胶囊 42 + 下沿 14，加上行内上边距 ≈ **70dp**；`Box(weight(1f))` 里的 `LazyColumn` 在那一行**之上**就结束，于是这 70dp 全是**页面底色**（用户主题 `#05010f`，卡片 `#12092c`）。**不是新画了一条带子**：胶囊颜色一直是对的（accent `#ff2f96` + `onPrimary`），裸的是它下面那条底色。
+
+**与 D37 ② 的关系（两份诊断都对，错的是「只能二选一」）**：D37 ② 记的是真 bug —— 旧浮动按钮（`ExtendedFloatingActionButton` + `align(BottomEnd)`）压在内容上而**列表没给它留空间**，最后一两行永远被盖住、点不到。但 `4b82e13` 的修法（照 v2 稿子 `flex:'none'` 改成列表下面独立一行）是**用一个 bug 换另一个**：可达性好了，代价是 70dp 布局高度从列表手里被拿走，换来一条与内容无关的页面底色空带。
+
+**修法（两步同时做，不许只做一步）**
+1. **位置回浮动** —— 按钮移进列表那一层的 `Box`（`BoxScope.align(Alignment.BottomEnd)`，`SessionsScreen.kt:509`），不占列表的布局高度，列表视口因此铺到 Scaffold 内容盒下沿（= 常驻底栏 `BOTTOM_BAR_HEIGHT = 56dp` 的上沿）。**只有 `BoxScope.align` 是「压在内容上」**，`Column` 子项必然各占一行 —— 那正是黑带的来源。胶囊样式与点击行为**零 diff**（accent 填充 + `onPrimary`、无阴影、圆角 999、42 高、`session.newSession()` + `onOpenChat()`），横向 16 / 下沿 14 不变。
+2. **可达性给列表** —— `LazyColumn.contentPadding.bottom` 换成 `SESSIONS_LIST_BOTTOM_RESERVE = 14 + 42 + 14 = 70dp`。**下界**是「胶囊高 + 它自己的下沿」= **56dp**（滚到底时最后一条不许停在按钮底下、看得见点不到），在其上再加 v2 的列表底 14 → 70。**底部 inset 故意不加**：根 `Column` 已经 `.padding(contentPadding)` 消费掉它（底边 = 底栏 56 + 系统 inset），再加一次就是 D36 在会话树上量到的「最后一行下面的死带」。
+
+**两个数的分工（写进常量 KDoc，防止日后变成互相矛盾的两个数）**：`SESSIONS_LIST_BOTTOM` 管「列表内容与底边至少留 14」（稿子的值）；`SESSIONS_LIST_BOTTOM_RESERVE` 管「最后一条不被浮在它上面的按钮盖住」（可达性下界 + v2 的 14）。列表 `contentPadding` 把两者**相加**，谁也不替谁。常量声明位置必须在三个被加数**之后**（Kotlin 顶层属性按声明顺序初始化，写在前面会读到 Dp 零值）。
+
+**真机判据（最灵敏的放最前）**：① 还有更多会话没显示时，内容区最下沿应当是**被视口裁切的卡片**（左下角取像素 ≈ `#12092c`），不允许再出现约 70dp 的 `#05010f` 带；② 滚到**底**时最后一条会话**完整可见、可点（切换）、可长按（删除 sheet）**，与胶囊留 14dp，胶囊不压任何一行（*滚到底时最后一条下方有 70dp 让步空间是**预期**，不是本 bug*）；③ 胶囊仍贴右下、在底栏之上，改前改后逐像素相同（`#ff2f96` + `onPrimary`、无阴影、圆角 999）；④ **空列表**两态（「还没有会话」/「正在读取会话…」）与**筛选后为空**（「没有匹配的会话」）：空态块顶对齐（离筛选行 86dp，`PiEmptyStateTopAnchored`），胶囊在右下 → 不重叠；空态 `fillMaxSize` 的 Box 不吃点击，胶囊是后绘制的子项，仍可点；⑤ 筛选后列表变短（不足以滚动）同样成立 —— 短列表最后一条下面就是那 70dp 让步空间，胶囊落在其中；⑥ 软键盘：`Scaffold(Modifier.imePadding())` 抬的是整块内容（含底栏），胶囊跟着内容走，不会落到输入法下面。
+
+**风险声明**：浮动件会盖住滚动中经过它下面的行 —— 这是「浮动」的定义，换来的是列表铺满 + 最后一条可达。日后若有人为了「不被盖住」再改回占位的一行，必须先推翻本条 ①。
+
+**未验证**：本容器无可用 AAPT2/真机 APK 产物（同 D57 的限制），①–⑥ 是判据不是实测。**门槛**：`tools/typecheck.sh` 对 `SessionsScreen.kt` 0 error（`:app` 只剩 `ui/settings/DiagnosticsReport.kt` 的 `BuildConfig`，脚本自述盲区）；`check-nested-comments.py` OK（211 个 Kotlin 文件）。**D37 ② 更正**：症状仍成立，修法不再是「改成列表下面一行」；以本条为准 —— **浮动 + `contentPadding`**。

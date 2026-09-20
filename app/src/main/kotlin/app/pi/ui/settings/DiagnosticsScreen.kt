@@ -66,6 +66,8 @@ fun DiagnosticsScreen(
     onBack: () -> Unit,
     engine: () -> EngineDiagnostics?,
     failures: () -> List<String>,
+    /** `PiEngineHost.EngineEntry.label` of this process's last launch; see `DiagnosticsReport.build`. */
+    engineEntry: () -> String? = { null },
 ) {
     val context = LocalContext.current
     val paths = remember(context) {
@@ -84,9 +86,10 @@ fun DiagnosticsScreen(
     // and again only on an explicit refresh. Reading it walks the runtime tree and
     // each packaged payload, which is not something to repeat per frame or per
     // recomposition.
+    val entryLabel = engineEntry
     LaunchedEffect(Unit) {
         report = withContext(Dispatchers.IO) {
-            DiagnosticsReport.build(context, paths, engine(), failures())
+            DiagnosticsReport.build(context, paths, engine(), failures(), entryLabel())
         }
         working = false
     }
@@ -102,8 +105,7 @@ fun DiagnosticsScreen(
                 .verticalScroll(rememberScrollState()),
         ) {
             Text(
-                "这份纯文本汇总了引擎最后一次退出的退出码与已捕获的 stderr、运行时与载荷状态、关键路径、" +
-                    "最近的失败，以及设备信息。它不会进入对话上下文；敏感值已做脱敏。",
+                "报告不会进入对话上下文；敏感值已做脱敏。",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

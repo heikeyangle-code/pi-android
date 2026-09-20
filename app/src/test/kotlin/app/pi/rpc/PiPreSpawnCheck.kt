@@ -12,6 +12,13 @@ package app.pi.rpc
 //     the engine two sources for one value (the §M12 shape: two truths, one of
 //     which silently wins),
 //   * a `RestartEngine` claim on the row that is not actually restart-only,
+//   * a discovery suppression (`--no-extensions` / `--no-skills` /
+//     `--no-prompt-templates` / `--no-themes`) that is not carried, or one that is
+//     emitted with extra flags. The four are **1:1 with pi**: `--no-extensions` in
+//     particular must *not* be paired with `-e` to keep the app's own extensions
+//     alive — that would be an app-side exception to a pi flag, and the shipped
+//     extensions are ordinary discovered extensions that the switch is meant to
+//     turn off too (`docs/pre-spawn-config.md` §2.2).
 //   * a pre-spawn row that left the two groups which document the pre-spawn
 //     contract (`运行时与诊断 → 进程` for the engine knobs, `提示词` for the two
 //     prompt flags — see the `preSpawnGroups` comment below). The second group is
@@ -139,6 +146,10 @@ fun main() {
         systemPrompt = "base prompt",
         appendSystemPrompt = "extra preference",
         noContextFiles = true,
+        noExtensions = true,
+        noSkills = true,
+        noPromptTemplates = true,
+        noThemes = true,
         extensionArgs = PASS_THROUGH_FIXTURE_ARGS,
     )
     val suffix = everything.commandLineSuffix()
@@ -221,6 +232,49 @@ fun main() {
     )
     val noContextOff = PiLaunchOptions.fromSettingValues(null, null, null, null, false)
     check("noContextFiles=false emits nothing", noContextOff.commandLineSuffix() == "")
+
+    // ------------------------------------------------- the four discovery suppressions
+    val suppressionSuffix = PiLaunchOptions.fromSettingValues(
+        offline = null,
+        cacheRetention = null,
+        systemPrompt = null,
+        appendSystemPrompt = null,
+        noContextFiles = null,
+        noExtensions = true,
+        noSkills = true,
+        noPromptTemplates = true,
+        noThemes = true,
+    ).commandLineSuffix()
+    val suppressionFlags = listOf("--no-extensions", "--no-skills", "--no-prompt-templates", "--no-themes")
+    check(
+        "every discovery suppression reaches the command line",
+        suppressionFlags.all { containsFlag(suppressionSuffix, it) },
+        "got ${suppressionSuffix.ifBlank { "(empty suffix)" }}",
+    )
+    // Exact, not "contains": with only these four set, the suffix is those four flags
+    // and nothing else. This is the assertion that would catch any future companion
+    // (an `-e`, a path, an env-derived extra) being smuggled in next to them.
+    check(
+        "with only the four suppressions on, the suffix is exactly those four flags",
+        suppressionSuffix == " --no-extensions --no-skills --no-prompt-templates --no-themes",
+        "got ${suppressionSuffix.ifBlank { "(empty suffix)" }}",
+    )
+    // 1:1 with pi — nothing is added next to a suppression. In particular
+    // `--no-extensions` must not come with `-e` companions: the app's shipped
+    // extensions are ordinary discovered extensions, so they are supposed to go off
+    // with the switch. An `-e` here would be an app-side exception to a pi flag.
+    check(
+        "no suppression is accompanied by an explicit source flag",
+        !Regex("(^|\\s)-e(\\s|$)").containsMatchIn(suppressionSuffix),
+        "the command line carries -e next to a --no-* flag: " +
+            "${suppressionSuffix.ifBlank { "(empty suffix)" }}. The four are 1:1 with pi " +
+            "(docs/pre-spawn-config.md §2.2); keeping the app's extensions alive under " +
+            "--no-extensions is a different app-side feature, not this flag.",
+    )
+    check(
+        "the four suppressions are absent when unset",
+        suppressionFlags.none { containsFlag(defaults.commandLineSuffix(), it) },
+    )
 
     // Quoting: the suffix is handed to `bash -lc`, so spaces and metacharacters
     // must stay inside one argument.

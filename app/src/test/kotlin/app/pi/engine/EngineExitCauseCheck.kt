@@ -7,7 +7,10 @@ package app.pi.engine
 // Why a harness: this object is the *only* thing that turns the captured stderr into
 // something a person can act on, and every rule in it is a claim about what pi
 // prints. The stderr strings below are copied verbatim from runs against the pinned
-// engine (pi 0.85.1, node 24.19.0); the runs and their exit codes are recorded in
+// engine (pi 0.85.1, node 24.19.0; the 0.86.1 bump re-checked them against that
+// engine's source, where they are unchanged — `core/extensions/loader.ts:578`,
+// `cli/args.ts:242`, `main.ts:645`, `modes/rpc/rpc-mode.ts:476`); the runs and their
+// exit codes are recorded in
 // `docs/engine-exit-review.md` §2. If pi's wording ever changes, the rule silently
 // stops matching and the failure screen quietly falls back to "引擎异常退出" — which
 // is precisely the state this object was written to end. Pinning the strings here

@@ -41,15 +41,15 @@ import app.pi.ui.theme.PiTheme
  *    says what ran and the footer already says how it ended (state, exit code, line count,
  *    「已截断」), so a collapsed card is readable without the tail. Going back to pi's shape is
  *    the single guard around the body below. Ledger: `07-construction-decisions.md` D45;
- *  - `[Full output: <path>. Truncated: …]` as a warning line (`:78-90`) — the same sentence in
+ *  - `[Full output: <path>. Truncated: …]` as a warning line (`:86-98`) — the same sentence in
  *    the same place, but **inside the expanded branch** here, for the same reason (D45): the
  *    footer's 「已截断」 carries the fact while collapsed, and the notice is what names the file
  *    to copy from. The sentence the tool already appended to its own text is stripped first
- *    (`:59-64`), which is what [stripFullOutputFooter] does, so the fact is printed once;
- *  - `Elapsed 12.3s` while the command runs and `Took 12.3s` afterwards (`:91-96`), pi
- *    refreshing it once a second (`:113-115`).
+ *    (`:47-53`), which is what [stripFullOutputFooter] does, so the fact is printed once;
+ *  - `Elapsed 12.3s` while the command runs and `Took 12.3s` afterwards (`:100-105`), pi
+ *    refreshing it once a second (`:122`).
  *
- * > Line numbers are the shipped build's (`dist/core/tools/renderers/bash.js`, v0.85.1), which
+ * > Line numbers are the shipped build's (`dist/core/tools/renderers/bash.js`, v0.86.1), which
  * > is the copy this was verified against; the older `.ts` numbers elsewhere in this file are
  * > the upstream TypeScript source and point at the same statements.
  *
@@ -255,7 +255,8 @@ private fun shellSubject(command: String, timeout: Int?): List<ToolCallPart> = b
  *
  * pi splits these across two lines (its card's title, and `Elapsed`/`Took` under the body);
  * the app's card has one footer row, so they are joined in pi's order. The elapsed part is
- * [ToolOutputParse.elapsedLabel], which is pi's `formatDuration` (`renderers/bash.ts:32-34`).
+ * [ToolOutputParse.elapsedLabel], which is pi's `formatDuration` (`renderers/bash.ts:32-42`,
+ * including 0.86.1's switch to minutes and hours past a minute).
  *
  * [elapsedMs] is handed in by the caller: while the command runs this is the app's
  * recomposition beat, not a clock of its own, and the same value goes to the tick. A

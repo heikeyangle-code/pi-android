@@ -89,6 +89,10 @@ internal fun splitAutoTheme(raw: String): Pair<String, String>? {
 /**
  * What the effective badge means, plus the action that applies it (spec §6.5).
  * pi has four different timings; a badge without this explanation is just noise.
+ *
+ * `AutoRestartEngine` is the fifth and the only one that needs no action from the
+ * user: the write itself restarts the engine (`RuntimeSwitchAction`), so the body
+ * says so and `SettingsGroupScreen` passes no action — the dialog is a 知道了.
  */
 @Composable
 fun PiEffectiveDialog(
@@ -115,6 +119,13 @@ fun PiEffectiveDialog(
             "需要重启引擎",
             "改动已保存，重启引擎后生效。重启会终止正在进行的回合，已写入磁盘的会话不会丢失。",
             "重启引擎",
+        )
+
+        EffectiveKind.AutoRestartEngine -> Triple(
+            "自动重启引擎",
+            "改动已保存，并且这个开关会自己重启引擎来让它生效——不用你再动手。" +
+                "探针没通过、或重启被正在运行的回合拒绝时，行上会写明发生了什么。",
+            "知道了",
         )
 
         EffectiveKind.RestartApp -> Triple(
@@ -635,19 +646,11 @@ fun PiListEditorSheet(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Spacer(Modifier.height(PiSpacing.inline))
-            PiInfoNote(
-                if (setting.container == PiValueContainer.Object) {
-                    "每行一项，写成「键 = 值」，键按精确匹配不认通配符。值以 { 或 [ 开头时按 JSON 解析，" +
-                        "例如逐模型压缩覆盖写成 model-id = {\"reserveTokens\": 400000}，其余按字符串/数字/布尔解析。" +
-                        "清空并保存 = 删掉这项设置、回到 pi 的默认（不是写一个空对象）。"
-                } else {
-                    "每行一项，支持 glob 与排除标记：!pattern 排除、+path 强制包含、-path 强制排除。" +
-                        "值以 { 或 [ 开头时按 JSON 解析，例如 packages 的对象形式 " +
-                        "{\"source\": \"pi-skills\", \"autoload\": false}。" +
-                        "清空并保存 = 删掉这项设置、回到 pi 的默认（不是写一个空列表）。"
-                },
-            )
-            Spacer(Modifier.height(PiSpacing.inline))
+            // 这里原来有一块 `PiInfoNote`，逐行讲解值的写法（键=值 / glob 排除标记 / JSON 解析 /
+            // 「清空并保存 = 删键」）。用户裁定删掉：**这一屏要的是能用的编辑器，不是语法手册**。
+            // 真正必须知道的两件事仍在行自己的 `description` 里（默认值是什么、清空等于回到默认），
+            // 所以删掉这块没有让任何承诺消失；值的语法本来也由 `Pi 文件` 屏与 pi 自己的文档负责。
+            // 读旧版请见 `git log -S"每行一项" -- app/src/main/kotlin/app/pi/ui/settings/PiSettingsEditors.kt`。
             if (setting.presets.isNotEmpty()) {
                 Text(
                     "快捷添加",

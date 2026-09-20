@@ -26,10 +26,11 @@ import java.io.File
  *
  *  - [agentMirrorDir] is the **authoritative** agent dir. It is what pi reads and
  *    writes, it is what the app's own settings store addresses
- *    (`ui/PiSessionViewModel.kt:325-328`), and it survives a runtime re-extract
- *    (`RuntimeProvisioner.wipe()` deletes `paths.runtime` wholesale,
- *    `RuntimeProvisioner.kt:85-91`, and only re-creates an empty
- *    `/root/.pi/agent`).
+ *    (`ui/PiSessionViewModel.kt:325-328`), and it survives a runtime re-extract:
+ *    `RuntimeProvisioner` deletes nothing outside `paths.runtime` (a payload change
+ *    only extracts *over* the tree), and the one path that does delete the tree — the
+ *    explicit repair — leaves this directory alone and re-creates only an empty
+ *    `/root/.pi/agent` inside the rootfs.
  *  - [agentTruthDir] is the rootfs copy. It is a real directory and this package
  *    still keeps it in step, but pi does not read it while the bind is in place. It
  *    is the fallback for a run whose proot argv omits the bind — which is why every

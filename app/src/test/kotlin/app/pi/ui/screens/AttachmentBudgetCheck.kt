@@ -29,9 +29,19 @@ import java.io.File
 //     one message and one more does not — is checked as arithmetic, at the strict
 //     inequality pi itself uses (`encodedSize < maxBytes`).
 //  4. **The decision, not just the numbers.** `decide` is the one place that answers
-//     "does this image fit", and the refusal's fields are what the user is told. The
-//     checks drive it at both boundaries (exactly full, one character over) and with an
-//     empty list, so the copy's numbers cannot come from anywhere but the decision.
+//     "does this image fit", and its fields are what the user is told *when it does not*:
+//     section 8 pins that the outcome is no longer a refusal but a downgrade to
+//     "copied into the workspace, hand over the path" (`ChatScreen`'s `fallbackInline`),
+//     with the verdict's own three figures in the sentence. The checks drive it at both
+//     boundaries (exactly full, one character over) and with an empty list, so the copy's
+//     numbers cannot come from anywhere but the decision.
+//
+//  5. **The workspace copy's bound is the disk, not the message** (`AttachmentBudget.workspaceSpace`).
+//     The two limits are unrelated: `MESSAGE_BYTES` is about one JSONL record's inline base64,
+//     the workspace copy is about free space. Section 8 pins that a file larger than
+//     `MESSAGE_BYTES` is still copied when the disk has room, that a shortage reports the
+//     space figures rather than "too large", and that the margin stays a bounded number
+//     rather than a second provisioning threshold.
 //
 // ## What it cannot check
 //
@@ -347,6 +357,87 @@ fun main() {
     checkTrue(
         "the read guard is above the message budget, so it never stands in for it",
         AttachmentBudget.MAX_PICKED_IMAGE_BYTES > AttachmentBudget.MESSAGE_BYTES,
+    )
+
+    // ------------------------- 8. 工作区复制：上限只有磁盘，**不是**内联预算
+    //
+    // 用户原话：「附件现在本来就是发啥都复制到工作区，现在发个文件还说太大，复制不进去，太傻逼了。」
+    // 那条拒绝来自 `copyIntoWorkspace` 把 `MESSAGE_BYTES`（23.95 MB，内联预算）当成了复制的上限。
+    // 下面四组断言把这条裁决钉住：上限与内联预算**无关**、空间不足报的是空间、任何内联不成的结局
+    // 都是「放进工作区 + 给路径」、以及余量不许长成第二个「解包门槛」。
+    val roomy = 64L * 1024 * 1024 * 1024 // 64 GiB：任何真机上都是「装得下」
+    check(
+        "① 比内联预算多一个字节的文件，磁盘装得下就允许复制",
+        AttachmentBudget.workspaceSpace(AttachmentBudget.MESSAGE_BYTES + 1L, roomy),
+        AttachmentBudget.DiskSpace.Room,
+    )
+    check(
+        "① 内联额度的大小在复制这条路上不出现（恰好在预算上也是 Room）",
+        AttachmentBudget.workspaceSpace(AttachmentBudget.MESSAGE_BYTES.toLong() * 8, roomy),
+        AttachmentBudget.DiskSpace.Room,
+    )
+    checkTrue(
+        "① 余量是一个有界的数，不是第二个解包门槛",
+        AttachmentBudget.WORKSPACE_SPACE_MARGIN_BYTES in 1..(64L * 1024 * 1024),
+        "margin=${AttachmentBudget.WORKSPACE_SPACE_MARGIN_BYTES}",
+    )
+    // 边界：恰好等于「可用 − 余量」装得下，多一个字节装不下（严格不等）。
+    val free = AttachmentBudget.WORKSPACE_SPACE_MARGIN_BYTES + 10_000L
+    check("② 恰好用完余量之外的每一字节：Room", AttachmentBudget.workspaceSpace(10_000L, free), AttachmentBudget.DiskSpace.Room)
+    check(
+        "② 多一个字节：Insufficient，且两个数就是那次测量的数",
+        AttachmentBudget.workspaceSpace(10_001L, free),
+        AttachmentBudget.DiskSpace.Insufficient(neededBytes = 10_001L, availableBytes = free),
+    )
+    check(
+        "② 可用空间比余量还小 → 需要的下界照实报",
+        AttachmentBudget.workspaceSpace(4_096L, 1_024L),
+        AttachmentBudget.DiskSpace.Insufficient(neededBytes = 4_096L, availableBytes = 1_024L),
+    )
+    check(
+        "② 文件系统读不出可用空间时不假装知道（不据此拒绝）",
+        AttachmentBudget.workspaceSpace(Long.MAX_VALUE, null),
+        AttachmentBudget.DiskSpace.Unknown,
+    )
+    check(
+        "② 显式余量参数被用上，不是被忽略",
+        AttachmentBudget.workspaceSpace(2_000L, 3_000L, marginBytes = 1_500L),
+        AttachmentBudget.DiskSpace.Insufficient(neededBytes = 2_000L, availableBytes = 3_000L),
+    )
+    checkTrue(
+        "③ 内联被拒的那张图，复制这条路照样允许（两条判定互相独立）",
+        AttachmentBudget.decide(listOf(AttachmentBudget.MESSAGE_BASE64_CHARS), 1) is AttachmentBudget.Verdict.MessageFull &&
+            AttachmentBudget.workspaceSpace(AttachmentBudget.MESSAGE_BYTES + 1L, roomy) == AttachmentBudget.DiskSpace.Room,
+    )
+
+    // ③/① 的连线：`ChatScreen` 编不了（Compose + Android），所以这两条读源文本 —— 与 (e) 同法。
+    // 断言的是**形状**，不是措辞：旧的有界复制（`copyBounded(..., MESSAGE_BYTES)`）必须不在，
+    // 复制的判定必须只有一处（`workspaceSpace`），而「内联不成 → 放进工作区」这条降级必须在。
+    check("旧的内联预算不再被当成复制的上限", chatText.contains("copyBounded(input, sink, AttachmentBudget.MESSAGE_BYTES)"), false)
+    check(
+        "工作区复制的空间判定只有一个入口",
+        Regex("AttachmentBudget\\.workspaceSpace\\(").findAll(chatText).count(),
+        1,
+    )
+    checkTrue(
+        "内联额度不够时走的是「放进工作区 + 给路径」，不是拒绝",
+        Regex("is AttachmentBudget\\.Verdict\\.MessageFull -> fallbackInline\\(").containsMatchIn(chatText) &&
+            !chatText.contains("messageFullText("),
+        "degrade=${Regex("fallbackInline\\(").findAll(chatText).count()} messageFullText=${chatText.contains("messageFullText(")}",
+    )
+    checkTrue(
+        "空间不足的那句话说的是空间，而不是「文件太大」",
+        chatText.contains("磁盘空间不足：这个文件至少需要") && !chatText.contains("文件太大：上限是"),
+    )
+    checkTrue(
+        "降级说明里同时有：工作区路径、没有内联、模型能读到",
+        chatText.contains("已放进工作区 \$relativePath —— \$why，所以没有随消息内联") &&
+            chatText.contains("模型可以用工具读取这个文件"),
+    )
+    checkTrue(
+        "半文件必删：两条失败路径都删（空间与写入失败）",
+        Regex("runCatching \\{ target\\.file\\.delete\\(\\) \\}").findAll(chatText).count() == 2,
+        "deletes=${Regex("target\\.file\\.delete\\(\\)").findAll(chatText).count()}",
     )
 
     println(if (failures == 0) "\nharness: OK (all checks passed)" else "\nharness: FAILED ($failures)")

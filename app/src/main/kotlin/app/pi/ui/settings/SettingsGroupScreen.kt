@@ -100,6 +100,12 @@ fun SettingsGroupScreen(
      * [EffectiveKind.RestartEngine] row ("重启引擎"). Null hides that button, which
      * is right where no engine hook exists: the row's own explanation still says
      * what has to happen.
+     *
+     * [EffectiveKind.AutoRestartEngine] rows deliberately do **not** use it, even
+     * when this is non-null: their write already restarted the engine, so a button
+     * would either repeat that or fall through to the generic action channel and
+     * answer 「当前不可用」 for a row that is working. See the `when` at the
+     * `PiEffectiveDialog` call.
      */
     onRestartEngine: (() -> Unit)? = null,
     /**
@@ -127,7 +133,7 @@ fun SettingsGroupScreen(
             confirming = setting
         } else if (setting.kind != PiRowKind.Switch && !setting.readOnly) {
             // 只读行（运行时那六行）没有可打开的东西：`PiSettingRow` 早就没给它们 chevron，
-            // 但点击一直通着 —— 点「pi 版本」（行上是 `0.85.1`）会打开一个空的、禁用的
+            // 但点击一直通着 —— 点「pi 版本」（行上是当时的引擎版本 `0.85.1`）会打开一个空的、禁用的
             // 文本框。判据与 chevron 用同一个 `readOnly`，两处不再分叉
             // （`docs/settings-audit-impl.md` §B4）。
             editing = setting
@@ -235,20 +241,6 @@ fun SettingsGroupScreen(
                     }
                 }
             }
-            item {
-                // v2 分组页页脚：说明徽标的四种时机（06 §2「页脚说明 16px 14px 0」）。
-                Text(
-                    "每一行末尾那枚徽标说明改动什么时候生效：新会话 / 需重载 / 需重启引擎 / 需重启。",
-                    modifier = Modifier.padding(
-                        start = PiSettingsMetrics.pageHorizontal,
-                        end = PiSettingsMetrics.pageHorizontal,
-                        top = PiSettingsMetrics.footerTop,
-                        bottom = PiSpacing.unit,
-                    ),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
         }
     }
 
@@ -283,8 +275,14 @@ fun SettingsGroupScreen(
             // `RestartEngine` that action is the engine restart itself, which the
             // host owns (设置 → 进程 → 重启引擎) — the generic action channel is for
             // `PiRowKind.Action` rows and would answer "not implemented" here.
+            //
+            // `AutoRestartEngine` deliberately has **no** action: the write already
+            // restarted the engine, so a button here would either do it twice or —
+            // worse — fall through to the generic channel, whose answer for a
+            // non-Action row is 「当前不可用」. Null gives the dialog its 知道了.
             onRunAction = when {
                 openExplanation.effective == EffectiveKind.RestartEngine -> onRestartEngine
+                openExplanation.effective == EffectiveKind.AutoRestartEngine -> null
                 run != null -> { { run(openExplanation) } }
                 else -> null
             },

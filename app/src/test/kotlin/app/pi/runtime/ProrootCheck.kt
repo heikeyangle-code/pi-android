@@ -132,6 +132,60 @@ fun main() {
     check("proroot binds /dev to /dev", prorootBinds.contains("/dev:/dev"), true)
     check("proot's bind count is unchanged by the respelling", prootBinds.size, sharedBinds.size + 2)
 
+    // ---- `-w` 的目录必须在 rootfs 里存在（2026-09-19 实测；引擎 126 的根因） -------
+    // proroot v1.2.8 的 `-w` **只按 rootfs 解析**、不看绑定表：`<rootfs>/<cwd>` 不存在时
+    // 启动器打印 `[proroot] chdir workdir failed: …` 并让子进程以 126 退出（原文见
+    // `ProrootCommand` 与 `ProrootExecProbe` 的 KDoc）。修法是 `ensureWorkdir`，它的纪律是
+    // "只在有绑定覆盖、且那条绑定的 host 目录存在时才补目录"——无条件的 `mkdirs()` 会把
+    // "忘了传绑定"从一次响亮的启动失败变成一次安静的空工作区运行。下面把纯判据和真实
+    // 文件上的每一种状态都钉住。
+    check("a guest path maps to its rootfs path", ProrootCommand.workdirUnder(p.rootfs, "/workspace/pi/workspaces/workspace-1"), java.io.File(p.rootfs, "workspace/pi/workspaces/workspace-1"))
+    check("a trailing slash is the same directory", ProrootCommand.workdirUnder(p.rootfs, "/workspace/"), java.io.File(p.rootfs, "workspace"))
+    check("`-w /` is the rootfs itself", ProrootCommand.workdirUnder(p.rootfs, "/"), p.rootfs)
+    check("a relative cwd is refused", ProrootCommand.workdirUnder(p.rootfs, "workspace"), null)
+    check("a `..` segment is refused", ProrootCommand.workdirUnder(p.rootfs, "/workspace/../etc"), null)
+    check("an empty segment is refused", ProrootCommand.workdirUnder(p.rootfs, "/workspace//x"), null)
+
+    val engineCwd = "/workspace/pi/workspaces/workspace-1"
+    val workspaceBind = "/data/user/0/app.pi/files/pi/workspaces/workspace-1" to engineCwd
+    check("the engine's own bind covers its cwd", ProrootCommand.bindingCovering(engineCwd, listOf(workspaceBind)), workspaceBind)
+    check("a bind above the cwd covers it", ProrootCommand.bindingCovering("$engineCwd/sub", listOf(workspaceBind)), workspaceBind)
+    check("a name that only looks like a prefix does not cover", ProrootCommand.bindingCovering("${engineCwd}x", listOf(workspaceBind)), null)
+    check("no bind covers /root", ProrootCommand.bindingCovering("/root", listOf(workspaceBind)), null)
+    check("the builder sees the extra binds and the tmp bind", ProrootCommand.boundPairs(p, null, listOf(workspaceBind)).let { it.contains(workspaceBind) && it.any { pair -> pair.second == "/tmp" } }, true)
+    check("a bare proot binding reads as host == guest", ProrootCommand.boundPairs(p, null, emptyList()).contains("/dev" to "/dev"), true)
+
+    // 真实文件上的每一种状态。`ensureWorkdir` 只会碰 rootfs 里那个替身目录。
+    val wdRoot = java.io.File(System.getProperty("java.io.tmpdir"), "pi-proroot-workdir-check")
+    wdRoot.deleteRecursively()
+    val wdRootfs = java.io.File(wdRoot, "rootfs")
+    val wdHost = java.io.File(wdRoot, "host/workspace-1")
+    check("no bind means no directory is created", ProrootCommand.ensureWorkdir(wdRootfs, engineCwd, emptyList()), ProrootCommand.WorkdirState.NO_BIND)
+    check("...and nothing was created", wdRootfs.exists(), false)
+    wdHost.mkdirs()
+    val wdCovering = listOf(wdHost.path to engineCwd)
+    check("a rootfs that is not unpacked is left alone", ProrootCommand.ensureWorkdir(wdRootfs, engineCwd, wdCovering), ProrootCommand.WorkdirState.NO_ROOTFS)
+    check("...and still nothing was created", wdRootfs.exists(), false)
+    wdRootfs.mkdirs()
+    check("the first launch creates the guest cwd", ProrootCommand.ensureWorkdir(wdRootfs, engineCwd, wdCovering), ProrootCommand.WorkdirState.CREATED)
+    check("...and it is a directory", java.io.File(wdRootfs, "workspace/pi/workspaces/workspace-1").isDirectory, true)
+    check("the second launch finds it", ProrootCommand.ensureWorkdir(wdRootfs, engineCwd, wdCovering), ProrootCommand.WorkdirState.PRESENT)
+    check("a missing bind host is not papered over", ProrootCommand.ensureWorkdir(wdRootfs, "/workspace/other", listOf(java.io.File(wdRoot, "gone").path to "/workspace/other")), ProrootCommand.WorkdirState.HOST_MISSING)
+    check("...and that path was not created either", java.io.File(wdRootfs, "workspace/other").exists(), false)
+    val wdBlocked = java.io.File(wdRoot, "blocked/rootfs")
+    wdBlocked.mkdirs()
+    java.io.File(wdBlocked, "workspace").writeText("a file where a directory has to be")
+    check("a mkdirs() that cannot win is reported as such", ProrootCommand.ensureWorkdir(wdBlocked, engineCwd, wdCovering), ProrootCommand.WorkdirState.FAILED)
+
+    // 端到端：`build` 是唯一的漏斗（引擎 / 装包 / 终端 / 三个探针阶段 / 失败取证都走它），
+    // 所以引擎形状的 argv 一经产出，rootfs 里就已经有了那个 `-w` 目录。
+    val wdPaths = PiPaths(filesDir = java.io.File(wdRoot, "files"), nativeLibDir = java.io.File(wdRoot, "lib"))
+    wdPaths.rootfs.mkdirs()
+    val wdArgv = ProrootCommand.build(wdPaths, "echo hi", engineCwd, null, listOf(wdHost.path to engineCwd))
+    check("build() prepares the engine's -w in the rootfs", java.io.File(wdPaths.rootfs, "workspace/pi/workspaces/workspace-1").isDirectory, true)
+    check("...and still passes the cwd it was given", wdArgv.windowed(2).any { it == listOf("-w", engineCwd) }, true)
+    wdRoot.deleteRecursively()
+
     // The tail is the shared shell invocation, identical in both.
     check("proroot ends with the shared shell tail", prorootArgv.takeLast(3), listOf("/bin/bash", "-c", command))
     check("proot ends with the same tail", prootArgv.takeLast(3), prorootArgv.takeLast(3))
@@ -197,17 +251,48 @@ fun main() {
     check("all four conditions satisfied means proroot", RuntimeChoice.decide(enabled = true, filesPresent = true, probePassed = true, consecutiveFailures = 0), EngineDecision(GuestEngine.Proroot, EngineFallback.None))
     check("the switch is checked before the files", RuntimeChoice.decide(enabled = false, filesPresent = false, probePassed = false, consecutiveFailures = 5), EngineDecision(GuestEngine.Proot, EngineFallback.SwitchOff))
     check("every failure reason has a sentence", EngineFallback.entries.all { RuntimeChoice.describe(it).isNotBlank() }, true)
-    // 尚未运行 is the sentence users got stuck on: the first launch after the switch is
-    // turned on is the one that runs the probe **and still uses proot**, and only a later
-    // launch can end up on proroot. The old text ("首次使用时会自动跑一次") described the
-    // probe but not what the user sees in between. Pinned here because this sentence is
-    // in `RuntimeChoice` — a symbol this harness already owns — and the settings row and
-    // the report both render it verbatim.
+    // 这一组句子读出来的是「运行时（实际生效）」那一行的值：标题问「在跑哪个」，所以每个值
+    // 都必须**先写那个运行时**，原因才跟在括号里。旧的一组是反过来的（关掉时写「未开启（走
+    // proot）」），用户直接问了出来：「关掉 Pro Root 为什么要写着未开启」。这条不变量逐值
+    // 钉住「谁在最前面」，改文案时最先被它拦住。
+    val sentences = EngineFallback.entries.associateWith { RuntimeChoice.describe(it) }
+    check(
+        "every sentence leads with the runtime that is in effect",
+        sentences.values.map { it.substringBefore('（') }.distinct().sorted(),
+        listOf("proot", "proroot"),
+    )
+    check(
+        "the sentence for proroot leads with proroot, every proot fallback with proot",
+        sentences[EngineFallback.None]?.substringBefore('（'),
+        "proroot",
+    )
+    check(
+        "every proot fallback leads with proot",
+        EngineFallback.entries.filter { it != EngineFallback.None }
+            .associateWith { sentences[it]?.substringBefore('（') },
+        EngineFallback.entries.filter { it != EngineFallback.None }.associateWith { "proot" },
+    )
+    check(
+        "turning the switch off reads as the runtime, not as the switch",
+        sentences[EngineFallback.SwitchOff],
+        "proot",
+    )
+    // 尚未运行 不再讲「下一次 / 再下一次」：拨开开关现在会**当场**跑探针并重启引擎
+    // （`ui/settings/RuntimeSwitchAction`），所以三趟车的说明既不是用户看到的事，也和开关
+    // 那一行的文案互相矛盾。这一档只剩一个含义：此刻没有这个 revision 的探针结论。
     val notRun = RuntimeChoice.describe(EngineFallback.ProbeNotRun)
-    check("尚未运行 says the next launch runs the probe", notRun.contains("下一次启动 guest 会跑一次"), true)
-    check("尚未运行 says that launch still uses proot", notRun.contains("那一次仍用 proot"), true)
-    check("尚未运行 says proroot can only take over after that", notRun.contains("再下一次"), true)
+    check("尚未运行 names the missing probe verdict", notRun.contains("探针尚未运行"), true)
+    check("尚未运行 no longer promises a next launch", notRun.contains("下一次"), false)
+    check("尚未运行 no longer counts launches", notRun.contains("再下一次"), false)
     check("尚未运行 is still one line", notRun.none { it == '\n' || it == '\r' }, true)
+    check(
+        "the failure streak names the count and the way out",
+        listOf(
+            sentences[EngineFallback.FailureStreak]?.contains("3 次启动失败") == true,
+            sentences[EngineFallback.FailureStreak]?.contains("重新打开开关") == true,
+        ),
+        listOf(true, true),
+    )
     check("the failure budget is three", RuntimeChoice.MAX_CONSECUTIVE_FAILURES, 3)
     check("a failure advances the counter", RuntimeChoice.afterFailure(0), 1)
     check("a failure at the boundary is exhausted", RuntimeChoice.exhausted(RuntimeChoice.afterFailure(2)), true)
@@ -531,7 +616,8 @@ fun main() {
 
     val execPass = ProrootExecProbe.parse(
         execLine(ProrootExecProbe.PHASE_EXISTS, "/usr/bin/env", ProrootExecProbe.STATE_EXEC) + "\n" +
-            execLine(ProrootExecProbe.PHASE_RUN, "/usr/bin/env", "0", "true") + "\n" +
+            // 真机形状：`env true` 退出 0 且**什么都不打印**（RUN 行没有输出字段）。
+            execLine(ProrootExecProbe.PHASE_RUN, "/usr/bin/env", "0") + "\n" +
             execLine(ProrootExecProbe.PHASE_EXISTS, "/opt/node/bin/node", ProrootExecProbe.STATE_EXEC) + "\n" +
             execLine(ProrootExecProbe.PHASE_RUN, "/opt/node/bin/node", "0", "v24.19.0"),
     )
@@ -541,10 +627,63 @@ fun main() {
     check("the pass names the engine's binary and its version", execPass.describe().any { it.contains("/opt/node/bin/node --version") && it.contains("v24.19.0") }, true)
     check("a passing line starts with the pass mark", execPass.describe().first().startsWith(ProrootExecProbe.PASS_MARK), true)
 
+    // **门禁必须是可满足的** —— 这一组断言是用户真机报告换来的，也是这次修复的判据。
+    //
+    // `/usr/bin/env true` 的设计就是退出 0 且**什么都不打印**；旧规则把「退出码 0 但没有输出」
+    // 一律当失败，于是这一档在真机上**永远过不去**。报告原文：
+    // `实际生效: proot（探针未通过）(默认档 · 动态二进制: /usr/bin/env true: 退出码 0 但没有任何输出)`
+    // —— 同一份报告里 raw syscall、`rg`、`fd` 全过，所以 proroot 永远选不上，表现为「开关没用」。
+    //
+    // 为什么这条缺陷能活到今天：**夹具本身说了假话**。上面那条 `execPass` 原先给静默的
+    // `/usr/bin/env true` 编了一行输出 `true`，于是一个真机上不可能出现的形状一直绿着。
+    // 现在 `execPass` 用的就是真机形状（`env true` 静默 + node 打印版本），下面这几条是它的
+    // 判据：静默的目标必须通过，而**期望有输出**的那条静默下来必须失败。
+    check("真机形状：静默的 /usr/bin/env true + 会打印版本的 node ⇒ 通过", execPass.ok, true)
+    check("静默的目标没有 reason", execPass.results.first().reason, null)
+    check("静默的成功不画一对空括号", execPass.describe().first().contains("（）"), false)
+    check(
+        "它说的是「本来就不输出」，不是「没有输出」",
+        execPass.describe().first().contains("本来就不输出"),
+        true,
+    )
+    check(
+        "两个目标各自声明了「该不该有输出」",
+        ProrootExecProbe.TARGETS.map { it.expectsOutput },
+        listOf(false, true),
+    )
+    // 整道门禁必须**可满足**：三档都健康的真机形状（raw 有翻译、工具 ok、动态二进制用上面
+    // 那份 `execPass`）⇒ 必须允许 proroot。旧规则下这一格永远是 `false`，那正是「开关拨开也
+    // 没用、实际生效永远是 proot」的全部原因；这条断言把「可满足」钉在门禁这一层，而不是
+    // 只钉在这一档。
+    check(
+        "三档都健康的真机形状让门禁可满足（⇒ 允许 proroot）",
+        RuntimeChoice.probeGate(
+            RuntimeChoice.PROROOT_SECCOMP,
+            rawVetoed = false,
+            rawTranslated = true,
+            toolsOk = true,
+            execOk = execPass.ok,
+        ),
+        true,
+    )
+    // 反例：**期望有输出**的那一条静默了 ⇒ 必须失败（node 的严格性一点没放松）
+    val nodeSilent = ProrootExecProbe.parse(
+        execLine(ProrootExecProbe.PHASE_EXISTS, "/usr/bin/env", ProrootExecProbe.STATE_EXEC) + "\n" +
+            execLine(ProrootExecProbe.PHASE_RUN, "/usr/bin/env", "0") + "\n" +
+            execLine(ProrootExecProbe.PHASE_EXISTS, "/opt/node/bin/node", ProrootExecProbe.STATE_EXEC) + "\n" +
+            execLine(ProrootExecProbe.PHASE_RUN, "/opt/node/bin/node", "0"),
+    )
+    check("node --version 退出 0 却没输出 ⇒ 失败", nodeSilent.ok, false)
+    check(
+        "失败原因仍是「退出码 0 但没有任何输出」",
+        nodeSilent.results.last().reason,
+        "退出码 0 但没有任何输出",
+    )
+
     // The device's shape: both binaries exist with +x, and the engine's own one still exits 126.
     val execBroken = ProrootExecProbe.parse(
         execLine(ProrootExecProbe.PHASE_EXISTS, "/usr/bin/env", ProrootExecProbe.STATE_EXEC) + "\n" +
-            execLine(ProrootExecProbe.PHASE_RUN, "/usr/bin/env", "0", "true") + "\n" +
+            execLine(ProrootExecProbe.PHASE_RUN, "/usr/bin/env", "0") + "\n" +
             execLine(ProrootExecProbe.PHASE_EXISTS, "/opt/node/bin/node", ProrootExecProbe.STATE_EXEC) + "\n" +
             execLine(ProrootExecProbe.PHASE_RUN, "/opt/node/bin/node", "126", "Permission denied"),
     )
@@ -727,6 +866,237 @@ fun main() {
     check("the probe cache is inside the volatile runtime tree", p.prorootProbeCache().path, "$FILES/pi/runtime/.proroot-probe")
     check("the CA bundle is the payload's path", GuestRecipe.GUEST_CA_BUNDLE, "/etc/ssl/certs/ca-certificates.crt")
     check("quoting survives an embedded single quote", ShellQuote.quote("a'b"), "'a'\\''b'")
+
+    // ============================== 9. 开关关着 = 另一条线「一点活都没干」
+    //
+    // The user's sentence this section answers is not about the *decision*: it is
+    // 「就算完全没用，也不影响另一个，一点不影响」. The decision half is pinned above
+    // (`decide(enabled = false, …)` is `SwitchOff`), and that alone is not enough —
+    // `RuntimeSelection.plan()`/`status()` could still have stat'ed the five proroot
+    // components, read the cache and hashed the binaries *before* reaching the decision,
+    // and every one of those results would be discarded. That would be work on every guest
+    // start for a user who never enabled proroot, and no decision-level check can see it.
+    //
+    // Four layers are pinned here, and this is exactly how far a bare JVM can go:
+    //
+    //  1. **The decision cannot depend on any proroot fact while the switch is off.**
+    //     The full cross-product of the other three inputs is enumerated: if the answer is
+    //     `SwitchOff` for all 16, then nothing those inputs describe can be consulted on
+    //     that path in the first place.
+    //  2. **The side effects are guarded in the source.** `RuntimeSelection.kt` imports
+    //     Android (`Context`, `Log`), so this harness cannot compile it and cannot call
+    //     `plan()`/`status()`. What it can do — the way `shell-policy-mirror` reads the
+    //     device guard — is read the file as text and require every expression that
+    //     touches proroot to sit inside an `enabled` guard: the five stats
+    //     (`missingProrootComponents()`), the cache read (`ProrootProbe.cached(`), the
+    //     config sweep, the gate call, and the two fields the answers are carried in
+    //     (`plan().probe`, `status().probePassed`). A future edit that hoists one of them
+    //     out of its guard fails this harness instead of silently costing every user 5
+    //     stats, a digest and a directory listing per launch.
+    //  3. **The suppressed side effect is real** (part 4): a PASS verdict planted under the
+    //     key the gate would compute is surfaced by the *production* reader
+    //     (`ProrootProbe.cached`) — so "the switch off does not read the cache" has a
+    //     visible consequence (`probePassed == null`, `probe == null`) rather than being an
+    //     unfalsifiable sentence about a file nobody would have read anyway.
+    //  4. **The component-less mirror** (part 5): with the five components absent the stat
+    //     answer is five, the decision refuses with `RuntimeFilesMissing`, and the planted
+    //     verdict is not rewritten by anything on that path.
+    //
+    // What this does **not** prove: that `plan()`/`status()` really return those two nulls
+    // at runtime — they live in `RuntimeSelection`, which cannot be compiled here, so the
+    // two fields are pinned only through their (single) assignment sites and the guards
+    // around them. Proving it needs `RuntimeSelection` compiled with android.jar plus a
+    // device; the layer is stated as a gap rather than papered over.
+    //
+    // (1) The decision ignores the other three facts entirely when the switch is off.
+    val offDecisions = buildList {
+        for (files in listOf(true, false)) {
+            for (probe in listOf(true, false)) {
+                for (fail in listOf(0, 1, 3, 99)) {
+                    add(RuntimeChoice.decide(enabled = false, filesPresent = files, probePassed = probe, consecutiveFailures = fail))
+                }
+            }
+        }
+    }
+    check("the switch off answers SwitchOff for every combination", offDecisions.size, 16)
+    check(
+        "…and none of the other three facts can change that answer",
+        offDecisions.all { it == EngineDecision(GuestEngine.Proot, EngineFallback.SwitchOff) },
+        true,
+    )
+    // The reverse half: components missing outranks a passing probe, so an enabled switch
+    // on a device without the five files can never run the gate either.
+    check(
+        "a missing component outranks a passing gate",
+        RuntimeChoice.decide(enabled = true, filesPresent = false, probePassed = true, consecutiveFailures = 0),
+        EngineDecision(GuestEngine.Proot, EngineFallback.RuntimeFilesMissing),
+    )
+
+    // (2) On a tree with no proroot components, nothing proroot-shaped appears just from
+    // asking the path questions — and the one accessor that *does* create the directory is
+    // the one `plan()`/`sweepProrootConfigs` does not use when the switch is off.
+    val offRoot = java.io.File(System.getProperty("java.io.tmpdir"), "pi-proroot-off-${System.nanoTime()}")
+    val offPaths = PiPaths(
+        filesDir = java.io.File(offRoot, "files").also { it.mkdirs() },
+        nativeLibDir = java.io.File(offRoot, "lib").also { it.mkdirs() },
+    )
+    check("the fixture has no proroot component", offPaths.missingProrootComponents().size, 5)
+    check("the non-creating scratch accessor creates no proroot-tmp", offPaths.prorootTmpDir().exists(), false)
+    check("asking for the probe cache creates nothing", offPaths.prorootProbeCache().exists(), false)
+    check("asking for the autopsy path creates nothing", offPaths.prorootEngineForensics().exists(), false)
+    // The pair's contract, stated in `PiPaths.prorootTmp`: the sweep must be able to look
+    // without creating, and only a launch creates. Both halves are asserted so a swap of
+    // the two accessors cannot pass.
+    check("the creating accessor does create it", offPaths.prorootTmp.isDirectory, true)
+    check("…and the non-creating one still only looks", offPaths.prorootTmpDir().isDirectory, true)
+
+    // (3) The source-level guards. Whitespace is normalised so this pins the *structure*
+    // and not the formatting.
+    val selectionSource = java.io.File(
+        java.io.File(System.getProperty("pi.repo.root") ?: "."),
+        "app/src/main/kotlin/app/pi/runtime/RuntimeSelection.kt",
+    ).readText().replace(Regex("\\s+"), " ")
+    val statsGuard = "val missing = if (enabled) paths.missingProrootComponents() else emptyList()"
+    check("both entry points guard the five stats with `enabled`", selectionSource.split(statsGuard).size - 1, 2)
+    check(
+        "the five stats are called nowhere else",
+        selectionSource.split("missingProrootComponents()").size - 1,
+        2,
+    )
+    check(
+        "the gate is called only behind `enabled && filesPresent && not exhausted`",
+        selectionSource.contains("val probePassed = if (enabled && filesPresent && !RuntimeChoice.exhausted(failures)) { probe = gate(storage)"),
+        true,
+    )
+    check(
+        "the cache is read only behind `enabled && missing.isEmpty()`",
+        selectionSource.contains("val cached = if (enabled && missing.isEmpty()) { runCatching { ProrootProbe.cached("),
+        true,
+    )
+    check(
+        "the config sweep runs only when the switch is on",
+        selectionSource.split("if (enabled) sweepProrootConfigs()").size - 1,
+        1,
+    )
+    check(
+        "plan()'s probe field is filled from the gated call only",
+        selectionSource.split("probe = probe,").size - 1,
+        1,
+    )
+    check(
+        "status()'s probePassed is filled from the guarded cache read only",
+        selectionSource.split("probePassed = cached?.passed,").size - 1,
+        1,
+    )
+
+    // (3b) 开关关着时 plan() 的探针字段与 status() 的 probePassed 各自**只有一个**赋值点，
+    // 而 (3) 的守卫说明那个赋值点读的是 `enabled` 之内的值。把两个字段的可达值钉出来：
+    // 关着 → `probe == null` / `probePassed == null`，不是 `false`（「没跑过」和「跑了没过」
+    // 是两种读数，不能互相冒充，见 `ProrootProbeNarrative.detailLines` 的分支）。
+    //
+    // 这一段**执行不了**：`status()`/`plan()` 在 `RuntimeSelection` 里，而那个文件 import 了
+    // Android（`Context`/`Log`/`Looper`），bare JVM 编译不了。所以这里只钉住赋值点的**唯一性**，
+    // 运行期可达性由 (3) 的源码守卫与 (4) 的「种下的结论确实读得到」共同承担。
+
+    // (4) 种下一份「通过」的探针结论，用来证明「没读到」不是一个空命题。
+    //
+    // A guard that suppresses a side effect is only meaningful while the side effect is
+    // real. So this plants a passing verdict **in the file `status()` reads**, under the
+    // exact key `gate()` would compute for this tree (revision + `ProrootProbe.digestOf`),
+    // and first proves the production reader surfaces it: `ProrootProbe.cached` is the very
+    // call `status()` makes when `enabled && missing.isEmpty()`. With the five components
+    // present and the planted key matching, it reads back `true` — so an unguarded
+    // `status()` would report `probePassed = true`, not `null`, and an unguarded `plan()`
+    // would carry a verdict in `plan().probe`. That is what makes "the switch off does not
+    // read it" an observable claim rather than a comment.
+    val plantedRoot = java.io.File(System.getProperty("java.io.tmpdir"), "pi-proroot-planted-${System.nanoTime()}")
+    val plantedPaths = PiPaths(
+        filesDir = java.io.File(plantedRoot, "files").also { it.mkdirs() },
+        nativeLibDir = java.io.File(plantedRoot, "lib").also { it.mkdirs() },
+    )
+    RuntimeChoice.REQUIRED_FILES.forEach { name ->
+        java.io.File(plantedPaths.nativeLib, name).writeText("so-$name")
+    }
+    check("the planted fixture has every component", plantedPaths.missingProrootComponents(), emptyList<String>())
+    val plantedRevision = "2026-09-19.1"
+    val plantedDigest = ProrootProbe.digestOf(plantedPaths)
+    check("the digest is a real reading, not the empty string", plantedDigest.length, 64)
+    check(
+        "the planted verdict lives in the file the retry path deletes",
+        plantedPaths.prorootProbeCache().path,
+        "${plantedPaths.runtime.path}/.proroot-probe",
+    )
+    plantedPaths.prorootProbeCache().parentFile?.mkdirs()
+    plantedPaths.prorootProbeCache().writeText(
+        ProrootProbeCache.render(
+            ProrootProbe.key(plantedRevision, plantedDigest),
+            passed = true,
+            detail = listOf("✓ 种下的结论：全部通过"),
+        ),
+    )
+    check(
+        "a planted PASS is readable under the key the gate would ask for",
+        ProrootProbe.cached(plantedPaths, plantedRevision, plantedDigest)?.passed,
+        true,
+    )
+    check(
+        "…and it is a cached verdict, not a fresh measurement",
+        ProrootProbe.cached(plantedPaths, plantedRevision, plantedDigest)?.cached,
+        true,
+    )
+    check(
+        "a different revision does not see the planted verdict",
+        ProrootProbe.cached(plantedPaths, "2026-01-01.0", plantedDigest),
+        null,
+    )
+    // The read is a read: nothing in this path rewrote the file.
+    check(
+        "reading the planted verdict leaves it on disk",
+        plantedPaths.prorootProbeCache().isFile,
+        true,
+    )
+    plantedRoot.deleteRecursively()
+
+    // (5) 镜像的那一半：开关**开着**、五个组件一个都不在。
+    //
+    // `RuntimeChoice.decide` 在门禁之前就拒（上面已钉），源码里门禁在
+    // `enabled && filesPresent && !exhausted` 之内、缓存读取在 `enabled && missing.isEmpty()`
+    // 之内 —— 所以「组件不在」这条路上探针不会跑，连种下的结论都不会被读。可读的那一半在
+    // 这里执行：五条 stat 的答案是 5，决策是 `RuntimeFilesMissing`，种下的文件字节不变。
+    val absentRoot = java.io.File(System.getProperty("java.io.tmpdir"), "pi-proroot-absent-${System.nanoTime()}")
+    val absentPaths = PiPaths(
+        filesDir = java.io.File(absentRoot, "files").also { it.mkdirs() },
+        nativeLibDir = java.io.File(absentRoot, "lib").also { it.mkdirs() },
+    )
+    check("the mirror fixture is missing all five", absentPaths.missingProrootComponents().size, 5)
+    val absentRevision = "2026-09-19.1"
+    val absentDigest = ProrootProbe.digestOf(absentPaths)
+    absentPaths.prorootProbeCache().parentFile?.mkdirs()
+    absentPaths.prorootProbeCache().writeText(
+        ProrootProbeCache.render(
+            ProrootProbe.key(absentRevision, absentDigest),
+            passed = true,
+            detail = listOf("✓ 种下的结论：全部通过"),
+        ),
+    )
+    val absentText = absentPaths.prorootProbeCache().readText()
+    check(
+        "the planted verdict is readable even with the components absent",
+        ProrootProbe.cached(absentPaths, absentRevision, absentDigest)?.passed,
+        true,
+    )
+    check(
+        "an enabled switch on a component-less tree refuses before the gate",
+        RuntimeChoice.decide(enabled = true, filesPresent = false, probePassed = true, consecutiveFailures = 0),
+        EngineDecision(GuestEngine.Proot, EngineFallback.RuntimeFilesMissing),
+    )
+    check(
+        "…and that path never rewrote the planted verdict",
+        absentPaths.prorootProbeCache().readText(),
+        absentText,
+    )
+    absentRoot.deleteRecursively()
+    offRoot.deleteRecursively()
 
     println(if (failures == 0) "\nharness: OK (all checks passed)" else "\nharness: FAILED ($failures)")
     if (failures != 0) kotlin.system.exitProcess(1)

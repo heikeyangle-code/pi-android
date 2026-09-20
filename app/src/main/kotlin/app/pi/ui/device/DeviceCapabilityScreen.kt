@@ -306,11 +306,6 @@ fun DeviceCapabilityScreen(
 
             item {
                 PiSettingsSectionHeader("能力授权")
-                InfoNote(
-                    "能力默认关闭，逐组授权。「基础」组默认开启，因为它只做用户看得见的事" +
-                        "（剪贴板、通知、打开链接、分享）。被关闭的能力不会静默失效：Agent 会收到明确原因，" +
-                        "并被要求把原因和开启位置原样告诉你。",
-                )
             }
 
             items(DeviceCapability.entries.toList()) { capability ->
@@ -414,8 +409,8 @@ fun DeviceCapabilityScreen(
             item {
                 Spacer(Modifier.height(PiSpacing.unit))
                 InfoNote(
-                    "所有设备操作都会写入本地审计日志（不含内容本身），可在上面的状态卡里看到最近几条。" +
-                        "紧急情况下可以直接关闭对应能力的开关，或停用系统的无障碍服务 —— 两者都会立刻生效。",
+                    "所有设备操作都会写入本地审计日志（不含内容本身）。紧急情况下关闭对应能力的开关、" +
+                        "或停用系统的无障碍服务即可立刻停止。",
                 )
             }
         }
@@ -690,10 +685,6 @@ private fun DeviceCapabilityCard(
                         color = PiTheme.palette.error,
                     )
                 }
-                InfoNote(
-                    "无障碍服务能看到当前屏幕上的所有文本（包括密码框以外的输入内容与通知），并代替你点按。" +
-                        "只在你需要 Agent 操作手机时开启，用完可以关闭。",
-                )
             }
 
             DeviceCapability.Storage -> {
@@ -785,7 +776,7 @@ private fun DeviceCapabilityCard(
                             color = MaterialTheme.colorScheme.onSurface,
                         )
                         Text(
-                            "默认关闭。开启后，\$() 与反引号、以及 sh/bash/eval/source 都会被允许。",
+                            "开启后，\$() 与反引号、以及 sh/bash/eval/source 都会被允许。",
                             style = PiTheme.text.meta,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -966,8 +957,8 @@ private fun ShellPolicyCard(relaxed: Boolean, workspace: String) {
 
         Spacer(Modifier.height(PiSpacing.gutter))
         Text(
-            "危险操作（结束应用、Shell、分享、打开链接、向输入框写入、裸按键注入、跨沙箱读写文件）第一次会请求确认，" +
-                "确认框里有「同意并记住本次会话」；没有确认通道时直接拒绝，而不是默认允许。",
+            "危险操作（结束应用、Shell、分享、打开链接、向输入框写入、裸按键注入、跨沙箱读写文件）" +
+                "第一次会请求确认，确认框里有「同意并记住本次会话」。",
             style = PiTheme.text.meta,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -994,13 +985,6 @@ private fun ApprovalsCard(lines: List<String>) {
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-        Spacer(Modifier.height(PiSpacing.small))
-        Text(
-            "注意：「同意并记住本次会话」的状态由 pi 上报，App 无法独立验证。" +
-                "真正不可绕过的边界是上面的能力开关、硬性禁用清单与写入边界。",
-            style = PiTheme.text.meta,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
     }
 }
 
@@ -1141,7 +1125,7 @@ private fun shizukuSteps(shizuku: JSONObject): List<String> {
             "打开 Shizuku，在它的界面里点「通过无线调试启动」（Android 11+，全程在这台手机上，不需要电脑）。",
             "系统设置 → 开发者选项 → 无线调试：打开它，再在 Shizuku 里按提示配对。",
             "Shizuku 启动后回到这里，点「请求 Shizuku 授权」。",
-            "注意：重启手机后 Shizuku 会停止，需要再做一次这一步（这是 Android 的限制，不是本应用的）。",
+            "重启手机后 Shizuku 会停止，需要再做一次这一步。",
         )
     }
     if (!shizuku.optBoolean("permissionGranted")) {

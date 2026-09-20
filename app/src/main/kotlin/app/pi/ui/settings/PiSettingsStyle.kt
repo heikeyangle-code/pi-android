@@ -423,11 +423,16 @@ internal fun PiSettingsBadge(
 }
 
 /**
- * 四种生效徽标（`02-real-content.md` §4.3）：`需重载` / `新会话` / `需重启引擎` / `需重启`。
+ * 生效徽标（`02-real-content.md` §4.3）：`需重载` / `新会话` / `需重启引擎` /
+ * `自动重启引擎` / `需重启`。
  *
  * 文字与色相沿用 `ui/components/PiCommon.kt` 的既有映射（tertiary / onSurfaceVariant /
  * error，都是 M3 槽位 = pi 派生），本批只把**形状**换成 §2 的圆角 999 + 1px 描边 +
  * 色块，不新增也不改任何颜色。`Immediate` 不出徽标。
+ *
+ * `AutoRestartEngine` 用 `tertiary` 而不是 `RestartEngine` 那枚 `error`：红色在这一排里是
+ * 「要你做点什么」的语气（需重启引擎 / 需重启），而这一行不需要用户动手——写下去的时候重启
+ * 已经发生了。徽标的字也一样：说「自动」，不说「需」。
  */
 @Composable
 internal fun PiSettingsEffectiveBadge(
@@ -439,6 +444,7 @@ internal fun PiSettingsEffectiveBadge(
         EffectiveKind.Reload -> "需重载" to MaterialTheme.colorScheme.tertiary
         EffectiveKind.NewSession -> "新会话" to MaterialTheme.colorScheme.onSurfaceVariant
         EffectiveKind.RestartEngine -> "需重启引擎" to MaterialTheme.colorScheme.error
+        EffectiveKind.AutoRestartEngine -> "自动重启引擎" to MaterialTheme.colorScheme.tertiary
         EffectiveKind.RestartApp -> "需重启" to MaterialTheme.colorScheme.error
     }
     PiSettingsBadge(label = label, tone = tone, modifier = modifier)

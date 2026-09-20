@@ -64,6 +64,24 @@ private fun check(name: String, ok: Boolean, detail: String = "") {
 private val keyPattern = Regex("""^\s*key = "([^"]+)",\s*$""")
 private val piOwnedPattern = Regex("""^\s*"([^"]+)" to "([^"]*)",\s*$""")
 
+/**
+ * The one section that is allowed to mix an editable row with a read-only one:
+ * a **control and the reading derived from it**, control first.
+ *
+ * Why the exemption exists: the proroot switch and the 「运行时（实际生效）」 row are
+ * two halves of one feature — the switch asks for a runtime, the row reports which
+ * one is running and why not. They used to live in two different sections of the
+ * same group, and the user could not tell they were related
+ * (「下面那个加速开关和它是一个功能吧？你把它拆到两个部分干啥？」). Rule 9 exists to
+ * keep read-only *facts* from being scattered among settings, and this pair is the
+ * opposite case: one control plus its own result.
+ *
+ * It is declared as `group constant to section label` and then pinned to the exact
+ * two keys below, so it can never widen into "any section may mix" — a third row
+ * appearing here fails, and a declaration whose section disappeared fails as stale.
+ */
+private val PAIRED_CONTROL_SECTION = "G_RUNTIME" to "运行时选择"
+
 /** Every `key = "..."` of the registry, in file order. */
 private fun registeredKeys(registry: String): List<String> =
     registry.lineSequence().mapNotNull { keyPattern.find(it)?.groupValues?.get(1) }.toList()
@@ -316,6 +334,14 @@ private fun piSettingFields(registry: String): List<String> =
  */
 private val bareFieldReaders: Map<String, String> = mapOf(
     "emptyListLabel" to "在 `PiSetting.display` 里以接收者属性（裸名）读取：`if (count == 0) emptyListLabel`",
+    // 同一个形状的第二个：`container` 的读者是 `PiSetting` 的两支扩展函数，函数体里它就是
+    // 接收者的属性，写成裸名 —— `editableEntries` 的 `when (container)`
+    // （`ui/settings/PiSettingsJson.kt:103`）与 `elementFromEntries` 的同一句（`:114`），调用点
+    // 是 `PiSettingEditorHost.kt:104`（读）与 `:134`（写）。规则的字面判据找的是
+    // `setting.container`，看不见这种读法；登记在这里，而不是为了迁就字符串匹配去把产品代码
+    // 改写成 `setting.container`。
+    "container" to "在 `PiSetting.editableEntries` / `elementFromEntries` 里以接收者属性（裸名）读取：" +
+        "`when (container)`（`PiSettingsJson.kt:103`、`:114`）",
 )
 
 fun main() {
@@ -451,15 +477,40 @@ fun main() {
 
     // Rule 9: one section, one kind. An Action or a read-only fact next to editable
     // settings is exactly how "the mess" reads on screen.
+    //
+    // One declared exception, `PAIRED_CONTROL_SECTION`: a control and the reading
+    // derived from it belong together (control first), and the pair below pins the
+    // exemption to exactly those two keys — an unrelated read-only row cannot hide
+    // behind it, and a stale declaration fails instead of excusing nothing.
     val mixedSections = shapes.groupBy { it.group to it.section }.filterValues { rowsIn ->
         rowsIn.any { it.nonEditable } && rowsIn.any { !it.nonEditable }
     }
+    val unexcusedMixed = mixedSections.filterKeys { it != PAIRED_CONTROL_SECTION }
     check(
-        "no section mixes non-editable rows with settings",
-        mixedSections.isEmpty(),
-        mixedSections.keys.joinToString("\n  ") { (group, section) ->
+        "no section mixes non-editable rows with settings (outside the declared control/reading pair)",
+        unexcusedMixed.isEmpty(),
+        unexcusedMixed.keys.joinToString("\n  ") { (group, section) ->
             "$group/$section mixes actions or read-only rows with editable settings"
         },
+    )
+    val pairRows = shapes.filter { (it.group to it.section) == PAIRED_CONTROL_SECTION }
+    check(
+        "the declared control/reading section exists",
+        pairRows.isNotEmpty(),
+        "${PAIRED_CONTROL_SECTION.first}/${PAIRED_CONTROL_SECTION.second} is declared as the " +
+            "control/reading pair but holds no row — a stale exemption",
+    )
+    check(
+        "the control/reading section is exactly the switch and its derived reading",
+        pairRows.map { it.key } == listOf("app.runtime.proroot", "app.runtime.prorootStatus"),
+        "expected [app.runtime.proroot, app.runtime.prorootStatus] (control first), got " +
+            pairRows.joinToString { it.key },
+    )
+    check(
+        "the control is editable, the reading below it is a read-only fact",
+        pairRows.firstOrNull()?.let { !it.nonEditable && it.kind == "Switch" } == true &&
+            pairRows.getOrNull(1)?.let { it.nonEditable && it.readOnly && it.kind == "Text" } == true,
+        pairRows.joinToString { "${it.key} kind=${it.kind} readOnly=${it.readOnly}" },
     )
 
     // Rule 10: no one-row section inside a group that has several sections — a header for a
@@ -521,15 +572,30 @@ fun main() {
             "it means 'no built-in tool at all' (core/sdk.ts:256-262) while the row promises the default",
     )
 
-    // Rule 14: no preset may offer a tool this platform cannot run. `powershell` is in pi's
-    // `ToolName` union (`core/tools/index.ts:95`) but its implementation throws on anything but
-    // Windows (`utils/shell.ts` getPowerShellConfig), and the guest has no `pwsh` — a chip for it
-    // would hand the user a tool that fails on first use.
-    val presets = Regex("""private val builtinTools = listOf\(([^)]*)\)""").find(registry)?.groupValues?.get(1)
-    check("the built-in tool preset list was found", presets != null)
+    // Rule 14: the chip list on 内建工具 offers **exactly the optional tools** — the ones pi
+    // does not enable by default (`grep`, `find`, `ls`; the defaults are `read`, `bash`,
+    // `edit`, `write`). It must not offer a tool this platform cannot run (`powershell` is in
+    // pi's `ToolName` union, `core/tools/index.ts:95`, but its implementation throws on
+    // anything but Windows — `utils/shell.ts` getPowerShellConfig — and the guest has no
+    // `pwsh`), and it must not offer one that is already on either: the user rejected a
+    // seven-chip list with 「默认不是有 4 个工具了吗？…给我弄 3 个没默认启用的不就完事了吗？」.
+    val presets =
+        Regex("""private val optionalTools = listOf\(([^)]*)\)""").find(registry)?.groupValues?.get(1)
+    check("the optional-tool preset list was found", presets != null)
+    val presetNames = presets?.split(",")?.map { it.trim().trim('"') }?.filter { it.isNotEmpty() }.orEmpty()
+    check(
+        "the chips offer exactly the three optional tools",
+        presetNames == listOf("grep", "find", "ls"),
+        "presets: $presets",
+    )
     check(
         "the tool presets do not offer the Windows-only powershell",
-        presets?.contains("powershell") == false,
+        presetNames.contains("powershell").not(),
+        "presets: $presets",
+    )
+    check(
+        "the tool presets do not offer a tool that is already on by default",
+        presetNames.none { it in listOf("read", "bash", "edit", "write") },
         "presets: $presets",
     )
 

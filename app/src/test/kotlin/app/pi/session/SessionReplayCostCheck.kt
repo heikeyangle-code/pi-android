@@ -705,6 +705,179 @@ fun main() {
     println("上限大小（${payload.length / 1024 / 1024} MiB）逐块喂入 + 成帧 = %.1f ms（与设备无关）".format(feedMs))
     println()
 
+    // ------------------------------------------- 6. the header read, and only it
+    //
+    // 打开一个会话的那一段读里，`readHeader` 是**唯一一处只取决于第一行**的读：pi 的会话头就是
+    // 文件的第一行，而无头文件不是会话（`session-manager.ts:551-556`）。它的读范围上限却是
+    // `HEADER_BUDGET` = 1 MiB（`SessionFileReader.kt:695`），所以旧形状会把 `[0, 1 MiB)` 整段
+    // 读完、切成行，再只看第一行 —— 会话文件小于 1 MiB 时就是**整份读一遍**。而 `readTail` 之后
+    // 自己还要读一遍窗口（`:220`），于是同一份文件被读两遍。
+    //
+    // 这一节做两件事：把这一段的代价量出来（对 §3 的 `read ms`，它是同一段读里能被省掉的那部分），
+    // 并把「早退」的答案钉在与规则一致的五类输入上 —— 空行/坏行在头之前、第一个能解析的行不是头、
+    // 头在 1 MiB 之外（界不许被放宽）、没有任何可解析的行、以及所有真实夹具（答案的 id 必须与
+    // 文件第一行写下的那个一致）。
+    println("-- 6. readHeader：只取决于第一行的读 --")
+    println("%-16s %9s %14s %14s".format("shape", "file MB", "readHeader ms", "readTail ms"))
+    for ((name, file) in shapes) {
+        val headerMs = medianMs(repeats = 3) { SessionFileReader.readHeader(file) }
+        val tailMs = medianMs(repeats = 3) { SessionFileReader.readTail(file, windowChars, windowEntries) }
+        println("%-16s %9s %14.2f %14.2f".format(name, mb(file.length()), headerMs, tailMs))
+        // 期望值取自文件自己写下的第一行，不是字面量：夹具的 id 有三个（bench / one-message /
+        // mixed），写死一个会让另外两个变成假绿。
+        val expectedId = idOf(PiJson.parseObjectOrNull(allLines(file).first()))
+        check(
+            "$name: readHeader 认出这个会话，且 id 与文件第一行一致",
+            idOf(SessionFileReader.readHeader(file)),
+            expectedId,
+        )
+    }
+    println()
+    val headerRoot = File(System.getProperty("java.io.tmpdir"), "pi-replay-header-${System.nanoTime()}")
+    headerRoot.mkdirs()
+    // (a) 空行与解析不出的行在头之前：仍然要认出会话（「第一个**能解析的**行说了算」）
+    val paddedFile = File(headerRoot, "padded.jsonl")
+    paddedFile.writeText("\n\nnot json\n" + header("padded") + "\n" + userEntry("u1", null, "hi") + "\n")
+    check("空行与坏行之后仍认得出会话头", idOf(SessionFileReader.readHeader(paddedFile)), "padded")
+    // (b) 第一个能解析的行不是会话头 → 不是会话（pi 的同一个否决）
+    val notSessionFile = File(headerRoot, "not-a-session.jsonl")
+    notSessionFile.writeText(userEntry("u1", null, "hi") + "\n")
+    check("第一个能解析的行不是会话头时不认", SessionFileReader.readHeader(notSessionFile), null)
+    // (c) 头在 1 MiB 之外：上限不变（早退只许提前停，不许把界放宽）
+    val farFile = File(headerRoot, "far-header.jsonl")
+    farFile.writeText("{\"pad\":\"" + "p".repeat(1 shl 20) + "\"}\n" + header("far") + "\n")
+    check("头在 1 MiB 之外仍然不认（界未放宽）", SessionFileReader.readHeader(farFile), null)
+    // (d) 没有可解析的行：空文件、只有空行、只有坏行
+    val emptyFile = File(headerRoot, "empty.jsonl").apply { writeText("") }
+    val blanksFile = File(headerRoot, "blanks.jsonl").apply { writeText("\n\n\n") }
+    val brokenFile = File(headerRoot, "broken.jsonl").apply { writeText("{oops\n{\"also\":\n") }
+    check("空文件没有头", SessionFileReader.readHeader(emptyFile), null)
+    check("只有空行没有头", SessionFileReader.readHeader(blanksFile), null)
+    check("只有坏行没有头", SessionFileReader.readHeader(brokenFile), null)
+    // (e) 只有头、没有任何条目：这是一个**是**会话的文件（pi 会打开它），所以必须认出
+    val headerOnly = File(headerRoot, "header-only.jsonl")
+    headerOnly.writeText(header("only") + "\n")
+    check("只有头没有条目也是会话", idOf(SessionFileReader.readHeader(headerOnly)), "only")
+    headerRoot.deleteRecursively()
+    println()
+
+    // --------------------------- 7. 「新建会话」在没有引擎时也不许被丢掉
+    //
+    // 用户原话：「我新建对话，点第一下新建不了，再点第二下。」
+    //
+    // 根因是 `Boot.Idle` 那一段窗口（D31：对话页在这一段是**可用**的，接管页只画
+    // `Boot.Working`）：`newSession()` 直接走 `call("新建会话")`，而 `call` 在 `api == null`
+    // 时只推一条通知就返回 —— 第一次点击**没有执行**，第二次（引擎已 attach）才成。
+    // `send` / `sendFollowUp` / `runPromptCommand` 三条有 D31 的 park（排到 attach 之后按序
+    // 重放），`newSession` 漏了。这一节读**源文本**钉住这条连线，与 `AttachmentBudgetCheck`
+    // 读 `ChatScreen.kt` 同法（`PiSessionViewModel` 是 AndroidViewModel，本机编译不了它）。
+    val viewModelFile = System.getProperty("pi.repo.root")?.let {
+        File(it, "app/src/main/kotlin/app/pi/ui/PiSessionViewModel.kt")
+    }
+    val viewModelText = if (viewModelFile != null && viewModelFile.isFile) viewModelFile.readText() else ""
+    checkTrue("读到了 PiSessionViewModel.kt（读不到这一节就没有意义）", viewModelText.isNotEmpty())
+    val newSessionBody = viewModelText
+        .substringAfter("fun newSession(parentSession: String? = null) {", "")
+        .take(2000)
+    checkTrue("找到了 newSession 的函数体", newSessionBody.isNotEmpty(), "marker not found")
+    checkTrue(
+        "没有引擎时「新建会话」排到 attach 之后，而不是丢给 call 的未就绪分支",
+        newSessionBody.contains("parkUntilAttached { newSession(parentSession) }"),
+    )
+    // 顺序也要钉：排队必须在 `call` 之前，否则第一次点击仍然不执行（这正是那条缺陷）。
+    val parkAt = newSessionBody.indexOf("parkUntilAttached {")
+    val callAt = newSessionBody.indexOf("call(\"新建会话\")")
+    checkTrue(
+        "排队发生在 call 之前",
+        parkAt in 0 until callAt,
+        "parkAt=$parkAt callAt=$callAt",
+    )
+    checkTrue(
+        "排进队里时界面有话可说（不许出现「点了没反应」）",
+        newSessionBody.contains("pushNotice("),
+    )
+    // 重放恰好一次：队是「先拷贝再清空」，每个闭包按序只跑一次 —— 不重复、不丢。
+    val drain = viewModelText
+        .substringAfter("if (pendingPrompts.isNotEmpty()) {", "")
+        .take(400)
+    checkTrue(
+        "重放先拷贝再清空（拷贝之后新排进来的动作不会被这次重放吃掉）",
+        drain.contains("pendingPrompts.toList()") && drain.contains("pendingPrompts.clear()"),
+        drain.take(120),
+    )
+    checkTrue(
+        "并且按序各跑一次（forEach，不是并发也不是去重）",
+        drain.contains("queued.forEach { it() }"),
+        drain.take(160),
+    )
+
+    // ------------------- 8. 引擎重启之后必须回到刚才那个会话（「切成好几段」的根因）
+    //
+    // 用户原话：「一个对话在列表里被切成好几段、标题各不相同」「之前都没有这种 bug，肯定是最近
+    // 这几轮、修加载时间这些问题的时候引入的」。
+    //
+    // 机制（两半，都在下面钉住）：① `PiEngineHost` 的 argv 固定（没有 `-c`/`--resume`），所以每次
+    // 重启起来的 pi 都在**全新**的会话文件上；② `attach` 里原来 `replayHistory(engine)` 在
+    // `refreshState()` **之前**，于是它用**上一个引擎**的 `_state.meta` 去解析源文件 —— 那份 meta
+    // 与旧文件的 header id 一致，校验通过，屏幕重画的是**老对话**，而 pi 已经在新会话上。用户继续
+    // 打字，消息落进新文件 ⇒ 一次对话裂成数段、每段标题不同。`afterSessionReplaced` 的 KDoc 早就
+    // 写明了这条规则（「`refreshState` **before** the replay, not after」），attach 没有遵守。
+    val attachBody = viewModelText
+        // 锚点只取到形参开头：`attach` 现在还有 `continueFrom`（重启续接），写死完整签名会让
+        // 这段断言在签名变化时静默变成「marker not found」—— 第一次跑就是这么红的。
+        .substringAfter("private fun attach(engine: PiEngineSession", "")
+        .take(20_000)
+    checkTrue("找到了 attach 的函数体", attachBody.isNotEmpty(), "marker not found")
+    val refreshAt = attachBody.indexOf("refreshState()")
+    val replayAt = attachBody.indexOf("replayHistory(engine)")
+    checkTrue(
+        "attach 里 refreshState() 在 replayHistory 之前（否则会拿上一个引擎的 meta 去读文件）",
+        refreshAt >= 0 && replayAt >= 0 && refreshAt < replayAt,
+        "refreshAt=$refreshAt replayAt=$replayAt",
+    )
+    // 续接恰好一次，且在 `restartEngine` 内 —— 工作区切换走 `host.restart`，不经过它（换了工作区
+    // 就该是新会话：记录在旧 cwd 上的会话在新 cwd 里 pi 也打不开）。
+    val continueCalls = Regex("continueAfterRestart\\(").findAll(viewModelText).count()
+    check("续接只被声明一次、调用一次", continueCalls, 2)
+    checkTrue(
+        "工作区切换那条路不接续（换了工作区就该是新会话）",
+        !viewModelText.substringAfter("suspend fun switchWorkspace(", "").take(8_000)
+            .contains("continueFrom"),
+    )
+    val restartBody = viewModelText
+        .substringAfter("suspend fun restartEngine(", "")
+        .take(8_000)
+    checkTrue(
+        "重启成功那一支把「刚才那个会话」交给 attach",
+        restartBody.contains("attach(result.session, continueFrom = previousSession)"),
+    )
+    checkTrue(
+        "attach 在它自己全部收尾之后才接续（两次 replay 不许并发）",
+        attachBody.contains("continueFrom?.let { continueAfterRestart(it) }") &&
+            attachBody.indexOf("continueFrom?.let") > attachBody.indexOf("maybeResumeLastSession()"),
+    )
+    val helperBody = viewModelText
+        .substringAfter("private suspend fun continueAfterRestart(", "")
+        .take(4_000)
+    checkTrue("找到了续接的函数体", helperBody.isNotEmpty(), "marker not found")
+    // 失败必须可见，且两个分支各有各的话（异常 / 扩展否决），不许混成一句、更不许静默。
+    checkTrue(
+        "失败按真实分支各自有一句话（异常 / 扩展否决 / 文件不在了）",
+        helperBody.contains("没能接回刚才的会话") &&
+            helperBody.contains("取消了重启后的会话接续") &&
+            helperBody.contains("找不到刚才那个会话的文件"),
+    )
+    checkTrue(
+        "三支失败（异常 / 扩展否决 / 文件不在了）都只说「停在新的空会话上」（不假装切成功）",
+        Regex("停在一个新的空会话上").findAll(helperBody).count() == 3,
+    )
+    // 精确到分支，不用裸的 `afterSessionReplaced()`：KBoc 里也提到了它（带反引号）。
+    checkTrue(
+        "只有成功那一支才 afterSessionReplaced()（它是唯一会换转录的收尾）",
+        helperBody.contains("else -> afterSessionReplaced()") &&
+            Regex("afterSessionReplaced\\(\\)").findAll(helperBody).count() >= 1,
+    )
+
     // ---------------------------------------------------------------- summary
     println("-- 结论 --")
     val small = wholeCost["text-40"]!!

@@ -68,6 +68,15 @@ import app.pi.ui.theme.PiTheme
 fun BootScreen(
     boot: Boot,
     onRetry: () -> Unit,
+    /**
+     * The explicit repair action: rebuild the volatile runtime tree from the APK.
+     *
+     * A separate callback rather than a mode of [onRetry], because it is a different
+     * decision with a different cost: it deletes everything installed inside the guest,
+     * where a retry re-runs the ordinary (non-destructive) boot. This is the app's only
+     * caller of `RuntimeProvisioner.ensureReady(rebuild = true)`.
+     */
+    onRebuild: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val palette = PiTheme.palette
@@ -130,6 +139,17 @@ fun BootScreen(
                 BootErrorCard(message = boot.message, detail = boot.detail)
                 Spacer(Modifier.height(BootCardActionGap))
                 BootButton("重试", onRetry)
+                Spacer(Modifier.height(BootCardActionGap))
+                // The repair action, and the one place the user can reach it. It is
+                // visually the destructive one (error fill, not the accent) because it
+                // is the only button in this app that deletes anything inside the guest.
+                BootButton("重建运行时", onRebuild, destructive = true)
+                Spacer(Modifier.height(BootNoteGap))
+                BootParagraph(
+                    "重建会删掉 guest 里你自己装的东西：apt/pip 包、npm -g 包、" +
+                        "/usr/local/bin 下的文件、/root 下除 .pi/agent 之外的文件。" +
+                        "工作区、会话、设置和凭证在易失树之外，不会被删。",
+                )
                 Spacer(Modifier.height(BootNoteGap))
                 BootParagraph("如果反复失败，把这个提示连同它下面的文字发给我。")
             }
@@ -276,14 +296,18 @@ private fun BootErrorCard(message: String, detail: String?) {
  * button visibly taller than the board's. The label is `14/600` rather than the
  * board's `13`: the app has no sans 13 role (`B7` owns the type scale), and 14 is
  * the role every other button label in this app already uses.
+ *
+ * [destructive] swaps the accent fill for the error fill. It is reserved for the one
+ * action on this screen that deletes something inside the guest (`重建运行时`), so the
+ * two buttons cannot be confused at a glance.
  */
 @Composable
-private fun BootButton(label: String, onClick: () -> Unit) {
+private fun BootButton(label: String, onClick: () -> Unit, destructive: Boolean = false) {
     val palette = PiTheme.palette
     Box(
         modifier = Modifier
             .clip(RoundedCornerShape(BootButtonRadius))
-            .background(palette.accent)
+            .background(if (destructive) palette.error else palette.accent)
             .clickable(role = Role.Button, onClick = onClick)
             .height(BootButtonHeight)
             .padding(horizontal = 12.dp),

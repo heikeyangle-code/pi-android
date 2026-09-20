@@ -18,7 +18,9 @@ import app.pi.rpc.JsonlFramer
  * ## pi's own limits, transcribed
  *
  * pi normalizes every inline image through `resizeImageInProcess`
- * (`packages/coding-agent/src/utils/image-resize-core.ts`, pinned engine 0.85.1):
+ * (`packages/coding-agent/src/utils/image-resize-core.ts`, pinned engine 0.86.1; the
+ * `:82-93`/`:95-106`/`:112-114`/`:122`/`:146-150` ranges below were re-checked against
+ * the 0.86.1 source, where they are unchanged):
  *
  *  1. if the picture is already within `maxWidth`/`maxHeight` **and** its
  *     `ceil(bytes / 3) * 4` base64 is under `maxBytes`, pi sends the original bytes
@@ -156,6 +158,76 @@ internal object AttachmentBudget {
      * frame — rather than a new number.
      */
     const val MAX_PICKED_IMAGE_BYTES = JsonlFramer.DEFAULT_MAX_RECORD_CHARS
+
+    // ------------------------------------------------- 工作区复制：上限只有磁盘
+
+    /**
+     * 往工作区复制时要留出的磁盘余量：16 MiB。
+     *
+     * **为什么要有余量，而不是「写到写不动为止」。** 目标目录是**整个 App 私有存储**：
+     * 引擎（proot 的 rootfs、会话 JSONL、临时文件）、主题、附件共用它。把可用空间读到最后一
+     * 字节再写，等于替 pi 把它的下一次写盘挤掉 —— 用户看到的是「复制成功了，然后引擎在别处
+     * 报错」。16 MiB 是「一次会话落盘 + 一份 rootfs 临时文件」的量级。
+     *
+     * **为什么不复用 `runtime/RuntimeSpaceBudget`。** 读过它（只读）：那个 `MIN_REQUIRED_BYTES`
+     * 是 480 MiB，回答的是「这三个解包产物能不能铺开」——一个与附件无关的问题。拿它当这里的
+     * 余量，会在还有 400 MiB 空闲的机器上拒绝复制一个 2 KB 的文件，把「留点余量」变成
+     * 「不许用磁盘」。两个数各有各的读者，所以不引用、也不改那个文件（它在别的批次手里）。
+     */
+    const val WORKSPACE_SPACE_MARGIN_BYTES: Long = 16L * 1024 * 1024
+
+    /**
+     * 工作区复制**现在**还能不能继续写。这是这条路唯一的上限。
+     *
+     * **它与 [MESSAGE_BYTES] 无关，两者不是同一个数、也不是同一件事。** [MESSAGE_BYTES]
+     * 管的是「多少 base64 字符会随消息**内联**进 JSONL」，理由是单条记录超过
+     * [JsonlFramer.DEFAULT_MAX_RECORD_CHARS] 会被丢弃；而复制进工作区的产物只是 composer 里
+     * 的**一个相对路径**（`attachments/<name>`，十几个字节），agent 是自己从磁盘读它的。
+     * 拿内联预算去卡一次工作区复制，就是「这条消息装不下这张图，所以文件也不给你放进
+     * agent 能读到的地方」——用户报的正是这个：「发个文件还说太大，复制不进去」。
+     *
+     * 三种回答，第三种是诚实的那一半：文件系统读不出可用空间时**不假装知道**
+     * （[Unknown]），照写 —— 真的写不下时 `write` 会抛出来，那是
+     * `WorkspaceCopy.WriteFailed`，好过一个编出来的数字。
+     *
+     * @param neededBytes 这一次写入之后的总字节数（已写入 + 本块读到的字节数）。
+     * @param availableBytes 目标目录所在文件系统的可用字节数；null 表示读不出来。
+     * @param marginBytes 见 [WORKSPACE_SPACE_MARGIN_BYTES]。
+     */
+    sealed interface DiskSpace {
+        /** [neededBytes] 装得下，而且留得住余量。 */
+        data object Room : DiskSpace
+
+        /**
+         * 装不下。两个数都来自调用方读到的事实，所以「至少需要 X，可用 Y」这句话与判定
+         * 不可能对不上；[neededBytes] 是**下界**（源确实给出了这么多字节），所以文案里说的是
+         * 「至少」。
+         */
+        data class Insufficient(val neededBytes: Long, val availableBytes: Long) : DiskSpace
+
+        /** 文件系统没说可用空间是多少（`StatFs` 读不到）——不据此拒绝。 */
+        data object Unknown : DiskSpace
+    }
+
+    /**
+     * 这一块能不能写下去的**唯一**判定：[DiskSpace]。
+     *
+     * 规则就是 `neededBytes <= availableBytes - marginBytes`。余量比可用空间还大时 `room` 是 0，
+     * 于是空闲不足 [WORKSPACE_SPACE_MARGIN_BYTES] 的机器会拒绝每一次复制，而不是把自己写满。
+     */
+    fun workspaceSpace(
+        neededBytes: Long,
+        availableBytes: Long?,
+        marginBytes: Long = WORKSPACE_SPACE_MARGIN_BYTES,
+    ): DiskSpace {
+        if (availableBytes == null) return DiskSpace.Unknown
+        val room = (availableBytes - marginBytes).coerceAtLeast(0L)
+        return if (neededBytes <= room) {
+            DiskSpace.Room
+        } else {
+            DiskSpace.Insufficient(neededBytes, availableBytes)
+        }
+    }
 
     // -------------------------------------------------------------- the arithmetic
 

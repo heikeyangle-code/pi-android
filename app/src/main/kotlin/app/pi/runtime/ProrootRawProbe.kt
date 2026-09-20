@@ -13,7 +13,9 @@ package app.pi.runtime
  *     2026-09-19: the gate passed on `perl` (dynamic) and `rg`/`fd` (static musl) while
  *     the engine still died with exit code 126, so the gate had no stage that spoke about
  *     the engine's own binary. `ProrootExecProbe` is that stage; its KDoc carries the
- *     evidence.
+ *     evidence — **and the resolution**: that 126 was the launcher failing to `chdir` the
+ *     engine's `-w`, not Node being unexecutable. The stage stays as a guard against the
+ *     next defect of that class.
  *
  * Neither object touches `java.io`: a built string in, a parsed verdict out.
  */
@@ -410,11 +412,47 @@ object ProrootRawProbe {
  * verdict ever said so. `docs/proroot-research.md` §5.P0-2 already warns that proroot's
  * failures are silent; this one was silent *through* the gate.
  *
+ * ## 结案（2026-09-19 实测）：那次 126 不是 Node 起不来，是启动器 `chdir` 不了 `-w`
+ *
+ * 上面那段对**门禁覆盖范围**的判断成立，对**成因**的判断是错的。实测结论：
+ *
+ *  - **Node 能在钉住的 v1.2.8 下 exec。** 本开发容器本身就是 proroot 客户机；用
+ *    `qemu-aarch64-static` 驱动钉住的 `libproroot.so`（bionic 二进制在客户机里不能直接
+ *    exec），套一份从 `build/downloads/ubuntu-base-24.04.3-base-arm64.tar.gz` 解出的 rootfs
+ *    并把钉住的 `node-v24.19.0-linux-arm64` 放成 `<rootfs>/opt/node`（连同
+ *    `/usr/local/bin/node -> /opt/node/bin/node` 的软链），用 **本 App 一模一样的 argv 形状**
+ *    跑：`/usr/bin/env true` → 0、`/opt/node/bin/node --version` → `v24.19.0`、
+ *    `perl` → 0。`/opt/node/bin/node` 是 **ET_EXEC（非 PIE）**，`perl`/`env` 是 ET_DYN ——
+ *    这是"perl 行、node 不行"这种形状天然的来源，但实测它在这台机器上不成立。
+ *  - **那次 126 是启动器级的 `chdir` 失败。** proroot v1.2.8 的 `-w` **只按 rootfs 解析**，
+ *    不看 `-b` 绑定表；`<rootfs>/<cwd>` 不存在时启动器打印一行、子进程以 126 退出：
+ *
+ *    ```
+ *    [proroot] chdir workdir failed: /workspace/pi/workspaces/workspace-1: No such file or directory
+ *    [proroot] child exited with code 126
+ *    ```
+ *
+ *    同一条命令只在 rootfs 里补上那个目录，就 `cwd=/workspace/pi/workspaces/workspace-1`
+ *    并全部退出 0。App 的装机路径只建 `<rootfs>/workspace`（`RuntimeProvisioner.kt:687`），
+ *    而引擎与装包命令的 cwd 是 `<rootfs>/workspace/pi/workspaces/<名>`
+ *    （`GuestWorkspacePath.under`、`PiEngineHost.kt:437`），差的正是这一层。修法在
+ *    `ProrootCommand.ensureWorkdir`（连同"只在有绑定覆盖、且那条绑定的 host 目录存在时
+ *    才补目录"的纪律）。
+ *  - **本阶段自己的形状从来没复现过那个 126**：它的 `-w` 是 `/`（rootfs 自己），上面三组
+ *    目标在 lab 里都退出 0。真机上若本阶段报 126，那是另一个成因，本轮的复现里没有它。
+ *
+ * 本阶段因此**保留**：它是唯一对"引擎这一类二进制"说话的测量，而"引擎自己的形状"
+ *（`-w <guest workspace>` + 它自己的 `-b`）由 `ProrootProbe.autopsy` 在一次真实启动失败
+ * 之后原样重跑 —— 那次 `chdir` 失败正是先在那条路径上留下了 proroot 的原话。
+ *
  * ## What it measures, and why these two targets
  *
  *  1. **`/usr/bin/env true`** — the smallest dynamically linked glibc ELF in the pinned
  *     Ubuntu base (68 KB). It isolates "a dynamic binary can be exec'd here" from "Node
- *     specifically can be exec'd here".
+ *     specifically can be exec'd here". Note what it measures: `env` execs `true`, which
+ *     exits 0 and writes **nothing**, so this target passes on silence
+ *     ([Target.expectsOutput] `false`) — the output rule below applies to the engine's
+ *     binary, not to this one.
  *  2. **`/opt/node/bin/node --version`** — the engine's own interpreter, invoked for
  *     real. This is the measurement that matters: a runtime that cannot start this
  *     binary cannot start the engine, and a gate that passes anyway hands the user a
@@ -499,8 +537,22 @@ object ProrootExecProbe {
     fun isLaunchFailure(exitCode: Int?): Boolean =
         exitCode == EXIT_CANNOT_EXEC || exitCode == EXIT_NOT_FOUND
 
-    /** One binary this stage really executes. */
-    data class Target(val exe: String, val args: String) {
+    /**
+     * One binary this stage really executes.
+     *
+     * @param expectsOutput whether a **successful** run of this command prints anything.
+     *
+     *   It is a property of the *command*, not a switch that relaxes the verdict, and it
+     *   exists because one of the two targets is `/usr/bin/env true` — whose whole purpose
+     *   is to exit 0 and print nothing. Without this field the rule "exit 0 with no output
+     *   is a failure" (which is exactly what a wrapper that silently does nothing looks
+     *   like) made the gate **unsatisfiable**: the user's report shows the stage failing
+     *   with `退出码 0 但没有任何输出` on a device where proroot, the raw-syscall probe, `rg`
+     *   and `fd` had all passed — so proroot could never be selected, no matter what the
+     *   user did. `/opt/node/bin/node --version` keeps `true`: it must really print a
+     *   version, and a version-less node is still reported as a failure.
+     */
+    data class Target(val exe: String, val args: String, val expectsOutput: Boolean = true) {
         /** For the report and the harness: the exact command line that was run. */
         val commandLine: String get() = if (args.isEmpty()) exe else "$exe $args"
     }
@@ -508,14 +560,22 @@ object ProrootExecProbe {
     /**
      * The two targets, in report order.
      *
-     * `/opt/node/bin/node` is the engine's own path (`PiEngineHost`'s guest command) and
-     * not the `/usr/local/bin/node` symlink: the symlink is what PATH resolves to, but the
-     * engine execs the real path, and a probe that tested a different spelling would not
-     * be an answer about the engine.
+     * `/opt/node/bin/node` is the engine's own path and not the `/usr/local/bin/node`
+     * symlink: the symlink is what PATH resolves to, but the engine **execs** the real path,
+     * and a probe that tested a different spelling would not be an answer about the engine.
+     * The same string is spelled in three other places — `PiEngineHost`'s guest command
+     * (`exec /opt/node/bin/node …`), `AgentLayout.guestNode`, and the symlink
+     * `RuntimeProvisioner` creates — so the literal is deliberate rather than an oversight:
+     * this object lives in `runtime/` and is compiled by a bare-JVM harness that has none of
+     * those files, and a probe that reached into the packages layer would stop being pure.
+     * If the payload ever moves Node, the probe fails loudly with
+     * `不存在（探针读不到这个文件）` rather than passing quietly.
      */
     val TARGETS: List<Target> = listOf(
-        Target("/usr/bin/env", "true"),
-        Target("/opt/node/bin/node", "--version"),
+        // `true` prints nothing **by design** — `expectsOutput = false` is what says so.
+        Target("/usr/bin/env", "true", expectsOutput = false),
+        // Node must print its version: this one stays strict.
+        Target("/opt/node/bin/node", "--version", expectsOutput = true),
     )
 
     /** One target's measured outcome. */
@@ -537,7 +597,11 @@ object ProrootExecProbe {
 
         /** One line for the report, the row and the autopsy. */
         fun describe(): String = if (ok) {
-            "$PASS_MARK $commandLine：退出码 0（${firstLine.orEmpty()}）"
+            // A target that is silent **by design** has nothing to put in the parenthesis, and
+            // an empty `（）` reads like a missing reading. Say the fact instead of nesting
+            //括号：`退出码 0（该目标本来就不输出）`。
+            val detail = firstLine?.takeIf { it.isNotBlank() } ?: "该目标本来就不输出"
+            "$PASS_MARK $commandLine：退出码 0（$detail）"
         } else {
             "$FAIL_MARK $commandLine：$reason"
         }
@@ -555,7 +619,10 @@ object ProrootExecProbe {
         /** Only `[proroot] …` lines, bounded; see [launcherLinesFrom]. */
         val launchLines: List<String> = emptyList(),
     ) {
-        /** True only when every target was found executable, ran, and exited 0 with output. */
+        /**
+         * True only when every target was found executable, ran, and exited 0 — and printed
+         * what it was supposed to print ([Target.expectsOutput]).
+         */
         val ok: Boolean get() = results.isNotEmpty() && results.all { it.ok }
 
         /** The recorded evidence lines, in target order. */
@@ -601,8 +668,11 @@ object ProrootExecProbe {
      * Turn the run's stdout into verdicts. Pure.
      *
      * A missing marker line for a target is reported as a failure (see [Report]); a blank
-     * first output line on a 0 exit is a failure too, because "exit 0 and said nothing" is
-     * exactly what a wrapper script that silently does nothing looks like.
+     * first output line on a 0 exit is a failure **only for a target that is supposed to
+     * print something** ([Target.expectsOutput]) — "exit 0 and said nothing" is exactly what
+     * a wrapper script that silently does nothing looks like, but it is also exactly what
+     * `/usr/bin/env true` *is*. Applying the rule to both made this stage unsatisfiable and
+     * refused proroot on every device; see [TARGETS].
      */
     fun parse(output: String, targets: List<Target> = TARGETS): Report {
         val states = LinkedHashMap<String, String>()
@@ -656,8 +726,13 @@ object ProrootExecProbe {
                 state == STATE_MISSING -> "`${target.exe}` 在 guest 里不存在（探针读不到这个文件）"
                 state == STATE_NOEXEC -> "`${target.exe}` 存在但没有执行位（+x 未置位）"
                 run == null -> "没有输出这个目标的运行结果行（探测中途死了）"
-                run.first != 0 -> "`${target.commandLine}` 退出码 ${run.first}" + suffix(run.second)
-                run.second == null -> "`${target.commandLine}` 退出码 0 但没有任何输出"
+                // The mark prefix and the command line already name the target, so the reason
+                // starts at the exit code: `✗ 动态二进制 /opt/node/bin/node --version：退出码 126：…`.
+                run.first != 0 -> "退出码 ${run.first}" + suffix(run.second)
+                // Silence is a failure **only for a command that is supposed to speak** —
+                // see [Target.expectsOutput]. `/usr/bin/env true` exiting 0 silently is the
+                // target working, not the runtime hiding something.
+                run.second == null && target.expectsOutput -> "退出码 0 但没有任何输出"
                 else -> null
             }
             TargetResult(

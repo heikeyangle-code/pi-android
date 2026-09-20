@@ -9,10 +9,11 @@
  * (`models.json`, `auth.json`, `models-store.json`, session JSONL), it sends pi's
  * RPC commands, and it ships extensions that pi loads. Every one of those is a
  * *fact about the pinned pi*, and every one of them is written down in App code
- * with a `file:line` that describes **0.85.1**. Change `PI_VERSION` and the app
- * keeps compiling while the facts underneath it move — the failure mode this
- * repository has already paid for twice (`docs/known-gaps.md` §M11: a capability
- * silently downgraded; §M12: config keys silently deleted).
+ * with a `file:line` that was read off the engine version current when the comment
+ * was written — not necessarily the one `PI_VERSION` now names. Change `PI_VERSION`
+ * and the app keeps compiling while the facts underneath it move — the failure mode
+ * this repository has already paid for twice (`docs/known-gaps.md` §M11: a
+ * capability silently downgraded; §M12: config keys silently deleted).
  *
  * CI today asserts that the payload *exists* and that its licences match. Nothing
  * asserts that what the app does with it still means what it meant. This does.
@@ -40,7 +41,8 @@
  *
  * ## Usage
  *
- *   node tools/pi-contract.mjs                 # install the pinned version, run all
+ *   node tools/pi-contract.mjs                 # install the pinned version into
+ *                                              # build/pi-contract, run all
  *   node tools/pi-contract.mjs --pi <dir>      # use an already-installed package
  *   node tools/pi-contract.mjs --pi <dir> --only=theme
  *                                              # one group only: surface | theme |
@@ -103,7 +105,21 @@ function distText(piDir) {
 
 function checkSurface(piDir) {
 	const dist = distText(piDir);
-	const commands = appLiterals("rpc/src/main/kotlin/app/pi/rpc/Commands.kt", /put\("type", "([a-z_]+)"\)/g);
+	// `Commands.kt` builds its records two ways, and both are commands pi must still
+	// understand: `buildJsonObject { put("type", …) }` for the ones that carry fields,
+	// and the `simple(id, type)` helper for the field-less ones. Scanning only the
+	// first form (as this did at 0.85.1) asserted 19 of the 34 records and left a
+	// rename in `abort`, `get_state`, `cycle_model`, `clone`, `get_tree` and eleven
+	// others invisible — which is the one thing this group exists to catch.
+	//
+	// `image` is excluded: the `put("type", "image")` inside `putImages` is an
+	// `ImageContent` element of a `prompt`'s `images` array (`rpc-types.ts`'s
+	// `ImageContent`), not an RPC command, and asserting it would pass vacuously
+	// because the string `image` appears in the engine for many other reasons.
+	const commands = [
+		...appLiterals("rpc/src/main/kotlin/app/pi/rpc/Commands.kt", /put\("type", "([a-z_]+)"\)/g),
+		...appLiterals("rpc/src/main/kotlin/app/pi/rpc/Commands.kt", /simple\(id, "([a-z_]+)"\)/g),
+	].filter((command) => command !== "image");
 	// The app answers the extension UI sub-protocol in two places, because pi's eight
 	// methods have two shapes: four are dialogs that need an answer
 	// (`ExtensionUi.kt`'s method enum), four are fire-and-forget chrome
@@ -154,7 +170,21 @@ function checkSurface(piDir) {
 			"construction and update both readers if the name or the location moved.",
 	);
 
-	const knownUiMethods = ["confirm", "input", "notify", "select", "editor", "setStatus", "setTitle", "setWidget"];
+	// `set_editor_text` is the ninth method (`rpc-types.ts`'s RpcExtensionUIRequest) and
+	// the one that is neither a dialog nor chrome: the app applies it to the composer
+	// (`PiSessionViewModel`'s `"set_editor_text" ->` arm). It was missing from this list
+	// at 0.85.1, so a rename of the only method that fills the composer was unasserted.
+	const knownUiMethods = [
+		"confirm",
+		"input",
+		"notify",
+		"select",
+		"editor",
+		"setStatus",
+		"setTitle",
+		"setWidget",
+		"set_editor_text",
+	];
 	for (const method of knownUiMethods) {
 		check(
 			`extension UI method still exists in the pinned engine: ${method}`,
@@ -884,7 +914,16 @@ const runs = (name) => only === null || only === name;
 const explicit = process.argv.indexOf("--pi");
 let piDir = explicit >= 0 ? resolve(process.argv[explicit + 1]) : null;
 if (!piDir) {
-	const stage = mkdtempSync(join(tmpdir(), "pi-contract-install-"));
+	// A *stable* directory under `build/` (gitignored), not a `mkdtemp` under the
+	// system temp dir. npm resolves the project root by walking **up** from `cwd` to
+	// the nearest `package.json`/`node_modules`, so an unrelated `/tmp/package.json`
+	// (left by any earlier `npm install` in `/tmp`) captures the install: npm writes
+	// `/tmp/node_modules` while this script then looks in the temp dir and exits 2
+	// with `not a pi package`. `build/pi-contract` has no such ancestor inside this
+	// repository, and a persistent directory also makes a re-run a fast `up to date`
+	// instead of re-downloading the engine.
+	const stage = join(ROOT, "build", "pi-contract");
+	mkdirSync(stage, { recursive: true });
 	const version = pinnedVersion();
 	console.log(`engine: ${PI_PACKAGE}@${version} (from tools/fetch-runtime.mjs)`);
 	execFileSync("npm", ["install", "--ignore-scripts", "--no-audit", "--no-fund", `${PI_PACKAGE}@${version}`], {

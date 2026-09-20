@@ -131,8 +131,8 @@ Unlicense.txt	Unlicense	许可证全文
 0BSD.txt	0BSD	许可证全文
 BlueOak-1.0.0.txt	BlueOak-1.0.0	许可证全文
 JetBrainsMono-OFL-1.1.txt	JetBrains Mono 2.304（OFL-1.1）	许可证全文
-pi-license.txt	pi 引擎 0.85.1（MIT）	许可证全文
+pi-license.txt	pi 引擎 0.86.1（MIT）	许可证全文
 proroot-license.txt	proroot v1.2.8（Proprietary）	许可证全文
 proprietary-third-party.txt	随包分发的专有组件（proroot）	专有组件
-pi-engine-licence-gaps.txt	未随包提供许可文本的依赖（13 个）	说明
-pi-engine-npm-notices.txt	pi 引擎依赖的版权声明来源（含 1 个取不到的）	说明
+pi-engine-licence-gaps.txt	未随包提供许可文本的依赖（12 个）	说明
+pi-engine-npm-notices.txt	pi 引擎依赖的版权声明来源（含 3 个取不到的）	说明

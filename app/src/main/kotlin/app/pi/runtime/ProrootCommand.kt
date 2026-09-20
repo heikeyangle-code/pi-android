@@ -72,6 +72,43 @@ import java.io.File
  * itself; the launcher's own sentence is now carried as evidence
  * ([ProrootRawProbe.launcherLines]).
  *
+ * ## `-w` 指的目录必须在 **rootfs 里**存在（2026-09-19 实测；引擎 126 的根因）
+ *
+ * 这是同一类失败的第二个，形状和 `-b` 那次很像，但更隐蔽：proroot v1.2.8 的 `-w`
+ *（guest 工作目录）**不看绑定表**。启动器在 fork 之前对 `<rootfs>/<cwd>` 做 `chdir`，
+ * 目录不存在就打印一行、让子进程以 **126** 退出；而 126 在别处正好是壳层的"命令能看见
+ * 但不能执行"，所以这条被读成了"node 不能 exec"（[ProrootExecProbe] 的 KDoc 记了完整
+ * 证据与结案）。
+ *
+ * 实测（本开发容器本身就是 proroot 客户机；载荷见 `runtime.lock.json`，rootfs 是钉住的
+ * ubuntu-base 24.04.3 + 同一个 node 24.19.0。bionic 的 `libproroot.so` 在客户机里不能
+ * 直接 exec——proroot 自己的解释器解不了 bionic 的依赖——所以用 `qemu-aarch64-static`
+ * 驱动钉住的那份 launcher，argv/env 与本文件产出的完全一致）：
+ *
+ * ```
+ * libproroot.so --link2symlink -0 -r <rootfs> -w /workspace/pi/workspaces/workspace-1 \
+ *   -b /dev:/dev … -b <files>/pi/workspaces/workspace-1:/workspace/pi/workspaces/workspace-1 \
+ *   -b <rootfs>/tmp:/tmp /bin/bash -c '…'
+ * # → [proroot] chdir workdir failed: /workspace/pi/workspaces/workspace-1: No such file or directory
+ * # → [proroot] child exited with code 126
+ * ```
+ *
+ * 同一条命令，只在 rootfs 里补上那个目录，就变成 `cwd=/workspace/pi/workspaces/workspace-1`，
+ * 且 `/usr/bin/env true`、`/opt/node/bin/node --version`（v24.19.0）、`perl` 全部退出 0。
+ * 两个名字不同、内容不同的标记文件证明**落地的是绑定那一侧**（`-b` 的 host 目录），
+ * rootfs 里那个目录只是让 `chdir` 有东西可进的替身。
+ *
+ * 所以 [build] 在拼 argv 之前调 [ensureWorkdir]：只有当 `cwd` 落在**某条绑定之下、且那条
+ * 绑定的 host 目录真的存在**时才在 rootfs 里补目录。故意不无条件 `mkdirs()`——否则
+ * "忘了传绑定"会从"启动器大声失败"退化成"pi 在一个空的 rootfs 目录里安静工作"，
+ * 那正是本项目禁止的"读出来像是另一回事"。
+ *
+ * 三个探针阶段（`-w /`）与终端（`-w /root`）不受影响：前者就是 rootfs 本身，后者是
+ * ubuntu-base 自带的目录。装机路径只建了 `<rootfs>/workspace`
+ *（`RuntimeProvisioner.kt:687`），而引擎与装包命令的 cwd 是
+ * `<rootfs>/workspace/pi/workspaces/<名>`（`GuestWorkspacePath.under`、`PiEngineHost.kt:437`）
+ * ——差的就是这一层，所以探针全绿、引擎 126。
+ *
  * Environment: proroot recognises **no** `PROOT_*` variable, so none is set here.
  * In their place the launcher is told where its own components are. This is
  * **byte-for-byte the set DSH App exports** — measured from the live launcher's
@@ -140,6 +177,112 @@ object ProrootCommand {
         if (value.contains(BIND_SEPARATOR)) value else "$value$BIND_SEPARATOR$value"
 
     /**
+     * `-w` 的目录在 rootfs 里是什么状态，或者**为什么我们没有动它**。
+     *
+     * 七种读法对应七件事，不能互相冒充（本项目对"读出来的东西"的硬要求）：
+     * [NO_BIND] 是"这次启动没有任何绑定覆盖 `cwd`，所以按纪律不建"——不是失败，是拒绝替
+     * 调用方兜底；[HOST_MISSING] 是"绑定在，但它 host 那一侧不存在"，那通常意味着调用方
+     * 忘了 `mkdirs()` 工作区，启动器会大声失败，我们**不**把它变成空目录。
+     */
+    enum class WorkdirState {
+        /** rootfs 里已经有了。 */
+        PRESENT,
+
+        /** 刚刚补上。 */
+        CREATED,
+
+        /** 没有绑定覆盖 `cwd`：不建（见类 KDoc 的纪律）。 */
+        NO_BIND,
+
+        /** 有绑定覆盖，但那条绑定的 host 目录不在：不建。 */
+        HOST_MISSING,
+
+        /** rootfs 还没解包：不建（proroot 本来也起不来）。 */
+        NO_ROOTFS,
+
+        /** `cwd` 不是可用的绝对 guest 路径（相对、空、含 `..`）。 */
+        UNUSABLE_PATH,
+
+        /** rootfs 在，`mkdirs()` 还是失败（权限/同名文件）。 */
+        FAILED,
+    }
+
+    /**
+     * 覆盖 [cwd] 的那条绑定（guest 侧等于 `cwd`，或 `cwd` 在它之下），没有就 null。
+     *
+     * 只看 guest 侧、不碰文件系统，所以 harness 能在裸 JVM 上钉住这条判据。`cwd` 恰好是
+     * 绑定目标本身是最常见的情形：引擎的 `-w` 与它自己的 workspace 绑定就是同一个字符串
+     *（`PiEngineHost.kt:499`、`GuestWorkspacePath.under`）。
+     */
+    fun bindingCovering(cwd: String, binds: List<Pair<String, String>>): Pair<String, String>? {
+        val clean = cwd.trimEnd('/').ifEmpty { "/" }
+        return binds.firstOrNull { (_, guestValue) ->
+            val guest = guestValue.trimEnd('/').ifEmpty { "/" }
+            guest == "/" || clean == guest || clean.startsWith("$guest/")
+        }
+    }
+
+    /**
+     * guest 绝对路径在 rootfs 里的落点；不是可用的绝对 guest 路径时 null。
+     *
+     * `-w /` 就是 rootfs 自己。任何一段是空、`.`、`..` 的路径都拒绝：这个函数的结果会被
+     * `mkdirs()`，而 `..` 能让它落到 rootfs 外面去。
+     */
+    fun workdirUnder(rootfs: File, cwd: String): File? {
+        if (!cwd.startsWith("/")) return null
+        val relative = cwd.trim('/')
+        if (relative.isEmpty()) return rootfs
+        val segments = relative.split('/')
+        if (segments.any { it.isEmpty() || it == "." || it == ".." }) return null
+        return File(rootfs, relative)
+    }
+
+    /**
+     * 保证 [cwd] 在 [rootfs] 里有一个**目录**可进，返回它当时的状态（见 [WorkdirState]）。
+     *
+     * 为什么必须是"有绑定覆盖"才动手，类 KDoc 有一整节；一句话：无条件的 `mkdirs()` 会把
+     * "忘了传绑定"从一个响亮的启动失败变成一次安静的、空工作区里的运行。
+     *
+     * 幂等，且对 proot 完全无意义（只有 [ProrootCommand.build] 调它）。
+     */
+    fun ensureWorkdir(
+        rootfs: File,
+        cwd: String,
+        binds: List<Pair<String, String>>,
+    ): WorkdirState {
+        val binding = bindingCovering(cwd, binds) ?: return WorkdirState.NO_BIND
+        if (!File(binding.first).isDirectory) return WorkdirState.HOST_MISSING
+        if (!rootfs.isDirectory) return WorkdirState.NO_ROOTFS
+        val dir = workdirUnder(rootfs, cwd) ?: return WorkdirState.UNUSABLE_PATH
+        if (dir.isDirectory) return WorkdirState.PRESENT
+        return if (dir.mkdirs() || dir.isDirectory) WorkdirState.CREATED else WorkdirState.FAILED
+    }
+
+    /**
+     * 本次启动的全部 `(host, guest)` 绑定对：共享绑定表 + 调用方的额外绑定 + `/tmp`。
+     *
+     * 与 [build] 拼进去的 argv 同源（同一个 [GuestRecipe.binds]、同一个 [GuestRecipe.tmpBind]），
+     * 所以"argv 里绑了什么"与"判断 `-w` 是否在绑定之下时看的是什么"不可能分叉——这正是
+     * [ensureWorkdir] 那条纪律能站住的前提。没有冒号的值按 proot 的 host == guest 读。
+     */
+    fun boundPairs(
+        paths: PiPaths,
+        storage: File?,
+        extraBinds: List<Pair<String, String>>,
+    ): List<Pair<String, String>> =
+        GuestRecipe.binds(paths, storage).map { (_, value) -> asPair(value) } +
+            extraBinds +
+            listOf(asPair(GuestRecipe.tmpBind(paths)[1]))
+
+    /** `host:guest` → pair；没有冒号时按 host == guest 读（proot 的简写）。 */
+    private fun asPair(value: String): Pair<String, String> =
+        if (value.contains(BIND_SEPARATOR)) {
+            value.substringBefore(BIND_SEPARATOR) to value.substringAfter(BIND_SEPARATOR)
+        } else {
+            value to value
+        }
+
+    /**
      * @param guestCommand passed to `bash -c` **inside** the rootfs, so it may use
      *        guest paths (`/opt/pi/node`, `/workspace`, …).
      */
@@ -150,6 +293,11 @@ object ProrootCommand {
         storage: File?,
         extraBinds: List<Pair<String, String>> = emptyList(),
     ): List<String> {
+        // 2026-09-19：proroot 的 `-w` 只按 rootfs 解析（绑定表不算数），所以 `-w` 指的目录
+        // 必须在 rootfs 里真的存在，否则启动器 `chdir` 失败、子进程 126（类 KDoc 有实测
+        // 原文）。**这里是唯一的漏斗**：引擎、装包命令、终端、三个探针阶段和失败取证都
+        // 经过 [GuestCommandLine] → 本函数，而失败取证恰恰绕过了 `RuntimeSelection`。
+        ensureWorkdir(paths.rootfs, cwd, boundPairs(paths, storage, extraBinds))
         val argv = mutableListOf<String>()
         argv += paths.prorootLauncher().absolutePath
         // Kept from the proot recipe: without it a guest `link()` is EACCES

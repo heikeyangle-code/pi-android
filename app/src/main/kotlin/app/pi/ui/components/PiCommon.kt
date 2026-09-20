@@ -280,11 +280,17 @@ fun PiStatusLine(
  *
  * @param percent 0–100, straight from pi's `getContextUsage().percent`; null when pi
  *   has not reported one.
- * @param diameter the ring's outer size.
+ * @param diameter the ring's outer size — **the drawn arc**, not the touch target.
+ *   The caller owns the touch box: whatever `modifier` it passes is the outer box this
+ *   composable fills, and the arc is centred in it. That split is D27's (24 dp visual,
+ *   32 dp touch, 30 dp slot in the composer's key row), and it was a real defect before:
+ *   the box used to be `modifier.size(diameter)`, so the `size` handed in by the caller
+ *   was immediately overridden by the visual size — the touch area and the drawn ring
+ *   disagreed about which of them was the button.
  * @param stroke the pen width. `06 §2`'s bar has no analogue; 2 is the weight that
  *   keeps a 24 dp ring legible as a ring rather than a dot.
  * @param placeholderStyle the style of the `?`. It is a parameter because the ring
- *   is drawn at two very different sizes (24 dp in the composer, ~52 dp in the sheet)
+ *   is drawn at two very different sizes (24 dp in the composer, 56 dp in the sheet)
  *   and one glyph size cannot serve both.
  */
 @Composable
@@ -301,8 +307,9 @@ fun PiContextRing(
     placeholderStyle: TextStyle,
 ) {
     val palette = PiTheme.palette
-    Box(modifier = modifier.size(diameter), contentAlignment = Alignment.Center) {
-        Canvas(Modifier.fillMaxSize()) {
+    // The caller's box is the touch target; the arc is drawn *inside* it, centred.
+    Box(modifier = modifier, contentAlignment = Alignment.Center) {
+        Canvas(Modifier.size(diameter)) {
             val pen = stroke.toPx().coerceAtMost(size.minDimension / 2f)
             val inset = pen / 2f
             val box = Size(size.width - pen, size.height - pen)
@@ -329,12 +336,17 @@ fun PiContextRing(
             }
         }
         if (percent == null) {
-            Text(
-                text = "?",
-                style = placeholderStyle,
-                color = palette.bodyOnTool,
-                maxLines = 1,
-            )
+            // Centred on the **ring**, not on the touch box around it: the two are
+            // concentric here, and pinning the glyph to the arc's own diameter is what
+            // keeps it that way if a caller ever hands in an off-centre box.
+            Box(Modifier.size(diameter), contentAlignment = Alignment.Center) {
+                Text(
+                    text = "?",
+                    style = placeholderStyle,
+                    color = palette.bodyOnTool,
+                    maxLines = 1,
+                )
+            }
         }
     }
 }
@@ -946,6 +958,17 @@ fun PiValueRow(
  *    `PI_CACHE_RETENTION`) and the resources its loader caches at startup.
  *    Nothing short of a new process applies it, so the badge must not say
  *    "重载" — a word that promises the change is one tap away.
+ *  - [AutoRestartEngine] — the same timing as [RestartEngine] (a new process is
+ *    still what makes the value true) **but the app performs it itself** as part
+ *    of the write: the row is `app.runtime.proroot`, whose toggle runs the probe
+ *    and then restarts the engine onto the chosen runtime
+ *    (`RuntimeSwitchAction`). The badge says 「自动重启引擎」 rather than
+ *    「需重启引擎」 so it does not ask the user for a step that already happened —
+ *    and the row is never left claiming a value the running engine does not have
+ *    (a refused restart is rolled back). Use this kind only where the write path
+ *    really does the restart; a row without that wiring must stay
+ *    [RestartEngine], or its badge tells the user the change is applied while
+ *    nothing has happened.
  *  - [RestartApp] — read while *this* app starts (the foreground-service switch).
  *  - [Immediate] — nothing to wait for.
  *
@@ -960,5 +983,13 @@ fun PiValueRow(
  * unreachable spelling of the same pill. The enum stays: it is the registry's
  * type and the settings package references it, and this batch does not own that
  * package.
+ *
+ * Every value here has a reader in `ui/settings`: the badge label
+ * (`PiSettingsStyle.PiSettingsEffectiveBadge`), the explanation dialog
+ * (`PiSettingsEditors.PiEffectiveDialog`, which is a `when` — exhaustive on
+ * purpose, so a new kind cannot be added without deciding what it means and
+ * whether it offers an action), and the badge's action
+ * (`SettingsGroupScreen`, where only [RestartEngine] routes to the manual
+ * restart).
  */
-enum class EffectiveKind { Immediate, Reload, RestartEngine, NewSession, RestartApp }
+enum class EffectiveKind { Immediate, Reload, RestartEngine, AutoRestartEngine, NewSession, RestartApp }
