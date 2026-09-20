@@ -312,8 +312,6 @@ const PROROOT_RELEASE = `https://github.com/coderredlab/proroot/releases/downloa
  * for the source audit; a version bump without it is an unreviewed change to a
  * closed binary.
  */
-const PROROOT_VERSION = "v1.2.8";
-const PROROOT_RELEASE = `https://github.com/coderredlab/proroot/releases/download/${PROROOT_VERSION}`;
 
 /**
  * Pinned upstream artifacts. `sha256: null` means "record on first fetch".
