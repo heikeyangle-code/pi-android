@@ -3,6 +3,7 @@ package app.pi.runtime
 import android.os.SystemClock
 import android.system.Os
 import android.system.OsConstants
+import android.util.Log
 import java.io.File
 
 /**
@@ -48,6 +49,8 @@ import java.io.File
  * no longer tell those processes apart from unrelated ones.
  */
 object GuestTreeReaper {
+
+    private const val TAG = "PiGuestTreeReaper"
 
     /** How long SIGTERM gets to work before SIGKILL. */
     const val TERM_TIMEOUT_MS: Long = 3_000L
@@ -218,6 +221,43 @@ object GuestTreeReaper {
         thread.isDaemon = true
         thread.start()
         return thread
+    }
+
+    /**
+     * The **probe-timeout** half of the same rule: capture the tree now (the launcher is
+     * still alive, which is the only moment its children are reachable) and reap it in the
+     * background.
+     *
+     * `ProrootProbe` hands the launcher's identity here instead of calling [capture] itself,
+     * because that file has to stay Android-free for the bare-JVM `proroot` harness and *this*
+     * object is the one that signals pids with `android.system.Os.kill`. That keeps one
+     * implementation: the probe path cannot drift from the three production stop sites.
+     *
+     * Called from the probe's own (background) thread at the moment a stage times out, before
+     * it kills the direct child. Both "nothing to reap" cases are **said**, not assumed away.
+     *
+     * @param launcherPid null when the launch never identified itself (no `.proroot-config`
+     *        table appeared), so there is nothing to capture.
+     * @param expectedStartTime the `starttime` recorded when the pid was resolved, so a
+     *        recycled pid is rejected instead of signalled.
+     */
+    fun reapTimeoutedProbe(launcherPid: Int?, expectedStartTime: Long?): Unit {
+        if (launcherPid == null) {
+            Log.w(TAG, "proroot 探针超时，但拿不到 launcher pid：没有可回收的 guest 树")
+            return
+        }
+        val snapshot = runCatching { capture(launcherPid, expectedStartTime) }.getOrNull()
+        if (snapshot == null) {
+            Log.w(TAG, "proroot 探针超时，但捕获不到 guest 进程树：launcher pid 已不存在或已被回收")
+            return
+        }
+        runCatching {
+            reapInBackground(snapshot) { report ->
+                if (!report.clean) {
+                    Log.w(TAG, "proroot 探针超时后仍有 guest 进程存活：${report.survivors.joinToString()}")
+                }
+            }
+        }
     }
 
     /**

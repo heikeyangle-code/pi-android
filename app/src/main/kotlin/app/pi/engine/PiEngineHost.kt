@@ -176,6 +176,10 @@ class PiEngineHost(private val appContext: Context) {
                 storage = storage,
                 exitCode = exitCode,
                 launcherSource = launcherSource,
+                // The autopsy re-runs the same launch shape, so it can time out the same way;
+                // handing the launcher back to the Android-side reaper here is what keeps a
+                // timed-out autopsy from leaking the tree it started.
+                onTimeoutTree = GuestTreeReaper::reapTimeoutedProbe,
                 cwd = cwd,
                 extraBinds = extraBinds,
             )

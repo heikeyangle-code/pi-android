@@ -404,7 +404,17 @@ class RuntimeSelection(
                 val key = ProrootProbe.key(revision, digest)
                 Thread({
                     try {
-                        val verdict = ProrootProbe.run(paths, storage, revision, digest)
+                        val verdict = ProrootProbe.run(
+                            paths,
+                            storage,
+                            revision,
+                            digest,
+                            // The probe hands the launcher's identity back at a stage timeout,
+                            // before it kills the direct child, so this — the Android side —
+                            // can capture and reap the tree. The probe file itself stays
+                            // Android-free; see `ProrootProbe.run`'s KDoc.
+                            onTimeoutTree = GuestTreeReaper::reapTimeoutedProbe,
+                        )
                         recordGateVerdict(verdict, key)
                     } finally {
                         probeInFlight.set(false)
@@ -421,7 +431,16 @@ class RuntimeSelection(
                 cached = false,
             )
         }
-        val verdict = ProrootProbe.run(paths, storage, revision, digest)
+        val verdict = ProrootProbe.run(
+            paths,
+            storage,
+            revision,
+            digest,
+            // Same seam as the background call above: the reaper is Android and lives in this
+            // class's package, the probe is not, and there is no default that could silently
+            // skip the reaping.
+            onTimeoutTree = GuestTreeReaper::reapTimeoutedProbe,
+        )
         recordGateVerdict(verdict, verdict.key)
         return verdict
     }

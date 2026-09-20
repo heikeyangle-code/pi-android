@@ -207,8 +207,22 @@ object ProrootProbe {
      *
      * The planted probe file is deleted on the way out in every path — it is the
      * app's own file in the app's own tmp directory.
+     *
+     * @param onTimeoutTree `(launcherPid, launcherStartTime)` — called **at the moment a
+     *        stage times out and before its direct child is killed**, because the guest tree
+     *        is only reachable through its parent/child edges while the launcher is still
+     *        alive. It is a parameter rather than a direct call to `GuestTreeReaper` on
+     *        purpose: this file must stay Android-free so the bare-JVM `proroot` harness can
+     *        compile it, and the reaper signals pids with `android.system.Os.kill`. There is
+     *        **no default** — a no-op would silently restore the leak this closes.
      */
-    fun run(paths: PiPaths, storage: File?, revision: String, digest: String): Verdict {
+    fun run(
+        paths: PiPaths,
+        storage: File?,
+        revision: String,
+        digest: String,
+        onTimeoutTree: (launcherPid: Int?, launcherStartTime: Long?) -> Unit,
+    ): Verdict {
         val mode = RuntimeChoice.PROROOT_SECCOMP
         val key = key(revision, digest, mode)
         val plantedHost = File(paths.tmp, ProrootRawProbe.PLANTED_NAME)
@@ -221,6 +235,7 @@ object ProrootProbe {
                 guestCommand = ProrootRawProbe.guestCommand(paths.tmp.path, token),
                 storage = storage,
                 timeoutMs = RAW_TIMEOUT_MS,
+                onTimeoutTree = onTimeoutTree,
             )
         }.getOrElse { error -> "proroot 启动探针失败：${error::class.java.simpleName}: ${error.message}" }
         runCatching { plantedHost.delete() }
@@ -238,7 +253,7 @@ object ProrootProbe {
             }
         detail += tools.describe().map { "  $it" }
 
-        val exec = runExecStage(paths, storage, EXEC_TIMEOUT_MS)
+        val exec = runExecStage(paths, storage, EXEC_TIMEOUT_MS, onTimeoutTree)
         detail += exec.describe().map { "  $it" }
 
         // The gate itself: `RuntimeChoice.probeGate` owns the rule, pure, so the harness
@@ -285,7 +300,12 @@ object ProrootProbe {
      * Blocking and never called on a happy path: [run]'s third stage and [autopsy] are the
      * only callers.
      */
-    private fun runExecStage(paths: PiPaths, storage: File?, timeoutMs: Long): ProrootExecProbe.Report {
+    private fun runExecStage(
+        paths: PiPaths,
+        storage: File?,
+        timeoutMs: Long,
+        onTimeoutTree: (launcherPid: Int?, launcherStartTime: Long?) -> Unit,
+    ): ProrootExecProbe.Report {
         val output = runCatching {
             runGuest(
                 paths = paths,
@@ -293,6 +313,7 @@ object ProrootProbe {
                 guestCommand = ProrootExecProbe.guestCommand(),
                 storage = storage,
                 timeoutMs = timeoutMs,
+                onTimeoutTree = onTimeoutTree,
             )
         }.getOrElse { error ->
             "${ProrootRawProbe.LAUNCHER_PREFIX} 启动探针失败：${error::class.java.simpleName}: ${error.message}"
@@ -332,6 +353,8 @@ object ProrootProbe {
      *        probe's own `/`.
      * @param extraBinds the engine's own extra binds (`host to guest`), so a bind problem is
      *        reproduced rather than missed. Defaults to none, i.e. the probe's shape.
+     * @param onTimeoutTree see [run]; the autopsy re-runs the same launch shape, so it can
+     *        time out the same way and must be able to hand the tree to the reaper.
      * @return the lines to record in the failure state and the diagnostic report.
      */
     fun autopsy(
@@ -339,6 +362,7 @@ object ProrootProbe {
         storage: File?,
         exitCode: Int?,
         launcherSource: String?,
+        onTimeoutTree: (launcherPid: Int?, launcherStartTime: Long?) -> Unit,
         cwd: String? = null,
         extraBinds: List<Pair<String, String>> = emptyList(),
         timeoutMs: Long = AUTOPSY_TIMEOUT_MS,
@@ -354,6 +378,7 @@ object ProrootProbe {
                 maxChars = AUTOPSY_MAX_OUTPUT_CHARS,
                 cwd = cwd ?: "/",
                 extraBinds = extraBinds,
+                onTimeoutTree = onTimeoutTree,
             )
         }.getOrElse { error ->
             return ProrootExecProbe.autopsyLines(
@@ -393,6 +418,14 @@ object ProrootProbe {
         maxChars: Int = MAX_PROBE_OUTPUT_CHARS,
         cwd: String = "/",
         extraBinds: List<Pair<String, String>> = emptyList(),
+        /**
+         * Handed the launcher's identity **before** the direct child is killed (see the
+         * timeout branch). A parameter rather than a call to `GuestTreeReaper`, because that
+         * object is Android (`android.system.Os.kill`) and this file has to stay compilable by
+         * the bare-JVM `proroot` harness. Callers in Android classes pass
+         * `GuestTreeReaper::reapTimeoutedProbe`-shaped functions.
+         */
+        onTimeoutTree: (launcherPid: Int?, launcherStartTime: Long?) -> Unit,
     ): String {
         val argv = GuestCommandLine.build(paths, engine, guestCommand, cwd = cwd, storage = storage, extraBinds = extraBinds)
         // proroot rejects `--kill-on-exit`, so a probe that times out would leave its whole
@@ -417,20 +450,12 @@ object ProrootProbe {
         handle?.resolveLauncherPid()
         val finished = runCatching { process.waitFor(timeoutMs, TimeUnit.MILLISECONDS) }.getOrDefault(false)
         if (!finished) {
-            // Capture **before** killing the direct child: the tree is only reachable through
-            // its parent/child edges, and `destroyForcibly()` reparents the children to init
-            // ([GuestTreeReaper.capture]). `capture` checks the start time recorded at resolve
-            // time, so a recycled pid is never signalled.
-            val captured = handle?.let { live ->
-                val pid = live.launcherPid
-                if (pid == null) {
-                    null
-                } else {
-                    runCatching { GuestTreeReaper.capture(pid, live.launcherStartTime) }.getOrNull()
-                }
-            }
+            // Hand over the tree **before** killing the direct child: it is only reachable
+            // through its parent/child edges, and `destroyForcibly()` reparents the children to
+            // init. The callee captures it (the start time recorded at resolve time makes a
+            // recycled pid safe to reject) and reaps it after the kill.
+            runCatching { onTimeoutTree(handle?.launcherPid, handle?.launcherStartTime) }
             process.destroyForcibly()
-            if (captured != null) runCatching { GuestTreeReaper.reapInBackground(captured) }
             runCatching { handle?.deleteConfig() }
             val partial = readBounded(process, maxChars)
             // The timeout is reported in the raw probe's marker vocabulary on purpose:
