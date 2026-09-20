@@ -337,9 +337,11 @@ fun main() {
         defaults.commandLineSuffix() == "",
         "got '${defaults.commandLineSuffix()}'",
     )
+    // 扩展那一路用 `ExtensionFlagArgs.parse` 自己构造（构造函数的形参叫 `extensionFlags`，
+    // 是已经解析好的列表；`extensionArgs` 那个名字属于 `fromSettingValues` 的文本入参）。
     val pinnedWithExtensions = PiLaunchOptions(
         continueSessionId = sessionId,
-        extensionArgs = PASS_THROUGH_FIXTURE_ARGS,
+        extensionFlags = ExtensionFlagArgs.parse(PASS_THROUGH_FIXTURE_ARGS).flags,
     ).commandLineSuffix()
     check(
         "`--session-id` sits before the extension pass-through (their tokens cannot eat the id)",
@@ -352,7 +354,7 @@ fun main() {
     val clobber = runCatching {
         PiLaunchOptions(
             continueSessionId = sessionId,
-            extensionArgs = "--session-id 0000",
+            extensionFlags = ExtensionFlagArgs.parse("--session-id 0000").flags,
         ).commandLineSuffix()
     }
     check(

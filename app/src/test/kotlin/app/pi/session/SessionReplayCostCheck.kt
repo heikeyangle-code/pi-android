@@ -810,6 +810,27 @@ fun main() {
         drain.contains("queued.forEach { it() }"),
         drain.take(160),
     )
+    // 上面那三条钉的是「没被丢弃」；缺陷其实是「被执行之后又被撤销」，两者不相交 —— 所以它们在
+    // 用户报「点第一遍没反应」时**全绿**。补的是同一件事的另一个方向：重放之后 `attach` 的尾巴
+    // 里不许再有任何「把会话切走」的动作（当时的形状是 `maybeResumeLastSession()` /
+    // `continueAfterRestart()` 排在重放之后，无条件把用户切回落盘的旧会话）。
+    //
+    // 重放之后，`attach` 里不许再换会话：引擎自己的「回到哪条会话」要么排在重放之前，
+    // 要么不存在（现在就是后者，会话由 argv 钉住）。任何一处「重放之后再把会话切走」回来，这条就红。
+    val attachForOrder = viewModelText
+        .substringAfter("private fun attach(engine: PiEngineSession", "")
+        .substringBefore("\n    /**", "")
+    checkTrue("找到了 attach 的函数体（顺序不变量）", attachForOrder.isNotEmpty(), "marker not found")
+    val replayAtForOrder = attachForOrder.indexOf("pendingPrompts.isNotEmpty()")
+    checkTrue("attach 里能找到重放点", replayAtForOrder >= 0, "replayAt=$replayAtForOrder")
+    val afterReplay = attachForOrder.substring(replayAtForOrder)
+    val undoing = listOf("switchSession(", "maybeResumeLastSession(", "continueAfterRestart(")
+        .filter { afterReplay.contains(it) }
+    checkTrue(
+        "重放之后 attach 不许再换会话（否则用户那一次点击会被撤销 = 第一遍没反应）",
+        undoing.isEmpty(),
+        "重放之后仍然出现：$undoing",
+    )
 
     // ------------------- 8. 引擎重启之后必须回到刚才那个会话（「切成好几段」的根因）
     //
