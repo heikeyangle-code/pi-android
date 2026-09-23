@@ -1,15 +1,24 @@
 package app.pi.ui.extension
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.AnnotatedString
@@ -139,33 +148,8 @@ fun ExtensionWidgetStack(
                     // extension pushes a widget: without the `remember` this rebuilt it on every
                     // recomposition of this stack.
                     val shown = remember(widget.lines) { boundedWidgetLines(widget.lines) }
-                    shown.forEach { line ->
-                        // One parse per line, not two. `chromeText(line).isEmpty()` used to
-                        // strip the whole line (allocating a second copy of it) just to
-                        // answer a yes/no question, and the answer is already in the spans:
-                        // `Ansi.parse` returns one span per styled run, so "paints no
-                        // glyphs" is "every run is empty". Reading the blank test off the
-                        // spans also means the test and the drawing cannot disagree about a
-                        // line made only of colour escapes — they were two parses of the
-                        // same string.
-                        //
-                        // A blank line is meaningful spacing in a text widget, which a
-                        // Text("") would collapse to zero height. A line that is nothing
-                        // but colour escapes is blank in the same sense — it paints no
-                        // glyphs — so it takes the same path.
-                        //
-                        // **Remembered per line**, because this stack recomposes whenever the
-                        // screen around the composer does (every 200 ms publication while
-                        // anything streams, every keystroke), and `Ansi.parse` is not free: 11
-                        // lines of ≈40 characters measured ~0.7 ms per recomposition
-                        // (`docs/scroll-perf-items.md` §3). The key is the line's own text, so a
-                        // widget that did not change parses nothing.
-                        val spans = remember(line) { chromeSpans(line) }
-                        ExtensionSpans(
-                            spans = if (spans.all { it.text.isEmpty() }) listOf(Ansi.Span(" ")) else spans,
-                            defaultColor = palette.muted,
-                            style = PiTheme.text.monoSmall,
-                        )
+                    shown.forEachIndexed { index, line ->
+                        WidgetLineRow(line = line, index = index)
                     }
                 }
             }
@@ -178,3 +162,121 @@ fun windowTitleOf(title: String?, fallback: String): String = title?.takeIf { it
 
 /** `06 §2`: the one corner radius v2 gives a content card. */
 private val WidgetCardRadius = 10.dp
+
+/** How much of a folded payload's raw text an opened row shows before it scrolls. */
+private val WidgetRawMaxHeight = 200.dp
+
+/**
+ * One `setWidget` line, drawn under the two rules in [widgetRow].
+ *
+ * `maxLines = 1` is not a style choice: pi's own terminal panel truncates a widget
+ * line to the panel width and never wraps it (`truncLine`, `tui/render.js`), so
+ * wrapping was already a divergence from the original — and that divergence is
+ * what let one 32 KB payload line become twenty-five rows of the conversation.
+ *
+ * The classification is remembered per line, for the same reason the spans are:
+ * this stack recomposes on every 200 ms publication while anything streams, and a
+ * widget that did not change should cost neither a regex nor a parse. It also puts
+ * a ceiling on `Ansi.parse`'s input, which is the other half of the same problem.
+ *
+ * A line whose row is `null` is a consumed data channel (see
+ * `ExtensionWidgetLines.HIDDEN_PAYLOAD_PREFIXES`) and draws nothing.
+ */
+@Composable
+private fun WidgetLineRow(line: String, index: Int) {
+    val row = remember(line) { widgetRow(line) } ?: return
+    when (row) {
+        is WidgetRow.Text -> {
+            val spans = remember(row.text) { chromeSpans(row.text) }
+            ExtensionSpans(
+                spans = if (spans.all { it.text.isEmpty() }) listOf(Ansi.Span(" ")) else spans,
+                defaultColor = PiTheme.palette.muted,
+                style = PiTheme.text.monoSmall,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+
+        is WidgetRow.Folded -> WidgetFoldedRow(label = row.label, raw = row.raw, index = index)
+
+        is WidgetRow.Summary ->
+            WidgetFoldedRow(label = row.headline, raw = row.raw, index = index, details = row.details)
+    }
+}
+
+/**
+ * A folded payload: one stable row, with the raw text one tap away.
+ *
+ * The label is the entire visible surface, which is what makes the flicker
+ * impossible rather than merely smaller: it comes from the prefix or from the
+ * summary's counts, never from the payload's volatile fields (`generatedAt`,
+ * `updatedAt`), so an extension that re-sends its payload on every status tick
+ * re-renders the same string.
+ *
+ * The raw text is plain [Text] and **not** [ExtensionSpans]: that is the point of
+ * folding — `Ansi.parse` never sees the 32 KB — and it scrolls inside a bounded
+ * height instead of becoming the panel's own layout.
+ */
+@Composable
+private fun WidgetFoldedRow(
+    label: String,
+    raw: String,
+    index: Int,
+    details: List<String> = emptyList(),
+) {
+    val palette = PiTheme.palette
+    // Keyed by row position and not by the line: keying by the line would collapse
+    // the viewer every time the payload the user is reading gets refreshed.
+    val open = remember(index) { mutableStateOf(false) }
+    // The row is 44dp tall because it is the only tap target an extension payload gets, and a
+    // 12sp line of text is not one. V2's rows are all at least this tall; the number is the
+    // Android minimum touch target rather than a taste call.
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 44.dp)
+            .clickable { open.value = !open.value },
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = if (open.value) "▾" else "▸",
+            color = palette.dim,
+            style = PiTheme.text.monoSmall,
+        )
+        Spacer(Modifier.width(8.dp))
+        Text(
+            text = label,
+            color = palette.accent,
+            style = PiTheme.text.monoSmall,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
+        Spacer(Modifier.width(8.dp))
+        Text(
+            text = if (open.value) "收起" else "点开",
+            color = palette.dim,
+            style = PiTheme.text.monoSmall,
+        )
+    }
+    if (!open.value) return
+    details.forEach { detail ->
+        val spans = remember(detail) { chromeSpans(detail) }
+        ExtensionSpans(
+            spans = spans,
+            defaultColor = palette.muted,
+            style = PiTheme.text.monoSmall,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+    Text(
+        text = raw,
+        color = palette.muted,
+        style = PiTheme.text.monoSmall,
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(max = WidgetRawMaxHeight)
+            .verticalScroll(rememberScrollState()),
+    )
+}

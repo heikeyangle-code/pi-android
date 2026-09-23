@@ -980,6 +980,24 @@ run_harness notice-queue \
   "$ROOT/app/src/test/kotlin/app/pi/ui/extension/NoticeQueueCheck.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/ui/extension/NoticeQueue.kt"
 
+# app.pi.ui.extension: what a `setWidget` line **is**. pi's RPC widget contract is
+# `widgetLines: string[]` and nothing else, so an extension that wants a richer panel sends a
+# **prefix plus a JSON object on one line** and expects the host to interpret it
+# (`pi-subagents`' `PI_SUBAGENT_ASYNC_JSON:`). Drawing every line verbatim made one 32 KB
+# payload occupy half the conversation and re-lay-out on every status tick, because pi's cap
+# counts *lines* (`MAX_WIDGET_LINES = 10`) — the same class of hole `ImageSizeCheck` closes for
+# a single long grep hit. Three properties here are invisible to a compiler: a folded label
+# never depends on the payload's volatile fields (that, and not a smaller font, is what removes
+# the flicker), no `Text` row ever exceeds `WIDGET_LINE_MAX_CHARS` (the bound on both layout and
+# `Ansi.parse`'s input), and prose is not swallowed (`FOO_JSON: hello` is text, only
+# `<PREFIX>:{` is a payload).
+run_harness widget-payload \
+  app.pi.ui.extension.WidgetPayloadCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/ui/extension/WidgetPayloadCheck.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/ui/extension/ExtensionWidgetLines.kt" \
+  "$ROOT/rpc/src/main/kotlin/app/pi/rpc/PiJson.kt" \
+  "$ROOT/rpc/src/main/kotlin/app/pi/rpc/internal/Json.kt"
+
 # app.pi.ui.chat: the `@` lookup's failure classification. The composer draws nothing for an
 # empty candidate list, which is right for "fd matched nothing" and was also the answer for
 # a missing runtime / a proot launch failure / a timeout / a killed process. Which is which
