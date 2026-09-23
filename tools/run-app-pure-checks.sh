@@ -349,6 +349,7 @@ run_harness guest-tool-probe \
   "$ROOT/app/src/main/kotlin/app/pi/runtime/GuestToolProbe.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/runtime/VolatileTree.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/runtime/PiRuntime.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/runtime/GuestWorkspacePath.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/runtime/GuestRecipe.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/runtime/RuntimeChoice.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/runtime/GuestCommandLine.kt" \
@@ -376,6 +377,7 @@ run_harness proroot \
   app.pi.runtime.ProrootCheckKt \
   "$ROOT/app/src/test/kotlin/app/pi/runtime/ProrootCheck.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/runtime/PiRuntime.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/runtime/GuestWorkspacePath.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/runtime/VolatileTree.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/runtime/GuestRecipe.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/runtime/ProrootCommand.kt" \
@@ -693,6 +695,7 @@ run_harness boot-audit \
   "$ROOT/app/src/main/kotlin/app/pi/runtime/TreeSnapshot.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/runtime/VolatileTree.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/runtime/PiRuntime.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/runtime/GuestWorkspacePath.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/runtime/GuestRecipe.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/runtime/RuntimeChoice.kt"
 
@@ -963,6 +966,7 @@ run_harness proroot-status-text \
   "$ROOT/app/src/main/kotlin/app/pi/runtime/GuestCommandLine.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/runtime/VolatileTree.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/runtime/PiRuntime.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/runtime/GuestWorkspacePath.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/runtime/ShellQuote.kt"
 
 # app.pi.runtime: the probe's *evidence lines*, the half the diagnostic report prints. The
@@ -981,6 +985,7 @@ run_harness proroot-probe-detail \
   "$ROOT/app/src/main/kotlin/app/pi/runtime/GuestCommandLine.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/runtime/VolatileTree.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/runtime/PiRuntime.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/runtime/GuestWorkspacePath.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/runtime/ShellQuote.kt"
 
 # --- 4. verdict ---------------------------------------------------------------
