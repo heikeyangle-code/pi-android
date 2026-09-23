@@ -243,37 +243,38 @@ private fun sessionGroupChecks() {
 // ------------------------------------------------------------ 外部工作区 ----
 
 /**
- * 「这个工作区目录在不在 App 的私有目录里」。
+ * 「这个工作区目录在不在本应用建的工作区根下面」。
  *
- * 判据错了的代价不对称：把外部目录判成内部，`delete` 就会递归删掉用户设备上的目录
- * （`WorkspaceChoice.deleteRemovesFiles` 是同一个判据的第二个使用者）。
+ * 判据错了的代价不对称：真正的删除判据是 [WorkspaceChoice.deleteRemovesFiles]，而它**按名字**
+ * 判断（`workspace-N` 才是我们建的）—— 按位置判断的那个 `isExternal` 已于 2026-09-23 删除，
+ * 因为它没有生产调用方，而且工作区搬进 rootfs 之后它的 `filesRoot` 参数会把每个内部工作区都
+ * 判成外部。
  */
 private fun externalChecks() {
-    val filesRoot = "/data/user/0/app.pi/files"
-    check("an app-owned workspace is not external", WorkspaceChoice.isExternal("$filesRoot/pi/workspaces/workspace-1", filesRoot), false)
-    check("the files root itself is not external", WorkspaceChoice.isExternal(filesRoot, filesRoot), false)
-    check("a trailing slash does not change it", WorkspaceChoice.isExternal("$filesRoot/", filesRoot), false)
-    check("shared storage is external", WorkspaceChoice.isExternal("/storage/emulated/0/Foo", filesRoot), true)
-    check("a removable volume is external", WorkspaceChoice.isExternal("/storage/1AB2-3C4D/Foo", filesRoot), true)
-    check("the terminal's /root is external", WorkspaceChoice.isExternal("/root", filesRoot), true)
-    // 前缀必须落在目录分隔符上：`files-extra` 与 `files` 是两个目录。
-    check("a sibling with the root's prefix is external", WorkspaceChoice.isExternal("$filesRoot-extra/x", filesRoot), true)
-    check("an empty path is not answered as external", WorkspaceChoice.isExternal("", filesRoot), false)
+    val base = "/data/user/0/app.pi/files/pi/runtime/rootfs/workspace"
+    val workspacesRoot = "$base/pi/workspaces"
 
     check(
         "an external guest spelling goes through the same rule",
-        WorkspaceChoice.guestPathOf("/storage/emulated/0/Foo", filesRoot),
+        WorkspaceChoice.guestPathOf("/storage/emulated/0/Foo", base),
         "/workspace/storage/emulated/0/Foo",
     )
     check(
         "an app-owned guest spelling is unchanged",
-        WorkspaceChoice.guestPathOf("$filesRoot/pi/workspaces/workspace-1", filesRoot),
+        WorkspaceChoice.guestPathOf("$workspacesRoot/workspace-1", base),
         "/workspace/pi/workspaces/workspace-1",
     )
     check(
-        "the workspace maps to /workspace itself when it *is* the files root",
-        WorkspaceChoice.guestPathOf(filesRoot, filesRoot),
+        "the workspace maps to /workspace itself when it *is* the base",
+        WorkspaceChoice.guestPathOf(base, base),
         "/workspace",
+    )
+    // The base is `/workspace` itself, one level **above** the workspaces root — the
+    // distinction the deleted position-based predicate used to blur.
+    check(
+        "the workspaces root is one level below the base",
+        GuestWorkspacePath.under(base, workspacesRoot),
+        "/workspace/pi/workspaces",
     )
 }
 

@@ -139,25 +139,16 @@ object WorkspaceChoice {
 
     // ------------------------------------------------------------ 外部工作区
 
-    /**
-     * 这个工作区目录是不是**设备上的真目录**（不是 App 私有目录里的 `workspace-N`）。
-     *
-     * 判据是位置，不是名字：`/storage/emulated/0/Foo`、`/storage/1AB2-3C4D/Foo` 都是外部工作区，
-     * 而 `<files>/pi/workspaces/workspace-1` 不是。两边都用**绝对路径**比较（[filesRoot] 由调用方
-     * 给 `context.filesDir.absolutePath`），并且要求前缀落在目录分隔符上 —— 否则
-     * `/data/user/0/app.pi/files-extra` 会被误判成「在 files 目录里」。
-     *
-     * 为什么这件事要有一个名字：**外部目录不是本应用创建的目录**。`workspace-N` 可以递归删
-     * （那是我们建的），外部目录只能「取消登记」（`WorkspaceStore.delete` 的 KDoc 写了为什么）
-     * —— 而这条区别的输入就是这个布尔值。
-     */
-    fun isExternal(hostPath: String, filesRoot: String): Boolean {
-        val clean = hostPath.trim().trimEnd('/')
-        if (clean.isEmpty()) return false
-        val root = filesRoot.trim().trimEnd('/')
-        if (root.isEmpty()) return true
-        return !(clean == root || clean.startsWith("$root/"))
-    }
+    // `isExternal(hostPath, filesRoot)` was here until 2026-09-23. It answered "is this
+    // directory outside the app's own tree" **by position**, and it had no production
+    // caller: the decision that actually gets made — "does deleting this workspace delete
+    // files?" — is `deleteRemovesFiles(name)` below, and it answers **by name**, because
+    // only names this app minted are ours to delete. The function had drifted with the
+    // layout too: after the workspace moved into the rootfs, its `filesRoot` argument would
+    // have judged every app-owned workspace *external*, which is the direction that loses
+    // no data but silently stops deleting. Deleting the function removes both the dead code
+    // and the trap; if a position-based question is ever needed again, `PiPaths.workspaces`
+    // is the root to compare against, not the files directory.
 
     /**
      * 设备的哪个存储卷根可以给用户选，以及要不要「所有文件访问」。
