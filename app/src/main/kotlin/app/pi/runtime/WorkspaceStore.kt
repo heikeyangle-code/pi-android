@@ -211,8 +211,21 @@ object WorkspaceStore {
 
     // ------------------------------------------------------------- resolving
 
-    /** `<files>/pi/workspaces`. Not created by this accessor. */
-    fun root(context: Context): File = File(context.filesDir, ROOT_RELATIVE)
+    /**
+     * `<rootfs>/workspace/pi/workspaces`. Not created by this accessor.
+     *
+     * Inside the rootfs since 2026-09-23 (`PiPaths.workspaces`), which is what stops the
+     * workspace from being a bind and lets `git` run in it under proroot.
+     */
+    fun root(context: Context): File = pathsOf(context).workspaces
+
+    /** The host directory `GuestWorkspacePath` mirrors at `/workspace`. */
+    private fun workspaceBase(context: Context): File = pathsOf(context).workspaceBase
+
+    private fun pathsOf(context: Context): PiPaths = PiPaths(
+        filesDir = context.filesDir,
+        nativeLibDir = File(context.applicationInfo.nativeLibraryDir),
+    )
 
     /** `pi/workspaces/<name>` — the spelling `GuestWorkspacePath` needs. */
     fun relativeOf(name: String): String = "$ROOT_RELATIVE/$name"
@@ -292,7 +305,7 @@ object WorkspaceStore {
     fun currentHost(context: Context): File {
         val current = refresh(context).name
         if (!isOwned(current)) return File(current)
-        return GuestWorkspacePath.ensureHost(context.filesDir, relativeOf(current))
+        return GuestWorkspacePath.ensureHost(workspaceBase(context), relativeOf(current))
     }
 
     /**
@@ -678,7 +691,7 @@ object WorkspaceStore {
         // deliberately the *same* rule — `/storage/emulated/0/Foo` becomes
         // `/workspace/storage/emulated/0/Foo` inside the guest, which is the path `PiEngineHost`
         // binds it to and starts pi in, so its `.pi` project directory is the one on the device.
-        guestPath = WorkspaceChoice.guestPathOf(dir.absolutePath, context.filesDir.absolutePath),
+        guestPath = WorkspaceChoice.guestPathOf(dir.absolutePath, workspaceBase(context).absolutePath),
         isCurrent = name == current,
         external = external,
         available = available,
@@ -781,13 +794,10 @@ object WorkspaceStore {
      * `<workspace>/.pi/settings.json` and the workspace is what is being chosen.
      */
     private fun store(context: Context): PiSettingsFileStore {
-        val root = context.filesDir.absolutePath
+        val root = workspaceBase(context).absolutePath
         val cached = scope
         if (cached != null && cached.filesRoot == root) return cached.store
-        val paths = PiPaths(
-            filesDir = context.filesDir,
-            nativeLibDir = File(context.applicationInfo.nativeLibraryDir),
-        )
+        val paths = pathsOf(context)
         val created = PiSettingsFileStore(globalFile = File(paths.agentDir, "settings.json"))
         scope = Scope(root, created)
         return created

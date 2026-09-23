@@ -68,7 +68,7 @@ class AgentLayout(
      * the **guest** cwd — which is also the key pi writes into `trust.json`.
      */
     val guestWorkspace: String = GuestWorkspacePath.under(
-        paths.home.parentFile?.absolutePath ?: paths.home.absolutePath,
+        paths.workspaceBase.absolutePath,
         hostWorkspace.absolutePath,
     )
 

@@ -2,6 +2,7 @@ package app.pi.bridge
 
 import android.content.Context
 import app.pi.runtime.GuestWorkspacePath
+import app.pi.runtime.PiPaths
 import app.pi.runtime.PtyLauncher
 import java.io.File
 
@@ -100,8 +101,19 @@ object DeviceWorkspace : ShellWriteBoundary {
         }
         aliases = set.filter { it.isNotEmpty() }.toList()
         hostPath = canonical
-        engineGuestPath = guestSpellingOf(canonical, canonicalize(context.filesDir.absolutePath))
+        engineGuestPath = guestSpellingOf(canonical, canonicalize(workspaceBase(context).absolutePath))
     }
+
+    /**
+     * `GuestWorkspacePath`'s base for this install — `<rootfs>/workspace`, which the guest
+     * sees as `/workspace`. Canonicalised at the call site for the same reason the host path
+     * is: the two spellings of the files directory (`/data/user/0` vs `/data/data`) would
+     * otherwise make the guest spelling disagree with pi's cwd.
+     */
+    private fun workspaceBase(context: Context): File = PiPaths(
+        filesDir = context.filesDir,
+        nativeLibDir = File(context.applicationInfo.nativeLibraryDir),
+    ).workspaceBase
 
     override fun contains(path: String): Boolean {
         val canonical = canonicalize(path)
@@ -147,8 +159,8 @@ object DeviceWorkspace : ShellWriteBoundary {
      * (rather than inlined at the [refresh] call site) so the canonicalised host
      * path is the only thing it has to explain.
      */
-    private fun guestSpellingOf(workspace: String, filesRoot: String): String =
-        GuestWorkspacePath.under(filesRoot, workspace)
+    private fun guestSpellingOf(workspace: String, base: String): String =
+        GuestWorkspacePath.under(base, workspace)
 
     private fun canonicalize(path: String): String {
         val clean = path.trim().trim('"', '\'')

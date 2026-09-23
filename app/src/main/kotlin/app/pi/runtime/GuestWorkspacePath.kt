@@ -17,10 +17,15 @@ import java.io.File
  *
  * The rule has two halves and this object owns both:
  *
- *  1. **Where** a workspace lives: under the app's files directory, at
- *     [ROOT_RELATIVE], one directory per workspace. [DEFAULT_RELATIVE] is the
- *     workspace an install that has never chosen one uses — `workspace-1`, the one
- *     this app shipped with, never migrated and never rebuilt.
+ *  1. **Where** a workspace lives: under the base this object mirrors at [GUEST_ROOT] — that
+ *     is `PiPaths.workspaceBase`, `<rootfs>/workspace`, so the directory is
+ *     `<rootfs>/workspace/pi/workspaces/<name>` and pi sees it as
+ *     `/workspace/pi/workspaces/<name>`. (Until 2026-09-23 the base was the app's files
+ *     directory; the workspace moved into the rootfs and the base moved with it, while every
+ *     guest spelling stayed byte-identical.) [ROOT_RELATIVE] is the per-install subdirectory,
+ *     one workspace each, and [DEFAULT_RELATIVE] is the workspace an install that has never
+ *     chosen one uses — `workspace-1`, the one this app shipped with, never migrated and never
+ *     rebuilt.
  *  2. **Which** workspace is current: there is exactly one per process, because
  *     there is exactly one engine, one terminal and one write boundary. That name
  *     is persisted in the app's own settings key and resolved by
@@ -38,10 +43,9 @@ import java.io.File
  *
  * ## The engine spelling, and why it is not `/workspace`
  *
- * `PiEngineHost` mirrors the *files directory* at [GUEST_ROOT] and mounts the
- * workspace at the path that remains after the files-directory prefix
- * ([under]). With the workspace at `<files>/pi/workspaces/workspace-1` the guest
- * sees it at
+ * `PiEngineHost` mirrors the *workspace base* at [GUEST_ROOT] and mounts the
+ * workspace at the path that remains after that base's prefix ([under]). With the
+ * workspace at `<rootfs>/workspace/pi/workspaces/workspace-1` the guest sees it at
  *
  *     /workspace/pi/workspaces/workspace-1
  *
@@ -84,7 +88,7 @@ object GuestWorkspacePath {
      */
     const val DEFAULT_RELATIVE: String = "pi/workspaces/workspace-1"
 
-    /** The directory every workspace is a child of, under the files directory. */
+    /** The directory every workspace is a child of, under [PiPaths.workspaceBase]. */
     const val ROOT_RELATIVE: String = "pi/workspaces"
 
     /**
@@ -108,7 +112,7 @@ object GuestWorkspacePath {
     const val TERMINAL_GUEST_PATH: String = "/workspace"
 
     /**
-     * The workspace in effect for this process, relative to the files directory.
+     * The workspace in effect for this process, relative to [PiPaths.workspaceBase].
      *
      * Defaults to [DEFAULT_RELATIVE] and is changed only by [adoptRelative], which
      * [WorkspaceStore] calls once it has resolved (and, when necessary, corrected)
@@ -139,10 +143,10 @@ object GuestWorkspacePath {
     }
 
     /** The workspace directory itself, for the current workspace. */
-    fun host(filesDir: File): File = host(filesDir, RELATIVE)
+    fun host(base: File): File = host(base, RELATIVE)
 
-    /** The workspace directory [relative] names, relative to [filesDir]. */
-    fun host(filesDir: File, relative: String): File = File(filesDir, relative)
+    /** The workspace directory [relative] names, relative to [base]. */
+    fun host(base: File, relative: String): File = File(base, relative)
 
     /**
      * [host], **created if it is missing**, and returned either way.
@@ -169,25 +173,30 @@ object GuestWorkspacePath {
      * [WorkspaceStore.refresh]'s job, and it says so in words; a `mkdirs()` that
      * picked a different directory would be the silent switch that rule forbids.
      */
-    fun ensureHost(filesDir: File): File = ensureHost(filesDir, RELATIVE)
+    fun ensureHost(base: File): File = ensureHost(base, RELATIVE)
 
     /** [ensureHost] for an explicit workspace, which may be one that is not current. */
-    fun ensureHost(filesDir: File, relative: String): File {
-        val dir = host(filesDir, relative)
+    fun ensureHost(base: File, relative: String): File {
+        val dir = host(base, relative)
         dir.mkdirs()
         return dir
     }
 
     /**
-     * The engine's guest spelling of [hostWorkspace]: the files directory is
-     * mirrored at [GUEST_ROOT], so the spelling is what remains after the prefix
-     * is removed. An empty remainder is the root itself.
+     * The engine's guest spelling of [hostWorkspace]: [base] is mirrored at [GUEST_ROOT], so
+     * the spelling is what remains after that prefix is removed. An empty remainder is the
+     * root itself.
      *
-     * A pure function of two strings, not of `File`, so a bare-JVM harness can pin
-     * it and so the rule reads identically at every call site.
+     * [base] is `PiPaths.workspaceBase` (`<rootfs>/workspace`) — it was `<filesDir>` until
+     * the workspace moved into the rootfs on 2026-09-23. **The rule and every guest spelling
+     * it produces are unchanged**; only the host base moved, which is why pi's
+     * `trust.json` keys survive the change.
+     *
+     * A pure function of two strings, not of `File`, so a bare-JVM harness can pin it and so
+     * the rule reads identically at every call site.
      */
-    fun under(filesDir: String, hostWorkspace: String): String {
-        val relative = hostWorkspace.removePrefix(filesDir).trimStart('/')
+    fun under(base: String, hostWorkspace: String): String {
+        val relative = hostWorkspace.removePrefix(base).trimStart('/')
         return if (relative.isEmpty()) GUEST_ROOT else "$GUEST_ROOT/$relative"
     }
 }

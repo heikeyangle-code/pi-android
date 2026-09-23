@@ -215,7 +215,10 @@ object WorkspaceChoice {
 
     /**
      * 外部工作区在 guest 里的拼法 —— 与内部工作区**同一条规则**（`GuestWorkspacePath.under`：
-     * 文件目录镜像在 `/workspace`，工作区就是去掉那个前缀之后剩下的路径）。
+     * 某个基底镜像在 `/workspace`，工作区就是去掉那个前缀之后剩下的路径）。
+     *
+     * 基底由调用方给：`PiPaths.workspaceBase`（`<rootfs>/workspace`）。**它不是 files 目录**
+     * —— 2026-09-23 工作区搬进 rootfs 时基底跟着换过，而 guest 拼写一个字没变。
      *
      * 这一个薄门存在的唯一理由是**它要能被 harness 执行**：规则本身在 `GuestWorkspacePath`，
      * 这里只把「外部工作区也走同一条规则」这件事记下来，免得有人以为外部目录要另配一个挂载点。
@@ -223,8 +226,8 @@ object WorkspaceChoice {
      * pi 的项目设置因此是那个目录里的 `.pi/settings.json`（`PiProjectConfig.root`），
      * 这正是 pi 的语义：项目设置跟着 cwd 走。
      */
-    fun guestPathOf(hostPath: String, filesRoot: String): String =
-        GuestWorkspacePath.under(filesRoot, hostPath)
+    fun guestPathOf(hostPath: String, base: String): String =
+        GuestWorkspacePath.under(base, hostPath)
 
     /**
      * 删一个工作区时，磁盘上的文件会不会一起消失。

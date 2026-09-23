@@ -629,21 +629,19 @@ class PiEngineHost(private val appContext: Context) {
             // (`RuntimeSelection`). The install/maintenance paths deliberately do not;
             // see that class's KDoc for where the line is drawn and why.
             val selection = RuntimeSelection.of(appContext, paths)
-            // **The agent dir is no longer bound** (2026-09-23); the workspace still is.
+            // **No extra binds at all** (2026-09-23). The engine's cwd
+            // (`/workspace/pi/workspaces/<name>`) and pi's home (`/root/.pi/agent`) are
+            // spelled exactly like the host directories backing them — both live in the
+            // rootfs — so the guest reaches them through the rootfs prefix and there is
+            // nothing to mount.
             //
-            // pi's home is `<rootfs>/root/.pi/agent`, which is exactly the guest's
-            // `/root/.pi/agent`, so the engine reaches it through the rootfs prefix and the
-            // app addresses that same directory through `PiPaths.agentDir`. The bind that
-            // used to be here existed to *make* those two the same directory; moving the
-            // directory into the rootfs made it structural instead — and it removes an
-            // app-private bind, which is what proroot's `scandir`/`mkstemp`/`mkdtemp`
-            // failures live in (`docs/proroot-scandir-defect.md`).
-            //
-            // The workspace bind stays, because the workspace is still outside the rootfs
-            // (`PiPaths.workspaces` gives the reason). That is also why `git` still needs a
-            // workaround under proroot: `.git/tXXXXXX` is created inside the bound
-            // workspace.
-            val extraBinds = listOf(workspace.absolutePath to guestWorkspace)
+            // The two bindings that used to be here are what made `git` unusable under
+            // proroot: its `scandir`/`mkstemp`/`mkdtemp` return `ENOENT` anywhere under a
+            // bind whose host source is an app-private directory
+            // (`docs/proroot-scandir-defect.md`), and `.git/tXXXXXX` is created *inside the
+            // workspace*. The engine is where pi runs `git`, so this is the fix that
+            // matters.
+            val extraBinds = emptyList<Pair<String, String>>()
             val extraEnv = mapOf(
                 // pi's file surface is 1:1 with a desktop install, so settings,
                 // skills, extensions and themes are interchangeable with one.
@@ -1192,7 +1190,7 @@ class PiEngineHost(private val appContext: Context) {
      * drifted apart before.
      */
     private fun guestPathFor(host: File): String =
-        GuestWorkspacePath.under(appContext.filesDir.absolutePath, host.absolutePath)
+        GuestWorkspacePath.under(paths.workspaceBase.absolutePath, host.absolutePath)
 
     companion object {
         /** Log tag for the proroot launch/reap bookkeeping; nothing else in here logs. */

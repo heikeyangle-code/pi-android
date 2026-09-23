@@ -28,6 +28,7 @@ import app.pi.rpc.parseSessionEntry
 import app.pi.rpc.QueueMode
 import app.pi.rpc.SessionEntry
 import app.pi.rpc.StreamingBehavior
+import app.pi.runtime.PiPaths
 import app.pi.rpc.ToolCall
 import app.pi.rpc.ToolStatus
 import app.pi.rpc.TranscriptItem
@@ -1681,9 +1682,22 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * literal here, which is one more place the engine's cwd could drift.
      */
     private fun guestWorkspace(): String = GuestWorkspacePath.under(
-        getApplication<Application>().filesDir.absolutePath,
+        workspaceBase().absolutePath,
         defaultWorkspace().absolutePath,
     )
+
+    /**
+     * `GuestWorkspacePath`'s base for this install: `<rootfs>/workspace`, which the guest
+     * sees as `/workspace`. It replaced `<filesDir>` when the workspace moved into the
+     * rootfs (2026-09-23) — the guest spelling is unchanged, only the host base is.
+     */
+    private fun workspaceBase(): java.io.File {
+        val application = getApplication<Application>()
+        return PiPaths(
+            filesDir = application.filesDir,
+            nativeLibDir = java.io.File(application.applicationInfo.nativeLibraryDir),
+        ).workspaceBase
+    }
 
     // ------------------------------------------------------------ workspaces
 

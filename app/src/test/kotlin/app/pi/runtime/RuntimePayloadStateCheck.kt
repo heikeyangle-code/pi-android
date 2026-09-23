@@ -134,11 +134,12 @@ fun main() {
     nativeLib.mkdirs()
     val paths = PiPaths(filesDir = filesDir, nativeLibDir = nativeLib)
 
-    check("E1 the workspace root is outside the volatile tree", VolatileTree.contains(paths.runtime, paths.workspaces), false)
-    // The agent dir is **inside** the rootfs since 2026-09-23
-    // (`DurableLayout.AGENT_IN_ROOTFS`), which is the whole point of that change: a rootfs
-    // path is an ordinary path, so proroot's bind-subtree failures cannot reach pi's home.
-    // What keeps it safe is `wipe()`'s move-out, not its location (W 段).
+    // Both of the directories the app owns moved **inside** the rootfs on 2026-09-23
+    // (`DurableLayout.AGENT_IN_ROOTFS` / `WORKSPACES_IN_ROOTFS`). That is the point of the
+    // change: a rootfs path is an ordinary path, so proroot's bind-subtree failures cannot
+    // reach pi's home or a workspace, which is what makes `git` work again. What keeps them
+    // safe is `wipe()`'s move-out, not their location (W 段).
+    check("E1 the workspace root is inside the rootfs", VolatileTree.contains(paths.rootfs, paths.workspaces), true)
     check("E2 the agent dir is inside the rootfs", VolatileTree.contains(paths.rootfs, paths.agentDir), true)
     check("E3 persist is outside the volatile tree", VolatileTree.contains(paths.runtime, paths.persist), false)
     check("E4 the layout reports no violation", DurableLayout.violations(paths.home, paths.runtime), emptyList<String>())
@@ -147,16 +148,16 @@ fun main() {
     check("E5 the volatile root is deletable", VolatileTree.offending(paths.runtime, listOf(paths.runtime)), emptyList<File>())
     // A recursive delete pointed at a durable directory is refused for the ones that live
     // **outside** the volatile tree — `deleteTreeInsideVolatile` turns each offender into a
-    // thrown ProvisioningException. The agent dir is inside it on purpose, so it is not an
-    // offender; its protection is `DurablePreserve` instead.
+    // thrown ProvisioningException. Only `persist` is out there now; the two directories
+    // inside the rootfs are protected by `DurablePreserve` instead.
     check(
-        "E6 both out-of-tree durable directories are refused as delete targets",
+        "E6 the one out-of-tree durable directory is refused as a delete target",
         VolatileTree.offending(paths.runtime, DurableLayout.durableDirs(paths.home, paths.runtime)),
-        listOf(paths.workspaces, paths.persist),
+        listOf(paths.persist),
     )
     check(
-        "E7 the agent dir is not an offender — the rootfs is where it belongs",
-        VolatileTree.offending(paths.runtime, listOf(paths.agentDir)),
+        "E7 neither rootfs directory is an offender — the rootfs is where they belong",
+        VolatileTree.offending(paths.runtime, listOf(paths.agentDir, paths.workspaces)),
         emptyList<File>(),
     )
     check(
@@ -173,39 +174,39 @@ fun main() {
     check("E10 the volatile root contains itself", VolatileTree.relativePath(paths.runtime, paths.runtime), "")
 
     // The counterexample, and the asymmetry that *is* the rule: with `home` inside the
-    // volatile tree, the two directories located relative to `home` become violations —
-    // and the agent dir does not, because it is located relative to the rootfs. That is
-    // what lets a durable directory live in the rootfs without weakening this check.
+    // volatile tree, the one directory located relative to `home` becomes a violation —
+    // and the two that are located relative to the rootfs do not. That is what lets durable
+    // directories live in the rootfs without weakening this check.
     val movedHome = paths.runtime
     val violations = DurableLayout.violations(movedHome, paths.runtime)
-    check("F1 a durable dir spelled under the volatile tree is a violation", violations.size, 2)
+    check("F1 a durable dir spelled under the volatile tree is a violation", violations.size, 1)
     check("F2 the violation names the directory", violations.all { it.contains("落在易失树") }, true)
     check("F3 the violation names the tree", violations.all { it.contains(paths.runtime.path) }, true)
     check(
-        "F4 the agent dir is not among them — it lives in the rootfs",
-        violations.none { it.contains(paths.agentDir.path) },
+        "F4 neither rootfs-resident directory is among them",
+        violations.none { it.contains(paths.agentDir.path) || it.contains(paths.workspaces.path) },
         true,
     )
 
     // ------------------------------------------------- 显式「修复」那一刀的保护机制
     // `wipe()` 是唯一会整棵删 `<files>/pi/runtime` 的地方，只有 `rebuild = true` 能到。
-    // 从 2026-09-23 起 pi 的 agent 目录**就在** rootfs 里（`DurableLayout.AGENT_IN_ROOTFS`），
-    // 所以这一刀不再是一个空跑的保护：它每次「修复」都要真的把 agent 目录搬出去再搬回来。
-    // 工作区根和 persist 仍在易失树之外，清单里不会有它们。
+    // 从 2026-09-23 起 pi 的 agent 目录**和工作区根都在** rootfs 里
+    // （`DurableLayout.AGENT_IN_ROOTFS` / `WORKSPACES_IN_ROOTFS`），所以这一刀不再是空跑：
+    // 每次「修复」都要真的把这两个目录搬出去再搬回来。只有 persist 在易失树之外。
     check(
-        "W1 the agent dir is the one durable directory inside the rootfs",
+        "W1 the rootfs-resident durable directories are the move list",
         DurableLayout.durableInsideRootfs(DurableLayout.durableDirs(paths.home, paths.runtime), paths.rootfs),
-        listOf(paths.agentDir),
+        listOf(paths.workspaces, paths.agentDir),
     )
     check(
-        "W1b and the two out-of-tree durable directories are not in the move list",
-        DurableLayout.durableInsideRootfs(listOf(paths.workspaces, paths.persist), paths.rootfs),
+        "W1b and the one out-of-tree durable directory is not in it",
+        DurableLayout.durableInsideRootfs(listOf(paths.persist), paths.rootfs),
         emptyList<File>(),
     )
-    val inRootfs = File(paths.rootfs, "workspace")
+    val inRootfs = File(paths.rootfs, "somewhere-else")
     check(
-        "W2 a durable directory inside the rootfs is picked up",
-        DurableLayout.durableInsideRootfs(listOf(inRootfs, paths.workspaces), paths.rootfs),
+        "W2 a durable directory inside the rootfs is picked up, one outside is not",
+        DurableLayout.durableInsideRootfs(listOf(inRootfs, paths.persist), paths.rootfs),
         listOf(inRootfs),
     )
     check(
@@ -248,15 +249,19 @@ fun main() {
     check("W13 and the durable directory is untouched by the refusal", File(userWs, "main.py").readText(), "keep me")
     preserveRoot.deleteRecursively()
 
-    // One spelling of the workspace root, on both sides of the files-directory boundary:
-    // `GuestWorkspacePath.ROOT_RELATIVE` is relative to `<files>`, `PiPaths.workspaces` is
-    // built from `DurableLayout`, and they must name the same directory.
+    // One spelling of the workspace root, on both sides of the boundary: the guest relative
+    // path is what remains of `WORKSPACES_IN_ROOTFS` after the guest's `/workspace` base,
+    // and `PiPaths.workspaces` is built from that same pair.
     check(
-        "G1 the two spellings of the workspace root agree",
+        "G1 the workspace's two spellings agree",
         GuestWorkspacePath.ROOT_RELATIVE,
-        "pi/" + DurableLayout.WORKSPACES_RELATIVE,
+        DurableLayout.WORKSPACES_IN_ROOTFS.removePrefix(DurableLayout.WORKSPACE_BASE_IN_ROOTFS + "/"),
     )
-    check("G2 workspaces follows the durable layout", paths.workspaces, File(paths.home, DurableLayout.WORKSPACES_RELATIVE))
+    check(
+        "G2 workspaces sits on the guest's /workspace base",
+        paths.workspaces,
+        File(paths.workspaceBase, GuestWorkspacePath.ROOT_RELATIVE),
+    )
 
     // ------------------------------------------- the transition, as arithmetic
     // "Every existing install extracts over the tree and deletes nothing" is not a promise

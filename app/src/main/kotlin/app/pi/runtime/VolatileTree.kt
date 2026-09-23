@@ -79,10 +79,12 @@ object VolatileTree {
  * `mkstemp` 系工具，在 proroot 下都要绕。搬进 rootfs 之后它不再是一条绑定，走的是一条
  * 普通的 rootfs 路径。
  *
- * **工作区根（[WORKSPACES_RELATIVE]）刻意没有一起搬。** 它的 guest 拼写由
- * [GuestWorkspacePath] 给出，而那整条规则的前提是「files 目录镜像在 `/workspace`」——
- * 搬它就要换掉那条规则的基底，也就是 app 里每一处文件路径调用点，而且会给终端的短拼写
- * `/workspace` 带来一个必须单独决定的问题。那是另一次改动；这一次只动 agent 目录。
+ * **工作区根也搬了**：[WORKSPACES_IN_ROOTFS] = `<rootfs>/workspace/pi/workspaces`。它的
+ * guest 拼写由 [GuestWorkspacePath] 给出，那条规则的前提是「某个基底镜像在 `/workspace`」——
+ * 所以搬它的同时把那个基底从 `<files>` 换成了 [WORKSPACE_BASE_IN_ROOTFS]
+ * （`<rootfs>/workspace`），**guest 拼写一个字没变**（`/workspace/pi/workspaces/<名>`，
+ * 也就是 pi 写进 `trust.json` 的那个 cwd）。这正是 `git` 能被修好的原因：`.git/tXXXXXX`
+ * 现在建在一条普通的 rootfs 路径上，而不是绑定子树的里面。
  *
  * ## 代价是「agent 目录现在在易失树里」，而这一条是被保护的，不是被默许的
  *
@@ -105,8 +107,15 @@ object DurableLayout {
     /** `<rootfs>/root/.pi/agent`，相对 rootfs。就是 guest 的 `/root/.pi/agent`。 */
     const val AGENT_IN_ROOTFS: String = "root/.pi/agent"
 
-    /** `<files>/pi/workspaces`，相对 `PiPaths.home`。**刻意仍在 rootfs 之外**，见类 KDoc。 */
-    const val WORKSPACES_RELATIVE: String = "workspaces"
+    /**
+     * `<rootfs>/workspace`，相对 rootfs —— `GuestWorkspacePath` 当作 guest `/workspace`
+     * 的那一层。工作区根在它下面，所以 guest 的 `/workspace/pi/workspaces/<名>`
+     * 就是一条普通的 rootfs 路径。
+     */
+    const val WORKSPACE_BASE_IN_ROOTFS: String = "workspace"
+
+    /** `<rootfs>/workspace/pi/workspaces`，相对 rootfs。guest 侧是 `/workspace/pi/workspaces`。 */
+    const val WORKSPACES_IN_ROOTFS: String = "workspace/pi/workspaces"
 
     /** `<files>/pi/persist`，相对 `PiPaths.home`。本 App 自己的耐久目录。 */
     const val PERSIST_RELATIVE: String = "persist"
@@ -114,12 +123,18 @@ object DurableLayout {
     /** [ROOTFS_RELATIVE] 在 [runtime] 下解析出的那个目录。 */
     fun rootfsOf(runtime: File): File = File(runtime, ROOTFS_RELATIVE)
 
+    /** `GuestWorkspacePath` 的基底：`<rootfs>/workspace`。 */
+    fun workspaceBaseOf(runtime: File): File = File(rootfsOf(runtime), WORKSPACE_BASE_IN_ROOTFS)
+
     /** 三个耐久目录，顺序固定，便于报告逐行打印。 */
-    fun durableDirs(home: File, runtime: File): List<File> = listOf(
-        File(home, WORKSPACES_RELATIVE),
-        File(rootfsOf(runtime), AGENT_IN_ROOTFS),
-        File(home, PERSIST_RELATIVE),
-    )
+    fun durableDirs(home: File, runtime: File): List<File> {
+        val rootfs = rootfsOf(runtime)
+        return listOf(
+            File(rootfs, WORKSPACES_IN_ROOTFS),
+            File(rootfs, AGENT_IN_ROOTFS),
+            File(home, PERSIST_RELATIVE),
+        )
+    }
 
     /**
      * 三个耐久目录里**落在 [rootfs] 之内**的那些 —— 也就是 `wipe()` 必须先搬走的那些

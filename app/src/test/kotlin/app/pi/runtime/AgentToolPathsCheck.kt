@@ -41,6 +41,13 @@ fun check(name: String, actual: Any?, expected: Any?) {
 
 private const val FILES = "/data/user/0/app.pi/files"
 
+/**
+ * The base [GuestWorkspacePath] treats as the guest's `/workspace`:
+ * `<files>/pi/runtime/rootfs/workspace`. It was `<files>` itself until the workspace moved
+ * into the rootfs on 2026-09-23 — **the guest spelling did not change**, only this base.
+ */
+private const val WS_BASE = "$FILES/pi/runtime/rootfs/workspace"
+
 private fun paths() = PiPaths(
     filesDir = java.io.File(FILES),
     nativeLibDir = java.io.File("/data/app/app.pi/lib/arm64"),
@@ -119,22 +126,22 @@ fun main() {
     // `GuestWorkspacePath` and every call site reads it. These checks pin the rule
     // and, just as importantly, pin the *disagreement* the rule cannot remove:
     // the terminal mounts the same directory at a different guest path.
-    check("the workspace lives under the files directory", GuestWorkspacePath.RELATIVE, "pi/workspaces/workspace-1")
+    check("the workspace's guest-relative spelling", GuestWorkspacePath.RELATIVE, "pi/workspaces/workspace-1")
     check(
-        "the workspace directory is <files>/pi/workspaces/workspace-1",
-        GuestWorkspacePath.host(java.io.File(FILES)).path,
-        "$FILES/pi/workspaces/workspace-1",
+        "the workspace directory is <rootfs>/workspace/pi/workspaces/workspace-1",
+        GuestWorkspacePath.host(java.io.File(WS_BASE)).path,
+        "$WS_BASE/pi/workspaces/workspace-1",
     )
-    val engineSpelling = GuestWorkspacePath.under(FILES, "$FILES/${GuestWorkspacePath.RELATIVE}")
+    val engineSpelling = GuestWorkspacePath.under(WS_BASE, "$WS_BASE/${GuestWorkspacePath.RELATIVE}")
     check(
         "the engine's guest spelling of the workspace",
         engineSpelling,
         "/workspace/pi/workspaces/workspace-1",
     )
-    check("the files directory itself is the mount root", GuestWorkspacePath.under(FILES, FILES), "/workspace")
+    check("the base itself is the mount root", GuestWorkspacePath.under(WS_BASE, WS_BASE), "/workspace")
     check(
-        "a path outside the files directory keeps its own shape (matches guestPathFor)",
-        GuestWorkspacePath.under(FILES, "/sdcard/ws"),
+        "a path outside the base keeps its own shape (matches guestPathFor)",
+        GuestWorkspacePath.under(WS_BASE, "/sdcard/ws"),
         "/workspace/sdcard/ws",
     )
     check(
@@ -161,18 +168,18 @@ fun main() {
     check("the project config directory is pi's default", PiProjectConfig.DIRECTORY, ".pi")
     check(
         "the project config root is <workspace>/.pi",
-        PiProjectConfig.root(java.io.File("$FILES/${GuestWorkspacePath.RELATIVE}")).path,
-        "$FILES/${GuestWorkspacePath.RELATIVE}/.pi",
+        PiProjectConfig.root(java.io.File("$WS_BASE/${GuestWorkspacePath.RELATIVE}")).path,
+        "$WS_BASE/${GuestWorkspacePath.RELATIVE}/.pi",
     )
     check(
         "project settings resolve to pi's projectSettingsPath",
-        PiProjectConfig.settingsFile(java.io.File("$FILES/${GuestWorkspacePath.RELATIVE}")).path,
-        "$FILES/${GuestWorkspacePath.RELATIVE}/.pi/settings.json",
+        PiProjectConfig.settingsFile(java.io.File("$WS_BASE/${GuestWorkspacePath.RELATIVE}")).path,
+        "$WS_BASE/${GuestWorkspacePath.RELATIVE}/.pi/settings.json",
     )
     check(
         "project themes resolve to <workspace>/.pi/themes",
-        PiProjectConfig.themesDir(java.io.File("$FILES/${GuestWorkspacePath.RELATIVE}")).path,
-        "$FILES/${GuestWorkspacePath.RELATIVE}/.pi/themes",
+        PiProjectConfig.themesDir(java.io.File("$WS_BASE/${GuestWorkspacePath.RELATIVE}")).path,
+        "$WS_BASE/${GuestWorkspacePath.RELATIVE}/.pi/themes",
     )
     // The three resource directories pi discovers by walking (`resource-loader.ts:819-822`).
     check(

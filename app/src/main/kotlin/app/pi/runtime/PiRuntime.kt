@@ -7,24 +7,23 @@ import java.io.File
  *
  * ## Where user data lives (2026-09-23)
  *
- * pi's agent dir lives **inside the rootfs**: `<rootfs>/root/.pi/agent`, which *is* the
- * guest path pi already used (`/root/.pi/agent`), so nothing in the guest changes spelling.
- * It used to live at `<files>/pi/.pi/agent` and be **bound** over that guest path. It is
- * not any more, because proroot's `scandir`/`mkstemp`/`mkdtemp` return `ENOENT` inside a
- * bind whose host source is an app-private directory (`docs/proroot-scandir-defect.md`),
- * which cost the app `npm install` into the agent dir and every `mkstemp`-based tool that
- * touched it. A rootfs path is an ordinary path.
+ * pi's agent dir and the workspace root both live **inside the rootfs**:
+ * `<rootfs>/root/.pi/agent` and `<rootfs>/workspace/pi/workspaces`. Those two *are* the
+ * guest paths pi already used (`/root/.pi/agent`, `/workspace/pi/workspaces` — see
+ * [workspaceBase] for why that spelling had to stay), so nothing in the guest changes.
+ * They used to live under `<files>/pi` and be **bound** into the guest. They are not any
+ * more, because proroot's `scandir`/`mkstemp`/`mkdtemp` return `ENOENT` inside a bind whose
+ * host source is an app-private directory (`docs/proroot-scandir-defect.md`) — which made
+ * `git`, `gcc` and `sed -i` unusable there. A rootfs path is an ordinary path.
  *
- * So for this directory the split is no longer "durable vs volatile" but "protected vs
- * unprotected", and the protection is [DurablePreserve]: `wipe()` — the only whole-tree
- * delete, reachable only from the explicit repair path — **moves the durable directories
- * out of the tree first** and back afterwards, refusing to delete if it cannot.
- * [DurableLayout.violations] is what keeps that honest: a durable directory may live
- * inside the rootfs, never elsewhere in the volatile tree.
+ * So the split is no longer "durable vs volatile", it is "protected vs unprotected", and
+ * the protection is [DurablePreserve]: `wipe()` — the only whole-tree delete, reachable
+ * only from the explicit repair path — **moves the durable directories out of the tree
+ * first** and back afterwards, refusing to delete if it cannot. [DurableLayout.violations]
+ * is what keeps that honest: a durable directory may live inside the rootfs, never
+ * elsewhere in the volatile tree.
  *
- * The workspace root ([workspaces]) deliberately did **not** move — see its KDoc.
- * [persist] stays outside as well: it is this app's own boot audit, which the guest never
- * sees.
+ * [persist] stays outside: it is this app's own boot audit, which the guest never sees.
  */
 class PiPaths(private val filesDir: File, private val nativeLibDir: File) {
 
@@ -49,21 +48,33 @@ class PiPaths(private val filesDir: File, private val nativeLibDir: File) {
     val agentDir: File get() = File(rootfs, DurableLayout.AGENT_IN_ROOTFS)
 
     /**
-     * The workspace root: `<files>/pi/workspaces`, one directory per workspace.
+     * The base [GuestWorkspacePath] treats as the guest's `/workspace`: `<rootfs>/workspace`.
      *
-     * **Still outside the rootfs on purpose** (2026-09-23). Its guest spelling comes from
-     * [GuestWorkspacePath], whose whole rule is "the files directory is mirrored at
-     * `/workspace`" — so moving this directory into the rootfs would change the base of
-     * that rule and therefore every file-path call site in the app, and it would also
-     * remove the only way the terminal can keep its shorter `/workspace` spelling
-     * ([GuestWorkspacePath.TERMINAL_GUEST_PATH]). That is its own change, with its own
-     * decision; this one is the agent dir.
-     *
-     * The consequence is unchanged and worth stating: `git` inside a workspace is still
-     * broken under proroot, because the workspace is still an app-private bind
-     * (`docs/proroot-scandir-defect.md`).
+     * Every workspace path in the app is derived from this one value, and it is the *only*
+     * thing that changed when the workspace moved into the rootfs (2026-09-23). The guest
+     * spelling did not change at all: `<rootfs>/workspace/pi/workspaces/<name>` is exactly
+     * the `/workspace/pi/workspaces/<name>` pi already had as its cwd — which matters,
+     * because pi's project trust keys are `canonicalizePath(cwd)` and a changed spelling
+     * would silently drop every project-level skill, prompt, theme and extension.
      */
-    val workspaces: File get() = File(home, DurableLayout.WORKSPACES_RELATIVE)
+    val workspaceBase: File get() = File(rootfs, DurableLayout.WORKSPACE_BASE_IN_ROOTFS)
+
+    /**
+     * The workspace root: `<rootfs>/workspace/pi/workspaces`, one directory per workspace —
+     * which is the guest's `/workspace/pi/workspaces`.
+     *
+     * The engine's cwd (`/workspace/pi/workspaces/<name>`, [GuestWorkspacePath.RELATIVE])
+     * therefore resolves through the rootfs with **no bind at all**, and that is what makes
+     * `git` work inside a workspace again: `.git/tXXXXXX` is created in the workspace, and
+     * proroot's `scandir`/`mkstemp`/`mkdtemp` fail anywhere under a bind whose host source
+     * is an app-private directory (`docs/proroot-scandir-defect.md`).
+     *
+     * The terminal keeps a second, shorter spelling of *one* workspace — `/workspace`
+     * ([GuestWorkspacePath.TERMINAL_GUEST_PATH]) — and that one is still a bind
+     * (`PtyLauncher`), because it names a different path for the same directory and only a
+     * bind can do that. Its host side is inside the rootfs now too.
+     */
+    val workspaces: File get() = File(workspaceBase, GuestWorkspacePath.ROOT_RELATIVE)
 
     /**
      * This app's own durable directory: `<files>/pi/persist`.
