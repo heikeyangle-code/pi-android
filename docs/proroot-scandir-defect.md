@@ -1,85 +1,53 @@
-# proroot 的 `scandir(3)` 让 pi 列不了目录
+# proroot 下 pi 列不了目录：`scandir(3)`
 
-> 本文取代 `proroot-bind-drop-defect.md`（已删）。那一版把现象读成了"proroot 静默丢掉
-> `-b` 绑定"，并据此得出"改不了、不要改代码"。**那个根因判断是错的**，修法也就跟着错了。
-> 下面是设备实测 + 二进制符号表 + 本机 Node 实验三方对出来的结论。
->
-> 状态：**已定位、已修（Node 侧兜底）、待设备验证**。
-> 相关：上游 [issue #25](https://github.com/coderredlab/proroot/issues/25)（诉求仍然成立，但已不是修复路径）。
+> proroot 运行时的一个缺陷，以及本仓库在 Node 侧的修法。
+> 状态：**根因已定位（设备实测）、修法已实现并推送、待设备复验**。
+> 取代 `proroot-bind-drop-defect.md`（已删：那一版把现象读成"绑定被静默丢掉"，根因是错的）。
+> 上游：[coderredlab/proroot#25](https://github.com/coderredlab/proroot/issues/25)。
 
 ---
 
-## 1. 一句话结论
+## 1. 结论
 
-proroot 的 **`scandir(3)` hook 对它自己重写的路径返回 `ENOENT`**，而同一条路径上
-`opendir(3)` + `readdir(3)` **是好的**。
+proroot 的 **`scandir(3)` hook 对它自己重写的路径返回 `ENOENT`**，而**同一条路径上
+`opendir(3)` + `readdir(3)` 是好的**。
 
-Node 的 `fs.readdirSync` / `fs.readdir` 恰好是**用 `scandir(3)` 实现的**
-（libuv `uv_fs_scandir` → libc `scandir64`），而 `bash` 的 `ls`/`find`/`grep` 用的是
-`opendir` + `readdir`。**于是同一个目录：bash 能列，Node 列不了。**
+Node 的 `fs.readdirSync` / `fs.readdir` 恰好经 libuv `uv_fs_scandir` 落到 **`scandir(3)`**；
+`bash` 的 `ls`/`find`/`grep` 走的是 `opendir` + `readdir`。于是**同一个目录，bash 能列、
+Node 列不了**。
 
-pi 的进程内列目录**全部**走 `fs.readdir*`——`ls` 工具、扩展加载器、技能、主题、提示词、
-命令面板、会话列表——所以它们一起坏，而终端里手敲 `ls` 一直是好的。
-
----
-
-## 2. 设备实测（用户做的对比，把范围钉死了）
-
-判据：**比较「guest 里看到的 inode」与「真实 rootfs 里的 inode」，两者不同的路径，正好就是
-`ls` 报 ENOENT 的路径。**
-
-| 路径 | guest inode | rootfs inode | `ls` 工具 |
-|---|---|---|---|
-| `/`、`/etc`、`/opt`、`/usr`、`/data` | 相同 | 相同 | ✅ |
-| `/root`、`/root/.pi` | 相同 | 相同 | ✅ |
-| `/workspace`、`/workspace/pi`、`/workspace/pi/workspaces` | 相同 | 相同 | ✅ |
-| `/opt/pi/node_modules` | — | — | ✅ |
-| `/sdcard`（真实内核挂载） | 不同 | 不同 | ✅ |
-| `/tmp` | 2795720 | 2795917 | ❌ ENOENT |
-| `/workspace/pi/workspaces/workspace-1`（当时的 cwd） | 4850950 | 4878829 | ❌ ENOENT |
-| `/root/.pi/agent` | 4738345 | 4816727 | ❌ ENOENT |
-| `/dev/shm` | 存在 | rootfs 里不存在 | ❌ ENOENT |
-
-**触发条件不是"设备号不同"**（`/sdcard` 设备号也不同，但它能列），而是
-**proroot 自己做路径重写的那一类挂载点**。
-
-两条旁证，决定了根因的方向：
-
-1. **错误形态是 `Cannot read directory: ENOENT … scandir`**，而路径真不存在时报的是另一种
-   ——`Path not found`。说明这些目录在 `ls` 工具视角里 **`stat` 成功、`readdir`（scandir）失败**。
-2. **同一批路径上别的工具都正常**：`read` 能读到文件，`grep`/`find` 能列出内容
-   （它们走独立二进制 + `opendir`/`getdents`）。
+pi 进程内所有列目录都走 `fs.readdir*`，所以它们一起坏——这不是巧合，是同一个函数。
 
 ---
 
-## 3. 根因：三个事实叠在一起
+## 2. 根因
 
-### 3.1 libc 侧：proroot 导出了 `scandir`，它的实现是坏的
+### 2.1 libc 侧：proroot 导出了 `scandir`，那条实现是坏的
 
-对仓库里钉住的 v1.2.8 `libproroot-runtime.so`
-（sha256 `8c47a0a7db32d84c179ebb5bf3640f655a3181860ece5886ae44d92858730c34`）跑
-`readelf --dyn-syms` 实测：
+对钉住的 v1.2.8 `libproroot-runtime.so`
+（sha256 `8c47a0a7db32d84c179ebb5bf3640f655a3181860ece5886ae44d92858730c34`）
+跑 `readelf --dyn-syms` 实测：
 
-| 符号 | proroot 是否导出 | 该路径在设备上 |
+| 符号 | proroot 是否导出 | 设备上的表现 |
 |---|---|---|
 | **`opendir`** | **导出** | ✅ 好 |
 | **`scandir` / `scandir64`** | **导出** | ❌ **坏** |
-| `readdir` / `readdir64` / `closedir` / `fdopendir` / `getdents64` | **不导出**（走 libc） | ✅ 好 |
+| `readdir` / `readdir64` / `closedir` / `fdopendir` / `getdents64` | 不导出（走 libc） | ✅ 好 |
 | `open` / `openat` / `stat` / `stat64` / `readlink` / `realpath` | 导出 | ✅ 好 |
 
-**所以这不是"漏 hook"，是"hook 了但那条实现有 bug"。** 而兜底方案之所以成立，
-正是因为 `opendir` 是它自己实现的、路径翻译正确，后面接的 `readdir` 是 libc 的、也好。
+**不是"漏 hook"，是"hook 了但那条实现有 bug"。** 兜底之所以成立，正因为 `opendir` 是它
+自己实现的、路径翻译正确，后面接的 `readdir` 是 libc 的、也好。
 
-### 3.2 Node 侧：`fs.readdir*` 走的正是坏的那条
+### 2.2 Node 侧：`fs.readdir*` 走的正是坏的那条
 
 - `fs.readdirSync` / `fs.readdir` → libuv `uv__fs_scandir()` → libc **`scandir64`**
   （`libuv/src/unix/fs.c`，PLT 调用，不是内联 syscall）。
-- 不是 `opendir` 那条路——所以 libc `readdir(3)` 好，不代表 Node 的 `fs.readdir` 好。
-  **两个同名的东西，落在两条不同的实现上。**
+- **libc 的 `readdir(3)` 好，不代表 Node 的 `fs.readdir` 好**——两个同名的东西落在两条
+  不同的实现上。这是整个问题里最容易读错的一处。
 
-### 3.3 pi 侧：28 处调用，一个症状
+### 2.3 pi 侧：28 处调用，一个症状
 
-`packages/coding-agent/src` 里 `readdirSync` / `readdir` 共 **28 处**，覆盖：
+`packages/coding-agent/src` 里 `readdirSync` / `readdir` 共 **28 处**：
 
 | 功能 | 位置 |
 |---|---|
@@ -92,57 +60,89 @@ pi 的进程内列目录**全部**走 `fs.readdir*`——`ls` 工具、扩展加
 | 会话列表 | `core/session-manager.ts:640` |
 | 迁移 | `migrations.ts:90` |
 
-**用户看到的三个症状（`ls` 失败、命令面板缺项、扩展不加载）是同一处根因的三张脸。**
+**用户看到的"`ls` 失败 / 命令面板缺项 / 扩展不加载"是同一处根因的三张脸。**
 
 ---
 
-## 4. 上一版文档错在哪（避免后人重走）
+## 3. 症状与范围（设备实测）
 
-| 上一版的判断 | 实际 |
-|---|---|
-| "proroot **静默丢掉 `-b` 绑定**" | 绑定**没丢**：`stat` 成功、bash 能列、inode 只在重写路径上不同。丢的只是 `scandir` 这一条实现。 |
-| 分成"症状 A（只有枚举坏）"和"症状 B（整条绑定没生效）"两个根因 | 只有**一个**：`scandir` 在重写路径上失败。所谓"绑定丢了"是把它在 `catch { return [] }` 下游的表现误当成了因。 |
-| "要修就得 patch proroot / 上 LD_PRELOAD shim / 物化进 rootfs" | 都不必。**修在 Node 侧，不碰 proroot。** |
-| "前提是 shim 能排到 proroot 之前，实测排不到 → 不可行" | 位置问题本身不成立：我们要的正是**它翻译之后**那一层。 |
-| "不改代码，维持现状" | 现在有改动更小、不依赖上游的修法。 |
+### 3.1 失败路径 = proroot 的绑定挂载点
 
-上一版里仍然有效的部分：§6 的环境限制（本机那五个 `.so` 是另一条 lineage、无法本地换版做 A/B）、
-§7 提给上游的两条诉求（`PROROOT_VERBOSE` 下打印绑定表、绑定失效时非零退出）。
+对 16 条路径逐条跑「`ls` 工具 / `bash` 数条数 / `test -d` / `grep` / `find`」：
+
+| 路径 | `ls` | bash 条数 | `test -d` | `grep` | `find` |
+|---|---|---|---|---|---|
+| `/` | OK | 27 | DIR_OK | OK | OK |
+| `/etc` | OK | 92 | DIR_OK | OK | OK |
+| `/usr` | OK | 9 | DIR_OK | OK | OK |
+| `/opt/pi` | OK | 4 | DIR_OK | OK | OK |
+| `/opt/pi/node_modules` | OK | 3 | DIR_OK | OK | OK |
+| `/root` | OK | 16 | DIR_OK | OK | OK |
+| `/root/.pi` | OK | 5 | DIR_OK | OK | OK |
+| **`/root/.pi/agent`** | **FAIL ENOENT** | 17 | DIR_OK | OK | OK |
+| **`/root/.pi/agent/extensions`** | **FAIL ENOENT** | 9 | DIR_OK | OK | OK |
+| `/workspace` | OK | 3 | DIR_OK | OK | OK |
+| `/workspace/pi` | OK | 1 | DIR_OK | OK | OK |
+| `/workspace/pi/workspaces` | OK | 1 | DIR_OK | OK | OK |
+| **`/tmp`** | **FAIL ENOENT** | 300 | DIR_OK | OK | OK |
+| **`/dev/shm`** | **FAIL ENOENT** | 0 | DIR_OK | OK | OK |
+| `/sdcard` | OK | 49 | DIR_OK | OK | OK |
+| **`/workspace/pi/workspaces/workspace-1`** | **FAIL ENOENT** | 7 | DIR_OK | OK | OK |
+
+四条读法：
+
+1. **失败的 5 条全部是 proroot 的绑定挂载点。** 分界线很准：`/root/.pi` 好而
+   `/root/.pi/agent` 坏；`/workspace/pi/workspaces` 好而它下面那一层坏。
+2. **`test -d` 全绿** → 目录真存在。是"看不见内容"，不是"目录不在"。
+3. **`bash` 数条数在那 5 条上全部成功** → **子进程那条路是好的**。
+4. **`grep` / `find` 在全部 16 条上都 OK**（走独立二进制），**`read` 全部 OK**（不走枚举）。
+
+### 3.2 地基：`opendir` 在失败路径上可用，且条数与 `/bin/ls` 一致
+
+| 路径 | `fs.opendirSync` | `fs.readdirSync` | `/bin/ls` |
+|---|---|---|---|
+| `/root/.pi/agent` | **17** | ERR:ENOENT | 17 |
+| `/root/.pi/agent/extensions` | **9** | ERR:ENOENT | 9 |
+| `/tmp` | **300** | ERR:ENOENT | 300 |
+| `/dev/shm` | **0** | ERR:ENOENT | 0 |
+| `/workspace/pi/workspaces/workspace-1` | **7** | ERR:ENOENT | 7 |
+
+**这组数字是修法的全部依据**：`opendir` 在坏路径上不仅可用，而且给出的条目与 `/bin/ls`
+**逐条一致**——所以换过去得到的是完整列表，不是残缺列表。
 
 ---
 
-## 5. 修法：Node 侧兜底，只对 proroot 注入
+## 4. 修法
 
-**不动 proroot，不动 pi 的代码。**
+**不动 proroot，也不动 pi 的代码。**
 
-### 5.1 模块
+### 4.1 模块
 
 `app/src/main/assets/guest/scandir-fix.mjs` → 客机 `/opt/pi/scandir-fix.mjs`。
 
-它把 `fs.readdirSync` / `fs.readdir` 包一层：
+把 `fs.readdirSync` / `fs.readdir` 包一层，规则只有两条：
 
 ```
 先照常调用原来的实现
   ├─ 成功                                   → 原样返回
-  ├─ 抛 ENOENT 且 statSync 说目录确实存在     → 改用 opendir + read 列一遍
+  ├─ 抛 ENOENT 且 statSync 说目录确实存在     → 记下这条路径，改用 opendir + read 列一遍
   └─ 其它错误                               → 原样抛出
 ```
 
-三条设计约束，每条都有理由：
+四条设计约束，每条都有理由：
 
 - **必须用 `createRequire` 拿 `node:fs`，不能在 ESM 里 `import "node:fs"`。**
-  Node 在第一次 import 时就把具名导出**快照**了，之后再改打不中。本机实测：
-  ESM 写法下 `import * as fs` 打不中；CJS 写法下 `import * as fs` 与
-  `import { readdir }` **都打中**。
-- **只在原来失败时才接管**，所以 `scandir` 正常的环境（proot）里，代码路径与结果与今天**完全一致**。
-- **每条路径只白失败一次**：第一次在某个路径上遇到 `ENOENT`（且 `stat` 说目录存在）就把它记进一个
-  有上限的 `broken` 集合，之后对该路径**直接走 `opendir`**，不再去试那条已知会失败的。
-  没有这一层，连续列同一个目录 N 次就是 N 次白失败——这是对的实现与否的差别，不是优化。
-- **真不存在的目录仍然抛 ENOENT**（`statSync` 也失败 → 不兜），不会把错误吞掉。
+  Node 在第一次 import 时就把具名导出**快照**了，之后再改打不中。本机实测：ESM 写法下
+  `import * as fs` 打不中；CJS 写法下 `import * as fs` 与 `import { readdir }` **都打中**。
+- **只在原来失败时才接管** → `scandir` 正常的环境里，代码路径与结果与改动前**完全一致**。
+- **每条路径只白失败一次。** 第一次在某个路径上遇到 `ENOENT`（且 `stat` 说目录存在）就把它
+  记进一个有上限（512）的内存集合，之后对该路径**直接走 `opendir`**。没有这一层，连续列
+  同一个目录 N 次就是 N 次注定失败的调用。
+- **真不存在的目录仍然抛 ENOENT**（`statSync` 也失败 → 不兜），错误不被吞掉。
 
-### 5.2 注入
+### 4.2 注入
 
-只写在 `ProrootCommand.environment()` 里：
+只有一处，且**只在 proroot 的环境里**（`ProrootCommand.environment()`）：
 
 ```kotlin
 if (paths.scandirFix().isFile) {
@@ -150,58 +150,95 @@ if (paths.scandirFix().isFile) {
 }
 ```
 
-- **只在 proroot 的环境里** → proot 路径连模块都不加载。**proroot 出任何问题的回退就是
-  关掉开关，不需要回滚代码。**
-- **必须判文件在不在**：`--import` 指到不存在的文件是**硬失败**（node 起不来），不是警告。
+- **只在 proroot** → `proot` 路径不设这个变量，连模块都不加载。
+- **判文件在不在** → `--import` 指到不存在的文件是**硬失败**（node 起不来），不是警告。
 
-### 5.3 落地
+### 4.3 落地
 
-`PiEngineHost` 每次 boot 从 assets 写回 `<rootfs>/opt/pi/scandir-fix.mjs`（写临时文件再 rename，
-避免半个模块被 `--import` 读到）。写在易失树里，所以显式修复路径删掉它之后下次 boot 会补回来。
+`PiEngineHost` 每次 boot 从 assets 写回 `<rootfs>/opt/pi/scandir-fix.mjs`
+（写临时文件再 rename，避免半个模块被 `--import` 读到）。写在易失树里，所以显式修复路径
+删掉它之后下次 boot 会补回来。写入失败记在 `PiEngineHost.lastScandirFix` 上。
 
-**为什么不放进 pi 的载荷**：那样要改 `tools/fetch-runtime.mjs` 与 revision，而这一步只是
+**为什么不放进 pi 的载荷**：那要改 `tools/fetch-runtime.mjs` 与 revision，而这里只是
 一个文件写入。**为什么不放进 agent 目录**：那是绑定路径——修复不能依赖它要修的东西。
 
-### 5.4 它为什么不影响升级
+---
 
-- **pi 的包一个字节没改**：没打补丁、没改 dist、没改 `node_modules`
-- 只碰 **Node 内建的 `fs`**，不认任何 pi 的源码行
-- 上游发新版 → 新版照样调 `fs.readdir*` → 照样被覆盖
-- 升级流程不变：改 `PI_VERSION` → 重跑契约检查 → 重新生成载荷
+## 5. 边界
+
+### 5.1 不影响升级
+
+- **pi 的包一个字节没改**：没打补丁、没改 dist、没改 `node_modules`。
+- 只碰 **Node 内建的 `fs`**，不认任何 pi 的源码行；上游发新版照样调 `fs.readdir*`，照样被覆盖。
+- 升级流程不变：改 `PI_VERSION` → 重跑契约检查 → 重新生成载荷。
+- 这与 `Aether` 那条"构建期字符串替换 patch pi 的 dist 源码"是**完全不同的两条路**。
+
+### 5.2 不影响 proot
+
+两层独立保证：
+
+1. **模块根本不会被加载**——`NODE_OPTIONS` 只写在 `ProrootCommand.environment()`，proot 走
+   `ProotCommand.environment()`，那个变量不存在。
+2. **就算加载了也不触发**——兜底只在原实现失败时接管；proot 下 `scandir` 正常，兜底一次都不执行。
+
+proroot 出任何问题的回退就是**关掉开关**，不需要回滚代码。
+
+### 5.3 性能
+
+| 情况 | 成本 |
+|---|---|
+| `scandir` 正常的路径 | **零变化**（走原实现） |
+| 坏路径，第一次遇到 | 一次失败的 syscall + 一次 `statSync` ≈ 微秒级 |
+| 坏路径，之后 | **零额外**（直接 `opendir`，与 `/bin/ls` 同一条路） |
+
+`scandir` 本身就是 `opendir`+`readdir`+分配的封装，两者同量级。
+
+### 5.4 用户可见行为
+
+- **工具卡只有一张，而且是成功的那张。** 那次内部失败被包在同一个函数体里，**不外泄**；
+  pi 的工具只被调用一次，拿到的是数组。
+- **资源在引擎启动时就被发现好了**，命令面板只是显示那份已建好的列表——所以**第一次打开
+  就是完整的**，不需要用户先触发任何失败。
+- 兜底本身失败时（例如 `opendir` 在那条路径上也不行），错误照常冒到 pi，
+  结果与改动前**一样是一张失败卡**，不会更糟。
 
 ---
 
-## 6. 验证状态（分清验过与没验）
+## 6. 验证状态
 
-**已验（本机实测）**
+**已验**
 
-- `readelf --dyn-syms`：proroot 导出 `opendir`/`scandir`/`scandir64`，不导出 `readdir`/`closedir`/`getdents64`。
-- Node 实验：`--import` + `createRequire` 的写法对 `import * as fs` 与具名 import **都生效**；
-  ESM 写法**不生效**。
-- 兜底逻辑：模拟 `scandir` 抛 ENOENT 后，同步/异步两条都正确兜回；`withFileTypes` 仍返回 Dirent；
-  真缺目录仍抛 ENOENT；`scandir` 正常时结果与原实现逐条一致。
-- pi 侧 28 处调用点全部经 `fs.readdir*`。
+- `readelf --dyn-syms`：proroot 导出 `opendir`/`scandir`/`scandir64`，不导出
+  `readdir`/`closedir`/`getdents64`。
+- 设备实测：§3.1 的 16×5 表、§3.2 的 `opendirSync` vs `readdirSync` vs `/bin/ls` 表。
+- 本机 Node 实验：`--import` + `createRequire` 的写法对 `import * as fs` 与具名 import
+  **都生效**，ESM 写法**不生效**；兜底在模拟 `scandir` 失败后同步/异步都正确接管；
+  `withFileTypes` 仍返回 Dirent；真缺目录仍抛 ENOENT；`scandir` 正常时结果与原实现逐条一致；
+  记忆生效（第二次调用不再试坏的）。
+- `tools/typecheck.sh`：**0 error diagnostics**（`:rpc` 0 / `:app` 0）。
+- `build/run-proroot-harness.sh`：唯一失败是既有的
+  `both runtimes bind external storage twice`——成因是本容器里 `/storage/emulated/0` 是指向
+  `/sdcard` 的符号链接，而 Android 上方向相反；改动前后逐条一致。
 
-**没验（必须在设备上做）**
+**未验（必须在设备上做）**
 
-1. **`opendir` 在那些失败的绑定路径上确实能工作。** 这是整个兜底的前提。
-   一行可验（在 app 的终端里跑）：
-   ```bash
-   node -e 'const fs=require("fs");const d="/workspace/pi/workspaces/workspace-1";
-   try{const h=fs.opendirSync(d);let n=0;while(h.readSync())n++;h.closeSync();console.log("opendir OK",n)}catch(e){console.log("opendir FAIL",e.code)};
-   try{console.log("readdirSync OK",fs.readdirSync(d).length)}catch(e){console.log("readdirSync FAIL",e.code)}'
-   ```
-   期望 `opendir OK`（条数>0）+ `readdirSync FAIL ENOENT`。**若两个都 FAIL**，兜底的前提不成立，
-   要改成走子进程 `/bin/ls`（那条已实测是好的）。
-2. **修完之后 `ls` / 命令面板 / 扩展是否真的恢复。**
-3. **`--import` 在这个 proroot 客户机里是否正常加载**（路径可达、Node 版本支持）。
+1. 装上带本改动的包、**开着 proroot** 之后：那 5 条路径的 `ls` 是否从 `FAIL ENOENT` 变成 `OK`，
+   其余 11 条是否**一行都没变**。
+2. 扩展、技能、主题、提示词、命令面板是否完整。
+3. `--import` 在这个 proroot 客户机里是否确实加载（`NODE_OPTIONS` 与文件存在两行）。
+
+复验用 `docs/proroot-scandir-probe.md` 的普查提示词，改前/改后各跑一次对照。
 
 ---
 
-## 7. 仍然可能改的地方
+## 7. 可改之处
 
-- 若前提 1 不成立 → 换成子进程 `/bin/ls` 兜底（同一注入点，只改模块）。
-- 若 `--import` 在某些构建下不稳 → 换成 `--require` 或 `module.registerHooks`。
-- 上游若哪天修了 `scandir` → 这个模块变成纯 no-op（它先调原实现，成功就返回），**可以原样留着**，
-  也可以连同注入一起删掉。
-- 终端里手敲 `pi` 的那条路径同样经 `ProrootCommand.environment()`，所以自动覆盖。
+- **不再需要"每条路径白失败一次"**：可在模块加载时先探测（拿当前工作目录试一次
+  `readdirSync`），坏了就全局切换、之后一律直接 `opendir`。**代价是这个探测依赖"所探路径
+  恰好是绑定路径"这一假设**——不对就误判成"环境正常"，兜底形同虚设且不报错。当前实现
+  不猜：哪条路径真坏，是在它真坏的那一刻才知道的。
+- **若 `opendir` 在个别路径上也不行**：兜底可再加一级走子进程 `/bin/ls`
+  （§3.1 已证明它在全部 5 条坏路径上成功）。当前实测不需要，所以没加。
+- **若 `--import` 在某些构建下不稳**：换 `--require` 或 `module.registerHooks`，注入点不变。
+- **上游若修了 `scandir`**：本模块退化为纯 no-op（先调原实现，成功即返回），可原样留着，
+  也可连同注入一起删掉。
