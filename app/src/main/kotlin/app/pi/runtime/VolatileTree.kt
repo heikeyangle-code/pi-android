@@ -95,6 +95,20 @@ object DurableLayout {
     )
 
     /**
+     * 三个耐久目录里**落在 [rootfs] 之内**的那些 —— 也就是 `wipe()` 必须先搬走的那些
+     * （[DurablePreserve]）。
+     *
+     * **今天是空列表**：三个耐久目录都在 `<files>/pi/runtime` 之外，而且 `PiPaths` 的构造
+     * 检查（[violations]）会拒绝把它们放进去。这个函数存在，是为了让「把工作区和 agent
+     * 目录搬进 rootfs」那一天**不需要再新写一套保护机制** —— `wipe()` 读的就是它，而
+     * harness 的 G 段钉住「今天为空」这个事实（也就是那次改动对现在的行为零影响）。
+     *
+     * 用 [VolatileTree.contains] 而不是自己拼字符串前缀，是为了让「什么算在树下」只有一处定义。
+     */
+    fun durableInsideRootfs(durable: List<File>, rootfs: File): List<File> =
+        durable.filter { VolatileTree.contains(rootfs, it) }
+
+    /**
      * 落在 [runtime] 之内的耐久目录，每个一条**可读的中文句子**；空列表表示结构正确。
      *
      * 返回句子而不是布尔值，是因为这个结果的两条出口都要把它呈现给人：`PiPaths` 抛出时

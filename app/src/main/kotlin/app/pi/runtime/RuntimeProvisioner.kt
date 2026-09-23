@@ -431,14 +431,54 @@ class RuntimeProvisioner(
      * the old behaviour, kept because a genuinely broken tree has to be recoverable, and
      * it is honest about its cost: everything the user installed inside the guest goes
      * with it. It deletes nothing outside `paths.runtime`.
+     *
+     * ## The one way it could take user data, and what closes it
+     *
+     * Everything above holds for today's layout because all three durable directories live
+     * *outside* `paths.runtime` ([DurableLayout]). The moment one of them moves **inside**
+     * the rootfs — which is what removing the last proroot bind would require — this
+     * method becomes a data-loss path.
+     *
+     * [DurablePreserve] closes it: the durable directories that are inside the rootfs are
+     * **moved out** to `<files>/pi/.preserve` first, and moved back afterwards. For today's
+     * layout that list is empty ([DurableLayout.durableInsideRootfs]), so this method does
+     * exactly what it did before — one recursive delete, then the skeleton — and the
+     * harness pins that emptiness.
+     *
+     * If the data cannot be moved out, this **refuses to delete** and the rebuild fails
+     * loudly. That direction is deliberate: a failed repair is recoverable, a silent
+     * delete is not.
      */
     private fun wipe() {
         // Only the volatile tree, never `paths.home`. [deleteTreeInsideVolatile] is the
         // structural half of that sentence: it refuses any target outside `paths.runtime`,
         // so a future edit that repoints this call fails loudly instead of deleting a
         // workspace.
-        deleteTreeInsideVolatile(paths.runtime, "重建运行时（显式修复）")
-        prepareVolatileDirs()
+        val preserve = File(paths.home, DurablePreserve.PRESERVE_DIR)
+        val stash = try {
+            DurablePreserve.moveOut(
+                DurableLayout.durableInsideRootfs(DurableLayout.durableDirs(paths.home), paths.rootfs),
+                preserve,
+            )
+        } catch (refused: java.io.IOException) {
+            throw ProvisioningException("拒绝重建运行时：${refused.message}", refused)
+        }
+        var deleted = false
+        try {
+            deleteTreeInsideVolatile(paths.runtime, "重建运行时（显式修复）")
+            deleted = true
+        } finally {
+            // Same order as before this object existed: the skeleton is recreated only
+            // after a *successful* delete, so the refusal path leaves the tree alone.
+            if (deleted) prepareVolatileDirs()
+            val stranded = DurablePreserve.restore(stash)
+            // Anything that could not be put back stays in `.preserve` — that copy is the
+            // only place the data still exists, so it is not cleaned up in that case.
+            // `delete()`, never `deleteRecursively()`: [DurablePreserve.restore] emptied it,
+            // and this file's one recursive delete stays the one in
+            // [deleteTreeInsideVolatile] (the harness pins that count).
+            if (stranded.isEmpty()) runCatching { preserve.delete() }
+        }
     }
 
     /**

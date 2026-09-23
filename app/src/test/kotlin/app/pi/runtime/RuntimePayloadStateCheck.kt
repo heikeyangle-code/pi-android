@@ -171,6 +171,64 @@ fun main() {
     check("F2 the violation names the directory", violations.all { it.contains("落在易失树") }, true)
     check("F3 the violation names the tree", violations.all { it.contains(paths.runtime.path) }, true)
 
+    // ------------------------------------------------- 显式「修复」那一刀的保护机制
+    // `wipe()` 是唯一会整棵删 `<files>/pi/runtime` 的地方，只有 `rebuild = true` 能到。
+    // 今天它安全，因为三个耐久目录都在易失树**之外**；`DurablePreserve` 的存在是为了
+    // 「哪天把工作区/agent 目录搬进 rootfs」不需要再新写一套保护机制。
+    //
+    // **「今天为空」这件事本身就是「对现在的行为零影响」的证明**：清单空 ⇒ `moveOut`
+    // 不建落脚目录、直接返回空 Stash ⇒ `wipe()` 与没有这个对象时逐字一致。
+    check(
+        "W1 no durable directory is inside the rootfs today",
+        DurableLayout.durableInsideRootfs(DurableLayout.durableDirs(paths.home), paths.rootfs),
+        emptyList<File>(),
+    )
+    val inRootfs = File(paths.rootfs, "workspace")
+    check(
+        "W2 a durable directory inside the rootfs is picked up",
+        DurableLayout.durableInsideRootfs(listOf(inRootfs, paths.workspaces), paths.rootfs),
+        listOf(inRootfs),
+    )
+    check(
+        "W3 the volatile tree itself is never one of them",
+        DurableLayout.durableInsideRootfs(listOf(paths.runtime), paths.rootfs),
+        emptyList<File>(),
+    )
+
+    // 搬走 → 删 → 搬回，在**真实目录**上跑一遍：设备上真正会发生的就是这三步。
+    val preserveRoot = File(System.getProperty("java.io.tmpdir"), "pi-preserve-check-${System.nanoTime()}")
+    val pRuntime = File(preserveRoot, "pi/runtime")
+    val pRootfs = File(pRuntime, "rootfs")
+    val pPreserve = File(preserveRoot, "pi/${DurablePreserve.PRESERVE_DIR}")
+    val userWs = File(pRootfs, "workspace")
+    userWs.mkdirs()
+    File(userWs, "main.py").writeText("keep me")
+    File(pRootfs, "usr").mkdirs()
+    File(pRootfs, "usr/node").writeText("payload")
+
+    val stash = DurablePreserve.moveOut(listOf(userWs), pPreserve)
+    check("W4 the durable directory left the tree before the delete", userWs.exists(), false)
+    check("W5 it is parked under the preserve directory", stash.entries.single().first.parentFile, pPreserve)
+    check("W6 the preserve directory is outside the volatile tree", VolatileTree.contains(pRuntime, pPreserve), false)
+    check("W7 its content is intact while parked", File(stash.entries.single().first, "main.py").readText(), "keep me")
+
+    // 这一行就是 `wipe()` 的那一刀。
+    pRuntime.deleteRecursively()
+    check("W8 the payload really is gone", File(pRootfs, "usr/node").exists(), false)
+    check("W9 the user's file survived the delete", File(stash.entries.single().first, "main.py").readText(), "keep me")
+
+    check("W10 everything came back", DurablePreserve.restore(stash), emptyList<File>())
+    check("W11 readable again at its original path", File(userWs, "main.py").readText(), "keep me")
+
+    // 搬不动就**不许删**：落脚位置被一个普通文件占住时 `moveOut` 必须抛，而不是返回一个空
+    // 清单、让调用方以为数据已经安全了就去删树。这条分支就是「宁可让重建失败」那句话。
+    val blocked = File(preserveRoot, "blocked")
+    blocked.writeText("not a directory")
+    val refused = runCatching { DurablePreserve.moveOut(listOf(userWs), blocked) }.isFailure
+    check("W12 a move-out that cannot happen refuses instead of reporting success", refused, true)
+    check("W13 and the durable directory is untouched by the refusal", File(userWs, "main.py").readText(), "keep me")
+    preserveRoot.deleteRecursively()
+
     // One spelling of the workspace root, on both sides of the files-directory boundary:
     // `GuestWorkspacePath.ROOT_RELATIVE` is relative to `<files>`, `PiPaths.workspaces` is
     // built from `DurableLayout`, and they must name the same directory.
@@ -226,6 +284,35 @@ fun main() {
         File(System.getProperty("pi.repo.root") ?: "."),
         "app/src/main/kotlin/app/pi/runtime/RuntimeProvisioner.kt",
     ).readText().replace(Regex("\\s+"), " ")
+
+    // `wipe()` 的**顺序**是行为，不是排版：搬走必须在删之前，搬回必须在删之后，搬不动必须
+    // 是抛异常而不是继续删。上面的 W4–W13 直接驱动 `DurablePreserve`，但没有任何东西能证明
+    // `wipe()` 真的按这个顺序调它 —— 所以这里把 `wipe()` 的函数体当源码文本读。
+    val wipeBody = provisionerSource
+        .substringAfter("private fun wipe() {")
+        .substringBefore("private fun deleteTreeInsideVolatile(")
+    val moveOutAt = wipeBody.indexOf("DurablePreserve.moveOut(")
+    val deleteAt = wipeBody.indexOf("deleteTreeInsideVolatile(")
+    check("W14 wipe moves the durable directories out before it deletes", moveOutAt >= 0 && moveOutAt < deleteAt, true)
+    check("W15 and restores them afterwards", wipeBody.contains("DurablePreserve.restore(stash)"), true)
+    check("W16 a refusal becomes a ProvisioningException, not a delete", wipeBody.contains("throw ProvisioningException("), true)
+    check(
+        "W17 the skeleton is recreated only after a successful delete",
+        wipeBody.contains("if (deleted) prepareVolatileDirs()"),
+        true,
+    )
+    check(
+        "W18 a stranded directory keeps the preserve copy",
+        wipeBody.contains("if (stranded.isEmpty()) runCatching { preserve.delete() }"),
+        true,
+    )
+    // 清理落脚目录**不能**是第二次递归删除：这是 P7 那条「全文件只有一处递归删除」守卫
+    // 的另一半，写在这里是因为它和 W14–W18 是同一段代码。
+    check(
+        "W19 the preserve cleanup is a plain delete, not a recursive one",
+        wipeBody.contains("preserve.deleteRecursively()"),
+        false,
+    )
 
     // ① The fast path is one comparison and one early return.
     val fastPath = "if (!rebuild && paths.rootfs.isDirectory && isStampCurrent(revision)) " +
