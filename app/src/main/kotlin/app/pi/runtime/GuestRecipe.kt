@@ -52,14 +52,6 @@ object GuestRecipe {
     fun binds(paths: PiPaths, storage: File?): List<List<String>> = buildList {
         add(listOf("-b", "/dev"))
         add(listOf("-b", "/dev/urandom:/dev/random"))
-        // `/dev/shm` has to be **after** `-b /dev`, because the later bind wins under both
-        // runtimes (measured: with `/dev` first and `/dev/urandom:/dev/random` second, the
-        // guest's `/dev/random` is urandom's device, major:minor 1:9). Without this entry the
-        // guest's `/dev/shm` is whatever the host's `/dev` happens to contain — Android ships
-        // none — and everything that uses POSIX shared memory (Chromium/Playwright, some
-        // native addons) fails there. The reference implementation binds exactly this:
-        // `-b <app cache>/shm:/dev/shm` was in DSH App's live launcher argv on this device.
-        add(listOf("-b", "${paths.shm.path}:/dev/shm"))
         add(listOf("-b", "/proc"))
         add(listOf("-b", "/sys"))
         add(listOf("-b", "/system"))
@@ -69,6 +61,20 @@ object GuestRecipe {
             add(listOf("-b", "${storage.path}:/sdcard"))
             add(listOf("-b", "${storage.path}:/storage/emulated/0"))
         }
+        // `/dev/shm` is the **last** entry of the system table, and that position is copied
+        // from the reference implementation rather than chosen here (2026-09-23): the live
+        // DSHA launcher's argv is `/dev`, `/dev/urandom:/dev/random`, `/proc`, `/sys`,
+        // `/system`, `/apex`, `/proc/self/fd:/dev/fd`, `/sdcard`, `/storage/emulated/0`,
+        // **then** `<cache>/shm:/dev/shm` (`DSH-APP/DSHA`,
+        // `runtime/ContainerRuntime.java` `baseArgv`). We previously emitted it third.
+        //
+        // It still has to be **after** `-b /dev`, because the later bind wins under both
+        // runtimes (measured: with `/dev` first and `/dev/urandom:/dev/random` second, the
+        // guest's `/dev/random` is urandom's device, major:minor 1:9), and last satisfies
+        // that. Without this entry the guest's `/dev/shm` is whatever the host's `/dev`
+        // happens to contain — Android ships none — and everything that uses POSIX shared
+        // memory (Chromium/Playwright, some native addons) fails there.
+        add(listOf("-b", "${paths.shm.path}:/dev/shm"))
     }.map { (flag, value) -> listOf(flag, bindValue(value)) }
 
     /**

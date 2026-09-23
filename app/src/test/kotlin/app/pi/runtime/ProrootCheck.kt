@@ -356,33 +356,39 @@ fun main() {
     check("both runtimes name the same CA bundle", listOf(prootEnv["SSL_CERT_FILE"], prorootEnv["SSL_CERT_FILE"]), listOf(GuestRecipe.GUEST_CA_BUNDLE, GuestRecipe.GUEST_CA_BUNDLE))
     check("the forwarded CA constant is the shared one", ProotCommand.GUEST_CA_BUNDLE, GuestRecipe.GUEST_CA_BUNDLE)
     check("extra environment is merged, not dropped", ProrootCommand.environment(p, mapOf("X" to "1"))["X"], "1")
-    // The launcher's environment is the four variables the reference implementation exports
-    // (measured from its live `/proc/<pid>/environ` on the device: `PROROOT_TMP_DIR`,
-    // `PROROOT_LIB_PATH`, `PROROOT_LINKER_PATH`, `PROROOT_STUB_LOADER`) **plus the two
-    // documented diagnostic switches** `PROROOT_VERBOSE` / `PROROOT_LOG_APPEND` (upstream
-    // README; they only make proroot say what it translated). `PROROOT_TRAMPOLINE_PATH` is
-    // discovered by the launcher itself, and `PROROOT_NO_SECCOMP` is *deliberately absent* —
-    // v1.2.8 has no reader for it (it writes `1` into its own children and nothing consumes
-    // it), so exporting it would change our environment and nothing else.
+    // **Exactly** the four variables the reference implementation exports — read from its
+    // source (`DSH-APP/DSHA`, `runtime/ContainerRuntime.java` `applyEnv()`) and from its live
+    // launcher's `/proc/<pid>/environ` on this device: `PROROOT_TMP_DIR`, `PROROOT_LIB_PATH`,
+    // `PROROOT_LINKER_PATH`, `PROROOT_STUB_LOADER`. Nothing else.
+    //
+    // The two documented diagnostic switches `PROROOT_VERBOSE` / `PROROOT_LOG_APPEND` are
+    // **deliberately absent from the production path** (2026-09-23): the reference
+    // implementation never sets them, they only make proroot narrate what it translated, and
+    // the file one is appended per launch and never rotated. "Some binds do not take effect
+    // under proroot" is a timing-dependent defect, so extra diagnostics on the launch path
+    // have to be ruled out before anything else. [ProrootCommand.prorootTraceLog] still names
+    // the file, so turning tracing on for a diagnosis is one line.
+    //
+    // `PROROOT_TRAMPOLINE_PATH` is discovered by the launcher itself, and
+    // `PROROOT_NO_SECCOMP` is *deliberately absent* — v1.2.8 has no reader for it (it writes
+    // `1` into its own children and nothing consumes it), so exporting it would change our
+    // environment and nothing else.
     check(
-        "proroot exports the four launcher variables plus the two diagnostic switches",
+        "proroot exports exactly the four launcher variables",
         prorootEnv.keys.filter { it.startsWith("PROROOT_") }.sorted(),
         listOf(
             "PROROOT_LIB_PATH",
             "PROROOT_LINKER_PATH",
-            "PROROOT_LOG_APPEND",
             "PROROOT_STUB_LOADER",
             "PROROOT_TMP_DIR",
-            "PROROOT_VERBOSE",
         ),
     )
-    // Trace 落点：宿主路径、在 `<files>` 下（不在易失树里），值是 1。
-    check("the trace switch is on", prorootEnv["PROROOT_VERBOSE"], "1")
-    check("the trace file is <files>/proroot-trace.log", prorootEnv["PROROOT_LOG_APPEND"], "$FILES/proroot-trace.log")
+    check("the verbose switch stays off in production", prorootEnv.containsKey("PROROOT_VERBOSE"), false)
+    check("the trace file is not opened in production", prorootEnv.containsKey("PROROOT_LOG_APPEND"), false)
     check(
-        "the trace file is the one the builder names",
+        "the trace path is still named for a deliberate diagnosis",
         ProrootCommand.prorootTraceLog(p).path,
-        prorootEnv["PROROOT_LOG_APPEND"],
+        "$FILES/proroot-trace.log",
     )
     check("the no-seccomp variable is not exported", prorootEnv.containsKey(ProrootCommand.NO_SECCOMP_ENV), false)
     check("the trampoline path is left to the launcher", prorootEnv.containsKey("PROROOT_TRAMPOLINE_PATH"), false)
