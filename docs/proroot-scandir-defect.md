@@ -1,7 +1,8 @@
 # proroot 下 pi 列不了目录：`scandir(3)`
 
 > proroot 运行时的一个缺陷，以及本仓库在 Node 侧的修法。
-> 状态：**根因已定位（设备实测）、修法已实现并推送、待设备复验**。
+> 状态：**根因已定位、修法已实现并在设备上验证通过**（2026-09-23：原本失败的 5 条路径
+> 全部恢复，其余 11 条读数逐条不变）。
 > 取代 `proroot-bind-drop-defect.md`（已删：那一版把现象读成"绑定被静默丢掉"，根因是错的）。
 > 上游：[coderredlab/proroot#25](https://github.com/coderredlab/proroot/issues/25)。
 
@@ -220,14 +221,31 @@ proroot 出任何问题的回退就是**关掉开关**，不需要回滚代码�
   `both runtimes bind external storage twice`——成因是本容器里 `/storage/emulated/0` 是指向
   `/sdcard` 的符号链接，而 Android 上方向相反；改动前后逐条一致。
 
-**未验（必须在设备上做）**
+**已上机验证（2026-09-23，同一台设备）**
 
-1. 装上带本改动的包、**开着 proroot** 之后：那 5 条路径的 `ls` 是否从 `FAIL ENOENT` 变成 `OK`，
-   其余 11 条是否**一行都没变**。
-2. 扩展、技能、主题、提示词、命令面板是否完整。
-3. `--import` 在这个 proroot 客户机里是否确实加载（`NODE_OPTIONS` 与文件存在两行）。
+装上带本改动的包、**开着 proroot** 重跑 `docs/proroot-scandir-probe.md` 的普查：
 
-复验用 `docs/proroot-scandir-probe.md` 的普查提示词，改前/改后各跑一次对照。
+| 路径 | 修前 | 修后 | `bash` 条数（修后） |
+|---|---|---|---|
+| `/root/.pi/agent` | FAIL ENOENT | **OK** | 17 |
+| `/root/.pi/agent/extensions` | FAIL ENOENT | **OK** | 9 |
+| `/tmp` | FAIL ENOENT | **OK** | 300 |
+| `/dev/shm` | FAIL ENOENT | **OK** | 0 |
+| `/workspace/pi/workspaces/workspace-1` | FAIL ENOENT | **OK** | 7 |
+
+- **其余 11 条路径的读数逐条与修前一致**——不是"顺手改了别的"，也没有把本来好的换掉。
+- 表 1 为 `NODE_OPTIONS=--import=/opt/pi/scandir-fix.mjs` 且文件存在 → 接线到位。
+- 唯一数字变化是 `/opt/pi` 的条数 4 → **5**：多出来的就是本模块自己，
+  即"文件确实落在设计的位置"。`read` 四项全部无变化。
+- **归因**：修前那一版（只含环境变量与绑定顺序的改动）在同一台设备上**仍然失败**，
+  所以这次恢复来自本模块，不是别的改动。
+
+**仍未确认**
+
+- **界面层**：扩展、技能、主题、提示词、命令面板是否完整显示。`ls` 通了是它们的
+  必要条件（同一批 `readdirSync` 调用点），但仍应看一眼实际界面。
+- 若个别路径上 `opendir` 也不可用（本次未出现），按 §7 第二条加一级兜底。
+
 
 ---
 
