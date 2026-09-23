@@ -8,10 +8,19 @@ const fsp = require("node:fs/promises");
 
 const MARK = Symbol.for("pi.scandirFallback");
 
-function viaOpendirSync(dir, options) {
+// Paths already known to fail: after the first ENOENT-on-an-existing-directory there is no
+// reason to pay for the failing call again on that path. Learned once per path per process.
+const broken = new Set();
+const BROKEN_LIMIT = 512;
+
+function markBroken(path) {
+  if (typeof path === "string" && broken.size < BROKEN_LIMIT) broken.add(path);
+}
+
+function viaOpendirSync(path, options) {
   const wantTypes = !!(options && typeof options === "object" && options.withFileTypes === true);
   const out = [];
-  const handle = fs.opendirSync(dir);
+  const handle = fs.opendirSync(path);
   try {
     let entry;
     while ((entry = handle.readSync()) !== null) out.push(wantTypes ? entry : entry.name);
@@ -21,10 +30,10 @@ function viaOpendirSync(dir, options) {
   return out;
 }
 
-async function viaOpendir(dir, options) {
+async function viaOpendir(path, options) {
   const wantTypes = !!(options && typeof options === "object" && options.withFileTypes === true);
   const out = [];
-  const handle = await fsp.opendir(dir);
+  const handle = await fsp.opendir(path);
   try {
     // Explicit read() rather than `for await`: the async iterator closes the handle itself
     // when it finishes, and the close() below would then throw ERR_DIR_CLOSED.
@@ -37,21 +46,30 @@ async function viaOpendir(dir, options) {
 }
 
 // Only take over when the original threw ENOENT for a directory that stat() says is there.
-function shouldFallback(err, dir) {
+function shouldFallback(err, path) {
   if (!err || err.code !== "ENOENT") return false;
-  try { return fs.statSync(dir).isDirectory(); } catch { return false; }
+  try { return fs.statSync(path).isDirectory(); } catch { return false; }
 }
 
-function wrapSync(orig, dir) {
+function wrapSync(orig) {
   return function (path, ...rest) {
-    try { return orig.call(this, path, ...rest); }
-    catch (err) { if (!shouldFallback(err, path)) throw err; return viaOpendirSync(path, rest[0]); }
+    if (!broken.has(path)) {
+      try { return orig.call(this, path, ...rest); }
+      catch (err) {
+        if (!shouldFallback(err, path)) throw err;
+        markBroken(path);
+      }
+    }
+    return viaOpendirSync(path, rest[0]);
   };
 }
+
 function wrapAsync(orig) {
   return function (path, ...rest) {
+    if (broken.has(path)) return viaOpendir(path, rest[0]);
     return Promise.resolve(orig.call(this, path, ...rest)).catch((err) => {
       if (!shouldFallback(err, path)) throw err;
+      markBroken(path);
       return viaOpendir(path, rest[0]);
     });
   };
