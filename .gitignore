@@ -30,6 +30,12 @@ app/src/main/assets/runtime-revision.txt
 # every working tree.
 app/src/main/assets/runtime-payloads/
 
+# Python bytecode. `tools/build-license-assets.py` is imported (not only executed) by
+# some local harnesses, which leaves a `tools/__pycache__/` behind — nobody builds from
+# it, and it showed up untracked until this line existed.
+__pycache__/
+*.pyc
+
 # IDE
 .idea/
 *.iml

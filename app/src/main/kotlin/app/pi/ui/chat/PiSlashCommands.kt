@@ -227,36 +227,28 @@ val PI_BUILTIN_SLASH_COMMANDS: List<PiSlashCommand> = listOf(
 )
 
 /**
- * The other twelve of pi's twenty-three built-ins: the ones this palette does
+ * The other thirteen of pi's twenty-four built-ins: the ones this palette does
  * **not** list, and the sentence the app should give a user who types one by
  * hand.
  *
- * `PI_BUILTIN_SLASH_COMMANDS` names eleven and this map names twelve; together
- * they are exactly `core/slash-commands.ts:20-42`. Both directions matter: the
- * eleven are rows, and these twelve are the ones a user can still type because
- * they remember them from pi. Without this table the app would answer `/trust`
- * with the "that is not a command" message, which is false — pi has it.
+ * `PI_BUILTIN_SLASH_COMMANDS` names eleven and this map names thirteen; together
+ * they are exactly pi's `BUILTIN_SLASH_COMMANDS` (24 names). Both directions
+ * matter: the eleven are rows, and these thirteen are the ones a user can still
+ * type because they remember them from pi. Without this table the app would
+ * answer `/trust` with the "that is not a command" message, which is false — pi
+ * has it.
+ *
+ * **Both directions are asserted**: `tools/pi-contract.mjs`'s `tables` group
+ * reads the eleven rows and this map's keys and requires them to cover pi's list
+ * exactly, so a built-in pi adds fails the build until a sentence exists for it.
+ * That is why `/bug` is here — it arrived in pi 0.86.1 and neither table named
+ * it, so typing it answered "no such command" until the 0.87.1 audit.
  *
  * ## How `ChatScreen` uses it (agreed contract)
  *
- * The `ComposerRoute.Unknown` branch in `ChatScreen.kt` used to tell the user to
- * drop the leading `/` and send the text as prose. That is the right answer only
- * for a genuine typo, and it is exactly wrong for a name pi implements. The branch
- * now looks a name up first and only falls through when there is no entry:
- *
- * ```kotlin
- * is ComposerRoute.Unknown -> piCommandWithoutEntry(route.name)
- *     ?.let { session.notifyUser(it) }
- *     ?: session.notifyUnknownCommand(route.name)
- * ```
- *
- * **`piCommandWithoutEntry` is a second copy of this table**, private to
- * `ChatScreen.kt`. It was written in parallel with this one and the two must not
- * both survive: they are the same twelve names and the same nine sentences, so the
- * first time pi's built-in list changes they will disagree silently. This is the
- * copy to keep — it lives beside [PI_BUILTIN_SLASH_COMMANDS], whose names are the
- * complement, and the two together are checkable against
- * `core/slash-commands.ts:20-42`. The caller should become:
+ * The `ComposerRoute.Unknown` branch looks a name up in [unlistedBuiltinHint]
+ * and only falls through to the typo message when there is no entry — a genuine
+ * typo is the only case that deserves "that is not a command":
  *
  * ```kotlin
  * is ComposerRoute.Unknown -> unlistedBuiltinHint(route.name)
@@ -279,7 +271,7 @@ val PI_BUILTIN_SLASH_COMMANDS: List<PiSlashCommand> = listOf(
  *    exactly that (`PtyLauncher` hands the guest shell the same agent dir the engine
  *    uses). So the sentence points at the terminal, because that is where the command
  *    works — it is **not** a Settings path, which is the shape that was deleted.
- *  - **the remaining seven say only that pi has the command and this app has no
+ *  - **the remaining eight say only that pi has the command and this app has no
  *    entry**: **do not** turn them into Settings paths. That is precisely the shape
  *    that was deleted (a row that tells the user to go and configure something
  *    themselves), and re-adding it here would put it back on a different surface.
@@ -294,6 +286,12 @@ val PI_UNLISTED_BUILTIN_COMMANDS: Map<String, String> = mapOf(
     // states that honestly and stops there — no path, no "go and do it".
     "scoped-models" to "pi 有 /scoped-models；本应用没有对应入口。",
     "trust" to "pi 有 /trust；本应用没有对应入口。",
+    // `/bug` arrived in pi **0.86.1** (its changelog's 新用户可见面) and neither
+    // table named it until the 0.87.1 audit — pi's `/bug` files a report to the Pi
+    // developers from its own TUI, and this app's local 诊断报告 is a different
+    // ability, so the Group C sentence is the honest one. The `tables` group in
+    // `tools/pi-contract.mjs` is what would have caught it.
+    "bug" to "pi 有 /bug；本应用没有对应入口。",
     // Not "no entry": pi's login is an interactive-TUI command and the terminal page
     // runs that TUI, so the true sentence is where to run it. Same for logout.
     "login" to "pi 有 /login；本应用没有内建表单——到 工作区 → 终端 输入 pi 回车，再运行 /login。",

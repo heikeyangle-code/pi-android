@@ -56,6 +56,96 @@ NPM_CACHE = os.path.join(DOWNLOADS, "npm-licences")
 FONT_CACHE = os.path.join(DOWNLOADS, "font-licences")
 OUT = os.path.join(ROOT, "app", "src", "main", "assets", "licenses")
 LOCK = os.path.join(ROOT, "runtime.lock.json")
+ENGINE_PAYLOAD = os.path.join(ROOT, "app", "src", "main", "assets", "runtime", "pi-engine.tgz")
+
+
+def pinned_constant(name: str) -> str:
+    """Read `const <name> = "...";` out of `tools/fetch-runtime.mjs`.
+
+    Every version this script talks about is read from there rather than repeated here,
+    so a bump has one place to change and this script cannot silently pin a licence from
+    a different release than the artifact it describes.
+    """
+    fetch_script = os.path.join(ROOT, "tools", "fetch-runtime.mjs")
+    try:
+        text = open(fetch_script, encoding="utf-8").read()
+    except OSError as error:
+        sys.exit(f"cannot read {fetch_script}: {error}")
+    m = re.search(rf'^const {name} = "([^"]+)";', text, re.M)
+    if not m:
+        sys.exit(f"{name} not found in tools/fetch-runtime.mjs; the pin must live in exactly one place")
+    return m.group(1)
+
+
+def engine_version() -> str:
+    """The pi version the engine payload is built from."""
+    return pinned_constant("PI_VERSION")
+
+
+def proroot_version() -> str:
+    """The proroot release tag the five binaries are pinned to."""
+    return pinned_constant("PROROOT_VERSION")
+
+
+def engine_payload_versions(packages: list[str]) -> dict[str, str]:
+    """The version each named `@earendil-works/*` package **actually has in the payload**.
+
+    Read out of the archive this app ships (`assets/runtime/pi-engine.tgz`) rather than
+    from a fresh `npm install`: the point of the check is that the bytes the APK carries
+    and the release a licence notice names are the same one. A stale local payload is not
+    hypothetical — it is the state this repository was in when the 0.87.1 audit started:
+    `PI_VERSION` said 0.86.1 while `pi-engine.tgz` still held 0.85.1.
+
+    `npm` nests them (`node_modules/@earendil-works/pi-coding-agent/node_modules/…`), so
+    each package is matched by the *suffix* `node_modules/<name>/package.json`.
+    """
+    suffixes = [(name, f"node_modules/{name}/package.json") for name in packages]
+    found: dict[str, str] = {}
+    with tarfile.open(ENGINE_PAYLOAD, "r:gz") as tar:
+        for member in tar:
+            if not member.isfile():
+                continue
+            path = member.name[2:] if member.name.startswith("./") else member.name
+            for name, suffix in suffixes:
+                if name in found or not path.endswith(suffix):
+                    continue
+                handle = tar.extractfile(member)
+                if handle is None:
+                    continue
+                found[name] = json.loads(handle.read())["version"]
+            if len(found) == len(suffixes):
+                break
+    return found
+
+
+def verify_engine_payload_versions() -> None:
+    """Refuse to describe a release the shipped payload is not.
+
+    The six `@earendil-works/*` rows are the packages `tools/fetch-runtime.mjs` installs
+    and tars; this build only ever reads `PI_VERSION` for them (see
+    `PI_ENGINE_NO_LICENCE_TEXT`), so before this check nothing could notice that the
+    archive was one release behind the pin. CI runs the fetch step before this script, so
+    the only way to hit it is a local run against a stale `assets/runtime/` — which is
+    exactly when a wrong version label would otherwise be written, reviewed and shipped.
+    """
+    packages = [name for name, _version, _licence in PI_ENGINE_NO_LICENCE_TEXT if name.startswith("@earendil-works/")]
+    if not os.path.isfile(ENGINE_PAYLOAD):
+        sys.exit(
+            f"missing {os.path.relpath(ENGINE_PAYLOAD, ROOT)}\n"
+            f"  run `node tools/fetch-runtime.mjs` first: this script compares the engine payload's own\n"
+            f"  package.json files against PI_VERSION, because a licence notice built from anything else\n"
+            f"  describes a release the APK does not carry."
+        )
+    pinned = engine_version()
+    actual = engine_payload_versions(packages)
+    for name in packages:
+        got = actual.get(name)
+        if got != pinned:
+            sys.exit(
+                f"{name}: PI_VERSION is {pinned}, the payload has {got or 'no package.json'}\n"
+                f"  {os.path.relpath(ENGINE_PAYLOAD, ROOT)} is stale. Run `node tools/fetch-runtime.mjs`\n"
+                f"  (it installs @earendil-works/pi-coding-agent@{pinned} and re-tars the payload)."
+            )
 
 # npm packages in pi's dependency closure whose licence is not otherwise present
 # in a downloaded artifact. Versions are the ones pi 0.87.1 pins in its shipped
@@ -170,13 +260,22 @@ PROROOT_FILES = [
 # ones 0.87.1's shrinkwrap pins: 3.972.72 / 3.972.77 / 3.997.44). The previous bump
 # (0.85.1 → 0.86.1) had moved those three `@aws-sdk/*` versions and swapped
 # `@nodable/entities` + `xml-naming` out for `proxy-agent-negotiate`.
+#
+# The six versions come from `PI_VERSION`, not from this file: they are the packages
+# `tools/fetch-runtime.mjs` installs at that exact version, so repeating the number
+# here is what left this list describing 0.86.1 after the pin had moved. Keeping them
+# derived is only half the guard — `verify_engine_payload_versions()` also reads the
+# shipped payload, so a *stale archive* cannot be described with a current label.
 PI_ENGINE_NO_LICENCE_TEXT = [
-    ("@earendil-works/pi-coding-agent", "0.87.1", "MIT"),
-    ("@earendil-works/chord", "0.87.1", "MIT"),
-    ("@earendil-works/pi-agent-core", "0.87.1", "MIT"),
-    ("@earendil-works/pi-ai", "0.87.1", "MIT"),
-    ("@earendil-works/pi-telemetry", "0.87.1", "MIT"),
-    ("@earendil-works/pi-tui", "0.87.1", "MIT"),
+    *((name, engine_version(), "MIT")
+      for name in (
+          "@earendil-works/pi-coding-agent",
+          "@earendil-works/chord",
+          "@earendil-works/pi-agent-core",
+          "@earendil-works/pi-ai",
+          "@earendil-works/pi-telemetry",
+          "@earendil-works/pi-tui",
+      )),
     ("data-uri-to-buffer", "4.0.1", "MIT"),
     ("proxy-agent-negotiate", "1.1.0", "MIT"),
     ("standardwebhooks", "1.1.1", "MIT"),
@@ -196,10 +295,10 @@ PI_ENGINE_NO_LICENCE_TEXT = [
 PI_ENGINE_NOTICES = [
     (
         "6 × @earendil-works/* 包",
-        "0.87.1",
+        engine_version(),
         "MIT",
-        "正文与版权声明见列表里的『pi 引擎 0.87.1（MIT）』那一份：这六个包与 pi 引擎出自同一 monorepo，根 LICENSE 即它们的许可文本（已按 v0.87.1 标签逐字节核对；该标签的 LICENSE 与 v0.85.1/v0.86.1 逐字节相同，sha256 未变）",
-        "https://raw.githubusercontent.com/earendil-works/pi/v0.87.1/LICENSE",
+        f"正文与版权声明见列表里的『pi 引擎 {engine_version()}（MIT）』那一份：这六个包与 pi 引擎出自同一 monorepo，根 LICENSE 即它们的许可文本（已按 v{engine_version()} 标签逐字节核对；该标签的 LICENSE 与 v0.85.1/v0.86.1 逐字节相同，sha256 未变）",
+        f"https://raw.githubusercontent.com/earendil-works/pi/v{engine_version()}/LICENSE",
         "0457f5bcec3b3b211605dfb5d1a49042fd638f3686a410fe099c24a25af13c48",
     ),
     (
@@ -240,34 +339,6 @@ PI_ENGINE_NOTICES = [
         "",
     ),
 ]
-
-
-def pinned_constant(name: str) -> str:
-    """Read `const <name> = "...";` out of `tools/fetch-runtime.mjs`.
-
-    Every version this script talks about is read from there rather than repeated here,
-    so a bump has one place to change and this script cannot silently pin a licence from
-    a different release than the artifact it describes.
-    """
-    fetch_script = os.path.join(ROOT, "tools", "fetch-runtime.mjs")
-    try:
-        text = open(fetch_script, encoding="utf-8").read()
-    except OSError as error:
-        sys.exit(f"cannot read {fetch_script}: {error}")
-    m = re.search(rf'^const {name} = "([^"]+)";', text, re.M)
-    if not m:
-        sys.exit(f"{name} not found in tools/fetch-runtime.mjs; the pin must live in exactly one place")
-    return m.group(1)
-
-
-def engine_version() -> str:
-    """The pi version the engine payload is built from."""
-    return pinned_constant("PI_VERSION")
-
-
-def proroot_version() -> str:
-    """The proroot release tag the five binaries are pinned to."""
-    return pinned_constant("PROROOT_VERSION")
 
 
 def sha256(path: str) -> str:
@@ -666,6 +737,13 @@ def main() -> None:
     if not os.path.isfile(LOCK):
         sys.exit("runtime.lock.json not found")
     lock = json.load(open(LOCK))
+
+    # Before anything is written: the engine payload the APK ships has to be the release
+    # every engine-derived version string in this file claims (see
+    # verify_engine_payload_versions). CI runs the fetch step first, so this only fires on
+    # a local run against a stale `assets/runtime/` — which is exactly the case that
+    # shipped a 0.86.1 label over a 0.85.1 archive.
+    verify_engine_payload_versions()
 
     # Assemble into scratch space and install only after every check has passed.
     #

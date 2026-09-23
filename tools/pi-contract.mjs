@@ -28,26 +28,32 @@
  *     `dist/modes/interactive/theme/{dark,light}.json`. This is the one pi fact the
  *     app **copies** rather than reads, so nothing else in this file — or in the
  *     build — would notice a re-colouring upstream. See [checkThemeValues].
- *  3. **Tool-result text** — the fragments pi's *tools* write into a result, which
+ *  3. **App transcription tables** — the five lists the app keeps by hand *because pi
+ *     has no channel for them*: settings keys, built-in slash commands, resource
+ *     types, tool names and the theme token set. These are the copies that go stale
+ *     silently (§M11/§M12's shape), and one of them already had: `/bug` was added to
+ *     pi in 0.86.1 and the app answered it with "no such command" until this group
+ *     existed. See [checkAppTables].
+ *  4. **Tool-result text** — the fragments pi's *tools* write into a result, which
  *     `ui/blocks/ToolOutputParse.kt` parses as if they were a format (the `read`
  *     footer, the `grep`/`find` empty answers, the `limit reached` notice, the shell
  *     exit line, `details.truncation`'s keys), plus the duration ladder the app copies
  *     out of the TUI renderer. Nothing else in this file looks at
  *     `dist/core/tools/**`, and the app degrades to a generic card instead of failing,
  *     so a rename here is otherwise invisible. See [checkToolText].
- *  4. **Session surface** — the session-file facts the app transcribes rather than
+ *  5. **Session surface** — the session-file facts the app transcribes rather than
  *     asks for: the entry types it models, that `CURRENT_SESSION_VERSION` is still 3,
  *     that `appendCompaction` still accepts a null `firstKeptEntryId` (retain-none
  *     compaction), and that the app still keeps entry types it does not model (the
  *     `context_edit` pair). pi exposes no RPC channel for any of them. See
  *     [checkSessionSurface].
- *  5. **Behaviour** — `models.json` semantics, asserted by running the pinned
+ *  6. **Behaviour** — `models.json` semantics, asserted by running the pinned
  *     engine: a declaration that omits `input`/`contextWindow` really does replace
  *     the catalog entry with pi's defaults (that is why the app must not declare
  *     models pi knows), `modelOverrides` really does merge (that is why it is the
  *     safe way to adjust one), and a catalog model's default `inputLimits` really is
  *     the 2000×2000 / 4.5 MiB(base64) / q80 profile `AttachmentBudget.kt` pre-resizes to.
- *  6. **Extensions** — the extensions this app ships still load into the pinned
+ *  7. **Extensions** — the extensions this app ships still load into the pinned
  *     engine. Their API surface is the one thing here with no static substitute.
  *
  * Every failure prints **the App code that depends on the fact**, because the
@@ -60,12 +66,12 @@
  *   node tools/pi-contract.mjs --pi <dir>      # use an already-installed package
  *   node tools/pi-contract.mjs --pi <dir> --only=theme
  *                                              # one group only: surface | theme |
- *                                              # tooltext | session | bundled |
- *                                              # behaviour | extensions
+ *                                              # tables | tooltext | session |
+ *                                              # bundled | behaviour | extensions
  *
  * `--only` exists because the groups cost very different things: `surface`, `theme`,
- * `tooltext` and `session` are static reads of `dist/`, while `behaviour` and the
- * startup-reload check spawn the engine and `extensions` loads this app's own
+ * `tables`, `tooltext` and `session` are static reads of `dist/`, while `behaviour` and
+ * the startup-reload check spawn the engine and `extensions` loads this app's own
  * extension tree. A group that fails for a reason outside its own subject (a
  * work-in-progress file under `app/src/main/assets/pi-extensions/`, say) should not
  * be able to hide a verdict about the palette.
@@ -1171,6 +1177,265 @@ function checkSessionSurface(piDir) {
 	console.log(`   (${APP_ENTRY_TYPES.length} modelled entry types, session version ${version})`);
 }
 
+// -------------------------------------- part 2d: the app's own transcription tables
+
+/**
+ * The tables the app maintains **because pi offers no channel for them**, asserted
+ * against the engine that actually ships.
+ *
+ * `docs/pi-sourced-lists.md` permits an app-owned table only when pi cannot be asked:
+ * `get_commands` excludes built-ins by design, settings have no RPC schema, the theme
+ * token set has no endpoint, and the built-in tool names appear only inside the system
+ * prompt. The rule has a price — these copies go stale **silently**, which is the
+ * §M11/§M12 shape this repository has already paid for twice. This group is that
+ * price's insurance:
+ *
+ *  - **settings keys** (`ui/settings/PiSettingsRegistry.kt`) against the pinned
+ *    `Settings` interface. A key pi deleted or renamed is a row the user can still
+ *    toggle and pi will ignore — the "switch with no effect" bug
+ *    (`docs/settings-review.md`). The *reverse* direction is printed, not asserted:
+ *    pi having a key the app does not expose is a decision, not a defect.
+ *  - **built-in slash commands** (`ui/chat/PiSlashCommands.kt`): pi's
+ *    `BUILTIN_SLASH_COMMANDS` is excluded from `get_commands`, so the app keeps both
+ *    halves of the list by hand (the rows it shows, and the sentence it gives for a
+ *    name the user types from memory). Both directions are asserted, because a *new*
+ *    pi built-in is exactly what goes unnoticed: `/bug` arrived in 0.86.1 and this
+ *    table answered it with "no such command" until 0.87.1's audit.
+ *  - **resource types** (`packages/PiPackageFilters.kt`) against pi's own four keys.
+ *  - **tool names** (`PiQuickAdd.builtinToolDefaults` + the registry's `optionalTools`
+ *    presets) against pi's `ToolName` union: a chip naming a tool pi no longer has
+ *    writes a whitelist that silently enables nothing.
+ *  - **theme tokens** (`ui/theme/PiThemeFiles.kt`): the required set and the five
+ *    optional fallbacks, against `theme-schema.json` and `theme.js`'s fallback map.
+ *    The `theme` group asserts the *values* of the built-in themes; this asserts the
+ *    app's own schema transcription, which is what decides whether a user's theme file
+ *    is accepted at all.
+ *
+ * Every reader below has a **floor** on what it extracted. A regex that stopped
+ * matching would otherwise turn each assertion into a silent pass — the technique
+ * `checkThemeValues` uses for `PiPalette.kt`.
+ */
+
+/** `val <name> = listOf("a", "b")` — the quoted entries, in order. */
+function kotlinListOf(text, name) {
+	const match = new RegExp(`val\\s+${name}\\s*(?::[^=]+)?=\\s*listOf\\(([\\s\\S]*?)\\)`).exec(text);
+	if (!match) return null;
+	return [...match[1].matchAll(/"([^"]+)"/g)].map((m) => m[1]);
+}
+
+/** `val <name> ... = mapOf("k" to "v", …)` — the keys, in order. */
+function kotlinMapOf(text, name) {
+	const match = new RegExp(`val\\s+${name}\\s*(?::[^=]+)?=\\s*mapOf\\(([\\s\\S]*?)\\n\\s*\\)`).exec(text);
+	if (!match) return null;
+	return [...match[1].matchAll(/"([^"]+)"\s+to\s+"/g)].map((m) => m[1]);
+}
+
+/** A `val <name> = listOf(...)` block's raw text, for readers with their own shape. */
+function kotlinBlock(text, name) {
+	const match = new RegExp(`val\\s+${name}\\s*(?::[^=]+)?=\\s*([\\s\\S]*?)\\n(?:val|fun|private val|/\\*\\*|\\}\n)`).exec(text);
+	return match ? match[1] : null;
+}
+
+/** `export interface Name { … }` blocks of a `.d.ts`, name → body. */
+function tsInterfaces(text) {
+	const out = new Map();
+	for (const match of text.matchAll(/export interface (\w+)(?:\s+extends\s+[^{]+)?\s*\{([\s\S]*?)\n\}/g)) {
+		out.set(match[1], match[2]);
+	}
+	return out;
+}
+
+/**
+ * Whether a dotted settings path resolves from `Settings` by walking the declared
+ * interfaces. pi's schema is TypeBox-generated, so the `.d.ts` mirrors it one
+ * interface per nested object; an inline object type is a leaf and resolves here.
+ */
+function settingsPathResolves(interfaces, path) {
+	let body = interfaces.get("Settings");
+	if (!body) return false;
+	const segments = path.split(".");
+	for (let index = 0; index < segments.length; index++) {
+		const match = new RegExp(`^\\s*${segments[index]}\\??\\s*:\\s*([^;]+);`, "m").exec(body);
+		if (!match) return false;
+		if (index === segments.length - 1) return true;
+		const named = /^(\w+)$/.exec(match[1].trim())?.[1];
+		if (!named || !interfaces.has(named)) return false;
+		body = interfaces.get(named);
+	}
+	return true;
+}
+
+function checkAppTables(piDir) {
+	const read = (file) => readFileSync(join(ROOT, file), "utf8");
+	const engine = (file) => readFileSync(join(piDir, "dist", file), "utf8");
+
+	// ---------------------------------------------------------------- settings keys
+	const settingsDeclared = engine("core/settings-manager.d.ts");
+	const interfaces = tsInterfaces(settingsDeclared);
+	const registryText = read("app/src/main/kotlin/app/pi/ui/settings/PiSettingsRegistry.kt");
+	const appKeys = [...registryText.matchAll(/key = "([^"]+)"/g)]
+		.map((m) => m[1])
+		.filter((key) => !key.startsWith("app."));
+	check(
+		"the settings registry still exposes the keys this group reads (>= 35 pi-owned keys)",
+		appKeys.length >= 35 && interfaces.has("Settings"),
+		`ui/settings/PiSettingsRegistry.kt declares its rows as \`key = "…"\` and this reader takes ` +
+			`every key that is not \`app.\`-prefixed. It found ${appKeys.length} and ` +
+			`${interfaces.has("Settings") ? "the" : "NO"} \`Settings\` interface in the pinned ` +
+			`settings-manager.d.ts. If a row was renamed or reformatted, re-point this reader (the floor ` +
+			`is what keeps a stopped reader from passing vacuously).`,
+	);
+	for (const key of appKeys) {
+		check(
+			`the pinned engine's Settings schema still has ${key}`,
+			settingsPathResolves(interfaces, key),
+			`ui/settings/PiSettingsRegistry.kt writes ${key} into settings.json. If pi deleted or renamed ` +
+				`it, the row still renders and still saves and pi ignores it — the "switch with no effect" ` +
+				`shape of docs/settings-review.md. Re-read the pinned core/settings-manager.ts's Settings ` +
+				`schema and either follow the rename or delete the row.`,
+		);
+	}
+	// Informational: the other direction is a decision (TUI-only keys), not a defect.
+	const piTopLevel = new Set([...interfaces.get("Settings").matchAll(/^ {4}(\w+)\??:/gm)].map((m) => m[1]));
+	const appTopLevel = new Set(appKeys.map((key) => key.split(".")[0]));
+	const notExposed = [...piTopLevel].filter((key) => !appTopLevel.has(key)).sort();
+	console.log(
+		`   (${appKeys.length} pi-owned settings keys pinned, ${piTopLevel.size} in pi; ` +
+			`${notExposed.length} pi keys not exposed by the app: ${notExposed.join(", ")})`,
+	);
+
+	// ------------------------------------------------------- built-in slash commands
+	const slashText = read("app/src/main/kotlin/app/pi/ui/chat/PiSlashCommands.kt");
+	const listedBlock = kotlinBlock(slashText, "PI_BUILTIN_SLASH_COMMANDS") ?? "";
+	const unlistedBlock = kotlinBlock(slashText, "PI_UNLISTED_BUILTIN_COMMANDS") ?? "";
+	const listed = [...listedBlock.matchAll(/PiSlashCommand\(\s*"([a-z-]+)"/g)].map((m) => m[1]);
+	const unlisted = [...unlistedBlock.matchAll(/^\s*"([a-z-]+)"\s+to\s+"/gm)].map((m) => m[1]);
+	const piBuiltins = [...engine("core/slash-commands.js").matchAll(/name: "([a-z-]+)"/g)].map((m) => m[1]);
+	check(
+		"the built-in slash-command tables are still readable (11 rows + 12 hints, and pi has >= 20)",
+		listed.length >= 10 && unlisted.length >= 10 && piBuiltins.length >= 20,
+		`ui/chat/PiSlashCommands.kt keeps both halves of pi's built-in list ` +
+			`(${listed.length} rows + ${unlisted.length} hints read; pi's BUILTIN_SLASH_COMMANDS has ` +
+			`${piBuiltins.length}). The reader matches \`PiSlashCommand("name"\` inside the rows block ` +
+			`and \`"name" to "…"\` inside the hints map; re-point it if either was reformatted.`,
+	);
+	for (const name of [...listed, ...unlisted]) {
+		check(
+			`pi still has the built-in slash command /${name}`,
+			piBuiltins.includes(name),
+			`ui/chat/PiSlashCommands.kt names /${name}. If pi removed or renamed it, the app either ` +
+				`offers a command that does nothing (a row) or tells the user pi has a command it no ` +
+				`longer has (a hint). Re-read the pinned core/slash-commands.ts's BUILTIN_SLASH_COMMANDS ` +
+				`and update the row/hint.`,
+		);
+	}
+	for (const name of piBuiltins) {
+		check(
+			`the app covers pi's built-in slash command /${name}`,
+			listed.includes(name) || unlisted.includes(name),
+			`pi's BUILTIN_SLASH_COMMANDS has /${name} and neither table in ui/chat/PiSlashCommands.kt ` +
+				`names it, so a user who types it is told there is no such command — which is false. This ` +
+				`is how /bug (new in 0.86.1) stayed uncovered. Add it to PI_BUILTIN_SLASH_COMMANDS as a ` +
+				`row or to PI_UNLISTED_BUILTIN_COMMANDS with an honest sentence.`,
+		);
+	}
+
+	// -------------------------------------------------------------- resource types
+	const appResourceTypes = kotlinListOf(read("app/src/main/kotlin/app/pi/packages/PiPackageFilters.kt"), "RESOURCE_TYPES");
+	const piResourceTypes = [.../const RESOURCE_TYPES = \[([^\]]*)\]/.exec(engine("modes/interactive/components/config-selector.js"))?.[1].matchAll(/"([^"]+)"/g) ?? []].map((m) => m[1]);
+	check(
+		"the resource-type list is still readable on both sides (4 keys)",
+		appResourceTypes?.length === 4 && piResourceTypes.length === 4,
+		`app/src/main/kotlin/app/pi/packages/PiPackageFilters.kt's RESOURCE_TYPES ` +
+			`(${appResourceTypes?.length ?? "unreadable"}) and pi's ` +
+			`modes/interactive/components/config-selector.ts's (${piResourceTypes.length}) are the same ` +
+			`four keys. Re-point this reader if either list moved.`,
+	);
+	for (const type of appResourceTypes ?? []) {
+		check(
+			`pi still knows the resource type "${type}"`,
+			piResourceTypes.includes(type),
+			`PiPackageFilters.kt reads and writes the "${type}" key of settings.json's package filters. ` +
+				`A rename upstream means the app's filter row edits a key pi ignores — re-read the pinned ` +
+				`config-selector.ts and follow it.`,
+		);
+	}
+
+	// ------------------------------------------------------------------ tool names
+	const quickAdd = read("app/src/main/kotlin/app/pi/ui/settings/PiQuickAdd.kt");
+	const baseline = kotlinListOf(quickAdd, "builtinToolDefaults");
+	const optional = kotlinListOf(registryText, "optionalTools");
+	const piTools = [...engine("core/tools/index.js").matchAll(/^\s+"([a-z]+)",$/gm)].map((m) => m[1]);
+	const toolNames = new Set(piTools);
+	check(
+		"the tool-name lists are still readable on both sides (4 defaults, 3 optional, 8 built-ins)",
+		baseline?.length === 4 && optional?.length === 3 && toolNames.size === 8,
+		`PiQuickAdd.builtinToolDefaults (${baseline?.length ?? "unreadable"}), the registry's ` +
+			`optionalTools (${optional?.length ?? "unreadable"}) and pi's ToolName union ` +
+			`(${toolNames.size}) are what the 内建工具 row's chips write into settings.json. Re-point ` +
+			`this reader if a list moved.`,
+	);
+	for (const tool of [...(baseline ?? []), ...(optional ?? [])]) {
+		check(
+			`pi still has a built-in tool named ${tool}`,
+			toolNames.has(tool),
+			`the 内建工具 row offers ${tool} as a chip and PiQuickAdd folds it into a *complete* ` +
+				`whitelist (pi's defaultTools does not merge). A tool pi no longer has means the saved ` +
+				`list enables nothing by that name — re-read the pinned core/tools/index.ts's ToolName.`,
+		);
+	}
+
+	// ---------------------------------------------------------------- theme schema
+	const themeFiles = read("app/src/main/kotlin/app/pi/ui/theme/PiThemeFiles.kt");
+	const required = kotlinListOf(themeFiles, "REQUIRED_TOKENS");
+	const fallbackKeys = kotlinMapOf(themeFiles, "OPTIONAL_FALLBACKS");
+	const piSchema = JSON.parse(engine("modes/interactive/theme/theme-schema.json"));
+	const piTokens = new Set(Object.keys(piSchema.properties.colors.properties));
+	const appTokens = new Set([...(required ?? []), ...(fallbackKeys ?? [])]);
+	check(
+		"the theme token sets are still readable (51 required + 5 optional, 56 in the schema)",
+		required?.length === 51 && fallbackKeys?.length === 5 && piTokens.size === 56,
+		`ui/theme/PiThemeFiles.kt transcribes pi's theme schema: REQUIRED_TOKENS ` +
+			`(${required?.length ?? "unreadable"}), OPTIONAL_FALLBACKS (${fallbackKeys?.length ?? "unreadable"}), ` +
+			`against theme-schema.json's ${piTokens.size} colour tokens. This is the set that decides ` +
+			`whether a user's own theme file is accepted with a warning or silently half-applied — ` +
+			`re-point this reader if either declaration moved.`,
+	);
+	const missingTokens = [...piTokens].filter((token) => !appTokens.has(token));
+	const extraTokens = [...appTokens].filter((token) => !piTokens.has(token));
+	check(
+		"PiThemeFiles names exactly pi's theme tokens",
+		missingTokens.length === 0 && extraTokens.length === 0,
+		`theme-schema.json: ${piTokens.size} tokens; PiThemeFiles: ${appTokens.size}. ` +
+			(missingTokens.length ? `Not read by the app: ${missingTokens.join(", ")}. ` : "") +
+			(extraTokens.length ? `Not in pi any more: ${extraTokens.join(", ")}. ` : "") +
+			`A missing token means a user's theme file is reported as incomplete for a token pi accepts; ` +
+			`re-read the pinned theme-schema.json and update REQUIRED_TOKENS/OPTIONAL_FALLBACKS.`,
+	);
+
+	// The five fallbacks: `theme.ts`'s `withThemeColorFallbacks` points at the sibling
+	// token a theme may omit. The app re-derives each colour from the same target, so a
+	// re-pointed fallback upstream silently changes what the app paints.
+	const fallbackBody = /function withThemeColorFallbacks\(colors\)\s*\{([\s\S]*?)\n\}/.exec(engine("modes/interactive/theme/theme.js"))?.[1] ?? "";
+	const piFallbacks = new Map(
+		[...fallbackBody.matchAll(/(\w+):\s*colors\.\w+\s*\?\?\s*colors\.(\w+)/g)].map((m) => [m[1], m[2]]),
+	);
+	const appFallbackMap = new Map(
+		[...(kotlinBlock(themeFiles, "OPTIONAL_FALLBACKS") ?? "").matchAll(/"(\w+)"\s+to\s+"(\w+)"/g)].map((m) => [m[1], m[2]]),
+	);
+	check(
+		"the five optional-token fallbacks point at the same tokens as pi",
+		piFallbacks.size === 5 &&
+			appFallbackMap.size === 5 &&
+			[...piFallbacks].every(([token, target]) => appFallbackMap.get(token) === target),
+		`pi's withThemeColorFallbacks (pinned theme.ts) maps ` +
+			`${JSON.stringify(Object.fromEntries(piFallbacks))}; the app maps ` +
+			`${JSON.stringify(Object.fromEntries(appFallbackMap))}. A theme that omits one of these five ` +
+			`tokens gets pi's fallback colour and the app's different one — re-read the pinned theme.ts ` +
+			`and update PiThemeFiles.OPTIONAL_FALLBACKS.`,
+	);
+}
+
 // ------------------------------------------------------------- part 3: extensions
 
 function checkExtensions(piDir) {
@@ -1200,6 +1465,7 @@ function checkExtensions(piDir) {
 const GROUPS = [
 	["surface", "--- surface ---"],
 	["theme", "--- theme values ---"],
+	["tables", "--- app transcription tables ---"],
 	["tooltext", "--- tool-result text ---"],
 	["session", "--- session surface ---"],
 	["bundled", "--- bundled entry ---"],
@@ -1252,6 +1518,10 @@ if (runs("surface")) {
 if (runs("theme")) {
 	console.log("\n--- theme values ---");
 	checkThemeValues(piDir);
+}
+if (runs("tables")) {
+	console.log("\n--- app transcription tables ---");
+	checkAppTables(piDir);
 }
 if (runs("tooltext")) {
 	console.log("\n--- tool-result text ---");

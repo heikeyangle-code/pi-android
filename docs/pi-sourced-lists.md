@@ -36,14 +36,21 @@
 | `packages/PiProviderPresets.kt` | 13 个厂商 | pi 的 `packages/ai/src/providers/*.ts`（**37** 个 provider） | **已钉住**：`tools/pi-contract.mjs` 对每个 `builtInPi` 预设断言它的 `baseUrl` 仍然出现在钉住的引擎里。这张表特殊——**它会被写出去**（`PiCredentialService.save` 把 baseUrl/api 写进 `models.json`），过期就等于覆盖引擎自己的端点，而 `get_available_models` 按凭证过滤、列不出"还没有 key 的厂商"，所以问不到全量 |
 | `packages/PiPackageModel.kt` 的 `PiBuiltinExtension.SHIPPED` | 3 个 | 无（**`pi 无对应物`**：pi 没有"自带扩展"这个概念） | 名字与用途说明是 App 的知识；但**条目本身应与 `extensions/` 目录里的实际文件一致**，而 `readBuiltins` 每次都用文件系统核一遍（不在就显示"未安装"，是可见的错，不是静默的错） |
 
-### App 维护、且**问不到**的表（写明理由）
+### App 维护、且**问不到**的表（写明理由 + 钉在哪）
 
-| 表 | pi 的真身 | 为什么问不到 |
-|---|---|---|
-| `ui/chat/PiSlashCommands.kt` 的 `PI_BUILTIN_SLASH_COMMANDS` | `core/slash-commands.ts:19-43` | **pi 故意不给**：内置命令被排除在 `get_commands` 之外（`docs/rpc.md:853`），RPC 也没有任何命令能列出它们 |
-| `packages/PiPackageFilters.kt` 的 `RESOURCE_TYPES`（4 个键） | `modes/interactive/components/config-selector.ts:26-38` | RPC 没有通道；四个键是稳定的形状 |
-| `ui/settings/PiSettingsRegistry.kt` | `core/settings-manager.ts:106-158` 的 `Settings` 接口 | **pi 不通过 RPC 暴露设置 schema**（只有文件）。每行的**值**来自 pi 的文件，但键/默认值/描述只能是 App 的转写——所以它需要的是"每个键都有消费者"的审计（见 `docs/settings-review.md`） |
-| `ui/render/PiMarkdownTheme.kt`、`ui/render/PiCodeHighlight.kt` 的渲染令牌 | pi 的 markdown/高亮渲染器内部 | 渲染器内部没有数据通道；主题**颜色**是例外——那些读的是 pi 的主题 JSON |
+这些表**仍然要 App 自己维护**（理由在中列），但自 2026-09-23 起它们**全部**进入了
+`tools/pi-contract.mjs` 的 `tables` 组：钉的是"App 的副本还指着 pi 真有的东西"，不是"副本的内容对不对"
+（后者只能靠 `docs/settings-review.md` 那种消费者审计）。**改动这些表之前先读那一组断言的失败文案**——
+它写明了该回去重读 pi 的哪个文件。
+
+| 表 | pi 的真身 | 为什么问不到 | 契约怎么钉 |
+|---|---|---|---|
+| `ui/chat/PiSlashCommands.kt` 的 `PI_BUILTIN_SLASH_COMMANDS`（11 行）+ `PI_UNLISTED_BUILTIN_COMMANDS`（13 条文案） | `core/slash-commands.ts` 的 `BUILTIN_SLASH_COMMANDS`（**24** 个名字） | **pi 故意不给**：内置命令被排除在 `get_commands` 之外（`docs/rpc.md:853`），RPC 也没有任何命令能列出它们 | **双向**：每个 App 名字必须仍在 pi 的列表里，且 pi 的每个名字必须被两张表之一覆盖。**这条已经抓到真漏洞**：`/bug` 是 pi 0.86.1 新增的，两张表都没它，用户输入 `/bug` 得到的是"没有这个命令"——直到 0.87.1 审计 |
+| `packages/PiPackageFilters.kt` 的 `RESOURCE_TYPES`（4 个键） | `modes/interactive/components/config-selector.ts` 的 `RESOURCE_TYPES` | RPC 没有通道；四个键是稳定的形状 | 四个键逐个断言仍在 pi 的列表里 |
+| `ui/settings/PiSettingsRegistry.kt` 的 **38 个 `pi.*` 键** | `core/settings-manager.ts` 的 `Settings` 接口（52 个顶层键） | **pi 不通过 RPC 暴露设置 schema**（只有文件）。每行的**值**来自 pi 的文件，但键/默认值/描述只能是 App 的转写——所以它还需要"每个键都有消费者"的审计（见 `docs/settings-review.md`） | 每个 `pi.*` 键（含 `compaction.*`/`retry.provider.*` 这类嵌套路径）必须在 `Settings` 的 `.d.ts` 里仍能解析；**反方向只打印不失败**（pi 有而 App 没暴露的 24 个是决策，不是缺陷） |
+| `PiQuickAdd.builtinToolDefaults`（4）+ `PiSettingsRegistry` 的 `optionalTools`（3） | `core/tools/index.ts` 的 `ToolName` 联合（8 个：read/bash/powershell/edit/write/grep/find/ls） | 工具名只出现在 pi 的系统提示词里，没有任何端点在列它 | 7 个名字逐个断言仍是 pi 的内建工具（chip 写出去的是**完整白名单**，名字错了等于一个工具都不启用） |
+| `ui/theme/PiThemeFiles.kt` 的 `REQUIRED_TOKENS`（51）+ `OPTIONAL_FALLBACKS`（5） | `modes/interactive/theme/theme-schema.json` 的 `colors`（**56** 个 token）+ `theme.ts` 的 `withThemeColorFallbacks` | 主题 schema 没有端点；用户主题文件的令牌集只能照着抄 | 两个方向都断言：App 的 51∪5 必须**正好等于** schema 的 56 个 token 名；五个 fallback 必须指向 pi 指的同一个 token |
+| `ui/render/PiMarkdownTheme.kt`、`ui/render/PiCodeHighlight.kt` 的渲染令牌 | pi 的 markdown/高亮渲染器内部 | 渲染器内部没有数据通道；主题**颜色**是例外——那些读的是 pi 的主题 JSON（`PiPalette.kt` 的转写由 `theme` 组逐值断言） | **未钉**：这两个表的"令牌"是渲染器内部取值，pi 没有可读的声明面。若哪天它变成可读的，先在这里登记再加断言 |
 
 ## 这条规则怎么落地（防止再长出新表）
 
@@ -53,7 +60,9 @@
    不要自己发明一套发现规则（扩展/技能/模板/主题这四种的规则各不相同，pi 在
    `core/package-manager.ts:645-653` 里分派，照抄它）。
 3. **能被 pi 验证的表，就加一条 `tools/pi-contract.mjs` 断言**（现在有：RPC 命令名、扩展 UI 方法名、
-   `models.json` 的替换与合并语义、随包扩展能不能装进引擎、10 个内置厂商的 baseUrl）。
+   `models.json` 的替换与合并语义、随包扩展能不能装进引擎、10 个内置厂商的 baseUrl、工具结果文本、
+   会话条目面，以及上面那五张抄写表 = `tables` 组）。
+   **一条也不许"只加断言不留后果"**：每条都要能在失败时打印"回去重读哪个 App 文件"。
 4. **写出去的东西不要覆盖 pi 自己的**：这也是本次审计抓到的一处真问题——
    `PiCredentialService.save` 原本把 App 的显示名（`Google AI Studio`）写进 `models.json` 的
    provider 块，覆盖了 pi 自己的 `Google`。现在只对 pi 没有的厂商写 `name`。
