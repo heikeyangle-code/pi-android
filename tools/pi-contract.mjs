@@ -28,12 +28,26 @@
  *     `dist/modes/interactive/theme/{dark,light}.json`. This is the one pi fact the
  *     app **copies** rather than reads, so nothing else in this file — or in the
  *     build — would notice a re-colouring upstream. See [checkThemeValues].
- *  3. **Behaviour** — `models.json` semantics, asserted by running the pinned
+ *  3. **Tool-result text** — the fragments pi's *tools* write into a result, which
+ *     `ui/blocks/ToolOutputParse.kt` parses as if they were a format (the `read`
+ *     footer, the `grep`/`find` empty answers, the `limit reached` notice, the shell
+ *     exit line, `details.truncation`'s keys), plus the duration ladder the app copies
+ *     out of the TUI renderer. Nothing else in this file looks at
+ *     `dist/core/tools/**`, and the app degrades to a generic card instead of failing,
+ *     so a rename here is otherwise invisible. See [checkToolText].
+ *  4. **Session surface** — the session-file facts the app transcribes rather than
+ *     asks for: the entry types it models, that `CURRENT_SESSION_VERSION` is still 3,
+ *     that `appendCompaction` still accepts a null `firstKeptEntryId` (retain-none
+ *     compaction), and that the app still keeps entry types it does not model (the
+ *     `context_edit` pair). pi exposes no RPC channel for any of them. See
+ *     [checkSessionSurface].
+ *  5. **Behaviour** — `models.json` semantics, asserted by running the pinned
  *     engine: a declaration that omits `input`/`contextWindow` really does replace
  *     the catalog entry with pi's defaults (that is why the app must not declare
- *     models pi knows), and `modelOverrides` really does merge (that is why it is
- *     the safe way to adjust one).
- *  4. **Extensions** — the extensions this app ships still load into the pinned
+ *     models pi knows), `modelOverrides` really does merge (that is why it is the
+ *     safe way to adjust one), and a catalog model's default `inputLimits` really is
+ *     the 2000×2000 / 4.5 MiB(base64) / q80 profile `AttachmentBudget.kt` pre-resizes to.
+ *  6. **Extensions** — the extensions this app ships still load into the pinned
  *     engine. Their API surface is the one thing here with no static substitute.
  *
  * Every failure prints **the App code that depends on the fact**, because the
@@ -46,14 +60,15 @@
  *   node tools/pi-contract.mjs --pi <dir>      # use an already-installed package
  *   node tools/pi-contract.mjs --pi <dir> --only=theme
  *                                              # one group only: surface | theme |
- *                                              # bundled | behaviour | extensions
+ *                                              # tooltext | session | bundled |
+ *                                              # behaviour | extensions
  *
- * `--only` exists because the four groups cost very different things: `surface` and
- * `theme` are static reads of `dist/`, while `behaviour` and the startup-reload check
- * spawn the engine and `extensions` loads this app's own extension tree. A group that
- * fails for a reason outside its own subject (a work-in-progress file under
- * `app/src/main/assets/pi-extensions/`, say) should not be able to hide a verdict
- * about the palette.
+ * `--only` exists because the groups cost very different things: `surface`, `theme`,
+ * `tooltext` and `session` are static reads of `dist/`, while `behaviour` and the
+ * startup-reload check spawn the engine and `extensions` loads this app's own
+ * extension tree. A group that fails for a reason outside its own subject (a
+ * work-in-progress file under `app/src/main/assets/pi-extensions/`, say) should not
+ * be able to hide a verdict about the palette.
  *
  * Exit code 0 = every assertion holds. Non-zero = read the last line.
  */
@@ -717,6 +732,45 @@ function checkBehaviour(piDir) {
 			"defect §M11/§M12 are about; the app must not recommend modelOverrides if it replaces.",
 	);
 
+	// (3) `inputLimits` (new in 0.87.1) — the one fact `AttachmentBudget.kt` transcribes
+	//     *as a default*. A catalog model the engine reports carries the resolved profile,
+	//     so the three numbers the App's arithmetic is built on are assertable directly
+	//     instead of re-read from source. `maxBytes` counts base64 characters, which is
+	//     the unit `AttachmentBudget.PI_MAX_BASE64_CHARS` speaks.
+	const limits = model.inputLimits?.images?.resize;
+	check(
+		"a catalog model's default image resize profile is still 2000x2000 / 4.5 MiB(base64) / q80",
+		limits?.maxWidth === 2000 &&
+			limits?.maxHeight === 2000 &&
+			limits?.maxBytes === 4718592 &&
+			limits?.jpegQuality === 80,
+		`app.pi pre-resizes an attachment to pi's own ceiling before sending it ` +
+			`(ui/screens/AttachmentBudget.kt: PI_MAX_DIMENSION, PI_MAX_BASE64_CHARS, PI_JPEG_QUALITIES, ` +
+			`cited to utils/image-resize-core.ts). ${engineVersion(piDir)} reports ` +
+			`${JSON.stringify(limits)}. If the default moved, the App's "this image fits" arithmetic no ` +
+			`longer matches what pi will send — re-read utils/image-resize-core.ts and re-derive ` +
+			`AttachmentBudget's constants + its harness, or stop pre-resizing.`,
+	);
+	//     The App's editors reach a catalog model only through `modelOverrides` (never
+	//     `models[]`, which replaces the entry — §M11), so the new nested field has to be
+	//     adjustable through that path.
+	writeModelsJson(probe, {
+		baseUrl: "https://api.deepseek.com",
+		api: "openai-completions",
+		modelOverrides: { [id]: { inputLimits: { images: { resize: { maxBytes: 999 } } } } },
+	});
+	const afterLimits = availableModels(piDir, probe).find((m) => m.provider === "deepseek" && m.id === id);
+	check(
+		"modelOverrides can set inputLimits (and keeps the rest of the model intact)",
+		afterLimits?.inputLimits?.images?.resize?.maxBytes === 999 &&
+			afterLimits?.inputLimits?.images?.resize?.maxWidth === 2000 &&
+			JSON.stringify(afterLimits?.input) === JSON.stringify(model.input),
+		`the App's model editor adjusts a catalog model only through modelOverrides ` +
+			`(packages/PiCredentialService.kt's "declare only what pi cannot know" rule, §M11). If a nested ` +
+			`object like inputLimits did not merge, that rule would have to be re-derived — re-read the ` +
+			`pinned core/provider-composer.ts's applyOverride.`,
+	);
+
 	rmSync(probe, { recursive: true, force: true });
 }
 
@@ -869,6 +923,254 @@ async function checkStartupOnlyReload(piDir) {
 	rmSync(probe, { recursive: true, force: true });
 }
 
+// ------------------------------------------------------- part 2b: tool-result text
+
+/**
+ * The **text pi's tools write into a result**, which this app parses as if it were a
+ * format. `app/src/main/kotlin/app/pi/ui/blocks/ToolOutputParse.kt` turns a tool
+ * result into a block by matching pi's own strings — the `read` footer, the `grep` and
+ * `find` empty answers, the `limit reached` notice, the shell exit line — and
+ * `ToolBlockChrome.kt`/`ShellBlock.kt` render pi's `Elapsed`/`Took` figure from a
+ * duration ladder copied out of `core/tools/renderers/bash.ts`.
+ *
+ * ## Why this needs its own group
+ *
+ * Nothing in this script looked at `dist/core/tools/**` or `renderers/**` before: the
+ * `surface` group reads RPC command *names*, and the design of `ToolOutputParse` is
+ * "never throw" — an unrecognised body degrades to the generic card. So a renamed
+ * footer is **invisible**: no build failure, no crash, just a worse transcript on the
+ * phone. That is the §M11/§M12 shape one layer lower (the app believes a copy of pi's
+ * text and the copy went stale).
+ *
+ * ## Why the producer file is part of the assertion
+ *
+ * The same sentence can survive in the engine for unrelated reasons (a docs string, a
+ * system prompt, a fixture), which is how a `surface` check can pass vacuously. Each
+ * row below therefore reads **the file that produces the text**, and the failure names
+ * the App code that depends on it.
+ *
+ * ## What this deliberately does not do
+ *
+ * It does not pin whole sentences with their numbers (`` "[Showing lines 3-40 of 900.
+ * Use offset=41 to continue.]" `` is built from templates), and it does not assert the
+ * layout the app invents *around* pi's text — only pi's own fragments. A rewrite that
+ * keeps the distinctive prefix still passes; that is the intended sensitivity, because
+ * the app matches on those prefixes.
+ */
+const TOOL_TEXT = [
+	{
+		what: "read's truncation footer (both branches)",
+		file: "core/tools/read.js",
+		needles: ["Showing lines ", "more lines in file. Use offset="],
+		app: "SourceBody.footer (ToolOutputParse.kt, `readBody`)",
+	},
+	{
+		what: "grep's empty answer",
+		file: "core/tools/grep.js",
+		needles: ["No matches found"],
+		app: "GrepBody.empty (ToolOutputParse.kt, `grepBody`)",
+	},
+	{
+		what: "find's empty answer",
+		file: "core/tools/find.js",
+		needles: ["No files found matching pattern"],
+		app: "the `find` body (ToolOutputParse.kt, `patternListBody`)",
+	},
+	{
+		what: "the shell tools' non-zero exit line",
+		file: "core/tools/bash.js",
+		needles: ["Command exited with code "],
+		app: "ShellBody's exit line (app/src/main/kotlin/app/pi/ui/blocks/ShellBlock.kt)",
+	},
+];
+
+/**
+ * The `limit reached` notice. `ToolOutputParse.NOTICE_SUBJECT` is the regex
+ * `limit|truncated`, applied to a result's trailing line to decide whether that line
+ * is pi's own footnote rather than tool output — so the *phrase*, not a full sentence,
+ * is the contract. `ls` shares `find`'s notice text.
+ */
+const TOOL_NOTICE_FILES = ["core/tools/grep.js", "core/tools/find.js", "core/tools/ls.js"];
+
+/** The `details.truncation` keys the app reads off a tool result. */
+const TRUNCATION_KEYS = ["truncated", "truncatedBy", "outputLines", "totalLines"];
+
+function checkToolText(piDir) {
+	for (const row of TOOL_TEXT) {
+		const file = join(piDir, "dist", row.file);
+		const text = existsSync(file) ? readFileSync(file, "utf8") : "";
+		for (const needle of row.needles) {
+			check(
+				`${row.file} still produces ${JSON.stringify(needle)}`,
+				text.includes(needle),
+				`app.pi parses pi's tool-result text: this fragment is what ` +
+					`${row.app} keys on. A rename here does not fail the build and does not throw — ` +
+					`ToolOutputParse answers null by design and the block degrades to the generic card. ` +
+					`Re-read the pinned ${row.file}, update the Kotlin matcher, and update this row.`,
+			);
+		}
+	}
+
+	for (const file of TOOL_NOTICE_FILES) {
+		const full = join(piDir, "dist", file);
+		const text = existsSync(full) ? readFileSync(full, "utf8") : "";
+		check(
+			`${file} still says "limit reached"`,
+			text.includes("limit reached"),
+			`app.pi tells pi's own limit footnote apart from tool output by the words ` +
+				`limit/truncated (ToolOutputParse.kt's NOTICE_SUBJECT, used by the grep and ` +
+				`find/ls bodies). Without the phrase that line is rendered as if the tool had ` +
+				`printed it. Re-read the pinned ${file} and the App's notice test.`,
+		);
+	}
+
+	// `TruncationResult` (`core/tools/truncate.ts`) is handed to the app inside a tool
+	// result's `details`, and `ToolOutputParse` reads it as an object — a renamed key
+	// silently becomes "not truncated" on the phone while pi really did truncate.
+	const truncateFile = join(piDir, "dist", "core/tools/truncate.js");
+	const truncate = existsSync(truncateFile) ? readFileSync(truncateFile, "utf8") : "";
+	for (const key of TRUNCATION_KEYS) {
+		check(
+			`truncate.js still reports details.truncation.${key}`,
+			truncate.includes(key),
+			`app.pi reads this key off a tool result (ToolOutputParse.kt, and the "已截断" footer in ` +
+				`ShellBlock.kt / PathListBlock.kt). A renamed key reports "not truncated" for output pi ` +
+				`did truncate. Re-read the pinned core/tools/truncate.ts + the tool that sets it.`,
+		);
+	}
+
+	// The one pi fact this app **copies** rather than parses: pi's duration units, taken
+	// from the TUI renderer. The renderer's output never reaches RPC — the App
+	// re-implements the ladder in Kotlin so a phone reads a duration the way pi's
+	// terminal does. A change here is therefore a *silent divergence*: both surfaces keep
+	// working and stop agreeing.
+	//
+	// Note what is *not* asserted: the words. The App's own label is Chinese
+	// (`已运行`/`耗时`), so "Elapsed" exists only on pi's side — asserting the App spells
+	// "Elapsed" would fail on correct code. What the two sides share is the unit ladder:
+	// `%.1fs` under a minute, `m` + `s` under an hour, `h` + `m` + `s` above it.
+	const bashRenderer = join(piDir, "dist", "core/tools/renderers", "bash.js");
+	const renderer = existsSync(bashRenderer) ? readFileSync(bashRenderer, "utf8") : "";
+	check(
+		"renderers/bash.js still carries pi's Elapsed/Took label and a duration ladder",
+		renderer.includes("Elapsed") && renderer.includes("Took") && renderer.includes("m "),
+		`app.pi reproduces pi's elapsed figure and its unit ladder ` +
+			`(ToolOutputParse.formatDuration + elapsedText, used by ShellBlock.kt and ` +
+			`ToolBlockChrome.kt) from renderers/bash.ts's formatDuration. If this file moved or the ` +
+			`ladder changed, re-read the pinned renderers/bash.ts and the App's copy together — the two ` +
+			`surfaces silently disagree otherwise.`,
+	);
+	const appFormat = readFileSync(join(ROOT, "app/src/main/kotlin/app/pi/ui/blocks/ToolOutputParse.kt"), "utf8");
+	check(
+		"the App still carries that copied unit ladder (formatDuration)",
+		["fun formatDuration(", '"%.1fs"', "m ${"].every((needle) => appFormat.includes(needle)),
+		`ToolOutputParse.formatDuration is the App's copy of pi's duration ladder ` +
+			`(renderers/bash.ts:32-42) and ToolBlockChrome.toolHeaderReading prints it. If the App ` +
+			`dropped or reshaped it, this group no longer describes the same fact — either restore it ` +
+			`or delete this row together with the copy.`,
+	);
+	console.log(
+		`   (${TOOL_TEXT.reduce((n, r) => n + r.needles.length, 0)} tool-text fragments, ` +
+			`${TOOL_NOTICE_FILES.length} limit notices, ${TRUNCATION_KEYS.length} truncation keys)`,
+	);
+}
+
+// -------------------------------------------------------- part 2c: session surface
+
+/**
+ * The **session-file** facts the app hard-codes instead of asking for.
+ *
+ * `rpc/src/main/kotlin/app/pi/rpc/SessionEntries.kt` maps pi's persisted `SessionEntry`
+ * union to Kotlin, `app/src/main/kotlin/app/pi/session/SessionFileReader.kt` reads the
+ * JSONL directly, and `Transcript.kt` resolves compactions by `firstKeptEntryId`. None
+ * of these can be asked over RPC — `get_entries` hands back entries but never the
+ * union, and the file format's own version integer is not reported anywhere. So the
+ * facts below are transcriptions, each with a distinct failure mode:
+ *
+ *  - a **renamed** entry type the app models would come back `SessionEntry.Unknown`
+ *    (kept, but shown as raw JSON — the tree screen loses its row);
+ *  - a **bumped** `CURRENT_SESSION_VERSION` means pi may rewrite the file in a shape
+ *    the app's reader was not written for, and nothing else in the build looks at it;
+ *  - a **narrowed** `firstKeptEntryId` (back to non-null) would make retain-none
+ *    compactions unrepresentable in Kotlin, where the field is deliberately `String?`.
+ *
+ * ## The unmodelled entry type is asserted, deliberately
+ *
+ * `context_edit` arrived in 0.87.1 and is **not** in the app's modelled set. That is the
+ * design, not a gap: `parseSessionEntry`'s `else -> SessionEntry.Unknown` is what makes
+ * an entry written by a newer pi *kept* rather than dropped. So this group asserts the
+ * pair — pi still writes `context_edit` (the reason the Unknown arm is exercised), and
+ * the App still has the Unknown arm that keeps it. Asserting only the first, or
+ * "helpfully" adding `context_edit` to the modelled list, would each break the property
+ * the pair is there to protect.
+ */
+const APP_ENTRY_TYPES = [
+	["message", "SessionMessageEntry"],
+	["model_change", "ModelChangeEntry"],
+	["thinking_level_change", "ThinkingLevelChangeEntry"],
+	["compaction", "CompactionEntry"],
+	["branch_summary", "BranchSummaryEntry"],
+	["custom", "CustomEntry"],
+	["custom_message", "CustomMessageEntry"],
+	["label", "LabelEntry"],
+	["session_info", "SessionInfoEntry"],
+];
+
+function checkSessionSurface(piDir) {
+	const sessionManager = readFileSync(join(piDir, "dist", "core", "session-manager.js"), "utf8");
+	const declared = readFileSync(join(piDir, "dist", "core", "session-manager.d.ts"), "utf8");
+
+	const version = /CURRENT_SESSION_VERSION\s*=\s*(\d+)/.exec(sessionManager)?.[1] ?? null;
+	check(
+		"the pinned engine still writes session format version 3",
+		version === "3",
+		`app.pi reads the session JSONL itself (session/SessionFileReader.kt, ` +
+			`rpc/.../SessionEntries.kt) and has no channel for this integer — pi reports it nowhere ` +
+			`over RPC. A bump means pi may migrate or write a shape the reader was not written for; ` +
+			`re-read the pinned core/session-manager.ts's migrateSessionEntries and the App's reader ` +
+			`together before touching this check.`,
+	);
+
+	const union = /export type SessionEntry =([^;]+);/.exec(declared)?.[1] ?? "";
+	for (const [type, kotlin] of APP_ENTRY_TYPES) {
+		check(
+			`the pinned engine's SessionEntry union still contains the ${type} entry the app models`,
+			union.includes(kotlin),
+			`rpc/.../SessionEntries.kt parses "${type}". If it left the union, pi stopped writing it and ` +
+				`the App's data class is dead code (or the entry was renamed, in which case the App must ` +
+				`follow or it will render it as SessionEntry.Unknown's raw JSON). Re-read the pinned ` +
+				`core/session-manager.d.ts and update SessionEntries.kt + its consumers.`,
+		);
+	}
+
+	// The pair described above: a newer pi's entry type exists, and the App has the arm
+	// that keeps it. If this fails on the App side, unknown entries are being *dropped*,
+	// which is the one outcome the design forbids.
+	const appEntries = readFileSync(join(ROOT, "rpc/src/main/kotlin/app/pi/rpc/SessionEntries.kt"), "utf8");
+	check(
+		"pi still has an entry type the app does not model (context_edit), and the app still keeps unknown types",
+		union.includes("ContextEditEntry") && /else\s*->\s*SessionEntry\.Unknown\(/.test(appEntries),
+		`SessionEntries.kt's \`else -> SessionEntry.Unknown(type, meta, raw)\` is what keeps an entry ` +
+			`written by a newer pi instead of dropping it (the ${union.includes("ContextEditEntry") ? "still-present" : "now-absent"} ` +
+			`context_edit is the current example). If pi no longer writes any type the App does not model, ` +
+			`this row is vacuous and should be replaced by whatever the next new type is; if the App lost ` +
+			`its Unknown arm, newer sessions silently lose rows — re-read SessionEntries.kt's parser.`,
+	);
+
+	// The retain-none compaction: `appendCompaction(summary, null, tokensBefore)` keeps no
+	// preceding entries. The App's `Compaction.firstKeptEntryId` is `String?` for this
+	// reason (`SessionEntries.kt`, `Transcript.kt`'s `onCompactionEntry`).
+	check(
+		"firstKeptEntryId is still nullable in appendCompaction",
+		/firstKeptEntryId:\s*string\s*\|\s*null/.test(declared),
+		`app.pi models Compaction.firstKeptEntryId as String? and Transcript.onCompactionEntry ` +
+			`carries it forward when a later compaction omits it. If pi narrowed the type back to ` +
+			`string, a retain-none compaction becomes unrepresentable in Kotlin — re-read the pinned ` +
+			`core/session-manager.d.ts's appendCompaction and the App's parse path.`,
+	);
+	console.log(`   (${APP_ENTRY_TYPES.length} modelled entry types, session version ${version})`);
+}
+
 // ------------------------------------------------------------- part 3: extensions
 
 function checkExtensions(piDir) {
@@ -898,6 +1200,8 @@ function checkExtensions(piDir) {
 const GROUPS = [
 	["surface", "--- surface ---"],
 	["theme", "--- theme values ---"],
+	["tooltext", "--- tool-result text ---"],
+	["session", "--- session surface ---"],
 	["bundled", "--- bundled entry ---"],
 	["behaviour", "--- behaviour ---"],
 	["extensions", "--- extensions ---"],
@@ -948,6 +1252,14 @@ if (runs("surface")) {
 if (runs("theme")) {
 	console.log("\n--- theme values ---");
 	checkThemeValues(piDir);
+}
+if (runs("tooltext")) {
+	console.log("\n--- tool-result text ---");
+	checkToolText(piDir);
+}
+if (runs("session")) {
+	console.log("\n--- session surface ---");
+	checkSessionSurface(piDir);
 }
 if (runs("bundled")) {
 	console.log("\n--- bundled entry ---");

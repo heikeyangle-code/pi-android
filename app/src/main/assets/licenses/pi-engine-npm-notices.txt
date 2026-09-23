@@ -5,9 +5,9 @@ pi 引擎依赖的许可与版权声明来源
 同一 monorepo、同一载荷里的兄弟包、或上游仓库。
 下面是逐个核到的位置。每一项的 sha256 都是实际抓到的字节，可以复核，不需要相信这段话。
 
-  6 × @earendil-works/* 包  （0.86.1，MIT）
-      正文与版权声明见列表里的『pi 引擎 0.86.1（MIT）』那一份：这六个包与 pi 引擎出自同一 monorepo，根 LICENSE 即它们的许可文本（已按 v0.86.1 标签逐字节核对）
-      来源    https://raw.githubusercontent.com/earendil-works/pi/v0.86.1/LICENSE
+  6 × @earendil-works/* 包  （0.87.1，MIT）
+      正文与版权声明见列表里的『pi 引擎 0.87.1（MIT）』那一份：这六个包与 pi 引擎出自同一 monorepo，根 LICENSE 即它们的许可文本（已按 v0.87.1 标签逐字节核对；该标签的 LICENSE 与 v0.85.1/v0.86.1 逐字节相同，sha256 未变）
+      来源    https://raw.githubusercontent.com/earendil-works/pi/v0.87.1/LICENSE
       sha256  0457f5bcec3b3b211605dfb5d1a49042fd638f3686a410fe099c24a25af13c48
 
   3 × @aws-sdk/* 包  （见上表，Apache-2.0）

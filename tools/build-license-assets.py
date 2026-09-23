@@ -58,8 +58,10 @@ OUT = os.path.join(ROOT, "app", "src", "main", "assets", "licenses")
 LOCK = os.path.join(ROOT, "runtime.lock.json")
 
 # npm packages in pi's dependency closure whose licence is not otherwise present
-# in a downloaded artifact. Versions are the ones pi 0.86.1 pins in its shipped
+# in a downloaded artifact. Versions are the ones pi 0.87.1 pins in its shipped
 # shrinkwrap; a bump must move both the version and the pi version together.
+# (Checked at 0.87.1: tslib 2.8.1 and lru-cache 11.4.0 are unchanged, so this table
+# did not move with the bump.)
 #   tslib       0BSD          (also: `Unlicense` is taken from ripgrep's tarball)
 #   lru-cache   BlueOak-1.0.0
 #   minimatch   BlueOak-1.0.0  (ships its own LICENSE.md, so no entry here)
@@ -95,8 +97,8 @@ JETBRAINS_MONO_LICENCE_TITLE = f"JetBrains Mono {JETBRAINS_MONO_VERSION}（OFL-1
 # notice — while MIT requires the notice. We therefore ship it ourselves, from the
 # upstream tag matching the engine version. Verified: this URL's bytes are
 # identical to `/root/pi-src/LICENSE` at pi 0.85.1 (sha256 0457f5bcec3b3b21…); the
-# v0.86.1 tag's LICENSE was re-fetched and is **byte-identical** (same sha256), so
-# the text we distribute did not change across the bump.
+# v0.86.1 and v0.87.1 tags' LICENSE files were re-fetched and are **byte-identical**
+# (same sha256), so the text we distribute has not changed across either bump.
 PI_LICENCE_URL = "https://raw.githubusercontent.com/earendil-works/pi/v{version}/LICENSE"
 PI_LICENCE_SHA256 = "0457f5bcec3b3b211605dfb5d1a49042fd638f3686a410fe099c24a25af13c48"
 
@@ -154,7 +156,7 @@ PROROOT_FILES = [
 # file**. Derived, not guessed: the `pi-engine` step of tools/fetch-runtime.mjs was
 # run in an isolated directory —
 #     npm install --ignore-scripts --omit=dev --omit=optional \
-#       @earendil-works/pi-coding-agent@0.86.1
+#       @earendil-works/pi-coding-agent@0.87.1
 # — and npm's own installed list (`node_modules/.package-lock.json`) was audited:
 # 118 packages installed, 106 shipping a licence file, these 12 not. Every one of
 # the 12 still declares a field, so this is "no text", never "no licence"; and for
@@ -162,17 +164,19 @@ PROROOT_FILES = [
 # mismatches at 0.86.1). Pinned here because the assets must build without npm;
 # re-derive on a version bump (docs/known-gaps.md §L5).
 #
-# What the 0.85.1 → 0.86.1 bump changed: the six `@earendil-works/*` packages moved
-# to 0.86.1, the three `@aws-sdk/*` ones to the versions 0.86.1's shrinkwrap pins,
-# `@nodable/entities` and `xml-naming` left the closure entirely, and
-# `proxy-agent-negotiate` entered it.
+# What the 0.86.1 → 0.87.1 bump changed: **only the six `@earendil-works/*`
+# versions**. The set itself was re-derived at 0.87.1 (same 118 packages, the same
+# 12 without a licence file, and the three `@aws-sdk/*` versions below are still the
+# ones 0.87.1's shrinkwrap pins: 3.972.72 / 3.972.77 / 3.997.44). The previous bump
+# (0.85.1 → 0.86.1) had moved those three `@aws-sdk/*` versions and swapped
+# `@nodable/entities` + `xml-naming` out for `proxy-agent-negotiate`.
 PI_ENGINE_NO_LICENCE_TEXT = [
-    ("@earendil-works/pi-coding-agent", "0.86.1", "MIT"),
-    ("@earendil-works/chord", "0.86.1", "MIT"),
-    ("@earendil-works/pi-agent-core", "0.86.1", "MIT"),
-    ("@earendil-works/pi-ai", "0.86.1", "MIT"),
-    ("@earendil-works/pi-telemetry", "0.86.1", "MIT"),
-    ("@earendil-works/pi-tui", "0.86.1", "MIT"),
+    ("@earendil-works/pi-coding-agent", "0.87.1", "MIT"),
+    ("@earendil-works/chord", "0.87.1", "MIT"),
+    ("@earendil-works/pi-agent-core", "0.87.1", "MIT"),
+    ("@earendil-works/pi-ai", "0.87.1", "MIT"),
+    ("@earendil-works/pi-telemetry", "0.87.1", "MIT"),
+    ("@earendil-works/pi-tui", "0.87.1", "MIT"),
     ("data-uri-to-buffer", "4.0.1", "MIT"),
     ("proxy-agent-negotiate", "1.1.0", "MIT"),
     ("standardwebhooks", "1.1.1", "MIT"),
@@ -192,10 +196,10 @@ PI_ENGINE_NO_LICENCE_TEXT = [
 PI_ENGINE_NOTICES = [
     (
         "6 × @earendil-works/* 包",
-        "0.86.1",
+        "0.87.1",
         "MIT",
-        "正文与版权声明见列表里的『pi 引擎 0.86.1（MIT）』那一份：这六个包与 pi 引擎出自同一 monorepo，根 LICENSE 即它们的许可文本（已按 v0.86.1 标签逐字节核对）",
-        "https://raw.githubusercontent.com/earendil-works/pi/v0.86.1/LICENSE",
+        "正文与版权声明见列表里的『pi 引擎 0.87.1（MIT）』那一份：这六个包与 pi 引擎出自同一 monorepo，根 LICENSE 即它们的许可文本（已按 v0.87.1 标签逐字节核对；该标签的 LICENSE 与 v0.85.1/v0.86.1 逐字节相同，sha256 未变）",
+        "https://raw.githubusercontent.com/earendil-works/pi/v0.87.1/LICENSE",
         "0457f5bcec3b3b211605dfb5d1a49042fd638f3686a410fe099c24a25af13c48",
     ),
     (

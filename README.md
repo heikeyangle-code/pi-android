@@ -37,8 +37,8 @@
 > **包里装的是官方 pi 的完整 npm 包。**
 > 不是子集，不是"支持了哪些功能"，不是照着重写的参考实现。
 
-`@earendil-works/pi-coding-agent` **0.85.1**，从 npm 原样取回，连同它的整棵运行时依赖树——
-**6 个 `@earendil-works/*` 运行时包、19 个直接依赖、128 个包**，全部随 APK 分发。
+`@earendil-works/pi-coding-agent` **0.87.1**，从 npm 原样取回，连同它的整棵运行时依赖树——
+**6 个 `@earendil-works/*` 运行时包、19 个直接依赖、npm 实装 118 个包**，全部随 APK 分发。
 
 于是这里没有"实现了多少"的问题：
 
@@ -69,11 +69,16 @@
 
 配套三道保险，让这件事不会悄悄出事：
 
-- **构建期契约检查**：把 pi 的 RPC 命令、provider 预设逐条对着**钉住的那个引擎版本**核对；
-  上游改名或删东西，**构建直接失败**，不会带着错发出去。
+- **构建期契约检查**（`tools/pi-contract.mjs`，CI 的一个独立 job）：把 pi 的 RPC 命令、
+  扩展界面方法、provider 预设、主题令牌值、`models.json` 语义、**工具结果文本**、
+  **会话文件面**（条目类型 / 格式版本 / 可空的 `firstKeptEntryId`）逐条对着**钉住的那个
+  引擎版本**核对；上游改名、删东西或改语义，**构建直接失败**，不会带着错发出去。
+  每一条失败都会打印"该回去重读哪个 App 文件"。
 - **协议全覆盖**：pi 在 RPC 模式下能发的 **33 条命令全部接入**，
   会发的 **9 种扩展界面方法每一种都有落点**。
-- **全套载荷按 SHA-256 锁在 [`runtime.lock.json`](runtime.lock.json)**，哈希一变就断。
+- **全部载荷按 SHA-256 锁定**：Linux 运行时包、ripgrep/fd/git 与 proroot 的五个二进制记在
+  [`runtime.lock.json`](runtime.lock.json)；pi 引擎走 npm 自身的完整性校验，外加构建期算出的
+  `runtime-payloads/*.digest`——设备**逐个载荷**比对，只重解包真的变了的那个。
 
 **你拿到的不是一份快照，是一条能一直走下去的路。**
 
@@ -161,7 +166,7 @@ pi 最不一样的地方，是它把 agent 拆成了**文件**。
 
 ### 一、引擎：官方 pi，一字未改
 
-包里就是 `@earendil-works/pi-coding-agent` **0.85.1** 的完整发行版。
+包里就是 `@earendil-works/pi-coding-agent` **0.87.1** 的完整发行版。
 PI 只做一件事：**用 pi 自己的 `--mode rpc` 驱动它**，再把它画成手机上该有的样子。
 会话内核、工具、扩展加载器、provider 工厂、主题令牌——**一行都没动**。
 
@@ -279,7 +284,7 @@ PI 站在几个成熟上游之上，它们各自保留自己的许可与版权�
 
 | 项目 | 它是什么 |
 | :--- | :--- |
-| **[pi](https://github.com/earendil-works/pi)** | 上游 coding agent，`@earendil-works/pi-coding-agent` **0.85.1**（MIT）。包内就是这一份完整发行版，一个字没改。 |
+| **[pi](https://github.com/earendil-works/pi)** | 上游 coding agent，`@earendil-works/pi-coding-agent` **0.87.1**（MIT）。包内就是这一份完整发行版，一个字没改。 |
 | **[Ubuntu Base 24.04.3](https://cdimage.ubuntu.com/ubuntu-base/releases/24.04.3/release/)** | glibc 2.39 用户态 |
 | **[Node.js 24.19](https://nodejs.org/en/download)** | 官方 glibc 构建 |
 | **[proot](https://proot-me.github.io/)**（Termux 构建） | 用户态系统调用翻译层，不需要 root |
