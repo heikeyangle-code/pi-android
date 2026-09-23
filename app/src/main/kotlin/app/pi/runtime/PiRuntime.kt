@@ -5,26 +5,63 @@ import java.io.File
 /**
  * Filesystem layout of the runtime.
  *
- * The split matters: `<files>/pi` holds user data and survives an app update,
- * while `<files>/pi/runtime` is a volatile tree that is rebuilt whenever the
- * packaged runtime changes. Mixing the two is how an app update eats a user's
- * sessions (docs/pi-android-app-design.md §19.1).
+ * ## Where user data lives (2026-09-23)
+ *
+ * pi's agent dir lives **inside the rootfs**: `<rootfs>/root/.pi/agent`, which *is* the
+ * guest path pi already used (`/root/.pi/agent`), so nothing in the guest changes spelling.
+ * It used to live at `<files>/pi/.pi/agent` and be **bound** over that guest path. It is
+ * not any more, because proroot's `scandir`/`mkstemp`/`mkdtemp` return `ENOENT` inside a
+ * bind whose host source is an app-private directory (`docs/proroot-scandir-defect.md`),
+ * which cost the app `npm install` into the agent dir and every `mkstemp`-based tool that
+ * touched it. A rootfs path is an ordinary path.
+ *
+ * So for this directory the split is no longer "durable vs volatile" but "protected vs
+ * unprotected", and the protection is [DurablePreserve]: `wipe()` — the only whole-tree
+ * delete, reachable only from the explicit repair path — **moves the durable directories
+ * out of the tree first** and back afterwards, refusing to delete if it cannot.
+ * [DurableLayout.violations] is what keeps that honest: a durable directory may live
+ * inside the rootfs, never elsewhere in the volatile tree.
+ *
+ * The workspace root ([workspaces]) deliberately did **not** move — see its KDoc.
+ * [persist] stays outside as well: it is this app's own boot audit, which the guest never
+ * sees.
  */
 class PiPaths(private val filesDir: File, private val nativeLibDir: File) {
 
-    /** Everything the user owns: sessions, settings, extensions, credentials. */
+    /**
+     * `<files>/pi` — this app's own side of the durable area.
+     *
+     * It used to hold pi's home as well; what is left is [persist]. Kept as a directory so
+     * the app-private layout stays legible (`docs/pi-android-app-design.md` §19.1).
+     */
     val home: File = File(filesDir, "pi")
 
-    /** pi's `PI_HOME`; `agentDir` below it is `PI_CODING_AGENT_DIR`. */
-    val agentDir: File get() = File(home, DurableLayout.AGENT_RELATIVE)
+    /**
+     * pi's `PI_CODING_AGENT_DIR`: `<rootfs>/root/.pi/agent`, which **is** the guest's
+     * `/root/.pi/agent`.
+     *
+     * Not bound any more — the guest reaches it through the rootfs prefix, and the app
+     * reads and writes the very same directory through this accessor. That is the whole
+     * point of the accessor existing: the earlier design had the guest on
+     * `<rootfs>/root/.pi/agent` while the app addressed `<files>/pi/.pi/agent`, so the
+     * settings/sessions/credentials the app read were never the ones pi wrote.
+     */
+    val agentDir: File get() = File(rootfs, DurableLayout.AGENT_IN_ROOTFS)
 
     /**
      * The workspace root: `<files>/pi/workspaces`, one directory per workspace.
      *
-     * The spelling is [DurableLayout.WORKSPACES_RELATIVE]'s, and
-     * `GuestWorkspacePath.ROOT_RELATIVE` (`pi/workspaces`, relative to the *files*
-     * directory) is the other side of the same fact; a bare-JVM harness compares the
-     * two, so the workspace cannot end up somewhere else than this accessor says.
+     * **Still outside the rootfs on purpose** (2026-09-23). Its guest spelling comes from
+     * [GuestWorkspacePath], whose whole rule is "the files directory is mirrored at
+     * `/workspace`" — so moving this directory into the rootfs would change the base of
+     * that rule and therefore every file-path call site in the app, and it would also
+     * remove the only way the terminal can keep its shorter `/workspace` spelling
+     * ([GuestWorkspacePath.TERMINAL_GUEST_PATH]). That is its own change, with its own
+     * decision; this one is the agent dir.
+     *
+     * The consequence is unchanged and worth stating: `git` inside a workspace is still
+     * broken under proroot, because the workspace is still an app-private bind
+     * (`docs/proroot-scandir-defect.md`).
      */
     val workspaces: File get() = File(home, DurableLayout.WORKSPACES_RELATIVE)
 
@@ -33,83 +70,68 @@ class PiPaths(private val filesDir: File, private val nativeLibDir: File) {
      *
      * Durable means "must outlive an update", which is why the boot audit lives here
      * ([BootAudit]) — a file whose whole purpose is to compare a boot before an update
-     * with the boot after it cannot live in the volatile tree. Not under
-     * `<files>/pi/.pi/agent`: that directory is pi's own home, and this app's
-     * bookkeeping does not belong in it.
+     * with the boot after it cannot live in a tree that a repair may rebuild. It is the
+     * **only** durable directory left outside the rootfs: pi's agent dir and the workspace
+     * root are inside it now (see the class KDoc), protected by [DurablePreserve] rather
+     * than by their location. This one is the app's own bookkeeping, the guest never looks
+     * at it, and keeping it out of the rootfs is free.
      */
     val persist: File get() = File(home, DurableLayout.PERSIST_RELATIVE)
 
     /**
-     * Where a guest-resolvable tool binary has to live — in **both** of the two
-     * directories this class exposes below.
+     * Where a guest-resolvable tool binary has to live.
      *
      * The guest spelling `/usr/local/bin/<tool>` is a symlink to
-     * `/root/.pi/agent/bin/<tool>`, and which host directory that guest path lands in
-     * depends on whether the launch path binds [agentDir] over `/root/.pi/agent`:
-     *
-     *  - `PiEngineHost` (the chat engine), `GuestCommand` (package commands) and
-     *    `PtyLauncher` (the terminal) **all bind it now**, so on every ordinary launch
-     *    the guest resolves it to [agentBinDir] and the rootfs copy at
-     *    [rootfsAgentBinDir] is **shadowed**.
-     *  - The rootfs copy is therefore no longer "the other launch path's copy". It is
-     *    the copy that answers *after a tree deletion and before the next provision*: the
-     *    explicit repair path (`ensureReady(rebuild = true)`) deletes the whole volatile
-     *    tree, `installTool` recreates both, and anything that runs in that window falls
-     *    through to the rootfs copy. Keeping it costs two small files.
+     * `/root/.pi/agent/bin/<tool>`, and `/root/.pi/agent` **is** [agentDir] — the same
+     * directory from both sides, now that the agent dir lives in the rootfs. So there is
+     * exactly one copy to install, and [rootfsAgentBinDir] is that same directory; the
+     * second accessor survives only so the callers that spell it out keep reading as
+     * "the rootfs copy of what I install".
      *
      * ## The history, because the shape only makes sense with it
      *
-     * `PtyLauncher` used to be the one path that did **not** bind the agent dir, which
-     * meant the terminal's `pi` read `<rootfs>/root/.pi/agent` — a different agent dir
-     * from the chat page's, with different sessions, settings and credentials. That was
-     * survivable while the terminal only existed to show pi's own TUI on request. It
-     * stopped being survivable when the terminal became "a shell where the user types
-     * `pi`": the shell is now a first-class way to run pi, and running it against a
-     * second, volatile agent dir is not a smaller version of the chat page, it is a
-     * different install. So the terminal binds it too, and the three paths agree.
+     * Those two used to be genuinely different directories: the durable
+     * `<files>/pi/.pi/agent`, bound over the guest's `/root/.pi/agent` on every launch
+     * path, and the rootfs copy, which answered only in the window between a tree
+     * deletion and the next provision. `PtyLauncher` was the one path that did *not*
+     * bind, so the terminal's `pi` ran against a second, volatile agent dir with
+     * different sessions, settings and credentials — survivable while the terminal only
+     * showed pi's own TUI, not survivable once it became "a shell where the user types
+     * `pi`".
      *
-     * Installing into only one of the two directories still breaks things, just over a
-     * narrower window, and the failure is silent either way: a dangling
-     * `/usr/local/bin/fd` is indistinguishable from "fd was never installed" to every
-     * caller of it, which is how pi's `find` tool and the `@` mention completion both
-     * lose their backend with no error printed anywhere. That is why `installTool`
-     * writes both and [ensureToolsVisible] repairs both.
-     *
-     * The two are genuinely different directories and neither contains the other:
-     * [agentDir] is `<files>/pi/.pi/agent` (durable — `RuntimeProvisioner` deletes
-     * nothing outside `<files>/pi/runtime`), while [rootfsAgentBinDir] is inside the
-     * volatile tree and disappears only with the whole tree, on the explicit repair path.
+     * Binding fixed that. Moving the directory into the rootfs fixes it differently and
+     * better: one directory, addressed by the app and the guest alike, protected by
+     * [DurablePreserve] instead of by being outside the tree.
      */
     fun agentBinDir(): File = File(agentDir, "bin")
 
-    /**
-     * The rootfs copy of [agentBinDir]. Read [agentBinDir]'s KDoc first: since every
-     * launch path binds the agent dir, this copy answers only in the window between a
-     * tree deletion (the explicit rebuild) and the next successful provision.
-     */
-    fun rootfsAgentBinDir(): File = File(rootfs, "root/.pi/agent/bin")
+    /** [agentBinDir] under the name it had while the two copies were different directories. */
+    fun rootfsAgentBinDir(): File = agentBinDir()
 
     /** Volatile: the tree a payload change may rewrite, and only the repair path deletes. */
     val runtime: File = File(home, "runtime")
 
     /**
-     * Where this class refuses to be built: a durable directory inside [runtime].
+     * Where this class refuses to be built: a durable directory inside [runtime] but
+     * **outside** the rootfs.
      *
-     * The user's report is that an update deletes the workspace root, and the only
-     * structural way that can happen is a durable directory — the workspace root, pi's
-     * agent dir, or this app's persist dir — being spelled *inside* the volatile tree
-     * that provisioning rebuilds. So the invariant is asserted where the paths are
-     * built, not left to a comment: with the layout above it can never fire, and if a
-     * later change moves one of them under `runtime/` the app fails loudly with the
-     * path and the relative offset instead of deleting the user's files on the next
-     * update. The same sentence also appears in the diagnostic report's path section,
-     * so a build that somehow shipped without this assertion still tells the user.
+     * A durable directory *inside* the rootfs is fine — [DurablePreserve] moves it out of
+     * the tree before `wipe()` deletes and moves it back afterwards. What has no protection
+     * at all is a durable directory spelled anywhere else under [runtime]: `wipe()` deletes
+     * the whole tree and its move list only covers the rootfs layer. So the invariant is
+     * asserted where the paths are built, not left to a comment: with the layout above it
+     * can never fire, and if a later change spells one of them under `runtime/` the app
+     * fails loudly with the path and the relative offset instead of deleting the user's
+     * files on the next repair. The same sentence also appears in the diagnostic report's
+     * path section, so a build that somehow shipped without this assertion still tells the
+     * user.
      */
     init {
         val violations = DurableLayout.violations(home, runtime)
         if (violations.isNotEmpty()) {
             throw IllegalStateException(
-                "耐久目录落在易失树内，升级会删掉用户数据：\n" + violations.joinToString("\n"),
+                "耐久目录落在易失树内、rootfs 之外，升级会删掉用户数据：\n" +
+                    violations.joinToString("\n"),
             )
         }
     }
@@ -127,8 +149,14 @@ class PiPaths(private val filesDir: File, private val nativeLibDir: File) {
      */
     fun payloadStateDir(): File = File(runtime, ".payloads")
 
-    /** The Ubuntu userland (glibc). */
-    val rootfs: File get() = File(runtime, "rootfs")
+    /**
+     * The Ubuntu userland (glibc).
+     *
+     * It also holds the two durable directories that used to be bound in from
+     * `<files>/pi` — [agentDir] and [workspaces] — which is what
+     * [DurableLayout.violations] and [DurablePreserve] exist to keep safe.
+     */
+    val rootfs: File get() = File(runtime, DurableLayout.ROOTFS_RELATIVE)
 
     /** proot's scratch: loader spills, link2symlink targets. */
     val tmp: File get() = File(runtime, "tmp").also { it.mkdirs() }

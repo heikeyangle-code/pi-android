@@ -8,15 +8,15 @@ package app.pi.runtime
 //
 // What it pins, and why each one is worth pinning:
 //
-//  1. **The two tool directories are different.** `PiPaths.agentBinDir()` is the
-//     bind source — the engine, the package commands and (since the terminal became
-//     "a shell where you type `pi`") `PtyLauncher` all bind it over the guest's
-//     `/root/.pi/agent`; `PiPaths.rootfsAgentBinDir()` is the copy that answers only
-//     in the window between `RuntimeProvisioner.wipe()` and the next successful
-//     provision. Neither contains the other, which is precisely why `installTool`
-//     writes both and `ensureToolsVisible` repairs both: a `/usr/local/bin/<tool>`
-//     that dangles is indistinguishable from "the tool was never installed", and that
-//     failure is silent. This is the assertion that would have caught it.
+//  1. **There is one tool directory.** `PiPaths.agentBinDir()` and
+//     `PiPaths.rootfsAgentBinDir()` used to be two *different* directories — the bind
+//     source, and the rootfs copy that answered only in the window between
+//     `RuntimeProvisioner.wipe()` and the next successful provision — which is why
+//     `installTool` wrote both: a `/usr/local/bin/<tool>` that dangles is
+//     indistinguishable from "the tool was never installed", and that failure is silent.
+//     Since 2026-09-23 the agent dir lives at `<rootfs>/root/.pi/agent`, which **is** the
+//     guest's `/root/.pi/agent`, the bind is gone, and the two accessors name the same
+//     directory. The assertions below are what would catch a second copy coming back.
 //  2. **`/usr/bin/git` is reachable.** git is installed into the rootfs at the
 //     ordinary Debian paths and is addressed by PATH, not by an agent-dir symlink —
 //     so if `/usr/bin` ever leaves the PATH this class pins, `git` becomes
@@ -49,36 +49,27 @@ private fun paths() = PiPaths(
 fun main() {
     val p = paths()
 
-    // ------------------------------------- 1. the two directories a guest path can mean
-    check("the bind source is <files>/pi/.pi/agent", p.agentDir.path, "$FILES/pi/.pi/agent")
-    check("the tools' bind-source dir is agentDir/bin", p.agentBinDir().path, "$FILES/pi/.pi/agent/bin")
+    // ------------------------------------- 1. the one directory a guest path can mean
+    // The agent dir is the guest's own spelling, inside the rootfs: no bind, and the app
+    // and pi address the same place by construction.
     check(
-        "the rootfs copy is the shadowed <rootfs>/root/.pi/agent",
+        "the agent dir is the guest's /root/.pi/agent, inside the rootfs",
+        p.agentDir.path,
+        "$FILES/pi/runtime/rootfs/root/.pi/agent",
+    )
+    check("the tool dir is agentDir/bin", p.agentBinDir().path, "$FILES/pi/runtime/rootfs/root/.pi/agent/bin")
+    // The second accessor is the *same* directory now, not a second copy — that is the
+    // whole point of the change, and a new second copy is what this would catch.
+    check(
+        "and the rootfs accessor names that same directory, not a second copy",
         p.rootfsAgentBinDir().path,
-        "$FILES/pi/runtime/rootfs/root/.pi/agent/bin",
+        p.agentBinDir().path,
     )
-    // The whole point: they are not the same directory, and neither is inside the
-    // other, so no single install satisfies both launch paths.
+    // The guest spelling the /usr/local/bin symlink uses must be that directory. This is
+    // the string RuntimeProvisioner.GUEST_AGENT_BIN spells; it is private there, so it is
+    // re-spelled here deliberately — a mismatch is a dangling link.
     check(
-        "the two tool directories are distinct",
-        p.agentBinDir() == p.rootfsAgentBinDir(),
-        false,
-    )
-    check(
-        "the bind source does not contain the rootfs copy",
-        p.rootfsAgentBinDir().path.startsWith(p.agentBinDir().path + "/"),
-        false,
-    )
-    check(
-        "the rootfs copy does not contain the bind source",
-        p.agentBinDir().path.startsWith(p.rootfsAgentBinDir().path + "/"),
-        false,
-    )
-    // The guest spelling the /usr/local/bin symlink uses must be the bind source.
-    // This is the string RuntimeProvisioner.GUEST_AGENT_BIN spells; it is private
-    // there, so it is re-spelled here deliberately — a mismatch is a dangling link.
-    check(
-        "the guest spelling /root/.pi/agent/bin maps to the bind source",
+        "the guest spelling /root/.pi/agent/bin maps to the tool dir",
         p.agentBinDir().path,
         p.agentDir.resolve("bin").path,
     )

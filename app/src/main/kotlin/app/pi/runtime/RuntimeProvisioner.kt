@@ -457,7 +457,7 @@ class RuntimeProvisioner(
         val preserve = File(paths.home, DurablePreserve.PRESERVE_DIR)
         val stash = try {
             DurablePreserve.moveOut(
-                DurableLayout.durableInsideRootfs(DurableLayout.durableDirs(paths.home), paths.rootfs),
+                DurableLayout.durableInsideRootfs(DurableLayout.durableDirs(paths.home, paths.runtime), paths.rootfs),
                 preserve,
             )
         } catch (refused: java.io.IOException) {

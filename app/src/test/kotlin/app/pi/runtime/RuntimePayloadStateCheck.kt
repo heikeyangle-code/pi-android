@@ -135,52 +135,71 @@ fun main() {
     val paths = PiPaths(filesDir = filesDir, nativeLibDir = nativeLib)
 
     check("E1 the workspace root is outside the volatile tree", VolatileTree.contains(paths.runtime, paths.workspaces), false)
-    check("E2 the agent dir is outside the volatile tree", VolatileTree.contains(paths.runtime, paths.agentDir), false)
+    // The agent dir is **inside** the rootfs since 2026-09-23
+    // (`DurableLayout.AGENT_IN_ROOTFS`), which is the whole point of that change: a rootfs
+    // path is an ordinary path, so proroot's bind-subtree failures cannot reach pi's home.
+    // What keeps it safe is `wipe()`'s move-out, not its location (W 段).
+    check("E2 the agent dir is inside the rootfs", VolatileTree.contains(paths.rootfs, paths.agentDir), true)
     check("E3 persist is outside the volatile tree", VolatileTree.contains(paths.runtime, paths.persist), false)
     check("E4 the layout reports no violation", DurableLayout.violations(paths.home, paths.runtime), emptyList<String>())
     // What `wipe()` is allowed to delete: the volatile root itself. Nothing else is ever
     // passed to a recursive delete in the provisioner.
     check("E5 the volatile root is deletable", VolatileTree.offending(paths.runtime, listOf(paths.runtime)), emptyList<File>())
-    // And if a future edit pointed a recursive delete at a durable directory, the guard
-    // refuses it: all three come back as offenders, which is what `deleteTreeInsideVolatile`
-    // turns into a thrown ProvisioningException.
+    // A recursive delete pointed at a durable directory is refused for the ones that live
+    // **outside** the volatile tree — `deleteTreeInsideVolatile` turns each offender into a
+    // thrown ProvisioningException. The agent dir is inside it on purpose, so it is not an
+    // offender; its protection is `DurablePreserve` instead.
     check(
-        "E6 every durable directory is refused as a delete target",
-        VolatileTree.offending(paths.runtime, DurableLayout.durableDirs(paths.home)).size,
-        3,
+        "E6 both out-of-tree durable directories are refused as delete targets",
+        VolatileTree.offending(paths.runtime, DurableLayout.durableDirs(paths.home, paths.runtime)),
+        listOf(paths.workspaces, paths.persist),
     )
     check(
-        "E7 the runtime's own children are legal targets",
+        "E7 the agent dir is not an offender — the rootfs is where it belongs",
+        VolatileTree.offending(paths.runtime, listOf(paths.agentDir)),
+        emptyList<File>(),
+    )
+    check(
+        "E8 the runtime's own children are legal targets",
         VolatileTree.offending(paths.runtime, listOf(File(paths.runtime, "node-stage"), File(paths.runtime, "lib"))),
         emptyList<File>(),
     )
     // A sibling with the runtime's prefix is not "inside" it.
     check(
-        "E8 a path that merely shares the prefix is outside",
+        "E9 a path that merely shares the prefix is outside",
         VolatileTree.contains(paths.runtime, File(filesDir, "pi/runtime-old")),
         false,
     )
-    check("E9 the volatile root contains itself", VolatileTree.relativePath(paths.runtime, paths.runtime), "")
+    check("E10 the volatile root contains itself", VolatileTree.relativePath(paths.runtime, paths.runtime), "")
 
-    // The counterexample: if the durable root really were inside the volatile tree, the
-    // check that `PiPaths` runs at construction must answer with a loud sentence — this is
-    // the same function, so the failure mode the assertion would produce is pinned here.
+    // The counterexample, and the asymmetry that *is* the rule: with `home` inside the
+    // volatile tree, the two directories located relative to `home` become violations —
+    // and the agent dir does not, because it is located relative to the rootfs. That is
+    // what lets a durable directory live in the rootfs without weakening this check.
     val movedHome = paths.runtime
     val violations = DurableLayout.violations(movedHome, paths.runtime)
-    check("F1 a durable dir inside the volatile tree is a violation", violations.size, 3)
+    check("F1 a durable dir spelled under the volatile tree is a violation", violations.size, 2)
     check("F2 the violation names the directory", violations.all { it.contains("落在易失树") }, true)
     check("F3 the violation names the tree", violations.all { it.contains(paths.runtime.path) }, true)
+    check(
+        "F4 the agent dir is not among them — it lives in the rootfs",
+        violations.none { it.contains(paths.agentDir.path) },
+        true,
+    )
 
     // ------------------------------------------------- 显式「修复」那一刀的保护机制
     // `wipe()` 是唯一会整棵删 `<files>/pi/runtime` 的地方，只有 `rebuild = true` 能到。
-    // 今天它安全，因为三个耐久目录都在易失树**之外**；`DurablePreserve` 的存在是为了
-    // 「哪天把工作区/agent 目录搬进 rootfs」不需要再新写一套保护机制。
-    //
-    // **「今天为空」这件事本身就是「对现在的行为零影响」的证明**：清单空 ⇒ `moveOut`
-    // 不建落脚目录、直接返回空 Stash ⇒ `wipe()` 与没有这个对象时逐字一致。
+    // 从 2026-09-23 起 pi 的 agent 目录**就在** rootfs 里（`DurableLayout.AGENT_IN_ROOTFS`），
+    // 所以这一刀不再是一个空跑的保护：它每次「修复」都要真的把 agent 目录搬出去再搬回来。
+    // 工作区根和 persist 仍在易失树之外，清单里不会有它们。
     check(
-        "W1 no durable directory is inside the rootfs today",
-        DurableLayout.durableInsideRootfs(DurableLayout.durableDirs(paths.home), paths.rootfs),
+        "W1 the agent dir is the one durable directory inside the rootfs",
+        DurableLayout.durableInsideRootfs(DurableLayout.durableDirs(paths.home, paths.runtime), paths.rootfs),
+        listOf(paths.agentDir),
+    )
+    check(
+        "W1b and the two out-of-tree durable directories are not in the move list",
+        DurableLayout.durableInsideRootfs(listOf(paths.workspaces, paths.persist), paths.rootfs),
         emptyList<File>(),
     )
     val inRootfs = File(paths.rootfs, "workspace")

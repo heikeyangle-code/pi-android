@@ -34,15 +34,15 @@ import java.util.concurrent.TimeUnit
  *
  * ## Which copy it resolves
  *
- * It passes no `extraBinds`, so the guest's `/root/.pi/agent` is the **rootfs**
- * copy — the resolution the terminal path gets (`PtyLauncher.prepare`). The three
- * launch paths that *do* bind the durable [PiPaths.agentDir] over that guest path
- * are covered elsewhere and not duplicated here: `AgentToolPathsCheck` pins at
- * build time that both directories exist and that neither contains the other, and
- * `RuntimeProvisioner.ensureToolsVisible()` re-publishes both on every boot.
- * (Binding the durable directory here would need a third spelling of the guest
- * path `/root/.pi/agent`, which is exactly the kind of duplication that made the
- * original dangling link possible.)
+ * There is only one. `/root/.pi/agent` **is** `PiPaths.agentDir` since 2026-09-23 — a
+ * rootfs path — so this probe (which passes no `extraBinds`) and every launch path that
+ * passes some resolve to the same directory by construction. `AgentToolPathsCheck` pins
+ * that at build time, and `RuntimeProvisioner.ensureToolsVisible()` re-publishes the tools
+ * on every boot.
+ *
+ * It used to matter: the probe saw the rootfs copy while the engine saw a *bound* one, and
+ * a second spelling of the guest path `/root/.pi/agent` was how the original dangling link
+ * happened.
  *
  * ## Android-free
  *

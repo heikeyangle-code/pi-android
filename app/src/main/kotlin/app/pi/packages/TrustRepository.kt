@@ -8,19 +8,21 @@ import java.nio.file.StandardCopyOption
 /**
  * Reads and writes pi's `trust.json`, in both places it can exist.
  *
- * ## Which copy is authoritative — this changed, and it matters
+ * ## Which copy is authoritative
  *
- * pi reads `<agentDir>/trust.json` (`trust-manager.ts:212-214`). Since
- * `PiEngineHost` binds the durable agent dir over guest `/root/.pi/agent`
- * (`PiEngineHost.kt:285-294`), the file pi actually reads is
+ * pi reads `<agentDir>/trust.json` (`trust-manager.ts:212-214`). Since 2026-09-23
+ * `PiPaths.agentDir` **is** the guest's `/root/.pi/agent` — a rootfs path, with no bind —
+ * so both files below name the same directory:
  *
- *   - [engineFile] — `<files>/pi/.pi/agent/trust.json`, the bind source. Durable
- *     across a runtime re-extract (`RuntimeProvisioner.kt:85-91` deletes
- *     `paths.runtime`), and the one the app's own settings store addresses too.
- *   - [rootfsFile] — `<rootfs>/root/.pi/agent/trust.json`, kept in step as a
- *     fallback for a run without the bind. While the engine runs it is **shadowed**,
- *     and a guest command now binds the same directory ([GuestCommand.bindList]), so
- *     nothing reads it in practice.
+ *   - [engineFile] — `<rootfs>/root/.pi/agent/trust.json`: the file pi actually reads,
+ *     and the one the app's own settings store addresses too.
+ *   - [rootfsFile] — the same path. The name survives from when the two differed; keeping
+ *     both call sites is harmless and keeps the diff honest about which one used to be the
+ *     shadowed copy.
+ *
+ * Durable across a runtime re-extract: `RuntimeProvisioner` only extracts *over* the tree,
+ * and the one path that deletes it — the explicit repair — moves this directory out first
+ * and back afterwards (`DurablePreserve`).
  *
  * This file previously read and locked the *rootfs* copy first, on the premise that
  * the agent dir was not bound. That premise is gone (`AgentLayout` records it), and

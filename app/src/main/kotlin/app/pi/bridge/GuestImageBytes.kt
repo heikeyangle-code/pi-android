@@ -97,8 +97,11 @@ internal class GuestImage(
  *    under `/workspace` (`:286`). The terminal's `PtyLauncher` binds the *same* host
  *    directory one level up, at plain `/workspace`
  *    (`runtime/PtyLauncher.kt:146,264`), so both spellings are probed.
- *  - `/tmp` to `<files>/pi/runtime/tmp` — `runtime/PiRuntime.kt:120`.
- *  - `/root/.pi/agent` to `<files>/pi/.pi/agent` — `PiEngineHost.kt:291`.
+ *  - `/root/.pi/agent` to `<rootfs>/root/.pi/agent` — `PiPaths.agentDir`. Since
+ *    2026-09-23 that **is** the guest's path (the bind is gone), so it resolves through
+ *    the rootfs rule below.
+ *  - `/tmp` likewise: it stopped being a bind on 2026-09-23, so `<rootfs>/tmp` is what a
+ *    guest `/tmp/...` names.
  *  - `/sdcard` and `/storage/emulated/0` to the device's shared storage —
  *    `runtime/PiRuntime.kt:92-93`.
  *  - anything else (`/etc`, `/opt`, `/usr`, `/root/...`) to the rootfs:

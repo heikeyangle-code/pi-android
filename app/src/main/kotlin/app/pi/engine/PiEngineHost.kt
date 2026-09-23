@@ -629,19 +629,21 @@ class PiEngineHost(private val appContext: Context) {
             // (`RuntimeSelection`). The install/maintenance paths deliberately do not;
             // see that class's KDoc for where the line is drawn and why.
             val selection = RuntimeSelection.of(appContext, paths)
-            val extraBinds = listOf(
-                workspace.absolutePath to guestWorkspace,
-                // The agent dir was the one thing *not* bound, which meant pi read
-                // and wrote `<rootfs>/root/.pi/agent` while the app addressed
-                // `PiPaths.agentDir` (`<files>/pi/.pi/agent`). Every app-side
-                // reader — settings, sessions, and this package's trust.json and
-                // auth.json/models.json — was therefore looking at a directory pi
-                // never touches, and, worse, one that an update could delete: that
-                // path is inside the volatile tree, and the old provisioning wiped the
-                // whole tree on every revision bump. Binding it is what puts pi's home
-                // in the durable directory instead.
-                paths.agentDir.absolutePath to guestAgentDir,
-            )
+            // **The agent dir is no longer bound** (2026-09-23); the workspace still is.
+            //
+            // pi's home is `<rootfs>/root/.pi/agent`, which is exactly the guest's
+            // `/root/.pi/agent`, so the engine reaches it through the rootfs prefix and the
+            // app addresses that same directory through `PiPaths.agentDir`. The bind that
+            // used to be here existed to *make* those two the same directory; moving the
+            // directory into the rootfs made it structural instead — and it removes an
+            // app-private bind, which is what proroot's `scandir`/`mkstemp`/`mkdtemp`
+            // failures live in (`docs/proroot-scandir-defect.md`).
+            //
+            // The workspace bind stays, because the workspace is still outside the rootfs
+            // (`PiPaths.workspaces` gives the reason). That is also why `git` still needs a
+            // workaround under proroot: `.git/tXXXXXX` is created inside the bound
+            // workspace.
+            val extraBinds = listOf(workspace.absolutePath to guestWorkspace)
             val extraEnv = mapOf(
                 // pi's file surface is 1:1 with a desktop install, so settings,
                 // skills, extensions and themes are interchangeable with one.

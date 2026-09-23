@@ -8,7 +8,10 @@ import java.io.File
  * ## 为什么它必须存在，而不是一句注释
  *
  * `<files>/pi/runtime` 是**易失**的（`RuntimeProvisioner` 会重建它），
- * `<files>/pi/workspaces`、`<files>/pi/.pi/agent` 和 `<files>/pi/persist` 是**耐久**的。
+ * `<files>/pi/workspaces` 和 `<files>/pi/persist` 是**耐久**的，`<files>/pi/runtime` 是
+ * **易失**的；pi 的 agent 目录自 2026-09-23 起住在易失树**之内**的 rootfs 里
+ * （`<rootfs>/root/.pi/agent`，见 [DurableLayout]），由 `wipe()` 的搬走/搬回保护，而不是
+ * 由位置保护。
  * 用户报过「升级完软件，工作区根目录的东西全没了」，所以这条边界不能只是一个约定：
  * 只要有**任何一处**把耐久目录算进了易失树，升级就会删用户的东西，而这件事在编译期
  * 不会响、在设备上也是静默的。
@@ -62,35 +65,59 @@ object VolatileTree {
 }
 
 /**
- * 耐久区相对 `<files>/pi` 的三个子目录，**一处拼写**。
+ * 耐久目录的**一处拼写**，以及「它们在不在易失树里」这一条判定的唯一实现。
  *
- * 三个目录都不在易失树里，且都必须在升级、重建运行时之后仍然存在：
+ * ## 2026-09-23：pi 的 agent 目录搬进了 rootfs
  *
- *  - [WORKSPACES_RELATIVE]：工作区根。`GuestWorkspacePath.ROOT_RELATIVE`（`pi/workspaces`，
- *    相对 files 目录）是它的另一侧拼法；harness 直接比较两者，所以两边不可能漂移。
- *  - [AGENT_RELATIVE]：`<files>/pi/.pi/agent`，pi 自己的 home（会话、settings、auth、
- *    扩展、技能、主题、提示词）。它会被 bind 到 guest 的 `/root/.pi/agent`。
- *  - [PERSIST_RELATIVE]：本 App 自己的耐久目录，放启动审计这类「必须活过升级」的文件。
- *    用 `persist` 而不是直接塞进 `<files>/pi/`：`<files>/pi` 下已经有 pi 自己的布局
- *    （`.pi/`）和易失的 `runtime/`、`engines/`，再混进 App 私有文件会让「哪些是 pi 的、
- *    哪些是我们的」看不出来；而且用户手机上装的那份构建里已经有一个 `files/pi/persist/`
- *    （`{cache,npm}`），沿用同一个名字，两边的语义一致。
+ * pi 的 agent 目录（会话、settings、auth、扩展、技能、主题、提示词）现在住在
+ * **rootfs 里**：[AGENT_IN_ROOTFS] = `<rootfs>/root/.pi/agent`，就是 guest 的
+ * `/root/.pi/agent`。
+ *
+ * 这么做是因为 proroot 的 `scandir(3)`/`mkstemp(3)`/`mkdtemp(3)` 在「宿主源是应用私有
+ * 目录」的绑定子树里返回 `ENOENT`（`docs/proroot-scandir-defect.md`）—— 而 agent 目录
+ * 正是那条绑定：不搬走它，`npm install` 往 agent 目录里的写入、以及任何碰它的
+ * `mkstemp` 系工具，在 proroot 下都要绕。搬进 rootfs 之后它不再是一条绑定，走的是一条
+ * 普通的 rootfs 路径。
+ *
+ * **工作区根（[WORKSPACES_RELATIVE]）刻意没有一起搬。** 它的 guest 拼写由
+ * [GuestWorkspacePath] 给出，而那整条规则的前提是「files 目录镜像在 `/workspace`」——
+ * 搬它就要换掉那条规则的基底，也就是 app 里每一处文件路径调用点，而且会给终端的短拼写
+ * `/workspace` 带来一个必须单独决定的问题。那是另一次改动；这一次只动 agent 目录。
+ *
+ * ## 代价是「agent 目录现在在易失树里」，而这一条是被保护的，不是被默许的
+ *
+ * 它落在 rootfs 里是**合法**的：`wipe()`（唯一会整棵删 `<files>/pi/runtime` 的地方，
+ * 只有用户显式点「修复」能到）会先用 [DurablePreserve] 把它**搬出易失树**，删完再搬回；
+ * 搬不动就拒绝删除。所以 [violations] 现在的判据是
+ *
+ * > 耐久目录可以在 rootfs 之内；**不允许**的是落在易失树里、却在 rootfs **之外**
+ *
+ * 因为搬运清单覆盖的正是 rootfs 之内那一层：rootfs 外的易失节点没有任何东西保护它。
+ *
+ * [ROOTFS_RELATIVE] 是 `PiPaths.rootfs` 相对 `PiPaths.runtime` 的拼写，搬进 rootfs 的
+ * 耐久目录都按它定位 —— 一处拼写，`PiPaths` 也从这里取。
  */
 object DurableLayout {
 
-    /** `<files>/pi/workspaces`，相对 `PiPaths.home`。 */
+    /** `<files>/pi/runtime/rootfs`，相对 [PiPaths.runtime]。`PiPaths.rootfs` 用它。 */
+    const val ROOTFS_RELATIVE: String = "rootfs"
+
+    /** `<rootfs>/root/.pi/agent`，相对 rootfs。就是 guest 的 `/root/.pi/agent`。 */
+    const val AGENT_IN_ROOTFS: String = "root/.pi/agent"
+
+    /** `<files>/pi/workspaces`，相对 `PiPaths.home`。**刻意仍在 rootfs 之外**，见类 KDoc。 */
     const val WORKSPACES_RELATIVE: String = "workspaces"
 
-    /** `<files>/pi/.pi/agent`，相对 `PiPaths.home`。 */
-    const val AGENT_RELATIVE: String = ".pi/agent"
-
-    /** `<files>/pi/persist`，相对 `PiPaths.home`。 */
+    /** `<files>/pi/persist`，相对 `PiPaths.home`。本 App 自己的耐久目录。 */
     const val PERSIST_RELATIVE: String = "persist"
 
+    /** [ROOTFS_RELATIVE] 在 [runtime] 下解析出的那个目录。 */
+    fun rootfsOf(runtime: File): File = File(runtime, ROOTFS_RELATIVE)
+
     /** 三个耐久目录，顺序固定，便于报告逐行打印。 */
-    fun durableDirs(home: File): List<File> = listOf(
+    fun durableDirs(home: File, runtime: File): List<File> = listOf(
         File(home, WORKSPACES_RELATIVE),
-        File(home, AGENT_RELATIVE),
+        File(rootfsOf(runtime), AGENT_IN_ROOTFS),
         File(home, PERSIST_RELATIVE),
     )
 
@@ -98,27 +125,31 @@ object DurableLayout {
      * 三个耐久目录里**落在 [rootfs] 之内**的那些 —— 也就是 `wipe()` 必须先搬走的那些
      * （[DurablePreserve]）。
      *
-     * **今天是空列表**：三个耐久目录都在 `<files>/pi/runtime` 之外，而且 `PiPaths` 的构造
-     * 检查（[violations]）会拒绝把它们放进去。这个函数存在，是为了让「把工作区和 agent
-     * 目录搬进 rootfs」那一天**不需要再新写一套保护机制** —— `wipe()` 读的就是它，而
-     * harness 的 G 段钉住「今天为空」这个事实（也就是那次改动对现在的行为零影响）。
-     *
      * 用 [VolatileTree.contains] 而不是自己拼字符串前缀，是为了让「什么算在树下」只有一处定义。
      */
     fun durableInsideRootfs(durable: List<File>, rootfs: File): List<File> =
         durable.filter { VolatileTree.contains(rootfs, it) }
 
     /**
-     * 落在 [runtime] 之内的耐久目录，每个一条**可读的中文句子**；空列表表示结构正确。
+     * 结构违规，每个一条**可读的中文句子**；空列表表示结构正确。
+     *
+     * 判据只有一条：**耐久目录可以落在 rootfs 之内（[DurablePreserve] 保护它），但不允许
+     * 落在易失树里、rootfs 之外** —— 那里没有任何东西保护它。
      *
      * 返回句子而不是布尔值，是因为这个结果的两条出口都要把它呈现给人：`PiPaths` 抛出时
      * 进异常消息，`DiagnosticsReport` 打印时进报告正文。让「哪个目录、在哪棵树下」这句话
      * 只写一次，就不会出现「断言说 A、报告说 B」。
      */
-    fun violations(home: File, runtime: File): List<String> = durableDirs(home).mapNotNull { dir ->
-        VolatileTree.relativePath(runtime, dir)?.let { relative ->
-            "耐久目录 ${dir.path} 落在易失树 ${runtime.path} 之内（相对路径 \"$relative\"）：" +
-                "升级或重建运行时会把它删掉。"
+    fun violations(home: File, runtime: File): List<String> {
+        val rootfs = rootfsOf(runtime)
+        return durableDirs(home, runtime).mapNotNull { dir ->
+            // rootfs 之内的耐久目录由 `wipe()` 的搬运清单保护 —— 这是设计，不是违规。
+            if (VolatileTree.contains(rootfs, dir)) return@mapNotNull null
+            VolatileTree.relativePath(runtime, dir)?.let { relative ->
+                "耐久目录 ${dir.path} 落在易失树 ${runtime.path} 之内、却在 rootfs " +
+                    "${rootfs.path} 之外（相对路径 \"$relative\"）：`wipe()` 的搬运清单只覆盖 " +
+                    "rootfs 之内的耐久目录，所以升级或重建运行时会把它删掉。"
+            }
         }
     }
 }

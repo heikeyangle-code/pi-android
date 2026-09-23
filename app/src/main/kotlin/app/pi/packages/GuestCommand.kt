@@ -375,30 +375,34 @@ class GuestCommand(private val layout: AgentLayout) {
     }
 
     /**
-     * The extra binds: the workspace **and the agent dir**, the same two the engine
-     * passes and in the same order (`PiEngineHost.kt:285-294`). `-l` writes
-     * `<cwd>/.pi/settings.json`, so the workspace bind is required; `pi install`
-     * without `-l` writes `<agentDir>/settings.json` and installs into
-     * `<agentDir>/npm`, so the agent bind is required too.
+     * The extra binds: the workspace, and **only** the workspace (2026-09-23). `-l` writes
+     * `<cwd>/.pi/settings.json`, so that bind is required.
      *
-     * ## Why this is not redundant with the engine's bind
+     * ## Why the agent dir is no longer bound
      *
-     * It is a *different process*. proot binds are per-invocation, so this command
-     * starts with the rootfs's own `/root/.pi/agent` unless it says otherwise — while
-     * the running engine, launched with its own bind, reads the durable directory.
-     * Before this bind existed the app therefore installed into one directory and the
-     * engine read another: `pi install 'npm:foo'` printed `Installed npm:foo`, exited
-     * 0, wrote the `packages` entry where the engine would never look, and nothing
-     * happened. The assertion below is what keeps that from coming back quietly.
+     * This is a *different process*, and proot binds are per-invocation — but the agent dir
+     * no longer needs a bind to be the right directory: `PiPaths.agentDir` is
+     * `<rootfs>/root/.pi/agent`, which is exactly the guest's `/root/.pi/agent`, so this
+     * command and the running engine both reach it through the rootfs prefix.
+     *
+     * That is the structural version of what this method used to do with a bind. The bug it
+     * closes is the same one: `pi install 'npm:foo'` printing `Installed npm:foo`, exiting
+     * 0, and writing the `packages` entry where the engine would never look. Binding would
+     * fix that too — but it would put a bind mountpoint exactly where `npm install` writes,
+     * and proroot's `scandir`/`mkstemp`/`mkdtemp` fail anywhere under such a bind
+     * (`docs/proroot-scandir-defect.md`). [PiAgentDirContract.misleadingAgentDirBinds] is
+     * the replacement check: with the directory itself correct, the only thing left worth
+     * asserting is that nothing redirects that guest path.
      */
     private fun bindList(): List<Pair<String, String>> {
         layout.ensureAgentMirrorDir()
-        val binds = listOf(layout.workspaceBind(), layout.agentDirBind())
-        check(PiAgentDirContract.bindsAgentDir(binds, layout.agentMirrorDir.absolutePath)) {
+        val binds = listOf(layout.workspaceBind())
+        val misleading = PiAgentDirContract.misleadingAgentDirBinds(binds)
+        check(misleading.isEmpty()) {
             // No source citation in this text: an invariant message can reach a log or a
             // crash report, and the rule for strings is the same in both places. The
             // reasoning is in this method's KDoc.
-            "guest 命令与引擎的 agent 目录绑定不一致：$binds；" +
+            "guest 命令把 agent 目录绑到了别处：$misleading；" +
                 "这会让 pi install/list 写到一个引擎不读的目录"
         }
         return binds

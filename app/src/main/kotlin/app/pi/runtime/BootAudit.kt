@@ -39,8 +39,9 @@ import java.time.Instant
  * ## 它在哪里
  *
  * `<files>/pi/persist/boot-audit.log`（[DurableLayout.PERSIST_RELATIVE]）。**必须在耐久区**：
- * 它的整个用途是活过升级并与升级前对比，放进易失的 `runtime/` 就自相矛盾了；也不放进
- * `<files>/pi/.pi/agent`——那是 pi 自己的 home，本 App 的审计日志不该混进 pi 的目录。
+ * 它的整个用途是活过升级并与升级前对比，放进 rootfs 就自相矛盾了（那个目录由
+ * `DurablePreserve` 保护，但它存在的意义正是给「修复」重建）。也不放进
+ * `<rootfs>/root/.pi/agent`——那是 pi 自己的 home，本 App 的审计日志不该混进 pi 的目录。
  * `DiagnosticsReport` 会打印这个文件的路径和内容。
  *
  * `append` / `entry` / `shouldRecord` 是纯函数，由 bare-JVM harness 驱动；只有
@@ -147,7 +148,7 @@ object BootAudit {
      *  - `reextract=` 这次启动真正覆盖重解了哪些载荷（`none` / `provision-failed` / 名字表）；
      *  - `ws=` 工作区根：存在性、`lastModified`、直接子项（名字/类型/大小/mtime）与未记下的项数；
      *  - `wswalk=` 工作区根的量级（有预算，截断就写明）；
-     *  - `agent=` / `agentwalk=` 同上，对象是 `<files>/pi/.pi/agent`。
+     *  - `agent=` / `agentwalk=` 同上，对象是 pi 的 agent 目录（`PiPaths.agentDir`）。
      */
     fun entry(
         timestamp: Instant,

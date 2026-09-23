@@ -31,11 +31,11 @@ internal class GuestPathRoots(
  *
  * **The order is the safety argument.** Two rules:
  *
- *  1. A bind mapping is tried **before** the rootfs. A guest `/root/.pi/agent/x` names the
- *     bound `<files>/pi/.pi/agent/x`; `<rootfs>/root/.pi/agent/x` is a *different*
- *     directory that merely has the same name, so it must never win. (`/tmp` is no longer
- *     a bind — it is an ordinary rootfs directory — so it falls through to rule 2's
- *     rootfs candidate, which is the only candidate it has.)
+ *  1. A bind mapping is tried **before** the rootfs. A guest `/workspace/pi/.../x` names
+ *     the bound workspace directory; a same-named path under the rootfs is a *different*
+ *     directory, so it must never win. (`/tmp` and `/root/.pi/agent` stopped being binds
+ *     on 2026-09-23 — they are ordinary rootfs directories now — so they fall through to
+ *     rule 2's rootfs candidate, which is the only candidate they have.)
  *  2. For an absolute path with no known bind, the rootfs is tried **before** the
  *     literal host path. `<rootfs>/etc/hosts` is the file the guest means; the
  *     phone's own `/etc/hosts` exists too, and returning it would render content

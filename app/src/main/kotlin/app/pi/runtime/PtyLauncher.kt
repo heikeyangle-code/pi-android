@@ -191,23 +191,26 @@ object PtyLauncher {
             cwd = "/root",
             storage = storage,
             extraBinds = listOf(
-                workspace.absolutePath to guestWorkspace,
-                // The agent dir, bound exactly as `PiEngineHost` and
-                // `GuestCommand` bind it. Without this the terminal's
-                // `/root/.pi/agent` resolved to `<rootfs>/root/.pi/agent` — a
-                // *different* directory from the durable `<files>/pi/.pi/agent`
-                // the chat page's engine reads and writes. Typing `pi` in the
-                // terminal is now the normal way to reach the TUI, so that
-                // directory is the main path, not a corner case: the two would
-                // disagree about sessions, settings, credentials, extensions and
-                // every installed tool, and the rootfs copy is destroyed by the
-                // next runtime revision bump anyway.
+                // The terminal's `/workspace` is the **one bind left**, and it stays
+                // because it is the one *different spelling* of a directory that both
+                // sides already agree on: the engine's cwd is
+                // `/workspace/pi/workspaces/<name>` (a plain rootfs path now), while a
+                // shell wants the short `/workspace`. Only a bind can name one directory
+                // twice.
                 //
-                // `PiPaths.agentBinDir()`'s KDoc names this launcher as the one
-                // path missing the bind; `PiAgentDirContract` is the checkable
-                // statement of the agreement, and this list is now its third
-                // conforming caller.
-                paths.agentDir.absolutePath to guestAgentDir,
+                // Its host side moved into the rootfs with everything else
+                // (`PiPaths.workspaces`), so this is no longer an app-private bind — and
+                // if proroot's bind handling does break it, the blast radius is the
+                // terminal's short spelling, not the engine's workspace: `git` run from
+                // the engine's cwd is on a plain rootfs path.
+                workspace.absolutePath to guestWorkspace,
+                // The agent dir is **not** bound any more (2026-09-23). It lives at
+                // `<rootfs>/root/.pi/agent`, which is exactly the guest's
+                // `/root/.pi/agent`, so the guest reaches it through the rootfs prefix and
+                // the app addresses the same directory through `PiPaths.agentDir`. The
+                // earlier reason for binding it — that the terminal's copy was a second,
+                // volatile agent dir with different sessions, settings and credentials —
+                // is now answered by there being only one directory at all.
             ),
             extraEnv = spec.environment(),
             // The one caller that ever passes `false` is [start]'s retry, after a proroot
