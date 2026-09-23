@@ -51,26 +51,29 @@ function shouldFallback(err, path) {
   try { return fs.statSync(path).isDirectory(); } catch { return false; }
 }
 
+// Both wrapped functions take exactly two parameters (`(path, options)`), so they are spelled
+// out rather than collected with `...rest`: the rest form allocates a fresh array on every
+// single call, including every call on a path that was never broken.
 function wrapSync(orig) {
-  return function (path, ...rest) {
+  return function (path, options) {
     if (!broken.has(path)) {
-      try { return orig.call(this, path, ...rest); }
+      try { return orig.call(this, path, options); }
       catch (err) {
         if (!shouldFallback(err, path)) throw err;
         markBroken(path);
       }
     }
-    return viaOpendirSync(path, rest[0]);
+    return viaOpendirSync(path, options);
   };
 }
 
 function wrapAsync(orig) {
-  return function (path, ...rest) {
-    if (broken.has(path)) return viaOpendir(path, rest[0]);
-    return Promise.resolve(orig.call(this, path, ...rest)).catch((err) => {
+  return function (path, options) {
+    if (broken.has(path)) return viaOpendir(path, options);
+    return Promise.resolve(orig.call(this, path, options)).catch((err) => {
       if (!shouldFallback(err, path)) throw err;
       markBroken(path);
-      return viaOpendir(path, rest[0]);
+      return viaOpendir(path, options);
     });
   };
 }
