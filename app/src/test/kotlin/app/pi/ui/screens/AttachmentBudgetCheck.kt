@@ -326,6 +326,11 @@ fun main() {
         AttachmentBudget.limitsFor(parsed?.inputLimits),
         AttachmentBudget.Limits(maxWidth = 1024, maxHeight = 768, maxBase64Chars = 999, jpegQuality = 42),
     )
+    // The input must be **derived from** the budget, not a plausible-looking number: this
+    // case used to say `20 MiB`, which is *below* the record budget (64 MiB in base64
+    // characters), so `min` kept the model's smaller number and the clamp was never
+    // exercised — a green-looking assertion that tested the opposite of its own name.
+    // pi's `maxBytes` is counted in base64 characters, so doubling the budget is above it.
     check(
         "a profile bigger than the record budget is clamped to it",
         AttachmentBudget.limitsFor(
@@ -335,7 +340,7 @@ fun main() {
                     resize = app.pi.rpc.PiResponses.ImageResizeLimits(
                         maxWidth = null,
                         maxHeight = null,
-                        maxBytes = 20L * 1024 * 1024,
+                        maxBytes = AttachmentBudget.MESSAGE_BASE64_CHARS.toLong() * 2,
                         jpegQuality = null,
                     ),
                     maxPerMessage = null,

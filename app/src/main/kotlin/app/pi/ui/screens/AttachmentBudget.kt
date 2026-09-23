@@ -140,7 +140,7 @@ internal object AttachmentBudget {
      * The profile to pre-resize against: the **model's own** `inputLimits.images.resize`
      * where it published one, pi's defaults where it did not, and the record's budget on top.
      *
-     * Why the model's numbers are not taken on trust: a user may write `maxBytes: 20 MiB`
+     * Why the model's numbers are not taken on trust: a user may write `maxBytes: 200 MiB`
      * into `models.json`, and a message whose images exceed [MESSAGE_BASE64_CHARS] is a
      * message the App cannot read back — its own echo is one record, and the framer drops a
      * record past `JsonlFramer.DEFAULT_MAX_RECORD_CHARS` (the class KDoc has the history:
