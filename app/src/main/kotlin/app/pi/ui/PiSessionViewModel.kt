@@ -3419,7 +3419,24 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * (`docs/hang-and-crash-review.md` §A1). The transcript is still not cleared on
      * failure: a rebuild that cannot repopulate its rows must not destroy them.
      */
-    private suspend fun replayHistory(engine: PiEngineSession) {
+    /**
+     * @param brandNew the session was created **in this engine, in place** — `new_session`,
+     *   fork and clone rebind without emitting an event, so there is no file to read. pi
+     *   writes a session on its first `message_end`, so a brand-new one either has no file
+     *   at all or, worse, `meta.sessionFile` still names **the session we just left**.
+     *
+     *   Reading that file is the 「新建会话点 1/2/3 次，直到成功为止」 defect: `readTail`
+     *   succeeds against the *old* session, `seedHistory` puts the old conversation back on
+     *   screen, and the `return` below means **the engine is never asked what it actually
+     *   holds**. When the timing happens to work the file is absent, `resolveSessionFile`
+     *   answers null, and the RPC path below produces the blank conversation the user
+     *   expects — which is why the symptom looked random.
+     *
+     *   For a brand-new session the engine is the only authority: `get_entries` answers an
+     *   empty page for it (`replayHistoryOverRpc`, whose KDoc says so). So this flag skips
+     *   the file question entirely rather than trying to answer it.
+     */
+    private suspend fun replayHistory(engine: PiEngineSession, brandNew: Boolean = false) {
         // Cleared first: the replay either replaces it or fails, and a stale list
         // would let the next scroll-up prepend one session's entries onto another's.
         loadedHistoryChars = 0L
@@ -3429,7 +3446,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         evictedFrom = 0L
         loadedUntil = 0L
         evictedEntries = 0
-        val file = resolveSessionFile()
+        val file = if (brandNew) null else resolveSessionFile()
         if (file != null) {
             // The read and the retained-size accounting are one IO hop, not two: the
             // accounting serialises every entry to measure it ([entryChars]) and it is
@@ -4552,7 +4569,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                 pushNotice("扩展取消了新建会话", Notice.Tone.Warning)
                 return@call
             }
-            afterSessionReplaced()
+            afterSessionReplaced(brandNew = true)
             requestNav(NavRequest.Chat)
         }
     }
@@ -4897,7 +4914,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                 pushNotice("扩展取消了分支", Notice.Tone.Warning)
                 return@call
             }
-            afterSessionReplaced()
+            afterSessionReplaced(brandNew = true)
             result.text?.takeIf { it.isNotBlank() }?.let(::fillComposer)
             requestNav(NavRequest.Chat)
         }
@@ -4986,7 +5003,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                 pushNotice("扩展取消了复制", Notice.Tone.Warning)
                 return@call
             }
-            afterSessionReplaced()
+            afterSessionReplaced(brandNew = true)
             requestNav(NavRequest.Chat)
             pushNotice("已复制为新会话", Notice.Tone.Info)
         }
@@ -5440,18 +5457,23 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      *    (`modes/rpc-mode.ts:254-271`), so clearing it would wedge the engine.
      *  - `exported`, which is already handled just below.
      */
-    private suspend fun afterSessionReplaced() {
+     * @param brandNew the session was created **in this engine, in place**: the
+     *   `new_session` / fork / clone paths, which rebind without emitting an event. They are
+     *   also exactly the paths where [meta] may still name the session the user just left,
+     *   *and* where the new session has **no file at all** (pi writes one on its first
+     *   `message_end`). Reordering below cannot make a non-existent file trustworthy, so on
+     *   these three the file question is **skipped** and the engine answers instead — see
+     *   [replayHistory]'s `brandNew` for the defect this closes.
+     */
+    private suspend fun afterSessionReplaced(brandNew: Boolean = false) {
         val engine = session ?: return
-        // `refreshState` **before** the replay, not after: the replay's source is the
-        // session file, and the only trustworthy name for that file is the one
-        // `get_state` just reported. Reading it first would use the meta of the
-        // session the user just left on the `new_session` / `fork` / `clone` paths,
-        // which rebind in place and emit no event — i.e. it would replay the wrong
-        // conversation. `switchSession` / `importSession` set [SessionHints] so the
-        // common path is unaffected, and this ordering costs one round trip that
-        // replaces a whole-session read.
+        // `refreshState` **before** the replay, not after: on the file-backed paths
+        // (`switch_session` / import) the only trustworthy name for that file is the one
+        // `get_state` just reported. Reading it first would use the meta of the session the
+        // user just left. It cannot fix the in-place rebind paths — nothing can, because
+        // there is no file yet — which is what `brandNew` is for.
         refreshState()
-        replayHistory(engine)
+        replayHistory(engine, brandNew)
         refreshStats()
         refreshCommands()
         // **这里**不再**调 `refreshSessions()`。** 会话列表在这一屏之外只有一个读者（会话覆盖层），
