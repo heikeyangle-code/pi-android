@@ -145,8 +145,13 @@ internal fun truncateWidgetLine(line: String): String =
  */
 internal fun widgetCardTone(rows: List<WidgetRow>): WidgetTone? =
     rows.mapNotNull { (it as? WidgetRow.Summary)?.worst }
-        .maxByOrNull { WIDGET_TONE_SEVERITY.indexOf(it) }
+        .minByOrNull { WIDGET_TONE_SEVERITY.indexOf(it) }
 
+/**
+ * Severity, **worst first** — so the most severe tone is the *smallest* index and
+ * every lookup takes `minBy`. A `maxBy` over this list picks the mildest state,
+ * which is how a card holding one failed job first drew itself as a success.
+ */
 private val WIDGET_TONE_SEVERITY = listOf(
     WidgetTone.Error, WidgetTone.Warning, WidgetTone.Accent,
     WidgetTone.Success, WidgetTone.Muted, WidgetTone.Dim, WidgetTone.Text,
@@ -288,7 +293,7 @@ private fun subagentSummary(json: String): WidgetRow? {
         headline = headline,
         details = details,
         worst = runs.map { look(it.text("state")).tone }
-            .maxByOrNull { WIDGET_TONE_SEVERITY.indexOf(it) } ?: WidgetTone.Accent,
+            .minByOrNull { WIDGET_TONE_SEVERITY.indexOf(it) } ?: WidgetTone.Accent,
         raw = json,
     )
 }
