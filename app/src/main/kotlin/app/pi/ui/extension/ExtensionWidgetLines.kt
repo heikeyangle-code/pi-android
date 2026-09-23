@@ -199,6 +199,20 @@ private const val SUBAGENT_SNAPSHOT_VERSION = 1
  */
 private const val SUBAGENT_DETAIL_RUNS = 4
 
+/**
+ * How many of one job's tasks the card lists before summarising (`+N 个子任务`).
+ *
+ * The payload caps children at `maxChildrenPerNode = 8`; four keeps one job's
+ * disclosure the same height as the job list it sits in.
+ */
+private const val SUBAGENT_DETAIL_CHILDREN = 4
+
+/**
+ * The payload's own `maxDepth` (`async-status-projection.js`), used as the bound on
+ * the leaf walk so a malformed or self-referencing tree cannot recurse forever.
+ */
+private const val SUBAGENT_MAX_DEPTH = 3
+
 /** One state's glyph, word and token — the extension's own choices, transcribed. */
 private data class StateLook(val glyph: String, val word: String, val tone: WidgetTone)
 
@@ -242,11 +256,16 @@ private fun subagentSummary(json: String): WidgetRow? {
     if (root.text("version")?.toIntOrNull() != SUBAGENT_SNAPSHOT_VERSION) return null
 
     val runs = (root["runs"] as? JsonArray).orEmpty().mapNotNull { it as? JsonObject }
+
+    // **A run is not an agent.** A scripted call spawns N tasks inside *one* async job, and the
+    // extension keeps them in `children` with the job's own `label` being a joined agent list
+    // (`formatWidgetAgents` → `researcher, researcher, researcher, +1 more`). Counting `runs`
+    // therefore reported "1 运行中" for a job running four agents, which reads as a bug in the
+    // card. Counting **leaves** is what the user is counting: a job with children contributes
+    // its children, a childless job contributes itself.
+    val leaves = runs.flatMap { leafStates(it) }
     val counts = LinkedHashMap<String, Int>()
-    for (run in runs) {
-        val state = run.text("state") ?: "partial"
-        counts[state] = (counts[state] ?: 0) + 1
-    }
+    for (state in leaves) counts[state] = (counts[state] ?: 0) + 1
     val headline = buildList {
         // Known states in the extension's order, then anything it did not name — an unknown
         // state must still be *counted*, or a payload with one would silently read as
@@ -263,24 +282,20 @@ private fun subagentSummary(json: String): WidgetRow? {
         if (root.truncated()) add(WidgetSpan("（已截断）", WidgetTone.Dim))
     }
 
-    val details = runs.take(SUBAGENT_DETAIL_RUNS).map { run ->
-        val look = look(run.text("state"))
-        val activity = run["activity"] as? JsonObject
-        val stats = listOfNotNull(
-            activity?.text("currentTool"),
-            activity?.count("turnCount")?.let { "$it 轮" },
-            activity?.count("toolCount")?.let { "$it 工具" },
-        )
+    val details = runs.take(SUBAGENT_DETAIL_RUNS).flatMap { run ->
+        // The extension's own panel draws the job row and then its tasks under it
+        // (`materializedWidgetChildLines` uses `├─` / `└─`), so the card does too — otherwise a
+        // four-agent job is a single opaque row whose name is a repeated agent list.
+        val children = (run["children"] as? JsonArray).orEmpty().mapNotNull { it as? JsonObject }
+        val shown = children.take(SUBAGENT_DETAIL_CHILDREN)
         buildList {
-            add(WidgetSpan("${look.glyph} ", look.tone))
-            // The name is the one run of this line a reader scans for: the
-            // extension bolds it (`themeBold` in its own renderer) and so does the
-            // card, which is why it is `Text` and not `Muted`.
-            add(WidgetSpan(run.text("label") ?: "（未命名）", WidgetTone.Text))
-            if (stats.isNotEmpty()) {
-                add(WidgetSpan(" · ", WidgetTone.Dim))
-                add(WidgetSpan(stats.joinToString(" · "), WidgetTone.Dim))
+            add(nodeRow(run))
+            shown.forEachIndexed { index, child ->
+                val last = index == shown.lastIndex && children.size <= SUBAGENT_DETAIL_CHILDREN
+                add(nodeRow(child, branch = if (last) "└─ " else "├─ "))
             }
+            val hidden = children.size - shown.size
+            if (hidden > 0) add(listOf(WidgetSpan("└─ +$hidden 个子任务", WidgetTone.Dim)))
         }
     }.let { rendered ->
         val hidden = runs.size - SUBAGENT_DETAIL_RUNS
@@ -289,13 +304,49 @@ private fun subagentSummary(json: String): WidgetRow? {
 
     return WidgetRow.Summary(
         label = "子代理",
-        badge = runs.size.toString(),
+        // The agent count, not the job count: the badge is read as "how many are out there".
+        badge = leaves.size.toString(),
         headline = headline,
         details = details,
-        worst = runs.map { look(it.text("state")).tone }
+        worst = leaves.map { look(it).tone }
             .minByOrNull { WIDGET_TONE_SEVERITY.indexOf(it) } ?: WidgetTone.Accent,
         raw = json,
     )
+}
+
+/**
+ * The leaf states under one node: its children's if it has any, else its own.
+ *
+ * Depth-bounded by the payload's own cap, so a malformed or cyclic tree cannot make
+ * this walk forever.
+ */
+private fun leafStates(node: JsonObject, depth: Int = 0): List<String> {
+    val children = (node["children"] as? JsonArray).orEmpty().mapNotNull { it as? JsonObject }
+    if (children.isEmpty() || depth >= SUBAGENT_MAX_DEPTH) return listOf(node.text("state") ?: "partial")
+    return children.flatMap { leafStates(it, depth + 1) }
+}
+
+/** One job's or one task's row: state glyph, name, then the extension's own readings. */
+private fun nodeRow(node: JsonObject, branch: String = ""): List<WidgetSpan> {
+    val look = look(node.text("state"))
+    val activity = node["activity"] as? JsonObject
+    val stats = listOfNotNull(
+        activity?.text("currentTool"),
+        activity?.count("turnCount")?.let { "$it 轮" },
+        activity?.count("toolCount")?.let { "$it 工具" },
+    )
+    return buildList {
+        if (branch.isNotEmpty()) add(WidgetSpan(branch, WidgetTone.Dim))
+        add(WidgetSpan("${look.glyph} ", look.tone))
+        // The name is the one run of this line a reader scans for: the extension bolds it
+        // (`themeBold` in its own renderer) and so does the card, which is why it is `Text`
+        // and not `Muted`.
+        add(WidgetSpan(node.text("label") ?: "（未命名）", WidgetTone.Text))
+        if (stats.isNotEmpty()) {
+            add(WidgetSpan(" · ", WidgetTone.Dim))
+            add(WidgetSpan(stats.joinToString(" · "), WidgetTone.Dim))
+        }
+    }
 }
 
 private fun look(state: String?): StateLook = SUBAGENT_STATES[state] ?: SUBAGENT_STATE_FALLBACK

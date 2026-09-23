@@ -130,7 +130,7 @@ fun main() {
     // (bold at the drawing site), the rest dim — the extension's own shape (`themeBold`,
     // `statJoin`).
     val detail = one.details.first()
-    widgetCheck("one detail row per job", one.details.size, 1)
+    widgetCheck("the job row, then its one task under it", one.details.size, 2)
     widgetCheck("the glyph carries the state's colour", tonesOf(detail.take(1)), listOf(WidgetTone.Accent))
     widgetCheck("the name is the readable run", listOf(detail[1].text, detail[1].tone), listOf("oracle", WidgetTone.Text))
     widgetCheck(
@@ -173,7 +173,7 @@ fun main() {
 
     // pi-subagents draws the first four jobs and summarises the rest (`MAX_WIDGET_JOBS = 4`).
     val many = summary(snapshot((0 until 6).joinToString(",") { run("r$it", "agent$it", "running", 1, 1) }))
-    widgetCheck("details stop at the panel's own cap", many.details.size, 5)
+    widgetCheck("four jobs (each with one task), then the remainder", many.details.size, 9)
     widgetCheck("and the remainder is named", textOf(many.details.last()), "+2 个更多")
     widgetCheck("in the dim token", tonesOf(many.details.last()), listOf(WidgetTone.Dim))
 
@@ -187,6 +187,30 @@ fun main() {
         widgetRow("PI_SUBAGENT_ASYNC_JSON:" + one.raw.replace("pi-subagents.async-status-snapshot", "something.else")) is WidgetRow.Folded,
     )
     checkTrue("a malformed body folds", widgetRow("""PI_SUBAGENT_ASYNC_JSON:{oops}""") is WidgetRow.Folded)
+
+    // **A job is not an agent.** A scripted call spawns N tasks inside one async job, and the
+    // extension's own `label` for that job is a joined agent list
+    // (`researcher, researcher, researcher, +1 more`). Counting `runs` therefore drew
+    // "1 运行中" for a run of four agents — the card contradicted the sentence above it, and
+    // this is the device case that produced the report. Leaves are what the user counts.
+    val scripted = summary(
+        snapshot(
+            """{"id":"job","kind":"subagent","label":"researcher, researcher, researcher, +1 more",
+                "state":"running","activity":{"state":"running","turnCount":1,"toolCount":1},
+                "children":[
+                  {"id":"s1","kind":"step","label":"catbox-recovery","state":"running"},
+                  {"id":"s2","kind":"step","label":"st-image-embed","state":"running"},
+                  {"id":"s3","kind":"step","label":"st-card-optim","state":"running"},
+                  {"id":"s4","kind":"step","label":"cn-community","state":"complete"}]}""".trimIndent().replace("\n", ""),
+        ),
+    )
+    widgetCheck("a scripted job counts its agents, not itself", textOf(scripted.headline), "3 运行中 · 1 完成")
+    widgetCheck("and the badge is the agent count", scripted.badge, "4")
+    widgetCheck("the job row is drawn, then its tasks under it", scripted.details.size, 5)
+    widgetCheck("a task row starts with its branch glyph", tonesOf(scripted.details[1].take(1)), listOf(WidgetTone.Dim))
+    widgetCheck("and carries the task's own name", scripted.details[1][2].text, "catbox-recovery")
+    widgetCheck("the last task closes the branch", scripted.details[4][0].text, "└─ ")
+    widgetCheck("a job with no tasks still counts as one", summary(snapshot(run("solo", "oracle", "running", 1, 1))).badge, "1")
 
     // ------------------------------------------------------------------ the card's own tone
     widgetCheck("a text-only widget has no state to carry", widgetCardTone(listOf(WidgetRow.Text("hi"))), null)
