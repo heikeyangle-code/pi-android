@@ -98,18 +98,27 @@ pi 进程内所有列目录都走 `fs.readdir*`，所以它们一起坏——这
 3. **`bash` 数条数在那 5 条上全部成功** → **子进程那条路是好的**。
 4. **`grep` / `find` 在全部 16 条上都 OK**（走独立二进制），**`read` 全部 OK**（不走枚举）。
 
-### 3.2 地基：`opendir` 在失败路径上可用，且条数与 `/bin/ls` 一致
+### 3.2 地基：`opendir` 在失败路径上可用，修好后三列逐条相等
 
-| 路径 | `fs.opendirSync` | `fs.readdirSync` | `/bin/ls` |
-|---|---|---|---|
-| `/root/.pi/agent` | **17** | ERR:ENOENT | 17 |
-| `/root/.pi/agent/extensions` | **9** | ERR:ENOENT | 9 |
-| `/tmp` | **300** | ERR:ENOENT | 300 |
-| `/dev/shm` | **0** | ERR:ENOENT | 0 |
-| `/workspace/pi/workspaces/workspace-1` | **7** | ERR:ENOENT | 7 |
+同一台设备，修前 / 修后各测一次 `fs.opendirSync` 与 `fs.readdirSync`，右侧是独立的
+第三方参照 `/bin/ls`（走 libc 的 `opendir`+`readdir`，从头到尾没坏过）：
 
-**这组数字是修法的全部依据**：`opendir` 在坏路径上不仅可用，而且给出的条目与 `/bin/ls`
-**逐条一致**——所以换过去得到的是完整列表，不是残缺列表。
+| 路径 | `fs.opendirSync` | `fs.readdirSync` 修前 | `fs.readdirSync` 修后 | `/bin/ls` |
+|---|---|---|---|---|
+| `/root/.pi/agent` | 17 | ERR:ENOENT | **17** | 17 |
+| `/root/.pi/agent/extensions` | 9 | ERR:ENOENT | **9** | 9 |
+| `/tmp` | 300 | ERR:ENOENT | **300** | 300 |
+| `/dev/shm` | 0 | ERR:ENOENT | **0** | 0 |
+| `/workspace/pi/workspaces/workspace-1` | 7 | ERR:ENOENT | **7** | 7 |
+
+两条读法：
+
+1. **`opendir` 给出的条目与 `/bin/ls` 逐条一致**——所以换过去得到的是**完整**列表，
+   不是残缺列表。这是修法的全部依据。
+2. **修后 pi 用的 `readdirSync` 与 `/bin/ls` 逐条相等**——即 **pi 拿到的东西和 bash
+   拿到的完全一样**。`/dev/shm` 那一行尤其说明问题：修前它报 ENOENT（pi 以为"目录不存在"），
+   修后是 `0`（pi 正确知道"目录存在但为空"）。
+
 
 ---
 
