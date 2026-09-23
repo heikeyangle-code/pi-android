@@ -697,4 +697,4 @@ typecheck: FAILED in :app — 3 error diagnostic(s)
 3. **旁证**：`settings` 里看不到这些数据；导出报告（`DiagnosticsReport`）里的附件统计可以作旁证——发同一张截图
    前后，记录里那张图的 base64 长度应与"PNG 候选胜出"一致（比 JPEG 大或小都正常，关键是与 pi 侧记录一致，
    即 MIME 为 `image/png`）。
-4. **回归**：连续选 7 张 pi 上限附近的图 + 1 张（第 8 张应被拒）——`MESSAGE_BYTES` 那条拒绝文案不变（已有 66 条断言覆盖）。
+4. **回归**：连续选 14 张 pi 上限附近的图 + 1 张（第 15 张应被拒）——`MESSAGE_BYTES` 那条拒绝文案不变（已有 66 条断言覆盖）。

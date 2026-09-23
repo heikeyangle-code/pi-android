@@ -13,7 +13,7 @@ package app.pi.session
 //
 //  1. the byte cost of one `get_entries` response for a session of a given shape,
 //     split into entries/text/tool output/inline base64 images — i.e. **what
-//     actually pushes a record past the framer's record cap** (32 MiB since the cap
+//     actually pushes a record past the framer's record cap** (64 MiB since the cap
 //     moved; the harness reads the cap from `JsonlFramer` rather than spelling it);
 //  2. the wall-clock cost of the two stages the app performs on that response:
 //     `JSON -> JsonObject` per line (the engine's read loop) and
@@ -458,8 +458,8 @@ fun main() {
         // window boundaries — that is the arithmetic the change is most likely to get
         // wrong, and a single-step walk would never execute it. On an image-heavy session
         // the budget is [APP_WINDOW_CHARS], the number the screen actually passes: it
-        // used to be `DEFAULT_MAX_LINE_CHARS * 3`, which after the cap moved to 32 MiB
-        // would be 96 MiB and would read `img-1msg-2x5MB` in a single window. That is a
+        // used to be `DEFAULT_MAX_LINE_CHARS * 3`, which after the cap moved to 64 MiB
+        // would be 192 MiB and would read `img-1msg-2x5MB` in a single window. That is a
         // harness bound looser than production's, and a bound looser than production's
         // cannot fail for the reason production fails — the false green this repository
         // keeps finding. [MULTI_IMAGE_SHAPE]'s explicit block below is the same walk,

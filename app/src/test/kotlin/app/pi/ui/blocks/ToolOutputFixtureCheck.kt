@@ -222,7 +222,11 @@ fun main() {
         println("tool-output-fixtures: FAILED ($failures)")
         println("  a stale capture: re-run `node tools/collect-tool-fixtures.mjs --check`")
         println("  a changed parser: read the `protects:` line above")
+        println("harness: FAILED ($failures)")
         exitProcess(1)
     }
     println("tool-output-fixtures: OK — the pinned engine's tool output still parses (${CASES.size} cases)")
+    // `tools/run-app-pure-checks.sh` requires this exact marker as well as exit 0: the
+    // status alone cannot tell "every assertion passed" from "the JVM never ran `main`".
+    println("harness: OK (all checks passed)")
 }

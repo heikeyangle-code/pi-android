@@ -353,7 +353,11 @@ fun main() {
     )
 
     // ------------------------------------- 7. the read guard is a guard, not the limit
-    check("the picked-file read guard is one frame", AttachmentBudget.MAX_PICKED_IMAGE_BYTES, 33_554_432)
+    check(
+        "the picked-file read guard is one frame",
+        AttachmentBudget.MAX_PICKED_IMAGE_BYTES,
+        app.pi.rpc.JsonlFramer.DEFAULT_MAX_RECORD_CHARS,
+    )
     checkTrue(
         "the read guard is above the message budget, so it never stands in for it",
         AttachmentBudget.MAX_PICKED_IMAGE_BYTES > AttachmentBudget.MESSAGE_BYTES,

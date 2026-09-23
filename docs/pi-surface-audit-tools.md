@@ -249,7 +249,7 @@ pi 的工具全集是 `ToolName = "read" | "bash" | "powershell" | "edit" | "wri
 |---|---|---|
 | 每图上限与候选编码序 | `AttachmentBudget`（`ui/screens/AttachmentBudget.kt:16-70`）逐条复刻 pi 的 2000/4.5MiB/base64 字符数口径 | ✅ |
 | **差异 1（有意的）** | `AttachmentBudget.kt:30-36`、`:211-212`：pi 在候选序里**总是先试 PNG**，App 只在源图**能带 alpha** 时才试 PNG，否则直接 JPEG | 语义差异：一张不透明、超出尺寸的 PNG，pi 可能仍以 PNG 发送，App 发 JPEG。**快速路径 1（已在限内）仍然字节不变**。理由是有意的（Android 上 2000×2000 PNG 编码慢且更大）。`{读}` |
-| **差异 2（App 侧新增）** | 整条消息的 base64 预算 `MESSAGE_BASE64_CHARS`（`AttachmentBudget.kt:47-70`），由 `JsonlFramer.DEFAULT_MAX_RECORD_CHARS` 反推，上限 **7 张 pi 满额图**；pi 只有"每图 4.5MiB"，没有整条消息预算 | 这是**因为传输/回读是 App 自己的约束**（`get_entries` 记录与 `message_start/end` 回显）而加的下限，不是 pi 语义的替代品。属于"更严"，不会产生与 pi 不同的模型可见结果，除非一张合法消息超 32MiB 记录上限——那时 App 会拒绝，pi 会发。`{读} + {推}` |
+| **差异 2（App 侧新增）** | 整条消息的 base64 预算 `MESSAGE_BASE64_CHARS`（`AttachmentBudget.kt:47-70`），由 `JsonlFramer.DEFAULT_MAX_RECORD_CHARS` 反推，上限 **14 张 pi 满额图**；pi 只有"每图 4.5MiB"，没有整条消息预算 | 这是**因为传输/回读是 App 自己的约束**（`get_entries` 记录与 `message_start/end` 回显）而加的下限，不是 pi 语义的替代品。属于"更严"，不会产生与 pi 不同的模型可见结果，除非一张合法消息超 64MiB 记录上限——那时 App 会拒绝，pi 会发。`{读} + {推}` |
 | `images.autoResize` | 设置行（`PiSettingsRegistry.kt:1064`） | ✅ |
 | `images.blockImages` | 设置行（`:1075`），描述明确写"给模型设的闸门：图片仍可附加，只是不会随请求发出去" | ✅ 语义与 pi 一致 |
 | `terminal.showImages` | 不列 | 附录 A（TUI 终端能力） |

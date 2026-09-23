@@ -153,7 +153,11 @@ fun main() {
 
     if (failures > 0) {
         println("session-entry-detail: FAILED ($failures)")
+        println("harness: FAILED ($failures)")
         exitProcess(1)
     }
     println("session-entry-detail: OK — unmodelled entries render as readable text")
+    // The runner's protocol: it greps for this marker *in addition to* the exit status, so
+    // a harness that silently ran nothing cannot pass as green.
+    println("harness: OK (all checks passed)")
 }

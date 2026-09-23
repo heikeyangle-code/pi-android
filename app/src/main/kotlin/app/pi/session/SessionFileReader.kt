@@ -695,7 +695,7 @@ internal object SessionFileReader {
     private const val HEADER_BUDGET = 1 shl 20
 
     /**
-     * Per-line cap for a **replay** read: the wire's own record cap, 32 MiB.
+     * Per-line cap for a **replay** read: the wire's own record cap, 64 MiB.
      *
      * A bound, not a policy — it exists so a corrupted file cannot make the open path
      * allocate without limit. It has to be at least [JsonlFramer.DEFAULT_MAX_RECORD_CHARS]
