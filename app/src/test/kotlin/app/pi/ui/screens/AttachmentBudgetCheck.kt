@@ -274,9 +274,9 @@ fun main() {
         AttachmentBudget.MESSAGE_BASE64_CHARS + AttachmentBudget.FRAMING_SLACK_CHARS,
         app.pi.rpc.JsonlFramer.DEFAULT_MAX_RECORD_CHARS,
     )
-    check("the record cap is 32 MiB", app.pi.rpc.JsonlFramer.DEFAULT_MAX_RECORD_CHARS, 33_554_432)
-    check("the message budget in base64 characters", AttachmentBudget.MESSAGE_BASE64_CHARS, 33_488_896)
-    check("the message budget in bytes", AttachmentBudget.MESSAGE_BYTES, 25_116_672)
+    check("the record cap is 64 MiB", app.pi.rpc.JsonlFramer.DEFAULT_MAX_RECORD_CHARS, 67_108_864)
+    check("the message budget in base64 characters", AttachmentBudget.MESSAGE_BASE64_CHARS, 67_043_328)
+    check("the message budget in bytes", AttachmentBudget.MESSAGE_BYTES, 50_282_496)
     check(
         "the budget in bytes is the same conversion",
         AttachmentBudget.base64CharsToBytes(AttachmentBudget.MESSAGE_BASE64_CHARS),
@@ -297,19 +297,19 @@ fun main() {
     )
 
     // ------------------------------------- 5. the end-to-end claim the copy makes
-    check("pi-maximum images per message", AttachmentBudget.MAX_PI_SIZED_IMAGES, 7)
+    check("pi-maximum images per message", AttachmentBudget.MAX_PI_SIZED_IMAGES, 14)
     // pi's own test is strict (`candidate.encodedSize < opts.maxBytes`), so the largest
     // image pi will emit is one character under the ceiling.
     val largest = AttachmentBudget.PI_MAX_BASE64_CHARS - 1
     checkTrue(
-        "7 pi-maximum images fit",
-        7 * largest <= AttachmentBudget.MESSAGE_BASE64_CHARS,
+        "14 pi-maximum images fit",
+        14 * largest <= AttachmentBudget.MESSAGE_BASE64_CHARS,
     )
     checkTrue(
-        "8 do not",
-        8 * largest > AttachmentBudget.MESSAGE_BASE64_CHARS,
+        "15 do not",
+        15 * largest > AttachmentBudget.MESSAGE_BASE64_CHARS,
     )
-    checkTrue("the budget is under the record cap, so the envelope always has room", AttachmentBudget.MESSAGE_BASE64_CHARS < 32 * 1024 * 1024)
+    checkTrue("the budget is under the record cap, so the envelope always has room", AttachmentBudget.MESSAGE_BASE64_CHARS < 64 * 1024 * 1024)
     checkTrue(
         "one pi-maximum image plus the envelope still leaves room for a second",
         AttachmentBudget.MESSAGE_BASE64_CHARS - largest >= largest,
@@ -337,7 +337,7 @@ fun main() {
         full.remainingBytes,
         AttachmentBudget.base64CharsToBytes(10),
     )
-    check("the refusal names how many pi-sized images a whole message holds", full.piSizedImages, 7)
+    check("the refusal names how many pi-sized images a whole message holds", full.piSizedImages, 14)
     check(
         "the refusal reports the image that did not fit",
         full.candidateBytes,

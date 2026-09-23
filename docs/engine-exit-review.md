@@ -267,7 +267,9 @@ pi 侧行号相对 `/root/pi-src`（0.85.1，commit `bbb61e34`，与 `tools/fetc
 
 ## 9. 未修 / 未验证（写明，不当作已解决）
 
-1. **`get_entries` 的大记录天花板没有解**（实验 2.6）。`get_entries` 没有 `limit`/`offset`，`since` 只能"从某个 entry 之后"，而**第一页永远是全部**（`modes/rpc/rpc-mode.ts:638-649`），所以 App 侧无法靠分页把单条记录压到 8 MiB 之下。可选方向：① 加大 `JsonlFramer` 上限（代价是内存：一条 32 MiB 记录在手机上就是数百 MB 堆，可能把 OOM 从"打不开"变成"闪退"，**不建议**单改一个常量）；② `get_tree` + 按需 `get_entries(since=…)` 逐段重建（第一页仍可能超限）；③ 上游给 `get_entries` 加 `limit`。**本轮的处置只有一条**：这一类的失败不再静默（上一轮 `PiEngineSession` 会把在途请求失败掉）。`replayHistory` 仍然吞掉失败（`PiSessionViewModel.kt` 的 `runCatching{}.getOrNull() ?: return`），所以用户看到的是空对话——**这是下一轮该做的第一件事**（至少在失败时给一句"这个会话太大，当前版本打不开"）。
+1. **`get_entries` 的大记录天花板没有解**（实验 2.6）。`get_entries` 没有 `limit`/`offset`，`since` 只能"从某个 entry 之后"，而**第一页永远是全部**（`modes/rpc/rpc-mode.ts:638-649`），所以 App 侧无法靠分页把单条记录压到上限之下。可选方向：① 加大 `JsonlFramer` 上限（代价是内存：一条记录在手机上解析后是数百 MB 堆，可能把 OOM 从"打不开"变成"闪退"）；② `get_tree` + 按需 `get_entries(since=…)` 逐段重建（第一页仍可能超限）；③ 上游给 `get_entries` 加 `limit`。**本轮的处置只有一条**：这一类的失败不再静默（上一轮 `PiEngineSession` 会把在途请求失败掉）。`replayHistory` 仍然吞掉失败（`PiSessionViewModel.kt` 的 `runCatching{}.getOrNull() ?: return`），所以用户看到的是空对话——**这是下一轮该做的第一件事**（至少在失败时给一句"这个会话太大，当前版本打不开"）。
+
+   **2026-09-23 更新（方向 ① 被知情地采用了，但它没有解决问题）**：`JsonlFramer.DEFAULT_MAX_RECORD_CHARS` 由 **32 MiB 翻到 64 MiB**（`SessionFileReader.DEFAULT_MAX_LINE_CHARS` 是派生的，跟着走），一条消息能放的 pi-上限图 **7 张 → 14 张**。这条不是"修好了"：天花板仍在，只是抬高了一倍；而方向 ① 的代价**现在是活的** —— 峰值 `pending` 缓冲翻倍，一个畸形/超长记录会缓冲到 64 MiB 才被丢弃（`droppedRecords` 计数）。**如果设备上出现 OOM 一闪退，回退这一个常量即可**（`AttachmentBudget` 的预算与那条 harness 都会跟着回落，因为它们是派生的）。
 2. **`--session-dir` 指向普通文件**时 pi 会"照常服务、落盘才失败"（实验 2.3）。App 的路径是自己 `mkdirs` 的，正常够不着；列为观察。
 3. **proot 自身的退出码 1 未在真机/本机复现**（2.7）。判据是 stderr 的 `proot error:`。
 4. **`DeviceUiAutomation.dispatch` 的无超时等待**（第 4 节 #6）未修。

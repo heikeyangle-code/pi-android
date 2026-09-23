@@ -465,11 +465,11 @@ data class UiPrefs(
  * was deleted with this move). What `ChatScreen` stages is now compressed to pi's own
  * inline limits — longest edge 2000, base64 under 4.5 MB per image — and one message's
  * images are budgeted **together** against the framing cap (`AttachmentBudget`:
- * `JsonlFramer.DEFAULT_MAX_RECORD_CHARS` − 64 KiB ≈ **31.94 MiB of base64**, i.e.
- * ≈ 23.95 MB of bytes, or 7 pi-maximum images). That budget is what makes this type
+ * `JsonlFramer.DEFAULT_MAX_RECORD_CHARS` − 64 KiB ≈ **63.94 MiB of base64**, i.e.
+ * ≈ 47.95 MB of bytes, or 14 pi-maximum images). That budget is what makes this type
  * necessary rather than optional: the smallest contribution one image can make to the
- * Bundle is still megabytes of text, and a legal message is up to seven of them, while
- * Binder's per-transaction limit is ~1 MB — so the *first* image was already over it.
+ * Bundle is still megabytes of text, and a legal message is now up to fourteen of them,
+ * while Binder's per-transaction limit is ~1 MB — so the *first* image was already over it.
  *
  * `rememberSaveable` does not write those strings to a file. They go to
  * `androidx.compose.ui.platform.DisposableSaveableStateRegistry`, which registers a
@@ -5698,7 +5698,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
          *    of a single window — the shape that used to be an over-cap record and an
          *    unopenable conversation. At ~500 characters per text entry the same
          *    budget is on the order of 16 000 entries. It is deliberately **not**
-         *    raised to `SessionFileReader.DEFAULT_MAX_LINE_CHARS` (32 MiB): one
+         *    raised to `SessionFileReader.DEFAULT_MAX_LINE_CHARS` (64 MiB): one
          *    oversized entry must not cost every text session its first-paint bound.
          *  - **Small enough** to stay a background blur rather than a stall. The whole
          *    open on this window is measured in the `session-replay-cost` harness;

@@ -711,7 +711,7 @@ internal object SessionFileReader {
      * deliberately: a future raise of either has to be a raise of both.
      *
      * The cost is a bound relaxed, not removed: this is the ceiling that stops a corrupt
-     * file from allocating without limit, and it is now 32 MiB instead of 8 MiB. It is
+     * file from allocating without limit, and it is now 64 MiB instead of 8 MiB. It is
      * also **not** the largest window an entry can land in — that is
      * `HISTORY_WINDOW_CHARS` (8 MiB) — and it must not be lowered to meet it: a window
      * smaller than one line is handled by [readTail]/[readBefore] keeping the newest

@@ -102,32 +102,40 @@ class JsonlFramer(private val maxRecordChars: Int = DEFAULT_MAX_RECORD_CHARS) {
 
     companion object {
         /**
-         * 32 MiB. pi's largest legitimate single record is a tool result, which pi
+         * 64 MiB. pi's largest legitimate single record is a tool result, which pi
          * itself truncates at 50 KB / 2000 lines; this cap exists for the one
          * payload pi does *not* truncate: an inline base64 image, at four
          * characters per three bytes, echoed back inside a `message_start` /
          * `message_end` event and inside one entry of a `get_entries` response.
          *
          * The number is derived from what the composer is allowed to send, not
-         * chosen: the app compresses every attachment to pi's own inline limits
-         * (`maxWidth`/`maxHeight` 2000, base64 < 4.5 MB — see
-         * `utils/image-resize-core.ts` in the pinned engine) and caps the base64 of
-         * **one message's** images at this cap minus a framing allowance, so a legal
-         * message can be 7 pi-maximum images and its record approaches 32 MiB. The
-         * sender's arithmetic lives in `AttachmentBudget` (`app.pi.ui.screens`); if
-         * this constant moves, that one moves with it, because a legal message whose
-         * own echo is over this cap is a message the app cannot read back.
+         * chosen: the app compresses every attachment to the model's own inline
+         * limits (`maxWidth`/`maxHeight` and a base64 ceiling — pi's defaults are 2000
+         * and 4.5 MB, `utils/image-resize-core.ts` in the pinned engine, and since 0.87
+         * they are per-model) and caps the base64 of **one message's** images at this
+         * cap minus a framing allowance, so a legal message can be 14 pi-default-maximum
+         * images and its record approaches 64 MiB. The sender's arithmetic lives in
+         * `AttachmentBudget` (`app.pi.ui.screens`); if this constant moves, that one moves
+         * with it, because a legal message whose own echo is over this cap is a message
+         * the app cannot read back.
          *
          * The cost of the size is real and is not paid only by legal records: this
          * is a **cumulative** bound on one record, so a malformed or over-long
-         * record buffers up to 32 MiB before [JsonlFramer] gives up on it. The
+         * record buffers up to 64 MiB before [JsonlFramer] gives up on it. The
          * buffering is incremental (one `feed` chunk at a time) and the record is
          * discarded, not truncated, once it passes — [JsonlFramer.droppedRecords]
-         * counts it — but the peak allocation is 32 MiB of `pending` plus the chunk
-         * that crossed the line, not the chunk size. 8 MiB used to bound that; the
-         * larger cap trades the bound for the ability to read back what the app is
-         * allowed to send.
+         * counts it — but the peak allocation is 64 MiB of `pending` plus the chunk
+         * that crossed the line, not the chunk size.
+         *
+         * **This number has now moved twice for the same reason, and the history is the
+         * argument for not nudging it again without one.** It was 8 MiB, which was too
+         * small to read back what the app was allowed to send — two 5 MB photos were
+         * 16 MB of base64, so the user's own message could not be read and the
+         * conversation would not open. It became 32 MiB to buy that back. It is 64 MiB
+         * now: the bound it trades away is **peak allocation on one malformed record**,
+         * and what it buys is 14 images in a message instead of 7. Both halves of that
+         * trade are real, and the memory half is the one nobody notices until it bites.
          */
-        const val DEFAULT_MAX_RECORD_CHARS = 32 * 1024 * 1024
+        const val DEFAULT_MAX_RECORD_CHARS = 64 * 1024 * 1024
     }
 }
