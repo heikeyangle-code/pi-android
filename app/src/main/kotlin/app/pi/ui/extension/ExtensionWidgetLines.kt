@@ -1,6 +1,7 @@
 package app.pi.ui.extension
 
 import app.pi.rpc.PiJson
+import app.pi.ui.blocks.TOOL_LINE_MAX_CHARS
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -17,67 +18,86 @@ import kotlinx.serialization.json.JsonPrimitive
  * richer than text has only one channel — a string — and the convention that grew
  * out of that is a **prefix plus a JSON object on one line**
  * (`PI_SUBAGENT_ASYNC_JSON:{"kind":…}`, `pi-subagents`' "host inspection
- * protocol", `docs/observability.md` §"Host inspection protocol (RPC)").
+ * protocol", `docs/observability.md`).
  *
  * The App used to draw every such line verbatim. That is not merely ugly: the
- * payload is bounded by the *sender* (32 KB for `pi-subagents`), pi's own widget
- * cap counts **lines** (`MAX_WIDGET_LINES = 10`, `boundedWidgetLines`), and one
- * 32 KB line passes a line-count cap untouched and then wraps — which is how a
- * status payload came to occupy half the conversation and re-lay-out on every
- * status tick.
+ * payload is bounded by the *sender* (32 KB), pi's own widget cap counts **lines**
+ * (`MAX_WIDGET_LINES = 10`, [boundedWidgetLines]), and one 32 KB line passes a
+ * line-count cap untouched and then wraps — which is how a status payload came to
+ * occupy half the conversation and re-lay-out on every status tick.
  *
- * ## The two rules, and why both are extension-agnostic
+ * ## The rules, and which of them are pi's rather than mine
  *
- *  1. **A line is text or it is too big to be text.** pi's own TUI draws a widget
- *     line truncated to the panel width and never wraps it (`truncLine`,
- *     `tui/render.js`), and a line past [WIDGET_LINE_MAX_CHARS] cannot be shown
- *     as one row on a phone at all. Such a line is folded into a chip: nothing is
- *     lost (the raw text is one tap away), the panel cannot grow past its budget,
- *     and the folded label does not depend on the payload's contents — so it does
- *     not change — and therefore cannot flicker.
- *  2. **A line that declares itself structured is not drawn as text.** The
- *     detection is the convention above, not a list of extension names, so a
- *     *future* extension gets the fold for free. What the App *understands* is a
- *     separate, smaller thing: [PAYLOAD_SUMMARIES] maps a prefix to a renderer,
- *     and an unregistered prefix still folds (never falls back to raw text).
+ *  1. **A line is text, or it is a declared payload, or it is too long to be
+ *     text.** pi truncates an over-long machine line with `…` at
+ *     [TOOL_LINE_MAX_CHARS] — its own grep limit, `core/tools/truncate.ts:13`,
+ *     already transcribed for the tool card (`blocks/ToolOutputParse.kt`) — so the
+ *     widget uses **the same number and the same ellipsis** instead of inventing a
+ *     second bound. Truncation is right for text; it would be wrong for a payload,
+ *     which is why a declared payload folds instead.
+ *  2. **A payload the App understands is summarised, and only a payload is.**
+ *     Detection is the convention above, not a list of extension names, so a
+ *     *future* extension gets the fold for free. [PAYLOAD_SUMMARIES] maps a prefix
+ *     to a renderer; an unregistered prefix still folds, never falls back to raw
+ *     text.
+ *  3. **Colour comes from the payload's own states, mapped the way the extension
+ *     maps them.** In pi the extension colours its own widget
+ *     (`theme.fg("accent", …)`) — and when it hands the host a JSON payload
+ *     instead, the *state → token* mapping is in its renderer
+ *     (`tui/render.js` `widgetStatusGlyph` / `widgetStepStatus`). [SUBAGENT_STATES]
+ *     is that table, transcribed: `running` accent, `queued` muted, `complete`
+ *     success, `paused`/`stopped` warning, and **everything else error** — the
+ *     extension's own fall-through, including its `failed`/`partial`/`rejected`
+ *     arms. The spans carry a [WidgetTone], not a `Color`, so this file stays
+ *     Android-free and the harness can pin the mapping token by token.
  *
  * A prefix in [HIDDEN_PAYLOAD_PREFIXES] is a pure data channel: `pi-subagents`
  * says so itself for its inspect reply — "Hosts must not render this widget"
- * (`docs/observability.md`) — so the App drops it instead of showing a chip.
+ * (`docs/observability.md`) — so the App drops it.
  *
  * ## What is deliberately *not* here
  *
- * No rendering, no Compose, no colour: this file is Android-free on purpose so a
- * bare-JVM harness can execute every rule above (`tools/run-app-pure-checks.sh`,
- * `widget-payload`). The renderer is [ExtensionWidgetStack].
+ * No rendering, no Compose, no colour values: the renderer is [ExtensionWidgetStack]
+ * and `widgetToneColor`. Nothing in the output is a timestamp or a duration: the
+ * extension re-sends its payload on every status tick, and a label that changes for
+ * a reason the user cannot see is the flicker this file exists to remove.
  */
 
-/**
- * The longest line still treated as text.
- *
- * Not a style choice: 1024 characters cannot fit one row of a phone-width panel,
- * and a widget line is *by contract* one row. Chosen well above any legitimate
- * decorated line (a coloured 46-column line is a few hundred bytes of ANSI) and
- * far below the 32 KB a status payload can reach.
- */
-internal const val WIDGET_LINE_MAX_CHARS = 1024
+/** The tokens a widget line may be painted with — pi's own set for this panel. */
+internal enum class WidgetTone { Text, Muted, Dim, Accent, Success, Warning, Error }
+
+/** One run of a widget line, with the token the extension's renderer would use. */
+internal data class WidgetSpan(val text: String, val tone: WidgetTone)
 
 /** One row of an extension widget, after the rules above have been applied. */
 internal sealed interface WidgetRow {
-    /** Verbatim text, one row, ellipsized by the renderer. */
+    /** Verbatim text, already truncated by [widgetRow], drawn on one row. */
     data class Text(val text: String) : WidgetRow
 
     /**
-     * A payload the App does not summarise (or a line too long to be text).
+     * A payload the App does not summarise.
      *
-     * [label] depends only on the prefix (or the character count), never on the
-     * payload's *contents* — an extension that re-sends this line on every tick
-     * therefore cannot make the panel re-lay-out.
+     * [label] depends only on the prefix, never on the payload's *contents* — an
+     * extension that re-sends this line on every tick therefore cannot make the
+     * panel re-lay-out.
      */
     data class Folded(val label: String, val raw: String) : WidgetRow
 
-    /** A payload the App understands: a stable headline, plus lines when opened. */
-    data class Summary(val headline: String, val details: List<String>, val raw: String) : WidgetRow
+    /**
+     * A payload the App understands: a titled row, the disclosure body, and the
+     * tone that decides the card's own border and stripe.
+     *
+     * [headline] is the counts row; [details] are the per-job rows, already in
+     * [WidgetSpan] form so the renderer only maps tones to colours.
+     */
+    data class Summary(
+        val label: String,
+        val badge: String,
+        val headline: List<WidgetSpan>,
+        val details: List<List<WidgetSpan>>,
+        val worst: WidgetTone,
+        val raw: String,
+    ) : WidgetRow
 }
 
 /**
@@ -98,17 +118,39 @@ internal fun widgetRow(line: String): WidgetRow? {
         return if (summary == null) {
             WidgetRow.Folded(prefix, json)
         } else {
-            WidgetRow.Summary(summary.headline, summary.details, json)
+            summary
         }
     }
-    if (line.length > WIDGET_LINE_MAX_CHARS) {
-        return WidgetRow.Folded("长文本 ${line.length} 字符", line)
-    }
-    return WidgetRow.Text(line)
+    return WidgetRow.Text(truncateWidgetLine(line))
 }
 
-/** A payload's compact form. `headline` is one row; nothing here carries a clock. */
-internal data class WidgetSummary(val headline: String, val details: List<String>)
+/**
+ * pi's own treatment of an over-long machine line: cut at
+ * [TOOL_LINE_MAX_CHARS] and mark it, exactly as the tool card does
+ * (`blocks/ToolOutputParse.kt`). A widget line is one row on a phone, so a
+ * longer one is not text any more — and this is also what bounds
+ * `Ansi.parse`'s input at the drawing site.
+ */
+internal fun truncateWidgetLine(line: String): String =
+    if (line.length <= TOOL_LINE_MAX_CHARS) line else line.substring(0, TOOL_LINE_MAX_CHARS) + "…"
+
+/**
+ * The card's own tone: the most severe state any row carries, or `null` when
+ * nothing in the widget is reporting one (a text widget, or an unregistered
+ * payload).
+ *
+ * Severity order is the one a reader uses — a failure outranks a pause, both
+ * outrank progress — and it is why one card can carry a mixed set of jobs without
+ * the container colour lying about them.
+ */
+internal fun widgetCardTone(rows: List<WidgetRow>): WidgetTone? =
+    rows.mapNotNull { (it as? WidgetRow.Summary)?.worst }
+        .maxByOrNull { WIDGET_TONE_SEVERITY.indexOf(it) }
+
+private val WIDGET_TONE_SEVERITY = listOf(
+    WidgetTone.Error, WidgetTone.Warning, WidgetTone.Accent,
+    WidgetTone.Success, WidgetTone.Muted, WidgetTone.Dim, WidgetTone.Text,
+)
 
 /**
  * `<PREFIX>:{…}` — a prefix token, a colon, and a JSON **object**.
@@ -136,7 +178,7 @@ private val HIDDEN_PAYLOAD_PREFIXES = setOf("PI_SUBAGENT_INSPECT_JSON")
  * an extension is an improvement here, never a prerequisite for not breaking the
  * panel.
  */
-private val PAYLOAD_SUMMARIES: Map<String, (String) -> WidgetSummary?> = mapOf(
+private val PAYLOAD_SUMMARIES: Map<String, (String) -> WidgetRow?> = mapOf(
     "PI_SUBAGENT_ASYNC_JSON" to ::subagentSummary,
 )
 
@@ -152,46 +194,44 @@ private const val SUBAGENT_SNAPSHOT_VERSION = 1
  */
 private const val SUBAGENT_DETAIL_RUNS = 4
 
+/** One state's glyph, word and token — the extension's own choices, transcribed. */
+private data class StateLook(val glyph: String, val word: String, val tone: WidgetTone)
+
+/**
+ * The job-level mapping from `tui/render.js` `widgetStatusGlyph`, plus the word
+ * from `widgetStepStatus`: `running` accent, `queued` muted `◦`, `complete`
+ * success `✓`, `paused`/`stopped` warning `■`, and **everything else** error `✗`.
+ *
+ * The fall-through is the extension's, not this file's: it draws no separate
+ * `partial` or `rejected` glyph, so neither does the App. Words are Chinese
+ * because they are the *host's* prose — the extension's English words never cross
+ * the wire (it sends the JSON, and the summary is this App's invention).
+ */
+private val SUBAGENT_STATES: Map<String, StateLook> = mapOf(
+    "running" to StateLook("⠋", "运行中", WidgetTone.Accent),
+    "queued" to StateLook("◦", "排队中", WidgetTone.Muted),
+    "complete" to StateLook("✓", "完成", WidgetTone.Success),
+    "paused" to StateLook("■", "已暂停", WidgetTone.Warning),
+    "stopped" to StateLook("■", "已停止", WidgetTone.Warning),
+    "failed" to StateLook("✗", "失败", WidgetTone.Error),
+)
+
+/** The extension's own fall-through: anything it does not name is a failure glyph. */
+private val SUBAGENT_STATE_FALLBACK = StateLook("✗", "部分完成", WidgetTone.Error)
+
+/** The order the headline reads in, worst-last so a failure is the last word. */
 private val SUBAGENT_STATE_ORDER = listOf(
-    "running", "queued", "paused", "complete", "failed", "partial", "stopped", "rejected",
-)
-
-private val SUBAGENT_STATE_LABELS = mapOf(
-    "running" to "运行中",
-    "queued" to "排队中",
-    "paused" to "已暂停",
-    "complete" to "完成",
-    "failed" to "失败",
-    "partial" to "部分完成",
-    "stopped" to "已停止",
-    "rejected" to "已拒绝",
-)
-
-/** The same glyphs the extension's terminal panel uses (`widgetStatusGlyph`). */
-private val SUBAGENT_STATE_GLYPHS = mapOf(
-    "running" to "⠋",
-    "queued" to "◦",
-    "complete" to "✓",
-    "failed" to "✗",
-    "paused" to "■",
-    "partial" to "◐",
-    "stopped" to "■",
-    "rejected" to "✗",
+    "running", "queued", "paused", "complete", "failed", "stopped", "rejected", "partial",
 )
 
 /**
  * The `subagent-async` snapshot, as one row — or `null` when the payload is not
  * the versioned shape this code was written against, in which case the caller
  * folds it. `kind` **and** `version` are both required: the extension versions
- * this payload (`ASYNC_STATUS_SNAPSHOT_VERSION`) precisely so a host can refuse
- * to interpret a shape it does not know, and a guessed render of a changed shape
- * would be worse than a chip.
- *
- * Nothing in the output is a timestamp or a duration: the extension re-sends this
- * line on every status tick, and a headline that changes for a reason the user
- * cannot see is the flicker this file exists to remove.
+ * this payload precisely so a host can refuse to interpret a shape it does not
+ * know, and a guessed render of a changed shape would be worse than a chip.
  */
-private fun subagentSummary(json: String): WidgetSummary? {
+private fun subagentSummary(json: String): WidgetRow? {
     val root = PiJson.parseObjectOrNull(json) ?: return null
     if (root.text("kind") != SUBAGENT_SNAPSHOT_KIND) return null
     if (root.text("version")?.toIntOrNull() != SUBAGENT_SNAPSHOT_VERSION) return null
@@ -202,32 +242,58 @@ private fun subagentSummary(json: String): WidgetSummary? {
         val state = run.text("state") ?: "partial"
         counts[state] = (counts[state] ?: 0) + 1
     }
-    val parts = SUBAGENT_STATE_ORDER.mapNotNull { state ->
-        counts[state]?.let { "$it ${SUBAGENT_STATE_LABELS[state] ?: state}" }
-    }
-    val headline = buildString {
-        append("子代理：")
-        append(if (parts.isEmpty()) "无活动任务" else parts.joinToString(" · "))
-        if (root.truncated()) append("（已截断）")
+    val headline = buildList {
+        // Known states in the extension's order, then anything it did not name — an unknown
+        // state must still be *counted*, or a payload with one would silently read as
+        // "no active jobs" while its own rows are right there in the body.
+        val known = SUBAGENT_STATE_ORDER.filter { counts.containsKey(it) }
+        val rest = counts.keys.filter { it !in SUBAGENT_STATE_ORDER }.sorted()
+        (known + rest).forEachIndexed { index, state ->
+            val count = counts[state] ?: return@forEachIndexed
+            val look = look(state)
+            if (index > 0) add(WidgetSpan(" · ", WidgetTone.Dim))
+            add(WidgetSpan("$count ${look.word}", look.tone))
+        }
+        if (isEmpty()) add(WidgetSpan("无活动任务", WidgetTone.Muted))
+        if (root.truncated()) add(WidgetSpan("（已截断）", WidgetTone.Dim))
     }
 
     val details = runs.take(SUBAGENT_DETAIL_RUNS).map { run ->
+        val look = look(run.text("state"))
         val activity = run["activity"] as? JsonObject
         val stats = listOfNotNull(
+            activity?.text("currentTool"),
             activity?.count("turnCount")?.let { "$it 轮" },
             activity?.count("toolCount")?.let { "$it 工具" },
         )
-        val glyph = SUBAGENT_STATE_GLYPHS[run.text("state")] ?: "·"
-        // The glyph belongs to the name, not between names: pi's panel draws
-        // `${glyph} ${name}` and the rest of the row as `· `-separated stats.
-        (listOf("$glyph ${run.text("label") ?: "（未命名）"}") + stats).joinToString(" · ")
+        buildList {
+            add(WidgetSpan("${look.glyph} ", look.tone))
+            // The name is the one run of this line a reader scans for: the
+            // extension bolds it (`themeBold` in its own renderer) and so does the
+            // card, which is why it is `Text` and not `Muted`.
+            add(WidgetSpan(run.text("label") ?: "（未命名）", WidgetTone.Text))
+            if (stats.isNotEmpty()) {
+                add(WidgetSpan(" · ", WidgetTone.Dim))
+                add(WidgetSpan(stats.joinToString(" · "), WidgetTone.Dim))
+            }
+        }
+    }.let { rendered ->
+        val hidden = runs.size - SUBAGENT_DETAIL_RUNS
+        if (hidden > 0) rendered + listOf(listOf(WidgetSpan("+$hidden 个更多", WidgetTone.Dim))) else rendered
     }
-    val hidden = runs.size - SUBAGENT_DETAIL_RUNS
-    return WidgetSummary(
+
+    return WidgetRow.Summary(
+        label = "子代理",
+        badge = runs.size.toString(),
         headline = headline,
-        details = if (hidden > 0) details + "+$hidden 个更多" else details,
+        details = details,
+        worst = runs.map { look(it.text("state")).tone }
+            .maxByOrNull { WIDGET_TONE_SEVERITY.indexOf(it) } ?: WidgetTone.Accent,
+        raw = json,
     )
 }
+
+private fun look(state: String?): StateLook = SUBAGENT_STATES[state] ?: SUBAGENT_STATE_FALLBACK
 
 /**
  * Did the sender say it dropped anything? `omitted` is part of the snapshot's own
