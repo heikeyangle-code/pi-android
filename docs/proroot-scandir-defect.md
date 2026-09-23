@@ -8,11 +8,17 @@
 >
 > **2026-09-23 后续（读 §3 之前先看这条）**：§3.1 那 5 条失败路径里，**有 3 条已经不是绑定
 > 了** —— `/tmp` 的绑定被删掉，pi 的 agent 目录与工作区搬进了 rootfs（`PiPaths.agentDir` /
-> `PiPaths.workspaces`，各自的 KDoc 有理由）。所以现在全表**唯一**的应用私有绑定是
-> `<rootfs>/dev-shm → /dev/shm`，而没人列它。本文档剩下的价值是两件：**根因**（坏的是
-> proroot 自己导出的 `scandir` 实现，不是"漏 hook"），以及 `scandir-fix.mjs` 这个兜底
-> **为什么还留着** —— 它是"先调原实现、失败才接管"，`scandir` 正常时是纯 no-op，而终端的
-> `/workspace` 绑定仍在，删它得先上机验。
+> `PiPaths.workspaces`，各自的 KDoc 有理由）。**但「在 rootfs 里」不等于「不是应用私有」**：
+> rootfs 本身就是 `<files>/pi/runtime/rootfs`，所以从它取源的绑定**仍在**那条判定规则里。
+> 现在还剩**两条**应用私有绑定 —— `<rootfs>/dev-shm → /dev/shm`，以及终端的
+> `<rootfs>/workspace/pi/workspaces/<名> → /workspace`（`PtyLauncher`）；另外 proot 独有的
+> `<rootfs>/.l2s` 按同一拼写自绑定，proroot 不发那条。两条都只被 `scandir-fix.mjs` 兜住
+> **JS** 那一层：**原生二进制**（终端里跑 `git init`/`gcc`、枚举 `/dev/shm` 的少数程序）按已测
+> 得的规则仍在射程内 —— 但注意终端的 `/workspace` 这一条**没有单独上机量过**：§3.1 里
+> `/workspace` 那行 OK 是在**引擎**进程里读的，那里它只是 rootfs 里的一个普通目录，不是终端的
+> 挂载点。本文档剩下的价值是两件：**根因**（坏的是 proroot 自己导出的 `scandir`
+> 实现，不是"漏 hook"），以及 `scandir-fix.mjs` 这个兜底**为什么还留着** —— 它是"先调原实现、
+> 失败才接管"，`scandir` 正常时是纯 no-op，而上面那两条绑定仍在，删它得先上机验。
 
 ---
 

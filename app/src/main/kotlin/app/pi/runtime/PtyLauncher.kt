@@ -199,10 +199,15 @@ object PtyLauncher {
                 // twice.
                 //
                 // Its host side moved into the rootfs with everything else
-                // (`PiPaths.workspaces`), so this is no longer an app-private bind — and
-                // if proroot's bind handling does break it, the blast radius is the
-                // terminal's short spelling, not the engine's workspace: `git` run from
-                // the engine's cwd is on a plain rootfs path.
+                // (`PiPaths.workspaces`) — but the rootfs **is** `<files>/pi/runtime/rootfs`,
+                // so this bind's source is *still* an app-private directory, which is the
+                // property every measured failing bind shared (`docs/proroot-scandir-defect.md`
+                // §3.1): a **native** tool run here — `git init`, `gcc` — is therefore still in
+                // that defect's range, since `/opt/pi/scandir-fix.mjs` only wraps Node's `fs`.
+                // (Not separately measured: §3.1's `/workspace` row was read in the **engine**,
+                // where that path is a plain rootfs directory and not this mount point.)
+                // What the workspace move changed is the blast radius: `git` run from the
+                // **engine's** cwd is on a plain rootfs path (no bind) and works.
                 workspace.absolutePath to guestWorkspace,
                 // The agent dir is **not** bound any more (2026-09-23). It lives at
                 // `<rootfs>/root/.pi/agent`, which is exactly the guest's

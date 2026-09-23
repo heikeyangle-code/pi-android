@@ -91,9 +91,20 @@ object GuestRecipe {
     // source**, not the `-b` flag. `binds` below sources `/sdcard` from
     // `/storage/emulated/0` and `readdirSync` on it succeeds on the same device; the binds
     // whose host source was `<files>/…` are the ones that failed — and as of 2026-09-23
-    // **there are none left**: `/tmp` stopped being a bind here, pi's agent dir and the
-    // workspace moved into the rootfs, and `PiPaths.shm` (the one below) sources from
-    // `<rootfs>/dev-shm`. Every remaining entry is a system path or shared storage.
+    // most of them are **gone**: `/tmp` stopped being a bind here, and pi's agent dir and
+    // the workspace moved into the rootfs, where the guest reaches them through the prefix
+    // and no bind exists at all.
+    //
+    // **But "inside the rootfs" is not "not app-private"** — the rootfs is itself
+    // `<files>/pi/runtime/rootfs`, so a bind sourced from it is *still* the case that
+    // failed, and two of those remain: `PiPaths.shm` (the entry below,
+    // `<rootfs>/dev-shm`) and the terminal's `/workspace` (`PtyLauncher`, sourced from
+    // `<rootfs>/workspace/pi/workspaces/<name>`). Neither is a mistake to fix here — the
+    // source is app-private because that is where the data has to live for speed — they
+    // are where the native `scandir`/`mkstemp` failure is still reachable by the measured
+    // rule, covered for pi's own JS by `/opt/pi/scandir-fix.mjs` and **not** for native
+    // binaries. What the workspace move bought is that the *engine* is out of that set.
+    // Every other entry is a system path or shared storage.
     //
     // `TMPDIR` in [environment] is unchanged (`/tmp`): the app reaches a guest temporary
     // file by prefixing the rootfs ([app.pi.bridge.GuestPathMapping]), not through a bind.
