@@ -10,11 +10,18 @@ package app.pi.bridge
  * order with no device and no Gradle.
  */
 internal class GuestPathRoots(
-    /** `<filesDir>` — the engine mirrors it at `/workspace`. */
-    val filesDir: String,
+    /**
+     * `PiPaths.workspaceBase` — `<rootfs>/workspace`, the directory the engine mirrors at
+     * `/workspace`.
+     *
+     * It was `<filesDir>` until the workspace moved into the rootfs (2026-09-23). Every
+     * guest spelling stayed the same; only this host base moved, so this is the one field
+     * whose value changed.
+     */
+    val workspaceBase: String,
     /** `<filesDir>/pi/runtime/rootfs`, proot's `--rootfs`. */
     val rootfs: String,
-    /** `<filesDir>/pi/.pi/agent`, bound as guest `/root/.pi/agent`. */
+    /** `PiPaths.agentDir` — `<rootfs>/root/.pi/agent`, the guest's `/root/.pi/agent`. */
     val agentDir: String,
     /** The workspace directory, bound as the terminal's plain `/workspace`. */
     val workspaceHost: String?,
@@ -66,9 +73,9 @@ internal object GuestPathMapping {
                 spelling == WORKSPACE || spelling.startsWith("$WORKSPACE/") -> {
                     val relative = spelling.removePrefix(WORKSPACE).trimStart('/')
                     if (relative.isNotEmpty()) {
-                        // Engine spelling: guest /workspace mirrors <filesDir>
-                        // (PiEngineHost.guestPathFor, engine/PiEngineHost.kt:552-556).
-                        add("${roots.filesDir}/$relative")
+                        // Engine spelling: guest /workspace mirrors the workspace base
+                        // (PiEngineHost.guestPathFor over PiPaths.workspaceBase).
+                        add("${roots.workspaceBase}/$relative")
                         // Terminal spelling: guest /workspace IS the workspace
                         // directory (runtime/PtyLauncher.kt:146,264).
                         roots.workspaceHost?.let { add("$it/$relative") }
@@ -105,7 +112,11 @@ internal object GuestPathMapping {
                 else -> {
                     // Relative: pi's cwd is the workspace (PiEngineHost.kt:283).
                     roots.workspaceHost?.let { add("$it/$spelling") }
-                    add("${roots.filesDir}/$spelling")
+                    // The engine's own cwd is the workspace base plus the relative path,
+                    // so this is the fallback for a link written without the workspace's
+                    // name in it. It was `<filesDir>/<spelling>` while the engine mirrored
+                    // the files directory at `/workspace`.
+                    add("${roots.workspaceBase}/$spelling")
                     add(spelling)
                 }
             }

@@ -205,41 +205,60 @@ const UBUNTU_PORTS = "https://ports.ubuntu.com/ubuntu-ports";
  * this release's RPC surface, and pi has no stability guarantee across minor
  * versions. Bumping this is a decision, not an accident.
  *
- * 0.85.1 → **0.86.1**（2026-09-20）。这次不是"改个号"：上游有三处必须有人答话，写在这里，
- * 免得下一个人再从 release notes 里重新推：
+ * 0.85.1 → 0.86.1（2026-09-20）的结论：三处 provider/扩展破坏性改动（`pi-ai` 的 provider 流输入
+ * 换成 `TranscriptContext`、`ToolCall.arguments`/`ToolResultMessage.details` 限制为 JSON 兼容值、
+ * `user_bash` fail-closed）对 `app/src/main/assets/pi-extensions/` 下三个扩展都不适用；新增的
+ * 设置键 `cacheWarming` 已经接上（`ui/settings/PiSettingsRegistry.kt`）。
  *
- *  1. **0.86.0 对 provider/扩展作者是破坏性改动**：`pi-ai` 的 provider 流输入从 `Context`
- *     换成规范化的 `TranscriptContext`；`ToolCall.arguments`/`ToolResultMessage.details`
- *     被限制为 JSON 兼容值；`user_bash` 改成 **fail-closed**。本仓库自带的三个扩展
- *     （`pi-android-bridge/`、`pi-android-permission-gate.ts`、`pi-highlight/` —— 就是
- *     `app/src/main/assets/pi-extensions/` 下的全部条目，见其 `README.md` 的表）已经逐个
- *     重读过：三个都不定义 provider、都不写 `arguments`/`details`、都没有 `user_bash`
- *     处理器，所以三条破坏性改动都不适用。判据有两半：对 0.86.1 的真类型定义做
- *     `tsc --noEmit` 零错误（`build/extension-check/` 那个 dev harness，`docs/pi-surface-audit-tools.md`
- *     记录了它），以及 `node tools/pi-contract.mjs` 的 `extensions` 组仍能把它们加载进
- *     0.86.1（`docs/pi-contract.md` 的 extensions 层）。
- *  2. **上游现在会在加载打包后的 CLI 之前打开 Node 的持久编译缓存**（0.86.1 原文：
- *     *reducing repeat launch time*）。**核到了具体位置**：这是上游在打包产物里注入的一行
- *     —— 安装好的 0.86.1 包里 `dist/bundle/cli.js` 第 2、4 行是
- *     `import { createRequire, enableCompileCache } from "node:module"` + `enableCompileCache()`。
- *     ⚠️ 但**本仓库启动的首选入口 `dist/bundle/rpc-entry.js` 里没有这一行**（grep 计数 0；
- *     `cli-runtime.js`、`index.js` 也没有），所以这条提升到不了本 App 实际走的那条路；而
- *     `PiEngineHost` 的 `NODE_COMPILE_CACHE` 注释写的是**另一件事**：这个变量在**解包入口**
- *     `dist/cli.js` 上量到过没效果（那时 ~969 次模块加载主导启动），并且明说"打包入口上没重测"、
- *     不该被读成"在打包入口也没效果"。要判断这条是否值得跟进，唯一的诚实实验是
- *     `rpc-entry.js` ± `NODE_COMPILE_CACHE`，读 `PiEngineSession.lastServingMs`。
- *     这条注释不是"已经写明了"，是**新增的、上游与本仓库路径不同的**事实。
- *  3. 新的用户可见面：`/bug`、prompt 缓存预热（`cache_warming_decision` 事件 + 它自己的
- *     设置）、Radius 离线模型目录、`compaction.modelOverrides`（我们已经接了）、
- *     `compat.allowedFallbackModels`、以及 Meta Muse 厂商（`/login meta`、`META_API_KEY`）。
- *     其中只有 prompt 缓存预热的 `cacheWarming` 是本 App **缺**的一个设置键（0.86.1 的
- *     `Settings` 相对 0.85.1 只多了这一个键），其余都有各自的落点或"pi 自己也没有 RPC 面"
- *     的证据，见 `docs/pi-contract.md` 与本轮审计。
+ * 0.86.1 → **0.87.1**（2026-09-22）。这一轮的结论与**判据**写在这里，免得下一个人再从 release
+ * notes 重推。总的说：**接口面几乎零变化**，唯一必须动的是许可证资产的版本标签（见
+ * `tools/build-license-assets.py`）。判据的主句是"字节相等"，不是"名字还在"：
  *
- * `tools/pi-contract.mjs`（CI 的 `contract` job）会把这条注释变成检查：它拿这个字符串
- * 指向的引擎去逐条核对命令名、事件类型、扩展 UI 方法、主题值与 `models.json` 语义。
+ *  1. **RPC 命令面零变化**：装好的 0.87.1 包里 `dist/modes/rpc/` **整个目录**与 0.86.1
+ *     逐字节相同（含 `rpc-types.js`、`rpc-mode.js`），所以 `rpc/.../Commands.kt` 的 33 个命令、
+ *     9 个扩展 UI 方法、事件序列化都不需要动；`rpc-types.d.ts` 的 `RpcCommand` 联合仍是 33 个成员。
+ *  2. **设置 schema 零变化**：`dist/core/settings-manager.{d.ts,js}` 与 0.86.1 逐字节相同
+ *     （`docs/settings.md` 在 0.87.1 被重写成参考表，但键的集合与 `Settings` 接口一致），
+ *     所以 `PiSettingsRegistry.kt` 不需要新增键。
+ *  3. **CLI flags 集合零变化**：`dist/cli/args.js` 的 `--flag` 集合完全相同（本仓库
+ *     `PiPreSpawnConfig.kt` 的 25 个 flag 全在）；唯一语义变化是 `--mode` 缺值/非法值现在报错
+ *     并非零退出（上游 fix #9045），而本 App 只传合法的 `rpc`。
+ *     `docs/environment-variables.md` 的 `PI_*` 表 0 增 0 删；`PI_OFFLINE` 的**描述**改写为
+ *     "含模型目录刷新"，但 `dist/core/model-runtime.js` 逐字节相同，行为没变。
+ *  4. **会话格式：`CURRENT_SESSION_VERSION` 仍 3，但多了一种条目**：`context_edit`
+ *     （`ContextEditEntry`，扩展 append-only 地改某条更早条目进入模型上下文的内容），
+ *     且 `appendCompaction(..., firstKeptEntryId, ...)` 的该参数放宽为 `string | null`
+ *     （retain-none 压缩）。本 App 的 `rpc/.../SessionEntries.kt` 对未知类型是全函数
+ *     （`else -> SessionEntry.Unknown`），`Compaction.firstKeptEntryId` 本来就是 `String?`，
+ *     所以两条都落在"不丢数据"这一侧；契约的 `session` 组把"App 建模的 9 种条目类型仍在 +
+ *     版本号仍是 3 + 该参数确实可空"钉住。
+ *  5. **扩展事件新增两种**（`context_with_system`、`agent_before_settle`），`turn_end` 变成
+ *     `BoundaryState`（多必填字段）。**都不上 RPC 线**：`dist/modes/rpc/rpc-mode.js` 逐字节相同，
+ *     `core/agent-session.js` 里 `_emit({type:…})` 的类型集合两版完全一致，
+ *     `agent_before_settle` 只经 `_extensionRunner.emitBoundary(...)`（`agent-session.js:1143-1157`）。
+ *     本仓库三个自带扩展只订阅 `before_agent_start`/`resources_discover`/`session_start`/
+ *     `tool_call`，用到的 `ctx.*`/`pi.*` 成员在 0.87.1 的类型定义里逐个仍在。
+ *  6. **`models.json` 多了 `inputLimits`**（provider 级与模型级；每模型的图片 resize 档位）。
+ *     `PiModelsMerge` 的合并是"App 拥有自己写的键、其余键原样带过"，所以这个新键不会被 App 的
+ *     保存流程删掉（§M12 那个形状没有复发）；`AttachmentBudget.kt` 转写的默认档实测未变
+ *     （`dist/utils/image-resize-core.js` 逐字节相同：2000×2000 / 4.5 MiB base64 / q80），
+ *     且 0.87.1 的 `get_available_models` 会把解析后的 `inputLimits` 直接放进 Model ——
+ *     契约的 `behaviour` 组现在断言这三个数字本身。
+ *  7. **App 解析「工具结果文本」这一层以前没有断言保护，本轮补上**：`ToolOutputParse.kt` 把
+ *     `core/tools/*.js` 产出的文本当解析目标（`read.js` 的 `Showing lines …` 与
+ *     `… more lines in file. Use offset=…`、`grep.js` 的 `No matches found`、`find.js` 的
+ *     `No files found matching pattern`、`bash.js` 的 `Command exited with code N`、
+ *     `truncate.js` 的 `details.truncation` 键名），外加从终端渲染器
+ *     `core/tools/renderers/bash.js` 照抄进 Kotlin 的 `formatDuration` 拼写。0.87.1 里这些
+ *     字符串一个都没动（`core/tools/` 只有 `read.js` 的 resize 透传变了，`renderers/` 逐字节
+ *     相同），但**以前没有任何东西会在它们变动时失败** —— 现在 `tools/pi-contract.mjs` 的
+ *     `tooltext` 组会。
+ *
+ * `tools/pi-contract.mjs`（CI 的 `contract` job）会把上面的判断变成检查：它拿这个字符串
+ * 指向的引擎去逐条核对命令名、事件类型、扩展 UI 方法、主题值、工具结果文本、会话条目面与
+ * `models.json` 语义。
  */
-const PI_VERSION = "0.86.1";
+const PI_VERSION = "0.87.1";
 
 /**
  * proroot — the optional second container runtime, and the only artifact here whose

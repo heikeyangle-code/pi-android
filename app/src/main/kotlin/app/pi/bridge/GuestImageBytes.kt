@@ -224,7 +224,7 @@ internal object GuestImageBytes {
             nativeLibDir = File(context.applicationInfo.nativeLibraryDir),
         )
         val roots = GuestPathRoots(
-            filesDir = context.filesDir.absolutePath,
+            workspaceBase = paths.workspaceBase.absolutePath,
             rootfs = paths.rootfs.absolutePath,
             agentDir = paths.agentDir.absolutePath,
             workspaceHost = runCatching { PtyLauncher.workspaceHost(context).absolutePath }.getOrNull(),

@@ -44,44 +44,49 @@ fun check(name: String, actual: Any?, expected: Any?) {
     }
 }
 
-/** The three roots as they look on a real install, spelled out so the diff is obvious. */
-private fun roots(workspaceHost: String? = "/data/user/0/app.pi/files/pi/workspaces/workspace-1") =
+/** The roots as they look on a real install, spelled out so the diff is obvious. */
+private fun roots(workspaceHost: String? = "$ROOTFS/workspace/pi/workspaces/workspace-1") =
     GuestPathRoots(
-        filesDir = "/data/user/0/app.pi/files",
-        rootfs = "/data/user/0/app.pi/files/pi/runtime/rootfs",
-        agentDir = "/data/user/0/app.pi/files/pi/.pi/agent",
+        workspaceBase = "$ROOTFS/workspace",
+        rootfs = ROOTFS,
+        agentDir = "$ROOTFS/root/.pi/agent",
         workspaceHost = workspaceHost,
         storage = "/storage/emulated/0",
     )
+
+private const val FILES = "/data/user/0/app.pi/files"
+private const val ROOTFS = "$FILES/pi/runtime/rootfs"
 
 private fun candidates(path: String, roots: GuestPathRoots = roots()): List<String> =
     GuestPathMapping.candidates(listOf(path), roots)
 
 fun main() {
-    val files = "/data/user/0/app.pi/files"
-    val rootfs = "$files/pi/runtime/rootfs"
-    val agent = "$files/pi/.pi/agent"
-    val ws = "$files/pi/workspaces/workspace-1"
+    val rootfs = ROOTFS
+    val wsBase = "$rootfs/workspace"
+    val agent = "$rootfs/root/.pi/agent"
+    val ws = "$wsBase/pi/workspaces/workspace-1"
 
     // ------------------------------------------------ guest /workspace, two spellings
-    // Under the engine, guest /workspace mirrors <filesDir>; under the terminal tab it
-    // IS the workspace directory. Both are tried, engine first, rootfs last.
+    // Under the engine, guest /workspace mirrors `PiPaths.workspaceBase`
+    // (`<rootfs>/workspace`; it was `<filesDir>` until 2026-09-23); under the terminal tab
+    // it IS the workspace directory. Both are tried, engine first — and the rootfs
+    // candidate is the same string as the engine's, so it de-duplicates away.
     check(
-        "a /workspace link tries the engine spelling, then the terminal spelling, then the rootfs",
+        "a /workspace link tries the engine spelling, then the terminal spelling",
         candidates("/workspace/chart.png"),
-        listOf("$files/chart.png", "$ws/chart.png", "$rootfs/workspace/chart.png"),
+        listOf("$wsBase/chart.png", "$ws/chart.png"),
     )
     // The engine's own cwd spelling of a file inside the workspace.
     check(
         "the engine's full workspace spelling resolves to the same host file",
         candidates("/workspace/pi/workspaces/workspace-1/chart.png").first(),
-        "$files/pi/workspaces/workspace-1/chart.png",
+        "$wsBase/pi/workspaces/workspace-1/chart.png",
     )
     // pi's cwd is the workspace, so a relative link is workspace-relative.
     check(
-        "a relative link is the workspace's, not <filesDir>'s",
+        "a relative link is the workspace's, not the base's",
         candidates("chart.png"),
-        listOf("$ws/chart.png", "$files/chart.png", "chart.png"),
+        listOf("$ws/chart.png", "$wsBase/chart.png", "chart.png"),
     )
 
     // ------------------------------------------------ the pi-grounded case: /tmp paste
@@ -97,10 +102,12 @@ fun main() {
     )
 
     // ------------------------------------------------ agent dir, shared storage
+    // The agent dir **is** the guest's `/root/.pi/agent` since 2026-09-23 (a rootfs path,
+    // no bind), so both candidates are the same string and de-duplicate to one.
     check(
-        "/root/.pi/agent binds to the app-side agent dir first",
+        "/root/.pi/agent resolves to the agent dir itself, once",
         candidates("/root/.pi/agent/sessions/x/y.png"),
-        listOf("$agent/sessions/x/y.png", "$rootfs/root/.pi/agent/sessions/x/y.png"),
+        listOf("$agent/sessions/x/y.png"),
     )
     check(
         "/sdcard maps onto shared storage, keeping the literal spelling as a fallback",
@@ -140,7 +147,7 @@ fun main() {
     check(
         "no workspace host still yields candidates",
         candidates("/workspace/chart.png", roots(workspaceHost = null)),
-        listOf("$files/chart.png", "$rootfs/workspace/chart.png"),
+        listOf("$wsBase/chart.png"),
     )
     check("an empty path yields nothing", candidates(""), emptyList<String>())
     // Percent-escapes survive the markdown parser, so both spellings are tried and the
@@ -148,7 +155,7 @@ fun main() {
     check(
         "two spellings of one link are both tried, without duplicates",
         GuestPathMapping.candidates(listOf("/workspace/a%20b.png", "/workspace/a b.png"), roots()),
-        listOf("$files/a%20b.png", "$ws/a%20b.png", "$rootfs/workspace/a%20b.png", "$files/a b.png", "$ws/a b.png", "$rootfs/workspace/a b.png"),
+        listOf("$wsBase/a%20b.png", "$ws/a%20b.png", "$wsBase/a b.png", "$ws/a b.png"),
     )
     // Guard the constant the mapping and the health payload both spell.
     check("the workspace mount point is /workspace", GuestPathMapping.WORKSPACE, "/workspace")
