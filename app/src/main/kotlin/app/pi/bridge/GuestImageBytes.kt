@@ -223,7 +223,6 @@ internal object GuestImageBytes {
         val roots = GuestPathRoots(
             filesDir = context.filesDir.absolutePath,
             rootfs = paths.rootfs.absolutePath,
-            tmp = paths.tmp.absolutePath,
             agentDir = paths.agentDir.absolutePath,
             workspaceHost = runCatching { PtyLauncher.workspaceHost(context).absolutePath }.getOrNull(),
             storage = Environment.getExternalStorageDirectory().absolutePath,

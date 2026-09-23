@@ -477,7 +477,6 @@ object ProotCommand {
         // shared rule rather than only the runtime whose failure happened to be measured
         // (`GuestRecipe.canonicalHost` has the measurement and the `/proc` exception).
         extraBinds.forEach { (host, guest) -> argv += listOf("-b", GuestRecipe.bindValue("$host:$guest")) }
-        argv += GuestRecipe.tmpBind(paths)
         argv += GuestRecipe.shellArgs(guestCommand)
         return argv
     }

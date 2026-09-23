@@ -283,13 +283,17 @@ object ProrootCommand {
     }
 
     /**
-     * 本次启动的全部 `(host, guest)` 绑定对：共享绑定表 + 调用方的额外绑定 + `/tmp`。
+     * 本次启动的全部 `(host, guest)` 绑定对：共享绑定表 + 调用方的额外绑定。
      *
-     * 与 [build] 拼进去的 argv 同源（同一个 [GuestRecipe.binds]、同一个 [GuestRecipe.tmpBind]，
+     * 与 [build] 拼进去的 argv 同源（同一个 [GuestRecipe.binds]、同一个 [bindArgument]，
      * 额外绑定同样过 [bindArgument]），所以"argv 里绑了什么"与"判断 `-w` 是否在绑定之下时看的是
      * 什么"不可能分叉——这正是 [ensureWorkdir] 那条纪律能站住的前提，也是 [WorkdirState.HOST_MISSING]
      * 检查的 host 目录与 argv 里那一个**逐字相同**的原因（别名拼写会让"存在"与"能被反向映射"
      * 变成两个不同的问题）。没有冒号的值按 proot 的 host == guest 读。
+     *
+     * `/tmp` 曾在这里（`GuestRecipe.tmpBind`），2026-09-23 移除：它是应用私有目录作宿主源的绑定，
+     * 而 proroot 的 `scandir`/`mkstemp`/`mkdtemp` 正是在这种绑定的子树里返回 `ENOENT`
+     * （`docs/proroot-scandir-defect.md`）。`/tmp` 现在解析在 rootfs 内。
      */
     fun boundPairs(
         paths: PiPaths,
@@ -297,8 +301,7 @@ object ProrootCommand {
         extraBinds: List<Pair<String, String>>,
     ): List<Pair<String, String>> =
         GuestRecipe.binds(paths, storage).map { (_, value) -> asPair(value) } +
-            extraBinds.map { (host, guest) -> asPair(bindArgument("$host:$guest")) } +
-            listOf(asPair(GuestRecipe.tmpBind(paths)[1]))
+            extraBinds.map { (host, guest) -> asPair(bindArgument("$host:$guest")) }
 
     /** `host:guest` → pair；没有冒号时按 host == guest 读（proot 的简写）。 */
     private fun asPair(value: String): Pair<String, String> =
@@ -353,8 +356,8 @@ object ProrootCommand {
         argv += listOf("-w", cwd)
         // The bind set, respelled for proroot: every entry goes out as `-b host:guest`,
         // including the ones the shared recipe spells as a lone host path. `-b` is the flag
-        // for the whole shared table by construction (`GuestRecipe.binds`/`tmpBind` each pair
-        // their own flag with their value, and the harness pins that every one of them is
+        // for the whole shared table by construction (`GuestRecipe.binds` pairs each one its
+        // own flag with its value, and the harness pins that every one of them is
         // `-b`), which is what lets this line reuse [boundPairs] instead of walking the shared
         // table a second time — the duplication that made every spawn canonicalise its hosts
         // twice.

@@ -37,11 +37,15 @@ package app.pi.runtime
  *
  * ## The three measurements
  *
- * 1. **`guestpath`** — a file this probe plants *inside the guest* (`/tmp/…`) and
+ * 1. **`guestpath`** — a file this probe plants *inside the guest* (`/dev/shm/…`) and
  *    then reads back with a raw `openat`. Translated → the marker comes back.
  *    Untranslated → `ENOENT`, because no such file exists at that path in the host
- *    namespace (guest `/tmp` is a host directory that is only reachable that way).
+ *    namespace (guest `/dev/shm` is a host directory that is only reachable that way).
  *    This is the positive test for "an inline `svc` call sees the guest filesystem".
+ *
+ *    (`/dev/shm` rather than `/tmp` since 2026-09-23: `/tmp` is no longer a bind, so it
+ *    can no longer distinguish a translated path from an untranslated one. `/dev/shm` is
+ *    still bound from an app-private directory, which is exactly the shape this measures.)
  * 2. **`hostpath`** — the same file addressed by its **host** absolute path, which
  *    the app embeds into the script. Reachable means the raw layer is addressing
  *    host paths; informational only, since that is the documented gap rather than a
@@ -141,7 +145,7 @@ object ProrootRawProbe {
     const val PLANTED_NAME = "pi-proroot-raw-probe"
 
     /** Its **guest** spelling — this is what the raw `openat` must resolve. */
-    const val PLANTED_GUEST_PATH = "/tmp/$PLANTED_NAME"
+    const val PLANTED_GUEST_PATH = "/dev/shm/$PLANTED_NAME"
 
     /**
      * Whether a run in which the raw syscall is *not* translated may pass. See the
@@ -285,20 +289,20 @@ object ProrootRawProbe {
     /**
      * The guest script.
      *
-     * @param hostTmpPath the **host** path of [PLANTED_GUEST_PATH] — `<runtime>/tmp`
-     *        in the app, which is what `/tmp` is bound to. Passed in because the guest
-     *        script cannot work out the host-side spelling of its own `/tmp`, and the
+     * @param hostShmPath the **host** path of [PLANTED_GUEST_PATH] — `PiPaths.shm` in the
+     *        app, which is what `/dev/shm` is bound to. Passed in because the guest
+     *        script cannot work out the host-side spelling of its own `/dev/shm`, and the
      *        third measurement is exactly about that spelling.
      * @param token the marker content; a random-ish value so a stale file from a
      *        previous run cannot satisfy the check.
      */
-    fun guestCommand(hostTmpPath: String, token: String): String {
+    fun guestCommand(hostShmPath: String, token: String): String {
         val tab = SEPARATOR
         // Single-quoted Perl, so nothing inside may contain a single quote. The host
         // path and the token are embedded as double-quoted Perl literals.
         val perl = buildString {
             appendLine("my \$planted = \"$PLANTED_GUEST_PATH\";")
-            appendLine("my \$hostpath = \"$hostTmpPath/$PLANTED_NAME\";")
+            appendLine("my \$hostpath = \"$hostShmPath/$PLANTED_NAME\";")
             appendLine("sub raw { my (\$p) = @_; my \$fd = syscall(56, -100, \$p, 0, 0);")
             appendLine("  return (undef, 0 + \$!) if \$fd < 0;")
             appendLine("  my \$d = \"\"; my \$b = \"\\0\" x 65536;")

@@ -49,7 +49,6 @@ private fun roots(workspaceHost: String? = "/data/user/0/app.pi/files/pi/workspa
     GuestPathRoots(
         filesDir = "/data/user/0/app.pi/files",
         rootfs = "/data/user/0/app.pi/files/pi/runtime/rootfs",
-        tmp = "/data/user/0/app.pi/files/pi/runtime/tmp",
         agentDir = "/data/user/0/app.pi/files/pi/.pi/agent",
         workspaceHost = workspaceHost,
         storage = "/storage/emulated/0",
@@ -61,7 +60,6 @@ private fun candidates(path: String, roots: GuestPathRoots = roots()): List<Stri
 fun main() {
     val files = "/data/user/0/app.pi/files"
     val rootfs = "$files/pi/runtime/rootfs"
-    val tmp = "$files/pi/runtime/tmp"
     val agent = "$files/pi/.pi/agent"
     val ws = "$files/pi/workspaces/workspace-1"
 
@@ -88,11 +86,14 @@ fun main() {
 
     // ------------------------------------------------ the pi-grounded case: /tmp paste
     // pi's TUI writes /tmp/pi-clipboard-<uuid>.png and inserts the path as text
-    // (src/modes/interactive/interactive-mode.ts:2934-2946). /tmp is its own bind.
+    // (src/modes/interactive/interactive-mode.ts:2934-2946). `/tmp` stopped being a bind on
+    // 2026-09-23 (see `GuestRecipe`: a proroot bind sourced from an app-private directory
+    // breaks `mkstemp`/`scandir` in its whole subtree), so the guest's `/tmp` is now the
+    // rootfs's — and that candidate must therefore come first, not second.
     check(
-        "/tmp binds to runtime/tmp and never to <rootfs>/tmp",
+        "/tmp resolves inside the rootfs, not to a bound host directory",
         candidates("/tmp/pi-clipboard-abc.png"),
-        listOf("$tmp/pi-clipboard-abc.png", "$rootfs/tmp/pi-clipboard-abc.png"),
+        listOf("$rootfs/tmp/pi-clipboard-abc.png", "/tmp/pi-clipboard-abc.png"),
     )
 
     // ------------------------------------------------ agent dir, shared storage

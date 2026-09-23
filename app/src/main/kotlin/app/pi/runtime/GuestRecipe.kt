@@ -77,16 +77,30 @@ object GuestRecipe {
         add(listOf("-b", "${paths.shm.path}:/dev/shm"))
     }.map { (flag, value) -> listOf(flag, bindValue(value)) }
 
-    /**
-     * A writable `/tmp`: Android has none, and a missing `TMPDIR` makes pi's bash
-     * tool fail to spill oversized output. A real bind (not an env var) because
-     * both runtimes resolve it inside the guest.
-     *
-     * The host side goes through [bindValue] like every other bind: `<files>/pi/runtime/tmp`
-     * is under the app's data directory, so a guest that `cd /tmp` hits the same alias the
-     * workspace bind does.
-     */
-    fun tmpBind(paths: PiPaths): List<String> = listOf("-b", bindValue("${paths.tmp.path}:/tmp"))
+    // `/tmp` is deliberately **not** bound any more (2026-09-23). It used to be
+    // `-b <files>/pi/runtime/tmp:/tmp`; that entry is gone, and the reasoning is the fix
+    // for the whole class, so it is recorded here rather than in a git log.
+    //
+    // A proroot bind mountpoint is where its `scandir(3)` / `mkstemp(3)` / `mkdtemp(3)`
+    // return `ENOENT` for the entire subtree (`docs/proroot-scandir-defect.md`, measured
+    // 12/12 on the pinned v1.2.8). Putting `/tmp` behind one therefore breaks every
+    // `tmpdir()`-based temporary file at once: `gcc` segfaults inside proroot's own error
+    // path, and libc's whole `__gen_tempname` family fails with the template untouched.
+    //
+    // The property that separates a broken bind from a working one is the bind's **host
+    // source**, not the `-b` flag. `binds` below sources `/sdcard` from
+    // `/storage/emulated/0` and `readdirSync` on it succeeds on the same device; the four
+    // binds whose host source is `<files>/…` (this one, `PiPaths.shm`, `PiPaths.agentDir`
+    // and the workspace) are the ones that fail. So the fix is to stop naming an
+    // app-private directory here and let `/tmp` resolve **inside the rootfs**, which is
+    // where a container's `/tmp` belongs and what the reference implementation does —
+    // `DSH-APP/DSHA` `runtime/ContainerRuntime.java` binds no user path at all, and its
+    // `/tmp` is an ordinary rootfs directory.
+    //
+    // `TMPDIR` in [environment] is unchanged (`/tmp`): the app reaches a guest temporary
+    // file by prefixing the rootfs ([app.pi.bridge.GuestPathMapping]), not through a bind.
+    // [PiPaths.tmp] also survives — it is proot's **host-side** `PROOT_TMP_DIR`
+    // (`PiRuntime.environment`), which has nothing to do with the guest's `/tmp`.
 
     /** `:` — how both runtimes spell a bind (`host:guest`), and what proroot's parser requires. */
     const val BIND_SEPARATOR: String = ":"
@@ -257,7 +271,7 @@ object GuestRecipe {
      * host side moves, so the guest mount point the shorthand named stays byte-identical.)
      *
      * This is the **only** place a bind's spelling is decided. Every bind both runtimes emit
-     * goes through it — the shared table ([binds]), `/tmp` ([tmpBind]) and the callers' extra
+     * goes through it — the shared table ([binds]) and the callers' extra
      * binds (`PiEngineHost`, `PtyLauncher`, `AgentLayout`, rendered by
      * `ProotCommand`/`ProrootCommand`) — which is what keeps the two runtimes' tables from
      * drifting apart, the thing this object exists for.

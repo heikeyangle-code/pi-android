@@ -14,8 +14,6 @@ internal class GuestPathRoots(
     val filesDir: String,
     /** `<filesDir>/pi/runtime/rootfs`, proot's `--rootfs`. */
     val rootfs: String,
-    /** `<filesDir>/pi/runtime/tmp`, bound as guest `/tmp`. */
-    val tmp: String,
     /** `<filesDir>/pi/.pi/agent`, bound as guest `/root/.pi/agent`. */
     val agentDir: String,
     /** The workspace directory, bound as the terminal's plain `/workspace`. */
@@ -33,9 +31,11 @@ internal class GuestPathRoots(
  *
  * **The order is the safety argument.** Two rules:
  *
- *  1. A bind mapping is tried **before** the rootfs. A guest `/tmp/x.png` names the
- *     bound `<files>/pi/runtime/tmp/x.png`; `<rootfs>/tmp/x.png` is a *different*
- *     directory that merely has the same name, so it must never win.
+ *  1. A bind mapping is tried **before** the rootfs. A guest `/root/.pi/agent/x` names the
+ *     bound `<files>/pi/.pi/agent/x`; `<rootfs>/root/.pi/agent/x` is a *different*
+ *     directory that merely has the same name, so it must never win. (`/tmp` is no longer
+ *     a bind — it is an ordinary rootfs directory — so it falls through to rule 2's
+ *     rootfs candidate, which is the only candidate it has.)
  *  2. For an absolute path with no known bind, the rootfs is tried **before** the
  *     literal host path. `<rootfs>/etc/hosts` is the file the guest means; the
  *     phone's own `/etc/hosts` exists too, and returning it would render content
@@ -73,12 +73,6 @@ internal object GuestPathMapping {
                         // directory (runtime/PtyLauncher.kt:146,264).
                         roots.workspaceHost?.let { add("$it/$relative") }
                     }
-                    add("${roots.rootfs}/${spelling.trimStart('/')}")
-                }
-
-                spelling == "/tmp" || spelling.startsWith("/tmp/") -> {
-                    val relative = spelling.removePrefix("/tmp").trimStart('/')
-                    if (relative.isNotEmpty()) add("${roots.tmp}/$relative")
                     add("${roots.rootfs}/${spelling.trimStart('/')}")
                 }
 

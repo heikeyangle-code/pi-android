@@ -117,7 +117,7 @@ fun main() {
     val sharedBinds = GuestRecipe.binds(p, storage).map { it[1] }
     val prootBinds = binds(ProotCommand.build(p, command, "/root", storage))
     val prorootBinds = binds(ProrootCommand.build(p, command, "/root", storage))
-    check("proot's binds are the shared table plus l2s and tmp", prootBinds.toSet(), (sharedBinds + l2sBind + GuestRecipe.tmpBind(p)[1]).toSet())
+    check("proot's binds are the shared table plus l2s", prootBinds.toSet(), (sharedBinds + l2sBind).toSet())
     check("both runtimes bind /dev, /proc, /sys, /system, /apex and /dev/fd", sharedBinds.any { it == "/dev" } && sharedBinds.any { it == "/proc" } && sharedBinds.any { it == "/sys" } && sharedBinds.any { it == "/system" } && sharedBinds.any { it == "/apex" } && sharedBinds.any { it == "/proc/self/fd:/dev/fd" }, true)
     check("both runtimes bind external storage twice", sharedBinds.count { it.startsWith(storage.path) }, 2)
 
@@ -134,10 +134,10 @@ fun main() {
     check("the normalizer qualifies a bare host path", ProrootCommand.bindArgument("/dev"), "/dev:/dev")
     check("the normalizer leaves a pair alone", ProrootCommand.bindArgument("/dev/urandom:/dev/random"), "/dev/urandom:/dev/random")
     check("the separator is the one proroot parses", ProrootCommand.BIND_SEPARATOR, ":")
-    check("proroot qualifies the shared table", prorootBinds.toSet(), (sharedBinds.map { ProrootCommand.bindArgument(it) } + GuestRecipe.tmpBind(p)[1]).toSet())
+    check("proroot qualifies the shared table", prorootBinds.toSet(), sharedBinds.map { ProrootCommand.bindArgument(it) }.toSet())
     check("proroot emits no unqualified bind value", prorootBinds.all { it.contains(ProrootCommand.BIND_SEPARATOR) }, true)
     check("proroot binds /dev to /dev", prorootBinds.contains("/dev:/dev"), true)
-    check("proot's bind count is unchanged by the respelling", prootBinds.size, sharedBinds.size + 2)
+    check("proot's bind count is unchanged by the respelling", prootBinds.size, sharedBinds.size + 1)
 
     // ---- 绑定源的拼写 == 内核会报告的那一种（别名 `/data/user/0` vs `/data/data`）------
     // `Context.getFilesDir()` 给的是**符号链接那一侧**（`/data/user/0/<pkg>/files`），而内核给的
@@ -254,18 +254,19 @@ fun main() {
         binds(ProrootCommand.build(p, command, "/root", storage, listOf(aliasExtra))).toSet(),
     )
 
-    // **files 目录本身是符号链接**：`/tmp` 也在 App 数据目录下，所以它也必须解析后输出——
-    // 否则 guest 里 `cd /tmp` 会遇到同一个问题。
+    // **files 目录本身是符号链接**：`paths.shm` 也在 App 数据目录下，所以它也必须解析后输出——
+    // 否则 guest 里 `cd /dev/shm` 会遇到同一个问题。（这一段原来用的是 `/tmp`；2026-09-23 起
+    // `/tmp` 不再是一条绑定，见 `GuestRecipe`，而 `/dev/shm` 是同一个形状的应用私有源绑定。）
     val aliasPaths = PiPaths(filesDir = aliasLink, nativeLibDir = java.io.File(NATIVE))
-    check("the alias tmp path really differs", aliasPaths.tmp.path == aliasPaths.tmp.canonicalPath, false)
-    check("proroot's tmp bind is the resolved path", binds(ProrootCommand.build(aliasPaths, command, "/", null)).first { it.endsWith(":/tmp") }, "${aliasPaths.tmp.canonicalPath}:/tmp")
+    check("the alias shm path really differs", aliasPaths.shm.path == aliasPaths.shm.canonicalPath, false)
+    check("proroot's shm bind is the resolved path", binds(ProrootCommand.build(aliasPaths, command, "/", null)).first { it.endsWith(":/dev/shm") }, "${aliasPaths.shm.canonicalPath}:/dev/shm")
     check("proroot emits nothing through the symlinked files dir", binds(ProrootCommand.build(aliasPaths, command, "/", null)).none { it.startsWith("${aliasLink.path}/") }, true)
     // proot additionally carries the `-b <l2s>:<l2s>` pair, which is **deliberately left
     // untouched** (both sides must stay the same string — `PiRuntime.kt`'s comment on that
     // line), so it is the one value allowed to be spelled through the symlink.
     val aliasProotBinds = binds(ProotCommand.build(aliasPaths, command, "/", null))
         .filterNot { it == "${aliasPaths.l2s.path}:${aliasPaths.l2s.path}" }
-    check("proot's tmp bind is the resolved path", aliasProotBinds.first { it.endsWith(":/tmp") }, "${aliasPaths.tmp.canonicalPath}:/tmp")
+    check("proot's shm bind is the resolved path", aliasProotBinds.first { it.endsWith(":/dev/shm") }, "${aliasPaths.shm.canonicalPath}:/dev/shm")
     check("proot emits nothing else through the symlinked files dir", aliasProotBinds.none { it.startsWith("${aliasLink.path}/") }, true)
     check("and the l2s pair really is the exception", binds(ProotCommand.build(aliasPaths, command, "/", null)).any { it == "${aliasPaths.l2s.path}:${aliasPaths.l2s.path}" }, true)
     aliasRoot.deleteRecursively()
@@ -290,7 +291,10 @@ fun main() {
     check("a bind above the cwd covers it", ProrootCommand.bindingCovering("$engineCwd/sub", listOf(workspaceBind)), workspaceBind)
     check("a name that only looks like a prefix does not cover", ProrootCommand.bindingCovering("${engineCwd}x", listOf(workspaceBind)), null)
     check("no bind covers /root", ProrootCommand.bindingCovering("/root", listOf(workspaceBind)), null)
-    check("the builder sees the extra binds and the tmp bind", ProrootCommand.boundPairs(p, null, listOf(workspaceBind)).let { it.contains(workspaceBind) && it.any { pair -> pair.second == "/tmp" } }, true)
+    // `/tmp` 不再是绑定（2026-09-23，见 `GuestRecipe`），所以这里只钉"额外绑定确实进来了"，
+    // 以及**它没有**被绑成 `/tmp`——`/tmp` 现在解析在 rootfs 内。
+    check("the builder sees the extra binds", ProrootCommand.boundPairs(p, null, listOf(workspaceBind)).contains(workspaceBind), true)
+    check("and nothing is bound to /tmp any more", ProrootCommand.boundPairs(p, null, listOf(workspaceBind)).none { it.second == "/tmp" }, true)
     check("a bare proot binding reads as host == guest", ProrootCommand.boundPairs(p, null, emptyList()).contains("/dev" to "/dev"), true)
 
     // 真实文件上的每一种状态。`ensureWorkdir` 只会碰 rootfs 里那个替身目录。
@@ -660,9 +664,9 @@ fun main() {
 
     // The script carries the host spelling of the planted file, which is the only way it
     // can measure whether the raw layer is addressing host paths.
-    val script = ProrootRawProbe.guestCommand(hostTmpPath = "/data/x/tmp", token = "TOKEN-1")
+    val script = ProrootRawProbe.guestCommand(hostShmPath = "/data/x/shm", token = "TOKEN-1")
     check("the script plants the file at the guest spelling", script.contains(ProrootRawProbe.PLANTED_GUEST_PATH), true)
-    check("the script knows the host spelling of /tmp", script.contains("/data/x/tmp/${ProrootRawProbe.PLANTED_NAME}"), true)
+    check("the script knows the host spelling of /dev/shm", script.contains("/data/x/shm/${ProrootRawProbe.PLANTED_NAME}"), true)
     check("the script uses the shared quoting rule", script.contains(ShellQuote.quote("TOKEN-1")), true)
     check("the arm64 openat number is the one §6.5 ② used", script.contains("syscall(56,"), true)
     check("the script checks for perl instead of assuming it", script.contains("command -v perl"), true)
@@ -1021,11 +1025,12 @@ fun main() {
 
     // ================================================================ 8. 共享配方常量
     check("the shell tail is bash -c", GuestRecipe.shellArgs("x"), listOf("/bin/bash", "-c", "x"))
-    // The expectation comes from the same rule the builder uses (`canonicalHost`), not from a
-    // literal: on a device `<files>` is spelled `/data/user/0/...` while the kernel spells it
-    // `/data/data/...`, so a hand-written literal would pin the machine instead of the rule.
-    // The alias section above is where the rule itself is pinned.
-    check("the tmp bind is the app's own directory", GuestRecipe.tmpBind(p), listOf("-b", "${p.tmp.canonicalPath}:/tmp"))
+    // `/tmp` 曾经在这里（`GuestRecipe.tmpBind`），2026-09-23 起不再是一条绑定：它是宿主源在
+    // App 数据目录里的绑定，而 proroot 的 `scandir`/`mkstemp`/`mkdtemp` 正是在这种绑定的子树里
+    // 返回 `ENOENT`（`docs/proroot-scandir-defect.md`）。`/tmp` 现在解析在 rootfs 内，
+    // `TMPDIR` 仍是 `/tmp`（下面这条钉住它，因为它是修复的一半）。
+    check("TMPDIR still names the guest's /tmp", GuestRecipe.environment(p)["TMPDIR"], "/tmp")
+    check("and /tmp is not a bind any more", binds(ProotCommand.build(p, command, "/", null)).none { it.endsWith(":/tmp") } && binds(ProrootCommand.build(p, command, "/", null)).none { it.endsWith(":/tmp") }, true)
     check("the proroot scratch is inside the volatile runtime tree", p.prorootTmp.path, "$FILES/pi/runtime/proroot-tmp")
     check("the probe cache is inside the volatile runtime tree", p.prorootProbeCache().path, "$FILES/pi/runtime/.proroot-probe")
     check("the CA bundle is the payload's path", GuestRecipe.GUEST_CA_BUNDLE, "/etc/ssl/certs/ca-certificates.crt")

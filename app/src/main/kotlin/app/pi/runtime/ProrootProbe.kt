@@ -225,14 +225,14 @@ object ProrootProbe {
     ): Verdict {
         val mode = RuntimeChoice.PROROOT_SECCOMP
         val key = key(revision, digest, mode)
-        val plantedHost = File(paths.tmp, ProrootRawProbe.PLANTED_NAME)
+        val plantedHost = File(paths.shm, ProrootRawProbe.PLANTED_NAME)
         val token = UUID.randomUUID().toString()
 
         val rawOutput = runCatching {
             runGuest(
                 paths = paths,
                 engine = GuestEngine.Proroot,
-                guestCommand = ProrootRawProbe.guestCommand(paths.tmp.path, token),
+                guestCommand = ProrootRawProbe.guestCommand(paths.shm.path, token),
                 storage = storage,
                 timeoutMs = RAW_TIMEOUT_MS,
                 onTimeoutTree = onTimeoutTree,
@@ -282,9 +282,9 @@ object ProrootProbe {
             paths.runtime.mkdirs()
             paths.prorootProbeCache().writeText(ProrootProbeCache.render(key, passed, detail))
         }
-        // The planted file lives in the guest's /tmp; if translation did not work it
+        // The planted file lives in the guest's /dev/shm; if translation did not work it
         // may not exist at all, and deleting a file that is not there is fine. This
-        // is the app's own file in the app's own tmp directory (`PiPaths.tmp`).
+        // is the app's own file in the app's own shm directory (`PiPaths.shm`).
         runCatching { plantedHost.delete() }
         return verdict
     }
