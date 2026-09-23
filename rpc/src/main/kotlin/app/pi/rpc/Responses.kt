@@ -129,6 +129,43 @@ object PiResponses {
         val contextUsage: ContextUsage?,
     )
 
+    /**
+     * `Model.inputLimits` — what a model accepts, per request and per image (new in pi
+     * 0.87, `core/model-config.ts`).
+     *
+     * Modelled as pi nests it rather than flattened to the one level the app reads today:
+     * `maxPerMessage`/`maxPerRequest`/`maxRequestBytes` are the request-side limits pi
+     * documents, and a flattened reader would silently drop them the day one of them
+     * matters. Every field is nullable because every field is optional in pi — the
+     * *defaults* are applied by the consumer that needs a number
+     * (`ui/screens/AttachmentBudget.limitsFor`), not here: this type reports what the
+     * engine said, and a missing key is not the same statement as pi's default.
+     */
+    data class InputLimits(
+        val maxRequestBytes: Long?,
+        val images: ImageLimits?,
+    )
+
+    /** `inputLimits.images`. */
+    data class ImageLimits(
+        val resize: ImageResizeLimits?,
+        val maxPerMessage: Int?,
+        val maxPerRequest: Int?,
+    )
+
+    /**
+     * `inputLimits.images.resize` — the profile pi itself resizes to
+     * (`utils/image-resize-core.ts`), which a user may override per model in
+     * `models.json` (`modelOverrides[<id>].inputLimits`).
+     */
+    data class ImageResizeLimits(
+        val maxWidth: Int?,
+        val maxHeight: Int?,
+        /** Base64 **characters**, not bytes — the unit pi compares. */
+        val maxBytes: Long?,
+        val jpegQuality: Int?,
+    )
+
     /** `Model`, trimmed to what a picker and a status line need. */
     data class ModelInfo(
         val id: String,
@@ -140,6 +177,11 @@ object PiResponses {
         val acceptsImages: Boolean,
         val contextWindow: Long?,
         val maxTokens: Long?,
+        /**
+         * The model's own image/request profile, when the engine published one. `null`
+         * means "pi said nothing", which the pre-resize path reads as pi's defaults.
+         */
+        val inputLimits: InputLimits? = null,
         /** USD per million tokens. */
         val inputCost: Double?,
         val outputCost: Double?,
@@ -503,10 +545,43 @@ object PiResponses {
                 ?.any { (it as? JsonPrimitive)?.content == "image" } ?: false,
             contextWindow = obj.long("contextWindow"),
             maxTokens = obj.long("maxTokens"),
+            inputLimits = inputLimits(obj.obj("inputLimits")),
             inputCost = cost?.dbl("input"),
             outputCost = cost?.dbl("output"),
             cacheReadCost = cost?.dbl("cacheRead"),
             cacheWriteCost = cost?.dbl("cacheWrite"),
+        )
+    }
+
+    /**
+     * `inputLimits`, or `null` when there is nothing to report.
+     *
+     * Absent keys stay `null` at every level instead of being defaulted: the shape is
+     * `{ maxRequestBytes?, images?: { resize?: {…}, maxPerMessage?, maxPerRequest? } }`, so
+     * an engine that publishes only `images.resize` must not come back looking like one
+     * that also said something about `maxPerMessage`. `AttachmentBudget.limitsFor` is where
+     * a missing number becomes pi's default, because that is where a number is needed.
+     */
+    private fun inputLimits(element: JsonObject?): InputLimits? {
+        val obj = element ?: return null
+        val images = obj.obj("images")
+        val resize = images?.obj("resize")
+        return InputLimits(
+            maxRequestBytes = obj.long("maxRequestBytes"),
+            images = images?.let {
+                ImageLimits(
+                    resize = resize?.let { limits ->
+                        ImageResizeLimits(
+                            maxWidth = limits.int("maxWidth"),
+                            maxHeight = limits.int("maxHeight"),
+                            maxBytes = limits.long("maxBytes"),
+                            jpegQuality = limits.int("jpegQuality"),
+                        )
+                    },
+                    maxPerMessage = it.int("maxPerMessage"),
+                    maxPerRequest = it.int("maxPerRequest"),
+                )
+            },
         )
     }
 

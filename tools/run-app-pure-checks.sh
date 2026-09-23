@@ -512,13 +512,18 @@ run_harness session-entry-detail \
 # 判定不可能对不上）。`ChatScreen` 只剩编解码那一薄层。
 #
 # 三件不能靠读代码保证的事：(1) pi 的常量是**逐值**钉死的 —— 对另一个程序的主张会无声过期；
-# (2) e2e：7 张 pi 上限大小的图放得下、第 8 张放不下（pi 自己是严格 `< maxBytes`）；
+# (2) e2e：14 张 pi 上限大小的图放得下、第 15 张放不下（pi 自己是严格 `< maxBytes`）；
 # (3) 与 `SessionFileReader.DEFAULT_MAX_LINE_CHARS` 的耦合 —— 合法的一行 entry 严格小于合法的
 # 单条消息记录（记录外面还有一层信封），所以读会话的行上限必须 ≥ 帧记录上限；这条正是
 # 「打开时丢行 → 回落旧路径 → 会话打不开」的复发条件。
 #
 # Android-free：本文件与 reader 只 import stdlib 与 kotlinx.serialization（经 `:rpc` 的
 # `PiJson`）；`AttachmentBudget` 一旦长出 Android import，这里就编译失败，这正是目的。
+#
+# 第 4 组（Tier 4.1）之后 `Response`/`PiResponses` 也进了这份闭包：预算不再是常量，而是
+# `limitsFor(state.meta.model?.inputLimits)` —— **当前模型自己的图片档位**盖在 pi 的默认值上、
+# 再被记录预算封顶。所以这一份要从 pi 的 JSON 一直验到编码计划：`availableModels(json)` 的
+# 字段路径、档位小于默认时被采纳、档位大于记录预算时被封顶、以及档位真的到达 `attemptPlan`。
 run_harness image-attachment-budget \
   app.pi.ui.screens.AttachmentBudgetCheckKt \
   "$ROOT/app/src/test/kotlin/app/pi/ui/screens/AttachmentBudgetCheck.kt" \
@@ -526,7 +531,16 @@ run_harness image-attachment-budget \
   "$ROOT/app/src/main/kotlin/app/pi/session/SessionFileReader.kt" \
   "$ROOT/rpc/src/main/kotlin/app/pi/rpc/Jsonl.kt" \
   "$ROOT/rpc/src/main/kotlin/app/pi/rpc/PiJson.kt" \
-  "$ROOT/rpc/src/main/kotlin/app/pi/rpc/internal/Json.kt"
+  "$ROOT/rpc/src/main/kotlin/app/pi/rpc/internal/Json.kt" \
+  "$ROOT/rpc/src/main/kotlin/app/pi/rpc/Transcript.kt" \
+  "$ROOT/rpc/src/main/kotlin/app/pi/rpc/Responses.kt" \
+  "$ROOT/rpc/src/main/kotlin/app/pi/rpc/Events.kt" \
+  "$ROOT/rpc/src/main/kotlin/app/pi/rpc/Messages.kt" \
+  "$ROOT/rpc/src/main/kotlin/app/pi/rpc/Ansi.kt" \
+  "$ROOT/rpc/src/main/kotlin/app/pi/rpc/ExtensionErrorText.kt" \
+  "$ROOT/rpc/src/main/kotlin/app/pi/rpc/Commands.kt" \
+  "$ROOT/rpc/src/main/kotlin/app/pi/rpc/SessionEntries.kt" \
+  "$ROOT/rpc/src/main/kotlin/app/pi/rpc/SkillBlock.kt"
 
 # :rpc: `extension_error`'s attribution. pi sends an absolute file path, which may
 # not reach user-visible copy, and most packaged extensions are loaded from

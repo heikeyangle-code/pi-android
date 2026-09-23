@@ -258,13 +258,171 @@ fun main() {
         1,
     )
     val planCall = Regex(
-        "for \\(attempt in AttachmentBudget\\.attemptPlan\\(mime, source\\.hasAlpha\\(\\), width, height\\)\\)",
+        "for \\(attempt in AttachmentBudget\\.attemptPlan\\(mime, source\\.hasAlpha\\(\\), width, height, limits\\)\\)",
     ).find(chatText)
     checkTrue(
         "and it is still evaluated before any encoding plan is built",
         fastPathReturn.size == 1 && planCall != null &&
             fastPathReturn.first().range.first < planCall.range.first,
         "fastPathReturns=${fastPathReturn.size} planAt=${planCall?.range?.first}",
+    )
+
+    // ------------------------------------- 3b. the per-model profile (Tier 4.1)
+    //
+    // Everything above pins pi's *defaults*. This section pins the profile the App actually
+    // works against, which is no longer a constant: `limitsFor` folds the **current model's**
+    // `inputLimits.images.resize` over those defaults, with the record's budget as a ceiling.
+    // Three things only this harness can check without a device:
+    //
+    //  (a) the JSON→Kotlin parse reads pi's exact key path (a renamed key would leave every
+    //      model on the defaults and nothing else in the build would notice);
+    //  (b) a profile *smaller* than pi's default is honoured (the case that used to be lost:
+    //      the App pre-resized to 2000 and pi resized again);
+    //  (c) a profile *larger* than the record budget is clamped, because a message whose
+    //      images exceed MESSAGE_BASE64_CHARS is one the App cannot read back.
+    val limitsJson = kotlinx.serialization.json.Json.parseToJsonElement(
+        """
+        {"models":[{"id":"m1","name":"M1","provider":"p","input":["text","image"],
+          "inputLimits":{"maxRequestBytes":123456,
+            "images":{"resize":{"maxWidth":1024,"maxHeight":768,"maxBytes":999,"jpegQuality":42},
+                      "maxPerMessage":3,"maxPerRequest":9}}}]}
+        """.trimIndent(),
+    )
+    val parsed = app.pi.rpc.PiResponses.availableModels(
+        app.pi.rpc.PiEvent.Response(
+            id = "r1",
+            command = "get_available_models",
+            success = true,
+            error = null,
+            data = limitsJson,
+        ),
+    ).firstOrNull()
+    check("the model list parses", parsed?.id, "m1")
+    check("inputLimits.maxRequestBytes is read", parsed?.inputLimits?.maxRequestBytes, 123_456L)
+    check("inputLimits.images.resize.maxWidth is read", parsed?.inputLimits?.images?.resize?.maxWidth, 1024)
+    check("inputLimits.images.resize.maxHeight is read", parsed?.inputLimits?.images?.resize?.maxHeight, 768)
+    check("inputLimits.images.resize.maxBytes is read", parsed?.inputLimits?.images?.resize?.maxBytes, 999L)
+    check("inputLimits.images.resize.jpegQuality is read", parsed?.inputLimits?.images?.resize?.jpegQuality, 42)
+    check("inputLimits.images.maxPerMessage is read", parsed?.inputLimits?.images?.maxPerMessage, 3)
+    check("inputLimits.images.maxPerRequest is read", parsed?.inputLimits?.images?.maxPerRequest, 9)
+
+    // A model that said nothing is not a model that said "pi's defaults": the type reports
+    // `null` and the *resolution* applies the defaults. Keeping those two apart is what lets
+    // a future caller distinguish "the engine published a profile" from "nobody knows".
+    val silent = app.pi.rpc.PiResponses.availableModels(
+        app.pi.rpc.PiEvent.Response(
+            id = "r2",
+            command = "get_available_models",
+            success = true,
+            error = null,
+            data = kotlinx.serialization.json.Json.parseToJsonElement("""{"models":[{"id":"m2","name":"M2"}]}"""),
+        ),
+    ).firstOrNull()
+    check("a model without inputLimits parses to null", silent?.inputLimits, null)
+
+    check("no profile at all means pi's defaults", AttachmentBudget.limitsFor(null), AttachmentBudget.PI_DEFAULT_LIMITS)
+    check(
+        "a model's own profile is what the pass uses",
+        AttachmentBudget.limitsFor(parsed?.inputLimits),
+        AttachmentBudget.Limits(maxWidth = 1024, maxHeight = 768, maxBase64Chars = 999, jpegQuality = 42),
+    )
+    check(
+        "a profile bigger than the record budget is clamped to it",
+        AttachmentBudget.limitsFor(
+            app.pi.rpc.PiResponses.InputLimits(
+                maxRequestBytes = null,
+                images = app.pi.rpc.PiResponses.ImageLimits(
+                    resize = app.pi.rpc.PiResponses.ImageResizeLimits(
+                        maxWidth = null,
+                        maxHeight = null,
+                        maxBytes = 20L * 1024 * 1024,
+                        jpegQuality = null,
+                    ),
+                    maxPerMessage = null,
+                    maxPerRequest = null,
+                ),
+            ),
+        ).maxBase64Chars,
+        AttachmentBudget.MESSAGE_BASE64_CHARS.toLong(),
+    )
+    check(
+        "a partial profile keeps pi's default for the fields it omits",
+        AttachmentBudget.limitsFor(
+            app.pi.rpc.PiResponses.InputLimits(
+                maxRequestBytes = null,
+                images = app.pi.rpc.PiResponses.ImageLimits(
+                    resize = app.pi.rpc.PiResponses.ImageResizeLimits(
+                        maxWidth = null,
+                        maxHeight = null,
+                        maxBytes = null,
+                        jpegQuality = 55,
+                    ),
+                    maxPerMessage = null,
+                    maxPerRequest = null,
+                ),
+            ),
+        ),
+        AttachmentBudget.Limits(
+            maxWidth = AttachmentBudget.PI_MAX_DIMENSION,
+            maxHeight = AttachmentBudget.PI_MAX_DIMENSION,
+            maxBase64Chars = AttachmentBudget.PI_MAX_BASE64_CHARS.toLong(),
+            jpegQuality = 55,
+        ),
+    )
+
+    // The ladder is pi's `new Set([jpegQuality, 85, 70, 55, 40])`, so a model's first
+    // quality changes the first element only. The constant and the function must agree at
+    // pi's own default or one of them is a second, drifting answer.
+    check(
+        "the constant ladder is the function at pi's default quality",
+        AttachmentBudget.jpegQualities(AttachmentBudget.PI_JPEG_QUALITY).toList(),
+        AttachmentBudget.PI_JPEG_QUALITIES.toList(),
+    )
+    check(
+        "a model's jpegQuality leads pi's fixed steps",
+        AttachmentBudget.jpegQualities(42).toList(),
+        listOf(42, 85, 70, 55, 40),
+    )
+    check(
+        "a model's quality that is already in the ladder does not duplicate it",
+        AttachmentBudget.jpegQualities(70).toList(),
+        listOf(70, 85, 55, 40),
+    )
+
+    // The two axes are separate limits (pi's own shape), and the profile reaches the plan.
+    check(
+        "a wide picture keeps its width when the profile allows it",
+        AttachmentBudget.initialTarget(
+            4000,
+            1000,
+            AttachmentBudget.Limits(maxWidth = 4000, maxHeight = 2000, maxBase64Chars = 1, jpegQuality = 80),
+        ),
+        AttachmentBudget.Target(4000, 1000),
+    )
+    check(
+        "the default profile still clamps both axes to 2000",
+        AttachmentBudget.initialTarget(4000, 1000),
+        AttachmentBudget.initialTarget(
+            4000,
+            1000,
+            AttachmentBudget.Limits(
+                maxWidth = AttachmentBudget.PI_MAX_DIMENSION,
+                maxHeight = AttachmentBudget.PI_MAX_DIMENSION,
+                maxBase64Chars = AttachmentBudget.PI_MAX_BASE64_CHARS.toLong(),
+                jpegQuality = AttachmentBudget.PI_JPEG_QUALITY,
+            ),
+        ),
+    )
+    check(
+        "the plan's first attempt is the model's clamped size, not pi's default",
+        AttachmentBudget.attemptPlan(
+            sourceMime = "image/jpeg",
+            hasAlpha = false,
+            width = 4000,
+            height = 1000,
+            limits = AttachmentBudget.Limits(maxWidth = 1024, maxHeight = 1024, maxBase64Chars = 1, jpegQuality = 42),
+        ).first(),
+        AttachmentBudget.Attempt(1024, 256, AttachmentBudget.Encoding.Jpeg(42)),
     )
 
     // ------------------------------------- 4. the per-message budget, derived

@@ -1,6 +1,7 @@
 package app.pi.ui.screens
 
 import app.pi.rpc.JsonlFramer
+import app.pi.rpc.PiResponses
 
 /**
  * The arithmetic behind one message's inline images, and **only** the arithmetic.
@@ -70,16 +71,17 @@ import app.pi.rpc.JsonlFramer
  * prompt longer than 64 KiB is not charged to this budget, exactly as it was not before
  * (the composer has no length limit of its own).
  *
- * The end-to-end numbers at today's [JsonlFramer.DEFAULT_MAX_RECORD_CHARS] of 32 MiB:
+ * The end-to-end numbers at today's [JsonlFramer.DEFAULT_MAX_RECORD_CHARS] of 64 MiB:
  *
- *  - [MESSAGE_BASE64_CHARS] = 33 488 896 base64 characters = 31.94 MiB;
- *  - [MESSAGE_BYTES] = 25 116 672 bytes = 23.95 MiB — the number the copy shows;
+ *  - [MESSAGE_BASE64_CHARS] = 67 043 328 base64 characters = 63.94 MiB;
+ *  - [MESSAGE_BYTES] = 50 282 496 bytes = 47.95 MiB — the number the copy shows;
  *  - one image at pi's own ceiling is [PI_MAX_BASE64_CHARS] = 4 718 592 base64
  *    characters = [PI_MAX_BYTES] = 3 538 944 bytes = 3.375 MiB of file, and
- *    [MAX_PI_SIZED_IMAGES] = **7** of them fit in one message
- *    (7 × 4 718 592 = 33 030 144 ≤ 33 488 896; 8 × = 37 748 736 > 33 488 896);
+ *    [MAX_PI_SIZED_IMAGES] = **14** of them fit in one message
+ *    (14 × 4 718 592 = 66 060 288 ≤ 67 043 328; 15 × = 70 778 880 > 67 043 328);
  *  - an ordinary 1–3 MB phone photo is one image and costs 1.4–4 MB of base64, so the
- *    composer can stage seven of them and the eighth is refused with the remaining room.
+ *    composer can stage fourteen of them and the fifteenth is refused with the remaining
+ *    room.
  *
  * Before this existed the cap was per image and 5.95 MB, and nothing re-encoded: two
  * 5 MB photos in one message were 16 MB of base64, over the framer's old 8 MiB record
@@ -110,6 +112,89 @@ internal object AttachmentBudget {
      */
     val PI_JPEG_QUALITIES = intArrayOf(80, 85, 70, 55, 40)
 
+    /**
+     * The profile one pre-resize pass works against.
+     *
+     * pi's defaults are [PI_DEFAULT_LIMITS]; a model that publishes
+     * `inputLimits.images.resize` replaces them through [limitsFor]. A type rather than
+     * three loose parameters because the numbers travel together, and because one of them
+     * (`maxBase64Chars`) has the App's own ceiling folded in — see [limitsFor].
+     */
+    data class Limits(
+        val maxWidth: Int,
+        val maxHeight: Int,
+        /** Base64 characters. */
+        val maxBase64Chars: Long,
+        val jpegQuality: Int,
+    )
+
+    /** pi's own defaults (`image-resize-core.ts:6-9`): the fallback for every field. */
+    val PI_DEFAULT_LIMITS = Limits(
+        maxWidth = PI_MAX_DIMENSION,
+        maxHeight = PI_MAX_DIMENSION,
+        maxBase64Chars = PI_MAX_BASE64_CHARS.toLong(),
+        jpegQuality = PI_JPEG_QUALITY,
+    )
+
+    /**
+     * The profile to pre-resize against: the **model's own** `inputLimits.images.resize`
+     * where it published one, pi's defaults where it did not, and the record's budget on top.
+     *
+     * Why the model's numbers are not taken on trust: a user may write `maxBytes: 20 MiB`
+     * into `models.json`, and a message whose images exceed [MESSAGE_BASE64_CHARS] is a
+     * message the App cannot read back — its own echo is one record, and the framer drops a
+     * record past `JsonlFramer.DEFAULT_MAX_RECORD_CHARS` (the class KDoc has the history:
+     * 5 MB photos were 16 MB of base64 and the conversation would not open). So the budget
+     * is a **ceiling**: a model's profile may raise the pre-resize target, never past what
+     * the record can hold.
+     *
+     * The other direction is the one that used to be lost: a model with a *smaller* profile
+     * (a 1024px provider) was pre-resized to pi's 2000 by this App and then resized again by
+     * pi — two resizes, and the model got a picture the App had already thrown detail away
+     * from. Nothing here is a new limit: every number is either the engine's own or the App's
+     * record budget, which is why the pre-resize pass stays (it is what keeps a 5 MB photo
+     * from becoming a record nobody can read).
+     *
+     * ## This key is the user's; the App only reads it
+     *
+     * `inputLimits` lives in `models.json` and the user writes it there (the App's file screen
+     * already edits that file: it is a document pi reads and never rewrites). Nothing in this
+     * App writes the key today — deliberately. If a UI ever does, it must **read-modify-write
+     * the nested object**: `PiModelsMerge` carries over every key the App does not write, but
+     * inside a key the App *does* write, the written value wins whole — so replacing
+     * `inputLimits` with a freshly built object silently drops the sub-keys the user set
+     * (`docs/known-gaps.md` §M12 is that accident, one level up, and it shipped once already).
+     *
+     * ## What is deliberately *not* read here
+     *
+     * `inputLimits.images.maxPerMessage` / `maxPerRequest` are pi's request-side limits on how
+     * many images it will accept. They are a different question from [MESSAGE_BASE64_CHARS]
+     * and [MAX_PI_SIZED_IMAGES], which are about how much base64 one *record* can hold. This
+     * function reads the resize profile only; wiring the request-side counts into the message
+     * budget would conflate two limits that belong to two different layers.
+     */
+    fun limitsFor(inputLimits: PiResponses.InputLimits?): Limits {
+        val resize = inputLimits?.images?.resize
+        return Limits(
+            maxWidth = resize?.maxWidth ?: PI_MAX_DIMENSION,
+            maxHeight = resize?.maxHeight ?: PI_MAX_DIMENSION,
+            maxBase64Chars = minOf(
+                resize?.maxBytes ?: PI_MAX_BASE64_CHARS.toLong(),
+                MESSAGE_BASE64_CHARS.toLong(),
+            ),
+            jpegQuality = resize?.jpegQuality ?: PI_JPEG_QUALITY,
+        )
+    }
+
+    /**
+     * pi's ladder for a given first quality: `Array.from(new Set([jpegQuality, 85, 70, 55,
+     * 40]))` (`image-resize-core.ts:122`). [PI_JPEG_QUALITIES] is this function at pi's
+     * default quality, and the harness asserts the two agree, so a model's `jpegQuality`
+     * cannot quietly change the ladder's shape.
+     */
+    fun jpegQualities(jpegQuality: Int): IntArray =
+        linkedSetOf(jpegQuality, 85, 70, 55, 40).toIntArray()
+
     /** pi's per-round shrink factor: `Math.floor(axis * 0.75)`, floored at 1 (`:146-147`). */
     const val SHRINK_NUMERATOR = 3
     const val SHRINK_DENOMINATOR = 4
@@ -135,7 +220,7 @@ internal object AttachmentBudget {
     /** [MESSAGE_BASE64_CHARS] in the bytes it encodes — the number the copy shows. */
     const val MESSAGE_BYTES = MESSAGE_BASE64_CHARS / 4 * 3
 
-    /** How many pi-maximum images fit in one message. 7 at the 32 MiB record cap. */
+    /** How many pi-maximum images fit in one message. 14 at the 64 MiB record cap. */
     const val MAX_PI_SIZED_IMAGES = MESSAGE_BASE64_CHARS / PI_MAX_BASE64_CHARS
 
     /**
@@ -258,19 +343,24 @@ internal object AttachmentBudget {
     /**
      * pi's first resize target, copied step for step from `image-resize-core.ts:95-106`:
      * clamp the width, then clamp the height against the already-clamped width, so the
-     * second clamp can round the aspect ratio once. [PI_MAX_DIMENSION] is both the width
-     * and the height limit.
+     * second clamp can round the aspect ratio once.
+     *
+     * The two limits are separate because pi's are: `maxWidth` and `maxHeight` are
+     * independent (`image-resize-core.ts:6-7`), they are equal only in pi's own default
+     * profile, and a model that publishes `4000×2000` really does allow a wide picture to
+     * keep its width. [PI_DEFAULT_LIMITS] is what the callers that have no model profile
+     * get, so the default path is byte-for-byte the old one.
      */
-    fun initialTarget(width: Int, height: Int): Target {
+    fun initialTarget(width: Int, height: Int, limits: Limits = PI_DEFAULT_LIMITS): Target {
         var w = width
         var h = height
-        if (w > PI_MAX_DIMENSION) {
-            h = Math.round(h.toDouble() * PI_MAX_DIMENSION / w).toInt()
-            w = PI_MAX_DIMENSION
+        if (w > limits.maxWidth) {
+            h = Math.round(h.toDouble() * limits.maxWidth / w).toInt()
+            w = limits.maxWidth
         }
-        if (h > PI_MAX_DIMENSION) {
-            w = Math.round(w.toDouble() * PI_MAX_DIMENSION / h).toInt()
-            h = PI_MAX_DIMENSION
+        if (h > limits.maxHeight) {
+            w = Math.round(w.toDouble() * limits.maxHeight / h).toInt()
+            h = limits.maxHeight
         }
         return Target(w, h)
     }
@@ -305,13 +395,16 @@ internal object AttachmentBudget {
 
     /**
      * The candidate encodings at one size, in pi's order — PNG first when [pngFirst], then
-     * JPEG at every quality step. See the class KDoc for the one deliberate difference
-     * from pi (PNG for a PNG source or an alpha-carrying bitmap, not for every source).
+     * JPEG at every quality step of [jpegQualities] for the profile's first quality (pi's
+     * default 80 unless a model published its own). See the class KDoc for the one
+     * deliberate difference from pi (PNG for a PNG source or an alpha-carrying bitmap, not
+     * for every source).
      */
-    fun encodings(sourceMime: String, hasAlpha: Boolean): List<Encoding> {
-        val out = ArrayList<Encoding>(PI_JPEG_QUALITIES.size + 1)
+    fun encodings(sourceMime: String, hasAlpha: Boolean, jpegQuality: Int = PI_JPEG_QUALITY): List<Encoding> {
+        val qualities = jpegQualities(jpegQuality)
+        val out = ArrayList<Encoding>(qualities.size + 1)
         if (pngFirst(sourceMime, hasAlpha)) out += Encoding.Png
-        for (quality in PI_JPEG_QUALITIES) out += Encoding.Jpeg(quality)
+        for (quality in qualities) out += Encoding.Jpeg(quality)
         return out
     }
 
@@ -319,17 +412,26 @@ internal object AttachmentBudget {
      * Every attempt pi's loop would make for a [width]×[height] source, in order: all
      * encodings at the clamped size, then all of them at each shrunk size, ending at
      * 1×1. The caller returns at the **first** encoding whose base64 is under
-     * [PI_MAX_BASE64_CHARS]; this sequence is lazy so the encodings after that point are
-     * never produced, which is the difference between one encode per picked photo and
-     * six.
+     * `limits.maxBase64Chars` (pi's own test, `encodedSize < maxBytes`); this sequence is
+     * lazy so the encodings after that point are never produced, which is the difference
+     * between one encode per picked photo and six.
+     *
+     * [limits] comes from `limitsFor(state.meta.model?.inputLimits)`: the model's own
+     * profile, with the record's budget as a ceiling.
      *
      * A source already within both limits never reaches this: `ChatScreen` keeps pi's
      * fast path and sends the original bytes.
      */
-    fun attemptPlan(sourceMime: String, hasAlpha: Boolean, width: Int, height: Int): Sequence<Attempt> = sequence {
-        var target = initialTarget(width, height)
+    fun attemptPlan(
+        sourceMime: String,
+        hasAlpha: Boolean,
+        width: Int,
+        height: Int,
+        limits: Limits = PI_DEFAULT_LIMITS,
+    ): Sequence<Attempt> = sequence {
+        var target = initialTarget(width, height, limits)
         while (true) {
-            for (encoding in encodings(sourceMime, hasAlpha)) {
+            for (encoding in encodings(sourceMime, hasAlpha, limits.jpegQuality)) {
                 yield(Attempt(target.width, target.height, encoding))
             }
             if (target.width == 1 && target.height == 1) break

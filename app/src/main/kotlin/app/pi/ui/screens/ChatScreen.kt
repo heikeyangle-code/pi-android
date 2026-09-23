@@ -683,7 +683,7 @@ private fun ChatBody(
                                 warning = true,
                             )
 
-                            // 读取上限（32 MiB，App 自己的内存门槛），不是消息的额度，也不是「太大」。
+                            // 读取上限（一条记录的大小，64 MiB；App 自己的内存门槛），不是消息的额度，也不是「太大」。
                             // 这一支以前是**拒绝**；现在原图照样进工作区、agent 照样能读它 —— 而且
                             // 走的是流式复制，所以「不把几十兆读进内存」这条理由一分没丢。
                             bytes.size > AttachmentBudget.MAX_PICKED_IMAGE_BYTES -> fallbackInline(
@@ -694,15 +694,23 @@ private fun ChatBody(
                             )
 
                             else -> {
-                                val image = withContext(Dispatchers.IO) { compressAttachment(bytes, mime) }
+                                // The profile this pass works against: the **current model's**
+                                // own `inputLimits.images.resize` where pi published one, pi's
+                                // defaults otherwise, and the record's budget as a ceiling
+                                // (`AttachmentBudget.limitsFor`). Reading it here is what makes a
+                                // user's per-model profile in `models.json` actually apply —
+                                // before this, the App pre-resized to pi's default 2000/4.5 MB
+                                // and pi then resized again to whatever the model really allows.
+                                val limits = AttachmentBudget.limitsFor(state.meta.model?.inputLimits)
+                                val image = withContext(Dispatchers.IO) { compressAttachment(bytes, mime, limits) }
                                 if (image == null) {
-                                    // 压不出来：读不出像素，或者所有候选（pi 的 4.5 MB 上限）都超。
-                                    // 后者是本条要求里的「全部候选都超预算」，结局改成给路径。
+                                    // 压不出来：读不出像素，或者所有候选都超 **这个模型的** 上限。
+                                    // 数字来自同一份 limits，所以句子与判定不可能对不上。
                                     fallbackInline(
                                         sourceUri = null,
                                         bytes = bytes,
-                                        why = "按 pi 的上限（最长边 ${AttachmentBudget.PI_MAX_DIMENSION}、" +
-                                            "base64 ${mibLabel(AttachmentBudget.PI_MAX_BASE64_CHARS)} MB）" +
+                                        why = "按当前模型的上限（最长边 ${limits.maxWidth}×${limits.maxHeight}、" +
+                                            "base64 ${mibLabel(limits.maxBase64Chars)} MB）" +
                                             "压不出足够小的版本",
                                     )
                                 } else {
@@ -4226,13 +4234,25 @@ private fun readBounded(input: java.io.InputStream, limit: Int): ByteArray {
  *     KDoc has the reasoning and the residual difference.
  *
  * Returns null when the bytes do not decode, or when even 1×1 cannot be encoded under
- * pi's ceiling. The caller tells the user which of the two happened is not knowable
+ * [limits]. The caller tells the user which of the two happened is not knowable
  * here, so it says both.
  *
- * Runs on `Dispatchers.IO` — one 2000×2000 decode plus one encode is tens of
- * milliseconds and a few megabytes, which must not happen on the frame thread.
+ * [limits] is `AttachmentBudget.limitsFor(state.meta.model?.inputLimits)`: the model's own
+ * profile when pi published one, pi's defaults otherwise, with the record's budget as a
+ * ceiling. The **fast path** below uses the same limits, so a model with a smaller profile
+ * no longer forwards an original the model cannot take.
+ *
+ * Runs on `Dispatchers.IO` — one full-size decode plus one encode is tens of
+ * milliseconds and a few megabytes, which must not happen on the frame thread. A model
+ * profile *larger* than pi's default makes that first attempt proportionally more expensive
+ * (a 4000px decode, not 2000px): that is the cost of no longer throwing away detail the
+ * model accepts, and `maxBase64Chars` is still what decides when the loop stops.
  */
-private fun compressAttachment(bytes: ByteArray, mime: String): PiImage? {
+private fun compressAttachment(
+    bytes: ByteArray,
+    mime: String,
+    limits: AttachmentBudget.Limits,
+): PiImage? {
     // Header only: `inJustDecodeBounds` reads the size without allocating pixels, which
     // is also how the fast path is decided without decoding anything.
     val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
@@ -4241,10 +4261,10 @@ private fun compressAttachment(bytes: ByteArray, mime: String): PiImage? {
     val height = bounds.outHeight
     if (width <= 0 || height <= 0) return null
 
-    if (width <= AttachmentBudget.PI_MAX_DIMENSION &&
-        height <= AttachmentBudget.PI_MAX_DIMENSION &&
+    if (width <= limits.maxWidth &&
+        height <= limits.maxHeight &&
         AttachmentBudget.piInlineSupported(mime) &&
-        AttachmentBudget.base64Chars(bytes.size) < AttachmentBudget.PI_MAX_BASE64_CHARS
+        AttachmentBudget.base64Chars(bytes.size) < limits.maxBase64Chars
     ) {
         return PiImage(Base64.encodeToString(bytes, Base64.NO_WRAP), mime)
     }
@@ -4258,13 +4278,14 @@ private fun compressAttachment(bytes: ByteArray, mime: String): PiImage? {
     try {
         // `mime` is the *source's* type and it decides the candidate order: a PNG source
         // (or any source whose decoded bitmap carries alpha) gets pi's PNG candidate
-        // first, everything else starts at JPEG 80. See `AttachmentBudget.pngFirst`.
-        for (attempt in AttachmentBudget.attemptPlan(mime, source.hasAlpha(), width, height)) {
+        // first, everything else starts at the profile's first JPEG quality. See
+        // `AttachmentBudget.pngFirst` and `jpegQualities`.
+        for (attempt in AttachmentBudget.attemptPlan(mime, source.hasAlpha(), width, height, limits)) {
             val scaled = scaleForAttachment(source, attempt.width, attempt.height) ?: continue
             try {
                 val encoded = encodeForAttachment(scaled, attempt.encoding) ?: continue
                 // pi's own test is strict (`encodedSize < maxBytes`).
-                if (encoded.base64.length < AttachmentBudget.PI_MAX_BASE64_CHARS) return encoded
+                if (encoded.base64.length < limits.maxBase64Chars) return encoded
             } finally {
                 // `scaleForAttachment` returns the source itself when the target is the
                 // source's own size, and the outer `finally` owns that one.
