@@ -811,14 +811,26 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     private val pendingPrompts = mutableListOf<() -> Unit>()
 
     /**
-     * Park [action] if no engine is attached yet; `true` when it was parked.
+     * Park [action] unless this engine can actually execute it now; `true` when it was parked.
+     *
+     * **The predicate is [api], not `session`, and that difference is the 「新建会话点 1/2/3 次」
+     * defect.** [api]'s own KDoc says it is "null exactly when there is no engine to talk to,
+     * which is what every action below checks before doing anything" — [call], the only thing
+     * that actually runs an action, does check it. This function checked `session` instead, so
+     * the two asked *different questions*: `attach` sets both fields together, but engine death
+     * clears them **in the opposite order** (`api = null` before `session = null`). A click
+     * landing in that window was therefore **neither parked nor executed** — it fell through to
+     * [call]'s not-ready branch and left one notice, which is precisely the user-visible shape
+     * this mechanism was built for (「我新建对话，点第一下新建不了，再点第二下」). The old
+     * predicate narrowed that window; this one closes it, because the field it asks about is
+     * the field that decides.
      *
      * The closure re-enters the public function it came from, so the replay runs the
      * same checks (compaction window, streaming behavior, optimistic echo) as a live
      * call rather than a copy of them that could drift.
      */
     private fun parkUntilAttached(action: () -> Unit): Boolean {
-        if (session != null) return false
+        if (api != null) return false
         pendingPrompts += action
         return true
     }
@@ -4524,6 +4536,10 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         // （引擎已 attach）才成。`send` / `sendFollowUp` / `runPromptCommand` 三条走的是
         // [parkUntilAttached]（D31 为同一个窗口加的），这里沿用同一套机制，不新造：
         // 闭包重入本函数，所以重放跑的是**同一条**路径，而不是它的副本。
+        //
+        // 2026-09-23 补：当时 [parkUntilAttached] 判的是 `session` 而 `call` 判的是 `api`，
+        // 两个字段在引擎死亡那条路上是**反序**置空的，所以窗口只是变窄、没有关掉（用户的新读数
+        // 是「点 1 次、2 次、3 次」）。现在两者判同一个字段，见 [parkUntilAttached] 的 KDoc。
         if (parkUntilAttached { newSession(parentSession) }) {
             // **排队也要看得见。** 会话列表那枚「＋ 新建会话」点完就关掉覆盖层（`onOpenChat`），
             // 用户落在对话页上；没有这句话，他看到的还是「点了没反应」—— 那正是这次要消灭的形状。
