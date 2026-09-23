@@ -186,6 +186,34 @@ class PiPaths(private val filesDir: File, private val nativeLibDir: File) {
     /** Where the app unpacks its own copy of the engine. */
     val engines: File get() = File(home, "engines")
 
+    /**
+     * The `scandir(3)` fallback module, at the **guest** path `NODE_OPTIONS` names.
+     *
+     * ## The defect it repairs
+     *
+     * proroot's `scandir(3)` hook returns `ENOENT` for the paths it rewrites — the bind
+     * mountpoints — while `opendir(3)`+`readdir(3)` work there (measured on device by
+     * comparing guest and rootfs inodes: the paths whose inodes differ are exactly the ones
+     * that fail). Node's `fs.readdirSync`/`fs.readdir` are implemented through
+     * `scandir(3)` (libuv `uv_fs_scandir`), so every directory listing inside the pi
+     * process fails on those paths — the `ls` tool, the extension loader, skills, themes,
+     * prompts and the session list — while `bash`'s `ls`, `find` and `grep` keep working
+     * because they use `opendir`+`readdir`. That split is the whole symptom.
+     *
+     * `app/src/main/assets/guest/scandir-fix.mjs` wraps `fs.readdir*` and takes over **only**
+     * when the original threw `ENOENT` for a directory `stat` says exists, so on proot
+     * (where `scandir` works) the code path and the results are unchanged.
+     *
+     * ## Why it lives here and not in the agent dir
+     *
+     * `<rootfs>/opt/pi/scandir-fix.mjs` is **inside the rootfs**, next to the engine, and
+     * deliberately not in a bind-mounted directory: a bound path is precisely the thing that
+     * is broken, and the repair must not depend on what it repairs. It is inside the
+     * volatile tree, so the explicit repair path deletes it — `PiEngineHost` writes it back
+     * from the asset on every boot, which is also what keeps it current.
+     */
+    fun scandirFix(): File = File(rootfs, "opt/pi/scandir-fix.mjs")
+
     val nativeLib: File get() = nativeLibDir
 
     /** The one location Android lets us execute from. */

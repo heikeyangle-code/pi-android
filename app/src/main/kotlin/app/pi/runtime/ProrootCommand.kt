@@ -409,6 +409,23 @@ object ProrootCommand {
         // 通道），而引擎的 **stdout 是 RPC 流** —— 若某个 proroot 构建把 verbose 写到 stdout，
         // RPC 会被污染。真出现那种症状时**只删 `PROROOT_VERBOSE`、保留 `PROROOT_LOG_APPEND`**
         // （文件那一路与协议无关）。
+        // ---- `scandir(3)` 兜底：**只对 proroot 注入** -------------------------------
+        // proroot 的 `scandir(3)` hook 对它重写的路径返回 ENOENT，而 `opendir(3)`+`readdir(3)`
+        // 在那些路径上是好的（设备实测：guest inode 与 rootfs inode 不同的路径，正好就是失败的
+        // 那些）。Node 的 `fs.readdirSync`/`fs.readdir` 走的是 `scandir(3)`，于是 pi 进程内**所有**
+        // 列目录——`ls` 工具、扩展加载器、技能、主题、提示词、命令面板、会话列表——在绑定路径上
+        // 全挂，而 bash 的 `ls`/`find`/`grep` 照常（它们走 `opendir`+`readdir`）。全文见
+        // `PiPaths.scandirFix()` 与 `assets/guest/scandir-fix.mjs`。
+        //
+        // **注入点只有这一处，而且只在 proroot 的环境里**：proot 路径不设这个变量，那一边连模块
+        // 都不加载。于是 proroot 出任何问题的回退就是关掉开关，不需要回滚代码。
+        //
+        // **必须判文件在不在**：`--import` 指到不存在的文件是**硬失败**（node 直接起不来），不是
+        // 警告。文件由 `PiEngineHost` 在每次 boot 时从 assets 写回 rootfs，正常情况下它都在；
+        // 不在就退回今天的行为，不会更糟。
+        if (paths.scandirFix().isFile) {
+            put("NODE_OPTIONS", "--import=$SCANDIR_FIX_GUEST_PATH")
+        }
         putAll(GuestRecipe.environment(paths))
         putAll(extra)
     }
@@ -430,4 +447,17 @@ object ProrootCommand {
      */
     fun prorootTraceLog(paths: PiPaths): File =
         File(paths.home.parentFile ?: paths.home, "proroot-trace.log")
+
+    /**
+     * The **guest** spelling of [PiPaths.scandirFix], i.e. what `NODE_OPTIONS` passes to
+     * `--import`.
+     *
+     * A constant rather than a computation because the two sides live in different
+     * namespaces: [PiPaths.scandirFix] is a host path used to decide whether the file is
+     * there, and this is the path the guest's Node resolves. They are the same directory
+     * only because `rootfs` *is* the guest's `/`; keeping the guest spelling explicit is
+     * what stops a future move of the rootfs from silently pointing `--import` at nothing
+     * (which is a hard Node startup failure, not a warning).
+     */
+    const val SCANDIR_FIX_GUEST_PATH: String = "/opt/pi/scandir-fix.mjs"
 }

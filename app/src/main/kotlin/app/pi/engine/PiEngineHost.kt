@@ -266,6 +266,18 @@ class PiEngineHost(private val appContext: Context) {
      * looks identical to one that worked, and the difference matters to the user.
      */
     var lastAgentDirMigration: String? = null
+
+    /**
+     * Whether the `scandir(3)` fallback module reached the guest on the last boot, and why
+     * not when it did not.
+     *
+     * `ProrootCommand` injects it through `NODE_OPTIONS` **only when the file exists**, so a
+     * write that failed leaves proroot exactly as broken as before while looking like a boot
+     * that simply did not help. That is the shape this field exists to make visible — the
+     * same reason as [lastBridgeError] one screen up.
+     */
+    @Volatile
+    var lastScandirFix: String? = null
         private set
 
     /**
@@ -535,6 +547,17 @@ class PiEngineHost(private val appContext: Context) {
             //    device-bridge failure must not cost the user their agent.
             runCatching { DeviceBridgeController.start(appContext) }
                 .onFailure { lastBridgeError = it.message }
+
+            // 3b. The `scandir(3)` fallback module, which is what makes proroot usable at
+            //     all (see `PiPaths.scandirFix()`): proroot's `scandir` returns ENOENT for
+            //     the paths it rewrites, and Node's `fs.readdir*` goes through `scandir`, so
+            //     every directory listing inside pi — `ls`, extensions, skills, themes,
+            //     prompts, sessions — fails on a bound path while `bash`'s `ls` keeps
+            //     working. `ProrootCommand` injects it through `NODE_OPTIONS` **only when
+            //     this file is present**, so the write has to happen before the spawn and
+            //     its failure must be visible rather than silent: a missing module is not a
+            //     degraded proroot, it is the same broken proroot as before.
+            lastScandirFix = installScandirFix()
 
             // 4. Spawn pi inside the guest.
             val workspace = workspaceProvider()
@@ -988,6 +1011,46 @@ class PiEngineHost(private val appContext: Context) {
      *    skipped 9" and "moved 9" are very different news and look the same from the
      *    outside.
      */
+    /**
+     * Copy `assets/guest/scandir-fix.mjs` to [PiPaths.scandirFix], every boot.
+     *
+     * ## Why every boot rather than once
+     *
+     * The destination is **inside the volatile tree**: the explicit repair path
+     * (`ensureReady(rebuild = true)`) deletes the whole rootfs, and a payload re-extract
+     * replaces it. Writing it on every boot costs one small file and removes the entire
+     * class of "the module was there last time and is not now" — which would otherwise show
+     * up as proroot being mysteriously broken again after a repair, with nothing to read.
+     *
+     * ## What it returns
+     *
+     * A sentence for [lastScandirFix], or `null` on success. It is **not** fatal: without the
+     * module, proroot behaves exactly as it did before this existed, and proot never looks at
+     * it. But the failure must be readable, because "the fix silently did not get installed"
+     * and "the fix did not work" are the same screen to the user.
+     */
+    private fun installScandirFix(): String? {
+        val target = paths.scandirFix()
+        return runCatching {
+            val bytes = appContext.assets
+                .open(SCANDIR_FIX_ASSET, android.content.res.AssetManager.ACCESS_BUFFER)
+                .use { it.readBytes() }
+            target.parentFile?.mkdirs()
+            // Write-then-rename: a half-written module passed to `--import` is a Node startup
+            // failure, and a boot that dies during provisioning would otherwise leave one.
+            val staging = File(target.parentFile, "${target.name}.partial")
+            staging.writeBytes(bytes)
+            if (!staging.renameTo(target)) {
+                target.writeBytes(bytes)
+                staging.delete()
+            }
+            null
+        }.getOrElse { error ->
+            "scandir 兜底模块未能写入 ${target.absolutePath}：" +
+                "${error::class.java.simpleName}: ${error.message ?: "无消息"}"
+        }
+    }
+
     private fun migrateGuestAgentDir(): String {
         val src = File(paths.rootfs, "root/.pi/agent")
         val dst = paths.agentDir
@@ -1135,6 +1198,16 @@ class PiEngineHost(private val appContext: Context) {
 
         /** Where the packaged engine lands inside the rootfs. */
         const val ENGINE_GUEST_ROOT = "/opt/pi"
+
+        /**
+         * The `scandir(3)` fallback module, as an APK asset.
+         *
+         * `ProrootCommand.SCANDIR_FIX_GUEST_PATH` is its **guest** spelling; this is where it
+         * comes from. Kept beside [ENGINE_GUEST_ROOT] because that is also where it lands —
+         * inside the rootfs, never on a bind, so the repair does not depend on the thing it
+         * repairs.
+         */
+        const val SCANDIR_FIX_ASSET = "guest/scandir-fix.mjs"
 
         /** The npm package name pi ships as. */
         const val PI_PACKAGE = "@earendil-works/pi-coding-agent"
