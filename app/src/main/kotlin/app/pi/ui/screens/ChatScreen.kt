@@ -161,6 +161,7 @@ import app.pi.ui.render.rememberedRowHeight
 import app.pi.ui.components.PiMenu
 import app.pi.ui.components.PiMenuItem
 import app.pi.ui.components.PiMenuPlacement
+import app.pi.ui.extension.ExtensionInfoCards
 import app.pi.ui.extension.ExtensionWidgetStack
 import app.pi.ui.extension.WidgetPlacement
 import app.pi.ui.extension.windowTitleOf
@@ -2329,6 +2330,17 @@ private fun ChatBody(
                 onDismiss = { session.dismissExport() },
             )
         }
+
+        // The two non-widget extension surfaces: `setStatus` entries, and the extensions
+        // whose UI `--mode rpc` cannot carry. Both fold to one row and draw nothing when
+        // empty — the old always-on status row was deleted for being permanently *there*,
+        // not for showing status. Above the editor only: a widget's own `widgetPlacement`
+        // decides which side it goes on, these two have no placement of their own, and
+        // mounting them at both sites would draw two copies of one list.
+        ExtensionInfoCards(
+            statuses = state.extensionStatuses,
+            tuiOnly = state.tuiOnlyExtensions,
+        )
 
         ExtensionWidgetStack(
             // Remembered on the widget list, which only changes when an extension

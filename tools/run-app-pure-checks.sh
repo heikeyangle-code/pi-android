@@ -995,6 +995,7 @@ run_harness widget-payload \
   app.pi.ui.extension.WidgetPayloadCheckKt \
   "$ROOT/app/src/test/kotlin/app/pi/ui/extension/WidgetPayloadCheck.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/ui/extension/ExtensionWidgetLines.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/ui/extension/ExtensionInfoRows.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/ui/blocks/ToolOutputParse.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/ui/blocks/ToolCallPart.kt" \
   "$ROOT/rpc/src/main/kotlin/app/pi/rpc/PiJson.kt" \

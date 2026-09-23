@@ -194,6 +194,20 @@ fun main() {
     widgetCheck("a card with a failed job takes its colour", widgetCardTone(listOf(mixed)), WidgetTone.Error)
     widgetCheck("a warning is weaker than an error", widgetCardTone(listOf(summary(snapshot(run("x", "h", "paused", 1, 1))), mixed)), WidgetTone.Error)
 
+    // ------------------------------------------------- the two non-widget surfaces
+    // pi's `sanitizeStatusText` (`footer.ts:13-19`). A status is an arbitrary string, and
+    // without this one embedded newline turns the card's single row into two.
+    widgetCheck("a status is sanitised the way pi sanitises it", sanitizeStatusText("a\nb\tc  d \r\n"), "a b c d")
+    widgetCheck("and trimmed", sanitizeStatusText("  x  "), "x")
+    // pi's only ordering rule for statuses: by key, alphabetically (`footer.ts:235-237`).
+    widgetCheck(
+        "statuses are ordered by key, as pi orders them",
+        statusRows(listOf("zeta" to "z", "alpha" to "a")).map { it.key },
+        listOf("alpha", "zeta"),
+    )
+    widgetCheck("an entry that sanitises to nothing draws no row", statusRows(listOf("k" to "  \n ")).size, 0)
+    widgetCheck("a status keeps the extension's own text", statusRows(listOf("k" to "待办 3/5")).first().text, "待办 3/5")
+
     // ------------------------------------------------------------------ the invariants
     val everyShape = listOf(
         "hello",
