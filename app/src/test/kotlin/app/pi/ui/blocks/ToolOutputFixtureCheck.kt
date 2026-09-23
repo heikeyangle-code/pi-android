@@ -107,20 +107,20 @@ fun main() {
     checkCase(
         "bash-plain",
         "nothing to strip (no truncation footer)",
-        ToolOutputParse.stripFullOutputFooter(content("bash-plain"), null),
+        stripFullOutputFooter(content("bash-plain"), null),
         content("bash-plain"),
     )
     // A non-zero exit THROWS in pi, so the number reaches the app only as this sentence.
     checkCase("bash-exit-3", "exitCode", ToolOutputParse.shellExitCode(null, content("bash-exit-3")), 3)
     checkCase("bash-no-output", "body", content("bash-no-output"), "(no output)")
 
-    val truncated = ToolOutputParse.truncationOf(details("bash-truncated"))
+    val truncated = truncationOf(details("bash-truncated"))
     checkCase("bash-truncated", "truncatedBy", truncated?.truncatedBy, "lines")
     checkCase("bash-truncated", "outputLines", truncated?.outputLines, 2000)
     checkCase("bash-truncated", "totalLines", truncated?.totalLines, 2500)
-    val fullPath = ToolOutputParse.fullOutputPathOf(details("bash-truncated"), content("bash-truncated"))
+    val fullPath = fullOutputPathOf(details("bash-truncated"), content("bash-truncated"))
     checkCase("bash-truncated", "fullOutputPath present", fullPath != null, true)
-    val stripped = ToolOutputParse.stripFullOutputFooter(content("bash-truncated"), fullPath)
+    val stripped = stripFullOutputFooter(content("bash-truncated"), fullPath)
     checkCase("bash-truncated", "footer removed from the body", stripped.contains("Full output:"), false)
     checkCase("bash-truncated", "body keeps pi's last line", stripped.trimEnd().endsWith("l2499"), true)
 
@@ -211,10 +211,10 @@ fun main() {
     // ------------------------------------------------------------------ write / edit
     // Neither is parsed by this file for its *body* (WriteBlock reads `args.content`), so
     // these keep the capture honest rather than testing a parser that does not exist here.
-    checkCase("write-ok", "nothing to strip", ToolOutputParse.stripFullOutputFooter(content("write-ok"), null), content("write-ok"))
+    checkCase("write-ok", "nothing to strip", stripFullOutputFooter(content("write-ok"), null), content("write-ok"))
     checkCase("write-ok", "names the file it wrote", content("write-ok").contains("written.txt"), true)
     val editDetails = details("edit-ok") as? JsonObject
-    checkCase("edit-ok", "an edit is never truncated", ToolOutputParse.truncationOf(editDetails), null)
+    checkCase("edit-ok", "an edit is never truncated", truncationOf(editDetails), null)
     checkCase("edit-ok", "details.diff is present", editDetails?.get("diff") != null, true)
     checkCase("edit-ok", "firstChangedLine", editDetails?.get("firstChangedLine")?.jsonPrimitive?.content, "2")
 
