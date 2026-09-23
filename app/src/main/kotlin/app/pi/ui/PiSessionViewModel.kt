@@ -5456,7 +5456,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      *    would be worse than stale — pi is *blocked* on that answer
      *    (`modes/rpc-mode.ts:254-271`), so clearing it would wedge the engine.
      *  - `exported`, which is already handled just below.
-     */
+     *
      * @param brandNew the session was created **in this engine, in place**: the
      *   `new_session` / fork / clone paths, which rebind without emitting an event. They are
      *   also exactly the paths where [meta] may still name the session the user just left,
