@@ -123,9 +123,6 @@ object DurableLayout {
     /** [ROOTFS_RELATIVE] 在 [runtime] 下解析出的那个目录。 */
     fun rootfsOf(runtime: File): File = File(runtime, ROOTFS_RELATIVE)
 
-    /** `GuestWorkspacePath` 的基底：`<rootfs>/workspace`。 */
-    fun workspaceBaseOf(runtime: File): File = File(rootfsOf(runtime), WORKSPACE_BASE_IN_ROOTFS)
-
     /** 三个耐久目录，顺序固定，便于报告逐行打印。 */
     fun durableDirs(home: File, runtime: File): List<File> {
         val rootfs = rootfsOf(runtime)

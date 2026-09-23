@@ -89,13 +89,11 @@ object GuestRecipe {
     //
     // The property that separates a broken bind from a working one is the bind's **host
     // source**, not the `-b` flag. `binds` below sources `/sdcard` from
-    // `/storage/emulated/0` and `readdirSync` on it succeeds on the same device; the four
-    // binds whose host source is `<files>/…` (this one, `PiPaths.shm`, `PiPaths.agentDir`
-    // and the workspace) are the ones that fail. So the fix is to stop naming an
-    // app-private directory here and let `/tmp` resolve **inside the rootfs**, which is
-    // where a container's `/tmp` belongs and what the reference implementation does —
-    // `DSH-APP/DSHA` `runtime/ContainerRuntime.java` binds no user path at all, and its
-    // `/tmp` is an ordinary rootfs directory.
+    // `/storage/emulated/0` and `readdirSync` on it succeeds on the same device; the binds
+    // whose host source was `<files>/…` are the ones that failed — and as of 2026-09-23
+    // **there are none left**: `/tmp` stopped being a bind here, pi's agent dir and the
+    // workspace moved into the rootfs, and `PiPaths.shm` (the one below) sources from
+    // `<rootfs>/dev-shm`. Every remaining entry is a system path or shared storage.
     //
     // `TMPDIR` in [environment] is unchanged (`/tmp`): the app reaches a guest temporary
     // file by prefixing the rootfs ([app.pi.bridge.GuestPathMapping]), not through a bind.
@@ -144,10 +142,9 @@ object GuestRecipe {
      * Why it is safe to cache for the life of the process: the canonical spelling of a path
      * depends only on the symlink structure *along* that path, and every path this object is
      * asked about is either a system mount point (`/dev`, `/proc`, `/sys`, `/system`, `/apex`,
-     * `/storage/emulated/0`) or an app-owned directory that the app itself creates before it is
-     * bound (`PiPaths.tmp`, `PiPaths.shm`, `PiPaths.agentDir`, the workspace). None of those is
-     * re-linked while the app process lives; shipping a different layout means an install,
-     * which replaces the process.
+     * `/storage/emulated/0`) or a directory the app itself creates ([PiPaths.shm], the
+     * terminal's workspace bind). None of those is re-linked while the app process lives;
+     * shipping a different layout means an install, which replaces the process.
      *
      * Why it must exist: without it every guest spawn pays one `canonicalPath` per bind —
      * an engine turn spawns several guests, and each `canonicalPath` is a chain of `readlink`/

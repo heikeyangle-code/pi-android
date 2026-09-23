@@ -1117,12 +1117,16 @@ class RuntimeProvisioner(
         // the engine and package commands bind the durable dir over the guest's
         // `/root/.pi/agent` and the terminal does not, so `agentBinDir` is the copy
         // with the bind and `rootfsAgentBinDir` is the copy without it.
-        for (dir in listOf(paths.agentBinDir(), paths.rootfsAgentBinDir())) {
-            dir.mkdirs()
-            val dest = File(dir, binaryName)
-            binary.copyTo(dest, overwrite = true)
-            dest.setExecutable(true, false)
-        }
+        //
+        // 2026-09-23: there is only **one** directory now — the agent dir moved into the
+        // rootfs, the bind went away, and `rootfsAgentBinDir()` is defined as
+        // `agentBinDir()`. The loop below therefore had two identical iterations; it has
+        // one, and this comment stays so the *reason* it used to be two is not lost.
+        val dir = paths.agentBinDir()
+        dir.mkdirs()
+        val dest = File(dir, binaryName)
+        binary.copyTo(dest, overwrite = true)
+        dest.setExecutable(true, false)
         deleteTreeInsideVolatile(staging, "$binaryName 暂存目录")
         publishTool(binaryName)
     }
@@ -1185,15 +1189,13 @@ class RuntimeProvisioner(
      * The symlink **must** name the guest path, not a host path — see [guestSymlink].
      */
     private fun publishTool(binaryName: String) {
-        val copies = listOf(File(paths.agentBinDir(), binaryName), File(paths.rootfsAgentBinDir(), binaryName))
-        val source = copies.firstOrNull { it.isFile } ?: return
-        copies.forEach { target ->
-            if (!target.isFile) {
-                target.parentFile?.mkdirs()
-                runCatching { source.copyTo(target, overwrite = false) }
-            }
-            if (target.isFile) target.setExecutable(true, false)
-        }
+        // One target, not two identical ones: `rootfsAgentBinDir()` is `agentBinDir()`
+        // since the agent dir moved into the rootfs (2026-09-23). `source` and `target`
+        // being the same file is exactly why the old two-copy loop could never copy
+        // anything here — this is the same behaviour with the redundancy removed.
+        val target = File(paths.agentBinDir(), binaryName)
+        if (!target.isFile) return
+        target.setExecutable(true, false)
         guestSymlink("$GUEST_LOCAL_BIN/$binaryName", "$GUEST_AGENT_BIN/$binaryName")
     }
 

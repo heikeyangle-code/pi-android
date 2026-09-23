@@ -179,14 +179,21 @@ class PiPaths(private val filesDir: File, private val nativeLibDir: File) {
      * writable: Android's own `/dev` ships no `shm`, and `-b /dev` (which both runtimes
      * apply) would otherwise leave the guest without one — POSIX shared memory
      * (`shm_open`) then fails for whatever needs it (Chromium/Playwright, some native
-     * addons). The reference implementation binds `<app cache>/shm:/dev/shm`; this is the
-     * same bind with a directory inside the volatile tree, so `wipe()` cleans it and no
-     * stale segment outlives the runtime tree.
+     * addons).
+     *
+     * **Inside the rootfs** (`<rootfs>/dev-shm`), not under `<files>/pi/runtime` as it was
+     * until 2026-09-23. An app-private bind source is exactly what proroot's
+     * `scandir`/`mkstemp`/`mkdtemp` fail on (`docs/proroot-scandir-defect.md`); nothing
+     * needs those calls here today, but leaving one app-private bind in the table would
+     * make "this app binds no app-private directory" false for every reader of
+     * [GuestRecipe.binds] and every future probe. It is scratch either way: `wipe()`
+     * deletes it with the tree and this getter recreates it on the next launch, so no
+     * stale segment outlives a rebuild.
      *
      * Created by the getter, like [tmp]: [GuestRecipe.binds] reads it on every launch and
      * neither runtime binds a host path that does not exist.
      */
-    val shm: File get() = File(runtime, "shm").also { it.mkdirs() }
+    val shm: File get() = File(rootfs, "dev-shm").also { it.mkdirs() }
 
     /**
      * The store proot's `--link2symlink` keeps its intermediates in, and it **must

@@ -5,6 +5,14 @@
 > 全部恢复，其余 11 条读数逐条不变）。
 > 取代 `proroot-bind-drop-defect.md`（已删：那一版把现象读成"绑定被静默丢掉"，根因是错的）。
 > 上游：[coderredlab/proroot#25](https://github.com/coderredlab/proroot/issues/25)。
+>
+> **2026-09-23 后续（读 §3 之前先看这条）**：§3.1 那 5 条失败路径里，**有 3 条已经不是绑定
+> 了** —— `/tmp` 的绑定被删掉，pi 的 agent 目录与工作区搬进了 rootfs（`PiPaths.agentDir` /
+> `PiPaths.workspaces`，各自的 KDoc 有理由）。所以现在全表**唯一**的应用私有绑定是
+> `<rootfs>/dev-shm → /dev/shm`，而没人列它。本文档剩下的价值是两件：**根因**（坏的是
+> proroot 自己导出的 `scandir` 实现，不是"漏 hook"），以及 `scandir-fix.mjs` 这个兜底
+> **为什么还留着** —— 它是"先调原实现、失败才接管"，`scandir` 正常时是纯 no-op，而终端的
+> `/workspace` 绑定仍在，删它得先上机验。
 
 ---
 
