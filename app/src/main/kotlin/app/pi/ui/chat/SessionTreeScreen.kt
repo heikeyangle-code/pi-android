@@ -54,6 +54,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import app.pi.rpc.PiMessage
 import app.pi.rpc.SessionEntry
+import app.pi.rpc.SessionEntrySummary
 import app.pi.rpc.SessionTreeNode
 import app.pi.ui.PiSeg
 import app.pi.ui.PiSessionViewModel
@@ -768,9 +769,17 @@ enum class TreeFilter(val label: String) {
  *    it stopped with an error/abort — the latter needs `stopReason`, which the
  *    wire model does carry (`PiMessage.Assistant.stopReason`);
  *  - `default` hides the settings/bookkeeping entries (labels, custom, model and
- *    thinking changes, session info);
+ *    thinking changes, session info, and `context_edit`);
  *  - `no-tools` additionally hides tool results, `user-only` keeps user messages,
  *    `labeled-only` keeps labelled nodes, `all` keeps everything.
+ *
+ * The settings/bookkeeping set is pi's own (`tree-selector.js:259-262`) and it has two
+ * halves here: the types this app models are matched by class, and the ones that arrive as
+ * [SessionEntry.Unknown] — `context_edit` today — by type name through
+ * [SessionEntrySummary.isSettingsEntry]. Without the second half, an unmodelled entry is
+ * always visible while pi hides it by default, which is how `context_edit` would have
+ * shown up as a permanent extra row in the default filter. A type pi adds later lands on
+ * the visible side until someone adds it to that set — the direction a reader can notice.
  */
 private fun passesTreeFilter(row: TreeRow, leafId: String?, mode: TreeFilter): Boolean {
     val entry = row.node.entry
@@ -787,7 +796,8 @@ private fun passesTreeFilter(row: TreeRow, leafId: String?, mode: TreeFilter): B
         entry is SessionEntry.Custom ||
         entry is SessionEntry.ModelChange ||
         entry is SessionEntry.ThinkingLevelChange ||
-        entry is SessionEntry.SessionInfo
+        entry is SessionEntry.SessionInfo ||
+        (entry is SessionEntry.Unknown && SessionEntrySummary.isSettingsEntry(entry.type))
     return when (mode) {
         TreeFilter.UserOnly -> entry is SessionEntry.Message && entry.message.role == "user"
         TreeFilter.NoTools ->
@@ -1125,7 +1135,11 @@ private fun entryDetail(entry: SessionEntry): String = when (entry) {
     is SessionEntry.CustomMessage -> "customType=${entry.customType.orEmpty()} display=${entry.display}"
     // The extension's own state, verbatim: this is the audit's §5.14 item 1.
     is SessionEntry.Custom -> "customType=${entry.customType.orEmpty()}\n${entry.data?.toString().orEmpty()}"
-    is SessionEntry.Unknown -> entry.raw.toString()
+    // An entry type this build does not model (`context_edit` today, whatever pi adds
+    // next): [SessionEntrySummary] gives `context_edit` pi's own `omit`/`replace`
+    // sentence and every other type a readable `key=value` list of its fields — never
+    // `raw.toString()`, which is what this branch used to print.
+    is SessionEntry.Unknown -> SessionEntrySummary.unknownDetail(entry.type, entry.raw)
 }
 
 /**

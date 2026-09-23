@@ -17,6 +17,12 @@
 
 ## 现状清单（2026-09-13 审计）
 
+> **最近更新（2026-09-23，pi 0.87.1 审计）**：把"App 自己维护、pi 问不到"的五张表全部钉进了
+> `tools/pi-contract.mjs` 的 **`tables` 组**（设置键、内置 slash 命令、资源类型、工具名、主题令牌），
+> 并把"pi 有而 App 没暴露"的设置键从构建日志里的一行搬成了下面那张可排期的表。**那一组第一天就
+> 抓到真漏洞**：`/bug`（pi 0.86.1 新增）两张 slash 表都没覆盖。表格内容见"App 维护、且**问不到**的表"。
+> 上面 2026-09-13 那行日期标的是那次审计的时间，不动。
+
 ### 已经是"问 pi / 看 pi 的地方"
 
 | 界面 | 来源 |
@@ -66,3 +72,23 @@
 4. **写出去的东西不要覆盖 pi 自己的**：这也是本次审计抓到的一处真问题——
    `PiCredentialService.save` 原本把 App 的显示名（`Google AI Studio`）写进 `models.json` 的
    provider 块，覆盖了 pi 自己的 `Google`。现在只对 pi 没有的厂商写 `name`。
+
+## 附：pi 有、App 没有暴露的设置键（24 个）
+
+`tools/pi-contract.mjs` 的 `tables` 组把 38 个 `pi.*` 键逐个对着 `Settings` 接口断言，**反方向只打印**
+——因为"pi 有而 App 没给一行"是决策，不是缺陷。但打印只活在构建日志里，所以在这里排一次队：
+**四类**，每一类要不要动都不需要这一轮下结论，只需要它可被排期。
+
+> 判据来源：pi 0.87.1 的 `docs/settings.md`（每行一句官方说明）与 `core/settings-manager.ts` 的
+> `Settings` 接口。App 侧的 `PiSettingsRegistry.kt` 是那张表的另一端。
+
+| 类 | 键 | 一句话判断 |
+|---|---|---|
+| **A. 终端交互界面专属**（App 没有那个界面，设了也不会有可见效果） | `tuiMode`、`fullscreenScrollbar`、`fullscreenCopyOnSelect`、`fullscreenExitOutput`、`outputPad`、`editorPaddingX`、`autocompleteMaxVisible`、`doubleEscapeAction`、`externalEditor`、`showHardwareCursor`、`quietStartup`、`collapseChangelog`、`treeFilterMode`、`terminal`（`showImages`/`imageWidthCells`/`clearOnShrink`/`showTerminalProgress`/`hyperlinks`/`images`） | **不动**。这些键描述的是 pi 自己的 TUI（`tui.ts` / `interactive-mode.ts`）；本 App 用 `PtyLauncher` 把原版 TUI 跑在终端页里，那个 TUI 直接读 `settings.json`，用户要调就去终端页调。给它们做 Android 行只会多出"设了看不出变化"的开关（`docs/settings-review.md` 的 §I11 形状） |
+| **B. 资源**追加**列表**（`extensions`/`skills`/`prompts`/`themes`） | `extensions`、`skills`、`prompts`、`themes` | **可排期，但要先想清语义**。这四个是 pi 的"额外路径"列表，App 现在**只读目录**（`PiResourceDiscovery.kt` 按 pi 的发现规则看 `extensions/`、`skills/`、`prompts/`、`themes/`），不写 settings 里的追加项。要暴露就得同时回答"相对路径怎么算""工作区与全局哪个根"，属于新界面而不是新键 |
+| **C. 记账 / 内部状态**（pi 自己写、用户基本不该手改） | `lastChangelogVersion`、`trackingId`、`warnings`（`anthropicExtraUsage`）、`enableAnalytics` | **不动**，除非用户能看见它的效果。`lastChangelogVersion`/`trackingId` 是 pi 的状态簿记；`enableAnalytics` 是实验性首启的埋点开关；`warnings.anthropicExtraUsage` 只影响 pi 的一条提示语 |
+| **D. 渲染选项** | `markdown`（`codeBlockIndent`、`mermaid`） | **排在 B 之后**：App 有自己的 markdown 渲染栈（`ui/render/PiMarkdownTheme.kt`、`PiCodeHighlight.kt`），pi 的这两个键是它自己的渲染器用的，改了只影响终端页 |
+| **E. 已用别的手段覆盖** | `sessionDir` | **不用暴露**：App 一直显式传 `--session-dir`（并设 `PI_CODING_AGENT_SESSION_DIR`），优先级高于这个设置键——见 `PiSettingsRegistry.kt:863-864` 的注释 |
+
+**不改这一节不需要任何理由，改它需要一个用户能看见的场景。** 下一轮 bump 时 `tables` 组会把新出现的
+"pi 有而 App 没有"的键继续打印出来；**新键应该被加进这张表**，而不是留在日志里。

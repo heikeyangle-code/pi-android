@@ -343,6 +343,16 @@ jobs:
           key: pi-contract-${{ hashFiles('tools/fetch-runtime.mjs') }}
       - name: Assert the app's assumptions about the pinned engine
         run: node tools/pi-contract.mjs
+      # The other half of the tool-output check. The `pure-checks` job asserts the App still
+      # parses the committed fixture; this asserts the fixture is still what the pinned
+      # engine produces, by running pi's own tool implementations against a fixed workspace
+      # and diffing the capture. It runs here rather than as its own job because the engine
+      # this step needs is exactly the one the step above just installed (`--pi` points at
+      # it), so it adds no download and no `npm install` of its own. Without this half a
+      # stale capture would keep passing forever: the fixture and the parser would agree
+      # with each other and with nothing pi actually emits.
+      - name: Assert the committed tool fixtures match the pinned engine
+        run: node tools/collect-tool-fixtures.mjs --check --pi build/pi-contract/node_modules/@earendil-works/pi-coding-agent
 
   # Kotlin block comments NEST, so a path written as `ui/` followed by two asterisks
   # inside a KDoc opens a second comment; the KDoc's closing delimiter closes that one,

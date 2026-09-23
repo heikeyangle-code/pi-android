@@ -477,6 +477,33 @@ run_harness session-replay-cost \
   "$ROOT/rpc/src/main/kotlin/app/pi/rpc/SessionEntries.kt" \
   "$ROOT/rpc/src/main/kotlin/app/pi/rpc/SkillBlock.kt"
 
+# app.pi.rpc: the session tree's text for entry types **this build does not model**.
+# `SessionEntries.kt` keeps them as `SessionEntry.Unknown` with their raw JSON (data must not
+# be lost), and `ui/chat/SessionTreeScreen.kt` used to render that as `raw.toString()` — the
+# treatment every *future* pi entry type would inherit, not a one-off for `context_edit`.
+# `SessionEntrySummary` is the replacement (pi's own `[context omit|replace: <id>]` sentence
+# for `context_edit` per `tree-selector.js:486`, a `key=value` field list for anything else),
+# and it lives in `:rpc` rather than in the Compose file so this harness can compile it — the
+# screen is not compilable here. What the screen itself contributes (calling it, and hiding
+# unmodelled settings/bookkeeping types under the default filter, `tree-selector.js:259-262`)
+# is verified only by the Android build; the harness pins the half that decides the text.
+run_harness session-entry-detail \
+  app.pi.rpc.SessionEntryDetailCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/rpc/SessionEntryDetailCheck.kt" \
+  "$ROOT/rpc/src/main/kotlin/app/pi/rpc/SessionEntrySummary.kt" \
+  "$ROOT/rpc/src/main/kotlin/app/pi/rpc/PiJson.kt" \
+  "$ROOT/rpc/src/main/kotlin/app/pi/rpc/Jsonl.kt" \
+  "$ROOT/rpc/src/main/kotlin/app/pi/rpc/internal/Json.kt" \
+  "$ROOT/rpc/src/main/kotlin/app/pi/rpc/Transcript.kt" \
+  "$ROOT/rpc/src/main/kotlin/app/pi/rpc/Events.kt" \
+  "$ROOT/rpc/src/main/kotlin/app/pi/rpc/Messages.kt" \
+  "$ROOT/rpc/src/main/kotlin/app/pi/rpc/Ansi.kt" \
+  "$ROOT/rpc/src/main/kotlin/app/pi/rpc/ExtensionErrorText.kt" \
+  "$ROOT/rpc/src/main/kotlin/app/pi/rpc/Responses.kt" \
+  "$ROOT/rpc/src/main/kotlin/app/pi/rpc/Commands.kt" \
+  "$ROOT/rpc/src/main/kotlin/app/pi/rpc/SessionEntries.kt" \
+  "$ROOT/rpc/src/main/kotlin/app/pi/rpc/SkillBlock.kt"
+
 # app.pi.ui.screens: 输入区附件的**体积预算**，也是「这张图能不能加进这条消息」的唯一判定处。
 # 为什么它必须在这里：解码/缩放/编码要 `Bitmap`，本机编译不了 `ChatScreen`（Compose），而真正
 # 决定一张图能不能发出去的是算术 —— pi 自己的上限（最长边 2000、base64 4.5 MB、质量阶梯
@@ -732,6 +759,22 @@ run_harness engine-exit-cause \
 run_harness tool-output-parse \
   app.pi.ui.blocks.ToolOutputParseCheckKt \
   "$ROOT/app/src/test/kotlin/app/pi/ui/blocks/ToolOutputParseCheck.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/ui/blocks/ToolOutputParse.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/ui/blocks/ToolCallPart.kt"
+
+# app.pi.ui.blocks: the same parser, against the engine's **own output** instead of against
+# inputs we wrote. `ToolOutputParseCheck` above is good at edge cases and blind to this
+# question: a parser matched to our idea of pi's wording keeps passing after the wording
+# moves. The fixture it reads here is captured by `tools/collect-tool-fixtures.mjs` running
+# pi's real tool implementations (read/grep/find/ls/shell/write/edit) against a fixed
+# workspace, and the `contract` job re-runs that capture with `--check`, so this harness and
+# that job are two halves of one claim: the committed bytes are still what the pinned engine
+# produces (there), and the App still parses them (here). Either half alone can pass while
+# the app is broken. The fixture path is found through `pi.repo.root`, and a missing fixture
+# fails hard (exit 2) rather than skipping.
+run_harness tool-output-fixtures \
+  app.pi.ui.blocks.ToolOutputFixtureCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/ui/blocks/ToolOutputFixtureCheck.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/ui/blocks/ToolOutputParse.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/ui/blocks/ToolCallPart.kt"
 
