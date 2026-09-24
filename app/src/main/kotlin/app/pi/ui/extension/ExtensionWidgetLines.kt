@@ -313,7 +313,7 @@ private fun subagentSummary(json: String): WidgetRow? {
             add(WidgetSpan("$count ${look.word}", look.tone))
         }
         if (isEmpty()) add(WidgetSpan("无活动任务", WidgetTone.Muted))
-        if (root.truncated()) add(WidgetSpan("（已截断）", WidgetTone.Dim))
+        root.omittedLabel()?.let { add(WidgetSpan(it, WidgetTone.Dim)) }
     }
 
     val details = runs.take(SUBAGENT_DETAIL_RUNS).flatMap { run ->
@@ -326,8 +326,13 @@ private fun subagentSummary(json: String): WidgetRow? {
         // +1 more`) names nothing a reader wants: its tasks are right below it with their own
         // names. The count is the useful fact for that row.
         val jobName = if (children.isEmpty()) run.text("label") else "${children.size} 个子任务"
+        // `kind` is `subagent` or `workflow`; one panel can hold both, and without the word
+        // they are indistinguishable. `id` is the handle the extension's own inspect command
+        // takes (`/subagents-inspect-rpc <requestId> <asyncId>`), so the card prints a short
+        // form of it — that is the whole interaction this surface has.
+        val jobKind = if (run.text("kind") == "workflow") "工作流" else null
         buildList {
-            add(nodeRow(run, name = jobName))
+            add(nodeRow(run, name = jobName, kindWord = jobKind, ref = run.text("id")?.take(8)))
             shown.forEachIndexed { index, child ->
                 val last = index == shown.lastIndex && children.size <= SUBAGENT_DETAIL_CHILDREN
                 add(
@@ -371,7 +376,13 @@ private fun leafStates(node: JsonObject, depth: Int = 0): List<String> {
 }
 
 /** One job's or one task's row: state glyph and word, name, then what it is doing now. */
-private fun nodeRow(node: JsonObject, branch: String = "", name: String? = null): List<WidgetSpan> {
+private fun nodeRow(
+    node: JsonObject,
+    branch: String = "",
+    name: String? = null,
+    kindWord: String? = null,
+    ref: String? = null,
+): List<WidgetSpan> {
     val look = look(node.text("state"))
     val activity = node["activity"] as? JsonObject
     // What it is doing *right now*, in the extension's own order (`widgetActivity`):
@@ -415,12 +426,18 @@ private fun nodeRow(node: JsonObject, branch: String = "", name: String? = null)
         // `06 §4`: the word always travels with the glyph, so the state survives colour
         // blindness — and it is the extension's own word for it (`widgetStepStatus`).
         add(WidgetSpan(look.word, look.tone))
+        if (kindWord != null) {
+            add(WidgetSpan(" · $kindWord", WidgetTone.Dim))
+        }
         if (name != null) {
             add(WidgetSpan("· ", WidgetTone.Dim))
             // The name is the one run of this line a reader scans for: the extension bolds it
             // (`themeBold` in its own renderer) and so does the card, which is why it is `Text`
             // and not `Muted`.
             add(WidgetSpan(name, WidgetTone.Text))
+        }
+        if (ref != null) {
+            add(WidgetSpan(" · $ref", WidgetTone.Dim))
         }
         if (doing.isNotEmpty()) {
             add(WidgetSpan(" · ", WidgetTone.Dim))
@@ -432,15 +449,23 @@ private fun nodeRow(node: JsonObject, branch: String = "", name: String? = null)
 private fun look(state: String?): StateLook = SUBAGENT_STATES[state] ?: SUBAGENT_STATE_FALLBACK
 
 /**
- * Did the sender say it dropped anything? `omitted` is part of the snapshot's own
- * contract (`runs`, `children`, `byteLimitExceeded`), so a summary that silently
- * ignored it would report a count the user can see is wrong.
+ * What the sender says it dropped, in **its own numbers**.
+ *
+ * `omitted` is part of the snapshot's contract (`runs`, `children`,
+ * `byteLimitExceeded`), and a sentence that only said "已截断" threw away the count the
+ * extension had just reported — the user could see four tasks on screen and be told
+ * nothing about the fifth. The byte limit is a different statement (nothing was counted,
+ * the payload was cut), so it gets its own words.
  */
-private fun JsonObject.truncated(): Boolean {
-    val omitted = this["omitted"] as? JsonObject ?: return false
-    if (omitted.text("byteLimitExceeded") == "true") return true
-    return (omitted.text("runs")?.toIntOrNull() ?: 0) > 0 ||
-        (omitted.text("children")?.toIntOrNull() ?: 0) > 0
+private fun JsonObject.omittedLabel(): String? {
+    val omitted = this["omitted"] as? JsonObject ?: return null
+    val dropped = (omitted.text("runs")?.toIntOrNull() ?: 0) +
+        (omitted.text("children")?.toIntOrNull() ?: 0)
+    return when {
+        dropped > 0 -> "（另有 $dropped 个未列出）"
+        omitted.text("byteLimitExceeded") == "true" -> "（超出字节上限）"
+        else -> null
+    }
 }
 
 /** A count that is worth printing: `0 轮` is noise. */

@@ -231,6 +231,36 @@ fun main() {
     widgetCheck("each task shows its own state word", listOf(scripted.details[1][2].text, scripted.details[3][2].text, scripted.details[4][2].text), listOf("运行中", "完成", "失败"))
     widgetCheck("and its own readings", scripted.details[1].last().text, "web_search · 3 轮 · 7 工具")
     widgetCheck("a job with tasks is named by its task count, not by a repeated agent list", scripted.details[0][4].text, "4 个子任务")
+    // The async id, in the short form the inspect command takes.
+    checkTrue(
+        "the job row carries the id the inspect command wants",
+        scripted.details[0].any { it.text == " · f456576c" },
+        "row=${textOf(scripted.details[0])}",
+    )
+    // `omitted` is the sender's own count, and the card must repeat it rather than saying
+    // only that something was cut.
+    checkTrue(
+        "a payload the sender trimmed names how many it dropped",
+        textOf(
+            summary(
+                """{"kind":"pi-subagents.async-status-snapshot","version":1,"runs":[],
+                    "omitted":{"runs":2,"children":3,"byteLimitExceeded":false}}""".trimIndent().replace("\n", ""),
+            ).headline,
+        ).contains("另有 5 个未列出"),
+    )
+    checkTrue(
+        "a payload cut by the byte limit says that instead",
+        textOf(
+            summary(
+                """{"kind":"pi-subagents.async-status-snapshot","version":1,"runs":[],
+                    "omitted":{"runs":0,"children":0,"byteLimitExceeded":true}}""".trimIndent().replace("\n", ""),
+            ).headline,
+        ).contains("超出字节上限"),
+    )
+    checkTrue(
+        "a payload that dropped nothing says nothing",
+        !textOf(summary(fixtureLine("more-than-the-panel-draws")).headline).contains("未列出"),
+    )
     // The durations are pi's own spellings, derived from the payload the extension re-sends — the
     // host adds no clock of its own (`widgetActivity`, `formatDuration`).
     widgetCheck(
