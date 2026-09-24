@@ -25,14 +25,6 @@ val TUI_ONLY_MARKERS: List<Pair<String, String>> = listOf(
     "setEditorComponent()" to ".setEditorComponent(",
     "addAutocompleteProvider()" to ".addAutocompleteProvider(",
     "onTerminalInput()" to ".onTerminalInput(",
-    // **Not detectable here: a function passed as a widget.** `setWidget(key, (tui, theme) => …)`
-    // is dropped before the wire too (`rpc-mode.ts:195-208` only forwards arrays), so those
-    // extensions get no panel and no explanation. A plain substring scan cannot tell that apart
-    // from `setWidget("plan-todos", lines)`, which is the *common* case (6 of the 7 widget
-    // senders in the ecosystem send text) — a `setWidget(` needle would list nearly every widget
-    // extension as unsupported, which is worse than the silence it was meant to fix. Detecting
-    // it needs a real check on the argument (`=>`, `function`, or an identifier bound to one),
-    // which is the next step if it ever bites.
     "mode === \"tui\"" to "mode === \"tui\"",
     "mode === 'tui'" to "mode === 'tui'",
 )
@@ -61,4 +53,25 @@ data class TuiOnlyExtension(
  * `custom` does not trip it.
  */
 fun tuiOnlyMarkers(source: String): List<String> =
-    TUI_ONLY_MARKERS.filter { (_, needle) -> source.contains(needle) }.map { it.first }
+    TUI_ONLY_MARKERS.filter { (_, needle) -> source.contains(needle) }.map { it.first } +
+        if (WIDGET_FACTORY.containsMatchIn(source)) listOf("widget factory") else emptyList()
+
+/**
+ * `setWidget(key, <function>)` — a component factory passed as the widget's content.
+ *
+ * pi drops it before the wire (`rpc-mode.ts:195-208` only forwards an array or `undefined`), so
+ * the extension gets **no panel and no error** — the same silence as `custom()`, from a call
+ * that does not look like one. `pi-neuralwatt-provider` and `pi-subagents`' FleetView do it.
+ *
+ * A regex and not a substring, and the difference matters: `"setWidget("` alone matches the
+ * *common* case — `setWidget("plan-todos", lines)`, 6 of the 7 text-widget senders in the
+ * ecosystem — and listing nearly every widget extension as unsupported is worse than the
+ * silence it was meant to explain. What is left is the second argument's shape.
+ *
+ * Known limit: a bare identifier bound to a factory elsewhere (`record.fallbackFactory`, which
+ * `pi-extension-utils` does) is not matched. Catching that needs the argument's binding, not
+ * its text, and a false positive costs a wrong sentence while this miss costs a missing one.
+ */
+private val WIDGET_FACTORY = Regex(
+    """setWidget\(\s*[^,)]+,\s*(\([^)]*\)\s*=>|async\s*\(|function\b|[A-Za-z_$][\w$]*Factory\b|\(\s*_?\w*\s*:)""",
+)

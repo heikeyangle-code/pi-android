@@ -1,6 +1,10 @@
 package app.pi.ui.extension
 
+import java.io.File
 import kotlin.system.exitProcess
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 
 // A bare-JVM harness for the widget-line rules. Registered in
 // `tools/run-app-pure-checks.sh` as `widget-payload`.
@@ -33,6 +37,27 @@ import kotlin.system.exitProcess
 // What this deliberately does not check: the rendering itself (Compose, not compiled here) and
 // the two prefix registrations' *politics* — only that an unregistered prefix folds instead of
 // being drawn, so a future extension gets the fold for free.
+
+/**
+ * The payload fixtures, captured from the extension's **own** projection
+ * (`tools/collect-subagent-fixtures.mjs`).
+ *
+ * The hand-written JSON this file used to carry is why a four-agent run rendered as
+ * "1 运行中" with the tasks missing: an invented shape agrees with the parser that reads it.
+ * These files are what `pi-subagents@0.71.0` actually emits, and `--check` re-derives them.
+ */
+private val FIXTURE_DIR: File = File(System.getProperty("pi.repo.root") ?: ".")
+    .resolve("app/src/test/resources/pi-subagent-fixtures")
+
+private fun fixtureLine(id: String): String {
+    val file = File(FIXTURE_DIR, "$id.json")
+    if (!file.isFile) {
+        println("widget-payload: CANNOT RUN — missing ${file.path}")
+        println("  run `node tools/collect-subagent-fixtures.mjs --pkg <pi-subagents> --write`")
+        exitProcess(2)
+    }
+    return Json.parseToJsonElement(file.readText()).jsonObject["line"]!!.jsonPrimitive.content
+}
 
 private var widgetFailures = 0
 
@@ -194,30 +219,10 @@ fun main() {
     // (`researcher, researcher, researcher, +1 more`). Counting `runs` therefore drew
     // "1 运行中" for a run of four agents — the card contradicted the sentence above it, and
     // this is the device case that produced the report. Leaves are what the user counts.
-    // **The real payload.** Produced by running the extension's own projection
-    // (`projectAsyncStatusSnapshot`, pi-subagents 0.71.0) over a scripted four-task job — not
-    // hand-written. Every earlier version of this test invented the shape, and an invented
-    // shape agrees with the code that reads it; that is how a four-agent run came to render as
-    // "1 运行中" with the tasks missing entirely.
-    val scripted = summary(
-        """{"kind":"pi-subagents.async-status-snapshot","version":1,"generatedAt":1790200638621,
-           "caps":{"maxRuns":20,"maxChildrenPerNode":8,"maxDepth":3,"maxStringLength":160,"maxSerializedBytes":32768},
-           "omitted":{"runs":0,"children":0,"byteLimitExceeded":false},
-           "runs":[{"id":"f456576c-1111-2222-3333-444455556666","kind":"subagent",
-             "label":"researcher, researcher, researcher, +1 more","state":"running",
-             "startedAt":1790200606123,"updatedAt":1790200638560,
-             "activity":{"state":"running","currentTool":"web_search","currentToolStartedAt":1790200630000,
-                         "turnCount":2,"toolCount":3},
-             "children":[
-               {"id":"k1","kind":"step","label":"catbox-recovery","state":"running",
-                "activity":{"state":"running","currentTool":"web_search","turnCount":3,"toolCount":7}},
-               {"id":"k2","kind":"step","label":"st-image-embed","state":"running",
-                "activity":{"state":"thinking","turnCount":2,"toolCount":5}},
-               {"id":"k3","kind":"step","label":"st-card-optim","state":"complete",
-                "activity":{"turnCount":4,"toolCount":9}},
-               {"id":"k4","kind":"step","label":"cn-community","state":"failed",
-                "activity":{"turnCount":1,"toolCount":2}}]}]}""".trimIndent().replace("\n", ""),
-    )
+    // **The real payload**, not a hand-written one: `scripted-parallel` is what the extension's
+    // own projection emits for a scripted call (one job, four tasks). Hand-written fixtures
+    // agreed with the code that read them — that is how a four-agent run stayed invisible.
+    val scripted = widgetRow(fixtureLine("scripted-parallel")) as WidgetRow.Summary
     widgetCheck("a scripted job counts its agents, not itself", textOf(scripted.headline), "2 运行中 · 1 完成 · 1 失败")
     widgetCheck("and the badge is the agent count", scripted.badge, "4")
     widgetCheck("the job row is drawn, then its tasks under it", scripted.details.size, 5)
@@ -274,6 +279,34 @@ fun main() {
     checkTrue("a widget whose lines all fit needs no affordance", !widgetNeedsDisclosure(listOf(WidgetRow.Text("short"))))
     checkTrue("a cut line earns one", widgetNeedsDisclosure(listOf(WidgetRow.Text("x".repeat(200)))))
     checkTrue("a payload always has something behind it", widgetNeedsDisclosure(listOf(widgetRow("""FOO_JSON:{"a":1}""")!!)))
+
+    // -------------------------------------------------------- every captured payload
+    // The regression net over real bytes: whatever the extension emits, the card must fold it
+    // into rows, draw no line past pi's machine-line limit, and never fall over — including the
+    // empty one and the state it never names.
+    for (id in listOf(
+        "single-agent", "scripted-parallel", "mixed-states", "more-than-the-panel-draws",
+        "workflow-with-steps", "nothing-running", "unknown-state",
+    )) {
+        val row = widgetRow(fixtureLine(id))
+        widgetCheck("$id still summarises", row is WidgetRow.Summary, true)
+        val captured = row as? WidgetRow.Summary ?: continue
+        checkTrue(
+            "$id keeps every drawn line inside pi's limit",
+            (captured.headline + captured.details.flatten()).all { it.text.length <= 501 },
+        )
+        checkTrue("$id names a tone for every span", captured.headline.isNotEmpty())
+    }
+    widgetCheck(
+        "the empty payload counts nothing and says so",
+        textOf((widgetRow(fixtureLine("nothing-running")) as WidgetRow.Summary).headline),
+        "无活动任务",
+    )
+    widgetCheck(
+        "a state the extension never names is its own error glyph",
+        (widgetRow(fixtureLine("unknown-state")) as WidgetRow.Summary).worst,
+        WidgetTone.Error,
+    )
 
     // ------------------------------------------------------------------ the invariants
     val everyShape = listOf(
