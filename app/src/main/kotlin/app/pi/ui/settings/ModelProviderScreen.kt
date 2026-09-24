@@ -579,14 +579,21 @@ private fun ImportSheet(
                 initialChecked = selected
             }
 
-            // 目录的**派生值**：官方目录有就用它（模型 + 上下文/价格/图片），没有才退回
-            // `models-store.json`。做成派生值是因为官方目录是异步读到的 —— 写成状态就会在
-            // "打开表单那一刻还没读完"时永远停在空表上，用户得切一次厂商才看得到模型。
+            // 目录的**派生值**，两个官方来源取"更新的那个"：
+            //  - `models-store.json` 是 pi 自己刷新过的缓存（RPC 启动时后台刷，含 pi.dev 的覆盖
+            //    目录，`core/remote-catalog-provider.ts` 的 `DEFAULT_CATALOG_BASE_URL`），所以
+            //    同一个 id 以它为准；
+            //  - 随包静态目录（41 份 JSON）永远在，补 store 里没有的厂商/模型。
+            // 引擎快照与我们的扫描都不进这里 —— 它们是下面 `knownById` 的后备。
+            // 做成派生值是因为两个来源都是异步读到的：写成状态就会停在"打开表单那一刻"。
             val catalog = remember(officialForPreset, storeCatalog) {
-                if (officialForPreset.isNotEmpty()) {
+                if (storeCatalog.isEmpty()) {
                     officialForPreset.map { it.toCatalogEntry() }
                 } else {
-                    storeCatalog
+                    val byId = LinkedHashMap<String, PiModelCatalog.Entry>()
+                    officialForPreset.forEach { model -> byId[model.id] = model.toCatalogEntry() }
+                    storeCatalog.forEach { entry -> byId[entry.id] = entry }
+                    byId.values.toList()
                 }
             }
 
