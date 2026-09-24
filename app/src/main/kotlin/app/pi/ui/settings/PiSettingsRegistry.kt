@@ -163,7 +163,12 @@ data class PiSearchHit(
     val breadcrumb: String get() = "$groupTitle · $section"
 }
 
-private const val G_MODEL = "model"
+/**
+ * pi 的「模型与推理」分组。**首页不再列它**（用户裁定：删掉那个分组入口）——组里的行
+ * 全部搬进了「模型与供应商」一屏；`SettingsHome` 用它把入口过滤掉，行本身留着给搜索、
+ * `groupTitle` 与就地编辑器用。
+ */
+internal const val G_MODEL = "model"
 /**
  * 本应用自己的分组（spec §6.4 的 12 组里没有它）。pi 的 settings 里没有系统提示词那两行
  * （它们是 `--system-prompt` / `--append-system-prompt` 启动参数），所以 spec 没有它们的

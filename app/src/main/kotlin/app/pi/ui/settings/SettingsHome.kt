@@ -170,11 +170,8 @@ fun SettingsHome(
             item {
                 SearchEntry(onOpenSearch)
             }
-            item {
-                CurrentModelCard(store, freshness, onOpenModels)
-            }
-            // 模型与供应商：首页最顶栏的第一扇门（用户拍板的位置）。下面的 设备 /
-            // 扩展 / 其他 / 关于 四节保持原样。
+            // 模型与供应商：首页最顶栏的第一扇门（用户拍板的位置）——取代原来那张
+            // 「当前模型」卡（卡已按用户裁定删除：同一个东西两处显示，就是"乱"）。
             if (onOpenModels != null) {
                 item {
                     PiSettingsSectionHeader("模型与供应商")
@@ -280,7 +277,11 @@ fun SettingsHome(
                     count = "${PiSettingsCatalog.settings.size} 项",
                 )
                 PiSettingsCard {
-                    PiSettingsCatalog.groups.forEachIndexed { index, group ->
+                    // 「模型与推理」这一组的入口**按用户裁定删除**：组里的行（选择与推理）
+                    // 全都搬进了顶栏的「模型与供应商」一屏，首页不再有任何一条路进那个分组屏。
+                    // 行仍留在注册表里 —— 搜索、`groupTitle` 与编辑器都还要按 key 找到它们。
+                    val listedGroups = PiSettingsCatalog.groups.filterNot { it.id == G_MODEL }
+                    listedGroups.forEachIndexed { index, group ->
                         if (index > 0) PiSettingsHairline()
                         GroupEntry(
                             group = group,
@@ -354,100 +355,6 @@ private fun SearchEntry(onClick: () -> Unit) {
                 style = PiTheme.text.meta,
                 color = PiTheme.palette.muted,
             )
-        }
-    }
-}
-
-/**
- * 当前模型快捷卡（v2：卡内左缘 2px accent 条、副行 `改这里 →`、模型 id 等宽
- * accent、思考等级 `◐` + 中文标签）。
- *
- * 卡整体可点，落到「模型与供应商」—— 默认模型的编辑器搬进了那一屏（分组屏那三行
- * 已不再渲染，见 `MODEL_SELECTION_KEYS`），所以这里不再按 key 路由到分组。
- */
-@Composable
-private fun CurrentModelCard(store: PiSettingsStore, freshness: Int, onOpenModels: (() -> Unit)?) {
-    // 三个读数都是 store 的纯函数，键里放 `freshness` 是为了「有人写过设置」之后重读一次：
-    // 少了这个键，这一卡会被 strong skipping 跳过（见 [SettingsHome] 的 `freshness`）。
-    // `store` 也是键：换工作区会换一个 store 实例。
-    val model = remember(store, freshness) { PiSettingsCatalog.summaryText(store, "defaultModel") }
-    val levelText = remember(store, freshness) {
-        PiSettingsCatalog.summaryText(store, "defaultThinkingLevel")
-    }
-    val levelWire = remember(store, freshness) {
-        PiSettingsCatalog.byKey["defaultThinkingLevel"]
-            ?.current(store)
-            ?.primitiveText()
-    }
-    val levelColor = PiTheme.palette.thinking(PiThinkingLevel.fromWire(levelWire).wire)
-    PiSettingsCard(
-        modifier = Modifier.padding(top = PiSettingsMetrics.cardPaddingLoose),
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable(enabled = onOpenModels != null) { onOpenModels?.invoke() }
-                .padding(
-                    start = PiSettingsMetrics.rowPaddingHorizontal,
-                    end = PiSettingsMetrics.rowPaddingHorizontal,
-                    top = PiSettingsMetrics.cardPadding,
-                    bottom = PiSettingsMetrics.cardPadding,
-                ),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(PiSettingsMetrics.rowGap),
-        ) {
-            Box(
-                Modifier
-                    .padding(
-                        top = PiSettingsMetrics.currentBarInset,
-                        bottom = PiSettingsMetrics.currentBarInset,
-                    )
-                    .fillMaxHeight()
-                    .width(PiSettingsMetrics.currentBarWidth)
-                    .background(PiTheme.palette.accent),
-            )
-            Column(Modifier.weight(1f)) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(PiSettingsMetrics.titleGap),
-                ) {
-                    Text(
-                        "当前模型",
-                        modifier = Modifier.weight(1f),
-                        style = PiTheme.text.meta,
-                        color = PiTheme.palette.muted,
-                    )
-                    Text(
-                        "改这里 →",
-                        style = PiTheme.text.meta,
-                        color = PiTheme.palette.muted,
-                    )
-                }
-                Row(
-                    modifier = Modifier.padding(top = PiSettingsMetrics.badgeGap),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(PiSettingsMetrics.badgeGap),
-                ) {
-                    Text(
-                        model,
-                        modifier = Modifier.weight(1f),
-                        style = PiTheme.text.mono,
-                        color = PiTheme.palette.accent,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    Text(
-                        "◐",
-                        style = PiTheme.text.meta,
-                        color = levelColor,
-                    )
-                    Text(
-                        levelText,
-                        style = PiTheme.text.meta,
-                        color = MaterialTheme.colorScheme.onSurface,
-                    )
-                }
-            }
         }
     }
 }

@@ -23,7 +23,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -58,13 +57,18 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonPrimitive
 
 /**
- * 搬进「模型与供应商」的三个 `settings.json` 选择键。
+ * 搬进「模型与供应商」的设置键：三个**选择**键（默认厂商 / 默认模型 / 循环列表）＋
+ * pi「模型与推理」分组里那几行**推理**设置。
  *
- * 分组屏用它过滤掉这三行（编辑器已经搬进来），设置栈用它把 `openSetting(key)`
- * 路由到本屏的就地编辑器 —— 两处必须是同一份名单，否则搜索点进分组屏会指向一个
- * 不存在的行，那是新的「点了没反应」。
+ * 两处用同一份名单：分组屏不再渲染它们（编辑器已经搬进来），设置栈用它把
+ * `openSetting(key)`（搜索结果、`/scoped-models` 焦点）路由到本屏的就地编辑器 ——
+ * 名单分叉就会出现"点了没反应"。
  */
-internal val MODEL_SELECTION_KEYS = setOf("defaultProvider", "defaultModel", "enabledModels")
+internal val MODEL_SELECTION_KEYS = setOf(
+    "defaultProvider", "defaultModel", "enabledModels",
+    "defaultThinkingLevel", "modelThinkingLevels", "thinkingBudgets",
+    "hideThinkingBlock", "cacheWarming", "showCacheMissNotices",
+)
 
 /**
  * 「模型与供应商」——这台设备上**官方配置文件的那几份**的编辑器，一屏装下清单、
@@ -246,7 +250,7 @@ fun ModelProviderScreen(
                     }
                 }
                 if (data.providersPendingRestart.isNotEmpty()) {
-                    item { RestartCard(data, lifecycle, coordinator) { note = it } }
+                    item { RestartCard(data, lifecycle, coordinator) { question = it } }
                 }
                 note?.let { msg -> item { Note(msg) } }
 
@@ -280,6 +284,17 @@ fun ModelProviderScreen(
                 // 重新解析循环作用域（`main.ts:788-797` 的 resolveModelScope 在 createRuntime
                 // 闭包里，闭包每会话跑一次）——不是"改完要重启"。
                 item { Note("这三个键就是 settings.json 里的选择。改完开一个新会话生效。") }
+
+                item { PiSettingsSectionHeader("推理与上下文") }
+                // pi 官方把这几行和上面三个选择键放在同一个「模型与推理」分组里；分组入口
+                // 已按用户裁定删除，编辑器整组搬进这一屏 —— 点开还是同一把
+                // `PiSettingEditorSheet`（搜索点到这些 key 也路由到这里）。
+                item { SettingLinkRow("defaultThinkingLevel", store, editTick) { editingKey = it } }
+                item { SettingLinkRow("modelThinkingLevels", store, editTick) { editingKey = it } }
+                item { SettingLinkRow("thinkingBudgets", store, editTick) { editingKey = it } }
+                item { SettingLinkRow("hideThinkingBlock", store, editTick) { editingKey = it } }
+                item { SettingLinkRow("cacheWarming", store, editTick) { editingKey = it } }
+                item { SettingLinkRow("showCacheMissNotices", store, editTick) { editingKey = it } }
 
                 item {
                     PiSettingsSectionHeader(
@@ -317,7 +332,22 @@ fun ModelProviderScreen(
                         ),
                     ) { Text("导入模型") }
                 }
+                item {
+                    // 「本地模型（llama.cpp）」原来是分组屏里的一行 Action，入口随分组一起
+                    // 删除后搬到这里：同一个导入 sheet，只是预选到本地端点那一档。
+                    OutlinedButton(
+                        onClick = {
+                            sheetPreset = "llamacpp"
+                            sheetOpen = true
+                        },
+                        modifier = Modifier.padding(
+                            horizontal = PiSettingsMetrics.pageHorizontal,
+                            vertical = PiSpacing.unit,
+                        ),
+                    ) { Text("本地模型（llama.cpp / LM Studio）") }
+                }
                 item { PiSettingsSectionHeader("说明") }
+                item { Note("订阅登录（Anthropic / OpenAI / GitHub Copilot 等订阅账号）去 工作区 → 终端 里运行 /login；这一屏写的是 API Key。") }
                 item { Note("「pi 目录」是 pi 自带的模型定义；「手写申报」写在你的模型配置里；「覆盖」只改 pi 目录里的某几个字段。") }
                 item { Note("一个厂商的模型一旦手写申报，就会替换这个厂商在 pi 目录里的同名条目；没动的厂商不受影响。") }
                 item { Note("这一屏读写的都是 pi 的官方文件（models.json、auth.json、settings.json）；对话里让 AI 改这些文件，列表会自动跟上。") }
@@ -467,9 +497,6 @@ private fun ImportSheet(
             var selected by remember { mutableStateOf<Set<String>>(emptySet()) }
             // 打开表单时的初始勾选 —— 保存时「动没动」的对账基准（见 ModelSelectionPlan）。
             var initialChecked by remember { mutableStateOf<Set<String>>(emptySet()) }
-            // null = 保持当前默认（不写 settings.json 的默认两个键）。
-            var defaultModelId by remember { mutableStateOf<String?>(null) }
-            var currentDefault by remember { mutableStateOf("未设置") }
             var scanEndpoint by remember { mutableStateOf<String?>(null) }
             var scanNote by remember { mutableStateOf<String?>(null) }
             var scanError by remember { mutableStateOf<String?>(null) }
@@ -478,7 +505,6 @@ private fun ImportSheet(
             var savedOk by remember { mutableStateOf(false) }
             var saveError by remember { mutableStateOf<String?>(null) }
             var catalog by remember { mutableStateOf<List<PiModelCatalog.Entry>>(emptyList()) }
-            var imageOverrides by remember { mutableStateOf<Map<String, Boolean>>(emptyMap()) }
             val sheetScope = rememberCoroutineScope()
 
             val preset = PiProviderPresets.byId(presetId) ?: PiProviderPresets.all.first()
@@ -507,11 +533,6 @@ private fun ImportSheet(
                 saveSteps = emptyList()
                 savedOk = false
                 saveError = null
-                currentDefault = existing.providerId?.let { p ->
-                    existing.modelId?.let { m -> "$p/$m" }
-                } ?: "未设置"
-                defaultModelId = null
-                imageOverrides = emptyMap()
                 // 初始勾选 = 「申报过的全部 + pi 目录里在循环范围内的」：
                 //  - 申报过的（手写 models[]）必须全勾 —— 取消勾选会在保存时删掉它的
                 //    定义，自定义厂商就再也没有这个模型了；
@@ -538,20 +559,29 @@ private fun ImportSheet(
                 (existingIds + scanned.map { it.id } + catalogIds + manualList).distinct()
             }
 
-            // 元数据两源，目录优先（与旧表单同序：目录是能力的权威，引擎快照可能已经带了
-            // App 自己申报过的条目，读它先会让坏条目为自己作证）。
-            val knownById = remember(availableModels, catalog, presetId) {
+            // 元数据三源，**官方优先、扫描兜底**（用户裁定：pi 官方文件有数据就用官方的，
+            // pi 暂时没有的才用这次 API 扫到的）：pi 目录（models-store.json）→ 引擎快照
+            // → 扫描里厂商自己给的数据。引擎排在扫描前是因为它是 pi 组合后的官方视图；
+            // 扫描数据只在 pi 一无所知时补位 —— 补的正是"模型官方的"那几个字段（上下文、
+            // 最大输出、图片、价格），这也是价格以前永远不显示的原因：扫描器只读了 id。
+            val scannedById = remember(scanned) { scanned.associateBy { it.id } }
+            val knownById = remember(availableModels, catalog, presetId, scanned) {
                 val fromCatalog = catalog.associateBy { it.id }
                 val fromEngine = availableModels.filter { it.provider == presetId }.associateBy { it.id }
-                (fromCatalog.keys + fromEngine.keys).associateWith { id ->
+                (fromCatalog.keys + fromEngine.keys + scannedById.keys).associateWith { id ->
                     val entry = fromCatalog[id]
                     val engine = fromEngine[id]
+                    val scan = scannedById[id]
                     KnownModel(
-                        name = entry?.name ?: engine?.name,
+                        name = entry?.name ?: engine?.name ?: scan?.displayName,
                         reasoning = entry?.reasoning ?: engine?.reasoning,
-                        acceptsImages = entry?.acceptsImages ?: engine?.acceptsImages ?: false,
-                        contextWindow = entry?.contextWindow ?: engine?.contextWindow,
-                        maxTokens = entry?.maxTokens ?: engine?.maxTokens,
+                        acceptsImages = entry?.acceptsImages ?: engine?.acceptsImages
+                            ?: scan?.acceptsImages ?: false,
+                        contextWindow = entry?.contextWindow ?: engine?.contextWindow
+                            ?: scan?.contextWindow,
+                        maxTokens = entry?.maxTokens ?: engine?.maxTokens ?: scan?.maxTokens,
+                        costInput = engine?.inputCost ?: scan?.costInputPerMillion,
+                        costOutput = engine?.outputCost ?: scan?.costOutputPerMillion,
                     )
                 }
             }
@@ -564,12 +594,14 @@ private fun ImportSheet(
                     reasoning = known?.reasoning,
                     contextWindow = known?.contextWindow,
                     maxTokens = known?.maxTokens,
-                    // 显式写、绝不省略：pi 把缺席的 input 填成纯文本（provider-composer:158）。
-                    input = if (imageOverrides[id] ?: (known?.acceptsImages == true)) {
-                        listOf("text", "image")
-                    } else {
-                        listOf("text")
-                    },
+                    // 只说知道的：官方目录或厂商自己说了"支持图片"才写 ["text","image"]，
+                    // 否则**不写这个键** —— 省略时 pi 自己按纯文本处理
+                    // （`provider-composer.ts:158`），那才是官方默认。以前无论知不知道都写
+                    // ["text"]，等于替厂商断言一次它没说过的话，界面也因此不得不问用户
+                    // "支持图片吗"（用户裁定：这个不让用户选）。
+                    input = if (known?.acceptsImages == true) listOf("text", "image") else emptyList(),
+                    costInput = known?.costInput,
+                    costOutput = known?.costOutput,
                 )
             }
 
@@ -701,11 +733,11 @@ private fun ImportSheet(
             if (scanNote != null) SheetNote(scanNote.orEmpty())
             if (scanError != null) SheetNote(scanError.orEmpty())
 
-            // ------------------------------------------------- 4 勾选与默认
-            PiSettingsSectionHeader("4 勾选与默认")
+            // ------------------------------------------------- 4 勾选要导入的模型
+            PiSettingsSectionHeader("4 勾选要导入的模型")
             SheetNote(
-                "左侧勾选 = 加进「循环模型」范围的模型（只重写本厂商的条目，其他厂商与手写 pattern 保留）；" +
-                    "右侧单选 = 保存后设为默认，第一项表示不动 settings.json。当前默认：$currentDefault",
+                "一个勾 = 这个模型。上下文、价格、是否支持图片一律先取 pi 官方目录，" +
+                    "pi 没有的用上面扫描到的厂商数据；两边都没有就不写，交给 pi 用默认值。",
             )
             OutlinedTextField(
                 value = manualIds,
@@ -715,16 +747,6 @@ private fun ImportSheet(
                     .fillMaxWidth()
                     .padding(horizontal = PiSettingsMetrics.cardPadding, vertical = PiSpacing.small),
             )
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable { defaultModelId = null }
-                    .padding(horizontal = PiSpacing.inline),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                RadioButton(selected = defaultModelId == null, onClick = { defaultModelId = null })
-                Text("保持当前默认（$currentDefault）", style = MaterialTheme.typography.bodyMedium)
-            }
             candidates.forEach { id ->
                 val known = knownById[id]
                 Row(
@@ -753,20 +775,7 @@ private fun ImportSheet(
                             style = PiTheme.text.meta,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
-                        if (!preset.builtInPi) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Checkbox(
-                                    checked = imageOverrides[id] ?: false,
-                                    onCheckedChange = { on -> imageOverrides = imageOverrides + (id to on) },
-                                )
-                                Text("支持图片输入", style = PiTheme.text.meta)
-                            }
-                        }
                     }
-                    RadioButton(
-                        selected = defaultModelId == id,
-                        onClick = { defaultModelId = id },
-                    )
                 }
             }
             if (candidates.isEmpty()) {
@@ -784,7 +793,6 @@ private fun ImportSheet(
                     enabled = !scanning && (selected.isNotEmpty() || preset.builtInPi),
                     onClick = {
                         val chosen = candidates.filter { it in selected }
-                        val requestedDefault = defaultModelId
                         sheetScope.launch {
                             saveError = null
                             saveSteps = emptyList()
@@ -797,8 +805,10 @@ private fun ImportSheet(
                                     api = api,
                                     choices = choicesFor(chosen),
                                     configuredModelIds = initialChecked,
-                                    setAsDefault = requestedDefault != null,
-                                    defaultModelId = requestedDefault,
+                                    // pi 官方目录已经知道的模型**不申报**：官方数据就是权威，
+                                    // 写一条只会把它替换成我们手上的副本（价格会归零、上下文
+                                    // 会退回 128k）。只有官方不认识的才用扫描到的数据写定义。
+                                    officiallyKnownIds = catalogIds,
                                 )
                             }
                             saveSteps = result.steps
@@ -815,10 +825,6 @@ private fun ImportSheet(
                                 existingIds = fresh.configuredModelIds
                                 modelsFileError = fresh.modelsFileError
                                 authFileError = fresh.authFileError
-                                currentDefault = fresh.providerId?.let { p ->
-                                    fresh.modelId?.let { m -> "$p/$m" }
-                                } ?: currentDefault
-                                defaultModelId = null
                                 // 对账基准随保存前进：下一次保存只对"这次改了什么"负责。
                                 initialChecked = selected
                             } else {
@@ -850,7 +856,7 @@ private fun ImportSheet(
                 SheetNote("保存完成。回到上面的清单：新厂商如果标着「等待重启」，去那张卡重启引擎。")
             }
             SheetNote("手写的模型配置可以带注释，不会被判成损坏。")
-            SheetNote("一个厂商的模型一旦提供就替换该厂商的全部模型；勾选时要想清楚这是不是全部要用的模型。")
+            SheetNote("只为 pi 官方不认识的模型写定义；官方目录里有的不会被覆盖，价格与上下文仍来自 pi。")
             Spacer(Modifier.height(PiSettingsMetrics.groupGap))
         }
     }
@@ -959,6 +965,19 @@ private fun RestartCard(
             ) { Text("重启引擎") }
         }
     }
+}
+
+/** 注册表里的一行设置，就地编辑：标题取官方标题，读数与分组屏用同一个 `summaryText`。 */
+@Composable
+private fun SettingLinkRow(
+    key: String,
+    store: PiSettingsStore,
+    editTick: Int,
+    onEdit: (String) -> Unit,
+) {
+    val setting = PiSettingsCatalog.byKey[key] ?: return
+    val value = remember(store, editTick, key) { PiSettingsCatalog.summaryText(store, key) }
+    LinkRow(title = setting.title, value = value, onClick = { onEdit(key) })
 }
 
 @Composable
@@ -1120,8 +1139,10 @@ private fun originText(model: PiModelInventory.Model): String {
 }
 
 /**
- * What pi knows about one model, flattened from the two sources that can say:
- * pi's catalog and the engine's list. (Transplanted from the old credential form.)
+ * What is known about one model, flattened from the three sources that can say —
+ * **official first**: pi's catalog (`models-store.json`), the engine's composed list,
+ * then the vendor's own data from this session's scan (user ruling: 官方有就用官方的，
+ * pi 没有的用 API 扫到的). Cost rides along because pi's picker prints it per million.
  */
 private data class KnownModel(
     val name: String?,
@@ -1129,6 +1150,8 @@ private data class KnownModel(
     val acceptsImages: Boolean,
     val contextWindow: Long?,
     val maxTokens: Long?,
+    val costInput: Double? = null,
+    val costOutput: Double? = null,
 )
 
 /**
@@ -1154,12 +1177,20 @@ private fun candidateMeta(
         append(" · ").append(known.name?.takeIf { it != id } ?: "pi 认识它")
         known.contextWindow?.let { append(" · 上下文 ").append(it) }
         if (known.acceptsImages) append(" · 支持图片")
+        // 价格：官方目录/引擎/厂商扫描任意一处给了就显示（用户报「连价格都不显示」——
+        // 扫描器以前只读 id，自建厂商的价格因此永远是空的）。
+        known.costInput?.let { append(" · $").append(trimCostText(it)).append("/M 入") }
+        known.costOutput?.let { append(" · $").append(trimCostText(it)).append("/M 出") }
     } else if (builtInPi) {
         append(" · pi 不认识它，勾选不会让 pi 认识它")
     } else {
         append(" · pi 不认识它，下面勾选的项会写进模型配置")
     }
 }
+
+/** 价格读数：去掉尾随 0（`3.0` → `3`、`0.2700` → `0.27`），不引入新的数字格式。 */
+private fun trimCostText(value: Double): String =
+    String.format(java.util.Locale.US, "%.4f", value).trimEnd('0').trimEnd('.')
 
 /** 收起时也值得占一行：已启用、默认、等待重启、缺凭证。 */
 private val PiModelInventory.Model.noteworthy: Boolean

@@ -63,6 +63,16 @@ class PiModelScanner(
     data class ScannedModel(
         val id: String,
         val displayName: String? = null,
+        /**
+         * 厂商自己在 payload 里给的元数据（[PiScanVendorMeta]），给什么带什么：上下文、
+         * 最大输出、图片能力、per-million 价格。**没给就是 null**，调用方于是什么都不写，
+         * 交给 pi 的默认值 —— 用户裁定：pi 官方没有的，才用这里扫到的数据。
+         */
+        val contextWindow: Long? = null,
+        val maxTokens: Long? = null,
+        val acceptsImages: Boolean? = null,
+        val costInputPerMillion: Double? = null,
+        val costOutputPerMillion: Double? = null,
         /** True when the vendor's own payload said so; most do not. */
         val vendorSuppliedMetadata: Boolean = false,
     )
@@ -236,8 +246,8 @@ class PiModelScanner(
         Result.Ok(
             models = models,
             endpoint = endpoint,
-            note = "清单只提供模型 id；上下文长度、价格等元数据厂商通常不给，" +
-                "未匹配到 pi 内置目录的会用默认值并在界面上标注。",
+            note = "清单只保证模型 id；上下文、最大输出、图片、价格这几项厂商给了就带上，" +
+                "没给的交给 pi 的默认值（不替厂商编）。",
         )
     }
 
@@ -260,7 +270,17 @@ class PiModelScanner(
                     ?: return@mapNotNull null
                 val name = (object0["display_name"] as? JsonPrimitive)?.content
                     ?: (object0["name"] as? JsonPrimitive)?.content
-                ScannedModel(id = id, displayName = name)
+                val meta = scanVendorMeta(object0)
+                ScannedModel(
+                    id = id,
+                    displayName = name,
+                    contextWindow = meta.contextWindow,
+                    maxTokens = meta.maxTokens,
+                    acceptsImages = meta.acceptsImages,
+                    costInputPerMillion = meta.costInputPerMillion,
+                    costOutputPerMillion = meta.costOutputPerMillion,
+                    vendorSuppliedMetadata = meta.any,
+                )
             }
         }
         val models = document["models"] as? JsonArray ?: return emptyList()

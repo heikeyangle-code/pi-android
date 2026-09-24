@@ -255,6 +255,12 @@ class PiCredentialService(
         val contextWindow: Long? = null,
         val maxTokens: Long? = null,
         val input: List<String> = emptyList(),
+        /**
+         * USD **per million tokens** —— pi 的 `models.json` 就按这个单位读 `cost`，App 的
+         * 模型选择器也按 `$x / M` 显示。扫描器负责把厂商的 per-token 价换算过来。
+         */
+        val costInput: Double? = null,
+        val costOutput: Double? = null,
     )
 
     data class SaveResult(
@@ -293,6 +299,15 @@ class PiCredentialService(
          * 模型被静默勾回来。
          */
         configuredModelIds: Set<String> = emptySet(),
+        /**
+         * pi 官方目录（`models-store.json`）已经认识的本厂商模型 id。
+         *
+         * 命中这些的**不写进 `models[]`**：pi 的语义是同 id 整体替换
+         * （`provider-composer.ts:203-206`），写一条只会把官方数据换成我们手上的副本 ——
+         * 价格归零、上下文退回默认值。用户裁定："pi 官方配置文件有数据的，就用 pi 官方的
+         * 数据；pi 暂时没有的，才用这次 API 扫到的数据。"
+         */
+        officiallyKnownIds: Set<String> = emptySet(),
         /** 用户是否明确点了「设为默认」；没点就不写默认选择。 */
         setAsDefault: Boolean = false,
         /** [setAsDefault] 为 true 时写入的模型 id；false 时忽略。 */
@@ -352,7 +367,11 @@ class PiCredentialService(
         // written: it is the **selection**, `enabledModels` in settings.json
         // (`settings-manager.ts:139`), which is pi's own mechanism for "which models
         // to offer" and says nothing about what a model *is*.
-        val declared = if (preset.builtInPi) emptyList() else choices
+        val declared = if (preset.builtInPi) {
+            emptyList()
+        } else {
+            choices.filterNot { it.id in officiallyKnownIds }
+        }
 
         val provider = PiModelsFile.Provider(
             id = preset.id,
@@ -372,6 +391,8 @@ class PiCredentialService(
                     contextWindow = choice.contextWindow,
                     maxTokens = choice.maxTokens,
                     input = choice.input,
+                    costInput = choice.costInput,
+                    costOutput = choice.costOutput,
                 )
             },
         )

@@ -3357,28 +3357,32 @@ private fun copyLastAssistant(session: PiSessionViewModel, context: Context) {
  */
 @Composable
 private fun ModelChip(label: String?, onClick: () -> Unit) {
-    // `06 §2` chip「高 26 圆角 999 `padding:0 9px`」, and v2 draws this one as
-    // `mono t12` in the text colour with a `1px borderMuted` ring
-    // (`direction-b-v2.html:500-503`). It carried a Material `Info` glyph and a
-    // filled surface before; the board's chip has neither, and a model id is machine
-    // language, so it takes the machine face.
+    // 外观**按用户裁定原样恢复**（"那个地方全都恢复成原来一模一样的样子，外观一点不要
+    // 动"）：ce2d815 曾把它改成 v2 的 mono 描边 chip（无图标、monoSmall、透明底 +
+    // borderMuted 描边），那不是用户想要的样子。这里回到 ce2d815 之前的形态：Info 图标 +
+    // `text.meta` 字色 + `surfaceContainerHigh` 填充面，间距 10/5。位置与字体都不动。
     Surface(
         modifier = Modifier
-            .height(26.dp)
-            .clip(PiShapes.badge)
-            .clickable(onClickLabel = "选择模型", onClick = onClick),
+            .padding(end = 4.dp)
+            .clickable(onClick = onClick),
         shape = PiShapes.badge,
-        color = Color.Transparent,
-        border = BorderStroke(1.dp, PiTheme.palette.borderMuted),
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
     ) {
         Row(
-            Modifier.padding(horizontal = 9.dp),
+            Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
+            Icon(
+                Icons.Filled.Info,
+                contentDescription = null,
+                modifier = Modifier.size(14.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.width(6.dp))
             Text(
-                text = label ?: "选择模型",
-                style = PiTheme.text.monoSmall,
-                color = MaterialTheme.colorScheme.onSurface,
+                label ?: "选择模型",
+                style = PiTheme.text.meta,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )

@@ -602,6 +602,16 @@ run_harness model-selection-plan \
   "$ROOT/app/src/test/kotlin/app/pi/packages/ModelSelectionPlanCheck.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/packages/ModelSelectionPlan.kt"
 
+# app.pi.packages: 厂商 `/models` 响应里**自愿给**的元数据（`PiScanVendorMeta.kt`）。为什么
+# 必须在这里：这些规则全是静默出错型 —— per-token→per-million 忘了乘，价格小一百万倍；
+# 图片能力读反，纯文本模型自称支持图片。屏幕上都只是一个数字或一个标签，编译器和肉眼都
+# 抓不到。用 OpenRouter 的真实字段形状钉住：有就给、没给就是 null（绝不写默认值）、
+# 非数字忽略。
+run_harness scan-vendor-meta \
+  app.pi.packages.PiScanVendorMetaCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/packages/PiScanVendorMetaCheck.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/packages/PiScanVendorMeta.kt"
+
 # :rpc: the engine's stdout decoding. `PiEngineSession.readLoop` handed each 16 KiB
 # read to `String(bytes, 0, read, UTF_8)`, which decodes one read as a complete
 # stream - so a CJK character straddling two reads became one replacement character
