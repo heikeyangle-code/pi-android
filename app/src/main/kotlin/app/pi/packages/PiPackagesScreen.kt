@@ -696,7 +696,7 @@ private fun BuiltinRowView(row: PiPackagesUiState.BuiltinRow) {
             // 「只装在了旧位置：pi 这次不会加载它」 / 「未安装：对应的能力会缺失」. The board
             // gives a row's status word the UI face (`direction-b-v2.html:2966`: `<Row
             // title={e.t} mono value={e.s} …>` — the `mono` prop is on the title only), and
-            // this app's own status words are already there (`PiModelsScreen.StatusTag`,
+            // this app's own status words are already there (`ModelProviderScreen.StatusTag`,
             // `PiSettingsStyle.PiSettingsEffectiveBadge`). The glyph to the left stays mono:
             // that is the one half of the pair that is machine language.
             PackageStrings.builtinPresence(row.presence),

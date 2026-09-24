@@ -12,7 +12,7 @@ import kotlinx.serialization.json.JsonPrimitive
  * ## 为什么需要它
  *
  * 以前设置页里根本没有"已导入的模型"这个东西：`models.json` 的内容只在凭证表单里
- * 按厂商显示一次（`PiCredentialScreen` 的 `existingIds`），而对话页的模型选择器只读
+ * 按厂商显示一次（`ModelProviderScreen` 导入 sheet 的 `existingIds`），而对话页的模型选择器只读
  * `get_available_models`（`ui/chat/ChatSheets.kt`）。于是两个问题都没有答案：
  *
  *  - "我导入过的模型在哪？" —— 没有一处能列出来；

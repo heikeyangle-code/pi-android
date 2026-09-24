@@ -59,7 +59,7 @@ import kotlinx.coroutines.withContext
  * ## 它不做什么
  *
  *  - 不区分是哪个文件变的：回调只带一个"变了"的信号。要分辨就再比一次 [PiFileStamps] 的
- *    单项指纹（`PiModelsScreen` 里就是这么读那四个文件的）。
+ *    单项指纹（`ModelProviderScreen` 里就是这么读那四个文件的）。
  *  - 不认识"改了但大小和 mtime 都没变"的情况。取舍写在 [PiFileStamps] 的头部。
  *  - 不管写入是不是本进程做的：App 自己写文件也会回调一次，处理方式就是再读一遍（读不写
  *    文件，所以不会成环）。
@@ -136,7 +136,7 @@ fun PiDirectoryWatch(
  * 100 ms is chosen against the two things that matter: the shortest real burst (the
  * `rename` half of an atomic write lands microseconds after the temp file's `CREATE`)
  * and the longest a stale value can be shown to a human who is looking at the page.
- * `PiModelsScreen` already waits 200 ms for the same reason; this window is shorter
+ * `ModelProviderScreen` already waits 200 ms for the same reason; this window is shorter
  * because these are the rows the user is looking at while they type.
  */
 private const val COALESCE_WINDOW_MS = 100L

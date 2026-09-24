@@ -788,7 +788,7 @@ function checkBehaviour(piDir) {
  * `create`, `:699` in `refresh`), and nothing on the RPC surface calls `refresh` —
  * `get_available_models` answers from `getAvailableSnapshot()` (`rpc-mode.ts:490-493`).
  * `PiModelInventory` turns "the file has it, the engine's list does not" into
- * 「等待重启」, and `PiModelsScreen` tells the user to restart for it. If pi ever grew an
+ * 「等待重启」, and `ModelProviderScreen` tells the user to restart for it. If pi ever grew an
  * RPC refresh (or reloaded the file per call), that sentence would become a lie — the
  * user would restart for nothing. So the negative is asserted directly: write the file
  * *while the engine is running*, ask again, and require the new model to be absent —
@@ -901,7 +901,7 @@ async function checkStartupOnlyReload(piDir) {
 		check(
 			"models.json edited while the engine runs really does need a restart",
 			after?.success === true && !liveIds.includes(addedId),
-			"PiModelInventory's PENDING_RESTART status and PiModelsScreen's 「等待重启」 + " +
+			"PiModelInventory's PENDING_RESTART status and ModelProviderScreen's 「等待重启」 + " +
 				"restart button are this fact. If pi now re-reads models.json during a session, " +
 				"re-read core/model-runtime.ts's refresh call sites and drop that UI (or find " +
 				"the command that refreshes and use it instead of a restart).",

@@ -155,7 +155,8 @@ fun ProjectScreen(
     // （`PtyLauncher.workspaceHost` 走 `WorkspaceStore.currentHost`，`WorkspaceStore.setCurrent`
     // 只改设置里的名字），而 Activity 的 context 不变 —— `remember(context)` 会把这一屏
     // 钉在首次组合时那个工作区上，切换之后一路读旧目录。`PiSettingsStack.kt:206-212` /
-    // `PiModelsScreen.kt:94-97` / `PiCredentialScreen.kt:122-125` 那三处是同一手法。
+    // `ModelProviderScreen.kt` 开头是同一手法（原来分属 PiModelsScreen / PiCredentialScreen
+    // 两屏，现已合并成一屏）。
     // 路径是一次设置读取，不是一次目录扫描。
     val workspacePath = PtyLauncher.workspaceHost(context).absolutePath
     val workspace = remember(context, workspacePath) { PtyLauncher.workspaceHost(context) }

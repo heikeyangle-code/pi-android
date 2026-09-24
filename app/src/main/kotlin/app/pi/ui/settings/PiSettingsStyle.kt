@@ -165,7 +165,8 @@ internal val PiSettingsCardShape = RoundedCornerShape(PiSettingsMetrics.cardRadi
  * `PiSettingsCard` 内部一次显示多少行之后开始收敛（多出来的折进一条「显示全部 N 个」）。
  *
  * 一处一个数字：原来的 8 是「模型」那一屏私有的 `COLLAPSE_ABOVE`
- * （`PiModelsScreen.kt`），而「扩展包与项目信任」这一屏的主题段同样是**长列表**
+ * （`ModelProviderScreen.kt`，由原 PiModelsScreen 合并而来），而「扩展包与项目信任」
+ * 这一屏的主题段同样是**长列表**
  * （实机一张卡里 14 行），两份阈值各写一遍就会各漂各的 —— 同一个构件、同一个屏幕族，
  * 只能有一个数字。
  */
@@ -278,12 +279,12 @@ internal fun PiSettingsHairline(inset: Dp = PiSettingsMetrics.dividerInset) {
  *
  * 「模型」屏的厂商卡与「扩展包与项目信任」屏的三个资源种类是同一个需要：一屏里的一类东西
  * 可能有十几行（实机：主题 14 个），整段铺出来会把下面所有分区推到屏外。原来这条动作只在
- * `PiModelsScreen` 里内联写过一次，第二个调用点各写一遍就会各自决定字色、字号与按压面 ——
+ * `ModelProviderScreen` 里内联写过一次，第二个调用点各写一遍就会各自决定字色、字号与按压面 ——
  * 本仓库已经有「同一个语义两处两种写法」的账（来源徽标就曾在这页写「（当前工作区）」、
  * 在工作区屏写「项目 .pi」）。所以它是共用件，放在设置面的取值表文件里。
  *
  * 字色与字号照 v2：`t12` + `--accent`（这里就是 `text.meta` + `primary`，与
- * `PiModelsScreen` 原来那条逐字相同，不新增任何颜色）；按压面是整行加
+ * `ModelProviderScreen` 原来那条逐字相同，不新增任何颜色）；按压面是整行加
  * `notePaddingVertical`。**水平位置由调用方给**：本页的卡里行自带 `0 12px` 内边距，
  * 而模型屏的厂商卡外层已经缩进 14，两种落点只能由卡自己决定。
  */

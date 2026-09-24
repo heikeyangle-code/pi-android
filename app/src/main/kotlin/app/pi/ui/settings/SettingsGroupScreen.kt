@@ -386,8 +386,15 @@ private class GroupSection(val label: String, val settings: List<PiSetting>)
 
 private fun buildGroupSections(groupId: String): List<GroupSection> {
     val settings = PiSettingsCatalog.settingsIn(groupId)
-    return PiSettingsCatalog.sectionsIn(groupId).map { section ->
-        GroupSection(section, settings.filter { it.section == section })
+        // 三个 settings.json 选择键的编辑器搬进了「模型与供应商」（`ModelProviderScreen`），
+        // 分组屏不再渲染这三行 —— 注册表保留条目是为了首页摘要、搜索与 `/scoped-models`
+        // 焦点还能按 key 找到；名单只有一个来源（`MODEL_SELECTION_KEYS`），两处共用，
+        // 否则搜索会点进一个不存在的行。
+        .filterNot { it.key in MODEL_SELECTION_KEYS }
+    return PiSettingsCatalog.sectionsIn(groupId).mapNotNull { section ->
+        val rows = settings.filter { it.section == section }
+        // 过滤后空掉的段连同段头一起去掉：一个没有行的段头就是新的「点了没反应」。
+        if (rows.isEmpty()) null else GroupSection(section, rows)
     }
 }
 

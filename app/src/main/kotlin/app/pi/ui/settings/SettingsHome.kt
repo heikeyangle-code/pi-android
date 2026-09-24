@@ -69,7 +69,6 @@ fun SettingsHome(
     contentPadding: PaddingValues,
     onOpenGroup: (String) -> Unit,
     onOpenSearch: () -> Unit,
-    onOpenSetting: (String) -> Unit,
     /** `null` hides the row, which is what a preview or a test wants. */
     onOpenDeviceCapabilities: (() -> Unit)? = null,
     /**
@@ -100,12 +99,13 @@ fun SettingsHome(
      */
     onOpenTerminal: (() -> Unit)? = null,
     /**
-     * 设置 → 模型（[PiModelsScreen]）。v2 的首页把它和终端并排放在「其他」一节
-     * （`direction-b-v2.html:2153-2156`，副行「这台设备上配好的厂商与模型」）。
+     * 「模型与供应商」（[ModelProviderScreen]）。**挪到了首页最顶栏**（用户拍板：
+     * 「位置在设置的最顶栏就行」）—— 它不再和终端并排放在「其他」一节，那一节现在
+     * 只剩终端与 Pi 文件。
      *
-     * 它不是 pi 的一个设置项：这一页列的是这台设备上已经配好的厂商与模型，读的是
-     * `models.json` 与引擎，所以它既不属于 13 个分组，也不在「设备 / 扩展」两节里。
-     * `null` 隐藏这一行（预览与测试用）。
+     * 它不是 pi 的一个设置项：这一屏是这台设备上几份官方配置文件
+     * （models.json / auth.json / settings.json）的编辑器，所以它不属于 13 个分组。
+     * `null` 隐藏入口（预览与测试用）。
      */
     onOpenModels: (() -> Unit)? = null,
     /**
@@ -171,7 +171,24 @@ fun SettingsHome(
                 SearchEntry(onOpenSearch)
             }
             item {
-                CurrentModelCard(store, freshness, onOpenSetting)
+                CurrentModelCard(store, freshness, onOpenModels)
+            }
+            // 模型与供应商：首页最顶栏的第一扇门（用户拍板的位置）。下面的 设备 /
+            // 扩展 / 其他 / 关于 四节保持原样。
+            if (onOpenModels != null) {
+                item {
+                    PiSettingsSectionHeader("模型与供应商")
+                }
+                item {
+                    PiSettingsCard {
+                        PiEntryRow(
+                            icon = Icons.Filled.Timeline,
+                            title = "模型与供应商",
+                            supporting = "厂商、模型、凭证与导入——官方配置文件的编辑器",
+                            onClick = onOpenModels,
+                        )
+                    }
+                }
             }
             // The device capability bridge is the one settings surface that is
             // not a pi setting: pi has no notion of the phone it runs on, so this
@@ -208,9 +225,9 @@ fun SettingsHome(
                     }
                 }
             }
-            // 其他：终端 + 模型 + Pi 文件。v2 的首页把前两行放在同一节（`phone4` /
-            // `phone33`），因为它们都不是 pi 的设置项 —— 一个是 TUI 回退口，一个是本应用
-            // 自己扫出来的模型清单 —— 也都不属于 13 个分组里的任何一个。
+            // 其他：终端 + Pi 文件。v2 曾把「模型」也放在这一节（`phone4` /
+            // `phone33`），但那一行已按用户拍板挪到首页最顶栏（上面的「模型与供应商」）
+            // —— 同一件事只有一个门，这正是这次重排要消灭的重复。
             //
             // 「Pi 文件」是第三行，按同一条件成立：它既不是 pi 的设置键，也不是 pi 的功能，
             // 而是 **pi 的文件**（`docs/settings-audit-pi-gap.md` §6.3 说它为什么在这里）。
@@ -222,15 +239,6 @@ fun SettingsHome(
                 PiSettingsCard {
                     if (onOpenTerminal != null) {
                         PiTerminalEntryRow(onClick = onOpenTerminal)
-                        PiSettingsHairline()
-                    }
-                    if (onOpenModels != null) {
-                        PiEntryRow(
-                            icon = Icons.Filled.Timeline,
-                            title = "模型",
-                            supporting = "这台设备上配好的厂商与模型",
-                            onClick = onOpenModels,
-                        )
                         PiSettingsHairline()
                     }
                     PiFilesEntryRow(onClick = openPiFiles)
@@ -354,11 +362,11 @@ private fun SearchEntry(onClick: () -> Unit) {
  * 当前模型快捷卡（v2：卡内左缘 2px accent 条、副行 `改这里 →`、模型 id 等宽
  * accent、思考等级 `◐` + 中文标签）。
  *
- * 卡整体可点，落到「默认模型」那一行的编辑器；这是这个屏上最常改的两个值，
- * 所以它值一张卡。
+ * 卡整体可点，落到「模型与供应商」—— 默认模型的编辑器搬进了那一屏（分组屏那三行
+ * 已不再渲染，见 `MODEL_SELECTION_KEYS`），所以这里不再按 key 路由到分组。
  */
 @Composable
-private fun CurrentModelCard(store: PiSettingsStore, freshness: Int, onOpenSetting: (String) -> Unit) {
+private fun CurrentModelCard(store: PiSettingsStore, freshness: Int, onOpenModels: (() -> Unit)?) {
     // 三个读数都是 store 的纯函数，键里放 `freshness` 是为了「有人写过设置」之后重读一次：
     // 少了这个键，这一卡会被 strong skipping 跳过（见 [SettingsHome] 的 `freshness`）。
     // `store` 也是键：换工作区会换一个 store 实例。
@@ -378,7 +386,7 @@ private fun CurrentModelCard(store: PiSettingsStore, freshness: Int, onOpenSetti
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .clickable { onOpenSetting("defaultModel") }
+                .clickable(enabled = onOpenModels != null) { onOpenModels?.invoke() }
                 .padding(
                     start = PiSettingsMetrics.rowPaddingHorizontal,
                     end = PiSettingsMetrics.rowPaddingHorizontal,
