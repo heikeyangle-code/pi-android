@@ -1,0 +1,5 @@
+{
+  "id": "nothing-running",
+  "why": "an empty runs array: the card must say so and draw no border, not fall over",
+  "line": "PI_SUBAGENT_ASYNC_JSON:{\"kind\":\"pi-subagents.async-status-snapshot\",\"version\":1,\"generatedAt\":1790200638621,\"caps\":{\"maxRuns\":20,\"maxChildrenPerNode\":8,\"maxDepth\":3,\"maxStringLength\":160,\"maxSerializedBytes\":32768},\"omitted\":{\"runs\":0,\"children\":0,\"byteLimitExceeded\":false},\"runs\":[]}"
+}

@@ -1,0 +1,5 @@
+{
+  "id": "workflow-with-steps",
+  "why": "workflow mode: the extension projects `workflowGraph` stages and `hostSteps` into child rows the card does NOT draw yet — captured so those rows can be built from a real sample rather than from a guess",
+  "line": "PI_SUBAGENT_ASYNC_JSON:{\"kind\":\"pi-subagents.async-status-snapshot\",\"version\":1,\"generatedAt\":1790200638621,\"caps\":{\"maxRuns\":20,\"maxChildrenPerNode\":8,\"maxDepth\":3,\"maxStringLength\":160,\"maxSerializedBytes\":32768},\"omitted\":{\"runs\":0,\"children\":0,\"byteLimitExceeded\":false},\"runs\":[{\"id\":\"job-workflow\",\"kind\":\"workflow\",\"label\":\"planner\",\"state\":\"running\",\"startedAt\":1790200606123,\"updatedAt\":1790200638560,\"children\":[{\"id\":\"w1\",\"kind\":\"step\",\"label\":\"plan\",\"state\":\"complete\"},{\"id\":\"w2\",\"kind\":\"step\",\"label\":\"build\",\"state\":\"running\",\"activity\":{\"currentTool\":\"edit\"}},{\"id\":\"w3\",\"kind\":\"step\",\"label\":\"verify\",\"state\":\"queued\"}]}]}"
+}
