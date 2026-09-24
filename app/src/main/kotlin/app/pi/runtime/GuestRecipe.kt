@@ -1,5 +1,7 @@
 package app.pi.runtime
 
+import java.util.TimeZone
+
 import java.io.File
 
 /**
@@ -347,6 +349,19 @@ object GuestRecipe {
         put("TERM", "xterm-256color")
         put("LANG", "C.UTF-8")
         put("PATH", "/opt/pi/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin")
+        // **The guest has no timezone of its own.** The packaged `ubuntu-base.tgz` ships neither
+        // `/etc/localtime` nor a `zoneinfo` tree, and nothing here set `TZ`, so every clock inside
+        // the container was UTC: `date`, `ls -l`, `git log`, the times a tool prints, and pi's own
+        // idea of "today" (`core/agent-session.ts` builds its date in the guest). On a phone in
+        // UTC+8 that is eight hours of wrong answers — reported by the user as "老是搞不准几点".
+        //
+        // The device knows its zone, and two facts make naming it free: `/system` is already part
+        // of the shared bind table ([binds]), and Android ships the zoneinfo database under
+        // `/system/usr/share/zoneinfo`. `TZDIR` is the glibc variable (the guest is Ubuntu, not
+        // bionic) and it must point there because the guest's own `/usr/share/zoneinfo` does not
+        // exist; a zone file that is missing anyway degrades to UTC, never to a wrong hour.
+        put("TZ", TimeZone.getDefault().id)
+        put("TZDIR", "/system/usr/share/zoneinfo")
         // The trust store, named explicitly because nothing else names it. The
         // pinned ubuntu-base ships no `/etc/ssl` at all; the git payload installs
         // [GUEST_CA_BUNDLE] and these two variables are what make anything read it.
