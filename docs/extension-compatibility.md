@@ -115,7 +115,7 @@ Grouped by symbol, because that is how they were verified:
 | Group | Symbols that exist now |
 |---|---|
 | Commands / palette | `PiSlashCommands.piCommandPalette`, `SlashPalette`, `PiCommandAction`, `PiSlashCommand`, `PiSessionViewModel.runPromptCommand`, `refreshCommands`, `sourceTagOf`, `sourceTagLabelOf`, `PI_UNLISTED_BUILTIN_COMMANDS` / `unlistedBuiltinHint`. **2026-09-14：** `PiCommandAction.TerminalOnly`、`PiCommandAction.OpenModelScope`、`PiSlashCommand.appLanding`、`notifyTerminalOnly` 与 `ComposerRoute.Unreachable` 均已删除——面板只列可执行的命令 |
-| Extension messages & entries | `Transcript` custom branch -> `onHookMessage`, `HookMessageBlock`, `Transcript.onCustomEntry`, `PiEngineSession.seedHistory` / `TranscriptReducer.seedFromHistory` |
+| Extension messages & entries | `Transcript` custom branch -> `onHookMessage`, `HookMessageBlock`, `PiEngineSession.seedHistory` / `TranscriptReducer.seedFromHistory`. **2026-09-24：** `custom` entry 不再画行（用户裁决，见 `registerEntryRenderer` 那一行），`onCustomEntry` 已删除 |
 | Session metadata | `PiEngineApi.setSessionName`, `PiSessionViewModel.renameSession`, `PiEvent.SessionInfoChanged` handling |
 | Session/queue/stats UI | `SessionStatsSheet` (context usage), `SessionToolsSheet`, `ModelPickerSheet` |
 | Models & providers | `PiEngineApi.getAvailableModels`, `refreshState()` on `AgentSettled`, `ModelChangeBlock` |
@@ -233,10 +233,10 @@ grades below are consequences of that, not of RPC.
 | `registerFlag(name, opts)` / `getFlag(name)` | CLI flags parsed from argv into `runtime.flagValues` (`types.ts:1329-1345`) | Works: values come from the process argv, and the app controls that argv (`PiEngineHost.kt:103-107`) | The app passes no extension flags | **N/A** — 无用户可见职责；but see §6.4: flags are the only way to configure an extension from the app without a settings file（App 不传扩展 flag；这是 App 的决定——`PiEngineHost` 只传 `--mode rpc --session-dir`）；pi 有 `types.ts:1329-1345` | S |
 | `registerMessageRenderer(customType, renderer)` | TUI renders a `CustomMessage` with the extension's own Component (`types.ts:1352`; `interactive-mode.ts:3597`) | **Renderer is never called.** The message still reaches the wire as a normal message event (`agent-session.ts:1537-1547`) | The extension's own renderer cannot run; the message itself is shown by the app's generic card: `Transcript` custom branch -> `onHookMessage` -> `HookMessageBlock`. | **DEGRADED** — 仍未做（渲染器本体够不着；消息以通用卡片兜底显示）. pi 有但我们够不着 `interactive-mode.ts:3597`（只有 TUI 调 `getMessageRenderer`）. | M |
 | `registerMarkdownTransformer(fn)` | Pure `string → string` transform applied to user/assistant markdown (`types.ts:1355`) | **Never called**: the only consumer is interactive mode (`interactive-mode.ts:2024-2025`, `3235`, `3645`) | Nothing: no transformer seam exists app-side (`grep Transformer` in `app/` hits only the unrelated image transformer in `PiMarkdown.kt:107-136`). | **MISSING** — 仍未做. pi 有但我们够不着 `interactive-mode.ts:2024-2025`（唯一消费者）. Note: the hook is pure `string -> string`, so if pi ever exposed it, this is cheap. | M |
-| `registerEntryRenderer(customType, renderer)` | TUI renders a `CustomEntry` (`types.ts:1358`; `interactive-mode.ts:3558`) | **Never called.** The entry data does reach the wire via `entry_appended` (`agent-session.ts:2616-2621`) | The extension's renderer cannot run; the entry is shown by the app's generic card: `PiEvent.EntryAppended -> onEntry -> onCustomEntry` (「扩展状态：<customType>」), `Transcript.kt:869`, `:1876`. | **DEGRADED** — 仍未做（渲染器本体够不着；条目以通用卡片兜底显示）. pi 有但我们够不着 `interactive-mode.ts:3558`. | M |
-| `sendMessage(msg, opts)` | Appends a custom message (in context, optionally displayed) with `triggerTurn`/`deliverAs` (`types.ts:1365-1368`) | Works: `_appendCustomMessage` emits `message_start`+`message_end` with `role:"custom"`, `customType`, `content`, `display`, `details` (`agent-session.ts:1537-1547`) | Implemented: `MessageEnd` custom branch -> `onHookMessage` -> `HookMessageBlock`, and history replay via `onCustomEntry`. `display:false` is honoured. | **N/A** — 已实现 `Transcript` custom branch / `onHookMessage` / `HookMessageBlock`. pi 有 `agent-session.ts:1537-1547`. | M |
+| `registerEntryRenderer(customType, renderer)` | TUI renders a `CustomEntry` (`types.ts:1358`; `interactive-mode.ts:3558`) | **Never called.** The entry data does reach the wire via `entry_appended` (`agent-session.ts:2616-2621`) | The extension's renderer cannot run, and since **2026-09-24** the app draws **no row at all** for a `custom` entry: `onEntry`'s `custom` arm answers `TranscriptChange.None` (user ruling — the old 「扩展状态：<customType>」 card plus its key/value table was the App's own invention, and the payloads read as noise under every tool card). The entry is still parsed and kept; only the row is gone. | **DEGRADED** — 仍未做（渲染器本体够不着；条目也不再以通用卡片兜底显示，2026-09-24 用户裁决）. pi 有但我们够不着 `interactive-mode.ts:3558`. | M |
+| `sendMessage(msg, opts)` | Appends a custom message (in context, optionally displayed) with `triggerTurn`/`deliverAs` (`types.ts:1365-1368`) | Works: `_appendCustomMessage` emits `message_start`+`message_end` with `role:"custom"`, `customType`, `content`, `display`, `details` (`agent-session.ts:1537-1547`) | Implemented: `MessageEnd` custom branch -> `onHookMessage` -> `HookMessageBlock`, and history replay through the `custom_message` entry -> `onHookEntry`. `display:false` is honoured. | **N/A** — 已实现 `Transcript` custom branch / `onHookMessage` / `HookMessageBlock`. pi 有 `agent-session.ts:1537-1547`. | M |
 | `sendUserMessage(content, opts)` | Sends a user message and always triggers a turn; `source:"extension"` (`types.ts:1375-1378`; `agent-session.ts:1569-1605`) | Works: arrives as a `user` message event (`packages/agent/src/agent-loop.ts:112-115`) | Implemented: the `role == "user"` branch of `Transcript.onEvent` projects the event through `projectUser`, so `.images` are preserved and a live skill block splits into a card; the optimistic echo (`onUserPrompt`) is matched and consumed rather than duplicated (`onUserMessageEnd`), and an echo pi never confirmed is dropped on a failed `prompt`/`steer`/`follow_up` response or on `agent_settled`. | **N/A** — 已实现 `Transcript.onUserMessageEnd` / `replaceEchoWithProjection` / `PendingUserEcho`. pi 有 `agent-session.ts:1569-1605`. | — |
-| `appendEntry(customType, data)` | Persists a `CustomEntry` outside LLM context; the documented way to keep extension state across restarts (`types.ts:1381`; `docs/extensions.md:1477-1493`) | Works: `entry_appended` carries the **full entry** (`agent-session.ts:2616-2621`) and `get_entries` returns it | Implemented twice over: live `PiEvent.EntryAppended -> onEntry -> onCustomEntry`, and on attach/reconnect `PiEngineSession` builds a fresh reducer with `seedFromHistory(entries)`. | **N/A** — 已实现 `Transcript.onCustomEntry` + `PiEngineSession.seedHistory`. pi 有 `agent-session.ts:2616-2621`. | M |
+| `appendEntry(customType, data)` | Persists a `CustomEntry` outside LLM context; the documented way to keep extension state across restarts (`types.ts:1381`; `docs/extensions.md:1477-1493`) | Works: `entry_appended` carries the **full entry** (`agent-session.ts:2616-2621`) and `get_entries` returns it | Reachable twice over: live `PiEvent.EntryAppended -> onEntry`, and on attach/reconnect `PiEngineSession` builds a fresh reducer with `seedFromHistory(entries)`. Since 2026-09-24 a `custom` entry produces **no transcript row** (user ruling) — it is parsed and kept, never drawn. | **N/A** — 已实现 `PiEngineSession.seedHistory`（`custom` 条目不画行）. pi 有 `agent-session.ts:2616-2621`. | M |
 | `setSessionName(name)` / `getSessionName()` | Session display name (`types.ts:1388-1391`) | `set_session_name` command, `session_info_changed` event, and `get_state.sessionName` (`rpc-mode.ts:661-668`, `agent-session.ts:159`) | Implemented: `PiEngineApi.setSessionName` + `PiSessionViewModel.renameSession` + `PiEvent.SessionInfoChanged` handling (`PiSessionViewModel.kt:1040`, `:2048`). | **N/A** — 已实现 `PiEngineApi.setSessionName` / `renameSession` / `SessionInfoChanged`. pi 有 `types.ts:1388-1391`. | S |
 | `setLabel(entryId, label)` | Bookmarks an entry (`types.ts:1394`) | No RPC command and no event; only the session tree carries labels and the app has no tree UI (`docs/rpc.md:749-772`) | Read-only: `SessionTreeScreen` displays pi-resolved labels and filters on them (`TreeFilter.LabeledOnly`, `row.node.label`), but nothing sets a label. | **DEGRADED** — 仍未做（显示与过滤已实现；写入无通道）. pi 有但我们够不着 `types.ts:1394` — `rpc-types.ts:20-74` has no label command. | M |
 | `exec(command, args, opts)` | Runs a process with the pi process's permissions (`types.ts:1397`) | Runs extension-side; nothing crosses the wire | Nothing to do | **N/A** — 无用户可见职责（扩展侧执行，无上线面）；pi 有 `types.ts:1397` | — |
@@ -379,7 +379,7 @@ can then modify state that a later wire event will reflect — that is how
 | Tool rendering (`renderCall`/`renderResult`) | TUI Components per tool row (`types.ts:491-500`; `interactive-mode/components/tool-execution.ts:116-121`) | **Never called on the wire.** But **`export_html` does call them**: `createToolHtmlRenderer` invokes the tool definition's renderers and converts ANSI→HTML (`export-html/tool-renderer.ts:99-156`, consumed at `:197`, `:211`) | Partially: live rendering is unreachable, but `exportSession` calls `export_html`, and pi's HTML renderer *does* invoke the extension renderers (`export-html/tool-renderer.ts:99-156`), so the custom output reaches the user as a file. | **DEGRADED** — 仍未做（live 不可达；`exportSession` -> `export_html` 是唯一通道）. pi 有但我们够不着（线上只有 `export_html`）. | M |
 | Message/entry renderers | Components for custom messages/entries (`interactive-mode.ts:3558`, `3597`) | Never called | Partially: the app renders its own generic cards for custom messages and custom entries; the extension's renderer still cannot run. | **DEGRADED** — 仍未做（渲染器本体够不着；通用兜底已实现）. pi 有但我们够不着 `interactive-mode.ts:3558`, `:3597`. | M |
 | Markdown transformer | `string → string` (`types.ts:1207`) | Never called (`interactive-mode.ts:2024-2025`) | Nothing; no seam, and no wire channel carries the transform. | **MISSING** — 仍未做. pi 有但我们够不着 `interactive-mode.ts:2024-2025`. | M |
-| Session persistence (`appendEntry`) | Custom entries survive restarts; documented recovery is to scan entries on `session_start` (`docs/extensions.md:1486-1492`) | Works; `get_entries` returns them | Implemented: live `entry_appended` projection and `seedHistory` on attach both render persisted custom entries. | **N/A** — 已实现 `onCustomEntry` + `seedHistory`. pi 有 `types.ts:1381`, `docs/extensions.md:1486-1492`. | M |
+| Session persistence (`appendEntry`) | Custom entries survive restarts; documented recovery is to scan entries on `session_start` (`docs/extensions.md:1486-1492`) | Works; `get_entries` returns them | Implemented: live `entry_appended` and `seedHistory` on attach both keep persisted custom entries readable across a restart — and, since 2026-09-24, both keep them **out of the transcript** (no row is drawn; user ruling). | **N/A** — 已实现 `PiEngineSession.seedHistory`（`custom` 条目不画行）. pi 有 `types.ts:1381`, `docs/extensions.md:1486-1492`. | M |
 | Labels | Persisted bookmarks (`docs/extensions.md:1514-1529`) | Only inside the session tree | Read-only: labels are displayed and filterable in `SessionTreeScreen`, never written. | **DEGRADED** — 仍未做（显示/过滤已实现；无写入命令）. pi 有但我们够不着 `types.ts:1394`. | M |
 | Extension load errors | Collected into `LoadExtensionsResult.errors` (`loader.ts:588-591`, `634-637`) | **Never printed and never emitted**: the RPC path has no consumer; they land in `runtime.diagnostics`, which the app never sees (`main.ts:775-782`) | Still nothing: no consumer of `LoadExtensionsResult.errors` anywhere in `app/` or `rpc/`. | **MISSING** — 仍未做. pi 有但我们够不着（`loader.ts:634-637` 收集，但没有任何输出/上报通道）. | S |
 | Extension handler errors | Caught and reported via `onError` (`runner.ts:851-882`) | `extension_error{extensionPath, event, error}` (`rpc-mode.ts:348-350`) | Implemented: `PiEvent.ExtensionError(extensionPath, event)` is parsed and shown with attribution. | **N/A** — 已实现（`extensionPath`/`event` 保留并可显示）；pi 有 `rpc-mode.ts:348-350` | XS |
@@ -833,12 +833,17 @@ and the hook it threw in.
 
 ### 5.8 ~~`entry_appended` carries the whole entry and the app throws it away~~ — FIXED
 
-`agent-session.ts:2616-2621` emits the full entry, and the app now projects it:
+`agent-session.ts:2616-2621` emits the full entry, and the app now consumes it:
 `PiEvent.EntryAppended` carries the payload into
-`TranscriptReducer.onEvent` -> `onEntry` -> `onCustomEntry`
-(`rpc/Transcript.kt:869`, `:1876`). History replay uses the same projection:
-`PiEngineSession` builds a fresh reducer with `seedFromHistory(entries)` after
-`get_entries`. Extension state therefore survives a restart *and* a reconnect.
+`TranscriptReducer.onEvent` -> `onEntry` (`rpc/Transcript.kt`). History replay uses
+the same path: `PiEngineSession` builds a fresh reducer with
+`seedFromHistory(entries)` after `get_entries`. Extension state therefore survives
+a restart *and* a reconnect.
+
+**2026-09-24 更新：** 消费不等于显示。`onEntry` 的 `custom` 分支现在返回
+`TranscriptChange.None`——用户裁决删掉那行「扩展状态：<customType>」与它下面的键值表
+（是 App 自己发明的渲染）。条目仍然被读入、保留在会话文件里、`get_entries` 仍然返回它们；
+丢掉的只有 transcript 行。
 
 ### 5.9 Precedence when two extensions collide (three different rules)
 
@@ -923,7 +928,8 @@ Three different mechanisms, three different app obligations:
 3. Labels via `pi.setLabel` (`types.ts:1394`).
 
 **All three are readable by the app today** (verified in the §0.2 re-check):
-custom entries via `onCustomEntry` (`rpc/Transcript.kt:1876`) and `seedHistory`;
+custom entries survive a restart via `seedHistory` (and, since 2026-09-24, are
+deliberately **not** drawn as a row);
 custom messages via the `MessageEnd` custom branch -> `onHookMessage`
 (`rpc/Transcript.kt:792-798`) -> `HookMessageBlock`; labels via `get_tree`, which
 pi resolves before sending (`TreeFilter.LabeledOnly`, `SessionTreeScreen`).
@@ -1010,7 +1016,7 @@ a `HookMessage` when `display !== false` (the block type exists,
 `rpc/Transcript.kt:1283`).
 
 **6.7 Surface `entry_appended` and call `get_entries` on attach.** `STATUS: DONE`
-— `PiEvent.EntryAppended -> onEntry -> onCustomEntry`, plus
+— `PiEvent.EntryAppended -> onEntry`, plus
 `PiEngineSession.seedHistory` over `get_entries` on attach. Feed
 `PiEvent.EntryAppended`'s full entry into `TranscriptReducer.onEntry`
 (`rpc/Transcript.kt:905`) instead of `TranscriptChange.None`, and after every

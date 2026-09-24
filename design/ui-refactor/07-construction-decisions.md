@@ -1257,3 +1257,16 @@ proroot；③ guest 内 `id` 是 fake root、`pwd` 是 `-w` 的 guest 路径、�
 **风险声明**：浮动件会盖住滚动中经过它下面的行 —— 这是「浮动」的定义，换来的是列表铺满 + 最后一条可达。日后若有人为了「不被盖住」再改回占位的一行，必须先推翻本条 ①。
 
 **未验证**：本容器无可用 AAPT2/真机 APK 产物（同 D57 的限制），①–⑥ 是判据不是实测。**门槛**：`tools/typecheck.sh` 对 `SessionsScreen.kt` 0 error（`:app` 只剩 `ui/settings/DiagnosticsReport.kt` 的 `BuildConfig`，脚本自述盲区）；`check-nested-comments.py` OK（211 个 Kotlin 文件）。**D37 ② 更正**：症状仍成立，修法不再是「改成列表下面一行」；以本条为准 —— **浮动 + `contentPadding`**。
+
+## D59 · 对话流里的「扩展状态：<customType> · {JSON}」删干净
+
+**用户原话**：「你看看我工具卡下面这些东西是什么时候弄进来的？扩展状态啥的，这么突兀，也不知道有什么意义。」→（问清来历后）「**删干净吧**，你知道这是什么地方吗？千万别删错。」
+
+**这是谁的馊主意**：不是用户的。两次都是本侧自己加的——`f9b8caa`（2026-09-11，渲染审计台账 **F6**/**RR-P4**，rpc 那批行做的）先把它做成一行 muted notice；`9c547a1`（2026-09-14，D27–D31 那一批）又给这行加了 `data` 第一层的键值表。两处提交信息与 `docs/gap-disposition.md` 都只记了"渲染审计缺口"，**没有任何一条用户裁决要求它**；而用户唯一对扩展状态表过态的是 **D29「彻底不显示」**。也就是说这条渲染是逆着既有裁决加回来的。
+
+**裁决**：`custom` 条目在对话流里**一行都不画**。
+- `rpc/.../Transcript.kt`：`onEntry` 的 `"custom"` 分支返回 `TranscriptChange.None`；`onCustomEntry`、`entryDataRows`、`compactEntryData` 及其两个上限常量**整个删除**；`Notice.rows` 字段删除。
+- `ui/blocks/NoticeBlock.kt`：键值表那一块与它的两个列宽常量删除，只留单行（自动重试、扩展失败仍在用 `Notice`）。
+- **什么都没删错**：删的是「渲染」，不是「数据」——`custom` 条目仍被解析、仍在会话文件里、`get_entries` 仍返回、会话树屏仍显示；`custom_message`（**进上下文**的那条路）与 `HookMessageBlock` 完全没动；「会话与队列」sheet 里 D29 那节扩展状态（`setStatus`）也没动。
+- pi 侧的判据：没有为 `customType` 注册渲染器时 **pi 自己也是静默的**（`interactive-mode.ts:3558-3561`），所以"不画"比"兜底画"更贴 pi。
+- 同类渲染审计项（`docs/extension-compatibility.md` 的 `registerEntryRenderer` 行、`docs/rpc-coverage.md`、`docs/capability-gap.md`、`docs/pi-surface-audit-tools.md`、`docs/remaining-work.md`、F6 的 disposition 行）同批改成"不画"。

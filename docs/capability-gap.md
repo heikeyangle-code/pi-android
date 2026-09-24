@@ -314,7 +314,7 @@ pi 的**内置**命令表：`core/slash-commands.ts:19-43`，**23** 条。App �
 | **`onTerminalInput`** | 返回空退订（`:163-166`） | 无 | 同上 |
 | 三个**可否决**钩子：`session_before_switch` / `session_before_fork` / `session_before_compact` | 否决经 RPC 响应回传 | `PiSessionViewModel.kt:2382-2385`（switch 取消）、`:2155-2158`（fork 取消）、`rpc/.../Transcript.kt:1555-1604`（compact 的 `aborted`/`errorMessage`） | `pi 有且 App 有` |
 | `session_before_tree` / `session_tree` / `navigateTree` / `setLabel` | **没有 RPC 命令** | 树只读（P2-3） | `pi 有但我们够不着（RPC 无命令）` |
-| `registerMessageRenderer` / `registerEntryRenderer` / `registerMarkdownTransformer` | 渲染器只在 TUI 被调用 | 通用兜底：`HookMessageBlock`、`onCustomEntry`、`BlockRenderer.kt:91-101` | `pi 有但我们够不着（渲染器不上线，内容不丢）` |
+| `registerMessageRenderer` / `registerEntryRenderer` / `registerMarkdownTransformer` | 渲染器只在 TUI 被调用 | 通用兜底：`HookMessageBlock`、`BlockRenderer.kt:91-101`（`custom` entry 自 **2026-09-24** 起不画行，用户裁决） | `pi 有但我们够不着（渲染器不上线，内容不丢）` |
 | `tool_call` 否决 | 变成错误工具结果（`agent-loop.ts:643-644`） | 失败卡（有落点） | `pi 有且 App 有` |
 | `user_bash` 替换执行 | 结果直接进 `bash` 响应 | BashPanel | `pi 有且 App 有`（P3-10） |
 | `input` 的 `handled` | 提前返回，无事件 | 无 | `pi 有但我们够不着（pi 不报信号）`（P2-5） |

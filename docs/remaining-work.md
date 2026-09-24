@@ -166,7 +166,7 @@
 | 组 | 现存的符号 |
 |---|---|
 | 命令面板 | `PiSlashCommands.piCommandPalette`、`SlashPalette`、`PiCommandAction`、`runPromptCommand`、`refreshCommands`、`sourceTagOf` |
-| 扩展消息/条目 | `Transcript` custom 分支 → `onHookMessage`、`HookMessageBlock`、`onCustomEntry`、`PiEngineSession.seedHistory` |
+| 扩展消息/条目 | `Transcript` custom 分支 → `onHookMessage`、`HookMessageBlock`、`PiEngineSession.seedHistory`（`custom` entry 自 2026-09-24 起不画行） |
 | 会话元数据 | `PiEngineApi.setSessionName`、`renameSession`、`PiEvent.SessionInfoChanged` |
 | 会话/队列/统计 | `SessionStatsSheet`（上下文用量）、`SessionToolsSheet`、`ModelPickerSheet` |
 | 模型/供应商 | `PiEngineApi.getAvailableModels`、`refreshState()` on `AgentSettled`、`ModelChangeBlock` |

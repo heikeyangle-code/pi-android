@@ -431,7 +431,7 @@ run_harness tree-navigation \
 | 项 | 功能是否在 | 现状 | 判定 |
 |---|---|---|---|
 | `setStatus` 的**专用页脚行** | 在（`PiSessionViewModel.setExtensionStatus` 收集） | 页脚行被 **D-3 裁决删除**（`ChatScreen.kt:1771` 注释），改在「会话与队列」sheet 的「扩展状态」段呈现（`ChatSheets.kt:463-478`） | **不算欠账**：数据没丢，只是换了落点，且是用户裁决 |
-| 扩展 `custom` 消息 / `custom` entry | 在 | `HookMessageBlock.kt`（`customMessageBg` + `customType` 标签）；`Transcript.onCustomEntry`（`Transcript.kt:2322-2336`） | 无欠账 |
+| 扩展 `custom` 消息 / `custom` entry | 在 | `HookMessageBlock.kt`（`customMessageBg` + `customType` 标签）；`custom` entry **2026-09-24 用户裁决删掉那行**（`onEntry` 的 `custom` 分支返回 `TranscriptChange.None`；原 `Transcript.onCustomEntry` 已删除） | 无欠账（条目仍被读入与保留，只是不画） |
 | `model_change` 行 | 在（session entry 存在，`core/session-manager.ts:64`） | **故意不画**（`BlockRenderer.kt:143-160` 的注释），改由 AppBar 的模型 chip 承担 | 无欠账（pi 自己也不画成 transcript 行） |
 | `label` / bookmark | 在（`SessionEntries.kt:115-121`、`:149-150` 解析，含"label 被清除" 的语义） | **能显示，不能设置**；pi 侧也只有扩展 API（`agent-session.ts:2629` 的 `setLabel`）与 TUI 的 `labeled-only` 过滤（`tree-selector.ts:376`），没有核心 UI | 无欠账 |
 | `grep` 的 context 行配色 **KDoc** | 在 | 代码正确（`toolOutput`，与 pi `renderers/grep.ts:52` 一致；pi 无 `contextOnTool` token），但 `GrepBlock.kt:181-183` 的 KDoc 说它取 `contextOnTool` | **文档瑕疵**，建议删那两行注释 |

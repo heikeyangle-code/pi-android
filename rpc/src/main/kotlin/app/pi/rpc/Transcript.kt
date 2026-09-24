@@ -5,7 +5,6 @@ import java.time.OffsetDateTime
 import java.time.ZoneId
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
-import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 
@@ -218,21 +217,6 @@ data class Notice(
     override val ts: Long,
     val text: String,
     val tone: Tone = Tone.Info,
-    /**
-     * A key/value breakdown of the same entry, when it has one — today only pi's
-     * `custom` entries (an extension's `ctx.ui.appendEntry(customType, data)`).
-     *
-     * **[text] is not replaced by this and must keep its whole original string**:
-     * the transcript's search reads it (`screens/ChatScreen.kt`'s `searchHits`, which
-     * asks each row's own fields rather than a joined copy of them), and so does the
-     * session export. The rows are a *reading* of the same data, drawn under the line
-     * rather than instead of it.
-     *
-     * Empty for every other producer, which is why it is a defaulted parameter: the
-     * two exhaustive `when`s over [TranscriptItem] (`ui/blocks/BlockRenderer.kt` and
-     * `screens/ChatScreen.kt`) do not have to move for it.
-     */
-    val rows: List<Pair<String, String>> = emptyList(),
 ) : TranscriptItem {
     enum class Tone { Info, Warning, Error }
 }
@@ -606,28 +590,6 @@ private fun detailsExitCode(details: JsonElement?): Int? {
     return obj.int("exitCode") ?: obj.int("exit_code") ?: obj.int("code")
 }
 
-/** Cap for [compactEntryData]: one transcript row, not a payload dump. */
-private const val CUSTOM_ENTRY_DATA_MAX = 200
-
-/**
- * One-line, bounded rendering of a `custom` entry's `data` (F6).
- *
- * `data` is `unknown` in pi (`core/session-manager.ts:104-108`), so it is a
- * string, a number, an array or an arbitrary nested object; the compact JSON
- * form is the closest thing to what the extension's own renderer would have
- * drawn. Newlines are flattened because the row is a single line, and the
- * result is capped so a payload the UI cannot lay out cannot take over the
- * transcript.
- */
-private fun compactEntryData(data: JsonElement?, max: Int = CUSTOM_ENTRY_DATA_MAX): String {
-    val text = when (data) {
-        null, is JsonNull -> ""
-        is JsonPrimitive -> data.content
-        else -> data.toString()
-    }.replace('\n', ' ').replace('\r', ' ').trim()
-    return if (text.length <= max) text else text.take(max - 1) + "…"
-}
-
 /**
  * [total] plus one more message's usage, field by field.
  *
@@ -656,42 +618,6 @@ private fun sumReported(total: Double?, next: Double?): Double? = when {
     total == null -> next
     next == null -> total
     else -> total + next
-}
-
-/**
- * How many key/value rows of a `custom` entry's `data` are shown.
- *
- * A display budget, not a pi rule: the card is a reading of an extension's payload,
- * and an extension may put anything in there. Twelve rows is roughly the point at
- * which one entry stops being scannable on a phone. Keys past the cap are simply not
- * drawn; nothing is annotated onto the card for them, and the single line above the
- * rows still carries the compacted whole ([compactEntryData] of the object), so an
- * entry that was cut short is never silent about it.
- */
-private const val CUSTOM_ENTRY_ROWS_MAX = 12
-
-/**
- * The **first level** of a `custom` entry's `data` as key/value rows.
- *
- * pi types `data` as `unknown` (`core/session-manager.ts:104-108`), so an extension
- * can write a string, a number, an array or an arbitrary nested object. Only a
- * JSON object has a key/value shape to draw; anything else answers an empty list and
- * the caller keeps its single-line form. Values go through [compactEntryData], which
- * is what keeps a payload from taking over the screen: newlines are flattened and
- * every value is capped at [CUSTOM_ENTRY_DATA_MAX] characters.
- *
- * **Nothing here interprets the data.** A key is printed as the extension spelled it
- * and a value as JSON's own text — no labels, no units, no guesses about what a field
- * means. That is the deliberate ceiling for this feature: the *pixels* an extension's
- * own renderer would have drawn cannot cross an RPC channel that has no such message
- * (`RpcExtensionUIRequest`, `rpc-types.ts:246-281`), but the data can, and showing it
- * unread is honest where inventing a rendering would not be.
- */
-private fun entryDataRows(data: JsonElement?): List<Pair<String, String>> {
-    val obj = data as? JsonObject ?: return emptyList()
-    return obj.entries.take(CUSTOM_ENTRY_ROWS_MAX).map { (key, value) ->
-        key to compactEntryData(value)
-    }
 }
 
 /**
@@ -1964,9 +1890,8 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
      *
      * Entry types that are not conversation content — `label`, `session_info`,
      * the `session` header and anything newer than this build — are inert rather
-     * than fatal. A `custom` entry is extension state and never enters the
-     * model's context, but pi still draws it (see [onCustomEntry]), so it is
-     * projected rather than dropped.
+     * than fatal. A `custom` entry is extension state and is inert here too: see
+     * the `custom` arm below.
      */
     fun onEntry(entry: JsonObject): TranscriptChange {
         val type = entry.str("type").orEmpty()
@@ -2003,14 +1928,23 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
             "custom_message", "hook_message" -> onHookEntry(entry, entryId, ts)
 
             // An extension's own persisted state (`{ type, customType, data }`,
-            // core/session-manager.ts:104-108, docs/session-format.md:279). pi
-            // renders it through the renderer the extension registered for that
-            // `customType`: live from `entry_appended` (`interactive-mode.ts:3202-3207`
-            // → `:3557-3562`) and on replay (`renderSessionEntries`, `:3786-3789`,
-            // whose item list really does carry `custom` entries — `RenderSessionItem`
-            // at `:228`, dispatched at `:3703-3707`). Before this case the app
-            // dropped it on both paths.
-            "custom" -> onCustomEntry(entry, entryId, ts)
+            // core/session-manager.ts:104-108, docs/session-format.md:279) is
+            // **deliberately not drawn**. pi shows it only through the renderer the
+            // extension registered for that `customType` (`interactive-mode.ts:3557-3562`,
+            // `components/custom-entry.ts`), and with no renderer registered pi itself
+            // adds no child at all (`:3558-3561`). The RPC wire carries no renderer
+            // registry, so the closest thing to pi's own behaviour is this: nothing.
+            //
+            // Until 2026-09-24 this arm projected the type and the payload as a muted
+            // row, plus (since 9c547a1) the first level of `data` as key/value lines.
+            // Both were the App's own invention, never a user decision, and the JSON
+            // they printed (`web-search-results`, the web-search extension's fetch
+            // cache) read as noise under every tool card. Removal was the user's
+            // ruling, and it matches D29's "扩展状态…彻底不显示"
+            // (`design/ui-refactor/07-construction-decisions.md:186-188`). The data
+            // is untouched: the entries stay in the session file, `get_entries`
+            // still returns them, and the session tree screen still shows them.
+            "custom" -> TranscriptChange.None
 
             // F26: there is deliberately **no** `skill` / `skill_invocation` case
             // here. pi has neither an entry type nor an event with those names —
@@ -2365,60 +2299,6 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
                 ts = ts,
                 customType = customType,
                 markdown = text,
-            ),
-        )
-    }
-
-    /**
-     * The row for a `custom` session entry — extension state that deliberately
-     * never enters the model's context (`core/session-manager.ts:95-108`,
-     * `docs/session-format.md:279-282`). F6: both paths used to drop it, so an
-     * extension keeping visible state with `pi.appendEntry()` showed nothing.
-     *
-     * pi hands the entry to the renderer the extension registered for its
-     * `customType` (`interactive-mode.ts:3557-3562` →
-     * `components/custom-entry.ts:40-46`). That renderer is a live TUI component
-     * and cannot cross the RPC boundary, so the honest fallback is the one pi's
-     * own failure branch also prints — the type and the payload
-     * (`custom-entry.ts:48-52`: `[customType] renderer failed: …`).
-     *
-     * It is deliberately **not** a [HookMessage]: `custom` state is not context
-     * (`sessionEntryToContextMessages`, `core/session-manager.ts:383-408`, skips
-     * every `custom` entry), while `custom_message` — the card [onHookEntry]
-     * builds — *is* context (`:124-142`); reusing that card would assert
-     * something false.
-     *
-     * When no renderer is registered for a `customType`, pi is silent
-     * (`interactive-mode.ts:3558-3561` returns before constructing a component),
-     * and when the renderer produces nothing it adds no child either
-     * (`components/custom-entry.ts:54-56`). The RPC wire carries no renderer
-     * registry, so the app cannot take that same decision, and the entry only
-     * reaches here because an extension explicitly appended it — showing the
-     * metadata is strictly closer to pi than the invisible row this replaces.
-     *
-     * The wording is the app's own: pi has no text for this row at all.
-     */
-    private fun onCustomEntry(entry: JsonObject, entryId: String?, ts: Long): TranscriptChange {
-        // pi's `CustomEntry` has no `display` field (`core/session-manager.ts:104-108`);
-        // only `CustomMessageEntry` has one (`:136-142`), and [onHookEntry]
-        // honours that one. A newer pi that adds it here is obeyed rather than
-        // ignored, so state an extension marks hidden cannot become a row.
-        if (entry.bool("display") == false) return TranscriptChange.None
-        val customType = entry.str("customType")
-            ?: entry.str("custom_type")
-            ?: "extension"
-        val data = compactEntryData(entry["data"])
-        val text = if (data.isEmpty()) "扩展状态：$customType" else "扩展状态：$customType · $data"
-        return append(
-            Notice(
-                key = keyFor(entryId, "custom"),
-                ts = ts,
-                text = text,
-                tone = Notice.Tone.Info,
-                // The structured half of the same payload. `text` above keeps the
-                // compacted line it always had — the search index and the export read
-                // it — and the rows are drawn *under* it by `NoticeBlock`.
-                rows = entryDataRows(entry["data"]),
             ),
         )
     }

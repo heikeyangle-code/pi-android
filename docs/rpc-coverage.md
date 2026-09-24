@@ -172,7 +172,7 @@
 | `session_before_compact` 否决 / 替换结果 | `compaction_end` 的 `aborted`/`errorMessage`/`result` | `Transcript.kt:1555-1604` | 有，完整 |
 | `session_before_tree` / `session_tree` / `navigateTree` | 无命令（`rpc-types.ts:20-74` 没有 `navigate_tree`） | 无 | **pi 有但我们够不着**：RPC 没有这条命令，App 的会话树只能只读 + 分叉（`SessionTreeScreen`） |
 | `setLabel` | 无命令 | 树界面只读显示 pi 已解析的标签 | **pi 有但我们够不着**：`rpc-types.ts:20-74` 无写入通道 |
-| `registerMarkdownTransformer` / `registerMessageRenderer` / `registerEntryRenderer` | 渲染器只在 TUI 被调用；消息/条目本体上线 | 通用卡片兜底（`HookMessageBlock`、`onCustomEntry`） | **pi 有但我们够不着**：渲染器实现不可达（`interactive-mode.ts:2024,3558,3597`），内容不丢 |
+| `registerMarkdownTransformer` / `registerMessageRenderer` / `registerEntryRenderer` | 渲染器只在 TUI 被调用；消息/条目本体上线 | 通用卡片兜底（`HookMessageBlock`）；`custom` entry 自 **2026-09-24** 起不画行（`onEntry` 的 `custom` 分支返回 `TranscriptChange.None`，用户裁决） | **pi 有但我们够不着**：渲染器实现不可达（`interactive-mode.ts:2024,3558,3597`），内容不丢 |
 | `custom()` / `setFooter` / `setHeader` / `setWorkingMessage` / `setWorkingVisible` / `setWorkingIndicator` / `setHiddenThinkingLabel` / `getEditorText` / `getAllThemes` / `getTheme` / `setTheme` / `get/setToolsExpanded` / `addAutocompleteProvider` / `set/getEditorComponent` / `onTerminalInput` | 无（`rpc-mode.ts:163-311` no-op / 假值） | `TuiOnlyScan` 扫描源码并提示改用终端页 | **pi 有但我们够不着**：RPC 上下文不实现，App 收不到任何信号 |
 | `getActiveTools` / `getAllTools` / `setActiveTools` / `getSystemPrompt` | 无命令 | 无 | **pi 有但我们够不着**：RPC 无此命令 |
 
