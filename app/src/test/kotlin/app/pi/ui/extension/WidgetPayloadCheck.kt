@@ -157,8 +157,8 @@ fun main() {
     val detail = one.details.first()
     widgetCheck("the job row, then its one task under it", one.details.size, 2)
     widgetCheck("the glyph carries the state's colour", tonesOf(detail.take(1)), listOf(WidgetTone.Accent))
-    widgetCheck("the state word rides with the glyph", listOf(detail[2].text, detail[2].tone), listOf("运行中", WidgetTone.Accent))
-    widgetCheck("the name is the readable run", listOf(detail[4].text, detail[4].tone), listOf("oracle", WidgetTone.Text))
+    checkTrue("the state word rides with the glyph", detail.any { it.text == "运行中" && it.tone == WidgetTone.Accent })
+    checkTrue("the name is the readable run", detail.any { it.text == "oracle" && it.tone == WidgetTone.Text })
     widgetCheck(
         "stats are dim and start with the current tool (the extension's widgetActivity)",
         listOf(detail[2].tone, detail.last().text),
@@ -226,11 +226,17 @@ fun main() {
     widgetCheck("a scripted job counts its agents, not itself", textOf(scripted.headline), "2 运行中 · 1 完成 · 1 失败")
     widgetCheck("and the badge is the agent count", scripted.badge, "4")
     widgetCheck("the job row is drawn, then its tasks under it", scripted.details.size, 5)
-    widgetCheck("a task row starts with its branch glyph", tonesOf(scripted.details[1].take(1)), listOf(WidgetTone.Dim))
-    widgetCheck("and carries the task's own name", scripted.details[1][4].text, "catbox-recovery")
-    widgetCheck("each task shows its own state word", listOf(scripted.details[1][2].text, scripted.details[3][2].text, scripted.details[4][2].text), listOf("运行中", "完成", "失败"))
+    checkTrue("a task row starts with its branch glyph", scripted.details[1].first().tone == WidgetTone.Dim && textOf(scripted.details[1]).startsWith("├─ "))
+    checkTrue("and carries the task's own name", textOf(scripted.details[1]).contains("catbox-recovery"))
+    checkTrue(
+        "each task shows its own state word",
+        listOf(1, 3, 4).map { textOf(scripted.details[it]) }.let { rows ->
+            rows[0].contains("运行中") && rows[1].contains("完成") && rows[2].contains("失败")
+        },
+    )
     widgetCheck("and its own readings", scripted.details[1].last().text, "web_search · 3 轮 · 7 工具")
-    widgetCheck("a job with tasks is named by its task count, not by a repeated agent list", scripted.details[0][4].text, "4 个子任务")
+    checkTrue("a job with tasks is named by its task count, not by a repeated agent list", textOf(scripted.details[0]).contains("4 个子任务"))
+    checkTrue("and the row says which kind of job it is", textOf(scripted.details[0]).contains("子代理"))
     // The async id, in the short form the inspect command takes.
     checkTrue(
         "the job row carries the id the inspect command wants",
@@ -273,9 +279,9 @@ fun main() {
         scripted.details[1].last().text,
         "web_search · 3 轮 · 7 工具",
     )
-    widgetCheck("the last task closes the branch", scripted.details[4][0].text, "└─ ")
+    checkTrue("the last task closes the branch", textOf(scripted.details[4]).startsWith("└─ "))
     val childless = summary(snapshot("""{"id":"solo","kind":"subagent","label":"oracle","state":"running"}"""))
-    widgetCheck("a job with no tasks counts as one and keeps its own name", listOf(childless.badge, childless.details[0][4].text), listOf("1", "oracle"))
+    widgetCheck("a job with no tasks counts as one and keeps its own name", listOf(childless.badge, textOf(childless.details[0]).contains("oracle")), listOf("1", true))
 
     // ------------------------------------------------------------------ the card's own tone
     widgetCheck("a text-only widget has no state to carry", widgetCardTone(listOf(WidgetRow.Text("hi"))), null)

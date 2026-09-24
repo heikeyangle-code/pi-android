@@ -330,7 +330,10 @@ private fun subagentSummary(json: String): WidgetRow? {
         // they are indistinguishable. `id` is the handle the extension's own inspect command
         // takes (`/subagents-inspect-rpc <requestId> <asyncId>`), so the card prints a short
         // form of it — that is the whole interaction this surface has.
-        val jobKind = if (run.text("kind") == "workflow") "工作流" else null
+        // Both words, not just the workflow one: a bare job row and a workflow row must be
+        // told apart, and leaving `subagent` implicit would mean the label appears only for the
+        // rarer kind — the reader cannot know which kind is "unmarked".
+        val jobKind = if (run.text("kind") == "workflow") "工作流" else "子代理"
         buildList {
             add(nodeRow(run, name = jobName, kindWord = jobKind, ref = run.text("id")?.take(8)))
             shown.forEachIndexed { index, child ->
@@ -462,7 +465,7 @@ private fun JsonObject.omittedLabel(): String? {
     val dropped = (omitted.text("runs")?.toIntOrNull() ?: 0) +
         (omitted.text("children")?.toIntOrNull() ?: 0)
     return when {
-        dropped > 0 -> "（另有 $dropped 个未列出）"
+        dropped > 0 -> "+$dropped 个未列出"
         omitted.text("byteLimitExceeded") == "true" -> "（超出字节上限）"
         else -> null
     }
