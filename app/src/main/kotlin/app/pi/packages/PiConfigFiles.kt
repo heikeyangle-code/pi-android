@@ -601,29 +601,62 @@ class PiEnginePreferences(
     private val store: PiSettingsFileStore get() = sharedStore ?: ownStore
 
     /**
-     * @param modelId null to only set the provider.
+     * `defaultProvider` + `defaultModel`，**只在用户明确「设为默认」时调**（判定在
+     * [ModelSelectionPlan.settings] 的 `writeDefault`）。
+     *
+     * 旧的 `selectModel` 把这三个键的写入绑成一次无条件调用：给已有厂商加一个模型，
+     * 默认模型也被顺手切走 —— 用户报的「导入完了也有 bug」的其中一半。拆开之后，
+     * "要不要写"由判定对象回答，这里只负责落盘。
+     *
      * @return null on success, else a message.
      */
-    fun selectModel(providerId: String, modelId: String?, enabledModelIds: List<String> = emptyList()): String? = runCatching {
+    fun setSelection(providerId: String, modelId: String): String? = runCatching {
         // pi locks `settings.json` itself on every save (`settings-manager.ts:236-256`),
         // so an unlocked write here can be overwritten by pi's next persistence with
         // no error at all.
         PiConfigFiles.withLock(File(agentDir, "settings.json")) {
             store.write("defaultProvider", JsonPrimitive(providerId))
-            if (modelId != null) store.write("defaultModel", JsonPrimitive(modelId))
-            if (enabledModelIds.isNotEmpty()) {
-                // `enabledModels` uses the same `provider/modelId` pattern syntax as
-                // `--models` (`settings-manager.ts:139`), so a bare model id is not
-                // enough — it must be qualified.
-                store.write(
-                    "enabledModels",
-                    JsonArray(enabledModelIds.map { JsonPrimitive("$providerId/$it") }),
-                )
-            }
+            store.write("defaultModel", JsonPrimitive(modelId))
             store.invalidate()
             null
         }
     }.getOrElse { error -> "写入设置失败：${error.message ?: error::class.java.simpleName}" }
+
+    /**
+     * `enabledModels` **整表**写入 —— 列表怎么算（保留谁、替换谁、要不要写）是
+     * [ModelSelectionPlan] 的判定，这里只是它的执行端。整表替换与 pi 自己一致
+     * （`settings-manager.ts:1325` 直接 `= patterns`），条目必须是 `provider/modelId`
+     * 限定名或用户自己的 glob（`settings-manager.ts:139`，同 `--models` 语法）。
+     *
+     * 空列表 = **删键**：pi 把"没有这个键"当全部模型可循环（`main.ts:789` 只在
+     * `length > 0` 时解析作用域），`store.remove` 会走 `SettingsDocument.removePath`
+     * 把清空后的父节点一起剪掉，文件里不会留下 `[]` 这种与"未设置"等价的空值。
+     *
+     * @return null on success, else a message.
+     */
+    fun setEnabledModels(patterns: List<String>): String? = runCatching {
+        PiConfigFiles.withLock(File(agentDir, "settings.json")) {
+            if (patterns.isEmpty()) {
+                store.remove("enabledModels")
+            } else {
+                store.write("enabledModels", JsonArray(patterns.map { JsonPrimitive(it) }))
+            }
+            store.invalidate()
+            null
+        }
+    }.getOrElse { error -> "写入循环模型列表失败：${error.message ?: error::class.java.simpleName}" }
+
+    /**
+     * 当前 `enabledModels` 的原样条目 —— [ModelSelectionPlan] 合并时要保留的"别人"。
+     *
+     * 读不到、不是数组、条目不是字符串：一律跳过而不是猜。这是写入前的**输入**，
+     * 把坏值当成空列表会让合并把"读失败"误判成"没有要保留的"，所以这里宁可少保留
+     * 一条，也不编造：坏 JSON 的场景由 `PiCredentialService.prefill` 的
+     * `modelsFileError`/`authFileError` 在界面上单独报，不靠这个方法吞掉。
+     */
+    fun enabledModels(): List<String> =
+        ((store.read("enabledModels") as? JsonArray) ?: return emptyList())
+            .mapNotNull { entry -> (entry as? JsonPrimitive)?.content?.takeIf { it.isNotBlank() } }
 
     /** Currently selected provider/model, for prefilling the editor. */
     fun current(): Pair<String?, String?> {

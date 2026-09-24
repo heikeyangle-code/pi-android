@@ -591,6 +591,17 @@ run_harness models-inventory \
   "$ROOT/app/src/main/kotlin/app/pi/packages/PiJsonComments.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/packages/PiFileStamps.kt"
 
+# app.pi.packages: 导入/编辑厂商时 settings.json 三个选择键的写入判定（`ModelSelectionPlan.kt`）。
+# 为什么必须在这里：用户报的「导入完了也有 bug」（B1）是旧 save() 每次无条件写
+# defaultProvider/defaultModel 并把 enabledModels 整表替换成只有本厂商的条目 —— 加一个模型
+# 默认模型被切走、导入第二个厂商冲掉第一个厂商的循环条目和手写 pattern。「勾选没动就不写」
+# 「别的厂商与手写 glob 必须活下来」是两条编译器看不见的条件判定，只能在这里钉住。
+# 纯 Kotlin stdlib：无 Android、无文件 IO。
+run_harness model-selection-plan \
+  app.pi.packages.ModelSelectionPlanCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/packages/ModelSelectionPlanCheck.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/packages/ModelSelectionPlan.kt"
+
 # :rpc: the engine's stdout decoding. `PiEngineSession.readLoop` handed each 16 KiB
 # read to `String(bytes, 0, read, UTF_8)`, which decodes one read as a complete
 # stream - so a CJK character straddling two reads became one replacement character

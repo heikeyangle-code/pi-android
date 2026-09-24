@@ -266,9 +266,19 @@ class PiCredentialService(
     )
 
     /**
-     * Write everything. [defaultModelId] becomes `defaultModel`; every id in
-     * [choices] becomes an entry in `enabledModels` (qualified `provider/id`, which
-     * is the syntax `settings-manager.ts:139` documents for `--models`).
+     * Write everything: `auth.json` → `models.json` → 以及**只在用户要求时**才写
+     * `settings.json` 里的选择键。
+     *
+     * 选择键（`defaultProvider`/`defaultModel`/`enabledModels`）由
+     * [ModelSelectionPlan] 判定，**默认一个都不写**：
+     *
+     *  - [setAsDefault] 为 true 且 [defaultModelId] 非空 ⇒ 写默认选择；
+     *  - 勾选集合与 [configuredModelIds] 不同 ⇒ 重写 `enabledModels`（整表，但别的
+     *    厂商的条目保留）。
+     *
+     * 旧版把这三键绑成一次无条件写入（`modelId ?: choices.first().id`），于是"给已有
+     * 厂商加一个模型"会顺手切默认、"导入第二个厂商"会冲掉第一个厂商的循环条目和用户
+     * 手写的 pattern —— 用户报的「导入完了也有 bug」（B1）。
      */
     fun save(
         preset: PiProviderPresets.Preset,
@@ -276,7 +286,12 @@ class PiCredentialService(
         baseUrl: String,
         api: String,
         choices: List<ModelChoice>,
-        defaultModelId: String?,
+        /** 保存前该厂商已配置的模型 id（`prefill` 的 `configuredModelIds`），判「动没动勾选」用。 */
+        configuredModelIds: Set<String> = emptySet(),
+        /** 用户是否明确点了「设为默认」；没点就不写默认选择。 */
+        setAsDefault: Boolean = false,
+        /** [setAsDefault] 为 true 时写入的模型 id；false 时忽略。 */
+        defaultModelId: String? = null,
     ): SaveResult {
         val steps = mutableListOf<String>()
         if (choices.isEmpty()) {
@@ -360,14 +375,34 @@ class PiCredentialService(
             "模型清单已保存：${preset.id}（${declared.size} 个模型）"
         }
 
-        preferences().selectModel(
+        // 选择键：判定（写不写、写什么）全在 ModelSelectionPlan，这里只执行并汇报。
+        val plan = ModelSelectionPlan.settings(
+            existingPatterns = preferences().enabledModels(),
             providerId = preset.id,
-            modelId = defaultModelId ?: choices.first().id,
-            enabledModelIds = choices.map { it.id },
-        )?.let { error ->
-            return SaveResult(false, steps + error, null)
+            checkedIds = choices.map { it.id },
+            configuredIds = configuredModelIds,
+            setAsDefault = setAsDefault,
+            requestedDefaultModelId = defaultModelId,
+        )
+        val defaultId = plan.defaultModelId
+        if (plan.writeDefault && defaultId != null) {
+            preferences().setSelection(preset.id, defaultId)?.let { error ->
+                return SaveResult(false, steps + error, null)
+            }
+            steps += "已设为默认模型：${preset.id}/$defaultId"
         }
-        steps += "已设为默认模型，并加入可切换的模型列表"
+        plan.enabledModels?.let { patterns ->
+            preferences().setEnabledModels(patterns)?.let { error ->
+                return SaveResult(false, steps + error, null)
+            }
+            steps += if (patterns.isEmpty()) {
+                // pi 把"没有 enabledModels"当全部模型可循环（`main.ts:789`），所以说清楚
+                // 这不是"什么都不循环"，免得用户以为自己清空了循环范围。
+                "循环列表已清空，回到 pi 的默认（全部模型可循环）"
+            } else {
+                "循环列表已更新（${patterns.size} 条，其他厂商的条目保留）"
+            }
+        }
 
         return SaveResult(
             ok = true,
