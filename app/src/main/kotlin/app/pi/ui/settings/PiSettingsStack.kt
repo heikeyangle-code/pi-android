@@ -243,6 +243,43 @@ fun PiSettingsStack(
     // and therefore re-reads the values. No timer, and nothing at all while the
     // settings destination is not on screen.
     var filesEpoch by remember { mutableStateOf(0) }
+
+    // 本 App 自己写完一个设置之后的 epoch —— 行能不能刷新，只由它保证。
+    //
+    // 行是在 composition 里读 `store.read(...)` 的，而真实 store（`PiSettingsFileStore`）
+    // **不是快照状态**：`read()` 只是普通函数，文档缓存在 `@Volatile var cached` 上
+    // （`settings/PiSettingsFileStore.kt:260-304`），所以写它谁也订阅不到。对比
+    // `InMemoryPiSettingsStore`（`PiSettingsInMemory.kt:20-31` 的 `mutableStateMapOf`），
+    // 那里的 KDoc 明说「写一个设置只重组显示它的那些行」（`:11-13`）——预览与测试因此
+    // 看不出这个缺陷，真机才看得到。
+    //
+    // 写完之后的唯一通知是 `onSettingWritten` → `PiSessionViewModel.onSettingWritten`
+    // （`PiSessionViewModel.kt:1242-1277`）里的 `refreshPrefs()` / `refreshTheme()`，也就是
+    // `_state` / `_theme` 两个 StateFlow。而设置目的地**不读**这两个流：`PiRoot` 只把
+    // `uiState` 用在 `navRequest` 上（`PiRoot.kt:587-588`，它自己的说明在 `:843`），行读的是
+    // store。strong skipping 下不稳定参数按 `===` 比较、捕获不稳定的 lambda 按捕获值
+    // memoize（`docs/scroll-perf-list.md:26`、`:104`、`:394`），而 `PiSettingsStack` 这一层
+    // 的参数在 `_state` 发布时逐个不变（`store` 来自 `remember(session)`、`knownThemes` 来自
+    // 等值的 StateFlow 不会发布、lambda 捕获的是同一批 state 对象）⇒ **整棵设置树被跳过**，
+    // 行上的值停在旧值上，直到离开分组再进来（那时 `SettingsGroupScreen` 重新组合并重读
+    // store）。用户报的正是这个：「调了不管事，必须得切个屏再切回去才有变化」。
+    //
+    // 为什么不能靠上面的 `filesEpoch`：它只由 `PiDirectoryWatch` 报**外部**改动时 ++，而
+    // `app.*` 写的是 `app-prefs.json`（`settings/PiSettingsFileStore.kt:349`、`:376`）——它是
+    // `agentDir` 的**同级**文件，既不在被监视的目录里（`:292` 只盯 `paths.agentDir` 与工作区
+    // 的 `.pi`），也不在 `SETTINGS_WATCHED` 的名字里（`:733-745`）。`theme` 之所以看起来是
+    // 即时生效的，恰恰因为它写的是被监视的 `settings.json`：`PiFileWatch.kt:44-45` 自己记着
+    // 这个依赖——「以前每个事件都回调一次，于是"改一个开关"会让整页重读两遍」。也就是说，
+    // 「改开关 → 页面重读」过去完全靠文件监视，而 `app.*` 的设置没有这一层。
+    var writeEpoch by remember { mutableStateOf(0) }
+
+    // 行必须重读的那个 epoch：外部改动与本 App 自己的写入各占一半。在这里（`PiSettingsStack`
+    // 自己的作用域里）读它，而不是只在某个分支的实参里现算，是为了让首页也吃到它：停在首页
+    // 时分组页与搜索页都不在组合里，若 epoch 只在它们的分支里被读，首页摘要（「主题 dark」
+    // 那类）就没有任何东西能把它重读——`docs/settings-audit-impl.md:232` 记的那条
+    // 「SettingsHome 靠父级重组，不是显式契约」的缺口。
+    val rowsEpoch = filesEpoch + writeEpoch
+
     // Keyed on the **path**, not just the context: 切换工作区 changes the directory
     // without changing the Activity's context, and a bare `remember(context)` would
     // keep reading the old workspace for the rest of the process's life
@@ -364,7 +401,13 @@ fun PiSettingsStack(
     // status text is exactly what a stale value would lie about.
     val handleSettingWritten: (String) -> Unit = { key ->
         if (key == AppOnlySettingsStore.KEY_PROROOT) runtimeStatusEpoch++
+        // 先让宿主读它要读的（`refreshPrefs` / `refreshTheme` / proroot 的探针流程），再让这一栈
+        // 的行重读 store。顺序反过来，proroot 那两行会先用旧的 `runtimeStatusText` 重读一次。
         onSettingWritten(key)
+        // 这一行才是「行刷新」的那一半：见上面 `writeEpoch` 的注释 —— store 不可订阅，
+        // 而写完之后被通知的 `_state` / `_theme` 不是设置页读的东西，所以必须显式换一个
+        // 会让行重读的 epoch。
+        writeEpoch++
     }
 
     val openSetting: (String) -> Unit = { key ->
@@ -547,7 +590,7 @@ fun PiSettingsStack(
 
             searching -> SettingsSearchScreen(
                 store = effectiveStore,
-                freshness = filesEpoch,
+                freshness = rowsEpoch,
                 contentPadding = contentPadding,
                 onBack = { searching = false },
                 onOpenSetting = openSetting,
@@ -557,10 +600,11 @@ fun PiSettingsStack(
             currentGroup != null -> SettingsGroupScreen(
                 groupId = currentGroup,
                 store = effectiveStore,
-                // 外部改了 settings.json 之后，值必须在界面上变。store 的缓存由
-                // `onExternalSettingsWrite` 丢掉，而这个 epoch 才是让行重新读它的东西
-                // （行是在 composition 里读 store 的，缓存失效本身不会触发重组）。
-                freshness = filesEpoch,
+                // 外部改了 settings.json、或者 App 自己写了一个设置之后，值必须在界面上变。
+                // store 的缓存由 `onExternalSettingsWrite` 丢掉，而这个 epoch 才是让行重新读
+                // 它的东西（行是在 composition 里读 store 的，缓存失效本身不会触发重组）。
+                // `rowsEpoch` = 外部改动 + 本进程写入，见它在 `writeEpoch` 旁边的定义。
+                freshness = rowsEpoch,
                 contentPadding = contentPadding,
                 onBack = {
                     if (backReturnsToSearch) searching = true
@@ -603,6 +647,10 @@ fun PiSettingsStack(
             else -> SettingsHome(
                 store = effectiveStore,
                 contentPadding = contentPadding,
+                // 首页的每条分组摘要也是从 store 读出来的（`GroupEntry` 的 `group.summary`），
+                // 所以同一个 epoch 必须传下来：没有它，首页会被 strong skipping 跳过，
+                // 「外观 → 主题 dark」那类摘要会停在旧值上。
+                freshness = rowsEpoch,
                 onOpenGroup = { id ->
                     groupId = id
                     highlightKey = null

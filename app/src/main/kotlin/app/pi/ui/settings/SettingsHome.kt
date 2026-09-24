@@ -127,6 +127,17 @@ fun SettingsHome(
      * 替换首页内容。行在两种情况下都在 —— 一个点了没反应的行比一个自托管的行更坏。
      */
     onOpenPiFiles: (() -> Unit)? = null,
+    /**
+     * 让首页的读数在「有东西写过设置」之后重读 `store` 的 epoch —— 与
+     * [SettingsGroupScreen.freshness]、[SettingsSearchScreen.freshness] 同一个东西，
+     * 由 `PiSettingsStack` 的 `rowsEpoch` 供给（外部改动 + 本进程写入）。
+     *
+     * 这一屏的每条分组摘要（`GroupEntry` 的 `group.summary`）与「当前模型」卡都是从 store
+     * 读出来的，而 store 不是快照状态 ⇒ 写完设置之后这一屏会被 strong skipping 跳过，
+     * 摘要停在旧值上（`docs/settings-audit-impl.md:232` 记的正是这条「靠父级重组」的缺口）。
+     * 默认 0 让预览/测试维持原样。
+     */
+    freshness: Int = 0,
 ) {
     val context = LocalContext.current
     // 退路用的自托管状态。放在早退之前，所以两个分支都走同一份 remember。
@@ -160,7 +171,7 @@ fun SettingsHome(
                 SearchEntry(onOpenSearch)
             }
             item {
-                CurrentModelCard(store, onOpenSetting)
+                CurrentModelCard(store, freshness, onOpenSetting)
             }
             // The device capability bridge is the one settings surface that is
             // not a pi setting: pi has no notion of the phone it runs on, so this
@@ -266,6 +277,7 @@ fun SettingsHome(
                         GroupEntry(
                             group = group,
                             store = store,
+                            freshness = freshness,
                             onClick = { onOpenGroup(group.id) },
                         )
                     }
@@ -346,12 +358,19 @@ private fun SearchEntry(onClick: () -> Unit) {
  * 所以它值一张卡。
  */
 @Composable
-private fun CurrentModelCard(store: PiSettingsStore, onOpenSetting: (String) -> Unit) {
-    val model = PiSettingsCatalog.summaryText(store, "defaultModel")
-    val levelText = PiSettingsCatalog.summaryText(store, "defaultThinkingLevel")
-    val levelWire = PiSettingsCatalog.byKey["defaultThinkingLevel"]
-        ?.current(store)
-        ?.primitiveText()
+private fun CurrentModelCard(store: PiSettingsStore, freshness: Int, onOpenSetting: (String) -> Unit) {
+    // 三个读数都是 store 的纯函数，键里放 `freshness` 是为了「有人写过设置」之后重读一次：
+    // 少了这个键，这一卡会被 strong skipping 跳过（见 [SettingsHome] 的 `freshness`）。
+    // `store` 也是键：换工作区会换一个 store 实例。
+    val model = remember(store, freshness) { PiSettingsCatalog.summaryText(store, "defaultModel") }
+    val levelText = remember(store, freshness) {
+        PiSettingsCatalog.summaryText(store, "defaultThinkingLevel")
+    }
+    val levelWire = remember(store, freshness) {
+        PiSettingsCatalog.byKey["defaultThinkingLevel"]
+            ?.current(store)
+            ?.primitiveText()
+    }
     val levelColor = PiTheme.palette.thinking(PiThinkingLevel.fromWire(levelWire).wire)
     PiSettingsCard(
         modifier = Modifier.padding(top = PiSettingsMetrics.cardPaddingLoose),
@@ -433,8 +452,12 @@ private fun CurrentModelCard(store: PiSettingsStore, onOpenSetting: (String) -> 
 private fun GroupEntry(
     group: PiSettingsGroup,
     store: PiSettingsStore,
+    freshness: Int,
     onClick: () -> Unit,
 ) {
+    // 摘要从 store 读（`PiSettingsGroup.summary`），所以它是这一行唯一需要重读的东西：
+    // 键里带 `freshness` 就是那个「有东西写过设置」的信号，见 [SettingsHome] 的 `freshness`。
+    val summary = remember(store, group.id, freshness) { group.summary(store) }
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -455,7 +478,7 @@ private fun GroupEntry(
                 overflow = TextOverflow.Ellipsis,
             )
             Text(
-                group.summary(store),
+                summary,
                 modifier = Modifier.padding(top = PiSettingsMetrics.supportingGap),
                 style = PiTheme.text.meta,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,

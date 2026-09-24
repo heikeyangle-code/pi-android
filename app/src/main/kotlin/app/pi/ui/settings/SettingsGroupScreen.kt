@@ -44,13 +44,18 @@ fun SettingsGroupScreen(
     onBack: () -> Unit,
     highlightKey: String? = null,
     /**
-     * A counter that changes when the settings files changed **outside** this app.
+     * A counter that changes when a row's value has to be read again — **无论那次改动是本 App
+     * 自己写的还是外部的**。
      *
-     * The rows read `store.read(...)` during composition, and a store that drops its
-     * cache does not by itself recompose anything — so an externally edited
-     * `settings.json` kept showing the old value until the user left and re-entered
-     * the group. Rebuilding the row list on a new epoch re-reads every value, and it
-     * only happens on a real file change (see `PiFileWatch.kt`), not per frame.
+     * The rows read `store.read(...)` during composition, and the real store
+     * (`PiSettingsFileStore`) is not snapshot state, so a write cannot recompose anything by
+     * itself — an edited `settings.json` kept showing the old value until the user left and
+     * re-entered the group. Rebuilding the row list on a new epoch re-reads every value.
+     *
+     * 两个来源都走这个参数，缺一个就会留下一类「调了不管事」：外部改动由 `PiFileWatch`
+     * 的 epoch 报（它只覆盖被监视的 pi 文件），本进程自己的写入由 `PiSettingsStack` 的
+     * `writeEpoch` 报 —— `app.*` 写的是没被监视的 `app-prefs.json`，只靠前者刷新不了
+     * （`PiSettingsStack.kt` 里 `writeEpoch` 的注释是完整的推导）。
      */
     freshness: Int = 0,
     knownThemes: List<PiThemeEntry> = emptyList(),
