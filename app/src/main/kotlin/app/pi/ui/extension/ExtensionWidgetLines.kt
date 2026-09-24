@@ -322,10 +322,12 @@ private fun subagentSummary(json: String): WidgetRow? {
         // four-agent job is a single opaque row whose name is a repeated agent list.
         val children = (run["children"] as? JsonArray).orEmpty().mapNotNull { it as? JsonObject }
         val shown = children.take(SUBAGENT_DETAIL_CHILDREN)
-        // A job whose `label` is a joined agent list (`researcher, researcher, researcher,
-        // +1 more`) names nothing a reader wants: its tasks are right below it with their own
-        // names. The count is the useful fact for that row.
-        val jobName = if (children.isEmpty()) run.text("label") else "${children.size} 个子任务"
+        // **The name is the extension's, not mine.** `widgetJobName` gives a job one of
+        // `parallel`, `chain`, a single agent's name, or the joined agent list — and those four
+        // are the only place the mode shows up at all. Replacing the joined list with "N 个子任务"
+        // (which this file did) threw that away: a parallel job and a chain job looked identical,
+        // and the row stopped saying what the sender called it.
+        val jobName = run.text("label")
         // `kind` is `subagent` or `workflow`; one panel can hold both, and without the word
         // they are indistinguishable. `id` is the handle the extension's own inspect command
         // takes (`/subagents-inspect-rpc <requestId> <asyncId>`), so the card prints a short
@@ -351,7 +353,18 @@ private fun subagentSummary(json: String): WidgetRow? {
         }
     }.let { rendered ->
         val hidden = runs.size - SUBAGENT_DETAIL_RUNS
-        if (hidden > 0) rendered + listOf(listOf(WidgetSpan("+$hidden 个更多", WidgetTone.Dim))) else rendered
+        if (hidden <= 0) {
+            rendered
+        } else {
+            // The extension breaks the remainder down (`+2 more (1 running, 1 finished)`), and the
+            // breakdown is the only part that says whether the hidden ones are still working.
+            val hiddenStates = runs.drop(SUBAGENT_DETAIL_RUNS).flatMap { leafStates(it) }
+            val parts = SUBAGENT_STATE_ORDER.mapNotNull { state ->
+                hiddenStates.count { it == state }.takeIf { it > 0 }?.let { "$it ${look(state).word}" }
+            }
+            val tail = if (parts.isEmpty()) "" else "（${parts.joinToString("、")}）"
+            rendered + listOf(listOf(WidgetSpan("+$hidden 个更多$tail", WidgetTone.Dim)))
+        }
     }
 
     return WidgetRow.Summary(

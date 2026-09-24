@@ -200,7 +200,9 @@ fun main() {
     // pi-subagents draws the first four jobs and summarises the rest (`MAX_WIDGET_JOBS = 4`).
     val many = summary(snapshot((0 until 6).joinToString(",") { run("r$it", "agent$it", "running", 1, 1) }))
     widgetCheck("four jobs (each with one task), then the remainder", many.details.size, 9)
-    widgetCheck("and the remainder is named", textOf(many.details.last()), "+2 个更多")
+    // The extension breaks the remainder down (`+N more (1 running, 1 finished)`), and the
+    // breakdown is what says whether the hidden ones are still working.
+    widgetCheck("and the remainder is named and broken down", textOf(many.details.last()), "+2 个更多（2 运行中）")
     widgetCheck("in the dim token", tonesOf(many.details.last()), listOf(WidgetTone.Dim))
 
     // ------------------------------------------------------- version/kind guards, and refusing
@@ -235,7 +237,14 @@ fun main() {
         },
     )
     widgetCheck("and its own readings", scripted.details[1].last().text, "web_search · 3 轮 · 7 工具")
-    checkTrue("a job with tasks is named by its task count, not by a repeated agent list", textOf(scripted.details[0]).contains("4 个子任务"))
+    // The name is the extension's own (`widgetJobName`): for a scripted call that is the joined
+    // agent list, and it is the only place the mode shows. The card used to overwrite it with
+    // "4 个子任务", which made a parallel job and a chain job look identical.
+    checkTrue(
+        "the job row keeps the name the extension gave it",
+        textOf(scripted.details[0]).contains("researcher, researcher, researcher, +1 more"),
+        "row=${textOf(scripted.details[0])}",
+    )
     checkTrue("and the row says which kind of job it is", textOf(scripted.details[0]).contains("子代理"))
     // The async id, in the short form the inspect command takes.
     checkTrue(
