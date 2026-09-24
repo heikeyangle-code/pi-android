@@ -331,6 +331,7 @@ fun ModelProviderScreen(
             initialPresetId = sheetPreset,
             service = service,
             availableModels = availableModels,
+            enabledPatterns = enabledModelsValue,
             onClose = { sheetOpen = false },
             onSaved = {
                 reloadTick++
@@ -412,9 +413,10 @@ fun ModelProviderScreen(
  *
  * 与旧表单的三处行为差异，都是用户报的「导入完了也有 bug」：
  *
- *  - **官方目录直接列模型**：候选 = 已保存 + 扫描到 + **pi 目录里的** + 手输，且目录里的
- *    默认全勾 —— 官方文件里有的，不粘 Key 就能看见、能选（旧版目录只给已存在的 id 补
- *    标签，不产生候选，不扫描就一个都列不出）；
+ *  - **官方目录直接列模型**：候选 = 已保存 + 扫描到 + **pi 目录里的** + 手输 —— 官方
+ *    文件里有的，不粘 Key 就能看见、能选（旧版目录只给已存在的 id 补标签，不产生
+ *    候选，不扫描就一个都列不出）。初始勾选见 prefill：循环范围没设 = 全勾，设了 =
+ *    只勾本来轮得到的（上次主动排除的不会因为打开过表单又被勾回来）；
  *  - **默认模型不抢**：单选第一项是「保持当前默认」（null = 不写这两个键）；只有用户
  *    明确选了某个模型才写（`ModelSelectionPlan.writeDefault`）；
  *  - **保存后就地刷新**：只重读「已配置」那几个字段，本次保存的步骤显示不被清掉（旧版
@@ -426,6 +428,8 @@ private fun ImportSheet(
     initialPresetId: String?,
     service: PiCredentialService,
     availableModels: List<PiResponses.ModelInfo>,
+    /** 当前 `enabledModels` 范围（settings.json 的有效值），决定目录模型初始勾不勾。 */
+    enabledPatterns: List<String>,
     onSaved: () -> Unit,
     onClose: () -> Unit,
 ) {
@@ -461,6 +465,8 @@ private fun ImportSheet(
             var scanned by remember { mutableStateOf<List<PiModelScanner.ScannedModel>>(emptyList()) }
             var manualIds by remember { mutableStateOf("") }
             var selected by remember { mutableStateOf<Set<String>>(emptySet()) }
+            // 打开表单时的初始勾选 —— 保存时「动没动」的对账基准（见 ModelSelectionPlan）。
+            var initialChecked by remember { mutableStateOf<Set<String>>(emptySet()) }
             // null = 保持当前默认（不写 settings.json 的默认两个键）。
             var defaultModelId by remember { mutableStateOf<String?>(null) }
             var currentDefault by remember { mutableStateOf("未设置") }
@@ -506,8 +512,20 @@ private fun ImportSheet(
                 } ?: "未设置"
                 defaultModelId = null
                 imageOverrides = emptyMap()
-                // 已保存的 + pi 目录里的默认全勾：官方文件里有的都要能一眼看到、勾上。
-                selected = existing.configuredModelIds.toSet() + entries.map { it.id }
+                // 初始勾选 = 「申报过的全部 + pi 目录里在循环范围内的」：
+                //  - 申报过的（手写 models[]）必须全勾 —— 取消勾选会在保存时删掉它的
+                //    定义，自定义厂商就再也没有这个模型了；
+                //  - 目录里的按 enabledModels 范围过滤：范围没设 = 全部可循环 = 全勾
+                //    （首次导入的默认形态）；范围设了 = 只勾本来就轮得到的，上次主动
+                //    排除的模型不会因为"打开过表单"又被勾回来（Bug①）。
+                // 判据与清单页同一个：PiModelInventory.matches。
+                val inScope = { id: String ->
+                    enabledPatterns.isEmpty() ||
+                        enabledPatterns.any { PiModelInventory.matches(it, presetId, id) }
+                }
+                selected = existing.configuredModelIds.toSet() +
+                    entries.map { it.id }.filter(inScope).toSet()
+                initialChecked = selected
             }
 
             val manualList = remember(manualIds) {
@@ -686,7 +704,7 @@ private fun ImportSheet(
             // ------------------------------------------------- 4 勾选与默认
             PiSettingsSectionHeader("4 勾选与默认")
             SheetNote(
-                "左侧勾选 = Ctrl+P 循环用哪些模型（只重写本厂商的条目，其他厂商与手写 pattern 保留）；" +
+                "左侧勾选 = 加进「循环模型」范围的模型（只重写本厂商的条目，其他厂商与手写 pattern 保留）；" +
                     "右侧单选 = 保存后设为默认，第一项表示不动 settings.json。当前默认：$currentDefault",
             )
             OutlinedTextField(
@@ -763,7 +781,7 @@ private fun ImportSheet(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Button(
-                    enabled = !scanning && selected.isNotEmpty(),
+                    enabled = !scanning && (selected.isNotEmpty() || preset.builtInPi),
                     onClick = {
                         val chosen = candidates.filter { it in selected }
                         val requestedDefault = defaultModelId
@@ -778,7 +796,7 @@ private fun ImportSheet(
                                     baseUrl = baseUrl,
                                     api = api,
                                     choices = choicesFor(chosen),
-                                    configuredModelIds = existingIds.toSet(),
+                                    configuredModelIds = initialChecked,
                                     setAsDefault = requestedDefault != null,
                                     defaultModelId = requestedDefault,
                                 )
@@ -801,6 +819,8 @@ private fun ImportSheet(
                                     fresh.modelId?.let { m -> "$p/$m" }
                                 } ?: currentDefault
                                 defaultModelId = null
+                                // 对账基准随保存前进：下一次保存只对"这次改了什么"负责。
+                                initialChecked = selected
                             } else {
                                 saveError = result.steps.lastOrNull()
                             }
@@ -811,7 +831,14 @@ private fun ImportSheet(
                 }
                 Spacer(Modifier.width(PiSpacing.inline))
                 Text(
-                    if (selected.isEmpty()) "至少要勾选一个模型" else "已选 ${selected.size} 个",
+                    when {
+                        selected.isNotEmpty() -> "已选 ${selected.size} 个"
+                        // 官方厂商不申报模型（models[] 一律不写），空着保存 = 只写凭证与
+                        // 连接块、循环列表一个字节不动 —— 「已有模型、只想补个 Key」不该
+                        // 被一个勾选门槛挡住（Bug②）。
+                        preset.builtInPi -> "不勾也能保存（不改循环列表）"
+                        else -> "至少要勾选一个模型"
+                    },
                     style = PiTheme.text.meta,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

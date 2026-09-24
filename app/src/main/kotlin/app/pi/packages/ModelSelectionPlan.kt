@@ -62,8 +62,9 @@ object ModelSelectionPlan {
      * @param existingPatterns 保存前 `settings.json` 里的 `enabledModels` 原样列表。
      * @param providerId 正在保存的厂商 id。
      * @param checkedIds 这次勾选的本厂商模型 id。
-     * @param configuredIds 保存前本厂商**已配置**的模型 id（`prefill` 的
-     *        `configuredModelIds`），与 [checkedIds] 比较得出"动没动"。
+     * @param configuredIds 打开表单时的初始勾选集合（用户看到的基准），
+     *        与 [checkedIds] 比较得出"动没动" —— **不是** `models.json` 的声明：
+     *        官方厂商从不申报，拿声明对账会次次算"动了"。
      * @param setAsDefault 用户是否明确点了「设为默认」。
      * @param requestedDefaultModelId 点了设为默认时要写入的模型 id。
      */

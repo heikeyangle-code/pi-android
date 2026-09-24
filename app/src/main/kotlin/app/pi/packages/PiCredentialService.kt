@@ -286,7 +286,12 @@ class PiCredentialService(
         baseUrl: String,
         api: String,
         choices: List<ModelChoice>,
-        /** 保存前该厂商已配置的模型 id（`prefill` 的 `configuredModelIds`），判「动没动勾选」用。 */
+        /**
+         * 打开表单时用户**看到的**初始勾选集合 —— [ModelSelectionPlan] 判「动没动勾选」
+         * 的对账基准。**不是** `models.json` 的声明：官方厂商从不申报（`declared` 恒空），
+         * 拿声明对账会把每次保存都算成"动了"，于是循环列表次次被重写、用户上次排除的
+         * 模型被静默勾回来。
+         */
         configuredModelIds: Set<String> = emptySet(),
         /** 用户是否明确点了「设为默认」；没点就不写默认选择。 */
         setAsDefault: Boolean = false,
@@ -294,8 +299,12 @@ class PiCredentialService(
         defaultModelId: String? = null,
     ): SaveResult {
         val steps = mutableListOf<String>()
-        if (choices.isEmpty()) {
-            return SaveResult(false, listOf("没有选择任何模型"), null)
+        // 空选择只对「本 App 申报模型」的厂商是错误：那里 `models[]` 是唯一定义，一个都
+        // 不勾等于写一个没有模型的空壳。pi 自带目录的厂商不申报任何模型（见下），"只加
+        // 一个 Key、别的都不动"是完全合法的保存 —— 以前这里一视同仁地拒绝，把最常见的
+        // 「已有模型、换个厂商补凭证」挡在了门外。
+        if (choices.isEmpty() && !preset.builtInPi) {
+            return SaveResult(false, steps + "没有选择任何模型", null)
         }
         // 留空 = 不动凭证（见类头部）。只有在"本来就没有凭证"时才是一个错误——否则编辑一个
         // 已配好的厂商会被迫重新粘贴 Key，而这一步和"加一个模型"毫无关系。
@@ -408,7 +417,11 @@ class PiCredentialService(
             ok = true,
             steps = steps,
             restart = PiPackageService.RestartRequired(
-                changes = listOf("${preset.displayName} 的模型与凭证（${choices.size} 个模型）"),
+                changes = if (choices.isEmpty()) {
+                    listOf("${preset.displayName} 的凭证与厂商块（模型沿用 pi 目录）")
+                } else {
+                    listOf("${preset.displayName} 的模型与凭证（${choices.size} 个模型）")
+                },
                 detail = "新厂商要重启引擎后才会出现在模型列表里。已保存的配置不会丢失。",
             ),
         )
