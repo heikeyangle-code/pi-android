@@ -3357,32 +3357,31 @@ private fun copyLastAssistant(session: PiSessionViewModel, context: Context) {
  */
 @Composable
 private fun ModelChip(label: String?, onClick: () -> Unit) {
-    // 外观**按用户裁定原样恢复**（"那个地方全都恢复成原来一模一样的样子，外观一点不要
-    // 动"）：ce2d815 曾把它改成 v2 的 mono 描边 chip（无图标、monoSmall、透明底 +
-    // borderMuted 描边），那不是用户想要的样子。这里回到 ce2d815 之前的形态：Info 图标 +
-    // `text.meta` 字色 + `surfaceContainerHigh` 填充面，间距 10/5。位置与字体都不动。
+    // `06 §2` chip「高 26 圆角 999 `padding:0 9px`」, and v2 draws this one as
+    // `mono t12` in the text colour with a `1px borderMuted` ring
+    // (`direction-b-v2.html:500-503`). It carried a Material `Info` glyph and a
+    // filled surface before; the board's chip has neither, and a model id is machine
+    // language, so it takes the machine face.
+    //
+    // 这一版是 `ce2d815`（**2026-09-13**，「终审甲：逐台对照 v2」）定下的，不是今天改的。
+    // 用户裁定：不是今天动的地方就别动 —— 撤销我那次"恢复原样"的改动，回到这一版。
     Surface(
         modifier = Modifier
-            .padding(end = 4.dp)
-            .clickable(onClick = onClick),
+            .height(26.dp)
+            .clip(PiShapes.badge)
+            .clickable(onClickLabel = "选择模型", onClick = onClick),
         shape = PiShapes.badge,
-        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        color = Color.Transparent,
+        border = BorderStroke(1.dp, PiTheme.palette.borderMuted),
     ) {
         Row(
-            Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+            Modifier.padding(horizontal = 9.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Icon(
-                Icons.Filled.Info,
-                contentDescription = null,
-                modifier = Modifier.size(14.dp),
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Spacer(Modifier.width(6.dp))
             Text(
-                label ?: "选择模型",
-                style = PiTheme.text.meta,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                text = label ?: "选择模型",
+                style = PiTheme.text.monoSmall,
+                color = MaterialTheme.colorScheme.onSurface,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
