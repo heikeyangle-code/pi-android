@@ -155,7 +155,7 @@ fun main() {
     // (bold at the drawing site), the rest dim — the extension's own shape (`themeBold`,
     // `statJoin`).
     val detail = one.details.first()
-    widgetCheck("the job row, then its one task under it", one.details.size, 2)
+    widgetCheck("the job row, its readings row, then its one task", one.details.size, 3)
     widgetCheck("the glyph carries the state's colour", tonesOf(detail.take(1)), listOf(WidgetTone.Accent))
     checkTrue("the state word rides with the glyph", detail.any { it.text == "运行中" && it.tone == WidgetTone.Accent })
     checkTrue("the name is the readable run", detail.any { it.text == "oracle" && it.tone == WidgetTone.Text })
@@ -199,7 +199,7 @@ fun main() {
 
     // pi-subagents draws the first four jobs and summarises the rest (`MAX_WIDGET_JOBS = 4`).
     val many = summary(snapshot((0 until 6).joinToString(",") { run("r$it", "agent$it", "running", 1, 1) }))
-    widgetCheck("four jobs (each with one task), then the remainder", many.details.size, 9)
+    widgetCheck("four jobs (readings + task each), then the remainder", many.details.size, 13)
     // The extension breaks the remainder down (`+N more (1 running, 1 finished)`), and the
     // breakdown is what says whether the hidden ones are still working.
     widgetCheck("and the remainder is named and broken down", textOf(many.details.last()), "+2 个更多（2 运行中）")
@@ -227,16 +227,20 @@ fun main() {
     val scripted = widgetRow(fixtureLine("scripted-parallel")) as WidgetRow.Summary
     widgetCheck("a scripted job counts its agents, not itself", textOf(scripted.headline), "2 运行中 · 1 完成 · 1 失败")
     widgetCheck("and the badge is the agent count", scripted.badge, "4")
-    widgetCheck("the job row is drawn, then its tasks under it", scripted.details.size, 5)
-    checkTrue("a task row starts with its branch glyph", scripted.details[1].first().tone == WidgetTone.Dim && textOf(scripted.details[1]).startsWith("├─ "))
-    checkTrue("and carries the task's own name", textOf(scripted.details[1]).contains("catbox-recovery"))
+    widgetCheck("the job row, its readings, then its four tasks", scripted.details.size, 6)
+    val taskRows = scripted.details.filter { textOf(it).startsWith("├─ ") || textOf(it).startsWith("└─ ") }
+    checkTrue(
+        "task rows start with their branch glyph",
+        taskRows.size == 4 && taskRows.all { it.first().tone == WidgetTone.Dim },
+        "rows=${taskRows.size}",
+    )
+    checkTrue("and carry the task's own name", taskRows.any { textOf(it).contains("catbox-recovery") })
     checkTrue(
         "each task shows its own state word",
-        listOf(1, 3, 4).map { textOf(scripted.details[it]) }.let { rows ->
-            rows[0].contains("运行中") && rows[1].contains("完成") && rows[2].contains("失败")
+        listOf("catbox-recovery" to "运行中", "st-card-optim" to "完成", "cn-community" to "失败").all { (name, word) ->
+            taskRows.any { textOf(it).contains(name) && textOf(it).contains(word) }
         },
     )
-    widgetCheck("and its own readings", scripted.details[1].last().text, "web_search · 3 轮 · 7 工具")
     // The name is the extension's own (`widgetJobName`): for a scripted call that is the joined
     // agent list, and it is the only place the mode shows. The card used to overwrite it with
     // "4 个子任务", which made a parallel job and a chain job look identical.
@@ -278,17 +282,23 @@ fun main() {
     )
     // The durations are pi's own spellings, derived from the payload the extension re-sends — the
     // host adds no clock of its own (`widgetActivity`, `formatDuration`).
-    widgetCheck(
-        "the job row carries pi's tool duration and its own elapsed",
-        scripted.details[0].last().text,
-        "web_search 8.6s · 2 轮 · 3 工具 · 32.4s",
+    checkTrue(
+        "the job's readings are their own row, in pi's order",
+        textOf(scripted.details[1]) == "⎿  web_search 8.6s · 2 轮 · 3 工具 · 32.4s",
+        "row=${textOf(scripted.details[1])}",
     )
-    widgetCheck(
+    checkTrue(
         "a task with no timestamps shows no duration rather than a guess",
-        scripted.details[1].last().text,
-        "web_search · 3 轮 · 7 工具",
+        taskRows.any { textOf(it).contains("web_search · 3 轮 · 7 工具") && !textOf(it).contains("s ·") },
     )
-    checkTrue("the last task closes the branch", textOf(scripted.details[4]).startsWith("└─ "))
+    // The job row's own statistic is progress, not the counts (`widgetStats` puts `done/total`
+    // on the row and the counts on the readings line).
+    checkTrue(
+        "the job row carries progress",
+        textOf(scripted.details[0]).contains("2/4"),
+        "row=${textOf(scripted.details[0])}",
+    )
+    checkTrue("the last task closes the branch", textOf(scripted.details.last()).startsWith("└─ "))
     val childless = summary(snapshot("""{"id":"solo","kind":"subagent","label":"oracle","state":"running"}"""))
     widgetCheck("a job with no tasks counts as one and keeps its own name", listOf(childless.badge, textOf(childless.details[0]).contains("oracle")), listOf("1", true))
 

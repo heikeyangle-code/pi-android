@@ -272,6 +272,9 @@ private val SUBAGENT_STATES: Map<String, StateLook> = mapOf(
 /** The extension's own fall-through: anything it does not name is a failure glyph. */
 private val SUBAGENT_STATE_FALLBACK = StateLook("✗", "部分完成", WidgetTone.Error)
 
+/** A job's task counts as done once it can no longer change. */
+private val SUBAGENT_TERMINAL_STATES = setOf("complete", "failed", "stopped", "rejected", "partial")
+
 /** The order the headline reads in, worst-last so a failure is the last word. */
 private val SUBAGENT_STATE_ORDER = listOf(
     "running", "queued", "paused", "complete", "failed", "stopped", "rejected", "partial",
@@ -336,8 +339,27 @@ private fun subagentSummary(json: String): WidgetRow? {
         // told apart, and leaving `subagent` implicit would mean the label appears only for the
         // rarer kind — the reader cannot know which kind is "unmarked".
         val jobKind = if (run.text("kind") == "workflow") "工作流" else "子代理"
+        // The job row's own statistic is **progress**, not turns/tools: the extension prints
+        // `done/total` here and puts the counts on the activity line. The children's states are
+        // the only progress the payload carries, so that is what this computes.
+        val childLeaves = children.flatMap { leafStates(it) }
+        val progress = if (childLeaves.isEmpty()) {
+            null
+        } else {
+            "${childLeaves.count { it in SUBAGENT_TERMINAL_STATES }}/${childLeaves.size}"
+        }
         buildList {
-            add(nodeRow(run, name = jobName, kindWord = jobKind, ref = run.text("id")?.take(8)))
+            add(
+                nodeRow(
+                    run,
+                    name = jobName,
+                    kindWord = jobKind,
+                    ref = run.text("id")?.take(8),
+                    stat = progress,
+                    withActivity = false,
+                ),
+            )
+            activityRow(doingFacts(run, currentToolOf(run), elapsedOf(run)))?.let { add(it) }
             shown.forEachIndexed { index, child ->
                 val last = index == shown.lastIndex && children.size <= SUBAGENT_DETAIL_CHILDREN
                 add(
@@ -392,12 +414,31 @@ private fun leafStates(node: JsonObject, depth: Int = 0): List<String> {
 }
 
 /** One job's or one task's row: state glyph and word, name, then what it is doing now. */
+/** The current tool with its own duration, in the extension's spelling (`widgetActivity`). */
+private fun currentToolOf(node: JsonObject): String? {
+    val activity = node["activity"] as? JsonObject
+    val updatedAt = node.long("updatedAt") ?: node.long("startedAt")
+    val since = activity?.long("currentToolStartedAt")
+    return activity?.text("currentTool")?.let { name ->
+        if (since != null && updatedAt != null) "$name ${ToolOutputParse.formatDuration(updatedAt - since)}" else name
+    }
+}
+
+/** The node's own elapsed, or null when it has no timestamps to derive one from. */
+private fun elapsedOf(node: JsonObject): String? {
+    val startedAt = node.long("startedAt") ?: return null
+    val endedAt = node.long("endedAt") ?: node.long("updatedAt") ?: return null
+    return ToolOutputParse.formatDuration(endedAt - startedAt)
+}
+
 private fun nodeRow(
     node: JsonObject,
     branch: String = "",
     name: String? = null,
     kindWord: String? = null,
     ref: String? = null,
+    stat: String? = null,
+    withActivity: Boolean = true,
 ): List<WidgetSpan> {
     val look = look(node.text("state"))
     val activity = node["activity"] as? JsonObject
@@ -427,15 +468,7 @@ private fun nodeRow(
     } else {
         null
     }
-    val doing = listOfNotNull(
-        currentTool,
-        // Only when there is no tool to name: the official panel does not draw this field at
-        // all, and "思考中" is the one case where the slot would otherwise be empty.
-        if (currentTool == null) activity?.text("state") else null,
-        activity?.count("turnCount")?.let { "$it 轮" },
-        activity?.count("toolCount")?.let { "$it 工具" },
-        elapsed,
-    )
+    val doing = doingFacts(node, currentTool, elapsed)
     return buildList {
         if (branch.isNotEmpty()) add(WidgetSpan(branch, WidgetTone.Dim))
         add(WidgetSpan("${look.glyph} ", look.tone))
@@ -455,12 +488,40 @@ private fun nodeRow(
         if (ref != null) {
             add(WidgetSpan(" · $ref", WidgetTone.Dim))
         }
-        if (doing.isNotEmpty()) {
+        if (stat != null) {
+            add(WidgetSpan(" · $stat", WidgetTone.Dim))
+        }
+        if (withActivity && doing.isNotEmpty()) {
             add(WidgetSpan(" · ", WidgetTone.Dim))
             add(WidgetSpan(doing.joinToString(" · "), WidgetTone.Dim))
         }
     }
 }
+
+/**
+ * The job's readings, in the extension's own order (`widgetActivity`): the current tool with how
+ * long it has been running, then the counts, then the job's own elapsed.
+ *
+ * They are the **second line** of the panel (`  ⎿  ${widgetActivity(job)}`), not part of the name
+ * row — this card used to inline them, which is why a job row and its activity had to be read as
+ * one long line.
+ */
+private fun doingFacts(node: JsonObject, currentTool: String?, elapsed: String?): List<String> {
+    val activity = node["activity"] as? JsonObject
+    return listOfNotNull(
+        currentTool,
+        // Only when there is no tool to name: the official panel does not draw this field at all,
+        // and "思考中" is the one case where the slot would otherwise be empty.
+        if (currentTool == null) activity?.text("state") else null,
+        activity?.count("turnCount")?.let { "$it 轮" },
+        activity?.count("toolCount")?.let { "$it 工具" },
+        elapsed,
+    )
+}
+
+/** The `⎿` row: dim, indented, and only when there is something to say. */
+private fun activityRow(facts: List<String>): List<WidgetSpan>? =
+    if (facts.isEmpty()) null else listOf(WidgetSpan("⎿  ${facts.joinToString(" · ")}", WidgetTone.Dim))
 
 private fun look(state: String?): StateLook = SUBAGENT_STATES[state] ?: SUBAGENT_STATE_FALLBACK
 
