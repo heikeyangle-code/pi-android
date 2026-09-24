@@ -277,6 +277,13 @@ fun ProjectScreen(
 
     // ---------------------------------------------------------------- ②③
     val runs = remember(state.transcript, state.bash) { runningCommands(state.transcript, state.bash) }
+    // ② 里那几条「已运行 N 秒」用的读数：ViewModel 推来的 1 Hz 粗时钟（`UiState.nowMs`，判据
+    // `UiState.hasPendingToolClock`，收的正好是 `runningCommands` 那一批 `Pending` 的
+    // bash/powershell 行）。这一屏**不自己读表**：`System.currentTimeMillis() - startedAt` 量的是
+    // 「这一行上一次重组是什么时候」，而一条什么都不打印的命令既没有发布、也就没有重组，读数会冻在
+    // 那儿 —— 这正是 `blocks/ShellBlock` 修掉的那个错。`null` 只覆盖两件事：时钟首跳还没落地的
+    // 那一次组合，以及调用方没传时钟；那时按老办法现读一次表给出的仍是正确的数，不是「没有读数」。
+    val nowMs = state.nowMs
     val pendingWrite = remember(state.transcript) { WorkspaceFiles.pendingWrite(state.transcript) }
     // 「本次会话改过」= write/edit + 这一屏自己保存过的那些（稿子底部第 2 条的口径）。
     var localEdits by remember { mutableStateOf<Set<String>>(emptySet()) }
@@ -613,6 +620,7 @@ fun ProjectScreen(
                                 run = run,
                                 sliceIndex = index,
                                 lastSliceIndex = runs.lastIndex,
+                                nowMs = nowMs,
                             )
                         }
                     }
@@ -1505,18 +1513,25 @@ private data class RunningCommand(
      *
      * `ToolCall.elapsedMs` 是 `endedAt - ts`（`rpc/.../Transcript.kt:89`），调用还在跑时
      * `endedAt` 为 null，所以它**在流式中恒为 null** —— 稿子那种 running 态一定要有点阵与
-     * 刻度，不能只靠它。转录里的 `bash` / `powershell` 调用带着自己的 `ts`，于是这里照
-     * `blocks/ShellBlock` 的既有做法现算（`System.currentTimeMillis() - ts`，**不自己起计时器**，
-     * 一次组合读一次）。`!` / `!!` 那条来自 `BashRun`，它没有时间戳可算，所以那一条仍然没有
-     * 读数（见 [runningCommands]）。
+     * 刻度，不能只靠它。转录里的 `bash` / `powershell` 调用带着自己的 `ts`，于是耗时按
+     * **ViewModel 推来的那个粗时钟**算（`UiState.nowMs - ts`，见 [RunningCommandRow]）。
+     * **不要在组合里现读表**：`System.currentTimeMillis() - ts` 算出来的是「这一行上一次重组
+     * 是什么时候」，一条什么都不打印的命令既没有输出块也没有发布，也就没有重组，读数会冻在
+     * 那儿直到有人点一下 —— 这正是 `blocks/ShellBlock` 修掉的那个错，别把它搬回来。
+     * `!` / `!!` 那条来自 `BashRun`，它没有时间戳可算，所以那一条仍然没有读数（见
+     * [runningCommands]）。
      */
     val startedAt: Long?,
-    /** pi 报过的时长（调用结束后才有值）；有值时以它为准，不再现算。 */
+    /** pi 报过的时长（调用结束后才有值）；有值时以它为准，不再算。 */
     val reportedMs: Long?,
     val lines: Int,
     val inContext: Boolean,
 ) {
-    /** 该显示给用户的时长：pi 报过的优先，其次按 [startedAt] 现算。 */
+    /**
+     * 该显示给用户的时长：pi 报过的优先，其次按 [startedAt] 与传进来的读数算。
+     *
+     * `now` 由 [RunningCommandRow] 从 `UiState.nowMs` 取得，**不是**本帧现读的表。
+     */
     fun elapsedMs(now: Long): Long? = reportedMs ?: startedAt?.let { (now - it).coerceAtLeast(0) }
 }
 
@@ -1556,8 +1571,9 @@ private fun runningAside(runs: List<RunningCommand>): (@Composable () -> Unit)? 
 /**
  * 正在跑的命令，取自**两个**真实来源：`state.bash`（`!` / `!!` 前缀的 [BashRun]）与转录里
  * `status = Pending` 的 `bash`/`powershell` 工具卡。时长优先用 `ToolCall.elapsedMs`
- * （= `endedAt - ts`，结束后才有），流式中则按行自己的 `ts` 现算 —— 这一屏**不自己计时**，
- * 那量的是手机的重组，不是命令。
+ * （= `endedAt - ts`，结束后才有），流式中则按行自己的 `ts` 与 **ViewModel 每秒推一次**的
+ * `UiState.nowMs` 算（判据 `UiState.hasPendingToolClock` 收的正是这里这批 Pending 行）——
+ * 这一屏**不自己读表**，现读出来的只是「上一次重组到现在」。
  */
 private fun runningCommands(
     items: List<TranscriptItem>,
@@ -1606,11 +1622,20 @@ private const val MAX_RUNNING_ROWS = 4
  * 圆角卡片，而它们其实是同一段信息。
  *
  * @param sliceIndex 这一条在 ② 里的序号（决定卡的上/下圆角与上方的行间线）。
+ * @param nowMs 那个粗时钟（`UiState.nowMs`）：耗时 = 行的时间戳到 `nowMs`。`null` 时退回
+ *   「这一帧现读一次表」，只在时钟首跳还没落地的那一次组合、或调用方没传时钟时发生 —— 它是
+ *   回退读数，不是「没有读数」。**改这里时不要把回退当成主路**：直接在这儿
+ *   `System.currentTimeMillis()` 会把读数变回「上一次重组」的函数，也就是这一屏原来那个
+ *   「安静跑着的命令数字冻住」的错（见 [RunningCommand] 的 KDoc）。
  */
 @Composable
-private fun RunningCommandRow(run: RunningCommand, sliceIndex: Int, lastSliceIndex: Int) {
-    val now = System.currentTimeMillis()
-    val elapsed = run.elapsedMs(now)
+private fun RunningCommandRow(
+    run: RunningCommand,
+    sliceIndex: Int,
+    lastSliceIndex: Int,
+    nowMs: Long? = null,
+) {
+    val elapsed = run.elapsedMs(nowMs ?: System.currentTimeMillis())
     Column(Modifier.fillMaxWidth()) {
         WsCardSlice(index = sliceIndex, lastIndex = lastSliceIndex) {
             WsRow(
