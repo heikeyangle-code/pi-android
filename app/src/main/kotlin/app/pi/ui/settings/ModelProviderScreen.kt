@@ -957,8 +957,10 @@ private fun ImportSheet(
                                     configuredModelIds = initialChecked,
                                     // pi 官方目录已经知道的模型**不申报**：官方数据就是权威，
                                     // 写一条只会把它替换成我们手上的副本（价格会归零、上下文
-                                    // 会退回 128k）。只有官方不认识的才用扫描到的数据写定义。
+                                    // 会退回 128k）。官方不认识的（还没更新的新模型）必须申报
+                                    // —— 那是"增加"，否则模型永远不出现。
                                     officiallyKnownIds = catalogIds,
+                                    officialCatalogRead = officialProviders.isNotEmpty(),
                                 )
                             }
                             saveSteps = result.steps
@@ -1373,9 +1375,14 @@ private fun candidateMeta(
         known.costInput?.let { append(" · $").append(trimCostText(it)).append("/M 入") }
         known.costOutput?.let { append(" · $").append(trimCostText(it)).append("/M 出") }
     } else if (builtInPi) {
-        append(" · pi 不认识它，勾选不会让 pi 认识它")
+        append(" · pi 不认识它，勾选后会写进模型配置")
     } else {
         append(" · pi 不认识它，下面勾选的项会写进模型配置")
+    }
+    // 官方目录与厂商 API 都没给元数据的模型：说清 pi 会补什么默认值，别让人以为那些数字
+    // 是厂商数据（`provider-composer.ts` 的 `modelFromJson`）。
+    if (known == null || (known.contextWindow == null && known.costInput == null)) {
+        append(" · 没有元数据：pi 用默认值（上下文 128k、最大输出 16k、仅文本、价格 0）")
     }
 }
 

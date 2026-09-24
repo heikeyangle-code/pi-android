@@ -313,7 +313,9 @@ class PiCredentialService(
          */
         configuredModelIds: Set<String> = emptySet(),
         /**
-         * pi 官方目录（`models-store.json`）已经认识的本厂商模型 id。
+         * pi 官方目录（`models-store.json` + 随包 `providers/data` 下那些 `<provider>.json`）
+         * 已经认识的本厂商
+         * 模型 id。
          *
          * 命中这些的**不写进 `models[]`**：pi 的语义是同 id 整体替换
          * （`provider-composer.ts:203-206`），写一条只会把官方数据换成我们手上的副本 ——
@@ -321,6 +323,15 @@ class PiCredentialService(
          * 数据；pi 暂时没有的，才用这次 API 扫到的数据。"
          */
         officiallyKnownIds: Set<String> = emptySet(),
+        /**
+         * 官方目录这次**到底读到没有**（[officiallyKnownIds] 非空不等于读到了：目录可能
+         * 真的一个模型都没有）。
+         *
+         * 读到了 → 只申报官方不认识的 id：一个**不在目录里的新模型**是"增加"，不是"替换"，
+         * 不申报它就永远出不来（它只会进 `enabledModels`，而 pi 解析不到任何模型）。
+         * 没读到 + pi 自带厂商 → 退回什么都不申报（写一条就是把官方数据换成默认值）。
+         */
+        officialCatalogRead: Boolean = false,
         /** 用户是否明确点了「设为默认」；没点就不写默认选择。 */
         setAsDefault: Boolean = false,
         /** [setAsDefault] 为 true 时写入的模型 id；false 时忽略。 */
@@ -380,10 +391,20 @@ class PiCredentialService(
         // written: it is the **selection**, `enabledModels` in settings.json
         // (`settings-manager.ts:139`), which is pi's own mechanism for "which models
         // to offer" and says nothing about what a model *is*.
-        val declared = if (preset.builtInPi) {
-            emptyList()
-        } else {
-            choices.filterNot { it.id in officiallyKnownIds }
+        // **只申报官方目录不认识的 id。**
+        //
+        //  - 官方认识的：不写 —— 同 id 是整体替换（`provider-composer.ts:203-206`），写了
+        //    就把官方数据换成我们的副本（价格 0、上下文退回 128k）；
+        //  - 官方**不**认识的（还没更新的新模型）：**必须写** —— `models[]` 是它唯一的定义，
+        //    不写它就只存在于 `enabledModels` 里，pi 解析不到、模型永远不出现。这种"增加"
+        //    不受替换语义影响；缺的字段由 pi 补默认值（`modelFromJson`：
+        //    contextWindow 128000、maxTokens 16384、input ["text"]、reasoning false、cost 0）。
+        //  - 目录这次没读到 + pi 自带厂商：退回什么都不申报（否则会把整份官方目录换成默认值）。
+        //  - 自建厂商（pi 没有它的目录）：`models[]` 是唯一定义，照旧全写。
+        val declared = when {
+            officialCatalogRead -> choices.filterNot { it.id in officiallyKnownIds }
+            preset.builtInPi -> emptyList()
+            else -> choices
         }
 
         val provider = PiModelsFile.Provider(
