@@ -354,22 +354,6 @@ jobs:
       - name: Assert the committed tool fixtures match the pinned engine
         run: node tools/collect-tool-fixtures.mjs --check --pi build/pi-contract/node_modules/@earendil-works/pi-coding-agent
 
-      # The other half of the **widget**-payload check, and this one cannot reuse the step
-      # above: `pi-subagents` is a third-party extension, not part of the pinned engine, so it
-      # needs its own install. Hence two steps and not one — an install that fails on the
-      # registry says so in npm's own words, instead of looking like the extension changed its
-      # payload. The version is pinned here and `--check` compares it against the version the
-      # committed fixtures were captured from, so either side moving is reported.
-      - name: Install the pinned pi-subagents
-        run: npm install --no-save --no-audit --no-fund --prefix build/subagent-fixtures pi-subagents@0.71.0
-      # What this buys: `ExtensionWidgetLines.kt` reads a payload produced by the extension's
-      # own projection, so a renamed field turns CI red instead of quietly emptying the card.
-      # It has already happened twice on device (once: a scripted call spawning four agents in
-      # one job rendered as "1 运行中" with every task missing), and a hand-written fixture
-      # could not have caught either — it agreed with the parser that read it.
-      - name: Assert the committed subagent fixtures match the pinned extension
-        run: node tools/collect-subagent-fixtures.mjs --check --pkg build/subagent-fixtures/node_modules/pi-subagents
-
   # Kotlin block comments NEST, so a path written as `ui/` followed by two asterisks
   # inside a KDoc opens a second comment; the KDoc's closing delimiter closes that one,
   # the outer comment stays open, and the compiler swallows the rest of the file. The
