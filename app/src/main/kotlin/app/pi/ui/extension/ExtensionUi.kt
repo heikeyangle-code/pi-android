@@ -260,7 +260,7 @@ fun boundedWidgetLines(lines: List<String>): List<String> =
  * array can legitimately be several rows (an extension that pushes file content), and a
  * cap that counted array elements would let the split walk straight past it.
  */
-fun boundedWidgetRows(rows: List<WidgetRow>): List<WidgetRow> =
+internal fun boundedWidgetRows(rows: List<WidgetRow>): List<WidgetRow> =
     if (rows.size <= MAX_WIDGET_LINES) {
         rows
     } else {
