@@ -3362,9 +3362,6 @@ private fun ModelChip(label: String?, onClick: () -> Unit) {
     // (`direction-b-v2.html:500-503`). It carried a Material `Info` glyph and a
     // filled surface before; the board's chip has neither, and a model id is machine
     // language, so it takes the machine face.
-    //
-    // 这一版是 `ce2d815`（**2026-09-13**，「终审甲：逐台对照 v2」）定下的，不是今天改的。
-    // 用户裁定：不是今天动的地方就别动 —— 撤销我那次"恢复原样"的改动，回到这一版。
     Surface(
         modifier = Modifier
             .height(26.dp)
