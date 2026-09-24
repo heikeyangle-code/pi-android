@@ -221,25 +221,26 @@ internal class TailFollow(initiallyFollowing: Boolean = true) {
         val previous = previousAnchor
         val movedBackwards = previous != null && anchor.isBefore(previous)
         val gesture = viewport.isScrollInProgress && anchor != previous
-        // A session that just ended with the anchor moved backwards: the drag's lift.
-        // Checked **before** rule 3, because atBottom's re-arm branch would otherwise
-        // swallow it (or the `else if (gesture)` would miss it, the session being over).
+        // A session that just ended with the anchor moved backwards: the drag's lift —
+        // the frame `gesture` itself cannot see, because the effect snapshots only on
+        // its keys and a quick flick's last snapshot already has
+        // `isScrollInProgress = false`.
         val releasedBackwards = previousScrolling && !viewport.isScrollInProgress && movedBackwards
 
-        // Rule 2, then rule 3 — with the release case first. `atBottom` still comes
-        // before the live gesture so that a fling that ends at the end resumes the
-        // follow rather than pausing it for the frames it spent travelling there.
-        if (releasedBackwards) {
-            // The user's hand, decided by the only evidence this machine can see:
-            // backwards + the session that carried it is over. A layout move has no
-            // session before it, so it does not land here (harness K3).
-            following = false
-            pausedByNavigation = false
-        } else if (viewport.atBottom) {
+        // Rule 3, then the release case, then the live gesture — **the order is the
+        // contract**: a drag (or a rebuild's re-anchor) that *lands at* the end must
+        // re-arm, because ending up at the bottom is the user coming back to the tail
+        // (harness D1/I4/I7 each failed with the release check first). Only a release
+        // that actually **left** the end pauses — the quick flick (harness K1) — and a
+        // layout move has no session before it, so it never pauses either (K3).
+        if (viewport.atBottom) {
             if (!pausedByNavigation || gesture) {
                 following = true
                 pausedByNavigation = false
             }
+        } else if (releasedBackwards) {
+            following = false
+            pausedByNavigation = false
         } else if (gesture) {
             pausedByNavigation = false
             if (movedBackwards) following = false
