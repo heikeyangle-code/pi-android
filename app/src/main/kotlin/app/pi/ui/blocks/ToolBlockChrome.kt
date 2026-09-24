@@ -363,9 +363,10 @@ internal fun toolHeaderReading(item: ToolCall): String? {
  * of an empty tick.
  *
  * [elapsedMs] is passed in rather than read from [item] because one caller has a
- * *live* number: a running shell command's elapsed time is derived from the row's own
- * timestamp by [ShellBlock], not from `ToolCall.elapsedMs` (which only exists once the
- * call has ended). Nothing here scans a result — the F31/F8 rule at the top of this file.
+ * *live* number: a running shell command's elapsed time is `UiState.nowMs - item.ts`,
+ * measured by [ShellBlock] against the ViewModel's 1 Hz clock, not read from
+ * `ToolCall.elapsedMs` (which only exists once the call has ended). Nothing here scans
+ * a result — the F31/F8 rule at the top of this file.
  *
  * There is **no expand label** on this row: v2's disclosure is the header chevron
  * (`direction-b-v2.html:746`), and the card body is itself the hit target

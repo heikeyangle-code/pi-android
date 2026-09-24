@@ -98,6 +98,9 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonNull
@@ -617,6 +620,24 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         val transcript: List<TranscriptItem> = emptyList(),
         val revision: Int = 0,
         val streaming: Boolean = false,
+        /**
+         * 所有「已运行 N 秒」读数共用的那个粗时钟；转写里没有 pending 的行时为 null。
+         *
+         * **为什么必须由这里发布，而不是在组合里现读。** 工具卡的耗时原来是在组合时算的
+         * （`ShellBlock`：`System.currentTimeMillis() - item.ts`），于是那个数字是「这一行
+         * 上一次重组是什么时候」的函数。安静跑着的命令既没有流式文本也没有输出块推过来，
+         * 没人重组它，读数就冻在那儿，直到点一下卡或切屏逼出一次新组合才跳一下。时钟得
+         * **被推**，不能被读。
+         *
+         * **为什么是 1 秒。** 这个读数本身的精度就是秒（`ToolOutputParse.elapsedLabel`
+         * 印的是 `12.3 秒` / `1 分 30 秒`），60 Hz 的心跳会为每一次看得见的变化多印 59 个
+         * 一模一样的数字——同一个读数配 60 倍的重组。一秒一跳是「不丢掉任何一个显示出来
+         * 的秒」的最粗节拍。
+         *
+         * null 是**空闲**态，也是消费者的回退契约：为 null 时没有任何东西在滴答（见
+         * ViewModel 里的发布者），消费者保持自己原来的行为，而不是编一个读数出来。
+         */
+        val nowMs: Long? = null,
         val queueSteering: Int = 0,
         val queueFollowUp: Int = 0,
         val lastError: String? = null,
@@ -721,7 +742,34 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
          * [switchWorkspace].
          */
         val workspace: WorkspaceState = WorkspaceState(),
-    )
+    ) {
+        /**
+         * [nowMs] 的发布判据，全 App 只有这一处：转写里有没有一行工具调用还在等结果。
+         *
+         * **为什么是 `ToolStatus.Pending` 而不是 [streaming] 或 `bash.running`。** 它是
+         * 「谁真的会去读这个时钟」的那个集合：一行工具卡是不是「运行中」只看它自己的
+         * `status`（`toolStateOf`，`ui/blocks/ToolBlockChrome.kt:152-153`），而只有「运行中」
+         * 的行会要一个走动的耗时（`ShellBlock`）。`streaming` 覆盖同一件事但**更宽**——
+         * 它从 `agent_start` 一直真到 `agent_end`（`TranscriptReducer`），所以一段几分钟
+         * 没有工具卡的纯文本回答也会命中了，而那时屏幕上没有任何读数在走。
+         *
+         * **安静跑着的 bash 掉不出去。** 一条命令的 `ToolCall` 行会一直停在 Pending，直到
+         * `tool_execution_end` 把它翻成成功/失败（`rpc/.../Transcript.kt:1650` →
+         * `finalizeTool`，`:1685`）；`tool_execution_update` 的 200 ms 节流省掉的是**发布**，
+         * 不是行的状态，而一条什么都不打印的命令更是一条发布都没有——这正是时钟必须按自己的
+         * 节拍重新问这个问题、而不是等某次发布顺手把答案带过来的原因。
+         *
+         * `state.bash`（`BashRun.running`）故意**不在**判据里：它确实也 pending，但没有读者
+         * 会为它读时钟——`BashRun` 没有开始时间戳（`ui/screens/ProjectScreen.kt:1571-1573`
+         * 记着这件事），`BashPanel` 自己写着「没有耗时读数」（`ui/chat/BashPanel.kt:73`），
+         * 收进来就是每秒白白发一次没人看的滴答。哪天 `BashRun` 有了时间戳，往这里加一项。
+         *
+         * 这一次 O(行数) 扫描的代价和 `syncTranscript` 为它的 `interrupted` 投影每次发布
+         * 都要跑的那次判据是同一条（`:2659`），而且它跑在时钟自己的节拍上，不是每帧。
+         */
+        val hasPendingToolClock: Boolean
+            get() = transcript.any { it is ToolCall && it.status == ToolStatus.Pending }
+    }
 
     private val host = PiEngineHost(app)
     private var session: PiEngineSession? = null
@@ -5597,6 +5645,50 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         publishWorkspaceState(resolved.name, resolved.note, bumped = resolved.note != null)
     }
 
+    /**
+     * 那个粗时钟：只要还有 pending 的工具行，就每秒往 [UiState.nowMs] 写一次；没有就一次
+     * 都不写。
+     *
+     * 放在类体最后，理由和上面那个 `init` 一样——它在 `init` 里被启动，读的是 [_state]，
+     * 声明序在它之前的字段才保证已经初始化。`viewModelScope` 是 `Main.immediate`，构造在
+     * 主线程时 `launch` 的循环体是**同步**跑起来的：首帧那次 `state` 的重放值判为「没有
+     * pending」，于是直接挂在收集上，构造期不会碰任何后声明的字段。
+     *
+     * **空闲零发布 / 有 pending 每秒一次，两半都在这里保证**：
+     *  - 空闲：判据为假时走 `if (!pending)` 那一支，只有 `nowMs` 还不是 null（也就是刚从
+     *    pending 落回来）才写一次收尾；此后没有任何 `delay` 在跑，这条协程挂在 StateFlow
+     *    的收集上，转写里的 200 ms 发布也只是重新过一次 [UiState.hasPendingToolClock] 的
+     *    判断，不再写状态；
+     *  - pending：`while (true)` 的每一次迭代**恰好写一次**再 `delay(TOOL_CLOCK_TICK_MS)`，
+     *    即一秒一个发布。`delay` 刻意不放在前面：先写第一跳，`nowMs` 从 pending 出现的那一刻
+     *    起就是非 null；反过来会留一段「行已经 pending、时钟还没 armed」的窗口，只能靠
+     *    `ShellBlock` 自己的回退读数兜着。
+     *
+     * `collectLatest` 而不是 `collect`：pending 翻回 false 的时候要把还在 `delay` 的那个
+     * 循环连人带 `delay` 一起取消掉，否则它会继续每秒写 nowMs——那正是「空闲零发布」的反面。
+     * `distinctUntilChanged` 挂在**布尔**上，所以 pending 期间流式文本每 200 ms 推来的
+     * 发布不会重启这个循环（重启会让节拍跟着发布走，又回到「有人推才走」的老毛病）。
+     */
+    init {
+        viewModelScope.launch {
+            state
+                .map { it.hasPendingToolClock }
+                .distinctUntilChanged()
+                .collectLatest { pending ->
+                    if (!pending) {
+                        if (_state.value.nowMs != null) {
+                            _state.value = _state.value.copy(nowMs = null)
+                        }
+                        return@collectLatest
+                    }
+                    while (true) {
+                        _state.value = _state.value.copy(nowMs = System.currentTimeMillis())
+                        delay(TOOL_CLOCK_TICK_MS)
+                    }
+                }
+        }
+    }
+
     override fun onCleared() {
         // Answer anything outstanding before the engine is torn down, so a
         // still-live pi is not left blocked on a dialog whose UI just vanished.
@@ -5792,6 +5884,14 @@ private const val NAVIGATE_COMMAND = "pi-android-navigate"
  * "summarizing".
  */
 private const val NAVIGATE_BUSY_LABEL = "跳转到会话位置…"
+
+/**
+ * [UiState.nowMs] 的节拍：一秒。它不是随手取的数——这个读数的显示精度就是秒
+ * （`ToolOutputParse.elapsedLabel`），比 1 s 更密的心跳除了多重组几次什么都不改；而 1 s
+ * 也正是 pi 给同一个读数用的周期（`ShellBlock` 的 KDoc：pi 的 bash 渲染器 `:122`
+ * 每秒刷新一次 `Elapsed`）。只在有 pending 行时存在，见发布者那段 KDoc。
+ */
+private const val TOOL_CLOCK_TICK_MS = 1_000L
 
 /**
  * The system night mode at the moment this view model was built.

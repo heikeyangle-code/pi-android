@@ -797,6 +797,16 @@ private fun ChatBody(
             state.transcript.filterNot { it is DateSeparator }
         }
     }
+    // The ViewModel's coarse tool clock (`UiState.nowMs`): what every 「已运行 N 秒」 in the
+    // transcript is measured against, ticking once a second **only** while a tool card is
+    // pending (predicate: `UiState.hasPendingToolClock`). Read as a plain value beside the
+    // other `state.*` reads: `state` is a value parameter, so nothing in this function
+    // subscribes to it — the subscription is `ChatScreen`'s `collectAsState`, and this
+    // function already recomposes whenever that value changes (it reads `transcript`,
+    // `revision`, `streaming`). What the clock adds is one extra recomposition per second
+    // while a command runs, and its absence of change at rest is why it costs nothing then:
+    // the value is null and never moves.
+    val nowMs = state.nowMs
     // F34 (`docs/rendering-review.md`) / spec §4.5: a long session opens on its last
     // [TRANSCRIPT_WINDOW_STEP] rows and grows that window upwards in the same steps.
     // This is a **rendering** window only — the reducer keeps every row, which is the
@@ -2190,6 +2200,10 @@ private fun ChatBody(
                             // (`onDiffOpenFull`, `onErrorRetry`) still have no target and
                             // stay deleted.
                             onImageClick = { viewedImage = it },
+                            // The coarse tool clock read beside the other `state.*` values
+                            // above; only `ShellBlock` consumes it — a running `bash` is the
+                            // one live duration in the transcript.
+                            nowMs = nowMs,
                         )
                     }
                 }

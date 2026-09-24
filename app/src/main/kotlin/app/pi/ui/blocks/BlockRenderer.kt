@@ -95,6 +95,18 @@ fun BlockRenderer(
      * go and is supplied by `ChatScreen`. Null keeps every image inert.
      */
     onImageClick: ((PiImage) -> Unit)? = null,
+    /**
+     * `UiState.nowMs` — the ViewModel's 1 Hz coarse clock, or null when nothing in
+     * the transcript is pending. Only [ShellBlock] reads it (a running `bash` is the
+     * one card whose elapsed number is live; every other card's duration is pi's own
+     * fixed figure), and it is handed down rather than read here so the renderer stays
+     * a pure function of its parameters. See `UiState.nowMs` for why the value exists
+     * and `UiState.hasPendingToolClock` for the predicate that publishes it.
+     *
+     * The default is null, so a caller that does not pass it keeps every block's
+     * previous behaviour.
+     */
+    nowMs: Long? = null,
 ) {
     when (item) {
         is UserMessage -> UserMessageBlock(item, modifier, onForkFromMessage, onImageClick)
@@ -127,7 +139,7 @@ fun BlockRenderer(
                 "ls" -> LsBlock(item, modifier, toolsDefaultExpanded, firstOfRun, lastOfRun)
                 // pi's two shells share one renderer factory (`index.ts:35-36`): the prompt
                 // is the only difference between them, so they share one block here too.
-                "bash", "powershell" -> ShellBlock(item, modifier, toolsDefaultExpanded, firstOfRun, lastOfRun)
+                "bash", "powershell" -> ShellBlock(item, modifier, toolsDefaultExpanded, firstOfRun, lastOfRun, nowMs)
                 else -> ToolCallBlock(item, modifier, toolsDefaultExpanded, firstOfRun, lastOfRun)
             }
         }

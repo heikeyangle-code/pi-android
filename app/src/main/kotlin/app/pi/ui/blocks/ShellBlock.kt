@@ -53,12 +53,16 @@ import app.pi.ui.theme.PiTheme
  * > is the copy this was verified against; the older `.ts` numbers elsewhere in this file are
  * > the upstream TypeScript source and point at the same statements.
  *
- * **The running clock is read, not owned.** pi starts an interval for it; this app has no
- * timer to start or stop, because a streaming row is already republished every 200 ms
- * (`rpc/.../Transcript.kt:618`, spec §4.3's `tool_execution_update` throttle) — the footer
- * reads the clock once per composition, so the number advances with the output and a command
- * that prints nothing simply holds the number it last showed. No new loop, no new thread,
- * nothing to cancel when the card scrolls away.
+ * **The running clock is pushed, not read here.** pi starts an interval for it
+ * (`:122`); this app has one clock for the whole transcript, owned by the ViewModel
+ * (`UiState.nowMs`, ticking once a second while some tool card is pending) and handed
+ * to this card as [nowMs]. The version of this that read `System.currentTimeMillis()`
+ * during composition was a real bug, not just a shortcut: a row only recomposes when
+ * something pushes it (streamed text, a bash output chunk), so a command that printed
+ * nothing froze its number until a tap or a screen switch forced a composition — the
+ * same number pi's interval keeps moving. The 200 ms `tool_execution_update` throttle
+ * is no substitute: it drives publications, and a silent command has none.
+ * Nothing here starts or cancels a timer.
  *
  * Two of pi's numbers are not available from the protocol and are read from pi's own text:
  * the exit code, because `BashToolDetails` does not carry one (`core/tools/bash.ts:49-52`) —
@@ -72,6 +76,12 @@ internal fun ShellBlock(
     defaultExpanded: Boolean = false,
     firstOfRun: Boolean = true,
     lastOfRun: Boolean = true,
+    /**
+     * `UiState.nowMs`: the ViewModel's 1 Hz coarse clock, non-null exactly while a
+     * tool card is pending. Null keeps the pre-clock behaviour (one read per
+     * composition) rather than producing no reading at all.
+     */
+    nowMs: Long? = null,
 ) {
     val palette = PiTheme.palette
     val state = toolStateOf(item)
@@ -141,11 +151,21 @@ internal fun ShellBlock(
         }
     }
     val subject = remember(command, timeout) { shellSubject(command, timeout) }
-    // The live clock: one read per composition, no timer of its own. See the KDoc. The
-    // same number feeds the footer's text and its tick (`04 §1.1`: 刻度与读数同源), so a
-    // running command's meter grows with the seconds beside it.
+    // The live clock comes **from the ViewModel** ([nowMs], `UiState.nowMs`), which ticks
+    // once a second for exactly as long as some tool card is pending. Reading
+    // `System.currentTimeMillis()` here instead is the bug this replaces: that number is a
+    // function of *when this row last recomposed*, and a command that prints nothing gets
+    // no recomposition at all — the reading froze until a tap or a screen switch forced
+    // one. The same number feeds the footer's text and its tick (`04 §1.1`: 刻度与读数
+    // 同源), so a running command's meter grows with the seconds beside it.
+    //
+    // `nowMs` is null while nothing is pending, which is the only case the fallback below
+    // covers: the ViewModel's clock publishes its first tick on the main loop *after* the
+    // row that arms it, so for that one hop (and for any caller that passes no clock at
+    // all — the default) one read per composition is still the correct number. It is not a
+    // second clock: once the row is armed, the value comes from the tick.
     val elapsedMs = if (pending) {
-        (System.currentTimeMillis() - item.ts).coerceAtLeast(0)
+        ((nowMs ?: System.currentTimeMillis()) - item.ts).coerceAtLeast(0)
     } else {
         item.elapsedMs
     }
@@ -258,10 +278,10 @@ private fun shellSubject(command: String, timeout: Int?): List<ToolCallPart> = b
  * [ToolOutputParse.elapsedLabel], which is pi's `formatDuration` (`renderers/bash.ts:32-42`,
  * including 0.86.1's switch to minutes and hours past a minute).
  *
- * [elapsedMs] is handed in by the caller: while the command runs this is the app's
- * recomposition beat, not a clock of its own, and the same value goes to the tick. A
- * blocked call has no such reading — nothing ran — so it takes the fourth state's own
- * footer instead.
+ * [elapsedMs] is handed in by the caller: while the command runs it is the ViewModel's
+ * 1 Hz clock minus the row's timestamp (see [ShellBlock]), and the same value goes to the
+ * tick. A blocked call has no such reading — nothing ran — so it takes the fourth state's
+ * own footer instead.
  */
 private fun shellFooter(item: ToolCall, state: ToolState, exitCode: Int?, lines: Int, elapsedMs: Long?): String {
     if (state == ToolState.Rejected) return toolRejectedFooter()
