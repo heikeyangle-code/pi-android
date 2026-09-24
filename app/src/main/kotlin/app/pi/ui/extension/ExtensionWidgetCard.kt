@@ -91,16 +91,29 @@ fun ExtensionWidgetStack(
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         widgets.forEach { widget ->
-            // The cap and the classification are pure functions of the list, and the list only
-            // changes when the extension pushes a widget: without the `remember` this rebuilt
-            // both on every recomposition of this stack.
-            val rows = remember(widget.lines) { widgetRows(boundedWidgetLines(widget.lines)) }
-            if (rows.isEmpty()) return@forEach
-            val tone = remember(rows) { widgetCardTone(rows) }
-            val stateColor = widgetToneColor(tone, palette)
             // Closed by default: the whole point of the fold is that an extension's payload
             // costs one row until the user asks for more.
             val expanded = remember(widget.key) { mutableStateOf(false) }
+            val expandedNow = expanded.value
+            // The classification is a pure function of the list, and the list only changes when
+            // the extension pushes a widget: without the `remember` this rebuilt it on every
+            // recomposition of this stack. Collapsed, pi's row budget applies
+            // (`boundedWidgetRows`); opened, it does not — the cap exists so one panel cannot
+            // push the conversation off screen, and a user who tapped the card has already
+            // decided to give it the room. Same split the tool card makes between its ten
+            // collapsed lines and its full output.
+            val rows = remember(widget.lines, expandedNow) {
+                val all = widgetRows(boundedWidgetLines(widget.lines))
+                if (expandedNow) all else boundedWidgetRows(all)
+            }
+            if (rows.isEmpty()) return@forEach
+            val tone = remember(rows) { widgetCardTone(rows) }
+            // Only a widget with no header of its own needs the cue: a payload row already
+            // shows `详情`, and a text panel earns one only when a line was actually cut.
+            val hint = remember(rows) {
+                widgetNeedsDisclosure(rows) && rows.none { it is WidgetRow.Folded || it is WidgetRow.Summary }
+            }
+            val stateColor = widgetToneColor(tone, palette)
             BlockCard(
                 color = palette.cardBg,
                 modifier = Modifier.toggleContent(expanded.value, { expanded.value = !expanded.value }),
@@ -119,6 +132,16 @@ fun ExtensionWidgetStack(
                         verticalArrangement = Arrangement.spacedBy(2.dp),
                     ) {
                         rows.forEach { row -> WidgetRowView(row, expanded.value) }
+                        if (hint) {
+                            // v2's 提示条 shape (`· 前缀 + 文本`, 12–13): a dim sentence rather
+                            // than a button, because the whole card is the hit target.
+                            Text(
+                                text = if (expanded.value) "· 收起" else "· 展开看全文",
+                                style = PiTheme.text.monoSmall,
+                                color = PiTheme.palette.dim,
+                                maxLines = 1,
+                            )
+                        }
                     }
                 }
             }
@@ -141,7 +164,11 @@ private fun WidgetRowView(row: WidgetRow, expanded: Boolean) {
                 spans = if (spans.all { it.text.isEmpty() }) listOf(Ansi.Span(" ")) else spans,
                 defaultColor = PiTheme.palette.muted,
                 style = PiTheme.text.monoSmall,
-                maxLines = 1,
+                // Folded: one row, cut (pi's own panel truncates a widget line and never wraps
+                // it). Opened: all of it, because a text widget's line was authored as a row of
+                // a monospace layout — an 80-column box, a space-aligned table — and an ellipsis
+                // throws that content away while wrapping only makes it crooked.
+                maxLines = if (expanded) Int.MAX_VALUE else 1,
                 overflow = TextOverflow.Ellipsis,
             )
         }

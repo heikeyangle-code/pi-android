@@ -106,7 +106,40 @@ internal sealed interface WidgetRow {
  * The single entry point the renderer calls, so the harness exercises exactly
  * what the screen draws.
  */
-internal fun widgetRows(lines: List<String>): List<WidgetRow> = lines.mapNotNull(::widgetRow)
+internal fun widgetRows(lines: List<String>): List<WidgetRow> = lines
+    // **One array element is not always one row.** `pi-web-access` pushes file content and
+    // `pi-background-tasks` pushes a joined remediation paragraph, so an element can carry
+    // newlines. Drawing only its first row dropped the rest silently, which is the one failure
+    // mode a host must never have: the extension's own panel shows those rows.
+    .flatMap { line -> if (line.contains('\n')) line.split('\n').take(MAX_SPLIT_ROWS) else listOf(line) }
+    .mapNotNull(::widgetRow)
+
+/**
+ * The most rows one array element may split into.
+ *
+ * A bound on the split itself, not on the card: the panel's own row budget is applied
+ * afterwards (`boundedWidgetRows`), and this only stops a pathological element (a
+ * megabyte of newlines) from allocating before that cap can act.
+ */
+internal const val MAX_SPLIT_ROWS = 64
+
+/**
+ * Is there anything a tap would reveal?
+ *
+ * A text widget has no header of its own, so the cue has to be earned: a line that was
+ * cut (the ellipsis is the evidence) or a payload row. A widget whose lines all fit
+ * needs no affordance, and gets none — the alternative was a `展开` label on every panel,
+ * including the ones with nothing behind it.
+ */
+internal fun widgetNeedsDisclosure(rows: List<WidgetRow>): Boolean = rows.any { row ->
+    when (row) {
+        is WidgetRow.Text -> row.text.length > WIDGET_DISCLOSURE_CHARS
+        is WidgetRow.Folded, is WidgetRow.Summary -> true
+    }
+}
+
+/** Past this many characters a line cannot be one row on a phone, so it is cut. */
+internal const val WIDGET_DISCLOSURE_CHARS = 48
 
 /** One line, or `null` when it must not be drawn at all. */
 internal fun widgetRow(line: String): WidgetRow? {

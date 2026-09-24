@@ -252,6 +252,21 @@ fun boundedWidgetLines(lines: List<String>): List<String> =
         lines.take(MAX_WIDGET_LINES) + WIDGET_TRUNCATED_LINE
     }
 
+/**
+ * pi's row cap, applied **after** a text line's own newlines have been split into
+ * rows ([widgetRows]).
+ *
+ * Same constant and same truncation row as [boundedWidgetLines] — one line of a widget
+ * array can legitimately be several rows (an extension that pushes file content), and a
+ * cap that counted array elements would let the split walk straight past it.
+ */
+fun boundedWidgetRows(rows: List<WidgetRow>): List<WidgetRow> =
+    if (rows.size <= MAX_WIDGET_LINES) {
+        rows
+    } else {
+        rows.take(MAX_WIDGET_LINES) + WidgetRow.Text(WIDGET_TRUNCATED_LINE)
+    }
+
 /** One `setWidget` panel: non-empty [lines]; an empty list clears the key. */
 data class ExtensionWidget(
     val key: String,

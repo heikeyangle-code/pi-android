@@ -250,6 +250,19 @@ fun main() {
     widgetCheck("an entry that sanitises to nothing draws no row", statusRows(listOf("k" to "  \n ")).size, 0)
     widgetCheck("a status keeps the extension's own text", statusRows(listOf("k" to "待办 3/5")).first().text, "待办 3/5")
 
+    // ------------------------------------------------- a text widget's real shapes
+    // `pi-web-access` pushes file content and `pi-background-tasks` a joined paragraph, so one
+    // array element can carry newlines. Drawing only the first row dropped the rest silently.
+    widgetCheck(
+        "an element carrying newlines becomes several rows",
+        widgetRows(listOf("a\nb\nc")),
+        listOf(WidgetRow.Text("a"), WidgetRow.Text("b"), WidgetRow.Text("c")),
+    )
+    widgetCheck("a blank element stays one row (it is spacing)", widgetRows(listOf("")), listOf(WidgetRow.Text("")))
+    checkTrue("a widget whose lines all fit needs no affordance", !widgetNeedsDisclosure(listOf(WidgetRow.Text("short"))))
+    checkTrue("a cut line earns one", widgetNeedsDisclosure(listOf(WidgetRow.Text("x".repeat(200)))))
+    checkTrue("a payload always has something behind it", widgetNeedsDisclosure(listOf(widgetRow("""FOO_JSON:{"a":1}""")!!)))
+
     // ------------------------------------------------------------------ the invariants
     val everyShape = listOf(
         "hello",

@@ -25,6 +25,12 @@ val TUI_ONLY_MARKERS: List<Pair<String, String>> = listOf(
     "setEditorComponent()" to ".setEditorComponent(",
     "addAutocompleteProvider()" to ".addAutocompleteProvider(",
     "onTerminalInput()" to ".onTerminalInput(",
+    // **A function passed as a widget is also TUI-only.** `setWidget(key, (tui, theme) => …)` is
+    // dropped before the wire in RPC mode (`rpc-mode.ts:195-208` only forwards arrays), so an
+    // extension that renders its panel as a component gets *no* panel here — the same silence as
+    // `custom()`, from a call that does not look like one. `pi-neuralwatt-provider` and
+    // `pi-extension-utils` (a library other extensions build on) both do it.
+    "widget factory" to "setWidget(",
     "mode === \"tui\"" to "mode === \"tui\"",
     "mode === 'tui'" to "mode === 'tui'",
 )
