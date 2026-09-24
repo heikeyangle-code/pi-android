@@ -3,6 +3,7 @@ package app.pi.ui.extension
 import java.io.File
 import kotlin.system.exitProcess
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
@@ -159,25 +160,29 @@ fun main() {
     widgetCheck("the glyph carries the state's colour", tonesOf(detail.take(1)), listOf(WidgetTone.Accent))
     checkTrue("the state word rides with the glyph", detail.any { it.text == "运行中" && it.tone == WidgetTone.Accent })
     checkTrue("the name is the readable run", detail.any { it.text == "oracle" && it.tone == WidgetTone.Text })
-    // **The job row carries `widgetStats`, not `widgetActivity`.** The official panel prints
-    // the counts on a *second* line (`` `⎿  ${widgetActivity(job)}` `` in render.js) and
-    // `done/total` on the job row itself — commit 0f1eff8 moved both ways to match, and this
-    // assertion (blame: older than that commit) still described the inline shape. Rewritten to
-    // the official split, with the readings row asserted where it now lives.
+    // **The job row carries `widgetStats`, the readings row carries `widgetActivity`** —
+    // both in the shape official gives *this payload*: `widgetStats`' stage/step/parallel
+    // branches need `mode`/`stepsTotal`/`currentStep`, fields the async projection never
+    // writes (measured off all seven fixtures), so its stat slot here is the tool-use
+    // count plus the job's elapsed. The job's elapsed therefore lives on this row and
+    // **not** in the activity line — official separates them (`render.js:1920` vs `:1111`).
     widgetCheck(
-        "the job row's own stat is dim progress (official widgetStats)",
+        "the job row's stats are tool-use + elapsed (official widgetStats for this payload)",
         listOf(detail[2].tone, detail.last().text),
-        listOf(WidgetTone.Dim, " · 0/1"),
+        listOf(WidgetTone.Dim, " · 6 工具 · 32.4s"),
     )
     val readings = one.details[1]
+    // The live-status label leads: `buildLiveStatusLine` → `formatActivityLabel` with
+    // lastActivityAt == updatedAt (age < 1s → 正在活跃), then the tool, then the counts.
     checkTrue(
-        "the readings are their own dim row, pi's order (tool first)",
-        textOf(readings).startsWith("⎿  read") && readings.all { it.tone == WidgetTone.Dim },
+        "the readings are their own dim row: live label, then tool first",
+        textOf(readings).startsWith("⎿  正在活跃 · read") && readings.all { it.tone == WidgetTone.Dim },
         "row=${textOf(readings)}",
     )
     checkTrue(
-        "and they carry the turn/tool counts (widgetActivity)",
-        textOf(readings).contains("4 轮") && textOf(readings).contains("6 工具"),
+        "and they carry the turn/tool counts, without the job's elapsed (widgetActivity)",
+        textOf(readings).contains("4 轮") && textOf(readings).contains("6 工具") &&
+            !textOf(readings).contains("32.4s"),
         "row=${textOf(readings)}",
     )
 
@@ -243,7 +248,8 @@ fun main() {
     // **The real payload**, not a hand-written one: `scripted-parallel` is what the extension's
     // own projection emits for a scripted call (one job, four tasks). Hand-written fixtures
     // agreed with the code that read them — that is how a four-agent run stayed invisible.
-    val scripted = widgetRow(fixtureLine("scripted-parallel")) as WidgetRow.Summary
+    val scriptedRaw = fixtureLine("scripted-parallel")
+    val scripted = widgetRow(scriptedRaw) as WidgetRow.Summary
     widgetCheck("a scripted job counts its agents, not itself", textOf(scripted.headline), "2 运行中 · 1 完成 · 1 失败")
     widgetCheck("and the badge is the agent count", scripted.badge, "4")
     widgetCheck("the job row, its readings, then its four tasks", scripted.details.size, 6)
@@ -308,22 +314,44 @@ fun main() {
         !textOf((widgetRow(fixtureLine("more-than-the-panel-draws")) as WidgetRow.Summary).headline).contains("未列出"),
     )
     // The durations are pi's own spellings, derived from the payload the extension re-sends — the
-    // host adds no clock of its own (`widgetActivity`, `formatDuration`).
+    // host adds no clock of its own (`widgetActivity`, `formatDuration`). The live-status label
+    // leads (its exact words depend on the snapshot's own age bucket), and the job's elapsed is
+    // deliberately absent: official carries it on the name row's stats instead.
+    val scriptedReadings = textOf(scripted.details[1])
     checkTrue(
-        "the job's readings are their own row, in pi's order",
-        textOf(scripted.details[1]) == "⎿  web_search 8.6s · 2 轮 · 3 工具 · 32.4s",
-        "row=${textOf(scripted.details[1])}",
+        "the job's readings are their own row: live label · tool-duration · counts, no job elapsed",
+        scriptedReadings.startsWith("⎿  ") &&
+            scriptedReadings.contains("web_search 8.6s") &&
+            scriptedReadings.contains("2 轮") &&
+            scriptedReadings.contains("3 工具") &&
+            !scriptedReadings.contains("32.4s"),
+        "row=$scriptedReadings",
     )
     checkTrue(
         "a task with no timestamps shows no duration rather than a guess",
         taskRows.any { textOf(it).contains("web_search · 3 轮 · 7 工具") && !textOf(it).contains("s ·") },
     )
-    // The job row's own statistic is progress, not the counts (`widgetStats` puts `done/total`
-    // on the row and the counts on the readings line).
+    // Official's stat slot for *this* payload: tool-use + the job's elapsed
+    // (`widgetStats`' stage/step/parallel branches need fields the async projection
+    // never writes — see `widgetJobStats`' KDoc).
     checkTrue(
-        "the job row carries progress",
-        textOf(scripted.details[0]).contains("2/4"),
+        "the job row carries tool-use + elapsed",
+        textOf(scripted.details[0]).contains("3 工具") && textOf(scripted.details[0]).contains("32.4s"),
         "row=${textOf(scripted.details[0])}",
+    )
+
+    // Identity before the glyph on child rows (official `materializedWidgetChildLines`:
+    // `└─ ${bold identity} ${glyph} ${name}`), read from the fixture itself so the pin
+    // follows whatever id the extension emits.
+    val scriptedChildIds = Json.parseToJsonElement(scriptedRaw.substringAfter(':')).jsonObject["runs"]!!
+        .jsonArray.first().jsonObject["children"]!!.jsonArray
+        .map { it.jsonObject["id"]!!.jsonPrimitive.content }
+    checkTrue(
+        "each task row carries its identity (official puts it before the glyph)",
+        scriptedChildIds.isNotEmpty() && scriptedChildIds.all { id ->
+            taskRows.any { row -> row.any { span -> span.text.contains(id) } }
+        },
+        "ids=$scriptedChildIds",
     )
     checkTrue("the last task closes the branch", textOf(scripted.details.last()).startsWith("└─ "))
     val childless = summary(snapshot("""{"id":"solo","kind":"subagent","label":"oracle","state":"running"}"""))
@@ -388,6 +416,47 @@ fun main() {
         "a state the extension never names is its own error glyph",
         (widgetRow(fixtureLine("unknown-state")) as WidgetRow.Summary).worst,
         WidgetTone.Error,
+    )
+
+    // `currentPath` is projected **when a tool holds one** (none of the seven fixtures
+    // has it) — the fact the readings line must carry when present, home-shortened the
+    // way official `shortenPath` folds `$HOME`.
+    val withPath = summary(
+        snapshot(
+            """{"id":"p1","kind":"subagent","label":"pathy","state":"running",
+               "startedAt":1790200606123,"updatedAt":1790200638560,
+               "currentPath":"/root/work/App.kt",
+               "activity":{"state":"running","turnCount":1,"toolCount":1,
+                           "lastActivityAt":1790200638560}}""".trimIndent().replace("\n", ""),
+        ),
+    )
+    checkTrue(
+        "the working path rides the readings line, home-shortened",
+        textOf(withPath.details[1]).contains("~/work/App.kt"),
+        "row=${textOf(withPath.details[1])}",
+    )
+
+    // Queued jobs collapse into ONE muted line between the running and the finished jobs
+    // (official's slots budget: the summary line itself consumes a slot).
+    val queuedPanel = summary(
+        snapshot(
+            """{"id":"r1","kind":"subagent","label":"go","state":"running","startedAt":1,"updatedAt":2},
+               {"id":"r2","kind":"subagent","label":"wait","state":"queued"}""".trimIndent().replace("\n", ""),
+        ),
+    )
+    checkTrue(
+        "queued jobs are one muted summary line",
+        queuedPanel.details.any { textOf(it) == "◦ 1 排队中" },
+        "rows=${queuedPanel.details.map { textOf(it) }}",
+    )
+
+    // Official's fall-through when a job reports no activity at all: the status word
+    // (`thinking…` / `Partial` / … at the tail of `widgetActivity`), localized.
+    val silent = widgetRow(fixtureLine("unknown-state")) as WidgetRow.Summary
+    checkTrue(
+        "a job with no activity falls through to the status word",
+        silent.details.size >= 2 && textOf(silent.details[1]).contains("部分完成"),
+        "rows=${silent.details.map { textOf(it) }}",
     )
 
     // ------------------------------------------------------------------ the invariants

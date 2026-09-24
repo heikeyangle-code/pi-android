@@ -272,9 +272,6 @@ private val SUBAGENT_STATES: Map<String, StateLook> = mapOf(
 /** The extension's own fall-through: anything it does not name is a failure glyph. */
 private val SUBAGENT_STATE_FALLBACK = StateLook("✗", "部分完成", WidgetTone.Error)
 
-/** A job's task counts as done once it can no longer change. */
-private val SUBAGENT_TERMINAL_STATES = setOf("complete", "failed", "stopped", "rejected", "partial")
-
 /** The order the headline reads in, worst-last so a failure is the last word. */
 private val SUBAGENT_STATE_ORDER = listOf(
     "running", "queued", "paused", "complete", "failed", "stopped", "rejected", "partial",
@@ -319,74 +316,100 @@ private fun subagentSummary(json: String): WidgetRow? {
         root.omittedLabel()?.let { add(WidgetSpan(it, WidgetTone.Dim)) }
     }
 
-    val details = runs.take(SUBAGENT_DETAIL_RUNS).flatMap { run ->
-        // The extension's own panel draws the job row and then its tasks under it
-        // (`materializedWidgetChildLines` uses `├─` / `└─`), so the card does too — otherwise a
-        // four-agent job is a single opaque row whose name is a repeated agent list.
+    // Official ordering and budget (multi-job builder, `render.js:2838-2899`): running
+    // first, then **one** muted line standing in for every queued job, then the finished
+    // — four slots in total (`MAX_WIDGET_JOBS = 4`, `shared/types.js:127`), counting the
+    // queued line itself. Children draw under their job (`materializedWidgetChildLines`),
+    // ordered the same way and capped at [SUBAGENT_DETAIL_CHILDREN]; child rows do **not**
+    // consume slots. The terminal-tier shapes (single-line / progressive, driven by
+    // `fitAdaptiveWidgetLines`' terminal row budget) have no phone analog: this card's
+    // folded state and its label/headline chrome play that role instead.
+    fun stateRank(state: String?): Int = when (state) {
+        "running" -> 0
+        "queued" -> 1
+        else -> 2
+    }
+    val ordered = runs.sortedWith(compareBy { stateRank(it.text("state")) })
+    fun jobRows(run: JsonObject): List<List<WidgetSpan>> {
         val children = (run["children"] as? JsonArray).orEmpty().mapNotNull { it as? JsonObject }
+            .sortedWith(compareBy { stateRank(it.text("state")) })
         val shown = children.take(SUBAGENT_DETAIL_CHILDREN)
         // **The name is the extension's, not mine.** `widgetJobName` gives a job one of
-        // `parallel`, `chain`, a single agent's name, or the joined agent list — and those four
-        // are the only place the mode shows up at all. Replacing the joined list with "N 个子任务"
-        // (which this file did) threw that away: a parallel job and a chain job looked identical,
-        // and the row stopped saying what the sender called it.
+        // `parallel`, `chain`, a single agent's name, or the joined agent list — those
+        // four are the only place the mode shows up. `kind` distinguishes the panel's two
+        // species (both words, per e22ca84); the id's short form is the handle the
+        // extension's own inspect command takes — the interaction this surface has.
         val jobName = run.text("label")
-        // `kind` is `subagent` or `workflow`; one panel can hold both, and without the word
-        // they are indistinguishable. `id` is the handle the extension's own inspect command
-        // takes (`/subagents-inspect-rpc <requestId> <asyncId>`), so the card prints a short
-        // form of it — that is the whole interaction this surface has.
-        // Both words, not just the workflow one: a bare job row and a workflow row must be
-        // told apart, and leaving `subagent` implicit would mean the label appears only for the
-        // rarer kind — the reader cannot know which kind is "unmarked".
         val jobKind = if (run.text("kind") == "workflow") "工作流" else "子代理"
-        // The job row's own statistic is **progress**, not turns/tools: the extension prints
-        // `done/total` here and puts the counts on the activity line. The children's states are
-        // the only progress the payload carries, so that is what this computes.
-        val childLeaves = children.flatMap { leafStates(it) }
-        val progress = if (childLeaves.isEmpty()) {
-            null
-        } else {
-            "${childLeaves.count { it in SUBAGENT_TERMINAL_STATES }}/${childLeaves.size}"
-        }
-        buildList {
+        return buildList {
             add(
                 nodeRow(
                     run,
                     name = jobName,
                     kindWord = jobKind,
                     ref = run.text("id")?.take(8),
-                    stat = progress,
-                    withActivity = false,
+                    stat = widgetJobStats(run),
                 ),
             )
-            activityRow(doingFacts(run, currentToolOf(run), elapsedOf(run)))?.let { add(it) }
+            activityRow(run)?.let { add(it) }
             shown.forEachIndexed { index, child ->
-                val last = index == shown.lastIndex && children.size <= SUBAGENT_DETAIL_CHILDREN
+                // Official marks `└─` only when the drawn child **is** the last child
+                // (`index === children.length - 1`): a truncated list is all `├─`.
                 add(
                     nodeRow(
                         child,
-                        branch = if (last) "└─ " else "├─ ",
+                        branch = if (index == children.lastIndex) "└─ " else "├─ ",
+                        identity = child.text("id"),
                         name = child.text("label") ?: "（未命名）",
+                        inlineActivity = activityLine(child).takeIf { it.isNotEmpty() },
                     ),
                 )
             }
             val hidden = children.size - shown.size
-            if (hidden > 0) add(listOf(WidgetSpan("└─ +$hidden 个子任务", WidgetTone.Dim)))
+            // Branch-less, like official's `+N more workflow children`.
+            if (hidden > 0) add(listOf(WidgetSpan("+$hidden 个更多子任务", WidgetTone.Dim)))
         }
-    }.let { rendered ->
-        val hidden = runs.size - SUBAGENT_DETAIL_RUNS
-        if (hidden <= 0) {
-            rendered
+    }
+    var slots = SUBAGENT_DETAIL_RUNS
+    val drawn = mutableListOf<List<WidgetSpan>>()
+    val hiddenRuns = mutableListOf<JsonObject>()
+    for (run in ordered.filter { it.text("state") == "running" }) {
+        if (slots <= 0) {
+            hiddenRuns += run
+            continue
+        }
+        drawn += jobRows(run)
+        slots--
+    }
+    val queuedRuns = ordered.filter { it.text("state") == "queued" }
+    if (queuedRuns.isNotEmpty()) {
+        if (slots > 0) {
+            drawn += listOf(listOf(WidgetSpan("◦ ${queuedRuns.size} 排队中", WidgetTone.Muted)))
+            slots--
         } else {
-            // The extension breaks the remainder down (`+2 more (1 running, 1 finished)`), and the
-            // breakdown is the only part that says whether the hidden ones are still working.
-            val hiddenStates = runs.drop(SUBAGENT_DETAIL_RUNS).flatMap { leafStates(it) }
-            val parts = SUBAGENT_STATE_ORDER.mapNotNull { state ->
-                hiddenStates.count { it == state }.takeIf { it > 0 }?.let { "$it ${look(state).word}" }
-            }
-            val tail = if (parts.isEmpty()) "" else "（${parts.joinToString("、")}）"
-            rendered + listOf(listOf(WidgetSpan("+$hidden 个更多$tail", WidgetTone.Dim)))
+            hiddenRuns += queuedRuns
         }
+    }
+    for (run in ordered.filter { stateRank(it.text("state")) == 2 }) {
+        if (slots <= 0) {
+            hiddenRuns += run
+            continue
+        }
+        drawn += jobRows(run)
+        slots--
+    }
+    val details = if (hiddenRuns.isEmpty()) {
+        drawn
+    } else {
+        // Official's tail (`+N more (…)`). The words are the extension's own state table
+        // (finer than official's three categories, same shape), which is the only part
+        // that says whether the hidden ones are still working.
+        val hiddenStates = hiddenRuns.flatMap { leafStates(it) }
+        val parts = SUBAGENT_STATE_ORDER.mapNotNull { state ->
+            hiddenStates.count { it == state }.takeIf { it > 0 }?.let { "$it ${look(state).word}" }
+        }
+        val tail = if (parts.isEmpty()) "" else "（${parts.joinToString("、")}）"
+        drawn + listOf(listOf(WidgetSpan("+${hiddenRuns.size} 个更多$tail", WidgetTone.Dim)))
     }
 
     return WidgetRow.Summary(
@@ -413,67 +436,32 @@ private fun leafStates(node: JsonObject, depth: Int = 0): List<String> {
     return children.flatMap { leafStates(it, depth + 1) }
 }
 
-/** One job's or one task's row: state glyph and word, name, then what it is doing now. */
-/** The current tool with its own duration, in the extension's spelling (`widgetActivity`). */
-private fun currentToolOf(node: JsonObject): String? {
-    val activity = node["activity"] as? JsonObject
-    val updatedAt = node.long("updatedAt") ?: node.long("startedAt")
-    val since = activity?.long("currentToolStartedAt")
-    return activity?.text("currentTool")?.let { name ->
-        if (since != null && updatedAt != null) "$name ${ToolOutputParse.formatDuration(updatedAt - since)}" else name
-    }
-}
-
-/** The node's own elapsed, or null when it has no timestamps to derive one from. */
-private fun elapsedOf(node: JsonObject): String? {
-    val startedAt = node.long("startedAt") ?: return null
-    val endedAt = node.long("endedAt") ?: node.long("updatedAt") ?: return null
-    return ToolOutputParse.formatDuration(endedAt - startedAt)
-}
-
+/**
+ * One job's or one task's row: branch and **identity** first — official
+ * `materializedWidgetChildLines` puts a child's id before its glyph, bold
+ * (`Text` is this card's bold) — then the state glyph and word, the name, and
+ * the row's own stat slot.
+ */
 private fun nodeRow(
     node: JsonObject,
     branch: String = "",
+    identity: String? = null,
     name: String? = null,
     kindWord: String? = null,
     ref: String? = null,
     stat: String? = null,
-    withActivity: Boolean = true,
+    /** The official child row keeps its readings on a `│`-prefixed second line; this card
+     *  inlines them after the name (phone density — same content, one row instead of two). */
+    inlineActivity: String? = null,
 ): List<WidgetSpan> {
     val look = look(node.text("state"))
-    val activity = node["activity"] as? JsonObject
-    // What it is doing *right now*, in the extension's own order (`widgetActivity`):
-    // the current tool first, then the counts. `activity.state` ("running" / "thinking" /
-    // …) is only used when there is no tool to name — the official panel does not draw it
-    // either, and "思考中" is the only case where the tool slot would otherwise be empty.
-    // **The extension's payload is the clock.** `updatedAt` is re-sent on every async state
-    // change, so a duration derived from these fields refreshes with the panel instead of needing
-    // a host-side ticker — which is also why the folded card can stay byte-stable (it draws none
-    // of these) while the opened one is live. The spellings are pi's own: `widgetActivity` writes
-    // `${currentTool} ${formatDuration(updatedAt - currentToolStartedAt)}`, and
-    // [ToolOutputParse.formatDuration] is that same `formatDuration` (`renderers/bash.ts:32-42`).
-    val updatedAt = node.long("updatedAt") ?: node.long("startedAt")
-    val toolStartedAt = activity?.long("currentToolStartedAt")
-    val currentTool = activity?.text("currentTool")?.let { name ->
-        if (toolStartedAt != null && updatedAt != null) {
-            "$name ${ToolOutputParse.formatDuration(updatedAt - toolStartedAt)}"
-        } else {
-            name
-        }
-    }
-    val startedAt = node.long("startedAt")
-    val endedAt = node.long("endedAt") ?: updatedAt
-    val elapsed = if (startedAt != null && endedAt != null) {
-        ToolOutputParse.formatDuration(endedAt - startedAt)
-    } else {
-        null
-    }
-    val doing = doingFacts(node, currentTool, elapsed)
     return buildList {
         if (branch.isNotEmpty()) add(WidgetSpan(branch, WidgetTone.Dim))
+        if (identity != null) add(WidgetSpan("$identity ", WidgetTone.Text))
         add(WidgetSpan("${look.glyph} ", look.tone))
         // `06 §4`: the word always travels with the glyph, so the state survives colour
         // blindness — and it is the extension's own word for it (`widgetStepStatus`).
+        // Official draws the word nowhere here; this is the documented a11y deviation.
         add(WidgetSpan(look.word, look.tone))
         if (kindWord != null) {
             add(WidgetSpan(" · $kindWord", WidgetTone.Dim))
@@ -481,8 +469,7 @@ private fun nodeRow(
         if (name != null) {
             add(WidgetSpan("· ", WidgetTone.Dim))
             // The name is the one run of this line a reader scans for: the extension bolds it
-            // (`themeBold` in its own renderer) and so does the card, which is why it is `Text`
-            // and not `Muted`.
+            // (`themeBold` in its own renderer) and so does the card.
             add(WidgetSpan(name, WidgetTone.Text))
         }
         if (ref != null) {
@@ -491,37 +478,134 @@ private fun nodeRow(
         if (stat != null) {
             add(WidgetSpan(" · $stat", WidgetTone.Dim))
         }
-        if (withActivity && doing.isNotEmpty()) {
+        if (inlineActivity != null) {
             add(WidgetSpan(" · ", WidgetTone.Dim))
-            add(WidgetSpan(doing.joinToString(" · "), WidgetTone.Dim))
+            add(WidgetSpan(inlineActivity, WidgetTone.Dim))
         }
     }
 }
 
 /**
- * The job's readings, in the extension's own order (`widgetActivity`): the current tool with how
- * long it has been running, then the counts, then the job's own elapsed.
+ * The job's readings, transcribed from official `widgetActivity` (`render.js:1111`) —
+ * the **second line** of the panel (`  ⎿  …`), never part of the name row:
  *
- * They are the **second line** of the panel (`  ⎿  ${widgetActivity(job)}`), not part of the name
- * row — this card used to inline them, which is why a job row and its activity had to be read as
- * one long line.
+ *  1. the live-status label (`buildLiveStatusLine` → `formatActivityLabel`/
+ *     `formatActivityAge`, both localized): the **snapshot's own freshness**
+ *     (`lastActivityAt` vs `updatedAt` — the payload is the clock, the host adds no
+ *     ticker), with the special activity states keeping their own phrases;
+ *  2. the current tool with how long *it* has run (`updatedAt - currentToolStartedAt`);
+ *  3. the working path (`currentPath` on the node, home-shortened like `shortenPath`) —
+ *     the0.71 projection writes it **when a tool holds one**; the fixtures carry none,
+ *     so it is drawn only when present and never invented;
+ *  4. `N 轮`, `N 工具`.
+ *
+ * There is deliberately **no job-elapsed here**: official puts the job's own duration on
+ * the name row's stats (`widgetStats`), not in the activity line. When nothing at all is
+ * known, official's fall-through words are used (`thinking…` / `queued…` / `Paused` …).
  */
-private fun doingFacts(node: JsonObject, currentTool: String?, elapsed: String?): List<String> {
+private fun activityLine(node: JsonObject): String {
     val activity = node["activity"] as? JsonObject
-    return listOfNotNull(
-        currentTool,
-        // Only when there is no tool to name: the official panel does not draw this field at all,
-        // and "思考中" is the one case where the slot would otherwise be empty.
-        if (currentTool == null) activity?.text("state") else null,
+    val updatedAt = node.long("updatedAt")
+    // The payload is the clock: `updatedAt` moves on every status tick, so this
+    // duration refreshes with the panel instead of needing a host-side ticker.
+    val tool = activity?.text("currentTool")?.let { name ->
+        val since = activity.long("currentToolStartedAt")
+        if (since != null && updatedAt != null) {
+            "$name ${ToolOutputParse.formatDuration((updatedAt - since).coerceAtLeast(0))}"
+        } else {
+            name
+        }
+    }
+    val facts = listOfNotNull(
+        tool,
+        node.text("currentPath")?.let { shortenHomePath(it) },
         activity?.count("turnCount")?.let { "$it 轮" },
         activity?.count("toolCount")?.let { "$it 工具" },
-        elapsed,
     )
+    val live = liveStatusLabel(activity, updatedAt)
+    return when {
+        live != null && facts.isNotEmpty() -> "$live · ${facts.joinToString(" · ")}"
+        live != null -> live
+        facts.isNotEmpty() -> facts.joinToString(" · ")
+        else -> idleFallbackWord(node.text("state")).orEmpty()
+    }
+}
+
+/**
+ * `buildLiveStatusLine` + `formatActivityLabel`, localized. The age buckets are the
+ * extension's own (`status-format.js`: `<1s now / <60s Ns / else Nm`), and the "now"
+ * passed in is the snapshot's `updatedAt`, not wall time.
+ */
+private fun liveStatusLabel(activity: JsonObject?, now: Long?): String? {
+    val state = activity?.text("state")
+    val last = activity?.long("lastActivityAt")
+    if (last == null || now == null) {
+        return when (state) {
+            "needs_attention" -> "需要处理"
+            "active_long_running" -> "长时间任务运行中"
+            else -> null
+        }
+    }
+    val ageMs = (now - last).coerceAtLeast(0)
+    val age = when {
+        ageMs < 1_000 -> "刚刚"
+        ageMs < 60_000 -> "${ageMs / 1_000} 秒"
+        else -> "${ageMs / 60_000} 分钟"
+    }
+    return when (state) {
+        "needs_attention" -> if (age == "刚刚") "刚刚需要处理" else "已 $age 没有活动，需要处理"
+        "active_long_running" -> "长时间任务运行中 · 最近活动 $age 前"
+        else -> if (age == "刚刚") "正在活跃" else "$age 前有活动"
+    }
+}
+
+/** Official's no-fact fall-through (`widgetActivity` tail), localized. */
+private fun idleFallbackWord(state: String?): String? = when (state) {
+    "running" -> "思考中…"
+    "queued" -> "排队中…"
+    "paused" -> "已暂停"
+    "stopped" -> "已停止"
+    "partial" -> "部分完成"
+    "failed" -> "失败"
+    null -> null
+    else -> look(state).word
+}
+
+/** `shortenPath` (`formatters.js:136`): the guest's home (`/root/`) folds to `~`. */
+private fun shortenHomePath(path: String): String =
+    if (path.startsWith("/root/")) "~${path.substring(5)}" else path
+
+/**
+ * The name row's own stats — official `widgetStats` **for this payload**: the tool-use
+ * count (nested under `activity` here; the TUI's own job objects carry it top-level) and
+ * the job's elapsed (`updatedAt - startedAt`, skipped while queued).
+ *
+ * The stage / step / parallel-group / checklist branches of `widgetStats` need `mode`,
+ * `stepsTotal`, `currentStep`, `parallelGroups` — fields the async projection never
+ * writes (measured off all seven fixtures: keys are activity,id,kind,label,startedAt,
+ * state[,updatedAt][,children][,endedAt]) — so they are unreachable by construction, not
+ * omitted by choice.
+ */
+private fun widgetJobStats(node: JsonObject): String? {
+    val activity = node["activity"] as? JsonObject
+    val toolUse = activity?.count("toolCount")?.let { "$it 工具" }
+    val elapsed = if (node.text("state") != "queued") {
+        val started = node.long("startedAt")
+        val end = node.long("updatedAt")
+        if (started != null && end != null) {
+            ToolOutputParse.formatDuration((end - started).coerceAtLeast(0))
+        } else {
+            null
+        }
+    } else {
+        null
+    }
+    return listOfNotNull(toolUse, elapsed).joinToString(" · ").takeIf { it.isNotEmpty() }
 }
 
 /** The `⎿` row: dim, indented, and only when there is something to say. */
-private fun activityRow(facts: List<String>): List<WidgetSpan>? =
-    if (facts.isEmpty()) null else listOf(WidgetSpan("⎿  ${facts.joinToString(" · ")}", WidgetTone.Dim))
+private fun activityRow(node: JsonObject): List<WidgetSpan>? =
+    activityLine(node).takeIf { it.isNotEmpty() }?.let { listOf(WidgetSpan("⎿  $it", WidgetTone.Dim)) }
 
 private fun look(state: String?): StateLook = SUBAGENT_STATES[state] ?: SUBAGENT_STATE_FALLBACK
 
