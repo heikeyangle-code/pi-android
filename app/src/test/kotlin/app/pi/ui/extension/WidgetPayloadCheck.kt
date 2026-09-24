@@ -132,7 +132,8 @@ fun main() {
     val detail = one.details.first()
     widgetCheck("the job row, then its one task under it", one.details.size, 2)
     widgetCheck("the glyph carries the state's colour", tonesOf(detail.take(1)), listOf(WidgetTone.Accent))
-    widgetCheck("the name is the readable run", listOf(detail[1].text, detail[1].tone), listOf("oracle", WidgetTone.Text))
+    widgetCheck("the state word rides with the glyph", listOf(detail[2].text, detail[2].tone), listOf("运行中", WidgetTone.Accent))
+    widgetCheck("the name is the readable run", listOf(detail[4].text, detail[4].tone), listOf("oracle", WidgetTone.Text))
     widgetCheck(
         "stats are dim and start with the current tool (the extension's widgetActivity)",
         listOf(detail[2].tone, detail.last().text),
@@ -193,24 +194,41 @@ fun main() {
     // (`researcher, researcher, researcher, +1 more`). Counting `runs` therefore drew
     // "1 运行中" for a run of four agents — the card contradicted the sentence above it, and
     // this is the device case that produced the report. Leaves are what the user counts.
+    // **The real payload.** Produced by running the extension's own projection
+    // (`projectAsyncStatusSnapshot`, pi-subagents 0.71.0) over a scripted four-task job — not
+    // hand-written. Every earlier version of this test invented the shape, and an invented
+    // shape agrees with the code that reads it; that is how a four-agent run came to render as
+    // "1 运行中" with the tasks missing entirely.
     val scripted = summary(
-        snapshot(
-            """{"id":"job","kind":"subagent","label":"researcher, researcher, researcher, +1 more",
-                "state":"running","activity":{"state":"running","turnCount":1,"toolCount":1},
-                "children":[
-                  {"id":"s1","kind":"step","label":"catbox-recovery","state":"running"},
-                  {"id":"s2","kind":"step","label":"st-image-embed","state":"running"},
-                  {"id":"s3","kind":"step","label":"st-card-optim","state":"running"},
-                  {"id":"s4","kind":"step","label":"cn-community","state":"complete"}]}""".trimIndent().replace("\n", ""),
-        ),
+        """{"kind":"pi-subagents.async-status-snapshot","version":1,"generatedAt":1790200638621,
+           "caps":{"maxRuns":20,"maxChildrenPerNode":8,"maxDepth":3,"maxStringLength":160,"maxSerializedBytes":32768},
+           "omitted":{"runs":0,"children":0,"byteLimitExceeded":false},
+           "runs":[{"id":"f456576c-1111-2222-3333-444455556666","kind":"subagent",
+             "label":"researcher, researcher, researcher, +1 more","state":"running",
+             "startedAt":1790200606123,"updatedAt":1790200638560,
+             "activity":{"state":"running","currentTool":"web_search","currentToolStartedAt":1790200630000,
+                         "turnCount":2,"toolCount":3},
+             "children":[
+               {"id":"k1","kind":"step","label":"catbox-recovery","state":"running",
+                "activity":{"state":"running","currentTool":"web_search","turnCount":3,"toolCount":7}},
+               {"id":"k2","kind":"step","label":"st-image-embed","state":"running",
+                "activity":{"state":"thinking","turnCount":2,"toolCount":5}},
+               {"id":"k3","kind":"step","label":"st-card-optim","state":"complete",
+                "activity":{"turnCount":4,"toolCount":9}},
+               {"id":"k4","kind":"step","label":"cn-community","state":"failed",
+                "activity":{"turnCount":1,"toolCount":2}}]}]}""".trimIndent().replace("\n", ""),
     )
-    widgetCheck("a scripted job counts its agents, not itself", textOf(scripted.headline), "3 运行中 · 1 完成")
+    widgetCheck("a scripted job counts its agents, not itself", textOf(scripted.headline), "2 运行中 · 1 完成 · 1 失败")
     widgetCheck("and the badge is the agent count", scripted.badge, "4")
     widgetCheck("the job row is drawn, then its tasks under it", scripted.details.size, 5)
     widgetCheck("a task row starts with its branch glyph", tonesOf(scripted.details[1].take(1)), listOf(WidgetTone.Dim))
-    widgetCheck("and carries the task's own name", scripted.details[1][2].text, "catbox-recovery")
+    widgetCheck("and carries the task's own name", scripted.details[1][4].text, "catbox-recovery")
+    widgetCheck("each task shows its own state word", listOf(scripted.details[1][2].text, scripted.details[3][2].text, scripted.details[4][2].text), listOf("运行中", "完成", "失败"))
+    widgetCheck("and its own readings", scripted.details[1].last().text, "web_search · 3 轮 · 7 工具")
+    widgetCheck("a job with tasks is named by its task count, not by a repeated agent list", scripted.details[0][4].text, "4 个子任务")
     widgetCheck("the last task closes the branch", scripted.details[4][0].text, "└─ ")
-    widgetCheck("a job with no tasks still counts as one", summary(snapshot(run("solo", "oracle", "running", 1, 1))).badge, "1")
+    val childless = summary(snapshot("""{"id":"solo","kind":"subagent","label":"oracle","state":"running"}"""))
+    widgetCheck("a job with no tasks counts as one and keeps its own name", listOf(childless.badge, childless.details[0][4].text), listOf("1", "oracle"))
 
     // ------------------------------------------------------------------ the card's own tone
     widgetCheck("a text-only widget has no state to carry", widgetCardTone(listOf(WidgetRow.Text("hi"))), null)

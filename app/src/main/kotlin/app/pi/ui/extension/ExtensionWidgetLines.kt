@@ -288,11 +288,21 @@ private fun subagentSummary(json: String): WidgetRow? {
         // four-agent job is a single opaque row whose name is a repeated agent list.
         val children = (run["children"] as? JsonArray).orEmpty().mapNotNull { it as? JsonObject }
         val shown = children.take(SUBAGENT_DETAIL_CHILDREN)
+        // A job whose `label` is a joined agent list (`researcher, researcher, researcher,
+        // +1 more`) names nothing a reader wants: its tasks are right below it with their own
+        // names. The count is the useful fact for that row.
+        val jobName = if (children.isEmpty()) run.text("label") else "${children.size} 个子任务"
         buildList {
-            add(nodeRow(run))
+            add(nodeRow(run, name = jobName))
             shown.forEachIndexed { index, child ->
                 val last = index == shown.lastIndex && children.size <= SUBAGENT_DETAIL_CHILDREN
-                add(nodeRow(child, branch = if (last) "└─ " else "├─ "))
+                add(
+                    nodeRow(
+                        child,
+                        branch = if (last) "└─ " else "├─ ",
+                        name = child.text("label") ?: "（未命名）",
+                    ),
+                )
             }
             val hidden = children.size - shown.size
             if (hidden > 0) add(listOf(WidgetSpan("└─ +$hidden 个子任务", WidgetTone.Dim)))
@@ -326,25 +336,36 @@ private fun leafStates(node: JsonObject, depth: Int = 0): List<String> {
     return children.flatMap { leafStates(it, depth + 1) }
 }
 
-/** One job's or one task's row: state glyph, name, then the extension's own readings. */
-private fun nodeRow(node: JsonObject, branch: String = ""): List<WidgetSpan> {
+/** One job's or one task's row: state glyph and word, name, then what it is doing now. */
+private fun nodeRow(node: JsonObject, branch: String = "", name: String? = null): List<WidgetSpan> {
     val look = look(node.text("state"))
     val activity = node["activity"] as? JsonObject
-    val stats = listOfNotNull(
+    // What it is doing *right now*, in the extension's own order (`widgetActivity`):
+    // the current tool first, then the counts. `activity.state` ("running" / "thinking" /
+    // …) is only used when there is no tool to name — the official panel does not draw it
+    // either, and "思考中" is the only case where the tool slot would otherwise be empty.
+    val doing = listOfNotNull(
         activity?.text("currentTool"),
+        activity?.text("currentTool")?.let { null } ?: activity?.text("state"),
         activity?.count("turnCount")?.let { "$it 轮" },
         activity?.count("toolCount")?.let { "$it 工具" },
     )
     return buildList {
         if (branch.isNotEmpty()) add(WidgetSpan(branch, WidgetTone.Dim))
         add(WidgetSpan("${look.glyph} ", look.tone))
-        // The name is the one run of this line a reader scans for: the extension bolds it
-        // (`themeBold` in its own renderer) and so does the card, which is why it is `Text`
-        // and not `Muted`.
-        add(WidgetSpan(node.text("label") ?: "（未命名）", WidgetTone.Text))
-        if (stats.isNotEmpty()) {
+        // `06 §4`: the word always travels with the glyph, so the state survives colour
+        // blindness — and it is the extension's own word for it (`widgetStepStatus`).
+        add(WidgetSpan(look.word, look.tone))
+        if (name != null) {
+            add(WidgetSpan("· ", WidgetTone.Dim))
+            // The name is the one run of this line a reader scans for: the extension bolds it
+            // (`themeBold` in its own renderer) and so does the card, which is why it is `Text`
+            // and not `Muted`.
+            add(WidgetSpan(name, WidgetTone.Text))
+        }
+        if (doing.isNotEmpty()) {
             add(WidgetSpan(" · ", WidgetTone.Dim))
-            add(WidgetSpan(stats.joinToString(" · "), WidgetTone.Dim))
+            add(WidgetSpan(doing.joinToString(" · "), WidgetTone.Dim))
         }
     }
 }
