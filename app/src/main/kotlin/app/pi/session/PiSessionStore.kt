@@ -123,10 +123,11 @@ class PiSessionStore(private val sessionsRoot: File) {
     /**
      * Serialises whole-directory scans.
      *
-     * `refreshSessions()` has no in-flight guard of its own (the screen's
-     * `LaunchedEffect` and the refresh button can overlap), and two concurrent scans
-     * are two full passes over the same files. One mutex makes the second wait for
-     * the first — whose results it then reuses straight out of [summaryCache].
+     * Concurrent scans are already folded at the source — `PiSessionViewModel`
+     * coalesces overlapping `refreshSessions()` calls into one follow-up pass — but
+     * this mutex still guards every *other* pair of hands, and two passes over the
+     * same files are two full scans. One mutex makes the second wait for the first —
+     * whose results it then reuses straight out of [summaryCache].
      */
     private val scanMutex = Mutex()
 

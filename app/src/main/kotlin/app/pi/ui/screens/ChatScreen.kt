@@ -1100,6 +1100,35 @@ private fun ChatBody(
         derivedStateOf { !listState.canScrollForward }
     }
 
+    // The settle pass — 「差几个像素到不了真底部」的那一半. A publication's pin is
+    // computed from the frame after it, but the tail row can still change height
+    // **without any key above moving**: the final markdown parse lands on
+    // `Dispatchers.Default` a beat later, an image's intrinsic size arrives later
+    // still. Neither bumps `revision`/`streaming`/any other key, so the follow simply
+    // stopped a few pixels short of the true end until the user touched the list (or
+    // switched screens — which is what the report said re-driven it). This collector
+    // turns that silent settle into a key. While streaming it stays quiet (growth
+    // there is already driven by `state.revision`), and a drag is the user's
+    // business — never a re-pin trigger.
+    var tailSize by remember(sessionKey) { mutableStateOf(-1) }
+    val streamingNow by rememberUpdatedState(state.streaming)
+    LaunchedEffect(listState, sessionKey) {
+        snapshotFlow {
+            val info = listState.layoutInfo
+            val tailItem = info.visibleItemsInfo.lastOrNull()
+            if (
+                tailItem != null &&
+                tailItem.index == info.totalItemsCount - 1 &&
+                !listState.isScrollInProgress &&
+                !streamingNow
+            ) {
+                tailItem.size
+            } else {
+                -1
+            }
+        }.collect { size -> tailSize = size }
+    }
+
     LaunchedEffect(
         state.revision,
         state.streaming,
@@ -1114,6 +1143,9 @@ private fun ChatBody(
         tailPoke,
         sessionKey,
         bottomInset,
+        // The tail row's settled height, from the collector above: the one geometry
+        // fact that can change with no other key moving (final parse / image size).
+        tailSize,
     ) {
         // **No early return while paused.** A transcript that is not following must still
         // be observed: "the user scrolled back to the bottom" and "a new row arrived

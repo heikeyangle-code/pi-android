@@ -954,6 +954,39 @@ fun main() {
         check("J22 a re-entered destination loads nothing before its first measure", freshLoads, 0)
     }
 
+    // ============================================================ K. the release frame
+    //
+    // The `ChatScreen` effect snapshots only on its keys, so a **quick** flick up
+    // reaches the machine exactly once more: `scrolling` flips true→false and by that
+    // snapshot `isScrollInProgress` is already false — `gesture` cannot see it, and
+    // the old rule order missed the pause, so the next publication's pin yanked the
+    // list back to the bottom (the reported 「上滑被拽回去」). The pairing that
+    // survives that frame is "was mid-session + anchor moved backwards".
+    run {
+        val flick = TailFollow(initiallyFollowing = true)
+        flick.onSnapshot(
+            TailSnapshot(10, viewport(10, atBottom = true, firstVisibleIndex = 6, isScrollInProgress = true)),
+        )
+        val released = flick.onSnapshot(
+            TailSnapshot(
+                10,
+                viewport(10, atBottom = false, firstVisibleIndex = 5, isScrollInProgress = false),
+            ),
+        )
+        check("K1 a flick whose session already ended still pauses", state(released), "false/0")
+        check("K2 and pins nothing", released.pin, null)
+
+        // The counterpart: the same backwards anchor move with **no** session before
+        // it is layout, not a hand (a row above reflowing) — rule 2 says only a user
+        // gesture pauses, so this one must keep following.
+        val settled = TailFollow(initiallyFollowing = true)
+        settled.onSnapshot(TailSnapshot(10, viewport(10, atBottom = false, firstVisibleIndex = 6)))
+        val layoutMove = settled.onSnapshot(
+            TailSnapshot(10, viewport(10, atBottom = false, firstVisibleIndex = 5)),
+        )
+        check("K3 a backwards layout move is not a hand", state(layoutMove), "true/0")
+    }
+
     println(if (failures == 0) "\nharness: OK (all checks passed)" else "\nharness: FAILED ($failures)")
     if (failures != 0) kotlin.system.exitProcess(1)
 }

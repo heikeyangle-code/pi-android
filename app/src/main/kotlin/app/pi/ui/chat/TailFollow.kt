@@ -105,6 +105,18 @@ internal class TailFollow(initiallyFollowing: Boolean = true) {
     private var previousAnchor: TailAnchor? = null
 
     /**
+     * Whether the **previous** snapshot was taken mid-session.
+     *
+     * The effect in `ChatScreen` snapshots only when one of its keys changes, so a
+     * quick flick reaches this machine exactly once more: `scrolling` flips true→false
+     * and by that snapshot `isScrollInProgress` is already false — [TailDecision]'s
+     * `gesture` cannot see it, and neither branch of rule 2/3 would pause. The pairing
+     * "was mid-session, now isn't, and the anchor moved backwards" *is* that drag's
+     * lift, and it is what the release rule below keys on.
+     */
+    private var previousScrolling: Boolean = false
+
+    /**
      * The pin the *current position* wants — whether or not the last call handed it
      * out (see the repeat guard in [onSnapshot]).
      *
@@ -209,11 +221,21 @@ internal class TailFollow(initiallyFollowing: Boolean = true) {
         val previous = previousAnchor
         val movedBackwards = previous != null && anchor.isBefore(previous)
         val gesture = viewport.isScrollInProgress && anchor != previous
+        // A session that just ended with the anchor moved backwards: the drag's lift.
+        // Checked **before** rule 3, because atBottom's re-arm branch would otherwise
+        // swallow it (or the `else if (gesture)` would miss it, the session being over).
+        val releasedBackwards = previousScrolling && !viewport.isScrollInProgress && movedBackwards
 
-        // Rule 2, then rule 3. `atBottom` is checked first so that a fling that ends
-        // at the end resumes the follow rather than pausing it for the frames it
-        // spent travelling there.
-        if (viewport.atBottom) {
+        // Rule 2, then rule 3 — with the release case first. `atBottom` still comes
+        // before the live gesture so that a fling that ends at the end resumes the
+        // follow rather than pausing it for the frames it spent travelling there.
+        if (releasedBackwards) {
+            // The user's hand, decided by the only evidence this machine can see:
+            // backwards + the session that carried it is over. A layout move has no
+            // session before it, so it does not land here (harness K3).
+            following = false
+            pausedByNavigation = false
+        } else if (viewport.atBottom) {
             if (!pausedByNavigation || gesture) {
                 following = true
                 pausedByNavigation = false
@@ -267,6 +289,7 @@ internal class TailFollow(initiallyFollowing: Boolean = true) {
 
         previousRows = rows
         previousAnchor = anchor
+        previousScrolling = viewport.isScrollInProgress
         return TailDecision(following = following, unseenRows = unseenRows, pin = issued)
     }
 
@@ -324,12 +347,13 @@ internal data class TailAnchor(val itemIndex: Int, val itemOffsetPx: Int) {
  *   than the session. The machine's indices are therefore in the list's own space,
  *   which is what `requestScrollToItem` takes; the old code's `headerRows`
  *   arithmetic disappears with it.
- * @param viewportEndOffsetPx `LazyListLayoutInfo.viewportEndOffset`. Item offsets
- *   are relative to the viewport, and this is the line the last row's bottom has to
- *   reach for the list to be at its end (`LazyListLayoutInfo.kt`: "the size of the
- *   lazy list layout minus beforeContentPadding"). With the transcript's symmetric
- *   vertical content padding the two agree exactly; the pin below never depends on
- *   that agreement, because reaching the end is detected by [atBottom].
+ * @param viewportEndOffsetPx `LazyListLayoutInfo.viewportEndOffset` — item offsets are
+ *   relative to the viewport start, and this is the line the last row's bottom has to
+ *   reach for the list to be at its end (Compose: "the size of the lazy list layout
+ *   minus beforeContentPadding"). The transcript's two ends are **not** symmetric —
+ *   top is `10.dp + earlierBand`, bottom `12.dp` (the LazyColumn's `contentPadding`)
+ *   — so this pin does not assume they agree: an overshoot is clamped by the measure
+ *   pass, and "am I at the end" is answered by [atBottom], never by this arithmetic.
  * @param isScrollInProgress `LazyListState.isScrollInProgress`.
  * @param atBottom `!LazyListState.canScrollForward`.
  */

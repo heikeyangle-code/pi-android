@@ -1074,7 +1074,18 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     private val _sessionsFailed = MutableStateFlow(false)
     val sessionsFailed: StateFlow<Boolean> = _sessionsFailed.asStateFlow()
 
+    // 合并连发（与 refreshTree 同一个理由）：进入会话屏的 LaunchedEffect、刷新钮、
+    // 回合尾的事件流会叠在一起 —— N 次 = N 遍全目录扫描 + N 次 state 发布。打开
+    // 会话树时的「疯狂刷新好几秒」里有一半是它；飞行中的要求折叠成一次补扫。
+    private var sessionsRefreshInFlight = false
+    private var sessionsRefreshQueued = false
+
     fun refreshSessions() {
+        if (sessionsRefreshInFlight) {
+            sessionsRefreshQueued = true
+            return
+        }
+        sessionsRefreshInFlight = true
         viewModelScope.launch {
             _sessionsLoading.value = _sessions.value.isEmpty()
             try {
@@ -1094,6 +1105,11 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                 )
             } finally {
                 _sessionsLoading.value = false
+                sessionsRefreshInFlight = false
+                if (sessionsRefreshQueued) {
+                    sessionsRefreshQueued = false
+                    refreshSessions()
+                }
             }
         }
     }
@@ -3999,9 +4015,36 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * is what the overlay opens on, paint as soon as pi answers without waiting on a
      * read proportional to the conversation.
      */
+    // 合并连发：`call()` 没有 in-flight 守卫，N 次 refreshTree = N 个并发 get_tree
+    // 排进引擎、每个完成都翻一次 `busy`/`state` —— 打开会话树后「疯狂刷新好几秒、
+    // 期间返回键像被吞掉」就是这个形状（入口个个单发，但 ⋮→树 + 分段切换 + 刷新钮
+    // 可以叠在同一瞬）。飞行中再来的要求折叠成**一次**补读：树是当前状态的快照，
+    // 晚一拍的这次读回答得同样好。
+    private var treeRefreshInFlight = false
+    private var treeRefreshQueued = false
+
     fun refreshTree() {
+        if (treeRefreshInFlight) {
+            treeRefreshQueued = true
+            return
+        }
+        if (api == null) {
+            // 引擎没跑：照旧走 call() 自己的「引擎未就绪」提示；block 不会执行，
+            // 所以这条路不落守卫（否则 flag 永远清不掉）。
+            call("读取会话树") { live -> _state.value = _state.value.copy(tree = live.getTree()) }
+            return
+        }
+        treeRefreshInFlight = true
         call("读取会话树") { api ->
-            _state.value = _state.value.copy(tree = api.getTree())
+            try {
+                _state.value = _state.value.copy(tree = api.getTree())
+            } finally {
+                treeRefreshInFlight = false
+                if (treeRefreshQueued) {
+                    treeRefreshQueued = false
+                    refreshTree()
+                }
+            }
         }
     }
 
