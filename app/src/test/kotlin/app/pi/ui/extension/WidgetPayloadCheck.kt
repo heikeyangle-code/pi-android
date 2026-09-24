@@ -159,10 +159,26 @@ fun main() {
     widgetCheck("the glyph carries the state's colour", tonesOf(detail.take(1)), listOf(WidgetTone.Accent))
     checkTrue("the state word rides with the glyph", detail.any { it.text == "运行中" && it.tone == WidgetTone.Accent })
     checkTrue("the name is the readable run", detail.any { it.text == "oracle" && it.tone == WidgetTone.Text })
+    // **The job row carries `widgetStats`, not `widgetActivity`.** The official panel prints
+    // the counts on a *second* line (`` `⎿  ${widgetActivity(job)}` `` in render.js) and
+    // `done/total` on the job row itself — commit 0f1eff8 moved both ways to match, and this
+    // assertion (blame: older than that commit) still described the inline shape. Rewritten to
+    // the official split, with the readings row asserted where it now lives.
     widgetCheck(
-        "stats are dim and start with the current tool (the extension's widgetActivity)",
+        "the job row's own stat is dim progress (official widgetStats)",
         listOf(detail[2].tone, detail.last().text),
-        listOf(WidgetTone.Dim, "read · 4 轮 · 6 工具"),
+        listOf(WidgetTone.Dim, " · 0/1"),
+    )
+    val readings = one.details[1]
+    checkTrue(
+        "the readings are their own dim row, pi's order (tool first)",
+        textOf(readings).startsWith("⎿  read") && readings.all { it.tone == WidgetTone.Dim },
+        "row=${textOf(readings)}",
+    )
+    checkTrue(
+        "and they carry the turn/tool counts (widgetActivity)",
+        textOf(readings).contains("4 轮") && textOf(readings).contains("6 工具"),
+        "row=${textOf(readings)}",
     )
 
     // The extension's own fall-through: `widgetStatusGlyph` draws ✗ in error for every state it
@@ -194,8 +210,11 @@ fun main() {
     widgetCheck("three parallel agents read as one line", textOf(three.headline), "3 运行中")
     widgetCheck("no runs is not an error", textOf(summary(snapshot("")).headline), "无活动任务")
 
+    // Wording follows the user's own ruling (e22ca84): the byte-limit case says
+    // 「（超出字节上限）」; the count case says 「+N 个未列出」 (below). The original
+    // assertion expected 「（已截断）」 and predates that ruling.
     val truncated = one.raw.replace(""""byteLimitExceeded":false""", """"byteLimitExceeded":true""")
-    checkTrue("a truncated snapshot says so", textOf(summary(truncated).headline).endsWith("（已截断）"))
+    checkTrue("a truncated snapshot says so", textOf(summary(truncated).headline).endsWith("（超出字节上限）"))
 
     // pi-subagents draws the first four jobs and summarises the rest (`MAX_WIDGET_JOBS = 4`).
     val many = summary(snapshot((0 until 6).joinToString(",") { run("r$it", "agent$it", "running", 1, 1) }))
@@ -250,10 +269,13 @@ fun main() {
         "row=${textOf(scripted.details[0])}",
     )
     checkTrue("and the row says which kind of job it is", textOf(scripted.details[0]).contains("子代理"))
-    // The async id, in the short form the inspect command takes.
+    // The job's id, in the short form the inspect command takes. The value comes from the
+    // **payload's own** `runs[0].id`; the older expectation (`f456576c`) belonged to a
+    // hand-written payload that bb28a85 replaced with the extension's own projection, which
+    // emits `job-1` here — an assertion no fixture can satisfy is not a check.
     checkTrue(
         "the job row carries the id the inspect command wants",
-        scripted.details[0].any { it.text == " · f456576c" },
+        scripted.details[0].any { it.text == " · job-1" },
         "row=${textOf(scripted.details[0])}",
     )
     // `omitted` is the sender's own count, and the card must repeat it rather than saying
@@ -265,7 +287,8 @@ fun main() {
                 """{"kind":"pi-subagents.async-status-snapshot","version":1,"runs":[],
                     "omitted":{"runs":2,"children":3,"byteLimitExceeded":false}}""".trimIndent().replace("\n", ""),
             ).headline,
-        ).contains("另有 5 个未列出"),
+        // 用户原话的措辞（e22ca84）：`+N 个未列出`，不是更早的「另有 N 个」。
+        ).contains("+5 个未列出"),
     )
     checkTrue(
         "a payload cut by the byte limit says that instead",
@@ -276,9 +299,13 @@ fun main() {
             ).headline,
         ).contains("超出字节上限"),
     )
+    // `fixtureLine` returns the **whole line** (prefix included). Feeding it through
+    // `summary()` added a second prefix, so `payloadLine` never matched and this assertion
+    // died with "the payload no longer summarises" — an exception that killed every later
+    // check in this file. Draw it the way the card does: `widgetRow` on the line itself.
     checkTrue(
         "a payload that dropped nothing says nothing",
-        !textOf(summary(fixtureLine("more-than-the-panel-draws")).headline).contains("未列出"),
+        !textOf((widgetRow(fixtureLine("more-than-the-panel-draws")) as WidgetRow.Summary).headline).contains("未列出"),
     )
     // The durations are pi's own spellings, derived from the payload the extension re-sends — the
     // host adds no clock of its own (`widgetActivity`, `formatDuration`).

@@ -654,9 +654,11 @@ class PiEnginePreferences(
      * 一条，也不编造：坏 JSON 的场景由 `PiCredentialService.prefill` 的
      * `modelsFileError`/`authFileError` 在界面上单独报，不靠这个方法吞掉。
      */
-    fun enabledModels(): List<String> =
-        ((store.read("enabledModels") as? JsonArray) ?: return emptyList())
-            .mapNotNull { entry -> (entry as? JsonPrimitive)?.content?.takeIf { it.isNotBlank() } }
+    // 表达式体函数禁止 `return`（CI 在 a4af7bd 报的正是这一行），改块体。
+    fun enabledModels(): List<String> {
+        val array = store.read("enabledModels") as? JsonArray ?: return emptyList()
+        return array.mapNotNull { entry -> (entry as? JsonPrimitive)?.content?.takeIf { it.isNotBlank() } }
+    }
 
     /** Currently selected provider/model, for prefilling the editor. */
     fun current(): Pair<String?, String?> {

@@ -1048,9 +1048,13 @@ private fun ProviderCard(
                     "删除",
                     modifier = Modifier
                         .clickable(onClick = onDelete)
+                        // `start` 属四参重载、`vertical` 属两参重载，混用四个 padding
+                        // 候选全部对不上（CI 在 e888c4b 报的就是这一行）——上下用显式的
+                        // top/bottom 表达同一个值。
                         .padding(
                             start = PiSpacing.inline,
-                            vertical = PiSettingsMetrics.notePaddingVertical,
+                            top = PiSettingsMetrics.notePaddingVertical,
+                            bottom = PiSettingsMetrics.notePaddingVertical,
                         ),
                     style = MaterialTheme.typography.labelLarge,
                     color = PiTheme.palette.warning,
