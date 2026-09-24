@@ -25,12 +25,14 @@ val TUI_ONLY_MARKERS: List<Pair<String, String>> = listOf(
     "setEditorComponent()" to ".setEditorComponent(",
     "addAutocompleteProvider()" to ".addAutocompleteProvider(",
     "onTerminalInput()" to ".onTerminalInput(",
-    // **A function passed as a widget is also TUI-only.** `setWidget(key, (tui, theme) => …)` is
-    // dropped before the wire in RPC mode (`rpc-mode.ts:195-208` only forwards arrays), so an
-    // extension that renders its panel as a component gets *no* panel here — the same silence as
-    // `custom()`, from a call that does not look like one. `pi-neuralwatt-provider` and
-    // `pi-extension-utils` (a library other extensions build on) both do it.
-    "widget factory" to "setWidget(",
+    // **Not detectable here: a function passed as a widget.** `setWidget(key, (tui, theme) => …)`
+    // is dropped before the wire too (`rpc-mode.ts:195-208` only forwards arrays), so those
+    // extensions get no panel and no explanation. A plain substring scan cannot tell that apart
+    // from `setWidget("plan-todos", lines)`, which is the *common* case (6 of the 7 widget
+    // senders in the ecosystem send text) — a `setWidget(` needle would list nearly every widget
+    // extension as unsupported, which is worse than the silence it was meant to fix. Detecting
+    // it needs a real check on the argument (`=>`, `function`, or an identifier bound to one),
+    // which is the next step if it ever bites.
     "mode === \"tui\"" to "mode === \"tui\"",
     "mode === 'tui'" to "mode === 'tui'",
 )
