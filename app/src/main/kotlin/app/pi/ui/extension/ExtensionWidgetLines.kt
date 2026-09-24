@@ -2,6 +2,7 @@ package app.pi.ui.extension
 
 import app.pi.rpc.PiJson
 import app.pi.ui.blocks.TOOL_LINE_MAX_CHARS
+import app.pi.ui.blocks.ToolOutputParse
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -377,11 +378,36 @@ private fun nodeRow(node: JsonObject, branch: String = "", name: String? = null)
     // the current tool first, then the counts. `activity.state` ("running" / "thinking" /
     // …) is only used when there is no tool to name — the official panel does not draw it
     // either, and "思考中" is the only case where the tool slot would otherwise be empty.
+    // **The extension's payload is the clock.** `updatedAt` is re-sent on every async state
+    // change, so a duration derived from these fields refreshes with the panel instead of needing
+    // a host-side ticker — which is also why the folded card can stay byte-stable (it draws none
+    // of these) while the opened one is live. The spellings are pi's own: `widgetActivity` writes
+    // `${currentTool} ${formatDuration(updatedAt - currentToolStartedAt)}`, and
+    // [ToolOutputParse.formatDuration] is that same `formatDuration` (`renderers/bash.ts:32-42`).
+    val updatedAt = node.long("updatedAt") ?: node.long("startedAt")
+    val toolStartedAt = activity?.long("currentToolStartedAt")
+    val currentTool = activity?.text("currentTool")?.let { name ->
+        if (toolStartedAt != null && updatedAt != null) {
+            "$name ${ToolOutputParse.formatDuration(updatedAt - toolStartedAt)}"
+        } else {
+            name
+        }
+    }
+    val startedAt = node.long("startedAt")
+    val endedAt = node.long("endedAt") ?: updatedAt
+    val elapsed = if (startedAt != null && endedAt != null) {
+        ToolOutputParse.formatDuration(endedAt - startedAt)
+    } else {
+        null
+    }
     val doing = listOfNotNull(
-        activity?.text("currentTool"),
-        activity?.text("currentTool")?.let { null } ?: activity?.text("state"),
+        currentTool,
+        // Only when there is no tool to name: the official panel does not draw this field at
+        // all, and "思考中" is the one case where the slot would otherwise be empty.
+        if (currentTool == null) activity?.text("state") else null,
         activity?.count("turnCount")?.let { "$it 轮" },
         activity?.count("toolCount")?.let { "$it 工具" },
+        elapsed,
     )
     return buildList {
         if (branch.isNotEmpty()) add(WidgetSpan(branch, WidgetTone.Dim))
@@ -422,3 +448,6 @@ private fun JsonObject.count(key: String): String? =
     text(key)?.toIntOrNull()?.takeIf { it > 0 }?.toString()
 
 private fun JsonObject.text(key: String): String? = (this[key] as? JsonPrimitive)?.content
+
+/** pi's timestamps are epoch milliseconds; a missing or malformed one is simply absent. */
+private fun JsonObject.long(key: String): Long? = text(key)?.toLongOrNull()

@@ -226,6 +226,18 @@ fun main() {
     widgetCheck("each task shows its own state word", listOf(scripted.details[1][2].text, scripted.details[3][2].text, scripted.details[4][2].text), listOf("运行中", "完成", "失败"))
     widgetCheck("and its own readings", scripted.details[1].last().text, "web_search · 3 轮 · 7 工具")
     widgetCheck("a job with tasks is named by its task count, not by a repeated agent list", scripted.details[0][4].text, "4 个子任务")
+    // The durations are pi's own spellings, derived from the payload the extension re-sends — the
+    // host adds no clock of its own (`widgetActivity`, `formatDuration`).
+    widgetCheck(
+        "the job row carries pi's tool duration and its own elapsed",
+        scripted.details[0].last().text,
+        "web_search 8.6s · 2 轮 · 3 工具 · 32.4s",
+    )
+    widgetCheck(
+        "a task with no timestamps shows no duration rather than a guess",
+        scripted.details[1].last().text,
+        "web_search · 3 轮 · 7 工具",
+    )
     widgetCheck("the last task closes the branch", scripted.details[4][0].text, "└─ ")
     val childless = summary(snapshot("""{"id":"solo","kind":"subagent","label":"oracle","state":"running"}"""))
     widgetCheck("a job with no tasks counts as one and keeps its own name", listOf(childless.badge, childless.details[0][4].text), listOf("1", "oracle"))
