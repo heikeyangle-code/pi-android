@@ -612,6 +612,17 @@ run_harness scan-vendor-meta \
   "$ROOT/app/src/test/kotlin/app/pi/packages/PiScanVendorMetaCheck.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/packages/PiScanVendorMeta.kt"
 
+# app.pi.packages: pi **官方随包发的模型目录**（`PiOfficialCatalog.kt`：41 份
+# `<provider>.json` + `.manifest.json` 的 SHA-256 校验）。为什么必须在这里：它取代了
+# App 手抄的提供商表 —— 读漏一份就是"提供商列表悄悄短一个"，正是用户要求"直读官方文件"
+# 的那个理由；而字段映射（`input`→图片能力、cost 的每百万单位、缺席≠不支持）全是静默
+# 出错型。每条失败路径都必须出 problem 行，而不是一个更短的列表。纯逻辑 + java.io +
+# java.security，无 Android。
+run_harness official-catalog \
+  app.pi.packages.PiOfficialCatalogCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/packages/PiOfficialCatalogCheck.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/packages/PiOfficialCatalog.kt"
+
 # :rpc: the engine's stdout decoding. `PiEngineSession.readLoop` handed each 16 KiB
 # read to `String(bytes, 0, read, UTF_8)`, which decodes one read as a complete
 # stream - so a CJK character straddling two reads became one replacement character

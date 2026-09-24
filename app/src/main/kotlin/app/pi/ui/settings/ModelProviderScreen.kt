@@ -9,10 +9,10 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -43,6 +43,7 @@ import app.pi.packages.PiCredentialService
 import app.pi.packages.PiModelCatalog
 import app.pi.packages.PiModelInventory
 import app.pi.packages.PiModelScanner
+import app.pi.packages.PiOfficialCatalog
 import app.pi.packages.PiProviderPresets
 import app.pi.rpc.PiResponses
 import app.pi.runtime.PtyLauncher
@@ -504,10 +505,37 @@ private fun ImportSheet(
             var saveSteps by remember { mutableStateOf<List<String>>(emptyList()) }
             var savedOk by remember { mutableStateOf(false) }
             var saveError by remember { mutableStateOf<String?>(null) }
-            var catalog by remember { mutableStateOf<List<PiModelCatalog.Entry>>(emptyList()) }
+            var storeCatalog by remember { mutableStateOf<List<PiModelCatalog.Entry>>(emptyList()) }
+            // 官方目录（41 个厂商 + 全部模型元数据）与它的读取问题；还有那个竖列表选择器的开关。
+            var officialProviders by remember { mutableStateOf<List<PiOfficialCatalog.Provider>>(emptyList()) }
+            var officialProblems by remember { mutableStateOf<List<String>>(emptyList()) }
+            var pickerOpen by remember { mutableStateOf(false) }
+            var pickerQuery by remember { mutableStateOf("") }
             val sheetScope = rememberCoroutineScope()
 
             val preset = PiProviderPresets.byId(presetId) ?: PiProviderPresets.all.first()
+
+            // **官方目录一次读完**（41 份 `<provider>.json` + SHA-256 校验）：提供商列表、
+            // 每个厂商的模型、以及它们的 baseUrl/api/上下文/价格/图片能力都来自这份文件。
+            // 用户裁定：不自己维护表；升级 `PI_VERSION` 换载荷，列表自动跟着变。
+            LaunchedEffect(Unit) {
+                val result = withContext(Dispatchers.IO) { service.officialCatalog() }
+                officialProviders = result.providers
+                officialProblems = result.problems
+            }
+            val officialCounts = remember(officialProviders) {
+                officialProviders.associate { it.id to it.models.size }
+            }
+            // 选择列表 = 官方 41 个（有手写预设的用预设的连接信息，其余从官方数据现构）
+            // + App 自建的 3 个（ollama / llama.cpp / 自定义）。
+            val providerChoices = remember(officialProviders) {
+                officialProviders.map { provider ->
+                    PiProviderPresets.byId(provider.id) ?: presetFromOfficial(provider)
+                } + PiProviderPresets.all.filterNot { it.builtInPi }
+            }
+            val officialForPreset = remember(officialProviders, presetId) {
+                officialProviders.firstOrNull { it.id == presetId }?.models.orEmpty()
+            }
 
             // prefill + 目录一次读完（IO 线程）：分开两个 effect 会有目录晚到、
             // 「默认全勾」漏掉目录那批的竞态。切厂商即重置，和旧表单同一个键。
@@ -523,7 +551,9 @@ private fun ImportSheet(
                 modelsFileError = existing.modelsFileError
                 authFileError = existing.authFileError
                 existingIds = existing.configuredModelIds
-                catalog = entries
+                // `models-store.json` 的条目只是兜底：真正的来源是下面那份派生出来的
+                // `catalog`（官方目录优先，且官方晚到时也会跟着变）。
+                storeCatalog = entries
                 apiKey = ""
                 scanned = emptyList()
                 manualIds = ""
@@ -546,6 +576,29 @@ private fun ImportSheet(
                 }
                 selected = existing.configuredModelIds.toSet() +
                     entries.map { it.id }.filter(inScope).toSet()
+                initialChecked = selected
+            }
+
+            // 目录的**派生值**：官方目录有就用它（模型 + 上下文/价格/图片），没有才退回
+            // `models-store.json`。做成派生值是因为官方目录是异步读到的 —— 写成状态就会在
+            // "打开表单那一刻还没读完"时永远停在空表上，用户得切一次厂商才看得到模型。
+            val catalog = remember(officialForPreset, storeCatalog) {
+                if (officialForPreset.isNotEmpty()) {
+                    officialForPreset.map { it.toCatalogEntry() }
+                } else {
+                    storeCatalog
+                }
+            }
+
+            // 官方目录晚到时补一次初始勾选：**只在用户还没有任何勾选时**才动，绝不覆盖
+            // 用户已经做过的选择（打开表单时官方数据可能还没读完）。
+            LaunchedEffect(officialForPreset, presetId) {
+                if (officialForPreset.isEmpty() || selected.isNotEmpty()) return@LaunchedEffect
+                val inScope = { id: String ->
+                    enabledPatterns.isEmpty() ||
+                        enabledPatterns.any { PiModelInventory.matches(it, presetId, id) }
+                }
+                selected = officialForPreset.map { it.id }.filter(inScope).toSet()
                 initialChecked = selected
             }
 
@@ -580,8 +633,8 @@ private fun ImportSheet(
                         contextWindow = entry?.contextWindow ?: engine?.contextWindow
                             ?: scan?.contextWindow,
                         maxTokens = entry?.maxTokens ?: engine?.maxTokens ?: scan?.maxTokens,
-                        costInput = engine?.inputCost ?: scan?.costInputPerMillion,
-                        costOutput = engine?.outputCost ?: scan?.costOutputPerMillion,
+                        costInput = entry?.costInput ?: engine?.inputCost ?: scan?.costInputPerMillion,
+                        costOutput = entry?.costOutput ?: engine?.outputCost ?: scan?.costOutputPerMillion,
                     )
                 }
             }
@@ -607,31 +660,121 @@ private fun ImportSheet(
 
             // ---------------------------------------------------------- 1 选厂商
             PiSettingsSectionHeader("1 选厂商")
-            LazyRow(
-                horizontalArrangement = Arrangement.spacedBy(PiSpacing.small),
-                contentPadding = PaddingValues(horizontal = PiSettingsMetrics.cardPadding),
+            // **竖列表 + 搜索，不是横滑 chips**（用户："横选了啥时候也看不完"）：官方 41 个
+            // 加 App 自建 3 个，一屏能翻、能搜，长名字也不会被挤没。
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = PiSettingsMetrics.cardPadding, vertical = PiSpacing.small),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                items(PiProviderPresets.all, key = { it.id }) { option ->
-                    if (option.id == presetId) {
-                        Button(onClick = { presetId = option.id }) { Text(option.displayName) }
-                    } else {
-                        OutlinedButton(onClick = { presetId = option.id }) { Text(option.displayName) }
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        preset.displayName,
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
+                    Text(
+                        buildString {
+                            append(preset.id)
+                            officialCounts[preset.id]?.let { append(" · ").append(it).append(" 个模型") }
+                            if (preset.id in configuredProviderIds) append(" · 已配置")
+                            append(if (preset.builtInPi) " · pi 官方" else " · App 自建")
+                        },
+                        style = PiTheme.text.meta,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                OutlinedButton(onClick = { pickerOpen = !pickerOpen }) {
+                    Text(if (pickerOpen) "收起" else "更换")
+                }
+            }
+            if (pickerOpen) {
+                val query = pickerQuery.trim().lowercase()
+                val shownChoices = providerChoices.filter { option ->
+                    query.isEmpty() ||
+                        option.id.lowercase().contains(query) ||
+                        option.displayName.lowercase().contains(query)
+                }
+                OutlinedTextField(
+                    value = pickerQuery,
+                    onValueChange = { pickerQuery = it },
+                    label = { Text("搜厂商（名字或 id）") },
+                    singleLine = true,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = PiSettingsMetrics.cardPadding, vertical = PiSpacing.small),
+                )
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 260.dp)
+                        .verticalScroll(rememberScrollState()),
+                ) {
+                    shownChoices.forEach { option ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    presetId = option.id
+                                    pickerOpen = false
+                                    pickerQuery = ""
+                                }
+                                .padding(
+                                    horizontal = PiSettingsMetrics.cardPadding,
+                                    vertical = PiSpacing.small,
+                                ),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                if (option.id == presetId) "✓" else "○",
+                                style = PiTheme.text.monoSmall,
+                                color = if (option.id == presetId) {
+                                    MaterialTheme.colorScheme.primary
+                                } else {
+                                    PiTheme.palette.muted
+                                },
+                            )
+                            Spacer(Modifier.width(PiSpacing.small))
+                            Column(Modifier.weight(1f)) {
+                                Text(
+                                    option.displayName,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                )
+                                Text(
+                                    buildString {
+                                        append(option.id)
+                                        officialCounts[option.id]?.let {
+                                            append(" · ").append(it).append(" 个模型")
+                                        }
+                                        if (option.id in configuredProviderIds) append(" · 已配置")
+                                    },
+                                    style = PiTheme.text.meta,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                    }
+                    if (shownChoices.isEmpty()) {
+                        Text(
+                            "没有匹配的厂商",
+                            style = PiTheme.text.meta,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(
+                                horizontal = PiSettingsMetrics.cardPadding,
+                                vertical = PiSpacing.small,
+                            ),
+                        )
                     }
                 }
             }
-            Text(
-                buildString {
-                    if (preset.id in configuredProviderIds) append("已配置 · ")
-                    append(if (preset.builtInPi) "pi 内置" else "自定义")
-                    append(" · ").append(preset.api)
-                },
-                style = PiTheme.text.meta,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(
-                    horizontal = PiSettingsMetrics.cardPadding,
-                    vertical = PiSpacing.small,
-                ),
-            )
+            if (officialProblems.isNotEmpty()) {
+                SheetNote(
+                    "官方目录有 ${officialProblems.size} 处读不出来，下面的厂商可能少几个：" +
+                        officialProblems.joinToString("；"),
+                )
+            }
             if (modelsFileError != null) {
                 SheetNote("模型配置当前无法被 pi 解析：$modelsFileError。修好之前，写入的厂商不会生效。")
             }
@@ -679,7 +822,7 @@ private fun ImportSheet(
                     .padding(horizontal = PiSettingsMetrics.cardPadding, vertical = PiSpacing.small),
             )
             SheetNote("写错 api 时厂商会注册成功、第一条消息才失败。请从上面的预设带出来，不要凭印象改。")
-            SheetNote("官方厂商的模型列表来自 pi 目录（models-store.json），已经在下面列好；扫描是可选的确认步骤。")
+            SheetNote("扫描即可确认 Key 可用；厂商自己给的上下文/价格/图片会被带上，没给的用 pi 默认值。")
 
             // --------------------------------------------------------- 3 扫描
             PiSettingsSectionHeader("3 检测并扫描模型")
@@ -1137,6 +1280,47 @@ private fun originText(model: PiModelInventory.Model): String {
         else -> parts.joinToString(" + ")
     }
 }
+
+/**
+ * 官方目录里的一档，在**没有手写预设**时构成一个可选厂商：连接信息取它第一个模型的
+ * `api`/`baseUrl`，探测方式由 `api` 推导（anthropic → x-api-key，google → key 查询，
+ * 其余 OpenAI 兼容）。41 个官方厂商里有一批是这样来的 —— 这正是"不自己维护表"。
+ */
+private fun presetFromOfficial(provider: PiOfficialCatalog.Provider): PiProviderPresets.Preset {
+    val sample = provider.models.firstOrNull()
+    val api = sample?.api ?: "openai-completions"
+    val anthropic = api.contains("anthropic", ignoreCase = true)
+    val google = api.contains("google", ignoreCase = true)
+    return PiProviderPresets.Preset(
+        id = provider.id,
+        displayName = provider.id,
+        baseUrl = sample?.baseUrl.orEmpty(),
+        api = api,
+        scanStyle = when {
+            anthropic -> PiProviderPresets.ScanStyle.Anthropic
+            google -> PiProviderPresets.ScanStyle.Google
+            else -> PiProviderPresets.ScanStyle.OpenAiCompatible
+        },
+        authHeader = !anthropic && !google,
+        builtInPi = true,
+        group = "官方",
+    )
+}
+
+/**
+ * 官方目录的一条 → App 自己的目录条目。映射写在这里而不是 `PiOfficialCatalog` 里：
+ * 那个对象要能单独进 bare-JVM harness，不能引用 App 的目录类型。
+ */
+private fun PiOfficialCatalog.Model.toCatalogEntry(): PiModelCatalog.Entry = PiModelCatalog.Entry(
+    id = id,
+    name = name,
+    reasoning = reasoning,
+    acceptsImages = acceptsImages,
+    contextWindow = contextWindow,
+    maxTokens = maxTokens,
+    costInput = costInputPerMillion,
+    costOutput = costOutputPerMillion,
+)
 
 /**
  * What is known about one model, flattened from the three sources that can say —

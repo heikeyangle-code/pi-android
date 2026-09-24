@@ -110,6 +110,19 @@ class PiCredentialService(
         return PiModelCatalog.parse(text, providerId)
     }
 
+    /**
+     * pi **官方随包发的**模型目录（`<rootfs>/opt/pi/…/pi-ai/dist/providers/data`）——
+     * 提供商列表、每个提供商的模型与元数据的唯一来源；App 不再自己维护一张表（用户裁定：
+     * 「不能直读官方文件展示出来吗？自己不维护了不行吗？」）。
+     *
+     * 路径来自 `tools/fetch-runtime.mjs` 的 `{ name: "pi-engine", prefix: "rootfs/opt/pi" }`：
+     * 载荷解包后 pi 的 npm 树就在 `<rootfs>/opt/pi/node_modules` 下，`pi-ai` 的目录数据在
+     * 它嵌套的 node_modules 里。**运行时还没解包时返回一条 problem**（调用方必须显示），
+     * 而不是一个空列表 —— 空列表会被读成"pi 没有提供商"。
+     */
+    fun officialCatalog(): PiOfficialCatalog.Catalog =
+        PiOfficialCatalog.readDirectory(File(layout.paths.rootfs, OFFICIAL_CATALOG_IN_ROOTFS))
+
     // ------------------------------------------------------------- 已导入清单
 
     /**
@@ -465,5 +478,12 @@ class PiCredentialService(
          * `models.json.lock` 这类"有人正在写"的信号也算——它们正是原子写入的中间态。
          */
         val MODEL_FILES = listOf("models.json", "auth.json", "models-store.json", "settings.json")
+
+        /**
+         * 官方模型目录在 rootfs 里的位置：`fetch-runtime.mjs` 把 pi 载荷解到
+         * `rootfs/opt/pi`，`pi-ai` 的目录数据在它嵌套的 node_modules 下。
+         */
+        const val OFFICIAL_CATALOG_IN_ROOTFS =
+            "opt/pi/node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-ai/dist/providers/data"
     }
 }

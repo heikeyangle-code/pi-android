@@ -46,6 +46,9 @@ object PiModelCatalog {
         val acceptsImages: Boolean?,
         val contextWindow: Long?,
         val maxTokens: Long?,
+        /** `cost.input` / `cost.output`，pi 的单位（**每百万 token 美元**）。 */
+        val costInput: Double? = null,
+        val costOutput: Double? = null,
     )
 
     /**
@@ -64,6 +67,7 @@ object PiModelCatalog {
             val obj = element as? JsonObject ?: return@mapNotNull null
             val id = (obj["id"] as? JsonPrimitive)?.takeIf { it.isString }?.content
             if (id.isNullOrBlank()) return@mapNotNull null
+            val cost = obj["cost"] as? JsonObject
             Entry(
                 id = id,
                 name = (obj["name"] as? JsonPrimitive)?.takeIf { it.isString }?.content,
@@ -75,6 +79,8 @@ object PiModelCatalog {
                     ?.let { inputs -> "image" in inputs },
                 contextWindow = (obj["contextWindow"] as? JsonPrimitive)?.content?.toLongOrNull(),
                 maxTokens = (obj["maxTokens"] as? JsonPrimitive)?.content?.toLongOrNull(),
+                costInput = (cost?.get("input") as? JsonPrimitive)?.content?.toDoubleOrNull(),
+                costOutput = (cost?.get("output") as? JsonPrimitive)?.content?.toDoubleOrNull(),
             )
         }
     }
