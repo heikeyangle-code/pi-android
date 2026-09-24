@@ -41,6 +41,8 @@ import app.pi.ui.components.PiAutoFocus
 import app.pi.ui.components.PiDialog
 import app.pi.ui.components.PiDialogAction
 import app.pi.ui.components.PiDialogActions
+import app.pi.ui.settings.PiSettingsMetrics
+import app.pi.ui.settings.PiSettingsSheet
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
 import kotlin.math.roundToInt
@@ -115,6 +117,19 @@ private fun ExtensionDialogShell(
     // previous extension's answer over.
     var draft by remember(dialog.id) { mutableStateOf(dialog.prefill.orEmpty()) }
 
+    // 长/宽的 select **换壳不换协议**（判定与阈值在 `ExtensionTextLines.selectNeedsSheet`，
+    // harness `text-lines` 钉着边界）：9 个以上选项在 330 宽的对话框里列表区（360dp ÷ 43dp
+    // 行高 = 8.4 行）必然内滚，任一标签超过 36 列则在对话框行里被省略号截掉 —— 这两种情况
+    // 改用 v2 的底部 sheet（正文余量 420dp、412 宽屏上一行约 49 列）。低于阈值仍是 `06 §2`
+    // 把扩展 select 归类的那个对话框。回包六条协议逐条不变，input/confirm/editor 不走这里。
+    if (dialog.method == ExtensionDialogMethod.Select &&
+        dialog.options.isNotEmpty() &&
+        selectNeedsSheet(dialog.options.map { visibleColumns(chromeText(it)) })
+    ) {
+        SelectSheetBody(dialog, backlog, onAnswer)
+        return
+    }
+
     // 外壳与设置页的对话框是**同一个构件**（`ui/components/PiDialog.kt`）：最大宽
     // 330、圆角 14、`surf-high` 底、1px `borderMuted`、`padding:18px 16px 12px`、
     // scrim `rgba(0,0,0,.32)`。两边原先各画一套，底色一个 `surf-low` 一个
@@ -172,42 +187,93 @@ private fun SelectBody(
             .border(PiSpacing.hairline, palette.borderMuted, shape),
     ) {
         Column(Modifier.verticalScroll(rememberScrollState())) {
-            dialog.options.forEachIndexed { index, option ->
-                if (index > 0) {
-                    Box(
-                        Modifier
-                            .fillMaxWidth()
-                            .height(PiSpacing.hairline)
-                            .background(palette.borderMuted),
-                    )
-                }
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable(role = Role.Button) {
-                            // The label is *painted* with the extension's colour but
-                            // *answered* plain: `buildAnswer` strips escapes from a
-                            // select answer, so a colour the extension wrapped its
-                            // own option in cannot come back as the user's choice.
-                            onAnswer(dialog.id, ExtensionAnswer.Value(option))
-                        }
-                        .padding(horizontal = 12.dp, vertical = 10.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        text = "○",
-                        style = PiTheme.text.monoSmall,
-                        color = palette.muted,
-                    )
-                    ExtensionSpans(
-                        spans = chromeSpans(option),
-                        defaultColor = palette.text,
-                        style = MaterialTheme.typography.bodyMedium,
-                        modifier = Modifier.weight(1f),
-                    )
+            SelectOptionRows(dialog, onAnswer)
+        }
+    }
+}
+
+/**
+ * 长/宽 select 的 sheet 外壳 —— 与 [SelectBody] 共用选项行本体，只换容器。
+ *
+ * **协议一条不变**：`id` 仍按 `dialog.id` 一 id 一回包（VM 的 `answerDialog` 对不上头就
+ * 丢弃）；`value` 点选项仍回原始 `ExtensionAnswer.Value(option)`（颜色只画不回，
+ * `buildAnswer` 会剥转义）；`cancelled` back/scrim/取消钮都回 `Cancelled`；`timeout` 的
+ * 倒计时与 VM 到点取消不经过这里，原样生效；`input`/`confirm`/`editor` 根本不进这个分支。
+ */
+@Composable
+private fun SelectSheetBody(
+    dialog: ExtensionDialog,
+    backlog: Int,
+    onAnswer: (String, ExtensionAnswer) -> Unit,
+) {
+    PiSettingsSheet(onDismiss = { onAnswer(dialog.id, ExtensionAnswer.Cancelled) }) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = PiSettingsMetrics.pageHorizontal)
+                .padding(top = PiSettingsMetrics.sheetHeadTop),
+        ) {
+            DialogHeading(dialog)
+            DialogMessage(dialog.message)
+            val palette = PiTheme.palette
+            val shape = RoundedCornerShape(DialogListRadius)
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = PiSettingsMetrics.sheetBodyMax)
+                    .clip(shape)
+                    .border(PiSpacing.hairline, palette.borderMuted, shape),
+            ) {
+                Column(Modifier.verticalScroll(rememberScrollState())) {
+                    SelectOptionRows(dialog, onAnswer)
                 }
             }
+            DialogActions(dialog, dialog.prefill.orEmpty(), onAnswer)
+            DialogFooter(dialog, backlog)
+        }
+    }
+}
+
+/** 两个外壳共用的选项行本体：`○` + 扩展自己着色的标签，一点即答（无确认钮）。 */
+@Composable
+private fun SelectOptionRows(
+    dialog: ExtensionDialog,
+    onAnswer: (String, ExtensionAnswer) -> Unit,
+) {
+    dialog.options.forEachIndexed { index, option ->
+        if (index > 0) {
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .height(PiSpacing.hairline)
+                    .background(PiTheme.palette.borderMuted),
+            )
+        }
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(role = Role.Button) {
+                    // The label is *painted* with the extension's colour but *answered*
+                    // plain: `buildAnswer` strips escapes from a select answer, so a colour
+                    // the extension wrapped its own option in cannot come back as the
+                    // user's choice.
+                    onAnswer(dialog.id, ExtensionAnswer.Value(option))
+                }
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = "○",
+                style = PiTheme.text.monoSmall,
+                color = PiTheme.palette.muted,
+            )
+            ExtensionSpans(
+                spans = chromeSpans(option),
+                defaultColor = PiTheme.palette.text,
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.weight(1f),
+            )
         }
     }
 }

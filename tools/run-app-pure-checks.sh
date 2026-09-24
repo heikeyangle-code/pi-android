@@ -1012,6 +1012,18 @@ run_harness widget-payload \
   "$ROOT/rpc/src/main/kotlin/app/pi/rpc/PiJson.kt" \
   "$ROOT/rpc/src/main/kotlin/app/pi/rpc/internal/Json.kt"
 
+# app.pi.ui.extension: 扩展输出的两条**渲染判据**（`ExtensionTextLines.kt`，纯函数）：
+# 预格式化行（框线 / 列对齐双空格 / 超过 pi 默认 80 列的行 → 展开不换行 + 横向滚动）与
+# select 改开底部 sheet 的阈值（9 个选项起、或任一标签 > 36 列）。为什么必须在这里：两条
+# 判据决定"卡片展开后列还对不对齐"和"长列表开不开 sheet"，编译器完全看不见；阈值本身
+# 就是设计（`06 §2` 对话框宽 330 / 列表余量 360dp / sheet 正文 420dp / pi 终端默认 80 列，
+# 见各常量的 KDoc），harness 连边界值（8↔9、36↔37、80↔81）一起钉住 —— 移动阈值必须是
+# 这里的一次显式改动。
+run_harness text-lines \
+  app.pi.ui.extension.ExtensionTextLinesCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/ui/extension/ExtensionTextLinesCheck.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/ui/extension/ExtensionTextLines.kt"
+
 # app.pi.ui.chat: the `@` lookup's failure classification. The composer draws nothing for an
 # empty candidate list, which is right for "fd matched nothing" and was also the answer for
 # a missing runtime / a proot launch failure / a timeout / a killed process. Which is which

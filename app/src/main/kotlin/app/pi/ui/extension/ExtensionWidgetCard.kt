@@ -1,6 +1,7 @@
 package app.pi.ui.extension
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -156,20 +157,32 @@ private fun WidgetRowView(row: WidgetRow, expanded: Boolean) {
         is WidgetRow.Text -> {
             // Text lines keep the extension's own colours: it wrote them with `theme.fg(…)`,
             // and `Ansi.parse` → `tokenColorFor` is how the terminal's SGR bytes become palette
-            // tokens. `maxLines = 1` because pi's own panel truncates a widget line to the panel
-            // width and never wraps it (`truncLine`, `tui/render.js`) — wrapping is what let one
-            // long line become twenty-five rows of the conversation.
+            // tokens. Folded: one row, cut (pi's own panel truncates a widget line to the panel
+            // width and never wraps it — `truncLine`, `tui/render.js`).
+            //
+            // Opened, three shapes:
+            //  - **prose** → the whole line, wrapped: sentences are read by wrapping;
+            //  - **preformatted** (box art / space-aligned columns / past pi's own 80-column
+            //    terminal width) → one line, no wrap, horizontal scroll: the column alignment
+            //    *is* the content and wrapping shreds it. The predicate is the pure
+            //    `isPreformatted` (harness `text-lines` pins the thresholds), so this site
+            //    only changes the modifier — the rule itself cannot drift here.
             val spans = remember(row.text) { chromeSpans(row.text) }
+            val preformatted = remember(row.text) { isPreformatted(row.text) }
+            val sideScroll = rememberScrollState()
             ExtensionSpans(
                 spans = if (spans.all { it.text.isEmpty() }) listOf(Ansi.Span(" ")) else spans,
                 defaultColor = PiTheme.palette.muted,
                 style = PiTheme.text.monoSmall,
-                // Folded: one row, cut (pi's own panel truncates a widget line and never wraps
-                // it). Opened: all of it, because a text widget's line was authored as a row of
-                // a monospace layout — an 80-column box, a space-aligned table — and an ellipsis
-                // throws that content away while wrapping only makes it crooked.
-                maxLines = if (expanded) Int.MAX_VALUE else 1,
+                maxLines = if (expanded && !preformatted) Int.MAX_VALUE else 1,
                 overflow = TextOverflow.Ellipsis,
+                // horizontalScroll hands the line unbounded width, so it cannot wrap; the
+                // tail is reachable by panning instead of being lost to an ellipsis.
+                modifier = if (expanded && preformatted) {
+                    Modifier.horizontalScroll(sideScroll)
+                } else {
+                    Modifier
+                },
             )
         }
 
