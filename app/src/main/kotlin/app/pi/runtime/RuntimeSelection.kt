@@ -72,6 +72,15 @@ class RuntimeSelection(
     val prorootEnabled: Boolean get() = prefs?.prorootEnabled ?: false
 
     /**
+     * The second switch, read the same way as [prorootEnabled] — **null prefs is off**.
+     *
+     * It lives here as well as on `RuntimePreferences` because the settings store holds a
+     * `RuntimeSelection`, not a preference object (that is the layer split this file's KDoc
+     * describes), and because every reader of the switch already has one of these.
+     */
+    val bxrootEnabled: Boolean get() = prefs?.bxrootEnabled ?: false
+
+    /**
      * Write the switch, keeping everything that means "try again" together.
      *
      * The preference itself clears the consecutive-failure counter

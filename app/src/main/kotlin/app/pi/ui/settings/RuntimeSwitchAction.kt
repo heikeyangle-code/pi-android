@@ -103,13 +103,16 @@ object RuntimeSwitchAction {
     }
 
     /** 探针在跑时状态行的值。数字与 `ProrootProbe` 的上界同源，写成一句话给用户。 */
-    const val PROBING_STATUS = "正在测 proroot 探针（最长约 60 秒）…"
+    const val PROBING_STATUS = "正在测运行时探针（最长约 60 秒）…"
 
     /** 往 proot 重启时状态行的值。 */
     const val RESTART_TO_PROOT_STATUS = "正在把引擎重启到 proot…"
 
     /** 往 proroot 重启时状态行的值。 */
     const val RESTART_TO_PROROOT_STATUS = "正在把引擎重启到 proroot…"
+
+    /** 第二个开关的同一句话，措辞不共用：状态行要说得清在换哪一个运行时。 */
+    const val RESTART_TO_BXROOT_STATUS = "正在把引擎重启到 bxroot…"
 
     /**
      * 开关刚写完（值是 [nowEnabled]），第一步做什么。
@@ -196,5 +199,6 @@ object RuntimeSwitchAction {
         Step.Probing -> PROBING_STATUS
         Step.RestartingToProot -> RESTART_TO_PROOT_STATUS
         Step.RestartingToProroot -> RESTART_TO_PROROOT_STATUS
+        Step.RestartingToBxroot -> RESTART_TO_BXROOT_STATUS
     }
 }
