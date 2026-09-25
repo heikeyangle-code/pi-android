@@ -1352,11 +1352,8 @@ object PiSettingsCatalog {
         // 的失败不会动另一个开关的状态。
         PiSetting(
             key = "app.runtime.bxroot",
-            title = "运行时加速（开源运行时 bxroot）",
-            description = "用开源（MIT）运行时 bxroot 代替 proot 执行引擎、终端、工具与装包命令；" +
-                "装机与维护始终走 proot。与上面那个开关相互独立：两个都打开时用 bxroot。" +
-                "默认关闭；打开就当场重启引擎切过去（不做探针），引擎、终端、工具与装包命令从此都走它。" +
-                "万一它在这台设备上起不来，连续三次启动失败会自动退回 proot（原因见下一行）。",
+            title = "运行时：bxroot（开源）",
+            description = "打开就用它跑引擎、终端、工具与装包命令。当场重启切换，不用重装软件。",
             kind = PiRowKind.Switch,
             group = G_RUNTIME,
             section = "运行时选择",
