@@ -5,12 +5,30 @@ package app.pi.runtime
  *
  * `Proot` is the app's pinned Termux proot recipe and the **only** one that is ever
  * used by the install/maintenance path. `Proroot` is the opt-in, closed-source,
- * faster runtime (`docs/proroot-research.md`).
+ * faster runtime (`docs/proroot-research.md`). `Bxroot` is the second opt-in runtime:
+ * an **independent switch** (`app.runtime.bxroot`) for the open-source runtime with the
+ * same five-piece shape, its own gate and its own failure streak — see
+ * `docs/bxroot-runtime.md`. Two switches rather than one three-way choice is
+ * deliberate: each runtime's gate answers only about itself, so a device that fails
+ * bxroot's probe keeps whatever the proroot switch said.
  */
 enum class GuestEngine {
     Proot,
     Proroot,
+    Bxroot,
 }
+
+/**
+ * True for the engines that are launched through the five-piece `LD_PRELOAD` runtime
+ * (`<launcher> -r <rootfs> -w <cwd> -b host:guest …`) as opposed to proot.
+ *
+ * The three call sites that ask are the ones where proot's and the opt-in engines'
+ * *plumbing* differ and the engine's identity does not matter: the PTY launch handle's
+ * config-table discovery ([PtySession]), its tmp-dir wiring ([PtyLauncher]) and the
+ * launch-token environment ([RuntimeSelection]). Written once so the second opt-in
+ * runtime cannot be forgotten at one of the three.
+ */
+val GuestEngine.usesOptInPlumbing: Boolean get() = this != GuestEngine.Proot
 
 /**
  * Why the decision came out as [GuestEngine.Proot].
@@ -38,6 +56,24 @@ enum class EngineFallback {
 
     /** Three consecutive proroot launch failures: forced back to proot. */
     FailureStreak,
+
+    /** bxroot is in use (its own switch is on and its own gate passed). */
+    BxrootActive,
+
+    /**
+     * bxroot's switch is off — the default, and independent of the proroot switch.
+     *
+     * It is a separate reason from [SwitchOff] because the two switches are two
+     * questions: a status line that cannot say *which* opt-in runtime it is talking
+     * about is the shape this file's other reasons exist to avoid.
+     */
+    BxrootSwitchOff,
+
+    /** bxroot's probe gate has not passed at this runtime revision + binary digest. */
+    BxrootProbeNotPassed,
+
+    /** Three consecutive bxroot launch failures: back to the other engines. */
+    BxrootFailureStreak,
 
     /**
      * This call site is on the install/maintenance path, which is **always** proot
@@ -198,6 +234,27 @@ object RuntimeChoice {
     )
 
     /**
+     * The five **bxroot** binaries, by the names `jniLibs` must ship (`runtime.lock.json`).
+     *
+     * Same five roles, same order as [REQUIRED_FILES] — the layout is deliberately the
+     * one proroot uses, because bxroot's whole launcher contract is a drop-in for it
+     * (`docs/bxroot-runtime.md` §「为什么五个文件的名字不一样，位置一样」).
+     */
+    val BXROOT_REQUIRED_FILES: List<String> = listOf(
+        "libbxroot.so",
+        "libbxroot-runtime.so",
+        "libbxroot-linker.so",
+        "libbxroot-bridge.so",
+        "libbxroot-stub-loader.so",
+    )
+
+    /** [REQUIRED_FILES] for the opt-in engine [engine]; proot has no file set of its own. */
+    fun requiredFiles(engine: GuestEngine): List<String> = when (engine) {
+        GuestEngine.Bxroot -> BXROOT_REQUIRED_FILES
+        else -> REQUIRED_FILES
+    }
+
+    /**
      * The seccomp档 **production launches proroot under**.
      *
      * One constant, named here rather than inlined in the launcher's environment, because
@@ -282,6 +339,38 @@ object RuntimeChoice {
         else -> EngineDecision(GuestEngine.Proroot, EngineFallback.None)
     }
 
+    /**
+     * The same decision, for the **second** opt-in switch (`app.runtime.bxroot`).
+     *
+     * A separate function rather than a parameter on [decide] because the two switches
+     * are independent by design: this one's default (`enabled == false`) must not be
+     * reachable from the proroot switch's state, and the proroot harness's pinned
+     * `decide(enabled, filesPresent, probePassed, consecutiveFailures)` signature is
+     * the `proroot` harness's contract (`tools/run-app-pure-checks.sh`). Each answer is
+     * still one sentence, and which one is in use is read off [EngineDecision.engine].
+     *
+     * @param enabled bxroot's own switch. **Off by default.**
+     * @param filesPresent all five [BXROOT_REQUIRED_FILES] are in `nativeLibraryDir`.
+     * @param probePassed bxroot's gate passed at this revision + binary digest.
+     * @param consecutiveFailures persisted count of bxroot launches that failed before
+     *        doing anything. The streak is per engine: a bxroot that fails three times
+     *        must not consume the proroot switch's credit.
+     */
+    fun decideBxroot(
+        enabled: Boolean,
+        filesPresent: Boolean,
+        probePassed: Boolean,
+        consecutiveFailures: Int,
+    ): EngineDecision = when {
+        !enabled -> EngineDecision(GuestEngine.Proot, EngineFallback.BxrootSwitchOff)
+        !filesPresent -> EngineDecision(GuestEngine.Proot, EngineFallback.RuntimeFilesMissing)
+        !probePassed -> EngineDecision(GuestEngine.Proot, EngineFallback.BxrootProbeNotPassed)
+        consecutiveFailures >= MAX_CONSECUTIVE_FAILURES ->
+            EngineDecision(GuestEngine.Proot, EngineFallback.BxrootFailureStreak)
+
+        else -> EngineDecision(GuestEngine.Bxroot, EngineFallback.BxrootActive)
+    }
+
     /** The counter after a proroot launch that failed before producing a result. */
     fun afterFailure(consecutiveFailures: Int): Int = consecutiveFailures + 1
 
@@ -364,6 +453,11 @@ object RuntimeChoice {
         EngineFallback.RuntimeFilesMissing -> "proot（运行时文件缺失）"
         EngineFallback.ProbeNotPassed -> "proot（探针未通过）"
         EngineFallback.ProbeNotRun -> "proot（探针尚未运行）"
+        EngineFallback.BxrootActive -> "bxroot（开源，LD_PRELOAD 路径翻译）"
+        EngineFallback.BxrootSwitchOff -> "proot"
+        EngineFallback.BxrootProbeNotPassed -> "proot（bxroot 探针未通过）"
+        EngineFallback.BxrootFailureStreak ->
+            "proot（bxroot 连续 $MAX_CONSECUTIVE_FAILURES 次启动失败，重新打开开关可清零重试）"
         EngineFallback.FailureStreak ->
             "proot（连续 $MAX_CONSECUTIVE_FAILURES 次启动失败，重新打开开关可清零重试）"
 

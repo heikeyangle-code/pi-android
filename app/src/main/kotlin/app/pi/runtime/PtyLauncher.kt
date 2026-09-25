@@ -265,8 +265,12 @@ object PtyLauncher {
             // thread that will not start, an OOM) would mean a second retry leaks the first
             // child — proroot has no `--kill-on-exit`. An unattributable failure therefore
             // propagates, with the first process's fate unchanged.
-            if (prepared.engine != GuestEngine.Proroot) throw startFailure
-            selection.recordProrootFailure(
+            // Only the opt-in engines are counted: proot is the floor of the fallback
+            // chain, so a proot launch that failed has nowhere to fall to and is not a
+            // strike against a switch the user did not turn on.
+            if (!prepared.engine.usesOptInPlumbing) throw startFailure
+            selection.recordFailure(
+                prepared.engine,
                 "${startFailure::class.java.simpleName}: ${startFailure.message}",
             )
             spawn(prepare(context, spec, allowProroot = false), paths, onOutput, onExit)
@@ -288,7 +292,11 @@ object PtyLauncher {
         // proroot's scratch directory, so the session can identify this launch by
         // the config table it writes (the platform has no `Process.pid()` here —
         // see `ProrootLaunchHandle`) — and then reap its tree on close.
-        prorootTmp = if (prepared.engine == GuestEngine.Proroot) paths.prorootTmp else null,
+        prorootTmp = when (prepared.engine) {
+            GuestEngine.Proroot -> paths.prorootTmp
+            GuestEngine.Bxroot -> paths.bxrootTmp
+            GuestEngine.Proot -> null
+        },
         launchToken = prepared.launchToken,
         // The `.proroot-config-<pid>` table this launch created. Deleting it at
         // stop is the same cleanup `RuntimeSelection.sweepProrootConfigs` would

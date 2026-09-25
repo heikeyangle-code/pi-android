@@ -115,7 +115,7 @@ class PtySession private constructor(
         // ([GuestTreeReaper.capture]). The capture is a `/proc` read — milliseconds —
         // whereas the reaping that follows waits for TERM and then KILL, which is why
         // only that half goes to a thread.
-        val captured = if (engine == GuestEngine.Proroot) {
+        val captured = if (engine.usesOptInPlumbing) {
             val pid = launch?.launcherPid
             if (pid == null) {
                 lastError = "停止终端时拿不到 proroot 的 launcher pid（.proroot-config 表没有出现），未回收 guest 进程树"
@@ -194,7 +194,7 @@ class PtySession private constructor(
                 // where the program wrote it.
                 .redirectErrorStream(true)
             builder.environment().putAll(environment)
-            val handle = if (engine == GuestEngine.Proroot && prorootTmp != null) {
+            val handle = if (engine.usesOptInPlumbing && prorootTmp != null) {
                 ProrootLaunchHandle.arm(prorootTmp, launchToken)
             } else {
                 null

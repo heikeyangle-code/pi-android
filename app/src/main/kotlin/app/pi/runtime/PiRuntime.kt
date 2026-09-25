@@ -358,6 +358,67 @@ class PiPaths(private val filesDir: File, private val nativeLibDir: File) {
      */
     val prorootTmp: File get() = prorootTmpDir().also { it.mkdirs() }
 
+    // ------------------------------------------------------------------ bxroot
+    // The second opt-in runtime's five binaries. Same roles, same order, same directory
+    // as the proroot set — bxroot's launcher contract is a drop-in for proroot's
+    // (`docs/bxroot-runtime.md`), and the names are load-bearing the same way: Android's
+    // native-library extractor only unpacks `lib*.so`, and each exec'd file must be PIE
+    // with `/system/bin/linker64` as its interpreter.
+    //
+    // A separate tmp directory, not a shared one: the two launchers write
+    // `.proroot-config-<pid>`-style tables named after themselves, and one sweep rule
+    // cannot be right for both (`ProrootConfigSweep` owns the proroot naming rule).
+
+    /** The bxroot launcher — the one file Android `execve()`s for this engine. */
+    fun bxrootLauncher(): File = File(nativeLibDir, "libbxroot.so")
+
+    /** The in-process hook (path translation, fake id0, `/proc` synthesis). */
+    fun bxrootRuntimeHook(): File = File(nativeLibDir, "libbxroot-runtime.so")
+
+    /** The ELF interpreter guest binaries are linked against. */
+    fun bxrootLinker(): File = File(nativeLibDir, "libbxroot-linker.so")
+
+    /** The entry trampoline a guest child re-enters through. */
+    fun bxrootBridge(): File = File(nativeLibDir, "libbxroot-bridge.so")
+
+    /** Static/static-pie and `execve` routing — what keeps `rg`/`fd` translated. */
+    fun bxrootStubLoader(): File = File(nativeLibDir, "libbxroot-stub-loader.so")
+
+    /** The five above, in the order `RuntimeChoice.BXROOT_REQUIRED_FILES` names them. */
+    fun bxrootComponents(): List<File> = listOf(
+        bxrootLauncher(),
+        bxrootRuntimeHook(),
+        bxrootLinker(),
+        bxrootBridge(),
+        bxrootStubLoader(),
+    )
+
+    /** bxroot's launcher-side tmp directory; handed to it as `BXROOT_TMP_DIR`. */
+    fun bxrootTmpDir(): File = File(runtime, "bxroot-tmp")
+
+    /** [bxrootTmpDir], created on access — the launcher requires the directory to exist. */
+    val bxrootTmp: File get() = bxrootTmpDir().also { it.mkdirs() }
+
+    /**
+     * The bxroot components missing from `nativeLibraryDir`, by file name.
+     *
+     * Mirror of [missingProrootComponents], cached the same way and for the same reason
+     * (within one process the five files cannot appear or disappear). The cache key is
+     * the directory path, so the two engines share one entry shape rather than two
+     * caches that could answer from different installs.
+     */
+    fun missingBxrootComponents(): List<String> {
+        val key = nativeLibDir.path
+        missingBxrootComponentsCache?.let { if (it.first == key) return it.second }
+        val components = bxrootComponents()
+        val missing = RuntimeChoice.BXROOT_REQUIRED_FILES.filterIndexed { index, _ -> !components[index].isFile }
+        missingBxrootComponentsCache = key to missing
+        return missing
+    }
+
+    /** Same contract as [missingComponentsCache], for the second opt-in engine. */
+    private var missingBxrootComponentsCache: Pair<String, List<String>>? = null
+
     /**
      * Records the proroot probe gate's verdict for one revision + binary digest
      * ([ProrootProbeCache]). Inside the volatile tree on purpose: it describes this
@@ -365,6 +426,15 @@ class PiPaths(private val filesDir: File, private val nativeLibDir: File) {
      * a pass for a tree that no longer exists.
      */
     fun prorootProbeCache(): File = File(runtime, ".proroot-probe")
+
+    /**
+     * The same cache file role for the second opt-in engine.
+     *
+     * A separate file, not a second key in [prorootProbeCache]: the two verdicts are
+     * measurements of two different five-file sets, and one file that can hold either is
+     * one sweep or one parse bug away from reporting a pass for the wrong runtime.
+     */
+    fun bxrootProbeCache(): File = File(runtime, ".bxroot-probe")
 
     /**
      * Throw the cached verdict away so the next proroot launch re-runs the gate.

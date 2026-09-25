@@ -32,6 +32,7 @@ object GuestCommandLine {
     ): List<String> = when (engine) {
         GuestEngine.Proot -> ProotCommand.build(paths, guestCommand, cwd, storage, extraBinds)
         GuestEngine.Proroot -> ProrootCommand.build(paths, guestCommand, cwd, storage, extraBinds)
+        GuestEngine.Bxroot -> BxrootCommand.build(paths, guestCommand, cwd, storage, extraBinds)
     }
 
     fun environment(
@@ -41,5 +42,6 @@ object GuestCommandLine {
     ): Map<String, String> = when (engine) {
         GuestEngine.Proot -> ProotCommand.environment(paths, extra)
         GuestEngine.Proroot -> ProrootCommand.environment(paths, extra)
+        GuestEngine.Bxroot -> BxrootCommand.environment(paths, extra)
     }
 }

@@ -49,6 +49,56 @@ class RuntimePreferences private constructor(context: Context) {
     val prorootFailures: Int get() = prefs.getInt(KEY_FAILURES, 0)
 
     /**
+     * The **second** opt-in runtime's own switch (`docs/bxroot-runtime.md`).
+     *
+     * Independent of [prorootEnabled] in both directions: the two runtimes answer
+     * different probes and have different failure streaks, so one switch cannot be the
+     * other's state. Off unless the user turned *this* one on.
+     */
+    val bxrootEnabled: Boolean get() = prefs.getBoolean(KEY_BXROOT_ENABLED, false)
+
+    /** Consecutive bxroot launches that failed before doing any work. */
+    val bxrootFailures: Int get() = prefs.getInt(KEY_BXROOT_FAILURES, 0)
+
+    /** Per-engine readers, so a caller never has to pick a key itself. */
+    fun enabled(engine: GuestEngine): Boolean = when (engine) {
+        GuestEngine.Bxroot -> bxrootEnabled
+        else -> prorootEnabled
+    }
+
+    fun failures(engine: GuestEngine): Int = when (engine) {
+        GuestEngine.Bxroot -> bxrootFailures
+        else -> prorootFailures
+    }
+
+    /** Per-engine writers; same reason, and the switch row's own path. */
+    fun setEnabled(engine: GuestEngine, enabled: Boolean) = when (engine) {
+        GuestEngine.Bxroot -> setBxrootEnabled(enabled)
+        else -> setProrootEnabled(enabled)
+    }
+
+    fun setFailures(engine: GuestEngine, count: Int) = when (engine) {
+        GuestEngine.Bxroot -> setBxrootFailures(count)
+        else -> setProrootFailures(count)
+    }
+
+    /**
+     * Store bxroot's switch. Turning it **on** clears bxroot's own streak, for the same
+     * reason [setProrootEnabled] does: the row's text promises that re-enabling is the
+     * retry, and a counter that survived it would make the switch a no-op.
+     */
+    fun setBxrootEnabled(enabled: Boolean) {
+        prefs.edit()
+            .putBoolean(KEY_BXROOT_ENABLED, enabled)
+            .putInt(KEY_BXROOT_FAILURES, 0)
+            .apply()
+    }
+
+    fun setBxrootFailures(count: Int) {
+        prefs.edit().putInt(KEY_BXROOT_FAILURES, count).apply()
+    }
+
+    /**
      * Store the switch. Turning it **on** clears the failure streak: the row's own
      * text promises that re-enabling is how a forced fallback is undone, and a
      * counter that survived it would make the switch a no-op.
@@ -70,6 +120,12 @@ class RuntimePreferences private constructor(context: Context) {
 
         /** The switch's key inside [PREFS_NAME]. */
         const val KEY_ENABLED = "proroot.enabled"
+
+        /** bxroot's switch: a second, independent question (`docs/bxroot-runtime.md`). */
+        const val KEY_BXROOT_ENABLED = "bxroot.enabled"
+
+        /** bxroot's own consecutive-failure counter. */
+        const val KEY_BXROOT_FAILURES = "bxroot.failures"
 
         /** The consecutive-failure counter's key inside [PREFS_NAME]. */
         const val KEY_FAILURES = "proroot.failures"

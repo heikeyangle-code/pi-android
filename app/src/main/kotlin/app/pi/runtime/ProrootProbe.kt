@@ -135,20 +135,27 @@ object ProrootProbe {
     @Volatile
     private var digestCache: Pair<String, String>? = null
 
-    fun digestOf(paths: PiPaths): String {
-        val key = paths.nativeLib.path
+    fun digestOf(paths: PiPaths, engine: GuestEngine = GuestEngine.Proroot): String {
+        val key = paths.nativeLib.path + "|" + engine.name
         digestCache?.let { if (it.first == key) return it.second }
-        val digest = computeDigest(paths)
+        val digest = computeDigest(paths, engine)
         digestCache = key to digest
         return digest
     }
 
-    private fun computeDigest(paths: PiPaths): String {
+    /**
+     * The cache file for [engine] — one file per engine, in one place so the writer
+     * ([run]) and the reader ([cached]) cannot disagree about which one they mean.
+     */
+    private fun probeCacheFile(paths: PiPaths, engine: GuestEngine): File =
+        if (engine == GuestEngine.Bxroot) paths.bxrootProbeCache() else paths.prorootProbeCache()
+
+    private fun computeDigest(paths: PiPaths, engine: GuestEngine = GuestEngine.Proroot): String {
         val md = MessageDigest.getInstance("SHA-256")
-        RuntimeChoice.REQUIRED_FILES.forEachIndexed { index, name ->
+        RuntimeChoice.requiredFiles(engine).forEachIndexed { index, name ->
             md.update(name.toByteArray())
             md.update(0)
-            val file = paths.prorootComponents()[index]
+            val file = if (engine == GuestEngine.Bxroot) paths.bxrootComponents()[index] else paths.prorootComponents()[index]
             if (file.isFile) {
                 file.inputStream().use { input ->
                     val buffer = ByteArray(1 shl 16)
@@ -173,9 +180,14 @@ object ProrootProbe {
     ): String = ProrootProbeCache.key(revision, digest, mode.tag)
 
     /** The cached verdict for this revision + digest, or null when there is none. */
-    fun cached(paths: PiPaths, revision: String, digest: String): Verdict? {
+    fun cached(
+        paths: PiPaths,
+        revision: String,
+        digest: String,
+        engine: GuestEngine = GuestEngine.Proroot,
+    ): Verdict? {
         val key = key(revision, digest)
-        val text = runCatching { paths.prorootProbeCache().readText() }.getOrNull()
+        val text = runCatching { probeCacheFile(paths, engine).readText() }.getOrNull()
         val parsed = ProrootProbeCache.parse(text, key) ?: return null
         return Verdict(passed = parsed.passed, key = key, detail = parsed.detail, cached = true)
     }
@@ -222,6 +234,18 @@ object ProrootProbe {
         revision: String,
         digest: String,
         onTimeoutTree: (launcherPid: Int?, launcherStartTime: Long?) -> Unit,
+        /**
+         * Which five-piece runtime is being measured. Defaults to proroot so every existing
+         * caller and the bare-JVM `proroot` harness keep their signature; the second opt-in
+         * engine passes [GuestEngine.Bxroot] and gets the same three stages against *its*
+         * binaries, its own digest and its own cache file.
+         *
+         * The stage content is deliberately identical: both runtimes answer the same three
+         * questions (does a raw path get translated, do the tool binaries run, does the
+         * engine-class binary run), and a probe that asked different questions per engine
+         * would make the two verdicts incomparable.
+         */
+        engine: GuestEngine = GuestEngine.Proroot,
     ): Verdict {
         val mode = RuntimeChoice.PROROOT_SECCOMP
         val key = key(revision, digest, mode)
@@ -231,7 +255,7 @@ object ProrootProbe {
         val rawOutput = runCatching {
             runGuest(
                 paths = paths,
-                engine = GuestEngine.Proroot,
+                engine = engine,
                 guestCommand = ProrootRawProbe.guestCommand(paths.shm.path, token),
                 storage = storage,
                 timeoutMs = RAW_TIMEOUT_MS,
@@ -244,7 +268,7 @@ object ProrootProbe {
         val detail = mutableListOf<String>()
         detail += raw.describe()
 
-        val tools = runCatching { GuestToolProbe.run(paths, storage, GuestEngine.Proroot) }
+        val tools = runCatching { GuestToolProbe.run(paths, storage, engine) }
             .getOrElse { error ->
                 GuestToolProbe.Report(
                     emptyList(),
@@ -253,7 +277,7 @@ object ProrootProbe {
             }
         detail += tools.describe().map { "  $it" }
 
-        val exec = runExecStage(paths, storage, EXEC_TIMEOUT_MS, onTimeoutTree)
+        val exec = runExecStage(paths, storage, EXEC_TIMEOUT_MS, onTimeoutTree, engine)
         detail += exec.describe().map { "  $it" }
 
         // The gate itself: `RuntimeChoice.probeGate` owns the rule, pure, so the harness
@@ -280,7 +304,7 @@ object ProrootProbe {
         // must not pay for the same measurement.
         runCatching {
             paths.runtime.mkdirs()
-            paths.prorootProbeCache().writeText(ProrootProbeCache.render(key, passed, detail))
+            probeCacheFile(paths, engine).writeText(ProrootProbeCache.render(key, passed, detail))
         }
         // The planted file lives in the guest's /dev/shm; if translation did not work it
         // may not exist at all, and deleting a file that is not there is fine. This
@@ -305,11 +329,12 @@ object ProrootProbe {
         storage: File?,
         timeoutMs: Long,
         onTimeoutTree: (launcherPid: Int?, launcherStartTime: Long?) -> Unit,
+        engine: GuestEngine = GuestEngine.Proroot,
     ): ProrootExecProbe.Report {
         val output = runCatching {
             runGuest(
                 paths = paths,
-                engine = GuestEngine.Proroot,
+                engine = engine,
                 guestCommand = ProrootExecProbe.guestCommand(),
                 storage = storage,
                 timeoutMs = timeoutMs,
@@ -435,13 +460,14 @@ object ProrootProbe {
         // the one launch path that skipped it. The token names *this* invocation: the
         // launcher's pid is not otherwise knowable on this platform (`ProrootLaunchHandle`
         // explains why `/proc/<pid>/environ` is the mechanism).
-        val token = if (engine == GuestEngine.Proroot) UUID.randomUUID().toString() else null
+        val token = if (engine.usesOptInPlumbing) UUID.randomUUID().toString() else null
         val env = GuestCommandLine.environment(
             paths = paths,
             engine = engine,
             extra = if (token == null) emptyMap() else mapOf(ProrootLaunchHandle.TOKEN_ENV to token),
         )
-        val handle = if (token == null) null else ProrootLaunchHandle.arm(paths.prorootTmpDir(), token)
+        val tmpDir = if (engine == GuestEngine.Bxroot) paths.bxrootTmpDir() else paths.prorootTmpDir()
+        val handle = if (token == null) null else ProrootLaunchHandle.arm(tmpDir, token)
         val process = ProcessBuilder(argv)
             .directory(paths.runtime)
             .redirectErrorStream(true)

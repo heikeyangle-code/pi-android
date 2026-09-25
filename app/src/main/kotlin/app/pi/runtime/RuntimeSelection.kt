@@ -186,7 +186,37 @@ class RuntimeSelection(
          */
         allowProroot: Boolean = true,
     ): Plan {
-        val enabled = allowProroot && (prefs?.prorootEnabled ?: false)
+        // ---- the second opt-in engine, asked first (2026-09-25) --------------------
+        // The order is a decision: with **both** switches on the user has asked for two
+        // runtimes, and bxroot is the one whose gate is cheapest to abandon — if it does
+        // not pass, the proroot path below runs exactly as it did before this engine
+        // existed. Nothing here is consulted while bxroot's own switch is off, which is
+        // the same "if it is not on, there is nothing to check" rule the proroot branch
+        // states for itself.
+        val bxrootEnabled = allowProroot && (prefs?.bxrootEnabled ?: false)
+        val bxrootMissing = if (bxrootEnabled) paths.missingBxrootComponents() else emptyList()
+        val bxrootFailures = prefs?.bxrootFailures ?: 0
+        var bxrootProbe: ProrootProbe.Verdict? = null
+        val bxrootProbePassed =
+            if (bxrootEnabled && bxrootMissing.isEmpty() && !RuntimeChoice.exhausted(bxrootFailures)) {
+                bxrootProbe = gate(storage, GuestEngine.Bxroot)
+                bxrootProbe.passed
+            } else {
+                false
+            }
+        val bxrootDecision = if (!allowProroot) {
+            EngineDecision(GuestEngine.Proot, EngineFallback.InstallPath)
+        } else {
+            RuntimeChoice.decideBxroot(
+                enabled = bxrootEnabled,
+                filesPresent = bxrootMissing.isEmpty(),
+                probePassed = bxrootProbePassed,
+                consecutiveFailures = bxrootFailures,
+            )
+        }
+        val bxrootWins = bxrootDecision.engine == GuestEngine.Bxroot
+
+        val enabled = !bxrootWins && allowProroot && (prefs?.prorootEnabled ?: false)
         // **Nothing proroot-shaped is touched while the switch is off** — not the five
         // `stat`s, not the config-table listing. The decision below cannot use either
         // of them in that case (`RuntimeChoice.decide` returns `SwitchOff` on its first
@@ -208,11 +238,16 @@ class RuntimeSelection(
             false
         }
 
-        val decision = if (!allowProroot) {
-            EngineDecision(GuestEngine.Proot, EngineFallback.InstallPath)
-        } else {
-            RuntimeChoice.decide(enabled, filesPresent, probePassed, failures)
+        val decision = when {
+            bxrootWins -> bxrootDecision
+            !allowProroot -> EngineDecision(GuestEngine.Proot, EngineFallback.InstallPath)
+            else -> RuntimeChoice.decide(enabled, filesPresent, probePassed, failures)
         }
+        // The evidence the plan carries is the **winning** engine's: a summary that mixed
+        // bxroot's probe lines with proroot's missing-file list would describe neither.
+        val reportedMissing = if (bxrootWins) bxrootMissing else missing
+        val reportedProbe = if (bxrootWins) bxrootProbe else probe
+        val reportedFailures = if (bxrootWins) bxrootFailures else failures
 
         // Only while proroot can actually launch. The sweep is the cleanup proroot's own
         // config tables get, and the only moment one can appear is a proroot launch —
@@ -230,7 +265,7 @@ class RuntimeSelection(
         // ([ProrootLaunchHandle] carries the argument). Proot plans get no token: they
         // are never reaped by pid, and a guest environment should not grow a variable
         // nothing reads.
-        val token = if (decision.engine == GuestEngine.Proroot) UUID.randomUUID().toString() else null
+        val token = if (decision.engine.usesOptInPlumbing) UUID.randomUUID().toString() else null
         val environment = GuestCommandLine.environment(
             paths = paths,
             engine = decision.engine,
@@ -249,7 +284,7 @@ class RuntimeSelection(
                 extraBinds = extraBinds,
             ),
             environment = environment,
-            notes = notesFor(decision, missing, probe, failures),
+            notes = notesFor(decision, reportedMissing, reportedProbe, reportedFailures),
             probe = probe,
             launchToken = token,
         )
@@ -267,6 +302,44 @@ class RuntimeSelection(
      * the finished strings down, and why the row's `read(key)` never reaches here.
      */
     fun status(): Status {
+        // bxroot first, mirroring plan(): a status line that said "proot" while every
+        // launch ran bxroot would be the same defect class this file's reasons exist for.
+        val bxrootEnabled = prefs?.bxrootEnabled ?: false
+        val bxrootFailures = prefs?.bxrootFailures ?: 0
+        val bxrootMissing = if (bxrootEnabled) paths.missingBxrootComponents() else emptyList()
+        val bxrootCached = if (bxrootEnabled && bxrootMissing.isEmpty()) {
+            runCatching {
+                ProrootProbe.cached(
+                    paths,
+                    revision(),
+                    ProrootProbe.digestOf(paths, GuestEngine.Bxroot),
+                    GuestEngine.Bxroot,
+                )
+            }.getOrNull()
+        } else {
+            null
+        }
+        val bxrootDecision = when {
+            !bxrootEnabled -> EngineDecision(GuestEngine.Proot, EngineFallback.BxrootSwitchOff)
+            bxrootMissing.isNotEmpty() -> EngineDecision(GuestEngine.Proot, EngineFallback.RuntimeFilesMissing)
+            RuntimeChoice.exhausted(bxrootFailures) ->
+                EngineDecision(GuestEngine.Proot, EngineFallback.BxrootFailureStreak)
+            bxrootCached == null -> EngineDecision(GuestEngine.Proot, EngineFallback.ProbeNotRun)
+            !bxrootCached.passed -> EngineDecision(GuestEngine.Proot, EngineFallback.BxrootProbeNotPassed)
+            else -> EngineDecision(GuestEngine.Bxroot, EngineFallback.BxrootActive)
+        }
+        if (bxrootDecision.engine == GuestEngine.Bxroot) {
+            return Status(
+                enabled = bxrootEnabled,
+                failures = bxrootFailures,
+                missingComponents = bxrootMissing,
+                probePassed = bxrootCached?.passed,
+                probeDetail = bxrootCached?.detail.orEmpty(),
+                engine = GuestEngine.Bxroot,
+                fallback = EngineFallback.BxrootActive,
+            )
+        }
+
         val enabled = prefs?.prorootEnabled ?: false
         val failures = prefs?.prorootFailures ?: 0
         // Same rule as [plan]: a switch that is off is answered by `SwitchOff` before
@@ -305,25 +378,43 @@ class RuntimeSelection(
      * exited non-zero is a result, not a runtime failure, and counting it would
      * abandon proroot because a user's `npm install` failed.
      */
-    fun recordProrootFailure(reason: String) {
+    fun recordProrootFailure(reason: String) = recordFailure(GuestEngine.Proroot, reason)
+
+    /**
+     * A launch of [engine] that failed **before producing a result**, counted against that
+     * engine's own streak.
+     *
+     * Per engine because the switches are independent: three bxroot failures must not spend
+     * the proroot switch's credit, and vice versa. The sentence keeps the engine's name so a
+     * log reader can tell the two counters apart without knowing which switch was on.
+     */
+    fun recordFailure(engine: GuestEngine, reason: String) {
         val store = prefs ?: return
-        val next = RuntimeChoice.afterFailure(store.prorootFailures)
-        store.setProrootFailures(next)
-        Log.w(TAG, "proroot 启动失败（$next/${RuntimeChoice.MAX_CONSECUTIVE_FAILURES}）：$reason")
+        if (!engine.usesOptInPlumbing) return
+        val next = RuntimeChoice.afterFailure(store.failures(engine))
+        store.setFailures(engine, next)
+        Log.w(TAG, "${engine.name.lowercase()} 启动失败（$next/${RuntimeChoice.MAX_CONSECUTIVE_FAILURES}）：$reason")
         if (RuntimeChoice.exhausted(next)) {
             // The "tell the user" half of DSH App's contract. The reachable surfaces
             // are the settings row (its summary reads `status()`), the diagnostic
             // report, and this log line: there is no toast channel inside the app
             // process, and inventing one would need the chat/session layer this
             // change deliberately does not touch.
-            Log.w(TAG, "proroot 已连续失败 $next 次，强制回退 proot；用户重新打开开关可清零重试")
+            Log.w(
+                TAG,
+                "${engine.name.lowercase()} 已连续失败 $next 次，强制回退 proot；用户重新打开开关可清零重试",
+            )
         }
     }
 
     /** A proroot launch that worked. Clears the streak — it is *consecutive*. */
-    fun recordProrootSuccess() {
+    fun recordProrootSuccess() = recordSuccess(GuestEngine.Proroot)
+
+    /** An opt-in launch that worked: clears **that engine's** streak, and only its own. */
+    fun recordSuccess(engine: GuestEngine) {
         val store = prefs ?: return
-        if (store.prorootFailures != 0) store.setProrootFailures(0)
+        if (!engine.usesOptInPlumbing) return
+        if (store.failures(engine) != 0) store.setFailures(engine, 0)
     }
 
     /**
@@ -385,17 +476,17 @@ class RuntimeSelection(
      * boot — finds the cached verdict. Nothing is skipped and nothing is decided on a
      * guess: the gate still has to pass before proroot is ever used.
      */
-    private fun gate(storage: File?): ProrootProbe.Verdict {
+    private fun gate(storage: File?, engine: GuestEngine = GuestEngine.Proroot): ProrootProbe.Verdict {
         val revision = revision()
-        val digest = runCatching { ProrootProbe.digestOf(paths) }.getOrDefault("")
-        ProrootProbe.cached(paths, revision, digest)?.let { return it }
+        val digest = runCatching { ProrootProbe.digestOf(paths, engine) }.getOrDefault("")
+        ProrootProbe.cached(paths, revision, digest, engine)?.let { return it }
         // A missing digest means we could not even read the binaries; do not cache a
         // verdict that was never measured.
         if (digest.isEmpty()) {
             return ProrootProbe.Verdict(
                 passed = false,
                 key = "unknown",
-                detail = listOf("✗ 探针未运行：读不到 proroot 二进制"),
+                detail = listOf("✗ 探针未运行：读不到 ${engine.name.lowercase()} 二进制"),
                 cached = false,
             )
         }
@@ -414,12 +505,13 @@ class RuntimeSelection(
                             // can capture and reap the tree. The probe file itself stays
                             // Android-free; see `ProrootProbe.run`'s KDoc.
                             onTimeoutTree = GuestTreeReaper::reapTimeoutedProbe,
+                            engine = engine,
                         )
                         recordGateVerdict(verdict, key)
                     } finally {
                         probeInFlight.set(false)
                     }
-                }, "pi-proroot-gate").apply { isDaemon = true }.start()
+                }, "pi-" + engine.name.lowercase() + "-gate").apply { isDaemon = true }.start()
             }
             return ProrootProbe.Verdict(
                 passed = false,
@@ -440,6 +532,7 @@ class RuntimeSelection(
             // class's package, the probe is not, and there is no default that could silently
             // skip the reaping.
             onTimeoutTree = GuestTreeReaper::reapTimeoutedProbe,
+            engine = engine,
         )
         recordGateVerdict(verdict, verdict.key)
         return verdict

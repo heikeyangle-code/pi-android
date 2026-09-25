@@ -270,6 +270,7 @@ object GuestToolProbe {
         val launcher = when (engine) {
             GuestEngine.Proot -> paths.prootBinary()
             GuestEngine.Proroot -> paths.prorootLauncher()
+            GuestEngine.Bxroot -> paths.bxrootLauncher()
         }
         if (!paths.rootfs.isDirectory || !launcher.exists()) {
             return Report(
