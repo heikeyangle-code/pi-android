@@ -108,7 +108,7 @@ data class PiBuiltinExtension(
 
     companion object {
         /**
-         * Transcription of `app/src/main/assets/pi-extensions/` (8 files, 3 entries),
+         * Transcription of `app/src/main/assets/pi-extensions/` (9 files, 4 entries),
          * with the entry each one is discovered as. Keep this list in step with the
          * asset tree: it is the only record that these are the app's, and it is what
          * the UI labels a row from.
@@ -117,6 +117,9 @@ data class PiBuiltinExtension(
             PiBuiltinExtension("pi-android-bridge", "pi-android-bridge/index.ts"),
             PiBuiltinExtension("pi-android-permission-gate", "pi-android-permission-gate.ts"),
             PiBuiltinExtension("pi-highlight", "pi-highlight/index.ts"),
+            // 长任务不再占满工具调用：`bg_start` 立刻返回、完成时 `pi.sendMessage` 投一条
+            // 消息给模型（`docs/background-jobs.md`）。
+            PiBuiltinExtension("pi-background", "pi-background/index.ts"),
         )
     }
 }

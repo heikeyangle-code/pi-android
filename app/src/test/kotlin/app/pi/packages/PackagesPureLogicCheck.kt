@@ -413,11 +413,11 @@ fun main() {
     // (`package-manager.ts:2352-2362`, `:2470-2475`). So the shipped set is the
     // app's own transcription of `app/src/main/assets/pi-extensions/`, and these
     // checks pin what the UI labels a row from.
-    check("three extensions are shipped", PiBuiltinExtension.SHIPPED.size, 3)
+    check("four extensions are shipped", PiBuiltinExtension.SHIPPED.size, 4)
     check(
         "shipped names are the asset names",
         PiBuiltinExtension.SHIPPED.map { it.name },
-        listOf("pi-android-bridge", "pi-android-permission-gate", "pi-highlight"),
+        listOf("pi-android-bridge", "pi-android-permission-gate", "pi-highlight", "pi-background"),
     )
 
     // pi's discovery loads a subdirectory only through its index.ts
