@@ -122,8 +122,13 @@ object RuntimeSwitchAction {
      *
      * 关闭：没有东西可测，运行时由偏好直接决定，立刻重启引擎回到 proot。
      */
-    fun onWrite(nowEnabled: Boolean, engine: GuestEngine = GuestEngine.Proroot): Step =
-        if (nowEnabled) Step.Probing else Step.RestartingToProot
+    fun onWrite(nowEnabled: Boolean, engine: GuestEngine = GuestEngine.Proroot): Step = when {
+        // bxroot 没有探针门禁：开关打开就是「用它」，直接重启过去 —— 这一步不再有 10~60 秒
+        // 的等待，也不会有「测完发现没过、于是什么也没发生」这个落点。
+        nowEnabled && engine == GuestEngine.Bxroot -> Step.RestartingToBxroot
+        nowEnabled -> Step.Probing
+        else -> Step.RestartingToProot
+    }
 
     /**
      * 探针的结论落地之后，还要不要重启引擎。

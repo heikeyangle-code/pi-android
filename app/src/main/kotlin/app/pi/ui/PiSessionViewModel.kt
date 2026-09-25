@@ -1417,7 +1417,12 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         runtimeSwitchJob?.cancel()
         runtimeSwitchJob = viewModelScope.launch {
             _runtimeSwitch.value = RuntimeSwitchAction.onWrite(nowEnabled, engine)
-            if (nowEnabled) {
+            if (nowEnabled && engine == GuestEngine.Bxroot) {
+                // 没有探针：直接切。用户在设置里打开这个开关的意思就是「所有 guest 命令走它」，
+                // 没有任何中间态；万一这条路起不来，连续三次失败后照样退回 proot（状态行会写明）。
+                notifyUser("已打开 bxroot：正在重启引擎，把引擎、终端、工具与装包命令都切到新运行时。")
+                restartForRuntimeSwitch(generation, selection, prefs, nowEnabled = true, engine = engine)
+            } else if (nowEnabled) {
                 notifyUser("已打开运行时加速：正在这台设备上测 $label 探针（最长约 60 秒），通过后会立刻重启引擎。")
                 probeThenSwitch(generation, selection, prefs, engine)
             } else {

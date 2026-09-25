@@ -349,9 +349,15 @@ object RuntimeChoice {
      * the `proroot` harness's contract (`tools/run-app-pure-checks.sh`). Each answer is
      * still one sentence, and which one is in use is read off [EngineDecision.engine].
      *
+     * **No probe gate here, on purpose.** proroot's gate exists because that runtime is
+     * closed-source and its failure mode on a given device was unknown; bxroot is the
+     * open-source runtime the user opted into and asked to be *used*, so the switch means
+     * "use it", the way proot is simply used. `docs/bxroot-runtime.md` records the decision.
+     * The safety net stays: three consecutive launch failures fall back to proot, and the
+     * fallback is named on the status row.
+     *
      * @param enabled bxroot's own switch. **Off by default.**
      * @param filesPresent all five [BXROOT_REQUIRED_FILES] are in `nativeLibraryDir`.
-     * @param probePassed bxroot's gate passed at this revision + binary digest.
      * @param consecutiveFailures persisted count of bxroot launches that failed before
      *        doing anything. The streak is per engine: a bxroot that fails three times
      *        must not consume the proroot switch's credit.
@@ -359,12 +365,10 @@ object RuntimeChoice {
     fun decideBxroot(
         enabled: Boolean,
         filesPresent: Boolean,
-        probePassed: Boolean,
         consecutiveFailures: Int,
     ): EngineDecision = when {
         !enabled -> EngineDecision(GuestEngine.Proot, EngineFallback.BxrootSwitchOff)
         !filesPresent -> EngineDecision(GuestEngine.Proot, EngineFallback.RuntimeFilesMissing)
-        !probePassed -> EngineDecision(GuestEngine.Proot, EngineFallback.BxrootProbeNotPassed)
         consecutiveFailures >= MAX_CONSECUTIVE_FAILURES ->
             EngineDecision(GuestEngine.Proot, EngineFallback.BxrootFailureStreak)
 

@@ -202,24 +202,19 @@ class RuntimeSelection(
         // existed. Nothing here is consulted while bxroot's own switch is off, which is
         // the same "if it is not on, there is nothing to check" rule the proroot branch
         // states for itself.
+        // **No probe gate for bxroot** (2026-09-25): the switch means "use it", the way proot
+        // is simply used. Its five files are the only precondition, and the safety net is the
+        // same one proroot has — three consecutive launch failures fall back to proot.
+        // `docs/bxroot-runtime.md` records why the gate was removed.
         val bxrootEnabled = allowProroot && (prefs?.bxrootEnabled ?: false)
         val bxrootMissing = if (bxrootEnabled) paths.missingBxrootComponents() else emptyList()
         val bxrootFailures = prefs?.bxrootFailures ?: 0
-        var bxrootProbe: ProrootProbe.Verdict? = null
-        val bxrootProbePassed =
-            if (bxrootEnabled && bxrootMissing.isEmpty() && !RuntimeChoice.exhausted(bxrootFailures)) {
-                bxrootProbe = gate(storage, GuestEngine.Bxroot)
-                bxrootProbe.passed
-            } else {
-                false
-            }
         val bxrootDecision = if (!allowProroot) {
             EngineDecision(GuestEngine.Proot, EngineFallback.InstallPath)
         } else {
             RuntimeChoice.decideBxroot(
                 enabled = bxrootEnabled,
                 filesPresent = bxrootMissing.isEmpty(),
-                probePassed = bxrootProbePassed,
                 consecutiveFailures = bxrootFailures,
             )
         }
@@ -255,7 +250,7 @@ class RuntimeSelection(
         // The evidence the plan carries is the **winning** engine's: a summary that mixed
         // bxroot's probe lines with proroot's missing-file list would describe neither.
         val reportedMissing = if (bxrootWins) bxrootMissing else missing
-        val reportedProbe = if (bxrootWins) bxrootProbe else probe
+        val reportedProbe = if (bxrootWins) null else probe
         val reportedFailures = if (bxrootWins) bxrootFailures else failures
 
         // Only while proroot can actually launch. The sweep is the cleanup proroot's own
@@ -316,25 +311,14 @@ class RuntimeSelection(
         val bxrootEnabled = prefs?.bxrootEnabled ?: false
         val bxrootFailures = prefs?.bxrootFailures ?: 0
         val bxrootMissing = if (bxrootEnabled) paths.missingBxrootComponents() else emptyList()
-        val bxrootCached = if (bxrootEnabled && bxrootMissing.isEmpty()) {
-            runCatching {
-                ProrootProbe.cached(
-                    paths,
-                    revision(),
-                    ProrootProbe.digestOf(paths, GuestEngine.Bxroot),
-                    GuestEngine.Bxroot,
-                )
-            }.getOrNull()
-        } else {
-            null
-        }
+        // Reads exactly what `plan()` decides, gate included — and there is no gate for bxroot,
+        // so a status line that said "探针未通过" would be describing a measurement that is no
+        // longer taken. The switch, the five files and the failure streak are the whole answer.
         val bxrootDecision = when {
             !bxrootEnabled -> EngineDecision(GuestEngine.Proot, EngineFallback.BxrootSwitchOff)
             bxrootMissing.isNotEmpty() -> EngineDecision(GuestEngine.Proot, EngineFallback.RuntimeFilesMissing)
             RuntimeChoice.exhausted(bxrootFailures) ->
                 EngineDecision(GuestEngine.Proot, EngineFallback.BxrootFailureStreak)
-            bxrootCached == null -> EngineDecision(GuestEngine.Proot, EngineFallback.ProbeNotRun)
-            !bxrootCached.passed -> EngineDecision(GuestEngine.Proot, EngineFallback.BxrootProbeNotPassed)
             else -> EngineDecision(GuestEngine.Bxroot, EngineFallback.BxrootActive)
         }
         if (bxrootDecision.engine == GuestEngine.Bxroot) {
@@ -342,8 +326,8 @@ class RuntimeSelection(
                 enabled = bxrootEnabled,
                 failures = bxrootFailures,
                 missingComponents = bxrootMissing,
-                probePassed = bxrootCached?.passed,
-                probeDetail = bxrootCached?.detail.orEmpty(),
+                probePassed = null,
+                probeDetail = emptyList(),
                 engine = GuestEngine.Bxroot,
                 fallback = EngineFallback.BxrootActive,
             )

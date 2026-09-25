@@ -23,9 +23,14 @@ bxroot 是一个开源（MIT）的容器运行时，与本项目已有的两个�
 本实现是**两个互相独立的开关**，而不是一个三选一的单选：
 
 - 两个都关 → proot（默认）
-- 只开 bxroot → bxroot（探针通过时）；没通过 → proot
+- 只开 bxroot → **bxroot**（不做探针：开关打开就是「用它」）
 - 只开 proroot → proroot（探针通过时）；没通过 → proot
-- 两个都开 → **bxroot 优先**；它没过门禁就完整退回原来的 proroot 路径
+- 两个都开 → **bxroot**；bxroot 的五个文件缺失或连续三次启动失败时，退回 proroot 那套路径
+
+**bxroot 没有探针门禁**（2026-09-25，用户明确要求）：proroot 的门禁存在是因为那是一个闭源
+运行时、它在某台设备上到底行不行事先不知道；bxroot 是开源运行时，用户打开开关的意思就是
+「所有 guest 命令走它」——和 proot 一样是直接用。兜底仍然是 proroot 那一套：连续三次启动
+失败退回 proot，并在「运行时（实际生效）」那一行写明原因。
 
 `RuntimeSelection.plan()`/`status()` 里 bxroot 先问、proroot 后问；`RuntimeChoice` 的
 每条理由都写明是哪一个运行时（`EngineFallback.BxrootSwitchOff` 与 `SwitchOff` 是两个值，
@@ -73,14 +78,11 @@ libbxroot.so --link2symlink -0 -r <rootfs> -w <cwd> -b <host>:<guest>… /bin/ba
 - 五个产物的 LOAD 段按 `0x4000`（16KB）对齐，满足 Android 15+ 16KB 页设备的要求。
 - MIT 许可与署名：`app/src/main/assets/licenses/bxroot-MIT.txt`。
 
-## 探针
+## 没有探针
 
-复用 `ProrootProbe` 的三个阶段（裸 syscall 路径翻译、工具链二进制、引擎类二进制），只把
-引擎、摘要与缓存文件换成 bxroot 的：摘要按 `RuntimeChoice.BXROOT_REQUIRED_FILES` 计算，
-结论写在 `<runtime>/.bxroot-probe`（与 proroot 的 `.proroot-probe` 分开）。
-
-**已知的措辞缺口**：探针与自检里少数面向用户的句子仍然写「proroot」（它们来自 proroot
-那一套叙事），bxroot 触发时会显示同一个句子。行为正确，措辞待改。
+`ProrootProbe` 的引擎参数化与 `.bxroot-probe` 缓存留着（proroot 那条路仍在用，且将来要重新
+加门禁时不必重写），但 **bxroot 的开关不跑它**：`RuntimeChoice.decideBxroot` 只问三件事 ——
+开关、五个文件在不在、连续失败计数。
 
 ## 验证状态
 
