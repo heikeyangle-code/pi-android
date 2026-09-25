@@ -436,6 +436,9 @@ class PiPaths(private val filesDir: File, private val nativeLibDir: File) {
      */
     fun bxrootProbeCache(): File = File(runtime, ".bxroot-probe")
 
+    /** [clearProrootProbeCache] for the second opt-in engine; same contract. */
+    fun clearBxrootProbeCache(): Boolean = bxrootProbeCache().delete()
+
     /**
      * Throw the cached verdict away so the next proroot launch re-runs the gate.
      *

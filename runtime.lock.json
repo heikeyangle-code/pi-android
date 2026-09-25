@@ -139,6 +139,31 @@
 			"url": "https://github.com/coderredlab/proroot/releases/download/v1.2.8/libproroot-stub-loader.so",
 			"sha256": "06c6624db3bdc45b9ced151cd781df439a37b47731d244b93e9d6a58cd48cde0",
 			"why": "proroot's static/static-pie and execve routing loader; optional upstream, enabled adaptively when the file is present"
+		},
+		"bxrootLauncher": {
+			"url": "https://github.com/qiannianhuanxiang/bxroot/archive/5c143864b0f36f42b79808547e39e57da688db68.tar.gz#libbxroot.so",
+			"sha256": "7d354cba519f8e45318915e9d70234969fa2bc56f8f11e5baedd4eed2b7f415b",
+			"why": "bxroot's launcher/CLI — the one file Android execve()s. Static ET_EXEC with no PT_INTERP, so Android 10+ can exec it straight out of nativeLibraryDir. MIT; built from 5c143864b0f36f42b79808547e39e57da688db68"
+		},
+		"bxrootRuntime": {
+			"url": "https://github.com/qiannianhuanxiang/bxroot/archive/5c143864b0f36f42b79808547e39e57da688db68.tar.gz#libbxroot-runtime.so",
+			"sha256": "295b3c84b206c04085883ce7ff4137862d32497c06e952e0bc82d43afef95925",
+			"why": "bxroot's in-process hook (LD_PRELOAD semantics): path translation, fake id0, /proc synthesis"
+		},
+		"bxrootLinker": {
+			"url": "https://github.com/qiannianhuanxiang/bxroot/archive/5c143864b0f36f42b79808547e39e57da688db68.tar.gz#libbxroot-linker.so",
+			"sha256": "b6e2d80d4ebc6b043e38f0086a4a725c62d1517735f193841e115e6ff7cf3607",
+			"why": "bxroot's ELF interpreter for guest binaries"
+		},
+		"bxrootBridge": {
+			"url": "https://github.com/qiannianhuanxiang/bxroot/archive/5c143864b0f36f42b79808547e39e57da688db68.tar.gz#libbxroot-bridge.so",
+			"sha256": "8ce489307411d56b06640449baa51b9ea882064cb706be7ded6b1cedef4053be",
+			"why": "bxroot's host/guest bridge"
+		},
+		"bxrootStubLoader": {
+			"url": "https://github.com/qiannianhuanxiang/bxroot/archive/5c143864b0f36f42b79808547e39e57da688db68.tar.gz#libbxroot-stub-loader.so",
+			"sha256": "3d2bc84a99ad5c6512783f44f475447c32f4cc58a42341232aa9b4667a19b78b",
+			"why": "bxroot's static/static-pie and execve routing loader (adds PT_INTERP to static guest binaries)"
 		}
 	}
 }

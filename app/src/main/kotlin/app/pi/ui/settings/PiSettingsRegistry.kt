@@ -1347,6 +1347,23 @@ object PiSettingsCatalog {
             effective = EffectiveKind.AutoRestartEngine,
             aliases = listOf("proroot", "proot", "runtime", "engine", "加速", "运行时"),
         ),
+        // 第二个运行时开关：**与上面那个开关并列、互不影响**（`docs/bxroot-runtime.md`）。
+        // 两个开关都打开时引擎用 bxroot；它探针没过就完整退回原来的 proroot 路径，所以这一行
+        // 的失败不会动另一个开关的状态。
+        PiSetting(
+            key = "app.runtime.bxroot",
+            title = "运行时加速（开源运行时 bxroot）",
+            description = "用开源（MIT）运行时 bxroot 代替 proot 执行引擎、终端、工具与装包命令；" +
+                "装机与维护始终走 proot。与上面那个开关相互独立：两个都打开时用 bxroot，" +
+                "bxroot 探针没通过就继续用 proroot 或 proot（原因见下一行）。" +
+                "默认关闭，打开后当场跑一次探针，通过就自动重启引擎切过去。",
+            kind = PiRowKind.Switch,
+            group = G_RUNTIME,
+            section = "运行时选择",
+            defaultValue = bool(false),
+            effective = EffectiveKind.AutoRestartEngine,
+            aliases = listOf("bxroot", "proroot", "proot", "runtime", "engine", "加速", "运行时", "开源"),
+        ),
         PiSetting(
             key = "app.runtime.prorootStatus",
             title = "运行时（实际生效）",

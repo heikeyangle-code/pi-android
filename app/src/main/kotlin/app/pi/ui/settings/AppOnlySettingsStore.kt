@@ -80,6 +80,7 @@ class AppOnlySettingsStore(
 
     override fun read(key: String): JsonElement? = when (key) {
         KEY_PROROOT -> JsonPrimitive(runtime.prorootEnabled)
+        KEY_BXROOT -> JsonPrimitive(runtime.bxrootEnabled)
         KEY_STATUS -> JsonPrimitive(runtimeStatus)
         else -> base.read(key)
     }
@@ -87,6 +88,7 @@ class AppOnlySettingsStore(
     override fun write(key: String, value: JsonElement) {
         when (key) {
             KEY_PROROOT -> runtime.setProrootEnabled(value.boolValue(false))
+            KEY_BXROOT -> runtime.setBxrootEnabled(value.boolValue(false))
             // A derived value has no writer. The row is `readOnly`, so nothing should
             // reach here; swallowing it keeps a future editor from writing a sentence
             // into pi's settings.json under a key the app would then ignore.
@@ -106,6 +108,7 @@ class AppOnlySettingsStore(
     override fun remove(key: String) {
         when (key) {
             KEY_PROROOT -> runtime.setProrootEnabled(false)
+            KEY_BXROOT -> runtime.setBxrootEnabled(false)
             KEY_STATUS -> Unit
             else -> base.remove(key)
         }
@@ -114,6 +117,13 @@ class AppOnlySettingsStore(
     companion object {
         /** The switch. App-only; see the class KDoc. */
         const val KEY_PROROOT = "app.runtime.proroot"
+
+        /**
+         * The **second** runtime switch (`docs/bxroot-runtime.md`). App-only for the same
+         * reason as [KEY_PROROOT]: it selects which binary launches the guest, before pi
+         * exists, so pi has no reader for it.
+         */
+        const val KEY_BXROOT = "app.runtime.bxroot"
 
         /** The effective runtime and the fallback reason. Derived, read-only. */
         const val KEY_STATUS = "app.runtime.prorootStatus"

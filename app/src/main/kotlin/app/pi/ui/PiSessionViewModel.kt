@@ -38,6 +38,7 @@ import app.pi.runtime.PiProjectConfig
 import app.pi.runtime.PtyLauncher
 import app.pi.runtime.RuntimePreferences
 import app.pi.runtime.RuntimeProvisioner
+import app.pi.runtime.GuestEngine
 import app.pi.runtime.RuntimeSelection
 import app.pi.runtime.WorkspaceStore
 import app.pi.session.PiSessionStore
@@ -1348,7 +1349,13 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         if (key == AppOnlySettingsStore.KEY_PROROOT) {
             // 开关当场生效：清结论（写入本身已经做了）→ 现在跑探针 → 通过就当场重启引擎。
             // 见 [applyRuntimeSwitch] 与 `RuntimeSwitchAction`。
-            applyRuntimeSwitch()
+            applyRuntimeSwitch(GuestEngine.Proroot)
+        }
+        if (key == AppOnlySettingsStore.KEY_BXROOT) {
+            // 第二个开关：完全同一条路，只是换成 bxroot 那一套（自己的偏好键、自己的探针
+            // 缓存、自己的失败计数）。两个开关互不影响：bxroot 探针没过时 proroot 的开关
+            // 原样不动，`RuntimeSelection` 会照旧走 proroot。
+            applyRuntimeSwitch(GuestEngine.Bxroot)
         }
     }
 
@@ -1392,11 +1399,16 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * （`RuntimeSelection.setProrootEnabled` → `ProrootRetry`），也就是「关掉再打开＝重试
      * 一次」那件事 —— 这个改动把它从「下一次启动 guest 时重测」变成「现在重测、现在切换」。
      */
-    private fun applyRuntimeSwitch() {
+    /** 开关名字的两个拼写，只用于通知文案；判定一律用 [GuestEngine]。 */
+    private fun runtimeLabel(engine: GuestEngine): String =
+        if (engine == GuestEngine.Bxroot) "bxroot" else "proroot"
+
+    private fun applyRuntimeSwitch(engine: GuestEngine) {
         val context = getApplication<Application>()
         val prefs = RuntimePreferences.get(context)
         val selection = RuntimeSelection.of(context, host.paths())
-        val nowEnabled = prefs.prorootEnabled
+        val nowEnabled = prefs.enabled(engine)
+        val label = runtimeLabel(engine)
         val generation = ++runtimeSwitchGeneration
         // 用户可以在探针跑着的时候把开关拨回去。上一次切换停在挂起点上被取消，这一次写入
         // 自己的流程接管屏幕上的状态。探针是阻塞调用（`Process.waitFor`），取消不会把它
@@ -1404,13 +1416,13 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         // 能再去重启引擎。
         runtimeSwitchJob?.cancel()
         runtimeSwitchJob = viewModelScope.launch {
-            _runtimeSwitch.value = RuntimeSwitchAction.onWrite(nowEnabled)
+            _runtimeSwitch.value = RuntimeSwitchAction.onWrite(nowEnabled, engine)
             if (nowEnabled) {
-                notifyUser("已打开运行时加速：正在这台设备上测 proroot 探针（最长约 60 秒），通过后会立刻重启引擎。")
-                probeThenSwitch(generation, selection, prefs)
+                notifyUser("已打开运行时加速：正在这台设备上测 $label 探针（最长约 60 秒），通过后会立刻重启引擎。")
+                probeThenSwitch(generation, selection, prefs, engine)
             } else {
                 notifyUser("已关闭运行时加速：正在重启引擎，把运行时换回 proot。")
-                restartForRuntimeSwitch(generation, selection, prefs, nowEnabled = false)
+                restartForRuntimeSwitch(generation, selection, prefs, nowEnabled = false, engine = engine)
             }
         }
     }
@@ -1429,7 +1441,9 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         generation: Int,
         selection: RuntimeSelection,
         prefs: RuntimePreferences,
+        engine: GuestEngine,
     ) {
+        val label = runtimeLabel(engine)
         val plan = withContext(Dispatchers.IO) {
             runCatching {
                 selection.plan(
@@ -1449,11 +1463,14 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             // 结论：状态行会显示 `RuntimeSelection.status()` 的真实读数（多半是「探针尚未
             // 运行」），通知只说这里测不成。
             _runtimeSwitch.value = RuntimeSwitchAction.Step.Idle
-            notifyUser("proroot 探针没能跑完：仍然走 proot。稍后再拨一次这个开关可以重测。", warning = true)
+            notifyUser("$label 探针没能跑完：仍然走 proot。稍后再拨一次这个开关可以重测。", warning = true)
             return
         }
-        _runtimeSwitch.value = RuntimeSwitchAction.afterProbe(prefs.prorootEnabled, plan.usingProroot)
-        if (!plan.usingProroot) {
+        // 「这次写入要的东西真的生效了吗」= 引擎此刻会不会用我刚打开的那个运行时。判据是
+        // `plan.engine`，不是另一个开关的状态：两个开关可以同时打开，而引擎只能是一个。
+        val effective = plan.engine == engine
+        _runtimeSwitch.value = RuntimeSwitchAction.afterProbe(prefs.enabled(engine), effective, engine)
+        if (!effective) {
             // 探针没通过（或运行时文件缺失）：引擎本来就在 proot 上，重启它只是白打断一个
             // 回合。原因用**状态行接下来要显示的那一句**说——`status()` 读的就是刚写下的
             // 缓存结论，所以通知与那一行不会各说一套（`plan.summary` 是同一份证据的即时
@@ -1462,7 +1479,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                 runCatching { selection.status() }.getOrNull()?.summary
             }
             notifyUser(
-                "没有切换到 proroot。实际生效：${rowSentence ?: plan.summary}——" +
+                "没有切换到 $label。实际生效：${rowSentence ?: plan.summary}——" +
                     "逐阶段记录在「运行时（实际生效）」那一行下面。",
                 warning = true,
             )
@@ -1485,17 +1502,23 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         selection: RuntimeSelection,
         prefs: RuntimePreferences,
         nowEnabled: Boolean,
+        engine: GuestEngine = GuestEngine.Proroot,
     ) {
+        val label = runtimeLabel(engine)
         _runtimeSwitch.value = if (nowEnabled) {
-            RuntimeSwitchAction.Step.RestartingToProroot
+            if (engine == GuestEngine.Bxroot) {
+                RuntimeSwitchAction.Step.RestartingToBxroot
+            } else {
+                RuntimeSwitchAction.Step.RestartingToProroot
+            }
         } else {
             RuntimeSwitchAction.Step.RestartingToProot
         }
         val outcome = restartEngine(
             reason = if (nowEnabled) {
-                "在设置里打开了运行时加速（proroot）"
+                "在设置里打开了运行时加速（$label）"
             } else {
-                "在设置里关掉了运行时加速（proroot）"
+                "在设置里关掉了运行时加速（$label）"
             },
             // **方向**决定能不能打断正在跑的回合，判定在 `RuntimeSwitchAction.allowInterrupt`
             // （纯函数，harness 钉住）：关掉时必须当场落地（用户的裁决「关闭就简单关闭重启
@@ -1513,23 +1536,23 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         // 开关最终持有哪个值，由纯函数定；这里只负责把它写下去 —— 不再自己判一次方向，
         // 那正是「关掉被回滚成开」的写法（`settle` 的 KDoc 记着这次的证据）。
         val finalEnabled = RuntimeSwitchAction.settle(nowEnabled, result)
-        if (prefs.prorootEnabled != finalEnabled) {
+        if (prefs.enabled(engine) != finalEnabled) {
             if (finalEnabled) {
                 // 回到「开」：只写偏好，**不删缓存的探针结论**。设置页那条写法
                 // （`RuntimeSelection.setProrootEnabled(true)`）会把结论当成「再试一次」删掉，
                 // 于是状态行会在引擎明明还在跑 proroot 的时候说「探针尚未运行」—— 一句真的
                 // 假话。结论描述的是这台机器，不是这个开关。
-                prefs.setProrootEnabled(true)
+                prefs.setEnabled(engine, true)
             } else {
                 // 回到「关」：与设置页同一条写法。开关一关，每条启动路径都按 proot 走
                 // （`RuntimeChoice.decide` 的第一条就是开关），失败计数清零、结论保留。
-                selection.setProrootEnabled(false)
+                selection.setEnabled(engine, false)
             }
         }
         _runtimeSwitch.value = RuntimeSwitchAction.Step.Idle
         val message = when (outcome) {
             is EngineRestartCoordinator.Outcome.Ok -> if (nowEnabled) {
-                "引擎已在 proroot 上重启，运行时加速已生效。"
+                "引擎已在 $label 上重启，运行时加速已生效。"
             } else {
                 "引擎已按 proot 重启，运行时加速已关闭。"
             }
@@ -1538,14 +1561,14 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             // 只剩「运行时需要按载荷更新」那一类拒绝；这句话说的是当时的**真事**：开关已经关了
             // （用户写下的值保留），但引擎这一次没能重启，所以它还在原来的运行时上跑。
             is EngineRestartCoordinator.Outcome.Refused -> outcome.message + if (nowEnabled) {
-                "开关已退回关闭：等这一段跑完再打开，就能切到 proroot。"
+                "开关已退回关闭：等这一段跑完再打开，就能切到 $label。"
             } else {
                 "开关已关闭并会保持关闭；引擎这一次没有重启成功，所以它还在原来的运行时上跑，" +
                     "下一次重启引擎（或重开 App）就会走 proot。"
             }
 
             is EngineRestartCoordinator.Outcome.Failed -> outcome.message + if (nowEnabled) {
-                "探针已经通过，下次启动引擎时会用 proroot。"
+                "探针已经通过，下次启动引擎时会用 $label。"
             } else {
                 "开关已关闭；下次启动引擎时会走 proot。"
             }

@@ -1,5 +1,7 @@
 package app.pi.ui.settings
 
+import app.pi.runtime.GuestEngine
+
 /**
  * 「运行时加速（实验性）」开关写完之后，**接下来该做什么**——这条判定本身。
  *
@@ -53,7 +55,8 @@ package app.pi.ui.settings
  * 没有「恢复默认」那条 `remove` 路径），所以「刚写完的值」与「写入前的值」必然互补。
  * `RuntimeSwitchActionCheck` 把这条互补关系逐值钉住。
  *
- * Android-free：只有 Kotlin stdlib，没有 import。
+ * Android-free：只有 Kotlin stdlib 加一个 [GuestEngine]（`app.pi.runtime`，同样是
+ * Android-free 的纯枚举），没有别的 import。
  */
 object RuntimeSwitchAction {
 
@@ -76,6 +79,9 @@ object RuntimeSwitchAction {
 
         /** 现在把引擎重启到 proroot。 */
         RestartingToProroot(true),
+
+        /** 现在把引擎重启到 bxroot（第二个开关打开且探针通过）。 */
+        RestartingToBxroot(true),
     }
 
     /**
@@ -113,7 +119,7 @@ object RuntimeSwitchAction {
      *
      * 关闭：没有东西可测，运行时由偏好直接决定，立刻重启引擎回到 proot。
      */
-    fun onWrite(nowEnabled: Boolean): Step =
+    fun onWrite(nowEnabled: Boolean, engine: GuestEngine = GuestEngine.Proroot): Step =
         if (nowEnabled) Step.Probing else Step.RestartingToProot
 
     /**
@@ -126,10 +132,14 @@ object RuntimeSwitchAction {
      * @param probePassed 门禁的结论。**只有它**能决定是否用 proroot：不是「文件在」，
      *        也不是「开关开着」——`RuntimeChoice.probeGate` 的三段测量缺一不可。
      */
-    fun afterProbe(nowEnabled: Boolean, probePassed: Boolean): Step = when {
+    fun afterProbe(
+        nowEnabled: Boolean,
+        probePassed: Boolean,
+        engine: GuestEngine = GuestEngine.Proroot,
+    ): Step = when {
         // 过期：开关已经不是这次写入的那个值了。
         !nowEnabled -> Step.Idle
-        probePassed -> Step.RestartingToProroot
+        probePassed -> if (engine == GuestEngine.Bxroot) Step.RestartingToBxroot else Step.RestartingToProroot
         // 没通过：引擎本来就在 proot 上，重启是白打断；原因交给状态行与通知。
         else -> Step.Idle
     }

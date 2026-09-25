@@ -418,6 +418,36 @@ class RuntimeSelection(
     }
 
     /**
+     * [setProrootEnabled] for the second opt-in engine: write the switch and, when it goes
+     * **on**, delete bxroot's own cached verdict so the retry is a real retry.
+     *
+     * Deliberately not `setProrootEnabled(engine == Proroot && enabled)`: touching the other
+     * engine's switch here would make one row's write change the other row's state, which is
+     * the "switch says one thing, engine does another" shape both of these switches exist
+     * to avoid.
+     */
+    fun setBxrootEnabled(enabled: Boolean) {
+        var removed = false
+        ProrootRetry.apply(
+            nowEnabled = enabled,
+            resetFailures = { prefs?.setBxrootEnabled(enabled) },
+            invalidateProbeCache = {
+                removed = runCatching { paths.clearBxrootProbeCache() }.getOrDefault(false)
+                removed
+            },
+        )
+        if (enabled) {
+            Log.i(TAG, if (removed) "bxroot 开关重新打开：已删除探针缓存" else "bxroot 开关重新打开：没有探针缓存需要删除")
+        }
+    }
+
+    /** Write the switch of [engine]; the settings row and the switch action both use this. */
+    fun setEnabled(engine: GuestEngine, enabled: Boolean) = when (engine) {
+        GuestEngine.Bxroot -> setBxrootEnabled(enabled)
+        else -> setProrootEnabled(enabled)
+    }
+
+    /**
      * Delete the config tables of launches whose process is gone, and cut the
      * directory back to [ProrootConfigSweep.DEFAULT_LIMIT] if it is still over.
      *

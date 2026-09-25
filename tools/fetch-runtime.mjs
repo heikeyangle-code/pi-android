@@ -511,6 +511,45 @@ const ARTIFACTS = {
     sha256: "06c6624db3bdc45b9ced151cd781df439a37b47731d244b93e9d6a58cd48cde0",
     why: "proroot's static/static-pie and execve routing loader; optional upstream, enabled adaptively when the file is present",
   },
+  // ---------------------------------------------------------------- bxroot
+  // The third runtime (optional, on its own switch). Unlike proroot there is **no
+  // upstream release to download**: the artifacts are built from a pinned commit of
+  // https://github.com/qiannianhuanxiang/bxroot, and the digests below are the ones that build produces
+  // on this project's toolchain (gcc 13.3, aarch64). `stageBxroot` therefore prefers
+  // the bytes already in jniLibs when their digests match, and otherwise builds from a
+  // local checkout — a fresh compile cannot be byte-identical across compilers, so a
+  // digest mismatch there is reported with both values rather than silently accepted.
+  // Licence: MIT; see assets/licenses/bxroot-MIT.txt.
+  bxrootLauncher: {
+    url: `${BXROOT_SOURCE}/archive/${BXROOT_COMMIT}.tar.gz#libbxroot.so`,
+    kind: "so",
+    sha256: "7d354cba519f8e45318915e9d70234969fa2bc56f8f11e5baedd4eed2b7f415b",
+    why: "bxroot's launcher/CLI — the one file Android execve()s. Static ET_EXEC with no PT_INTERP, so Android 10+ can exec it straight out of nativeLibraryDir. MIT; built from 5c143864b0f36f42b79808547e39e57da688db68",
+  },
+  bxrootRuntime: {
+    url: `${BXROOT_SOURCE}/archive/${BXROOT_COMMIT}.tar.gz#libbxroot-runtime.so`,
+    kind: "so",
+    sha256: "295b3c84b206c04085883ce7ff4137862d32497c06e952e0bc82d43afef95925",
+    why: "bxroot's in-process hook (LD_PRELOAD semantics): path translation, fake id0, /proc synthesis",
+  },
+  bxrootLinker: {
+    url: `${BXROOT_SOURCE}/archive/${BXROOT_COMMIT}.tar.gz#libbxroot-linker.so`,
+    kind: "so",
+    sha256: "b6e2d80d4ebc6b043e38f0086a4a725c62d1517735f193841e115e6ff7cf3607",
+    why: "bxroot's ELF interpreter for guest binaries",
+  },
+  bxrootBridge: {
+    url: `${BXROOT_SOURCE}/archive/${BXROOT_COMMIT}.tar.gz#libbxroot-bridge.so`,
+    kind: "so",
+    sha256: "8ce489307411d56b06640449baa51b9ea882064cb706be7ded6b1cedef4053be",
+    why: "bxroot's host/guest bridge",
+  },
+  bxrootStubLoader: {
+    url: `${BXROOT_SOURCE}/archive/${BXROOT_COMMIT}.tar.gz#libbxroot-stub-loader.so`,
+    kind: "so",
+    sha256: "3d2bc84a99ad5c6512783f44f475447c32f4cc58a42341232aa9b4667a19b78b",
+    why: "bxroot's static/static-pie and execve routing loader (adds PT_INTERP to static guest binaries)",
+  },
 };
 
 /**
@@ -620,6 +659,24 @@ const JNI_PAYLOAD = [
  * apply. Requiring PIE of all five made the equivalent check fail on a correct
  * payload once already; see `verifyElfDisguise`.
  */
+/** The commit the five bxroot digests above were produced from. */
+const BXROOT_COMMIT = "5c143864b0f36f42b79808547e39e57da688db68";
+const BXROOT_SOURCE = "https://github.com/qiannianhuanxiang/bxroot";
+
+/**
+ * bxroot's five binaries and where they land. `interpreter: null` for **all five**,
+ * including the launcher: `libbxroot.so` is a static `ET_EXEC` with no `PT_INTERP`, so
+ * it needs no linker disguise to be exec'd from `nativeLibraryDir` (the proroot
+ * launcher does, which is why its entry names `/system/bin/linker64`).
+ */
+const BXROOT_JNI_PAYLOAD = [
+  { name: "bxrootLauncher", to: "libbxroot.so", interpreter: null },
+  { name: "bxrootRuntime", to: "libbxroot-runtime.so", interpreter: null },
+  { name: "bxrootLinker", to: "libbxroot-linker.so", interpreter: null },
+  { name: "bxrootBridge", to: "libbxroot-bridge.so", interpreter: null },
+  { name: "bxrootStubLoader", to: "libbxroot-stub-loader.so", interpreter: null },
+];
+
 const PROROOT_JNI_PAYLOAD = [
   { name: "prorootLauncher", to: "libproroot.so", interpreter: "/system/bin/linker64" },
   { name: "prorootRuntime", to: "libproroot-runtime.so", interpreter: null },
@@ -661,6 +718,74 @@ function verifyElfDisguise(path, expectedInterpreter) {
 
 function sha256(path) {
   return createHash("sha256").update(readFileSync(path)).digest("hex");
+}
+
+/**
+ * Land bxroot's five binaries in `jniLibs`, or explain exactly what to do.
+ *
+ * Unlike every other artifact here there is **no release to fetch**: bxroot publishes
+ * source. So the rule is
+ *
+ *   1. the five files are already in `jniLibs` and hash to the pinned digests → done
+ *      (this is the ordinary path in CI, where the APK's copy is what was reviewed);
+ *   2. otherwise `BXROOT_SRC` (or `--bxroot=<dir>`) names a bxroot checkout → build it
+ *      (`make CC=gcc BUILD_DIR=build`) and verify the digests;
+ *   3. otherwise fail loudly with the two ways to fix it.
+ *
+ * Step 2 cannot promise a match: a different compiler produces different bytes for the
+ * same source, so a mismatch prints both digests instead of pretending. The digests in
+ * `runtime.lock.json` are from this project's toolchain (gcc 13.3, aarch64) and are the
+ * ones to update deliberately after a toolchain change.
+ */
+function stageBxroot() {
+  const pinned = BXROOT_JNI_PAYLOAD.map((item) => {
+    const spec = ARTIFACTS[item.name];
+    if (!spec) throw new Error(`BXROOT_JNI_PAYLOAD names ${item.name}, which is not in ARTIFACTS`);
+    return { ...item, sha256: spec.sha256 };
+  });
+  const allPresent = () => pinned.every((i) => existsSync(join(JNI, i.to)) && sha256(join(JNI, i.to)) === i.sha256);
+  const report = () => {
+    for (const item of pinned) {
+      const dst = join(JNI, item.to);
+      const kib = (statSync(dst).size / 1024).toFixed(1);
+      console.log(`  ${item.to.padEnd(26)} ${kib.padStart(8)} KiB  ok`);
+    }
+  };
+  if (allPresent()) {
+    report();
+    return;
+  }
+  const source = process.env.BXROOT_SRC
+    || (process.argv.find((a) => a.startsWith("--bxroot=")) || "").slice("--bxroot=".length)
+    || null;
+  if (!source || !existsSync(join(source, "Makefile"))) {
+    throw new Error(
+      "bxroot's five binaries are not in jniLibs and no source checkout was named.\n" +
+      "  Either restore the reviewed bytes, or build them from source:\n" +
+      `    git clone ${BXROOT_SOURCE} && git -C bxroot checkout ${BXROOT_COMMIT}\n` +
+      "    BXROOT_SRC=$(pwd)/bxroot node tools/fetch-runtime.mjs",
+    );
+  }
+  const build = join(source, "build");
+  mkdirSync(build, { recursive: true });
+  const made = spawnSync("make", ["CC=gcc", `BUILD_DIR=${build}`], { cwd: source, stdio: "inherit" });
+  if (made.status !== 0) throw new Error(`make in ${source} exited ${made.status}`);
+  for (const item of pinned) {
+    const from = join(build, item.to);
+    if (!existsSync(from)) throw new Error(`${item.to} was not produced by the build in ${source}`);
+    const digest = sha256(from);
+    const dst = join(JNI, item.to);
+    writeFileSync(dst, readFileSync(from));
+    if (digest !== item.sha256) {
+      console.log(
+        `  ${item.to.padEnd(26)} built, digest differs from the pinned one\n` +
+        `      pinned ${item.sha256}\n      built  ${digest}\n` +
+        "      A different toolchain produces different bytes. Verify the binary behaves, then\n" +
+        "      update the sha256 in ARTIFACTS and runtime.lock.json deliberately.",
+      );
+    }
+    verifyElfDisguise(dst, item.interpreter);
+  }
 }
 
 function download(url, dest) {
@@ -937,7 +1062,14 @@ function main() {
     const kib = (statSync(dst).size / 1024).toFixed(1);
     console.log(`  ${item.to.padEnd(24)} ${kib.padStart(8)} KiB  ok`);
   }
-  console.log(`  (proroot ${PROROOT_VERSION}; not wired into argv/env — nothing executes these yet)`);
+  console.log(`  (proroot ${PROROOT_VERSION})`);
+
+  // 2c. bxroot's five binaries -> jniLibs. There is no upstream release to download:
+  //     the pinned digests are what a build of BXROOT_COMMIT produces, so bytes already
+  //     in jniLibs win when they match, and otherwise a local checkout is built.
+  console.log("\njniLibs (bxroot):");
+  stageBxroot();
+  console.log(`  (bxroot @ ${BXROOT_COMMIT.slice(0, 8)}, MIT — see assets/licenses/bxroot-MIT.txt)`);
 
   // 3. Userland payloads stay compressed in assets; the app unpacks them on
   //    first launch into <files>/pi/runtime (volatile) and <files>/pi/pi (kept).
