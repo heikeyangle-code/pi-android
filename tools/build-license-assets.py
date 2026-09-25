@@ -181,6 +181,18 @@ JETBRAINS_MONO_LICENCE_SHA256 = "30f0c136e3c88e422d0791acd97238870f9054a9729bc34
 JETBRAINS_MONO_LICENCE_OUT = "JetBrainsMono-OFL-1.1.txt"
 JETBRAINS_MONO_LICENCE_TITLE = f"JetBrains Mono {JETBRAINS_MONO_VERSION}（OFL-1.1）"
 
+# bxroot — the optional third runtime. Its five binaries live in
+# `app/src/main/jniLibs/arm64-v8a/` (see `tools/fetch-runtime.mjs`, `stageBxroot`), so
+# MIT's "include the copyright notice and this permission notice" obligation has to be
+# satisfied inside the APK. Pinned to the commit the binaries were built from, and
+# verified by digest for the same reason the font is: a licence text from a different
+# revision describes a different distribution.
+BXROOT_COMMIT = "5c143864b0f36f42b79808547e39e57da688db68"
+BXROOT_LICENCE_URL = f"https://raw.githubusercontent.com/qiannianhuanxiang/bxroot/{BXROOT_COMMIT}/LICENSE"
+BXROOT_LICENCE_SHA256 = "390d111ba18aadbe5cd5001f717d911f5c52edeb8a974ff02030f4a512d50eb4"
+BXROOT_LICENCE_OUT = "bxroot-MIT.txt"
+BXROOT_LICENCE_TITLE = "bxroot @5c14386（MIT）"
+
 # pi's own licence text, which the published npm tarball **does not contain**: the
 # MIT text lives at the monorepo root and `packages/coding-agent` is published
 # without a copy, so the engine payload carries a `license: MIT` field and no
@@ -1025,6 +1037,38 @@ def build(lock: dict, fetch_missing: bool, stage: str) -> None:
         JETBRAINS_MONO_LICENCE_TITLE,
         JETBRAINS_MONO_LICENCE_SHA256,
         f"{JETBRAINS_MONO_LICENCE_OUT} not cached; re-run with --fetch-missing",
+    )
+
+    # bxroot's MIT text: same shape (pinned URL + pinned sha256 + cache + hard stop on a
+    # mismatch), because the five binaries that ride in jniLibs are the distribution.
+    os.makedirs(FONT_CACHE, exist_ok=True)
+    bxroot_licence = os.path.join(FONT_CACHE, BXROOT_LICENCE_OUT)
+    if not os.path.isfile(bxroot_licence) and fetch_missing:
+        try:
+            with urllib.request.urlopen(BXROOT_LICENCE_URL, timeout=60) as response:
+                body = response.read()
+        except Exception as error:  # noqa: BLE001 - reported, not raised
+            notes.append(f"{BXROOT_LICENCE_OUT}: {BXROOT_LICENCE_URL} failed ({error})")
+            body = None
+        if body is not None:
+            digest = hashlib.sha256(body).hexdigest()
+            if digest != BXROOT_LICENCE_SHA256:
+                sys.exit(
+                    f"bxroot's LICENSE at {BXROOT_COMMIT} changed\n"
+                    f"  pinned  {BXROOT_LICENCE_SHA256}\n"
+                    f"  actual  {digest}\n"
+                    f"  The five libbxroot*.so in app/src/main/jniLibs/ were built from that\n"
+                    f"  commit (see runtime.lock.json), so the text beside them must be that\n"
+                    f"  revision's: rebuild the binaries, then update this pin."
+                )
+            with open(bxroot_licence, "wb") as fh:
+                fh.write(body)
+    install_pinned_text(
+        bxroot_licence,
+        BXROOT_LICENCE_OUT,
+        BXROOT_LICENCE_TITLE,
+        BXROOT_LICENCE_SHA256,
+        f"{BXROOT_LICENCE_OUT} not cached; re-run with --fetch-missing",
     )
 
     # ------------------------------------- pi's own licence + the packages that lack one

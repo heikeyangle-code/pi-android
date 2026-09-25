@@ -298,6 +298,17 @@ const PROROOT_VERSION = "v1.2.8";
 const PROROOT_RELEASE = `https://github.com/coderredlab/proroot/releases/download/${PROROOT_VERSION}`;
 
 /**
+ * The third runtime (optional, its own switch). bxroot publishes **source, not
+ * releases**, so its five entries are not fetched: `built: true` keeps step 1 away
+ * from them and `stageBxroot` obtains the bytes (preferring the reviewed ones already
+ * in `jniLibs`) and records the digests. Declared here, above the table that reads
+ * them, because a `const` read before its declaration is a runtime error, not a
+ * hoisted `undefined`.
+ */
+const BXROOT_COMMIT = "5c143864b0f36f42b79808547e39e57da688db68";
+const BXROOT_SOURCE = "https://github.com/qiannianhuanxiang/bxroot";
+
+/**
  * proroot — the optional second container runtime, and the only artifact here whose
  * bytes nobody outside its author can rebuild.
  *
@@ -521,31 +532,36 @@ const ARTIFACTS = {
   // digest mismatch there is reported with both values rather than silently accepted.
   // Licence: MIT; see assets/licenses/bxroot-MIT.txt.
   bxrootLauncher: {
-    url: `${BXROOT_SOURCE}/archive/${BXROOT_COMMIT}.tar.gz#libbxroot.so`,
+    url: `${BXROOT_SOURCE}/archive/${BXROOT_COMMIT}.tar.gz`,
+    built: true,
     kind: "so",
     sha256: "7d354cba519f8e45318915e9d70234969fa2bc56f8f11e5baedd4eed2b7f415b",
     why: "bxroot's launcher/CLI — the one file Android execve()s. Static ET_EXEC with no PT_INTERP, so Android 10+ can exec it straight out of nativeLibraryDir. MIT; built from 5c143864b0f36f42b79808547e39e57da688db68",
   },
   bxrootRuntime: {
-    url: `${BXROOT_SOURCE}/archive/${BXROOT_COMMIT}.tar.gz#libbxroot-runtime.so`,
+    url: `${BXROOT_SOURCE}/archive/${BXROOT_COMMIT}.tar.gz`,
+    built: true,
     kind: "so",
     sha256: "295b3c84b206c04085883ce7ff4137862d32497c06e952e0bc82d43afef95925",
     why: "bxroot's in-process hook (LD_PRELOAD semantics): path translation, fake id0, /proc synthesis",
   },
   bxrootLinker: {
-    url: `${BXROOT_SOURCE}/archive/${BXROOT_COMMIT}.tar.gz#libbxroot-linker.so`,
+    url: `${BXROOT_SOURCE}/archive/${BXROOT_COMMIT}.tar.gz`,
+    built: true,
     kind: "so",
     sha256: "b6e2d80d4ebc6b043e38f0086a4a725c62d1517735f193841e115e6ff7cf3607",
     why: "bxroot's ELF interpreter for guest binaries",
   },
   bxrootBridge: {
-    url: `${BXROOT_SOURCE}/archive/${BXROOT_COMMIT}.tar.gz#libbxroot-bridge.so`,
+    url: `${BXROOT_SOURCE}/archive/${BXROOT_COMMIT}.tar.gz`,
+    built: true,
     kind: "so",
     sha256: "8ce489307411d56b06640449baa51b9ea882064cb706be7ded6b1cedef4053be",
     why: "bxroot's host/guest bridge",
   },
   bxrootStubLoader: {
-    url: `${BXROOT_SOURCE}/archive/${BXROOT_COMMIT}.tar.gz#libbxroot-stub-loader.so`,
+    url: `${BXROOT_SOURCE}/archive/${BXROOT_COMMIT}.tar.gz`,
+    built: true,
     kind: "so",
     sha256: "3d2bc84a99ad5c6512783f44f475447c32f4cc58a42341232aa9b4667a19b78b",
     why: "bxroot's static/static-pie and execve routing loader (adds PT_INTERP to static guest binaries)",
@@ -659,9 +675,6 @@ const JNI_PAYLOAD = [
  * apply. Requiring PIE of all five made the equivalent check fail on a correct
  * payload once already; see `verifyElfDisguise`.
  */
-/** The commit the five bxroot digests above were produced from. */
-const BXROOT_COMMIT = "5c143864b0f36f42b79808547e39e57da688db68";
-const BXROOT_SOURCE = "https://github.com/qiannianhuanxiang/bxroot";
 
 /**
  * bxroot's five binaries and where they land. `interpreter: null` for **all five**,
@@ -737,7 +750,7 @@ function sha256(path) {
  * `runtime.lock.json` are from this project's toolchain (gcc 13.3, aarch64) and are the
  * ones to update deliberately after a toolchain change.
  */
-function stageBxroot() {
+function stageBxroot(lock, resolveOnly) {
   const pinned = BXROOT_JNI_PAYLOAD.map((item) => {
     const spec = ARTIFACTS[item.name];
     if (!spec) throw new Error(`BXROOT_JNI_PAYLOAD names ${item.name}, which is not in ARTIFACTS`);
@@ -751,8 +764,26 @@ function stageBxroot() {
       console.log(`  ${item.to.padEnd(26)} ${kib.padStart(8)} KiB  ok`);
     }
   };
+  const record = (item, digest) => {
+    const spec = ARTIFACTS[item.name];
+    const pinned = lock.artifacts[item.name]?.sha256 ?? null;
+    if (resolveOnly || pinned === null) {
+      lock.artifacts[item.name] = { url: spec.url, sha256: digest, why: spec.why };
+      console.log(`  ${item.name.padEnd(16)} ${digest.slice(0, 16)}…  (recorded)`);
+    } else if (pinned !== digest) {
+      console.log(
+        `  ${item.name.padEnd(16)} digest differs from runtime.lock.json\n` +
+        `      pinned ${pinned}\n      actual ${digest}\n` +
+        "      Another toolchain produces different bytes. Verify the binary, then re-run\n" +
+        "      with --resolve-only to re-pin deliberately.",
+      );
+    } else {
+      console.log(`  ${item.name.padEnd(16)} ${digest.slice(0, 16)}…  ok`);
+    }
+  };
   if (allPresent()) {
     report();
+    for (const item of pinned) record(item, item.sha256);
     return;
   }
   const source = process.env.BXROOT_SRC
@@ -785,6 +816,7 @@ function stageBxroot() {
       );
     }
     verifyElfDisguise(dst, item.interpreter);
+    record(item, digest);
   }
 }
 
@@ -969,6 +1001,10 @@ function main() {
 
   // 1. Fetch and verify every artifact.
   for (const [name, spec] of Object.entries(ARTIFACTS)) {
+    // `built: true` — there is no upstream release to download (bxroot ships source).
+    // The bytes come from `stageBxroot` below, which also records them in the lock; a
+    // fetch here would 404 on a source tarball.
+    if (spec.built) continue;
     const file = join(CACHE, spec.url.split("/").pop());
     download(spec.url, file);
     const digest = sha256(file);
@@ -1068,7 +1104,7 @@ function main() {
   //     the pinned digests are what a build of BXROOT_COMMIT produces, so bytes already
   //     in jniLibs win when they match, and otherwise a local checkout is built.
   console.log("\njniLibs (bxroot):");
-  stageBxroot();
+  stageBxroot(lock, resolveOnly);
   console.log(`  (bxroot @ ${BXROOT_COMMIT.slice(0, 8)}, MIT — see assets/licenses/bxroot-MIT.txt)`);
 
   // 3. Userland payloads stay compressed in assets; the app unpacks them on
