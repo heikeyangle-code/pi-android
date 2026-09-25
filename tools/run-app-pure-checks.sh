@@ -353,7 +353,8 @@ run_harness guest-tool-probe \
   "$ROOT/app/src/main/kotlin/app/pi/runtime/GuestRecipe.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/runtime/RuntimeChoice.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/runtime/GuestCommandLine.kt" \
-  "$ROOT/app/src/main/kotlin/app/pi/runtime/ProrootCommand.kt"
+  "$ROOT/app/src/main/kotlin/app/pi/runtime/ProrootCommand.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/runtime/BxrootCommand.kt"
 
 
 # app.pi.runtime: the opt-in proroot runtime's pure logic — the §2.3.1 argv/env mapping
@@ -381,6 +382,7 @@ run_harness proroot \
   "$ROOT/app/src/main/kotlin/app/pi/runtime/VolatileTree.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/runtime/GuestRecipe.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/runtime/ProrootCommand.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/runtime/BxrootCommand.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/runtime/GuestCommandLine.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/runtime/RuntimeChoice.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/runtime/ProrootRetry.kt" \
@@ -1083,6 +1085,7 @@ run_harness proroot-status-text \
   "$ROOT/app/src/main/kotlin/app/pi/runtime/GuestToolProbe.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/runtime/RuntimeChoice.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/runtime/ProrootCommand.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/runtime/BxrootCommand.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/runtime/ProrootProbeCache.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/runtime/GuestRecipe.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/runtime/GuestCommandLine.kt" \
@@ -1102,6 +1105,7 @@ run_harness proroot-probe-detail \
   "$ROOT/app/src/main/kotlin/app/pi/runtime/GuestToolProbe.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/runtime/RuntimeChoice.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/runtime/ProrootCommand.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/runtime/BxrootCommand.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/runtime/ProrootProbeCache.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/runtime/GuestRecipe.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/runtime/GuestCommandLine.kt" \
