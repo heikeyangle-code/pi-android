@@ -30,12 +30,19 @@ package app.pi.session
 //     follows `-c`, including `-c`'s cwd filter (`:631-633`) and its flat-directory
 //     scope.
 //  5. **The name rules**: the latest `session_info` wins, and an empty one clears it
-//     (`:714-716`).
+//     (`session-manager.ts:828-831`) — and "latest" now means **the whole file**, not
+//     its first megabyte (see 7), which is what a rename on a long conversation
+//     depends on.
 //  6. **Deletion is contained**: only a regular `.jsonl` inside the session root.
-//  7. **The scan is bounded** (`SessionFileScan`): the 1 MiB budget is spent by a
-//     scanner that can drop an over-long line instead of reading it, because a
-//     session file's lines are messages (one of which can be a multi-megabyte tool
-//     result or an inline image).
+//  7. **The summary reads the whole file** (`PiSessionStore.readSummary`, pi's
+//     `buildSessionInfo` at `session-manager.ts:799`), because pi **appends**
+//     `session_info` to the end (`:1304-1313` → `appendFileSync`, `:1187`) while the
+//     reader used to stop at 1 MiB: the reported bug was a rename that never reached
+//     the list. `SessionFileScan` is what keeps that O(1) in memory — it streams the
+//     file and can drop an over-long line instead of reading it, because a session
+//     file's lines are messages (one of which can be a multi-megabyte tool result or
+//     an inline image). That per-line cap is the store's only remaining bound
+//     ([SessionFileScan.NO_BUDGET] is its total budget), and it is pinned below.
 //  8. **`/import` and `/export` follow pi's own rules** (`SessionImport.kt`,
 //     `SessionExportNaming.kt`): which first line makes a file a session
 //     (`session-manager.ts:538-577` — `loadEntriesFromFile`, header checked at `:573-576`),
@@ -158,10 +165,11 @@ fun main() {
         listOf("", "{not json", header("junk-then-header", "2024-06-01T00:00:00.000Z", CWD)),
         mtime = mid,
     )
-    // A session whose header only appears past the 1 MiB discovery budget is not a
-    // session for this reader — pi's bounded header scan gives up there too
-    // (`session-manager.ts:518-523` for the 1 MiB cap and the scan-limit error,
-    // `:604-634` for the bounded scan itself).
+    // A session whose only header sits on a line longer than the 1 MiB per-line cap is
+    // not a session for this reader: the line is dropped, so no parseable line remains.
+    // That cap is the scan's *memory* bound, not a total budget — the user's ruling is
+    // that the summary reads the whole file (see `PiSessionStore.readSummary` and the
+    // check below that a trailing message past 1 MiB is read).
     sessionFile(
         root,
         "oversized-header.jsonl",
@@ -226,7 +234,7 @@ fun main() {
         )
 
         check("blank and malformed leading lines are skipped", all.first { it.file.name == "leading-junk.jsonl" }.title, "(空会话)")
-        check("a header past the scan budget is not a session", names.contains("oversized-header.jsonl"), false)
+        check("a header on an over-long line is not read", names.contains("oversized-header.jsonl"), false)
         check("a message-only .jsonl is not a session", names.contains("not-a-session.jsonl"), false)
         check("an empty .jsonl is not a session", names.contains("empty.jsonl"), false)
 
@@ -300,10 +308,12 @@ fun main() {
         // and one of them is legitimately a multi-megabyte tool result (pi's own cap
         // is 50 KB per result) or an inline base64 image. `BufferedReader.readLine()`
         // returns such a line *in full* before any budget can be consulted, so the
-        // store's 1 MiB "header scan budget" bounded nothing at all — on a phone whose
+        // store's old 1 MiB scan budget bounded nothing at all — on a phone whose
         // free memory is ~1 GB, opening the session list could allocate whatever the
         // largest line happened to be, three times over (reader buffer, String,
-        // JsonObject). `SessionFileScan` is the bound; these checks pin it.
+        // JsonObject). `SessionFileScan` is the bound; these checks pin it. What the
+        // store scans now is the whole file ([NO_BUDGET]), so the per-line cap is the
+        // only bound left standing there.
         val kept = mutableListOf<String>()
         val consumed = SessionFileScan.forEachLine(
             java.io.StringReader("a\r\nb\n" + "x".repeat(5_000) + "\nc"),
@@ -315,6 +325,17 @@ fun main() {
         }
         check("the scan strips a CR, keeps the lines it read", kept, listOf("a", "b"))
         check("the scan stops exactly at its budget", consumed, 4096L)
+
+        val wholeFile = mutableListOf<String>()
+        SessionFileScan.forEachLine(
+            java.io.StringReader("one\ntwo\nthree\n"),
+            budget = SessionFileScan.NO_BUDGET,
+            maxLineChars = 1024,
+        ) { line ->
+            wholeFile += line
+            true
+        }
+        check("[NO_BUDGET] reads every line to EOF", wholeFile, listOf("one", "two", "three"))
 
         val afterLongLine = mutableListOf<String>()
         SessionFileScan.forEachLine(
@@ -341,11 +362,13 @@ fun main() {
         }
         check("an unterminated tail at EOF is a line", unterminated, listOf("tail"))
 
-        // ...and the same thing through the store's public surface: a session whose
-        // third line is larger than the whole scan budget still lists, with the header
-        // and the first user message intact, and falls back to the file's mtime for
-        // "last activity" (the scan was truncated, `PiSessionStore.kt` on `truncated`).
-        val hugeFile = sessionFile(
+        // ...and the same thing through the store's public surface. The third line is
+        // 2 MiB — larger than the per-line cap, so it is dropped rather than read — and
+        // the fourth line sits **past 1 MiB of file**, so it is the check that the
+        // summary scan does not stop at a 1 MiB total budget: the trailing user message
+        // must be the one that names "last activity". Before the file-wide scan it was
+        // the file's mtime instead, because `truncated` made the store fall back to it.
+        sessionFile(
             root,
             "huge-line.jsonl",
             listOf(
@@ -353,24 +376,81 @@ fun main() {
                 message("h1", null, "2024-06-01T00:00:01.000Z", "user", "before the huge line", mid + 1_000),
                 "{\"type\":\"message\",\"id\":\"h2\",\"message\":{\"role\":\"toolResult\",\"output\":\"" +
                     "z".repeat(2 * 1024 * 1024) + "\"}}",
+                message("h3", "h2", "2024-06-01T00:00:04.000Z", "user", "after the huge line", mid + 5_000),
             ),
             mtime = new,
         )
         val huge = store.list().firstOrNull { it.file.name == "huge-line.jsonl" }
-        check("a session with an over-budget line is still listed", huge != null, true)
+        check("a session with an over-long line is still listed", huge != null, true)
         check("its header is still read", huge?.cwd, CWD)
         check("its first user message is still the title", huge?.title, "before the huge line")
-        // Compared against the file's own mtime rather than the value handed to
-        // `setLastModified`: the point is the *rule* ("a truncated scan falls back to
-        // mtime"), and a filesystem with coarser timestamp granularity must not be able
-        // to red this check.
+        // The trailer is past 1 MiB and was never read before the file-wide scan.
+        check("a message past 1 MiB is still read", huge?.lastActivityAt, mid + 5_000)
+        // The dropped 2 MiB line is not a `message` entry this scan saw, and since the
+        // fallback-to-mtime branch is gone there is nothing to hide that: the count is
+        // one (h1), plus the trailer (h3) — pi would say three, because its `readline`
+        // materialises the over-long line.
+        check("an over-long line is dropped, not counted", huge?.messageCount, 2)
+
+        // 9. the whole file, not its first megabyte — the ruling behind `readSummary`.
+        //
+        // pi appends `session_info` to the end (`session-manager.ts:1304-1313` →
+        // `_persist`'s `appendFileSync`, `:1187`) and its own list streams the whole
+        // file (`:799`), so a name set on a >1 MiB conversation must be visible.
+        // `filler` puts the file at ~1.2 MiB, past the old scan: every check in this
+        // section fails against the 1 MiB prefix reader.
+        val filler = (1..300).map { i ->
+            message(
+                "f$i",
+                if (i == 1) null else "f${i - 1}",
+                "2024-06-01T00:00:02.000Z",
+                "assistant",
+                "x".repeat(4_000),
+                mid + i,
+            )
+        }
+        sessionFile(
+            root,
+            "big-name.jsonl",
+            listOf(
+                header("big-name", "2024-06-01T00:00:00.000Z", CWD),
+            ) + filler + listOf(
+                // Two trailing entries: the *latest* one wins, even when the earlier one
+                // is itself past 1 MiB.
+                sessionInfo("s1", "f300", "2024-06-01T00:00:05.000Z", "first tail name"),
+                sessionInfo("s2", "s1", "2024-06-01T00:00:06.000Z", "final tail name"),
+            ),
+            mtime = new,
+        )
+        val bigNamed = store.list().firstOrNull { it.file.name == "big-name.jsonl" }
+        check("a name appended past 1 MiB is listed", bigNamed?.name, "final tail name")
+        check("the last session_info wins at the end of a big file", bigNamed?.displayName, "final tail name")
+        // The whole file is counted, not the first megabyte: 300 filler messages
+        // (pi counts every `message` entry, `session-manager.ts:833-834`).
+        check("messageCount covers the whole file", bigNamed?.messageCount, 300)
+        check("last activity comes from the end of the file", bigNamed?.lastActivityAt, mid + 300)
+
+        sessionFile(
+            root,
+            "big-cleared.jsonl",
+            listOf(
+                header("big-cleared", "2024-06-01T00:00:00.000Z", CWD),
+                message("c0", null, "2024-06-01T00:00:01.000Z", "user", "big clear", mid + 1_000),
+                // Inside the old 1 MiB prefix — the name a truncated reader would keep.
+                sessionInfo("c1", "c0", "2024-06-01T00:00:03.000Z", "stale name"),
+            ) + filler + listOf(
+                // An empty trailing entry clears the name (`session-manager.ts:828-831`).
+                sessionInfo("c2", "f300", "2024-06-01T00:00:07.000Z", null),
+            ),
+            mtime = new,
+        )
         check(
-            "a truncated scan falls back to the file mtime",
-            huge?.lastActivityAt,
-            hugeFile.lastModified(),
+            "an empty trailing session_info clears a name set before 1 MiB",
+            store.list().first { it.file.name == "big-cleared.jsonl" }.name,
+            null,
         )
 
-        // 9. `/import`'s three pure rules (`SessionImport.kt`).
+        // 10. `/import`'s three pure rules (`SessionImport.kt`).
         //
         // pi's import path copies the file into the session directory and hands it to
         // `switch_session`, whose handler opens it with `SessionManager.open`
@@ -465,7 +545,7 @@ fun main() {
         )
         check("a blank source name is refused", SessionImport.destinationName("   ") { false }, null)
 
-        // 10. `/export`'s naming and typing rules (`SessionExportNaming.kt`).
+        // 11. `/export`'s naming and typing rules (`SessionExportNaming.kt`).
         //
         // pi picks the writer from the argument's extension
         // (`interactive-mode.ts:6188-6198`): `.jsonl` → JSONL, anything else (including

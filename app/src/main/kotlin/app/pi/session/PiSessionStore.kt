@@ -39,7 +39,7 @@ import java.io.File
  * hold flat files and group directories at the same time. One file per session,
  * append-only JSONL, first line a `session` header, then entries carrying
  * `id`/`parentId` that form the branch tree. Nothing here is a second index: the
- * file *is* the truth, and this class only reads enough of it to draw a list.
+ * file *is* the truth, and this class only projects the fields a list row needs.
  *
  * 两个布局一起读还有第二个后果：**同一个会话可能在两边各有一份**（副本、`/import` 的拷贝），
  * 于是同一段对话本可以列成两行 —— 用户原话「就那么一个对话……出现了好几个版本，就像被切开
@@ -64,22 +64,26 @@ class PiSessionStore(private val sessionsRoot: File) {
     }
 
     /**
-     * pi caps its own header discovery at 1 MiB per file
-     * (`session-manager.ts:487-489`, `MAX_SESSION_HEADER_SCAN_BYTES`).
+     * The number 1 MiB, used for **two different jobs** in this reader. They are not
+     * the same permission and must not be read as one.
      *
-     * Deliberate deviation, and the one place this reader is cheaper than pi's own
-     * list: pi's `buildSessionInfo` streams the **whole** file to count messages and
-     * collect every message's text for search (`:697-742`), which on a phone is
-     * hundreds of megabytes across a full list. We stop here and accept that a
-     * session longer than this budget is described by its first megabyte. The
-     * consequence is named where it matters — see the `truncated` handling in
-     * [readSummary].
+     *  - **A whole budget, for header discovery.** [readHeaderCwd] spends it as the
+     *    total it reads looking for the first line. That is pi's own synchronous
+     *    header scan (`core/session-manager.ts:690-694`, bounded by
+     *    `MAX_SESSION_HEADER_SCAN_BYTES`, `:607`).
+     *  - **A per-line cap, for the summary.** [readSummary] passes it as
+     *    [SessionFileScan]'s `maxLineChars`, because a session line is a *message*:
+     *    one can be a multi-megabyte tool result or an inline base64 image (see that
+     *    object's KDoc for why `readLine()` is not allowed here). This is a **memory**
+     *    bound on one line, not a bound on the file.
      *
-     * The budget is spent by [SessionFileScan], which is what makes it a real bound:
-     * `readLine()` cannot be capped, so the old shape read a line of any length and
-     * only then compared the total with this number (see that object's KDoc for why
-     * one line can be gigabytes of *legitimate* content). It also doubles as the
-     * per-line cap, because no single line is worth more than the whole scan.
+     * The old reading — "[readSummary] stops after this many characters" — was deleted
+     * on the user's ruling (「什么 1M 上限？谁规定的？和 pi 一样就可以」). It is the
+     * wrong rule for a name: pi **appends** the `session_info` entry to the end of the
+     * file and never rewrites it (see [Cached]), so a session past 1 MiB showed the
+     * old name — or no name at all — forever, while pi's own list, which streams the
+     * whole file (`:799`), showed the new one. The one deviation that remains is
+     * the per-line cap above; it is stated where it bites, in [readSummary].
      */
     private val headerScanBudget = 1 shl 20
 
@@ -101,8 +105,9 @@ class PiSessionStore(private val sessionsRoot: File) {
      * other writer is the app's own import, which creates a *new* file. So a file
      * whose length and mtime are unchanged cannot have a different summary, and a
      * changed file is re-scanned in full — which is correct rather than merely
-     * cheap, because `lastActivityAt`/`title`/`messageCount` all come from a prefix
-     * of the file.
+     * cheap, because every field of a row (`name`, `lastActivityAt`, `title`,
+     * `messageCount`) now comes from the file's bytes rather than from a bounded
+     * prefix of them ([readSummary]).
      *
      * Cost of being wrong: a stale row for a file that changed twice within one
      * filesystem timestamp tick **and** kept its byte length (a same-length rewrite).
@@ -139,8 +144,8 @@ class PiSessionStore(private val sessionsRoot: File) {
      * is the newest user/assistant message timestamp, else the header timestamp,
      * else the file's mtime (`:744-749`) — *not* the file's mtime, which is only
      * pi's last-resort fallback. [Summary.lastActivityAt] is that same value, so the
-     * list order here and the list order in the desktop picker agree for any session
-     * this reader can see in full.
+     * list order here and the list order in the desktop picker agree: [readSummary]
+     * reads the whole file, as pi's list does.
      *
      * ## 一个会话只有一行
      *
@@ -368,6 +373,37 @@ class PiSessionStore(private val sessionsRoot: File) {
      * directory would otherwise become a row that pi itself refuses to open
      * (`:905-908` throws for a non-empty file that does not parse as a session).
      *
+     * ## 整个文件，不是头 1 MiB（用户裁定）
+     *
+     * 这一遍扫描读**整个文件**，和 pi 的列表一样。pi 的 `buildSessionInfo`
+     * (`core/session-manager.ts:799`) 用 `createReadStream` + `readline`（`:813-816`）
+     * 流式读到底；`session_info` 逐个覆盖 `name`，**最后一个生效，空名即清除**
+     * （`:828-831`）；`messageCount` 数每一个 `message` 条目（`:833-834`），
+     * `lastActivityAt` 取全文里 user/assistant 消息的时间戳（`:836-839`）。行号取自本
+     * 仓库检出的 pi 0.87.1 源码（`packages/coding-agent/package.json:3`）。
+     *
+     * 以前的实现在 [headerScanBudget] 处停下（那个常量的旧读法），而 pi 是把
+     * `session_info` **追加到文件末尾**的：`appendSessionInfo` 造一个条目
+     * （`session-manager.ts:1304-1313`），`_appendEntry` → `_persist` 用
+     * `appendFileSync` 写到最后（`:1187`）。于是任何超过 1 MiB 的会话——一条工具结果或
+     * 一张内联图片就够了——改名之后列表永远显示旧名字（或一直没有名字），正是用户报的
+     * 「设置显示名称后列表里没变」。
+     *
+     * **没有照抄 pi 的那一步**：pi 把每条消息的正文累进 `allMessages`（`:848-851`）只是
+     * 为了它自己的搜索索引；本 App 的搜索 haystack 不用会话正文，所以这里不存任何消息
+     * 文本。内存因此是 O(1)：一行读完即弃，并且单行还有 `maxLineChars` 这道 1 MiB 上限
+     * （[headerScanBudget] 的第二个用途）。
+     *
+     * **保留的那一处偏离**：超过 1 MiB 的**一行**被丢弃而不是读进来（见
+     * [SessionFileScan]）—— pi 的 `readline` 会把那一行整个拿进内存，本机不这么做。代价
+     * 是那一行不参与 `messageCount`/`lastActivityAt`，从这一刻起这两个读数是**下界**；
+     * 以前那种"总预算用完就回退到文件 mtime"的上界随 1 MiB 总预算一起删除：`truncated`
+     * 标志在正常路径上永远为假，留一个永远为假的分支就是一句没人校验的断言（用户裁定）。
+     *
+     * The cost of reading the whole file: 首次进入会话列表要把每个会话读到底。摘要缓存
+     * （[Cached]，键是 length+mtime）把它限制在"每个文件每个版本一次"—— 改名只重读那一个
+     * 文件，其余文件零成本。
+     *
      * @param fallbackCwd the cwd encoded in the group directory name, when the file
      *        came from one. It is only a fallback for a header without `cwd`
      *        (`SessionHeader.cwd` is `string` in this pi version, but old files
@@ -400,22 +436,20 @@ class PiSessionStore(private val sessionsRoot: File) {
         var parentSession: String? = null
         var messageCount = 0
         var firstParsed = true
-        var truncated = false
         // The first parseable line decided the file is not a session. A flag rather
         // than a non-local return, because the scan hands lines to a lambda now.
         var notASession = false
-        // Characters the scan actually consumed. Everything the scan skips (blank
-        // lines, malformed lines, an over-long line) counts, so this is a real bound on
-        // the work done and the memory held — see [SessionFileScan].
-        var consumed = 0L
 
         runCatching {
             file.bufferedReader(Charsets.UTF_8).use { reader ->
-                // The scan is the bound (see [SessionFileScan]): pi's own discovery
-                // gives up on a file whose header is not within the budget
-                // (`:571-575`), and `readLine()` could not have enforced that — it
-                // returns a line of any length before any budget can be checked.
-                consumed = SessionFileScan.forEachLine(reader, headerScanBudget, headerScanBudget) { line ->
+                // 读到底，和 pi 的列表一样（`session-manager.ts:814`）。总预算因此是
+                // [SessionFileScan.NO_BUDGET]；真正的界只在两处：这里的 1 MiB 单行上限
+                // （[headerScanBudget] 的第二个用途）和 `maxLineChars` 那条丢弃规则。
+                SessionFileScan.forEachLine(
+                    reader,
+                    SessionFileScan.NO_BUDGET,
+                    headerScanBudget,
+                ) { line ->
                     if (notASession) return@forEachLine false
                     if (line.isBlank()) return@forEachLine true
                     val obj = parseObjectOrNull(line) ?: return@forEachLine true
@@ -438,7 +472,9 @@ class PiSessionStore(private val sessionsRoot: File) {
                             obj.str("parentSession")?.let { parentSession = it }
                         }
                         // pi keeps the *latest* `session_info`, and an entry with no
-                        // name (or an empty one) clears it (`:714-716`).
+                        // name (or an empty one) clears it (`:828-831`). "Latest" is now
+                        // over the whole file, which is what makes a rename visible: pi
+                        // appends the entry at the end (`:1304-1313`).
                         "session_info" -> name = obj.str("name")?.trim()?.takeIf { it.isNotEmpty() }
                         "message" -> {
                             // pi counts every `message` entry, whatever the role
@@ -474,25 +510,23 @@ class PiSessionStore(private val sessionsRoot: File) {
                     }
                     true
                 }
-                // Leaving the loop with budget left means the reader hit EOF; only a
-                // budget exhaustion counts as truncated.
-                truncated = consumed >= headerScanBudget
             }
         }
 
-        // The first parseable line was not a session header, or there was none at all
-        // (or the header is not within the scan budget — pi's discovery gives up in
-        // all three cases, `:571-575` returns null for an oversized header), and
-        // listing nothing is the honest answer.
+        // The first parseable line was not a session header, or there is no parseable
+        // line anywhere in the file. pi's list answers null in both cases
+        // (`session-manager.ts:822-823`, `:854`), and listing nothing is the honest
+        // answer.
         if (notASession) return null
         if (firstParsed) return null
 
         val mtime = file.lastModified()
-        // pi's own chain for `modified` (`:744-749`): last message activity, else
-        // the header timestamp, else mtime. When the scan was cut short the last
-        // activity we saw is a *lower bound*, so fall back to mtime — pi's own last
-        // resort (`:749`), and an upper bound on the file's real last write.
-        val activity = if (truncated) mtime else lastActivityAt ?: startedAt ?: mtime
+        // pi's own chain for `modified` (`:744-749`): last message activity, else the
+        // header timestamp, else mtime. Both of the first two now come from the whole
+        // file; only the over-long line dropped above can leave `lastActivityAt` a
+        // lower bound, and there is no honest fallback for that — see [readSummary]'s
+        // KDoc on the deleted `truncated` branch.
+        val activity = lastActivityAt ?: startedAt ?: mtime
 
         val summary = Summary(
             file = file,

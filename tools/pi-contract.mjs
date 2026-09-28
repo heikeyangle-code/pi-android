@@ -1312,8 +1312,8 @@ function checkAppTables(piDir) {
 	const unlisted = [...unlistedBlock.matchAll(/^\s*"([a-z-]+)"\s+to\s+"/gm)].map((m) => m[1]);
 	const piBuiltins = [...engine("core/slash-commands.js").matchAll(/name: "([a-z-]+)"/g)].map((m) => m[1]);
 	check(
-		"the built-in slash-command tables are still readable (11 rows + 12 hints, and pi has >= 20)",
-		listed.length >= 10 && unlisted.length >= 10 && piBuiltins.length >= 20,
+		"the built-in slash-command tables are still readable (>= 7 rows + >= 10 hints, and pi has >= 20)",
+		listed.length >= 7 && unlisted.length >= 10 && piBuiltins.length >= 20,
 		`ui/chat/PiSlashCommands.kt keeps both halves of pi's built-in list ` +
 			`(${listed.length} rows + ${unlisted.length} hints read; pi's BUILTIN_SLASH_COMMANDS has ` +
 			`${piBuiltins.length}). The reader matches \`PiSlashCommand("name"\` inside the rows block ` +

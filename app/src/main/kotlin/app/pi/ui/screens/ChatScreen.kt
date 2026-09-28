@@ -1557,12 +1557,6 @@ private fun ChatBody(
     fun pick(command: PiSlashCommand, args: String) {
         when (command.action) {
             PiCommandAction.Prompt -> session.runPromptCommand(command, args)
-            // The refresh belongs to the *navigation*: `PiRoot` handles this
-            // `NavRequest` by raising the session-list overlay, selecting the tree
-            // view and calling `refreshTree()` itself (`ui/PiRoot.kt`), which is the
-            // only way into the tree now. Refreshing here as well issued the same
-            // two RPCs twice.
-            PiCommandAction.OpenTree -> session.requestNav(NavRequest.SessionTree)
             PiCommandAction.PickFork -> {
                 session.refreshForkMessages()
                 sheet = ChatSheet.Fork
@@ -1583,13 +1577,7 @@ private fun ChatBody(
             } else {
                 sheet = ChatSheet.Rename
             }
-            PiCommandAction.SessionStats -> {
-                session.refreshStats()
-                sheet = ChatSheet.Stats
-            }
-            PiCommandAction.NewSession -> session.newSession()
             PiCommandAction.Compact -> session.compact(args.takeIf { it.isNotBlank() })
-            PiCommandAction.OpenSessions -> session.requestNav(NavRequest.SessionList)
             // `/import`: pi takes a path argument, a phone takes a picked document.
             // Any argument is ignored — there is no path to type — and the picker's
             // cancel is the "cancelled" answer rather than an error.
@@ -1618,6 +1606,15 @@ private fun ChatBody(
             // destination, the model is the AppBar chip, and the thinking level is the
             // composer's `◐`. Typing one of those names is answered by
             // `unlistedBuiltinHint` rather than by a lie.
+            //
+            // The same treatment took `OpenTree`, `SessionStats`, `NewSession` and
+            // `OpenSessions` with their `/tree`, `/session`, `/new` and `/resume` rows
+            // (group D in `ui/chat/PiSlashCommands.kt`): the session-list overlay is
+            // already the list *and* the tree (the top bar's session name opens it),
+            // and 会话信息 / 新建会话 are already the overflow menu's rows — 会话页's
+            // 「＋ 新建会话」 for the latter. Those arms only re-issued navigation and
+            // sheets the palette could not improve on. The `when` has no `else` on
+            // purpose: it must stay exhaustive over [PiCommandAction].
         }
     }
 

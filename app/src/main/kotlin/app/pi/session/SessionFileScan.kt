@@ -10,18 +10,21 @@ import java.io.Reader
  *
  * `readLine()` has no size argument: it accumulates until it finds a terminator, so
  * the peak allocation is whatever the longest line happens to be. The session index
- * reader capped its *total* scan (`PiSessionStore.headerScanBudget`, pi's own
+ * reader used to cap its *total* scan (`PiSessionStore.headerScanBudget`, pi's own
  * `MAX_SESSION_HEADER_SCAN_BYTES`, `core/session-manager.ts:487-489`) but checked
  * that cap only *after* `readLine()` returned — i.e. after the whole line was in
  * memory, twice (the reader's buffer and the `String`), and then a third time as a
- * `JsonObject` tree. One line is enough to defeat the budget: pi's session files are
- * JSONL of *messages*, and a single `message` entry legitimately carries a tool
+ * `JsonObject` tree. One line is enough to defeat a total budget: pi's session files
+ * are JSONL of *messages*, and a single `message` entry legitimately carries a tool
  * result (pi's own cap is 50 KB each) or an inline base64 image — multi-megabyte
- * lines are normal content, not corruption.
+ * lines are normal content, not corruption. The summary's total cap is gone (it now
+ * reads the whole file); this scanner's per-line cap is what still bounds memory.
  *
  * The same scan also runs per file on the resume path
- * ([PiSessionStore.mostRecentForResume] → `readHeaderCwd`), where it is the *only*
- * thing standing between "list the sessions" and "read everything".
+ * ([PiSessionStore.mostRecentForResume] → `readHeaderCwd`), where its [budget] is
+ * what keeps the *discovery* bounded — one header read for every candidate — while
+ * the one file that is chosen is then described by [PiSessionStore.readSummary],
+ * which reads it in full.
  *
  * ## The three bounds
  *
@@ -59,10 +62,28 @@ internal object SessionFileScan {
     private const val CHUNK_CHARS = 8 * 1024
 
     /**
+     * A [forEachLine] `budget` that no session file can reach, for the caller that
+     * wants the **whole file** rather than a prefix of it.
+     *
+     * It exists so "read to EOF" is stated as such instead of being spelled as the
+     * file's own length passed in as a budget — a length that would then need
+     * clamping, and a clamped budget is a silent truncation of exactly the kind
+     * [PiSessionStore] deleted (see that class on the 1 MiB total budget). The count
+     * is characters, not bytes: `Int.MAX_VALUE` of them is 2 Gi characters, i.e. at
+     * least 2 GiB of ASCII and more of a UTF-8 file, and a session file on a phone
+     * does not approach that.
+     *
+     * The scan's memory stays bounded anyway, because the bound that survives is
+     * `maxLineChars` (one line is read into a `String`), not this number.
+     */
+    const val NO_BUDGET = Int.MAX_VALUE
+
+    /**
      * Scan [reader] line by line.
      *
      * @param budget characters to consume in total; the scan stops once this many
-     *   have been read (including characters of skipped lines).
+     *   have been read (including characters of skipped lines). [NO_BUDGET] reads
+     *   until EOF.
      * @param maxLineChars lines longer than this are dropped rather than accumulated.
      * @param onLine called once per complete, non-dropped line, with the `'\r'`
      *   stripped and without the terminator. Returning `false` stops the scan

@@ -37,7 +37,7 @@ import app.pi.ui.theme.PiTheme
  * Every row here is runnable: the built-ins whose only outcome was a notice
  * ("no entry in this app" or "go to Settings") were **deleted**, not listed, so
  * there is no longer a state to explain. `PiSlashCommands.PI_BUILTIN_SLASH_COMMANDS`
- * records the twelve built-ins that are not here and why.
+ * records the seventeen built-ins that are not here and why.
  *
  * The list is capped in height so it never covers the transcript: on a phone the
  * composer must stay reachable while the palette is open.
