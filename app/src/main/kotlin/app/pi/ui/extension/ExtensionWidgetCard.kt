@@ -1,5 +1,6 @@
 package app.pi.ui.extension
 
+import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -115,9 +116,22 @@ fun ExtensionWidgetStack(
                 widgetNeedsDisclosure(rows) && rows.none { it is WidgetRow.Folded || it is WidgetRow.Summary }
             }
             val stateColor = widgetToneColor(tone, palette)
+            // **A panel with no title of its own gets the widget's key.** Only `Summary`/`Folded`
+            // rows carry a header; anything else is an extension's plain `string[]` (e.g.
+            // `pi-web-access`' `setWidget("web-activity", lines)`), which used to arrive on the
+            // phone as an unlabelled block of text. The key is the one identity the host always
+            // has. See [widgetCaption] for why it is humanised and not translated.
+            val caption = remember(widget.key, rows) {
+                widgetCaption(widget.key)
+                    ?.takeIf { rows.none { row -> row is WidgetRow.Summary || row is WidgetRow.Folded } }
+            }
             BlockCard(
                 color = palette.cardBg,
-                modifier = Modifier.toggleContent(expanded.value, { expanded.value = !expanded.value }),
+                modifier = Modifier
+                    // Height changes are real events here (a job starts, a job ends, the card is
+                    // opened). Animating them is what keeps the composer below from being yanked.
+                    .animateContentSize()
+                    .toggleContent(expanded.value, { expanded.value = !expanded.value }),
                 borderColor = (stateColor ?: palette.borderMuted).copy(alpha = 0.35f),
                 padding = BlockCardRowPadding,
             ) {
@@ -132,6 +146,15 @@ fun ExtensionWidgetStack(
                         modifier = Modifier.weight(1f),
                         verticalArrangement = Arrangement.spacedBy(2.dp),
                     ) {
+                        caption?.let { text ->
+                            Text(
+                                text = text,
+                                style = PiTheme.text.monoSmall,
+                                color = PiTheme.palette.dim,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
                         rows.forEach { row -> WidgetRowView(row, expanded.value) }
                         if (hint) {
                             // v2's 提示条 shape (`· 前缀 + 文本`, 12–13): a dim sentence rather
@@ -258,10 +281,22 @@ private fun WidgetDisclosure(
         ExpandLabel(expanded = expanded, expandText = "详情", collapseText = "收起")
     }
     if (!expanded) return
-    details.forEach { line ->
-        // The name inside a detail row is the one run a reader scans for, so it is bolded —
-        // which is what the extension itself does (`themeBold` in its own renderer).
-        WidgetSpans(spans = line, modifier = Modifier.fillMaxWidth(), boldText = true)
+    // **A bounded detail area, like the raw payload below it.** The card sits above the
+    // composer, so every row the details gain takes height away from the conversation and
+    // moves the composer: with four parallel agents starting and finishing, that was the
+    // second half of the device report ("来回跳"). Opening the card is the user asking to
+    // read it, not asking to push their draft off screen.
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(max = WidgetDetailsMaxHeight)
+            .verticalScroll(rememberScrollState()),
+    ) {
+        details.forEach { line ->
+            // The name inside a detail row is the one run a reader scans for, so it is bolded —
+            // which is what the extension itself does (`themeBold` in its own renderer).
+            WidgetSpans(spans = line, modifier = Modifier.fillMaxWidth(), boldText = true)
+        }
     }
     WidgetRawPayload(raw)
 }
@@ -347,3 +382,12 @@ internal fun widgetToneColor(tone: WidgetTone?, palette: PiPalette): Color? = wh
     WidgetTone.Warning -> palette.warning
     WidgetTone.Error -> palette.error
 }
+
+/**
+ * The opened card's detail budget.
+ *
+ * The same number [WidgetRawPayload] gives the raw text, and for the same reason: the card
+ * lives above the composer, so an unbounded detail area is an unbounded claim on the
+ * conversation's height. The rows stay reachable by scrolling inside the block.
+ */
+private val WidgetDetailsMaxHeight = 200.dp

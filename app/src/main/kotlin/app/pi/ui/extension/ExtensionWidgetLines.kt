@@ -142,6 +142,21 @@ internal fun widgetNeedsDisclosure(rows: List<WidgetRow>): Boolean = rows.any { 
 /** Past this many characters a line cannot be one row on a phone, so it is cut. */
 internal const val WIDGET_DISCLOSURE_CHARS = 48
 
+/**
+ * A widget that brings no title of its own gets one from its **key**.
+ *
+ * pi's widget channel is a `string[]`, so an extension such as `pi-web-access` sends
+ * `setWidget("web-activity", lines)` and the panel arrives with nothing that names it — on
+ * the phone it was an unlabelled block of text. The key is the one piece of identity the
+ * host always has, and pi's own multi-key widgets (`powerline-top`, `background-tasks`, …)
+ * already name themselves there.
+ *
+ * Humanised, never translated: the host does not know what "web-activity" *means*, so it
+ * must not invent a word for it. Separators become spaces and nothing else happens.
+ */
+internal fun widgetCaption(key: String): String? =
+    key.trim().replace('-', ' ').replace('_', ' ').takeIf { it.isNotEmpty() }
+
 /** One line, or `null` when it must not be drawn at all. */
 internal fun widgetRow(line: String): WidgetRow? {
     val payload = payloadLine(line)
@@ -415,7 +430,11 @@ private fun subagentSummary(json: String): WidgetRow? {
     return WidgetRow.Summary(
         label = "子代理",
         // The agent count, not the job count: the badge is read as "how many are out there".
-        badge = leaves.size.toString(),
+        // **Only when the headline cannot already say it.** With one state the headline reads
+        // 「3 运行中」 and the badge repeated that 3 — the device report was 「子代理 3 3 运行中」.
+        // A breakdown (`1 运行中 · 1 完成 · 1 失败`) does not carry the total, so there the badge
+        // is the only place it can be said, and it stays.
+        badge = leaves.size.takeIf { counts.size > 1 }?.toString(),
         headline = headline,
         details = details,
         worst = leaves.map { look(it).tone }
@@ -489,11 +508,13 @@ private fun nodeRow(
  * The job's readings, transcribed from official `widgetActivity` (`render.js:1111`) —
  * the **second line** of the panel (`  ⎿  …`), never part of the name row:
  *
- *  1. the live-status label (`buildLiveStatusLine` → `formatActivityLabel`/
- *     `formatActivityAge`, both localized): the **snapshot's own freshness**
- *     (`lastActivityAt` vs `updatedAt` — the payload is the clock, the host adds no
- *     ticker), with the special activity states keeping their own phrases;
- *  2. the current tool with how long *it* has run (`updatedAt - currentToolStartedAt`);
+ *  1. the live-status word, from the extension's **own** `activity.state`
+ *     (`needs_attention` / `active_long_running` / `running`) — the snapshot's freshness was
+ *     tried here (`lastActivityAt` vs `updatedAt`) and removed: `updatedAt` moves on every
+ *     status tick, so that phrase changed whether or not anything had happened;
+ *  2. the current tool, **by name only** — the stopwatch that used to ride along
+ *     (`updatedAt - currentToolStartedAt`) was a label that changed on every status tick,
+ *     i.e. the flicker this file exists to remove;
  *  3. the working path (`currentPath` on the node, home-shortened like `shortenPath`) —
  *     the0.71 projection writes it **when a tool holds one**; the fixtures carry none,
  *     so it is drawn only when present and never invented;
@@ -505,24 +526,19 @@ private fun nodeRow(
  */
 private fun activityLine(node: JsonObject): String {
     val activity = node["activity"] as? JsonObject
-    val updatedAt = node.long("updatedAt")
-    // The payload is the clock: `updatedAt` moves on every status tick, so this
-    // duration refreshes with the panel instead of needing a host-side ticker.
-    val tool = activity?.text("currentTool")?.let { name ->
-        val since = activity.long("currentToolStartedAt")
-        if (since != null && updatedAt != null) {
-            "$name ${ToolOutputParse.formatDuration((updatedAt - since).coerceAtLeast(0))}"
-        } else {
-            name
-        }
-    }
+    // **No clock on this row.** `updatedAt` is re-sent on every status tick, so
+    // `"$tool ${updatedAt - currentToolStartedAt}"` put a label that changes ~10×/s on
+    // every running job: with four agents that is four moving strings per tick, and the
+    // card was reported as "来回跳". The tool's *name* is the fact; its stopwatch is the
+    // terminal's job, not the card's.
+    val tool = activity?.text("currentTool")
     val facts = listOfNotNull(
         tool,
         node.text("currentPath")?.let { shortenHomePath(it) },
         activity?.count("turnCount")?.let { "$it 轮" },
         activity?.count("toolCount")?.let { "$it 工具" },
     )
-    val live = liveStatusLabel(activity, updatedAt)
+    val live = liveStatusLabel(activity)
     return when {
         live != null && facts.isNotEmpty() -> "$live · ${facts.joinToString(" · ")}"
         live != null -> live
@@ -532,31 +548,22 @@ private fun activityLine(node: JsonObject): String {
 }
 
 /**
- * `buildLiveStatusLine` + `formatActivityLabel`, localized. The age buckets are the
- * extension's own (`status-format.js`: `<1s now / <60s Ns / else Nm`), and the "now"
- * passed in is the snapshot's `updatedAt`, not wall time.
+ * The live word, from the **extension's own** activity state — never from a clock.
+ *
+ * This row used to compute `updatedAt - lastActivityAt` and print 「刚刚 / N 秒 / N 分钟」.
+ * `updatedAt` is re-sent on every status tick, so the label changed under the user's eyes
+ * whether or not anything had actually happened — four running agents meant four strings
+ * moving ~10×/s, which is the flicker this file exists to remove (see the header).
+ *
+ * The extension already carries the two states that *mean* staleness (`needs_attention`,
+ * `active_long_running`), so the host does not have to derive them from a timestamp it
+ * cannot interpret without a wall clock.
  */
-private fun liveStatusLabel(activity: JsonObject?, now: Long?): String? {
-    val state = activity?.text("state")
-    val last = activity?.long("lastActivityAt")
-    if (last == null || now == null) {
-        return when (state) {
-            "needs_attention" -> "需要处理"
-            "active_long_running" -> "长时间任务运行中"
-            else -> null
-        }
-    }
-    val ageMs = (now - last).coerceAtLeast(0)
-    val age = when {
-        ageMs < 1_000 -> "刚刚"
-        ageMs < 60_000 -> "${ageMs / 1_000} 秒"
-        else -> "${ageMs / 60_000} 分钟"
-    }
-    return when (state) {
-        "needs_attention" -> if (age == "刚刚") "刚刚需要处理" else "已 $age 没有活动，需要处理"
-        "active_long_running" -> "长时间任务运行中 · 最近活动 $age 前"
-        else -> if (age == "刚刚") "正在活跃" else "$age 前有活动"
-    }
+private fun liveStatusLabel(activity: JsonObject?): String? = when (activity?.text("state")) {
+    "needs_attention" -> "需要处理"
+    "active_long_running" -> "长时间任务运行中"
+    "running" -> "正在活跃"
+    else -> null
 }
 
 /** Official's no-fact fall-through (`widgetActivity` tail), localized. */
@@ -577,8 +584,15 @@ private fun shortenHomePath(path: String): String =
 
 /**
  * The name row's own stats — official `widgetStats` **for this payload**: the tool-use
- * count (nested under `activity` here; the TUI's own job objects carry it top-level) and
- * the job's elapsed (`updatedAt - startedAt`, skipped while queued).
+ * count (nested under `activity` here; the TUI's own job objects carry it top-level) and,
+ * for a **finished** job only, its total duration.
+ *
+ * **`endedAt`, never `updatedAt`.** A job's `updatedAt` is re-sent on every status tick, so
+ * `updatedAt - startedAt` drew a stopwatch that grew on every row, ten times a second —
+ * the single largest contributor to "三四排代理来回跳". `endedAt` is written once, when the
+ * job reaches a terminal state, so the duration it yields never changes again. A job that
+ * is still running therefore shows no duration at all, which is also what the card's own
+ * header rule asks for ("nothing in the output is a timestamp or a duration").
  *
  * The stage / step / parallel-group / checklist branches of `widgetStats` need `mode`,
  * `stepsTotal`, `currentStep`, `parallelGroups` — fields the async projection never
@@ -589,16 +603,10 @@ private fun shortenHomePath(path: String): String =
 private fun widgetJobStats(node: JsonObject): String? {
     val activity = node["activity"] as? JsonObject
     val toolUse = activity?.count("toolCount")?.let { "$it 工具" }
-    val elapsed = if (node.text("state") != "queued") {
-        val started = node.long("startedAt")
-        val end = node.long("updatedAt")
-        if (started != null && end != null) {
-            ToolOutputParse.formatDuration((end - started).coerceAtLeast(0))
-        } else {
-            null
+    val elapsed = node.long("endedAt")?.let { ended ->
+        node.long("startedAt")?.let { started ->
+            ToolOutputParse.formatDuration((ended - started).coerceAtLeast(0))
         }
-    } else {
-        null
     }
     return listOfNotNull(toolUse, elapsed).joinToString(" · ").takeIf { it.isNotEmpty() }
 }

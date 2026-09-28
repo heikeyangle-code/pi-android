@@ -98,13 +98,25 @@ private fun snapshot(runs: String, generatedAt: Long = 1_790_206_038_621L): Stri
      "runs":[$runs]}
     """.trimIndent().replace("\n", "")
 
-private fun run(id: String, label: String, state: String, turns: Int, tools: Int): String =
-    """{"id":"$id","kind":"subagent","label":"$label","state":"$state",
-        "startedAt":1790200606123,"updatedAt":1790200638560,
-        "activity":{"state":"running","currentTool":"read","turnCount":$turns,
-                    "toolCount":$tools,"lastActivityAt":1790200638560},
-        "children":[{"id":"step:0","kind":"step","label":"scout","state":"$state"}]}"""
-        .trimIndent().replace("\n", "")
+private fun run(
+    id: String,
+    label: String,
+    state: String,
+    turns: Int,
+    tools: Int,
+    updatedAt: Long = 1_790_200_638_560L,
+    endedAt: Long? = null,
+): String {
+    // `updatedAt` and `endedAt` are parameters because the *difference* between them is the
+    // point: the extension moves `updatedAt` on every status tick and writes `endedAt` once.
+    // A fixture that could not move `updatedAt` was a fixture that could not fail.
+    val ended = if (endedAt != null) ",\"endedAt\":$endedAt" else ""
+    return "{\"id\":\"$id\",\"kind\":\"subagent\",\"label\":\"$label\",\"state\":\"$state\"," +
+        "\"startedAt\":1790200606123,\"updatedAt\":$updatedAt$ended," +
+        "\"activity\":{\"state\":\"running\",\"currentTool\":\"read\",\"turnCount\":$turns," +
+        "\"toolCount\":$tools,\"lastActivityAt\":$updatedAt}," +
+        "\"children\":[{\"id\":\"step:0\",\"kind\":\"step\",\"label\":\"scout\",\"state\":\"$state\"}]}"
+}
 
 private fun summary(json: String): WidgetRow.Summary =
     widgetRow("PI_SUBAGENT_ASYNC_JSON:$json") as? WidgetRow.Summary
@@ -140,15 +152,35 @@ fun main() {
         listOf(WidgetRow.Text("a"), WidgetRow.Text("b")),
     )
 
+    // -------------------------------------------------- a panel that brings no title of its own
+    // pi's widget channel is a `string[]`, so most extensions that use it send no header at all
+    // (`pi-web-access`: `setWidget("web-activity", lines)`). The key is the one identity the host
+    // always has; it is humanised, never translated, because the host does not know what the
+    // extension meant by it.
+    widgetCheck("a widget key becomes its caption", widgetCaption("web-activity"), "web activity")
+    widgetCheck("an underscore key too", widgetCaption("background_tasks"), "background tasks")
+    widgetCheck("a blank key has no caption", widgetCaption("   "), null)
+
     // ------------------------------------------------------------------ the real prefix
     val one = summary(snapshot(run("r1", "oracle", "running", 4, 6), generatedAt = 1L))
-    widgetCheck("the title is the host's own label plus the job count", listOf(one.label, one.badge), listOf("子代理", "1"))
+    // One state: the headline already reads 「1 运行中」, so a badge would only repeat the number —
+    // the device report was 「子代理 3 3 运行中」, and this is that defect's assertion.
+    widgetCheck("a single state carries no badge", listOf(one.label, one.badge), listOf("子代理", null))
     widgetCheck("the headline counts by state, in the extension's colour", tonesOf(one.headline), listOf(WidgetTone.Accent))
     widgetCheck("the headline reads as words", textOf(one.headline), "1 运行中")
 
-    // **The anti-flicker property.** The extension re-sends this line on every status tick and
-    // only `generatedAt`/`lastActivityAt`/`updatedAt` move between them.
-    val later = summary(snapshot(run("r1", "oracle", "running", 4, 6), generatedAt = 1_790_206_039_999L))
+    // **The anti-flicker property — and the fixture that used to lie about it.** The extension
+    // re-sends this line on every status tick, and the field it moves is `updatedAt` (the payload
+    // is its own clock; `lastActivityAt` rides with it). The old `later` bumped only `generatedAt`,
+    // a field nothing draws, so this assertion passed while device users watched the card redraw
+    // several times a second. `updatedAt` moves here, which is the only version of the test that
+    // can fail for the right reason.
+    val later = summary(
+        snapshot(
+            run("r1", "oracle", "running", 4, 6, updatedAt = 1_790_206_039_999L),
+            generatedAt = 1_790_206_039_999L,
+        ),
+    )
     widgetCheck("a newer snapshot draws the same bytes", visible(widgetRow("PI_SUBAGENT_ASYNC_JSON:" + later.raw)), visible(widgetRow("PI_SUBAGENT_ASYNC_JSON:${one.raw}")))
     checkTrue("and the payload itself did change", one.raw != later.raw)
 
@@ -164,16 +196,31 @@ fun main() {
     // both in the shape official gives *this payload*: `widgetStats`' stage/step/parallel
     // branches need `mode`/`stepsTotal`/`currentStep`, fields the async projection never
     // writes (measured off all seven fixtures), so its stat slot here is the tool-use
-    // count plus the job's elapsed. The job's elapsed therefore lives on this row and
-    // **not** in the activity line — official separates them (`render.js:1920` vs `:1111`).
+    // count plus — **for a finished job only** — the job's elapsed. The job's elapsed
+    // therefore lives on this row and **not** in the activity line — official separates
+    // them (`render.js:1920` vs `:1111`).
+    //
+    // A *running* job shows no duration: its `updatedAt` moves on every tick, so
+    // `updatedAt - startedAt` was a stopwatch that grew on every row, ten times a second.
+    // That is the single largest contributor to the device report of rows "来回跳".
     widgetCheck(
-        "the job row's stats are tool-use + elapsed (official widgetStats for this payload)",
+        "a running job's stats are the tool count, with no duration to tick",
         listOf(detail[2].tone, detail.last().text),
-        listOf(WidgetTone.Dim, " · 6 工具 · 32.4s"),
+        listOf(WidgetTone.Dim, " · 6 工具"),
+    )
+    // A finished job's duration is `endedAt - startedAt`: written once, and therefore the
+    // only duration this card may draw.
+    val finished = summary(snapshot(run("r2", "done", "complete", 4, 6, endedAt = 1_790_200_638_560L)))
+    checkTrue(
+        "a finished job shows its frozen duration",
+        textOf(finished.details.first()).contains("32.4s"),
+        "row=${textOf(finished.details.first())}",
     )
     val readings = one.details[1]
-    // The live-status label leads: `buildLiveStatusLine` → `formatActivityLabel` with
-    // lastActivityAt == updatedAt (age < 1s → 正在活跃), then the tool, then the counts.
+    // The live word leads, and it comes from the **extension's own** `activity.state` — never
+    // from an age: this row used to print 「刚刚 / N 秒 / N 分钟」 out of
+    // `updatedAt - lastActivityAt`, which moved on every status tick. Then the tool, then the
+    // counts.
     checkTrue(
         "the readings are their own dim row: live label, then tool first",
         textOf(readings).startsWith("⎿  正在活跃 · read") && readings.all { it.tone == WidgetTone.Dim },
@@ -202,6 +249,8 @@ fun main() {
     // Counts *do* move, and must: that is a fact the user can see.
     val mixed = summary(snapshot(run("a", "x", "running", 1, 1) + "," + run("b", "y", "complete", 2, 3) + "," + run("c", "z", "failed", 1, 1)))
     widgetCheck("the headline reads in the extension's own state order", textOf(mixed.headline), "1 运行中 · 1 完成 · 1 失败")
+    // A breakdown does not carry the total, so here the badge is the only place it can be said.
+    widgetCheck("a breakdown keeps the badge", mixed.badge, "3")
     widgetCheck("the card's tone is the most severe job", mixed.worst, WidgetTone.Error)
     widgetCheck("the headline's tones are per state", tonesOf(mixed.headline), listOf(WidgetTone.Accent, WidgetTone.Dim, WidgetTone.Success, WidgetTone.Dim, WidgetTone.Error))
 
@@ -313,15 +362,17 @@ fun main() {
         "a payload that dropped nothing says nothing",
         !textOf((widgetRow(fixtureLine("more-than-the-panel-draws")) as WidgetRow.Summary).headline).contains("未列出"),
     )
-    // The durations are pi's own spellings, derived from the payload the extension re-sends — the
-    // host adds no clock of its own (`widgetActivity`, `formatDuration`). The live-status label
-    // leads (its exact words depend on the snapshot's own age bucket), and the job's elapsed is
-    // deliberately absent: official carries it on the name row's stats instead.
+    // **No clock anywhere on these rows.** The readings row used to carry the current tool's
+    // stopwatch (`web_search 8.6s`, from `updatedAt - currentToolStartedAt`), and every job row
+    // carried `updatedAt - startedAt`. Both move on every status tick — four parallel agents
+    // meant four strings changing ~10×/s, which is the device report of rows "来回跳". The
+    // readings row now names the tool; the job row's duration comes from `endedAt` only.
     val scriptedReadings = textOf(scripted.details[1])
     checkTrue(
-        "the job's readings are their own row: live label · tool-duration · counts, no job elapsed",
+        "the job's readings are their own row: live label · tool · counts, and no stopwatch",
         scriptedReadings.startsWith("⎿  ") &&
-            scriptedReadings.contains("web_search 8.6s") &&
+            scriptedReadings.contains("web_search") &&
+            !scriptedReadings.contains("8.6s") &&
             scriptedReadings.contains("2 轮") &&
             scriptedReadings.contains("3 工具") &&
             !scriptedReadings.contains("32.4s"),
@@ -333,11 +384,17 @@ fun main() {
     )
     // Official's stat slot for *this* payload: tool-use + the job's elapsed
     // (`widgetStats`' stage/step/parallel branches need fields the async projection
-    // never writes — see `widgetJobStats`' KDoc).
+    // never writes — see `widgetJobStats`' KDoc). The elapsed is drawn **only** when the job
+    // carries `endedAt`, i.e. once it is over and the number can no longer move.
     checkTrue(
-        "the job row carries tool-use + elapsed",
-        textOf(scripted.details[0]).contains("3 工具") && textOf(scripted.details[0]).contains("32.4s"),
+        "a running job's row carries tool-use and no duration",
+        textOf(scripted.details[0]).contains("3 工具") && !textOf(scripted.details[0]).contains("32.4s"),
         "row=${textOf(scripted.details[0])}",
+    )
+    checkTrue(
+        "a finished job in the same snapshot does carry its frozen duration",
+        scripted.details.any { textOf(it).contains("32.4s") },
+        "rows=${scripted.details.map { textOf(it) }}",
     )
 
     // Identity before the glyph on child rows (official `materializedWidgetChildLines`:
@@ -355,7 +412,11 @@ fun main() {
     )
     checkTrue("the last task closes the branch", textOf(scripted.details.last()).startsWith("└─ "))
     val childless = summary(snapshot("""{"id":"solo","kind":"subagent","label":"oracle","state":"running"}"""))
-    widgetCheck("a job with no tasks counts as one and keeps its own name", listOf(childless.badge, textOf(childless.details[0]).contains("oracle")), listOf("1", true))
+    widgetCheck(
+        "a job with no tasks counts as one, keeps its name, and needs no badge",
+        listOf(childless.badge, textOf(childless.headline), textOf(childless.details[0]).contains("oracle")),
+        listOf(null, "1 运行中", true),
+    )
 
     // ------------------------------------------------------------------ the card's own tone
     widgetCheck("a text-only widget has no state to carry", widgetCardTone(listOf(WidgetRow.Text("hi"))), null)
