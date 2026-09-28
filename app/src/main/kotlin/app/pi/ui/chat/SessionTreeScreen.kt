@@ -341,19 +341,43 @@ private fun TreeContent(
                 filter = filter,
                 query = query,
                 onFork = onFork,
-                onJump = { entryId ->
-                    // pi's `/tree` answers a pick on the current leaf with "Already at this
-                    // point" and does nothing (`interactive-mode.ts:5221-5226`), so the
-                    // question is not asked at all; the ViewModel says the sentence.
-                    if (entryId == state.tree?.leafId) {
-                        onNavigate(entryId, BranchSummaryChoice.NoSummary, null)
-                    } else if (skipSummaryPrompt()) {
-                        // `branchSummary.skipPrompt` = "always default to no summary"
-                        // (`interactive-mode.ts:5235-5236`), so the question is skipped
-                        // entirely rather than answered for the user.
-                        onNavigate(entryId, BranchSummaryChoice.NoSummary, null)
-                    } else {
-                        navigateTarget = entryId
+                onJump = { row ->
+                    // **"Will this move the leaf?" is not "is this the leaf?"** — pi's own
+                    // TUI asks the second question (`interactive-mode.ts:5416-5420`) and
+                    // therefore still asks "Summarize branch?" for a rewind whose parent is
+                    // the leaf, where pi then finds nothing to move and nothing to summarize
+                    // (`agent-session.ts:3593-3596` for the leaf itself, `:3711-3719` +
+                    // `:3613-3618` for the rewind). [navigateEffect] is that arithmetic, and
+                    // the question is only worth asking for [NavigateEffect.Moves].
+                    //
+                    // A row without an id cannot be named to pi at all; `BranchRow` only makes
+                    // the row clickable when it has one, so the `let` is that constraint
+                    // restated rather than a reachable branch.
+                    val entry = row.node.entry
+                    entry.id?.let { entryId ->
+                        val effect = navigateEffect(
+                            type = entry.type,
+                            role = (entry as? SessionEntry.Message)?.message?.role,
+                            id = entryId,
+                            parentId = entry.parentId,
+                            leafId = state.tree?.leafId,
+                        )
+                        when {
+                            // Already there, or a rewind that lands where the leaf already is:
+                            // nothing for the summary question to decide, and the ViewModel
+                            // reports what pi did (and puts a rewound message's text back in
+                            // the composer). Asking here was the "要摘要吗 → 什么都没发生" report.
+                            effect != NavigateEffect.Moves ->
+                                onNavigate(entryId, BranchSummaryChoice.NoSummary, null)
+
+                            // `branchSummary.skipPrompt` = "always default to no summary"
+                            // (`interactive-mode.ts:5235-5236`), so the question is skipped
+                            // entirely rather than answered for the user.
+                            skipSummaryPrompt() ->
+                                onNavigate(entryId, BranchSummaryChoice.NoSummary, null)
+
+                            else -> navigateTarget = entryId
+                        }
                     }
                 },
                 modifier = Modifier.weight(1f),
@@ -407,7 +431,14 @@ private fun NavigateSummaryDialog(
             text = {
                 Column {
                     Text(
-                        "告诉 pi 这次摘要要留住什么。它会替换掉默认的摘要提示词。",
+                        // 说实话：App 只发 `customInstructions`，**不发** `replaceInstructions`
+                        // （`PiTreeNavigation.navigateCommandArgs` 的 KDoc 记了为什么：那个字段
+                        // pi 的 RPC 面根本没有入口），而 pi 拼出来的提示词是**默认提示词**
+                        // 后面追加一段 `Additional focus: <用户输入>`
+                        // （`branch-summarization.ts:326-331`）。原来的「它会替换掉默认的摘要
+                        // 提示词」正好说反，用户据此以为默认要求不再生效。
+                        "告诉 pi 这次摘要要留住什么。它会作为「Additional focus」追加在 pi " +
+                            "默认的摘要提示词后面 —— 默认提示词仍然生效，不会被替换。",
                         style = PiTheme.text.meta,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -530,7 +561,12 @@ private fun BranchTab(
     filter: TreeFilter,
     query: String,
     onFork: (String) -> Unit,
-    onJump: (String) -> Unit,
+    /**
+     * 跳转 — the whole row is the target (`BranchRow`). Handing the **row** over rather than
+     * its id is what lets the caller decide with pi's own inputs (the entry's `type`,
+     * `message.role` and `parentId`, plus the leaf): see [navigateEffect].
+     */
+    onJump: (TreeRow) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val tree = state.tree?.tree.orEmpty()
@@ -903,7 +939,7 @@ private fun BranchRow(
     row: TreeRow,
     isLeaf: Boolean,
     onFork: (String) -> Unit,
-    onJump: (String) -> Unit,
+    onJump: (TreeRow) -> Unit,
 ) {
     val entry = row.node.entry
     val id = entry.id
@@ -922,7 +958,7 @@ private fun BranchRow(
             // (`agent-session.ts:3161-3164`), so unlike 分叉 this is offered everywhere —
             // and a row whose entry has no id cannot be named to pi at all, so it is not
             // clickable.
-            .clickable(enabled = id != null) { id?.let(onJump) },
+            .clickable(enabled = id != null) { if (id != null) onJump(row) },
         verticalAlignment = Alignment.CenterVertically,
     ) {
         // A thin rule instead of box-drawing characters: it survives the phone's

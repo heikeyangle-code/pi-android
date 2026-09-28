@@ -12,7 +12,11 @@ package app.pi.ui.chat
 //  1. the leaf rule (`agent-session.ts:3265-3277`): a user message and a
 //     `custom_message` rewind to the entry's *parent*, everything else lands *on*
 //     the entry. Getting this backwards moves the conversation to the wrong turn
-//     and there is no error anywhere — pi just obeys;
+//     and there is no error anywhere — pi just obeys. Its second half is the
+//     *effect* of a tap (`navigateEffect`): the target being the leaf is not the same
+//     as the leaf already being at the target, and the two differ in whether pi hands
+//     the message's text back for the composer — which is what decides if a tap puts
+//     anything back at all;
 //  2. the summary question and `branchSummary.skipPrompt`
 //     (`interactive-mode.ts:5236-5263`);
 //  3. the argument text: JSON, because pi splits the command line on the first
@@ -97,6 +101,79 @@ fun main() {
         "a user role without the message wrapper is not a user message",
         landingFor(entry("""{"type":"message","role":"user"}""")),
         NavigateLanding.AtEntry,
+    )
+
+    // --------------------------------- 1b. where the leaf lands, and what a tap does
+    //
+    // The tree screen holds `SessionEntry`s, not JSON, so the same rule exists over the same
+    // two fields in its string form — and the *decision* a row's tap needs is a third thing
+    // again: "will this move the leaf?", not "is this the leaf?".
+    check("the string form reads the same two fields", landingFor("message", "user"), NavigateLanding.BeforeEntry)
+    check("the string form of a custom message", landingFor("custom_message", null), NavigateLanding.BeforeEntry)
+    check("the string form of an assistant message", landingFor("message", "assistant"), NavigateLanding.AtEntry)
+    check("the string form of a missing type", landingFor(null, "user"), NavigateLanding.AtEntry)
+    check(
+        "the JSON form and the string form agree",
+        listOf(
+            landingFor(entry("""{"type":"message","message":{"role":"user"}}""")),
+            landingFor(entry("""{"type":"custom_message"}""")),
+        ),
+        listOf(landingFor("message", "user"), landingFor("custom_message", null)),
+    )
+
+    // `newLeafId`: the parent for a rewind (`agent-session.ts:3711-3719`), the entry itself
+    // for everything else (`:3723-3726`).
+    check("a rewind lands on the parent", landingIdFor("message", "user", "u2", "a1"), "a1")
+    check(
+        "a rewind of the first message lands on no leaf at all",
+        landingIdFor("message", "user", "u1", null),
+        null,
+    )
+    check("a custom message lands on the parent", landingIdFor("custom_message", null, "c1", "r"), "r")
+    check("an assistant message lands on itself", landingIdFor("message", "assistant", "a1", "u1"), "a1")
+    check("a branch summary lands on itself", landingIdFor("branch_summary", null, "s1", "r"), "s1")
+
+    // `navigateEffect` — the three cases a tap can be, and the reason the App must not use
+    // "is this the leaf?" as its one test.
+    check(
+        "the target is the leaf: pi's early return, and no editor text",
+        navigateEffect("message", "assistant", "a2", "u2", leafId = "a2"),
+        NavigateEffect.AlreadyThere,
+    )
+    check(
+        "a rewind whose parent is the leaf: no move, but pi does hand the text back",
+        navigateEffect("message", "user", "u2", "a1", leafId = "a1"),
+        NavigateEffect.RewindInPlace,
+    )
+    check(
+        "a rewind in an empty session: the leaf is already null",
+        navigateEffect("message", "user", "u1", null, leafId = null),
+        NavigateEffect.RewindInPlace,
+    )
+    check("a real rewind moves", navigateEffect("message", "user", "u2", "a1", leafId = "a2"), NavigateEffect.Moves)
+    check(
+        "a forward landing moves",
+        navigateEffect("message", "assistant", "a1", "u1", leafId = "u1"),
+        NavigateEffect.Moves,
+    )
+    // The leaf-is-the-target case wins over the landing rule: pi answers it before it reads
+    // the entry, so even an entry whose landing would be the leaf is "already there".
+    check(
+        "the leaf check comes first",
+        navigateEffect("message", "user", "u1", "u1", leafId = "u1"),
+        NavigateEffect.AlreadyThere,
+    )
+    // An entry this build cannot look up still has an id pi knows: the landing falls back to
+    // the entry itself (pi's `AtEntry` rule), so only the exact leaf match is a no-move.
+    check(
+        "an unknown entry that is the leaf is still no move",
+        navigateEffect(null, null, "x", null, leafId = "x"),
+        NavigateEffect.AlreadyThere,
+    )
+    check(
+        "an unknown entry that is not the leaf moves",
+        navigateEffect(null, null, "x", null, leafId = "y"),
+        NavigateEffect.Moves,
     )
 
     // ------------------------------------------- 2. the summary question

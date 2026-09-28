@@ -1513,6 +1513,12 @@ export default function (pi: ExtensionAPI) {
 			const label = typeof parsed.label === "string" ? parsed.label : undefined;
 
 			try {
+				// The leaf **before** the call, so the sentence below can be about what
+				// happened rather than about the command having been dispatched. `getLeafId`
+				// is on the read-only session surface (`core/extensions/types.ts:329`) and
+				// reports pi's in-memory leaf — the same fact `get_tree` reports over RPC
+				// (`modes/rpc/rpc-mode.ts:653`).
+				const leafBefore = ctx.sessionManager.getLeafId();
 				const result = await ctx.navigateTree(targetId, {
 					summarize,
 					customInstructions,
@@ -1539,10 +1545,36 @@ export default function (pi: ExtensionAPI) {
 				// extension, and the app says so where it matters rather than inventing a
 				// substitute.
 				if (result.cancelled) {
+					// The RPC-facing wrapper folds `aborted` into `cancelled`
+					// (`modes/rpc/rpc-mode.ts:329-335`), so this side cannot tell a
+					// `session_before_tree` veto from a summarization the user aborted — and a
+					// sentence that names only one of them is wrong half the time. Name both.
 					ctx.ui.notify(
-						"这次跳转被一个扩展取消了（session_before_tree 返回 cancel），会话位置没有改变。",
+						"这次跳转没有完成：pi 报的是取消（session_before_tree 返回 cancel，" +
+							"或摘要被中止），会话位置没有改变。",
 						"warning",
 					);
+					return;
+				}
+				// **The leaf moving is what "跳转" means, and it is checkable.** pi's TUI
+				// prints "Navigated to selected point" unconditionally
+				// (`interactive-mode.ts:5522`) because its footer status is transient; this
+				// app's channel is a snackbar, which reads as a claim about what happened — so
+				// the claim has to be true. Two legitimate no-moves reach here and neither is
+				// a jump: the target is an entry whose landing point is already the leaf
+				// (`agent-session.ts:3711-3719` → `branch()` with the same id), and the target
+				// **is** the leaf, which pi answers before it reads the entry (`:3593-3596`)
+				// and which its own TUI calls "Already at this point"
+				// (`interactive-mode.ts:5416`).
+				//
+				// When the leaf did not move this handler says **nothing**, on purpose: the
+				// host compares the same two readings (it has `get_tree` on both sides of the
+				// dispatch — `PiSessionViewModel.navigateTo`) and reports the no-move there, in
+				// pi's own words, alongside the one thing this handler cannot see at all — the
+				// composer the rewound text goes back into. Two sentences for one non-event is
+				// the noise `call()`'s no-engine path already guards against; one channel per
+				// fact is the rule.
+				if (ctx.sessionManager.getLeafId() === leafBefore) {
 					return;
 				}
 				ctx.ui.notify("已跳到所选位置。", "info");
