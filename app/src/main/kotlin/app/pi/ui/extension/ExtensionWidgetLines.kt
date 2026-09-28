@@ -90,10 +90,15 @@ internal sealed interface WidgetRow {
      *
      * [headline] is the counts row; [details] are the per-job rows, already in
      * [WidgetSpan] form so the renderer only maps tones to colours.
+     *
+     * [badge] is nullable because it is **not always information**: with a single
+     * state the headline already carries the number, and a badge would repeat it —
+     * the device report was 「子代理 3 3 运行中」. It is drawn only when the headline
+     * is a breakdown, which does not state the total.
      */
     data class Summary(
         val label: String,
-        val badge: String,
+        val badge: String?,
         val headline: List<WidgetSpan>,
         val details: List<List<WidgetSpan>>,
         val worst: WidgetTone,

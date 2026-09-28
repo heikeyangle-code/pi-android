@@ -205,8 +205,8 @@ fun main() {
     // That is the single largest contributor to the device report of rows "来回跳".
     widgetCheck(
         "a running job's stats are the tool count, with no duration to tick",
-        listOf(detail[2].tone, detail.last().text),
-        listOf(WidgetTone.Dim, " · 6 工具"),
+        listOf(detail[2].tone, detail.last().text.endsWith("6 工具")),
+        listOf(WidgetTone.Dim, true),
     )
     // A finished job's duration is `endedAt - startedAt`: written once, and therefore the
     // only duration this card may draw.
@@ -391,10 +391,24 @@ fun main() {
         textOf(scripted.details[0]).contains("3 工具") && !textOf(scripted.details[0]).contains("32.4s"),
         "row=${textOf(scripted.details[0])}",
     )
+    // **In one snapshot, at once**: the running job has no duration, the finished job keeps its
+    // frozen one. `scripted-parallel` cannot carry this pin — its only run is `running`, so it has
+    // no `endedAt` anywhere; a fixture that cannot express the difference cannot test it.
+    val timed = summary(
+        snapshot(
+            run("r1", "live", "running", 1, 3) + "," +
+                run("r2", "done", "complete", 2, 6, endedAt = 1_790_200_638_560L),
+        ),
+    )
     checkTrue(
-        "a finished job in the same snapshot does carry its frozen duration",
-        scripted.details.any { textOf(it).contains("32.4s") },
-        "rows=${scripted.details.map { textOf(it) }}",
+        "a running job's row has no duration",
+        !textOf(timed.details[0]).contains("32.4s"),
+        "row=${textOf(timed.details[0])}",
+    )
+    checkTrue(
+        "a finished job's row in the same snapshot keeps its frozen duration",
+        timed.details.any { textOf(it).contains("32.4s") },
+        "rows=${timed.details.map { textOf(it) }}",
     )
 
     // Identity before the glyph on child rows (official `materializedWidgetChildLines`:
