@@ -1068,18 +1068,6 @@ run_harness tree-navigation \
   "$ROOT/app/src/test/kotlin/app/pi/ui/chat/PiTreeNavigationCheck.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/ui/chat/PiTreeNavigation.kt"
 
-# app.pi.ui: who owns the AppBar's busy verb (`EngineStatusLine`). The defect it replaces was
-# invisible in any single-call reading — clearing `busy` when the *label* was still one's own
-# is correct until two calls carry the same label, and the app makes exactly that pair when
-# `refreshTree`'s coalescing dispatches its follow-up read before the previous `call`'s
-# `finally` has run: the AppBar answered 「就绪」 mid-read, and the word flapped for as long as
-# the pair lasted. Pure stdlib (no Android, no coroutines), so the pair can be held in the
-# order the app produces it, which no device check can be asked to do.
-run_harness engine-status-line \
-  app.pi.ui.EngineStatusLineCheckKt \
-  "$ROOT/app/src/test/kotlin/app/pi/ui/EngineStatusLineCheck.kt" \
-  "$ROOT/app/src/main/kotlin/app/pi/ui/EngineStatusLine.kt"
-
 # app.pi.runtime: the proroot status *sentences*. When the gate refuses, the row is the only
 # place the user can learn why — so the four answers ("not run yet" / "did not pass, and here
 # is the stage" / "passed, takes effect next launch" / "in use, and in which mode") must be

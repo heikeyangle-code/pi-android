@@ -84,81 +84,10 @@ private fun roleOf(entry: JsonObject): String? {
  * summary itself, which is exactly where pi left it
  * (`session-manager.ts:1395-1416` → `:1061`).
  */
-internal fun landingFor(entry: JsonObject): NavigateLanding =
-    landingFor(typeOf(entry), roleOf(entry))
-
-/**
- * [landingFor] over the two fields the rule reads, for the callers that hold the **parsed**
- * entry rather than its JSON (`SessionEntry` in `app/pi/rpc/SessionEntries.kt`).
- *
- * The same rule must not be written twice: the tree screen's rows are `SessionEntry`s, the
- * ViewModel's decision inputs are the same two fields, and the `JsonObject` form above is
- * now a projection of this one.
- */
-internal fun landingFor(type: String?, role: String?): NavigateLanding = when {
-    type == "message" && role == "user" -> NavigateLanding.BeforeEntry
-    type == "custom_message" -> NavigateLanding.BeforeEntry
+internal fun landingFor(entry: JsonObject): NavigateLanding = when {
+    typeOf(entry) == "message" && roleOf(entry) == "user" -> NavigateLanding.BeforeEntry
+    typeOf(entry) == "custom_message" -> NavigateLanding.BeforeEntry
     else -> NavigateLanding.AtEntry
-}
-
-/**
- * The id pi's leaf holds **after** navigating to the entry `id`/`parentId`, or null for the
- * root: `newLeafId` in `agent-session.ts:3699-3711`.
- *
- * This is what "will tapping this row move anything?" has to be asked against — comparing
- * the row's own id answers a different question (pi's TUI does ask that one, but only as an
- * early "Already at this point", see [navigateEffect]).
- */
-internal fun landingIdFor(
-    type: String?,
-    role: String?,
-    id: String?,
-    parentId: String?,
-): String? = when (landingFor(type, role)) {
-    NavigateLanding.BeforeEntry -> parentId
-    NavigateLanding.AtEntry -> id
-}
-
-/**
- * What `navigateTree(target)` will actually do, which is **not** the same as "does the
- * target id differ from the leaf".
- *
- * pi answers before it reads the entry at all in one case — `targetId === oldLeafId` returns
- * `{cancelled: false}` with **no** `editorText` (`agent-session.ts:3593-3596`) — and its own
- * TUI tests exactly that (`interactive-mode.ts:5416-5420`, "Already at this point"). A
- * *rewind* whose parent is already the leaf is the other no-move: `newLeafId` equals the
- * leaf, so `branch()` changes nothing, but pi still hands the entry's text back as
- * `editorText` (`:3711-3719`) — and there is nothing to summarize either, because
- * `collectEntriesForBranchSummary(oldLeafId, targetId)` sees the target's parent as the
- * common ancestor (`:3613-3618`).
- *
- * The three cases need three different answers out here, and each one is a user-visible
- * sentence: [AlreadyThere] has nothing to put in the composer, [RewindInPlace] has the
- * message's own text, and only [Moves] is a navigation.
- */
-internal enum class NavigateEffect {
-    /** `targetId == leafId`: pi returns `{cancelled:false}` and moves nothing. */
-    AlreadyThere,
-
-    /** The leaf is already at the target's landing point: no move, but the text comes back. */
-    RewindInPlace,
-
-    /** The leaf moves to [landingIdFor]'s answer. */
-    Moves,
-}
-
-/** Which of the three [NavigateEffect] cases the entry `id`/`parentId` is, against [leafId]. */
-internal fun navigateEffect(
-    type: String?,
-    role: String?,
-    id: String?,
-    parentId: String?,
-    leafId: String?,
-): NavigateEffect = when {
-    // pi's one early return, and the only no-op that does **not** hand the text back.
-    id != null && id == leafId -> NavigateEffect.AlreadyThere
-    landingIdFor(type, role, id, parentId) == leafId -> NavigateEffect.RewindInPlace
-    else -> NavigateEffect.Moves
 }
 
 /** The three answers pi's own `/tree` offers before navigating (`interactive-mode.ts:5238-5242`). */

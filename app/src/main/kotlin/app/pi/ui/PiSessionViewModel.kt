@@ -20,7 +20,6 @@ import app.pi.packages.EngineRestartCoordinator
 import app.pi.packages.asOutcome
 import app.pi.rpc.Notice
 import app.pi.rpc.PiCommands
-import app.pi.rpc.PiContentBlock
 import app.pi.rpc.PiEvent
 import app.pi.rpc.PiImage
 import app.pi.rpc.PiLaunchOptions
@@ -53,8 +52,6 @@ import app.pi.settings.readBoolean
 import app.pi.settings.readString
 import app.pi.ui.chat.BASH_OUTPUT_MAX_CHARS
 import app.pi.ui.chat.BranchSummaryChoice
-import app.pi.ui.chat.NavigateEffect
-import app.pi.ui.chat.NavigateLanding
 import app.pi.ui.chat.NavigateOutcome
 import app.pi.ui.chat.PiCommandAction
 import app.pi.ui.chat.PiCommandSource
@@ -65,9 +62,7 @@ import app.pi.ui.chat.PiSlashCommand
 import app.pi.ui.chat.TuiOnlyExtension
 import app.pi.ui.chat.activeBranch
 import app.pi.ui.chat.appendTailBounded
-import app.pi.ui.chat.landingFor
 import app.pi.ui.chat.navigateCommandArgs
-import app.pi.ui.chat.navigateEffect
 import app.pi.ui.chat.navigateOutcome
 import app.pi.ui.chat.piCommandPalette
 import app.pi.ui.chat.wantsSummary
@@ -2588,13 +2583,13 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             // （「读取会话状态」）写上、再在 finally 里清掉；放在它后面写，外层那句会被那次清理
             // 抹掉，replay 期间顶栏什么都不说。
             refreshState()
-            // 同一个 `claimBusy`/`releaseBusy` 令牌（见那对函数的 KDoc）：这条路的标签也是**这
-            // 一次 replay 的**，所以只有它还握着这行时才允许清掉。
-            val replayToken = claimBusy("正在加载会话")
+            _state.value = _state.value.copy(busy = "正在加载会话")
             try {
                 replayHistory(engine)
             } finally {
-                releaseBusy(replayToken)
+                if (_state.value.busy == "正在加载会话") {
+                    _state.value = _state.value.copy(busy = null)
+                }
             }
             refreshCommands()
             refreshTuiOnlyExtensions()
@@ -3432,7 +3427,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
         viewModelScope.launch {
-            val token = claimBusy(label)
+            _state.value = _state.value.copy(busy = label)
             try {
                 block(api)
             } catch (error: CancellationException) {
@@ -3444,40 +3439,8 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                         ?: "$label 失败",
                 )
             } finally {
-                releaseBusy(token)
+                if (_state.value.busy == label) _state.value = _state.value.copy(busy = null)
             }
-        }
-    }
-
-    // -------------------------------------------------------- the status line
-    //
-    // One line, one owner — the ownership rule itself lives in [EngineStatusLine], where
-    // `app/src/test/kotlin/app/pi/ui/EngineStatusLineCheck.kt` pins it without a device.
-    // These two are only the `UiState` half of it.
-    private val statusLine = EngineStatusLine()
-
-    /** Take the status line for [label] and return the token [releaseBusy] needs. */
-    private fun claimBusy(label: String): Long {
-        val token = statusLine.claim()
-        _state.value = _state.value.copy(busy = label)
-        return token
-    }
-
-    /**
-     * Give the status line back — only if [token] still owns it.
-     *
-     * A `false` from [EngineStatusLine.release] means a newer claim owns the line now, so
-     * `busy` is left alone: the read that is still running is not this one. That is the
-     * whole fix for the reported 「读取会话树 ↔ 就绪」 flapping — see the class's KDoc for the
-     * exact pair of calls that produced it.
-     *
-     * A writer that clears `busy` outright (the engine dying, `:2486`) leaves the token stale
-     * on purpose: the next claim supersedes it and the dead call's release is then a no-op,
-     * which is the correct reading of "that operation's status is moot".
-     */
-    private fun releaseBusy(token: Long) {
-        if (statusLine.release(token) && _state.value.busy != null) {
-            _state.value = _state.value.copy(busy = null)
         }
     }
 
@@ -3604,56 +3567,30 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      *     and the next `get_state` the meta still describes the session the user just
      *     left — reading its file would replay the wrong history, which is worse than
      *     the slow open this path replaces.
-     *  2. [SessionHints] is set by the one caller that already knows the answer
+     *  2. [SessionHints.file] is set by the one caller that already knows the answer
      *     from disk ([switchSession] holds the `PiSessionStore.Summary` the user
      *     tapped, and [importSession] the file it just copied), so the common case —
      *     opening a conversation from the list — needs no round trip at all.
-     *
-     * **Both are put through the same header test** ([verifiedSessionFile]). The hint used
-     * to be trusted on `isFile` alone, so any regular file a `Summary` named — a session
-     * file replaced under the list, a copy that is not a session at all — was read as this
-     * session's history: [expandEarlierHistory] would prepend another conversation's entries
-     * and [refreshEntries] would print its log (the same shape `:2572-2576` records once
-     * already). An unreadable header is a refusal, never a licence to read on.
      */
     private fun resolveSessionFile(): File? {
-        val hint = SessionHints.pending
-        if (hint != null && hint.file.isFile) return verifiedSessionFile(hint.file, hint.sessionId)
         val meta = _state.value.meta
+        val hinted = SessionHints.file
+        if (hinted != null && hinted.isFile) {
+            return hinted
+        }
         val file = hostSessionFile(meta.sessionFile) ?: return null
-        return verifiedSessionFile(file, meta.sessionId)
-    }
-
-    /**
-     * [file] when its own header agrees that it is the session [sessionId] names, else null.
-     *
-     * `sessionId == null` means "the caller could not know it" (a `get_state` that has not
-     * answered yet, an import whose head scan did not reach the header line) and is the one
-     * case with nothing to check — the same reading the meta path always had. A header that
-     * cannot be read at all, or that carries no `id`, is *not* the same as a mismatch; the
-     * existing rule is kept: a null header `id` passes, a readable different `id` refuses.
-     */
-    private fun verifiedSessionFile(file: File, sessionId: String?): File? {
-        if (sessionId == null) return file
-        val header = SessionFileReader.readHeader(file) ?: return null
-        val headerId = (header["id"] as? JsonPrimitive)?.takeIf { it.isString }?.content
-        if (headerId != null && headerId != sessionId) return null
+        val sessionId = meta.sessionId
+        if (sessionId != null) {
+            val header = SessionFileReader.readHeader(file) ?: return null
+            val headerId = (header["id"] as? JsonPrimitive)?.takeIf { it.isString }?.content
+            if (headerId != null && headerId != sessionId) return null
+        }
         return file
     }
 
-    /**
-     * The one file a session command already knows, until the meta catches up, and the
-     * session id that file must carry for [resolveSessionFile] to trust it.
-     *
-     * One value rather than two fields so the two halves cannot drift, and **one-shot**:
-     * every path that sets it clears it (`afterSessionReplaced` on success, `finally` in
-     * [switchSession] / [importSession] on every refusal and failure). Left behind, it would
-     * let a later read answer from the file of a session pi never opened.
-     */
+    /** The one file a session command already knows, until the meta catches up. */
     private object SessionHints {
-        data class Pending(val file: File, val sessionId: String?)
-
-        var pending: Pending? = null
+        var file: File? = null
     }
 
     /**
@@ -4083,15 +4020,6 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     // 期间返回键像被吞掉」就是这个形状（入口个个单发，但 ⋮→树 + 分段切换 + 刷新钮
     // 可以叠在同一瞬）。飞行中再来的要求折叠成**一次**补读：树是当前状态的快照，
     // 晚一拍的这次读回答得同样好。
-    //
-    // **守卫的两个标志只有一个清除点，而 `call()` 有一条不会执行 block 的早退**
-    // （`:3426-3432`：`api == null` 时它只推一条通知就返回）。`refreshTree` 上面那次
-    // `api == null` 判断进的是另一条路、不落守卫，所以这个洞要两个 `api` 读数之间被换掉
-    // 才成立 —— 但代价不对称：一旦 `treeRefreshInFlight` 留在 `true`，此后每次
-    // `refreshTree()` 都只置 `treeRefreshQueued` 就返回，而唯一会排空那个标志的地方正是
-    // 不会执行的 block ⇒ **这棵树在这一代 ViewModel 里再也不会被读**
-    // （「点叉号退出来，它又不给我拉回来」的形状）。所以派发本身被包住：block 没跑起来，
-    // 标志在这里释放。
     private var treeRefreshInFlight = false
     private var treeRefreshQueued = false
 
@@ -4107,26 +4035,10 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
         treeRefreshInFlight = true
-        // `call` 的 block 在 `Main.immediate` 上是**同步跑起来**的（调用点在主线程），所以
-        // 它返回时 `started` 已经如实回答了「block 到底进没进」。进了，标志属于这次读，由
-        // block 自己的 `finally` 释放；没进，只能在这里释放，否则标志永远不落。
-        var started = false
-        try {
-            call("读取会话树") { api ->
-                started = true
-                try {
-                    _state.value = _state.value.copy(tree = api.getTree())
-                } finally {
-                    treeRefreshInFlight = false
-                    if (treeRefreshQueued) {
-                        treeRefreshQueued = false
-                        refreshTree()
-                    }
-                }
-            }
-        } finally {
-            if (!started) {
-                // 同一条排空规则，只是从「block 的 finally」搬到了「派发的 finally」。
+        call("读取会话树") { api ->
+            try {
+                _state.value = _state.value.copy(tree = api.getTree())
+            } finally {
                 treeRefreshInFlight = false
                 if (treeRefreshQueued) {
                     treeRefreshQueued = false
@@ -4818,31 +4730,17 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             // The file is known here and nowhere else on this path: pi's `get_state`
             // only reports it after the switch has been answered, and waiting for
             // that would add a round trip to every open. `replayHistory` consumes
-            // the hint, and `resolveSessionFile` cross-checks the header's id — the
-            // `Summary`'s own `id` is that check's expectation on this path.
-            //
-            // **`try`/`finally`, not a clear on the two refusals I happened to think of.**
-            // The hint used to survive anything else: a `switch_session` that threw (the
-            // veto case is not the only one — pi refuses a session whose recorded cwd is
-            // gone, `agent-session-runtime.ts:206-207`) left it set, and the next
-            // `expandEarlierHistory` / `refreshEntries` then answered from the file of a
-            // session pi is not on. One-shot means one exit for every outcome, and the
-            // success path's own clear (`afterSessionReplaced`) is simply repeated here.
-            try {
-                SessionHints.pending = SessionHints.Pending(summary.file, summary.id)
-                val result = api.switchSession(path)
-                if (result.cancelled) {
-                    pushNotice("扩展取消了切换会话", Notice.Tone.Warning)
-                    return@call
-                }
-                afterSessionReplaced()
-                requestNav(NavRequest.Chat)
-            } finally {
-                // The success path cleared it at the end of `afterSessionReplaced`; this is
-                // the same statement on the paths that never got there (a refusal, a throw,
-                // a cancelled coroutine), so the hint cannot outlive its command.
-                SessionHints.pending = null
+            // the hint, and `resolveSessionFile` still cross-checks the header's id
+            // against `meta.sessionId` before trusting any *other* path.
+            SessionHints.file = summary.file
+            val result = api.switchSession(path)
+            if (result.cancelled) {
+                SessionHints.file = null
+                pushNotice("扩展取消了切换会话", Notice.Tone.Warning)
+                return@call
             }
+            afterSessionReplaced()
+            requestNav(NavRequest.Chat)
         }
     }
 
@@ -4885,22 +4783,13 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
         viewModelScope.launch {
-            // Same token as `call` uses: this line belongs to this import and to nothing
-            // else that happens to be in flight.
-            val importToken = claimBusy("导入会话")
+            _state.value = _state.value.copy(busy = "导入会话")
             try {
                 when (val prepared = withContext(Dispatchers.IO) { prepareImport(source) }) {
                     is ImportPrep.Rejected -> fail(prepared.sentence)
 
                     is ImportPrep.Ready -> {
-                        // The id comes from the picked document's own header (read by
-                        // `prepareImport`'s head scan), so the file this hint names is also
-                        // checked against the session it claims to be — see [SessionHints].
-                        // A guest path the app cannot map back to a host file simply leaves
-                        // no hint, and `resolveSessionFile` falls back to the meta path.
-                        hostSessionFile(prepared.guestPath)?.let { file ->
-                            SessionHints.pending = SessionHints.Pending(file, prepared.sessionId)
-                        }
+                        SessionHints.file = hostSessionFile(prepared.guestPath)
                         val result = api.switchSession(prepared.guestPath)
                         if (result.cancelled) {
                             pushNotice("扩展取消了导入会话", Notice.Tone.Warning)
@@ -4918,24 +4807,14 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                 // filesystem path, and user-visible copy here never shows one.
                 fail(SessionImport.failureSentence((error as? PiRpcException)?.reason ?: error.message))
             } finally {
-                // Same one-shot rule as [switchSession]: the hint is only valid for the
-                // command that set it, and `afterSessionReplaced`'s clear is not reached on
-                // a refusal or a throw.
-                SessionHints.pending = null
-                releaseBusy(importToken)
+                if (_state.value.busy == "导入会话") _state.value = _state.value.copy(busy = null)
             }
         }
     }
 
     /** What [importSession] decided before it touches pi. */
     private sealed interface ImportPrep {
-        /** [sessionId] is the copied file's header `id`, or null when the head scan missed it. */
-        data class Ready(
-            val guestPath: String,
-            val displayName: String,
-            val sessionId: String?,
-        ) : ImportPrep
-
+        data class Ready(val guestPath: String, val displayName: String) : ImportPrep
         data class Rejected(val sentence: String) : ImportPrep
     }
 
@@ -4968,14 +4847,9 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                 String(readBoundedBytes(input, SessionImport.HEAD_SCAN_CHARS), Charsets.UTF_8)
             }
         }.getOrNull() ?: return ImportPrep.Rejected(SessionImport.unreadableSentence())
-        val verdict = SessionImport.verdictOf(head)
-        if (verdict is SessionImport.Verdict.NotASession) {
+        if (SessionImport.verdictOf(head) is SessionImport.Verdict.NotASession) {
             return ImportPrep.Rejected(SessionImport.failureSentence("not a valid"))
         }
-        // The header `id` the copy will carry: the bounded head was read anyway, and
-        // [SessionImport.Verdict.Found] is where its header line already was. It becomes the
-        // expectation [resolveSessionFile] checks the imported file against.
-        val sessionId = (verdict as? SessionImport.Verdict.Found)?.header?.id
 
         // Step 2: pi's destination name (`agent-session-runtime.ts:371-379`).
         sessionsRoot.mkdirs()
@@ -5005,7 +4879,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             runCatching { target.delete() }
             ImportPrep.Rejected(SessionImport.unreadableSentence())
         } else {
-            ImportPrep.Ready(guestPath = guestPath, displayName = destination, sessionId = sessionId)
+            ImportPrep.Ready(guestPath = guestPath, displayName = destination)
         }
     }
 
@@ -5295,11 +5169,6 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             }
 
             val before = api.getTree().leafId
-            // What pi will do to the leaf from `before`, computed from the entry **before**
-            // the answer: it decides both the sentence a no-move gets and whether the
-            // composer may be refilled afterwards. See [NavigateEffect] — pi's TUI's
-            // "is this the leaf?" test is a narrower question than "will this move anything".
-            val effect = effectOf(entryId, before)
             val text = "/$NAVIGATE_COMMAND " + navigateCommandArgs(
                 targetId = entryId,
                 summarize = wantsSummary(choice, branchSummarySkipPrompt()),
@@ -5329,141 +5198,13 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                     refreshTree()
                     // `contextUsage` is the current branch's reading, so it moved too.
                     refreshStats()
-                    // **pi's `editorText`, reconstructed from what this screen already has.**
-                    // A rewind target's own text comes back with the answer
-                    // (`agent-session.ts:3711-3719`) and the TUI puts it in the editor
-                    // (`interactive-mode.ts:5515-5516`) — over RPC that field is dropped
-                    // (`rpc-mode.ts:329-335`), so the tree node / entry log is the only
-                    // source. Without it, landing on the first user message leaves an empty
-                    // transcript *and* an empty composer, with nothing to resend.
-                    refillComposerFromNavigation(entryId, effect)
                 }
-
-                // The leaf is where it was. Two of the three readings are the app's to report,
-                // and one is not — see below.
-                NavigateOutcome.NoMove -> {
-                    // The refill belongs to [NavigateEffect.RewindInPlace] alone: pi returns
-                    // `editorText` for it, and returns none for the other two.
-                    val refilled = refillComposerFromNavigation(entryId, effect)
-                    when (effect) {
-                        // pi answered before it looked at the entry
-                        // (`agent-session.ts:3593-3596`) and its TUI says exactly this
-                        // (`interactive-mode.ts:5416`). The extension says nothing for this
-                        // case (the leaf it reads before and after the call is unchanged), so
-                        // this sentence is the only one the user gets — and it is pi's own.
-                        NavigateEffect.AlreadyThere -> pushNotice(
-                            "pi 说已经在这个位置了（Already at this point），会话位置没有改变。",
-                            Notice.Tone.Info,
-                        )
-
-                        // The leaf is already at the landing point: nothing moved, but pi does
-                        // hand the message's text back — the useful half of this case, and the
-                        // reason the sentence differs when the composer was filled.
-                        NavigateEffect.RewindInPlace -> pushNotice(
-                            if (refilled) {
-                                "已经在这一点的位置上，会话位置没有改变；" +
-                                    "这条消息的原文已放回输入框。"
-                            } else {
-                                "已经在这一点的位置上，会话位置没有改变。"
-                            },
-                            Notice.Tone.Info,
-                        )
-
-                        // Landing differs from the leaf yet the leaf did not move: the only two
-                        // causes are a `session_before_tree` veto and an aborted summarization
-                        // (`agent-session.ts:3204-3206`, `:3247-3249`) — and those are exactly
-                        // the two the extension *does* report, because it is the side that sees
-                        // `cancelled` at all. It also cannot tell them apart, so its own
-                        // sentence names both. A second, vaguer sentence here would be two
-                        // messages for one non-event.
-                        NavigateEffect.Moves -> Unit
-                    }
-                }
-
-                // Distinct from [NavigateOutcome.NoMove] on purpose: the command never ran, so
-                // nothing about the session moved and no extension is around to have said why.
-                NavigateOutcome.Refused -> pushNotice(
-                    "跳转没有执行：pi 没有移动会话位置。",
-                    Notice.Tone.Warning,
-                )
+                // The extension has already said why through pi's own notice channel
+                // ("already there" / cancelled / aborted). Rebuilding here would be the
+                // half-screen-of-stale-data bug in reverse: a reset with nothing to show.
+                NavigateOutcome.NoMove, NavigateOutcome.Refused -> Unit
             }
         }
-    }
-
-    /** [navigateEffect] with [entryId]'s own fields, looked up from what the app holds. */
-    private fun effectOf(entryId: String, leafId: String?): NavigateEffect {
-        val entry = findEntry(entryId)
-        return navigateEffect(
-            type = entry?.type,
-            role = (entry as? SessionEntry.Message)?.message?.role,
-            // An entry this app cannot find in its own tree/entry log still has an id pi
-            // knows, so the "already there" test stays exact; the landing falls to `id`
-            // (pi's `AtEntry` rule) and any mismatch is reported as the cautious "Moves".
-            id = entry?.id ?: entryId,
-            parentId = entry?.parentId,
-            leafId = leafId,
-        )
-    }
-
-    /**
-     * Put the target entry's own text back in the composer, the way pi's `editorText` does.
-     *
-     * @return true when the composer was actually filled — the difference between the two
-     *   sentences a [NavigateEffect.RewindInPlace] no-move gets.
-     */
-    private fun refillComposerFromNavigation(entryId: String, effect: NavigateEffect): Boolean {
-        // pi's own guard is "editorText, and the editor is empty"
-        // (`interactive-mode.ts:5515-5516`: `if (result.editorText && !this.editor.getText().trim())`).
-        // A non-blank draft is never overwritten, and an entry with no text of its own
-        // (a label, a tool result, an entry this build does not model) fills nothing rather
-        // than clearing what the user typed.
-        if (effect == NavigateEffect.AlreadyThere) return false
-        if (composerDraft.text.value.isNotBlank()) return false
-        val text = navigateEditorText(entryId) ?: return false
-        fillComposer(text)
-        return true
-    }
-
-    /**
-     * pi's `editorText` for [entryId], from the data this screen already holds — or null.
-     *
-     * Only a [NavigateLanding.BeforeEntry] entry has one (`agent-session.ts:3711-3719`), and
-     * the tree is where the app keeps every entry it is showing; [UiState.entries] is the
-     * fallback for the case the tree is stale or absent (the 条目 tab's log). The text is
-     * pi's own `message.text`, i.e. the same flattening the wire model already carries —
-     * this does not re-derive it.
-     */
-    private fun navigateEditorText(entryId: String): String? {
-        val entry = findEntry(entryId) ?: return null
-        val role = (entry as? SessionEntry.Message)?.message?.role
-        if (landingFor(entry.type, role) != NavigateLanding.BeforeEntry) return null
-        val text = when (entry) {
-            is SessionEntry.Message -> entry.message.text
-            // `contentText(entry.content, "")` on pi's side (`:3720`): text blocks only.
-            // pi's own flattening is `internal` to the rpc module, and the composer is the
-            // one place a placeholder like `[image]` must not be pasted as prose.
-            is SessionEntry.CustomMessage -> entry.content
-                .filterIsInstance<PiContentBlock.Text>()
-                .joinToString("") { it.text }
-
-            else -> null
-        }
-        return text?.takeIf { it.isNotBlank() }
-    }
-
-    /**
-     * One entry by id, out of the two places the app keeps entries: the tree first (it is
-     * what the user tapped, and `get_tree` carries the whole forest), then the 条目 tab's log
-     * (a file scan that may be older, or absent until that tab is opened).
-     */
-    private fun findEntry(entryId: String): SessionEntry? {
-        val pending = ArrayDeque(_state.value.tree?.tree.orEmpty())
-        while (pending.isNotEmpty()) {
-            val node = pending.removeLast()
-            if (node.entry.id == entryId) return node.entry
-            pending.addAll(node.children)
-        }
-        return _state.value.entries.firstOrNull { it.id == entryId }
     }
 
     /**
@@ -5837,7 +5578,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         //
         // One-shot: a hint is only valid for the command that set it. Left behind, it
         // would let a later attach replay the file of a session pi is no longer on.
-        SessionHints.pending = null
+        SessionHints.file = null
         if (_state.value.queueSteering != 0 || _state.value.queueFollowUp != 0) {
             _state.value = _state.value.copy(queueSteering = 0, queueFollowUp = 0)
         }
