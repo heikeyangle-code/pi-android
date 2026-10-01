@@ -1,8 +1,8 @@
 {
 	"artifacts": {
 		"proot": {
-			"url": "https://packages.termux.dev/apt/termux-main/pool/main/p/proot/proot_5.1.107.92_aarch64.deb",
-			"sha256": "1f1c983509701f6826f568482c70673ee453a9ba38c9f5fa445a472d6b7524e9",
+			"url": "https://packages.termux.dev/apt/termux-main/pool/main/p/proot/proot_5.1.107.95_aarch64.deb",
+			"sha256": "0a1b3d0f6ef76436c5ed924cd8e8f5a6b7186e99e1650eb2d9bc734e218a74cb",
 			"why": "user-space syscall translator; no root needed"
 		},
 		"libtalloc": {

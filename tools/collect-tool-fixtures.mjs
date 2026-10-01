@@ -147,8 +147,11 @@ function cases(ws) {
 			tool: "bash",
 			args: { command: "printf 'partial\\n'; exit 3" },
 			probe:
-				"a non-zero exit THROWS (core/tools/bash.ts:363) and the number survives only in the " +
-				"appended sentence; ToolOutputParse.shellExitCode reads it (ToolOutputParse.kt's EXIT_CODE)",
+				"a non-zero exit is a RESULT, not a throw (core/tools/bash.ts:403-409 returns " +
+				"`isError: true` with the appended sentence; 0.87.1 threw at :371-372 instead), and the " +
+				"number survives only in that sentence; ToolOutputParse.shellExitCode reads it " +
+				"(ToolOutputParse.kt's EXIT_CODE). `details` now arrives for a failed call too, so the " +
+				"`threw: false` this case pins is the 0.99.2 behaviour",
 		},
 		{
 			id: "bash-no-output",

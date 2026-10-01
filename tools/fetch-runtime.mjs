@@ -84,6 +84,19 @@ const LOCK = join(ROOT, "runtime.lock.json");
 const TERMUX = "https://packages.termux.dev/apt/termux-main";
 
 /**
+ * Termux's build of `proot`, the user-space syscall translator the guest runs under.
+ *
+ * The `5.1.107.<n>` suffix is **Termux's build number**, not an upstream release: `.92`
+ * and `.95` are the same upstream `5.1.107` packaged again. The number is a named
+ * constant rather than a literal inside the URL because two other places need to agree
+ * with it — `runtime.lock.json` (which records the digest per URL) and
+ * `tools/build-license-assets.py`'s component list (which prints the version), and a
+ * literal repeated in the second one is exactly how a licence notice ends up describing
+ * a release the app no longer ships. `pinned_constant()` in that script reads this name.
+ */
+const PROOT_VERSION = "5.1.107.95";
+
+/**
  * The name suffix every payload archive in `assets/runtime/` is written with.
  *
  * ## It must not end in `.gz`
@@ -254,11 +267,114 @@ const UBUNTU_PORTS = "https://ports.ubuntu.com/ubuntu-ports";
  *     相同），但**以前没有任何东西会在它们变动时失败** —— 现在 `tools/pi-contract.mjs` 的
  *     `tooltext` 组会。
  *
+ * 0.87.1 → **0.99.2**（2026-09-30）。版本号从 0.87 直接跳到 0.99，因为 0.99.0 是一个大版本
+ * （codemode、MCP、虚拟模型、主题系统重做）。判据同上一轮：主句是"字节相等"，不是"名字还在"。
+ * 总的说：**RPC 线协议与工具结果文本没动，主题全部重做，设置 schema 三处新增，`defaultTools`
+ * 多了一种子语法**。
+ *
+ *  1. **RPC 线协议只有一处增量**。`dist/modes/rpc/jsonl.js`、`rpc-types.js`、`rpc-mode.d.ts`
+ *     逐字节相同；`rpc-mode.js` 变了 16 行，内容只有一件事 —— 给 `prompt`/`steer`/`follow_up`
+ *     的响应加 `data: { disposition }`。`preflightResult` 的签名从 `(success: boolean)` 换成
+ *     `(disposition: PromptDisposition)`，但**拒绝路径的行为没变**：0.87.1 是
+ *     `agent-session.ts:1751` 的 `preflightResult?.(false)` 紧跟 `throw`，0.99.2 改成"拒绝时干脆
+ *     不回调"（`agent-session.ts:307-308`："Not called if the prompt is rejected"），两条路都由
+ *     rpc-mode 的 `.catch` 回同一个 error 响应。本 App 的 `rpc/.../Responses.kt` 按设计忽略未知
+ *     字段（该文件 "Policy for unknown and absent fields" 第 1 条），所以这一条**不需要改**；
+ *     `docs/json.md` 与 `docs/rpc-extension-ui.md` 两版逐字节相同。
+ *  2. **CLI flags 集合零变化**：`dist/cli/args.js` 变了 7 行，但提取出的 `--flag` 集合两版
+ *     **都是 42 个、完全相同**。
+ *  3. **工具结果文本零变化，但 `bash` 的失败形态变了**：`core/tools/*.js` 与
+ *     `core/tools/renderers/*` 里被 `ToolOutputParse.kt` 当格式解析的那些字符串全在（契约的
+ *     `tooltext` 组逐条核对）。`dist/utils/image-resize-core.js` **逐字节相同**，所以
+ *     `AttachmentBudget.kt` 的 2000×2000 / 4.5 MiB base64 / q80 档位不需要动。
+ *     变化在别处：**非零退出码从"抛异常"改成"正常返回"** —— 0.87.1 在
+ *     `core/tools/bash.ts:371-372` `throw new Error(appendStatus(outputText, \`Command exited
+ *     with code ${exitCode}\`))`，0.99.2 在 `:403-409` 改成
+ *     `return { content: [...], details, structuredContent, isError: true }`。对 App 是**变好**：
+ *     文案一字未变（所以 `ToolOutputParse.shellExitCode` 照旧），而 `details` 现在对失败的调用
+ *     也存在。是 `tools/collect-tool-fixtures.mjs` 的 `--check` 抓到的（`bash-exit-3.threw`
+ *     由 `true` 变 `false`），已重新采集 fixture。
+ *  4. **会话格式只增不改**：`CURRENT_SESSION_VERSION` 仍 3，被 App 建模的 9 种 entry 仍在，
+ *     `appendCompaction` 的 `firstKeptEntryId` 仍可空。新增的是 assistant 消息记录
+ *     `thinkingLevel`，以及虚拟模型路由状态以 `customType: "pi.virtual-model-state"` 的 custom
+ *     entry 存储 —— 两条都落在"App 保留未知类型"这一侧。会话文件的**创建时机**也变了（0.99.0
+ *     #10000）：从"第一条 assistant 响应后"提前到"第一条用户消息时"。App 的
+ *     `PiSessionViewModel` 有 `if (!file.isFile) return null` 守卫，本来就覆盖"文件还不存在"这个
+ *     窗口，所以方向上是把窗口缩短，并且修掉了"新会话在首条回复前退出就丢"。
+ *  5. **设置 schema 三处新增，没有删除也没有改名**：`deviceId`（pi 自己写的安装标识，App 既不该
+ *     展示也不该删）、`codemode`（`{ mode?: "on" | "only", inlineBudget?: number }`，默认
+ *     `on` / 3000）、`fullscreenWheelScrollLines`。App 这一次补了 `codemode` 两行，其余两个写进
+ *     了契约工具里"不暴露"的**裁定表**（见下）。上一轮这个方向是**单向**的：`tables` 组只断言
+ *     App 的键仍在 pi 里，pi 新增的键只打印不断言 —— 所以加键不会让 CI 变红。这一轮把它变成了
+ *     双向：pi 每个未暴露的键都必须在 `UNEXPOSED_SETTINGS_DECISIONS` 里有理由，否则失败。
+ *  6. **`defaultTools` 多了 `+name` / `-name` 增量语义**（`settings-manager.ts:215-245`）：普通
+ *     名字仍替换 `DEFAULT_TOOL_NAMES`（那一半没变），但**全是修饰符**的列表现在从默认四件套出发
+ *     再应用 `+`/`-`；`getDefaultTools()` 也从"原样返回数组"（0.87.1 `:952-955`）变成"返回解析后
+ *     的列表"（0.99.2 `:1020-1025`），同名字不同返回值。App 有**两处**要跟着改：
+ *     `ui/settings/PiQuickAdd.kt`（否则会写出 `["+codemode","grep"]` 这种混合列表，pi 解析成
+ *     `["grep","codemode"]`，默认四件套被静默关掉 —— 正是那个文件当初要防的「工具全灭」），以及
+ *     `rpc/.../SettingsDocument.kt` 的 `merge`：pi 的 `deepMergeSettings` 给这个键加了特例
+ *     （`:249-251`，全是修饰符的项目层列表是**追加**到全局之上），少了它，"全局 `["grep"]` +
+ *     项目 `["+codemode"]`"在 App 里会显示成 `["+codemode"]` 而 pi 生效 `["grep","codemode"]`。
+ *  7. **主题全部重做（本轮唯一必须动色值的地方）**。`dark.json` / `light.json` 的 token **名字**
+ *     一个没增没减（59 个：51 必需 + 5 可选 + 3 `export` 面），但**值全部变了**（两侧共 118 个），
+ *     写法从 `#rrggbb` 变成 `okhsl()`，且大量 token 改成对 `vars` 的引用；另新增顶层 `appearance`
+ *     与 `system` 默认主题。pi 的取值语法因此多了三种写法，判据是 `theme.js:24` 的 `resolveVarRefs`
+ *     多了 `/^ok(lch|hsl)\(/i` 这一条分支（`#rgb` 三位 hex 由 `@earendil-works/pi-tui` 的
+ *     `parseColor` 接受，且 `l`/`s`/`c` 越界是**拒绝**而不是截断）。App 三处都要改：
+ *     `ui/theme/PiPalette.kt` 重抄色值、两个 `colors.xml` 的 `pi_window_background`、
+ *     `ui/theme/PiThemeFiles.kt` 的取值语法补这三种写法并让"解析失败"不再等价于"浅色"
+ *     （否则 0.99.2 的深色主题会因为 `userMessageBg` 是 `okhsl` 而整屏判成浅色）—— 另外
+ *     `theme` 设置多了合法值 `system`，App 必须认它，否则报"找不到主题「system」"。
+ *     契约的 `theme` 组这一轮报 FAIL **是读取器的问题，不是文件的问题**：它的 `resolveThemeValue`
+ *     实现的是 0.87.1 的 `resolveVarRefs`，缺那一行，于是 `okhsl(...)` 被当成 `vars` 的键去找、
+ *     找不到、返回 null，最后报成"引擎不再提供 dark.json"—— 而文件一直在。
+ *  8. **官方随包模型目录的格式变了，而且是"读得太成功"那一种**（`@earendil-works/pi-ai` 的
+ *     `dist/providers/data/**`）：`MODEL_DATA_SCHEMA_VERSION` 3 → 6，每个 provider 文件的内层键
+ *     从 `<id>` 变成 `` `${type}:${id}` ``（`scripts/generate-models.ts:3506`），条目新增 `type`
+ *     判别字段（chat 也显式带 `type: "chat"`，`:3443`）。0.99.2 实测 **1529 chat / 57 image /
+ *     15 classifier**，且 `typesafe.json` 整份只有 classifier。App 的读取器忽略键名、只取
+ *     `element["id"]`，又不读 `type`，于是 image/classifier 被当成 chat 模型列进导入表单并被
+ *     **默认全勾** —— 这正是 §M11 的形状（能力静默出错而不是响亮失败）。这一次 App 加了 `type`
+ *     过滤、`schemaVersion` 校验，契约新增 `catalog` 组把这三个事实钉住。
+ *  9. **三个内置扩展默认加载，且不污染 RPC**：`mcp`、`codemode`、`tool-search` 作为普通资源随包
+ *     发布，`get_commands` 因此多了一条 `/mcp`（实测：0.87.1 的 `get_commands` 是 `[llama]`，
+ *     0.99.2 是 `[llama, mcp]`）。实测 stdout 全是合法 JSONL、stderr 全空、`mcp.json` 缺失时
+ *     不报错也不建文件也不联网（日志走 `mcp.log`，告警走 `ctx.ui.notify`，都在 RPC 的既有形状内）。
+ *     **但 `--no-extensions` 的语义变了**（0.99.0）：内置扩展现在是 `builtin:<name>` 路径、落进
+ *     同一个发现闸门，所以这个 flag 现在**连它们一起关**。实测：0.87.1 加了它还留着 `/llama`，
+ *     0.99.2 加了它 `get_commands` 直接是空的。App 把它暴露成「停用扩展发现」，文案已补。
+ * 10. **嵌套工具调用第一次上了 RPC 线**：0.99.0 的 `ctx.executeTool()` 让工具在运行中再调工具
+ *     （codemode 脚本、MCP 都走这条路），pi 照常发 `tool_execution_start/update/end`，id 是
+ *     `<父id>/<n>`，并且事件上带 `parentToolCallId`（`core/nested-tool-calls.ts:112-128` 把它标成
+ *     必填；`modes/json-event.ts` 对非 `message_update` 事件原样透传，所以它确实到达 App）。pi 的
+ *     承诺是这些调用**不进 transcript**（输出记在父调用结果的 `nestedCalls` 里）。App 之前不认，
+ *     每嵌套一次就多画一张假的顶层卡片、重开会话后又消失。这一轮 `rpc/.../Events.kt` 读了这个
+ *     字段，`Transcript.kt` 的三个入口据此早退（三个都要挡：`_end` 会走到 `finalizeTool` 新建卡片）。
+ * 11. **项目信任的触发清单多了 `mcp.json`**（`core/trust-manager.ts:32`）。App 的
+ *     `packages/ProjectTrust.kt` 复现的是同一个判断（`TrustRepository.kt` 与 `ProjectScreen.kt`
+ *     两个消费者），少了它，一个"只放了 `.pi/mcp.json`"的工程不会被问信任，而 pi 又只在信任后
+ *     才读工程 mcp.json —— 用户的 MCP 会静默不加载。同批新增的 `mcp-auth.json`（OAuth 凭据）与
+ *     `mcp.log`（运行日志）落在「Pi 文件」屏的只读侧，各配了一句原因；`mcp.json` 本身进了可写
+ *     白名单，因为它是手机上唯一能配 MCP 服务器的地方（`pi mcp add` 是 CLI 子命令，App 不发）。
+ * 12. **新增两个包、一个新依赖**：`@earendil-works/pi-codemode`、`@earendil-works/pi-mcp`，以及
+ *     `quickjs-wasi` 3.6.2（codemode 的脚本沙箱；纯 WASI/WASM，不带原生二进制，所以
+ *     aarch64 的 guest 里不需要额外的东西）。`engines.node` 两版都是 `>=22.19.0`，载荷里钉的
+ *     Node 24.19 **不需要动**。七个 `@earendil-works/*` 的版本从此都跟 `PI_VERSION` 一致。
+ * 13. **许可证资产要重新生成，而且不能只改版本号**：重新推导的结果是 **121 个包、13 个声明了
+ *     许可证但不带许可证文件**（上一轮 118 / 12）；集合只多了 `@earendil-works/pi-codemode`
+ *     一个 —— `@earendil-works/pi-mcp` 带许可证文件，新出现的依赖 `ignore@7.0.8` 也带
+ *     （`LICENSE-MIT`）。`tslib` 2.8.1 / `lru-cache` 11.4.0 / 三个 `@aws-sdk/*` 版本都没动，
+ *     pi 的 LICENSE 文本 sha256 也没动（v0.85.1/v0.86.1/v0.87.1/v0.99.2 四个标签逐字节相同）。
+ *     CI 的 `Verify the licence assets match the pinned runtime` 会挡住漏做。
+ *
  * `tools/pi-contract.mjs`（CI 的 `contract` job）会把上面的判断变成检查：它拿这个字符串
- * 指向的引擎去逐条核对命令名、事件类型、扩展 UI 方法、主题值、工具结果文本、会话条目面与
- * `models.json` 语义。
+ * 指向的引擎去逐条核对命令名、事件类型、扩展 UI 方法、主题值、**官方模型目录的格式**、工具结果
+ * 文本、会话条目面与 `models.json` 语义。这一轮给它加了 `catalog` 组（第 8 条那件事以前**没有
+ * 任何断言看着**，App 的 sha256 校验会让格式变了的文件"静静地读成功"），并把设置键那条从单向
+ * 改成双向（第 5 条）。
  */
-const PI_VERSION = "0.87.1";
+const PI_VERSION = "0.99.2";
 
 /**
  * proroot — the optional second container runtime, and the only artifact here whose
@@ -356,7 +472,19 @@ const PROROOT_RELEASE = `https://github.com/coderredlab/proroot/releases/downloa
  */
 const ARTIFACTS = {
   proot: {
-    url: `${TERMUX}/pool/main/p/proot/proot_5.1.107.92_aarch64.deb`,
+    // Termux's own build of proot, and the `5.1.107.<n>` suffix is **Termux's build number**,
+    // not an upstream release: `.92` and `.95` are the same upstream `5.1.107` packaged
+    // again. Termux purges superseded builds from the mirror, so this pin rots on its own —
+    // which is exactly what happened between 0.87.1 and 0.99.2 (`.92` began answering 404
+    // while `.95` was the served build). There is no changelog in the deb to read, so the
+    // rule is: pin the version the mirror currently serves, and re-verify the extracted
+    // paths still match `JNI_PAYLOAD` when it moves (they did for `.95`:
+    // `usr/bin/proot` and `usr/libexec/proot/loader`).
+    //
+    // The digest lives in `runtime.lock.json` and is recorded on first fetch; a moved URL
+    // with a stale digest is a hard stop, and `--resolve-only` re-records it after the
+    // bytes have been inspected.
+    url: `${TERMUX}/pool/main/p/proot/proot_${PROOT_VERSION}_aarch64.deb`,
     kind: "deb",
     why: "user-space syscall translator; no root needed",
   },
@@ -663,13 +791,66 @@ function sha256(path) {
   return createHash("sha256").update(readFileSync(path)).digest("hex");
 }
 
+/**
+ * Where an Ubuntu `.deb` is fetched from, and why it is **not** the pool URL.
+ *
+ * `ports.ubuntu.com`'s pool keeps only the version each pocket currently serves: when
+ * Ubuntu publishes a security update, the superseded `.deb` is deleted outright rather
+ * than kept beside the new one. Five of the artifacts below are pinned to such a version
+ * — `libcurl3t64-gnutls` and the four `krb5` packages — and by the time of the 0.99.2
+ * bump every one of them answered **404**, so a from-scratch payload build was
+ * impossible: CI only still worked because `build/downloads` is an Actions cache. A pin
+ * whose bytes are kept for a few months and then deleted is not a pin.
+ *
+ * Launchpad's `+files` endpoint is the archive's own **publication record** and keeps
+ * every version it ever published, so it is the durable place to read a pinned file from.
+ * It serves the byte-identical `.deb` (checked: the `libcurl3t64-gnutls` bytes there hash
+ * to the digest `runtime.lock.json` already pins), which is why this needs no re-pin —
+ * only the source moves. `ARTIFACTS` still spells the canonical `ports.ubuntu.com` URL,
+ * because that is where the file *comes from* and what a reader should go look at; this
+ * function is where the build actually reads it.
+ *
+ * The pool URL is kept as a second try rather than dropped: if Launchpad is unreachable
+ * and the pocket still serves the file, the build should still succeed. Either way the
+ * bytes have to hash to the pinned digest before anything uses them (`main`'s check), so
+ * no source can substitute a different file.
+ *
+ * Returns `null` for any URL that is not one of these pool paths, so the other artifacts
+ * (Termux debs, Node, ripgrep, the proroot binaries) keep their single source.
+ */
+function ubuntuDebSources(url) {
+  // The pool path is `pool/<component>/<bucket>/<source-package>/<file>`, but the bucket
+  // is sometimes absent, so match the prefix and take the **last** segment rather than
+  // counting separators — a fixed-depth pattern silently answered `null` here once.
+  const file = /^https:\/\/ports\.ubuntu\.com\/ubuntu-ports\/pool\/.+\/([^/]+\.deb)$/.exec(url);
+  if (file === null) return null;
+  return [
+    `https://launchpad.net/ubuntu/+archive/primary/+files/${file[1]}`,
+    url,
+  ];
+}
+
 function download(url, dest) {
   if (existsSync(dest) && statSync(dest).size > 0) return dest;
   mkdirSync(dirname(dest), { recursive: true });
-  process.stdout.write(`  fetching ${url.split("/").pop()} … `);
-  execFileSync("curl", ["-sSL", "--fail", "--retry", "3", "-o", dest, url], { stdio: "inherit" });
-  process.stdout.write("ok\n");
-  return dest;
+  const name = url.split("/").pop();
+  const sources = ubuntuDebSources(url) ?? [url];
+  let lastError = null;
+  for (const [index, source] of sources.entries()) {
+    process.stdout.write(
+      index === 0 ? `  fetching ${name} … ` : `\n    pool has it; retrying there … `,
+    );
+    try {
+      execFileSync("curl", ["-sSL", "--fail", "--retry", "3", "-o", dest, source], {
+        stdio: "inherit",
+      });
+      process.stdout.write("ok\n");
+      return dest;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError;
 }
 
 function extract(kind, archive, into) {

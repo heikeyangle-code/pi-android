@@ -87,6 +87,18 @@ def proroot_version() -> str:
     return pinned_constant("PROROOT_VERSION")
 
 
+def proot_version() -> str:
+    """Termux's build of proot the guest runs under.
+
+    Read from `tools/fetch-runtime.mjs`'s `PROOT_VERSION` for the same reason
+    `engine_version()` is read from `PI_VERSION`: the component list prints this number,
+    and a literal here described `5.1.107.92` until the mirror purged that build and the
+    pin moved to `.95` — a list entry pointing at a licence for a release the app no
+    longer downloads. The suffix is Termux's own build number; see that constant's KDoc.
+    """
+    return pinned_constant("PROOT_VERSION")
+
+
 def engine_payload_versions(packages: list[str]) -> dict[str, str]:
     """The version each named `@earendil-works/*` package **actually has in the payload**.
 
@@ -148,10 +160,11 @@ def verify_engine_payload_versions() -> None:
             )
 
 # npm packages in pi's dependency closure whose licence is not otherwise present
-# in a downloaded artifact. Versions are the ones pi 0.87.1 pins in its shipped
+# in a downloaded artifact. Versions are the ones pi 0.99.2 pins in its shipped
 # shrinkwrap; a bump must move both the version and the pi version together.
-# (Checked at 0.87.1: tslib 2.8.1 and lru-cache 11.4.0 are unchanged, so this table
-# did not move with the bump.)
+# (Re-derived at 0.99.2: tslib 2.8.1 and lru-cache 11.4.0 are still what the
+# shrinkwrap pins, so this table did not move with the bump. Verified by reading
+# `npm-shrinkwrap.json`'s `node_modules/tslib` and `node_modules/lru-cache`.)
 #   tslib       0BSD          (also: `Unlicense` is taken from ripgrep's tarball)
 #   lru-cache   BlueOak-1.0.0
 #   minimatch   BlueOak-1.0.0  (ships its own LICENSE.md, so no entry here)
@@ -187,8 +200,9 @@ JETBRAINS_MONO_LICENCE_TITLE = f"JetBrains Mono {JETBRAINS_MONO_VERSION}（OFL-1
 # notice — while MIT requires the notice. We therefore ship it ourselves, from the
 # upstream tag matching the engine version. Verified: this URL's bytes are
 # identical to `/root/pi-src/LICENSE` at pi 0.85.1 (sha256 0457f5bcec3b3b21…); the
-# v0.86.1 and v0.87.1 tags' LICENSE files were re-fetched and are **byte-identical**
-# (same sha256), so the text we distribute has not changed across either bump.
+# v0.86.1, v0.87.1 and v0.99.2 tags' LICENSE files were re-fetched and are
+# **byte-identical** (same sha256), so the text we distribute has not changed across
+# any of those bumps.
 PI_LICENCE_URL = "https://raw.githubusercontent.com/earendil-works/pi/v{version}/LICENSE"
 PI_LICENCE_SHA256 = "0457f5bcec3b3b211605dfb5d1a49042fd638f3686a410fe099c24a25af13c48"
 
@@ -246,26 +260,29 @@ PROROOT_FILES = [
 # file**. Derived, not guessed: the `pi-engine` step of tools/fetch-runtime.mjs was
 # run in an isolated directory —
 #     npm install --ignore-scripts --omit=dev --omit=optional \
-#       @earendil-works/pi-coding-agent@0.87.1
+#       @earendil-works/pi-coding-agent@0.99.2
 # — and npm's own installed list (`node_modules/.package-lock.json`) was audited:
-# 118 packages installed, 106 shipping a licence file, these 12 not. Every one of
-# the 12 still declares a field, so this is "no text", never "no licence"; and for
-# the 106 that do ship one, the text was checked to support the declared id (0
+# 121 packages installed, 108 shipping a licence file, these 13 not. Every one of
+# the 13 still declares a field, so this is "no text", never "no licence"; and for
+# the 108 that do ship one, the text was checked to support the declared id (0
 # mismatches at 0.86.1). Pinned here because the assets must build without npm;
 # re-derive on a version bump (docs/known-gaps.md §L5).
 #
-# What the 0.86.1 → 0.87.1 bump changed: **only the six `@earendil-works/*`
-# versions**. The set itself was re-derived at 0.87.1 (same 118 packages, the same
-# 12 without a licence file, and the three `@aws-sdk/*` versions below are still the
-# ones 0.87.1's shrinkwrap pins: 3.972.72 / 3.972.77 / 3.997.44). The previous bump
-# (0.85.1 → 0.86.1) had moved those three `@aws-sdk/*` versions and swapped
+# What the 0.87.1 → 0.99.2 bump changed: the set grew by **one** package,
+# `@earendil-works/pi-codemode` (118 → 121 installed, 12 → 13 without a file —
+# `@earendil-works/pi-mcp` ships a licence file, and so does the `ignore@7.0.8` that
+# `pi-coding-agent` and `pi-agent-core` now depend on, so neither joins this list).
+# The three `@aws-sdk/*` versions below are still the ones 0.99.2's shrinkwrap pins:
+# 3.972.72 / 3.972.77 / 3.997.44, unchanged. The earlier bump
+# (0.85.1 → 0.86.1) had moved those three and swapped
 # `@nodable/entities` + `xml-naming` out for `proxy-agent-negotiate`.
 #
-# The six versions come from `PI_VERSION`, not from this file: they are the packages
-# `tools/fetch-runtime.mjs` installs at that exact version, so repeating the number
-# here is what left this list describing 0.86.1 after the pin had moved. Keeping them
-# derived is only half the guard — `verify_engine_payload_versions()` also reads the
-# shipped payload, so a *stale archive* cannot be described with a current label.
+# The seven `@earendil-works/*` versions come from `PI_VERSION`, not from this file:
+# they are the packages `tools/fetch-runtime.mjs` installs at that exact version, so
+# repeating the number here is what left this list describing 0.86.1 after the pin
+# had moved. Keeping them derived is only half the guard —
+# `verify_engine_payload_versions()` also reads the shipped payload, so a *stale
+# archive* cannot be described with a current label.
 PI_ENGINE_NO_LICENCE_TEXT = [
     *((name, engine_version(), "MIT")
       for name in (
@@ -273,6 +290,7 @@ PI_ENGINE_NO_LICENCE_TEXT = [
           "@earendil-works/chord",
           "@earendil-works/pi-agent-core",
           "@earendil-works/pi-ai",
+          "@earendil-works/pi-codemode",
           "@earendil-works/pi-telemetry",
           "@earendil-works/pi-tui",
       )),
@@ -294,10 +312,10 @@ PI_ENGINE_NO_LICENCE_TEXT = [
 # (package, version, licence, notice sentence, source url, sha256 or "" when none)
 PI_ENGINE_NOTICES = [
     (
-        "6 × @earendil-works/* 包",
+        "7 × @earendil-works/* 包",
         engine_version(),
         "MIT",
-        f"正文与版权声明见列表里的『pi 引擎 {engine_version()}（MIT）』那一份：这六个包与 pi 引擎出自同一 monorepo，根 LICENSE 即它们的许可文本（已按 v{engine_version()} 标签逐字节核对；该标签的 LICENSE 与 v0.85.1/v0.86.1 逐字节相同，sha256 未变）",
+        f"正文与版权声明见列表里的『pi 引擎 {engine_version()}（MIT）』那一份：这七个包与 pi 引擎出自同一 monorepo，根 LICENSE 即它们的许可文本（已按 v{engine_version()} 标签逐字节核对；v0.85.1/v0.86.1/v0.87.1/v0.99.2 四个标签的 LICENSE 逐字节相同，sha256 未变）",
         f"https://raw.githubusercontent.com/earendil-works/pi/v{engine_version()}/LICENSE",
         "0457f5bcec3b3b211605dfb5d1a49042fd638f3686a410fe099c24a25af13c48",
     ),
@@ -1212,7 +1230,7 @@ def write(path: str, text: str) -> None:
 # location, which for the copyleft components is also the written offer of source.
 COMPONENTS: list[tuple[str, str, str, str, str]] = [
     # Android native libraries
-    ("proot", "5.1.107.92", "GPL-2.0", "Android 原生库（随 App 二进制安装）", "https://github.com/termux/proot"),
+    ("proot", proot_version(), "GPL-2.0", "Android 原生库（随 App 二进制安装）", "https://github.com/termux/proot"),
     ("libtalloc", "2.4.3", "LGPL-3.0（上游 LICENSE 原文；Termux 打包元数据写 GPL-3.0，与上游不符）", "Android 原生库（随 App 二进制安装）", "https://www.samba.org/ftp/talloc/"),
     ("libandroid-shmem", "0.7", "BSD-3-Clause", "Android 原生库（随 App 二进制安装）", "https://github.com/termux/libandroid-shmem"),
     # Not open source, and therefore also the one row here whose licence is not a standard
