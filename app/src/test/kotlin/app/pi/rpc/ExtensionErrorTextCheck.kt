@@ -69,6 +69,37 @@ fun main() {
     check("a blank path yields no name", extensionErrorName("   "), null)
     check("a bare separator yields no name", extensionErrorName("/"), null)
 
+    // ------------------------------- paths that name no file (0.99.0's shape)
+    //
+    // pi identifies its own built-in extensions and tools by a synthetic path rather
+    // than a file (`core/source-info.ts:15-31`), and since 0.99.0 `extension_error`
+    // can carry one. The prefix is not a name: before this rule 「扩展出错：builtin:mcp」
+    // could reach the screen, which the whole file exists to prevent.
+    check(
+        "a builtin: path is reduced to the built-in's name",
+        extensionErrorName("builtin:mcp"),
+        "mcp",
+    )
+    check(
+        "a builtin: name keeps its dots and dashes",
+        extensionErrorName("builtin:llama.cpp"),
+        "llama.cpp",
+    )
+    check(
+        "the older angle-bracket form drops its source segment",
+        extensionErrorName("<inline:mcp>"),
+        "mcp",
+    )
+    check(
+        "an angle-bracket path with no source is its own name",
+        extensionErrorName("<mcp>"),
+        "mcp",
+    )
+    // The name can be absent, and then there is nothing worth naming: the generic
+    // sentence beats leaking the prefix back out.
+    check("a builtin: path with no name yields no name", extensionErrorName("builtin:"), null)
+    check("an empty angle-bracket path yields no name", extensionErrorName("<>"), null)
+
     // -------------------------------------------------------------- headline
     check(
         "a named failure names the extension",
@@ -80,6 +111,11 @@ fun main() {
         extensionErrorHeadline(null),
         "扩展出错",
     )
+    check(
+        "a built-in failure names the built-in, not its prefix",
+        extensionErrorHeadline("builtin:mcp"),
+        "扩展出错：mcp",
+    )
 
     // The one hard rule this file exists to enforce: no path fragments.
     val samples = listOf(
@@ -88,6 +124,9 @@ fun main() {
         "pi-highlight.ts",
         "/root/.pi/agent/extensions/my-ext/",
         "C:\\extensions\\gate\\index.js",
+        "builtin:mcp",
+        "builtin:llama.cpp",
+        "<inline:mcp>",
     )
     for (sample in samples) {
         val name = extensionErrorName(sample)

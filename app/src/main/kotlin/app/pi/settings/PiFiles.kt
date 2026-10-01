@@ -94,10 +94,18 @@ enum class PiFilesAccess { Writable, ReadOnly }
  * 上下文的五个候选名是 pi 的发现顺序（`core/resource-loader.ts:72`：
  * `AGENTS.override.md`、`AGENTS.md`、`AGENTS.MD`、`CLAUDE.md`、`CLAUDE.MD`）；
  * `SYSTEM.md` / `APPEND_SYSTEM.md` 是系统提示的两份文件形态（`:1024`、`:1038`）。
+ *
+ * `mcp.json` 是 0.99.0 的新成员（`docs/mcp.md` 的「Configure servers」）：用户级
+ * `<agentDir>/mcp.json` 与工程级 `.pi/mcp.json`。它满足这里的判据 —— pi 会读它，而 pi
+ * 只在用户于 `/mcp` 里改 exposure 或启用状态时**定点改写那几个键**，不整份重写
+ * （`docs/mcp.md:78-80`：「saved to the file that defines the server without replacing
+ * unrelated content」），与 `settings.json` 的处境相同。所以它必须可写：这是手机上唯一
+ * 能配 MCP 服务器的地方（`pi mcp add/list/login` 是 CLI 子命令，本应用不发）。
  */
 private val WRITABLE_ROOT_FILES: Set<String> = setOf(
     "settings.json",
     "models.json",
+    "mcp.json",
     "AGENTS.override.md",
     "AGENTS.md",
     "AGENTS.MD",
@@ -179,6 +187,12 @@ fun piFilesReadOnlyReason(relativePath: String): String {
                 "要改请回上一屏用「API Key」。"
         name == "models-store.json" ->
             "这是 pi 自己写的模型缓存，刷新时整份重写，手改没有意义。"
+        name == "mcp-auth.json" ->
+            "这是 MCP 服务器的 OAuth 凭据（按服务器 URL 存，`extensions/mcp/oauth.ts`），" +
+                "pi 在登录/刷新时整份重写。要登录请用命令面板里的 `/mcp login <服务器>`。"
+        name == "mcp.log" ->
+            "这是 MCP 扩展的运行日志（`extensions/mcp/log.ts` 追加写），不是配置；" +
+                "服务器配置在同目录的 mcp.json 里。"
         name == "trust.json" ->
             "项目信任决定的唯一真相是本应用的项目页与 pi 自己的信任流程；手改这里会和它们矛盾。"
         name == "keybindings.json" ->
@@ -191,7 +205,7 @@ fun piFilesReadOnlyReason(relativePath: String): String {
             "这是 pi 自己下载并覆盖的二进制（rg、fd）。"
         else ->
             "只读：可写白名单只包含 pi 会读、而 pi 自己不会重写的文档 —— " +
-                "settings.json、models.json、AGENTS.md、SYSTEM.md、APPEND_SYSTEM.md、" +
+                "settings.json、models.json、mcp.json、AGENTS.md、SYSTEM.md、APPEND_SYSTEM.md、" +
                 "以及 themes/、skills/、prompts/、extensions/ 里的文件。"
     }
 }

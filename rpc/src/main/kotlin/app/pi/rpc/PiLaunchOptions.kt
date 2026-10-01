@@ -100,13 +100,27 @@ data class PiLaunchOptions(
      * `--no-extensions`: stop pi's extension **discovery**, exactly as pi defines it.
      *
      * pi keeps the explicit `-e` sources and drops everything discovery would have
-     * found (`core/resource-loader.ts:452` / `:556`:
+     * found (`core/resource-loader.ts:569-571`:
      * `noExtensions ? cliEnabledExtensions : mergePaths(cliEnabledExtensions, enabledExtensions)`).
      * The app passes no `-e` — not even for its own shipped extensions — so this
      * switch turns **all** of them off, device layer included. That is deliberate:
      * the flag is exposed 1:1, and "keep the app's own extensions while hiding the
      * user's" is a separate app-side feature that must not be smuggled in through
      * `-e` (`docs/pre-spawn-config.md` §2.2).
+     *
+     * **0.99.0 changed what "all of them" covers.** pi's own built-in extensions —
+     * `mcp`, `codemode`, `tool-search` and `llama.cpp` — used to sit outside this
+     * gate: 0.87.1's `llama.cpp` was an inline factory, so this flag left it running.
+     * Since 0.99.0 they are ordinary resources registered under `builtin:<name>`
+     * (`core/package-manager.ts:972-983`, `core/source-info.ts`'s `BUILTIN_PATH_PREFIX`)
+     * and collected into the same `enabledExtensions` list the ternary above reads, so
+     * the same line drops them too. Measured on both releases: with this flag set,
+     * 0.87.1's `get_commands` still answered `/llama`, and 0.99.2 answers nothing.
+     *
+     * The user-visible consequence is that turning this on also removes the
+     * local-model provider and `/mcp` — which is why the settings row that exposes it
+     * (`ui/settings/PiSettingsRegistry.kt`) must say so instead of promising that only
+     * discovery stops.
      */
     val noExtensions: Boolean = false,
     /** `--no-skills`: stop pi's skill discovery and loading. */

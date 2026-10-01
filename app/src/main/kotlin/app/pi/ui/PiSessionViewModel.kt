@@ -2065,7 +2065,10 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * The four `--no-*` are passed 1:1 with pi and nothing else: opening
      * 「停用扩展发现」 also turns off the app's own shipped extensions, because pi's
      * `--no-extensions` stops discovery and the app deliberately passes no `-e`
-     * (`rpc/PiLaunchOptions.kt` KDoc, `docs/pre-spawn-config.md` §2.2).
+     * (`rpc/PiLaunchOptions.kt` KDoc, `docs/pre-spawn-config.md` §2.2). Since pi
+     * 0.99.0 it also turns off pi's **own built-in** extensions (`mcp`, `codemode`,
+     * `tool-search`, `llama.cpp`), which used to sit outside that gate — see
+     * [PiLaunchOptions.noExtensions] for the two measured releases.
      *
      * Only the file IO is here; the normalisation (blank means unset, only `long`
      * means long retention) lives in [PiLaunchOptions.fromSettingValues], where

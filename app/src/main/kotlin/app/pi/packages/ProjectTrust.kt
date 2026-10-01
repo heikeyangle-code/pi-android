@@ -37,9 +37,20 @@ import app.pi.runtime.PiProjectConfig
  */
 object ProjectTrust {
 
-    /** `docs/security.md:9-16`, `trust-manager.ts:30-38`. A bare `.pi` is not enough. */
+    /**
+     * `docs/security.md:9-16`, `trust-manager.ts:30-39`. A bare `.pi` is not enough.
+     *
+     * `mcp.json` joined in 0.99.0 (`trust-manager.ts:32`), and it is the one entry that
+     * is not about extensions: pi reads a project's `.pi/mcp.json` **only after** the
+     * project is trusted (`extensions/mcp/config.ts`), and a server entry it never reads
+     * produces no error, no warning and no wire event — the user's MCP servers are simply
+     * absent. Deciding "does this project need trusting" without it would let a project
+     * whose only resource is an MCP server go unasked, which is the exact silence this
+     * object exists to replace with a sentence.
+     */
     val TRUST_REQUIRING_CONFIG_ENTRIES = listOf(
         "settings.json",
+        "mcp.json",
         "extensions",
         "skills",
         "prompts",
