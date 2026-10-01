@@ -5,5 +5,5 @@
       (`PiPalette.Dark.pageBg`). See that file for why the window ground can only
       follow the system night mode and not pi's theme setting.
     -->
-    <color name="pi_window_background">#18181E</color>
+    <color name="pi_window_background">#21252C</color>
 </resources>
