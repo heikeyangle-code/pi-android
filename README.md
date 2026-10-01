@@ -205,18 +205,16 @@ pi 现在自带四个扩展，这个 App 直接可用：
 
 ## 装上
 
-APK 目前只从 CI 产物发布（仓库还没有正式 release）：
+从 **[最新 release](https://github.com/heikeyangle-code/pi-android/releases/latest)** 下载对应的 APK 直接安装（arm64，Android 8.0 / API 26 以上）：
 
-1. 打开 [Actions](https://github.com/heikeyangle-code/pi-android/actions)，进最新一次成功的 `ci` 运行；
-2. 下载 **`pi-android-sideload28`**（推荐）或 `pi-android-modern36`；
-3. 解压得到 `app-release.apk`，装上。
-
-| 变体 | targetSdk | 什么时候用 |
+| 下载 | targetSdk | 什么时候用 |
 | :--- | :--- | :--- |
-| `pi-android-sideload28` | 28 | **默认选这个。** 用 Android 10 以前那套沙箱规则，系统权限最少，行为最可预期 |
-| `pi-android-modern36` | 36 | 面向新系统行为变更的版本，需要真机验证；只在 28 那个装不上或行为异常时才试 |
+| `…-sideload28-arm64.apk` | 28 | **默认选这个。** 用 Android 10 以前那套沙箱规则，系统权限最少，行为最可预期 |
+| `…-modern36-arm64.apk` | 36 | 面向新系统行为变更的版本，需要真机验证；只在 28 那个装不上或行为异常时才试 |
 
-两个包用同一套密钥签名，**可以互相覆盖安装，升级不丢数据**。要求 Android 8.0 (API 26) 以上，arm64。
+两个包用同一套密钥签名，**可以互相覆盖安装，升级不丢数据**。
+
+想自己编译、或想拿 CI 的中间产物，见下面的[自己编译](#自己编译)。
 
 > [!NOTE]
 > 首次启动会解包约 64 MiB 的运行时（APK 本身约 136 MB，大部分是这部分），比之后每次启动慢。之后只在载荷真的变化时才重新解包。
