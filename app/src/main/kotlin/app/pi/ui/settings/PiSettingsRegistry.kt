@@ -823,10 +823,16 @@ object PiSettingsCatalog {
             // 快捷添加那 3 个是什么、清空等于什么，三件事说完即可；powershell 为什么不出现
             // 写在 `optionalTools` 的 KDoc 里，`defaultTools: []` 那种极端写法由 `Pi 文件` 屏负责。
             //
-            // `presetBaseline` 是这一行的**写入语义**：pi 的 `defaultTools` 是完整白名单
-            // （`core/settings-manager.ts:1336-1339` 原样返回、`core/sdk.ts:264` 只启用列出的），
-            // 所以 chip 只能加在默认四件套之上 —— 曾经直接写 `["grep"]`，用户实测到工具全灭
-            // （`settings.json` 里只剩 `["grep","find","ls"]`）。见 `PiQuickAdd`。
+            // `presetBaseline` 是这一行的**写入语义**：普通名字的 `defaultTools` 是完整白名单
+            // （`core/sdk.ts:264` 只启用列出的），所以 chip 只能加在默认四件套之上 —— 曾经直接
+            // 写 `["grep"]`，用户实测到工具全灭（`settings.json` 里只剩 `["grep","find","ls"]`）。
+            //
+            // 0.99.0 给同一个键加了 `+name`/`-name` 增量语法（`core/settings-manager.ts:234-245`，
+            // 关键是 `:236`：列表里一个普通名字都没有时，基线是**默认四件套**；有普通名字时，
+            // 基线就是那一串）。所以这一行读回来的值必须先按 `PiQuickAdd.resolveDefaultTools`
+            // 解析再展示与写回，不能把原数组当成生效集合 —— `["+codemode"]` 长度 1、生效 5 个。
+            // 另：`getDefaultTools()` 在 0.99.2 也变成返回解析后的列表（`:1429-1435`），
+            // 0.87.1 的「原样返回」不再成立。见 `PiQuickAdd`。
             description = "**默认只有 4 个：read、bash、edit、write**。快捷添加会在这 4 个之上再加。" +
                 "清空并保存 = 回到这 4 个默认值。",
             kind = PiRowKind.List,
@@ -838,6 +844,47 @@ object PiSettingsCatalog {
             emptyListLabel = "默认 read/bash/edit/write",
             aliases = listOf("tools", "builtin"),
         ),
+        PiSetting(
+            key = "codemode.mode",
+            title = "Codemode 方式",
+            description = "codemode 工具启用时，它怎么向模型交代能调用的工具。" +
+                "on = 已声明的工具把 codemode 声明附在自己描述后面；" +
+                "only = 只列 codemode 能调的那些，已启用的内置工具**不再直接声明给模型**。",
+            kind = PiRowKind.Value,
+            group = G_TOOLS,
+            section = "工具",
+            // pi 的默认值：`core/settings-manager.ts` 的 `CodemodeSettings.mode` 文档写明
+            // 「Default: `on`」，且 `codemode/index.ts` 的读取用 `?? "on"`。
+            defaultValue = str("on"),
+            effective = EffectiveKind.NewSession,
+            options = listOf(
+                PiOption("on", "on（默认）"),
+                PiOption("only", "only"),
+            ),
+            aliases = listOf("codemode", "mcp", "tool search"),
+        ),
+        PiSetting(
+            key = "codemode.inlineBudget",
+            title = "Codemode 声明预算",
+            description = "codemode 的描述里允许花在工具声明上的估算 token 数（字符数 / 4）。",
+            kind = PiRowKind.Number,
+            group = G_TOOLS,
+            section = "工具",
+            // 「Default: 3000」（`settings-manager.ts` 的 `CodemodeSettings.inlineBudget`）。
+            defaultValue = num(3000),
+            effective = EffectiveKind.NewSession,
+            min = 0,
+            max = 200000,
+            step = 100,
+            unit = "token",
+            aliases = listOf("codemode", "budget"),
+        ),
+        // `fullscreenWheelScrollLines`（0.99.0 新键）**故意不在这里**：它只影响原版 pi TUI 在
+        // 全屏模式下的鼠标滚轮行数，本应用不发它、界面上也没有鼠标滚轮 —— 与
+        // `fullscreenCopyOnSelect`/`fullscreenExitOutput`/`fullscreenScrollbar` 三个键一致。
+        // `deviceId`（同批新键）同样不展示：它是 pi 为 ChatGPT 登录生成的安装标识，只写全局设置、
+        // 从 bug report 里排除，是 pi 的内部状态而不是一个用户能决定的值。App 的写入路径是
+        // 「锁内重读整份文档、只改目标键」，所以它**不会被删掉**（`PiSettingsFileStore.kt`）。
         // Two rows were deleted here rather than wired, because nothing in the
         // app or on pi's wire can honour them:
         //
@@ -1440,7 +1487,9 @@ object PiSettingsCatalog {
             key = "app.runtime.noExtensions",
             title = "停用扩展发现",
             description = "打开后 pi 不再扫描扩展目录：本应用自带的扩展、通过资源包安装的扩展、" +
-                "你自己放进扩展目录的扩展都不会加载，设备能力工具会一起消失。",
+                "你自己放进扩展目录的扩展都不会加载，设备能力工具会一起消失。" +
+                "**pi 自带的内置扩展也一起停用** —— 本地模型（llama.cpp）与 `/mcp` 会随之消失，" +
+                "模型列表里看不到本地模型。",
             kind = PiRowKind.Switch,
             group = G_RUNTIME,
             section = "进程",
@@ -1688,9 +1737,19 @@ object PiSettingsCatalog {
             "${summaryText(store, "retry.enabled")} · $retries 次"
         },
         PiSettingsGroup(G_TOOLS, "工具", Icons.Filled.Build) { store ->
-            val row = byKey["defaultTools"]
-            val count = row?.countIn(store) ?: 0
-            if (count == 0) "默认 read·bash·edit·write" else "$count 个已启用"
+            val raw = store.read("defaultTools")
+            if (raw == null) {
+                "默认 read·bash·edit·write"
+            } else {
+                // 数的是 pi 的**生效集合**，不是数组长度：`["+codemode"]` 长度是 1，pi 生效
+                // 5 个（默认四件套 + codemode）。pi 在同一份列表上做的就是这件事
+                // （`core/settings-manager.ts:234-245`），`PiQuickAdd` 是它的转录。
+                val entries = (raw as? JsonArray)
+                    ?.mapNotNull { (it as? JsonPrimitive)?.content }
+                    .orEmpty()
+                val enabled = PiQuickAdd.resolveDefaultTools(entries, PiQuickAdd.builtinToolDefaults)
+                if (enabled.isEmpty()) "一个都不启用" else "${enabled.size} 个已启用"
+            }
         },
         PiSettingsGroup(G_SESSIONS, "会话", Icons.Filled.Folder) { store ->
             // Deliberately not derived from a `sessionDir` row: this app pins the

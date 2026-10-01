@@ -1,5 +1,6 @@
 package app.pi.rpc
 
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.boolean
@@ -15,12 +16,14 @@ import org.junit.Test
 /**
  * Settings editing is the code most able to destroy a user's configuration
  * silently, so it is pinned against pi's own semantics: recursive object merge,
- * wholesale array replacement, sparse documents, and byte-preservation of keys
- * the app does not know about.
+ * wholesale array replacement (with pi's one `defaultTools` exception),
+ * sparse documents, and byte-preservation of keys the app does not know about.
  */
 class SettingsDocumentTest {
 
     private fun doc(json: String): JsonObject = PiJson.parseObjectOrNull(json)!!
+
+    private fun arr(vararg items: String): JsonArray = JsonArray(items.map { JsonPrimitive(it) })
 
     @Test
     fun `lookup walks dotted paths`() {
@@ -101,12 +104,84 @@ class SettingsDocumentTest {
     fun `merge replaces arrays wholesale, as pi's isMergeableObject requires`() {
         // pi excludes arrays from merging, so a project list replaces the global
         // one instead of appending. Getting this wrong silently doubles a user's
-        // tool list.
+        // tool list. (`defaultTools` is the one exception; see the tests below.)
         val global = doc("""{"defaultTools":["read","bash","edit","write"]}""")
         val project = doc("""{"defaultTools":["read","grep"]}""")
         val merged = SettingsDocument.merge(global, project)
         val tools = SettingsDocument.lookup(merged, "defaultTools")!!.jsonArray.map { it.jsonPrimitive.content }
         assertEquals(listOf("read", "grep"), tools)
+    }
+
+    @Test
+    fun `merge appends a project defaultTools list made only of modifiers`() {
+        // pi's `mergeDefaultTools` (settings-manager.ts:223-228, applied at :249-251):
+        // `+name`/`-name` modify the *inherited* selection instead of replacing it,
+        // so these two layers resolve to ["grep","codemode"] in pi. Treating the
+        // project list as a replacement made the app's "effective value" show
+        // ["+codemode"] — the opposite of what pi ran. The modifiers are kept here
+        // (this mirrors pi's stored merge); `PiQuickAdd.effective` is what expands
+        // them for display.
+        val global = doc("""{"defaultTools":["grep"]}""")
+        val project = doc("""{"defaultTools":["+codemode"]}""")
+        val merged = SettingsDocument.merge(global, project)
+        val tools = SettingsDocument.lookup(merged, "defaultTools")!!.jsonArray.map { it.jsonPrimitive.content }
+        assertEquals(listOf("grep", "+codemode"), tools)
+    }
+
+    @Test
+    fun `merge replaces defaultTools when the project list mixes plain names and modifiers`() {
+        // Only an *all-modifier* list appends (`overrides.every(isToolModifier)`),
+        // and this is the mixed shape that must never be produced by the app:
+        // pi reads the plain name as the whole whitelist (settings-manager.ts:236),
+        // so `["+codemode","grep"]` disables read/bash/edit/write.
+        val global = doc("""{"defaultTools":["read","bash","edit","write"]}""")
+        val project = doc("""{"defaultTools":["+codemode","grep"]}""")
+        val merged = SettingsDocument.merge(global, project)
+        val tools = SettingsDocument.lookup(merged, "defaultTools")!!.jsonArray.map { it.jsonPrimitive.content }
+        assertEquals(listOf("+codemode", "grep"), tools)
+    }
+
+    @Test
+    fun `merge leaves defaultTools alone when the project layer does not set it`() {
+        val global = doc("""{"defaultTools":["grep"]}""")
+        val project = doc("""{"theme":"light"}""")
+        val merged = SettingsDocument.merge(global, project)
+        val tools = SettingsDocument.lookup(merged, "defaultTools")!!.jsonArray.map { it.jsonPrimitive.content }
+        assertEquals(listOf("grep"), tools)
+    }
+
+    @Test
+    fun `mergeDefaultTools pins every shape pi's rule distinguishes`() {
+        // Absent override = absent result (`overrides === undefined` → base).
+        assertNull(SettingsDocument.mergeDefaultTools(null, null))
+        assertEquals(arr("read"), SettingsDocument.mergeDefaultTools(arr("read"), null))
+        // Not an array on either side: the override replaces.
+        assertEquals(arr("+codemode"), SettingsDocument.mergeDefaultTools(null, arr("+codemode")))
+        assertEquals(JsonPrimitive("grep"), SettingsDocument.mergeDefaultTools(arr("read"), JsonPrimitive("grep")))
+        // Only `+`/`-` strings count as modifiers; a number makes the list replace.
+        assertEquals(
+            JsonArray(listOf(JsonPrimitive(1))),
+            SettingsDocument.mergeDefaultTools(arr("read"), JsonArray(listOf(JsonPrimitive(1)))),
+        )
+        // All modifiers append, in order. An empty override is vacuously
+        // "all modifiers" in pi (`[].every(...)`), so it keeps the base.
+        assertEquals(
+            arr("read", "+codemode", "-bash"),
+            SettingsDocument.mergeDefaultTools(arr("read"), arr("+codemode", "-bash")),
+        )
+        assertEquals(arr("read"), SettingsDocument.mergeDefaultTools(arr("read"), arr()))
+    }
+
+    @Test
+    fun `merge applies the defaultTools rule at the top level only, as pi does`() {
+        // pi runs the generic deep merge first and patches top-level `defaultTools`
+        // afterwards (settings-manager.ts:249-251), so a nested key that happens to
+        // be called `defaultTools` still gets the generic array replacement.
+        val global = doc("""{"nested":{"defaultTools":["read"]}}""")
+        val project = doc("""{"nested":{"defaultTools":["+codemode"]}}""")
+        val merged = SettingsDocument.merge(global, project)
+        val tools = SettingsDocument.lookup(merged, "nested.defaultTools")!!.jsonArray.map { it.jsonPrimitive.content }
+        assertEquals(listOf("+codemode"), tools)
     }
 
     @Test

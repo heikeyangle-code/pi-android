@@ -662,6 +662,77 @@ fun main() {
             "${editor?.contains("PiQuickAdd.remove(")}/${editor?.contains("PiQuickAdd.persist(")}",
     )
 
+    // Rule 15a: pi 0.99.0 gave `defaultTools` a second reading. `+name`/`-name` are
+    // **modifiers** of the inherited selection (`settings-manager.ts:166`, `:215-217`),
+    // the base being `DEFAULT_TOOL_NAMES` when the list holds no plain name at all
+    // (`:234-245`, key line `:236`); pi's own cases are
+    // `test/settings-manager.test.ts:650-661`. The editor used to fall through to the
+    // raw list, so `["+codemode"]` displayed as "every default tool is off" while pi
+    // ran them all on — and one chip tap then persisted `["+codemode","grep"]`, the
+    // mixed shape in which pi reads `grep` as the whole whitelist and silently drops
+    // read/bash/edit/write (`:236`). The expansion below is what removes that shape.
+    val codemode = "codemode"
+    val modifierOnly = PiQuickAdd.effective(listOf("+$codemode"), defaults, optional)
+    val minusOne = PiQuickAdd.effective(listOf("-bash"), defaults, optional)
+    val chipAfterModifier = PiQuickAdd.persist(
+        PiQuickAdd.add(listOf("+$codemode"), "grep", defaults, optional),
+        defaults,
+    )
+    val mixed = PiQuickAdd.effective(listOf("+$codemode", "grep"), defaults, optional)
+    val presetsPlusModifier = PiQuickAdd.effective(listOf("grep", "find", "+ls"), defaults, optional)
+    val mergedLayers = PiQuickAdd.effective(listOf("grep", "+$codemode"), defaults, optional)
+    val allOffModifiers = defaults.map { "-$it" }
+    check(
+        "an all-modifier list displays the default four plus the modifier",
+        modifierOnly == defaults + codemode,
+        "got $modifierOnly",
+    )
+    check(
+        "a -name list displays the default four minus that one tool",
+        minusOne == defaults - "bash",
+        "got $minusOne",
+    )
+    check(
+        "a chip tap on a modifier-only list persists plain names and keeps the default four",
+        chipAfterModifier == defaults + listOf(codemode, "grep"),
+        "got $chipAfterModifier",
+    )
+    check(
+        "the expansion of a modifier-only list is never mistaken for the baseline",
+        PiQuickAdd.persist(listOf("+$codemode"), defaults) == defaults + codemode,
+        "got ${PiQuickAdd.persist(listOf("+$codemode"), defaults)}",
+    )
+    check(
+        "a mixed plain+modifier list is read the way pi reads it, not as a whitelist union",
+        mixed == listOf("grep", codemode),
+        "got $mixed",
+    )
+    check(
+        "a modifier list that resolves to presets only is not 'repaired' into the union",
+        presetsPlusModifier == listOf("grep", "find", "ls"),
+        "got $presetsPlusModifier",
+    )
+    check(
+        "a merged global+project value resolves to what pi runs",
+        mergedLayers == listOf("grep", codemode),
+        "got $mergedLayers",
+    )
+    check(
+        "a modifier list that resolves back to the baseline still collapses to unset",
+        PiQuickAdd.persist(listOf("-bash", "+bash"), defaults).isEmpty(),
+        "got ${PiQuickAdd.persist(listOf("-bash", "+bash"), defaults)}",
+    )
+    check(
+        "an all-off modifier list is not flipped back into the default four",
+        PiQuickAdd.persist(allOffModifiers, defaults) == allOffModifiers,
+        "got ${PiQuickAdd.persist(allOffModifiers, defaults)}",
+    )
+    check(
+        "rows without a baseline keep +/- literal: they have no inherited selection",
+        PiQuickAdd.effective(listOf("+literal"), emptyList(), emptyList()) == listOf("+literal") &&
+            PiQuickAdd.persist(listOf("-literal"), emptyList()) == listOf("-literal"),
+    )
+
     // Rule 15b: `app.terminal.keyBar` is the same shape — an unset/empty value means the
     // default row of keys (`TerminalSettings.keyBarOf`: absent *and* empty both mean the
     // default bar, `ui/terminal/TerminalSettings.kt:112-124`) — so its chips have to add on
