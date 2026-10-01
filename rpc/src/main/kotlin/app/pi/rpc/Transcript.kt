@@ -1502,8 +1502,58 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
         }
     }
 
+    /**
+     * 这个 id 是否是 pi 给**嵌套工具调用**分配的 id —— 也就是扩展用 `ctx.executeTool()`
+     * 发起的调用（codemode 脚本与 MCP 都走这条路），不是模型自己发的调用。
+     *
+     * pi 把这类 id 定成 `<父调用 id>/<n>`，见 `core/nested-tool-calls.ts:186-190` 的
+     * `id: ${callerId}/${scope.nextId++}`；同时它向宿主承诺这些 id **不进 transcript**
+     * （`docs/extensions.md:148`「These ids do not appear as tool calls or tool results in
+     * the transcript.」）。RPC 模式仍然原样转发它们的三个生命周期事件
+     * （`modes/json-event.ts:60-63` 对非 `message_update` 的事件一律透传），所以把它们挡在
+     * transcript 之外是宿主这一侧要兑现的承诺。不挡的症状：codemode 脚本里每一次
+     * `read`/`bash` 都会多出一张**顶层**卡片，而嵌套调用不落盘（`nestedCalls` 只留名字、
+     * 状态与时长，从不留结果），重开会话后这些卡片又凭空消失。
+     *
+     * 判据有两层，**权威字段优先**：
+     *
+     *  1. `parentToolCallId` —— pi 在嵌套事件的三个形状上都把它标成**必填**
+     *     （`core/nested-tool-calls.ts:112-128`），而 `modes/json-event.ts:49-51` 对非
+     *     `message_update` 的事件一律**原样透传**，所以它确实到达解析层
+     *     （`rpc/.../Events.kt` 的三个 `ToolExecution*` 类）。这一层不需要任何形状假设。
+     *  2. id 形状 `<父调用 id>/<n>`（`nested-tool-calls.ts:186-190` 的
+     *     `id: ${callerId}/${scope.nextId++}`）—— 只在字段缺席时才用。匹配故意收得很紧：
+     *     前缀必须是本 reducer 已经见过的工具调用（[toolIndexByCallId]，只在 [reset] 里清空、
+     *     从不逐条删除），因此一个恰好含 `/` 的 provider id 不会被误判成嵌套调用（provider
+     *     id 的形状见 `ai/src/api/transform-messages.ts:60-64` 与
+     *     `ai/src/api/google-generative-ai.ts:197-201`）。深度大于 1 的 id（`a/1/2`）沿前缀
+     *     逐级上溯，直到撞上那个真正建过卡片的祖先。
+     *
+     * 三层代码都要挡，不能只挡 [onToolStart]：`_update` 只会写 start 已经建出的那张卡片，
+     * 而 `_end` 会走到 [finalizeTool]，它面对**查不到 id 的调用**是直接 `append` 一张新卡片
+     * （这条路径本来是留给「reducer 漏掉了 start」的孤儿调用的）。所以只挡 start 只是把
+     * 顶层卡片推后一个事件出现。
+     */
+    private fun isNestedToolCall(callId: String, parentToolCallId: String?): Boolean {
+        // The authoritative signal: pi sets it on every nested lifecycle event and never on
+        // a model-issued one (see `Events.kt`'s `ToolExecutionStart.parentToolCallId`).
+        if (parentToolCallId != null) return true
+        // Fallback for an event that arrived without it. The shape below is what
+        // `nested-tool-calls.ts:186-190` builds, and the match is deliberately tight: the
+        // prefix must be a call this reducer has already seen ([toolIndexByCallId], cleared
+        // only by [reset]), so a provider id that happens to contain `/` is not mistaken for
+        // a nested one. Depth above 1 (`a/1/2`) walks up to the ancestor that drew a card.
+        val slash = callId.lastIndexOf('/')
+        if (slash <= 0 || slash == callId.length - 1) return false
+        if (!callId.substring(slash + 1).all { it in '0'..'9' }) return false
+        val parent = callId.substring(0, slash)
+        return toolIndexByCallId.containsKey(parent) || isNestedToolCall(parent, null)
+    }
+
     private fun onToolStart(event: PiEvent.ToolExecutionStart): TranscriptChange {
         streaming = true
+        // 嵌套调用不是 transcript 内容；三个入口都要挡的理由见 [isNestedToolCall]。
+        if (isNestedToolCall(event.toolCallId, event.parentToolCallId)) return TranscriptChange.None
         val existing = toolIndexByCallId[event.toolCallId]
         if (existing != null) {
             val current = items.getOrNull(existing)
@@ -1530,6 +1580,9 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
     }
 
     private fun onToolUpdate(event: PiEvent.ToolExecutionUpdate): TranscriptChange {
+        // 见 [isNestedToolCall]：`_update` 自己不会建行（查不到 id 就返回 None），这一挡是
+        // 把三个入口凑齐、免得将来有别的路径替嵌套 id 建了行。
+        if (isNestedToolCall(event.toolCallId, event.parentToolCallId)) return TranscriptChange.None
         val index = toolIndexByCallId[event.toolCallId] ?: return TranscriptChange.None
         val current = items.getOrNull(index) as? ToolCall ?: return TranscriptChange.None
         val chunk = event.partialText ?: return TranscriptChange.None
@@ -1574,15 +1627,20 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
         return TranscriptChange.Updated(index)
     }
 
-    private fun onToolEnd(event: PiEvent.ToolExecutionEnd): TranscriptChange = finalizeTool(
-        callId = event.toolCallId,
-        toolName = event.toolName,
-        output = event.resultText,
-        isError = event.isError,
-        details = event.details,
-        ts = now(),
-        images = event.resultImages,
-    )
+    private fun onToolEnd(event: PiEvent.ToolExecutionEnd): TranscriptChange {
+        // 见 [isNestedToolCall]：`_end` 是三个入口里唯一会**新建**卡片的那一个 ——
+        // [finalizeTool] 对查不到 id 的调用是 append，所以只挡 start 挡不住它。
+        if (isNestedToolCall(event.toolCallId, event.parentToolCallId)) return TranscriptChange.None
+        return finalizeTool(
+            callId = event.toolCallId,
+            toolName = event.toolName,
+            output = event.resultText,
+            isError = event.isError,
+            details = event.details,
+            ts = now(),
+            images = event.resultImages,
+        )
+    }
 
     /**
      * Close a tool call and, when its `details` carry a diff, append the

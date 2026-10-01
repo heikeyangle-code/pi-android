@@ -212,6 +212,23 @@ sealed interface PiEvent {
         val toolCallId: String,
         val toolName: String,
         val args: JsonObject?,
+        /**
+         * The model-issued call this one was made **inside**, or null for a top-level call.
+         *
+         * pi 0.99.0 added `ctx.executeTool()`, and a tool that uses it makes nested calls
+         * that pi still reports as a full `tool_execution_*` lifecycle. Those events carry
+         * this field — it is **required** on the nested shape
+         * (`core/nested-tool-calls.ts:112-128`) — and `modes/json-event.ts:49-51` passes
+         * every non-`message_update` event through verbatim, so it does reach this reader.
+         *
+         * It is the authoritative "this is not a transcript row" signal: pi promises the
+         * nested ids do not appear as tool calls or results in the transcript
+         * (`docs/extensions.md`), and the nested call's own output is recorded on the
+         * *parent's* result as `nestedCalls`. A reader that ignores this field draws one
+         * phantom top-level card per nested call, which then disappears on reopen because
+         * nested calls are never persisted. See `Transcript.isNestedToolCall`.
+         */
+        val parentToolCallId: String? = null,
     ) : PiEvent {
         override val type = "tool_execution_start"
     }
@@ -220,6 +237,8 @@ sealed interface PiEvent {
         val toolCallId: String,
         val toolName: String?,
         val partialText: String?,
+        /** See [ToolExecutionStart.parentToolCallId]. */
+        val parentToolCallId: String? = null,
     ) : PiEvent {
         override val type = "tool_execution_update"
     }
@@ -241,6 +260,8 @@ sealed interface PiEvent {
          * the transcript can at least list what came back.
          */
         val resultImages: List<PiImage> = emptyList(),
+        /** See [ToolExecutionStart.parentToolCallId]. */
+        val parentToolCallId: String? = null,
     ) : PiEvent {
         override val type = "tool_execution_end"
     }
@@ -479,12 +500,14 @@ object PiEvents {
             toolCallId = o.str("toolCallId").orEmpty(),
             toolName = o.str("toolName").orEmpty(),
             args = o["args"] as? JsonObject,
+            parentToolCallId = o.str("parentToolCallId"),
         )
 
         "tool_execution_update" -> PiEvent.ToolExecutionUpdate(
             toolCallId = o.str("toolCallId").orEmpty(),
             toolName = o.str("toolName"),
             partialText = o.obj("partialResult")?.let { contentText(it["content"]) },
+            parentToolCallId = o.str("parentToolCallId"),
         )
 
         "tool_execution_end" -> {
@@ -496,6 +519,7 @@ object PiEvents {
                 isError = o.bool("isError") ?: false,
                 details = result?.get("details") ?: o["details"],
                 resultImages = imageBlocks(result?.get("content")),
+                parentToolCallId = o.str("parentToolCallId"),
             )
         }
 

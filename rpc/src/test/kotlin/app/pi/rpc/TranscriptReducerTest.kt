@@ -126,6 +126,46 @@ class TranscriptReducerTest {
     }
 
     @Test
+    fun `nested tool calls never become top-level cards`() {
+        val r = reducer()
+        // 父调用：codemode 脚本本身。
+        r.onEvent(PiEvents.parse("""{"type":"tool_execution_start","toolCallId":"tc1","toolName":"codemode","args":{}}"""))
+        // 脚本里的一次 `read`：pi 把 id 改写成 `<父 id>/<n>`，并照旧发三个生命周期事件，
+        // 三个都带 `parentToolCallId`（`core/nested-tool-calls.ts:186-190,245-251`）。
+        r.onEvent(PiEvents.parse("""{"type":"tool_execution_start","toolCallId":"tc1/1","toolName":"read","args":{"path":"a.txt"},"parentToolCallId":"tc1"}"""))
+        r.onEvent(PiEvents.parse("""{"type":"tool_execution_update","toolCallId":"tc1/1","parentToolCallId":"tc1","partialResult":{"content":[{"type":"text","text":"nested"}]}}"""))
+        r.onEvent(PiEvents.parse("""{"type":"tool_execution_end","toolCallId":"tc1/1","toolName":"read","isError":false,"result":{"content":[{"type":"text","text":"nested"}]},"parentToolCallId":"tc1"}"""))
+        // 只有父调用是 transcript 内容（`docs/extensions.md:148`），也只有它会随会话落盘。
+        assertEquals(1, r.transcript.size)
+        val card = r.transcript[0] as ToolCall
+        assertEquals("codemode", card.toolName)
+        assertEquals(ToolStatus.Pending, card.status)
+    }
+
+    @Test
+    fun `a nested tool end cannot append a card on its own`() {
+        val r = reducer()
+        r.onEvent(PiEvents.parse("""{"type":"tool_execution_start","toolCallId":"tc1","toolName":"codemode","args":{}}"""))
+        // 关键的一条：`finalizeTool` 对查不到 id 的调用会 append 一张新卡片，所以只挡
+        // `start` 挡不住嵌套调用，`_end` 必须自己挡（否则顶层卡片晚一个事件出现）。
+        r.onEvent(PiEvents.parse("""{"type":"tool_execution_end","toolCallId":"tc1/1","toolName":"read","isError":false,"result":{"content":[{"type":"text","text":"x"}]},"parentToolCallId":"tc1"}"""))
+        assertEquals(1, r.transcript.size)
+        assertEquals("codemode", (r.transcript[0] as ToolCall).toolName)
+    }
+
+    @Test
+    fun `the nested-call guard keys on the id shape, not on any slash`() {
+        val r = reducer()
+        // 一个恰好含 `/` 但不是 `<父 id>/<n>` 形状的 provider id：照常建卡。
+        r.onEvent(PiEvents.parse("""{"type":"tool_execution_start","toolCallId":"call_a/b","toolName":"bash","args":{}}"""))
+        assertEquals(1, r.transcript.size)
+        // 深度 2：`tc1/1/2` 的直接父 id 从未建过卡片，仍要沿前缀上溯认出 tc1。
+        r.onEvent(PiEvents.parse("""{"type":"tool_execution_start","toolCallId":"tc1","toolName":"codemode","args":{}}"""))
+        r.onEvent(PiEvents.parse("""{"type":"tool_execution_end","toolCallId":"tc1/1/2","toolName":"read","isError":false,"result":{"content":[{"type":"text","text":"deep"}]},"parentToolCallId":"tc1/1"}"""))
+        assertEquals(2, r.transcript.size)
+    }
+
+    @Test
     fun `agent end closes every streaming block`() {
         val r = reducer()
         r.onEvent(thinking("t"))
