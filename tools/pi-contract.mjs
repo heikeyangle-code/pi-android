@@ -47,13 +47,19 @@
  *     compaction), and that the app still keeps entry types it does not model (the
  *     `context_edit` pair). pi exposes no RPC channel for any of them. See
  *     [checkSessionSurface].
- *  6. **Behaviour** — `models.json` semantics, asserted by running the pinned
+ *  6. **Official model catalog** — the format of `@earendil-works/pi-ai`'s bundled
+ *     `dist/providers/data/**`, which `packages/PiOfficialCatalog.kt` parses. Its
+ *     sha256 check makes a *matching* file silent, so 0.99.0's rename of the inner keys
+ *     from `<id>` to `<type>:<id>` — and its new image and classifier entries — reached
+ *     the import sheet as extra chat models with nothing failing. See
+ *     [checkCatalogData].
+ *  7. **Behaviour** — `models.json` semantics, asserted by running the pinned
  *     engine: a declaration that omits `input`/`contextWindow` really does replace
  *     the catalog entry with pi's defaults (that is why the app must not declare
  *     models pi knows), `modelOverrides` really does merge (that is why it is the
  *     safe way to adjust one), and a catalog model's default `inputLimits` really is
  *     the 2000×2000 / 4.5 MiB(base64) / q80 profile `AttachmentBudget.kt` pre-resizes to.
- *  7. **Extensions** — the extensions this app ships still load into the pinned
+ *  8. **Extensions** — the extensions this app ships still load into the pinned
  *     engine. Their API surface is the one thing here with no static substitute.
  *
  * Every failure prints **the App code that depends on the fact**, because the
@@ -67,12 +73,13 @@
  *   node tools/pi-contract.mjs --pi <dir> --only=theme
  *                                              # one group only: surface | theme |
  *                                              # tables | tooltext | session |
- *                                              # bundled | behaviour | extensions
+ *                                              # catalog | bundled | behaviour |
+ *                                              # extensions
  *
  * `--only` exists because the groups cost very different things: `surface`, `theme`,
- * `tables`, `tooltext` and `session` are static reads of `dist/`, while `behaviour` and
- * the startup-reload check spawn the engine and `extensions` loads this app's own
- * extension tree. A group that fails for a reason outside its own subject (a
+ * `tables`, `tooltext`, `session` and `catalog` are static reads of `dist/`, while
+ * `behaviour` and the startup-reload check spawn the engine and `extensions` loads this
+ * app's own extension tree. A group that fails for a reason outside its own subject (a
  * work-in-progress file under `app/src/main/assets/pi-extensions/`, say) should not
  * be able to hide a verdict about the palette.
  *
@@ -80,7 +87,7 @@
  */
 
 import { execFileSync, spawn } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -363,29 +370,340 @@ function builtinThemePath(piDir, name) {
 }
 
 /**
- * `resolveVarRefs` (`theme.ts:228-244`): a hex string, an empty string and a 0-255
- * integer are literal; anything else names a `vars` entry and resolves recursively.
- * Returns `null` for a reference pi would reject (missing target, or a cycle), so the
- * caller reports it instead of throwing the whole script away.
+ * `resolveVarRefs` (`theme.ts:24`): a hex string, an empty string, a 0-255 integer
+ * **and an `oklch()`/`okhsl()` colour** are literal; anything else names a `vars`
+ * entry and resolves recursively. Returns `null` for a reference pi would reject
+ * (missing target, or a cycle), so the caller reports it instead of throwing the
+ * whole script away.
+ *
+ * The `ok(lch|hsl)` clause is 0.99.0's addition, and it is why this group failed
+ * against 0.99.2 with a message about a missing file: without it, `okhsl(232 54% 67%)`
+ * is looked up as a `vars` key, not found, and the whole read is abandoned — while the
+ * file is right there. `theme.ts` spells the clause `/^ok(lch|hsl)\(/i`; it is repeated
+ * here verbatim.
  */
 function resolveThemeValue(value, vars, seen = new Set()) {
-	if (typeof value === "number" || value === "" || value.startsWith("#")) return value;
+	if (
+		typeof value === "number" ||
+		value === "" ||
+		value.startsWith("#") ||
+		/^ok(lch|hsl)\(/i.test(value)
+	) {
+		return value;
+	}
 	if (seen.has(value) || !(value in vars)) return null;
 	seen.add(value);
 	return resolveThemeValue(vars[value], vars, seen);
 }
 
+// ------------------------------------------------------------- pi's colour grammar
+//
+// 0.99.0 rewrote the built-in themes in OKHSL and left `vars` references pointing at
+// those functions, so comparing a theme against `PiPalette.kt` — which is Compose
+// `Color(0xFF……)`, i.e. sRGB — now needs the conversion pi does in
+// `@earendil-works/pi-tui`'s `colors.ts` and `oklab.ts`.
+//
+// This is a **port**, not an approximation, and here the difference matters: OKHSL's
+// saturation is relative to the sRGB gamut *at that hue and lightness*, so the usual
+// HSL formula would be wrong for most tokens — and wrong in a way that still looks
+// plausible in a diff. The maths is Björn Ottosson's reference implementation (MIT),
+// the same one pi ports. It is duplicated here rather than imported because this
+// script asserts against a *directory*, and that directory is not guaranteed to have
+// `node_modules` (CI hands `--pi` a freshly installed package, a developer hands it a
+// checkout). Keep it in step with `packages/tui/src/oklab.ts`: a drift shows up as a
+// value mismatch on the offending token, because the `theme` group compares every
+// token's rendered hex — never as silence.
+
+const OKLAB_LAB_TO_LMS = [
+	[1, 0.3963377773761749, 0.2158037573099136],
+	[1, -0.1055613458156586, -0.0638541728258133],
+	[1, -0.0894841775298119, -1.2914855480194092],
+];
+const OKLAB_LMS_TO_LINEAR_SRGB = [
+	[4.0767416360759583, -3.3077115392580629, 0.2309699031821043],
+	[-1.2684379732850315, 2.6097573492876882, -0.341319376002657],
+	[-0.0041960761386756, -0.7034186179359362, 1.7076146940746117],
+];
+/** Per sRGB channel: the (a, b) half-plane where it clips first, and the saturation fit. */
+const OKLAB_SATURATION_FIT = [
+	[
+		[-1.8817031, -0.80936501],
+		[1.19086277, 1.76576728, 0.59662641, 0.75515197, 0.56771245],
+	],
+	[
+		[1.8144408, -1.19445267],
+		[0.73956515, -0.45954404, 0.08285427, 0.12541073, -0.14503204],
+	],
+	[
+		[0.13110758, 1.81333971],
+		[1.35733652, -0.00915799, -1.1513021, -0.50559606, 0.00692167],
+	],
+];
+const OKLAB_K1 = 0.206;
+const OKLAB_K2 = 0.03;
+const OKLAB_K3 = (1 + OKLAB_K1) / (1 + OKLAB_K2);
+
+const oklabMatrix = (m, [x, y, z]) => m.map((row) => row[0] * x + row[1] * y + row[2] * z);
+const okhslToOklabLightness = (x) => (x * x + OKLAB_K1 * x) / (OKLAB_K3 * (x + OKLAB_K2));
+const oklabLinearToSrgb = (value) =>
+	value > 0.0031308 ? 1.055 * value ** (1 / 2.4) - 0.055 : 12.92 * value;
+
+/** Oklab `[L, a, b]` to linear sRGB `[r, g, b]` (0-1, may leave the gamut). */
+function oklabToLinearSrgb(lab) {
+	return oklabMatrix(
+		OKLAB_LMS_TO_LINEAR_SRGB,
+		oklabMatrix(OKLAB_LAB_TO_LMS, lab).map((value) => value ** 3),
+	);
+}
+
+/** Linear sRGB (0-1) to sRGB channels (0-255, rounded), clipping out-of-gamut channels. */
+function linearSrgbToRgb(linear) {
+	const [r, g, b] = linear.map((value) =>
+		Math.round(Math.min(1, Math.max(0, oklabLinearToSrgb(value))) * 255),
+	);
+	return { r, g, b };
+}
+
+const oklabLmsSlopes = (a, b) => OKLAB_LAB_TO_LMS.map((row) => row[1] * a + row[2] * b);
+
+/** Largest saturation (C/L) inside sRGB for hue `(a, b)`: polynomial fit plus one Halley step. */
+function oklabMaxSaturation(a, b) {
+	const channel = OKLAB_SATURATION_FIT.findIndex(
+		([[x, y]], index) => index === 2 || x * a + y * b > 1,
+	);
+	const [k0, k1, k2, k3, k4] = OKLAB_SATURATION_FIT[channel][1];
+	const weights = OKLAB_LMS_TO_LINEAR_SRGB[channel];
+	const saturation = k0 + k1 * a + k2 * b + k3 * a * a + k4 * a * b;
+	const slopes = oklabLmsSlopes(a, b);
+	const base = slopes.map((k) => 1 + saturation * k);
+	const dot = (values) => values.reduce((sum, value, index) => sum + weights[index] * value, 0);
+	const f = dot(base.map((value) => value ** 3));
+	const f1 = dot(base.map((value, index) => 3 * slopes[index] * value ** 2));
+	const f2 = dot(base.map((value, index) => 6 * slopes[index] ** 2 * value));
+	return saturation - (f * f1) / (f1 * f1 - 0.5 * f * f2);
+}
+
+/** Oklab lightness and chroma of the most saturated sRGB colour of hue `(a, b)`. */
+function oklabCusp(a, b) {
+	const saturation = oklabMaxSaturation(a, b);
+	const lightness = Math.cbrt(
+		1 / Math.max(...oklabToLinearSrgb([1, saturation * a, saturation * b])),
+	);
+	return [lightness, lightness * saturation];
+}
+
+/** Chroma where the constant-lightness line at `lightness` leaves the sRGB gamut. */
+function oklabMaxChroma(a, b, lightness, [cuspL, cuspC]) {
+	if (lightness <= cuspL) return (cuspC * lightness) / cuspL;
+	const t = (cuspC * (lightness - 1)) / (cuspL - 1);
+	const slopes = oklabLmsSlopes(a, b);
+	const lms = slopes.map((k) => lightness + t * k);
+	const cubes = lms.map((value) => value ** 3);
+	const first = lms.map((value, index) => 3 * slopes[index] * value ** 2);
+	const second = lms.map((value, index) => 6 * slopes[index] ** 2 * value);
+	const dot = (row, values) => row[0] * values[0] + row[1] * values[1] + row[2] * values[2];
+	const steps = OKLAB_LMS_TO_LINEAR_SRGB.map((row) => {
+		const f = dot(row, cubes) - 1;
+		const f1 = dot(row, first);
+		const f2 = dot(row, second);
+		const u = f1 / (f1 * f1 - 0.5 * f * f2);
+		return u >= 0 ? -f * u : Number.MAX_VALUE;
+	});
+	return t + Math.min(...steps);
+}
+
+/** OKHSL's chroma reference points at lightness `L` and hue `(a, b)`: `[c0, cMid, cMax]`. */
+function oklabChromaStops(L, a, b) {
+	const peak = oklabCusp(a, b);
+	const cMax = oklabMaxChroma(a, b, L, peak);
+	const k = cMax / Math.min(L * (peak[1] / peak[0]), (1 - L) * (peak[1] / (1 - peak[0])));
+	const midS =
+		0.11516993 +
+		1 /
+			(7.4477897 +
+				4.1590124 * b +
+				a *
+					(-2.19557347 +
+						1.75198401 * b +
+						a *
+							(-2.13704948 -
+								10.02301043 * b +
+								a * (-4.24894561 + 5.38770819 * b + 4.69891013 * a))));
+	const midT =
+		0.11239642 +
+		1 /
+			(1.6132032 -
+				0.68124379 * b +
+				a *
+					(0.40370612 +
+						0.90148123 * b +
+						a * (-0.27087943 + 0.6122399 * b + a * (0.00299215 - 0.45399568 * b - 0.14661872 * a))));
+	const cMid =
+		0.9 * k * Math.sqrt(Math.sqrt(1 / (1 / (L * midS) ** 4 + 1 / ((1 - L) * midT) ** 4)));
+	const c0 = Math.sqrt(1 / (1 / (L * 0.4) ** 2 + 1 / ((1 - L) * 0.8) ** 2));
+	return [c0, cMid, cMax];
+}
+
+/** OKHSL to sRGB channels (0-255, rounded). Hue in degrees, saturation and lightness 0-1. */
+function okhslToRgb(hue, saturation, lightness) {
+	const L = okhslToOklabLightness(lightness);
+	let lab = [L, 0, 0];
+	if (L > 0 && L < 1 && saturation > 0) {
+		const angle = (2 * Math.PI * (((hue % 360) + 360) % 360)) / 360;
+		const a = Math.cos(angle);
+		const b = Math.sin(angle);
+		const [c0, cMid, cMax] = oklabChromaStops(L, a, b);
+		let chroma;
+		if (saturation < 0.8) {
+			const t = 1.25 * saturation;
+			const k1 = 0.8 * c0;
+			chroma = (t * k1) / (1 - (1 - k1 / cMid) * t);
+		} else {
+			const t = 5 * (saturation - 0.8);
+			const k1 = (0.2 * cMid ** 2 * 1.25 ** 2) / c0;
+			chroma = cMid + (t * k1) / (1 - (1 - k1 / (cMax - cMid)) * t);
+		}
+		lab = [L, chroma * a, chroma * b];
+	}
+	return linearSrgbToRgb(oklabToLinearSrgb(lab));
+}
+
+const oklabInSrgbGamut = (linear) => linear.every((c) => c >= -1e-7 && c <= 1 + 1e-7);
+
+/** OKLCH to sRGB channels, gamut-mapped by reducing chroma at a fixed hue. */
+function oklchToRgb(l, c, h) {
+	const radians = (h * Math.PI) / 180;
+	const cos = Math.cos(radians);
+	const sin = Math.sin(radians);
+	const atChroma = (chroma) => oklabToLinearSrgb([l, chroma * cos, chroma * sin]);
+	const direct = atChroma(c);
+	if (oklabInSrgbGamut(direct)) return linearSrgbToRgb(direct);
+	// The achromatic colour is always in gamut, so it is the fallback when no
+	// bisection step fits (`oklch(100% 0.3 150)` must map to white).
+	let linear = atChroma(0);
+	let low = 0;
+	let high = c;
+	for (let index = 0; index < 20; index++) {
+		const chroma = (low + high) / 2;
+		const candidate = atChroma(chroma);
+		if (oklabInSrgbGamut(candidate)) {
+			low = chroma;
+			linear = candidate;
+		} else {
+			high = chroma;
+		}
+	}
+	return linearSrgbToRgb(linear);
+}
+
+const XTERM_BASIC = [
+	[0, 0, 0],
+	[128, 0, 0],
+	[0, 128, 0],
+	[128, 128, 0],
+	[0, 0, 128],
+	[128, 0, 128],
+	[0, 128, 128],
+	[192, 192, 192],
+	[128, 128, 128],
+	[255, 0, 0],
+	[0, 255, 0],
+	[255, 255, 0],
+	[0, 0, 255],
+	[255, 0, 255],
+	[0, 255, 255],
+	[255, 255, 255],
+];
+const XTERM_CUBE = [0, 95, 135, 175, 215, 255];
+
+/** A 0-255 ANSI index to sRGB channels (`colors.ts`'s `indexedToRgb`). */
+function indexedToRgb(index) {
+	if (index < 16) {
+		return { r: XTERM_BASIC[index][0], g: XTERM_BASIC[index][1], b: XTERM_BASIC[index][2] };
+	}
+	if (index < 232) {
+		const cube = index - 16;
+		return {
+			r: XTERM_CUBE[Math.floor(cube / 36)],
+			g: XTERM_CUBE[Math.floor((cube % 36) / 6)],
+			b: XTERM_CUBE[cube % 6],
+		};
+	}
+	const gray = 8 + (index - 232) * 10;
+	return { r: gray, g: gray, b: gray };
+}
+
+const OKLAB_NUMBER = String.raw`[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?`;
+// `colors.ts`'s `OKLCH_PATTERN` / `OKHSL_PATTERN`, verbatim. Note the different
+// argument orders: OKLCH is `L C H` (L may carry `%`), OKHSL is `H S% L%`.
+const OKLCH_PATTERN = new RegExp(
+	`^oklch\\(\\s*(${OKLAB_NUMBER})(%)?\\s+(${OKLAB_NUMBER})\\s+(${OKLAB_NUMBER})(?:deg)?\\s*\\)$`,
+	"i",
+);
+const OKHSL_PATTERN = new RegExp(
+	`^okhsl\\(\\s*(${OKLAB_NUMBER})(?:deg)?\\s+(${OKLAB_NUMBER})(%)?\\s+(${OKLAB_NUMBER})(%)?\\s*\\)$`,
+	"i",
+);
+
+/**
+ * One theme value to sRGB channels, or `null` when it is nothing pi would accept.
+ *
+ * The grammar is `colors.ts`'s `parseColor`: a 3- or 6-digit hex string, an `oklch()`,
+ * an `okhsl()`, or a 0-255 integer (an ANSI index).
+ */
+function themeColorToRgb(value) {
+	if (typeof value === "number") {
+		return Number.isInteger(value) && value >= 0 && value <= 255 ? indexedToRgb(value) : null;
+	}
+	if (typeof value !== "string") return null;
+	const hex = /^#([\da-f]{3}|[\da-f]{6})$/i.exec(value);
+	if (hex) {
+		const digits = hex[1].length === 3 ? [...hex[1]].map((digit) => digit + digit).join("") : hex[1];
+		return {
+			r: Number.parseInt(digits.slice(0, 2), 16),
+			g: Number.parseInt(digits.slice(2, 4), 16),
+			b: Number.parseInt(digits.slice(4, 6), 16),
+		};
+	}
+	const oklch = OKLCH_PATTERN.exec(value);
+	if (oklch) {
+		const lightness = Number.parseFloat(oklch[1]) / (oklch[2] ? 100 : 1);
+		return oklchToRgb(lightness, Number.parseFloat(oklch[3]), Number.parseFloat(oklch[4]));
+	}
+	const okhsl = OKHSL_PATTERN.exec(value);
+	if (okhsl) {
+		const saturation = Number.parseFloat(okhsl[2]) / (okhsl[3] ? 100 : 1);
+		const lightness = Number.parseFloat(okhsl[4]) / (okhsl[5] ? 100 : 1);
+		return okhslToRgb(Number.parseFloat(okhsl[1]), saturation, lightness);
+	}
+	return null;
+}
+
+/** One theme value to lowercase `#rrggbb`, or `null` when pi would reject it. */
+function themeColorToHex(value) {
+	const rgb = themeColorToRgb(value);
+	if (rgb === null) return null;
+	const channel = (n) => n.toString(16).padStart(2, "0");
+	return `#${channel(rgb.r)}${channel(rgb.g)}${channel(rgb.b)}`;
+}
+
 /**
  * Every `colors` token plus the three `export` surfaces of one built-in theme,
  * resolved the way pi resolves them: `vars` references followed, the five optional
- * tokens filled from their fallbacks, `export` folded in.
+ * tokens filled from their fallbacks, `export` folded in, and each value rendered to
+ * lowercase `#rrggbb` — because `PiPalette.kt` is Compose `Color(0xFF……)`, i.e. sRGB,
+ * and 0.99.0's themes are written in `okhsl()`.
  *
- * Returns `null` when the file is missing (a package that moved its themes) or when
- * any value refuses to resolve, so the caller can say which of those happened.
+ * Returns `{colors, why}`: `colors` is `null` when the file is missing (a package that
+ * moved its themes) **or** when a value refuses to resolve, and `why` says which. The
+ * two used to share one message, which is how a reader bug read as "the engine no
+ * longer ships dark.json" while the file sat on disk — see `resolveThemeValue`.
  */
 function builtinThemeColors(piDir, name) {
 	const file = builtinThemePath(piDir, name);
-	if (!existsSync(file)) return null;
+	if (!existsSync(file)) {
+		return { colors: null, why: `the file is missing (looked for ${file})` };
+	}
 	const json = JSON.parse(readFileSync(file, "utf8"));
 	const vars = json.vars ?? {};
 	// pi's fallback map points at the *unresolved* sibling value, which is then
@@ -399,10 +717,31 @@ function builtinThemeColors(piDir, name) {
 	const out = {};
 	for (const [token, value] of Object.entries(raw)) {
 		const resolved = resolveThemeValue(value, vars);
-		if (resolved === null) return null;
-		out[token] = resolved;
+		if (resolved === null) {
+			return {
+				colors: null,
+				why:
+					`${file} has a \`${token}\` value this reader cannot resolve ` +
+					`(${JSON.stringify(value)}: neither a hex colour, an okhsl()/oklch() colour, ` +
+					`a 0-255 index, nor a \`vars\` entry that resolves). The file is there — the ` +
+					`value grammar is what changed. Re-read \`resolveVarRefs\` in the pinned ` +
+					`\`modes/interactive/theme/theme.ts\``,
+			};
+		}
+		const hex = themeColorToHex(resolved);
+		if (hex === null) {
+			return {
+				colors: null,
+				why:
+					`${file}'s \`${token}\` resolves to ${JSON.stringify(resolved)}, which this reader ` +
+					`cannot turn into sRGB. The colour grammar comes from ` +
+					`\`@earendil-works/pi-tui\`'s \`colors.ts\` (\`parseColor\`); re-read it and port ` +
+					`the change into \`themeColorToRgb\` here`,
+			};
+		}
+		out[token] = hex;
 	}
-	return out;
+	return { colors: out, why: null };
 }
 
 /**
@@ -494,13 +833,15 @@ function checkThemeValues(piDir) {
 	for (const theme of ["Dark", "Light"]) {
 		const name = theme.toLowerCase();
 		const file = builtinThemePath(piDir, name);
-		const pi = builtinThemeColors(piDir, name);
+		const read = builtinThemeColors(piDir, name);
+		const pi = read.colors;
 		check(
-			`the pinned engine still ships ${file}`,
+			`the pinned engine's ${name} theme still reads as this checker reads it (${file})`,
 			pi !== null,
 			`PiPalette.${theme} is a transcription of that file, and every screen reads it through ` +
-				`PiTheme.palette. If the built-in themes moved inside the package, re-read the package ` +
-				`layout and re-point this check — do not delete it: nothing else notices a re-colouring.`,
+				`PiTheme.palette. ${read.why}. Do not delete this check: nothing else notices a ` +
+				`re-colouring. Re-read the pinned theme file and the code named above, then re-point ` +
+				`this reader.`,
 		);
 		if (pi === null) continue;
 
@@ -558,7 +899,7 @@ function checkThemeValues(piDir) {
 		["values", "app/src/main/res/values/colors.xml", "light"],
 		["values-night", "app/src/main/res/values-night/colors.xml", "dark"],
 	]) {
-		const pi = builtinThemeColors(piDir, themeName);
+		const pi = builtinThemeColors(piDir, themeName).colors;
 		const expected = pi === null ? null : String(pi.pageBg).toLowerCase();
 		const actual = resourceColor(file, "pi_window_background");
 		check(
@@ -1304,6 +1645,73 @@ function checkAppTables(piDir) {
 			`${notExposed.length} pi keys not exposed by the app: ${notExposed.join(", ")})`,
 	);
 
+	// ------------------------------------------------- the reverse direction, as decisions
+	//
+	// "Not exposed" is a decision per key, so it is written down per key rather than
+	// merely printed. The printer above was the only witness when 0.99.2 added
+	// `deviceId`, `codemode` and `fullscreenWheelScrollLines`: a new key means a switch
+	// the user cannot reach, or — worse, and this is the §M12 shape this repository has
+	// already paid for twice — a value the app's editor never knew it had to preserve.
+	// A key that is neither exposed nor declared now fails, and a declaration that has
+	// gone stale (pi removed the key, or the app started exposing it) fails too, so the
+	// list cannot rot into a description of a state that cannot happen.
+	const UNEXPOSED_SETTINGS_DECISIONS = {
+		// TUI-only: the original terminal interface's own presentation and input
+		// details, which this app re-implements in Compose. Changing them changes
+		// nothing a phone shows.
+		autocompleteMaxVisible: "TUI 输入框的自动补全可见行数",
+		collapseChangelog: "TUI 启动后折叠 changelog",
+		doubleEscapeAction: "TUI 双击 Esc 的行为",
+		editorPaddingX: "TUI 编辑器左右留白",
+		externalEditor: "TUI 的 Ctrl+G 外部编辑器",
+		fullscreenCopyOnSelect: "TUI 全屏下选择即复制",
+		fullscreenExitOutput: "TUI 全屏退出后是否回显输出",
+		fullscreenScrollbar: "TUI 全屏滚动条",
+		fullscreenWheelScrollLines: "TUI 全屏鼠标滚轮行数（0.99.0 新键）",
+		markdown: "TUI 的 markdown 渲染档位",
+		outputPad: "TUI 输出左右留白（0|1）",
+		quietStartup: "TUI 启动横幅",
+		showHardwareCursor: "TUI 是否显示硬件光标",
+		tuiMode: "TUI 渲染模式",
+		// pi's own bookkeeping rather than a value the user decides.
+		deviceId:
+			"pi 为 ChatGPT 登录生成的安装标识（0.99.0 新键）：只写全局设置、从 bug report 排除。" +
+			"App 不展示也不删（写入路径是锁内重读整份文档再改目标键）",
+		lastChangelogVersion: "pi 自己记录的已读 changelog 版本",
+		trackingId: "随 enableAnalytics 生成的匿名标识",
+		enableAnalytics: "匿名分析开关：本应用不发遥测，所以没有这个入口",
+		// Resource lists: the app has a screen for each of them, and editing the raw
+		// arrays would fight those screens and `PiPackageFilters`' own `+`/`-`/`!` syntax.
+		extensions: "资源列表：由「资源包」屏与 PiPackageFilters 的过滤语法管理",
+		prompts: "资源列表：由「已发现的资源」屏展示",
+		skills: "资源列表：由「已发现的资源」屏展示",
+		themes: "资源列表：主题由「主题」屏选择（PiThemeFiles 自己扫描目录）",
+		terminal: "终端能力覆盖（hyperlinks/trueColor/images）：App 不经过终端渲染",
+		warnings: "pi 的警告开关（anthropicExtraUsage）",
+		sessionDir: "会话目录：App 在命令行上固定它（--session-dir），见 G_SESSIONS 的分组摘要",
+		treeFilterMode: "/tree 的默认过滤器：App 的会话树有自己的筛选",
+	};
+	const undecided = notExposed.filter((key) => !(key in UNEXPOSED_SETTINGS_DECISIONS));
+	check(
+		`every pi settings key the app does not expose is a written-down decision (${Object.keys(UNEXPOSED_SETTINGS_DECISIONS).length} decided)`,
+		undecided.length === 0,
+		`ui/settings/PiSettingsRegistry.kt neither exposes nor declares ${undecided.length} of pi's ` +
+			`settings keys: ${undecided.join(", ")}. Each is a decision — expose it as a row, or add it ` +
+			`to UNEXPOSED_SETTINGS_DECISIONS in this file with the reason (TUI-only, pi-internal, ` +
+			`superseded …). The failure mode is silence in both directions: a key the user cannot ` +
+			`reach, or a value the app's single-key editor never knew it had to preserve.`,
+	);
+	const staleDecisions = Object.keys(UNEXPOSED_SETTINGS_DECISIONS).filter(
+		(key) => !notExposed.includes(key),
+	);
+	check(
+		`the unexposed-settings decisions still describe reality (${staleDecisions.length} stale)`,
+		staleDecisions.length === 0,
+		`These keys are declared unexposed but are no longer in \`notExposed\`: ` +
+			`${staleDecisions.join(", ")}. Either pi renamed or removed them, or the app now exposes ` +
+			`them — delete the line rather than leave one that describes a state which cannot happen.`,
+	);
+
 	// ------------------------------------------------------- built-in slash commands
 	const slashText = read("app/src/main/kotlin/app/pi/ui/chat/PiSlashCommands.kt");
 	const listedBlock = kotlinBlock(slashText, "PI_BUILTIN_SLASH_COMMANDS") ?? "";
@@ -1469,6 +1877,7 @@ const GROUPS = [
 	["tooltext", "--- tool-result text ---"],
 	["session", "--- session surface ---"],
 	["bundled", "--- bundled entry ---"],
+	["catalog", "--- official model catalog ---"],
 	["behaviour", "--- behaviour ---"],
 	["extensions", "--- extensions ---"],
 ];
@@ -1511,6 +1920,133 @@ if (!existsSync(join(piDir, "dist"))) {
 // `extensions` spawn the engine, so they are the two a failure elsewhere in the tree
 // (or a missing runtime) can turn into a throw before the static verdicts are read.
 // A full run keeps its historical order; `--only=<group>` runs exactly one.
+/**
+ * The **official model catalog's data format**: `@earendil-works/pi-ai`'s bundled
+ * `dist/providers/data/**`, which `packages/PiOfficialCatalog.kt` parses.
+ *
+ * ## Why this group exists
+ *
+ * This is the one pi file whose format change is *invisible* to the app. The reader
+ * verifies each provider file's sha256 against a manifest, and a matching hash with
+ * parseable JSON produces **no problem and no notice** — so when 0.99.0 renamed the
+ * per-provider inner keys from `<id>` to `<type>:<id>` and started emitting image and
+ * classifier entries next to chat ones, the app kept "succeeding": it ignored the key
+ * names and read `element["id"]`, so 57 image models and 15 classifier models appeared
+ * as chat models, were default-checked in the import sheet, and were written into
+ * `enabledModels` (or, for non-built-in providers, into `models.json`, where pi's own
+ * schema has no `type` and builds a chat model out of a classifier). That is the
+ * §M11 shape — a capability silently wrong rather than loudly broken.
+ *
+ * ## What it asserts
+ *
+ *  1. the shipped `schemaVersion` is the one the app was written against
+ *     (`PiOfficialCatalog.MODEL_DATA_SCHEMA_VERSION`, transcribed from pi's
+ *     `scripts/model-data.ts`'s `MODEL_DATA_SCHEMA_VERSION`);
+ *  2. every inner-key **prefix** the data actually uses is one of the model types the
+ *     app's reader knows about — a fourth type must not arrive unnoticed;
+ *  3. the data still contains a non-`chat` entry, so (2) is not vacuous: if pi ever
+ *     emitted chat only, the filter this group protects would stop being exercised and
+ *     that change should be seen, not assumed.
+ *
+ * The data lives in a **sibling** package (`@earendil-works/pi-ai`), reached through
+ * the same `node_modules` the coding-agent package sits in — which is how both CI
+ * (`build/pi-contract`) and a `--pi <installed tree>` invocation have it.
+ */
+function checkCatalogData(piDir) {
+	const registryText = readFileSync(
+		join(ROOT, "app/src/main/kotlin/app/pi/packages/PiOfficialCatalog.kt"),
+		"utf8",
+	);
+	const declared = /MODEL_DATA_SCHEMA_VERSION\s*=\s*(\d+)/.exec(registryText);
+	// The types the app's reader knows how to *filter* (`PiOfficialCatalog`'s `providerOf`
+	// drops everything that is not chat; the rest are named so that a new one is a
+	// failure here rather than a new row in the import sheet).
+	const knownTypes = ["chat", "image", "classifier"];
+
+	// Two shapes, because the tool is pointed at both: CI hands `--pi` the package
+	// directory npm created (`<stage>/node_modules/@earendil-works/pi-coding-agent`,
+	// where pi-ai is the **sibling** package), while a hand-run may hand it an unpacked
+	// package root that carries its own `node_modules`. First existing wins.
+	const dataCandidates = [
+		join(piDir, "..", "pi-ai", "dist", "providers", "data"),
+		join(piDir, "node_modules", "@earendil-works", "pi-ai", "dist", "providers", "data"),
+	];
+	const dataDir = dataCandidates.find((candidate) => existsSync(candidate)) ?? dataCandidates[0];
+	check(
+		"the pinned engine's pi-ai package still ships its model data directory",
+		existsSync(dataDir),
+		`looked for ${dataCandidates.join(" and ")}. PiOfficialCatalog.kt parses these files, and this ` +
+			`group is the only thing that would notice their format moving. If pi-ai moved its data, ` +
+			`re-point this check (packages/ai/scripts/generate-models.ts is what writes it) — do not ` +
+			`delete it.`,
+	);
+	if (!existsSync(dataDir)) return;
+
+	const manifestPath = join(dataDir, ".manifest.json");
+	check(
+		"the model data directory still has its manifest",
+		existsSync(manifestPath),
+		`${manifestPath} is missing. PiOfficialCatalog.kt reads \`schemaVersion\` from it; without the ` +
+			`file the app cannot check it either, so this is the earliest place to say so.`,
+	);
+	if (!existsSync(manifestPath)) return;
+
+	const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+	check(
+		`the model data manifest declares schemaVersion ${declared ? declared[1] : "<unreadable>"}, the version the app reads`,
+		declared !== null && Number(manifest.schemaVersion) === Number(declared[1]),
+		`${manifestPath} says schemaVersion ${JSON.stringify(manifest.schemaVersion)} and ` +
+			`PiOfficialCatalog.MODEL_DATA_SCHEMA_VERSION is ${declared ? declared[1] : "unreadable"}. ` +
+			`0.99.0 moved this from 3 to 6 and renamed the inner keys to \`<type>:<id>\` in the same ` +
+			`release; a mismatch means the reader's assumptions moved with it. Re-read ` +
+			`packages/ai/scripts/model-data.ts and generate-models.ts, then update ` +
+			`PiOfficialCatalog.kt (its \`type\` filter, and this constant).`,
+	);
+
+	const prefixes = new Map();
+	let providerFiles = 0;
+	let nonChat = 0;
+	for (const name of readdirSync(dataDir)) {
+		if (!name.endsWith(".json") || name.startsWith(".")) continue;
+		providerFiles++;
+		const groups = JSON.parse(readFileSync(join(dataDir, name), "utf8"));
+		for (const models of Object.values(groups)) {
+			if (models === null || typeof models !== "object") continue;
+			for (const key of Object.keys(models)) {
+				const prefix = key.includes(":") ? key.slice(0, key.indexOf(":")) : "<none>";
+				prefixes.set(prefix, (prefixes.get(prefix) ?? 0) + 1);
+				if (prefix !== "chat") nonChat++;
+			}
+		}
+	}
+	check(
+		"the model data is still readable as api → inner key (>= 30 provider files)",
+		providerFiles >= 30 && prefixes.size > 0,
+		`read ${providerFiles} provider files under ${dataDir} and found ${prefixes.size} distinct ` +
+			`inner-key prefixes. A collapse here means the layout changed, not that the data is empty — ` +
+			`re-read generate-models.ts and re-point this reader.`,
+	);
+	const unknown = [...prefixes.keys()].filter((prefix) => !knownTypes.includes(prefix));
+	check(
+		`every inner-key prefix is a model type the app knows (${[...prefixes.keys()].sort().join(", ")})`,
+		unknown.length === 0,
+		`the data uses inner-key prefix(es) ${unknown.join(", ")}, which PiOfficialCatalog.kt does not ` +
+			`know about. \`providerOf\` filters on \`type\`, and \`modelOf\` defaults a missing \`type\` to ` +
+			`"chat"\` — so an unrecognised type is read as a chat model and lands in the import sheet's ` +
+			`default selection. Add it to \`knownTypes\` here *and* decide what the app does with it ` +
+			`(today: filter it out, like image and classifier).`,
+	);
+	check(
+		"the data still contains a non-chat entry, so the type filter is exercised",
+		nonChat > 0,
+		`every inner key in ${providerFiles} provider files is now \`chat:\`. The type filter in ` +
+			`PiOfficialCatalog.kt exists because 0.99.0 started emitting image and classifier entries ` +
+			`beside chat ones; with none left, that filter's justification (and this group's ` +
+			`non-vacuity) should be re-derived rather than assumed.`,
+	);
+	console.log(`   (${providerFiles} provider files, ${nonChat} non-chat entries, schemaVersion ${manifest.schemaVersion})`);
+}
+
 if (runs("surface")) {
 	console.log("\n--- surface ---");
 	checkSurface(piDir);
@@ -1530,6 +2066,10 @@ if (runs("tooltext")) {
 if (runs("session")) {
 	console.log("\n--- session surface ---");
 	checkSessionSurface(piDir);
+}
+if (runs("catalog")) {
+	console.log("\n--- official model catalog ---");
+	checkCatalogData(piDir);
 }
 if (runs("bundled")) {
 	console.log("\n--- bundled entry ---");
