@@ -1692,6 +1692,12 @@ object PiSettingsCatalog {
         "images.autoResize" to "pi 读：settings-manager.ts:1289 → core/agent-session.ts:522 / :2792（附件与 read 的图片缩放）",
         "images.blockImages" to "pi 读：settings-manager.ts:1302 → core/sdk.ts:271（建会话时是否允许图片进入模型）",
         "enableInstallTelemetry" to "pi 读：settings-manager.ts:1055 → core/telemetry.ts:12（安装上报与厂商归因头）",
+        // 0.99.0 新增的 codemode 设置。这一对与前后的区别在于**读取方式**：pi 没有给它们
+        // 专门的 getter，内置 codemode 扩展直接读「生效设置」对象
+        // （`pi.getSettings().codemode?…`），而 `getSettings()` 本身就是 0.99.2 才加的
+        // （`settings-manager.ts:564`）。所以这里引的是字段定义 + 消费者，不是一个取值函数。
+        "codemode.mode" to "pi 读：extensions/codemode/index.ts:23 的 pi.getSettings().codemode?.mode（字段 settings-manager.ts:105，取值 on/only 定义在 :101，:176 声明；访问器 getSettings 在 :564）—— 决定 codemode 描述里是否还直接声明 active 的 direct 工具",
+        "codemode.inlineBudget" to "pi 读：extensions/codemode/index.ts:27 的 pi.getSettings().codemode?.inlineBudget（字段 settings-manager.ts:107，默认 3000）—— codemode 描述里允许花在工具声明上的估算 token 数",
     )
 
     /**
