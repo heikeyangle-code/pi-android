@@ -372,6 +372,18 @@ fun main() {
         listOf("readStateDigest", "readStateList", "packagedDigest", "payloadStateDir").none { it in finishCurrentBody },
         true,
     )
+    // P4b: …and it reports a step **only when it has a warning to show**. A step *is* a
+    // full-screen page — `ChatScreen` draws `BootScreen` for `Boot.Working` and for nothing
+    // else — so an unconditional one here put that page over a chat page that was already
+    // usable, for as long as these probes take, on **every** launch that changed nothing:
+    // the 「一秒的启动动画，每次进来一闪而过」 the user reported. Both halves are pinned,
+    // because only the pair rules out the old shape.
+    check(
+        "P4b a launch with nothing to unpack reports no step",
+        finishCurrentBody.contains("firstOrNull()?.let { onStep(") &&
+            !finishCurrentBody.contains("onStep(Step(steps"),
+        true,
+    )
 
     // ② The repair path is the only deleter, and it is entered only explicitly.
     check("P5 wipe() is declared exactly once", provisionerSource.split("private fun wipe() {").size - 1, 1)

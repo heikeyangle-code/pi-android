@@ -382,12 +382,17 @@ class RuntimeProvisioner(
      * changes, no runtime payload did — the honest thing is to say so and to record the
      * new revision, not to re-extract 110 MiB because a number moved.
      *
-     * The steps say what happened. "运行时已是最新，无需重解" is the whole answer, and
-     * the screen shows it rather than a sequence of extraction steps that never ran.
+     * **This path reports a step only when it has something to say.** It used to emit two
+     * unconditionally — 「运行时已是最新，无需重解」 followed by the final one — so the boot
+     * surface could say what had happened. But that surface is drawn only for
+     * `Boot.Working` (`ChatScreen`), so a launch with nothing to unpack put a **full-screen
+     * page on top of a chat page that was already usable**, held it for as long as the
+     * handful of probes below take, and then took it away: the 「一闪而过的启动动画」 the user
+     * asked to be rid of. The chat page is drawn from the first frame and a failure still
+     * reaches `Boot.Failed` through the exception, so the only thing left that is worth a
+     * screen here is one of the two repair warnings below.
      */
     private fun finishCurrent(revision: String, migration: Boolean, onStep: (Step) -> Unit): ProvisionOutcome {
-        val steps = listOf(CURRENT_STEP, FINAL_STEP)
-        onStep(Step(steps[0], 0, steps.size))
         paths.prepareLibraryAliases()
         // The two tools live in *two* directories, and one of them is outside the
         // stamped tree ([PiPaths.agentBinDir]). A boot that does not re-extract is
@@ -401,8 +406,10 @@ class RuntimeProvisioner(
         // nothing to add.
         val groupWarning = ensureAndroidGroups()
         val stampWarning = if (isStampCurrent(revision)) null else writeStamp(revision)
-        val warning = listOfNotNull(groupWarning, stampWarning).firstOrNull()
-        onStep(Step(warning ?: steps[steps.size - 1], steps.size - 1, steps.size))
+        // A step *is* a full-screen page, so the only thing worth emitting here is a warning
+        // the user has to see. The ordinary launch has none and therefore shows no surface at
+        // all — which is the whole point of this branch's shape.
+        listOfNotNull(groupWarning, stampWarning).firstOrNull()?.let { onStep(Step(it, 0, 1)) }
         return ProvisionOutcome(reextracted = emptyList(), migrated = migration, rebuilt = false)
     }
 
@@ -1525,12 +1532,13 @@ class RuntimeProvisioner(
         private const val DIGEST_LENGTH = 16
 
         // ------------------------------------------------------- boot step labels
-        // Named constants rather than literals at the call sites: the same three
-        // sentences are asserted by the boot screen's own text and by nothing else, and
-        // a step list is the one place a user reads what an update actually did.
-
-        /** Nothing to do: the whole answer of a cold start that changed nothing. */
-        private const val CURRENT_STEP = "运行时已是最新，无需重解"
+        // Named constants rather than literals at the call sites: a step label is the one
+        // place a user reads what an update actually did, and the labels are the boot
+        // screen's own text.
+        //
+        // There is deliberately **no** "nothing to do" label. That sentence had one, and it
+        // was the thing that put a full-screen page over a chat page that was already usable
+        // on every launch that changed nothing — see [finishCurrent].
 
         /** Pre-flight: what this APK actually carries. */
         private const val AUDIT_STEP = "校验内置载荷"
