@@ -23,11 +23,13 @@ import kotlinx.serialization.json.JsonPrimitive
  *    from, so a theme dropped into `~/.pi/agent/themes` is selectable even though
  *    the `themes` setting never mentions it. (pi does the same in
  *    `getCustomThemeInfos`, `theme.ts:500`.)
- *  - **Colour resolution**, exactly pi 0.99.2's value grammar: `#rgb` / `#rrggbb`,
+ *  - **Colour resolution**, exactly pi's value grammar: `#rgb` / `#rrggbb`,
  *    `oklch(L C H)` / `okhsl(H S L)`, an integer 0-255 (a 256-colour terminal
  *    index), `""` (the terminal's default), or a `vars` reference
  *    (`resolveVarRefs`, `theme.ts:135-151`; see [resolveRaw] for the grammar and
- *    the colour maths).
+ *    the colour maths). The grammar was transcribed at 0.99.2 and **re-checked at
+ *    1.0.0: `resolveVarRefs` and both built-in theme files are byte-identical
+ *    across the two versions**, so nothing here moved with the bump.
  *  - **Optional-token fallbacks** from `withThemeColorFallbacks`
  *    (`theme.ts:164-179`) and the HTML exporter's derived page/card/info
  *    backgrounds (`core/export-html/index.ts:81-105`).

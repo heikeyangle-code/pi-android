@@ -159,7 +159,7 @@
 
 8. **`app.runtime.noExtensions` / `noSkills` / `noPromptTemplates` / `noThemes`**（四条新行，Switch，`RestartEngine`，注册表 设置 → 运行时与诊断 → 进程）：分别接 `--no-extensions`（`cli/args.ts:169`）、`--no-skills`（`:188`）、`--no-prompt-templates`（`:190`）、`--no-themes`（`:192`）；每个键在 `PiSessionViewModel.launchOptions()` 里读，经 `fromSettingValues` 进 argv。
 9. **`PiLaunchOptions`**：新增四个布尔字段与 `commandLineSuffix()` 的四段追加；**没有** `-e`、没有额外路径、没有随包扩展配对。`fromSettingValues` 只多四个可空布尔参数。
-10. **`PiPreSpawnConfig.kt`**：四条从 `NOT_EXPOSED_PRE_SPAWN` 移到 `APP_EXPOSED_PRE_SPAWN`；全表 `piReader` 的 `file:line` 按钉住的 **0.86.1** 重新核过一遍。
+10. **`PiPreSpawnConfig.kt`**：四条从 `NOT_EXPOSED_PRE_SPAWN` 移到 `APP_EXPOSED_PRE_SPAWN`；全表 `piReader` 的 `file:line` 按**当时**钉住的 **0.86.1** 重新核过一遍（此后 `PI_VERSION` 又动过三轮：0.87.1 → 0.99.2 → 1.0.0，行号只保证写作时成立；参数名本身由 `tools/pi-contract.mjs` 的 surface 断言每次核对）。
 11. **`pre-spawn` harness**：新增「四个抑制都进命令行」「只有这四个开关时 argv 恰好等于这四个旗标」「没有 `-e` 之类附带的显式来源旗标」「默认（全不设）时 argv 为空」四类断言，以及注册表/ViewModel 的接线检查。
 
 ## 4. 不确定项与设备判据

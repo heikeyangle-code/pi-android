@@ -6,6 +6,22 @@
 
 **对照对象**：pi 0.85.1（`/root/pi-src`，HEAD `bbb61e3`，`packages/coding-agent/package.json` version = 0.85.1）。
 
+**写作之后的引擎变动**（本文的每一行都是 0.85.1 的快照，`file:line` 也只对 0.85.1 成立；
+行为由 `tools/pi-contract.mjs` 每次对着 `tools/fetch-runtime.mjs` 的 `PI_VERSION` 重新核）：
+
+- **0.99.0** 新增 4 个键：`deviceId`、`codemode.mode`、`codemode.inlineBudget`、
+  `fullscreenWheelScrollLines`。
+- **0.99.2** 设置面零增删。
+- **1.0.0** 零增删，但两处**取值**变了，两份表里的字面值要照这个读：
+  `quietStartup` 的类型从 `boolean` 放宽到 **`boolean | "header"`**（`getQuietStartup()` 原样返回
+  `true`/`"header"`/`false`；CLI 那条 `--quiet-startup` 因此是三值），`tuiMode` 的**默认值**从
+  `regular` 翻成 **`fullscreen`**（`getTuiMode()` 的兜底同一轮翻的）。两个键都是 TUI-only，
+  本 App 的「不做」裁定不变 —— 见 `tools/fetch-runtime.mjs` 里 1.0.0 那段的第 5 条。
+
+顶层键数也从这份快照的 **51** 涨到 **55**（0.99.0 那三个新键带来的；`tools/pi-contract.mjs` 的
+`tables` 组每次都会打印 pi 侧的真实条数：0.99.2 与 1.0.0 都是 55）。本文 §0 与两张表里的
+数量、`file:line` 都仍是 0.85.1 的快照。
+
 **证据口径**
 
 - 指向**本仓库**一律用**符号名**（函数 / 键名 / 类名），不写行号——同一轮有别的代理在改这些文件。

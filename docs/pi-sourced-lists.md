@@ -39,7 +39,7 @@
 
 | 表 | 条目 | pi 的真身 | 处置 |
 |---|---|---|---|
-| `packages/PiProviderPresets.kt` | 13 个厂商 | pi 的 `packages/ai/src/providers/*.ts`（**37** 个 provider） | **已钉住**：`tools/pi-contract.mjs` 对每个 `builtInPi` 预设断言它的 `baseUrl` 仍然出现在钉住的引擎里。这张表特殊——**它会被写出去**（`PiCredentialService.save` 把 baseUrl/api 写进 `models.json`），过期就等于覆盖引擎自己的端点，而 `get_available_models` 按凭证过滤、列不出"还没有 key 的厂商"，所以问不到全量 |
+| `packages/PiProviderPresets.kt` | 13 个厂商 | pi 的 `packages/ai/src/providers/*.ts`（**37** 个 provider —— 写作当时 0.85.1 的数；引擎已升到 1.0.0，这个总数没有跟着重数，`pi-contract` 核的是 App 那 10 个带 `builtInPi` 的预设而不是总数） | **已钉住**：`tools/pi-contract.mjs` 对每个 `builtInPi` 预设断言它的 `baseUrl` 仍然出现在钉住的引擎里。这张表特殊——**它会被写出去**（`PiCredentialService.save` 把 baseUrl/api 写进 `models.json`），过期就等于覆盖引擎自己的端点，而 `get_available_models` 按凭证过滤、列不出"还没有 key 的厂商"，所以问不到全量 |
 | `packages/PiPackageModel.kt` 的 `PiBuiltinExtension.SHIPPED` | 3 个 | 无（**`pi 无对应物`**：pi 没有"自带扩展"这个概念） | 名字与用途说明是 App 的知识；但**条目本身应与 `extensions/` 目录里的实际文件一致**，而 `readBuiltins` 每次都用文件系统核一遍（不在就显示"未安装"，是可见的错，不是静默的错） |
 
 ### App 维护、且**问不到**的表（写明理由 + 钉在哪）

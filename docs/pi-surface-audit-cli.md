@@ -326,7 +326,7 @@ pi 侧的上线集合 = `session.subscribe` 的事件（`AgentSessionEvent`，`c
 | 更新检查（"有新版本"） | `utils/version-check.ts:97-98`；只在 TUI 起（`interactive-mode.ts:1047`） | 无（App 自己钉版本） | `app.runtime.piVersion` 行 | TUI-only |
 | `/changelog` | `slash-commands.ts:31`；`interactive-mode.ts:3022`；`utils/changelog.ts` | 低 | 无（`PiSettingsRegistry.kt:1367-1372` 记录过删除理由） | TUI-only |
 | `collapseChangelog` / `lastChangelogVersion` | `settings-manager.ts:127`/`:107` | 无 | 无 | TUI-only |
-| 自更新 `pi update`（self） | `package-manager-cli.ts:1022-1092`（托管安装 / npm / pnpm 三条路） | **有害**：App 钉死 `PI_VERSION = "0.85.1"`（`tools/fetch-runtime.mjs:190`）并按 revision 校验载荷 | 无 | 见 §11 |
+| 自更新 `pi update`（self） | `package-manager-cli.ts:1022-1092`（托管安装 / npm / pnpm 三条路） | **有害**：App 钉死 `PI_VERSION`（`tools/fetch-runtime.mjs`，**1.0.0**）并按 revision 校验载荷 | 无 | 见 §11 |
 | 启动计时 | `core/timings.ts:5`（`PI_TIMING=1`，写 stderr） | 有 | `app.runtime.engineStartup` 行（App 自己测） | 已接（机制不同） |
 | 诊断（设置诊断） | `core/settings-diagnostics.ts`；非交互模式写 stderr（`main.ts:896-900`） | 有 | 引擎 stderr 捕获（`PiEngineSession.stderr`）+ `DiagnosticsReport`；设置侧另有 `PiSettingsValidation` | 已接 |
 | `pi doctor` | **不存在** | — | `DiagnosticsScreen`/`DiagnosticsReport` 是 App 自建 | pi 没有对应物 → 不做 |
@@ -404,7 +404,7 @@ pi 侧的上线集合 = `session.subscribe` 的事件（`AgentSessionEvent`，`c
 
 | 项 | pi 证据 | 为什么不做 |
 |---|---|---|
-| `pi update`（自更新，含托管安装与 npm/pnpm 两条路） | `package-manager-cli.ts:1022-1092`；`getSelfUpdatePlan` | App 钉死 `PI_VERSION = "0.85.1"`（`tools/fetch-runtime.mjs:190`）并按 revision 校验/解压载荷（`RuntimeProvisioner`）。让它自更新等于让被校验的产物自己变，`tools/pi-contract.mjs` 的全部断言（命令名、语义、扩展 API）会一起失效。**代码层还有一道**：`PiPackageUpdate.plan` 直接拒绝位置参数 `self`/`pi`（pi 把它们编译成自更新目标，`package-manager-cli.ts:534-536`），所以界面上不存在能触发它的路径 |
+| `pi update`（自更新，含托管安装与 npm/pnpm 两条路） | `package-manager-cli.ts:1022-1092`；`getSelfUpdatePlan` | App 钉死 `PI_VERSION`（`tools/fetch-runtime.mjs`，1.0.0）并按 revision 校验/解压载荷（`RuntimeProvisioner`）。让它自更新等于让被校验的产物自己变，`tools/pi-contract.mjs` 的全部断言（命令名、语义、扩展 API）会一起失效。**代码层还有一道**：`PiPackageUpdate.plan` 直接拒绝位置参数 `self`/`pi`（pi 把它们编译成自更新目标，`package-manager-cli.ts:534-536`），所以界面上不存在能触发它的路径 |
 | `pi auth print-api-key` / `print-bearer-token` | `cli/auth-command.ts:18-22`；`main.ts:161-190`；`cli/credential-print.ts` | **有意不做**（本批次裁定）。凭据只写不显示是刻意的安全取舍：`auth.json` 由 App 以 `0600` 维护（`PiConfigFiles` 只收紧不放宽），而把长期 API Key / bearer token 明文显示或复制到剪贴板，在 Android 上任何应用都能读——净增风险、不增能力（凭证页 `PiCredentialScreen` 没有"显示已存密钥"，这是设计而非缺口）。这两条 pi 命令的用途是给**外部客户端**取凭据，手机上这个消费者不存在；`print-bearer-token` 顺带刷新 OAuth 令牌这一半，在终端页跑一次 `/login` 即可达到。**要重开的话只做 `print-bearer-token` 的显示/复制，并需再次确认** |
 | `--session-id <id>` | `args.ts:125-127`、`main.ts:431-443` | 只有外部编排器需要"我要这个 ID"；App 的 `new_session` 不需要 |
 | `--print` / `-p` | `args.ts:157-163`、`main.ts:118-120` | 给脚本一问一答；App 的对话页就是交互面 |
