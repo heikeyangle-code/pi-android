@@ -1,5 +1,5 @@
 {
-  "pi": "0.99.2",
+  "pi": "1.0.0",
   "cases": [
     {
       "args": {
@@ -21,7 +21,7 @@
       "details": null,
       "id": "bash-exit-3",
       "normalized": [],
-      "probe": "a non-zero exit is a RESULT, not a throw (core/tools/bash.ts:403-409 returns `isError: true` with the appended sentence; 0.87.1 threw at :371-372 instead), and the number survives only in that sentence; ToolOutputParse.shellExitCode reads it (ToolOutputParse.kt's EXIT_CODE). `details` now arrives for a failed call too, so the `threw: false` this case pins is the 0.99.2 behaviour",
+      "probe": "a non-zero exit is a RESULT, not a throw (core/tools/bash.ts:403-409 returns `isError: true` with the appended sentence; 0.87.1 threw at :371-372 instead), and the number survives only in that sentence; ToolOutputParse.shellExitCode reads it (ToolOutputParse.kt's EXIT_CODE). `details` now arrives for a failed call too, so the `threw: false` this case pins is the 0.99.2 behaviour, unchanged in 1.0.0",
       "threw": false,
       "tool": "bash"
     },

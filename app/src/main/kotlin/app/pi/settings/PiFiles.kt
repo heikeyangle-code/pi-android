@@ -188,7 +188,11 @@ fun piFilesReadOnlyReason(relativePath: String): String {
         name == "models-store.json" ->
             "这是 pi 自己写的模型缓存，刷新时整份重写，手改没有意义。"
         name == "mcp-auth.json" ->
-            "这是 MCP 服务器的 OAuth 凭据（按服务器 URL 存，`extensions/mcp/oauth.ts`），" +
+            // 键的形状在 pi 1.0.0 变过一次：0.99.x 是「仅服务器 URL」，1.0.0 起是
+            // 「服务器名|URL」（`extensions/mcp/oauth.ts` 的 `storeKeys()`），好让同一个 URL
+            // 下的不同服务器各登各的。旧的「仅 URL」条目会被第一个用到它的服务器接管，
+            // 其余同名 URL 的服务器要重新登录一次 —— 所以这句话不能再说「按 URL 存」。
+            "这是 MCP 服务器的 OAuth 凭据（按服务器名 + URL 存，`extensions/mcp/oauth.ts`），" +
                 "pi 在登录/刷新时整份重写。要登录请用命令面板里的 `/mcp login <服务器>`。"
         name == "mcp.log" ->
             "这是 MCP 扩展的运行日志（`extensions/mcp/log.ts` 追加写），不是配置；" +

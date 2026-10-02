@@ -373,8 +373,74 @@ const UBUNTU_PORTS = "https://ports.ubuntu.com/ubuntu-ports";
  * 文本、会话条目面与 `models.json` 语义。这一轮给它加了 `catalog` 组（第 8 条那件事以前**没有
  * 任何断言看着**，App 的 sha256 校验会让格式变了的文件"静静地读成功"），并把设置键那条从单向
  * 改成双向（第 5 条）。
+ *
+ * 0.99.2 → **1.0.0**（2026-10-01）。判据仍是"字节相等"。这一轮是**最不需要动 App 的一次**：
+ * 契约工具对着 1.0.0 跑是 229 PASS / 0 FAIL。总的说：**RPC 线、主题色值、会话格式、模型目录
+ * 格式、工具结果文本、设置键集合、依赖集全部零变化；除版本号外只需重生成两套资产，外加一处
+ * 文案**。
+ *
+ *  1. **RPC 线协议逐字节相同**：`dist/modes/rpc/` 整个目录（含 `rpc-mode.js`）、`rpc-types.d.ts`、
+ *     `docs/json.md`、`docs/rpc-extension-ui.md` 全部零差异。命令面与 9 个扩展 UI 方法一条不少，
+ *     `get_commands` 仍是 `[llama, mcp]`（契约的 `surface` 组逐条核对）。
+ *  2. **CLI flags 集合零变化**：`dist/cli/args.js` 只改了 2 行帮助文字，提取出的 flag 集合两版
+ *     相同。两处**语义**变化都够不着 App：`--provider` 现在必须配 `--model`，单独给会直接报错
+ *     （上游 fix #10236）—— App 这两个 flag 都不传，走的是 settings 的 `defaultProvider`／
+ *     `defaultModel`（`PiPreSpawnConfig.kt` 里两条 `PiCliKnobWithSetting`）；`--tui-mode` 的默认值
+ *     从 `regular` 变成 `fullscreen`，App 不传。
+ *  3. **主题色值零变化**：`dist/modes/interactive/theme/{dark,light}.json` **逐字节相同**，所以
+ *     `PiPalette.kt` 那 118 个值这一轮**不用重抄**（上一轮抄过一次，这是第一次不用抄）。变的是
+ *     `system-theme.js`：`anchored()` 现在额外给派生色压一道 **OKLCH chroma 上限**（取源色自己的
+ *     chroma，按同一条 saturation 曲线衰减），免得 pastel 调色板在换亮度时被拉得更艳
+ *     （上游 #10255/#10293）。App **不用跟**：`PiThemeFiles.kt` 不实现 system 主题的生成器，
+ *     遇到 `system` 只按设备深浅色挑内置 dark/light 主题（`PiThemeFiles.kt:247-268`），
+ *     这里根本没有"把终端调色板搬到另一个亮度"这一步。
+ *  4. **工具结果文本零变化**：`collect-tool-fixtures.mjs --check` 对 1.0.0 只报一个字段过期 ——
+ *     fixture 里的 pi 版本号；17 条探测的工具文本、`threw`、`details` 全部一字未变。
+ *     `bash` 的**输出 schema 描述**被缩短了（`core/tools/bash.js` 的 `output`／`truncated`／
+ *     `full_output_path` 三条从长句变短语），那是给模型看的工具声明文字，App 不抄。
+ *  5. **设置 schema 零增删改**：`dist/core/settings-manager.js` 只改了两个 getter 的取值，没有
+ *     新键也没有删键。`getTuiMode()` 的兜底从 `regular` 翻成 `fullscreen`；`getQuietStartup()` 的
+ *     返回类型从 `boolean` 放宽到 `boolean | "header"`（`docs/settings.md` 同步）。两个键都是
+ *     TUI-only 且 App 未暴露，契约里那 26 条 `UNEXPOSED_SETTINGS_DECISIONS` 的**双向检查仍然
+ *     通过、0 条过期** —— 也就是说这一次**不需要动 `PiSettingsRegistry.kt` 的不暴露裁定表**。
+ *  6. **会话格式零变化**：`CURRENT_SESSION_VERSION` 仍 3，`appendCompaction` 的
+ *     `firstKeptEntryId` 仍可空，App 建模的 9 种 entry 仍在（契约的 `session` 组）。变的是
+ *     `core/agent-session.js` 里延迟工具的**待激活集合**（`_pendingToolNames`）：恢复会话或
+ *     `/reload` 时，MCP 服务器在下一个 prompt 前重连回来的那些 `tool_search` 工具不再被丢掉。
+ *     引擎内部的修复，App 白吃。
+ *  7. **官方模型目录格式零变化**：`schemaVersion` 仍 6、内层键仍是 `type:id`、仍是 42 份文件、
+ *     仍有一份整份非 chat 的 `typesafe.json`，所以 `PiOfficialCatalog.kt` 的读取器不用动。
+ *     条数从 **1529 chat / 57 image / 15 classifier** 变成 **1532 / 57 / 15**（+5 −2：新增
+ *     `global.openai.gpt-6.1-sol`、`opencode.json` 的 `fledge-alpha-free`，以及 OpenRouter 的
+ *     `apodex/apodex-1.1-mini:free`、`typesafe/jev-router`、`unbiased/pareto-26.10-preview`；
+ *     去掉 `openai/gpt-6.1-sol:batch` 与 `openai/gpt-6.1-sol-pro:batch`）。导入表单自动就有。
+ *  8. **依赖集逐条相同**：`package.json` 的 22 个依赖**名字与版本约束一个没变**，只有
+ *     `@earendil-works/*` 七件套从 `^0.99.2` 变 `^1.0.0` —— 这正是"版本号只写一处"所依赖的形状。
+ *     `quickjs-wasi` 仍 3.6.2，`quickjs.wasm` 字节数 637405 **一模一样**；`engines.node` 仍
+ *     `>=22.19.0`，载荷里钉的 Node 24.19 不动。
+ *  9. **许可证资产：数字一个没动，只有版本标签**。按本脚本的推导方式在隔离目录重跑
+ *     `npm install --ignore-scripts --omit=dev --omit=optional @earendil-works/pi-coding-agent@1.0.0`：
+ *     **121 个包、108 个带许可证文件、13 个不带**，那 13 个的名单与 0.99.2 **逐一相同**
+ *     （7 个 `@earendil-works/*` + `data-uri-to-buffer@4.0.1` + `proxy-agent-negotiate@1.1.0` +
+ *     `standardwebhooks@1.1.1` + 三个 `@aws-sdk/*`，仍是 3.972.72 / 3.972.77 / 3.997.44）。pi 的
+ *     LICENSE 在 `v1.0.0` 标签下 sha256 仍是 `0457f5bc…` —— 与 v0.85.1/v0.86.1/v0.87.1/v0.99.2
+ *     逐字节相同，五个标签同一份文本。
+ * 10. **MCP 的 `mcp-auth.json` 键变了形状 —— 本轮唯一一处 App 文案要跟着改的地方**。
+ *     `extensions/mcp/oauth.js` 的 `storeKeys(name, serverUrl)` 把凭据键从"仅 URL"改成
+ *     "`mcpNamespace(服务器名)|URL`"，好让同一个 URL 下的不同服务器各登各的；旧的"仅 URL"键会被
+ *     **第一个用到它的服务器接管**（`forServer` 里带锁迁移），同一 URL 的其它服务器要重新登录。
+ *     `mcp.json` 还多了 `oauth.authServerMetadataUrl`（必须 HTTPS，loopback 上可 http；
+ *     `core/mcp-servers.js` 自己校验）。App 把 `mcp.json` 当文本管、不校验键，所以**不需要代码
+ *     改动**；要改的是 `settings/PiFiles.kt` 里 `mcp-auth.json` 那条只读原因的措辞 —— 它还写着
+ *     "按服务器 URL 存"。
+ * 11. **1.0.0 白送的四样**（一行 App 代码都不用改）：codemode 脚本可以用
+ *     `models.generateImages()` 生成图片、再用 `image()` 把结果附进去（扩展里是
+ *     `ctx.modelRegistry.generateImages()`）—— 这是"App 要不要再挂一个图片 MCP"这个问题的上游
+ *     答案；Anthropic 的**复制码登录**（浏览器不在本机时，正好是手机的场景）；`/login` 顶层多了
+ *     一条 Radius，并能顺手把它的 MCP 服务器配好；MCP OAuth 的一整套加固
+ *     （`authServerMetadataUrl`、按服务器分凭据、RFC 9207 `iss` 校验、step-up 登录保留已授 scope）。
  */
-const PI_VERSION = "0.99.2";
+const PI_VERSION = "1.0.0";
 
 /**
  * proroot — the optional second container runtime, and the only artifact here whose
@@ -1145,7 +1211,30 @@ function main() {
     const dst = join(ASSETS, `node${PAYLOAD_SUFFIX}`);
     // Pipe rather than a temp tree: tar streams, and a rootfs-shaped extraction
     // here would duplicate ~150 MB of files on the build host for no reason.
-    execFileSync("bash", ["-c", `xz -dc ${JSON.stringify(src)} | gzip -9 > ${JSON.stringify(dst)}`]);
+    //
+    // `set -o pipefail` is load-bearing, and its absence was a **silent** failure
+    // until 1.0.0: without it the pipeline's status is `gzip`'s, so a host without
+    // `xz` (a build-time dependency, see this file's header) got a 20-byte empty
+    // archive here, the line below cheerfully printed `node.tgz 0.0 MiB ok`, and the
+    // APK shipped a guest with no `/opt/node/bin/node` — the interpreter the engine
+    // cannot start without, and the one `ProrootRawProbe` checks first. Nothing
+    // downstream noticed: the payload digests are self-consistent, so this would
+    // have surfaced as "the engine won't start" on a fresh install.
+    // Found while rebuilding for 1.0.0 on a host without `xz`. CI has it.
+    try {
+      execFileSync("bash", [
+        "-c",
+        `set -o pipefail; xz -dc ${JSON.stringify(src)} | gzip -9 > ${JSON.stringify(dst)}`,
+      ]);
+    } catch (error) {
+      throw new Error(
+        `node.tgz: re-compressing ${src} failed.\n` +
+          "  `xz` is a build-time dependency of this script. Without it the payload would be\n" +
+          "  an empty archive and the APK would ship a guest with no /opt/node/bin/node,\n" +
+          "  which is the interpreter the engine runs on. Install xz-utils and re-run.",
+        { cause: error },
+      );
+    }
     const mib = (statSync(dst).size / 1024 / 1024).toFixed(1);
     console.log(`  ${"node.tgz".padEnd(24)} ${mib.padStart(8)} MiB  ok (xz -> gz)`);
   }

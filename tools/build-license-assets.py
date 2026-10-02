@@ -200,7 +200,7 @@ JETBRAINS_MONO_LICENCE_TITLE = f"JetBrains Mono {JETBRAINS_MONO_VERSION}（OFL-1
 # notice — while MIT requires the notice. We therefore ship it ourselves, from the
 # upstream tag matching the engine version. Verified: this URL's bytes are
 # identical to `/root/pi-src/LICENSE` at pi 0.85.1 (sha256 0457f5bcec3b3b21…); the
-# v0.86.1, v0.87.1 and v0.99.2 tags' LICENSE files were re-fetched and are
+# v0.86.1, v0.87.1, v0.99.2 and v1.0.0 tags' LICENSE files were re-fetched and are
 # **byte-identical** (same sha256), so the text we distribute has not changed across
 # any of those bumps.
 PI_LICENCE_URL = "https://raw.githubusercontent.com/earendil-works/pi/v{version}/LICENSE"
@@ -260,7 +260,7 @@ PROROOT_FILES = [
 # file**. Derived, not guessed: the `pi-engine` step of tools/fetch-runtime.mjs was
 # run in an isolated directory —
 #     npm install --ignore-scripts --omit=dev --omit=optional \
-#       @earendil-works/pi-coding-agent@0.99.2
+#       @earendil-works/pi-coding-agent@1.0.0
 # — and npm's own installed list (`node_modules/.package-lock.json`) was audited:
 # 121 packages installed, 108 shipping a licence file, these 13 not. Every one of
 # the 13 still declares a field, so this is "no text", never "no licence"; and for
@@ -268,13 +268,17 @@ PROROOT_FILES = [
 # mismatches at 0.86.1). Pinned here because the assets must build without npm;
 # re-derive on a version bump (docs/known-gaps.md §L5).
 #
+# What the 0.99.2 → 1.0.0 bump changed: **nothing in this list**. The same audit was
+# run at 1.0.0 and came back 121 / 108 / 13 with the identical 13 names and the
+# identical `@aws-sdk/*` versions (3.972.72 / 3.972.77 / 3.997.44) — the only field
+# that moved is the `@earendil-works/*` version, which is derived below.
+#
 # What the 0.87.1 → 0.99.2 bump changed: the set grew by **one** package,
 # `@earendil-works/pi-codemode` (118 → 121 installed, 12 → 13 without a file —
 # `@earendil-works/pi-mcp` ships a licence file, and so does the `ignore@7.0.8` that
 # `pi-coding-agent` and `pi-agent-core` now depend on, so neither joins this list).
-# The three `@aws-sdk/*` versions below are still the ones 0.99.2's shrinkwrap pins:
-# 3.972.72 / 3.972.77 / 3.997.44, unchanged. The earlier bump
-# (0.85.1 → 0.86.1) had moved those three and swapped
+# The earlier bump
+# (0.85.1 → 0.86.1) had moved those three `@aws-sdk/*` versions and swapped
 # `@nodable/entities` + `xml-naming` out for `proxy-agent-negotiate`.
 #
 # The seven `@earendil-works/*` versions come from `PI_VERSION`, not from this file:
@@ -315,7 +319,7 @@ PI_ENGINE_NOTICES = [
         "7 × @earendil-works/* 包",
         engine_version(),
         "MIT",
-        f"正文与版权声明见列表里的『pi 引擎 {engine_version()}（MIT）』那一份：这七个包与 pi 引擎出自同一 monorepo，根 LICENSE 即它们的许可文本（已按 v{engine_version()} 标签逐字节核对；v0.85.1/v0.86.1/v0.87.1/v0.99.2 四个标签的 LICENSE 逐字节相同，sha256 未变）",
+        f"正文与版权声明见列表里的『pi 引擎 {engine_version()}（MIT）』那一份：这七个包与 pi 引擎出自同一 monorepo，根 LICENSE 即它们的许可文本（已按 v{engine_version()} 标签逐字节核对；v0.85.1/v0.86.1/v0.87.1/v0.99.2/v1.0.0 五个标签的 LICENSE 逐字节相同，sha256 未变）",
         f"https://raw.githubusercontent.com/earendil-works/pi/v{engine_version()}/LICENSE",
         "0457f5bcec3b3b211605dfb5d1a49042fd638f3686a410fe099c24a25af13c48",
     ),

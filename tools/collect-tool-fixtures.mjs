@@ -151,7 +151,7 @@ function cases(ws) {
 				"`isError: true` with the appended sentence; 0.87.1 threw at :371-372 instead), and the " +
 				"number survives only in that sentence; ToolOutputParse.shellExitCode reads it " +
 				"(ToolOutputParse.kt's EXIT_CODE). `details` now arrives for a failed call too, so the " +
-				"`threw: false` this case pins is the 0.99.2 behaviour",
+				"`threw: false` this case pins is the 0.99.2 behaviour, unchanged in 1.0.0",
 		},
 		{
 			id: "bash-no-output",

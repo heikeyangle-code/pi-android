@@ -848,8 +848,9 @@ object PiSettingsCatalog {
             key = "codemode.mode",
             title = "Codemode 方式",
             description = "codemode 工具启用时，它怎么向模型交代能调用的工具。" +
-                "on = 已声明的工具把 codemode 声明附在自己描述后面；" +
-                "only = 只列 codemode 能调的那些，已启用的内置工具**不再直接声明给模型**。",
+                "on = 已声明的工具在自己描述后面附一句「怎么从脚本调它」；" +
+                "only = 只列 codemode 能调的那些，已启用的内置工具**不再直接声明给模型**。" +
+                "（1.0.0 把前半句的措辞从「附上 codemode 声明」改成「附一句调用方式」，行为没变。）",
             kind = PiRowKind.Value,
             group = G_TOOLS,
             section = "工具",
