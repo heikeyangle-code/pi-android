@@ -151,23 +151,7 @@ fun ToolCallBlock(
                     // (`components/tool-execution.js:274-278`), i.e. the wire name verbatim.
                     // Deriving the title from `item.toolName` is therefore the faithful
                     // reading for the general case, and the `ifEmpty` is pi's own empty case.
-                    //
-                    // MCP breaks that one-to-one, which is what [mcpToolLabel] is for. pi gives
-                    // its MCP tools a renderer of their own, and that renderer draws the tool
-                    // definition's `label` (`extensions/mcp/tools.ts:267`,
-                    // `` `${server}/${tool.name}` ``) — so pi's UI reads `filesystem/read_file`
-                    // where the wire says `mcp__filesystem__read_file`. The app cannot ask for
-                    // that label: it is a field of the tool *definition*, and it never crosses
-                    // the RPC wire (the event is `toolCallId`/`toolName`/`args`,
-                    // `docs/json.md`'s event table; `toJsonEvent` passes the event object
-                    // through unchanged; `ToolInfo` has no `label` either). Rebuilding the same
-                    // two halves from the same wire name is the only option left, and the
-                    // rebuild is lossy — see [mcpToolLabel] for exactly how.
-                    //
-                    // The `?:` is load-bearing: [mcpToolLabel] answers `null` for everything
-                    // that is not shaped like an MCP tool, so a bug in the rebuild cannot
-                    // retitle a built-in, and the empty-name case still reaches `"工具"`.
-                    title = mcpToolLabel(item.toolName) ?: item.toolName.ifEmpty { "工具" },
+                    title = item.toolName.ifEmpty { "工具" },
                     // **The one card pi leaves uncoloured.** This block is the fallback for a tool
                     // pi gives no renderer at all, and pi's own fallback path builds the whole
                     // body with no `fg` call: `contentText.setText(this.formatToolExecution())`,

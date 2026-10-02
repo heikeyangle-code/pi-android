@@ -437,27 +437,6 @@ fun main() {
     check("degrade: an unrecognised grep is null", ToolOutputParse.grepBody("nope") == null, true)
     check("degrade: a null argument set is safe", ToolOutputParse.readBody(null, "").lines.size, 0)
 
-    // ---------------------------------------------------------- MCP tool titles
-    //
-    // pi's own UI titles an MCP call `server/tool` (the definition's `label`,
-    // `extensions/mcp/tools.ts:267`), while the wire name is `mcp__<server>__<tool>`.
-    // The label never crosses the wire, so this rebuild is the whole of what the app can
-    // do — and it must say `null` for everything that is not an MCP tool, because the
-    // caller falls back to the raw name and a false positive would retitle `read`.
-    check("mcp: the server and tool halves are joined", mcpToolLabel("mcp__filesystem__read_file"), "filesystem/read_file")
-    check(
-        "mcp: the separator survives inside the tool name",
-        mcpToolLabel("mcp__dev_server__get__thing"),
-        "dev_server/get__thing",
-    )
-    check("mcp: a built-in is not an MCP tool", mcpToolLabel("read"), null)
-    check("mcp: the app's own tool is not an MCP tool", mcpToolLabel("android_screenshot"), null)
-    check("mcp: an empty name is not an MCP tool", mcpToolLabel(""), null)
-    check("mcp: a half-formed name is not an MCP tool", mcpToolLabel("mcp__filesystem"), null)
-    check("mcp: an empty server is not an MCP tool", mcpToolLabel("mcp____read"), null)
-    check("mcp: an empty tool is not an MCP tool", mcpToolLabel("mcp__filesystem__"), null)
-    check("mcp: the prefix alone is not an MCP tool", mcpToolLabel("mcp__"), null)
-
     if (failures > 0) {
         println("tool-output-parse: $failures check(s) failed")
         exitProcess(1)
