@@ -745,6 +745,7 @@ run_harness runtime-payload-state \
   app.pi.runtime.RuntimePayloadStateCheckKt \
   "$ROOT/app/src/test/kotlin/app/pi/runtime/RuntimePayloadStateCheck.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/runtime/PayloadPrune.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/runtime/TarExtractor.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/runtime/VolatileTree.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/runtime/DurablePreserve.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/runtime/PiRuntime.kt" \

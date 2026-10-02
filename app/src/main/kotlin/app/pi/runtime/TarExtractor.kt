@@ -118,12 +118,12 @@ class TarExtractor(
 
             when (typeFlag) {
                 '5' -> {
-                    target.mkdirs()
+                    ensureDirectory(target)
                     onEntry?.invoke(rawName)
                 }
                 '2' -> {
-                    target.parentFile?.mkdirs()
-                    target.delete()
+                    ensureParent(target)
+                    unlinkIfPresent(target)
                     runCatching { Files.createSymbolicLink(target.toPath(), Path.of(linkName)) }
                         .onFailure {
                             // Some Android filesystems refuse symlinks; a copy is a
@@ -141,7 +141,8 @@ class TarExtractor(
                     // create hardlinks across these trees, and a copy preserves
                     // behaviour for every case pi hits (the size cost is why the
                     // build must not ship a dereferenced tree in the first place).
-                    target.parentFile?.mkdirs()
+                    ensureParent(target)
+                    unlinkIfPresent(target)
                     val src = resolveSafely(linkName)
                     if (src != null && src.exists()) {
                         runCatching { Files.copy(src.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING) }
@@ -150,7 +151,8 @@ class TarExtractor(
                     onEntry?.invoke(rawName)
                 }
                 '0', '\u0000', '7' -> {
-                    target.parentFile?.mkdirs()
+                    ensureParent(target)
+                    unlinkIfPresent(target)
                     writeFile(input, target, size)
                     applyMode(target, mode)
                     onEntry?.invoke(rawName)
@@ -161,8 +163,109 @@ class TarExtractor(
         return Result(filesWritten, bytesWritten, entriesSeen)
     }
 
+    /**
+     * Make [dir] a directory, clearing whatever **non-directory** sits in its place.
+     *
+     * ## Why this is not `dir.mkdirs()`
+     *
+     * Extraction is an *overwrite*: a changed payload is unpacked onto the tree the
+     * previous one left, and only afterwards does `RuntimeProvisioner.prunePayload`
+     * delete what the old payload owned and the new one does not. That ordering is
+     * deliberate (the prune needs the new list, which is read from the APK either way),
+     * but it means the extraction itself has to survive a tree that no longer matches:
+     * if a path is a **directory** in the new payload and a regular file — or a symlink
+     * whose target is gone — in the old one, `mkdirs()` returns `false` **without
+     * creating anything**, and the very next write fails with a bare
+     * `open failed: ENOENT` against a file whose parent "should" be there.
+     *
+     * That is not hypothetical. A device showed exactly this on every overwrite
+     * install:
+     *
+     *     failed to unpack pi-engine.tgz: <…>/dist/bundle/cli.js: open failed: ENOENT
+     *
+     * — `dist/bundle` could not be created, so `cli.js` had nowhere to go. Retrying
+     * could not help (`prunePayload` runs *after* a successful extraction, so the node
+     * in the way is never reached), and the only way out was 「重建运行时」, i.e. wiping
+     * the guest and everything the user had installed in it. Replaying the same two
+     * payloads onto a *clean* tree extracted all 14941 files without one failure —
+     * the archive was never at fault.
+     *
+     * Clearing is deliberately non-recursive and never follows a link: this can remove
+     * a symlink, a regular file, or an **empty** directory. A non-empty directory is
+     * left alone — the payload lists own no directories (`PayloadPrune`'s KDoc), so
+     * anything under one is the user's, and the write that follows will fail with the
+     * node named rather than quietly deleting their files.
+     */
+    private fun ensureDirectory(dir: File) {
+        if (dir.isDirectory && !isSymlink(dir)) return
+        unlinkIfPresent(dir)
+        dir.mkdirs()
+    }
+
+    /** [ensureDirectory] for every component between [destination] and [target]'s parent. */
+    private fun ensureParent(target: File) {
+        val parent = target.parentFile ?: return
+        val relative = parent.path.removePrefix(canonicalBase).trimStart(File.separatorChar)
+        if (relative.isEmpty()) return
+        var current = File(canonicalBase)
+        for (part in relative.split(File.separatorChar)) {
+            if (part.isEmpty()) continue
+            current = File(current, part)
+            ensureDirectory(current)
+        }
+    }
+
+    /**
+     * Remove whatever occupies [path], if it is something this extractor may remove:
+     * a symlink (never its target), a regular file, or an empty directory.
+     */
+    private fun unlinkIfPresent(path: File) {
+        if (isSymlink(path)) {
+            runCatching { Files.deleteIfExists(path.toPath()) }
+            return
+        }
+        if (!path.exists()) return
+        // `delete()` on a directory succeeds only when it is empty; a non-empty one is
+        // left in place on purpose (see [ensureDirectory]).
+        path.delete()
+    }
+
+    private fun isSymlink(path: File): Boolean =
+        runCatching { Files.isSymbolicLink(path.toPath()) }.getOrDefault(false)
+
+    /**
+     * What is actually at [path], for the failure message. "Nothing is here" and "a
+     * dangling symlink is here" produce the same `ENOENT`, and only one of them means
+     * the archive is wrong.
+     */
+    private fun describeNode(path: File?): String {
+        if (path == null) return "无"
+        if (isSymlink(path)) {
+            val link = runCatching { Files.readSymbolicLink(path.toPath()) }.getOrNull()
+            return if (path.exists()) "符号链接 -> $link（目标存在）" else "符号链接 -> $link（**目标不存在**）"
+        }
+        return when {
+            path.isDirectory -> "目录"
+            path.exists() -> "普通文件"
+            else -> "不存在"
+        }
+    }
+
     private fun writeFile(input: InputStream, target: File, size: Long) {
-        target.outputStream().use { out ->
+        val stream = try {
+            target.outputStream()
+        } catch (e: IOException) {
+            // The only failure left here is one this class refused to repair (a
+            // non-empty directory in the way, a read-only tree, a full disk), so name
+            // the node instead of leaving a bare path next to `ENOENT` — that message
+            // cannot be told apart from "the archive lacks this file", which is what
+            // cost a device round trip the last time.
+            throw IOException(
+                "${e.message}（目标节点：${describeNode(target)}；父目录：${describeNode(target.parentFile)}）",
+                e,
+            )
+        }
+        stream.use { out ->
             val buffer = ByteArray(1 shl 16)
             var remaining = size
             while (remaining > 0) {

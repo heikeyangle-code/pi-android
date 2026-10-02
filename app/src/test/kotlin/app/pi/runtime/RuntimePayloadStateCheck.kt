@@ -27,7 +27,11 @@ package app.pi.runtime
 //
 //   tools/run-app-pure-checks.sh
 
+import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
 import java.io.File
+import java.nio.file.Files
+import java.util.zip.GZIPOutputStream
 
 var failures = 0
 
@@ -451,6 +455,110 @@ fun main() {
         1,
     )
     check("P20 the build emits the list in sorted order", fetchSource.contains("return [...out].sort();"), true)
+
+    // ------------------------------------------------ extraction over a changed tree
+    //
+    // An update does **not** start from an empty tree. The changed payload is unpacked onto
+    // the tree the previous one left, and the old-only files are pruned only afterwards
+    // (`RuntimeProvisioner`'s `extract → prune → record`). So the extractor itself has to
+    // survive a path whose *kind* changed, or the unpack dies with a bare `ENOENT` against a
+    // file whose parent "should" be there.
+    //
+    // That is the device report this section exists for — every overwrite install ended on:
+    //
+    //     failed to unpack pi-engine.tgz: <…>/dist/bundle/cli.js: open failed: ENOENT
+    //
+    // where the real story was that `dist/bundle` could not be created because something that
+    // is not a directory already sat there. Retrying could not help (the prune that would have
+    // removed it runs *after* a successful extraction), so the only way out was「重建运行时」
+    // — wiping the guest and everything the user had installed in it. Replaying the same two
+    // payloads onto a *clean* tree writes all 14941 files without one failure, so the archive
+    // was never at fault.
+    //
+    // All five states below are ones a real tree can be in, and all five are silent without
+    // the repair: `mkdirs()` returns `false` and the write answers `ENOENT`/`EISDIR`.
+    class TarEntry(val name: String, val type: Char, val content: ByteArray = ByteArray(0))
+
+    fun tarHeader(name: String, type: Char, size: Long): ByteArray {
+        val header = ByteArray(512)
+        fun put(offset: Int, text: String, length: Int) {
+            val bytes = text.toByteArray(Charsets.UTF_8)
+            bytes.copyInto(header, offset, 0, minOf(bytes.size, length))
+        }
+        fun octal(offset: Int, value: Long, length: Int) =
+            put(offset, value.toString(8).padStart(length - 1, '0'), length - 1)
+        put(0, name, 100)
+        octal(100, 0b110_100_100L, 8) // 0644
+        octal(108, 0L, 8)
+        octal(116, 0L, 8)
+        octal(124, size, 12)
+        octal(136, 0L, 12)
+        put(148, "        ", 8) // checksum: `TarExtractor` does not verify it, by design
+        header[156] = type.code.toByte()
+        return header
+    }
+
+    fun tarGz(vararg entries: TarEntry): ByteArray {
+        val out = ByteArrayOutputStream()
+        GZIPOutputStream(out).use { gz ->
+            for (entry in entries) {
+                gz.write(tarHeader(entry.name, entry.type, entry.content.size.toLong()))
+                gz.write(entry.content)
+                gz.write(ByteArray((512 - entry.content.size % 512) % 512))
+            }
+            gz.write(ByteArray(1024)) // end-of-archive marker: two zero blocks
+        }
+        return out.toByteArray()
+    }
+
+    fun extractOver(dest: File, vararg entries: TarEntry): Throwable? = runCatching {
+        TarExtractor(dest).extractGzip(ByteArrayInputStream(tarGz(*entries)))
+    }.exceptionOrNull()
+
+    val extractRoot = File(root, "extract").also { it.mkdirs() }
+
+    // E1: a regular file where the new payload wants a directory. This is the device's shape:
+    // `mkdirs()` answers false, the write answers ENOENT, and every retry repeats it.
+    val e1 = File(extractRoot, "e1").also { it.mkdirs() }
+    File(e1, "a").writeText("stale file")
+    val e1Threw = extractOver(e1, TarEntry("a/", '5'), TarEntry("a/f.txt", '0', "hello".toByteArray()))
+    check("E1 a stale file where a directory belongs: no failure", e1Threw, null)
+    check("E1 …the file inside it landed", File(e1, "a/f.txt").readText(), "hello")
+
+    // E2: an empty directory where the new payload wants a file (`EISDIR` without the repair).
+    val e2 = File(extractRoot, "e2").also { it.mkdirs() }
+    File(e2, "b").mkdirs()
+    val e2Threw = extractOver(e2, TarEntry("b", '0', "now a file".toByteArray()))
+    check("E2 an empty directory where a file belongs: no failure", e2Threw, null)
+    check("E2 …and it is a file now", File(e2, "b").readText(), "now a file")
+
+    // E3: a **dangling symlink** where the new payload wants a file. `outputStream()` follows
+    // it, so this is the one that produces the device's exact `ENOENT` wording.
+    val e3 = File(extractRoot, "e3").also { it.mkdirs() }
+    Files.createSymbolicLink(File(e3, "c").toPath(), File("gone.txt").toPath())
+    val e3Threw = extractOver(e3, TarEntry("c", '0', "real".toByteArray()))
+    check("E3 a dangling symlink where a file belongs: no failure", e3Threw, null)
+    check("E3 …and the link was replaced, not followed", Files.isSymbolicLink(File(e3, "c").toPath()), false)
+    check("E3 …with the payload's bytes", File(e3, "c").readText(), "real")
+
+    // E4: a broken **ancestor**. Clearing only the immediate parent is not enough — every
+    // component between the destination and the file has to be walked.
+    val e4 = File(extractRoot, "e4").also { it.mkdirs() }
+    File(e4, "deep").writeText("stale file")
+    val e4Threw = extractOver(e4, TarEntry("deep/er/f.txt", '0', "deep".toByteArray()))
+    check("E4 a broken ancestor: no failure", e4Threw, null)
+    check("E4 …the whole chain was rebuilt", File(e4, "deep/er/f.txt").readText(), "deep")
+
+    // E5: a **non-empty** directory in the way is refused, never deleted. The payload lists own
+    // no directories (`PayloadPrune`), so whatever is inside one is the user's — and the
+    // failure has to name the node, because "a path plus ENOENT" cannot be told apart from
+    // "the archive lacks this file", which is what cost the device round trip.
+    val e5 = File(extractRoot, "e5").also { it.mkdirs() }
+    File(e5, "d").mkdirs()
+    File(e5, "d/user.txt").writeText("mine")
+    val e5Message = extractOver(e5, TarEntry("d", '0', "payload".toByteArray()))?.message ?: ""
+    check("E5 a non-empty directory is not deleted", File(e5, "d/user.txt").readText(), "mine")
+    check("E5 …and the failure names it as a directory", e5Message.contains("目录"), true)
 
     root.deleteRecursively()
 
