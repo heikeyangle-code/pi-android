@@ -38,6 +38,8 @@ import app.pi.ui.theme.PiSpacing
 fun NoticeBlock(
     item: Notice,
     modifier: Modifier = Modifier,
+    /** `app.appearance.showTimestamps`: off hides the trailing clock, and off is the default. */
+    showTimestamps: Boolean = false,
 ) {
     val palette = PiTheme.palette
     // pi's own informational status line is `dim`, and only its warning branch leaves that
@@ -70,11 +72,13 @@ fun NoticeBlock(
                 color = color,
             )
             Spacer(Modifier.width(PiSpacing.inline))
-            Text(
-                text = formatClock(item.ts),
-                style = PiTheme.text.meta,
-                color = palette.metaOnCanvas,
-            )
+            if (showTimestamps) {
+                Text(
+                    text = formatClock(item.ts),
+                    style = PiTheme.text.meta,
+                    color = palette.metaOnCanvas,
+                )
+            }
         }
     }
 }

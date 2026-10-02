@@ -126,7 +126,7 @@
 | `theme` | Value | Reload | `PiSessionViewModel.refreshTheme` → `PiThemeLoader.load`；`PiSettingEditorSheet` 走 `PiThemeEditorSheet`；`onSettingWritten("theme")` → `refreshTheme()` | AL + **B8** |
 | `app.appearance.fontScaleDelta` | Number | （Immediate） | `readPrefs` → `UiPrefs.fontScaleDelta` → `MainActivity`（`textScaleDelta`） | AL |
 | `app.appearance.messageDensity` | Value | （Immediate） | `readPrefs` → `ChatScreen` 块间距 | AL |
-| `app.appearance.showTimestamps` | Switch | （Immediate） | `readPrefs` → `ChatScreen` 时间戳/日期分隔 | AL |
+| `app.appearance.showTimestamps` | Switch | （Immediate） | `readPrefs` → `ChatScreen` 日期分隔（`visibleItems`）+ `BlockRenderer(showTimestamps=…)` → `UserMessageBlock`/`NoticeBlock` 的时钟。**默认关**；此前默认开、气泡时钟又无条件画，所以开关看起来不管事 | AL |
 | `app.appearance.thinkingCollapsedByDefault` | Switch | （Immediate） | `readPrefs` → `ChatScreen` `thinkingDefaultExpanded` | AL |
 | `images.autoResize` | Switch | NewSession | 无 App 读者（pi `:1289`） | PW |
 | `images.blockImages` | Switch | NewSession | 无 App 读者（pi `:1302` → `sdk.ts:270`，注释写明"mid-session changes take effect"，但 manager 每会话/进程才重建） | PW |

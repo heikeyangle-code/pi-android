@@ -1167,11 +1167,14 @@ object PiSettingsCatalog {
         PiSetting(
             key = "app.appearance.showTimestamps",
             title = "显示时间戳",
-            description = "每轮首次出现处显示一次时间戳；跨天时插入日期分隔。关掉之后对话流只剩内容。",
+            description = "开着时：你的消息气泡右下角带一次时间，通知行末尾带一次，跨天插入日期分隔。" +
+                "关掉之后对话流只剩内容。**默认关**。",
             kind = PiRowKind.Switch,
             group = G_APPEARANCE,
             section = "外观",
-            defaultValue = bool(true),
+            // 默认从 true 改 false（用户裁定）。这里、`UiPrefs.showTimestamps` 和
+            // `readPrefs` 的兜底是**同一件事的三处写法**，改一处就是三处不一致。
+            defaultValue = bool(false),
             aliases = listOf("timestamp", "time"),
         ),
         PiSetting(

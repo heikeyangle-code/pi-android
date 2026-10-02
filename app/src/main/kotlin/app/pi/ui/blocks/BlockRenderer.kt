@@ -107,9 +107,19 @@ fun BlockRenderer(
      * previous behaviour.
      */
     nowMs: Long? = null,
+    /**
+     * `app.appearance.showTimestamps`. The two rows that carry a clock — the user's own
+     * bubble and a notice line — read this, and **the default is `false`, matching the
+     * setting's own default**, so a caller that passes nothing draws neither.
+     *
+     * Before this parameter existed both clocks were unconditional and the setting reached
+     * only the date separators, so turning it off emptied the separators and still left a time
+     * on every message the user had written.
+     */
+    showTimestamps: Boolean = false,
 ) {
     when (item) {
-        is UserMessage -> UserMessageBlock(item, modifier, onForkFromMessage, onImageClick)
+        is UserMessage -> UserMessageBlock(item, modifier, onForkFromMessage, onImageClick, showTimestamps)
 
         is AssistantText -> AssistantTextBlock(item, modifier)
 
@@ -181,6 +191,6 @@ fun BlockRenderer(
 
         is DateSeparator -> DateSeparatorBlock(item, modifier)
 
-        is Notice -> NoticeBlock(item, modifier)
+        is Notice -> NoticeBlock(item, modifier, showTimestamps)
     }
 }

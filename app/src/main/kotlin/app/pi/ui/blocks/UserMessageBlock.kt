@@ -74,6 +74,17 @@ fun UserMessageBlock(
     onForkFromMessage: ((String) -> Unit)? = null,
     /** A tap on an attached image opens it full screen ([PiImageViewer]). */
     onImageClick: ((PiImage) -> Unit)? = null,
+    /**
+     * `app.appearance.showTimestamps`. **Off hides this bubble's clock**, and off is the
+     * default.
+     *
+     * The clock used to be drawn unconditionally — which is exactly why the switch looked
+     * broken: the only thing it reached was the date separators (`ChatScreen`'s
+     * `visibleItems`), so turning it off emptied the separators and left a clock on every one
+     * of the user's own messages. That is the one timestamp anyone notices, because it sits
+     * on the row they just wrote.
+     */
+    showTimestamps: Boolean = false,
 ) {
     val palette = PiTheme.palette
     val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
@@ -131,20 +142,22 @@ fun UserMessageBlock(
                         onImageClick = onImageClick,
                     )
                 }
-                Text(
-                    text = formatClock(item.ts),
-                    modifier = Modifier.align(Alignment.End),
-                    // `mono t12`: the machine face at v2's label step, which is exactly
-                    // the `monoSmall` role (12/18, `PiMonoFamily`). `meta` is the same
-                    // size in the *system* face, and the board's markup asks for `.mono`
-                    // on this timestamp specifically.
-                    style = PiTheme.text.monoSmall,
-                    // `c-muted` (`--muted: #808080`), the v2 palette's `muted` token.
-                    // It measures 3.07:1 on `userMessageBg`: over spec §9's 3:1
-                    // metadata floor, which is why the board's colour can be used
-                    // literally here (F12 kept `dim` — 2.11:1 — out of this bubble).
-                    color = palette.muted,
-                )
+                if (showTimestamps) {
+                    Text(
+                        text = formatClock(item.ts),
+                        modifier = Modifier.align(Alignment.End),
+                        // `mono t12`: the machine face at v2's label step, which is exactly
+                        // the `monoSmall` role (12/18, `PiMonoFamily`). `meta` is the same
+                        // size in the *system* face, and the board's markup asks for `.mono`
+                        // on this timestamp specifically.
+                        style = PiTheme.text.monoSmall,
+                        // `c-muted` (`--muted: #808080`), the v2 palette's `muted` token.
+                        // It measures 3.07:1 on `userMessageBg`: over spec §9's 3:1
+                        // metadata floor, which is why the board's colour can be used
+                        // literally here (F12 kept `dim` — 2.11:1 — out of this bubble).
+                        color = palette.muted,
+                    )
+                }
             }
         }
         }

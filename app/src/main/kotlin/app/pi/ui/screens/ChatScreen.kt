@@ -2193,6 +2193,12 @@ private fun ChatBody(
                             // `false` (`core/settings-manager.ts:120`), so an install
                             // that never touched that row shows nothing new.
                             showBilledCost = prefs.showCacheMissNotices,
+                            // The clocks on the user's own bubble and on a notice line. They
+                            // used to be unconditional, which is why the 外观 switch looked
+                            // broken: it reached only the date separators, so turning it off
+                            // left a time on every message the user had written. Off is now
+                            // the default on both sides of this parameter.
+                            showTimestamps = prefs.showTimestamps,
                             // F19 (`docs/rendering-review.md`) / RR-P10: the one
                             // remaining callback of the renderer's original five whose
                             // target already exists in this app is supplied here instead of

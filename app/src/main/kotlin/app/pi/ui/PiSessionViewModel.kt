@@ -432,7 +432,13 @@ data class HistoryCursor(
 data class UiPrefs(
     val fontScaleDelta: Int = 0,
     val messageDensity: String = "comfortable",
-    val showTimestamps: Boolean = true,
+    /**
+     * `app.appearance.showTimestamps`, **default off**. It gates three things: the clock on
+     * the user's own bubble, the clock at the end of a notice line, and the date separators
+     * `ChatScreen` inserts between days. The first two were unconditional until this switch
+     * was made to mean something — which is what made the row look broken.
+     */
+    val showTimestamps: Boolean = false,
     val thinkingCollapsedByDefault: Boolean = true,
     val expandToolsByDefault: Boolean = false,
     /** pi's `hideThinkingBlock`. */
@@ -1269,7 +1275,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         return UiPrefs(
             fontScaleDelta = int("app.appearance.fontScaleDelta", 0, -2..2),
             messageDensity = string("app.appearance.messageDensity", "comfortable"),
-            showTimestamps = bool("app.appearance.showTimestamps", true),
+            showTimestamps = bool("app.appearance.showTimestamps", false),
             thinkingCollapsedByDefault = bool("app.appearance.thinkingCollapsedByDefault", true),
             expandToolsByDefault = bool("app.tools.expandByDefault", false),
             hideThinkingBlock = bool("hideThinkingBlock", false),

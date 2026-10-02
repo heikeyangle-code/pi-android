@@ -686,7 +686,7 @@ pi 的 TUI 会按扩展名分支（`.jsonl` → `exportToJsonl`，`interactive-m
 | `hideThinkingBlock` | **pi 有**：`core/settings-manager.ts:119`（`Settings` 接口）、`:962` `getHideThinkingBlock`、`:982` `setHideThinkingBlock`；消费在 `modes/interactive/components/assistant-message.ts:143`（渲染助手消息时按它隐藏 thinking 块） | `PiSessionViewModel.readPrefs` → `ChatScreen` 的 `hideThinking` 与搜索过滤 | **1:1，一致**。RPC 模式下 pi 不渲染，App 就是渲染方，所以读同一个键、按同一语义隐藏是唯一正确做法 |
 | `app.appearance.fontScaleDelta` | **pi 无**（0 hits） | `readPrefs` → `MainActivity` `textScaleDelta` → `PiTheme` | App 自己的键（有 `app.` 前缀）；已接 |
 | `app.appearance.messageDensity` | **pi 无**（0 hits） | `readPrefs` → `ChatScreen` 的块间距 | 同上 |
-| `app.appearance.showTimestamps` | **pi 无**（0 hits） | `readPrefs` → `ChatScreen` 的 `visibleItems` | 同上 |
+| `app.appearance.showTimestamps` | **pi 无**（0 hits） | `readPrefs` → `ChatScreen` 的 `visibleItems`（日期分隔）+ `BlockRenderer(showTimestamps=…)` → `UserMessageBlock`/`NoticeBlock` 的时钟；**默认关** | 同上 |
 | `app.appearance.thinkingCollapsedByDefault` | **pi 无**（0 hits） | `readPrefs` → `ChatScreen` 的 `thinkingDefaultExpanded` | 同上 |
 | `app.tools.expandByDefault` | **pi 无**（0 hits） | `readPrefs` → `ChatScreen` 的 `toolsExpanded` | 同上 |
 | `app.runtime.keepAlive` | **pi 无**（`keepAlive` 的 10 处命中都在 `experimental/server.ts`，是 HTTP keep-alive，与此无关） | `readPrefs` → 启动路径上决定要不要起前台服务 | App 自己的键（Android 前台服务）；已接 |

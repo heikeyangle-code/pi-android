@@ -788,6 +788,37 @@ fun main() {
         dangling.joinToString { "\"$it\" matches no key, alias, title or description" },
     )
 
+    // Rule 13: a switch whose default is written in three places has to agree with itself, and
+    // the thing it claims to control has to actually read it.
+    //
+    // `app.appearance.showTimestamps` is the row that proved both halves. Its default was
+    // spelled `bool(true)` in the registry and `true` again in `readPrefs`, and neither
+    // spelling reached a clock: the user's own bubble and the notice line drew one
+    // unconditionally, so turning the switch off emptied the date separators and still left a
+    // time on every message the user had written — 「关了好像不管事」. Every rule above still
+    // passed, because the key *is* read; it was read by code that ignored its value.
+    val viewModel = File(root, "app/src/main/kotlin/app/pi/ui/PiSessionViewModel.kt").readText()
+    check(
+        "the registry's default for app.appearance.showTimestamps is off",
+        registry.contains("key = \"app.appearance.showTimestamps\"") &&
+            registry.contains("defaultValue = bool(false)"),
+    )
+    check(
+        "the reader's fallback for app.appearance.showTimestamps is off too",
+        viewModel.contains("bool(\"app.appearance.showTimestamps\", false)"),
+    )
+    check(
+        "UiPrefs' own default for showTimestamps is off too",
+        viewModel.contains("val showTimestamps: Boolean = false"),
+    )
+    for (block in listOf("UserMessageBlock.kt", "NoticeBlock.kt")) {
+        val body = File(root, "app/src/main/kotlin/app/pi/ui/blocks/$block")
+        check(
+            "ui/blocks/$block draws its clock only behind the switch",
+            body.isFile && body.readText().contains("if (showTimestamps)"),
+        )
+    }
+
     val appKeys = keys.count { it.startsWith("app.") }
     val piKeys = keys.size - appKeys
     println(
