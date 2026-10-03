@@ -585,6 +585,41 @@ fun main() {
         true,
     )
 
+    // 目录所有权（根因修法）：删除动作必须是**单节点** `File.delete()`，靠 `victims` 的深度倒序
+    // 让"文件先删、父目录后删"自然成立；`deleteRecursively()` 在整个文件里仍然只有一处
+    // （P7），而且那一处在 `deleteTreeInsideVolatile` 里，不在 prune 上。
+    //
+    // 判据用带点的 `.deleteRecursively()`（那是**调用**），不是注释里的那个词：prune 的注释
+    // 必须能写"这里绝不能递归删"，那正是它不递归的理由。
+    val pruneBody = provisionerSource
+        .substringAfter("PayloadPrune.victims(")
+        .substringBefore("private fun existsWithoutFollowing(")
+    check(
+        "P33 the prune delete is a single node, never recursive",
+        provisionerSource.contains("val deleted = runCatching { target.delete() }.getOrDefault(false)") &&
+            pruneBody.contains("runCatching { target.delete() }") &&
+            !pruneBody.contains(".deleteRecursively()"),
+        true,
+    )
+    // 非空目录"保留"不是失败：分类函数必须显式排除符号链接（`isDirectory` 会跟随链接）。
+    check(
+        "P34 a kept directory is classified by kind, links excluded",
+        provisionerSource.contains(
+            "isKeptNonEmptyDirectory(target: File): Boolean = !runCatching { " +
+                "java.nio.file.Files.isSymbolicLink(target.toPath()) }.getOrDefault(false) && target.isDirectory",
+        ),
+        true,
+    )
+    check(
+        "P35 a kept non-empty directory is logged, not reported as a payload failure",
+        provisionerSource.contains("keptDirectories += relative") &&
+            provisionerSource.contains("reportKeptDirectories()") &&
+            provisionerSource.indexOf("if (isKeptNonEmptyDirectory(target))") > 0 &&
+            provisionerSource.indexOf("if (isKeptNonEmptyDirectory(target))") <
+            provisionerSource.indexOf("payloadWarnings += \"\$relative（删除失败）\""),
+        true,
+    )
+
     // ------------------------------------------------ extraction over a changed tree
     //
     // An update does **not** start from an empty tree. The changed payload is unpacked onto
@@ -688,6 +723,101 @@ fun main() {
     val e5Message = extractOver(e5, TarEntry("d", '0', "payload".toByteArray()))?.message ?: ""
     check("E5 a non-empty directory is not deleted", File(e5, "d/user.txt").readText(), "mine")
     check("E5 …and the failure names it as a directory", e5Message.contains("目录"), true)
+
+    // ------------------------------------------------- 目录也在载荷所有权里
+    //
+    // 根因（1.0.0 → 1.0.1 的实测链路）：清单只记非目录路径 ⇒ 旧载荷的**目录**从来不算"它拥有
+    // 的东西" ⇒ 里面的文件被 prune 删掉之后目录变空、下一份载荷又不拥有它 ⇒ **空壳永远留着**。
+    // 空的 `node_modules` 目录不是几十字节：Node 的解析撞上 `.../node_modules/<pkg>/` 就**就地
+    // 失败、不再往上找**，真包明明在 `/opt/pi/node_modules/` 也会被判成"找不到包"，于是 pi 的
+    // `loadPhoton()` 静默 catch 成 null，每张图都报 "could not be resized…"。
+    //
+    // 修法是让所有权对目录同样成立：目录行进清单（构建期，`tools/fetch-runtime.mjs`），
+    // `present` 含目录（调用方本来就用不跟随链接的探测，它包含目录 —— 这一节把这件事钉住），
+    // 删除仍是**单节点 `File.delete()`**。于是不需要任何新机制：
+    //   - 文件先于父目录被删（`victims` 的深度倒序）；
+    //   - 空目录删得掉 ⇒ 一趟之后树上不留空壳；
+    //   - 非空目录**必然删不掉** ⇒ 用户后来放进去的东西（`npm -g`/apt/手建）留着。
+    fun fixturePresent(base: File, of: List<String>): Set<String> = of.filterTo(HashSet()) { relative ->
+        val node = File(base, relative)
+        node.exists() || Files.isSymbolicLink(node.toPath())
+    }
+
+    // 与 `RuntimeProvisioner.prunePayload` 的删除动作同形：单节点 `delete()`，失败的记进 kept。
+    fun pruneFixture(base: File, old: List<String>, new: List<String>): Pair<List<String>, List<String>> {
+        val deleted = mutableListOf<String>()
+        val kept = mutableListOf<String>()
+        PayloadPrune.victims(old, new, fixturePresent(base, old)).forEach { relative ->
+            val node = File(base, relative)
+            if (node.delete()) deleted += relative else if (node.exists()) kept += relative
+        }
+        return deleted to kept
+    }
+
+    // ① 旧树有 rootfs/a/b/c/f、新树没有 ⇒ f、c、b、a 全部消失，顺序由深到浅。
+    val d1 = File(System.getProperty("java.io.tmpdir"), "pi-prune-dirs-1-${System.nanoTime()}")
+    val d1Tree = listOf("rootfs/a/b/c/f", "rootfs/a/b/c", "rootfs/a/b", "rootfs/a")
+    File(d1, "rootfs/a/b/c").mkdirs()
+    File(d1, "rootfs/a/b/c/f").writeText("payload")
+    val d1Result = pruneFixture(d1, d1Tree, emptyList())
+    check("N1 every old-owned level disappears, deepest first", d1Result.first, d1Tree)
+    check("N1b and nothing was kept", d1Result.second, emptyList<String>())
+    check(
+        "N1c the tree really has no directories left but its roots",
+        d1Tree.none { File(d1, it).exists() } && File(d1, "rootfs").isDirectory,
+        true,
+    )
+    // ④ 幂等：第二趟同一批输入什么都不删（树上已经没有这些路径，`present` 自然把它们滤掉）。
+    check(
+        "N2 a second pass over the same input deletes nothing",
+        pruneFixture(d1, d1Tree, emptyList()).first,
+        emptyList<String>(),
+    )
+
+    // ② rootfs/a/b 里还有别的文件（用户后来放的）⇒ a/b 与更上层必须留着，而且那是"保留"不是"失败"。
+    val d2 = File(System.getProperty("java.io.tmpdir"), "pi-prune-dirs-2-${System.nanoTime()}")
+    File(d2, "rootfs/a/b/c").mkdirs()
+    File(d2, "rootfs/a/b/c/f").writeText("payload")
+    File(d2, "rootfs/a/b/mine.txt").writeText("mine")
+    val d2Result = pruneFixture(d2, d1Tree, emptyList())
+    check("N3 the file and the emptied directory go", d2Result.first, listOf("rootfs/a/b/c/f", "rootfs/a/b/c"))
+    check("N3b a non-empty directory is kept, not failed", d2Result.second, listOf("rootfs/a/b", "rootfs/a"))
+    check("N3c and the user's file is untouched", File(d2, "rootfs/a/b/mine.txt").readText(), "mine")
+    check("N3d the kept directory is still there", File(d2, "rootfs/a/b").isDirectory, true)
+
+    // 纯判定：新清单仍然拥有的目录永远不是受害者（它刚刚被覆盖写入，且里面有新载荷的文件）。
+    check(
+        "N4 a directory the new list still owns is never a victim",
+        PayloadPrune.victims(
+            listOf("rootfs/a/b", "rootfs/a/b/c", "rootfs/a/b/c/f"),
+            listOf("rootfs/a/b"),
+            setOf("rootfs/a/b", "rootfs/a/b/c", "rootfs/a/b/c/f"),
+        ),
+        listOf("rootfs/a/b/c/f", "rootfs/a/b/c"),
+    )
+    check(
+        "N5 a directory that is not on the tree is not a victim",
+        PayloadPrune.victims(listOf("rootfs/gone"), emptyList(), emptySet()),
+        emptyList<String>(),
+    )
+
+    // ④ 符号链接：它是清单条目、可以删，但删掉的是**链接本身**，链接目标里的东西一个字节不动
+    // （这正是 `prunePayload` 里 `target.delete()` 的语义；也是 `isKeptNonEmptyDirectory` 必须
+    // 显式排除链接的原因 —— `isDirectory` 会跟随链接）。
+    val d4 = File(System.getProperty("java.io.tmpdir"), "pi-prune-dirs-3-${System.nanoTime()}")
+    File(d4, "rootfs/keep/real").mkdirs()
+    File(d4, "rootfs/keep/real/inside.txt").writeText("survives")
+    File(d4, "rootfs/a").mkdirs()
+    val link = File(d4, "rootfs/a/link")
+    Files.createSymbolicLink(link.toPath(), File(d4, "rootfs/keep/real").toPath())
+    val d4Result = pruneFixture(d4, listOf("rootfs/a/link"), emptyList())
+    check("N6 a symlink entry is a victim", d4Result.first, listOf("rootfs/a/link"))
+    check("N6b but the link is what disappears", Files.isSymbolicLink(link.toPath()), false)
+    check("N6c and its target keeps every byte", File(d4, "rootfs/keep/real/inside.txt").readText(), "survives")
+    d1.deleteRecursively()
+    d2.deleteRecursively()
+    d4.deleteRecursively()
+
 
     // ------------------------------------------------- 客体必要配置："缺了什么"
     //
