@@ -468,6 +468,123 @@ fun main() {
     )
     check("P20 the build emits the list in sorted order", fetchSource.contains("return [...out].sort();"), true)
 
+    // -------------------------------------------- 事后收尾的失败：不许静默、不许记账
+    //
+    // 这一批修的是同一个形状：**某一步失败了，而下一次启动走的是"不用再做"的那条路**，
+    // 所以失败不报出来就永远没人重试。四条：
+    //
+    //  - P0 客体必要配置没写成，载荷却全部记账 ⇒ 下次 `plan` 为空 ⇒ `finishCurrent`
+    //    （以前从不写这些文件）⇒ 写 stamp 宣告成功、页面消失，`/etc/resolv.conf` 永久缺失；
+    //  - P1a `deleteRecursively` 没删净却继续 ⇒ 「重建运行时」报成功、下一次仍撞在同一个节点；
+    //  - P1b 搬回失败/被强杀 ⇒ 用户的目录留在 `.preserve`，全仓没有第二个地方看它；
+    //  - 合并 node 时写失败被吞 ⇒ 照样记账 ⇒ 半份树被当成最新，且没有任何页面。
+    //
+    // P0 的两条性质：**一个写入口**（因此没有第二份"忘了加判断"的逻辑），而且它判的是
+    // 存在性、不是内容（"文件都在时写入次数为 0"的等价可观察量）。
+    val ensureConfigBody = provisionerSource
+        .substringAfter("private fun ensureGuestConfig(): String? {")
+        .substringBefore("private fun configureGuestFiles() {")
+    check(
+        "P21 the guest config has exactly one guarded writer",
+        ensureConfigBody.contains("if (paths.missingGuestConfig().isNotEmpty()) configureGuestFiles()"),
+        true,
+    )
+    check(
+        "P22 the guard is an existence check, not a read or a write",
+        ensureConfigBody.contains("missingGuestConfig()") && !ensureConfigBody.contains("readText"),
+        true,
+    )
+    check(
+        "P23 and the writer has no other caller",
+        provisionerSource.split("configureGuestFiles()").size - 1,
+        2, // 定义处 + ensureGuestConfig 里那一次调用
+    )
+    check(
+        "P24 the fast path repairs the guest config too",
+        finishCurrentBody.contains("ensureGuestConfig()"),
+        true,
+    )
+    val provisionBody = provisionerSource
+        .substringAfter("private fun provision(revision: String, rebuild: Boolean, onStep: (Step) -> Unit): ProvisionOutcome {")
+        .substringBefore("private fun finishCurrent(")
+    check(
+        "P25 so does the extraction path, through the same function",
+        provisionBody.contains("ensureGuestConfig()"),
+        true,
+    )
+
+    // P1a：删完必须**验证真的没了**，没删净就是失败。文案要点出还剩哪些路径。
+    val deleteBody = provisionerSource
+        .substringAfter("private fun deleteTreeInsideVolatile(target: File, why: String) {")
+        .substringBefore("private fun extractPayloadOver(")
+    check(
+        "P26 a recursive delete that did not finish throws instead of reporting success",
+        deleteBody.contains("target.deleteRecursively()") &&
+            deleteBody.contains("if (target.exists()) {") &&
+            deleteBody.contains("没能删净"),
+        true,
+    )
+    check(
+        "P26b and it names what is left",
+        deleteBody.contains("walkTopDown()"),
+        true,
+    )
+
+    // P1b：搁浅的耐久目录在**两条路**上都会被捡回来；搬不回就失败（所以 stamp 不写、下次还来）。
+    check(
+        "P27 a stranded durable directory is recovered through DurablePreserve.recover",
+        provisionerSource.contains("DurablePreserve.recover("),
+        true,
+    )
+    check(
+        "P27b from both provisioning paths",
+        finishCurrentBody.contains("recoverStrandedDurableDirs()") &&
+            provisionBody.contains("recoverStrandedDurableDirs()"),
+        true,
+    )
+    check(
+        "P27c and a rebuild that cannot put them back fails instead of reporting success",
+        wipeBody.contains("重建运行时没能把耐久目录搬回原位"),
+        true,
+    )
+
+    // 合并 node 时的写失败：收集 → 抛 → 因此 digest 不会被写（失败 ⇒ 不许记账）。
+    val mergeBody = provisionerSource
+        .substringAfter("private fun mergeTreeOver(from: File, to: File): List<String> {")
+        .substringBefore("private fun installTool(")
+    check(
+        "P28 mergeTreeOver names every path it could not merge",
+        mergeBody.contains("failed += child.path") && mergeBody.contains("failed += source.path"),
+        true,
+    )
+    check(
+        "P29 and extractNode refuses to finish while any of them is outstanding",
+        provisionerSource
+            .substringAfter("private fun extractNode() {")
+            .substringBefore("private fun mergeTreeOver(")
+            .contains("if (notMerged.isNotEmpty())"),
+        true,
+    )
+
+    // prune 与记账的失败也被报出来（这两条以前是纯 `runCatching`/忽略返回值）。
+    check(
+        "P30 a prune that could not delete is reported",
+        provisionerSource.contains("payloadWarnings += \"\$relative（删除失败）\""),
+        true,
+    )
+    check(
+        "P31 a payload state that was not written is reported",
+        provisionerSource.contains("payloadWarnings += recordWarning"),
+        true,
+    )
+    check(
+        "P32 and every warning reaches the one step label",
+        provisionBody.contains("recoveryWarning,") &&
+            provisionBody.contains("payloadWarning(),") &&
+            provisionBody.contains(".joinToString(\"\\n\")"),
+        true,
+    )
+
     // ------------------------------------------------ extraction over a changed tree
     //
     // An update does **not** start from an empty tree. The changed payload is unpacked onto
@@ -571,6 +688,123 @@ fun main() {
     val e5Message = extractOver(e5, TarEntry("d", '0', "payload".toByteArray()))?.message ?: ""
     check("E5 a non-empty directory is not deleted", File(e5, "d/user.txt").readText(), "mine")
     check("E5 …and the failure names it as a directory", e5Message.contains("目录"), true)
+
+    // ------------------------------------------------- 客体必要配置："缺了什么"
+    //
+    // P0 修的是"载荷全部记账了、配置文件却没写成功"那条路：下一次启动 `plan` 为空，走
+    // `finishCurrent`，而它以前从不写这些文件 —— 于是 stamp 写成成功、失败页消失，
+    // `/etc/resolv.conf` 永久缺失（guest 里所有域名解析失败，App 看起来是健康的）。
+    //
+    // 判据必须幂等且便宜：都在时**一个字节都不写**，只做四次存在性判断。这一节用真实目录跑
+    // 它的每一种"缺"：整棵树是新的 / 一个文件是零字节 / 该是目录的位置是文件 / 只少一个。
+    val cfgRoot = File(System.getProperty("java.io.tmpdir"), "pi-guest-config-check-${System.nanoTime()}")
+    val cfgPaths = PiPaths(filesDir = File(cfgRoot, "files"), nativeLibDir = File(cfgRoot, "native"))
+    check(
+        "M1 a tree with no guest config names all four targets",
+        cfgPaths.missingGuestConfig().map { it.relative },
+        cfgPaths.guestConfigTargets().map { it.relative },
+    )
+    check("M1b and there are four of them", cfgPaths.guestConfigTargets().size, 4)
+
+    cfgPaths.rootfs.mkdirs()
+    cfgPaths.guestConfigTargets().forEach { target ->
+        val file = File(cfgPaths.rootfs, target.relative)
+        if (target.directory) file.mkdirs() else file.also { it.parentFile?.mkdirs() }.writeText("x\n")
+    }
+    check("M2 everything in place asks for nothing", cfgPaths.missingGuestConfig(), emptyList<PiPaths.GuestConfigTarget>())
+
+    // 零字节 == 没写成功：截断的 stamp 读作"没解包"，截断的 resolv.conf 读作"没有 DNS"。
+    File(cfgPaths.rootfs, "etc/hosts").writeText("")
+    check(
+        "M3 an empty file counts as missing",
+        cfgPaths.missingGuestConfig().map { it.relative },
+        listOf("etc/hosts"),
+    )
+
+    // 该是目录的位置被一个普通文件占住，也算缺 —— 只判 `exists()` 会漏掉这一种。
+    File(cfgPaths.rootfs, "etc/hosts").writeText("x\n")
+    cfgPaths.agentDir.deleteRecursively()
+    cfgPaths.agentDir.parentFile?.mkdirs()
+    cfgPaths.agentDir.writeText("not a directory")
+    check(
+        "M4 a file where a directory belongs counts as missing",
+        cfgPaths.missingGuestConfig().map { it.relative },
+        listOf(DurableLayout.AGENT_IN_ROOTFS),
+    )
+    cfgRoot.deleteRecursively()
+
+    // ------------------------------------------------- 「搁浅的耐久目录」的启动恢复
+    //
+    // `wipe()` 搬出 → 删树 → 搬回，中间被强杀（或搬回失败）就把用户的会话/工作区留在
+    // `.preserve` 里，而在这之前**全仓没有第二个地方看那个目录**。`recover` 就是那一眼：
+    // 原位置不在 → 搬回；原位置是空目录 → 搬回；两边都有内容 → 一个字节都不动并报出来。
+    val recRoot = File(System.getProperty("java.io.tmpdir"), "pi-recover-check-${System.nanoTime()}")
+    val recHome = File(recRoot, "pi")
+    val recRuntime = File(recHome, "runtime")
+    val recPreserve = File(recHome, DurablePreserve.PRESERVE_DIR)
+    val recDurable = DurableLayout.durableDirs(recHome, recRuntime)
+    val recWs = recDurable[0]
+    val recAgent = recDurable[1]
+
+    check("R1 no stash means nothing to recover", DurablePreserve.recover(recDurable, recPreserve).anything, false)
+    check("R1b and it does not create the preserve directory", recPreserve.exists(), false)
+
+    // R2：原位置不存在 → 搬回，内容完整，壳被清掉。
+    recPreserve.mkdirs()
+    recWs.mkdirs()
+    File(recWs, "notes.md").writeText("keep me")
+    val stashWs = File(recPreserve, "workspaces-${System.nanoTime()}")
+    check("R2 the stash is where an interrupted wipe would leave it", recWs.renameTo(stashWs), true)
+    val r2 = DurablePreserve.recover(recDurable, recPreserve)
+    check("R2b a missing target is restored", r2.restored, listOf(recWs))
+    check("R2c with its content", File(recWs, "notes.md").readText(), "keep me")
+    check("R2d and nothing is stranded", r2.stranded, emptyList<Pair<File, File>>())
+    check("R2e the emptied shell is cleaned up", recPreserve.exists(), false)
+    check("R3 a second call is a no-op", DurablePreserve.recover(recDurable, recPreserve).anything, false)
+
+    // R4：新树已经建了一个**空**目录 —— 不能因为它存在就把数据丢在 .preserve 里。
+    recPreserve.mkdirs()
+    recAgent.mkdirs()
+    File(recAgent, "auth.json").writeText("sk-secret")
+    val stashAgent = File(recPreserve, "agent-${System.nanoTime()}")
+    check("R4 the credential is parked", recAgent.renameTo(stashAgent), true)
+    recAgent.mkdirs()
+    check("R4b the fresh target really is empty", recAgent.listFiles()?.isEmpty(), true)
+    val r4 = DurablePreserve.recover(recDurable, recPreserve)
+    check("R4c an empty target does not block the restore", r4.restored, listOf(recAgent))
+    check("R4d the parked credential is back", File(recAgent, "auth.json").readText(), "sk-secret")
+
+    // R5：两边都有内容 → 保守。既不恢复、也不删除、也不隐藏。
+    // R4 成功之后 `.preserve` 被清掉了（那是它该有的样子），所以这里重新造一个壳。
+    recPreserve.mkdirs()
+    val stashAgent2 = File(recPreserve, "agent-${System.nanoTime()}")
+    check("R5 the parked copy moves aside", recAgent.renameTo(stashAgent2), true)
+    recAgent.mkdirs()
+    File(recAgent, "settings.json").writeText("new")
+    val r5 = DurablePreserve.recover(recDurable, recPreserve)
+    check("R5b nothing is restored when both sides have content", r5.restored, emptyList<File>())
+    check("R5c and it is reported instead of hidden", r5.stranded.map { it.second }, listOf(recAgent))
+    check("R5d the new content is untouched", File(recAgent, "settings.json").readText(), "new")
+    check("R5e the parked copy is untouched too", File(stashAgent2, "auth.json").readText(), "sk-secret")
+    check("R5f and the shell is kept because something is still parked", recPreserve.isDirectory, true)
+
+    // R6：不认识的条目（不是我们放的目录名）既不被认领、也不被删掉 —— 清壳只清空目录。
+    val junk = File(recPreserve, "junk-1").also { it.mkdirs() }
+    check(
+        "R6 an unrecognised entry is not claimed",
+        DurablePreserve.recoveryTargets(recPreserve, recDurable).none { it.first == junk },
+        true,
+    )
+    val prefixProbe = File(recRoot, "prefix-probe").also { it.mkdirs() }
+    File(prefixProbe, "workspacesX-1").mkdirs()
+    File(prefixProbe, "workspaces-1").mkdirs()
+    File(prefixProbe, "junk-1").mkdirs()
+    check(
+        "R6b the name prefix must include the separator",
+        DurablePreserve.recoveryTargets(prefixProbe, recDurable).map { it.first.name },
+        listOf("workspaces-1"),
+    )
+    recRoot.deleteRecursively()
 
     // ------------------------------------------------- 一个目录的两个 guest 拼法
     //
