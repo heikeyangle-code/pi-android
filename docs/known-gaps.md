@@ -25,7 +25,7 @@
 ### A2. LaTeX 渲染（四种定界符 + `renderLatex` 的移植）—— **主体已完成；两类已知偏差 + layout 支未移植，全部由夹具钉住**
 > **状态（本轮复核，Phase A 收尾）：**
 >
-> **1. 已完成、且逐项有机械证据。** `ui/render/PiLatex.kt` 是 pi 1.0.1 的 `packages/tui/src/latex.ts` 的逐字移植。16 张表、569 个 key/成员由 `tools/check-latex-tables.mjs` 与引擎自己的 `dist/latex.js` **逐 key 比对**（脚本读两边的源文本、期望值不手抄）；428 条公式 + 31 条定界符用例由 `tools/collect-latex-fixtures.mjs` 从 pi 自己的 `renderLatex` / `tokenizeInlineLatex` / `tokenizeBlockLatex` 生成（`app/src/test/resources/pi-latex-fixtures/cases.json`），在 `app/src/test/kotlin/app/pi/ui/render/PiLatexCheck.kt`（注册为 `tools/run-app-pure-checks.sh` 的 `latex`）里**逐字节**比对；另有 5745 条模板化 + 40000 条随机形状公式在本机与 pi 做过差分（0 处行内不一致，见渲染盘点 §4）。夹具记着 pi-tui 的版本，并与 `tools/pi-engine.lock.json` 锁住的版本比对：引擎升级而夹具没重生成会红。
+> **1. 已完成、且逐项有机械证据。** `ui/render/PiLatex.kt` 是 pi 1.0.1 的 `packages/tui/src/latex.ts` 的逐字移植。16 张表、569 个 key/成员由 `tools/check-latex-tables.mjs` 与引擎自己的 `dist/latex.js` **逐 key 比对**（脚本读两边的源文本、期望值不手抄）；428 条公式 + 34 条定界符用例由 `tools/collect-latex-fixtures.mjs` 从 pi 自己的 `renderLatex` / `tokenizeInlineLatex` / `tokenizeBlockLatex` 生成（`app/src/test/resources/pi-latex-fixtures/cases.json`），在 `app/src/test/kotlin/app/pi/ui/render/PiLatexCheck.kt`（注册为 `tools/run-app-pure-checks.sh` 的 `latex`）里**逐字节**比对；另有 5745 条模板化 + 40000 条随机形状公式在本机与 pi 做过差分（0 处行内不一致，见渲染盘点 §4）。夹具记着 pi-tui 的版本，并与 `tools/pi-engine.lock.json` 锁住的版本比对：引擎升级而夹具没重生成会红。
 >
 > **2. 四种定界符都在了。** `$…$`、`$$…$$`、`\(…\)`、`\[…\]`（pi 的 `tokenizeInlineLatex` / `tokenizeBlockLatex`）。后两种在上一轮**整类走不到数学分支**（`piMarkdownSource` 第一行 `contains('$')` 直接返回），本轮补齐；同时把预处理逻辑搬进 `PiLatex.preprocess`（纯 Kotlin、零 import），`PiMarkdown.piMarkdownSource` 只剩一行转发 —— 搬家的唯一理由是它必须能被这台没有设备的机器编译并对着 pi 自己的 tokenizer 比对（`PiMarkdown.kt` 有 Compose import，一个断言也跑不了）。
 >
