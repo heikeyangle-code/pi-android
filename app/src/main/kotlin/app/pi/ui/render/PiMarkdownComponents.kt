@@ -206,7 +206,7 @@ private fun piMathComponent(type: org.intellij.markdown.IElementType, model: Mar
 @Composable
 private fun PiFormulaText(model: MarkdownComponentModel, block: Boolean) {
     val palette = PiTheme.palette
-    val text = remember(model.content, model.node) {
+    val source = remember(model.content, model.node) {
         PiLatex.formulaText(
             content = model.content,
             text = model.content.substring(model.node.startOffset, model.node.endOffset),
@@ -214,14 +214,24 @@ private fun PiFormulaText(model: MarkdownComponentModel, block: Boolean) {
             fallback = "（公式）",
         )
     }
+    // 能归约成多行网格时画网格（`PiLatex` 的 layout 支），否则按 pi 的回退画原文。
+    // 正常路径下块级公式根本到不了这里 —— 预处理已经把网格写回源文本了
+    // （`PiLatex.prepare` 的注释），这一段是"源里还有漏网的 math 节点"时的兜底。
+    val grid = remember(source, block) {
+        PiLatex.toUnicode(source, display = block)?.takeIf { it.contains('\n') }
+    }
     Text(
-        text = text,
+        text = grid ?: source,
         modifier = Modifier
             .fillMaxWidth()
             .padding(vertical = if (block) 6.dp else 2.dp),
         style = model.typography.code,
         color = palette.mdCode,
-        textAlign = if (block) TextAlign.Center else TextAlign.Start,
+        // **网格不能居中**：`TextAlign.Center` 是**逐行**居中的，每一行的偏移量都等于
+        // (可用宽度 − 这一行宽度) / 2，于是 `⎛ a │ b ⎞` 与 `⎝ c │ d ⎠` 会被推成不同的
+        // 起点、整块拆散。网格的对齐全靠它自己的空格（`renderLayout` 逐行补齐），
+        // 所以必须左对齐 —— pi 也是这么推行的（`components/markdown.js:384-386`）。
+        textAlign = TextAlign.Start,
     )
 }
 

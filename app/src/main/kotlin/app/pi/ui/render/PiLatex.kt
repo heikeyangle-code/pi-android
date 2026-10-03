@@ -784,10 +784,10 @@ internal object PiLatex {
      * 显示式公式的最终形状：`null` = 这条公式画不出来（调用方保留原文），否则是
      * **独占一段**的 `\n<渲染结果>\n`（见 [toDisplayUnicode] 的说明）。
      */
-    private fun displayBlock(body: String): String? {
-        val rendered = toUnicode(body.trim(), display = true) ?: return null
-        return "\n" + rendered + "\n"
-    }
+    /** 显示式 body 的渲染结果（可能是多行网格），没画出来时 `null`。 */
+    private fun displayRendered(body: String): String? = toUnicode(body.trim(), display = true)
+
+    private fun displayBlock(body: String): String? = displayRendered(body)?.let { "\n$it\n" }
 
     // ---------------------------------------------------------------------
     // 竖直排版：latex.ts:681-809 的 layout 节点与 renderLayout
@@ -1091,10 +1091,28 @@ internal object PiLatex {
      * 任何 [PiLatex] 归约不出来的公式都原样留在源里 —— pi 自己的回退也是打印
      * `latexToken.raw`（`markdown.ts:509`、`:649`）。
      */
-    fun preprocess(markdown: String): String {
+    fun preprocess(markdown: String): String = prepare(markdown).text
+
+    /** 预处理的结果：改过的源文本 + "这次真的写进了一块多行网格"。 */
+    class PreparedMath(val text: String, val hasDisplayGrid: Boolean)
+
+    /**
+     * 预处理，并且**报告这次有没有往源文本里写进多行网格**。
+     *
+     * 为什么需要这个标记：网格是**多行**文本，而库的 annotator 会把段落内的换行变成
+     * 空格（`MarkdownAnnotatorConfig.eolAsNewLine` 默认 `false`），所以含网格的这条
+     * 消息必须在渲染时打开 `eolAsNewLine`（见 `PiMarkdownText`）。标记只在**这次
+     * 替换确实产生了多行结果**时为真：`$x^2$`、`$$x^2$$` 这类只用一行的公式不打开，
+     * 别的消息一个字节都不动。
+     *
+     * 行内公式也要算：环境（矩阵/`cases`/`aligned`）**不受 `display` 门控**，行内的
+     * `$\begin{pmatrix}…\end{pmatrix}$` 也会写成一块网格。
+     */
+    fun prepare(markdown: String): PreparedMath {
         // 快路径：两个定界符家族（`$` 与 `\(`/`\[`）都没有时，整篇没有任何东西可改。
         // 流式转写里这是绝大多数帧的情况。
-        if (!markdown.contains('$') && !markdown.contains('\\')) return markdown
+        if (!markdown.contains('$') && !markdown.contains('\\')) return PreparedMath(markdown, false)
+        val grid = BooleanArray(1)
         val out = StringBuilder(markdown.length)
         var index = 0
         while (index < markdown.length) {
@@ -1105,7 +1123,7 @@ internal object PiLatex {
                 out.append(fence.value)
                 val closing = "\n" + fence.groupValues[1]
                 val end = markdown.indexOf(closing, fence.range.last + 1)
-                if (end < 0) return out.append(markdown, fence.range.last + 1, markdown.length).toString()
+                if (end < 0) return PreparedMath(out.append(markdown, fence.range.last + 1, markdown.length).toString(), grid[0])
                 out.append(markdown, fence.range.last + 1, end + closing.length)
                 index = end + closing.length
                 continue
@@ -1121,14 +1139,14 @@ internal object PiLatex {
                 code == null -> fence.range.first
                 else -> minOf(fence.range.first, code.range.first)
             }
-            out.append(applyMath(markdown, index, start))
+            out.append(applyMath(markdown, index, start, grid))
             index = start
         }
-        return out.toString()
+        return PreparedMath(out.toString(), grid[0])
     }
 
-    /** 对一段"没有代码"的区间 `[start, end)` 做两次替换。 */
-    private fun applyMath(text: String, start: Int, end: Int): String {
+    /** 对一段"没有代码"的区间 `[start, end)` 做两次替换；`grid[0]` 记录是否写进了多行网格。 */
+    private fun applyMath(text: String, start: Int, end: Int, grid: BooleanArray): String {
         val run = text.substring(start, end)
         if (!run.contains('$') && !run.contains('\\')) return run
         // **两道 guard 都是精确的。** 上面的 `contains` 已经把"不可能匹配"的区间整个
@@ -1142,14 +1160,18 @@ internal object PiLatex {
             BLOCK_MATH.replace(run) { match ->
                 val dollar = match.groupValues[1]
                 val bracket = match.groupValues[2]
-                when {
-                    // `$$…$$`：整段（含定界符）交给 toDisplayUnicode。
-                    dollar.isNotEmpty() -> toDisplayUnicode(match.value) ?: match.value
-                    // `\[…\]`：块级形态的 body 已经在 group 2 里（含可能的换行），
-                    // 空 body 是 pi 的"待定"（原文照排），所以不动。
-                    bracket.isNotBlank() -> displayBlock(bracket) ?: match.value
-                    else -> match.value
+                // `$$…$$` 的 body 要从 match.value 里剥（含可能的收尾换行）；`\[…\]`
+                // 的 body 已经在 2 号组里。空 body 是 pi 的"待定"（原文照排），不动。
+                val body = if (dollar.isNotEmpty()) {
+                    match.value.trim().removePrefix("$$").removeSuffix("$$").trim()
+                } else {
+                    bracket.trim()
                 }
+                val rendered = if (body.isEmpty()) null else displayRendered(body)
+                // **只有渲染结果本身是多行**才算网格：`$$x^2$$` 画出来是一行，独占一段
+                // 的 `\n` 包裹是 App 的形状、不是网格（见 prepare 的注释）。
+                if (rendered != null && rendered.contains('\n')) grid[0] = true
+                if (rendered == null) match.value else "\n$rendered\n"
             }
         } else {
             run
@@ -1159,16 +1181,19 @@ internal object PiLatex {
             val bracketed = match.groupValues[2]
             when {
                 // `\(…\)`：pi 没有块级形态，任何时候都是行内。
-                parenthesized.isNotEmpty() -> toUnicode(parenthesized) ?: match.value
+                parenthesized.isNotEmpty() -> toUnicode(parenthesized)?.also { if (it.contains('\n')) grid[0] = true }
+                    ?: match.value
                 // `\[…\]`：行首的那种交给上面那一趟（没被替换 = pi 的待定/画不出来，
                 // 保持原文）；只有行中的才是 pi 的行内 token。
                 bracketed.isNotEmpty() ->
                     if (atLineStart(block, match.range.first)) match.value
-                    else toUnicode(bracketed) ?: match.value
+                    else toUnicode(bracketed)?.also { if (it.contains('\n')) grid[0] = true } ?: match.value
                 // `$…$`：定界符就是首尾两个字符，形状没变。
                 else -> {
                     val source = match.value
-                    toUnicode(source.substring(1, source.length - 1)) ?: source
+                    val rendered = toUnicode(source.substring(1, source.length - 1))
+                    if (rendered != null && rendered.contains('\n')) grid[0] = true
+                    rendered ?: source
                 }
             }
         }

@@ -17,6 +17,8 @@ import com.mikepenz.markdown.compose.Markdown
 import com.mikepenz.markdown.model.ReferenceLinkHandlerImpl
 import com.mikepenz.markdown.model.State
 import com.mikepenz.markdown.model.markdownAnimations
+import com.mikepenz.markdown.model.markdownAnnotator
+import com.mikepenz.markdown.model.markdownAnnotatorConfig
 import com.mikepenz.markdown.model.rememberMarkdownState
 import org.intellij.markdown.flavours.gfm.GFMFlavourDescriptor
 import org.intellij.markdown.parser.MarkdownParser
@@ -97,7 +99,12 @@ internal fun PiMarkdownText(
     remember(context) { PiNodeCodeHighlighter.attach(context) }
     // Keyed on the source: rewriting is a linear scan with a handful of regex
     // matches, but a streaming block re-parses on every token, so it is cached.
-    val content = remember(markdown) { piMarkdownSource(markdown) }
+    // 预处理还要报告"这次有没有写进一块多行网格"：网格靠换行与空格对齐，而库的
+    // annotator 默认把段落内换行压成空格，所以含网格的这条消息要按下一段的两个
+    // 开关渲染 —— 别的消息一个字节都不变（`PiLatex.prepare` 的注释）。
+    val prepared = remember(markdown) { PiLatex.prepare(markdown) }
+    val content = prepared.text
+    val hasGrid = prepared.hasDisplayGrid
     // F32 / RR-P9: everything the five markdown objects depend on is read here,
     // once per composition, and the objects themselves are built by the pure
     // functions in `PiMarkdownTheme.kt` — the library's own builders are
@@ -115,8 +122,12 @@ internal fun PiMarkdownText(
     val colors = remember(palette, darkTheme, textColor) {
         piMarkdownColors(palette, darkTheme, textColor)
     }
-    val typography = remember(palette, baseText, monoText, codeText, textColor) {
-        piMarkdownTypography(palette, baseText, monoText, codeText, textColor)
+    val typography = remember(palette, baseText, monoText, codeText, textColor, hasGrid) {
+        val built = piMarkdownTypography(palette, baseText, monoText, codeText, textColor)
+        // 网格用**空格**对齐（`renderLayout` 逐行补齐），比例字体里空格与字形的宽度
+        // 不同、整块会歪，所以含网格的这条消息把段落样式换成等宽。改写只作用于
+        // `paragraph`：标题/列表/引用的角色保持原样，其它消息完全不受影响。
+        if (hasGrid) built.copy(paragraph = monoText.copy(color = built.paragraph.color)) else built
     }
     // `piMarkdownComponents()` is an ordinary function — `markdownComponents(...)`
     // is not composable — so it can be remembered directly. The lambdas it holds
@@ -239,6 +250,15 @@ internal fun PiMarkdownText(
             dimens = piMarkdownDimens,
             imageTransformer = imageTransformer,
             components = components,
+            // 网格必须**保住换行**：annotator 的 `EOL -> if (eolAsNewLine) append('\n')
+            // else append(' ')`（`annotator/AnnotatedStringKtx.kt`）默认走 `else`，一块
+            // 网格会被压成一行 —— 比不画更糟。只在含网格的消息里打开（见 `hasGrid`）。
+            // pi 自己就是保留换行的（`components/markdown.js:367-369` 把段落文本整串
+            // 推进 `lines`），所以这是往 pi 靠；**不全量打开**是因为那会改掉所有消息的
+            // 段落观感（App 的软换行今天渲染成空格），那是另一笔交易。
+            annotator = remember(hasGrid) {
+                markdownAnnotator(config = markdownAnnotatorConfig(eolAsNewLine = hasGrid))
+            },
             // Two library defaults this renderer must not inherit. Both are about the
             // *streaming* case, and both were inherited silently until
             // `docs/streaming-review.md` §2.3/§2.4 — the streaming row is the one row

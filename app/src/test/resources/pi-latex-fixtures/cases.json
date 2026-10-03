@@ -2740,44 +2740,50 @@
 			"piRenders": false
 		},
 		{
+			"source": "> **4b. 保行通道（候选 B，已落地；作用域收紧到\"这条消息里有显示式网格\"）。** `eolAsNewLine` 与等宽段落只在 `PiLatex.prepare` 报告 `hasDisplayGrid` 时为真：判据是**这次替换的渲染结果本身含换行**（`$$x^2$$` 只有一行、不打开；矩阵/`cases`/堆叠分数/上下限/多行脚本、**以及行内的环境**都会打开）。`PiLat",
+			"provenance": "docs/known-gaps.md:39",
+			"piVisible": "> **4b. 保行通道（候选 B，已落地；作用域收紧到\"这条消息里有显示式网格\"）。** `eolAsNewLine` 与等宽段落只在 `PiLatex.prepare` 报告 `hasDisplayGrid` 时为真：判据是**这次替换的渲染结果本身含换行**（`$$x^2$$` 只有一行、不打开；矩阵/`cases`/堆叠分数/上下限/多行脚本、**以及行内的环境**都会打开）。`PiLat",
+			"piRenders": false
+		},
+		{
 			"source": "  - 失败一律原样上报：pi 的错误在 stderr（`console.error(chalk.red(\\`Error: ${message}\\`))`，`package-manager-cli.ts:1096-1100`），成功行的 `Warning:`（`:255-263`、`:737-741`）也保留。超时与「启动失败」是 App 自己的状态，不会被伪装成包错误。",
-			"provenance": "docs/known-gaps.md:104",
+			"provenance": "docs/known-gaps.md:109",
 			"piVisible": "  - 失败一律原样上报：pi 的错误在 stderr（`console.error(chalk.red(\\`Error: ${message}\\`))`，`package-manager-cli.ts:1096-1100`），成功行的 `Warning:`（`:255-263`、`:737-741`）也保留。超时与「启动失败」是 App 自己的状态，不会被伪装成包错误。",
 			"piRenders": false
 		},
 		{
 			"source": "    $ bash tools/typecheck.sh > /tmp/tc-verify2.log 2>&1; echo \"EXIT=$?\" >> /tmp/tc-verify2.log",
-			"provenance": "docs/known-gaps.md:255",
+			"provenance": "docs/known-gaps.md:260",
 			"piVisible": "    $ bash tools/typecheck.sh > /tmp/tc-verify2.log 2>&1; echo \"EXIT=$?\" >> /tmp/tc-verify2.log",
 			"piRenders": false
 		},
 		{
 			"source": "    $ cat /tmp/tc-verify2.log",
-			"provenance": "docs/known-gaps.md:256",
+			"provenance": "docs/known-gaps.md:261",
 			"piVisible": "    $ cat /tmp/tc-verify2.log",
 			"piRenders": false
 		},
 		{
 			"source": "    $ grep -cE '\\.kt:[0-9]+:[0-9]+: error:' /tmp/tc-verify2.log",
-			"provenance": "docs/known-gaps.md:259",
+			"provenance": "docs/known-gaps.md:264",
 			"piVisible": "    $ grep -cE '\\.kt:[0-9]+:[0-9]+: error:' /tmp/tc-verify2.log",
 			"piRenders": false
 		},
 		{
 			"source": "    1. `set -uo pipefail` + `if echo \"$APP_DIAG\" | grep -qE \"\\.kt:...: error:\"`：诊断超过管道缓冲（约 900+ 条）时 `grep -q` 提前退出、`echo` 收到 SIGPIPE，`pipefail` 让管道返回 141 → `if` 为假 → 打印 OK。实测出现过「946 条 error 后紧跟 `typec",
-			"provenance": "docs/known-gaps.md:265",
+			"provenance": "docs/known-gaps.md:270",
 			"piVisible": "    1. `set -uo pipefail` + `if echo \"$APP_DIAG\" | grep -qE \"\\.kt:...: error:\"`：诊断超过管道缓冲（约 900+ 条）时 `grep -q` 提前退出、`echo` 收到 SIGPIPE，`pipefail` 让管道返回 141 → `if` 为假 → 打印 OK。实测出现过「946 条 error 后紧跟 `typec",
 			"piRenders": false
 		},
 		{
 			"source": "  - ⚠ 判读陷阱：**`:app` 的 class 数永远是 0**。本机不加载 Compose 编译器插件，codegen 走不到最后，所以 `build/typecheck/out-*/app` 为空**不代表失败**——唯一判据是日志里的 `error:` 行（自己数，别只看末行）。脚本已改成每次调用独立 `out-$$`；`/tmp` 里 `fork: Function not imp",
-			"provenance": "docs/known-gaps.md:268",
+			"provenance": "docs/known-gaps.md:273",
 			"piVisible": "  - ⚠ 判读陷阱：**`:app` 的 class 数永远是 0**。本机不加载 Compose 编译器插件，codegen 走不到最后，所以 `build/typecheck/out-*/app` 为空**不代表失败**——唯一判据是日志里的 `error:` 行（自己数，别只看末行）。脚本已改成每次调用独立 `out-$$`；`/tmp` 里 `fork: Function not imp",
 			"piRenders": false
 		},
 		{
 			"source": "| `K2JVMCompiler -no-stdlib -jvm-target 17 -classpath <kotlinc+serialization+coroutines> -d <out> $(find rpc/src/main/kotlin -name '*.kt')`（与 `tools/typecheck.sh` 同一套 kotlinc/classpath） | **exit 0，0 e",
-			"provenance": "docs/known-gaps.md:831",
+			"provenance": "docs/known-gaps.md:836",
 			"piVisible": "| `K2JVMCompiler -no-stdlib -jvm-target 17 -classpath <kotlinc+serialization+coroutines> -d <out> $(find rpc/src/main/kotlin -name '*.kt')`（与 `tools/typecheck.sh` 同一套 kotlinc/classpath） | **exit 0，0 e",
 			"piRenders": false
 		},

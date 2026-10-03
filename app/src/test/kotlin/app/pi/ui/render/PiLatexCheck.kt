@@ -123,6 +123,7 @@ fun main() {
     displayChecks()
     delimiterDeviationChecks()
     dollarProseChecks()
+    gridScopeChecks()
     sentinelChecks(asserted)
 
     if (failures != 0) {
@@ -260,6 +261,52 @@ private fun dollarProseChecks() {
     println("  我们有意保守（pi 会渲染、我们保留原文）的样本之一，取自：${conserved.joinToString("、")}")
 }
 
+/**
+ * **网格开关的作用域**（候选 B 的通道）：`PiLatex.prepare` 只在"这次替换真的写进了
+ * 一块**多行**网格"时把 `hasDisplayGrid` 置真，`PiMarkdownText` 也只在那时为这条消息
+ * 打开 `eolAsNewLine` 与等宽段落。别的消息必须一个字节都不变 —— 这里用一批**真实
+ * 消息形状**把这条钉住：不含显示式网格的一律 `false`（多段、列表、引用、只有一行的
+ * 行内公式、未成块的 `\[`、围栏里的 `$$`），含矩阵/`cases`/堆叠分数/上下限/三行脚本的
+ * 一律 `true`。
+ *
+ * 两个容易搞错的地方都在这张表里：`$$x^2$$` 画出来**只有一行**（不该打开开关），
+ * 而行内的 `$\begin{pmatrix}…$` 画出来**是多行**（环境不受 `display` 门控，该打开）。
+ */
+private fun gridScopeChecks() {
+    val withoutGrid = listOf(
+        "普通一段话，没有任何公式。",
+        "一段里有行内公式 \$x^2\$，它只画一行。",
+        "多段文本。\n\n第二段还是文字，第三段也是。",
+        "- 列表项一\n- 列表项二\n- 第三项里有一个 \$\\alpha\$",
+        "> 引用里也没有显示式公式\n> 第二行同样是文字",
+        "行内代码里的定界符不算：`\$\$x\$\$` 与 `\$y\$`",
+        "围栏里的也不算：\n```\n\$\$x\$\$\n```\n",
+        "未成块的 \\[ 开定界符，后面没有闭定界符。",
+        "\$\$x^2\$\$ 这种显示式公式画出来也只有一行。",
+        "行内分数只有一行：\$\\frac{a}{b}\$。",
+    )
+    for (message in withoutGrid) {
+        check("不含网格的消息不打开开关：${readable(message)}", PiLatex.prepare(message).hasDisplayGrid, false)
+    }
+    val withGrid = listOf(
+        "\$\$\\frac{a}{b}\$\$",
+        "文字在前。\n\n\$\$\\sum_{i=1}^{n} i\$\$\n\n文字在后。",
+        "\$\$\\begin{pmatrix}a&b\\\\c&d\\end{pmatrix}\$\$",
+        "\$\$\\begin{cases}a&x>0\\\\b&x<0\\end{cases}\$\$",
+        "\$\$\\begin{aligned}a&=b\\\\c&=d\\end{aligned}\$\$",
+        "行内的环境也是多行：\$\\begin{pmatrix}a&b\\\\c&d\\end{pmatrix}\$",
+        "\$\$\\lim_{n\\to\\infty} a_n\$\$",
+        "\$\$x^{\\alpha}\$\$ 的上标没有 Unicode 形式，脚本才排成两行",
+        "\$\$x_{n \\\\to \\\\infty}\$\$ 的下标里有箭头与无穷，排成两行",
+    )
+    for (message in withGrid) {
+        check("含网格的消息打开开关：${readable(message)}", PiLatex.prepare(message).hasDisplayGrid, true)
+    }
+    // 预处理输出本身不能因为这次重构变了（`preprocess` 现在只是 `prepare().text`）
+    for (message in withoutGrid + withGrid) {
+        check("preprocess 与 prepare().text 一致：${readable(message)}", PiLatex.preprocess(message), PiLatex.prepare(message).text)
+    }
+}
 /** 解析期的哨兵不能漏进结果：它们是私用码位，画出来就是豆腐块。 */
 private fun sentinelChecks(all: List<Case>) {
     val leaked = all.mapNotNull { case ->
