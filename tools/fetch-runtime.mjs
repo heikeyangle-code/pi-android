@@ -1542,11 +1542,21 @@ function main() {
     },
     {
       // The archive is a whole distribution tree, but `installTool` installs exactly
-      // one binary — the file named `rg` inside it — and writes it to two places. Only
-      // the rootfs copy is inside the volatile tree and therefore listed. The durable
-      // copy at `<files>/pi/.pi/agent/bin/rg` is deliberately **not** in any list: it
-      // lives in the user's own directory, and "never delete anything outside the
-      // lists" is precisely what keeps this feature from touching it.
+      // one binary — the file named `rg` inside it — and writes it to two places.
+      //
+      // **Both of those places are listed, and the first one is deliberate even though it
+      // is inside a durable directory.** Until 2026-09-23 the agent dir was
+      // `<files>/pi/.pi/agent`, *outside* the volatile tree, so the durable copy was
+      // deliberately not listed ("never delete anything outside the lists"); that decision
+      // is now history. The agent dir moved into the rootfs
+      // (`<rootfs>/root/.pi/agent`, `DurableLayout.AGENT_IN_ROOTFS`), which is inside the
+      // volatile tree but protected by `DurablePreserve` — and `RuntimeProvisioner`'s
+      // `agentBinDir()` *is* that rootfs directory, so the copy this literal names is the
+      // one and only copy. Leaving it out would make the tool invisible to prune, i.e. a
+      // `ripgrep.tgz` that stops shipping it could never have the old file removed; listing
+      // it makes the payload the owner of its own binary, which is exactly the set
+      // `PayloadPrune` is allowed to delete. Nothing else under the agent dir belongs in a
+      // list.
       name: "ripgrep",
       archive: join(ASSETS, `ripgrep${PAYLOAD_SUFFIX}`),
       literal: ["rootfs/root/.pi/agent/bin/rg", "rootfs/usr/local/bin/rg"],

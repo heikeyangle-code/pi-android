@@ -272,16 +272,25 @@ object DiagnosticsReport {
             pathLine(this, "proot 二进制", paths.prootBinary())
             pathLine(this, "proot loader", paths.prootLoader())
             pathLine(this, "stamp", paths.stampFile())
-            // The structural promise behind "an upgrade cannot delete the workspace": the
-            // three durable directories are outside the volatile tree. `PiPaths`' own
-            // construction asserts the same thing and throws, so this line is what a
-            // report shows when the assertion is not in the build the user has. Empty =
-            // correct; anything else names the directory and the tree it fell inside.
+            // The structural promise behind "an upgrade cannot delete the workspace". It is
+            // **not** "the durable directories are outside the volatile tree": since
+            // 2026-09-23 two of the three live inside it (`<rootfs>/workspace/pi/workspaces`
+            // and `<rootfs>/root/.pi/agent`; only `persist` is outside). What protects them is
+            // `DurablePreserve`, which `wipe()` — and only `wipe()` — runs before deleting the
+            // tree. So the answer has to say that, or the report tells a user asking "will an
+            // upgrade delete my work?" the opposite of the truth. `PiPaths`' own construction
+            // asserts the same rule and throws, so this line is what a report shows when the
+            // assertion is not in the build the user has: empty = correct; anything else names
+            // the directory that is in the volatile tree *and outside the rootfs*, which is the
+            // one placement with no protection at all.
             val layoutViolations = DurableLayout.violations(paths.home, paths.runtime)
             appendLine(
-                "耐久目录是否落在易失树内：" +
+                "耐久目录是否落在无保护的易失区：" +
                     if (layoutViolations.isEmpty()) {
-                        "否（工作区、agentDir、persist 都在 ${paths.runtime.name}/ 之外）"
+                        "否。工作区与 agentDir 在 rootfs 内（${paths.runtime.name}/rootfs/ 之下），" +
+                            "由「重建运行时」删树前先搬出、删完再搬回的 DurablePreserve 保护；" +
+                            "persist 在 ${paths.runtime.name}/ 之外，任何删除都碰不到。" +
+                            "三者都不在易失树内、rootfs 之外的位置。"
                     } else {
                         layoutViolations.joinToString("；")
                     },

@@ -55,9 +55,11 @@ import java.nio.file.StandardCopyOption
  *
  * ## 落点
  *
- * 由调用方给的 `File` 决定，见 `PiPaths.sessionIndexFile`：`<files>/pi/session-index.json`，
+ * 由调用方给的 `File` 决定，见 `PiPaths.sessionIndexFile`：
+ * `<files>/pi/runtime/.session-index.json`（易失树的根，与 `rootfs/` 同级），
  * 和 `image-cache/` 同一个先例 —— App 私有、不进 rootfs、不进会话目录，而且**可以随时丢掉**。
- * 丢掉它的唯一代价是下一次进会话列表回到全量扫描。
+ * 丢掉它的唯一代价是下一次进会话列表回到全量扫描：日常启动不碰它，只有显式「重建运行时」
+ * （`ensureReady(rebuild = true)`，全 App 一个按钮）会随整棵易失树把它一起删掉。
  */
 internal class PiSessionIndex(private val file: File) {
 
