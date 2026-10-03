@@ -453,10 +453,16 @@ fun main() {
         true,
     )
 
-    // The build half of the same property: a `.list` holds files and symlinks only, because
-    // a directory entry in a list is what would make a prune reach a subtree the user has put
-    // files into. `payloadPaths` drops `tar`'s directory rows (a trailing `/`) and sorts, and
-    // `PayloadPrune.encodeList`/`isSafePath` reject what the build must never emit.
+    // The build half of the same property. **This pair changes together with
+    // `tools/fetch-runtime.mjs`**: `payloadPaths` used to drop `tar`'s directory rows
+    // (`if (name.length === 0 || name.endsWith("/")) continue;`), and that drop is exactly the
+    // root cause this harness's N1–N6 section exists for — a directory that is not owned can
+    // never be pruned, so it stays behind empty, and an empty `node_modules` directory makes
+    // Node's resolution fail in place. When `payloadPaths` starts keeping directory rows, P19
+    // must become the *new* rule, and the trailing slash must be stripped by the build, not
+    // merely tolerated: `PayloadPrune.isSafePath` rejects any path with an empty component, so
+    // `a/b/` would be silently dropped from a list and the directory would never be pruned
+    // again. P20 (sorted) is unchanged.
     val fetchSource = File(
         File(System.getProperty("pi.repo.root") ?: "."),
         "tools/fetch-runtime.mjs",
