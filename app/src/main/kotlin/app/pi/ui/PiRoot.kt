@@ -533,6 +533,25 @@ fun PiRoot() {
     // screen exists.
     var sessionView by rememberSaveable { mutableStateOf(SessionViewPreference.List.name) }
 
+    /**
+     * 关掉覆盖层 —— **并且把「打开哪一屏」的偏好复位成列表**。
+     *
+     * [sessionView] 是「这一次请求要打开树」的**请求级**状态，不是用户的粘性偏好：它由
+     * `/tree`、分支摘要行、⋮ 菜单的「会话树」三项在举起覆盖层时设成 Tree。可它以前**没有
+     * 任何清除点**，而 `SessionsScreen` 自己的 `viewIndex` 是 `rememberSaveable`、随覆盖层
+     * 离开组合而丢失，于是它下一次挂载又照着这个还停在上次的 [sessionView] 走 —— 用户看到
+     * 的就是「明明点叉号退出来了，再进来却又把我拉进会话树」。
+     *
+     * 复位放在**唯一**这条关闭路径上（✕、返回键、`onOpenChat`、以及把覆盖层放下的三个导航
+     * 分支都走它），这样下一个人不用去数有几种关法。
+     */
+    val closeOverlay: () -> Unit = remember {
+        {
+            overlayIndex = null
+            sessionView = SessionViewPreference.List.name
+        }
+    }
+
     // The per-destination state that has to survive a destination switch.
     //
     // `when (current)` below *removes* the other destinations from the
@@ -603,15 +622,15 @@ fun PiRoot() {
                 overlayIndex = PiOverlay.SessionList.ordinal
             }
             NavRequest.Chat -> {
-                overlayIndex = null
+                closeOverlay()
                 destinationName = PiDestination.Chat.name
             }
             NavRequest.Settings -> {
-                overlayIndex = null
+                closeOverlay()
                 destinationName = PiDestination.Settings.name
             }
             is NavRequest.SettingsFocus -> {
-                overlayIndex = null
+                closeOverlay()
                 settingsFocus = navRequest.key
                 destinationName = PiDestination.Settings.name
             }
@@ -846,11 +865,13 @@ fun PiRoot() {
                             // `ChatScreen` 的 `onForkFromMessage` 上（`docs/scroll-perf-list.md` §2.1）。
                             val onOpenChat: () -> Unit = remember {
                                 {
-                                    overlayIndex = null
+                                    closeOverlay()
                                     destinationName = PiDestination.Chat.name
                                 }
                             }
-                            val onCloseSessionList: () -> Unit = remember { { overlayIndex = null } }
+                            // 关掉这一层就走 [closeOverlay]：它同时把「打开哪一屏」复位成列表，
+                            // 所以下一次进来不会又被拉回会话树（见那个 lambda 的 KDoc）。
+                            val onCloseSessionList: () -> Unit = remember { closeOverlay }
                             SessionsScreen(
                                 contentPadding = padding,
                                 session = session,
@@ -874,7 +895,7 @@ fun PiRoot() {
                         // (`05-compose-migration-plan.md` §3.8).
                         PiOverlay.Terminal -> TerminalScreen(
                             contentPadding = padding,
-                            onBack = { overlayIndex = null },
+                            onBack = closeOverlay,
                         )
                     }
                 }
@@ -900,7 +921,7 @@ fun PiRoot() {
             // *navigation* back (search → group → out), not an overlay back, and
             // it is enabled only while an inner level is open, which the overlay
             // covers anyway.
-            BackHandler(enabled = overlay != null) { overlayIndex = null }
+            BackHandler(enabled = overlay != null) { closeOverlay() }
 
             // Mounted once, above the destination switch, because an extension
             // dialog is not chat-specific: `notify` and `extension_error` arrive

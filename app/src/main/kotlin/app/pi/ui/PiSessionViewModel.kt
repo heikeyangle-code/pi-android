@@ -2592,13 +2592,13 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             // （「读取会话状态」）写上、再在 finally 里清掉；放在它后面写，外层那句会被那次清理
             // 抹掉，replay 期间顶栏什么都不说。
             refreshState()
-            _state.value = _state.value.copy(busy = "正在加载会话")
+            // 同一个 `claimBusy`/`releaseBusy` 令牌（见那对函数的 KDoc）：这条路的标签也是
+            // **这一次 replay 的**，所以只有它还握着这行时才允许清掉。
+            val replayToken = claimBusy("正在加载会话")
             try {
                 replayHistory(engine)
             } finally {
-                if (_state.value.busy == "正在加载会话") {
-                    _state.value = _state.value.copy(busy = null)
-                }
+                releaseBusy(replayToken)
             }
             refreshCommands()
             refreshTuiOnlyExtensions()
@@ -3436,7 +3436,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
         viewModelScope.launch {
-            _state.value = _state.value.copy(busy = label)
+            val token = claimBusy(label)
             try {
                 block(api)
             } catch (error: CancellationException) {
@@ -3448,8 +3448,47 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                         ?: "$label 失败",
                 )
             } finally {
-                if (_state.value.busy == label) _state.value = _state.value.copy(busy = null)
+                releaseBusy(token)
             }
+        }
+    }
+
+    // -------------------------------------------------------- the status line
+    //
+    // One line, one owner — the ownership rule itself lives in [EngineStatusLine],
+    // where `app/src/test/kotlin/app/pi/ui/EngineStatusLineCheck.kt` pins it without a
+    // device (see `tools/run-app-pure-checks.sh`). These two are only the `UiState`
+    // half of it.
+    private val statusLine = EngineStatusLine()
+
+    /** Take the status line for [label] and return the token [releaseBusy] needs. */
+    private fun claimBusy(label: String): Long {
+        val token = statusLine.claim()
+        _state.value = _state.value.copy(busy = label)
+        return token
+    }
+
+    /**
+     * Give the status line back — only if [token] still owns it.
+     *
+     * A `false` from [EngineStatusLine.release] means a newer claim owns the line now,
+     * so `busy` is left alone: the operation that is still running is not this one.
+     *
+     * **这就是「读取会话树 ↔ 就绪」疯狂来回刷的根因修复。** 旧规则拿**标签**当所有权
+     * （`busy == label` 才允许清），而 `refreshTree()` 的合并补读是在前一次读的 block
+     * `finally` 里派发的、两次标签都是「读取会话树」——前一次结束会**把后一次仍在跑的
+     * 那一行抹掉**，顶栏在没读完时就先跳到「就绪」；后一次自己的清理再什么都找不到。
+     * 一对合并读就产生一次假翻转，用户看到的就是字面上的「读取会话树 ↔ 就绪」。令牌规则
+     * 下这种翻转**结构上不可能**：无论期间开了多少次读，行一直归最新的那次，只有它释放
+     * 才回到「就绪」。
+     *
+     * A writer that clears `busy` outright (the engine dying, `:2486`) leaves the token
+     * stale on purpose: the next claim supersedes it, and the dead call's release is then
+     * a no-op — the correct reading of "that operation's status is moot".
+     */
+    private fun releaseBusy(token: Long) {
+        if (statusLine.release(token) && _state.value.busy != null) {
+            _state.value = _state.value.copy(busy = null)
         }
     }
 
@@ -4029,6 +4068,15 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     // 期间返回键像被吞掉」就是这个形状（入口个个单发，但 ⋮→树 + 分段切换 + 刷新钮
     // 可以叠在同一瞬）。飞行中再来的要求折叠成**一次**补读：树是当前状态的快照，
     // 晚一拍的这次读回答得同样好。
+    //
+    // **守卫的两个标志只有一个清除点，而 `call()` 有一条不会执行 block 的早退**
+    // （`:api == null` 时它只推一条通知就返回）。`refreshTree` 上面那次 `api == null`
+    // 判断进的是另一条路、不落守卫，所以这个洞要两个 `api` 读数之间被换掉才成立 ——
+    // 但代价不对称：一旦 `treeRefreshInFlight` 留在 `true`，此后每次 `refreshTree()`
+    // 都只置 `treeRefreshQueued` 就返回，而唯一会排空那个标志的地方正是**不会执行的
+    // block** ⇒ 这棵树在这一代 ViewModel 里再也不会被读（顶栏可能永远停在「读取会话树」
+    // 或永远停在「就绪」，而树本身不再更新）。所以派发本身被包住：block 没跑起来，
+    // 标志在这里释放。
     private var treeRefreshInFlight = false
     private var treeRefreshQueued = false
 
@@ -4044,10 +4092,26 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
         treeRefreshInFlight = true
-        call("读取会话树") { api ->
-            try {
-                _state.value = _state.value.copy(tree = api.getTree())
-            } finally {
+        // `call` 的 block 在 `Main.immediate` 上是**同步跑起来**的（调用点在主线程），
+        // 所以它返回时 `started` 已经如实回答了「block 到底进没进」。进了，标志属于这次
+        // 读，由 block 自己的 `finally` 释放；没进，只能在这里释放，否则标志永远不落。
+        var started = false
+        try {
+            call("读取会话树") { live ->
+                started = true
+                try {
+                    _state.value = _state.value.copy(tree = live.getTree())
+                } finally {
+                    treeRefreshInFlight = false
+                    if (treeRefreshQueued) {
+                        treeRefreshQueued = false
+                        refreshTree()
+                    }
+                }
+            }
+        } finally {
+            if (!started) {
+                // 同一条排空规则，只是从「block 的 finally」搬到了「派发的 finally」。
                 treeRefreshInFlight = false
                 if (treeRefreshQueued) {
                     treeRefreshQueued = false
@@ -4792,7 +4856,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
         viewModelScope.launch {
-            _state.value = _state.value.copy(busy = "导入会话")
+            val importToken = claimBusy("导入会话")
             try {
                 when (val prepared = withContext(Dispatchers.IO) { prepareImport(source) }) {
                     is ImportPrep.Rejected -> fail(prepared.sentence)
@@ -4816,7 +4880,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
                 // filesystem path, and user-visible copy here never shows one.
                 fail(SessionImport.failureSentence((error as? PiRpcException)?.reason ?: error.message))
             } finally {
-                if (_state.value.busy == "导入会话") _state.value = _state.value.copy(busy = null)
+                releaseBusy(importToken)
             }
         }
     }
