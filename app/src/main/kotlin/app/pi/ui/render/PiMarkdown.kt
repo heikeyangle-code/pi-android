@@ -34,8 +34,9 @@ import org.intellij.markdown.parser.MarkdownParser
  * `PiHtml.INLINE_TYPE`），不是一个能被组件分派到的节点：段落有自己的组件
  * （`compose/MarkdownExtension.kt` 的 `PARAGRAPH` 分支），而段落里的粗体、链接、行内代码
  * 都是 annotator 拼进同一个 `AnnotatedString` 的。想从组件层拿到行内 HTML 就得把整个
- * `paragraph` 槽接过来自己解析一遍（`docs/known-gaps.md` A2 第 38 行记着这次失败：
- * 组件层拿不到那个 annotator，自己拆会把同段其它文字的格式丢掉）。
+ * `paragraph` 槽接过来自己解析一遍（`docs/known-gaps.md` A2 的 ①「候选 A 不可行」记着
+ * 这次失败：组件层拿不到那个 annotator，自己拆会把同段其它文字的格式丢掉 —— 那一段同时
+ * 也是本文件这个钩子只认领一种节点的理由）。
  *
  * 库把 annotator 作为 `Markdown(annotator = …)` 的参数暴露，而它的 `annotate` 钩子
  * **就是** `AnnotatedString.Builder` 的扩展函数
