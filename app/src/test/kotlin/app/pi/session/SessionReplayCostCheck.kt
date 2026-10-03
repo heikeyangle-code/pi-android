@@ -699,7 +699,7 @@ fun main() {
     println("-- 3b. readTail 的分段成本（同一条窗口预算；每项取 7 次最小）--")
     println(
         "%-16s %10s %10s %10s %10s %10s %10s %8s".format(
-            "shape", "control", "header", "snap", "tail", "tail-hdr-snap", "entries", "窗口条数",
+            "shape", "control", "header", "snap", "tail", "tail-hdr-snap", "readAll", "窗口条数",
         ),
     )
     for ((name, file) in shapes) {
