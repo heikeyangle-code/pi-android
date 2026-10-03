@@ -124,6 +124,7 @@ fun main() {
     delimiterDeviationChecks()
     dollarProseChecks()
     gridScopeChecks()
+    indentProtectionChecks()
     sentinelChecks(asserted)
 
     if (failures != 0) {
@@ -307,6 +308,66 @@ private fun gridScopeChecks() {
         check("preprocess 与 prepare().text 一致：${readable(message)}", PiLatex.preprocess(message), PiLatex.prepare(message).text)
     }
 }
+private fun indentProtectionChecks() {
+    // 每条：包装成消息形态（`$$…$$`）后过 `prepare`，检查写回源文本里没有一行
+    // 是 ≥4 个 ASCII 空格（或制表符）的前导 —— 那是 markdown 的缩进代码块规则。
+    val wrapped = cases("displayTargets").map { it.source } + cases("delimiters").map { it.source } +
+        cases("delimiterDisplayTargets", field = "display").map { it.source } + listOf(
+            "\$\$S_n = \\sum_{k=1}^{n} \\frac{1}{k^2} \\to \\frac{\\pi^2}{6}\$\$",
+            "\$\$\\sum_{i=1}^{n}\\prod_{j=1}^{m} a_{ij}\$\$",
+            "\$\$\\begin{pmatrix}a_{11}&a_{12}&a_{13}\\\\a_{21}&a_{22}&a_{23}\\\\a_{31}&a_{32}&a_{33}\\end{pmatrix}\$\$",
+            "\$\$\\lim_{n\\to\\infty}\\frac{1}{n}\\sum_{k=1}^{n} x_k\$\$",
+            "\$\$\\frac{\\partial^2 f}{\\partial x \\partial y} = \\int_0^1 g(t)\\,dt\$\$",
+            "\$\$\\begin{cases}\\frac{a}{b} & x>0\\\\\\sum_{i} c_i & x<0\\end{cases}\$\$",
+            "\$\$P(A \\mid B) = \\frac{P(B \\mid A)P(A)}{P(B)}\$\$",
+            "\$\$\\begin{aligned}\\frac{1}{2} &= \\sum_{k} \\frac{1}{k}\\\\ x &= y\\end{aligned}\$\$",
+        )
+    var checked = 0
+    for (source in wrapped) {
+        val message = if (source.contains("\$\$") || source.contains("\\[")) source else "\$\$" + source + "\$\$"
+        val text = PiLatex.prepare(message).text
+        checked++
+        for (line in text.split("\n")) {
+            val leading = line.takeWhile { it == ' ' || it == '\t' }
+            if (leading.length >= 4) {
+                check("写回的源文本没有 ≥4 前导空格的网格行：${readable(message)}", leading.length, 0)
+            }
+        }
+    }
+    check("缩进保护覆盖了全部 display 目标、定界符用例与深层嵌套样例", checked, wrapped.size)
+
+    // 保护只改**空白的编码**：把 NBSP 换回普通空格之后，必须与 pi 的网格逐字节相同。
+    var same = 0
+    for (case in cases("displayTargets")) {
+        val message = "\$\$" + case.source + "\$\$"
+        val rendered = PiLatex.toUnicode(case.source, display = true) ?: continue
+        if (!rendered.contains("\n")) continue
+        val unprotected = PiLatex.prepare(message).text.replace("\u00A0", " ")
+        if (unprotected == "\n" + rendered + "\n") same++ else check("缩进保护只改编码：${case.name}", unprotected, "\n" + rendered + "\n")
+    }
+    check("多行网格写回源文本时只改了前导空白的编码（$same 条）", same > 0, true)
+
+    // 反向：不含网格的消息**通道不生效** —— 没有 NBSP 注入、没有换行保护；
+    // 完全不含定界符的纯文本连源文本都一个字节不变（含行内公式的消息本来就会被
+    // 归约，那是数学预处理该做的事，不是通道的事）。
+    val proseOnly = listOf(
+        "普通一段话，没有公式。",
+        "多段文字。\n\n第二段还是文字，第三段里也没有定界符。",
+    )
+    for (message in proseOnly) {
+        check("纯文本消息逐字节不变：${readable(message)}", PiLatex.prepare(message).text, message)
+    }
+    val noGrid = proseOnly + listOf(
+        "行内公式 \$x^2\$ 只有一行。",
+        "\$\$x^2\$\$ 也只有一行。",
+    )
+    for (message in noGrid) {
+        val prepared = PiLatex.prepare(message)
+        check("不含网格的消息 hasDisplayGrid=false：${readable(message)}", prepared.hasDisplayGrid, false)
+        check("不含网格的消息不注入 NBSP：${readable(message)}", prepared.text.contains('\u00A0'), false)
+    }
+}
+
 /** 解析期的哨兵不能漏进结果：它们是私用码位，画出来就是豆腐块。 */
 private fun sentinelChecks(all: List<Case>) {
     val leaked = all.mapNotNull { case ->

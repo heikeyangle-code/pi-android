@@ -1093,6 +1093,33 @@ internal object PiLatex {
      */
     fun preprocess(markdown: String): String = prepare(markdown).text
 
+    /**
+     * 写回 markdown 源时用来保护**前导空白**的字符：不换行空格 U+00A0。
+     *
+     * 为什么需要它：markdown 里 **≥4 个前导 ASCII 空格 = 缩进代码块**，而网格的前导
+     * 空格正是 `renderLayout` 居中对齐的产物（`renderLatex` 只剥掉所有非空行的**公共**
+     * 缩进，剩下的每行缩进会露给 markdown）。被 markdown 当成代码块的那些行会被单独
+     * 画成一个带「复制」头的代码框 —— 一条公式就被切成"一半代码框 + 一半正文"，用户
+     * 报的就是这个。
+     *
+     * 为什么不是 pi 的 `PROTECTED_SPACE`（`latex.ts:704`，本文件里也在用）：那是**布局
+     * 内部**的哨兵，`renderLatex` 收尾一定会把它换回普通空格、**不进输出**；而写进
+     * markdown 源的字符必须留在源里、并且**看起来就是空格**。私用区字符在字体里没有
+     * 字形，会画成豆腐块。NBSP 满足两件事：markdown 的缩进规则只认 ASCII 空格与制表符
+     * （CommonMark），而等宽字体里 NBSP 与空格同宽 —— 网格的对齐与视觉宽度因此不变。
+     */
+    private const val MARKDOWN_PROTECTED_SPACE = "\u00A0"
+
+    /**
+     * 把每一行的**前导空格**换成 [MARKDOWN_PROTECTED_SPACE]，其余字符（含中间的对齐
+     * 空格）原样 —— 保护范围只到"markdown 会不会把它当缩进"为止。
+     */
+    private fun protectLeadingIndent(rendered: String): String =
+        rendered.split('\n').joinToString("\n") { line ->
+            val leading = line.takeWhile { it == ' ' }
+            MARKDOWN_PROTECTED_SPACE.repeat(leading.length) + line.substring(leading.length)
+        }
+
     /** 预处理的结果：改过的源文本 + "这次真的写进了一块多行网格"。 */
     class PreparedMath(val text: String, val hasDisplayGrid: Boolean)
 
@@ -1171,7 +1198,7 @@ internal object PiLatex {
                 // **只有渲染结果本身是多行**才算网格：`$$x^2$$` 画出来是一行，独占一段
                 // 的 `\n` 包裹是 App 的形状、不是网格（见 prepare 的注释）。
                 if (rendered != null && rendered.contains('\n')) grid[0] = true
-                if (rendered == null) match.value else "\n$rendered\n"
+                if (rendered == null) match.value else "\n" + protectLeadingIndent(rendered) + "\n"
             }
         } else {
             run
@@ -1181,19 +1208,36 @@ internal object PiLatex {
             val bracketed = match.groupValues[2]
             when {
                 // `\(…\)`：pi 没有块级形态，任何时候都是行内。
-                parenthesized.isNotEmpty() -> toUnicode(parenthesized)?.also { if (it.contains('\n')) grid[0] = true }
-                    ?: match.value
+                parenthesized.isNotEmpty() -> toUnicode(parenthesized)?.let {
+                    if (it.contains('\n')) {
+                        grid[0] = true
+                        protectLeadingIndent(it)
+                    } else {
+                        it
+                    }
+                } ?: match.value
                 // `\[…\]`：行首的那种交给上面那一趟（没被替换 = pi 的待定/画不出来，
                 // 保持原文）；只有行中的才是 pi 的行内 token。
                 bracketed.isNotEmpty() ->
                     if (atLineStart(block, match.range.first)) match.value
-                    else toUnicode(bracketed)?.also { if (it.contains('\n')) grid[0] = true } ?: match.value
+                    else toUnicode(bracketed)?.let {
+                        if (it.contains('\n')) {
+                            grid[0] = true
+                            protectLeadingIndent(it)
+                        } else {
+                            it
+                        }
+                    } ?: match.value
                 // `$…$`：定界符就是首尾两个字符，形状没变。
                 else -> {
                     val source = match.value
                     val rendered = toUnicode(source.substring(1, source.length - 1))
-                    if (rendered != null && rendered.contains('\n')) grid[0] = true
-                    rendered ?: source
+                    if (rendered != null && rendered.contains('\n')) {
+                        grid[0] = true
+                        protectLeadingIndent(rendered)
+                    } else {
+                        rendered ?: source
+                    }
                 }
             }
         }
