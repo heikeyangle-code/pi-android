@@ -976,7 +976,8 @@ internal object PiLatex {
      *
      * `$` 这一支的开关位置不是随意的，每一处都是拿 **220 条真实 prose 语料**量过以后
      * 留的（`app/src/test/resources/pi-latex-fixtures/cases.json` 的 `dollarProse`：
-     * 184 条取自本仓库自己的 `docs/**.md` / `res/values*/**.xml`，36 条手写真实用法）：
+     * 184 条取自本仓库自己的 `docs` 下的全部 `.md` 与 `res/values` 开头的 `.xml`，
+     * 36 条手写真实用法）：
      * `(?<!\\)` 与 `(?<!\s)` 对应 pi 自己的规则（`markdown.ts:56-72`），而开定界符
      * 前面**不再**要求"不是字母/数字"、body 开头**不再**要求"不是数字" —— 那两条
      * 让 `a$x$b`、`2$x$`、`$5$` 这些 pi 当公式的输入被我们当成普通文本，实测它们在

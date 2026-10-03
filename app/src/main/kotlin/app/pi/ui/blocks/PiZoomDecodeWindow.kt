@@ -95,16 +95,20 @@ internal const val DETAIL_MAX_PIXELS = 2_000_000L
 private const val MAX_DETAIL_SAMPLE = 64
 
 /**
- * 解码驱动在一次快照里看到的那一帧：**落定的**倍率与平移，外加「双击动画正在跑」这一位。
+ * 解码驱动在一次快照里看到的那一帧：**落定的**倍率与平移。
  *
  * 为什么不直接把 `scale`/`pan` 传给算术：双击是动画（1× → 8× 会连续经过中间每一档），照「当前
  * 倍率跨过阈值」触发的话一次双击会连开好几次解码 —— 用户明确说了「不用太费性能」。所以驱动只看
- * 静默之后的值，而 [animating] 是其中的一位。
+ * 静默之后的值。
+ *
+ * **「动画正在跑」不进这个类**（它曾经在这里，作为第四个字段，但调用点在构造之前就已经用
+ * `if (animating) null else …` 把它过滤掉了，于是那个字段永远是 `false`、也没有任何读者 ——
+ * 一个只会误导下一个人的常量）。动画中驱动的做法是**不发值**，而不是发一位 `false`。
  *
  * `equals` 就是数据类的逐字段比较 —— `snapshotFlow` 靠它决定要不要重新发一个值，浮点逐位相等
  * 正是「手势真的动了」的判据。
  */
-internal data class ZoomProbe(val scale: Float, val panX: Float, val panY: Float, val animating: Boolean)
+internal data class ZoomProbe(val scale: Float, val panX: Float, val panY: Float)
 
 /** 源图上的一个像素矩形，半开区间 `[left, right) × [top, bottom)`。 */
 internal data class SourceRect(val left: Int, val top: Int, val right: Int, val bottom: Int) {

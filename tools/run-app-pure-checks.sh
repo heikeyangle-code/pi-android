@@ -882,6 +882,42 @@ run_harness history-retention \
   "$ROOT/app/src/test/kotlin/app/pi/ui/HistoryRetentionCheck.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/ui/HistoryRetention.kt"
 
+# app.pi.ui: the AppBar's status line — the *busy verb* (`读取会话树`, `切换会话`, …) and who
+# is allowed to clear it. The defect this replaces was invisible in every single-call
+# reading: "clear only when `busy` still equals my label" is correct until two calls carry
+# the same label — and the app produces exactly that pair, because `refreshTree()`'s
+# coalesced follow-up read is dispatched from inside the previous read's own block
+# `finally`. The first call then sees "its" label (put there by the second), clears it, and
+# the AppBar drops to 「就绪」 in the middle of a read — the literal 「读取会话树 ↔ 就绪」
+# flapping two devices reported. Ownership is now a monotonic token, and a device cannot be
+# asked to reproduce the ordering, so the harness does: later claim first, then the older
+# release must be refused.
+run_harness status-line \
+  app.pi.ui.EngineStatusLineCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/ui/EngineStatusLineCheck.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/ui/EngineStatusLine.kt"
+
+# app.pi.highlight: mermaid 的那份记忆（`PiMermaidMemo.kt`）。与代码高亮器相反，mermaid 以前
+# **没有缓存**：滚出屏幕再滚回来就是重新问一次 guest（最坏 3 次重试、每次先闪源码再变成图）。
+# 缓存键必须含 mode（同一段源码在 streaming 与 final 下是两张不同的图）；上限两个都要
+# （64 项 + 4 MiB：NoArt 是零字节，只按字节计就能无界堆积）；`Unavailable` 不进缓存
+# （否则一次网络抖动会被永久显示成源码）。这四条性质编译器一条都看不见，错法全是安静的。
+run_harness mermaid-memo \
+  app.pi.highlight.PiMermaidMemoCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/highlight/PiMermaidMemoCheck.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/highlight/PiMermaidMemo.kt"
+
+# app.pi.ui.blocks: 放大之后要看的是**细节** —— 越过阈值时按源图坐标只解当前可见的一块
+# （`BitmapRegionDecoder`），块位图有恒定上界（2 000 000 像素 = 8 MB），与原图多大无关；
+# 1× 一个字节都不多要；只有块**严格比基础图清楚**时才解（这是「源图本来就没有更多像素」
+# 那张图仍然糊的诚实来源）。`ImageSize.kt` 必须在闭包里：harness 真的执行
+# `base64DecodedBytes` / `encodedImageWithinBudget` / `naturalImagePixels`。
+run_harness zoom-decode-window \
+  app.pi.ui.blocks.PiZoomDecodeWindowCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/ui/blocks/PiZoomDecodeWindowCheck.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/ui/blocks/PiZoomDecodeWindow.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/ui/blocks/ImageSize.kt"
+
 # app.pi.ui.chat: the `!` panel's output window. pi bounds its own panel at the tail
 # (`modes/interactive/components/bash-execution.js:93-98`, `truncateTail` with
 # DEFAULT_MAX_LINES/DEFAULT_MAX_BYTES); this is the same bound on the app's side, and the
