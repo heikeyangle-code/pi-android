@@ -157,8 +157,27 @@ function badParam(tool: string, param: string, allowed: string[], got: unknown):
 	);
 }
 
+/**
+ * 设备能力分组的 id，与 App 侧 `bridge/DeviceCapability.kt` 的 `id` 一一对应
+ * （`basic` / `storage` / `accessibility` / `sensors` / `shell`，共 5 组）。
+ *
+ * 这里是一份**抄写**，不是第二份真相：注册时拿它去 `/app/health` 的
+ * `capabilities[].id` 里查状态，而那份 JSON 就是授权页和桥端点共用的
+ * `DeviceCapabilityState`（`DeviceBridgeRouter.kt` 的 `/app/health` 分支）。App 侧加一组
+ * 能力时这里会查不到、对应工具不会注册（而不是猜着注册），所以错法是保守的。
+ */
+type DeviceCapabilityId = "basic" | "storage" | "accessibility" | "sensors" | "shell";
+
 interface DeviceToolSpec {
 	name: string;
+	/**
+	 * 这个工具属于哪一组能力；`null` 表示不依赖任何一组（只有 `android_bridge_status`），
+	 * 永远注册。
+	 *
+	 * 判据只能从两处读出来：工具用到的桥端点被 `DeviceBridgeRouter.kt` 的哪个
+	 * `withCapability(...)` 包着，以及能力卡上 `DeviceCapability.kt` 的 `allows` 文案。
+	 */
+	capability: DeviceCapabilityId | null;
 	label: string;
 	description: string;
 	promptSnippet: string;
@@ -368,6 +387,7 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 	// ---------------------------------------------------------------- 诊断 ----
 	{
 		name: "android_bridge_status",
+		capability: null,
 		label: "设备桥状态",
 		description: "Bridge + capability state: groups on/usable, accessibility, missing permissions, screenshot support.",
 		promptSnippet: "Bridge + capability status",
@@ -486,6 +506,7 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 	// ------------------------------------------------------------ 屏幕 / UI ----
 	{
 		name: "android_ui_dump",
+		capability: "accessibility",
 		label: "读取屏幕",
 		description: "Read the screen node tree (indexed); indices feed android_tap and android_input. Coordinates are display pixels.",
 		promptSnippet: "Read screen tree (indexed)",
@@ -550,6 +571,7 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 	},
 	{
 		name: "android_tap",
+		capability: "accessibility",
 		label: "点按",
 		description: "Tap by dump index (most reliable), x/y, or text/desc/resourceId resolved on-device. longPress for long press.",
 		promptSnippet: "Tap node or coordinate",
@@ -590,6 +612,7 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 	},
 	{
 		name: "android_input",
+		capability: "accessibility",
 		label: "输入文本",
 		description: "Type into the focused field or a dump index; falls back to clipboard paste (replaces the clipboard) when refused.",
 		promptSnippet: "Type into a field",
@@ -628,6 +651,7 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 	},
 	{
 		name: "android_key",
+		capability: "accessibility",
 		label: "系统按键",
 		description: "Run a system global action. For raw keys (enter/delete/arrows) use android_keyevent (needs Shizuku).",
 		promptSnippet: "Global action (back/home/lock)",
@@ -646,6 +670,7 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 	},
 	{
 		name: "android_keyevent",
+		capability: "accessibility",
 		label: "注入原始按键",
 		description: "Inject raw keys into the focused window via Shizuku (ADB uid=2000); refuses without it.",
 		promptSnippet: "Inject raw keys (Shizuku)",
@@ -668,6 +693,7 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 	},
 	{
 		name: "android_swipe",
+		capability: "accessibility",
 		label: "滑动 / 滚动",
 		description: "Swipe in display pixels, or scroll the node at index/selector with direction (accessibility scroll action).",
 		promptSnippet: "Swipe or scroll a node",
@@ -737,6 +763,7 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 	},
 	{
 		name: "android_screenshot",
+		capability: "accessibility",
 		label: "截屏",
 		description: "Capture the screen (Android 11+); region crops it, marks draws the last dump's indices. Secure windows fail.",
 		promptSnippet: "Capture the screen",
@@ -800,6 +827,7 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 	// ---------------------------------------------------------------- 应用 ----
 	{
 		name: "android_app",
+		capability: "basic",
 		label: "应用列表 / 启动",
 		description: "List installed apps, or launch one by exact package name (find it with action=\"list\" first).",
 		promptSnippet: "List or launch apps",
@@ -866,6 +894,7 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 	},
 	{
 		name: "android_stop_app",
+		capability: "accessibility",
 		label: "结束应用",
 		description: "Kill a user app's background process; system apps, critical processes and pi-android are refused.",
 		promptSnippet: "Kill a background app",
@@ -886,6 +915,7 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 	// ------------------------------------------------------------ 交互/输出 ----
 	{
 		name: "android_say",
+		capability: "basic",
 		label: "通知 / 短提示 / 朗读",
 		description: "Post a notification, show a short on-screen message, or read text with TTS.",
 		promptSnippet: "Notify / toast / speak",
@@ -941,6 +971,7 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 	},
 	{
 		name: "android_vibrate",
+		capability: "basic",
 		label: "震动",
 		description: "Vibrate the phone.",
 		promptSnippet: "Vibrate the phone",
@@ -959,6 +990,7 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 	},
 	{
 		name: "android_share",
+		capability: "basic",
 		label: "分享",
 		description: "Share text or a link via the system sheet; to open a URL use android_open.",
 		promptSnippet: "Share to another app",
@@ -980,6 +1012,7 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 	},
 	{
 		name: "android_open",
+		capability: "basic",
 		label: "打开链接",
 		description: "Open a URL/deep link with the default app; intent: URLs fall back to browser_fallback_url.",
 		promptSnippet: "Open URL / deep link",
@@ -1000,6 +1033,7 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 	// ------------------------------------------------------------ 剪贴板 ----
 	{
 		name: "android_clipboard",
+		capability: "basic",
 		label: "剪贴板",
 		description: "Pass text to write the clipboard, omit it to read; reads work only in the foreground (Android 10+).",
 		promptSnippet: "Read/write clipboard",
@@ -1028,6 +1062,7 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 	// -------------------------------------------------------------- 存储 ----
 	{
 		name: "android_download",
+		capability: "storage",
 		label: "公共 Download 读写",
 		description: "Read/write the public Download folder; user-authorized dirs use android_files. write: no permission on API 29+, storage permission on 8/9. read: own exports only on 33+, storage permission on 30-32.",
 		promptSnippet: "Public Download files",
@@ -1083,6 +1118,7 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 	},
 	{
 		name: "android_files_list",
+		capability: "storage",
 		label: "已授权目录",
 		description: "List user-authorized (SAF) dirs; omit path for root names. Read/write them with android_files.",
 		promptSnippet: "List authorized dirs",
@@ -1113,6 +1149,7 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 	},
 	{
 		name: "android_files",
+		capability: "storage",
 		label: "授权目录读写",
 		description: "Read/write files under a user-authorized (SAF) dir. write: creates parent dirs, overwrites. read: text direct, binary as base64. Public Download uses android_download.",
 		promptSnippet: "Authorized-dir files",
@@ -1170,6 +1207,7 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 	// ------------------------------------------------- 位置 / 传感器 / 相机 ----
 	{
 		name: "android_device_state",
+		capability: "sensors",
 		label: "设备状态",
 		description: "Read battery, last known location, the sensor list, or one sensor sample.",
 		promptSnippet: "Battery / location / sensors",
@@ -1240,6 +1278,7 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 	},
 	{
 		name: "android_torch",
+		capability: "sensors",
 		label: "手电筒",
 		description: "Flashlight (camera LED) on/off; some ROMs need the camera permission.",
 		promptSnippet: "Flashlight on/off",
@@ -1257,6 +1296,7 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 	// --------------------------------------------------------------- Shell ----
 	{
 		name: "android_shell",
+		capability: "shell",
 		label: "设备 Shell",
 		description: "Whitelisted shell; unknown refused. Blocked: mount/umount, setenforce, setprop, settings put, mknod, dd, mkfs, pm clear|uninstall, su|sudo|magisk, /dev/block. Writes only in workspace; Shizuku = uid 2000, else app uid.",
 		promptSnippet: "Guarded device shell",
@@ -1382,11 +1422,74 @@ function environmentGuidance(): string {
 }
 
 // ---------------------------------------------------------------------------
+// 注册哪些工具
+// ---------------------------------------------------------------------------
+
+/**
+ * 读一次 `/app/health`，得出“此刻哪些能力分组可用”，给注册循环做过滤。
+ *
+ * 判据是 `capabilities[].usable`，**不**再叠一次 `enabled`：App 侧的
+ * `DeviceCapabilityStore.state()` 已经把三件事合进 `usable`
+ * （`DeviceCapabilityStore.kt:151`：`usable = persisted && !sessionOff && denial == null`），
+ * 所以 `usable` 严格强于“开关开着”。再与一次 `enabled` 只会是同一件事的第二份真相，
+ * 而且会把“开关开着但系统侧还没就绪”的那一组（例如无障碍已启用但服务还没连上）当成可用 ——
+ * 那正是这次要消灭的“注册了却调不动”。
+ *
+ * 读不到（桥没起来、token 文件读不到、超时）就返回 `null`，调用方按“一组都不注册、
+ * 只留 `android_bridge_status`”处理。桥不在时我们并不知道任何一组开着没有；这时注册全部
+ * 工具等于把“注册了但调用失败”重新变成默认，而这次改动的全部意义就是不让不可用的东西进请求。
+ * 对用户也不是死路：`android_bridge_status` 永远注册，它会说出“未连接”和下一步。
+ */
+async function usableCapabilities(): Promise<ReadonlySet<string> | null> {
+	try {
+		const health = await bridgeHealth();
+		return new Set(health.capabilities.filter((capability) => capability.usable).map((capability) => capability.id));
+	} catch {
+		return null;
+	}
+}
+
+/**
+ * 这个工具此刻该不该注册。
+ *
+ * `capability === null` 的是 `android_bridge_status`：它是“为什么不可用”的唯一解释通道
+ * （`health.capabilities[].reason` 只有它会读给模型听），成本约 100 字符，所以永远注册。
+ * 其余工具只在它那一组 `usable` 时注册 —— 关掉的能力，它的 `description`、
+ * `promptSnippet`、`promptGuidelines` 和参数 schema 一个字都不进请求。
+ */
+function shouldRegister(spec: DeviceToolSpec, usable: ReadonlySet<string> | null): boolean {
+	if (spec.capability === null) return true;
+	return usable !== null && usable.has(spec.capability);
+}
+
+// ---------------------------------------------------------------------------
 // extension entry point
 // ---------------------------------------------------------------------------
 
-export default function (pi: ExtensionAPI) {
+/**
+ * 工厂是 `async` 的，这是 pi 支持的形状：`ExtensionFactory = (pi) => void | Promise<void>`
+ * （pi 1.0.1 `core/extensions/types.d.ts:1481`），加载器 `await factory(load.api)` 之后才
+ * `commit()`（`core/extensions/loader.js:514`），所以这里 `await` 出来的能力状态在
+ * 任何工具被调用之前就已经定下。
+ */
+export default async function (pi: ExtensionAPI) {
+	// 只注册“当前可用”的能力对应的工具。
+	//
+	// ## 为什么不热生效（以及这句事实写在哪两处）
+	//
+	// `pi.registerTool` 只在扩展工厂跑的时候登记一次，pi 没有“每次请求重算工具表”的钩子。
+	// 这个工厂不是在进程启动时跑一次就完了：pi 每次 `createRuntime()` 都会重新加载扩展 ——
+	// 引擎启动、新会话、fork / switch_session / resume、`ctx.reload()`（`/device-reload`）
+	// 都走这条路（pi 1.0.1：`core/agent-session-runtime.js` 的 `newSession()` → `createRuntime()`
+	// → `core/agent-session-services.js:69` 的 `resourceLoader.reload()` →
+	// `core/resource-loader.js:353` 的 `clearExtensionCache()`）。
+	//
+	// 所以：能力开关的改动在**下一个新会话 / 重载扩展 / 引擎重启**之后生效，而不是当场生效。
+	// App 侧 `ui/device/DeviceCapabilityScreen.kt` 在「能力授权」标题下写了同一句话，
+	// 用户和模型看到的是同一个口径。
+	const usable = await usableCapabilities();
 	for (const tool of DEVICE_TOOLS) {
+		if (!shouldRegister(tool, usable)) continue;
 		pi.registerTool({
 			name: tool.name,
 			label: tool.label,

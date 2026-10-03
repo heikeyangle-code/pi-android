@@ -102,6 +102,15 @@ import org.json.JSONObject
  * The authority is [DeviceCapabilityStore]: it persists the switches and the HTTP
  * server re-reads it on every request, so a change here takes effect immediately —
  * no restart, no reload. There is deliberately no "apply" button.
+ *
+ * ### 「立即生效」只对执行侧成立
+ *
+ * 随包扩展 `pi-android-bridge` 在**加载时**按这一屏的同一份能力状态决定注册哪些 `android_*`
+ * 工具（读 `/app/health` 的 `capabilities[].usable`），而 pi 的 `registerTool` 只在扩展工厂
+ * 跑的时候登记一次，没有“每次请求重算工具表”的钩子。所以关掉一组能力后：桥立刻开始拒绝那一组
+ * 的端点（上面那句仍然成立），但**模型提示词里的那些工具**要等下一次加载扩展才消失 —— 开一个
+ * 新会话、`/device-reload` 重载扩展或重启引擎都会重新加载扩展。用户看到的是「能力授权」标题下
+ * 那份 [InfoNote]，两处说的是同一件事。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -306,6 +315,17 @@ fun DeviceCapabilityScreen(
 
             item {
                 PiSettingsSectionHeader("能力授权")
+            }
+
+            item {
+                // 开关对桥的**执行侧**立即生效（`DeviceCapabilityStore.check()` 每个请求现读），
+                // 但随包扩展注册哪些 android_* 工具是在扩展加载时定下的：pi 的 `registerTool`
+                // 只在扩展工厂跑的时候登记一次，没有“每次请求重算工具表”的钩子。这是该对用户
+                // 说的生效口径 —— 和 `pi-android-bridge/index.ts` 注册循环上方的注释是同一件事。
+                InfoNote(
+                    "这些开关立即改变设备桥允许做什么；模型看到的 android_* 工具清单要等下次加载扩展才重算 —— " +
+                        "开一个新会话（或重启引擎）之后，关掉的那组工具才会从提示词里消失。",
+                )
             }
 
             items(DeviceCapability.entries.toList()) { capability ->
