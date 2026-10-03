@@ -370,7 +370,8 @@ private fun PiImageFallback(
 }
 
 /**
- * GFM 表格：解析、列宽、横向滚动都留给库，我们只解开它给每个单元格的**一行**限制。
+ * GFM 表格：解析、列宽、横向滚动都留给库，我们只把库写死的「每格 1 行」换成
+ * [TABLE_MAX_LINES]。
  *
  * ## 为什么要覆盖这个槽
  *
@@ -379,34 +380,69 @@ private fun PiImageFallback(
  * （`compose/components/MarkdownComponents.kt:216-217`，0.45.0 `core` artifact 源码），
  * 而 `MarkdownTable` 给单元格的默认值写死成一行：
  * `MarkdownTableHeader(maxLines: Int = 1, overflow = TextOverflow.Ellipsis, …)`
- * 与 `MarkdownTableRow(maxLines: Int = 1, …)`（`compose/elements/MarkdownTable.kt:130`、
- * `:172`），`MarkdownTableBasicText` 自己也是 `maxLines: Int = 1`（同文件 `:222`）。
- * `MarkdownTable(content, node, style, annotatorSettings, headerBlock, rowBlock)` **没有**
- * `maxLines` 参数，所以只能从 `headerBlock` / `rowBlock` 两个槽换掉它。
+ * （`compose/elements/MarkdownTable.kt:124-133`）与
+ * `MarkdownTableRow(maxLines: Int = 1, …)`（同文件 `:164-175`），两者都把这个值原样交给
+ * `MarkdownTableBasicText(maxLines: Int = 1, …)`（同文件 `:217-225`；转交在 `:151-158`、
+ * `:192-199`，最终落到 `MarkdownBasicText` 的 `maxLines`，`:258-267`）。
+ * `MarkdownTable(content, node, style, annotatorSettings, headerBlock, rowBlock)` 的签名
+ * （`:65-81`）**没有** `maxLines` 参数，所以只能从 `headerBlock` / `rowBlock` 两个槽换掉它。
  *
  * 用户看到的是「表格的确很多显示不全，只能显示前几行字，每一格里」：每格只画一行、
  * 其余用「…」截掉，而且没有任何交互能看到被截的部分（表头与数据行都是这样）。
  *
+ * ## 这个数字只有一处：[TABLE_MAX_LINES]
+ *
+ * 表头与数据行分成两个 lambda 只是因为库的签名如此；两边都引用同一个 [TABLE_MAX_LINES]，
+ * 而第三个组件（单元格 `MarkdownTableBasicText`）拿到的是库从这两个值转交下去的同一个数
+ * ——我们不自己调它（那要重写整行布局），所以表格路径上不存在第二个常量可以漂移。
+ *
+ * ## 为什么是 50：不是 1，也不是无限
+ *
+ * - **不能回到 1。** 1 就是用户报的症状（每格一行 + 省略号），那正是这次要修的。
+ * - **不能是 `Int.MAX_VALUE`**（本槽加上时用的值，也是这次要换掉的值）。库确实把
+ *   `Int.MAX_VALUE` 当作「不限」（`.../elements/material/TextWrapper.kt` 的
+ *   `maxLines: Int = Int.MAX_VALUE`），但表格这条路上「不限」是**按内容计费**的：
+ *   单元格的排版行数没有上界，而这张表不是 Lazy（见下），所以一个被模型写成整段话的
+ *   单元格可以把成本抬到任意高。
+ * - **50 行的理由**是「大到任何真实单元格都碰不到，小到病态单元格有上界」。按
+ *   `tableCellWidth = 160.dp` 与正文 ≈14sp 反推：一行约 11 个汉字（或约 22 个拉丁
+ *   字符），50 行 ≈ 550 个汉字，比任何人在表格单元格里写的一句话都长。`overflow`
+ *   仍是库的 `Ellipsis`，所以万一真有单元格超过 50 行，它是「截断 + …」，而不是
+ *   无限高、也不是静默丢字。
+ *
+ * ## 代价：单元格数 × 每格排版行数（算术，不是真机测量）
+ *
+ * 表格的横向滚动不是 Lazy：`MarkdownTable` 在
+ * `scrollable = maxWidth <= tableWidth` 为真时用
+ * `Modifier.horizontalScroll(rememberScrollState()).requiredWidth(tableWidth)`
+ * （`:99-103`），它只裁剪**绘制**——表里所有行、所有列的单元格照样全部组合、测量、
+ * 提交绘制；列宽是 `columnsCount * LocalMarkdownDimens.current.tableCellWidth`
+ * （`:82-88`），我们设的 160 dp 不随屏幕压缩。于是成本是
+ *
+ *     单元格数 = (数据行数 + 1) × 列数        // 30 行 × 4 列 = 124 格
+ *     每格排版行数 ≈ min(内容折行数, TABLE_MAX_LINES)
+ *
+ * 同一张 30×4 的表：每格 1 行时是 124 行文本布局；`Int.MAX_VALUE` 时这个数由内容决定
+ * ——一个 2 千字的单元格在 160 dp 列宽下要折 ≈180 行，124 格都这样就是两万行量级，
+ * 而且没有上界可写；现在是 ≤ 124 × 50 = 6200 行，且与内容长度无关。
+ *
+ * 表头那一行还多付一层：`MarkdownTableHeader` 把 `Modifier.height(IntrinsicSize.Max)`
+ * 放在表头 `Row` 上（`:135-137`），于是**每个表头格都会额外付一次本征测量**（≈一次
+ * 完整文本布局）——4 列的表就是 4 次额外测量，每次同样被 50 行封顶。单元格自己的
+ * `Modifier.onPlaced { containerSize.value = … }`（`:237`、`:260-262`）又是上面
+ * `remember(text, …, containerSize.value, …)`（`:241-244`）的键，所以首帧每格还会多
+ * 一次重组 + 一次文本重测（之后写等值不再失效，会收敛）；这部分由库决定，与本常量无关。
+ *
  * ## 不做什么，以及为什么
  *
- * **不自己写表格。** 横向滚动库已经有了：`MarkdownTable` 里
- * `val scrollable = maxWidth <= tableWidth`，为真时
- * `Modifier.horizontalScroll(rememberScrollState()).requiredWidth(tableWidth)`
- * （`MarkdownTable.kt:99-103`），与 `PiCodeSurface` 给代码块用的
- * `.horizontalScroll(rememberScrollState())` 是同一个惯用法；列宽是
- * `columnsCount * LocalMarkdownDimens.current.tableCellWidth`
- * （`MarkdownTable.kt:83`、`:88`；我们设的 160 dp），不随屏幕压缩。所以这里**不动横向**，
- * 也不动 `PiMarkdownDimens`：`tableCellWidth = 160.dp` 是库默认值、不是用户报的症状，
- * 没有证据就不改数字。
+ * **不动横向，也不动列宽。** `horizontalScroll(requiredWidth(tableWidth))` 就是库自己的
+ * 实现（`:99-103`），与 `PiCodeSurface` 给代码块用的 `.horizontalScroll(rememberScrollState())`
+ * 是同一个惯用法；`tableCellWidth = 160.dp` 是库默认值、不是用户报的症状，没有证据不改数字。
  *
- * **不加上限高度、不加内部纵向滚动。** 单元格现在会折行，行数多表格就高，由外层列表
- * 滚动接管——和代码块一样（`PiCodeSurface` 对 200 行的围栏也没有高度上限）。
- * 加一个 `heightIn(max = …)` + 内部 `verticalScroll` 会把超限的行藏进一个要用户自己
- * 发现的内层滚动条里，那正是这次报的「显示不全」换了个方向。
- *
- * `maxLines = Int.MAX_VALUE` 就是「不限行」的写法，`overflow` 保持库的 `Ellipsis`：
- * 达不到，所以不改；留着只是万一以后把 [TABLE_MAX_LINES] 调小，截断标记仍在。
- * 表头与数据行分成两个 lambda，是因为库的签名就是这样，两个都只在这里出现一次。
+ * **不加上限高度、不加内部纵向滚动。** 单元格会折行，行数多表格就高，由外层列表滚动
+ * 接管——和代码块一样（`PiCodeSurface` 对 200 行的围栏也没有高度上限）。加一个
+ * `heightIn(max = …)` + 内部 `verticalScroll` 会把超限的行藏进一个要用户自己发现的内层
+ * 滚动条里，那正是这次报的「显示不全」换了个方向。
  */
 @Composable
 private fun PiTable(model: MarkdownComponentModel) {
@@ -424,12 +460,14 @@ private fun PiTable(model: MarkdownComponentModel) {
 }
 
 /**
- * 一格最多画几行。`Int.MAX_VALUE` 是 Compose `BasicText` 自己的「不限」写法
- * （库 `.../elements/material/TextWrapper.kt` 的 `maxLines: Int = Int.MAX_VALUE`
- * 就是默认值），所以这里不是发明一个数，而是**回到库本来的默认值**、只去掉表格路径上
- * 那个 1。
+ * 一格最多画几行，表格路径上这个数的**唯一**来源。
+ *
+ * 选 50 的完整理由（为什么不是 1、为什么不是 `Int.MAX_VALUE`，以及它换来的上界是什么）
+ * 写在 [PiTable] 的 KDoc 里；这里只留结论：大到任何真实单元格都碰不到，小到病态单元格
+ * 有上界。改这个数只改这里，`MarkdownTableHeader`、`MarkdownTableRow` 与它们转交下去的
+ * `MarkdownTableBasicText` 会一起变。
  */
-private const val TABLE_MAX_LINES = Int.MAX_VALUE
+private const val TABLE_MAX_LINES = 50
 
 @Composable
 private fun PiCodeFence(model: MarkdownComponentModel) {
@@ -688,6 +726,14 @@ private val WHITESPACE = Regex("\\s+")
  * coroutine (3 × 250 ms of socket budget + 2 × 400 ms of waiting), then it stops — no
  * timer survives it, and a transcript with F mermaid fences never exceeds 3·F requests.
  *
+ * **缓存（R3）：滚回来不再问 guest。** `PiNodeMermaidRenderer` 现在带着一个进程级的
+ * 有界 LRU（键 = `(code, mode)`），所以同一段源码第二次进入组合时这次询问是 map 命中：
+ * 不再出网、不再重跑 guest 的布局引擎、也不会「先闪源码再变成图」。命中时
+ * `produceState` 的 `initialValue` 直接就是那张图，且 producer 立即返回——连
+ * [STREAM_SETTLE_MS] 都不再等：等待是为了「别画半张图」，而命中的意思是这份源码已经被
+ * 完整画过，同一个 `(code, mode)` 出的就是同一张图。失败（`Unavailable`）不进缓存，
+ * 所以上面那 3 次重试在冷引擎下仍然是 3 次；`NoArt` 是定论，会进缓存。
+ *
  * **`Final` waits for the fence even the first time.** pi's gate there is
  * `context.isStreaming` (`:66-67`), which this component cannot see — `PiMarkdownText`
  * receives markdown, not the message's state, and adding a parameter to it is outside
@@ -719,13 +765,20 @@ private fun rememberPiMermaidArt(code: String, language: String?): PiMermaidArt?
     }
     if (!isMermaid) return null
     val hasStreamed = remember { booleanArrayOf(false) }
-    val art = produceState<PiMermaidArt?>(initialValue = null, code, language, mode) {
+    // 缓存同步读一次，键 = (code, mode)，与 memo 的键一致。命中时首帧就是图（不再先闪
+    // 一次源码），producer 也不再问 guest —— 这正是「滚出去再滚回来」不再重跑布局引擎的
+    // 那一步。只读、无副作用，所以可以在组合期做。
+    val cached = remember(code, mode) { PiNodeMermaidRenderer.cached(code, mode) }
+    val art = produceState<PiMermaidArt?>(initialValue = (cached as? PiMermaidReply.Art)?.art, code, language, mode) {
+        // 有定论了（画出图，或 grok-mermaid 明确拒绝）就不再问；null 表示没问过。
+        // 跳过下面的 settle：等待是为了别画半张图，而命中说明这份源码已经完整画过。
+        if (cached != null) return@produceState
         val isUpdate = hasStreamed[0]
         hasStreamed[0] = true
         if (isUpdate || mode == PiMermaidMode.Final) delay(STREAM_SETTLE_MS)
         var attempt = 0
         while (true) {
-            when (val reply = withContext(Dispatchers.Default) { PiNodeMermaidRenderer.render(code) }) {
+            when (val reply = withContext(Dispatchers.Default) { PiNodeMermaidRenderer.render(code, mode) }) {
                 is PiMermaidReply.Art -> {
                     value = reply.art
                     return@produceState
