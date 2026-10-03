@@ -1,7 +1,6 @@
 package app.pi.ui.chat
 
 import android.content.Context
-import android.util.Base64
 import app.pi.bridge.DeviceActionException
 import app.pi.bridge.DeviceSystemActions
 import app.pi.ui.ExportedSession
@@ -63,7 +62,15 @@ object SessionExportDelivery {
      */
     data class Result(val sentence: String, val warning: Boolean = false)
 
-    /** Save to the public Download folder. */
+    /**
+     * Save to the public Download folder.
+     *
+     * 走 `export(sourceFile = …)` 而不是把文件编码成 base64 再交给它：一份导出的会话可以有
+     * 几 MB，而 `readBytes()` → base64 字符串（≈4/3 倍）→ `export` 里再 decode 回来，
+     * 是同一条数据的**三份**同时驻留（峰值 ≈ 3.3 倍文件大小）；`sourceFile` 让 `export`
+     * 自己读一次，只剩一份。文件不可读时仍然先由 `isFile` 给出那句人话，读失败则落到
+     * `export` 抛出的 `DeviceActionException`（比原来那句泛泛的"读不出来了"更具体）。
+     */
     fun saveToDownloads(context: Context, exported: ExportedSession): Result = try {
         val file = File(exported.path)
         if (!file.isFile) {
@@ -73,8 +80,9 @@ object SessionExportDelivery {
                 context = context,
                 name = exported.name,
                 text = null,
-                base64 = Base64.encodeToString(file.readBytes(), Base64.NO_WRAP),
+                base64 = null,
                 mimeType = exported.mimeType,
+                sourceFile = file,
             )
             Result("已保存到 Download/${exported.name}")
         }
