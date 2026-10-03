@@ -209,10 +209,13 @@ internal fun PiMarkdownText(
     //     decision and the drawing can never disagree about which transformer is
     //     installed.
     //
-    // `http(s)` links deliberately resolve to `null` (`bridge/GuestImageBytes.kt`,
-    // "What it deliberately does not resolve"): pi never fetches an image, and a
-    // silent request from composition would leak the user's IP. Those links keep the
-    // alt + source fallback.
+    // `http(s)` links really load now — `bridge/GuestImageBytes.kt` was changed this round
+    // from "refuse, because the render layer has no network I/O" to "fetch, under a
+    // no-headers / 8 MiB / bounded-timeout / bounded-disk-cache contract". That is the one
+    // behavioural deviation this round takes on, and it is the render layer's first
+    // outbound request; the KDoc there states the price. A link that fails (offline,
+    // timeout, over the cap, non-2xx) still keeps the alt + source fallback, because
+    // `transform` answers `null` for exactly the same reasons it always did.
     val imageTransformer = rememberPiGuestImageTransformer()
     // What one eager row actually costs the frame, measured rather than estimated: the parse
     // (`parseBlocking`, run inside `rememberMarkdownState`) **and** the composition of the

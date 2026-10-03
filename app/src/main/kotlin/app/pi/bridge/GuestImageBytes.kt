@@ -6,14 +6,25 @@ import android.os.Environment
 import android.util.Base64
 import app.pi.runtime.PiPaths
 import app.pi.runtime.PtyLauncher
+import java.io.ByteArrayOutputStream
 import java.io.File
+import java.io.InputStream
+import java.net.CookieHandler
+import java.net.HttpURLConnection
+import java.net.URI
+import java.security.MessageDigest
+import kotlin.coroutines.cancellation.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.withContext
 
 /**
- * The bytes behind one markdown image link, with the source that produced them.
+ * 一个 markdown 图片 link 背后的字节，以及这些字节从哪来。
  *
- * [source] is for diagnostics (the `lastFailure` story) and is never sent anywhere:
- * it exists so a maintainer can tell "the link was a data: URI" apart from "the link
- * was a guest path that did not exist".
+ * [source] 只用于诊断（[GuestImageBytes.lastFailure] 那套），从不外发：它让维护者分得清
+ * "link 是个 data: URI" 和 "link 是个不存在的 guest 路径"，也分得清"这份字节来自网络缓存"
+ * 还是"这次真出了网"。
  */
 internal class GuestImage(
     val bytes: ByteArray,
@@ -22,158 +33,245 @@ internal class GuestImage(
 )
 
 /**
- * Turns a markdown image `link` into bytes.
+ * 把一个 markdown 图片 `link` 变成字节。
  *
- * ## NOT WIRED YET — A3 does not take effect until this is called
+ * ## 先读这一段：渲染层**已经会出网了**
  *
- * Nothing calls into this object, and nothing calls [PiGuestImageTransformer] either.
- * The missing wiring is two lines in `ui/render/` (that directory's owner, not this
- * file's):
+ * 本轮之前，这个对象的 KDoc 把 `http(s)` 写成一类被**故意拒绝**的 link，理由是
+ * "渲染层没有网络 I/O"、"一次静默请求会把用户的 IP 泄漏给模型随手写的主机"。
+ * 那条性质**已经撤销**：用户要求「全面加强」，`http(s)` 现在真的去取字节。
+ * 这是本轮唯一的行为性偏离，也是本 App 与 pi 的又一处故意不同——pi 的终端渲染器
+ * **从不为 markdown 图片取字节**，它连 `image` 分支都没有，`![]()` 落到 `default`
+ * 分支只打印 alt 文本（`packages/tui/src/components/markdown.ts:619-627`）。
+ * 偏离的价钱写在下面「远端图片」一节里，一条不省，并且登记在
+ * `docs/known-gaps.md` §A3。
  *
- *  - **P-A** `ui/render/PiMarkdown.kt` — replace
- *    `LocalPiImageTransformer provides NoOpImageTransformerImpl()` with
- *    `LocalPiImageTransformer provides rememberPiGuestImageTransformer()`.
- *  - **P-B** `ui/render/PiMarkdownComponents.kt` — `PiImagePlaceholder` must decide
- *    from the *result* of `transform`, not from the transformer's type: the library
- *    drops the whole node when `transform` returns `null`, so wiring P-A without P-B
- *    would render an unresolvable link as nothing at all (today it shows alt + the
- *    source).
+ * 除 `http(s)` 之外的所有路径（`data:`、`file:`、guest 路径）仍然是纯本地读，
+ * 一行网络代码都不经过，也仍然没有 loopback 服务（见「为什么不用 loopback HTTP」）。
  *
- * Written down because this project has repeatedly shipped "the UI promises a
- * behaviour that was never connected": a reader who finds this file must not assume
- * images already render.
+ * "NOT WIRED YET — A3 does not take effect until this is called" 那段也删了：
+ * 接线早就完成（`ui/render/PiMarkdown.kt` 调 `rememberPiGuestImageTransformer()`，
+ * 同一个实例同时进本 App 的 local 与库的 `Markdown(imageTransformer = …)`），
+ * 原来列的 P-A / P-B 两处都不再是待办。
  *
- * ## What a `link` actually is — read from pi, not guessed
+ * ## 一个 `link` 到底是什么 —— 读 pi，不猜
  *
- * pi defines **no** image-link semantics at all, and the sources below are why this
- * class has to decide rather than follow:
+ * pi 自己**没有**定义任何图片 link 语义，所以这里必须自己决定而不是照抄：
  *
- *  - pi's terminal markdown renderer has no `image` case. Its `switch` falls to the
- *    `default` branch, which prints the token's `text` — the alt text — and nothing
- *    else (`packages/tui/src/components/markdown.ts:619-627`). A markdown image in pi
- *    is therefore *text*, never a fetch.
- *  - Images on the RPC wire are inline base64 and never a path:
- *    `prompt`/`steer`/`follow_up` carry `images?: ImageContent[]` as
- *    `{type:"image", data:<base64>, mimeType}` (`packages/coding-agent/docs/rpc.md:78`),
- *    and the documented session `Attachment` embeds `content` as base64 with no file
- *    on disk (`docs/rpc.md:1510-1521`). So "pi session attachment" is *not* a location
- *    this channel could read — those bytes travel inside the message and are rendered
- *    by `ui/blocks/ImageGridBlock.kt`, a different surface.
- *  - The one place pi does turn an image into a path is the TUI clipboard paste: it
- *    writes `/tmp/pi-clipboard-<uuid>.<ext>` and inserts that **path as text** into
- *    the editor (`src/modes/interactive/interactive-mode.ts:2934-2946`). That text can
- *    end up quoted in an assistant message, which is the pi-grounded reason a guest
- *    path is worth resolving at all.
+ *  - pi 的终端 markdown 渲染器没有 `image` 分支。它的 `switch` 落到 `default`，
+ *    只打印 token 的 `text`，也就是 alt 文本
+ *    （`packages/tui/src/components/markdown.ts:619-627`）。所以 pi 里 markdown 图片
+ *    是**文本**，不是一次取字节。
+ *  - RPC 上的图片是 inline base64，从来不是路径：`prompt`/`steer`/`follow_up` 带
+ *    `images?: ImageContent[]`，形状是 `{type:"image", data:<base64>, mimeType}`
+ *    （`packages/coding-agent/docs/rpc.md:78`），文档里的会话 `Attachment` 也把
+ *    `content` 作为 base64 内嵌、磁盘上没有文件（`docs/rpc.md:1510-1521`）。
+ *    所以"pi 会话附件"**不是**这条通道能读的位置——那些字节在消息里，由
+ *    `ui/blocks/ImageGridBlock.kt` 那块表面渲染。
+ *  - pi 唯一把图片变成路径的地方是 TUI 的剪贴板粘贴：它写
+ *    `/tmp/pi-clipboard-<uuid>.<ext>` 并把那个**路径当文本**插进编辑器
+ *    （`src/modes/interactive/interactive-mode.ts:2934-2946`）。这段文本可能被引用进
+ *    助手的消息里，这才是"guest 路径值得解析"的 pi 依据。
  *
- * Everything else is model-authored text: an LLM writing `![chart](/tmp/x.png)` is not
- * following a pi contract. So this resolver accepts the shapes that are *resolvable*
- * and returns `null` — letting the transcript keep its placeholder — for anything
- * else. It never invents a path.
+ * 其余一切都是模型自己写的文本：LLM 写 `![chart](/tmp/x.png)` 并不是在遵守 pi 的契约。
+ * 所以这里接受那些**能解析**的形状，其它一律 `null`（正文保留占位与来源文本），
+ * 从不自己编一条路径出来。
  *
- * ## What it resolves
+ * ## 它解析什么
  *
- *  - `data:` URIs, decoded in place. Self-contained, so no channel is involved.
- *  - `file:` URIs and bare filesystem paths, mapped from the guest's spelling to the
- *    host file that spelling denotes (table below).
+ *  - `data:` URI，就地解码。自包含，不牵涉任何通道。
+ *  - `file:` URI 与裸文件路径，从 guest 的写法映射到宿主文件（下面那张表）。
+ *  - `http:` / `https:`，取字节 + 有界磁盘缓存（下一节）。**只**这两个 scheme：
+ *    别的一律继续走文件那条路并失败（例如 `ftp:` 会得到"找不到图片文件"）。
  *
- * ## What it deliberately does **not** resolve: `http(s)`
+ * ## 远端图片（`http(s)`）：取什么、上限多少、缓存在哪、失败怎么办
  *
- * A remote URL is refused, not attempted. pi itself never fetches an image, and in a
- * phone app a *silent* request to whatever host the model wrote would leak the user's
- * IP (and the fact that they opened this session) to that host, and would hand the
- * model a probe/tracking primitive with no user-visible action. Rendering the link as
- * text — what the transcript already does for a link it cannot resolve — costs the
- * user nothing and leaks nothing. If a future design wants remote images it belongs
- * behind an explicit user tap, not behind composition.
+ * ### 取的是什么
  *
- * ## Where the bytes come from (guest path to host file)
+ * 一次 `GET`，用 `HttpURLConnection`（不新增依赖，和 `packages/PiModelScanner.kt`
+ * 已经出网那条路同一个栈）。**一个请求头都不设**：没有 cookie、没有 `Authorization`、
+ * 没有自定义 header。URL 里内嵌凭据（`http://user:pass@host/x.png`）直接拒绝，
+ * 并且**不回显**这个 link（不然密码就进了 [lastFailure]）。
  *
- * The bridge runs in the app process, and the guest is a proot rootfs of the same
- * app-private tree, so every bind the engine creates is a *host directory* this
- * process can already read. The mappings, each one a `ProotCommand.build` bind:
+ * `CookieHandler` 是个例外，而且必须当硬条件处理：进程里只要装了一个
+ * （`android.webkit.CookieManager` 一构造就会 `CookieHandler.setDefault`），
+ * `HttpURLConnection` 就会自己把 cookie 加进请求，而且**没有开关**能关掉它。
+ * 所以这里不是"承诺不带 cookie"，而是：**装了 cookie handler 就拒绝远端图片**，
+ * 原因写进 [lastFailure]。本 App 目前没装（`grep -rn "CookieManager\|CookieHandler"
+ * app/src/main` 只命中注释），所以正常情况下这个守卫不触发。
  *
- *  - `/workspace/<reg>` to `<filesDir>/<reg>` — `PiEngineHost.guestPathFor`
- *    (`engine/PiEngineHost.kt:552-556`) strips the `<filesDir>` prefix and mounts
- *    under `/workspace` (`:286`). The terminal's `PtyLauncher` binds the *same* host
- *    directory one level up, at plain `/workspace`
- *    (`runtime/PtyLauncher.kt:146,264`), so both spellings are probed.
- *  - `/root/.pi/agent` to `<rootfs>/root/.pi/agent` — `PiPaths.agentDir`. Since
- *    2026-09-23 that **is** the guest's path (the bind is gone), so it resolves through
- *    the rootfs rule below.
- *  - `/tmp` likewise: it stopped being a bind on 2026-09-23, so `<rootfs>/tmp` is what a
- *    guest `/tmp/...` names.
- *  - `/sdcard` and `/storage/emulated/0` to the device's shared storage —
- *    `runtime/PiRuntime.kt:92-93`.
- *  - anything else (`/etc`, `/opt`, `/usr`, `/root/...`) to the rootfs:
- *    `--rootfs=<files>/pi/runtime/rootfs` (`runtime/PiRuntime.kt:114`).
+ * ### 上限与超时（都是硬数字）
  *
- * A host path can also be named directly (`/data/user/0/<pkg>/...`,
- * `/storage/emulated/0/...`), so plain absolute paths are the last probe. The order is
- * not incidental — [GuestPathMapping] documents it as the safety argument, and
- * `app/src/test/kotlin/app/pi/bridge/GuestPathMappingCheck.kt` pins it.
+ *  - 单张 [MAX_BYTES] = 8 MiB，与 `data:` URI、本地文件同一个数。`Content-Length`
+ *    先看一眼，读取循环再按实际字节数卡一遍（声明可以没有，也可以撒谎）。
+ *  - 连接 [CONNECT_TIMEOUT_MS] = 5 s，单次读 [READ_TIMEOUT_MS] = 5 s，
+ *    一整张图的总预算 [TOTAL_TIMEOUT_MS] = 15 s。前两个管"多久没有进展"，
+ *    第三个管"每块都读得到、但慢慢喂一整张"——循环在**每块之间**查它，所以一次远端
+ *    取字节的最坏耗时是总预算再加一个读取超时，不是无限。
  *
- * ## Why not loopback HTTP
+ * ### 缓存在哪、多大
  *
- * The other loopback services in this app (`DeviceBridgeHttp`, the highlight service)
- * exist because the *guest* has to reach the *host* process. Here the bytes move in
- * the opposite direction and never leave the app process, so a socket would add a
- * token, a port and a failure mode to a `File.readBytes()`. No endpoint is added.
+ * 有界磁盘缓存 + LRU，目录是 `<files>/pi/image-cache/`（[PiPaths.home] 下面）。
+ * **不在 rootfs 里**：rootfs 是 guest 自己的树，升级/prune 的故事必须保持简单，
+ * 一个可以随时丢掉的图片缓存不该进去。文件名是 URL 的 SHA-256 前 16 字节的
+ * URL-safe base64（22 个字符，文件系统安全，也不泄漏 URL 本身）。
+ * 总大小上限 [MAX_DISK_BYTES] = 64 MiB；超了按 `lastModified` 从最旧开始删，
+ * 而命中缓存会 `setLastModified` 把它顶到最新——这就是 LRU 的全部实现，没有索引文件。
+ * **命中缓存不出网**。
  *
- * ## Limits, stated rather than hidden
+ * 写入是"先写 `.tmp` 再 rename"，所以不会留下一份写了一半的缓存文件；写盘本身失败
+ * 不致命（字节已经在内存里，图照画，只是下次还得再出一次网）。
  *
- * Only the five formats pi's own `read` tool accepts are decoded
- * (jpg/png/gif/webp/bmp — `docs/pi-android-app-design.md:507`; the decoder is
- * `BitmapFactory` in the transformer). An animated GIF renders its first frame. A
- * `data:` URI renders whatever base64 it carries. Shared storage is read through the
- * app's own permissions, so on a scoped-storage device a path there may simply not be
- * readable — that is reported as a failure, never as an empty image. pi's
- * `images.blockImages` setting is **not** consulted, because pi defines it as
- * "prevents all images from being sent to LLM providers"
- * (`core/settings-manager.ts:64`) — an outbound-request switch, not a rendering one.
+ * **没有 revalidation**：这一份字节的身份就是 URL，同一个 URL 的内容在服务端换了不会
+ * 自动重取（没有 `If-None-Match` / `If-Modified-Since`，因为那要再出一次网，也就
+ * 抵消了缓存的意义）。要强制重取就清掉 App 存储，或者等 LRU 把它淘汰。
+ *
+ * ### 失败怎么办
+ *
+ * 一律 `null` + [lastFailure] 写明原因，于是正文走那条既有的「alt + 图片地址」回退
+ * （`ui/render/PiMarkdownComponents.kt` 的 `PiImageFallback`）——**不新增一种"破图"外观**。
+ * 离线、超时、非 2xx、超过上限、不是图片，都是这一条路。失败**不进缓存**
+ * （没有负缓存），所以下一次组合会再试一次。
+ *
+ * ### 线程与取消
+ *
+ * 阻塞 I/O，**绝不在主线程**：远端那条整段包在 `withContext(Dispatchers.IO)` 里，
+ * 调用方就算忘了也不会把它读进帧里（本 App 的调用方是
+ * `PiGuestImageTransformer`，它本来就在 IO 上）。读取循环每读一块查一次取消
+ * （`currentCoroutineContext().ensureActive()`），所以节点离开组合时下载当场停，
+ * 而不是把 8 MiB 拉完再丢掉；`produceState` 负责取消，第一帧画的仍是回退文本。
+ *
+ * **同一帧可能有两个调用者，这一点必须防。** 库对一张**行内**图片会在同一帧调用
+ * `transform` 两次：`MarkdownInlineImageWithSize` 自己调一次
+ * （`.../compose/elements/MarkdownText.kt:375`，用来量本征尺寸），随后
+ * `components.inlineImage`（也就是 `PiInlineImage`）经 `MarkdownInlineImage` 又调一次
+ * （`.../elements/MarkdownInlineImage.kt:13`）。两次都是各自 `produceState`（键相同），
+ * 第一帧两边都未命中内存缓存，所以**理论上会各取一次**。内存缓存从第二帧起就命中，
+ * 磁盘缓存让下一次会话也命中，所以代价是首次最多一次重复请求——这里不引入 in-flight
+ * 去重，但写磁盘因此必须用**唯一的临时文件名**：两个 writer 共用一个 `.tmp` 会互相
+ * 截断，而半份文件会被当成缓存命中，于是那张图永远解不出、又永远不出网。
+ * 见 [rememberOnDisk]。
+ *
+ * ## 字节从哪来（guest 路径 → 宿主文件）
+ *
+ * 桥跑在 App 进程里，guest 是同一个 app-private 树里的 proot rootfs，所以引擎建的每个
+ * bind 都是**这个进程本来就能读的宿主目录**。映射逐条都是一次 `ProotCommand.build` 的
+ * bind：
+ *
+ *  - `/workspace/<reg>` → `<filesDir>/<reg>`——`PiEngineHost.guestPathFor`
+ *    (`engine/PiEngineHost.kt:552-556`) 去掉 `<filesDir>` 前缀并挂到 `/workspace`
+ *    (`:286`)。终端的 `PtyLauncher` 把**同一个**宿主目录绑到上一级、也就是 `plain
+ *    /workspace`（`runtime/PtyLauncher.kt:146,264`），所以两种拼法都会试。
+ *  - `/root/.pi/agent` → `<rootfs>/root/.pi/agent`——`PiPaths.agentDir`。从 2026-09-23 起
+ *    这**就是** guest 的路径（bind 没了），所以走下面那条 rootfs 规则。
+ *  - `/tmp` 同理：2026-09-23 起它不再是 bind，guest 的 `/tmp/...` 就是 `<rootfs>/tmp`。
+ *  - `/sdcard` 与 `/storage/emulated/0` → 设备共享存储——`runtime/PiRuntime.kt:92-93`。
+ *  - 其它一切（`/etc`、`/opt`、`/usr`、`/root/...`）→ rootfs：
+ *    `--rootfs=<files>/pi/runtime/rootfs`（`runtime/PiRuntime.kt:114`）。
+ *
+ * 宿主路径也可以被直接写出来（`/data/user/0/<pkg>/...`、`/storage/emulated/0/...`），
+ * 所以裸绝对路径是最后一项。顺序不是随手定的——[GuestPathMapping] 把它当作安全论证写下来，
+ * `app/src/test/kotlin/app/pi/bridge/GuestPathMappingCheck.kt` 钉着它。
+ *
+ * ## 为什么不用 loopback HTTP
+ *
+ * 本 App 其它 loopback 服务（`DeviceBridgeHttp`、高亮服务）存在是因为**guest** 要够到
+ * **宿主**进程。这里字节走的是相反方向、而且从不离开 App 进程（远端图片那一路是出网，
+ * 不是 loopback），所以加一个 socket 只会给一次 `File.readBytes()` 添上 token、端口和
+ * 一种失败模式。不新增任何端点。
+ *
+ * ## 明说的限制
+ *
+ * 只解 pi 自己的 `read` 工具接受的五种格式（jpg/png/gif/webp/bmp——
+ * `docs/pi-android-app-design.md:507`；解码器是 transformer 里的 `BitmapFactory`）。
+ * 动图 GIF 只画第一帧。`data:` URI 照它带的 base64 画。共享存储靠 App 自己的权限读，
+ * 所以在 scoped storage 的设备上那里的路径可能根本读不到——那会报成失败，不会是一张空图。
+ * pi 的 `images.blockImages` 设置**不看**，因为 pi 把它定义成"阻止所有图片发给 LLM 提供方"
+ * （`core/settings-manager.ts:64`），那是一个出站请求的开关，不是渲染开关。
+ * 另外：远端图片只接受 http/https，而**明文** `http` 还要过 Android 的明文策略——
+ * 本 App 的 manifest 没有 `usesCleartextTraffic`、也没有 network security config，
+ * `targetSdk` ≥ 28 时平台按默认拒绝明文，于是 `http://` 的图会在取字节那一步失败并走回退，
+ * `https://` 没有这个问题。（manifest 不是这次改动的文件，这里只登记、不改。）
  */
 internal object GuestImageBytes {
 
     /**
-     * 8 MB. This is a display cap, not pi's provider cap: pi resizes what it sends to
-     * a model to 2000x2000 / 4.5 MB base64 (`docs/pi-android-app-design.md:580`), while
-     * this path only has to fit on a phone screen. Larger than the cap is refused with
-     * a reason instead of being decoded and OOM-ing the transcript.
+     * 8 MiB。这是一条**显示**上限，不是 pi 的提供方上限：pi 发给模型的图会先缩到
+     * 2000x2000 / 4.5 MB base64（`docs/pi-android-app-design.md:580`），而这条路径只需要
+     * 放得进手机屏幕。超过上限不是"截断后画"，而是带着原因拒绝——解码一张超限的图
+     * 会直接把转写 OOM 掉。同一把尺子量四处：`data:` URI 解出的字节、本地文件的长度、
+     * 远端响应的实际字节数、以及磁盘缓存里已有的那一项。
      */
     private const val MAX_BYTES = 8 * 1024 * 1024
 
+    /** 远端连接超时；见类注释「上限与超时」。 */
+    private const val CONNECT_TIMEOUT_MS = 5_000
+
+    /** 远端两次读之间没有进展就算失败。 */
+    private const val READ_TIMEOUT_MS = 5_000
+
+    /** 一次远端取字节的总预算，循环在每块之间查它。 */
+    private const val TOTAL_TIMEOUT_MS = 15_000L
+
+    /** 磁盘缓存的总大小上限，单位字节。 */
+    private const val MAX_DISK_BYTES = 64L * 1024 * 1024
+
+    /** 磁盘缓存目录名，落在 [PiPaths.home]（`<files>/pi`）下面。 */
+    private const val DISK_CACHE_DIR = "image-cache"
+
+    /** 远端响应体的读取分块大小。 */
+    private const val READ_CHUNK_BYTES = 64 * 1024
+
     /**
-     * Why the last load failed, for diagnostics. `null` after a success. Mirrors
-     * `PiHighlightClient.lastFailure` so both byte channels can be reported the same
-     * way.
+     * 上一次取字节为什么失败，供诊断用。成功后是 `null`。与
+     * `PiHighlightClient.lastFailure` 同形，两条字节通道可以用同一种方式报告。
      */
     @Volatile
     var lastFailure: String? = null
         private set
 
-    /** Blocking. Call from `Dispatchers.IO`; returns `null` when there is nothing to decode. */
-    fun load(context: Context, rawLink: String): GuestImage? {
+    /**
+     * 取字节。阻塞：远端那条路自己切到 [Dispatchers.IO]，本地两条路是普通的文件读。
+     *
+     * `suspend` 只为了取消——远端读取循环用它查 `ensureActive()`，节点离开组合时
+     * 下载当场停（见类注释「线程与取消」）。
+     */
+    suspend fun load(context: Context, rawLink: String): GuestImage? {
         val link = rawLink.trim().removeSurrounding("<", ">").trim()
         if (link.isEmpty()) return fail("图片链接为空")
-        if (link.startsWith("http://", ignoreCase = true) ||
-            link.startsWith("https://", ignoreCase = true)
-        ) {
-            // A refusal, not a missing feature: see the class comment. The transcript
-            // keeps its alt + source line, which is what pi itself would show.
-            return fail("不下载远端图片（$link）：不代替用户向模型写出的主机发起请求")
-        }
+        val remote = httpUriOrNull(link)
         return try {
             when {
+                remote != null -> fromRemote(context, remote)
                 link.startsWith("data:", ignoreCase = true) -> fromDataUri(link)
                 else -> fromFile(context, link)
             }
+        } catch (cancel: CancellationException) {
+            // 取消不是失败，是"这一帧不要了"：照原样抛出，别被下面的 catch 变成一条假的
+            // 失败原因，也别让已经取消的协程继续跑下去。
+            throw cancel
         } catch (error: Exception) {
             fail("读取图片失败：${error::class.java.simpleName}: ${error.message}")
         }
     }
 
+    /**
+     * `link` 的 `URI`，**只**在 scheme 是 `http`/`https` 时给出；别的（包括解析失败）
+     * 一律 `null`，交给文件那条路。
+     *
+     * 用 `URI` 而不是 `startsWith("http")`：后者会把 `httpx:` 也当成远端，而
+     * 「只接受 http/https」这条规矩应该只有一处说了算。scheme 大小写不敏感，
+     * 所以 `HTTP://` 也走这里。
+     */
+    private fun httpUriOrNull(link: String): URI? {
+        val uri = runCatching { URI(link) }.getOrNull() ?: return null
+        val scheme = uri.scheme?.lowercase() ?: return null
+        return if (scheme == "http" || scheme == "https") uri else null
+    }
+
     // --------------------------------------------------------------- sources ----
 
-    /** `data:image/png;base64,...` — self-contained, so no channel is involved. */
+    /** `data:image/png;base64,...` —— 自包含，不牵涉任何通道。 */
     private fun fromDataUri(link: String): GuestImage? {
         val comma = link.indexOf(',')
         if (comma < 0) return fail("data: URI 缺少逗号分隔符")
@@ -186,7 +284,7 @@ internal object GuestImageBytes {
             Uri.decode(payload).toByteArray(Charsets.UTF_8)
         }
         if (bytes.isEmpty()) return fail("data: URI 解出 0 字节")
-        if (bytes.size > MAX_BYTES) return fail("data: URI 超过 ${MAX_BYTES / 1024 / 1024} MB 上限")
+        if (bytes.size > MAX_BYTES) return fail("data: URI 超过 ${MAX_BYTES / 1024 / 1024} MiB 上限")
         val declared = header.substringBefore(';').trim()
         return GuestImage(bytes, mimeOf(bytes, declared, null), "data: URI（${bytes.size} 字节）")
     }
@@ -201,7 +299,7 @@ internal object GuestImageBytes {
         for (candidate in hostCandidates(context, path)) {
             if (!candidate.isFile) continue
             if (candidate.length() > MAX_BYTES) {
-                return fail("图片文件 ${candidate.name} 超过 ${MAX_BYTES / 1024 / 1024} MB 上限")
+                return fail("图片文件 ${candidate.name} 超过 ${MAX_BYTES / 1024 / 1024} MiB 上限")
             }
             val bytes = candidate.readBytes()
             if (bytes.isEmpty()) return fail("图片文件 ${candidate.name} 是空文件")
@@ -210,13 +308,182 @@ internal object GuestImageBytes {
         return fail("找不到图片文件：$path（已尝试 guest 到 host 的全部绑定映射）")
     }
 
+    /**
+     * 远端图片。整段在 [Dispatchers.IO] 上，所以调用方在哪个线程都不会把网络读进帧里。
+     *
+     * 顺序是「守卫 → 磁盘缓存 → 出网 → 写缓存」：三个守卫（凭据、主机名、cookie handler）
+     * 靠前是因为它们决定这次请求**允不允许发生**，而不是它成功还是失败。
+     */
+    private suspend fun fromRemote(context: Context, uri: URI): GuestImage? = withContext(Dispatchers.IO) {
+        // 凭据：不回显 link，不然密码就进了 lastFailure。
+        if (uri.userInfo != null) {
+            return@withContext fail("远端图片链接内嵌了用户名/密码，拒绝：不会发送任何凭据")
+        }
+        if (uri.host.isNullOrEmpty()) return@withContext fail("远端图片链接没有主机名，拒绝")
+        // 见类注释：装了 CookieHandler 就一定会带上 cookie，而且关不掉，所以只能拒绝。
+        if (CookieHandler.getDefault() != null) {
+            return@withContext fail("进程里装了 CookieHandler，远端图片可能带上会话 cookie，拒绝")
+        }
+
+        val cacheFile = diskCacheFile(context, uri)
+        // 长度比较写开而不是用 `in 1..MAX_BYTES.toLong()`：Int/Long 混写的区间在这里没有
+        // 可读性的收益，而 `Long <= Int` 是 Kotlin 允许的数值比较。
+        val cacheLength = cacheFile?.length() ?: 0L
+        if (cacheFile != null && cacheFile.isFile && cacheLength > 0 && cacheLength <= MAX_BYTES) {
+            val cached = runCatching { cacheFile.readBytes() }.getOrNull()
+            // `sniff` 不是可有可无的一步：缓存里那份如果被写坏/换掉，直接交给解码器会
+            // 变成一张**永远**画不出来的图（失败不进缓存，但缓存命中不会再出网）。
+            // 认得出是 pi 的五种格式之一才用它，否则当成未命中、重新取。
+            if (cached != null && cached.isNotEmpty() && sniff(cached) != null) {
+                // LRU：命中的这份变成最新，下次淘汰不会先丢它。
+                runCatching { cacheFile.setLastModified(System.currentTimeMillis()) }
+                return@withContext GuestImage(
+                    cached,
+                    mimeOf(cached, "", null),
+                    "远端缓存（$uri，${cached.size} 字节）",
+                )
+            }
+        }
+
+        val deadlineNanos = System.nanoTime() + TOTAL_TIMEOUT_MS * 1_000_000
+        val connection = (uri.toURL().openConnection() as HttpURLConnection).apply {
+            requestMethod = "GET"
+            connectTimeout = CONNECT_TIMEOUT_MS
+            readTimeout = READ_TIMEOUT_MS
+            // 默认就是 true，写出来是因为它决定了 http→https 这类跳转要不要跟：
+            // 平台不会把 https 重定向到 http，所以这里不需要额外判断。
+            instanceFollowRedirects = true
+            useCaches = false
+            // 故意不调 setRequestProperty：见类注释「取的是什么」。
+        }
+        val bytes = try {
+            val status = connection.responseCode
+            if (status !in 200..299) {
+                return@withContext fail("远端图片返回 HTTP $status：$uri")
+            }
+            // 声明的大小先挡一道：一个 500 MB 的响应不必先下载 8 MiB 才知道它太大。
+            val declared = connection.contentLengthLong
+            if (declared > MAX_BYTES) {
+                return@withContext fail("远端图片声明 $declared 字节，超过 ${MAX_BYTES / 1024 / 1024} MiB 上限")
+            }
+            readBounded(connection.inputStream, declared, deadlineNanos) ?: return@withContext null
+        } catch (cancel: CancellationException) {
+            // 与 `load` 里同一条规矩：取消照原样抛，别变成一条假的失败原因。
+            throw cancel
+        } catch (error: Exception) {
+            return@withContext fail("下载远端图片失败：${error::class.java.simpleName}: ${error.message}")
+        } finally {
+            connection.disconnect()
+        }
+
+        cacheFile?.let { file -> rememberOnDisk(file, bytes) }
+        GuestImage(bytes, mimeOf(bytes, "", null), "远端 $uri（${bytes.size} 字节）")
+    }
+
+    /**
+     * 按 [MAX_BYTES] 与 [deadlineNanos] 读一个响应体，超了就 `null`（原因写进 [lastFailure]）。
+     *
+     * 每读一块都查取消：节点离开组合后这次下载当场停。`declared` 只用来预分配缓冲区
+     * （-1 表示服务端没给长度），不参与判定——真话是实际读到的字节数。
+     */
+    private suspend fun readBounded(stream: InputStream, declared: Long, deadlineNanos: Long): ByteArray? {
+        val capacity = if (declared > 0 && declared <= MAX_BYTES) declared.toInt() else READ_CHUNK_BYTES
+        val out = ByteArrayOutputStream(capacity)
+        val buffer = ByteArray(READ_CHUNK_BYTES)
+        stream.use { input ->
+            while (true) {
+                currentCoroutineContext().ensureActive()
+                if (System.nanoTime() > deadlineNanos) {
+                    return fail("远端图片超过 ${TOTAL_TIMEOUT_MS / 1000} 秒预算")
+                }
+                val read = input.read(buffer)
+                if (read < 0) break
+                if (out.size() + read > MAX_BYTES) {
+                    return fail("远端图片超过 ${MAX_BYTES / 1024 / 1024} MiB 上限")
+                }
+                out.write(buffer, 0, read)
+            }
+        }
+        val bytes = out.toByteArray()
+        if (bytes.isEmpty()) return fail("远端图片是空响应")
+        return bytes
+    }
+
+    // ---------------------------------------------------- remote disk cache ----
+
+    /**
+     * 这份 URL 在磁盘缓存里的文件，目录不存在就建。
+     *
+     * 文件名是 URL 的摘要而不是 URL：URL 里有 `/`、`?`、`&`，还有长度；而摘要还顺手
+     * 避免了把"用户看了哪些 URL"明文留在文件名里。不带扩展名：`mimeOf` 先按魔数认，
+     * 认得出 pi 的五种格式，扩展名在这里没用，带上反而会让同一张图的两种拼法变成两个文件。
+     */
+    private fun diskCacheFile(context: Context, uri: URI): File? = runCatching {
+        val paths = PiPaths(
+            filesDir = context.filesDir,
+            nativeLibDir = File(context.applicationInfo.nativeLibraryDir),
+        )
+        val directory = File(paths.home, DISK_CACHE_DIR)
+        directory.mkdirs()
+        File(directory, digestOf(uri.toASCIIString()))
+    }.getOrNull()
+
+    /** URL 的 SHA-256 前 16 字节，URL-safe base64、不去掉也不用 padding（22 个字符）。 */
+    private fun digestOf(value: String): String = Base64.encodeToString(
+        MessageDigest.getInstance("SHA-256").digest(value.toByteArray(Charsets.UTF_8)),
+        0,
+        16,
+        Base64.NO_WRAP or Base64.URL_SAFE or Base64.NO_PADDING,
+    )
+
+    /**
+     * 把字节放进磁盘缓存，并把总大小压回 [MAX_DISK_BYTES] 以内。
+     *
+     * 先写一个 `.tmp` 再 rename，所以缓存目录里**只有完整的文件**——半份文件会被当成
+     * 命中，于是那张图永远解不出、又永远不出网（失败不进缓存，但缓存命中不再出网）。
+     * 临时名里带 `System.nanoTime()` 是因为同一个 URL 的第一帧可能有**两个**调用者
+     * （见类注释），共用一个 `.tmp` 会让两个 writer 互相截断。
+     *
+     * rename 失败就放弃这次缓存，**不做非原子写**：宁可不缓存，也不留一份可能是半份的
+     * 文件。整段 `runCatching`：**写失败不致命**——字节已经在内存里，图照画，这次的代价
+     * 只是下次还得再出一次网；一个只读的文件系统不该让正文图片消失。
+     */
+    private fun rememberOnDisk(file: File, bytes: ByteArray) = runCatching {
+        val temporary = File(file.parentFile, "${file.name}.${System.nanoTime()}.tmp")
+        temporary.writeBytes(bytes)
+        if (temporary.renameTo(file)) {
+            file.setLastModified(System.currentTimeMillis())
+        } else {
+            temporary.delete()
+        }
+        evict(file.parentFile)
+    }
+
+    /**
+     * 把缓存目录压回 [MAX_DISK_BYTES]：按 `lastModified` 从最旧的开始删。
+     *
+     * 只在**写入**时算一次，所以缓存命中是零额外成本；`lastModified` 由命中时的
+     * `setLastModified` 顶新，这就是 LRU 的全部实现。没有索引文件，也就没有
+     * "索引和文件对不上"这种状态。
+     */
+    private fun evict(directory: File?) {
+        val files = directory?.listFiles() ?: return
+        var total = files.sumOf { it.length() }
+        if (total <= MAX_DISK_BYTES) return
+        for (oldest in files.sortedBy { it.lastModified() }) {
+            if (total <= MAX_DISK_BYTES) break
+            total -= oldest.length()
+            oldest.delete()
+        }
+    }
+
     // ------------------------------------------------------- guest to host ----
 
     /**
-     * Every host file a guest-or-host spelling could mean, in priority order.
+     * 一个 guest（或宿主）拼法可能指的每一个宿主文件，按优先级排序。
      *
-     * The rules and their reasoning live in [GuestPathMapping]; this function only
-     * supplies the current install's roots and the two spellings of the link.
+     * 规则与理由在 [GuestPathMapping] 里；这里只负责提供这次安装的各个根，以及 link 的
+     * 两种拼法。
      */
     private fun hostCandidates(context: Context, path: String): List<File> {
         val paths = PiPaths(
@@ -230,12 +497,12 @@ internal object GuestImageBytes {
             workspaceHost = runCatching { PtyLauncher.workspaceHost(context).absolutePath }.getOrNull(),
             storage = Environment.getExternalStorageDirectory().absolutePath,
         )
-        // Percent-escapes survive the markdown parser, so both spellings are tried.
+        // 百分号转义会活着穿过 markdown 解析器，所以两种拼法都试。
         val spellings = listOf(path, runCatching { Uri.decode(path) }.getOrDefault(path)).distinct()
         return GuestPathMapping.candidates(spellings, roots).map { File(it) }
     }
 
-    /** `file:///a/b`, `file:/a/b` and `file://localhost/a/b`; a remote authority is refused. */
+    /** `file:///a/b`、`file:/a/b`、`file://localhost/a/b`；远端 authority 一律拒绝。 */
     private fun fileUriToPath(link: String): String? {
         val uri = runCatching { Uri.parse(link) }.getOrNull() ?: return null
         val scheme = uri.scheme?.lowercase()
@@ -248,9 +515,8 @@ internal object GuestImageBytes {
     // -------------------------------------------------------------- helpers ----
 
     /**
-     * Magic-byte sniffing first, then whatever the source declared, then the
-     * extension. pi's accepted set is jpg/png/gif/webp/bmp
-     * (`docs/pi-android-app-design.md:507`), so those are the signatures here.
+     * 先按魔数认，再认来源声明的类型，最后看扩展名。pi 认的集合是 jpg/png/gif/webp/bmp
+     * （`docs/pi-android-app-design.md:507`），所以这里就是这几个签名。
      */
     private fun mimeOf(bytes: ByteArray, declared: String, fileName: String?): String {
         sniff(bytes)?.let { return it }
@@ -287,7 +553,12 @@ internal object GuestImageBytes {
         else -> null
     }
 
-    private fun fail(reason: String): GuestImage? {
+    /**
+     * 记下原因并返回 `null`。泛型只为了让三个「读字节」的出口
+     * （[GuestImage]、[readBounded] 的 `ByteArray?`、以及内联在分支里的返回）共用同一处
+     * 「失败 = null + lastFailure」的规矩，而不是为每种类型各写一个函数。
+     */
+    private fun <T> fail(reason: String): T? {
         lastFailure = reason
         return null
     }

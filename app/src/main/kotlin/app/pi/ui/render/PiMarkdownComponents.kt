@@ -51,6 +51,9 @@ import com.mikepenz.markdown.compose.elements.MarkdownCodeBlock
 import com.mikepenz.markdown.compose.elements.MarkdownCodeFence
 import com.mikepenz.markdown.compose.elements.MarkdownImage
 import com.mikepenz.markdown.compose.elements.MarkdownInlineImage
+import com.mikepenz.markdown.compose.elements.MarkdownTable
+import com.mikepenz.markdown.compose.elements.MarkdownTableHeader
+import com.mikepenz.markdown.compose.elements.MarkdownTableRow
 import com.mikepenz.markdown.model.ImageTransformer
 import com.mikepenz.markdown.model.MarkdownTypography
 import com.mikepenz.markdown.model.NoOpImageTransformerImpl
@@ -97,10 +100,10 @@ internal val LocalPiImageTransformer = staticCompositionLocalOf<ImageTransformer
 }
 
 /**
- * The renderer's component set: pi's code-block chrome, pi's math, and the
- * image fallback.
+ * The renderer's component set: pi's code-block chrome, pi's math, the
+ * image fallback, and the one thing the library gets wrong about tables.
  *
- * Everything except those three keeps the library default, because the default
+ * Everything except those four keeps the library default, because the default
  * reads its colours and type from the [com.mikepenz.markdown.model.MarkdownColors]
  * and [com.mikepenz.markdown.model.MarkdownTypography] built in
  * `PiMarkdownTheme.kt` — which are pi's tokens. Overriding a component that
@@ -115,12 +118,17 @@ internal val LocalPiImageTransformer = staticCompositionLocalOf<ImageTransformer
  *
  * Images are the third, and they take **two** slots, because the library splits the
  * surface: a block image reaches `image` ([PiImagePlaceholder]), one written inside a
- * paragraph reaches `inlineImage` ([PiInlineImage]). Real bytes now arrive through
+ * paragraph reaches `inlineImage` ([PiInlineImage]). Real bytes arrive through
  * `bridge/PiGuestImageTransformer.kt` (installed by `PiMarkdown.kt`), so both components
  * draw them and both keep saying "an image was here, and here is where it pointed" when
  * the link cannot be resolved — the library's own inline default would draw nothing at
  * all there. See each component's comment for why the decision is made on
  * `transform`'s *result* rather than on the transformer's type.
+ *
+ * Tables are the fourth, and they claim the `table` slot for exactly one reason —
+ * the library gives every cell one line ([PiTable]). Everything else about a
+ * table (the parse, the fixed column width, the horizontal scroll) stays the
+ * library's.
  *
  * **Not composable, on purpose.** `markdownComponents(...)` is a plain function
  * in the library (`.../compose/components/MarkdownComponents.kt`) whose
@@ -137,6 +145,7 @@ internal fun piMarkdownComponents(): MarkdownComponents = markdownComponents(
     codeBlock = { model -> PiCodeBlock(model) },
     image = { model -> PiImagePlaceholder(model) },
     inlineImage = { model -> PiInlineImage(model) },
+    table = { model -> PiTable(model) },
     custom = { type, model -> piMathComponent(type, model) },
 )
 
@@ -229,8 +238,9 @@ private fun PiFormulaText(model: MarkdownComponentModel, block: Boolean) {
  * **Where the bytes come from now.** `bridge/PiGuestImageTransformer.kt` implements the
  * renderer's image seam (`ImageTransformer.transform(link) -> ImageData?`, upstream
  * `model/ImageTransformer.kt:16-29`) on top of `bridge/GuestImageBytes.kt`, which
- * decodes `data:` URIs and maps `file:`/bare paths from the guest's spelling to the host
- * file. `PiMarkdown.kt` installs it through [LocalPiImageTransformer] *and* through
+ * decodes `data:` URIs, maps `file:`/bare paths from the guest's spelling to the host
+ * file, and fetches `http(s)` images into a bounded disk cache.
+ * `PiMarkdown.kt` installs it through [LocalPiImageTransformer] *and* through
  * `Markdown(imageTransformer = …)`, so both this component and the library's own image
  * components see it.
  *
@@ -239,10 +249,10 @@ private fun PiFormulaText(model: MarkdownComponentModel, block: Boolean) {
  * `LocalImageTransformer.current.transform(link)?.let { … }`
  * (`.../compose/elements/MarkdownImage.kt:17-29`), so a `null` means the image vanishes
  * from the transcript with no trace. Asking *first* and keeping the alt + source text
- * for a `null` is what keeps a link that cannot be resolved — `http(s)` is refused by
- * design (`bridge/GuestImageBytes.kt`, "What it deliberately does not resolve"), a file
- * may be missing, a body may exceed the size cap, and the first frame of any real load
- * is still empty — strictly better than the no-op default's silence.
+ * for a `null` is what keeps a link that cannot be resolved — a file that is missing, a
+ * body over the size cap, a remote fetch that is offline or times out
+ * (`bridge/GuestImageBytes.kt`), and the first frame of any real load, which is still
+ * empty — strictly better than the no-op default's silence.
  *
  * `MarkdownImage` calls `transform` again; that second call is a cache read
  * (`PiGuestImageTransformer.transform` seeds `produceState` from its bitmap cache), so
@@ -358,6 +368,68 @@ private fun PiImageFallback(
         )
     }
 }
+
+/**
+ * GFM 表格：解析、列宽、横向滚动都留给库，我们只解开它给每个单元格的**一行**限制。
+ *
+ * ## 为什么要覆盖这个槽
+ *
+ * 库的 `MarkdownComponents.table` 默认是
+ * `MarkdownTable(it.content, it.node, style = it.typography.table)`
+ * （`compose/components/MarkdownComponents.kt:216-217`，0.45.0 `core` artifact 源码），
+ * 而 `MarkdownTable` 给单元格的默认值写死成一行：
+ * `MarkdownTableHeader(maxLines: Int = 1, overflow = TextOverflow.Ellipsis, …)`
+ * 与 `MarkdownTableRow(maxLines: Int = 1, …)`（`compose/elements/MarkdownTable.kt:130`、
+ * `:172`），`MarkdownTableBasicText` 自己也是 `maxLines: Int = 1`（同文件 `:222`）。
+ * `MarkdownTable(content, node, style, annotatorSettings, headerBlock, rowBlock)` **没有**
+ * `maxLines` 参数，所以只能从 `headerBlock` / `rowBlock` 两个槽换掉它。
+ *
+ * 用户看到的是「表格的确很多显示不全，只能显示前几行字，每一格里」：每格只画一行、
+ * 其余用「…」截掉，而且没有任何交互能看到被截的部分（表头与数据行都是这样）。
+ *
+ * ## 不做什么，以及为什么
+ *
+ * **不自己写表格。** 横向滚动库已经有了：`MarkdownTable` 里
+ * `val scrollable = maxWidth <= tableWidth`，为真时
+ * `Modifier.horizontalScroll(rememberScrollState()).requiredWidth(tableWidth)`
+ * （`MarkdownTable.kt:99-103`），与 `PiCodeSurface` 给代码块用的
+ * `.horizontalScroll(rememberScrollState())` 是同一个惯用法；列宽是
+ * `columnsCount * LocalMarkdownDimens.current.tableCellWidth`
+ * （`MarkdownTable.kt:83`、`:88`；我们设的 160 dp），不随屏幕压缩。所以这里**不动横向**，
+ * 也不动 `PiMarkdownDimens`：`tableCellWidth = 160.dp` 是库默认值、不是用户报的症状，
+ * 没有证据就不改数字。
+ *
+ * **不加上限高度、不加内部纵向滚动。** 单元格现在会折行，行数多表格就高，由外层列表
+ * 滚动接管——和代码块一样（`PiCodeSurface` 对 200 行的围栏也没有高度上限）。
+ * 加一个 `heightIn(max = …)` + 内部 `verticalScroll` 会把超限的行藏进一个要用户自己
+ * 发现的内层滚动条里，那正是这次报的「显示不全」换了个方向。
+ *
+ * `maxLines = Int.MAX_VALUE` 就是「不限行」的写法，`overflow` 保持库的 `Ellipsis`：
+ * 达不到，所以不改；留着只是万一以后把 [TABLE_MAX_LINES] 调小，截断标记仍在。
+ * 表头与数据行分成两个 lambda，是因为库的签名就是这样，两个都只在这里出现一次。
+ */
+@Composable
+private fun PiTable(model: MarkdownComponentModel) {
+    MarkdownTable(
+        content = model.content,
+        node = model.node,
+        style = model.typography.table,
+        headerBlock = { content, header, tableWidth, style ->
+            MarkdownTableHeader(content, header, tableWidth, style, maxLines = TABLE_MAX_LINES)
+        },
+        rowBlock = { content, row, tableWidth, style ->
+            MarkdownTableRow(content, row, tableWidth, style, maxLines = TABLE_MAX_LINES)
+        },
+    )
+}
+
+/**
+ * 一格最多画几行。`Int.MAX_VALUE` 是 Compose `BasicText` 自己的「不限」写法
+ * （库 `.../elements/material/TextWrapper.kt` 的 `maxLines: Int = Int.MAX_VALUE`
+ * 就是默认值），所以这里不是发明一个数，而是**回到库本来的默认值**、只去掉表格路径上
+ * 那个 1。
+ */
+private const val TABLE_MAX_LINES = Int.MAX_VALUE
 
 @Composable
 private fun PiCodeFence(model: MarkdownComponentModel) {
