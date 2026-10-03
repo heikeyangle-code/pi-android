@@ -4328,14 +4328,12 @@ private fun readBounded(input: java.io.InputStream, limit: Int): ByteArray {
  *     的那一张）。解码期先按整倍数丢掉一半像素，等于让第 2 轮之后的每一次收缩都从比 pi 更少的
  *     像素重采样 —— 尺寸对了，细节比 pi 少。省内存的收益不值得在这里制造一个内容层面的差异
  *     （峰值内存是设备问题，列在变更报告里）。
- *  3. **Alpha, and a PNG source, pick the format**
- *     (`AttachmentBudget.encodings`): PNG first for a picture whose decoded bitmap can
- *     carry alpha **or** whose source MIME is `image/png`; JPEG otherwise. `Bitmap.hasAlpha()`
- *     is the alpha test, and on a decoded `ARGB_8888` it reports whether the *source* had
- *     an alpha channel, which is why an opaque JPEG does not get encoded as a PNG. pi
- *     pushes that PNG candidate for every source that needs a re-encode; asking for it only
- *     where it can win is the app's one deliberate difference — `AttachmentBudget`'s class
- *     KDoc has the reasoning and the residual difference.
+ *  3. **候选顺序与源无关**（`AttachmentBudget.encodings`）：pi 对**每一个**进循环的源都先推
+ *     PNG 候选，装不下再走 JPEG 阶梯（`image-resize-core.ts:112-114`、`:122`）—— 包括一张
+ *     不透明的相机 JPEG。这里照抄，不按 MIME 也不按 `Bitmap.hasAlpha()` 分流：旧的「只在
+ *     PNG 源或带 alpha 时才试 PNG」把截图上的字压糊了（同一张 2400×600 的图形，PNG 1 184 593 B
+ *     对 JPEG80 134 870 B）。两笔随之而来的价钱（每次重编码多一次全尺寸 PNG 编码；装得下时
+ *     内联体积大几倍，于是同一条消息装得下的图变少）写在 `AttachmentBudget` 的类 KDoc 里。
  *
  * Returns null when the bytes do not decode, when the orientation copy cannot be allocated,
  * or when even 1×1 cannot be encoded under [limits]. Which of the three happened is not
@@ -4395,10 +4393,10 @@ private fun compressAttachment(
         return null
     }
     try {
-        // `mime` 是*源*的类型，它决定候选顺序：PNG 源（或任何解码后位图带 alpha 的源）拿到
-        // pi 的 PNG 候选在前，其余从档位的第一个 JPEG 质量开始。见
-        // `AttachmentBudget.pngFirst` 与 `jpegQualities`。
-        for (attempt in AttachmentBudget.attemptPlan(mime, source.hasAlpha(), width, height, limits)) {
+        // 候选顺序不看源：pi 对每一个进循环的源都先推 PNG，装不下再走 JPEG 阶梯
+        // （`AttachmentBudget.encodings`，两笔价钱写在那里的类 KDoc 里）。所以这里不再传 MIME，
+        // 也不再问 `source.hasAlpha()` —— 解码配置仍是 ARGB_8888，那是 PNG 编码要保留 alpha。
+        for (attempt in AttachmentBudget.attemptPlan(width, height, limits)) {
             val scaled = scaleForAttachment(oriented, attempt.width, attempt.height) ?: continue
             try {
                 val encoded = encodeForAttachment(scaled, attempt.encoding) ?: continue
@@ -4423,10 +4421,6 @@ private fun compressAttachment(
  * `filter = false` 不是性能选择：那张映射是**整数到整数的置换**，重采样（`filter = true`）
  * 只会把每个像素和它邻居插在一起，把一张无损的旋转弄成一张糊的旋转。方向为 1（含「读不出
  * 方向」）时返回 `source` 本身，不复制 —— 绝大多数照片走这条，一次多余的位图分配都不该有。
- *
- * `hasAlpha` 的判断留在调用方、并且只看 `source`：置换不改 alpha（像素带着自己的 alpha 一起
- * 搬走），但 `createBitmap` 会按新配置重设那个标志位，从结果位图上再问一次就不再是「源有没有
- * alpha 通道」了。
  *
  * 返回 null 只可能是位图分配失败（OOM）；调用方按「压不出来」处理。
  */

@@ -31,23 +31,26 @@ import app.pi.rpc.PiResponses
  *     shrink both axes by three quarters ([SHRINK_NUMERATOR]/[SHRINK_DENOMINATOR],
  *     `:146-150`) and try again, down to 1×1.
  *
- * The candidate order at one size is pi's: PNG first, then JPEG at
- * [PI_JPEG_QUALITIES] (`:112-114`, `:122`). **One deliberate difference**, and only one:
- * pi pushes that PNG candidate for **every** source that reaches the resize loop,
- * including an opaque camera JPEG, while [pngFirst] asks for it only when the source MIME
- * is `image/png` **or** the decoded bitmap reports alpha.
+ * The candidate order at one size is pi's, for **every** source that reaches the loop: PNG
+ * first, then JPEG at [PI_JPEG_QUALITIES] (`:112-114`, `:122`). There is no exception for an
+ * opaque camera JPEG — pi pushes that PNG candidate unconditionally and the App now does the
+ * same.
  *
- * The reason is Android's encoder: a PNG encode of a 2000×2000 photo is both slow and
- * larger than the JPEG the loop would fall through to, so paying it unconditionally costs
- * one full-size encode per picked photo to almost never win. The residual, user-visible
- * difference is therefore exactly this: an **opaque, non-PNG source that needs a
- * re-encode** — a camera JPEG, a HEIC or BMP or WebP that pi would have converted to PNG
- * first (`image-process.ts:49-65`) — is offered the JPEG ladder straight away, so the app
- * may send a JPEG where pi would have sent a PNG. For a photograph that is a difference
- * in name only: it is the one class that could not have benefited, because the PNG of it
- * is larger. Fast path 1 is untouched by this: a PNG/JPEG/GIF/WebP already within both
- * limits is still forwarded **byte for byte**, so an opaque PNG under the limits is still
- * sent as the original PNG.
+ * **这里曾经是 App 的「唯一刻意差异」，现在已经没有了。** 旧实现在「源是 `image/png`」或
+ * 「解码后的位图带 alpha」时才推 PNG，理由是 Android 编码一张 2000×2000 的 PNG 又慢又大，
+ * 为一张照片付一次全尺寸 PNG 编码几乎永远不划算。那个理由对**照片**成立，对**图形**是错的：
+ * 同一张 2400×600 的图形，pi 送 1 184 593 B 的 PNG，App 送 134 870 B 的 JPEG80 —— 体积小
+ * 8.8×，但**有损**，截图上的字会糊。用户看得见的那一半（字糊了）比省下的体积重要，所以顺序
+ * 与 pi 一致。
+ *
+ * **代价（明写，两笔）。** ① 每一张需要重编码的图现在都多一次**全尺寸 PNG 编码**，即使它注定
+ * 装不下 —— 而 PNG 候选是**第一个**被尝试的，所以这一笔是每一次重编码都要先付的。② 装得下
+ * 的时候内联体积会比 JPEG 那条路大得多（上面那张是 8.8×），于是同一条消息能装下的图**变少**：
+ * [MESSAGE_BASE64_CHARS] 是按记录长度算的，不会因为换成 PNG 而变大。两笔价钱都是照抄 pi 的
+ * 结果，不是新引入的缺陷。
+ *
+ * 快速路径不受影响：两个限制都过得了的图仍然**逐字节**原样转发（不重编码），所以一张上限内的
+ * 不透明 PNG 还是那张原 PNG。
  *
  * `maxBytes` is 4.5 MB of **base64 characters** — `4.5 * 1024 * 1024`, compared against
  * the encoded string's length, not the picture's byte count (`:22`, `:129`) — and the
@@ -378,32 +381,17 @@ internal object AttachmentBudget {
         if (axis <= 1) 1 else maxOf(1, axis * SHRINK_NUMERATOR / SHRINK_DENOMINATOR)
 
     /**
-     * Whether this source gets pi's PNG candidate before the JPEG ladder.
+     * The candidate encodings at one size, in pi's order (`image-resize-core.ts:112-122`):
+     * **PNG first for every source**, then JPEG at each quality step of [jpegQualities] for
+     * the profile's first quality (pi's default 80 unless a model published its own).
      *
-     * `true` for a PNG source (any variant — `image/png` is what pi's own conversion
-     * emits, `image-process.ts:56-60`) and for anything whose decoded bitmap carries
-     * alpha, which is the only case where a JPEG re-encode would lose information. `false`
-     * for every other source, including a camera JPEG: see the class KDoc for why that is
-     * the app's one deliberate difference from pi and what it costs the user.
-     *
-     * The MIME is reduced the way pi reduces it (`baseMimeType`, `image-process.ts:29-31`):
-     * everything from the first `;`, trimmed and lower-cased, so `image/png; charset=binary`
-     * qualifies.
+     * pi 对每一个进循环的源都先推 PNG 候选，不看 MIME、也不看位图有没有 alpha；这里照抄，
+     * 类 KDoc 写了随之而来的两笔体积/时间代价。
      */
-    fun pngFirst(sourceMime: String, hasAlpha: Boolean): Boolean =
-        hasAlpha || baseMimeType(sourceMime) == "image/png"
-
-    /**
-     * The candidate encodings at one size, in pi's order — PNG first when [pngFirst], then
-     * JPEG at every quality step of [jpegQualities] for the profile's first quality (pi's
-     * default 80 unless a model published its own). See the class KDoc for the one
-     * deliberate difference from pi (PNG for a PNG source or an alpha-carrying bitmap, not
-     * for every source).
-     */
-    fun encodings(sourceMime: String, hasAlpha: Boolean, jpegQuality: Int = PI_JPEG_QUALITY): List<Encoding> {
+    fun encodings(jpegQuality: Int = PI_JPEG_QUALITY): List<Encoding> {
         val qualities = jpegQualities(jpegQuality)
         val out = ArrayList<Encoding>(qualities.size + 1)
-        if (pngFirst(sourceMime, hasAlpha)) out += Encoding.Png
+        out += Encoding.Png
         for (quality in qualities) out += Encoding.Jpeg(quality)
         return out
     }
@@ -423,15 +411,13 @@ internal object AttachmentBudget {
      * fast path and sends the original bytes.
      */
     fun attemptPlan(
-        sourceMime: String,
-        hasAlpha: Boolean,
         width: Int,
         height: Int,
         limits: Limits = PI_DEFAULT_LIMITS,
     ): Sequence<Attempt> = sequence {
         var target = initialTarget(width, height, limits)
         while (true) {
-            for (encoding in encodings(sourceMime, hasAlpha, limits.jpegQuality)) {
+            for (encoding in encodings(limits.jpegQuality)) {
                 yield(Attempt(target.width, target.height, encoding))
             }
             if (target.width == 1 && target.height == 1) break
