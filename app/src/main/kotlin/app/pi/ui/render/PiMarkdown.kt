@@ -161,6 +161,12 @@ internal fun PiMarkdownText(
     val prepared = remember(markdown) { PiLatex.prepare(markdown) }
     val content = prepared.text
     val hasGrid = prepared.hasDisplayGrid
+    // 「这条消息里有没有可能出现裸 HTML」—— 就是一次 `contains('<')`，扫一遍字符串（一次
+    // 组合，不是每帧）。这个布尔值买到的是**库那行判定回到 `annotate == null` 的短路**：
+    // 没有 `<` 的消息根本不装钩子，`PiHtml` 的纯函数、trim、块级切分也全都不会被调到。
+    // 装与不装的差别只有一次虚调用 + 一次 8 字节比较，但用户要的是"代价最小"，而这条
+    // 代价是零 —— 一个 `<` 都不可能被漏掉（HTML 标签必然以它开头）。
+    val hasHtmlTagStart = markdown.indexOf('<') >= 0
     // F32 / RR-P9: everything the five markdown objects depend on is read here,
     // once per composition, and the objects themselves are built by the pure
     // functions in `PiMarkdownTheme.kt` — the library's own builders are
@@ -328,13 +334,15 @@ internal fun PiMarkdownText(
             // `annotate` 是行内裸 HTML 的认领钩子（`piInlineHtmlAnnotate` 的注释里有它
             // 为什么只能落在这一层、以及它的代价）：库拿它当"这个 child 我处理了吗"，
             // 返回 `false` 就原样走库自己的 switch，所以只有 `HTML_TAG` 会被认领。
-            // 两个参数共用同一个 `remember`：`markdownAnnotator` 造出来的
+            // **而且只在源文本里真的有 `<` 时才装**（`hasHtmlTagStart`）—— 没装时库那行
+            // 判定是 `annotate == null` 的短路，这类消息的 annotator 路径与这次改动之前
+            // 逐字节相同。两个参数共用同一个 `remember`：`markdownAnnotator` 造出来的
             // `DefaultMarkdownAnnotator` 按 `config` + `annotate` 判等，而这两者都是稳定
-            // 的（`hasGrid` 是这次渲染的一个常量，lambda 是顶层 `val`）。
-            annotator = remember(hasGrid) {
+            // 的（两个布尔是这次渲染的常量，lambda 是顶层 `val`）。
+            annotator = remember(hasGrid, hasHtmlTagStart) {
                 markdownAnnotator(
                     config = markdownAnnotatorConfig(eolAsNewLine = hasGrid),
-                    annotate = piInlineHtmlAnnotate,
+                    annotate = if (hasHtmlTagStart) piInlineHtmlAnnotate else null,
                 )
             },
             // Two library defaults this renderer must not inherit. Both are about the
