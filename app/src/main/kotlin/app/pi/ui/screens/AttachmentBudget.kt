@@ -18,11 +18,20 @@ import app.pi.rpc.PiResponses
  *
  * ## pi's own limits, transcribed
  *
- * pi normalizes every inline image through `resizeImageInProcess`
- * (`packages/coding-agent/src/utils/image-resize-core.ts`, pinned engine 0.86.1; the
- * `:82-93`/`:95-106`/`:112-114`/`:122`/`:146-150` ranges below were re-checked against
- * the 0.86.1 source, where they are unchanged):
+ * pi normalizes every inline image through `resizeImage()`
+ * (`packages/coding-agent/src/utils/image-resize.ts:85-110`)，`_normalizePromptImages` 在
+ * `core/agent-session.ts:1890-1910` 每一轮 prompt 调它一次（档案取自 `:1900`）。`resizeImage()`
+ * 把活交给 worker 线程里的 `resizeImageInProcess`，worker 加载不起来时**回落**到同进程
+ * （`:105-109`）—— 所以两处是同一个算法，本文件写的是它。以下行号都是
+ * `packages/coding-agent/src/utils/image-resize-core.ts` 在 pin 住的引擎 **1.0.1**
+ * （`tools/pi-engine.lock.json`）里的位置，
+ * `:74-79`/`:82-93`/`:95-106`/`:112-114`/`:122`/`:146-150` 逐条对过 1.0.1 的源码：
  *
+ *  0. **EXIF 方向先摆正**（`:74-76` → `exif-orientation.ts`）：`originalWidth`/`originalHeight`
+ *     取自摆正**之后**的图（`:78-79`），所以第 1 步的判断与第 2 步的尺寸算的都是摆正后的长宽。
+ *     这是整条链上唯一会产生**内容层面**分歧的一步：App 侧由 [PiExifOrientation] 读方向、
+ *     `ChatScreen.applyOrientation` 施加同一个置换；少了它，竖拍的照片（像素 4032×3024 +
+ *     EXIF orientation 6）会被算成 2000×1500 的横图 —— 尺寸数字自洽，方向是错的。
  *  1. if the picture is already within `maxWidth`/`maxHeight` **and** its
  *     `ceil(bytes / 3) * 4` base64 is under `maxBytes`, pi sends the original bytes
  *     unchanged — no re-encode at all (`:82-93`);
@@ -30,6 +39,10 @@ import app.pi.rpc.PiResponses
  *     encode at the current size and take the first candidate under `maxBytes`, else
  *     shrink both axes by three quarters ([SHRINK_NUMERATOR]/[SHRINK_DENOMINATOR],
  *     `:146-150`) and try again, down to 1×1.
+ *
+ * 这三步有个前置开关：`images.autoResize: false` 会让 pi **跳过 1 和 2**
+ * （`image-process.ts:86-118`，归一化那一步照跑），App 侧同样
+ * （`ChatScreen.withAutoResizeOff`）—— 那时本文件的 [attemptPlan] 根本不参与。
  *
  * The candidate order at one size is pi's, for **every** source that reaches the loop: PNG
  * first, then JPEG at [PI_JPEG_QUALITIES] (`:112-114`, `:122`). There is no exception for an
@@ -131,7 +144,7 @@ internal object AttachmentBudget {
         val jpegQuality: Int,
     )
 
-    /** pi's own defaults (`image-resize-core.ts:6-9`): the fallback for every field. */
+    /** pi's own defaults (`image-resize-core.ts:24-29`): the fallback for every field. */
     val PI_DEFAULT_LIMITS = Limits(
         maxWidth = PI_MAX_DIMENSION,
         maxHeight = PI_MAX_DIMENSION,
@@ -349,7 +362,8 @@ internal object AttachmentBudget {
      * second clamp can round the aspect ratio once.
      *
      * The two limits are separate because pi's are: `maxWidth` and `maxHeight` are
-     * independent (`image-resize-core.ts:6-7`), they are equal only in pi's own default
+     * independent (`image-resize-core.ts:5-6`, the two optional fields of
+     * `ImageResizeOptions`), they are equal only in pi's own default
      * profile, and a model that publishes `4000×2000` really does allow a wide picture to
      * keep its width. [PI_DEFAULT_LIMITS] is what the callers that have no model profile
      * get, so the default path is byte-for-byte the old one.

@@ -2,6 +2,10 @@ package app.pi.ui.screens
 
 import java.io.File
 
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+
 // Bare-JVM harness for the composer's image budget. Registered in
 // `tools/run-app-pure-checks.sh` as `image-attachment-budget`.
 //
@@ -80,6 +84,12 @@ private fun checkTrue(name: String, ok: Boolean, detail: String = "") {
 }
 
 fun main() {
+    // `AttachmentBudget.kt` 的源文本，本节与第 2 节两处要用（版本标签、以及「刻意差异」真的删掉了）。
+    // 与 `chatText` 同法：`pi.repo.root` 由 `tools/run-app-pure-checks.sh` 传给每个 harness。
+    val budgetText = System.getProperty("pi.repo.root")
+        ?.let { File(it, "app/src/main/kotlin/app/pi/ui/screens/AttachmentBudget.kt") }
+        ?.takeIf { it.isFile }?.readText().orEmpty()
+
     // ---------------------------------------- 1. pi's limits, transcribed literally
     check("pi's longest edge", AttachmentBudget.PI_MAX_DIMENSION, 2000)
     check("pi's base64 ceiling is 4.5 MiB", AttachmentBudget.PI_MAX_BASE64_CHARS, 4_718_592)
@@ -90,6 +100,27 @@ fun main() {
         listOf(80, 85, 70, 55, 40),
     )
     check("pi's shrink factor", AttachmentBudget.SHRINK_NUMERATOR to AttachmentBudget.SHRINK_DENOMINATOR, 3 to 4)
+
+    // --- 1b. KDoc 里那个版本号必须跟着 pin。
+    //
+    // `AttachmentBudget` 的类 KDoc 写「pin 住的引擎 **1.0.1**」，而 `tools/pi-engine.lock.json`
+    // 早就换成别的版本时，这一整套「逐值钉死 pi」的断言就变成对一个**已经不存在的 pi** 的主张 ——
+    // 那正是 0.86.1 → 1.0.1 那次漏掉的东西（`PiLatexCheck` 用「夹具版本 vs lock」钉同一件事）。
+    // 版本从 lock 里**读**，不写死在这里：写死的话它自己也会过期。
+    val lockText = System.getProperty("pi.repo.root")
+        ?.let { File(it, "tools/pi-engine.lock.json") }
+        ?.takeIf { it.isFile }?.readText().orEmpty()
+    val pinnedVersion = runCatching {
+        Json.parseToJsonElement(lockText).jsonObject["packages"]?.jsonObject
+            ?.get("node_modules/@earendil-works/pi-coding-agent")?.jsonObject
+            ?.get("version")?.jsonPrimitive?.content
+    }.getOrNull()
+    checkTrue("tools/pi-engine.lock.json 里的 pi-coding-agent 版本读得到", !pinnedVersion.isNullOrBlank(), "pinned=$pinnedVersion")
+    checkTrue(
+        "AttachmentBudget 的 KDoc 标的正是 lock 里那个版本",
+        pinnedVersion != null && budgetText.contains("引擎 **$pinnedVersion**"),
+        "pinned=$pinnedVersion kdocHas=${pinnedVersion != null && budgetText.contains(pinnedVersion.orEmpty())}",
+    )
 
     // ------------------------------------------------ 2. pi's base64 arithmetic
     check("base64 of 0 bytes", AttachmentBudget.base64Chars(0), 0)
@@ -143,11 +174,8 @@ fun main() {
         },
         listOf(listOf(42, 85, 70, 55, 40), listOf(80, 85, 70, 55, 40), listOf(70, 85, 55, 40)),
     )
-    // 「唯一刻意差异」必须真的不在代码里了 —— 只改注释不删代码等于差异还在，所以这两条读源文本。
-    // （`ChatScreen` 那条分流调用点由下面的 (e) 节按新形状钉住。）
-    val budgetText = System.getProperty("pi.repo.root")
-        ?.let { File(it, "app/src/main/kotlin/app/pi/ui/screens/AttachmentBudget.kt") }
-        ?.takeIf { it.isFile }?.readText().orEmpty()
+    // 「唯一刻意差异」必须真的不在代码里了 —— 只改注释不删代码等于差异还在，所以这两条读源文本
+    // （`budgetText` 在 main 开头读了一次）。`ChatScreen` 那条分流调用点由下面的 (e) 节按新形状钉住。
     check("AttachmentBudget.kt 读得到（源文本断言的前提）", budgetText.isNotEmpty(), true)
     check("pngFirst 已经不在了", budgetText.contains("pngFirst"), false)
     check("encodings/attemptPlan 不再按源分流（没有 hasAlpha 参数）", budgetText.contains("hasAlpha"), false)
