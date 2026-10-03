@@ -218,8 +218,14 @@ fun ProjectScreen(
     // 于是两半对不上：列得出来、打不开、也标不上。
     //
     // 所以这一屏现在是一台文件管理器：根是 guest 的 `/`，初始停在当前工作区（第一屏看到的
-    // 和以前一样），往上走几层就到根。**写仍然只允许在 guest 的 `/workspace` 里**
-    // （[editableRoot]）—— 这一屏的职责是「看清楚」，编辑边界与引擎、终端保持一致。
+    // 和以前一样），往上走几层就到根。**能看的地方就能改** —— 用户裁定「全都一样，全都能看
+    // 能编辑」：多一层「这里只读、那里能写」的规则，就会多一处「为什么这个点不动」的解释，
+    // 而 pi 自己（终端里）本来就没有这层边界。
+    //
+    // 一个诚实的提醒，写在这里而不是变成一条限制：`/opt/pi`、`/opt/node`、`/usr`、`/etc`
+    // 这些地方的文件是**载荷装的**，每份载荷带一份自己的路径清单；下次升级会覆盖同名文件、
+    // 并剪掉旧版多出来的那些。手改它们不会被拦，但升级之后会变回去 —— 要长期留住的东西放
+    // `/workspace` 里（那份清单不包含它）。
     val paths = remember(context) {
         PiPaths(
             filesDir = context.filesDir,
@@ -227,7 +233,6 @@ fun ProjectScreen(
         )
     }
     val guestRootfs = remember(paths) { paths.rootfs }
-    val editableRoot = remember(paths) { paths.workspaceBase }
     // 根到当前工作区的那几段：`workspace / pi / workspaces / workspace-1`。
     //
     // **两边都取规范路径再相减**：`filesDir` 的两个拼法（`/data/user/0/…` 与 `/data/data/…`）
@@ -244,12 +249,6 @@ fun ProjectScreen(
     var listingError by remember { mutableStateOf<WorkspaceOpen.Failed?>(null) }
     val currentDir = remember(guestRootfs, crumbs) {
         crumbs.fold(guestRootfs) { dir, segment -> File(dir, segment) }
-    }
-    // 这一层能不能改：只有 guest 的 `/workspace` 里可以。判据是**规范路径**，不是字符串前缀。
-    val writableHere = remember(editableRoot, currentDir) {
-        val root = editableRoot.canonicalFile
-        val here = runCatching { currentDir.canonicalFile }.getOrNull()
-        here != null && (here.path == root.path || here.path.startsWith(root.path + File.separator))
     }
     LaunchedEffect(refreshTick, currentDir.absolutePath) {
         listing = null
@@ -424,18 +423,8 @@ fun ProjectScreen(
         startInEdit = startInEdit,
     )
 
-    /**
-     * 打开一个文件。[editable] 由调用方按「这一层能不能改」给（[writableHere]）：浏览的根是
-     * guest 的 `/`，但写边界仍然只有 guest 的 `/workspace`。默认 true 是给 ③ 那条路留的 ——
-     * 它解析出来的永远是工作区相对路径，本来就落在边界里。
-     */
-    fun openRelative(
-        path: String,
-        file: File,
-        startInEdit: Boolean = false,
-        editable: Boolean = true,
-    ) {
-        viewer = targetFor(path, file, editable = editable, startInEdit = startInEdit)
+    fun openRelative(path: String, file: File, startInEdit: Boolean = false) {
+        viewer = targetFor(path, file, editable = true, startInEdit = startInEdit)
     }
 
     /**
@@ -823,10 +812,7 @@ fun ProjectScreen(
                     WsSectionHeader(
                         label = "全部文件",
                         count = if (listingError != null) null else "${listing?.size ?: 0} 项",
-                        aside = if (listingError != null || !writableHere) {
-                            // 只读层（`/` 之下、guest 的 `/workspace` 之外）不给「新建」：
-                            // 浏览的根是 guest 的 `/`，写边界仍然只有 `/workspace`。少一个能按
-                            // 却会失败的按钮，比按下去再报错好。
+                        aside = if (listingError != null) {
                             null
                         } else {
                             // 稿子这一颗是**无描边无底的 accent 文本 + 13 的加号**
@@ -957,10 +943,7 @@ fun ProjectScreen(
                                         if (entry.isDirectory) {
                                             crumbs = crumbs + entry.name
                                         } else {
-                                            val file = File(currentDir, entry.name)
-                                            // 只读层里打开的文件不给编辑（viewer 的「编辑」
-                                            // 按钮与保存一起关掉），边界与上面那颗「新建」一致。
-                                            openRelative(entry.path, file, editable = writableHere)
+                                            openRelative(entry.path, File(currentDir, entry.name))
                                         }
                                     },
                                     onMenu = {
@@ -1289,20 +1272,16 @@ fun ProjectScreen(
 
     // ------------------------------------------------------------ 浮层：行尾 ⋮ 菜单
     menuFor?.let { target ->
-        // ③ 那几行是 pi 在它自己的 cwd 里写的（`resolveSession` 优先按工作区相对解析），所以它们的菜单永远可改；
-        // ④ 的行要看**它所在那一层**——菜单可能是在只读层里点开的。
-        val menuEditable = target.fromSession || writableHere
         WorkspaceMenuSheet(
             target = target,
-            editable = menuEditable,
             onClose = { menuFor = null },
             onOpen = {
                 menuFor = null
-                openRelative(target.path, target.file, editable = menuEditable)
+                openRelative(target.path, target.file)
             },
             onEdit = {
                 menuFor = null
-                openRelative(target.path, target.file, startInEdit = true, editable = menuEditable)
+                openRelative(target.path, target.file, startInEdit = true)
             },
             onEnter = {
                 menuFor = null
@@ -2584,12 +2563,6 @@ private fun WorkspaceMenuSheet(
     onDelete: () -> Unit,
     onCopyPath: () -> Unit,
     onLocateInChat: () -> Unit,
-    /**
-     * 这一层能不能改（[writableHere]）。只读层里不摆「编辑 / 重命名 / 删除」——浏览的根是
-     * guest 的 `/`，写边界只有 guest 的 `/workspace`；一个按下去只会失败的菜单项比没有更糟。
-     * 「打开 / 进入 / 复制路径 / 看它在对话里的那一步」照旧。
-     */
-    editable: Boolean,
 ) {
     WsSheet(
         title = WorkspaceFiles.middleEllipsis(target.file.name, MENU_TITLE_MAX_CHARS),
@@ -2599,18 +2572,14 @@ private fun WorkspaceMenuSheet(
     ) {
         if (target.isDirectory) {
             MenuAction("进入", onEnter)
-            if (editable) {
-                MenuAction("重命名", onRename)
-                MenuAction("删除", onDelete, tone = PiTheme.palette.error)
-            }
+            MenuAction("重命名", onRename)
+            MenuAction("删除", onDelete, tone = PiTheme.palette.error)
             MenuAction("复制路径", onCopyPath)
         } else {
             MenuAction("打开", onOpen)
-            if (editable) {
-                MenuAction("编辑", onEdit)
-                MenuAction("重命名", onRename)
-                MenuAction("删除", onDelete, tone = PiTheme.palette.error)
-            }
+            MenuAction("编辑", onEdit)
+            MenuAction("重命名", onRename)
+            MenuAction("删除", onDelete, tone = PiTheme.palette.error)
             if (target.fromSession) {
                 MenuAction("看它在对话里的那一步", onLocateInChat)
             } else {
