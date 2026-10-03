@@ -969,7 +969,7 @@ proot 的 bind 是**每次调用**的事。于是同一条 host 路径在引擎�
 |---|---|---|
 | pi 以 MIT 授权 | `/root/pi-src/LICENSE:1-3`（"MIT License / Copyright (c) 2025 Mario Zechner"） | pi 有 —— 它有 LICENSE 文件 |
 | npm 包的许可声明 | `/root/pi-src/packages/coding-agent/package.json:98`（`"license": "MIT"`） | pi 有 —— 声明在 `package.json`，npm 会把它带进安装后的包 |
-| 依赖树的许可声明 | `packages/coding-agent/npm-shrinkwrap.json`：143 个依赖条目**全部**带 `license` 字段（MIT 83、Apache-2.0 36、BSD-3-Clause 13、ISC 7、BlueOak-1.0.0 2、Unlicense 1、0BSD 1） | pi 有 —— 每个依赖各自声明 |
+| 依赖树的许可声明 | 每个依赖在各自的 `package.json` 里声明（1.0.0 之前还能从 `packages/coding-agent/npm-shrinkwrap.json` 一次读全 143 条；**1.0.1 起该文件不再随包发布**，改为读 `tools/pi-engine.lock.json` 或一次真实安装的 `node_modules/.package-lock.json`） | pi 有 —— 每个依赖各自声明 |
 | **有没有"第三方声明"机制** | 全仓库 grep `third-party`/`thirdparty`（`packages/*/src`）：**仅 1 处命中**，且是计费提示 `modes/interactive/interactive-mode.ts:254`，与许可无关 | **pi 无对应物** |
 | **有没有许可界面 / CLI 输出版权** | `src/cli.ts` / `src/cli/` / `src/main.ts` grep `licen[cs]e`：**零命中**；交互设置菜单里也没有许可项（`modes/interactive/` grep `licen` 零命中） | **pi 无对应物** |
 | **有没有 per-package LICENSE** | `find . -maxdepth 3 -name "LICENSE*"`（排除 node_modules）：只有根 `./LICENSE` 一个 | **pi 无对应物** |
@@ -1030,7 +1030,7 @@ proot 的 bind 是**每次调用**的事。于是同一条 host 路径在引擎�
 3. **pi 引擎载荷的 npm 许可已实测复核（结论不乐观，但已定位）**。按 `fetch-runtime.mjs` 里 `pi-engine` 那步的原命令在隔离目录跑：
    `npm install --ignore-scripts --omit=dev --omit=optional @earendil-works/pi-coding-agent@0.85.1`（装到 `/tmp`，**没有落进 `app/` 或 `build/`**），再按 **npm 自己的安装清单**（`node_modules/.package-lock.json`）逐包核对：
 
-   - 实际安装 **128** 个包（不是 shrinkwrap 里的 143——`--omit=optional` 会剪掉一批）；
+   - 实际安装 **128** 个包（0.85.1 时；1.0.1 是 **120** 个。当时那个 143 是 shrinkwrap 的条目数，`--omit=optional` 会剪掉一批 —— 那张表 1.0.1 起也不再随包发布）；
    - **115 个带许可文件，13 个不带**；13 个全都**声明了** `license` 字段，所以是"没带文本"，不是"没有许可证"；
    - 对 115 个带文件者做了**文本 vs 声明**核对（MIT/Apache-2.0/BSD-2/BSD-3/ISC/BlueOak/Unlicense/0BSD 各自的特征串）：**0 处不符**。
 

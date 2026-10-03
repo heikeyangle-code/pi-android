@@ -44,13 +44,15 @@
  *
  * Build-time only. Uses host `dpkg-deb`/`tar`/`xz`; it never runs on device.
  *
- *   node tools/fetch-runtime.mjs                 # verify + assemble
- *   node tools/fetch-runtime.mjs --resolve-only  # (re)write runtime.lock.json
+ *   node tools/fetch-runtime.mjs                    # verify + assemble
+ *   node tools/fetch-runtime.mjs --resolve-only     # (re)write runtime.lock.json
+ *   node tools/fetch-runtime.mjs --refresh-engine-lock  # (re)write tools/pi-engine.lock.json
  */
 
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
+  copyFileSync,
   cpSync,
   existsSync,
   mkdirSync,
@@ -61,7 +63,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from "node:fs";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -69,6 +71,31 @@ const CACHE = join(ROOT, "build", "downloads");
 const STAGE = join(ROOT, "build", "runtime");
 const JNI = join(ROOT, "app", "src", "main", "jniLibs", "arm64-v8a");
 const ASSETS = join(ROOT, "app", "src", "main", "assets", "runtime");
+
+/**
+ * The engine tree's own recipe card — **ours**, because upstream stopped shipping one.
+ *
+ * Until pi 1.0.0 the published package carried `npm-shrinkwrap.json`, so
+ * `npm install @earendil-works/pi-coding-agent@X` produced one specific tree: every
+ * transitive version was pinned by upstream and two builds of the same `X` were
+ * byte-identical. **1.0.1 removed it**, and the drift is not hypothetical — between
+ * 1.0.0 and 1.0.1 the three `@aws-sdk/*` versions moved on their own
+ * (3.972.72/3.972.77/3.997.44 → 3.972.74/3.972.79/3.997.46), which changes this
+ * payload's bytes and therefore `runtime-revision.txt`.
+ *
+ * Two consequences, both real: a phone that sees a new revision re-unpacks ~117 MiB
+ * for nothing, and the licence assets (generated from this tree, and legally required
+ * to be accurate) drift with it. So the pin lives here: the payload is installed with
+ * `npm ci` against this file, and a `PI_VERSION` that does not match it **fails the
+ * build** instead of silently shipping a different tree.
+ *
+ * Refresh it with `node tools/fetch-runtime.mjs --refresh-engine-lock` whenever
+ * `PI_VERSION` moves — that is the one extra step an engine bump has.
+ */
+const ENGINE_LOCK = join(ROOT, "tools", "pi-engine.lock.json");
+
+/** The engine package inside that lock. */
+const ENGINE_PACKAGE = "node_modules/@earendil-works/pi-coding-agent";
 /**
  * The per-payload metadata the app reads to decide what to re-extract:
  * `app/src/main/assets/runtime-payloads/<name>.digest` and `<name>.list`.
@@ -439,8 +466,45 @@ const UBUNTU_PORTS = "https://ports.ubuntu.com/ubuntu-ports";
  *     答案；Anthropic 的**复制码登录**（浏览器不在本机时，正好是手机的场景）；`/login` 顶层多了
  *     一条 Radius，并能顺手把它的 MCP 服务器配好；MCP OAuth 的一整套加固
  *     （`authServerMetadataUrl`、按服务器分凭据、RFC 9207 `iss` 校验、step-up 登录保留已授 scope）。
+ *
+ * 1.0.0 → **1.0.1**（2026-10-03）。判据同前。**契约面与 1.0.0 逐字节相同**，所以 App 代码这一轮
+ * 一行都不用改；真正要处理的是**上游改了它的发布方式**这件事。
+ *
+ *  1. **契约面零变化**：`modes/rpc/rpc-mode.js`、`modes/rpc/jsonl.js`、
+ *     `modes/rpc/rpc-types.d.ts`、`modes/interactive/theme/{dark,light}.json`、
+ *     `core/settings-manager.d.ts`（设置 schema）、`core/tools/bash.js`（工具结果文本）、
+ *     `utils/image-resize-core.js`（图片 resize 档位）—— 全部 `cmp` 相等。主题与设置这两块
+ *     尤其值钱：`PiPalette.kt` 的 118 个色值和设置键裁定表这一轮都不用碰。
+ *  2. **变的地方都在 TUI 与 MCP**，App 够不着：MCP 的**项目级覆盖**（`.pi/mcp.json` 里只写
+ *     `enabled`/`exposure` 就改用户级服务器，`/mcp` 能按项目开关）、`oauth.clientRegistration:
+ *     "cimd"`（用 pi.dev 上的 Client ID Metadata Document 代替动态注册）、
+ *     `pi.registerToolRenderer()`（TUI 渲染）、以及 TUI 组件换名（1.0.0 刚加的
+ *     `pi-logo-animation` 被删、换成 `easter-egg-3d`）。App 自己渲染、也不校验 `mcp.json` 的键，
+ *     所以一条都不用跟；`docs/mcp.md` 里那两个新键值得知道，但不需要代码。
+ *  3. **上游把 `npm-shrinkwrap.json` 从发布包里删了** —— 这是本轮唯一的**结构性**变化，也是
+ *     "版本号只写一处"第一次被打破。以前那份卡钉住了整棵依赖树（~120 个包），同一个
+ *     `PI_VERSION` 两次构建逐字节相同；删掉之后 `npm install` 自己解析 `^` 范围，于是**版本号
+ *     没动也可能装出不同的树**。实测：`@aws-sdk/*` 三个包在 1.0.0→1.0.1 之间自己漂了
+ *     （3.972.72/3.972.77/3.997.44 → 3.972.74/3.972.79/3.997.46），实装 121 → **120** 个包。
+ *     两个具体后果：载荷字节变 → `runtime-revision.txt` 变 → **每台手机白重解包 117 MiB**；
+ *     许可证资产是从这棵树生成的，跟着漂 → CI 的许可证检查会红，或者更糟：清单写错。
+ *     修法是**这份卡我们自己留一份**：`tools/pi-engine.lock.json`（本工具
+ *     `--refresh-engine-lock` 生成），引擎用 `npm ci` 按它装，`PI_VERSION` 与它不一致就**构建失败**。
+ *     代价是升版本时多一步：改 `PI_VERSION` → `--refresh-engine-lock`。
+ *  4. **许可证资产**：实装 120 包 / 107 带许可证文件 / 13 不带 —— 那 13 个的**名单不变**
+ *     （7 个 `@earendil-works/*` + `data-uri-to-buffer@4.0.1` + `proxy-agent-negotiate@1.1.0` +
+ *     `standardwebhooks@1.1.1` + 三个 `@aws-sdk/*`），变的只有三个 `@aws-sdk/*` 的**版本号**
+ *     （见上）—— 而它们在生成器里是**手写的字面量**，所以 `build-license-assets.py` 那一行必须改，
+ *     否则生成的清单会描述一棵不存在的树。另外 `brace-expansion@5.0.12` 成了直接依赖
+ *     （上游的安全修复），它带许可证文件，所以不进那 13 个。
+ *  5. **官方模型目录**：仍 42 份文件、`schemaVersion` 仍 6、文件名与内层键形状不变，所以
+ *     `PiOfficialCatalog.kt` 的读取器不用动；条数 1532/57/15 → **1536 chat / 59 image /
+ *     20 classifier**（Cloudflare 的 Clef 系列等）。App 里那两个"实测数字"的句子要跟着改。
+ *  6. **`docs/known-gaps.md` 与 `build-license-assets.py` 里几处以 shrinkwrap 为依据的说法**
+ *     （"143 个依赖条目全部带 license 字段"、"tslib/lru-cache 是 shrinkwrap 钉的"）从 1.0.1 起
+ *     没有依据了，同一轮改掉。
  */
-const PI_VERSION = "1.0.0";
+const PI_VERSION = "1.0.1";
 
 /**
  * proroot — the optional second container runtime, and the only artifact here whose
@@ -1076,9 +1140,104 @@ function assembleGitPayload() {
 }
 
 
+/**
+ * Read the engine lock, and refuse to build if it is not the one [PI_VERSION] names.
+ *
+ * A stale lock is the one failure that would otherwise be silent in the worst way: the
+ * payload would be a *different tree* than the version string claims, its digest would
+ * legitimately change, and every device would re-unpack for no reason. So it is a hard
+ * stop that names the command that fixes it.
+ */
+function readEngineLock() {
+  if (!existsSync(ENGINE_LOCK)) {
+    throw new Error(
+      `missing ${relative(ROOT, ENGINE_LOCK)}. The engine payload is installed from it ` +
+        `(upstream removed its own npm-shrinkwrap.json in 1.0.1).\n` +
+        `  fix: node tools/fetch-runtime.mjs --refresh-engine-lock`,
+    );
+  }
+  const lock = JSON.parse(readFileSync(ENGINE_LOCK, "utf8"));
+  const engine = lock?.packages?.[ENGINE_PACKAGE]?.version;
+  if (engine !== PI_VERSION) {
+    throw new Error(
+      `tools/pi-engine.lock.json pins pi ${engine ?? "(unreadable)"} but PI_VERSION is ` +
+        `${PI_VERSION}.\n` +
+        `  That lock is the only place that says which version of each of the ~120 packages\n` +
+        `  the payload contains; installing without it lets npm pick, so the same PI_VERSION\n` +
+        `  produces a different tree on a different day (the payload digest and the licence\n` +
+        `  assets both follow it).\n` +
+        `  fix: node tools/fetch-runtime.mjs --refresh-engine-lock`,
+    );
+  }
+  return lock;
+}
+
+/**
+ * (Re)write [ENGINE_LOCK] for the current [PI_VERSION].
+ *
+ * `--package-lock-only` because this step exists to decide *versions*, not to install:
+ * the install happens later, from the lock, with `npm ci`. Writes through the same
+ * pretty-printed form every time so a refresh that changed nothing produces no diff.
+ */
+function refreshEngineLock() {
+  const tmp = join(STAGE, "engine-lock");
+  rmSync(tmp, { recursive: true, force: true });
+  mkdirSync(tmp, { recursive: true });
+  writeFileSync(
+    join(tmp, "package.json"),
+    `${JSON.stringify(
+      {
+        name: "pi-engine",
+        private: true,
+        version: "0.0.0",
+        dependencies: { "@earendil-works/pi-coding-agent": PI_VERSION },
+      },
+      null,
+      2,
+    )}\n`,
+  );
+  execFileSync(
+    "npm",
+    [
+      "install",
+      "--package-lock-only",
+      "--ignore-scripts",
+      "--omit=dev",
+      "--omit=optional",
+      "--no-audit",
+      "--no-fund",
+    ],
+    { cwd: tmp, stdio: "inherit" },
+  );
+  const lock = JSON.parse(readFileSync(join(tmp, "package-lock.json"), "utf8"));
+  const engine = lock.packages?.[ENGINE_PACKAGE]?.version;
+  if (engine !== PI_VERSION) {
+    throw new Error(
+      `npm resolved ${ENGINE_PACKAGE} to ${engine ?? "(nothing)"} while PI_VERSION is ` +
+        `${PI_VERSION}; refusing to write a lock that contradicts the version string.`,
+    );
+  }
+  const entries = Object.keys(lock.packages).filter((k) => k.startsWith("node_modules/"));
+  writeFileSync(ENGINE_LOCK, `${JSON.stringify(lock, null, 2)}\n`);
+  rmSync(tmp, { recursive: true, force: true });
+  console.log(
+    `tools/pi-engine.lock.json refreshed: pi ${engine}, ${entries.length} package entries ` +
+      `(${entries.filter((k) => lock.packages[k].optional).length} optional, omitted from the payload)`,
+  );
+}
+
 function main() {
   const resolveOnly = process.argv.includes("--resolve-only");
   const lock = existsSync(LOCK) ? JSON.parse(readFileSync(LOCK, "utf8")) : { artifacts: {} };
+
+  // Its own mode, and it runs before any download: refreshing the engine lock for a new
+  // PI_VERSION is a decision about *versions*, and an assembler that first re-fetched
+  // 60 MiB of artifacts would make it look like a build.
+  if (process.argv.includes("--refresh-engine-lock")) {
+    mkdirSync(STAGE, { recursive: true });
+    refreshEngineLock();
+    return;
+  }
 
   mkdirSync(CACHE, { recursive: true });
   mkdirSync(JNI, { recursive: true });
@@ -1255,19 +1414,44 @@ function main() {
     rmSync(stage, { recursive: true, force: true });
     mkdirSync(stage, { recursive: true });
     const spec = `@earendil-works/pi-coding-agent@${PI_VERSION}`;
-    console.log(`\nengine: ${spec}`);
+    console.log(`\nengine: ${spec} (from tools/pi-engine.lock.json)`);
+    // `npm ci` against our own lock, not `npm install`: upstream removed its
+    // npm-shrinkwrap.json in 1.0.1, so an install would resolve the transitive
+    // closure at build time and the same PI_VERSION could produce two different
+    // trees. The lock's root dependency list has to match the package.json `npm ci`
+    // is given, so the package.json is written from the lock rather than from a
+    // second copy of the same facts (see [readEngineLock] for the mismatch guard).
+    const engineLock = readEngineLock();
+    writeFileSync(
+      join(stage, "package.json"),
+      `${JSON.stringify(
+        {
+          name: "pi-engine",
+          private: true,
+          version: "0.0.0",
+          dependencies: engineLock.packages[""].dependencies,
+        },
+        null,
+        2,
+      )}\n`,
+    );
+    copyFileSync(ENGINE_LOCK, join(stage, "package-lock.json"));
     // Output is captured rather than inherited so the extraction warning below can be
     // seen; it is echoed either way, so the progress a person reads on a terminal is
     // unchanged apart from arriving at the end of the install.
     const npm = spawnSync(
       "npm",
-      ["install", "--ignore-scripts", "--omit=dev", "--omit=optional", "--no-audit", "--no-fund", spec],
+      ["ci", "--ignore-scripts", "--omit=dev", "--omit=optional", "--no-audit", "--no-fund"],
       { cwd: stage, encoding: "utf8" },
     );
     if (npm.stdout) process.stdout.write(npm.stdout);
     if (npm.stderr) process.stderr.write(npm.stderr);
     if (npm.status !== 0) {
-      throw new Error(`npm install ${spec} failed with status ${npm.status}`);
+      throw new Error(
+        `npm ci failed with status ${npm.status}. If it says the lock does not satisfy ` +
+          `package.json, tools/pi-engine.lock.json and PI_VERSION disagree — run ` +
+          `node tools/fetch-runtime.mjs --refresh-engine-lock.`,
+      );
     }
     // npm unpacks 128 packages in parallel and can fail to create an entry while still
     // exiting 0. Measured once in four consecutive builds: a single
@@ -1279,7 +1463,7 @@ function main() {
     // otherwise reach a device as "some pi feature does not work".
     if (/TAR_ENTRY_ERROR/.test(npm.stderr ?? "")) {
       throw new Error(
-        `npm install ${spec} reported a tar extraction error, so the engine payload ` +
+        `npm ci (${spec}) reported a tar extraction error, so the engine payload ` +
           `would be incomplete. Re-run the build; if it repeats, the npm cache ` +
           `(npm cache verify) or the registry response for one of the 128 packages is bad.`,
       );

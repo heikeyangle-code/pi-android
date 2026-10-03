@@ -10,8 +10,9 @@ import kotlinx.serialization.json.JsonPrimitive
 /**
  * pi 官方随包发的**模型目录**：`…/pi-ai/dist/providers/data/` 下每份 `<provider>.json`
  * （0.99.2 实测 42 份），加一份 `.manifest.json`（`schemaVersion` + 每份文件的 SHA-256）。
- * **1.0.0 逐项复核过：仍是 42 份、`schemaVersion` 仍是 6、仍是 `api → ${type}:${id}`，
- * 条目 1532 chat / 57 image / 15 classifier（比 0.99.2 多 3 个 chat），所以本文件不用改。**
+ * **1.0.0 与 1.0.1 都逐项复核过：仍是 42 份、`schemaVersion` 仍是 6、仍是
+ * `api → ${type}:${id}`；条目 0.99.2 是 1529/57/15，1.0.0 是 1532/57/15，
+ * 1.0.1 是 1536 chat / 59 image / 20 classifier。形状没变，所以本文件不用改。**
  *
  * 0.99.2 起 `schemaVersion` 是 6（0.87.1 是 3），且数据格式变了三处：条目新增 `type`
  * 判别字段，内层键从 `<id>` 变成 `` `${type}:${id}` ``，同一份文件里混进 image /

@@ -414,9 +414,40 @@ function differences(expected, actual) {
 	return out;
 }
 
+/** The engine version `tools/fetch-runtime.mjs` pins — read, never repeated. */
+function pinnedVersion() {
+	const source = readFileSync(join(ROOT, "tools", "fetch-runtime.mjs"), "utf8");
+	const match = /^const PI_VERSION = "([^"]+)";/m.exec(source);
+	if (!match) {
+		console.error("could not read PI_VERSION out of tools/fetch-runtime.mjs");
+		process.exit(2);
+	}
+	return match[1];
+}
+
 function main() {
 	const { dir, cleanup } = resolveEngine();
 	const engineVersion = JSON.parse(readFileSync(join(dir, "package.json"), "utf8")).version;
+	const pinned = pinnedVersion();
+	// A capture from the *wrong* engine is the one failure this file cannot see by itself:
+	// it would print "17 cases from pi X", write them, and the fixture would claim the pin's
+	// behaviour while describing another release. It happens easily, because the engine is
+	// taken from the first of three places that exists (`--pi`, `build/pi-contract`, the
+	// shipped payload) and the first two survive a `PI_VERSION` bump as the *previous*
+	// version's tree. It did happen while bumping to 1.0.1: a stale
+	// `build/pi-contract` produced a `"pi": "1.0.0"` fixture against a 1.0.1 pin.
+	if (engineVersion !== pinned) {
+		console.error(
+			`resolved engine is pi ${engineVersion} but PI_VERSION is ${pinned}.\n` +
+				`  This fixture is by definition the *pinned* engine's behaviour, and CI's\n` +
+				`  \`--check\` compares against a fresh install of ${pinned}, so a capture from\n` +
+				`  ${engineVersion} would only fail later.\n` +
+				`  Usual cause: a stale build/pi-contract or build/runtime/engine left by the\n` +
+				`  previous pin. Delete it, or re-run \`node tools/fetch-runtime.mjs\`.`,
+		);
+		cleanup();
+		process.exit(2);
+	}
 	return import(`${dir}/dist/core/tools/index.js`)
 		.then((toolsModule) => capture(toolsModule, engineVersion))
 		.then((fixture) => {

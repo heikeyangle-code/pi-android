@@ -160,11 +160,15 @@ def verify_engine_payload_versions() -> None:
             )
 
 # npm packages in pi's dependency closure whose licence is not otherwise present
-# in a downloaded artifact. Versions are the ones pi 0.99.2 pins in its shipped
-# shrinkwrap; a bump must move both the version and the pi version together.
-# (Re-derived at 0.99.2: tslib 2.8.1 and lru-cache 11.4.0 are still what the
-# shrinkwrap pins, so this table did not move with the bump. Verified by reading
-# `npm-shrinkwrap.json`'s `node_modules/tslib` and `node_modules/lru-cache`.)
+# in a downloaded artifact. Versions are read off a real install of the pinned
+# engine; a bump must move both the version and the pi version together.
+#
+# **This used to be read out of pi's `npm-shrinkwrap.json`; that file is gone**
+# (upstream removed it from the published package in 1.0.1, and the payload is now
+# installed from `tools/pi-engine.lock.json` instead — see `tools/fetch-runtime.mjs`).
+# The table below is the same either way: both files say which version of each
+# package the payload contains. At 1.0.1, tslib 2.8.1 and lru-cache 11.4.0 are
+# still what the lock resolves to.
 #   tslib       0BSD          (also: `Unlicense` is taken from ripgrep's tarball)
 #   lru-cache   BlueOak-1.0.0
 #   minimatch   BlueOak-1.0.0  (ships its own LICENSE.md, so no entry here)
@@ -200,7 +204,7 @@ JETBRAINS_MONO_LICENCE_TITLE = f"JetBrains Mono {JETBRAINS_MONO_VERSION}（OFL-1
 # notice — while MIT requires the notice. We therefore ship it ourselves, from the
 # upstream tag matching the engine version. Verified: this URL's bytes are
 # identical to `/root/pi-src/LICENSE` at pi 0.85.1 (sha256 0457f5bcec3b3b21…); the
-# v0.86.1, v0.87.1, v0.99.2 and v1.0.0 tags' LICENSE files were re-fetched and are
+# v0.86.1, v0.87.1, v0.99.2, v1.0.0 and v1.0.1 tags' LICENSE files were re-fetched and are
 # **byte-identical** (same sha256), so the text we distribute has not changed across
 # any of those bumps.
 PI_LICENCE_URL = "https://raw.githubusercontent.com/earendil-works/pi/v{version}/LICENSE"
@@ -273,6 +277,14 @@ PROROOT_FILES = [
 # identical `@aws-sdk/*` versions (3.972.72 / 3.972.77 / 3.997.44) — the only field
 # that moved is the `@earendil-works/*` version, which is derived below.
 #
+# What the 1.0.0 → 1.0.1 bump changed: **the same 13 names, but the tree moved under
+# them** — 121 → **120** installed, 108 → **107** with a licence file, and the three
+# `@aws-sdk/*` versions below became 3.972.74 / 3.972.79 / 3.997.46. That movement is
+# exactly what upstream dropping its shrinkwrap causes: nothing in pi changed to make
+# those three packages release new patch versions. `brace-expansion@5.0.12` became a
+# direct dependency (upstream's security pin) and ships a licence file, so it is not
+# one of the 13.
+#
 # What the 0.87.1 → 0.99.2 bump changed: the set grew by **one** package,
 # `@earendil-works/pi-codemode` (118 → 121 installed, 12 → 13 without a file —
 # `@earendil-works/pi-mcp` ships a licence file, and so does the `ignore@7.0.8` that
@@ -301,9 +313,9 @@ PI_ENGINE_NO_LICENCE_TEXT = [
     ("data-uri-to-buffer", "4.0.1", "MIT"),
     ("proxy-agent-negotiate", "1.1.0", "MIT"),
     ("standardwebhooks", "1.1.1", "MIT"),
-    ("@aws-sdk/credential-provider-http", "3.972.72", "Apache-2.0"),
-    ("@aws-sdk/credential-provider-login", "3.972.77", "Apache-2.0"),
-    ("@aws-sdk/nested-clients", "3.997.44", "Apache-2.0"),
+    ("@aws-sdk/credential-provider-http", "3.972.74", "Apache-2.0"),
+    ("@aws-sdk/credential-provider-login", "3.972.79", "Apache-2.0"),
+    ("@aws-sdk/nested-clients", "3.997.46", "Apache-2.0"),
 ]
 
 # Where the notice for each of those packages can actually be found, and what was
@@ -319,7 +331,7 @@ PI_ENGINE_NOTICES = [
         "7 × @earendil-works/* 包",
         engine_version(),
         "MIT",
-        f"正文与版权声明见列表里的『pi 引擎 {engine_version()}（MIT）』那一份：这七个包与 pi 引擎出自同一 monorepo，根 LICENSE 即它们的许可文本（已按 v{engine_version()} 标签逐字节核对；v0.85.1/v0.86.1/v0.87.1/v0.99.2/v1.0.0 五个标签的 LICENSE 逐字节相同，sha256 未变）",
+        f"正文与版权声明见列表里的『pi 引擎 {engine_version()}（MIT）』那一份：这七个包与 pi 引擎出自同一 monorepo，根 LICENSE 即它们的许可文本（已按 v{engine_version()} 标签逐字节核对；v0.85.1/v0.86.1/v0.87.1/v0.99.2/v1.0.0/v1.0.1 六个标签的 LICENSE 逐字节相同，sha256 未变）",
         f"https://raw.githubusercontent.com/earendil-works/pi/v{engine_version()}/LICENSE",
         "0457f5bcec3b3b211605dfb5d1a49042fd638f3686a410fe099c24a25af13c48",
     ),
