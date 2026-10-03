@@ -1002,7 +1002,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * desktop picker does.
      */
     private val sessionStore: PiSessionStore by lazy {
-        PiSessionStore(File(host.paths().agentDir, "sessions"))
+        PiSessionStore(File(host.paths().agentDir, "sessions"), host.paths().sessionIndexFile())
     }
 
     /**

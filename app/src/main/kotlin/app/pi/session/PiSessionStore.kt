@@ -1,6 +1,9 @@
 package app.pi.session
 
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -45,7 +48,28 @@ import java.io.File
  * 于是同一段对话本可以列成两行 —— 用户原话「就那么一个对话……出现了好几个版本，就像被切开
  * 一样」。所以 [list] 按会话身份去重，两个布局里哪一份留下见 [laterSessionRow]。
  */
-class PiSessionStore(private val sessionsRoot: File) {
+class PiSessionStore(
+    private val sessionsRoot: File,
+    /**
+     * 摘要索引落盘的位置，`null` 表示**不落盘** —— 也就是这个类以前的行为。
+     *
+     * 路径是注入的，这里**不出现任何硬编码位置**：这个类只依赖 `java.io.File`，它拿不到
+     * `Context` 也拿不到 [app.pi.runtime.PiPaths]，所以"索引放哪"是调用方的决定
+     * （见 `PiPaths.sessionIndexFile` 的 KDoc，以及那个 accessor 存在的理由）。
+     *
+     * 它只是一个**缓存文件**：读不出来、写不进去、内容不认识，都退化成全量扫描，一行结果
+     * 都不会变（[PiSessionIndex] 的 KDoc 解释了为什么）。
+     */
+    indexFile: File? = null,
+    /**
+     * 同时读几个会话文件。默认 [DEFAULT_PARALLELISM]，`1` 就是**今天的串行行为**。
+     *
+     * 存在的唯一理由是让 `session-store` harness 能把"并行 == 串行"当成一条真跑的断言
+     * （同一批文件、同一份夹具，两种取值逐字段比）。它**不影响结果**：读的顺序不参与
+     * 任何判定，只有"谁先进 `bySession`"参与，而那个顺序由 [list] 的目录遍历定死。
+     */
+    private val parallelism: Int = DEFAULT_PARALLELISM,
+) {
 
     data class Summary(
         val file: File,
@@ -126,6 +150,20 @@ class PiSessionStore(private val sessionsRoot: File) {
     private val cacheLock = Any()
 
     /**
+     * [summaryCache] 的磁盘版：上一次进程到这里为止攒下的行。
+     *
+     * 它只是把上面那句 KDoc 里的「每个文件每个版本一次」从**每个进程一次**延长到
+     * **每个文件每个版本一次**。键与失效判据完全一样（[PiSessionIndex.keyOf] /
+     * [PiSessionIndex.lookup]），所以命中它的效果就是"那次扫描的结果还在内存里" ——
+     * 而冷启动/ViewModel 重建之后的那一次全量扫描正是用户抱怨的那一次
+     * （「在聊天界面点左上角查看这些对话历史，加载比较慢，要好几秒」）。
+     *
+     * 调用方没给位置（`null`）时这里也是 `null`，于是每个 `readSummary` 都走全量扫描：
+     * 本类以前的行为，一字不差。
+     */
+    private val index: PiSessionIndex? = indexFile?.let { PiSessionIndex(it) }
+
+    /**
      * Serialises whole-directory scans.
      *
      * Concurrent scans are already folded at the source — `PiSessionViewModel`
@@ -186,11 +224,18 @@ class PiSessionStore(private val sessionsRoot: File) {
     suspend fun list(limit: Int = 300): List<Summary> = scanMutex.withLock {
         withContext(Dispatchers.IO) {
             if (!sessionsRoot.isDirectory) return@withContext emptyList()
-            val out = ArrayList<Summary>()
+            // 先把「要读哪些文件、按什么顺序读」定下来，再并行去读。
+            //
+            // 这个顺序**是结果的一部分**：下面那次 `sortByDescending` 是稳定排序，两行
+            // `lastActivityAt` 并列时谁在前取决于它们进 `bySession` 的先后，而那个先后
+            // 从前就是这层目录遍历的顺序（`sessionsRoot.listFiles()` → 每个组目录自己的
+            // `listFiles()`）。所以并行只能并行「读」，收集必须照旧按这个顺序做 ——
+            // 把结果按完成先后折进 `bySession` 会让并列的两行换个位置，那就是行为变化。
+            val planned = ArrayList<PlannedFile>()
+            // 这次扫描见过的缓存键。今天的代码是在 `readSummary` 里顺手收集的；挪到这里，
+            // 是因为"哪些文件参与这次扫描"本来就是这层遍历在决定 —— 收集因此与读取的先后
+            // 无关，并行读也不会漏掉一个键（漏掉会让 `retainAll` 把一条还活着的摘要删掉）。
             val seen = HashSet<String>()
-            // 会话身份 → 已经留下的那一行。`LinkedHashMap` 只是让「同一身份、完全并列的两份」
-            // 也走 [laterSessionRow] 的最后一条规则，而不是看谁的键先被放进来。
-            val bySession = LinkedHashMap<String, Summary>()
             sessionsRoot.listFiles()?.forEach { entry ->
                 when {
                     // pi's default layout: one directory per cwd, one level deep
@@ -201,29 +246,109 @@ class PiSessionStore(private val sessionsRoot: File) {
                         // when a file's header carries no `cwd` of its own.
                         val groupCwd = encodedCwdFromGroupName(entry.name)
                         entry.listFiles()?.forEach { file ->
-                            if (isSessionFile(file)) {
-                                readSummary(file, groupCwd, seen)?.let { keepOneRowPerSession(bySession, it) }
-                            }
+                            if (isSessionFile(file)) planned.add(plan(file, groupCwd, seen))
                         }
                     }
                     // The layout our engine actually writes (`:1551-1552`): the session
                     // files sit directly in the session directory, so there is no group
                     // name to fall back to.
-                    isSessionFile(entry) ->
-                        readSummary(entry, null, seen)?.let { keepOneRowPerSession(bySession, it) }
+                    isSessionFile(entry) -> planned.add(plan(entry, null, seen))
                 }
+            }
+            // 会话身份 → 已经留下的那一行。`LinkedHashMap` 只是让「同一身份、完全并列的两份」
+            // 也走 [laterSessionRow] 的最后一条规则，而不是看谁的键先被放进来。
+            val bySession = LinkedHashMap<String, Summary>()
+            readSummaries(planned).forEach { summary ->
+                summary?.let { keepOneRowPerSession(bySession, it) }
             }
             // Forget summaries for files that are gone, so a deleted (or imported and
             // later removed) session cannot keep a row's worth of memory alive for the
             // life of the process. Cheap: one pass over the fresh key set.
             synchronized(cacheLock) { summaryCache.keys.retainAll(seen) }
-            out.addAll(bySession.values)
+            // 同一件事的磁盘版本：索引里也只许留这次见过的（见 [persistIndex]）。
+            persistIndex(seen)
+            val out = ArrayList<Summary>(bySession.values)
             out.sortByDescending { it.lastActivityAt }
             // `limit` 数的是**会话**：去重发生在截断之前，否则一份副本就会占掉一行，
             // 把一个真实的会话挤出屏幕。见 `SessionIdentityCheck.kt` 的最后一条检查。
             if (out.size > limit) out.subList(0, limit) else out
         }
     }
+
+    /**
+     * 一次扫描要读的一个文件，以及读它时用的回退 cwd。
+     *
+     * 键本身不进这里：它是 [plan] 收集进 `seen` 用的，而 [readSummary] 会从
+     * `(file.absolutePath, fallbackCwd)` 用**同一个** [PiSessionIndex.keyOf] 再算一遍 ——
+     * 一处定义，两处调用，所以 `retainAll` 与 `summaryCache` 不可能对不上。
+     */
+    private class PlannedFile(val file: File, val fallbackCwd: String?)
+
+    /** 记下这次扫描见过的一个文件，并把它的缓存键收进 `seen`（索引有界的那一半）。 */
+    private fun plan(file: File, fallbackCwd: String?, seen: MutableSet<String>): PlannedFile {
+        seen.add(PiSessionIndex.keyOf(file.absolutePath, fallbackCwd))
+        return PlannedFile(file, fallbackCwd)
+    }
+
+    /**
+     * 按 [planned] 的**原顺序**读出每一份摘要，最多 [parallelism] 个文件同时在读。
+     *
+     * "原顺序"是这条函数唯一的契约：`awaitAll` 按下标回答（不是按完成先后），调用方就能
+     * 照串行的样子把结果折进 `bySession`。串行的实现（[parallelism] 为 1）走上面那条
+     * `map`，与以前逐字相同；并行的实现只是把同一批 `readSummary` 摊到
+     * `Dispatchers.IO` 的一个**有界视图**上：最多 [parallelism] 个线程真的在解析，
+     * 其余排队 —— 一屏会话不会开出上百个线程（每个线程一次要读的文件是几十 MB 的
+     * JSONL，开一屏线程就是把内存和调度都交给最坏情况）。
+     *
+     * 取消仍然穿透：`awaitAll` 在调用方被取消时取消所有子任务，和以前"循环里被取消"一样。
+     */
+    private suspend fun readSummaries(planned: List<PlannedFile>): List<Summary?> {
+        if (parallelism <= 1 || planned.size <= 1) {
+            return planned.map { readSummary(it.file, it.fallbackCwd) }
+        }
+        val dispatcher = Dispatchers.IO.limitedParallelism(parallelism)
+        return coroutineScope {
+            planned.map { item -> async(dispatcher) { readSummary(item.file, item.fallbackCwd) } }.awaitAll()
+        }
+    }
+
+    /**
+     * 把这次扫描的结果落盘，**只留这次见到的**（`seen`）。
+     *
+     * 与上面那句 `retainAll` 是同一个决定：一个已经删掉的会话不许在索引里留一行 ——
+     * 否则索引会随会话目录的生命周期单调增长，而"有界"是这个缓存存在的条件之一。
+     *
+     * 读 [summaryCache] 要在 [cacheLock] 里：并行扫描刚结束，但 `mostRecentForResume`
+     * 那条路也可能正在往里写。`filter { it.key in seen }` 在单线程下是上面那句 `retainAll`
+     * 的重复（它保证过 `keys ⊆ seen`），在**并发**下不是：另一个协程刚为 `mostRecentForResume`
+     * 写进去的那个键不属于这次目录扫描，不该被这次扫描写进索引。
+     * 取出来的快照交给 [PiSessionIndex]，写盘由它在自己的锁里做（两次 `list()` 并发时，
+     * 后面的覆盖前面的，两份都是同一次扫描的完整结果 —— 而 `list()` 之间本来就有 [scanMutex]）。
+     */
+    private fun persistIndex(seen: Set<String>) {
+        val index = index ?: return
+        val rows = synchronized(cacheLock) {
+            summaryCache.entries
+                .filter { it.key in seen }
+                .associate { (key, cached) -> key to cached.toRow() }
+        }
+        index.replaceAll(rows)
+    }
+
+    /** [Cached] → 落盘的行（`File` 不进索引：路径在键里，读回来时用手上那个 `File` 重建）。 */
+    private fun Cached.toRow(): PiSessionIndex.Row = PiSessionIndex.Row(
+        length = length,
+        modified = modified,
+        id = summary.id,
+        cwd = summary.cwd,
+        startedAt = summary.startedAt,
+        lastActivityAt = summary.lastActivityAt,
+        name = summary.name,
+        title = summary.title,
+        model = summary.model,
+        messageCount = summary.messageCount,
+        parentSession = summary.parentSession,
+    )
 
     /** 把一个会话的候选行放进 [bySession]，同一个身份只留 [laterSessionRow] 选中的那一行。 */
     private fun keepOneRowPerSession(bySession: MutableMap<String, Summary>, row: Summary) {
@@ -402,29 +527,39 @@ class PiSessionStore(private val sessionsRoot: File) {
      *
      * The cost of reading the whole file: 首次进入会话列表要把每个会话读到底。摘要缓存
      * （[Cached]，键是 length+mtime）把它限制在"每个文件每个版本一次"—— 改名只重读那一个
-     * 文件，其余文件零成本。
+     * 文件，其余文件零成本。**这份缓存现在也落在磁盘上**（[index]），因为"每个文件每个版本
+     * 一次"里的"一次"以前是每个**进程**一次：冷启动、切工作区、ViewModel 重建之后的那一次
+     * 仍然是全量，而那正是用户报的那一次。
      *
      * @param fallbackCwd the cwd encoded in the group directory name, when the file
      *        came from one. It is only a fallback for a header without `cwd`
      *        (`SessionHeader.cwd` is `string` in this pi version, but old files
      *        exist); it never *replaces* the header's own value, and null simply
      *        means "this file has no group name to fall back to".
-     * @param seen when non-null, the cache keys this scan touched are collected into
-     *        it so [list] can drop summaries for files that no longer exist. Null
-     *        from a caller that is not a whole-directory scan
-     *        ([mostRecentForResume]).
      */
-    private fun readSummary(file: File, fallbackCwd: String?, seen: MutableSet<String>? = null): Summary? {
+    private fun readSummary(file: File, fallbackCwd: String?): Summary? {
         // The fallback cwd is part of the key: the same file has two legitimate
-        // summaries depending on who asks (see [Cached]).
-        val key = file.absolutePath + '\u0000' + (fallbackCwd ?: "")
-        seen?.add(key)
+        // summaries depending on who asks (see [Cached]). 键的定义在
+        // [PiSessionIndex.keyOf]，这里与 [plan] 都用它 —— 一处定义，两处调用。
+        val key = PiSessionIndex.keyOf(file.absolutePath, fallbackCwd)
         val length = file.length()
         val modified = file.lastModified()
         synchronized(cacheLock) {
             summaryCache[key]?.let { cached ->
                 if (cached.length == length && cached.modified == modified) return cached.summary
             }
+        }
+        // 进程内没有，但**上一次进程**可能有：磁盘索引就是那份 `summaryCache`。
+        // 命中判据与上面那句逐字相同（键相同、length 与 mtime 都相等），所以命中它 ==
+        // "那次扫描的结果还在这台机器的内存里"，一个字段都不会不同；长度/mtime 任何一个动了
+        // 就落到下面的全量扫描 —— **扫描永远赢**，索引只省掉重复解析。
+        //
+        // 命中之后写回进程内那份，理由与解析成功之后那句 `summaryCache[key] = Cached(...)`
+        // 完全一样（下一次 `list()` 少一次 stat 之后的查表），也让 [persistIndex] 看得见它。
+        index?.lookup(key, length, modified)?.let { row ->
+            val summary = row.toSummary(file)
+            synchronized(cacheLock) { summaryCache[key] = Cached(length, modified, summary) }
+            return summary
         }
         var id: String? = null
         var cwd: String? = fallbackCwd
@@ -593,5 +728,37 @@ class PiSessionStore(private val sessionsRoot: File) {
         if (raw.isNullOrBlank()) return null
         raw.toLongOrNull()?.let { return it }
         return runCatching { java.time.Instant.parse(raw).toEpochMilli() }.getOrNull()
+    }
+
+    /**
+     * 索引里的一行 → 一行摘要，用**调用方手上那个 `File`** 而不是从路径新建一个。
+     *
+     * 这一点是为 [laterSessionRow] 服务的：它比较 `a.file.lastModified()`、看
+     * `isFlatLayout(a.file)`（比 `parentFile.absolutePath`）、最后比 `absolutePath`。
+     * 用索引里的路径 `File(path)` 重建通常也能得到同样的值，但"通常"不够 —— 手上有现成的
+     * 那个对象，就没有任何重建得出差异的余地。
+     */
+    private fun PiSessionIndex.Row.toSummary(file: File): Summary = Summary(
+        file = file,
+        id = id,
+        cwd = cwd,
+        startedAt = startedAt,
+        lastActivityAt = lastActivityAt,
+        name = name,
+        title = title,
+        model = model,
+        messageCount = messageCount,
+        parentSession = parentSession,
+    )
+
+    companion object {
+        /**
+         * 一次扫描同时读几个会话文件。
+         *
+         * 4：慢的那一段是每个文件的逐行 JSON 解析（几十 MB 文本），不是目录遍历，所以
+         * 2–4 个线程就够把首屏耗时压下来；再多只是让几个大文件的解析争同一块内存带宽。
+         * `Dispatchers.IO.limitedParallelism` 保证它的上界（不是"IO 池上无限并发"）。
+         */
+        const val DEFAULT_PARALLELISM: Int = 4
     }
 }
