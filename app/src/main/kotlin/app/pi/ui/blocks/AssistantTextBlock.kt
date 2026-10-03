@@ -12,6 +12,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.dp
 import app.pi.rpc.AssistantText
+import app.pi.rpc.PiImage
 import app.pi.ui.render.PiMarkdownText
 import app.pi.ui.theme.PiTheme
 import app.pi.ui.theme.PiSpacing
@@ -57,6 +58,13 @@ import app.pi.ui.theme.PiSpacing
 fun AssistantTextBlock(
     item: AssistantText,
     modifier: Modifier = Modifier,
+    /**
+     * A tap on an image written in the message's own markdown, handed to the same viewer the
+     * attachments and tool screenshots use (`ChatScreen`'s `viewedImage`). Null keeps every
+     * image in the body inert — the rendering itself is unchanged, because
+     * `PiMarkdownText` only installs the tap when this is supplied.
+     */
+    onImageClick: ((PiImage) -> Unit)? = null,
 ) {
     val palette = PiTheme.palette
     val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
@@ -79,6 +87,7 @@ fun AssistantTextBlock(
                     PiMarkdownText(
                         markdown = item.text,
                         modifier = Modifier.weight(1f),
+                        onImageClick = onImageClick,
                     )
                 }
                 if (item.streaming) {

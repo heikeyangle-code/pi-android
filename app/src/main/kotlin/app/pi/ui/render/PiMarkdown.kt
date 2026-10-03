@@ -13,6 +13,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import app.pi.bridge.rememberPiGuestImageTransformer
 import app.pi.highlight.PiNodeCodeHighlighter
+import app.pi.rpc.PiImage
 import app.pi.ui.theme.PiTheme
 import com.mikepenz.markdown.compose.Markdown
 import com.mikepenz.markdown.model.ReferenceLinkHandlerImpl
@@ -136,6 +137,12 @@ private val piInlineHtmlAnnotate: AnnotatedString.Builder.(String, ASTNode) -> B
  *   headings, links and code are then drawn on top of, not a replacement for
  *   them. A hand-written theme may set the two tokens differently, which is why
  *   this is a parameter rather than a constant.
+ * @param onImageClick 点正文里的一张图时把它交给谁 —— 宿主是 `ChatScreen` 的
+ *   `viewedImage: PiImage?` → `PiImageViewer`，与工具结果/附件那张网格**同一个出口**
+ *   （`BlockRenderer` 的 `onImageClick`）。默认 `null`：这个表面没有可打开的查看器，
+ *   图片保持不可点，渲染与改动前逐字节相同。这次接线同时管两种图：`![](https://…)`
+ *   与本地路径的图走的是同一条字节通道（`bridge/GuestImageBytes.kt`），点开这件事在
+ *   出口处没有区别。见 [LocalPiImageClick]。
  */
 @Composable
 internal fun PiMarkdownText(
@@ -148,6 +155,9 @@ internal fun PiMarkdownText(
     // arriving), and the row's owner is `ChatScreen`. See `PiMarkdownImmediate.kt` for the
     // defect, the bound and the cost.
     immediate: Boolean = LocalPiMarkdownImmediate.current,
+    // 见 [LocalPiImageClick]：一个组合局部而不是参数，因为库的组件集是 `remember` 出来的、
+    // 参数进不去。
+    onImageClick: ((PiImage) -> Unit)? = null,
 ) {
     val context = LocalContext.current
     // `remember(context)`: attach() is idempotent and cheap, but this keeps it to
@@ -312,6 +322,9 @@ internal fun PiMarkdownText(
     CompositionLocalProvider(
         LocalPiCodeHighlighter provides PiNodeCodeHighlighter,
         LocalPiImageTransformer provides imageTransformer,
+        // 点开一张图的那条缝。`null` 时两个图片槽一个修饰符都不多（见 [LocalPiImageClick]），
+        // 所以正文之外那几个没传回调的 markdown 表面不受影响。
+        LocalPiImageClick provides onImageClick,
     ) {
         Markdown(
             // The state built above, not the `content` overload: the state is what makes the

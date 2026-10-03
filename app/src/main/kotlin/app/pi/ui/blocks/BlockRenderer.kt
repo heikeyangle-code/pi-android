@@ -89,7 +89,9 @@ fun BlockRenderer(
     onForkFromMessage: ((String) -> Unit)? = null,
     /**
      * A tap on any image in the transcript — the user's attachment, a `read` of a
-     * picture, or a tool's screenshot. It is the target F19
+     * picture, a tool's screenshot, or an image written in a message's own markdown
+     * (the assistant's body and the user's own bubble both render through
+     * [app.pi.ui.render.PiMarkdownText]). It is the target F19
      * (`docs/rendering-review.md`) said was missing when it deleted the old
      * `onImageClick`; now that [PiImageViewer] exists, the callback has somewhere to
      * go and is supplied by `ChatScreen`. Null keeps every image inert.
@@ -121,7 +123,7 @@ fun BlockRenderer(
     when (item) {
         is UserMessage -> UserMessageBlock(item, modifier, onForkFromMessage, onImageClick, showTimestamps)
 
-        is AssistantText -> AssistantTextBlock(item, modifier)
+        is AssistantText -> AssistantTextBlock(item, modifier, onImageClick)
 
         is ThinkingBlock -> if (!hideThinking) {
             ThinkingBlockBlock(item, modifier, thinkingDefaultExpanded)

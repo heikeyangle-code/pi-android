@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -14,8 +15,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -34,6 +37,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.pi.highlight.PiNodeCodeHighlighter
 import app.pi.highlight.PiNodeMermaidRenderer
+import app.pi.rpc.PiImage
 import app.pi.runtime.PiPaths
 import app.pi.runtime.PiProjectConfig
 import app.pi.runtime.PtyLauncher
@@ -61,6 +65,7 @@ import com.mikepenz.markdown.utils.resolveImageAlt
 import com.mikepenz.markdown.utils.resolveImageLink
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.intellij.markdown.flavours.gfm.GFMElementTypes
 
@@ -98,6 +103,33 @@ internal val LocalPiCodeHighlighter = staticCompositionLocalOf<PiCodeHighlighter
 internal val LocalPiImageTransformer = staticCompositionLocalOf<ImageTransformer> {
     NoOpImageTransformerImpl()
 }
+
+/**
+ * 正文里的一张图被点了一下时，把**交给查看器的那份 wire 值**送去哪里。
+ *
+ * ## 为什么是一个组合局部，而不是给组件加参数
+ *
+ * 两个图片槽（[PiImagePlaceholder] / [PiInlineImage]）是**库按节点分派**到的，离"谁知道查看器
+ * 在哪"那个调用点很远：宿主是 `ChatScreen` 的 `viewedImage: PiImage?` → `PiImageViewer`
+ * （`ui/screens/ChatScreen.kt:2786-2794`），而它只把 `onImageClick` 交给 `BlockRenderer`
+ * （`:2260`）。库的组件集是 `PiMarkdown.kt` 里 `val components = remember { piMarkdownComponents() }`
+ * 造一次、全程复用的，参数进不去（那个 `remember` 正是这个文件不是 `@Composable` 的原因）；
+ * 和 [LocalPiImageTransformer] 用组合局部是同一个理由。
+ *
+ * ## 默认 `null` = 没有查看器可开
+ *
+ * 此时两个图片槽**一个修饰符都不多**、直接调库的组件：预览、测试、以及正文之外那几个
+ * markdown 表面（`HookMessageBlock` / `CompactionBlock` / `BranchSummaryBlock` /
+ * `SkillInvocationBlock` 都没传回调）与这次改动之前逐字节相同 —— 它们的图仍然不可点。
+ *
+ * ## 为什么是 `compositionLocalOf` 而不是 `staticCompositionLocalOf`
+ *
+ * 这个值是一个**回调**，身份由调用点决定（`ChatScreen` 的 `{ viewedImage = it }`）。
+ * `staticCompositionLocalOf` 的值一变会重组 provider 的**整个**子树，而正文 markdown 恰好是
+ * `PiMarkdown.kt` 一直在避免按上层重组次数付代价的地方（那些 `remember` 的注释就是账本）。
+ * 动态那个只让**读者**失效，而读者只有两个图片槽。
+ */
+internal val LocalPiImageClick = compositionLocalOf<((PiImage) -> Unit)?> { null }
 
 /**
  * The renderer's component set: pi's code-block chrome, pi's math, the
@@ -338,8 +370,10 @@ private fun PiImagePlaceholder(model: MarkdownComponentModel) {
     // component that would draw nothing.
     val decoded = if (link != null) transformer.transform(link) else null
     if (decoded != null) {
-        // Bytes in hand; let the library draw them (it reuses the same decoded bitmap).
-        MarkdownImage(content, node)
+        // Bytes in hand; let the library draw them (it reuses the same decoded bitmap),
+        // and put the viewer behind a tap — see [PiImageViewerTap]. The fallback below
+        // deliberately stays inert: a link whose bytes are not there has nothing to open.
+        PiImageViewerTap(link) { MarkdownImage(content, node) }
         return
     }
     // The block component is the only one that can resolve an alt: its `model.content`
@@ -395,10 +429,57 @@ private fun PiInlineImage(model: MarkdownComponentModel) {
     val transformer = LocalPiImageTransformer.current
     val decoded = if (link.isNotBlank()) transformer.transform(link) else null
     if (decoded != null) {
-        MarkdownInlineImage(link, model.node)
+        // Same tap as the block slot — one implementation ([PiImageViewerTap]), so the two
+        // surfaces cannot drift into two different "what does a tap do" answers.
+        PiImageViewerTap(link) { MarkdownInlineImage(link, model.node) }
         return
     }
     PiImageFallback(alt = null, link = link, typography = model.typography)
+}
+
+/**
+ * 一次点按 = 打开查看器。**只有两件事**：取字节（[piMarkdownImageViewerImage]），把
+ * [PiImage] 交给 [LocalPiImageClick]。
+ *
+ * ## 为什么这一层只在有查看器时才存在
+ *
+ * `LocalPiImageClick.current` 为 `null` 时直接画 `content()` —— **不多一个 `Box`、不多一个
+ * 修饰符**。所以预览、测试、以及正文之外那几个 markdown 表面的渲染与这次改动之前逐字节
+ * 相同（见 [LocalPiImageClick]）。
+ *
+ * ## 为什么整段异步
+ *
+ * 取字节最坏是一次磁盘读或一次出网（`bridge/GuestImageBytes.kt` 的 5/5/15 s）；点按那一帧
+ * 不能等它。所以 `clickable` 只起一个协程，字节到手之后再调回调。
+ *
+ * 回调拿到的是**已经读出来的字节**，不是 link：查看器要的就是
+ * `PiImage(base64, mimeType)`，而 link 到字节的换算（`data:` / guest 路径 / `http(s)`）在
+ * 字节通道里已经有一份，不许在这里长第二份。
+ *
+ * 局部为 `null`、或 link 解析不出来（block 槽的 `resolveImageLink` 可以给 `null`）时，
+ * 这一层退化成"没有点按" —— 与改动前一样。
+ */
+@Composable
+private fun PiImageViewerTap(link: String?, content: @Composable () -> Unit) {
+    val onImageClick = LocalPiImageClick.current
+    // 两个都是局部 `val`：下面的 lambda 里用它们靠的是**局部不可变变量**的智能转换，而不是
+    // `isNullOrBlank()` 的契约推断 —— 后者在 `||` 里是否传播到 lambda 里不值得赌。
+    val openLink = link?.takeIf { it.isNotBlank() }
+    if (onImageClick == null || openLink == null) {
+        content()
+        return
+    }
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    Box(
+        modifier = Modifier.clickable(onClickLabel = "查看图片") {
+            scope.launch {
+                piMarkdownImageViewerImage(context, openLink)?.let(onImageClick)
+            }
+        },
+    ) {
+        content()
+    }
 }
 
 /**

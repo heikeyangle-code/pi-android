@@ -133,6 +133,10 @@ fun UserMessageBlock(
                         markdown = item.text,
                         modifier = Modifier.fillMaxWidth(),
                         textColor = palette.userMessageText,
+                        // 用户自己消息里 markdown 写的图：与同一个气泡里那张附件网格走同一个
+                        // 出口（下面 `ImageGridBlock` 的 `onImageClick`），不然"附件能点开、
+                        // 自己写的 `![]()` 不能"就是同一条气泡里的两种行为。
+                        onImageClick = onImageClick,
                     )
                 }
                 if (item.images.isNotEmpty()) {
