@@ -1,6 +1,7 @@
 package app.pi.runtime
 
 import android.content.res.AssetManager
+import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -32,8 +33,14 @@ import kotlin.math.roundToInt
  * `<files>/pi/runtime/.payloads/<name>.digest` and `<name>.list` ([PiPaths.payloadStateDir]):
  *
  *  - `<name>.digest` — the digest of the bytes this payload was last extracted from;
- *  - `<name>.list` — every **non-directory** path that payload owns, relative to
- *    `paths.runtime`, sorted, one per line.
+ *  - `<name>.list` — every path that payload owns, relative to `paths.runtime`, sorted, one
+ *    per line: **files, symlinks *and* directories**. Directories belong in it because
+ *    ownership has to hold for them too: a directory is not tracked, the files inside it are
+ *    pruned away on the next upgrade while the directory itself stays behind, forever — and an
+ *    empty `node_modules` directory is not a harmless few bytes, it is what makes Node's
+ *    resolution fail in place instead of looking one level up. See [PayloadPrune]'s "目录也在
+ *    清单里" for the whole argument and why the existing depth-ordered single-node delete
+ *    needs no new mechanism to honour it.
  *
  * The decision, and its cost. A matching `.stamp` reaches none of this (see the fast path
  * below); these are the cases once it does not match:
@@ -44,17 +51,20 @@ import kotlin.math.roundToInt
  *    `deleteRecursively` of anything the payload does not own), and then only
  *    `old.list − new.list` is deleted ([PayloadPrune.victims]), which is what keeps
  *    upstream-removed files from lingering while leaving every file the user created —
- *    those are in neither list — untouchable.
+ *    those are in neither list — untouchable. Directories are in the same set difference and
+ *    in the same pass: deepest-first ordering deletes a file before its parent directory, and
+ *    a non-empty directory simply refuses to be deleted, which is exactly the rule "never
+ *    take anything the user put in there".
  *  - **no per-payload state at all** (every install that predates this change) — every
  *    payload is re-extracted over the tree with **no** whole-tree wipe and **no** prune:
  *    there is no old list to prune against, so this transition cannot delete anything.
  *
- * The payload lists are **21,259 paths / 2.0 MiB** of text in total, measured from the
- * pinned archives (`ubuntu-base` 2,758, `node` 4,714, `pi-engine` 13,531, `git` 252,
- * `ripgrep` 2, `fd` 2), against the 121,072,689 bytes (115.5 MiB) of payload archives
- * these binaries ship. On device each is read once per attempt (only on the slow path),
- * parsed once into a `Set`, and used for one set difference — never re-read or re-parsed
- * per payload.
+ * The payload lists measured **21,259 paths / 2.0 MiB** of text (files and symlinks only —
+ * the directory rows are a later addition, see [PayloadPrune]), from the pinned archives
+ * (`ubuntu-base` 2,758, `node` 4,714, `pi-engine` 13,531, `git` 252, `ripgrep` 2, `fd` 2),
+ * against the 121,072,689 bytes (115.5 MiB) of payload archives these binaries ship. On device
+ * each is read once per attempt (only on the slow path), parsed once into a `Set`, and used for
+ * one set difference — never re-read or re-parsed per payload.
  *
  * ## Why this is faster than what it replaced, not only safer
  *
@@ -149,6 +159,17 @@ class RuntimeProvisioner(
     private val payloadWarnings = mutableListOf<String>()
 
     /**
+     * Directories this attempt **kept** because they were not empty.
+     *
+     * The counterpart of [payloadWarnings], and deliberately not part of it: a directory that
+     * still holds something the lists do not own refusing to be deleted is the *designed*
+     * outcome of the safety rule (see [prunePayload]), not a problem to put on the boot page.
+     * It is reported to `logcat` by [reportKeptDirectories] instead. Cleared per attempt, like
+     * [payloadWarnings].
+     */
+    private val keptDirectories = mutableListOf<String>()
+
+    /**
      * What one provisioning attempt actually did.
      *
      * Returned rather than kept in a field because two callers need the same answer
@@ -240,6 +261,7 @@ class RuntimeProvisioner(
         // A warning accumulator, cleared per attempt: same shape and same reason as
         // [payloadReport] (written on this path, read on this path only).
         payloadWarnings.clear()
+        keptDirectories.clear()
 
         // P1b: a `wipe()` killed between its move-out and its move-back leaves the user's
         // sessions/workspaces parked in `<files>/pi/.preserve`, and nothing else in this app
@@ -370,6 +392,9 @@ class RuntimeProvisioner(
             if (recordWarning != null) payloadWarnings += recordWarning
             index++
         }
+        // One line for the directories this pass deliberately left alone (user content inside
+        // them). Here rather than at the end so a later failure cannot swallow it.
+        reportKeptDirectories()
 
         // The guest's required configuration (`/etc/resolv.conf`, `/etc/hosts`, the two
         // directories) and the `/etc/group` repair, through the same idempotent function the
@@ -758,6 +783,11 @@ class RuntimeProvisioner(
         // old list owned" would turn a build-side mistake into deleted files, so an
         // empty list is read as "cannot tell" and nothing is pruned.
         if (new.isEmpty()) return
+        // `present` is built from the **old list**, so only a path the payload used to own can
+        // ever be a victim; the probe does not follow symlinks, so a dangling link counts as
+        // present. It deliberately includes **directories**: they are in the lists now, and
+        // `it in present` is the step that would otherwise filter them all out and turn
+        // "directory ownership" back into a comment (`PayloadPrune.victims`' KDoc).
         val present = old.filterTo(HashSet()) { relative -> existsWithoutFollowing(File(paths.runtime, relative)) }
         val root = runCatching { paths.runtime.canonicalPath }.getOrNull() ?: return
         PayloadPrune.victims(old, new, present).forEach { relative ->
@@ -770,10 +800,51 @@ class RuntimeProvisioner(
                 payloadWarnings += "$relative（已指向易失树之外，按规则拒绝删除）"
                 return@forEach
             }
-            if (!runCatching { target.delete() }.getOrDefault(false) && existsWithoutFollowing(target)) {
-                payloadWarnings += "$relative（删除失败）"
+            // Single node, never `deleteRecursively()`: a directory that still holds anything
+            // the lists do not own (the user's `npm -g`, apt, a hand-made file) simply refuses
+            // to be deleted, and that refusal is the safety rule — not a failure. Catching it
+            // here is what keeps it from being reported as one.
+            val deleted = runCatching { target.delete() }.getOrDefault(false)
+            if (deleted || !existsWithoutFollowing(target)) return@forEach
+            if (isKeptNonEmptyDirectory(target)) {
+                keptDirectories += relative
+                return@forEach
             }
+            payloadWarnings += "$relative（删除失败）"
         }
+    }
+
+    /**
+     * True when [target] is a directory that `File.delete()` refused because it is **not
+     * empty** — i.e. the case the whole rule is built around: it is kept, on purpose, because
+     * something in it is not the payload's to delete.
+     *
+     * A symlink is excluded explicitly: `isDirectory` follows it, and a link whose *target* is
+     * a directory must not be mistaken for a directory that was left alone (deleting a link
+     * removes the link, never its target, so a failure there is a real failure).
+     */
+    private fun isKeptNonEmptyDirectory(target: File): Boolean =
+        !runCatching { java.nio.file.Files.isSymbolicLink(target.toPath()) }.getOrDefault(false) &&
+            target.isDirectory
+
+    /**
+     * Say out loud which directories this attempt kept because they were not empty.
+     *
+     * Kept out of `payloadWarnings` on purpose: this is the designed outcome, not a failure, and
+     * sending it through the boot page would put a full-screen warning on a *successful* upgrade
+     * every time the user has ever dropped a file into a directory the payload stopped
+     * shipping. It is still not silent — one `logcat` line, capped, with the count and the
+     * paths — which is this repository's established channel for "a device with no UI access
+     * still has a log" (`PiEngineHost.lastBridgeError` reasons the same way).
+     */
+    private fun reportKeptDirectories() {
+        if (keptDirectories.isEmpty()) return
+        val shown = keptDirectories.take(KEPT_DIRECTORY_LOG_LIMIT).joinToString("、")
+        Log.i(
+            TAG,
+            "本次升级保留了 ${keptDirectories.size} 个非空目录（里面有清单之外的条目，按规则不删）：$shown" +
+                (if (keptDirectories.size > KEPT_DIRECTORY_LOG_LIMIT) "…" else ""),
+        )
     }
 
     /** Existence without following a symlink, so a dangling link still counts as present. */
@@ -1763,6 +1834,12 @@ class RuntimeProvisioner(
         }
 
     companion object {
+        /** `logcat` tag for the one line [reportKeptDirectories] emits. */
+        private const val TAG = "RuntimeProvisioner"
+
+        /** How many kept directories that line names before it elides the rest. */
+        private const val KEPT_DIRECTORY_LOG_LIMIT = 5
+
         /**
          * The fallback revision, used only when [packagedRevision] cannot read the
          * assembler's digest.

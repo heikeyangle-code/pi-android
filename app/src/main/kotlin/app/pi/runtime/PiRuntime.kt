@@ -151,8 +151,9 @@ class PiPaths(private val filesDir: File, private val nativeLibDir: File) {
      * The one place per-payload state lives: `<files>/pi/runtime/.payloads`.
      *
      * Inside the volatile tree on purpose. Each payload gets a `<name>.digest` (the
-     * digest of the bytes it was extracted from) and a `<name>.list` (every non-directory
-     * path it owns, relative to [runtime]) beside it, so the next provision can tell
+     * digest of the bytes it was extracted from) and a `<name>.list` (every path it owns,
+     * relative to [runtime] — **files, symlinks and directories**, which is what makes the
+     * ownership rule reach directories too) beside it, so the next provision can tell
      * "this payload did not change, touch nothing" from "this payload changed, extract it
      * over the tree and prune only what the old list owned". Deleting the whole tree —
      * the explicit repair path — takes this state with it, which is exactly right: a
