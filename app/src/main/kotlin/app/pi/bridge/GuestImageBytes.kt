@@ -188,10 +188,12 @@ internal class GuestImage(
  * 所以在 scoped storage 的设备上那里的路径可能根本读不到——那会报成失败，不会是一张空图。
  * pi 的 `images.blockImages` 设置**不看**，因为 pi 把它定义成"阻止所有图片发给 LLM 提供方"
  * （`core/settings-manager.ts:64`），那是一个出站请求的开关，不是渲染开关。
- * 另外：远端图片只接受 http/https，而**明文** `http` 还要过 Android 的明文策略——
- * 本 App 的 manifest 没有 `usesCleartextTraffic`、也没有 network security config，
- * `targetSdk` ≥ 28 时平台按默认拒绝明文，于是 `http://` 的图会在取字节那一步失败并走回退，
- * `https://` 没有这个问题。（manifest 不是这次改动的文件，这里只登记、不改。）
+ * 另外：远端图片只接受 http/https。**明文** `http` 曾经会被平台策略拦住——本 App 的
+ * `targetSdk` 默认 28（`app/build.gradle.kts:38`），API 28 起平台默认拒绝明文，而当时 manifest
+ * 里既没有 `usesCleartextTraffic`、也没有 network security config。现在 `<application>` 上明确
+ * 写了 `android:usesCleartextTraffic="true"`（用户拍板「明文开」），所以 `http://` 与
+ * `https://` 都能取。代价要明写：那一条是**整个应用进程**的网络策略，不是「只放行图片」——
+ * 它为这条渲染路径而开，但 App 内所有 Java 网络栈都受影响。
  */
 internal object GuestImageBytes {
 
