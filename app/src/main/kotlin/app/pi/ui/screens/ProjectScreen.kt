@@ -65,6 +65,7 @@ import app.pi.rpc.ToolCall
 import app.pi.rpc.ToolDiff
 import app.pi.rpc.ToolStatus
 import app.pi.rpc.TranscriptItem
+import app.pi.runtime.PiPaths
 import app.pi.runtime.PtyLauncher
 import app.pi.runtime.WorkspaceChoice
 import app.pi.runtime.WorkspaceStore
@@ -207,11 +208,48 @@ fun ProjectScreen(
         engine == PiEngineSession.EngineState.Failed
 
     // ---------------------------------------------------------------- ④ 浏览
-    var crumbs by remember { mutableStateOf<List<String>>(emptyList()) }
+    //
+    // ## 浏览的根是 **guest 的 `/`**（`<rootfs>`），不是当前工作区
+    //
+    // 用户的原话：「工作区现在只能看工作区的文件。但是 AI 很多东西它不写到工作区里，它写到
+    // 工作区之外的路径了……就像文件管理一样，再加几层呗。」以当前工作区为根时，`/root`、
+    // `/tmp`、别的 `workspaces/<name>`、`/workspace/<别的目录>` —— 引擎**启动**的地方不等于
+    // 它**写**的地方 —— 这些一律看不到，而 ③ 那条「本次会话改过」又诚实地列着它们，
+    // 于是两半对不上：列得出来、打不开、也标不上。
+    //
+    // 所以这一屏现在是一台文件管理器：根是 guest 的 `/`，初始停在当前工作区（第一屏看到的
+    // 和以前一样），往上走几层就到根。**写仍然只允许在 guest 的 `/workspace` 里**
+    // （[editableRoot]）—— 这一屏的职责是「看清楚」，编辑边界与引擎、终端保持一致。
+    val paths = remember(context) {
+        PiPaths(
+            filesDir = context.filesDir,
+            nativeLibDir = File(context.applicationInfo.nativeLibraryDir),
+        )
+    }
+    val guestRootfs = remember(paths) { paths.rootfs }
+    val editableRoot = remember(paths) { paths.workspaceBase }
+    // 根到当前工作区的那几段：`workspace / pi / workspaces / workspace-1`。
+    //
+    // **两边都取规范路径再相减**：`filesDir` 的两个拼法（`/data/user/0/…` 与 `/data/data/…`）
+    // 在这里会相遇 —— `PiPaths` 用 `context.filesDir`，而 `workspace` 来自 `PtyLauncher`，
+    // 前缀一旦对不上，`removePrefix` 什么也不删，crumbs 就变成整条绝对路径的第一段。
+    // `DeviceWorkspace.canonicalize` 的 KDoc 记着同一个坑。
+    val homeCrumbs = remember(guestRootfs, workspace) {
+        val root = runCatching { guestRootfs.canonicalPath }.getOrNull() ?: guestRootfs.absolutePath
+        val here = runCatching { workspace.canonicalPath }.getOrNull() ?: workspace.absolutePath
+        here.removePrefix(root).trimStart('/').split('/').filter { it.isNotEmpty() }
+    }
+    var crumbs by remember(workspace, guestRootfs) { mutableStateOf(homeCrumbs) }
     var listing by remember { mutableStateOf<List<WorkspaceEntry>?>(null) }
     var listingError by remember { mutableStateOf<WorkspaceOpen.Failed?>(null) }
-    val currentDir = remember(workspace, crumbs) {
-        crumbs.fold(workspace) { dir, segment -> File(dir, segment) }
+    val currentDir = remember(guestRootfs, crumbs) {
+        crumbs.fold(guestRootfs) { dir, segment -> File(dir, segment) }
+    }
+    // 这一层能不能改：只有 guest 的 `/workspace` 里可以。判据是**规范路径**，不是字符串前缀。
+    val writableHere = remember(editableRoot, currentDir) {
+        val root = editableRoot.canonicalFile
+        val here = runCatching { currentDir.canonicalFile }.getOrNull()
+        here != null && (here.path == root.path || here.path.startsWith(root.path + File.separator))
     }
     LaunchedEffect(refreshTick, currentDir.absolutePath) {
         listing = null
@@ -328,18 +366,47 @@ fun ProjectScreen(
         }
     }
 
-    /** 相对路径 → 一个可以打开的文件；路径越界（`..`）或不在工作区里就返回 null。 */
-    fun resolveInside(path: String): File? {
-        val clean = path.trimStart('/')
-        if (clean.isEmpty()) return null
-        val file = File(workspace, clean)
-        val root = workspace.canonicalFile
-        val target = runCatching { file.canonicalFile }.getOrNull() ?: return null
-        return if (target.path == root.path || target.path.startsWith(root.path + File.separator)) {
-            target
-        } else {
-            null
+    /**
+     * 转录里那条路径 → 要打开的文件 + 该显示的名字，或者 null。
+     *
+     * 两种拼法各试一次，**存在的那一个赢**（顺序固定，所以结果可复现）：
+     *
+     *  1. **工作区相对** —— [WorkspaceFiles.workspaceRelative] 之后从**工作区**起算（不是从
+     *     `currentDir`：这条路径是 pi 在它自己的 cwd 里写的，跟用户此刻翻到哪一层无关）。
+     *     引擎写的东西绝大多数落在这一支。
+     *  2. **guest 的 `/` 之下** —— 绝对路径按 guest 根折一次。pi 并不是只往 cwd 里写：
+     *     `/tmp` 里的中间产物、`/root/.pi` 里的东西、`/opt` 里的脚本都真的在 guest 里，
+     *     以前这一屏**从来没有**办法看到它们（用户的原话：「AI 很多东西它不写到工作区里」）。
+     *
+     * 显示名跟着赢的那一支走：工作区相对的那支显示相对路径，另一支显示 pi 写下的**guest
+     * 原拼法** —— 那才是那个文件真实的名字，把它显示成别的东西会让人找不到它。
+     */
+    fun resolveSession(raw: String, guestWorkspace: String): WorkspaceSessionFile? {
+        val root = guestRootfs.canonicalFile
+        fun inside(file: File): File? {
+            val target = runCatching { file.canonicalFile }.getOrNull() ?: return null
+            return if (target.path == root.path || target.path.startsWith(root.path + File.separator)) {
+                target
+            } else {
+                null
+            }
         }
+        val relative = WorkspaceFiles.workspaceRelative(raw, guestWorkspace)
+        if (relative.isNotEmpty()) {
+            val candidate = inside(File(workspace, relative))
+            if (candidate != null && candidate.exists()) return WorkspaceSessionFile(candidate, relative)
+        }
+        if (raw.startsWith("/")) {
+            val guest = raw.trimStart('/')
+            if (guest.isNotEmpty()) {
+                val candidate = inside(File(guestRootfs, guest))
+                if (candidate != null && candidate.exists()) return WorkspaceSessionFile(candidate, raw)
+            }
+        }
+        // 两支都落空：调用方拿到 null，报的是 pi 写下的原拼法（不是这里替它编一个）。
+        // 这条路上以前说的是「这个文件不在工作区里」—— 那是把「我没找到」说成了一句关于
+        // 那个文件的事实，用户听到的就是「明明写完了却说被删了」。
+        return null
     }
 
     fun targetFor(
@@ -357,8 +424,18 @@ fun ProjectScreen(
         startInEdit = startInEdit,
     )
 
-    fun openRelative(path: String, file: File, startInEdit: Boolean = false) {
-        viewer = targetFor(path, file, editable = true, startInEdit = startInEdit)
+    /**
+     * 打开一个文件。[editable] 由调用方按「这一层能不能改」给（[writableHere]）：浏览的根是
+     * guest 的 `/`，但写边界仍然只有 guest 的 `/workspace`。默认 true 是给 ③ 那条路留的 ——
+     * 它解析出来的永远是工作区相对路径，本来就落在边界里。
+     */
+    fun openRelative(
+        path: String,
+        file: File,
+        startInEdit: Boolean = false,
+        editable: Boolean = true,
+    ) {
+        viewer = targetFor(path, file, editable = editable, startInEdit = startInEdit)
     }
 
     /**
@@ -489,7 +566,8 @@ fun ProjectScreen(
                     // 哪些文件」也作废（那些是旧工作区里的路径）。草稿那一半由
                     // `state.workspace.revision` 在 `ChatScreen` 里清（引擎已经把 revision
                     // 加一了）。
-                    crumbs = emptyList()
+                    // 回到**当前工作区**那一层：根现在是 guest 的 `/`，`emptyList()` 会落到根上。
+                    crumbs = homeCrumbs
                     localEdits = emptySet()
                     refreshTick++
                 }
@@ -710,22 +788,28 @@ fun ProjectScreen(
                                         )
                                     },
                                     onClick = {
-                                        val resolved = diffPathFor(file.path, guestWorkspace)
-                                        val target = resolveInside(resolved)
-                                        if (target != null) {
-                                            openRelative(resolved, target)
+                                        // 路径可能是工作区相对的，也可能是 guest 绝对拼法（引擎
+                                        // 的 cwd 拼法或终端的 `/workspace` 拼法），甚至写在 cwd
+                                        // 之外 —— `resolveSession` 两种都试。解析不出来时说的是
+                                        // **找不到**，不再说「不在工作区里」：那是把两件事说成一件，
+                                        // 用户看到的就是「明明写完了却说被删了」。
+                                        val resolved = resolveSession(file.path, guestWorkspace)
+                                        if (resolved != null) {
+                                            openRelative(resolved.displayPath, resolved.file)
                                         } else {
-                                            say("这个文件不在工作区里，打不开。", StateTone.Warning)
+                                            say("找不到这个文件：${file.path}", StateTone.Warning)
                                         }
                                     },
                                     onMenu = {
-                                        val resolved = diffPathFor(file.path, guestWorkspace)
-                                        val target = resolveInside(resolved)
-                                        if (target == null) {
-                                            say("这个文件不在工作区里。", StateTone.Warning)
+                                        val resolved = resolveSession(file.path, guestWorkspace)
+                                        if (resolved == null) {
+                                            say("找不到这个文件：${file.path}", StateTone.Warning)
                                         } else {
-                                            menuFor =
-                                                menuTargetFor(resolved, target, fromSession = true)
+                                            menuFor = menuTargetFor(
+                                                resolved.displayPath,
+                                                resolved.file,
+                                                fromSession = true,
+                                            )
                                         }
                                     },
                                 )
@@ -739,7 +823,10 @@ fun ProjectScreen(
                     WsSectionHeader(
                         label = "全部文件",
                         count = if (listingError != null) null else "${listing?.size ?: 0} 项",
-                        aside = if (listingError != null) {
+                        aside = if (listingError != null || !writableHere) {
+                            // 只读层（`/` 之下、guest 的 `/workspace` 之外）不给「新建」：
+                            // 浏览的根是 guest 的 `/`，写边界仍然只有 `/workspace`。少一个能按
+                            // 却会失败的按钮，比按下去再报错好。
                             null
                         } else {
                             // 稿子这一颗是**无描边无底的 accent 文本 + 13 的加号**
@@ -750,7 +837,11 @@ fun ProjectScreen(
                     )
                 }
                 item {
+                    // 根那一颗现在是 **guest 的 `/`**（浏览的根），不再等于「工作区」；初始
+                    // crumbs 就是根到当前工作区的那几段，所以第一屏看到的目录与以前一模一样，
+                    // 只是往上还有层可走。
                     BreadcrumbRow(
+                        rootLabel = ROOTFS_CRUMB_LABEL,
                         crumbs = crumbs,
                         onGo = { index -> crumbs = crumbs.take(index) },
                     )
@@ -765,7 +856,7 @@ fun ProjectScreen(
                             detail = error.detail,
                             actions = {
                                 WsErrAction("重试") { refreshTick++ }
-                                WsErrAction("回到工作区") { crumbs = emptyList() }
+                                WsErrAction("回到工作区") { crumbs = homeCrumbs }
                             },
                         )
                     }
@@ -828,11 +919,30 @@ fun ProjectScreen(
                 } else {
                     entries.forEachIndexed { index, entry ->
                         item(key = "entry:${entry.path}") {
-                            val matched = if (engineDown) {
+                            // 这一行的**工作区相对**路径。`entry.path` 是**相对 `currentDir`** 的
+                            // 名字（`WorkspaceFiles.list` 的定义），拿它去比转录里的路径只在
+                            // 「工作区根那一层」才碰得巧 —— 这就是「写进子目录的文件永远不带
+                            // 「本次会话」徽标」的原因，而用户报的那条正好是 `/workspace/pyjhora/
+                            // 印占解读方案.md`，隔了一层。所以这里按当前目录拼出真正的工作区相对
+                            // 路径再比；不在工作区里的层（浏览的根是 guest 的 `/`）没有可比的名字。
+                            val entryRelative = remember(currentDir, entry.name, workspace) {
+                                val root = workspace.canonicalFile
+                                val canonical = runCatching {
+                                    File(currentDir, entry.name).canonicalFile
+                                }.getOrNull()
+                                when {
+                                    canonical == null -> null
+                                    canonical.path == root.path -> null
+                                    canonical.path.startsWith(root.path + File.separator) ->
+                                        canonical.path.removePrefix(root.path + File.separator)
+                                    else -> null
+                                }
+                            }
+                            val matched = if (engineDown || entryRelative == null) {
                                 null
                             } else {
                                 changedPaths.firstOrNull {
-                                    WorkspaceFiles.sameFile(entry.path, it, guestWorkspace)
+                                    WorkspaceFiles.sameFile(entryRelative, it, guestWorkspace)
                                 }
                             }
                             val entryDiff = matched?.let { path ->
@@ -848,7 +958,9 @@ fun ProjectScreen(
                                             crumbs = crumbs + entry.name
                                         } else {
                                             val file = File(currentDir, entry.name)
-                                            openRelative(entry.path, file)
+                                            // 只读层里打开的文件不给编辑（viewer 的「编辑」
+                                            // 按钮与保存一起关掉），边界与上面那颗「新建」一致。
+                                            openRelative(entry.path, file, editable = writableHere)
                                         }
                                     },
                                     onMenu = {
@@ -1177,16 +1289,20 @@ fun ProjectScreen(
 
     // ------------------------------------------------------------ 浮层：行尾 ⋮ 菜单
     menuFor?.let { target ->
+        // ③ 那几行是 pi 在它自己的 cwd 里写的（`resolveSession` 优先按工作区相对解析），所以它们的菜单永远可改；
+        // ④ 的行要看**它所在那一层**——菜单可能是在只读层里点开的。
+        val menuEditable = target.fromSession || writableHere
         WorkspaceMenuSheet(
             target = target,
+            editable = menuEditable,
             onClose = { menuFor = null },
             onOpen = {
                 menuFor = null
-                openRelative(target.path, target.file)
+                openRelative(target.path, target.file, editable = menuEditable)
             },
             onEdit = {
                 menuFor = null
-                openRelative(target.path, target.file, startInEdit = true)
+                openRelative(target.path, target.file, startInEdit = true, editable = menuEditable)
             },
             onEnter = {
                 menuFor = null
@@ -1927,11 +2043,8 @@ private fun changedDirectory(path: String): String? =
 private fun diffFor(items: List<TranscriptItem>, path: String): ToolDiff? =
     items.filterIsInstance<ToolDiff>().lastOrNull { it.path == path && it.diffText.isNotBlank() }
 
-/** pi 的参数可能是 guest 拼法；把它折成工作区相对路径，好在工作区里找到那个文件。 */
-private fun diffPathFor(path: String, guestWorkspace: String): String {
-    val prefix = guestWorkspace.trimEnd('/') + "/"
-    return if (path.startsWith(prefix)) path.removePrefix(prefix) else path.trimStart('/')
-}
+/** [ProjectScreen.resolveSession] 的结果：打开谁，以及把它叫什么。 */
+private class WorkspaceSessionFile(val file: File, val displayPath: String)
 
 // ================================================================ ④ 全部文件
 
@@ -1954,7 +2067,7 @@ private fun diffPathFor(path: String, guestWorkspace: String): String {
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun BreadcrumbRow(crumbs: List<String>, onGo: (Int) -> Unit) {
+private fun BreadcrumbRow(rootLabel: String, crumbs: List<String>, onGo: (Int) -> Unit) {
     val palette = PiTheme.palette
     FlowRow(
         modifier = Modifier
@@ -1968,7 +2081,7 @@ private fun BreadcrumbRow(crumbs: List<String>, onGo: (Int) -> Unit) {
         verticalArrangement = Arrangement.Center,
     ) {
         Crumb(
-            text = WorkspaceFiles.ROOT_LABEL,
+            text = rootLabel,
             mono = false,
             current = crumbs.isEmpty(),
             onClick = { onGo(0) },
@@ -2016,6 +2129,13 @@ private fun Crumb(text: String, mono: Boolean, current: Boolean, onClick: () -> 
 
 /** 稿子给每一段面包屑 `maxWidth:170`。 */
 private val CRUMB_MAX_WIDTH = 170.dp
+
+/**
+ * 面包屑第一段的字：浏览的根是 **guest 的 `/`**（`<rootfs>`），所以它不叫「工作区」——
+ * 工作区只是它下面 `workspace/pi/workspaces/<name>` 那一层 —— 所以它不叫「工作区」，
+ * 那会把根和根下面的一层混成一个词。
+ */
+private const val ROOTFS_CRUMB_LABEL = "根"
 
 /**
  * 目录树里的一行：目录在前、文件夹行点进去、文件行点开查看。
@@ -2464,6 +2584,12 @@ private fun WorkspaceMenuSheet(
     onDelete: () -> Unit,
     onCopyPath: () -> Unit,
     onLocateInChat: () -> Unit,
+    /**
+     * 这一层能不能改（[writableHere]）。只读层里不摆「编辑 / 重命名 / 删除」——浏览的根是
+     * guest 的 `/`，写边界只有 guest 的 `/workspace`；一个按下去只会失败的菜单项比没有更糟。
+     * 「打开 / 进入 / 复制路径 / 看它在对话里的那一步」照旧。
+     */
+    editable: Boolean,
 ) {
     WsSheet(
         title = WorkspaceFiles.middleEllipsis(target.file.name, MENU_TITLE_MAX_CHARS),
@@ -2473,14 +2599,18 @@ private fun WorkspaceMenuSheet(
     ) {
         if (target.isDirectory) {
             MenuAction("进入", onEnter)
-            MenuAction("重命名", onRename)
-            MenuAction("删除", onDelete, tone = PiTheme.palette.error)
+            if (editable) {
+                MenuAction("重命名", onRename)
+                MenuAction("删除", onDelete, tone = PiTheme.palette.error)
+            }
             MenuAction("复制路径", onCopyPath)
         } else {
             MenuAction("打开", onOpen)
-            MenuAction("编辑", onEdit)
-            MenuAction("重命名", onRename)
-            MenuAction("删除", onDelete, tone = PiTheme.palette.error)
+            if (editable) {
+                MenuAction("编辑", onEdit)
+                MenuAction("重命名", onRename)
+                MenuAction("删除", onDelete, tone = PiTheme.palette.error)
+            }
             if (target.fromSession) {
                 MenuAction("看它在对话里的那一步", onLocateInChat)
             } else {

@@ -572,6 +572,42 @@ fun main() {
     check("E5 a non-empty directory is not deleted", File(e5, "d/user.txt").readText(), "mine")
     check("E5 …and the failure names it as a directory", e5Message.contains("目录"), true)
 
+    // ------------------------------------------------- 一个目录的两个 guest 拼法
+    //
+    // `GuestWorkspacePath` 说明同一个 host 目录在 guest 里有两个规范名字：引擎的 cwd 是
+    // `/workspace/pi/workspaces/<name>`，终端把它挂在一层之上、就叫 `/workspace`。转录里的
+    // 路径两种都会出现，只认其中一种就是设备上那条「写完没被删，点开说被删了」——文件确实
+    // 在 `<工作区>/pyjhora/…`，界面去找 `<工作区>/workspace/pyjhora/…`，然后说它不在。
+    val engineGuest = "/workspace/pi/workspaces/workspace-1"
+    check(
+        "W20 引擎拼法折成工作区相对路径",
+        GuestWorkspacePath.relativeToWorkspace("$engineGuest/pyjhora/x.md", engineGuest),
+        "pyjhora/x.md",
+    )
+    check(
+        "W21 终端拼法折成同一个答案（这条就是设备上那个 bug）",
+        GuestWorkspacePath.relativeToWorkspace("/workspace/pyjhora/x.md", engineGuest),
+        "pyjhora/x.md",
+    )
+    check(
+        "W22 已经是相对路径时原样返回",
+        GuestWorkspacePath.relativeToWorkspace("pyjhora/x.md", engineGuest),
+        "pyjhora/x.md",
+    )
+    check(
+        "W23 两种拼法都不像时只去前导斜杠（调用方还要再试 guest 根那一支）",
+        GuestWorkspacePath.relativeToWorkspace("/root/.pi/agent/auth.json", engineGuest),
+        "root/.pi/agent/auth.json",
+    )
+    check(
+        "W24 引擎拼法与 under() 互为逆运算",
+        GuestWorkspacePath.relativeToWorkspace(
+            GuestWorkspacePath.under("/base", "/base/pi/workspaces/workspace-1"),
+            GuestWorkspacePath.under("/base", "/base/pi/workspaces/workspace-1"),
+        ),
+        "",
+    )
+
     root.deleteRecursively()
 
     println(if (failures == 0) "\nharness: OK (all checks passed)" else "\nharness: FAILED ($failures)")

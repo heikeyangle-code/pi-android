@@ -199,4 +199,33 @@ object GuestWorkspacePath {
         val relative = hostWorkspace.removePrefix(base).trimStart('/')
         return if (relative.isEmpty()) GUEST_ROOT else "$GUEST_ROOT/$relative"
     }
+
+    /**
+     * [under] 的**反向**：一条 guest 路径 → 相对工作区的路径。
+     *
+     * ## 为什么必须认两种前缀
+     *
+     * 同一个 host 目录在 guest 里有两个规范名字（[GUEST_ROOT] 与 [TERMINAL_GUEST_PATH]，
+     * 见类 KDoc）：引擎的 cwd 是 `/workspace/pi/workspaces/<name>`，而**终端**把同一个目录
+     * 挂在一层之上、就叫 `/workspace`。两种各去掉自己的前缀之后得到**同一个**相对路径，
+     * 所以这里认两种，而不是多拼一层 —— 多拼一层正是那个 bug：`/workspace/pyjhora/x.md`
+     * 只认引擎前缀时会掉进最后那个分支，变成 `workspace/pyjhora/x.md`，于是
+     * `<工作区>/workspace/pyjhora/x.md` 当然不存在，界面就说那个文件没了。
+     *
+     * 只做前缀归一，**不碰文件系统**：调用方拿结果去拼候选路径，再由存在与否决定用哪个。
+     */
+    fun relativeToWorkspace(path: String, guestWorkspace: String): String {
+        val absolute = path.startsWith("/")
+        val trimmed = path.trimStart('/')
+        val engine = guestWorkspace.trimStart('/').trimEnd('/')
+        if (trimmed == engine) return ""
+        if (trimmed.startsWith("$engine/")) return trimmed.removePrefix("$engine/")
+        // 终端那一支**只对绝对路径**生效：`workspace/notes.md` 是引擎 cwd 里的一个普通相对
+        // 路径（cwd 里真有个叫 `workspace` 的目录），把它当成挂载点就会指向别处。
+        if (absolute) {
+            val terminal = TERMINAL_GUEST_PATH.trimStart('/').trimEnd('/')
+            if (trimmed.startsWith("$terminal/")) return trimmed.removePrefix("$terminal/")
+        }
+        return trimmed
+    }
 }

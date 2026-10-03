@@ -1,6 +1,7 @@
 package app.pi.ui.screens
 
 import app.pi.packages.PiConfigFiles
+import app.pi.runtime.GuestWorkspacePath
 import app.pi.rpc.ToolCall
 import app.pi.rpc.TranscriptItem
 import app.pi.rpc.ToolStatus
@@ -101,9 +102,6 @@ internal sealed interface WorkspaceOpen {
  * 拉进内存。
  */
 internal object WorkspaceFiles {
-
-    /** 工作区在界面上的名字（与会话列表的 `工作区` 同一套词）。 */
-    const val ROOT_LABEL = "工作区"
 
     /** design 稿：`文件 2.4 MB。查看器不整份载入，只给前 25 行`。 */
     const val PREVIEW_LINES = 25
@@ -572,16 +570,21 @@ internal object WorkspaceFiles {
     /**
      * 一个「本次会话改过」的路径 ↔ 目录树里的相对路径是否指同一个文件。
      *
-     * pi 的 `read`/`write`/`edit` 参数既可能是工作区相对路径（cwd 就是工作区），也可能是
-     * `/workspace/pi/workspaces/workspace-1/...` 这种 guest 拼法。两种都认，别的拼法不猜。
+     * pi 的 `read`/`write`/`edit` 参数既可能是工作区相对路径（cwd 就是工作区），也可能带
+     * guest 前缀。两边都先按 [workspaceRelative] 归一，再比 —— 认哪种拼法只写在一个地方。
      */
-    fun sameFile(relativePath: String, touchedPath: String, guestWorkspace: String): Boolean {
-        val a = relativePath.trimStart('/')
-        val b = touchedPath.trimStart('/')
-        if (a == b) return true
-        val prefix = guestWorkspace.trimEnd('/') + "/"
-        return b.startsWith(prefix) && a == b.removePrefix(prefix)
-    }
+    fun sameFile(relativePath: String, touchedPath: String, guestWorkspace: String): Boolean =
+        workspaceRelative(relativePath, guestWorkspace) == workspaceRelative(touchedPath, guestWorkspace)
+
+    /**
+     * 转录里那条路径 → **相对当前工作区**的路径。
+     *
+     * 规则本身在 [GuestWorkspacePath.relativeToWorkspace]（那是「一个目录的两个 guest 拼法」
+     * 这条事实的 owner，bare-JVM harness 直接钉它）；这里只是这一屏用的名字。漏掉终端拼法
+     * 的后果写在那个函数的 KDoc 里，正是用户报的「写完没被删，点开说被删了」。
+     */
+    fun workspaceRelative(path: String, guestWorkspace: String): String =
+        GuestWorkspacePath.relativeToWorkspace(path, guestWorkspace)
 }
 
 /** ③ 里那条「pi 正在写这个文件」的行。 */
