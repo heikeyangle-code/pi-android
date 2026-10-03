@@ -293,6 +293,7 @@ pi 的 `renderLayout`（`[PI]/latex.js:681-809`）把 layout 节点拼成字符�
 ### 8.3 `custom` 槽“认领一切”的陷阱
 - **今天的行为**：`MarkdownElementInternal` 的 else 分支是 `handled = components.custom?.invoke(...) != null`，而 `custom` 返回 `Unit`（永不为 null），所以**只要提供了 `custom`，所有未识别节点都被判为已处理**，不再递归子节点。App 的 `piMathComponent` 用无 `else` 的 `when` 只认两种 math，其余“什么都不做”。证据：`[LIB]/compose/MarkdownExtension.kt:92-95`（`handled`）、`:97-101`（递归）；`HEAD PiMarkdownComponents.kt:188-194`；说明 `:143-187`。
 - **状态**：done（有意为之；副作用是 `HTML_BLOCK` 也不会递归，见 §11.8，但递归本来也画不出东西）。
+- **状态行（本次追加）**：陷阱本身没变（`custom` 的 `when` 仍然没有 `else`），但认领清单从两个变成了三个：`piCustomComponent` 现在按名字认领 `GFMElementTypes.INLINE_MATH`、`GFMElementTypes.BLOCK_MATH`、`HTML_BLOCK`。上面「状态」那句「`HTML_BLOCK` 也不会递归」描述的仍是递归这一侧的事实，而整块消失这件事已在 §11.8 修掉（改由这一支自己把原文画出来）。
 - **要补的话**：无（若将来要接管别的未知节点，必须回到这里读这段）。
 
 ### 8.4 主题对象缓存（F32 的修复落点）
@@ -393,7 +394,8 @@ pi 的 `renderLayout`（`[PI]/latex.js:681-809`）把 layout 节点拼成字符�
 - 性能代价 **低**。
 - **是否偏离 pi**：是（App 的实现方式导致；pi 在 token 层替换）。**要登记**。
 
-### 11.8（低）裸 HTML：把原始 HTML 当文本画出来
+### 11.8（低）裸 HTML：把原始 HTML 当文本画出来 —— **已完成（本次追加状态行；上面与下面这些描述保留为改动前的快照）**
+- **状态行（本次追加）**：两条路都补上了 —— 块级 `HTML_BLOCK` 由 `custom` 槽的新分支（`PiMarkdownComponents.kt` 的 `PiHtmlBlock`）画成 pi 的 `raw.trim()`，行内 `HTML_TAG` 由 `Markdown(annotator = …)` 的认领钩子（`PiMarkdown.kt` 的 `piInlineHtmlAnnotate`）把原始字节 `append` 回那一段 `AnnotatedString`。判定与文本拼装在零 import 的 `ui/render/PiHtml.kt`，由 `PiHtmlCheck`（`tools/run-app-pure-checks.sh` 的 `html`）对着 pi 自己渲染的 51 条形状逐字节断言，并在解析器的**全部 77 个节点类型名**上断言「只认这两个」。本机实跑 `harness: OK`（187 条 PASS）。**残余差异**（都不是这一次引入的，故没有动）：段落软换行仍然是「App 空格 / pi 换行」、被换行拆开的行内标签由库的 `LT`/`TEXT`/`EOL` token 拼出（字符不少、只是不分行）、行内代码两侧的空格（§11.10）、pi 对**整篇**源文本做 `\t`/`\r` 归一而 App 只在 HTML 切片上补。
 - 收益 **低–中**：pi 对块级/行内 HTML 都是原文照排（`[PI]/…/markdown.js:474-478`、`:570-574`）；App 今天整块丢弃（`HTML_BLOCK` 落到 `custom` 槽的 `when` 空分支，§8.3；行内 `HTML_TAG` 在 annotator 的 `else` 里没有 `append`，`[LIB]/annotator/AnnotatedStringKtx.kt:363-368`）。
 - 风险 **低**：覆盖 `HTML_BLOCK` 需要一个 `text`/自定义槽；行内要给 annotator 传自定义 `MarkdownAnnotator`。
 - 性能代价 **低**。

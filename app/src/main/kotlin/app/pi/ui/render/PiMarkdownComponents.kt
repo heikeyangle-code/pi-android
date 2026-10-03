@@ -101,9 +101,10 @@ internal val LocalPiImageTransformer = staticCompositionLocalOf<ImageTransformer
 
 /**
  * The renderer's component set: pi's code-block chrome, pi's math, the
- * image fallback, and the one thing the library gets wrong about tables.
+ * image fallback, the one thing the library gets wrong about tables, and bare
+ * block HTML.
  *
- * Everything except those four keeps the library default, because the default
+ * Everything except those five keeps the library default, because the default
  * reads its colours and type from the [com.mikepenz.markdown.model.MarkdownColors]
  * and [com.mikepenz.markdown.model.MarkdownTypography] built in
  * `PiMarkdownTheme.kt` — which are pi's tokens. Overriding a component that
@@ -113,8 +114,12 @@ internal val LocalPiImageTransformer = staticCompositionLocalOf<ImageTransformer
  * around every fence and prints the fence language above it. The library's
  * default code block has a background but no border, so the border is added.
  *
- * Math is the second; [piMathComponent] explains why it claims only two element
- * types.
+ * Math is the second, and bare block HTML is the fifth; both arrive through the
+ * `custom` slot, and [piCustomComponent] explains why they have to share it and
+ * why that slot can only be widened one named node type at a time (the "claims
+ * everything" trap). Line HTML is *not* here — it is an inline token, not a
+ * dispatched node, so it is claimed in `PiMarkdown.kt`'s annotator instead
+ * (`PiHtml.INLINE_TYPE` has the two halves of pi's branch).
  *
  * Images are the third, and they take **two** slots, because the library splits the
  * surface: a block image reaches `image` ([PiImagePlaceholder]), one written inside a
@@ -146,11 +151,12 @@ internal fun piMarkdownComponents(): MarkdownComponents = markdownComponents(
     image = { model -> PiImagePlaceholder(model) },
     inlineImage = { model -> PiInlineImage(model) },
     table = { model -> PiTable(model) },
-    custom = { type, model -> piMathComponent(type, model) },
+    custom = { type, model -> piCustomComponent(type, model) },
 )
 
 /**
- * pi's math nodes.
+ * The two things the renderer's dispatch would otherwise drop: pi's math nodes, and
+ * **bare block HTML**.
  *
  * **The trap.** The renderer's dispatch (upstream
  * `multiplatform-markdown-renderer`, `compose/MarkdownExtension.kt:92-94`) is
@@ -170,36 +176,88 @@ internal fun piMarkdownComponents(): MarkdownComponents = markdownComponents(
  * There is no return value that can undo that: the `handled` flag is computed
  * from the *call*, not from anything the callee can say. The only way to keep
  * the default behaviour for the other types is to not claim them, which is
- * exactly what this function does — a `when` with no `else` branch. It returns
- * for the two node types it was written for and does nothing for everything
- * else, leaving the dispatch's own conclusion alone rather than trying to
- * re-implement the recursion it cannot reach.
+ * exactly what this function does — every branch names one node type and there is
+ * no `else`. It returns for the node types it was written for and does nothing
+ * for everything else, leaving the dispatch's own conclusion alone rather than
+ * trying to re-implement the recursion it cannot reach. **That is why the two new
+ * branches are added inside this `when` and not by widening the claim**: the set of
+ * claimed types is exactly `{INLINE_MATH, BLOCK_MATH, HTML_BLOCK}`, and
+ * `PiHtmlCheck` pins the HTML half of that set against every node type name the
+ * pinned parser can produce (77 of them).
  *
- * In normal rendering this function is in fact unreachable for math, because
+ * Math. In normal rendering these branches are in fact unreachable, because
  * [piMarkdownSource] rewrites `$...$` / `$$...$$` before the parser runs; see
- * [PiMarkdownText]. It is kept because it is the AST-level statement of what
- * this app supports, and because the renderer's dispatch reaches it for *any*
+ * [PiMarkdownText]. They are kept because they are the AST-level statement of what
+ * this app supports, and because the renderer's dispatch reaches them for *any*
  * node build it is handed — including a partial document, which is what every
  * streaming token produces — so a math node that survives to a component call
- * must land here rather than silently vanishing.
+ * must land here rather than silently vanishing. A node that reaches this point is
+ * rendered as the formula's own source in `mdCode`, which is the phone's equivalent
+ * of pi's pending formula (`packages/tui/src/components/markdown.ts:508`):
+ * unmistakably a formula, visibly not typeset.
+ *
+ * Block HTML. This branch **is** reachable, and before it existed the whole block
+ * was dropped: `HTML_BLOCK` is not one of the renderer's built-in cases, so it fell
+ * to the `custom` slot, the `when` had no branch for it, and — per the trap above —
+ * `handled` was already true, so the node was neither drawn nor recursed into. Not
+ * a tag vanished; the text inside it vanished too. pi never renders HTML either: it
+ * prints the block's own bytes, trimmed (`PiHtml.BLOCK_TYPE` has the source).
  *
  * (The library also ships a streaming parser that keeps a stable AST prefix and
  * re-parses only its tail — `StreamingMarkdownState`, `model/StreamingMarkdownState.kt`
  * in 0.45.0 — but this app does not use it: it is append-only (`append(chunk)`)
  * while the App's transcript carries the accumulated text, so adopting it needs a
  * delta channel out of the reducer first. See `docs/streaming-review.md` §4.2.)
- *
- * A node that reaches this point is rendered as the formula's own source in
- * `mdCode`, which is the phone's equivalent of pi's pending formula
- * (`packages/tui/src/components/markdown.ts:508`): unmistakably a formula,
- * visibly not typeset.
  */
 @Composable
-private fun piMathComponent(type: org.intellij.markdown.IElementType, model: MarkdownComponentModel) {
-    when (type) {
-        GFMElementTypes.INLINE_MATH -> PiFormulaText(model, block = false)
-        GFMElementTypes.BLOCK_MATH -> PiFormulaText(model, block = true)
+private fun piCustomComponent(type: org.intellij.markdown.IElementType, model: MarkdownComponentModel) {
+    when {
+        type === GFMElementTypes.INLINE_MATH -> PiFormulaText(model, block = false)
+        type === GFMElementTypes.BLOCK_MATH -> PiFormulaText(model, block = true)
+        // 走 `PiHtml.handlesBlock` 而不是直接 `type === MarkdownElementTypes.HTML_BLOCK`，
+        // 是为了让"认领哪些类型"这句能被执行、而不是只被读出来：判定在本机跑得动
+        // （`PiHtmlCheck` 对解析器的类型全集逐条断言）。这里多付的只是一次 8 字节
+        // 字符串比较，而且只在"库的二十个内建 case 都不认"的节点上付。
+        PiHtml.handlesBlock(type.name) -> PiHtmlBlock(model)
     }
+}
+
+/**
+ * 裸块级 HTML：**照抄 pi，把原文当文字排出来**，不解析、不转义、不改写。
+ *
+ * pi 的分支是 `lines.push(this.applyDefaultStyle(token.raw.trim()))`
+ * （`packages/tui/src/components/markdown.ts:622`）—— 一个字符都不丢：内部换行原样
+ * 保留（`renderToken` 把整串推进 `lines`，由 `wrapTextWithAnsi` 按 `\n` 拆行），所以
+ * `<div>\nhello\n</div>` 在终端上是三行。这里用同一个 [PiHtml.blockTextAt]，
+ * 期望值由 pi 自己渲染的字节钉住（`app/src/test/resources/pi-html-fixtures/cases.json`）。
+ *
+ * **为什么用 [Text] 而不是库的段落组件。** `MarkdownParagraph` 拼字符串走的是 annotator
+ * （`.../elements/MarkdownParagraph.kt:21-25`），而 annotator 对 `HTML_BLOCK_CONTENT`
+ * 这类子节点落进 `else`、什么都不 append，于是它会画出一个**空**段落。这个块要的是
+ * "把这一片源文本原样画出来"，那就只有直接 `Text` 一条路。
+ *
+ * **颜色与字号**：只给 `typography.paragraph`，**不另给 `color`**。库的段落走
+ * `MarkdownBasicText`，它的取色顺序是「显式 `color` → `style.color` →
+ * `LocalMarkdownColors.current.text`」（`.../elements/material/TextWrapper.kt`），而
+ * `piMarkdownTypography` 的 `paragraph` 颜色**总是**指定的（`body` =
+ * `textColor ?: palette.text`）。所以不传 `color` 得到的就是"它如果真是一个段落时"的
+ * 同一个颜色；传 `palette.text` 反而会在 `textColor` 被覆盖的表面（技能卡片传
+ * `customMessageText`）上与相邻段落不一致。不加 `maxLines`：pi 不截断。
+ */
+@Composable
+private fun PiHtmlBlock(model: MarkdownComponentModel) {
+    val content = model.content
+    val node = model.node
+    // `remember(content, node)`：切分与 trim 只在节点或源文本变了的时候重做一次，
+    // 重组（同一条消息重新测量、主题变化）不重算。它不在每帧路径上。
+    val text = remember(content, node) {
+        PiHtml.blockTextAt(content, node.startOffset, node.endOffset)
+    }
+    if (text.isEmpty()) return
+    Text(
+        text = text,
+        style = model.typography.paragraph,
+    )
 }
 
 /** One un-rewritten formula, in pi's "shown as written" style. */

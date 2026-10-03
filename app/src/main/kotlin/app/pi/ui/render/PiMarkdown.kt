@@ -10,6 +10,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
 import app.pi.bridge.rememberPiGuestImageTransformer
 import app.pi.highlight.PiNodeCodeHighlighter
 import app.pi.ui.theme.PiTheme
@@ -20,8 +21,62 @@ import com.mikepenz.markdown.model.markdownAnimations
 import com.mikepenz.markdown.model.markdownAnnotator
 import com.mikepenz.markdown.model.markdownAnnotatorConfig
 import com.mikepenz.markdown.model.rememberMarkdownState
+import org.intellij.markdown.ast.ASTNode
 import org.intellij.markdown.flavours.gfm.GFMFlavourDescriptor
 import org.intellij.markdown.parser.MarkdownParser
+
+/**
+ * 行内裸 HTML 的认领钩子（`MarkdownAnnotator.annotate`）。
+ *
+ * ## 为什么必须走这一条缝
+ *
+ * 行内 HTML 是**段落里的一个 token**（`MarkdownTokenTypes.HTML_TAG`，见
+ * `PiHtml.INLINE_TYPE`），不是一个能被组件分派到的节点：段落有自己的组件
+ * （`compose/MarkdownExtension.kt` 的 `PARAGRAPH` 分支），而段落里的粗体、链接、行内代码
+ * 都是 annotator 拼进同一个 `AnnotatedString` 的。想从组件层拿到行内 HTML 就得把整个
+ * `paragraph` 槽接过来自己解析一遍（`docs/known-gaps.md` A2 第 38 行记着这次失败：
+ * 组件层拿不到那个 annotator，自己拆会把同段其它文字的格式丢掉）。
+ *
+ * 库把 annotator 作为 `Markdown(annotator = …)` 的参数暴露，而它的 `annotate` 钩子
+ * **就是** `AnnotatedString.Builder` 的扩展函数
+ * （`model/MarkdownAnnotator.kt`：`AnnotatedString.Builder.(content, child) -> Boolean`），
+ * 返回 `true` 表示"这个 child 我处理了"、`false` 表示"交回默认处理"。于是这里可以做到
+ * **只认领一种节点、别的一个都不碰**：
+ *
+ *     if (annotate == null || !annotate(content, child)) { …库自己的 switch… }
+ *     （`annotator/AnnotatedStringKtx.kt` 的 `buildMarkdownAnnotatedString`）
+ *
+ * 返回 `false` 时库走的还是原来那一整段 switch，所以**不含 HTML_TAG 的消息，
+ * `AnnotatedString` 一个字节都不变**。这一点不是靠样例撑着的：`PiHtml.handlesInline`
+ * 只对 `"HTML_TAG"` 为真，而 `PiHtmlCheck` 拿 pin 住的解析器（`org.jetbrains:markdown`
+ * 0.7.9 + GFM）**全部 77 个节点类型名**逐个跑过这个判定（夹具的 `typeUniverse`），
+ * 所以"其它任何节点都不会被认领"是一条被穷举过的断言。
+ *
+ * ## 为什么是顶层 `val`
+ *
+ * 这个 lambda 的**身份**是 `DefaultMarkdownAnnotator.equals` 的一个字段，而 annotator 又是
+ * `Markdown(...)` 的参数。顶层 `val` 让它整个进程只有一个实例，`remember` 不会因为
+ * lambda 每次重组都新建而失效；它本身**不持有任何状态**，也不做分配（`PiHtml.inlineTextAt`
+ * 只在切片里有 `\t`/`\r` 时才新建字符串）。
+ *
+ * ## 代价（明写，不含糊）
+ *
+ * 库的那行判定从 `annotate == null` 的短路变成一次虚调用 + 一次字符串比较，
+ * 作用范围是"每个被拼接的 inline 节点"，时机是 annotator 生成 `AnnotatedString` 的那条路
+ * （每段文本一次，不在重组/绘制的每帧路径上）。pi 自己的 `renderInlineTokens` 也是逐
+ * token 一个 switch，这一层的量级与它相同。
+ */
+private val piInlineHtmlAnnotate: AnnotatedString.Builder.(String, ASTNode) -> Boolean =
+    { content, child ->
+        if (PiHtml.handlesInline(child.type.name)) {
+            // pi 的行内分支：`result += applyTextWithNewlines(token.raw)`（原文照排）。
+            append(PiHtml.inlineTextAt(content, child.startOffset, child.endOffset))
+            true
+        } else {
+            // 不是 HTML_TAG：交回库的默认处理，与今天逐字节相同。
+            false
+        }
+    }
 
 /**
  * Renders pi's markdown natively.
@@ -268,8 +323,18 @@ internal fun PiMarkdownText(
             // pi 自己就是保留换行的（`components/markdown.js:367-369` 把段落文本整串
             // 推进 `lines`），所以这是往 pi 靠；**不全量打开**是因为那会改掉所有消息的
             // 段落观感（App 的软换行今天渲染成空格），那是另一笔交易。
+            //
+            // `annotate` 是行内裸 HTML 的认领钩子（`piInlineHtmlAnnotate` 的注释里有它
+            // 为什么只能落在这一层、以及它的代价）：库拿它当"这个 child 我处理了吗"，
+            // 返回 `false` 就原样走库自己的 switch，所以只有 `HTML_TAG` 会被认领。
+            // 两个参数共用同一个 `remember`：`markdownAnnotator` 造出来的
+            // `DefaultMarkdownAnnotator` 按 `config` + `annotate` 判等，而这两者都是稳定
+            // 的（`hasGrid` 是这次渲染的一个常量，lambda 是顶层 `val`）。
             annotator = remember(hasGrid) {
-                markdownAnnotator(config = markdownAnnotatorConfig(eolAsNewLine = hasGrid))
+                markdownAnnotator(
+                    config = markdownAnnotatorConfig(eolAsNewLine = hasGrid),
+                    annotate = piInlineHtmlAnnotate,
+                )
             },
             // Two library defaults this renderer must not inherit. Both are about the
             // *streaming* case, and both were inherited silently until
