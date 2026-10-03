@@ -909,6 +909,21 @@ run_harness mermaid-memo \
   "$ROOT/app/src/test/kotlin/app/pi/highlight/PiMermaidMemoCheck.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/highlight/PiMermaidMemo.kt"
 
+# app.pi.ui.render: **裸 HTML 照 pi 原样排字**。pi 从不解释 HTML，它把源码原样当文字打出来
+# （块级 `raw.trim()`、行内 `raw`）—— 一个字都不丢。App 以前整块丢（`HTML_BLOCK` 落进
+# `custom` 槽的空分支）或只丢标签（行内 `HTML_TAG` 在库 annotator 的 else 里没有 append），
+# 连本仓库自己的文档里 `` `/export <path>.jsonl` `` 都会被显示成 `/export .jsonl`。
+#
+# 期望值不是手抄：`tools/collect-pi-html-pitext.mjs` 真跑 pi 1.0.1 的 `Markdown.render` 取
+# 输出，`tools/HtmlFixtureSpans.java` 用 pin 住的解析器量节点跨度与类型全集（77 个类型名）。
+# 这个 harness 钉住的四件事：块级逐字节等于 pi、行内片段逐字节等于 pi、`\t`/`\r` 归一与 JS
+# `trim` 逐码位一致、以及**认领集合只含那两个类型**（117 条真实段落里一条都不含）——
+# 最后一条是"不含 HTML 的消息一字不变"的证据。
+run_harness html \
+  app.pi.ui.render.PiHtmlCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/ui/render/PiHtmlCheck.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/ui/render/PiHtml.kt"
+
 # app.pi.ui.blocks: 放大之后要看的是**细节** —— 越过阈值时按源图坐标只解当前可见的一块
 # （`BitmapRegionDecoder`），块位图有恒定上界（2 000 000 像素 = 8 MB），与原图多大无关；
 # 1× 一个字节都不多要；只有块**严格比基础图清楚**时才解（这是「源图本来就没有更多像素」

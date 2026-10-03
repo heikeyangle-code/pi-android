@@ -20,9 +20,10 @@ import kotlinx.serialization.json.jsonPrimitive
  * `<not a tag>` 到底是块还是文本、`` ` <b> ` `` 里的 `<b>` 该不该留。这些错了手机上
  * 不会崩、不会报错，只会有一条消息少画一段或者多画一个字符 —— 所以期望值不能手抄，
  * 必须是 **pi 自己的 `Markdown.render` 打在字节上的结果**
- * （`app/src/test/resources/pi-html-fixtures/cases.json`，由同目录的
- * `collect-pi-html-pitext.mjs` 生成；节点跨度与类型全集由同目录的 `HtmlFixtureSpans.java`
- * 用 pin 住的解析器量出；两个生成脚本的头部都有可复制的命令行）。
+ * （`app/src/test/resources/pi-html-fixtures/cases.json`，由 `tools/collect-pi-html-pitext.mjs`
+ * 生成；节点跨度与类型全集由 `tools/HtmlFixtureSpans.java` 用 pin 住的解析器量出；
+ * 两个生成脚本的头部都有可复制的命令行 —— 数据留在测试资源里，**生成器按仓库惯例放
+ * `tools/`**，和 `collect-latex-fixtures.mjs` / `collect-tool-fixtures.mjs` 同一格）。
  *
  * ## 四段断言，强度递增
  *
@@ -58,7 +59,7 @@ private val MARKDOWN_ENTRY: File =
 private val FIXTURE: JsonObject = run {
     if (!FIXTURE_FILE.isFile) {
         println("html: CANNOT RUN - 缺少夹具 ${FIXTURE_FILE.absolutePath}")
-        println("html:           跑夹具同目录的 `collect-pi-html-pitext.mjs` + `HtmlFixtureSpans.java` 生成它（两个文件的头部都有命令行）")
+        println("html:           跑 `tools/collect-pi-html-pitext.mjs` + `tools/HtmlFixtureSpans.java` 生成它（两个文件的头部都有命令行）")
         exitProcess(2)
     }
     Json.parseToJsonElement(FIXTURE_FILE.readText()).jsonObject
