@@ -1,0 +1,3138 @@
+{
+	"piTui": "1.0.1",
+	"generatedBy": "tools/collect-latex-fixtures.mjs（期望值是 pi 的 renderLatex 返回值，不是手抄）",
+	"cases": [
+		{
+			"name": "font-switch-bf",
+			"source": "\\bf{x}",
+			"expected": "x"
+		},
+		{
+			"name": "font-switch-space-bf",
+			"source": "\\bf x",
+			"expected": "x"
+		},
+		{
+			"name": "font-switch-eats-whitespace-bf",
+			"source": "\\bf   x",
+			"expected": "x"
+		},
+		{
+			"name": "font-switch-before-command-bf",
+			"source": "a\\bf\\alpha",
+			"expected": "aα"
+		},
+		{
+			"name": "font-switch-cal",
+			"source": "\\cal{x}",
+			"expected": "x"
+		},
+		{
+			"name": "font-switch-space-cal",
+			"source": "\\cal x",
+			"expected": "x"
+		},
+		{
+			"name": "font-switch-eats-whitespace-cal",
+			"source": "\\cal   x",
+			"expected": "x"
+		},
+		{
+			"name": "font-switch-before-command-cal",
+			"source": "a\\cal\\alpha",
+			"expected": "aα"
+		},
+		{
+			"name": "font-switch-it",
+			"source": "\\it{x}",
+			"expected": "x"
+		},
+		{
+			"name": "font-switch-space-it",
+			"source": "\\it x",
+			"expected": "x"
+		},
+		{
+			"name": "font-switch-eats-whitespace-it",
+			"source": "\\it   x",
+			"expected": "x"
+		},
+		{
+			"name": "font-switch-before-command-it",
+			"source": "a\\it\\alpha",
+			"expected": "aα"
+		},
+		{
+			"name": "font-switch-rm",
+			"source": "\\rm{x}",
+			"expected": "x"
+		},
+		{
+			"name": "font-switch-space-rm",
+			"source": "\\rm x",
+			"expected": "x"
+		},
+		{
+			"name": "font-switch-eats-whitespace-rm",
+			"source": "\\rm   x",
+			"expected": "x"
+		},
+		{
+			"name": "font-switch-before-command-rm",
+			"source": "a\\rm\\alpha",
+			"expected": "aα"
+		},
+		{
+			"name": "font-switch-sf",
+			"source": "\\sf{x}",
+			"expected": "x"
+		},
+		{
+			"name": "font-switch-space-sf",
+			"source": "\\sf x",
+			"expected": "x"
+		},
+		{
+			"name": "font-switch-eats-whitespace-sf",
+			"source": "\\sf   x",
+			"expected": "x"
+		},
+		{
+			"name": "font-switch-before-command-sf",
+			"source": "a\\sf\\alpha",
+			"expected": "aα"
+		},
+		{
+			"name": "font-switch-sl",
+			"source": "\\sl{x}",
+			"expected": "x"
+		},
+		{
+			"name": "font-switch-space-sl",
+			"source": "\\sl x",
+			"expected": "x"
+		},
+		{
+			"name": "font-switch-eats-whitespace-sl",
+			"source": "\\sl   x",
+			"expected": "x"
+		},
+		{
+			"name": "font-switch-before-command-sl",
+			"source": "a\\sl\\alpha",
+			"expected": "aα"
+		},
+		{
+			"name": "font-switch-tt",
+			"source": "\\tt{x}",
+			"expected": "x"
+		},
+		{
+			"name": "font-switch-space-tt",
+			"source": "\\tt x",
+			"expected": "x"
+		},
+		{
+			"name": "font-switch-eats-whitespace-tt",
+			"source": "\\tt   x",
+			"expected": "x"
+		},
+		{
+			"name": "font-switch-before-command-tt",
+			"source": "a\\tt\\alpha",
+			"expected": "aα"
+		},
+		{
+			"name": "font-switch-nested",
+			"source": "{\\rm x}y",
+			"expected": "xy"
+		},
+		{
+			"name": "font-switch-in-script",
+			"source": "x^{\\rm y}",
+			"expected": "xʸ"
+		},
+		{
+			"name": "font-switch-named",
+			"source": "x\\rm x",
+			"expected": "xx"
+		},
+		{
+			"name": "limit-operator-bare-argmax",
+			"source": "\\argmax x",
+			"expected": "argmax x"
+		},
+		{
+			"name": "limit-operator-lower-argmax",
+			"source": "\\argmax_{x} f(x)",
+			"expected": "argmax[x] f(x)"
+		},
+		{
+			"name": "limit-operator-lower-paren-argmax",
+			"source": "\\argmax_{n \\to \\infty} a_n",
+			"expected": "argmax[n→∞] aₙ"
+		},
+		{
+			"name": "limit-operator-upper-argmax",
+			"source": "\\argmax^{2}",
+			"expected": "argmax²"
+		},
+		{
+			"name": "limit-operator-both-argmax",
+			"source": "\\argmax_{i=1}^{n}",
+			"expected": "argmax[i=1]ⁿ"
+		},
+		{
+			"name": "limit-operator-bare-argmin",
+			"source": "\\argmin x",
+			"expected": "argmin x"
+		},
+		{
+			"name": "limit-operator-lower-argmin",
+			"source": "\\argmin_{x} f(x)",
+			"expected": "argmin[x] f(x)"
+		},
+		{
+			"name": "limit-operator-lower-paren-argmin",
+			"source": "\\argmin_{n \\to \\infty} a_n",
+			"expected": "argmin[n→∞] aₙ"
+		},
+		{
+			"name": "limit-operator-upper-argmin",
+			"source": "\\argmin^{2}",
+			"expected": "argmin²"
+		},
+		{
+			"name": "limit-operator-both-argmin",
+			"source": "\\argmin_{i=1}^{n}",
+			"expected": "argmin[i=1]ⁿ"
+		},
+		{
+			"name": "limit-operator-bare-inf",
+			"source": "\\inf x",
+			"expected": "inf x"
+		},
+		{
+			"name": "limit-operator-lower-inf",
+			"source": "\\inf_{x} f(x)",
+			"expected": "inf[x] f(x)"
+		},
+		{
+			"name": "limit-operator-lower-paren-inf",
+			"source": "\\inf_{n \\to \\infty} a_n",
+			"expected": "inf[n→∞] aₙ"
+		},
+		{
+			"name": "limit-operator-upper-inf",
+			"source": "\\inf^{2}",
+			"expected": "inf²"
+		},
+		{
+			"name": "limit-operator-both-inf",
+			"source": "\\inf_{i=1}^{n}",
+			"expected": "inf[i=1]ⁿ"
+		},
+		{
+			"name": "limit-operator-bare-injlim",
+			"source": "\\injlim x",
+			"expected": "injlim x"
+		},
+		{
+			"name": "limit-operator-lower-injlim",
+			"source": "\\injlim_{x} f(x)",
+			"expected": "injlim[x] f(x)"
+		},
+		{
+			"name": "limit-operator-lower-paren-injlim",
+			"source": "\\injlim_{n \\to \\infty} a_n",
+			"expected": "injlim[n→∞] aₙ"
+		},
+		{
+			"name": "limit-operator-upper-injlim",
+			"source": "\\injlim^{2}",
+			"expected": "injlim²"
+		},
+		{
+			"name": "limit-operator-both-injlim",
+			"source": "\\injlim_{i=1}^{n}",
+			"expected": "injlim[i=1]ⁿ"
+		},
+		{
+			"name": "limit-operator-bare-lim",
+			"source": "\\lim x",
+			"expected": "lim x"
+		},
+		{
+			"name": "limit-operator-lower-lim",
+			"source": "\\lim_{x} f(x)",
+			"expected": "lim[x] f(x)"
+		},
+		{
+			"name": "limit-operator-lower-paren-lim",
+			"source": "\\lim_{n \\to \\infty} a_n",
+			"expected": "lim[n→∞] aₙ"
+		},
+		{
+			"name": "limit-operator-upper-lim",
+			"source": "\\lim^{2}",
+			"expected": "lim²"
+		},
+		{
+			"name": "limit-operator-both-lim",
+			"source": "\\lim_{i=1}^{n}",
+			"expected": "lim[i=1]ⁿ"
+		},
+		{
+			"name": "limit-operator-bare-liminf",
+			"source": "\\liminf x",
+			"expected": "liminf x"
+		},
+		{
+			"name": "limit-operator-lower-liminf",
+			"source": "\\liminf_{x} f(x)",
+			"expected": "liminf[x] f(x)"
+		},
+		{
+			"name": "limit-operator-lower-paren-liminf",
+			"source": "\\liminf_{n \\to \\infty} a_n",
+			"expected": "liminf[n→∞] aₙ"
+		},
+		{
+			"name": "limit-operator-upper-liminf",
+			"source": "\\liminf^{2}",
+			"expected": "liminf²"
+		},
+		{
+			"name": "limit-operator-both-liminf",
+			"source": "\\liminf_{i=1}^{n}",
+			"expected": "liminf[i=1]ⁿ"
+		},
+		{
+			"name": "limit-operator-bare-limsup",
+			"source": "\\limsup x",
+			"expected": "limsup x"
+		},
+		{
+			"name": "limit-operator-lower-limsup",
+			"source": "\\limsup_{x} f(x)",
+			"expected": "limsup[x] f(x)"
+		},
+		{
+			"name": "limit-operator-lower-paren-limsup",
+			"source": "\\limsup_{n \\to \\infty} a_n",
+			"expected": "limsup[n→∞] aₙ"
+		},
+		{
+			"name": "limit-operator-upper-limsup",
+			"source": "\\limsup^{2}",
+			"expected": "limsup²"
+		},
+		{
+			"name": "limit-operator-both-limsup",
+			"source": "\\limsup_{i=1}^{n}",
+			"expected": "limsup[i=1]ⁿ"
+		},
+		{
+			"name": "limit-operator-bare-max",
+			"source": "\\max x",
+			"expected": "max x"
+		},
+		{
+			"name": "limit-operator-lower-max",
+			"source": "\\max_{x} f(x)",
+			"expected": "max[x] f(x)"
+		},
+		{
+			"name": "limit-operator-lower-paren-max",
+			"source": "\\max_{n \\to \\infty} a_n",
+			"expected": "max[n→∞] aₙ"
+		},
+		{
+			"name": "limit-operator-upper-max",
+			"source": "\\max^{2}",
+			"expected": "max²"
+		},
+		{
+			"name": "limit-operator-both-max",
+			"source": "\\max_{i=1}^{n}",
+			"expected": "max[i=1]ⁿ"
+		},
+		{
+			"name": "limit-operator-bare-min",
+			"source": "\\min x",
+			"expected": "min x"
+		},
+		{
+			"name": "limit-operator-lower-min",
+			"source": "\\min_{x} f(x)",
+			"expected": "min[x] f(x)"
+		},
+		{
+			"name": "limit-operator-lower-paren-min",
+			"source": "\\min_{n \\to \\infty} a_n",
+			"expected": "min[n→∞] aₙ"
+		},
+		{
+			"name": "limit-operator-upper-min",
+			"source": "\\min^{2}",
+			"expected": "min²"
+		},
+		{
+			"name": "limit-operator-both-min",
+			"source": "\\min_{i=1}^{n}",
+			"expected": "min[i=1]ⁿ"
+		},
+		{
+			"name": "limit-operator-bare-projlim",
+			"source": "\\projlim x",
+			"expected": "projlim x"
+		},
+		{
+			"name": "limit-operator-lower-projlim",
+			"source": "\\projlim_{x} f(x)",
+			"expected": "projlim[x] f(x)"
+		},
+		{
+			"name": "limit-operator-lower-paren-projlim",
+			"source": "\\projlim_{n \\to \\infty} a_n",
+			"expected": "projlim[n→∞] aₙ"
+		},
+		{
+			"name": "limit-operator-upper-projlim",
+			"source": "\\projlim^{2}",
+			"expected": "projlim²"
+		},
+		{
+			"name": "limit-operator-both-projlim",
+			"source": "\\projlim_{i=1}^{n}",
+			"expected": "projlim[i=1]ⁿ"
+		},
+		{
+			"name": "limit-operator-bare-sup",
+			"source": "\\sup x",
+			"expected": "sup x"
+		},
+		{
+			"name": "limit-operator-lower-sup",
+			"source": "\\sup_{x} f(x)",
+			"expected": "sup[x] f(x)"
+		},
+		{
+			"name": "limit-operator-lower-paren-sup",
+			"source": "\\sup_{n \\to \\infty} a_n",
+			"expected": "sup[n→∞] aₙ"
+		},
+		{
+			"name": "limit-operator-upper-sup",
+			"source": "\\sup^{2}",
+			"expected": "sup²"
+		},
+		{
+			"name": "limit-operator-both-sup",
+			"source": "\\sup_{i=1}^{n}",
+			"expected": "sup[i=1]ⁿ"
+		},
+		{
+			"name": "limit-operator-limits",
+			"source": "\\lim\\limits_{n} x",
+			"expected": "lim[n] x"
+		},
+		{
+			"name": "limit-operator-nolimits",
+			"source": "\\lim\\nolimits_{n} x",
+			"expected": "lim[n] x"
+		},
+		{
+			"name": "limit-operator-limits-spaced",
+			"source": "\\lim \\limits_{n} x",
+			"expected": "lim[n] x"
+		},
+		{
+			"name": "limit-operator-modifier-not-prefix",
+			"source": "\\lim\\limitsx",
+			"expected": null
+		},
+		{
+			"name": "limit-operator-bracket-not-script",
+			"source": "\\max_i",
+			"expected": "max[i]"
+		},
+		{
+			"name": "limit-operator-word-arg",
+			"source": "\\lim_{n\\to\\infty}",
+			"expected": "lim[n→∞]"
+		},
+		{
+			"name": "limit-operator-space-arg",
+			"source": "\\lim_ {n}",
+			"expected": "lim[n]"
+		},
+		{
+			"name": "limit-operator-tab-arg",
+			"source": "\\lim\t_{n}",
+			"expected": "lim[n]"
+		},
+		{
+			"name": "limit-operator-double-lower",
+			"source": "\\lim_{a}_{b} x",
+			"expected": null
+		},
+		{
+			"name": "limit-operator-inside-text",
+			"source": "a\\lim_{x}b",
+			"expected": "a lim[x] b"
+		},
+		{
+			"name": "display-limit-bare-sum",
+			"source": "\\sum",
+			"expected": "∑"
+		},
+		{
+			"name": "display-limit-lower-sum",
+			"source": "\\sum_{i=1}",
+			"expected": "∑ᵢ₌₁"
+		},
+		{
+			"name": "display-limit-lower-spaces-sum",
+			"source": "\\sum_{n \\to \\infty}",
+			"expected": "∑_(n→∞)"
+		},
+		{
+			"name": "display-limit-both-sum",
+			"source": "\\sum_{i=1}^{n}",
+			"expected": "∑ᵢ₌₁ⁿ"
+		},
+		{
+			"name": "display-limit-bare-prod",
+			"source": "\\prod",
+			"expected": "∏"
+		},
+		{
+			"name": "display-limit-lower-prod",
+			"source": "\\prod_{i=1}",
+			"expected": "∏ᵢ₌₁"
+		},
+		{
+			"name": "display-limit-lower-spaces-prod",
+			"source": "\\prod_{n \\to \\infty}",
+			"expected": "∏_(n→∞)"
+		},
+		{
+			"name": "display-limit-both-prod",
+			"source": "\\prod_{i=1}^{n}",
+			"expected": "∏ᵢ₌₁ⁿ"
+		},
+		{
+			"name": "display-limit-bare-int",
+			"source": "\\int",
+			"expected": "∫"
+		},
+		{
+			"name": "display-limit-lower-int",
+			"source": "\\int_{i=1}",
+			"expected": "∫ᵢ₌₁"
+		},
+		{
+			"name": "display-limit-lower-spaces-int",
+			"source": "\\int_{n \\to \\infty}",
+			"expected": "∫_(n→∞)"
+		},
+		{
+			"name": "display-limit-both-int",
+			"source": "\\int_{i=1}^{n}",
+			"expected": "∫ᵢ₌₁ⁿ"
+		},
+		{
+			"name": "display-limit-bare-iint",
+			"source": "\\iint",
+			"expected": "∬"
+		},
+		{
+			"name": "display-limit-lower-iint",
+			"source": "\\iint_{i=1}",
+			"expected": "∬ᵢ₌₁"
+		},
+		{
+			"name": "display-limit-lower-spaces-iint",
+			"source": "\\iint_{n \\to \\infty}",
+			"expected": "∬_(n→∞)"
+		},
+		{
+			"name": "display-limit-both-iint",
+			"source": "\\iint_{i=1}^{n}",
+			"expected": "∬ᵢ₌₁ⁿ"
+		},
+		{
+			"name": "display-limit-bare-iiint",
+			"source": "\\iiint",
+			"expected": "∭"
+		},
+		{
+			"name": "display-limit-lower-iiint",
+			"source": "\\iiint_{i=1}",
+			"expected": "∭ᵢ₌₁"
+		},
+		{
+			"name": "display-limit-lower-spaces-iiint",
+			"source": "\\iiint_{n \\to \\infty}",
+			"expected": "∭_(n→∞)"
+		},
+		{
+			"name": "display-limit-both-iiint",
+			"source": "\\iiint_{i=1}^{n}",
+			"expected": "∭ᵢ₌₁ⁿ"
+		},
+		{
+			"name": "display-limit-bare-oint",
+			"source": "\\oint",
+			"expected": "∮"
+		},
+		{
+			"name": "display-limit-lower-oint",
+			"source": "\\oint_{i=1}",
+			"expected": "∮ᵢ₌₁"
+		},
+		{
+			"name": "display-limit-lower-spaces-oint",
+			"source": "\\oint_{n \\to \\infty}",
+			"expected": "∮_(n→∞)"
+		},
+		{
+			"name": "display-limit-both-oint",
+			"source": "\\oint_{i=1}^{n}",
+			"expected": "∮ᵢ₌₁ⁿ"
+		},
+		{
+			"name": "display-limit-bare-coprod",
+			"source": "\\coprod",
+			"expected": "∐"
+		},
+		{
+			"name": "display-limit-lower-coprod",
+			"source": "\\coprod_{i=1}",
+			"expected": "∐ᵢ₌₁"
+		},
+		{
+			"name": "display-limit-lower-spaces-coprod",
+			"source": "\\coprod_{n \\to \\infty}",
+			"expected": "∐_(n→∞)"
+		},
+		{
+			"name": "display-limit-both-coprod",
+			"source": "\\coprod_{i=1}^{n}",
+			"expected": "∐ᵢ₌₁ⁿ"
+		},
+		{
+			"name": "display-limit-bare-bigcap",
+			"source": "\\bigcap",
+			"expected": "⋂"
+		},
+		{
+			"name": "display-limit-lower-bigcap",
+			"source": "\\bigcap_{i=1}",
+			"expected": "⋂ᵢ₌₁"
+		},
+		{
+			"name": "display-limit-lower-spaces-bigcap",
+			"source": "\\bigcap_{n \\to \\infty}",
+			"expected": "⋂_(n→∞)"
+		},
+		{
+			"name": "display-limit-both-bigcap",
+			"source": "\\bigcap_{i=1}^{n}",
+			"expected": "⋂ᵢ₌₁ⁿ"
+		},
+		{
+			"name": "display-limit-bare-bigcup",
+			"source": "\\bigcup",
+			"expected": "⋃"
+		},
+		{
+			"name": "display-limit-lower-bigcup",
+			"source": "\\bigcup_{i=1}",
+			"expected": "⋃ᵢ₌₁"
+		},
+		{
+			"name": "display-limit-lower-spaces-bigcup",
+			"source": "\\bigcup_{n \\to \\infty}",
+			"expected": "⋃_(n→∞)"
+		},
+		{
+			"name": "display-limit-both-bigcup",
+			"source": "\\bigcup_{i=1}^{n}",
+			"expected": "⋃ᵢ₌₁ⁿ"
+		},
+		{
+			"name": "display-limit-bare-bigvee",
+			"source": "\\bigvee",
+			"expected": "⋁"
+		},
+		{
+			"name": "display-limit-lower-bigvee",
+			"source": "\\bigvee_{i=1}",
+			"expected": "⋁ᵢ₌₁"
+		},
+		{
+			"name": "display-limit-lower-spaces-bigvee",
+			"source": "\\bigvee_{n \\to \\infty}",
+			"expected": "⋁_(n→∞)"
+		},
+		{
+			"name": "display-limit-both-bigvee",
+			"source": "\\bigvee_{i=1}^{n}",
+			"expected": "⋁ᵢ₌₁ⁿ"
+		},
+		{
+			"name": "display-limit-bare-bigwedge",
+			"source": "\\bigwedge",
+			"expected": "⋀"
+		},
+		{
+			"name": "display-limit-lower-bigwedge",
+			"source": "\\bigwedge_{i=1}",
+			"expected": "⋀ᵢ₌₁"
+		},
+		{
+			"name": "display-limit-lower-spaces-bigwedge",
+			"source": "\\bigwedge_{n \\to \\infty}",
+			"expected": "⋀_(n→∞)"
+		},
+		{
+			"name": "display-limit-both-bigwedge",
+			"source": "\\bigwedge_{i=1}^{n}",
+			"expected": "⋀ᵢ₌₁ⁿ"
+		},
+		{
+			"name": "display-limit-bare-bigoplus",
+			"source": "\\bigoplus",
+			"expected": "⨁"
+		},
+		{
+			"name": "display-limit-lower-bigoplus",
+			"source": "\\bigoplus_{i=1}",
+			"expected": "⨁ᵢ₌₁"
+		},
+		{
+			"name": "display-limit-lower-spaces-bigoplus",
+			"source": "\\bigoplus_{n \\to \\infty}",
+			"expected": "⨁_(n→∞)"
+		},
+		{
+			"name": "display-limit-both-bigoplus",
+			"source": "\\bigoplus_{i=1}^{n}",
+			"expected": "⨁ᵢ₌₁ⁿ"
+		},
+		{
+			"name": "display-limit-bare-bigotimes",
+			"source": "\\bigotimes",
+			"expected": "⨂"
+		},
+		{
+			"name": "display-limit-lower-bigotimes",
+			"source": "\\bigotimes_{i=1}",
+			"expected": "⨂ᵢ₌₁"
+		},
+		{
+			"name": "display-limit-lower-spaces-bigotimes",
+			"source": "\\bigotimes_{n \\to \\infty}",
+			"expected": "⨂_(n→∞)"
+		},
+		{
+			"name": "display-limit-both-bigotimes",
+			"source": "\\bigotimes_{i=1}^{n}",
+			"expected": "⨂ᵢ₌₁ⁿ"
+		},
+		{
+			"name": "display-limit-bare-bigodot",
+			"source": "\\bigodot",
+			"expected": "⨀"
+		},
+		{
+			"name": "display-limit-lower-bigodot",
+			"source": "\\bigodot_{i=1}",
+			"expected": "⨀ᵢ₌₁"
+		},
+		{
+			"name": "display-limit-lower-spaces-bigodot",
+			"source": "\\bigodot_{n \\to \\infty}",
+			"expected": "⨀_(n→∞)"
+		},
+		{
+			"name": "display-limit-both-bigodot",
+			"source": "\\bigodot_{i=1}^{n}",
+			"expected": "⨀ᵢ₌₁ⁿ"
+		},
+		{
+			"name": "display-limit-bare-bigsqcup",
+			"source": "\\bigsqcup",
+			"expected": "⨆"
+		},
+		{
+			"name": "display-limit-lower-bigsqcup",
+			"source": "\\bigsqcup_{i=1}",
+			"expected": "⨆ᵢ₌₁"
+		},
+		{
+			"name": "display-limit-lower-spaces-bigsqcup",
+			"source": "\\bigsqcup_{n \\to \\infty}",
+			"expected": "⨆_(n→∞)"
+		},
+		{
+			"name": "display-limit-both-bigsqcup",
+			"source": "\\bigsqcup_{i=1}^{n}",
+			"expected": "⨆ᵢ₌₁ⁿ"
+		},
+		{
+			"name": "display-limit-bare-biguplus",
+			"source": "\\biguplus",
+			"expected": "⨄"
+		},
+		{
+			"name": "display-limit-lower-biguplus",
+			"source": "\\biguplus_{i=1}",
+			"expected": "⨄ᵢ₌₁"
+		},
+		{
+			"name": "display-limit-lower-spaces-biguplus",
+			"source": "\\biguplus_{n \\to \\infty}",
+			"expected": "⨄_(n→∞)"
+		},
+		{
+			"name": "display-limit-both-biguplus",
+			"source": "\\biguplus_{i=1}^{n}",
+			"expected": "⨄ᵢ₌₁ⁿ"
+		},
+		{
+			"name": "symbol-greek",
+			"source": "\\pi\\alpha\\beta\\Gamma\\Omega",
+			"expected": "παβΓΩ"
+		},
+		{
+			"name": "symbol-var-forms",
+			"source": "\\phi\\varphi\\epsilon\\varepsilon\\epsilon",
+			"expected": "ϕφϵεϵ"
+		},
+		{
+			"name": "symbol-operators",
+			"source": "\\pm\\mp\\times\\div\\cdot\\ast\\star\\circ\\bullet",
+			"expected": "±∓ × ÷ · ∗⋆∘•"
+		},
+		{
+			"name": "symbol-sets",
+			"source": "\\in\\notin\\ni\\subset\\supset\\subseteq\\supseteq",
+			"expected": "∈ ∉ ∋ ⊂ ⊃ ⊆ ⊇"
+		},
+		{
+			"name": "symbol-arrows",
+			"source": "\\to\\rightarrow\\leftarrow\\Rightarrow\\Leftarrow\\mapsto",
+			"expected": "→ → ← ⇒ ⇐ ↦"
+		},
+		{
+			"name": "symbol-misc",
+			"source": "\\infty\\emptyset\\forall\\exists\\neg\\land\\lor",
+			"expected": "∞∅∀∃¬∧∨"
+		},
+		{
+			"name": "symbol-big",
+			"source": "\\bigcup\\bigcap\\bigwedge\\bigvee",
+			"expected": "⋃⋂⋀⋁"
+		},
+		{
+			"name": "symbol-dots",
+			"source": "\\ldots\\cdots\\vdots\\ddots",
+			"expected": "…⋯⋮⋱"
+		},
+		{
+			"name": "symbol-abs",
+			"source": "\\vert x\\vert\\Vert y\\Vert\\lfloor x\\rfloor\\lceil y\\rceil",
+			"expected": "| x|‖ y‖⌊ x⌋⌈ y⌉"
+		},
+		{
+			"name": "symbol-braces",
+			"source": "\\lbrace x\\rbrace",
+			"expected": "{ x}"
+		},
+		{
+			"name": "symbol-backslash",
+			"source": "\\backslash",
+			"expected": "\\"
+		},
+		{
+			"name": "symbol-backslash-inline",
+			"source": "a\\backslash b",
+			"expected": "a\\ b"
+		},
+		{
+			"name": "symbol-prime",
+			"source": "\\prime",
+			"expected": "′"
+		},
+		{
+			"name": "symbol-nabla",
+			"source": "\\nabla f",
+			"expected": "∇ f"
+		},
+		{
+			"name": "symbol-partial",
+			"source": "\\partial f / \\partial x",
+			"expected": "∂ f / ∂ x"
+		},
+		{
+			"name": "relation-le",
+			"source": "a\\le b",
+			"expected": "a ≤ b"
+		},
+		{
+			"name": "relation-leq-spaced",
+			"source": "a \\leq b",
+			"expected": "a ≤ b"
+		},
+		{
+			"name": "relation-in",
+			"source": "a\\in B",
+			"expected": "a ∈ B"
+		},
+		{
+			"name": "relation-notin",
+			"source": "a\\notin B",
+			"expected": "a ∉ B"
+		},
+		{
+			"name": "relation-to",
+			"source": "a\\to b",
+			"expected": "a → b"
+		},
+		{
+			"name": "relation-implies",
+			"source": "a\\implies b",
+			"expected": "a ⇒ b"
+		},
+		{
+			"name": "relation-iff",
+			"source": "a\\iff b",
+			"expected": "a ⇔ b"
+		},
+		{
+			"name": "relation-approx",
+			"source": "a\\approx b",
+			"expected": "a ≈ b"
+		},
+		{
+			"name": "relation-equiv",
+			"source": "a\\equiv b",
+			"expected": "a ≡ b"
+		},
+		{
+			"name": "relation-ne",
+			"source": "a\\ne b",
+			"expected": "a ≠ b"
+		},
+		{
+			"name": "relation-subset",
+			"source": "A\\subset B",
+			"expected": "A ⊂ B"
+		},
+		{
+			"name": "relation-mid",
+			"source": "a\\mid b",
+			"expected": "a ∣ b"
+		},
+		{
+			"name": "relation-parallel",
+			"source": "a\\parallel b",
+			"expected": "a ∥ b"
+		},
+		{
+			"name": "relation-gets",
+			"source": "f\\gets x",
+			"expected": "f ← x"
+		},
+		{
+			"name": "relation-no-space-around",
+			"source": "a+b",
+			"expected": "a+b"
+		},
+		{
+			"name": "relation-literal-equals",
+			"source": "a=b",
+			"expected": "a = b"
+		},
+		{
+			"name": "relation-literal-less",
+			"source": "a<b",
+			"expected": "a < b"
+		},
+		{
+			"name": "relation-literal-greater",
+			"source": "a>b",
+			"expected": "a > b"
+		},
+		{
+			"name": "relation-literal-less-spaced",
+			"source": "a < b",
+			"expected": "a < b"
+		},
+		{
+			"name": "relation-cdot",
+			"source": "a\\cdot b",
+			"expected": "a · b"
+		},
+		{
+			"name": "relation-times",
+			"source": "a\\times b",
+			"expected": "a × b"
+		},
+		{
+			"name": "relation-cdot-no-space",
+			"source": "a\\cdotb",
+			"expected": null
+		},
+		{
+			"name": "relation-negative-space",
+			"source": "a\\!b",
+			"expected": "ab"
+		},
+		{
+			"name": "relation-negmedspace",
+			"source": "a\\negmedspace b",
+			"expected": "a b"
+		},
+		{
+			"name": "named-operator-bare-sin",
+			"source": "\\sin x",
+			"expected": "sin x"
+		},
+		{
+			"name": "named-operator-glued-sin",
+			"source": "2\\sin x",
+			"expected": "2 sin x"
+		},
+		{
+			"name": "named-operator-command-sin",
+			"source": "\\sin\\alpha",
+			"expected": "sin α"
+		},
+		{
+			"name": "named-operator-paren-sin",
+			"source": "\\sin(x)",
+			"expected": "sin(x)"
+		},
+		{
+			"name": "named-operator-bare-cos",
+			"source": "\\cos x",
+			"expected": "cos x"
+		},
+		{
+			"name": "named-operator-glued-cos",
+			"source": "2\\cos x",
+			"expected": "2 cos x"
+		},
+		{
+			"name": "named-operator-command-cos",
+			"source": "\\cos\\alpha",
+			"expected": "cos α"
+		},
+		{
+			"name": "named-operator-paren-cos",
+			"source": "\\cos(x)",
+			"expected": "cos(x)"
+		},
+		{
+			"name": "named-operator-bare-tan",
+			"source": "\\tan x",
+			"expected": "tan x"
+		},
+		{
+			"name": "named-operator-glued-tan",
+			"source": "2\\tan x",
+			"expected": "2 tan x"
+		},
+		{
+			"name": "named-operator-command-tan",
+			"source": "\\tan\\alpha",
+			"expected": "tan α"
+		},
+		{
+			"name": "named-operator-paren-tan",
+			"source": "\\tan(x)",
+			"expected": "tan(x)"
+		},
+		{
+			"name": "named-operator-bare-log",
+			"source": "\\log x",
+			"expected": "log x"
+		},
+		{
+			"name": "named-operator-glued-log",
+			"source": "2\\log x",
+			"expected": "2 log x"
+		},
+		{
+			"name": "named-operator-command-log",
+			"source": "\\log\\alpha",
+			"expected": "log α"
+		},
+		{
+			"name": "named-operator-paren-log",
+			"source": "\\log(x)",
+			"expected": "log(x)"
+		},
+		{
+			"name": "named-operator-bare-ln",
+			"source": "\\ln x",
+			"expected": "ln x"
+		},
+		{
+			"name": "named-operator-glued-ln",
+			"source": "2\\ln x",
+			"expected": "2 ln x"
+		},
+		{
+			"name": "named-operator-command-ln",
+			"source": "\\ln\\alpha",
+			"expected": "ln α"
+		},
+		{
+			"name": "named-operator-paren-ln",
+			"source": "\\ln(x)",
+			"expected": "ln(x)"
+		},
+		{
+			"name": "named-operator-bare-exp",
+			"source": "\\exp x",
+			"expected": "exp x"
+		},
+		{
+			"name": "named-operator-glued-exp",
+			"source": "2\\exp x",
+			"expected": "2 exp x"
+		},
+		{
+			"name": "named-operator-command-exp",
+			"source": "\\exp\\alpha",
+			"expected": "exp α"
+		},
+		{
+			"name": "named-operator-paren-exp",
+			"source": "\\exp(x)",
+			"expected": "exp(x)"
+		},
+		{
+			"name": "named-operator-bare-det",
+			"source": "\\det x",
+			"expected": "det x"
+		},
+		{
+			"name": "named-operator-glued-det",
+			"source": "2\\det x",
+			"expected": "2 det x"
+		},
+		{
+			"name": "named-operator-command-det",
+			"source": "\\det\\alpha",
+			"expected": "det α"
+		},
+		{
+			"name": "named-operator-paren-det",
+			"source": "\\det(x)",
+			"expected": "det(x)"
+		},
+		{
+			"name": "named-operator-bare-gcd",
+			"source": "\\gcd x",
+			"expected": "gcd x"
+		},
+		{
+			"name": "named-operator-glued-gcd",
+			"source": "2\\gcd x",
+			"expected": "2 gcd x"
+		},
+		{
+			"name": "named-operator-command-gcd",
+			"source": "\\gcd\\alpha",
+			"expected": "gcd α"
+		},
+		{
+			"name": "named-operator-paren-gcd",
+			"source": "\\gcd(x)",
+			"expected": "gcd(x)"
+		},
+		{
+			"name": "named-operator-bare-deg",
+			"source": "\\deg x",
+			"expected": "deg x"
+		},
+		{
+			"name": "named-operator-glued-deg",
+			"source": "2\\deg x",
+			"expected": "2 deg x"
+		},
+		{
+			"name": "named-operator-command-deg",
+			"source": "\\deg\\alpha",
+			"expected": "deg α"
+		},
+		{
+			"name": "named-operator-paren-deg",
+			"source": "\\deg(x)",
+			"expected": "deg(x)"
+		},
+		{
+			"name": "named-operator-bare-dim",
+			"source": "\\dim x",
+			"expected": "dim x"
+		},
+		{
+			"name": "named-operator-glued-dim",
+			"source": "2\\dim x",
+			"expected": "2 dim x"
+		},
+		{
+			"name": "named-operator-command-dim",
+			"source": "\\dim\\alpha",
+			"expected": "dim α"
+		},
+		{
+			"name": "named-operator-paren-dim",
+			"source": "\\dim(x)",
+			"expected": "dim(x)"
+		},
+		{
+			"name": "named-operator-bare-hom",
+			"source": "\\hom x",
+			"expected": "hom x"
+		},
+		{
+			"name": "named-operator-glued-hom",
+			"source": "2\\hom x",
+			"expected": "2 hom x"
+		},
+		{
+			"name": "named-operator-command-hom",
+			"source": "\\hom\\alpha",
+			"expected": "hom α"
+		},
+		{
+			"name": "named-operator-paren-hom",
+			"source": "\\hom(x)",
+			"expected": "hom(x)"
+		},
+		{
+			"name": "named-operator-bare-ker",
+			"source": "\\ker x",
+			"expected": "ker x"
+		},
+		{
+			"name": "named-operator-glued-ker",
+			"source": "2\\ker x",
+			"expected": "2 ker x"
+		},
+		{
+			"name": "named-operator-command-ker",
+			"source": "\\ker\\alpha",
+			"expected": "ker α"
+		},
+		{
+			"name": "named-operator-paren-ker",
+			"source": "\\ker(x)",
+			"expected": "ker(x)"
+		},
+		{
+			"name": "named-operator-bare-Pr",
+			"source": "\\Pr x",
+			"expected": "Pr x"
+		},
+		{
+			"name": "named-operator-glued-Pr",
+			"source": "2\\Pr x",
+			"expected": "2 Pr x"
+		},
+		{
+			"name": "named-operator-command-Pr",
+			"source": "\\Pr\\alpha",
+			"expected": "Pr α"
+		},
+		{
+			"name": "named-operator-paren-Pr",
+			"source": "\\Pr(x)",
+			"expected": "Pr(x)"
+		},
+		{
+			"name": "named-operator-bare-sec",
+			"source": "\\sec x",
+			"expected": "sec x"
+		},
+		{
+			"name": "named-operator-glued-sec",
+			"source": "2\\sec x",
+			"expected": "2 sec x"
+		},
+		{
+			"name": "named-operator-command-sec",
+			"source": "\\sec\\alpha",
+			"expected": "sec α"
+		},
+		{
+			"name": "named-operator-paren-sec",
+			"source": "\\sec(x)",
+			"expected": "sec(x)"
+		},
+		{
+			"name": "named-operator-bare-csc",
+			"source": "\\csc x",
+			"expected": "csc x"
+		},
+		{
+			"name": "named-operator-glued-csc",
+			"source": "2\\csc x",
+			"expected": "2 csc x"
+		},
+		{
+			"name": "named-operator-command-csc",
+			"source": "\\csc\\alpha",
+			"expected": "csc α"
+		},
+		{
+			"name": "named-operator-paren-csc",
+			"source": "\\csc(x)",
+			"expected": "csc(x)"
+		},
+		{
+			"name": "named-operator-bare-cot",
+			"source": "\\cot x",
+			"expected": "cot x"
+		},
+		{
+			"name": "named-operator-glued-cot",
+			"source": "2\\cot x",
+			"expected": "2 cot x"
+		},
+		{
+			"name": "named-operator-command-cot",
+			"source": "\\cot\\alpha",
+			"expected": "cot α"
+		},
+		{
+			"name": "named-operator-paren-cot",
+			"source": "\\cot(x)",
+			"expected": "cot(x)"
+		},
+		{
+			"name": "named-operator-bare-arcsin",
+			"source": "\\arcsin x",
+			"expected": "arcsin x"
+		},
+		{
+			"name": "named-operator-glued-arcsin",
+			"source": "2\\arcsin x",
+			"expected": "2 arcsin x"
+		},
+		{
+			"name": "named-operator-command-arcsin",
+			"source": "\\arcsin\\alpha",
+			"expected": "arcsin α"
+		},
+		{
+			"name": "named-operator-paren-arcsin",
+			"source": "\\arcsin(x)",
+			"expected": "arcsin(x)"
+		},
+		{
+			"name": "named-operator-bare-arccos",
+			"source": "\\arccos x",
+			"expected": "arccos x"
+		},
+		{
+			"name": "named-operator-glued-arccos",
+			"source": "2\\arccos x",
+			"expected": "2 arccos x"
+		},
+		{
+			"name": "named-operator-command-arccos",
+			"source": "\\arccos\\alpha",
+			"expected": "arccos α"
+		},
+		{
+			"name": "named-operator-paren-arccos",
+			"source": "\\arccos(x)",
+			"expected": "arccos(x)"
+		},
+		{
+			"name": "named-operator-bare-arctan",
+			"source": "\\arctan x",
+			"expected": "arctan x"
+		},
+		{
+			"name": "named-operator-glued-arctan",
+			"source": "2\\arctan x",
+			"expected": "2 arctan x"
+		},
+		{
+			"name": "named-operator-command-arctan",
+			"source": "\\arctan\\alpha",
+			"expected": "arctan α"
+		},
+		{
+			"name": "named-operator-paren-arctan",
+			"source": "\\arctan(x)",
+			"expected": "arctan(x)"
+		},
+		{
+			"name": "named-operator-bare-sinh",
+			"source": "\\sinh x",
+			"expected": "sinh x"
+		},
+		{
+			"name": "named-operator-glued-sinh",
+			"source": "2\\sinh x",
+			"expected": "2 sinh x"
+		},
+		{
+			"name": "named-operator-command-sinh",
+			"source": "\\sinh\\alpha",
+			"expected": "sinh α"
+		},
+		{
+			"name": "named-operator-paren-sinh",
+			"source": "\\sinh(x)",
+			"expected": "sinh(x)"
+		},
+		{
+			"name": "named-operator-bare-cosh",
+			"source": "\\cosh x",
+			"expected": "cosh x"
+		},
+		{
+			"name": "named-operator-glued-cosh",
+			"source": "2\\cosh x",
+			"expected": "2 cosh x"
+		},
+		{
+			"name": "named-operator-command-cosh",
+			"source": "\\cosh\\alpha",
+			"expected": "cosh α"
+		},
+		{
+			"name": "named-operator-paren-cosh",
+			"source": "\\cosh(x)",
+			"expected": "cosh(x)"
+		},
+		{
+			"name": "named-operator-bare-tanh",
+			"source": "\\tanh x",
+			"expected": "tanh x"
+		},
+		{
+			"name": "named-operator-glued-tanh",
+			"source": "2\\tanh x",
+			"expected": "2 tanh x"
+		},
+		{
+			"name": "named-operator-command-tanh",
+			"source": "\\tanh\\alpha",
+			"expected": "tanh α"
+		},
+		{
+			"name": "named-operator-paren-tanh",
+			"source": "\\tanh(x)",
+			"expected": "tanh(x)"
+		},
+		{
+			"name": "named-operator-bare-coth",
+			"source": "\\coth x",
+			"expected": "coth x"
+		},
+		{
+			"name": "named-operator-glued-coth",
+			"source": "2\\coth x",
+			"expected": "2 coth x"
+		},
+		{
+			"name": "named-operator-command-coth",
+			"source": "\\coth\\alpha",
+			"expected": "coth α"
+		},
+		{
+			"name": "named-operator-paren-coth",
+			"source": "\\coth(x)",
+			"expected": "coth(x)"
+		},
+		{
+			"name": "named-operator-bare-arg",
+			"source": "\\arg x",
+			"expected": "arg x"
+		},
+		{
+			"name": "named-operator-glued-arg",
+			"source": "2\\arg x",
+			"expected": "2 arg x"
+		},
+		{
+			"name": "named-operator-command-arg",
+			"source": "\\arg\\alpha",
+			"expected": "arg α"
+		},
+		{
+			"name": "named-operator-paren-arg",
+			"source": "\\arg(x)",
+			"expected": "arg(x)"
+		},
+		{
+			"name": "named-operator-bare-lg",
+			"source": "\\lg x",
+			"expected": "lg x"
+		},
+		{
+			"name": "named-operator-glued-lg",
+			"source": "2\\lg x",
+			"expected": "2 lg x"
+		},
+		{
+			"name": "named-operator-command-lg",
+			"source": "\\lg\\alpha",
+			"expected": "lg α"
+		},
+		{
+			"name": "named-operator-paren-lg",
+			"source": "\\lg(x)",
+			"expected": "lg(x)"
+		},
+		{
+			"name": "named-operator-superscript",
+			"source": "\\sin^2 x",
+			"expected": "sin² x"
+		},
+		{
+			"name": "named-operator-subscript",
+			"source": "\\sin_x y",
+			"expected": "sinₓ y"
+		},
+		{
+			"name": "named-operator-negative-space",
+			"source": "\\sin\\!x",
+			"expected": "sinx"
+		},
+		{
+			"name": "named-operator-glued-after-paren",
+			"source": "(x)\\sin y",
+			"expected": "(x) sin y"
+		},
+		{
+			"name": "named-operator-two",
+			"source": "2\\sin x\\cos y",
+			"expected": "2 sin x cos y"
+		},
+		{
+			"name": "not-in",
+			"source": "a\\not\\in B",
+			"expected": "a ∉ B"
+		},
+		{
+			"name": "not-equals",
+			"source": "\\not=",
+			"expected": "≠"
+		},
+		{
+			"name": "not-less",
+			"source": "\\not<",
+			"expected": "≮"
+		},
+		{
+			"name": "not-symbol",
+			"source": "\\not\\subset",
+			"expected": "⊄"
+		},
+		{
+			"name": "not-char",
+			"source": "\\not a",
+			"expected": "a̸"
+		},
+		{
+			"name": "not-empty",
+			"source": "\\not{}",
+			"expected": null
+		},
+		{
+			"name": "fraction",
+			"source": "\\frac{a}{b}",
+			"expected": "a/b"
+		},
+		{
+			"name": "fraction-simple",
+			"source": "\\frac12",
+			"expected": "1/2"
+		},
+		{
+			"name": "fraction-spaced",
+			"source": "\\frac {a} {b}",
+			"expected": "a/b"
+		},
+		{
+			"name": "fraction-space-between",
+			"source": "\\frac{a} {b}",
+			"expected": "a/b"
+		},
+		{
+			"name": "fraction-newline",
+			"source": "\\frac\n{a}{b}",
+			"expected": "a/b"
+		},
+		{
+			"name": "fraction-dfrac",
+			"source": "\\dfrac{a}{b}",
+			"expected": "a/b"
+		},
+		{
+			"name": "fraction-tfrac",
+			"source": "\\tfrac{a}{b}",
+			"expected": "a/b"
+		},
+		{
+			"name": "fraction-nested",
+			"source": "\\frac{1}{\\frac{a}{b}}",
+			"expected": "1/(a/b)"
+		},
+		{
+			"name": "fraction-long-numerator",
+			"source": "\\frac{a+b}{c}",
+			"expected": "(a+b)/c"
+		},
+		{
+			"name": "fraction-long-denominator",
+			"source": "\\frac{a}{b+c}",
+			"expected": "a/(b+c)"
+		},
+		{
+			"name": "fraction-single-letter",
+			"source": "\\frac{x}{2}",
+			"expected": "x/2"
+		},
+		{
+			"name": "fraction-missing-arg",
+			"source": "\\frac{a}",
+			"expected": null
+		},
+		{
+			"name": "root",
+			"source": "\\sqrt{x}",
+			"expected": "√x"
+		},
+		{
+			"name": "root-group",
+			"source": "\\sqrt{ab}",
+			"expected": "√ab"
+		},
+		{
+			"name": "root-three",
+			"source": "\\sqrt[3]{x}",
+			"expected": "∛x"
+		},
+		{
+			"name": "root-four",
+			"source": "\\sqrt[4]{x}",
+			"expected": "∜x"
+		},
+		{
+			"name": "root-n",
+			"source": "\\sqrt[n]{x}",
+			"expected": "ⁿ√x"
+		},
+		{
+			"name": "root-optional-spaced",
+			"source": "\\sqrt [3]{x}",
+			"expected": "∛x"
+		},
+		{
+			"name": "root-optional-symbol",
+			"source": "\\sqrt[\\alpha]{x}",
+			"expected": "^α√x"
+		},
+		{
+			"name": "root-nested",
+			"source": "\\sqrt{\\sqrt{x}}",
+			"expected": "√(√x)"
+		},
+		{
+			"name": "root-no-arg",
+			"source": "\\sqrt",
+			"expected": null
+		},
+		{
+			"name": "accent-vec",
+			"source": "\\vec{v}",
+			"expected": "v⃗"
+		},
+		{
+			"name": "accent-hat",
+			"source": "\\hat{x}",
+			"expected": "x̂"
+		},
+		{
+			"name": "accent-tilde",
+			"source": "\\tilde{x}",
+			"expected": "x̃"
+		},
+		{
+			"name": "accent-bar",
+			"source": "\\bar{x}",
+			"expected": "x̅"
+		},
+		{
+			"name": "accent-dot",
+			"source": "\\dot{x}",
+			"expected": "ẋ"
+		},
+		{
+			"name": "accent-ddot",
+			"source": "\\ddot{x}",
+			"expected": "ẍ"
+		},
+		{
+			"name": "accent-wide",
+			"source": "\\widehat{abc}",
+			"expected": "widehat(abc)"
+		},
+		{
+			"name": "accent-long",
+			"source": "\\overline{ab}",
+			"expected": "overline(ab)"
+		},
+		{
+			"name": "accent-underline",
+			"source": "\\underline{ab}",
+			"expected": "underline(ab)"
+		},
+		{
+			"name": "accent-overrightarrow",
+			"source": "\\overrightarrow{AB}",
+			"expected": "overrightarrow(AB)"
+		},
+		{
+			"name": "accent-multiple",
+			"source": "\\vec{a}\\vec{b}",
+			"expected": "a⃗b⃗"
+		},
+		{
+			"name": "wrappers-text",
+			"source": "\\text{a b}",
+			"expected": "a b"
+		},
+		{
+			"name": "wrappers-textbf",
+			"source": "\\textbf{a b}",
+			"expected": "a b"
+		},
+		{
+			"name": "wrappers-mathbb",
+			"source": "\\mathbb{R}",
+			"expected": "ℝ"
+		},
+		{
+			"name": "wrappers-mathbb-mixed",
+			"source": "\\mathbb{R}^n",
+			"expected": "ℝⁿ"
+		},
+		{
+			"name": "wrappers-mathcal",
+			"source": "\\mathcal{L}",
+			"expected": "L"
+		},
+		{
+			"name": "wrappers-mathrm",
+			"source": "\\mathrm{d}x",
+			"expected": "dx"
+		},
+		{
+			"name": "wrappers-mbox",
+			"source": "\\mbox{abc}",
+			"expected": "abc"
+		},
+		{
+			"name": "wrappers-emph",
+			"source": "\\emph{a}",
+			"expected": "a"
+		},
+		{
+			"name": "wrappers-nested",
+			"source": "\\mathbf{a+b}",
+			"expected": "a+b"
+		},
+		{
+			"name": "boxed",
+			"source": "\\boxed{a}",
+			"expected": "[a]"
+		},
+		{
+			"name": "boxed-spaced",
+			"source": "\\boxed {x}",
+			"expected": "[x]"
+		},
+		{
+			"name": "binom",
+			"source": "\\binom{n}{k}",
+			"expected": "(n choose k)"
+		},
+		{
+			"name": "pmod",
+			"source": "\\pmod{n}",
+			"expected": "(mod n)"
+		},
+		{
+			"name": "pod",
+			"source": "\\pod{n}",
+			"expected": "(n)"
+		},
+		{
+			"name": "bmod",
+			"source": "a\\bmod n",
+			"expected": "a mod n"
+		},
+		{
+			"name": "mod",
+			"source": "a\\mod n",
+			"expected": "a mod n"
+		},
+		{
+			"name": "overset",
+			"source": "\\overset{a}{b}",
+			"expected": "bᵃ"
+		},
+		{
+			"name": "stackrel",
+			"source": "\\stackrel{a}{b}",
+			"expected": "bᵃ"
+		},
+		{
+			"name": "underset",
+			"source": "\\underset{a}{b}",
+			"expected": "bₐ"
+		},
+		{
+			"name": "left-right",
+			"source": "\\left(\\frac{a}{b}\\right)",
+			"expected": "(a/b)"
+		},
+		{
+			"name": "left-right-dot",
+			"source": "\\left. x \\right)",
+			"expected": "x )"
+		},
+		{
+			"name": "middle-pipe",
+			"source": "\\left(x\\middle|y\\right)",
+			"expected": "(x|y)"
+		},
+		{
+			"name": "size-commands",
+			"source": "\\big( x \\Big)",
+			"expected": "( x )"
+		},
+		{
+			"name": "style-commands",
+			"source": "\\displaystyle x + \\textstyle y",
+			"expected": "x + y"
+		},
+		{
+			"name": "limits-ignored",
+			"source": "\\sin\\limits_{x}",
+			"expected": "sinₓ"
+		},
+		{
+			"name": "scripts-simple",
+			"source": "x^2",
+			"expected": "x²"
+		},
+		{
+			"name": "scripts-sub",
+			"source": "x_i",
+			"expected": "xᵢ"
+		},
+		{
+			"name": "scripts-both",
+			"source": "x_i^2",
+			"expected": "xᵢ²"
+		},
+		{
+			"name": "scripts-both-reverse",
+			"source": "x^2_i",
+			"expected": "x²ᵢ"
+		},
+		{
+			"name": "scripts-two-markers-spaced",
+			"source": "x^2 _3",
+			"expected": "x²₃"
+		},
+		{
+			"name": "scripts-multi-letter-sub",
+			"source": "x_{ab}",
+			"expected": "x_ab"
+		},
+		{
+			"name": "scripts-upper-sub",
+			"source": "x_{A}",
+			"expected": "x_A"
+		},
+		{
+			"name": "scripts-upper-sub-two",
+			"source": "x_{AB}",
+			"expected": "x_AB"
+		},
+		{
+			"name": "scripts-symbol-sub",
+			"source": "x_{\\alpha}",
+			"expected": "x_α"
+		},
+		{
+			"name": "scripts-group-sub",
+			"source": "x_{i+1}",
+			"expected": "xᵢ₊₁"
+		},
+		{
+			"name": "scripts-group-sup",
+			"source": "x^{n+1}",
+			"expected": "xⁿ⁺¹"
+		},
+		{
+			"name": "scripts-negative",
+			"source": "x^{-1}",
+			"expected": "x⁻¹"
+		},
+		{
+			"name": "scripts-spaced",
+			"source": "x^ 2",
+			"expected": "x²"
+		},
+		{
+			"name": "scripts-space-between",
+			"source": "x ^ 2",
+			"expected": "x²"
+		},
+		{
+			"name": "scripts-nested",
+			"source": "x^{y^2}",
+			"expected": "x^(y²)"
+		},
+		{
+			"name": "scripts-in-group",
+			"source": "{x^2}y",
+			"expected": "x²y"
+		},
+		{
+			"name": "scripts-empty",
+			"source": "x^{}",
+			"expected": "x"
+		},
+		{
+			"name": "scripts-with-equals",
+			"source": "x_{i=1}",
+			"expected": "xᵢ₌₁"
+		},
+		{
+			"name": "scripts-with-equals-spaced",
+			"source": "x_{i = 1}",
+			"expected": "xᵢ₌₁"
+		},
+		{
+			"name": "scripts-to-infinity",
+			"source": "x_{n \\to \\infty}",
+			"expected": "x_(n → ∞)"
+		},
+		{
+			"name": "scripts-no-arg",
+			"source": "x^",
+			"expected": null
+		},
+		{
+			"name": "scripts-braces-only",
+			"source": "x_{}",
+			"expected": "x"
+		},
+		{
+			"name": "whitespace-collapse",
+			"source": "a   b",
+			"expected": "a b"
+		},
+		{
+			"name": "whitespace-newline",
+			"source": "a\nb",
+			"expected": "a b"
+		},
+		{
+			"name": "whitespace-tab",
+			"source": "a\tb",
+			"expected": "a b"
+		},
+		{
+			"name": "whitespace-nbsp",
+			"source": "a b",
+			"expected": "a b"
+		},
+		{
+			"name": "whitespace-leading",
+			"source": "  x",
+			"expected": "x"
+		},
+		{
+			"name": "whitespace-trailing",
+			"source": "x   ",
+			"expected": "x"
+		},
+		{
+			"name": "nonbreaking-tilde",
+			"source": "a~b",
+			"expected": "a b"
+		},
+		{
+			"name": "alignment-tab",
+			"source": "a&b",
+			"expected": "ab"
+		},
+		{
+			"name": "forced-newline",
+			"source": "a\\\\b",
+			"expected": "a\nb"
+		},
+		{
+			"name": "command-newline",
+			"source": "a\\\nb",
+			"expected": "a b"
+		},
+		{
+			"name": "escape-brace",
+			"source": "\\{x\\}",
+			"expected": "{x}"
+		},
+		{
+			"name": "escape-dollar",
+			"source": "\\$x\\$",
+			"expected": "$x$"
+		},
+		{
+			"name": "escape-percent",
+			"source": "a\\%b",
+			"expected": "a%b"
+		},
+		{
+			"name": "escape-hash",
+			"source": "\\#x",
+			"expected": "#x"
+		},
+		{
+			"name": "escape-underscore",
+			"source": "a\\_b",
+			"expected": "a_b"
+		},
+		{
+			"name": "escape-amp",
+			"source": "a\\&b",
+			"expected": "a&b"
+		},
+		{
+			"name": "escape-pipe",
+			"source": "a\\|b",
+			"expected": "a‖b"
+		},
+		{
+			"name": "escape-unicode",
+			"source": "\\pi \\ne \\alpha",
+			"expected": "π ≠ α"
+		},
+		{
+			"name": "spacing-comma",
+			"source": "a\\,b",
+			"expected": "a b"
+		},
+		{
+			"name": "spacing-semicolon",
+			"source": "a\\;b",
+			"expected": "a b"
+		},
+		{
+			"name": "spacing-quad",
+			"source": "a\\quad b",
+			"expected": "a b"
+		},
+		{
+			"name": "spacing-qquad",
+			"source": "a\\qquad b",
+			"expected": "a b"
+		},
+		{
+			"name": "spacing-space-command",
+			"source": "a\\ b",
+			"expected": "a b"
+		},
+		{
+			"name": "spacing-enspace",
+			"source": "a\\enspace b",
+			"expected": "a b"
+		},
+		{
+			"name": "spacing-thinspace",
+			"source": "a\\thinspace b",
+			"expected": "a b"
+		},
+		{
+			"name": "spacing-negative-thin",
+			"source": "a\\negthinspace b",
+			"expected": "a b"
+		},
+		{
+			"name": "spacing-negative-bang",
+			"source": "a\\!b",
+			"expected": "ab"
+		},
+		{
+			"name": "unknown-command",
+			"source": "\\unknown x",
+			"expected": null
+		},
+		{
+			"name": "unknown-command-alone",
+			"source": "\\foo",
+			"expected": null
+		},
+		{
+			"name": "unknown-letter-command",
+			"source": "\\q",
+			"expected": null
+		},
+		{
+			"name": "unbalanced-close",
+			"source": "x}",
+			"expected": null
+		},
+		{
+			"name": "unbalanced-open",
+			"source": "x{",
+			"expected": null
+		},
+		{
+			"name": "unbalanced-group",
+			"source": "{x",
+			"expected": null
+		},
+		{
+			"name": "end-without-begin",
+			"source": "x\\end{y}",
+			"expected": null
+		},
+		{
+			"name": "trailing-backslash",
+			"source": "x\\",
+			"expected": null
+		},
+		{
+			"name": "unknown-environment",
+			"source": "\\begin{foo}x\\end{foo}",
+			"expected": null
+		},
+		{
+			"name": "empty-source",
+			"source": "",
+			"expected": ""
+		},
+		{
+			"name": "only-space",
+			"source": "  ",
+			"expected": ""
+		},
+		{
+			"name": "only-braces",
+			"source": "{}",
+			"expected": ""
+		}
+	],
+	"knownUnported": [
+		{
+			"name": "matrix-inline",
+			"source": "\\begin{pmatrix}a&b\\\\c&d\\end{pmatrix}",
+			"expected": "⎛ a │ b ⎞\n⎝ c │ d ⎠"
+		},
+		{
+			"name": "cases-inline",
+			"source": "\\begin{cases}a&x>0\\\\b&x<0\\end{cases}",
+			"expected": "⎧ a if x > 0\n⎨\n⎩ b if x < 0"
+		},
+		{
+			"name": "aligned-inline",
+			"source": "\\begin{aligned}a&=b\\\\c&=d\\end{aligned}",
+			"expected": "a = b\nc = d"
+		},
+		{
+			"name": "equation-inline",
+			"source": "\\begin{equation}x^2\\end{equation}",
+			"expected": "x²"
+		}
+	],
+	"delimiters": [
+		{
+			"name": "inline-paren",
+			"source": "\\(x\\)",
+			"expected": "x",
+			"tokens": [
+				"latex"
+			]
+		},
+		{
+			"name": "inline-paren-adjacent",
+			"source": "a\\(x\\)b",
+			"expected": "axb",
+			"tokens": [
+				"latex"
+			]
+		},
+		{
+			"name": "inline-paren-spaces",
+			"source": "a \\(x\\) b",
+			"expected": "a x b",
+			"tokens": [
+				"latex"
+			]
+		},
+		{
+			"name": "inline-paren-symbols",
+			"source": "\\(\\alpha+\\beta\\)",
+			"expected": "α+β",
+			"tokens": [
+				"latex"
+			]
+		},
+		{
+			"name": "inline-paren-fraction",
+			"source": "\\(\\frac{a}{b}\\)",
+			"expected": "a/b",
+			"tokens": [
+				"latex"
+			]
+		},
+		{
+			"name": "inline-paren-unknown",
+			"source": "\\(\\unknown\\)",
+			"expected": "\\(\\unknown\\)",
+			"tokens": [
+				"latex"
+			]
+		},
+		{
+			"name": "inline-paren-empty",
+			"source": "\\(\\)",
+			"expected": "\\(\\)",
+			"tokens": []
+		},
+		{
+			"name": "inline-paren-unclosed",
+			"source": "a \\(x",
+			"expected": "a \\(x",
+			"tokens": [
+				"latex:pending"
+			]
+		},
+		{
+			"name": "inline-paren-newline",
+			"source": "\\(x\ny\\)",
+			"expected": "\\(x\ny\\)",
+			"tokens": []
+		},
+		{
+			"name": "dollar-simple",
+			"source": "$x$",
+			"expected": "x",
+			"tokens": [
+				"latex"
+			]
+		},
+		{
+			"name": "dollar-spaces-around",
+			"source": "a $x$ b",
+			"expected": "a x b",
+			"tokens": [
+				"latex"
+			]
+		},
+		{
+			"name": "dollar-prose",
+			"source": "costs $5 and $10 today",
+			"expected": "costs $5 and $10 today",
+			"tokens": []
+		},
+		{
+			"name": "dollar-prose-word",
+			"source": "the $PATH and $HOME dir",
+			"expected": "the $PATH and $HOME dir",
+			"tokens": []
+		},
+		{
+			"name": "dollar-unknown",
+			"source": "$\\unknown$",
+			"expected": "$\\unknown$",
+			"tokens": [
+				"latex"
+			]
+		},
+		{
+			"name": "dollar-pending-price",
+			"source": "price: $3.50 (USD)",
+			"expected": "price: $3.50 (USD)",
+			"tokens": [
+				"latex:pending"
+			]
+		},
+		{
+			"name": "dollar-wrapping-paren",
+			"source": "$\\(x\\)$",
+			"expected": "$\\(x\\)$",
+			"tokens": [
+				"latex"
+			]
+		},
+		{
+			"name": "dollar-inline-in-text",
+			"source": "a $x$ and $y$",
+			"expected": "a x and y",
+			"tokens": [
+				"latex",
+				"latex"
+			]
+		},
+		{
+			"name": "dollar-escaped",
+			"source": "\\$x\\$",
+			"expected": "\\$x\\$",
+			"tokens": []
+		},
+		{
+			"name": "dollar-only",
+			"source": "$$",
+			"expected": "$$",
+			"tokens": []
+		},
+		{
+			"name": "bracket-line-start-simple",
+			"source": "\\[x^2\\]\n",
+			"expected": "\nx²\n",
+			"tokens": [
+				"latexBlock"
+			]
+		},
+		{
+			"name": "bracket-line-start-two",
+			"source": "\\[a\\]\n\\[b\\]\n",
+			"expected": "\na\n\nb\n",
+			"tokens": [
+				"latexBlock",
+				"latexBlock"
+			]
+		},
+		{
+			"name": "bracket-and-dollar-blocks",
+			"source": "$$x$$\n\\[y\\]\n",
+			"expected": "\nx\n\ny\n",
+			"tokens": [
+				"latexBlock",
+				"latexBlock"
+			]
+		},
+		{
+			"name": "bracket-multiline",
+			"source": "\\[\nx\n\\]\n",
+			"expected": "\nx\n",
+			"tokens": [
+				"latexBlock"
+			]
+		},
+		{
+			"name": "bracket-mid-line",
+			"source": "pre \\[\\frac{a}{b}\\]",
+			"expected": "pre a/b",
+			"tokens": [
+				"latex"
+			]
+		},
+		{
+			"name": "bracket-trailing-text",
+			"source": "\\[x\\] trailing",
+			"expected": "\\[x\\] trailing",
+			"tokens": [
+				"latexBlock:pending"
+			]
+		},
+		{
+			"name": "bracket-empty",
+			"source": "\\[\\]",
+			"expected": "\\[\\]",
+			"tokens": [
+				"latexBlock:pending"
+			]
+		},
+		{
+			"name": "dollar-block-line",
+			"source": "$$x^2$$\n",
+			"expected": "\nx²\n",
+			"tokens": [
+				"latexBlock"
+			]
+		},
+		{
+			"name": "dollar-block-multiline",
+			"source": "$$\nx^2\n$$\n",
+			"expected": "\nx²\n",
+			"tokens": [
+				"latexBlock"
+			]
+		},
+		{
+			"name": "code-span-untouched",
+			"source": "a `$y$` b",
+			"expected": "a `$y$` b",
+			"tokens": []
+		},
+		{
+			"name": "code-span-bracket-untouched",
+			"source": "a `\\(y\\)` b",
+			"expected": "a `\\(y\\)` b",
+			"tokens": []
+		},
+		{
+			"name": "fence-untouched",
+			"source": "```\n$$x$$\n```\n",
+			"expected": "```\n$$x$$\n```\n",
+			"tokens": []
+		},
+		{
+			"name": "fence-bracket-untouched",
+			"source": "```\n\\(x\\)\n```\n",
+			"expected": "```\n\\(x\\)\n```\n",
+			"tokens": []
+		},
+		{
+			"name": "two-inline",
+			"source": "\\(a\\) and \\(b\\)",
+			"expected": "a and b",
+			"tokens": [
+				"latex",
+				"latex"
+			]
+		},
+		{
+			"name": "inline-and-block",
+			"source": "x \\(a\\) \\[b\\]\n",
+			"expected": "x a b\n",
+			"tokens": [
+				"latex",
+				"latex"
+			]
+		}
+	],
+	"delimiterDisplayTargets": [
+		{
+			"name": "bracket-line-start",
+			"source": "\\[\\frac{a}{b}\\]",
+			"inline": "\na/b\n",
+			"display": "\na\n─\nb\n",
+			"tokens": [
+				"latexBlock"
+			]
+		},
+		{
+			"name": "bracket-line-start-newline",
+			"source": "\\[\\frac{a}{b}\\]\n",
+			"inline": "\na/b\n",
+			"display": "\na\n─\nb\n",
+			"tokens": [
+				"latexBlock"
+			]
+		},
+		{
+			"name": "bracket-line-start-indented",
+			"source": "   \\[\\frac{a}{b}\\]\n",
+			"inline": "\na/b\n",
+			"display": "\na\n─\nb\n",
+			"tokens": [
+				"latexBlock"
+			]
+		},
+		{
+			"name": "bracket-alone-in-line",
+			"source": "text\n\\[\\frac{a}{b}\\]\ntext",
+			"inline": "text\n\na/b\ntext",
+			"display": "text\n\na\n─\nb\ntext",
+			"tokens": [
+				"latexBlock"
+			]
+		}
+	],
+	"delimiterDeviations": [
+		{
+			"name": "dollar-after-word",
+			"source": "a$x$b",
+			"inline": "axb",
+			"display": "axb",
+			"tokens": [
+				"latex"
+			]
+		},
+		{
+			"name": "dollar-after-digit",
+			"source": "2$x$",
+			"inline": "2x",
+			"display": "2x",
+			"tokens": [
+				"latex"
+			]
+		},
+		{
+			"name": "dollar-digit-body",
+			"source": "$5$",
+			"inline": "5",
+			"display": "5",
+			"tokens": [
+				"latex"
+			]
+		},
+		{
+			"name": "dollar-digit-body-adjacent",
+			"source": "a$5$b",
+			"inline": "a5b",
+			"display": "a5b",
+			"tokens": [
+				"latex"
+			]
+		},
+		{
+			"name": "dollar-letter-after",
+			"source": "$x$y",
+			"inline": "xy",
+			"display": "xy",
+			"tokens": [
+				"latex"
+			]
+		},
+		{
+			"name": "dollar-word-word",
+			"source": "abc$def$ghi",
+			"inline": "abcdefghi",
+			"display": "abcdefghi",
+			"tokens": [
+				"latex"
+			]
+		},
+		{
+			"name": "inflated-one-char-before",
+			"source": "a \\[x\\] b",
+			"inline": "a \\[x\\] b",
+			"display": "a \\[x\\] b",
+			"tokens": [
+				"latexBlock:pending"
+			]
+		},
+		{
+			"name": "inflated-bracket-glued",
+			"source": "a\\[x\\]b",
+			"inline": "a\\[x\\]b",
+			"display": "a\\[x\\]b",
+			"tokens": [
+				"latexBlock:pending"
+			]
+		},
+		{
+			"name": "inflated-dollar-mid-line",
+			"source": "a $$x$$ b",
+			"inline": "a x b",
+			"display": "a x b",
+			"tokens": [
+				"latex"
+			]
+		},
+		{
+			"name": "inflated-dollar-in-text",
+			"source": "pre $$x$$ post",
+			"inline": "pre x post",
+			"display": "pre x post",
+			"tokens": [
+				"latex"
+			]
+		},
+		{
+			"name": "bracket-unrenderable",
+			"source": "\\[\\begin{pmatrix}a&b\\\\c&d\\end{pmatrix}\\]",
+			"inline": "\n⎛ a │ b ⎞\n⎝ c │ d ⎠\n",
+			"display": "\n⎛ a │ b ⎞\n⎝ c │ d ⎠\n",
+			"tokens": [
+				"latexBlock"
+			]
+		}
+	],
+	"displayTargets": [
+		{
+			"name": "limit-operator-lower-argmax",
+			"source": "\\argmax_{x} f(x)",
+			"expected": "argmax f(x)\n  x"
+		},
+		{
+			"name": "limit-operator-lower-paren-argmax",
+			"source": "\\argmax_{n \\to \\infty} a_n",
+			"expected": "argmax aₙ\n n→∞"
+		},
+		{
+			"name": "limit-operator-upper-argmax",
+			"source": "\\argmax^{2}",
+			"expected": "  2\nargmax"
+		},
+		{
+			"name": "limit-operator-both-argmax",
+			"source": "\\argmax_{i=1}^{n}",
+			"expected": "  n\nargmax\n i=1"
+		},
+		{
+			"name": "limit-operator-lower-argmin",
+			"source": "\\argmin_{x} f(x)",
+			"expected": "argmin f(x)\n  x"
+		},
+		{
+			"name": "limit-operator-lower-paren-argmin",
+			"source": "\\argmin_{n \\to \\infty} a_n",
+			"expected": "argmin aₙ\n n→∞"
+		},
+		{
+			"name": "limit-operator-upper-argmin",
+			"source": "\\argmin^{2}",
+			"expected": "  2\nargmin"
+		},
+		{
+			"name": "limit-operator-both-argmin",
+			"source": "\\argmin_{i=1}^{n}",
+			"expected": "  n\nargmin\n i=1"
+		},
+		{
+			"name": "limit-operator-lower-inf",
+			"source": "\\inf_{x} f(x)",
+			"expected": "inf f(x)\n x"
+		},
+		{
+			"name": "limit-operator-lower-paren-inf",
+			"source": "\\inf_{n \\to \\infty} a_n",
+			"expected": "inf aₙ\nn→∞"
+		},
+		{
+			"name": "limit-operator-upper-inf",
+			"source": "\\inf^{2}",
+			"expected": " 2\ninf"
+		},
+		{
+			"name": "limit-operator-both-inf",
+			"source": "\\inf_{i=1}^{n}",
+			"expected": " n\ninf\ni=1"
+		},
+		{
+			"name": "limit-operator-lower-injlim",
+			"source": "\\injlim_{x} f(x)",
+			"expected": "injlim f(x)\n  x"
+		},
+		{
+			"name": "limit-operator-lower-paren-injlim",
+			"source": "\\injlim_{n \\to \\infty} a_n",
+			"expected": "injlim aₙ\n n→∞"
+		},
+		{
+			"name": "limit-operator-upper-injlim",
+			"source": "\\injlim^{2}",
+			"expected": "  2\ninjlim"
+		},
+		{
+			"name": "limit-operator-both-injlim",
+			"source": "\\injlim_{i=1}^{n}",
+			"expected": "  n\ninjlim\n i=1"
+		},
+		{
+			"name": "limit-operator-lower-lim",
+			"source": "\\lim_{x} f(x)",
+			"expected": "lim f(x)\n x"
+		},
+		{
+			"name": "limit-operator-lower-paren-lim",
+			"source": "\\lim_{n \\to \\infty} a_n",
+			"expected": "lim aₙ\nn→∞"
+		},
+		{
+			"name": "limit-operator-upper-lim",
+			"source": "\\lim^{2}",
+			"expected": " 2\nlim"
+		},
+		{
+			"name": "limit-operator-both-lim",
+			"source": "\\lim_{i=1}^{n}",
+			"expected": " n\nlim\ni=1"
+		},
+		{
+			"name": "limit-operator-lower-liminf",
+			"source": "\\liminf_{x} f(x)",
+			"expected": "liminf f(x)\n  x"
+		},
+		{
+			"name": "limit-operator-lower-paren-liminf",
+			"source": "\\liminf_{n \\to \\infty} a_n",
+			"expected": "liminf aₙ\n n→∞"
+		},
+		{
+			"name": "limit-operator-upper-liminf",
+			"source": "\\liminf^{2}",
+			"expected": "  2\nliminf"
+		},
+		{
+			"name": "limit-operator-both-liminf",
+			"source": "\\liminf_{i=1}^{n}",
+			"expected": "  n\nliminf\n i=1"
+		},
+		{
+			"name": "limit-operator-lower-limsup",
+			"source": "\\limsup_{x} f(x)",
+			"expected": "limsup f(x)\n  x"
+		},
+		{
+			"name": "limit-operator-lower-paren-limsup",
+			"source": "\\limsup_{n \\to \\infty} a_n",
+			"expected": "limsup aₙ\n n→∞"
+		},
+		{
+			"name": "limit-operator-upper-limsup",
+			"source": "\\limsup^{2}",
+			"expected": "  2\nlimsup"
+		},
+		{
+			"name": "limit-operator-both-limsup",
+			"source": "\\limsup_{i=1}^{n}",
+			"expected": "  n\nlimsup\n i=1"
+		},
+		{
+			"name": "limit-operator-lower-max",
+			"source": "\\max_{x} f(x)",
+			"expected": "max f(x)\n x"
+		},
+		{
+			"name": "limit-operator-lower-paren-max",
+			"source": "\\max_{n \\to \\infty} a_n",
+			"expected": "max aₙ\nn→∞"
+		},
+		{
+			"name": "limit-operator-upper-max",
+			"source": "\\max^{2}",
+			"expected": " 2\nmax"
+		},
+		{
+			"name": "limit-operator-both-max",
+			"source": "\\max_{i=1}^{n}",
+			"expected": " n\nmax\ni=1"
+		},
+		{
+			"name": "limit-operator-lower-min",
+			"source": "\\min_{x} f(x)",
+			"expected": "min f(x)\n x"
+		},
+		{
+			"name": "limit-operator-lower-paren-min",
+			"source": "\\min_{n \\to \\infty} a_n",
+			"expected": "min aₙ\nn→∞"
+		},
+		{
+			"name": "limit-operator-upper-min",
+			"source": "\\min^{2}",
+			"expected": " 2\nmin"
+		},
+		{
+			"name": "limit-operator-both-min",
+			"source": "\\min_{i=1}^{n}",
+			"expected": " n\nmin\ni=1"
+		},
+		{
+			"name": "limit-operator-lower-projlim",
+			"source": "\\projlim_{x} f(x)",
+			"expected": "projlim f(x)\n   x"
+		},
+		{
+			"name": "limit-operator-lower-paren-projlim",
+			"source": "\\projlim_{n \\to \\infty} a_n",
+			"expected": "projlim aₙ\n  n→∞"
+		},
+		{
+			"name": "limit-operator-upper-projlim",
+			"source": "\\projlim^{2}",
+			"expected": "   2\nprojlim"
+		},
+		{
+			"name": "limit-operator-both-projlim",
+			"source": "\\projlim_{i=1}^{n}",
+			"expected": "   n\nprojlim\n  i=1"
+		},
+		{
+			"name": "limit-operator-lower-sup",
+			"source": "\\sup_{x} f(x)",
+			"expected": "sup f(x)\n x"
+		},
+		{
+			"name": "limit-operator-lower-paren-sup",
+			"source": "\\sup_{n \\to \\infty} a_n",
+			"expected": "sup aₙ\nn→∞"
+		},
+		{
+			"name": "limit-operator-upper-sup",
+			"source": "\\sup^{2}",
+			"expected": " 2\nsup"
+		},
+		{
+			"name": "limit-operator-both-sup",
+			"source": "\\sup_{i=1}^{n}",
+			"expected": " n\nsup\ni=1"
+		},
+		{
+			"name": "limit-operator-limits",
+			"source": "\\lim\\limits_{n} x",
+			"expected": "lim x\n n"
+		},
+		{
+			"name": "limit-operator-limits-spaced",
+			"source": "\\lim \\limits_{n} x",
+			"expected": "lim x\n n"
+		},
+		{
+			"name": "limit-operator-bracket-not-script",
+			"source": "\\max_i",
+			"expected": "max\n i"
+		},
+		{
+			"name": "limit-operator-word-arg",
+			"source": "\\lim_{n\\to\\infty}",
+			"expected": "lim\nn→∞"
+		},
+		{
+			"name": "limit-operator-space-arg",
+			"source": "\\lim_ {n}",
+			"expected": "lim\n n"
+		},
+		{
+			"name": "limit-operator-tab-arg",
+			"source": "\\lim\t_{n}",
+			"expected": "lim\n n"
+		},
+		{
+			"name": "limit-operator-inside-text",
+			"source": "a\\lim_{x}b",
+			"expected": "alim b\n  x"
+		},
+		{
+			"name": "display-limit-lower-sum",
+			"source": "\\sum_{i=1}",
+			"expected": " ∑\ni=1"
+		},
+		{
+			"name": "display-limit-lower-spaces-sum",
+			"source": "\\sum_{n \\to \\infty}",
+			"expected": " ∑\nn→∞"
+		},
+		{
+			"name": "display-limit-both-sum",
+			"source": "\\sum_{i=1}^{n}",
+			"expected": " n\n ∑\ni=1"
+		},
+		{
+			"name": "display-limit-lower-prod",
+			"source": "\\prod_{i=1}",
+			"expected": " ∏\ni=1"
+		},
+		{
+			"name": "display-limit-lower-spaces-prod",
+			"source": "\\prod_{n \\to \\infty}",
+			"expected": " ∏\nn→∞"
+		},
+		{
+			"name": "display-limit-both-prod",
+			"source": "\\prod_{i=1}^{n}",
+			"expected": " n\n ∏\ni=1"
+		},
+		{
+			"name": "display-limit-lower-int",
+			"source": "\\int_{i=1}",
+			"expected": " ∫\ni=1"
+		},
+		{
+			"name": "display-limit-lower-spaces-int",
+			"source": "\\int_{n \\to \\infty}",
+			"expected": " ∫\nn→∞"
+		},
+		{
+			"name": "display-limit-both-int",
+			"source": "\\int_{i=1}^{n}",
+			"expected": " n\n ∫\ni=1"
+		},
+		{
+			"name": "display-limit-lower-iint",
+			"source": "\\iint_{i=1}",
+			"expected": " ∬\ni=1"
+		},
+		{
+			"name": "display-limit-lower-spaces-iint",
+			"source": "\\iint_{n \\to \\infty}",
+			"expected": " ∬\nn→∞"
+		},
+		{
+			"name": "display-limit-both-iint",
+			"source": "\\iint_{i=1}^{n}",
+			"expected": " n\n ∬\ni=1"
+		},
+		{
+			"name": "display-limit-lower-iiint",
+			"source": "\\iiint_{i=1}",
+			"expected": " ∭\ni=1"
+		},
+		{
+			"name": "display-limit-lower-spaces-iiint",
+			"source": "\\iiint_{n \\to \\infty}",
+			"expected": " ∭\nn→∞"
+		},
+		{
+			"name": "display-limit-both-iiint",
+			"source": "\\iiint_{i=1}^{n}",
+			"expected": " n\n ∭\ni=1"
+		},
+		{
+			"name": "display-limit-lower-oint",
+			"source": "\\oint_{i=1}",
+			"expected": " ∮\ni=1"
+		},
+		{
+			"name": "display-limit-lower-spaces-oint",
+			"source": "\\oint_{n \\to \\infty}",
+			"expected": " ∮\nn→∞"
+		},
+		{
+			"name": "display-limit-both-oint",
+			"source": "\\oint_{i=1}^{n}",
+			"expected": " n\n ∮\ni=1"
+		},
+		{
+			"name": "display-limit-lower-coprod",
+			"source": "\\coprod_{i=1}",
+			"expected": " ∐\ni=1"
+		},
+		{
+			"name": "display-limit-lower-spaces-coprod",
+			"source": "\\coprod_{n \\to \\infty}",
+			"expected": " ∐\nn→∞"
+		},
+		{
+			"name": "display-limit-both-coprod",
+			"source": "\\coprod_{i=1}^{n}",
+			"expected": " n\n ∐\ni=1"
+		},
+		{
+			"name": "display-limit-lower-bigcap",
+			"source": "\\bigcap_{i=1}",
+			"expected": " ⋂\ni=1"
+		},
+		{
+			"name": "display-limit-lower-spaces-bigcap",
+			"source": "\\bigcap_{n \\to \\infty}",
+			"expected": " ⋂\nn→∞"
+		},
+		{
+			"name": "display-limit-both-bigcap",
+			"source": "\\bigcap_{i=1}^{n}",
+			"expected": " n\n ⋂\ni=1"
+		},
+		{
+			"name": "display-limit-lower-bigcup",
+			"source": "\\bigcup_{i=1}",
+			"expected": " ⋃\ni=1"
+		},
+		{
+			"name": "display-limit-lower-spaces-bigcup",
+			"source": "\\bigcup_{n \\to \\infty}",
+			"expected": " ⋃\nn→∞"
+		},
+		{
+			"name": "display-limit-both-bigcup",
+			"source": "\\bigcup_{i=1}^{n}",
+			"expected": " n\n ⋃\ni=1"
+		},
+		{
+			"name": "display-limit-lower-bigvee",
+			"source": "\\bigvee_{i=1}",
+			"expected": " ⋁\ni=1"
+		},
+		{
+			"name": "display-limit-lower-spaces-bigvee",
+			"source": "\\bigvee_{n \\to \\infty}",
+			"expected": " ⋁\nn→∞"
+		},
+		{
+			"name": "display-limit-both-bigvee",
+			"source": "\\bigvee_{i=1}^{n}",
+			"expected": " n\n ⋁\ni=1"
+		},
+		{
+			"name": "display-limit-lower-bigwedge",
+			"source": "\\bigwedge_{i=1}",
+			"expected": " ⋀\ni=1"
+		},
+		{
+			"name": "display-limit-lower-spaces-bigwedge",
+			"source": "\\bigwedge_{n \\to \\infty}",
+			"expected": " ⋀\nn→∞"
+		},
+		{
+			"name": "display-limit-both-bigwedge",
+			"source": "\\bigwedge_{i=1}^{n}",
+			"expected": " n\n ⋀\ni=1"
+		},
+		{
+			"name": "display-limit-lower-bigoplus",
+			"source": "\\bigoplus_{i=1}",
+			"expected": " ⨁\ni=1"
+		},
+		{
+			"name": "display-limit-lower-spaces-bigoplus",
+			"source": "\\bigoplus_{n \\to \\infty}",
+			"expected": " ⨁\nn→∞"
+		},
+		{
+			"name": "display-limit-both-bigoplus",
+			"source": "\\bigoplus_{i=1}^{n}",
+			"expected": " n\n ⨁\ni=1"
+		},
+		{
+			"name": "display-limit-lower-bigotimes",
+			"source": "\\bigotimes_{i=1}",
+			"expected": " ⨂\ni=1"
+		},
+		{
+			"name": "display-limit-lower-spaces-bigotimes",
+			"source": "\\bigotimes_{n \\to \\infty}",
+			"expected": " ⨂\nn→∞"
+		},
+		{
+			"name": "display-limit-both-bigotimes",
+			"source": "\\bigotimes_{i=1}^{n}",
+			"expected": " n\n ⨂\ni=1"
+		},
+		{
+			"name": "display-limit-lower-bigodot",
+			"source": "\\bigodot_{i=1}",
+			"expected": " ⨀\ni=1"
+		},
+		{
+			"name": "display-limit-lower-spaces-bigodot",
+			"source": "\\bigodot_{n \\to \\infty}",
+			"expected": " ⨀\nn→∞"
+		},
+		{
+			"name": "display-limit-both-bigodot",
+			"source": "\\bigodot_{i=1}^{n}",
+			"expected": " n\n ⨀\ni=1"
+		},
+		{
+			"name": "display-limit-lower-bigsqcup",
+			"source": "\\bigsqcup_{i=1}",
+			"expected": " ⨆\ni=1"
+		},
+		{
+			"name": "display-limit-lower-spaces-bigsqcup",
+			"source": "\\bigsqcup_{n \\to \\infty}",
+			"expected": " ⨆\nn→∞"
+		},
+		{
+			"name": "display-limit-both-bigsqcup",
+			"source": "\\bigsqcup_{i=1}^{n}",
+			"expected": " n\n ⨆\ni=1"
+		},
+		{
+			"name": "display-limit-lower-biguplus",
+			"source": "\\biguplus_{i=1}",
+			"expected": " ⨄\ni=1"
+		},
+		{
+			"name": "display-limit-lower-spaces-biguplus",
+			"source": "\\biguplus_{n \\to \\infty}",
+			"expected": " ⨄\nn→∞"
+		},
+		{
+			"name": "display-limit-both-biguplus",
+			"source": "\\biguplus_{i=1}^{n}",
+			"expected": " n\n ⨄\ni=1"
+		},
+		{
+			"name": "fraction",
+			"source": "\\frac{a}{b}",
+			"expected": "a\n─\nb"
+		},
+		{
+			"name": "fraction-simple",
+			"source": "\\frac12",
+			"expected": "1\n─\n2"
+		},
+		{
+			"name": "fraction-spaced",
+			"source": "\\frac {a} {b}",
+			"expected": "a\n─\nb"
+		},
+		{
+			"name": "fraction-space-between",
+			"source": "\\frac{a} {b}",
+			"expected": "a\n─\nb"
+		},
+		{
+			"name": "fraction-newline",
+			"source": "\\frac\n{a}{b}",
+			"expected": "a\n─\nb"
+		},
+		{
+			"name": "fraction-dfrac",
+			"source": "\\dfrac{a}{b}",
+			"expected": "a\n─\nb"
+		},
+		{
+			"name": "fraction-nested",
+			"source": "\\frac{1}{\\frac{a}{b}}",
+			"expected": " 1\n───\na/b"
+		},
+		{
+			"name": "fraction-long-numerator",
+			"source": "\\frac{a+b}{c}",
+			"expected": "a+b\n───\n c"
+		},
+		{
+			"name": "fraction-long-denominator",
+			"source": "\\frac{a}{b+c}",
+			"expected": " a\n───\nb+c"
+		},
+		{
+			"name": "fraction-single-letter",
+			"source": "\\frac{x}{2}",
+			"expected": "x\n─\n2"
+		},
+		{
+			"name": "left-right",
+			"source": "\\left(\\frac{a}{b}\\right)",
+			"expected": "  a\n( ─ )\n  b"
+		},
+		{
+			"name": "scripts-upper-sub",
+			"source": "x_{A}",
+			"expected": "x\n A"
+		},
+		{
+			"name": "scripts-upper-sub-two",
+			"source": "x_{AB}",
+			"expected": "x\n AB"
+		},
+		{
+			"name": "scripts-symbol-sub",
+			"source": "x_{\\alpha}",
+			"expected": "x\n α"
+		},
+		{
+			"name": "scripts-nested",
+			"source": "x^{y^2}",
+			"expected": "  2\n y\nx"
+		}
+	]
+}

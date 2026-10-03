@@ -67,7 +67,7 @@ package app.pi.ui.render
  * | `\sum_{i=1}^{n}` | `∑ᵢ₌₁ⁿ` | limits above and below | `∑ᵢ₌₁ⁿ` — pi's inline form (`latex.ts:1150-1157`), so it matches inline and differs in block |
  * | `\begin{pmatrix}…\end{pmatrix}` | a bracketed grid | a bracketed grid | `null`, so the caller prints the formula exactly as written — this one differs in **both** |
  *
- * **Why porting the layout function alone would not be enough.** [piMarkdownSource]
+ * **Why porting the layout function alone would not be enough.** [preprocess]
  * substitutes a rendered formula into the markdown *source* before the parser
  * runs, and the renderer's annotator turns an end of line inside a paragraph
  * into a **space**: `MarkdownAnnotatorConfig.eolAsNewLine` defaults to `false`
@@ -318,7 +318,10 @@ internal object PiLatex {
         "rVert" to "\u2016",
         "lbrace" to "{",
         "rbrace" to "}",
-        "backslash" to "\\\\",
+        // pi：`latex.ts:222` 的值是 `"\\"`，也就是**一个**反斜杠字符。这里曾经写成
+        // `"\\\\"`（两个），于是 `$\backslash$` 比 pi 多画一个 `\` —— 值本身写错不会
+        // 有任何编译错误，只有 `tools/check-latex-tables.mjs` 的逐 key 比对能看见。
+        "backslash" to "\\",
         "lfloor" to "\u230a",
         "rfloor" to "\u230b",
         "lceil" to "\u2308",
@@ -503,6 +506,27 @@ internal object PiLatex {
         "tanh",
     )
 
+    /**
+     * `latex.ts:265-278`。**这张表必须先于 [SYMBOLS] 和 [NAMED_OPERATORS] 判定**
+     * （pi：`latex.ts:1087` 在 `:1098` 之前，也比符号表早）—— `inf`/`lim`/`max`/`min`/`sup`
+     * 同时在 [NAMED_OPERATORS] 里，`inf` 还在 [SYMBOLS] 里没有（只有 `infty`），
+     * 而 pi 对这 11 个命令一律走 `parseOperator(…, "bracket", …)`：`\lim_{n\to\infty}`
+     * 是 `lim[n→∞]`，不是 `lim` 后面接一个下标。
+     */
+    private val LIMIT_OPERATORS: Set<String> = setOf(
+        "argmax",
+        "argmin",
+        "inf",
+        "injlim",
+        "lim",
+        "liminf",
+        "limsup",
+        "max",
+        "min",
+        "projlim",
+        "sup",
+    )
+
     private val DISPLAY_LIMIT_SYMBOLS: Set<String> = setOf(
         "bigcap",
         "bigcup",
@@ -520,6 +544,102 @@ internal object PiLatex {
         "oint",
         "prod",
         "sum",
+    )
+
+    /**
+     * `latex.ts:298-388`。为什么需要单独一张表：pi 对关系符在符号两侧各补一个空格
+     * （`latex.ts:1109` 的 `RELATION_COMMANDS.has(command)` 那一支），而同一张符号表里
+     * 别的命令不补。少了它 `$a\le b$` 会画成 `a≤ b`（pi：`a ≤ b`）。
+     */
+    private val RELATION_COMMANDS: Set<String> = setOf(
+        "Leftarrow",
+        "Leftrightarrow",
+        "Longleftarrow",
+        "Longleftrightarrow",
+        "Longrightarrow",
+        "Rightarrow",
+        "Join",
+        "Vdash",
+        "Vvdash",
+        "approx",
+        "asymp",
+        "bowtie",
+        "cong",
+        "dashv",
+        "fullouterjoin",
+        "doteq",
+        "downarrow",
+        "equiv",
+        "ge",
+        "geq",
+        "geqslant",
+        "gets",
+        "gg",
+        "hookleftarrow",
+        "hookrightarrow",
+        "iff",
+        "implies",
+        "in",
+        "leadsto",
+        "le",
+        "leftarrow",
+        "leftharpoondown",
+        "leftharpoonup",
+        "leftrightarrow",
+        "leftrightharpoons",
+        "leftouterjoin",
+        "leq",
+        "leqslant",
+        "ll",
+        "longleftarrow",
+        "longleftrightarrow",
+        "longmapsto",
+        "longrightarrow",
+        "ltimes",
+        "mapsto",
+        "mid",
+        "models",
+        "ne",
+        "nearrow",
+        "neq",
+        "ni",
+        "notin",
+        "nvdash",
+        "nvDash",
+        "nwarrow",
+        "parallel",
+        "perp",
+        "prec",
+        "preceq",
+        "propto",
+        "rightharpoondown",
+        "rightharpoonup",
+        "rightleftharpoons",
+        "rightouterjoin",
+        "rightarrow",
+        "rightsquigarrow",
+        "rtimes",
+        "searrow",
+        "sim",
+        "simeq",
+        "sqsubset",
+        "sqsubseteq",
+        "sqsupset",
+        "sqsupseteq",
+        "subset",
+        "subseteq",
+        "succ",
+        "succeq",
+        "supset",
+        "supseteq",
+        "swarrow",
+        "to",
+        "triangleleft",
+        "triangleright",
+        "twoheadleftarrow",
+        "twoheadrightarrow",
+        "uparrow",
+        "vdash",
     )
 
     private val SPACING_COMMANDS: Set<String> = setOf(
@@ -543,6 +663,15 @@ internal object PiLatex {
         "negthickspace",
         "negthinspace",
     )
+
+    /**
+     * `latex.ts:526`。`\rm`/`\bf` 这类**字体切换**命令自己什么都不画，而且吃掉紧跟其后的
+     * 空白（`latex.ts:1050-1056`）—— 所以 `$\rm x$` 是 `x`，不是 `\rm x` 的原文，也不是 ` x`。
+     * `a\bf   b` 是 `ab`（pi 的 whitespace 分支不会先插一个空格：命令返回空串后，剩下的空白
+     * 由这一支自己吃掉）。不认这张表的后果是**整条公式**变成原文，因为未知命令在 pi 里是
+     * `supported = false`。
+     */
+    private val FONT_SWITCH_COMMANDS: Set<String> = setOf("bf", "cal", "it", "rm", "sf", "sl", "tt")
 
     private val IGNORED_COMMANDS: Set<String> = setOf(
         "displaystyle",
@@ -665,24 +794,260 @@ internal object PiLatex {
      */
     fun toDisplayUnicode(source: String): String? {
         val body = source.trim().removePrefix("$$").removeSuffix("$$").trim()
-        val rendered = toUnicode(body, display = true) ?: return null
-        return "\n" + rendered + "\n"
+        return displayBlock(body)
     }
 
     /**
-     * `latex.ts:646-657` `normalizeOutput`, minus the named-operator spacing
-     * markers (the layout they exist for is not ported): collapse runs of
-     * spaces, trim every line, and drop blank lines between content lines.
+     * 显示式公式的最终形状：`null` = 这条公式画不出来（调用方保留原文），否则是
+     * **独占一段**的 `\n<渲染结果>\n`（见 [toDisplayUnicode] 的说明）。
+     */
+    private fun displayBlock(body: String): String? {
+        val rendered = toUnicode(body.trim(), display = true) ?: return null
+        return "\n" + rendered + "\n"
+    }
+
+    // ---------------------------------------------------------------------
+    // 接入 markdown 源文本：pi 的两个 latex tokenizer，作用在源上
+    // ---------------------------------------------------------------------
+
+    /**
+     * pi 的 `LATEX_MARKDOWN_EXTENSIONS`（`packages/tui/src/components/markdown.ts:123-172`），
+     * 作用在**源文本**上而不是 token 流上。
+     *
+     * pi 的 tokenizer 是 `marked` 扩展，也就是说它们跑在 marked 自己的规则**之后**：
+     * 围栏代码与行内代码里的 `$` 永远不会到 `tokenizeInlineLatex`
+     * （`markdown.ts:52-99`）。这里要复刻这一点，所以扫描必须自己跳过代码 ——
+     * [FENCE] 与 [INLINE_CODE] 两个状态就是干这个的。少了它们，`` a `$y$` b ``
+     * 会被在代码里替换掉，渲染出来是一段写着公式结果的代码。
+     *
+     * 顺序也跟 marked 一致：**先块级，再行内**。块级 token 会先把整段 `$$…$$` /
+     * `\[…\]` 吃掉，行内那一趟就看不到显示式公式的内部；反过来会把 `$$` 当成两条
+     * 相邻的行内公式。
+     *
+     * ## 与 pi 定界符的逐条对齐（以及哪里只是逼近）
+     *
+     * 四种定界符都在这里（pi：`markdown.ts:56-58`、`:106-112`）：
+     *
+     * | 定界符 | pi 的形态 | 这里 |
+     * |---|---|---|
+     * | `\(…\)` | 行内；单行、非空（`markdown.ts:65-99`） | 一样 |
+     * | `\[…\]` | **行首**（≤3 空格）+ `\]` 后到行尾 ⇒ 块级；否则行内 | 一样（行首判定在 [atLineStart]） |
+     * | `$$…$$` | **行首** + `$$` 后到行尾 ⇒ 块级；否则行内 | 见下面那条已知偏差 |
+     * | `$…$` | 行内；body 不以空白结尾、后面不接数字等（`markdown.ts:65-72`） | 沿用原有正则，未动 |
+     *
+     * `\(`/`\[` 的转义：`\\(` 不是定界符（pi 的 `escape` 规则先吃掉它），所以两条分支
+     * 都带 `(?<!\\)`。**注意 `\(` 前面是字母或数字时 pi 仍然认它是公式**
+     * （`a\(x\)` 是 `ax`，我在本机用 marked 跑过），所以这两条分支没有
+     * "前面不能是单词字符" 的 lookbehind —— 那一条只属于 `$`。
+     *
+     * **已知偏差（`$$` 的行首锚点）**：pi 只在 `$$…$$` 位于"段落起点 + ≤3 空格"
+     * 且 `$$` 后到行尾时才当块级（否则当行内：`abc $$x$$` 渲染成行内的 `x`）。
+     * 这里的 `$$` 分支沿用 App 原有的、没有行首锚点的正则，所以行中的 `$$x$$`
+     * 今天会变成独占一段的显示式。这一条**没有**在这次改动里动
+     * （`docs/known-gaps.md` §A2 记着它）：它是既有行为、影响面比补两种定界符大，
+     * 而 `\[…\]` 是新加的，可以一次就做对。
+     *
+     * 剩下的一类边界也记在这里：`a \[x\] b` 这种"公式前正好一个字符 + 一个空格"的
+     * 行中 `\[`，pi 的 marked 会把段落切在那里、然后把它当**待定块级**（原文照排），
+     * 而这里会当成行内公式画出来。这是 marked 段落切分的副作用（`e.slice(1)` 那一处
+     * 的锚点），不是可以"照抄"的规则；宁可画成公式（pi 在 `abc \[x\] b` 上就是这么做的）
+     * 也不去复刻它。
+     *
+     * 任何 [PiLatex] 归约不出来的公式都原样留在源里 —— pi 自己的回退也是打印
+     * `latexToken.raw`（`markdown.ts:509`、`:649`）。
+     */
+    fun preprocess(markdown: String): String {
+        // 快路径：两个定界符家族（`$` 与 `\(`/`\[`）都没有时，整篇没有任何东西可改。
+        // 流式转写里这是绝大多数帧的情况。
+        if (!markdown.contains('$') && !markdown.contains('\\')) return markdown
+        val out = StringBuilder(markdown.length)
+        var index = 0
+        while (index < markdown.length) {
+            val fence = FENCE.find(markdown, index)
+            if (fence != null && fence.range.first == index) {
+                // 围栏代码块：一直拷到同字符、不短于开栏的收栏为止，这样里面更短的
+                // 反引号串不会提前结束它。
+                out.append(fence.value)
+                val closing = "\n" + fence.groupValues[1]
+                val end = markdown.indexOf(closing, fence.range.last + 1)
+                if (end < 0) return out.append(markdown, fence.range.last + 1, markdown.length).toString()
+                out.append(markdown, fence.range.last + 1, end + closing.length)
+                index = end + closing.length
+                continue
+            }
+            val code = INLINE_CODE.find(markdown, index)
+            if (code != null && code.range.first == index) {
+                out.append(code.value)
+                index = code.range.last + 1
+                continue
+            }
+            val start = when {
+                fence == null -> code?.range?.first ?: markdown.length
+                code == null -> fence.range.first
+                else -> minOf(fence.range.first, code.range.first)
+            }
+            out.append(applyMath(markdown, index, start))
+            index = start
+        }
+        return out.toString()
+    }
+
+    /** 对一段"没有代码"的区间 `[start, end)` 做两次替换。 */
+    private fun applyMath(text: String, start: Int, end: Int): String {
+        val run = text.substring(start, end)
+        if (!run.contains('$') && !run.contains('\\')) return run
+        // **两道 guard 都是精确的。** 上面的 `contains` 已经把"不可能匹配"的区间整个
+        // 跳过了；下面这两道只跳过对应的那一趟，因为每个 pattern 都必须先看到它自己的
+        // 字面量才能匹配（`$$` / `\[`）。少了它们，那一趟会走完整个区间才得出"这里
+        // 没有显示式公式"的结论 —— 手机上 5.9 KB 的一趟量到 0.36–1.32 ms，而带 guard
+        // 是 0.40 ms，代价出现在每个流式 token 更新时的重组里
+        // （`docs/scroll-perf-items.md` §3）。`Regex.replace` 没有匹配时返回原串，
+        // 所以跳过它唯一能改变的就是"哪个实例"流到下一趟。
+        val block = if (run.contains(BLOCK_MATH_MARKER) || run.contains(BLOCK_BRACKET_MARKER)) {
+            BLOCK_MATH.replace(run) { match ->
+                val dollar = match.groupValues[1]
+                val bracket = match.groupValues[2]
+                when {
+                    // `$$…$$`：整段（含定界符）交给 toDisplayUnicode。
+                    dollar.isNotEmpty() -> toDisplayUnicode(match.value) ?: match.value
+                    // `\[…\]`：块级形态的 body 已经在 group 2 里（含可能的换行），
+                    // 空 body 是 pi 的"待定"（原文照排），所以不动。
+                    bracket.isNotBlank() -> displayBlock(bracket) ?: match.value
+                    else -> match.value
+                }
+            }
+        } else {
+            run
+        }
+        return INLINE_MATH.replace(block) { match ->
+            val parenthesized = match.groupValues[1]
+            val bracketed = match.groupValues[2]
+            when {
+                // `\(…\)`：pi 没有块级形态，任何时候都是行内。
+                parenthesized.isNotEmpty() -> toUnicode(parenthesized) ?: match.value
+                // `\[…\]`：行首的那种交给上面那一趟（没被替换 = pi 的待定/画不出来，
+                // 保持原文）；只有行中的才是 pi 的行内 token。
+                bracketed.isNotEmpty() ->
+                    if (atLineStart(block, match.range.first)) match.value
+                    else toUnicode(bracketed) ?: match.value
+                // `$…$`：定界符就是首尾两个字符，形状没变。
+                else -> {
+                    val source = match.value
+                    toUnicode(source.substring(1, source.length - 1)) ?: source
+                }
+            }
+        }
+    }
+
+    /**
+     * 这个位置是不是"行首（允许 ≤3 个空格/制表符）"。
+     *
+     * 与 pi 的 `tokenizeBlockLatex` 的 `^ {0,3}` 同义，用在行内那一趟里把行首的
+     * `\[` 留给块级趟（`markdown.ts:106-112`）。pi 真正的锚点更细（还包含 marked
+     * 的段落切分），那部分见 [preprocess] 的已知偏差。
+     */
+    private fun atLineStart(text: String, index: Int): Boolean {
+        var back = index
+        var spaces = 0
+        while (back > 0 && spaces < 3 && (text[back - 1] == ' ' || text[back - 1] == '\t')) {
+            back--
+            spaces++
+        }
+        return back == 0 || text[back - 1] == '\n'
+    }
+
+    /**
+     * 块级 Math 的两条分支**共用一次替换**，与 pi 的 block tokenizer 同序：
+     * 它在每个位置先试 `$$` 再试 `\[`（`markdown.ts:106-112`）。共用还有一个更要紧的
+     * 效果：`Regex.replace` 不会重扫替换结果，所以 `$$a \[b\]$$` 里的 `\[b\]`
+     * 不会被当成第二条公式（pi 也把它整段当一条）。
+     *
+     * 1 号组 = `$$…$$` 的 body，2 号组 = `\[…\]` 的 body。
+     */
+    private val BLOCK_MATH = Regex(
+        pattern = """(?<![\p{L}\p{N}\\])\$\$([^$]+?)\$\$\n?""" +
+            """|(?m)^ {0,3}\\\[[ \t]*(?:\n)?([\s\S]*?)\\\][ \t]*(?:\n|$)""",
+        option = RegexOption.DOT_MATCHES_ALL,
+    )
+
+    /**
+     * 行内数学的三条分支，`\(`/`\[`/`$` 依次（pi：`markdown.ts:56-58`）。
+     * 1 号组 = `\(…\)`，2 号组 = `\[…\]`，3 号 = `$…$`（沿用原有那条）。
+     */
+    private val INLINE_MATH = Regex(
+        pattern = """(?<!\\)\\\(([^\n]+?)\\\)""" +
+            """|(?<!\\)\\\[([^\n]+?)\\\]""" +
+            """|(?<![\p{L}\p{N}\\])\$(?!\d)([^\s$][^$\n]*?)(?<!\s)\$(?![\p{L}\p{N}])""",
+    )
+
+    /**
+     * [applyMath] 里两道 guard 需要的字面量。放在 pattern 旁边，这样 guard 不会和
+     * pattern 悄悄失配。
+     */
+    private const val BLOCK_MATH_MARKER = "$$"
+    private const val BLOCK_BRACKET_MARKER = "\\["
+
+    /**
+     * 当前位置的开围栏：最多三个空格，然后三个以上反引号或波浪号
+     * （CommonMark 的规定）。info string 不捕获 —— 收栏只需要标记本身。
+     */
+    private val FENCE = Regex("(?m)^ {0,3}(`{3,}|~{3,})[^\n]*")
+
+    /**
+     * 行内代码：一串反引号，然后**同样长度**的第一串反引号。
+     * `org.intellij.markdown` 用的是同样的贪心规则，所以扫描器与解析器对
+     * "这一行内代码到哪里结束"的判断一致。
+     */
+    private val INLINE_CODE = Regex("(`{1,3})(?:(?!\\1)[\\s\\S])*?\\1")
+
+    /**
+     * pi 的两枚**具名算子哨兵**（`latex.ts:651-652`）。
+     *
+     * pi 用的是补充平面的私用码位 `\u{f0004}` / `\u{f0005}`；这里换成 BMP 私用区的
+     * `\uE004` / `\uE005`，原因是下面两条间距正则要在 Java 的 lookbehind 里放一个
+     * **单字符**（补充平面字符在 UTF-16 里是两个 char，写进字符类会变成两个独立
+     * 选择项，语义就错了）。哨兵在 [normalizeOutput] 结束前一定被消费掉，不进任何
+     * 输出字符串，所以码位本身不是契约；语义与 pi 相同这一点由 `PiLatexCheck` 的
+     * 公式夹具（`2\sin x`、`\sin\alpha`、`\sin^2`）钉住。
+     */
+    private const val NAMED_OPERATOR_START = "\uE004"
+    private const val NAMED_OPERATOR_END = "\uE005"
+
+    /** `latex.ts:653`：具名算子前面是字母/数字/`)`/`]`/布局标记 时补一个空格。 */
+    private val NAMED_OPERATOR_LEFT_SPACING = Regex("(?<=[\\p{L}\\p{N}\\)\\]}])$NAMED_OPERATOR_START")
+
+    /** `latex.ts:654`：具名算子后面紧跟字母/数字/`√` 时补一个空格。 */
+    private val NAMED_OPERATOR_RIGHT_SPACING = Regex("$NAMED_OPERATOR_END(?=[\\p{L}\\p{N}\u221a])")
+
+    /**
+     * `latex.ts:654-665` `normalizeOutput`：折叠空格、逐行 trim、丢掉内容行之间的空行。
+     *
+     * 前两条替换是 pi 的**具名算子间距**协议（`latex.ts:649-653`、`:657-659`）：
+     * `\sin` 这类命令在解析期被包上两个哨兵，最后在这里换成空格或删掉。为什么不能
+     * 直接拼字符串：间距取决于**后面**是什么（`latex.ts` 的
+     * `NAMED_OPERATOR_RIGHT_SPACING_PATTERN` 是 lookahead），而 `\sin` 出现在
+     * `2\sin x`（要空格：`2 sin x`）与 `\sin(x)`（不要空格）两种上下文里。
+     * 少了这两条，`$2\sin x$` 会画成 `2sin x`。
+     *
+     * pi 的右间距类里还有一个 `LAYOUT_MARKER_START`（`latex.ts:660`）：那是
+     * `renderLayout` 的布局标记，只有移植了布局支（Phase B）才可能出现，所以这里
+     * 不放——放了也匹配不到任何东西。
      */
     private fun normalizeOutput(value: String): String {
-        val lines = value.split('\n')
+        val spaced = value
+            .replace(NAMED_OPERATOR_LEFT_SPACING, " ")
+            .replace(NAMED_OPERATOR_START, "")
+            .replace(NAMED_OPERATOR_RIGHT_SPACING, " ")
+            .replace(NAMED_OPERATOR_END, "")
+        val lines = spaced.split('\n')
         val kept = lines.filterIndexed { index, line -> line.isNotEmpty() || (index > 0 && index < lines.size - 1) }
         return kept.joinToString("\n") { it.replace(Regex("[ \t]+"), " ").trim() }.trim()
     }
 
     /**
-     * `latex.ts:601-611` `replaceCharacters`, `latex.ts:613-626`
-     * `formatScript`, `latex.ts:628-634` `formatFraction`, `latex.ts:636-639`
+     * `latex.ts:602-612` `replaceCharacters`, `latex.ts:614-620`
+     * `normalizeScriptValue` + `formatUnicodeScript`, `latex.ts:622-634`
+     * `formatScript`, `latex.ts:636-642` `formatFraction`, `latex.ts:644-647`
      * `formatRoot`. Kept separate with pi's names so each fallback can be
      * compared against upstream.
      */
@@ -759,20 +1124,30 @@ internal object PiLatex {
                 if (character == '\\') {
                     val command = parseCommand() ?: return null
                     if (command == NEGATIVE_SPACE) {
-                        // `latex.ts:845-852`: negative spacing trims what came
-                        // before it.
+                        // `latex.ts:885-891`：负间距吃掉紧邻它前面的那个空格；如果
+                        // 前面正好是一个具名算子（`\sin` 这类被哨兵包起来的），吃掉的
+                        // 是**右哨兵**而不是空格 —— 否则 `\sin\!x` 会留下一个空壳哨兵，
+                        // 最后在那里多出一个空格。
                         while (result.isNotEmpty() && result.last().isWhitespace()) result.deleteCharAt(result.length - 1)
+                        if (result.endsWith(NAMED_OPERATOR_END)) result.delete(result.length - NAMED_OPERATOR_END.length, result.length)
                     } else {
                         result.append(command)
                     }
                     continue
                 }
                 if (character == '^' || character == '_') {
-                    // `latex.ts:854-868`.
+                    // `latex.ts:894-904`：脚本插在**右哨兵之前**。`\sin^2` 的 `²` 必须
+                    // 落在 `END` 里面（`START sin ² END`），否则 `normalizeOutput` 的右
+                    // 间距规则会以为 `²` 跟不上算子，多补一个空格（pi 是 `sin²`）。
                     position++
                     while (result.isNotEmpty() && result.last().isWhitespace()) result.deleteCharAt(result.length - 1)
-                    val argument = parseRequiredArgument() ?: return null
-                    result.append(formatScript(argument, character == '_'))
+                    val argument = parseScripts(character) ?: return null
+                    if (result.endsWith(NAMED_OPERATOR_END)) {
+                        result.delete(result.length - NAMED_OPERATOR_END.length, result.length)
+                        result.append(argument).append(NAMED_OPERATOR_END)
+                    } else {
+                        result.append(argument)
+                    }
                     continue
                 }
                 if (character.isWhitespace()) {
@@ -808,13 +1183,49 @@ internal object PiLatex {
             return if (endCharacter != null) null else result.toString()
         }
 
-        /** `latex.ts:928` `parseCommand`. */
+        /**
+         * `latex.ts:949-1005` `parseScripts`，**去掉 layout 那一支**
+         * （`latex.ts:982-1005` 的 `needsLayout`）。
+         *
+         * 去掉它是安全的，也是唯一的空档：那一支的前置条件是 `this.display`
+         * （`latex.ts:982`），而本文件里 `display` 只由 [toDisplayUnicode] 传进来、
+         * 且目前不改变任何解析结果（见 [toUnicode]）。留在外面的部分是 pi 的
+         * "第二个标记" 规则：两个 `_`/`^` 之间允许有空白，但第二个必须是**另一种**
+         * 标记（同种交给外层 `parseSequence` 的下一轮），例如 `x^2 _3` 是 `x²₃`。
+         */
+        private fun parseScripts(initialMarker: Char): String? {
+            var sub: String? = null
+            var sup: String? = null
+            val order = ArrayList<Char>(2)
+            var failed = false
+            fun parseOne(marker: Char) {
+                val value = parseRequiredArgument() ?: run { failed = true; return }
+                if (marker == '_') sub = value else sup = value
+                order.add(marker)
+            }
+            parseOne(initialMarker)
+            var next = position
+            while (next < source.length && source[next].isWhitespace()) next++
+            if (next < source.length && (source[next] == '^' || source[next] == '_') && source[next] != initialMarker) {
+                position = next + 1
+                parseOne(source[next])
+            }
+            if (failed) return null
+            // pi 在这里用的是 `subUnicode ?? formatScript(scripts.sub ?? "", kind)`，而
+            // `formatUnicodeScript` 就是 `formatScript` 的前半段 —— 两个三元表达式
+            // 化简下来就是这一行。
+            return order.joinToString("") { marker ->
+                formatScript((if (marker == '_') sub else sup) ?: "", marker == '_')
+            }
+        }
+
+        /** `latex.ts:1013` `parseCommand`. */
         private fun parseCommand(): String? {
             position++
             if (position >= source.length) return null
             val first = source[position]
             if (first == '\n' || first == '\r') {
-                // `latex.ts:934-941`: a backslash before a line break is a
+                // `latex.ts:1019-1026`: a backslash before a line break is a
                 // forced newline.
                 position++
                 if (first == '\r' && position < source.length && source[position] == '\n') position++
@@ -830,54 +1241,76 @@ internal object PiLatex {
                 position++
             }
 
-            // `latex.ts:943-1100`, in pi's own order: the first match wins.
+            // `latex.ts:1043-1190`, in pi's own order: the first match wins.
             if (command == "\\") return "\n"
             if (command in SPACING_COMMANDS) return " "
             if (command in NEGATIVE_SPACING_COMMANDS) return NEGATIVE_SPACE
+            if (command in FONT_SWITCH_COMMANDS) {
+                // `latex.ts:1050-1056`：字体切换命令自己画空白，并且**吃掉后面的空白**
+                // —— 所以 `\rm x` 是 `x`（不是 ` x`），`a\bf   b` 是 `ab`。
+                while (position < source.length && source[position].isWhitespace()) position++
+                return ""
+            }
             if (command in IGNORED_COMMANDS) return ""
             if (command in CHAR_ESCAPES) return command
             if (command == "|") return "\u2016"
             if (command == "not") {
-                // `latex.ts:983-996`.
+                // `latex.ts:1074-1085`.
                 val value = (parseRequiredArgument() ?: return null).trim()
                 NEGATED_SYMBOLS[value]?.let { return " $it " }
                 if (value.isEmpty()) return null
                 return " " + value[0] + "\u0338" + value.substring(1) + " "
             }
+            if (command in LIMIT_OPERATORS) {
+                // `latex.ts:1086-1088`：**在符号表之前**。11 个命令里 `inf`/`lim`/
+                // `liminf`/`limsup`/`max`/`min`/`sup` 同时是具名算子、`sum` 类则在符号表里
+                // —— pi 一律按"算子 + 方括号下限"走（`\lim_{x}` 是 `lim[x]`），
+                // 所以这个分支的位置就是语义。
+                return parseOperator(command, InlineLowerStyle.BRACKET, spaced = true) ?: return null
+            }
             SYMBOLS[command]?.let { symbol ->
-                // `latex.ts:1002-1008`: a display-limit symbol drops its
-                // above/below limits here (that layout is not ported), and pi
-                // pads the multiplicative operators. Relations are padded by
-                // the `=`/`<`/`>` branch above instead, since a symbol table
-                // entry is what the model wrote for every other command.
-                if (command == "cdot" || command == "times") return " " + symbol + " "
-                return symbol
+                // `latex.ts:1090-1096`. 上下限在 display 下才上下排（`latex.ts:1237`，
+                // 未移植），行内路径里 pi 也走 parseOperator，把下限排成下标
+                // （`\sum_{i=1}^{n}` → `∑ᵢ₌₁ⁿ`）；这里的差别是 parseOperator 会先
+                // `normalizeOutput(...).replaceAll(" ", "")` 再格式化 —— `\sum_{n \to \infty}`
+                // 是 `∑_(n→∞)`（下标里没有空格），走外层 `parseSequence` 会得到
+                // `∑_(n → ∞)`。
+                if (command in DISPLAY_LIMIT_SYMBOLS) {
+                    return parseOperator(symbol, InlineLowerStyle.SCRIPT, spaced = false) ?: return null
+                }
+                // `latex.ts:1095`：乘法算子与关系符两侧补空格（`a\le b` 是 `a ≤ b`）。
+                // 关系符列表见 [RELATION_COMMANDS]；`=`/`<`/`>` 三个字面量由
+                // `parseSequence` 自己那一支处理（`latex.ts:905`）。
+                return if (command == "cdot" || command == "times" || command in RELATION_COMMANDS) {
+                    " $symbol "
+                } else {
+                    symbol
+                }
             }
             if (command in NAMED_OPERATORS) {
-                // `latex.ts:1005-1007`: `\sin` prints in roman. Pi wraps it in
-                // spacing markers for its operator layout; the name alone is
-                // what the Unicode rendering shows.
-                return command
+                // `latex.ts:1097-1099`：pi 把算子名包进哨兵，由 `normalizeOutput` 决定
+                // 要不要在两侧补空格（`2\sin x` 是 `2 sin x`，`\sin(x)` 不动）。
+                return NAMED_OPERATOR_START + command + NAMED_OPERATOR_END
             }
             if (command in SIZE_COMMANDS) return ""
             if (command == "left" || command == "middle" || command == "right") {
-                // `latex.ts:1017-1022`: the delimiter that follows is parsed as
+                // `latex.ts:1103-1108`: the delimiter that follows is parsed as
                 // a symbol by the next iteration; `\left.` is invisible.
                 if (position < source.length && source[position] == '.') position++
                 return ""
             }
             if (command == "frac" || command == "dfrac" || command == "tfrac") {
-                // `latex.ts:1017-1031`, minus the `shouldStack` branch: this port
+                // `latex.ts:1109-1122`, minus the `shouldStack` branch: this port
                 // never stacks, so a fraction is always `a/b`. That is pi's own
-                // result wherever `display` is false (`latex.ts:1030`), i.e. for
-                // every inline formula; inside `$$...$$` pi would stack instead
-                // (class note).
+                // result wherever `display` is false (`latex.ts:1110`、`:1121`),
+                // i.e. for every inline formula; inside `$$...$$` pi would stack
+                // instead (class note).
                 val numerator = parseRequiredArgument() ?: return null
                 val denominator = parseRequiredArgument() ?: return null
                 return formatFraction(numerator, denominator)
             }
             if (command == "sqrt") {
-                // `latex.ts:1041-1057`, including `\sqrt[3]`.
+                // `latex.ts:1124-1137`, including `\sqrt[3]`.
                 val degree = parseOptionalArgument()?.trim()
                 val value = parseRequiredArgument() ?: return null
                 if (degree == null || degree == "2") return formatRoot(value)
@@ -886,60 +1319,65 @@ internal object PiLatex {
                 return formatScript(degree, false) + formatRoot(value)
             }
             if (command == "boxed" || command == "fbox") {
+                // `latex.ts:1138-1140`.
                 return "[" + (parseRequiredArgument() ?: return null).trim() + "]"
             }
             if (command == "binom" || command == "dbinom" || command == "tbinom") {
-                // `latex.ts:1062-1064`.
+                // `latex.ts:1141-1143`.
                 val top = parseRequiredArgument() ?: return null
                 val bottom = parseRequiredArgument() ?: return null
                 return "(" + top + " choose " + bottom + ")"
             }
             ACCENTS[command]?.let { accent ->
-                // `latex.ts:1065-1070`: one base character takes a combining
+                // `latex.ts:1144-1148`: one base character takes a combining
                 // mark; anything longer keeps the command name.
                 val value = parseRequiredArgument() ?: return null
                 return if (value.length == 1) value + accent else command + "(" + value + ")"
             }
             if (command == "mathbb") {
-                // `latex.ts:1071-1073`.
+                // `latex.ts:1149-1152`.
                 val value = parseRequiredArgument() ?: return null
                 return value.map { BLACKBOARD[it.toString()] ?: it.toString() }.joinToString("")
             }
             if (command == "operatorname") {
-                // `latex.ts:1074-1082`: no operator layout here, so the name is
-                // simply printed.
+                // `latex.ts:1153-1160`：名字由 `parseOperator` 排版，所以
+                // `\operatorname*{argmax}_{x}` 与 `\argmax_{x}` 一样是方括号下限
+                // （`argmax[x]`）—— 差别只在 `*` 决定的 displayLimits，而行内两条路
+                // 都不上下排。把名字直接印出来会得到 `argmax_(x)`。
                 if (position < source.length && source[position] == '*') position++
-                return (parseRequiredArgument() ?: return null).trim()
+                val operator = normalizeOutput((parseRequiredArgument() ?: return null))
+                return parseOperator(operator.trim(), InlineLowerStyle.BRACKET, spaced = true) ?: return null
             }
             if (command == "mod" || command == "bmod") return " mod "
             if (command == "pmod" || command == "pod") {
-                // `latex.ts:1085-1087`.
+                // `latex.ts:1164-1167`.
                 val value = (parseRequiredArgument() ?: return null).trim()
                 return if (command == "pmod") " (mod $value)" else " ($value)"
             }
             if (command == "overset" || command == "stackrel") {
-                // `latex.ts:1089-1092`.
+                // `latex.ts:1168-1171`.
                 val upper = parseRequiredArgument() ?: return null
                 val value = (parseRequiredArgument() ?: return null).trim()
                 return value + formatScript(upper, false)
             }
             if (command == "underset") {
-                // `latex.ts:1093-1096`.
+                // `latex.ts:1173-1176`.
                 val lower = parseRequiredArgument() ?: return null
                 val value = (parseRequiredArgument() ?: return null).trim()
                 return value + formatScript(lower, true)
             }
             if (command in PLAIN_WRAPPERS) {
-                // `latex.ts:1097-1099`.
+                // `latex.ts:1178-1181`.
                 val value = parseRequiredArgument() ?: return null
                 return if (command.startsWith("text") || command == "mbox") value else value.trim()
             }
             if (command == "begin") {
-                // `latex.ts:1090-1091` hands `\begin` to `parseEnvironment`
-                // (`latex.ts:1239-1310`), which builds layout nodes: matrices
-                // (`latex.ts:1301-1306`, `:1312-1355`), `cases` (`:1286-1299`),
-                // `aligned`/`gather`/`split` (`:1257-1284`). Every one of them is
-                // drawn by `renderLayout`, which this port does not have.
+                // `latex.ts:1183-1184` hands `\begin` to `parseEnvironment`
+                // (`latex.ts:1331-1422`), which builds layout nodes: the eight
+                // grid environments (`latex.ts:1384-1386`, `:1410-1468`),
+                // `cases` (`:1379`), `aligned`/`gather`/`split` (`:1355-1377`).
+                // Every one of them is drawn by `renderLayout`, which this port
+                // does not have.
                 // Returning `null` makes the whole formula unrenderable, so the
                 // caller prints the source text as written — pi's own recovery
                 // for a formula it cannot render (`markdown.ts:509`), applied one
@@ -947,32 +1385,119 @@ internal object PiLatex {
                 // layout is not ported.
                 return null
             }
-            // `latex.ts:1100`: an unknown command marks the expression
-            // unsupported, and the call site prints the raw source.
+            // `latex.ts:1185-1188` 的 `\end` 与 `:1190-1191` 的未知命令在 pi 里是同一件事
+            // （`supported = false`，返回值只有 `\end` 那支会用到、而它已经不可渲染），
+            // 在本文件里也归成同一件事：返回 `null`，调用方保留原文。
             return null
         }
 
-        /** `latex.ts:1160` `parseRequiredArgument`: a group or a single token. */
+        /**
+         * `latex.ts:1194-1250` `parseOperator`，**minus the layout branch**
+         * （`latex.ts:1237-1240` 的 `operator` 节点）：上下限只在 display 下才上下排，
+         * 那一支要 `renderLayout`（class note）。
+         *
+         * 为什么必须有它，而不是让外层 `parseSequence` 去处理 `_`/`^`：pi 在这里对
+         * 参数做了两件外层不做的事 ——
+         *  ① 下限用方括号而不是下标（`inlineLowerStyle = "bracket"`，`\lim_{x}` 是
+         *     `lim[x]`，而 `x_{a}` 是 `xₐ`）；
+         *  ② 参数先 `normalizeOutput(...).replaceAll(" ", "")`（`latex.ts:1223`），
+         *     所以 `\sup_{x \in A}` 是 `sup[x∈A]`，下标里不留空格。
+         * 另外 `\limits`/`\nolimits` 这个修饰词只有这里认（`latex.ts:1202-1208`）。
+         *
+         * `displayLimits` 参数没有跟着搬过来：它只参与上面那个 layout 分支
+         * （`latex.ts:1237`），在这一支里没有任何可观察效果。
+         */
+        private fun parseOperator(operator: String, inlineLowerStyle: InlineLowerStyle, spaced: Boolean = false): String? {
+            var lower: String? = null
+            var upper: String? = null
+            // 修饰词之前的空白与 `\limits` 本身都不进输出；`(?![A-Za-z])` 让 `\limitsfoo`
+            // 不算 `\limits`（pi 的 `latex.ts:1205`）。
+            var modifierPosition = position
+            while (modifierPosition < source.length && (source[modifierPosition] == ' ' || source[modifierPosition] == '\t')) {
+                modifierPosition++
+            }
+            val modifier = LIMITS_MODIFIER.find(source, modifierPosition)
+            if (modifier != null && modifier.range.first == modifierPosition) {
+                position = modifierPosition + modifier.value.length
+            }
+            while (true) {
+                var scriptPosition = position
+                while (scriptPosition < source.length && (source[scriptPosition] == ' ' || source[scriptPosition] == '\t')) {
+                    scriptPosition++
+                }
+                if (scriptPosition >= source.length) break
+                val kind = source[scriptPosition]
+                if (kind != '_' && kind != '^') break
+                position = scriptPosition + 1
+                val value = normalizeOutput(parseRequiredArgument() ?: return null).replace(" ", "")
+                if (kind == '_') {
+                    // `latex.ts:1228-1230`：同一个算子出现两个下限是错误（pi 置
+                    // `supported = false`；这里直接让整条公式回原文）。
+                    if (lower != null) return null
+                    lower = value
+                } else {
+                    if (upper != null) return null
+                    upper = value
+                }
+            }
+            var rendered = operator
+            if (lower != null) {
+                rendered += if (inlineLowerStyle == InlineLowerStyle.BRACKET) "[$lower]" else formatScript(lower, true)
+            }
+            if (upper != null) rendered += formatScript(upper, false)
+            return if (spaced) " $rendered " else rendered
+        }
+
+        /**
+         * `latex.ts:1252-1298` `parseRequiredArgument` / `parseRequiredArgumentValue`，
+         * 外加 pi 的**前导空白跳过**（`latex.ts:1261-1263`）：`\frac {a} {b}` 是 `a/b`，
+         * 不跳的话 ` {a}` 会被当成参数本身，得到 `()/ab` 这种结果。
+         *
+         * pi 的 `stackFractions` 参数（同一个 `\frac` 在 display 下嵌套时是否继续堆叠）
+         * 属于没有移植的 layout 支，所以这里没有这个参数。
+         */
         private fun parseRequiredArgument(): String? {
+            while (position < source.length && source[position].isWhitespace()) position++
             if (position >= source.length) return null
             if (source[position] == '{') {
                 position++
                 return parseSequence('}')
             }
-            // `latex.ts:1168`: one character or one command.
+            // `latex.ts:1272-1279`: one character or one command.
             val character = source[position]
             if (character == '\\') return parseCommand()
             position++
             return character.toString()
         }
 
-        /** `latex.ts:1188` `parseOptionalArgument`: `[...]`, or `null`. */
+        /**
+         * `latex.ts:1280-1296` `parseOptionalArgument`：`[ \t]` 之后必须紧跟 `[`，
+         * 取到**下一个** `]`（pi 用的是 `indexOf`，不认嵌套、也不管转义）。
+         *
+         * pi 对取出来的度数调 `renderNested`（再起一个 LatexParser），这里用
+         * `parseSequence(']')` 就地解析。两者在正常输入上等价；差别只在
+         * `\sqrt[a\]b]{x}` 这种带转义的方括号里 —— pi 会在被转义的 `]` 处切断，
+         * 这里会因为 `\]` 是未知命令而整条回原文。宁可让这种输入回原文，也不去
+         * 复刻一个"切在转义符上"的行为。
+         */
         private fun parseOptionalArgument(): String? {
+            while (position < source.length && (source[position] == ' ' || source[position] == '\t')) position++
             if (position >= source.length || source[position] != '[') return null
             position++
             return parseSequence(']')
         }
     }
+
+    /** `latex.ts:1195`：下限的排法。项目符号表里没有"运算符"这种角色，所以用枚举。 */
+    private enum class InlineLowerStyle { BRACKET, SCRIPT }
+
+    /**
+     * `latex.ts:1205` 的 `/^\\(limits|nolimits)(?![A-Za-z])/`。pi 是对
+     * `source.slice(position)` 求匹配，所以 `^` 表示"从当前位置开始"；Kotlin 的
+     * `Regex.find(input, startIndex)` 不会把 `^` 当成 `startIndex`
+     * （`^` 永远指输入开头），所以这里去掉锚点，改由调用点比较 `range.first`。
+     */
+    private val LIMITS_MODIFIER = Regex("\\\\(limits|nolimits)(?![A-Za-z])")
 
     /**
      * `latex.ts:525` `NEGATIVE_SPACE`. Pi uses a NUL sentinel so that the

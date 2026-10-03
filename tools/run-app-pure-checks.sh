@@ -887,6 +887,22 @@ run_harness row-height-cache \
   "$ROOT/app/src/test/kotlin/app/pi/ui/render/RowHeightCacheCheck.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/ui/render/RowHeightCache.kt"
 
+# app.pi.ui.render: `PiLatex.kt` 的**行为**夹具 —— 428 条公式，期望值是 pi 自己的
+# `renderLatex` 跑出来的（`tools/collect-latex-fixtures.mjs` 生成，期望值不是手抄的），
+# 逐字节比对。为什么非得在这里跑：`PiLatex.kt` 换得掉的是**表**（那张有
+# `tools/check-latex-tables.mjs` 逐 key 比对），换不掉的是**顺序** —— `\lim_{n\to\infty}`
+# 是 `lim[n→∞]` 还是 `lim_(n→∞)`，只取决于 `parseCommand` 里 `LIMIT_OPERATORS`
+# （`latex.ts:1086`）排在符号表和具名算子之前；`2\sin x` 是 `2 sin x` 还是 `2sin x`，
+# 只取决于哨兵间距（`latex.ts:649-653`）。这些错了手机上不会崩、不会报错，只会有一条
+# 公式和 pi 画得不一样，所以必须有东西能在这台没有设备的机器上把它变成红的。
+# 夹具里还记着 pi-tui 的版本，与 `tools/pi-engine.lock.json` 锁住的版本比对：
+# 引擎锁升级而夹具没重生成时，这里必须红 —— 否则夹具在测一个已经不存在的 pi。
+# 纯逻辑：`PiLatex.kt` 一个 import 都没有，只剩 kotlinx.serialization 读 JSON。
+run_harness latex \
+  app.pi.ui.render.PiLatexCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/ui/render/PiLatexCheck.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/ui/render/PiLatex.kt"
+
 # app.pi.ui.blocks: the transcript image cache's arithmetic — a byte-bounded LRU whose keys
 # are multi-megabyte payloads. Two properties matter and neither is visible in the UI: the
 # byte accounting must include the key itself (a cache that forgets what its keys weigh is a
