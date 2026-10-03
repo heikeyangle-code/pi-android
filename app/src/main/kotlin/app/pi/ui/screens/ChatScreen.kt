@@ -90,6 +90,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.material3.LocalTextStyle
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.IntOffset
@@ -3588,9 +3590,31 @@ private fun Composer(
                 .background(MaterialTheme.colorScheme.surfaceContainerLow, inputShape)
                 .padding(horizontal = 10.dp, vertical = 9.dp),
         ) {
+            // 这个字段必须自己拿 `TextFieldValue`，不能用 `value: String` 那个重载。
+            // 库的 String 重载把光标位置存在自己内部
+            // （`androidx/compose/foundation/text/BasicTextField.kt:713-717`：
+            // `val textFieldValue = textFieldValueState.copy(text = value)` —— **只换文本、
+            // 不动 selection**，而 `textFieldValueState` 的初始 selection 是 `TextRange.Zero`），
+            // 而这里 `draft` 会被**代码**改掉：命令面板与菜单（`draft = "/"`）、`!` / `!!`、
+            // `@` 提及（`draft += "@"`）。于是程序化塞进去的 `/` 后面光标仍停在 0 ——
+            // 再打字就落在斜杠**前面**（用户报的正是这个；用输入法敲 `/` 没事，因为那条路走
+            // `CoreTextField` 自己的编辑，selection 是它算出来的）。
+            // 所以：**文本不是这一次用户敲出来的时候，一律把光标放到末尾**，这也是按这些按钮
+            // 的人接下来要打字的位置。
+            val field = remember {
+                mutableStateOf(TextFieldValue(text = draft, selection = TextRange(draft.length)))
+            }
+            if (field.value.text != draft) {
+                field.value = TextFieldValue(text = draft, selection = TextRange(draft.length))
+            }
             BasicTextField(
-                value = draft,
-                onValueChange = onDraftChange,
+                value = field.value,
+                // 用户输入这条路上，selection/composition 都来自库，原样存回，不能重建
+                // （重建会丢掉输入法的 composing 区间，中文输入时可见地闪）。
+                onValueChange = { updated ->
+                    field.value = updated
+                    onDraftChange(updated.text)
+                },
                 modifier = Modifier.fillMaxWidth().heightIn(min = 20.dp, max = 120.dp),
                 // `06 §2` 输入区「输入 14/20」: the composer's own text is the 14 sp
                 // chat-text step with a 20 sp lead, not M3's larger field default.
