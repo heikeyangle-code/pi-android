@@ -262,6 +262,15 @@ internal fun piMarkdownTypography(
     /** The fence body's own role — `06 §2`: 码块固定 13/19, not the 13/20 machine body. */
     code: TextStyle,
     textColor: Color? = null,
+    /**
+     * 段落用等宽（而不是 [base]）。
+     *
+     * 只有**含显示式网格**的消息才为真：网格是靠空格对齐的，比例字体里空格与字形的宽度
+     * 不同，整块会歪。做成参数而不是"造完之后 `copy`"——库的 `MarkdownTypography` 没有
+     * `copy`（能造它的只有 `DefaultMarkdownTypography` 这个构造器），上一版就是因此在
+     * CI 上红了 `Unresolved reference 'copy'`。
+     */
+    monoParagraph: Boolean = false,
 ): MarkdownTypography {
     val heading = base.copy(color = palette.mdHeading, fontWeight = FontWeight.SemiBold)
     val body = textColor ?: palette.text
@@ -293,7 +302,7 @@ internal fun piMarkdownTypography(
         // The colour was here and the italic was not, so a quote read as body text in a slightly
         // different hue instead of as a quote.
         quote = base.copy(color = palette.mdQuote, fontStyle = FontStyle.Italic),
-        paragraph = base.copy(color = body),
+        paragraph = if (monoParagraph) mono.copy(color = body) else base.copy(color = body),
         ordered = base.copy(color = body),
         bullet = base.copy(color = palette.mdListBullet),
         list = base.copy(color = body),

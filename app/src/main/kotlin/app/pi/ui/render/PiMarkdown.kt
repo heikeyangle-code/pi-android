@@ -123,11 +123,23 @@ internal fun PiMarkdownText(
         piMarkdownColors(palette, darkTheme, textColor)
     }
     val typography = remember(palette, baseText, monoText, codeText, textColor, hasGrid) {
-        val built = piMarkdownTypography(palette, baseText, monoText, codeText, textColor)
         // 网格用**空格**对齐（`renderLayout` 逐行补齐），比例字体里空格与字形的宽度
         // 不同、整块会歪，所以含网格的这条消息把段落样式换成等宽。改写只作用于
         // `paragraph`：标题/列表/引用的角色保持原样，其它消息完全不受影响。
-        if (hasGrid) built.copy(paragraph = monoText.copy(color = built.paragraph.color)) else built
+        //
+        // 走 `piMarkdownTypography` 的参数而不是对返回值 `copy`：那个类型是库的
+        // `MarkdownTypography`，只有 `DefaultMarkdownTypography` 那个构造器能造它，
+        // **没有 `copy`**（CI 的 `:app:compileReleaseKotlin` 在 `Unresolved reference
+        // 'copy'` 上抓过一次）。段落的三个兄弟角色（`text`/`ordered`/`list`）保持比例，
+        // 所以这不是"整条消息换成代码字体"，是"段落这一档换成等宽"。
+        piMarkdownTypography(
+            palette = palette,
+            base = baseText,
+            mono = monoText,
+            code = codeText,
+            textColor = textColor,
+            monoParagraph = hasGrid,
+        )
     }
     // `piMarkdownComponents()` is an ordinary function — `markdownComponents(...)`
     // is not composable — so it can be remembered directly. The lambdas it holds
