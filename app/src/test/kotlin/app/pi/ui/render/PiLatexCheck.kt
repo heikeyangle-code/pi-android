@@ -124,6 +124,7 @@ fun main() {
     inlineChecks(asserted)
     delimiterChecks()
     delimiterDeviationChecks()
+    dollarProseChecks()
     sentinelChecks(asserted + unported)
     unportedChecks(unported)
     recordDisplayTargets()
@@ -213,6 +214,58 @@ private fun delimiterDeviationChecks() {
             println("PASS 定界符偏差 ${case.name} 仍然不同（pi：${readable(case.expected)}，端口：${readable(actual)}）")
         }
     }
+}
+
+/**
+ * `$` 的 **prose 语料**（220 条：184 条取自本仓库自己的 `docs/**.md` /
+ * `res/values*/**.xml`，36 条手写真实用法，每条一个场景）。
+ *
+ * 这一段的判据只有一条，而且它是**算出来的**：**不许出现"pi 不改而我们改"的样本**
+ * —— 那是"新误判"，也就是正常散文被吃掉。语料里 15 条是 pi 自己会渲染的
+ * （shell/Perl 的 `$var` 对、`$5$` 这类），我们**有意地**比 pi 保守，所以那 15 条
+ * 里的多数仍然原样保留 —— 那些就是 `delimiterDeviations` 锁住的偏差。
+ *
+ * 为什么这条断言值得存在：它不阻止将来对齐 `$`（对齐后它依然成立，因为对齐只减少
+ * "pi 改而我们不改"），但它把"我们不会比 pi 更爱吃文本"变成一个每次 CI 都验一句的
+ * 事实。语料本身与每条的场景写在夹具的 `dollarProse` 里，取自哪个文件也写在
+ * `provenance`，可以逐条复核。
+ */
+private fun dollarProseChecks() {
+    val entries = FIXTURE["dollarProse"]!!.jsonArray.map { element ->
+        val entry = element.jsonObject
+        Triple(
+            entry["source"]!!.jsonPrimitiveContent(),
+            entry["provenance"]!!.jsonPrimitiveContent(),
+            (entry["piRenders"] as JsonPrimitive).content.toBoolean(),
+        )
+    }
+    var falsePositives = 0
+    var piAndWe = 0
+    var piOnly = 0
+    var neither = 0
+    val conserved = ArrayList<String>()
+    for ((source, provenance, piRenders) in entries) {
+        val weChange = PiLatex.preprocess(source) != source
+        when {
+            weChange && !piRenders -> {
+                falsePositives++
+                if (falsePositives <= 5) println("  新误判（pi 不改而我们改）：${readable(source)} ← $provenance")
+            }
+            weChange && piRenders -> piAndWe++
+            !weChange && piRenders -> piOnly++
+            else -> {
+                neither++
+                if (conserved.size < 5) conserved.add(provenance)
+            }
+        }
+    }
+    check("prose 语料里没有一条「pi 不改而我们改」（新误判）", falsePositives, 0)
+    check("prose 语料条数不少于 200（防的是语料被删空）", entries.size >= 200, true)
+    println(
+        "info: prose 语料 ${entries.size} 条 —— 双方都不改 $neither；pi 改我们也改 $piAndWe；" +
+            "pi 改而我们有意不改 $piOnly；新误判 $falsePositives",
+    )
+    println("  我们有意保守（pi 会渲染、我们保留原文）的样本之一，取自：${conserved.joinToString("、")}")
 }
 
 /** 解析期的哨兵不能漏进结果：它们是私用码位，画出来就是豆腐块。 */

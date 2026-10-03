@@ -33,8 +33,8 @@
  * 退出码：0 = 一致 / 已写盘；1 = `--check` 发现差异；2 = 跑不起来（缺 pi-tui）。
  */
 
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import { dirname, join, relative } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const REPO = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -513,6 +513,8 @@ const DELIMITERS = [
 	["dollar-prose-word", String.raw`the $PATH and $HOME dir`],
 	["dollar-unknown", String.raw`$\unknown$`],
 	["dollar-pending-price", String.raw`price: $3.50 (USD)`],
+	["dollar-after-digit", String.raw`2$x$`],
+	["dollar-digit-body", String.raw`$5$`],
 	["bracket-line-start", String.raw`\[\frac{a}{b}\]`],
 	["bracket-line-start-newline", String.raw`\[\frac{a}{b}\]` + "\n"],
 	["bracket-line-start-indented", "   " + String.raw`\[\frac{a}{b}\]` + "\n"],
@@ -542,13 +544,15 @@ const DELIMITERS = [
  * **已知不同**（断言"仍然不一样"，所以它们不会悄悄变成一样、也不会被忘掉）。
  * 三类理由，每一类的出处都写在这里：
  *
- * ① `$` 那一条正则比 pi 的 tokenizer 保守（**这次没有改，属于既有行为**）。
- *    pi 的规则在 `markdown.ts:52-99`：开定界符前面是什么**不影响**它是不是公式
- *    （`a$x$b` 是公式），body 以数字开头也是公式（`$5$` 是公式）；只有
- *    "body 以空白结尾"、"收尾 `$` 后面紧跟数字"、"body 长得像常量名而后面紧跟
- *    标识符"、"body 里有反引号" 才拒绝。App 的正则用的是"前面不能是字母/数字/
- *    反斜杠、开头不能是数字、收尾后面不能是字母/数字"这三条近似，所以在这些
- *    输入上把公式当成了普通文本。pip 实测输出见每条用例的 `display` 字段。
+ * ① `$` 那一条正则比 pi 的 tokenizer 保守，**原因现在只剩一个**：收尾的
+ *    `(?![\p{L}\p{N}])`。pi 的规则在 `markdown.ts:52-99` 里只有四种拒绝
+ *    （body 以空白结尾、收尾 `$` 之后紧跟数字、body 像常量名而后面紧跟标识符、
+ *    body 含反引号），开定界符前面是什么、body 是不是数字开头都**不**影响它是不是
+ *    公式。原先还有"开定界符前不能是字母/数字"与"body 不能以数字开头"两条，
+ *    220 条 prose 语料量下来它们既不减少误判、也不保护任何正常用法，已经删掉
+ *    （`2$x$`、`$5$` 因此从这张表挪进了 `DELIMITERS`）。剩下这 4 种形状
+ *    （`a$x$b`、`a$5$b`、`$x$y`、`abc$def$ghi`）都来自收尾那条，保留的理由与
+ *    逐条语料证据见 `docs/known-gaps.md` §A2。
  * ② marked 的段落切分：位置相关的行为（`e.slice(1)`），让"公式前正好一个字符 +
  *    一个空格"的行中 `$$`/`\[` 变成**待定块级**（原文照排），而 App 画成公式。
  * ③ 未移植：`\begin{…}` 那一族（`latex.ts:1331`）pi 连行内都画（布局支
@@ -557,8 +561,6 @@ const DELIMITERS = [
 const DELIMITER_DEVIATIONS = [
 	// ① `$` 正则的整体近似
 	["dollar-after-word", String.raw`a$x$b`],
-	["dollar-after-digit", String.raw`2$x$`],
-	["dollar-digit-body", String.raw`$5$`],
 	["dollar-digit-body-adjacent", String.raw`a$5$b`],
 	["dollar-letter-after", String.raw`$x$y`],
 	["dollar-word-word", String.raw`abc$def$ghi`],
@@ -570,6 +572,99 @@ const DELIMITER_DEVIATIONS = [
 	// ③ 未移植的布局支
 	["bracket-unrenderable", String.raw`\[\begin{pmatrix}a&b\\c&d\end{pmatrix}\]`],
 ];
+
+// ---------------------------------------------------------------------------
+// 第三部分：`$` 的 prose 语料 —— "我们有意保守"的可复核证据
+// ---------------------------------------------------------------------------
+
+/**
+ * 为什么要扫一遍真实语料：`PiLatex` 的 `$` 分支比 pi 的 tokenizer 保守
+ * （见 KDoc 与 `docs/known-gaps.md` §A2 的三条偏差）。"保守"是好事还是坏事，
+ * 只能用真实文本来决定 —— 对齐它会不会把 shell 命令、模板占位符、货币价格
+ * 吃掉？这 220 条就是回答：**取自本仓库自己的文档/资源 + 一份手写的真实用法
+ * 清单（每条一个场景）**。
+ *
+ * 这里**只记语料与 pi 的判定**，"我们改不改它"由 `PiLatexCheck.kt` 在测试时算
+ * （生成脚本跑不了 Kotlin），所以夹具不会随着 App 的实现而过期。
+ *
+ * 语料本身不进仓库（体积与许可证），进的只是"取自哪个文件 + 命中片段 + 判定"。
+ */
+function walkFiles(dir, out = []) {
+	for (const entry of readdirSync(dir)) {
+		const path = join(dir, entry);
+		if (statSync(path).isDirectory()) {
+			if (!/^(build|\.git|node_modules)$/.test(entry)) walkFiles(path, out);
+		} else {
+			out.push(path);
+		}
+	}
+	return out;
+}
+
+/** 真实用法清单：每条写明场景，因为"这算不算正常用法"正是判定本身。 */
+const DOLLAR_PROSE_CURATED = [
+	["US$5", "货币：不带闭定界符"],
+	["a $5 and $10 bill", "货币：一句话里两个价格（pi 的两条 guard 就是为它）"],
+	["costs $5 and $10 today", "货币：散文里的价格"],
+	["I paid $3.50 (USD)", "货币：带小数与括号"],
+	["$5$", "两个 `$` 夹一个数字（pi 会当公式，本 App 不会）"],
+	["total: $1,234.56", "货币：千分位与小数"],
+	["$USD", "货币：跟字母"],
+	["\\$x\\$", "被转义的两美元（pi 不当公式，我们也不当）"],
+	["$HOME and $PATH", "shell：两个变量名"],
+	["echo $HOME", "shell：命令"],
+	["$1 $2", "shell：位置参数"],
+	["${name}", "模板：占位符"],
+	["${1:default}", "模板：带默认值"],
+	["%1$s 个任务", "Android 占位符：`%1$s`"],
+	["%1$d 个任务进行中", "Android 占位符：`%1$d`（res/values 里就有这一条）"],
+	["%s$%d", "Android 占位符：两个"],
+	["^\\d+$", "正则：结尾锚点"],
+	["price$", "正则：只有结尾锚点"],
+	["a$b", "正则：行锚点"],
+	["$^", "正则：两个锚点"],
+	["`$y$`", "markdown 行内代码里的公式（代码里的定界符不该被当公式）"],
+	["see `$x$` for the value", "散文里夹行内代码"],
+	["The $ sign", "单独一个美元符号"],
+	["a $ b", "被空格夹住的美元符号"],
+	["$", "只有一个 `$`"],
+	["$$", "两个 `$`"],
+	["$x", "只有开定界符"],
+	["x$", "只有闭定界符"],
+	["a$x$b", "字母夹公式（pi 当公式，本 App 不当）"],
+	["$x$y", "公式后紧跟字母（pi 当公式，本 App 不当）"],
+	["x$y$", "字母后紧跟公式（pi 当公式，本 App 不当）"],
+	["2\\pi$x$", "命令夹公式（pi 当公式，本 App 不当）"],
+	["abc$def$ghi", "单词夹公式（pi 当公式，本 App 不当）"],
+	["$ABC$def", "常量名样式 body + 后面跟标识符（pi 的常量名规则就是为它，两边都不当公式）"],
+	["the ${BRAVO} var", "模板：跟常量名（同上）"],
+	["value: $$x$$", "行中的双美元（pi 当行内公式，本 App 当独占一段的块级 —— 已知偏差）"],
+];
+
+function scanDollarProse() {
+	const entries = new Map();
+	const add = (source, provenance) => {
+		if (!source.includes("$") || entries.has(source)) return;
+		entries.set(source, { source, provenance });
+	};
+	let scannedLines = 0;
+	for (const file of walkFiles(join(REPO, "docs"))) {
+		if (!file.endsWith(".md")) continue;
+		readFileSync(file, "utf8").split("\n").forEach((line, index) => {
+			if (!line.includes("$")) return;
+			scannedLines++;
+			// 文档里的表格行长几百字符；取前 200 字符就够复核，也压住夹具体积。
+			add(line.length <= 200 ? line : line.slice(0, 200), `${relative(REPO, file)}:${index + 1}`);
+		});
+	}
+	for (const file of walkFiles(join(REPO, "app/src/main/res")).filter((f) => /values[^/]*\/.*\.xml$/.test(f))) {
+		readFileSync(file, "utf8").split("\n").forEach((line, index) => {
+			if (line.includes("$")) add(line.trim(), `${relative(REPO, file)}:${index + 1}`);
+		});
+	}
+	for (const [source, why] of DOLLAR_PROSE_CURATED) add(source, `手写语料：${why}`);
+	return { scannedLines, entries: [...entries.values()] };
+}
 
 const marked = await piMarked();
 function delimiterCase([name, source]) {
@@ -596,6 +691,18 @@ const delimiterDisplayTargets = DELIMITERS.map(delimiterCase)
 	.filter((entry) => entry.inline !== entry.display)
 	.map((entry) => ({ name: entry.name, source: entry.source, inline: entry.inline, display: entry.display, tokens: entry.tokens }));
 
+/**
+ * 每条语料的 pi 判定：`piVisible` = pi 渲染出来的可见文本（`pending` 与
+ * `renderLatex` 返回 `undefined` 的都是原文），`piRenders` = 它是否真的替换了文本。
+ * 用 [expectedSource] 的同一套规则算出来，所以"什么算公式"与其它夹具段完全一致。
+ */
+const prose = scanDollarProse();
+const dollarProse = prose.entries.map(({ source, provenance }) => {
+	const tokens = latexTokens(marked.lexer(source));
+	const piVisible = expectedSource(source, tokens, "inline");
+	return { source, provenance, piVisible, piRenders: piVisible !== source };
+});
+
 const fixture = {
 	piTui: piVersion,
 	generatedBy: "tools/collect-latex-fixtures.mjs（期望值是 pi 的 renderLatex 返回值，不是手抄）",
@@ -604,6 +711,7 @@ const fixture = {
 	delimiters: delimiterAssertions,
 	delimiterDisplayTargets,
 	delimiterDeviations: DELIMITER_DEVIATIONS.map(delimiterCase),
+	dollarProse,
 	displayTargets,
 };
 const text = JSON.stringify(fixture, null, "\t") + "\n";
@@ -638,5 +746,6 @@ console.log(
 	`latex-fixtures: 已写入 ${FIXTURE}\n` +
 		`  pi-tui ${piVersion}：${cases.length} 条公式断言 + ${fixture.delimiters.length} 条定界符断言 + ` +
 		`${knownUnported.length + fixture.delimiterDeviations.length} 条已知偏差 + ` +
-		`${displayTargets.length} 条 display 目标`,
+		`${displayTargets.length} 条 display 目标 + ${dollarProse.length} 条 prose 语料` +
+		`（扫过的含 \`$\` 行 ${prose.scannedLines}）`,
 );
