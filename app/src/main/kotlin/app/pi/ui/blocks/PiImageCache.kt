@@ -26,8 +26,26 @@ import android.graphics.Bitmap
  *    the same rule `PiGuestImageTransformer` states for a missing file.
  *  - **Both boxes.** The key carries the requested width and height, so a grid cell's
  *    downsample and the viewer's window-sized decode are separate entries. They are
- *    different resolutions for different surfaces — the viewer magnifies its pixels up to
- *    8×, so it may not reuse a thumbnail.
+ *    different resolutions for different surfaces, so a hit from one may not serve the
+ *    other. What this cache stores is still **one decode per (bytes, box)** — the viewer's
+ *    box is the whole window, and that entry stays the 1× picture; the sharper block the
+ *    zoom path decodes is *not* here (see below).
+ *
+ * ## What is deliberately *not* in here: the zoom block
+ *
+ * 放大之后查看器会按源图坐标再解一块（`PiZoomDecodeWindow` / `decodePiImageRegion`），那块位图
+ * **不进这个缓存**，理由有三条，每条都会在别处变成代价：
+ *
+ *  - 它的身份是「这几个字节 + 源图上这个矩形 + 倍率」，而不是「这几个字节」；放进这张按
+ *    payload 计费的键里，就得把矩形也塞进键（键立刻变复杂），而它随平移换掉、命中率极低。
+ *  - 它有一个**恒定**的字节上界（`DETAIL_MAX_PIXELS` = 2 000 000 像素 = 8 000 000 B），与源图
+ *    多大无关，所以它不需要这张缓存的字节预算来兜底；真正需要兜底的是「一张图只解一次」这件事。
+ *  - 塞进来还要**多留一份几 MB 的 base64 键** —— [ByteBoundedLru] 把键的字节也算进去（见下），
+ *    于是为了缓存一块 4 MB 的位图，得让一张照片的 payload 一直活着。查看器自己拿着那块（一个
+ *    `remember`），缩回 1× 时当场丢掉，这才是它该有的寿命。
+ *
+ * [MAX_TOTAL_BYTES] 因此**不变**（32 MiB）：这次改动没有往这张缓存里多放任何东西，1× 的常驻
+ * 内存与之前逐字节相同（查看器在 1× 时一块细节都不拿）。
  *  - **The payload is charged to the entry.** The key holds the base64 string, so the
  *    cache keeps those megabytes alive; [ByteBoundedLru] is told to count them
  *    (`payload.length * 2`) on top of the bitmap's own `allocationByteCount`. Without

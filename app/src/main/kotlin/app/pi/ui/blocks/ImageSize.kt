@@ -32,7 +32,13 @@ import kotlin.math.roundToInt
  *  - [ByteBoundedLru], the bounded map both image and text caches use;
  *  - [TextMemo], a typed memo of `String -> String` parses (the cross-composition cache
  *    behind `ParseCaches`);
- *  - [IncrementalLineCount], the append-only line counter the streaming tool footer uses.
+ *  - [IncrementalLineCount], the append-only line counter the streaming tool footer uses;
+ *  - [MAX_INLINE_IMAGE_BYTES] with [base64DecodedBytes] / [encodedImageWithinBudget] — the one
+ *    ceiling on how big a picture's **encoded** bytes may be before anything is read or decoded
+ *    (both whole-picture decode entries in `ImageGridBlock.kt` check it first);
+ *  - [naturalImagePixels], the header-only size reader. It is [naturalImageAspect]'s source of
+ *    truth, and the zoom path's first input: re-decoding the visible block needs the **source's**
+ *    own pixel size, not the sampled bitmap's.
  *
  * None of them knows anything about pictures; they are here so the same harness can
  * execute them.
@@ -124,6 +130,58 @@ internal const val SINGLE_IMAGE_FALLBACK_ASPECT = 4f / 3f
 internal const val MAX_CONCURRENT_IMAGE_DECODES = 2
 
 /**
+ * The largest **encoded** picture this module will hand to the platform decoder: 8 MiB.
+ *
+ * ## Why a ceiling on the input at all
+ *
+ * `decodePiImageFile` used to call `file.readBytes()` on whatever it was given, and
+ * `decodePiImage` base64-decodes the whole payload. Both are the *encoded* bytes, so a workspace
+ * file of a few hundred megabytes with a `.png` name was an allocation with no bound on it — the
+ * one image path in this app that had none (`GuestImageBytes` had already put its own 8 MiB
+ * [MAX_BYTES] in front of `data:` URIs, local files and http). A file that cannot be *held* cannot
+ * be decoded, so the honest answer is the same one that path gives: refuse it and let the caller
+ * show what it already shows for bytes the codec will not take.
+ *
+ * ## Why this number, and not a new one
+ *
+ * It is `GuestImageBytes.MAX_BYTES` — 8 MiB, the app's one yardstick for "how big may a single
+ * picture be" — which is itself pi's own order of magnitude (pi inlines up to 4.5 MB of base64 per
+ * image). That constant is `private` inside its object and that file is not this change's, so the
+ * number is mirrored here rather than referenced; `PiZoomDecodeWindowCheck` reads
+ * `GuestImageBytes.kt` as source text and fails if the two ever disagree, which is the same way
+ * `ShellPolicyMirrorCheck` keeps the two copies of the shell policy honest.
+ *
+ * The trade is explicit: a single picture whose *encoded* size is over 8 MiB is no longer drawn at
+ * all (it used to be decoded, with a peak of ~4 bytes per pixel of its full size — 48 MB for a
+ * 12 MP photo, and unbounded beyond that). Losing a view of an oversized picture is cheaper than
+ * an out-of-memory on a mid-range phone, and the message the viewer already has for undecodable
+ * bytes is re-used for it.
+ */
+internal const val MAX_INLINE_IMAGE_BYTES: Long = 8L * 1024 * 1024
+
+/**
+ * How many bytes [base64Chars] characters of base64 decode to — without decoding them.
+ *
+ * This is what makes the [MAX_INLINE_IMAGE_BYTES] check affordable *before* the decode: the
+ * payload may be 11 M characters, and turning it into bytes just to measure it is the allocation
+ * the check exists to avoid. The estimate can be two bytes low (padding), which is irrelevant for
+ * a yardstick whose job is to refuse the hundreds-of-megabytes case; an exact figure would mean
+ * decoding the payload first.
+ */
+internal fun base64DecodedBytes(base64Chars: Int): Long =
+    base64Chars.coerceAtLeast(0).toLong() / 4L * 3L
+
+/**
+ * Whether an encoded picture of [encodedBytes] bytes is still within [MAX_INLINE_IMAGE_BYTES].
+ *
+ * Zero is not "within": an empty payload has no picture in it, and every decoder would answer null
+ * for it anyway — saying it here keeps the callers from reading a file or decoding a payload that
+ * cannot be one.
+ */
+internal fun encodedImageWithinBudget(encodedBytes: Long): Boolean =
+    encodedBytes in 1..MAX_INLINE_IMAGE_BYTES
+
+/**
  * Bytes needed for the fixed-prologue formats: png (24), gif (10), bmp (26), webp (30).
  *
  * Deliberately one buffer for all four — the biggest of them plus slack — because the
@@ -170,17 +228,29 @@ internal data class ImagePixels(val width: Int, val height: Int)
  * payload, was rejected: `String.hashCode()` is O(payload) on its first call, which would
  * put a multi-megabyte hash (milliseconds) back on the frame that is scrolling.
  */
-internal fun naturalImageAspect(base64: String): Float? {
+internal fun naturalImageAspect(base64: String): Float? =
+    naturalImagePixels(base64)?.let { aspectOf(it) }
+
+/**
+ * 和 [naturalImageAspect] 走**同一条**头部路径，但把像素尺寸本身交出来。
+ *
+ * 为什么需要它：放大之后要按源图坐标重解可见的那一块（`PiZoomDecodeWindow`），那套算术的第一
+ * 个输入就是源图的原始像素尺寸 —— 拿不到它，就只能退回「放大的是采样位图」这个旧行为。读法与
+ * [naturalImageAspect] 逐行相同（四个定长前言的格式读 32 字节，只有 JPEG 付那一次 64 KiB 的
+ * 标记搜索），所以两个函数不会对同一份字节给出不同的答案：[naturalImageAspect] 就是它再加一步
+ * 除法。
+ */
+internal fun naturalImagePixels(base64: String): ImagePixels? {
     if (base64.isEmpty()) return null
     val prologue = base64PrefixBytes(base64, HEADER_PROLOGUE_BYTES)
-    readImageHeader(prologue)?.let { return aspectOf(it) }
+    readImageHeader(prologue)?.let { return it }
     // A JPEG whose frame header is behind its EXIF thumbnail is the one case the prologue
     // can fail on while the payload is fine. Anything else that failed here has already
     // answered "not a picture I understand".
     if (!isJpegStart(prologue)) return null
     if (base64.length <= base64CharsFor(HEADER_PROLOGUE_BYTES)) return null
     val search = base64PrefixBytes(base64, HEADER_JPEG_SEARCH_BYTES)
-    return readImageHeader(search)?.let { aspectOf(it) }
+    return readImageHeader(search)
 }
 
 /**

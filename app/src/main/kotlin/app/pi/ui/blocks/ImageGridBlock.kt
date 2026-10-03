@@ -121,8 +121,10 @@ import kotlinx.coroutines.withContext
  * single-image cell's box comes from the payload's header rather than from the decoded
  * bitmap, so the "box depends on the ratio depends on the box" cycle cannot form. The
  * viewer decodes its own copy at screen size — a *second* decode, deliberately: it is a
- * different resolution for a different surface, not a repeat of the same one (its box
- * stays the whole window because pinching magnifies those pixels up to 8×).
+ * different resolution for a different surface, not a repeat of the same one. That entry is
+ * the viewer's **1×** picture; when the user magnifies past a threshold the viewer re-decodes
+ * the *visible block* from the source instead of magnifying those pixels (`PiZoomDecodeWindow`,
+ * and the class KDoc on `PiImageViewerSurface`), so a thumbnail may never be handed to either.
  *
  * @param onImageClick null keeps the cells inert, which is what a preview or a test
  *   that has no viewer to raise passes.
@@ -400,11 +402,17 @@ private sealed interface CellImage {
  * The bytes themselves: `PiImage` 是 wire 的形状（inline base64），所以这条入口自己解一次
  * base64 再交给 [decodePiImageBytes] —— 采样、面积预算、`inJustDecodeBounds` 那一套都在那里，
  * 两个入口共用同一份（见 [decodePiImageFile]）。
+ *
+ * 解码之前先过 [encodedImageWithinBudget] 那把 8 MiB 的尺子（[MAX_INLINE_IMAGE_BYTES]）：这条
+ * 入口的 base64 是**整份**解出来的，没有上限时一份超大 payload 就是一次没有边界的分配。超限的
+ * 答案与「平台解码器不认这些字节」完全一样（null），所以两个调用点各自的回退文案不用变。
  */
-internal fun decodePiImage(base64: String, targetWidth: Int = 0, targetHeight: Int = 0): Bitmap? =
-    runCatching { Base64.decode(base64, Base64.DEFAULT) }
+internal fun decodePiImage(base64: String, targetWidth: Int = 0, targetHeight: Int = 0): Bitmap? {
+    if (!encodedImageWithinBudget(base64DecodedBytes(base64.length))) return null
+    return runCatching { Base64.decode(base64, Base64.DEFAULT) }
         .getOrNull()
         ?.let { bytes -> decodePiImageBytes(bytes, targetWidth, targetHeight) }
+}
 
 /**
  * 同一把解码器，吃**已经在这边的字节**：工作区/文件查看器里的图片是磁盘上的一个文件。
@@ -412,11 +420,16 @@ internal fun decodePiImage(base64: String, targetWidth: Int = 0, targetHeight: I
  * 为什么不让调用方自己 base64 一下再交给 [decodePiImage]：一张手机截图 2–10 MB，多一趟
  * 编码 + 解码就是多一份峰值内存，而两种来源真正不同的只有"字节从哪来"。采样与面积预算
  * 一行未动，仍在 [decodePiImageBytes] 里。
+ *
+ * 同一个 8 MiB 尺子，但这次量的是**文件本身**（`length()`，一次 stat）而不是 base64 长度：
+ * 这条路上最贵的错法是一个几百 MB 的文件名以 `.png` 结尾，`readBytes()` 会照单全收。
  */
-internal fun decodePiImageFile(file: File, targetWidth: Int = 0, targetHeight: Int = 0): Bitmap? =
-    runCatching { file.readBytes() }
+internal fun decodePiImageFile(file: File, targetWidth: Int = 0, targetHeight: Int = 0): Bitmap? {
+    if (!encodedImageWithinBudget(file.length())) return null
+    return runCatching { file.readBytes() }
         .getOrNull()
         ?.let { bytes -> decodePiImageBytes(bytes, targetWidth, targetHeight) }
+}
 
 /** 解码本身：wire 与宿主文件都走这里，所以"一次解码"这件事只有一份实现。 */
 private fun decodePiImageBytes(bytes: ByteArray, targetWidth: Int, targetHeight: Int): Bitmap? =
