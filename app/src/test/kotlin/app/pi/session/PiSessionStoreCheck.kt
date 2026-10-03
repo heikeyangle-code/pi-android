@@ -949,6 +949,16 @@ fun main() {
         checkRows("13.4 并行 2 == 并行 4", coldStore(idxSessions, idxFile, 2).list(), coldStore(idxSessions, idxFile, 4).list())
         check("13.5 夹具的会话数多于线程数（真的分批了）", parallelFull.size > 4, true)
 
+        // 13.6 `-c`（`mostRecentForResume`）走的是**另一条**调用路径，但它读的也是同一个
+        // `readSummary`，所以索引对它一样生效 —— 也就一样必须给出同一行。它只读平铺那一层，
+        // 键因此与 `list` 对同一个文件用的键完全相同。
+        coldStore(idxSessions, idxFile).list() // 把索引写热
+        val resumePlain = PiSessionStore(idxSessions).mostRecentForResume(CWD)
+        val resumeIndexed = PiSessionStore(idxSessions, idxFile).mostRecentForResume(CWD)
+        check("13.6 带索引的 -c 与不带索引的 -c 选出同一个会话", resumeIndexed?.file?.absolutePath, resumePlain?.file?.absolutePath)
+        check("13.6 那一行的每个字段都一样", resumeIndexed?.let { rowFields(it) }, resumePlain?.let { rowFields(it) })
+        check("13.6 选出来的确实是 CWD 的会话", resumeIndexed?.cwd, CWD)
+
         // ============================================================== 14. 数字
         //
         // N 个会话 × 每个 M 字节，真实形状（每行 0.6 MB 的内联图片；见
