@@ -232,13 +232,15 @@ fun main() {
     val fastPathReturns = Regex(
         "return PiImage\\(Base64\\.encodeToString\\(bytes, Base64\\.NO_WRAP\\), mime\\)",
     ).findAll(chatText).toList()
-    check("原字节快速返回只剩一处", fastPathReturns.size, 1)
-    // `.+` 而不是 `[^)]*`：参数里就有括号（`source.hasAlpha()`），而 `.` 不跨行，所以这一条
-    // 仍然钉在**一行** call site 上。
+    // 两处：`compressAttachment` 的快速路径，与 `images.autoResize: false` 那一支
+    // （`withAutoResizeOff`）。两处都原字节转发；第一处用的是摆正后的长宽，第二处虽然不摆正
+    // （pi 关掉缩放时也不摆正），方向仍在它之前就解析出来、并传了进去。所以下面比的是**第一处**。
+    check("原字节转发恰好两处（快速路径 + autoResize 关掉那一支）", fastPathReturns.size, 2)
+    // `.+` 而不是 `[^)]*`：参数里可能有括号，而 `.` 不跨行，所以这一条钉在**一行** call site 上。
     val planCalls = Regex("for \\(attempt in AttachmentBudget\\.attemptPlan\\((.+)\\)\\)").findAll(chatText).toList()
     check("编码计划恰好一处", planCalls.size, 1)
 
-    if (readCalls.size == 1 && fastPathReturns.size == 1 && planCalls.size == 1) {
+    if (readCalls.size == 1 && fastPathReturns.size == 2 && planCalls.size == 1) {
         val readAt = readCalls.first().range.first
         checkTrue(
             "先读方向，再决定快速路径（快速路径用的是摆正后的长宽）",
@@ -258,7 +260,7 @@ fun main() {
         )
     } else {
         failures++
-        println("FAIL 顺序断言：三个调用点的数量不是 1，无法比较先后")
+        println("FAIL 顺序断言：调用点的数量不是期望值，无法比较先后")
     }
 
     println(if (failures == 0) "\nharness: OK (all checks passed)" else "\nharness: FAILED ($failures)")

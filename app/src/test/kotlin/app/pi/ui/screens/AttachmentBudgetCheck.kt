@@ -199,7 +199,9 @@ fun main() {
 
     // (e) 快速路径不受影响。这是源文本断言：`ChatScreen` 导 Compose/Android，本 harness 编不了它，
     // 而「限制内 + MIME 受支持 → 原字节直接返回」正是这次候选序改动**不该**碰到的那条路径。
-    // 断言两件事：那次原字节返回仍在（恰好一次），且仍排在**任何**编码计划之前。
+    // 断言的是**两处**原字节转发各就各位：`compressAttachment` 的快速路径（档位判断之后、任何编码
+    // 计划之前），以及 `images.autoResize: false` 那一支（`withAutoResizeOff`，它本来就不建计划）。
+    // 两处文案一模一样，所以数量是 2 而不是 1 —— 少了哪一处都会红。
     // `pi.repo.root` 由 `tools/run-app-pure-checks.sh` 传给每个 harness（与 `ImageSizeCheck` 同法）。
     val chatScreen = System.getProperty("pi.repo.root")?.let {
         File(it, "app/src/main/kotlin/app/pi/ui/screens/ChatScreen.kt")
@@ -209,9 +211,9 @@ fun main() {
         "return PiImage\\(Base64\\.encodeToString\\(bytes, Base64\\.NO_WRAP\\), mime\\)",
     ).findAll(chatText).toList()
     check(
-        "the fast path still returns the original bytes for an under-limits, inline-MIME picture",
+        "原字节转发恰好两处：档位内的快速路径 + images.autoResize 关掉那一支",
         fastPathReturn.size,
-        1,
+        2,
     )
     // 调用点的形状也一起钉：改完候选序之后 `attemptPlan` 只收尺寸与档位（不再收源），而
     // `ChatScreen` 送进去的必须是**摆正后**的 `width`/`height`（EXIF 那一笔，见
@@ -220,10 +222,16 @@ fun main() {
         "for \\(attempt in AttachmentBudget\\.attemptPlan\\(width, height, limits\\)\\)",
     ).find(chatText)
     checkTrue(
-        "and it is still evaluated before any encoding plan is built",
-        fastPathReturn.size == 1 && planCall != null &&
+        "第一处是快速路径，仍排在**任何**编码计划之前",
+        fastPathReturn.size == 2 && planCall != null &&
             fastPathReturn.first().range.first < planCall.range.first,
         "fastPathReturns=${fastPathReturn.size} planAt=${planCall?.range?.first}",
+    )
+    checkTrue(
+        "第二处在 withAutoResizeOff 的函数体里（那条路不建计划）",
+        fastPathReturn.size == 2 &&
+            fastPathReturn.last().range.first > chatText.indexOf("private fun withAutoResizeOff("),
+        "secondAt=${fastPathReturn.lastOrNull()?.range?.first} fnAt=${chatText.indexOf("private fun withAutoResizeOff(")}",
     )
     check("候选序不看源：调用点里没有 hasAlpha/mime 参数", chatText.contains("attemptPlan(mime"), false)
 
@@ -573,6 +581,37 @@ fun main() {
         Regex("runCatching \\{ target\\.file\\.delete\\(\\) \\}").findAll(chatText).count() == 2,
         "deletes=${Regex("target\\.file\\.delete\\(\\)").findAll(chatText).count()}",
     )
+
+    // ------------------------- 9. `images.autoResize` 的消费者（源文本）
+    //
+    // `images.autoResize` 曾经**只有设置项的展示、没有消费者**：用户把它关掉之后 App 照压。
+    // 这一节钉住两件事，都是读 `ChatScreen.kt` 源文本 —— 本机编不了 Compose：
+    //  (a) 设置真的被读了，默认值是 pi 的 `true`（`settings-manager.ts:68`、`:1404`），且
+    //      「跳过预压缩」这个值真的传进了 `compressAttachment`；
+    //  (b) **消息预算没有跟着关掉**：`AttachmentBudget.decide` 仍在，且仍在读设置之后 ——
+    //      暂存的 base64 会进 composer 状态，超了 `JsonlFramer` 的记录上限就是 App 自己都读不回来
+    //      的一条记录。关掉自动缩放不等于允许发那样一条消息。
+    val autoResizeReads = Regex("readBoolean\\(\"images\\.autoResize\"\\) \\?: true").findAll(chatText).toList()
+    check("images.autoResize 被读，且缺省是 pi 的 true", autoResizeReads.size, 1)
+    check(
+        "读到的值传进了 compressAttachment",
+        Regex("compressAttachment\\(bytes, mime, limits, autoResize\\)").findAll(chatText).count(),
+        1,
+    )
+    check(
+        "跳过预压缩的那一支在 compressAttachment 里",
+        Regex("if \\(!autoResize\\) return withAutoResizeOff\\(bytes, mime, transform\\)").findAll(chatText).count(),
+        1,
+    )
+    val decides = Regex("AttachmentBudget\\.decide\\(").findAll(chatText).toList()
+    check("消息预算仍在判定（decide 恰好一处）", decides.size, 1)
+    if (autoResizeReads.size == 1 && decides.size == 1) {
+        checkTrue(
+            "预算判定排在读设置之后（关掉预压缩也没把预算一起去掉）",
+            autoResizeReads.first().range.first < decides.first().range.first,
+            "read=${autoResizeReads.first().range.first} decide=${decides.first().range.first}",
+        )
+    }
 
     println(if (failures == 0) "\nharness: OK (all checks passed)" else "\nharness: FAILED ($failures)")
     if (failures != 0) kotlin.system.exitProcess(1)

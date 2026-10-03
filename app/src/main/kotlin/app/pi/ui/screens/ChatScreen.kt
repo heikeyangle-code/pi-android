@@ -1,5 +1,6 @@
 package app.pi.ui.screens
 
+import app.pi.settings.readBoolean
 import app.pi.ui.blocks.PiImageCache
 import app.pi.ui.blocks.decodePiImage
 import app.pi.ui.blocks.piImageDecodeGate
@@ -706,16 +707,34 @@ private fun ChatBody(
                                 // before this, the App pre-resized to pi's default 2000/4.5 MB
                                 // and pi then resized again to whatever the model really allows.
                                 val limits = AttachmentBudget.limitsFor(state.meta.model?.inputLimits)
-                                val image = withContext(Dispatchers.IO) { compressAttachment(bytes, mime, limits) }
+                                // pi 的 `images.autoResize`（`settings-manager.ts:68` 定义、
+                                // `:1404` 的 `getImageAutoResize()`，默认 `true`；pi 在归一化
+                                // 每一轮 prompt 图片时读它，`agent-session.ts:1899`）。
+                                // 关掉 = 不做 App 侧预压缩；语义与**没有**跟着关掉的那条消息预算
+                                // 都写在 `compressAttachment` 的 KDoc 里。
+                                // 这次读是内存命中（缓存文档按 1/4 秒节流 stat），与设置界面的
+                                // 每一行同一条读法。
+                                val autoResize = session.settingsStore.readBoolean("images.autoResize") ?: true
+                                val image = withContext(Dispatchers.IO) {
+                                    compressAttachment(bytes, mime, limits, autoResize)
+                                }
                                 if (image == null) {
-                                    // 压不出来：读不出像素，或者所有候选都超 **这个模型的** 上限。
-                                    // 数字来自同一份 limits，所以句子与判定不可能对不上。
+                                    // 压不出来（自动缩放开着）：读不出像素，或者所有候选都超
+                                    // **这个模型的** 上限。数字来自同一份 limits，所以句子与判定
+                                    // 不可能对不上。
+                                    // 自动缩放关着时不成的是**转换**（不是「压不小」）：那句
+                                    // 不能借用这里的数字，否则句子里会出现一个没有参与判定的上限。
                                     fallbackInline(
                                         sourceUri = null,
                                         bytes = bytes,
-                                        why = "按当前模型的上限（最长边 ${limits.maxWidth}×${limits.maxHeight}、" +
-                                            "base64 ${mibLabel(limits.maxBase64Chars)} MB）" +
-                                            "压不出足够小的版本",
+                                        why = if (autoResize) {
+                                            "按当前模型的上限（最长边 ${limits.maxWidth}×${limits.maxHeight}、" +
+                                                "base64 ${mibLabel(limits.maxBase64Chars)} MB）" +
+                                                "压不出足够小的版本"
+                                        } else {
+                                            "自动缩放关着（images.autoResize: false），" +
+                                                "这张图也不是 pi 能直接内联的格式，转换不出来"
+                                        },
                                     )
                                 } else {
                                     when (val verdict = AttachmentBudget.decide(staged, image.base64.length)) {
@@ -732,7 +751,8 @@ private fun ChatBody(
                                             why = "本条消息的内联额度不够" +
                                                 "（上限 ${mibLabel(verdict.limitBytes)} MB，" +
                                                 "已用 ${mibLabel(verdict.usedBytes)} MB，" +
-                                                "这张压缩后 ${mibLabel(verdict.candidateBytes)} MB）",
+                                                "这张" + (if (autoResize) "压缩后 " else "原图 ") +
+                                                "${mibLabel(verdict.candidateBytes)} MB）",
                                         )
                                     }
                                 }
@@ -4344,6 +4364,21 @@ private fun readBounded(input: java.io.InputStream, limit: Int): ByteArray {
  * ceiling. The **fast path** below uses the same limits, so a model with a smaller profile
  * no longer forwards an original the model cannot take.
  *
+ * ## `autoResize = false`：pi 的 `images.autoResize`
+ *
+ * pi 的开关（`settings-manager.ts:68` 定义、`:1404` 的 `getImageAutoResize()`，默认 `true`；
+ * 唯一的分支在 `image-process.ts:86`）关掉的是**缩放**，不是归一化 —— `:78` 的
+ * `normalizeImage` 照跑：`image/png|jpeg|gif|webp` 原样通过，其余（heic/bmp/tiff）**转成
+ * PNG**（`image-convert.ts:23-30`，那次转换里也摆正 EXIF），然后 base64 原样送出。所以这条路
+ * 交给 [withAutoResizeOff] 做同样两件事，尺寸、候选序、质量阶梯一个都不参与。
+ *
+ * **消息预算没有跟着关掉，这是 App 的边界、不是 pi 的。** 预压缩在这边还担着另一件事：暂存的
+ * base64 会进 composer 状态，而一条消息的 base64 合计受
+ * `JsonlFramer.DEFAULT_MAX_RECORD_CHARS − 64 KiB`（[AttachmentBudget.MESSAGE_BASE64_CHARS]）这条
+ * **传输**上限约束 —— 超了的那条记录连 App 自己都读不回来（类 KDoc 有这段历史）。所以关掉自动
+ * 缩放只是不再「为了模型的档位」压缩；判定仍在调用方（`AttachmentBudget.decide`），装不下时照样
+ * 降级成「放进工作区 + 给路径」，而不是把预压缩和预算一起删掉。
+ *
  * Runs on `Dispatchers.IO` — one full-size decode plus one encode is tens of
  * milliseconds and a few megabytes, which must not happen on the frame thread. A model
  * profile *larger* than pi's default makes that first attempt proportionally more expensive
@@ -4354,6 +4389,7 @@ private fun compressAttachment(
     bytes: ByteArray,
     mime: String,
     limits: AttachmentBudget.Limits,
+    autoResize: Boolean,
 ): PiImage? {
     // Header only: `inJustDecodeBounds` reads the size without allocating pixels, which
     // is also how the fast path is decided without decoding anything.
@@ -4361,6 +4397,8 @@ private fun compressAttachment(
     BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
     val storedWidth = bounds.outWidth
     val storedHeight = bounds.outHeight
+    // 这里同时是「这堆字节到底是不是一张图」的判据：`images.autoResize: false` 那条路也走它，
+    // 所以关掉预压缩不会把一份解不开的字节当成图发出去。
     if (storedWidth <= 0 || storedHeight <= 0) return null
 
     // EXIF 方向**先**读，而且要用它把「存储长宽」换成「摆正后长宽」：pi 的
@@ -4371,6 +4409,9 @@ private fun compressAttachment(
     val orientation = PiExifOrientation.read(bytes)
     val transform = PiExifOrientation.transformFor(orientation)
     val (width, height) = PiExifOrientation.orientedSize(storedWidth, storedHeight, transform)
+
+    // 用户关掉了 pi 的 `images.autoResize`：不做预压缩（pi 的同一分支也不做）。
+    if (!autoResize) return withAutoResizeOff(bytes, mime, transform)
 
     if (width <= limits.maxWidth &&
         height <= limits.maxHeight &&
@@ -4411,6 +4452,51 @@ private fun compressAttachment(
     } finally {
         // `applyOrientation` 在方向为 1 时返回的就是 `source`，那一份只回收一次。
         if (oriented !== source) oriented.recycle()
+        source.recycle()
+    }
+}
+
+/**
+ * `images.autoResize: false` 那一条路：不做任何缩放，只做 pi 的 `normalizeImage` 那一步。
+ *
+ *  - pi 能直接内联的 MIME（[AttachmentBudget.piInlineSupported]）：`bytes` **逐字节**转发，
+ *    连 EXIF 都留在里面 —— pi 也是把 `normalized.bytes` 原样 base64 送出
+ *    （`image-process.ts:113-118`），所以这里与「快速路径」不是同一件事：那条还要求尺寸与
+ *    字节数都在档位之内，这条一个都不看。
+ *  - 其余 MIME：解码 → 摆正 → 按**原始尺寸**编码 PNG，因为 pi 会先把它转成 PNG
+ *    （`image-process.ts:55-64` → `image-convert.ts:23-30`）。这里没有 `inSampleSize`：
+ *    采样会让输出与 pi 那张全分辨率 PNG 不同，而这条路的存在意义就是「不替用户改尺寸」。
+ *
+ * 失败（解码不了、位图分配失败、编码失败）返回 null，调用方按「内联不成」降级 —— 与压缩那条路
+ * 同一个出口，但句子不同（那边说「压不出足够小」，这边说不成的是转换）。
+ *
+ * [transform] 由调用方传入而不是在这里重读一遍 EXIF：方向只解析一次，两条分支用的是同一个值。
+ */
+private fun withAutoResizeOff(
+    bytes: ByteArray,
+    mime: String,
+    transform: PiExifOrientation.Transform,
+): PiImage? {
+    if (AttachmentBudget.piInlineSupported(mime)) {
+        return PiImage(Base64.encodeToString(bytes, Base64.NO_WRAP), mime)
+    }
+
+    val source = runCatching {
+        BitmapFactory.decodeByteArray(
+            bytes,
+            0,
+            bytes.size,
+            BitmapFactory.Options().apply { inPreferredConfig = Bitmap.Config.ARGB_8888 },
+        )
+    }.getOrNull() ?: return null
+    try {
+        val oriented = applyOrientation(source, transform) ?: return null
+        try {
+            return encodeForAttachment(oriented, AttachmentBudget.Encoding.Png)
+        } finally {
+            if (oriented !== source) oriented.recycle()
+        }
+    } finally {
         source.recycle()
     }
 }
