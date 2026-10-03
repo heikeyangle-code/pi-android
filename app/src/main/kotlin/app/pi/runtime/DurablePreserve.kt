@@ -84,4 +84,90 @@ object DurablePreserve {
         original.parentFile?.mkdirs()
         if (stashDir.renameTo(original)) null else original
     }
+
+    /**
+     * 一次搁浅恢复[recover]的结果。
+     *
+     * @param restored 已经搬回原位的原位置（顺序与 [recoveryTargets] 一致）。
+     * @param stranded **两边都有内容、按保守策略一个字节都没动**的
+     *        `落在 .preserve 的副本 to 原位置`。这些项既没有恢复、也没有被删除。
+     */
+    class Recovery internal constructor(
+        val restored: List<File>,
+        val stranded: List<Pair<File, File>>,
+    ) {
+        val anything: Boolean get() = restored.isNotEmpty() || stranded.isNotEmpty()
+    }
+
+    /**
+     * 上一轮 `moveOut` 留在 [preserveDir] 里的副本，按 [durable] 的**名字前缀**认回原位置。
+     *
+     * 落脚的目录名是 `"<原目录名>-<纳秒>"`（[moveOut]），而 [durable] 是
+     * `DurableLayout.durableDirs(home, runtime)` —— 三个耐久目录的**唯一拼写**。所以
+     * "这个副本是谁的"不需要额外写一份清单：前缀相同即是。`"agent-x"` 不会撞上别的耐久
+     * 目录，`"workspacesX-1"` 也不会被当成 `workspaces`（比较带上了那个分隔符）。
+     */
+    fun recoveryTargets(preserveDir: File, durable: List<File>): List<Pair<File, File>> {
+        val entries = runCatching { preserveDir.listFiles() }.getOrNull().orEmpty()
+        return durable.flatMap { dir ->
+            entries.asSequence()
+                .filter { it.isDirectory && it.name.startsWith("${dir.name}-") }
+                .sortedBy { it.name }
+                .map { it to dir }
+                .toList()
+        }
+    }
+
+    /**
+     * 启动时把上一轮搁浅的耐久目录搬回去 —— `wipe()` 在 moveOut 与 restore 之间被强杀时，
+     * 用户的会话、工作区与 agent 目录就停在 `<files>/pi/.preserve/` 下面，而全仓没有第二个
+     * 地方会看一眼那个目录。这个方法就是那一眼。
+     *
+     * ## 保守的判据
+     *
+     *  - 原位置**不存在** → 搬回；
+     *  - 原位置是**空目录** → 搬回（先删那个空壳；`rename` 覆盖非空目录在 Linux 上是
+     *    `ENOTEMPTY`，所以绝不尝试覆盖）；
+     *  - 其余情况（原位置有内容、或原位置不是目录）→ **一个字节都不动**，记进
+     *    [Recovery.stranded]，让调用方把情况说出来。宁可让用户看到"有两份"，也不能用旧数据
+     *    盖掉新的那一份 —— 这正是 [moveOut] 的 KDoc 里"宁可失败也不静默丢数据"的同一条。
+     *
+     * ## 幂等
+     *
+     * 搬回之后副本就不在了，第二次调用返回空的 [Recovery]；`.preserve` 只在**没有**任何
+     * 搁浅项时才清壳，且只 `delete()`（空目录）—— 与 `wipe()` 里那句话同一条纪律。
+     */
+    fun recover(durable: List<File>, preserveDir: File): Recovery {
+        if (!preserveDir.isDirectory) return Recovery(emptyList(), emptyList())
+        val restored = mutableListOf<File>()
+        val stranded = mutableListOf<Pair<File, File>>()
+        for ((stash, original) in recoveryTargets(preserveDir, durable)) {
+            // 原位置不存在：直接搬回。
+            if (!original.exists()) {
+                original.parentFile?.mkdirs()
+                if (stash.renameTo(original)) {
+                    restored += original
+                } else {
+                    stranded += stash to original
+                }
+                continue
+            }
+            // 原位置是空目录：换回内容。绝不覆盖非空目录。
+            if (original.isDirectory && original.listFiles()?.isEmpty() == true) {
+                original.parentFile?.mkdirs()
+                if (original.delete() && stash.renameTo(original)) {
+                    restored += original
+                } else {
+                    stranded += stash to original
+                }
+                continue
+            }
+            // 两边都有内容（或原位置不是目录）：保守，什么都不动。
+            stranded += stash to original
+        }
+        // 清壳只在搬空之后，而且只清空目录：里面若还有别的条目（例如一个不认识的目录），
+        // `delete()` 会失败，那正是我们要的结果 —— 不碰不是我们放进去的东西。
+        if (stranded.isEmpty()) runCatching { preserveDir.delete() }
+        return Recovery(restored, stranded)
+    }
 }

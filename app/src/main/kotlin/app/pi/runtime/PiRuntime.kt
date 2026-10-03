@@ -177,13 +177,60 @@ class PiPaths(private val filesDir: File, private val nativeLibDir: File) {
      *    这份索引不需要：它活不过一次升级的代价是**一次**全量扫描，而它每次进列表都会把自己
      *    重新写热。
      *
-     * 落在这里的代价明写：`wipe()` —— 唯一会整棵删 [runtime] 的地方，只有显式「修复」或
-     * 载荷版本变化能到 —— 会把它一起删掉。那正是缓存该有的归宿：整棵树都重建了，索引里那些
+     * 落在这里的代价明写：`wipe()` —— 唯一会整棵删 [runtime] 的地方，**只有显式「修复」**
+     * （`RuntimeProvisioner.ensureReady(rebuild = true)`，唯一调用点是启动失败卡上那个按钮）
+     * 能到 —— 会把它一起删掉。载荷版本变化**不会**：那条路是逐载荷覆盖解压，从不删树
+     * （`provision` 的 `plan` 分支）。那正是缓存该有的归宿：整棵树都重建了，索引里那些
      * 绝对路径也已经没有意义。日常重启与使用都不会删它。
      *
      * 前导点与 `.payloads` 同一个意思：这不是载荷、也不是给人翻的文件。
      */
     fun sessionIndexFile(): File = File(runtime, ".session-index.json")
+
+    /**
+     * 客体**必要配置**的一个落点：相对 [rootfs] 的一条路径，以及它应该是文件还是目录。
+     *
+     * 抽成值而不是两处字面量，是因为它同时被两个地方读，而两处一旦漂移，失败是**静默**的：
+     * `RuntimeProvisioner.configureGuestFiles()` 按它写，`missingGuestConfig()` 按它判
+     * "这次启动要不要补"。少写一个判定项 = 那个文件缺了也没人补，而补它的机会
+     * （`provision` 的收尾）在载荷全部记账之后下一次就再也不会来（`plan` 为空 → 走
+     * `finishCurrent`，历史 bug：`/etc/resolv.conf` 永久缺失而启动显示成功）。
+     */
+    data class GuestConfigTarget(
+        /** 相对 [rootfs] 的拼写。 */
+        val relative: String,
+        /** true = 必须是一个目录；false = 必须是一个**非空**文件。 */
+        val directory: Boolean,
+    ) {
+        /** 这个落点在 [rootfs] 下是否已经就位。只做一次存在性判断，不读内容。 */
+        fun presentUnder(rootfs: File): Boolean {
+            val file = File(rootfs, relative)
+            return if (directory) file.isDirectory else file.isFile && file.length() > 0L
+        }
+    }
+
+    /**
+     * 客体必要配置的**全部**落点：glibc 读的两个文件 + pi 与 App 都要的两个目录。
+     *
+     * 顺序固定，便于报告逐行打印；内容与写入逻辑在
+     * `RuntimeProvisioner.configureGuestFiles()`，这里只有落点。
+     */
+    fun guestConfigTargets(): List<GuestConfigTarget> = listOf(
+        GuestConfigTarget("etc/resolv.conf", directory = false),
+        GuestConfigTarget("etc/hosts", directory = false),
+        GuestConfigTarget(DurableLayout.AGENT_IN_ROOTFS, directory = true),
+        GuestConfigTarget(DurableLayout.WORKSPACE_BASE_IN_ROOTFS, directory = true),
+    )
+
+    /**
+     * 缺失（不存在 / 零字节 / 该是目录的却是文件）的那几项；**空 = 一个字节都不用写**。
+     *
+     * 这就是"快路径不许变慢"那条约束下的合法代价：四个存在性判断，成功后不产生任何写入，
+     * 也不读文件内容。内容对不对**不在这里判** —— 两个 DNS 文件的内容是常量，改内容的
+     * 构建要按 revision 换代（见 `RuntimeProvisioner.ensureGuestConfig` 的 KDoc）。
+     */
+    fun missingGuestConfig(): List<GuestConfigTarget> =
+        guestConfigTargets().filterNot { it.presentUnder(rootfs) }
 
     /**
      * The Ubuntu userland (glibc).

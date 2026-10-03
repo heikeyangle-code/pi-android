@@ -127,6 +127,28 @@ class RuntimeProvisioner(
     private var payloadReport: String = ""
 
     /**
+     * What this attempt could not finish *after* a payload was extracted: the old-payload
+     * paths [prunePayload] could not delete, and any per-payload state [recordPayloadState]
+     * could not write. One entry per problem, `"<path 或载荷>（<原因>）"`.
+     *
+     * A field for the same reason [payloadReport] is one: it is a per-attempt diagnostic that
+     * one step produces and a later step renders, and the alternative — returning it — would
+     * change the call while the call *shape* is what the harness pins as the fix for the
+     * original ordering bug (`extract → prune → record`,
+     * `app/src/test/kotlin/app/pi/runtime/RuntimePayloadStateCheck.kt`, P17). Cleared at the
+     * start of every slow-path attempt and never read on the fast path, so a stale value
+     * cannot outlive the attempt that wrote it.
+     *
+     * Why a failed prune is *reported* rather than retried: it keeps the payload's new digest
+     * recorded, so the payload is not re-extracted next boot and the delete is not attempted
+     * again. The alternative — not recording the digest — would re-extract the whole payload
+     * on every single boot until the undeletable node went away, i.e. minutes per launch
+     * forever. So the honest fix is to say it out loud; the fresh-list-not-recorded variant is
+     * written up in the report instead.
+     */
+    private val payloadWarnings = mutableListOf<String>()
+
+    /**
      * What one provisioning attempt actually did.
      *
      * Returned rather than kept in a field because two callers need the same answer
@@ -214,6 +236,19 @@ class RuntimeProvisioner(
         // it as "every payload changed" re-extracts over what is there (nothing is
         // deleted), which repairs it without needing the explicit rebuild.
         val rootfsMissing = !paths.rootfs.isDirectory
+
+        // A warning accumulator, cleared per attempt: same shape and same reason as
+        // [payloadReport] (written on this path, read on this path only).
+        payloadWarnings.clear()
+
+        // P1b: a `wipe()` killed between its move-out and its move-back leaves the user's
+        // sessions/workspaces parked in `<files>/pi/.preserve`, and nothing else in this app
+        // ever looks at that directory. Recovery runs **here**, before any payload is
+        // extracted, so the directories are back where they belong before anything writes
+        // near them; `finishCurrent` calls the same function for the plan-is-empty case (and
+        // for the stamp-hit boot), where it is one `isDirectory` probe because the directory
+        // is normally absent.
+        val recoveryWarning = recoverStrandedDurableDirs()
 
         // The three directories [wipe] used to be the only creator of. Creating them on
         // this path (and not on the fast one) keeps the fast path's fixed cost exactly
@@ -331,16 +366,18 @@ class RuntimeProvisioner(
             // already read for the plan. One asset read per payload per attempt, never two.
             val newList = packagedList(payload)
             prunePayload(payload, newList)
-            recordPayloadState(payload, packagedDigests[payload], newList)
+            val recordWarning = recordPayloadState(payload, packagedDigests[payload], newList)
+            if (recordWarning != null) payloadWarnings += recordWarning
             index++
         }
 
-        // The guest's `/etc/group` repair reports through the last step's label (like
-        // the stamp below): the runtime is complete either way, and the only thing at
-        // stake is whether the terminal still prints coreutils' "cannot find name for
-        // group ID" lines.
+        // The guest's required configuration (`/etc/resolv.conf`, `/etc/hosts`, the two
+        // directories) and the `/etc/group` repair, through the same idempotent function the
+        // fast path uses: a launch that finds all of it already in place writes nothing, so
+        // this step costs four existence probes on an update. See [ensureGuestConfig] for why
+        // the write and the check must be one function.
         next()
-        val groupWarning = configureGuest()
+        val configWarning = ensureGuestConfig()
         index++
 
         paths.prepareLibraryAliases()
@@ -348,7 +385,17 @@ class RuntimeProvisioner(
         // (the boot screen's step label) instead of failing a boot whose runtime is
         // complete. See [writeStamp].
         val stampWarning = writeStamp(revision)
-        val warning = listOfNotNull(groupWarning, stampWarning).firstOrNull()
+        // Every warning this attempt produced, joined rather than picked: they are all true
+        // statements about the same boot, and the ones that used to be silent (a prune that
+        // could not delete, a payload state that could not be written, a durable directory
+        // left stranded by an interrupted repair) are exactly the ones a user needs to be
+        // able to read. One warning behaves exactly as before.
+        val warning = listOfNotNull(
+            recoveryWarning,
+            payloadWarning(),
+            configWarning,
+            stampWarning,
+        ).joinToString("\n").takeIf { it.isNotEmpty() }
         onStep(Step(warning ?: steps[index], index, steps.size))
 
         return ProvisionOutcome(
@@ -368,13 +415,27 @@ class RuntimeProvisioner(
      * payload list, and walks no directory; the per-payload state is not touched at all
      * unless the stamp differed.
      *
-     * It is also the *only* path that can repair two things [provision] did not touch —
-     * the agent-dir copy of `rg`/`fd` and the guest's `/etc/group` — so both run here;
-     * see [ensureToolsVisible] and [ensureAndroidGroups]. `prepareLibraryAliases`
-     * creates `paths.lib` through its own getter, exactly as the early return always
-     * did; `paths.tmp` is likewise created by its getter wherever it is used, so neither
-     * needs a step of its own here (and adding one would be a new syscall on every cold
-     * start).
+     * It is also the *only* path that can repair three things [provision] did not touch —
+     * the agent-dir copy of `rg`/`fd`, the guest's required configuration
+     * (`/etc/resolv.conf`, `/etc/hosts`, the two directories) and the guest's `/etc/group` —
+     * so all of them run here; see [ensureToolsVisible] and [ensureGuestConfig].
+     * `prepareLibraryAliases` creates `paths.lib` through its own getter, exactly as the
+     * early return always did; `paths.tmp` is likewise created by its getter wherever it is
+     * used, so neither needs a step of its own here (and adding one would be a new syscall on
+     * every cold start).
+     *
+     * ## Why the required configuration is here too (the P0 defect)
+     *
+     * [provision]'s slow path records each payload's state as soon as that payload is
+     * extracted, and it writes the stamp only after `ensureGuestConfig()`. So if the
+     * configuration write itself fails (the realistic case: the extraction just filled the
+     * disk, and `writeText` answers `ENOSPC`), every payload is recorded, the stamp is not,
+     * and the *next* launch finds `plan` empty and comes here. This function used to skip the
+     * configuration entirely, so it wrote the stamp and reported a successful boot **with
+     * `/etc/resolv.conf` missing forever** — inside the guest every name lookup then fails
+     * while the app looks healthy. Calling the same idempotent function from both paths is
+     * what closes that: the file is missing ⇒ it is written here; everything is in place ⇒
+     * four existence probes and no write.
      *
      * The stamp is rewritten when it does not match, and that is not bookkeeping
      * pedantry: the revision also covers payloads that never enter this tree (the five
@@ -400,16 +461,28 @@ class RuntimeProvisioner(
         // moved out of the rootfs — see [ensureToolsVisible]. Cheap: two file-existence
         // probes.
         ensureToolsVisible()
-        // Same shape, same reason: a device that already unpacked keeps its rootfs, so a
-        // boot that does *not* re-extract is the only path that can repair the guest's
-        // `/etc/group` ([ensureAndroidGroups]). Idempotent, and free when there is
-        // nothing to add.
-        val groupWarning = ensureAndroidGroups()
+        // A durable directory left stranded by an interrupted 「重建运行时」 is recovered on
+        // every boot, from here as well as from [provision]: one `isDirectory` probe on an
+        // ordinary launch (the directory is not there), and the boot that actually finds a
+        // stash is one whose stamp `wipe()` deleted — i.e. a boot that came through
+        // [provision] anyway. Keeping it in both places is what makes it hold for the
+        // plan-is-empty and the stamp-matches shapes too, at a fixed cost of one stat.
+        val recoveryWarning = recoverStrandedDurableDirs()
+        // The guest's required configuration. Idempotent: when everything is in place this is
+        // four existence probes and no write; when something is missing — including the case
+        // a previous boot failed after recording every payload — it is repaired here. It also
+        // carries the `/etc/group` repair, which therefore still runs on every boot.
+        val configWarning = ensureGuestConfig()
         val stampWarning = if (isStampCurrent(revision)) null else writeStamp(revision)
         // A step *is* a full-screen page, so the only thing worth emitting here is a warning
         // the user has to see. The ordinary launch has none and therefore shows no surface at
-        // all — which is the whole point of this branch's shape.
-        listOfNotNull(groupWarning, stampWarning).firstOrNull()?.let { onStep(Step(it, 0, 1)) }
+        // all — which is the whole point of this branch's shape. Every warning this attempt
+        // produced goes into the one label (`joinToString`), and the `firstOrNull()` on a
+        // one-element list is what keeps "nothing to say ⇒ no step at all".
+        val warnings = listOfNotNull(recoveryWarning, configWarning, stampWarning)
+            .joinToString("\n")
+            .takeIf { it.isNotEmpty() }
+        listOfNotNull(warnings).firstOrNull()?.let { onStep(Step(it, 0, 1)) }
         return ProvisionOutcome(reextracted = emptyList(), migrated = migration, rebuilt = false)
     }
 
@@ -471,6 +544,7 @@ class RuntimeProvisioner(
             throw ProvisioningException("拒绝重建运行时：${refused.message}", refused)
         }
         var deleted = false
+        var stranded: List<File> = emptyList()
         try {
             deleteTreeInsideVolatile(paths.runtime, "重建运行时（显式修复）")
             deleted = true
@@ -478,13 +552,25 @@ class RuntimeProvisioner(
             // Same order as before this object existed: the skeleton is recreated only
             // after a *successful* delete, so the refusal path leaves the tree alone.
             if (deleted) prepareVolatileDirs()
-            val stranded = DurablePreserve.restore(stash)
+            stranded = DurablePreserve.restore(stash)
             // Anything that could not be put back stays in `.preserve` — that copy is the
             // only place the data still exists, so it is not cleaned up in that case.
             // `delete()`, never `deleteRecursively()`: [DurablePreserve.restore] emptied it,
             // and this file's one recursive delete stays the one in
             // [deleteTreeInsideVolatile] (the harness pins that count).
             if (stranded.isEmpty()) runCatching { preserve.delete() }
+        }
+        // P1b: a rebuild that could not put the user's directories back must not report
+        // success. The data is intact in `.preserve`, and failing here is what keeps the
+        // stamp unwritten — so the next boot takes the slow path and
+        // [recoverStrandedDurableDirs] tries again, instead of a `stamp`-current device never
+        // looking at that directory again.
+        if (stranded.isNotEmpty()) {
+            throw ProvisioningException(
+                "重建运行时没能把耐久目录搬回原位：" + stranded.joinToString { it.path } +
+                    "。数据仍完整保存在 ${preserve.path}（既没有删除、也没有覆盖任何内容）；" +
+                    "本次重建按失败处理，所以没有写 stamp —— 下次启动会先尝试自动归位。",
+            )
         }
     }
 
@@ -519,6 +605,24 @@ class RuntimeProvisioner(
             )
         }
         target.deleteRecursively()
+        // P1a: a recursive delete that could not finish must never be reported as a rebuild.
+        // The call above returns `false` for a tree it could not take apart (a directory whose
+        // parent is not writable, a mode the filesystem refuses) and that result used to be
+        // dropped, so 「重建运行时」 said success, the extraction that followed failed on the very
+        // node the delete was supposed to remove, and the failure card came back with the same
+        // text on every tap — a button that could not do anything. Naming what is left is the
+        // actionable half: which path, and why it is usually there (guest-side `chmod`).
+        if (target.exists()) {
+            val left = runCatching {
+                target.walkTopDown().take(5).joinToString("、") { it.path }
+            }.getOrNull().orEmpty()
+            throw ProvisioningException(
+                "没能删净 ${target.path}（$why）：还有节点删不掉" +
+                    (if (left.isNotEmpty()) "，例如 $left" else "") +
+                    "。常见原因是这些节点的父目录不可写（guest 里 chmod 过）或文件系统拒绝删除。" +
+                    "运行时**没有**被重建，本次按失败处理，不会假装成功。",
+            )
+        }
     }
 
     // ------------------------------------------------------------ payload state
@@ -635,6 +739,15 @@ class RuntimeProvisioner(
      * refused. This is the same rule [TarExtractor.resolveSafely] enforces in the other
      * direction (nothing may be *written* outside the destination).
      *
+     * ## What happens when a delete fails
+     *
+     * Every way this can fail now lands in [payloadWarnings] instead of being dropped on the
+     * floor: a victim whose canonical path cannot be resolved, one that now resolves outside
+     * the volatile tree (the gate above), and a `delete()` that returns false while the node
+     * is demonstrably still there. Recording the payload's new state right afterwards means
+     * the next boot will not re-extract it and therefore will not retry the delete — so if
+     * this were silent, the stale file would be invisible forever.
+     *
      * @param newList this APK's list for the payload, already read and parsed by the caller.
      */
     private fun prunePayload(payload: Payload, newList: List<String>?) {
@@ -649,9 +762,17 @@ class RuntimeProvisioner(
         val root = runCatching { paths.runtime.canonicalPath }.getOrNull() ?: return
         PayloadPrune.victims(old, new, present).forEach { relative ->
             val target = File(paths.runtime, relative)
-            val canonical = runCatching { target.canonicalPath }.getOrNull() ?: return@forEach
-            if (!PayloadPrune.within(root, canonical)) return@forEach
-            runCatching { target.delete() }
+            val canonical = runCatching { target.canonicalPath }.getOrNull() ?: run {
+                payloadWarnings += "$relative（规范路径读不出来，未删除）"
+                return@forEach
+            }
+            if (!PayloadPrune.within(root, canonical)) {
+                payloadWarnings += "$relative（已指向易失树之外，按规则拒绝删除）"
+                return@forEach
+            }
+            if (!runCatching { target.delete() }.getOrDefault(false) && existsWithoutFollowing(target)) {
+                payloadWarnings += "$relative（删除失败）"
+            }
         }
     }
 
@@ -674,16 +795,29 @@ class RuntimeProvisioner(
      *        this APK does not say; then no state is written and the next attempt reads it
      *        as changed, which is the safe direction).
      * @param list the packaged list, already read and parsed.
+     * @return null when both files now hold what they should, otherwise one entry for
+     *   [payloadWarnings]. The two failures are not the same size and the sentence says so:
+     *   a **digest** that did not land means the payload is re-extracted on the next boot
+     *   (safe, and self-healing — the digest is what says "this payload is done"); a **list**
+     *   that did not land leaves the previous list in place, so the next prune compares
+     *   against a stale but still payload-owned set (safe by the same arithmetic, and the
+     *   reason it is only a warning rather than a failure).
      */
-    private fun recordPayloadState(payload: Payload, digest: String?, list: List<String>?) {
-        if (digest == null) return
+    private fun recordPayloadState(payload: Payload, digest: String?, list: List<String>?): String? {
+        if (digest == null) return null
         val dir = paths.payloadStateDir().also { it.mkdirs() }
-        writeStampAtomically(File(dir, "${payloadMetaName(payload)}.digest"), digest + "\n")
-        if (list == null) return
-        writeStampAtomically(
-            File(dir, "${payloadMetaName(payload)}.list"),
-            PayloadPrune.encodeList(list),
-        )
+        val name = payloadMetaName(payload)
+        val digestWritten = writeStampAtomically(File(dir, "$name.digest"), digest + "\n")
+        val listWritten = list?.let {
+            writeStampAtomically(File(dir, "$name.list"), PayloadPrune.encodeList(it))
+        } ?: true
+        if (digestWritten && listWritten) return null
+        return "$name（" +
+            buildList {
+                if (!digestWritten) add("digest 没写成，下次启动会重新解包这个载荷")
+                if (!listWritten) add("list 没写成，下次 prune 只能用旧清单")
+            }.joinToString("；") +
+            "）"
     }
 
     private fun extractAsset(assetName: String, into: File) {
@@ -977,8 +1111,23 @@ class RuntimeProvisioner(
             ?: throw ProvisioningException("node archive had no top-level directory")
         val target = File(paths.rootfs, "opt/node")
         target.parentFile?.mkdirs()
-        mergeTreeOver(top, target)
+        val notMerged = mergeTreeOver(top, target)
         deleteTreeInsideVolatile(staging, "node 暂存目录")
+        // 失败 ⇒ 不许记账。 `mergeTreeOver` used to swallow a copy or symlink it could not
+        // perform (`runCatching { … }` with no result check), and `provision` then recorded
+        // node's digest right afterwards — so the tree kept whatever the blocked node was, the
+        // payload was never planned again, and nothing on screen ever said so. Throwing here
+        // means the digest is *not* written, so the next boot re-extracts node and tries again
+        // (and prune gets another chance at the node that is in the way).
+        if (notMerged.isNotEmpty()) {
+            throw ProvisioningException(
+                "node 载荷有 ${notMerged.size} 个文件没能覆盖写入（例如 " +
+                    notMerged.take(3).joinToString("、") +
+                    "）。这些路径上多半有删不掉的节点（非空目录、只读父目录）。" +
+                    "本次**没有**记录 node 的载荷状态，所以下次启动会重试，" +
+                    "而不是把半份树当成最新。",
+            )
+        }
         // Expose it on PATH the way the guest expects.
         guestSymlink("/usr/local/bin/node", "/opt/node/bin/node")
         guestSymlink("/usr/local/bin/npm", "/opt/node/bin/npm")
@@ -998,22 +1147,63 @@ class RuntimeProvisioner(
      * Symlinks are recreated as symlinks (a dereferenced `npm -> ../lib/...` copy is a
      * different, larger tree), and the executable bit is re-applied because
      * `File.copyTo` does not carry permissions.
+     *
+     * ## Why failures are returned rather than swallowed
+     *
+     * Every operation here can fail for a reason that is not the archive's fault: a
+     * **non-empty directory** where the payload wants a file (`copyTo` answers
+     * `FileAlreadyExistsException`/`EISDIR`), a directory whose parent cannot be created, a
+     * directory listing that cannot be read, a symlink that cannot be recreated because
+     * something undeletable is in the way. The caller is the node payload, whose destination
+     * (`/opt/node`) is the one the guest itself writes into — so those shapes are reachable
+     * with `npm -g` and a stray `mkdir`. Swallowing them and then recording the payload's
+     * digest is the one combination that hides a broken tree permanently: no exception, no
+     * retry, no page. So each failure is collected and named, and `extractNode` turns a
+     * non-empty list into a `ProvisioningException` **before** the payload state is written.
+     *
+     * The `setExecutable` result is deliberately *not* part of the verdict: it returns false
+     * on a filesystem that refuses `chmod` without throwing, and aborting the whole payload
+     * for that would re-extract Node (57 MiB compressed, a few hundred MB written) on every
+     * boot forever. The copy having succeeded is the criterion; the exec bit is best effort,
+     * exactly as before.
+     *
+     * @return the source paths that could not be merged into [to]; empty when the whole tree
+     *   was merged.
      */
-    private fun mergeTreeOver(from: File, to: File) {
+    private fun mergeTreeOver(from: File, to: File): List<String> {
+        val failed = mutableListOf<String>()
         val stack = ArrayDeque<Pair<File, File>>()
         stack.addLast(from to to)
         while (stack.isNotEmpty()) {
             val (source, destination) = stack.removeLast()
             destination.mkdirs()
-            for (child in source.listFiles() ?: continue) {
+            // `listFiles()` answers null for an unreadable directory, and `continue` used to
+            // read that as "this subtree is empty" — an unreadable directory is not an empty
+            // one, so it is named instead.
+            val children = source.listFiles()
+            if (children == null) {
+                failed += source.path
+                continue
+            }
+            for (child in children) {
                 val target = File(destination, child.name)
                 val path = child.toPath()
                 if (java.nio.file.Files.isSymbolicLink(path)) {
-                    val link = runCatching { java.nio.file.Files.readSymbolicLink(path) }.getOrNull() ?: continue
-                    runCatching {
-                        if (java.nio.file.Files.isSymbolicLink(target.toPath()) || target.exists()) target.delete()
-                        java.nio.file.Files.createSymbolicLink(target.toPath(), link)
+                    val link = runCatching { java.nio.file.Files.readSymbolicLink(path) }.getOrNull()
+                    if (link == null) {
+                        failed += child.path
+                        continue
                     }
+                    val linked = runCatching {
+                        if (java.nio.file.Files.isSymbolicLink(target.toPath()) || target.exists()) {
+                            // A non-empty directory here is NOT deleteRecursively'd: whatever is
+                            // inside it is the user's, and the failure is named instead.
+                            if (!target.delete()) return@runCatching false
+                        }
+                        java.nio.file.Files.createSymbolicLink(target.toPath(), link)
+                        true
+                    }.getOrDefault(false)
+                    if (!linked) failed += child.path
                     continue
                 }
                 if (child.isDirectory) {
@@ -1021,12 +1211,15 @@ class RuntimeProvisioner(
                     continue
                 }
                 if (!child.isFile) continue
-                runCatching {
+                val copied = runCatching {
                     child.copyTo(target, overwrite = true)
                     if (child.canExecute()) target.setExecutable(true, false)
-                }
+                    true
+                }.getOrDefault(false)
+                if (!copied) failed += child.path
             }
         }
+        return failed
     }
 
     /**
@@ -1160,29 +1353,32 @@ class RuntimeProvisioner(
     }
 
     /**
-     * Re-assert the `/usr/local/bin/<tool>` symlink and make sure the file it points at
-     * exists in **both** directories a launch path can resolve it through.
+     * Re-assert the `/usr/local/bin/<tool>` symlink for every tool whose binary the agent
+     * dir actually holds.
      *
-     * ## Why this is not just [installTool] again
+     * ## What this does and does not do
      *
-     * `PiPaths.agentBinDir` explains the two directories. Two separate things can empty
-     * one of them after provisioning has already run, and neither re-runs `installTool`,
-     * because `ensureReady` returns early while the stamp is current:
+     * It **does** re-create the guest-visible symlink (`/usr/local/bin/<name>` →
+     * `/root/.pi/agent/bin/<name>`) and re-apply the exec bit, for each name in
+     * [TOOL_BINARIES]. It **does not** restore a missing binary, and it cannot: the two host
+     * directories this used to bridge are one directory now (`PiPaths.agentBinDir()` ==
+     * `rootfsAgentBinDir()` since 2026-09-23), so there is no surviving copy to copy from,
+     * and reading the APK asset here is exactly the cost the fast path is not allowed to pay.
+     * `publishTool` therefore returns without touching the symlink when the target is absent.
      *
-     *  - `PiEngineHost.migrateGuestAgentDir` runs **before** provisioning on every boot
-     *    (`PiEngineHost.kt:223`, then `:227`) and *moves* the children of the rootfs
-     *    agent dir into the durable one. It skips an entry whose target already exists,
-     *    so a complete install is left alone — but an install that predates this fix
-     *    has no `agentBinDir` yet, and there its `bin/` is renamed away, taking the
-     *    rootfs copy with it. That is the terminal's copy, and only this function puts
-     *    it back.
-     *  - `wipe()` deletes `rootfsAgentBinDir` wholesale on a revision bump. `installTool`
-     *    recreates it on that same boot, so this is the belt to that pair of braces.
+     * ## Why it still runs on every boot
      *
-     * Copying from whichever copy survived keeps the two in step without needing the
-     * asset, which is what makes this callable from the early-return path where nothing
-     * has been unpacked yet. `overwrite = false` is the point: this repairs a missing
-     * file and must never race a fresh extraction into downgrading one.
+     * Because the *symlink* is the part that can go missing without the binary doing so:
+     * `wipe()` and a payload re-extract both replace `/usr/local/bin`, and `installTool` is
+     * not re-run when the stamp matches. Cheap: two `isFile` probes.
+     *
+     * ## The consequence, stated so it is not mistaken for a repair
+     *
+     * If `bin/rg` itself disappears (a guest `rm`, or a future APK whose `ripgrep.list` drops
+     * the literal), nothing here brings it back — the re-extract only happens when the
+     * *packaged digest* changes. `installTool` and the payload lists are the only writers;
+     * see `tools/fetch-runtime.mjs`'s `ripgrep`/`fd` blocks for why both spellings
+     * (`rootfs/root/.pi/agent/bin/<tool>` and `rootfs/usr/local/bin/<tool>`) are listed.
      */
     private fun ensureToolsVisible() {
         TOOL_BINARIES.forEach { publishTool(it) }
@@ -1190,8 +1386,7 @@ class RuntimeProvisioner(
 
     /**
      * One tool's guest-visible spelling: `/usr/local/bin/<name>` pointing at the guest
-     * path `/root/.pi/agent/bin/<name>`, plus the guarantee that both host directories
-     * that guest path can mean actually hold the file.
+     * path `/root/.pi/agent/bin/<name>`, plus the exec bit on the file it names.
      *
      * The symlink **must** name the guest path, not a host path — see [guestSymlink].
      */
@@ -1207,14 +1402,55 @@ class RuntimeProvisioner(
     }
 
     /**
-     * Guest configuration that Android cannot supply.
+     * The guest's **required configuration**, repaired idempotently — and the one function
+     * both provisioning paths call.
      *
-     * DNS is the important one: glibc inside proot cannot see Android's
-     * per-network resolver, so without a static `resolv.conf` every name lookup
-     * fails while the network is otherwise fine — the single most confusing
-     * failure mode of a proot'd userland (docs/pi-android-app-design.md §13).
+     * ## What it guarantees
+     *
+     *  - the two files Android cannot supply: `etc/resolv.conf` (glibc inside proot cannot see
+     *    Android's per-network resolver, so without a static one every name lookup fails while
+     *    the network is otherwise fine — the single most confusing failure mode of a proot'd
+     *    userland, docs/pi-android-app-design.md §13) and `etc/hosts`;
+     *  - the two directories pi and the app both address: `<rootfs>/root/.pi/agent` (pi's
+     *    home, the guest's `/root/.pi/agent`) and `<rootfs>/workspace`;
+     *  - plus the guest's group database ([ensureAndroidGroups]), which used to ride on the
+     *    old `configureGuest()` and must keep running on **every** boot.
+     *
+     * ## Why the check and the write are the same function (the P0 defect)
+     *
+     * `provision` records each payload's state as soon as it is extracted and writes the stamp
+     * only after this call. So a failure *here* — the realistic one being `ENOSPC` right after
+     * the extraction filled the disk — leaves every payload recorded and the stamp unwritten;
+     * the next launch then finds `plan` empty and goes to [finishCurrent], which used to skip
+     * the configuration entirely. It wrote the stamp, the failure card disappeared, and
+     * `/etc/resolv.conf` was missing for good: a "successful" boot whose guest cannot resolve
+     * a single name. [finishCurrent] now calls *this* function, so the missing file is what
+     * decides that the write happens — there is no second, unguarded copy of the write path to
+     * forget.
+     *
+     * ## What it deliberately does not do
+     *
+     * When everything is in place it writes **nothing** (and reads no content): the fast path's
+     * extra cost is the four existence probes behind [PiPaths.missingGuestConfig]. Changing the
+     * *content* of the two files is therefore not repaired by this function — that is a
+     * build/version decision and belongs to the payload revision, exactly as it was before.
+     *
+     * @return null when nothing needed doing, otherwise the one-line warning to show (today:
+     *   only the `/etc/group` repair can produce one, and it verifies its own write).
      */
-    private fun configureGuest(): String? {
+    private fun ensureGuestConfig(): String? {
+        if (paths.missingGuestConfig().isNotEmpty()) configureGuestFiles()
+        return ensureAndroidGroups()
+    }
+
+    /**
+     * Write the guest's required configuration, unconditionally.
+     *
+     * Only called by [ensureGuestConfig] after it has established that something is missing —
+     * so a boot that finds the tree configured pays nothing for this. Fields are idempotent:
+     * every path here is either overwritten with the same bytes or `mkdirs()`-ed.
+     */
+    private fun configureGuestFiles() {
         val etc = File(paths.rootfs, "etc").also { it.mkdirs() }
         File(etc, "resolv.conf").writeText(
             """
@@ -1233,15 +1469,86 @@ class RuntimeProvisioner(
         )
 
         // pi's home inside the guest: the same layout a desktop install has, so
-        // settings, skills, extensions and themes are interchangeable.
-        File(paths.rootfs, "root/.pi/agent").mkdirs()
-        File(paths.rootfs, "workspace").mkdirs()
-
-        // The guest's group database, repaired from this process's own supplementary
-        // groups. See [ensureAndroidGroups]; the returned warning travels to the boot
-        // screen's last step label.
-        return ensureAndroidGroups()
+        // settings, skills, extensions and themes are interchangeable. `paths.agentDir` and
+        // `paths.workspaceBase` are the *same* two spellings `PiPaths.guestConfigTargets()`
+        // checks, so "the function that writes them" and "the function that asks whether they
+        // are missing" cannot drift into two different directories.
+        paths.agentDir.mkdirs()
+        paths.workspaceBase.mkdirs()
     }
+
+    /**
+     * Recover durable directories a previous, interrupted 「重建运行时」 left parked in
+     * `<files>/pi/.preserve` ([DurablePreserve.recover]).
+     *
+     * ## Why this exists
+     *
+     * `wipe()` moves `rootfs/workspace/pi/workspaces` and `rootfs/root/.pi/agent` out of the
+     * tree, deletes the tree and moves them back. A process killed between the delete and the
+     * move-back leaves the user's sessions, workspaces and credentials in `.preserve` — and
+     * nothing in this app ever looked at that directory again, so a fresh, empty agent
+     * directory was the permanent outcome while the data sat on the same filesystem.
+     * `wipe()` now *fails* when its own move-back does not complete (so the stamp stays
+     * unwritten and the slow path runs again); this is the other half: the boot that finds a
+     * stash picks it up.
+     *
+     * ## Cost
+     *
+     * One `isDirectory` probe when there is no stash — the normal case on every boot. The
+     * `listFiles()` only happens when that directory exists, which is only ever true after an
+     * interrupted or failed repair. Called from both [provision] (before any extraction, so
+     * the directories are back before anything writes near them) and [finishCurrent].
+     *
+     * @return null when there was nothing to recover; otherwise one sentence for the boot
+     *   screen's label. A **stranded** item (both sides have content) is never deleted, never
+     *   overwritten and never hidden: it is reported, and the copy stays in `.preserve`.
+     */
+    private fun recoverStrandedDurableDirs(): String? {
+        val preserve = File(paths.home, DurablePreserve.PRESERVE_DIR)
+        if (!preserve.isDirectory) return null
+        val recovery = runCatching {
+            DurablePreserve.recover(
+                DurableLayout.durableDirs(paths.home, paths.runtime),
+                preserve,
+            )
+        }.getOrElse { error ->
+            return "上次重建搁浅的耐久目录没能自动归位（${preserve.path}）：" +
+                "${error::class.java.simpleName}: ${error.message}。" +
+                "数据仍在那里，没有被删除、也没有被覆盖。"
+        }
+        if (!recovery.anything) return null
+        return buildString {
+            if (recovery.restored.isNotEmpty()) {
+                append("已归位上次重建搁浅的耐久目录（${recovery.restored.size} 项）：")
+                append(recovery.restored.joinToString("、") { it.path })
+                append("。")
+            }
+            if (recovery.stranded.isNotEmpty()) {
+                if (isNotEmpty()) append('\n')
+                append("上次重建有 ${recovery.stranded.size} 项没能归位（原位置已有内容，按保守策略一个字节都没动）：")
+                append(recovery.stranded.joinToString("、") { "${it.first.path} → ${it.second.path}" })
+                append("。数据仍完整保存在 ${preserve.path}，请先备份，不要直接删。")
+            }
+        }
+    }
+
+    /**
+     * The one sentence for [payloadWarnings], or null when this attempt had none.
+     *
+     * Deliberately names the consequence ("不会重试" / "下次启动会重新解包") rather than only
+     * the fact: these are the failures that used to be silent, and the reason they are silent
+     * is that the next attempt legitimately does something different, so no later error ever
+     * points back here.
+     */
+    private fun payloadWarning(): String? {
+        if (payloadWarnings.isEmpty()) return null
+        return "本次载荷收尾有 ${payloadWarnings.size} 处没能完成：" +
+            payloadWarnings.take(5).joinToString("、") +
+            (if (payloadWarnings.size > 5) "…" else "") +
+            "。旧残留会留在树里（不重解就不会重试，想清掉可以点「重建运行时」）；" +
+            "状态没写全的载荷会在下次启动重新解包。"
+    }
+
 
     /**
      * Make the guest's `/etc/group` know the gids this process actually has.
