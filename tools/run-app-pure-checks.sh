@@ -437,6 +437,7 @@ run_harness sessions \
   app.pi.session.PiSessionStoreCheckKt \
   "$ROOT/app/src/test/kotlin/app/pi/session/PiSessionStoreCheck.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/session/PiSessionStore.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/session/PiSessionIndex.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/session/SessionFileScan.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/session/SessionImport.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/session/SessionExportNaming.kt" \
@@ -457,6 +458,7 @@ run_harness session-identity \
   app.pi.session.SessionIdentityCheckKt \
   "$ROOT/app/src/test/kotlin/app/pi/session/SessionIdentityCheck.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/session/PiSessionStore.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/session/PiSessionIndex.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/session/SessionFileScan.kt" \
   "$ROOT/rpc/src/main/kotlin/app/pi/rpc/PiJson.kt" \
   "$ROOT/rpc/src/main/kotlin/app/pi/rpc/internal/Json.kt"
