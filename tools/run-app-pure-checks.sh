@@ -974,6 +974,18 @@ run_harness latex \
   "$ROOT/app/src/test/kotlin/app/pi/ui/render/PiLatexCheck.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/ui/render/PiLatex.kt"
 
+# app.pi.ui.render: **正文里的图片点开查看器**那条接线。库里那两个图片槽
+# （`MarkdownImage`/`MarkdownInlineImage`）根本不收指针，而出口（`viewedImage` → `PiImageViewer`）
+# 一直只接在工具栏/用户气泡那张 `ImageGridBlock` 上 —— 所以正文 markdown 画的图（本地与远端
+# 都一样）以前点了没反应。这个 harness 钉住三件事：交给查看器的**身份**（base64 逐字节、单行、
+# 标准字母表，关掉再打开要能命中缓存）、**没有第二条取字节的路**（只走 `GuestImageBytes.load`），
+# 以及那条路上的数字一个都没动（3 许可 / 8 MiB / 5·5·15 s / 64 MiB LRU / 45 s 负缓存）。
+run_harness markdown-image-tap \
+  app.pi.ui.render.PiMarkdownImageTapCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/ui/render/PiMarkdownImageTapCheck.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/ui/render/PiMarkdownImageTap.kt" \
+  "$ROOT/rpc/src/main/kotlin/app/pi/rpc/Commands.kt"
+
 # app.pi.ui.blocks: the transcript image cache's arithmetic — a byte-bounded LRU whose keys
 # are multi-megabyte payloads. Two properties matter and neither is visible in the UI: the
 # byte accounting must include the key itself (a cache that forgets what its keys weigh is a
