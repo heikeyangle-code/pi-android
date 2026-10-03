@@ -206,7 +206,7 @@ fun PiImageViewer(
  * ## Gestures
  *
  *  - **pinch** → scale, **drag while scaled** → pan (`detectTransformGestures`);
- *  - **double tap** → 1× ⇄ [DOUBLE_TAP_SCALE], clearing the pan;
+ *  - **double tap** → 1× ⇄ [MAX_SCALE]（到顶），清掉平移；
  *  - **tap on the picture** → nothing (it consumes the tap, so it cannot fall
  *    through to the backdrop);
  *  - **tap on the ground around the picture** → dismiss; the picture is laid out at
@@ -353,7 +353,7 @@ internal fun PiImageViewerSurface(
                                 // must not reach the backdrop's dismiss detector.
                                 onTap = {},
                                 onDoubleTap = {
-                                    scale = if (scale > 1f) 1f else DOUBLE_TAP_SCALE
+                                    scale = if (scale > 1f) 1f else MAX_SCALE
                                     pan = Offset.Zero
                                 },
                             )
@@ -500,13 +500,15 @@ private fun ClearViewerPlatformDim() {
     }
 }
 
-/** One pinch-out step from 1× to the detail view, and the double-tap's target. */
-private const val DOUBLE_TAP_SCALE = 3f
-
 /**
  * The zoom range. 1× is "fitted to the window" by construction, and the ceiling is
  * [MAX_SCALE] rather than infinity because past it a sampled bitmap is only being
  * magnified as blur.
+ *
+ * 双击直接跳到 [MAX_SCALE]，不再有第三个数字：用户要的是「双击放到最大、再双击回到原样」
+ * （相册里最基本的那个动作），而一个介于 1 与上限之间的中间档只会让人怀疑「为什么双击只放大
+ * 一点点」。它同时意味着双击之后一定还能再放大 —— 上限就是双击到的那一档，捏合的范围与它完全
+ * 重合（1×–8×）。
  */
 private const val MIN_SCALE = 1f
 private const val MAX_SCALE = 8f
