@@ -739,7 +739,10 @@ object DeviceSystemActions {
      *
      * 用平台自己的表（`MimeTypeMap`）而不是手写一张后缀表：手写的那张永远漏，而漏掉的后缀
      * 在被交出去时会被报成 `application/octet-stream` —— 一句对图片也照说的谎。
-     * 拿不到时给 `*/*`：那是"我不知道"的系统写法，让系统自己去挑，比编一个具体的错类型好。
+     * 拿不到时给通配 MIME —— 就是下面那两行返回的、三个字符构成的「星号、斜杠、星号」。**这三个
+     * 字符在这段块注释里不能连写**：星号紧跟斜杠会在这一行当场把注释关掉，而下面那些 `*` 开头的行
+     * 会变成代码（这个文件真的因此编译失败过一次，报的是「Expecting member declaration」）。它
+     * 是系统里"我不知道"的写法，让系统自己去挑，比编一个具体的错类型好。
      */
     fun mimeTypeForFileName(name: String): String {
         val suffix = name.substringAfterLast('.', "").lowercase(Locale.US)
