@@ -25,15 +25,13 @@ import kotlinx.serialization.json.jsonObject
  *
  * 三段，三种断言强度（与生成脚本的注释一一对应）：
  *
- *  ① `cases`（428 条）：`PiLatex.toUnicode(source)` 必须与 pi 的输出**逐字节**相同，
- *    pi 返回 `undefined` 的 16 条必须返回 `null`（原文回退）。这是本文件的全部意义。
- *  ② `knownUnported`（4 条）：pi 画得出来、端口画不出来（`\begin{…}` 那一族，需要
- *    `renderLayout`，`latex.ts:737`）。这里断言"**仍然不一样**"—— 它是一个**偏差锁**：
- *    Phase B 把 `\begin` 接上以后这条会红，提醒把那 4 条挪进 `cases`，而不是让
- *    "今天的不一样"悄悄变成"永远的不一样"。
- *  ③ `displayTargets`（114 条）：`renderLatex(src, {display:true})` 与行内不同的条目。
- *    只记录、不断言：那些正是堆叠分数与算子上限（`renderLayout`，Phase B）。把它们
- *    断言成"现在的行内结果"才是真正在骗人。
+ *  ① `cases`（432 条）：`PiLatex.toUnicode(source)` 必须与 pi 的输出**逐字节**相同，
+ *    pi 返回 `undefined` 的 16 条必须返回 `null`（原文回退）。行内的 `\begin{…}`
+ *    （矩阵/`cases`/`aligned`）也在这里 —— 环境分支不受 `display` 门控。
+ *  ② `displayTargets`（114 条）+ `delimiterDisplayTargets`（4 条）：pi 的**块级**输出
+ *    （堆叠分数、算子上限、上下两行的脚本、网格环境），逐字节断言。
+ *  ③ `delimiterDeviations`（9 条）+ `dollarProse`（220 条）：已知偏差的锁与 prose 语料
+ *    的"新误判 = 0"护栏，理由见各自的函数注释。
  *
  * 另外两条容易漏、但漏了会很难看的东西：
  *  - **哨兵不能进输出**：`NAMED_OPERATOR_START/END`（`PiLatex.kt` 里的 `\uE004`/`\uE005`）
@@ -103,7 +101,6 @@ private fun readable(value: Any?): String = when (value) {
 
 fun main() {
     val asserted = cases("cases")
-    val unported = cases("knownUnported")
 
     check("夹具条数不少于 $MINIMUM_CASES（防的是夹具被删空）", asserted.size >= MINIMUM_CASES, true)
     check("夹具里的公式名唯一", asserted.map { it.name }.toSet().size, asserted.size)
@@ -123,11 +120,10 @@ fun main() {
     fixtureVersionChecks()
     inlineChecks(asserted)
     delimiterChecks()
+    displayChecks()
     delimiterDeviationChecks()
     dollarProseChecks()
-    sentinelChecks(asserted + unported)
-    unportedChecks(unported)
-    recordDisplayTargets()
+    sentinelChecks(asserted)
 
     if (failures != 0) {
         println("latex: FAILED - $failures check(s)")
@@ -181,11 +177,7 @@ private fun delimiterChecks() {
         else check("定界符 ${case.name}（源：${readable(case.source)}）", actual, case.expected)
     }
     check("全部 ${entries.size} 条定界符用例与 pi 的 token 决策一致", matched, entries.size)
-    val targets = cases("delimiterDisplayTargets", field = "display")
-    println("定界符 display 目标（pi 当块级、这里当行内渲染；Phase B 的验收目标）：${targets.size} 条")
-    for (case in targets.take(2)) {
-        println("  例如 ${case.name}（源：${readable(case.source)}）→ pi display：${readable(case.expected)}")
-    }
+    // 这 4 条（pi 当块级、整段输出里有堆叠网格）由 [displayChecks] 逐字节断言。
 }
 
 /**
@@ -277,30 +269,42 @@ private fun sentinelChecks(all: List<Case>) {
 }
 
 /**
- * ② 偏差锁：这 4 条今天**必须**与 pi 不同。它们红起来的意思是"`\begin{…}` 已经
- * 接上了"，那时把这 4 条从 `knownUnported` 挪进 `cases`（生成脚本里也要挪，
- * 见其中 `KNOWN_UNPORTED`）。
+ * **块级排版**：夹具里每条公式的 `renderLatex(source, {display: true})`（114 条
+ * `displayTargets`）与每条块级定界符用例的 `preprocess` 输出（4 条
+ * `delimiterDisplayTargets`）都取自 pi 的真实输出，这里逐字节断言。
+ *
+ * 这一段是 Phase B 第一半的验收：堆叠分数、算子上限、`parseScripts` 的上下两行、
+ * 八种网格环境 + `cases`/`aligned`/`gather`/`split`，以及 `renderLayout` 的
+ * 居中/基线/受保护空格。行内环境（`\begin{…}` 那 4 条）在 `cases` 里断言。
  */
-private fun unportedChecks(unported: List<Case>) {
-    for (case in unported) {
-        val actual = PiLatex.toUnicode(case.source)
-        if (actual == case.expected) {
-            failures++
-            println(
-                "FAIL ${case.name} 已经与 pi 相同了（${readable(actual)}）——" +
-                    "说明 layout 那一支已经移植，把这 4 条从夹具的 knownUnported 挪进 cases",
-            )
-        } else {
-            println("PASS ${case.name} 仍然未移植（pi：${readable(case.expected)}，端口：${readable(actual)}）")
-        }
-    }
-}
-
-/** ③ 只报告：这些是 Phase B 的验收目标，记录在夹具里。 */
-private fun recordDisplayTargets() {
+private fun displayChecks() {
     val targets = cases("displayTargets")
-    println("display 目标（记录在夹具里、本阶段不断言）：${targets.size} 条")
-    for (case in targets.take(3)) {
-        println("  例如 ${case.name}（源：${case.source.replace("\n", "\\n")}）→ pi display：${readable(case.expected)}")
+    var matched = 0
+    for (case in targets) {
+        val actual = PiLatex.toUnicode(case.source, display = true)
+        if (actual == case.expected) matched++
+        else check("display ${case.name}（源：${readable(case.source)}）", actual, case.expected)
     }
+    check("全部 ${targets.size} 条 display 目标与 pi 的块级排版逐字节相同", matched, targets.size)
+
+    // 定界符那 4 条记的是 `preprocess` 的整段输出（含独占一段的 `\n` 包裹）。
+    val delimiterTargets = FIXTURE["delimiterDisplayTargets"]!!.jsonArray.map { element ->
+        val entry = element.jsonObject
+        Triple(
+            entry["name"]!!.jsonPrimitiveContent(),
+            entry["source"]!!.jsonPrimitiveContent(),
+            (entry["display"] as JsonPrimitive).contentOrNull,
+        )
+    }
+    var delimiterMatched = 0
+    for ((name, source, expected) in delimiterTargets) {
+        val actual = PiLatex.preprocess(source)
+        if (actual == expected) delimiterMatched++
+        else check("定界符 display $name（源：${readable(source)}）", actual, expected)
+    }
+    check(
+        "全部 ${delimiterTargets.size} 条块级定界符用例的整段输出与 pi 一致",
+        delimiterMatched,
+        delimiterTargets.size,
+    )
 }

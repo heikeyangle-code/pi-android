@@ -25,72 +25,41 @@ package app.pi.ui.render
  * the `\text`-family wrappers, spacing, `\left`/`\right`, size commands and
  * the character escapes.
  *
- * ## The one thing it deliberately does not port: pi's vertical layout
+ * ## pi 的竖直排版（layout）：已移植
  *
- * pi's `LatexParser` can also emit *layout nodes* and let `renderLayout`
- * (`latex.ts:723-809`) assemble them into a small character grid:
+ * `LatexParser` 会把一部分构造变成 *layout 节点*，再由 [renderLayout] 拼成一小块
+ * 字符网格（`latex.ts:737`）：
  *
- * * `\frac` stacks as numerator / a `─` rule / denominator when the formula is
- *   display math and the fraction was not reached through a script
- *   (`latex.ts:1017-1031`, the `shouldStack` branch; drawn at `latex.ts:748-761`);
- * * a display operator carrying limits (`\sum`, `\int`, `\lim`, …) puts them
- *   above and below the symbol instead of beside it (`latex.ts:1145-1148`,
- *   drawn at `latex.ts:762-780`);
- * * the eight grid environments (`array`, `matrix`, `smallmatrix`, `pmatrix`,
- *   `bmatrix`, `Bmatrix`, `vmatrix`, `Vmatrix`) become a delimited grid
- *   (`latex.ts:1301-1306` dispatches them, `latex.ts:1312-1355` pads the columns
- *   and adds the `⎛⎝ ⎞⎠` family); `cases` (`latex.ts:1286-1299`) and
- *   `aligned`/`gather`/`split` (`latex.ts:1257-1284`) are the same mechanism
- *   without delimiters.
+ * * `\frac` 在 display 下、且不是从脚本里进来的时候，排成
+ *   分子 / 一条 `─` / 分母（`latex.ts:1110` 的 `shouldStack`，画在 `latex.ts:748`）；
+ * * 带上下限的算子（`\sum`、`\int`、`\lim`…）在 display 下把限排到符号上下
+ *   （`latex.ts:1237`，画在 `latex.ts:762`）；
+ * * 八种网格环境（`array`、`matrix`、`smallmatrix`、`pmatrix`、`bmatrix`、
+ *   `Bmatrix`、`vmatrix`、`Vmatrix`）变成带定界符的网格（`latex.ts:1384-1386`
+ *   分派、`latex.ts:1422-1481` 补列宽并加 `⎛⎝ ⎞⎠` 一族）；`cases`（`latex.ts:1393`）
+ *   与 `aligned`/`gather`/`split`（`latex.ts:1355-1377`）是同一套机制、不带定界符；
+ * * `parseScripts` 在 display 下也能把上下标排成两行（`latex.ts:982` 的
+ *   `needsLayout`），判据有三层，见 [LatexParser.parseScripts] 的注释。
  *
- * None of that is drawn here. How far the difference reaches depends on the
- * construct, because pi gates only two of the three on `display`:
+ * 三处里只有两处被 `display` 门控（分数与算子上限）；**环境不受门控**：`\begin`
+ * 直接进 [LatexParser.parseEnvironment]（`latex.ts:1183`），多行一定变成 layout
+ * 节点，而 `renderLatex` 只要收过节点就一定跑 [renderLayout]
+ * （`latex.ts:1497-1505`）。所以行内的 `$\begin{pmatrix}…\end{pmatrix}$` 在 pi 里
+ * 也是网格，这里也一样。
  *
- * * `\frac` (`latex.ts:1018`) and operator limits (`latex.ts:1145`) are
- *   **block-only** differences. pi renders an inline `$…$` token with
- *   `renderLatex(text)` (`packages/tui/src/components/markdown.ts:649`), where
- *   `display` is false and both are off, and a `$$…$$` token with
- *   `renderLatex(text, { display: true })` (`markdown.ts:509`), where they are
- *   on; each rendered line is then pushed separately (`markdown.ts:511-513`).
- * * the environment branch is **not** gated: `\begin` goes straight to
- *   `parseEnvironment` (`latex.ts:1090-1091`), a multi-row matrix always becomes
- *   a layout node (`latex.ts:1350-1354`), and `renderLatex` runs `renderLayout`
- *   whenever any node was collected, whatever `display` says
- *   (`latex.ts:1382-1385`). pi therefore draws the grid for an inline
- *   `$\begin{pmatrix}…\end{pmatrix}$` as well.
+ * **网格能不能画到屏幕上，是另一件事（PiMarkdown 侧）。** [preprocess] 把渲染结果
+ * 写回 markdown *源文本*，而渲染器的 annotator 会把段落内的换行变成**空格**
+ * （`MarkdownAnnotatorConfig.eolAsNewLine` 默认 `false`：
+ * `annotator/AnnotatedStringKtx.kt` 的 `EOL -> if (eolAsNewLine) append('\n') else
+ * append(' ')`）。所以块级公式必须走一条**保行**的通道（库的 math 节点 + `custom`
+ * 槽的组件，或一个专用围栏），否则这块网格会在出门时被压回一行 —— 那比不画更糟。
+ * 通道不在这个文件里；[toUnicode] 只保证"算出来的字符串与 pi 逐字节相同"。
  *
- * So on a phone the visible fallbacks are exactly these:
- *
- * | construct | pi, inline `$…$` | pi, inside `$$…$$` | this port |
- * |---|---|---|---|
- * | `\frac{a}{b}` | `a/b` | stacked, with a rule between | `a/b` — pi's inline form (`latex.ts:1030`), so it matches inline and differs in block |
- * | `\sum_{i=1}^{n}` | `∑ᵢ₌₁ⁿ` | limits above and below | `∑ᵢ₌₁ⁿ` — pi's inline form (`latex.ts:1150-1157`), so it matches inline and differs in block |
- * | `\begin{pmatrix}…\end{pmatrix}` | a bracketed grid | a bracketed grid | `null`, so the caller prints the formula exactly as written — this one differs in **both** |
- *
- * **Why porting the layout function alone would not be enough.** [preprocess]
- * substitutes a rendered formula into the markdown *source* before the parser
- * runs, and the renderer's annotator turns an end of line inside a paragraph
- * into a **space**: `MarkdownAnnotatorConfig.eolAsNewLine` defaults to `false`
- * (`multiplatform-markdown-renderer/.../model/MarkdownAnnotatorConfig.kt`) and
- * the annotator reads `MarkdownTokenTypes.EOL -> if (eolAsNewLine) append('\n')
- * else append(' ')` (`.../annotator/AnnotatedStringKtx.kt:357`). A grid computed
- * here would be flattened back into one line by the renderer on the way out, so
- * pi's layout needs a channel that preserves line structure — a fence, or a
- * block-level math component — before a port would be visible. That is a
- * rendering-architecture change, not a change to this parser; until it exists,
- * porting `renderLayout` would produce a correct string the app cannot draw,
- * which is worse than the fallback above.
- *
- * Anything outside the ported subset makes [PiLatex.toUnicode] return `null`,
- * and the caller then leaves the source text alone \u2014 pi's own behaviour for a
- * formula it cannot render (`markdown.ts:509` and `:649` both fall back to
- * `latexToken.raw`). Printing `\begin{pmatrix} a & b \end{pmatrix}` verbatim is
- * honest; drawing a grid we cannot draw would not be.
- *
- * **Known limit, stated plainly:** there is no math-typesetting engine here and
- * none is being added. A formula either reduces to the Unicode pi's own inline
- * path would print, or it is shown as written. `docs/known-gaps.md` A2 and
- * `docs/gap-disposition.md` section 10.1 record the same trade.
+ *  * **Known limit, stated plainly:** 这里没有、也不会加一个真正的排版引擎。一条公式
+ * 要么归约成 pi 自己会画的那串 Unicode（含上面那块网格），要么整条按原文显示
+ * （pi 的回退：`markdown.ts:509`、`:649` 都打印 `latexToken.raw`）。`\begin{pmatrix}`
+ * 画不出来时把原文印出来是诚实的；画一块自己都算不对的网格不是。
+ * `docs/known-gaps.md` §A2 记着当前的偏差与证据。
  */
 internal object PiLatex {
 
@@ -731,27 +700,47 @@ internal object PiLatex {
     )
 
     /**
-     * `latex.ts:1376` `renderLatex`: the Unicode approximation of one formula,
-     * or `null` when it uses something this port does not implement.
+     * `latex.ts:1488` `renderLatex`：一条公式的 Unicode 近似，或 `null`（用到了这个
+     * 移植不认识的东西时）。
      *
-     * @param display accepted for parity with pi's signature. It selects the
-     *   stacked layout, which is not ported (see the class note), so it changes
-     *   nothing here; the caller decides whether a block formula gets its own
-     *   line. pi's inline call site passes nothing, i.e. `display = false`
-     *   (`markdown.ts:649`), and for an inline formula without an environment
-     *   this function then reproduces pi exactly: the `shouldStack` branch
-     *   (`latex.ts:1018`) and the display-limits branch (`latex.ts:1145`) are the
-     *   only `display`-gated ones, and pi turns both off. Note that pi's
-     *   environment branch (matrices, `cases`, `aligned`) is **not**
-     *   `display`-gated, so pi renders those even inline while this port reports
-     *   the formula unsupported — which is why `display` does not fully decide
-     *   this function's coverage.
+     * `display` 与 pi 的同名参数同义（`markdown.ts:649` 行内传 `false`、
+     * `markdown.ts:509` 块级传 `true`），它决定三件事：
+     *  - `\frac` 是否堆叠（`latex.ts:1110` 的 `shouldStack`）；
+     *  - 带上下限的算子是否把限排到上下（`latex.ts:1237`）；
+     *  - `parseScripts` 里的脚本是否变成上下两行（`latex.ts:982` 的 `needsLayout`）。
+     *
+     * 环境（矩阵、`cases`、`aligned`）**不受** `display` 门控：`\begin` 直接进
+     * `parseEnvironment`（`latex.ts:1183`），多行一定变成 layout node，而只要收过
+     * layout node 就一定会跑 [renderLayout] —— 所以 pi 连行内的 `\begin{pmatrix}`
+     * 也画网格，这里也一样。
      */
     fun toUnicode(source: String, display: Boolean = false): String? {
-        val parser = LatexParser(source)
-        val rendered = parser.parseSequence() ?: return null
-        if (!parser.finished) return null
-        return normalizeOutput(rendered)
+        val nodes = ArrayList<LayoutNode>()
+        val parser = LatexParser(source, nodes, display)
+        val rendered = parser.render() ?: return null
+        if (nodes.isEmpty()) return rendered.replace(PROTECTED_SPACE, " ")
+        return finishLayout(renderLayout(rendered, nodes))
+    }
+
+    /**
+     * `latex.ts:1488-1506` `renderLatex` 的收尾：算出网格后剥掉**所有非空行的公共
+     * 左缩进**、逐行 `trimEnd`、再整体 `trimEnd`，最后把 [PROTECTED_SPACE] 换回普通
+     * 空格。
+     *
+     * 两处容易抄错的细节：
+     *  - 缩进用的是 `line.length`（UTF-16 长度）而不是显示宽度（pi 就是 `slice`），
+     *    所以一行里有 CJK 时剥掉的字符数与列数不是一回事；
+     *  - 全是空行时 `Math.min(...[])` 在 JS 里是 `Infinity`，每一行都会被切空 ——
+     *    这里用 `Int.MAX_VALUE` 复刻同一个结果（返回空串）。
+     */
+    private fun finishLayout(layout: Layout): String {
+        val lines = layout.lines
+        val indentation = lines.filter { it.trim().isNotEmpty() }
+            .minOfOrNull { it.length - it.trimStart().length } ?: Int.MAX_VALUE
+        return lines
+            .joinToString("\n") { it.drop(indentation).trimEnd() }
+            .trimEnd()
+            .replace(PROTECTED_SPACE, " ")
     }
 
     /**
@@ -776,21 +765,15 @@ internal object PiLatex {
     }
 
     /**
-     * The block-math path: `markdown.ts:505-517` renders a `latexBlock` token
-     * with `display: true`. On a terminal that means stacked fractions, operator
-     * limits and matrix grids through `renderLayout` (`latex.ts:723-809`), which
-     * this port does not draw (see the class note — and note that the class note
-     * also explains why the missing piece is a line-preserving channel, not this
-     * function). What this does keep is pi's other display-math decision: the
-     * result is laid out as **its own line block** (`markdown.ts:511-513` pushes
-     * each rendered line separately), so a display formula is never glued into
-     * the middle of a sentence. That is the part worth keeping on a phone, and
-     * it is why an unrenderable `$$...$$` still gets its own paragraph while an
-     * inline one just sits in the text.
+     * 块级公式：`markdown.ts:505-517` 用 `display: true` 渲染一个 `latexBlock`，
+     * 于是 `\frac` 堆叠、算子的限上下排、网格环境成块（见类注释）。
      *
-     * The `\n` padding is what makes that paragraph break visible through the
-     * markdown source the caller is rewriting; it is not pi's output (pi emits
-     * whole lines into its own text buffer).
+     * `display` 之外还有 pi 的另一个决定：整块结果**独占一段**
+     * （`markdown.ts:511-513` 把每一行单独推进文本缓冲），所以显示式公式永远不会被
+     * 粘进句子中间。返回的 `\n` 包裹就是让这件事透过"写回 markdown 源文本"这个
+     * 机制看得见 —— pi 那边是直接把行推进自己的缓冲，没有这两个 `\n`。
+     *
+     * 能不能真的画出多行，取决于调用方有没有保行通道（类注释末尾）。
      */
     fun toDisplayUnicode(source: String): String? {
         val body = source.trim().removePrefix("$$").removeSuffix("$$").trim()
@@ -805,6 +788,258 @@ internal object PiLatex {
         val rendered = toUnicode(body.trim(), display = true) ?: return null
         return "\n" + rendered + "\n"
     }
+
+    // ---------------------------------------------------------------------
+    // 竖直排版：latex.ts:681-809 的 layout 节点与 renderLayout
+    // ---------------------------------------------------------------------
+
+    /**
+     * 一个待排版的节点（`latex.ts:681-696` 的 `LayoutNode`）。
+     *
+     * `Fraction`/`Operator`/`Script` 的字段都是**已经 normalizeOutput 过的文本**
+     * （可能还含布局标记，所以 [renderLayout] 对它们递归）；`Matrix` 的 `lines` 是
+     * 已经拼好的行 —— `parseSequence` 的 `.` 那一支还要**就地**往最后一行追加一个
+     * 字符，所以是 `MutableList`。
+     */
+    private sealed interface LayoutNode {
+        class Fraction(val numerator: String, val denominator: String) : LayoutNode
+        class Operator(val operator: String, val lower: String?, val upper: String?) : LayoutNode
+        class Script(val lower: String?, val upper: String?) : LayoutNode
+        class Matrix(val lines: MutableList<String>, val baseline: Int) : LayoutNode
+    }
+
+    /** 一块排好的字符网格（`latex.ts:688-692`）：行、总宽、基线所在行号。 */
+    private class Layout(val lines: List<String>, val width: Int, val baseline: Int)
+
+    /**
+     * `latex.ts:707` `padLayoutLine`：左对齐（或居中）补到 [width] 列。
+     *
+     * `centered` 时左边是 `floor(padding / 2)`，余下的都在右边 —— pi 就是这么写的，
+     * 奇数差的那一列留在右边（差值只能是 0 或 1，因为它只用来居中小于等于宽度的内容）。
+     */
+    private fun padLayoutLine(line: String, width: Int, centered: Boolean = false): String {
+        val padding = maxOf(0, width - layoutWidth(line))
+        val left = if (centered) padding / 2 else 0
+        return " ".repeat(left) + line + " ".repeat(padding - left)
+    }
+
+    /**
+     * `latex.ts:717` `joinLayouts`：把同一行里的若干块**按基线对齐**横向拼起来，
+     * 每块补到自己的宽度；空行只 `trimEnd` 右边。
+     *
+     * 基线是"块内第几行与整行的文字基线对齐"：`baseline` 越大说明这块越靠下。
+     * 整行的基线取各块的最大值，所以比它靠上的块（`baseline` 小）会在下面留白。
+     */
+    private fun joinLayouts(layouts: List<Layout>): Layout {
+        if (layouts.isEmpty()) return Layout(listOf(""), 0, 0)
+        val baseline = layouts.maxOf { it.baseline }
+        val below = layouts.maxOf { it.lines.size - it.baseline - 1 }
+        val lines = ArrayList<String>(baseline + below + 1)
+        for (row in 0..baseline + below) {
+            val builder = StringBuilder()
+            for (layout in layouts) {
+                val sourceRow = row - baseline + layout.baseline
+                builder.append(
+                    if (sourceRow >= 0 && sourceRow < layout.lines.size) {
+                        padLayoutLine(layout.lines[sourceRow], layout.width)
+                    } else {
+                        " ".repeat(layout.width)
+                    },
+                )
+            }
+            lines.add(builder.toString().trimEnd())
+        }
+        return Layout(lines, layouts.sumOf { it.width }, baseline)
+    }
+
+    /**
+     * `latex.ts:737` `renderLayout`：把带布局标记的文本画成字符网格。
+     *
+     * `source` 是解析阶段拼出来的字符串，里面每个布局节点都是一个
+     * `LAYOUT_MARKER_START <下标> LAYOUT_MARKER_END`；标记之间的**字面文本**按
+     * pi 的规则 trim，而紧挨着 `matrix` 的空格要保住（`latex.ts:751-759`、
+     * `:815-819`）—— 那是矩阵与左右文字之间唯一的分隔，`\left( \begin{matrix}…`
+     * 这类写法全靠它。
+     *
+     * 一条公式的**多行来源**在这里汇合：分数（上下叠）、算子上限、脚本（上下标）、
+     * 矩阵（多行一起进 [Matrix]），以及源文本里 `\\` 换出来的换行。
+     */
+    private fun renderLayout(source: String, nodes: List<LayoutNode>): Layout {
+        val renderedLines = ArrayList<String>()
+        var firstBaseline = 0
+        for (sourceLine in source.split('\n')) {
+            val layouts = ArrayList<Layout>()
+            var position = 0
+            var previousNode: LayoutNode? = null
+            for (match in LAYOUT_MARKER_PATTERN.findAll(sourceLine)) {
+                val index = match.range.first
+                val node = nodes.getOrNull(match.groupValues[1].toInt()) ?: continue
+                if (index > position) {
+                    val sliced = sourceLine.substring(position, index)
+                    val trimmed = (if (previousNode != null) sliced.trimStart() else sliced).trimEnd()
+                    val preserveLeadingSpace = previousNode is LayoutNode.Matrix && sliced.firstOrNull()?.isWhitespace() == true
+                    val preserveTrailingSpace = node is LayoutNode.Matrix && sliced.lastOrNull()?.isWhitespace() == true
+                    val text = if (trimmed.isNotEmpty()) {
+                        (if (preserveLeadingSpace) " " else "") + trimmed + (if (preserveTrailingSpace) " " else "")
+                    } else if (preserveLeadingSpace || preserveTrailingSpace) {
+                        " "
+                    } else {
+                        ""
+                    }
+                    layouts.add(Layout(listOf(text), layoutWidth(text), 0))
+                }
+                when (node) {
+                    is LayoutNode.Fraction -> {
+                        val numerator = renderLayout(node.numerator, nodes)
+                        val denominator = renderLayout(node.denominator, nodes)
+                        val contentWidth = maxOf(numerator.width, denominator.width, 1)
+                        val width = contentWidth + 2
+                        layouts.add(
+                            Layout(
+                                lines = numerator.lines.map { padLayoutLine(it, width, centered = true) } +
+                                    (" " + "─".repeat(contentWidth) + " ") +
+                                    denominator.lines.map { padLayoutLine(it, width, centered = true) },
+                                width = width,
+                                baseline = numerator.lines.size,
+                            ),
+                        )
+                    }
+                    is LayoutNode.Operator -> {
+                        val contentWidth = maxOf(
+                            layoutWidth(node.operator),
+                            node.lower?.let { layoutWidth(it) } ?: 0,
+                            node.upper?.let { layoutWidth(it) } ?: 0,
+                        )
+                        val lines = ArrayList<String>(3)
+                        node.upper?.let { lines.add(padLayoutLine(it, contentWidth, centered = true) + " ") }
+                        lines.add(padLayoutLine(node.operator, contentWidth, centered = true) + " ")
+                        node.lower?.let { lines.add(padLayoutLine(it, contentWidth, centered = true) + " ") }
+                        layouts.add(Layout(lines, contentWidth + 1, if (node.upper == null) 0 else 1))
+                    }
+                    is LayoutNode.Script -> {
+                        val upper = node.upper?.let { renderLayout(it, nodes) }
+                        val lower = node.lower?.let { renderLayout(it, nodes) }
+                        val width = maxOf(upper?.width ?: 0, lower?.width ?: 0)
+                        layouts.add(
+                            Layout(
+                                lines = (upper?.lines?.map { padLayoutLine(it, width) } ?: emptyList()) +
+                                    " ".repeat(width) +
+                                    (lower?.lines?.map { padLayoutLine(it, width) } ?: emptyList()),
+                                width = width,
+                                baseline = upper?.lines?.size ?: 0,
+                            ),
+                        )
+                    }
+                    is LayoutNode.Matrix -> {
+                        val width = maxOf(0, node.lines.maxOfOrNull { layoutWidth(it) } ?: 0)
+                        layouts.add(Layout(node.lines.map { padLayoutLine(it, width) }, width, node.baseline))
+                    }
+                }
+                position = match.range.last + 1
+                previousNode = node
+            }
+            if (position < sourceLine.length) {
+                val sliced = sourceLine.substring(position)
+                val trimmed = if (previousNode != null) sliced.trimStart() else sliced
+                val text = if (previousNode is LayoutNode.Matrix && sliced.firstOrNull()?.isWhitespace() == true) {
+                    " $trimmed"
+                } else {
+                    trimmed
+                }
+                layouts.add(Layout(listOf(text), layoutWidth(text), 0))
+            }
+            val lineLayout = joinLayouts(layouts)
+            if (renderedLines.isEmpty()) firstBaseline = lineLayout.baseline
+            renderedLines.addAll(lineLayout.lines)
+        }
+        return Layout(renderedLines, maxOf(0, renderedLines.maxOfOrNull { layoutWidth(it) } ?: 0), firstBaseline)
+    }
+
+    /**
+     * 网格里一格文本占几列。pi 用的是 `visibleWidth`（`utils.ts:250` → 字形分段 +
+     * `get-east-asian-width` + emoji 规则），这里只需要它在本场景下的行为：
+     * 汉字/全角算 2 列、组合记号算 0 列、其余（拉丁、希腊、`∑ ∫ √ ─ ⎛` 这些
+     * Ambiguous 数学符号）算 1 列 —— 实测 `get-east-asian-width` 对这些符号返回 1。
+     *
+     * 网格里不会有 ANSI 转义序列（那是终端才有的东西），所以 pi 的剥 ANSI 一步不需要。
+     */
+    private fun layoutWidth(text: String): Int {
+        var width = 0
+        var index = 0
+        while (index < text.length) {
+            val codePoint = text.codePointAt(index)
+            index += Character.charCount(codePoint)
+            width += when {
+                codePoint == 0x200D -> 0
+                codePoint in 0xFE00..0xFE0F -> 0
+                codePoint in 0x0300..0x036F -> 0
+                codePoint in 0x1AB0..0x1AFF -> 0
+                codePoint in 0x1DC0..0x1DFF -> 0
+                codePoint in 0x20D0..0x20FF -> 0
+                codePoint in 0xFE20..0xFE2F -> 0
+                codePoint in 0x1100..0x115F -> 2
+                codePoint in 0x2E80..0x303E -> 2
+                codePoint in 0x3041..0x33FF -> 2
+                codePoint in 0x3400..0x4DBF -> 2
+                codePoint in 0x4E00..0x9FFF -> 2
+                codePoint in 0xA000..0xA4CF -> 2
+                codePoint in 0xAC00..0xD7A3 -> 2
+                codePoint in 0xF900..0xFAFF -> 2
+                codePoint in 0xFE30..0xFE6F -> 2
+                codePoint in 0xFF00..0xFF60 -> 2
+                codePoint in 0xFFE0..0xFFE6 -> 2
+                codePoint in 0x1F300..0x1F64F -> 2
+                codePoint in 0x1F900..0x1F9FF -> 2
+                codePoint in 0x20000..0x3FFFD -> 2
+                else -> 1
+            }
+        }
+        return width
+    }
+
+    /**
+     * 布局标记（`latex.ts:700-703`）与**受保护空格**（`:704`）。
+     *
+     * pi 用补充平面私用区 `U+F0000`…`U+F0002`；这里用 BMP 私用区 `U+E000`…`U+E002`，
+     * 理由与具名算子哨兵相同（[NAMED_OPERATOR_START] 的注释：Java 正则的 lookbehind
+     * 要单字符）。四个值互不相同、且都不进输出，所以码位本身不是契约。
+     */
+    private const val LAYOUT_MARKER_START = "\uE000"
+    private const val LAYOUT_MARKER_END = "\uE001"
+    private const val PROTECTED_SPACE = "\uE002"
+
+    /**
+     * `latex.ts:1384`：八种"画成网格"的环境。`array` 的 body 前面还有一个 `{列格式}`
+     * 方案（`latex.ts:1385`），`renderMatrix` 之前先把它去掉。
+     */
+    private val GRID_ENVIRONMENTS = setOf(
+        "array",
+        "matrix",
+        "smallmatrix",
+        "pmatrix",
+        "bmatrix",
+        "Bmatrix",
+        "vmatrix",
+        "Vmatrix",
+    )
+
+    /**
+     * `latex.ts:1436-1442` 的五套定界符：`[左上, 右上, 左中, 右中, 左下, 右下]`。
+     * `array`/`matrix`/`smallmatrix` 不在表里（它们没有定界符），所以这里只放五种。
+     */
+    private val MATRIX_DELIMITERS: Map<String, List<String>> = mapOf(
+        "pmatrix" to listOf("⎛", "⎞", "⎜", "⎟", "⎝", "⎠"),
+        "bmatrix" to listOf("⎡", "⎤", "⎢", "⎥", "⎣", "⎦"),
+        "Bmatrix" to listOf("⎧", "⎫", "⎨", "⎬", "⎩", "⎭"),
+        "vmatrix" to listOf("│", "│", "│", "│", "│", "│"),
+        "Vmatrix" to listOf("║", "║", "║", "║", "║", "║"),
+    )
+
+    /** `latex.ts:702`：`LAYOUT_MARKER_START <十进制下标> LAYOUT_MARKER_END`。 */
+    private val LAYOUT_MARKER_PATTERN = Regex("$LAYOUT_MARKER_START(\\d+)$LAYOUT_MARKER_END")
+
+    /** `latex.ts:703`：**结尾**的布局标记，`parseSequence` 的 `.` 那一支要用。 */
+    private val TRAILING_LAYOUT_MARKER_PATTERN = Regex("$LAYOUT_MARKER_START(\\d+)$LAYOUT_MARKER_END$")
 
     // ---------------------------------------------------------------------
     // 接入 markdown 源文本：pi 的两个 latex tokenizer，作用在源上
@@ -1028,10 +1263,12 @@ internal object PiLatex {
     private const val NAMED_OPERATOR_END = "\uE005"
 
     /** `latex.ts:653`：具名算子前面是字母/数字/`)`/`]`/布局标记 时补一个空格。 */
-    private val NAMED_OPERATOR_LEFT_SPACING = Regex("(?<=[\\p{L}\\p{N}\\)\\]}])$NAMED_OPERATOR_START")
+    private val NAMED_OPERATOR_LEFT_SPACING =
+        Regex("(?<=[\\p{L}\\p{N}\\)\\]}$LAYOUT_MARKER_END])$NAMED_OPERATOR_START")
 
     /** `latex.ts:654`：具名算子后面紧跟字母/数字/`√` 时补一个空格。 */
-    private val NAMED_OPERATOR_RIGHT_SPACING = Regex("$NAMED_OPERATOR_END(?=[\\p{L}\\p{N}\u221a])")
+    private val NAMED_OPERATOR_RIGHT_SPACING =
+        Regex("$NAMED_OPERATOR_END(?=[\\p{L}\\p{N}\u221a$LAYOUT_MARKER_START])")
 
     /**
      * `latex.ts:654-665` `normalizeOutput`：折叠空格、逐行 trim、丢掉内容行之间的空行。
@@ -1043,9 +1280,9 @@ internal object PiLatex {
      * `2\sin x`（要空格：`2 sin x`）与 `\sin(x)`（不要空格）两种上下文里。
      * 少了这两条，`$2\sin x$` 会画成 `2sin x`。
      *
-     * pi 的右间距类里还有一个 `LAYOUT_MARKER_START`（`latex.ts:660`）：那是
-     * `renderLayout` 的布局标记，只有移植了布局支（Phase B）才可能出现，所以这里
-     * 不放——放了也匹配不到任何东西。
+     * 两条正则的字符类里都带着**布局标记**（`latex.ts:653-654` 的 `\u{f0001}` 与
+     * `\u{f0000}`）：`\sum` 这类节点在下标排成两行时，紧挨着算子名的正是布局标记，
+     * 少了它 `2\limits\sum` 这种写法就会少一个空格。
      */
     private fun normalizeOutput(value: String): String {
         val spaced = value
@@ -1074,12 +1311,23 @@ internal object PiLatex {
         return result.toString()
     }
 
+    /** `latex.ts:614` `normalizeScriptValue`：去掉 `= + -` 两侧的空白。 */
+    private fun normalizeScriptValue(value: String): String =
+        value.trim().replace(Regex("\\s*([=+-])\\s*"), "$1")
+
+    /** `latex.ts:618-620` `formatUnicodeScript`：整串都有对应上下标字符才算成功。 */
+    private fun formatUnicodeScript(value: String, subscript: Boolean): String? =
+        replaceCharacters(normalizeScriptValue(value), if (subscript) SUBSCRIPTS else SUPERSCRIPTS)
+
     private fun formatScript(value: String, subscript: Boolean): String {
-        val trimmed = value.trim().replace(Regex("\\s*([=+-])\\s*"), "$1")
-        val unicode = replaceCharacters(trimmed, if (subscript) SUBSCRIPTS else SUPERSCRIPTS)
+        val trimmed = normalizeScriptValue(value)
+        val unicode = formatUnicodeScript(value, subscript)
         if (unicode != null) return unicode
         val prefix = if (subscript) "_" else "^"
-        if (trimmed.length == 1 || (subscript && trimmed.matches(Regex("^[A-Za-z]+$")))) {
+        // pi 用 `Array.from(value).length`（**码点**数）判断"单个字符"，所以 emoji/
+        // 补充平面字符算一个；Kotlin 的 `String.length` 是 UTF-16 长度，得显式数码点。
+        val codePoints = trimmed.codePointCount(0, trimmed.length)
+        if (codePoints == 1 || (subscript && trimmed.matches(Regex("^[A-Za-z]+$")))) {
             return "$prefix$trimmed"
         }
         return "$prefix($trimmed)"
@@ -1110,12 +1358,37 @@ internal object PiLatex {
      */
     private const val NEGATIVE_SPACE = "\u0000"
 
-    private class LatexParser(private val source: String) {
+    private class LatexParser(
+        private val source: String,
+        private val layoutNodes: MutableList<LayoutNode>,
+        private val display: Boolean,
+    ) {
 
         private var position = 0
 
+        /** `latex.ts:898-901` 的 `supported`：false 时整条公式回原文。 */
+        private var supported = true
+
+        /** `latex.ts:902` 的 `stackFractions`：只在 display 下的 `\frac` 嵌套里被关掉。 */
+        private var stackFractions = true
+
+        /** `latex.ts:903` 的 `scriptDepth`：脚本里的脚本不再单独排成上下两行。 */
+        private var scriptDepth = 0
+
         /** `latex.ts:825`: true only when the whole source was consumed. */
         val finished: Boolean get() = position == source.length
+
+        /**
+         * `latex.ts:855-862` `render()`：解析 + `supported`/位置两项校验，
+         * 通过则返回 [normalizeOutput] 过的文本。冒号前的两层校验缺一不可 ——
+         * `position` 没走到末尾说明有没消费掉的尾巴（例如多出来的 `}` 分支被
+         * `parseSequence` 直接返回了），在 pi 里同样是 `undefined`。
+         */
+        fun render(): String? {
+            val rendered = parseSequence() ?: return null
+            if (!supported || position != source.length) return null
+            return normalizeOutput(rendered)
+        }
 
         /** `latex.ts:833` `parseSequence`. */
         fun parseSequence(endCharacter: Char? = null): String? {
@@ -1189,12 +1462,25 @@ internal object PiLatex {
                     result.append(' ')
                     continue
                 }
+                if (character == '.') {
+                    // `latex.ts:929-937`：矩阵节点结尾紧跟一个 `.` 时，这个点要落进
+                    // 矩阵的**最后一行**（`\begin{matrix}…\end{matrix}.` 这种写法）。
+                    // 否则矩阵会被当成"一块"、点在块外面单独占一列。
+                    val marker = TRAILING_LAYOUT_MARKER_PATTERN.find(result)
+                    val node = marker?.let { layoutNodes.getOrNull(it.groupValues[1].toInt()) }
+                    if (node is LayoutNode.Matrix) {
+                        node.lines[node.lines.size - 1] = (node.lines.lastOrNull() ?: "") + character
+                        position++
+                        continue
+                    }
+                }
                 result.append(character)
                 position++
             }
             // `latex.ts:909-912`: a sequence that ran out before its closing
             // brace is unsupported.
-            return if (endCharacter != null) null else result.toString()
+            if (endCharacter != null) return null
+            return result.toString()
         }
 
         /**
@@ -1213,7 +1499,16 @@ internal object PiLatex {
             val order = ArrayList<Char>(2)
             var failed = false
             fun parseOne(marker: Char) {
-                val value = parseRequiredArgument() ?: run { failed = true; return }
+                scriptDepth++
+                val value = try {
+                    parseRequiredArgument(stackFractions = false)
+                } finally {
+                    scriptDepth--
+                }
+                if (value == null) {
+                    failed = true
+                    return
+                }
                 if (marker == '_') sub = value else sup = value
                 order.add(marker)
             }
@@ -1228,9 +1523,44 @@ internal object PiLatex {
             // pi 在这里用的是 `subUnicode ?? formatScript(scripts.sub ?? "", kind)`，而
             // `formatUnicodeScript` 就是 `formatScript` 的前半段 —— 两个三元表达式
             // 化简下来就是这一行。
-            return order.joinToString("") { marker ->
-                formatScript((if (marker == '_') sub else sup) ?: "", marker == '_')
+            val inline = {
+                order.joinToString("") { marker ->
+                    formatScript((if (marker == '_') sub else sup) ?: "", marker == '_')
+                }
             }
+            // `latex.ts:982-1005` 的 `needsLayout`：**三层**条件，缺一层都会把不该上下排的
+            // 脚本排成两行。`canUseLayout` 是 pi 对"这块脚本适不适合上下排"的判据：
+            // 出现 `/`（分数已排成一行文字）、含布局标记（里面已经有块了）、或者
+            // 多个字符且不含大写与 `*`/`∗`（`_ab` 这类会画成上下两行，而 `x^{n+1}` 不会）。
+            val subValue = sub
+            val supValue = sup
+            val canUseLayout = listOf(subValue, supValue).none { value ->
+                value != null &&
+                    (
+                        value.contains('/') ||
+                            (
+                                !value.contains(LAYOUT_MARKER_START) &&
+                                    value.codePointCount(0, value.length) > 1 &&
+                                    !value.any { it in "ABCDEFGHIJKLMNOPQRSTUVWXYZ*∗" }
+                                )
+                        )
+            }
+            val needsLayout = display &&
+                canUseLayout &&
+                (
+                    scriptDepth > 0 ||
+                        (subValue != null && formatUnicodeScript(subValue, subscript = true) == null) ||
+                        (supValue != null && formatUnicodeScript(supValue, subscript = false) == null)
+                    )
+            if (!needsLayout) return inline()
+            val index = layoutNodes.size
+            layoutNodes.add(
+                LayoutNode.Script(
+                    lower = subValue?.let { normalizeOutput(it) },
+                    upper = supValue?.let { normalizeOutput(it) },
+                ),
+            )
+            return "$LAYOUT_MARKER_START$index$LAYOUT_MARKER_END"
         }
 
         /** `latex.ts:1013` `parseCommand`. */
@@ -1280,7 +1610,7 @@ internal object PiLatex {
                 // `liminf`/`limsup`/`max`/`min`/`sup` 同时是具名算子、`sum` 类则在符号表里
                 // —— pi 一律按"算子 + 方括号下限"走（`\lim_{x}` 是 `lim[x]`），
                 // 所以这个分支的位置就是语义。
-                return parseOperator(command, InlineLowerStyle.BRACKET, spaced = true) ?: return null
+                return parseOperator(command, InlineLowerStyle.BRACKET, displayLimits = true, spaced = true) ?: return null
             }
             SYMBOLS[command]?.let { symbol ->
                 // `latex.ts:1090-1096`. 上下限在 display 下才上下排（`latex.ts:1237`，
@@ -1290,7 +1620,7 @@ internal object PiLatex {
                 // 是 `∑_(n→∞)`（下标里没有空格），走外层 `parseSequence` 会得到
                 // `∑_(n → ∞)`。
                 if (command in DISPLAY_LIMIT_SYMBOLS) {
-                    return parseOperator(symbol, InlineLowerStyle.SCRIPT, spaced = false) ?: return null
+                    return parseOperator(symbol, InlineLowerStyle.SCRIPT, displayLimits = true) ?: return null
                 }
                 // `latex.ts:1095`：乘法算子与关系符两侧补空格（`a\le b` 是 `a ≤ b`）。
                 // 关系符列表见 [RELATION_COMMANDS]；`=`/`<`/`>` 三个字面量由
@@ -1314,13 +1644,18 @@ internal object PiLatex {
                 return ""
             }
             if (command == "frac" || command == "dfrac" || command == "tfrac") {
-                // `latex.ts:1109-1122`, minus the `shouldStack` branch: this port
-                // never stacks, so a fraction is always `a/b`. That is pi's own
-                // result wherever `display` is false (`latex.ts:1110`、`:1121`),
-                // i.e. for every inline formula; inside `$$...$$` pi would stack
-                // instead (class note).
-                val numerator = parseRequiredArgument() ?: return null
-                val denominator = parseRequiredArgument() ?: return null
+                // `latex.ts:1109-1122`：`shouldStack` 只在 display 下、且没被
+                // `stackFractions` 关掉时成立（`\frac` 的分子里再套 `\frac` 就不再叠 ——
+                // 一格网格里塞不下第二层）。`parseRequiredArgument(!shouldStack)` 就是
+                // 把这层开关传下去：正在堆叠的这一层，它的分子分母里的分数不堆叠。
+                val shouldStack = display && stackFractions && command != "tfrac"
+                val numerator = parseRequiredArgument(stackFractions = !shouldStack) ?: return null
+                val denominator = parseRequiredArgument(stackFractions = !shouldStack) ?: return null
+                if (shouldStack) {
+                    val index = layoutNodes.size
+                    layoutNodes.add(LayoutNode.Fraction(normalizeOutput(numerator), normalizeOutput(denominator)))
+                    return "$LAYOUT_MARKER_START$index$LAYOUT_MARKER_END"
+                }
                 return formatFraction(numerator, denominator)
             }
             if (command == "sqrt") {
@@ -1358,9 +1693,11 @@ internal object PiLatex {
                 // `\operatorname*{argmax}_{x}` 与 `\argmax_{x}` 一样是方括号下限
                 // （`argmax[x]`）—— 差别只在 `*` 决定的 displayLimits，而行内两条路
                 // 都不上下排。把名字直接印出来会得到 `argmax_(x)`。
-                if (position < source.length && source[position] == '*') position++
+                val starred = position < source.length && source[position] == '*'
+                if (starred) position++
                 val operator = normalizeOutput((parseRequiredArgument() ?: return null))
-                return parseOperator(operator.trim(), InlineLowerStyle.BRACKET, spaced = true) ?: return null
+                return parseOperator(operator.trim(), InlineLowerStyle.BRACKET, displayLimits = starred, spaced = true)
+                    ?: return null
             }
             if (command == "mod" || command == "bmod") return " mod "
             if (command == "pmod" || command == "pod") {
@@ -1386,18 +1723,8 @@ internal object PiLatex {
                 return if (command.startsWith("text") || command == "mbox") value else value.trim()
             }
             if (command == "begin") {
-                // `latex.ts:1183-1184` hands `\begin` to `parseEnvironment`
-                // (`latex.ts:1331-1422`), which builds layout nodes: the eight
-                // grid environments (`latex.ts:1384-1386`, `:1410-1468`),
-                // `cases` (`:1379`), `aligned`/`gather`/`split` (`:1355-1377`).
-                // Every one of them is drawn by `renderLayout`, which this port
-                // does not have.
-                // Returning `null` makes the whole formula unrenderable, so the
-                // caller prints the source text as written — pi's own recovery
-                // for a formula it cannot render (`markdown.ts:509`), applied one
-                // level earlier than pi applies it. See the class note for why the
-                // layout is not ported.
-                return null
+                // `latex.ts:1183-1184`：`\begin{…}` 一律交给 [parseEnvironment]。
+                return parseEnvironment()
             }
             // `latex.ts:1185-1188` 的 `\end` 与 `:1190-1191` 的未知命令在 pi 里是同一件事
             // （`supported = false`，返回值只有 `\end` 那支会用到、而它已经不可渲染），
@@ -1421,17 +1748,25 @@ internal object PiLatex {
          * `displayLimits` 参数没有跟着搬过来：它只参与上面那个 layout 分支
          * （`latex.ts:1237`），在这一支里没有任何可观察效果。
          */
-        private fun parseOperator(operator: String, inlineLowerStyle: InlineLowerStyle, spaced: Boolean = false): String? {
+        private fun parseOperator(
+            operator: String,
+            inlineLowerStyle: InlineLowerStyle,
+            displayLimits: Boolean,
+            spaced: Boolean = false,
+        ): String? {
+            var useDisplayLimits = displayLimits
             var lower: String? = null
             var upper: String? = null
             // 修饰词之前的空白与 `\limits` 本身都不进输出；`(?![A-Za-z])` 让 `\limitsfoo`
-            // 不算 `\limits`（pi 的 `latex.ts:1205`）。
+            // 不算 `\limits`（pi 的 `latex.ts:1205`）。`\limits`/`\nolimits` 只在这里
+            // 被认出来 —— 它是"这个算子要不要上下排限"的显式开关。
             var modifierPosition = position
             while (modifierPosition < source.length && (source[modifierPosition] == ' ' || source[modifierPosition] == '\t')) {
                 modifierPosition++
             }
             val modifier = LIMITS_MODIFIER.find(source, modifierPosition)
             if (modifier != null && modifier.range.first == modifierPosition) {
+                useDisplayLimits = modifier.groupValues[1] == "limits"
                 position = modifierPosition + modifier.value.length
             }
             while (true) {
@@ -1454,6 +1789,15 @@ internal object PiLatex {
                     upper = value
                 }
             }
+            // `latex.ts:1237-1240`：display 下、且这个算子允许上下限时，限排成上下两行。
+            // `useDisplayLimits` 说的是"这个算子在准则排版里上下排限"：`\lim`/`\sum`
+            // 这类是 true（`latex.ts:1087`、`:1093`），`\operatorname*` 由那个 `*` 决定
+            // （`:1153-1159`），`\sin` 不是 → 它走上面的 inline 分支。
+            if (display && useDisplayLimits && (lower != null || upper != null)) {
+                val index = layoutNodes.size
+                layoutNodes.add(LayoutNode.Operator(operator, lower, upper))
+                return "$LAYOUT_MARKER_START$index$LAYOUT_MARKER_END"
+            }
             var rendered = operator
             if (lower != null) {
                 rendered += if (inlineLowerStyle == InlineLowerStyle.BRACKET) "[$lower]" else formatScript(lower, true)
@@ -1470,7 +1814,20 @@ internal object PiLatex {
          * pi 的 `stackFractions` 参数（同一个 `\frac` 在 display 下嵌套时是否继续堆叠）
          * 属于没有移植的 layout 支，所以这里没有这个参数。
          */
-        private fun parseRequiredArgument(): String? {
+        private fun parseRequiredArgument(stackFractions: Boolean = true): String? {
+            // `latex.ts:1252-1259`：`stackFractions` 只在**这一次**参数解析里生效，
+            // 解析完要还原 —— 它由 `\frac` 的 `shouldStack` 决定，用来阻止第二层堆叠。
+            val previous = this.stackFractions
+            this.stackFractions = previous && stackFractions
+            try {
+                return parseRequiredArgumentValue()
+            } finally {
+                this.stackFractions = previous
+            }
+        }
+
+        /** `latex.ts:1260-1279` `parseRequiredArgumentValue`。 */
+        private fun parseRequiredArgumentValue(): String? {
             while (position < source.length && source[position].isWhitespace()) position++
             if (position >= source.length) return null
             if (source[position] == '{') {
@@ -1494,6 +1851,224 @@ internal object PiLatex {
          * 这里会因为 `\]` 是未知命令而整条回原文。宁可让这种输入回原文，也不去
          * 复刻一个"切在转义符上"的行为。
          */
+        /**
+         * `latex.ts:1298-1330` `readRawGroup`：读出 `{…}` 的**原文**（不解析），
+         * 括号深度按 `{`/`}` 数，`\` 后面那个字符跳过（`\{`/`\}` 不算深度）。
+         *
+         * 环境名必须原文拿到 —— `\begin{matrix}` 里的 `matrix` 不是公式内容，
+         * 不能过 [parseCommand]（那样 `\begin{align}` 会被当命令解析）。
+         */
+        private fun readRawGroup(): String? {
+            while (position < source.length && (source[position] == ' ' || source[position] == '\t')) position++
+            if (position >= source.length || source[position] != '{') return null
+            position++
+            val start = position
+            var depth = 1
+            while (position < source.length) {
+                val character = source[position]
+                if (character == '\\') {
+                    position += 2
+                    continue
+                }
+                if (character == '{') depth++
+                if (character == '}') depth--
+                if (depth == 0) {
+                    val value = source.substring(start, position)
+                    position++
+                    return value
+                }
+                position++
+            }
+            return null
+        }
+
+        /** `latex.ts:1351` `splitEnvironmentRows`：行分隔是 `\\`，可带 `[2pt]` 这类可选参数。 */
+        private val ENVIRONMENT_ROW_SEPARATOR = Regex("""\\\\(?:\[[^\]\n]*\])?""")
+
+        private fun splitEnvironmentRows(body: String): List<String> =
+            ENVIRONMENT_ROW_SEPARATOR.split(body)
+
+        /**
+         * `latex.ts:1331-1391` `parseEnvironment`。分派顺序与 pi 一致：
+         * `equation` 族（只做一次嵌套渲染）、`aligned` 族（逐行拼、`&` 丢掉）、
+         * `cases`、八种网格环境，其余一律不支持。
+         */
+        private fun parseEnvironment(): String? {
+            val environment = readRawGroup() ?: return null
+            val endMarker = "\\end{$environment}"
+            val end = source.indexOf(endMarker, position)
+            if (end < 0) return null
+            val body = source.substring(position, end)
+            position = end + endMarker.length
+            if (environment == "equation" || environment == "equation*" || environment == "displaymath") {
+                return renderNested(body)?.trim()
+            }
+            if (
+                environment == "aligned" ||
+                environment == "align" ||
+                environment == "align*" ||
+                environment == "alignedat" ||
+                environment == "alignat" ||
+                environment == "alignat*" ||
+                environment == "gather" ||
+                environment == "gathered" ||
+                environment == "multline" ||
+                environment == "multline*" ||
+                environment == "split"
+            ) {
+                // `latex.ts:1357-1377`：`alignedat` 族的**第一个** `{…}` 是列数，
+                // 丢掉；其余环境的 `&` 直接删掉（对齐信息对单列文本没意义），
+                // 每行单独渲染、空行丢掉、用 `\n` 拼起来。
+                val alignedAt = environment == "alignedat" || environment == "alignat" || environment == "alignat*"
+                val alignmentBody = if (alignedAt) body.replace(Regex("^\\s*\\{[^}]*}"), "") else body
+                val rendered = ArrayList<String>()
+                for (row in splitEnvironmentRows(alignmentBody)) {
+                    val cells = row.split('&')
+                    val joined = if (alignedAt) {
+                        cells.chunked(2).joinToString(" ") { it.joinToString("") }
+                    } else {
+                        cells.joinToString("")
+                    }
+                    // 有一行渲染不出来 ⇒ 整条公式回原文（pi 把 `supported` 置 false）。
+                    // 这里不能 `mapNotNull` 掉这一行 —— 那会在屏幕上留下一段**缺行的**
+                    // 公式，比原文更难看出是坏的。
+                    rendered.add(renderNested(joined)?.trim() ?: return null)
+                }
+                return rendered.filter { it.isNotEmpty() }.joinToString("\n")
+            }
+            if (environment == "cases" || environment == "cases*") {
+                return renderCases(body)
+            }
+            if (environment in GRID_ENVIRONMENTS) {
+                val matrixBody = if (environment == "array") body.replace(Regex("^\\s*\\{[^}]*}"), "") else body
+                return renderMatrix(environment, matrixBody)
+            }
+            return null
+        }
+
+        /**
+         * `latex.ts:1393-1421` `renderCases`：两列（值 | 条件），值列右侧用
+         * [PROTECTED_SPACE] 补齐，条件列前面按 pi 的规则加 ` if ` 或一个空格；
+         * 行数大于 1 时上下加 `⎧ ⎨ ⎩`，偶数行在中间插一行只有分隔符的空行。
+         *
+         * 为什么用 [PROTECTED_SPACE] 而不是普通空格：这些补齐最终会被
+         * `renderLayout` 的 `trimEnd` 与 `padLayoutLine` 处理，普通空格会被吃掉，
+         * 而 `cases` 的列对齐要求它活到最后（收尾时统一换回空格）。
+         */
+        private fun renderCases(body: String): String? {
+            val rows = splitEnvironmentRows(body)
+                .map { row ->
+                    row.split('&').map { cell ->
+                        renderNested(cell, stackFractions = false)?.trim() ?: return null
+                    }
+                }
+                .filter { row -> row.any { it.isNotEmpty() } }
+            val valueWidth = maxOf(
+                0,
+                rows.maxOfOrNull { row -> layoutWidth((row.getOrNull(0) ?: "").replace(Regex(",\\s*$"), "")) } ?: 0,
+            )
+            val contents = rows.map { row ->
+                val value = (row.getOrNull(0) ?: "").replace(Regex(",\\s*$"), "")
+                val condition = row.getOrNull(1) ?: ""
+                if (condition.isEmpty()) {
+                    value
+                } else {
+                    val conditionPrefix = if (Regex("^(?:if|when|for|otherwise)\\b", RegexOption.IGNORE_CASE).containsMatchIn(condition)) " " else " if "
+                    value + PROTECTED_SPACE.repeat(valueWidth - layoutWidth(value)) + conditionPrefix + condition
+                }
+            }
+            if (contents.size <= 1) {
+                return if (contents.isEmpty()) "" else "⎧ ${contents[0]}"
+            }
+            val middle = contents.size / 2
+            val visualRows: List<String?> = if (contents.size % 2 == 0) {
+                // pi 在一个**空行**上插分隔符（`latex.ts:1404-1406`）：偶数行时
+                // 中间多出一行只有 `⎨` 的行，上下两半各占一半高度。
+                ArrayList<String?>(contents.size + 1).apply {
+                    addAll(contents.subList(0, middle))
+                    add(null)
+                    addAll(contents.subList(middle, contents.size))
+                }
+            } else {
+                contents
+            }
+            val lines = visualRows.mapIndexed { index, content ->
+                val delimiter = when (index) {
+                    0 -> "⎧"
+                    visualRows.size - 1 -> "⎩"
+                    else -> "⎨"
+                }
+                if (content == null) delimiter else "$delimiter $content"
+            }
+            val index = layoutNodes.size
+            layoutNodes.add(LayoutNode.Matrix(lines.toMutableList(), baseline = middle))
+            return "$LAYOUT_MARKER_START$index$LAYOUT_MARKER_END"
+        }
+
+        /**
+         * `latex.ts:1422-1481` `renderMatrix`：列宽 = 该列所有单元格显示宽度的最大值，
+         * 单元格之间是 ` │ `，`array`/`matrix`/`smallmatrix` 只有网格，其余五种加
+         * 定界符（`pmatrix` 是圆括号，`bmatrix` 是方括号，`Bmatrix` 是花括号，
+         * `vmatrix`/`Vmatrix` 是竖线）。**只有一行时直接返回那一行**（不建节点，
+         * 于是不会走 [renderLayout]）；`\end{matrix}.` 那个点由 `parseSequence` 追加。
+         */
+        private fun renderMatrix(environment: String, body: String): String? {
+            val matrix = splitEnvironmentRows(body)
+                .map { row ->
+                    row.split('&').map { cell ->
+                        renderNested(cell, stackFractions = false)?.trim() ?: return null
+                    }
+                }
+                .filter { row -> row.any { it.isNotEmpty() } }
+            val columnCount = maxOf(0, matrix.maxOfOrNull { it.size } ?: 0)
+            val columnWidths = (0 until columnCount).map { column ->
+                maxOf(0, matrix.maxOfOrNull { layoutWidth(it.getOrNull(column) ?: "") } ?: 0)
+            }
+            val rows = matrix.map { row ->
+                (0 until columnCount).joinToString(" │ ") { column ->
+                    val cell = row.getOrNull(column) ?: ""
+                    cell + PROTECTED_SPACE.repeat(maxOf(0, columnWidths[column] - layoutWidth(cell)))
+                }
+            }
+            val lines: List<String> = if (environment == "array" || environment == "matrix" || environment == "smallmatrix") {
+                rows
+            } else {
+                val delimiters = MATRIX_DELIMITERS[environment] ?: return rows.joinToString("\n")
+                rows.mapIndexed { index, row ->
+                    val left = when (index) {
+                        0 -> delimiters[0]
+                        rows.size - 1 -> delimiters[4]
+                        else -> delimiters[2]
+                    }
+                    val right = when (index) {
+                        0 -> delimiters[1]
+                        rows.size - 1 -> delimiters[5]
+                        else -> delimiters[3]
+                    }
+                    "$left $row $right"
+                }
+            }
+            if (lines.size <= 1) return lines.firstOrNull() ?: ""
+            val index = layoutNodes.size
+            layoutNodes.add(LayoutNode.Matrix(lines.toMutableList(), baseline = 0))
+            return "$LAYOUT_MARKER_START$index$LAYOUT_MARKER_END"
+        }
+
+        /**
+         * `latex.ts:1441-1458` `renderNested`：再起一个解析器，**共用**同一份
+         * layoutNodes（下标连续），`display` 还要与 `stackFractions` 相与 ——
+         * 嵌套里的 `\frac` 只在"外层正在堆叠"时继续堆叠。
+         *
+         * 失败（`undefined`）在 pi 里是把自己的 `supported` 置 false 并**返回原文**，
+         * 这里返回 `null`，由调用方一路变成整条公式的 `null`：对用户是同一件事
+         * （原文照排），但实现上不能只在这里 `?: ""`，否则半截渲染会漏出去。
+         */
+        private fun renderNested(source: String, stackFractions: Boolean = true): String? {
+            val parser = LatexParser(source, layoutNodes, display && stackFractions)
+            val rendered = parser.render() ?: return null
+            return rendered
+        }
+
         private fun parseOptionalArgument(): String? {
             while (position < source.length && (source[position] == ' ' || source[position] == '\t')) position++
             if (position >= source.length || source[position] != '[') return null

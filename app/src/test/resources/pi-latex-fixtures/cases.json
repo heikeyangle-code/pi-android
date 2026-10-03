@@ -2123,28 +2123,6 @@
 			"expected": null
 		},
 		{
-			"name": "unknown-environment",
-			"source": "\\begin{foo}x\\end{foo}",
-			"expected": null
-		},
-		{
-			"name": "empty-source",
-			"source": "",
-			"expected": ""
-		},
-		{
-			"name": "only-space",
-			"source": "  ",
-			"expected": ""
-		},
-		{
-			"name": "only-braces",
-			"source": "{}",
-			"expected": ""
-		}
-	],
-	"knownUnported": [
-		{
 			"name": "matrix-inline",
 			"source": "\\begin{pmatrix}a&b\\\\c&d\\end{pmatrix}",
 			"expected": "⎛ a │ b ⎞\n⎝ c │ d ⎠"
@@ -2163,6 +2141,26 @@
 			"name": "equation-inline",
 			"source": "\\begin{equation}x^2\\end{equation}",
 			"expected": "x²"
+		},
+		{
+			"name": "unknown-environment",
+			"source": "\\begin{foo}x\\end{foo}",
+			"expected": null
+		},
+		{
+			"name": "empty-source",
+			"source": "",
+			"expected": ""
+		},
+		{
+			"name": "only-space",
+			"source": "  ",
+			"expected": ""
+		},
+		{
+			"name": "only-braces",
+			"source": "{}",
+			"expected": ""
 		}
 	],
 	"delimiters": [
@@ -2346,6 +2344,14 @@
 			"expected": "\nx\n\ny\n",
 			"tokens": [
 				"latexBlock",
+				"latexBlock"
+			]
+		},
+		{
+			"name": "bracket-unrenderable",
+			"source": "\\[\\begin{pmatrix}a&b\\\\c&d\\end{pmatrix}\\]",
+			"expected": "\n⎛ a │ b ⎞\n⎝ c │ d ⎠\n",
+			"tokens": [
 				"latexBlock"
 			]
 		},
@@ -2550,15 +2556,6 @@
 			"tokens": [
 				"latex"
 			]
-		},
-		{
-			"name": "bracket-unrenderable",
-			"source": "\\[\\begin{pmatrix}a&b\\\\c&d\\end{pmatrix}\\]",
-			"inline": "\n⎛ a │ b ⎞\n⎝ c │ d ⎠\n",
-			"display": "\n⎛ a │ b ⎞\n⎝ c │ d ⎠\n",
-			"tokens": [
-				"latexBlock"
-			]
 		}
 	],
 	"dollarProse": [
@@ -2716,6 +2713,12 @@
 			"source": "| `Regex(` 编译 | 看是否在每帧/每 token 路径上 | 都是模块级常量（`ui/render/PiMarkdown.kt:275` 等）；`PiLatex` 里有逐调用构造（`:678-719`），但只在含 `$` 的文本上走到 |",
 			"provenance": "docs/hang-and-crash-review.md:135",
 			"piVisible": "| `Regex(` 编译 | 看是否在每帧/每 token 路径上 | 都是模块级常量（`ui/render/PiMarkdown.kt:275` 等）；`PiLatex` 里有逐调用构造（`:678-719`），但只在含 `$` 的文本上走到 |",
+			"piRenders": false
+		},
+		{
+			"source": "### A2. LaTeX 渲染（四种定界符 + `renderLatex` 全量移植，含竖直排版）—— **已完成（layout 于 Phase B 落地）；`$` 的 4 种形状与行中定位是两类有意的偏差，全部由夹具钉住**",
+			"provenance": "docs/known-gaps.md:25",
+			"piVisible": "### A2. LaTeX 渲染（四种定界符 + `renderLatex` 全量移植，含竖直排版）—— **已完成（layout 于 Phase B 落地）；`$` 的 4 种形状与行中定位是两类有意的偏差，全部由夹具钉住**",
 			"piRenders": false
 		},
 		{

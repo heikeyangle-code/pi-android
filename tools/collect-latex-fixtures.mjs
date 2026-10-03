@@ -16,7 +16,7 @@
  * | 段 | 是什么 | `PiLatexCheck` 怎么用 |
  * |---|---|---|
  * | `cases` | `renderLatex(src)`（行内） | **逐字断言** |
- * | `knownUnported` | pi 画得出来、端口画不出来（`\begin{…}` 那一族） | 断言**仍然不一样**（Phase B 移植后这条会红，那时把它挪进 `cases`） |
+ * | `displayTargets` | `renderLatex(src, {display:true})` 与行内不同的条目 | Phase B 之后**逐字节断言**（pi 的块级排版） |
  * | `displayTargets` | `renderLatex(src, {display:true})` 与行内结果**不同**的条目 | 只记录 Phase B 的目标，本阶段不断言 |
  *
  * 「只记录」不等于「没确认」：`displayTargets` 里存的是 pi 的真实输出，Phase B 就是
@@ -315,15 +315,11 @@ const CASES = [
 ];
 
 /**
- * `cases` 与 `knownUnported` 的分界不是靠人工挑，而是**按 pi 的输出**分：pi 返回
- * `undefined`（认不出来）的进 `cases`（期望 `null`），pi 画得出来而端口画不出来的
- * 才进 `knownUnported`。后者目前只有 `\begin{…}` 那一族 —— 判据是「端口返回
- * `null`」这件事由生成器**不**假设，而是留给定夹具去断言"仍然不一样"。
+ * 每条用例都进 `cases`：pi 画得出来的就断言逐字节相等，pi 自己返回 `undefined` 的
+ * 期望 `null`（原文回退）。`\begin{…}` 那四条（`matrix-inline` 等）也在这里 ——
+ * Phase B 把 layout 支搬过来之后它们与 pi 相同了，不再是"已知未移植"。
  */
-const KNOWN_UNPORTED = new Set(["matrix-inline", "cases-inline", "aligned-inline", "equation-inline"]);
-
 const cases = [];
-const knownUnported = [];
 const displayTargets = [];
 const seen = new Set();
 for (const entry of CASES) {
@@ -351,11 +347,7 @@ for (const entry of CASES) {
 		source,
 		expected: inline === undefined ? null : inline,
 	};
-	if (KNOWN_UNPORTED.has(name)) {
-		knownUnported.push(record);
-	} else {
-		cases.push(record);
-	}
+	cases.push(record);
 	if (display !== inline) {
 		displayTargets.push({ name, source, expected: display === undefined ? null : display });
 	}
@@ -526,6 +518,7 @@ const DELIMITERS = [
 	["bracket-line-start-simple", String.raw`\[x^2\]` + "\n"],
 	["bracket-line-start-two", String.raw`\[a\]` + "\n" + String.raw`\[b\]` + "\n"],
 	["bracket-and-dollar-blocks", String.raw`$$x$$` + "\n" + String.raw`\[y\]` + "\n"],
+	["bracket-unrenderable", String.raw`\[\begin{pmatrix}a&b\\c&d\end{pmatrix}\]`],
 	["bracket-multiline", "\\[\nx\n\\]" + "\n"],
 	["bracket-mid-line", String.raw`pre \[\frac{a}{b}\]`],
 	["bracket-trailing-text", String.raw`\[x\] trailing`],
@@ -569,8 +562,6 @@ const DELIMITER_DEVIATIONS = [
 	["inflated-bracket-glued", String.raw`a\[x\]b`],
 	["inflated-dollar-mid-line", String.raw`a $$x$$ b`],
 	["inflated-dollar-in-text", String.raw`pre $$x$$ post`],
-	// ③ 未移植的布局支
-	["bracket-unrenderable", String.raw`\[\begin{pmatrix}a&b\\c&d\end{pmatrix}\]`],
 ];
 
 // ---------------------------------------------------------------------------
@@ -707,7 +698,6 @@ const fixture = {
 	piTui: piVersion,
 	generatedBy: "tools/collect-latex-fixtures.mjs（期望值是 pi 的 renderLatex 返回值，不是手抄）",
 	cases,
-	knownUnported,
 	delimiters: delimiterAssertions,
 	delimiterDisplayTargets,
 	delimiterDeviations: DELIMITER_DEVIATIONS.map(delimiterCase),
@@ -725,7 +715,7 @@ if (process.argv.includes("--check")) {
 	if (committed === text) {
 		console.log(
 			`latex-fixtures: OK — 夹具与 pi-tui ${piVersion} 的输出一致（${cases.length} 条公式断言 + ` +
-				`${fixture.delimiters.length} 条定界符断言 + ${fixture.delimiterDisplayTargets.length} 条定界符 display 目标 + ${knownUnported.length + fixture.delimiterDeviations.length} ` +
+				`${fixture.delimiters.length} 条定界符断言 + ${fixture.delimiterDisplayTargets.length} 条定界符 display 目标 + ${fixture.delimiterDeviations.length} ` +
 				`条已知偏差 + ${displayTargets.length} 条 display 目标）`,
 		);
 		process.exit(0);
@@ -745,7 +735,7 @@ writeFileSync(FIXTURE, text);
 console.log(
 	`latex-fixtures: 已写入 ${FIXTURE}\n` +
 		`  pi-tui ${piVersion}：${cases.length} 条公式断言 + ${fixture.delimiters.length} 条定界符断言 + ` +
-		`${knownUnported.length + fixture.delimiterDeviations.length} 条已知偏差 + ` +
+		`${fixture.delimiterDeviations.length} 条已知偏差 + ` +
 		`${displayTargets.length} 条 display 目标 + ${dollarProse.length} 条 prose 语料` +
 		`（扫过的含 \`$\` 行 ${prose.scannedLines}）`,
 );
