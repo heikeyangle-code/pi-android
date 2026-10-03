@@ -32,6 +32,13 @@ import android.graphics.Bitmap
  *    cache keeps those megabytes alive; [ByteBoundedLru] is told to count them
  *    (`payload.length * 2`) on top of the bitmap's own `allocationByteCount`. Without
  *    that the bound would hide half of what the cache costs.
+ *  - **A host file too, keyed by the file.** The viewer also draws workspace images,
+ *    whose bytes are on disk rather than in a payload (`PiImageViewerSource.HostFile`);
+ *    its key is `file:<路径>:<字节数>:<mtime>` — the same "these exact bytes" identity,
+ *    spelled by the file. Reopening the same picture costs no read and no decode, and an
+ *    edited file is a different key, so a stale decode cannot be served for it. A `file:`
+ *    key can never collide with a payload: `:` is not in base64's alphabet. Such a key is
+ *    tens of bytes, so it adds nothing worth accounting for.
  *
  * ## Bound, and why it is this number
  *

@@ -99,6 +99,21 @@
 
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
 
+    <!--
+      明文 HTTP **全局**放行（用户拍板：「明文开」）。
+
+      为什么需要：渲染层现在真的会去取 markdown 里的 `http(s)` 图片
+      （`bridge/GuestImageBytes.kt` 的 `fromRemote`），而 `app/build.gradle.kts` 的
+      `targetSdk` 默认是 28（那个文件顶部写着理由）—— API 28 起平台默认拒绝明文，于是
+      `http://` 的图片一律在取字节那一步失败，报出来的是
+      `IOException: Cleartext HTTP traffic not permitted`，只有 `https://` 能用。
+
+      范围要说清楚，这一条不是「只放行图片」：`usesCleartextTraffic` 是**整个应用进程**的
+      网络策略开关，Java 网络栈（`HttpURLConnection`/OkHttp）与 `WebView` 的资源加载一起
+      放开，本进程任何一次出站请求都可以走 `http://`。想收窄只能换成 network security
+      config 的按域名白名单，而那要求事先知道用户会贴哪些图片站 —— 做不到，所以这里如实
+      开全局，而不是把范围写得比实际小。
+    -->
     <application
         android:name=".PiApplication"
         android:allowBackup="false"
@@ -110,6 +125,7 @@
         android:largeHeap="true"
         android:supportsRtl="true"
         android:theme="@style/Theme.Pi"
+        android:usesCleartextTraffic="true"
         tools:targetApi="36">
 
         <!--
@@ -132,6 +148,29 @@
             android:exported="true"
             android:multiprocess="false"
             android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
+
+        <!--
+          「用其他应用打开」：把一个工作区文件以 `content://` URI + 读权限交给系统里的应用
+          （`WorkspaceViewer.openWithOtherApp`）。
+
+          为什么必须有 provider：这些文件在应用私有目录里（`<files>/pi/runtime/rootfs/…`），
+          别的应用读不到；而 `file://` 从 Android 7 起交给另一个应用会抛
+          `FileUriExposedException`。唯一的通道就是 FileProvider 的 URI +
+          `FLAG_GRANT_READ_URI_PERMISSION`。
+
+          路径范围见 `res/xml/file_paths.xml`：**只有 `<files>/pi/` 这一棵**。
+          `exported="false"` 挡住外面直接查询它；`grantUriPermissions="true"` 是必须的，
+          否则连我们自己的显式授权也传不出去 —— 授权仍然是一次一个 URI 的，不是开放整棵树。
+        -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
 
         <activity
             android:name=".MainActivity"

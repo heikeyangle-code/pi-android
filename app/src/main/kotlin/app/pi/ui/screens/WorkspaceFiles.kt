@@ -36,10 +36,19 @@ internal enum class WorkspaceEntryKind {
     /** 文本：走只读文本查看器（可编辑）。 */
     Text,
 
-    /** `.html`：走系统 WebView 渲染预览（本批新增的唯一一条能力）。 */
+    /** `.html`：走系统 WebView 渲染预览。 */
     Html,
 
-    /** 二进制：查看器不展开，只给类型与大小。 */
+    /**
+     * 图片：查看器里直接画出来（可放大、可存到 Download）。
+     *
+     * 它以前落在 [Binary] 里，于是点开一张截图只有「这是二进制文件 / PNG 文件 / 2.4 MB」——
+     * 而 App 有解码器、有查看器、有缩略图。判据只有一条：**我们能渲染的自己渲染，渲染不了的
+     * 才交给系统**（[Binary]）。
+     */
+    Image,
+
+    /** 二进制：查看器不展开，只给类型与大小，并由系统里的应用去打开。 */
     Binary,
 }
 
@@ -63,10 +72,11 @@ internal data class WorkspaceEntry(
 }
 
 /**
- * 打开一个文件的四种结局，每一种在界面上都有一个不重样的状态。
+ * 打开一个文件的几种结局，每一种在界面上都有一个不重样的状态。
  *
  * 这是 design 稿 `binary` / `toolarge` / `viewing` 三个状态加一个失败态的数据面：
- * 二进制不给内容、超大文件只给前几行、读失败给原因 —— 三者都不是「空文件」。
+ * 图片不给字节（查看器自己按目标框采样解码）、二进制不给内容、超大文件只给前几行、
+ * 读失败给原因 —— 四者都不是「空文件」。
  */
 internal sealed interface WorkspaceOpen {
     /** 文本，整份（或行数封顶后截断）。 */
@@ -76,6 +86,15 @@ internal sealed interface WorkspaceOpen {
         val totalLines: Int?,
         val truncated: Boolean,
     ) : WorkspaceOpen
+
+    /**
+     * 图片：**一个字节也不读**。
+     *
+     * 这个分支存在的全部意义就是让查看器走图片那条路而不是 [Binary]。大小与类型不在这里
+     * 带一份：顶栏已经在显示 `大小 · 时间`，而类型由解码器按字节判断、由
+     * `MimeTypeMap` 按后缀判断 —— 多一个没人读的字段就是第二份真相。
+     */
+    data object Image : WorkspaceOpen
 
     /** 二进制：不展开内容。 */
     data class Binary(val sizeBytes: Long, val typeLabel: String) : WorkspaceOpen
@@ -129,9 +148,21 @@ internal object WorkspaceFiles {
     /** [countLines] 每次读的块大小。 */
     private const val COUNT_CHUNK_CHARS = 8 * 1024
 
-    /** 已知的二进制后缀（`.so` / 图片 / 压缩包 / 数据库 …）。 */
-    private val BINARY_SUFFIXES = setOf(
+    /**
+     * 能渲染的图片后缀（[WorkspaceEntryKind.Image]）。
+     *
+     * 名单是「平台解码器画得出来」的那些：`BitmapFactory` 认 png/jpg/gif/webp/bmp，
+     * `ico`/`heic`/`avif` 在较新的系统上也有解码器 —— 这里判的是**该不该交给图片查看器**，
+     * 真解码不了时那一步会如实说「这张图片无法解码」（不是静默画空白）。
+     *
+     * 它们以前在 [BINARY_SUFFIXES] 里，所以点开一张图只有一句"这是二进制文件"。
+     */
+    private val IMAGE_SUFFIXES = setOf(
         "png", "jpg", "jpeg", "gif", "webp", "bmp", "ico", "heic", "avif",
+    )
+
+    /** 已知的二进制后缀（`.so` / 压缩包 / 数据库 / 音视频 …）。图片不在这里，见 [IMAGE_SUFFIXES]。 */
+    private val BINARY_SUFFIXES = setOf(
         "so", "dylib", "dll", "a", "o", "class", "dex", "jar", "apk", "aar", "zip",
         "gz", "tgz", "bz2", "xz", "zst", "7z", "rar", "tar",
         "mp3", "m4a", "aac", "ogg", "opus", "wav", "flac", "mp4", "mkv", "webm", "mov",
@@ -160,14 +191,19 @@ internal object WorkspaceFiles {
     )
 
     /**
-     * 一个文件是文本、HTML 还是二进制。
+     * 一个文件是文本、HTML、图片、目录还是二进制。
      *
-     * 后缀先判（`.so` 一眼就是二进制），后缀不确定时**闻一下头部**：出现 NUL 字节就
-     * 当二进制。这个判据来自 `file(1)` 的经典做法，也是 pi 自己区分文本行的做法。
+     * 后缀先判（`.so` 一眼就是二进制，`.png` 一眼就该画出来），后缀不确定时**闻一下头部**：
+     * 出现 NUL 字节就当二进制。这个判据来自 `file(1)` 的经典做法，也是 pi 自己区分文本行的
+     * 做法。
+     *
+     * 图片优先于二进制：两边都只看后缀，而图片是**能渲染**的那一类 —— 顺序写反就等于把
+     * 图片重新丢回"二进制"。
      */
     fun kindOf(file: File): WorkspaceEntryKind {
         val name = file.name.lowercase(Locale.US)
         val suffix = name.substringAfterLast('.', "")
+        if (suffix in IMAGE_SUFFIXES) return WorkspaceEntryKind.Image
         if (suffix == "html" || suffix == "htm") return WorkspaceEntryKind.Html
         if (suffix in BINARY_SUFFIXES) return WorkspaceEntryKind.Binary
         return if (looksBinary(file)) WorkspaceEntryKind.Binary else WorkspaceEntryKind.Text
@@ -185,11 +221,25 @@ internal object WorkspaceFiles {
         }
     }.getOrDefault(false)
 
-    /** 二进制文件在查看器里的类型标签：后缀大写，没有后缀就说「无后缀」。 */
+    /**
+     * 二进制文件在查看器里的类型标签：后缀大写，没有后缀就说「无后缀」。
+     *
+     * 图片不再走这里（[WorkspaceEntryKind.Image] 有自己的查看器），所以它只有一个读者 ——
+     * 给图片也贴一个「PNG 文件」的标签，才是把"能渲染"说成"打不开"。
+     */
     fun binaryLabel(file: File): String {
         val suffix = file.name.substringAfterLast('.', "").uppercase(Locale.US)
         return if (suffix.isEmpty()) "无后缀" else "$suffix 文件"
     }
+
+    /**
+     * 这个条目能不能用**文本编辑器**改：只有 [WorkspaceEntryKind.Text]。
+     *
+     * 判据写在这里，因为查看器的顶栏与行菜单的「编辑」都问它；各判一次就会出现
+     * 「菜单里有编辑、点开却没有编辑键」，或者更糟 —— 把图片/二进制当 UTF-8 文本写回去。
+     * HTML 由 WebView 渲染，改它要走编辑态就绕开了渲染；目录根本不进查看器。
+     */
+    fun editableAsText(kind: WorkspaceEntryKind): Boolean = kind == WorkspaceEntryKind.Text
 
     /**
      * 读一个文本文件，按 design 稿的三档分流：整份 / 只预览前 25 行 / 二进制。
@@ -203,6 +253,9 @@ internal object WorkspaceFiles {
                 detail = "java.io.FileNotFoundException: ${file.absolutePath}\n  (No such file or directory)",
             )
         }
+        // 图片**不在这里读**：查看器按自己的目标框采样解码（`decodePiImageFile`），
+        // 这里读一遍就等于一张 4000px 的截图先在内存里躺一份。
+        if (kind == WorkspaceEntryKind.Image) return WorkspaceOpen.Image
         if (kind == WorkspaceEntryKind.Binary) {
             return WorkspaceOpen.Binary(file.length(), binaryLabel(file))
         }

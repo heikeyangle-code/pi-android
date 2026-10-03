@@ -1,5 +1,8 @@
 package app.pi.ui.screens
 
+import android.content.ActivityNotFoundException
+import android.content.Context
+import android.content.Intent
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
@@ -57,8 +60,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.core.content.FileProvider
 import app.pi.bridge.DeviceActionException
 import app.pi.bridge.DeviceSystemActions
+import app.pi.ui.blocks.PiImageViewerSource
+import app.pi.ui.blocks.PiImageViewerSurface
 import app.pi.ui.components.PiDialog
 import app.pi.ui.components.PiDialogAction
 import app.pi.ui.components.PiDialogActions
@@ -87,14 +93,15 @@ import kotlinx.coroutines.withContext
  * **返回键、点外部、下滑**三件事都由窗口本身处理，而全应用那一处 `BackHandler`
  * （`PiRoot` 的 KDoc 记着「两处会互相遮盖」）依然只有一处。
  *
- * ## 五个状态，一个都不能少
+ * ## 状态，一个都不能少
  *
  * | 状态 | 触发 | 界面 |
  * |---|---|---|
  * | 加载中 | 还在磁盘上读 | 一行「正在读取…」 |
  * | 文本 | 读到了 | 行号列 + 等宽正文，可滚动、只读（`viewing`） |
  * | 空文件 | 0 行 | 一句话（不是错误，也不是加载中） |
- * | 二进制 | NUL 字节 / 已知后缀 | 不让看内容，只说类型与大小，并说明为什么 |
+ * | 图片 | 图片后缀 | 图片查看器的同一块画布：可放大、可存到 Download（`ImageBody`） |
+ * | 二进制 | NUL 字节 / 已知后缀 | 不让看内容，只说类型与大小，并由系统里的应用打开 |
  * | 超大文件 | > 1 MB | 前 25 行 + 一行说明（`toolarge`） |
  * | 读取失败 | IO 异常 / 文件没了 | 原因 + 详情 + 重试 |
  * | HTML | `.html` / `.htm` | 系统 WebView 渲染预览 |
@@ -153,7 +160,16 @@ internal fun WorkspaceViewer(
     // null = 正在读。它和「0 行」是两件事，所以不能用空表代替。
     var opened by remember(target.relativePath, reloadTick) { mutableStateOf<WorkspaceOpen?>(null) }
     var mode by remember(target.relativePath) {
-        mutableStateOf(if (target.startInEdit) ViewerMode.Edit else ViewerMode.View)
+        // `startInEdit` 也要过「这个 kind 能不能按文本改」那道判据（判据一处，见
+        // `WorkspaceFiles.editableAsText`）：菜单里的「编辑」与被写死的 `startInEdit` 都可能
+        // 落到图片/二进制上，而编辑态对着空草稿保存，就是拿 UTF-8 文本覆盖一张图片。
+        mutableStateOf(
+            if (target.startInEdit && WorkspaceFiles.editableAsText(target.kind)) {
+                ViewerMode.Edit
+            } else {
+                ViewerMode.View
+            },
+        )
     }
     var draft by remember(target.relativePath) { mutableStateOf("") }
     var dirty by remember(target.relativePath) { mutableStateOf(false) }
@@ -247,7 +263,7 @@ internal fun WorkspaceViewer(
                     dirty = dirty,
                     saving = saving,
                     editing = mode == ViewerMode.Edit,
-                    canEdit = target.editable && !isHtml && target.kind != WorkspaceEntryKind.Binary,
+                    canEdit = target.editable && WorkspaceFiles.editableAsText(target.kind),
                     onBack = { leave() },
                     onEdit = {
                         val text = opened
@@ -298,23 +314,30 @@ internal fun WorkspaceViewer(
                         else -> ViewerBody(
                             opened = opened,
                             saveError = saveError,
-                            onRetry = { reloadTick++ },
-                            onRetrySave = { save() },
-                            fileName = target.file.name,
+                            file = target.file,
                             // 高亮语言按工作区相对路径判（`PiCodeLanguage.forPath`），与对话里
                             // read/write 卡同一条路径；pi 也一样按路径后缀决定语言
                             // （`renderers/read.ts:126-127`）。
                             path = target.relativePath,
+                            onRetry = { reloadTick++ },
+                            onRetrySave = { save() },
                             onExport = {
                                 onMessage(exportBinary(context, target.file))
                             },
                             onShare = {
                                 onMessage(sharePath(context, target))
                             },
+                            onOpenWithApp = {
+                                onMessage(openWithOtherApp(context, target.file))
+                            },
                             onCopyError = {
                                 copyToClipboard(context, saveError?.detail.orEmpty())
                                 onMessage("已复制错误")
                             },
+                            // 图片那一支的 ✕ / 点空白处：与顶栏返回走同一条路（`leave()`），
+                            // 图片没有草稿，它只会关掉这一层。
+                            onDismissImage = { leave() },
+                            onMessage = onMessage,
                         )
                     }
                 }
@@ -503,18 +526,30 @@ private fun ViewerTopBar(
 private fun ViewerBody(
     opened: WorkspaceOpen?,
     saveError: WorkspaceOpen.Failed?,
-    fileName: String,
+    /**
+     * 正在看的那个文件。
+     *
+     * 图片那一支要把它交给图片查看器（[PiImageViewerSurface] 收的是宿主文件），别的几支只
+     * 用到它的名字 —— 一个 [File] 足够，不需要再带一个 `fileName` 字符串（两个参数说的是
+     * 同一件事，就有第二份真相）。
+     */
+    file: File,
     /**
      * 工作区相对路径。只做两件事：给正文挑高亮语言（`PiCodeLanguage.forPath`，与对话里的
      * `read`/`write` 卡同一条路径），以及 [`TooLargeBody`] 的提示。**显示**用的是
-     * [fileName] 与顶栏那份 meta。
+     * [file] 的名字与顶栏那份 meta。
      */
     path: String,
     onRetry: () -> Unit,
     onRetrySave: () -> Unit,
     onExport: () -> Unit,
     onShare: () -> Unit,
+    onOpenWithApp: () -> Unit,
     onCopyError: () -> Unit,
+    /** 图片那一支的 ✕ / 点图片周围：关掉整个查看器（图片没有草稿，中间没有可问的东西）。 */
+    onDismissImage: () -> Unit,
+    /** 图片查看器里「保存到下载目录」的结果。 */
+    onMessage: (String) -> Unit,
 ) {
     if (saveError != null) {
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
@@ -534,13 +569,14 @@ private fun ViewerBody(
     when (opened) {
         null -> LoadingBody()
         is WorkspaceOpen.Text -> if (opened.lines.isEmpty()) {
-            EmptyFileBody(fileName)
+            EmptyFileBody(file.name)
         } else {
             CodeBody(opened.lines, opened.totalLines, opened.truncated, path)
         }
 
         is WorkspaceOpen.TooLarge -> TooLargeBody(opened, path)
-        is WorkspaceOpen.Binary -> BinaryBody(opened, fileName, onExport, onShare)
+        is WorkspaceOpen.Image -> ImageBody(file, onDismissImage, onMessage)
+        is WorkspaceOpen.Binary -> BinaryBody(opened, file.name, onOpenWithApp, onExport, onShare)
         is WorkspaceOpen.Failed -> Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
             Spacer(Modifier.height(PiSettingsMetrics.notePaddingVertical))
             WsErrBlock(
@@ -716,13 +752,43 @@ private fun TooLargeBody(opened: WorkspaceOpen.TooLarge, path: String) {
 }
 
 /**
- * 二进制：不给内容，只说类型与大小，并说清**为什么**不给 ——
- * 「这一屏的查看器只打开文本，二进制展开成乱码没有意义」。
+ * 图片：**交给聊天那个图片查看器的同一块画布**（[PiImageViewerSurface]）。
+ *
+ * 为什么不在这里另写一个"图片预览"：解码只有一份（`decodePiImageFile`）、闸门只有一把
+ * （`piImageDecodeGate`）、手势只有一套（捏合 / 拖动 / 双击），而"保存到下载目录"这件事
+ * 也就只有一处（`DeviceSystemActions.export`）。抄一份出来的第一天就会和那一份不一致 ——
+ * 这个文件里每一个"第二份"都写着同样的结论。
+ *
+ * 这一支只说明"画哪里"：它已经在一个全屏 `Dialog` 里（顶栏、⋮ 菜单都在），再为一张图开
+ * 第二个窗口没有意义，所以画布直接铺在正文区；✕ 与点空白处都交给 [onDismiss]，与顶栏返回
+ * 是同一条路（[ViewerBody] 的 `onDismissImage`）。
+ */
+@Composable
+private fun ImageBody(
+    file: File,
+    onDismiss: () -> Unit,
+    onMessage: (String) -> Unit,
+) {
+    PiImageViewerSurface(
+        image = PiImageViewerSource.HostFile(file),
+        onDismiss = onDismiss,
+        onMessage = onMessage,
+    )
+}
+
+/**
+ * 二进制：不给内容，只说类型与大小 —— 但**能交给系统里的应用打开**。
+ *
+ * 「渲染不了的交系统」是这一屏现在的判据：主动作是 `ACTION_VIEW` + `content://` URI +
+ * 正确的 MIME（[openWithOtherApp]），导出与分享退为次动作（系统里没人能接时它们还在，
+ * 而且那时提示会把这句话说清楚）。以前这里的主动作是「导出到 Download」—— 用户想看一眼
+ * 那个 PDF，得到的却是 Download 里多一个文件，还得自己再去找。
  */
 @Composable
 private fun BinaryBody(
     opened: WorkspaceOpen.Binary,
     fileName: String,
+    onOpenWithApp: () -> Unit,
     onExport: () -> Unit,
     onShare: () -> Unit,
 ) {
@@ -746,8 +812,9 @@ private fun BinaryBody(
                 color = MaterialTheme.colorScheme.onSurface,
             )
             Text(
-                "查看器只打开文本：它没有字符编码可以按，展开出来只是乱码。" +
-                    "「$fileName」是${opened.typeLabel}，${WorkspaceFiles.formatSize(opened.sizeBytes)}。",
+                "查看器不展开它：它没有字符编码可以按，展开出来只是乱码。" +
+                    "「$fileName」是${opened.typeLabel}，${WorkspaceFiles.formatSize(opened.sizeBytes)}，" +
+                    "可以交给系统里的应用打开。",
                 modifier = Modifier.padding(top = PiSpacing.inline),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -756,8 +823,14 @@ private fun BinaryBody(
                 modifier = Modifier.padding(top = PiSettingsMetrics.cardPaddingLoose),
                 horizontalArrangement = Arrangement.spacedBy(PiSettingsMetrics.pageHorizontal),
             ) {
-                WsErrAction("导出到 Download", tone = PiTheme.palette.accent, onClick = onExport)
-                WsErrAction("分享", tone = PiTheme.palette.accent, onClick = onShare)
+                WsErrAction("用其他应用打开", tone = PiTheme.palette.accent, onClick = onOpenWithApp)
+            }
+            Row(
+                modifier = Modifier.padding(top = PiSettingsMetrics.cardPadding),
+                horizontalArrangement = Arrangement.spacedBy(PiSettingsMetrics.pageHorizontal),
+            ) {
+                WsErrAction("导出到 Download", tone = PiTheme.palette.muted, onClick = onExport)
+                WsErrAction("分享", tone = PiTheme.palette.muted, onClick = onShare)
             }
         }
     }
@@ -818,8 +891,11 @@ private fun EditorBody(
 // ------------------------------------------------------------------ HTML ----
 
 /**
- * `.html` 的渲染预览 —— **本批相对设计稿新增的唯一一条能力**（用户原话：「就只加一个功能：
- * HTML 文件可以打开」）。
+ * `.html` 的渲染预览（用户原话：「就只加一个功能：HTML 文件可以打开」）。
+ *
+ * 「本批新增的唯一一条能力」这句话已经过期了：图片现在走 [ImageBody]，二进制交给系统
+ * （[openWithOtherApp]）—— 三条路加起来的判据是同一个：**能渲染的自己渲染，渲染不了的
+ * 交系统**。
  *
  * ## 为什么是系统 WebView，而不是自己解析
  *
@@ -918,26 +994,76 @@ private fun HtmlPreview(
  * 走 App 既有的那条导出通道（`DeviceSystemActions.export`，设置里「导出诊断报告」用的是
  * 同一支），而不是在这里另写一个 `MediaStore` 写入器：那会变成第二条写公共目录的路径，
  * 两条路径迟早会在分区存储的某个分支上不一致。
+ *
+ * 字节给的是**文件本身**（`sourceFile`）：这条路以前自己 `readBytes()` 再 base64 一遍，
+ * 而 `export` 拿到 base64 又要解回来 —— 一个 20 MB 的文件，峰值内存里躺着三份同样的字节。
  */
-private fun exportBinary(context: android.content.Context, file: File): String = try {
-    val bytes = file.readBytes()
-    val encoded = android.util.Base64.encodeToString(bytes, android.util.Base64.DEFAULT)
+private fun exportBinary(context: Context, file: File): String = try {
     DeviceSystemActions.export(
         context = context,
         name = file.name,
         text = null,
-        base64 = encoded,
-        mimeType = binaryMime(file.name),
+        base64 = null,
+        mimeType = DeviceSystemActions.mimeTypeForFileName(file.name),
+        sourceFile = file,
     )
     "已保存到 Download/${file.name}"
 } catch (error: DeviceActionException) {
-    "导出失败：" + error.message
+    "导出失败：" + error.denial.reason + (error.denial.hint?.let { " $it" } ?: "")
 } catch (error: Exception) {
     "导出失败：${error::class.java.simpleName}: ${error.message}"
 }
 
+/**
+ * 用系统里的应用打开这个文件：`ACTION_VIEW` + `content://` URI（[FileProvider] 授读权限）
+ * + 正确的 MIME。
+ *
+ * 三条各自都有理由：
+ *
+ *  - **`content://` 而不是 `file://`**：Android 7 起把 `file://` 交给另一个应用会抛
+ *    `FileUriExposedException`。这个 App 的私有目录别人也读不到，只有 URI 授权能给出去。
+ *  - **`FLAG_GRANT_READ_URI_PERMISSION`**：URI 授权是要显式带上的，否则对面拿到一个
+ *    读不了的 URI，报的是它自己的"文件不存在"。
+ *  - **`FLAG_ACTIVITY_NEW_TASK`**：这里拿到的 `Context` 是查看器那个 `Dialog` 的 context
+ *    （不是 Activity），从非 Activity 的 context 起界面必须带这个 flag，否则
+ *    `AndroidRuntimeException`。
+ *
+ * 判"有没有人能接"靠的是 `startActivity` 抛不抛 `ActivityNotFoundException`，**不是**
+ * `resolveActivity`：API 30 起包可见性会过滤 `resolveActivity` 的结果，一个系统明明能起的
+ * 应用可能在这里答 null —— 那会让我们把"其实打得开"说成"没有应用能打开"。异常是平台自己
+ * 的答案，不经过可见性过滤。
+ *
+ * 返回一句给用户看的话：成功、没人能接（保留导出/分享两条路）、或 FileProvider 覆盖不到
+ * 这个路径。**不静默降级**：任何一种失败都带一句人话，而不是"什么都没发生"。
+ */
+private fun openWithOtherApp(context: Context, file: File): String {
+    val uri = try {
+        FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+    } catch (_: IllegalArgumentException) {
+        // FileProvider 的路径清单只覆盖 `<files>/pi/`（`res/xml/file_paths.xml`）：工作区
+        // 可以是一个设备上的真目录（「从设备目录选择」），那里不在授权范围内。不为了这一步
+        // 把根目录也交出去 —— 那是把 shared_prefs/databases 一起放进可授权的范围。
+        return "这个文件不在应用的私有目录里，没法直接交给其他应用打开。" +
+            "可以先「导出到 Download」，再从那里打开或分享。"
+    }
+    val mime = DeviceSystemActions.mimeTypeForFileName(file.name)
+    val intent = Intent(Intent.ACTION_VIEW).apply {
+        setDataAndType(uri, mime)
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    }
+    return try {
+        context.startActivity(intent)
+        "已交给其他应用打开 · ${file.name}"
+    } catch (error: ActivityNotFoundException) {
+        "这台设备上没有能打开这种文件的应用（$mime）。可以导出到 Download，或分享它的路径。"
+    } catch (error: Exception) {
+        "打开失败：${error::class.java.simpleName}: ${error.message}"
+    }
+}
+
 /** 分享：App 的分享通道只送文本（`ACTION_SEND` + `text/plain`），所以送路径。 */
-private fun sharePath(context: android.content.Context, target: WorkspaceViewerTarget): String = try {
+private fun sharePath(context: Context, target: WorkspaceViewerTarget): String = try {
     DeviceSystemActions.share(
         context = context,
         text = "工作区文件：${target.relativePath}\n${target.file.absolutePath}",
@@ -951,26 +1077,10 @@ private fun sharePath(context: android.content.Context, target: WorkspaceViewerT
     "分享失败：${error::class.java.simpleName}: ${error.message}"
 }
 
-private fun binaryMime(name: String): String {
-    val suffix = name.substringAfterLast('.', "").lowercase(java.util.Locale.US)
-    return when (suffix) {
-        "png" -> "image/png"
-        "jpg", "jpeg" -> "image/jpeg"
-        "gif" -> "image/gif"
-        "webp" -> "image/webp"
-        "pdf" -> "application/pdf"
-        "zip" -> "application/zip"
-        "gz", "tgz" -> "application/gzip"
-        "mp3" -> "audio/mpeg"
-        "mp4" -> "video/mp4"
-        else -> "application/octet-stream"
-    }
-}
-
 /** 复制一段文本（错误详情、`/名字`）；失败不抛，回一句人话。 */
-internal fun copyToClipboard(context: android.content.Context, text: String): Boolean =
+internal fun copyToClipboard(context: Context, text: String): Boolean =
     runCatching {
-        val manager = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE)
+        val manager = context.getSystemService(Context.CLIPBOARD_SERVICE)
             as? android.content.ClipboardManager ?: return false
         manager.setPrimaryClip(android.content.ClipData.newPlainText("pi", text))
         true

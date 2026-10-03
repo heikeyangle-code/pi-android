@@ -31,6 +31,7 @@ import android.os.Vibrator
 import android.provider.MediaStore
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
+import android.webkit.MimeTypeMap
 import android.widget.Toast
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
@@ -730,16 +731,51 @@ object DeviceSystemActions {
 
     // --------------------------------------------------------------- storage ----
 
-    /** Public Download, sanitised name, MediaStore on API 29+, legacy path below. */
+    /**
+     * 一个文件名该用哪个 MIME —— 整个 App 只有这一份。
+     *
+     * 两个读者，而且两边必须答同一个值：工作区的文件查看器把文件交给系统里的应用打开
+     * （`ACTION_VIEW`），以及图片/二进制写进 Download（[export] 要 MIME）。
+     *
+     * 用平台自己的表（`MimeTypeMap`）而不是手写一张后缀表：手写的那张永远漏，而漏掉的后缀
+     * 在被交出去时会被报成 `application/octet-stream` —— 一句对图片也照说的谎。
+     * 拿不到时给 `*/*`：那是"我不知道"的系统写法，让系统自己去挑，比编一个具体的错类型好。
+     */
+    fun mimeTypeForFileName(name: String): String {
+        val suffix = name.substringAfterLast('.', "").lowercase(Locale.US)
+        if (suffix.isEmpty()) return "*/*"
+        return MimeTypeMap.getSingleton().getMimeTypeFromExtension(suffix) ?: "*/*"
+    }
+
+    /**
+     * Public Download, sanitised name, MediaStore on API 29+, legacy path below.
+     *
+     * The bytes come from exactly one of three sources, in this order: [sourceFile] — a file
+     * already on disk, which is **read here** rather than handed over as base64 (a photograph
+     * is megabytes; encoding it to base64 so this function can decode it again is a second
+     * full copy of the same bytes for nothing) — then [base64], then [text]. Every caller
+     * still ends up in the one writer to a user-visible location.
+     */
     fun export(
         context: Context,
         name: String,
         text: String?,
         base64: String?,
         mimeType: String,
+        sourceFile: File? = null,
     ): JSONObject {
         val safeName = sanitizeName(name)
         val bytes: ByteArray = when {
+            sourceFile != null -> runCatching { sourceFile.readBytes() }
+                .getOrElse {
+                    throw DeviceActionException(
+                        DeviceDenial(
+                            code = DeviceDenial.ERROR,
+                            reason = "读不到要导出的文件：${it.message}",
+                            hint = "文件可能已经被删掉或改名，重新打开一次再导出。",
+                        ),
+                    )
+                }
             base64 != null -> runCatching { android.util.Base64.decode(base64, android.util.Base64.DEFAULT) }
                 .getOrElse {
                     throw DeviceActionException(
@@ -748,7 +784,7 @@ object DeviceSystemActions {
                 }
             text != null -> text.toByteArray(Charsets.UTF_8)
             else -> throw DeviceActionException(
-                DeviceDenial(DeviceDenial.BAD_REQUEST, "导出需要 content 或 base64 之一。"),
+                DeviceDenial(DeviceDenial.BAD_REQUEST, "导出需要 content、base64 或文件路径之一。"),
             )
         }
         if (bytes.isEmpty()) {

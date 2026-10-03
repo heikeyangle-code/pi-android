@@ -2761,7 +2761,13 @@ private fun ChatBody(
     // dialog. `PiImageViewer` is a `Dialog` (a separate window), so this placement
     // does not overlay the list; it only decides who owns "which image is open".
     viewedImage?.let { image ->
-        PiImageViewer(image = image, onDismiss = { viewedImage = null })
+        PiImageViewer(
+            image = image,
+            onDismiss = { viewedImage = null },
+            // 「保存到下载目录」的结果走全应用同一条通知队列（`ExtensionUiHost` 的 snackbar），
+            // 与这个屏里其它 UI 层的失败（例如选择器什么都没返回）同一条路。
+            onMessage = { session.notifyUser(it) },
+        )
     }
 }
 

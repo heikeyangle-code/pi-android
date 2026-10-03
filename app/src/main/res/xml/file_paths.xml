@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  FileProvider 能授权的路径 —— 「用其他应用打开」那一个应用拿得到 URI 的范围。
+
+  **只有 `<files>/pi/` 这一棵**，也就是运行时的家（`PiPaths.home`：
+  `<files>/pi/runtime/rootfs/…` 是 guest 的 `/`，工作区在那下面）。两个"不要"：
+
+    - 不写 `<files-path name="..." path="." />`：那会把整个 `<files>/` 交出去。`shared_prefs`
+      与 `databases` 不在 `files/` 下（它们是 `context.getFilesDir()` 的兄弟），但 `<files>/`
+      里还有别的应用自留地，没有理由一起暴露。
+    - 不写 `<external-path>` / `<root-path>`：工作区可以是用户选的设备真目录
+      （`WorkspaceExternalPicker`），把那棵树整体授权出去，等于把整个外部存储开放给任何一个
+      被我们启动的看图应用。那里打不开时 `openWithOtherApp` 会如实说明并给出导出/分享两条路
+      （见它的 KDoc）—— 而不是悄悄扩大这个范围。
+
+  `path="pi/"` 是相对 `Context.getFilesDir()` 的，所以 `..` 出不去：FileProvider 自己会
+  规范化请求路径并要求它落在配置的根下面。
+-->
+<paths>
+    <files-path name="pi-home" path="pi/" />
+</paths>

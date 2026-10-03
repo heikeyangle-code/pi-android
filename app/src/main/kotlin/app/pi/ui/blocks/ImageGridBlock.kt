@@ -36,6 +36,7 @@ import app.pi.ui.theme.PiSpacing
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.util.Base64
+import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -395,10 +396,31 @@ private sealed interface CellImage {
  * grid is an out-of-memory on a mid-range phone. So one more rule bounds the **area**
  * at [DECODE_AREA_BUDGET_FACTOR] box-areas; it can only ever fire for a picture whose
  * aspect ratio is nothing like its box, and it does not touch the normal case at all.
+ *
+ * The bytes themselves: `PiImage` 是 wire 的形状（inline base64），所以这条入口自己解一次
+ * base64 再交给 [decodePiImageBytes] —— 采样、面积预算、`inJustDecodeBounds` 那一套都在那里，
+ * 两个入口共用同一份（见 [decodePiImageFile]）。
  */
 internal fun decodePiImage(base64: String, targetWidth: Int = 0, targetHeight: Int = 0): Bitmap? =
+    runCatching { Base64.decode(base64, Base64.DEFAULT) }
+        .getOrNull()
+        ?.let { bytes -> decodePiImageBytes(bytes, targetWidth, targetHeight) }
+
+/**
+ * 同一把解码器，吃**已经在这边的字节**：工作区/文件查看器里的图片是磁盘上的一个文件。
+ *
+ * 为什么不让调用方自己 base64 一下再交给 [decodePiImage]：一张手机截图 2–10 MB，多一趟
+ * 编码 + 解码就是多一份峰值内存，而两种来源真正不同的只有"字节从哪来"。采样与面积预算
+ * 一行未动，仍在 [decodePiImageBytes] 里。
+ */
+internal fun decodePiImageFile(file: File, targetWidth: Int = 0, targetHeight: Int = 0): Bitmap? =
+    runCatching { file.readBytes() }
+        .getOrNull()
+        ?.let { bytes -> decodePiImageBytes(bytes, targetWidth, targetHeight) }
+
+/** 解码本身：wire 与宿主文件都走这里，所以"一次解码"这件事只有一份实现。 */
+private fun decodePiImageBytes(bytes: ByteArray, targetWidth: Int, targetHeight: Int): Bitmap? =
     runCatching {
-        val bytes = Base64.decode(base64, Base64.DEFAULT)
         if (targetWidth <= 0 || targetHeight <= 0) {
             return@runCatching BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
         }

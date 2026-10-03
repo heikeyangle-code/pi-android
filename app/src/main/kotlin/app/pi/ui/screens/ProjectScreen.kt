@@ -25,6 +25,7 @@ import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material3.Icon
@@ -2179,7 +2180,13 @@ private fun WorkspaceEntryRow(
 /** 目录名太长时中间省略（与面包屑同一条规则）。 */
 private const val ENTRY_NAME_MAX_CHARS = 28
 
-/** 文件夹 / 文本 / 二进制三种图标：稿子为二进制单加了一个图标态。 */
+/**
+ * 四种图标：文件夹 / 文本（含 HTML）/ 图片 / 二进制。稿子为二进制单加了一个图标态。
+ *
+ * 图片借的是 Material 自己的 `Image` 笔画：设计稿那套图标里没有图片态（它只有
+ * folder/file/bin 三种文件图标），而一张图在列表里和一份文本长得一模一样，就等于又把
+ * 「能渲染」这件事藏回「文件」里 —— 这一批修的就是它。
+ */
 @Composable
 private fun EntryGlyph(kind: WorkspaceEntryKind) {
     when (kind) {
@@ -2195,6 +2202,13 @@ private fun EntryGlyph(kind: WorkspaceEntryKind) {
         // 与旁边两个真矢量笔画不同源，字号一变就不齐。
         WorkspaceEntryKind.Binary -> Icon(
             imageVector = WsBinaryFileGlyph,
+            contentDescription = null,
+            modifier = Modifier.size(PiSettingsMetrics.searchIconSize),
+            tint = PiTheme.palette.muted,
+        )
+
+        WorkspaceEntryKind.Image -> Icon(
+            Icons.Filled.Image,
             contentDescription = null,
             modifier = Modifier.size(PiSettingsMetrics.searchIconSize),
             tint = PiTheme.palette.muted,
@@ -2525,6 +2539,14 @@ private data class WorkspaceMenuTarget(
     val path: String,
     val file: File,
     val isDirectory: Boolean,
+    /**
+     * 这个条目是哪种文件（`WorkspaceFiles.kindOf`）。
+     *
+     * 菜单要它只为一件事：给不给「编辑」（判据 `WorkspaceFiles.editableAsText`）。以前每个
+     * 文件行都画一个「编辑」，点开一张图/一个 `.so` 却是空的编辑态 —— 保存下去就是拿 UTF-8
+     * 文本覆盖那些字节。
+     */
+    val kind: WorkspaceEntryKind,
     /** 从 ③ 来的行多一项「看它在对话里的那一步」。 */
     val fromSession: Boolean,
     val sizeBytes: Long,
@@ -2536,6 +2558,8 @@ private fun menuTargetFor(path: String, file: File, fromSession: Boolean): Works
         path = path,
         file = file,
         isDirectory = file.isDirectory,
+        // 与目录树/查看器同一个判据（`WorkspaceFiles.kindOf`），菜单据此决定给不给「编辑」。
+        kind = if (file.isDirectory) WorkspaceEntryKind.Directory else WorkspaceFiles.kindOf(file),
         fromSession = fromSession,
         sizeBytes = if (file.isFile) file.length() else 0L,
         modifiedAt = file.lastModified(),
@@ -2577,7 +2601,11 @@ private fun WorkspaceMenuSheet(
             MenuAction("复制路径", onCopyPath)
         } else {
             MenuAction("打开", onOpen)
-            MenuAction("编辑", onEdit)
+            // 「编辑」只对文本存在（判据一处：`WorkspaceFiles.editableAsText`）。给图片/二进制
+            // 一个编辑键，点开是空的编辑态，保存下去就是把那些字节覆盖成 UTF-8 文本。
+            if (WorkspaceFiles.editableAsText(target.kind)) {
+                MenuAction("编辑", onEdit)
+            }
             MenuAction("重命名", onRename)
             MenuAction("删除", onDelete, tone = PiTheme.palette.error)
             if (target.fromSession) {
