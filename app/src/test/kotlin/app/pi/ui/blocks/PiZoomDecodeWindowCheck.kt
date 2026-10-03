@@ -4,6 +4,11 @@ import java.io.File
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.system.exitProcess
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 
 // A bare-JVM harness for `PiZoomDecodeWindow.kt` — the arithmetic behind 「放大之后按可见的那一块
 // 重新解码」. Registered in `tools/run-app-pure-checks.sh` as `zoom-decode-window`, with
@@ -75,21 +80,6 @@ private const val BASE_W = 2000
 private const val BASE_H = 1500
 private const val SRC_W = 4000
 private const val SRC_H = 3000
-
-/** `PiImageViewer.clampPan`'s rule, as this harness must apply it to a pan before asking for a rect. */
-private fun clampPan(
-    panX: Float,
-    panY: Float,
-    scale: Float,
-    fittedWidth: Float,
-    fittedHeight: Float,
-    boxWidth: Float,
-    boxHeight: Float,
-): Pair<Float, Float> {
-    val maxX = max(0f, (scale * fittedWidth - boxWidth) / 2f)
-    val maxY = max(0f, (scale * fittedHeight - boxHeight) / 2f)
-    return panX.coerceIn(-maxX, maxX) to panY.coerceIn(-maxY, maxY)
-}
 
 /**
  * What `decodePiImageBytes` produces for this pair: halve while **both** axes still cover the box,
@@ -360,17 +350,22 @@ private fun aspectChecks() {
 }
 
 private fun panChecks() {
-    // A pan is clamped by `PiImageViewer.clampPan` before the arithmetic sees it, so the sweep is over
-    // *clamped* pans: at every extreme the block must still be a legal, non-empty rectangle inside the
-    // source, and the far edge must be able to reach the source's own edge.
+    // The pan the decode arithmetic sees is the one the gesture path produces, so the sweep drives the
+    // app's own rule (`panLimit` + `panAfterDrag`) with absurd *screen* finger travel: at every extreme
+    // the block must still be a legal, non-empty rectangle inside the source, and the far edge must be
+    // reachable.
     val fit = viewerFit(BOX_W, BOX_H, BASE_W, BASE_H)
     val fittedWidth = BASE_W * fit
     val fittedHeight = BASE_H * fit
+    val maxPanX = panLimit(8f, fittedWidth, BOX_W.toFloat())
+    val maxPanY = panLimit(8f, fittedHeight, BOX_H.toFloat())
     var farRight = 0
     var farBottom = 0
     for (rawX in listOf(-1e5f, -5000f, -1080f, -500f, 0f, 500f, 1080f, 5000f, 1e5f)) {
         for (rawY in listOf(-1e5f, -5000f, -800f, 0f, 800f, 5000f, 1e5f)) {
-            val (px, py) = clampPan(rawX, rawY, 8f, fittedWidth, fittedHeight, BOX_W.toFloat(), BOX_H.toFloat())
+            // `rawX` is the *screen* travel of the finger; the gesture layer hands over `rawX / 8`.
+            val px = panAfterDrag(0f, rawX / 8f, 8f, maxPanX)
+            val py = panAfterDrag(0f, rawY / 8f, 8f, maxPanY)
             val r = visible(BOX_W, BOX_H, SRC_W, SRC_H, 8f, px, py)
                 ?: run { checkSilent("a clamped pan still yields a block", false) { "$rawX,$rawY" }; continue }
             checkSilent("a clamped pan yields a legal block", insideSource(r, SRC_W, SRC_H)) { "$r (pan $px,$py)" }
@@ -385,6 +380,137 @@ private fun panChecks() {
     // clamps into the picture, because between a gesture write and the decode there is a race.
     val absurd = visible(BOX_W, BOX_H, SRC_W, SRC_H, 8f, 99_999f, -99_999f)
     checkTrue("an absurd pan is clamped into the source", absurd != null && insideSource(absurd, SRC_W, SRC_H)) { "$absurd" }
+}
+
+/**
+ * 拖动跟不跟手 —— **这就是用户报的「放大了之后左右上下滑动，滑的特别特别慢」**。
+ *
+ * The mechanism is quoted in [panStepFromGesture]'s KDoc and it was read out of the platform's own
+ * sources: the gesture layer hands the finger's travel over in the *local* space inside
+ * `graphicsLayer` (so divided by the scale), while `translationX/Y` is applied *outside* the scale
+ * (hwui composes `T·R·S`). Feeding `drag` straight into `pan` therefore moved the picture by
+ * `1/scale` of the finger — 1/8 at 8×.
+ *
+ * What is pinned here: the round trip (screen travel in → the same screen travel out), that the
+ * conversion is a no-op at 1×, that the clamp only ever changes an out-of-range value, and that
+ * sixty dragged frames accumulate without drift.
+ */
+private fun panMappingChecks() {
+    // 1×: the conversion must be a no-op, so nothing about the un-zoomed picture changes.
+    for (travel in listOf(0f, 1f, 7.5f, -40f, 1234.5f)) {
+        checkTrue("at 1x the gesture step is the finger's own travel ($travel)", panStepFromGesture(travel, 1f) == travel)
+    }
+
+    // The round trip: the finger travels `screen` px, the gesture layer delivers `screen / scale`, and
+    // the picture must end up exactly `screen` px further along. The 0.01 px allowance is the float
+    // error of divide-then-multiply, not slack in the requirement (a pixel is 100x bigger).
+    var worst = 0f
+    var roundTrips = 0
+    for (scale in listOf(1f, 1.5f, 2f, 2.5f, 4f, 5.5f, 8f)) {
+        for (screen in listOf(-500f, -37.5f, -1f, 0f, 1f, 12.5f, 80f, 333.25f)) {
+            val delivered = screen / scale
+            val moved = panStepFromGesture(delivered, scale)
+            val error = abs(moved - screen)
+            if (error > worst) worst = error
+            roundTrips++
+            checkSilent("the picture follows the finger 1:1 (${screen}px at ${scale}x)", error <= 0.01f) {
+                "moved=$moved wanted=$screen error=$error"
+            }
+        }
+    }
+    check("the 1:1 round trip was checked across the zoom range", roundTrips, 56)
+    checkTrue("and its worst float error is under a hundredth of a pixel", worst <= 0.01f) { "worst=$worst" }
+
+    // The defect itself, so that dropping the conversion cannot pass this file: an 80 px drag at 8×
+    // used to move the picture 10 px.
+    check("unconverted, an 80px drag at 8x moves 10px (the bug)", 80f / 8f, 10f)
+    checkTrue("converted, 80px of finger is 80px of picture", abs(panStepFromGesture(80f / 8f, 8f) - 80f) <= 0.01f)
+
+    // Clamp: in range the value passes through untouched (that is "逐像素跟手"), out of range it is
+    // pinned to the limit (no bounce, no animation, no damping).
+    val limit = 500f
+    // In range: the value must come out exactly as it went in. These pairs are chosen so that
+    // `pan + travel` stays inside ±500 (the clamp is allowed to touch anything outside that).
+    for ((pan, travel) in listOf(
+        -400f to -50f,
+        -100f to 0f,
+        0f to 1f,
+        100f to 25f,
+        450f to 50f,
+        499f to 0f,
+        -499f to 0f,
+    )) {
+        val next = panAfterDrag(pan, travel, 1f, limit)
+        checkSilent("an in-range drag is passed through untouched", next == pan + travel) { "$pan + $travel -> $next" }
+    }
+    check("a drag past the edge is pinned to the limit", panAfterDrag(490f, 50f, 1f, limit), 500f)
+    check("and so is one past the other edge", panAfterDrag(-490f, -50f, 1f, limit), -500f)
+    check("a drag that lands exactly on the edge is not altered", panAfterDrag(480f, 20f, 1f, limit), 500f)
+    checkTrue("a drag inside the range is never moved by the clamp", panAfterDrag(120f, 3f, 1f, limit) == 123f)
+
+    // 1× never pans: `viewerFit` is `min(box / bitmap)`, so the fitted picture never overflows the box,
+    // so the limit is zero — the "reset to centre at 1×" is the clamp's own result.
+    val fit = viewerFit(BOX_W, BOX_H, BASE_W, BASE_H)
+    check("at 1x the pan limit is zero on x", panLimit(1f, BASE_W * fit, BOX_W.toFloat()), 0f)
+    check("at 1x the pan limit is zero on y", panLimit(1f, BASE_H * fit, BOX_H.toFloat()), 0f)
+    check(
+        "so a drag at 1x leaves the picture centred",
+        panAfterDrag(0f, 999f, 1f, panLimit(1f, BASE_W * fit, BOX_W.toFloat())),
+        0f,
+    )
+    // An axis that still fits at any zoom has no slack either (a very wide picture).
+    check("an axis that still fits has no slack", panLimit(8f, 100f, BOX_W.toFloat()), 0f)
+    check("and one that does not has the expected half-overflow", panLimit(8f, 300f, 400f), 1000f)
+
+    // Sixty frames of continuous dragging accumulate exactly: no drift, no damping, no lag.
+    var pan = 0f
+    repeat(60) { pan = panAfterDrag(pan, 6f / 8f, 8f, limit) }
+    checkTrue("60 frames of 6px screen travel accumulate to 360px", abs(pan - 360f) <= 0.05f) { "pan=$pan" }
+}
+
+/**
+ * 落定闸：拖动期间**一次解码都不许开始**，松手之后恰好落定一次 —— 「解码不在手势路径上」这句话
+ * 只有真的跑一遍协程才算验过（写在 Composable 里的 `delay` 只能靠读码相信）。
+ *
+ * Real time, with a 15x margin: the gate is 120 ms of quiet and the simulated finger moves every 8 ms,
+ * so the "shut for the whole drag" assertion only breaks if this machine stalls for fifteen frames in
+ * a row.
+ */
+private fun settleGateChecks() {
+    val settle = 120L
+    runBlocking {
+        val probes = MutableStateFlow<ZoomProbe?>(null)
+        val settled = ArrayList<ZoomProbe>()
+        val collector = launch { probes.settledProbes(settle).collect { settled.add(it) } }
+        try {
+            // ① 拖动：每 8 ms 一帧、连续 40 帧（320 ms），从来安静不到 120 ms
+            var pan = 0f
+            repeat(40) {
+                pan += 8f
+                probes.value = ZoomProbe(8f, pan, 0f)
+                delay(8)
+            }
+            check("the settle gate stays shut for the whole drag", settled.size, 0)
+
+            // ② 松手：安静之后恰好落定一次，值是最后一帧
+            delay(settle + 200)
+            check("releasing the finger settles exactly once", settled.size, 1)
+            check("and the settled view is the last frame of the drag", settled.lastOrNull(), ZoomProbe(8f, 320f, 0f))
+
+            // ③ 双击动画帧（null）：不算落定，连延时都不排队
+            probes.value = null
+            delay(settle + 200)
+            check("an animation frame is not a settled view", settled.size, 1)
+
+            // ④ 动画结束、图停在 1×：再落定一次新值（这就是「缩回 1× 放掉那一块」的触发）
+            probes.value = ZoomProbe(1f, 0f, 0f)
+            delay(settle + 200)
+            check("the view the animation ended on settles once", settled.size, 2)
+            check("with the value it ended on", settled.lastOrNull(), ZoomProbe(1f, 0f, 0f))
+        } finally {
+            collector.cancel()
+        }
+    }
 }
 
 private fun tilingChecks() {
@@ -564,7 +690,7 @@ private fun wiringChecks() {
     }
     // 重解只认落定的倍率：驱动是一个 snapshotFlow + 去抖的 delay，并且动画帧直接发 null。
     checkTrue("the detail decode is driven by a snapshotFlow", text.contains("snapshotFlow {"))
-    checkTrue("and waits for the view to settle before decoding", text.contains("delay(ZOOM_SETTLE_MILLIS)"))
+    checkTrue("and waits for the view to settle before decoding", text.contains(".settledProbes(ZOOM_SETTLE_MILLIS)"))
     checkTrue("and does not even evaluate the probe while the animation runs", text.contains("if (animating) null else ZoomProbe(")) {
         "an animation frame must not reach the decode decision, let alone allocate for it"
     }
@@ -590,6 +716,45 @@ private fun wiringChecks() {
     checkTrue("and the region decode is wrapped so it cannot throw", text.contains("BitmapRegionDecoder")) {
         "the platform decoder throws IOException on bytes it does not understand"
     }
+    // 拖动跟手：两个轴都必须走 [panAfterDrag]，而旧的原地夹取必须真的没了（留着一份 = 两份规则）。
+    check(
+        "both axes pan through the pure conversion + clamp",
+        Regex("""panAfterDrag\(""").findAll(code).count(),
+        2,
+    )
+    checkTrue("the in-file clamp is gone (one rule, one place)", !code.contains("clampPan(")) {
+        "a second copy of the clamp is how the conversion and the bound drift apart"
+    }
+    checkTrue("and the pan limit comes from the pure function too", code.contains("panLimit("))
+    // 落定闸：解码只能从落定流里来（`.settledProbes(` 在 `decodePiImageRegion` 之前）。
+    checkTrue("the decode is driven by the settle gate", code.contains(".settledProbes("))
+    checkTrue(
+        "and only downstream of it",
+        code.indexOf("decodePiImageRegion(") > code.indexOf(".settledProbes("),
+    ) { "the decode must not be reachable from a gesture frame" }
+    // 变换读在绘制期（layer 的 block），不是组合期的参数：拖动一帧只重画那一层，不重组合。
+    checkTrue("the transform is read inside the graphicsLayer block", code.contains("graphicsLayer {"))
+    check(
+        "and not through graphicsLayer's parameters (which would recompose every frame)",
+        Regex("""graphicsLayer\(\s*(scaleX|scaleY|translationX|translationY|alpha|rotationZ)""").findAll(code).count(),
+        0,
+    )
+    // 手势那一帧路径上不许出现解码：只有换算与 `snapTo`。
+    // 从**调用**处切（`detectTransformGestures {`），不是从那一行 import —— 后者会把整个文件的
+    // 上半截当成"手势块"。
+    val gesture = code.substringAfter("detectTransformGestures {", "").substringBefore(".pointerInput(", "")
+    checkTrue(
+        "the drag path contains no decode and no I/O",
+        gesture.isNotEmpty() &&
+            !gesture.contains("decodePiImageRegion") &&
+            !gesture.contains("zoomDecodeWindow") &&
+            !gesture.contains("withContext") &&
+            !gesture.contains("PiImageCache"),
+    ) { "a decode on the frame path is exactly the slow the user reported" }
+    checkTrue(
+        "it goes through the pure pan arithmetic instead",
+        gesture.contains("panAfterDrag(") && gesture.contains("panLimit("),
+    )
 }
 
 private fun repoRoot(): File? {
@@ -605,6 +770,8 @@ private fun repoRoot(): File? {
 
 fun main() {
     yardstickChecks()
+    panMappingChecks()
+    settleGateChecks()
     fitChecks()
     thresholdChecks()
     canonicalCaseChecks()

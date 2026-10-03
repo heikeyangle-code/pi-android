@@ -39,7 +39,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
@@ -60,11 +59,9 @@ import java.io.File
 import java.util.Locale
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlin.math.max
 
 /**
  * 查看器要画的那一张图：两种来源，**一块画布**。
@@ -225,6 +222,8 @@ fun PiImageViewer(
  * 还有啥用？」。所以倍率越过阈值之后，这里按**源图坐标**只解当前可见的那一块
  * （`BitmapRegionDecoder`，见 [decodePiImageRegion]），并把它画在图片节点**里面**：那一层
  * `graphicsLayer` 会连它一起缩放平移，所以块跟着图一起动，拖动时不会跟丢。
+ * 取块的时机是**手势停下之后**（[settledProbes] 的落定闸，100 ms 的安静）：拖动期间一次解码都
+ * 不发生，拖动的那一帧路径上只有几个浮点的换算。
  *
  * 这笔账的每一个数字都在 [PiZoomDecodeWindow] 的文件头里，算术也都在那个文件里（本机能跑）：
  *
@@ -250,7 +249,10 @@ fun PiImageViewer(
  *
  * ## Gestures
  *
- *  - **pinch** → scale, **drag while scaled** → pan (`detectTransformGestures`);
+ *  - **pinch** → scale, **drag while scaled** → pan (`detectTransformGestures`)。拖动是 **1:1
+ *    跟手**的：手势交上来的是图层**内部**的局部位移，而 `translationX/Y` 在缩放之外，两者差一个
+ *    倍率 —— 换算写在 [panStepFromGesture] 的 KDoc 里（不换算的话 8× 时图只走手指的八分之一，
+ *    就是用户报的「滑的特别特别慢」）。越界只在边界上停住，不回弹、不做动画。
  *  - **double tap** → 1× ⇄ [MAX_SCALE]（到顶），200 ms 的缓动过渡、倍率与平移同时到达，结束
  *    时平移清零；
  *  - **tap on the picture** → nothing (it consumes the tap, so it cannot fall
@@ -379,55 +381,57 @@ internal fun PiImageViewerSurface(
             var block by remember(image.cacheKey) { mutableStateOf<DetailBlock?>(null) }
 
             val source = sourcePixels
-            // 重解只认**落定的**倍率与平移，不看动画中的当前值。
+            // 重解只认**落定的**倍率与平移，不看拖动或动画中的当前值。
             //
-            // 为什么必须这样：双击的 200 ms 里 `scale` 会连续经过 1×…8×，照「当前倍率跨过阈值」
-            // 触发就会一次双击连开好几次解码（用户明确说了「不用太费性能」）。两道闸：
+            // 为什么必须这样：双击的 200 ms 里 `scale` 会连续经过 1×…8×，拖动时每一帧 `pan` 都在
+            // 变，照「当前值」触发就会连开好几次解码（用户明确说了「不用太费性能」）。两道闸：
             // ① 动画帧这个 block 直接发 `null`，**动画中一帧都不重算**（所以一帧都不会触发解码，
-            //    连分配都没有）；② 手势停下来 [ZOOM_SETTLE_MILLIS] 才算落定，`collectLatest` 会把
-            //    还没落定的那一次连同它已经发出去的解码一起取消 —— 取消是真的（节点离开组合、缩放
-            //    变了、快速来回缩放都属于这一条）。双击的代价因此是：动画走完再过 100 ms 细节出现。
+            //    连分配都没有）；② 手势停下来 [ZOOM_SETTLE_MILLIS] 才算落定 —— 那是 [settledProbes]
+            //    的职责，新的拖动帧会取消上一次的等待，于是**拖动期间一次解码都不开始**，解码永远
+            //    不在手势路径上。落定之后再来的落定值由 `collectLatest` 处理：它会连同已经发出去的
+            //    解码一起取消 —— 取消是真的（节点离开组合、继续拖动、快速来回缩放都属于这一条）。
+            // 代价如实写：双击是「动画 200 ms + 100 ms 之后」细节出现；拖动是松手之后 100 ms。
             LaunchedEffect(image.cacheKey, decoded, source) {
                 if (source == null) return@LaunchedEffect
                 snapshotFlow {
                     if (animating) null else ZoomProbe(scale.value, panX.value, panY.value)
-                }.collectLatest { lived ->
-                    val settled = lived ?: return@collectLatest
-                    delay(ZOOM_SETTLE_MILLIS)
-                    val visible = zoomVisibleSourceRect(
-                        boxWidthPx = boxWidthPx,
-                        boxHeightPx = boxHeightPx,
-                        baseWidthPx = decoded.width,
-                        baseHeightPx = decoded.height,
-                        sourceWidthPx = source.width,
-                        sourceHeightPx = source.height,
-                        scale = settled.scale,
-                        panX = settled.panX,
-                        panY = settled.panY,
-                    )
-                    if (visible == null) {
-                        // 回到 1×（或这张源图本来就没有更多像素）：**当场把那一块放掉**，1× 的内存
-                        // 与改动前一样。
-                        block = null
-                        return@collectLatest
-                    }
-                    val held = block
-                    if (held != null && zoomDecodeWindowCovers(held.window, visible)) {
-                        // 上一块还盖着这一屏：继续用它，不重解（平移时图不会闪）。
-                        return@collectLatest
-                    }
-                    val window = zoomDecodeWindow(
-                        visible = visible,
-                        sourceWidthPx = source.width,
-                        sourceHeightPx = source.height,
-                        baseWidthPx = decoded.width,
-                        baseHeightPx = decoded.height,
-                    ) ?: return@collectLatest
-                    val decoded2 = withContext(Dispatchers.IO) {
-                        underImageDecodeGate { decodePiImageRegion(image, window, source) }
-                    } ?: return@collectLatest
-                    block = DetailBlock(window, decoded2)
                 }
+                    .settledProbes(ZOOM_SETTLE_MILLIS)
+                    .collectLatest { settled ->
+                        val visible = zoomVisibleSourceRect(
+                            boxWidthPx = boxWidthPx,
+                            boxHeightPx = boxHeightPx,
+                            baseWidthPx = decoded.width,
+                            baseHeightPx = decoded.height,
+                            sourceWidthPx = source.width,
+                            sourceHeightPx = source.height,
+                            scale = settled.scale,
+                            panX = settled.panX,
+                            panY = settled.panY,
+                        )
+                        if (visible == null) {
+                            // 回到 1×（或这张源图本来就没有更多像素）：**当场把那一块放掉**，1× 的
+                            // 内存与改动前一样。
+                            block = null
+                            return@collectLatest
+                        }
+                        val held = block
+                        if (held != null && zoomDecodeWindowCovers(held.window, visible)) {
+                            // 上一块还盖着这一屏：继续用它，不重解（平移时图不会闪）。
+                            return@collectLatest
+                        }
+                        val window = zoomDecodeWindow(
+                            visible = visible,
+                            sourceWidthPx = source.width,
+                            sourceHeightPx = source.height,
+                            baseWidthPx = decoded.width,
+                            baseHeightPx = decoded.height,
+                        ) ?: return@collectLatest
+                        val decoded2 = withContext(Dispatchers.IO) {
+                            underImageDecodeGate { decodePiImageRegion(image, window, source) }
+                        } ?: return@collectLatest
+                        block = DetailBlock(window, decoded2)
+                    }
             }
 
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -455,23 +459,39 @@ internal fun PiImageViewerSurface(
                                 // 放进 `launch` 是 Animatable 的用法要求；它的写入会取消正在跑的双击
                                 // 动画 —— 手指一动，动画当场交给手指。
                                 scope.launch {
-                                    val next = (scale.value * zoom).coerceIn(MIN_SCALE, MAX_SCALE)
+                                    // 手势的局部位移与 `graphicsLayer` 的 translation 差一个倍率，
+                                    // 换算与夹取都在那两个纯函数里做（根因写在
+                                    // [panStepFromGesture] 的 KDoc：指针事件在图层**里面**、而
+                                    // translation 在缩放**之外** —— 原来直接 `pan + drag`，8× 时
+                                    // 图只走了手指的八分之一，就是用户报的「滑的特别特别慢」）。
+                                    val gestureScale = scale.value
+                                    val next = (gestureScale * zoom).coerceIn(MIN_SCALE, MAX_SCALE)
                                     zoomIntent = next
                                     scale.snapTo(next)
-                                    val panned = if (next <= MIN_SCALE) {
-                                        Offset.Zero
+                                    if (next <= MIN_SCALE) {
+                                        // 缩回 1×：平移清零。`panLimit` 在 1× 时本来也是 0
+                                        // （`viewerFit` 保证整张图装得下），这条只是把那个不变量写成
+                                        // 明文，顺带兜住 0 尺寸的退化布局。
+                                        panX.snapTo(0f)
+                                        panY.snapTo(0f)
                                     } else {
-                                        clampPan(
-                                            pan = Offset(panX.value, panY.value) + drag,
-                                            scale = next,
-                                            fittedWidth = fittedWidth,
-                                            fittedHeight = fittedHeight,
-                                            boxWidth = boxWidthPx.toFloat(),
-                                            boxHeight = boxHeightPx.toFloat(),
+                                        panX.snapTo(
+                                            panAfterDrag(
+                                                pan = panX.value,
+                                                gestureDrag = drag.x,
+                                                gestureScale = gestureScale,
+                                                maxPan = panLimit(next, fittedWidth, boxWidthPx.toFloat()),
+                                            ),
+                                        )
+                                        panY.snapTo(
+                                            panAfterDrag(
+                                                pan = panY.value,
+                                                gestureDrag = drag.y,
+                                                gestureScale = gestureScale,
+                                                maxPan = panLimit(next, fittedHeight, boxHeightPx.toFloat()),
+                                            ),
                                         )
                                     }
-                                    panX.snapTo(panned.x)
-                                    panY.snapTo(panned.y)
                                 }
                             }
                         }
@@ -765,32 +785,6 @@ private fun wireImageName(mimeType: String, nowMs: Long): String {
     val subtype = mimeType.substringBefore(';').substringAfter('/', "").lowercase(Locale.US)
     val extension = subtype.filter { it.isLetterOrDigit() }.ifEmpty { "img" }
     return "pi-image-$nowMs.$extension"
-}
-
-/**
- * Keeps the picture's edge from being dragged inside the window: at scale `s` the
- * picture overflows the box by `(s·fitted − box)` on each axis, so half of that is
- * the furthest the centre may move before a blank strip appears where the picture's
- * own edge should be.
- *
- * At 1× (or on an axis that still fits) the limit is zero, so the picture stays
- * centred — which is why the caller resets the pan to zero as soon as scale drops
- * back to 1.
- */
-private fun clampPan(
-    pan: Offset,
-    scale: Float,
-    fittedWidth: Float,
-    fittedHeight: Float,
-    boxWidth: Float,
-    boxHeight: Float,
-): Offset {
-    val maxX = max(0f, (scale * fittedWidth - boxWidth) / 2f)
-    val maxY = max(0f, (scale * fittedHeight - boxHeight) / 2f)
-    return Offset(
-        x = pan.x.coerceIn(-maxX, maxX),
-        y = pan.y.coerceIn(-maxY, maxY),
-    )
 }
 
 /**

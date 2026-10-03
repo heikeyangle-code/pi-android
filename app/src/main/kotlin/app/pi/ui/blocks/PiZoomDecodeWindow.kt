@@ -4,10 +4,17 @@ import kotlin.math.ceil
 import kotlin.math.floor
 import kotlin.math.max
 import kotlin.math.min
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.transformLatest
 
 /**
- * 「放大之后要重新解码」这一步的**全部算术**：当前视口对应源图上的哪一个像素矩形、那块要按
- * 几倍采样、以及它在 1× 画面上贴在哪儿。
+ * 查看器里那两半**纯算术**：放大后要解哪一块（[zoomDecodeWindow]），以及拖动时平移该落在哪里
+ * （[panAfterDrag]）。
+ *
+ * 「放大之后要重新解码」这一半：当前视口对应源图上的哪一个像素矩形、那块要按几倍采样、以及它在
+ * 1× 画面上贴在哪儿。
  *
  * ## 为什么这值得一个单独的文件
  *
@@ -20,11 +27,18 @@ import kotlin.math.min
  * 盒、1× 的落点、倍率、平移、两个尺寸（基础位图与源图）之间来回换算。这段算术如果长在 Compose
  * 文件里，本机就一行都跑不了（这台机器没有 android.jar、也没有 Compose 编译器插件）；搬到这里
  * 之后它可以被 `app/src/test/kotlin/app/pi/ui/blocks/PiZoomDecodeWindowCheck.kt` **真的执行**
- * —— 边界、极端宽高比、被 `clampPan` 夹过的平移、以及与 `decodePiImageBytes` 采样规则配合出来
- * 的内存上界，都是跑出来的，不是读出来的。
+ * —— 边界、极端宽高比、被夹过的平移、以及与 `decodePiImageBytes` 采样规则配合出来的内存上界，
+ * 都是跑出来的，不是读出来的。
  *
- * 本文件除 `kotlin.math` 外零 import，和 [ImageSize] 一样：它长出 Android 或 Compose 的 import，
- * `tools/run-app-pure-checks.sh` 就会编译失败，这正是目的。
+ * 另一半是**平移那一层换算**（[panStepFromGesture] / [panLimit] / [panAfterDrag]）：用户报的
+ * 「放大了之后左右上下滑动，滑的特别特别慢」的根因就在那里 —— 手势的位移与 `graphicsLayer` 的
+ * translation 差一个倍率，差在哪、为什么差，写在那三个函数的 KDoc 里（它不是审美问题，是两个
+ * 坐标系的问题，所以它必须在能被断言的地方）。落定闸 [settledProbes] 也在这里：拖动期间一次
+ * 解码都不许发生，而「拖动中为关、静止后为开」这件事只有真的跑一遍协程才算验过。
+ *
+ * 本文件只 import `kotlin.math` 与 `kotlinx.coroutines` 的 flow/delay（前者是算术、后者是那道
+ * 落定闸），Android 与 Compose 一行都没有 —— 和 [ImageSize] 的 `Semaphore` 同一个道理：它长出
+ * Android 或 Compose 的 import，`tools/run-app-pure-checks.sh` 就会编译失败，这正是目的。
  *
  * ## 为什么是区域解码，而不是「按更大的目标重解整张」
  *
@@ -361,3 +375,79 @@ private fun alignDown(v: Int, sample: Int): Int = (v / sample) * sample
 
 /** `v` 向上取到 [sample] 的整数倍。 */
 private fun alignUp(v: Int, sample: Int): Int = ((v + sample - 1) / sample) * sample
+
+// ------------------------------------------------------------------ 平移 ----
+//
+// 「放大之后拖不动 / 滑得特别特别慢」的根因全在这一段。两个事实各自都对，凑在一起差一个倍率：
+
+/**
+ * 手势的**局部**位移 → `graphicsLayer` 的 translation 增量。
+ *
+ * ## 为什么不能直接 `pan += drag`（用户原话：「滑的特别特别慢」）
+ *
+ * 1. **`detectTransformGestures` 交上来的 `drag` 不是屏幕像素，是「本节点自己的坐标」**：指针事件
+ *    在派发前会被换算进 pointer input 节点的坐标系 —— `HitPathTracker`（"translate their position
+ *    relative to the parent coordinates, to give us a change local to the PointerInputFilter's
+ *    coordinates"）走的是 `LayoutCoordinates.localPositionOf`，而 `NodeCoordinator.toParentPosition`
+ *    / `fromParentPosition` 会过那一层的矩阵（`layer.mapOffset(..., inverse = …)`）。画布上的
+ *    `pointerInput` 落在 `graphicsLayer` **里面**，那一层带着倍率，所以手指每走 `d` 个屏幕像素，
+ *    交上来的 `drag` 只有 `d / scale`（8× 时就是八分之一）。
+ * 2. **`translationX/Y` 在缩放之外**：hwui 把图层矩阵拼成 `T(translation) · R · S`
+ *    （`RenderProperties.cpp` 的 `updateMatrix()`：`setTranslate` 之后 `preScale`，Skia 的 `pre*`
+ *    是右乘、且「先作用于点」），所以 translation 的 1 个单位就是屏幕上的 1 个像素。
+ *
+ * 两条一对，`pan += drag` 时图只走了手指的 `1/scale`。换算就是把它乘回去：
+ * **屏幕位移 = 局部位移 × 倍率**。
+ *
+ * @param gestureScale 这一帧**图层实际用的**倍率（也就是事件派发时的那一个值），不是本帧刚算出来
+ *   的新倍率：换算的是「已经发生的那段位移」用的是旧矩阵。
+ */
+internal fun panStepFromGesture(drag: Float, gestureScale: Float): Float = drag * gestureScale
+
+/**
+ * 一个轴上平移的上界（**屏幕像素**，与 translation 同单位）：图比视口多出来的那一半，图不比视口
+ * 大时是 0。
+ *
+ * 1× 时它恒为 0：`viewerFit` 是 `min(box/bitmap)`，所以 `fitted = bitmap·fit ≤ box` 恒成立 ——
+ * 「缩回 1× 平移清零」因此不需要单独一条规则（`PiImageViewer` 那条 `if` 只是把这条不变量写成
+ * 明文）。
+ */
+internal fun panLimit(scale: Float, fitted: Float, box: Float): Float =
+    max(0f, (scale * fitted - box) / 2f)
+
+/**
+ * 一帧拖动之后，一个轴上的平移该落在哪里：先把手势位移换算成屏幕位移（[panStepFromGesture]），
+ * 再夹进 [maxPan]。
+ *
+ * 夹取**只在越界那一下**改数值：范围内的位移原样通过（逐像素跟手），越界时钉在边界（不回弹、不做
+ * 动画 —— 平移这条路一次动画都没有）。换算与夹取必须在同一处做，否则两者会各自按不同的倍数算：
+ * 「图比视口多出多少」是屏幕像素，而手势位移是局部像素。
+ */
+internal fun panAfterDrag(pan: Float, gestureDrag: Float, gestureScale: Float, maxPan: Float): Float =
+    (pan + panStepFromGesture(gestureDrag, gestureScale)).coerceIn(-maxPan, maxPan)
+
+/**
+ * 落定闸：把「每一帧都在变的探针」变成「安静了 [settleMillis] 才发一次」的落定值。
+ *
+ * 拖动与捏合的每一个事件都会改 `scale`/`pan`，照当前值触发解码就会一次拖动连开好几次区域解码
+ * （用户明确说过「不用太费性能」）。`transformLatest` 的语义正好是这件事：新的一帧**取消**上一次
+ * 的 `delay`，所以只有真的停下来才轮到下游 —— **解码永远不在这条手势路径上**。
+ *
+ * `null` 是「这一帧不算数」（双击动画正在跑，见 `PiImageViewer` 的 `snapshotFlow`）：直接丢掉，
+ * 连延时都不排。
+ *
+ * 抽成 Flow 算子不是为了好看，是为了**可验**：写在 Composable 里的 `delay` 只能靠读码相信，而
+ * `PiZoomDecodeWindowCheck` 可以拿真的协程喂一串拖动帧，断言「拖动期间一次都不落定、松手之后恰好
+ * 落定到最后那一帧、动画帧不算落定」。
+ *
+ * 为什么 opt-in `ExperimentalCoroutinesApi`：这个「取消上一次等待、只留最后一次」的语义在
+ * `transformLatest` 上是**稳定**的实现，而更眼熟的那个 `debounce` 本身带 `@FlowPreview`（预览级）
+ * —— 一个进程级的滑动体验不该建在预览 API 上。这里显式 opt-in 一次，而不是靠编译器的警告放过去。
+ */
+@OptIn(ExperimentalCoroutinesApi::class)
+internal fun Flow<ZoomProbe?>.settledProbes(settleMillis: Long): Flow<ZoomProbe> =
+    transformLatest { probe ->
+        if (probe == null) return@transformLatest
+        delay(settleMillis)
+        emit(probe)
+    }
