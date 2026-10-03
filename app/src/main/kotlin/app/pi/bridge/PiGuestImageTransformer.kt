@@ -142,10 +142,20 @@ internal class PiGuestImageTransformer(private val context: Context) : ImageTran
         val outcome = requestPolicy.load(key) { requested -> loadUnshared(requested) }
         val bitmap = outcome.getOrNull()
         if (bitmap == null) {
-            // 负缓存命中/超预算时这次**根本没出网**，`GuestImageBytes.lastFailure` 里可能
-            // 还留着别处的旧原因。把这条真实结论写回去，诊断（以及回退文案的依据）才不撒谎。
-            (outcome.exceptionOrNull() as? PiImageNegativeCacheHit)?.let { hit ->
-                GuestImageBytes.noteFailure(hit.message ?: "远端图片最近失败过，这次不出网")
+            // 负缓存命中 / 生产者超预算时这次**根本没走到取字节**（或者取消了它），
+            // `GuestImageBytes.lastFailure` 里可能还留着别处的旧原因。把这条真实结论写回去，
+            // 诊断（以及回退文案的依据）才不撒谎。
+            when (val failure = outcome.exceptionOrNull()) {
+                is PiImageNegativeCacheHit -> GuestImageBytes.noteFailure(
+                    failure.message ?: "远端图片最近失败过，这次不出网",
+                )
+
+                is PiImageProducerTimeout -> GuestImageBytes.noteFailure(
+                    failure.message ?: "图片加载超过兜底预算，这次没画出来",
+                )
+
+                // 其它失败就是取字节/解码那一步写下的原因，`lastFailure` 已经是对的。
+                else -> Unit
             }
         }
         return bitmap
