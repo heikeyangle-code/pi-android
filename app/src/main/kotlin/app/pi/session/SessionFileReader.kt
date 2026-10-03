@@ -406,6 +406,20 @@ internal object SessionFileReader {
      * caller wants the newest entries. Trimming rather than stopping is what keeps the
      * newest line in the window — see the class KDoc.
      *
+     * ## 切行是怎么写的，以及为什么
+     *
+     * 内层循环**先在一个 8 KiB 的块里找换行，再整段抄进 `current`**，而不是逐字符
+     * `append(c)`。两者的输出逐字相同（一条 LF 才切行、一个尾随 CR 才被去掉、一行允许长到恰好
+     * `maxLineChars`），差别只在代价：会话文件里最大的行是一条带内联图片的消息，几 MB 的 base64
+     * 在一行里，逐字符那条路要为它走几百万次 `append` + 一次上限比较，而整段抄是
+     * `System.arraycopy`。同一条 `readTail` 上量到的差是 1.3–1.9×（`session-replay-cost` §3b，
+     * 取 7 次最小；`readTail` 本身 1.4–2.1×）。旧的逐字符写法与新的按段写法在这份文件的
+     * fixture 上跑出同一张 `Window` 四字段表，逐字节相同。
+     *
+     * 同一段扫描里的另一处重复：`BoundedFileReader.offsetOf` 原本每行都从块头量起，短行的会话里
+     * 这笔 O(块 × 行数) 比解码本身还贵。它现在接着上一次的位置量（同一个块内调用位置单调递增），
+     * 和式不变。
+     *
      * @param maxChars characters to keep; null means everything. The **oldest** lines are
      *   dropped first, and the newest one is never dropped even when it alone exceeds the
      *   budget, because an entry is indivisible.
@@ -437,7 +451,6 @@ internal object SessionFileReader {
             var skipping = false
             // `lineStartBytes` is the offset of the line currently being accumulated,
             // relative to the range start; the first line's is 0.
-            var firstLine = true
 
             while (!stopped) {
                 val got = reader.read(chunk, 0, chunk.size)
@@ -447,42 +460,61 @@ internal object SessionFileReader {
                 if (got == 0) continue
                 var index = 0
                 while (index < got) {
-                    val c = chunk[index]
-                    index++
-                    if (c == '\n') {
-                        if (skipping) {
-                            skipping = false
+                    // 换行之前的这一整段一次处理完，而不是逐字符 `append(c)` + 逐字符判上限。
+                    //
+                    // 为什么这是这次改动的主要收益：一段（最坏一整条）内联图片就是一个几 MB 的行，
+                    // 逐字符那条路在它上面要走几百万次 `StringBuilder.append` 加一次 `maxLineChars`
+                    // 比较，而整段 `append(chunk, offset, len)` 是 `System.arraycopy`。用户的
+                    // 「单条消息大于一个窗口时尾窗慢 3.6×」正是在这种行上量的。
+                    //
+                    // 语义与逐字符版**逐字相同**，三条都对齐着写：
+                    //  - 一行允许长到恰好 `maxLineChars`：超出它的第一个字符才触发 skipping；
+                    //  - 触发 skipping 时 `dropped` 置位（`Window.complete` 就是它），并且这一行的
+                    //    剩余部分整段丢掉、`current` 清空；
+                    //  - 被丢掉的长行仍然要把 `lineStartBytes` 推到下一行 —— 否则下一个窗口的偏移
+                    //    会落在这一行中间。
+                    val newline = indexOfNewline(chunk, index, got)
+                    val runEnd = if (newline < 0) got else newline
+                    if (!skipping && runEnd > index) {
+                        val room = maxLineChars - current.length
+                        if (room <= 0) {
+                            skipping = true
                             current.setLength(0)
-                            lineStartBytes = reader.offsetOf(chunk, index)
-                            continue
+                            dropped = true
+                        } else {
+                            val take = minOf(room, runEnd - index)
+                            current.append(chunk, index, take)
+                            if (take < runEnd - index) {
+                                skipping = true
+                                current.setLength(0)
+                                dropped = true
+                            }
                         }
-                        val line = current.toString().removeSuffix("\r")
+                    }
+                    if (newline < 0) break
+                    index = newline + 1
+                    if (skipping) {
+                        skipping = false
                         current.setLength(0)
-                        val thisOffset = lineStartBytes
                         lineStartBytes = reader.offsetOf(chunk, index)
-                        firstLine = false
-                        if (line.isBlank()) continue
-                        // `thisOffset` is relative to the range start, so the file
-                        // offset is the base plus it. Getting this wrong is how a
-                        // backward window ends up 15 KB off and re-delivers entries the
-                        // next window already had.
-                        if (collected.isEmpty()) firstOffset = from + thisOffset
-                        seenChars += line.length
-                        collected += line
-                        if (onLine != null && !onLine(line)) {
-                            stopped = true
-                            break
-                        }
                         continue
                     }
-                    if (skipping) continue
-                    if (current.length >= maxLineChars) {
-                        skipping = true
-                        current.setLength(0)
-                        dropped = true
-                        continue
+                    val line = current.toString().removeSuffix("\r")
+                    current.setLength(0)
+                    val thisOffset = lineStartBytes
+                    lineStartBytes = reader.offsetOf(chunk, index)
+                    if (line.isBlank()) continue
+                    // `thisOffset` is relative to the range start, so the file
+                    // offset is the base plus it. Getting this wrong is how a
+                    // backward window ends up 15 KB off and re-delivers entries the
+                    // next window already had.
+                    if (collected.isEmpty()) firstOffset = from + thisOffset
+                    seenChars += line.length
+                    collected += line
+                    if (onLine != null && !onLine(line)) {
+                        stopped = true
+                        break
                     }
-                    current.append(c)
                 }
             }
         } finally {
@@ -552,19 +584,43 @@ internal object SessionFileReader {
         private var beforeChunk: Long = 0L
 
         /**
+         * 已经量过的 chunk 前缀长度，以及它对应的字节数 —— [offsetOf] 的增量缓存。
+         *
+         * 为什么要有它：`offsetOf` 每个非空行调用一次，而它原本**每次从 chunk 头量起**，于是
+         * 一个 8 KiB 块里 20 行就是 20 次平均 4 KiB 的扫描（O(块 × 行数)）；短行的会话里这笔开销
+         * 比解码本身还大。调用位置在同一个 chunk 内是递增的，所以「接着上次量」与「每次从头量」
+         * 是同一条和式的两种算法：**和完全相同**，代价从 O(块 × 行数) 变成 O(块)。
+         */
+        private var countedIndex: Int = 0
+
+        /** [countedIndex] 那一段的字节数。 */
+        private var countedBytes: Long = 0L
+
+        /**
          * The offset of the character at [index] in the chunk being walked, **relative
          * to [start]**. The caller rebases onto the file by adding its own `from`, and
          * that base is added exactly once — the same byte counted twice is what makes a
          * window hand the next window an entry it had already delivered.
+         *
+         * 缓存的两条失效规则，都是为了让答案与「每次从头量」逐位相同：`read()` 换了 chunk 就清空
+         * （新块的相对起点是当时的 `consumed`），`index` 回退到已经量过的位置之前也清空重来。
          */
         fun offsetOf(chunk: CharArray, index: Int): Long {
-            var bytes = 0L
-            for (i in 0 until index) bytes += utf8Width(chunk[i])
-            return beforeChunk + bytes
+            if (index < countedIndex) {
+                countedIndex = 0
+                countedBytes = 0L
+            }
+            while (countedIndex < index) {
+                countedBytes += utf8Width(chunk[countedIndex])
+                countedIndex++
+            }
+            return beforeChunk + countedBytes
         }
 
         override fun read(cbuf: CharArray, off: Int, len: Int): Int {
             beforeChunk = consumed
+            countedIndex = 0
+            countedBytes = 0L
             if (start + consumed >= end) return -1
             // Clamp the **request**, not just the result: asking the buffered decoder
             // for a full chunk near the end of the range hands back characters decoded
@@ -584,6 +640,20 @@ internal object SessionFileReader {
             runCatching { delegate.close() }
             runCatching { raf.close() }
         }
+    }
+
+    /**
+     * `chunk` 里从 [from] 起、到 [until] 之前第一个 `'\n'` 的下标，没有就是 -1。
+     *
+     * `CharArray` 没有带起点的 `indexOf`（`String` 才有），所以这里是一只线性的循环 —— 它取代的
+     * 也是循环，只是把「逐字符 append + 逐字符判上限」换成了「先找出换行，再整段抄」。LF 是唯一的
+     * 行终止符（U+2028/U+2029 不是，见类 KDoc），所以只找这一个字符。
+     */
+    private fun indexOfNewline(chunk: CharArray, from: Int, until: Int): Int {
+        for (i in from until until) {
+            if (chunk[i] == '\n') return i
+        }
+        return -1
     }
 
     private fun utf8Width(c: Char): Long = when {
@@ -617,8 +687,12 @@ internal object SessionFileReader {
      * newest line; the budget is a target, not an exact allocation. The probe walks
      * backwards in [PROBE_BYTES] steps, so a multi-megabyte line costs a scan of its own
      * length and a normal one costs a single read.
+     *
+     * **不是 `private`，是为了 `session-replay-cost` 能单独给它计时**：尾窗慢的时候要分得清是
+     * 「回溯找行首」还是「扫字节切行」，而这两段只差这一个 `internal`。它不改变任何行为，也没有
+     * 第二个调用者。
      */
-    private fun snapToLineStart(file: File, target: Long): Long {
+    fun snapToLineStart(file: File, target: Long): Long {
         if (target <= 0L) return 0L
         RandomAccessFile(file, "r").use { raf ->
             val buf = ByteArray(PROBE_BYTES)

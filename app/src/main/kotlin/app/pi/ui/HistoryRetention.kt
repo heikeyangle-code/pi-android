@@ -1,5 +1,7 @@
 package app.pi.ui
 
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 
@@ -9,38 +11,121 @@ import kotlinx.serialization.json.JsonPrimitive
  * ## Why this is a file of its own
  *
  * `PiSessionViewModel` is an `AndroidViewModel`, so nothing in it can be executed on
- * this machine (`tools/typecheck.sh` has no Android runtime). The measured cost of this
- * function is the reason the view model changed at all — it serialises an entry to take
- * the length of the result — so the *arithmetic* the cap depends on lives here, where
- * `tools/run-app-pure-checks.sh` → `history-retention` can pin it on a bare JVM.
+ * this machine (`tools/typecheck.sh` has no Android runtime). The *arithmetic* the cap
+ * depends on lives here — how big one entry counts as, and how much of the retained copy
+ * may be evicted — so `tools/run-app-pure-checks.sh` → `history-retention` can pin it on
+ * a bare JVM.
  *
  * ## What the number is
  *
- * **It is the serialised length.** Measuring an entry means rendering it back to JSON
- * and taking that string's length, because the question the cap answers is "how much
- * would holding this entry cost" — and an inline image's base64 is the single biggest
- * thing an entry carries, whether or not its own text field is the thing that holds it.
- * The constant term covers the ids and envelope of a small entry, which the transcript
- * row also holds.
+ * **It is the serialised length.** The question the cap answers is "how much would
+ * holding this entry cost", and an inline image's base64 is the single biggest thing an
+ * entry carries, whether or not its own text field is the thing that holds it. The
+ * constant term covers the ids and envelope of a small entry, which the transcript row
+ * also holds.
  *
- * ## Why the caller must stay off the frame thread
+ * ## 为什么数字仍然是「序列化长度」，而不再是「序列化一次」
  *
- * The measurement is expensive: rendering one 6 MiB base64 entry costs ~135 ms and a
- * 4000-entry text window ~460 ms on a desktop JVM (measured), and a phone is slower. All
- * three call sites used to sum it on the frame thread — `viewModelScope` is
- * `Dispatchers.Main.immediate` — so opening a session, and every later "load earlier"
- * (which re-summed the whole retained set), blocked the UI for hundreds of milliseconds
- * to seconds. A cheaper measure would have to re-implement kotlinx's JSON escaping and
- * would silently change what the budget means, so the cost is paid on
- * `Dispatchers.IO` instead.
+ * 这个数喂的是保留预算与驱逐时机（[evictablePrefix]），所以它**必须逐位不变**。改前的写法是
+ * `entry.toString()` / `message.toString()` —— 把整棵 JSON 写成一个 `String` 再取 `.length`。
+ * 数字是对的，代价却是：一条 6 MB 内联图片的消息要**先物化一个 6 MB 的串**（还有 `StringBuilder`
+ * 扩容过程中的那份翻倍拷贝）。窗口里每条这样的 entry 都付一次，而它只是要一个长度。
+ *
+ * 现在改为 [serializedLength]：走一遍 [JsonElement]，**按 kotlinx 写 JSON 的同一条规则累加字符
+ * 数**，一个字节的 payload 都不复制。输出与 `element.toString()` 逐字符相同 —— 转义规则是
+ * kotlinx 的 `StringJsonWriter` 那一条（`"` `\` 与 `\t\b\n\r\f` 两字符、其余 `< 0x20` 的六字符
+ * `\u00xx`、非 ASCII 原样输出），对象是 `{` + `"key":value` + `,` + `}`、数组是 `[` + 值 + `,` + `]`、
+ * 非字符串 primitive 原样写 `content`（`JsonNull` 的 content 就是 `null`）。这不是论证，是
+ * `history-retention` harness 里对随机 JSON（转义、控制字符、非 ASCII、代理对、嵌套、大数组）
+ * 做的**恒等 fuzz**：`serializedLength(e) == e.toString().length` 每一条都要成立。
+ *
+ * 由此带来的另一个后果是：这个测量本身已经可以放在帧线程上还不心疼。**但三个调用点仍然留在
+ * `Dispatchers.IO`** —— 它们与一次文件读或一次 RPC 回落在同一个 `withContext` 里（“要不要保留
+ * 这个窗口”本来就是同一个决定），把它们搬回帧线程不是这次改动的目标，也不该顺手做。
  */
 internal fun entryChars(entry: JsonObject): Long {
     val type = (entry["type"] as? JsonPrimitive)?.content
     val message = entry["message"] as? JsonObject
     if (type == "message" && message != null) {
-        return message.toString().length.toLong() + ENTRY_ENVELOPE_CHARS
+        return serializedLength(message) + ENTRY_ENVELOPE_CHARS
     }
-    return entry.toString().length.toLong() + ENTRY_ENVELOPE_CHARS
+    return serializedLength(entry) + ENTRY_ENVELOPE_CHARS
+}
+
+/**
+ * [element] 被 kotlinx 序列化后的字符数，**不物化那个字符串**。
+ *
+ * 与 `element.toString().length` 恒等；等价性的依据与 fuzz 见 [entryChars] 的 KDoc 与
+ * `HistoryRetentionCheck`。
+ *
+ * `internal` 而不是 `private`：fuzz 要直接对着这个函数断言，而不是对着一个测试专用的副本 ——
+ * 副本绿而生产红正是这类改动最容易出的假绿。
+ */
+internal fun serializedLength(element: JsonElement): Long = when (element) {
+    is JsonObject -> {
+        // `{}` 加每个 `"key":value`，再加 n-1 个逗号。
+        var total = 2L
+        var first = true
+        for ((key, value) in element) {
+            if (!first) total += 1L
+            first = false
+            total += 2L + escapedChars(key) + 1L + serializedLength(value)
+        }
+        total
+    }
+    is JsonArray -> {
+        var total = 2L
+        var first = true
+        for (item in element) {
+            if (!first) total += 1L
+            first = false
+            total += serializedLength(item)
+        }
+        total
+    }
+    // `JsonNull` 也走这里：它不是字符串，`content` 就是 `null` 四个字符。`JsonElement` 只有这
+    // 三个子类（sealed），所以这里没有兜底分支 —— 将来 kotlinx 多一个子类时，编译会红着要一个
+    // 答案，而不是悄悄走一条算错的默认值。
+    is JsonPrimitive -> if (element.isString) 2L + escapedChars(element.content) else element.content.length.toLong()
+}
+
+/**
+ * [value] 写进 JSON 字符串字面量后、两个引号之间的字符数。
+ *
+ * 逐字符对应 kotlinx `StringJsonWriter` 的转义表：`"` 与 `\` 两字符；`\t \b \n \r \f` 用短转义
+ * 两字符；其余码位 `< 0x20` 的控制字符写成 `\u00xx` 六字符；**别的都原样输出** —— 包括 `0x7F`、
+ * 非 ASCII、U+2028/U+2029 与落单的代理项（`String.length` 按 UTF-16 code unit 数，所以那个宽度
+ * 正好是 1）。
+ *
+ * 初始值就是 `value.length`（「全部原样输出」），只有 ASCII 里那几个字符要**加**：两字符转义加
+ * 1、`\u00xx` 加 5。所以这是一张 128 项的「额外字符数」表加一次遍历 —— 会话窗口里最大的一串是
+ * 内联图片的 base64，一个要转义的字符都没有，走的就是「每个字符查一次 0」这条最快的路。
+ * （实测 2.5 MB 串：`when` 分支版 8.43 ms → 查表版 3.59 ms，本机 amd64。）
+ */
+private fun escapedChars(value: String): Long {
+    var total = value.length.toLong()
+    for (c in value) {
+        val code = c.code
+        // 128 及以上一律原样输出（含所有多字节字符与代理项），表不覆盖它们。
+        if (code < 128) total += ESCAPED_EXTRA[code]
+    }
+    return total
+}
+
+/**
+ * 每个 ASCII 码位写进 JSON 字符串后**比原字符多出**几个字符。
+ *
+ * 0 = 原样；1 = `\"` `\\` `\t` `\b` `\n` `\r` `\f` 这类两字符短转义；5 = 其余控制字符的
+ * `\u00xx`（六字符）。表就是上面那条规则的展开，fuzz 断的是整条链路的恒等，不是这张表本身。
+ */
+private val ESCAPED_EXTRA = IntArray(128) { code ->
+    val c = code.toChar()
+    when {
+        c == '"' || c == '\\' -> 1
+        c == '\t' || c == '\b' || c == '\n' || c == '\r' || c == '\u000C' -> 1
+        code < 0x20 -> 5
+        else -> 0
+    }
 }
 
 /**

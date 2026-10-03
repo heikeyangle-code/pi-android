@@ -673,6 +673,190 @@ fun main() {
         )
     }
 
+    // (b5) `readTail` 的四段：`readHeader`、`snapToLineStart`、`readRange` + `entries()`。
+    //
+    // 为什么这一节存在：用户报的「尾部窗口在小文件上比整读还慢」「单条消息大于一个窗口时慢 3.6×」
+    // 说明尾窗**多做了活**，但「多做的活」在哪一段是猜不出来的 —— §3 只给了一个总数。这里把它拆开：
+    // 前两段是能直接计时的（`readHeader` 是公开的；`snapToLineStart` 为这一节改成 internal），剩下
+    // 的那一段就是 `readTail` 减去两者，也就是读者自己的字节扫描 + 切行 + 解析。
+    //
+    // 这一段没有断言，它只是数字；它要回答的是「优化该往哪里下手」，答案写进改动报告。
+    // 量法：**取 7 次里的最小值**，而且每一项都配一个与 reader 无关的对照（`allLines` 走的是
+    // `File.readLines()`）。这台机器上同时跑着别的活，中位数会把别人抢 CPU 的时间算到被量的那段
+    // 代码头上 —— §2 与 §3 用的还是 `medianMs`，它们对「哪一段慢了」没有分辨力，但它们与用户给的
+    // 基线是同一套量法，所以保持不动。这里的对照列是给读表的人看的：对照没变而 tail 降了，才是
+    // 真的降了。
+    fun controlMs(repeats: Int = 7, block: () -> Unit): Double {
+        var best = Double.MAX_VALUE
+        for (i in 0 until repeats) {
+            val t = System.nanoTime()
+            block()
+            val ms = (System.nanoTime() - t) / 1_000_000.0
+            if (ms < best) best = ms
+        }
+        return best
+    }
+    println("-- 3b. readTail 的分段成本（同一条窗口预算；每项取 7 次最小）--")
+    println(
+        "%-16s %10s %10s %10s %10s %10s %10s %8s".format(
+            "shape", "control", "header", "snap", "tail", "tail-hdr-snap", "entries", "窗口条数",
+        ),
+    )
+    for ((name, file) in shapes) {
+        val window = SessionFileReader.readTail(file, windowChars, windowEntries)
+        val control = controlMs { allLines(file) }
+        val headerMs = controlMs { SessionFileReader.readHeader(file) }
+        val snapMs = controlMs {
+            SessionFileReader.snapToLineStart(file, (file.length() - windowChars.toLong()).coerceAtLeast(0L))
+        }
+        val tailMs = controlMs { SessionFileReader.readTail(file, windowChars, windowEntries) }
+        val entriesMs = controlMs { SessionFileReader.readAll(file)?.entries?.size }
+        println(
+            "%-16s %10.2f %10.2f %10.2f %10.2f %10.2f %10.2f %8d".format(
+                name, control, headerMs, snapMs, tailMs,
+                (tailMs - headerMs - snapMs).coerceAtLeast(0.0),
+                entriesMs,
+                window?.entries?.size ?: 0,
+            ),
+        )
+    }
+    println()
+
+    // (b6) `readTail` 的**四个字段**对一份独立参照：不是「跑两次一样」，而是「用另一种写法算出来的
+    // 答案一样」。
+    //
+    // 这一节是这次改动（`readRange` 的逐字符扫描 → 按段切行 + 偏移增量）的等价性证据。参照实现
+    // 故意走另一条路：把整份文件读成字节，按 `'\n'` 切出每一行的**文件偏移**与文本，然后按
+    // `readTail`/`readBefore` 文档里的规则（snap 回行首、预算从最老的开始丢、最新一行永不留不下、
+    // 落后于 `until` 的半行丢掉、`session` 头从 entries 里去掉）重新算一遍四个字段。夹具保证没有
+    // 空行、没有 CR、也没有超出 `DEFAULT_MAX_LINE_CHARS` 的行，所以参照与生产实现可以逐字对照。
+    //
+    // 形状 × 预算的**实际值**也打印出来：这就是「改前/改后逐字段相等」的那张表，改动前后各跑一次
+    // 做 diff。
+    println("-- 4b. 尾部窗口的四个字段 vs 独立参照（含改前/改后对照表）--")
+    println(
+        "%-16s %9s %7s %12s %11s %8s %s".format(
+            "shape", "budget", "entries", "startOffset", "reachedStart", "complete", "first..last id",
+        ),
+    )
+    var windowMismatches = 0
+    val windowMismatchReport = StringBuilder()
+    val windowBudgets = listOf(Int.MAX_VALUE, 1 shl 20, 64 * 1024, 4096, 512)
+    for ((name, file) in walked) {
+        val bytes = file.readBytes()
+        // 行索引只建一次：`readBefore` 的每一步都要拿它对照，按步重建会把这一节变成一次内存测试。
+        val lines = referenceLines(bytes)
+        val total = bytes.size.toLong()
+        for (budget in windowBudgets) {
+            val actual = SessionFileReader.readTail(file, budget, Int.MAX_VALUE)
+            val from = referenceSnap(bytes, (total - budget.toLong()).coerceAtLeast(0L))
+            val expected = referenceWindow(lines, from, total, budget, Int.MAX_VALUE)
+            val actualSignature = windowSignature(actual)
+            val expectedSignature = windowSignature(expected)
+            if (actualSignature != expectedSignature) {
+                windowMismatches++
+                windowMismatchReport.append("$name @ $budget\n  参照=$expectedSignature\n  实际=$actualSignature\n")
+            }
+            println(
+                "%-16s %9s %7d %12d %11s %8s %s..%s".format(
+                    name, if (budget == Int.MAX_VALUE) "MAX" else budget.toString(),
+                    actual?.entries?.size ?: 0, actual?.startOffset ?: -1L,
+                    actual?.reachedStart?.toString() ?: "-", actual?.complete?.toString() ?: "-",
+                    actual?.entries?.firstOrNull()?.let(::idOf) ?: "-",
+                    actual?.entries?.lastOrNull()?.let(::idOf) ?: "-",
+                ),
+            )
+        }
+        // `readBefore` 也走同一条 `readRange`：拿真实的窗口起点当 `startOffset`，与参照同法比对。
+        // 这是「加载更早」那条路，窗界算错会重复或丢掉 entry，所以它不能只靠 §4 的整条走查。
+        var cursor = SessionFileReader.readTail(file, APP_WINDOW_CHARS, APP_WINDOW_ENTRIES) ?: continue
+        var steps = 0
+        while (!cursor.reachedStart && steps < 3) {
+            val before = SessionFileReader.readBefore(file, cursor.startOffset, APP_WINDOW_CHARS, APP_WINDOW_ENTRIES)
+                ?: break
+            val expectedBefore = referenceWindow(
+                lines,
+                referenceSnap(bytes, (cursor.startOffset - APP_WINDOW_CHARS.toLong()).coerceAtLeast(0L)),
+                cursor.startOffset,
+                APP_WINDOW_CHARS,
+                APP_WINDOW_ENTRIES,
+            )
+            if (windowSignature(before) != windowSignature(expectedBefore)) {
+                windowMismatches++
+                windowMismatchReport.append(
+                    "$name readBefore @ ${cursor.startOffset}\n" +
+                        "  参照=${windowSignature(expectedBefore)}\n  实际=${windowSignature(before)}\n",
+                )
+            }
+            cursor = before
+            steps++
+        }
+    }
+    check("W1 readTail/readBefore 的四个字段与独立参照逐条一致（全部形状 × 预算）", windowMismatches, 0)
+    if (windowMismatches > 0) println(windowMismatchReport)
+    println()
+
+    // (b7) `readRange` 的按段切行：行上限的**边界**，以及跨块跳行、CR、U+2028/U+2029。
+    //
+    // 这一节是为这次改动写的：`readRange` 的内层循环从「逐字符 append + 逐字符判上限」换成了
+    // 「先找换行、再整段抄」。原来那条边界的含义是 —— 一行允许长到**恰好** `maxLineChars`，超出它
+    // 的第一个字符才让这一行作废（`dropped=true`，`Window.complete=false`），而作废只影响这一行：
+    // 下一行必须完好、且必须从它自己的位置开始。跨块那一半更要紧：作废状态要能穿过 `read()` 的块
+    // 边界活下来。
+    run {
+        val bulkRoot = File(root, "bulk-scan")
+        bulkRoot.mkdirs()
+        fun paddedEntry(id: String, totalChars: Int): String {
+            val head = "{\"id\":\"$id\",\"pad\":\""
+            val tail = "\"}"
+            return head + "p".repeat(totalChars - head.length - tail.length) + tail
+        }
+        // 两种规模：4096（整行落在一个 8 KiB 块里）与 20 000（必然跨块）。
+        for (cap in listOf(4096, 20_000)) {
+            val file = File(bulkRoot, "cap-$cap.jsonl")
+            val exact = paddedEntry("exact", cap)
+            val over = paddedEntry("over", cap + 1)
+            val after = "{\"id\":\"after\",\"pad\":\"ok\"}"
+            file.writeText(listOf(header("bulk"), exact, over, after).joinToString("\n") + "\n", StandardCharsets.UTF_8)
+            check("b7 cap=$cap: 夹具长度分别是不超/恰好/超一", listOf(exact.length, over.length), listOf(cap, cap + 1))
+
+            // 上限 = cap：恰好等于上限的留下，超一个字符的整行作废，而**它后面那条必须完好**
+            // ——「作废」如果忘了在换行处清空 `current`，`after` 就会粘上被丢行的一截。
+            val atCap = SessionFileReader.readAll(file, maxLineChars = cap)!!
+            check("b7 cap=$cap: 超限的一行报不完整", atCap.complete, false)
+            check("b7 cap=$cap: 恰好等于上限的留下、超一个字符的丢掉", atCap.entries.map(::idOf), listOf("exact", "after"))
+            check("b7 cap=$cap: 被丢行的下一条没有粘上它的内容", idOf(atCap.entries.last()) to (atCap.entries.last()["pad"]?.toString()), "after" to "\"ok\"")
+
+            // 上限 +1：三条都在，且完整 —— 边界只差这一个字符。
+            val raised = SessionFileReader.readAll(file, maxLineChars = cap + 1)!!
+            check("b7 cap=$cap: 上限抬一就完整", raised.complete, true)
+            check("b7 cap=$cap: 上限抬一后三条都在", raised.entries.map(::idOf), listOf("exact", "over", "after"))
+            // 而 `readEntries` 走的是 `onLine` 那条通道，也必须同意：它报不完整，并且交出同样两条。
+            val streamed = ArrayList<String>()
+            val streamedOk = SessionFileReader.readEntries(file, maxLineChars = cap) { streamed += idOf(it)!! }
+            check("b7 cap=$cap: readEntries 的判定与整段读一致", streamedOk, false)
+            check("b7 cap=$cap: readEntries 交出的条目一致", streamed, listOf("exact", "after"))
+        }
+
+        // CR 与 U+2028/U+2029：LF 是唯一的行终止符，一个尾随 CR 被去掉，而 U+2028/U+2029
+        // **不是**终止符（`String.lines()` 会把它们当终止符，这正是不能顺手换实现的原因）。
+        val trickFile = File(bulkRoot, "terminators.jsonl")
+        val tricky = "{\"id\":\"tricky\",\"pad\":\"a\u2028b\u2029c\"}"
+        trickFile.writeText(
+            header("tricky") + "\n" + tricky + "\r\n" + userEntry("tail", null, "end") + "\n",
+            StandardCharsets.UTF_8,
+        )
+        val trickyRead = SessionFileReader.readAll(trickFile)!!
+        check("b7 U+2028/U+2029 不切行，尾随 CR 被去掉", trickyRead.entries.map(::idOf), listOf("tricky", "tail"))
+        check(
+            "b7 U+2028/U+2029 原样留在字符串里",
+            trickyRead.entries.first()["pad"]?.toString(),
+            "\"a\u2028b\u2029c\"",
+        )
+        check("b7 逐条与文件里那两行解析出来的一致", fingerprint(trickyRead.entries), fingerprint(listOf(tricky, userEntry("tail", null, "end")).mapNotNull { PiJson.parseObjectOrNull(it) }))
+    }
+    println()
+
     // (c) the framer's cap is what drops the big one: prove the same bytes are
     // unreadable at the cap and readable once it is raised, so the ceiling (not the
     // file) is the defect. The size is `cap + 1` read from the framer, never a literal:
@@ -1015,6 +1199,119 @@ private fun fingerprint(entries: List<JsonObject>): String =
     entries.joinToString("\u0001") { e ->
         val p = e["id"] as? kotlinx.serialization.json.JsonPrimitive
         "${p?.content}:${(e["type"] as? kotlinx.serialization.json.JsonPrimitive)?.content}"
+    }
+
+/**
+ * 参照实现用的一行：文件字节偏移、文本（不含换行与 CR）、终止换行的字节位置。
+ *
+ * 由 [referenceLines] 从整份字节里切出来，是「另一种写法」的基础 —— 它不依赖读者自己的分块扫描、
+ * 不依赖 `BoundedFileReader`、也不依赖 `offsetOf` 的 UTF-8 宽度累加。
+ */
+private data class ReferenceLine(val offset: Long, val text: String, val newlineAt: Int)
+
+/**
+ * 参照实现：把整份文件按 `'\n'` 切成行。
+ *
+ * 生产读者是分块的、并且 LF 是唯一的终止符；这里的 `'\n'` 是逐字节找的，重建 `String` 一次
+ * （`String(bytes, start, len, UTF_8)` 与流式解码对合法 UTF-8 是同一个结果）。夹具没有 CR，
+ * 有 CR 时读者会去掉一个尾随 CR，而这里不会 —— 所以这一节只对夹具成立，这也是它把每一行都
+ * 记下来的原因：读者与参照必须真的看到同一组行。
+ */
+private fun referenceLines(bytes: ByteArray): List<ReferenceLine> {
+    val out = ArrayList<ReferenceLine>()
+    var start = 0
+    var i = 0
+    while (i < bytes.size) {
+        if (bytes[i] == '\n'.code.toByte()) {
+            out += ReferenceLine(
+                offset = start.toLong(),
+                text = String(bytes, start, i - start, StandardCharsets.UTF_8).removeSuffix("\r"),
+                newlineAt = i,
+            )
+            start = i + 1
+        }
+        i++
+    }
+    return out
+}
+
+/**
+ * 参照实现：包含 [target] 的那一行的起始字节 —— 与 `snapToLineStart` 同一条规则（向后找最近的
+ * `'\n'`，找不到就是文件头）。
+ */
+private fun referenceSnap(bytes: ByteArray, target: Long): Long {
+    if (target <= 0L) return 0L
+    var i = (minOf(target, bytes.size.toLong()) - 1L).toInt()
+    while (i >= 0) {
+        if (bytes[i] == '\n'.code.toByte()) return i + 1L
+        i--
+    }
+    return 0L
+}
+
+/**
+ * 参照实现：`[from, until)` 里的一个窗口，四个字段按 `SessionFileReader.readRange` + `entries()`
+ * 的规则重新算一遍。
+ *
+ * 「同法」是字面的，几条都写下来，因为它们就是这次改动不许动的东西：
+ *
+ *  - 非空行按文件顺序收集，**`session` 头也在其中并且占预算**（生产实现就是这样，这也是
+ *    `Window.startOffset` 在从头读时是 0 的原因）；
+ *  - 字符预算从**最老的**行开始丢，且最新一行永不留不下（`keepFrom < size - 1`）；
+ *  - `maxEntries` 再切一次，也是从最老的开始；
+ *  - 落后于 `until` 的半行不是 entry（读者读不到它的终止换行）；但读者的下界裁剪会多要一个字节
+ *    （`BoundedFileReader` 的 `+1`，为了跨块的字符），所以终止换行**正好落在 `until`** 的那一行
+ *    仍然会被读出来 —— 这里按 `newlineAt <= until` 复现这条边界；
+ *  - `firstOffset` 是范围里第一条非空行的偏移，再按被丢掉的那些行的 **UTF-8 字节数 + 1** 向前推进
+ *    （偏移是字节，不是字符）；
+ *  - `reachedStart` 是 `from == 0 && 没被 maxEntries 切 && 没被预算丢过`。
+ */
+private fun referenceWindow(
+    lines: List<ReferenceLine>,
+    from: Long,
+    until: Long,
+    maxChars: Int,
+    maxEntries: Int,
+): SessionFileReader.Window {
+    val inRange = lines.filter { it.offset >= from && it.newlineAt.toLong() <= until }
+    val collected = inRange.filter { it.text.isNotBlank() }
+    var seenChars = collected.sumOf { it.text.length.toLong() }
+    var keepFrom = 0
+    while (keepFrom < collected.size - 1 && seenChars > maxChars) {
+        seenChars -= collected[keepFrom].text.length
+        keepFrom++
+    }
+    val budgetDropped = keepFrom > 0
+    val capped = collected.size - keepFrom > maxEntries
+    if (capped) keepFrom = collected.size - maxEntries
+    var firstOffset = from
+    for (line in inRange) {
+        if (line.text.isNotBlank()) {
+            firstOffset = line.offset
+            break
+        }
+    }
+    for (k in 0 until keepFrom) {
+        firstOffset += collected[k].text.toByteArray(StandardCharsets.UTF_8).size + 1L
+    }
+    val entries = collected.drop(keepFrom)
+        .mapNotNull { PiJson.parseObjectOrNull(it.text) }
+        .filterNot { (it["type"] as? kotlinx.serialization.json.JsonPrimitive)?.content == "session" }
+    return SessionFileReader.Window(
+        entries = entries,
+        startOffset = firstOffset,
+        reachedStart = from == 0L && !capped && !budgetDropped,
+        complete = true,
+    )
+}
+
+/** 一个窗口的四个字段，一行文本：改前/改后的对照表与参照比对都用它。 */
+private fun windowSignature(window: SessionFileReader.Window?): String =
+    if (window == null) {
+        "null"
+    } else {
+        "entries=${fingerprint(window.entries)} start=${window.startOffset} " +
+            "reached=${window.reachedStart} complete=${window.complete}"
     }
 
 private fun checkTrue(name: String, ok: Boolean, detail: String = "") {

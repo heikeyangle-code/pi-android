@@ -17,7 +17,12 @@ package app.pi.ui
 // entry, and an inline image's base64 lives in the entry's message, so a measurement
 // that skimped on it would let a session of images past the cap.
 
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.JsonUnquotedLiteral
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
@@ -32,6 +37,15 @@ private fun check(name: String, actual: Any?, expected: Any?) {
         failures++
         println("FAIL $name\n  expected: $expected\n  actual:   $actual")
     }
+}
+
+private fun checkTrue(name: String, ok: Boolean, detail: String = "") {
+    if (ok) {
+        println("PASS $name")
+        return
+    }
+    failures++
+    println(if (detail.isEmpty()) "FAIL $name" else "FAIL $name\n  $detail")
 }
 
 private fun textEntry(text: String): JsonObject = buildJsonObject {
@@ -108,6 +122,182 @@ fun main() {
     // truncate on the way (it is a `Long`, and the cap it feeds is 64 MiB).
     val many = List(500) { textEntry("x".repeat(1000)) }
     check("500 entries are summed, not truncated", entryCharsOf(many) > 500L * 1000L, true)
+
+    // --- entryChars 的等价性：serializedLength == element.toString().length ---------
+    //
+    // 改前这个数是 `entry.toString()` / `message.toString()` 的长度；改后是走一遍 JsonElement
+    // 累加出来的（见 `HistoryRetention.kt` 的 [serializedLength]）。这个数喂的是保留预算与驱逐
+    // 时机，所以「等价」不是「差不多」：**逐字符恒等**是唯一可接受的结果，而它是可以被证明的，
+    // 所以这里就证 —— 三层，从最细到最粗：
+    //
+    //   1. 单字符穷举：BMP 的全部 65 536 个 code unit，每个单独包成一个 JsonPrimitive 比一次。
+    //      这一层把 kotlinx 的转义表逐格钉死（`"`、`\`、短转义、`\u00xx`、0x7F、非 ASCII、
+    //      U+2028/U+2029、落单代理项）。
+    //   2. 随机树 fuzz：随机的嵌套对象/数组/字符串/数字/布尔/null/非引号字面量，字符串取自一个
+    //      「会打人的」字符池（各类转义、控制字符、非 ASCII、emoji、代理对），含空容器与大数组。
+    //   3. 随机 JSON 文本：把随机文本 `PiJson` 解析回来（真实的 entry 就是这条路径来的），再比。
+    //
+    // 三层任何一层红了，就说明「不物化字符串」这一步改变了预算数字 —— 那是这次改动绝对不允许的
+    // 事，宁可退回物化。
+    val escapePool = listOf(
+        "a", "Z", "0", " ", "/", "<", ">", "&", "'", "~", "?",
+        "\"", "\\", "\t", "\b", "\n", "\r", "\u000C",
+        "\u0000", "\u0001", "\u0008", "\u001F", "\u007F", "\u0080", "\u00A0",
+        "\u2028", "\u2029", "é", "中", "中文字", "😀", "\uD83D\uDE00", "\uFFFD",
+    )
+
+    var escapeMismatches = 0
+    var escapeChecked = 0
+    var firstEscapeMiss = ""
+    fun verifyElement(element: JsonElement, label: String) {
+        val expected = element.toString().length.toLong()
+        val actual = serializedLength(element)
+        escapeChecked++
+        if (expected != actual) {
+            escapeMismatches++
+            if (firstEscapeMiss.isEmpty()) {
+                firstEscapeMiss = "$label expected=$expected actual=$actual json=${element.toString().take(80)}"
+            }
+        }
+    }
+
+    // 1. BMP 逐 code unit 穷举。
+    for (code in 0..0xFFFF) {
+        verifyElement(JsonPrimitive(code.toChar().toString()), "u+%04X".format(code))
+    }
+
+    // 2. 随机树 fuzz。种子固定，所以这是一条可复现的检查，而不是一次抽奖。
+    val fuzz = java.util.Random(20251120L)
+    fun randomText(): String {
+        val n = fuzz.nextInt(6)
+        val b = StringBuilder()
+        repeat(n) { b.append(escapePool[fuzz.nextInt(escapePool.size)]) }
+        return b.toString()
+    }
+    fun randomElement(depth: Int): JsonElement {
+        val choices = if (depth <= 0) 6 else 10
+        return when (fuzz.nextInt(choices)) {
+            0 -> JsonObject(LinkedHashMap()) // 空对象
+            1 -> JsonArray(emptyList()) // 空数组
+            2 -> JsonPrimitive(randomText())
+            3 -> JsonPrimitive(fuzz.nextInt(1 shl 24) - (1 shl 23))
+            4 -> JsonPrimitive(fuzz.nextBoolean())
+            5 -> JsonUnquotedLiteral("unquoted-" + fuzz.nextInt(100))
+            6 -> {
+                val map = LinkedHashMap<String, JsonElement>()
+                repeat(fuzz.nextInt(5)) { map[randomText()] = randomElement(depth - 1) }
+                JsonObject(map)
+            }
+            7 -> JsonArray(List(fuzz.nextInt(8)) { randomElement(depth - 1) })
+            // 大数组：一次几百个元素，序列化路径上的分隔符会被算到很多次。
+            8 -> JsonArray(List(500) { JsonPrimitive(randomText()) })
+            else -> JsonNull
+        }
+    }
+    repeat(2_000) { verifyElement(randomElement(depth = 4), "fuzz#$it") }
+
+    // 3. 随机 JSON 文本解析回来（entry 的真实来源），含 key 顺序与数字字面量的原样保留。
+    //
+    // 这一层的字符串内容取自一个**已经转义好**的片段池：拼出来的文本是合法 JSON，解析回来的
+    // 字符串里才会真的带上引号、反斜杠、控制字符、非 ASCII 与代理对。解析失败的条数也要为 0，
+    // 否则这一层会因为「全都解析不出来」而空转成假绿。
+    val jsonEscapedPool = listOf(
+        "a", "Z", "0", " ", "/", "<", ">", "&", "'", "~",
+        "\\\"", "\\\\", "\\t", "\\b", "\\n", "\\r", "\\f",
+        "\\u0000", "\\u0001", "\\u001F", "\\u007f", "\\u00a0", "\\u2028", "\\u2029",
+        "é", "中", "😀", "\\ud83d\\ude00", "\\uFFFD",
+    )
+    fun randomJsonString(): String = "\"" +
+        List(fuzz.nextInt(6)) { jsonEscapedPool[fuzz.nextInt(jsonEscapedPool.size)] }.joinToString("") + "\""
+    fun randomJsonValue(depth: Int): String = when (fuzz.nextInt(if (depth <= 0) 3 else 5)) {
+        0 -> randomJsonString()
+        1 -> (fuzz.nextInt(2_000) - 1_000).toString()
+        2 -> listOf("true", "false", "null")[fuzz.nextInt(3)]
+        3 -> "{" + List(fuzz.nextInt(4)) { randomJsonString() + ":" + randomJsonValue(depth - 1) }.joinToString(",") + "}"
+        else -> "[" + List(fuzz.nextInt(5)) { randomJsonValue(depth - 1) }.joinToString(",") + "]"
+    }
+    var parseFailures = 0
+    repeat(1_000) {
+        val text = "{" + List(1 + fuzz.nextInt(4)) {
+            randomJsonString() + ":" + randomJsonValue(depth = 3)
+        }.joinToString(",") + "}"
+        val parsed = runCatching { kotlinx.serialization.json.Json.parseToJsonElement(text) }.getOrNull() as? JsonObject
+        if (parsed == null) parseFailures++ else verifyElement(parsed, "parsed#$it")
+    }
+    check("F0 随机 JSON 文本都真的解析出来了（这一层不是空转）", parseFailures, 0)
+
+    check("F1 serializedLength == toString().length，逐条（含 BMP 穷举与随机树）", escapeMismatches, 0)
+    checkTrue("F1 覆盖量足够（BMP 65 536 + fuzz + 解析回读）", escapeChecked > 65_000, "checked=$escapeChecked")
+    if (firstEscapeMiss.isNotEmpty()) println("  第一处不等价：$firstEscapeMiss")
+
+    // `entryChars` 自己的两个分支也要与改前的参考实现逐条相等：message 取 `message`，别的取整条。
+    fun referenceEntryChars(entry: JsonObject): Long {
+        val type = (entry["type"] as? JsonPrimitive)?.content
+        val message = entry["message"] as? JsonObject
+        return if (type == "message" && message != null) {
+            message.toString().length.toLong() + 64L
+        } else {
+            entry.toString().length.toLong() + 64L
+        }
+    }
+    var entryMismatches = 0
+    var firstEntryMiss = ""
+    repeat(500) {
+        val candidate = randomElement(depth = 3)
+        val entry = if (it % 2 == 0 && candidate is JsonObject) {
+            // 造一条真正的 message entry，让 `message` 分支被走到
+            JsonObject(LinkedHashMap(candidate).also { map -> map["type"] = JsonPrimitive("message") })
+        } else {
+            candidate
+        }
+        val obj = entry as? JsonObject ?: return@repeat
+        val expected = referenceEntryChars(obj)
+        val actual = entryChars(obj)
+        if (expected != actual) {
+            entryMismatches++
+            if (firstEntryMiss.isEmpty()) firstEntryMiss = "expected=$expected actual=$actual"
+        }
+    }
+    check("F2 entryChars == 改前的物化实现（两个分支都走）", entryMismatches, 0)
+    if (firstEntryMiss.isNotEmpty()) println("  第一处不等价：$firstEntryMiss")
+
+    // --- 改前/改后这个测量的耗时（真实窗口形状） -------------------------------------
+    //
+    // 窗口形状照着 `session-replay-cost` 的 `img-20x2.5MB` 取：内联图片是「量一条 entry」最贵的
+    // 形状，也是这个预算存在的理由。改前每条都要物化一个 3.3 MB 的串，改后一个字节都不复制。
+    run {
+        val base64 = "A".repeat(2_500_000)
+        val window = List(10) { index ->
+            if (index % 2 == 0) {
+                imageEntry(base64)
+            } else {
+                textEntry("x".repeat(400))
+            }
+        }
+        // 等价性的最后一道：同一条窗口，两个实现的总和必须相等。
+        check("F3 整窗总和与改前一致", entryCharsOf(window), window.sumOf { referenceEntryChars(it) })
+        // 两个实现**交替**着跑：改前那一个每条都要新建一个 3.3 MB 的串，垃圾一多就会把 GC 记到
+        // 另一边的账上；交替 + 取最小值，量到的才是这段计算本身。
+        var beforeMs = Double.MAX_VALUE
+        var afterMs = Double.MAX_VALUE
+        var roundMismatches = 0
+        for (i in 0 until 15) {
+            var t = System.nanoTime()
+            val materialised = window.sumOf { referenceEntryChars(it) }
+            beforeMs = minOf(beforeMs, (System.nanoTime() - t) / 1_000_000.0)
+            t = System.nanoTime()
+            val counted = entryCharsOf(window)
+            afterMs = minOf(afterMs, (System.nanoTime() - t) / 1_000_000.0)
+            // 两边都必须算出同一个数，否则时间没有意义。
+            if (counted != materialised) roundMismatches++
+        }
+        check("F4 每一轮两个实现同值（时间才有意义）", roundMismatches, 0)
+        println(
+            "entryChars 耗时：物化字符串（改前）%.2f ms -> 不物化（改后）%.2f ms（%d 条，含 %d 张 2.5MB 内联图）".format(
+                beforeMs, afterMs, window.size, window.count { it["message"].toString().contains("\"type\":\"image\"") },
+            ),
+        )
+    }
 
     // --- the backward readings ------------------------------------------------------
     //
