@@ -287,6 +287,24 @@ run_harness guest-paths \
   "$ROOT/app/src/test/kotlin/app/pi/bridge/GuestPathMappingCheck.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/bridge/GuestPathMapping.kt"
 
+# app.pi.bridge: 正文远端图片的**请求策略**（`PiImageRequestPolicy.kt`）—— 正在飞的请求按
+# `(link, 目标宽度)` 在进程级去重、失败结果 45 s 内不再出网（有界、会过期）、生产者跑在
+# 进程级作用域里且有自己的兜底预算。为什么必须在这里跑：R1（性能审计唯一判定为「严重」的
+# 一条）就是"失败不缓存 + 没有任何 in-flight 去重"在 `LazyColumn` 回收行时的后果 —— 一张
+# 坏 URL 每滚回来一次就重新出一网，行内图还会在同一帧被库调两次、各开一条连接。
+#
+# 这台状态机的四条性质编译器一条都看不见，而且错了全是安静的：并发只跑一次 loader、
+# 加载结束后条目被移除、失败只在 TTL 内挡住重试、等待方取消**不**牵连生产者。时钟是注入的
+# （`now = { clock }`），所以 TTL 用假时钟推、不靠 `Thread.sleep`。
+#
+# Android-free：只用 Kotlin stdlib 与 kotlinx.coroutines（`CompletableDeferred` / `launch` /
+# `withTimeoutOrNull` / `Dispatchers`）。这个文件一旦长出 `android.*` import，这里就编译失败
+# ——那正是"它不再是纯策略"的信号。
+run_harness image-request-policy \
+  app.pi.bridge.PiImageRequestPolicyCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/bridge/PiImageRequestPolicyCheck.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/bridge/PiImageRequestPolicy.kt"
+
 # app.pi.bridge: the device shell's policy exists twice — Kotlin enforces it
 # (`DeviceShellGuard.hardBlocks`) and the permission gate's `danger.ts` mirrors it so
 # an impossible command is refused before the user is asked about it. The two diverged

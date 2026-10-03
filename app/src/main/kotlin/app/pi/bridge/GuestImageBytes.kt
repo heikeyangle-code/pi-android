@@ -17,6 +17,8 @@ import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 
 /**
@@ -109,6 +111,20 @@ internal class GuestImage(
  *    第三个管"每块都读得到、但慢慢喂一整张"——循环在**每块之间**查它，所以一次远端
  *    取字节的最坏耗时是总预算再加一个读取超时，不是无限。
  *
+ * ### 同时打开的 socket 有几个
+ *
+ * 取字节那一段有**自己**的信号量 [remoteFetchGate]，[MAX_CONCURRENT_REMOTE_FETCHES] = 3 个
+ * 许可。它与 `ui/blocks/ImageSize.kt` 的 `piImageDecodeGate`（2 个许可）是**两把不同的
+ * 闸门、管两件不同的事**，不是重复：那一把限的是"进程里同时在**解的位图**"（内存与帧时间，
+ * 而且它只包 decode），这一把限的是"同时在**开的连接**"（socket/FD）。合成一把就会让其中
+ * 一个上限被另一个的许可数无意中决定 —— 解码 2 许可会变成"网络也只能同时 2 条"，反过来
+ * 也一样。
+ *
+ * 许可在**磁盘缓存未命中之后**才申请：命中缓存不出网，也就不需要许可。而
+ * [TOTAL_TIMEOUT_MS] 从**拿到许可之后**才开始算，所以 15 s 仍然是"这一次取字节的网络时间"，
+ * 排队不占它（最坏总耗时因此是"排队 + 15 s + 一个读超时"，由 `PiImageRequestPolicy` 那边
+ * 60 s 的兜底预算封住）。
+ *
  * ### 缓存在哪、多大
  *
  * 有界磁盘缓存 + LRU，目录是 `<files>/pi/image-cache/`（[PiPaths.home] 下面）。
@@ -130,27 +146,41 @@ internal class GuestImage(
  *
  * 一律 `null` + [lastFailure] 写明原因，于是正文走那条既有的「alt + 图片地址」回退
  * （`ui/render/PiMarkdownComponents.kt` 的 `PiImageFallback`）——**不新增一种"破图"外观**。
- * 离线、超时、非 2xx、超过上限、不是图片，都是这一条路。失败**不进缓存**
- * （没有负缓存），所以下一次组合会再试一次。
+ * 离线、超时、非 2xx、超过上限、不是图片，都是这一条路。失败**不写磁盘**（磁盘缓存里
+ * 只有成功取到的完整字节），但也**不再是"下次组合会再试一次"**：`PiImageRequestPolicy`
+ * 把一次失败在内存里记住 45 s，这段时间内同一个 `(link, 目标宽度)` 根本走不到这里。
+ *
+ * 为什么是 TTL 而不是永久负缓存：图片文件可能就在这一轮才被 agent 写出来，URL 可能只是
+ * 瞬断，502 也可能下一秒就好 —— 永久记住会把一次瞬时失败变成永久空白。要的只是"滚动
+ * 期间别反复重打"。完整理由在那条策略的 KDoc 里。
  *
  * ### 线程与取消
  *
  * 阻塞 I/O，**绝不在主线程**：远端那条整段包在 `withContext(Dispatchers.IO)` 里，
  * 调用方就算忘了也不会把它读进帧里（本 App 的调用方是
  * `PiGuestImageTransformer`，它本来就在 IO 上）。读取循环每读一块查一次取消
- * （`currentCoroutineContext().ensureActive()`），所以节点离开组合时下载当场停，
- * 而不是把 8 MiB 拉完再丢掉；`produceState` 负责取消，第一帧画的仍是回退文本。
+ * （`currentCoroutineContext().ensureActive()`）。
  *
- * **同一帧可能有两个调用者，这一点必须防。** 库对一张**行内**图片会在同一帧调用
- * `transform` 两次：`MarkdownInlineImageWithSize` 自己调一次
+ * **"节点离开组合下载当场停"这条已经撤销**（R1）。下载现在跑在 [PiImageRequestPolicy] 的
+ * **进程级**作用域里：节点离开组合它不会停，而是跑完并把字节写进磁盘缓存，用户滚回来时
+ * 那是**缓存命中、不出网**。原因是 `LazyColumn` 回收行会让 `produceState` 重跑，而"失败
+ * 不被记住"意味着**一张坏 URL 每滚回来一次就重新出一网**；取舍、预算与谁取消谁写在
+ * [PiImageRequestPolicy] 的 KDoc 里，这里只说后果。
+ *
+ * **取消只在每 64 KiB 分块之间检查**（[readBounded]）：`InputStream.read` 阻塞在 socket 上
+ * 时协程取消是进不去的 —— 这是 JDK 阻塞 I/O 的性质，根治不了。所以一次 `read` 的最坏耗时
+ * 由 [READ_TIMEOUT_MS] 兜底、整段由 [TOTAL_TIMEOUT_MS] 与策略层 60 s 的兜底预算兜底：
+ * "取消不进去"不等于"停不下来"。
+ *
+ * **同一帧的两个调用者不再各取一次。** 库对一张**行内**图片会在同一帧调用 `transform`
+ * 两次：`MarkdownInlineImageWithSize` 自己调一次
  * （`.../compose/elements/MarkdownText.kt:375`，用来量本征尺寸），随后
  * `components.inlineImage`（也就是 `PiInlineImage`）经 `MarkdownInlineImage` 又调一次
  * （`.../elements/MarkdownInlineImage.kt:13`）。两次都是各自 `produceState`（键相同），
- * 第一帧两边都未命中内存缓存，所以**理论上会各取一次**。内存缓存从第二帧起就命中，
- * 磁盘缓存让下一次会话也命中，所以代价是首次最多一次重复请求——这里不引入 in-flight
- * 去重，但写磁盘因此必须用**唯一的临时文件名**：两个 writer 共用一个 `.tmp` 会互相
- * 截断，而半份文件会被当成缓存命中，于是那张图永远解不出、又永远不出网。
- * 见 [rememberOnDisk]。
+ * 而第一个请求现在按 `(link, 目标宽度)` 进了 [PiImageRequestPolicy] 的进程级 in-flight
+ * 表，第二个**共享**它的结果，不再另开一条连接。写磁盘仍然用**唯一的临时文件名**
+ * （见 [rememberOnDisk]）：那是另一条独立的正确性要求（两个 writer 共用 `.tmp` 会互相
+ * 截断，半份文件会被当成命中），去重不能替代它。
  *
  * ## 字节从哪来（guest 路径 → 宿主文件）
  *
@@ -225,6 +255,24 @@ internal object GuestImageBytes {
     private const val READ_CHUNK_BYTES = 64 * 1024
 
     /**
+     * 同时在取字节的远端请求上界，3 条。见类注释「同时打开的 socket 有几个」：
+     * 它和 `piImageDecodeGate`（2 许可、只包解码）是两把不同的闸门。
+     *
+     * 3 而不是 2：解码闸门是"进程里同时在解的位图"，取字节闸门是"同时在开的连接"。
+     * 一屏里有 5 张坏 URL 时，3 条并发已经足够快（一条最坏 15 s + 5 s，剩下的排队），
+     * 又不至于让 5 张图同时各占一个 socket、各自的 8 MiB 缓冲和 `Dispatchers.IO` 的线程。
+     */
+    private const val MAX_CONCURRENT_REMOTE_FETCHES = 3
+
+    /**
+     * 取字节的闸门。见类注释「同时打开的 socket 有几个」。
+     *
+     * 对象是 `GuestImageBytes`（一个进程级 object），所以这把闸门是**进程级**的：两个
+     * 组合、两个页面、两个 transformer 抢的是同一份许可。许可在磁盘缓存未命中之后才拿。
+     */
+    private val remoteFetchGate = Semaphore(MAX_CONCURRENT_REMOTE_FETCHES)
+
+    /**
      * 上一次取字节为什么失败，供诊断用。成功后是 `null`。与
      * `PiHighlightClient.lastFailure` 同形，两条字节通道可以用同一种方式报告。
      */
@@ -233,10 +281,20 @@ internal object GuestImageBytes {
         private set
 
     /**
+     * 记一条**不是这次读字节产生**的失败原因（来自 [PiImageRequestPolicy]：负缓存命中、
+     * 生产者超预算）。与 [fail] 共用"失败 = null + lastFailure"这条规矩，只是原因由那条
+     * 状态机给 —— 不然"这次没出网"会顶着一句上一次别处的下载失败，诊断就撒谎了。
+     */
+    fun noteFailure(reason: String) {
+        lastFailure = reason
+    }
+
+    /**
      * 取字节。阻塞：远端那条路自己切到 [Dispatchers.IO]，本地两条路是普通的文件读。
      *
-     * `suspend` 只为了取消——远端读取循环用它查 `ensureActive()`，节点离开组合时
-     * 下载当场停（见类注释「线程与取消」）。
+     * `suspend` 只为了取消——远端读取循环用它查 `ensureActive()`（见类注释「线程与取消」：
+     * 取消只在每块之间生效，节点离开组合**不再**让下载当场停 —— 那件事现在归
+     * [PiImageRequestPolicy] 的进程级作用域管）。
      */
     suspend fun load(context: Context, rawLink: String): GuestImage? {
         val link = rawLink.trim().removeSurrounding("<", ">").trim()
@@ -334,7 +392,7 @@ internal object GuestImageBytes {
         if (cacheFile != null && cacheFile.isFile && cacheLength > 0 && cacheLength <= MAX_BYTES) {
             val cached = runCatching { cacheFile.readBytes() }.getOrNull()
             // `sniff` 不是可有可无的一步：缓存里那份如果被写坏/换掉，直接交给解码器会
-            // 变成一张**永远**画不出来的图（失败不进缓存，但缓存命中不会再出网）。
+            // 变成一张**永远**画不出来的图（失败**不写磁盘缓存**，但缓存命中不会再出网）。
             // 认得出是 pi 的五种格式之一才用它，否则当成未命中、重新取。
             if (cached != null && cached.isNotEmpty() && sniff(cached) != null) {
                 // LRU：命中的这份变成最新，下次淘汰不会先丢它。
@@ -347,6 +405,24 @@ internal object GuestImageBytes {
             }
         }
 
+        // 缓存未命中才申请取字节的许可：见类注释「同时打开的 socket 有几个」。15 s 的总预算
+        // 也从**拿到许可之后**才算（`fetchOverNetwork` 内部），所以排队不占网络预算。
+        val bytes = fetchOverNetwork(uri) ?: return@withContext null
+
+        cacheFile?.let { file -> rememberOnDisk(file, bytes) }
+        GuestImage(bytes, mimeOf(bytes, "", null), "远端 $uri（${bytes.size} 字节）")
+    }
+
+    /**
+     * 一次真正的出网取字节：拿一个 [remoteFetchGate] 的许可 → `GET` → 按 [MAX_BYTES] 与
+     * [TOTAL_TIMEOUT_MS] 读完 → 断开。失败一律 `null`（原因写进 [lastFailure]），
+     * 取消照原样抛。
+     *
+     * 许可只包这一段（不含磁盘缓存读写、不含解码），所以"同时打开的 socket"这个上界就是
+     * [MAX_CONCURRENT_REMOTE_FETCHES]。`deadlineNanos` 在这里算而不是在调用方：它量的是
+     * "这一次取字节"的时间，排队等许可的时间不该从网络预算里扣。
+     */
+    private suspend fun fetchOverNetwork(uri: URI): ByteArray? = remoteFetchGate.withPermit {
         val deadlineNanos = System.nanoTime() + TOTAL_TIMEOUT_MS * 1_000_000
         val connection = (uri.toURL().openConnection() as HttpURLConnection).apply {
             requestMethod = "GET"
@@ -358,35 +434,33 @@ internal object GuestImageBytes {
             useCaches = false
             // 故意不调 setRequestProperty：见类注释「取的是什么」。
         }
-        val bytes = try {
+        try {
             val status = connection.responseCode
             if (status !in 200..299) {
-                return@withContext fail("远端图片返回 HTTP $status：$uri")
+                return@withPermit fail("远端图片返回 HTTP $status：$uri")
             }
             // 声明的大小先挡一道：一个 500 MB 的响应不必先下载 8 MiB 才知道它太大。
             val declared = connection.contentLengthLong
             if (declared > MAX_BYTES) {
-                return@withContext fail("远端图片声明 $declared 字节，超过 ${MAX_BYTES / 1024 / 1024} MiB 上限")
+                return@withPermit fail("远端图片声明 $declared 字节，超过 ${MAX_BYTES / 1024 / 1024} MiB 上限")
             }
-            readBounded(connection.inputStream, declared, deadlineNanos) ?: return@withContext null
+            readBounded(connection.inputStream, declared, deadlineNanos)
         } catch (cancel: CancellationException) {
             // 与 `load` 里同一条规矩：取消照原样抛，别变成一条假的失败原因。
             throw cancel
         } catch (error: Exception) {
-            return@withContext fail("下载远端图片失败：${error::class.java.simpleName}: ${error.message}")
+            return@withPermit fail("下载远端图片失败：${error::class.java.simpleName}: ${error.message}")
         } finally {
             connection.disconnect()
         }
-
-        cacheFile?.let { file -> rememberOnDisk(file, bytes) }
-        GuestImage(bytes, mimeOf(bytes, "", null), "远端 $uri（${bytes.size} 字节）")
     }
 
     /**
      * 按 [MAX_BYTES] 与 [deadlineNanos] 读一个响应体，超了就 `null`（原因写进 [lastFailure]）。
      *
-     * 每读一块都查取消：节点离开组合后这次下载当场停。`declared` 只用来预分配缓冲区
-     * （-1 表示服务端没给长度），不参与判定——真话是实际读到的字节数。
+     * **每读一块都查取消，但 `read` 本身阻塞时取消进不去**（JDK 阻塞 I/O 的性质）：所以
+     * 一次 `read` 的最坏耗时靠 [READ_TIMEOUT_MS] 兜底，不是靠取消。`declared` 只用来
+     * 预分配缓冲区（-1 表示服务端没给长度），不参与判定——真话是实际读到的字节数。
      */
     private suspend fun readBounded(stream: InputStream, declared: Long, deadlineNanos: Long): ByteArray? {
         val capacity = if (declared > 0 && declared <= MAX_BYTES) declared.toInt() else READ_CHUNK_BYTES
@@ -442,9 +516,10 @@ internal object GuestImageBytes {
      * 把字节放进磁盘缓存，并把总大小压回 [MAX_DISK_BYTES] 以内。
      *
      * 先写一个 `.tmp` 再 rename，所以缓存目录里**只有完整的文件**——半份文件会被当成
-     * 命中，于是那张图永远解不出、又永远不出网（失败不进缓存，但缓存命中不再出网）。
-     * 临时名里带 `System.nanoTime()` 是因为同一个 URL 的第一帧可能有**两个**调用者
-     * （见类注释），共用一个 `.tmp` 会让两个 writer 互相截断。
+     * 命中，于是那张图永远解不出、又永远不出网（失败**不写磁盘缓存**，但缓存命中不再出网）。
+     * 临时名里带 `System.nanoTime()` 是防御性的：同一个 URL 的两个调用者现在由
+     * [PiImageRequestPolicy] 去了重，但去重是调度层的事，写盘的原子性不该依赖它
+     * （见类注释「同一帧的两个调用者不再各取一次」）。
      *
      * rename 失败就放弃这次缓存，**不做非原子写**：宁可不缓存，也不留一份可能是半份的
      * 文件。整段 `runCatching`：**写失败不致命**——字节已经在内存里，图照画，这次的代价

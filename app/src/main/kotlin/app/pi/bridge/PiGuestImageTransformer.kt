@@ -79,15 +79,24 @@ import kotlinx.coroutines.withContext
  * [GuestImageBytes]），解码在 [Dispatchers.Default]（CPU 活，而且一张原图几十毫秒）。
  * 所以图片的第一帧是「没有」——正文画的是 alt + 来源那条回退——下一帧才换成图。
  *
- * **取消**：`produceState` 的协程在节点离开组合时被取消，而 [GuestImageBytes] 的远端
- * 读取每读一块都会查一次取消，所以划过一张网络图不会把它的下载读完。
+ * ## 取消：谁取消谁
+ *
+ * 真正取字节的那一次跑在 [PiImageRequestPolicy] 的**进程级**作用域里，所以它不再是
+ * `produceState` 的取消能停下来的东西：节点离开组合它照样跑完，把字节写进磁盘缓存，用户
+ * 滚回来时是**缓存命中、不出网**。这条是有意的（原来那句"节点离开组合下载当场停"已撤销，
+ * 理由见 [PiImageRequestPolicy] 的 KDoc）：`LazyColumn` 回收行会让 `produceState` 重跑，
+ * 而"失败不被记住、并发不去重"就意味着**一张坏 URL 每滚回来一次就重新出一网**。
+ *
+ * `produceState` 保留的：等待方取消。等待方等的是共享的那份结果，取消它自己不会取消
+ * 生产者（否则滚快一点就把别人正在下的图掐了）。
  *
  * ## 失败一律 `null`，绝不画错的图
  *
  * 解不出来的（文件不存在、响应不是图片、超过 [GuestImageBytes] 的单张上限、网络失败、
  * 超时……）一律返回 `null`——这正是默认 no-op 实现的答案，于是正文保留
  * 「alt + 图片地址」那条回退（`ui/render/PiMarkdownComponents.kt` 的 `PiImageFallback`），
- * 原因留在 `GuestImageBytes.lastFailure`。**失败不进缓存**，见下面 `cached` 的说明。
+ * 原因留在 `GuestImageBytes.lastFailure`。**失败不进位图缓存**，但也不再"每次组合都重试"：
+ * 失败由 [PiImageRequestPolicy] 在内存里记 45 s，见下面 `cached` 的说明。
  */
 internal class PiGuestImageTransformer(private val context: Context) : ImageTransformer {
 
@@ -118,17 +127,52 @@ internal class PiGuestImageTransformer(private val context: Context) : ImageTran
         )
     }
 
+    /**
+     * 取一张图：先过 [PiImageRequestPolicy]（正在飞的共享、失败 45 s 内不出网），再真正取字节
+     * 与解码。
+     *
+     * 键与位图缓存**同一个类型**（[PiImageRequestKey] = `(link, 目标宽度)`）：正在飞的那一份
+     * 和已经画出来那一份指着同一张图。宽度在键里是因为位图按它采样（旋转/分屏必须重解）。
+     *
+     * 这里是 `produceState` 的等待方：它被取消只取消自己这一次等待，不会取消生产者 ——
+     * 否则滚快一点就把别人正在下的图掐了（见类注释「取消：谁取消谁」）。
+     */
     private suspend fun load(link: String, widthPx: Int): Bitmap? {
-        val loaded = withContext(Dispatchers.IO) { GuestImageBytes.load(context, link) } ?: return null
+        val key = PiImageRequestKey(link, widthPx)
+        val outcome = requestPolicy.load(key) { requested -> loadUnshared(requested) }
+        val bitmap = outcome.getOrNull()
+        if (bitmap == null) {
+            // 负缓存命中/超预算时这次**根本没出网**，`GuestImageBytes.lastFailure` 里可能
+            // 还留着别处的旧原因。把这条真实结论写回去，诊断（以及回退文案的依据）才不撒谎。
+            (outcome.exceptionOrNull() as? PiImageNegativeCacheHit)?.let { hit ->
+                GuestImageBytes.noteFailure(hit.message ?: "远端图片最近失败过，这次不出网")
+            }
+        }
+        return bitmap
+    }
+
+    /**
+     * 真正取一次：取字节 → 解码 → **成功**才进位图缓存。
+     *
+     * 这个函数只被 [PiImageRequestPolicy] 的生产者调用一次（同一个 key 上并发的其它调用者
+     * 共享它的结果），所以磁盘写入、解码、缓存写入都只发生一次。
+     */
+    private suspend fun loadUnshared(key: PiImageRequestKey): Result<Bitmap> {
+        // 本地那两条路（`data:`、文件）是普通的阻塞读，所以整段仍然要在 IO 上；远端那条
+        // 自己也会切一次，这里不重复算账。
+        val loaded = withContext(Dispatchers.IO) { GuestImageBytes.load(context, key.link) }
+            ?: return Result.failure(
+                IllegalStateException(GuestImageBytes.lastFailure ?: "读取图片字节失败（没有留下原因）"),
+            )
         val decoded = withContext(Dispatchers.Default) {
-            // 解码也过同一把闸门：`piImageDecodeGate` 的两个许可就是「进程里同时在解的图」
-            // 的上界（`ui/blocks/ImageSize.kt`，`MAX_CONCURRENT_IMAGE_DECODES = 2`）。
-            // 正文图片和聊天里的图片抢的是同一份帧时间与同一份内存，分成两把闸门
-            // 等于把这个上界悄悄翻倍。
-            piImageDecodeGate.withPermit { decode(loaded.bytes, widthPx) }
-        } ?: return null
-        store(link, widthPx, decoded)
-        return decoded
+            // 解码过的是**另一把**闸门：`piImageDecodeGate` 的两个许可就是「进程里同时在解的
+            // 图」的上界（`ui/blocks/ImageSize.kt`，`MAX_CONCURRENT_IMAGE_DECODES = 2`）。
+            // 正文图片和聊天里的图片抢的是同一份帧时间与同一份内存，分成两把闸门等于把这个
+            // 上界悄悄翻倍。它与 `GuestImageBytes` 那把"同时在开的连接"（3 许可）是两回事。
+            piImageDecodeGate.withPermit { decode(loaded.bytes, key.widthPx) }
+        } ?: return Result.failure(IllegalStateException("图片解码失败：${loaded.source}"))
+        store(key, decoded)
+        return Result.success(decoded)
     }
 
     /**
@@ -205,44 +249,49 @@ internal class PiGuestImageTransformer(private val context: Context) : ImageTran
         private const val DECODE_AREA_BUDGET_FACTOR = 4L
 
         /**
-         * 缓存键：link 加**它被采样到的宽**。宽必须在键里，因为位图是按它采样的——
-         * 换了宽度（旋转、分屏）就得重新解，不能把竖屏尺寸的图当横屏的用。
+         * **进程级**的请求策略：正在飞的请求按 `(link, 目标宽度)` 去重、失败 45 s 内不再出网。
          *
-         * [hashCode] 故意不碰 link 的字符：`data:` URI 的 link 是几 MB 的 base64，
-         * `String.hashCode()` 是 O(长度)，仓库里量到过新造的 4 MiB 字符串花 22.8 ms
-         * （`docs/scroll-perf-items.md` §2.2），而 `cached()` 是在**组合里**同步跑的。
-         * 所以哈希只由宽度和长度算（都是 O(1)），link 本身只在哈希撞上之后才比较——
-         * 同一个 `String` 实例的直接命中在 `String.equals` 的第一行就返回。
+         * 放在 companion 里而不是实例字段里，是因为它**必须**活得比任何一次组合长：
+         * `rememberPiGuestImageTransformer()` 每次 Activity 重建都可能给一个新实例，而
+         * "同一张图别并发取两次"这件事跨实例才成立（行内图在同一帧被库调两次、两个页面
+         * 同时显示同一张图，都是这个形状）。把实例状态放在这里也是同一个理由 —— 位图缓存
+         * 本来就是进程级的。
+         *
+         * 默认参数就是生产值（45 s 负缓存 / 60 s 兜底预算 / 64 条负缓存 / `Dispatchers.IO`），
+         * 全部理由在 [PiImageRequestPolicy] 的 KDoc 里。
          */
-        private class Key(val link: String, val widthPx: Int) {
-            override fun equals(other: Any?): Boolean =
-                other is Key && widthPx == other.widthPx && link == other.link
-
-            override fun hashCode(): Int = 31 * widthPx + link.length
-        }
+        private val requestPolicy = PiImageRequestPolicy<PiImageRequestKey, Bitmap>()
 
         /**
          * 访问序：再读一张旧图会把它挪到最新端，于是下面的淘汰总是丢最久没用的那张。
+         *
+         * 键就是 [PiImageRequestKey]，与 [requestPolicy] 的键是**同一个类型**：正在飞的那份
+         * 与画出来那份必须指着同一张图。
          */
-        private val cache = LinkedHashMap<Key, Bitmap>(16, 0.75f, true)
+        private val cache = LinkedHashMap<PiImageRequestKey, Bitmap>(16, 0.75f, true)
 
         /**
-         * **失败不进缓存。** 文件可能就在这一轮才被写出来（agent 正在同一个回合里写它），
-         * 不可达的 URL 也可能回来，负缓存会把一次瞬时失败变成永久空白。也不会反复重取：
-         * `produceState` 以 (link, 宽) 为键，同一个链接在一次组合里只加载一次。
+         * **失败不进位图缓存。** 文件可能就在这一轮才被写出来（agent 正在同一个回合里写它），
+         * 不可达的 URL 也可能回来 —— 位图缓存没有 TTL，"记住一次失败"在这里就是永久空白。
+         *
+         * 但失败也不再是"每次组合都重试"：那是 [requestPolicy] 的活，它记 45 s（有 TTL、
+         * 到点照旧重试）。所以这里是两件事分开：位图缓存只放成功的像素，失败的记忆归策略层。
          */
         private fun cached(link: String, widthPx: Int): Bitmap? =
-            synchronized(cache) { cache[Key(link, widthPx)] }
+            synchronized(cache) { cache[PiImageRequestKey(link, widthPx)] }
 
         /**
          * 两条上限都在这里执行，而不是靠重写 `removeEldestEntry`：淘汰规则因此只有一个
          * 可读的循环——丢最久没用的那项，直到**两条**上限都满足。位图的字节数取
          * `allocationByteCount` 而不是 `byteCount`：后者是按当前宽高算的理论值，
          * 前者才是这块内存真正占了多少。
+         *
+         * 只在成功之后调用（见 [loadUnshared]）：策略层共享的是"这一次取字节+解码"的结果，
+         * 位图缓存仍然是唯一存像素的地方，不新增第二份。
          */
-        private fun store(link: String, widthPx: Int, bitmap: Bitmap) {
+        private fun store(key: PiImageRequestKey, bitmap: Bitmap) {
             synchronized(cache) {
-                cache[Key(link, widthPx)] = bitmap
+                cache[key] = bitmap
                 var total = cache.values.sumOf { it.allocationByteCount.toLong() }
                 val iterator = cache.entries.iterator()
                 while ((cache.size > MAX_ENTRIES || total > MAX_TOTAL_BYTES) && iterator.hasNext()) {
