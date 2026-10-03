@@ -144,8 +144,30 @@ private fun window(
 ): ZoomDecodeWindow? {
     val (bw, bh) = baseOf(srcW, srcH, boxW, boxH)
     val r = zoomVisibleSourceRect(boxW, boxH, bw, bh, srcW, srcH, scale, panX, panY) ?: return null
-    return zoomDecodeWindow(r, srcW, srcH, bw, bh)
+    return zoomDecodeWindow(r, srcW, srcH, bw, bh, detailBudgetPixels(boxW, boxH))
 }
+
+/** 1× 时源图在屏幕上的宽度（px）—— 后面所有「一源像素等于几个屏幕像素」都从这里出发。 */
+private fun fittedOf(boxW: Int, boxH: Int, srcW: Int, srcH: Int): Float {
+    val (bw, bh) = baseOf(srcW, srcH, boxW, boxH)
+    return bw * viewerFit(boxW, boxH, bw, bh)
+}
+
+/** 这张图在 1× 之外的「1 源像素 = 1 屏幕像素」倍率。 */
+private fun oneToOne(boxW: Int, boxH: Int, srcW: Int, srcH: Int): Float {
+    val (bw, bh) = baseOf(srcW, srcH, boxW, boxH)
+    val fit = viewerFit(boxW, boxH, bw, bh)
+    return minOf(srcW / (bw * fit), srcH / (bh * fit))
+}
+
+/** The app's own per-image ceiling, exactly as the viewer computes it (`hardCeiling = MAX_SCALE`). */
+private fun maxScaleOf(boxW: Int, boxH: Int, srcW: Int, srcH: Int): Float {
+    val (bw, bh) = baseOf(srcW, srcH, boxW, boxH)
+    val fit = viewerFit(boxW, boxH, bw, bh)
+    return maxZoomForSource(bw * fit, bh * fit, srcW, srcH, MAX_SCALE_TEST)
+}
+
+private const val MAX_SCALE_TEST = 8f
 
 /**
  * The one **input** ceiling this change adds, and the header read the arithmetic needs.
@@ -231,27 +253,40 @@ private fun fitChecks() {    // `viewerFit` is also the 1× placement the viewer
 }
 
 private fun thresholdChecks() {
-    // 1×: the whole picture is on screen at the sampled resolution — there is nothing to re-earn, and
-    // requirement 2 is that this case keeps today's bitmap *and today's memory*.
-    check("1x asks for no block", visible(BOX_W, BOX_H, SRC_W, SRC_H, 1f), null)
-    check("1.5x asks for no block", visible(BOX_W, BOX_H, SRC_W, SRC_H, 1.5f), null)
-    check("2x asks for no block", visible(BOX_W, BOX_H, SRC_W, SRC_H, 2f), null)
+    // 1×: 整张图在屏幕上，按源解一份出来只会比基础图更粗（预算把它降采样到基础图那一档），
+    // 所以**不取块** —— 这就是旧那条 `scale × fit ≥ 2` 阈值想表达的事，现在由预算+「更清楚才解」
+    // 两条推出来。
+    check("1x asks for no block", window(BOX_W, BOX_H, SRC_W, SRC_H, 1f), null)
+    check("1.5x asks for no block", window(BOX_W, BOX_H, SRC_W, SRC_H, 1.5f), null)
+    check("2x asks for no block", window(BOX_W, BOX_H, SRC_W, SRC_H, 2f), null)
+    check("2.5x asks for no block", window(BOX_W, BOX_H, SRC_W, SRC_H, 2.5f), null)
+    check("3x asks for no block (the block would only be as coarse as the base)", window(BOX_W, BOX_H, SRC_W, SRC_H, 3f), null)
+    checkTrue("3.8x (the source's 1:1) does", window(BOX_W, BOX_H, SRC_W, SRC_H, 4f) != null)
 
-    // The threshold is on `scale·fit` (screen pixels per base pixel). `fit` is 0.54 here, so the block
-    // is only useful from ~3.8× on: below that the sampled bitmap is still the sharper one, and the
-    // budget would only buy a block as coarse as the base.
-    check("3x is still below the deficit threshold", visible(BOX_W, BOX_H, SRC_W, SRC_H, 3f), null)
-    checkTrue("4x crosses it", visible(BOX_W, BOX_H, SRC_W, SRC_H, 4f) != null)
-
-    // 原图比视口还小: an 800×600 source in a 1080×2000 window decodes 1:1 (no sampling), so
-    // `source ≤ base` and *nothing* is ever re-decoded — the strongest form of 「倍率只能是 1」:
-    // 这里连一次解码都不发生.
+    // 原图比视口还小：基础图就是全分辨率（`inSampleSize = 1`），于是永远没有更清楚的东西可解 ——
+    // 这就是「倍率只能是 1」的那一类，连一次解码都不发生。
     for (scale in listOf(1f, 2f, 4f, 8f)) {
-        check("a source smaller than its decode (${scale}x) asks for no block", visible(BOX_W, BOX_H, 800, 600, scale), null)
-        check("and no window either (${scale}x)", window(BOX_W, BOX_H, 800, 600, scale), null)
+        check("a source smaller than its decode (${scale}x) asks for no block", window(BOX_W, BOX_H, 800, 600, scale), null)
     }
-    // Same source, huge window: still nothing to ask for.
-    check("a 400x300 source in a huge box asks for no block", visible(4000, 4000, 400, 300, 8f), null)
+    check("a 400x300 source in a huge box asks for no block", window(4000, 4000, 400, 300, 8f), null)
+
+    // **旧阈值没在做决定**：扫描里任何 `scale × fit < 2` 的情形都不取块 —— 也就是说删掉那个常量
+    // 没有改变过任何一个判断（它的判断与「预算降采样后还能不能比基础图更清楚」逐条一致）。
+    var below = 0
+    for (box in listOf(BOX_W to BOX_H, 1080 to 2400, 1440 to 2960, 400 to 800, 3840 to 2160)) {
+        for (src in listOf(4000 to 3000, 8160 to 6120, 2000 to 1500, 1080 to 2400, 20000 to 15000)) {
+            val (bw, bh) = baseOf(src.first, src.second, box.first, box.second)
+            val fit = viewerFit(box.first, box.second, bw, bh)
+            for (scale in listOf(1f, 1.2f, 1.5f, 2f, 2.5f, 3f)) {
+                if (scale * fit >= 2f) continue
+                below++
+                checkSilent("below the old deficit threshold no block is asked for", window(box.first, box.second, src.first, src.second, scale) == null) {
+                    "box=${box.first}x${box.second} src=${src.first}x${src.second} scale=$scale"
+                }
+            }
+        }
+    }
+    checkTrue("the deleted threshold's territory was actually scanned", below > 20) { "cases=$below" }
 }
 
 private fun canonicalCaseChecks() {
@@ -304,7 +339,7 @@ private fun marginFallbackChecks() {
     checkTrue("4x: the window is the visible block itself, not a quarter wider", w.left == v.left && w.right == v.right && w.width in 999..1001) {
         "window=$w visible=$v"
     }
-    checkTrue("4x: it still fits the 2 M px budget", decodedPixels(w) <= DETAIL_MAX_PIXELS) {
+    checkTrue("4x: it still fits the viewport-derived budget", decodedPixels(w) <= detailBudgetPixels(BOX_W, BOX_H)) {
         "actual=${decodedPixels(w)}"
     }
     checkTrue("4x: and it is strictly sharper than the base", w.sample < decimationOf(SRC_W, SRC_H, BASE_W, BASE_H))
@@ -314,11 +349,11 @@ private fun aspectChecks() {
     // A 20:1 panorama, decoded as `decodePiImageBytes` would: the area budget halves it to 10000×500,
     // whose fit is 0.108 — at 8× each base pixel is still under one screen pixel, so the sampled
     // bitmap is *already* sharper than the screen and no block is asked for.
-    check("a 20:1 panorama needs no block at 8x", visible(BOX_W, BOX_H, 20000, 1000, 8f), null)
+    check("a 20:1 panorama needs no block at 8x", window(BOX_W, BOX_H, 20000, 1000, 8f), null)
     // A 1:20 column (500×10000 at sample 2): fit 0.2 → 1.6 screen px per base px at 8×, just under
     // the threshold. Nothing is decoded, and nothing has to be: this is the documented edge of
     // 「够用且简单」.
-    check("a 1:20 column needs no block at 8x", visible(BOX_W, BOX_H, 1000, 20000, 8f), null)
+    check("a 1:20 column needs no block at 8x", window(BOX_W, BOX_H, 1000, 20000, 8f), null)
 
     // A 8:3 source that *is* magnified past the threshold: 8000×3000 → base 4000×1500 (sample 2),
     // fit 0.27 → 8×·0.27 = 2.16 > 2.
@@ -326,7 +361,7 @@ private fun aspectChecks() {
     checkTrue("a 8:3 source at 8x gets a confined block", wide != null && insideSource(wide, 8000, 3000)) {
         "$wide"
     }
-    checkTrue("a 8:3 source at 8x stays under the pixel budget", wide != null && decodedPixels(wide) <= DETAIL_MAX_PIXELS)
+    checkTrue("a 8:3 source at 8x stays under the pixel budget", wide != null && decodedPixels(wide) <= detailBudgetPixels(1440, 1440))
 
     // A 1:8 source in a square box, magnified past the threshold (base 600x4800 at sample 2, fit
     // 0.3 -> 8x*0.3 = 2.4). A *bigger* 1:8 source is deliberately not asserted here: at 12000x96000
@@ -337,7 +372,7 @@ private fun aspectChecks() {
     checkTrue("a 1:8 source at 8x gets a confined block", tall != null && insideSource(tall, 1200, 9600)) {
         "$tall base=$tallBase"
     }
-    checkTrue("a 1:8 source at 8x stays under the pixel budget", tall != null && decodedPixels(tall) <= DETAIL_MAX_PIXELS)
+    checkTrue("a 1:8 source at 8x stays under the pixel budget", tall != null && decodedPixels(tall) <= detailBudgetPixels(1440, 1440))
     checkTrue("a 1:8 source at 8x is still sharper than its base", tall != null &&
         tall.sample < decimationOf(1200, 9600, tallBase.first, tallBase.second))
 
@@ -346,7 +381,104 @@ private fun aspectChecks() {
     checkTrue("a 1:12 source at 8x gets a confined block", column != null && insideSource(column, 1000, 12000)) {
         "$column"
     }
-    checkTrue("a 1:12 source at 8x stays under the pixel budget", column != null && decodedPixels(column) <= DETAIL_MAX_PIXELS)
+    checkTrue("a 1:12 source at 8x stays under the pixel budget", column != null && decodedPixels(column) <= detailBudgetPixels(BOX_W, BOX_H))
+}
+
+/**
+ * 「糊在哪一层」的算术，以及按源分辨率限幅之后的结论 —— 这是这次改动的核心，所以它必须能被本机
+ * 跑出来，而不是写在报告里。
+ *
+ * 三层，逐层用数字回答：
+ *
+ *  1. **重解的字节是不是原图**：`decodePiImageRegion` 吃的是 `image.base64`（wire）或
+ *     `image.file.readBytes()`（宿主文件）—— 也就是**原图的编码字节**，不是基础位图、也不经过
+ *     [PiImageCache]。所以「放大拿不到细节」不是这一层的问题（这一层由下面那条源码断言钉住）。
+ *  2. **上限/预算够不够**：块的预算是**视口面积**（[detailBudgetPixels]），它在「源被放大」时
+ *     足以让块按原生解（可见源区域 ≤ 可见屏幕面积）。旧值写死的 2 M 在 1080×2400 的屏上比视口
+ *     小，于是「源和屏幕差不多细」的图（50 MP 放到 1:1）会被降一半采样 —— 这一节用同一张图、
+ *     两个预算把差别算出来。
+ *  3. **倍率是否本来就越过了源的极限**：`1 源像素 = 1 屏幕像素` 的倍率是 `源宽 ÷ 1× 屏幕宽`。
+ *     4000 px 的照片是 3.7×，2000 px 的附件是 1.85×，1080 px 的截图是 1.0× —— 8× 对后两者是
+ *     4.3×/8× 的纯插值。所以最大倍率按图算（[maxZoomForSource]，余量 [SOURCE_ZOOM_HEADROOM]）。
+ */
+private fun sourceLimitChecks() {
+    // ---- 层 3：1:1 倍率与「原来 8× 到底越过多少」 -------------------------------------------
+    checkTrue("a 12 MP photo's 1:1 zoom is 3.7x on a 1080px screen", abs(oneToOne(BOX_W, BOX_H, SRC_W, SRC_H) - 3.70f) < 0.02f) {
+        "actual=${oneToOne(BOX_W, BOX_H, SRC_W, SRC_H)}"
+    }
+    checkTrue("so 8x magnified it 2.16x past 1:1", abs(8f / oneToOne(BOX_W, BOX_H, SRC_W, SRC_H) - 2.16f) < 0.02f)
+    // pi 送出去的附件长边被压到 2000（AttachmentBudget.PI_MAX_DIMENSION）：1:1 只有 1.85×，
+    // 8× 就是 4.3 倍的纯插值 —— 用户看到的「糊」主要在这一次。
+    checkTrue("a 2000px attachment's 1:1 zoom is 1.85x", abs(oneToOne(BOX_W, BOX_H, 2000, 1500) - 1.85f) < 0.02f)
+    checkTrue("so 8x magnified it 4.32x past 1:1", abs(8f / oneToOne(BOX_W, BOX_H, 2000, 1500) - 4.32f) < 0.03f)
+    // 和屏幕一样宽的截图：1× 就已经 1:1，8× 是 8 倍放大 —— 最糊的一类，而它连细节块都没有
+    // （基础图就是全分辨率）。
+    // 同一个比例：源和视口都是 1080×2400（一张和屏幕一样宽的截图），1× 就已经 1:1。
+    checkTrue("a screen-width screenshot is already 1:1 at 1x", abs(oneToOne(1080, 2400, 1080, 2400) - 1f) < 0.01f)
+    checkTrue("so 8x magnified it eight times", abs(8f / oneToOne(1080, 2400, 1080, 2400) - 8f) < 0.05f)
+    // 50 MP：1:1 是 7.6×，8× 之后仍在源以内（它不缺像素，缺的是预算）。
+    checkTrue("a 50 MP photo is still inside its source at 8x", 8f / oneToOne(BOX_W, BOX_H, 8160, 6120) < 1.1f)
+
+    // ---- 层 3 的修法：按源限幅 ---------------------------------------------------------------
+    checkTrue("a 12 MP photo may still go to ~7.4x", abs(maxScaleOf(BOX_W, BOX_H, SRC_W, SRC_H) - 7.4f) < 0.05f) {
+        "actual=${maxScaleOf(BOX_W, BOX_H, SRC_W, SRC_H)}"
+    }
+    checkTrue("a 2000px attachment is capped at 3.7x", abs(maxScaleOf(BOX_W, BOX_H, 2000, 1500) - 3.7f) < 0.05f) {
+        "actual=${maxScaleOf(BOX_W, BOX_H, 2000, 1500)}"
+    }
+    check("a screen-width screenshot is capped at the 2x floor", maxScaleOf(1080, 2400, 1080, 2400), 2f)
+    check("and so is a source smaller than the screen", maxScaleOf(BOX_W, BOX_H, 200, 150), 2f)
+    check("a 50 MP photo still reaches the absolute ceiling", maxScaleOf(BOX_W, BOX_H, 8160, 6120), MAX_SCALE_TEST)
+    check("an unknown source size falls back to today's ceiling", maxZoomForSource(1080f, 810f, null, null, MAX_SCALE_TEST), MAX_SCALE_TEST)
+
+    // 限幅之后**再也不会**把源放大超过 [SOURCE_ZOOM_HEADROOM] 倍（除非撞到下限 2×）。
+    var worstMagnification = 0f
+    for (box in listOf(BOX_W to BOX_H, 1080 to 2400, 1440 to 2960)) {
+        for (src in listOf(4000 to 3000, 2000 to 1500, 1080 to 2400, 200 to 150, 8160 to 6120, 20000 to 15000)) {
+            val cap = maxScaleOf(box.first, box.second, src.first, src.second)
+            val magnification = cap / oneToOne(box.first, box.second, src.first, src.second)
+            if (cap > 2f + 1e-3f && magnification > worstMagnification) worstMagnification = magnification
+            checkSilent("the capped zoom never magnifies the source past the headroom (unless floored)", cap <= 2f + 1e-3f || magnification <= SOURCE_ZOOM_HEADROOM + 1e-3f) {
+                "box=${box.first}x${box.second} src=${src.first}x${src.second} cap=$cap magnification=$magnification"
+            }
+            checkSilent("and the cap never exceeds the absolute ceiling", cap <= MAX_SCALE_TEST)
+        }
+    }
+    checkTrue("the worst source magnification after capping is 2x", worstMagnification <= SOURCE_ZOOM_HEADROOM + 1e-3f) {
+        "worst=$worstMagnification"
+    }
+
+    // ---- 层 2：预算与「原生」 -----------------------------------------------------------------
+    // 手机上预算就是视口面积（1080×2400 = 2.59 M 像素 = 10.4 MB），大屏才撞 4 M 的保险。
+    check("a 1080x2400 viewport's budget is its own area", detailBudgetPixels(1080, 2400), 1080L * 2400L)
+    check("a 1440x2960 viewport is clamped by the absolute ceiling", detailBudgetPixels(1440, 2960), DETAIL_ABSOLUTE_MAX_PIXELS)
+    check("a 4K tablet is clamped too", detailBudgetPixels(3840, 2160), DETAIL_ABSOLUTE_MAX_PIXELS)
+    check("a degenerate viewport has no budget", detailBudgetPixels(0, 2400), 0L)
+
+    // 12 MP 的照片放到它的最大倍率：可见的一块按**原生**解（sample = 1），而且装得下预算。
+    val photoAtCap = window(BOX_W, BOX_H, SRC_W, SRC_H, maxScaleOf(BOX_W, BOX_H, SRC_W, SRC_H))
+    checkTrue("a 12 MP photo at its cap gets a native block", photoAtCap != null && photoAtCap.sample == 1) {
+        "$photoAtCap"
+    }
+    checkTrue("and it is inside the budget", photoAtCap != null && decodedPixels(photoAtCap) <= detailBudgetPixels(BOX_W, BOX_H))
+    // 50 MP 在 8×：可见的一块是 1020×2267 ≈ 2.3 M 源像素，**旧预算（2 M）只能降一半采样**，
+    // 新预算（视口面积 2.59 M）给到原生。这就是「源和屏幕差不多细」时旧上限在糊的那一处。
+    val fiftyAtCeiling = window(1080, 2400, 8160, 6120, 8f)
+    checkTrue("a 50 MP photo at 8x gets a native block under the new budget", fiftyAtCeiling != null && fiftyAtCeiling.sample == 1) {
+        "$fiftyAtCeiling"
+    }
+    val fiftyOldBudget = zoomVisibleSourceRect(1080, 2400, 2040, 1530, 8160, 6120, 8f, 0f, 0f)
+        ?.let { zoomDecodeWindow(it, 8160, 6120, 2040, 1530, 2_000_000L) }
+    checkTrue("the old 2 M cap halved that block's sampling instead", fiftyOldBudget != null && fiftyOldBudget.sample == 2) {
+        "$fiftyOldBudget"
+    }
+    checkTrue("so the new budget is strictly sharper there", fiftyAtCeiling != null && fiftyOldBudget != null &&
+        fiftyAtCeiling.sample < fiftyOldBudget.sample)
+    checkTrue("and still under 16 MB per block", decodedPixels(fiftyAtCeiling!!) * 4 <= DETAIL_ABSOLUTE_MAX_PIXELS * 4)
+
+    // 一块的**内存**上界（每帧没有分配，这里是「持有」的上界）：手机上 10.4 MB，任何屏幕 16 MB。
+    checkTrue("a phone block is at most 10.4 MB", 1080L * 2400L * 4 <= 10_400_000L)
+    checkTrue("and any block at most 16 MB", DETAIL_ABSOLUTE_MAX_PIXELS * 4 == 16_000_000L)
 }
 
 private fun panChecks() {
@@ -530,7 +662,7 @@ private fun tilingChecks() {
     checkTrue("the new block covers the new view", zoomDecodeWindowCovers(window(BOX_W, BOX_H, SRC_W, SRC_H, 8f, BOX_W * 0.5f, 0f)!!, large))
 
     // 缩回 1×：没有可见区，也就没有块 —— 1× 的内存与今天逐字节相同。
-    check("zooming back to 1x releases the block (no rect)", visible(BOX_W, BOX_H, SRC_W, SRC_H, 1f), null)
+    check("zooming back to 1x releases the block (no window)", window(BOX_W, BOX_H, SRC_W, SRC_H, 1f), null)
 }
 
 /**
@@ -538,7 +670,7 @@ private fun tilingChecks() {
  *
  * Three claims, over a sweep of viewports × sources × zooms:
  *
- *  1. every window decodes to at most [DETAIL_MAX_PIXELS] pixels, whatever the source is — this is
+ *  1. every window decodes to at most [detailBudgetPixels] pixels, whatever the source is — this is
  *     what makes 「内存与原图多大无关」 true for the bitmaps;
  *  2. a window is only ever handed back when it is *strictly* sharper than the base bitmap, so the
  *     budget is never spent on something the screen already has;
@@ -573,17 +705,21 @@ private fun budgetChecks() {
             val decimation = decimationOf(sw, sh, bw, bh)
             for (scale in listOf(1f, 1.5f, 2f, 3f, 4f, 5f, 6f, 8f)) {
                 val r = zoomVisibleSourceRect(vw, vh, bw, bh, sw, sh, scale, 0f, 0f)
-                if (scale == 1f && r != null) decodesAtOne++
+                if (scale == 1f && r != null &&
+                    zoomDecodeWindow(r, sw, sh, bw, bh, detailBudgetPixels(vw, vh)) != null
+                ) {
+                    decodesAtOne++
+                }
                 if (r == null) continue
                 checkSilent("the visible block is inside the source", insideSource(r, sw, sh)) { "$r" }
-                val w = zoomDecodeWindow(r, sw, sh, bw, bh) ?: continue
+                val w = zoomDecodeWindow(r, sw, sh, bw, bh, detailBudgetPixels(vw, vh)) ?: continue
                 decisions++
                 val pixels = decodedPixels(w)
                 if (pixels > biggest) {
                     biggest = pixels
                     biggestAt = "src=${sw}x$sh box=${vw}x$vh scale=$scale window=${w.width}x${w.height}/${w.sample}"
                 }
-                checkSilent("every window decodes to <= DETAIL_MAX_PIXELS", pixels <= DETAIL_MAX_PIXELS) {
+                checkSilent("every window decodes within the viewport-derived budget", pixels <= detailBudgetPixels(vw, vh)) {
                     "src=${sw}x$sh box=${vw}x$vh scale=$scale → $pixels"
                 }
                 checkSilent("a window is only asked for when it is sharper than the base", w.sample < decimation) {
@@ -592,16 +728,18 @@ private fun budgetChecks() {
                 checkSilent("the window is inside the source", insideSource(w, sw, sh)) { "$w" }
                 checkSilent("the window is aligned to its sample factor", w.left % w.sample == 0 && w.top % w.sample == 0) { "$w" }
                 checkSilent("the sample factor is a power of two", w.sample >= 1 && (w.sample and (w.sample - 1)) == 0) { "$w" }
-                checkSilent("the margin never pushes the window outside the budget", pixels <= DETAIL_MAX_PIXELS) { "$w" }
+                checkSilent("the margin never pushes the window outside the budget", pixels <= detailBudgetPixels(vw, vh)) { "$w" }
+                checkSilent("and the budget itself is bounded by the absolute ceiling", detailBudgetPixels(vw, vh) <= DETAIL_ABSOLUTE_MAX_PIXELS) { "$w" }
             }
         }
     }
     checkTrue("the sweep actually made decode decisions", decisions > 40) { "decisions=$decisions" }
     check("1x never asks for a block, over the whole sweep", decodesAtOne, 0)
-    println("      biggest block over the sweep: $biggest px = ${biggest * 4} B ($biggestAt)")
-    checkTrue("the biggest block over the sweep is under 8 MB", biggest * 4 <= 8_000_000L) {
-        "actual=${biggest * 4} B"
-    }
+    println("      biggest block over the sweep: $biggest px = ${biggest * 4} B = ${biggest * 4 / 1_000_000} MB ($biggestAt)")
+    checkTrue(
+        "the biggest block over the sweep is under the 16 MB absolute ceiling",
+        biggest * 4 <= DETAIL_ABSOLUTE_MAX_PIXELS * 4,
+    ) { "actual=${biggest * 4} B" }
 }
 
 private fun placementChecks() {
@@ -627,46 +765,64 @@ private fun placementChecks() {
     check("the placement checks ran", placements, 4)
 }
 
-/**
- * Why this section exists: the numbers in the change report have to be reproducible, and the claim the
- * user asked to be able to trust — 「放大真的出细节」 with a memory ceiling — is a set of pixel counts.
- * Printing them is the raw evidence.
- */
+/** One row of the evidence table: a viewport and the source resolution the viewer actually gets. */
 private class Evidence(val label: String, val boxW: Int, val boxH: Int, val srcW: Int, val srcH: Int)
 
+/**
+ * The numbers in the change report have to be reproducible, and 「糊在哪一层」 is exactly a set of
+ * pixel counts: how many source pixels the picture actually has, at which zoom one of them becomes one
+ * screen pixel, how far past that the old 8× went, and what the block delivers at the capped zoom.
+ */
 private fun evidence() {
     println()
-    println("kind                                    box         source       1× decode        8× block: source rect  sample  decode px    bytes")
+    println("kind                                    box         source        1× decode      1:1 zoom   old 8x mag   app max    budget px   block at app max: rect      sample  decode px    MB  native?")
     for (case in listOf(
         Evidence("12 MP photo (user's case)", 1080, 2000, 4000, 3000),
+        Evidence("12 MP photo on a tall screen", 1080, 2400, 4000, 3000),
+        Evidence("pi-capped attachment (2000px)", 1080, 2400, 2000, 1500),
+        Evidence("device-tool screenshot (1280px)", 1080, 2400, 576, 1280),
         Evidence("50 MP photo", 1080, 2400, 8160, 6120),
-        Evidence("phone screenshot (source=viewport)", 1080, 2400, 1080, 2400),
-        Evidence("20:1 panorama", 1080, 2000, 20000, 1000),
         Evidence("300 MP (must never be decoded whole)", 1080, 2400, 20000, 15000),
+        Evidence("screen-width screenshot", 1080, 2400, 1080, 2400),
     )) {
         val (bw, bh) = baseOf(case.srcW, case.srcH, case.boxW, case.boxH)
-        val w = window(case.boxW, case.boxH, case.srcW, case.srcH, 8f)
+        val s = oneToOne(case.boxW, case.boxH, case.srcW, case.srcH)
+        val cap = maxScaleOf(case.boxW, case.boxH, case.srcW, case.srcH)
+        val w = window(case.boxW, case.boxH, case.srcW, case.srcH, cap)
+        val budget = detailBudgetPixels(case.boxW, case.boxH)
         val block = if (w == null) {
-            "none (nothing to earn)"
+            "none (the base is already as fine as the source)"
         } else {
-            val at = zoomDecodePlacement(w, case.boxW, case.boxH, bw, bh, case.srcW, case.srcH)
-            "%-12s %-19s %6d  %10d B  %8.1f KB for the decode"
-                .format("${w.width}x${w.height}", "${w.sample}×", decodedPixels(w), decodedPixels(w) * 4, decodedPixels(w) * 4 / 1024.0)
-                .let { "$it  (placed ${"%.0f,%.0f %.0fx%.0f".format(at.left, at.top, at.width, at.height)} in picture px)" }
+            "%-13s %-7s %10d  %6.1f  %-7s".format(
+                "${w.width}x${w.height}",
+                "${w.sample}×",
+                decodedPixels(w),
+                decodedPixels(w) * 4 / 1_000_000.0,
+                if (w.sample == 1) "yes" else "no",
+            )
         }
-        println("%-39s %-11s %-12s %-16s %s".format(case.label, "${case.boxW}x${case.boxH}", "${case.srcW}x${case.srcH}", "${bw}x$bh", block))
+        println(
+            "%-39s %-11s %-13s %-14s %-10s %-12s %-9s %-8s %s".format(
+                case.label,
+                "${case.boxW}x${case.boxH}",
+                "${case.srcW}x${case.srcH}",
+                "${bw}x$bh",
+                "%.2fx".format(s),
+                "%.2fx".format(8f / s),
+                "%.2fx".format(cap),
+                "$budget px",
+                block,
+            ),
+        )
     }
-    println("      1× decode = 按视口采样出来的基础图（今天就有，缓存在 PiImageCache 里）")
-    println("      8× block  = 区域解码：只解可见的一块，sample× 是它的 inSampleSize")
-    println("      limit: DETAIL_MAX_PIXELS=${DETAIL_MAX_PIXELS} px = ${DETAIL_MAX_PIXELS * 4} B = ${DETAIL_MAX_PIXELS * 4 / (1024 * 1024)} MiB per block")
+    println("      1:1 zoom   = 1 源像素 = 1 屏幕像素的倍率（源宽 ÷ 它在 1× 的屏幕宽）：超过它之后任何解码都救不了")
+    println("      old 8x mag = 旧的 8× 相对 1:1 越过了多少（>2 就是肉眼可见的插值糊）")
+    println("      app max    = maxZoomForSource：min(8, 2 × 1:1)，下限 2×")
+    println("      block      = 区域解码（只解可见的一块），sample× 是它的 inSampleSize；native = 一个位图像素对一个源像素")
+    println("      budget     = min(视口面积, ${DETAIL_ABSOLUTE_MAX_PIXELS} px = 16 MB)；手机上就是视口面积")
     println()
 }
 
-/**
- * The wiring, read as source text: `PiImageViewer.kt` cannot be compiled on this machine (no
- * android.jar, no Compose compiler), and these are the facts of the interaction no numeric check can
- * reach.
- */
 private fun wiringChecks() {
     val file = repoRoot()?.let { File(it, "app/src/main/kotlin/app/pi/ui/blocks/PiImageViewer.kt") }
     val text = if (file != null && file.isFile) file.readText() else ""
@@ -710,17 +866,18 @@ private fun wiringChecks() {
     }
     checkTrue("the base decode still goes through PiImageCache", text.contains("PiImageCache.readThrough("))
     // 兜底：解不出块时保持上一块 / 退回基础图，而不是白屏。
-    checkTrue("a failed region decode leaves the block that is on screen alone", text.contains("?: return@collectLatest")) {
+    checkTrue("a failed region decode leaves the block that is on screen alone", code.contains("if (decoded2 != null) block = DetailBlock(")) {
         "null from the decoder must keep the previous patch (or the base bitmap) visible"
     }
     checkTrue("and the region decode is wrapped so it cannot throw", text.contains("BitmapRegionDecoder")) {
         "the platform decoder throws IOException on bytes it does not understand"
     }
     // 拖动跟手：两个轴都必须走 [panAfterDrag]，而旧的原地夹取必须真的没了（留着一份 = 两份规则）。
+    // 手势两个轴 + 源尺寸迟到时收回上限的两个轴。
     check(
-        "both axes pan through the pure conversion + clamp",
+        "every pan write goes through the pure conversion + clamp",
         Regex("""panAfterDrag\(""").findAll(code).count(),
-        2,
+        4,
     )
     checkTrue("the in-file clamp is gone (one rule, one place)", !code.contains("clampPan(")) {
         "a second copy of the clamp is how the conversion and the bound drift apart"
@@ -755,6 +912,33 @@ private fun wiringChecks() {
         "it goes through the pure pan arithmetic instead",
         gesture.contains("panAfterDrag(") && gesture.contains("panLimit("),
     )
+    // A：重解的字节必须是**原图**（不是基础位图、不经过缓存）；否则放大永远拿不到细节。
+    val region = code.substringAfter("private fun decodePiImageRegion(", "").substringBefore("private fun readSourcePixels(", "")
+    checkTrue(
+        "the region decode reads the original encoded bytes",
+        region.contains("Base64.decode(image.base64") && region.contains("image.file.readBytes()"),
+    ) { "a block decoded from the sampled base bitmap could never be sharper than it" }
+    checkTrue(
+        "and it never touches the sampled bitmap or the cache",
+        region.isNotEmpty() && !region.contains("PiImageCache") && !region.contains("decodePiImageSource"),
+    )
+    // B：预算按视口面积算（不是写死的 2 M），并且真的传给了纯算术。
+    checkTrue("the viewer derives the block budget from the viewport", code.contains("detailBudgetPixels(boxWidthPx, boxHeightPx)"))
+    // C：最大倍率按源分辨率算，并且捏合与双击都用它（不是硬编码的 MAX_SCALE）。
+    checkTrue("the zoom ceiling is derived from the source", code.contains("maxZoomForSource("))
+    check(
+        "and the pinch range uses it",
+        Regex("""coerceIn\(MIN_SCALE, maxScale\)""").findAll(code).count(),
+        1,
+    )
+    checkTrue("and the double tap too", code.contains("else maxScale"))
+    checkTrue("a late-arriving source size clamps the current zoom", code.contains("if (scale.value > maxScale)"))
+    // B 的第二个数字：落定闸仍然是 100 ms（真机上的感知延迟 ≈ 100 ms + 一次区域解码）。这条钉住
+    // 报告里的那个数字，改它就得同时改报告与 KDoc。
+    checkTrue("the settle gate is still the 100 ms in the report", text.contains("ZOOM_SETTLE_MILLIS = 100L")) {
+        "the latency number in the change report comes from here"
+    }
+
 }
 
 private fun repoRoot(): File? {
@@ -770,6 +954,7 @@ private fun repoRoot(): File? {
 
 fun main() {
     yardstickChecks()
+    sourceLimitChecks()
     panMappingChecks()
     settleGateChecks()
     fitChecks()

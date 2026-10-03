@@ -23,6 +23,10 @@ import kotlinx.coroutines.flow.transformLatest
  * 8 个屏幕像素 —— 采样时丢掉的细节再也回不来。用户的话是
  * 「放大了肯定要看到更多细节呀，不然放大还有啥用？」。
  *
+ * 放大还有一个**上界**问题：倍率超过「1 源像素 = 1 屏幕像素」之后，源里就没有更多信息了，
+ * 任何解码都救不了（一张和屏幕一样宽的截图放到 8× 就是 8 倍放大）。所以最大倍率按图算，见
+ * [maxZoomForSource]；而「该多细」由 [detailBudgetPixels] 从视口面积推出来。
+ *
  * 修法只有在放大时按源图坐标重解**可见的那一块**。而「可见的那一块」是一段纯粹的算术：视口
  * 盒、1× 的落点、倍率、平移、两个尺寸（基础位图与源图）之间来回换算。这段算术如果长在 Compose
  * 文件里，本机就一行都跑不了（这台机器没有 android.jar、也没有 Compose 编译器插件）；搬到这里
@@ -50,20 +54,22 @@ import kotlinx.coroutines.flow.transformLatest
  *
  * ## 内存上界（这三条就是这次改动的硬约束，数字不是形容词）
  *
- *  1. **一块 ≤ [DETAIL_MAX_PIXELS] = 2 000 000 像素 = 8 000 000 B**（`ARGB_8888`，4 B/像素），
- *     与源图多大、屏幕多大都无关 —— 由 [zoomDecodeWindow] 的采样倍率循环强制，超预算就整倍
- *     降采样（[ZoomDecodeWindow.sample]），而不是让它涨上去。1080×2400 的屏幕上常见照片根本
- *     用不到倍率（余量后的块 ≈ 1.0–1.5 M 像素）；4K 平板上倍率会真的顶上。
+ *  1. **一块 ≤ [detailBudgetPixels]（= 视口面积，被 [DETAIL_ABSOLUTE_MAX_PIXELS] = 4 000 000 像素
+ *     = 16 000 000 B 压住）**，与源图多大无关 —— 由 [zoomDecodeWindow] 的采样倍率循环强制，超预算
+ *     就整倍降采样（[ZoomDecodeWindow.sample]），而不是让它涨上去。手机上这个预算就是视口面积
+ *     （1080×2400 → 2.59 M 像素 = 10.4 MB），4 K 平板才会撞到那道 16 MB 的保险。
+ *     旧值是写死的 2 000 000 像素：1080×2400 的屏幕比它大，于是「源和屏幕分辨率差不多」的图
+ *     （例如 50 MP 放大到 1:1）会被预算先把块降一半采样 —— 屏幕上看到一块被拉大 2× 的图。
  *  2. **只在「比现在屏幕上那张更清楚」时才要块**：块的采样倍率必须**严格小于**基础图自己的
- *     抽稀倍数（[baseDecimation]），否则这块和屏幕上已经有的东西一样清楚，花掉 8 MB 换一次
- *     解码、换一张看不出区别的图 —— 那就不要。这条是 [zoomDecodeWindow] 返回 `null` 的主要
- *     理由，也是「50 MP 图在 4× 时仍然糊」（预算只能给它一个不比基础图更清楚的块）这句
- *     老实话的来源。
- *  3. **1× 一个字节都不多要**：`scale × fit ≥` [DETAIL_SCALE_DEFICIT] 才可能取块，而
- *     `base > 源图` 的抽稀一旦发生，`fit ≤ 1`（`decodePiImageBytes` 的采样规则保证基础图面积
- *     大于视口面积，或两个轴都不小于视口），所以 1× 恒不取块。缩回 1× 时调用方当场丢掉上一块
- *     （见 `PiImageViewer`），1× 的内存与改动前逐字节相同。
- *
+ *     抽稀倍数（[baseDecimation]），否则这块和屏幕上已经有的东西一样清楚，花掉一次解码换一张
+ *     看不出区别的图 —— 那就不要。这条是 [zoomDecodeWindow] 返回 `null` 的唯一理由，也是
+ *     「50 MP 图在小倍率下仍然糊」这句老实话的来源。**它同时取代了旧的那条 `scale × fit ≥ 2`
+ *     阈值**：阈值在 1× 与低倍率下做的判断与它逐条一致（扫描断言钉着这件事），也就是那条阈值
+ *     从来没在做决定。
+ *  3. **1× 一个字节都不多要**：基础图一旦抽稀过，它的面积就大于视口，于是一整张源图按预算降采样
+ *     之后恰好落到基础图那一档 —— `zoomDecodeWindow` 返回 `null`，1× 恒不取块。缩回 1× 时调用方
+ *     当场丢掉上一块（见 `PiImageViewer`），1× 的内存与改动前逐字节相同。
+
  * 区域解码**不**走 [PiImageCache]：块是「当前这一屏」的东西，随平移换掉，而且它有一个恒定的
  * 字节上界；塞进那个按 payload 计费的缓存只会为了几 MB 的块多留一份几 MB 的 base64 字符串。
  * 块的寿命就是查看器的寿命。
@@ -77,28 +83,61 @@ import kotlinx.coroutines.flow.transformLatest
  */
 
 /**
- * 基础图的一个像素被摊到多少屏幕像素，才值得为细节再解一次（2）。
- *
- * `scale × fit < 2` 时屏幕上每个基础图像素还摊不到 2 个 —— 基础图本身就是清晰的那一份，重解
- * 只会换来一块和它一样糊的图。用户要的是「双击放到最大」，所以这条阈值的实际作用点是 4×–8×
- * （常见手机 + 常见照片），也就是用户真正在抱怨的那一段。
- */
-internal const val DETAIL_SCALE_DEFICIT = 2f
-
-/**
  * 块在可见区之外多要的余量，按可见区的边长比例（0.25 = 每边 25%）。
  *
  * 平移时先用上一块顶着，走出这块余量才重新解 —— 余量太小会每拖一下就重解，太大则白占内存
- * （面积是 `(1+2m)² = 2.25` 倍）。预算吃紧时这个余量是第一个被收掉的东西（见 [zoomDecodeWindow]）：
- * 一块「更清楚但没有余量」的图，比一块「有余量但和屏幕上一样糊」的图有用得多。
+ * （面积是 `(1+2m)² = 2.25` 倍）。但它只是**余量**：预算紧时它是第一个被收掉的东西（见
+ * [zoomDecodeWindow]），因为用户抱怨的是清晰度，而余量换来的只是「平移中块外那一圈更软」。
  */
 internal const val DETAIL_MARGIN_FRACTION = 0.25f
 
 /**
- * 一块细节位图的像素面积上限（2 000 000 像素 = 8 000 000 B）。见文件头第 1 条：这是**硬**上限，
- * 超了降采样，而不是让它涨上去。
+ * 一块细节位图的**内存**上限（4 000 000 像素 = 16 000 000 B）。
+ *
+ * 它不是「块该多大」—— 块真正该多细由 [detailBudgetPixels] 从视口面积算出来。这道保险只对**大屏**
+ * 生效，而 1440×2900 及以下的手机视口（≤4.2 M 像素）都在它以内，也就是说**手机上它从不生效**。
+ * 它的用途是把 4K 平板（3840×2160 = 8.3 M 视口）的块压住：那块最多比屏幕粗 1.44×（肉眼接近
+ * 1:1），而不是一次分配 33 MB。
  */
-internal const val DETAIL_MAX_PIXELS = 2_000_000L
+internal const val DETAIL_ABSOLUTE_MAX_PIXELS: Long = 4_000_000L
+
+/**
+ * 一块细节位图的像素预算：**视口面积**，被 [DETAIL_ABSOLUTE_MAX_PIXELS] 压住。
+ *
+ * 这个数不是调出来的，是从「块要干什么」推出来的：
+ *
+ *  - 块的职责是让**当前这一屏**看到它该有的细节。比源图分辨率更细是浪费（源里没有更多像素），
+ *    比屏幕分辨率更粗则一眼可见（块被放大）。所以目标分辨率 = `min(源图分辨率, 屏幕分辨率)`。
+ *  - 屏幕这一侧的上界就是**可见的那块屏幕面积**，它不超过视口面积 ⇒ 块的像素数 ≤ 视口面积。
+ *  - 源图那一侧更细只发生在「源被放大」时，而此时可见的源区域本来就小于可见的屏幕面积 ——
+ *    还是同一条上界。源被**缩小**时可见源区域比屏幕大，那正是不该按原生解的时候（按屏幕解就够）。
+ *
+ * 于是 `min(视口面积, 4 M)` 同时是「该多细」和「最多多少」。旧值是写死的 2 000 000 像素：
+ * 1080×2400 的屏幕（2.59 M）比它大，于是在「源和屏幕分辨率差不多」的图上（例如 50 MP 的图放大
+ * 到 1:1 时）预算先把块降了一半采样，屏幕于是看到一块被拉大 2× 的图 —— 那是用户这次抱怨的一部分。
+ */
+internal fun detailBudgetPixels(boxWidthPx: Int, boxHeightPx: Int): Long {
+    if (boxWidthPx <= 0 || boxHeightPx <= 0) return 0L
+    return min(DETAIL_ABSOLUTE_MAX_PIXELS, boxWidthPx.toLong() * boxHeightPx.toLong())
+}
+
+/**
+ * 最大倍率相对「1 源像素 = 1 屏幕像素」那一点允许的余量（2×）。
+ *
+ * 1 个源像素被摊到 2 个屏幕像素（面积 4 倍）时，双线性插值还只是「软」，再往上就是「糊成一片」
+ * —— 用户这次说的「放大怎么感觉不清晰」正是这一段。取 1 会让「双击放到最大」对一张和屏幕一样宽
+ * 的截图变成**空操作**（它 1× 就已经是 1:1），那不是用户要的；取 2 是各家相册的常见手感，也是
+ * 「双击一定看得出变化」的下限。
+ */
+internal const val SOURCE_ZOOM_HEADROOM = 2f
+
+/**
+ * 最大倍率的下限（也是「双击一定看得见效果」的保证）。
+ *
+ * `SOURCE_ZOOM_HEADROOM × 1:1 倍率` 对一张比屏幕还小的图会算出小于 1 的值（它 1× 时就已经在被
+ * 放大），那时最大倍率取 2×，而不是「不能放大」。
+ */
+private const val MIN_DETAIL_MAX_SCALE = 2f
 
 /**
  * 采样倍率的加倍次数上限（64×）。
@@ -134,7 +173,7 @@ internal data class SourceRect(val left: Int, val top: Int, val right: Int, val 
  * 一次区域解码的请求：源图矩形 + 采样倍率。
  *
  * [sample] 是给 `BitmapRegionDecoder` 的 `inSampleSize`，所以解码结果的像素尺寸是
- * `ceil(矩形边长 / sample)`，面积 ≤ [DETAIL_MAX_PIXELS]。
+ * `ceil(矩形边长 / sample)`，面积 ≤ 调用方给的预算（见 [detailBudgetPixels]）。
  */
 internal data class ZoomDecodeWindow(
     val left: Int,
@@ -173,15 +212,50 @@ internal fun viewerFit(boxWidthPx: Int, boxHeightPx: Int, baseWidthPx: Int, base
 }
 
 /**
- * 当前视口对应源图上的哪一个矩形，或者 `null`（= 画面上就该是今天那张基础图，不必取块）。
+ * 这张图**值得**放到的最大倍率：`min(硬上限, `[SOURCE_ZOOM_HEADROOM]` × 1:1 倍率)`，且不低于 2×。
  *
- * 返回 `null` 的三种情况，每一种都有它自己的理由，而且都必须真的退化成今天的行为：
+ * 1:1 倍率 = 源图宽度 ÷ 它在 1× 时的屏幕宽度（两个轴取小的那个）。倍率超过它以后，一个源像素被
+ * 摊到不止一个屏幕像素 —— 源里就那么多信息，**任何解码都救不了**，用户看到的就是「放到 8× 但只有
+ * 1/8 的真实像素」。所以上限按图算，而不是对所有图都写 8：
  *
- *  - **源图不比基础图多像素**（两个轴都不超）：屏幕再大也没有更多细节可解。原图比视口还小时
- *    走的就是这一条 —— 那种图在 1× 就已经 1:1（甚至被放大），采样倍率只能是 1。
- *  - **倍率不够**：`scale × fit <` [DETAIL_SCALE_DEFICIT]，基础图的像素还没有被摊到 2 个屏幕
- *    像素以上。
- *  - **输入不成形**：非正的盒/尺寸，非有限或非正的倍率与平移。
+ *  - 4000×3000 的照片投在 1080 宽的屏上 → 1:1 = 3.7× → 最大 7.4×（几乎还是 8×，看不出少了）；
+ *  - pi 送出去的 2000 px 长边附件 → 1:1 = 1.85× → 最大 3.7×（原来放到 8× = 4.3 倍放大，纯糊）；
+ *  - 和屏幕一样宽的截图（1080 px）→ 1:1 = 1.0× → 最大 2×（原来 8× = 8 倍放大，最糊的一类）；
+ *  - 50 MP 的图 → 1:1 = 7.6× → 最大仍是硬上限 8×（它放大之后还有源像素可用）。
+ *
+ * 「够大吗」的判断：**手机照片这一档几乎没变**（7.4× vs 8×），被砍掉的只有那些本来就糊的档位 ——
+ * 也就是用户抱怨的那些。要更保守或更大，只动 [SOURCE_ZOOM_HEADROOM] 一个数。
+ *
+ * @param hardCeiling 应用自己的绝对上限（`MAX_SCALE`）。源尺寸未知（`null`/非正）时返回它，
+ *   也就是**退回今天的行为**。
+ */
+internal fun maxZoomForSource(
+    fittedWidthPx: Float,
+    fittedHeightPx: Float,
+    sourceWidthPx: Int?,
+    sourceHeightPx: Int?,
+    hardCeiling: Float,
+): Float {
+    if (fittedWidthPx <= 0f || fittedHeightPx <= 0f) return hardCeiling
+    if (sourceWidthPx == null || sourceHeightPx == null) return hardCeiling
+    if (sourceWidthPx <= 0 || sourceHeightPx <= 0) return hardCeiling
+    if (hardCeiling < MIN_DETAIL_MAX_SCALE) return hardCeiling
+    val oneToOne = min(sourceWidthPx / fittedWidthPx, sourceHeightPx / fittedHeightPx)
+    if (!oneToOne.isFinite() || oneToOne <= 0f) return hardCeiling
+    return (SOURCE_ZOOM_HEADROOM * oneToOne).coerceIn(MIN_DETAIL_MAX_SCALE, hardCeiling)
+}
+
+/**
+ * 当前视口对应源图上的哪一个矩形，或者 `null`（只有**输入不成形**才会 null）。
+ *
+ * 它是一个**几何**函数：只回答「这一屏落在源图的哪里」，**不回答「该不该解」** —— 那件事由
+ * [zoomDecodeWindow] 按预算与「有没有比基础图更清楚」决定。这样分开之后，原来那条
+ * `scale × fit ≥ 2` 的阈值就没有立足点了：它在 1× 与低倍率下做的判断，与「按预算降采样之后还
+ * 能不能比基础图更清楚」逐条一致（`PiZoomDecodeWindowCheck` 有一条扫描断言把这件事钉住），
+ * 也就是说**它从来没在做决定**。
+ *
+ * 返回 `null` 的情况：非正的盒/尺寸，非有限或非正的倍率与平移 —— 都是退化输入，调用方此时不该
+ * 有任何细节块（它们在 1× 与解码失败时本来也是「没有块」）。
  */
 internal fun zoomVisibleSourceRect(
     boxWidthPx: Int,
@@ -199,11 +273,8 @@ internal fun zoomVisibleSourceRect(
     if (sourceWidthPx <= 0 || sourceHeightPx <= 0) return null
     if (!scale.isFinite() || scale <= 0f) return null
     if (!panX.isFinite() || !panY.isFinite()) return null
-    if (sourceWidthPx <= baseWidthPx && sourceHeightPx <= baseHeightPx) return null
 
     val fit = viewerFit(boxWidthPx, boxHeightPx, baseWidthPx, baseHeightPx)
-    if (scale * fit < DETAIL_SCALE_DEFICIT) return null
-
     val fittedWidth = baseWidthPx * fit
     val fittedHeight = baseHeightPx * fit
     // 视口落在「1× 画面」上的矩形：图心在画面中心，`graphicsLayer` 的 translation 是屏幕像素，
@@ -230,17 +301,23 @@ internal fun zoomVisibleSourceRect(
 }
 
 /**
- * 要解的那一块，或者 `null`（= **不该解**：解出来不会比屏幕上那张更清楚，或者一块装不下）。
+ * 要解的那一块，或者 `null`（= **不该解**：解了也不会比屏幕上那张更清楚）。
  *
- * 三步，每一步都在回答「不加它用户会看到什么」：
+ * 判据只有两条，都不是魔数：
  *
- *  1. 先按 [DETAIL_MARGIN_FRACTION] 的余量要一块（平移时可以用它顶着）。够清楚就用它。
- *  2. 预算把余量吃掉时**收掉余量**再要一次：可见区本身往往还装得下。代价是平移要重解（每停
- *     一次解一块），换来的是「真的更清楚」——不加这一步，4× 的照片就永远只有一张和基础图一样
- *     糊的块（余量让它多要 2.25 倍面积，正好把 1:1 挤成 1:2）。
- *  3. 连可见区都要降采样才装得下（`sample ≥` [baseDecimation]）：这块和屏幕上已经有的东西一样
- *     清楚，**返回 `null`**，一个字节都不解。50 MP 的图在小倍率下就是这一条 —— 如实承认它仍然
- *     是糊的，而不是花 8 MB 假装有细节。
+ *  1. **内存**：块的像素数 ≤ [budgetPixels]（调用方给 [detailBudgetPixels]，也就是视口面积，
+ *     被 [DETAIL_ABSOLUTE_MAX_PIXELS] 压住）。超了就整倍降采样，绝不让它涨上去。
+ *  2. **有用**：块的采样倍率必须**严格小于**基础图的抽稀倍数（[baseDecimation]）。否则这块和屏幕
+ *     上已经有的东西一样清楚 —— 花一次解码换一张看不出区别的图。**这一条同时取代了旧的那条
+ *     `scale × fit ≥ 2` 阈值**：在 1× 与低倍率下，可见区（整个源图，而基础图一旦抽稀过它的面积
+ *     就大于视口）按预算降采样之后恰好落到基础图那一档，于是这里返回 `null`。
+ *
+ * 两个候选按**清晰优先**取：
+ *  - 带余量（[DETAIL_MARGIN_FRACTION]）的那块让平移时可以用上一块顶着，但它要多花 2.25 倍面积，
+ *    预算紧时会把块从 1:1 挤成 1:2。用户这次抱怨的是清晰度，所以**只要收掉余量能换来更低的采样
+ *    倍率就收**（代价：平移中块外的部分是基础图 —— 不白屏、不闪，只是那一圈更软，松手 100 ms 后
+ *    补上）。余量免费时（常见情形）照留。
+ *  - 已经 1:1（`sample == 1`）时不必再算第二个候选：没有更清楚的档位了。
  */
 internal fun zoomDecodeWindow(
     visible: SourceRect,
@@ -248,13 +325,18 @@ internal fun zoomDecodeWindow(
     sourceHeightPx: Int,
     baseWidthPx: Int,
     baseHeightPx: Int,
+    budgetPixels: Long,
 ): ZoomDecodeWindow? {
     val decimation = baseDecimation(sourceWidthPx, sourceHeightPx, baseWidthPx, baseHeightPx)
-    val margined = buildZoomWindow(visible, sourceWidthPx, sourceHeightPx, DETAIL_MARGIN_FRACTION)
-    if (margined.sample < decimation) return margined
-    val exact = buildZoomWindow(visible, sourceWidthPx, sourceHeightPx, 0f)
-    if (exact.sample < decimation) return exact
-    return null
+    val margined = buildZoomWindow(visible, sourceWidthPx, sourceHeightPx, DETAIL_MARGIN_FRACTION, budgetPixels)
+    // 已经 1:1 就没有更清楚的档位：不必再算收掉余量的那个候选（余量因此免费保留）。
+    val exact = if (margined.sample > 1) {
+        buildZoomWindow(visible, sourceWidthPx, sourceHeightPx, 0f, budgetPixels)
+    } else {
+        margined
+    }
+    val best = if (exact.sample < margined.sample) exact else margined
+    return if (best.sample < decimation) best else null
 }
 
 /**
@@ -303,7 +385,7 @@ internal fun zoomDecodePlacement(
  * 基础图自己的抽稀倍数：源图的每个像素被几个基础图像素代表（`decodePiImageBytes` 用的是
  * `inSampleSize`，所以它是 2 的幂，这里按上取整算以防非整倍）。
  *
- * 块的采样倍率必须**严格小于**它，否则块和屏幕上那张一样清楚（见 [zoomDecodeWindow] 第 3 步）。
+ * 块的采样倍率必须**严格小于**它，否则块和屏幕上那张一样清楚（见 [zoomDecodeWindow] 第 2 条）。
  */
 private fun baseDecimation(
     sourceWidthPx: Int,
@@ -320,20 +402,21 @@ private fun baseDecimation(
 }
 
 /**
- * 由可见区算出矩形：外扩 [marginFraction]、夹进源图、按 [DETAIL_MAX_PIXELS] 选采样倍率，并把
+ * 由可见区算出矩形：外扩 [marginFraction]、夹进源图、按 [budgetPixels] 选采样倍率，并把
  * 矩形**对齐到采样倍率的整数倍**。
  *
  * 对齐是为了让结果尺寸没有歧义：`decodeRegion` 的输出是矩形边长除以采样倍率（向上取整），矩形
  * 自己就是 `sample` 的整数倍时，这个除法不会因为取整方向而在两个平台上差一个像素。
  *
  * 预算按**对齐之后**的矩形算（见下面的循环），所以出来那一块的解码面积一定 ≤
- * [DETAIL_MAX_PIXELS]：对齐只会把矩形往外长，先定倍率再对齐就会让上界差几个像素。
+ * [budgetPixels]：对齐只会把矩形往外长，先定倍率再对齐就会让上界差几个像素。
  */
 private fun buildZoomWindow(
     visible: SourceRect,
     sourceWidthPx: Int,
     sourceHeightPx: Int,
     marginFraction: Float,
+    budgetPixels: Long,
 ): ZoomDecodeWindow {
     // 防御性夹取：调用方只该给 [zoomVisibleSourceRect] 的结果。真给了越界的矩形，这里把它裁到
     // 源图边界内 —— 区域解码在源图外面解会返回 null，那就连块都没有了。
@@ -361,7 +444,7 @@ private fun buildZoomWindow(
         val bottom = min(sourceHeightPx, alignUp(bottom1, sample))
         val decodedWidth = (right - left + sample - 1) / sample
         val decodedHeight = (bottom - top + sample - 1) / sample
-        if (decodedWidth.toLong() * decodedHeight.toLong() <= DETAIL_MAX_PIXELS ||
+        if (decodedWidth.toLong() * decodedHeight.toLong() <= budgetPixels ||
             sample >= MAX_DETAIL_SAMPLE
         ) {
             return ZoomDecodeWindow(left, top, right, bottom, sample)

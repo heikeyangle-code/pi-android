@@ -227,21 +227,26 @@ fun PiImageViewer(
  *
  * 这笔账的每一个数字都在 [PiZoomDecodeWindow] 的文件头里，算术也都在那个文件里（本机能跑）：
  *
- *  - 一块 ≤ [DETAIL_MAX_PIXELS] 像素 = **8 000 000 B**，**与源图多大无关**。12 MP 整张解出来是
- *    ≈48 MB、50 MP ≈192 MB（`ARGB_8888`），区域解码是唯一不付这笔账的读法；超过预算就整倍降
- *    采样，而不是让它涨上去。
- *  - **1× 一个字节都不多要**：阈值是「基础图一个像素摊到 2 个屏幕像素以上」，而基础图一旦被抽稀
- *    过 `fit` 就 ≤ 1，所以 1× 恒不取块；缩回 1× 时上一块**当场丢掉**，1× 的内存与改动前一样。
+ *  - 一块 ≤ [detailBudgetPixels]（**视口面积**，被 4 000 000 像素 = 16 000 000 B 的保险压住），
+ *    与源图多大无关。1080×2400 的手机上就是 2.59 M 像素 = 10.4 MB。12 MP 整张解出来是 ≈48 MB、
+ *    50 MP ≈192 MB（`ARGB_8888`），区域解码是唯一不付这笔账的读法；超过预算就整倍降采样，而不是
+ *    让它涨上去。旧值写死的 2 M 比很多手机的视口小，反而会把「源和屏幕差不多细」的块的采样降一半。
  *  - **只在真的更清楚时才解**：块的采样倍率必须严格小于基础图自己的抽稀倍数，否则这块和屏幕上
- *    已经有的东西一样清楚 —— 没有这条，4× 会为一张和基础图一样糊的块白花 8 MB。
- *  - **整张图永远不为了放大而重解**：双击 8× ⇄ 1× 反复时，1× 是缓存命中，8× 是一次 ≤8 MB 的
+ *    已经有的东西一样清楚。这条同时就是 1× 不取块的证明（一整套源图按预算降采样之后恰好落在基础图
+ *    那一档）。
+ *  - **最大倍率按源分辨率算**（[maxZoomForSource]）：超过「1 源像素 = 1 屏幕像素」之后源里就没有
+ *    信息了，任何解码都救不了。所以双击的「最大」是这张图的 `min(8, 2 × 1:1 倍率)`（一张
+ *    4000 px 的照片 ≈7.4×，一张 1080 px 的截图 = 2×），倍率本身也因此不再越过源 2 倍以上。
+ *  - **整张图永远不为了放大而重解**：双击 最大 ⇄ 1× 反复时，1× 是缓存命中，放大是一次 ≤预算 的
  *    区域解码（异步、期间一直画着 1× 那张顶着），不是「整张重解」。
  *  - 块**不进** [PiImageCache]：它是「当前这一屏」的东西，随平移换掉，而且有一个恒定上界；塞进
  *    那个按 payload 计费的缓存只会为了几 MB 的块多留一份几 MB 的 base64 字符串。
  *
- * 诚实的残留模糊（不装作用户看不出来）：源图**不比**基础图多像素时（例如一张 1080 px 宽的截图
- * 放大到 8×）本来就没有更多细节，屏幕上仍然是被拉大的采样位图；50 MP 那种图在小倍率下预算只买
- * 得到一块不比基础图更清楚的块，于是干脆不解（[zoomDecodeWindow] 第 3 步），也是糊的。
+ * 诚实的残留（不装作用户看不出来）：源图**不比**基础图多像素时（例如一张 1080 px 宽的截图）本来
+ * 就没有更多细节 —— 这一类现在由最大倍率兜住了（它 1× 就已经是 1:1，所以最多再放到 2×，而不是
+ * 8× 的纯插值）；在 1:1 与 2× 之间的那一段，一个源像素对应 1–2 个屏幕像素，是双线性插值能给的
+ * 极限。50 MP 那种图在小倍率下预算只买得到一块不比基础图更清楚的块，于是干脆不解
+ * （[zoomDecodeWindow] 第 2 条），屏幕上就是基础图。
  *
  * 编码字节超过 [MAX_INLINE_IMAGE_BYTES]（8 MiB，App 里那条图片通道唯一的尺子）的图在这里不画：
  * 这条路上最贵的错法是一个几百 MB 的文件名以 `.png` 结尾，`readBytes()` 会照单全收。它走的是
@@ -253,8 +258,8 @@ fun PiImageViewer(
  *    跟手**的：手势交上来的是图层**内部**的局部位移，而 `translationX/Y` 在缩放之外，两者差一个
  *    倍率 —— 换算写在 [panStepFromGesture] 的 KDoc 里（不换算的话 8× 时图只走手指的八分之一，
  *    就是用户报的「滑的特别特别慢」）。越界只在边界上停住，不回弹、不做动画。
- *  - **double tap** → 1× ⇄ [MAX_SCALE]（到顶），200 ms 的缓动过渡、倍率与平移同时到达，结束
- *    时平移清零；
+ *  - **double tap** → 1× ⇄ 这张图的最大倍率（[maxZoomForSource]；源尺寸未知时就是 [MAX_SCALE]），
+ *    200 ms 的缓动过渡、倍率与平移同时到达，结束时平移清零；
  *  - **tap on the picture** → nothing (it consumes the tap, so it cannot fall
  *    through to the backdrop);
  *  - **tap on the ground around the picture** → dismiss; the picture is laid out at
@@ -381,6 +386,27 @@ internal fun PiImageViewerSurface(
             var block by remember(image.cacheKey) { mutableStateOf<DetailBlock?>(null) }
 
             val source = sourcePixels
+            // 这张图**值得**放到的最大倍率：源分辨率决定（[maxZoomForSource]），源尺寸还没读到就是
+            // 硬上限 [MAX_SCALE] —— 也就是今天的行为。超过「1 源像素 = 1 屏幕像素」之后源里就没有
+            // 更多信息，任何解码都救不了，所以双击的「最大」按图算：一张 4000 px 的照片仍然放到
+            // 7.4×（几乎还是 8×），而一张 1080 px 宽的截图最多 2×（它 1× 就已经是 1:1）。
+            val maxScale = maxZoomForSource(
+                fittedWidthPx = fittedWidth,
+                fittedHeightPx = fittedHeight,
+                sourceWidthPx = source?.width,
+                sourceHeightPx = source?.height,
+                hardCeiling = MAX_SCALE,
+            )
+            // 源尺寸是异步读到的：它到达时上限可能落到当前倍率以下（用户在头一小会儿里就捏到了
+            // 7×，而这张图只值得 3.7×）。那就当场收回上限并把平移夹回新范围 —— 否则「按源限幅」
+            // 只对之后的手势生效，屏幕上仍停在一片糊上。
+            LaunchedEffect(maxScale) {
+                if (scale.value > maxScale) {
+                    scale.snapTo(maxScale)
+                    panX.snapTo(panAfterDrag(panX.value, 0f, 1f, panLimit(maxScale, fittedWidth, boxWidthPx.toFloat())))
+                    panY.snapTo(panAfterDrag(panY.value, 0f, 1f, panLimit(maxScale, fittedHeight, boxHeightPx.toFloat())))
+                }
+            }
             // 重解只认**落定的**倍率与平移，不看拖动或动画中的当前值。
             //
             // 为什么必须这样：双击的 200 ms 里 `scale` 会连续经过 1×…8×，拖动时每一帧 `pan` 都在
@@ -410,27 +436,39 @@ internal fun PiImageViewerSurface(
                             panY = settled.panY,
                         )
                         if (visible == null) {
-                            // 回到 1×（或这张源图本来就没有更多像素）：**当场把那一块放掉**，1× 的
-                            // 内存与改动前一样。
                             block = null
                             return@collectLatest
                         }
                         val held = block
-                        if (held != null && zoomDecodeWindowCovers(held.window, visible)) {
-                            // 上一块还盖着这一屏：继续用它，不重解（平移时图不会闪）。
-                            return@collectLatest
-                        }
+                        // 该不该解、解哪一块、按几倍采样：全在纯算术里（预算 = 视口面积，
+                        // 见 [detailBudgetPixels]；采样倍率必须比基础图更细）。
                         val window = zoomDecodeWindow(
                             visible = visible,
                             sourceWidthPx = source.width,
                             sourceHeightPx = source.height,
                             baseWidthPx = decoded.width,
                             baseHeightPx = decoded.height,
-                        ) ?: return@collectLatest
-                        val decoded2 = withContext(Dispatchers.IO) {
-                            underImageDecodeGate { decodePiImageRegion(image, window, source) }
-                        } ?: return@collectLatest
-                        block = DetailBlock(window, decoded2)
+                            budgetPixels = detailBudgetPixels(boxWidthPx, boxHeightPx),
+                        )
+                        when {
+                            // 现在不该解（回到 1×、源没有更多像素、或解了也不比基础图清楚）：上一块
+                            // 只在这一屏**还盖得住**时才留着（它至少不比基础图差），否则当场放掉 ——
+                            // 1× 因此一定回到「只有基础图」的内存，与改动前逐字节相同。
+                            window == null -> if (held == null || !zoomDecodeWindowCovers(held.window, visible)) {
+                                block = null
+                            }
+
+                            // 上一块还盖着这一屏：继续用它，不重解（平移时图不会闪）。
+                            held != null && zoomDecodeWindowCovers(held.window, visible) -> Unit
+
+                            else -> {
+                                val decoded2 = withContext(Dispatchers.IO) {
+                                    underImageDecodeGate { decodePiImageRegion(image, window, source) }
+                                }
+                                // 解不出来就保持现状（上一块 / 1× 那张），不白屏、不报错。
+                                if (decoded2 != null) block = DetailBlock(window, decoded2)
+                            }
+                        }
                     }
             }
 
@@ -465,7 +503,9 @@ internal fun PiImageViewerSurface(
                                     // translation 在缩放**之外** —— 原来直接 `pan + drag`，8× 时
                                     // 图只走了手指的八分之一，就是用户报的「滑的特别特别慢」）。
                                     val gestureScale = scale.value
-                                    val next = (gestureScale * zoom).coerceIn(MIN_SCALE, MAX_SCALE)
+                                    // 上限是**这张图**值得放到的倍率（[maxZoomForSource]），不是硬编码
+                                    // 的 8：再往上只是把有限的源像素摊得更开。
+                                    val next = (gestureScale * zoom).coerceIn(MIN_SCALE, maxScale)
                                     zoomIntent = next
                                     scale.snapTo(next)
                                     if (next <= MIN_SCALE) {
@@ -501,8 +541,8 @@ internal fun PiImageViewerSurface(
                                 // must not reach the backdrop's dismiss detector.
                                 onTap = {},
                                 onDoubleTap = {
-                                    // 1× ⇄ 上限，看清的是**目标态**而不是动画途中的值。
-                                    val target = if (zoomIntent > MIN_SCALE) MIN_SCALE else MAX_SCALE
+                                    // 1× ⇄ 这张图的最大倍率，看清的是**目标态**而不是动画途中的值。
+                                    val target = if (zoomIntent > MIN_SCALE) MIN_SCALE else maxScale
                                     zoomIntent = target
                                     // 这一趟动画的「代次」：第二次双击会取消第一次的三个动画，而第一次的
                                     // `finally` **不能**把 `animating` 清掉 —— 那会让解码触发在第二次动画
@@ -673,11 +713,11 @@ private data class DetailBlock(val window: ZoomDecodeWindow, val bitmap: Bitmap)
  *
  * ## 这一次解码的内存（与 [PiZoomDecodeWindow] 的文件头对齐）
  *
- * 常驻的只有块位图（≤ 8 000 000 B）。这一次解码的**峰值**还要算上**源字节**，两份：
- * 这里自己解出来的那一份（wire 是 base64 解码、宿主文件是 `readBytes`，两者都被
- * [MAX_INLINE_IMAGE_BYTES] 那把 8 MiB 的尺子挡在解码之前）+ 平台解码器内部自己那一份。两份都
- * 在 `finally` 的 `recycle()` 之后由回收器释放；块位图由调用方在缩回 1× 时丢掉。也就是说峰值
- * ≤ 8 MiB + 8 MiB + 8 MB，**与原图多大无关**（超 8 MiB 的图根本走不到这里）。
+ * 常驻的只有块位图（≤ [detailBudgetPixels]，手机上 10.4 MB、硬上限 16 MB）。这一次解码的**峰值**
+ * 还要算上**源字节**，两份：这里自己解出来的那一份（wire 是 base64 解码、宿主文件是 `readBytes`，
+ * 两者都被 [MAX_INLINE_IMAGE_BYTES] 那把 8 MiB 的尺子挡在解码之前）+ 平台解码器内部自己那一份。
+ * 两份都在 `finally` 的 `recycle()` 之后由回收器释放；块位图由调用方在缩回 1× 时丢掉。也就是说
+ * 峰值 ≤ 8 MiB + 8 MiB + 16 MB，**与原图多大无关**（超 8 MiB 的图根本走不到这里）。
  */
 private fun decodePiImageRegion(
     image: PiImageViewerSource,
@@ -804,15 +844,14 @@ private fun ClearViewerPlatformDim() {
 }
 
 /**
- * The zoom range. 1× is "fitted to the window" by construction, and the ceiling is
- * [MAX_SCALE] rather than infinity because past it the screen has run out of source pixels:
- * 8× is already more than the 1:1 magnification of an ordinary 12 MP photo in a 1080 px
- * window, and the detail block above cannot invent more.
+ * 倍率的**绝对**上限（8×）。它不是每张图的上限 —— 那由 [maxZoomForSource] 按源分辨率算
+ * （`min(这个数, 2 × 1:1 倍率)`，源尺寸未知时退回这个数）。这里是「再高也没有意义」的一刀：
+ * 8× 已经超过普通 12 MP 照片在 1080 窗口里的 1:1 倍率（3.7×）一倍以上。
  *
- * 双击直接跳到 [MAX_SCALE]，不再有第三个数字：用户要的是「双击放到最大、再双击回到原样」
+ * 双击直接跳到**这张图的最大倍率**，不再有第三个数字：用户要的是「双击放到最大、再双击回到原样」
  * （相册里最基本的那个动作），而一个介于 1 与上限之间的中间档只会让人怀疑「为什么双击只放大
  * 一点点」。它同时意味着双击之后一定还能再放大 —— 上限就是双击到的那一档，捏合的范围与它完全
- * 重合（1×–8×）。
+ * 重合（1×–上限）。
  */
 private const val MIN_SCALE = 1f
 private const val MAX_SCALE = 8f
