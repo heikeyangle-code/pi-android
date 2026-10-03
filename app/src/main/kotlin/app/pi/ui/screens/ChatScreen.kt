@@ -20,6 +20,7 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Matrix
 import android.os.Environment
 import android.provider.DocumentsContract
 import android.util.Base64
@@ -4302,6 +4303,12 @@ private fun readBounded(input: java.io.InputStream, limit: Int): ByteArray {
  *
  * ## pi's flow, and where this differs
  *
+ *  0. **EXIF 方向先摆正**（`image-resize-core.ts:74-76` → `exif-orientation.ts`）：pi 在算
+ *     `originalWidth`/`originalHeight` **之前**就把图转正，所以后面每一步 —— 快速路径的判断、
+ *     目标尺寸、3/4 收缩、质量阶梯 —— 看到的都是**摆正后**的长宽。App 这边这一步是
+ *     `PiExifOrientation.read` 读出方向、`Matrix` 施加同一个置换（`BitmapFactory` 自己不看
+ *     EXIF，`Bitmap.compress` 也不写 EXIF）。少了这一步，竖拍的照片（像素 4032×3024 +
+ *     EXIF orientation 6）会被算成 2000×1500 的横图 —— 模型收到一张侧倒的图。
  *  1. **Fast path** (`image-resize-core.ts:82-93`): a picture already within both limits
  *     goes on the wire **byte for byte**, with its own MIME type. This is the only path
  *     that does not re-encode, and it is what keeps an ordinary photo from being
@@ -4315,6 +4322,12 @@ private fun readBounded(input: java.io.InputStream, limit: Int): ByteArray {
  *     Lanczos3 through Photon; Android's `Bitmap.createScaledBitmap(..., filter = true)`
  *     is bilinear, which is a resampling difference, not a size or an ordering one — it
  *     is listed as device-only in the change report.
+ *
+ *     **为什么这里不给 `BitmapFactory` 设 `inSampleSize`**：pi 的每一轮收缩都是从**全分辨率**
+ *     的 `image` 重新 `photon.resize` 的（`image-resize-core.ts:109`，`image` 是 `:74` 解码出来
+ *     的那一张）。解码期先按整倍数丢掉一半像素，等于让第 2 轮之后的每一次收缩都从比 pi 更少的
+ *     像素重采样 —— 尺寸对了，细节比 pi 少。省内存的收益不值得在这里制造一个内容层面的差异
+ *     （峰值内存是设备问题，列在变更报告里）。
  *  3. **Alpha, and a PNG source, pick the format**
  *     (`AttachmentBudget.encodings`): PNG first for a picture whose decoded bitmap can
  *     carry alpha **or** whose source MIME is `image/png`; JPEG otherwise. `Bitmap.hasAlpha()`
@@ -4324,9 +4337,9 @@ private fun readBounded(input: java.io.InputStream, limit: Int): ByteArray {
  *     where it can win is the app's one deliberate difference — `AttachmentBudget`'s class
  *     KDoc has the reasoning and the residual difference.
  *
- * Returns null when the bytes do not decode, or when even 1×1 cannot be encoded under
- * [limits]. The caller tells the user which of the two happened is not knowable
- * here, so it says both.
+ * Returns null when the bytes do not decode, when the orientation copy cannot be allocated,
+ * or when even 1×1 cannot be encoded under [limits]. Which of the three happened is not
+ * knowable here, so the caller says the general thing.
  *
  * [limits] is `AttachmentBudget.limitsFor(state.meta.model?.inputLimits)`: the model's own
  * profile when pi published one, pi's defaults otherwise, with the record's budget as a
@@ -4348,9 +4361,18 @@ private fun compressAttachment(
     // is also how the fast path is decided without decoding anything.
     val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
     BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
-    val width = bounds.outWidth
-    val height = bounds.outHeight
-    if (width <= 0 || height <= 0) return null
+    val storedWidth = bounds.outWidth
+    val storedHeight = bounds.outHeight
+    if (storedWidth <= 0 || storedHeight <= 0) return null
+
+    // EXIF 方向**先**读，而且要用它把「存储长宽」换成「摆正后长宽」：pi 的
+    // `originalWidth`/`originalHeight` 取自摆正之后的图（`image-resize-core.ts:74-79`），
+    // 而 `BitmapFactory` 给的是**存储**尺寸。摆正只换方向、不换像素数，所以解码取样
+    // （`inSampleSize`）仍然按存储像素算 —— 本函数不设 `inSampleSize`（见 KDoc），这条只是
+    // 提醒后来者别把两者混在一起：解码出来还是 storedWidth×storedHeight 个像素。
+    val orientation = PiExifOrientation.read(bytes)
+    val transform = PiExifOrientation.transformFor(orientation)
+    val (width, height) = PiExifOrientation.orientedSize(storedWidth, storedHeight, transform)
 
     if (width <= limits.maxWidth &&
         height <= limits.maxHeight &&
@@ -4366,27 +4388,56 @@ private fun compressAttachment(
         bytes.size,
         BitmapFactory.Options().apply { inPreferredConfig = Bitmap.Config.ARGB_8888 },
     ) ?: return null
+    // 摆正发生在**进入 3/4 + 质量阶梯循环之前**，与 pi 同序（`:74-76` 在 `:126-154` 之前）。
+    val oriented = applyOrientation(source, transform)
+    if (oriented == null) {
+        source.recycle()
+        return null
+    }
     try {
-        // `mime` is the *source's* type and it decides the candidate order: a PNG source
-        // (or any source whose decoded bitmap carries alpha) gets pi's PNG candidate
-        // first, everything else starts at the profile's first JPEG quality. See
-        // `AttachmentBudget.pngFirst` and `jpegQualities`.
+        // `mime` 是*源*的类型，它决定候选顺序：PNG 源（或任何解码后位图带 alpha 的源）拿到
+        // pi 的 PNG 候选在前，其余从档位的第一个 JPEG 质量开始。见
+        // `AttachmentBudget.pngFirst` 与 `jpegQualities`。
         for (attempt in AttachmentBudget.attemptPlan(mime, source.hasAlpha(), width, height, limits)) {
-            val scaled = scaleForAttachment(source, attempt.width, attempt.height) ?: continue
+            val scaled = scaleForAttachment(oriented, attempt.width, attempt.height) ?: continue
             try {
                 val encoded = encodeForAttachment(scaled, attempt.encoding) ?: continue
                 // pi's own test is strict (`encodedSize < maxBytes`).
                 if (encoded.base64.length < limits.maxBase64Chars) return encoded
             } finally {
-                // `scaleForAttachment` returns the source itself when the target is the
-                // source's own size, and the outer `finally` owns that one.
-                if (scaled !== source) scaled.recycle()
+                // `scaleForAttachment` 在目标就是自己的尺寸时原样返回，那份由外层 finally 负责。
+                if (scaled !== oriented) scaled.recycle()
             }
         }
         return null
     } finally {
+        // `applyOrientation` 在方向为 1 时返回的就是 `source`，那一份只回收一次。
+        if (oriented !== source) oriented.recycle()
         source.recycle()
     }
+}
+
+/**
+ * 把解码后的位图摆正到显示方向，用的是 [PiExifOrientation.matrixFor] 那六个数字。
+ *
+ * `filter = false` 不是性能选择：那张映射是**整数到整数的置换**，重采样（`filter = true`）
+ * 只会把每个像素和它邻居插在一起，把一张无损的旋转弄成一张糊的旋转。方向为 1（含「读不出
+ * 方向」）时返回 `source` 本身，不复制 —— 绝大多数照片走这条，一次多余的位图分配都不该有。
+ *
+ * `hasAlpha` 的判断留在调用方、并且只看 `source`：置换不改 alpha（像素带着自己的 alpha 一起
+ * 搬走），但 `createBitmap` 会按新配置重设那个标志位，从结果位图上再问一次就不再是「源有没有
+ * alpha 通道」了。
+ *
+ * 返回 null 只可能是位图分配失败（OOM）；调用方按「压不出来」处理。
+ */
+private fun applyOrientation(source: Bitmap, transform: PiExifOrientation.Transform): Bitmap? {
+    if (transform == PiExifOrientation.Transform.NONE) return source
+    val matrix = Matrix().apply {
+        setValues(PiExifOrientation.matrixFor(transform, source.width, source.height))
+    }
+    return runCatching {
+        Bitmap.createBitmap(source, 0, 0, source.width, source.height, matrix, false)
+    }.getOrNull()
 }
 
 /** One resize step; the source itself when the target is already its size. */
