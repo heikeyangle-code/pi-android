@@ -213,7 +213,7 @@ val PI_BUILTIN_SLASH_COMMANDS: List<PiSlashCommand> = listOf(
     // palette must not be a set of doors into Settings. `enabledModels` is
     // reachable at 设置 → 模型与推理 → 循环模型.
     PiSlashCommand(
-        "export", "导出会话：HTML 与可导入的会话文件各一份", PiCommandSource.Builtin, null,
+        "export", "导出会话：不带参数＝HTML 与可导入的会话文件各一份；给名字＝按后缀只写一份", PiCommandSource.Builtin, null,
         PiCommandAction.ExportSession,
     ),
     // No `argumentHint`: a hint suppresses the palette tap's "run it" behaviour
