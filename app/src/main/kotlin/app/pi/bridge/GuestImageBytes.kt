@@ -107,7 +107,7 @@ internal class GuestImage(
  *  - 单张 [MAX_BYTES] = 8 MiB，与 `data:` URI、本地文件同一个数。`Content-Length`
  *    先看一眼，读取循环再按实际字节数卡一遍（声明可以没有，也可以撒谎）。
  *  - 连接 [CONNECT_TIMEOUT_MS] = 5 s，单次读 [READ_TIMEOUT_MS] = 5 s，
- *    一整张图的总预算 [TOTAL_TIMEOUT_MS] = 15 s。前两个管"多久没有进展"，
+ *    一整张图的总预算 [TOTAL_TIMEOUT_MS] = 45 s。前两个管"多久没有进展"，
  *    第三个管"每块都读得到、但慢慢喂一整张"——循环在**每块之间**查它，所以一次远端
  *    取字节的最坏耗时是总预算再加一个读取超时，不是无限。
  *
@@ -121,9 +121,10 @@ internal class GuestImage(
  * 也一样。
  *
  * 许可在**磁盘缓存未命中之后**才申请：命中缓存不出网，也就不需要许可。而
- * [TOTAL_TIMEOUT_MS] 从**拿到许可之后**才开始算，所以 15 s 仍然是"这一次取字节的网络时间"，
- * 排队不占它（最坏总耗时因此是"排队 + 15 s + 一个读超时"，由 `PiImageRequestPolicy` 那边
- * 60 s 的兜底预算封住）。
+ * [TOTAL_TIMEOUT_MS] 从**拿到许可之后**才开始算，所以 45 s 仍然是"这一次取字节的网络时间"，
+ * 排队不占它（最坏总耗时因此是"排队 + 45 s + 一个读超时"；外层
+ * `PiImageRequestPolicy` 的兜底预算在同一件事上也已经改成"排队不算在内"，见那边
+ * `PI_IMAGE_PRODUCER_BUDGET_MS` 的 KDoc —— 两层对"排队到底算谁的时间"必须是同一个答案）。
  *
  * ### 缓存在哪、多大
  *
@@ -169,7 +170,7 @@ internal class GuestImage(
  *
  * **取消只在每 64 KiB 分块之间检查**（[readBounded]）：`InputStream.read` 阻塞在 socket 上
  * 时协程取消是进不去的 —— 这是 JDK 阻塞 I/O 的性质，根治不了。所以一次 `read` 的最坏耗时
- * 由 [READ_TIMEOUT_MS] 兜底、整段由 [TOTAL_TIMEOUT_MS] 与策略层 60 s 的兜底预算兜底：
+ * 由 [READ_TIMEOUT_MS] 兜底、整段由 [TOTAL_TIMEOUT_MS] 与策略层的兜底预算兜底：
  * "取消不进去"不等于"停不下来"。
  *
  * **同一帧的两个调用者不再各取一次。** 库对一张**行内**图片会在同一帧调用 `transform`
@@ -242,8 +243,20 @@ internal object GuestImageBytes {
     /** 远端两次读之间没有进展就算失败。 */
     private const val READ_TIMEOUT_MS = 5_000
 
-    /** 一次远端取字节的总预算，循环在每块之间查它。 */
-    private const val TOTAL_TIMEOUT_MS = 15_000L
+    /**
+     * 一次远端取字节的总预算，循环在每块之间查它。
+     *
+     * **15 s → 45 s**，理由是可算的、不是感觉：用户自己截图里那批 Wikimedia 图
+     * （`…/1920px-….jpg`）实测 **45 KB – 540 KB**（本机用与 App 相同的"不设任何请求头"
+     * 取过：Tatry 483 852 B、Hong Kong 538 758 B、gstatic 44 891 B），而他截图里的状态栏
+     * 是 **4–18 KB/s**（VPN）—— 15 s 里最多到 270 KB，所以**那些图在 15 s 预算下无论
+     * 如何都取不全**，表现就是"有的成功、有的不成功"（小的成、大的败）。45 s 在
+     * 11–18 KB/s 上够到 500 KB 那一档。
+     *
+     * 代价明写：只有"服务端在响应、但很慢"的连接才吃得到这个 45 s（连接失败 5 s 就结束、
+     * 卡住 5 s 就结束），而且它换来的字节会进磁盘缓存，下次是命中不出网。
+     */
+    private const val TOTAL_TIMEOUT_MS = 45_000L
 
     /** 磁盘缓存的总大小上限，单位字节。 */
     private const val MAX_DISK_BYTES = 64L * 1024 * 1024
@@ -259,7 +272,7 @@ internal object GuestImageBytes {
      * 它和 `piImageDecodeGate`（2 许可、只包解码）是两把不同的闸门。
      *
      * 3 而不是 2：解码闸门是"进程里同时在解的位图"，取字节闸门是"同时在开的连接"。
-     * 一屏里有 5 张坏 URL 时，3 条并发已经足够快（一条最坏 15 s + 5 s，剩下的排队），
+     * 一屏里有 5 张坏 URL 时，3 条并发已经足够快（一条最坏 45 s + 5 s，剩下的排队），
      * 又不至于让 5 张图同时各占一个 socket、各自的 8 MiB 缓冲和 `Dispatchers.IO` 的线程。
      */
     private const val MAX_CONCURRENT_REMOTE_FETCHES = 3
@@ -405,7 +418,7 @@ internal object GuestImageBytes {
             }
         }
 
-        // 缓存未命中才申请取字节的许可：见类注释「同时打开的 socket 有几个」。15 s 的总预算
+        // 缓存未命中才申请取字节的许可：见类注释「同时打开的 socket 有几个」。45 s 的总预算
         // 也从**拿到许可之后**才算（`fetchOverNetwork` 内部），所以排队不占网络预算。
         val bytes = fetchOverNetwork(uri) ?: return@withContext null
 

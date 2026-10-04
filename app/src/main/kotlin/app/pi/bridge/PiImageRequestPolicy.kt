@@ -62,7 +62,7 @@ import kotlinx.coroutines.withTimeoutOrNull
  * 这条取代了 `PiGuestImageBytes`/`PiGuestImageTransformer` 原来那句"节点离开组合下载
  * 当场停"。原因是这套策略的取舍方向变了：`LazyColumn` 回收行会让 `produceState` 重跑，
  * 而"失败不被记住"就意味着**一张坏 URL 每滚回来一次就重新出一网**（每次都带 5 s 连接 +
- * 5 s 读 + 15 s 总预算），行内图还会在同一帧被库调两次、各自开一条连接。
+ * 5 s 读 + 45 s 总预算），行内图还会在同一帧被库调两次、各自开一条连接。
  *
  * 现在的取舍是：生产者跑在进程级作用域里、有自己的预算，所以节点离开组合之后它会跑完，
  * 把字节写进磁盘缓存 —— 用户滚回来时那是**缓存命中，不出网**。代价是划过一张网络图时
@@ -71,7 +71,7 @@ import kotlinx.coroutines.withTimeoutOrNull
  *
  * ## 分工
  *
- *  - [GuestImageBytes]：**怎么取字节**（磁盘缓存、8 MiB 上限、5 s/5 s/15 s 超时、64 KiB
+ *  - [GuestImageBytes]：**怎么取字节**（磁盘缓存、8 MiB 上限、5 s/5 s/45 s 超时、64 KiB
  *    分块），以及"取字节"这一小段的并发上限（那把信号量在那边，不在这里）。
  *  - `PiGuestImageTransformer`：字节 → 位图（`piImageDecodeGate`）→ 位图缓存。
  *  - 本类：上面那件事**要不要现在做、要不要第二次做**。
@@ -167,6 +167,10 @@ internal class PiImageRequestPolicy<K : Any, V : Any>(
      * `withTimeoutOrNull` 只包 [loader]，所以超预算取消的是这一次加载，不是作用域；被取消
      * 时**照常**记负缓存（这是一次失败），而生产者自己被外部取消（作用域销毁）时**不**记
      * ——那次取消不是这张图的结论，记了会给 45 秒后的重试埋一个假答案。
+     *
+     * 超预算那一支的"记负缓存"**后来被撤销**（`finish` 里现在明确跳过
+     * [PiImageProducerTimeout]，理由见 `PI_IMAGE_PRODUCER_BUDGET_MS`）：这条超时**量的是
+     * 排队时间**，而请求可能连一次字节都没取到。
      */
     private suspend fun produce(key: K, pending: Pending<V>, loader: suspend (K) -> Result<V>) {
         val outcome: Result<V> = try {
@@ -190,12 +194,19 @@ internal class PiImageRequestPolicy<K : Any, V : Any>(
      *
      * 移除带身份校验（`inFlight[key] === pending`）：条目可能已经被后来的一个生产者换成
      * 新的了（TTL 到期后重试正好撞上旧生产者收尾），那就不能把新的那条删掉。
+     *
+     * **超预算（[PiImageProducerTimeout]）不写负缓存**，这条是后改的、与 [produce] 那段
+     * 注释里"被取消时照常记"相反，理由在 `PI_IMAGE_PRODUCER_BUDGET_MS` 的 KDoc 最后一段：
+     * 一次"排在取字节闸门后面还没轮到"的请求不是关于这张图的结论，把它记成 45 s 的失败
+     * 会让一屏慢图在第一次超时之后**整片消失**（用户报的「表格的图渲染出来了，一会再进
+     * 对话又没了」）。它仍然是一次数得清的失败：原因照旧回给这次等待方，条目照旧被清掉。
      */
     private fun finish(key: K, pending: Pending<V>, outcome: Result<V>?) {
         synchronized(lock) {
             if (inFlight[key] === pending) inFlight.remove(key)
-            if (outcome != null && outcome.isFailure) {
-                rememberNegative(key, outcome.exceptionOrNull()?.message)
+            val cause = outcome?.exceptionOrNull()
+            if (cause != null && cause !is PiImageProducerTimeout) {
+                rememberNegative(key, cause.message)
             }
         }
     }
@@ -264,20 +275,30 @@ internal class PiImageProducerTimeout(budgetMs: Long) :
  * 失败结果在内存里记住多久：45 s。
  *
  * 落在要求的 30–60 s 中间：短到"滚动期间别反复重打"够用，长到比一次最坏取字节
- * （15 s 预算 + 5 s 读超时）明显更长 —— 否则用户停在同一个位置时还是会按预算周期重打。
+ * （45 s 预算 + 5 s 读超时）明显更长 —— 否则用户停在同一个位置时还是会按预算周期重打。
  */
 internal const val PI_IMAGE_NEGATIVE_TTL_MS: Long = 45_000L
 
 /**
- * 生产者的兜底预算：60 s。
+ * 生产者的兜底预算：**300 s**。
  *
- * **不是**第二个网络预算：网络那段仍然是 `GuestImageBytes` 的 5 s 连接 / 5 s 读 /
- * 15 s 总预算，这里故意比它宽得多（15 s + 5 s 读超时，再给解码与 `piImageDecodeGate`
- * 排队留余量），所以它绝不会截断一次合法的取字节。它的唯一作用是把"生产者绝不无限跑"
- * 变成这条状态机自身的性质：`read` 阻塞在 socket 上时取消进不去，卡住的那一条终究会被
- * 清掉。
+ * 原值是 60 s，改大的理由是它**量的东西不对**：这个计时从生产者被**启动**那一刻开始，
+ * 而生产者可能一直排在取字节闸门（`GuestImageBytes.remoteFetchGate`，3 个许可）或者解码
+ * 闸门（`piImageDecodeGate`，2 个许可）后面 —— 排队时间是算在它头上的。一张 6 列 × 44 行
+ * 的表有 40 多张图，3 个许可意味着第 13 张要等 4 轮；每轮只要几十秒，第 13 张就"超过
+ * 60 s 预算"，于是**一张本来完全正常的图被记成失败**。用户报的正是这个形状：
+ * 「表格的图渲染出来了，一会再进对话又没了」。
+ *
+ * 300 s 是"排队到第 4 轮之后仍然算数"的量级，不是第二个网络预算：**网络那一段自己仍然
+ * 有硬上限**（`GuestImageBytes` 的 5 s 连接 / 5 s 读 / 45 s 总预算），真实工作永远由那组
+ * 数字封住；这个数只留一条性质 —— 「生产者绝不无限跑」（`read` 阻塞在 socket 上时取消
+ * 进不去，卡住的那一条终究会被清掉）。
+ *
+ * 配合 `finish` 里那条：超预算**不写负缓存**。这两条是一件事的两半 —— 超时意味着"没轮到我"，
+ * 不是"这张图坏了"，所以下一次组合照旧可以再排一次队；否则一次排队超时就换来 45 s 的
+ * 空白，而 45 s 之后重试又会排到队尾、再超时一次。
  */
-internal const val PI_IMAGE_PRODUCER_BUDGET_MS: Long = 60_000L
+internal const val PI_IMAGE_PRODUCER_BUDGET_MS: Long = 300_000L
 
 /**
  * 负缓存表的条数上限：64。

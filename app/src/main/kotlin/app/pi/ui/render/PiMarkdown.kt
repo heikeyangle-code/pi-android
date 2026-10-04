@@ -169,7 +169,12 @@ internal fun PiMarkdownText(
     // annotator 默认把段落内换行压成空格，所以含网格的这条消息要按下一段的两个
     // 开关渲染 —— 别的消息一个字节都不变（`PiLatex.prepare` 的注释）。
     val prepared = remember(markdown) { PiLatex.prepare(markdown) }
-    val content = prepared.text
+    // 裸图片 URL → `![](...)`（`ui/render/PiImageLinks.kt` 的规则与取舍）。**排在公式
+    // 预处理之后**：公式先看原文，改写写进去的那串不会被 `$`/`\(` 规则再扫一遍。它只认
+    // "整行/整格就是一个白名单后缀的 URL"，围栏代码、行内代码、缩进代码、以及还带着别的
+    // 文字的行都不碰；键是 `prepared.text`（公式那一趟的输出才是这里的输入），两个
+    // `remember` 因此各缓存一次、互不重算。
+    val content = remember(prepared.text) { PiImageLinks.rewrite(prepared.text) }
     val hasGrid = prepared.hasDisplayGrid
     // 「这条消息里有没有可能出现裸 HTML」—— 就是一次 `contains('<')`，扫一遍字符串（一次
     // 组合，不是每帧）。这个布尔值买到的是**库那行判定回到 `annotate == null` 的短路**：

@@ -9,14 +9,19 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.geometry.isSpecified
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.painter.BitmapPainter
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalWindowInfo
+import androidx.compose.ui.unit.Density
 import app.pi.ui.blocks.piImageDecodeGate
 import com.mikepenz.markdown.model.ImageData
 import com.mikepenz.markdown.model.ImageTransformer
+import com.mikepenz.markdown.model.ImageWidth
+import com.mikepenz.markdown.model.PlaceholderConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -97,18 +102,52 @@ import kotlinx.coroutines.withContext
  * 「alt + 图片地址」那条回退（`ui/render/PiMarkdownComponents.kt` 的 `PiImageFallback`），
  * 原因留在 `GuestImageBytes.lastFailure`。**失败不进位图缓存**，但也不再"每次组合都重试"：
  * 失败由 [PiImageRequestPolicy] 在内存里记 45 s，见下面 `cached` 的说明。
+ *
+ * ## 两个尺寸来源：正文用窗口宽，表格缩略图用**单元格内容宽**
+ *
+ * [boxWidthPx] 为 `null` 时（正文、附件网格之外的一切）按老规矩取
+ * `LocalWindowInfo.containerSize.width`，见 [transform] 里那段论证。
+ *
+ * 表格单元格传进来的那个数是**真的会画多宽**：单元格内容宽 = 列宽 − 两侧内边距
+ * （`MarkdownTableHeader` 给每个格子 `Modifier.padding(tableCellPadding).weight(1f)`，
+ * 而整行的宽度被 `widthIn(tableWidth)` 钉死，所以它与横向滚动状态无关）——
+ * 由 `ui/render/PiMarkdownComponents.kt` 的 `PiTable` 从 `LocalMarkdownDimens` 算出。
+ *
+ * 这条是**性能修复**，不是细化：一张 6 列 × 44 行、每行一张图的表（用户截图里的量级）
+ * 有 40+ 张图，按窗口宽 1080 px 解码时每张 ~1.2 MB，40 张就是 50 MB 常驻、远超位图缓存
+ * 的 32 MiB，于是解码/淘汰互相追着跑（滚动卡顿）；按 144 dp（≈396 px）解码每张只有
+ * ~0.6 MB，同一个缓存装得下整张表。规则与 Android 官方的位图优化同一条：
+ * **按将显示的尺寸降采样**。
+ *
+ * ## 单元格的占位框由我们自己算：库那套会自己追自己
+ *
+ * 库的 `ImageTransformer.placeholderConfig` 默认实现把**容器高度**也算进去
+ * （`containerCappedHeight = min(imageHeight, containerHeight)`），而单元格的容器高度
+ * **就是这一格文本自己的高度** —— 里面正摆着这个占位框。于是"框的大小"与"行的高度"
+ * 互相依赖：图片一加载，容器高度变、框跟着变、行高再变，最后收敛到的尺寸取决于中间
+ * 经历了几帧。用户看到的就是「缩略图大小有时候不对，过一会儿又正常了」。
+ * [boxWidthPx] 非空时这里改成**只由宽度决定**（高度按图片自身比例），换掉了那个环。
  */
-internal class PiGuestImageTransformer(private val context: Context) : ImageTransformer {
+internal class PiGuestImageTransformer(
+    private val context: Context,
+    /**
+     * 画这张图的框的宽度（px）；`null` = 正文，用窗口宽度（见类注释）。
+     */
+    private val boxWidthPx: Int? = null,
+) : ImageTransformer {
 
     @Composable
     override fun transform(link: String): ImageData? {
         // 目标框的宽。库的 `transform(link)` 只给一个 link，没有尺寸参数
-        // （`model/ImageTransformer.kt:16-21`），而「画多宽」只有排版知道，所以从
+        // （`model/ImageTransformer.kt:16-21`），而「画多宽」只有排版知道，所以正文从
         // `LocalWindowInfo` 读一次组合容器的像素尺寸。正文一定比容器窄，所以这是个
         // **上界**：只会多解一点，绝不会解得比画出来的还小。`containerSize` 是
         // `MutableState`（compose-ui 1.8.3 `AndroidWindowInfo.android.kt:66-76`），
         // 尺寸变了会重组，而缓存键里带着它，所以旋转后不会拿旧尺寸的位图去画。
-        val widthPx = LocalWindowInfo.current.containerSize.width
+        //
+        // 表格那条走 `boxWidthPx`，**不读** `LocalWindowInfo`（单元格宽与窗口宽无关，
+        // 按窗口宽解码就是上面说的那 50 MB）。
+        val widthPx = boxWidthPx ?: LocalWindowInfo.current.containerSize.width
         // `initialValue` 是一次内存缓存读（不做 IO），所以滚出去再滚回来，第一帧就有图。
         val bitmap by produceState<Bitmap?>(initialValue = cached(link, widthPx), link, widthPx) {
             if (value == null) value = load(link, widthPx)
@@ -125,6 +164,34 @@ internal class PiGuestImageTransformer(private val context: Context) : ImageTran
             // `MarkdownImage` 优先用 alt 当无障碍名，这里只是没有 alt 时的兜底。
             contentDescription = link,
         )
+    }
+
+    /**
+     * 单元格里的图：宽度钉死成 [boxWidthPx]，高度按图片自身比例；还没量到尺寸时先用
+     * 记忆下来的比例（[rememberAspect]），仍然不知道就给一个正方形
+     * （`Image` 用 `ContentScale.Fit`，所以最坏情况只是上下留白，不会变形）。
+     *
+     * 只有 [boxWidthPx] 非空时才接管；正文的块级图不走这个函数（库的 `MarkdownImage`
+     * 直接问 [transform]），段落内联图仍走库的默认实现 —— 那条路的容器是整段文本，
+     * 没有上面那个"容器高度=自己"的环。
+     */
+    override fun placeholderConfig(
+        link: String,
+        density: Density,
+        containerSize: Size,
+        imageWidth: ImageWidth,
+        imageSize: Size,
+        imageSizeChanged: ((String, Size) -> Unit)?,
+    ): PlaceholderConfig {
+        val box = boxWidthPx
+            ?: return super.placeholderConfig(link, density, containerSize, imageWidth, imageSize, imageSizeChanged)
+        val widthDp = with(density) { box.toDp().value }
+        val aspect = if (imageSize.isSpecified && imageSize.width > 0f) {
+            imageSize.height / imageSize.width
+        } else {
+            rememberAspect(link)
+        }
+        return PlaceholderConfig(Size(widthDp, widthDp * (aspect ?: 1f)))
     }
 
     /**
@@ -247,9 +314,46 @@ internal class PiGuestImageTransformer(private val context: Context) : ImageTran
          * 所以 32 MiB 装得下几张。上限本身没有跟着采样一起降：它是「图片最多能占多少
          * 内存」这条规则，`ui/blocks/PiImageCache.kt` 的 `MAX_TOTAL_BYTES` 也是同一个数，
          * 两个位图缓存不许对同一件事有两种说法。
+         *
+         * **条数从 24 提到 64**（字节上限不动，所以内存上界不变）：表格缩略图按单元格宽
+         * 解码之后单张只有几百 KB，一张 6 列 × 44 行的表就有 40 多张 —— 24 条会让用户
+         * 每滚一屏都把前面的图丢掉重解（"滚回去又白一下"），而 64 条 × 0.6 MB 仍然远低于
+         * 32 MiB。真正吃内存的大图由那条字节上限管，条数只该管"小图能留几张"。
          */
-        private const val MAX_ENTRIES = 24
+        private const val MAX_ENTRIES = 64
         private const val MAX_TOTAL_BYTES = 32L * 1024 * 1024
+
+        /**
+         * [aspectRatios] 的条数上限。它只是一个"第一帧别猜错比例"的记忆，不需要与位图
+         * 缓存一一对应（位图被淘汰后这条记忆留着仍然是对的：比例是 URL 的性质）。
+         */
+        private const val MAX_ASPECT_ENTRIES = 128
+
+        /**
+         * 图片自身的 **高 / 宽** 比，按 link 记，进程级、有界。
+         *
+         * 为什么需要它：单元格的占位框在**第一帧**就要一个高度，而那时位图还没解出来
+         * （`imageSizeByLink` 只在 `MarkdownInlineImageWithSize` 的 `SideEffect` 里、
+         * 也就是至少一帧之后才有）。不知道比例的兜底是正方形，于是每一格都会先撑成
+         * 正方形、再收缩到真实比例 —— 一张 40 多行的表就是 40 多次行高变化，用户看到的
+         * 是「表格先抖一下」。有了这份记忆，第二次渲染（滚动回来看、重进对话）第一帧就是
+         * 对的框。写进去的是**解码后位图**的宽高比：采样是两轴同一个 `inSampleSize`
+         * （`decode` 的两个循环都同时改 width/height），所以比例除了一点舍入之外不变。
+         */
+        private val aspectRatios = object : LinkedHashMap<String, Float>(16, 0.75f, true) {
+            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Float>): Boolean =
+                size > MAX_ASPECT_ENTRIES
+        }
+
+        /** [aspectRatios] 的读；没记过就返回 `null`（调用方给正方形的兜底）。 */
+        private fun rememberAspect(link: String): Float? = synchronized(aspectRatios) { aspectRatios[link] }
+
+        /** [aspectRatios] 的写。见那份记忆的注释：只在**成功解码之后**写。 */
+        private fun recordAspect(link: String, bitmap: Bitmap) {
+            if (bitmap.width <= 0 || bitmap.height <= 0) return
+            val aspect = bitmap.height.toFloat() / bitmap.width.toFloat()
+            synchronized(aspectRatios) { aspectRatios[link] = aspect }
+        }
 
         /**
          * 面积预算：解出来的位图面积最多是目标框的几倍。4 与
@@ -267,7 +371,7 @@ internal class PiGuestImageTransformer(private val context: Context) : ImageTran
          * 同时显示同一张图，都是这个形状）。把实例状态放在这里也是同一个理由 —— 位图缓存
          * 本来就是进程级的。
          *
-         * 默认参数就是生产值（45 s 负缓存 / 60 s 兜底预算 / 64 条负缓存 / `Dispatchers.IO`），
+         * 默认参数就是生产值（45 s 负缓存 / 300 s 兜底预算 / 64 条负缓存 / `Dispatchers.IO`），
          * 全部理由在 [PiImageRequestPolicy] 的 KDoc 里。
          */
         private val requestPolicy = PiImageRequestPolicy<PiImageRequestKey, Bitmap>()
@@ -300,6 +404,9 @@ internal class PiGuestImageTransformer(private val context: Context) : ImageTran
          * 位图缓存仍然是唯一存像素的地方，不新增第二份。
          */
         private fun store(key: PiImageRequestKey, bitmap: Bitmap) {
+            // 比例的记忆先写：它在缓存锁之外，而且"这张图是什么比例"与"位图还被不被缓存
+            // 留着"是两件事（见 [aspectRatios]）。
+            recordAspect(key.link, bitmap)
             synchronized(cache) {
                 cache[key] = bitmap
                 var total = cache.values.sumOf { it.allocationByteCount.toLong() }
@@ -326,4 +433,19 @@ internal class PiGuestImageTransformer(private val context: Context) : ImageTran
 internal fun rememberPiGuestImageTransformer(): ImageTransformer {
     val context = LocalContext.current.applicationContext
     return remember(context) { PiGuestImageTransformer(context) }
+}
+
+/**
+ * 表格单元格那一个：与上面**同一个类**、只是把目标框宽度钉成 [widthPx]（单元格内容宽）。
+ *
+ * 两个实例共用一切进程级状态（[PiGuestImageTransformer] companion 里的位图缓存、比例记忆、
+ * 请求策略），所以"表格里按 396 px 解、正文里按 1080 px 解"是**两份位图**（缓存键里带宽度，
+ * 这是对的：缩放后的像素不是同一份），而"同一张图取两次字节"不会发生。
+ *
+ * `remember(context, widthPx)`：旋转、分屏、字号变化都可能改这个数，键里必须带着它。
+ */
+@Composable
+internal fun rememberPiGuestImageTransformer(widthPx: Int): ImageTransformer {
+    val context = LocalContext.current.applicationContext
+    return remember(context, widthPx) { PiGuestImageTransformer(context, widthPx) }
 }

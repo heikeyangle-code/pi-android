@@ -14,7 +14,7 @@ import kotlinx.coroutines.withContext
  * [GuestImageBytes.load] 就是渲染那张图时用的同一个入口：`data:` 就地解码、`file:`/裸路径
  * 走 guest→host 映射、`http(s)` 命中 `<files>/pi/image-cache/` 的有界磁盘缓存，未命中才
  * 出网。出网那一段的每一个数字都**没有动**：3 个取字节许可（`MAX_CONCURRENT_REMOTE_FETCHES`）、
- * 8 MiB 单张上限（`MAX_BYTES`）、5 s 连接 / 5 s 读 / 15 s 总预算、64 MiB 磁盘 LRU
+ * 8 MiB 单张上限（`MAX_BYTES`）、5 s 连接 / 5 s 读 / 45 s 总预算、64 MiB 磁盘 LRU
  * （`bridge/GuestImageBytes.kt:237-265`）。这次改动**没有**新增任何网络代码，也没有第二份
  * 缓存 —— 点一次图只是把已经画出来的那张图的字节再取一次，而它已经在磁盘缓存里。
  *

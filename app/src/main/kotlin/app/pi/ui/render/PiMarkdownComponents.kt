@@ -15,6 +15,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -25,6 +26,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
@@ -35,6 +37,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import app.pi.bridge.rememberPiGuestImageTransformer
 import app.pi.highlight.PiNodeCodeHighlighter
 import app.pi.highlight.PiNodeMermaidRenderer
 import app.pi.rpc.PiImage
@@ -46,6 +49,8 @@ import app.pi.settings.readString
 import app.pi.ui.theme.PiPalette
 import app.pi.ui.theme.PiTheme
 import java.io.File
+import com.mikepenz.markdown.compose.LocalImageTransformer
+import com.mikepenz.markdown.compose.LocalMarkdownDimens
 import com.mikepenz.markdown.compose.LocalReferenceLinkHandler
 import com.mikepenz.markdown.compose.components.MarkdownComponentModel
 import com.mikepenz.markdown.compose.components.MarkdownComponents
@@ -449,7 +454,7 @@ private fun PiInlineImage(model: MarkdownComponentModel) {
  *
  * ## 为什么整段异步
  *
- * 取字节最坏是一次磁盘读或一次出网（`bridge/GuestImageBytes.kt` 的 5/5/15 s）；点按那一帧
+ * 取字节最坏是一次磁盘读或一次出网（`bridge/GuestImageBytes.kt` 的 5/5/45 s）；点按那一帧
  * 不能等它。所以 `clickable` 只起一个协程，字节到手之后再调回调。
  *
  * 回调拿到的是**已经读出来的字节**，不是 link：查看器要的就是
@@ -592,20 +597,55 @@ private fun PiImageFallback(
  * 接管——和代码块一样（`PiCodeSurface` 对 200 行的围栏也没有高度上限）。加一个
  * `heightIn(max = …)` + 内部 `verticalScroll` 会把超限的行藏进一个要用户自己发现的内层
  * 滚动条里，那正是这次报的「显示不全」换了个方向。
+ *
+ * ## 第三个理由：格子里的图（后加）
+ *
+ * 库里"一格里的 `![]()`"走的是**行内**图片那条路（`MarkdownTableBasicText` 读库自己的
+ * `LocalImageTransformer`，`MarkdownTable.kt:218-267`），而这条路的两个尺寸都由**容器**决定：
+ * 解码宽度取自窗口（与格子无关 → 一张 6×44 的表要解 40 多张 1080 px 的位图，约 50 MB，
+ * 远超 32 MiB 位图缓存），占位框的高还取自"这一格自己的高度"（于是框与行高互相追）。
+ * `PiTable` 因此在这里换一个**按单元格内容宽构造成**的 transformer 实例 —— 机制、算术与
+ * 价钱在 `bridge/PiGuestImageTransformer.kt` 的类注释里，那条也是这次「滑动卡」的修复。
  */
 @Composable
 private fun PiTable(model: MarkdownComponentModel) {
-    MarkdownTable(
-        content = model.content,
-        node = model.node,
-        style = model.typography.table,
-        headerBlock = { content, header, tableWidth, style ->
-            MarkdownTableHeader(content, header, tableWidth, style, maxLines = TABLE_MAX_LINES)
-        },
-        rowBlock = { content, row, tableWidth, style ->
-            MarkdownTableRow(content, row, tableWidth, style, maxLines = TABLE_MAX_LINES)
-        },
-    )
+    val dimens = LocalMarkdownDimens.current
+    val density = LocalDensity.current
+    // 单元格**内容**宽 = 列宽 − 两侧内边距。这个数与横向滚动状态无关：
+    // `MarkdownTableHeader`/`MarkdownTableRow` 的行是 `Modifier.widthIn(tableWidth)`，
+    // 每格是 `Modifier.padding(tableCellPadding).weight(1f)`（库 0.45.0
+    // `compose/elements/MarkdownTable.kt:136`、`:141`、`:178`、`:182`），所以格子宽度
+    // 恒等于 `tableCellWidth/列数 × 列数` —— 也就是 `tableCellWidth`。正文那份
+    // `LocalMarkdownDimens` 只在这里读一次，`tableCellPadding` 是本 App 覆盖过的值
+    // （8 dp，v2 的 `padding:6px 8px`，见 `PiMarkdownTheme.kt`）。
+    val cellWidthPx = with(density) {
+        (dimens.tableCellWidth - dimens.tableCellPadding * 2).roundToPx()
+    }.coerceAtLeast(1)
+    // 表格里换一个**同一个类**的 transformer 实例：它把"画多宽"钉成上面这个数，
+    // 于是 (a) 缩略图按单元格宽解码（不是窗口的 1080 px），(b) 占位框只由宽度决定
+    // （不再是"容器高度 = 这一格自己"那个反馈环）。两个理由都在
+    // `bridge/PiGuestImageTransformer.kt` 的类注释里，连同代价。
+    val transformer = rememberPiGuestImageTransformer(cellWidthPx)
+    CompositionLocalProvider(
+        // 库的 `MarkdownTableBasicText` 直接读库自己的 `LocalImageTransformer`
+        // （`MarkdownTable.kt:232`），单元格里的 `![]()` 因此按上面那个框画；
+        // 我们自己的 `LocalPiImageTransformer` 也一起换，两个读它的槽
+        // （`PiImagePlaceholder` / `PiInlineImage`）才不会与库看到两份答案。
+        LocalImageTransformer provides transformer,
+        LocalPiImageTransformer provides transformer,
+    ) {
+        MarkdownTable(
+            content = model.content,
+            node = model.node,
+            style = model.typography.table,
+            headerBlock = { content, header, tableWidth, style ->
+                MarkdownTableHeader(content, header, tableWidth, style, maxLines = TABLE_MAX_LINES)
+            },
+            rowBlock = { content, row, tableWidth, style ->
+                MarkdownTableRow(content, row, tableWidth, style, maxLines = TABLE_MAX_LINES)
+            },
+        )
+    }
 }
 
 /**

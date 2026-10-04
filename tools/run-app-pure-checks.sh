@@ -979,12 +979,27 @@ run_harness latex \
 # 一直只接在工具栏/用户气泡那张 `ImageGridBlock` 上 —— 所以正文 markdown 画的图（本地与远端
 # 都一样）以前点了没反应。这个 harness 钉住三件事：交给查看器的**身份**（base64 逐字节、单行、
 # 标准字母表，关掉再打开要能命中缓存）、**没有第二条取字节的路**（只走 `GuestImageBytes.load`），
-# 以及那条路上的数字一个都没动（3 许可 / 8 MiB / 5·5·15 s / 64 MiB LRU / 45 s 负缓存）。
+# 以及那条路上的数字（3 许可 / 8 MiB / 5·5·45 s / 64 MiB LRU / 45 s 负缓存 / 300 s 兜底预算
+# —— 其中两个数在"全链路图片"那一轮改过，各自写着理由，见该 harness 的 D4/D9）。
 run_harness markdown-image-tap \
   app.pi.ui.render.PiMarkdownImageTapCheckKt \
   "$ROOT/app/src/test/kotlin/app/pi/ui/render/PiMarkdownImageTapCheck.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/ui/render/PiMarkdownImageTap.kt" \
   "$ROOT/rpc/src/main/kotlin/app/pi/rpc/Commands.kt"
+
+# app.pi.ui.render: 裸图片 URL → `![](...)` 的改写规则。用户报的是「表格里那种也能优雅地渲染
+# 出来」——同一个 URL，写成 `![]()` 就出图、写成裸链接就只有一行蓝字（模型两种写法都会用，
+# 表格的"直链"列更是只有 URL）。改写在**解析之前**换掉源文本，所以"哪些行能动"就是"用户的
+# 文字会不会被吃掉"：这一项逐条钉住不改的那些（围栏/行内代码/缩进代码/还带着别的文字的行/
+# 括号不成对/表格分隔行/转义的 `|`），以及唯一会改的那条（整行或整格就是一个白名单后缀的
+# URL，成对括号逐对转义），外加"除改写段之外逐字节相同"与幂等。解析器那一侧的事实（哪种
+# 写法真的解析成 `IMAGE`、`LINK_DESTINATION` 里到底是什么）在本机装不上
+# `org.jetbrains:markdown`，用同一个 pin 的解析器实跑过 AST，结论记在 `PiImageLinks.kt` 的类
+# 注释里。Android-free。
+run_harness image-links \
+  app.pi.ui.render.PiImageLinksCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/ui/render/PiImageLinksCheck.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/ui/render/PiImageLinks.kt"
 
 # app.pi.runtime: 客机的时钟。`18817a7` 把 `TZDIR` 指到 Android 那份 zoneinfo（只有打包的
 # `tzdata`、没有按区文件），glibc 的相对名查找是 `getenv("TZDIR") + "/" + name` 一次 `fopen`，

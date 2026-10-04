@@ -199,14 +199,21 @@ fun main() {
         }
     }
 
-    // ------------------------------------ 4. 那条路上的数字这次一个都不许动（源码文本）
+    // ------------------------------------ 4. 那条路上的数字（源码文本）
+    //
+    // 这一段原来的标题是「这次一个都不许动」。**两个数后来确实动了**，各有算得出来的理由
+    // （下面 D4/D9 各自写着），所以这里改成"钉住当前值"：动这两个数必须同时改这一行，
+    // 也就是必须在这里写下一句为什么。其余的数字与结构仍然是"不许动"。
     run {
         val bytes = "app/src/main/kotlin/app/pi/bridge/GuestImageBytes.kt"
         source(bytes, "D1")?.let { text ->
             check("D1 单张上限还是 8 MiB", text.contains("MAX_BYTES = 8 * 1024 * 1024"), true)
             check("D2 连接超时还是 5 s", text.contains("CONNECT_TIMEOUT_MS = 5_000"), true)
             check("D3 读超时还是 5 s", text.contains("READ_TIMEOUT_MS = 5_000"), true)
-            check("D4 总预算还是 15 s", text.contains("TOTAL_TIMEOUT_MS = 15_000L"), true)
+            // D4：15 s → 45 s。用户截图里那批 Wikimedia 图实测 45 KB–540 KB，而状态栏是
+            // 4–18 KB/s，15 s 最多到 270 KB —— 大图在旧预算下**必然**失败，这正是他报的
+            // 「有的成功、有的不成功」。
+            check("D4 总预算 45 s（15 s 装不下那批量级的图）", text.contains("TOTAL_TIMEOUT_MS = 45_000L"), true)
             check("D5 磁盘缓存还是 64 MiB", text.contains("MAX_DISK_BYTES = 64L * 1024 * 1024"), true)
             check(
                 "D6 取字节闸门还是 3 个许可",
@@ -223,8 +230,19 @@ fun main() {
         val policy = "app/src/main/kotlin/app/pi/bridge/PiImageRequestPolicy.kt"
         source(policy, "D8")?.let { text ->
             check("D8 失败负缓存还是 45 s", text.contains("PI_IMAGE_NEGATIVE_TTL_MS: Long = 45_000L"), true)
-            check("D9 生产者兜底预算还是 60 s", text.contains("PI_IMAGE_PRODUCER_BUDGET_MS: Long = 60_000L"), true)
+            // D9：60 s → 300 s。那个计时从生产者**启动**开始，而生产者可能排在取字节闸门
+            // 后面（3 个许可，40 张图 = 4 轮），排队时间被算成"加载超时"，于是一张正常的图
+            // 被记成失败 —— 用户报的「表格的图渲染出来了，一会再进对话又没了」。
+            check("D9 生产者兜底预算 300 s（排队不该算成超时）", text.contains("PI_IMAGE_PRODUCER_BUDGET_MS: Long = 300_000L"), true)
+            // D9b：与之配对的一半 —— 超预算**不写负缓存**，否则一次"没轮到我"会换来
+            // 45 s 的空白，而那 45 s 之后重试又会排到队尾。
+            check(
+                "D9b 超预算不写负缓存",
+                text.contains("cause != null && cause !is PiImageProducerTimeout"),
+                true,
+            )
         }
+
 
         val transformer = "app/src/main/kotlin/app/pi/bridge/PiGuestImageTransformer.kt"
         source(transformer, "D10")?.let { text ->
