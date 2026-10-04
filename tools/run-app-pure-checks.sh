@@ -987,19 +987,9 @@ run_harness markdown-image-tap \
   "$ROOT/app/src/main/kotlin/app/pi/ui/render/PiMarkdownImageTap.kt" \
   "$ROOT/rpc/src/main/kotlin/app/pi/rpc/Commands.kt"
 
-# app.pi.ui.render: 裸图片 URL → `![](...)` 的改写规则。用户报的是「表格里那种也能优雅地渲染
-# 出来」——同一个 URL，写成 `![]()` 就出图、写成裸链接就只有一行蓝字（模型两种写法都会用，
-# 表格的"直链"列更是只有 URL）。改写在**解析之前**换掉源文本，所以"哪些行能动"就是"用户的
-# 文字会不会被吃掉"：这一项逐条钉住不改的那些（围栏/行内代码/缩进代码/还带着别的文字的行/
-# 括号不成对/表格分隔行/转义的 `|`），以及唯一会改的那条（整行或整格就是一个白名单后缀的
-# URL，成对括号逐对转义），外加"除改写段之外逐字节相同"与幂等。解析器那一侧的事实（哪种
-# 写法真的解析成 `IMAGE`、`LINK_DESTINATION` 里到底是什么）在本机装不上
-# `org.jetbrains:markdown`，用同一个 pin 的解析器实跑过 AST，结论记在 `PiImageLinks.kt` 的类
-# 注释里。Android-free。
-run_harness image-links \
-  app.pi.ui.render.PiImageLinksCheckKt \
-  "$ROOT/app/src/test/kotlin/app/pi/ui/render/PiImageLinksCheck.kt" \
-  "$ROOT/app/src/main/kotlin/app/pi/ui/render/PiImageLinks.kt"
+# （这里曾经有一项 `image-links`，验的是"裸图片 URL → `![](...)`"的改写规则。用户裁定撤销：
+# `![]()` 才是图、链接就是链接，所以那个模块与这一项一起删掉了，见
+# `docs/known-gaps.md` §A3 的 R2 末条。不要在没有新裁定的情况下加回来。）
 
 # app.pi.runtime: 客机的时钟。`18817a7` 把 `TZDIR` 指到 Android 那份 zoneinfo（只有打包的
 # `tzdata`、没有按区文件），glibc 的相对名查找是 `getenv("TZDIR") + "/" + name` 一次 `fopen`，
