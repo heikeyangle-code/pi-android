@@ -1,31 +1,30 @@
 package app.pi.session
 
-// 会话列表的**身份**判据：一段对话只有一行。注册在
-// `tools/run-app-pure-checks.sh` 的 `session-identity`。
+// 会话列表的**身份**判据。注册在 `tools/run-app-pure-checks.sh` 的 `session-identity`。
 //
 // 为什么必须钉住：`PiSessionStore.list()` 分别遍历 pi 的两个布局（引擎平铺写的
 // `sessions/<ISO>_<id>.jsonl`、pi 默认的 `sessions/--<cwd>--/<ISO>_<id>.jsonl`），而**同一个
-// 会话可以在两边各留一份** —— 组目录里的副本是某个时刻的快照，`/import` 的拷贝更是只换名字、
-// 不改 header（`PiSessionViewModel.prepareImport`，工作树 `:4738-4750`），于是两份带同一个 `id`。旧 `list()` 把两个
-// 布局的文件都直接塞进结果里，所以一段对话会变成两行（用户报的「就那么一个对话……出现了好几个
-// 版本，就像被切开一样」）。本文件的前四组夹具就是那个形状；下面的检查要求这些夹具只产出
-// **5 行**，而旧实现会产出 **8 行**（每个文件一行）。
+// 会话可以在磁盘上留一份以上** —— 组目录里的快照、`/import` 拷进来的副本（`prepareImport` 只换
+// 名字、不改 header），以及 pi 在 id 查找漏掉时**用同一个 id 新建**的那一份。
 //
-// 三件不能靠读代码保证的事，也是这个 harness 真正钉的东西：
+// 列表的规则不是「同一个 id 只留一行」，而是**「一份的字节是另一份的前缀才合并」**
+// （`PiSessionStore.mergeSameIdRow`）：
 //
-//  1. **去重的键是会话身份，不是显示名。** `Summary.id`（header 的 `id`，也是文件名里
-//     `_<id>` 那一段）。两个真正不同的会话可以有同一个标题（用户两轮都只打「继续」）—— 那是
-//     两段对话，必须留两行。按标题去重会把其中一段**藏起来**，比重复更糟。
-//  2. **留下哪一份是一个全序**（`PiSessionStore.laterSessionRow`）：内容更新的先赢，并列时
-//     平铺的那份赢，再并列才比 mtime，最后按路径定序。夹具故意把 mtime 与被选中的那份**相反**
-//     （平铺原件 mtime 更新、内容更旧；组目录副本 mtime 更旧、内容更新），所以「按 mtime 选」或
-//     「按布局选」这两种更简单的实现都会红。
-//  3. **`limit` 数的是会话。** 去重若发生在截断之后，一份副本就会占掉一行、把一段真实对话挤出
-//     屏幕；夹具里 8 个文件、5 段对话，`limit = 4` 必须给出最旧的那段之外的四段。
+//  1. **互为前缀（逐字节相同）** ⇒ 一行，按 `laterSessionRow` 的全序挑一份（第 2 组夹具；夹具把
+//     mtime 与正确答案**反过来**，所以「按 mtime 选」会红）。
+//  2. **一份是另一份的前缀且更短** ⇒ 一行，留**长的那份**（第 1、3 组夹具：快照只能是活文件的前缀，
+//     因为追加只在文件末尾长出来）—— 「相等才算重复」的更简单实现会在这里红。
+//  3. **不互为前缀** ⇒ **两行都留**（第 3b 组夹具）：这是**一段对话的两个半截**，任何「只留一行」
+//     的规则都必然藏掉用户的一半（「重装完只剩后面这一半截」）。官方 pi 在这里也是一个 `.jsonl`
+//     一行、完全不按 id 去重（`core/session-manager.ts:941-967`）。
+//  4. **分组的键仍然只是身份**：两个真正不同的会话可以有同一个标题（用户两轮都只打「继续」）——
+//     那是两段对话，必须留两行（第 4 组夹具）。按标题去重会把其中一段**藏起来**，比重复更糟。
+//  5. **`limit` 数的是行**（= 一段对话一行，真的劈开的那一段是两行）：去重若发生在截断之后，
+//     一份快照就会占掉一行、把一段真实对话挤出屏幕（第 5 组）。
 //
-// 以及一件**反向**的事（第 7 节）：磁盘上真的分成几段的对话（每次引擎启动新开一个会话文件，
-// 几个不同的 `id`、标题各不相同）**不是**重复行，去重不许把它们合并 —— 那一节要求三行都在，
-// 标题各自取自自己文件里的第一条 user 消息。
+// 以及两件**反向**的事：第 7 节要求「几个不同 `id` 的段落」各行都在（去重不许按标题合并），
+// 第 8 节直接钉住那条前缀判据本身（含「等长但不同字节 ⇒ 不合并」和「读不出来 ⇒ 不合并」这两个
+// 边界）。
 //
 // Android-free by construction：只用 stdlib、`java.io.File`、kotlinx.serialization（经 `:rpc` 的
 // `PiJson`）与 kotlinx.coroutines。`PiSessionStore` 如果长出 Android import，这里就编译不过。
@@ -128,24 +127,53 @@ fun main() {
 
     // ------------------------------- 3. 平铺层里的 `/import` 拷贝（同 id、不同文件名）
     // `PiSessionViewModel.prepareImport` 只挑一个没被占用的名字，**改的是文件名不是 header**，
-    // 所以副本带着与原件相同的 `id`。副本是更早的快照（一条消息），但 mtime 更晚。
+    // 所以副本带着与原件相同的 `id`。它是**逐字节**的拷贝（`importFromJsonl` 就是原样拷，
+    // `dist/core/agent-session-runtime.ts:359-413`），之后原件继续追加 ⇒ **副本是原件的前缀**。
+    // 夹具直接把头部那两行拿来共用，免得「这是一份拷贝」变成靠巧合成立。副本的 mtime 更晚 ——
+    // 这正是「别拿 mtime 决定」的那一条。
+    val importedHead = listOf(
+        header("imported", "2026-03-01T00:00:00.000Z"),
+        message("i1", null, "2026-03-01T00:00:01.000Z", "user", "导入过的那段对话", mid + 3_000),
+    )
     val importedOriginal = sessionFile(
         root,
         "2026-03-01T00-00-00-000Z_imported.jsonl",
-        listOf(
-            header("imported", "2026-03-01T00:00:00.000Z"),
-            message("i1", null, "2026-03-01T00:00:01.000Z", "user", "导入过的那段对话", mid + 3_000),
-            message("i2", "i1", "2026-03-01T00:00:02.000Z", "assistant", "原件更长", mid + 3_001),
-        ),
+        importedHead + message("i2", "i1", "2026-03-01T00:00:02.000Z", "assistant", "原件更长", mid + 3_001),
         mtime = old,
     )
-    val importedCopy = sessionFile(
+    val importedCopy = sessionFile(root, "imported-1.jsonl", importedHead, mtime = new)
+
+    // ------------------------ 3b. **真被劈开的那一段**：同 id、互不为前缀 ⇒ 两行都在
+    // pi 的 `--session-id` 在 `findById` 漏掉时（id ∧ header 的 `cwd` 等于引擎进程的 cwd ∧
+    // 文件是 `--session-dir` 那一层的直接子文件，三条里漏一条）会用**同一个 id 新建**一个文件
+    // （`dist/main.js:344-351`、`dist/core/session-manager.js:1421-1441`），此后每条消息都写进
+    // 那个新文件。于是原件是**前半段**、孪生文件是**后半段**，两份之间没有任何重叠，而且孪生文件的
+    // header 是**另一次**创建的（时间戳不同）—— 所以它们从第一块字节起就不同。
+    //
+    // 这不是「同一段对话在磁盘上留了两份」，是「一段对话被切成了两半」，所以**两行都要在**：
+    // 只留一行必然藏掉用户的一半（留新的就丢了开头，留旧的就丢了最近说的），而用户报的正是
+    // 「重装完只剩后面这一半截、名字也改成半截开头的名字」。两行的名字各自取自自己文件里的第一条
+    // user 消息 —— 这正是用户看到的那个「名字变成半截开头那条」。
+    val splitFirstLines = listOf(
+        header("split", "2026-08-01T00:00:00.000Z"),
+        message("p1", null, "2026-08-01T00:00:01.000Z", "user", "前半截的第一句", mid + 8_000),
+        message("p2", "p1", "2026-08-01T00:00:02.000Z", "assistant", "前半截的回答", mid + 8_001),
+    )
+    val splitSecondLines = listOf(
+        header("split", "2026-09-01T00:00:00.000Z"),
+        message("q1", null, "2026-09-01T00:00:01.000Z", "user", "重启后接着说的第一句", mid + 9_000),
+        message("q2", "q1", "2026-09-01T00:00:02.000Z", "assistant", "后半截的回答", mid + 9_001),
+    )
+    val splitFirstHalf = sessionFile(
         root,
-        "imported-1.jsonl",
-        listOf(
-            header("imported", "2026-03-01T00:00:00.000Z"),
-            message("i1", null, "2026-03-01T00:00:01.000Z", "user", "导入过的那段对话", mid + 500),
-        ),
+        "2026-08-01T00-00-00-000Z_split.jsonl",
+        splitFirstLines,
+        mtime = old,
+    )
+    val splitSecondHalf = sessionFile(
+        root,
+        "2026-09-01T00-00-00-000Z_split.jsonl",
+        splitSecondLines,
         mtime = new,
     )
 
@@ -175,17 +203,25 @@ fun main() {
     kotlinx.coroutines.runBlocking {
         val rows = store.list()
 
-        // 8 个会话文件（flatTwolayout / groupTwolayout / flatTie / groupTie / importedOriginal /
-        // importedCopy / sameTitleA / sameTitleB = 8 个文件、5 段对话），旧实现每个文件一行。
-        check("8 个文件、5 段对话 → 只有 5 行", rows.size, 5)
+        // 10 个会话文件（flatTwolayout / groupTwolayout / flatTie / groupTie / importedOriginal /
+        // importedCopy / splitFirstHalf / splitSecondHalf / sameTitleA / sameTitleB），7 行 ——
+        // 旧实现（每个文件一行）会给出 10 行，「同 id 只留一行」的实现会给出 6 行（把劈开的那段
+        // 藏掉一半）。
+        check("10 个文件 → 7 行（两对前缀合并、一对真劈开的两行都在）", rows.size, 7)
         check(
-            "每一行的会话身份互不相同",
-            rows.map { it.id }.distinct().size,
+            "除了真劈开的那一段，每一行的会话身份互不相同",
+            rows.filter { it.id != "split" }.map { it.id }.distinct().size,
+            rows.count { it.id != "split" },
+        )
+        check(
+            "每一行指向的文件互不相同（同 id 的两行也是两个文件）",
+            rows.map { it.file.absolutePath }.distinct().size,
             rows.size,
         )
         check("每一行的文件都真的存在", rows.all { it.file.isFile }, true)
 
-        // 1. 跨布局的重复：留下内容更长的那份，不是 mtime 更新、也不是「平铺优先」的那份。
+        // 1. 跨布局的重复：两份是**前缀**关系（组目录那份更长），留下长的那份 —— 不是 mtime 更新
+        // 的那份，也不是「平铺优先」的那份。
         val twolayout = rows.first { it.id == "twolayout" }
         check("跨布局的同一个会话只留一行", rows.count { it.id == "twolayout" }, 1)
         check(
@@ -195,7 +231,7 @@ fun main() {
         )
         check("它的消息数就是那份更长副本的", twolayout.messageCount, 4)
 
-        // 2. 内容并列：平铺的那份赢，即使副本的 mtime 更新。
+        // 2. 内容并列（逐字节相同）：平铺的那份赢，即使副本的 mtime 更新。
         val tie = rows.first { it.id == "tie" }
         check("字节相同、mtime 不同的两份也只留一行", rows.count { it.id == "tie" }, 1)
         check(
@@ -204,12 +240,26 @@ fun main() {
             flatTie.absolutePath,
         )
 
-        // 3. 平铺层里的 `/import` 拷贝：同 id、不同文件名，一样只留一行。
+        // 3. 平铺层里的 `/import` 拷贝：同 id、不同文件名，是原件的**前缀** ⇒ 只留一行，留原件。
         check("`/import` 的拷贝也只留一行", rows.count { it.id == "imported" }, 1)
         check(
             "留下的是内容更全的原件",
             rows.first { it.id == "imported" }.file.absolutePath,
             importedOriginal.absolutePath,
+        )
+
+        // 3b. **真被劈开的那一段**：同 id、互不为前缀 ⇒ 两行都在，名字各取自己文件的第一条
+        // user 消息。（这正是用户看到的形状：列表里多出一条以「半截开头那句」命名的对话。）
+        check("真劈开的两半 → 两行（谁也不许藏掉谁）", rows.count { it.id == "split" }, 2)
+        check(
+            "两行指向的是劈开的那两个文件",
+            rows.filter { it.id == "split" }.map { it.file.absolutePath }.sorted(),
+            listOf(splitFirstHalf.absolutePath, splitSecondHalf.absolutePath).sorted(),
+        )
+        check(
+            "两行的名字各取自己文件里的第一条 user 消息",
+            rows.filter { it.id == "split" }.map { it.displayName }.sorted(),
+            listOf("前半截的第一句", "重启后接着说的第一句").sorted(),
         )
 
         // 4. 去重不许看显示名：两段不同的对话共用标题时，两行都要在。
@@ -225,47 +275,60 @@ fun main() {
             listOf(sameTitleA.absolutePath, sameTitleB.absolutePath).sorted(),
         )
 
-        // 5. `limit` 数的是**会话**：5 段对话，limit=5 就是 5 行；limit=4 去掉的是活动最旧的
-        // 那段对话（same-title-b），不是被某份副本占掉一行。
-        check("limit 数会话：5 段对话 → limit=5 给 5 行", store.list(limit = 5).size, 5)
+        // 5. `limit` 数的是**行**（一段对话一行，真劈开的那一段是两行）：7 行，limit=7 就是 7 行；
+        // limit=6 去掉的是活动最旧的那一行（same-title-b），而不是让某份快照占掉一个位置。
+        check("limit 数行：7 行 → limit=7 给 7 行", store.list(limit = 7).size, 7)
         check(
-            "limit=4 去掉的是最旧的那段对话，不是副本占位",
-            store.list(limit = 4).map { it.id }.sorted(),
-            listOf("imported", "same-title-a", "tie", "twolayout").sorted(),
+            "limit=6 去掉的是活动最旧的那一行，不是快照占位",
+            store.list(limit = 6).map { it.title }.sorted(),
+            listOf("两种布局里的同一个会话", "并列的两份", "导入过的那段对话", "前半截的第一句", "重启后接着说的第一句", "继续")
+                .sorted(),
         )
         check(
-            "limit 之后每一行仍然是不同的会话",
-            store.list(limit = 4).map { it.id }.distinct().size,
-            4,
+            "limit 之后那一段劈开的对话仍然是两行（劈开本身不许被截断掉一半）",
+            store.list(limit = 6).count { it.id == "split" },
+            2,
         )
 
-        // 6. 去重只是**读数**：一个文件都没有被删、也没有被改。
+        // 6. 合并/并列都只是**读数**：一个文件都没有被删、也没有被改。
         check(
-            "被折叠掉的那几份仍然在磁盘上（store 不删文件）",
-            listOf(flatTwolayout.exists(), groupTie.exists(), importedCopy.exists(), sameTitleB.exists()),
-            listOf(true, true, true, true),
+            "被合并掉的那几份、以及劈开的两半，都仍然在磁盘上（store 不删文件）",
+            listOf(
+                flatTwolayout.exists(),
+                groupTie.exists(),
+                importedCopy.exists(),
+                splitFirstHalf.exists(),
+                splitSecondHalf.exists(),
+                sameTitleB.exists(),
+            ),
+            listOf(true, true, true, true, true, true),
         )
         check(
-            "被折叠掉的那几份内容没被动过",
+            "被合并掉的那几份内容没被动过",
             groupTie.readText(),
             tieLines.joinToString("\n") + "\n",
+        )
+        check(
+            "劈开的两半内容也没被动过",
+            listOf(splitFirstHalf.readText(), splitSecondHalf.readText()),
+            listOf(
+                splitFirstLines.joinToString("\n") + "\n",
+                splitSecondLines.joinToString("\n") + "\n",
+            ),
         )
     }
 
     // ------------------- 7. **另一回事**：真的分成几段的对话，不许被去重合并掉
     //
-    // 上面全部是「同一段对话在磁盘上留了两份」。用户报的症状还有第二种磁盘形状，它**不是**重复
-    // 行：引擎每次启动都新开一个 pi 会话（guest argv 固定为 `--session-dir <agentDir>/sessions`，
-    // 没有 `-c`/`--session`，`PiEngineHost.kt:592-596`；「接着上次」是 attach 之后发的一条
-    // `switch_session`，由默认关闭的设置 `app.sessions.resumeLast` 守着
-    // （`PiSessionViewModel.maybeResumeLastSession`，工作树 `:2517-2520`；
-    // `PiSettingsRegistry.kt:846`）。所以一段不断继续的对话会在磁盘上留下**几个不同的会话**
-    // （几个不同的 `id`），每个文件的第一条 user 消息就是它自己的标题 —— 用户看到的
-    // 「一个对话被切成几段、标题还各不相同」正是这个形状。
+    // 第 3b 组的劈开是「同一个 `id`、两份文件」，这一节是「**几个不同的 `id`**」：一段不断继续的
+    // 对话在早期版本的 App 里会在磁盘上留下几个不同的会话（每次引擎启动都新开一个，几个不同的
+    // `id`、标题各不相同）。这两形状都必须**如实分行**，而且谁都不许靠标题合并。
+    // （今天引擎已经由 argv 钉住同一段对话 —— `--session-id`，或在 pi 的 `findById` 找不到它时
+    // 换成 `--session <path>`，见 `restartEngine` / `SessionResume.kt` —— 所以第 3b 组那种「同一个
+    // `id` 的两个半截」才是当前会出现的形状；这一节的形状仍要如实显示：老会话还在硬盘上。）
     //
-    // 这一节钉住的是「store 在这种形状下说的是实话，而且去重不许碰它」：同一 `id` 才是同一段
-    // 对话（上面的夹具），不同 `id` 是两段对话，血缘由 pi 自己的 `parentSession` 字段表达，
-    // 不是靠标题猜。谁要是把去重做成「标题相同就合并」，这几行会红。
+    // 这一节钉住的是「store 说的是实话，而且合并判据不许看标题」：血缘由 pi 自己的 `parentSession`
+    // 字段表达，不是靠标题猜。谁要是把合并做成「标题相同就合并」，这几行会红。
     val segmentRoot = java.io.File(root.parentFile, "pi-session-segments-${System.nanoTime()}")
     segmentRoot.mkdirs()
     val segmentStore = PiSessionStore(segmentRoot)
@@ -302,6 +365,54 @@ fun main() {
         check("三个文件一个都没被折叠掉", segments.all { it.isFile }, true)
     }
     segmentRoot.deleteRecursively()
+
+    // ------------------- 8. 那条前缀判据本身（含两个边界）
+    //
+    // 列表的合并规则全压在 `prefixRelationOf` 上，所以直接把它按四个答案各测一遍 —— 这一节不碰
+    // `list()`，因此它红了就说明是判据本身，而不是分组的接线。第三个夹具**等长但内容不同**：
+    // 这一格是「相等 / 前缀」两种实现唯一会给出不同答案的地方（等长时前缀只可能是相等），
+    // 所以它必须回答 Disjoint 而不是 Same，否则一份被改过的同 id 文件会被悄悄合并掉。
+    val pairRoot = java.io.File(root.parentFile, "pi-session-pairs-${System.nanoTime()}")
+    pairRoot.mkdirs()
+    val pairLines = listOf(
+        header("pair", "2026-10-01T00:00:00.000Z"),
+        message("r1", null, "2026-10-01T00:00:01.000Z", "user", "同一段对话的开头", mid + 10_000),
+    )
+    val pairShort = sessionFile(pairRoot, "short.jsonl", pairLines, mtime = old)
+    val pairLong = sessionFile(
+        pairRoot,
+        "long.jsonl",
+        pairLines + message("r2", "r1", "2026-10-01T00:00:02.000Z", "assistant", "后来长出来的", mid + 10_001),
+        mtime = new,
+    )
+    val equalLengthDifferent = sessionFile(
+        pairRoot,
+        "equal.jsonl",
+        listOf(
+            header("pair", "2026-10-01T00:00:00.000Z"),
+            message("r1", null, "2026-10-01T00:00:01.000Z", "user", "同一段对话的开头", mid + 10_999),
+        ),
+        mtime = old,
+    )
+    check("短的是长的前缀 → AInB", prefixRelationOf(pairShort, pairLong), PrefixRelation.AInB)
+    check("长的看短的那份 → BInA（方向是判据的一部分）", prefixRelationOf(pairLong, pairShort), PrefixRelation.BInA)
+    check("同一份文件自己 → Same", prefixRelationOf(pairShort, pairShort), PrefixRelation.Same)
+    check(
+        "等长但内容不同 → Disjoint（这一格「相等」和「前缀」才会给出不同答案）",
+        prefixRelationOf(pairShort, equalLengthDifferent),
+        PrefixRelation.Disjoint,
+    )
+    check(
+        "劈开的两半 → Disjoint",
+        prefixRelationOf(splitFirstHalf, splitSecondHalf),
+        PrefixRelation.Disjoint,
+    )
+    check(
+        "读不出来（文件不存在）→ Disjoint：证明不了是前缀就不许合并",
+        prefixRelationOf(pairShort, java.io.File(pairRoot, "gone.jsonl")),
+        PrefixRelation.Disjoint,
+    )
+    pairRoot.deleteRecursively()
 
     root.deleteRecursively()
 

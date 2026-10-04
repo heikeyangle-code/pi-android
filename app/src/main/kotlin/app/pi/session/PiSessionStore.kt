@@ -44,9 +44,12 @@ import java.io.File
  * `id`/`parentId` that form the branch tree. Nothing here is a second index: the
  * file *is* the truth, and this class only projects the fields a list row needs.
  *
- * 两个布局一起读还有第二个后果：**同一个会话可能在两边各有一份**（副本、`/import` 的拷贝），
- * 于是同一段对话本可以列成两行 —— 用户原话「就那么一个对话……出现了好几个版本，就像被切开
- * 一样」。所以 [list] 按会话身份去重，两个布局里哪一份留下见 [laterSessionRow]。
+ * 两个布局一起读还有第二个后果：**同一个会话可能在磁盘上有一份以上的文件** —— `cp` 出来的快照、
+ * `/import` 的拷贝（`PiSessionViewModel.prepareImport` 只挑一个没占用的名字、**不改 header**，
+ * 所以副本与原件带同一个 `id`），以及 pi 在 id 查找漏掉时**用同一个 id 新建**的那一份。
+ * 这几份里只有一类该合并成一行：**一份的字节是另一份的前缀**（快照只能是活文件的前缀，因为它
+ * 之后活文件还在追加）。互不为前缀的两份是**一段对话的两个半截**，两行都要在 —— 用户报的两种
+ * 现象各自对应一半，完整的规则、证据与代价见 [mergeSameIdRow]。
  */
 class PiSessionStore(
     private val sessionsRoot: File,
@@ -150,6 +153,17 @@ class PiSessionStore(
     private val cacheLock = Any()
 
     /**
+     * 同一个 `id` 相撞时问过的「互为前缀吗」（[prefixRelation] 的备忘）。
+     *
+     * 它只影响**读**：备忘的值与当场比出来的值逐字相同（键是两份文件的 `(路径, length, mtime)`），
+     * 所以命中它 == 那次比较的结果还在内存里。只在 [list] 里读写、由 [scanMutex] 串行化，
+     * 所以没有自己的锁；每次扫描按「这一轮遍历到的路径」把两份里有任何一份不再出现的条目删掉
+     * （与 `summaryCache` 的 `retainAll` 同一件事），所以它是有界的：上界是**这次扫描里同 id
+     * 相撞过的文件对**，而相撞本身是罕见事件。
+     */
+    private val prefixVerdicts = HashMap<PairKey, PrefixRelation>()
+
+    /**
      * [summaryCache] 的磁盘版：上一次进程到这里为止攒下的行。
      *
      * 它只是把上面那句 KDoc 里的「每个文件每个版本一次」从**每个进程一次**延长到
@@ -185,23 +199,24 @@ class PiSessionStore(
      * list order here and the list order in the desktop picker agree: [readSummary]
      * reads the whole file, as pi's list does.
      *
-     * ## 一个会话只有一行
+     * ## 一个会话一行 —— **除非一份不是另一份的前缀**
      *
-     * 上面那两个布局是**分别**遍历的，而一个会话可以在两边各留一份：组目录里的那份是
-     * 某个时刻的副本（用户 `cp` 过、或本 App 的 `/import` 把它复制进会话目录 ——
-     * `PiSessionViewModel.prepareImport`（工作树 `:4738-4750`）只挑一个没占用的名字、**不改
-     * header**，所以副本与原件带同一个 `id`），引擎平铺的那份才是 pi 正在追加的。不去重的话，
-     * 同一段对话会在
-     * 列表里变成两行（用户原话：「就那么一个对话……出现了好几个版本，就像被切开一样」），
-     * 而且 `SessionsScreen` 的两处计数（`"${visible.size} 条"` 与组标题的 `rows.size`）
-     * 跟着虚高。
+     * 上面那两个布局是**分别**遍历的，而一个会话可以在磁盘上留一份以上：组目录里的快照（用户
+     * `cp` 过）、`/import` 拷进来的副本（`PiSessionViewModel.prepareImport` 只挑一个没占用的名字、
+     * **不改 header**，所以副本与原件带同一个 `id`）、以及 pi 在 id 查找漏掉时**用同一个 id 新建**
+     * 的那一份。不去重的话，同一段对话会变成两行 —— 用户原话「就那么一个对话……出现了好几个版本，
+     * 就像被切开一样」，`SessionsScreen` 的两处计数也跟着虚高。
      *
-     * 去重的键是**会话自己的身份**：`Summary.id`（header 里的 `id`，也是 pi 文件名
+     * 但**「同一个 id」不等于「同一段对话在磁盘上留了两份」**，所以分组的键还是身份，合并的判据
+     * 另有一条：**只有一份的字节是另一份的前缀时才合并**（[mergeSameIdRow] 有完整规则与用户两次
+     * 投诉各自对应的一半）。不互为前缀的两份是**一段对话的两个半截**，两行都要在。
+     *
+     * 分组的键是**会话自己的身份**：`Summary.id`（header 里的 `id`，也是 pi 文件名
      * `"<ISO>_<id>.jsonl"` 里 `_` 之后那一段；header 读不出 id 时才退回文件名）。**不是**
      * 显示名 —— 两个真正不同的会话可以有同一个标题（用户两轮都只打了「继续」），那是两条
      * 对话，必须留两行（`SessionIdentityCheck.kt` 钉住了这一条）。
      *
-     * 留下哪一行由 [laterSessionRow] 决定；两行都只是**读数**，这里不删任何一个文件。
+     * 合并或并列都只是**读数**：这里不删任何一个文件，也不改它的一个字节。
      *
      * ## 它把「读不到」和「确实没有」压成了同一个 `emptyList()`（已知形状）
      *
@@ -255,22 +270,31 @@ class PiSessionStore(
                     isSessionFile(entry) -> planned.add(plan(entry, null, seen))
                 }
             }
-            // 会话身份 → 已经留下的那一行。`LinkedHashMap` 只是让「同一身份、完全并列的两份」
-            // 也走 [laterSessionRow] 的最后一条规则，而不是看谁的键先被放进来。
-            val bySession = LinkedHashMap<String, Summary>()
+            // 会话身份 → 已经留下的那几行。**同一个身份不一定只留一行**（见 [mergeSameIdRow]）：
+            // 不互为前缀的两份是同一段对话的两个半截，都要留下。值用有序表，所以「同一身份剩下来
+            // 的多行」之间仍然是目录遍历的顺序 —— 那个顺序参与下面 `sortByDescending` 的并列判定
+            // （稳定排序），与只留一行时逐字相同。
+            val bySession = LinkedHashMap<String, MutableList<Summary>>()
             readSummaries(planned).forEach { summary ->
-                summary?.let { keepOneRowPerSession(bySession, it) }
+                summary?.let { mergeSameIdRow(bySession, it) }
             }
             // Forget summaries for files that are gone, so a deleted (or imported and
             // later removed) session cannot keep a row's worth of memory alive for the
             // life of the process. Cheap: one pass over the fresh key set.
             synchronized(cacheLock) { summaryCache.keys.retainAll(seen) }
+            // 同一件事的两份：前缀判定的备忘（它按**一对**文件算，见 [prefixRelation]）与磁盘索引，
+            // 都只许留这次见过的文件。注意记号不同 —— `seen` 装的是**缓存键**（路径 + 回退 cwd），
+            // 而备忘的键装的是路径，所以这里按这次遍历过的路径来剪（`planned` 就是那份清单）。
+            val scannedPaths = planned.mapTo(HashSet(planned.size)) { it.file.absolutePath }
+            prefixVerdicts.keys.removeAll { it.a !in scannedPaths || it.b !in scannedPaths }
             // 同一件事的磁盘版本：索引里也只许留这次见过的（见 [persistIndex]）。
             persistIndex(seen)
-            val out = ArrayList<Summary>(bySession.values)
+            val out = ArrayList<Summary>(bySession.values.sumOf { it.size })
+            bySession.values.forEach { out.addAll(it) }
             out.sortByDescending { it.lastActivityAt }
-            // `limit` 数的是**会话**：去重发生在截断之前，否则一份副本就会占掉一行，
-            // 把一个真实的会话挤出屏幕。见 `SessionIdentityCheck.kt` 的最后一条检查。
+            // `limit` 数的是**行**：合并发生在截断之前，否则一份快照就会占掉一行、把一段真实的
+            // 对话挤出屏幕（`limit` 之前是「一段对话一行」，真劈开的那一段是两行）。
+            // 见 `SessionIdentityCheck.kt` 的第 5 组检查。
             if (out.size > limit) out.subList(0, limit) else out
         }
     }
@@ -350,20 +374,108 @@ class PiSessionStore(
         parentSession = summary.parentSession,
     )
 
-    /** 把一个会话的候选行放进 [bySession]，同一个身份只留 [laterSessionRow] 选中的那一行。 */
-    private fun keepOneRowPerSession(bySession: MutableMap<String, Summary>, row: Summary) {
-        val previous = bySession[row.id]
-        bySession[row.id] = if (previous == null) row else laterSessionRow(previous, row)
+    /**
+     * 把一个会话的候选行并进 [bySession]（键是会话身份 `id`）。
+     *
+     * ## 规则：**只有一份的字节是另一份的前缀时才合并**
+     *
+     * - **互为前缀（逐字节相同）** ⇒ 一行，两份里按 [laterSessionRow] 挑一份（一次 `cp` 留下的
+     *   形状：内容一模一样、mtime 不同、可能在两个布局里）。
+     * - **一份是另一份的前缀、且更短** ⇒ 一行，**留长的那份**。短的那份只能是一份旧快照：它之后
+     *   活文件还在继续追加，而追加不会改动它前面已经写下的字节。
+     * - **不互为前缀** ⇒ **两行都留**。这是**一段对话的两个半截**：pi 的 `--session-id` 在
+     *   `findById` 漏掉时（id ∧ header 的 `cwd` 等于引擎 cwd ∧ 文件在 `--session-dir` 那一层的
+     *   直接子文件，三条里漏一条）会用**同一个 id 新建**一个文件（`dist/main.js:344-351`、
+     *   `dist/core/session-manager.js:1421-1441`），此后消息都写进新文件；两份之间**没有任何
+     *   重叠**，谁也盖不住谁。
+     *
+     * ## 为什么是「前缀」而不是「相等」，也不是**只有**一行
+     *
+     * 这条线上用户投诉过两次，方向相反，各自对应规则的一半：
+     *
+     *  - 「就那么一个对话……出现了好几个版本，就像被切开一样」= 同一段对话在磁盘上留了两份。
+     *    这份副本**在一开始是逐字节相同的**，但用户一继续聊，活文件长出来、副本就不再相同 ——
+     *    所以判据不能用「相等」，必须用**前缀**（相等只是它的特例）。
+     *  - 「重装完只剩后面这一半截、名字也改成半截开头那条」= pi 用同一个 id 新建了第二份，
+     *    两份互不为前缀。这时任何「只留一行」的规则都必然**藏掉用户的一半对话**（留新的那半就
+     *    丢了开头，留旧的那半就丢了最近说的），而官方 pi 的实现是：`listSessionsFromDir`
+     *    （`dist/core/session-manager.ts:941-967`）**一个 `.jsonl` 一行，完全不按 id 去重**。
+     *    两行都留因此不是偏离官方，而是**回到**官方；本 App 唯一有意保留的偏离是「前缀的那一份
+     *    不重复列出来」。
+     *
+     * ## 代价，以及为什么它不在正常路径上
+     *
+     * 前缀判据只在**同一个 `id` 相撞**时才问（[prefixRelation]）：正常扫描里一个身份只有一行，
+     * 这里连一次 `stat` 都不会多做，更不会重读文件。相撞时也**不是**把两份都读进内存：
+     * [prefixRelationOf] 逐块比、遇见第一个不同的字节就停 —— 真被劈开的两份在 header 的
+     * `timestamp` 那一小段里就分道扬镳（同 id 不同时刻），所以那一条路只读几百字节。判定结果按
+     * 「两份文件的 (路径, 长度, mtime)」备忘（[prefixVerdicts]），同一份扫描里同 id 有三份以上
+     * 时不会重复比。`readSummary` 读过的那份字节**没有留下来**（一个会话可以几百 MB，留不住），
+     * 所以这是相撞时的一次**有界**重读，不是把摘要的活干两遍。
+     *
+     * 读不出来（文件消失、IO 错误）时答案是**不合并**：不能证明是前缀就不许把一份藏起来。
+     */
+    private fun mergeSameIdRow(bySession: MutableMap<String, MutableList<Summary>>, row: Summary) {
+        val kept = bySession.getOrPut(row.id) { mutableListOf() }
+        for (index in kept.indices) {
+            val previous = kept[index]
+            when (prefixRelation(previous, row)) {
+                // 逐字节相同：留哪一份由 [laterSessionRow] 的全序决定（与以前逐字相同）。
+                PrefixRelation.Same -> {
+                    kept[index] = laterSessionRow(previous, row)
+                    return
+                }
+                // 这一行更长、且已经证明了它装着已留下的那一行的全部字节 ⇒ 活的是这一行。
+                PrefixRelation.AInB -> {
+                    kept[index] = row
+                    return
+                }
+                // 反过来：已留下的那行才是更长的活文件，这一行是它的旧快照 ⇒ 什么都不做。
+                PrefixRelation.BInA -> return
+                // 不互为前缀：这一段对话的两个半截，两行都留 —— 与别的已留下的行再比一轮。
+                PrefixRelation.Disjoint -> Unit
+            }
+        }
+        kept += row
+    }
+
+    /**
+     * [mergeSameIdRow] 那一条前缀判据，带备忘。
+     *
+     * 键是**问的那一刻**两份文件的身份：路径 + `(length, mtime)`。失效判据与 `summaryCache`
+     * 同源 —— 一个会话只会被追加，所以「两份的 (length, mtime) 都没动」⇒ 两者的字节关系也没动。
+     * 反过来，一份文件在取键与比较之间又长了一点时，下一次扫描算出的键就变了，于是重比一次：
+     * 少命中一次备忘，不会给出错的关系。
+     *
+     * 它只在 [list] 里被读写，而 [list] 由 [scanMutex] 串行化，所以这里不需要 `cacheLock`
+     * （那个锁是给 [list] 与 `mostRecentForResume` 共用的 `summaryCache` 的）。
+     */
+    private fun prefixRelation(a: Summary, b: Summary): PrefixRelation {
+        val key = PairKey(
+            a = a.file.absolutePath,
+            aLength = a.file.length(),
+            aModified = a.file.lastModified(),
+            b = b.file.absolutePath,
+            bLength = b.file.length(),
+            bModified = b.file.lastModified(),
+        )
+        prefixVerdicts[key]?.let { return it }
+        return prefixRelationOf(a.file, b.file).also { prefixVerdicts[key] = it }
     }
 
     /**
      * 同一个会话的两行里留下哪一行 —— 一个全序，所以答案与文件系统的返回顺序无关。
      *
+     * 它只在**已经证明两份互为前缀**（[PrefixRelation.Same]，见 [mergeSameIdRow]）时决定留哪一份：
+     * 逐字节相同的两份，上面的数字必然并列，所以实际生效的是第 2–4 条。不互为前缀的两份不走这里
+     * —— 那是两个半截，两行都留。
+     *
      * 1. **内容更新的赢。** `lastActivityAt` 是 pi 的 `modified`（`:744-749`），也就是这一行
-     *    描述到的那段对话的末尾；两份副本里它更晚的那份拿着的对话更长，正是用户要的那份。
+     *    描述到的那段对话的末尾。字节相同的两份在这一条上必然并列；留着它是因为它是这套读数里
+     *    唯一说明「这段对话到哪儿为止」的那个，而 `Summary` 的其它字段将来再变时这仍是第一条。
      * 2. **并列时平铺的那份赢**（直接躺在 [sessionsRoot] 下、不属于任何组目录）。理由是
      *    「哪一份是活的」：引擎带 `--session-dir <agentDir>/sessions` 启动
-     *    （`PiEngineHost.kt:592`），pi 因此只在平铺目录里创建与追加会话（`session-manager.ts:1551-1552`、
+     *    （`PiEngineHost.kt:619`），pi 因此只在平铺目录里创建与追加会话（`session-manager.ts:1551-1552`、
      *    `:947-949`），`switch_session` 打开的就是这一份、pi 接着往它里面写；组目录里的同名
      *    副本是别处留下的快照，打开它等于把这次对话接到快照上。
      *    （这一步**先于**文件时间：一次 `cp` 会让副本的 mtime 比原件新，而两者内容一模一样 ——
@@ -382,6 +494,35 @@ class PiSessionStore(
         val bModified = b.file.lastModified()
         if (aModified != bModified) return if (aModified > bModified) a else b
         return if (a.file.absolutePath <= b.file.absolutePath) a else b
+    }
+
+    /**
+     * [prefixRelation] 的备忘键：两份文件的路径与 `(length, mtime)`。
+     *
+     * 方向是有意的（`a` 是调用那一刻传进来的前一份）：同一次扫描里问的方向是确定的，所以一对文件
+     * 只会有一条记录。
+     */
+    private class PairKey(
+        val a: String,
+        val aLength: Long,
+        val aModified: Long,
+        val b: String,
+        val bLength: Long,
+        val bModified: Long,
+    ) {
+        override fun equals(other: Any?): Boolean = other is PairKey &&
+            a == other.a && aLength == other.aLength && aModified == other.aModified &&
+            b == other.b && bLength == other.bLength && bModified == other.bModified
+
+        override fun hashCode(): Int {
+            var result = a.hashCode()
+            result = 31 * result + aLength.hashCode()
+            result = 31 * result + aModified.hashCode()
+            result = 31 * result + b.hashCode()
+            result = 31 * result + bLength.hashCode()
+            result = 31 * result + bModified.hashCode()
+            return result
+        }
     }
 
     /** 这一行来自平铺布局（直接躺在 [sessionsRoot] 下），还是来自某个 cwd 组目录。 */
@@ -762,3 +903,89 @@ class PiSessionStore(
         const val DEFAULT_PARALLELISM: Int = 4
     }
 }
+
+/**
+ * 两份会话文件在**字节**上的关系，只在同一个 `id` 相撞时问一次（[PiSessionStore.mergeSameIdRow]
+ * 的全部判据就是它）。四个答案，不是「相等 / 不等」两个：
+ *
+ *  - [Same] 逐字节相同 —— 一次 `cp` 留下的形状（内容一模一样，副本的 mtime 可能更新）；
+ *  - [AInB] / [BInA] 一份是另一份的**前缀**且更短 —— 旧快照；活的那份是长的那个，因为
+ *    「追加」只在文件末尾长出来，不会改动前面已经写下的字节；
+ *  - [Disjoint] 互不为前缀 —— **一段对话的两个半截**（pi 用同一个 id 新建过一份，两份之间
+ *    没有任何重叠），必须两行都在。
+ *
+ * 「相等」在这个枚举里是前缀的一个特例，而不是它的替代品：那份副本在用户继续聊之后就不再
+ * 相等了，但仍然**是**前缀。用相等当判据就会把「一个有若干版本」放回来（用户早先投诉过），
+ * 用「不互为前缀也合并」当判据就会把用户的一半对话藏起来。
+ */
+internal enum class PrefixRelation { AInB, BInA, Same, Disjoint }
+
+/**
+ * 比较两份文件，回答 [PrefixRelation]。**不是**把两份都读进内存：
+ *
+ *  - 只比 `min(两份长度)` 那些字节（更长的部分不可能让「短的是长的那份的前缀」成立或不成立）；
+ *  - 逐块比，**遇见第一个不同的字节就返回** —— 真被劈开的两份在 `header` 的 `timestamp` 那一小段
+ *    里就分道扬镳（同一个 `id`、不同时刻），所以那一条路通常只读几 KB；
+ *  - 一份快照那种「整段相同」的形状才会读满短的那一份的长度（这是判据本身的代价，见
+ *    [PiSessionStore.mergeSameIdRow] 的「代价」一段）。
+ *
+ * **读不出来时回答 [PrefixRelation.Disjoint]**（也就是不合并、两行都在）：证明不了是前缀就不许
+ * 把一份藏起来 —— 宁可多一行，也不许让用户少一半对话。反过来，把一份**读不了**当成「相同」才是
+ * 真正危险的那个方向。
+ */
+internal fun prefixRelationOf(a: File, b: File): PrefixRelation {
+    val aLength = a.length()
+    val bLength = b.length()
+    val shared = if (aLength < bLength) aLength else bLength
+    if (!shareFirstBytes(a, b, shared)) return PrefixRelation.Disjoint
+    return when {
+        aLength == bLength -> PrefixRelation.Same
+        aLength < bLength -> PrefixRelation.AInB
+        else -> PrefixRelation.BInA
+    }
+}
+
+/** 前 [shared] 个字节是否逐字节相同；任何 IO 问题都回答 false（见 [prefixRelationOf]）。 */
+private fun shareFirstBytes(a: File, b: File, shared: Long): Boolean = runCatching {
+    // **两份都要能打开**，`shared == 0` 也不例外：一个不存在的文件 `length()` 也是 0，而
+    // 「0 字节是任何文件的前缀」在字节层面成立、在「这是不是一段会话」的层面毫无意义 —— 它是
+    // **读不出来**，按 [prefixRelationOf] 的契约必须回答 Disjoint（不合并）。
+    a.inputStream().use { left ->
+        b.inputStream().use { right ->
+            if (shared <= 0L) return@runCatching true
+            val leftChunk = ByteArray(PREFIX_CHUNK_BYTES)
+            val rightChunk = ByteArray(PREFIX_CHUNK_BYTES)
+            var remaining = shared
+            while (remaining > 0L) {
+                val want = if (remaining < PREFIX_CHUNK_BYTES) remaining.toInt() else PREFIX_CHUNK_BYTES
+                if (readUpTo(left, leftChunk, want) != want) return@runCatching false
+                if (readUpTo(right, rightChunk, want) != want) return@runCatching false
+                for (index in 0 until want) {
+                    if (leftChunk[index] != rightChunk[index]) return@runCatching false
+                }
+                remaining -= want
+            }
+            true
+        }
+    }
+}.getOrDefault(false)
+
+/** 尽量读满 [count] 个字节（`InputStream.read` 允许短读），返回真正读到的个数。 */
+private fun readUpTo(input: java.io.InputStream, buffer: ByteArray, count: Int): Int {
+    var total = 0
+    while (total < count) {
+        val read = input.read(buffer, total, count - total)
+        if (read < 0) break
+        total += read
+    }
+    return total
+}
+
+/**
+ * 比较时的块大小，64 KiB。
+ *
+ * 与 `readBoundedBytes` 那个一样大：它决定的是「快照那种整段相同的形状要循环多少次」，而
+ * 「劈开那种第一块就分道扬镳的形状」与块大小无关。再大只是让每次 `read` 多搬一点内存，
+ * 再小是多几次系统调用。
+ */
+private const val PREFIX_CHUNK_BYTES: Int = 64 * 1024

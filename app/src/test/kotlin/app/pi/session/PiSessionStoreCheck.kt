@@ -703,12 +703,16 @@ fun main() {
 
         suspend fun withoutIndex(): List<PiSessionStore.Summary> = coldStore(idxSessions, null).list()
 
+        // big-a 的头两行单独拿出来：组目录里那份"副本"要用**同样的字节**写，它才真的是
+        // 原件的前缀（`/import` 就是逐字节拷，见 `PiSessionStore.mergeSameIdRow`）。
+        val bigAHead = listOf(
+            header("big-a", "2024-06-01T00:00:00.000Z", CWD),
+            message("a1", null, "2024-06-01T00:00:01.000Z", "user", "first message of A", iBase + 1_000),
+        )
         val bigA = sessionFile(
             idxSessions,
             "2024-06-01T00-00-00-000Z_big-a.jsonl",
-            listOf(
-                header("big-a", "2024-06-01T00:00:00.000Z", CWD),
-                message("a1", null, "2024-06-01T00:00:01.000Z", "user", "first message of A", iBase + 1_000),
+            bigAHead + listOf(
                 imageMessage("a2", "a1", "2024-06-01T00:00:02.000Z", 600_000, iBase + 1_001),
                 sessionInfo("a3", "a2", "2024-06-01T00:00:03.000Z", "名字 A"),
             ),
@@ -774,7 +778,8 @@ fun main() {
             mtime = iBase + 7_010,
         )
         // 组目录：一份 header 没有 cwd 的（回退到目录名解出来的 cwd），一份是 big-a 的副本
-        // （同一个 id、但内容更旧 —— `laterSessionRow` 必须留下平铺那一份）。
+        // （同一个 id、只装着 big-a 的头两行 —— 逐字节的拷贝，所以它必然是原件的**前缀**；
+        // mtime 更晚，所以「按 mtime 选」会选错）。合并判据必须留下平铺那份。
         val idxGroup = java.io.File(idxSessions, "--workspace-pi-workspaces-workspace-2--")
         sessionFile(
             idxGroup,
@@ -788,10 +793,7 @@ fun main() {
         sessionFile(
             idxGroup,
             "2024-06-01T00-00-00-000Z_copy-of-big-a.jsonl",
-            listOf(
-                header("big-a", "2024-06-01T00:00:00.000Z", CWD),
-                message("ca1", null, "2024-06-01T00:00:01.000Z", "user", "an older copy of A", iBase + 100),
-            ),
+            bigAHead,
             mtime = iBase + 8_000,
         )
         sessionFile(idxSessions, "not-a-session.jsonl", listOf("{\"type\":\"message\",\"id\":\"x\"}"), mtime = iBase + 9_000)

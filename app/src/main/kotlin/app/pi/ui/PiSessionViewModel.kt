@@ -2161,9 +2161,10 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * ③ 文件是 `--session-dir` 那一层的直接子文件**（`core/session-manager.js:1421-1441`、
      * `:441-443`）。三条里漏一条它不是报错，而是**用同一个 id 新建一个文件**
      * （`dist/main.js:344-351`），此后每条消息都写进那个新文件 —— 于是一段对话变成两个文件、
-     * 两个都顶着同一个 id。App 的列表按 id 去重（`PiSessionStore.keepOneRowPerSession`），
-     * 只剩下其中一个，于是用户看到「只剩后面这一半截」「名字也改成半截开头的名字」
-     * 「转录顶部没有『加载更早』」（那个文件确实是从那儿开始的），而完整的原件还在磁盘上。
+     * 两个都顶着同一个 id。列表**两行都留**（`PiSessionStore.mergeSameIdRow`：两份互不为前缀就
+     * 不合并），名字各取自己文件里的第一条 user 消息 —— 这正是用户看到的「名字变成半截开头的
+     * 那条」；而在这一条 argv 修好之前，列表按 id 只留一行，剩下的那半截看上去就是整段对话
+     * （「往上翻，翻到头也没有了」「转录顶部没有『加载更早』」—— 那个文件确实是从那儿开始的）。
      *
      * 第 ② 条在真机上真的会漏：proroot 的 `getcwd()` 会泄漏宿主拼写
      * （`docs/proroot-mode-audit.md:20-48`），所以「同一个目录的两种拼法」写入的会话，在另一种拼法
