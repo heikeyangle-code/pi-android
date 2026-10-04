@@ -61,7 +61,8 @@ import app.pi.ui.terminal.TerminalPane
  *
  * ## Why the back arrow is required here
  *
- * It is opened as an **overlay** (`PiRoot`'s `PiOverlay.Terminal`), so the app's
+ * It is opened as an **overlay** (`PiRoot` 里的 `OverlaySlot.Terminal`；举手与关门都走
+ * `PiSessionViewModel.raiseOverlay` / `closeOverlay`）, so the app's
  * single overlay `BackHandler` already closes it by keypress. The arrow is not
  * redundant with that: a full-screen surface with no visible way out made the
  * terminal feel like a trap when it was a destination, and the settings row it now
