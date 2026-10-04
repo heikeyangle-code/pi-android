@@ -1650,7 +1650,7 @@ M11/M12 是**打补丁**：先发现"申报模型会覆盖能力"，加了一个
 - **pi**：`/export x.jsonl` 写的是**当前分支的重新序列化** —— 一个新头 + `getBranch()` 的条目 +
   `parentId` 重新串成线性（`dist/core/session-export.js:7-42`）。
 - **App**：**逐字节复制磁盘上那个会话文件**（原名，`<ISO>_<id>.jsonl`，
-  `PiSessionViewModel.copySessionFile`），并让一次导出同时给出 HTML 与它。理由：「导出一个分支」正是
+  `PiSessionViewModel.exportedSessionFile`），并让一次导出同时给出 HTML 与它。理由：「导出一个分支」正是
   **后缀副本**的来源 —— 那份副本与完整会话文件顶着同一个 `id`（见 §O 里两条投诉的第一条），而 HTML
   **导不回来**（pi 的导入只认会话格式），用户原话「我自己都导入不进来」。
 - 代价：这份 JSONL 不是"把分支摊平"的线性文件，而是会话文件本身（**包含所有分支**、与 pi 的导出字节

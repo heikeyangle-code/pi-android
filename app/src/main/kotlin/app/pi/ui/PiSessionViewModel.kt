@@ -4047,7 +4047,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * Host path of a guest session path, or null.
      *
      * The inverse of [guestSessionPath], and the same mapping the export's byte copy applies
-     * ([copySessionFile]). The guards matter: `get_state`'s `sessionFile`
+     * ([exportedSessionFile]). The guards matter: `get_state`'s `sessionFile`
      * comes from pi, so a malformed or escaping value must not become an arbitrary
      * read — only a path under the guest's session directory that resolves inside
      * the host's is accepted, and only when it is a regular file.
@@ -5489,12 +5489,17 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
-     * `/export <path>` — **一次导出给两份**：pi 的 HTML（给人看/分享）＋**会话文件本身**
-     * （逐字节复制、不改名，见 [copySessionFile]）。HTML 导不回来，会话文件能导回来；而它一直
-     * 就在磁盘上（pi 在写它），App 手上就有路径（`meta.sessionFile`）。
+     * `/export [path]`。
      *
-     * HTML 那一份一个字没动：按参数后缀分派是 pi 的规则（`interactive-mode.ts:6062-6066`），
-     * HTML 本体仍走 RPC `export_html`（`rpc-types.ts:60`），写进工作区 ——
+     * **给了名字**（`/export 名字.xxx`）＝ **pi 的分派，1:1**：后缀决定写哪一种，
+     * **只写那一份**，名字就是你给的那个（`interactive-mode.ts:6062-6066`：`.jsonl` 结尾 → JSONL，
+     * 其余 → HTML）。
+     *
+     * **没给名字**（菜单/面板里那个「导出会话」）＝ 两份一起：pi 的 HTML（默认名）＋
+     * **会话文件本身**（逐字节复制、原名，见 [exportedSessionFile]）。HTML 导不回来，会话文件能导回来，
+     * 而它一直就在磁盘上（pi 在写它，App 手上有 `meta.sessionFile`）。
+     *
+     * HTML 那一份一个字没动：仍走 RPC `export_html`（`rpc-types.ts:60`）写进工作区 ——
      * pi 的默认落点也是它的 cwd（`core/export-html/index.ts:191-196`）。
      *
      * 确认只说文件、不说路径：落点是 App 私有目录，能打印的路径用户都打不开 —— 那份导出因此以
@@ -5502,62 +5507,79 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      */
     fun exportSession(fileName: String? = null) {
         val name = fileName?.trim()?.takeIf { it.isNotEmpty() }
-        // pi 的分派一个字没动（`interactive-mode.ts:6062-6066`）：`.jsonl` 结尾的参数属于 JSONL
-        // 那一份，因此 HTML 用默认名；其余（含没给参数）就是 HTML 的名字。
-        val htmlName = if (SessionExportNaming.isJsonl(name)) {
-            SessionExportNaming.defaultHtmlName(_state.value.meta.sessionFile, System.currentTimeMillis())
-        } else {
-            name ?: SessionExportNaming.defaultHtmlName(_state.value.meta.sessionFile, System.currentTimeMillis())
-        }
-        val guestPath = "${guestWorkspace()}/$htmlName"
-        call("导出会话") { api ->
-            api.exportHtml(guestPath)
-            val html = File(defaultWorkspace(), htmlName)
-            // **同一份导出里还带着会话文件本身**（逐字节、原名）—— 见 [copySessionFile]。
-            val jsonl = copySessionFile()
-            val files = listOfNotNull(
-                html.takeIf { it.isFile }?.let {
-                    ExportedFile(htmlName, SessionExportNaming.mimeTypeFor(htmlName), it.absolutePath)
-                },
-                jsonl?.let {
-                    ExportedFile(it.name, SessionExportNaming.mimeTypeFor(it.name), it.absolutePath)
-                },
-            )
-            if (files.isEmpty()) {
-                pushNotice("导出没有写出文件，请重试。", Notice.Tone.Warning)
-                return@call
-            }
-            _state.value = _state.value.copy(exported = ExportedSession(files))
-            pushNotice(
-                if (jsonl != null) {
-                    "会话已导出：`.jsonl` 那份是会话文件本身，可以导回来。"
-                } else {
-                    "会话已导出。"
-                },
-                Notice.Tone.Info,
-            )
+        when {
+            name != null && SessionExportNaming.isJsonl(name) -> exportJsonlOnly(name)
+            name != null -> exportHtmlOnly(name)
+            else -> exportBoth()
         }
     }
 
+    /** `/export <path>` 的 HTML 分支（pi 的分派）。 */
+    private fun exportHtmlOnly(htmlName: String) {
+        call("导出会话") { api ->
+            api.exportHtml("${guestWorkspace()}/$htmlName")
+            publish(listOfNotNull(exportedHtml(htmlName)))
+        }
+    }
+
+    /** `/export <名字>.jsonl`：只给会话文件那一份（内容仍是磁盘上那份，逐字节；名字用你给的）。 */
+    private fun exportJsonlOnly(jsonlName: String) {
+        call("导出会话") { _ ->
+            publish(listOfNotNull(exportedSessionFile(jsonlName)))
+        }
+    }
+
+    /** 普通导出：HTML（默认名）与会话文件（原名）各一份。 */
+    private fun exportBoth() {
+        val htmlName = SessionExportNaming.defaultHtmlName(_state.value.meta.sessionFile, System.currentTimeMillis())
+        call("导出会话") { api ->
+            api.exportHtml("${guestWorkspace()}/$htmlName")
+            publish(listOfNotNull(exportedHtml(htmlName), exportedSessionFile()))
+        }
+    }
+
+    /** 导出目录里那份 HTML，真写出来了才回答一个交付项。 */
+    private fun exportedHtml(htmlName: String): ExportedFile? =
+        File(defaultWorkspace(), htmlName).takeIf { it.isFile }?.let {
+            ExportedFile(htmlName, SessionExportNaming.mimeTypeFor(htmlName), it.absolutePath)
+        }
+
+    /** 登记这一次导出，并说清哪一份能导回来。 */
+    private fun publish(files: List<ExportedFile>) {
+        if (files.isEmpty()) {
+            pushNotice("导出没有写出文件，请重试。", Notice.Tone.Warning)
+            return
+        }
+        _state.value = _state.value.copy(exported = ExportedSession(files))
+        val withSessionFile = files.any { it.name.endsWith(SessionExportNaming.JSONL_SUFFIX, ignoreCase = true) }
+        pushNotice(
+            if (withSessionFile) "会话已导出：`.jsonl` 那份是会话文件本身，可以导回来。" else "会话已导出。",
+            Notice.Tone.Info,
+        )
+    }
+
     /**
-     * 会话文件本身，**逐字节**复制一份到导出目录 —— 这份就是能 `importFromJsonl` 导回来的那份。
+     * 会话文件本身，**逐字节**复制一份到导出目录，回答一个交付项 —— 这份就是能 `importFromJsonl`
+     * 导回来的那份。
      *
      * 不重新序列化：pi 的 `/export x.jsonl` 写的是 `getBranch()` 的重新序列化
      * （`core/session-export.js:7-42`），而"导出一个分支"就是**后缀副本**的来源（与完整会话文件顶着
      * 同一个 `id`，列表合并时会顶掉一半对话）。复制磁盘上那个文件则字节相同、`id` 不变、每条分支都在。
      *
-     * **不改名**：用磁盘上那份自己的名字（`<ISO>_<id>.jsonl`）。还没有文件时（pi 在第一条 assistant
-     * 消息落盘前不建文件）回答 null，那份导出只有 HTML。
+     * **名字**：没给（普通导出）就用磁盘上那份自己的名字（`<ISO>_<id>.jsonl`）；给了名字
+     * （`/export x.jsonl`）就用你给的 —— pi 那条路就是"写到你说的地方"。
+     * 还没有文件时（pi 在第一条 assistant 消息落盘前不建文件）回答 null。
      */
-    private suspend fun copySessionFile(): File? {
+    private suspend fun exportedSessionFile(name: String? = null): ExportedFile? {
         val source = hostSessionFile(_state.value.meta.sessionFile) ?: return null
-        val target = File(defaultWorkspace(), source.name)
-        return withContext(Dispatchers.IO) {
+        val target = File(defaultWorkspace(), name ?: source.name)
+        val copied = withContext(Dispatchers.IO) {
             runCatching {
                 target.parentFile?.mkdirs()
                 source.copyTo(target, overwrite = true)
             }.getOrNull()?.takeIf { it.isFile }
-        }
+        } ?: return null
+        return ExportedFile(copied.name, SessionExportNaming.mimeTypeFor(copied.name), copied.absolutePath)
     }
 
     /** The user is done with the export row. */
