@@ -1859,7 +1859,7 @@ private fun ChatBody(
                                 )
                                 add(PiMenuItem("新建会话") { session.newSession() })
                                 add(
-                                    PiMenuItem("从历史消息分支") {
+                                    PiMenuItem("从历史消息分叉") {
                                         session.refreshForkMessages()
                                         sheet = ChatSheet.Fork
                                     },

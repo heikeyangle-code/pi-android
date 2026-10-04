@@ -4796,7 +4796,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * nothing else with it — its session selector rebuilds a tree from that field
      * (`components/session-selector.ts:206-231`), and our own [PiSessionStore.Summary]
      * already reads it back (`parentSession`), which is why a child session shows up
-     * with the 分支 marker. No grouping or tag of our own is involved.
+     * with the 「来自〈父会话名〉」 line. No grouping or tag of our own is involved.
      *
      * pi answers `cancelled` when an extension vetoes it.
      */
@@ -5155,7 +5155,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      * fill channel `set_editor_text` uses.
      */
     private fun forkAt(entryId: String, row: ForkRow?) {
-        call("创建分支", errorText = ::forkFailureText) { api ->
+        call("创建分叉", errorText = ::forkFailureText) { api ->
             val target = if (row == null) {
                 entryId
             } else {
@@ -5167,11 +5167,17 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             }
             val result = api.fork(target)
             if (result.cancelled) {
-                pushNotice("扩展取消了分支", Notice.Tone.Warning)
+                pushNotice("扩展取消了分叉", Notice.Tone.Warning)
                 return@call
             }
             afterSessionReplaced(brandNew = true)
             result.text?.takeIf { it.isNotBlank() }?.let(::fillComposer)
+            // pi 的 TUI 在分叉成功后会打一行 `Forked to new session`
+            // （`modes/interactive/interactive-mode.ts:5457`），而本屏的 `cloneSession`
+            // 早就有对应的 `Cloned to new session`（`:5487`、这里 `:5264` 的「已复制为新会话」）。
+            // 少了它，用户看到的是整段对话被换掉、没有任何一句解释 —— 那正是用户说的
+            // 「一点也没有安全感」。这条提示与「已复制为新会话」同一个出口、同一档语气。
+            pushNotice("已分叉为新会话", Notice.Tone.Info)
             requestNav(NavRequest.Chat)
         }
     }
@@ -5211,7 +5217,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     } else {
         "这条消息不在 pi 的可分叉点里。pi 只允许从已经写进会话文件的用户消息分叉" +
             "（getUserMessagesForForking），刚发出去还没落盘的一条就是这种情况：" +
-            "等这一轮结束，或从 ⋮ 菜单的「从历史消息分支」里选一条。"
+            "等这一轮结束，或从 ⋮ 菜单的「从历史消息分叉」里选一条。"
     }
 
     /**
@@ -5226,7 +5232,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         val reason = error.message?.takeIf { it.isNotBlank() } ?: "原因未知"
         val next = when {
             reason.contains("Invalid entry ID for forking") ->
-                "请从 ⋮ 菜单的「从历史消息分支」里选一条消息；那条列表就是 pi 认可的全部分叉点。"
+                "请从 ⋮ 菜单的「从历史消息分叉」里选一条消息；那条列表就是 pi 认可的全部分叉点。"
 
             reason.contains("has not been saved yet") ->
                 "pi 还没有把这个会话写到磁盘上的会话文件。先发一条消息、等模型回复一句，再分叉。"
@@ -5239,7 +5245,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
 
             else -> "可以重新打开这个会话再试一次。"
         }
-        return "创建分支失败：$reason。$next"
+        return "创建分叉失败：$reason。$next"
     }
 
     /**
