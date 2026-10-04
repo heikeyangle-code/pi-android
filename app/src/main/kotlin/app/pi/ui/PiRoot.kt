@@ -527,11 +527,18 @@ fun PiRoot() {
     val overlay = overlayAt(overlayIndex)
 
     // Which view the session overlay should open on. It is hoisted here, rather than
-    // left to `SessionsScreen`'s own `rememberSaveable`, because `/tree` and the
+    // left to `SessionsScreen`'s own saved state, because `/tree` and the
     // branch-summary row have to open the overlay **on the tree**
     // ([SessionViewPreference]); state inside the screen could not be set before the
     // screen exists.
-    var sessionView by rememberSaveable { mutableStateOf(SessionViewPreference.List.name) }
+    //
+    // **`remember`，不是 `rememberSaveable` —— 这一行就是修「退出来又被拉回会话树」的。**
+    // 这个值是**请求级**的（"这一次要打开树"），不是用户的粘性偏好。而 `overlayIndex` 是
+    // `rememberSaveable`：任何一次 Activity/进程重建（切深色、从后台回来、系统回收）
+    // 都会把"覆盖层打开 + 停在树"**一起恢复成一条幽灵请求** —— 用户看到的正是「点叉号
+    // 退出来了，几秒后自己又把我拉回会话树，只能重启 App」。**请求不该比请求活得久**：
+    // 重建之后默认落在列表（`SessionViewPreference.List`），要树就再点一次。
+    var sessionView by remember { mutableStateOf(SessionViewPreference.List.name) }
 
     /**
      * 关掉覆盖层 —— **并且把「打开哪一屏」的偏好复位成列表**。
