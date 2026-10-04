@@ -1113,7 +1113,17 @@ fun ProjectScreen(
         snack?.let { message ->
             WorkspaceSnackBar(
                 message = message,
-                modifier = Modifier.align(Alignment.BottomCenter),
+                // **必须让开 App 自己的底栏。** 这一段挂在下面那个 `Box` 的直接子级上，
+                // 而那个 `Box` **没有**吃 `contentPadding`（吃它的是上面那根页面 Column），
+                // 于是 `BottomCenter` 指的是**屏幕**底边；而底栏由 `Scaffold` 后画（z 序在
+                // 内容之上），所以这条提示的下沿 56dp 正好被底栏盖住 —— 用户看到的是一条
+                // 只在顶上露出一线的棕色条（「点不开的文件，底部出现个框，看不清说的啥」，
+                // 而且它 2600ms 就没了）。内边距用**同一个** `contentPadding`，页面与这条
+                // 提示因此永远对齐；再加 8dp 是稿子里那条「提示在底栏上方留一线」的间距
+                // （`workspace-final.html` 的 `Snack`，与 `06 §2` 同一组数）。
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = contentPadding.calculateBottomPadding() + 8.dp),
             )
         }
     }
