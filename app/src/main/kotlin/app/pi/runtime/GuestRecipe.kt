@@ -349,19 +349,42 @@ object GuestRecipe {
         put("TERM", "xterm-256color")
         put("LANG", "C.UTF-8")
         put("PATH", "/opt/pi/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin")
-        // **The guest has no timezone of its own.** The packaged `ubuntu-base.tgz` ships neither
-        // `/etc/localtime` nor a `zoneinfo` tree, and nothing here set `TZ`, so every clock inside
-        // the container was UTC: `date`, `ls -l`, `git log`, the times a tool prints, and pi's own
-        // idea of "today" (`core/agent-session.ts` builds its date in the guest). On a phone in
-        // UTC+8 that is eight hours of wrong answers — reported by the user as "老是搞不准几点".
+        // ---- TZ / TZDIR: one guest, two parsers, one directory that had no zone files ----
         //
-        // The device knows its zone, and two facts make naming it free: `/system` is already part
-        // of the shared bind table ([binds]), and Android ships the zoneinfo database under
-        // `/system/usr/share/zoneinfo`. `TZDIR` is the glibc variable (the guest is Ubuntu, not
-        // bionic) and it must point there because the guest's own `/usr/share/zoneinfo` does not
-        // exist; a zone file that is missing anyway degrades to UTC, never to a wrong hour.
-        put("TZ", TimeZone.getDefault().id)
-        put("TZDIR", "/system/usr/share/zoneinfo")
+        // (2026-10-04) `18817a7` wrote `TZDIR=/system/usr/share/zoneinfo`, on the belief that
+        // "Android ships the zoneinfo database under `/system/usr/share/zoneinfo`". Android
+        // ships **one packed file** there — `tzdata` (bionic's format, 429854 B) plus
+        // `tz_version` (`007.001|2024a|001`) — and **no per-zone file**: no `Asia/`, no
+        // `Asia/Shanghai`. That commit's own message says the path was never checked on a
+        // device.
+        //
+        // The failure is silent. glibc 2.39 `time/tzfile.c` resolves a **relative** name as
+        // `getenv("TZDIR") + "/" + name` and `fopen`s it — no `scandir`, and **no fallback to
+        // the compiled-in `/usr/share/zoneinfo`**; when that open fails, `time/tzset.c` falls
+        // through to the POSIX 1003.1 parser, where `Asia/Shanghai` reads as the name `Asia`
+        // followed by `/`, which is not an offset, so the zone becomes "`Asia`, UTC+0". Every C
+        // clock in the guest (`date`, `ls -l`, `git log`, python) was 8 h off while Node — pi
+        // itself — was right, because ICU has its own zone database and never opens a file.
+        // Both runtimes share this map and the bind table, so proot and proroot are wrong
+        // together: this is not proroot's `scandir` defect.
+        //
+        // The value below is the **intersection of the two parsers**: glibc accepts
+        // `{TZDIR}/<id>` (a readable TZif) or a POSIX spec (no file at all); ICU accepts `<id>`
+        // or a POSIX spec, and **nothing that looks like a path** (measured on node v24.19.0:
+        // `TZ=:/usr/share/zoneinfo/Asia/Shanghai` prints `GMT+0000`). So: the id when the guest
+        // really has the file, otherwise the POSIX offset — never a naked short name, which is
+        // UTC in glibc and the right hour in Node. Cost: one `stat` per guest launch.
+        val zone = TimeZone.getDefault()
+        val zoneId = zone.id
+        put(
+            "TZ",
+            timezoneValue(
+                zoneId = zoneId,
+                zoneFileExists = guestZoneFile(paths, zoneId)?.isFile == true,
+                secondsEast = zone.getOffset(System.currentTimeMillis()) / 1000,
+            ),
+        )
+        put("TZDIR", GUEST_ZONEINFO_DIR)
         // The trust store, named explicitly because nothing else names it. The
         // pinned ubuntu-base ships no `/etc/ssl` at all; the git payload installs
         // [GUEST_CA_BUNDLE] and these two variables are what make anything read it.
@@ -381,6 +404,92 @@ object GuestRecipe {
         // fail certificate verification.
         put("GIT_SSL_CAINFO", GUEST_CA_BUNDLE)
         put("SSL_CERT_FILE", GUEST_CA_BUNDLE)
+    }
+
+    /**
+     * The **guest's own** zoneinfo tree — where the zone files are, and glibc's compiled-in
+     * default for a relative `TZ`. **It must never be spelled under `/system`** (that was
+     * `18817a7`'s defect; [environment]'s comment has the measurements, and
+     * `GuestTimezoneCheck` pins the rule).
+     */
+    const val GUEST_ZONEINFO_DIR = "/usr/share/zoneinfo"
+
+    /**
+     * The value `TZ` carries, from the three facts that decide it: the device's zone id,
+     * whether the guest has a tzfile for that id, and the offset that id means *right now*.
+     *
+     * Pure, and deliberately the whole decision: the harness drives every branch with no device
+     * and no guest rootfs. The two branches are the intersection of the two parsers — see
+     * [environment]'s comment; the floor is [offsetSpec], never a naked short name.
+     */
+    fun timezoneValue(zoneId: String?, zoneFileExists: Boolean, secondsEast: Int): String {
+        val id = zoneId
+        return if (id != null && zoneFileExists && isSafeZoneId(id)) id else offsetSpec(secondsEast)
+    }
+
+    /** `<rootfs>/usr/share/zoneinfo/<id>`, or null when [zoneId] may not be joined onto it. */
+    private fun guestZoneFile(paths: PiPaths, zoneId: String?): File? =
+        if (isSafeZoneId(zoneId)) File(paths.rootfs, "$GUEST_ZONEINFO_DIR/$zoneId") else null
+
+    /**
+     * Whether [zoneId] may be joined onto [GUEST_ZONEINFO_DIR]. `TimeZone.getDefault().id` is a
+     * string the **device** chose, so it is untrusted input on its way into a file path (`..`,
+     * a leading `/`, a backslash, a NUL); the rule also rejects the ids this device really
+     * returns, such as `GMT+08:00`, which have no zone file anywhere.
+     *
+     * The shape is the IANA id shape: non-empty `[A-Za-z0-9_+-]` segments separated by `/`.
+     * `Etc/GMT-8` passes; `Asia/Shanghai/`, `Asia//Shanghai`, `/Asia`, `../etc/passwd`, `a\b`,
+     * `GMT+08:00`, `""` and `null` do not.
+     */
+    fun isSafeZoneId(zoneId: String?): Boolean {
+        val id = zoneId ?: return false
+        if (id.isEmpty() || id.length > 255) return false
+        return id.split('/').all { segment ->
+            segment.isNotEmpty() && segment.all { c ->
+                c in 'a'..'z' || c in 'A'..'Z' || c in '0'..'9' || c == '_' || c == '+' || c == '-'
+            }
+        }
+    }
+
+    /**
+     * A POSIX `TZ` spec for [secondsEast] seconds east of UTC — the floor when the guest has no
+     * zone file for the device's id. Needs no file, and both parsers understand it.
+     *
+     * The sign is POSIX's (`CST-8` is UTC+8: the offset is what you add to *local* time to get
+     * UTC) and a name containing digits must be quoted. Both halves were measured against glibc
+     * and node v24.19.0: `<+08>-8` is UTC+8, while `<08>-8` (no sign in the name) and
+     * `<+05:30>-5:30` (colon inside it) are **silently read as offset 0** — so the sign is
+     * always written and the colon is kept out of the name. `0` returns the word `UTC`.
+     *
+     * Seconds are emitted when the offset has them (historical LMT offsets; no post-1970 zone
+     * does), because POSIX allows `hh[:mm[:ss]]` and rounding them away would be a silent lie.
+     * DST is this branch's price: the offset in force at launch, not the transitions.
+     */
+    fun offsetSpec(secondsEast: Int): String {
+        if (secondsEast == 0) return "UTC"
+        val east = secondsEast > 0
+        val abs = kotlin.math.abs(secondsEast.toLong())
+        val hours = (abs / 3600).toInt()
+        val minutes = (abs % 3600 / 60).toInt()
+        val seconds = (abs % 60).toInt()
+        val hh = hours.toString().padStart(2, '0')
+        val mm = minutes.toString().padStart(2, '0')
+        val ss = seconds.toString().padStart(2, '0')
+        val name = buildString {
+            append('<')
+            append(if (east) '+' else '-')
+            append(hh)
+            if (minutes != 0 || seconds != 0) append(mm)
+            if (seconds != 0) append(ss)
+            append('>')
+        }
+        // POSIX's offset sign is local-minus-UTC inverted; the name's sign is the plain one.
+        val posixSign = if (east) "-" else "+"
+        return when {
+            seconds != 0 -> "$name$posixSign$hours:$mm:$ss"
+            minutes != 0 -> "$name$posixSign$hours:$mm"
+            else -> "$name$posixSign$hours"
+        }
     }
 
     /**
