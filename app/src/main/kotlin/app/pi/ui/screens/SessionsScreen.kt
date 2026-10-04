@@ -164,16 +164,11 @@ fun SessionsScreen(
     // selector; ours live here because a phone has no Ctrl+D and no `new_session`
     // argument prompt (`docs/sessions.md:48`, `rpc-types.ts:27`).
     var actions by remember { mutableStateOf<PiSessionStore.Summary?>(null) }
-    // **`remember`，不是 `rememberSaveable`。** 打开哪一屏由**这一次的请求**决定
-    // （[initialView]：`/tree` 与分支摘要行要树，别的都要列表），而 `PiRoot` 的
-    // `saveableStateHolder` 会把这一屏被移出组合时的 `rememberSaveable` 状态**留住** ——
-    // 于是"上一次停在树"会被带进下一次挂载，用户看到的就是「点叉号退出来了，再进来
-    // 又把我拉进会话树」。视图不是需要跨重建记住的偏好：`/tree` 想要树时会重新请求。
-    var viewIndex by remember { mutableIntStateOf(initialView.ordinal) }
+    var viewIndex by rememberSaveable { mutableIntStateOf(initialView.ordinal) }
     val view = SessionsView.entries.getOrNull(viewIndex) ?: SessionsView.List
     // The host can ask for a different view *after* this screen is already composed
     // (a second `/tree` while the overlay is open): the overlay stays mounted across
-    // requests, so the initial value above would never be consulted again.
+    // requests, so `rememberSaveable`'s initial value would never be consulted again.
     LaunchedEffect(initialView) { viewIndex = initialView.ordinal }
 
     // `/import` from the sessions screen: the same action as the palette row, and the
