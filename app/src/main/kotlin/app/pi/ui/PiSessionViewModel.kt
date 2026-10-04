@@ -45,6 +45,7 @@ import app.pi.session.ResumeTarget
 import app.pi.session.SessionExportNaming
 import app.pi.session.SessionFileReader
 import app.pi.session.SessionImport
+import app.pi.session.countIdLookupCandidates
 import app.pi.session.resumeTargetFor
 import app.pi.service.PiEngineController
 import app.pi.service.PiEngineLifecyclePolicy
@@ -2173,8 +2174,12 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      *
      * 所以这里把「App 知道的文件事实」读出来，交给纯逻辑
      * `app.pi.session.resumeTargetFor` 判定（判定与断言都在 `SessionResume.kt` /
-     * `SessionResumeCheck.kt`）：**只有 pi 真的能找到时才留在 id 形式**（那一格 argv 与以前逐字
-     * 相同），其余「App 能为这个文件担保、而 pi 会找不到」的格子改成把文件路径交给 pi。
+     * `SessionResumeCheck.kt`）：**只有当 pi 的 `findById` 一定、且唯一地命中这个文件时才留在 id
+     * 形式**（那一格 argv 与以前逐字相同），其余「App 能为这个文件担保、而 pi 会找不到或会给出
+     * 另一份」的格子改成把文件路径交给 pi。**唯一性**是第二条理由：`findById` 取的是 `readdirSync`
+     * 顺序里的第一个命中，而不是 mtime 最新的那个 —— 同一个 id 有两份（真劈开的两半都躺在平铺层）
+     * 时它可能给出另一份，用户重启后会看到另一个半截、新消息也写进那一份（`countIdLookupCandidates`
+     * 数这个，见它的 KDoc）。
      *
      * 与 [resolveSessionFile] 同一个纪律：**不许拿一个 App 说不清的文件去开**。映射不出 host 文件、
      * header 读不出来、header 的 id 不是本机 `get_state` 报的那一个 —— 一律退回 id 形式
@@ -2189,14 +2194,23 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             fun field(key: String): String? =
                 (header?.get(key) as? JsonPrimitive)?.takeIf { it.isString }?.content
             val root = File(host.paths().agentDir, "sessions")
+            val flat = file?.parentFile?.absolutePath == root.absolutePath
+            val launchCwd = guestWorkspace()
+            val id = meta.sessionId
+            // 「pi 的 `findById` 会不会唯一地命中这个文件」只在文件确实躺在那一层里时才需要问；
+            // 其余情况 [resumeTargetFor] 的 flat 判据已经定了路径形式。**算不出来就按 `false` 传**
+            // （走路径）—— 那是安全的一边：多走一次精确形式，不会藏掉任何东西。
+            val unique = id != null && flat &&
+                countIdLookupCandidates(root, id, launchCwd) { SessionFileReader.readHeader(it) } == 1
             resumeTargetFor(
-                requestedId = meta.sessionId,
+                requestedId = id,
                 guestPath = guestPath,
                 fileExists = file != null,
-                flatChildOfSessionDir = file?.parentFile?.absolutePath == root.absolutePath,
+                flatChildOfSessionDir = flat,
                 headerId = field("id"),
                 headerCwd = field("cwd"),
-                launchCwd = guestWorkspace(),
+                launchCwd = launchCwd,
+                idResolvesUniquely = unique,
             )
         }
     }

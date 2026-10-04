@@ -1,6 +1,10 @@
 package app.pi.session
 
 import app.pi.rpc.PiLaunchOptions
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 
 // 「引擎启动时靠什么认回这段对话」的判定 —— `SessionResume.kt` 的 harness。
 //
@@ -14,8 +18,9 @@ import app.pi.rpc.PiLaunchOptions
 // 这个 harness 要钉住的是修法的**边界**，而不是它的实现：
 //
 //  1. **能发 id 就发 id。** 只有「文件是一段真会话 ∧ 它在平铺层 ∧ header 的 cwd 与引擎 cwd
-//     逐字符相等」时才发 `--session-id` —— 那也正是 pi 自己能找到的那一格，所以正常用户的 argv
-//     一个字都没变。少一条就换路径（第 6/7/8/9/11 组）。
+//     逐字符相等 ∧ 那个 id 在那一层里**只有这一份**」时才发 `--session-id` —— 那也正是 pi 自己
+//     一定且唯一会命中的那一格，所以正常用户的 argv 一个字都没变。少一条就换路径
+//     （第 6/6b/7/8/9/11 组）。
 //  2. **不许拿一个不能担保的文件去开。** header 读不出来、或者 header 的 id 不是我们要的那段对话，
 //     一律留在 id 形式 —— 拿错文件去开等于把用户换到另一段对话里，比劈开更糟（第 4/5 组）。
 //  3. **「文件还没有」是正常状态，不是错误。** pi 在第一条 assistant 消息落盘前不建文件，
@@ -24,8 +29,17 @@ import app.pi.rpc.PiLaunchOptions
 //     但是两个字符串 —— 那正是真机上出事的那一格（proroot 的 `getcwd()` 泄漏宿主拼写，
 //     `docs/proroot-mode-audit.md:20-48`），必须判成「不相等」（第 7 组），
 //     而只差结尾斜杠/重复斜杠/`.` 段的两种拼写是 pi 眼里的同一个路径，必须判成「相等」（第 10 组）。
+//  5. **歧义不猜。** `findById` 取的是 `readdirSync` 顺序里的第一个命中，**不是** mtime 最新的
+//     那一份 —— 所以同一个 id 有两份时 `--session-id` 可能给出**另一份**（用户重启后看到另一个
+//     半截，新消息也写进那一份）。那两格（歧义 + 能担保）必须换成路径：第 6b/14c 组问判定，
+//     第 16 组问「第几个候选」是怎么数出来的（含「cwd 不同 / 无 cwd / 读不出来都不算候选」）。
 //
-// Android-free：只用 stdlib，所以 `tools/run-app-pure-checks.sh` 那套 kotlinc 配方能跑它。
+// 第 13 组把五件可独立真假的事穷举成 **32 格**，并钉死两个数字：pi 一定且唯一命中的只有 **1 格**
+// （留在 id 形式、argv 逐字不变），「App 能担保而 pi 会找不到或给出另一份」的 **7 格**全部换成
+// 路径，其余 25 格留在 id 形式。
+//
+// Android-free：只用 stdlib + kotlinx.serialization（构造夹具 header），所以
+// `tools/run-app-pure-checks.sh` 那套 kotlinc 配方能跑它。
 
 private var failures = 0
 
@@ -56,6 +70,7 @@ private fun target(
     headerId: String? = ID,
     headerCwd: String? = LAUNCH_CWD,
     launchCwd: String? = LAUNCH_CWD,
+    idResolvesUniquely: Boolean = true,
 ): ResumeTarget = resumeTargetFor(
     requestedId = requestedId,
     guestPath = guestPath,
@@ -64,6 +79,7 @@ private fun target(
     headerId = headerId,
     headerCwd = headerCwd,
     launchCwd = launchCwd,
+    idResolvesUniquely = idResolvesUniquely,
 )
 
 fun main() {
@@ -84,9 +100,29 @@ fun main() {
 
     // ---------------------------------------------- 6. 正常情况：argv 一个字都不变
     check(
-        "6 平铺层 + cwd 相同（pi 找得到）→ 照旧发 --session-id",
+        "6 平铺层 + cwd 相同 + 那个 id 只有这一份（pi 一定且唯一命中）→ 照旧发 --session-id",
         target(),
         ResumeTarget.ById(ID),
+    )
+
+    // ---------------------------------------------- 6b. 同一个 id 有两份 ⇒ 歧义，不猜
+    // `findById` 取的是 `readdirSync` 顺序里的**第一个**命中，而那个顺序不是 mtime —— 所以
+    // 「两半都躺在平铺层」时 `--session-id` 可能给出**另一份**：用户重启后看到另一个半截，新消息
+    // 也写进那一份，而且完全不可预测。歧义时把文件交出去，才是确定的。
+    check(
+        "6b 那个 id 在平铺层里有两份（pi 会给出哪一份不可预测）→ 换成路径",
+        target(idResolvesUniquely = false),
+        ResumeTarget.ByPath(GUEST_PATH),
+    )
+    check(
+        "6c 歧义 + 说不出文件 → 只能按 id（没有路径可交）",
+        target(guestPath = null, idResolvesUniquely = false),
+        ResumeTarget.ById(ID),
+    )
+    check(
+        "6d 歧义 + 文件不在平铺层 → 换成路径（flat 判据本身已经定了）",
+        target(flatChildOfSessionDir = false, idResolvesUniquely = false),
+        ResumeTarget.ByPath(GUEST_PATH),
     )
 
     // ---------------------------------------------- 7. 真机上出事的那一格
@@ -143,61 +179,70 @@ fun main() {
 
     // ---------------------------------------------- 13. 规则本身（穷举，把「哪一格换」钉成等式）
     //
-    // 四件可独立真假的事：文件在不在、在不在平铺层、header 的 id 对不对、cwd 等不等（16 格）。
-    // 两条互逆的断言，合起来就是这条修法的全部内容：
+    // 五件可独立真假的事：文件在不在、在不在平铺层、header 的 id 对不对、cwd 等不等、
+    // 那个 id 在那一层里**是不是只有这一份**（32 格）。两条互逆的断言，合起来就是这条修法的
+    // 全部内容：
     //
-    //  13a **pi 能找到的那一格必须留在 id 形式**（argv 一个字都不变）——
-    //      「文件在 ∧ 平铺层 ∧ id 对 ∧ cwd 相等」；
-    //  13b **「App 能为这个文件担保（文件在 ∧ header 的 id 对）而 pi 又会找不到」的每一格必须
-    //      换成路径** —— 也就是那一刀落下的所有格子，一格都不许漏。
+    //  13a **pi 一定且唯一命中的那一格必须留在 id 形式**（argv 一个字都不变）——
+    //      「文件在 ∧ 平铺层 ∧ id 对 ∧ cwd 相等 ∧ 唯一」；
+    //  13b **「App 能为这个文件担保（文件在 ∧ header 的 id 对）而 pi 会找不到、或会给出另一份」
+    //      的每一格必须换成路径** —— 也就是那一刀（和那次不可预测的命中）落下的所有格子。
     //
     // 其余两格（文件不在、header 的 id 不是这一段对话）本来就留在 id 形式，那是**今天的行为**：
     // 前者是 pi 的文档化语义（用同一个 id 建），后者 App 说不清那个文件是谁的，不许拿它去开。
     val flags = listOf(true, false)
     var byId = 0
     var byPath = 0
-    var piWouldFind = 0
-    var vouchedButPiWouldMiss = 0
+    var piResolves = 0
+    var vouchedButBroken = 0
     var wrongAnswer = 0
     for (exists in flags) {
         for (flat in flags) {
             for (idOk in flags) {
                 for (cwdOk in flags) {
-                    val answer = resumeTargetFor(
-                        requestedId = ID,
-                        guestPath = GUEST_PATH,
-                        fileExists = exists,
-                        flatChildOfSessionDir = flat,
-                        headerId = if (idOk) ID else "bbbb2222",
-                        headerCwd = if (cwdOk) LAUNCH_CWD else "/workspace/pi/workspaces/workspace-2",
-                        launchCwd = LAUNCH_CWD,
-                    )
-                    val finds = exists && flat && idOk && cwdOk
-                    val broken = exists && idOk && !(flat && cwdOk)
-                    if (finds) piWouldFind++
-                    if (broken) vouchedButPiWouldMiss++
-                    when (answer) {
-                        is ResumeTarget.ById -> {
-                            byId++
-                            // 能找到的必须按 id；说不清文件的两格也按 id（今天的行为）。
-                            if (!finds && !(!exists || !idOk)) wrongAnswer++
+                    for (unique in flags) {
+                        val answer = resumeTargetFor(
+                            requestedId = ID,
+                            guestPath = GUEST_PATH,
+                            fileExists = exists,
+                            flatChildOfSessionDir = flat,
+                            headerId = if (idOk) ID else "bbbb2222",
+                            headerCwd = if (cwdOk) LAUNCH_CWD else "/workspace/pi/workspaces/workspace-2",
+                            launchCwd = LAUNCH_CWD,
+                            idResolvesUniquely = unique,
+                        )
+                        val resolves = exists && flat && idOk && cwdOk && unique
+                        // App 能担保这个文件（它读过 header、id 对），但 pi 的查找不保证给出它。
+                        val broken = exists && idOk && !(flat && cwdOk && unique)
+                        if (resolves) piResolves++
+                        if (broken) vouchedButBroken++
+                        when (answer) {
+                            is ResumeTarget.ById -> {
+                                byId++
+                                // 唯一命中的必须按 id；说不清文件的两格也按 id（今天的行为）。
+                                if (!resolves && !(!exists || !idOk)) wrongAnswer++
+                            }
+                            is ResumeTarget.ByPath -> {
+                                byPath++
+                                if (!broken) wrongAnswer++
+                            }
+                            ResumeTarget.None -> wrongAnswer++
                         }
-                        is ResumeTarget.ByPath -> {
-                            byPath++
-                            if (!broken) wrongAnswer++
-                        }
-                        ResumeTarget.None -> wrongAnswer++
                     }
                 }
             }
         }
     }
-    check("13 16 格里 pi 找得到的恰好是「文件在 ∧ 平铺层 ∧ id 对 ∧ cwd 相等」这一格", piWouldFind, 1)
-    check("13b 而 App 能担保、pi 又会找不到的格子有 3 个", vouchedButPiWouldMiss, 3)
-    check("13c 那 3 格全部换成了路径（一刀都不许漏）", byPath, 3)
-    check("13d 其余 13 格留在 id 形式（正常用户的 argv 一个字都没变）", byId, 13)
+    check(
+        "13 32 格里 pi 一定且唯一命中的恰好是「文件在 ∧ 平铺层 ∧ id 对 ∧ cwd 相等 ∧ 唯一」这一格",
+        piResolves,
+        1,
+    )
+    check("13b 而 App 能担保、pi 又会找不到或给出另一份的格子有 7 个", vouchedButBroken, 7)
+    check("13c 那 7 格全部换成了路径（一格都不许漏）", byPath, 7)
+    check("13d 其余 25 格留在 id 形式（正常用户的 argv 一个字都没变）", byId, 25)
     check("13e 没有一格落在第三条路上", wrongAnswer, 0)
-    check("13f 三档都算得出来（16 格全过了一遍）", byId + byPath, 16)
+    check("13f 三档都算得出来（32 格全过了一遍）", byId + byPath, 32)
 
     // ---------------------------------------------- 14. 用户报的那条形状的起步动作
     //
@@ -212,9 +257,26 @@ fun main() {
         headerId = ID,
         headerCwd = "/data/user/0/app.pi/files/pi/workspaces/workspace-1",
         launchCwd = LAUNCH_CWD,
+        // 拼写变了的那一格连 cwd 都对不上（也就不是 pi 的候选），唯一性在这里不是理由；
+        // 给 `true` 是为了让这一条只量 cwd 那一格。
+        idResolvesUniquely = true,
     )
     check("14 拼写变了的那一格不再走 id（否则 pi 会再劈一个同 id 文件）", split, ResumeTarget.ByPath(GUEST_PATH))
     check("14b 而它交出去的正是那一段对话自己的文件", (split as? ResumeTarget.ByPath)?.guestPath, GUEST_PATH)
+
+    // 14c. 「两半都躺在平铺层」的形状（这一轮新确定的那一条）：cwd 一样、文件也在平铺层，但那个 id
+    // 有**两份** —— `findById` 会按 `readdirSync` 顺序给出其中一份，不可预测，所以必须走路径。
+    val ambiguous = resumeTargetFor(
+        requestedId = ID,
+        guestPath = GUEST_PATH,
+        fileExists = true,
+        flatChildOfSessionDir = true,
+        headerId = ID,
+        headerCwd = LAUNCH_CWD,
+        launchCwd = LAUNCH_CWD,
+        idResolvesUniquely = false,
+    )
+    check("14c 同 id 两份且都在平铺层 → 换成路径（歧义不猜）", ambiguous, ResumeTarget.ByPath(GUEST_PATH))
 
     // ---------------------------------------------- 15. argv 的拼法
     //
@@ -261,6 +323,79 @@ fun main() {
         PiLaunchOptions(resumeSessionPath = GUEST_PATH, continueMostRecent = true).commandLineSuffix(),
         " --session $GUEST_PATH",
     )
+
+    // ---------------------------------------------- 16. 「那个 id 在那一层里有几份」怎么数
+    //
+    // 这一节量 [countIdLookupCandidates] —— 它是 `idResolvesUniquely` 的来源，而它**必须与 pi 的
+    // `findById` 同款**：只这一层（不进 `--<cwd>--` 分组目录）、只看 `.jsonl`、只认 header 的
+    // `id` 相等 ∧ `cwd` 与引擎 cwd 按 pi 的规则相等。数错了就会改变选路 —— 少算一个候选就继续发
+    // `--session-id`，可能落到**另一份**上（正是这一轮要确定性化的那件事）。
+    //
+    // 用**真文件**（函数自己 `listFiles`），header 由调用方给 —— 这正是 ViewModel 传进去的那个
+    // lambda 的形状（`SessionFileReader.readHeader`），所以这里不碰 `SessionFileReader`。
+    val pairDir = java.io.File(
+        System.getProperty("java.io.tmpdir"),
+        "pi-session-resume-check-${System.nanoTime()}",
+    )
+    pairDir.mkdirs()
+    fun headerOf(id: String?, cwd: String?): JsonObject = buildJsonObject {
+        put("type", JsonPrimitive("session"))
+        if (id != null) put("id", JsonPrimitive(id))
+        if (cwd != null) put("cwd", JsonPrimitive(cwd))
+    }
+    fun fileIn(name: String): java.io.File = java.io.File(pairDir, name).also { it.writeText("{}\n") }
+    val mine = fileIn("2026-03-01T00-00-00-000Z_$ID.jsonl")
+    val twin = fileIn("2026-10-04T05-22-43-234Z_$ID.jsonl")
+    val otherId = fileIn("2026-03-02T00-00-00-000Z_bbbb2222.jsonl")
+    val otherWorkspace = fileIn("2026-03-03T00-00-00-000Z_ccc33333.jsonl")
+    val notJsonl = fileIn("notes.txt")
+    val unreadable = fileIn("2026-03-04T00-00-00-000Z_dddd4444.jsonl")
+    // 同名但是**目录**：`findById` 那边靠 `readHeader` 失败挡掉，这里靠 `isFile` 挡掉。
+    val directory = java.io.File(pairDir, "2026-03-05T00-00-00-000Z_eeee5555.jsonl").also { it.mkdirs() }
+
+    val base = mapOf(
+        mine to headerOf(ID, LAUNCH_CWD),
+        otherId to headerOf("bbbb2222", LAUNCH_CWD),
+        otherWorkspace to headerOf("ccc33333", LAUNCH_CWD),
+        notJsonl to headerOf(ID, LAUNCH_CWD),
+        unreadable to headerOf(null, null),
+        directory to headerOf(ID, LAUNCH_CWD),
+    )
+    fun count(extra: Map<java.io.File, JsonObject?> = emptyMap()): Int =
+        countIdLookupCandidates(pairDir, ID, LAUNCH_CWD) { base[it] ?: extra[it] }
+
+    check("16 只有我们自己那一份 ⇒ 1（别的 id / 别的文件名 / 目录都不算）", count(), 1)
+    check("16b 同一个 id 的第二份（孪生）⇒ 2（歧义：调用方会换路径）", count(mapOf(twin to headerOf(ID, LAUNCH_CWD))), 2)
+    check(
+        "16c 同一 id 但 cwd 是别的工作区 ⇒ 仍算 1（pi 的 cwd 过滤把它排除在外）",
+        count(mapOf(fileIn("2026-03-06T00-00-00-000Z_ffff6666.jsonl") to headerOf(ID, "/workspace/pi/workspaces/workspace-2"))),
+        1,
+    )
+    check(
+        "16d header 没有 cwd ⇒ 仍算 1（`sessionCwdMatches` 要求 cwd 非空）",
+        count(mapOf(fileIn("2026-03-07T00-00-00-000Z_7777.jsonl") to headerOf(ID, null))),
+        1,
+    )
+    check(
+        "16e header 的 cwd 是空串 ⇒ 仍算 1",
+        count(mapOf(fileIn("2026-03-08T00-00-00-000Z_8888.jsonl") to headerOf(ID, ""))),
+        1,
+    )
+    check(
+        "16f 读不出来的 header ⇒ 不算候选（少算只会更偏向路径形式，那是安全的一边）",
+        count(mapOf(fileIn("2026-03-09T00-00-00-000Z_9999.jsonl") to null)),
+        1,
+    )
+    check(
+        "16g 目录不存在 ⇒ 0（不是「算出来有歧义」，是「问不出来」）",
+        countIdLookupCandidates(java.io.File(pairDir, "gone"), ID, LAUNCH_CWD) { null },
+        0,
+    )
+    check("16h 直接问判据：id 对 + cwd 对 ⇒ 命中", isIdLookupCandidate(headerOf(ID, LAUNCH_CWD), ID, LAUNCH_CWD), true)
+    check("16i id 对但 cwd 不同 ⇒ 不算命中", isIdLookupCandidate(headerOf(ID, "/elsewhere"), ID, LAUNCH_CWD), false)
+    check("16j header 为 null ⇒ 不算命中", isIdLookupCandidate(null, ID, LAUNCH_CWD), false)
+    check("16k 引擎 cwd 问不出来（null）⇒ 不算命中（`resolvePath` 比较不可能成立）", isIdLookupCandidate(headerOf(ID, LAUNCH_CWD), ID, null), false)
+    pairDir.deleteRecursively()
 
     println(if (failures == 0) "\nharness: OK (all checks passed)" else "\nharness: FAILED ($failures)")
     if (failures != 0) kotlin.system.exitProcess(1)

@@ -1,5 +1,9 @@
 package app.pi.session
 
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import java.io.File
+
 /**
  * 引擎（重新）启动时，**靠什么把这一段对话认回来**：会话 `id`，还是那个文件本身的路径。
  *
@@ -64,9 +68,15 @@ package app.pi.session
  * 「文件存在但不是 pi 会话」会让 `_setSessionFile` 抛异常（`session-manager.js:662-690`），
  * `openSessionOrExit` 于是 `process.exit(1)`（`dist/main.js:266-274`），引擎根本起不来。而
  * `--session-id` 在同一格今天的行为是**静默劈开对话**（数据还在、但界面上少了一半，而且每次重启
- * 都可能再劈一次）。两边都不是好结果，所以这里的选择是：**只在「id 形式注定解析不到、而文件又是
- * 一段货真价实的会话」那一格换成路径** —— 也就是只在今天已经坏掉的那一格改行为。cwd 相同、文件
- * 又在平铺层时，argv 与今天**逐字相同**（[ResumeTarget.ById]），所以正常用户的启动路径一点没变。
+ * 都可能再劈一次）。两边都不是好结果，所以这里的选择是：**只在「id 形式一定、且唯一地命中这个
+ * 文件」时才留在 id 形式，其余情况换成路径** —— 也就是只在今天已经坏掉的那些格改行为。正常情况
+ * （文件在平铺层、header 的 cwd 相符、那个 id 在这一层里只有它一份）argv 与今天**逐字相同**
+ * （[ResumeTarget.ById]），所以正常用户的启动路径一点没变。
+ *
+ * **「唯一」是第二个理由，不是同一条的重复**：`findById` 取的是 `readdirSync` 顺序里的第一个命中，
+ * 而那个顺序不是 mtime —— 所以同一个 id 有两份（真劈开的两半都躺在平铺层）时它可能给出**另一份**，
+ * 用户重启后会看到另一个半截、新消息也写进那一份。歧义不猜：见
+ * [resumeTargetFor] 的 `idResolvesUniquely` 与 [countIdLookupCandidates]。
  *
  * ## 为什么这些判定住在 `app.pi.session` 而不是 ViewModel
  *
@@ -80,8 +90,9 @@ package app.pi.session
  */
 internal sealed interface ResumeTarget {
     /**
-     * 照旧发 `--session-id <id>`。**这一支必须覆盖所有「pi 能找到」的情况**，理由见文件 KDoc：
-     * 路径形式多一个 `process.exit(1)` 的面，能不发就不发。
+     * 照旧发 `--session-id <id>`。**这一支只在 pi 的查找一定、且唯一地命中我们点名的那个文件时
+     * 才用**（[resumeTargetFor] 的四条判据），理由见文件 KDoc：路径形式多一个 `process.exit(1)`
+     * 的面，能不发就不发。
      */
     data class ById(val id: String) : ResumeTarget
 
@@ -112,6 +123,11 @@ internal sealed interface ResumeTarget {
  *   过 `resolvePath` 再比的。
  * @param launchCwd 这个引擎**即将**启动时的 guest cwd（`GuestWorkspacePath` 的拼写），也就是
  *   `process.cwd()` 会成为的那个字符串 —— `findById` 的第 3 条比的就是它。
+ * @param idResolvesUniquely `findById` 在那一层里**只有一个**命中，而且就是我们点名的这个文件
+ *   （[countIdLookupCandidates] == 1）。**这是第二个必须走路径形式的理由**：`findById` 遍历的是
+ *   `readdirSync` 的顺序，**不是文件 mtime**，所以同一个 id 有两份时它可能给出**另一份** —— 用户
+ *   重启后看到另一个半截，新消息也写进那一份，而且完全不可预测。歧义不许猜：直接把文件交出去。
+ *   说不清（没算、算不出来）时按 `false` 传，也就是走路径 —— 那是安全的那一边。
  */
 internal fun resumeTargetFor(
     requestedId: String?,
@@ -121,14 +137,67 @@ internal fun resumeTargetFor(
     headerId: String?,
     headerCwd: String?,
     launchCwd: String?,
+    idResolvesUniquely: Boolean,
 ): ResumeTarget {
     val id = requestedId?.takeIf { it.isNotBlank() } ?: return ResumeTarget.None
     val path = guestPath?.takeIf { it.isNotBlank() } ?: return ResumeTarget.ById(id)
     if (!fileExists) return ResumeTarget.ById(id)
     // 这个文件不是我们要的那段对话（或者 header 读不出来）：不许拿它当路径。
     if (headerId == null || headerId != id) return ResumeTarget.ById(id)
-    if (flatChildOfSessionDir && cwdMatches(headerCwd, launchCwd)) return ResumeTarget.ById(id)
+    if (flatChildOfSessionDir && cwdMatches(headerCwd, launchCwd) && idResolvesUniquely) {
+        return ResumeTarget.ById(id)
+    }
     return ResumeTarget.ByPath(path)
+}
+
+/**
+ * pi 的 `findById` 在 [sessionDir] 这一层里会有**几个**命中（0 / 1 / 2 —— 到 2 就停）。
+ *
+ * 复刻的是它自己的扫描（`dist/core/session-manager.js:1421-1441`）：只 `readdirSync` 这一层一次
+ * （不进 `--<cwd>--` 分组目录）、只看 `.jsonl`、每个文件的 **header** 里 `id` 相等且 `cwd` 经
+ * [normalizeGuestPath] 后与 [launchCwd] 相等（[isIdLookupCandidate]）。
+ *
+ * **为什么要数它。** `findById` 取的是 `readdirSync` 顺序里的**第一个**命中，而那个顺序**不是**
+ * 文件 mtime（也就不是「最新/最活的那份」）。所以同一个 id 有两份时，`--session-id` 给出哪一份是
+ * 不可预测的 —— 而调用方（[resumeTargetFor]）的规矩是：**歧义不猜，直接把文件路径交出去**。
+ * 数到 2 就停下，所以「有歧义」这一格最多读两个 header；只有读到一个（或一个都没有）时才扫完。
+ *
+ * 读不出来的文件按「不是候选」算（`headerOf` 抛异常或给出 null）—— 少算一个候选只会让结果更
+ * 倾向于路径形式，那是安全的一边（见 [isIdLookupCandidate] 的 KDoc）。
+ */
+internal fun countIdLookupCandidates(
+    sessionDir: File,
+    requestedId: String,
+    launchCwd: String?,
+    headerOf: (File) -> JsonObject?,
+): Int {
+    val files = runCatching { sessionDir.listFiles() }.getOrNull() ?: return 0
+    var found = 0
+    for (file in files) {
+        // 与 `findById` 同名同款：只看 `.jsonl`。目录被 `isFile` 挡掉（pi 那边靠 `readHeader`
+        // 失败挡掉；这里把它说明白）。
+        if (!file.name.endsWith(".jsonl") || !file.isFile) continue
+        val header = runCatching { headerOf(file) }.getOrNull()
+        if (!isIdLookupCandidate(header, requestedId, launchCwd)) continue
+        found++
+        if (found > 1) return found
+    }
+    return found
+}
+
+/**
+ * 一个文件的 header 算不算 `findById` 的一个命中：`id` 相等 ∧ `cwd` 与 [launchCwd] 按 pi 的规则
+ * 相等（[cwdMatches]）。**与「这个文件是不是我们要的那份」无关** —— 它只回答「pi 的查找会不会
+ * 把这一行算进来」。
+ *
+ * header 读不出来（null）时不算命中：**少算一个候选只会让调用方更倾向于路径形式**，而路径形式是
+ * 精确的那一边；反过来（把读不出来的当成候选）只会让人更放心地发 id，方向相反。
+ */
+internal fun isIdLookupCandidate(header: JsonObject?, requestedId: String, launchCwd: String?): Boolean {
+    val id = (header?.get("id") as? JsonPrimitive)?.takeIf { it.isString }?.content
+    if (id == null || id != requestedId) return false
+    val cwd = (header?.get("cwd") as? JsonPrimitive)?.takeIf { it.isString }?.content
+    return cwdMatches(cwd, launchCwd)
 }
 
 /**
