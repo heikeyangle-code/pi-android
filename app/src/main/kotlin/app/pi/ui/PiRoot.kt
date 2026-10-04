@@ -533,24 +533,6 @@ fun PiRoot() {
     // screen exists.
     var sessionView by rememberSaveable { mutableStateOf(SessionViewPreference.List.name) }
 
-    /**
-     * 关掉覆盖层 —— **并且把「打开哪一屏」的偏好复位成列表**。
-     *
-     * [sessionView] 是「这一次请求要打开树」的**请求级**状态，不是用户的粘性偏好：它由
-     * `/tree`、分支摘要行、⋮ 菜单的「会话树」三项在举起覆盖层时设成 Tree。可它以前**没有
-     * 任何清除点**，而 `SessionsScreen` 自己的 `viewIndex` 是 `rememberSaveable`、随覆盖层
-     * 离开组合而丢失，于是它下一次挂载又照着这个还停在上次的 [sessionView] 走 —— 用户看到
-     * 的就是「明明点叉号退出来了，再进来却又把我拉进会话树」。
-     *
-     * 复位放在**唯一**这条关闭路径上（✕、返回键、`onOpenChat`、以及把覆盖层放下的三个导航
-     * 分支都走它），这样下一个人不用去数有几种关法。
-     */
-    val closeOverlay: () -> Unit = remember {
-        {
-            overlayIndex = null
-            sessionView = SessionViewPreference.List.name
-        }
-    }
 
     // The per-destination state that has to survive a destination switch.
     //
@@ -584,6 +566,31 @@ fun PiRoot() {
     val session: PiSessionViewModel = viewModel()
     LaunchedEffect(Unit) { session.boot() }
 
+    /**
+     * 关掉覆盖层 —— **并且把「打开哪一屏」的偏好复位成列表**。
+     *
+     * [sessionView] 是「这一次请求要打开树」的**请求级**状态，不是用户的粘性偏好：它由
+     * `/tree`、分支摘要行、⋮ 菜单的「会话树」三项在举起覆盖层时设成 Tree。可它以前**没有
+     * 任何清除点**，而 `SessionsScreen` 自己的 `viewIndex` 是 `rememberSaveable`、随覆盖层
+     * 离开组合而丢失，于是它下一次挂载又照着这个还停在上次的 [sessionView] 走 —— 用户看到
+     * 的就是「明明点叉号退出来了，再进来却又把我拉进会话树」。
+     *
+     * 复位放在**唯一**这条关闭路径上（✕、返回键、`onOpenChat`、以及把覆盖层放下的三个导航
+     * 分支都走它），这样下一个人不用去数有几种关法。
+     */
+    val closeOverlay: () -> Unit = remember {
+        {
+            overlayIndex = null
+            sessionView = SessionViewPreference.List.name
+            // **关掉覆盖层同时作废排队中的导航请求。** 请求由下面的
+            // `LaunchedEffect(navRequest, uiState.navSeq)` 执行，而效果体要等下一帧
+            // 才跑：主线程被别的工作占满时（用户读数：消息越多越明显、有时要等一秒多），
+            // 一条已经点下去的 `SessionTree` 会**在 ✕ 之后才落地**，把会话树又举回来。
+            // 那时 `claimNav` 会拒绝它 —— 见 `PiSessionViewModel.navIssued`。
+            session.discardPendingNav()
+        }
+    }
+
     // The theme picker lists what pi would load, not only what the `themes`
     // setting names, and the active theme's caveats are shown with it. Both come
     // from the ViewModel, which is the one place that reads pi's theme files.
@@ -605,7 +612,10 @@ fun PiRoot() {
     // same request can be made again (two `/tree` commands in a row).
     val uiState by session.state.collectAsState()
     val navRequest = uiState.navRequest
-    LaunchedEffect(navRequest) {
+    LaunchedEffect(navRequest, uiState.navSeq) {
+        // **先领处理权，再执行。** 请求的身份是 uiState.navSeq：关掉覆盖层时
+        // discardPendingNav() 已把高水位推过去，排队到现在才跑到的请求在这里被拒。
+        if (navRequest == null || !session.claimNav(uiState.navSeq)) return@LaunchedEffect
         when (navRequest) {
             // The session list is an overlay, so the request only raises the
             // layer; it must not also move the destination. Landing on 对话
@@ -651,7 +661,6 @@ fun PiRoot() {
             }
             null -> Unit
         }
-        session.consumeNav()
     }
 
     // **The bottom bar is always there.** v2's Boot screens (`phone59`–`phone61`) are a

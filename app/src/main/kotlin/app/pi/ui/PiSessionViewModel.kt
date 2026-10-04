@@ -713,6 +713,11 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         /** Set by the ViewModel, consumed by `PiRoot`. */
         val navRequest: NavRequest? = null,
         /**
+         * [navRequest] 的序号 —— "这一条请求"的身份。`PiRoot` 拿它去
+         * [PiSessionViewModel.claimNav] 领处理权：只处理**新的**请求，`0` 表示没有请求。
+         */
+        val navSeq: Long = 0,
+        /**
          * pi's latest provider-reported usage, straight off the reducer
          * (`TranscriptReducer.lastUsage`, fed by `message_update.usage` and
          * `message_end.message.usage`). F10: every one of those payloads was
@@ -5663,20 +5668,50 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /**
+     * 导航请求的序号：**「这一条请求」的身份**，`requestNav` 每次分配一个、从不复用。
+     *
+     * 为什么需要它：请求是在 `PiRoot` 的 `LaunchedEffect(navRequest)` 里落地的，而**效果
+     * 体要等下一帧才跑**。主线程被别的工作占满时（用户读数：消息越多越明显、有时要等
+     * 一秒多），那条已经被点下去的请求会**在用户关掉覆盖层之后才落地**，把会话树又举
+     * 回来 —— 用户原话：「点进会话树，一直显示读取会话树，这个时候我点叉，点出去，
+     * 1 秒内就给我拉回来」。`NavRequest.SessionTree` 是 `data object`，"这一次请求"与
+     * "上一次"在状态里长得一模一样，所以**值本身不足以判断一条请求该不该被执行**。
+     *
+     * 高水位 [navHandled] 放在**普通字段**里、不属于 `UiState`：任何过期状态快照都带不
+     * 走它。[discardPendingNav] 把它推到 [navIssued]，于是"关掉覆盖层"同时作废**所有
+     * 还没落地的请求** —— 一条请求最多被处理一次，而且关掉之后永远不会再被处理。
+     */
+    private var navIssued = 0L
+    private var navHandled = 0L
+
     /** Ask `PiRoot` to change destination, raise an overlay, or focus a screen. */
     fun requestNav(request: NavRequest) {
-        _state.value = _state.value.copy(navRequest = request)
+        navIssued += 1
+        _state.value = _state.value.copy(navRequest = request, navSeq = navIssued)
     }
 
     /**
-     * Clear the request the UI has just handled.
+     * 领取 [seq] 这条请求的处理权 —— **只对还没被处理、也没被作废的请求返回一次 `true`**。
      *
-     * `PiRoot` consumes the request from inside its effect and runs that effect
-     * again on the `null` it writes back, so the value must actually change: the
-     * write is skipped when it is already `null` to avoid emitting a state change
-     * that carries none.
+     * `PiRoot` 先问这一句，再执行请求：关掉覆盖层之后才轮到的那条请求会在这里被拒
+     * （[discardPendingNav] 已经把高水位推过去了），所以"点叉就退出"由构造保证。
      */
-    fun consumeNav() {
+    fun claimNav(seq: Long): Boolean {
+        if (seq <= navHandled || seq > navIssued) return false
+        navHandled = seq
+        if (_state.value.navSeq == seq) {
+            _state.value = _state.value.copy(navRequest = null)
+        }
+        return true
+    }
+
+    /**
+     * 作废**所有尚未落地**的导航请求：用户把覆盖层关掉了，`PiRoot` 里那条排着队、
+     * 还没跑到的效果不许再执行（见 [navIssued] 的 KDoc）。
+     */
+    fun discardPendingNav() {
+        navHandled = navIssued
         if (_state.value.navRequest != null) {
             _state.value = _state.value.copy(navRequest = null)
         }
