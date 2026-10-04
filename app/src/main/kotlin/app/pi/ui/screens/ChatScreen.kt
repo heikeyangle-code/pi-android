@@ -1866,7 +1866,7 @@ private fun ChatBody(
                                 )
                                 add(PiMenuItem("复制当前会话") { session.cloneSession() })
                                 add(PiMenuItem("重命名") { sheet = ChatSheet.Rename })
-                                add(PiMenuItem("导出会话（按扩展名）") { session.exportSession() })
+                                add(PiMenuItem("导出会话（HTML + 可导入文件）") { session.exportSession() })
                                 add(
                                     PiMenuItem("跳到上一条提问") {
                                         // F34: the first visible row as a *full-list*
