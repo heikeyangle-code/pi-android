@@ -367,33 +367,37 @@ fun main() {
     // 「谁来钉」是**接线**，而 `PiSessionViewModel` import Android、在这里编译不了，所以读源码文本
     // （与下面读注册表同一套分工）。三条事实：
     //
-    //  * **只有进程内重启钉 id**：只有那一刻 App 既知道用户在哪条对话上、又保证 cwd 没变。
+    //  * **只有进程内重启钉会话**：只有那一刻 App 既知道用户在哪条对话上、又保证 cwd 没变。
     //    冷启动（`boot()`，也是崩溃后「重试」按钮走的路）交给 `-c`；切工作区换了 cwd，旧 id
     //    不是 `findById` 的答案（它的 cwd 过滤会用同一个 id 再建一个文件）。
-    //  * id 在 `host.restart` **之前**读进局部变量：那次调用一进去旧引擎就退场，`meta` 被清。
+    //  * 会话在 `host.restart` **之前**读进局部变量：那次调用一进去旧引擎就退场，`meta` 被清。
     //  * `-c` 由 `app.sessions.resumeLast` 决定，而那个开关读的是**注册表里的默认值**
     //    （`boolIn`）—— 「把默认值翻成开」这类改动必须同时改变行为，不只是设置页的显示。
     val restartBody = viewModel.substringAfter("suspend fun restartEngine(", "").take(6_000)
     check("找到了 restartEngine 的函数体", restartBody.isNotEmpty(), "marker not found")
-    val pinAt = restartBody.indexOf("val resumeSessionId = _state.value.meta.sessionId")
+    val pinAt = restartBody.indexOf("val resume = resumeTarget()")
     val restartAt = restartBody.indexOf("host.restart(")
     check(
-        "restartEngine reads the id before it hands the new process its argv",
+        "restartEngine reads the conversation (id or file) before it hands the new process its argv",
         pinAt >= 0 && restartAt >= 0 && pinAt < restartAt,
         "pinAt=$pinAt restartAt=$restartAt",
     )
     check(
-        "restartEngine pins that id in the launch options",
-        restartBody.contains("launch = launchOptions(continueSessionId = resumeSessionId)"),
+        "restartEngine pins it in the launch options — the id when pi can find it, the file when it cannot",
+        restartBody.contains("launch = when (resume)") &&
+            restartBody.contains("launchOptions(continueSessionId = resume.id)") &&
+            restartBody.contains("launchOptions(resumeSessionPath = resume.guestPath)"),
     )
     // 断言的是**实参**形状，不是形参：`private fun launchOptions(continueSessionId: …)` 也以同一个
-    // 前缀开头，只数前缀会把声明和注释里的引用都算进去。三条 `launch = ` 里只有一条带 id。
+    // 前缀开头，只数前缀会把声明和注释里的引用都算进去。整份 `viewModel` 里 `launch = ` 只有两种：
+    // 两处无参（`boot`、`switchWorkspace`）与 `restartEngine` 那一处 `when (resume)` ——
+    // **哪一种形式由 `resumeTarget` 判定**，它的判定规则在 `session-resume` harness 里逐格钉住。
     // （计数先落到两个 val 里：模板表达式里再嵌套一层字符串字面量，是这个 harness 里没人需要的
     // 花活，读起来也更容易出错。）
     val noArgLaunches = Regex("launch = launchOptions\\(\\)").findAll(viewModel).count()
-    val pinnedLaunches = Regex("launch = launchOptions\\(continueSessionId = ").findAll(viewModel).count()
+    val pinnedLaunches = Regex("launch = when \\(resume\\)").findAll(viewModel).count()
     check(
-        "`launch = ` 只有两种形状：两处无参（boot / 切工作区）+ 一处钉 id（进程内重启）",
+        "`launch = ` 只有两种形状：两处无参（boot / 切工作区）+ 一处按 pi 能找到的形式钉住会话",
         noArgLaunches == 2 && pinnedLaunches == 1,
         "no-arg=$noArgLaunches pinned=$pinnedLaunches",
     )
