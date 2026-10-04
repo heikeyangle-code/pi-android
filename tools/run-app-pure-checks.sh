@@ -986,6 +986,22 @@ run_harness markdown-image-tap \
   "$ROOT/app/src/main/kotlin/app/pi/ui/render/PiMarkdownImageTap.kt" \
   "$ROOT/rpc/src/main/kotlin/app/pi/rpc/Commands.kt"
 
+# app.pi.runtime: 客机的时钟。`18817a7` 把 `TZDIR` 指到 Android 那份 zoneinfo（只有打包的
+# `tzdata`、没有按区文件），glibc 的相对名查找是 `getenv("TZDIR") + "/" + name` 一次 `fopen`，
+# 失败后**静默退化成 POSIX 解析**（`Asia/Shanghai` → 缩写 `Asia`、偏移 0），而 Node 的 ICU
+# 自带数据、一直是对的 —— 一个客机两只表，谁也不报错。这一项钉住分支表（有 tzfile 用短名、
+# 没有就退 POSIX 偏移、**绝不退短名**）、id 安全规则、偏移写法（引号里的名字必须带符号、不许带
+# 冒号），以及环境 map 上"`TZDIR` 不是 `/system`"。Android-free：`java.io.File` +
+# `java.util.TimeZone` + `PiPaths`。
+run_harness guest-timezone \
+  app.pi.runtime.GuestTimezoneCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/runtime/GuestTimezoneCheck.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/runtime/PiRuntime.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/runtime/VolatileTree.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/runtime/GuestWorkspacePath.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/runtime/GuestRecipe.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/runtime/RuntimeChoice.kt"
+
 # app.pi.ui.blocks: the transcript image cache's arithmetic — a byte-bounded LRU whose keys
 # are multi-megabyte payloads. Two properties matter and neither is visible in the UI: the
 # byte accounting must include the key itself (a cache that forgets what its keys weigh is a
