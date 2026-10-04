@@ -1029,10 +1029,13 @@ fun main() {
     //      规则（「`refreshState` **before** the replay, not after」），attach 没有遵守。
     //   ② 真正的分裂：pi 的 argv 是固定的（没有 `-c`/`--session-id`），每一次进程启动都落在**全新**
     //      的会话文件上；而重启（proroot 开关当场生效、装包之后重启、崩溃后重试）是 **App 的实现
-    //      细节**，不该被用户看见成一段新对话。修法是**在 argv 里钉住 id** —— `restartEngine` 传
-    //      `continueSessionId`（发成 `--session-id <id>`）—— **不是**起来之后补一条
-    //      `switch_session`：那套「事后接回 + 删掉本次新建的空会话」的机制已删（本文件下面钉它
-    //      不许回来；`--session-id` 与 `-c` 的**解析事实**在 `pre-spawn` harness 里执行）。
+    //      细节**，不该被用户看见成一段新对话。修法是**在 argv 里钉住那一段对话** ——
+    //      `restartEngine` 传 `continueSessionId`（发成 `--session-id <id>`），或者当 pi 的
+    //      `findById` 注定找不到它时（id ∧ header 的 cwd 等于引擎 cwd ∧ 文件在平铺层，三条里漏一条
+    //      pi 就会**用同一个 id 再建一个文件**）传 `resumeSessionPath`（发成 `--session <path>`）；
+    //      选哪一种由纯逻辑 `resumeTargetFor` 判定，`session-resume` harness 逐格钉住它 —— 而
+    //      **不是**起来之后补一条 `switch_session`：那套「事后接回 + 删掉本次新建的空会话」的机制
+    //      已删（本文件下面钉它不许回来；两个标志的**解析事实**在 `pre-spawn` harness 里执行）。
     val attachBody = viewModelText
         // 锚点只取到形参开头：写死完整签名会让这段断言在签名变化时静默变成「marker not found」。
         .substringAfter("private fun attach(engine: PiEngineSession", "")
@@ -1055,16 +1058,19 @@ fun main() {
         .substringAfter("suspend fun restartEngine(", "")
         .substringBefore("private fun attach(engine: PiEngineSession)")
     checkTrue("找到了 restartEngine 的函数体", restartBody.isNotEmpty(), "marker not found")
-    val pinAt = restartBody.indexOf("val resumeSessionId = _state.value.meta.sessionId")
+    val pinAt = restartBody.indexOf("val resume = resumeTarget()")
     val restartAt = restartBody.indexOf("host.restart(")
     checkTrue(
-        "重启前就把用户那条对话的 id 抓在手里（pin 在 host.restart 之前）",
+        "重启前就把用户那条对话抓在手里（pin 在 host.restart 之前）",
         pinAt >= 0 && restartAt >= 0 && pinAt < restartAt,
         "pinAt=$pinAt restartAt=$restartAt",
     )
     checkTrue(
-        "抓住了就交给 argv（`launchOptions(continueSessionId = resumeSessionId)`）",
-        restartBody.contains("launch = launchOptions(continueSessionId = resumeSessionId)"),
+        "抓住了就交给 argv（`launchOptions` 的两种会话形式，选哪一种由 `resumeTarget` 判定 —— " +
+            "`--session-id` 只在 pi 的 `findById` 找得到时可用，否则它会用同一个 id 再建一个文件）",
+        restartBody.contains("launch = when (resume)") &&
+            restartBody.contains("launchOptions(continueSessionId = resume.id)") &&
+            restartBody.contains("launchOptions(resumeSessionPath = resume.guestPath)"),
     )
     checkTrue(
         "重启成功之后只 attach，没有第二条会话命令",
@@ -1087,13 +1093,17 @@ fun main() {
             .contains("restartEngine("),
     )
     checkTrue(
-        "另一处 host.restart( 在 switchWorkspace 里，且那里不钉 id",
+        "另一处 host.restart( 在 switchWorkspace 里，且那里两种会话形式都不钉（换了 cwd）",
         viewModelText
             // 窗口取到 `switchWorkspace` 自己的结尾为止（下一个声明是 `wouldInterruptTurn`）：
             // 再往后就是 `launchOptions` 的声明，那里面当然有 `continueSessionId`。
             .substringAfter("suspend fun switchWorkspace(", "")
             .substringBefore("fun wouldInterruptTurn()")
-            .let { it.contains("host.restart(") && !it.contains("continueSessionId") },
+            .let {
+                it.contains("host.restart(") &&
+                    !it.contains("continueSessionId") &&
+                    !it.contains("resumeSessionPath")
+            },
     )
     // 删掉的那套机制**不许回来**：每个重启入口各自补一条 `switch_session`，正是「一次对话裂成
     // 好几段」的来源（两次收尾之间用户就能打字，消息落进另一个文件）；而「本次新建的空会话」
