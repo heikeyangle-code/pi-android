@@ -105,38 +105,6 @@ enum class PiDestination(val label: String) {
         }
 }
 
-/**
- * What is drawn **over** the current destination, if anything.
- *
- * An overlay is deliberately not a [PiDestination]: a destination is a place the
- * bottom bar goes, and both of these belong to whatever session is on screen.
- * Making the session list a fourth tab is the mistake `03-navigation-decision.md`
- * records; keeping it out of the enum means the bottom bar cannot regress into
- * listing it again.
- *
- * The list and the tree are **one** overlay with two views, not two overlays: they
- * answer the same question, swap in place behind one segmented control, and — the
- * part that decides it — Compose hands a back press to the most recently composed
- * handler, so stacking two overlays would leave only the top one closable while the
- * app keeps its single `BackHandler` promise (`PiRoot`'s own note below). The
- * full-screen terminal joins them here, from the settings row, for the same reason:
- * it is not a place either.
- */
-private enum class PiOverlay {
-    /** The session list — and, behind one tap, pi's `/tree`. */
-    SessionList,
-
-    /**
-     * The full-screen terminal, opened from the settings home's terminal row.
-     *
-     * It is an overlay rather than a destination because the user retired it from
-     * the bottom bar: it is a fallback for the handful of extension APIs the RPC
-     * path cannot carry, not a place to spend the bar's most visible slot
-     * (`03-navigation-decision.md`). Its own screen is deliberately not redesigned
-     * — `ui/terminal` is out of scope for this refactor.
-     */
-    Terminal,
-}
 
 /**
  * Which of the two views the session overlay opens on.
@@ -146,7 +114,6 @@ private enum class PiOverlay {
  * user tap a segmented control to reach it. It is a *preference* rather than a
  * separate overlay because there is only one overlay; see [PiOverlay].
  */
-private enum class SessionViewPreference { List, Tree }
 
 /**
  * `rememberSaveable` cannot persist an enum (it is neither a `Bundle` value nor
@@ -154,8 +121,6 @@ private enum class SessionViewPreference { List, Tree }
  * Out-of-range values land on `null` rather than throwing: a restored state from a
  * build whose overlay set was smaller must not crash the launch.
  */
-private fun overlayAt(index: Int?): PiOverlay? =
-    index?.let { PiOverlay.entries.getOrNull(it) }
 
 /**
  * The bottom inset assumed while an overlay covers the screen, when the
@@ -523,15 +488,12 @@ fun PiRoot() {
     // One overlay slot for the whole app. See [PiOverlay] for why it is not a
     // destination; see the single `BackHandler` below for why it lives here and
     // nowhere else.
-    var overlayIndex by rememberSaveable { mutableStateOf<Int?>(null) }
-    val overlay = overlayAt(overlayIndex)
 
     // Which view the session overlay should open on. It is hoisted here, rather than
     // left to `SessionsScreen`'s own `rememberSaveable`, because `/tree` and the
     // branch-summary row have to open the overlay **on the tree**
     // ([SessionViewPreference]); state inside the screen could not be set before the
     // screen exists.
-    var sessionView by rememberSaveable { mutableStateOf(SessionViewPreference.List.name) }
 
 
     // The per-destination state that has to survive a destination switch.
@@ -567,29 +529,15 @@ fun PiRoot() {
     LaunchedEffect(Unit) { session.boot() }
 
     /**
-     * 关掉覆盖层 —— **并且把「打开哪一屏」的偏好复位成列表**。
+     * 关掉覆盖层 —— **不管打断还是怎么的，关掉之后不许它自己回来。**
      *
-     * [sessionView] 是「这一次请求要打开树」的**请求级**状态，不是用户的粘性偏好：它由
-     * `/tree`、分支摘要行、⋮ 菜单的「会话树」三项在举起覆盖层时设成 Tree。可它以前**没有
-     * 任何清除点**，而 `SessionsScreen` 自己的 `viewIndex` 是 `rememberSaveable`、随覆盖层
-     * 离开组合而丢失，于是它下一次挂载又照着这个还停在上次的 [sessionView] 走 —— 用户看到
-     * 的就是「明明点叉号退出来了，再进来却又把我拉进会话树」。
-     *
-     * 复位放在**唯一**这条关闭路径上（✕、返回键、`onOpenChat`、以及把覆盖层放下的三个导航
-     * 分支都走它），这样下一个人不用去数有几种关法。
+     * 两件事一起做，而且都由 ViewModel 拥有（见 [PiSessionViewModel.closeOverlay]）：
+     * 「覆盖层开着」这一条状态**不在组合层**，所以晚到的状态写、过期快照、restored
+     * state 都碰不到它；同时作废排队中的导航请求（请求的效果体要等下一帧才跑，一条已
+     * 经点下去的 `SessionTree` 会在 ✕ 之后才轮到 —— 那正是用户看到的"点出去 1 秒内又
+     * 被拉回来"）。之后只有**新的**手势能再把它举起来。
      */
-    val closeOverlay: () -> Unit = remember {
-        {
-            overlayIndex = null
-            sessionView = SessionViewPreference.List.name
-            // **关掉覆盖层同时作废排队中的导航请求。** 请求由下面的
-            // `LaunchedEffect(navRequest, uiState.navSeq)` 执行，而效果体要等下一帧
-            // 才跑：主线程被别的工作占满时（用户读数：消息越多越明显、有时要等一秒多），
-            // 一条已经点下去的 `SessionTree` 会**在 ✕ 之后才落地**，把会话树又举回来。
-            // 那时 `claimNav` 会拒绝它 —— 见 `PiSessionViewModel.navIssued`。
-            session.discardPendingNav()
-        }
-    }
+    val closeOverlay: () -> Unit = remember { { session.closeOverlay() } }
 
     // The theme picker lists what pi would load, not only what the `themes`
     // setting names, and the active theme's caveats are shown with it. Both come
@@ -611,6 +559,11 @@ fun PiRoot() {
     // once for the request and once for the `null`, and the second run is how the
     // same request can be made again (two `/tree` commands in a row).
     val uiState by session.state.collectAsState()
+    // **覆盖层开着与否，读的是 ViewModel 自己那条流，不是 `UiState`、也不是
+    // `rememberSaveable`。** 用户的要求是硬的：「点叉就必须退出，不管打断还是怎么的。」
+    // 这条流只有 `raiseOverlay`/`closeOverlay` 两个写者，任何晚到的 `_state` 写、任何
+    // restored state 都碰不到它 —— 于是"关掉之后又被举起来"在结构上不可能。
+    val overlayState by session.overlay.collectAsState()
     val navRequest = uiState.navRequest
     LaunchedEffect(navRequest, uiState.navSeq) {
         // **先领处理权，再执行。** 请求的身份是 uiState.navSeq：关掉覆盖层时
@@ -628,8 +581,7 @@ fun PiRoot() {
             // transcript and move the ground under the list they are about to read,
             // for no gain. If they pick a row, the pick moves them then.
             NavRequest.SessionList -> {
-                sessionView = SessionViewPreference.List.name
-                overlayIndex = PiOverlay.SessionList.ordinal
+                session.raiseOverlay(OverlaySlot.SessionList, OverlayView.List)
             }
             NavRequest.Chat -> {
                 closeOverlay()
@@ -648,8 +600,7 @@ fun PiRoot() {
             // second view. There is no separate tree overlay — see [PiOverlay] — so
             // this both raises the layer and picks the view.
             NavRequest.SessionTree -> {
-                sessionView = SessionViewPreference.Tree.name
-                overlayIndex = PiOverlay.SessionList.ordinal
+                session.raiseOverlay(OverlaySlot.SessionList, OverlayView.Tree)
                 session.refreshTree()
             }
             // The terminal raises the overlay layer for the same reason the list
@@ -657,7 +608,7 @@ fun PiRoot() {
             // composer's chip and the overflow entry are gone (the user retired
             // the terminal), so the settings home's row is the one door.
             NavRequest.Terminal -> {
-                overlayIndex = PiOverlay.Terminal.ordinal
+                session.raiseOverlay(OverlaySlot.Terminal, OverlayView.List)
             }
             null -> Unit
         }
@@ -708,8 +659,7 @@ fun PiRoot() {
                     // moving them first would rebuild the transcript underneath the
                     // list they are about to read.
                         onOpenSessions = {
-                            sessionView = SessionViewPreference.List.name
-                            overlayIndex = PiOverlay.SessionList.ordinal
+                            session.raiseOverlay(OverlaySlot.SessionList, OverlayView.List)
                         },
                     )
                 }
@@ -852,7 +802,7 @@ fun PiRoot() {
             // before the extension host so that a blocking dialog stays on top of
             // them: an extension waiting on an answer must be answerable from the
             // session list too (see the note on the single host below).
-            val shown = overlay
+            val shown = overlayState?.slot
             if (shown != null) {
                 // Opaque, not translucent: the transcript underneath must not
                 // read as part of this layer (the ask that produced this batch's
@@ -864,7 +814,7 @@ fun PiRoot() {
                     color = MaterialTheme.colorScheme.background,
                 ) {
                     when (shown) {
-                        PiOverlay.SessionList -> {
+                        OverlaySlot.SessionList -> {
                             // **两个回调的 identity 固定下来。** 它们只捕获 `overlayIndex` 与
                             // `destinationName` 这两个 `MutableState`（在本组合的整个生命周期里是
                             // 同一个对象），所以 `remember` 之后**行为逐字不变** —— 而这一屏的
@@ -891,7 +841,7 @@ fun PiRoot() {
                                 onClose = onCloseSessionList,
                                 // Which view to open on: `/tree` and the branch-summary
                                 // row ask for the tree, everything else for the list.
-                                initialView = if (sessionView == SessionViewPreference.Tree.name) {
+                                initialView = if (overlayState?.view == OverlayView.Tree) {
                                     SessionsView.Tree
                                 } else {
                                     SessionsView.List
@@ -902,7 +852,7 @@ fun PiRoot() {
                         // The full-screen terminal, unchanged from when it was a
                         // destination: this batch moves the *door*, not the room
                         // (`05-compose-migration-plan.md` §3.8).
-                        PiOverlay.Terminal -> TerminalScreen(
+                        OverlaySlot.Terminal -> TerminalScreen(
                             contentPadding = padding,
                             onBack = closeOverlay,
                         )
@@ -930,7 +880,7 @@ fun PiRoot() {
             // *navigation* back (search → group → out), not an overlay back, and
             // it is enabled only while an inner level is open, which the overlay
             // covers anyway.
-            BackHandler(enabled = overlay != null) { closeOverlay() }
+            BackHandler(enabled = overlayState != null) { closeOverlay() }
 
             // Mounted once, above the destination switch, because an extension
             // dialog is not chat-specific: `notify` and `extension_error` arrive

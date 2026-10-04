@@ -5707,6 +5707,42 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
+     * 覆盖层此刻是否显示、显示哪一屏 —— **单独一条流，绝不放进 `UiState`**。
+     *
+     * 用户的要求是硬的：「点叉就必须退出，**不管打断还是怎么的**，不能给我拉回来。」
+     * 于是"覆盖层开着"这件事只能由 [raiseOverlay] / [closeOverlay] 这一对动作拥有。
+     * 为什么必须与 `UiState` 分开：`_state.value = _state.value.copy(...)` 有七十多处，
+     * 任何一次晚到的写、任何一份 restored state / 过期快照都可能把"覆盖层开着"再送回
+     * 来 —— 而这条流它们一个都碰不到。[closeOverlay] 之后，只有**新的** [raiseOverlay]
+     * 能让它再显示；排队中的导航请求同时被 [discardPendingNav] 作废。
+     */
+    private val _overlay = MutableStateFlow<OverlayState?>(null)
+    val overlay: StateFlow<OverlayState?> = _overlay.asStateFlow()
+
+    /** 举起覆盖层；重复调用就是改 [OverlayState.view]（覆盖层开着时再来一次 `/tree`）。 */
+    fun raiseOverlay(slot: OverlaySlot, view: OverlayView) {
+        _overlay.value = OverlayState(slot, view)
+    }
+
+    /**
+     * 关掉覆盖层 —— **并且作废排队中的导航请求**。
+     *
+     * 两件事必须一起做：请求是在 `PiRoot` 的效果体里落地的，而效果体要等下一帧才跑，
+     * 所以一条已经点下去的 `SessionTree` 可能在 ✕ 之后才轮到（用户读数：消息越多越明显、
+     * 有时要等一秒多，于是"点出去 1 秒内又被拉回来"）。关掉之后它再也过不了
+     * [claimNav]，覆盖层也不会再显示。
+     */
+    fun closeOverlay() {
+        _overlay.value = null
+        discardPendingNav()
+    }
+
+    /** 覆盖层里切「列表 / 树」。没开着时是 no-op。 */
+    fun setOverlayView(view: OverlayView) {
+        _overlay.value = _overlay.value?.copy(view = view)
+    }
+
+    /**
      * 作废**所有尚未落地**的导航请求：用户把覆盖层关掉了，`PiRoot` 里那条排着队、
      * 还没跑到的效果不许再执行（见 [navIssued] 的 KDoc）。
      */
@@ -6056,3 +6092,16 @@ private const val TOOL_CLOCK_TICK_MS = 1_000L
 private fun systemDarkAtStartup(application: Application): Boolean =
     (application.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
         Configuration.UI_MODE_NIGHT_YES
+
+
+/**
+ * 覆盖层的**槽位**：这个 App 只有一个覆盖层，会话列表与 pi 的 `/tree` 是它的两种视图
+ * （见 `PiOverlay`），终端是另一个槽位。
+ */
+enum class OverlaySlot { SessionList, Terminal }
+
+/** 会话覆盖层打开时停在哪个视图：`SessionsScreen` 的列表，或 pi 的 `/tree`。 */
+enum class OverlayView { List, Tree }
+
+/** [PiSessionViewModel.overlay] 的读数：哪一层、哪一屏。 */
+data class OverlayState(val slot: OverlaySlot, val view: OverlayView)
