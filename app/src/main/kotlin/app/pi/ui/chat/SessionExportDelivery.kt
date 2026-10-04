@@ -12,8 +12,8 @@ import java.io.File
  * ## Why this exists
  *
  * `/export` writes the session into the app's **private** workspace. pi's own
- * export lands in the user's cwd (`core/export-html/index.ts:274-281`) and its TUI
- * reports that path (`interactive-mode.ts:6060-6075`), so the file is reachable on
+ * export lands in the user's cwd (`core/export-html/index.ts:191-196`) and its TUI
+ * reports that path (`interactive-mode.ts:5380-5388`), so the file is reachable on
  * a desktop; inside an Android sandbox there is no such place and no file manager
  * can open the artifact. The export is the deliverable, so the app owes the user a
  * way to take it — and it already owns exactly two of them for its own diagnostic
@@ -27,6 +27,11 @@ import java.io.File
  * Deliberately the same two sinks as the diagnostic report: a third storage
  * location, or a `FileProvider` of this app's own, would be a second channel to
  * keep correct for one button.
+ *
+ * ## 两份：保存要把两份都写出去
+ *
+ * [ExportedSession] 是 HTML 与会话文件本身（逐字节，能导回来），所以 [saveToDownloads] 逐份写；
+ * 分享面板只带得动一个文本块，所以 [share] 分享 HTML，会话文件那份走「保存到 Download」。
  *
  * ## Sharing is text, and that has a limit
  *
@@ -63,29 +68,26 @@ object SessionExportDelivery {
     data class Result(val sentence: String, val warning: Boolean = false)
 
     /**
-     * Save to the public Download folder.
+     * Save every artifact of [exported] to the public Download folder.
      *
      * 走 `export(sourceFile = …)` 而不是把文件编码成 base64 再交给它：一份导出的会话可以有
      * 几 MB，而 `readBytes()` → base64 字符串（≈4/3 倍）→ `export` 里再 decode 回来，
      * 是同一条数据的**三份**同时驻留（峰值 ≈ 3.3 倍文件大小）；`sourceFile` 让 `export`
-     * 自己读一次，只剩一份。文件不可读时仍然先由 `isFile` 给出那句人话，读失败则落到
-     * `export` 抛出的 `DeviceActionException`（比原来那句泛泛的"读不出来了"更具体）。
+     * 自己读一次，只剩一份。读不出来时由 `export` 自己抛出的 `DeviceActionException` 说原因
+     * （文件不在了、没权限、空间不够），这里不再另写一句去猜。
      */
     fun saveToDownloads(context: Context, exported: ExportedSession): Result = try {
-        val file = File(exported.path)
-        if (!file.isFile) {
-            Result(unreadableSentence(), warning = true)
-        } else {
+        for (file in exported.files) {
             DeviceSystemActions.export(
                 context = context,
-                name = exported.name,
+                name = file.name,
                 text = null,
                 base64 = null,
-                mimeType = exported.mimeType,
-                sourceFile = file,
+                mimeType = file.mimeType,
+                sourceFile = File(file.path),
             )
-            Result("已保存到 Download/${exported.name}")
         }
+        Result("已保存到 Download：${exported.files.joinToString("、") { it.name }}")
     } catch (error: DeviceActionException) {
         Result(
             "保存到 Download 失败：${error.denial.reason}" +
@@ -98,12 +100,15 @@ object SessionExportDelivery {
         Result("保存到 Download 失败：文件读不出来了。请重新导出一份再试。", warning = true)
     }
 
-    /** Open the share sheet with the export. */
+    /**
+     * Open the share sheet with the **HTML** (the human-readable half).
+     *
+     * 分享通道只带一个文本块，所以这里只发 HTML；要导回来的那份用「保存到 Download」取。
+     */
     fun share(context: Context, exported: ExportedSession): Result = try {
-        val file = File(exported.path)
+        val html = exported.files.firstOrNull { it.mimeType == HTML_MIME } ?: exported.files.first()
+        val file = File(html.path)
         when {
-            !file.isFile -> Result(unreadableSentence(), warning = true)
-
             // Bytes here, characters there: `EXTRA_TEXT` carries a String, and a
             // UTF-8 Chinese session costs up to three bytes per character in the
             // transaction. `length()` is the cheap bound and runs before anything is
@@ -120,7 +125,7 @@ object SessionExportDelivery {
                     DeviceSystemActions.share(
                         context = context,
                         text = text,
-                        subject = exported.name,
+                        subject = html.name,
                         url = null,
                     )
                     Result("已打开分享")
@@ -136,6 +141,8 @@ object SessionExportDelivery {
         Result("分享失败：这份导出读不出来了。请重新导出一份，或改用保存到 Download。", warning = true)
     }
 
+    private const val HTML_MIME: String = "text/html"
+
     /**
      * The one action that still works when the text is too big for a share intent:
      * save it to Download, then share it from there. Named once so the two size
@@ -143,8 +150,4 @@ object SessionExportDelivery {
      */
     private const val TOO_LARGE: String =
         "内容较大，系统分享带不动它。请先保存到 Download，再从文件管理器里分享。"
-
-    /** The artifact vanished between the export and the button. */
-    private fun unreadableSentence(): String =
-        "这份导出已经不在了（可能被清理掉了）。请重新导出一次。"
 }

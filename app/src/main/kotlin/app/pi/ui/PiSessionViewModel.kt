@@ -106,14 +106,10 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonArray
-import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.buildJsonObject
 import java.io.File
 import java.io.IOException
-import java.time.Instant
-import java.time.temporal.ChronoUnit
 
 /**
  * Boot progress, as a first-class state rather than a boolean.
@@ -346,11 +342,22 @@ data class BashRun(
  * between the export and the user's choice, and it is the only reason the app
  * keeps a path to its own artifact in state.
  *
- * [path] is the file's absolute host path and is **never** rendered: user-visible
- * copy in this app names no internal directory. [name] is what the user sees and
- * what the delivery uses as the Download file name.
+ * ## 一次导出是两份
+ *
+ * HTML 给人看/分享，**导不回来**（不是 pi 的会话格式）；所以同一份导出里还带着**会话文件本身**
+ * —— 逐字节复制、连名字都不改，那份才是能 `importFromJsonl` 导回来的。
+ *
+ * [ExportedFile.path] 是 App 私有目录里的绝对路径，**从不渲染**：用户可见文案不出现内部目录。
+ * [ExportedFile.name] 是用户看得到的文件名，也是交付时用的 Download 文件名。
  */
-data class ExportedSession(
+data class ExportedSession(val files: List<ExportedFile>) {
+    /** 行上显示的那一行：两份的文件名并排，`.html` / `.jsonl` 一眼分清。 */
+    val name: String get() = files.joinToString(" ＋ ") { it.name }
+}
+
+/** [ExportedSession] 里的一份产物（HTML 或那份逐字节复制的会话文件）。 */
+data class ExportedFile(
+    /** 文件名，也是交付时的 Download 文件名。 */
     val name: String,
     /** What the delivery channel calls the file — see `SessionExportNaming`. */
     val mimeType: String,
@@ -4039,8 +4046,8 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     /**
      * Host path of a guest session path, or null.
      *
-     * The inverse of [guestSessionPath], and the same mapping [sessionHeaderOf] and
-     * `exportJsonl` already apply. The guards matter: `get_state`'s `sessionFile`
+     * The inverse of [guestSessionPath], and the same mapping the export's byte copy applies
+     * ([copySessionFile]). The guards matter: `get_state`'s `sessionFile`
      * comes from pi, so a malformed or escaping value must not become an arbitrary
      * read — only a path under the guest's session directory that resolves inside
      * the host's is accepted, and only when it is a regular file.
@@ -5482,174 +5489,80 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
-     * `/export <path>` — the format follows the extension, exactly as pi does it.
+     * `/export <path>` — **一次导出给两份**：pi 的 HTML（给人看/分享）＋**会话文件本身**
+     * （逐字节复制、不改名，见 [copySessionFile]）。HTML 导不回来，会话文件能导回来；而它一直
+     * 就在磁盘上（pi 在写它），App 手上就有路径（`meta.sessionFile`）。
      *
-     * pi's TUI branches on the argument: `interactive-mode.ts:6062-6066` calls
-     * `exportToJsonl` when the path ends in `.jsonl` and `exportToHtml`
-     * otherwise. The RPC surface only exposes `export_html`
-     * (`rpc-types.ts:60`), so the JSONL branch is reproduced here from the same
-     * records pi would write — see [exportJsonl].
+     * HTML 那一份一个字没动：按参数后缀分派是 pi 的规则（`interactive-mode.ts:6062-6066`），
+     * HTML 本体仍走 RPC `export_html`（`rpc-types.ts:60`），写进工作区 ——
+     * pi 的默认落点也是它的 cwd（`core/export-html/index.ts:191-196`）。
      *
-     * HTML still goes through `export_html`, written into the workspace where the
-     * app can find it again. pi's default destination is its cwd —
-     * `pi-session-<会话文件 basename>.html` (`core/export-html/index.ts:274-281`) —
-     * which *is* the workspace, but the response returns the guest spelling of the
-     * path. Passing an explicit path (with the name `SessionExportNaming` derives
-     * from pi's rule) keeps both spellings known to this class, which is what lets
-     * the app check the file it actually looks for.
-     *
-     * The confirmation names the **file**, not its path: the destination is this
-     * app's private storage, so the only path the app could print is one the user
-     * cannot open in any file manager — and it was the last place in the app's own
-     * copy that showed an internal directory. That sentence is exactly why the
-     * export now ends with a delivery handle instead of a path ([ExportedSession]):
-     * the user gets the file (Download or the share sheet), not a location they
-     * cannot reach. When the file is not there at all, the app says so rather than
-     * falling back to pi's guest path.
-     *
-     * This is also the only non-TUI path by which an extension's
-     * `renderCall`/`renderResult` output reaches a client (audit §5.11).
+     * 确认只说文件、不说路径：落点是 App 私有目录，能打印的路径用户都打不开 —— 那份导出因此以
+     * **交付句柄**收尾（[ExportedSession]）。一份都没写出来时说没写出来。
      */
     fun exportSession(fileName: String? = null) {
         val name = fileName?.trim()?.takeIf { it.isNotEmpty() }
-        val jsonlName = name?.takeIf { SessionExportNaming.isJsonl(it) }
-        if (jsonlName != null) {
-            exportJsonl(jsonlName)
-            return
+        // pi 的分派一个字没动（`interactive-mode.ts:6062-6066`）：`.jsonl` 结尾的参数属于 JSONL
+        // 那一份，因此 HTML 用默认名；其余（含没给参数）就是 HTML 的名字。
+        val htmlName = if (SessionExportNaming.isJsonl(name)) {
+            SessionExportNaming.defaultHtmlName(_state.value.meta.sessionFile, System.currentTimeMillis())
+        } else {
+            name ?: SessionExportNaming.defaultHtmlName(_state.value.meta.sessionFile, System.currentTimeMillis())
         }
-        val htmlName = name
-            ?: SessionExportNaming.defaultHtmlName(_state.value.meta.sessionFile, System.currentTimeMillis())
         val guestPath = "${guestWorkspace()}/$htmlName"
         call("导出会话") { api ->
             api.exportHtml(guestPath)
-            val hostPath = File(defaultWorkspace(), htmlName)
-            if (hostPath.isFile) {
-                publishExport(hostPath)
-            } else {
+            val html = File(defaultWorkspace(), htmlName)
+            // **同一份导出里还带着会话文件本身**（逐字节、原名）—— 见 [copySessionFile]。
+            val jsonl = copySessionFile()
+            val files = listOfNotNull(
+                html.takeIf { it.isFile }?.let {
+                    ExportedFile(htmlName, SessionExportNaming.mimeTypeFor(htmlName), it.absolutePath)
+                },
+                jsonl?.let {
+                    ExportedFile(it.name, SessionExportNaming.mimeTypeFor(it.name), it.absolutePath)
+                },
+            )
+            if (files.isEmpty()) {
                 pushNotice("导出没有写出文件，请重试。", Notice.Tone.Warning)
+                return@call
             }
+            _state.value = _state.value.copy(exported = ExportedSession(files))
+            pushNotice(
+                if (jsonl != null) {
+                    "会话已导出：`.jsonl` 那份是会话文件本身，可以导回来。"
+                } else {
+                    "会话已导出。"
+                },
+                Notice.Tone.Info,
+            )
         }
     }
 
     /**
-     * Register a finished export and say what the user can now do with it.
+     * 会话文件本身，**逐字节**复制一份到导出目录 —— 这份就是能 `importFromJsonl` 导回来的那份。
      *
-     * One place for both writers, so the sentence and the state cannot disagree
-     * about whether an export happened. The tone is Info on purpose: the export
-     * succeeded, and what follows is an action, not a warning.
+     * 不重新序列化：pi 的 `/export x.jsonl` 写的是 `getBranch()` 的重新序列化
+     * （`core/session-export.js:7-42`），而"导出一个分支"就是**后缀副本**的来源（与完整会话文件顶着
+     * 同一个 `id`，列表合并时会顶掉一半对话）。复制磁盘上那个文件则字节相同、`id` 不变、每条分支都在。
+     *
+     * **不改名**：用磁盘上那份自己的名字（`<ISO>_<id>.jsonl`）。还没有文件时（pi 在第一条 assistant
+     * 消息落盘前不建文件）回答 null，那份导出只有 HTML。
      */
-    private fun publishExport(file: File) {
-        _state.value = _state.value.copy(
-            exported = ExportedSession(
-                name = file.name,
-                mimeType = SessionExportNaming.mimeTypeFor(file.name),
-                path = file.absolutePath,
-            ),
-        )
-        pushNotice("会话已导出，可以保存到 Download 或分享出去。", Notice.Tone.Info)
+    private suspend fun copySessionFile(): File? {
+        val source = hostSessionFile(_state.value.meta.sessionFile) ?: return null
+        val target = File(defaultWorkspace(), source.name)
+        return withContext(Dispatchers.IO) {
+            runCatching {
+                target.parentFile?.mkdirs()
+                source.copyTo(target, overwrite = true)
+            }.getOrNull()?.takeIf { it.isFile }
+        }
     }
 
     /** The user is done with the export row. */
     fun dismissExport() {
         _state.value = _state.value.copy(exported = null)
-    }
-
-    /**
-     * Write the active branch as JSONL, byte-for-byte the shape of pi's
-     * `exportToJsonl` (`core/session-export.ts:7-42`).
-     *
-     * That function emits, in order: a fresh session header, then every entry on
-     * the current branch with `parentId` **re-chained to the previously written
-     * entry** (which is how an export of a branch becomes a linear file), then a
-     * trailing newline. The branch is `getBranch()`: walk `parentId` from the
-     * leaf to the root and reverse (`session-manager.ts:1274-1285`). `version` is
-     * `CURRENT_SESSION_VERSION` (`session-manager.ts:30`), not the copied file's.
-     *
-     * This is the app-side half of an RPC gap, not a re-implementation of pi's
-     * data: the entries come from `get_entries` verbatim, so the bytes differ
-     * only in JSON key order and in `parentId`, which pi itself rewrites.
-     */
-    private fun exportJsonl(fileName: String) {
-        call("导出会话") { _ ->
-            val engine = session ?: return@call
-            val response = engine.request({ PiCommands.getEntries(it) })
-            if (!response.success) {
-                throw PiRpcException("get_entries", response.error ?: "读取会话条目失败")
-            }
-            val raw = PiResponses.entries(response)
-            val leafId = PiResponses.sessionEntries(response)?.leafId
-            val branch = branchPath(raw, leafId)
-            val meta = _state.value.meta
-            val source = sessionHeaderOf(meta.sessionFile)
-            val header = buildJsonObject {
-                put("type", JsonPrimitive("session"))
-                put("version", JsonPrimitive(CURRENT_SESSION_VERSION))
-                put("id", JsonPrimitive(source?.first ?: meta.sessionId.orEmpty()))
-                put("timestamp", JsonPrimitive(Instant.now().truncatedTo(ChronoUnit.MILLIS).toString()))
-                put("cwd", JsonPrimitive(source?.second ?: guestWorkspace()))
-            }
-            val body = StringBuilder(header.toString())
-            var previousId: String? = null
-            for (entry in branch) {
-                val reChained = JsonObject(
-                    entry + ("parentId" to (previousId?.let { JsonPrimitive(it) } ?: JsonNull)),
-                )
-                body.append('\n').append(reChained)
-                previousId = (entry["id"] as? JsonPrimitive)?.takeIf { it.isString }?.content
-            }
-            body.append('\n')
-
-            val target = File(defaultWorkspace(), fileName)
-            target.parentFile?.mkdirs()
-            // A failed write used to surface as the raw exception sentence, which
-            // carries the path it failed on. The consequence is what the user needs,
-            // and the path is the one thing this app never prints.
-            val written = withContext(Dispatchers.IO) {
-                runCatching { target.writeText(body.toString()) }.isSuccess
-            }
-            if (!written) {
-                pushNotice("导出没有写出文件，请重试。", Notice.Tone.Warning)
-                return@call
-            }
-            // The file, not its path — see [exportSession] for why the app does not
-            // print paths into its own private storage.
-            publishExport(target)
-        }
-    }
-
-    /** `SessionManager.getBranch` (`session-manager.ts:1274-1285`), old to new. */
-    private fun branchPath(entries: List<JsonObject>, leafId: String?): List<JsonObject> {
-        if (leafId == null) return emptyList()
-        val byId = entries.mapNotNull { entry ->
-            val id = (entry["id"] as? JsonPrimitive)?.takeIf { it.isString }?.content
-            id?.let { it to entry }
-        }.toMap()
-        val path = ArrayDeque<JsonObject>()
-        var current = byId[leafId]
-        while (current != null) {
-            path.addFirst(current)
-            val parent = (current["parentId"] as? JsonPrimitive)?.takeIf { it.isString }?.content
-            current = parent?.let { byId[it] }
-        }
-        return path.toList()
-    }
-
-    /**
-     * `id` and `cwd` out of the session file's header line — the two header
-     * fields `exportSessionToJsonl` copies from the live session
-     * (`session-export.ts:22-28`). The mapped host file is preferred because a
-     * session switched from another project carries that project's cwd, which
-     * the app cannot otherwise know.
-     */
-    private fun sessionHeaderOf(guestPath: String?): Pair<String, String>? {
-        val path = guestPath ?: return null
-        val prefix = "${host.guestAgentDir}/"
-        if (!path.startsWith(prefix)) return null
-        val file = File(host.paths().agentDir, path.removePrefix(prefix))
-        val line = runCatching { file.useLines { it.firstOrNull() } }.getOrNull() ?: return null
-        val header = runCatching { app.pi.rpc.PiJson.parseObjectOrNull(line) }.getOrNull() ?: return null
-        fun field(key: String) = (header[key] as? JsonPrimitive)?.takeIf { it.isString }?.content
-        return (field("id") ?: return null) to (field("cwd") ?: guestWorkspace())
     }
 
     /**
@@ -6135,9 +6048,6 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
 
         /** A 1 MiB source file is not an extension a phone should be parsing. */
         const val MAX_EXTENSION_SOURCE_BYTES = 1L shl 20
-
-        /** `CURRENT_SESSION_VERSION` (`core/session-manager.ts:30`). */
-        const val CURRENT_SESSION_VERSION = 3
     }
 }
 
