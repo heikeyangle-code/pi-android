@@ -3631,10 +3631,28 @@ private fun Composer(
             BasicTextField(
                 value = field.value,
                 // 用户输入这条路上，selection/composition 都来自库，原样存回，不能重建
-                // （重建会丢掉输入法的 composing 区间，中文输入时可见地闪）。
+                // （重建会丢掉输入法的 composing 区间，中文输入时可见地闪）。**但只有文本真的
+                // 变了才写回 `draft`**，见下。
                 onValueChange = { updated ->
+                    // 这道**文本**一级的闸必须自己补，`value: TextFieldValue` 重载里没有。
+                    // 库的 `value: String` 重载内部有一道 `lastTextValue != new.text`
+                    // （`androidx/compose/foundation/text/BasicTextField.kt:727-742`），所以只有
+                    // 文本真的变了的更新才到达 `onValueChange`；`TextFieldValue` 重载的闸是整值
+                    // 比较 `if (value != it)`（同文件 `:868-874`），而 `TextFieldValue.equals`
+                    // 把 composition/selection 也算进去（`ui-text` 的 `TextFieldValue.kt:123-132`）。
+                    // 库在**失去焦点**时会主动发一次
+                    // `onValueChange(editProcessor.toTextFieldValue().copy(composition = null))`
+                    // ——**文本没变**（`TextFieldDelegate.kt:395-404`，`onBlur`）。发送路径正好是
+                    // 这个形状：先 `draft = ""`，紧接着 `dismissKeys()` 的 `focus.clearFocus()`
+                    // （本文件 `:499-502` 与 `:2606`/`:2617`），而 `onBlur` 读的是 EditProcessor，
+                    // 它只在 `CoreTextField` 组合时才被重置（`CoreTextField.kt:280`），于是那次
+                    // 回调交回来的是**清空之前**的文本，`onDraftChange` 把它写回 `draft` —— 发送
+                    // 的清空就这么被抹掉了（用户报的「发出去了、字还在输入框里、还能再发一遍」）。
+                    // 只有在 composing 区间存在时 `value != it` 才为真、闸放行，所以它只是「有时候」。
+                    // 注意不能拿 `draft` 当基准比较：这个 bug 里 `draft` 已经是 `""`，那反而会放行。
+                    val textChanged = updated.text != field.value.text
                     field.value = updated
-                    onDraftChange(updated.text)
+                    if (textChanged) onDraftChange(updated.text)
                 },
                 modifier = Modifier.fillMaxWidth().heightIn(min = 20.dp, max = 120.dp),
                 // `06 §2` 输入区「输入 14/20」: the composer's own text is the 14 sp
