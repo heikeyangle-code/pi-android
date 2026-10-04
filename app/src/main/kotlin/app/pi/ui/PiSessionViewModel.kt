@@ -5737,11 +5737,6 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         discardPendingNav()
     }
 
-    /** 覆盖层里切「列表 / 树」。没开着时是 no-op。 */
-    fun setOverlayView(view: OverlayView) {
-        _overlay.value = _overlay.value?.copy(view = view)
-    }
-
     /**
      * 作废**所有尚未落地**的导航请求：用户把覆盖层关掉了，`PiRoot` 里那条排着队、
      * 还没跑到的效果不许再执行（见 [navIssued] 的 KDoc）。
@@ -6096,7 +6091,7 @@ private fun systemDarkAtStartup(application: Application): Boolean =
 
 /**
  * 覆盖层的**槽位**：这个 App 只有一个覆盖层，会话列表与 pi 的 `/tree` 是它的两种视图
- * （见 `PiOverlay`），终端是另一个槽位。
+ * （见 [OverlayView]），终端是另一个槽位。
  */
 enum class OverlaySlot { SessionList, Terminal }
 

@@ -485,15 +485,13 @@ fun PiRoot() {
     val current = PiDestination.entries.firstOrNull { it.name == destinationName }
         ?: PiDestination.Chat
 
-    // One overlay slot for the whole app. See [PiOverlay] for why it is not a
-    // destination; see the single `BackHandler` below for why it lives here and
-    // nowhere else.
-
-    // Which view the session overlay should open on. It is hoisted here, rather than
-    // left to `SessionsScreen`'s own `rememberSaveable`, because `/tree` and the
-    // branch-summary row have to open the overlay **on the tree**
-    // ([SessionViewPreference]); state inside the screen could not be set before the
-    // screen exists.
+    // The one overlay (the session list — with pi's `/tree` as its second view — and
+    // the terminal) is **not** a destination: the bottom bar has three places, and an
+    // overlay belongs to whatever session is on screen. It is owned by the ViewModel
+    // (`PiSessionViewModel.overlay`), not by a value remembered here: `closeOverlay()`
+    // must be final — "点叉就必须退出，不管你打断还是怎么的" — and a request that lands
+    // a frame late must not be able to raise it again. See the single `BackHandler`
+    // below for why the back press lives here and nowhere else.
 
 
     // The per-destination state that has to survive a destination switch.
@@ -815,8 +813,8 @@ fun PiRoot() {
                 ) {
                     when (shown) {
                         OverlaySlot.SessionList -> {
-                            // **两个回调的 identity 固定下来。** 它们只捕获 `overlayIndex` 与
-                            // `destinationName` 这两个 `MutableState`（在本组合的整个生命周期里是
+                            // **两个回调的 identity 固定下来。** 它们只调 `session.closeOverlay()` /
+                            // 写 `destinationName` 这个 `MutableState`（在本组合的整个生命周期里是
                             // 同一个对象），所以 `remember` 之后**行为逐字不变** —— 而这一屏的
                             // 父级每收到一次 `UiState` 发布（流式期间约 200 ms 一次）就重组，从前的
                             // 字面量 lambda 每次都换新实例，`SessionsScreen` 的参数按 `===` 比较
