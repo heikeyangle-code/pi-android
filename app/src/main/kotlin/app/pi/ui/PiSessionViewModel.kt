@@ -41,9 +41,11 @@ import app.pi.runtime.RuntimeProvisioner
 import app.pi.runtime.RuntimeSelection
 import app.pi.runtime.WorkspaceStore
 import app.pi.session.PiSessionStore
+import app.pi.session.ResumeTarget
 import app.pi.session.SessionExportNaming
 import app.pi.session.SessionFileReader
 import app.pi.session.SessionImport
+import app.pi.session.resumeTargetFor
 import app.pi.service.PiEngineController
 import app.pi.service.PiEngineLifecyclePolicy
 import app.pi.service.PiEngineService
@@ -2097,8 +2099,15 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      *   （`switchWorkspace`）都传 null：前者的进程里没有这个知识，后者换了 cwd、旧 id 不是
      *   `findById` 的答案（它的 cwd 过滤会用同一个 id 再建一个文件）。两条路都退到
      *   [PiLaunchOptions.continueMostRecent]（`-c`，受 `app.sessions.resumeLast` 管辖）。
+     * @param resumeSessionPath 这一次启动要打开的**文件**（pi 的 `--session <path>`）。只有
+     *   [resumeTarget] 判定「id 形式注定解析不到、而那个文件确实就是这一段会话」时才给 ——
+     *   也就是 `findById` 的 cwd 过滤会漏掉、从而**再建一个同 id 文件**的那一格。
+     *   与 [continueSessionId] 二选一，两者都给时 pi 先看路径（`PiLaunchOptions.resumeSessionPath`）。
      */
-    private fun launchOptions(continueSessionId: String? = null): PiLaunchOptions = PiLaunchOptions.fromSettingValues(
+    private fun launchOptions(
+        continueSessionId: String? = null,
+        resumeSessionPath: String? = null,
+    ): PiLaunchOptions = PiLaunchOptions.fromSettingValues(
         offline = settingsStore.readBoolean("app.runtime.offline"),
         cacheRetention = settingsStore.readString("app.runtime.cacheRetention"),
         // Blank means "use pi's own prompt", not "pass an empty prompt": pi only
@@ -2115,9 +2124,13 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         // unrecognised `--flag` (`ExtensionFlagArgs`) before it becomes argv.
         extensionArgs = extensionArgsStore.read(),
         // 用户此刻在哪条对话上：`meta.sessionId` 就是 `get_state` 报出来的那个 id，也正是
-        // `--session-id` 要的值（不是文件路径 —— 路径形式带 `process.exit(1)` 的失败面，见
-        // `PiLaunchOptions` 的 KDoc）。
+        // `--session-id` 要的值。**但它只在 pi 找得到时才可用** —— 见 [resumeTarget]：那句
+        // 「用同一个 id 新建」在 `findById` 漏掉时会**用同一个 id 再建一个文件**，于是一段对话
+        // 被劈成两个同 id 的文件。所以这里与 [resumeSessionPath] 二选一，由 [resumeTarget] 决定。
         continueSessionId = continueSessionId,
+        // 另一条路：只在 id 形式注定解析不到、而且那个文件已经被读过、确实是这一段会话时才给
+        // （`app.pi.session.resumeTargetFor`）。路径形式是唯一不带 cwd 过滤的参数。
+        resumeSessionPath = resumeSessionPath,
         // 冷启动那条路：开关开着就带 `-c`，接回同一 cwd 的最近一段。它的默认值在注册表
         // （`defaultValue = bool(true)`），这里读的也是那一处。
         continueMostRecent = resumeLastEnabled(),
@@ -2139,6 +2152,53 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
             .firstOrNull { it.key == RESUME_LAST_SETTING_KEY }
             ?.boolIn(settingsStore)
     }.getOrNull() ?: false
+
+    /**
+     * 这一次（重新）启动该把哪一段对话交出去 —— **id 形式，还是那个文件**。
+     *
+     * `--session-id` 的前提比它看上去强：pi 的 `SessionManager.findById` 要求
+     * **① id 相等 ∧ ② header 的 `cwd` 经 `resolvePath` 后等于这个即将启动的进程的 cwd ∧
+     * ③ 文件是 `--session-dir` 那一层的直接子文件**（`core/session-manager.js:1421-1441`、
+     * `:441-443`）。三条里漏一条它不是报错，而是**用同一个 id 新建一个文件**
+     * （`dist/main.js:344-351`），此后每条消息都写进那个新文件 —— 于是一段对话变成两个文件、
+     * 两个都顶着同一个 id。App 的列表按 id 去重（`PiSessionStore.keepOneRowPerSession`），
+     * 只剩下其中一个，于是用户看到「只剩后面这一半截」「名字也改成半截开头的名字」
+     * 「转录顶部没有『加载更早』」（那个文件确实是从那儿开始的），而完整的原件还在磁盘上。
+     *
+     * 第 ② 条在真机上真的会漏：proroot 的 `getcwd()` 会泄漏宿主拼写
+     * （`docs/proroot-mode-audit.md:20-48`），所以「同一个目录的两种拼法」写入的会话，在另一种拼法
+     * 下 `findById` 的**字符串**比较不过（pi 的 `resolvePath` 不做 realpath）。切换运行时、
+     * 重建运行时、换工作区名字，都会翻转这个拼写。
+     *
+     * 所以这里把「App 知道的文件事实」读出来，交给纯逻辑
+     * `app.pi.session.resumeTargetFor` 判定（判定与断言都在 `SessionResume.kt` /
+     * `SessionResumeCheck.kt`）：**只有 pi 真的能找到时才留在 id 形式**（那一格 argv 与以前逐字
+     * 相同），其余「App 能为这个文件担保、而 pi 会找不到」的格子改成把文件路径交给 pi。
+     *
+     * 与 [resolveSessionFile] 同一个纪律：**不许拿一个 App 说不清的文件去开**。映射不出 host 文件、
+     * header 读不出来、header 的 id 不是本机 `get_state` 报的那一个 —— 一律退回 id 形式
+     * （也就是今天的行为），因为拿错文件去开等于把用户换到另一段对话里。
+     */
+    private suspend fun resumeTarget(): ResumeTarget {
+        val meta = _state.value.meta
+        val guestPath = meta.sessionFile
+        return withContext(Dispatchers.IO) {
+            val file = hostSessionFile(guestPath)
+            val header = file?.let { runCatching { SessionFileReader.readHeader(it) }.getOrNull() }
+            fun field(key: String): String? =
+                (header?.get(key) as? JsonPrimitive)?.takeIf { it.isString }?.content
+            val root = File(host.paths().agentDir, "sessions")
+            resumeTargetFor(
+                requestedId = meta.sessionId,
+                guestPath = guestPath,
+                fileExists = file != null,
+                flatChildOfSessionDir = file?.parentFile?.absolutePath == root.absolutePath,
+                headerId = field("id"),
+                headerCwd = field("cwd"),
+                launchCwd = guestWorkspace(),
+            )
+        }
+    }
 
     /**
      * The engine's last exit, for 设置 → 运行时与诊断 → 导出诊断报告.
@@ -2280,17 +2340,23 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         allowInterrupt: Boolean,
     ): EngineRestartCoordinator.Outcome {
         // **接回只有一条路：argv。** `host.restart` 的 `launch` 实参在进程被换掉之前求值
-        // （下面 `launchOptions(continueSessionId = resumeSessionId)`），pi 就带着
-        // `--session-id <id>` 起来：`findById` 找到那个 id 就**追加**，找不到就用同一个 id 新建
-        // （`main.ts:435-447`、`core/session-manager.ts:938-961`）⇒ 重启用的是同一条对话，
+        // （下面 `launchOptions(continueSessionId = …)` / `launchOptions(resumeSessionPath = …)`），
+        // pi 就带着 `--session-id <id>` 或 `--session <path>` 起来：前者在 `findById` 找到那个 id 时
+        // **追加**、找不到就用同一个 id 新建（`main.ts:435-447`、`core/session-manager.ts:938-961`），
+        // 后者直接打开那个文件、**没有 cwd 过滤**（`main.ts:337-345`）⇒ 重启用的是同一条对话，
         // 不需要事后再发一条 `switch_session`。用户报的「一个对话被切成好几段」正是从"每个重启
         // 入口各自补一次 `switch_session`"的缝隙里来的，所以这里删除那套机制、只留 argv。
         //
+        // **两种形式二选一，由 [resumeTarget] 判定**，因为「找不到就用同一个 id 新建」在
+        // `findById` 的三条判据（id ∧ header 的 cwd 等于引擎 cwd ∧ 文件在平铺层）漏掉一条时
+        // 会**再建一个同 id 的文件**：一段对话变成两个文件、两个都顶着同一个 id，App 的列表按 id
+        // 去重后只剩其中一个 —— 用户报的「重装完只剩后面这一半截、名字也改成半截开头的名字」。
+        // 那一格必须走路径形式（`--session <path>`），其余情况一律保持 `--session-id` 逐字不变。
+        //
         // **抓在手里再换进程**：`host.restart` 一进去旧引擎就退场（`Stopped` 那一支会清
         // `api`/`session`），期间的 `meta` 谁先写没有约束；把 `_state.value` 读在 `host.restart`
-        // 的实参位置上，就多了一处「求值顺序由别人决定」的假设。id 取 `get_state` 报出来的那个
-        // （不是文件路径 —— 路径形式带 `process.exit(1)` 的失败面，见 `PiLaunchOptions` 的 KDoc），
-        // 空串按「没有」处理。
+        // 的实参位置上，就多了一处「求值顺序由别人决定」的假设。所以 [resumeTarget] 在这里求值，
+        // 它读的 `meta` 就是「换进程之前的那一份」。
         //
         // 覆盖范围：本函数是进程内重启的唯一入口（全仓对该 host 调用的只有两处，另一处在
         // `switchWorkspace` —— 换了 cwd 就该是新会话，那里**不**传 id），运行时开关（proroot
@@ -2303,23 +2369,29 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         // i.e. drop the wake lock across the *new* engine's cold start.
         //
         // 这一行在 `engineTransition = true` **之前**、也在 `host.restart` 之前，见上面那段
-        // 「抓在手里再换进程」。
-        val resumeSessionId = _state.value.meta.sessionId?.takeIf { it.isNotBlank() }
+        // 「抓在手里再换进程」。**它现在回答的是「用哪种形式钉住」而不是「哪个 id」**：
+        // 只有 pi 的 `findById` 真的能找到那个文件时才发 `--session-id`
+        // （`app.pi.session.SessionResume.kt` 的 KDoc 与 [resumeTarget]），否则发文件路径 ——
+        // 因为那一格 pi 的行为是「用同一个 id 再建一个文件」，也就是用户报的「只剩后面这一半截」。
+        val resume = resumeTarget()
         engineTransition = true
         val result = try {
             host.restart(
                 reason = reason,
                 workspaceProvider = ::defaultWorkspace,
                 allowInterrupt = allowInterrupt,
-                launch = launchOptions(continueSessionId = resumeSessionId),
+                launch = when (resume) {
+                    is ResumeTarget.ById -> launchOptions(continueSessionId = resume.id)
+                    is ResumeTarget.ByPath -> launchOptions(resumeSessionPath = resume.guestPath)
+                    ResumeTarget.None -> launchOptions()
+                },
             )
         } finally {
             engineTransition = false
         }
         if (result is PiEngineHost.Restart.Ok) {
-            // 接回**不需要在这里做**：这一次 `host.restart` 的 argv 里已经带了
-            // `--session-id`（上面那次 `launchOptions(continueSessionId = …)`），新引擎启动时就
-            // 落在同一条对话上。
+            // 接回**不需要在这里做**：这一次 `host.restart` 的 argv 里已经带了 `--session-id`
+            // 或 `--session`（上面那次 `launchOptions(…)`），新引擎启动时就落在同一条对话上。
             attach(result.session)
         } else {
             // A refused restart leaves the old engine running (nothing changes); a

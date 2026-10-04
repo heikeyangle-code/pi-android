@@ -444,6 +444,25 @@ run_harness sessions \
   "$ROOT/rpc/src/main/kotlin/app/pi/rpc/PiJson.kt" \
   "$ROOT/rpc/src/main/kotlin/app/pi/rpc/internal/Json.kt"
 
+# app.pi.session: **引擎（重新）启动时靠什么认回这一段对话** —— 会话 `id`，还是那个文件本身
+# （`SessionResume.kt`）。它存在的理由是一条真机制：pi 的 `--session-id` 走
+# `SessionManager.findById`，判据是「id ∧ header 的 cwd 等于引擎 cwd ∧ 文件在 `--session-dir`
+# 那一层的直接子文件」（`dist/core/session-manager.js:1421-1441`），漏一条不是报错、而是
+# **用同一个 id 新建一个文件**（`dist/main.js:344-351`）—— 一段对话变成两个同 id 的文件，列表按 id
+# 去重后只剩其中一个（用户报的「重装完只剩后面这一半截、名字也改成半截开头的名字、没有『加载更早』」）。
+# 这个 harness 钉四件事：**pi 找得到的那一格必须仍然发 `--session-id`，argv 逐字节不变**；
+# 「App 能为文件担保、而 pi 会找不到」的每一格换成 `--session <path>`（它没有 cwd 过滤，
+# `dist/main.js:337-345`）；说不清那个文件时（不存在 / header 读不出 / header 的 id 不是这一段）
+# 一律退回 id 形式；以及两个会话标志的拼法（空格形式、值里有空格要引起来、`=` 形式会被 pi 吞掉）。
+# Android-free：`SessionResume.kt` 与 `PiLaunchOptions.kt` 都只用 stdlib。
+run_harness session-resume \
+  app.pi.session.SessionResumeCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/session/SessionResumeCheck.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/session/SessionResume.kt" \
+  "$ROOT/rpc/src/main/kotlin/app/pi/rpc/PiLaunchOptions.kt" \
+  "$ROOT/rpc/src/main/kotlin/app/pi/rpc/ExtensionFlagArgs.kt" \
+  "$ROOT/rpc/src/main/kotlin/app/pi/rpc/PiPreSpawnConfig.kt"
+
 # app.pi.session: **一段对话只有一行**。`PiSessionStore.list()` 分别遍历 pi 的两个布局（引擎
 # 平铺写的 `sessions/<ISO>_<id>.jsonl` 与 pi 默认的 `sessions/--<cwd>--/…`），而同一个会话可以
 # 在两边各留一份 —— 组目录里的快照、`/import` 只换名字不改 header 的拷贝
