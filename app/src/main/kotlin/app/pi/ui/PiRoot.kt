@@ -112,7 +112,8 @@ enum class PiDestination(val label: String) {
  * `NavRequest.SessionTree` (pi's `/tree`, and the branch-summary row's tap) has to
  * land on the tree rather than on the list — a command that says 树 must not make the
  * user tap a segmented control to reach it. It is a *preference* rather than a
- * separate overlay because there is only one overlay; see [PiOverlay].
+ * separate overlay because there is only one overlay; see
+ * [PiSessionViewModel.overlay] for the one owner of it.
  */
 
 /**
@@ -595,7 +596,7 @@ fun PiRoot() {
                 destinationName = PiDestination.Settings.name
             }
             // pi's `/tree`: the *same* overlay as the session list, opened on its
-            // second view. There is no separate tree overlay — see [PiOverlay] — so
+            // second view. There is no separate tree overlay — one slot — so
             // this both raises the layer and picks the view.
             NavRequest.SessionTree -> {
                 session.raiseOverlay(OverlaySlot.SessionList, OverlayView.Tree)

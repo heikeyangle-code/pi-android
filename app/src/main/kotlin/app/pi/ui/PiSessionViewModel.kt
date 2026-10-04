@@ -5648,7 +5648,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         // **这里**不再**调 `refreshSessions()`。** 会话列表在这一屏之外只有一个读者（会话覆盖层），
         // 而那个屏幕**每次挂载都会自己重读**（`SessionsScreen` 的 `LaunchedEffect(Unit)`）——
         // 那也是它唯一能重新变可见的方式：本条函数每一个用户可达的调用点都以
-        // `requestNav(NavRequest.Chat)` 收尾，而 `PiRoot` 对它的处理就是 `overlayIndex = null`
+        // `requestNav(NavRequest.Chat)` 收尾，而 `PiRoot` 对它的处理就是 `closeOverlay()`
         // （`PiRoot.kt:605-608`，覆盖层本来就关着）。
         // 所以这里那次扫描的产物是「没人在看的一份列表」，而覆盖层每次挂载还要再扫一遍。
         // 删它的理由是**那次扫描的结果到不了任何屏幕**，不是「列表可以旧着」：如果将来出现一条路
