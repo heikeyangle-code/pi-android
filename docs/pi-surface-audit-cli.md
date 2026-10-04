@@ -75,8 +75,8 @@ pi 的 `parseArgs` 一共认 **44 项**（含 `--`、`@file`、位置消息、un
 | `--append-system-prompt` `:112` | 追加（可重复，`resource-loader.ts:532-534`） | `app.runtime.appendSystemPrompt` | 已接 | 同上 |
 | `--name` / `-n` `:115` | 会话显示名（`normalizeSessionName`，`main.ts:690-697`） | `set_session_name` → `PiSessionViewModel.setSessionName` | 已接 | RPC 有等价命令，启动参数是重复入口 |
 | `--no-session` `:121` | 临时会话（`SessionManager.inMemory`，`main.ts:359-361`） | 无 | 有意钉死 | 会话列表 / 续接 / 导出全建立在会话文件上 |
-| `--session <path\|id>` `:123` | 指定会话文件或 ID 前缀（`resolveSessionPath`，`main.ts:252-278`） | `switch_session` + `SessionsScreen` | 已接 | 运行时可做，不必启动参数 |
-| `--session-id <id>` `:125` | 精确 ID（不存在则按该 ID 新建，`main.ts:431-443`） | 无 | 手机不可用 | 只有外部编排器需要钉 ID；App 自己 `new_session` |
+| `--session <path\|id>` `:123` | 指定会话文件或 ID 前缀（`resolveSessionPath`，`main.ts:252-278`） | 运行时：`switch_session` + `SessionsScreen`；**启动时**：进程内重启在 pi 的 id 查找不唯一命中（同 id 多份、`findById` 取 `readdirSync` 顺序第一个）或 header 的 cwd 对不上引擎 cwd 时，发 `--session <path>`（`PiSessionViewModel.resumeTarget` → `PiLaunchOptions.resumeSessionPath`；它没有 cwd 过滤，起出来的 runtime cwd 取会话自己的 cwd，与 `switch_session` 同一个状态） | 已接 | 运行时可做，不必启动参数 —— 但**重启**那一条必须走 argv：起来之后再补 `switch_session` 会与新引擎的首帧抢会话 |
+| `--session-id <id>` `:125` | 精确 ID（不存在则按该 ID 新建，`main.ts:431-443`） | **引擎重启**时靠 argv 钉回同一段对话（`PiSessionViewModel.restartEngine` → `app.pi.session.resumeTargetFor`）；只有「`findById` 一定且唯一命中那个文件」时才发它，否则改发 `--session <path>`（见上一行） | 已接（App 内部用，不是用户面） | 手机不可用的那半是「让用户手输一个 ID」；App 是把它当**续接**的手段用的 |
 | `--fork <path\|id>` `:127` | 从某会话 fork 成新文件（`SessionManager.forkFrom`，`main.ts:363-384`） | `fork` / `clone` RPC | 已接 | `SessionTreeScreen` 的「分叉」 |
 | `--session-dir <dir>` `:129` | 会话存储目录（`main.ts:670-676`） | 与 `PI_CODING_AGENT_SESSION_DIR` 一起**钉死**（`PiPreSpawnConfig.kt:355-357`） | 有意钉死 | 设定后设置里的 `sessionDir` 永远读不到，会变成两个真相 |
 | `--models <patterns>` `:131` | Ctrl+P 循环用的模型作用域（`main.ts:788-792`） | `enabledModels` 行（通配符编辑） | 已接 | CLI 值会盖过设置值，故只留设置 |
@@ -221,7 +221,7 @@ pi 侧的上线集合 = `session.subscribe` 的事件（`AgentSessionEvent`，`c
 | 新建 | 默认行为 | `new_session(parentSession?)` `rpc-types.ts:27` | `/new`（`interactive-mode.ts:3063`） | `/new`、会话页、`PiSessionViewModel.newSession` | 已接 |
 | 续接最近 | `--continue` `args.ts:100` | — | — | `app.sessions.resumeLast` + `mostRecentForResume` | 已接 |
 | 恢复指定 | `--resume`、`--session` `:102`/`:123` | `switch_session` `:61` | `/resume`（`:3094`） | `SessionsScreen` → `switchToSession` | 已接 |
-| 精确 ID | `--session-id` `:125` | — | — | 无 | 手机不可用 |
+| 精确 ID | `--session-id` `:125` | — | — | 引擎**重启**时由 argv 钉住（`PiSessionViewModel.restartEngine`）：pi 的 `findById` 一定且唯一命中时发 `--session-id`，否则发 `--session <path>` | 已接（App 内部用，不是用户面） |
 | fork（新文件） | `--fork` `:127` | `fork(entryId)` `:62` | `/fork` | 树屏「分叉」 | 已接 |
 | clone | — | `clone` `:63` | `/clone` | `/clone` | 已接 |
 | **树内跳转** | — | **无命令** | `/tree`（`:3042` → `session.navigateTree`，`agent-session.ts:3136`） | 无（只能 fork 新文件） | **pi RPC 够不着**（§5.4） |
@@ -406,7 +406,7 @@ pi 侧的上线集合 = `session.subscribe` 的事件（`AgentSessionEvent`，`c
 |---|---|---|
 | `pi update`（自更新，含托管安装与 npm/pnpm 两条路） | `package-manager-cli.ts:1022-1092`；`getSelfUpdatePlan` | App 钉死 `PI_VERSION`（`tools/fetch-runtime.mjs`，1.0.0）并按 revision 校验/解压载荷（`RuntimeProvisioner`）。让它自更新等于让被校验的产物自己变，`tools/pi-contract.mjs` 的全部断言（命令名、语义、扩展 API）会一起失效。**代码层还有一道**：`PiPackageUpdate.plan` 直接拒绝位置参数 `self`/`pi`（pi 把它们编译成自更新目标，`package-manager-cli.ts:534-536`），所以界面上不存在能触发它的路径 |
 | `pi auth print-api-key` / `print-bearer-token` | `cli/auth-command.ts:18-22`；`main.ts:161-190`；`cli/credential-print.ts` | **有意不做**（本批次裁定）。凭据只写不显示是刻意的安全取舍：`auth.json` 由 App 以 `0600` 维护（`PiConfigFiles` 只收紧不放宽），而把长期 API Key / bearer token 明文显示或复制到剪贴板，在 Android 上任何应用都能读——净增风险、不增能力（凭证页 `PiCredentialScreen` 没有"显示已存密钥"，这是设计而非缺口）。这两条 pi 命令的用途是给**外部客户端**取凭据，手机上这个消费者不存在；`print-bearer-token` 顺带刷新 OAuth 令牌这一半，在终端页跑一次 `/login` 即可达到。**要重开的话只做 `print-bearer-token` 的显示/复制，并需再次确认** |
-| `--session-id <id>` | `args.ts:125-127`、`main.ts:431-443` | 只有外部编排器需要"我要这个 ID"；App 的 `new_session` 不需要 |
+| `--session-id <id>` | `args.ts:125-127`、`main.ts:431-443` | **2026-10-04 更正：App 现在用它**（进程内重启钉回同一段对话，`PiSessionViewModel.restartEngine`），所以这一行不再属于「不做」；留着它是因为它有一个**必须绕开**的边：`findById` 按 cwd 过滤、且同 id 多份时取 `readdirSync` 顺序里的**第一个**（不是最新那份）——cwd 对不上或那个 id 在平铺层有歧义时改用 `--session <path>`（`app.pi.session.resumeTargetFor`，断言见 `session-resume` harness）。「手机不可用」的那半现在只剩「让用户手输一个 ID」 |
 | `--print` / `-p` | `args.ts:157-163`、`main.ts:118-120` | 给脚本一问一答；App 的对话页就是交互面 |
 | `pi experimental server` / `client`、`packages/protocol` | `cli/experimental/**`；`package.json:31-34` 把 `dist/cli/experimental`、`dist/experimental` 排除出发布物；`protocol.ts:5` `PROTOCOL_VERSION = 8` | **不在随包发出的产物里**，与我们的 RPC 协议是两套东西 |
 | `PI_RADIUS_GATEWAY` / `PI_SERVER_DIR` / `PI_SERVER_ID`、Radius 认证 | `experimental/radius-auth.ts:8`、`experimental/server.ts:51-52`；`/share` 的 Radius 分支 `session-share.ts:49-...` | 源码级实验特性，发布物里没有 |
