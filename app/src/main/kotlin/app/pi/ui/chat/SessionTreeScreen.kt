@@ -76,7 +76,7 @@ import app.pi.ui.theme.PiTheme
  *    an extension's `pi.appendEntry(customType, data)` state is visible at all:
  *    those entries are deliberately outside the model's context, the reducer
  *    treats them as inert, and `entry_appended` carries them only live
- *    (`agent-session.ts:2616-2621`; audit §1.5, §5.8).
+ *    (`agent-session.ts:3359-3365`; audit §1.5, §5.8).
  *
  * A tree node offers 分叉 only where pi accepts one: `fork` without options
  * requires a **user** `message` entry and throws "Invalid entry ID for forking"
@@ -90,11 +90,12 @@ import app.pi.ui.theme.PiTheme
  *
  *  - **跳转** is `navigateTree`: the leaf moves **inside this session file** — nothing new
  *    is created, and the conversation continues from the chosen point
- *    (`core/agent-session.ts:3126-3127`). It is offered on **every** row, because
- *    `navigateTree` accepts any entry id; where the leaf actually lands depends on the
- *    entry, and that rule is pinned in [NavigateLanding].
+ *    (`core/agent-session.ts:3905-3906` 的头一句就是这件事：「Unlike fork() which creates a
+ *    new session file, this stays in the same file.」). It is offered on **every** row, because
+ *    `navigateTree` accepts any entry id (`agent-session.ts:4040-4053`); where the leaf
+ *    actually lands depends on the entry, and that rule is pinned in [NavigateLanding].
  *  - **分叉** is `fork`: it writes a **new session file**
- *    (`agent-session-runtime.ts:289-352`), leaving the original untouched.
+ *    (`agent-session-runtime.ts:262-350`), leaving the original untouched.
  *
  * 跳转 reaches pi through the shipped bridge extension's `pi-android-navigate` command,
  * because RPC exposes no navigate command (`rpc-types.ts:20-74`) while `rpc-mode.ts` does
@@ -241,9 +242,9 @@ private fun TreeContent(
     modifier: Modifier = Modifier,
 ) {
     // The row whose 跳转 is being decided. pi asks its own question before navigating
-    // (`interactive-mode.ts:5236-5263`), so the answer is collected here and the caller is
+    // (`interactive-mode.ts:5516-5551`), so the answer is collected here and the caller is
     // told once — the dialog is dismissed first, because pi closes its selector before
-    // asking (`:5229`).
+    // asking (`:5517`).
     var navigateTarget by remember { mutableStateOf<String?>(null) }
     Column(modifier.fillMaxSize()) {
         // 分支 / 条目 是真功能（分支 = pi 的 `get_tree`，条目 = entries），**不删**；
@@ -343,13 +344,13 @@ private fun TreeContent(
                 onFork = onFork,
                 onJump = { entryId ->
                     // pi's `/tree` answers a pick on the current leaf with "Already at this
-                    // point" and does nothing (`interactive-mode.ts:5221-5226`), so the
+                    // point" and does nothing (`interactive-mode.ts:5508-5513`), so the
                     // question is not asked at all; the ViewModel says the sentence.
                     if (entryId == state.tree?.leafId) {
                         onNavigate(entryId, BranchSummaryChoice.NoSummary, null)
                     } else if (skipSummaryPrompt()) {
                         // `branchSummary.skipPrompt` = "always default to no summary"
-                        // (`interactive-mode.ts:5235-5236`), so the question is skipped
+                        // (`interactive-mode.ts:5524`), so the question is skipped
                         // entirely rather than answered for the user.
                         onNavigate(entryId, BranchSummaryChoice.NoSummary, null)
                     } else {
@@ -364,7 +365,7 @@ private fun TreeContent(
     }
 
     // pi's own question, asked after the pick and before the navigation
-    // (`interactive-mode.ts:5229-5262`). Composed outside the `Column` above so it is not
+    // (`interactive-mode.ts:5516-5551`). Composed outside the `Column` above so it is not
     // a layout child of the list — it draws in its own window.
     navigateTarget?.let { target ->
         NavigateSummaryDialog(
@@ -379,7 +380,7 @@ private fun TreeContent(
 
 /**
  * "Summarize branch?" — pi's three answers, verbatim
- * (`interactive-mode.ts:5238-5242`: "No summary" / "Summarize" / "Summarize with custom
+ * (`interactive-mode.ts:5526-5530`: "No summary" / "Summarize" / "Summarize with custom
  * prompt"), plus the instructions editor the third one opens (`:5252-5258`).
  *
  * The labels are translated because this is a question *this app* is asking, not a string
@@ -396,7 +397,7 @@ private fun NavigateSummaryDialog(
 ) {
     // Which answer is being refined: null = the question, non-null = the instructions editor
     // for the custom form. One dialog with two steps rather than two, because pi's loop
-    // returns to the question if the editor is cancelled (`interactive-mode.ts:5254-5257`).
+    // returns to the question if the editor is cancelled (`interactive-mode.ts:5540-5544`).
     var instructing by remember { mutableStateOf(false) }
     var instructions by remember { mutableStateOf("") }
 
@@ -468,6 +469,16 @@ private fun NavigateSummaryDialog(
  * 多了一个**真的会跳**的动作。留着旧句子就等于在界面上说一个谎，所以这句换成了现在这两件事
  * 的分工说明：点一行是跳转（同一个会话文件内换 leaf），「分叉」是新建一个会话文件。
  *
+ * **2026 追加**（用户：「一点也没有安全感」「我的东西还在不在」）：句尾补上「原会话保留」。
+ * 事实上这是**补回稿子本来就有的那半句** —— v2 那句是「分叉会新建一个会话文件，原会话保持
+ * 不变。」（下一段），D1 改写时只留下了后半句的「新建」。它不是新语义，是把 pi 的行为写出来：
+ * `/fork` 只写**新**文件，原文件一个字节都不改（`SessionManager.createBranchedSession` 只
+ * `_rewriteFile()` 到刚设成新路径的 `this.sessionFile`，`session-manager.ts:1714`、`:1720`；
+ * 旧文件只在 `SessionManager.open` 里被读，`agent-session-runtime.ts:315`），
+ * 所以「原来的会话还在」是可断言的事实，不是安慰。它现在是 **44 个字符**（加了 7 个），在
+ * 360dp 屏上仍是**两行**（12sp 的中文在 332dp 正文宽里每行约 27 字），所以下面那笔 62dp
+ * 的账不用重算。
+ *
  * 它替掉的仍是 v2 那句「分叉会新建一个会话文件，原会话保持不变。」——`11-designer-adjudication.md`
  * 的 A-08 裁定「删掉等于把这些能力从界面上抹掉」，所以这句在，只是把「两个动作分别是什么」
  * 说全；间距也仍是一个 `TREE_FILTER_GAP` + 一个 `PiSpacing.unit`。
@@ -498,7 +509,7 @@ private fun NavigateSummaryDialog(
  * 的账不用重算。
  */
 private const val TREE_FORK_HINT =
-    "点一行是跳转：在同一个会话文件里回到那一点继续。分叉则会新建一个会话文件。"
+    "点一行是跳转：在同一个会话文件里回到那一点继续。分叉会新建一个会话文件，原会话保持不变。"
 
 /**
  * 说明句在列表里的 key：**常量**，不随筛选档位、查询词或会话变化。
@@ -689,9 +700,11 @@ fun activePathIds(roots: List<SessionTreeNode>, leafId: String?): Set<String> {
  * timestamps — `sortedByDescending` is stable, so this only lifts the active
  * subtree and never reshuffles what pi sent. With more than one root the forest is
  * pi's "virtual root that branches": every root indents one step
- * (`tree-selector.ts:262-266`).
+ * (`tree-selector.ts:243-248` —— 引号里那句话就是 `:243` 的注释原文，`:248` 的
+ * `multipleRoots ? 1 : 0` 是那个缩进；同一处逻辑在增量分支里还有一份 `:497`。本行原先引
+ * `:262-266`，那一段在处理 toolCall 映射，与缩进无关。)
  *
- * **Iterative, not recursive.** pi says why in `session-manager.ts:1350-1352`
+ * **Iterative, not recursive.** pi says why in `session-manager.ts:1557-1558`
  * ("Use iterative approach to avoid stack overflow on deep trees"); a session
  * resumed a few thousand times is deep enough to matter, and the recursion this
  * replaces would have died on it with a `StackOverflowError` in the middle of a
@@ -749,7 +762,7 @@ private val WHITESPACE = Regex("\\s+")
 
 /**
  * pi's five tree filter modes, in the order its own selector cycles them
- * (`components/tree-selector.ts:1066-1073`).
+ * (`components/tree-selector.ts:1074-1081`).
  */
 enum class TreeFilter(val label: String) {
     Default("默认"),
@@ -919,7 +932,7 @@ private fun BranchRow(
             // the row already carries a label, an optional badge, 「当前」and 分叉, and the
             // KDoc on the 分叉 button records what a second full-width action cost the
             // summary's width. `navigateTree` accepts **any** entry id
-            // (`agent-session.ts:3161-3164`), so unlike 分叉 this is offered everywhere —
+            // (`agent-session.ts:4040-4053`), so unlike 分叉 this is offered everywhere —
             // and a row whose entry has no id cannot be named to pi at all, so it is not
             // clickable.
             .clickable(enabled = id != null) { id?.let(onJump) },

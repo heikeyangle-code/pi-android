@@ -229,7 +229,10 @@ val PI_BUILTIN_SLASH_COMMANDS: List<PiSlashCommand> = listOf(
     // the same action read the same.
     PiSlashCommand("copy", "复制最后一条回复到剪贴板", PiCommandSource.Builtin, null, PiCommandAction.CopyLastAssistant),
     PiSlashCommand("name", "设置会话显示名称", PiCommandSource.Builtin, null, PiCommandAction.RenameSession),
-    PiSlashCommand("fork", "从某条历史消息创建分支", PiCommandSource.Builtin, null, PiCommandAction.PickFork),
+    // pi 自己的说法是 "Creates a new session from an earlier user message"
+    // (`docs/sessions.md:27`)，所以「分叉」+「新会话」两个词都要在：只写「创建分支」会被读成
+    // 树上的一次分支（那是 `/tree`，同一个会话文件，`docs/sessions.md:26`）。
+    PiSlashCommand("fork", "从某条历史消息分叉出新会话", PiCommandSource.Builtin, null, PiCommandAction.PickFork),
     PiSlashCommand("clone", "在当前节点复制整个会话", PiCommandSource.Builtin, null, PiCommandAction.CloneSession),
     // `/trust`, `/login`, `/logout` and `/reload` used to sit here as rows whose
     // tap only produced a notice pointing at a Settings row. Group C: gone. The

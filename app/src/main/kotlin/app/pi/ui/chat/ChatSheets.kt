@@ -405,7 +405,12 @@ fun SessionToolsSheet(
                 onClick = onTree,
             )
             PiValueRow(
-                title = "从历史消息分支",
+                // 「分叉」，不是「分支」：pi 的 `/fork` 写的是一个**新会话文件**
+                // （`docs/sessions.md:26-31` 的三行表：`/tree` 在同一个文件里移动、`/fork`
+                // 与 `/clone` 各建一个新会话），而「分支」在本应用里指的是树上的结构
+                // （会话树的那个页签、分支摘要）。两个词各有各的所指，混用是用户说的
+                // 「分叉分支搞不清」。
+                title = "从历史消息分叉",
                 supporting = null,
                 value = "选择",
                 onClick = onFork,
@@ -1108,10 +1113,10 @@ private fun StatLine(label: String, value: String) {
  * break exactly the promise the number makes.
  *
  * The blurb states pi's real semantics, which the previous copy got wrong:
- * `fork` defaults to `position: "before"` (`agent-session-runtime.ts:264-287`), so
+ * `fork` defaults to `position: "before"` (`agent-session-runtime.ts:262-287`), so
  * the new session ends *before* the chosen message — that message is not carried
  * over; its text is handed back instead and the block menu's 编辑并从此分叉 puts it
- * in the composer (`interactive-mode.ts:5157-5165`), which is what the picker
+ * in the composer (`interactive-mode.ts:5450-5457`), which is what the picker
  * opened from the ⋮ menu will do too once the fork lands.
  */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -1123,11 +1128,12 @@ fun ForkPickerSheet(
 ) {
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(Modifier.fillMaxWidth().padding(horizontal = PiSpacing.pageHorizontal)) {
-            Text("从哪条消息分支", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface)
+            Text("从哪条消息分叉", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface)
             Spacer(Modifier.height(4.dp))
             Text(
                 "会在「这条消息之前」分出新的会话（这条消息本身不会带过去），" +
-                    "并把它放回输入框，可以改完再发。编号就是 pi 给的可分叉消息顺序。",
+                    "并把它放回输入框，可以改完再发。编号就是 pi 给的可分叉消息顺序。" +
+                    "原会话文件保持原样，在会话列表里还找得到它。",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -1135,7 +1141,7 @@ fun ForkPickerSheet(
             if (messages.isEmpty()) {
                 Text(
                     // pi's own wording for this state is `No messages to fork from`
-                    // (`interactive-mode.ts:5149-5155`); saying what to do about it is
+                    // (`interactive-mode.ts:5437-5440`); saying what to do about it is
                     // the app's addition, because a sheet that says only "没有" reads
                     // as a broken feature rather than as an empty session.
                     "pi 说这个会话还没有可分叉的用户消息（No messages to fork from）。" +

@@ -1208,6 +1208,23 @@ run_harness tree-navigation \
   "$ROOT/app/src/test/kotlin/app/pi/ui/chat/PiTreeNavigationCheck.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/ui/chat/PiTreeNavigation.kt"
 
+# app.pi.ui.chat: 会话列表那一行「来自〈父会话名〉」的判定（`SessionForkLabel.kt`）。为什么它必须
+# 是一个独立文件：它要回答的那个问题只有一个信息来源 —— pi 写在**子会话文件头**里的 `parentSession`
+# （一个路径，`docs/session-format.md:72-76`；`/fork`、`/clone`、`newSession({parentSession})` 三种
+# 来源共用同一个字段，`core/session-manager.ts:1681`、`:1854`），而判定本身只是「拿路径的末段去比
+# 会话列表里每一行的文件名」——纯字符串算术。它住在 Compose 的 `SessionsScreen.kt` 里时本机编译
+# 不了，也就无从被跑到；搬出来之后这一项钉住五件事：父的名字取 pi 的会话名或那一行自己的显示名、
+# 父不在列表里时**降级成 null 而不是拿文件名冒充名字**、只比文件名末段（`parentSession` 是 guest
+# 路径，与主机的 `File` 前缀不同）、结果里**不含任何动作词**（文件不记是 `fork` 还是 `clone`，
+# 所以界面也只许说「来自谁」）、以及**一个 `id` 两行**（`PiSessionStore.list()` 的
+# `mergeSameIdRow`：两份互不为前缀的「劈开的两半」同 id 并存）时**不去两半之间挑** —— 判定看不见
+# `id`，而两半是不同的文件名、`parentSession` 只记一条路径，所以写下来的那一半赢。Android-free：
+# 这个文件一个 import 都没有。
+run_harness session-fork-label \
+  app.pi.ui.chat.SessionForkLabelCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/ui/chat/SessionForkLabelCheck.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/ui/chat/SessionForkLabel.kt"
+
 # app.pi.runtime: the proroot status *sentences*. When the gate refuses, the row is the only
 # place the user can learn why — so the four answers ("not run yet" / "did not pass, and here
 # is the stage" / "passed, takes effect next launch" / "in use, and in which mode") must be

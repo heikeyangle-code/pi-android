@@ -28,12 +28,17 @@ import app.pi.ui.theme.PiSpacing
  * labelled 分支摘要 with the branch id. Clicking either jumps to that branch
  * (when the host provides [onClick]) or expands the summary in place.
  *
+ * 标签下面是**一句说清这张卡是什么的话**（「跳转离开一条分支时留下的摘要，不是分叉。」）。
+ * 它补的是用户的原话「不知道那是干啥的」：`分支摘要` 四个字说的是它属于哪一族卡片，没有说它是
+ * 什么时候、被什么动作写下来的，而"分叉"与"分支"又只差一个字。上游 TUI 在同一个位置也有
+ * 一句关于这张卡自己的话（`branch-summary-message.ts:46-56`），只是那句讲的是怎么展开。
+ *
  * The summary is a two-line plain-text preview while collapsed and markdown once
  * expanded — the same split pi's `branch-summary-message.ts:41-56` makes.
  *
  * [showBilledCost] is pi's `showCacheMissNotices`; when on, pi prints the
  * summarization's own usage as a `branch_summary` billing row
- * (`modes/interactive/interactive-mode.ts:3802-3812`, fed on replay at `:3792`).
+ * (`modes/interactive/interactive-mode.ts:4053-4067`, dispatched at `:3953`, fed on replay at `:4035`).
  * See [PiBilledCostLine] for why the text is pi's English verbatim.
  */
 @Composable
@@ -75,6 +80,24 @@ fun BranchSummaryBlock(
                         // the same slot had two voices depending on which card you looked at.
                         style = PiTheme.text.monoSmall,
                         color = palette.customMessageLabel,
+                    )
+                    // 一句话说清这张卡是什么 —— 用户的原话是「不知道那是干啥的」，而且把它和
+                    // 「分叉」记混了（「那分叉分支啊，有时候都搞不清」）。两句都是真话，且都有 pi
+                    // 的依据：这张卡由 `branchWithSummary` 在**离开一条分支**时写下
+                    // （`session-manager.ts:1600-1625`；TUI 的对应动作是 `/tree` 之后回答
+                    // "Summarize branch?"，`interactive-mode.ts:5516-5551`），而**分叉不会产生它**
+                    // —— `/fork` 只是把原会话到那一点为止的条目复制进一个新文件
+                    // （`agent-session-runtime.ts:262-350`；`docs/sessions.md:26-31` 那张表把
+                    // `/tree` / `/fork` / `/clone` 三件事分开写）。
+                    //
+                    // 放在**折叠态也看得见**的位置：这正是这张卡片自己无法自证的那件事，而 pi 的
+                    // TUI 在同一个位置也有一句话（`branch-summary-message.ts:46-56`：
+                    // "Branch summary (ctrl+o to expand)"）—— 那句说的是怎么展开，这句说的是它
+                    // 是什么。
+                    Text(
+                        text = "跳转离开一条分支时留下的摘要，不是分叉。",
+                        style = PiTheme.text.meta,
+                        color = palette.muted,
                     )
                     val branchId = item.branchId
                     if (!branchId.isNullOrBlank()) {

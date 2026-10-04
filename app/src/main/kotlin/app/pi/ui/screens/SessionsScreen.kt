@@ -63,7 +63,9 @@ import app.pi.ui.PiSessionViewModel
 import app.pi.ui.PiTopBar
 import app.pi.ui.PiTopBarIcon
 import app.pi.ui.PiTopBarTextAction
+import app.pi.ui.chat.SessionFileRow
 import app.pi.ui.chat.SessionTreeScreen
+import app.pi.ui.chat.forkParentNameOf
 import app.pi.ui.components.PiDialog
 import app.pi.ui.components.PiDialogAction
 import app.pi.ui.components.PiDialogActions
@@ -100,18 +102,38 @@ enum class SessionsView(val label: String) {
  * （`SessionTreeScreen(embedded = true)`），它自己的顶栏与不透明底由这里提供——两个
  * 覆盖层叠在一起时只有最上面那个能被返回键关掉。
  *
- * ## 一行的两行形态
+ * ## 一行的两行形态（有父会话时多一行）
  *
  * 三段真实字段（`02-real-content.md` §1.2 的公式）折成 v2 的两行
  * (`direction-b-v2.html:1814-1822`)：
  *
  * ```
  * 第 1 行   会话名（可省略）… [当前]                相对时间
- * 第 2 行   工作区 · 模型（可省略）…                18 条 · 分支 · 已命名
+ * 第 2 行   工作区 · 模型（可省略）…                18 条 · 已命名
+ * 第 3 行   来自〈会话名〉                          （只有 parentSession 存在时才有）
  * ```
  *
  * 第二行的属性段右对齐、第一段让位给省略号：一屏要读的是「哪条、多久以前、多少条」。
- * 文案一个字没改——它们是 pi 的字段，不是排版。
+ * 这几段文案是 pi 的字段，不是排版——本轮唯一动过的字是原来那个「· 分支」，理由见下。
+ *
+ * 第三行是本次补的那一件：有父会话的会话，pi 在它的**文件头**里记着 `parentSession`
+ * （`docs/session-format.md:72-76`），而这一屏从前只用第二行末尾那两个字「· 分支」说它有
+ * 父会话，**不说父是谁**。用户的原话是「如果是分叉，能不能让它显示的更明显一点」—— 现在它
+ * 单独一行，父会话的名字（取不到就不写名字）连同「原来那条会话还在列表里」这个事实一起看得见。
+ * 上游的对应物是它会话选择器里的缩进（`session-selector.ts:206-231`、`:531-537`），呈现不同、
+ * 事实同源，登记在 `docs/known-gaps.md` §B2。
+ *
+ * **为什么是「来自」而不是「分叉自」**：`parentSession` 是 `/fork`、`/clone`、
+ * `newSession({ parentSession })` **三种**来源共用的同一个头字段
+ * （`docs/session-format.md:72`），文件里没有第二个标记能区分它们——`/clone` 在上游就是
+ * `fork(leafId, { position: "at" })`（`rpc-mode.ts:619-628`），走的是同一个
+ * `SessionManager.createBranchedSession`。所以这一行只许说**这条从哪儿来**，不许说**它是被
+ * 分叉还是被复制**：那两个字文件里没有。用户要的「更明显」由**单独一行**给，不由动词给。
+ *
+ * **而且第三种来源在本应用里是一条真按钮**：会话行的长按菜单有「新建子会话」
+ * （`PiSessionViewModel.newChildSession` → `newSession(parentSession)`），它写同一个字段，
+ * 既不是分叉也不是复制。所以「分叉自」不只是不精确，它会把用户自己按「新建子会话」建出来的
+ * 那条会话说成一条分叉 —— 界面上说文件里没有的话，正是用户那句「一点也没有安全感」的病根。
  *
  * ## 点一行做什么
  *
@@ -188,6 +210,20 @@ fun SessionsScreen(
     // index.
     val activeFile = state.meta.sessionFile?.substringAfterLast('/')
 
+    // 每一行「来自哪个会话」—— 有父会话的行，pi 在它的**文件头**里记着原会话的路径
+    // （`parentSession`，`docs/session-format.md:72-76`），这里把它翻成会话列表里的那个显示名。
+    //
+    // 按 `sessions`（**全部**行，不是筛过之后的那批）算一次：关系是文件里的事实，不该随搜索框
+    // 里打了什么字而消失，而每行自己线性扫一遍就是 O(n²) 的每帧开销。[forkParentNameOf]
+    // 就是这条判定，纯函数，只认 pi 记在文件头里的那个字符串。
+    val forkParentNames = remember(sessions) {
+        // 判定要的只有两个字段，所以这里先投影一次：`SessionForkLabel.kt` 是纯文件
+        // （一个 import 都没有），不认识 `PiSessionStore.Summary`，也正因如此它能在没有
+        // Android 的机器上被 harness 真跑一遍。
+        val rows = sessions.map { SessionFileRow(it.file.name, it.displayName) }
+        sessions.associate { it.file.absolutePath to forkParentNameOf(it.parentSession, rows) }
+    }
+
     // 工作区组标题要用的名字：目录名 → label，取自 `WorkspaceStore`（和工作区页的切换面板同一
     // 份读数）。一次设置文件读取 + 每个 label 一次目录判断，所以按组合算一次、不在每一行每一帧
     // 里算。键是 `sessions`：每次列表刷新就会重读（改名之后回到这一屏必然拿到新名字 —— 这一屏
@@ -210,11 +246,19 @@ fun SessionsScreen(
     // 值逐字不变：同一组谓词、同一个遍历顺序、同一条排序规则；`sessionQueryTokens` 只是把
     // 「与行无关」的那一次 tokenisation 提出循环（见 `sessionMatches` 的 KDoc）。
     //
-    // 这两样的**单位是会话，不是文件**：`sessions` 来自 `PiSessionStore.list()`，而它按会话
-    // 身份去重（`PiSessionStore.kt` 的 `list`/`laterSessionRow`）—— 一段对话在磁盘上留了两份
-    // （组目录副本、`/import` 的拷贝）时也只有一行。所以下面两处计数（副行的 `"${visible.size} 条"`
-    // 与每个组标题的 `rows.size`）说的就是「几条对话」；去重放在 store 里而不是这里，是为了不让
-    // 「同一段对话算几条」有第二个说法。
+    // 这两样的**单位是 `PiSessionStore.list()` 交出来的行**，而一行就是一个 `.jsonl` ——
+    // 与上游 pi 一样「一个文件一行、不按 id 去重」（`session-manager.ts:941-967`）。
+    // `list()` 只在**同一个 `id` 且一份的字节是另一份的前缀**时才合并（旧快照、组目录副本、
+    // `/import` 的拷贝）；**互不为前缀**的两份 —— 那正是「一段对话被劈成两个文件」的形态 ——
+    // **两行都留**（`PiSessionStore.mergeSameIdRow` 的 `PrefixRelation.Disjoint`）。
+    // 所以同一个 `id` 到了这一屏**可能是两行**，而下面两处计数（副行的 `"${visible.size} 条"`
+    // 与每个组标题的 `rows.size`）数的就是**行**：劈开的两半算两条。那是去重规则自己的账，
+    // 本屏照抄它、不在这里另立一个「几条对话」的说法（也不减、不并）。
+    //
+    // 这条规则也决定了第三行「来自〈会话名〉」的取法：`forkParentNameOf` 的键是**文件名**
+    // （`parentSession` 记的是一条路径），**不是 `id`** —— 所以同 `id` 两行不会让它去两半之间
+    // 挑一行（见 `ui/chat/SessionForkLabel.kt`）；本屏再以 `file.absolutePath` 为键查一次，
+    // 于是一行画一行自己的「来自谁」，劈开的两半各画各的，谁也不会替谁说话。
     val listView = remember(sessions, query, byName, namedOnly, workspacesRoot, workspaceLabels) {
         val tokens = sessionQueryTokens(query)
         val visible = sessions
@@ -496,6 +540,8 @@ fun SessionsScreen(
                                     // 第二行的第一个字段是这一组的工作区名，与标题同一个算法
                                     // （同一个 cwd，所以必须印同一个名字）。
                                     workspaceLabel = groupLabel(cwd, workspacesRoot, workspaceLabels),
+                                    // 父会话的显示名，取不到就是 null（父不在列表里）。
+                                    forkedFrom = forkParentNames[summary.file.absolutePath],
                                     onOpen = {
                                         session.switchSession(summary)
                                         onOpenChat()
@@ -867,10 +913,16 @@ private fun GroupHeading(label: String, count: Int) {
  *
  * ```
  * 第 1 行  会话名（15/500，可省略）…  [当前]        相对时间（12 等宽）
- * 第 2 行  工作区 · 模型（12 muted，可省略）…       18 条 · 分支 · 已命名（12 muted）
+ * 第 2 行  工作区 · 模型（12 muted，可省略）…       18 条 · 已命名（12 muted）
+ * 第 3 行  来自〈会话名〉（12 muted，可省略）        ← 只有 `parentSession` 存在时才有
  * ```
  *
  * 行内边距 `10px 12px`、两行间距 3、第一行 `gap:7`、第二行 `gap:8`。
+ *
+ * 第三行是本轮的唯一形态改动，理由写在 [SessionRow] 的 `forkedFrom` 参数与
+ * `SessionsScreen` 的 `## 一行的两行形态` 那一段里：有父会话的会话在**第二行末尾**从前
+ * 只写两个字「· 分支」，看不出父是谁；`18 条 · 分支 · 已命名` 因此变成 `18 条 · 已命名`
+ * 加上这独立的一行。**两行形态本身没有变**，没有父会话的行一个像素都不动。
  *
  * **行的底与分隔线是那张卡的**（v2 的 `Card`：`surf-low`、圆角 10、`margin:0 14px`，
  * 线只画在行与行之间、再向内缩 14）：所以这里按 [first]/[last] 只圆该圆的两个角，线画在
@@ -892,6 +944,18 @@ private fun SessionRow(
     first: Boolean,
     last: Boolean,
     workspaceLabel: String,
+    /**
+     * 这一行**来自**的那个会话的显示名，取不到父行时是 null。
+     *
+     * 只有 [PiSessionStore.Summary.parentSession] 存在时才有意义 —— 那个字段是 pi 写在子会话
+     * 文件头里的原会话路径（`docs/session-format.md:72-76`），`ui/chat/SessionForkLabel.kt` 的
+     * [forkParentNameOf] 把它翻成名字（那个文件是纯的，本机有 harness 跑它）。
+     *
+     * 名字叫 `forkedFrom` 只是因为 pi 把写这个字段的机制叫 `fork`（`/clone` 走的也是它，
+     * `rpc-mode.ts:619-628`）；**界面上的字不许跟着叫「分叉自」**，理由见 `SessionsScreen`
+     * 的 `## 一行的两行形态` 那一段。
+     */
+    forkedFrom: String?,
     onOpen: () -> Unit,
     onLongPress: () -> Unit,
 ) {
@@ -966,11 +1030,36 @@ private fun SessionRow(
                 Text(
                     buildString {
                         append(summary.messageCount).append(" 条")
-                        if (summary.parentSession != null) append(" · 分支")
                         if (hasName(summary)) append(" · 已命名")
                     },
                     style = PiTheme.text.meta,
                     color = PiTheme.palette.muted,
+                )
+            }
+            // 「这条是从哪儿来的」——**单独一行**，不挤进上面那一行。
+            //
+            // 上面那一行右端是不带权重的 `Text`（它先量、拿到自己全部的字宽），所以把父会话
+            // 的名字接在「N 条」后面，一个长会话名就会把左边的工作区名挤成省略号；单独一行没有
+            // 这个问题，而且「更明显」正是用户要的那件事（原话：「如果是分叉，能不能让它显示的
+            // 更明显一点」）。
+            //
+            // 事实全部来自 pi 自己记的字段，一个字都不是推出来的：`parentSession` 是 `/fork`、
+            // `/clone`、`newSession({ parentSession })` 三种来源共用的同一个头字段
+            // （`docs/session-format.md:72-76`；写它的是 `session-manager.ts:1681`、`:1854`），
+            // 所以这里只说「来自谁」——**不写「分叉自」**，因为文件里没有区分分叉与复制的东西
+            // （`/clone` 就是 `fork(leafId, { position: "at" })`，`rpc-mode.ts:619-628`），
+            // 用户会看到的差别只是头两个字。pi 自己用缩进画这条关系（`session-selector.ts:206-231`、
+            // `:531-537`，且只在 Threaded 排序且没搜索时，`:380-386`），本应用用一行小字表达同一
+            // 件事实（见 `docs/known-gaps.md` §B2）。名字取不到时**不猜**：父被删掉或落在
+            // `list(limit)` 之外时只印「来自其他会话」+ 一句说明，绝不拿文件名冒充会话名。
+            if (summary.parentSession != null) {
+                Text(
+                    if (forkedFrom != null) "来自 $forkedFrom" else "来自其他会话（原会话不在列表里）",
+                    modifier = Modifier.padding(top = PiSettingsMetrics.supportingGap),
+                    style = PiTheme.text.meta,
+                    color = PiTheme.palette.muted,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
             }
         }
