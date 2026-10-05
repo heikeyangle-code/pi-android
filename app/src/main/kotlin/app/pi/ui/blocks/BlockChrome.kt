@@ -268,10 +268,15 @@ internal fun BlockActionMenu(
  * user-message bubble's radius, and `05 §3.3` decided the bubble keeps 16 dp while
  * the transcript's cards tighten to v2's 10.
  */
-internal val BlockCardShape = RoundedCornerShape(BLOCK_CARD_RADIUS)
-
-/** `06 §2` 工具卡：圆角 10 — the number the shape above and a run's shell ring both use. */
+/** `06 §2` 工具卡：圆角 10 — the number the shape below and a run's shell ring both use. */
 internal val BLOCK_CARD_RADIUS = 10.dp
+
+/**
+ * The card's shape, built from [BLOCK_CARD_RADIUS] — and it must follow the `val` above it:
+ * top-level property initialisers run in **declaration order**, so reading it from here before
+ * it is declared is a compile error.
+ */
+internal val BlockCardShape = RoundedCornerShape(BLOCK_CARD_RADIUS)
 
 /**
  * A card's shape **inside its run**: rounded on the two corners that are the run's own ends,

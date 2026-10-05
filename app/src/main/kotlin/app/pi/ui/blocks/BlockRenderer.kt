@@ -82,7 +82,7 @@ import app.pi.rpc.UserMessage
  *   reader of the ViewModel's coarse clock.
  */
 @Composable
-fun BlockRenderer(
+internal fun BlockRenderer(
     item: TranscriptItem,
     modifier: Modifier = Modifier,
     hideThinking: Boolean = false,
@@ -162,7 +162,7 @@ fun BlockRenderer(
                 // is the only difference between them, so they share one block here too.
                 "bash", "powershell" ->
                     ShellBlock(item, modifier, toolsDefaultExpanded, firstOfRun, lastOfRun, nowMs, runRing)
-                else -> ToolCallBlock(item, modifier, toolsDefaultExpanded, firstOfRun, lastOfRun, runRing = runRing)
+                else -> ToolCallBlock(item, modifier, toolsDefaultExpanded, firstOfRun, lastOfRun, ring = runRing)
             }
         }
 

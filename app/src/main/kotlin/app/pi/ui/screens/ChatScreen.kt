@@ -2217,7 +2217,7 @@ private fun ChatBody(
                         // list: `BlockColumn` pads with it, `ToolRailFrame` overdraws by it, and
                         // both read this one value — that is the whole fix for the rail breaking
                         // apart across the gap (`BlockChrome.BlockColumn` has the argument).
-                        LocalRowGap provides rowGapDp(item, prefs.messageDensity).dp,
+                        LocalRowGap provides item.rowGapDp(prefs.messageDensity).dp,
                     ) {
                         BlockRenderer(
                             item = item,

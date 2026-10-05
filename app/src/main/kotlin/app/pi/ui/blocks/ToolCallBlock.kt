@@ -32,7 +32,7 @@ import app.pi.ui.theme.PiTheme
  * line's wording) live in `ToolOutputParse.kt` for the same reason.
  */
 @Composable
-fun ToolCallBlock(
+internal fun ToolCallBlock(
     item: ToolCall,
     modifier: Modifier = Modifier,
     defaultExpanded: Boolean = false,

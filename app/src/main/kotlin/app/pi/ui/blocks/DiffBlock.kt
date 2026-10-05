@@ -74,7 +74,7 @@ private const val DIFF_NODE_GLYPH = "±"
 private const val DIFF_LINE_WASH_ALPHA = 0.08f
 
 @Composable
-fun DiffBlock(
+internal fun DiffBlock(
     item: ToolDiff,
     modifier: Modifier = Modifier,
     defaultExpanded: Boolean = false,
