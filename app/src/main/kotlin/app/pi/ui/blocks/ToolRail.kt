@@ -269,16 +269,17 @@ internal fun ToolRailFrame(
 }
 
 /**
- * The run's outline: the two vertical edges, plus a horizontal edge (with its two corner arcs)
- * only at the ends that **are** an end of the run.
+ * The run's outline: a horizontal cap — with its two corner arcs — at each end that **is** an end
+ * of the run. There are deliberately **no vertical edges** (see the note at the path below): the
+ * sides of the run are not something this app draws any more, so a run of one card reads as a cap
+ * above and a cap below, and a longer run as a cap at each end with the 1 dp interior dividers
+ * carrying the row boundaries in between.
  *
- * The horizontal edges a run's interior must *not* draw are simply absent from the path rather
- * than drawn and clipped away — a clip would also cut the vertical edges' overdraw into the gap,
- * which is what joins one row to the next.
+ * The caps a run's interior must *not* draw are simply absent from the path rather than drawn and
+ * clipped away.
  *
  * The path is inset by half the stroke, so a 1 dp line's *outer* edge sits exactly on the card's
- * boundary: the same pixel the card's own per-card border used to occupy, and the same one a CSS
- * `border` occupies.
+ * boundary: the same pixel a CSS `border` occupies.
  */
 private fun DrawScope.drawShellRing(
     color: Color,
@@ -294,10 +295,12 @@ private fun DrawScope.drawShellRing(
     val top = if (firstOfRun) half else -(gap - half)
     val bottom = if (lastOfRun) size.height - half else size.height + gap - half
     val path = Path()
-    path.moveTo(left, top)
-    path.lineTo(left, bottom)
-    path.moveTo(right, top)
-    path.lineTo(right, bottom)
+    // **No vertical edges.** The run's two sides used to be drawn here (one 1 dp line at
+    // `RAIL_INDENT`, one at the right edge) and they are the two lines the user rejected:
+    // "左侧竖着那条细线和右侧那条细线我不要" — on a merged run they run the whole length
+    // beside every row, and on a single-card run they are the card's own left/right border.
+    // What is left is the run's identity in the *horizontal* channel only: the cap (with its
+    // two corner arcs) at each end of the run, and the interior 1 dp divider between rows.
     if (firstOfRun) {
         path.moveTo(left, top + radius)
         path.arcTo(Rect(left, top, left + 2 * radius, top + 2 * radius), 180f, 90f, false)
