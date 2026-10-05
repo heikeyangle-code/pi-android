@@ -251,13 +251,38 @@ fun main() {
             chatText.contains("verticalArrangement = Arrangement.spacedBy(blockSpacing)"),
             false,
         )
-        check("X3 the row is handed its own gap", chatText.contains("LocalRowGap provides rowGapDp(item, prefs.messageDensity).dp"), true)
+        // X3 asserts the **contract**, not the call's spelling. An earlier version of this check
+        // pinned the literal `LocalRowGap provides rowGapDp(item, …)` and CI went red the moment
+        // `3282248` rewrote the very same call as `item.rowGapDp(…)` — the row still got its own
+        // gap, and nothing about the layout changed: the assertion was testing a spelling. What
+        // must hold is 「每一行拿到自己的底部留白」, which is three facts: exactly one provider,
+        // the provided value comes from the row's own gap function seeded by the density
+        // preference, and it is set inside the list's per-row scope (a single provider around the
+        // whole list would hand every row the same number and undo the point).
+        val provides = chatText.indexOf("LocalRowGap provides")
+        check("X3.1 the row's gap has exactly one provider", chatText.split("LocalRowGap provides").size - 1, 1)
+        check("X3.2 it is inside the list's per-row scope, not once for the list", provides > chatText.indexOf("itemsIndexed("), true)
+        val provided = if (provides < 0) "" else chatText.substring(provides).lineSequence().first()
+        check("X3.3 the value comes from the row's own gap function", provided.contains("rowGapDp("), true)
+        check("X3.4 …seeded by the density preference", provided.contains("prefs.messageDensity"), true)
         check(
             "X4 and exactly one block applies it as bottom padding",
             chromeText.split("padding(bottom = LocalRowGap.current)").size - 1,
             1,
         )
-        check("X5 the rail reads that very value back for its overdraw", railText.contains("val gap = LocalRowGap.current"), true)
+        check("X5 the rail reads that very value back for its overdraw", railText.contains("LocalRowGap.current"), true)
+        // The other half of "one source": the value has exactly one applier and one reader, so
+        // "the overdraw equals the row's own bottom air" is structural rather than a promise —
+        // and the list itself never touches it (that is the F11 shape).
+        check(
+            "X11 exactly one applier and one reader of that value",
+            listOf(
+                chromeText.split("LocalRowGap.current").size - 1,
+                railText.split("LocalRowGap.current").size - 1,
+                chatText.split("LocalRowGap.current").size - 1,
+            ),
+            listOf(1, 1, 0),
+        )
         check(
             "X6 with no compile-time bridge constant to disagree with it",
             railText.contains("internal val RAIL_BRIDGE"),
