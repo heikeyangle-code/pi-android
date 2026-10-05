@@ -53,6 +53,10 @@ fun ThinkingBlockBlock(
     val headline = if (item.streaming) "思考中…" else "思考"
     val headlineDuration = if (item.streaming) null else item.elapsedMs?.let { formatDuration(it) }
 
+    // Read in composition, **not** inside the draw lambda: a `CompositionLocal` cannot be read
+    // outside composition, and `drawBehind`'s block is not composable. `ToolRailFrame` hoists its
+    // own read for the same reason.
+    val rowGap = LocalRowGap.current
     BlockColumn(
         modifier.drawBehind {
             // The level's pen runs the **whole block**: the headline, and — when the block is
@@ -66,7 +70,7 @@ fun ThinkingBlockBlock(
             // part of the block — `BlockColumn` pads with it — so it is subtracted here and the bar
             // stops at the body's edge instead of painting into the gap below.
             val inset = 2.dp.toPx()
-            val gap = LocalRowGap.current.toPx()
+            val gap = rowGap.toPx()
             drawRect(
                 color = pen,
                 topLeft = Offset(0f, inset),
