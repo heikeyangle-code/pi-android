@@ -12,6 +12,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -50,7 +53,27 @@ fun ThinkingBlockBlock(
     val headline = if (item.streaming) "思考中…" else "思考"
     val headlineDuration = if (item.streaming) null else item.elapsedMs?.let { formatDuration(it) }
 
-    BlockColumn(modifier) {
+    BlockColumn(
+        modifier.drawBehind {
+            // The level's pen runs the **whole block**: the headline, and — when the block is
+            // open — the body down to its last line. That is what "条变长" asked for; the `Row`'s
+            // own `AccentStripe` below is left in place and covered exactly (same x, same colour),
+            // so the closed state is pixel-identical to before and the open state is the same
+            // stroke grown to the block's bottom edge.
+            //
+            // `2 dp` top and bottom is the optical inset the collapsed row already carried: a
+            // `3×19` stroke inside a `23` dp line box. The row's bottom air (`LocalRowGap`) is not
+            // part of the block — `BlockColumn` pads with it — so it is subtracted here and the bar
+            // stops at the body's edge instead of painting into the gap below.
+            val inset = 2.dp.toPx()
+            val gap = LocalRowGap.current.toPx()
+            drawRect(
+                color = pen,
+                topLeft = Offset(0f, inset),
+                size = Size(3.dp.toPx(), (size.height - gap - inset * 2).coerceAtLeast(0f)),
+            )
+        },
+    ) {
         // F28: the whole block is the toggle target, which is what pi does —
         // `components/assistant-message.ts:160-166` wraps the entire thinking
         // component in the `MouseRegion` that flips its visibility.
