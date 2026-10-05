@@ -123,8 +123,8 @@ fun ThinkingBlockBlock(
     }
 }
 
-/** v2's `ThinkRow` stripe: `width:3,height:18`. */
-private val THINK_STRIPE_HEIGHT = 18.dp
+/** v2's `ThinkRow` stripe is `width:3,height:18`; this build keeps it **19** — the row's own line box, so the bar reaches from the top of the words to the bottom of the descenders instead of stopping short of them. */
+private val THINK_STRIPE_HEIGHT = 19.dp
 
 /** v2's `ThinkRow` `gap:8` — between the stripe, the headline and the level word. */
 private val THINK_ROW_GAP = 8.dp
