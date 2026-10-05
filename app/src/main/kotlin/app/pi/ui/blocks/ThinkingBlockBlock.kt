@@ -191,6 +191,14 @@ fun ThinkingBlockBlock(
                         text = headlineDuration,
                         style = PiTheme.text.numeric,
                         color = palette.thinkingBodyOnCanvas,
+                        // A **fixed slot**, exactly like the tool card's own readout
+                        // (`TOOL_READOUT_WIDTH`). While the block streams this number comes from
+                        // the ViewModel's 1 Hz clock, so it changes once a second — and `5s` →
+                        // `1m30s` is three glyphs wider. Left unslotted the row re-measures on
+                        // every tick, and with the body expanded everything below it shifts with
+                        // it (the user's "整屏乱跳"). `40 dp` is what the widest reading needs:
+                        // `1m30s`, five tabular figures at this step.
+                        modifier = Modifier.width(THINK_DURATION_WIDTH),
                     )
                 }
                 if (levelLabel != null) {
@@ -266,6 +274,13 @@ fun ThinkingBlockBlock(
         }
     }
 }
+
+/**
+ * The width of the elapsed-time slot. The reading is live while the block streams (the 1 Hz
+ * clock), and its width would otherwise grow with it — `5s` → `1m30s` — re-measuring the row
+ * every second. `40 dp` fits the widest of them at the numeric step.
+ */
+private val THINK_DURATION_WIDTH = 40.dp
 
 /**
  * The expand/collapse duration. `200 ms` is not invented here — `PiImageViewer`'s zoom already
