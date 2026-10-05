@@ -38,13 +38,11 @@ class PiRpcException(
  * is not.
  *
  * Commands that do not appear here are the three prompting commands (`prompt`,
- * `steer`, `follow_up`). They are fire-and-forget and — more importantly —
- * `PiEngineSession.prompt` mirrors the message into the local transcript before
- * sending it; routing them through a second path would either duplicate that
- * side effect or bypass it. They stay on [PiEngineSession] where the transcript
- * lives, and so does the local echo a queued `steer`/`follow_up` needs
- * (`PiEngineSession.echoUserPrompt`), because a reducer mutation has to be
- * published by the engine to reach the UI (`PiEngineSession.publication`).
+ * `steer`, `follow_up`). They are fire-and-forget — pi's `success: false` answer
+ * has nobody waiting on it — and they stay on [PiEngineSession], which owns their
+ * ids: the id is what names a **refused** send, and the app now relies on that
+ * refusal being visible (`PiSessionViewModel`'s `PiEvent.Response` arm) rather
+ * than on a local copy of the message.
  *
  * Timeouts default to [DEFAULT_TIMEOUT_MS]; the commands that can legitimately
  * take minutes use [SLOW_TIMEOUT_MS], and every function lets the caller

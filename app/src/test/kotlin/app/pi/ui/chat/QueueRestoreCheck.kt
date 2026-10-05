@@ -57,12 +57,40 @@ fun main() {
         "queued",
     )
 
-    // A blank queued message (pi can queue an empty expansion) must not produce a
-    // leading separator around the draft.
+    // A blank queued message is not text, so the merge must not turn it into a
+    // leading separator around the draft — that half of pi's rule is right.
     check(
-        "a blank queued message is dropped",
+        "a blank queued message is dropped by the merge",
         mergeRestoredQueue(listOf("", "  "), "draft"),
         "draft",
+    )
+
+    // …but "dropped by the merge" is **not** "nothing was queued". `clear_queue`
+    // answers with pi's queue, which is text only (`core/agent-session.ts:2355-2362`),
+    // so an entry with no text is a message the app queued from an image and no
+    // caption: the entry is real and its text is empty. This is the case that used
+    // to be pinned only as "dropped", which let the attachment disappear with no
+    // sentence anywhere (the caller now warns: `PiSessionViewModel.restoreQueue`).
+    check(
+        "two blank entries are two entries with no text, not an empty queue",
+        summarizeRestoredQueue(listOf("", "  ")),
+        RestoredQueue(withText = 0, withoutText = 2),
+    )
+    check(
+        "an empty answer is an empty queue",
+        summarizeRestoredQueue(emptyList()),
+        RestoredQueue(withText = 0, withoutText = 0),
+    )
+    check("an empty answer reports itself empty", summarizeRestoredQueue(emptyList()).isEmpty, true)
+    check(
+        "a mixed answer counts both halves",
+        summarizeRestoredQueue(listOf("text", "")),
+        RestoredQueue(withText = 1, withoutText = 1),
+    )
+    check(
+        "a text-only answer has nothing to warn about",
+        summarizeRestoredQueue(listOf("one", "two")),
+        RestoredQueue(withText = 2, withoutText = 0),
     )
 
     // Nothing queued and nothing typed: the composer stays empty rather than

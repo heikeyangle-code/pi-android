@@ -58,14 +58,14 @@ import kotlinx.coroutines.withTimeoutOrNull
  *     transcript; it surfaces as [PiEvent.Unknown] and is published like any
  *     other event.
  *  4. **Publication.** every mutation of the reducer — the event path in [handle]
- *     and the calls this class makes on the caller's behalf ([prompt],
- *     [echoUserPrompt], [seedHistory]) — goes through [publish], which hands the
+ *     and the calls this class makes on the caller's behalf (the typed sends,
+ *     [seedHistory]) — goes through [publish], which hands the
  *     UI the rows that actually changed ([TranscriptPublication]). Rebuilding the
  *     whole row list per event is what made a long streaming session progressively
  *     laggier (docs/rendering-review.md F7 / RR-P7).
  *  5. **Ownership.** the reducer and the published snapshot have one owner at a
  *     time, guarded by [transcriptLock]: the reader thread folds events under it
- *     ([handle]), the app's mutations do too ([prompt], [echoUserPrompt]), and
+ *     ([handle]), the app's mutations do too (the typed sends), and
  *     [seedHistory] swaps in a reducer built off the frame thread. Nothing outside
  *     that lock touches the reducer's mutable row list — including the UI, which
  *     reads [TranscriptPublication.rows], a snapshot.
@@ -83,8 +83,8 @@ class PiEngineSession(
      * The one lock that owns the reducer **and** the published snapshot.
      *
      * Why it exists: this class folds events into the reducer on the reader thread
-     * ([handle], inside [readLoop]'s IO context) while the app calls [prompt],
-     * [echoUserPrompt] and [seedHistory] from its own threads — the ViewModel's are
+     * ([handle], inside [readLoop]'s IO context) while the app calls the typed
+     * sends and [seedHistory] from its own threads — the ViewModel's are
      * `Dispatchers.Main.immediate`. `TranscriptReducer` is a plain state machine
      * over an unsynchronized `MutableList` with no lock of its own, and neither
      * [publishedRows] nor [publish]'s read-modify-write of [revision] was atomic,
@@ -139,10 +139,9 @@ class PiEngineSession(
      * The reducer currently serving this session. **Reads only.**
      *
      * Mutating through this reference is exactly what [transcriptLock] exists to
-     * stop: a direct `onEvent` / `onUserPrompt` / `seedFromHistory` call would race
-     * the reader thread, and the change would never be published. The publishing
-     * paths are [handle] (reader thread), [prompt], [echoUserPrompt] and
-     * [seedHistory].
+     * stop: a direct `onEvent` / `onEntry` / `seedFromHistory` call would race the
+     * reader thread, and the change would never be published. The publishing paths
+     * are [handle] (reader thread) and [seedHistory].
      */
     val transcript: TranscriptReducer get() = reducer
 
@@ -826,7 +825,7 @@ class PiEngineSession(
      * `PiEvent.EntryAppended` arm). A caller must NOT call `transcript.onEntry(entry)`
      * again: it would double the row. Reads of the reducer from outside this class
      * are fine; *writes* are not — every one has to go through [publish] (this
-     * method, [prompt], [echoUserPrompt] and [seedHistory]), or the change index and
+     * method and [seedHistory]), or the change index and
      * the row diff are never published (fidelity/rendering review F5).
      */
     private fun foldEvent(event: PiEvent) {
@@ -1003,52 +1002,44 @@ class PiEngineSession(
     // ------------------------------------------------------- typed operations
 
     /**
-     * Send a prompt and mirror it into the local transcript before the wire call.
+     * Send a prompt: the app's one entry point for an idle turn and for the two
+     * mid-turn delivery choices, exactly as pi's TUI uses it (`session.prompt(text,
+     * { streamingBehavior })`, `interactive-mode.ts:3357-3364` for Enter and
+     * `:4413-4421` for alt+enter).
      *
-     * The echo is local because pi's own TUI adds the user's row when
-     * `message_start` arrives with `role === "user"`
-     * (`modes/interactive/interactive-mode.ts:3223-3227`), and the reducer here
-     * appends nothing for a `user` message: it only clears the content-block maps
-     * for `assistant` (the `PiEvent.MessageStart` arm of `TranscriptReducer.onEvent`).
-     * Without the echo the bubble the
-     * user just sent would not exist until the session was reopened and replayed
-     * (docs/rendering-review.md F1).
+     * **Nothing is drawn here.** pi's user row is created when the message is
+     * actually *delivered* — `message_start(role: "user")`
+     * (`interactive-mode.ts:3479-3486`, 1.0.3) — and a message that is merely queued
+     * has no row at all, only the pending line above the editor (`:4683-4700`), which
+     * the app renders as its queue row. The app used to echo the send locally so the
+     * bubble appeared the instant they hit send (F1, `docs/rendering-review.md`);
+     * that row could not be taken back when pi's `clear_queue` returned the text
+     * undelivered, and re-sending drew a second bubble for one delivery. The user's
+     * ruling is 1:1 with pi, so the row is born in
+     * `TranscriptReducer.onUserMessageEnd` and nowhere else.
      */
     fun prompt(
         message: String,
         images: List<PiImage> = emptyList(),
         streamingBehavior: app.pi.rpc.StreamingBehavior? = null,
     ) {
-        echoUserPrompt(message, images)
         send(PiCommands.prompt(nextId(), message, images, streamingBehavior))
     }
 
     /**
-     * Mirror a message the user sent or queued into the transcript, and publish it.
-     *
-     * This is the publishing form of `TranscriptReducer.onUserPrompt`, and its one
-     * caller is [prompt] — the optimistic row that makes the user's own message
-     * visible the instant it is submitted, before pi confirms it (F1,
-     * `docs/rendering-review.md`). Publishing matters: calling
-     * `transcript.onUserPrompt` directly does create the row, but the change is
-     * never published — no revision, no [publication] — so no consumer would see it
-     * and a caller that wants the UI to show it would have to rebuild the list by
-     * hand.
-     *
-     * It stayed a separate function after every mid-turn queue path moved onto
-     * `prompt` + `streamingBehavior` (pi's own shape: `interactive-mode.ts:3137-3143`):
-     * `PiSessionViewModel.send` / `sendFollowUp` used to send the bare `steer` /
-     * `follow_up` commands, which carry no echo, and called this by hand. They no
-     * longer do — a second echo on top of [prompt]'s would render the row twice and
-     * leave a stale entry in the reducer's pending-echo queue
-     * (`rpc/.../Transcript.kt:883-897`) — so this is now [prompt]'s publisher and
-     * nothing else's.
+     * pi's bare `steer`, used in exactly one window: **while pi is compacting**,
+     * where `prompt` throws (`core/agent-session.ts:1939-1943`) and the bare command
+     * queues the text instead (`_queueUserInput`, `:2126-2152`, which does no
+     * compaction check). Pi's TUI has its own local queue for that window
+     * (`queueCompactionMessage`), and the app needs none: pi's queue is visible over
+     * `queue_update`, so the message shows up in the queue row like any other.
      */
-    fun echoUserPrompt(text: String, images: List<PiImage> = emptyList()) {
-        synchronized(transcriptLock) {
-            publish(transcript.onUserPrompt(text, images))
-        }
-    }
+    fun steer(message: String, images: List<PiImage> = emptyList()): Boolean =
+        send(PiCommands.steer(nextId(), message, images))
+
+    /** pi's bare `follow_up`, the compaction-window form of [sendFollowUp]; see [steer]. */
+    fun followUp(message: String, images: List<PiImage> = emptyList()): Boolean =
+        send(PiCommands.followUp(nextId(), message, images))
 
     /**
      * Rebuild the whole stream from pi's persisted entries (`get_entries`).
@@ -1128,26 +1119,31 @@ class PiEngineSession(
     /**
      * Take every queued message back out of pi **without** touching the turn in
      * flight: pi's `app.message.dequeue` (`alt+up`), wired at
-     * `modes/interactive/interactive-mode.ts:2899` and implemented by
-     * `restoreQueuedMessagesToEditor()` (`:4387-4406`) — which is
+     * `modes/interactive/interactive-mode.ts:3097` and implemented by
+     * `restoreQueuedMessagesToEditor()` (`:4702-4721`) — which is
      * `clearAllQueues()` + put the text back in the editor, and only aborts when the
      * caller passes `{ abort: true }`.
      *
      * Everything queued comes back at once, matching pi: `clear_queue` takes no
      * argument and its handler returns the whole `session.clearQueue()`
-     * (`rpc-types.ts:26`, `rpc-mode.ts:433-435`, `core/agent-session.ts:1608-1615`),
+     * (`rpc-types.ts:26`, `rpc-mode.ts:431-433`, `core/agent-session.ts:2355-2362`),
      * and pi's pending-messages display is a read-only list under a single
      * "edit all queued messages" hint — there is no per-message dequeue to
      * reproduce.
      *
      * The queue text is read from the **`clear_queue` response**, not from
      * `get_state`. `clear_queue` answers with the arrays it just removed
-     * (`rpc-mode.ts:433-435` returns `session.clearQueue()`, i.e.
-     * `{steering, followUp}` — `agent-session.ts:1608-1615`), while `get_state`
+     * (`rpc-mode.ts:431-433` returns `session.clearQueue()`, i.e.
+     * `{steering, followUp}` — `agent-session.ts:2355-2362`), while `get_state`
      * carries no queue arrays at all (`RpcSessionState` has only
      * `pendingMessageCount`). Reading them off `get_state` therefore always
      * produced two empty lists: pi emptied its queue and the text was never handed
      * back, so pressing Stop silently destroyed whatever the user had queued.
+     *
+     * Nothing in the transcript has to be undone for these messages: the app draws
+     * no row for a queued one ([prompt]), so "pi will never deliver it" and "there
+     * is no row claiming it was sent" are the same statement — which is what makes
+     * the restore whole.
      */
     suspend fun drainQueue(): List<String> {
         val cleared = request(PiCommands.clearQueue(nextId()))
@@ -1162,9 +1158,9 @@ class PiEngineSession(
      * (docs/pi-android-ui-spec.md §7.2).
      *
      * The abort is unconditional and comes **after** the drain, exactly as
-     * `restoreQueuedMessagesToEditor({ abort: true })` orders it
-     * (`interactive-mode.ts:4391` then `:4404-4406`): a `clear_queue` that failed
-     * must not leave a turn running that the user asked to stop.
+     * `restoreQueuedMessagesToEditor({ abort: true })` orders it (`interactive-mode.ts:4705`
+     * then `:4683-4685`): a `clear_queue` that failed must not leave a turn running
+     * that the user asked to stop.
      */
     suspend fun stopAndDrainQueue(): List<String> {
         val restored = drainQueue()
@@ -1293,8 +1289,22 @@ class PiEngineSession(
          *  - `extension_ui_request` — pi blocks the extension until the App answers
          *    (`ui/extension/ExtensionUi.kt`), so a dropped one is a turn that never
          *    ends and never says why;
-         *  - `agent_settled` / `agent_end` — the turn boundary the ViewModel turns
-         *    into `refreshState` and the stats refresh;
+         *  - `agent_start` / `agent_settled` — the two ends of pi's own
+         *    `isStreaming` (`_runAgentPrompt` sets `_isAgentRunActive` at its start
+         *    and `_emitAgentSettled` clears it in its `finally`), which is the fact
+         *    the send path needs to choose between a plain `prompt` and a queued
+         *    `steer`/`followUp` (`PiSessionViewModel`'s `EngineMeta.isStreaming`).
+         *    Losing the *end* leaves that flag true — harmless, pi ignores
+         *    `streamingBehavior` when it is idle — but losing the *start* would send
+         *    a bare `prompt` into a running turn, which pi refuses outright;
+         *  - `agent_end` — the turn boundary the ViewModel turns into `refreshState`
+         *    and the stats refresh;
+         *  - `queue_update` — the **only** feedback a queued message has. The app
+         *    draws no row for one until pi delivers it (`prompt`), so a dropped
+         *    update is a 引导/后续 the user cannot see anywhere: not in the queue row,
+         *    and not in the transcript, which is exactly the "did it go?" silence
+         *    the echo used to paper over. Queue updates are user-paced (one per
+         *    enqueue/drain), never a delta stream;
          *  - `compaction_start` / `compaction_end` — the flag that decides whether the
          *    next message may be sent as a `prompt` or has to be a `follow_up`;
          *    losing the end leaves the App believing a compaction is still running.
@@ -1307,8 +1317,10 @@ class PiEngineSession(
          */
         private val CRITICAL_EVENT_TYPES = setOf(
             "extension_ui_request",
+            "agent_start",
             "agent_settled",
             "agent_end",
+            "queue_update",
             "compaction_start",
             "compaction_end",
         )
