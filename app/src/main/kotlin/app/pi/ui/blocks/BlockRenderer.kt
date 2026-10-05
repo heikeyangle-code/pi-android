@@ -135,7 +135,11 @@ internal fun BlockRenderer(
         is AssistantText -> AssistantTextBlock(item, modifier, onImageClick)
 
         is ThinkingBlock -> if (!hideThinking) {
-            ThinkingBlockBlock(item, modifier, thinkingDefaultExpanded, nowMs)
+            // No clock: the thinking row is back to its pre-rework behaviour — the elapsed time
+            // appears once, from pi's own `elapsedMs`, and the row does not change every second.
+            // See `PiSessionViewModel.hasPendingToolClock` for why the clock no longer arms for a
+            // streaming thinking block.
+            ThinkingBlockBlock(item, modifier, thinkingDefaultExpanded)
         }
 
         // P2-1 (`docs/capability-gap.md` §4.9): pi gives every built-in tool its own

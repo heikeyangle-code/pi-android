@@ -845,8 +845,12 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
          */
         val hasPendingToolClock: Boolean
             get() = transcript.any {
-                (it is ToolCall && it.status == ToolStatus.Pending) ||
-                    (it is ThinkingBlock && it.streaming)
+                (it is ToolCall && it.status == ToolStatus.Pending)
+                // A streaming `ThinkingBlock` used to arm the clock too (a live elapsed reading on
+                // the thinking row). Rolled back: that reading changed once a second, which
+                // re-measured the row and woke the list's two viewport-pinning paths — the
+                // user's "思考内容在动的时候我点开，整个屏幕乱跳". The thinking row now shows only
+                // pi's own `elapsedMs`, once, when the block ends.
             }
     }
 
