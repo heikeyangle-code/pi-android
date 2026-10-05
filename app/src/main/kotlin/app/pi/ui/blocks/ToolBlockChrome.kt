@@ -1,5 +1,8 @@
 package app.pi.ui.blocks
 
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
@@ -522,7 +525,14 @@ internal fun ToolCard(
         glyph = toolStateGlyph(state),
         tone = toolStateTone(state),
         label = toolStateLabel(state),
-        modifier = modifier,
+        // Same motion as the thinking block and the extension widget card (200 ms +
+        // FastOutSlowInEasing — the pair `PiImageViewer` already animates with). Without it the
+        // open/close of a card with a body was a single-frame height change; with the default
+        // `animateContentSize()` spec it would be a spring, i.e. it would overshoot and bounce.
+        modifier = modifier.animateContentSize(
+            animationSpec = tween(200, easing = FastOutSlowInEasing),
+            alignment = Alignment.Top,
+        ),
         firstOfRun = firstOfRun,
         lastOfRun = lastOfRun,
         shellFill = fill,
