@@ -114,9 +114,11 @@ class PiEngineService : Service() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
         return NotificationCompat.Builder(this, PiApplication.CHANNEL_ENGINE)
-            // The notification's small icon is a silhouette — the system tints it —
-            // so it takes the icon's monochrome layer, not the coloured foreground.
-            .setSmallIcon(R.drawable.ic_launcher_monochrome)
+            // The notification's small icon *is* the app icon: the same drawable the
+            // launcher's foreground layer uses. The system flattens it to one colour
+            // and tints it (that is what a status-bar icon is), but the shape is the
+            // icon's own — not a second drawing of it.
+            .setSmallIcon(R.drawable.ic_launcher_foreground)
             .setContentTitle(getString(R.string.engine_running_title))
             .setContentText(getString(R.string.engine_running_text, runningTasks))
             .setOngoing(true)

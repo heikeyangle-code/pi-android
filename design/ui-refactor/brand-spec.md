@@ -18,13 +18,14 @@ App 图标是用户 2026-10-05 亲自定下的一张图（`/root/ui-redesign/ref
 | 层 | 文件 | 内容 |
 |---|---|---|
 | 前景 | `app/src/main/res/drawable/ic_launcher_foreground.xml` | 白色 pi 字标 + 绿色 `>_` 提示符，**108×108 viewport**，字形压在中心 66dp 安全区内 |
-| 单色（API 33+ 主题化图标） | `app/src/main/res/drawable/ic_launcher_monochrome.xml` | 只画字形剪影 |
+| 单色（API 33+ 主题化图标） | `app/src/main/res/drawable/ic_launcher_monochrome.xml` | **与前景同一套形**（字标 + `>_`），只是全部单色 |
 | 背景 | `values/colors.xml` 的 `ic_launcher_background` | 纯色 `#11141D` |
 
 - 形状：小写 pi 字标 —— p 的外环 + 内白（一个**洞**，非零填充）+ 腿，i 的杆 + 点；p 的内白里是绿色的 `>_`。
 - 颜色取自那张图本身，**三个都不在 pi 令牌集里**（对照关系见下）。底色是唯一进资源文件的色值。
 - **这就是全部的品牌图形**。pi 没有别的 logo、没有吉祥物、没有插图库。
-- 用法：只作为 App 图标使用（通知小图标用单色层）。**App 界面里不再画它**——原来那个 π 字形连同
+- 用法：只作为 App 图标使用；通知小图标就是前景那枚 drawable（状态栏图标只能是一个颜色，系统会把它压平并着色，
+  但形状是图标自己的）。**App 界面里不再画它**——原来那个 π 字形连同
   `ui/theme/PiMark.kt` 一起删掉了（用户原话「软件里不要再出现原来图标相关的东西了。删掉那些东西。」），
   `PiEmptyState` 与 `BootScreen` 都不再带标识。
 - 不要把它当装饰图案铺开，不要描边加光、不要渐变、不要旋转。
