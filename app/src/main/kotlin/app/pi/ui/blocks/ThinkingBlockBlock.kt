@@ -1,6 +1,8 @@
 package app.pi.ui.blocks
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
@@ -217,7 +219,22 @@ fun ThinkingBlockBlock(
             // body is its only child, so the ground and the text cannot appear in different
             // frames; the pen above grows on the same frames because it is drawn on this
             // container's parent.
-            AnimatedVisibility(visible = expanded, enter = expandVertically(), exit = shrinkVertically()) {
+            AnimatedVisibility(
+                visible = expanded,
+                // 200 ms + FastOutSlowInEasing is the app's own motion (`PiImageViewer`'s zoom
+                // uses the same pair). The Compose defaults are **springs on size**, and a
+                // spring on a *height* overshoots and settles slowly — with a long body that
+                // re-measures on every frame that reads as the block "顿" and its height
+                // "上下乱跳". A tween gives one predictable, monotonic height change instead.
+                enter = expandVertically(
+                    animationSpec = tween(THINK_EXPAND_MILLIS, easing = FastOutSlowInEasing),
+                    expandFrom = Alignment.Top,
+                ),
+                exit = shrinkVertically(
+                    animationSpec = tween(THINK_EXPAND_MILLIS, easing = FastOutSlowInEasing),
+                    shrinkTowards = Alignment.Top,
+                ),
+            ) {
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -249,6 +266,13 @@ fun ThinkingBlockBlock(
         }
     }
 }
+
+/**
+ * The expand/collapse duration. `200 ms` is not invented here — `PiImageViewer`'s zoom already
+ * animates with `200 ms` + `FastOutSlowInEasing`, and this app has no shared motion constant to
+ * import, so the number is matched to that call site rather than picked fresh.
+ */
+private const val THINK_EXPAND_MILLIS = 200
 
 /**
  * v5's `ThinkRow` `gap:8` — between the headline, the elapsed reading and the level word.

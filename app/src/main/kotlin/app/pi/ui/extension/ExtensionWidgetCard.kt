@@ -137,7 +137,16 @@ fun ExtensionWidgetStack(
                 modifier = Modifier
                     // Height changes are real events here (a job starts, a job ends, the card is
                     // opened). Animating them is what keeps the composer below from being yanked.
-                    .animateContentSize()
+                    //
+                    // `200 ms` is the app's own number rather than a fresh one: `PiImageViewer`'s
+                    // zoom animates with `200 ms` + `FastOutSlowInEasing`, and there is no shared
+                    // motion constant to import. The bare `animateContentSize()` default is a
+                    // **spring on size**, which overshoots a height change and then settles —
+                    // that is the card's own open/close visibly bouncing instead of moving once.
+                    .animateContentSize(
+                        animationSpec = tween(200, easing = FastOutSlowInEasing),
+                        alignment = Alignment.Top,
+                    )
                     .toggleContent(expanded.value, { expanded.value = !expanded.value }),
                 borderColor = (stateColor ?: palette.borderMuted).copy(alpha = 0.35f),
                 padding = BlockCardRowPadding,
