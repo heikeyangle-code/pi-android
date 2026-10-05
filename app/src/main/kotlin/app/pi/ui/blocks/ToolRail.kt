@@ -44,13 +44,14 @@ import app.pi.ui.theme.StateTone
  * ```
  * rail container  padding-left 26
  * line            left 9, width 1, 16 inset top and bottom
- * node            15×15, left 1 / top 4.5, 1 dp stroke = state colour at 45 %
+ * node            15×15, left 2 / top 4.5, 1 dp stroke = state colour at 45 %
  * shell           radius 10 at the run's two ends, 1 px ring, 1 px interior dividers
  * ```
  *
- * The card is inset 26 from the item's left edge, so the node (1 … 16) and the line
- * (9 … 10) sit in the card's left margin and never overlap its content. The node is
- * filled with the page colour so the line does not show through the circle; that
+ * The card is inset 26 from the item's left edge, so the node (2 … 17) and the line
+ * (9 … 10) sit in the card's left margin and never overlap its content, and the node's centre
+ * (9.5) lands exactly on the line's (9 + ½ of the 1 dp stroke) — see [RAIL_NODE_LEFT]. The node
+ * is filled with the page colour so the line does not show through the circle; that
  * fill is the rail's job, the ring and the glyph are [PiStateNode]'s.
  *
  * **The node is 15 dp and its `top` follows the row's centre** (`差异表` §2 第 10/11 行).
@@ -112,8 +113,23 @@ internal val RAIL_INDENT: Dp = 26.dp
 /** `06 §2`「竖线 left 9」: the line's x, measured from the transcript item's left edge. */
 internal val RAIL_LINE_LEFT: Dp = 9.dp
 
-/** `06 §2`「节点 left 1」: the node's x inside the item. */
-internal val RAIL_NODE_LEFT: Dp = 1.dp
+/**
+ * The node's x: **2 dp, so the 15 dp circle stays concentric with the 1 dp line**
+ * (`06 §2`「节点 left 1」).
+ *
+ * `left 1` was arithmetic for the **17 dp** node: `1 + 17/2 = 9.5`, which is the line's own
+ * centre ([RAIL_LINE_LEFT] 9 + half of the 1 dp stroke). When the node became 15 dp
+ * (`差异表` §2 第 10 行) the same `1` put its centre at `8.5` — exactly 1 dp of eccentricity, the
+ * circle sitting off its own wire, and visible on any run long enough for the line to read as a
+ * wire at all. `2 + 15/2 = 9.5` restores it: the same centre, so
+ * `差异表` §2 第 13 行's 「线 `left 9`」 stays untouched. v5 measures the same box — 节点绝对
+ * x `16..31` against a line whose centre is `23.5` (page edge 14 + 9.5).
+ *
+ * The size is [RAIL_NODE_SIZE]'s business; these two are one decision and are asserted together
+ * (`ToolCardTextCheck`), because a size change that forgets this number is exactly how the
+ * eccentricity got in.
+ */
+internal val RAIL_NODE_LEFT: Dp = 2.dp
 
 /**
  * The node's `top`: **the 24 dp row's centre minus half the node** (`差异表` §2 第 11 行; v5's

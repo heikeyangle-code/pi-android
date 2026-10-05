@@ -26,6 +26,11 @@ package app.pi.ui.blocks
 //     of the next card and the shell would have shown a seam. The three tiers are asserted here,
 //     *and* the source is read to assert there is still exactly **one** place that gives the
 //     spacing (the F11 shape: block padding + list `spacedBy` = twice the gap).
+//  5. **The two "1:1" geometry values the review found are asserted, not promised.** 审查 #19:
+//     the folded row's reading track is one fixed 44 dp, and the cell is laid out on *every* row
+//     (so the verdict's right edge cannot move). 审查 #13: `RAIL_NODE_LEFT` + `RAIL_NODE_SIZE`/2
+//     equals `RAIL_LINE_LEFT` + ½ — a 15 dp node needs `left 2` to stay concentric with the
+//     `left 9`/1 dp line, which is what `left 1` was arithmetic for at 17 dp.
 //
 // Run it by hand:
 //
@@ -257,6 +262,40 @@ fun main() {
             "X6 with no compile-time bridge constant to disagree with it",
             railText.contains("internal val RAIL_BRIDGE"),
             false,
+        )
+
+        // ------------------------------------------------- 7. the two 1:1 values the review found
+        //
+        // Both are numbers Compose owns, so they cannot be instantiated here — but both are
+        // *decisions*, and the defects they fix were decisions that drifted apart from the
+        // geometry they were derived from. Asserting the decision (one number, and the arithmetic
+        // that relates three numbers) is what stops the next drift.
+        val header = java.io.File(root, "app/src/main/kotlin/app/pi/ui/blocks/ToolBlockChrome.kt")
+        check("X7 the collapsed row's source is there", header.isFile, true)
+        if (header.isFile) {
+            val headerText = header.readText()
+            // 审查 #19: v5 pins the verdict cell's right edge with the reading track's own fixed
+            // width. `auto` there — which is what a width-less `Column` is — lets the state word
+            // slide with whatever the reading happens to spell.
+            val readout = Regex("""TOOL_READOUT_WIDTH\s*=\s*([0-9.]+)\.dp""")
+                .find(headerText)?.groupValues?.get(1)?.toFloat()
+            check("X8 v5's reading track is one fixed 44 dp (审查 #19)", readout, 44f)
+            check(
+                "X9 …and the cell is laid out on every row, so the verdict's edge cannot move",
+                headerText.contains("if (reading != null || elapsedMs != null)"),
+                false,
+            )
+        }
+        // 审查 #13: the line's centre and the node's centre are one number. `left 1` was right
+        // for a 17 dp node; 15 dp needs `left 2`, or the circle sits 1 dp off its wire.
+        fun dpOf(name: String): Float? =
+            Regex("""\b$name:\s*Dp\s*=\s*([0-9.]+)\.dp""").find(railText)?.groupValues?.get(1)?.toFloat()
+        val lineMid = (dpOf("RAIL_LINE_LEFT") ?: -1f) + 0.5f
+        val nodeMid = (dpOf("RAIL_NODE_LEFT") ?: -1f) + (dpOf("RAIL_NODE_SIZE") ?: -1f) / 2f
+        check(
+            "X10 the 15 dp node is concentric with the 1 dp line: left 2 + 7.5 == 9 + 0.5 (审查 #13)",
+            nodeMid,
+            lineMid,
         )
     }
 

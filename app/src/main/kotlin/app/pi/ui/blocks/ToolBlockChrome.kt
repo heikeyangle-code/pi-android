@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -125,7 +126,7 @@ internal fun toolPathPart(path: String, fallback: String): ToolCallPart =
  *   工具名    mono 12 toolTitle + Bold       <- pi: fg("toolTitle", bold(toolName))
  *   主体      mono 12 分段取色               <- pi: the renderer's own fg(token, …) runs
  *   判决      mono 12 text（不是 muted）      <- 状态词，截断时追加「· 已截断」
- *   读数      mono 12 muted，右轴对齐         <- the call's own reading (a duration, or a count)
+ *   读数      mono 12 muted，右轴对齐，格子定宽 44 <- the call's own reading (a duration, a count)
  *   刻度      1dp，状态色，读数正下方          <- the same number, ordinal (04 §1.1)
  *   箭头      5×5 几何，bodyOnTool            <- right while collapsed, down while expanded
  * ```
@@ -286,30 +287,48 @@ internal fun ToolHeader(
             color = palette.text,
             maxLines = 1,
         )
-        if (reading != null || elapsedMs != null) {
-            Spacer(Modifier.width(PiSpacing.gutter))
-            // Number above tick, both flush to the row's right axis (v5's `.rd`): the
-            // readings of two cards therefore line up down the transcript, which is what
-            // `tabular-nums` buys on a proportional face and what the monospace family gives
-            // for free here. No fixed width — the right axis is already pinned by the two
-            // fixed-width cells behind it (gap + chevron), so a `12 项` row wastes no space.
-            Column(horizontalAlignment = Alignment.End) {
-                if (reading != null) {
-                    Text(
-                        text = reading,
-                        style = PiTheme.text.monoSmall,
-                        color = palette.muted,
-                        maxLines = 1,
-                    )
-                }
-                // `04 §1.1`: 刻度是读数的补充，不是替代 — so it sits under the number it
-                // belongs to, at v5's 1 px gap.
-                DurationMeter(
-                    ms = elapsedMs,
-                    color = accent,
-                    modifier = Modifier.padding(top = PiSpacing.hairline),
+        Spacer(Modifier.width(PiSpacing.gutter))
+        // The reading cell, **one global fixed width** (v5's `.rd`: `.row`'s fifth grid track is
+        // a literal `44px`, see [TOOL_READOUT_WIDTH]).
+        //
+        // It used to be as wide as its own contents. That did pin the reading's **right** axis —
+        // the chevron and the two gutters behind it hold that — but it left the **verdict cell's
+        // right edge** free to slide with the reading: a `12 项` row put 成功 4 dp to the left of
+        // where a `575ms` row put it, and a row with no reading at all slid the whole way over to
+        // the chevron. Three cards of one state did not line up down the transcript, which is the
+        // one thing the reading column is *for*. v5 pins both axes with this one number, and it
+        // pins them on **every** row: a grid track exists even when empty, so the three 运行中
+        // rows that draw nothing there still hand the verdict its exact x. Hence no `if` around
+        // the cell — only around the number inside it.
+        Column(
+            modifier = Modifier
+                .width(TOOL_READOUT_WIDTH)
+                // A **fixed** width must not become a **clipped** one. `没有执行` is four
+                // full-width glyphs (~48 dp at 12 sp, the mono family falls back to the system
+                // CJK face) and would be cut by a 44 dp box. v5 has the same overflow and the same
+                // answer: the grid track stays 44 px and the number overflows it *leftward*, so
+                // its right edge — the axis — never moves. `unbounded` measures the number at its
+                // own width and `End` places it flush with this cell's right edge, spilling into
+                // the 6 dp gutter exactly like CSS does.
+                .wrapContentWidth(align = Alignment.End, unbounded = true),
+            horizontalAlignment = Alignment.End,
+        ) {
+            if (reading != null) {
+                Text(
+                    text = reading,
+                    style = PiTheme.text.monoSmall,
+                    color = palette.muted,
+                    maxLines = 1,
                 )
             }
+            // `04 §1.1`: 刻度是读数的补充，不是替代 — so it sits under the number it
+            // belongs to, at v5's 1 px gap. It draws nothing without a real `ms` (`DurationMeter`
+            // returns early), which is why an empty cell costs no pixels and no measure pass.
+            DurationMeter(
+                ms = elapsedMs,
+                color = accent,
+                modifier = Modifier.padding(top = PiSpacing.hairline),
+            )
         }
         Spacer(Modifier.width(PiSpacing.gutter))
         ToolChevron(expanded)
@@ -322,8 +341,8 @@ internal fun ToolHeader(
  * `差异表` §2 第 1/2 行: the folded card is **24 dp**, down from the 39.5 dp the two-row card
  * measured on a device. The card's own vertical padding is **0** ([ToolCardRowPadding]), so
  * this row *is* the card: `06 §2` 工具卡's `padding:7px 10px` keeps its 10 horizontal and gives
- * up the 7 vertical, which a row that must hold a 18 dp line box and v5's 15 dp reading column
- * (12 dp number + 1 dp gap + 1 dp tick) does not need.
+ * up the 7 vertical, which a row that must hold a 18 dp line box and v5's 15 dp tall reading
+ * stack (12 dp number + 1 dp gap + 1 dp tick; [TOOL_READOUT_WIDTH] is its *width*) does not need.
  *
  * A **minimum**, not a fixed height: `app.appearance.fontScaleDelta` and the system font scale
  * can make a 12 sp line box taller than 18 dp, and a hard height would clip the text rather than
@@ -333,6 +352,23 @@ private val TOOL_ROW_MIN_HEIGHT = 24.dp
 
 /** v5's `.mk`: the state glyph's centred cell (one monospace advance). */
 private val TOOL_STATE_GLYPH_WIDTH = 7.dp
+
+/**
+ * v5's `.rd`: the reading cell's **one global fixed width** — the row's fifth grid track.
+ *
+ * It is not a maximum but the cell's actual width on every card, because it is what holds the
+ * **verdict** cell's right edge still: the value the reading happens to spell (`575ms`, `8ms`,
+ * `12 项`, `没有执行`, or nothing at all) must not be able to move the state word it stands
+ * beside. That is the whole reason v5 gives the track a literal `44px` rather than `auto` —
+ * with `auto`, `.vd`'s right edge followed `.num`'s width and a column of `成功`s did not line
+ * up. The reading's own right axis was already pinned by the chevron and the two gutters; the
+ * verdict's was not.
+ *
+ * 44 fits the widest *number* the column ever prints — the shell face's `2m 49s` and a
+ * three-digit `575ms` with room to spare — and the one phrase that does not fit overflows
+ * leftward without moving the axis; see the cell's own note in [ToolHeader].
+ */
+private val TOOL_READOUT_WIDTH = 44.dp
 
 /** v5's `.ch`: the disclosure chevron's box. */
 private val TOOL_CHEVRON_SIZE = 5.dp
