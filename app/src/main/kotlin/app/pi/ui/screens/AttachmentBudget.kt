@@ -23,9 +23,9 @@ import app.pi.rpc.PiResponses
  * `core/agent-session.ts:1890-1910` 每一轮 prompt 调它一次（档案取自 `:1900`）。`resizeImage()`
  * 把活交给 worker 线程里的 `resizeImageInProcess`，worker 加载不起来时**回落**到同进程
  * （`:105-109`）—— 所以两处是同一个算法，本文件写的是它。以下行号都是
- * `packages/coding-agent/src/utils/image-resize-core.ts` 在 pin 住的引擎 **1.0.1**
- * （`tools/pi-engine.lock.json`）里的位置，
- * `:74-79`/`:82-93`/`:95-106`/`:112-114`/`:122`/`:146-150` 逐条对过 1.0.1 的源码：
+ * `packages/coding-agent/src/utils/image-resize-core.ts` 在 pin 住的引擎 **1.0.3**
+ * （`tools/pi-engine.lock.json`；1.0.1→1.0.3 该文件逐字节未变）里的位置，
+ * `:74-79`/`:82-93`/`:95-106`/`:112-114`/`:122`/`:146-150` 逐条对过 1.0.3 的源码：
  *
  *  0. **EXIF 方向先摆正**（`:74-76` → `exif-orientation.ts`）：`originalWidth`/`originalHeight`
  *     取自摆正**之后**的图（`:78-79`），所以第 1 步的判断与第 2 步的尺寸算的都是摆正后的长宽。

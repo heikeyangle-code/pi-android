@@ -102,3 +102,40 @@ cd /tmp && npm pack @earendil-works/pi-coding-agent@1.0.1 @earendil-works/pi-cod
 - `behaviour` / `extensions`：见回报（单跑）。
 - 未跑 `tools/run-app-pure-checks.sh`（按任务纪律交 CI）。
 
+## 八、收尾：KDoc 里"声称 pi 版本"的引用（CI 抓到的 `image-attachment-budget`）
+
+CI 红在：`AttachmentBudget.kt` 的类 KDoc 写「pin 住的引擎 **1.0.1**」，而
+`AttachmentBudgetCheck.kt` 的 1b 组把这句话和 `tools/pi-engine.lock.json` 里的版本对起来 ——
+锁文件已经是 1.0.3，于是断言失败（`FAIL AttachmentBudget 的 KDoc 标的正是 lock 里那个版本`）。
+
+修的时候只改"声称版本/口径"的引用，改前逐个 `cmp` 过它们指的上游文件在 1.0.1→1.0.3 之间
+**逐字节相同**（所以行号与结论仍然成立）：
+
+| 文件 | 改了什么 | 依据（两版 `cmp` 相同） |
+| :--- | :--- | :--- |
+| `app/src/main/kotlin/app/pi/ui/screens/AttachmentBudget.kt` | KDoc 的 `1.0.1` → `1.0.3`（两处） | `dist/utils/image-resize-core.js` |
+| `app/src/main/kotlin/app/pi/session/SessionResume.kt` | `pi 1.0.1 的 dist/main.js` → `1.0.3`；探针那句保留"1.0.1 实测"并注明 1.0.3 同文件未变 | `dist/main.js`、`dist/core/session-manager.js` |
+| `app/src/main/kotlin/app/pi/ui/render/PiHtml.kt` | 两条分支的版本 `1.0.1` → `1.0.3` | pi-tui `dist/components/markdown.js` |
+| `app/src/main/kotlin/app/pi/ui/screens/PiExifOrientation.kt` | 期望值来源 `1.0.1` → `1.0.3` | `dist/utils/exif-orientation.js` |
+| `app/src/test/kotlin/app/pi/ui/screens/PiExifOrientationCheck.kt` | 三处夹具来源 `1.0.1` → `1.0.3` | 同上 |
+| `app/src/test/kotlin/app/pi/ui/screens/AttachmentBudgetCheck.kt` | 说明性注释改成不写死版本（它举的是"KDoc 写死的版本 vs lock"这个失败模式） | 本身不改断言逻辑 |
+| `app/src/main/assets/pi-extensions/pi-android-bridge/index.ts` | 两处 `pi 1.0.1` → `1.0.3` | `core/extensions/types.d.ts`、`core/agent-session-runtime.js` |
+| `tools/run-app-pure-checks.sh` | html 夹具来源注释 `pi 1.0.1` → `1.0.3` | 同上 |
+
+**故意没改**（历史记录，不是"当前 pin 是什么"的主张）：`PiOfficialCatalog.kt` 里
+"1.0.0 与 1.0.1 都复核过 …" 的历次复核清单；`tools/fetch-runtime.mjs` 与
+`tools/build-license-assets.py` 的历次升级分析段；`RuntimePayloadStateCheck.kt` 的
+"1.0.0 → 1.0.1 实测链路"；`AttachmentBudgetCheck.kt` 的"0.86.1 → 1.0.1 那次漏掉的东西"；
+`rpc/.../TranscriptReducerTest.kt` 的 `interactive-mode.ts:3452-3459`（1.0.1）行号引用
+（该文件 1.0.3 变了约 +15 行，行号已漂，但那份文件当时正被另一个代理改动，没有并入本轮）。
+
+单跑验收（用 `tools/run-app-pure-checks.sh` 同一套 staged 编译器/库，只编译并运行这一个 harness）：
+
+```
+compile errors: 0
+...
+PASS AttachmentBudget 的 KDoc 标的正是 lock 里那个版本
+harness: OK (all checks passed)
+```
+
+

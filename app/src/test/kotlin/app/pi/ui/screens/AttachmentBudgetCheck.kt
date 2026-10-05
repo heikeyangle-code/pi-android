@@ -103,7 +103,7 @@ fun main() {
 
     // --- 1b. KDoc 里那个版本号必须跟着 pin。
     //
-    // `AttachmentBudget` 的类 KDoc 写「pin 住的引擎 **1.0.1**」，而 `tools/pi-engine.lock.json`
+    // `AttachmentBudget` 的类 KDoc 写死的那个版本，而 `tools/pi-engine.lock.json`
     // 早就换成别的版本时，这一整套「逐值钉死 pi」的断言就变成对一个**已经不存在的 pi** 的主张 ——
     // 那正是 0.86.1 → 1.0.1 那次漏掉的东西（`PiLatexCheck` 用「夹具版本 vs lock」钉同一件事）。
     // 版本从 lock 里**读**，不写死在这里：写死的话它自己也会过期。
