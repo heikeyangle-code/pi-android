@@ -283,6 +283,26 @@ fun main() {
             ),
             listOf(1, 1, 0),
         )
+        // 「每一行自己给留白」的**覆盖面**：任何一个转写行的 block 都必须落到 `BlockColumn`
+        // （它把那行自己的留白 padding 下去）或自己读 `LocalRowGap.current`。名单取自
+        // `BlockRenderer` 的 `when` 分支（`ModelChange` 不渲染任何东西，所以不在名单里），
+        // 这是这条新模型的防漏：漏掉一行的表现不是编译错，而是那一行与邻居的节奏对不上。
+        val rowBlocks = listOf(
+            "AssistantTextBlock", "UserMessageBlock", "ThinkingBlockBlock", "ToolCallBlock",
+            "ReadBlock", "WriteBlock", "EditBlock", "GrepBlock", "PathListBlock",
+            "DiffBlock", "ShellBlock", "CompactionBlock", "BranchSummaryBlock",
+            "HookMessageBlock", "SkillInvocationBlock", "ErrorBlock", "NoticeBlock",
+            "DateSeparatorBlock",
+        )
+        for (name in rowBlocks) {
+            val file = java.io.File(root, "app/src/main/kotlin/app/pi/ui/blocks/$name.kt")
+            val text = if (file.isFile) file.readText() else ""
+            check(
+                "X12 $name gives its own bottom air",
+                text.contains("BlockColumn(") || text.contains("LocalRowGap.current"),
+                true,
+            )
+        }
         check(
             "X6 with no compile-time bridge constant to disagree with it",
             railText.contains("internal val RAIL_BRIDGE"),

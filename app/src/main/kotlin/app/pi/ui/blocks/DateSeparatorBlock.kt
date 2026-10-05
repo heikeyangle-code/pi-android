@@ -31,9 +31,16 @@ fun DateSeparatorBlock(
             // `LazyColumn`'s `contentPadding`, not the block's; this row used to
             // add another `horizontal = PiSpacing.pageHorizontal` on top of it, which is
             // what left this kind at 32 dp while every `BlockColumn` block moved
-            // to 16 dp. Vertical rhythm stays here: this block is outside the
-            // list's block spacing by design.
-            .padding(vertical = PiSpacing.unit / 2),
+            // to 16 dp. Its own 9 dp above and below stays — a date rule wants more air than
+            // a paragraph does.
+            .padding(vertical = PiSpacing.unit / 2)
+            // …but the **row gap is still the row's own** (补 2 in
+            // `/root/ui-redesign/施工补充.md`): every transcript row gives its own bottom air,
+            // and this is the one row that does not go through `BlockColumn`, so it has to read
+            // the same value out of `LocalRowGap` itself. Without this line the separator kept
+            // 13 dp above (the previous row's own gap + 9) and only 9 below — this block used to
+            // lean on the list's `Arrangement.spacedBy`, which no longer exists.
+            .padding(bottom = LocalRowGap.current),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         HorizontalDivider(
