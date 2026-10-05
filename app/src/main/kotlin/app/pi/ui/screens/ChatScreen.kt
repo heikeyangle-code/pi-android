@@ -127,6 +127,7 @@ import app.pi.ui.NavRequest
 import app.pi.ui.PiSessionViewModel
 import app.pi.ui.earlierRowText
 import app.pi.ui.blocks.BlockRenderer
+import app.pi.ui.blocks.LocalDisclosureTap
 import app.pi.ui.blocks.LocalRowGap
 import app.pi.ui.blocks.PiImageViewer
 import app.pi.ui.blocks.blockGapDp
@@ -2218,6 +2219,10 @@ private fun ChatBody(
                         // both read this one value — that is the whole fix for the rail breaking
                         // apart across the gap (`BlockChrome.BlockColumn` has the argument).
                         LocalRowGap provides item.rowGapDp(prefs.messageDensity).dp,
+                        // A disclosure tap re-lays-out this row, so the tail follow has to yield to
+                        // it exactly as it yields to a drag — otherwise it pins the viewport back
+                        // and the screen jumps under the finger. See `LocalDisclosureTap`'s KDoc.
+                        LocalDisclosureTap provides { pauseTail() },
                     ) {
                         BlockRenderer(
                             item = item,
