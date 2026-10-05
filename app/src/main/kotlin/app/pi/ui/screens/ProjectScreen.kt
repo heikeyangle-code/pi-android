@@ -317,8 +317,8 @@ fun ProjectScreen(
     // ---------------------------------------------------------------- ②③
     val runs = remember(state.transcript, state.bash) { runningCommands(state.transcript, state.bash) }
     // ② 里那几条「已运行 N 秒」用的读数：ViewModel 推来的 1 Hz 粗时钟（`UiState.nowMs`，判据
-    // `UiState.hasPendingToolClock`，收的正好是 `runningCommands` 那一批 `Pending` 的
-    // bash/powershell 行）。这一屏**不自己读表**：`System.currentTimeMillis() - startedAt` 量的是
+    // `UiState.hasPendingToolClock` —— 它收的是"屏幕上任何一行在走读数"，包含但不限于
+    // `runningCommands` 这一批 `Pending` 的 bash/powershell 行；另一条支线是还在流式的思考块）。这一屏**不自己读表**：`System.currentTimeMillis() - startedAt` 量的是
     // 「这一行上一次重组是什么时候」，而一条什么都不打印的命令既没有发布、也就没有重组，读数会冻在
     // 那儿 —— 这正是 `blocks/ShellBlock` 修掉的那个错。`null` 只覆盖两件事：时钟首跳还没落地的
     // 那一次组合，以及调用方没传时钟；那时按老办法现读一次表给出的仍是正确的数，不是「没有读数」。
@@ -1679,7 +1679,8 @@ private fun runningAside(runs: List<RunningCommand>): (@Composable () -> Unit)? 
  * 正在跑的命令，取自**两个**真实来源：`state.bash`（`!` / `!!` 前缀的 [BashRun]）与转录里
  * `status = Pending` 的 `bash`/`powershell` 工具卡。时长优先用 `ToolCall.elapsedMs`
  * （= `endedAt - ts`，结束后才有），流式中则按行自己的 `ts` 与 **ViewModel 每秒推一次**的
- * `UiState.nowMs` 算（判据 `UiState.hasPendingToolClock` 收的正是这里这批 Pending 行）——
+ * `UiState.nowMs` 算（判据 `UiState.hasPendingToolClock` 至少收下这里这批 Pending 行，
+ * 它另外还收"还在流式的思考块"）——
  * 这一屏**不自己读表**，现读出来的只是「上一次重组到现在」。
  */
 private fun runningCommands(

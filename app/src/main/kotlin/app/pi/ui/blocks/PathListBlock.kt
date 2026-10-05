@@ -36,6 +36,8 @@ internal fun FindBlock(
     defaultExpanded: Boolean = false,
     firstOfRun: Boolean = true,
     lastOfRun: Boolean = true,
+    /** The **run's** state, for the 1 px ring the rail draws ([ToolRunSlot.ring]). */
+    ring: RailState? = null,
 ) = PathListBlock(
     item = item,
     title = "find",
@@ -47,6 +49,7 @@ internal fun FindBlock(
     defaultExpanded = defaultExpanded,
     firstOfRun = firstOfRun,
     lastOfRun = lastOfRun,
+    ring = ring,
 )
 
 /**
@@ -70,6 +73,8 @@ internal fun LsBlock(
     defaultExpanded: Boolean = false,
     firstOfRun: Boolean = true,
     lastOfRun: Boolean = true,
+    /** The **run's** state, for the 1 px ring the rail draws ([ToolRunSlot.ring]). */
+    ring: RailState? = null,
 ) = PathListBlock(
     item = item,
     title = "ls",
@@ -81,6 +86,7 @@ internal fun LsBlock(
     defaultExpanded = defaultExpanded,
     firstOfRun = firstOfRun,
     lastOfRun = lastOfRun,
+    ring = ring,
 )
 
 /**
@@ -113,6 +119,7 @@ private fun PathListBlock(
     defaultExpanded: Boolean = false,
     firstOfRun: Boolean = true,
     lastOfRun: Boolean = true,
+    ring: RailState? = null,
 ) {
     val palette = PiTheme.palette
     val state = toolStateOf(item)
@@ -137,7 +144,6 @@ private fun PathListBlock(
     }
     val shown = remember(plan) { countEntries(plan) }
     val omitted = (body.entryCount - shown).coerceAtLeast(0)
-    val hasBody = body.groups.isNotEmpty() || body.notice != null || body.empty
     val footer = remember(item.output, item.exitCode, item.elapsedMs, item.outputTruncated, state, body.entryCount) {
         if (state == ToolState.Rejected) {
             toolRejectedFooter()
@@ -158,6 +164,7 @@ private fun PathListBlock(
                 { expanded = !expanded },
                 firstOfRun = firstOfRun,
                 lastOfRun = lastOfRun,
+                ring = ring,
             ) {
                 ToolHeader(
                     item = item,
@@ -168,8 +175,8 @@ private fun PathListBlock(
                     // the tool's own `limit` answer is what those two cards say first.
                     // It is the same number the footer prints, from the same parse.
                     right = if (state == ToolState.Rejected) null else "${body.entryCount} 项",
+                    state = state,
                     expanded = expanded,
-                    expandable = hasBody,
                 )
                 if (expanded) {
                     when {
@@ -216,12 +223,10 @@ private fun PathListBlock(
                     }
                     body.notice?.let { ToolNotice(text = it, copyOnTap = null) }
                     if (notice != null) ToolNotice(text = notice, copyOnTap = fullOutputPath)
+                    // 展开态的**最后一行**：整串页脚（`差异表` §2 第 3 行）。措辞与 ` · `
+                    // 顺序由 [toolFooterText] / `shellFooter` 决定，这里一个字都不动。
+                    ToolFooter(text = footer, state = state)
                 }
-                ToolFooter(
-                    text = footer,
-                    state = state,
-                    elapsedMs = item.elapsedMs,
-                )
             }
         }
     }

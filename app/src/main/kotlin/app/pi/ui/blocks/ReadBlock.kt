@@ -41,6 +41,8 @@ internal fun ReadBlock(
     defaultExpanded: Boolean = false,
     firstOfRun: Boolean = true,
     lastOfRun: Boolean = true,
+    /** The **run's** state, for the 1 px ring the rail draws ([ToolRunSlot.ring]). */
+    ring: RailState? = null,
 ) {
     val palette = PiTheme.palette
     val state = toolStateOf(item)
@@ -56,7 +58,6 @@ internal fun ReadBlock(
     val pending = state == ToolState.Running
     val shown = if (fullOutput) body.lines else body.lines.take(READ_PREVIEW_LINES)
     val hidden = (body.totalLines - shown.size).coerceAtLeast(0)
-    val hasBody = body.lines.isNotEmpty() || body.footer != null || body.scanCapped || notice != null
     val footer = remember(item.output, item.exitCode, item.elapsedMs, item.outputTruncated, state) {
         toolFooterText(item, state, body.totalLines)
     }
@@ -68,6 +69,7 @@ internal fun ReadBlock(
                 { expanded = !expanded },
                 firstOfRun = firstOfRun,
                 lastOfRun = lastOfRun,
+                ring = ring,
             ) {
                 ToolHeader(
                     item = item,
@@ -82,8 +84,8 @@ internal fun ReadBlock(
                         add(toolPathPart(body.path, fallback = "文件"))
                         if (range.isNotEmpty()) add(ToolCallPart(range, ToolCallToken.Warning))
                     },
+                    state = state,
                     expanded = expanded,
-                    expandable = hasBody,
                 )
                 if (expanded) {
                     if (body.lines.isEmpty()) {
@@ -128,12 +130,10 @@ internal fun ReadBlock(
                         Text(text = TOOL_SCAN_CAPPED_HINT, style = PiTheme.text.meta, color = palette.muted)
                     }
                     if (notice != null) ToolNotice(text = notice, copyOnTap = fullOutputPath)
+                    // 展开态的**最后一行**：整串页脚（`差异表` §2 第 3 行）。措辞与 ` · `
+                    // 顺序由 [toolFooterText] 决定，这里一个字都不动。
+                    ToolFooter(text = footer, state = state)
                 }
-                ToolFooter(
-                    text = footer,
-                    state = state,
-                    elapsedMs = item.elapsedMs,
-                )
             }
         }
     }

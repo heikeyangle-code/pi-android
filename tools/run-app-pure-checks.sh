@@ -1052,6 +1052,44 @@ run_harness text-cache \
   "$ROOT/app/src/test/kotlin/app/pi/ui/blocks/TextCacheCheck.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/ui/blocks/ImageSize.kt"
 
+# app.pi.ui.blocks: **工具卡的文案、run 的分组、与块间距的唯一来源**（`ToolState.kt` +
+# `ToolCardText.kt` + `BlockRhythm.kt`）。为什么必须在这里：
+#
+#  · `差异表` §2 第 3 行把「状态词 · 退出码 · 耗时 · N 行 · 已截断 · 无输出」从折叠态搬到展开态
+#    最后一行，并要求**措辞与 ` · ` 顺序逐字**——搬一次加一句承诺不是检查，所以那几个函数被搬进
+#    这个闭包，逐字断言；折叠行新增的两个格子（判决 = 状态词（+`· 已截断`）、读数 = 数值或
+#    `没有执行`）与读数口径（文件工具 ms / 两个 shell 用 pi 的 `6.4s`·`2m 49s` / 被拒没有数值）
+#    同理。
+#  · `toolRunPlan` 是壳的环的算术：一个 run 里全是同一状态 → 那状态色；混着成功/失败 → 中性。
+#    这是"壳不许替某一行表态"那句设计规则的唯一实现，编译器看不见。
+#  · 块间距：**轨道线的过绘与壳的过绘都必须等于该行自己的底部留白**。这条曾经是"编译期常量 8 vs
+#    运行期 4/8/16"——只有默认档相等，所以「宽松」档下轨道线在每张卡之间断开。三档在这里钉死，
+#    并且**读源码**断言给间距的地方仍然只有一处（块自己 padding + 列表 spacedBy = F11 的双倍间距）。
+#
+# Android-free：这三个文件一个 import 都不碰 Compose（`ToolCardText.kt` 只 import `ToolCall`，
+# `ToolOutputParse.kt` 只碰 kotlinx.serialization 与 `java.util`）。闭包里的 `rpc/**` 是
+# `TranscriptItem`/`ToolCall`/`ToolDiff`/`Notice` 的类型来源，与 `session-entry-detail` 用的是同一份。
+run_harness tool-state \
+  app.pi.ui.blocks.ToolCardTextCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/ui/blocks/ToolCardTextCheck.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/ui/blocks/ToolState.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/ui/blocks/ToolCardText.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/ui/blocks/BlockRhythm.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/ui/blocks/ToolOutputParse.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/ui/blocks/ToolCallPart.kt" \
+  "$ROOT/rpc/src/main/kotlin/app/pi/rpc/PiJson.kt" \
+  "$ROOT/rpc/src/main/kotlin/app/pi/rpc/Jsonl.kt" \
+  "$ROOT/rpc/src/main/kotlin/app/pi/rpc/internal/Json.kt" \
+  "$ROOT/rpc/src/main/kotlin/app/pi/rpc/Transcript.kt" \
+  "$ROOT/rpc/src/main/kotlin/app/pi/rpc/Events.kt" \
+  "$ROOT/rpc/src/main/kotlin/app/pi/rpc/Messages.kt" \
+  "$ROOT/rpc/src/main/kotlin/app/pi/rpc/Ansi.kt" \
+  "$ROOT/rpc/src/main/kotlin/app/pi/rpc/ExtensionErrorText.kt" \
+  "$ROOT/rpc/src/main/kotlin/app/pi/rpc/Responses.kt" \
+  "$ROOT/rpc/src/main/kotlin/app/pi/rpc/Commands.kt" \
+  "$ROOT/rpc/src/main/kotlin/app/pi/rpc/SessionEntries.kt" \
+  "$ROOT/rpc/src/main/kotlin/app/pi/rpc/SkillBlock.kt"
+
 # app.pi.ui.settings: 「运行时加速（实验性）」开关**当场生效**的那条判定。用户原话是
 # 「只要在开关里点开开关，就自动重启切换。为什么还要退出软件重进呢？」——于是写完这个开关
 # 要清掉探针结论与失败计数、现在就跑一次门禁、通过了当场把引擎重启到 proroot，被拒时还要

@@ -29,6 +29,7 @@ import app.pi.rpc.QueueMode
 import app.pi.rpc.SessionEntry
 import app.pi.rpc.StreamingBehavior
 import app.pi.runtime.PiPaths
+import app.pi.rpc.ThinkingBlock
 import app.pi.rpc.ToolCall
 import app.pi.rpc.ToolStatus
 import app.pi.rpc.TranscriptItem
@@ -765,20 +766,30 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         val workspace: WorkspaceState = WorkspaceState(),
     ) {
         /**
-         * [nowMs] 的发布判据，全 App 只有这一处：转写里有没有一行工具调用还在等结果。
+         * [nowMs] 的发布判据，全 App 只有这一处：转写里有没有**任何一行在走读数的行**。
          *
-         * **为什么是 `ToolStatus.Pending` 而不是 [streaming] 或 `bash.running`。** 它是
-         * 「谁真的会去读这个时钟」的那个集合：一行工具卡是不是「运行中」只看它自己的
-         * `status`（`toolStateOf`，`ui/blocks/ToolBlockChrome.kt:152-153`），而只有「运行中」
-         * 的行会要一个走动的耗时（`ShellBlock`）。`streaming` 覆盖同一件事但**更宽**——
-         * 它从 `agent_start` 一直真到 `agent_end`（`TranscriptReducer`），所以一段几分钟
-         * 没有工具卡的纯文本回答也会命中了，而那时屏幕上没有任何读数在走。
+         * **两个来源。** ① 一行工具调用还在等结果（`ToolStatus.Pending`）；②
+         * **一行还在流式的思考块**（`ThinkingBlock.streaming`）。两者是同一件事的两张脸：
+         * 「这一行现在有一个会自己往上跳的数字」。思考行的耗时以前只在块结束之后才出现
+         * （`if (item.streaming) null`），所以那时它不在这个集合里；`差异表` §3 第 1 行批准
+         * 了「进行中也显示」，于是它必须一起把时钟打开——**加的是判据的一条支线，不是新时钟、
+         * 也不是新状态**（下面那支 1 Hz 循环一个字都没改）。
+         *
+         * **为什么是 `ToolStatus.Pending` / `streaming` 而不是 [streaming] 或 `bash.running`。**
+         * 它是「谁真的会去读这个时钟」的那个集合：一行工具卡是不是「运行中」只看它自己的
+         * `status`（`toolStateOf`，`ui/blocks/ToolState.kt`），而只有「运行中」的行会要一个走动的
+         * 耗时（`ShellBlock`）；思考块同理只看它自己的 `streaming`（`ThinkingBlockBlock`）。
+         * 状态级 [streaming] 覆盖同一件事但**更宽**——它从 `agent_start` 一直真到 `agent_end`
+         * （`TranscriptReducer`），所以一段几分钟没有工具卡、也没有思考块的纯文本回答也会命中，
+         * 而那时屏幕上没有任何读数在走。反过来，`thinking.streaming` 比状态级的 [streaming]
+         * **更窄**：块一旦封口（`ThinkingBlock.elapsedMs` 落定）就不再需要滴答。
          *
          * **安静跑着的 bash 掉不出去。** 一条命令的 `ToolCall` 行会一直停在 Pending，直到
          * `tool_execution_end` 把它翻成成功/失败（`rpc/.../Transcript.kt:1650` →
          * `finalizeTool`，`:1685`）；`tool_execution_update` 的 200 ms 节流省掉的是**发布**，
          * 不是行的状态，而一条什么都不打印的命令更是一条发布都没有——这正是时钟必须按自己的
-         * 节拍重新问这个问题、而不是等某次发布顺手把答案带过来的原因。
+         * 节拍重新问这个问题、而不是等某次发布顺手把答案带过来的原因。思考块同理：一个只思考、
+         * 不吐字的模型给不出任何发布。
          *
          * `state.bash`（`BashRun.running`）故意**不在**判据里：它确实也 pending，但没有读者
          * 会为它读时钟——`BashRun` 没有开始时间戳（`ui/screens/ProjectScreen.kt:1571-1573`
@@ -789,7 +800,10 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
          * 都要跑的那次判据是同一条（`:2659`），而且它跑在时钟自己的节拍上，不是每帧。
          */
         val hasPendingToolClock: Boolean
-            get() = transcript.any { it is ToolCall && it.status == ToolStatus.Pending }
+            get() = transcript.any {
+                (it is ToolCall && it.status == ToolStatus.Pending) ||
+                    (it is ThinkingBlock && it.streaming)
+            }
     }
 
     private val host = PiEngineHost(app)
@@ -5856,15 +5870,15 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
-     * 那个粗时钟：只要还有 pending 的工具行，就每秒往 [UiState.nowMs] 写一次；没有就一次
-     * 都不写。
+     * 那个粗时钟：只要 [UiState.hasPendingToolClock] 为真（还有 pending 的工具行，或还有
+     * 一行在流式的思考块），就每秒往 [UiState.nowMs] 写一次；没有就一次都不写。
      *
      * 放在类体最后，理由和上面那个 `init` 一样——它在 `init` 里被启动，读的是 [_state]，
      * 声明序在它之前的字段才保证已经初始化。`viewModelScope` 是 `Main.immediate`，构造在
      * 主线程时 `launch` 的循环体是**同步**跑起来的：首帧那次 `state` 的重放值判为「没有
      * pending」，于是直接挂在收集上，构造期不会碰任何后声明的字段。
      *
-     * **空闲零发布 / 有 pending 每秒一次，两半都在这里保证**：
+     * **空闲零发布 / 有行在走读数时每秒一次，两半都在这里保证**：
      *  - 空闲：判据为假时走 `if (!pending)` 那一支，只有 `nowMs` 还不是 null（也就是刚从
      *    pending 落回来）才写一次收尾；此后没有任何 `delay` 在跑，这条协程挂在 StateFlow
      *    的收集上，转写里的 200 ms 发布也只是重新过一次 [UiState.hasPendingToolClock] 的
@@ -5872,7 +5886,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
      *  - pending：`while (true)` 的每一次迭代**恰好写一次**再 `delay(TOOL_CLOCK_TICK_MS)`，
      *    即一秒一个发布。`delay` 刻意不放在前面：先写第一跳，`nowMs` 从 pending 出现的那一刻
      *    起就是非 null；反过来会留一段「行已经 pending、时钟还没 armed」的窗口，只能靠
-     *    `ShellBlock` 自己的回退读数兜着。
+     *    `ShellBlock` / `ThinkingBlockBlock` 自己的回退读数兜着。
      *
      * `collectLatest` 而不是 `collect`：pending 翻回 false 的时候要把还在 `delay` 的那个
      * 循环连人带 `delay` 一起取消掉，否则它会继续每秒写 nowMs——那正是「空闲零发布」的反面。

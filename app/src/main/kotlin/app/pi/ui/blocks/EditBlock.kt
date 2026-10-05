@@ -38,6 +38,8 @@ internal fun EditBlock(
     defaultExpanded: Boolean = false,
     firstOfRun: Boolean = true,
     lastOfRun: Boolean = true,
+    /** The **run's** state, for the 1 px ring the rail draws ([ToolRunSlot.ring]). */
+    ring: RailState? = null,
 ) {
     val palette = PiTheme.palette
     val state = toolStateOf(item)
@@ -56,6 +58,7 @@ internal fun EditBlock(
                 { expanded = !expanded },
                 firstOfRun = firstOfRun,
                 lastOfRun = lastOfRun,
+                ring = ring,
             ) {
                 ToolHeader(
                     item = item,
@@ -65,26 +68,27 @@ internal fun EditBlock(
                     // with `pathDisplay = renderToolPath(...)` → `fg("accent", …)`
                     // (`core/tools/render-utils.js:57-63`). `write` and `read` are the same shape.
                     subject = listOf(toolPathPart(path, fallback = "文件")),
-                    expanded = expanded,
-                    expandable = failed,
-                )
-                if (expanded && failed) {
-                    // pi's error branch (`renderers/edit.ts:97-106`): the result text, unless
-                    // it is the preview's own error, which this app never has.
-                    //
-                    // The machine face, because this is pi's **tool result** rendered inside the
-                    // tool card: rule #7 puts tool output in mono, and every other result body on
-                    // these cards already is (`ToolBodyText`'s `mono`, `BlockChrome.MonoText`).
-                    // It is deliberately not the `ErrorBlock`'s treatment — that block is a
-                    // standalone error surface and its message is a sentence
-                    // (`ProseText`), which stays as it is.
-                    Text(text = item.output, style = PiTheme.text.monoSmall, color = palette.error)
-                }
-                ToolFooter(
-                    text = footer,
                     state = state,
-                    elapsedMs = item.elapsedMs,
+                    expanded = expanded,
                 )
+                if (expanded) {
+                    if (failed) {
+                        // pi's error branch (`renderers/edit.ts:97-106`): the result text, unless
+                        // it is the preview's own error, which this app never has.
+                        //
+                        // The machine face, because this is pi's **tool result** rendered inside
+                        // the tool card: rule #7 puts tool output in mono, and every other result
+                        // body on these cards already is (`ToolBodyText`'s `mono`,
+                        // `BlockChrome.MonoText`). It is deliberately not the `ErrorBlock`'s
+                        // treatment — that block is a standalone error surface and its message is
+                        // a sentence (`ProseText`), which stays as it is.
+                        Text(text = item.output, style = PiTheme.text.monoSmall, color = palette.error)
+                    }
+                    // 展开态的**最后一行**：整串页脚（`差异表` §2 第 3 行）。措辞与 ` · `
+                    // 顺序由 [toolFooterText] 决定，这里一个字都不动。成功的一次 `edit` 没有正文，
+                    // 展开后看到的就是这一行 —— 它因此不能躲在 `failed` 后面。
+                    ToolFooter(text = footer, state = state)
+                }
             }
         }
     }

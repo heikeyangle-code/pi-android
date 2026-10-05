@@ -37,6 +37,8 @@ internal fun WriteBlock(
     defaultExpanded: Boolean = false,
     firstOfRun: Boolean = true,
     lastOfRun: Boolean = true,
+    /** The **run's** state, for the 1 px ring the rail draws ([ToolRunSlot.ring]). */
+    ring: RailState? = null,
 ) {
     val palette = PiTheme.palette
     val state = toolStateOf(item)
@@ -48,7 +50,6 @@ internal fun WriteBlock(
     val shown = if (fullOutput) body.lines else body.lines.take(WRITE_PREVIEW_LINES)
     val hidden = (body.totalLines - shown.size).coerceAtLeast(0)
     val failed = state == ToolState.Failed
-    val hasBody = body.lines.isNotEmpty() || failed
     val footer = remember(item.output, item.exitCode, item.elapsedMs, item.outputTruncated, state) {
         toolFooterText(item, state, body.totalLines)
     }
@@ -60,6 +61,7 @@ internal fun WriteBlock(
                 { expanded = !expanded },
                 firstOfRun = firstOfRun,
                 lastOfRun = lastOfRun,
+                ring = ring,
             ) {
                 ToolHeader(
                     item = item,
@@ -69,8 +71,8 @@ internal fun WriteBlock(
                     // with `pathDisplay = renderToolPath(...)` → `fg("accent", …)`
                     // (`core/tools/render-utils.js:57-63`).
                     subject = listOf(toolPathPart(body.path, fallback = "文件")),
+                    state = state,
                     expanded = expanded,
-                    expandable = hasBody,
                 )
                 if (expanded) {
                     if (body.lines.isEmpty()) {
@@ -126,12 +128,10 @@ internal fun WriteBlock(
                     if (body.scanCapped) {
                         Text(text = TOOL_SCAN_CAPPED_HINT, style = PiTheme.text.meta, color = palette.muted)
                     }
+                    // 展开态的**最后一行**：整串页脚（`差异表` §2 第 3 行）。措辞与 ` · `
+                    // 顺序由 [toolFooterText] 决定，这里一个字都不动。
+                    ToolFooter(text = footer, state = state)
                 }
-                ToolFooter(
-                    text = footer,
-                    state = state,
-                    elapsedMs = item.elapsedMs,
-                )
             }
         }
     }
