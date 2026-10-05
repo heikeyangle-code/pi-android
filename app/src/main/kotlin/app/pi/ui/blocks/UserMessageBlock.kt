@@ -33,11 +33,20 @@ import app.pi.ui.theme.PiSpacing
  *
  * So the bubble is **full width** — the board's own caption for the row is 「用户消息：
  * 满宽气泡，右下角时间」 — in `--user-bg` (`#343541`) with `--user-text` (`#D4D4D4`)
- * prose, radius 12, padding 12, a 10 bottom margin, and the turn's timestamp once in
- * the bottom-right corner in the machine face at 12. It is deliberately **not** a
+ * prose, radius 12, padding 12, a 10 bottom margin, and the turn's timestamp once at the
+ * **bottom-right of the row** in the machine face at 12. It is deliberately **not** a
  * right-aligned chat bubble: the container is what distinguishes the user's turn from
  * the assistant's container-less prose (`06 §2`), and a bubble with a tail would say
  * the opposite.
+ *
+ * **The clock is drawn outside the `userMessageBg`, below the bubble** (this round's one
+ * change to this file, and the reason the KDoc's jsx above is no longer literal). The
+ * board put it inside as the bubble's last child; with `padding:12` and a gap before it,
+ * that made the air below the user's text 3.2× the air above it (38 dp vs 12 dp) and the
+ * text read as top-heavy. There is no padding arithmetic that fixes that while the clock
+ * is inside — it has to leave the box. See the rendering site for the numbers and for the
+ * `dim`-vs-`muted` argument, which only became available once the ground under the clock
+ * stopped being `userMessageBg`.
  *
  * **Frozen board vs the older prose specs (for the owner of the design docs — not
  * changed here).** `docs/pi-android-ui-spec.md:447`/`:824` and
@@ -107,63 +116,94 @@ fun UserMessageBlock(
         // first thing anyone tries to copy, and before this the only way was the
         // menu's 复制. The ⋮ above keeps that whole-bubble copy for a single tap.
         SelectableContent {
-        Surface(
-            // The board's `marginBottom:10`, verbatim. It is deliberately a literal and
-            // not `PiSpacing.blockGap` (8): the board's own number is 10, and this file
-            // may not add a token. Applied outside the `Surface`, so it stacks with the
-            // list's `Arrangement.spacedBy` instead of replacing it, and the gap is
-            // never painted in `userMessageBg`.
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(bottom = 10.dp),
-            // `borderRadius:12`.
-            shape = PiShapes.cardInner,
-            color = palette.userMessageBg,
-        ) {
             Column(
-                // The board's `padding:12`, both axes.
-                modifier = Modifier.padding(PiSpacing.cardPadding),
-                // `ImageGrid mb={8}`: the gap that follows the grid. The board has no
-                // gap between the body and the grid, and 8 is the nearest step of v2's
-                // own rhythm to the 10 this used to be.
-                verticalArrangement = Arrangement.spacedBy(PiSpacing.blockGap),
+                // The board's `marginBottom:10`, verbatim. It is deliberately a literal and
+                // not `PiSpacing.blockGap` (8): the board's own number is 10, and this file
+                // may not add a token.
+                //
+                // **It hangs off the block now, not off the bubble.** The clock is outside the
+                // bubble, so a margin on the `Surface` would have become the bubble-to-clock
+                // gap — the bubble would sit 10 dp above its own time — while the clock-to-next-row
+                // gap got the list's rhythm. On the block it still stacks under both, and the gap
+                // is never painted in `userMessageBg`.
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 10.dp),
             ) {
-                if (item.text.isNotEmpty()) {
-                    PiMarkdownText(
-                        markdown = item.text,
-                        modifier = Modifier.fillMaxWidth(),
-                        textColor = palette.userMessageText,
-                        // 用户自己消息里 markdown 写的图：与同一个气泡里那张附件网格走同一个
-                        // 出口（下面 `ImageGridBlock` 的 `onImageClick`），不然"附件能点开、
-                        // 自己写的 `![]()` 不能"就是同一条气泡里的两种行为。
-                        onImageClick = onImageClick,
-                    )
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    // `borderRadius:12`.
+                    shape = PiShapes.cardInner,
+                    color = palette.userMessageBg,
+                ) {
+                    Column(
+                        // The board's `padding:12`, both axes.
+                        modifier = Modifier.padding(PiSpacing.cardPadding),
+                        // `ImageGrid mb={8}`: the gap that follows the grid. The board has no
+                        // gap between the body and the grid, and 8 is the nearest step of v2's
+                        // own rhythm to the 10 this used to be.
+                        verticalArrangement = Arrangement.spacedBy(PiSpacing.blockGap),
+                    ) {
+                        if (item.text.isNotEmpty()) {
+                            PiMarkdownText(
+                                markdown = item.text,
+                                modifier = Modifier.fillMaxWidth(),
+                                textColor = palette.userMessageText,
+                                // 用户自己消息里 markdown 写的图：与同一个气泡里那张附件网格走同一个
+                                // 出口（下面 `ImageGridBlock` 的 `onImageClick`），不然"附件能点开、
+                                // 自己写的 `![]()` 不能"就是同一条气泡里的两种行为。
+                                onImageClick = onImageClick,
+                            )
+                        }
+                        if (item.images.isNotEmpty()) {
+                            ImageGridBlock(
+                                images = item.images,
+                                modifier = Modifier.fillMaxWidth(),
+                                onImageClick = onImageClick,
+                            )
+                        }
+                    }
                 }
-                if (item.images.isNotEmpty()) {
-                    ImageGridBlock(
-                        images = item.images,
-                        modifier = Modifier.fillMaxWidth(),
-                        onImageClick = onImageClick,
-                    )
-                }
+                // ── The clock, **outside** the bubble, bottom-right ─────────────────────
+                //
+                // It used to be the bubble's last child, and that is what made the user's own
+                // text look off-centre rather than merely tight: with `padding:12` all round plus
+                // the `spacedBy(8)` before the clock and the clock's own 18 dp line box, the air
+                // above the body was 12 dp while the air below it was 8 + 18 + 12 = 38 dp — 3.2×
+                // the top, so every bubble read as if its text had floated up. Moving the clock
+                // out makes the bubble's own box symmetric again (12 / 12, the board's
+                // `padding:12`), and a one-line bubble drops from 73 dp to 47 dp because the
+                // clock's line box is no longer inside the `userMessageBg`.
+                //
+                // 3 dp is the board's own number (`.clkout` sits 3 px under `.bub`): far enough
+                // that the two shapes read as separate objects, close enough that the clock still
+                // belongs to the bubble above it rather than to the row below.
+                //
+                // **Off draws nothing at all — no empty `Text`, no placeholder.** A composed
+                // `Text("")` would still hold an 18 dp line box, which is exactly the
+                // invisible-but-present row the switch is supposed to remove.
                 if (showTimestamps) {
                     Text(
                         text = formatClock(item.ts),
-                        modifier = Modifier.align(Alignment.End),
-                        // `mono t12`: the machine face at v2's label step, which is exactly
-                        // the `monoSmall` role (12/18, `PiMonoFamily`). `meta` is the same
-                        // size in the *system* face, and the board's markup asks for `.mono`
-                        // on this timestamp specifically.
+                        modifier = Modifier
+                            .align(Alignment.End)
+                            .padding(top = 3.dp),
+                        // `mono t12`: the machine face at v2's label step, which is exactly the
+                        // `monoSmall` role (12/18, `PiMonoFamily`). `meta` is the same size in the
+                        // *system* face, and the board's markup asks for `.mono` on this timestamp.
                         style = PiTheme.text.monoSmall,
-                        // `c-muted` (`--muted: #808080`), the v2 palette's `muted` token.
-                        // It measures 3.07:1 on `userMessageBg`: over spec §9's 3:1
-                        // metadata floor, which is why the board's colour can be used
-                        // literally here (F12 kept `dim` — 2.11:1 — out of this bubble).
-                        color = palette.muted,
+                        // `dim` — the board's own `.clkout` colour — and the **ground** is what
+                        // makes the board's choice available again: F12
+                        // (`docs/rendering-review.md:326`) measured `dim` at 2.11:1 against the
+                        // bubble this clock used to sit on, under §9's 3:1 metadata floor, and its
+                        // own minimal-fix list named 「move the timestamp out of the bubble」 as one
+                        // of the two ways out. Outside, the ground is `pageBg`: `PiPalette.Dark`'s
+                        // `dim` (`#7E888E`) on `#21252C` measures 4.25:1, over the floor. Still a
+                        // metadata colour, not a body one.
+                        color = palette.dim,
                     )
                 }
             }
-        }
         }
         }
     }

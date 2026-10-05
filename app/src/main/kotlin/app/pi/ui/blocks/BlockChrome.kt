@@ -37,6 +37,9 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.text.style.TextOverflow
@@ -391,8 +394,8 @@ internal fun AccentStripe(
  * v2 draws every `展开 / 收起` label in `muted` (`06 §3`: the thinking row, the diff
  * card, the custom card's head), not in the accent — the accent is not a
  * decoration, and an affordance that is always on screen should not compete with the
- * card's state colour. [color] exists for the one card whose label belongs to its
- * own tone: the error card's `详情`, which v2 paints `error`.
+ * card's state colour. [color] exists for a label that belongs to its own tone — it
+ * was introduced for the error card's `详情`, which v2 paints `error`.
  *
  * @param color the label and chevron colour; `muted` by default, as v2 draws it.
  */
@@ -437,6 +440,50 @@ internal fun ExpandLabel(
 
 /** v2's `展开 / 收起` chevron: `s={13}` (`direction-b-v2.html:911`, `:951`). */
 private val EXPAND_CHEVRON_SIZE = 13.dp
+
+/**
+ * The **other** disclosure chevron: the 5×5 geometry the crowded rows draw.
+ *
+ * [ExpandLabel]'s 13 dp icon is right for a `展开 / 收起` label that owns its row, and wrong
+ * for a card row that already carries six fields — the icon's bounding box cost 14 dp of which
+ * 9 were empty (`差异表` §2 第 16 行). So the tool card and the three extension cards draw this
+ * one instead: the same shape v5 does (`.ch` — an L built from a right border and a bottom
+ * border, rotated ∓45°), so the stroke count, the direction (**right while collapsed, down while
+ * expanded**) and the colour are unchanged; only the box is smaller.
+ *
+ * `1.5` rather than the app's 1 px hairline because this is an **icon's stroke**, not a
+ * structural line: it is the weight the 14 dp `KeyboardArrowRight`/`Down` it replaces drew at
+ * this size, and the 1 px rule (`06 §5`) is about separators, borders, the rail and the ticks —
+ * all of which are still exactly 1 dp.
+ *
+ * [tint] is the caller's business because the chevron belongs to the word it sits beside: the
+ * tool row's is `bodyOnTool`, the three extension cards' is `muted` — the same token their
+ * `详情` word takes.
+ */
+@Composable
+internal fun DisclosureChevron(
+    expanded: Boolean,
+    tint: Color,
+    modifier: Modifier = Modifier,
+) {
+    Box(
+        modifier = modifier
+            .size(DISCLOSURE_CHEVRON_SIZE)
+            .rotate(if (expanded) 45f else -45f)
+            .drawBehind {
+                val stroke = DISCLOSURE_CHEVRON_STROKE.toPx()
+                val half = stroke / 2f
+                drawLine(tint, Offset(size.width - half, 0f), Offset(size.width - half, size.height), stroke)
+                drawLine(tint, Offset(0f, size.height - half), Offset(size.width, size.height - half), stroke)
+            },
+    )
+}
+
+/** v5's `.ch`: the crowded rows' disclosure chevron box. */
+private val DISCLOSURE_CHEVRON_SIZE = 5.dp
+
+/** v5's `.ch` border width — an icon stroke, see [DisclosureChevron]. */
+private val DISCLOSURE_CHEVRON_STROKE = 1.5.dp
 
 /**
  * The single expand/collapse gesture: **the content is the hit target**.

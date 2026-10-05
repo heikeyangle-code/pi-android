@@ -1,14 +1,12 @@
 package app.pi.ui.blocks
 
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.material3.MaterialTheme
@@ -17,9 +15,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.draw.rotate
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
@@ -331,7 +326,7 @@ internal fun ToolHeader(
             )
         }
         Spacer(Modifier.width(PiSpacing.gutter))
-        ToolChevron(expanded)
+        DisclosureChevron(expanded = expanded, tint = palette.bodyOnTool)
     }
 }
 
@@ -369,42 +364,6 @@ private val TOOL_STATE_GLYPH_WIDTH = 7.dp
  * leftward without moving the axis; see the cell's own note in [ToolHeader].
  */
 private val TOOL_READOUT_WIDTH = 44.dp
-
-/** v5's `.ch`: the disclosure chevron's box. */
-private val TOOL_CHEVRON_SIZE = 5.dp
-
-/**
- * v5's `.ch` border width. `1.5` rather than the app's 1 px hairline because this is an
- * **icon's stroke**, not a structural line: it is the same weight the 14 dp
- * `KeyboardArrowRight`/`Down` it replaces drew at this size, and the 1 px rule (`06 §5`) is
- * about separators, borders, the rail and the ticks — all of which are still exactly 1 dp.
- */
-private val TOOL_CHEVRON_STROKE = 1.5.dp
-
-/**
- * The disclosure chevron: **right while collapsed, down while expanded** — the same pair the
- * `展开 / 收起` label's own chevron uses ([ExpandLabel]), and the same pair v2 draws.
- *
- * A 5×5 geometry rather than a 14 dp icon (`差异表` §2 第 16 行): the icon's own bounding box
- * cost 14 dp of a row that now has to hold six fields, and 9 of those dp were empty. The
- * shape is v5's `.ch` — an L (right border + bottom border) rotated ∓45° — so the stroke
- * count, the direction and the colour (`bodyOnTool`) are unchanged; only the box is smaller.
- */
-@Composable
-private fun ToolChevron(expanded: Boolean) {
-    val tint = PiTheme.palette.bodyOnTool
-    Box(
-        modifier = Modifier
-            .size(TOOL_CHEVRON_SIZE)
-            .rotate(if (expanded) 45f else -45f)
-            .drawBehind {
-                val stroke = TOOL_CHEVRON_STROKE.toPx()
-                val half = stroke / 2f
-                drawLine(tint, Offset(size.width - half, 0f), Offset(size.width - half, size.height), stroke)
-                drawLine(tint, Offset(0f, size.height - half), Offset(size.width, size.height - half), stroke)
-            },
-    )
-}
 
 /**
  * The card's **last line while expanded**: the state's glyph, then pi's whole footer sentence.
