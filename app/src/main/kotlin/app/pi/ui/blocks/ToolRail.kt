@@ -287,6 +287,12 @@ private fun DrawScope.drawShellRing(
     firstOfRun: Boolean,
     lastOfRun: Boolean,
 ) {
+    // **Nothing to draw on a run's interior row**, and this is the hot path: a merged run is
+    // mostly interior rows, and every one of them used to allocate a `Path` on every draw —
+    // including the draws a re-layout forces when a card is opened or closed. Neither cap is
+    // drawn here (no vertical edges, and the caps only exist at the run's two ends), so the
+    // whole function can return before touching the allocator.
+    if (!firstOfRun && !lastOfRun) return
     val stroke = PiSpacing.hairline.toPx()
     val half = stroke / 2f
     val left = RAIL_INDENT.toPx() + half
