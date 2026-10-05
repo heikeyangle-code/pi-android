@@ -17,11 +17,14 @@
       docs/pi-android-ui-spec.md §2.1 maps export.pageBg -> Surface and
       export.cardBg -> SurfaceContainer; only the first is needed before Compose.
 
-      The two launcher colours are the icon's own and deliberately do not follow
-      the theme: a launcher icon that changed with a pi theme file would be an
-      icon nobody could recognise.
+      The launcher icon's ground is the artwork's own dark, `#11141D`, sampled from
+      the PNG the user picked (`ui-redesign/reference/新图标-原始.png`). Its other two
+      colours live literally in `drawable/ic_launcher_foreground.xml` — `#F3F3F3` for
+      the pi wordmark and `#5BD470` for the >_ prompt — so there is no
+      `ic_launcher_foreground` colour resource any more. The icon still does not follow
+      the pi theme: an icon that changed with a theme file would be an icon nobody
+      could recognise.
     -->
     <color name="pi_window_background">#EFEEEE</color>
-    <color name="ic_launcher_background">#18181E</color>
-    <color name="ic_launcher_foreground">#8ABEB7</color>
+    <color name="ic_launcher_background">#11141D</color>
 </resources>

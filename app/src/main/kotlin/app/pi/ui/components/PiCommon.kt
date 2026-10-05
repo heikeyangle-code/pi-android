@@ -52,7 +52,6 @@ import androidx.compose.ui.window.PopupProperties
 import androidx.compose.ui.unit.sp
 import app.pi.rpc.PiResponses
 import app.pi.rpc.TokenUsage
-import app.pi.ui.theme.PiMark
 import app.pi.ui.theme.PiPalette
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
@@ -716,22 +715,14 @@ fun PiMixedLine(
  * Empty states never say "no data". They say what the screen is for and offer
  * the one action that fills it (docs/pi-android-ui-spec.md §7.3).
  *
- * The mark is v2's: either the π glyph (`06 §2` 空态「π 字形 34」，`brand-spec.md` §1
- * allows it as an empty-state identifier) or the screen's own icon. v2's prototype
- * keeps both spellings and chooses per screen — the chat's two engine states carry
- * the mark, because they are the app's own empty surface, while a search that
- * matched nothing keeps its icon.
+ * The glyph is **always the screen's own icon** — v2's prototype had a second
+ * spelling here (the app's π mark for the chat's two engine states); it went away
+ * with that mark, so every empty state now names its own screen.
  *
- * **Both branches are bare glyphs.** [markPi]'s branch is the 34 dp `muted` mark;
- * the other is the screen's icon at the board's 30 dp in the same `muted`. It used
- * to sit inside a 68 dp `surfaceContainerHigh` disc, which no v2 empty state has
- * (`direction-b-v2.html:821-823`; phone21/22 and phone28 are all a bare glyph over
- * the title), so the container is gone.
- *
- * [markPi] defaults to `true`, which is the chat's two engine states. The call
- * sites that draw a *finding* rather than the app's own surface — the session
- * list's two, the settings search and the session tree's three — pass
- * `markPi = false` and keep the icon v2 gives them.
+ * **The glyph is bare.** It is the screen's icon at the board's 30 dp in `muted`,
+ * with no disc behind it. The app used to wrap it in a 68 dp `surfaceContainerHigh`
+ * disc, which no v2 empty state has (`direction-b-v2.html:821-823`; phone21/22 and
+ * phone28 are all a bare glyph over the title), so the container is gone.
  *
  * Geometry follows `06 §2` where the container allows it: the horizontal inset is
  * the board's 34, the title is the 17/600 title role, and the body is 14 with the
@@ -740,7 +731,7 @@ fun PiMixedLine(
  * fixed-height frame, and in the app the host hands the state a `weight(1f)` box
  * that this column already centres in (`Arrangement.Center`).
  *
- * @param icon the screen's own icon; ignored while [markPi] is on.
+ * @param icon the screen's own icon.
  */
 @Composable
 fun PiEmptyState(
@@ -749,7 +740,6 @@ fun PiEmptyState(
     body: String,
     modifier: Modifier = Modifier,
     action: (@Composable () -> Unit)? = null,
-    markPi: Boolean = true,
 ) {
     Column(
         modifier = modifier
@@ -758,23 +748,18 @@ fun PiEmptyState(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
-        if (markPi) {
-            PiMark(size = 34.dp, tint = PiTheme.palette.muted)
-        } else {
-            // A **bare** glyph, 30 and `muted`, exactly as the board draws this branch:
-            // `EmptyState` (`direction-b-v2.html:821-823`) puts the screen's own icon in
-            // a plain `inline-flex` coloured `--muted` and sizes the chat mark at 34
-            // against the others' 30 (`:819`). The app used to wrap it in a 68 dp
-            // `surfaceContainerHigh` disc, which is a container v2's empty states have
-            // nowhere — see phone21/22 (the session list's two) and phone28 (the tree's),
-            // all three a bare glyph over the title.
-            Icon(
-                icon,
-                contentDescription = null,
-                modifier = Modifier.size(EMPTY_STATE_ICON),
-                tint = PiTheme.palette.muted,
-            )
-        }
+        // A **bare** glyph, 30 dp and `muted`, exactly as the board draws it:
+        // `EmptyState` (`direction-b-v2.html:821-823`) puts the screen's own icon in a
+        // plain `inline-flex` coloured `--muted`. The app used to wrap it in a 68 dp
+        // `surfaceContainerHigh` disc, which no v2 empty state has — see phone21/22 (the
+        // session list's two) and phone28 (the tree's), all three a bare glyph over the
+        // title.
+        Icon(
+            icon,
+            contentDescription = null,
+            modifier = Modifier.size(EMPTY_STATE_ICON),
+            tint = PiTheme.palette.muted,
+        )
         Spacer(Modifier.height(EMPTY_STATE_TITLE_GAP))
         Text(
             title,
@@ -810,7 +795,7 @@ private val EMPTY_STATE_INSET = 34.dp
  * 而不是居中。这个包一层 `Box` 的构件把那半个取值还回来，**只给要照稿子的那一屏用**；
  * [PiEmptyState] 本身不动，别的屏的居中原样保留。
  *
- * @param icon the screen's own icon; ignored while [markPi] is on.
+ * @param icon the screen's own icon.
  */
 @Composable
 fun PiEmptyStateTopAnchored(
@@ -818,7 +803,6 @@ fun PiEmptyStateTopAnchored(
     title: String,
     body: String,
     modifier: Modifier = Modifier,
-    markPi: Boolean = true,
 ) {
     Box(modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
         PiEmptyState(
@@ -826,7 +810,6 @@ fun PiEmptyStateTopAnchored(
             title = title,
             body = body,
             modifier = Modifier.padding(top = EMPTY_STATE_TOP_INSET),
-            markPi = markPi,
         )
     }
 }
@@ -837,7 +820,7 @@ private val EMPTY_STATE_TOP_INSET = 86.dp
 /** `06 §2` 空态: the mark-to-title gap is v2's `marginTop:12`. */
 private val EMPTY_STATE_TITLE_GAP = 12.dp
 
-/** `06 §2` 空态: a screen's own icon is the board's `s=30`, the π mark's `s=34` its sibling. */
+/** `06 §2` 空态: the screen's own icon is the board's `s=30`. */
 private val EMPTY_STATE_ICON = 30.dp
 
 /** `06 §2` 空态「正文 14/1.6」: 14 sp × 1.6, stated as leading rather than as a ratio. */

@@ -35,7 +35,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.pi.runtime.RuntimeProvisioner
 import app.pi.ui.Boot
-import app.pi.ui.theme.PiMark
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
 
@@ -164,10 +163,10 @@ fun BootScreen(
 /**
  * The 52 dp circle above every state.
  *
- * `phone59`/`phone60` carry the π mark at `muted` inside it (the board's badge
- * has `color:var(--muted)`, i.e. the mark is not the accent — the accent is
- * reserved for the one live thing on the screen); `phone61` swaps the mark for
- * `✗` in `error`, which is the failure's symbol in `06 §4`'s table.
+ * `phone59`/`phone60` carry the app's mark at `muted` inside it; the mark went away
+ * with the old icon, so the badge is now a bare ring while the engine starts, and
+ * `phone61`'s `✗` in `error` — the failure's symbol in `06 §4`'s table — is the only
+ * glyph it draws.
  *
  * 17 sp is the board's `mono t17` for that glyph and is the only inline size in
  * this file: `PiTheme.text.mono` is the app's 13 sp machine role, and the badge
@@ -188,8 +187,6 @@ private fun BootBadge(boot: Boot) {
                 style = PiTheme.text.mono.copy(fontSize = 17.sp, lineHeight = 22.sp),
                 color = palette.error,
             )
-        } else {
-            PiMark(size = BootBadgeMarkSize, tint = palette.muted)
         }
     }
 }
@@ -362,9 +359,6 @@ private val BootPagePadding = 30.dp
 
 /** `.b-boot-badge{width:52px;height:52px}`. */
 private val BootBadgeSize = 52.dp
-
-/** `PiMark s={26}` inside the badge. */
-private val BootBadgeMarkSize = 26.dp
 
 /** `.b-boot-bar i{height:4px}` / `.b-boot-bar{gap:2px}`. */
 private val BootBarHeight = 4.dp

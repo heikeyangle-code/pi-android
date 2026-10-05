@@ -114,7 +114,9 @@ class PiEngineService : Service() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
         return NotificationCompat.Builder(this, PiApplication.CHANNEL_ENGINE)
-            .setSmallIcon(R.drawable.ic_launcher_foreground)
+            // The notification's small icon is a silhouette — the system tints it —
+            // so it takes the icon's monochrome layer, not the coloured foreground.
+            .setSmallIcon(R.drawable.ic_launcher_monochrome)
             .setContentTitle(getString(R.string.engine_running_title))
             .setContentText(getString(R.string.engine_running_text, runningTasks))
             .setOngoing(true)
