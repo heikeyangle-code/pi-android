@@ -1558,7 +1558,10 @@ private fun ChatBody(
             // (`reveal` resets it) and the anchor restore sets to the pixel offset the
             // reader left — the one caller for which "put the target at the top" is not
             // the same as "put the reader back where they were".
-            listState.requestScrollToItem(renderedItems.size - 1 - index, pendingJumpOffset)
+            // `index` already comes from `itemIndexOfVisibleRow`, which speaks the
+            // list's own (reversed) coordinates -- mirroring it again here sent every
+            // navigation to the wrong end (the reader's 「回到顶部」 stopped working).
+            listState.requestScrollToItem(index, pendingJumpOffset)
             pendingJump = null
             pendingJumpOffset = 0
         }
