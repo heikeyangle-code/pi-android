@@ -1916,7 +1916,7 @@ private fun ChatBody(
                                         // `visibleItems`, and the hidden prefix does
                                         // not exist in the rendered list.
                                         val firstFull =
-                                            listState.firstVisibleItemIndex + hiddenCount
+                                            (visibleItems.size - 1 - listState.firstVisibleItemIndex)
                                         userRowIndices().lastOrNull { it < firstFull }?.let { row ->
                                             pauseTail()
                                             reveal(row)
@@ -1926,7 +1926,7 @@ private fun ChatBody(
                                 add(
                                     PiMenuItem("跳到下一条提问") {
                                         val firstFull =
-                                            listState.firstVisibleItemIndex + hiddenCount
+                                            (visibleItems.size - 1 - listState.firstVisibleItemIndex)
                                         userRowIndices().firstOrNull { it > firstFull }?.let { row ->
                                             pauseTail()
                                             reveal(row)
