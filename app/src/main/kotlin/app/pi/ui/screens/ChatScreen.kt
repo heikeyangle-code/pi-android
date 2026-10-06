@@ -1128,13 +1128,15 @@ private fun ChatBody(
     // one, and the two jumps below use it for exactly that reason).
     var scrolling by remember { mutableStateOf(false) }
 
-    // `!canScrollForward` — the end test `TailFollow` uses (`TailViewport.atBottom`), and
+    // `!canScrollBackward` — the end test `TailFollow` uses (`TailViewport.atBottom`), and
     // for the same reason: it is true exactly when the last row's bottom is inside the
     // viewport, including the tail of a row taller than the viewport. Declared here
     // because it is a *key* of the follow effect: the moment the user's own scroll reaches
     // the end is the moment a paused follow has to be observed again so it can re-arm.
     val atBottom by remember(listState) {
-        derivedStateOf { !listState.canScrollForward }
+        // Reversed list: the newest end is the layout's *start*, so being there is
+        // Cannot-scroll-backwards. The value handed to TailFollow uses the same test.
+        derivedStateOf { !listState.canScrollBackward }
     }
 
     // The settle pass — 「差几个像素到不了真底部」的那一半. A publication's pin is
@@ -1556,7 +1558,7 @@ private fun ChatBody(
             // (`reveal` resets it) and the anchor restore sets to the pixel offset the
             // reader left — the one caller for which "put the target at the top" is not
             // the same as "put the reader back where they were".
-            listState.requestScrollToItem(index, pendingJumpOffset)
+            listState.requestScrollToItem(renderedItems.size - 1 - index, pendingJumpOffset)
             pendingJump = null
             pendingJumpOffset = 0
         }
