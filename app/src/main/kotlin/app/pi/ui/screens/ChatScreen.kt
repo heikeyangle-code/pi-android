@@ -1152,10 +1152,11 @@ private fun ChatBody(
     LaunchedEffect(listState, sessionKey) {
         snapshotFlow {
             val info = listState.layoutInfo
-            val tailItem = info.visibleItemsInfo.lastOrNull()
+            // Reversed list: the row at the layout start is the newest one.
+            val tailItem = info.visibleItemsInfo.firstOrNull()
             if (
                 tailItem != null &&
-                tailItem.index == info.totalItemsCount - 1 &&
+                tailItem.index == 0 &&
                 !listState.isScrollInProgress &&
                 !streamingNow
             ) {
@@ -1407,7 +1408,9 @@ private fun ChatBody(
                     return@collect
                 }
                 if (!anchorSettled.value) return@collect
-                val key = anchorWindow.getOrNull(index)?.key
+                // The state reports the layout start (the newest visible row); the
+                // window is in transcript order, so mirror the index back.
+                val key = anchorWindow.getOrNull(anchorWindow.size - 1 - index)?.key
                 if (key != null && key != anchorKey) anchorKey = key
                 if (offset != anchorOffset) anchorOffset = offset
             }
@@ -2122,14 +2125,20 @@ private fun ChatBody(
             LazyColumn(
                 state = listState,
                 modifier = Modifier.fillMaxSize(),
+                // The list is **reversed**: item 0 is the newest row, the layout starts at
+                // the screen bottom, and a row above the reader changing height can no
+                // longer move the reader. See TailFollow's KDoc.
+                reverseLayout = true,
                 // The vertical ends are not the block gap: they are the scroll
                 // container's own `10` top (plus the sentinel's reserved band, when there
                 // is one) and `12` bottom.
                 contentPadding = PaddingValues(
                     start = PiSpacing.pageHorizontal,
                     end = PiSpacing.pageHorizontal,
-                    top = 10.dp + earlierBand,
-                    bottom = 12.dp,
+                    // Reversed: contentPadding is applied at the layout end, so the
+                    // sentinel band goes to the bottom end of the call.
+                    top = 12.dp,
+                    bottom = 10.dp + earlierBand,
                 ),
                 // **No `verticalArrangement`**: the rhythm is the rows' own bottom air now (see
                 // above). Anything added here would be the second half of the F11 mistake.
@@ -2148,7 +2157,7 @@ private fun ChatBody(
                 // exactly the granularity the slot table reuses on, so the class is
                 // the content type — no new taxonomy needed.
                 itemsIndexed(
-                    renderedItems,
+                    renderedItems.asReversed(),
                     key = { _, item -> item.key },
                     contentType = { _, item -> item::class },
                 ) { sliceIndex, item ->
@@ -2156,7 +2165,9 @@ private fun ChatBody(
                     // indices, and both the window prefix and the loading row sit in
                     // front of this item — translate once, here, so everything below
                     // keeps using `index` as before.
-                    val index = sliceIndex + hiddenCount
+                    // `sliceIndex` counts the reversed feed; `index` stays the
+                    // transcript index every consumer below was written for.
+                    val index = (renderedItems.size - 1 - sliceIndex) + hiddenCount
                     // `present` is a `Set`: this line runs once per rendered row on every
                     // frame the list composes, and the old `List<Int>.contains` was a
                     // linear scan of every match in the session.
