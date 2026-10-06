@@ -2147,10 +2147,12 @@ private fun ChatBody(
                 contentPadding = PaddingValues(
                     start = PiSpacing.pageHorizontal,
                     end = PiSpacing.pageHorizontal,
-                    // Reversed: contentPadding is applied at the layout end, so the
-                    // sentinel band goes to the bottom end of the call.
-                    top = 12.dp,
-                    bottom = 10.dp + earlierBand,
+                    // Reversed: `contentPadding` is applied to the **visual** ends by
+                    // Compose, so the sentinel's reserved band stays where it belongs (the
+                    // visual top). The first version of this flip swapped them and left a
+                    // band of empty space above the composer.
+                    top = 10.dp + earlierBand,
+                    bottom = 12.dp,
                 ),
                 // **No `verticalArrangement`**: the rhythm is the rows' own bottom air now (see
                 // above). Anything added here would be the second half of the F11 mistake.
