@@ -987,6 +987,149 @@ fun main() {
         check("K3 a backwards layout move is not a hand", state(layoutMove), "true/0")
     }
 
+    // ============================================== L. the pin's licence (rule 5)
+    //
+    // 「点展开，整个视口跳到最底下，再点收起又跳回来」. The frame: the reader is parked
+    // at the end of the transcript and following, and they tap a collapsed tool card
+    // **above** the tail. The card grows, `LazyColumn` keeps the reader's own row
+    // anchored, everything below the card moves down and the tail leaves the screen —
+    // no row was added, no revision moved, no inset changed and no hand touched the
+    // list. `atBottom` flipping is the *only* reason `ChatScreen`'s effect
+    // re-snapshots, and the old pin condition answered that frame by yanking the
+    // viewport to the very bottom (`TailPin(tail, PIN_TO_END_PX)`; 770 px on the
+    // reader's recording, with the library's own scroll correction making 754 px of it
+    // back on the collapse).
+    //
+    // Rule 5 refuses the pin on exactly that shape of frame and pays for it on every
+    // other one. These checks are the shape and each of the ways a frame can be paid
+    // for, in the order the rule names them.
+    run {
+        // Parked at the end: 20 rows, the tail (19) on screen with its bottom on the
+        // end line.
+        val reader = TailFollow()
+        val atEnd = reader.onSnapshot(
+            TailSnapshot(
+                transcriptRows = 20,
+                viewport = viewport(20, atBottom = true, firstVisibleIndex = 16),
+                revision = 7,
+            ),
+        )
+        check("L1 parked at the end: nothing to pin", atEnd.pin, null)
+
+        // The reader's tap, one frame later: the same 20 rows, the same revision, the
+        // same viewport — only the rows' geometry below the reader's own row moved, and
+        // the tail is now off the screen. Nothing here is about the transcript, so
+        // nothing here may scroll it.
+        val tapped = reader.onSnapshot(
+            TailSnapshot(
+                transcriptRows = 20,
+                viewport = viewport(20, atBottom = false, firstVisibleIndex = 16, lastVisibleIndex = 18),
+                revision = 7,
+            ),
+        )
+        check("L2 the reader's own disclosure above the tail pins nothing", tapped.pin, null)
+        check("L3 and the follow is untouched by it", state(tapped), "true/0")
+
+        // The *same* geometry with a publication behind it is content growth, which is
+        // what a follow is for: it pins to the end.
+        val grew = reader.onSnapshot(
+            TailSnapshot(
+                transcriptRows = 20,
+                viewport = viewport(20, atBottom = false, firstVisibleIndex = 16, lastVisibleIndex = 18),
+                revision = 8,
+            ),
+        )
+        check("L4 content growth on the same geometry still pins", grew.pin, TailPin(19, PIN_TO_END_PX))
+
+        // The reader's collapse: the geometry moves back the other way with nothing
+        // behind it either. The library's scroll correction is the list's business (it
+        // is the other half of what the reader sees); the app adds no scroll of its own.
+        val collapsing = TailSnapshot(
+            transcriptRows = 20,
+            viewport = viewport(
+                20,
+                atBottom = false,
+                firstVisibleIndex = 16,
+                lastVisibleOffsetPx = 850,
+            ),
+            revision = 8,
+        )
+        check("L5 the collapse's own geometry does want a pin", collapsing.viewport.pinToTail(), TailPin(16, 50))
+        val collapsed = reader.onSnapshot(collapsing)
+        check("L6 and the reader's own collapse is not paid for", collapsed.pin, null)
+
+        // The tail row's own late parse — the settle pass. No key of the caller moves
+        // (row count, revision, inset and the row's index are all identical); only its
+        // height changes, and that *is* about the newest row. It keeps its pin.
+        val settled = TailFollow()
+        settled.onSnapshot(
+            TailSnapshot(20, viewport(20, atBottom = false, firstVisibleIndex = 16, lastVisibleSizePx = 200)),
+        )
+        val reparsed = settled.onSnapshot(
+            TailSnapshot(20, viewport(20, atBottom = false, firstVisibleIndex = 16, lastVisibleSizePx = 260)),
+        )
+        check("L7 the tail row's own settled height still pins", reparsed.pin, TailPin(16, 60))
+
+        // The viewport itself changed: the composer's inset grew (the keyboard came
+        // up), so the window the rows are read through is shorter. The rows did not
+        // move, and the tail has to be brought back inside the window.
+        val keyboard = TailFollow()
+        keyboard.onSnapshot(TailSnapshot(20, viewport(20, atBottom = true, firstVisibleIndex = 16)))
+        val raised = keyboard.onSnapshot(
+            TailSnapshot(
+                20,
+                viewport(
+                    20,
+                    atBottom = false,
+                    firstVisibleIndex = 16,
+                    lastVisibleIndex = 18,
+                    viewportEndOffsetPx = 700,
+                ),
+            ),
+        )
+        check("L8 a shrunken viewport still pins", raised.pin, TailPin(19, PIN_TO_END_PX))
+
+        // A hand on the list. The reader drags towards the newest row — the anchor
+        // moves *forward*, which is never a pause — and lets go short of the end, so
+        // the follow finishes the job. A session edge is not a disclosure.
+        val drag = TailFollow()
+        drag.onSnapshot(
+            TailSnapshot(20, viewport(20, atBottom = false, firstVisibleIndex = 16, lastVisibleIndex = 18)),
+        )
+        drag.onSnapshot(
+            TailSnapshot(
+                20,
+                viewport(20, atBottom = false, firstVisibleIndex = 17, lastVisibleIndex = 18, isScrollInProgress = true),
+            ),
+        )
+        val letGo = drag.onSnapshot(
+            TailSnapshot(20, viewport(20, atBottom = false, firstVisibleIndex = 17, lastVisibleIndex = 18)),
+        )
+        check("L9 a drag's release still pins", letGo.pin, TailPin(19, PIN_TO_END_PX))
+
+        // An explicit re-arm — the affordance, the send button — with nothing else
+        // moving, which is the one frame whose only licence is the reader's own
+        // "go to the newest".
+        val fab = TailFollow()
+        fab.onSnapshot(TailSnapshot(20, viewport(20, atBottom = true, firstVisibleIndex = 16)))
+        fab.reArm()
+        val afterFab = fab.onSnapshot(
+            TailSnapshot(20, viewport(20, atBottom = false, firstVisibleIndex = 16, lastVisibleIndex = 18)),
+        )
+        check("L10 an explicit re-arm is licensed", afterFab.pin, TailPin(19, PIN_TO_END_PX))
+
+        // A restored machine has no previous viewport (rotation, a re-entered
+        // destination), so its first frame is licensed even though the row count it
+        // comes back with is the one it went away with: that transcript has to land on
+        // its newest row, not stay where the saved index pointed.
+        val restored = TailFollow.fromSavedState(listOf(1, 0, 20))
+        check("L11 a restored machine exists", restored != null, true)
+        val resumed = restored!!.onSnapshot(
+            TailSnapshot(20, viewport(20, atBottom = false, firstVisibleIndex = 16, lastVisibleIndex = 18)),
+        )
+        check("L12 its first frame still pins", resumed.pin, TailPin(19, PIN_TO_END_PX))
+    }
+
     println(if (failures == 0) "\nharness: OK (all checks passed)" else "\nharness: FAILED ($failures)")
     if (failures != 0) kotlin.system.exitProcess(1)
 }

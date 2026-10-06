@@ -2885,7 +2885,26 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
         // publication would still be treated as a gap and adopt wholesale.
         _state.value = _state.value.copy(
             transcript = transcript,
-            revision = pub.revision,
+            // **The content counter, not the publication counter.** `revision` is one of
+            // the keys of `ChatScreen`'s follow effect, and the follow's pin must only be
+            // paid for by a frame in which the *transcript* changed. The engine publishes
+            // on **every** folded event — including the ones that moved nothing
+            // (`message_update` carrying only `usage`, `agent_start`, `agent_settled`,
+            // `thinking_level_changed`) — and advancing this for those made a "nothing
+            // happened" publication re-run the follow, which then issued its pin and
+            // yanked the viewport to the bottom: the reader's 「没有人动它，它自己跳」.
+            // `replaced` / a changed index / a row-count change is exactly "the rows
+            // changed": a streamed token or a growing tool output is a new row object
+            // (`changedIndices`), a new row is a size change, a rebuild is `replaced`.
+            // Everything else on this publication (`streaming`, usage) is still copied.
+            revision = if (
+                pub.replaced || pub.changedIndices.isNotEmpty() ||
+                previous.transcript.size != pub.rows.size
+            ) {
+                pub.revision
+            } else {
+                previous.revision
+            },
             streaming = pub.streaming,
             // The latest assistant usage, published so the UI can read it.
             //
