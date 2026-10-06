@@ -1283,7 +1283,13 @@ private fun ChatBody(
     // one batch was prepended and `hiddenCount` stayed above zero permanently, which also
     // gated off the session-file read (`hiddenCount == 0`). See `reArmsEarlier`'s KDoc.
     val atTop by remember(listState) {
-        derivedStateOf { listState.firstVisibleItemIndex == 0 }
+        derivedStateOf {
+            // Reversed list: index 0 is the *newest* row, so the window's top -- the
+            // oldest row that is loaded -- is the item at the layout's end.
+            val info = listState.layoutInfo
+            val lastVisible = info.visibleItemsInfo.lastOrNull()
+            lastVisible != null && lastVisible.index == info.totalItemsCount - 1
+        }
     }
     // A key of the rule below: entering or leaving "the list cannot scroll" is precisely
     // when the second arming edge becomes true, and nothing else about the list changes
