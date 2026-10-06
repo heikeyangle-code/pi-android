@@ -159,8 +159,6 @@ import app.pi.ui.chat.freshRowKeysAfter
 import app.pi.ui.chat.hiddenRows
 import app.pi.ui.chat.itemIndexOfVisibleRow
 import app.pi.ui.chat.mayArmEarlier
-import app.pi.ui.chat.mayReadEarlier
-import app.pi.ui.chat.reachedTopByHand
 import app.pi.ui.chat.thinkingLabelOf
 import app.pi.ui.chat.unlistedBuiltinHint
 import app.pi.ui.components.PiContextRing
@@ -1269,21 +1267,6 @@ private fun ChatBody(
     // `atTop` is then true for ever, and the original single edge could never fire again:
     // one batch was prepended and `hiddenCount` stayed above zero permanently, which also
     // gated off the session-file read (`hiddenCount == 0`). See `reArmsEarlier`'s KDoc.
-    //
-    // **Arming is not loading, and neither edge can tell a reader from a layout.** Both are
-    // facts about the *list*: a card that collapses under the viewport shrinks the content
-    // below it, and the `LazyColumn`'s own measure pass then walks the viewport up to the
-    // window's top (and, with not enough content above to absorb the pixels, clamps there and
-    // lays the content out from the viewport's top). `atTop` and `!canScrollForward` then read
-    // as "the reader reached the top", and the effect below used to answer by loading older
-    // history — an unasked prepend at the head of a layout that has no scroll offset to anchor
-    // it, i.e. the reported 「收起一张卡，列表立刻跳到本页最顶部，约 0.8s 后才自己滑回底部」. So both
-    // the load and the file read additionally require the reader's own hand
-    // (`reachedTopByHand`), latched in [earlierAsked]: a scroll session in flight with the
-    // viewport at the top. A disclosure tap starts no scroll session, so a collapse can no
-    // longer load anything, however far it moves the viewport; the wedged window still loads,
-    // because the reader drags at the top when it does (and the 「加载更早」 row is a direct
-    // trigger either way).
     val atTop by remember(listState) {
         derivedStateOf { listState.firstVisibleItemIndex == 0 }
     }
@@ -1295,12 +1278,6 @@ private fun ChatBody(
     }
     // (`atBottom` is declared above, next to the follow effect that is keyed on it.)
     var earlierArmed by rememberSaveable(sessionKey) { mutableStateOf(false) }
-    // The reader's hand, latched across one gesture: true once a scroll session has been seen
-    // with the viewport at the window's top, and consumed by the load it authorises (or cleared
-    // the moment the viewport leaves the top). Deliberately **not** `rememberSaveable`: a
-    // gesture does not survive the process, and a restored `true` would authorise a load nothing
-    // has asked for. See `reachedTopByHand` for the defect both rules would have without it.
-    var earlierAsked by remember(sessionKey) { mutableStateOf(false) }
     // Spec §4.5's second half. The client-side window below only re-reveals rows the
     // **transcript already holds**, and what the transcript holds used to be the whole
     // session (one `get_entries`), so the two were the same list. It now starts as the
@@ -1479,7 +1456,7 @@ private fun ChatBody(
     LaunchedEffect(atTop, canScrollForward, hiddenCount, scrolling, earlierHistory) {
         // Two arming edges, one rule: away from the top, or a viewport with nowhere left to
         // scroll (a transcript shorter than the screen — see `reArmsEarlier`). Armed *and*
-        // at the top **and the reader's own hand** is the only state that loads.
+        // at the top is the only state that loads.
         //
         // `mayArmEarlier` and not `reArmsEarlier`: a `LazyListState` reports
         // `canScrollForward == false` until its **first measure** (`mutableStateOf(false)`
@@ -1489,41 +1466,19 @@ private fun ChatBody(
         if (mayArmEarlier(atTop, canScrollForward, listState.layoutInfo.totalItemsCount > 0)) {
             earlierArmed = true
         }
-        // The reader's hand, latched: a scroll session in flight while the viewport is at the
-        // window's top. A disclosure tap starts no session, so a collapse — which can move the
-        // viewport to the top by itself (see `reachedTopByHand`) — cannot authorise anything
-        // here. The latch survives the release so the load below still has it on the frame the
-        // gesture ends, and it is dropped as soon as the viewport leaves the top.
-        if (reachedTopByHand(atTop, scrolling)) earlierAsked = true
-        if (!atTop) {
-            earlierAsked = false
-            return@LaunchedEffect
-        }
+        if (!atTop) return@LaunchedEffect
         // Asked for only once the loaded rows are exhausted: while `hiddenCount > 0`
         // the batch below is a slice of rows already in memory, and starting a file
-        // read at the same moment would do both jobs for one gesture. `mayReadEarlier` adds
-        // the hand and the "gesture is over" terms: this call is an RPC, and a layout change
-        // that walked the viewport to the top used to fire it bare (`hiddenCount == 0 &&
-        // atTop && hasEarlier`) — that is the unasked batch the report's second movement comes
-        // from.
-        if (
-            mayReadEarlier(atTop, earlierAsked, hiddenCount, scrolling) &&
-            earlierHistory != null && earlierHistory.hasEarlier
-        ) {
-            earlierAsked = false
+        // read at the same moment would do both jobs for one gesture.
+        if (hiddenCount == 0 && earlierHistory != null && earlierHistory.hasEarlier) {
             session.expandEarlierHistory()
         }
         // `mayLoadEarlier` is the whole fix for 「用力往旧消息方向一划就跳到最顶部」: a
         // batch may only be prepended once the gesture is over. Prepending *while a
         // fling is running* grows the list in the direction the fling is travelling,
         // so the fling never reaches an end and one flick walks the whole session.
-        // `askedByHand` is the second half of the rule (see the latch above): the batch is an
-        // answer to the reader, never to a row that shrank under the viewport.
-        if (!mayLoadEarlier(atTop, earlierArmed, hiddenCount, scrolling, earlierAsked)) {
-            return@LaunchedEffect
-        }
+        if (!mayLoadEarlier(atTop, earlierArmed, hiddenCount, scrolling)) return@LaunchedEffect
         earlierArmed = false
-        earlierAsked = false
         renderWindow += TRANSCRIPT_WINDOW_STEP
         // **No position request here any more.** While 「加载更早」 was the list's item 0,
         // a batch had to be compensated for by hand: the sentinel kept its key at index 0,

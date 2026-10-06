@@ -502,75 +502,13 @@ internal data class TailDecision(
  * @param armed true once the user has been away from the window top, so a viewport
  *   that merely *starts* there does not load on the first frame.
  * @param hiddenRows rows the window is holding back (`hiddenCount`).
- * @param askedByHand [reachedTopByHand], latched by the caller across the gesture.
- *   **This term is what keeps a *layout* change from loading.** `atWindowTop` and `armed` are
- *   both facts about the *list*, and a row that shrinks under the viewport can produce them
- *   with no reader involved — see [reachedTopByHand] for the mechanism and the report. Loading
- *   older history is an answer to the reader asking for it, so it needs evidence of a hand.
  */
 internal fun mayLoadEarlier(
     atWindowTop: Boolean,
     armed: Boolean,
     hiddenRows: Int,
     isScrollInProgress: Boolean,
-    askedByHand: Boolean,
-): Boolean = atWindowTop && armed && hiddenRows > 0 && !isScrollInProgress && askedByHand
-
-/**
- * Whether **the reader's own gesture** is what put the viewport at the window's top.
- *
- * ## The defect this exists for
- *
- * `atWindowTop` and `!canScrollForward` are facts about the *list*, and a **layout** change can
- * produce them with no reader involved. Collapsing a card is the case in the report: the body
- * that disappears is bigger than what is left below it, so the content from the viewport's top
- * down no longer fills the viewport, and the `LazyColumn`'s own measure pass re-derives the
- * position — it walks the viewport back by the pixels that disappeared, and when there is not
- * enough content above to absorb them it clamps at the first item and lays the whole content out
- * from the viewport's top (`LazyListMeasure.kt`'s `if (currentMainAxisOffset < maxOffset)` branch,
- * then `calculateItemsOffsets`' `hasSpareSpace` branch, which **ignores the scroll position**).
- * The first item is then the viewport's first item *and* the list cannot scroll forward: exactly
- * the pair `mayArmEarlier`/`mayLoadEarlier` read as "the reader reached the top of the window".
- *
- * So the reader's hand has to be part of that pair, and it is: a scroll session in flight
- * (`LazyListState.isScrollInProgress`) **with the viewport at the top**. A drag or a fling that
- * ends at the top satisfies it, and so does the wedged-window case `reArmsEarlier` was extended
- * for — collapsed rows make the list shorter than the screen, and the reader drags at the top to
- * pull history in. A disclosure tap starts **no** scroll session at all (the tap only flips the
- * row's `expanded` state), so a collapse cannot satisfy it however far it moves the viewport.
- *
- * The caller latches this across the gesture (`ChatScreen`'s `earlierAsked`): it is true on the
- * frames the session is in flight, and the load consumes it, because the load itself may only run
- * once the gesture is over ([mayLoadEarlier]'s `isScrollInProgress` term).
- */
-internal fun reachedTopByHand(atWindowTop: Boolean, isScrollInProgress: Boolean): Boolean =
-    atWindowTop && isScrollInProgress
-
-/**
- * Whether the **session file** may be asked for an older batch on this frame.
- *
- * The sibling of [mayLoadEarlier] for the case where the loaded rows are *all rendered*
- * (`hiddenRows == 0`): growing `renderWindow` would grow nothing, so the older rows have to come
- * from the file. It answers the same question with the same evidence — the viewport is at the
- * window's top, the reader's hand put it there, and the gesture is over.
- *
- * It is deliberately **not** a bare `atWindowTop`: this call starts an RPC, and a layout change
- * that walks the viewport to the top must not start one. The report is exactly that landing —
- * 「收起一张卡，列表立刻跳到本页最顶部（06:03 那一轮），约 0.8s 后才自己滑回底部」: the tap shrinks a
- * row, the measure pass moves the viewport to the top, the bare `atWindowTop` fires the read, the
- * older batch is prepended into a layout that has no scroll offset to anchor it (the
- * `hasSpareSpace` branch above), the reader lands on the newly inserted head, and the follow then
- * pins the tail back — two movements, 0.1 s and 0.8 s apart, from one tap.
- *
- * @param hiddenRows rows the window is holding back (`hiddenCount`); a non-zero count means the
- *   older rows are already in memory and [mayLoadEarlier] owns the frame.
- */
-internal fun mayReadEarlier(
-    atWindowTop: Boolean,
-    askedByHand: Boolean,
-    hiddenRows: Int,
-    isScrollInProgress: Boolean,
-): Boolean = atWindowTop && askedByHand && hiddenRows == 0 && !isScrollInProgress
+): Boolean = atWindowTop && armed && hiddenRows > 0 && !isScrollInProgress
 
 /**
  * Whether the "load earlier" rule may be **re-armed** on this frame.
@@ -594,13 +532,6 @@ internal fun mayReadEarlier(
  * ends. The loop this creates is bounded by construction — each pass prepends one batch and
  * stops as soon as the content is taller than the viewport (or the history runs out), which
  * is exactly "fill the screen with the conversation".
- *
- * **Arming is not loading, and this edge cannot tell a reader from a layout.** It is a fact about
- * the *list*, so a row that shrinks under the viewport sets it too (that is how the reported
- * collapse reached the load rule at all). It therefore only makes the rule *eligible*:
- * [mayLoadEarlier] and [mayReadEarlier] additionally require [reachedTopByHand], so a viewport
- * that arrived at the top without a gesture loads nothing — while the wedged window this edge
- * exists for still loads, because the reader is dragging at the top when it does.
  */
 internal fun reArmsEarlier(atWindowTop: Boolean, canScrollForward: Boolean): Boolean =
     !atWindowTop || !canScrollForward
@@ -770,16 +701,4 @@ internal fun freshRowKeysAfter(
  * screen uses to convert a row's index, and the `tail-follow` harness's J group, which pins
  * that a row inserted at the *transcript's* head moves the reader's row by exactly the number
  * of rows inserted and that the reader stays on the same row.
- *
- * ## The one state where that argument does not hold, and why the rule now avoids it
- *
- * Key anchoring needs a **scroll offset to anchor**: it re-derives *which index* the viewport's
- * first item moved to. When the content is shorter than the viewport there is no offset —
- * `calculateItemsOffsets` takes its `hasSpareSpace` branch, which arranges the items from the
- * viewport's top and requires `itemsScrollOffset == 0` (Compose asserts it). A prepend in that
- * state therefore moves the reader by the batch's height **however good the anchoring is**; only
- * the fact that `mayLoadEarlier`/`mayReadEarlier` no longer let a layout change get there keeps a
- * disclosure tap out of it. A reader who *does* ask for history in that state (dragging at the
- * top of a screenful of collapsed rows) is at the top already, and the loaded batch is what they
- * asked to see above them.
  */

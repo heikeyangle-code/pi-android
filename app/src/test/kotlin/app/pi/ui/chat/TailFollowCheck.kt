@@ -538,13 +538,12 @@ fun main() {
     // transcript's head moves the reader's row by the number of rows inserted **and no
     // further** — with `headerRows = 0`, which is what the screen passes now.
     run {
-        // The rule itself. `askedByHand = true` is the reader's own gesture — the M group
-        // below is where that term is pinned; these five are about the older three.
-        check("H1 a flick in flight loads nothing", mayLoadEarlier(true, true, 500, true, true), false)
-        check("H2 the batch loads once the gesture is over", mayLoadEarlier(true, true, 500, false, true), true)
-        check("H3 away from the window top nothing loads", mayLoadEarlier(false, true, 500, false, true), false)
-        check("H4 an un-armed window top loads nothing", mayLoadEarlier(true, false, 500, false, true), false)
-        check("H5 nothing hidden loads nothing", mayLoadEarlier(true, true, 0, false, true), false)
+        // The rule itself.
+        check("H1 a flick in flight loads nothing", mayLoadEarlier(true, true, 500, true), false)
+        check("H2 the batch loads once the gesture is over", mayLoadEarlier(true, true, 500, false), true)
+        check("H3 away from the window top nothing loads", mayLoadEarlier(false, true, 500, false), false)
+        check("H4 an un-armed window top loads nothing", mayLoadEarlier(true, false, 500, false), false)
+        check("H5 nothing hidden loads nothing", mayLoadEarlier(true, true, 0, false), false)
 
         // The band the 「加载更早」 row reserves in the list's top padding: the row is
         // `Icon(24dp)` + `Spacer(6dp)` + `Text(meta)` in a `Row(padding(vertical = 8dp))`, so
@@ -639,17 +638,15 @@ fun main() {
         check("H13 a viewport with nowhere to scroll re-arms", reArmsEarlier(true, false), true)
         check("H14 the ordinary case does not", reArmsEarlier(true, true), false)
         // The two halves, executed together: the rule above is what makes the load
-        // possible at all in the wedged state, **and the reader's hand is what makes it a
-        // load** — the wedged state is entered by dragging at the top (the M group pins the
-        // other half: the same arm/disarm state with no gesture loads nothing).
+        // possible at all in the wedged state…
         check(
             "H15 the second edge is what un-wedges the window",
-            mayLoadEarlier(true, reArmsEarlier(true, false), 500, false, askedByHand = true),
+            mayLoadEarlier(true, reArmsEarlier(true, false), 500, false),
             true,
         )
         // …and this is the old behaviour, kept as the statement of the defect: armed only
         // by the away-from-top edge, the same frame loads nothing, for ever.
-        check("H16 the old single edge leaves it wedged", mayLoadEarlier(true, false, 500, false, true), false)
+        check("H16 the old single edge leaves it wedged", mayLoadEarlier(true, false, 500, false), false)
     }
 
     // ================================ I. "I was at the bottom, I sent, and it stopped" ===
@@ -928,33 +925,23 @@ fun main() {
 
         // One batch per gesture, with the effect's own body: `earlierArmed` is cleared
         // *before* the load and nothing re-arms it while the viewport stays at the top, so a
-        // second pass on the same frame state must load nothing. `asked` is the hand latch the
-        // effect keeps (`ChatScreen`'s `earlierAsked`): set by a scroll session that has the
-        // viewport at the top, consumed by the load it authorises.
+        // second pass on the same frame state must load nothing.
         var armed = false
-        var asked = false
         var loads = 0
         fun frame(atTop: Boolean, canScrollForward: Boolean, hasLaidOut: Boolean, hidden: Int, scrolling: Boolean) {
             if (mayArmEarlier(atTop, canScrollForward, hasLaidOut)) armed = true
-            if (reachedTopByHand(atTop, scrolling)) asked = true
-            if (!atTop) {
-                asked = false
-                return
-            }
-            if (!mayLoadEarlier(atTop, armed, hidden, scrolling, asked)) return
+            if (!atTop) return
+            if (!mayLoadEarlier(atWindowTop = atTop, armed = armed, hiddenRows = hidden, isScrollInProgress = scrolling)) return
             armed = false
-            asked = false
             loads++
         }
-        // The user drags away from the top (arming edge), drags back to it and lifts.
-        frame(atTop = false, canScrollForward = true, hasLaidOut = true, hidden = 350, scrolling = true)
-        frame(atTop = true, canScrollForward = true, hasLaidOut = true, hidden = 350, scrolling = true)
+        // The user scrolls away from the top (that is the arming edge) and back to it.
+        frame(atTop = false, canScrollForward = true, hasLaidOut = true, hidden = 350, scrolling = false)
         frame(atTop = true, canScrollForward = true, hasLaidOut = true, hidden = 350, scrolling = false)
         check("J19 a batch is loaded once", loads, 1)
         frame(atTop = true, canScrollForward = true, hasLaidOut = true, hidden = 300, scrolling = false)
         check("J20 and not again while the viewport is still at the top", loads, 1)
-        frame(atTop = false, canScrollForward = true, hasLaidOut = true, hidden = 300, scrolling = true)
-        frame(atTop = true, canScrollForward = true, hasLaidOut = true, hidden = 300, scrolling = true)
+        frame(atTop = false, canScrollForward = true, hasLaidOut = true, hidden = 300, scrolling = false)
         frame(atTop = true, canScrollForward = true, hasLaidOut = true, hidden = 300, scrolling = false)
         check("J21 leaving the top and coming back loads the next batch", loads, 2)
 
@@ -963,7 +950,7 @@ fun main() {
         var freshArmed = false
         var freshLoads = 0
         if (mayArmEarlier(atWindowTop = true, canScrollForward = false, hasLaidOut = false)) freshArmed = true
-        if (mayLoadEarlier(atWindowTop = true, armed = freshArmed, hiddenRows = 350, isScrollInProgress = false, askedByHand = true)) freshLoads++
+        if (mayLoadEarlier(atWindowTop = true, armed = freshArmed, hiddenRows = 350, isScrollInProgress = false)) freshLoads++
         check("J22 a re-entered destination loads nothing before its first measure", freshLoads, 0)
     }
 
@@ -998,108 +985,6 @@ fun main() {
             TailSnapshot(10, viewport(10, atBottom = false, firstVisibleIndex = 5)),
         )
         check("K3 a backwards layout move is not a hand", state(layoutMove), "true/0")
-    }
-
-    // ============= M. a collapse is not a reader: the load rules need the hand, not the layout
-    //
-    // The report these pin, from the user's own 23 s screen recording: 收起一张思考块 / 工具卡 →
-    // 「列表立刻跳到本页最顶部（06:03 那一轮），约 0.8 s 后才自己滑回底部」。只在贴着列表末尾时
-    // 必跳，**被收起的内容越大越必跳**；在更早的内容里反复展开/收起则稳定。
-    //
-    // 帧证据（同一支录屏，720×1600 降采样、每 33 ms 一帧，节选）：
-    //   t=2.367  展开的思考块占满下半屏，列表贴底（`atTop && atBottom`，两枚悬浮箭头都不显示）；
-    //   t=2.400  点击后的第一帧：该行正文消失（应当），**它下面整片变成页面底色**，两枚箭头同时
-    //            出现（`!atTop`、`!atBottom || !following`）——视口自己走到了窗口顶；
-    //   t=2.500  「06:03」那天分隔行 + 三张工具卡 + 正文 / 表格出现在屏幕**上方**，原先可见的内容
-    //            整体下移约 830 px：一批更早的行被 prepend 进来（这一次点击没有任何滚动会话）。
-    //
-    // 也就是两段位移：布局先把视口带到窗口顶（`LazyListMeasure.kt` 的
-    // `if (currentMainAxisOffset < maxOffset)` 回退分支；内容不足时 `calculateItemsOffsets` 的
-    // `hasSpareSpace` 分支把整段内容按 `Arrangement.Top` 从视口顶铺开），然后规则把这件事读成
-    // 「读者到了顶」→ `session.expandEarlierHistory()` 的那一批在 t=2.500 落下来（异步读，点击后
-    // 约 0.1 s），再接着跟随把它钉回尾部 —— 报告里的「约 0.8 s 后才自己滑回底部」就是这一下。
-    //
-    // 修法就在这两条规则上：`atTop` / `!canScrollForward` 只是**资格**（arming），能不能真的加载
-    // 由 `reachedTopByHand`（一次滚动会话 + 视口在顶）决定。收起是点击，不是滚动会话，所以它再也
-    // 加载不了任何东西。
-    run {
-        // 1. 收起造成的顶（无手势）：不读文件、不补窗口。
-        check(
-            "M1 a layout move to the top is not a hand",
-            reachedTopByHand(atWindowTop = true, isScrollInProgress = false),
-            false,
-        )
-        check(
-            "M2 so the file read stays off",
-            mayReadEarlier(true, askedByHand = false, hiddenRows = 0, isScrollInProgress = false),
-            false,
-        )
-        check(
-            "M3 and the window batch stays off, however armed the list is",
-            mayLoadEarlier(true, armed = true, hiddenRows = 350, isScrollInProgress = false, askedByHand = false),
-            false,
-        )
-
-        // 2. 读者的手势在顶上 —— 含「列表比一屏还短、拖一下把历史拉进来」那个 wedge 场景。
-        check("M4 a drag at the top is a hand", reachedTopByHand(true, isScrollInProgress = true), true)
-        check(
-            "M5 and its release loads the window batch",
-            mayLoadEarlier(true, armed = true, hiddenRows = 350, isScrollInProgress = false, askedByHand = true),
-            true,
-        )
-        check("M6 and asks the file when nothing is hidden", mayReadEarlier(true, true, 0, false), true)
-
-        // 3. 手势没结束之前谁都不动。
-        check(
-            "M7 mid-gesture nothing loads",
-            mayLoadEarlier(true, true, 350, isScrollInProgress = true, askedByHand = true),
-            false,
-        )
-        check("M8 mid-gesture nothing is read", mayReadEarlier(true, true, 0, true), false)
-
-        // 4. 两条规则互补：有隐藏行时文件不动，全都渲染出来了才去问文件。
-        check("M9 a hidden window never reads the file", mayReadEarlier(true, true, 350, false), false)
-        check("M10 a fully rendered window never grows", mayLoadEarlier(true, true, 0, false, true), false)
-
-        // 5. 端到端：把 `ChatScreen` 那条 effect 的 body 跑一遍，收起那一帧什么都不许发生。
-        var armed = false
-        var asked = false
-        var loads = 0
-        var reads = 0
-        fun frame(atTop: Boolean, canScrollForward: Boolean, hidden: Int, scrolling: Boolean, hasEarlier: Boolean) {
-            if (mayArmEarlier(atTop, canScrollForward, hasLaidOut = true)) armed = true
-            if (reachedTopByHand(atTop, scrolling)) asked = true
-            if (!atTop) {
-                asked = false
-                return
-            }
-            if (mayReadEarlier(atTop, asked, hidden, scrolling) && hasEarlier) {
-                asked = false
-                reads++
-            }
-            if (!mayLoadEarlier(atTop, armed, hidden, scrolling, asked)) return
-            armed = false
-            asked = false
-            loads++
-        }
-        // 收起：视口自己到了顶、列表也不能再滚，而且没有任何滚动会话。旧代码在这里
-        // （`hiddenCount > 0`）加一批窗口、（`hiddenCount == 0`）读一次文件。
-        frame(atTop = true, canScrollForward = false, hidden = 350, scrolling = false, hasEarlier = true)
-        check("M11 a collapse grows no window", loads, 0)
-        frame(atTop = true, canScrollForward = false, hidden = 0, scrolling = false, hasEarlier = true)
-        check("M12 and reads no file (the 0.8 s landing)", reads, 0)
-        // 读者自己拖到顶：会话在飞的那一帧什么都不做，松手那一帧才读。
-        frame(atTop = true, canScrollForward = false, hidden = 0, scrolling = true, hasEarlier = true)
-        check("M13 mid-flight nothing happens", loads + reads, 0)
-        frame(atTop = true, canScrollForward = false, hidden = 0, scrolling = false, hasEarlier = true)
-        check("M14 the release reads the file exactly once", reads, 1)
-        frame(atTop = true, canScrollForward = false, hidden = 0, scrolling = false, hasEarlier = true)
-        check("M15 and the next layout frame does not read again", reads, 1)
-        // 同一个 latch 也让窗口那一批只走手势。
-        frame(atTop = false, canScrollForward = true, hidden = 350, scrolling = true, hasEarlier = false)
-        frame(atTop = true, canScrollForward = true, hidden = 350, scrolling = true, hasEarlier = false)
-        frame(atTop = true, canScrollForward = true, hidden = 350, scrolling = false, hasEarlier = false)
-        check("M16 the same hand loads a window batch", loads, 1)
     }
 
     println(if (failures == 0) "\nharness: OK (all checks passed)" else "\nharness: FAILED ($failures)")
