@@ -82,7 +82,7 @@ fun CompactionBlock(
             // is the family's convention in this app — applied for the same reason the other
             // three have it, so the four cards are one component.
             borderColor = palette.customMessageLabel.copy(alpha = 0.35f),
-            modifier = Modifier.toggleContent(expanded, { expanded = !expanded }),
+            modifier = Modifier.toggleContent(expanded, { expanded = !expanded }, rowKey = item.key),
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 AccentStripe(palette.customMessageLabel, PiSpacing.accentStripe)
