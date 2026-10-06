@@ -29,6 +29,7 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.mutableStateOf
@@ -36,7 +37,11 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -50,19 +55,28 @@ import java.util.Locale
 /**
  * Shared chrome for the 14 conversation blocks (docs/pi-android-ui-spec.md §7.4).
  *
- * The page margin and the block rhythm belong to the `LazyColumn` that renders
- * the stream (spec §7.4: `assistant-text` 左右内边距 0): it supplies both the
- * horizontal content padding and the vertical arrangement, so a block that
- * padded itself as well doubled the margin (F11 in `docs/rendering-review.md`).
- * Colour always comes from [PiTheme.palette].
+ * **The page margin belongs to the list; the rhythm belongs to the row.** The `LazyColumn`
+ * supplies the horizontal content padding (`PiSpacing.pageHorizontal`), so a block that padded
+ * itself as well doubled the margin (F11 in `docs/rendering-review.md`). The vertical rhythm is
+ * given **exactly once** for the same reason, and the one place is [BlockColumn]: the list's own
+ * `Arrangement` no longer spaces its items at all (补 2 in `/root/ui-redesign/施工补充.md` —
+ * 「块自己给就不许列表再给」; the shape F11 caught was 18 + 9 + 9 = 36 dp).
  *
- * v2's rhythm is **8**, not 16 (`06 §2`「块间距 8」, decision D1), and that number
- * lives at the one call site that owns it — the `LazyColumn`'s `spacedBy`
- * (`screens/ChatScreen.kt`). [BlockColumn]'s own `Arrangement` is the *inside* of
- * one block and stays on `PiSpacing.gutter` (6dp), exactly as spec §7.4 has it.
+ * ## Why the gap is read back rather than passed down
+ *
+ * The rail's line has to **overdraw** into the gap below a row to reach the next one
+ * (`ToolRail.kt`), and a run's shell does the same with its fill and its side borders. That
+ * overdraw is the one place where "how much air is below me" is load-bearing, and it used to be
+ * a compile-time constant (`RAIL_BRIDGE = PiSpacing.blockGap`, 8 dp) while the actual spacing was
+ * a runtime setting (`app.appearance.messageDensity`: 4 / 8 / 16 dp) — equal in the default tier
+ * only, which is why the rail visibly **broke into pieces** under 宽松 (16 dp of gap, 8 dp of
+ * overdraw) and why a shell drawn the same way would show a seam instead of one plate.
+ *
+ * So the gap is a property of the row ([rowGapDp], one function), this column applies it as its
+ * own bottom padding, and the rail reads the very same value back out of [LocalRowGap]. One
+ * source, two readers, nothing to keep in sync — 「跟随排版自然来」, and a future per-row-kind
+ * rhythm is a change to that one function.
  */
-
-/** The wrapper every block uses. Margins come from the list, not from here (F11). */
 @Composable
 internal fun BlockColumn(
     modifier: Modifier = Modifier,
@@ -70,12 +84,26 @@ internal fun BlockColumn(
     content: @Composable ColumnScope.() -> Unit,
 ) {
     Column(
-        modifier = modifier.fillMaxWidth(),
+        modifier = modifier.fillMaxWidth().padding(bottom = LocalRowGap.current),
         verticalArrangement = Arrangement.spacedBy(PiSpacing.gutter),
         horizontalAlignment = horizontalAlignment,
         content = content,
     )
 }
+
+/**
+ * **This row's** bottom air, in dp — the value [BlockColumn] pads with and the value
+ * `ToolRailFrame` overdraws by, which is what makes the two impossible to disagree.
+ *
+ * Provided per transcript row by `ChatScreen` from [rowGapDp] (the row's own property, seeded by
+ * the `app.appearance.messageDensity` setting). The default is the default tier, so a block
+ * composed outside the transcript list — a preview, a harness, a test — still gets the design's
+ * 4 dp rather than 0.
+ *
+ * `compositionLocalOf`, not `staticCompositionLocalOf`: the value changes with the density
+ * preference and its readers must follow.
+ */
+internal val LocalRowGap = compositionLocalOf { DEFAULT_ROW_GAP_DP.dp }
 
 /** Machine output: always monospace (design rule 7 — "two voices"). */
 @Composable
@@ -243,7 +271,31 @@ internal fun BlockActionMenu(
  * user-message bubble's radius, and `05 §3.3` decided the bubble keeps 16 dp while
  * the transcript's cards tighten to v2's 10.
  */
-internal val BlockCardShape = RoundedCornerShape(10.dp)
+/** `06 §2` 工具卡：圆角 10 — the number the shape below and a run's shell ring both use. */
+internal val BLOCK_CARD_RADIUS = 10.dp
+
+/**
+ * The card's shape, built from [BLOCK_CARD_RADIUS] — and it must follow the `val` above it:
+ * top-level property initialisers run in **declaration order**, so reading it from here before
+ * it is declared is a compile error.
+ */
+internal val BlockCardShape = RoundedCornerShape(BLOCK_CARD_RADIUS)
+
+/**
+ * A card's shape **inside its run**: rounded on the two corners that are the run's own ends,
+ * square where the run continues (`差异表` §2 第 14 行: 圆角只在 run 的两端).
+ *
+ * The merged shell is one plate, so an internal row must not round anything — two rounded rows
+ * butted against each other read as two cards again, which is the shape this revamp removes. A
+ * card that is alone in its run gets [BlockCardShape] exactly (both ends), which is why the
+ * ordinary single tool call looks byte-for-byte as it did.
+ */
+internal fun runCardShape(firstOfRun: Boolean, lastOfRun: Boolean): RoundedCornerShape = RoundedCornerShape(
+    topStart = if (firstOfRun) BLOCK_CARD_RADIUS else 0.dp,
+    topEnd = if (firstOfRun) BLOCK_CARD_RADIUS else 0.dp,
+    bottomStart = if (lastOfRun) BLOCK_CARD_RADIUS else 0.dp,
+    bottomEnd = if (lastOfRun) BLOCK_CARD_RADIUS else 0.dp,
+)
 
 /**
  * A tonal container card: v2's 10dp radius, no elevation, palette colour.
@@ -263,6 +315,12 @@ internal fun BlockCard(
     modifier: Modifier = Modifier,
     borderColor: Color? = null,
     /**
+     * The card's corner radius. The default is the whole [BlockCardShape]; a card that sits
+     * inside a **run** passes [runCardShape] so only the run's two ends are rounded (and so its
+     * 1 px ring, drawn by the rail, is the run's — see `ToolCard`).
+     */
+    shape: Shape = BlockCardShape,
+    /**
      * The card's interior padding. The default is `06 §2`「卡片内 12px」; the tool
      * card and the diff card pass their own `PaddingValues(horizontal = 10.dp)`
      * because v2 gives their rows `padding:7px 10px` / `0 10px 8px` — a 10 dp
@@ -273,7 +331,7 @@ internal fun BlockCard(
 ) {
     Surface(
         modifier = modifier.fillMaxWidth(),
-        shape = BlockCardShape,
+        shape = shape,
         color = color,
         border = borderColor?.let { BorderStroke(PiSpacing.hairline, it) },
     ) {
@@ -287,7 +345,20 @@ internal fun BlockCard(
     }
 }
 
-/** `06 §2` 工具卡 / diff 卡: their rows inset 10 horizontally (`padding:7px 10px`). */
+/**
+ * `06 §2` 工具卡: the tool card's rows inset 10 horizontally and **0** vertically — the card *is*
+ * its 24 dp row now (`差异表` §2 第 5 行; the two-row card's 6 + 6 is what a one-row card cannot
+ * afford), so the expanded card's lower air is carried by its last line (`ToolFooter`).
+ */
+internal val ToolCardRowPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp)
+
+/**
+ * `06 §2` 工具卡 / diff 卡: the rows' horizontal inset, `padding:7px 10px`.
+ *
+ * Kept at 6 dp vertically for the **diff card**, which is not part of this revamp: its two header
+ * rows keep the box they had (「不动 diff 卡」). The tool card's own padding is
+ * [ToolCardRowPadding].
+ */
 internal val BlockCardRowPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
 
 /**
@@ -323,8 +394,8 @@ internal fun AccentStripe(
  * v2 draws every `展开 / 收起` label in `muted` (`06 §3`: the thinking row, the diff
  * card, the custom card's head), not in the accent — the accent is not a
  * decoration, and an affordance that is always on screen should not compete with the
- * card's state colour. [color] exists for the one card whose label belongs to its
- * own tone: the error card's `详情`, which v2 paints `error`.
+ * card's state colour. [color] exists for a label that belongs to its own tone — it
+ * was introduced for the error card's `详情`, which v2 paints `error`.
  *
  * @param color the label and chevron colour; `muted` by default, as v2 draws it.
  */
@@ -369,6 +440,50 @@ internal fun ExpandLabel(
 
 /** v2's `展开 / 收起` chevron: `s={13}` (`direction-b-v2.html:911`, `:951`). */
 private val EXPAND_CHEVRON_SIZE = 13.dp
+
+/**
+ * The **other** disclosure chevron: the 5×5 geometry the crowded rows draw.
+ *
+ * [ExpandLabel]'s 13 dp icon is right for a `展开 / 收起` label that owns its row, and wrong
+ * for a card row that already carries six fields — the icon's bounding box cost 14 dp of which
+ * 9 were empty (`差异表` §2 第 16 行). So the tool card and the three extension cards draw this
+ * one instead: the same shape v5 does (`.ch` — an L built from a right border and a bottom
+ * border, rotated ∓45°), so the stroke count, the direction (**right while collapsed, down while
+ * expanded**) and the colour are unchanged; only the box is smaller.
+ *
+ * `1.5` rather than the app's 1 px hairline because this is an **icon's stroke**, not a
+ * structural line: it is the weight the 14 dp `KeyboardArrowRight`/`Down` it replaces drew at
+ * this size, and the 1 px rule (`06 §5`) is about separators, borders, the rail and the ticks —
+ * all of which are still exactly 1 dp.
+ *
+ * [tint] is the caller's business because the chevron belongs to the word it sits beside: the
+ * tool row's is `bodyOnTool`, the three extension cards' is `muted` — the same token their
+ * `详情` word takes.
+ */
+@Composable
+internal fun DisclosureChevron(
+    expanded: Boolean,
+    tint: Color,
+    modifier: Modifier = Modifier,
+) {
+    Box(
+        modifier = modifier
+            .size(DISCLOSURE_CHEVRON_SIZE)
+            .rotate(if (expanded) 45f else -45f)
+            .drawBehind {
+                val stroke = DISCLOSURE_CHEVRON_STROKE.toPx()
+                val half = stroke / 2f
+                drawLine(tint, Offset(size.width - half, 0f), Offset(size.width - half, size.height), stroke)
+                drawLine(tint, Offset(0f, size.height - half), Offset(size.width, size.height - half), stroke)
+            },
+    )
+}
+
+/** v5's `.ch`: the crowded rows' disclosure chevron box. */
+private val DISCLOSURE_CHEVRON_SIZE = 5.dp
+
+/** v5's `.ch` border width — an icon stroke, see [DisclosureChevron]. */
+private val DISCLOSURE_CHEVRON_STROKE = 1.5.dp
 
 /**
  * The single expand/collapse gesture: **the content is the hit target**.
@@ -455,16 +570,6 @@ private val CLOCK_FORMAT: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm
 /** Clock shown once per turn (docs/pi-android-ui-spec.md §4.6). */
 internal fun formatClock(ts: Long): String =
     Instant.ofEpochMilli(ts).atZone(ZoneId.systemDefault()).format(CLOCK_FORMAT)
-
-/** Durations the way pi prints them: ms under a second, then s, then m s. */
-internal fun formatDuration(ms: Long): String {
-    val safe = ms.coerceAtLeast(0)
-    return when {
-        safe < 1_000 -> "${safe}ms"
-        safe < 60_000 -> "${safe / 1_000}s"
-        else -> "${safe / 60_000}m${(safe % 60_000) / 1_000}s"
-    }
-}
 
 /** Token counts stay compact in an 11.5sp meta line: 42000 becomes 42k. */
 internal fun formatTokens(count: Long): String = when {

@@ -105,6 +105,30 @@ internal class TailFollow(initiallyFollowing: Boolean = true) {
     private var previousAnchor: TailAnchor? = null
 
     /**
+     * The **previous** observation's layout, kept only for the pin licence below.
+     *
+     * Null before the first snapshot — which is what makes that first one licensed
+     * (a restored machine, a session switch and a re-entered destination all start
+     * here, and all of them have to land on the tail).
+     */
+    private var previousViewport: TailViewport? = null
+    /** The caller's transcript revision as of the previous snapshot. See [TailSnapshot.revision]. */
+    private var previousRevision: Int = -1
+    /** The caller's poke as of the previous snapshot. */
+    private var previousPoke: Long = -1
+
+    /**
+     * A licence to issue a pin on the **next** observation no matter what moved,
+     * granted by [reArm] (and by rule 1's own re-arm inside [onSnapshot]) and consumed
+     * by that observation.
+     *
+     * `reArm` means "the newest row is where the reader wants to be — now": the
+     * affordance and the send button say it with no other key having moved, which is
+     * exactly the frame the licence below would otherwise refuse to scroll on.
+     */
+    private var pinLicensed: Boolean = true
+
+    /**
      * Whether the **previous** snapshot was taken mid-session.
      *
      * The effect in `ChatScreen` snapshots only when one of its keys changes, so a
@@ -117,8 +141,7 @@ internal class TailFollow(initiallyFollowing: Boolean = true) {
     private var previousScrolling: Boolean = false
 
     /**
-     * The pin the *current position* wants — whether or not the last call handed it
-     * out (see the repeat guard in [onSnapshot]).
+     * The last pin the caller was **given** (see the repeat guard in [onSnapshot]).
      *
      * Only the pin is remembered, not the geometry it came from: an identical pin is
      * the same request, and remembering the geometry as well is what let an
@@ -139,6 +162,9 @@ internal class TailFollow(initiallyFollowing: Boolean = true) {
         // suppressed by the repeat guard: the remembered pin describes what the
         // *previous* position wanted, and the user has just asked for the tail.
         lastPin = null
+        // Nor by rule 5's licence: the reader has just said where they want to be, and
+        // the frame that acts on it has no other key of its own to move.
+        pinLicensed = true
     }
 
     /**
@@ -198,6 +224,55 @@ internal class TailFollow(initiallyFollowing: Boolean = true) {
      * `LazyListState.requestScrollToItem` ([TailPin]). It is `null` in every other
      * case, so a paused transcript is never scrolled by the streaming code.
      *
+     * ## 5. The pin has to be *paid for* — 「展开/收起让视口乱跳」
+     *
+     * The four rules above are about the *flag*, and they are right: a layout change
+     * is not a hand, so it must never pause a follow. The **pin** is a different
+     * question, and answering it with position alone is what produced the reader's
+     * 「点展开，整个视口跳到最底下，再点收起又跳回来」.
+     *
+     * The frame, exactly: the reader is at the end of the transcript and following.
+     * They tap a **collapsed tool card above the tail**. The card grows; `LazyColumn`
+     * keeps the reader's own row anchored, so everything below the card moves down by
+     * the card's body height and the tail row leaves the screen; `canScrollForward`
+     * turns true and `atBottom` flips. `ChatScreen`'s follow effect is *keyed* on
+     * `atBottom` (it has to be: that is the frame a paused follow learns the reader is
+     * back at the end on), so it re-snapshots — and the old pin condition answered
+     * "not at the bottom and following" with `pinToTail()`, which for a tail that is
+     * no longer on screen is `TailPin(tail, PIN_TO_END_PX)`: **the viewport is yanked
+     * to the very bottom of the transcript** (measured on the reader's recording:
+     * 770 px). Collapsing the same card then shrinks the content under a viewport the
+     * library has to correct back, so the reader sees the second half of the jump
+     * (754 px) — the list's own scroll correction, which no app-side rule can or
+     * should suppress.
+     *
+     * The missing distinction is that **nothing about the transcript moved**. A pin is
+     * a claim about the transcript's newest row ("it must be visible"), so it is only
+     * issued when something other than the list's own scroll geometry changed since
+     * the previous observation:
+     *
+     *  - the content: [TailSnapshot.transcriptRows], [TailSnapshot.revision],
+     *    [TailSnapshot.poke] — a publication, an optimistic row, an explicit
+     *    "go to the newest";
+     *  - the viewport itself: `viewportEndOffsetPx` — the composer's inset, the
+     *    keyboard, a rotation. The rows did not move; the window they are read
+     *    through did, and the tail has to be brought back inside it;
+     *  - the reader's hand: an `isScrollInProgress` edge. A tap is **not** a scroll
+     *    session (and neither is `requestScrollToItem`), so the disclosure above
+     *    cannot hide behind this one;
+     *  - the tail row's **own** measured height, while it stayed the last visible row:
+     *    the final markdown parse and an image's intrinsic size land after the
+     *    publication that caused them, with no key of its own to move
+     *    (`ChatScreen`'s `tailSize`). This is the one geometry fact that is about the
+     *    newest row itself, and dropping it would bring back 「差几个像素到不了真底部」.
+     *
+     * A row *above* the tail changing height satisfies none of them, so that frame
+     * issues no scroll — which is the whole fix. Note what the licence is **not**: it
+     * gates the pin only. `following`, `unseenRows` and every rule above see the same
+     * snapshots in the same order as before, so this can only ever *withhold* a
+     * scroll; it can never pause a follow, re-arm one, or move a viewport that the old
+     * code left alone.
+     *
      * ## The caller's obligation, because rules 2 and 3 are observations
      *
      * Rules 2 and 3 are facts about a *sequence* of snapshots, so a caller that stops
@@ -256,7 +331,26 @@ internal class TailFollow(initiallyFollowing: Boolean = true) {
             else -> unseenRows + (rows - previousRows).coerceAtLeast(0)
         }
 
-        val pin = when {
+        // Rule 5's licence, read *after* the rules above so rule 1's own re-arm is
+        // seen (it grants one) and before the pin below. Nothing here is a rule: no
+        // branch of it changes `following` or `unseenRows`.
+        val lastViewport = previousViewport
+        val contentChanged = previousRows < 0 ||
+            rows != previousRows ||
+            snapshot.revision != previousRevision ||
+            snapshot.poke != previousPoke
+        val viewportChanged =
+            lastViewport == null || viewport.viewportEndOffsetPx != lastViewport.viewportEndOffsetPx
+        val gestureEdge = viewport.isScrollInProgress != previousScrolling
+        val tailSettled = lastViewport != null &&
+            lastViewport.lastVisibleIndex == lastViewport.tailIndex &&
+            viewport.lastVisibleIndex == viewport.tailIndex &&
+            viewport.lastVisibleSizePx != lastViewport.lastVisibleSizePx
+        val licensed = pinLicensed || contentChanged || viewportChanged || gestureEdge || tailSettled
+
+        // The pin the *position* wants, whether or not this observation is allowed to
+        // hand it out (rule 5).
+        val wanted = when {
             !following -> null
             viewport.isScrollInProgress -> null
             viewport.totalItems <= 0 -> null
@@ -281,16 +375,28 @@ internal class TailFollow(initiallyFollowing: Boolean = true) {
         // identical pin is the same request by definition, so skipping it cannot lose
         // a scroll — a geometry that really moved asks for a different pin (see the
         // harness's "new geometry is pinned again").
-        val repeated = pin != null && pin == lastPin
-        val issued = if (repeated) null else pin
-        // The memory follows what the *position* wants, not what was sent this time: a
-        // skip means "already asked for", and forgetting it would let the next
-        // identical emission ask again - which is the loop this exists to stop.
-        lastPin = pin
+        val repeated = wanted != null && wanted == lastPin
+        // Rule 5, the only place it is consulted: an unpaid-for pin is not issued.
+        val issued = if (!licensed || repeated) null else wanted
+        // The memory is the last pin the caller was **given**, which is what "never
+        // re-issue a pin" is about. A frame the licence refuses is not a request that
+        // was made, so it must not suppress the same want on the next licensed frame —
+        // while a *repeated* one is the same want by definition either way, and a
+        // position that wants nothing forgets the pin, exactly as it did before.
+        lastPin = when {
+            wanted == null -> null
+            issued != null -> wanted
+            else -> lastPin
+        }
 
         previousRows = rows
         previousAnchor = anchor
         previousScrolling = viewport.isScrollInProgress
+        previousViewport = viewport
+        previousRevision = snapshot.revision
+        previousPoke = snapshot.poke
+        // One frame's worth: [reArm] is what grants the next one.
+        pinLicensed = false
         return TailDecision(following = following, unseenRows = unseenRows, pin = issued)
     }
 
@@ -459,6 +565,23 @@ internal data class TailSnapshot(
      * the only way a pin can be issued between two tokens.
      */
     val poke: Long = 0L,
+    /**
+     * `ChatScreen`'s `state.revision` — the transcript publication counter — as of the
+     * frame that produced this snapshot.
+     *
+     * Rule 5's evidence that the **content** moved. `transcriptRows` cannot carry it:
+     * a streaming answer, a tool's growing output and a row whose parse changed all
+     * keep the row count and move no other key of the caller's effect, yet they are
+     * exactly the publications a follow has to chase. The engine bumps this counter
+     * once per publication and for nothing else (no UI clock, no inset, no
+     * `nowMs` tick), which is what makes "the content changed" a fact here rather than
+     * an inference.
+     *
+     * Defaulted to `0` for the harnesses, which drive the machine by geometry alone:
+     * an unchanged default is "no publication between these two frames", the
+     * conservative reading.
+     */
+    val revision: Int = 0,
 )
 
 /**

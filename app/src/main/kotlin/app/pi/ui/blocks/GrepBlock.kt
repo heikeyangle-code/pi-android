@@ -47,6 +47,8 @@ internal fun GrepBlock(
     defaultExpanded: Boolean = false,
     firstOfRun: Boolean = true,
     lastOfRun: Boolean = true,
+    /** The **run's** state, for the 1 px ring the rail draws ([ToolRunSlot.ring]). */
+    ring: RailState? = null,
 ) {
     val palette = PiTheme.palette
     val state = toolStateOf(item)
@@ -54,7 +56,7 @@ internal fun GrepBlock(
     var fullOutput by remember { mutableStateOf(false) }
     val body = remember(item.output) { ToolOutputParse.grepBody(item.output) }
     if (body == null) {
-        ToolCallBlock(item, modifier, defaultExpanded, firstOfRun, lastOfRun)
+        ToolCallBlock(item, modifier, defaultExpanded, firstOfRun, lastOfRun, ring = ring)
         return
     }
     val subject = remember(item.args) { grepSubject(item.args) }
@@ -72,7 +74,6 @@ internal fun GrepBlock(
     }
     val shownMatches = remember(plan) { countMatches(plan) }
     val omitted = (body.matchCount - shownMatches).coerceAtLeast(0)
-    val hasBody = body.groups.isNotEmpty() || body.notice != null || body.empty
     val footer = remember(item.output, item.exitCode, item.elapsedMs, item.outputTruncated, state, body.matchCount) {
         if (state == ToolState.Rejected) {
             toolRejectedFooter()
@@ -96,13 +97,14 @@ internal fun GrepBlock(
                 { expanded = !expanded },
                 firstOfRun = firstOfRun,
                 lastOfRun = lastOfRun,
+                ring = ring,
             ) {
                 ToolHeader(
                     item = item,
                     title = "grep",
                     subject = subject,
+                    state = state,
                     expanded = expanded,
-                    expandable = hasBody,
                 )
                 if (expanded) {
                     when {
@@ -145,12 +147,10 @@ internal fun GrepBlock(
                     }
                     body.notice?.let { ToolNotice(text = it, copyOnTap = null) }
                     if (notice != null) ToolNotice(text = notice, copyOnTap = fullOutputPath)
+                    // 展开态的**最后一行**：整串页脚（`差异表` §2 第 3 行）。措辞与 ` · `
+                    // 顺序由 [toolFooterText] 决定，这里一个字都不动。
+                    ToolFooter(text = footer, state = state)
                 }
-                ToolFooter(
-                    text = footer,
-                    state = state,
-                    elapsedMs = item.elapsedMs,
-                )
             }
         }
     }
