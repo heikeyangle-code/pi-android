@@ -1206,6 +1206,13 @@ private fun ChatBody(
             TailSnapshot(
                 transcriptRows = transcriptRows,
                 poke = tailPoke,
+                // Rule 5's evidence that the *content* moved: this effect re-runs on
+                // `atBottom`/`tailSize` too, and those two are pure scroll geometry —
+                // the reader's own tap on a tool card above the tail flips both
+                // without a single row changing. Without this, `pinToTail()` answered
+                // that frame by yanking the viewport to the very bottom (see
+                // `TailFollow`'s rule 5).
+                revision = state.revision,
                 viewport = TailViewport(
                     totalItems = info.totalItemsCount,
                     firstVisibleIndex = listState.firstVisibleItemIndex,
@@ -1234,6 +1241,9 @@ private fun ChatBody(
         // scroll session, is never cancelled by the next token and can never be
         // mistaken for the user's hand. The `isScrollInProgress` re-read closes the gap
         // between the snapshot and this line — the follow must never cancel a drag.
+        // A non-null pin already means the machine found something other than the
+        // list's own scroll geometry behind this frame (`TailFollow` rule 5), so the
+        // reader's own expand/collapse above the tail cannot reach this line.
         if (pin != null && !listState.isScrollInProgress) {
             listState.requestScrollToItem(pin.index, pin.offsetPx)
         }
