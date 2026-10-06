@@ -658,8 +658,7 @@ internal fun WsRow(
                     style = if (mono) {
                         // 稿子的等宽行标题是 14（`mono t14`），而 `PiTheme.text.mono` 是 13
                         // 的机器正文档；就地定尺寸，`PiTextStyles` 与 `piTypography` 都不动 ——
-                        // 同一手法在 `BootScreen.BootBadge`(17) 与
-                        // `PiSettingsEditors` 的数字框(17) 上都用过。
+                        // 同一手法在 `PiSettingsEditors` 的数字框(17) 上也用过。
                         PiTheme.text.mono.copy(fontSize = 14.sp, lineHeight = 20.sp)
                     } else {
                         MaterialTheme.typography.bodyLarge

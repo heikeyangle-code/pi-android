@@ -479,7 +479,6 @@ fun SessionsScreen(
                         title = "正在读取会话…",
                         body = "会话文件较多时需要几秒，读完后列表会显示在这里。",
                         modifier = Modifier.fillMaxSize(),
-                        markPi = false,
                     )
                 } else if (sessionsFailed && sessions.isEmpty()) {
                     // **读不到，不等于没有。** 这一支是这次补的第三种状态：旧代码把 `list()` 的异常
@@ -491,7 +490,6 @@ fun SessionsScreen(
                         title = "读不到会话列表",
                         body = "这一次读取失败了，不是没有会话。点右上角的刷新可以再试一次。",
                         modifier = Modifier.fillMaxSize(),
-                        markPi = false,
                     )
                 } else if (sessions.isEmpty()) {
                     PiEmptyStateTopAnchored(
@@ -499,9 +497,6 @@ fun SessionsScreen(
                         title = "还没有会话",
                         body = "会话按工作目录分组，这里会列出每一个目录的对话。",
                         modifier = Modifier.fillMaxSize(),
-                        // `phone21` 画的是对话气泡，不是 π 字形：π 是 App 自己那几面
-                        // 空态（对话页）的标识，这里画的是「这个列表里没有东西」。
-                        markPi = false,
                     )
                 } else if (visible.isEmpty()) {
                     PiEmptyStateTopAnchored(
@@ -510,7 +505,6 @@ fun SessionsScreen(
                         body = "换一个关键词，或关掉「仅命名」筛选。",
                         modifier = Modifier.fillMaxSize(),
                         // `phone22` 是放大镜：一次没搜到不是「App 是空的」。
-                        markPi = false,
                     )
                 } else {
                     // 分组与组间排序在上面那次 `remember` 里（与 `visible` 同一组键）：

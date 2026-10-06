@@ -108,8 +108,6 @@ fun SettingsSearchScreen(
                 icon = Icons.Filled.Search,
                 title = "没有匹配的设置",
                 body = "试试字段名（reserveTokens、sessionDir），或者斜杠命令（/compact、/tree）。",
-                // 同会话列表那一对：一次没搜到是「找的东西不在这」，不是 App 的空面。
-                markPi = false,
             )
 
             else -> LazyColumn(
