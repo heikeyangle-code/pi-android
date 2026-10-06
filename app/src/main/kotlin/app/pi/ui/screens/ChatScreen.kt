@@ -2355,8 +2355,19 @@ private fun ChatBody(
                     modifier = Modifier
                         .align(Alignment.TopStart)
                         .offset {
-                            val first = listState.layoutInfo.visibleItemsInfo.firstOrNull { it.index == 0 }
-                            IntOffset(0, if (first == null) -bandPx else first.offset - bandPx)
+                            // The sentinel sits above the transcript's **first** row, which in a
+                            // reversed list is the item at the layout's *end*. Main-axis offsets
+                            // there are measured from the screen's bottom, so an item's visual top
+                            // is `viewportHeight - offset - size`. (Was: the item at feed index 0,
+                            // which is now the *newest* row.)
+                            val info = listState.layoutInfo
+                            val last = info.visibleItemsInfo.lastOrNull {
+                                it.index == info.totalItemsCount - 1
+                            }
+                            val viewportHeight = info.viewportEndOffset - info.viewportStartOffset
+                            val y = if (last == null) -bandPx
+                                else viewportHeight - last.offset - last.size - bandPx
+                            IntOffset(0, y)
                         }
                         .padding(horizontal = PiSpacing.pageHorizontal),
                 )
