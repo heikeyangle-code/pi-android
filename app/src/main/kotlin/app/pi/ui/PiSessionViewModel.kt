@@ -29,7 +29,6 @@ import app.pi.rpc.QueueMode
 import app.pi.rpc.SessionEntry
 import app.pi.rpc.StreamingBehavior
 import app.pi.runtime.PiPaths
-import app.pi.rpc.ThinkingBlock
 import app.pi.rpc.ToolCall
 import app.pi.rpc.ToolStatus
 import app.pi.rpc.TranscriptItem
