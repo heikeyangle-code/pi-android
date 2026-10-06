@@ -238,13 +238,18 @@ internal class TailFollow(initiallyFollowing: Boolean = true) {
      * turns true and `atBottom` flips. `ChatScreen`'s follow effect is *keyed* on
      * `atBottom` (it has to be: that is the frame a paused follow learns the reader is
      * back at the end on), so it re-snapshots — and the old pin condition answered
-     * "not at the bottom and following" with `pinToTail()`, which for a tail that is
-     * no longer on screen is `TailPin(tail, PIN_TO_END_PX)`: **the viewport is yanked
-     * to the very bottom of the transcript** (measured on the reader's recording:
-     * 770 px). Collapsing the same card then shrinks the content under a viewport the
-     * library has to correct back, so the reader sees the second half of the jump
-     * (754 px) — the list's own scroll correction, which no app-side rule can or
-     * should suppress.
+     * "not at the bottom and following" with `pinToTail()`: on the un-reversed list that
+     * was `TailPin(tail, PIN_TO_END_PX)` and the viewport was yanked to the very bottom
+     * of the transcript (measured on the reader's recording: 770 px). Collapsing the
+     * same card then shrank the content under a viewport the library had to correct
+     * back, and the reader saw the second half of the jump (754 px) — the list's own
+     * scroll clamp, which no app-side rule can or should suppress.
+     *
+     * **That second half is why the list is reversed now** (`reverseLayout`, item 0 =
+     * the newest row): with the anchor at the *newest* end, a row above the reader
+     * changing height never lowers the scroll range below the reader's offset, so the
+     * clamp cannot fire at all. What is left for this rule is the first half — a
+     * snapshot that carried no content change must not issue a pin.
      *
      * The missing distinction is that **nothing about the transcript moved**. A pin is
      * a claim about the transcript's newest row ("it must be visible"), so it is only
@@ -294,7 +299,7 @@ internal class TailFollow(initiallyFollowing: Boolean = true) {
 
         val anchor = viewport.anchor
         val previous = previousAnchor
-        val movedBackwards = previous != null && anchor.isBefore(previous)
+        val movedBackwards = previous != null && anchor.isOlder(previous)
         val gesture = viewport.isScrollInProgress && anchor != previous
         // A session that just ended with the anchor moved backwards: the drag's lift —
         // the frame `gesture` itself cannot see, because the effect snapshots only on
@@ -343,9 +348,9 @@ internal class TailFollow(initiallyFollowing: Boolean = true) {
             lastViewport == null || viewport.viewportEndOffsetPx != lastViewport.viewportEndOffsetPx
         val gestureEdge = viewport.isScrollInProgress != previousScrolling
         val tailSettled = lastViewport != null &&
-            lastViewport.lastVisibleIndex == lastViewport.tailIndex &&
-            viewport.lastVisibleIndex == viewport.tailIndex &&
-            viewport.lastVisibleSizePx != lastViewport.lastVisibleSizePx
+            lastViewport.firstVisibleIndex == lastViewport.tailIndex &&
+            viewport.firstVisibleIndex == viewport.tailIndex &&
+            viewport.firstVisibleSizePx != lastViewport.firstVisibleSizePx
         val licensed = pinLicensed || contentChanged || viewportChanged || gestureEdge || tailSettled
 
         // The pin the *position* wants, whether or not this observation is allowed to
@@ -363,11 +368,10 @@ internal class TailFollow(initiallyFollowing: Boolean = true) {
         // feeds this machine — so repeating a pin is a per-frame remeasure loop.
         //
         // Compare the **pin**, not the geometry it came from. Requiring an identical
-        // viewport too defeated this guard in the one case it exists for: when the
-        // tail row is taller than the viewport, `pinToTail()` returns the fixed
-        // `TailPin(tail, PIN_TO_END_PX)` — a value that does not depend on the offsets —
-        // and the list cannot satisfy it *exactly* (the requested position is clamped to
-        // the content end). The remeasure
+        // viewport too defeated this guard in the one case it exists for: the pin is a
+        // fixed value that does not depend on the offsets at all (`TailPin(0, 0)` on a
+        // reversed list; a fixed `TailPin(tail, PIN_TO_END_PX)` before it), while the
+        // geometry a remeasure reports does differ. The remeasure
         // that `requestScrollToItem` schedules therefore produces a *different*
         // geometry with the **same** pin, the old condition let it through, and the
         // follow re-issued the unsatisfiable request on every frame: a remeasure loop
@@ -438,12 +442,14 @@ internal data class TailAnchor(val itemIndex: Int, val itemOffsetPx: Int) {
     /**
      * The viewport moved towards older rows.
      *
-     * A smaller index is unambiguous. An unchanged index with a smaller offset is
-     * the same movement inside one row, and it is how a tall streaming row behaves
-     * once its start has passed the top of the viewport.
+     * **The list is reversed** (`reverseLayout = true`, fed with the newest row first),
+     * so item 0 is the newest row and the layout starts at the **bottom** of the screen:
+     * moving towards history pushes the layout forward, which in `LazyListState`'s own
+     * numbers is a **larger** index and a **larger** offset inside the anchor row (a
+     * tall streaming row whose bottom has passed the screen's bottom edge).
      */
-    fun isBefore(other: TailAnchor): Boolean =
-        itemIndex < other.itemIndex || (itemIndex == other.itemIndex && itemOffsetPx < other.itemOffsetPx)
+    fun isOlder(other: TailAnchor): Boolean =
+        itemIndex > other.itemIndex || (itemIndex == other.itemIndex && itemOffsetPx > other.itemOffsetPx)
 }
 
 /**
@@ -468,59 +474,57 @@ internal data class TailViewport(
     val totalItems: Int,
     val firstVisibleIndex: Int,
     val firstVisibleOffsetPx: Int,
-    val lastVisibleIndex: Int,
-    val lastVisibleOffsetPx: Int,
-    val lastVisibleSizePx: Int,
+    /**
+     * The measured height of the row at the layout's start — the **newest** row
+     * (`reverseLayout`). It is the one geometry fact that is *about the row a follow
+     * exists for*, which is what rule 5's settle licence needs (a streamed token or a
+     * markdown parse changing that row's height must still re-pin).
+     */
+    val firstVisibleSizePx: Int,
+    /**
+     * `LazyListLayoutInfo.viewportEndOffset` — the size of the lazy list layout. Kept
+     * because the *viewport* growing or shrinking (the keyboard, an inset change) is
+     * its own reason to re-pin; it is direction-agnostic.
+     */
     val viewportEndOffsetPx: Int,
     val isScrollInProgress: Boolean,
+    /**
+     * `!LazyListState.canScrollBackward`. The list is **reversed**, so its layout
+     * starts at the newest row: "cannot scroll backwards" means that row is already
+     * where it has to be, i.e. the newest end of the transcript is on screen. This is
+     * what `!canScrollForward` used to be on an un-reversed list, and it is what every
+     * rule below means by "at the bottom".
+     */
     val atBottom: Boolean,
 ) {
     val anchor: TailAnchor get() = TailAnchor(firstVisibleIndex, firstVisibleOffsetPx)
 
-    /** The last row — the one a follow has to keep visible. */
-    val tailIndex: Int get() = totalItems - 1
+    /**
+     * The newest row — item 0, because the list is reversed (`ChatScreen` feeds
+     * `renderedItems.asReversed()` into a `reverseLayout = true` `LazyColumn`).
+     */
+    val tailIndex: Int get() = 0
 
     /**
-     * How to reach the tail with `requestScrollToItem`, or null when the tail's
-     * bottom is already inside the viewport.
+     * How to reach the newest row with `requestScrollToItem`, or `null` when it is
+     * already on screen.
      *
-     * **The bug this exists for.** `scrollToItem(totalItems - 1)` puts the last
-     * row's *top* at the top of the viewport. When that row is taller than the
-     * viewport — a long streaming answer, which is the normal case — the newest text
-     * (its bottom) is then one viewport *below* the fold, so "follow the tail"
-     * scrolled to a place where the tail is invisible. Two cases:
+     * **On a reversed list this needs no arithmetic at all.** The layout starts at the
+     * screen's bottom, so item 0 is the newest row and that row is "on screen" exactly
+     * when it is the first visible item. `TailPin(0, 0)` puts its **bottom** — the
+     * newest line a follow is chasing — on the bottom edge, in one step, whether the
+     * row is shorter or taller than the viewport.
      *
-     *  - the tail row is visible: move the viewport down by exactly the number of
-     *    pixels of it that are below the fold, keeping the first visible row. The
-     *    measure pass clamps an overshoot at the content end by scrolling back
-     *    (`LazyListMeasure.kt:246-269`), so this lands at the end, never past it;
-     *  - the tail row is not visible at all (its whole body is below the fold): ask
-     *    for its **end**, [PIN_TO_END_PX], not its top.
-     *
-     * **Why the second case no longer asks for the tail's top.** It used to return
-     * `offsetPx = 0` — put the tail row's top at the viewport's top — and rely on the
-     * *next* snapshot to align its bottom once the row had been measured ("one extra
-     * frame"). That next snapshot only exists if one of the follow effect's **keys**
-     * changes (`ChatScreen`'s `LaunchedEffect(state.revision, state.streaming,
-     * renderedItems.size, scrolling, atBottom, tailPoke, …)`), and in exactly the case
-     * this branch is for it does not: a tail row taller than the viewport leaves
-     * `!canScrollForward` false both before and after the jump, no scroll session is
-     * started (`requestScrollToItem` starts none by design) and nothing else moves — so
-     * the correction was never requested and "回到最新" parked with the tail row's top at
-     * the top of the screen and its newest lines still below the fold. The user's report
-     * was 「下点了它到不了屏幕最底部」, and it is the *delivery* that was broken, not the
-     * arithmetic. Asking for the end clamps to the end in **one** step and needs no second
-     * snapshot at all; `PinToEnd` is the value, and the harness pins both the one-shot
-     * property and the fact that it is not a second pin.
+     * The un-reversed list could not say that: there the pin was a pixel difference
+     * against the *last* item, plus `PIN_TO_END_PX` for "the tail is below the fold",
+     * because asking for a row's *top* hides the newest lines of anything taller than
+     * the viewport (the reader's 「下点了它到不了屏幕最底部」). Both cases are now this
+     * one request.
      */
     fun pinToTail(): TailPin? {
         if (totalItems <= 0) return null
-        val tail = tailIndex
-        if (lastVisibleIndex < tail) return TailPin(index = tail, offsetPx = PIN_TO_END_PX)
-        if (lastVisibleIndex > tail) return null
-        val hidden = lastVisibleOffsetPx + lastVisibleSizePx - viewportEndOffsetPx
-        if (hidden <= 0) return null
-        return TailPin(index = firstVisibleIndex, offsetPx = firstVisibleOffsetPx + hidden)
+        if (firstVisibleIndex > 0) return TailPin(index = 0, offsetPx = 0)
+        return null
     }
 }
 
@@ -533,20 +537,6 @@ internal data class TailViewport(
  */
 internal data class TailPin(val index: Int, val offsetPx: Int)
 
-/**
- * The offset [TailViewport.pinToTail] asks for when the tail row is not on screen at all.
- *
- * `requestScrollToItem(index, offset)` places the item's **start** `offset` px above the
- * viewport's top, and the measure pass clamps the result to the content
- * (`LazyListMeasure.kt:246-269`), so any offset beyond the content's height means "as far
- * down as this list goes" — the end. The number only has to exceed the longest content a
- * transcript can have; ~16.7 M px is about sixteen thousand phone screens, which is also
- * far below `Int.MAX_VALUE` so no offset arithmetic in the measure pass can wrap.
- *
- * `internal` rather than private so the `tail-follow` harness can assert the exact value
- * instead of a literal that could drift from it.
- */
-internal const val PIN_TO_END_PX = 1 shl 24
 
 /** One observation of the list. See [TailFollow.onSnapshot]. */
 internal data class TailSnapshot(
@@ -731,7 +721,7 @@ internal fun itemIndexOfVisibleRow(
     renderWindow: Int,
     windowOpen: Boolean,
     headerRows: Int,
-): Int = visibleRow - hiddenRows(visibleRows, renderWindow, windowOpen) + headerRows
+): Int = (visibleRows - 1 - visibleRow) - headerRows
 
 /** The inverse of [itemIndexOfVisibleRow]: an item index back to a `visibleItems` index. */
 internal fun visibleRowOfItemIndex(
@@ -740,7 +730,7 @@ internal fun visibleRowOfItemIndex(
     renderWindow: Int,
     windowOpen: Boolean,
     headerRows: Int,
-): Int = itemIndex + hiddenRows(visibleRows, renderWindow, windowOpen) - headerRows
+): Int = visibleRows - 1 - (itemIndex + headerRows)
 
 /**
  * The height the 「加载更早」 row measures itself at, in pixels.
