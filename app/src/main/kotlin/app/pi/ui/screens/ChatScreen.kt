@@ -127,7 +127,6 @@ import app.pi.ui.NavRequest
 import app.pi.ui.PiSessionViewModel
 import app.pi.ui.earlierRowText
 import app.pi.ui.blocks.BlockRenderer
-import app.pi.ui.blocks.LocalDisclosureTap
 import app.pi.ui.blocks.LocalRowGap
 import app.pi.ui.blocks.PiImageViewer
 import app.pi.ui.blocks.blockGapDp
@@ -2219,25 +2218,6 @@ private fun ChatBody(
                         // both read this one value — that is the whole fix for the rail breaking
                         // apart across the gap (`BlockChrome.BlockColumn` has the argument).
                         LocalRowGap provides item.rowGapDp(prefs.messageDensity).dp,
-                        // A disclosure tap re-lays-out this row, so two things have to stand down:
-                        //
-                        //  1. the tail follow (`pauseTail()`), which would otherwise re-pin the
-                        //     viewport so the tail stays visible;
-                        //  2. **the anchor correction** (`LaunchedEffect(hiddenCount,
-                        //     visibleItems.size)` above). Its keys change with the row's height —
-                        //     and a 24 dp card with a body changes them by a lot — so it used to
-                        //     run and re-apply the **pre-change** `(anchorKey, anchorOffset)`.
-                        //     Keeping that row at its old offset shifts everything by exactly the
-                        //     height delta: the user's "展开再收回，它直接跳到下半截 / 跳到上半截".
-                        //
-                        // Nulling the anchor is the fix rather than a flag: the correction needs a
-                        // key to restore, so with none it is a no-op — no timing race with the
-                        // layout change — and the tracker below re-records where the viewport
-                        // actually is on the settled layout.
-                        LocalDisclosureTap provides {
-                            pauseTail()
-                            anchorKey = null
-                        },
                     ) {
                         BlockRenderer(
                             item = item,

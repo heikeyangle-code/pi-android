@@ -517,44 +517,17 @@ private val DISCLOSURE_CHEVRON_STROKE = 1.5.dp
 // Callers: pass the lambda parenthesised — `Modifier.toggleContent(expanded, { … })`.
 // Kotlin binds a *trailing* lambda to the **last** parameter, which here is
 // `enabled`, so `toggleContent(expanded) { … }` does not compile.
-@Composable
 internal fun Modifier.toggleContent(
     expanded: Boolean,
     onToggle: () -> Unit,
     enabled: Boolean = true,
-): Modifier {
-    // Read in composition, never in the click lambda: `CompositionLocal.current` may only be read
-    // where a composition exists, and that lambda runs after it has ended.
-    val onDisclosureTap = LocalDisclosureTap.current
-    return then(
-        if (enabled) {
-            Modifier.clickable(onClickLabel = if (expanded) "收起" else "展开") {
-                // Pause the tail **before** the row changes height — the pause is what stops the
-                // follow from putting the viewport back where it was.
-                onDisclosureTap()
-                onToggle()
-            }
-        } else {
-            Modifier
-        },
-    )
-}
-
-/**
- * Every disclosure tap in the transcript is reported here. `ChatScreen` provides it as the tail
- * follow's pause — **which is the fix for the expand/collapse jump**.
- *
- * The follow (`ui/chat/TailFollow.kt`) re-pins the viewport so the tail stays visible, and it used
- * to yield **only to a scroll session**: `ChatScreen` tests `listState.isScrollInProgress` before
- * every `requestScrollToItem`. A tap is not a scroll session, so expanding a card above the tail
- * re-laid-out the list and the follow pinned it straight back on the next frame — the screen moved
- * under the finger, and while a row streamed it moved once a second. In the user's words: "思考内容
- * 在动的时候我点开，这个会上下乱刷，整个屏幕乱跳".
- *
- * A tap that changes layout is the user's intent exactly as a drag is, so it takes the same pause.
- * Default is a no-op, so previews and callers outside the transcript are unaffected.
- */
-internal val LocalDisclosureTap = compositionLocalOf { {} }
+): Modifier = then(
+    if (enabled) {
+        Modifier.clickable(onClickLabel = if (expanded) "收起" else "展开") { onToggle() }
+    } else {
+        Modifier
+    },
+)
 
 /**
  * [Modifier.toggleContent] for a block whose content is a column: the column —
