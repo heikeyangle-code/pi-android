@@ -977,6 +977,20 @@ run_harness row-height-cache \
   "$ROOT/app/src/test/kotlin/app/pi/ui/render/RowHeightCacheCheck.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/ui/render/RowHeightCache.kt"
 
+# app.pi.ui.render: the gate that decides whether a transcript row's markdown is parsed on the
+# frame it is composed, or one or more frames later on `Dispatchers.Default`. The asynchronous
+# path draws the library's loading slot, an empty box, so a row that re-enters the composition
+# window has no text until the parse lands - and because the height floor holds its geometry, a
+# reader sees it blank **in place** rather than moving. The latch is the row's own parse state
+# (nothing parsed in this composition yet), plus "not streaming" and "either a remembered height
+# or a first sighting for the window"; every one of the 16 input cells is pinned, including the
+# boundary this change deliberately leaves alone. Android-free, so it runs on a machine that
+# cannot build the APK.
+run_harness markdown-parse-gate \
+  app.pi.ui.render.MarkdownParseGateCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/ui/render/MarkdownParseGateCheck.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/ui/render/RowHeightCache.kt"
+
 # app.pi.ui.render: `PiLatex.kt` 的**行为**夹具 —— 428 条公式，期望值是 pi 自己的
 # `renderLatex` 跑出来的（`tools/collect-latex-fixtures.mjs` 生成，期望值不是手抄的），
 # 逐字节比对。为什么非得在这里跑：`PiLatex.kt` 换得掉的是**表**（那张有

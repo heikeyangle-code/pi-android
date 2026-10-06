@@ -167,6 +167,7 @@ import app.pi.ui.render.LocalPiMarkdownParsed
 import app.pi.ui.render.RowHeightCache
 import app.pi.ui.render.piMarkdownParseBudget
 import app.pi.ui.render.rememberedRowHeight
+import app.pi.ui.render.wantsImmediateMarkdown
 import app.pi.ui.components.PiMenu
 import app.pi.ui.components.PiMenuItem
 import app.pi.ui.components.PiMenuPlacement
@@ -1431,9 +1432,13 @@ private fun ChatBody(
     //  - only while the transcript is **not streaming**: a row published mid-turn arrives at
     //    the *bottom*, where its height correction is off-screen, and marking it would make
     //    every streamed tool card parse synchronously for nothing;
-    //  - and each row at most once: `RowHeightCache` is the latch (the item lambda asks only
-    //    when there is no remembered height), so a row that has been measured — including one
-    //    that scrolls out and back — never asks again.
+    //  - and each *composition* of a row at most once: the latch is the row's own
+    //    `markdownParsed` flag (this composition has reported the library's `State.Success`),
+    //    so a row that has already parsed never asks twice. `RowHeightCache` is **not** the
+    //    latch any more — the rows coming *back* into the viewport have a remembered height,
+    //    and refusing them for exactly that reason is what made them blank in place on the
+    //    frame they returned. The predicate is `wantsImmediateMarkdown`
+    //    (`ui/render/RowHeightCache.kt`), pinned by `tools/run-app-pure-checks.sh`.
     //
     // The set is bounded by `FRESH_ROW_KEYS_MAX` keys and never accumulates with the session.
     var freshRowKeys by remember(sessionKey) { mutableStateOf<Set<String>>(emptySet()) }
@@ -2203,10 +2208,14 @@ private fun ChatBody(
                     val lastOfRun = slot.lastOfRun
                     // Whether this row's markdown must be parsed before its first layout:
                     // see `PiMarkdownImmediate.kt` for the defect, and the block above for
-                    // the gate. `RowHeightCache` is the latch — a row that has already been
-                    // measured never asks again, so the synchronous parse happens at most
-                    // once per row — and streaming text never asks: its content changes on
-                    // every token, and that parse belongs off the frame thread.
+                    // the gate. The latch is the row's own parse state — *this* composition
+                    // has not reported `State.Success` yet — so the rows that come **back**
+                    // into the window parse on the frame they return. They have a remembered
+                    // height, which is why the cache used to refuse them; holding that height
+                    // keeps them from *moving*, but it does not stop them from blanking, and a
+                    // blank body at the correct height is exactly the 「原地闪一下」 the reader
+                    // reports. Streaming text never asks: its content changes on every token,
+                    // and that parse belongs off the frame thread.
                     //
                     // The last term is the **frame budget**: `piMarkdownParseBudget` is billed
                     // with the measured cost of every eager parse this frame (`PiMarkdown.kt`
@@ -2216,10 +2225,12 @@ private fun ChatBody(
                     // common case — and no row's fate is decided by its character count.
                     val streamingRow = (item as? AssistantText)?.streaming == true ||
                         (item as? ThinkingBlock)?.streaming == true
-                    val immediateMarkdown = !streamingRow &&
-                        RowHeightCache.shared.of(item.key) == null &&
-                        (item.key in freshRowKeys || restoring) &&
-                        piMarkdownParseBudget.allow(System.nanoTime())
+                    val immediateMarkdown = wantsImmediateMarkdown(
+                        streaming = streamingRow,
+                        parsedInThisComposition = markdownParsed.value,
+                        hasRememberedHeight = RowHeightCache.shared.of(item.key) != null,
+                        firstSightingForWindow = item.key in freshRowKeys || restoring,
+                    ) && piMarkdownParseBudget.allow(System.nanoTime())
                     CompositionLocalProvider(
                         LocalPiMarkdownImmediate provides immediateMarkdown,
                         LocalPiMarkdownParsed provides onMarkdownParsed,
