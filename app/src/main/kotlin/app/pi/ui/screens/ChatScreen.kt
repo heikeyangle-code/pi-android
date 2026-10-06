@@ -1201,6 +1201,9 @@ private fun ChatBody(
         // transition below.
         val wasFollowing = following
         val info = listState.layoutInfo
+        // The list is reversed (`reverseLayout`), so the item at the layout's start — the
+        // *newest* row the reader can see — is the one the follow's model needs.
+        val first = info.visibleItemsInfo.firstOrNull()
         val last = info.visibleItemsInfo.lastOrNull()
         val decision = tail.onSnapshot(
             TailSnapshot(
@@ -1217,12 +1220,13 @@ private fun ChatBody(
                     totalItems = info.totalItemsCount,
                     firstVisibleIndex = listState.firstVisibleItemIndex,
                     firstVisibleOffsetPx = listState.firstVisibleItemScrollOffset,
-                    lastVisibleIndex = last?.index ?: -1,
-                    lastVisibleOffsetPx = last?.offset ?: 0,
-                    lastVisibleSizePx = last?.size ?: 0,
+                    // The newest row's own measured height (rule 5's settle fact).
+                    firstVisibleSizePx = first?.size ?: 0,
                     viewportEndOffsetPx = info.viewportEndOffset,
                     isScrollInProgress = listState.isScrollInProgress,
-                    atBottom = !listState.canScrollForward,
+                    // Reversed list: "cannot scroll backwards" is "the newest row is where
+                    // it has to be".
+                    atBottom = !listState.canScrollBackward,
                 ),
             ),
         )

@@ -43,7 +43,7 @@ fun check(name: String, actual: Any?, expected: Any?) {
 private fun viewport(
     totalItems: Int,
     atBottom: Boolean,
-    firstVisibleIndex: Int = 0,
+    firstVisibleIndex: Int = -1,
     firstVisibleOffsetPx: Int = 0,
     lastVisibleIndex: Int = totalItems - 1,
     lastVisibleOffsetPx: Int = 800,
@@ -52,11 +52,24 @@ private fun viewport(
     isScrollInProgress: Boolean = false,
 ) = TailViewport(
     totalItems = totalItems,
-    firstVisibleIndex = firstVisibleIndex,
+    // **The list is reversed** (`reverseLayout`, newest row first), so the row at the
+    // layout's start — what `LazyListState` reports as the first visible item — is the
+    // *newest* row the reader can see. These checks are still written in the
+    // un-reversed vocabulary they were built in (an index that grows towards the tail),
+    // and this mirror is the whole translation:
+    //
+    //   lastVisibleIndex == totalItems - 1  <=>  the newest row is on screen (index 0)
+    //   lastVisibleIndex <  totalItems - 1  <=>  it is scrolled off (index > 0)
+    // A check that names `firstVisibleIndex` means "where the reader is parked" (the
+    // index of the *oldest* visible row, in the vocabulary these checks were written
+    // in). A reversed list's first visible item is the *newest* one, hence the mirror.
+    // A check that names only `lastVisibleIndex` is describing the tail, which is index
+    // 0 exactly when it is on screen.
+    firstVisibleIndex = if (firstVisibleIndex >= 0) totalItems - 1 - firstVisibleIndex
+        else totalItems - 1 - lastVisibleIndex,
     firstVisibleOffsetPx = firstVisibleOffsetPx,
-    lastVisibleIndex = lastVisibleIndex,
-    lastVisibleOffsetPx = lastVisibleOffsetPx,
-    lastVisibleSizePx = lastVisibleSizePx,
+    // The newest row's own height — rule 5's settle fact.
+    firstVisibleSizePx = lastVisibleSizePx,
     viewportEndOffsetPx = viewportEndOffsetPx,
     isScrollInProgress = isScrollInProgress,
     atBottom = atBottom,
@@ -86,13 +99,12 @@ fun main() {
                 viewport = viewport(
                     totalItems = 11,
                     atBottom = false,
-                    firstVisibleIndex = 6,
                     lastVisibleOffsetPx = 900,
                 ),
             ),
         )
         check("A3 content growth does NOT pause the follow", state(grew), "true/0")
-        check("A4 and it pins the 100 px that are below the fold", grew.pin, TailPin(6, 100))
+        check("A4 and it pins nothing — the newest row grows upwards, away from the bottom edge", grew.pin, null)
 
         // The old approximation's other blind spot: a row taller than the viewport is
         // "at the bottom" by index while its newest text is a viewport below the fold.
@@ -102,14 +114,13 @@ fun main() {
                 viewport = viewport(
                     totalItems = 11,
                     atBottom = false,
-                    firstVisibleIndex = 10,
                     lastVisibleOffsetPx = 0,
                     lastVisibleSizePx = 4000,
                 ),
             ),
         )
         check("A5 a tall tail row keeps the follow armed", state(tall), "true/0")
-        check("A6 and the pin is the 4000-1000 px that are below the fold", tall.pin, TailPin(10, 3000))
+        check("A6 and a newest row taller than the viewport needs no pin either", tall.pin, null)
 
         // Layout churn: the flag flapping for several frames, no gesture anywhere.
         val churn = TailFollow()
@@ -281,7 +292,6 @@ fun main() {
                 viewport(
                     totalItems = 32,
                     atBottom = false,
-                    firstVisibleIndex = 10,
                     lastVisibleIndex = 31,
                     lastVisibleOffsetPx = 0,
                     lastVisibleSizePx = 2000,
@@ -289,7 +299,7 @@ fun main() {
             ),
         )
         check("E7 the affordance re-arms", state(afterFab), "true/0")
-        check("E8 and pins to the tail", afterFab.pin, TailPin(10, 1000))
+        check("E8 and nothing is pinned: the newest row is already at the bottom edge", afterFab.pin, null)
     }
 
     // ================================================================= F. the pin
@@ -302,7 +312,6 @@ fun main() {
         val visibleTall = viewport(
             totalItems = 20,
             atBottom = false,
-            firstVisibleIndex = 17,
             firstVisibleOffsetPx = 40,
             lastVisibleIndex = 19,
             lastVisibleOffsetPx = 300,
@@ -310,7 +319,7 @@ fun main() {
             viewportEndOffsetPx = 1000,
         )
         // 300 + 800 - 1000 = 100 px of the tail are below the fold.
-        check("F1 the pin is the hidden pixel count", visibleTall.pinToTail(), TailPin(17, 140))
+        check("F1 a row taller than the viewport at the bottom edge asks for nothing", visibleTall.pinToTail(), null)
 
         val notVisible = viewport(totalItems = 20, atBottom = false, lastVisibleIndex = 18)
         // The offset is not 0: it asks for the tail row's **end**
@@ -322,7 +331,7 @@ fun main() {
         check(
             "F2 a tail that is not on screen is pinned to the end in one step",
             notVisible.pinToTail(),
-            TailPin(19, PIN_TO_END_PX),
+            TailPin(0, 0),
         )
         // The one-shot property itself: the geometry the request above produces — the tail
         // row is now the last visible row and fully inside the viewport, which is what the
@@ -331,16 +340,11 @@ fun main() {
         val landedAtEnd = viewport(
             totalItems = 20,
             atBottom = true,
-            firstVisibleIndex = 19,
             lastVisibleOffsetPx = 0,
             lastVisibleSizePx = 500,
             viewportEndOffsetPx = 1000,
         )
         check("F2b and that position needs no second snapshot", landedAtEnd.pinToTail(), null)
-        // A guard on the constant itself: it has to be past any plausible content
-        // (a 1000 px viewport × thousands of rows) and still far from `Int.MAX_VALUE`, so
-        // the measure pass cannot wrap when it adds it to a row's own offset.
-        check("F2c the end offset is large but not at the int boundary", PIN_TO_END_PX in (1 shl 20)..(1 shl 28), true)
 
         val fullyVisible = viewport(
             totalItems = 20,
@@ -360,7 +364,6 @@ fun main() {
         val settled = viewport(
             totalItems = 20,
             atBottom = false,
-            firstVisibleIndex = 17,
             firstVisibleOffsetPx = 140,
             lastVisibleIndex = 19,
             lastVisibleOffsetPx = 200,
@@ -375,13 +378,12 @@ fun main() {
         val withHeader = viewport(
             totalItems = 52,
             atBottom = false,
-            firstVisibleIndex = 47,
             firstVisibleOffsetPx = 0,
             lastVisibleIndex = 51,
             lastVisibleOffsetPx = 0,
             lastVisibleSizePx = 2000,
         )
-        check("F6 the header row does not shift the pin", withHeader.pinToTail(), TailPin(47, 1000))
+        check("F6 the newest row at the bottom edge asks for nothing", withHeader.pinToTail(), null)
     }
 
     // ====================================== G. same-frame sequences and persistence
@@ -400,10 +402,10 @@ fun main() {
         // already in place, and that remeasure re-emits the flow that feeds this
         // machine, so a repeated pin would be a per-frame remeasure loop.
         val stable = TailFollow()
-        val snapshot = TailSnapshot(12, viewport(12, atBottom = false, lastVisibleSizePx = 1500))
+        val snapshot = TailSnapshot(12, viewport(12, atBottom = false, lastVisibleIndex = 9, lastVisibleSizePx = 1500))
         val one = stable.onSnapshot(snapshot)
         val two = stable.onSnapshot(snapshot)
-        check("G3 the first snapshot pins", one.pin, TailPin(0, 1300))
+        check("G3 the first snapshot pins, because the newest row is off the bottom edge", one.pin, TailPin(0, 0))
         check("G4 an identical repeat is not re-requested", two.pin, null)
         check("G5 and the state is unchanged", state(two), state(one))
 
@@ -417,7 +419,7 @@ fun main() {
         val grown = stable.onSnapshot(
             TailSnapshot(12, viewport(12, atBottom = false, lastVisibleSizePx = 1540)),
         )
-        check("G8 new geometry is pinned again", grown.pin, TailPin(0, 1340))
+        check("G8 in the reversed model that geometry needs no pin either", grown.pin, null)
 
         // The loop the repeat guard exists for, in the shape that used to defeat it.
         // When the tail row is taller than the viewport the pin is a *fixed*
@@ -430,7 +432,7 @@ fun main() {
         val asked = unreachable.onSnapshot(
             TailSnapshot(6, viewport(6, atBottom = false, lastVisibleIndex = 2)),
         )
-        check("G9 a tail above the viewport is pinned to the end", asked.pin, TailPin(5, PIN_TO_END_PX))
+        check("G9 a tail above the viewport is pinned to the end", asked.pin, TailPin(0, 0))
         val remeasured = unreachable.onSnapshot(
             TailSnapshot(6, viewport(6, atBottom = false, firstVisibleIndex = 1, lastVisibleIndex = 2)),
         )
@@ -455,7 +457,6 @@ fun main() {
                 viewport(
                     6,
                     atBottom = false,
-                    firstVisibleIndex = 5,
                     lastVisibleOffsetPx = 0,
                     lastVisibleIndex = 5,
                     lastVisibleSizePx = 2000,
@@ -463,14 +464,13 @@ fun main() {
                 ),
             ),
         )
-        check("G14 a tall tail row pins by the pixels below the fold", tallAsked.pin, TailPin(5, 1000))
+        check("G14 a newest row taller than the viewport pins nothing", tallAsked.pin, null)
         val tallSettled = tall.onSnapshot(
             TailSnapshot(
                 6,
                 viewport(
                     6,
                     atBottom = true,
-                    firstVisibleIndex = 5,
                     lastVisibleOffsetPx = -1000,
                     lastVisibleIndex = 5,
                     lastVisibleSizePx = 2000,
@@ -489,7 +489,7 @@ fun main() {
         val afterReArm = reArmed.onSnapshot(
             TailSnapshot(6, viewport(6, atBottom = false, lastVisibleIndex = 2)),
         )
-        check("G11 an explicit re-arm pins again", afterReArm.pin, TailPin(5, PIN_TO_END_PX))
+        check("G11 an explicit re-arm pins again", afterReArm.pin, TailPin(0, 0))
 
         // Rotation: the paused state and its count survive, the anchors do not.
         val paused = TailFollow()
@@ -695,7 +695,6 @@ fun main() {
                 viewport(
                     11,
                     atBottom = false,
-                    firstVisibleIndex = 10,
                     lastVisibleOffsetPx = 0,
                     lastVisibleSizePx = 4000,
                     isScrollInProgress = true,
@@ -715,7 +714,6 @@ fun main() {
             send,
             TailSnapshot(
                 11,
-                viewport(11, atBottom = false, firstVisibleIndex = 6, lastVisibleOffsetPx = 900),
             ),
         )
         check("I5 the next token is still following", firstToken, true)
@@ -775,13 +773,13 @@ fun main() {
             6,
             viewport(6, atBottom = false, lastVisibleIndex = 2, lastVisibleSizePx = 2000),
         )
-        check("I11 the tail is pinned once", forgotten.onSnapshot(longTail).pin, TailPin(5, PIN_TO_END_PX))
+        check("I11 the tail is pinned once", forgotten.onSnapshot(longTail).pin, TailPin(0, 0))
         forgotten.pause()
         forgotten.reArm()
         check(
             "I12 a pause does not remember the old pin",
             forgotten.onSnapshot(longTail).pin,
-            TailPin(5, PIN_TO_END_PX),
+            TailPin(0, 0),
         )
 
         // The exact end geometry this whole group turns on: at `!canScrollForward` the
@@ -1039,7 +1037,7 @@ fun main() {
                 revision = 8,
             ),
         )
-        check("L4 content growth on the same geometry still pins", grew.pin, TailPin(19, PIN_TO_END_PX))
+        check("L4 content growth on the same geometry still pins", grew.pin, TailPin(0, 0))
 
         // The reader's collapse: the geometry moves back the other way with nothing
         // behind it either. The library's scroll correction is the list's business (it
@@ -1049,12 +1047,11 @@ fun main() {
             viewport = viewport(
                 20,
                 atBottom = false,
-                firstVisibleIndex = 16,
-                lastVisibleOffsetPx = 850,
+                lastVisibleIndex = 18,
             ),
             revision = 8,
         )
-        check("L5 the collapse's own geometry does want a pin", collapsing.viewport.pinToTail(), TailPin(16, 50))
+        check("L5 the collapse's own geometry does want a pin", collapsing.viewport.pinToTail(), TailPin(0, 0))
         val collapsed = reader.onSnapshot(collapsing)
         check("L6 and the reader's own collapse is not paid for", collapsed.pin, null)
 
@@ -1068,7 +1065,7 @@ fun main() {
         val reparsed = settled.onSnapshot(
             TailSnapshot(20, viewport(20, atBottom = false, firstVisibleIndex = 16, lastVisibleSizePx = 260)),
         )
-        check("L7 the tail row's own settled height still pins", reparsed.pin, TailPin(16, 60))
+        check("L7 the newest row's own settled height moves nothing: it grows upwards", reparsed.pin, null)
 
         // The viewport itself changed: the composer's inset grew (the keyboard came
         // up), so the window the rows are read through is shorter. The rows did not
@@ -1087,7 +1084,7 @@ fun main() {
                 ),
             ),
         )
-        check("L8 a shrunken viewport still pins", raised.pin, TailPin(19, PIN_TO_END_PX))
+        check("L8 a shrunken viewport still pins", raised.pin, TailPin(0, 0))
 
         // A hand on the list. The reader drags towards the newest row — the anchor
         // moves *forward*, which is never a pause — and lets go short of the end, so
@@ -1105,7 +1102,7 @@ fun main() {
         val letGo = drag.onSnapshot(
             TailSnapshot(20, viewport(20, atBottom = false, firstVisibleIndex = 17, lastVisibleIndex = 18)),
         )
-        check("L9 a drag's release still pins", letGo.pin, TailPin(19, PIN_TO_END_PX))
+        check("L9 a drag's release still pins", letGo.pin, TailPin(0, 0))
 
         // An explicit re-arm — the affordance, the send button — with nothing else
         // moving, which is the one frame whose only licence is the reader's own
@@ -1116,7 +1113,7 @@ fun main() {
         val afterFab = fab.onSnapshot(
             TailSnapshot(20, viewport(20, atBottom = false, firstVisibleIndex = 16, lastVisibleIndex = 18)),
         )
-        check("L10 an explicit re-arm is licensed", afterFab.pin, TailPin(19, PIN_TO_END_PX))
+        check("L10 an explicit re-arm is licensed", afterFab.pin, TailPin(0, 0))
 
         // A restored machine has no previous viewport (rotation, a re-entered
         // destination), so its first frame is licensed even though the row count it
@@ -1127,7 +1124,7 @@ fun main() {
         val resumed = restored!!.onSnapshot(
             TailSnapshot(20, viewport(20, atBottom = false, firstVisibleIndex = 16, lastVisibleIndex = 18)),
         )
-        check("L12 its first frame still pins", resumed.pin, TailPin(19, PIN_TO_END_PX))
+        check("L12 its first frame still pins", resumed.pin, TailPin(0, 0))
     }
 
     println(if (failures == 0) "\nharness: OK (all checks passed)" else "\nharness: FAILED ($failures)")
