@@ -347,11 +347,12 @@ internal class TailFollow(initiallyFollowing: Boolean = true) {
         val viewportChanged =
             lastViewport == null || viewport.viewportEndOffsetPx != lastViewport.viewportEndOffsetPx
         val gestureEdge = viewport.isScrollInProgress != previousScrolling
-        val tailSettled = lastViewport != null &&
-            lastViewport.firstVisibleIndex == lastViewport.tailIndex &&
-            viewport.firstVisibleIndex == viewport.tailIndex &&
-            viewport.firstVisibleSizePx != lastViewport.firstVisibleSizePx
-        val licensed = pinLicensed || contentChanged || viewportChanged || gestureEdge || tailSettled
+        // (The settle term the un-reversed list needed is gone with it: on a reversed
+        // list the newest row grows *upwards* from the bottom edge, so its own height
+        // changing is not a reason to move anything -- and keeping it here made the
+        // reader's own tap on the newest card license a pin, which is what put the
+        // viewport at the bottom of the expanded content.)
+        val licensed = pinLicensed || contentChanged || viewportChanged || gestureEdge
 
         // The pin the *position* wants, whether or not this observation is allowed to
         // hand it out (rule 5).
