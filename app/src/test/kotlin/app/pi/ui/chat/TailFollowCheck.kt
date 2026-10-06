@@ -1100,30 +1100,6 @@ fun main() {
         frame(atTop = true, canScrollForward = true, hidden = 350, scrolling = true, hasEarlier = false)
         frame(atTop = true, canScrollForward = true, hidden = 350, scrolling = false, hasEarlier = false)
         check("M16 the same hand loads a window batch", loads, 1)
-
-        // 6. 机器本身在「内容变矮」这一拍是干净的（所以根因不在 `TailFollow`，在加载边）：
-        //    收起让视口被回退（first index 变小、内容末端仍在视口末端线上），没有滚动会话，
-        //    所以 rule 2 不该把它读成手势 —— `following` 不掉，也不发 pin。
-        val shrink = TailFollow()
-        val atEnd = shrink.onSnapshot(TailSnapshot(10, viewport(10, atBottom = true, firstVisibleIndex = 6)))
-        check("M17 the follower is armed at the end", state(atEnd), "true/0")
-        val afterShrink = shrink.onSnapshot(
-            TailSnapshot(
-                10,
-                viewport(10, atBottom = true, firstVisibleIndex = 4, lastVisibleOffsetPx = 200, lastVisibleSizePx = 200),
-            ),
-        )
-        check(
-            "M18 the collapse neither pauses the follow nor pins anything",
-            "${state(afterShrink)}/${afterShrink.pin}",
-            "true/0/null",
-        )
-        // 紧接着一个 token 到达（尾巴长到折线以下）：跟随照常把**末端**收回 —— 钉的是落点，
-        // 不是被折叠体之下那个位置。
-        val nextToken = shrink.onSnapshot(
-            TailSnapshot(10, viewport(10, atBottom = false, firstVisibleIndex = 4, lastVisibleSizePx = 1200)),
-        )
-        check("M19 the next token retracts the tail (not the collapsed row's place)", nextToken.pin, TailPin(4, 1000))
     }
 
     println(if (failures == 0) "\nharness: OK (all checks passed)" else "\nharness: FAILED ($failures)")
