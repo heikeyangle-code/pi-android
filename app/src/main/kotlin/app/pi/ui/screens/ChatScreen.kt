@@ -2122,6 +2122,10 @@ private fun ChatBody(
             // it occupies: exactly the row's height plus the block gap the list no longer
             // inserts between it and the first message.
             val earlierBand = if (showsEarlierRow) earlierRowHeightValue + blockSpacing else 0.dp
+            // One reversed *view* per list instead of one per call: `asReversed()` is
+            // O(1) and copies nothing, but it is still a wrapper object.
+            val reversedItems = remember(renderedItems) { renderedItems.asReversed() }
+
             LazyColumn(
                 state = listState,
                 modifier = Modifier.fillMaxSize(),
@@ -2157,7 +2161,7 @@ private fun ChatBody(
                 // exactly the granularity the slot table reuses on, so the class is
                 // the content type — no new taxonomy needed.
                 itemsIndexed(
-                    renderedItems.asReversed(),
+                    reversedItems,
                     key = { _, item -> item.key },
                     contentType = { _, item -> item::class },
                 ) { sliceIndex, item ->
