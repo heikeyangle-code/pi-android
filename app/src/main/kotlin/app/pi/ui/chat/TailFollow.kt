@@ -168,47 +168,6 @@ internal class TailFollow(initiallyFollowing: Boolean = true) {
     }
 
     /**
-     * Yield the position to a **content change the reader made on a row**: a disclosure tap
-     * that expands or collapses a thinking block or a tool card. Same pause as far as the
-     * *pin* is concerned — while this machine is not following it issues none, so the
-     * publication that follows cannot yank the list to the tail under the reader's own
-     * finger (`e2e26e4`) — but deliberately **not** [pause]'s `pausedByNavigation` latch:
-     * a disclosure tap is not a navigation, and the latch is what turns the defect below
-     * from one frame of movement into "the reader is never taken back".
-     *
-     * ## What actually moves the pixels, because the pause does not
-     *
-     * The tap changes one row's height, and a shrinking row near the tail cannot keep the
-     * viewport where it was: `measureLazyList` composes forward from the item the state
-     * anchored on and, when those items no longer fill the viewport, scrolls **back** by
-     * the pixels that are missing and composes earlier items into view (`LazyListMeasure.kt`,
-     * the `currentMainAxisOffset < maxOffset` branch — "there will be not enough items to
-     * fill the viewport after the requested index" in `LazyListScrollPosition`'s own list
-     * of outcomes). The viewport therefore *lands on the content's end*, and everything on
-     * screen slides down by (the row's height delta − the pixels that were below the fold).
-     * That landing is exactly rule 3's `atBottom`, and rule 3's guard lets it re-arm only
-     * when `pausedByNavigation` is clear (or a gesture is seen). With the latch set, the
-     * machine stayed off, the collapsed row was left one body behind the tail, and every
-     * row that arrived afterwards stayed below the fold — the reported
-     * 「展开/收起后，可见内容整体换到了更早的一段」 for **both** block kinds. Cleared, rule 3
-     * takes the tail back on that same landing, which is pi's own "returning to the end
-     * resumes the follow no matter how the user got there" (`scroll-view.ts:127`).
-     *
-     * Clearing the latch is also what keeps a disclosure usable *after* a navigation:
-     * [pause]'s flag is otherwise permanent, so the first search reveal would leave every
-     * later collapse behaving like the harness's `L5`.
-     */
-    fun yieldToContent() {
-        following = false
-        unseenRows = 0
-        pausedByNavigation = false
-        // Same reason as [pause]'s: the remembered pin describes the position the machine
-        // was following, and this call hands the position to the layout — it must not let
-        // that memory suppress the pin of whatever position the layout settles on.
-        lastPin = null
-    }
-
-    /**
      * Fold one observation of the list, and answer what the caller should do about it.
      *
      * The order of the rules is the whole argument:
