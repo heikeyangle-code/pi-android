@@ -155,7 +155,6 @@ import app.pi.ui.chat.mayLoadEarlier
 import app.pi.ui.chat.mergeRestoredQueue
 import app.pi.ui.chat.routeComposerText
 import app.pi.ui.chat.earlierRowHeightPx
-import app.pi.ui.blocks.LocalRowOpened
 import app.pi.ui.chat.freshRowKeysAfter
 import app.pi.ui.chat.hiddenRows
 import app.pi.ui.chat.itemIndexOfVisibleRow
@@ -2261,12 +2260,6 @@ private fun ChatBody(
                         // both read this one value — that is the whole fix for the rail breaking
                         // apart across the gap (`BlockChrome.BlockColumn` has the argument).
                         LocalRowGap provides item.rowGapDp(prefs.messageDensity).dp,
-                        // Opening a row puts its key in `freshRowKeys`, so its body is
-                        // parsed on the frame it appears instead of the next one (the
-                        // reader's 「推开又抖一下」).
-                        LocalRowOpened provides { key ->
-                            freshRowKeys = freshRowKeysAfter(freshRowKeys, listOf(key), FRESH_ROW_KEYS_MAX)
-                        },
                     ) {
                         BlockRenderer(
                             item = item,

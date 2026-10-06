@@ -517,30 +517,13 @@ private val DISCLOSURE_CHEVRON_STROKE = 1.5.dp
 // Callers: pass the lambda parenthesised — `Modifier.toggleContent(expanded, { … })`.
 // Kotlin binds a *trailing* lambda to the **last** parameter, which here is
 // `enabled`, so `toggleContent(expanded) { … }` does not compile.
-/**
- * Called with a row's key when the reader **opens** it.
- *
- * The body of a row appears on the frame its `expanded` flips, and a body whose
- * markdown has not been parsed yet measures at the wrong height -- the list then
- * corrects it on the next frame, which the reader sees as the content shuddering
- * and settling. `ChatScreen` publishes this callback to put that key into the
- * `freshRowKeys` set, whose rows parse synchronously (`LocalPiMarkdownImmediate`,
- * the same gate a batch of 「加载更早」 rows goes through). Only the opening tap
- * fires it: streaming rows keep the cheap asynchronous path.
- */
-internal val LocalRowOpened = staticCompositionLocalOf<(String) -> Unit> { {} }
-
 internal fun Modifier.toggleContent(
     expanded: Boolean,
     onToggle: () -> Unit,
     enabled: Boolean = true,
-    rowKey: String? = null,
 ): Modifier = then(
     if (enabled) {
-        Modifier.clickable(onClickLabel = if (expanded) "收起" else "展开") {
-            if (!expanded && rowKey != null) LocalRowOpened.current(rowKey)
-            onToggle()
-        }
+        Modifier.clickable(onClickLabel = if (expanded) "收起" else "展开") { onToggle() }
     } else {
         Modifier
     },
@@ -561,11 +544,10 @@ internal fun ToggleContent(
     onToggle: () -> Unit,
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
-    rowKey: String? = null,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     Column(
-        modifier = modifier.fillMaxWidth().toggleContent(expanded, onToggle, enabled, rowKey),
+        modifier = modifier.fillMaxWidth().toggleContent(expanded, onToggle, enabled),
         content = content,
     )
 }

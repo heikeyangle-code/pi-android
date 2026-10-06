@@ -81,7 +81,7 @@ fun ThinkingBlockBlock(
         // F28: the whole block is the toggle target, which is what pi does —
         // `components/assistant-message.ts:160-166` wraps the entire thinking
         // component in the `MouseRegion` that flips its visibility.
-        ToggleContent(expanded = expanded, onToggle = { expanded = !expanded }, rowKey = item.key) {
+        ToggleContent(expanded = expanded, onToggle = { expanded = !expanded }) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 // `06 §3` 构件 7 + v2's `ThinkRow`: a `3px` stripe as tall as the row's
                 // own text block (`height:18`), not the 32 dp status row this used to

@@ -124,7 +124,7 @@ fun BranchSummaryBlock(
                     // F28: the row jumps to the branch (spec §7.4 点击跳转), so the
                     // expand affordance stays a distinct target — but it is the
                     // shared gesture, not a fourth spelling of it.
-                    modifier = Modifier.toggleContent(expanded, { expanded = !expanded }, rowKey = item.key),
+                    modifier = Modifier.toggleContent(expanded, { expanded = !expanded }),
                 )
             }
             if (expanded) {

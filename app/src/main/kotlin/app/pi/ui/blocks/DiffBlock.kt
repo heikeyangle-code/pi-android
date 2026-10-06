@@ -147,7 +147,7 @@ internal fun DiffBlock(
             BlockCard(
                 color = palette.toolPendingBg,
                 // F28: same content-region gesture as the tool card.
-                modifier = Modifier.toggleContent(expanded, { expanded = !expanded }, rowKey = item.key),
+                modifier = Modifier.toggleContent(expanded, { expanded = !expanded }),
                 // `06 §2` 颜色行 gives this card the plain hairline token rather than a
                 // state colour at 35 %: the diff is neutral by definition, and v2 draws it
                 // `1px solid var(--border-muted)`. The 1 px line itself is now drawn by the run

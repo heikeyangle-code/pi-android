@@ -534,7 +534,7 @@ internal fun ToolCard(
     ) {
         BlockCard(
             color = fill,
-            modifier = Modifier.toggleContent(expanded, onToggle, rowKey = item.key),
+            modifier = Modifier.toggleContent(expanded, onToggle),
             shape = runCardShape(firstOfRun, lastOfRun),
             padding = ToolCardRowPadding,
             content = content,
