@@ -821,7 +821,7 @@ class PiSessionViewModel(app: Application) : AndroidViewModel(app) {
          *
          * **为什么是 `ToolStatus.Pending` / `streaming` 而不是 [streaming] 或 `bash.running`。**
          * 它是「谁真的会去读这个时钟」的那个集合：一行工具卡是不是「运行中」只看它自己的
-         * `status`（`toolStateOf`，`ui/blocks/ToolState.kt`），而只有「运行中」的行会要一个走动的
+         * `status`（`toolStateOf`，`ui/blocks/ToolBlockChrome.kt`），而只有「运行中」的行会要一个走动的
          * 耗时（`ShellBlock`）；思考块同理只看它自己的 `streaming`（`ThinkingBlockBlock`）。
          * 状态级 [streaming] 覆盖同一件事但**更宽**——它从 `agent_start` 一直真到 `agent_end`
          * （`TranscriptReducer`），所以一段几分钟没有工具卡、也没有思考块的纯文本回答也会命中，

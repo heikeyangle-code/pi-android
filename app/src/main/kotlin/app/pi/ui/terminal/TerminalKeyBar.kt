@@ -237,9 +237,7 @@ fun TerminalKeyBar(
             Text(
                 text = it,
                 color = palette.foreground.copy(alpha = 0.7f),
-                // 12, not 11: `06 §2` 的字号 5 档里没有 11，12 是"给人看的标签"的下限
-                // （`差异表` §2 第 17 行）。字号是尺寸，不是颜色。
-                fontSize = 12.sp,
+                fontSize = 11.sp,
                 modifier = Modifier.padding(start = 4.dp),
             )
         }
@@ -315,8 +313,7 @@ private fun ActionChip(
             text = label,
             color = palette.foreground,
             fontFamily = FontFamily.Monospace,
-            // 同上：标签下限 12（`差异表` §2 第 17 行）。
-            fontSize = 12.sp,
+            fontSize = 11.sp,
         )
     }
 }

@@ -127,12 +127,7 @@ import app.pi.ui.NavRequest
 import app.pi.ui.PiSessionViewModel
 import app.pi.ui.earlierRowText
 import app.pi.ui.blocks.BlockRenderer
-import app.pi.ui.blocks.LocalRowGap
 import app.pi.ui.blocks.PiImageViewer
-import app.pi.ui.blocks.blockGapDp
-import app.pi.ui.blocks.railStateOf
-import app.pi.ui.blocks.rowGapDp
-import app.pi.ui.blocks.toolRunPlan
 import app.pi.ui.chat.BashPanel
 import app.pi.ui.chat.ComposerRoute
 import app.pi.ui.chat.ContextSheet
@@ -876,14 +871,6 @@ private fun ChatBody(
     val renderedItems = remember(visibleItems, renderWindow, windowOpen) {
         if (windowOpen) visibleItems else visibleItems.takeLast(renderWindow)
     }
-    // The **run plan** for the whole loaded list: one slot per row saying whether it opens /
-    // closes its run and which state the run's shell ring is painted with (null = the rows
-    // disagree, so the ring is neutral). One pass of enum comparisons — no text, no allocation
-    // per row beyond the plan — recomputed when the transcript list's identity changes, which is
-    // the same key `visibleItems` itself is built with. It has to be the whole list rather than
-    // the rendered window for the reason spelled out at its consumer below (a row at the window's
-    // edge still has a neighbour in the transcript).
-    val railPlan = remember(visibleItems) { toolRunPlan(visibleItems.map { railStateOf(it) }) }
     // The same number `renderedItems` implies, but computed from the *window* rather
     // than from the list it produced: the anchor restore below needs to know how many
     // rows sit above a given row without having to build that list
@@ -2057,24 +2044,23 @@ private fun ChatBody(
         // `ChatScreen`'s boot branch).
         Box(Modifier.weight(1f).fillMaxWidth().clipToBounds()) {
         if (!emptyTranscript) {
-            // `app.appearance.messageDensity`: the transcript's block rhythm. F11
-            // (`docs/rendering-review.md`): blocks used to pad themselves as well, so the real
-            // gap was 18 (spacedBy) + 9 + 9 (BlockColumn) = 36 dp and the prose column lost
-            // 16 dp on each side. The rule that came out of it is **exactly one place gives the
-            // rhythm**, and that place moved off this list: each row now carries its own bottom
-            // air (`TranscriptItem.rowGapDp` → `BlockColumn`'s padding), the list's own
-            // `Arrangement` spaces nothing, and the rail reads the same value back out of
-            // `LocalRowGap` for its overdraw. The reason is not tidiness — a single list-wide
-            // `spacedBy(blockSpacing)` could not be read by a row's own rail, so the rail's
-            // overdraw was a compile-time 8 while the spacing was this runtime setting: equal in
-            // the default tier only, which is why the line broke apart under 宽松. See
-            // `BlockChrome.BlockColumn` and `BlockRhythm.kt`.
+            // `app.appearance.messageDensity`: the transcript's block rhythm,
+            // scaled around v2's own gap. F11 (`docs/rendering-review.md`):
+            // blocks used to pad themselves as well, so the real gap was
+            // 18 (spacedBy) + 9 + 9 (BlockColumn) = 36 dp and the prose column lost
+            // 16 dp on each side; the list is now the only place that margins.
             //
-            // B7: the default is `PiSpacing.small` (4), not `06 §2`'s「块间距 8」 — an accounted
-            // deviation (`差异表` §2 第 7 行): the density pref scales it (compact is half, cozy
-            // is double), so the stream keeps its three steps and the default is the merged
-            // card's own rhythm.
-            val blockSpacing = blockGapDp(prefs.messageDensity).dp
+            // B7: the base gap is **8**, not 16. `06 §2`「块间距 8」 is v2's rhythm
+            // (every card in the frozen board carries `marginBottom:8`), and the
+            // three density steps hang off it — compact is half, cozy is double —
+            // so the pref still moves the stream and the default is the design's.
+            // `PiSpacing.blockGap` is the same constant `ToolRail` bridges with, so
+            // the rail's overdraw and the gap it spans cannot drift apart.
+            val blockSpacing = when (prefs.messageDensity) {
+                "compact" -> PiSpacing.blockGap / 2
+                "cozy" -> PiSpacing.blockGap * 2
+                else -> PiSpacing.blockGap
+            }
             // The page margin is **14 at every density** (`06 §2`「屏水平 14px」,
             // `direction-b-v2.html:1376`: `.b-scroll{padding:10px 14px 12px}`). The
             // compact step used to narrow it to 12 as well, which put the transcript's
@@ -2106,10 +2092,9 @@ private fun ChatBody(
             //  - **the same click**: `fillMaxWidth().clickable{…}.padding(vertical = 8.dp)`,
             //    the same order, so the ripple covers the same area.
             //
-            // The reserved band is `earlierRowHeight + blockSpacing`, and `blockSpacing` here is
-            // the **same** `blockGapDp` the rows pad themselves with (this is the one other
-            // consumer, and it asks the same function rather than holding a second number): the
-            // sentinel is drawn outside the list, so it has no row of its own to give it air.
+            // The list keeps `Arrangement.spacedBy(blockSpacing)` for its own rows, and the
+            // reserved band is `earlierRowHeight + blockSpacing` so the first row sits
+            // where it did when the sentinel was an item with a gap under it.
             val earlierRowHeightValue = earlierRowHeight(earlierText.orEmpty())
             // Where the overlay sits, and how much of the list's own top padding is the band
             // it occupies: exactly the row's height plus the block gap the list no longer
@@ -2127,8 +2112,7 @@ private fun ChatBody(
                     top = 10.dp + earlierBand,
                     bottom = 12.dp,
                 ),
-                // **No `verticalArrangement`**: the rhythm is the rows' own bottom air now (see
-                // above). Anything added here would be the second half of the F11 mistake.
+                verticalArrangement = Arrangement.spacedBy(blockSpacing),
             ) {
                 // The 「加载更早」 row is the overlay below, not an item here — see the block
                 // above for why, and for the three things that had to stay identical.
@@ -2184,23 +2168,25 @@ private fun ChatBody(
                         // A floor, not a size, released by the parse itself: see
                         // `ui/render/TranscriptRowHeight.kt` (and `RowHeightCache`'s bound).
                         .rememberedRowHeight(item.key, contentReady = markdownParsed.value)
-                    // The execution rail's two ends (`06 §2` 执行轨道「竖线上下各缩进 16」), and the
-                    // **run's** ring colour. A run is a property of *consecutive transcript
-                    // rows*, so the one place that can answer "is this the first/last row of my
-                    // run, and does the run agree on a state" is the list that holds the order —
-                    // the blocks themselves only ever see one item. `railPlan` therefore comes
-                    // from `visibleItems`, the whole loaded list, and not from the rendered
-                    // slice: inside the window the two are the same row
-                    // (`renderedItems[i] == visibleItems[hiddenCount + i]`), but at the window's
-                    // two ends the slice has no neighbour where the transcript has one. Reading
-                    // the slice made the boundary row's rail insets flip the moment a batch was
-                    // prepended *under* it — and that boundary row is exactly the one the anchor
-                    // above is holding still, so the flip was a few tens of dp of movement on
-                    // the reader's own row, once per load-earlier batch. `ToolCall` and
-                    // `ToolDiff` are the only two kinds that draw a rail (`ui/blocks/ToolRail.kt`).
-                    val slot = railPlan[index]
-                    val firstOfRun = slot.firstOfRun
-                    val lastOfRun = slot.lastOfRun
+                    // The execution rail's two ends (`06 §2` 执行轨道「竖线上下各缩进 16」).
+                    // A run is a property of *consecutive transcript rows*, so the one
+                    // place that can answer "is this the first/last tool card of a run"
+                    // is the list that holds the order — the blocks themselves only ever
+                    // see one item. `previous`/`next` therefore come from `visibleItems`,
+                    // the whole loaded list, and not from the rendered slice: inside the
+                    // window the two are the same row (`renderedItems[i] ==
+                    // visibleItems[hiddenCount + i]`), but at the window's two ends the
+                    // slice has no neighbour where the transcript has one. Reading the
+                    // slice made the boundary row's rail insets flip the moment a batch
+                    // was prepended *under* it — and that boundary row is exactly the one
+                    // the anchor above is holding still, so the flip was a few tens of dp
+                    // of movement on the reader's own row, once per load-earlier batch.
+                    // `ToolCall` and `ToolDiff` are the only two kinds that draw a rail
+                    // (`ui/blocks/ToolRail.kt`).
+                    val previous = visibleItems.getOrNull(hiddenCount + sliceIndex - 1)
+                    val next = visibleItems.getOrNull(hiddenCount + sliceIndex + 1)
+                    val firstOfRun = previous !is ToolCall && previous !is ToolDiff
+                    val lastOfRun = next !is ToolCall && next !is ToolDiff
                     // Whether this row's markdown must be parsed before its first layout:
                     // see `PiMarkdownImmediate.kt` for the defect, and the block above for
                     // the gate. `RowHeightCache` is the latch — a row that has already been
@@ -2223,20 +2209,12 @@ private fun ChatBody(
                     CompositionLocalProvider(
                         LocalPiMarkdownImmediate provides immediateMarkdown,
                         LocalPiMarkdownParsed provides onMarkdownParsed,
-                        // **This row's own bottom air**, handed to the row rather than to the
-                        // list: `BlockColumn` pads with it, `ToolRailFrame` overdraws by it, and
-                        // both read this one value — that is the whole fix for the rail breaking
-                        // apart across the gap (`BlockChrome.BlockColumn` has the argument).
-                        LocalRowGap provides item.rowGapDp(prefs.messageDensity).dp,
                     ) {
                         BlockRenderer(
                             item = item,
                             modifier = rowModifier,
                             firstOfRun = firstOfRun,
                             lastOfRun = lastOfRun,
-                            // The run's ring: this row's state when the whole run agrees, null
-                            // (→ neutral) when it does not.
-                            runRing = slot.ring,
                             // pi's `hideThinkingBlock` (`settings-manager.ts:119`) and
                             // the app's collapse-by-default preference both land here;
                             // the renderer already honours both.
@@ -2292,9 +2270,8 @@ private fun ChatBody(
                             // stay deleted.
                             onImageClick = { viewedImage = it },
                             // The coarse tool clock read beside the other `state.*` values
-                            // above. Two blocks consume it: `ShellBlock` (a running `bash` is
-                            // the one live *call* duration) and `ThinkingBlockBlock` (a
-                            // thinking row that is still streaming counts up too).
+                            // above; only `ShellBlock` consumes it — a running `bash` is the
+                            // one live duration in the transcript.
                             nowMs = nowMs,
                         )
                     }

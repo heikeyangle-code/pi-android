@@ -73,16 +73,9 @@ import app.pi.rpc.UserMessage
  *   16」, and `ToolRail.kt`'s KDoc for the whole argument). Both default to `true`,
  *   which is the shape of a one-card run: a caller that passes nothing gets v2's
  *   clean inset rather than a stub and a tail.
- * @param runRing the **run's** state, for the 1 px ring the merged shell draws around a whole
- *   run (`ToolRunSlot.ring`): the row's own state when every row of the run agrees, null when
- *   they do not (and then the ring is the neutral `borderMuted @35%`). Only the two rail blocks
- *   read it. Null is also the default, so a caller that passes nothing draws the neutral ring —
- *   which is the same thing a mixed run draws, and never a state the run does not have.
- * @param nowMs see the `nowMs` parameter below: the thinking row joined the shells as a second
- *   reader of the ViewModel's coarse clock.
  */
 @Composable
-internal fun BlockRenderer(
+fun BlockRenderer(
     item: TranscriptItem,
     modifier: Modifier = Modifier,
     hideThinking: Boolean = false,
@@ -91,7 +84,6 @@ internal fun BlockRenderer(
     showBilledCost: Boolean = false,
     firstOfRun: Boolean = true,
     lastOfRun: Boolean = true,
-    runRing: RailState? = null,
     onBranchClick: ((BranchSummary) -> Unit)? = null,
     /** §4.8: 编辑并从此分叉 — pi forks a session from a user message (`fork`, rpc-types.ts:62). */
     onForkFromMessage: ((String) -> Unit)? = null,
@@ -107,12 +99,11 @@ internal fun BlockRenderer(
     onImageClick: ((PiImage) -> Unit)? = null,
     /**
      * `UiState.nowMs` — the ViewModel's 1 Hz coarse clock, or null when nothing in
-     * the transcript is live. Two blocks read it: [ShellBlock] (a running `bash` is the
-     * one *call* whose elapsed number is live) and [ThinkingBlockBlock] (a thinking row
-     * that is still streaming counts up too). Every other card's duration is pi's own
-     * fixed figure. It is handed down rather than read here so the renderer stays a pure
-     * function of its parameters. See `UiState.nowMs` for why the value exists and
-     * `UiState.hasPendingToolClock` for the predicate that publishes it.
+     * the transcript is pending. Only [ShellBlock] reads it (a running `bash` is the
+     * one card whose elapsed number is live; every other card's duration is pi's own
+     * fixed figure), and it is handed down rather than read here so the renderer stays
+     * a pure function of its parameters. See `UiState.nowMs` for why the value exists
+     * and `UiState.hasPendingToolClock` for the predicate that publishes it.
      *
      * The default is null, so a caller that does not pass it keeps every block's
      * previous behaviour.
@@ -135,10 +126,6 @@ internal fun BlockRenderer(
         is AssistantText -> AssistantTextBlock(item, modifier, onImageClick)
 
         is ThinkingBlock -> if (!hideThinking) {
-            // No clock: the thinking row is back to its pre-rework behaviour — the elapsed time
-            // appears once, from pi's own `elapsedMs`, and the row does not change every second.
-            // See `PiSessionViewModel.hasPendingToolClock` for why the clock no longer arms for a
-            // streaming thinking block.
             ThinkingBlockBlock(item, modifier, thinkingDefaultExpanded)
         }
 
@@ -153,24 +140,23 @@ internal fun BlockRenderer(
         is ToolCall -> if (item.images.isNotEmpty()) {
             // The one branch whose card can carry images, so the one that needs the
             // viewer: `onImageClick` reaches the grid from `ToolCallBlock`.
-            ToolCallBlock(item, modifier, toolsDefaultExpanded, firstOfRun, lastOfRun, onImageClick, runRing)
+            ToolCallBlock(item, modifier, toolsDefaultExpanded, firstOfRun, lastOfRun, onImageClick)
         } else {
             when (item.toolName) {
-                "read" -> ReadBlock(item, modifier, toolsDefaultExpanded, firstOfRun, lastOfRun, runRing)
-                "write" -> WriteBlock(item, modifier, toolsDefaultExpanded, firstOfRun, lastOfRun, runRing)
-                "edit" -> EditBlock(item, modifier, toolsDefaultExpanded, firstOfRun, lastOfRun, runRing)
-                "grep" -> GrepBlock(item, modifier, toolsDefaultExpanded, firstOfRun, lastOfRun, runRing)
-                "find" -> FindBlock(item, modifier, toolsDefaultExpanded, firstOfRun, lastOfRun, runRing)
-                "ls" -> LsBlock(item, modifier, toolsDefaultExpanded, firstOfRun, lastOfRun, runRing)
+                "read" -> ReadBlock(item, modifier, toolsDefaultExpanded, firstOfRun, lastOfRun)
+                "write" -> WriteBlock(item, modifier, toolsDefaultExpanded, firstOfRun, lastOfRun)
+                "edit" -> EditBlock(item, modifier, toolsDefaultExpanded, firstOfRun, lastOfRun)
+                "grep" -> GrepBlock(item, modifier, toolsDefaultExpanded, firstOfRun, lastOfRun)
+                "find" -> FindBlock(item, modifier, toolsDefaultExpanded, firstOfRun, lastOfRun)
+                "ls" -> LsBlock(item, modifier, toolsDefaultExpanded, firstOfRun, lastOfRun)
                 // pi's two shells share one renderer factory (`index.ts:35-36`): the prompt
                 // is the only difference between them, so they share one block here too.
-                "bash", "powershell" ->
-                    ShellBlock(item, modifier, toolsDefaultExpanded, firstOfRun, lastOfRun, nowMs, runRing)
-                else -> ToolCallBlock(item, modifier, toolsDefaultExpanded, firstOfRun, lastOfRun, ring = runRing)
+                "bash", "powershell" -> ShellBlock(item, modifier, toolsDefaultExpanded, firstOfRun, lastOfRun, nowMs)
+                else -> ToolCallBlock(item, modifier, toolsDefaultExpanded, firstOfRun, lastOfRun)
             }
         }
 
-        is ToolDiff -> DiffBlock(item, modifier, toolsDefaultExpanded, firstOfRun, lastOfRun, runRing)
+        is ToolDiff -> DiffBlock(item, modifier, toolsDefaultExpanded, firstOfRun, lastOfRun)
 
         is CompactionMarker -> CompactionBlock(item, modifier, showBilledCost)
 

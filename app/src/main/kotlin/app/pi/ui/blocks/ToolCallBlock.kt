@@ -32,7 +32,7 @@ import app.pi.ui.theme.PiTheme
  * line's wording) live in `ToolOutputParse.kt` for the same reason.
  */
 @Composable
-internal fun ToolCallBlock(
+fun ToolCallBlock(
     item: ToolCall,
     modifier: Modifier = Modifier,
     defaultExpanded: Boolean = false,
@@ -40,8 +40,6 @@ internal fun ToolCallBlock(
     lastOfRun: Boolean = true,
     /** A tap on a returned image opens it full screen ([PiImageViewer]). */
     onImageClick: ((PiImage) -> Unit)? = null,
-    /** The **run's** state, for the 1 px ring the rail draws ([ToolRunSlot.ring]). */
-    ring: RailState? = null,
 ) {
     val palette = PiTheme.palette
     // The card's state, derived once: `06 §4`'s fourth state (被拒) is read from the
@@ -139,7 +137,6 @@ internal fun ToolCallBlock(
                 { expanded = !expanded },
                 firstOfRun = firstOfRun,
                 lastOfRun = lastOfRun,
-                ring = ring,
             ) {
                 ToolHeader(
                     item = item,
@@ -164,8 +161,8 @@ internal fun ToolCallBlock(
                     // arguments are the terminal's default foreground — `Uncoloured`, which the
                     // palette maps onto pi's `text` — not `accent` and not a segmented line.
                     subject = listOf(ToolCallPart(item.argsSummary, ToolCallToken.Uncoloured)),
-                    state = state,
                     expanded = expanded,
+                    expandable = item.output.isNotEmpty(),
                 )
 
                 if (expanded && item.output.isNotEmpty()) {
@@ -253,12 +250,11 @@ internal fun ToolCallBlock(
                     )
                 }
 
-                // The footer is the expanded card's **last line**, and the images above it are
-                // the one body that is painted while collapsed too (they always were) — so the
-                // line is gated on `expanded` on its own, after them（`差异表` §2 第 3 行）.
-                if (expanded) {
-                    ToolFooter(text = footer, state = state)
-                }
+                ToolFooter(
+                    text = footer,
+                    state = state,
+                    elapsedMs = item.elapsedMs,
+                )
             }
         }
     }

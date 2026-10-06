@@ -2,6 +2,7 @@ package app.pi.ui.screens
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -14,8 +15,10 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
@@ -29,8 +32,10 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import app.pi.runtime.RuntimeProvisioner
 import app.pi.ui.Boot
+import app.pi.ui.theme.PiMark
 import app.pi.ui.theme.PiSpacing
 import app.pi.ui.theme.PiTheme
 
@@ -45,18 +50,16 @@ import app.pi.ui.theme.PiTheme
  *
  * ## Geometry (v2 `direction-b-v2.html` `.b-boot`)
  *
- * One centred column of 30 dp inline padding: the state's title at `17/600`, a body
- * line, and the one action. The three states are `phone59` (准备启动本地引擎),
- * `phone60` (正在安装运行时, with the segmented bar) and `phone61` (引擎没有在运行,
- * with the v2 error block). The copy is the product's own (`02-real-content.md` §7.3)
- * and is not touched by this batch.
+ * One centred column of 30 dp inline padding: a `52` circle badge, the state's
+ * title at `17/600`, a body line, and the one action. The three states are
+ * `phone59` (准备启动本地引擎), `phone60` (正在安装运行时, with the segmented bar)
+ * and `phone61` (引擎没有在运行, with the v2 error block). The copy is the product's
+ * own (`02-real-content.md` §7.3) and is not touched by this batch.
  *
- * The board's `52` circle badge is **not drawn**: it carried the app's mark, that
- * mark is gone with the old icon, and the user asked for no badge here at all
- * (2026-10-05). The failure state keeps its own signal in the words below and in
- * the error block's `✗` — the same 三重编码 the rest of the app uses (symbol, then
- * word, then colour), which is what makes the dead-engine state readable without
- * colour.
+ * The badge is the π mark (`brand-spec.md` §1: App 图标 / 顶部标识 / 空态标识) at 26
+ * inside its 52 circle, tinted `muted`; the failure state replaces it with `✗` in
+ * `error` — the same 三重编码 the rest of the app uses (symbol, then word, then
+ * colour), which is what makes the dead-engine state readable without colour.
  *
  * `StepBar` keeps the hand-drawn `Box` pair the file always had (see its KDoc);
  * only its shape changed, from a continuous fill to v2's segmented bar.
@@ -85,6 +88,8 @@ fun BootScreen(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
+        BootBadge(boot)
+
         when (boot) {
             Boot.Idle -> {
                 Spacer(Modifier.height(BootHeadingGap))
@@ -155,6 +160,39 @@ fun BootScreen(
 }
 
 // ---------------------------------------------------------------- the three states
+
+/**
+ * The 52 dp circle above every state.
+ *
+ * `phone59`/`phone60` carry the π mark at `muted` inside it (the board's badge
+ * has `color:var(--muted)`, i.e. the mark is not the accent — the accent is
+ * reserved for the one live thing on the screen); `phone61` swaps the mark for
+ * `✗` in `error`, which is the failure's symbol in `06 §4`'s table.
+ *
+ * 17 sp is the board's `mono t17` for that glyph and is the only inline size in
+ * this file: `PiTheme.text.mono` is the app's 13 sp machine role, and the badge
+ * glyph is the one place v2 draws it at 17.
+ */
+@Composable
+private fun BootBadge(boot: Boot) {
+    val palette = PiTheme.palette
+    Box(
+        modifier = Modifier
+            .size(BootBadgeSize)
+            .border(PiSpacing.hairline, palette.borderMuted, CircleShape),
+        contentAlignment = Alignment.Center,
+    ) {
+        if (boot is Boot.Failed) {
+            Text(
+                text = "✗",
+                style = PiTheme.text.mono.copy(fontSize = 17.sp, lineHeight = 22.sp),
+                color = palette.error,
+            )
+        } else {
+            PiMark(size = BootBadgeMarkSize, tint = palette.muted)
+        }
+    }
+}
 
 /** `17/600` — `MaterialTheme.typography.titleMedium` is exactly that. */
 @Composable
@@ -322,6 +360,12 @@ private fun StepBar(step: RuntimeProvisioner.Step) {
 /** `.b-boot{padding:0 30px}`: the boot surface's own inline margin (not the page 14). */
 private val BootPagePadding = 30.dp
 
+/** `.b-boot-badge{width:52px;height:52px}`. */
+private val BootBadgeSize = 52.dp
+
+/** `PiMark s={26}` inside the badge. */
+private val BootBadgeMarkSize = 26.dp
+
 /** `.b-boot-bar i{height:4px}` / `.b-boot-bar{gap:2px}`. */
 private val BootBarHeight = 4.dp
 private val BootBarSegmentGap = 2.dp
@@ -335,10 +379,9 @@ private val BootButtonRadius = 8.dp
 
 /**
  * The board's per-state rhythm, read off `phone59`–`phone61`:
- * `mt18` above the title (badge→title on the board; the badge is not drawn any more),
- * `mt10` title→body, `mt4` step name→counter, `mt18` counter→bar, `mt16`
- * title→error card, and the action's own top gap — 20 after the idle body, 16 after
- * the failure card.
+ * `mt18` badge→title, `mt10` title→body, `mt4` step name→counter, `mt18`
+ * counter→bar, `mt16` title→error card, and the action's own top gap — 20 after the
+ * idle body, 16 after the failure card.
  */
 private val BootHeadingGap = 18.dp
 private val BootBodyGap = 10.dp
