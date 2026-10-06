@@ -1110,6 +1110,27 @@ private fun ChatBody(
         pausedRows = transcriptRows
     }
 
+    /**
+     * The disclosure tap's yield: [pauseTail] **without the navigation latch**
+     * (`TailFollow.yieldToContent`).
+     *
+     * The distinction is the whole fix for 「思考块/工具卡 展开或收起后视口跳到别处」. The tap
+     * changes one row's height; a shrinking row whose tail is inside the viewport cannot keep
+     * the `LazyColumn` where it was, so the measure pass scrolls back to the content's end
+     * (`measureLazyList`'s "no longer fills the viewport" branch) and the visible transcript
+     * slides down by (the row's height delta − the pixels below the fold). That landing is
+     * `TailFollow`'s `atBottom`, i.e. rule 3's re-arm condition — but rule 3 is forbidden while
+     * `pausedByNavigation` is set, which `pauseTail()` sets (the search/「上一条」 navigation's
+     * latch, deliberately permanent). So the reader was left one collapsed body behind the tail
+     * with every later row below the fold. A disclosure is not a navigation, and this yield is
+     * reversible exactly like a drag's release (rule 2 clears the same flag).
+     */
+    fun yieldTail() {
+        tail.yieldToContent()
+        following = false
+        pausedRows = transcriptRows
+    }
+
     fun reArmTail() {
         tail.reArm()
         following = true
@@ -2219,23 +2240,33 @@ private fun ChatBody(
                         // both read this one value — that is the whole fix for the rail breaking
                         // apart across the gap (`BlockChrome.BlockColumn` has the argument).
                         LocalRowGap provides item.rowGapDp(prefs.messageDensity).dp,
-                        // A disclosure tap re-lays-out this row, so two things have to stand down:
+                        // A disclosure tap re-lays-out this row, so two things have to stand
+                        // down — but **reversibly** (`yieldTail`, not `pauseTail`):
                         //
-                        //  1. the tail follow (`pauseTail()`), which would otherwise re-pin the
-                        //     viewport so the tail stays visible;
-                        //  2. **the anchor correction** (`LaunchedEffect(hiddenCount,
-                        //     visibleItems.size)` above). Its keys change with the row's height —
-                        //     and a 24 dp card with a body changes them by a lot — so it used to
-                        //     run and re-apply the **pre-change** `(anchorKey, anchorOffset)`.
-                        //     Keeping that row at its old offset shifts everything by exactly the
-                        //     height delta: the user's "展开再收回，它直接跳到下半截 / 跳到上半截".
+                        //  1. the tail follow's *pin* (`e2e26e4`): while following, the layout
+                        //     change moves a key of the follow effect and the pin would drag
+                        //     the reader to the tail under their own finger. The yield issues
+                        //     no pin and needs none;
+                        //  2. **the position itself**, which the tap does not own: the collapse
+                        //     shrinks the row, so when that row's tail was inside the viewport
+                        //     the `LazyColumn` scrolls back to the content's end (see
+                        //     `yieldTail` — *that* is what moves the pixels, and no app-side
+                        //     re-request can undo it: the old position is past the new
+                        //     `maxOffset` and the same measure pass clamps it). The viewport
+                        //     therefore lands on `atBottom`, and rule 3 has to be free to
+                        //     re-arm there — the navigation latch `pauseTail()` sets is what
+                        //     left the reader stranded one collapsed body behind the tail.
                         //
-                        // Nulling the anchor is the fix rather than a flag: the correction needs a
-                        // key to restore, so with none it is a no-op — no timing race with the
-                        // layout change — and the tracker below re-records where the viewport
-                        // actually is on the settled layout.
+                        // `anchorKey = null` is kept from `5ef14ca`, but it is **not** what
+                        // moves the viewport: this correction is keyed on `(hiddenCount,
+                        // visibleItems.size)`, and neither changes when one row's *height*
+                        // changes, so it has never run on a disclosure frame. Nulling it only
+                        // keeps a run in the *same settle window* (a window prepend in a long
+                        // session, which does move `hiddenCount`) from re-pinning the position
+                        // the layout has just legitimately taken, using the tracker's
+                        // post-slide row.
                         LocalDisclosureTap provides {
-                            pauseTail()
+                            yieldTail()
                             anchorKey = null
                         },
                     ) {
