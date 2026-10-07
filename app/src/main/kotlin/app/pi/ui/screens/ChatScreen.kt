@@ -160,6 +160,7 @@ import app.pi.ui.chat.disclosureDeficitPx
 import app.pi.ui.chat.earlierRowHeightPx
 import app.pi.ui.chat.freshRowKeysAfter
 import app.pi.ui.chat.hiddenRows
+import app.pi.ui.chat.holdBandPx
 import app.pi.ui.chat.holdBandStillNeeded
 import app.pi.ui.chat.itemIndexOfVisibleRow
 import app.pi.ui.chat.mayArmEarlier
@@ -1345,6 +1346,7 @@ private fun ChatBody(
                 val index = listState.firstVisibleItemIndex
                 val key = renderedItemsNow.getOrNull(index)?.key
                 if (key != null) {
+                    val info = listState.layoutInfo
                     disclosureTapSeq.longValue += 1
                     disclosureTap = DisclosureTap(
                         seq = disclosureTapSeq.longValue,
@@ -1355,7 +1357,19 @@ private fun ChatBody(
                         // `viewportEndOffset` is *not* affected by the band: the library
                         // computes it as `maxOffset + afterContentPadding`, and the band moves
                         // both terms by the same amount.
-                        viewportEndOffsetPx = listState.layoutInfo.viewportEndOffset,
+                        viewportEndOffsetPx = info.viewportEndOffset,
+                        // How much empty space the position **already** needs, measured before
+                        // the flip. Zero for every ordinary collapse (the reader is inside the
+                        // range the list has without any band); non-zero only when a previous
+                        // collapse's band is still in force, and then it is the part the
+                        // library's scroll-back is about to spend before this screen can look —
+                        // see `holdBandPx`'s KDoc for the whole argument.
+                        bandAtTapPx = holdBandPx(
+                            lastItemBottomPx = info.visibleItemsInfo.lastOrNull()
+                                ?.let { it.offset + it.size } ?: info.viewportEndOffset,
+                            viewportEndOffsetPx = info.viewportEndOffset,
+                            baseBottomPaddingPx = transcriptBottomPadPx,
+                        ),
                     )
                 }
             }
@@ -1395,8 +1409,14 @@ private fun ChatBody(
                 requestOutstanding = true
                 // Exactly the pixels the list was short, so the position the reader had is
                 // reachable *and* is the list's end (no scroll session, no animation, and
-                // `canScrollForward` stays false — see `holdBandStillNeeded`).
-                disclosureBandPx = deficit
+                // `canScrollForward` stays false — see `holdBandStillNeeded`) — plus whatever
+                // the position already needed before this tap (`bandAtTapPx`, zero for a single
+                // collapse). Without that term a **second** collapse in a row reserves only its
+                // own `D2`: the scroll-back spends `D2` of the band that was already in force
+                // before this screen can measure anything, so the position the request asks for
+                // is `band` px above what the new reservation can reach and the reader lands
+                // exactly `band` px lower than they were (`holdBandPx`'s KDoc has the argument).
+                disclosureBandPx = tap.bandAtTapPx + deficit
                 listState.requestScrollToItem(index, tap.offsetPx)
             } else if (sawClamp) {
                 // The position is back: the hold is in place.
@@ -4239,18 +4259,24 @@ private val TailFollowSaver: Saver<TailFollow, Any> = listSaver(
  * silently skipped).
  *
  * See the disclosure section in this file's chat composable for the mechanism, and
- * `ui/chat/TailFollow.kt`'s `disclosureDeficitPx` / `holdBandStillNeeded` for the arithmetic.
+ * `ui/chat/TailFollow.kt`'s `disclosureDeficitPx` / `holdBandPx` / `holdBandStillNeeded` for
+ * the arithmetic.
  *
  * @param viewportEndOffsetPx `LazyListLayoutInfo.viewportEndOffset` at the tap, the one
  *   number that says "the viewport itself changed" (the composer's inset, the keyboard): a
  *   frame that moved *it* is the follow's business, not a disclosure's. A band cannot move it
  *   (`viewportEndOffset = maxOffset + afterContentPadding`, and the band moves both terms).
+ * @param bandAtTapPx the empty space the reader's position already needed at the tap — `0`
+ *   unless a previous collapse's band is still in force, and the reason a second collapse in a
+ *   row has to add its own deficit to it rather than replace it (`holdBandPx`'s KDoc has the
+ *   argument, and the `tail-follow` harness's M group pins the arithmetic).
  */
 private data class DisclosureTap(
     val seq: Long,
     val rowKey: String,
     val offsetPx: Int,
     val viewportEndOffsetPx: Int,
+    val bandAtTapPx: Int,
 )
 
 /**

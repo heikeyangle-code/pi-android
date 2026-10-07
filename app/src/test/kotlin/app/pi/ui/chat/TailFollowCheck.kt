@@ -1182,18 +1182,34 @@ fun main() {
         check("M7 one pixel short of filling it keeps it", holdBandStillNeeded(end - base - 1, end, base), true)
         check("M8 a tail below the fold is not a band case", holdBandStillNeeded(end + 200, end, base), false)
 
-        // A second collapse on top of the first: the deficit is re-measured from the row's new
-        // position (the band's own pixels are part of what the content has to fill), and the
-        // band has to grow with it — the rule is a function of the geometry, not of the last
-        // number it saw.
-        val second = disclosureDeficitPx(120, 950)
-        check("M9 a second collapse has a bigger band", second, 830)
-        check("M10 and it is still needed at that new end", holdBandStillNeeded(end - base - second, end, base), true)
+        // The `drop` rule and the band's *size* are one expression: `holdBandStillNeeded` is
+        // `holdBandPx(...) > 0` and nothing else, so the two can never drift apart. Pinned on
+        // both signs, including the boundary the drop turns on.
+        check("M9 the drop rule is the band being empty", holdBandStillNeeded(end - base - 1, end, base), holdBandPx(end - base - 1, end, base) > 0)
+        check("M10 and it is the same at the line", holdBandStillNeeded(end - base, end, base), holdBandPx(end - base, end, base) > 0)
+
+        // A **second** collapse while the first one's band is still in force. The library's
+        // scroll-back spends `D2` of the band that is already there before this screen can
+        // measure anything, so the movement the correction sees is `D2` alone — while the
+        // reader's position needs the whole `band + D2`. Reserving `D2` (what `daabfe6` did)
+        // leaves the reader exactly `band` px lower, i.e. the same reported defect one card
+        // later; the reservation has to be the void measured at the tap plus the new deficit.
+        val firstBand = disclosureDeficitPx(120, 490)      // 370: the first collapse's band
+        val secondDeficit = disclosureDeficitPx(120, 490)  // the second collapse, same geometry
+        check("M11 the first collapse's band", firstBand, 370)
+        check("M12 the second collapse's own deficit", secondDeficit, 370)
+        check("M13 and the reservation is the sum", firstBand + secondDeficit, 740)
+        // The point of the sum: the *second* deficit alone is short by exactly the band that was
+        // already in force, i.e. the reader would come to rest that much lower.
+        check("M14 the deficit alone is short by the band in force", (firstBand + secondDeficit) - secondDeficit, firstBand)
+        // And the sum is still a *band* for the geometry it is reserved in (the void the held
+        // position leaves is the sum), which is what makes `holdBandStillNeeded` keep it.
+        check("M15 the sum is the void at the new held end", holdBandStillNeeded(end - base - 740, end, base), true)
 
         // The window is a bound, not a single-frame read: the tap may be delivered between
         // frames, in which case the collapse's own layout pass has not run yet and the first
         // look reads "nothing moved". One frame is a coin flip, not a bound.
-        check("M11 the hold watches more than one frame", DISCLOSURE_HOLD_FRAMES >= 2, true)
+        check("M16 the hold watches more than one frame", DISCLOSURE_HOLD_FRAMES >= 2, true)
     }
 
     println(if (failures == 0) "\nharness: OK (all checks passed)" else "\nharness: FAILED ($failures)")

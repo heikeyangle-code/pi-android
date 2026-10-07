@@ -871,6 +871,50 @@ internal fun disclosureDeficitPx(anchorOffsetPx: Int, rowOffsetNowPx: Int): Int 
     (rowOffsetNowPx - anchorOffsetPx).coerceAtLeast(0)
 
 /**
+ * The empty space the reader's own disclosure position needs, in pixels: **exactly the
+ * distance between the last row's bottom and the line the content would have to reach for that
+ * position to be legal without any band at all** — and `0` when a band is not what holds
+ * anything, i.e. when the position is not past that line.
+ *
+ * ## Why this is the number, and not "how far the reader was pushed"
+ *
+ * The measure pass' scroll-back boundary is `maxOffset = viewportSize − beforeContentPadding −
+ * afterContentPadding` (`LazyList.kt`'s `mainAxisAvailableSize`), and in `LazyListItemInfo`
+ * coordinates the last item's `offset + size` *is* the composed content's end. So the line the
+ * position has to reach without a band is `viewportEndOffset − base`, and how far the content is
+ * short of it is this function's value — exactly the extra `contentPadding.bottom` that turns
+ * "unreachable" into "reachable", and exactly the empty space the reader ends up seeing under
+ * the last row. [holdBandStillNeeded] is this number's "is it positive" and nothing else, so the
+ * band's size and the rule that drops it cannot drift apart.
+ *
+ * ## Why the caller also needs it *at the tap*
+ *
+ * A second collapse while the first one's band is still in force is what the tap-time use is
+ * for. The library's scroll-back runs *inside* the measure pass, before the app can measure
+ * anything: when a body closes and shortens the content by `D2`, the position is first pulled
+ * back by `D2` — to the *banded* max, i.e. `D2` of the band that was already there is spent
+ * before `ChatScreen` looks. The movement it can still see is therefore `D2` alone, while the
+ * reader's position needs the whole `band + D2`; reserving `D2` (what this fix did at first)
+ * leaves the reader exactly `band` px lower — the same reported defect, one card later. Asking
+ * this function for the void *before* the flip gives the pixels that are already needed, which
+ * the correction adds to the `D2` it measures afterwards.
+ *
+ * @param lastItemBottomPx `visibleItemsInfo.last()`'s `offset + size` — the composed
+ *   content's end in viewport coordinates. When the tail is below the fold this is at least
+ *   `viewportEndOffset`, so the answer is `0`, which is right: there is real content below the
+ *   viewport and the reader is nowhere near a band.
+ * @param viewportEndOffsetPx `LazyListLayoutInfo.viewportEndOffset`. **Independent of the
+ *   band**: the library computes it as `maxOffset + afterContentPadding`, and both terms move
+ *   by the same `band`, so a padding change cannot drive this number.
+ * @param baseBottomPaddingPx the list's own bottom padding, without the band (`12.dp` here).
+ */
+internal fun holdBandPx(
+    lastItemBottomPx: Int,
+    viewportEndOffsetPx: Int,
+    baseBottomPaddingPx: Int,
+): Int = (viewportEndOffsetPx - baseBottomPaddingPx - lastItemBottomPx).coerceAtLeast(0)
+
+/**
  * Whether the bottom band the disclosure hold reserved is **still** what makes the held
  * position reachable — i.e. whether the empty space has to stay.
  *
@@ -880,8 +924,8 @@ internal fun disclosureDeficitPx(anchorOffsetPx: Int, rowOffsetNowPx: Int): Int 
  * the collapse the reader's row would leave a gap larger than the list's bottom padding, and
  * the measure pass' scroll-back is what removes that gap (by moving the reader). The only way
  * to make the un-clamped position a legal one is to *have* the missing pixels below the last
- * row — `ChatScreen` adds exactly [disclosureDeficitPx] of `contentPadding.bottom` — so the
- * scroll range grows by exactly the amount the framework was short.
+ * row — `ChatScreen` adds exactly [holdBandPx] of `contentPadding.bottom` — so the scroll
+ * range grows by exactly the amount the framework was short.
  *
  * ## When it can go, and why this test is the whole rule
  *
@@ -889,7 +933,7 @@ internal fun disclosureDeficitPx(anchorOffsetPx: Int, rowOffsetNowPx: Int): Int 
  * scroll-back the moment it is removed), and it must not be kept once the content has grown
  * into it (that would leave scrollable empty space below the transcript forever). Both
  * questions are the same question: *is the current position within the range the list had
- * before the band existed?*
+ * before the band existed?* — which is [holdBandPx] being `0`.
  *
  * The measure pass `maxOffset` is `viewportSize − beforeContentPadding − afterContentPadding`
  * (`LazyList.kt`'s `mainAxisAvailableSize`), and its scroll-back guarantees the composed
@@ -919,7 +963,7 @@ internal fun holdBandStillNeeded(
     lastItemBottomPx: Int,
     viewportEndOffsetPx: Int,
     baseBottomPaddingPx: Int,
-): Boolean = lastItemBottomPx < viewportEndOffsetPx - baseBottomPaddingPx
+): Boolean = holdBandPx(lastItemBottomPx, viewportEndOffsetPx, baseBottomPaddingPx) > 0
 
 /**
  * How many frames `ChatScreen` watches the list for after a disclosure **collapse** before
