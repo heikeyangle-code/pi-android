@@ -7,6 +7,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -39,12 +41,10 @@ fun SkillInvocationBlock(
     defaultExpanded: Boolean = false,
 ) {
     val palette = PiTheme.palette
-    // Held in the transcript's table by this row's key, so a card the reader opened is still
-    // open when the row comes back into the `LazyColumn`'s window (`RowExpansionStore.kt`).
-    // [defaultExpanded] is a constant `false` for this block — no expand/collapse-all switch
-    // reaches it — so its entry is never rebased, and a reader's choice survives the whole
-    // session until the table's bound drops it.
-    var expanded by rememberRowExpanded(defaultExpanded)
+    // Keyed on the parameter so the AppBar's expand/collapse-all switch (pi's
+    // `app.tools.expand`, interactive-mode.ts `setToolsExpanded`) reaches every
+    // row, exactly as pi re-applies expansion to all of its children.
+    var expanded by remember(defaultExpanded) { mutableStateOf(defaultExpanded) }
 
     BlockColumn(modifier) {
         BlockCard(

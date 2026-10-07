@@ -87,7 +87,7 @@ internal fun ShellBlock(
 ) {
     val palette = PiTheme.palette
     val state = toolStateOf(item)
-    var expanded by rememberRowExpanded(defaultExpanded)
+    var expanded by remember(defaultExpanded) { mutableStateOf(defaultExpanded) }
     var fullOutput by remember { mutableStateOf(false) }
     val pending = state == ToolState.Running
     val command = remember(item.args) { argString(item.args, "command").orEmpty() }

@@ -42,7 +42,7 @@ internal fun WriteBlock(
 ) {
     val palette = PiTheme.palette
     val state = toolStateOf(item)
-    var expanded by rememberRowExpanded(defaultExpanded)
+    var expanded by remember(defaultExpanded) { mutableStateOf(defaultExpanded) }
     var fullOutput by remember { mutableStateOf(false) }
     val body = remember(item.args) { ToolOutputParse.writeBody(item.args) }
     val command = remember(item.args) { toolCommandText(item.args) }

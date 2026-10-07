@@ -8,6 +8,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -43,11 +45,7 @@ fun CompactionBlock(
     showBilledCost: Boolean = false,
 ) {
     val palette = PiTheme.palette
-    // The summary's disclosure, held in the transcript's table by this row's key so it survives
-    // the row leaving the `LazyColumn`'s window (`RowExpansionStore.kt`). The default is the
-    // constant `false` this card always had — it is not one of the expand/collapse-all switch's
-    // rows — so its entry is never rebased.
-    var expanded by rememberRowExpanded(defaultExpanded = false)
+    var expanded by remember { mutableStateOf(false) }
     val label = when (item.status) {
         CompactionMarker.Status.Running -> "正在压缩上下文…"
         CompactionMarker.Status.Done -> "上下文已压缩"

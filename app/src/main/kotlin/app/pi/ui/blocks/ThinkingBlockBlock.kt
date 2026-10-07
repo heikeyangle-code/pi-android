@@ -7,6 +7,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -35,12 +37,10 @@ fun ThinkingBlockBlock(
     defaultExpanded: Boolean = false,
 ) {
     val palette = PiTheme.palette
-    // The value is keyed on the parameter, so the AppBar's expand/collapse-all switch (pi's
-    // `app.tools.expand`, interactive-mode.ts `setToolsExpanded`) reaches every row, exactly as
-    // pi re-applies expansion to all of its children — but it is held in the transcript's own
-    // table by this row's key, so it also survives the row leaving the `LazyColumn`'s window
-    // (`RowExpansion.kt`, and `RowExpansionStore.kt` for the defect).
-    var expanded by rememberRowExpanded(defaultExpanded)
+    // Keyed on the parameter so the AppBar's expand/collapse-all switch (pi's
+    // `app.tools.expand`, interactive-mode.ts `setToolsExpanded`) reaches every
+    // row, exactly as pi re-applies expansion to all of its children.
+    var expanded by remember(defaultExpanded) { mutableStateOf(defaultExpanded) }
     val pen = palette.thinking(item.level ?: "medium")
     val levelLabel = item.level?.takeIf { it.isNotBlank() }?.let { PiThinkingLevel.fromWire(it).label }
     // The row is a **two-voice** line, which is rule #7 (`docs/pi-android-ui-spec.md` §1) applied
