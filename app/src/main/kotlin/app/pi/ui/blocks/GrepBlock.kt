@@ -52,7 +52,7 @@ internal fun GrepBlock(
 ) {
     val palette = PiTheme.palette
     val state = toolStateOf(item)
-    var expanded by remember(defaultExpanded) { mutableStateOf(defaultExpanded) }
+    var expanded by rememberRowExpanded(defaultExpanded)
     var fullOutput by remember { mutableStateOf(false) }
     val body = remember(item.output) { ToolOutputParse.grepBody(item.output) }
     if (body == null) {

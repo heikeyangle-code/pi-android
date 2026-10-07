@@ -128,8 +128,11 @@ import app.pi.ui.PiSessionViewModel
 import app.pi.ui.earlierRowText
 import app.pi.ui.blocks.BlockRenderer
 import app.pi.ui.blocks.LocalDisclosureToggle
+import app.pi.ui.blocks.LocalRowExpansion
 import app.pi.ui.blocks.LocalRowGap
+import app.pi.ui.blocks.LocalTranscriptRowKey
 import app.pi.ui.blocks.PiImageViewer
+import app.pi.ui.blocks.RowExpansionStore
 import app.pi.ui.blocks.blockGapDp
 import app.pi.ui.blocks.railStateOf
 import app.pi.ui.blocks.rowGapDp
@@ -1645,6 +1648,28 @@ private fun ChatBody(
         // layout must not be a zero-height one, and the set may not grow with the session.
         freshRowKeys = freshRowKeysAfter(freshRowKeys, keys, FRESH_ROW_KEYS_MAX)
     }
+
+    // ------------------------------------------------- a card the reader opened stays open
+    //
+    // **The defect this table stands behind.** Every disclosure block held its state in
+    // `remember(defaultExpanded) { mutableStateOf(defaultExpanded) }`. The `defaultExpanded` key
+    // is deliberate — it is how the AppBar's expand/collapse-all switch reaches every row — but a
+    // `remember`'s value dies with the composition that owns it, and this list disposes the
+    // composition of any row that leaves its window (scrolled far enough, or pushed out by a
+    // layout shift). The row was then composed again and re-initialised from `defaultExpanded`,
+    // so a card the reader had opened came back **collapsed**: 「几张卡片都展开着，我只收起一张，
+    // 有时候别的也跟着收起来了」.
+    //
+    // The state therefore lives here instead, one entry per row **key** — `TranscriptItem.key`,
+    // the identity the list above is built with and the same one `RowHeightCache` and
+    // `freshRowKeys` key on — and `LocalRowExpansion`/`LocalTranscriptRowKey` hand it to the
+    // blocks (`ui/blocks/RowExpansion.kt`). It belongs to one opening of one session, like the
+    // window above, so it is not carried across a session switch (a new key → a new table), and
+    // it is **bounded** (`ROW_EXPANSION_MAX`) so it cannot grow with the session
+    // (`RowExpansionStore.kt` owns both the bound and the rule that a moved `defaultExpanded`
+    // still discards what was chosen under the old one, which is what keeps the switch exact).
+    val rowExpansion = remember(sessionKey) { RowExpansionStore(ROW_EXPANSION_MAX) }
+
     // True for the first composition of a *restored* screen (a destination switch, a
     // rotation): its visible rows have remembered heights but no parsed content yet, so
     // without this the reader gets a column of correctly-sized **blank** rows for a frame.
@@ -2435,6 +2460,14 @@ private fun ChatBody(
                         // both read this one value — that is the whole fix for the rail breaking
                         // apart across the gap (`BlockChrome.BlockColumn` has the argument).
                         LocalRowGap provides item.rowGapDp(prefs.messageDensity).dp,
+                        // **This row's identity, and the table its disclosure state lives in.**
+                        // `item.key` is the key the list above is built with, so
+                        // `rememberRowExpanded` files the reader's choice under exactly the
+                        // identity the list itself calls stable — which is what makes a card the
+                        // reader opened survive the row leaving and re-entering this window
+                        // (`rowExpansion` above has the defect and the bound).
+                        LocalTranscriptRowKey provides item.key,
+                        LocalRowExpansion provides rowExpansion,
                         // The transcript's disclosure hook (`toggleContent`), and only here:
                         // the extension cards that also disclose sit *outside* this list, and
                         // their height is not this list's content — a hold for them would be a
@@ -4161,6 +4194,20 @@ private const val TRANSCRIPT_WINDOW_STEP = 50
  * height); it never costs correctness, and the set cannot grow with the session.
  */
 private const val FRESH_ROW_KEYS_MAX = 200
+
+/**
+ * How many rows' expand/collapse choices this screen remembers — the bound on the table
+ * `rememberRowExpanded` writes through to (see `rowExpansion` above and
+ * `ui/blocks/RowExpansionStore.kt`).
+ *
+ * An entry is only ever created by a tap on a card the reader has on screen, so this is not a
+ * number the transcript's length can reach: it is a ceiling on how many *opened* cards one
+ * session can carry, several screens' worth over. When it is reached the least recently
+ * read-or-toggled row is dropped, and that row goes back to following its `defaultExpanded` —
+ * the behaviour every row had before the table existed. **This is the one number the fix adds,
+ * and it exists so the table cannot grow with the session.**
+ */
+private const val ROW_EXPANSION_MAX = 256
 
 /** The two floating scroll arrows: v2's dense control step, and 8dp apart. */
 private val SCROLL_ARROWS_GAP = 8.dp

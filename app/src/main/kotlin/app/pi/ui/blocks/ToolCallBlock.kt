@@ -49,8 +49,10 @@ internal fun ToolCallBlock(
     val state = toolStateOf(item)
     // Keyed on the parameter so the AppBar's expand/collapse-all switch (pi's
     // `app.tools.expand`, interactive-mode.ts `setToolsExpanded`) reaches every
-    // row, exactly as pi re-applies expansion to all of its children.
-    var expanded by remember(defaultExpanded) { mutableStateOf(defaultExpanded) }
+    // row, exactly as pi re-applies expansion to all of its children — and held in
+    // the transcript's own table by this row's key, so it outlives the row leaving
+    // the `LazyColumn`'s window (`RowExpansionStore.kt`).
+    var expanded by rememberRowExpanded(defaultExpanded)
     // F17 (`docs/rendering-review.md`): the card's own toggle and the spec's
     // 「展开全部」 are two different questions — the first asks "show the output at
     // all", the second "stop cutting it at 200 lines". Collapsing the card resets

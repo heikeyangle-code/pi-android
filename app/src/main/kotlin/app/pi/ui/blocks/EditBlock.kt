@@ -3,7 +3,6 @@ package app.pi.ui.blocks
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -43,7 +42,7 @@ internal fun EditBlock(
 ) {
     val palette = PiTheme.palette
     val state = toolStateOf(item)
-    var expanded by remember(defaultExpanded) { mutableStateOf(defaultExpanded) }
+    var expanded by rememberRowExpanded(defaultExpanded)
     val command = remember(item.args) { toolCommandText(item.args) }
     val path = remember(item.args) { argString(item.args, "file_path", "path").orEmpty() }
     val failed = state == ToolState.Failed

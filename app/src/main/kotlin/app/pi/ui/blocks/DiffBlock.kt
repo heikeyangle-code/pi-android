@@ -14,7 +14,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -86,8 +85,10 @@ internal fun DiffBlock(
     val palette = PiTheme.palette
     // Keyed on the parameter so the AppBar's expand/collapse-all switch (pi's
     // `app.tools.expand`, interactive-mode.ts `setToolsExpanded`) reaches every
-    // row, exactly as pi re-applies expansion to all of its children.
-    var expanded by remember(defaultExpanded) { mutableStateOf(defaultExpanded) }
+    // row, exactly as pi re-applies expansion to all of its children — and held in
+    // the transcript's own table by this row's key, so it outlives the row leaving
+    // the `LazyColumn`'s window (`RowExpansionStore.kt`).
+    var expanded by rememberRowExpanded(defaultExpanded)
     // **`expanded` is a key, so a collapsed diff card plans nothing.** `plan` is read only
     // inside the `if (expanded)` branch below, yet it used to be built here unconditionally —
     // and building it is not cheap: it walks every hunk, pairs removed/added runs, and runs the

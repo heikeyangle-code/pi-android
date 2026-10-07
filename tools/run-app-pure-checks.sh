@@ -954,6 +954,21 @@ run_harness zoom-decode-window \
   "$ROOT/app/src/main/kotlin/app/pi/ui/blocks/PiZoomDecodeWindow.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/ui/blocks/ImageSize.kt"
 
+# app.pi.ui.blocks: the transcript's expand/collapse table. The twelve disclosure blocks held
+# their state in `remember(defaultExpanded) { mutableStateOf(defaultExpanded) }`; a `remember`'s
+# value dies with the composition that owns it, and this `LazyColumn` disposes the composition of
+# every row that leaves its window (scrolled far enough, or pushed out by a layout shift), so a
+# card the reader had opened came back collapsed. The state now lives in a table keyed by the
+# **row's key**, and the two halves of the old expression are what this harness pins, because
+# this machine cannot compile Compose: the value must outlive the row's composition, and a
+# **change** of `defaultExpanded` must still discard it — including the case the naive
+# implementations get wrong, a manual value coming back when the switch is moved back. Plus the
+# bound, because the table may not grow with the session.
+run_harness row-expansion-store \
+  app.pi.ui.blocks.RowExpansionStoreCheckKt \
+  "$ROOT/app/src/test/kotlin/app/pi/ui/blocks/RowExpansionStoreCheck.kt" \
+  "$ROOT/app/src/main/kotlin/app/pi/ui/blocks/RowExpansionStore.kt"
+
 # app.pi.ui.chat: the `!` panel's output window. pi bounds its own panel at the tail
 # (`modes/interactive/components/bash-execution.js:93-98`, `truncateTail` with
 # DEFAULT_MAX_LINES/DEFAULT_MAX_BYTES); this is the same bound on the app's side, and the

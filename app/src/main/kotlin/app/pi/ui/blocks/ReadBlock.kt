@@ -46,7 +46,7 @@ internal fun ReadBlock(
 ) {
     val palette = PiTheme.palette
     val state = toolStateOf(item)
-    var expanded by remember(defaultExpanded) { mutableStateOf(defaultExpanded) }
+    var expanded by rememberRowExpanded(defaultExpanded)
     var fullOutput by remember { mutableStateOf(false) }
     val body = remember(item.args, item.output) { ToolOutputParse.readBody(item.args, item.output) }
     val range = remember(item.args) { readRange(item.args) }
