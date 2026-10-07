@@ -331,7 +331,7 @@ PI_ENGINE_NOTICES = [
         "7 × @earendil-works/* 包",
         engine_version(),
         "MIT",
-        f"正文与版权声明见列表里的『pi 引擎 {engine_version()}（MIT）』那一份：这七个包与 pi 引擎出自同一 monorepo，根 LICENSE 即它们的许可文本（已按 v{engine_version()} 标签逐字节核对；v0.85.1/v0.86.1/v0.87.1/v0.99.2/v1.0.0/v1.0.1 六个标签的 LICENSE 逐字节相同，sha256 未变）",
+        f"正文与版权声明见列表里的『pi 引擎 {engine_version()}（MIT）』那一份：这七个包与 pi 引擎出自同一 monorepo，根 LICENSE 即它们的许可文本（已按 v{engine_version()} 标签逐字节核对；v0.85.1/v0.86.1/v0.87.1/v0.99.2/v1.0.0/v1.0.1/v1.0.2/v1.0.3 八个标签的 LICENSE 逐字节相同，sha256 未变）",
         f"https://raw.githubusercontent.com/earendil-works/pi/v{engine_version()}/LICENSE",
         "0457f5bcec3b3b211605dfb5d1a49042fd638f3686a410fe099c24a25af13c48",
     ),

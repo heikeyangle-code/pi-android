@@ -254,7 +254,7 @@ pi 现在自带四个扩展，这个 App 直接可用：
 - **diff 工具产物的字节**：判据是「字节相等」而不是「名字还在」——名字还在、语义变了，是这个仓库踩过两次的坑（`docs/known-gaps.md` §M11 / §M12）。
 - **全部载荷按 SHA-256 锁定**：Linux 运行时、git 闭包、ripgrep/fd、proroot 的五个二进制记在 [`runtime.lock.json`](runtime.lock.json)；设备逐个载荷比对，只重解包真的变了的那个。
 
-当前钉的是 **pi 1.0.1**。
+当前钉的是 **pi 1.0.3**。
 
 ---
 
@@ -286,7 +286,7 @@ bash tools/run-app-pure-checks.sh      # 纯逻辑 harness（不需要设备）
 
 | 项目 | 它是什么 |
 | :--- | :--- |
-| **[pi](https://github.com/earendil-works/pi)** | 上游 coding agent，`@earendil-works/pi-coding-agent` **1.0.1**（MIT） |
+| **[pi](https://github.com/earendil-works/pi)** | 上游 coding agent，`@earendil-works/pi-coding-agent` **1.0.3**（MIT） |
 | **[Ubuntu Base 24.04](https://cdimage.ubuntu.com/ubuntu-base/releases/24.04.3/release/)** | glibc 用户态 |
 | **[Node.js 24.19](https://nodejs.org/en/download)** | 官方 glibc 构建 |
 | **[proot](https://proot-me.github.io/)**（Termux 构建） | 用户态系统调用翻译层 |
