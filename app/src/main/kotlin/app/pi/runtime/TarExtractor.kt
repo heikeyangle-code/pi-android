@@ -314,24 +314,47 @@ class TarExtractor(
      * thousands of entries (20 000 entries × 2 calls = 557 ms in isolation, on top of
      * an 8–25 s extraction).
      *
-     * The per-entry `canonicalFile` on the candidate stays: it is what refuses an
-     * entry whose path goes *through a symlink this same extraction just created* (a
-     * tar can put `bin -> /` before `bin/evil`), and a purely lexical check cannot see
-     * that. Removing it would be a security regression dressed as an optimisation.
+     * ## 只 canonical 父目录，**最后一个分量保持字面**（pi-engine 升级 ELOOP 的根因）
+     *
+     * 旧实现是 `File(destination, cleaned).canonicalFile`，即把整条路径（含最后那个
+     * 分量）都交给 `realpath`。这在**覆盖解压**时是错的：一个软链条目自己的路径上，
+     * 往往正躺着上一次解包留下的同名软链 —— `canonicalFile` 会**跟着它走到目标**，
+     * 于是新的软链被写在**目标的位置**，而不是条目自己的位置上。
+     *
+     * 真实后果（pi 1.0.1 → 1.0.3 的原地升级，设备报
+     * `failed to unpack pi-engine.tgz: Too many symbolic links encountered`）：
+     * 载荷里的 `./node_modules/.bin/yaml -> ../yaml/bin.mjs` 解析到
+     * `node_modules/yaml/bin.mjs`，而该文件**就在包根目录**；把 `../yaml/bin.mjs`
+     * 写在包根，相对路径展开回去正是它自己 —— 一条自指软链
+     * （`yaml/bin.mjs -> ../yaml/bin.mjs`）。紧接着的载荷条目
+     * `./node_modules/yaml/bin.mjs` 一调 `canonicalFile` 就抛 `ELOOP`。
+     * 载荷里这 9 条 `.bin` 软链在 1.0.1 与 1.0.3 **逐字相同**，所以这不是新载荷
+     * 引入的，而是"原地覆盖解压"必然触发的潜伏缺陷。
+     *
+     * 改成只 canonical 父目录之后：
+     *  - 软链条目写在它自己的路径上（`.bin/yaml`），旧链由 [unlinkIfPresent] 先删掉；
+     *  - 普通文件写在自己的路径上（`yaml/bin.mjs`），旧的自指链同样先被删掉 ——
+     *    也就是说**已经被弄坏的树在下一次成功解包时自愈**；
+     *  - 越界检查仍然成立：父目录若被解析到 [destination] 之外（载荷可以放
+     *    `bin -> /` 再放 `bin/evil`），这里照样拒绝。最后那个分量不需要 canonical
+     *    —— 写之前 [unlinkIfPresent] 永远先把该位置的节点（软链、文件、空目录）
+     *    拿掉，从不跟着它打开。
      */
     private fun resolveSafely(rawName: String): File? {
         val cleaned = rawName.removePrefix("./").trimStart('/')
         if (cleaned.isEmpty()) return destination
         val parts = cleaned.split('/')
         if (parts.any { it == ".." }) return null
-        val resolved = File(destination, cleaned)
+        val lexical = File(destination, cleaned)
+        // A bare filename resolves its parent to the destination itself; only an empty
+        // name (handled above) has no parent.
+        val parent = lexical.parentFile ?: return null
         val base = canonicalBase
-        val candidate = resolved.canonicalFile
-        return if (candidate.path == base || candidate.path.startsWith(base + File.separator)) {
-            candidate
-        } else {
-            null
+        val canonicalParent = parent.canonicalFile
+        if (canonicalParent.path != base && !canonicalParent.path.startsWith(base + File.separator)) {
+            return null
         }
+        return File(canonicalParent, lexical.name)
     }
 
     /**
