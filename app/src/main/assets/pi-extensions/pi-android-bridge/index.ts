@@ -1468,7 +1468,7 @@ function shouldRegister(spec: DeviceToolSpec, usable: ReadonlySet<string> | null
 
 /**
  * 工厂是 `async` 的，这是 pi 支持的形状：`ExtensionFactory = (pi) => void | Promise<void>`
- * （pi 1.0.1 `core/extensions/types.d.ts:1481`），加载器 `await factory(load.api)` 之后才
+ * （pi 1.0.3 `core/extensions/types.d.ts:1481`），加载器 `await factory(load.api)` 之后才
  * `commit()`（`core/extensions/loader.js:514`），所以这里 `await` 出来的能力状态在
  * 任何工具被调用之前就已经定下。
  */
@@ -1480,7 +1480,7 @@ export default async function (pi: ExtensionAPI) {
 	// `pi.registerTool` 只在扩展工厂跑的时候登记一次，pi 没有“每次请求重算工具表”的钩子。
 	// 这个工厂不是在进程启动时跑一次就完了：pi 每次 `createRuntime()` 都会重新加载扩展 ——
 	// 引擎启动、新会话、fork / switch_session / resume、`ctx.reload()`（`/device-reload`）
-	// 都走这条路（pi 1.0.1：`core/agent-session-runtime.js` 的 `newSession()` → `createRuntime()`
+	// 都走这条路（pi 1.0.3：`core/agent-session-runtime.js` 的 `newSession()` → `createRuntime()`
 	// → `core/agent-session-services.js:69` 的 `resourceLoader.reload()` →
 	// `core/resource-loader.js:353` 的 `clearExtensionCache()`）。
 	//

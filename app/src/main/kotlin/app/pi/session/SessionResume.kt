@@ -11,7 +11,7 @@ import java.io.File
  *
  * App 现在只有一种钉法：`PiSessionViewModel.restartEngine`（`:2307-2314`）把 `meta.sessionId`
  * 交出去，由 `PiLaunchOptions.continueSessionId` 渲染成 `--session-id <id>`。pi 对这个参数的处理
- * 在 pi 1.0.1 的 `dist/main.js:344-351`：
+ * 在 pi 1.0.3 的 `dist/main.js:344-351`（1.0.1→1.0.3 该文件逐字节相同）：
  *
  * ```
  * if (parsed.sessionId) {
@@ -37,7 +37,8 @@ import java.io.File
  * 两份互不为前缀就不合并），名字各取自己文件里第一条 user 消息 —— 用户看到的「名字改成半截开头
  * 那条」就是这个；而在列表只按 id 留一行的那些版本里，剩下的那半截看上去就是整段对话
  * （「往上翻，翻到头也没有了」「转录顶部没有『加载更早』」—— 因为**那个文件确实是从那儿开始的**）。
- * 真 pi 1.0.1 的探针（同 cwd / cwd 不同 / header 无 cwd / 文件在分组目录四组）复现了后三种：
+ * 真 pi 的探针（1.0.1 实测；`dist/core/session-manager.js` 在 1.0.3 逐字节相同，结论不变）
+ * （同 cwd / cwd 不同 / header 无 cwd / 文件在分组目录四组）复现了后三种：
  * 只有 cwd 相同时是 `SessionManager.open`。
  *
  * 第 ① 条还带一个次序上的事实：同一个 id 在那一层里有**两份**时，`findById` 取的是

@@ -19,8 +19,8 @@ package app.pi.ui.screens
  *
  * 纯 Kotlin（零 Android import）是刻意的：Android 层只能用 `Matrix` 施加 [matrixFor] 那几个
  * 数字，而「读出来的方向对不对」「映射表是不是 pi 那张」这两件事可以在本机 kotlinc 上真跑
- * （`app/src/test/kotlin/app/pi/ui/screens/PiExifOrientationCheck.kt`，期望值全部取自 pi 1.0.1
- * 的 `dist/utils/exif-orientation.js`）。
+ * （`app/src/test/kotlin/app/pi/ui/screens/PiExifOrientationCheck.kt`，期望值全部取自 pi 1.0.3
+ * 的 `dist/utils/exif-orientation.js`；1.0.1→1.0.3 该文件逐字节未变）。
  *
  * 没有引入 `androidx.exifinterface`，也没有引入任何解析 EXIF 的库：本仓库对随包依赖逐条登记
  * 许可证，为一个 IFD 走一遍许可证流水线不划算；而且这里要的是**与 pi 逐字节一致**的判定

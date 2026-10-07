@@ -102,3 +102,103 @@ cd /tmp && npm pack @earendil-works/pi-coding-agent@1.0.1 @earendil-works/pi-cod
 - `behaviour` / `extensions`：见回报（单跑）。
 - 未跑 `tools/run-app-pure-checks.sh`（按任务纪律交 CI）。
 
+## 八、收尾：KDoc 里"声称 pi 版本"的引用（CI 抓到的 `image-attachment-budget`）
+
+CI 红在：`AttachmentBudget.kt` 的类 KDoc 写「pin 住的引擎 **1.0.1**」，而
+`AttachmentBudgetCheck.kt` 的 1b 组把这句话和 `tools/pi-engine.lock.json` 里的版本对起来 ——
+锁文件已经是 1.0.3，于是断言失败（`FAIL AttachmentBudget 的 KDoc 标的正是 lock 里那个版本`）。
+
+修的时候只改"声称版本/口径"的引用，改前逐个 `cmp` 过它们指的上游文件在 1.0.1→1.0.3 之间
+**逐字节相同**（所以行号与结论仍然成立）：
+
+| 文件 | 改了什么 | 依据（两版 `cmp` 相同） |
+| :--- | :--- | :--- |
+| `app/src/main/kotlin/app/pi/ui/screens/AttachmentBudget.kt` | KDoc 的 `1.0.1` → `1.0.3`（两处） | `dist/utils/image-resize-core.js` |
+| `app/src/main/kotlin/app/pi/session/SessionResume.kt` | `pi 1.0.1 的 dist/main.js` → `1.0.3`；探针那句保留"1.0.1 实测"并注明 1.0.3 同文件未变 | `dist/main.js`、`dist/core/session-manager.js` |
+| `app/src/main/kotlin/app/pi/ui/render/PiHtml.kt` | 两条分支的版本 `1.0.1` → `1.0.3` | pi-tui `dist/components/markdown.js` |
+| `app/src/main/kotlin/app/pi/ui/screens/PiExifOrientation.kt` | 期望值来源 `1.0.1` → `1.0.3` | `dist/utils/exif-orientation.js` |
+| `app/src/test/kotlin/app/pi/ui/screens/PiExifOrientationCheck.kt` | 三处夹具来源 `1.0.1` → `1.0.3` | 同上 |
+| `app/src/test/kotlin/app/pi/ui/screens/AttachmentBudgetCheck.kt` | 说明性注释改成不写死版本（它举的是"KDoc 写死的版本 vs lock"这个失败模式） | 本身不改断言逻辑 |
+| `app/src/main/assets/pi-extensions/pi-android-bridge/index.ts` | 两处 `pi 1.0.1` → `1.0.3` | `core/extensions/types.d.ts`、`core/agent-session-runtime.js` |
+| `tools/run-app-pure-checks.sh` | html 夹具来源注释 `pi 1.0.1` → `1.0.3` | 同上 |
+
+**故意没改**（历史记录，不是"当前 pin 是什么"的主张）：`PiOfficialCatalog.kt` 里
+"1.0.0 与 1.0.1 都复核过 …" 的历次复核清单；`tools/fetch-runtime.mjs` 与
+`tools/build-license-assets.py` 的历次升级分析段；`RuntimePayloadStateCheck.kt` 的
+"1.0.0 → 1.0.1 实测链路"；`AttachmentBudgetCheck.kt` 的"0.86.1 → 1.0.1 那次漏掉的东西"；
+`rpc/.../TranscriptReducerTest.kt` 的 `interactive-mode.ts:3452-3459`（1.0.1）行号引用
+（该文件 1.0.3 变了约 +15 行，行号已漂，但那份文件当时正被另一个代理改动，没有并入本轮）。
+
+单跑验收（用 `tools/run-app-pure-checks.sh` 同一套 staged 编译器/库，只编译并运行这一个 harness）：
+
+```
+compile errors: 0
+...
+PASS AttachmentBudget 的 KDoc 标的正是 lock 里那个版本
+harness: OK (all checks passed)
+```
+
+## 九、升级后真机起不来：`failed to unpack pi-engine.tgz: Too many symbolic links encountered`
+
+**根因在解包器，不在载荷。** `TarExtractor.resolveSafely()` 的旧实现把**整条路径**（含最后那个
+分量）交给 `canonicalFile`。覆盖解压时，软链条目自己的路径上正躺着上一次解包留下的同名软链，
+`canonicalFile` 跟着它走到目标，于是新软链被写在**目标的位置**：
+
+- 载荷 `./node_modules/.bin/yaml -> ../yaml/bin.mjs` canonical 到 `node_modules/yaml/bin.mjs`
+  （**包根**文件）→ 把 `../yaml/bin.mjs` 写在包根，相对展开回去就是它自己 = **自指软链**；
+- 紧接着的条目 `./node_modules/yaml/bin.mjs` 一 canonical 就抛 `ELOOP`，
+  `RuntimeProvisioner.extractAsset` 把它包成设备上那句话。
+
+证据：
+- `app/src/main/kotlin/app/pi/runtime/TarExtractor.kt:322-335`（旧 `resolveSafely` 返回
+  `resolved.canonicalFile`）+ `:124-138`（软链分支写在 canonical 之后的 `target`）。
+- 用同一份 `pi-engine.tgz` 逐条模仿旧解包逻辑：空目录 **16467 条全过**；在**已解开的树上再解
+  一次**，在 `./node_modules/yaml/bin.mjs` 处 `ELOOP`，现场留下
+  `node_modules/yaml/bin.mjs -> ../yaml/bin.mjs`（自指）。
+- 对照数据：用旧锁 `npm ci --ignore-scripts --omit=dev --omit=optional` 装出 **1.0.1 的树**，
+  `node_modules/.bin` 软链**同为 9 条、路径与目标逐字相同**（含 `yaml -> ../yaml/bin.mjs`）
+  → **不是新载荷引入的**。`RuntimeProvisioner` 的 digest 计划只重解**变了的那一个**载荷，
+  所以只有 pi-engine 被覆盖解压、也只有它报错（git 载荷那 163 条软链同理会坏，只是这轮
+  digest 没变所以没重解）。缺陷自 `278d3d1` 起潜伏。
+
+**选定的修法：解包侧（B）** —— `resolveSafely` 只 canonical 父目录、最后一个分量保持字面
+（`TarExtractor.kt:303-365`）。理由：
+- 它修的是根因，而且**所有载荷共用**这一条路径；
+- 越界检查不降级：父目录仍然 canonical 并做包含检查，载荷放 `bin -> /` 再放 `bin/evil`
+  照样被拒；最后那个分量本就不需要 canonical —— 写之前 `unlinkIfPresent` 一定先把该位置的
+  节点（软链/文件/空目录）拿掉，从不跟着它打开；
+- **自愈**：已经被弄坏的树在下一次成功解包时会被修好（旧自指链由 `unlinkIfPresent` 先删）。
+- **为什么不选 A（组装侧不发/解引用 `.bin`）**：`.bin` 是 npm 的正常布局（guest 侧
+  `node_modules/.bin` 有用途），而 `tools/fetch-runtime.mjs:1033/1047` 的 `dereference: false`
+  与 `:860-865` 给 git 载荷写的"发软链省 4 MiB"是同一套有意设计，去掉或解引用会误伤体积与
+  语义；更关键的是 A 只盖住这一种形状 —— 任何"目标落在包根"的软链都会再次触发，B 才是把
+  这一类关掉。C（两边都做）在 B 修好后是多余。
+
+**回归防线（CI 可验）**：`app/src/test/kotlin/app/pi/runtime/RuntimePayloadStateCheck.kt` 新增
+**E11**：用这个文件里已有的 tar 构造器造一条 `node_modules/.bin/yaml -> ../yaml/bin.mjs` 加
+真实目标文件，**先**把旧链摆在目标目录（模拟覆盖解压），再解一次，断言不抛错、链接建在自己
+路径上、目标是真文件而不是自指链。E11 在旧代码上会因 `ELOOP` 变红，在新代码上绿 —— 也就是
+说这条 bug 从此由 CI 挡。
+
+单跑验收（`runtime-payload-state`，用 `tools/run-app-pure-checks.sh` 同一套 staged 编译器/库，
+只编译运行这一个 harness）：
+
+```
+compile errors: 0
+PASS E11 an existing symlink entry is re-extracted: no failure
+PASS E11 …the link is recreated at its own path, not at its target
+PASS E11 …and the target is a real file, not a self-referential link
+PASS E11 …holding the payload's bytes
+harness: OK (all checks passed)
+```
+
+还需真机验证：
+- 从已装 1.0.1 的设备**原地升级**到带修复的版本 → pi-engine 覆盖解压不再报 ELOOP，引擎能起；
+- **已经被这轮弄坏的设备**：下一次成功解包自愈；或点「重建运行时」（wipe 能吃掉自指链 —— 用
+  Kotlin `File.deleteRecursively` 的等价 Java 复刻验证过）；
+- 升级后 `git --version` / `node -v` / `rg --version` / `fd --version` 正常（git 载荷这轮没被
+  重解，但值得确认）；
+- `node_modules/.bin/pi` 指向的 `dist/bundle/cli.js` 仍是真文件（不是软链）。
+
+
+
