@@ -29,14 +29,6 @@ class TranscriptBlocksTest {
     private fun thinking(s: String) =
         PiEvents.parse("""{"type":"message_update","assistantMessageEvent":{"type":"thinking_delta","contentIndex":0,"delta":"$s"}}""")
 
-    /** A user message as pi delivers it — the only way a user row is born. */
-    private fun userSaid(r: TranscriptReducer, text: String) =
-        r.onEvent(
-            PiEvents.parse(
-                """{"type":"message_end","message":{"role":"user","content":[{"type":"text","text":"$text"}]}}""",
-            ),
-        )
-
     private val editDiff = listOf(
         "diff --git a/src/auth.ts b/src/auth.ts",
         "--- a/src/auth.ts",
@@ -443,10 +435,10 @@ class TranscriptBlocksTest {
     @Test
     fun `a day separator appears only when the day actually changes`() {
         val r = reducer()
-        userSaid(r, "first")
+        r.onUserPrompt("first")
         assertEquals(1, r.transcript.size)
         clock += 2 * 24 * 60 * 60 * 1000L
-        userSaid(r, "second")
+        r.onUserPrompt("second")
         assertEquals(3, r.transcript.size)
         assertTrue(r.transcript[1] is DateSeparator)
         assertEquals("今天", (r.transcript[1] as DateSeparator).label)
@@ -455,7 +447,7 @@ class TranscriptBlocksTest {
     @Test
     fun `turn end across midnight inserts a date separator`() {
         val r = reducer()
-        userSaid(r, "first")
+        r.onUserPrompt("first")
         clock += 2 * 24 * 60 * 60 * 1000L
         val change = r.onEvent(PiEvents.parse("""{"type":"turn_end","turnIndex":0}"""))
         assertEquals(2, r.transcript.size)
@@ -554,7 +546,7 @@ class TranscriptBlocksTest {
     @Test
     fun `seeding an empty history clears the stream`() {
         val r = reducer()
-        userSaid(r, "stale")
+        r.onUserPrompt("stale")
         assertTrue(r.seedFromHistory(emptyList()) == TranscriptChange.None)
         assertTrue(r.transcript.isEmpty())
     }
@@ -615,7 +607,7 @@ class TranscriptBlocksTest {
     @Test
     fun `history seeding clears state left over from the previous session`() {
         val r = reducer()
-        userSaid(r, "session one")
+        r.onUserPrompt("session one")
         r.seedFromHistory(
             listOf(
                 obj(
@@ -662,7 +654,7 @@ class TranscriptBlocksTest {
         assertEquals(2, r.transcript.size)
         r.reset()
         assertTrue(r.transcript.isEmpty())
-        userSaid(r, "fresh")
+        r.onUserPrompt("fresh")
         assertEquals(1, r.transcript.size)
     }
 

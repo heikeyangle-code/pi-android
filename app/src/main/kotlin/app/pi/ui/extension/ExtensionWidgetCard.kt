@@ -1,25 +1,20 @@
 package app.pi.ui.extension
 
 import androidx.compose.animation.animateContentSize
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -28,16 +23,14 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import app.pi.rpc.Ansi
 import app.pi.ui.blocks.AccentStripe
 import app.pi.ui.blocks.BlockCard
 import app.pi.ui.blocks.BlockCardRowPadding
-import app.pi.ui.blocks.DisclosureChevron
+import app.pi.ui.blocks.ExpandLabel
 import app.pi.ui.blocks.toggleContent
 import app.pi.ui.theme.PiPalette
 import app.pi.ui.theme.PiSpacing
@@ -54,7 +47,7 @@ import app.pi.ui.theme.PiTheme
  *
  * The card is the transcript's own furniture — [BlockCard] (radius 10, 1 px
  * `hairline`), [BlockCardRowPadding] (`7px 10px` rows), [AccentStripe],
- * [DisclosureChevron], and [toggleContent] for the tap. So a widget reads as a sibling of
+ * [ExpandLabel], and [toggleContent] for the tap. So a widget reads as a sibling of
  * the tool card rather than as chrome from another app.
  *
  * It differs in exactly two ways, both because a widget is not a tool call:
@@ -162,7 +155,7 @@ fun ExtensionWidgetStack(
                                 overflow = TextOverflow.Ellipsis,
                             )
                         }
-                        WidgetRows(rows = rows, expanded = expanded.value)
+                        rows.forEach { row -> WidgetRowView(row, expanded.value) }
                         if (hint) {
                             // v2's 提示条 shape (`· 前缀 + 文本`, 12–13): a dim sentence rather
                             // than a button, because the whole card is the hit target.
@@ -177,52 +170,6 @@ fun ExtensionWidgetStack(
                 }
             }
         }
-    }
-}
-
-/**
- * The card's body rows, with the verbatim lines grouped into a **bounded, self-scrolling**
- * block.
- *
- * `rows` used to be drawn straight into the card's column, one line per element, so a plain
- * `string[]` widget (the real device's `pi-subagents` panel, all `::` / `∟` lines and the
- * extension's own colours) made the card as tall as pi's own 10-line cap allows — 220 dp of a
- * screen whose composer has to stay reachable. The cap and the inner scroll are the **host's**
- * addition here, exactly as [WidgetDetailsMaxHeight] is for the opened detail area; the lines
- * themselves are untouched — same text, same spans, same colours, same order, no re-wrap (the
- * opened preformatted ones scroll sideways, the rest still wrap).
- *
- * The grouping walks **runs of consecutive `Text` rows** rather than assuming "every row is
- * text": a payload row in the middle of prose keeps its place in the order, and a text widget
- * (the case this exists for) is one run.
- */
-@Composable
-private fun WidgetRows(rows: List<WidgetRow>, expanded: Boolean) {
-    var index = 0
-    while (index < rows.size) {
-        val row = rows[index]
-        if (row !is WidgetRow.Text) {
-            WidgetRowView(row, expanded)
-            index++
-            continue
-        }
-        var end = index
-        while (end + 1 < rows.size && rows[end + 1] is WidgetRow.Text) end++
-        val run = rows.subList(index, end + 1)
-        // `key` because each run owns a `rememberScrollState` and the list's length changes
-        // with the payload: without it a removed run's scroll offset would be inherited by the
-        // run below it, i.e. the block would appear to jump the moment a payload shrank.
-        key(index) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(max = WidgetDetailsMaxHeight)
-                    .verticalScroll(rememberScrollState()),
-            ) {
-                run.forEach { line -> WidgetRowView(line, expanded) }
-            }
-        }
-        index = end + 1
     }
 }
 
@@ -249,10 +196,7 @@ private fun WidgetRowView(row: WidgetRow, expanded: Boolean) {
             ExtensionSpans(
                 spans = if (spans.all { it.text.isEmpty() }) listOf(Ansi.Span(" ")) else spans,
                 defaultColor = PiTheme.palette.muted,
-                // 22, the design's own `.wl` line box — a plain-text widget panel is read as a
-                // list of terminal rows, and 18 dp (the role's default leading) ran them
-                // together. The **size** stays the role's; only the leading moves.
-                style = PiTheme.text.monoSmall.copy(lineHeight = 22.sp),
+                style = PiTheme.text.monoSmall,
                 maxLines = if (expanded && !preformatted) Int.MAX_VALUE else 1,
                 overflow = TextOverflow.Ellipsis,
                 // horizontalScroll hands the line unbounded width, so it cannot wrap; the
@@ -270,7 +214,6 @@ private fun WidgetRowView(row: WidgetRow, expanded: Boolean) {
             badge = null,
             headline = emptyList(),
             details = emptyList(),
-            jobs = emptyList(),
             raw = row.raw,
             expanded = expanded,
         )
@@ -280,7 +223,6 @@ private fun WidgetRowView(row: WidgetRow, expanded: Boolean) {
             badge = row.badge,
             headline = row.headline,
             details = row.details,
-            jobs = row.jobs,
             raw = row.raw,
             expanded = expanded,
         )
@@ -304,7 +246,6 @@ private fun WidgetDisclosure(
     badge: String?,
     headline: List<WidgetSpan>,
     details: List<List<WidgetSpan>>,
-    jobs: List<WidgetJob>,
     raw: String,
     expanded: Boolean,
 ) {
@@ -328,149 +269,36 @@ private fun WidgetDisclosure(
                 maxLines = 1,
             )
         }
-        // **The state summary ends the row, it does not fill it.** It used to take
-        // `weight(1f)` on the `WidgetSpans` itself — the whole space between the badge and
-        // `详情` — so `3 运行中` sat in the middle of the header and moved whenever the label or
-        // the badge changed width; worse, the three extension cards beside it carried their
-        // counts in three different places. The summary is a **reading**, and readings in this
-        // card are right-aligned: the flexible space is a box that ends where `详情` begins, so
-        // the summary, the info cards' counts and the `详情` beside them all sit on one right
-        // edge down the stack.
-        //
-        // It is a **box** rather than a bare `Spacer`+`WidgetSpans` pair for the reason the
-        // weighted cell exists at all: the unweighted children (the label, the badge, `详情` and
-        // the chevron) are measured first and keep their space, so a headline that lists four
-        // states cannot squeeze the affordance off the row — it ellipsises inside this box.
-        Box(
-            modifier = Modifier.weight(1f),
-            contentAlignment = Alignment.CenterEnd,
-        ) {
-            if (headline.isNotEmpty()) {
-                WidgetSpans(spans = headline)
-            }
+        Spacer(Modifier.width(PiSpacing.gutter))
+        if (headline.isEmpty()) {
+            Spacer(Modifier.weight(1f))
+        } else {
+            WidgetSpans(spans = headline, modifier = Modifier.weight(1f))
         }
         Spacer(Modifier.width(PiSpacing.gutter))
         // A label, not a second hit target: the card is the toggle (`toggleContent`), which is
-        // the one expand idiom the tree has (BlockChrome's `ExpandLabel` KDoc).
-        WidgetDisclosureLabel(expanded)
+        // the one expand idiom the tree has (`ExpandLabel`'s KDoc).
+        ExpandLabel(expanded = expanded, expandText = "详情", collapseText = "收起")
     }
     if (!expanded) return
-    WidgetDetails(details = details, jobs = jobs)
-    WidgetRawPayload(raw)
-}
-
-/**
- * The card's disclosure pair: the words the tree already uses (`详情` / `收起`, and the raw
- * viewer's own `查看` / `收起`), plus the **tool row's** 5 dp chevron rather than the 13 dp icon
- * `ExpandLabel` draws for a `展开 / 收起` label ([DisclosureChevron] has the argument). It is
- * the same affordance on a row that carries four fields, so it is the same geometry the folded
- * tool row draws.
- */
-@Composable
-private fun WidgetDisclosureLabel(
-    expanded: Boolean,
-    expandText: String = "详情",
-    collapseText: String = "收起",
-) {
-    val palette = PiTheme.palette
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Text(
-            text = if (expanded) collapseText else expandText,
-            style = MaterialTheme.typography.labelMedium,
-            color = palette.muted,
-        )
-        Spacer(Modifier.width(PiSpacing.tiny))
-        DisclosureChevron(expanded = expanded, tint = palette.muted)
-    }
-}
-
-/**
- * The opened card's body: **one row per drawn leaf** when the payload has a structured
- * projection ([WidgetRow.Summary.jobs]), which is the shape this card prefers — a subagent's
- * own name on the left, its live word and readings on the right.
- *
- * The raw span rows ([WidgetRow.Summary.details]) are the fallback: they are what the card
- * drew before the structured form existed, and a payload that produced no structured row still
- * gets them rather than an empty body. Both are the **same** walk of the payload (see
- * `jobRows`), so which leaves are shown and in what order never depends on which shape is
- * drawn.
- *
- * **A bounded area, like the raw payload below it.** The card sits above the composer, so every
- * row the details gain takes height away from the conversation and moves the composer: with
- * four parallel agents starting and finishing, that was the second half of the device report
- * ("来回跳"). Opening the card is the user asking to read it, not asking to push their draft off
- * screen.
- */
-@Composable
-private fun WidgetDetails(details: List<List<WidgetSpan>>, jobs: List<WidgetJob>) {
-    if (jobs.isEmpty() && details.isEmpty()) return
+    // **A bounded detail area, like the raw payload below it.** The card sits above the
+    // composer, so every row the details gain takes height away from the conversation and
+    // moves the composer: with four parallel agents starting and finishing, that was the
+    // second half of the device report ("来回跳"). Opening the card is the user asking to
+    // read it, not asking to push their draft off screen.
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .heightIn(max = WidgetDetailsMaxHeight)
             .verticalScroll(rememberScrollState()),
     ) {
-        if (jobs.isNotEmpty()) {
-            jobs.forEach { job -> WidgetJobRow(job) }
-        } else {
-            details.forEach { line ->
-                // The name inside a detail row is the one run a reader scans for, so it is
-                // bolded — which is what the extension itself does (`themeBold` in its own
-                // renderer).
-                WidgetSpans(spans = line, modifier = Modifier.fillMaxWidth(), boldText = true)
-            }
+        details.forEach { line ->
+            // The name inside a detail row is the one run a reader scans for, so it is bolded —
+            // which is what the extension itself does (`themeBold` in its own renderer).
+            WidgetSpans(spans = line, modifier = Modifier.fillMaxWidth(), boldText = true)
         }
     }
-}
-
-/**
- * One structured row: the extension's state glyph, its own name, and its readings at the row's
- * other edge.
- *
- * The two cells are the design's `.job` grid (`14px minmax(0,1fr) auto`): the name is the
- * **flexible** column (it takes whatever the readings do not), and the readings are the `auto`
- * one — measured first, at their own width, so they are never the cell that gets cut. The
- * readings are also the smaller claim: they are two counters, while the name is the thing the
- * reader is scanning the list for. A row whose glyph is empty is the host's own summary sentence
- * (`+N 个更多…`), not a leaf, and stays `dim` the way the raw form draws it.
- */
-@Composable
-private fun WidgetJobRow(job: WidgetJob) {
-    val palette = PiTheme.palette
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        if (job.glyph.isNotEmpty()) {
-            Text(
-                text = job.glyph,
-                style = PiTheme.text.monoSmall,
-                color = widgetToneColor(job.tone, palette) ?: palette.muted,
-                maxLines = 1,
-            )
-            Spacer(Modifier.width(PiSpacing.gutter))
-        }
-        Text(
-            text = job.name,
-            modifier = Modifier.weight(1f),
-            style = PiTheme.text.monoSmall,
-            // The name is the run a reader scans for, exactly as it is in the raw form.
-            color = if (job.glyph.isEmpty()) palette.dim else palette.text,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-        if (job.readings.isNotEmpty()) {
-            Spacer(Modifier.width(PiSpacing.gutter))
-            Text(
-                text = job.readings,
-                style = PiTheme.text.monoSmall,
-                color = palette.dim,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                textAlign = TextAlign.End,
-            )
-        }
-    }
+    WidgetRawPayload(raw)
 }
 
 /** The payload itself, one tap deeper and bounded: the viewer, never the card's layout. */
@@ -478,17 +306,6 @@ private fun WidgetJobRow(job: WidgetJob) {
 private fun WidgetRawPayload(raw: String) {
     val palette = PiTheme.palette
     val open = remember { mutableStateOf(false) }
-    // The footer is its own **band**: a 1 px `borderMuted @35%` rule (the design's
-    // `.foot{border-top:1px solid var(--ring)}`, and the same ring colour every card's outline
-    // uses) separates it from the rows above, so `原始数据 · N 字符` reads as the card's floor
-    // rather than as one more detail line. 1 px, and it is the app's `hairline` token — the
-    // rule that all separators are 1 px (`06 §5`).
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(PiSpacing.hairline)
-            .background(palette.borderMuted.copy(alpha = 0.35f)),
-    )
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -503,7 +320,7 @@ private fun WidgetRawPayload(raw: String) {
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f),
         )
-        WidgetDisclosureLabel(open.value, expandText = "查看")
+        ExpandLabel(expanded = open.value, expandText = "查看", collapseText = "收起")
     }
     if (!open.value) return
     Text(

@@ -567,6 +567,10 @@ private fun BranchTab(
             TreeForkHint(Modifier.padding(bottom = PiSpacing.unit))
             PiEmptyState(
                 icon = BRANCH_GLYPH,
+                // v2's session-tree empty states use their own icon, not the π mark
+                // (`direction-b-v2.html:1922`: `icon="branch"`). `PiEmptyState` defaults
+                // to the mark because the *chat's* two engine empty states carry it.
+                markPi = false,
                 title = if (state.busy != null) "正在读取…" else "还没有分支",
                 body = "会话有第一条消息后，这里会显示分支结构。",
                 modifier = Modifier.weight(1f),
@@ -579,6 +583,10 @@ private fun BranchTab(
             TreeForkHint(Modifier.padding(bottom = PiSpacing.unit))
             PiEmptyState(
                 icon = BRANCH_GLYPH,
+                // v2's session-tree empty states use their own icon, not the π mark
+                // (`direction-b-v2.html:1922`: `icon="branch"`). `PiEmptyState` defaults
+                // to the mark because the *chat's* two engine empty states carry it.
+                markPi = false,
                 title = "没有匹配的条目",
                 body = "当前筛选是「${filter.label}」。换一个关键词，或再按一次筛选按钮循环到下一种模式。",
                 modifier = Modifier.weight(1f),
@@ -1047,6 +1055,10 @@ private fun EntriesTab(entries: List<SessionEntry>, modifier: Modifier = Modifie
     if (entries.isEmpty()) {
         PiEmptyState(
             icon = BRANCH_GLYPH,
+            // v2's session-tree empty states use their own icon, not the π mark
+            // (`direction-b-v2.html:1922`: `icon="branch"`). `PiEmptyState` defaults
+            // to the mark because the *chat's* two engine empty states carry it.
+            markPi = false,
             title = "没有条目",
             body = "这个会话还没有写入任何条目。",
             modifier = modifier,

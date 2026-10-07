@@ -12,9 +12,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -53,31 +50,7 @@ fun ThinkingBlockBlock(
     val headline = if (item.streaming) "思考中…" else "思考"
     val headlineDuration = if (item.streaming) null else item.elapsedMs?.let { formatDuration(it) }
 
-    // Read in composition, **not** inside the draw lambda: a `CompositionLocal` cannot be read
-    // outside composition, and `drawBehind`'s block is not composable. `ToolRailFrame` hoists its
-    // own read for the same reason.
-    val rowGap = LocalRowGap.current
-    BlockColumn(
-        modifier.drawBehind {
-            // The level's pen runs the **whole block**: the headline, and — when the block is
-            // open — the body down to its last line. That is what "条变长" asked for; the `Row`'s
-            // own `AccentStripe` below is left in place and covered exactly (same x, same colour),
-            // so the closed state is pixel-identical to before and the open state is the same
-            // stroke grown to the block's bottom edge.
-            //
-            // `2 dp` top and bottom is the optical inset the collapsed row already carried: a
-            // `3×19` stroke inside a `23` dp line box. The row's bottom air (`LocalRowGap`) is not
-            // part of the block — `BlockColumn` pads with it — so it is subtracted here and the bar
-            // stops at the body's edge instead of painting into the gap below.
-            val inset = 2.dp.toPx()
-            val gap = rowGap.toPx()
-            drawRect(
-                color = pen,
-                topLeft = Offset(0f, inset),
-                size = Size(3.dp.toPx(), (size.height - gap - inset * 2).coerceAtLeast(0f)),
-            )
-        },
-    ) {
+    BlockColumn(modifier) {
         // F28: the whole block is the toggle target, which is what pi does —
         // `components/assistant-message.ts:160-166` wraps the entire thinking
         // component in the `MouseRegion` that flips its visibility.
@@ -150,8 +123,8 @@ fun ThinkingBlockBlock(
     }
 }
 
-/** v2's `ThinkRow` stripe is `width:3,height:18`; this build keeps it **19** — the row's own line box, so the bar reaches from the top of the words to the bottom of the descenders instead of stopping short of them. */
-private val THINK_STRIPE_HEIGHT = 19.dp
+/** v2's `ThinkRow` stripe: `width:3,height:18`. */
+private val THINK_STRIPE_HEIGHT = 18.dp
 
 /** v2's `ThinkRow` `gap:8` — between the stripe, the headline and the level word. */
 private val THINK_ROW_GAP = 8.dp

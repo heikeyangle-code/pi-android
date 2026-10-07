@@ -278,25 +278,6 @@ fun main() {
     widgetCheck("and the remainder is named and broken down", textOf(many.details.last()), "+2 个更多（2 运行中）")
     widgetCheck("in the dim token", tonesOf(many.details.last()), listOf(WidgetTone.Dim))
 
-    // ------------------------------------------------- the structured rows, one per drawn leaf
-    // The opened card draws these instead of the raw span rows: a subagent's own name on the
-    // left, its readings on the right. What matters is that they are the **same walk** — same
-    // `MAX_WIDGET_JOBS` / `maxChildrenPerNode` cuts, same order — or the two shapes would
-    // disagree about what the panel contains, which is the one thing a projection may not do.
-    widgetCheck("one structured row per drawn leaf: the job, then its task", one.jobs.size, 2)
-    widgetCheck("the job's glyph and tone are the state's", listOf(one.jobs[0].glyph, one.jobs[0].tone), listOf("⠋", WidgetTone.Accent))
-    widgetCheck("its name is the extension's own", one.jobs[0].name, "oracle")
-    // The two counters, in `widgetActivity`'s own order — the live-activity word stays out of
-    // this cell so the name beside it keeps the room (see `flatReadings`).
-    widgetCheck("its readings are the two counters", one.jobs[0].readings, "4 轮 · 6 工具")
-    widgetCheck("a task nests under the job without a branch mark", one.jobs[1].name, "scout")
-    widgetCheck("a task with no activity falls back to its state word", one.jobs[1].readings, "思考中…")
-    // Four drawn jobs, each drawing its one task = eight leaves, then the cap's single tail.
-    widgetCheck("the two shapes agree on how many leaves are drawn", many.jobs.count { it.glyph.isNotEmpty() }, 8)
-    widgetCheck("and the cap's tail is one structured row too", many.jobs.last().name, "+2 个更多（2 运行中）")
-    widgetCheck("which carries no state glyph, so it stays dim", many.jobs.last().glyph, "")
-    widgetCheck("so the structured body is those leaves plus the tail", many.jobs.size, 9)
-
     // ------------------------------------------------------- version/kind guards, and refusing
     checkTrue(
         "a future version folds instead of being guessed at",

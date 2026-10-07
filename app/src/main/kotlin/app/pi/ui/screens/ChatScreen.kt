@@ -127,17 +127,10 @@ import app.pi.ui.NavRequest
 import app.pi.ui.PiSessionViewModel
 import app.pi.ui.earlierRowText
 import app.pi.ui.blocks.BlockRenderer
-import app.pi.ui.blocks.LocalDisclosureToggle
-import app.pi.ui.blocks.LocalRowGap
 import app.pi.ui.blocks.PiImageViewer
-import app.pi.ui.blocks.blockGapDp
-import app.pi.ui.blocks.railStateOf
-import app.pi.ui.blocks.rowGapDp
-import app.pi.ui.blocks.toolRunPlan
 import app.pi.ui.chat.BashPanel
 import app.pi.ui.chat.ComposerRoute
 import app.pi.ui.chat.ContextSheet
-import app.pi.ui.chat.DISCLOSURE_HOLD_FRAMES
 import app.pi.ui.chat.ForkPickerSheet
 import app.pi.ui.chat.MentionPalette
 import app.pi.ui.chat.ModelPickerSheet
@@ -156,12 +149,9 @@ import app.pi.ui.chat.ThinkingPickerSheet
 import app.pi.ui.chat.mayLoadEarlier
 import app.pi.ui.chat.mergeRestoredQueue
 import app.pi.ui.chat.routeComposerText
-import app.pi.ui.chat.disclosureDeficitPx
 import app.pi.ui.chat.earlierRowHeightPx
 import app.pi.ui.chat.freshRowKeysAfter
 import app.pi.ui.chat.hiddenRows
-import app.pi.ui.chat.holdBandPx
-import app.pi.ui.chat.holdBandStillNeeded
 import app.pi.ui.chat.itemIndexOfVisibleRow
 import app.pi.ui.chat.mayArmEarlier
 import app.pi.ui.chat.thinkingLabelOf
@@ -172,7 +162,6 @@ import app.pi.ui.render.LocalPiMarkdownParsed
 import app.pi.ui.render.RowHeightCache
 import app.pi.ui.render.piMarkdownParseBudget
 import app.pi.ui.render.rememberedRowHeight
-import app.pi.ui.render.wantsImmediateMarkdown
 import app.pi.ui.components.PiMenu
 import app.pi.ui.components.PiMenuItem
 import app.pi.ui.components.PiMenuPlacement
@@ -186,7 +175,6 @@ import app.pi.ui.theme.PiTheme
 import app.pi.ui.theme.StateTone
 import app.pi.ui.theme.stateToneColor
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.launch
 
@@ -319,17 +307,6 @@ private val EARLIER_ROW_ICON_GAP = 6.dp
 
 /** The row's own vertical padding (`padding(vertical = 8.dp)`), 8 top and 8 bottom. */
 private val EARLIER_ROW_PADDING = 8.dp
-
-/**
- * The transcript list's own bottom air — `contentPadding.bottom` when the disclosure hold is
- * not holding anything.
- *
- * Named because it is the one literal the hold's arithmetic needs as a *number*
- * (`holdBandStillNeeded`'s unbanded end line is `viewportEndOffset - this - band`): reading it
- * back out of `LazyListLayoutInfo.afterContentPadding` instead would be one frame behind a band
- * change, and that one frame is exactly the frame the release test runs on.
- */
-private val TRANSCRIPT_BOTTOM_PAD = 12.dp
 
 /**
  * 「加载更早」 drawn as an **overlay** over the transcript list, not as its item 0.
@@ -844,9 +821,8 @@ private fun ChatBody(
         }
     }
     // The ViewModel's coarse tool clock (`UiState.nowMs`): what every 「已运行 N 秒」 in the
-    // transcript is measured against, ticking once a second **only** while some row's reading is
-    // live — a pending tool card, or a thinking block that is still streaming (predicate:
-    // `UiState.hasPendingToolClock`). Read as a plain value beside the
+    // transcript is measured against, ticking once a second **only** while a tool card is
+    // pending (predicate: `UiState.hasPendingToolClock`). Read as a plain value beside the
     // other `state.*` reads: `state` is a value parameter, so nothing in this function
     // subscribes to it — the subscription is `ChatScreen`'s `collectAsState`, and this
     // function already recomposes whenever that value changes (it reads `transcript`,
@@ -894,14 +870,6 @@ private fun ChatBody(
     val renderedItems = remember(visibleItems, renderWindow, windowOpen) {
         if (windowOpen) visibleItems else visibleItems.takeLast(renderWindow)
     }
-    // The **run plan** for the whole loaded list: one slot per row saying whether it opens /
-    // closes its run and which state the run's shell ring is painted with (null = the rows
-    // disagree, so the ring is neutral). One pass of enum comparisons — no text, no allocation
-    // per row beyond the plan — recomputed when the transcript list's identity changes, which is
-    // the same key `visibleItems` itself is built with. It has to be the whole list rather than
-    // the rendered window for the reason spelled out at its consumer below (a row at the window's
-    // edge still has a neighbour in the transcript).
-    val railPlan = remember(visibleItems) { toolRunPlan(visibleItems.map { railStateOf(it) }) }
     // The same number `renderedItems` implies, but computed from the *window* rather
     // than from the list it produced: the anchor restore below needs to know how many
     // rows sit above a given row without having to build that list
@@ -1114,11 +1082,6 @@ private fun ChatBody(
     // Bumped by the affordance and by a send: an explicit "go to the newest" must pin
     // even when no other key would have moved.
     var tailPoke by remember { mutableLongStateOf(0L) }
-    // The bottom band the reader's own disclosure **collapse** needs (see the section below
-    // the follow effect for the whole mechanism). Declared here, above the follow effect,
-    // because that effect is the band's second — and only other — writer: a follow pin lands
-    // the reader on the list's own end, and a band left standing would be that end.
-    var disclosureBandPx by remember(sessionKey) { mutableIntStateOf(0) }
     // The *whole* transcript's row count, not the rendered window's: the count must
     // include rows the window has not materialised. `rememberUpdatedState` because the
     // gesture observer below is started once and would otherwise capture the first
@@ -1229,13 +1192,6 @@ private fun ChatBody(
             TailSnapshot(
                 transcriptRows = transcriptRows,
                 poke = tailPoke,
-                // Rule 5's evidence that the *content* moved: this effect re-runs on
-                // `atBottom`/`tailSize` too, and those two are pure scroll geometry —
-                // the reader's own tap on a tool card above the tail flips both
-                // without a single row changing. Without this, `pinToTail()` answered
-                // that frame by yanking the viewport to the very bottom (see
-                // `TailFollow`'s rule 5).
-                revision = state.revision,
                 viewport = TailViewport(
                     totalItems = info.totalItemsCount,
                     firstVisibleIndex = listState.firstVisibleItemIndex,
@@ -1264,19 +1220,7 @@ private fun ChatBody(
         // scroll session, is never cancelled by the next token and can never be
         // mistaken for the user's hand. The `isScrollInProgress` re-read closes the gap
         // between the snapshot and this line — the follow must never cancel a drag.
-        // A non-null pin already means the machine found something other than the
-        // list's own scroll geometry behind this frame (`TailFollow` rule 5), so the
-        // reader's own expand/collapse above the tail cannot reach this line.
         if (pin != null && !listState.isScrollInProgress) {
-            // The disclosure hold's band is not what is holding anything any more: a pin is
-            // the follow moving the reader to a position the list can reach on its own, and
-            // if the band stayed it would *be* that position — the request below aims past the
-            // list's end, the band is the last thing before that end, and the tail would come
-            // to rest `band` px above the bottom with the empty strip it exists for still
-            // under it (the disclosure section below has the whole mechanism). Dropping it on
-            // this same frame cannot move the reader: the request below replaces the position
-            // outright, so no frame ever reads the old one against the shorter range.
-            disclosureBandPx = 0
             listState.requestScrollToItem(pin.index, pin.offsetPx)
         }
     }
@@ -1296,163 +1240,6 @@ private fun ChatBody(
             if (inProgress && following) markPausedRows()
         }
     }
-
-    // ------------------------------------------- the reader's own disclosure tap stays put
-    //
-    // **The defect this holds a position for.** Opening a tool card / thinking row pushes
-    // everything below it *down*: `LazyColumn` anchors on the reader's row and the row grows
-    // downward, which is what the reader wants. Closing it back is not the mirror image.
-    // The content below the tapped row gets shorter; when what is left no longer fills the
-    // viewport, `LazyListMeasure`'s scroll-back (`if (currentMainAxisOffset < maxOffset)`,
-    // i.e. "do not leave a gap larger than the bottom padding") *scrolls the reader back* —
-    // the content moves down, and the spot the reader tapped moves down with it. The
-    // reader's words: 「收起的时候，原来被顶下去的那些行又上来了，结果我点的地方跑到屏幕更下面
-    // 去了，整块往下移」. The scroll-back cannot be suppressed app-side (it is inside the
-    // measure pass); the two things the app *can* do are (a) ask the position back after the
-    // fact — its own `requestScrollToItem`, which starts no scroll session — and (b) make
-    // that position legal by reserving the missing pixels at the bottom (`disclosureBandPx`).
-    //
-    // **Only a collapse.** `onDisclosureToggle` is invoked by `Modifier.toggleContent`
-    // *before* the row flips, with the value it is about to take. An opening tap does nothing
-    // here at all — not even a frame of watching — so the downward growth is untouched.
-    //
-    // **The measurement is exact, not a guess.** TailFollow.kt's `disclosureDeficitPx` turns
-    // the anchor row's own offset change into the number of pixels the content was pulled
-    // down (the anchor's content position cannot move: a disclosure body is below its header,
-    // and the tapped row is visible). `holdBandStillNeeded` is the mirror rule for taking the
-    // band away again — see both for the arithmetic and the cases it folds in.
-    //
-    // **What this deliberately does not touch.** The follow: a band is *padding*, not
-    // content, so `viewportEndOffset` — and therefore every number `TailFollow` reads — does
-    // not move; at the held position `canScrollForward` is false exactly as it was before the
-    // tap, so `atBottom`, 「回到最新」 and the unread count see no change. The anchors: the
-    // held position *is* `anchorKey`/`anchorOffset`, so the tracker records the position it
-    // already had. And 加载更早: the band is at the bottom, the window logic looks at the top.
-    // (`disclosureBandPx` itself is declared up with the follow's state, because the follow
-    // effect is its other writer.)
-    var disclosureTap by remember(sessionKey) { mutableStateOf<DisclosureTap?>(null) }
-    val disclosureTapSeq = remember(sessionKey) { mutableLongStateOf(0L) }
-    // The list's own bottom air in pixels — the *unbanded* end line the release test is
-    // measured against (`TRANSCRIPT_BOTTOM_PAD` is the same number the `LazyColumn` pads
-    // with, a few hundred lines below).
-    val transcriptBottomPadPx = with(LocalDensity.current) { TRANSCRIPT_BOTTOM_PAD.roundToPx() }
-    // Read at the frame the correction runs, not captured at composition: the window
-    // (`renderedItems`) may have been re-cut between the tap and that frame, and the row the
-    // reader was on has to be resolved by **key** for exactly that reason.
-    val renderedItemsNow by rememberUpdatedState(renderedItems)
-    val onDisclosureToggle: ((Boolean) -> Unit)? = remember(listState, sessionKey) {
-        { expandedNow: Boolean ->
-            if (!expandedNow) {
-                val index = listState.firstVisibleItemIndex
-                val key = renderedItemsNow.getOrNull(index)?.key
-                if (key != null) {
-                    val info = listState.layoutInfo
-                    disclosureTapSeq.longValue += 1
-                    disclosureTap = DisclosureTap(
-                        seq = disclosureTapSeq.longValue,
-                        rowKey = key,
-                        offsetPx = listState.firstVisibleItemScrollOffset,
-                        // The viewport's own geometry, so a frame that changed it (the
-                        // composer's inset, the keyboard) is not mistaken for a disclosure.
-                        // `viewportEndOffset` is *not* affected by the band: the library
-                        // computes it as `maxOffset + afterContentPadding`, and the band moves
-                        // both terms by the same amount.
-                        viewportEndOffsetPx = info.viewportEndOffset,
-                        // How much empty space the position **already** needs, measured before
-                        // the flip. Zero for every ordinary collapse (the reader is inside the
-                        // range the list has without any band); non-zero only when a previous
-                        // collapse's band is still in force, and then it is the part the
-                        // library's scroll-back is about to spend before this screen can look —
-                        // see `holdBandPx`'s KDoc for the whole argument.
-                        bandAtTapPx = holdBandPx(
-                            lastItemBottomPx = info.visibleItemsInfo.lastOrNull()
-                                ?.let { it.offset + it.size } ?: info.viewportEndOffset,
-                            viewportEndOffsetPx = info.viewportEndOffset,
-                            baseBottomPaddingPx = transcriptBottomPadPx,
-                        ),
-                    )
-                }
-            }
-        }
-    }
-    LaunchedEffect(disclosureTap, sessionKey) {
-        val tap = disclosureTap ?: return@LaunchedEffect
-        // Phase 1: find the frame the library moved the reader on, reserve exactly that much
-        // at the bottom, and ask for the position back. `requestOutstanding` is what keeps
-        // phase 2 from reading a measurement taken *between* a request and the layout that
-        // applies it (that geometry looks like "the band is not needed", which would take the
-        // band away again before it could do its job).
-        var sawClamp = false
-        var requestOutstanding = false
-        var framesLeft = DISCLOSURE_HOLD_FRAMES
-        while (framesLeft > 0) {
-            framesLeft -= 1
-            // One frame before reading: the tap may have been delivered between frames, in
-            // which case the collapse's own layout pass has not run yet and the geometry
-            // still reads as "nothing moved". (This is the same one-frame wait the follow
-            // effect above documents, for the same reason.)
-            withFrameNanos { }
-            // Stop correcting — but do not skip phase 2: a band that is already in place must
-            // still get its release. The reader's hand owns the position, and a viewport that
-            // changed under them (the composer's inset, the keyboard) is the follow's
-            // business; neither is a disclosure, and neither may be fought.
-            if (listState.isScrollInProgress) break
-            if (listState.layoutInfo.viewportEndOffset != tap.viewportEndOffsetPx) break
-            val index = renderedItemsNow.indexOfFirst { it.key == tap.rowKey }
-            if (index < 0) break
-            // The anchor row is always still on screen after the scroll-back: the content
-            // below its top can only shrink towards it, never past it.
-            val row = listState.layoutInfo.visibleItemsInfo.firstOrNull { it.index == index } ?: break
-            val deficit = disclosureDeficitPx(tap.offsetPx, row.offset)
-            if (deficit > 0) {
-                sawClamp = true
-                requestOutstanding = true
-                // Exactly the pixels the list was short, so the position the reader had is
-                // reachable *and* is the list's end (no scroll session, no animation, and
-                // `canScrollForward` stays false — see `holdBandStillNeeded`) — plus whatever
-                // the position already needed before this tap (`bandAtTapPx`, zero for a single
-                // collapse). Without that term a **second** collapse in a row reserves only its
-                // own `D2`: the scroll-back spends `D2` of the band that was already in force
-                // before this screen can measure anything, so the position the request asks for
-                // is `band` px above what the new reservation can reach and the reader lands
-                // exactly `band` px lower than they were (`holdBandPx`'s KDoc has the argument).
-                disclosureBandPx = tap.bandAtTapPx + deficit
-                listState.requestScrollToItem(index, tap.offsetPx)
-            } else if (sawClamp) {
-                // The position is back: the hold is in place.
-                requestOutstanding = false
-                break
-            }
-            // Otherwise no clamp has been seen yet: keep looking. A collapse that did not
-            // move the reader never produces one (`disclosureDeficitPx` is 0 for the whole
-            // window), and an *expand* never gets here at all — `onDisclosureToggle` only
-            // records a collapse.
-        }
-        // A request issued on the last frame above has not been measured yet, and phase 2
-        // reads measurements. One frame is exactly what it needs: the padding and the
-        // position are applied by the composition and layout of the frame the request was
-        // made in.
-        if (requestOutstanding) withFrameNanos { }
-        // Phase 2: the band's release, on the one fact that makes it safe — the current
-        // position is inside the range the list had *before* the band existed
-        // (`holdBandStillNeeded`). That single test covers every way out (content growing into
-        // the empty space, a publication's follow pin, a gesture, a jump, a session switch),
-        // and it cannot fire while the held position still needs the band — which is exactly
-        // the case that would re-run the scroll-back this whole mechanism exists to undo. The
-        // band only ever grows inside phase 1, so this is its one owner.
-        if (disclosureBandPx <= 0) return@LaunchedEffect
-        snapshotFlow {
-            val info = listState.layoutInfo
-            val last = info.visibleItemsInfo.lastOrNull() ?: return@snapshotFlow false
-            !holdBandStillNeeded(
-                lastItemBottomPx = last.offset + last.size,
-                viewportEndOffsetPx = info.viewportEndOffset,
-                baseBottomPaddingPx = transcriptBottomPadPx,
-            )
-        }.first { canDrop -> canDrop }
-        disclosureBandPx = 0
-    }
-
     // Spec §4.5: "向上滚动时分批加载更早的 entry". Reaching the top grows the window by
     // one step. The `earlierArmed` guard is what keeps that from looping: while the
     // user stays at the top the flag is cleared by the load itself, and it is re-armed
@@ -1620,13 +1407,9 @@ private fun ChatBody(
     //  - only while the transcript is **not streaming**: a row published mid-turn arrives at
     //    the *bottom*, where its height correction is off-screen, and marking it would make
     //    every streamed tool card parse synchronously for nothing;
-    //  - and each *composition* of a row at most once: the latch is the row's own
-    //    `markdownParsed` flag (this composition has reported the library's `State.Success`),
-    //    so a row that has already parsed never asks twice. `RowHeightCache` is **not** the
-    //    latch any more — the rows coming *back* into the viewport have a remembered height,
-    //    and refusing them for exactly that reason is what made them blank in place on the
-    //    frame they returned. The predicate is `wantsImmediateMarkdown`
-    //    (`ui/render/RowHeightCache.kt`), pinned by `tools/run-app-pure-checks.sh`.
+    //  - and each row at most once: `RowHeightCache` is the latch (the item lambda asks only
+    //    when there is no remembered height), so a row that has been measured — including one
+    //    that scrolls out and back — never asks again.
     //
     // The set is bounded by `FRESH_ROW_KEYS_MAX` keys and never accumulates with the session.
     var freshRowKeys by remember(sessionKey) { mutableStateOf<Set<String>>(emptySet()) }
@@ -2250,24 +2033,23 @@ private fun ChatBody(
         // `ChatScreen`'s boot branch).
         Box(Modifier.weight(1f).fillMaxWidth().clipToBounds()) {
         if (!emptyTranscript) {
-            // `app.appearance.messageDensity`: the transcript's block rhythm. F11
-            // (`docs/rendering-review.md`): blocks used to pad themselves as well, so the real
-            // gap was 18 (spacedBy) + 9 + 9 (BlockColumn) = 36 dp and the prose column lost
-            // 16 dp on each side. The rule that came out of it is **exactly one place gives the
-            // rhythm**, and that place moved off this list: each row now carries its own bottom
-            // air (`TranscriptItem.rowGapDp` → `BlockColumn`'s padding), the list's own
-            // `Arrangement` spaces nothing, and the rail reads the same value back out of
-            // `LocalRowGap` for its overdraw. The reason is not tidiness — a single list-wide
-            // `spacedBy(blockSpacing)` could not be read by a row's own rail, so the rail's
-            // overdraw was a compile-time 8 while the spacing was this runtime setting: equal in
-            // the default tier only, which is why the line broke apart under 宽松. See
-            // `BlockChrome.BlockColumn` and `BlockRhythm.kt`.
+            // `app.appearance.messageDensity`: the transcript's block rhythm,
+            // scaled around v2's own gap. F11 (`docs/rendering-review.md`):
+            // blocks used to pad themselves as well, so the real gap was
+            // 18 (spacedBy) + 9 + 9 (BlockColumn) = 36 dp and the prose column lost
+            // 16 dp on each side; the list is now the only place that margins.
             //
-            // B7: the default is `PiSpacing.small` (4), not `06 §2`'s「块间距 8」 — an accounted
-            // deviation (`差异表` §2 第 7 行): the density pref scales it (compact is half, cozy
-            // is double), so the stream keeps its three steps and the default is the merged
-            // card's own rhythm.
-            val blockSpacing = blockGapDp(prefs.messageDensity).dp
+            // B7: the base gap is **8**, not 16. `06 §2`「块间距 8」 is v2's rhythm
+            // (every card in the frozen board carries `marginBottom:8`), and the
+            // three density steps hang off it — compact is half, cozy is double —
+            // so the pref still moves the stream and the default is the design's.
+            // `PiSpacing.blockGap` is the same constant `ToolRail` bridges with, so
+            // the rail's overdraw and the gap it spans cannot drift apart.
+            val blockSpacing = when (prefs.messageDensity) {
+                "compact" -> PiSpacing.blockGap / 2
+                "cozy" -> PiSpacing.blockGap * 2
+                else -> PiSpacing.blockGap
+            }
             // The page margin is **14 at every density** (`06 §2`「屏水平 14px」,
             // `direction-b-v2.html:1376`: `.b-scroll{padding:10px 14px 12px}`). The
             // compact step used to narrow it to 12 as well, which put the transcript's
@@ -2299,37 +2081,27 @@ private fun ChatBody(
             //  - **the same click**: `fillMaxWidth().clickable{…}.padding(vertical = 8.dp)`,
             //    the same order, so the ripple covers the same area.
             //
-            // The reserved band is `earlierRowHeight + blockSpacing`, and `blockSpacing` here is
-            // the **same** `blockGapDp` the rows pad themselves with (this is the one other
-            // consumer, and it asks the same function rather than holding a second number): the
-            // sentinel is drawn outside the list, so it has no row of its own to give it air.
+            // The list keeps `Arrangement.spacedBy(blockSpacing)` for its own rows, and the
+            // reserved band is `earlierRowHeight + blockSpacing` so the first row sits
+            // where it did when the sentinel was an item with a gap under it.
             val earlierRowHeightValue = earlierRowHeight(earlierText.orEmpty())
             // Where the overlay sits, and how much of the list's own top padding is the band
             // it occupies: exactly the row's height plus the block gap the list no longer
             // inserts between it and the first message.
             val earlierBand = if (showsEarlierRow) earlierRowHeightValue + blockSpacing else 0.dp
-            // The disclosure hold's bottom band (the section above has the whole argument):
-            // exactly the pixels the list was short on the frame the reader closed a card, so
-            // the position they were on is a legal one and can be asked for. Zero — and
-            // therefore this list's own `12` and nothing else — unless a collapse really moved
-            // them.
-            val disclosureBand = with(LocalDensity.current) { disclosureBandPx.toDp() }
             LazyColumn(
                 state = listState,
                 modifier = Modifier.fillMaxSize(),
                 // The vertical ends are not the block gap: they are the scroll
                 // container's own `10` top (plus the sentinel's reserved band, when there
-                // is one) and `12` bottom — plus the disclosure hold's band, which is the
-                // one term here that is not a constant (`holdBandStillNeeded` in
-                // `ui/chat/TailFollow.kt` is the rule that takes it back out).
+                // is one) and `12` bottom.
                 contentPadding = PaddingValues(
                     start = PiSpacing.pageHorizontal,
                     end = PiSpacing.pageHorizontal,
                     top = 10.dp + earlierBand,
-                    bottom = TRANSCRIPT_BOTTOM_PAD + disclosureBand,
+                    bottom = 12.dp,
                 ),
-                // **No `verticalArrangement`**: the rhythm is the rows' own bottom air now (see
-                // above). Anything added here would be the second half of the F11 mistake.
+                verticalArrangement = Arrangement.spacedBy(blockSpacing),
             ) {
                 // The 「加载更早」 row is the overlay below, not an item here — see the block
                 // above for why, and for the three things that had to stay identical.
@@ -2385,33 +2157,31 @@ private fun ChatBody(
                         // A floor, not a size, released by the parse itself: see
                         // `ui/render/TranscriptRowHeight.kt` (and `RowHeightCache`'s bound).
                         .rememberedRowHeight(item.key, contentReady = markdownParsed.value)
-                    // The execution rail's two ends (`06 §2` 执行轨道「竖线上下各缩进 16」), and the
-                    // **run's** ring colour. A run is a property of *consecutive transcript
-                    // rows*, so the one place that can answer "is this the first/last row of my
-                    // run, and does the run agree on a state" is the list that holds the order —
-                    // the blocks themselves only ever see one item. `railPlan` therefore comes
-                    // from `visibleItems`, the whole loaded list, and not from the rendered
-                    // slice: inside the window the two are the same row
-                    // (`renderedItems[i] == visibleItems[hiddenCount + i]`), but at the window's
-                    // two ends the slice has no neighbour where the transcript has one. Reading
-                    // the slice made the boundary row's rail insets flip the moment a batch was
-                    // prepended *under* it — and that boundary row is exactly the one the anchor
-                    // above is holding still, so the flip was a few tens of dp of movement on
-                    // the reader's own row, once per load-earlier batch. `ToolCall` and
-                    // `ToolDiff` are the only two kinds that draw a rail (`ui/blocks/ToolRail.kt`).
-                    val slot = railPlan[index]
-                    val firstOfRun = slot.firstOfRun
-                    val lastOfRun = slot.lastOfRun
+                    // The execution rail's two ends (`06 §2` 执行轨道「竖线上下各缩进 16」).
+                    // A run is a property of *consecutive transcript rows*, so the one
+                    // place that can answer "is this the first/last tool card of a run"
+                    // is the list that holds the order — the blocks themselves only ever
+                    // see one item. `previous`/`next` therefore come from `visibleItems`,
+                    // the whole loaded list, and not from the rendered slice: inside the
+                    // window the two are the same row (`renderedItems[i] ==
+                    // visibleItems[hiddenCount + i]`), but at the window's two ends the
+                    // slice has no neighbour where the transcript has one. Reading the
+                    // slice made the boundary row's rail insets flip the moment a batch
+                    // was prepended *under* it — and that boundary row is exactly the one
+                    // the anchor above is holding still, so the flip was a few tens of dp
+                    // of movement on the reader's own row, once per load-earlier batch.
+                    // `ToolCall` and `ToolDiff` are the only two kinds that draw a rail
+                    // (`ui/blocks/ToolRail.kt`).
+                    val previous = visibleItems.getOrNull(hiddenCount + sliceIndex - 1)
+                    val next = visibleItems.getOrNull(hiddenCount + sliceIndex + 1)
+                    val firstOfRun = previous !is ToolCall && previous !is ToolDiff
+                    val lastOfRun = next !is ToolCall && next !is ToolDiff
                     // Whether this row's markdown must be parsed before its first layout:
                     // see `PiMarkdownImmediate.kt` for the defect, and the block above for
-                    // the gate. The latch is the row's own parse state — *this* composition
-                    // has not reported `State.Success` yet — so the rows that come **back**
-                    // into the window parse on the frame they return. They have a remembered
-                    // height, which is why the cache used to refuse them; holding that height
-                    // keeps them from *moving*, but it does not stop them from blanking, and a
-                    // blank body at the correct height is exactly the 「原地闪一下」 the reader
-                    // reports. Streaming text never asks: its content changes on every token,
-                    // and that parse belongs off the frame thread.
+                    // the gate. `RowHeightCache` is the latch — a row that has already been
+                    // measured never asks again, so the synchronous parse happens at most
+                    // once per row — and streaming text never asks: its content changes on
+                    // every token, and that parse belongs off the frame thread.
                     //
                     // The last term is the **frame budget**: `piMarkdownParseBudget` is billed
                     // with the measured cost of every eager parse this frame (`PiMarkdown.kt`
@@ -2421,35 +2191,19 @@ private fun ChatBody(
                     // common case — and no row's fate is decided by its character count.
                     val streamingRow = (item as? AssistantText)?.streaming == true ||
                         (item as? ThinkingBlock)?.streaming == true
-                    val immediateMarkdown = wantsImmediateMarkdown(
-                        streaming = streamingRow,
-                        parsedInThisComposition = markdownParsed.value,
-                        hasRememberedHeight = RowHeightCache.shared.of(item.key) != null,
-                        firstSightingForWindow = item.key in freshRowKeys || restoring,
-                    ) && piMarkdownParseBudget.allow(System.nanoTime())
+                    val immediateMarkdown = !streamingRow &&
+                        RowHeightCache.shared.of(item.key) == null &&
+                        (item.key in freshRowKeys || restoring) &&
+                        piMarkdownParseBudget.allow(System.nanoTime())
                     CompositionLocalProvider(
                         LocalPiMarkdownImmediate provides immediateMarkdown,
                         LocalPiMarkdownParsed provides onMarkdownParsed,
-                        // **This row's own bottom air**, handed to the row rather than to the
-                        // list: `BlockColumn` pads with it, `ToolRailFrame` overdraws by it, and
-                        // both read this one value — that is the whole fix for the rail breaking
-                        // apart across the gap (`BlockChrome.BlockColumn` has the argument).
-                        LocalRowGap provides item.rowGapDp(prefs.messageDensity).dp,
-                        // The transcript's disclosure hook (`toggleContent`), and only here:
-                        // the extension cards that also disclose sit *outside* this list, and
-                        // their height is not this list's content — a hold for them would be a
-                        // hold for a layout change that never happened. See the disclosure
-                        // section above for what the handler does and why a collapse needs it.
-                        LocalDisclosureToggle provides onDisclosureToggle,
                     ) {
                         BlockRenderer(
                             item = item,
                             modifier = rowModifier,
                             firstOfRun = firstOfRun,
                             lastOfRun = lastOfRun,
-                            // The run's ring: this row's state when the whole run agrees, null
-                            // (→ neutral) when it does not.
-                            runRing = slot.ring,
                             // pi's `hideThinkingBlock` (`settings-manager.ts:119`) and
                             // the app's collapse-by-default preference both land here;
                             // the renderer already honours both.
@@ -2505,9 +2259,8 @@ private fun ChatBody(
                             // stay deleted.
                             onImageClick = { viewedImage = it },
                             // The coarse tool clock read beside the other `state.*` values
-                            // above. Two blocks consume it: `ShellBlock` (a running `bash` is
-                            // the one live *call* duration) and `ThinkingBlockBlock` (a
-                            // thinking row that is still streaming counts up too).
+                            // above; only `ShellBlock` consumes it — a running `bash` is the
+                            // one live duration in the transcript.
                             nowMs = nowMs,
                         )
                     }
@@ -2609,13 +2362,13 @@ private fun ChatBody(
             }
         }
 
-        if (state.queueSteering.isNotEmpty() || state.queueFollowUp.isNotEmpty()) {
+        if (state.queueSteering > 0 || state.queueFollowUp > 0) {
             QueueRow(
                 steering = state.queueSteering,
                 followUp = state.queueFollowUp,
                 // pi's `app.message.dequeue` (`alt+up`): the queue comes back to the
-                // editor and **the turn keeps running** (`interactive-mode.ts:4467-4472`
-                // → `:4702-4721` with no `abort`). Stop is the other half — it drains
+                // editor and **the turn keeps running** (`interactive-mode.ts:4157-4164`
+                // → `:4387-4406` with no `abort`). Stop is the other half — it drains
                 // and aborts — and stays on the send button.
                 onRestore = {
                     session.restoreQueue { restored -> draft = mergeRestoredQueue(restored, draft) }
@@ -2829,10 +2582,10 @@ private fun ChatBody(
             onOpenMention = { if (PiFileMentions.prefixOf(draft) == null) draft += "@" },
             onSteer = {
                 // `session.send` **is** the steer route mid-turn: it picks
-                // `streamingBehavior: "steer"` whenever pi reports a run in flight
-                // (`PiSessionViewModel.kt`'s `send`), which is this chip's condition.
-                // The message then shows up in the queue row, and only becomes a
-                // bubble when pi delivers it.
+                // `streamingBehavior: "steer"` whenever the transcript is streaming
+                // (`PiSessionViewModel.kt`'s `send`), which is exactly this chip's
+                // condition, and it echoes the row locally so the message is visible
+                // before pi answers.
                 session.send(draft, attachments)
                 draft = ""
                 attachments = emptyList()
@@ -2894,7 +2647,7 @@ private fun ChatBody(
             // puts the queued text **and** the current editor text back into the
             // editor, then aborts. Dropping the queued text here is what made Stop
             // silently destroy what the user had typed.
-            // 清空 and 后续 are no longer Composer parameters: the designer's overflow
+            // 清空 and 排队 are no longer Composer parameters: the designer's overflow
             // ladder moved both out of the key row and into this screen's ⋮ menu, so
             // the composer does not gate or run them any more.
             // 清空 is the composer's own ⋮ entry (`ComposerMenu`); the editor it
@@ -2906,13 +2659,13 @@ private fun ChatBody(
             },
             onFollowUp = {
                 // pi's alt+enter: queue this message for after the current turn
-                // (`interactive-mode.ts:4435-4459` → `session.prompt(text,
+                // (`interactive-mode.ts:4126-4155` → `session.prompt(text,
                 // { streamingBehavior: "followUp" })`, which is `follow_up` on the
                 // wire). Only offered while streaming, because that is the only time
                 // pi's own binding queues rather than submits.
                 //
                 // The attachments go with it: pi's own call hands the editor's images
-                // to `_queueFollowUp` (`agent-session.ts:2208-2222`), and F21's
+                // to `_queueFollowUp` (`agent-session.ts:1225-1226`), and F21's
                 // finding in `docs/gap-disposition.md` §10 found this call dropping
                 // them — the chip looked like it queued the message and the picture
                 // was silently gone.
@@ -3669,19 +3422,12 @@ private fun ModelChip(label: String?, onClick: () -> Unit) {
  * What is waiting behind the running turn, plus the one action pi offers on it.
  *
  * pi draws the same thing above its editor (`updatePendingMessagesDisplay`,
- * `interactive-mode.ts:4683-4700`): **one line per queued message** — `Steering: <text>`
- * / `Follow-up: <text>` — and a single hint, "↳ <key> to edit all queued messages",
- * because `app.message.dequeue` restores **all** of them (`:4702-4721`) and
- * `clear_queue` has no per-message form (`rpc-types.ts:26`). This row keeps the app's
- * count chips on the head line and then adopts pi's shape: one line per queued
- * message, its text included and truncated the way pi truncates
- * (`TruncatedText(…, 1, 0)`). A count cannot say *which* message is waiting, which is
- * all the app used to show.
- *
- * Nothing here explains what either mode *does*: the two words are pi's own names for
- * its two queues (引导 = `steering`, 后续 = `follow-up`) and the row is a report of
- * what is in them, not a manual. The one place a mode is described is where a mode is
- * *chosen* — the settings rows and the 队列 sheet ([ChatSheets]).
+ * `interactive-mode.ts:4368-4385`): one line per queued message and a single hint —
+ * "↳ <key> to edit all queued messages" — because `app.message.dequeue` restores
+ * **all** of them (`:4387-4406`) and `clear_queue` has no per-message form
+ * (`rpc-types.ts:26`). This row keeps the app's existing count chips and adds that
+ * one action; it deliberately does not pretend each message can be taken back
+ * alone, because nothing on the wire can do that.
  *
  * v2's `QueueRow` (`direction-b-v2.html:1381-1390`, phone11/phone12) is the shape
  * here: a `⇢` chip for the steering count and a `⇣` chip for the follow-up count —
@@ -3692,65 +3438,29 @@ private fun ModelChip(label: String?, onClick: () -> Unit) {
  * the screen without a symbol.
  */
 @Composable
-private fun QueueRow(steering: List<String>, followUp: List<String>, onRestore: () -> Unit) {
-    Column(
+private fun QueueRow(steering: Int, followUp: Int, onRestore: () -> Unit) {
+    Row(
         Modifier.fillMaxWidth().padding(horizontal = PiSpacing.pageHorizontal, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            // The two words are pi's two waiting modes and are **not** synonyms:
-            // 引导 is `steeringMode`/steer (the turn is steered between its tool
-            // calls), 后续 is `followUpMode`/followUp (processed once the whole turn
-            // is over). The glyphs and tones are the queue's own third channel
-            // (`06 §4`: `⇢` warning, `⇣` muted).
-            if (steering.isNotEmpty()) {
-                QueueChip(glyph = "⇢", tone = PiTheme.palette.warning, text = "引导 ${steering.size}")
-            }
-            if (steering.isNotEmpty() && followUp.isNotEmpty()) Spacer(Modifier.width(PiSpacing.inline))
-            if (followUp.isNotEmpty()) {
-                QueueChip(glyph = "⇣", tone = PiTheme.palette.muted, text = "后续 ${followUp.size}")
-            }
-            Spacer(Modifier.weight(1f))
-            // The consequence, not the mechanism: the text goes back into the input box
-            // and the turn that is running is not touched.
-            Text(
-                "收回并编辑",
-                modifier = Modifier
-                    .clickable(onClickLabel = "收回并编辑", onClick = onRestore)
-                    .padding(horizontal = 6.dp, vertical = 3.dp),
-                style = PiTheme.text.meta,
-                color = MaterialTheme.colorScheme.primary,
-            )
-        }
-        for (message in steering) QueueMessageLine(label = "引导", text = message)
-        for (message in followUp) QueueMessageLine(label = "后续", text = message)
-    }
-}
-
-/**
- * One waiting message: pi's `Steering: <text>` line, with the mode word the app uses
- * for the same queue.
- *
- * A line is truncated rather than wrapped, exactly as pi truncates
- * (`TruncatedText(text, 1, 0)`): the queue sits above the composer and must not push
- * it off screen, and the *action* on those messages (收回并编辑) does not need the
- * rest of the sentence.
- */
-@Composable
-private fun QueueMessageLine(label: String, text: String) {
-    Row(Modifier.padding(top = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+        // The two words are pi's two waiting modes and are **not** synonyms:
+        // 插话 is `steeringMode`/steer (this turn is steered by the message, applied
+        // between its tool calls), 排队 is `followUpMode`/followUp (processed once the
+        // whole turn is over). The glyphs and tones are the queue's own third channel
+        // (`06 §4`: `⇢` warning, `⇣` muted).
+        if (steering > 0) QueueChip(glyph = "⇢", tone = PiTheme.palette.warning, text = "插话 $steering")
+        if (steering > 0 && followUp > 0) Spacer(Modifier.width(PiSpacing.inline))
+        if (followUp > 0) QueueChip(glyph = "⇣", tone = PiTheme.palette.muted, text = "排队 $followUp")
+        Spacer(Modifier.weight(1f))
+        // The consequence, not the mechanism: the text goes back into the input box
+        // and the turn that is running is not touched.
         Text(
-            text = label,
+            "收回并编辑",
+            modifier = Modifier
+                .clickable(onClickLabel = "收回并编辑", onClick = onRestore)
+                .padding(horizontal = 6.dp, vertical = 3.dp),
             style = PiTheme.text.meta,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            maxLines = 1,
-        )
-        Spacer(Modifier.width(5.dp))
-        Text(
-            text = text,
-            style = PiTheme.text.monoSmall,
-            color = PiTheme.palette.muted,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
+            color = MaterialTheme.colorScheme.primary,
         )
     }
 }
@@ -3871,9 +3581,9 @@ private fun Composer(
     /** pi's `app.clear`: empty editor. True while there is something to clear. */
     canClear: Boolean,
     onClear: () -> Unit,
-    /** 引导: pi's `steering` — the message is delivered between this turn's tool batches. */
+    /** 插话: pi's steer — the message joins the running turn. */
     onSteer: () -> Unit,
-    /** 后续: pi's `follow-up` — the message waits for the whole turn to finish. */
+    /** 排队: pi's followUp — the message waits for the turn to finish. */
     onFollowUp: () -> Unit,
     onSend: () -> Unit,
     onStop: () -> Unit,
@@ -3996,20 +3706,16 @@ private fun Composer(
                 )
                 // The two ways to hand pi something **while it is working**, which is
                 // the only time they differ — both are `prompt` with a
-                // `streamingBehavior`, and the names are pi's own two queue names
-                // carried into Chinese, one word per concept:
+                // `streamingBehavior`, and the names are picked so the pair cannot be
+                // read as synonyms:
                 //
-                //   引导 = `steering` / steer — delivered between the running turn's
-                //          tool batches, i.e. it steers this turn
-                //          (`interactive-mode.ts:3357-3364`, pi's own Enter while
+                //   插话 = `steeringMode` / steer — this turn is steered by the
+                //          message, applied between its tool calls
+                //          (`interactive-mode.ts:3137-3142`, pi's own Enter while
                 //          streaming)
-                //   后续 = `follow-up` / followUp — delivered only once the turn would
-                //          otherwise stop (`app.message.followUp`, pi's `alt+enter`)
-                //
-                // The labels stay two characters because that is the width this row
-                // was measured for (`design/ui-refactor/`'s overflow ladder); what
-                // each mode means belongs where a mode is chosen — the two settings
-                // rows and the 队列 sheet — not on a chip.
+                //   排队 = `followUpMode` / followUp — processed after the whole turn
+                //          is over (`app.message.followUp`, `keybindings.md:165`,
+                //          pi's `alt+enter`)
                 //
                 // Before this they were one chip (「后续」) and the steer half was
                 // reachable only through the send button — which, now that the engine
@@ -4017,8 +3723,8 @@ private fun Composer(
                 // is a stop button for the whole turn. Both are drawn as key chips:
                 // that is the family they belong to.
                 if (streaming) {
-                    KeyChip(label = "引导", enabled = canSteer, onClick = onSteer)
-                    KeyChip(label = "后续", enabled = canFollowUp, onClick = onFollowUp)
+                    KeyChip(label = "插话", enabled = canSteer, onClick = onSteer)
+                    KeyChip(label = "排队", enabled = canFollowUp, onClick = onFollowUp)
                 }
                 // The transcript's status row used to print this reading in its own
                 // 32 dp band above the stream; it is a ring in the key row now
@@ -4248,38 +3954,6 @@ private val TailFollowSaver: Saver<TailFollow, Any> = listSaver(
 )
 
 /**
- * One disclosure **collapse**, as the chat screen saw it at the moment of the tap: the row
- * the viewport was anchored on and how far into it, plus the viewport's own end line.
- *
- * The row is carried by **key**, not by index: the rendered window is a suffix of the
- * transcript, so a batch that arrives between the tap and the correction renumbers every
- * index — while the row the reader was on is exactly the thing that must not be lost. The
- * `seq` exists so that two taps with identical geometry are still two events (a
- * `LaunchedEffect` keyed on equal values would not restart, and the second hold would be
- * silently skipped).
- *
- * See the disclosure section in this file's chat composable for the mechanism, and
- * `ui/chat/TailFollow.kt`'s `disclosureDeficitPx` / `holdBandPx` / `holdBandStillNeeded` for
- * the arithmetic.
- *
- * @param viewportEndOffsetPx `LazyListLayoutInfo.viewportEndOffset` at the tap, the one
- *   number that says "the viewport itself changed" (the composer's inset, the keyboard): a
- *   frame that moved *it* is the follow's business, not a disclosure's. A band cannot move it
- *   (`viewportEndOffset = maxOffset + afterContentPadding`, and the band moves both terms).
- * @param bandAtTapPx the empty space the reader's position already needed at the tap — `0`
- *   unless a previous collapse's band is still in force, and the reason a second collapse in a
- *   row has to add its own deficit to it rather than replace it (`holdBandPx`'s KDoc has the
- *   argument, and the `tail-follow` harness's M group pins the arithmetic).
- */
-private data class DisclosureTap(
-    val seq: Long,
-    val rowKey: String,
-    val offsetPx: Int,
-    val viewportEndOffsetPx: Int,
-    val bandAtTapPx: Int,
-)
-
-/**
  * The composer's ⋮ chip: the trigger characters and 清空, which no longer fit in the
  * key row.
  *
@@ -4459,7 +4133,7 @@ private fun KeyHint(label: String, onClick: () -> Unit) {
  * that the answer is not a priority ladder but a **shorter row**: `@`, `!` and `!!`
  * move into the ⋮ chip beside them ([ComposerMenu]), where they do exactly what the
  * chips did. What is left is what a person reaches for while typing (`/`, the
- * paperclip), the two delivery choices that exist only mid-turn (引导 / 后续), the
+ * paperclip), the two delivery choices that exist only mid-turn (插话 / 排队), the
  * thinking level and the context ring.
  *
  * No width arithmetic, no fallback order, no budget constants — the row is short
@@ -4476,7 +4150,7 @@ private fun KeyHint(label: String, onClick: () -> Unit) {
  * all, so it read as stray characters rather than as keys.
  *
  * [enabled] is false for the conditional members whose action needs something to
- * deliver: pi's `alt+enter` 后续 and the 引导 chip both have nothing to hand over
+ * deliver: pi's `alt+enter` 排队 and the 插话 chip both have nothing to hand over
  * while the composer is empty, and a disabled chip is drawn in the muted tokens and
  * takes no tap.
  *

@@ -230,10 +230,7 @@ private val providerOptions: List<PiOption> = choices(
     "google" to "Google",
     "google-vertex" to "Google Vertex",
     "amazon-bedrock" to "Amazon Bedrock",
-    // 根因：pi 1.0.3 把 Azure 的 provider id 从 `azure-openai-responses` 改名成 `azure`
-    //（上游 breaking change）。这里选中的值会进 `settings.json` 的 `defaultProvider`，
-    // 旧 id 在新引擎里不再被认，会静默回退到别的 provider —— 所以必须跟着改名。
-    "azure" to "Azure OpenAI",
+    "azure-openai-responses" to "Azure OpenAI",
     "openai-codex" to "OpenAI Codex",
     "github-copilot" to "GitHub Copilot",
     "xai" to "xAI",
@@ -552,19 +549,19 @@ object PiSettingsCatalog {
 
         PiSetting(
             key = "steeringMode",
-            title = "引导模式",
+            title = "穿插模式",
             description = "流式中发送的消息怎么送达：逐条（等当前这条处理完再给下一条）或全部一起给。",
             kind = PiRowKind.Value,
             group = G_MESSAGES,
             section = "送达",
             defaultValue = str("one-at-a-time"),
             options = deliveryOptions,
-            aliases = listOf("引导", "steer", "queue"),
+            aliases = listOf("steer", "queue"),
         ),
         PiSetting(
             key = "followUpMode",
             title = "后续模式",
-            description = "等到本轮结束后再发的消息怎么送达：逐条或全部一起给。",
+            description = "排队等到本轮结束的消息怎么送达：逐条或全部一起给。",
             kind = PiRowKind.Value,
             group = G_MESSAGES,
             section = "送达",
@@ -1737,7 +1734,7 @@ object PiSettingsCatalog {
             if (parts.isEmpty()) "用 pi 自带的提示词" else parts.joinToString(" · ")
         },
         PiSettingsGroup(G_MESSAGES, "消息与网络", Icons.Filled.CompareArrows) { store ->
-            "引导：${summaryText(store, "steeringMode")} · 后续：${summaryText(store, "followUpMode")}"
+            "穿插：${summaryText(store, "steeringMode")} · 后续：${summaryText(store, "followUpMode")}"
         },
         PiSettingsGroup(G_COMPACTION, "上下文与压缩", Icons.Filled.Compress) { store ->
             val enabled = summaryText(store, "compaction.enabled")

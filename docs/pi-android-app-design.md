@@ -637,7 +637,7 @@ agent_start → turn_start → 用户消息事件
 
 ### 10.2 40 个内建 provider
 
-anthropic、openai、google、google-vertex、amazon-bedrock、azure、openai-codex、github-copilot、xai、groq、cerebras、**deepseek**、mistral、openrouter、vercel-ai-gateway、together、fireworks、baseten、nvidia、huggingface、**minimax(+cn)**、**moonshotai(+cn)**、**zai(+coding-cn)**、**kimi-coding**、**opencode(+go)**、cloudflare（workers-ai / ai-gateway）、**qwen-token-plan(+cn/individual)**、**xiaomi(+cn/ams/sgp)**、ant-ling、radius、llama.cpp
+anthropic、openai、google、google-vertex、amazon-bedrock、azure-openai-responses、openai-codex、github-copilot、xai、groq、cerebras、**deepseek**、mistral、openrouter、vercel-ai-gateway、together、fireworks、baseten、nvidia、huggingface、**minimax(+cn)**、**moonshotai(+cn)**、**zai(+coding-cn)**、**kimi-coding**、**opencode(+go)**、cloudflare（workers-ai / ai-gateway）、**qwen-token-plan(+cn/individual)**、**xiaomi(+cn/ams/sgp)**、ant-ling、radius、llama.cpp
 
 图片**生成** API：只有 `openrouter-images`。
 

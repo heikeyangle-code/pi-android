@@ -89,9 +89,7 @@ internal sealed interface WidgetRow {
      * tone that decides the card's own border and stripe.
      *
      * [headline] is the counts row; [details] are the per-job rows, already in
-     * [WidgetSpan] form so the renderer only maps tones to colours; [jobs] is the
-     * **same** walk in the structured shape the opened card prefers (one row per
-     * drawn leaf) — see its own note.
+     * [WidgetSpan] form so the renderer only maps tones to colours.
      *
      * [badge] is nullable because it is **not always information**: with a single
      * state the headline already carries the number, and a badge would repeat it —
@@ -103,40 +101,10 @@ internal sealed interface WidgetRow {
         val badge: String?,
         val headline: List<WidgetSpan>,
         val details: List<List<WidgetSpan>>,
-        /**
-         * The opened card's **structured** body: one row per leaf the panel draws, in
-         * `pi-subagents`' own order and inside its own two caps ([SUBAGENT_DETAIL_RUNS] jobs,
-         * [SUBAGENT_DETAIL_CHILDREN] tasks each, then `+N`) — a subagent's name on the left and
-         * its readings on the right, which is the shape the open card prefers.
-         *
-         * It comes out of the same `jobRows` walk that builds [details], so the two shapes
-         * cannot disagree about *which* leaves are drawn or in what order. [details] stays as
-         * the raw span form that walk always produced, and is what the card falls back to when
-         * there is no structured row.
-         */
-        val jobs: List<WidgetJob>,
         val worst: WidgetTone,
         val raw: String,
     ) : WidgetRow
 }
-
-/**
- * One row of the opened card's **structured** form.
- *
- * [glyph] is the extension's own state glyph (`widgetStatusGlyph`, transcribed in
- * [SUBAGENT_STATES]) — **empty** on a row that is the host's summary sentence (`+N 个更多…`)
- * rather than a leaf, which is also what tells the renderer to keep that row `dim`. [name] is
- * the extension's own name for the job or the task (`label`), and [readings] is the short tail
- * of its `⎿` line in that line's own order ([flatReadings]). Nothing here is the host's
- * invention except the two cells' positions — which is the layout this payload was already
- * projected for.
- */
-internal data class WidgetJob(
-    val glyph: String,
-    val tone: WidgetTone,
-    val name: String,
-    val readings: String,
-)
 
 /**
  * Classify and resolve every line of one widget, dropping the data channels.
@@ -382,12 +350,7 @@ private fun subagentSummary(json: String): WidgetRow? {
         else -> 2
     }
     val ordered = runs.sortedWith(compareBy { stateRank(it.text("state")) })
-    // One walk, two shapes. The card's opened body prefers the structured one ([WidgetJob]: a
-    // name and its readings), but the raw span rows are the extension's own transcription of
-    // this panel and stay built from the very same `shown`/`hidden` decisions — a second walk
-    // that re-counted the children could disagree about the cap, which is the one thing here
-    // that is not allowed to drift.
-    fun jobRows(run: JsonObject): JobRows {
+    fun jobRows(run: JsonObject): List<List<WidgetSpan>> {
         val children = (run["children"] as? JsonArray).orEmpty().mapNotNull { it as? JsonObject }
             .sortedWith(compareBy { stateRank(it.text("state")) })
         val shown = children.take(SUBAGENT_DETAIL_CHILDREN)
@@ -398,62 +361,50 @@ private fun subagentSummary(json: String): WidgetRow? {
         // extension's own inspect command takes — the interaction this surface has.
         val jobName = run.text("label")
         val jobKind = if (run.text("kind") == "workflow") "工作流" else "子代理"
-        val row = mutableListOf<List<WidgetSpan>>()
-        val flat = mutableListOf<WidgetJob>()
-        row += nodeRow(
-            run,
-            name = jobName,
-            kindWord = jobKind,
-            ref = run.text("id")?.take(8),
-            stat = widgetJobStats(run),
-        )
-        activityRow(run)?.let { row += it }
-        flat += leafJob(run, jobName)
-        shown.forEachIndexed { index, child ->
-            // Official marks `└─` only when the drawn child **is** the last child
-            // (`index === children.length - 1`): a truncated list is all `├─`.
-            row += nodeRow(
-                child,
-                branch = if (index == children.lastIndex) "└─ " else "├─ ",
-                identity = child.text("id"),
-                name = child.text("label") ?: "（未命名）",
-                inlineActivity = activityLine(child).takeIf { it.isNotEmpty() },
+        return buildList {
+            add(
+                nodeRow(
+                    run,
+                    name = jobName,
+                    kindWord = jobKind,
+                    ref = run.text("id")?.take(8),
+                    stat = widgetJobStats(run),
+                ),
             )
-            flat += leafJob(child, child.text("label"))
+            activityRow(run)?.let { add(it) }
+            shown.forEachIndexed { index, child ->
+                // Official marks `└─` only when the drawn child **is** the last child
+                // (`index === children.length - 1`): a truncated list is all `├─`.
+                add(
+                    nodeRow(
+                        child,
+                        branch = if (index == children.lastIndex) "└─ " else "├─ ",
+                        identity = child.text("id"),
+                        name = child.text("label") ?: "（未命名）",
+                        inlineActivity = activityLine(child).takeIf { it.isNotEmpty() },
+                    ),
+                )
+            }
+            val hidden = children.size - shown.size
+            // Branch-less, like official's `+N more workflow children`.
+            if (hidden > 0) add(listOf(WidgetSpan("+$hidden 个更多子任务", WidgetTone.Dim)))
         }
-        val hidden = children.size - shown.size
-        // Branch-less, like official's `+N more workflow children`.
-        if (hidden > 0) {
-            val more = "+$hidden 个更多子任务"
-            row += listOf(WidgetSpan(more, WidgetTone.Dim))
-            flat += WidgetJob(glyph = "", tone = WidgetTone.Dim, name = more, readings = "")
-        }
-        return JobRows(row, flat)
     }
     var slots = SUBAGENT_DETAIL_RUNS
     val drawn = mutableListOf<List<WidgetSpan>>()
-    val jobs = mutableListOf<WidgetJob>()
     val hiddenRuns = mutableListOf<JsonObject>()
     for (run in ordered.filter { it.text("state") == "running" }) {
         if (slots <= 0) {
             hiddenRuns += run
             continue
         }
-        val rows = jobRows(run)
-        drawn += rows.detail
-        jobs += rows.flat
+        drawn += jobRows(run)
         slots--
     }
     val queuedRuns = ordered.filter { it.text("state") == "queued" }
     if (queuedRuns.isNotEmpty()) {
         if (slots > 0) {
-            val queuedLine = "◦ ${queuedRuns.size} 排队中"
-            drawn += listOf(listOf(WidgetSpan(queuedLine, WidgetTone.Muted)))
-            // The queued slot is **one muted line standing in for every queued job** — not a
-            // leaf — so its structured row keeps the whole sentence, glyph included, in the one
-            // cell it owns. A row with no separate glyph is drawn `dim` by the card, which is
-            // the token the raw form gives this same line.
-            jobs += WidgetJob(glyph = "", tone = WidgetTone.Muted, name = queuedLine, readings = "")
+            drawn += listOf(listOf(WidgetSpan("◦ ${queuedRuns.size} 排队中", WidgetTone.Muted)))
             slots--
         } else {
             hiddenRuns += queuedRuns
@@ -464,25 +415,22 @@ private fun subagentSummary(json: String): WidgetRow? {
             hiddenRuns += run
             continue
         }
-        val rows = jobRows(run)
-        drawn += rows.detail
-        jobs += rows.flat
+        drawn += jobRows(run)
         slots--
     }
-    // Official's tail (`+N more (…)`). The words are the extension's own state table
-    // (finer than official's three categories, same shape), which is the only part
-    // that says whether the hidden ones are still working.
-    val hiddenTail: String? = if (hiddenRuns.isEmpty()) {
-        null
+    val details = if (hiddenRuns.isEmpty()) {
+        drawn
     } else {
+        // Official's tail (`+N more (…)`). The words are the extension's own state table
+        // (finer than official's three categories, same shape), which is the only part
+        // that says whether the hidden ones are still working.
         val hiddenStates = hiddenRuns.flatMap { leafStates(it) }
         val parts = SUBAGENT_STATE_ORDER.mapNotNull { state ->
             hiddenStates.count { it == state }.takeIf { it > 0 }?.let { "$it ${look(state).word}" }
         }
         val tail = if (parts.isEmpty()) "" else "（${parts.joinToString("、")}）"
-        "+${hiddenRuns.size} 个更多$tail"
+        drawn + listOf(listOf(WidgetSpan("+${hiddenRuns.size} 个更多$tail", WidgetTone.Dim)))
     }
-    val details = if (hiddenTail == null) drawn else drawn + listOf(listOf(WidgetSpan(hiddenTail, WidgetTone.Dim)))
 
     return WidgetRow.Summary(
         label = "子代理",
@@ -494,55 +442,10 @@ private fun subagentSummary(json: String): WidgetRow? {
         badge = leaves.size.takeIf { counts.size > 1 }?.toString(),
         headline = headline,
         details = details,
-        jobs = if (hiddenTail == null) jobs else jobs + WidgetJob("", WidgetTone.Dim, hiddenTail, ""),
         worst = leaves.map { look(it).tone }
             .minByOrNull { WIDGET_TONE_SEVERITY.indexOf(it) } ?: WidgetTone.Accent,
         raw = json,
     )
-}
-
-/** The two bodies one run contributes: the raw span rows, and the structured rows beside them. */
-private data class JobRows(val detail: List<List<WidgetSpan>>, val flat: List<WidgetJob>)
-
-/**
- * One drawn leaf as a structured row: the extension's own state glyph and tone first, its own
- * name, and its readings.
- *
- * The glyph matters here for the reason `06 §4` gives every state in the app: colour alone never
- * carries the state, and a row of names with no symbol column is a list of names, not a status
- * panel. It is the same glyph and the same token the raw form draws — this is the same node seen
- * from one column over.
- */
-private fun leafJob(node: JsonObject, label: String?): WidgetJob {
-    val look = look(node.text("state"))
-    return WidgetJob(
-        glyph = look.glyph,
-        tone = look.tone,
-        name = label ?: "（未命名）",
-        readings = flatReadings(node),
-    )
-}
-
-/**
- * The structured row's right cell: the leaf's **two counters**, in `activityLine`'s own order
- * (`17 轮 · 21 工具`) — or the extension's no-fact fall-through when nothing is counted yet
- * (`思考中…`, `排队中…`, `已暂停`, the state table's own words).
- *
- * It is deliberately the short half of [activityLine]: no live-activity word, no current tool,
- * no working path. The design's row ends in `17 轮 · 21 工具`, and this cell is the `auto` column
- * of a `minmax(0,1fr) auto` grid — every character it takes comes out of the subagent's name,
- * and a name cut in half is worse than a reading that is still one tap away. Nothing is dropped
- * from the card: those fields belong to the **same** node, are still in
- * [WidgetRow.Summary.details], and are in `原始数据` below. The state itself is not lost either —
- * it is the glyph and its token, the symbol channel `06 §4` requires.
- */
-private fun flatReadings(node: JsonObject): String {
-    val activity = node["activity"] as? JsonObject
-    val parts = listOfNotNull(
-        activity?.count("turnCount")?.let { "$it 轮" },
-        activity?.count("toolCount")?.let { "$it 工具" },
-    )
-    return if (parts.isNotEmpty()) parts.joinToString(" · ") else idleFallbackWord(node.text("state")).orEmpty()
 }
 
 /**

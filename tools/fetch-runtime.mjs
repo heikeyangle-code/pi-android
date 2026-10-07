@@ -503,43 +503,8 @@ const UBUNTU_PORTS = "https://ports.ubuntu.com/ubuntu-ports";
  *  6. **`docs/known-gaps.md` 与 `build-license-assets.py` 里几处以 shrinkwrap 为依据的说法**
  *     （"143 个依赖条目全部带 license 字段"、"tslib/lru-cache 是 shrinkwrap 钉的"）从 1.0.1 起
  *     没有依据了，同一轮改掉。
- *
- * 1.0.1 → **1.0.3**（2026-10-05）。判据同前：`npm pack` 两个版本，解开 tarball 后
- * `dist` 下每个 `.js.map` 的 `sourcesContent` 还原出 `packages/coding-agent/src`（244 → 245 个文件），
- * 再与兄弟包（`pi-ai` / `pi-tui` / `pi-agent-core` / `pi-codemode` / `pi-mcp` / `chord`）一起逐文件比。
- *
- *  1. **契约面逐字节相同**：`modes/rpc/rpc-types.ts`、`modes/interactive/theme/theme-schema.json`
- *     与 `{dark,light}.json`、`core/settings-manager.ts`、`cli/args.ts`、
- *     `core/tools/{bash,read,write,edit,grep,find,ls}.ts` 及 `core/tools/renderers/*.ts` 全部 `cmp` 相等。
- *     所以 `PiPalette.kt` 的 56 个令牌、工具卡读数口径、`PiSettingsRegistry.kt` 的设置键表、
- *     `rpc/Commands.kt` 的命令表这一轮都不用碰。
- *  2. **变的地方 App 都够不着**：新增 `src/utils/output-files.ts`（临时输出文件统一入口，权限
- *     收紧到 0600）、codemode 的 `image()` 现在把图片落盘并在结果里写路径、`config.ts` 的
- *     `detectInstallChange()`（安装被替换/删除后提示重启）、`interactive-mode.ts` 认 `ENOTTY`
- *     并给 stdin 也挂错误处理、`provider-composer.ts` 支持下面的新采样键。
- *  3. **必须跟着改的一处：上游把 Azure provider 从 `azure-openai-responses` 改名成 `azure`**
- *     （breaking；`core/model-resolver.ts` 的默认模型表与 `pi-ai` 的 provider/目录文件一起改，
- *     `AZURE_OPENAI_*` 环境变量不变）。App 的 `ui/settings/PiSettingsRegistry.kt` 的
- *     `providerOptions` 还写着旧 id —— 用户在「默认厂商」里选了它，写进 `settings.json` 的
- *     `defaultProvider` 在 1.0.3 的 pi 里不再被认，会静默回退。已改成 `"azure"`。
- *  4. **官方模型目录形状不变，数字变了**：`pi-ai/dist/providers/data` 仍 42 份、`schemaVersion`
- *     仍 6、内层键仍是 `${type}:${id}`，所以 `PiOfficialCatalog.kt` 的读取器不用动；
- *     但 `azure-openai-responses.json` 随 provider 改名成 `azure.json`，条目
- *     1536/59/20 → **1539 chat / 59 image / 23 classifier**。该文件 KDoc 里的实测数字已跟着改。
- *  5. **`models.json` 多了 `samplingParamsByThinkingLevel`**（1.0.2 的新特性，按思考级别覆盖采样
- *     参数）。`PiModelsMerge` 本来就逐键保留它不认识的键、`PiConfigFiles` 是读-改-写，所以**代码
- *     不用动**；这是「可选新特性」，App 要不要暴露给用户另定。
- *  6. **`pi-tui` 只改了 Home/End 键位**：`tui.editor.cursorLineStart/End` 去掉 `ctrl+home`/`ctrl+end`，
- *     `tui.altScreen.top/bottom` 改用它们。App 不转写 pi-tui 键位、也不跑终端 TUI，不需要改；
- *     但 `app/src/test/resources/pi-{latex,html}-fixtures/cases.json` 的 `piTui` 版本字段要跟着升。
- *  7. **Node 不动**：`engines.node` 仍 `>=22.19.0`，载荷钉的 Node 24.19 不解。`package.json` 只有
- *     `@earendil-works/*` 七件套从 `^1.0.1` 变 `^1.0.3`（另有三个 devDependency 同升），
- *     其余依赖名与约束逐条相同。
- *  8. **许可证资产**：版本标签跟着走；三个手写的 `@aws-sdk/*` 版本按新锁更新（它们漂不漂与 pi 无关，
- *     是 1.0.1 起没有 shrinkwrap 的直接后果）。`v1.0.2` / `v1.0.3` 标签的 `LICENSE` 与之前七个标签
- *     逐字节相同，所以只改标签、不加正文。
  */
-const PI_VERSION = "1.0.3";
+const PI_VERSION = "1.0.1";
 
 /**
  * proroot — the optional second container runtime, and the only artifact here whose

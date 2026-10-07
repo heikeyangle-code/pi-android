@@ -1,31 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!--
-  PI 的启动图标前景层：白色 pi 字标 + 绿色 >_ 提示符。
-
-    字形实测自交付给用户的那张图（1254×1254，整张 = launcher 的 72dp 视口），
-    坐标换算：X = 54 + (x - 626.5) × 72/1254，Y = 54 + (y - 626) × 72/1254。
-    字标四角都落在中心 66dp 安全区内（x 33.6–73.3，y 28.7–74.3），圆形遮罩下也不会被切。
-
-    白色部分是一条路径的五个子路径：p 的外环（顺时针）+ 内白（逆时针，非零填充形成洞）
-    + p 的腿 + i 的杆 + i 的点。洞的颜色由背景层给（values 里的 ic_launcher_background），
-    所以换底色时不用改这里。
--->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
+    <!-- A pi glyph: crossbar with two legs. -->
     <path
-        android:fillColor="#F3F3F3"
-        android:pathData="M40.48,38.5 H55.81 A6.89,6.89 0 0 1 62.7,45.39 V56.81 A6.89,6.89 0 0 1 55.81,63.7 H40.48 A6.89,6.89 0 0 1 33.59,56.81 V45.39 A6.89,6.89 0 0 1 40.48,38.5 Z M53.8,44.35 H42.89 A3.16,3.16 0 0 0 39.73,47.51 V55.03 A3.16,3.16 0 0 0 42.89,58.19 H53.8 A3.16,3.16 0 0 0 56.96,55.03 V47.51 A3.16,3.16 0 0 0 53.8,44.35 Z M33.59,58.25 H42.03 A0,0 0 0 1 42.03,58.25 V71.45 A2.87,2.87 0 0 1 39.16,74.33 H36.4 A2.81,2.81 0 0 1 33.59,71.51 V58.25 A0,0 0 0 1 33.59,58.25 Z M65.57,38.67 H72.34 A0.69,0.69 0 0 1 73.03,39.36 V61.06 A2.58,2.58 0 0 1 70.45,63.65 H65.22 A0.34,0.34 0 0 1 64.88,63.3 V39.36 A0.69,0.69 0 0 1 65.57,38.67 Z M64.56,33.13 a4.45,4.45 0 1,0 8.9,0 a4.45,4.45 0 1,0 -8.9,0 Z" />
-    <path
-        android:fillColor="#00000000"
-        android:strokeColor="#5BD470"
-        android:strokeWidth="2.07"
-        android:strokeLineCap="round"
-        android:strokeLineJoin="round"
-        android:pathData="M43.46,48.37 L46.05,51.24 L43.46,54.11" />
-    <path
-        android:fillColor="#5BD470"
-        android:pathData="M49.29,53.71 H52.85 A0.72,0.72 0 0 1 53.57,54.43 V54.43 A0.72,0.72 0 0 1 52.85,55.15 H49.29 A0.72,0.72 0 0 1 48.57,54.43 V54.43 A0.72,0.72 0 0 1 49.29,53.71 Z" />
+        android:fillColor="@color/ic_launcher_foreground"
+        android:pathData="M30,38 H78 V46 H71 V74 H63 V46 H45 V74 H37 V46 H30 Z" />
 </vector>

@@ -647,9 +647,9 @@ fun main() {
     //
     // All five states below are ones a real tree can be in, and all five are silent without
     // the repair: `mkdirs()` returns `false` and the write answers `ENOENT`/`EISDIR`.
-    class TarEntry(val name: String, val type: Char, val content: ByteArray = ByteArray(0), val link: String = "")
+    class TarEntry(val name: String, val type: Char, val content: ByteArray = ByteArray(0))
 
-    fun tarHeader(name: String, type: Char, size: Long, link: String): ByteArray {
+    fun tarHeader(name: String, type: Char, size: Long): ByteArray {
         val header = ByteArray(512)
         fun put(offset: Int, text: String, length: Int) {
             val bytes = text.toByteArray(Charsets.UTF_8)
@@ -664,7 +664,6 @@ fun main() {
         octal(124, size, 12)
         octal(136, 0L, 12)
         put(148, "        ", 8) // checksum: `TarExtractor` does not verify it, by design
-        put(157, link, 100) // symlink target (`type` '2'); empty for every other kind
         header[156] = type.code.toByte()
         return header
     }
@@ -673,7 +672,7 @@ fun main() {
         val out = ByteArrayOutputStream()
         GZIPOutputStream(out).use { gz ->
             for (entry in entries) {
-                gz.write(tarHeader(entry.name, entry.type, entry.content.size.toLong(), entry.link))
+                gz.write(tarHeader(entry.name, entry.type, entry.content.size.toLong()))
                 gz.write(entry.content)
                 gz.write(ByteArray((512 - entry.content.size % 512) % 512))
             }
@@ -730,51 +729,6 @@ fun main() {
     val e5Message = extractOver(e5, TarEntry("d", '0', "payload".toByteArray()))?.message ?: ""
     check("E5 a non-empty directory is not deleted", File(e5, "d/user.txt").readText(), "mine")
     check("E5 …and the failure names it as a directory", e5Message.contains("目录"), true)
-
-    // E11: a **symlink entry that a previous payload already created** — which is what every
-    // payload upgrade is. The old reader canonicalised the *whole* path, so it followed the
-    // old link to its target and wrote the new link **at the target** instead of at the
-    // entry's own path. `./node_modules/.bin/yaml -> ../yaml/bin.mjs` targets a **package
-    // root** file, and `../yaml/bin.mjs` written at the package root expands back to itself
-    // — a self-referential link; the next `canonicalFile` on that path then throws
-    // `Too many symbolic links encountered`. That is the device report this case pins:
-    //
-    //     failed to unpack pi-engine.tgz: Too many symbolic links encountered
-    //
-    // The `.bin` links are identical in the 1.0.1 and the 1.0.3 payload (9 links, same paths
-    // and same targets), and the digest plan re-extracts only the **changed** payload onto
-    // the tree the previous one left — so this is not a new archive, it is what any in-place
-    // payload upgrade does. The fix is in `TarExtractor.resolveSafely`: canonicalise the
-    // parent only, keep the last component literal.
-    val e11 = File(extractRoot, "e11").also { it.mkdirs() }
-    Files.createDirectories(File(e11, "node_modules/.bin").toPath())
-    Files.createDirectories(File(e11, "node_modules/yaml").toPath())
-    File(e11, "node_modules/yaml/bin.mjs").writeText("old")
-    Files.createSymbolicLink(
-        File(e11, "node_modules/.bin/yaml").toPath(),
-        File("../yaml/bin.mjs").toPath(),
-    )
-    val e11Threw = extractOver(
-        e11,
-        TarEntry("node_modules/.bin/yaml", '2', link = "../yaml/bin.mjs"),
-        TarEntry("node_modules/yaml/bin.mjs", '0', "new".toByteArray()),
-    )
-    check("E11 an existing symlink entry is re-extracted: no failure", e11Threw, null)
-    check(
-        "E11 …the link is recreated at its own path, not at its target",
-        Files.readSymbolicLink(File(e11, "node_modules/.bin/yaml").toPath()).toString(),
-        "../yaml/bin.mjs",
-    )
-    check(
-        "E11 …and the target is a real file, not a self-referential link",
-        Files.isSymbolicLink(File(e11, "node_modules/yaml/bin.mjs").toPath()),
-        false,
-    )
-    check(
-        "E11 …holding the payload's bytes",
-        File(e11, "node_modules/yaml/bin.mjs").readText(),
-        "new",
-    )
 
     // ------------------------------------------------- 目录也在载荷所有权里
     //

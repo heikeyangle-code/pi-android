@@ -933,7 +933,7 @@ run_harness mermaid-memo \
 # `custom` 槽的空分支）或只丢标签（行内 `HTML_TAG` 在库 annotator 的 else 里没有 append），
 # 连本仓库自己的文档里 `` `/export <path>.jsonl` `` 都会被显示成 `/export .jsonl`。
 #
-# 期望值不是手抄：`tools/collect-pi-html-pitext.mjs` 真跑 pi 1.0.3 的 `Markdown.render` 取
+# 期望值不是手抄：`tools/collect-pi-html-pitext.mjs` 真跑 pi 1.0.1 的 `Markdown.render` 取
 # 输出，`tools/HtmlFixtureSpans.java` 用 pin 住的解析器量节点跨度与类型全集（77 个类型名）。
 # 这个 harness 钉住的四件事：块级逐字节等于 pi、行内片段逐字节等于 pi、`\t`/`\r` 归一与 JS
 # `trim` 逐码位一致、以及**认领集合只含那两个类型**（117 条真实段落里一条都不含）——
@@ -975,20 +975,6 @@ run_harness bash-output \
 run_harness row-height-cache \
   app.pi.ui.render.RowHeightCacheCheckKt \
   "$ROOT/app/src/test/kotlin/app/pi/ui/render/RowHeightCacheCheck.kt" \
-  "$ROOT/app/src/main/kotlin/app/pi/ui/render/RowHeightCache.kt"
-
-# app.pi.ui.render: the gate that decides whether a transcript row's markdown is parsed on the
-# frame it is composed, or one or more frames later on `Dispatchers.Default`. The asynchronous
-# path draws the library's loading slot, an empty box, so a row that re-enters the composition
-# window has no text until the parse lands - and because the height floor holds its geometry, a
-# reader sees it blank **in place** rather than moving. The latch is the row's own parse state
-# (nothing parsed in this composition yet), plus "not streaming" and "either a remembered height
-# or a first sighting for the window"; every one of the 16 input cells is pinned, including the
-# boundary this change deliberately leaves alone. Android-free, so it runs on a machine that
-# cannot build the APK.
-run_harness markdown-parse-gate \
-  app.pi.ui.render.MarkdownParseGateCheckKt \
-  "$ROOT/app/src/test/kotlin/app/pi/ui/render/MarkdownParseGateCheck.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/ui/render/RowHeightCache.kt"
 
 # app.pi.ui.render: `PiLatex.kt` 的**行为**夹具 —— 428 条公式，期望值是 pi 自己的
@@ -1065,44 +1051,6 @@ run_harness text-cache \
   app.pi.ui.blocks.TextCacheCheckKt \
   "$ROOT/app/src/test/kotlin/app/pi/ui/blocks/TextCacheCheck.kt" \
   "$ROOT/app/src/main/kotlin/app/pi/ui/blocks/ImageSize.kt"
-
-# app.pi.ui.blocks: **工具卡的文案、run 的分组、与块间距的唯一来源**（`ToolState.kt` +
-# `ToolCardText.kt` + `BlockRhythm.kt`）。为什么必须在这里：
-#
-#  · `差异表` §2 第 3 行把「状态词 · 退出码 · 耗时 · N 行 · 已截断 · 无输出」从折叠态搬到展开态
-#    最后一行，并要求**措辞与 ` · ` 顺序逐字**——搬一次加一句承诺不是检查，所以那几个函数被搬进
-#    这个闭包，逐字断言；折叠行新增的两个格子（判决 = 状态词（+`· 已截断`）、读数 = 数值或
-#    `没有执行`）与读数口径（文件工具 ms / 两个 shell 用 pi 的 `6.4s`·`2m 49s` / 被拒没有数值）
-#    同理。
-#  · `toolRunPlan` 是壳的环的算术：一个 run 里全是同一状态 → 那状态色；混着成功/失败 → 中性。
-#    这是"壳不许替某一行表态"那句设计规则的唯一实现，编译器看不见。
-#  · 块间距：**轨道线的过绘与壳的过绘都必须等于该行自己的底部留白**。这条曾经是"编译期常量 8 vs
-#    运行期 4/8/16"——只有默认档相等，所以「宽松」档下轨道线在每张卡之间断开。三档在这里钉死，
-#    并且**读源码**断言给间距的地方仍然只有一处（块自己 padding + 列表 spacedBy = F11 的双倍间距）。
-#
-# Android-free：这三个文件一个 import 都不碰 Compose（`ToolCardText.kt` 只 import `ToolCall`，
-# `ToolOutputParse.kt` 只碰 kotlinx.serialization 与 `java.util`）。闭包里的 `rpc/**` 是
-# `TranscriptItem`/`ToolCall`/`ToolDiff`/`Notice` 的类型来源，与 `session-entry-detail` 用的是同一份。
-run_harness tool-state \
-  app.pi.ui.blocks.ToolCardTextCheckKt \
-  "$ROOT/app/src/test/kotlin/app/pi/ui/blocks/ToolCardTextCheck.kt" \
-  "$ROOT/app/src/main/kotlin/app/pi/ui/blocks/ToolState.kt" \
-  "$ROOT/app/src/main/kotlin/app/pi/ui/blocks/ToolCardText.kt" \
-  "$ROOT/app/src/main/kotlin/app/pi/ui/blocks/BlockRhythm.kt" \
-  "$ROOT/app/src/main/kotlin/app/pi/ui/blocks/ToolOutputParse.kt" \
-  "$ROOT/app/src/main/kotlin/app/pi/ui/blocks/ToolCallPart.kt" \
-  "$ROOT/rpc/src/main/kotlin/app/pi/rpc/PiJson.kt" \
-  "$ROOT/rpc/src/main/kotlin/app/pi/rpc/Jsonl.kt" \
-  "$ROOT/rpc/src/main/kotlin/app/pi/rpc/internal/Json.kt" \
-  "$ROOT/rpc/src/main/kotlin/app/pi/rpc/Transcript.kt" \
-  "$ROOT/rpc/src/main/kotlin/app/pi/rpc/Events.kt" \
-  "$ROOT/rpc/src/main/kotlin/app/pi/rpc/Messages.kt" \
-  "$ROOT/rpc/src/main/kotlin/app/pi/rpc/Ansi.kt" \
-  "$ROOT/rpc/src/main/kotlin/app/pi/rpc/ExtensionErrorText.kt" \
-  "$ROOT/rpc/src/main/kotlin/app/pi/rpc/Responses.kt" \
-  "$ROOT/rpc/src/main/kotlin/app/pi/rpc/Commands.kt" \
-  "$ROOT/rpc/src/main/kotlin/app/pi/rpc/SessionEntries.kt" \
-  "$ROOT/rpc/src/main/kotlin/app/pi/rpc/SkillBlock.kt"
 
 # app.pi.ui.settings: 「运行时加速（实验性）」开关**当场生效**的那条判定。用户原话是
 # 「只要在开关里点开开关，就自动重启切换。为什么还要退出软件重进呢？」——于是写完这个开关

@@ -82,8 +82,6 @@ internal fun ShellBlock(
      * composition) rather than producing no reading at all.
      */
     nowMs: Long? = null,
-    /** The **run's** state, for the 1 px ring the rail draws ([ToolRunSlot.ring]). */
-    ring: RailState? = null,
 ) {
     val palette = PiTheme.palette
     val state = toolStateOf(item)
@@ -180,20 +178,13 @@ internal fun ShellBlock(
                 { expanded = !expanded },
                 firstOfRun = firstOfRun,
                 lastOfRun = lastOfRun,
-                ring = ring,
             ) {
                 ToolHeader(
                     item = item,
                     title = "$",
                     subject = subject,
-                    state = state,
                     expanded = expanded,
-                    // The **live** reading and the **live** tick, from the one number
-                    // ([elapsedMs], the ViewModel's 1 Hz clock while the call is pending) —
-                    // `toolHeaderReading`'s default would be pi's settled figure, which does not
-                    // exist until the call ends.
-                    right = toolHeaderReading(item, elapsedMs),
-                    elapsedMs = elapsedMs,
+                    expandable = bodyText.isNotEmpty() || notice != null,
                 )
                 // The body is drawn **only while expanded** (D45): pi paints the collapsed tail
                 // too (`renderers/bash.js:56-70`), and that is the one shape here this app does
@@ -207,38 +198,38 @@ internal fun ShellBlock(
                 // not cosmetic — five *logical* lines wrap to a varying number of rows as the
                 // tail slides, so the card's height used to change while a command streamed and
                 // everything below it moved with it.
-                if (expanded) {
-                    if (bodyText.isNotEmpty()) {
-                        ShellPreviewBody(
-                            text = painted,
-                            totalLines = lines,
-                            fullOutput = fullOutput,
-                            color = palette.bodyOnTool,
-                            onExpandAll = { fullOutput = true },
-                        )
-                    }
-                    // A settled command with no output says so in the footer ([shellFooter]),
-                    // which is where pi's own card reports the same thing; the body has nothing
-                    // to print either way.
-                    //
-                    // pi's warning line, at pi's own place *within the expanded body*
-                    // (`renderers/bash.js:78-90`: `component.addChild(new Text(`\n${theme.fg("warning",
-                    // `[${warnings.join(". ")}]`)}`, 0, 0))`), but **inside the expanded branch** here:
-                    // pi's condition (`if (truncation?.truncated || fullOutputPath)`) is independent
-                    // of `expanded`, so its collapsed card reports a truncated result too (D45 — the
-                    // same decision that hides the collapsed tail hides its notice; the footer's
-                    // 「已截断」 is what carries the fact while collapsed).
-                    //
-                    // It is the same information as the sentence pi's bash tool appends to its own
-                    // output, so it appears once: [stripFullOutputFooter] removes that sentence from
-                    // the body first (`:59-64`), and nothing else in this card prints it.
-                    if (notice != null) {
-                        ToolNotice(text = notice, copyOnTap = fullOutputPath)
-                    }
-                    // 展开态的**最后一行**：整串页脚（`差异表` §2 第 3 行）。措辞与 ` · `
-                    // 顺序由 [shellFooter] 决定，这里一个字都不动。
-                    ToolFooter(text = footer, state = state)
+                if (expanded && bodyText.isNotEmpty()) {
+                    ShellPreviewBody(
+                        text = painted,
+                        totalLines = lines,
+                        fullOutput = fullOutput,
+                        color = palette.bodyOnTool,
+                        onExpandAll = { fullOutput = true },
+                    )
                 }
+                // A settled command with no output says so in the footer ([shellFooter]),
+                // which is where pi's own card reports the same thing; the body has nothing
+                // to print either way.
+                //
+                // pi's warning line, at pi's own place *within the expanded body*
+                // (`renderers/bash.js:78-90`: `component.addChild(new Text(`\n${theme.fg("warning",
+                // `[${warnings.join(". ")}]`)}`, 0, 0))`), but **inside the expanded branch** here:
+                // pi's condition (`if (truncation?.truncated || fullOutputPath)`) is independent
+                // of `expanded`, so its collapsed card reports a truncated result too (D45 — the
+                // same decision that hides the collapsed tail hides its notice; the footer's
+                // 「已截断」 is what carries the fact while collapsed).
+                //
+                // It is the same information as the sentence pi's bash tool appends to its own
+                // output, so it appears once: [stripFullOutputFooter] removes that sentence from
+                // the body first (`:59-64`), and nothing else in this card prints it.
+                if (expanded && notice != null) {
+                    ToolNotice(text = notice, copyOnTap = fullOutputPath)
+                }
+                ToolFooter(
+                    text = footer,
+                    state = state,
+                    elapsedMs = elapsedMs,
+                )
             }
         }
     }

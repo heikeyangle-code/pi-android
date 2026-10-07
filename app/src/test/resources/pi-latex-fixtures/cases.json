@@ -1,5 +1,5 @@
 {
-	"piTui": "1.0.3",
+	"piTui": "1.0.1",
 	"generatedBy": "tools/collect-latex-fixtures.mjs（期望值是 pi 的 renderLatex 返回值，不是手抄）",
 	"cases": [
 		{
@@ -2747,43 +2747,43 @@
 		},
 		{
 			"source": "  - 失败一律原样上报：pi 的错误在 stderr（`console.error(chalk.red(\\`Error: ${message}\\`))`，`package-manager-cli.ts:1096-1100`），成功行的 `Warning:`（`:255-263`、`:737-741`）也保留。超时与「启动失败」是 App 自己的状态，不会被伪装成包错误。",
-			"provenance": "docs/known-gaps.md:149",
+			"provenance": "docs/known-gaps.md:109",
 			"piVisible": "  - 失败一律原样上报：pi 的错误在 stderr（`console.error(chalk.red(\\`Error: ${message}\\`))`，`package-manager-cli.ts:1096-1100`），成功行的 `Warning:`（`:255-263`、`:737-741`）也保留。超时与「启动失败」是 App 自己的状态，不会被伪装成包错误。",
 			"piRenders": false
 		},
 		{
 			"source": "    $ bash tools/typecheck.sh > /tmp/tc-verify2.log 2>&1; echo \"EXIT=$?\" >> /tmp/tc-verify2.log",
-			"provenance": "docs/known-gaps.md:300",
+			"provenance": "docs/known-gaps.md:260",
 			"piVisible": "    $ bash tools/typecheck.sh > /tmp/tc-verify2.log 2>&1; echo \"EXIT=$?\" >> /tmp/tc-verify2.log",
 			"piRenders": false
 		},
 		{
 			"source": "    $ cat /tmp/tc-verify2.log",
-			"provenance": "docs/known-gaps.md:301",
+			"provenance": "docs/known-gaps.md:261",
 			"piVisible": "    $ cat /tmp/tc-verify2.log",
 			"piRenders": false
 		},
 		{
 			"source": "    $ grep -cE '\\.kt:[0-9]+:[0-9]+: error:' /tmp/tc-verify2.log",
-			"provenance": "docs/known-gaps.md:304",
+			"provenance": "docs/known-gaps.md:264",
 			"piVisible": "    $ grep -cE '\\.kt:[0-9]+:[0-9]+: error:' /tmp/tc-verify2.log",
 			"piRenders": false
 		},
 		{
 			"source": "    1. `set -uo pipefail` + `if echo \"$APP_DIAG\" | grep -qE \"\\.kt:...: error:\"`：诊断超过管道缓冲（约 900+ 条）时 `grep -q` 提前退出、`echo` 收到 SIGPIPE，`pipefail` 让管道返回 141 → `if` 为假 → 打印 OK。实测出现过「946 条 error 后紧跟 `typec",
-			"provenance": "docs/known-gaps.md:310",
+			"provenance": "docs/known-gaps.md:270",
 			"piVisible": "    1. `set -uo pipefail` + `if echo \"$APP_DIAG\" | grep -qE \"\\.kt:...: error:\"`：诊断超过管道缓冲（约 900+ 条）时 `grep -q` 提前退出、`echo` 收到 SIGPIPE，`pipefail` 让管道返回 141 → `if` 为假 → 打印 OK。实测出现过「946 条 error 后紧跟 `typec",
 			"piRenders": false
 		},
 		{
 			"source": "  - ⚠ 判读陷阱：**`:app` 的 class 数永远是 0**。本机不加载 Compose 编译器插件，codegen 走不到最后，所以 `build/typecheck/out-*/app` 为空**不代表失败**——唯一判据是日志里的 `error:` 行（自己数，别只看末行）。脚本已改成每次调用独立 `out-$$`；`/tmp` 里 `fork: Function not imp",
-			"provenance": "docs/known-gaps.md:313",
+			"provenance": "docs/known-gaps.md:273",
 			"piVisible": "  - ⚠ 判读陷阱：**`:app` 的 class 数永远是 0**。本机不加载 Compose 编译器插件，codegen 走不到最后，所以 `build/typecheck/out-*/app` 为空**不代表失败**——唯一判据是日志里的 `error:` 行（自己数，别只看末行）。脚本已改成每次调用独立 `out-$$`；`/tmp` 里 `fork: Function not imp",
 			"piRenders": false
 		},
 		{
 			"source": "| `K2JVMCompiler -no-stdlib -jvm-target 17 -classpath <kotlinc+serialization+coroutines> -d <out> $(find rpc/src/main/kotlin -name '*.kt')`（与 `tools/typecheck.sh` 同一套 kotlinc/classpath） | **exit 0，0 e",
-			"provenance": "docs/known-gaps.md:876",
+			"provenance": "docs/known-gaps.md:836",
 			"piVisible": "| `K2JVMCompiler -no-stdlib -jvm-target 17 -classpath <kotlinc+serialization+coroutines> -d <out> $(find rpc/src/main/kotlin -name '*.kt')`（与 `tools/typecheck.sh` 同一套 kotlinc/classpath） | **exit 0，0 e",
 			"piRenders": false
 		},
@@ -3119,19 +3119,19 @@
 		},
 		{
 			"source": "- **A2（LaTeX）**：`PiLatex.kt` 已在，接线正确，`custom` 陷阱处理正确（§8.3）。但**条目把它写成“已完成”过于乐观**：它只覆盖了行内 `$…$` 的等价物与可归约子集；`\\(…\\)`/`\\[…\\]`、`FONT_SWITCH_COMMANDS`、`LIMIT_OPERATORS` 4 项、bracket-limits、关系符空格、参数前导空白、以及整个 `",
-			"provenance": "docs/render-inventory.md:344",
+			"provenance": "docs/render-inventory.md:343",
 			"piVisible": "- **A2（LaTeX）**：`PiLatex.kt` 已在，接线正确，`custom` 陷阱处理正确（§8.3）。但**条目把它写成“已完成”过于乐观**：它只覆盖了行内 `$…$` 的等价物与可归约子集；`\\(…\\)`/`\\[…\\]`、`FONT_SWITCH_COMMANDS`、`LIMIT_OPERATORS` 4 项、bracket-limits、关系符空格、参数前导空白、以及整个 `",
 			"piRenders": false
 		},
 		{
 			"source": "- 收益 **高**：这是唯一“pi 有、App 完全没有”的数学入口，且 `\\(`/`\\[` 在模型输出里常见度不低于 `$`。",
-			"provenance": "docs/render-inventory.md:354",
+			"provenance": "docs/render-inventory.md:353",
 			"piVisible": "- 收益 **高**：这是唯一“pi 有、App 完全没有”的数学入口，且 `\\(`/`\\[` 在模型输出里常见度不低于 `$`。",
 			"piRenders": false
 		},
 		{
 			"source": "- 收益 **中**：消除 `$\\text{a*b*c}$`→斜体、公式内 `|`→破表、行中 `$$`→多空段这类隐蔽 bug。",
-			"provenance": "docs/render-inventory.md:392",
+			"provenance": "docs/render-inventory.md:391",
 			"piVisible": "- 收益 **中**：消除 `$\\text{a*b*c}$`→斜体、公式内 `|`→破表、行中 `$$`→多空段这类隐蔽 bug。",
 			"piRenders": false
 		},

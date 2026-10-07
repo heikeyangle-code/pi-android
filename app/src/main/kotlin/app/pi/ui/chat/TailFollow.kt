@@ -105,30 +105,6 @@ internal class TailFollow(initiallyFollowing: Boolean = true) {
     private var previousAnchor: TailAnchor? = null
 
     /**
-     * The **previous** observation's layout, kept only for the pin licence below.
-     *
-     * Null before the first snapshot — which is what makes that first one licensed
-     * (a restored machine, a session switch and a re-entered destination all start
-     * here, and all of them have to land on the tail).
-     */
-    private var previousViewport: TailViewport? = null
-    /** The caller's transcript revision as of the previous snapshot. See [TailSnapshot.revision]. */
-    private var previousRevision: Int = -1
-    /** The caller's poke as of the previous snapshot. */
-    private var previousPoke: Long = -1
-
-    /**
-     * A licence to issue a pin on the **next** observation no matter what moved,
-     * granted by [reArm] (and by rule 1's own re-arm inside [onSnapshot]) and consumed
-     * by that observation.
-     *
-     * `reArm` means "the newest row is where the reader wants to be — now": the
-     * affordance and the send button say it with no other key having moved, which is
-     * exactly the frame the licence below would otherwise refuse to scroll on.
-     */
-    private var pinLicensed: Boolean = true
-
-    /**
      * Whether the **previous** snapshot was taken mid-session.
      *
      * The effect in `ChatScreen` snapshots only when one of its keys changes, so a
@@ -141,7 +117,8 @@ internal class TailFollow(initiallyFollowing: Boolean = true) {
     private var previousScrolling: Boolean = false
 
     /**
-     * The last pin the caller was **given** (see the repeat guard in [onSnapshot]).
+     * The pin the *current position* wants — whether or not the last call handed it
+     * out (see the repeat guard in [onSnapshot]).
      *
      * Only the pin is remembered, not the geometry it came from: an identical pin is
      * the same request, and remembering the geometry as well is what let an
@@ -162,9 +139,6 @@ internal class TailFollow(initiallyFollowing: Boolean = true) {
         // suppressed by the repeat guard: the remembered pin describes what the
         // *previous* position wanted, and the user has just asked for the tail.
         lastPin = null
-        // Nor by rule 5's licence: the reader has just said where they want to be, and
-        // the frame that acts on it has no other key of its own to move.
-        pinLicensed = true
     }
 
     /**
@@ -224,55 +198,6 @@ internal class TailFollow(initiallyFollowing: Boolean = true) {
      * `LazyListState.requestScrollToItem` ([TailPin]). It is `null` in every other
      * case, so a paused transcript is never scrolled by the streaming code.
      *
-     * ## 5. The pin has to be *paid for* — 「展开/收起让视口乱跳」
-     *
-     * The four rules above are about the *flag*, and they are right: a layout change
-     * is not a hand, so it must never pause a follow. The **pin** is a different
-     * question, and answering it with position alone is what produced the reader's
-     * 「点展开，整个视口跳到最底下，再点收起又跳回来」.
-     *
-     * The frame, exactly: the reader is at the end of the transcript and following.
-     * They tap a **collapsed tool card above the tail**. The card grows; `LazyColumn`
-     * keeps the reader's own row anchored, so everything below the card moves down by
-     * the card's body height and the tail row leaves the screen; `canScrollForward`
-     * turns true and `atBottom` flips. `ChatScreen`'s follow effect is *keyed* on
-     * `atBottom` (it has to be: that is the frame a paused follow learns the reader is
-     * back at the end on), so it re-snapshots — and the old pin condition answered
-     * "not at the bottom and following" with `pinToTail()`, which for a tail that is
-     * no longer on screen is `TailPin(tail, PIN_TO_END_PX)`: **the viewport is yanked
-     * to the very bottom of the transcript** (measured on the reader's recording:
-     * 770 px). Collapsing the same card then shrinks the content under a viewport the
-     * library has to correct back, so the reader sees the second half of the jump
-     * (754 px) — the list's own scroll correction, which no app-side rule can or
-     * should suppress.
-     *
-     * The missing distinction is that **nothing about the transcript moved**. A pin is
-     * a claim about the transcript's newest row ("it must be visible"), so it is only
-     * issued when something other than the list's own scroll geometry changed since
-     * the previous observation:
-     *
-     *  - the content: [TailSnapshot.transcriptRows], [TailSnapshot.revision],
-     *    [TailSnapshot.poke] — a publication, an optimistic row, an explicit
-     *    "go to the newest";
-     *  - the viewport itself: `viewportEndOffsetPx` — the composer's inset, the
-     *    keyboard, a rotation. The rows did not move; the window they are read
-     *    through did, and the tail has to be brought back inside it;
-     *  - the reader's hand: an `isScrollInProgress` edge. A tap is **not** a scroll
-     *    session (and neither is `requestScrollToItem`), so the disclosure above
-     *    cannot hide behind this one;
-     *  - the tail row's **own** measured height, while it stayed the last visible row:
-     *    the final markdown parse and an image's intrinsic size land after the
-     *    publication that caused them, with no key of its own to move
-     *    (`ChatScreen`'s `tailSize`). This is the one geometry fact that is about the
-     *    newest row itself, and dropping it would bring back 「差几个像素到不了真底部」.
-     *
-     * A row *above* the tail changing height satisfies none of them, so that frame
-     * issues no scroll — which is the whole fix. Note what the licence is **not**: it
-     * gates the pin only. `following`, `unseenRows` and every rule above see the same
-     * snapshots in the same order as before, so this can only ever *withhold* a
-     * scroll; it can never pause a follow, re-arm one, or move a viewport that the old
-     * code left alone.
-     *
      * ## The caller's obligation, because rules 2 and 3 are observations
      *
      * Rules 2 and 3 are facts about a *sequence* of snapshots, so a caller that stops
@@ -331,26 +256,7 @@ internal class TailFollow(initiallyFollowing: Boolean = true) {
             else -> unseenRows + (rows - previousRows).coerceAtLeast(0)
         }
 
-        // Rule 5's licence, read *after* the rules above so rule 1's own re-arm is
-        // seen (it grants one) and before the pin below. Nothing here is a rule: no
-        // branch of it changes `following` or `unseenRows`.
-        val lastViewport = previousViewport
-        val contentChanged = previousRows < 0 ||
-            rows != previousRows ||
-            snapshot.revision != previousRevision ||
-            snapshot.poke != previousPoke
-        val viewportChanged =
-            lastViewport == null || viewport.viewportEndOffsetPx != lastViewport.viewportEndOffsetPx
-        val gestureEdge = viewport.isScrollInProgress != previousScrolling
-        val tailSettled = lastViewport != null &&
-            lastViewport.lastVisibleIndex == lastViewport.tailIndex &&
-            viewport.lastVisibleIndex == viewport.tailIndex &&
-            viewport.lastVisibleSizePx != lastViewport.lastVisibleSizePx
-        val licensed = pinLicensed || contentChanged || viewportChanged || gestureEdge || tailSettled
-
-        // The pin the *position* wants, whether or not this observation is allowed to
-        // hand it out (rule 5).
-        val wanted = when {
+        val pin = when {
             !following -> null
             viewport.isScrollInProgress -> null
             viewport.totalItems <= 0 -> null
@@ -375,28 +281,16 @@ internal class TailFollow(initiallyFollowing: Boolean = true) {
         // identical pin is the same request by definition, so skipping it cannot lose
         // a scroll — a geometry that really moved asks for a different pin (see the
         // harness's "new geometry is pinned again").
-        val repeated = wanted != null && wanted == lastPin
-        // Rule 5, the only place it is consulted: an unpaid-for pin is not issued.
-        val issued = if (!licensed || repeated) null else wanted
-        // The memory is the last pin the caller was **given**, which is what "never
-        // re-issue a pin" is about. A frame the licence refuses is not a request that
-        // was made, so it must not suppress the same want on the next licensed frame —
-        // while a *repeated* one is the same want by definition either way, and a
-        // position that wants nothing forgets the pin, exactly as it did before.
-        lastPin = when {
-            wanted == null -> null
-            issued != null -> wanted
-            else -> lastPin
-        }
+        val repeated = pin != null && pin == lastPin
+        val issued = if (repeated) null else pin
+        // The memory follows what the *position* wants, not what was sent this time: a
+        // skip means "already asked for", and forgetting it would let the next
+        // identical emission ask again - which is the loop this exists to stop.
+        lastPin = pin
 
         previousRows = rows
         previousAnchor = anchor
         previousScrolling = viewport.isScrollInProgress
-        previousViewport = viewport
-        previousRevision = snapshot.revision
-        previousPoke = snapshot.poke
-        // One frame's worth: [reArm] is what grants the next one.
-        pinLicensed = false
         return TailDecision(following = following, unseenRows = unseenRows, pin = issued)
     }
 
@@ -565,23 +459,6 @@ internal data class TailSnapshot(
      * the only way a pin can be issued between two tokens.
      */
     val poke: Long = 0L,
-    /**
-     * `ChatScreen`'s `state.revision` — the transcript publication counter — as of the
-     * frame that produced this snapshot.
-     *
-     * Rule 5's evidence that the **content** moved. `transcriptRows` cannot carry it:
-     * a streaming answer, a tool's growing output and a row whose parse changed all
-     * keep the row count and move no other key of the caller's effect, yet they are
-     * exactly the publications a follow has to chase. The engine bumps this counter
-     * once per publication and for nothing else (no UI clock, no inset, no
-     * `nowMs` tick), which is what makes "the content changed" a fact here rather than
-     * an inference.
-     *
-     * Defaulted to `0` for the harnesses, which drive the machine by geometry alone:
-     * an unchanged default is "no publication between these two frames", the
-     * conservative reading.
-     */
-    val revision: Int = 0,
 )
 
 /**
@@ -825,158 +702,3 @@ internal fun freshRowKeysAfter(
  * that a row inserted at the *transcript's* head moves the reader's row by exactly the number
  * of rows inserted and that the reader stays on the same row.
  */
-
-/**
- * How far the `LazyColumn` pushed the content down under the reader after a disclosure
- * **collapse**, in pixels — the amount `ChatScreen` has to undo to keep the tapped spot still.
- *
- * ## The defect this number is for
- *
- * The reader taps a card (or a thinking row) whose disclosed body makes the content below
- * the tapped row shorter than the viewport by the time it is closed. `LazyColumn`'s measure
- * pass refuses to leave a gap larger than the content's bottom padding
- * (`LazyListMeasure`'s scroll-back: `if (currentMainAxisOffset < maxOffset) { … }`), so it
- * scrolls the position *back* — the content moves down, and the reader's tapped spot moves
- * down with it. The user's report is exactly this: 「收起之后我点的那一行跑到下面去了，整块往下移」.
- *
- * The app cannot suppress the scroll-back (it lives inside the measure pass), but it *can*
- * ask the position back afterwards — provided the position is reachable, which is what the
- * band in [holdBandStillNeeded] is for. This function is the measurement that makes the
- * undo exact rather than a guess.
- *
- * ## Why the difference of two offsets *is* the distance the content moved
- *
- * Take the row the viewport was anchored on (`LazyListState.firstVisibleItemIndex`) at the
- * moment of the tap, and its `offset` — how far its top sits from the viewport's content
- * start (`LazyListItemInfo.offset`). A disclosure body is always **below** its own header,
- * and the tapped row is visible, so the anchor's row is at or above the tapped row and the
- * collapse happens strictly below the anchor's top: the anchor's *content* position is
- * unchanged by the toggle. With `screen position = content position − scroll offset`, an
- * unchanged content position means the change in screen position is exactly the change in
- * scroll position — i.e. the number of pixels the content was pulled down. Nothing else has
- * to be known: not the collapsed body's height, not the content's total height.
- *
- * A non-positive answer (the row is where it was, or moved up) means no hold: an **expand**
- * leaves the anchor alone (that is the downward growth that is already correct), and a
- * scroll that moved the row up belongs to the reader. The caller therefore only ever acts on
- * a positive number, which is why a disclosure tap can cost nothing at all when the library
- * did not move the reader.
- *
- * @param anchorOffsetPx the anchor row's `offset` at the tap (the state's
- *   `firstVisibleItemScrollOffset`).
- * @param rowOffsetNowPx the same row's `offset` on the frame being examined
- *   (`LazyListItemInfo.offset`).
- */
-internal fun disclosureDeficitPx(anchorOffsetPx: Int, rowOffsetNowPx: Int): Int =
-    (rowOffsetNowPx - anchorOffsetPx).coerceAtLeast(0)
-
-/**
- * The empty space the reader's own disclosure position needs, in pixels: **exactly the
- * distance between the last row's bottom and the line the content would have to reach for that
- * position to be legal without any band at all** — and `0` when a band is not what holds
- * anything, i.e. when the position is not past that line.
- *
- * ## Why this is the number, and not "how far the reader was pushed"
- *
- * The measure pass' scroll-back boundary is `maxOffset = viewportSize − beforeContentPadding −
- * afterContentPadding` (`LazyList.kt`'s `mainAxisAvailableSize`), and in `LazyListItemInfo`
- * coordinates the last item's `offset + size` *is* the composed content's end. So the line the
- * position has to reach without a band is `viewportEndOffset − base`, and how far the content is
- * short of it is this function's value — exactly the extra `contentPadding.bottom` that turns
- * "unreachable" into "reachable", and exactly the empty space the reader ends up seeing under
- * the last row. [holdBandStillNeeded] is this number's "is it positive" and nothing else, so the
- * band's size and the rule that drops it cannot drift apart.
- *
- * ## Why the caller also needs it *at the tap*
- *
- * A second collapse while the first one's band is still in force is what the tap-time use is
- * for. The library's scroll-back runs *inside* the measure pass, before the app can measure
- * anything: when a body closes and shortens the content by `D2`, the position is first pulled
- * back by `D2` — to the *banded* max, i.e. `D2` of the band that was already there is spent
- * before `ChatScreen` looks. The movement it can still see is therefore `D2` alone, while the
- * reader's position needs the whole `band + D2`; reserving `D2` (what this fix did at first)
- * leaves the reader exactly `band` px lower — the same reported defect, one card later. Asking
- * this function for the void *before* the flip gives the pixels that are already needed, which
- * the correction adds to the `D2` it measures afterwards.
- *
- * @param lastItemBottomPx `visibleItemsInfo.last()`'s `offset + size` — the composed
- *   content's end in viewport coordinates. When the tail is below the fold this is at least
- *   `viewportEndOffset`, so the answer is `0`, which is right: there is real content below the
- *   viewport and the reader is nowhere near a band.
- * @param viewportEndOffsetPx `LazyListLayoutInfo.viewportEndOffset`. **Independent of the
- *   band**: the library computes it as `maxOffset + afterContentPadding`, and both terms move
- *   by the same `band`, so a padding change cannot drive this number.
- * @param baseBottomPaddingPx the list's own bottom padding, without the band (`12.dp` here).
- */
-internal fun holdBandPx(
-    lastItemBottomPx: Int,
-    viewportEndOffsetPx: Int,
-    baseBottomPaddingPx: Int,
-): Int = (viewportEndOffsetPx - baseBottomPaddingPx - lastItemBottomPx).coerceAtLeast(0)
-
-/**
- * Whether the bottom band the disclosure hold reserved is **still** what makes the held
- * position reachable — i.e. whether the empty space has to stay.
- *
- * ## What the band is, and why one is needed at all
- *
- * The position the reader is being held at is one the content cannot reach on its own: after
- * the collapse the reader's row would leave a gap larger than the list's bottom padding, and
- * the measure pass' scroll-back is what removes that gap (by moving the reader). The only way
- * to make the un-clamped position a legal one is to *have* the missing pixels below the last
- * row — `ChatScreen` adds exactly [holdBandPx] of `contentPadding.bottom` — so the scroll
- * range grows by exactly the amount the framework was short.
- *
- * ## When it can go, and why this test is the whole rule
- *
- * The band must not be dropped while the held position needs it (that would re-run the
- * scroll-back the moment it is removed), and it must not be kept once the content has grown
- * into it (that would leave scrollable empty space below the transcript forever). Both
- * questions are the same question: *is the current position within the range the list had
- * before the band existed?* — which is [holdBandPx] being `0`.
- *
- * The measure pass `maxOffset` is `viewportSize − beforeContentPadding − afterContentPadding`
- * (`LazyList.kt`'s `mainAxisAvailableSize`), and its scroll-back guarantees the composed
- * content's end sits at `maxOffset` — in `LazyListItemInfo` coordinates, the last item's
- * `offset + size`. So, with `afterContentPadding = base + band`:
- *
- *  - the banded end is `viewportEndOffset − base − band` (the tail's bottom), and
- *  - the unbanded end is `viewportEndOffset − base`.
- *
- * The reader is inside the *original* range exactly when the content's end is at or below
- * the unbanded end line. Note what that makes of the ordinary cases: one pixel of growth at
- * the tail puts the last row's bottom back on the unbanded line (drop), growth of exactly
- * the band does the same (drop — the empty space is filled), a gesture or a follow pin that
- * moves the reader to a position the list could reach without the band also drops it, and a
- * reader still parked at the banded end keeps it (the condition is `−band < 0`).
- *
- * @param lastItemBottomPx `visibleItemsInfo.last()`'s `offset + size` — the composed
- *   content's end in viewport coordinates. When the tail is below the fold this is at least
- *   `viewportEndOffset`, so the answer is "drop", which is right: there is real content
- *   below the viewport and the reader is nowhere near the band.
- * @param viewportEndOffsetPx `LazyListLayoutInfo.viewportEndOffset`. **Independent of the
- *   band**: the library computes it as `maxOffset + afterContentPadding`, and both terms
- *   move by the same `band`, so a padding change cannot make this test flap.
- * @param baseBottomPaddingPx the list's own bottom padding, without the band (`12.dp` here).
- */
-internal fun holdBandStillNeeded(
-    lastItemBottomPx: Int,
-    viewportEndOffsetPx: Int,
-    baseBottomPaddingPx: Int,
-): Boolean = holdBandPx(lastItemBottomPx, viewportEndOffsetPx, baseBottomPaddingPx) > 0
-
-/**
- * How many frames `ChatScreen` watches the list for after a disclosure **collapse** before
- * it stops.
- *
- * The frame a toggle's new geometry is measured on is not necessarily the frame the tap was
- * delivered on (a pointer event may arrive as a plain message between frames, in which case
- * the recomposition it triggers is the *next* frame's), so the correction cannot be a
- * single-frame read. It is a bound, not a wait: the loop ends as soon as the row is back
- * where the reader left it, and a collapse that never moved the reader leaves nothing to
- * find, so the cost of the miss is a handful of idle frames — while the cost of giving up
- * too early is the reader's position moving, which is the whole bug. Four frames is ~66 ms
- * at 60 Hz, comfortably more than the one or two frames the geometry needs while staying
- * well inside a tap's perceived instant.
- */
-internal const val DISCLOSURE_HOLD_FRAMES: Int = 4

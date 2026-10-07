@@ -27,18 +27,12 @@ class TranscriptReducerTest {
         PiEvents.parse("""{"type":"message_update","assistantMessageEvent":{"type":"thinking_delta","contentIndex":0,"delta":"$s"}}""")
 
     @Test
-    fun `a user message is drawn when pi delivers it, not when it is sent`() {
+    fun `user prompt appears immediately, before any engine event`() {
         val r = reducer()
-        // Sending is not an event. pi creates the row on `message_start(role:
-        // "user")` (`interactive-mode.ts:3452-3459`, 1.0.1), so a message that is
-        // merely queued has no row — the app's queue row is where a queued one shows
-        // up, and nothing in the transcript may claim it was sent.
-        r.onEvent(PiEvents.parse("""{"type":"queue_update","steering":["steer me"],"followUp":[]}"""))
-        assertEquals(0, r.transcript.size)
-        r.onEvent(userEnd("steer me"))
+        r.onUserPrompt("hello")
         assertEquals(1, r.transcript.size)
         assertTrue(r.transcript[0] is UserMessage)
-        assertEquals("steer me", (r.transcript[0] as UserMessage).text)
+        assertEquals("hello", (r.transcript[0] as UserMessage).text)
     }
 
     @Test
@@ -216,7 +210,7 @@ class TranscriptReducerTest {
     @Test
     fun `reset clears state for a new session`() {
         val r = reducer()
-        r.onEvent(userEnd("hi"))
+        r.onUserPrompt("hi")
         r.onEvent(text("yo"))
         r.reset()
         assertEquals(0, r.transcript.size)
@@ -368,10 +362,10 @@ class TranscriptReducerTest {
 
     // ------------------------------------------------------- user message rows
     //
-    // pi draws a user row from its own event (`interactive-mode.ts:3452-3459`,
-    // 1.0.1), and this app now draws nothing of its own — the event is the only
-    // source, for the app's own prompt and for an extension's
-    // `pi.sendUserMessage()` alike (`core/agent-session.ts:2234-2260`).
+    // pi draws a user row from its own event (`interactive-mode.ts:3222-3225`),
+    // and this app also echoes locally for instant feedback, so the two must not
+    // both become bubbles. An extension's `pi.sendUserMessage()` reaches the same
+    // event (`core/agent-session.ts:1569-1605`).
 
     private fun userEnd(text: String) =
         PiEvents.parse(
@@ -379,77 +373,91 @@ class TranscriptReducerTest {
         )
 
     @Test
-    fun `a delivered message is exactly one row, however many times it is answered`() {
+    fun `pi's own message_end confirms the local echo instead of duplicating it`() {
         val r = reducer()
+        r.onUserPrompt("hello")
         r.onEvent(userEnd("hello"))
-        r.onEvent(PiEvents.parse("""{"type":"response","command":"prompt","success":true}"""))
         assertEquals(1, r.transcript.size)
+        assertTrue(r.transcript[0] is UserMessage)
         assertEquals("hello", (r.transcript[0] as UserMessage).text)
     }
 
     @Test
-    fun `two identical sends produce two rows, not one`() {
+    fun `an extension's user message appears with no local echo`() {
         val r = reducer()
-        r.onEvent(userEnd("again"))
-        r.onEvent(userEnd("again"))
-        assertEquals(2, r.transcript.size)
-    }
-
-    @Test
-    fun `a refused send leaves no row and does not swallow the next message`() {
-        val r = reducer()
-        // A refusal is a `success: false` with no `message_end` behind it. Nothing
-        // was drawn for the send (see the delivery test above), so there is nothing
-        // to undo — and the next message pi does deliver is its own row.
-        r.onEvent(PiEvents.parse("""{"type":"response","command":"prompt","success":false,"error":"no model"}"""))
-        assertEquals(0, r.transcript.size)
+        r.onEvent(PiEvents.parse("""{"type":"message_start","message":{"role":"user"}}"""))
         r.onEvent(userEnd("from the extension"))
         assertEquals(1, r.transcript.size)
         assertEquals("from the extension", (r.transcript[0] as UserMessage).text)
     }
 
     @Test
-    fun `a skill message pi expanded draws the card of the text pi queued`() {
+    fun `a user message pi rewrote replaces the echo and still renders one row`() {
         val r = reducer()
-        // The user typed `/skill:demo`; pi expanded it on the way in and that is the
-        // message it delivers (`_expandSkillCommand`, `agent-session.ts:2140-2147`),
-        // so the row is the card — the app has no raw invocation of its own to show.
+        r.onUserPrompt("/skill:demo")
+        // Built as a raw JSON record rather than through `userEnd`, and in the
+        // exact shape pi's `_expandSkillCommand` writes — `parsePiSkillBlock` is
+        // anchored on the real form (`rpc/SkillBlock.kt`).
         r.onEvent(
             PiEvents.parse(
                 """{"type":"message_end","message":{"role":"user","content":[{"type":"text","text":"<skill name=\"demo\" location=\"/skills/demo/SKILL.md\">\nReferences are relative to /skills/demo.\n\nthe body\n</skill>"}]}}""",
             ),
         )
         assertEquals(1, r.transcript.size)
+        // pi splits a skill block out of the event
+        // (`interactive-mode.ts:3631-3650`), so the projection is a card. The
+        // invariant that matters: exactly one row, and not the raw echo.
         assertTrue(r.transcript[0] is SkillInvocation)
         assertEquals("demo", (r.transcript[0] as SkillInvocation).skillName)
     }
 
     @Test
-    fun `a message delivered behind tool rows is appended in delivery order`() {
+    fun `two identical sends produce two rows, not one`() {
         val r = reducer()
-        // A queued steer lands mid-turn, after the tool batch it waited for — so its
-        // row is appended *after* the tool card, which is where pi's TUI adds it
-        // too (`message_start` -> `addMessageToChat`).
-        r.onEvent(toolStart("t1"))
-        r.onEvent(
-            PiEvents.parse(
-                """{"type":"message_end","message":{"role":"user","content":[{"type":"text","text":"<skill name=\"demo\" location=\"/s/SKILL.md\">\nReferences are relative to /s.\n\nbody\n</skill>"}]}}""",
-            ),
-        )
+        r.onUserPrompt("again")
+        r.onEvent(userEnd("again"))
+        r.onUserPrompt("again")
+        r.onEvent(userEnd("again"))
         assertEquals(2, r.transcript.size)
-        assertTrue(r.transcript[0] is ToolCall)
-        assertTrue(r.transcript[1] is SkillInvocation)
     }
 
     @Test
-    fun `a rebuilt stream renders the replayed row and a later delivery is its own row`() {
+    fun `a send pi refused does not swallow the next user message`() {
         val r = reducer()
+        r.onUserPrompt("rejected")
+        r.onEvent(PiEvents.parse("""{"type":"response","command":"prompt","success":false,"error":"no model"}"""))
+        r.onEvent(userEnd("from the extension"))
+        assertEquals(2, r.transcript.size)
+        assertEquals("from the extension", (r.transcript[1] as UserMessage).text)
+    }
+
+    @Test
+    fun `a rewritten echo behind tool rows is left alone rather than shifted`() {
+        val r = reducer()
+        r.onUserPrompt("/skill:demo")
+        // Tool rows land after the queued echo; removing it now would renumber
+        // them and a later tool update would mutate the wrong row.
+        r.onEvent(toolStart("t1"))
+        r.onEvent(
+            PiEvents.parse(
+                """{"type":"message_end","message":{"role":"user","content":[{"type":"text","text":"<skill name=\"demo\" location=\"/s/SKILL.md\">\nbody\n</skill>"}]}}""",
+            ),
+        )
+        assertEquals(2, r.transcript.size)
+        assertEquals("/skill:demo", (r.transcript[0] as UserMessage).text)
+        // The tool row is still the tool row, at its own index.
+        assertTrue(r.transcript[1] is ToolCall)
+    }
+
+    @Test
+    fun `a rebuilt stream renders the replayed row and ignores a late confirmation`() {
+        val r = reducer()
+        r.onUserPrompt("local echo")
         r.reset()
         r.onEntry(obj("""{"type":"message","id":"e1","message":{"role":"user","content":[{"type":"text","text":"replayed"}]}}"""))
-        // The persisted entry is the row; a live delivery of the same text after a
-        // replay is a second one, exactly as it is in pi (its TUI renders the
-        // replayed entries and then every `message_start` it sees).
         r.onEvent(userEnd("replayed"))
+        // The reset dropped the pending echo, so the event is a message the app
+        // never showed and must be projected rather than swallowed.
         assertEquals(2, r.transcript.size)
         assertEquals("replayed", (r.transcript[1] as UserMessage).text)
     }

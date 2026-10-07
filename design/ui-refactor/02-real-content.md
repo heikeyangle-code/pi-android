@@ -242,7 +242,7 @@ time: 14:02
 ```
 status: 已结束
 headline: 思考 8s
-level 标签: high      ← 代码现在打印 **pi 自己的 wire 词**（`medium`/`high`…，机器面 `monoSmall` 12 + 等级笔色），不再是中文；见 `ThinkingBlockBlock.kt` 的注释
+level 标签: 中        ← thinkingLabelOf("medium") = 「中」，ChatSheets.kt:663
 body（折叠时不显示）: 排序在 groupBy 之后做的，先看 visible 的构造。
 ```
 <!-- 示例（正文） -->
@@ -407,7 +407,7 @@ output: >
 <!-- 示例（gradle 任务名为真实任务名形状） -->
 
 #### 块 13 · `thinking-block`（展开态，与块 03 组成折叠/展开对照）
-- 展开后：`thinkingText` 色 + 斜体 + 行高 **23**（`PiTheme.text.prose` = 14/23；这里原写 22 是 v2 重构前的旧值，已按代码更正）
+- 展开后：`thinkingText` 色 + 斜体 + 行高 22
 - 折叠入口文案由 `Modifier.toggleContent` 提供：`展开` / `收起`（`BlockChrome.kt:274`、`ToolBlockChrome.kt:138`）
 
 ```

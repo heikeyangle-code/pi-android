@@ -37,7 +37,7 @@ import java.util.stream.Collectors;
 public class HtmlFixtureSpans {
 
     static final String PARSER = "org.jetbrains:markdown-jvm:0.7.9 + GFMFlavourDescriptor";
-    static final String PI_TUI = "1.0.3";
+    static final String PI_TUI = "1.0.1";
 
     public static void main(String[] args) throws Exception {
         Path piJson = Path.of(args[0]);

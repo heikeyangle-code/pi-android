@@ -3,7 +3,7 @@ package app.pi.ui.render
 /**
  * 裸 HTML：**pi 从不渲染 HTML，它把源码当一个字符都不丢的文字排出来。**
  *
- * ## pi 的两条分支（1.0.3，`packages/tui/src/components/markdown.ts`）
+ * ## pi 的两条分支（1.0.1，`packages/tui/src/components/markdown.ts`）
  *
  * 块级（`:622`）：
  * ```ts

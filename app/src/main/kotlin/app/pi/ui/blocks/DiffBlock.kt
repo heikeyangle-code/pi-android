@@ -74,14 +74,12 @@ private const val DIFF_NODE_GLYPH = "±"
 private const val DIFF_LINE_WASH_ALPHA = 0.08f
 
 @Composable
-internal fun DiffBlock(
+fun DiffBlock(
     item: ToolDiff,
     modifier: Modifier = Modifier,
     defaultExpanded: Boolean = false,
     firstOfRun: Boolean = true,
     lastOfRun: Boolean = true,
-    /** The **run's** state ([ToolRunSlot.ring]); a diff is neutral, and this is the neutral. */
-    ring: RailState? = null,
 ) {
     val palette = PiTheme.palette
     // Keyed on the parameter so the AppBar's expand/collapse-all switch (pi's
@@ -133,16 +131,6 @@ internal fun DiffBlock(
             strokeAlpha = 1f,
             ringColor = palette.borderMuted,
             glyphColor = palette.bodyOnTool,
-            // The card's own fill paints the gap below it inside a run, so a run of diffs and
-            // calls reads as one plate (`ToolRail.kt`).
-            shellFill = palette.toolPendingBg,
-            // The run's ring, in the diff's own value: a lone diff card gets `borderMuted`
-            // exactly as before (`railRingColor`), and a run that mixes a diff with a call gets
-            // the neutral 35 % — the shell may not speak for one of its rows.
-            shellRing = railRingColor(ring, palette),
-            // 行间那条 1 px：**下面这一行自己的状态色**。diff 行的"状态色"就是它的中性描边，
-            // 只是压到 35 % —— 与工具行用同一套规则（`差异表` §2 第 8 行）。
-            divider = palette.borderMuted.copy(alpha = TOOL_CARD_BORDER_ALPHA),
         ) {
             BlockCard(
                 color = palette.toolPendingBg,
@@ -150,11 +138,8 @@ internal fun DiffBlock(
                 modifier = Modifier.toggleContent(expanded, { expanded = !expanded }),
                 // `06 §2` 颜色行 gives this card the plain hairline token rather than a
                 // state colour at 35 %: the diff is neutral by definition, and v2 draws it
-                // `1px solid var(--border-muted)`. The 1 px line itself is now drawn by the run
-                // shell (above) for the same reason the tool card's is — an outline per card
-                // would put a rectangle around every row of a run — and for a lone diff card
-                // that shell ring IS `borderMuted`, so the card looks unchanged.
-                shape = runCardShape(firstOfRun, lastOfRun),
+                // `1px solid var(--border-muted)`.
+                borderColor = palette.borderMuted,
                 // `06 §2` 工具卡 / diff 卡: this card's rows inset by 10, not 12.
                 padding = BlockCardRowPadding,
             ) {

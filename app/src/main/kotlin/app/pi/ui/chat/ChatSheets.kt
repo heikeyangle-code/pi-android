@@ -343,19 +343,18 @@ fun SessionToolsSheet(
             Spacer(Modifier.height(PiSpacing.unit))
 
             PiSectionHeader("队列模式")
-            // 引导 / 后续 are pi's own two queue names (`steering` / `follow-up`),
-            // carried into the whole app as one word per concept: the composer chips,
-            // the queue row and the settings rows all say the same two words, so this
-            // sheet cannot read as if it were describing something else. The English
-            // names in the parentheses are pi's too (`steer` / `follow_up`).
+            // 插话 / 排队 are the composer's two delivery chips' words, used here for
+            // the same two modes: one name per concept, or the sheet reads as if it
+            // were describing something else. The English names in the parentheses
+            // are pi's own (`steer` / `follow_up`).
             QueueModeRow(
-                title = "引导消息（steer）",
+                title = "插话消息（steer）",
                 supporting = "本回合进行中插入，下一次回答之前生效",
                 current = state.meta.steeringMode,
                 onPick = onSteeringMode,
             )
             QueueModeRow(
-                title = "后续消息（follow up）",
+                title = "排队消息（follow up）",
                 supporting = "整个回合结束后才投递",
                 current = state.meta.followUpMode,
                 onPick = onFollowUpMode,
