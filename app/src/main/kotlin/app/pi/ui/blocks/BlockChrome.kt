@@ -30,6 +30,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.compositionLocalOf
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.mutableStateOf
@@ -517,17 +518,53 @@ private val DISCLOSURE_CHEVRON_STROKE = 1.5.dp
 // Callers: pass the lambda parenthesised — `Modifier.toggleContent(expanded, { … })`.
 // Kotlin binds a *trailing* lambda to the **last** parameter, which here is
 // `enabled`, so `toggleContent(expanded) { … }` does not compile.
+//
+// ## Why this reads a `CompositionLocal`, and why it is `@Composable`
+//
+// A **collapse** is the one layout change in the transcript that the `LazyColumn`
+// library answers by *moving the reader*: the content below the tapped row gets
+// shorter, and when it stops filling the viewport the measure pass scrolls the
+// position back (`LazyListMeasure`'s scroll-back) — the reader sees the whole block
+// slide down. Only the screen that owns the list can undo that, and it has to know
+// the tap happened **before** the state flips, or the geometry it needs to hold is
+// already gone. [LocalDisclosureToggle] is that signal (see `ChatScreen`'s
+// `onDisclosureToggle`, which is the one consumer). The gesture itself is unchanged:
+// the hook runs first and the block's own `onToggle` still owns the state.
+@Composable
 internal fun Modifier.toggleContent(
     expanded: Boolean,
     onToggle: () -> Unit,
     enabled: Boolean = true,
-): Modifier = then(
-    if (enabled) {
-        Modifier.clickable(onClickLabel = if (expanded) "收起" else "展开") { onToggle() }
-    } else {
-        Modifier
-    },
-)
+): Modifier {
+    val onDisclosure = LocalDisclosureToggle.current
+    return then(
+        if (enabled) {
+            Modifier.clickable(onClickLabel = if (expanded) "收起" else "展开") {
+                // The value `expanded` is **about to take** — the reader is closing this
+                // row, not opening it. `ChatScreen` only holds a position for the closing
+                // half, so this is also what keeps an opening tap untouched.
+                onDisclosure?.invoke(!expanded)
+                onToggle()
+            }
+        } else {
+            Modifier
+        },
+    )
+}
+
+/**
+ * The disclosure gesture's "about to toggle" hook, read by [Modifier.toggleContent].
+ *
+ * `null` (the default, and the value outside the transcript) means no one is listening:
+ * the tap toggles the row and nothing else happens. The transcript's list provides a
+ * handler because a **collapse** can move the reader (see [Modifier.toggleContent]), and
+ * the handler is invoked with the value the row is about to take.
+ *
+ * `staticCompositionLocalOf`, unlike [LocalRowGap]: the value is a `remember`ed lambda
+ * that never changes while the screen is composed, and every row reads it — read
+ * tracking would bill every block for an answer that cannot move.
+ */
+internal val LocalDisclosureToggle = staticCompositionLocalOf<((Boolean) -> Unit)?> { null }
 
 /**
  * [Modifier.toggleContent] for a block whose content is a column: the column —

@@ -1130,6 +1130,72 @@ fun main() {
         check("L12 its first frame still pins", resumed.pin, TailPin(19, PIN_TO_END_PX))
     }
 
+    // ================================= M. the reader's own disclosure collapse, held still
+    //
+    // The defect: closing a tool card / thinking row whose body was long makes the content
+    // below the tapped row shorter, and when what is left no longer fills the viewport
+    // `LazyListMeasure`'s scroll-back pulls the content down — the reader's tapped spot moves
+    // down the screen (「收起之后我点的那一行跑到下面去了」). `ChatScreen` undoes it with the two
+    // functions pinned here: `disclosureDeficitPx` measures how far the content was pulled
+    // down (from the anchor row's own offset), and `holdBandStillNeeded` decides when the
+    // bottom band that made the held position legal can be taken away again.
+    //
+    // The geometry is the same model as the rest of the file — a 1000 px viewport — plus the
+    // list's own bottom content padding (`12.dp`, the term that makes the unbanded end line
+    // `viewportEndOffset - 12` rather than `viewportEndOffset`).
+    run {
+        // Nothing moved: a collapse whose remaining content still fills the viewport, and —
+        // the case `ChatScreen` does not even ask about — an **expand**. Opening a row grows
+        // the content *below* the tapped row and the library's key anchoring leaves the anchor
+        // where it is, which is the downward growth that has always been correct.
+        check("M1 a collapse that moved nobody is not a hold", disclosureDeficitPx(120, 120), 0)
+
+        // The row moved *up*: the reader scrolled, the follow pinned to the tail, or a row
+        // above grew. There is nothing to undo, and the answer must never be negative — a
+        // negative "deficit" would be a pin backwards, i.e. stealing the reader's scroll.
+        check("M2 a row that moved up is never a hold", disclosureDeficitPx(120, 40), 0)
+        check("M3 a row that moved up from deep in a row is still 0", disclosureDeficitPx(300, 0), 0)
+
+        // The scroll-back itself: the library pulled the content down, and the difference
+        // between where the row is and where the reader left it *is* the number of pixels. The
+        // band is that number and nothing else, so the position the reader had becomes a legal
+        // one again (and the list's end, so `atBottom` does not change — the follow sees the
+        // same geometry it saw before the tap).
+        val deficit = disclosureDeficitPx(120, 490)
+        check("M4 the pull-down is the band", deficit, 370)
+
+        val base = 12   // the list's own bottom padding: `contentPadding.bottom = 12.dp`
+        val end = 1000  // `LazyListLayoutInfo.viewportEndOffset`
+        // Held: the last row's bottom sits exactly `band` px above the unbanded end line
+        // (`viewportEndOffset - base`), which is what the reader sees as the empty strip at the
+        // bottom of the screen. Dropping the band here would re-run the scroll-back.
+        check(
+            "M5 the band is needed at the held end",
+            holdBandStillNeeded(end - base - deficit, end, base),
+            true,
+        )
+        // New content grew into it — by exactly the band. The last row's bottom is back on the
+        // unbanded end line, so the empty space is filled and the band goes. (A follow pin
+        // that lands on the end, a gesture, a jump and a session switch all leave the same
+        // geometry: "inside the range the list had before the band existed".)
+        check("M6 content filling the band releases it", holdBandStillNeeded(end - base, end, base), false)
+        check("M7 one pixel short of filling it keeps it", holdBandStillNeeded(end - base - 1, end, base), true)
+        check("M8 a tail below the fold is not a band case", holdBandStillNeeded(end + 200, end, base), false)
+
+        // A second collapse on top of the first: the deficit is re-measured from the row's new
+        // position (the band's own pixels are part of what the content has to fill), and the
+        // band has to grow with it — the rule is a function of the geometry, not of the last
+        // number it saw.
+        val second = disclosureDeficitPx(120, 950)
+        check("M9 a second collapse has a bigger band", second, 830)
+        check("M10 and it is still needed at that new end", holdBandStillNeeded(end - base - second, end, base), true)
+
+        // The window is a bound, not a single-frame read: the tap may be delivered between
+        // frames, in which case the collapse's own layout pass has not run yet and the first
+        // look reads "nothing moved". One frame is a coin flip, not a bound.
+        check("M11 the hold watches more than one frame", DISCLOSURE_HOLD_FRAMES >= 2, true)
+    }
+
     println(if (failures == 0) "\nharness: OK (all checks passed)" else "\nharness: FAILED ($failures)")
     if (failures != 0) kotlin.system.exitProcess(1)
 }

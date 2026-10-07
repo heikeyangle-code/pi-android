@@ -825,3 +825,114 @@ internal fun freshRowKeysAfter(
  * that a row inserted at the *transcript's* head moves the reader's row by exactly the number
  * of rows inserted and that the reader stays on the same row.
  */
+
+/**
+ * How far the `LazyColumn` pushed the content down under the reader after a disclosure
+ * **collapse**, in pixels — the amount `ChatScreen` has to undo to keep the tapped spot still.
+ *
+ * ## The defect this number is for
+ *
+ * The reader taps a card (or a thinking row) whose disclosed body makes the content below
+ * the tapped row shorter than the viewport by the time it is closed. `LazyColumn`'s measure
+ * pass refuses to leave a gap larger than the content's bottom padding
+ * (`LazyListMeasure`'s scroll-back: `if (currentMainAxisOffset < maxOffset) { … }`), so it
+ * scrolls the position *back* — the content moves down, and the reader's tapped spot moves
+ * down with it. The user's report is exactly this: 「收起之后我点的那一行跑到下面去了，整块往下移」.
+ *
+ * The app cannot suppress the scroll-back (it lives inside the measure pass), but it *can*
+ * ask the position back afterwards — provided the position is reachable, which is what the
+ * band in [holdBandStillNeeded] is for. This function is the measurement that makes the
+ * undo exact rather than a guess.
+ *
+ * ## Why the difference of two offsets *is* the distance the content moved
+ *
+ * Take the row the viewport was anchored on (`LazyListState.firstVisibleItemIndex`) at the
+ * moment of the tap, and its `offset` — how far its top sits from the viewport's content
+ * start (`LazyListItemInfo.offset`). A disclosure body is always **below** its own header,
+ * and the tapped row is visible, so the anchor's row is at or above the tapped row and the
+ * collapse happens strictly below the anchor's top: the anchor's *content* position is
+ * unchanged by the toggle. With `screen position = content position − scroll offset`, an
+ * unchanged content position means the change in screen position is exactly the change in
+ * scroll position — i.e. the number of pixels the content was pulled down. Nothing else has
+ * to be known: not the collapsed body's height, not the content's total height.
+ *
+ * A non-positive answer (the row is where it was, or moved up) means no hold: an **expand**
+ * leaves the anchor alone (that is the downward growth that is already correct), and a
+ * scroll that moved the row up belongs to the reader. The caller therefore only ever acts on
+ * a positive number, which is why a disclosure tap can cost nothing at all when the library
+ * did not move the reader.
+ *
+ * @param anchorOffsetPx the anchor row's `offset` at the tap (the state's
+ *   `firstVisibleItemScrollOffset`).
+ * @param rowOffsetNowPx the same row's `offset` on the frame being examined
+ *   (`LazyListItemInfo.offset`).
+ */
+internal fun disclosureDeficitPx(anchorOffsetPx: Int, rowOffsetNowPx: Int): Int =
+    (rowOffsetNowPx - anchorOffsetPx).coerceAtLeast(0)
+
+/**
+ * Whether the bottom band the disclosure hold reserved is **still** what makes the held
+ * position reachable — i.e. whether the empty space has to stay.
+ *
+ * ## What the band is, and why one is needed at all
+ *
+ * The position the reader is being held at is one the content cannot reach on its own: after
+ * the collapse the reader's row would leave a gap larger than the list's bottom padding, and
+ * the measure pass' scroll-back is what removes that gap (by moving the reader). The only way
+ * to make the un-clamped position a legal one is to *have* the missing pixels below the last
+ * row — `ChatScreen` adds exactly [disclosureDeficitPx] of `contentPadding.bottom` — so the
+ * scroll range grows by exactly the amount the framework was short.
+ *
+ * ## When it can go, and why this test is the whole rule
+ *
+ * The band must not be dropped while the held position needs it (that would re-run the
+ * scroll-back the moment it is removed), and it must not be kept once the content has grown
+ * into it (that would leave scrollable empty space below the transcript forever). Both
+ * questions are the same question: *is the current position within the range the list had
+ * before the band existed?*
+ *
+ * The measure pass `maxOffset` is `viewportSize − beforeContentPadding − afterContentPadding`
+ * (`LazyList.kt`'s `mainAxisAvailableSize`), and its scroll-back guarantees the composed
+ * content's end sits at `maxOffset` — in `LazyListItemInfo` coordinates, the last item's
+ * `offset + size`. So, with `afterContentPadding = base + band`:
+ *
+ *  - the banded end is `viewportEndOffset − base − band` (the tail's bottom), and
+ *  - the unbanded end is `viewportEndOffset − base`.
+ *
+ * The reader is inside the *original* range exactly when the content's end is at or below
+ * the unbanded end line. Note what that makes of the ordinary cases: one pixel of growth at
+ * the tail puts the last row's bottom back on the unbanded line (drop), growth of exactly
+ * the band does the same (drop — the empty space is filled), a gesture or a follow pin that
+ * moves the reader to a position the list could reach without the band also drops it, and a
+ * reader still parked at the banded end keeps it (the condition is `−band < 0`).
+ *
+ * @param lastItemBottomPx `visibleItemsInfo.last()`'s `offset + size` — the composed
+ *   content's end in viewport coordinates. When the tail is below the fold this is at least
+ *   `viewportEndOffset`, so the answer is "drop", which is right: there is real content
+ *   below the viewport and the reader is nowhere near the band.
+ * @param viewportEndOffsetPx `LazyListLayoutInfo.viewportEndOffset`. **Independent of the
+ *   band**: the library computes it as `maxOffset + afterContentPadding`, and both terms
+ *   move by the same `band`, so a padding change cannot make this test flap.
+ * @param baseBottomPaddingPx the list's own bottom padding, without the band (`12.dp` here).
+ */
+internal fun holdBandStillNeeded(
+    lastItemBottomPx: Int,
+    viewportEndOffsetPx: Int,
+    baseBottomPaddingPx: Int,
+): Boolean = lastItemBottomPx < viewportEndOffsetPx - baseBottomPaddingPx
+
+/**
+ * How many frames `ChatScreen` watches the list for after a disclosure **collapse** before
+ * it stops.
+ *
+ * The frame a toggle's new geometry is measured on is not necessarily the frame the tap was
+ * delivered on (a pointer event may arrive as a plain message between frames, in which case
+ * the recomposition it triggers is the *next* frame's), so the correction cannot be a
+ * single-frame read. It is a bound, not a wait: the loop ends as soon as the row is back
+ * where the reader left it, and a collapse that never moved the reader leaves nothing to
+ * find, so the cost of the miss is a handful of idle frames — while the cost of giving up
+ * too early is the reader's position moving, which is the whole bug. Four frames is ~66 ms
+ * at 60 Hz, comfortably more than the one or two frames the geometry needs while staying
+ * well inside a tap's perceived instant.
+ */
+internal const val DISCLOSURE_HOLD_FRAMES: Int = 4

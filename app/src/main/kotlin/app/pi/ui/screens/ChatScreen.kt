@@ -127,6 +127,7 @@ import app.pi.ui.NavRequest
 import app.pi.ui.PiSessionViewModel
 import app.pi.ui.earlierRowText
 import app.pi.ui.blocks.BlockRenderer
+import app.pi.ui.blocks.LocalDisclosureToggle
 import app.pi.ui.blocks.LocalRowGap
 import app.pi.ui.blocks.PiImageViewer
 import app.pi.ui.blocks.blockGapDp
@@ -136,6 +137,7 @@ import app.pi.ui.blocks.toolRunPlan
 import app.pi.ui.chat.BashPanel
 import app.pi.ui.chat.ComposerRoute
 import app.pi.ui.chat.ContextSheet
+import app.pi.ui.chat.DISCLOSURE_HOLD_FRAMES
 import app.pi.ui.chat.ForkPickerSheet
 import app.pi.ui.chat.MentionPalette
 import app.pi.ui.chat.ModelPickerSheet
@@ -154,9 +156,11 @@ import app.pi.ui.chat.ThinkingPickerSheet
 import app.pi.ui.chat.mayLoadEarlier
 import app.pi.ui.chat.mergeRestoredQueue
 import app.pi.ui.chat.routeComposerText
+import app.pi.ui.chat.disclosureDeficitPx
 import app.pi.ui.chat.earlierRowHeightPx
 import app.pi.ui.chat.freshRowKeysAfter
 import app.pi.ui.chat.hiddenRows
+import app.pi.ui.chat.holdBandStillNeeded
 import app.pi.ui.chat.itemIndexOfVisibleRow
 import app.pi.ui.chat.mayArmEarlier
 import app.pi.ui.chat.thinkingLabelOf
@@ -181,6 +185,7 @@ import app.pi.ui.theme.PiTheme
 import app.pi.ui.theme.StateTone
 import app.pi.ui.theme.stateToneColor
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.launch
 
@@ -313,6 +318,17 @@ private val EARLIER_ROW_ICON_GAP = 6.dp
 
 /** The row's own vertical padding (`padding(vertical = 8.dp)`), 8 top and 8 bottom. */
 private val EARLIER_ROW_PADDING = 8.dp
+
+/**
+ * The transcript list's own bottom air — `contentPadding.bottom` when the disclosure hold is
+ * not holding anything.
+ *
+ * Named because it is the one literal the hold's arithmetic needs as a *number*
+ * (`holdBandStillNeeded`'s unbanded end line is `viewportEndOffset - this - band`): reading it
+ * back out of `LazyListLayoutInfo.afterContentPadding` instead would be one frame behind a band
+ * change, and that one frame is exactly the frame the release test runs on.
+ */
+private val TRANSCRIPT_BOTTOM_PAD = 12.dp
 
 /**
  * 「加载更早」 drawn as an **overlay** over the transcript list, not as its item 0.
@@ -1097,6 +1113,11 @@ private fun ChatBody(
     // Bumped by the affordance and by a send: an explicit "go to the newest" must pin
     // even when no other key would have moved.
     var tailPoke by remember { mutableLongStateOf(0L) }
+    // The bottom band the reader's own disclosure **collapse** needs (see the section below
+    // the follow effect for the whole mechanism). Declared here, above the follow effect,
+    // because that effect is the band's second — and only other — writer: a follow pin lands
+    // the reader on the list's own end, and a band left standing would be that end.
+    var disclosureBandPx by remember(sessionKey) { mutableIntStateOf(0) }
     // The *whole* transcript's row count, not the rendered window's: the count must
     // include rows the window has not materialised. `rememberUpdatedState` because the
     // gesture observer below is started once and would otherwise capture the first
@@ -1246,6 +1267,15 @@ private fun ChatBody(
         // list's own scroll geometry behind this frame (`TailFollow` rule 5), so the
         // reader's own expand/collapse above the tail cannot reach this line.
         if (pin != null && !listState.isScrollInProgress) {
+            // The disclosure hold's band is not what is holding anything any more: a pin is
+            // the follow moving the reader to a position the list can reach on its own, and
+            // if the band stayed it would *be* that position — the request below aims past the
+            // list's end, the band is the last thing before that end, and the tail would come
+            // to rest `band` px above the bottom with the empty strip it exists for still
+            // under it (the disclosure section below has the whole mechanism). Dropping it on
+            // this same frame cannot move the reader: the request below replaces the position
+            // outright, so no frame ever reads the old one against the shorter range.
+            disclosureBandPx = 0
             listState.requestScrollToItem(pin.index, pin.offsetPx)
         }
     }
@@ -1265,6 +1295,144 @@ private fun ChatBody(
             if (inProgress && following) markPausedRows()
         }
     }
+
+    // ------------------------------------------- the reader's own disclosure tap stays put
+    //
+    // **The defect this holds a position for.** Opening a tool card / thinking row pushes
+    // everything below it *down*: `LazyColumn` anchors on the reader's row and the row grows
+    // downward, which is what the reader wants. Closing it back is not the mirror image.
+    // The content below the tapped row gets shorter; when what is left no longer fills the
+    // viewport, `LazyListMeasure`'s scroll-back (`if (currentMainAxisOffset < maxOffset)`,
+    // i.e. "do not leave a gap larger than the bottom padding") *scrolls the reader back* —
+    // the content moves down, and the spot the reader tapped moves down with it. The
+    // reader's words: 「收起的时候，原来被顶下去的那些行又上来了，结果我点的地方跑到屏幕更下面
+    // 去了，整块往下移」. The scroll-back cannot be suppressed app-side (it is inside the
+    // measure pass); the two things the app *can* do are (a) ask the position back after the
+    // fact — its own `requestScrollToItem`, which starts no scroll session — and (b) make
+    // that position legal by reserving the missing pixels at the bottom (`disclosureBandPx`).
+    //
+    // **Only a collapse.** `onDisclosureToggle` is invoked by `Modifier.toggleContent`
+    // *before* the row flips, with the value it is about to take. An opening tap does nothing
+    // here at all — not even a frame of watching — so the downward growth is untouched.
+    //
+    // **The measurement is exact, not a guess.** TailFollow.kt's `disclosureDeficitPx` turns
+    // the anchor row's own offset change into the number of pixels the content was pulled
+    // down (the anchor's content position cannot move: a disclosure body is below its header,
+    // and the tapped row is visible). `holdBandStillNeeded` is the mirror rule for taking the
+    // band away again — see both for the arithmetic and the cases it folds in.
+    //
+    // **What this deliberately does not touch.** The follow: a band is *padding*, not
+    // content, so `viewportEndOffset` — and therefore every number `TailFollow` reads — does
+    // not move; at the held position `canScrollForward` is false exactly as it was before the
+    // tap, so `atBottom`, 「回到最新」 and the unread count see no change. The anchors: the
+    // held position *is* `anchorKey`/`anchorOffset`, so the tracker records the position it
+    // already had. And 加载更早: the band is at the bottom, the window logic looks at the top.
+    // (`disclosureBandPx` itself is declared up with the follow's state, because the follow
+    // effect is its other writer.)
+    var disclosureTap by remember(sessionKey) { mutableStateOf<DisclosureTap?>(null) }
+    val disclosureTapSeq = remember(sessionKey) { mutableLongStateOf(0L) }
+    // The list's own bottom air in pixels — the *unbanded* end line the release test is
+    // measured against (`TRANSCRIPT_BOTTOM_PAD` is the same number the `LazyColumn` pads
+    // with, a few hundred lines below).
+    val transcriptBottomPadPx = with(LocalDensity.current) { TRANSCRIPT_BOTTOM_PAD.roundToPx() }
+    // Read at the frame the correction runs, not captured at composition: the window
+    // (`renderedItems`) may have been re-cut between the tap and that frame, and the row the
+    // reader was on has to be resolved by **key** for exactly that reason.
+    val renderedItemsNow by rememberUpdatedState(renderedItems)
+    val onDisclosureToggle: ((Boolean) -> Unit)? = remember(listState, sessionKey) {
+        { expandedNow: Boolean ->
+            if (!expandedNow) {
+                val index = listState.firstVisibleItemIndex
+                val key = renderedItemsNow.getOrNull(index)?.key
+                if (key != null) {
+                    disclosureTapSeq.longValue += 1
+                    disclosureTap = DisclosureTap(
+                        seq = disclosureTapSeq.longValue,
+                        rowKey = key,
+                        offsetPx = listState.firstVisibleItemScrollOffset,
+                        // The viewport's own geometry, so a frame that changed it (the
+                        // composer's inset, the keyboard) is not mistaken for a disclosure.
+                        // `viewportEndOffset` is *not* affected by the band: the library
+                        // computes it as `maxOffset + afterContentPadding`, and the band moves
+                        // both terms by the same amount.
+                        viewportEndOffsetPx = listState.layoutInfo.viewportEndOffset,
+                    )
+                }
+            }
+        }
+    }
+    LaunchedEffect(disclosureTap, sessionKey) {
+        val tap = disclosureTap ?: return@LaunchedEffect
+        // Phase 1: find the frame the library moved the reader on, reserve exactly that much
+        // at the bottom, and ask for the position back. `requestOutstanding` is what keeps
+        // phase 2 from reading a measurement taken *between* a request and the layout that
+        // applies it (that geometry looks like "the band is not needed", which would take the
+        // band away again before it could do its job).
+        var sawClamp = false
+        var requestOutstanding = false
+        var framesLeft = DISCLOSURE_HOLD_FRAMES
+        while (framesLeft > 0) {
+            framesLeft -= 1
+            // One frame before reading: the tap may have been delivered between frames, in
+            // which case the collapse's own layout pass has not run yet and the geometry
+            // still reads as "nothing moved". (This is the same one-frame wait the follow
+            // effect above documents, for the same reason.)
+            withFrameNanos { }
+            // Stop correcting — but do not skip phase 2: a band that is already in place must
+            // still get its release. The reader's hand owns the position, and a viewport that
+            // changed under them (the composer's inset, the keyboard) is the follow's
+            // business; neither is a disclosure, and neither may be fought.
+            if (listState.isScrollInProgress) break
+            if (listState.layoutInfo.viewportEndOffset != tap.viewportEndOffsetPx) break
+            val index = renderedItemsNow.indexOfFirst { it.key == tap.rowKey }
+            if (index < 0) break
+            // The anchor row is always still on screen after the scroll-back: the content
+            // below its top can only shrink towards it, never past it.
+            val row = listState.layoutInfo.visibleItemsInfo.firstOrNull { it.index == index } ?: break
+            val deficit = disclosureDeficitPx(tap.offsetPx, row.offset)
+            if (deficit > 0) {
+                sawClamp = true
+                requestOutstanding = true
+                // Exactly the pixels the list was short, so the position the reader had is
+                // reachable *and* is the list's end (no scroll session, no animation, and
+                // `canScrollForward` stays false — see `holdBandStillNeeded`).
+                disclosureBandPx = deficit
+                listState.requestScrollToItem(index, tap.offsetPx)
+            } else if (sawClamp) {
+                // The position is back: the hold is in place.
+                requestOutstanding = false
+                break
+            }
+            // Otherwise no clamp has been seen yet: keep looking. A collapse that did not
+            // move the reader never produces one (`disclosureDeficitPx` is 0 for the whole
+            // window), and an *expand* never gets here at all — `onDisclosureToggle` only
+            // records a collapse.
+        }
+        // A request issued on the last frame above has not been measured yet, and phase 2
+        // reads measurements. One frame is exactly what it needs: the padding and the
+        // position are applied by the composition and layout of the frame the request was
+        // made in.
+        if (requestOutstanding) withFrameNanos { }
+        // Phase 2: the band's release, on the one fact that makes it safe — the current
+        // position is inside the range the list had *before* the band existed
+        // (`holdBandStillNeeded`). That single test covers every way out (content growing into
+        // the empty space, a publication's follow pin, a gesture, a jump, a session switch),
+        // and it cannot fire while the held position still needs the band — which is exactly
+        // the case that would re-run the scroll-back this whole mechanism exists to undo. The
+        // band only ever grows inside phase 1, so this is its one owner.
+        if (disclosureBandPx <= 0) return@LaunchedEffect
+        snapshotFlow {
+            val info = listState.layoutInfo
+            val last = info.visibleItemsInfo.lastOrNull() ?: return@snapshotFlow false
+            !holdBandStillNeeded(
+                lastItemBottomPx = last.offset + last.size,
+                viewportEndOffsetPx = info.viewportEndOffset,
+                baseBottomPaddingPx = transcriptBottomPadPx,
+            )
+        }.first { canDrop -> canDrop }
+        disclosureBandPx = 0
+    }
+
     // Spec §4.5: "向上滚动时分批加载更早的 entry". Reaching the top grows the window by
     // one step. The `earlierArmed` guard is what keeps that from looping: while the
     // user stays at the top the flag is cleared by the load itself, and it is re-armed
@@ -2120,17 +2288,25 @@ private fun ChatBody(
             // it occupies: exactly the row's height plus the block gap the list no longer
             // inserts between it and the first message.
             val earlierBand = if (showsEarlierRow) earlierRowHeightValue + blockSpacing else 0.dp
+            // The disclosure hold's bottom band (the section above has the whole argument):
+            // exactly the pixels the list was short on the frame the reader closed a card, so
+            // the position they were on is a legal one and can be asked for. Zero — and
+            // therefore this list's own `12` and nothing else — unless a collapse really moved
+            // them.
+            val disclosureBand = with(LocalDensity.current) { disclosureBandPx.toDp() }
             LazyColumn(
                 state = listState,
                 modifier = Modifier.fillMaxSize(),
                 // The vertical ends are not the block gap: they are the scroll
                 // container's own `10` top (plus the sentinel's reserved band, when there
-                // is one) and `12` bottom.
+                // is one) and `12` bottom — plus the disclosure hold's band, which is the
+                // one term here that is not a constant (`holdBandStillNeeded` in
+                // `ui/chat/TailFollow.kt` is the rule that takes it back out).
                 contentPadding = PaddingValues(
                     start = PiSpacing.pageHorizontal,
                     end = PiSpacing.pageHorizontal,
                     top = 10.dp + earlierBand,
-                    bottom = 12.dp,
+                    bottom = TRANSCRIPT_BOTTOM_PAD + disclosureBand,
                 ),
                 // **No `verticalArrangement`**: the rhythm is the rows' own bottom air now (see
                 // above). Anything added here would be the second half of the F11 mistake.
@@ -2239,6 +2415,12 @@ private fun ChatBody(
                         // both read this one value — that is the whole fix for the rail breaking
                         // apart across the gap (`BlockChrome.BlockColumn` has the argument).
                         LocalRowGap provides item.rowGapDp(prefs.messageDensity).dp,
+                        // The transcript's disclosure hook (`toggleContent`), and only here:
+                        // the extension cards that also disclose sit *outside* this list, and
+                        // their height is not this list's content — a hold for them would be a
+                        // hold for a layout change that never happened. See the disclosure
+                        // section above for what the handler does and why a collapse needs it.
+                        LocalDisclosureToggle provides onDisclosureToggle,
                     ) {
                         BlockRenderer(
                             item = item,
@@ -4043,6 +4225,32 @@ private fun ScrollArrowButton(
 private val TailFollowSaver: Saver<TailFollow, Any> = listSaver(
     save = { it.savedState() },
     restore = { saved -> TailFollow.fromSavedState(saved) },
+)
+
+/**
+ * One disclosure **collapse**, as the chat screen saw it at the moment of the tap: the row
+ * the viewport was anchored on and how far into it, plus the viewport's own end line.
+ *
+ * The row is carried by **key**, not by index: the rendered window is a suffix of the
+ * transcript, so a batch that arrives between the tap and the correction renumbers every
+ * index — while the row the reader was on is exactly the thing that must not be lost. The
+ * `seq` exists so that two taps with identical geometry are still two events (a
+ * `LaunchedEffect` keyed on equal values would not restart, and the second hold would be
+ * silently skipped).
+ *
+ * See the disclosure section in this file's chat composable for the mechanism, and
+ * `ui/chat/TailFollow.kt`'s `disclosureDeficitPx` / `holdBandStillNeeded` for the arithmetic.
+ *
+ * @param viewportEndOffsetPx `LazyListLayoutInfo.viewportEndOffset` at the tap, the one
+ *   number that says "the viewport itself changed" (the composer's inset, the keyboard): a
+ *   frame that moved *it* is the follow's business, not a disclosure's. A band cannot move it
+ *   (`viewportEndOffset = maxOffset + afterContentPadding`, and the band moves both terms).
+ */
+private data class DisclosureTap(
+    val seq: Long,
+    val rowKey: String,
+    val offsetPx: Int,
+    val viewportEndOffsetPx: Int,
 )
 
 /**
