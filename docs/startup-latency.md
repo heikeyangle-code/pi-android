@@ -352,7 +352,7 @@ pre-main 的部分（node 启动 + 整个 ESM/CJS 模块图）**一秒都不在 
 - `packages/coding-agent/src/core/model-runtime.ts:39`
   `import * as builtinProviderCatalog from "@earendil-works/pi-ai/providers/all";`
   —— 而 `@earendil-works/pi-ai/dist/providers/all.js` 顶部**静态 import 了全部 30+ 个 provider**
-  （amazon-bedrock / anthropic / google / google-vertex / azure-openai-responses / openai /
+  （amazon-bedrock / anthropic / google / google-vertex / azure / openai /
   deepseek / groq / mistral / …）。**RPC 模式也一样加载**，因为模型目录是启动必需的。
   这就是 `undici`(80+)、`yaml`(43)、`semver`(23) 这些包出现在 RPC 启动图里的原因。
 - `packages/coding-agent/src/core/extensions/loader.ts:8-22`：为了 Bun 编译版能把包当
