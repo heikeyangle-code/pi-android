@@ -83,15 +83,31 @@ node tools/pi-contract.mjs --pi <1.1.0 包目录> --only=<组>  # surface|theme|
 **没有。** 这一轮九组契约在 1.1.0 上全 PASS —— 没有改名、没有删除、没有语义变化，
 `PiPalette.kt`、`PiSettingsRegistry.kt`、`rpc/Commands.kt`、各工具 block 一行都不用动。
 
-## 五、可选新特性（要用户定，本轮不做）
+## 五、可选新特性 —— 两条**都已落地**（跟着本批推送的第二笔，App 侧）
 
-1. **`durationMs`（准确耗时）**：`pi-agent-core` 用单调钟量每次工具执行，1.1.0 放进工具渲染上下文、
-   扩展事件 `tool_execution_end`、以及会话事件（`agent-session.ts` 对 `tool_execution_end` 原样转发，
-   所以 **RPC 流里也有**）。App 现在算 `endedAt - ts`（墙钟，含排队/等待）—— 上游这次修的正是
-   「`Took` 把非执行时间也算进去」。改成读 `durationMs`（没有时回落旧算法）是几行的改动，
-   **不改不会错**。
-2. **`agent_settled.aborted`**：能区分「用户按了停止」与「正常结束」。App 现在从自己的动作推断，
-   有了这个字段就不必推断。同样是可选。
+判据是"不改不会错，改了必须比现在准"，所以两条都只换**事实来源**，不新增界面、不新增计时器。
+
+1. **准确耗时（`durationMs`）**
+   - `rpc`：`PiEvent.ToolExecutionEnd` 多一个 `durationMs`（`o.long("durationMs")`，缺席为 null）；
+     `ToolCall` 多一个同名字段，`elapsedMs` 从 `endedAt - ts` 改成
+     **`durationMs ?: (endedAt - ts)`** —— 正是 pi 1.1.0 自己的口径
+     （`core/tools/renderers/bash.ts:99-110`：记录值优先，"it is monotonic and survives reloads"）。
+   - 两个入口都取它：**实时**走 `tool_execution_end.durationMs`；**重放**走会话文件里
+     `toolResult` 消息的同名键（pi-agent-core 的 `createToolResultMessage` 会写它），
+     所以**重开会话后读数不变**。旧会话（pi < 1.1.0 写的）没有这个键，回落墙钟 ——
+     与 1.0.3 时代逐字一致。
+   - 差别不是舍入：墙钟把工具**之外**的时间也算进去（排队、前后两次模型往返、被中止前的等待）。
+2. **`agent_settled.aborted`**
+   - `PiEvent.AgentSettled` 从 `data object` 变成 `data class AgentSettled(val aborted: Boolean)`，
+     四个使用点跟着改（`Transcript` / `PiEngineSession` / `PiSessionViewModel` 的 `when` 已用 `is`）。
+   - 在转录里**只当兜底**：正常中止路径由被中止的 assistant 消息先到达
+     （`pi-agent-core` 的 `agent-loop.ts:143` 在那里结束这一轮），`failTurn` 早已写上「回合已中止」
+     并把挂着的卡收掉；兜底由 `turnFailureReported`（`agent_start` 与 `reset()` 清）挡住重复，
+     **正常路径一行都不多**。它补的是"会话说这轮被中止、而转录里没有任何一行说过"那一种：
+     没有它，一次中止会被显示成正常结束，挂着的卡还会一直转。
+   - 需要说明：pi 自己的 TUI **不消费**这个字段（它的 `agent_settled` 分支只查 shutdown），
+     上游加它是给集成方用的（1.1.0 changelog 的原话），所以这里没有"上游怎么写我就怎么写"
+     可抄；App 沿用**已有那条**中止行（同一个 `failTurn`、同一句话），不是新措辞。
 3. 新模型（Claude Haiku 5.5、GPT-6 Luna 分类器、llama.cpp 原生分类模型等）：导入表按目录遍历，
    自动就有，不需要动代码。
 
@@ -105,6 +121,12 @@ node tools/pi-contract.mjs --pi <1.1.0 包目录> --only=<组>  # surface|theme|
   其余逐条重读并改结论」—— 属于独立一笔，不属于版本升级。
 - 本机没有跑 `tools/run-app-pure-checks.sh` 全量（按纪律交 CI）；改动涉及的单个 harness
   （`runtime-payload-state`、`image-attachment-budget`）在真机/CI 上兜底。
+- `:rpc` 的单元测试**本机跑过**（本机没有 Gradle 发行版，所以用 `build/pure-checks` 里 staged 的
+  kotlinc + Maven 上的 junit 4.13.2 直接编译并跑）：`rpc/src/{main,test}/kotlin` 编译 0 error，
+  12 个测试类 **254 条全过** —— 其中第五节那两条新特性的 8 条是新增的
+  （`TranscriptReducerTest` 3 条：记录值优先 / 旧会话回落墙钟 / 重放取会话文件里的值；
+  `EventsTest` 2 条：`durationMs` 解析与缺席为 null、`aborted` 解析；
+  `FidelityFixesTest` 3 条：正常中止只报一次行、没有消息时的兜底会补一行并收卡、未中止什么都不加）。
 - `tools/pi-contract.mjs` 的 `behaviour` 组会用真引擎起进程，本轮跑过一遍（PASS）；
   它不覆盖「RPC 里 `durationMs` 真的到了事件里」这一条 —— 那是第五节①的验收内容，
   要真机/真引擎抓一次事件流才能钉。

@@ -1,6 +1,8 @@
 package app.pi.rpc
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -203,5 +205,29 @@ class EventsTest {
         )
         val unknowns = samples.map { PiEvents.parse(it) }.filterIsInstance<PiEvent.Unknown>()
         assertEquals("no documented event may degrade: $unknowns", emptyList<PiEvent.Unknown>(), unknowns)
+    }
+
+    @Test
+    fun `reads pi 1_1_0's recorded tool duration, absent on older engines`() {
+        val withDuration = PiEvents.parse(
+            """{"type":"tool_execution_end","toolCallId":"t1","toolName":"bash","isError":false,
+                "result":{"content":[]},"durationMs":1234}""".trimIndent().replace("\n", ""),
+        ) as PiEvent.ToolExecutionEnd
+        assertEquals(1234L, withDuration.durationMs)
+        // 旧引擎（或没真正跑的工具）没有这个键：null 是"回落到墙钟"的信号，不是错误。
+        val without = PiEvents.parse(
+            """{"type":"tool_execution_end","toolCallId":"t1","toolName":"bash","isError":false,
+                "result":{"content":[]}}""".trimIndent().replace("\n", ""),
+        ) as PiEvent.ToolExecutionEnd
+        assertNull(without.durationMs)
+    }
+
+    @Test
+    fun `agent_settled carries whether the run was aborted`() {
+        val aborted = PiEvents.parse("""{"type":"agent_settled","aborted":true}""") as PiEvent.AgentSettled
+        assertTrue(aborted.aborted)
+        // 字段缺席（旧引擎）按"正常结束"读 —— 兜底只在中止时才有话可说。
+        val plain = PiEvents.parse("""{"type":"agent_settled"}""") as PiEvent.AgentSettled
+        assertFalse(plain.aborted)
     }
 }

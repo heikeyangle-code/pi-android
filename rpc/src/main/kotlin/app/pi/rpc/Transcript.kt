@@ -71,6 +71,19 @@ data class ToolCall(
     val isError: Boolean = false,
     val details: JsonElement? = null,
     val endedAt: Long? = null,
+    /**
+     * pi 1.1.0 记录下来的**这次工具执行的真实耗时**（毫秒），没有就是 null。
+     *
+     * 两个入口都带它：实时那条是 `tool_execution_end.durationMs`（[ToolExecutionEnd]，源于
+     * pi-agent-core 的 `agent-loop.ts` 用单调钟量出的 `executePreparedToolCall` 耗时）；
+     * 重放那条是持久化的 `toolResult` 消息里的同名键 —— `createToolResultMessage` 把它和
+     * `content`/`details` 一起写进会话文件，所以**重开会话后读数不变**，而不是像墙钟那样
+     * 每次重算。
+     *
+     * 缺席只有两种情形：pi < 1.1.0 写的旧会话，或这个工具根本没跑（pi 只在真正执行过的
+     * 结果上记这个数）。那时回落墙钟，见 [elapsedMs]。
+     */
+    val durationMs: Long? = null,
     val exitCode: Int? = null,
     val outputTruncated: Boolean = false,
     /**
@@ -84,8 +97,20 @@ data class ToolCall(
      */
     val images: List<PiImage> = emptyList(),
 ) : TranscriptItem {
-    /** Wall-clock duration pi's card shows in its footer. */
-    val elapsedMs: Long? get() = endedAt?.let { (it - ts).coerceAtLeast(0) }
+    /**
+     * The duration the card's footer shows.
+     *
+     * **pi 1.1.0 的口径，照搬**（`core/tools/renderers/bash.ts:99-110`）：记录下来的
+     * [durationMs] 优先 —— 它由单调钟量出、随结果落进会话文件，所以重开会话后不变；
+     * 没有记录值时回落**墙钟**（`endedAt - ts`），也就是这条链在 1.1.0 之前的算法。
+     *
+     * 两者的差别不是舍入：墙钟把工具**之外**的时间也算进去（排队、前后两次模型往返、
+     * 被中止前的等待）。上游 1.1.0 修的就是这一点，理由写在它自己的注释里
+     * （"A final result's recorded duration wins: it is monotonic and survives reloads"）。
+     *
+     * 这里**不新起定时器、不读时钟**：两个数都来自 pi（事件或会话文件），一行计算都没多。
+     */
+    val elapsedMs: Long? get() = durationMs ?: endedAt?.let { (it - ts).coerceAtLeast(0) }
 
     /** One-line argument summary for the collapsed card. Never throws. */
     val argsSummary: String get() = summarizeToolArgs(args)
@@ -829,6 +854,19 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
     private var suppressedToolUpdate: Int? = null
 
     /**
+     * 本轮是否已经由**消息**报过失败（[failTurn] 跑过）。
+     *
+     * 只为一件事存在：`agent_settled.aborted` 的兜底不许在正常路径上再补一行。正常中止时
+     * pi 先发 `message_end`（`stopReason: "aborted"`，`pi-agent-core` 的 `agent-loop.ts:143`
+     * 就在那里结束这一轮），[failTurn] 已经把「回合已中止」写进转录并把挂着的卡收掉，于是
+     * 兜底这一支看到 flag 已置、什么也不做 —— **事件顺序不变、行数不变**。
+     *
+     * 清在 `agent_start`（新一轮）和 [reset]（重建）。重放历史里的失败行也会置上它，那只会
+     * 让兜底**少**触发一次（少一行），不会多一行 —— guard 的硬要求是"绝不重复"，不是"必须触发"。
+     */
+    private var turnFailureReported = false
+
+    /**
      * The **unpublished** tail of a running tool call's output, per call id.
      *
      * ## Why the row is not the whole truth while a tool streams
@@ -1121,19 +1159,32 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
         }
         PiEvent.AgentStart -> {
             streaming = true
+            // 新一轮：上一轮的失败已经报过，兜底重新有资格。
+            turnFailureReported = false
             // A new turn: its usage starts from nothing. Zeroed here rather than at
             // `message_end` for the same reason `streaming` is (see [turnUsage]).
             turnUsage = null
             TranscriptChange.None
         }
         is PiEvent.AgentEnd -> endTurn()
-        PiEvent.AgentSettled -> {
+        is PiEvent.AgentSettled -> {
             // pi drains steering and follow-ups before it settles
             // (`agent-session.ts` `_handlePostAgentRun` -> `hasQueuedMessages`,
             // and `_emitAgentSettled` runs after that loop), so every echoed
             // message has been confirmed by now. Dropping leftovers keeps a
             // prompt pi rejected from blocking a later confirmation.
             pendingUserEchoes.clear()
+            // 兜底（见 [turnFailureReported] 与 [PiEvent.AgentSettled] 的 KDoc）：会话说这轮
+            // 是被**中止**的，而转录里没有任何一行说过 —— 正常路径上 `message_end` 的
+            // `stopReason: "aborted"` 会先到并把 flag 置上，所以这里通常什么都不做。
+            //
+            // 为什么它值得存在：没有这一支时，一次"消息没落下来"的中止会被显示成正常结束，
+            // 挂着的卡还会一直转。为什么是 `hasToolCalls = false`：pi 那条"有工具调用就不
+            // 打印中止行"的规则（`assistant-message.ts:182-199`）是**对消息**说的，这里恰恰
+            // 没有消息可判；兜底唯一的目的就是"别把中止显示成完成"，所以照常打印。
+            if (event.aborted && !turnFailureReported) {
+                failTurn(reason = "aborted", errorMessage = null, hasToolCalls = false)
+            }
             endTurn()
         }
 
@@ -1639,6 +1690,8 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
             details = event.details,
             ts = now(),
             images = event.resultImages,
+            // pi 1.1.0 的记录值（[ToolCall.durationMs]）；旧引擎缺席时是 null，读数回落墙钟。
+            durationMs = event.durationMs,
         )
     }
 
@@ -1655,6 +1708,12 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
         details: JsonElement?,
         ts: Long,
         images: List<PiImage> = emptyList(),
+        /**
+         * pi 1.1.0 的记录值。**只在它真的来了的时候覆盖**（`?: current.durationMs`）：
+         * 会话重建（`get_entries` 重放）会先建出没有这个数的行，随后的实时事件才带上它，
+         * 不能因为一次缺席把它擦掉。
+         */
+        durationMs: Long? = null,
     ): TranscriptChange {
         // The throttle may be holding output this card has not published yet, and
         // everything below reads (and can rewrite) its `output`: flush first, or a tool
@@ -1671,6 +1730,7 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
                 isError = isError,
                 details = details ?: current.details,
                 endedAt = ts,
+                durationMs = durationMs ?: current.durationMs,
                 exitCode = detailsExitCode(details) ?: current.exitCode,
                 // F23: pi marks a truncated tool result in `details.truncation`
                 // (or `details.truncated`); nothing ever set this flag, so the
@@ -1691,6 +1751,7 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
                 isError = isError,
                 details = details,
                 endedAt = ts,
+                durationMs = durationMs,
                 exitCode = detailsExitCode(details),
                 outputTruncated = detailsTruncated(details),
                 images = images,
@@ -1828,6 +1889,7 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
         hasToolCalls: Boolean,
         key: String? = null,
     ): TranscriptChange {
+        turnFailureReported = true
         val ts = now()
         val truncated = reason == "length"
         // pi: `length` prints unconditionally; aborted/error print only when the
@@ -2152,6 +2214,11 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
                     ts = ts,
                     // Reload must not lose what the live path keeps (F16).
                     images = imageBlocks(message["content"]),
+                    // pi 1.1.0 把执行耗时写进了 `toolResult` 消息本身
+                    // （`pi-agent-core` 的 `createToolResultMessage`），所以重开会话后
+                    // 卡上的读数和实时时是同一个数，而不是重算的墙钟。旧会话没有这个键，
+                    // 那时 `elapsedMs` 回落墙钟 —— 与 1.0.3 时代的行为一致。
+                    durationMs = message.long("durationMs"),
                 )
             }
 
@@ -2545,6 +2612,7 @@ class TranscriptReducer(private val now: () -> Long = { System.currentTimeMillis
         turnUsage = null
         currentDay = null
         streaming = false
+        turnFailureReported = false
         // A rebuild from `get_entries` renders every user row from the persisted
         // entry, so any optimistic row from the previous stream is already
         // represented and must not be re-matched against a future event.
