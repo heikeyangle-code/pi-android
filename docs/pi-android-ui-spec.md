@@ -376,7 +376,7 @@ data class DateSeparator(key, ts, label)
 | `toolcall_start` | 预插入一个 `ToolCall{PENDING}` 占位（这样参数流出时用户能看到工具名） |
 | `tool_execution_start` | 补齐工具名与参数摘要 |
 | `tool_execution_update` | **节流 200ms** 追加输出（避免抖动）；自动滚底（若在跟随态） |
-| `tool_execution_end` | 状态切 SUCCESS/ERROR，底色过渡；写入 exitCode、`durationMs`（pi 1.1.0 起，驱动 `elapsedMs`）与 `elapsedMs` 的墙钟回落 |
+| `tool_execution_end` | 状态切 SUCCESS/ERROR，底色过渡；写入 exitCode/elapsedMs |
 | `message_end` | `isStreaming=false`，做完整 Markdown 解析与高亮 |
 | `turn_end` | 结束本轮，插入 `date-separator` 若跨天 |
 | `entry_appended` | 追加对应类型 item（扩展 entry / label 等） |

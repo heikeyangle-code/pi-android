@@ -108,21 +108,7 @@ sealed interface PiEvent {
 
     data object AgentStart : PiEvent { override val type = "agent_start" }
     data class AgentEnd(val willRetry: Boolean?) : PiEvent { override val type = "agent_end" }
-
-    /**
-     * 一轮 agent 运行**彻底结束**（不会再有自动重试、压缩或排队的续跑）。
-     *
-     * [aborted] 是 pi 1.1.0 新增的：它来自会话自己的 `_agentRunAbortRequested`
-     * （`core/agent-session.ts:1083-1085`），回答的是「这一轮是被**中止**的，还是正常跑完的」。
-     *
-     * 为什么 App 还要它：正常的中止路径本来就有更早、更细的信号 —— 被中止的 assistant 消息带
-     * `stopReason: "aborted"`（`pi-agent-core` 的 `agent-loop.ts:143` 就是在那里结束这一轮的），
-     * `TranscriptReducer.failTurn` 早就在处理它。这个字段补的是**那条路径没走到**的情形：
-     * 会话自己知道「这轮是被叫停的」，而转录里没有任何一行说过。所以它只当**兜底**用，
-     * 且由「本轮是否已经报过失败」把重复追加挡住（见 `TranscriptReducer` 的
-     * `AgentSettled` 分支）—— 存在意义是「不许把一次中止显示成正常结束」，不是新增一行。
-     */
-    data class AgentSettled(val aborted: Boolean) : PiEvent { override val type = "agent_settled" }
+    data object AgentSettled : PiEvent { override val type = "agent_settled" }
 
     /**
      * pi's `turn_start` / `turn_end` carry **no** turn index on the RPC wire.
@@ -276,20 +262,6 @@ sealed interface PiEvent {
         val resultImages: List<PiImage> = emptyList(),
         /** See [ToolExecutionStart.parentToolCallId]. */
         val parentToolCallId: String? = null,
-        /**
-         * pi 1.1.0：这次执行的**真实耗时**（单调钟，毫秒），只有最终结果才有。
-         *
-         * 来源是 `pi-agent-core` 的 `agent-loop.ts`（`executePreparedToolCall` 用
-         * `performance.now()` 量出，随 `tool_execution_end` 与 `toolResult` 消息一起
-         * 出去），**没有它时**（更早的 pi、或没跑的工具）为 null —— 那时牌面上的读数
-         * 只能回落到墙钟（见 [app.pi.rpc.ToolCall.elapsedMs]）。
-         *
-         * 为什么值得带上它：墙钟把工具**之外**的时间也算进去（排队、前后的模型往返、
-         * 被中止前的等待），上游 1.1.0 专门修的就是这一点（renderers/bash.ts 的
-         * `Took` 改成优先用记录值）。而记录值还有一个性质：它跟
-         * `toolResult` 消息一起落进会话文件，所以**重开会话后读数不变**。
-         */
-        val durationMs: Long? = null,
     ) : PiEvent {
         override val type = "tool_execution_end"
     }
@@ -487,7 +459,7 @@ object PiEvents {
 
         "agent_start" -> PiEvent.AgentStart
         "agent_end" -> PiEvent.AgentEnd(o.bool("willRetry"))
-        "agent_settled" -> PiEvent.AgentSettled(aborted = o.bool("aborted") ?: false)
+        "agent_settled" -> PiEvent.AgentSettled
 
         // pi sends no turn index; `toolResults` is an array we only need a count of.
         "turn_start" -> PiEvent.TurnStart
@@ -548,9 +520,6 @@ object PiEvents {
                 details = result?.get("details") ?: o["details"],
                 resultImages = imageBlocks(result?.get("content")),
                 parentToolCallId = o.str("parentToolCallId"),
-                // pi 1.1.0 起才有（`pi-agent-core` 的 `agent-loop.ts` 用单调钟量）；
-                // 缺席 = 更早的 pi 或没跑的工具，回落墙钟的判据在 `ToolCall.elapsedMs`。
-                durationMs = o.long("durationMs"),
             )
         }
 

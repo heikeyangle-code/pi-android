@@ -5,7 +5,6 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -461,43 +460,5 @@ class TranscriptReducerTest {
         // never showed and must be projected rather than swallowed.
         assertEquals(2, r.transcript.size)
         assertEquals("replayed", (r.transcript[1] as UserMessage).text)
-    }
-
-    // ---------------------------------------------------------------- 工具耗时（pi 1.1.0）
-
-    @Test
-    fun `pi 1_1_0's recorded duration wins over the wall clock`() {
-        // pi 的 TUI 也是这个口径（`core/tools/renderers/bash.ts:99-110`：记录值优先，
-        // "it is monotonic and survives reloads"）。墙钟差被拉到一个数量级，
-        // 否则"用了记录值"和"用了墙钟"看着一样。
-        val r = reducer()
-        r.onEvent(PiEvents.parse("""{"type":"tool_execution_start","toolCallId":"c1","toolName":"bash","args":{"command":"sleep 60"}}"""))
-        clock += 60_000
-        r.onEvent(PiEvents.parse("""{"type":"tool_execution_end","toolCallId":"c1","toolName":"bash","isError":false,"result":{"content":[{"type":"text","text":"ok"}]},"durationMs":1200}"""))
-        val card = r.transcript.single() as ToolCall
-        assertEquals(1200L, card.durationMs)
-        assertEquals(1200L, card.elapsedMs)
-    }
-
-    @Test
-    fun `a result without a recorded duration keeps the wall-clock fallback`() {
-        // pi < 1.1.0 写的会话、或根本没跑的工具：行为与 1.0.3 时代逐字一致（墙钟）。
-        val r = reducer()
-        r.onEvent(PiEvents.parse("""{"type":"tool_execution_start","toolCallId":"c1","toolName":"bash","args":{}}"""))
-        clock += 60_000
-        r.onEvent(PiEvents.parse("""{"type":"tool_execution_end","toolCallId":"c1","toolName":"bash","isError":false,"result":{"content":[{"type":"text","text":"ok"}]}}"""))
-        val card = r.transcript.single() as ToolCall
-        assertNull(card.durationMs)
-        assertEquals(60_000L, card.elapsedMs)
-    }
-
-    @Test
-    fun `replay keeps the duration pi wrote into the session file`() {
-        // `toolResult` 消息自己带 `durationMs`（pi-agent-core 的 `createToolResultMessage`），
-        // 所以重开会话后读数不变 —— 上游修 "losing Took after reloading a session" 用的就是它。
-        val r = reducer()
-        r.onEntry(obj("""{"type":"message","id":"e1","message":{"role":"toolResult","toolCallId":"c1","toolName":"bash","content":[{"type":"text","text":"ok"}],"timestamp":1000,"durationMs":1200}}"""))
-        val card = r.transcript.single() as ToolCall
-        assertEquals(1200L, card.elapsedMs)
     }
 }

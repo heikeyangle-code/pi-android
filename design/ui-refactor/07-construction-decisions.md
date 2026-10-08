@@ -414,7 +414,7 @@ case 收成 `android_download` / `android_files` 两个并按 `input.op` 给不�
 4. **对话框按钮顺序**：稿子主项在左，本项目全应用是「取消在左」，保持全应用一致，不改。
 5. **② 段头 aside**：稿子只有一条命令所以 `aside="进入上下文"` 是常量；这一屏最多四条、各条可能不同。改成
    「全部一致时才提到段头（这时行里不重复写），不一致时段头不表态」——既不重复也不自相矛盾。行副行本身照稿子（那半句稿子没有）。
-6. **`!` / `!!` 那条命令没有刻度与进度段**：`ToolCall.elapsedMs` 是 pi 记录的执行耗时（1.1.0 起优先 `durationMs`，旧会话回落 `endedAt - ts`），流式中恒为 null；转录里的 bash 调用另有 `ts`，
+6. **`!` / `!!` 那条命令没有刻度与进度段**：`ToolCall.elapsedMs` 是 `endedAt - ts`，流式中恒为 null；转录里的 bash 调用另有 `ts`，
    所以照 `ShellBlock` 的先例现算（不起计时器）。而 `BashRun`（`ui/PiSessionViewModel.kt`）**没有时间戳字段**，算不出来 ——
    拿不到就不画，不编一个数。补它要给 `BashRun` 加字段，那个文件不在这一批边界里。
 7. **`t13` 系统字没有对应角色**：`PiTextStyles`/`piTypography` 的系统字只有 12/14/15/17，稿子写 `t13` 的几处（Notice 正文、
