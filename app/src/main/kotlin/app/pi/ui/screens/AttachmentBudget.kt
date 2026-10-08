@@ -19,33 +19,33 @@ import app.pi.rpc.PiResponses
  * ## pi's own limits, transcribed
  *
  * pi normalizes every inline image through `resizeImage()`
- * (`packages/coding-agent/src/utils/image-resize.ts:85-110`)，`_normalizePromptImages` 在
- * `core/agent-session.ts:1890-1910` 每一轮 prompt 调它一次（档案取自 `:1900`）。`resizeImage()`
+ * (`packages/coding-agent/src/utils/image-resize.ts:84-109`)，`_normalizePromptImages` 在
+ * `core/agent-session.ts:1937-1959` 每一轮 prompt 调它一次（档案取自 `:1947`）。`resizeImage()`
  * 把活交给 worker 线程里的 `resizeImageInProcess`，worker 加载不起来时**回落**到同进程
- * （`:105-109`）—— 所以两处是同一个算法，本文件写的是它。以下行号都是
- * `packages/coding-agent/src/utils/image-resize-core.ts` 在 pin 住的引擎 **1.0.3**
- * （`tools/pi-engine.lock.json`；1.0.1→1.0.3 该文件逐字节未变）里的位置，
- * `:74-79`/`:82-93`/`:95-106`/`:112-114`/`:122`/`:146-150` 逐条对过 1.0.3 的源码：
+ * （`:104-108`）—— 所以两处是同一个算法，本文件写的是它。以下行号都是
+ * `packages/coding-agent/src/utils/image-resize-core.ts` 在 pin 住的引擎 **1.1.0**
+ * （`tools/pi-engine.lock.json`；1.0.3→1.1.0 该文件只多了 worker 回包的类型标签，行号整体 +10）里的位置，
+ * `:84-89`/`:92-103`/`:105-116`/`:122-125`/`:132`/`:156-160` 逐条对过 1.1.0 的源码：
  *
- *  0. **EXIF 方向先摆正**（`:74-76` → `exif-orientation.ts`）：`originalWidth`/`originalHeight`
- *     取自摆正**之后**的图（`:78-79`），所以第 1 步的判断与第 2 步的尺寸算的都是摆正后的长宽。
+ *  0. **EXIF 方向先摆正**（`:84-86` → `exif-orientation.ts`）：`originalWidth`/`originalHeight`
+ *     取自摆正**之后**的图（`:88-89`），所以第 1 步的判断与第 2 步的尺寸算的都是摆正后的长宽。
  *     这是整条链上唯一会产生**内容层面**分歧的一步：App 侧由 [PiExifOrientation] 读方向、
  *     `ChatScreen.applyOrientation` 施加同一个置换；少了它，竖拍的照片（像素 4032×3024 +
  *     EXIF orientation 6）会被算成 2000×1500 的横图 —— 尺寸数字自洽，方向是错的。
  *  1. if the picture is already within `maxWidth`/`maxHeight` **and** its
  *     `ceil(bytes / 3) * 4` base64 is under `maxBytes`, pi sends the original bytes
- *     unchanged — no re-encode at all (`:82-93`);
- *  2. otherwise it clamps the long edge to [PI_MAX_DIMENSION] (`:95-106`), then loops:
+ *     unchanged — no re-encode at all (`:92-103`);
+ *  2. otherwise it clamps the long edge to [PI_MAX_DIMENSION] (`:105-116`), then loops:
  *     encode at the current size and take the first candidate under `maxBytes`, else
  *     shrink both axes by three quarters ([SHRINK_NUMERATOR]/[SHRINK_DENOMINATOR],
- *     `:146-150`) and try again, down to 1×1.
+ *     `:156-160`) and try again, down to 1×1.
  *
  * 这三步有个前置开关：`images.autoResize: false` 会让 pi **跳过 1 和 2**
  * （`image-process.ts:86-118`，归一化那一步照跑），App 侧同样
  * （`ChatScreen.withAutoResizeOff`）—— 那时本文件的 [attemptPlan] 根本不参与。
  *
  * The candidate order at one size is pi's, for **every** source that reaches the loop: PNG
- * first, then JPEG at [PI_JPEG_QUALITIES] (`:112-114`, `:122`). There is no exception for an
+ * first, then JPEG at [PI_JPEG_QUALITIES] (`:122-125`, `:132`). There is no exception for an
  * opaque camera JPEG — pi pushes that PNG candidate unconditionally and the App now does the
  * same.
  *
@@ -109,21 +109,21 @@ internal object AttachmentBudget {
 
     // ---------------------------------------------------------------- pi's limits
 
-    /** pi's `maxWidth`/`maxHeight` (`image-resize-core.ts:5-6`, `:24-29`). */
+    /** pi's `maxWidth`/`maxHeight` (`image-resize-core.ts:5-6`, `:34-39`). */
     const val PI_MAX_DIMENSION = 2000
 
     /**
      * pi's `DEFAULT_MAX_BYTES`: 4.5 MiB counted in **base64 characters**
-     * (`image-resize-core.ts:22`).
+     * (`image-resize-core.ts:32`).
      */
     const val PI_MAX_BASE64_CHARS = 4_718_592 // 4.5 * 1024 * 1024
 
-    /** pi's default JPEG quality, tried first (`image-resize-core.ts:8`, `:122`). */
+    /** pi's default JPEG quality, tried first (`image-resize-core.ts:8`, `:132`). */
     const val PI_JPEG_QUALITY = 80
 
     /**
      * pi's quality ladder, in pi's order: `Array.from(new Set([jpegQuality, 85, 70, 55,
-     * 40]))` with `jpegQuality = 80` (`image-resize-core.ts:122`) — so 80 first and then
+     * 40]))` with `jpegQuality = 80` (`image-resize-core.ts:132`) — so 80 first and then
      * the fixed steps, 85 included because it is the second element of the set.
      */
     val PI_JPEG_QUALITIES = intArrayOf(80, 85, 70, 55, 40)
@@ -144,7 +144,7 @@ internal object AttachmentBudget {
         val jpegQuality: Int,
     )
 
-    /** pi's own defaults (`image-resize-core.ts:24-29`): the fallback for every field. */
+    /** pi's own defaults (`image-resize-core.ts:34-39`): the fallback for every field. */
     val PI_DEFAULT_LIMITS = Limits(
         maxWidth = PI_MAX_DIMENSION,
         maxHeight = PI_MAX_DIMENSION,
@@ -204,7 +204,7 @@ internal object AttachmentBudget {
 
     /**
      * pi's ladder for a given first quality: `Array.from(new Set([jpegQuality, 85, 70, 55,
-     * 40]))` (`image-resize-core.ts:122`). [PI_JPEG_QUALITIES] is this function at pi's
+     * 40]))` (`image-resize-core.ts:132`). [PI_JPEG_QUALITIES] is this function at pi's
      * default quality, and the harness asserts the two agree, so a model's `jpegQuality`
      * cannot quietly change the ladder's shape.
      */
@@ -333,7 +333,7 @@ internal object AttachmentBudget {
     // -------------------------------------------------------------- the arithmetic
 
     /**
-     * pi's `inputBase64Size`: `Math.ceil(byteCount / 3) * 4` (`image-resize-core.ts:65`),
+     * pi's `inputBase64Size`: `Math.ceil(byteCount / 3) * 4` (`image-resize-core.ts:75`),
      * which is the exact length of the padded base64 of [byteCount] bytes.
      */
     fun base64Chars(byteCount: Int): Int = (byteCount + 2) / 3 * 4
@@ -357,7 +357,7 @@ internal object AttachmentBudget {
     data class Attempt(val width: Int, val height: Int, val encoding: Encoding)
 
     /**
-     * pi's first resize target, copied step for step from `image-resize-core.ts:95-106`:
+     * pi's first resize target, copied step for step from `image-resize-core.ts:105-116`:
      * clamp the width, then clamp the height against the already-clamped width, so the
      * second clamp can round the aspect ratio once.
      *
@@ -395,7 +395,7 @@ internal object AttachmentBudget {
         if (axis <= 1) 1 else maxOf(1, axis * SHRINK_NUMERATOR / SHRINK_DENOMINATOR)
 
     /**
-     * The candidate encodings at one size, in pi's order (`image-resize-core.ts:112-122`):
+     * The candidate encodings at one size, in pi's order (`image-resize-core.ts:122-132`):
      * **PNG first for every source**, then JPEG at each quality step of [jpegQualities] for
      * the profile's first quality (pi's default 80 unless a model published its own).
      *

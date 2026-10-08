@@ -1,5 +1,5 @@
 {
-	"piTui": "1.0.3",
+	"piTui": "1.1.0",
 	"parser": "org.jetbrains:markdown-jvm:0.7.9 + GFMFlavourDescriptor",
 	"generatedBy": "tools/collect-pi-html-pitext.mjs（期望值是 pi 自己的 Markdown.render 输出，不是手抄） + tools/HtmlFixtureSpans.java（跨度与类型全集由 pin 住的解析器量出）",
 	"cases": [

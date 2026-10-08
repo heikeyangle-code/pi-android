@@ -933,7 +933,7 @@ run_harness mermaid-memo \
 # `custom` 槽的空分支）或只丢标签（行内 `HTML_TAG` 在库 annotator 的 else 里没有 append），
 # 连本仓库自己的文档里 `` `/export <path>.jsonl` `` 都会被显示成 `/export .jsonl`。
 #
-# 期望值不是手抄：`tools/collect-pi-html-pitext.mjs` 真跑 pi 1.0.3 的 `Markdown.render` 取
+# 期望值不是手抄：`tools/collect-pi-html-pitext.mjs` 真跑 pi 1.1.0 的 `Markdown.render` 取
 # 输出，`tools/HtmlFixtureSpans.java` 用 pin 住的解析器量节点跨度与类型全集（77 个类型名）。
 # 这个 harness 钉住的四件事：块级逐字节等于 pi、行内片段逐字节等于 pi、`\t`/`\r` 归一与 JS
 # `trim` 逐码位一致、以及**认领集合只含那两个类型**（117 条真实段落里一条都不含）——

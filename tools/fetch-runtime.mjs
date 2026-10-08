@@ -538,8 +538,54 @@ const UBUNTU_PORTS = "https://ports.ubuntu.com/ubuntu-ports";
  *  8. **许可证资产**：版本标签跟着走；三个手写的 `@aws-sdk/*` 版本按新锁更新（它们漂不漂与 pi 无关，
  *     是 1.0.1 起没有 shrinkwrap 的直接后果）。`v1.0.2` / `v1.0.3` 标签的 `LICENSE` 与之前七个标签
  *     逐字节相同，所以只改标签、不加正文。
+ *
+ * 1.0.3 → **1.1.0**（2026-10-08；中间还有 1.0.4，2026-10-05）。判据同前，这一轮 `npm pack` 了
+ * 1.0.3 / 1.0.4 / 1.1.0 三份，`dist` 下每个 `.js.map` 的 `sourcesContent` 还原出
+ * `packages/coding-agent/src`（245 → 246 个文件，只多 `modes/interactive/program-status-reporter.ts`），
+ * 再与兄弟包（`pi-ai` / `pi-tui` / `pi-agent-core` / `pi-codemode` / `pi-mcp` / `chord`）逐文件比。
+ * 另把仓库自己的 `tools/pi-contract.mjs --pi <1.1.0>` 九组全跑了一遍（surface / theme / tables /
+ * tooltext / session / catalog / bundled / behaviour / extensions **全 PASS**）—— 这是"App 要不要改"
+ * 的主判据，比逐文件比更接近真实失败面。
+ *
+ *  1. **契约面没有一处改名或删除**：`modes/rpc/rpc-types.ts`、`theme-schema.json` 与
+ *     `{dark,light}.json`（仍 56 个 schema 令牌 / 59 个实体令牌，**值逐字节相同**）、
+ *     `core/settings-manager.ts` 的设置键、`core/tools/{bash,read,write,edit,grep,find,ls}.ts`
+ *     的结果文本与页脚、`core/tools/renderers/*` 的时长梯子、`core/session-manager.ts` 的条目类型、
+ *     `dist/main.js` 的 `rpc-entry` 全部保持。所以 `PiPalette.kt`、`PiSettingsRegistry.kt`、
+ *     `rpc/Commands.kt`、各工具 block 这一轮**一行都不用动**。
+ *  2. **唯一的 CLI 语义变化 App 够不着**：`--tools` / `--exclude-tools` 在 1.0.4 支持 `*` 通配，
+ *     1.1.0 加 `+name` / `-name` 修饰词与"不能与普通名字混用"的校验，另有 `--no-mcp`；
+ *     但 App **不传这两个开关**（工具选择走 pi 的设置键 `defaultTools`），而 `defaultTools` 的解析
+ *     只是被抽成 `applyToolModifiers`，语义逐条相同（普通名字替换继承值、`+/-` 在其上增删）——
+ *     所以 `PiPreSpawnConfig.kt` 里那两条只是行号引用会漂，行为不变。
+ *  3. **新信号：`durationMs` 与 `agent_settled.aborted`**（1.1.0）。`pi-agent-core` 现在用单调钟
+ *     量每次工具执行的耗时，1.1.0 把它放进工具渲染上下文、扩展事件 `tool_execution_end`，以及会话
+ *     事件（`agent-session.ts` 对 `tool_execution_end` 是**原样转发**，所以 RPC 流里也有）；
+ *     `agent_settled` 多一个 `aborted`。App 目前把耗时算成 `endedAt - ts`（墙钟，含排队/等待），
+ *     正是上游这次修掉的"`Took` 把非执行时间也算进去"。**不改不会错**（读数照常显示且合理），
+ *     要用上它是"可选新特性"，另定。
+ *  4. **RPC `bash` 流的分片转义修复**（#10504）：`utils/ansi.ts` 新增 `splitIncompleteAnsiSuffix`，
+ *     把结尾不完整的转义序列留到下一块。App 有自己的 SGR 解析器（`rpc/…/Ansi.kt`，按
+ *     `ansi-to-html.ts` 写的），它作用在**完整结果 / 整行**上、不走分片流，所以不适用。
+ *  5. **App 够不着的其余变化**：`syntax-highlight.ts` 改成按行调用 formatter（1.0.4 修"多行字符串
+ *     与注释只有第一行有颜色"；那是 pi 自己的 TUI 高亮器，App 的高亮走 `pi-highlight` 扩展 +
+ *     自己的作用域映射）、`renderers/edit.ts` 与 `outputPad`（TUI 内边距）、`read.ts` 的
+ *     `outputSchema` / `structuredContent`（codemode 拿图片块）、`image-resize*.ts` 给 worker 回包
+ *     打标签（`node --watch` 下 Node 自己往同一通道发消息；App 不跑 `--watch`，且
+ *     2000×2000 / 4.5 MiB / q80 的口径由 behaviour 组在 1.1.0 上复验过）、`theme.ts` 多一个
+ *     `subst` 作用域（映射到 `text` 色）、新增 `program-status-reporter.ts` 与 `pi-tui` 的
+ *     `program-status`（OSC 7501，只有真终端读得到；App 用 RPC，没有 TTY）。
+ *  6. **官方模型目录**：文件名与内层键形状不变（仍 42 份 provider 文件 + `.manifest.json`、
+ *     `schemaVersion` 仍 6），条目 1539/59/23 → **1605 chat / 61 image / 26 classifier**
+ *     （Claude Haiku 5.5、GPT-6 Luna 分类器、llama.cpp 原生分类模型等）。`PiOfficialCatalog.kt`
+ *     的读取器不用动，KDoc 里那两个实测数字要跟着改。
+ *  7. **Node 与依赖约束不动**：`engines.node` 仍 `>=22.19.0`，载荷钉的 Node 24.19 不解；
+ *     `dependencies` 里只有七个 `@earendil-works/*` 从 `^1.0.3` 变 `^1.1.0`，其余一行未改
+ *     （devDependency 里 `shx` 降了一档，不进载荷）。
+ *  8. **许可证资产**：`v1.0.4` / `v1.1.0` 标签的根 `LICENSE` 与之前八个标签逐字节相同
+ *     （sha256 `0457f5bc…`），所以只改标签清单、不加正文；三个手写的 `@aws-sdk/*` 版本按新锁复核。
  */
-const PI_VERSION = "1.0.3";
+const PI_VERSION = "1.1.0";
 
 /**
  * proroot — the optional second container runtime, and the only artifact here whose

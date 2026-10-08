@@ -15,7 +15,8 @@ import kotlinx.serialization.json.JsonPrimitive
  * 1.0.1 是 1536 chat / 59 image / 20 classifier。1.0.3 仍是 42 份、`schemaVersion` 仍是 6，
  * 条目 1539 chat / 59 image / 23 classifier；只有跟着 provider 改名的那份文件名从
  * `azure-openai-responses.json` 变成 `azure.json`（读取器按目录遍历，不看具体文件名，
- * 所以本文件不用改）。**
+ * 所以本文件不用改）。**1.1.0 也逐项复核过：仍是 42 份、`schemaVersion` 仍是 6，
+ * 条目 1605 chat / 61 image / 26 classifier —— 改的只是数据，读法一个字没动。**
  *
  * 0.99.2 起 `schemaVersion` 是 6（0.87.1 是 3），且数据格式变了三处：条目新增 `type`
  * 判别字段，内层键从 `<id>` 变成 `` `${type}:${id}` ``，同一份文件里混进 image /
