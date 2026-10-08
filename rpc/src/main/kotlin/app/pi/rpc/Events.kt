@@ -262,6 +262,20 @@ sealed interface PiEvent {
         val resultImages: List<PiImage> = emptyList(),
         /** See [ToolExecutionStart.parentToolCallId]. */
         val parentToolCallId: String? = null,
+        /**
+         * pi 1.1.0：这次执行的**真实耗时**（单调钟，毫秒），只有最终结果才有。
+         *
+         * 来源是 `pi-agent-core` 的 `agent-loop.ts`（`executePreparedToolCall` 用
+         * `performance.now()` 量出，随 `tool_execution_end` 与 `toolResult` 消息一起
+         * 出去），**没有它时**（更早的 pi、或没跑的工具）为 null —— 那时牌面上的读数
+         * 只能回落到墙钟（见 [app.pi.rpc.ToolCall.elapsedMs]）。
+         *
+         * 为什么值得带上它：墙钟把工具**之外**的时间也算进去（排队、前后的模型往返、
+         * 被中止前的等待），上游 1.1.0 专门修的就是这一点（renderers/bash.ts 的
+         * `Took` 改成优先用记录值）。而记录值还有一个性质：它跟
+         * `toolResult` 消息一起落进会话文件，所以**重开会话后读数不变**。
+         */
+        val durationMs: Long? = null,
     ) : PiEvent {
         override val type = "tool_execution_end"
     }
@@ -520,6 +534,9 @@ object PiEvents {
                 details = result?.get("details") ?: o["details"],
                 resultImages = imageBlocks(result?.get("content")),
                 parentToolCallId = o.str("parentToolCallId"),
+                // pi 1.1.0 起才有（`pi-agent-core` 的 `agent-loop.ts` 用单调钟量）；
+                // 缺席 = 更早的 pi 或没跑的工具，回落墙钟的判据在 `ToolCall.elapsedMs`。
+                durationMs = o.long("durationMs"),
             )
         }
 
