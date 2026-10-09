@@ -66,7 +66,7 @@ export const DANGER_LEVELS: Record<string, DangerLevel> = {
 	android_fs: "control",
 	android_shell: "dangerous",
 
-	// --- deferred：注册着但不进提示词，`tool_search` 按需激活 -----------------
+	// --- 细粒度工具（合并入口展开的那些）--------------------------------------------------
 	android_bridge_status: "read",
 	android_ui_dump: "read",
 	android_screenshot: "read",

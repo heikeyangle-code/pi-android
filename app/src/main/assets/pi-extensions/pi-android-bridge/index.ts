@@ -16,12 +16,11 @@
  *  - errors are signalled by **throwing**, and the thrown message is already the
  *    Chinese explanation plus the user's next step, because a disabled capability
  *    must never be a silent failure;
- *  - six tools are *declared* to the model — `android_status`, `android_ui`, `android_app`,
- *    `android_io`, `android_fs`, `android_shell` — and every finer-grained tool they expand
- *    into stays registered with `exposure: "deferred"`, so `tool_search` can still reach it
- *    without its schema and description being paid for on every turn; the six wave-2 tools
- *    (输入法 / 设备管理员 / 通知监听 / 自动化 / 本地 VPN / 投屏) are `deferred` as well — the
- *    declared six are unchanged;
+ *  - every tool is *declared* to the model while its capability group is on, and a group
+ *    that is off is not registered at all — so the prompt cost is the open groups' schemas
+ *    and nothing else. Six of them (`android_status`, `android_ui`, `android_app`,
+ *    `android_io`, `android_fs`, `android_shell`) merge the finer-grained tools by adding
+ *    an `action`; the merged tools stay registered so an endpoint and its wording exist once;
  *  - every tool truncates its own output with pi's own utilities (50KB / 2000
  *    lines) and says when it did;
  *  - string enums use `StringEnum` for Google API compatibility.
@@ -186,12 +185,6 @@ interface DeviceToolSpec {
 	 * `withCapability(...)` 包着，以及能力卡上 `DeviceCapability.kt` 的 `allows` 文案。
 	 */
 	capability: DeviceCapabilityId | null;
-	/**
-	 * 进不进提示词。`direct` = 常驻：每次请求都声明它的 schema 与 description；
-	 * `deferred` = 注册但不声明，`tool_search` 能找到并按需激活（pi 的 `ToolExposure`，
-	 * 见 `docs/extensions.md` 的 “Tool exposure”）。
-	 */
-	exposure: "direct" | "deferred";
 	label: string;
 	description: string;
 	promptSnippet: string;
@@ -614,7 +607,7 @@ const IO_REQUIRED: Record<string, string[]> = {
 };
 
 /**
- * pi 的工具分组名。声明与不声明的工具都归这一组，模型的工具列表与 tool_search 按它成组。
+ * pi 的工具分组名。模型的工具列表按它成组。
  */
 const DEVICE_NAMESPACE: ToolNamespace = {
 	name: "pi-android",
@@ -624,8 +617,8 @@ const DEVICE_NAMESPACE: ToolNamespace = {
 /**
  * 常驻工具把一次调用转交给它展开的细粒度工具。
  *
- * 六个常驻工具只多一个 `action`，其余参数原样传下去；被展开的工具仍然注册着
- * （`exposure: "deferred"`），所以端点和结果文案只有一份。
+ * 合并工具只多一个 `action`，其余参数原样传下去；被展开的工具仍然注册着，
+ * 所以端点和结果文案只有一份。
  */
 function deviceTool(name: string): DeviceToolSpec {
 	const tool = DEVICE_TOOLS.find((entry) => entry.name === name);
@@ -766,12 +759,11 @@ function listText(
 const DEVICE_TOOLS: DeviceToolSpec[] = [
 	// ----------------------------------------------------------- 常驻工具 ----
 	//
-	// 这六个是声明给模型的全部（`exposure: "direct"`，默认值）。其余工具注册着但
-	// `exposure: "deferred"`：`tool_search` 能找到并按需激活，平时不占提示词。
+	// 声明给模型的全部就是「当前开着的那几组」。一组关掉 = 它的工具根本不注册，
+	// 所以提示词的成本只等于开着的那几组的 schema，不需要额外的按需加载机制。
 	{
 		name: "android_status",
 		capability: null,
-		exposure: "direct",
 		label: "设备桥状态",
 		description: "Bridge + capability groups, foreground app, accessibility, permissions, shell backend/uid, SAF dirs, workspace boundary.",
 		promptSnippet: "Bridge + capability status",
@@ -784,7 +776,6 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 	{
 		name: "android_bridge_status",
 		capability: null,
-		exposure: "deferred",
 		label: "设备桥状态",
 		description: "Bridge + capability state: groups on/usable, accessibility, missing permissions, screenshot support.",
 		promptSnippet: "Bridge + capability status",
@@ -904,7 +895,6 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 	{
 		name: "android_ui",
 		capability: "accessibility",
-		exposure: "direct",
 		label: "屏幕操作",
 		description: "Screen: action=dump|tap|swipe|input|key|keyevent|screenshot. Dump first; its indices feed tap and input.",
 		promptSnippet: "Read screen / tap / type / swipe / screenshot",
@@ -964,7 +954,6 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 	{
 		name: "android_ui_dump",
 		capability: "accessibility",
-		exposure: "deferred",
 		label: "读取屏幕",
 		description: "Read the screen node tree (indexed); indices feed android_tap and android_input. Coordinates are display pixels.",
 		promptSnippet: "Read screen tree (indexed)",
@@ -1030,7 +1019,6 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 	{
 		name: "android_tap",
 		capability: "accessibility",
-		exposure: "deferred",
 		label: "点按",
 		description: "Tap by dump index (most reliable), x/y, or text/desc/resourceId resolved on-device. longPress for long press.",
 		promptSnippet: "Tap node or coordinate",
@@ -1072,7 +1060,6 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 	{
 		name: "android_input",
 		capability: "accessibility",
-		exposure: "deferred",
 		label: "输入文本",
 		description: "Type into the focused field or a dump index; falls back to clipboard paste (replaces the clipboard) when refused.",
 		promptSnippet: "Type into a field",
@@ -1112,7 +1099,6 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 	{
 		name: "android_key",
 		capability: "accessibility",
-		exposure: "deferred",
 		label: "系统按键",
 		description: "Run a system global action. For raw keys (enter/delete/arrows) use android_keyevent (needs Shizuku).",
 		promptSnippet: "Global action (back/home/lock)",
@@ -1132,7 +1118,6 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 	{
 		name: "android_keyevent",
 		capability: "accessibility",
-		exposure: "deferred",
 		label: "注入原始按键",
 		description: "Inject raw keys into the focused window via Shizuku (ADB uid=2000); refuses without it.",
 		promptSnippet: "Inject raw keys (Shizuku)",
@@ -1156,7 +1141,6 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 	{
 		name: "android_swipe",
 		capability: "accessibility",
-		exposure: "deferred",
 		label: "滑动 / 滚动",
 		description: "Swipe in display pixels, or scroll the node at index/selector with direction (accessibility scroll action).",
 		promptSnippet: "Swipe or scroll a node",
@@ -1227,7 +1211,6 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 	{
 		name: "android_screenshot",
 		capability: "accessibility",
-		exposure: "deferred",
 		label: "截屏",
 		description: "Capture the screen (Android 11+); region crops it, marks draws the last dump's indices. Secure windows fail.",
 		promptSnippet: "Capture the screen",
@@ -1292,7 +1275,6 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 	{
 		name: "android_app",
 		capability: "basic",
-		exposure: "direct",
 		label: "应用列表 / 启动 / 结束",
 		description: "List apps, launch one by exact package (find it with action=\"list\" first), or stop its background process.",
 		promptSnippet: "List / launch / stop apps",
@@ -1374,7 +1356,6 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 	{
 		name: "android_stop_app",
 		capability: "accessibility",
-		exposure: "deferred",
 		label: "结束应用",
 		description: "Kill a user app's background process; system apps, critical processes and pi-android are refused.",
 		promptSnippet: "Kill a background app",
@@ -1396,7 +1377,6 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 	{
 		name: "android_io",
 		capability: "basic",
-		exposure: "direct",
 		label: "对外输出",
 		description: "User-visible output: action=clipboard|say|vibrate|share|open. share opens the system sheet, open launches a URL.",
 		promptSnippet: "Clipboard / notify / vibrate / share / open",
@@ -1428,7 +1408,6 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 	{
 		name: "android_say",
 		capability: "basic",
-		exposure: "deferred",
 		label: "通知 / 短提示 / 朗读",
 		description: "Post a notification, show a short on-screen message, or read text with TTS.",
 		promptSnippet: "Notify / toast / speak",
@@ -1485,7 +1464,6 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 	{
 		name: "android_vibrate",
 		capability: "basic",
-		exposure: "deferred",
 		label: "震动",
 		description: "Vibrate the phone.",
 		promptSnippet: "Vibrate the phone",
@@ -1505,7 +1483,6 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 	{
 		name: "android_share",
 		capability: "basic",
-		exposure: "deferred",
 		label: "分享",
 		description: "Share text or a link via the system sheet; to open a URL use android_open.",
 		promptSnippet: "Share to another app",
@@ -1528,7 +1505,6 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 	{
 		name: "android_open",
 		capability: "basic",
-		exposure: "deferred",
 		label: "打开链接",
 		description: "Open a URL/deep link with the default app; intent: URLs fall back to browser_fallback_url.",
 		promptSnippet: "Open URL / deep link",
@@ -1550,7 +1526,6 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 	{
 		name: "android_clipboard",
 		capability: "basic",
-		exposure: "deferred",
 		label: "剪贴板",
 		description: "Pass text to write the clipboard, omit it to read; reads work only in the foreground (Android 10+).",
 		promptSnippet: "Read/write clipboard",
@@ -1580,7 +1555,6 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 	{
 		name: "android_fs",
 		capability: "basic",
-		exposure: "direct",
 		label: "文件",
 		description: "Files: action=list|read|write on user-authorized (SAF) dirs, or action=download for the public Download folder (needs op).",
 		promptSnippet: "Authorized-dir / Download files",
@@ -1618,7 +1592,6 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 	{
 		name: "android_download",
 		capability: "basic",
-		exposure: "deferred",
 		label: "公共 Download 读写",
 		description: "Read/write the public Download folder; user-authorized dirs use android_files. write: no permission on API 29+, storage permission on 8/9. read: own exports only on 33+, storage permission on 30-32.",
 		promptSnippet: "Public Download files",
@@ -1675,7 +1648,6 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 	{
 		name: "android_files_list",
 		capability: "basic",
-		exposure: "deferred",
 		label: "已授权目录",
 		description: "List user-authorized (SAF) dirs; omit path for root names. Read/write them with android_files.",
 		promptSnippet: "List authorized dirs",
@@ -1707,7 +1679,6 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 	{
 		name: "android_files",
 		capability: "basic",
-		exposure: "deferred",
 		label: "授权目录读写",
 		description: "Read/write files under a user-authorized (SAF) dir. write: creates parent dirs, overwrites. read: text direct, binary as base64. Public Download uses android_download.",
 		promptSnippet: "Authorized-dir files",
@@ -1766,7 +1737,6 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 	{
 		name: "android_device_state",
 		capability: "basic",
-		exposure: "deferred",
 		label: "设备状态",
 		description: "Read battery, last known location, the sensor list, or one sensor sample.",
 		promptSnippet: "Battery / location / sensors",
@@ -1838,7 +1808,6 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 	{
 		name: "android_torch",
 		capability: "basic",
-		exposure: "deferred",
 		label: "手电筒",
 		description: "Flashlight (camera LED) on/off; some ROMs need the camera permission.",
 		promptSnippet: "Flashlight on/off",
@@ -1857,7 +1826,6 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 	{
 		name: "android_shell",
 		capability: "shell",
-		exposure: "direct",
 		label: "设备 Shell",
 		description: "Whitelisted shell; unknown heads refused. Writes only inside the workspace; Shizuku = uid 2000, else the app uid. `$(...)`/backticks need relaxed mode.",
 		promptSnippet: "Guarded device shell",
@@ -1918,7 +1886,6 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 	{
 		name: "android_ime",
 		capability: "ime",
-		exposure: "deferred",
 		label: "输入法",
 		description: "PI as the active IME: action=insert|replace|delete|surround|submit|history|text on the focused field.",
 		promptSnippet: "Read/write the focused field via PI's IME",
@@ -2051,7 +2018,6 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 	{
 		name: "android_admin",
 		capability: "admin",
-		exposure: "deferred",
 		label: "设备管理员",
 		description: "Device Owner policies: action=status|capabilities|grant|hidden|suspend|uninstall-blocked|install-ca|always-on-vpn|lock-task|update-policy|status-bar|keyguard|camera|reboot|wipe.",
 		promptSnippet: "Device admin / Device Owner policies",
@@ -2266,7 +2232,6 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 	{
 		name: "android_notify",
 		capability: "basic",
-		exposure: "deferred",
 		label: "通知监听",
 		description: "Notification listener: action=status|recent|reply|dismiss|dismiss-all|snooze|events.",
 		promptSnippet: "Read/reply/dismiss notifications",
@@ -2390,7 +2355,6 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 	{
 		name: "android_automation",
 		capability: "basic",
-		exposure: "deferred",
 		label: "自动化",
 		description: "Automation rules: action=status|list|add|remove|apply|history.",
 		promptSnippet: "Automation rules (trigger → actions)",
@@ -2530,7 +2494,6 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 	{
 		name: "android_net",
 		capability: "basic",
-		exposure: "deferred",
 		label: "本地 VPN",
 		description: "Local VPN: action=status|start|stop|queries|blocklist (plaintext DNS + flow metadata only).",
 		promptSnippet: "Local VPN / DNS log",
@@ -2663,7 +2626,6 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 	{
 		name: "android_capture",
 		capability: "basic",
-		exposure: "deferred",
 		label: "投屏截图",
 		description: "MediaProjection capture: action=status|consent|grab (one JPEG frame; system audio has its own limits).",
 		promptSnippet: "Projection capture / audio",
@@ -2791,7 +2753,7 @@ pi 跑在 proot Ubuntu 里；这台手机上的一切操作都走 android_* 工�
 
 	"references/tools.md": `# 六个常驻工具
 
-提示词里只有这六个。其余细粒度工具（\`android_tap\`、\`android_files\`、\`android_device_state\` 等）注册着但默认不声明，需要时用 \`tool_search\` 找到并激活。
+下面这张表是合并后的六个入口；每个入口的 action 各对应一个注册着的细粒度工具。开关打开的那一组，它的工具全部声明给模型。
 
 | 工具 | 覆盖 | action |
 |---|---|---|
@@ -2806,7 +2768,7 @@ pi 跑在 proot Ubuntu 里；这台手机上的一切操作都走 android_* 工�
 - [DISABLED] / [NO_PERMISSION] 会把原因写在正文里，原样转述给用户，别重试；开启位置是「设置 → 设备能力」。
 - 危险动作会弹确认；用户拒绝就停。
 
-## 另外六个工具（不进提示词，用 tool_search 激活）
+## 另外六个工具
 
 上面那张表是常驻的六个；下面这六个注册着但不声明，它们的参数 schema 平时不占提示词。
 
@@ -2897,7 +2859,6 @@ function environmentGuidance(): string {
 		"pi runs in proot Ubuntu; tools are android_*.",
 		"- `/workspace` fast, `/sdcard` slow; device policy covers only android_* tools, workspace bash unrestricted.",
 		"- When input/pm/am/settings fail (they need the ADB identity, uid 2000), that identity is reachable by a local wireless-debug self-connect - read references/elevate.md and follow it. The first time it needs the user to open Wireless debugging and hand over the pairing code.",
-		"- If only the six resident android_* tools show up, `tool_search` is off: add it (and optionally `codemode`) to `defaultTools` in `/root/.pi/agent/settings.json` and restart the engine — that list is a full whitelist, extend it, never overwrite it.",
 		"- Dangerous device actions confirm; on refusal, stop.",
 	].join("\n");
 }
@@ -2980,7 +2941,6 @@ export default async function (pi: ExtensionAPI) {
 			promptSnippet: tool.promptSnippet,
 			promptGuidelines: tool.promptGuidelines,
 			parameters: tool.parameters,
-			exposure: tool.exposure,
 			namespace: DEVICE_NAMESPACE,
 			async execute(
 				_toolCallId: string,
