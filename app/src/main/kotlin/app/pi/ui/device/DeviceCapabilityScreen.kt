@@ -2,6 +2,8 @@ package app.pi.ui.device
 
 import android.Manifest
 import android.app.Activity
+import android.app.admin.DevicePolicyManager
+import android.content.ComponentName
 import android.content.Intent
 import android.os.Build
 import android.provider.Settings
@@ -67,6 +69,7 @@ import app.pi.bridge.DeviceShellGuard
 import app.pi.bridge.DeviceShizuku
 import app.pi.bridge.DeviceWorkspace
 import app.pi.bridge.PiCaptureService
+import app.pi.bridge.PiDeviceAdminReceiver
 import app.pi.bridge.PiInputMethodService
 import app.pi.bridge.PiScreenCapture
 import app.pi.bridge.PiVpnService
@@ -452,14 +455,30 @@ fun DeviceCapabilityScreen(
                         }
                     },
                     onOpenDeviceAdminSettings = {
-                        // 公开 API 里没有「设备管理应用列表」这个 action，安全设置页是它所在的那一层
-                        // （AOSP 在 安全 → 更多安全设置 → 设备管理应用）。
-                        val opened = runCatching {
-                            context.startActivity(Intent(Settings.ACTION_SECURITY_SETTINGS))
-                        }.isSuccess
+                        // 以前这里是 `startActivity(Settings.ACTION_SECURITY_SETTINGS)`，并让用户
+                        // 自己去找「设备管理应用」—— 那一项在 Android 10+ 的多数 ROM（包括这台的
+                        // HyperOS）上已经不再出现，照着走只会找不到。这也就解释了为什么用户说
+                        // 「该给的都给了」但设备管理员一直没激活：这条路本来就走不通。
+                        //
+                        // 正确的入口是让**应用**发 ACTION_ADD_DEVICE_ADMIN：系统会弹「要激活此设备
+                        // 管理应用吗？」，这是唯一一条在所有版本上都存在的路。激活后只给
+                        // pi_device_admin_policies.xml 里声明过的那两条策略（禁用摄像头、禁用锁屏
+                        // 功能），不是一把全域钥匙 —— 探话里明说这一点，用户才能真的判断要不要点。
+                        val component = ComponentName(
+                            context.packageName,
+                            PiDeviceAdminReceiver::class.java.name,
+                        )
+                        val request = Intent(DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN)
+                            .putExtra(DevicePolicyManager.EXTRA_DEVICE_ADMIN, component)
+                            .putExtra(
+                                DevicePolicyManager.EXTRA_ADD_EXPLANATION,
+                                "激活后，本应用只能做设备能力页里列出的那两件事：禁用摄像头、禁用锁屏功能。" +
+                                    "它不会因此拿到任何其他权限，你随时可以在系统设置里取消激活。",
+                            )
+                        val opened = runCatching { context.startActivity(request) }.isSuccess
                         if (!opened) {
-                            note = "无法打开系统的安全设置页。请手动进入 系统设置 → 安全 → 设备管理应用，" +
-                                "激活「PI 设备桥」。"
+                            note = "本机没有应用响应「激活设备管理应用」。请手动进入 系统设置 → 安全 → 设备管理应用" +
+                                "（部分 ROM 上是 设置 → 安全 → 更多安全设置），激活「PI 设备桥」。"
                         }
                     },
                     shizuku = shizuku,

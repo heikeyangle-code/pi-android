@@ -558,13 +558,17 @@ class DeviceBridgeRouter(
                 // 桥这一层没有能和用户说话的界面，在这里加一个确认参数只会变成一个永远为 true
                 // 的开关。
 
-                "/app/admin/status" -> withCapability(DeviceCapability.Admin) {
-                    DeviceAdmin.status(context)
-                }
+                // 这两条是**诊断**端点：唯一的职责就是说明「现在缺哪一档身份、每项策略能不能做」。
+                // 把诊断挂在它要诊断的那个前置后面，等于用问题回答问题 —— 没有身份就永久拿不到
+                // 「你缺什么身份」这个答案，而这正是用户最需要被告知的一件事。
+                //
+                // 不经过 withCapability，但**保留它包装出来的形状**（ok + capability + data），
+                // 所以调用方看不出来区别。对照 /app/capabilities：那一组诊断从一开始就是免门禁的。
+                "/app/admin/status" ->
+                    BridgeHttpResponse.ok(DeviceAdmin.status(context), DeviceCapability.Admin)
 
-                "/app/admin/capabilities" -> withCapability(DeviceCapability.Admin) {
-                    DeviceAdmin.capabilities(context)
-                }
+                "/app/admin/capabilities" ->
+                    BridgeHttpResponse.ok(DeviceAdmin.capabilities(context), DeviceCapability.Admin)
 
                 "/app/admin/grant" -> withCapability(DeviceCapability.Admin) {
                     okOrDenial(
