@@ -58,6 +58,7 @@ import {
 	isDeviceTool,
 	needsApproval,
 	needsApprovalForAdmin,
+	type ApprovalRule,
 } from "./pi-android-bridge/danger";
 
 /** The three answers the confirmation dialog offers. */
@@ -71,15 +72,22 @@ const sessionGrants = new Set<string>();
 /**
  * The key an approval is remembered under.
  *
- * The bridge's tools were merged: `android_download` and `android_files` now carry
- * their direction in `op` (`"write"` / `"read"`), where they used to be two tools
- * with two separate grants — remembering `android_files_write` never silenced
- * `android_files_read`. Keying the grant by tool name alone would quietly widen
- * that to both directions, so the op becomes part of the key whenever the call has
- * one. A tool without a direction (shell, stop_app, share, open, input, keyevent)
- * keeps its bare name, exactly as before.
+ * Three cases, and the first is the one that had to change:
+ *
+ *  - **A tool with a per-call rule list** (`android_shell`, `android_admin`) is
+ *    remembered **per matched rule**, never per tool. Keying those by tool name meant
+ *    one 「同意并记住本次会话」 on `pm clear` also silenced `mkfs`, `dd` and
+ *    `rm -rf /sdcard` for the rest of the session — seven curated rules collapsing to
+ *    zero on a single click, which is the opposite of what a curated list is for. The
+ *    rule's `id` is a short readable name, `grantLabel` shows it, so the scope is
+ *    stated in the dialog and in the confirmation note as well as here.
+ *  - **A direction** (`android_download`, `android_files`) keeps `op` in the key: those
+ *    used to be two tools with two separate grants, and remembering
+ *    `android_files_write` never silenced `android_files_read`.
+ *  - **Everything else** keeps its bare tool name, exactly as before.
  */
-function grantKey(toolName: string, input: Record<string, unknown>): string {
+function grantKey(toolName: string, input: Record<string, unknown>, rule: ApprovalRule | null): string {
+	if (rule !== null) return `${toolName}:${rule.id}`;
 	const op = input.op;
 	return typeof op === "string" && op.length > 0 ? `${toolName}:${op}` : toolName;
 }
@@ -128,7 +136,7 @@ export default function (pi: ExtensionAPI) {
 		// `action="status"` too, and a confirmation that fires on the wrong thing is how a
 		// confirmation becomes a reflex. So these two decide for themselves, and the level
 		// check below covers the tools that have no rule of their own.
-		let approvalReason: string | null = null;
+		let approvalReason: ApprovalRule | null = null;
 		if (toolName === "android_shell") {
 			const command = typeof input.command === "string" ? input.command : "";
 			approvalReason = needsApproval(command);
@@ -154,8 +162,9 @@ export default function (pi: ExtensionAPI) {
 			};
 		}
 
-		// (2) Already remembered for this session: do not ask again.
-		const key = grantKey(toolName, input);
+		// (2) Already remembered for this session: do not ask again. The key carries the
+		// matched rule, so this only skips the *same* consequence — see [grantKey].
+		const key = grantKey(toolName, input, approvalReason);
 		if (sessionGrants.has(key)) {
 			approvals.set(toolName, (approvals.get(toolName) ?? 0) + 1);
 			await publish(`${grantLabel(toolName, key)} 在本会话内已被记住，未再次询问。`);
@@ -167,9 +176,9 @@ export default function (pi: ExtensionAPI) {
 		const history = previous > 0
 			? `\n\n（本会话你已经批准过 ${previous} 次「${toolName}」，但每次都问过你。）`
 			: "";
-		// Only `android_shell` has a rule list of its own; the label is the consequence
-		// that made the command worth asking about, so it belongs in the question.
-		const reason = approvalReason === null ? "" : `\n\n［${approvalReason}］`;
+		// The rule's consequence sentence is what made the call worth asking about, so it
+		// belongs in the question.
+		const reason = approvalReason === null ? "" : `\n\n［${approvalReason.label}］`;
 
 		let choice: string | undefined;
 		try {
@@ -205,13 +214,29 @@ export default function (pi: ExtensionAPI) {
 			return undefined;
 		}
 
-		// Denied, dismissed, or an answer we do not recognise.
-		await publish(`用户拒绝或取消了：${toolName}。`);
+		if (choice === CHOICE_DENY) {
+			await publish(`用户拒绝了这个操作：${toolName}。`);
+			return {
+				block: true,
+				reason:
+					`用户拒绝了这个设备操作：${toolName}。` +
+					"请停下来，把用户拒绝这件事告诉他，不要重试，也不要用别的工具绕过。",
+			};
+		}
+
+		// No answer. pi auto-resolves a timed-out dialog with `undefined`
+		// (`docs/rpc-extension-ui.md`, "select"): the agent-side does it, the extension just
+		// sees the value. Reporting that as a refusal would put a decision in the user's
+		// mouth — the model tells them they refused something they never saw — and it would
+		// also tell the model not to retry, when the right move is to ask again once they are
+		// back at the phone.
+		await publish(`确认对话框超时或没有回答：${toolName}。`);
 		return {
 			block: true,
 			reason:
-				`用户拒绝了这个设备操作：${toolName}。` +
-				"请停下来，把用户拒绝这件事告诉他，不要重试，也不要用别的工具绕过。",
+				`确认对话框没有得到回答（120 秒超时或已被关闭），因此「${toolName}」没有执行。` +
+				"这不是用户拒绝 —— 他可能只是当时不在。如果他现在在旁边，可以再请求一次；" +
+				"否则先告诉他一声：这件事还在等他确认，没有执行。",
 		};
 	});
 

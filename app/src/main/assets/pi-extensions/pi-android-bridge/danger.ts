@@ -227,19 +227,66 @@ export const FORBIDDEN_SHELL_PATTERNS: ReadonlyArray<{ pattern: RegExp; label: s
  * `needsApprovalForAdmin` below — it is not a shell command, so it cannot live in this
  * list.
  *
+ * Each entry carries an `id` as well as a `label`, and the two do different jobs: the
+ * `label` is the consequence sentence shown in the dialog, while the `id` is what an
+ * 「同意并记住本次会话」 is remembered under. Two entries may share an `id` when they
+ * are the same rule reached two ways — `pm clear` and `cmd package clear` are one
+ * consequence, not two — and that is deliberate: remembering it should cover both,
+ * and only both.
+ *
  * The `dd` pattern requires whitespace after the command word on purpose. `/\bdd\b/i`
  * also matched `dd.txt` and `ls dd`, so the dialog asked about a file name; a
  * confirmation that fires on the wrong thing is how a confirmation becomes a reflex.
  */
-export const NEEDS_APPROVAL_SHELL_PATTERNS: ReadonlyArray<{ pattern: RegExp; label: string }> = [
-	{ pattern: /(^|[\s;&|()])dd\s/, label: "裸写入：目标若指向分区或整盘会被直接覆盖，数据无法恢复" },
-	{ pattern: /\bmkfs(\.[a-z0-9]+)?(\s|$)/i, label: "格式化文件系统（不可逆，该分区上的数据全部丢失）" },
-	{ pattern: /\/dev\/block/, label: "访问块设备：写入等于改分区表，可能让设备无法启动" },
-	{ pattern: /\bpm\s+clear\b/i, label: "清除应用数据（不可逆：该应用的全部数据会被删光）" },
-	{ pattern: /\bcmd\s+package\s+clear\b/i, label: "清除应用数据（不可逆：该应用的全部数据会被删光）" },
-	{ pattern: /\bpm\s+uninstall\b/i, label: "卸载应用（不可逆：应用与它的全部数据一起消失）" },
-	{ pattern: /\bcmd\s+package\s+uninstall\b/i, label: "卸载应用（不可逆：应用与它的全部数据一起消失）" },
+export const NEEDS_APPROVAL_SHELL_PATTERNS: ReadonlyArray<{
+	pattern: RegExp;
+	id: string;
+	label: string;
+}> = [
+	{
+		pattern: /(^|[\s;&|()])dd\s/,
+		id: "dd 裸写入",
+		label: "裸写入：目标若指向分区或整盘会被直接覆盖，数据无法恢复",
+	},
+	{
+		pattern: /\bmkfs(\.[a-z0-9]+)?(\s|$)/i,
+		id: "格式化分区",
+		label: "格式化文件系统（不可逆，该分区上的数据全部丢失）",
+	},
+	{
+		pattern: /\/dev\/block/,
+		id: "块设备",
+		label: "访问块设备：写入等于改分区表，可能让设备无法启动",
+	},
+	{
+		pattern: /\bpm\s+clear\b/i,
+		id: "清除应用数据",
+		label: "清除应用数据（不可逆：该应用的全部数据会被删光）",
+	},
+	{
+		pattern: /\bcmd\s+package\s+clear\b/i,
+		id: "清除应用数据",
+		label: "清除应用数据（不可逆：该应用的全部数据会被删光）",
+	},
+	{
+		pattern: /\bpm\s+uninstall\b/i,
+		id: "卸载应用",
+		label: "卸载应用（不可逆：应用与它的全部数据一起消失）",
+	},
+	{
+		pattern: /\bcmd\s+package\s+uninstall\b/i,
+		id: "卸载应用",
+		label: "卸载应用（不可逆：应用与它的全部数据一起消失）",
+	},
 ];
+
+/** One rule that makes a call worth asking about. */
+export interface ApprovalRule {
+	/** Short, human-readable, and stable — this is what a remembered grant is keyed by. */
+	readonly id: string;
+	/** The consequence sentence shown in the dialog. */
+	readonly label: string;
+}
 
 /**
  * The `android_admin` actions the user is asked about. Only one, and that is the point.
@@ -255,32 +302,34 @@ export const NEEDS_APPROVAL_SHELL_PATTERNS: ReadonlyArray<{ pattern: RegExp; lab
  * This lives beside the shell list rather than inside it because the decision is not
  * about a command string: it is a tool plus one of its `action` values.
  */
-export const NEEDS_APPROVAL_ADMIN_ACTIONS: ReadonlyArray<{ action: string; label: string }> = [
+export const NEEDS_APPROVAL_ADMIN_ACTIONS: ReadonlyArray<{ action: string; id: string; label: string }> = [
 	{
 		action: "wipe",
+		id: "恢复出厂",
 		label: "恢复出厂设置：手机上的一切都会被抹掉（包括 pi 与它的工作区），无法恢复",
 	},
 ];
 
 /**
- * @returns the label of the rule the admin action matched — the consequence to show the
- *   user — or null when the call may run without a confirmation.
+ * @returns the rule the command matched — its consequence sentence for the dialog and
+ *   the id a remembered grant is keyed by — or null when the command may run without a
+ *   confirmation.
  */
-export function needsApprovalForAdmin(input: Record<string, unknown>): string | null {
-	const action = typeof input.action === "string" ? input.action : "";
-	for (const entry of NEEDS_APPROVAL_ADMIN_ACTIONS) {
-		if (action === entry.action) return entry.label;
+export function needsApproval(command: string): ApprovalRule | null {
+	for (const rule of NEEDS_APPROVAL_SHELL_PATTERNS) {
+		if (rule.pattern.test(command)) return { id: rule.id, label: rule.label };
 	}
 	return null;
 }
 
 /**
- * @returns the label of the rule the command matched — the consequence to show the
- *   user — or null when the command may run without a confirmation.
+ * @returns the rule the admin action matched, or null when the call may run without a
+ *   confirmation.
  */
-export function needsApproval(command: string): string | null {
-	for (const { pattern, label } of NEEDS_APPROVAL_SHELL_PATTERNS) {
-		if (pattern.test(command)) return label;
+export function needsApprovalForAdmin(input: Record<string, unknown>): ApprovalRule | null {
+	const action = typeof input.action === "string" ? input.action : "";
+	for (const entry of NEEDS_APPROVAL_ADMIN_ACTIONS) {
+		if (action === entry.action) return { id: entry.id, label: entry.label };
 	}
 	return null;
 }
