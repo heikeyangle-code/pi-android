@@ -2750,7 +2750,7 @@ const SKILL_NAME = "pi-android-device";
 const SKILL_FILES: Record<string, string> = {
 	"SKILL.md": `---
 name: ${SKILL_NAME}
-description: "pi-android device tools (android_*): screen, apps, files, clipboard/notify/share, device shell. Read before acting on this phone."
+description: "pi-android device tools (android_*): screen, apps, files, clipboard/notify/share, device shell, IME, device admin, automation, local VPN, screen capture. Read before acting on this phone."
 ---
 
 # pi-android 设备环境
