@@ -2746,7 +2746,7 @@ pi 跑在 proot Ubuntu 里；这台手机上的一切操作都走 android_* 工�
 | 主题 | 什么时候读 | 附件 |
 |---|---|---|
 | 屏幕与输入 | 读屏、点按、输入、滑动、按键、截图 | \`references/ui.md\` |
-| 六个常驻工具 | 记不清 action 或参数 | \`references/tools.md\` |
+| 工具总表 | 有哪些工具、属于哪组、某个 action 怎么用 | \`references/tools.md\` |
 | 设备 Shell | 要在设备上跑命令、看 uid 与写入边界 | \`references/shell.md\` |
 | 路径 | /workspace、/sdcard、agentDir 各是什么 | \`references/paths.md\` |
 | 常见坑 | 报 [DISABLED] / NOT_FOUND / 截断时 | \`references/pitfalls.md\` |
@@ -2775,9 +2775,9 @@ pi 跑在 proot Ubuntu 里；这台手机上的一切操作都走 android_* 工�
 6. 密码框、银行类安全窗口系统禁止截屏，这是平台限制。
 `,
 
-	"references/tools.md": `# 六个常驻工具
+	"references/tools.md": `# 工具
 
-下面这张表是合并后的六个入口；每个入口的 action 各对应一个注册着的细粒度工具。开关打开的那一组，它的工具全部声明给模型。
+声明给模型的是 15 个：表一的 6 个合并入口，表二的 9 个没有合并入口的直连工具。另外还有 16 个细粒度工具（\`android_tap\`、\`android_files\`、\`android_bridge_status\` 等）被合并入口转交，同样注册着但不单独声明 —— 它们的动作都在表一的 action 里。开关打开的那一组才有它的工具；**五组默认全关**。
 
 | 工具 | 覆盖 | action |
 |---|---|---|
@@ -2792,9 +2792,9 @@ pi 跑在 proot Ubuntu 里；这台手机上的一切操作都走 android_* 工�
 - [DISABLED] / [NO_PERMISSION] 会把原因写在正文里，原样转述给用户，别重试；开启位置是「设置 → 设备能力」。
 - 危险动作会弹确认；用户拒绝就停。
 
-## 另外六个工具
+## 另外九个直连工具
 
-上面那张表是常驻的六个；下面这六个注册着但不声明，它们的参数 schema 平时不占提示词。
+它们没有合并入口，所以单独声明。
 
 | 工具 | 能力组 | 覆盖 | action |
 |---|---|---|---|
@@ -2804,6 +2804,9 @@ pi 跑在 proot Ubuntu 里；这台手机上的一切操作都走 android_* 工�
 | \`android_automation\` | basic | 自动化规则（触发器 + 条件 + 动作） | status / list / add / remove / apply / history |
 | \`android_net\` | basic | 本地 VPN：隧道、DNS 查询记录、黑名单 | status / start / stop / queries / blocklist |
 | \`android_capture\` | basic | 投屏（MediaProjection）截图与系统音频 | status / consent / grab |
+| \`android_stop_app\` | accessibility | 结束一个用户应用的进程；系统应用、关键进程与 pi-android 自己会被拒 | package |
+| \`android_device_state\` | basic | 电量 / 上次定位 / 传感器列表 / 一次采样 | action |
+| \`android_torch\` | basic | 手电筒开关（部分 ROM 要相机权限） | on |
 
 - 不可逆、或影响其他应用的动作：\`android_admin\` 的 reboot / wipe / grant / hidden / suspend / install-ca / lock-task。调用前先在正文里说明后果；被拒绝就停，别换条路再试。
 - \`android_ime\` 只在 PI 是当前输入法时有内容可读；密码框读不到（连长度都不报）；surround 读的是光标前后的文本，不是改选区。
