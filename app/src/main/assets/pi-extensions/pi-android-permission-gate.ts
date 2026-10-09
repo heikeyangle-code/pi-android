@@ -43,11 +43,6 @@
  *     there is nothing left that can never be allowed: `needsApproval` names the
  *     irreversible commands (a `dd` write, `mkfs`, `/dev/block`, `pm clear`) and the
  *     user is asked, while every other command runs without a dialog.
- *
- *     The same rule decides `android_admin`: only `action="wipe"` is asked about,
- *     through `needsApprovalForAdmin`. Every other admin action is a read or is
- *     reversible, and asking about those would be the noise that turns a confirmation
- *     into a reflex.
  */
 
 import type { ExtensionAPI, ToolCallEvent } from "@earendil-works/pi-coding-agent";
@@ -57,7 +52,6 @@ import {
 	describeDangerousCall,
 	isDeviceTool,
 	needsApproval,
-	needsApprovalForAdmin,
 	type ApprovalRule,
 } from "./pi-android-bridge/danger";
 
@@ -74,7 +68,7 @@ const sessionGrants = new Set<string>();
  *
  * Three cases, and the first is the one that had to change:
  *
- *  - **A tool with a per-call rule list** (`android_shell`, `android_admin`) is
+ *  - **A tool with a per-call rule list** (`android_shell`) is
  *    remembered **per matched rule**, never per tool. Keying those by tool name meant
  *    one 「同意并记住本次会话」 on `pm clear` also silenced `mkfs`, `dd` and
  *    `rm -rf /sdcard` for the rest of the session — seven curated rules collapsing to
@@ -130,21 +124,16 @@ export default function (pi: ExtensionAPI) {
 		// (3) Two rules are about the *call*, not the tool.
 		//
 		// The level is a property of the tool, but what is worth asking about belongs to
-		// one call: an irreversible shell command, or `android_admin(action="wipe")`.
-		// `android_admin` is `control` because eight of its nine actions are reads or are
-		// reversible — raising the whole tool would put a dialog in front of
-		// `action="status"` too, and a confirmation that fires on the wrong thing is how a
-		// confirmation becomes a reflex. So these two decide for themselves, and the level
-		// check below covers the tools that have no rule of their own.
+		// one call: an irreversible shell command. `android_shell` is `dangerous` as a
+		// tool, but most of what it runs is not worth asking about, so the rule list
+		// decides per call and the level check below covers tools with no rule of their
+		// own.
 		let approvalReason: ApprovalRule | null = null;
 		if (toolName === "android_shell") {
 			const command = typeof input.command === "string" ? input.command : "";
 			approvalReason = needsApproval(command);
-		} else if (toolName === "android_admin") {
-			approvalReason = needsApprovalForAdmin(input);
-		}
 
-		if (toolName === "android_shell" || toolName === "android_admin") {
+		if (toolName === "android_shell") {
 			// A tool with its own rule: a call that matched none of them runs silently.
 			if (approvalReason === null) return undefined;
 		} else if (level !== "dangerous") {

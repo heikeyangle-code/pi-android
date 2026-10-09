@@ -475,26 +475,6 @@ const ImeAction = Type.Union(
 	{ description: "text=read the field, surround=read the text around the caret, insert/replace=write, delete=chars around the caret, submit=editor action, history=past input." },
 );
 
-const AdminAction = Type.Union(
-	[
-		Type.Literal("status"),
-		Type.Literal("capabilities"),
-		Type.Literal("grant"),
-		Type.Literal("hidden"),
-		Type.Literal("suspend"),
-		Type.Literal("uninstall-blocked"),
-		Type.Literal("install-ca"),
-		Type.Literal("always-on-vpn"),
-		Type.Literal("lock-task"),
-		Type.Literal("update-policy"),
-		Type.Literal("status-bar"),
-		Type.Literal("keyguard"),
-		Type.Literal("camera"),
-		Type.Literal("reboot"),
-		Type.Literal("wipe"),
-	],
-	{ description: "status/capabilities=read; the rest are Device Owner / Profile Owner policy changes (reboot, wipe and lock-task are irreversible)." },
-);
 
 const NotifyAction = Type.Union(
 	[
@@ -773,8 +753,8 @@ interface ActionPayload {
 /**
  * 把 `{ok:false}` 当失败报出去。
  *
- * 波1 的动作函数（`PiInputMethodService.withConnection`、`DeviceAdmin.denied`、
- * `PiNotificationListener.failure`）**不抛异常**，而是把失败写进返回值；端点若原样透传
+ * 波1 的动作函数（`PiInputMethodService.withConnection`、`PiNotificationListener.failure`、
+ * `PiVpnService` 的各个动作）**不抛异常**，而是把失败写进返回值；端点若原样透传
  * 这个对象，这里就必须自己收下它。“把 `ok:false` 渲染成已完成”是这一层唯一会骗到模型的错：
  * 模型会据此认定操作生效，然后既不再试也不告诉用户。端点若已经把失败翻译成 denial，
  * `bridgePost` 就先抛了 `BridgeError`，根本走不到这里。
@@ -2057,232 +2037,6 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 			}),
 	},
 
-	// -------------------------------------------------------- 设备管理员 ----
-	//
-	// `DeviceAdmin`（Device Owner / Profile Owner / 普通设备管理员）里的策略动作。身份决定
-	// 能力：普通设备管理员几乎什么都做不了，`action=capabilities` 会如实报出当前身份下每项
-	// 能不能做 —— 不要用一次失败的调用去倒推。
-	//
-	// **不可逆、或影响其他应用的动作**（调用前要在正文里向用户说明后果，被拒绝就停）：
-	//  - reboot：设备立刻重启，未保存的内容丢失；
-	//  - wipe：Device Owner 下等于恢复出厂设置，Profile Owner 下清空工作资料；执行后数据不再
-	//    存在，系统立即重启；
-	//  - grant：直接改写**别的应用**的运行时权限授予状态（授予/拒绝/交回系统），等于替用户
-	//    回答系统权限弹窗；
-	//  - hidden：目标应用从启动器消失（数据保留），用户会以为它被卸载了；
-	//  - suspend：目标应用被强制停止、通知被抑制、无法启动；
-	//  - install-ca：装一张**系统级且持久**的 CA 证书，卸载本应用也不会移除，之后设备信任
-	//    该证书签发的任何站点；
-	//  - lock-task：把设备锁进专用设备（Kiosk）模式，只有清单里的应用能启动；空清单解除。
-	{
-		name: "android_admin",
-		capability: "admin",
-		label: "设备管理员",
-		description: "Device Owner policies: action=status|capabilities|grant|hidden|suspend|uninstall-blocked|install-ca|always-on-vpn|lock-task|update-policy|status-bar|keyguard|camera|reboot|wipe.",
-		promptSnippet: "Device admin / Device Owner policies",
-		promptGuidelines: [
-			"Read action=capabilities first: most actions need Device Owner or Profile Owner.",
-			"wipe = factory reset and reboot = reboot now: state the consequence in the reply before calling.",
-			"grant rewrites another app's runtime permission; install-ca is system-wide and persistent; hidden/suspend change what the user sees.",
-		],
-		parameters: Type.Object({
-			action: AdminAction,
-			package: Type.Optional(
-				Type.String({ description: "grant/hidden/uninstall-blocked/always-on-vpn: the target package (always-on-vpn: omit to turn it off)." }),
-			),
-			permission: Type.Optional(Type.String({ description: "grant: the runtime permission, e.g. android.permission.CAMERA." })),
-			state: Type.Optional(Type.Number({ description: "grant: 0 = hand back to the system, 1 = grant, 2 = deny." })),
-			hidden: Type.Optional(Type.Boolean({ description: "hidden: true = hide the app, false = unhide." })),
-			packages: Type.Optional(Type.Array(Type.String(), { description: "suspend/lock-task: the package list (lock-task: empty = off)." })),
-			suspended: Type.Optional(Type.Boolean({ description: "suspend: true = suspend, false = unsuspend." })),
-			blocked: Type.Optional(Type.Boolean({ description: "uninstall-blocked: true = block, false = allow." })),
-			base64: Type.Optional(
-				Type.String({ description: "install-ca: the DER certificate, base64-encoded (installCaCert takes DER, not PEM)." }),
-			),
-			lockdown: Type.Optional(Type.Boolean({ description: "always-on-vpn: block all networking while the VPN is down, default false." })),
-			mode: Type.Optional(
-				StringEnum(["automatic", "postpone", "windowed", "clear"] as const, {
-					description: "update-policy: which system-update policy to set.",
-				}),
-			),
-			windowStartMinutes: Type.Optional(Type.Number({ description: "update-policy windowed: start minute of day (0-1439)." })),
-			windowEndMinutes: Type.Optional(Type.Number({ description: "update-policy windowed: end minute of day." })),
-			disabled: Type.Optional(Type.Boolean({ description: "status-bar/keyguard/camera: true = disable, false = restore." })),
-			flags: Type.Optional(Type.Number({ description: "wipe: extra DevicePolicyManager flags, default 0." })),
-		}),
-		run: async (params) =>
-			guarded(async () => {
-				const p = params as {
-					action?: string;
-					package?: string;
-					permission?: string;
-					state?: number;
-					hidden?: boolean;
-					packages?: string[];
-					suspended?: boolean;
-					blocked?: boolean;
-					base64?: string;
-					lockdown?: boolean;
-					mode?: string;
-					windowStartMinutes?: number;
-					windowEndMinutes?: number;
-					disabled?: boolean;
-					flags?: number;
-				};
-				const action = typeof p.action === "string" ? p.action : "";
-				switch (action) {
-					case "status": {
-						const data = await bridgeGet<ActionPayload & { deviceOwner?: boolean; profileOwner?: boolean; adminActive?: boolean }>("/app/admin/status");
-						const role = data.deviceOwner === true
-							? "Device Owner"
-							: data.profileOwner === true
-								? "Profile Owner"
-								: data.adminActive === true
-									? "普通设备管理员（现代策略需要 Device Owner / Profile Owner）"
-									: "没有设备管理员身份";
-						return textResult(`设备管理员身份：${role}\n${typeof data.note === "string" ? data.note : ""}`, data);
-					}
-					case "capabilities": {
-						const data = await bridgeGet<Record<string, unknown>>("/app/admin/capabilities");
-						const table = Object.entries(data).filter(([, value]) => typeof value === "boolean");
-						if (table.length === 0) return textResult(`设备管理员能力：设备没有返回能力表。\n${JSON.stringify(data)}`, data);
-						const lines = table.map(([name, allowed]) => `- ${name}：${allowed === true ? "可执行" : "不可执行"}`);
-						return textResult(`设备管理员能力（当前身份下）：\n${lines.join("\n")}`, data);
-					}
-					case "grant": {
-						requireText("android_admin", action, params, ["package", "permission"]);
-						const state = requireNumber("android_admin", action, params, "state");
-						const data = await bridgePost<ActionPayload>("/app/admin/grant", {
-							package: p.package,
-							permission: p.permission,
-							state,
-						});
-						requireActionOk("android_admin", data);
-						const label = state === 0 ? "交回系统" : state === 1 ? "授予" : state === 2 ? "拒绝" : `state=${state}`;
-						return textResult(`已把 ${p.package} 的 ${p.permission} 改为「${label}」（等于替用户回答了系统权限弹窗）。`, data);
-					}
-					case "hidden": {
-						requireText("android_admin", action, params, ["package"]);
-						const hidden = requireBoolean("android_admin", action, params, "hidden");
-						const data = await bridgePost<ActionPayload>("/app/admin/hidden", { package: p.package, hidden });
-						requireActionOk("android_admin", data);
-						return textResult(
-							`已${hidden ? "隐藏" : "恢复"}应用 ${p.package}${hidden ? "（用户从启动器看不到它，数据保留）" : ""}。`,
-							data,
-						);
-					}
-					case "suspend": {
-						const packages = stringList(p.packages);
-						if (packages.length === 0) {
-							throw new Error("[BAD_PARAM] android_admin 的 action=\"suspend\" 需要非空的 packages（包名数组）。\n提示：补上 packages 后重新调用 android_admin。");
-						}
-						const suspended = requireBoolean("android_admin", action, params, "suspended");
-						const data = await bridgePost<ActionPayload>("/app/admin/suspend", { packages, suspended });
-						// 部分失败（系统回一个「没能挂起」的包名列表）在端点那里已经变成 denial，并把
-						// 包名写在正文里，所以这里不需要再分一次支。
-						requireActionOk("android_admin", data);
-						return textResult(`已${suspended ? "挂起" : "恢复"} ${packages.length} 个应用。`, data);
-					}
-					case "uninstall-blocked": {
-						requireText("android_admin", action, params, ["package"]);
-						const blocked = requireBoolean("android_admin", action, params, "blocked");
-						const data = await bridgePost<ActionPayload>("/app/admin/uninstall-blocked", { package: p.package, blocked });
-						requireActionOk("android_admin", data);
-						return textResult(`已${blocked ? "阻止" : "允许"}卸载 ${p.package}。`, data);
-					}
-					case "install-ca": {
-						requireText("android_admin", action, params, ["base64"]);
-						const data = await bridgePost<ActionPayload & { bytes?: number }>("/app/admin/install-ca", { base64: p.base64 });
-						requireActionOk("android_admin", data);
-						return textResult(
-							`已安装 CA 证书（${show(data.bytes)} 字节）—— 系统级且持久，卸载 pi-android 也不会移除。`,
-							data,
-						);
-					}
-					case "always-on-vpn": {
-						const target = typeof p.package === "string" && p.package.trim().length > 0 ? p.package : null;
-						const data = await bridgePost<ActionPayload>("/app/admin/always-on-vpn", { package: target, lockdown: p.lockdown === true });
-						requireActionOk("android_admin", data);
-						return textResult(
-							target === null
-								? "已关闭常驻（Always-on）VPN。"
-								: `已把常驻 VPN 设为 ${target}${p.lockdown === true ? "（lockdown：VPN 断开时阻断全部网络）" : ""}。`,
-							data,
-						);
-					}
-					case "lock-task": {
-						if (!Array.isArray(p.packages)) {
-							throw new Error("[BAD_PARAM] android_admin 的 action=\"lock-task\" 需要 packages（包名数组；空数组表示关闭 Lock Task）。\n提示：补上 packages 后重新调用 android_admin。");
-						}
-						const packages = stringList(p.packages);
-						const data = await bridgePost<ActionPayload>("/app/admin/lock-task", { packages });
-						requireActionOk("android_admin", data);
-						return textResult(
-							packages.length === 0
-								? "Lock Task 清单已设为空（等于关闭专用设备模式）。"
-								: `已把 ${packages.length} 个应用加入 Lock Task 清单：${packages.join("、")}。`,
-							data,
-						);
-					}
-					case "update-policy": {
-						requireText("android_admin", action, params, ["mode"]);
-						const data = await bridgePost<ActionPayload>("/app/admin/update-policy", {
-							mode: p.mode,
-							windowStartMinutes: p.windowStartMinutes,
-							windowEndMinutes: p.windowEndMinutes,
-						});
-						requireActionOk("android_admin", data);
-						const window = typeof p.windowStartMinutes === "number" && typeof p.windowEndMinutes === "number"
-							? `（安装窗口：每天第 ${p.windowStartMinutes}–${p.windowEndMinutes} 分钟）`
-							: "";
-						return textResult(`系统更新策略已设为「${p.mode}」${window}。`, data);
-					}
-					case "status-bar":
-					case "keyguard":
-					case "camera": {
-						const disabled = requireBoolean("android_admin", action, params, "disabled");
-						const data = await bridgePost<ActionPayload>(`/app/admin/${action}`, { disabled });
-						requireActionOk("android_admin", data);
-						const what = action === "status-bar" ? "状态栏" : action === "keyguard" ? "锁屏" : "相机";
-						return textResult(`${what}已${disabled ? "禁用" : "恢复"}。`, data);
-					}
-					case "reboot": {
-						const data = await bridgePost<ActionPayload>("/app/admin/reboot", {});
-						requireActionOk("android_admin", data);
-						return textResult("重启指令已交给系统：设备会立即重启，未保存的内容会丢失。", data);
-					}
-					case "wipe": {
-						const data = await bridgePost<ActionPayload>("/app/admin/wipe", { flags: p.flags });
-						requireActionOk("android_admin", data);
-						return textResult(`擦除指令已被系统接受（flags=${p.flags ?? 0}）：设备会立即重启，被擦除的数据不再存在。`, data);
-					}
-					default:
-						throw badParam(
-							"android_admin",
-							"action",
-							[
-								"status",
-								"capabilities",
-								"grant",
-								"hidden",
-								"suspend",
-								"uninstall-blocked",
-								"install-ca",
-								"always-on-vpn",
-								"lock-task",
-								"update-policy",
-								"status-bar",
-								"keyguard",
-								"camera",
-								"reboot",
-								"wipe",
-							],
-							p.action,
-						);
-				}
-			}),
-	},
-
 	// ------------------------------------------------------------ 通知 ----
 	//
 	// 通知监听（`PiNotificationListener`）：只有在系统「通知使用权」里勾选过 PI、且服务已连上
@@ -2866,8 +2620,7 @@ pi 跑在 proot Ubuntu 里；这台手机上的一切操作都走 android_* 工�
 
 | 工具 | 能力组 | 覆盖 | action |
 |---|---|---|---|
-| \`android_ime\` | ime | 经 PI 输入法读/写当前聚焦的输入框 | insert / replace / delete / surround / submit / history / text |
-| \`android_admin\` | admin | 设备管理员 / Device Owner 策略 | status / capabilities / grant / hidden / suspend / uninstall-blocked / install-ca / always-on-vpn / lock-task / update-policy / status-bar / keyguard / camera / reboot / wipe |
+| \`android_ime\` | ime | 经 PI 输入法读/写当前聚焦的输入框 | insert / replace / delete / surround / submit / history / text | status / capabilities / grant / hidden / suspend / uninstall-blocked / install-ca / always-on-vpn / lock-task / update-policy / status-bar / keyguard / camera / reboot / wipe |
 | \`android_notify\` | basic | 通知监听：读、回复、撤销、延后、事件流水 | status / recent / reply / dismiss / dismiss-all / snooze / events |
 | \`android_automation\` | basic | 自动化规则（触发器 + 条件 + 动作） | status / list / add / remove / apply / history |
 | \`android_net\` | basic | 本地 VPN：隧道、DNS 查询记录、黑名单 | status / start / stop / queries / blocklist |
@@ -2876,7 +2629,6 @@ pi 跑在 proot Ubuntu 里；这台手机上的一切操作都走 android_* 工�
 | \`android_device_state\` | basic | 电量 / 上次定位 / 传感器列表 / 一次采样 | action |
 | \`android_torch\` | basic | 手电筒开关（部分 ROM 要相机权限） | on |
 
-- 不可逆、或影响其他应用的动作：\`android_admin\` 的 reboot / wipe / grant / hidden / suspend / install-ca / lock-task。调用前先在正文里说明后果；被拒绝就停，别换条路再试。
 - \`android_ime\` 只在 PI 是当前输入法时有内容可读；密码框读不到（连长度都不报）；surround 读的是光标前后的文本，不是改选区。
 - \`android_capture\` 的 consent 只回答「现在需不需要授权」；真正那一下要用户在 pi-android 界面上点系统对话框，然后 grab。
 - \`android_automation\` 的每个端点自己会先启动引擎（apply 幂等），add 之后不用再手动启动。

@@ -92,22 +92,6 @@ enum class DeviceCapability(
         defaultEnabled = false,
     ),
 
-    Admin(
-        id = "admin",
-        title = "管理员",
-        summary = "设备管理员 / Device Owner 策略：应用隐藏与挂起、CA 证书、常驻 VPN、锁屏、擦除",
-        allows = listOf(
-            "读取当前身份下每项策略能不能执行（Device Owner / Profile Owner / 普通设备管理员）",
-            "隐藏 / 恢复、挂起 / 恢复应用，阻止用户卸载某个应用",
-            "修改某个应用运行时权限的授予状态",
-            "安装 CA 证书（系统级且持久：卸载本应用也不会移除）",
-            "设置常驻 VPN（可选「断开即断网」）与 Lock Task 应用清单",
-            "设置系统更新策略（自动 / 推迟 / 每日安装时间窗）",
-            "禁用状态栏、锁屏、相机（前两者只有 Device Owner 才能做）",
-            "重启设备；擦除设备或工作资料（不可逆：执行后系统立即重启，数据不再有）",
-        ),
-        defaultEnabled = false,
-    ),
     ;
 
     companion object {

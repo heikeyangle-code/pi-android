@@ -548,199 +548,6 @@ class DeviceBridgeRouter(
                     )
                 }
 
-                // ------------------------------------------ 设备管理员（「管理员」组）----
-                //
-                // 身份与「能不能做」由 DeviceAdmin 回答（它的 capabilities() 就是给端点做「先问
-                // 再做」的那张表），路由只负责三件事：能力闸门、参数整理、把它的
-                // `{ok:false,reason}` 变成带 code 的 denial。
-                //
-                // 不可逆的那两个（reboot / wipe）的「二次确认」在 pi 侧的审批闸门里，不在这里：
-                // 桥这一层没有能和用户说话的界面，在这里加一个确认参数只会变成一个永远为 true
-                // 的开关。
-
-                // 这两条是**诊断**端点：唯一的职责就是说明「现在缺哪一档身份、每项策略能不能做」。
-                // 把诊断挂在它要诊断的那个前置后面，等于用问题回答问题 —— 没有身份就永久拿不到
-                // 「你缺什么身份」这个答案，而这正是用户最需要被告知的一件事。
-                //
-                // 不经过 withCapability，但**保留它包装出来的形状**（ok + capability + data），
-                // 所以调用方看不出来区别。对照 /app/capabilities：那一组诊断从一开始就是免门禁的。
-                "/app/admin/status" ->
-                    BridgeHttpResponse.ok(DeviceAdmin.status(context), DeviceCapability.Admin)
-
-                "/app/admin/capabilities" ->
-                    BridgeHttpResponse.ok(DeviceAdmin.capabilities(context), DeviceCapability.Admin)
-
-                "/app/admin/grant" -> withCapability(DeviceCapability.Admin) {
-                    okOrDenial(
-                        result = DeviceAdmin.setPermissionGrantState(
-                            context = context,
-                            pkg = params.strRequiredAny("package", "packageName", "pkg"),
-                            perm = params.strRequiredAny("permission", "perm"),
-                            state = params.intRequired("state"),
-                        ),
-                        code = DeviceDenial.NO_PERMISSION,
-                        action = "修改运行时权限的授予状态",
-                    )
-                }
-
-                "/app/admin/hidden" -> withCapability(DeviceCapability.Admin) {
-                    okOrDenial(
-                        result = DeviceAdmin.setApplicationHidden(
-                            context = context,
-                            pkg = params.strRequiredAny("package", "packageName", "pkg"),
-                            hidden = params.boolRequired("hidden"),
-                        ),
-                        code = DeviceDenial.NO_PERMISSION,
-                        action = "隐藏/恢复应用",
-                    )
-                }
-
-                "/app/admin/suspend" -> withCapability(DeviceCapability.Admin) {
-                    val packages = params.stringList("packages")
-                        .ifEmpty { listOfNotNull(params.strAny("package", "packageName", "pkg")) }
-                    if (packages.isEmpty()) {
-                        throw DeviceActionException(
-                            DeviceDenial(
-                                code = DeviceDenial.BAD_REQUEST,
-                                reason = "缺少必填参数「packages」（或单个「package」）。",
-                            ),
-                        )
-                    }
-                    val suspended = params.boolRequired("suspended")
-                    okOrDenial(
-                        result = DeviceAdmin.setPackagesSuspended(
-                            context = context,
-                            pkgs = packages,
-                            suspended = suspended,
-                        ),
-                        code = DeviceDenial.NO_PERMISSION,
-                        action = if (suspended) "挂起应用" else "恢复应用",
-                    )
-                }
-
-                "/app/admin/uninstall-blocked" -> withCapability(DeviceCapability.Admin) {
-                    okOrDenial(
-                        result = DeviceAdmin.setUninstallBlocked(
-                            context = context,
-                            pkg = params.strRequiredAny("package", "packageName", "pkg"),
-                            blocked = params.boolRequired("blocked"),
-                        ),
-                        code = DeviceDenial.NO_PERMISSION,
-                        action = "阻止/允许卸载应用",
-                    )
-                }
-
-                "/app/admin/install-ca" -> withCapability(DeviceCapability.Admin) {
-                    // 只收 DER 的 base64：`DevicePolicyManager.installCaCert` 要的就是 DER，
-                    // 收 PEM 文本等于把带护头的一串字符当 DER 传下去（必然失败，而失败原因
-                    // 看着像证书本身有问题）。
-                    val encoded = params.strRequiredAny("base64", "certificate")
-                    val bytes = runCatching {
-                        android.util.Base64.decode(encoded, android.util.Base64.DEFAULT)
-                    }.getOrElse {
-                        throw DeviceActionException(
-                            DeviceDenial(
-                                code = DeviceDenial.BAD_REQUEST,
-                                reason = "base64 解不开：这不是合法的 base64（应该传 DER 证书的 base64）。",
-                            ),
-                        )
-                    }
-                    okOrDenial(
-                        result = DeviceAdmin.installCaCert(context, bytes),
-                        code = DeviceDenial.NO_PERMISSION,
-                        action = "安装 CA 证书",
-                    )
-                }
-
-                "/app/admin/always-on-vpn" -> withCapability(DeviceCapability.Admin) {
-                    // 不传包名就是关闭常驻 VPN（DeviceAdmin 的约定：null = 关）。
-                    val pkg = params.strAny("package", "packageName", "pkg")
-                    okOrDenial(
-                        result = DeviceAdmin.setAlwaysOnVpn(
-                            context = context,
-                            pkg = pkg,
-                            lockdown = params.bool("lockdown", false),
-                        ),
-                        code = DeviceDenial.NO_PERMISSION,
-                        action = if (pkg == null) "关闭常驻 VPN" else "设置常驻 VPN",
-                    )
-                }
-
-                "/app/admin/lock-task" -> withCapability(DeviceCapability.Admin) {
-                    // 这里空列表是合法输入（关闭 Lock Task），所以不能把「参数缺失」当成空列表：
-                    // 打错参数名会让设备静默退出专用设备模式。
-                    if (!params.has("packages") && !params.has("package")) {
-                        throw DeviceActionException(
-                            DeviceDenial(
-                                code = DeviceDenial.BAD_REQUEST,
-                                reason = "缺少参数「packages」。",
-                                hint = "传允许启动的包名列表；传空列表即关闭 Lock Task。",
-                            ),
-                        )
-                    }
-                    okOrDenial(
-                        result = DeviceAdmin.setLockTaskPackages(
-                            context = context,
-                            pkgs = params.stringList("packages"),
-                        ),
-                        code = DeviceDenial.NO_PERMISSION,
-                        action = "设置 Lock Task 应用清单",
-                    )
-                }
-
-                "/app/admin/update-policy" -> withCapability(DeviceCapability.Admin) {
-                    okOrDenial(
-                        result = DeviceAdmin.setSystemUpdatePolicy(
-                            context = context,
-                            mode = params.strRequired("mode"),
-                            windowStartMinutes = params.int("windowStartMinutes", -1),
-                            windowEndMinutes = params.int("windowEndMinutes", -1),
-                        ),
-                        code = DeviceDenial.NO_PERMISSION,
-                        action = "设置系统更新策略",
-                    )
-                }
-
-                "/app/admin/status-bar" -> withCapability(DeviceCapability.Admin) {
-                    okOrDenial(
-                        result = DeviceAdmin.setStatusBarDisabled(context, params.requiredDisabled()),
-                        code = DeviceDenial.NO_PERMISSION,
-                        action = "禁用/恢复状态栏",
-                    )
-                }
-
-                "/app/admin/keyguard" -> withCapability(DeviceCapability.Admin) {
-                    okOrDenial(
-                        result = DeviceAdmin.setKeyguardDisabled(context, params.requiredDisabled()),
-                        code = DeviceDenial.NO_PERMISSION,
-                        action = "禁用/恢复锁屏",
-                    )
-                }
-
-                "/app/admin/camera" -> withCapability(DeviceCapability.Admin) {
-                    okOrDenial(
-                        result = DeviceAdmin.setCameraDisabled(context, params.requiredDisabled()),
-                        code = DeviceDenial.NO_PERMISSION,
-                        action = "禁用/恢复相机",
-                    )
-                }
-
-                "/app/admin/reboot" -> withCapability(DeviceCapability.Admin) {
-                    okOrDenial(
-                        result = DeviceAdmin.reboot(context),
-                        code = DeviceDenial.NO_PERMISSION,
-                        action = "重启设备",
-                    )
-                }
-
-                "/app/admin/wipe" -> withCapability(DeviceCapability.Admin) {
-                    okOrDenial(
-                        result = DeviceAdmin.wipeData(context, params.int("flags", 0)),
-                        code = DeviceDenial.NO_PERMISSION,
-                        action = "擦除设备/工作资料",
-                    )
-                }
-
                 // -------------------------------------------- 通知监听（并入「基础」组）----
                 //
                 // 归属是契约定的：「基础开着」不等于「通知监听连上了」—— 后者还要用户在系统里
@@ -1143,12 +950,12 @@ class DeviceBridgeRouter(
     }
 
     /**
-     * 波1 组件的动作失败约定是 `{ok:false, reason:…}`（[DeviceAdmin]、
-     * [PiNotificationListener]、[PiInputMethodService] 都是这个形状），而桥的约定是
+     * 波1 组件的动作失败约定是 `{ok:false, reason:…}`（[PiNotificationListener]、
+     * [PiInputMethodService]、[PiVpnService] 都是这个形状），而桥的约定是
      * 「失败必须带 code」。这里做唯一一处翻译：ok=false 时抛 [DeviceActionException]，
      * 由 [withCapability] 统一转成 denial —— 组件不必为了端点的形状多包一层。
      *
-     * [code] 由调用点给：管理员那一路的失败基本都是身份/前置（NO_PERMISSION），
+     * [code] 由调用点给：通知那一路的失败基本都是「这条通知被系统收回了」（ERROR），
      * 通知那一路基本都是「这条通知已经被系统收回了」（ERROR）。
      */
     private fun okOrDenial(result: JSONObject, code: String, action: String): JSONObject {
@@ -1587,22 +1394,6 @@ class DeviceBridgeRouter(
             "POST /app/ime/delete",
             "GET  /app/ime/surround",
             "POST /app/ime/submit",
-            // 「管理员」组
-            "GET  /app/admin/status",
-            "GET  /app/admin/capabilities",
-            "POST /app/admin/grant",
-            "POST /app/admin/hidden",
-            "POST /app/admin/suspend",
-            "POST /app/admin/uninstall-blocked",
-            "POST /app/admin/install-ca",
-            "POST /app/admin/always-on-vpn",
-            "POST /app/admin/lock-task",
-            "POST /app/admin/update-policy",
-            "POST /app/admin/status-bar",
-            "POST /app/admin/keyguard",
-            "POST /app/admin/camera",
-            "POST /app/admin/reboot",
-            "POST /app/admin/wipe",
             // 以下四路并入「基础」组（契约规定，不另开开关）
             "GET  /app/notify/status",
             "GET  /app/notify/recent",

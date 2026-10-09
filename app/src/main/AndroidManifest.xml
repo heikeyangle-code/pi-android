@@ -260,28 +260,6 @@
                 android:resource="@xml/pi_input_method" />
         </service>
 
-        <!--
-          设备管理员接收器（「管理员」能力组，端点 `/app/admin/*`）。
-
-          它只是**身份**：系统用它把「激活/停用」告诉本应用，能做的动作在
-          `DeviceAdmin` 里（那才是被 `/app/admin/*` 调用的地方）。
-          `BIND_DEVICE_ADMIN` 让只有系统能给它发广播；`android.app.device_admin`
-          meta-data 指向的策略声明决定激活页面上问用户要什么（见那个文件，只有
-          相机与锁屏两条，其余策略要在 Device Owner 身份下才有效、不需要 uses-policy）。
-
-          激活/取消由用户在系统设置里操作，本应用不主动弹激活页。
-        -->
-        <receiver
-            android:name=".bridge.PiDeviceAdminReceiver"
-            android:exported="true"
-            android:permission="android.permission.BIND_DEVICE_ADMIN">
-            <meta-data
-                android:name="android.app.device_admin"
-                android:resource="@xml/pi_device_admin_policies" />
-            <intent-filter>
-                <action android:name="android.app.action.DEVICE_ADMIN_ENABLED" />
-            </intent-filter>
-        </receiver>
 
         <!--
           通知监听（并入「基础」能力组，端点 `/app/notify/*`）。

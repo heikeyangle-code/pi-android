@@ -91,11 +91,9 @@ export const DANGER_LEVELS: Record<string, DangerLevel> = {
 	// 波2 的六个新工具（输入法 / 设备管理员 / 通知监听 / 自动化 / 本地 VPN / 投屏）按上面
 	// 同一条规则记 `control`：每一个都是多 action 的合并体，既有「看一眼状态」的分支，也有
 	// 改设备策略的分支；整块记成 `dangerous` 会让每次读通知都弹一次确认，确认也就贬值了。
-	// 其中不可逆的分支（`android_admin` 的 wipe / reboot）由 App 侧端点在执行前取人工确认 ——
-	// `DeviceAdmin.wipeData` 的 KDoc 明确要求波2 这么做；闸门这一层仍然只有一条判据：
-	// 只有 `android_shell` 是 `dangerous`。
+	// 其中不可逆的那几条由 App 侧端点在执行前取人工确认；闸门这一层仍然只有一条判据：
+	// 只有 `android_shell` 是 `dangerous`，而它里面只有那 7 条正则会被问。
 	android_ime: "control",
-	android_admin: "control",
 	android_notify: "control",
 	android_automation: "control",
 	android_net: "control",
@@ -146,17 +144,6 @@ export function describeDangerousCall(toolName: string, input: Record<string, un
 	switch (toolName) {
 		case "android_shell":
 			return `执行设备 Shell 命令：\n\n  ${truncate(asString(input, "command"), 400)}\n\n命令本身不做任何过滤，成败取决于身份：装了 Shizuku 是 ADB 级 uid=2000，否则是应用自身身份（pm、input、dumpsys、screencap 会以 SecurityException 失败）。`;
-		case "android_admin": {
-			const action = asString(input, "action");
-			const target =
-				typeof input.package === "string" && input.package.length > 0 ? `  package=${input.package}` : "";
-			// 只有 wipe 会出现那句后果。它挂在弹窗正文里而不是给所有 admin 动作重复一遍，
-			// 否则 `grant` 的弹窗会写着「恢复出厂设置」—— 一句在错的地方出现的严重警告，
-			// 会教用户不再读弹窗。
-			const consequence =
-				action === "wipe" ? "\n\n恢复出厂设置：这台设备上的一切都会被抹掉（包括 pi 与它的工作区），无法恢复。" : "";
-			return `执行设备管理员操作：\n\n  action=${action}${target}\n\n这类操作需要 Device Owner / Profile Owner 身份，改的是设备级策略。${consequence}`;
-		}
 		case "android_stop_app":
 			return `结束应用：\n\n  ${asString(input, "package")}\n\n后台进程会被结束，未保存的内容可能丢失。`;
 		case "android_share":
@@ -223,9 +210,6 @@ export const FORBIDDEN_SHELL_PATTERNS: ReadonlyArray<{ pattern: RegExp; label: s
  *  - `pm clear` / `cmd package clear` delete an app's entire data directory;
  *  - `pm uninstall` / `cmd package uninstall` remove the app *and* that directory.
  *
- * `android_admin(action="wipe")` belongs to the same class and is asked about through
- * `needsApprovalForAdmin` below — it is not a shell command, so it cannot live in this
- * list.
  *
  * Each entry carries an `id` as well as a `label`, and the two do different jobs: the
  * `label` is the consequence sentence shown in the dialog, while the `id` is what an
@@ -288,27 +272,6 @@ export interface ApprovalRule {
 	readonly label: string;
 }
 
-/**
- * The `android_admin` actions the user is asked about. Only one, and that is the point.
- *
- * `wipe` is a factory reset: everything on the device goes, including this app and the
- * workspace the agent has been working in. Nothing else the tool can do is in the same
- * class — `reboot` looks like its sibling but the phone comes back, so it fails the
- * "the damage cannot be undone" test every other entry here is built on; `grant`,
- * `hidden`, `suspend` and the rest are reversible; `status` and `capabilities` are
- * reads. Asking about those would be noise, and noise is what turns a confirmation into
- * a reflex.
- *
- * This lives beside the shell list rather than inside it because the decision is not
- * about a command string: it is a tool plus one of its `action` values.
- */
-export const NEEDS_APPROVAL_ADMIN_ACTIONS: ReadonlyArray<{ action: string; id: string; label: string }> = [
-	{
-		action: "wipe",
-		id: "恢复出厂",
-		label: "恢复出厂设置：手机上的一切都会被抹掉（包括 pi 与它的工作区），无法恢复",
-	},
-];
 
 /**
  * @returns the rule the command matched — its consequence sentence for the dialog and
@@ -322,15 +285,6 @@ export function needsApproval(command: string): ApprovalRule | null {
 	return null;
 }
 
-/**
- * @returns the rule the admin action matched, or null when the call may run without a
- *   confirmation.
- */
-export function needsApprovalForAdmin(input: Record<string, unknown>): ApprovalRule | null {
-	const action = typeof input.action === "string" ? input.action : "";
-	for (const entry of NEEDS_APPROVAL_ADMIN_ACTIONS) {
-		if (action === entry.action) return { id: entry.id, label: entry.label };
-	}
 	return null;
 }
 

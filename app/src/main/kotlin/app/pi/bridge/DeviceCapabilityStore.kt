@@ -256,39 +256,6 @@ class DeviceCapabilityStore private constructor(context: Context) {
 
             else -> null
         }
-
-        // 管理员：契约指定的前置就是 Device Owner。[DeviceAdmin] 里那张表说明为什么：
-        // 能改策略的动作（应用隐藏/挂起、CA 证书、常驻 VPN、Lock Task、更新策略、权限
-        // 授予状态、擦除）需要 Owner 身份，状态栏/锁屏/重启只有 Device Owner 能做，普通
-        // 设备管理员身份只够当成升级到 DO/PO 的前置。所以组级先把「不是 DO」拦下，并
-        // 按契约说清只剩读的部分（身份与可执行性仍从 /app/capabilities 的 admin 条目
-        // 与 App 的能力页读得到）。
-        //
-        // 代价写在明处：Profile Owner（工作资料）设备上，这一组也会被这条前置拦住 ——
-        // 包括 PO 真能做的隐藏/挂起应用。要让 PO 也放行，得把这条前置改成
-        // [DeviceAdmin.available]，并把差异交给每个端点的身份检查（DeviceAdmin 的
-        // ownerDenial / deviceOwnerDenial），那是名单另一档的事。
-        DeviceCapability.Admin ->
-            // 三档身份都算「可用」：普通设备管理员只需要用户在一个系统弹窗上点确认就能拿到，
-            // 而 DeviceAdmin.available() 就是那个宽松判定（deviceOwner / profileOwner /
-            // adminActive）。以前这里只认 Device Owner，后果是连「我现在是哪一档身份」都
-            // 问不出来 —— 而本组 allows 的第一行写的就是「读取当前身份下每项策略能不能执行」。
-            // 诊断被自己的前置挡住，前后矛盾，也让人以为这组整个废了。
-            if (DeviceAdmin.available(appContext)) {
-                null
-            } else {
-                DeviceDenial(
-                    code = DeviceDenial.NO_PERMISSION,
-                    reason = "本应用没有任何一档设备管理身份（普通设备管理员 / Profile Owner / Device Owner）。" +
-                        "两档 owner 身份才能改策略；普通设备管理员只能改声明过的那两条（禁用摄像头、禁用锁屏功能）。",
-                    hint = "/app/admin/status 与 /app/admin/capabilities 在任何身份下都能调，先用它们看现状。" +
-                        "普通设备管理员不需要 adb：在 App 的「设置 → 设备能力 → 管理员」里点激活，系统会弹确认框。" +
-                        "Device Owner 才要 adb：`adb shell dpm set-device-owner " +
-                        "${appContext.packageName}/${PiDeviceAdminReceiver::class.java.name}`" +
-                        "（设备必须没有已登录账号、且从未设过 Device Owner —— 日常在用的手机通常有账号，" +
-                        "所以这条路多半要恢复出厂才能走通）。",
-                )
-            }
     }
 
     /** True when the app already holds the location runtime permission. */

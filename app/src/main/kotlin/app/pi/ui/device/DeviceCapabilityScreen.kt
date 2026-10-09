@@ -2,8 +2,6 @@ package app.pi.ui.device
 
 import android.Manifest
 import android.app.Activity
-import android.app.admin.DevicePolicyManager
-import android.content.ComponentName
 import android.content.Intent
 import android.os.Build
 import android.provider.Settings
@@ -28,7 +26,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.AdminPanelSettings
 import androidx.compose.material.icons.filled.Keyboard
 import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.PhoneAndroid
@@ -58,7 +55,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import app.pi.bridge.DeviceAccessibilityService
-import app.pi.bridge.DeviceAdmin
 import app.pi.bridge.DeviceApprovalLedger
 import app.pi.bridge.DeviceBridgeController
 import app.pi.bridge.DeviceCapability
@@ -69,7 +65,6 @@ import app.pi.bridge.DeviceShellGuard
 import app.pi.bridge.DeviceShizuku
 import app.pi.bridge.DeviceWorkspace
 import app.pi.bridge.PiCaptureService
-import app.pi.bridge.PiDeviceAdminReceiver
 import app.pi.bridge.PiInputMethodService
 import app.pi.bridge.PiScreenCapture
 import app.pi.bridge.PiVpnService
@@ -158,8 +153,6 @@ fun DeviceCapabilityScreen(
     var imeEnabled by remember { mutableStateOf(PiInputMethodService.available(context)) }
     var imeDefault by remember { mutableStateOf(PiInputMethodService.isDefaultInputMethod(context)) }
     var imeRunning by remember { mutableStateOf(PiInputMethodService.running() != null) }
-    // 整份身份自述（哪一档身份、每项策略能不能做）由组件给，卡片不自己拼。
-    var admin by remember { mutableStateOf(DeviceAdmin.status(context)) }
     // VPN 与投屏这两条授权只能由界面发起，所以这一屏得知道它们当前是不是在跑。
     var vpnRunning by remember { mutableStateOf(PiVpnService.available(context)) }
     var capturing by remember { mutableStateOf(PiScreenCapture.isCapturing()) }
@@ -310,7 +303,6 @@ fun DeviceCapabilityScreen(
                 imeEnabled = PiInputMethodService.available(context)
                 imeDefault = PiInputMethodService.isDefaultInputMethod(context)
                 imeRunning = PiInputMethodService.running() != null
-                admin = DeviceAdmin.status(context)
                 vpnRunning = PiVpnService.available(context)
                 capturing = PiScreenCapture.isCapturing()
                 cameraPermission = store.hasCameraPermission()
@@ -431,7 +423,6 @@ fun DeviceCapabilityScreen(
                                 "启用「PI 设备桥」并把它选为当前输入法。"
                         }
                     },
-                    admin = admin,
                     vpnRunning = vpnRunning,
                     onRequestVpn = {
                         // `prepare()` 返回 null 有两种含义：已经授权，或系统没有 VPN 服务。
@@ -452,33 +443,6 @@ fun DeviceCapabilityScreen(
                             note = "系统没有投屏服务（MediaProjectionManager 不可用）。"
                         } else {
                             captureConsent.launch(consent)
-                        }
-                    },
-                    onOpenDeviceAdminSettings = {
-                        // 以前这里是 `startActivity(Settings.ACTION_SECURITY_SETTINGS)`，并让用户
-                        // 自己去找「设备管理应用」—— 那一项在 Android 10+ 的多数 ROM（包括这台的
-                        // HyperOS）上已经不再出现，照着走只会找不到。这也就解释了为什么用户说
-                        // 「该给的都给了」但设备管理员一直没激活：这条路本来就走不通。
-                        //
-                        // 正确的入口是让**应用**发 ACTION_ADD_DEVICE_ADMIN：系统会弹「要激活此设备
-                        // 管理应用吗？」，这是唯一一条在所有版本上都存在的路。激活后只给
-                        // pi_device_admin_policies.xml 里声明过的那两条策略（禁用摄像头、禁用锁屏
-                        // 功能），不是一把全域钥匙 —— 探话里明说这一点，用户才能真的判断要不要点。
-                        val component = ComponentName(
-                            context.packageName,
-                            PiDeviceAdminReceiver::class.java.name,
-                        )
-                        val request = Intent(DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN)
-                            .putExtra(DevicePolicyManager.EXTRA_DEVICE_ADMIN, component)
-                            .putExtra(
-                                DevicePolicyManager.EXTRA_ADD_EXPLANATION,
-                                "激活后，本应用只能做设备能力页里列出的那两件事：禁用摄像头、禁用锁屏功能。" +
-                                    "它不会因此拿到任何其他权限，你随时可以在系统设置里取消激活。",
-                            )
-                        val opened = runCatching { context.startActivity(request) }.isSuccess
-                        if (!opened) {
-                            note = "本机没有应用响应「激活设备管理应用」。请手动进入 系统设置 → 安全 → 设备管理应用" +
-                                "（部分 ROM 上是 设置 → 安全 → 更多安全设置），激活「PI 设备桥」。"
                         }
                     },
                     shizuku = shizuku,
@@ -701,8 +665,6 @@ private fun DeviceCapabilityCard(
     imeDefault: Boolean,
     imeRunning: Boolean,
     onOpenInputMethodSettings: () -> Unit,
-    admin: JSONObject,
-    onOpenDeviceAdminSettings: () -> Unit,
     vpnRunning: Boolean,
     onRequestVpn: () -> Unit,
     capturing: Boolean,
@@ -930,27 +892,6 @@ private fun DeviceCapabilityCard(
                 if (!ready) {
                     TextButton(onClick = onOpenInputMethodSettings) { Text("前往输入法设置") }
                 }
-            }
-
-            DeviceCapability.Admin -> {
-                Spacer(Modifier.height(PiSpacing.inline))
-                // 身份那一句直接由 DeviceAdmin.status(context) 给：它按当前是哪一档身份
-                // （Device Owner / Profile Owner / 普通设备管理员 / 都没有）说哪一档能做什么。
-                // 卡片再抄一遍就一定会跟它分叉。
-                Text(
-                    admin.optString("note"),
-                    style = PiTheme.text.meta,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                if (!admin.optBoolean("owner")) {
-                    Text(
-                        "现在只能读状态：改策略需要 Device Owner 或 Profile Owner（隐藏/挂起应用、CA 证书、" +
-                            "常驻 VPN、Lock Task、更新策略、权限授予状态、擦除），状态栏、锁屏与重启只有 Device Owner 能做。",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = PiTheme.palette.warning,
-                    )
-                }
-                TextButton(onClick = onOpenDeviceAdminSettings) { Text("打开系统设备管理设置") }
             }
 
             DeviceCapability.Basic -> {
@@ -1295,9 +1236,7 @@ private fun iconFor(capability: DeviceCapability): ImageVector = when (capabilit
     DeviceCapability.Basic -> Icons.Filled.PhoneAndroid
     DeviceCapability.Accessibility -> Icons.Filled.TouchApp
     DeviceCapability.Shell -> Icons.Filled.Terminal
-    // 输入法用键盘、管理员用盾牌：两张卡在列表里紧挨着，图标不一样才不用读标题。
     DeviceCapability.Ime -> Icons.Filled.Keyboard
-    DeviceCapability.Admin -> Icons.Filled.AdminPanelSettings
 }
 
 /** Open the Shizuku manager app, if this device has one. */
