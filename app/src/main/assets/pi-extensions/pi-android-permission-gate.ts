@@ -172,6 +172,10 @@ export default function (pi: ExtensionAPI) {
 		}
 
 		const description = describeDangerousCall(toolName, input);
+		// What the model (and therefore the user) is told the decision was about. The tool
+		// name alone reads as `android_shell`, which tells the user nothing: the rule's short
+		// id is what distinguishes 「用户拒绝了卸载应用」 from 「用户拒绝了 android_shell」.
+		const subject = approvalReason === null ? toolName : `${toolName}（${approvalReason.id}）`;
 		const previous = approvals.get(toolName) ?? 0;
 		const history = previous > 0
 			? `\n\n（本会话你已经批准过 ${previous} 次「${toolName}」，但每次都问过你。）`
@@ -215,11 +219,11 @@ export default function (pi: ExtensionAPI) {
 		}
 
 		if (choice === CHOICE_DENY) {
-			await publish(`用户拒绝了这个操作：${toolName}。`);
+			await publish(`用户拒绝了这个操作：${subject}。`);
 			return {
 				block: true,
 				reason:
-					`用户拒绝了这个设备操作：${toolName}。` +
+					`用户拒绝了「${subject}」。` +
 					"请停下来，把用户拒绝这件事告诉他，不要重试，也不要用别的工具绕过。",
 			};
 		}
@@ -227,16 +231,18 @@ export default function (pi: ExtensionAPI) {
 		// No answer. pi auto-resolves a timed-out dialog with `undefined`
 		// (`docs/rpc-extension-ui.md`, "select"): the agent-side does it, the extension just
 		// sees the value. Reporting that as a refusal would put a decision in the user's
-		// mouth — the model tells them they refused something they never saw — and it would
-		// also tell the model not to retry, when the right move is to ask again once they are
-		// back at the phone.
-		await publish(`确认对话框超时或没有回答：${toolName}。`);
+		// mouth — the model tells them they refused something they never saw.
+		//
+		// It must not invite a retry either. The model cannot know whether the user is at the
+		// phone, so 「可以再请求一次」 turns into a blind retry: another 120 s, and if they are
+		// still away, another timeout. Report it and let the user say when to try again.
+		await publish(`确认对话框超时或没有回答：${subject}。`);
 		return {
 			block: true,
 			reason:
-				`确认对话框没有得到回答（120 秒超时或已被关闭），因此「${toolName}」没有执行。` +
-				"这不是用户拒绝 —— 他可能只是当时不在。如果他现在在旁边，可以再请求一次；" +
-				"否则先告诉他一声：这件事还在等他确认，没有执行。",
+				`确认对话框没有得到回答（120 秒超时或被关掉），所以「${subject}」没有执行。` +
+				"这不等于用户拒绝 —— 只是没人回答。不要自己重试：先告诉他这一步还在等他确认，" +
+				"他说可以了你再调一次。",
 		};
 	});
 
