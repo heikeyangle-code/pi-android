@@ -2883,10 +2883,11 @@ pi 跑在 proot Ubuntu 里；这台手机上的一切操作都走 android_* 工�
 
 	"references/shell.md": `# 设备 Shell（android_shell）
 
-- 一条命令一次调用；\`$(...)\` 与反引号要用户开「放宽模式」。
-- 命令头是白名单：getprop、dumpsys、logcat、pm、am、cmd、settings、wm、screencap、input、getevent、ls、cat、find、sed、awk、tar、curl…，未列出的默认拦截。
-- 只能写工作区之内，工作区外会拒；回复里的 policy 行会复述这次实际生效的规则。
-- 后端与身份写在回复的 [后端 …，uid=N]：默认是应用自身 uid；拿到 ADB 身份后是 uid 2000，input、pm、am、settings get、dumpsys 这些才真正可用（见 references/elevate.md）。
+- 一条命令一次调用。**命令头不做任何检查**：没有白名单，黑名单也是空的，\`su\` / \`mount\` / \`dd\` / 任意二进制都发得出去；写入也不限工作区；\`$(...)\` 与反引号同样不检查（那个「放宽模式」开关已无作用）。
+- 但真正决定成败的不是这条守卫，是**身份**。后端与身份写在回复的 \`[后端 …，uid=N]\` 里：
+  - 默认是**应用自身**（uid=u0_aXXX）→ \`pm\`、\`input\`、\`dumpsys\`、\`screencap\`、\`settings put\` 会以 \`SecurityException\` 失败。**这不是被策略拒，是系统不给权限**，换命令头、换写法都没用。
+  - 拿到 ADB 身份（uid 2000）→ 上面那些才真正可用。见 references/elevate.md。
+- ⚠️ **\`android_shell\` 不走 adb。** 它只有两档后端：Shizuku（uid 2000）与应用自身。所以即使 \`adb shell id\` 已经是 uid=2000，通过这个工具跑同样的命令**仍然是应用身份、仍然会失败**。需要 uid 2000 的活请走 \`bash\` + \`adb -s <ip:port> shell "<cmd>"\`（客户端与连接都在客机里）。
 - 每条流 50 KB 上限；被截断时点名是 stdout 还是 stderr。
 - 超时 / 没有退出码 / 非零退出都算失败，正文保留 pi 的原句 Command exited with code N。
 `,
@@ -2938,9 +2939,24 @@ Drive Settings with android_ui; read the screen with android_ui(action="dump").
   b. adb connect <ip>:<connectport>
   c. adb shell id   ->   uid=2000(shell)
 
-## 3. Fallback
+## 3. Spending it — 这一段最容易搞错
+
+\`android_shell\` **不走 adb**。它只有两档后端（Shizuku、应用自身），所以即使 \`adb shell id\`
+已经是 uid=2000，通过那个工具跑 \`pm list\` 仍然是应用身份、仍然失败。
+
+需要 uid 2000 的活走 \`bash\` —— 客户端与已连上的连接都在客机里：
+
+    ADB=/usr/lib/android-sdk/platform-tools/adb
+    $ADB devices                              # 172.19.0.1:39599  device
+    $ADB -s 172.19.0.1:39599 shell "pm list packages -3 | wc -l"
+
+这就是 uid 2000：\`pm\` / \`settings\` / \`am\` / \`input\` / \`dumpsys\` / \`screencap\` / \`cmd\` 都能用。
+**仍然做不到的：** 读别的应用私有数据（\`/data/data/<pkg>\`）—— 那需要 root，uid 2000 不够。
+
+## 4. Fallback
 Ask the user to open Wireless debugging and read out the code / port.
 Ports change every time; Wi-Fi off = wireless debugging off.
+Rebooting the phone drops the connection — step 2 is the per-session part.
 `,
 };
 
