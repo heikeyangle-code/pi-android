@@ -870,7 +870,6 @@ private fun DeviceCapabilityCard(
                 // 三种状态，不是一个布尔：在系统里启用、被选为当前输入法、服务被绑定，是三件
                 // 不同的事，缺哪一件用户要做的动作都不同（启用→去系统设置；切换→去键盘选择器；
                 // 绑定→等一两秒）。读数与 DeviceCapabilityStore 的组级前置同一组事实。
-                val ready = imeEnabled && imeDefault
                 Text(
                     when {
                         !imeEnabled ->
@@ -889,8 +888,18 @@ private fun DeviceCapabilityCard(
                     style = PiTheme.text.meta,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                if (!ready) {
-                    TextButton(onClick = onOpenInputMethodSettings) { Text("前往输入法设置") }
+                    // 这张卡片上最要紧的一句，且必须在用户去按按钮**之前**说：PI 不提供键盘，
+                    // 切过去就打不了字，而回去的路（系统输入法切换器）在部分 ROM（含这台
+                    // HyperOS）上并不好找。
+                    Text(
+                        "⚠️ 无键盘。要用键盘请点右侧「切换输入法」。",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = PiTheme.palette.warning,
+                    )
+                // 未就绪时它是「去启用」的入口；已是当前输入法时它是「换回去」的出口。
+                // 后者才是从“打不了字”里出来的路，所以不能只在未就绪时给。
+                TextButton(onClick = onOpenInputMethodSettings) {
+                    Text(if (imeDefault) "换回我的键盘" else "前往输入法设置")
                 }
             }
 

@@ -175,19 +175,41 @@ class PiInputMethodService : InputMethodService() {
             setPadding(dp(12), dp(8), dp(12), dp(8))
         }
         hintView = TextView(this).apply {
-            text = "PI 输入桥：正在读取输入框内容"
+            text = "PI 接管中（无键盘）"
             setTextColor(Color.WHITE)
             textSize = 14f
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         }
+
+        // 这个输入法**没有键盘**，也不应该有：它是 agent 读写输入框的通道（InputConnection
+        // 只交给当前输入法），不是给人打字的：
+        //
+        // 以前这里只有一颗「完成」。后果是：用户在键盘切换器里切到 PI 之后，不但打不了字，
+        // 而且**回不去了** —— 唯一的路是系统输入法切换器，而那颗键盘图标在部分 ROM（包括
+        // 这台 HyperOS）上并不好找。一个把用户锁在“打不了字”状态的界面是缺陷，所以这里
+        // 把「回去」放在屏幕上，而不是指望用户能自己找到。
+        //
+        // `showInputMethodPicker()` 在 API 28 起只能由当前输入法或系统界面调用 —— 这里正是
+        // 当前输入法，所以它一定弹得出来。
+        val switch = Button(this).apply {
+            text = "切换输入法"
+            isAllCaps = false
+            setOnClickListener {
+                runCatching {
+                    (getSystemService(INPUT_METHOD_SERVICE) as? InputMethodManager)
+                        ?.showInputMethodPicker()
+                }
+            }
+        }
         val done = Button(this).apply {
             text = "完成"
             isAllCaps = false
-            // 「完成」只收起键盘。输入法停在屏幕上没有用途，收起是用户主动结束
-            // 这次「读取」的唯一入口。
+            // 「完成」只收起键盘。输入法停在屏幕上没有用途，收起是用户主动结束这次「读取」
+            // 的入口之一。
             setOnClickListener { requestHideSelf(0) }
         }
         row.addView(hintView)
+        row.addView(switch)
         row.addView(done)
         return row
     }
@@ -201,8 +223,8 @@ class PiInputMethodService : InputMethodService() {
         super.onStartInputView(info, restarting)
         applyEditorInfo(info)
         hintView?.text = field?.packageName
-            ?.let { "PI 输入桥：正在读取 $it 的输入框" }
-            ?: "PI 输入桥：正在读取输入框"
+            ?.let { "PI 接管（无键盘）· $it" }
+            ?: "PI 接管（无键盘）"
         // 立即收一次：应用刚把焦点交给输入框时光标没动过，onUpdate* 不会触发，
         // 只靠轮询会晚 [POLL_MS] 才留下第一条记录。
         recordFieldChange("start")
