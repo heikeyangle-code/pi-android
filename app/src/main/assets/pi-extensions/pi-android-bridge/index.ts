@@ -915,14 +915,14 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 				// `/workspace`. Both are printed so a model never has to guess.
 				const aliases = workspace.guestPathAliases?.filter((alias) => alias !== workspace.guestPath) ?? [];
 				lines.push(
-					`Shell 写入边界：${workspace.shellPath ?? "未确定"}（guest 内是 ${workspace.guestPath}` +
+					`工作区：${workspace.shellPath ?? "未确定"}（guest 内是 ${workspace.guestPath}` +
 						(aliases.length > 0 ? `；终端标签页是 ${aliases.join("、")}` : "") +
-						"）—— 工作区之内不拦，工作区之外会拒。",
+						"）—— 仅供定位，不再是写入边界（Shell 不再限制写哪里）。",
 				);
 			}
-			if (typeof health.shellSyntaxRelaxed === "boolean") {
-				lines.push(`Shell 放宽模式：${health.shellSyntaxRelaxed ? "已开启（$(...)、反引号、sh/eval 都允许）" : "已关闭（默认）"}`);
-			}
+			// 这里曾经报「Shell 放宽模式：已开启/已关闭」。那个开关控制的两件事（命令替换
+			// 检查、白名单）在 DeviceShellGuard.inspect 里都已取消，健康检查里回读到的
+			// shellSyntaxRelaxed 不会再改变任何行为，所以不再拿它去告诉模型“可以期待什么”。
 			const saf = health.saf;
 			if (saf) {
 				lines.push(
@@ -1885,13 +1885,14 @@ const DEVICE_TOOLS: DeviceToolSpec[] = [
 		name: "android_shell",
 		capability: "shell",
 		label: "设备 Shell",
-		description: "Whitelisted shell; unknown heads refused. Writes only inside the workspace; Shizuku = uid 2000, else the app uid. `$(...)`/backticks need relaxed mode.",
-		promptSnippet: "Guarded device shell",
+		description: "Device shell — nothing is filtered: _any_ binary, any write path, `$(...)` and backticks all pass. Identity decides what actually works: Shizuku = uid 2000, else the app uid (pm / input / dumpsys / screencap then fail).",
+		promptSnippet: "Device shell (identity decides)",
 		promptGuidelines: [
 			"android_shell only for device identity; workspace git/npm/builds use bash.",
+			"For uid 2000 this tool is the wrong route — its only backends are Shizuku and the app uid. Even when adb shell id says 2000, run uid-2000 commands through bash + adb instead (references/elevate.md).",
 		],
 		parameters: Type.Object({
-			command: Type.String({ description: "One command; split multiple actions into separate calls. `$(...)`/backticks need relaxed mode." }),
+			command: Type.String({ description: "One command; split multiple actions into separate calls." }),
 			timeoutMs: Type.Optional(Type.Number({ description: "Timeout in ms, default 15000, cap 60000." })),
 		}),
 		run: async (params) =>
@@ -2883,7 +2884,7 @@ pi 跑在 proot Ubuntu 里；这台手机上的一切操作都走 android_* 工�
 
 	"references/shell.md": `# 设备 Shell（android_shell）
 
-- 一条命令一次调用。**命令头不做任何检查**：没有白名单，黑名单也是空的，\`su\` / \`mount\` / \`dd\` / 任意二进制都发得出去；写入也不限工作区；\`$(...)\` 与反引号同样不检查（那个「放宽模式」开关已无作用）。
+- 一条命令一次调用。**命令不做任何检查**：\`su\` / \`mount\` / \`dd\` / 任意二进制、写任意路径、\`$(...)\` 与反引号，全部直接放行。
 - 但真正决定成败的不是这条守卫，是**身份**。后端与身份写在回复的 \`[后端 …，uid=N]\` 里：
   - 默认是**应用自身**（uid=u0_aXXX）→ \`pm\`、\`input\`、\`dumpsys\`、\`screencap\`、\`settings put\` 会以 \`SecurityException\` 失败。**这不是被策略拒，是系统不给权限**，换命令头、换写法都没用。
   - 拿到 ADB 身份（uid 2000）→ 上面那些才真正可用。见 references/elevate.md。

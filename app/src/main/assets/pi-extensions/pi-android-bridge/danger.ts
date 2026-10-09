@@ -21,8 +21,8 @@
  * also be dishonest, because the guest can reach the device bridge's HTTP port
  * directly with the token it already has. The gate is a *confirmation* layer on the
  * model's device actions, not a sandbox for the guest; the parts that cannot be
- * bypassed from the guest are the Kotlin capability switch, the whitelist/hard-block
- * policy and the workspace write boundary.
+ * bypassed from the guest are the Kotlin capability switch and the Kotlin guard's
+ * hard-block list (currently empty, so in practice: the capability switch alone).
  *
  * Three levels, and the reasoning for each:
  *
@@ -145,7 +145,7 @@ function truncate(value: string, max: number): string {
 export function describeDangerousCall(toolName: string, input: Record<string, unknown>): string {
 	switch (toolName) {
 		case "android_shell":
-			return `执行设备 Shell 命令：\n\n  ${truncate(asString(input, "command"), 400)}\n\n命令受命令白名单与「工作区写入边界」限制，放宽模式放宽的只是命令替换与嵌套执行的语法；以当前 Shell 后端身份运行（装了 Shizuku 就是 ADB 级 uid=2000，否则是应用自身身份）。`;
+			return `执行设备 Shell 命令：\n\n  ${truncate(asString(input, "command"), 400)}\n\n命令本身不做任何过滤，成败取决于身份：装了 Shizuku 是 ADB 级 uid=2000，否则是应用自身身份（pm、input、dumpsys、screencap 会以 SecurityException 失败）。`;
 		case "android_stop_app":
 			return `结束应用：\n\n  ${asString(input, "package")}\n\n后台进程会被结束，未保存的内容可能丢失。`;
 		case "android_share":
@@ -175,10 +175,12 @@ export function describeDangerousCall(toolName: string, input: Record<string, un
  *
  * **It is empty, and deliberately so.** The device shell *asks* now instead of
  * refusing: an irreversible command is put in front of the user through
- * `needsApproval` below, and everything else is the whitelist's and the workspace
- * write boundary's business — both enforced inside the app process, where the guest
- * cannot bypass them. A pre-filter only earned its place by "this can never be
- * allowed"; there is no such command left, so there is no rule left.
+ * `needsApproval` below and everything else simply runs. The Kotlin guard stopped
+ * refusing commands by name as well — no whitelist, no write boundary, no
+ * substitution rule (`DeviceShellGuard.inspect`) — so this list is not a mirror of
+ * an enforcement layer any more, only of what the two sides still agree is worth a
+ * question. A pre-filter only earns its place by "this can never be allowed"; there
+ * is no such command left, so there is no rule left.
  *
  * The Kotlin list is empty with it. The two are compared mechanically by the
  * `shell-policy-mirror` bare-JVM harness
@@ -186,20 +188,21 @@ export function describeDangerousCall(toolName: string, input: Record<string, un
  * `tools/run-app-pure-checks.sh`), which fails when either side gains, loses or
  * renames a rule — so a rule added back on one side alone is caught.
  *
- * Two shapes that still do not belong here if the list is ever repopulated: a
- * path-based rule (the workspace is the write boundary, enforced on the Kotlin side
- * where it cannot be bypassed) and a rule for something that can only fail.
+ * Two shapes that still do not belong here if the list is ever repopulated: a rule
+ * for something that can only fail (that is a hard block, not a question), and a
+ * pattern loose enough to fire on an unrelated command — `/\bdd\b/i` matched
+ * `dd.txt`, and a question that fires on the wrong thing turns the confirmation into
+ * a reflex the user stops reading.
  */
 export const FORBIDDEN_SHELL_PATTERNS: ReadonlyArray<{ pattern: RegExp; label: string }> = [];
 
 /**
- * The syntax the 放宽模式 switch (「设置 → 设备能力 → Shell」) turns on.
+ * The syntax the 放宽模式 switch (「设置 → 设备能力 → Shell」) used to turn on.
  *
- * The switch is stored by the Kotlin side ([DeviceCapabilityStore.isShellSyntaxRelaxed])
- * and read back through `/app/health`, so this list and the Kotlin guard's
- * substitution check flip together. A mode only one side honoured would be worse
- * than no mode: the dialog would let something through that the guard then refuses,
- * with no way for the user to tell which side was wrong.
+ * **No longer consulted by anything.** The Kotlin guard stopped checking command
+ * substitution, so `shellPrecheck` below ignores this list, and the switch itself has
+ * no effect (the UI no longer draws it). Kept only so the file still records what the
+ * mode was — see the class comment on `DeviceShellGuard` for what replaced it.
  */
 export const RELAXED_ONLY_PATTERNS: ReadonlyArray<{ pattern: RegExp; label: string }> = [
 	{ pattern: /`/, label: "命令替换（反引号）" },
